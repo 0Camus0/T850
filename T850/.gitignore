@@ -1,0 +1,13 @@
+*.suo
+*.opendb
+*.db
+*.idb
+*.log
+*.pdb
+*.tlog
+*.lastbuildstate
+*.obj
+*.ilk
+*.sdf
+/Example/bin/*.iobj
+/Example/bin/*.ipdb

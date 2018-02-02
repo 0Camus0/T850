@@ -1,0 +1,19 @@
+<technique name = "test">
+	<global>
+		<define name = "def1"/>
+		<define name = "def2"/>
+	</global>
+	<profile name = "prof1" type = "GLSL">
+		<define name = "xd" value = "0"/>
+		<define name = "xddd" value = "lowp"/>
+		<shader type = "VS" path = "sh.glsl"/>
+		<shader type = "FS" path = "shf.glsl"/>
+	</profile>
+	
+	<profile name = "prof2" type = "HLSL">
+		<define name = "nn" value = "1"/>
+		<define name = "nnn" value = "lowp"/>
+		<shader type = "VS" path = "sh2.glsl"/>
+		<shader type = "FS" path = "shf2.glsl"/>
+	</profile>
+</technique>

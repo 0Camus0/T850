@@ -1,0 +1,481 @@
+# depslib dependency file v1.0
+1494553488 source:/home/Camus/Dev/T800-Project/T800/App/App.cpp
+	<Config.h>
+	<core/LinuxFramework.h>
+	<core/Win32Framework.h>
+	"Application.h"
+	<iostream>
+	<string>
+	<vector>
+
+1493940732 /home/Camus/Dev/T800-Project/T800/Framework/Config.h
+
+1493530978 /home/Camus/Dev/T800-Project/T800/Framework/include/core/LinuxFramework.h
+	<Config.h>
+	<core/Core.h>
+	<video/BaseDriver.h>
+	<GL/freeglut.h>
+	<memory>
+
+1493530978 /home/Camus/Dev/T800-Project/T800/Framework/include/core/Core.h
+	<Config.h>
+	<video/BaseDriver.h>
+	<utils/InputManager.h>
+
+1493845296 /home/Camus/Dev/T800-Project/T800/Framework/include/video/BaseDriver.h
+	<Config.h>
+	<string>
+	<vector>
+
+1493832777 /home/Camus/Dev/T800-Project/T800/Framework/include/utils/InputManager.h
+	<Config.h>
+	<SDL/SDL_keysym.h>
+	<GL/freeglut.h>
+
+1493530978 /home/Camus/Dev/T800-Project/T800/Librerias/freeglut-linux/include/GL/freeglut.h
+	"freeglut_std.h"
+	"freeglut_ext.h"
+
+1493530978 /home/Camus/Dev/T800-Project/T800/Librerias/freeglut-linux/include/GL/freeglut_std.h
+	<windows.h>
+	<EGL/egl.h>
+	<GLES2/gl2.h>
+	<OpenGL/gl.h>
+	<OpenGL/glu.h>
+	<GL/gl.h>
+	<GL/glu.h>
+	<stdlib.h>
+
+1493530978 /home/Camus/Dev/T800-Project/T800/Librerias/freeglut-linux/include/GL/freeglut_ext.h
+	<stdarg.h>
+
+1493530978 /home/Camus/Dev/T800-Project/T800/Framework/include/core/Win32Framework.h
+	<Config.h>
+	<core/Core.h>
+	<video/BaseDriver.h>
+	<memory>
+
+1493530978 /home/Camus/Dev/T800-Project/T800/App/Application.h
+	<core/Core.h>
+	<scene/PrimitiveManager.h>
+	<scene/PrimitiveInstance.h>
+	<scene/SceneProp.h>
+	<utils/xMaths.h>
+	<utils/Camera.h>
+	<utils/Timer.h>
+
+1493530978 /home/Camus/Dev/T800-Project/T800/Framework/include/scene/PrimitiveManager.h
+	<Config.h>
+	<vector>
+	<utils/xMaths.h>
+	<scene/PrimitiveBase.h>
+	<scene/SceneProp.h>
+
+1493530978 /home/Camus/Dev/T800-Project/T800/Framework/include/utils/xMaths.h
+	<Config.h>
+	<algorithm>
+	<iostream>
+	<cmath>
+	<string.h>
+
+1493530978 /home/Camus/Dev/T800-Project/T800/Framework/include/scene/PrimitiveBase.h
+	<Config.h>
+	<scene/SceneProp.h>
+	<video/BaseDriver.h>
+	<vector>
+
+1493530978 /home/Camus/Dev/T800-Project/T800/Framework/include/scene/SceneProp.h
+	<Config.h>
+	<utils/xMaths.h>
+	<utils/Camera.h>
+	<vector>
+
+1493530978 /home/Camus/Dev/T800-Project/T800/Framework/include/utils/Camera.h
+	<Config.h>
+	<utils/xMaths.h>
+
+1493530978 /home/Camus/Dev/T800-Project/T800/Framework/include/scene/PrimitiveInstance.h
+	<Config.h>
+	<scene/PrimitiveBase.h>
+	<video/BaseDriver.h>
+	<utils/xMaths.h>
+
+1493530978 /home/Camus/Dev/T800-Project/T800/Framework/include/utils/Timer.h
+	<Config.h>
+	<windows.h>
+	<sys/time.h>
+
+1494614838 source:/home/Camus/Dev/T800-Project/T800/App/Application.cpp
+	"Application.h"
+	<video/BaseDriver.h>
+	<utils/InputManager.h>
+	<scene/Cube.h>
+	<stdio.h>
+	<stdlib.h>
+	<time.h>
+	<sys/time.h>
+	<iostream>
+	<string>
+	<vector>
+
+1493530978 /home/Camus/Dev/T800-Project/T800/Framework/include/scene/Cube.h
+	<Config.h>
+	<utils/Utils.h>
+	<GLES2/gl2.h>
+	<GLES2/gl2ext.h>
+	<video/GLTexture.h>
+	<GLES3/gl3.h>
+	<video/GLTexture.h>
+	<GLES3/gl31.h>
+	<video/GLTexture.h>
+	<GL/glew.h>
+	<video/GLTexture.h>
+	<video/D3DXTexture.h>
+	<D3Dcompiler.h>
+	<utils/xMaths.h>
+	<scene/PrimitiveBase.h>
+
+1493530978 /home/Camus/Dev/T800-Project/T800/Framework/include/utils/Utils.h
+	<Config.h>
+	<stdio.h>
+	<iostream>
+	<string>
+	<GLES2/gl2.h>
+	<GLES2/gl2ext.h>
+	<GLES3/gl3.h>
+	<GLES3/gl31.h>
+	<GL/glew.h>
+	<GL/gl.h>
+
+1493845296 /home/Camus/Dev/T800-Project/T800/Framework/include/video/GLTexture.h
+	<Config.h>
+	<video/BaseDriver.h>
+
+1493845296 /home/Camus/Dev/T800-Project/T800/Framework/include/video/D3DXTexture.h
+	<Config.h>
+	<video\BaseDriver.h>
+	<d3d11.h>
+	<wrl.h>
+	<wrl/client.h>
+
+1493311044 source:/home/Camus/Dev/T800-Cloned/T800-Project/T800/App/App.cpp
+	<Config.h>
+	<core/LinuxFramework.h>
+	<core/Win32Framework.h>
+	"Application.h"
+
+1493332007 /home/Camus/Dev/T800-Cloned/T800-Project/T800/Framework/Config.h
+
+1493311044 /home/Camus/Dev/T800-Cloned/T800-Project/T800/Framework/include/core/LinuxFramework.h
+	<Config.h>
+	<core/Core.h>
+	<video/BaseDriver.h>
+	<GL/freeglut.h>
+	<memory>
+
+1493311044 /home/Camus/Dev/T800-Cloned/T800-Project/T800/Framework/include/core/Core.h
+	<Config.h>
+	<video/BaseDriver.h>
+	<utils/InputManager.h>
+
+1493311044 /home/Camus/Dev/T800-Cloned/T800-Project/T800/Framework/include/video/BaseDriver.h
+	<Config.h>
+	<string>
+	<vector>
+
+1493311044 /home/Camus/Dev/T800-Cloned/T800-Project/T800/Framework/include/utils/InputManager.h
+	<Config.h>
+	<SDL/SDL_keysym.h>
+	<GL/freeglut.h>
+
+1493311044 /home/Camus/Dev/T800-Cloned/T800-Project/T800/Librerias/freeglut-linux/include/GL/freeglut.h
+	"freeglut_std.h"
+	"freeglut_ext.h"
+
+1493311044 /home/Camus/Dev/T800-Cloned/T800-Project/T800/Librerias/freeglut-linux/include/GL/freeglut_std.h
+	<windows.h>
+	<EGL/egl.h>
+	<GLES2/gl2.h>
+	<OpenGL/gl.h>
+	<OpenGL/glu.h>
+	<GL/gl.h>
+	<GL/glu.h>
+	<stdlib.h>
+
+1493311044 /home/Camus/Dev/T800-Cloned/T800-Project/T800/Librerias/freeglut-linux/include/GL/freeglut_ext.h
+	<stdarg.h>
+
+1493311044 /home/Camus/Dev/T800-Cloned/T800-Project/T800/Framework/include/core/Win32Framework.h
+	<Config.h>
+	<core/Core.h>
+	<video/BaseDriver.h>
+	<memory>
+
+1493311044 /home/Camus/Dev/T800-Cloned/T800-Project/T800/App/Application.h
+	<core/Core.h>
+	<scene/PrimitiveManager.h>
+	<scene/PrimitiveInstance.h>
+	<scene/SceneProp.h>
+	<utils/xMaths.h>
+	<utils/Camera.h>
+	<utils/Timer.h>
+
+1493311044 /home/Camus/Dev/T800-Cloned/T800-Project/T800/Framework/include/scene/PrimitiveManager.h
+	<Config.h>
+	<vector>
+	<utils/xMaths.h>
+	<scene/PrimitiveBase.h>
+	<scene/SceneProp.h>
+
+1493311044 /home/Camus/Dev/T800-Cloned/T800-Project/T800/Framework/include/utils/xMaths.h
+	<Config.h>
+	<algorithm>
+	<iostream>
+	<cmath>
+	<string.h>
+
+1493311044 /home/Camus/Dev/T800-Cloned/T800-Project/T800/Framework/include/scene/PrimitiveBase.h
+	<Config.h>
+	<scene/SceneProp.h>
+	<video/BaseDriver.h>
+	<vector>
+
+1493311044 /home/Camus/Dev/T800-Cloned/T800-Project/T800/Framework/include/scene/SceneProp.h
+	<Config.h>
+	<utils/xMaths.h>
+	<utils/Camera.h>
+	<vector>
+
+1493311044 /home/Camus/Dev/T800-Cloned/T800-Project/T800/Framework/include/utils/Camera.h
+	<Config.h>
+	<utils/xMaths.h>
+
+1493311044 /home/Camus/Dev/T800-Cloned/T800-Project/T800/Framework/include/scene/PrimitiveInstance.h
+	<Config.h>
+	<scene/PrimitiveBase.h>
+	<video/BaseDriver.h>
+	<utils/xMaths.h>
+
+1493311556 /home/Camus/Dev/T800-Cloned/T800-Project/T800/Framework/include/utils/Timer.h
+	<Config.h>
+	<windows.h>
+	<sys/time.h>
+
+1493316351 source:/home/Camus/Dev/T800-Cloned/T800-Project/T800/App/Application.cpp
+	"Application.h"
+	<video/BaseDriver.h>
+	<scene/Cube.h>
+	<stdio.h>
+	<stdlib.h>
+	<time.h>
+
+1493311044 /home/Camus/Dev/T800-Cloned/T800-Project/T800/Framework/include/scene/Cube.h
+	<Config.h>
+	<utils/Utils.h>
+	<GLES2/gl2.h>
+	<GLES2/gl2ext.h>
+	<video/GLTexture.h>
+	<GLES3/gl3.h>
+	<video/GLTexture.h>
+	<GLES3/gl31.h>
+	<video/GLTexture.h>
+	<GL/glew.h>
+	<video/GLTexture.h>
+	<video/D3DXTexture.h>
+	<D3Dcompiler.h>
+	<utils/xMaths.h>
+	<scene/PrimitiveBase.h>
+
+1493311044 /home/Camus/Dev/T800-Cloned/T800-Project/T800/Framework/include/utils/Utils.h
+	<Config.h>
+	<stdio.h>
+	<iostream>
+	<string>
+	<GLES2/gl2.h>
+	<GLES2/gl2ext.h>
+	<GLES3/gl3.h>
+	<GLES3/gl31.h>
+	<GL/glew.h>
+	<GL/gl.h>
+
+1493311044 /home/Camus/Dev/T800-Cloned/T800-Project/T800/Framework/include/video/GLTexture.h
+	<Config.h>
+	<video/BaseDriver.h>
+
+1493311044 /home/Camus/Dev/T800-Cloned/T800-Project/T800/Framework/include/video/D3DXTexture.h
+	<Config.h>
+	<video\BaseDriver.h>
+	<d3d11.h>
+	<wrl.h>
+	<wrl/client.h>
+
+1500503155 source:/home/Camus/Dev/T800-Ex/T800-Project/T800/App/App.cpp
+	<Config.h>
+	<core/LinuxFramework.h>
+	<core/Win32Framework.h>
+	"Application.h"
+	<iostream>
+	<string>
+	<vector>
+
+1500503155 /home/Camus/Dev/T800-Ex/T800-Project/T800/Framework/Config.h
+
+1500503155 /home/Camus/Dev/T800-Ex/T800-Project/T800/Framework/include/core/LinuxFramework.h
+	<Config.h>
+	<core/Core.h>
+	<video/BaseDriver.h>
+	<GL/freeglut.h>
+	<memory>
+
+1500503155 /home/Camus/Dev/T800-Ex/T800-Project/T800/Framework/include/core/Core.h
+	<Config.h>
+	<video/BaseDriver.h>
+	<utils/InputManager.h>
+
+1500503155 /home/Camus/Dev/T800-Ex/T800-Project/T800/Framework/include/video/BaseDriver.h
+	<utils/cil.h>
+	<Config.h>
+	<string>
+	<vector>
+
+1500503155 /home/Camus/Dev/T800-Ex/T800-Project/T800/Framework/include/utils/cil.h
+	<string>
+	<fstream>
+	<iostream>
+	<cstddef>
+	<algorithm>
+
+1500503155 /home/Camus/Dev/T800-Ex/T800-Project/T800/Framework/include/utils/InputManager.h
+	<Config.h>
+	<SDL/SDL_keysym.h>
+	<GL/freeglut.h>
+
+1500503155 /home/Camus/Dev/T800-Ex/T800-Project/T800/Librerias/freeglut-linux/include/GL/freeglut.h
+	"freeglut_std.h"
+	"freeglut_ext.h"
+
+1500503155 /home/Camus/Dev/T800-Ex/T800-Project/T800/Librerias/freeglut-linux/include/GL/freeglut_std.h
+	<windows.h>
+	<EGL/egl.h>
+	<GLES2/gl2.h>
+	<OpenGL/gl.h>
+	<OpenGL/glu.h>
+	<GL/gl.h>
+	<GL/glu.h>
+	<stdlib.h>
+
+1500503155 /home/Camus/Dev/T800-Ex/T800-Project/T800/Librerias/freeglut-linux/include/GL/freeglut_ext.h
+	<stdarg.h>
+
+1500503155 /home/Camus/Dev/T800-Ex/T800-Project/T800/Framework/include/core/Win32Framework.h
+	<Config.h>
+	<core/Core.h>
+	<video/BaseDriver.h>
+	<memory>
+
+1500503155 /home/Camus/Dev/T800-Ex/T800-Project/T800/App/Application.h
+	<core/Core.h>
+	<scene/PrimitiveManager.h>
+	<scene/PrimitiveInstance.h>
+	<scene/SceneProp.h>
+	<utils/xMaths.h>
+	<utils/Camera.h>
+	<utils/Timer.h>
+
+1500503155 /home/Camus/Dev/T800-Ex/T800-Project/T800/Framework/include/scene/PrimitiveManager.h
+	<Config.h>
+	<vector>
+	<utils/xMaths.h>
+	<scene/PrimitiveBase.h>
+	<scene/SceneProp.h>
+
+1500503155 /home/Camus/Dev/T800-Ex/T800-Project/T800/Framework/include/utils/xMaths.h
+	<Config.h>
+	<algorithm>
+	<iostream>
+	<cmath>
+	<string.h>
+	<math.h>
+	<iostream>
+	<vector>
+
+1500503155 /home/Camus/Dev/T800-Ex/T800-Project/T800/Framework/include/scene/PrimitiveBase.h
+	<Config.h>
+	<scene/SceneProp.h>
+	<video/BaseDriver.h>
+	<vector>
+
+1500503155 /home/Camus/Dev/T800-Ex/T800-Project/T800/Framework/include/scene/SceneProp.h
+	<Config.h>
+	<utils/xMaths.h>
+	<utils/Camera.h>
+	<vector>
+
+1500503155 /home/Camus/Dev/T800-Ex/T800-Project/T800/Framework/include/utils/Camera.h
+	<Config.h>
+	<utils/xMaths.h>
+
+1500503155 /home/Camus/Dev/T800-Ex/T800-Project/T800/Framework/include/scene/PrimitiveInstance.h
+	<Config.h>
+	<scene/PrimitiveBase.h>
+	<video/BaseDriver.h>
+	<utils/xMaths.h>
+
+1500503155 /home/Camus/Dev/T800-Ex/T800-Project/T800/Framework/include/utils/Timer.h
+	<Config.h>
+	<windows.h>
+	<sys/time.h>
+
+1500503514 source:/home/Camus/Dev/T800-Ex/T800-Project/T800/App/Application.cpp
+	"Application.h"
+	<video/BaseDriver.h>
+	<utils/InputManager.h>
+	<scene/Cube.h>
+	<stdio.h>
+	<stdlib.h>
+	<time.h>
+	<sys/time.h>
+	<iostream>
+	<string>
+	<vector>
+
+1500503155 /home/Camus/Dev/T800-Ex/T800-Project/T800/Framework/include/scene/Cube.h
+	<Config.h>
+	<utils/Utils.h>
+	<GLES2/gl2.h>
+	<GLES2/gl2ext.h>
+	<video/GLTexture.h>
+	<GLES3/gl3.h>
+	<video/GLTexture.h>
+	<GLES3/gl31.h>
+	<video/GLTexture.h>
+	<GL/glew.h>
+	<video/GLTexture.h>
+	<video/D3DXTexture.h>
+	<D3Dcompiler.h>
+	<utils/xMaths.h>
+	<scene/PrimitiveBase.h>
+
+1500503155 /home/Camus/Dev/T800-Ex/T800-Project/T800/Framework/include/utils/Utils.h
+	<Config.h>
+	<stdio.h>
+	<iostream>
+	<string>
+	<GLES2/gl2.h>
+	<GLES2/gl2ext.h>
+	<GLES3/gl3.h>
+	<GLES3/gl31.h>
+	<GL/glew.h>
+	<GL/gl.h>
+
+1500503155 /home/Camus/Dev/T800-Ex/T800-Project/T800/Framework/include/video/GLTexture.h
+	<Config.h>
+	<video/BaseDriver.h>
+
+1500503155 /home/Camus/Dev/T800-Ex/T800-Project/T800/Framework/include/video/D3DXTexture.h
+	<Config.h>
+	<video\BaseDriver.h>
+	<d3d11.h>
+	<wrl.h>
+	<wrl/client.h>
+

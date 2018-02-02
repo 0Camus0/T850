@@ -1,0 +1,3 @@
+/T850/Lib/Release/Win32/*.lib
+/T850/bin/*.exe
+/T850/Lib/Debug/Win32/Frameworkd.lib

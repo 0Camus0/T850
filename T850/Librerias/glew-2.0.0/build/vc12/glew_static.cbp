@@ -1,0 +1,87 @@
+<?xml version="1.0" encoding="UTF-8" standalone="yes" ?>
+<CodeBlocks_project_file>
+	<FileVersion major="1" minor="6" />
+	<Project>
+		<Option title="glew_static" />
+		<Option pch_mode="2" />
+		<Option compiler="gcc" />
+		<Build>
+			<Target title="Release-x86">
+				<Option output="../../lib/glew" prefix_auto="1" extension_auto="1" />
+				<Option working_dir="" />
+				<Option object_output="tmp/glew32s/Release/Win32/" />
+				<Option deps_output="$(LIB_DIR)/Release/Win32/" />
+				<Option type="2" />
+				<Option compiler="gnu_gcc_compiler-x86" />
+				<Option createDefFile="1" />
+				<Compiler>
+					<Add option="-O3" />
+					<Add option="-Wall" />
+					<Add option="-DWIN32" />
+					<Add option="-DNDEBUG" />
+					<Add option="-D_LIB" />
+					<Add option="-DWIN32_LEAN_AND_MEAN" />
+					<Add option="-DGLEW_STATIC" />
+					<Add directory="../../include/" />
+				</Compiler>
+				<Linker>
+					<Add option="-s" />
+				</Linker>
+			</Target>
+			<Target title="Release">
+				<Option output="../../lib/glew" prefix_auto="1" extension_auto="1" />
+				<Option working_dir="" />
+				<Option object_output="tmp/glew32s/Release/Win32/" />
+				<Option deps_output="$(LIB_DIR)/Release/Win32/" />
+				<Option type="2" />
+				<Option compiler="gcc" />
+				<Option createDefFile="1" />
+				<Compiler>
+					<Add option="-O3" />
+					<Add option="-Wall" />
+					<Add option="-DWIN32" />
+					<Add option="-DNDEBUG" />
+					<Add option="-D_LIB" />
+					<Add option="-DWIN32_LEAN_AND_MEAN" />
+					<Add option="-DGLEW_STATIC" />
+					<Add directory="../../include/" />
+				</Compiler>
+				<Linker>
+					<Add option="-s" />
+				</Linker>
+			</Target>
+			<Target title="Release-Linux">
+				<Option output="../../lib/glew" prefix_auto="1" extension_auto="1" />
+				<Option working_dir="" />
+				<Option object_output="tmp/glew32s/Release/Win32/" />
+				<Option deps_output="$(LIB_DIR)/Release/Win32/" />
+				<Option type="2" />
+				<Option compiler="gcc" />
+				<Option createDefFile="1" />
+				<Compiler>
+					<Add option="-O3" />
+					<Add option="-Wall" />
+					<Add option="-DNDEBUG" />
+					<Add option="-DGLEW_STATIC" />
+					<Add directory="../../include/" />
+				</Compiler>
+				<Linker>
+					<Add option="-s" />
+				</Linker>
+			</Target>
+		</Build>
+		<Unit filename="../../include/GL/glew.h" />
+		<Unit filename="../../include/GL/wglew.h" />
+		<Unit filename="../../src/glew.c">
+			<Option compilerVar="CC" />
+		</Unit>
+		<Unit filename="../glew.rc">
+			<Option compilerVar="WINDRES" />
+		</Unit>
+		<Extensions>
+			<code_completion />
+			<envvars />
+			<debugger />
+		</Extensions>
+	</Project>
+</CodeBlocks_project_file>

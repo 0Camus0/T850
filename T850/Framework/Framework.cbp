@@ -1,0 +1,146 @@
+<?xml version="1.0" encoding="UTF-8" standalone="yes" ?>
+<CodeBlocks_project_file>
+	<FileVersion major="1" minor="6" />
+	<Project>
+		<Option title="Framework" />
+		<Option makefile="MakefileFramework" />
+		<Option pch_mode="2" />
+		<Option compiler="gcc" />
+		<Build>
+			<Target title="Debug">
+				<Option output="bin/Debug/Framework" prefix_auto="1" extension_auto="1" />
+				<Option working_dir="" />
+				<Option object_output="obj/Debug/" />
+				<Option type="2" />
+				<Option compiler="gcc" />
+				<Option createDefFile="1" />
+				<Compiler>
+					<Add option="-g" />
+				</Compiler>
+				<Linker>
+					<Add option="-lwayland-cursor" />
+					<Add option="-lwayland-client" />
+					<Add option="-lwayland-egl" />
+					<Add option="-lEGL" />
+					<Add option="-lGLESv2" />
+				</Linker>
+			</Target>
+			<Target title="Release">
+				<Option output="bin/Release/Framework" prefix_auto="1" extension_auto="1" />
+				<Option working_dir="" />
+				<Option object_output="obj/Release/" />
+				<Option type="2" />
+				<Option compiler="gcc" />
+				<Compiler>
+					<Add option="-O3" />
+				</Compiler>
+				<Linker>
+					<Add option="-s" />
+					<Add option="-lwayland-cursor" />
+					<Add option="-lwayland-client" />
+					<Add option="-lwayland-egl" />
+					<Add option="-lEGL" />
+					<Add option="-lGLESv2" />
+				</Linker>
+			</Target>
+		</Build>
+		<Compiler>
+			<Add option="-std=c++11" />
+			<Add option="-Wall" />
+			<Add option="-DOS_LINUX" />
+			<Add option="-DFREEGLUT_GLES" />
+			<Add option="-DFREEGLUT_WAYLAND" />
+			<Add directory="include" />
+			<Add directory="../Framework" />
+			<Add directory="../Librerias/stb/include" />
+			<Add directory="../Librerias/freeglut-linux/include" />
+			<Add directory="../Librerias/glew-2.0.0/include" />
+		</Compiler>
+		<Linker>
+			<Add directory="../Librerias/freeglut-linux/lib" />
+		</Linker>
+		<Unit filename="Config.h" />
+		<Unit filename="include/core/Core.h" />
+		<Unit filename="include/core/LinuxFramework.h" />
+		<Unit filename="include/core/Win32Framework.h" />
+		<Unit filename="include/scene/Cube.h" />
+		<Unit filename="include/scene/D3DXMesh.h" />
+		<Unit filename="include/scene/D3DXQuad.h" />
+		<Unit filename="include/scene/GLMesh.h" />
+		<Unit filename="include/scene/GLQuad.h" />
+		<Unit filename="include/scene/PrimitiveBase.h" />
+		<Unit filename="include/scene/PrimitiveInstance.h" />
+		<Unit filename="include/scene/PrimitiveManager.h" />
+		<Unit filename="include/scene/SceneProp.h" />
+		<Unit filename="include/scene/Triangle.h" />
+		<Unit filename="include/utils/Camera.h" />
+		<Unit filename="include/utils/Checker.h" />
+		<Unit filename="include/utils/InputManager.h" />
+		<Unit filename="include/utils/Timer.h" />
+		<Unit filename="include/utils/Utils.h" />
+		<Unit filename="include/utils/XDataBase.h" />
+		<Unit filename="include/utils/xDefs.h" />
+		<Unit filename="include/utils/xMaths.h" />
+		<Unit filename="include/video/BaseDriver.h" />
+		<Unit filename="include/video/D3DXDriver.h" />
+		<Unit filename="include/video/D3DXRT.h" />
+		<Unit filename="include/video/D3DXShader.h" />
+		<Unit filename="include/video/D3DXTexture.h" />
+		<Unit filename="include/video/GLDriver.h" />
+		<Unit filename="include/video/GLRT.h" />
+		<Unit filename="include/video/GLShader.h" />
+		<Unit filename="include/video/GLTexture.h" />
+		<Unit filename="src/core/Core.cpp" />
+		<Unit filename="src/core/LinuxFramework.cpp" />
+		<Unit filename="src/core/Win32Framework.cpp">
+			<Option compile="0" />
+			<Option link="0" />
+		</Unit>
+		<Unit filename="src/scene/Cube.cpp" />
+		<Unit filename="src/scene/D3DXMesh.cpp">
+			<Option compile="0" />
+			<Option link="0" />
+		</Unit>
+		<Unit filename="src/scene/D3DXQuad.cpp">
+			<Option compile="0" />
+			<Option link="0" />
+		</Unit>
+		<Unit filename="src/scene/GLMesh.cpp" />
+		<Unit filename="src/scene/GLQuad.cpp" />
+		<Unit filename="src/scene/PrimitiveInstance.cpp" />
+		<Unit filename="src/scene/PrimitiveManager.cpp" />
+		<Unit filename="src/scene/SceneProp.cpp" />
+		<Unit filename="src/scene/Triangle.cpp" />
+		<Unit filename="src/utils/Camera.cpp" />
+		<Unit filename="src/utils/InputManager.cpp" />
+		<Unit filename="src/utils/Timer.cpp" />
+		<Unit filename="src/utils/Utils.cpp" />
+		<Unit filename="src/utils/XDataBase.cpp" />
+		<Unit filename="src/utils/XMaths.cpp" />
+		<Unit filename="src/video/BaseDriver.cpp" />
+		<Unit filename="src/video/D3DXDriver.cpp">
+			<Option compile="0" />
+			<Option link="0" />
+		</Unit>
+		<Unit filename="src/video/D3DXRT.cpp">
+			<Option compile="0" />
+			<Option link="0" />
+		</Unit>
+		<Unit filename="src/video/D3DXShader.cpp">
+			<Option compile="0" />
+			<Option link="0" />
+		</Unit>
+		<Unit filename="src/video/D3DXTexture.cpp">
+			<Option compile="0" />
+			<Option link="0" />
+		</Unit>
+		<Unit filename="src/video/GLDriver.cpp" />
+		<Unit filename="src/video/GLRT.cpp" />
+		<Unit filename="src/video/GLShader.cpp" />
+		<Unit filename="src/video/GLTexture.cpp" />
+		<Extensions>
+			<code_completion />
+			<debugger />
+		</Extensions>
+	</Project>
+</CodeBlocks_project_file>

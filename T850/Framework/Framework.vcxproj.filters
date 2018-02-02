@@ -1,0 +1,339 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<Project ToolsVersion="4.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <ItemGroup>
+    <Filter Include="Source Files">
+      <UniqueIdentifier>{4FC737F1-C7A5-4376-A066-2A32D752A2FF}</UniqueIdentifier>
+      <Extensions>cpp;c;cc;cxx;def;odl;idl;hpj;bat;asm;asmx</Extensions>
+    </Filter>
+    <Filter Include="Header Files">
+      <UniqueIdentifier>{93995380-89BD-4b04-88EB-625FBE52EBFB}</UniqueIdentifier>
+      <Extensions>h;hh;hpp;hxx;hm;inl;inc;xsd</Extensions>
+    </Filter>
+    <Filter Include="Header Files\core">
+      <UniqueIdentifier>{ede60bc6-3ae3-4f3f-9cb4-ff2d4fcc4cd5}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Header Files\utils">
+      <UniqueIdentifier>{ead13b2b-f133-4372-89a0-fa4c211fde5d}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Header Files\scene">
+      <UniqueIdentifier>{2edcd6e5-a944-482b-b28a-e10981634000}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Header Files\video">
+      <UniqueIdentifier>{fd02d236-d982-438f-8f19-2c3974cf7ea7}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Source Files\core">
+      <UniqueIdentifier>{969d78f7-8df4-4ced-b9c2-acd61f4ff01c}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Source Files\video">
+      <UniqueIdentifier>{7f0d6fbd-b7c1-4aa7-89a3-159362e20826}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Source Files\scene">
+      <UniqueIdentifier>{974026cb-3e15-4f12-ba8e-6feadd0aba19}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Source Files\utils">
+      <UniqueIdentifier>{63e053be-8260-4813-ae01-bc3f06590eb0}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Source Files\video\D3DX">
+      <UniqueIdentifier>{4b25e9ac-1ed0-4f5f-a772-8acfcfc07838}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Source Files\video\GL">
+      <UniqueIdentifier>{bee7611b-4f3d-4db3-a278-3ccc3ff56d11}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Header Files\video\D3DX">
+      <UniqueIdentifier>{c043e95d-4a64-4581-aae7-2adc039c7cf1}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Header Files\video\GL">
+      <UniqueIdentifier>{f2cf3e98-b0bc-4354-bd5f-5df91dccb9ab}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Shaders">
+      <UniqueIdentifier>{da780f43-b73e-441b-a1b3-a1a56adda946}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Shaders\D3D11">
+      <UniqueIdentifier>{3b13b26b-42f4-4811-8eb4-58b6a06471e6}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Shaders\GLSL">
+      <UniqueIdentifier>{afb89638-cc69-44cd-840d-7cef05f91e0f}</UniqueIdentifier>
+    </Filter>
+  </ItemGroup>
+  <ItemGroup>
+    <ClInclude Include="include\core\Core.h">
+      <Filter>Header Files\core</Filter>
+    </ClInclude>
+    <ClInclude Include="include\utils\InputManager.h">
+      <Filter>Header Files\utils</Filter>
+    </ClInclude>
+    <ClInclude Include="include\utils\Utils.h">
+      <Filter>Header Files\utils</Filter>
+    </ClInclude>
+    <ClInclude Include="include\utils\XDataBase.h">
+      <Filter>Header Files\utils</Filter>
+    </ClInclude>
+    <ClInclude Include="include\utils\xDefs.h">
+      <Filter>Header Files\utils</Filter>
+    </ClInclude>
+    <ClInclude Include="include\utils\xMaths.h">
+      <Filter>Header Files\utils</Filter>
+    </ClInclude>
+    <ClInclude Include="include\scene\PrimitiveBase.h">
+      <Filter>Header Files\scene</Filter>
+    </ClInclude>
+    <ClInclude Include="include\scene\PrimitiveInstance.h">
+      <Filter>Header Files\scene</Filter>
+    </ClInclude>
+    <ClInclude Include="include\scene\PrimitiveManager.h">
+      <Filter>Header Files\scene</Filter>
+    </ClInclude>
+    <ClInclude Include="include\scene\SceneProp.h">
+      <Filter>Header Files\scene</Filter>
+    </ClInclude>
+    <ClInclude Include="include\video\BaseDriver.h">
+      <Filter>Header Files\video</Filter>
+    </ClInclude>
+    <ClInclude Include="Config.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="include\utils\Timer.h">
+      <Filter>Header Files\utils</Filter>
+    </ClInclude>
+    <ClInclude Include="include\utils\Camera.h">
+      <Filter>Header Files\utils</Filter>
+    </ClInclude>
+    <ClInclude Include="include\video\GLDriver.h">
+      <Filter>Header Files\video\GL</Filter>
+    </ClInclude>
+    <ClInclude Include="include\video\GLRT.h">
+      <Filter>Header Files\video\GL</Filter>
+    </ClInclude>
+    <ClInclude Include="include\video\GLShader.h">
+      <Filter>Header Files\video\GL</Filter>
+    </ClInclude>
+    <ClInclude Include="include\video\GLTexture.h">
+      <Filter>Header Files\video\GL</Filter>
+    </ClInclude>
+    <ClInclude Include="include\utils\cil.h">
+      <Filter>Header Files\utils</Filter>
+    </ClInclude>
+    <ClInclude Include="T8_descriptors.h">
+      <Filter>Header Files\utils</Filter>
+    </ClInclude>
+    <ClInclude Include="include\video\windows\D3DXDriver.h">
+      <Filter>Header Files\video\D3DX</Filter>
+    </ClInclude>
+    <ClInclude Include="include\video\windows\D3DXRT.h">
+      <Filter>Header Files\video\D3DX</Filter>
+    </ClInclude>
+    <ClInclude Include="include\video\windows\D3DXShader.h">
+      <Filter>Header Files\video\D3DX</Filter>
+    </ClInclude>
+    <ClInclude Include="include\video\windows\D3DXTexture.h">
+      <Filter>Header Files\video\D3DX</Filter>
+    </ClInclude>
+    <ClInclude Include="include\core\windows\Win32Framework.h">
+      <Filter>Header Files\core</Filter>
+    </ClInclude>
+    <ClInclude Include="include\utils\ResourceManager.h">
+      <Filter>Header Files\utils</Filter>
+    </ClInclude>
+    <ClInclude Include="include\utils\T8_Technique.h">
+      <Filter>Header Files\utils</Filter>
+    </ClInclude>
+    <ClInclude Include="include\utils\T8_Spline.h">
+      <Filter>Header Files\utils</Filter>
+    </ClInclude>
+    <ClInclude Include="include\scene\SplineWireframe.h">
+      <Filter>Header Files\scene</Filter>
+    </ClInclude>
+    <ClInclude Include="include\scene\LensFlare.h">
+      <Filter>Header Files\scene</Filter>
+    </ClInclude>
+    <ClInclude Include="include\scene\T8_TextRenderer.h">
+      <Filter>Header Files\scene</Filter>
+    </ClInclude>
+    <ClInclude Include="include\scene\T8_Quad.h">
+      <Filter>Header Files\scene</Filter>
+    </ClInclude>
+    <ClInclude Include="include\scene\RenderQuad.h">
+      <Filter>Header Files\scene</Filter>
+    </ClInclude>
+    <ClInclude Include="include\video\GLSLParser.h">
+      <Filter>Header Files\video\GL</Filter>
+    </ClInclude>
+    <ClInclude Include="include\video\ShaderBase.h">
+      <Filter>Header Files\video\GL</Filter>
+    </ClInclude>
+    <ClInclude Include="include\scene\RenderMesh.h">
+      <Filter>Header Files\scene</Filter>
+    </ClInclude>
+  </ItemGroup>
+  <ItemGroup>
+    <ClCompile Include="src\core\Core.cpp">
+      <Filter>Source Files\core</Filter>
+    </ClCompile>
+    <ClCompile Include="src\scene\PrimitiveInstance.cpp">
+      <Filter>Source Files\scene</Filter>
+    </ClCompile>
+    <ClCompile Include="src\scene\PrimitiveManager.cpp">
+      <Filter>Source Files\scene</Filter>
+    </ClCompile>
+    <ClCompile Include="src\scene\SceneProp.cpp">
+      <Filter>Source Files\scene</Filter>
+    </ClCompile>
+    <ClCompile Include="src\utils\InputManager.cpp">
+      <Filter>Source Files\utils</Filter>
+    </ClCompile>
+    <ClCompile Include="src\utils\Timer.cpp">
+      <Filter>Source Files\utils</Filter>
+    </ClCompile>
+    <ClCompile Include="src\utils\Utils.cpp">
+      <Filter>Source Files\utils</Filter>
+    </ClCompile>
+    <ClCompile Include="src\utils\XDataBase.cpp">
+      <Filter>Source Files\utils</Filter>
+    </ClCompile>
+    <ClCompile Include="src\utils\XMaths.cpp">
+      <Filter>Source Files\utils</Filter>
+    </ClCompile>
+    <ClCompile Include="src\utils\Camera.cpp">
+      <Filter>Source Files\utils</Filter>
+    </ClCompile>
+    <ClCompile Include="src\video\BaseDriver.cpp">
+      <Filter>Source Files\video</Filter>
+    </ClCompile>
+    <ClCompile Include="src\video\GLDriver.cpp">
+      <Filter>Source Files\video\GL</Filter>
+    </ClCompile>
+    <ClCompile Include="src\video\GLRT.cpp">
+      <Filter>Source Files\video\GL</Filter>
+    </ClCompile>
+    <ClCompile Include="src\video\GLShader.cpp">
+      <Filter>Source Files\video\GL</Filter>
+    </ClCompile>
+    <ClCompile Include="src\video\GLTexture.cpp">
+      <Filter>Source Files\video\GL</Filter>
+    </ClCompile>
+    <ClCompile Include="src\utils\cil.cpp">
+      <Filter>Source Files\utils</Filter>
+    </ClCompile>
+    <ClCompile Include="src\core\windows\Win32Framework.cpp">
+      <Filter>Source Files\core</Filter>
+    </ClCompile>
+    <ClCompile Include="src\video\windows\D3DXDriver.cpp">
+      <Filter>Source Files\video\D3DX</Filter>
+    </ClCompile>
+    <ClCompile Include="src\video\windows\D3DXRT.cpp">
+      <Filter>Source Files\video\D3DX</Filter>
+    </ClCompile>
+    <ClCompile Include="src\video\windows\D3DXShader.cpp">
+      <Filter>Source Files\video\D3DX</Filter>
+    </ClCompile>
+    <ClCompile Include="src\video\windows\D3DXTexture.cpp">
+      <Filter>Source Files\video\D3DX</Filter>
+    </ClCompile>
+    <ClCompile Include="src\utils\ResourceManager.cpp">
+      <Filter>Source Files\utils</Filter>
+    </ClCompile>
+    <ClCompile Include="src\utils\T8_Technique.cpp">
+      <Filter>Source Files\utils</Filter>
+    </ClCompile>
+    <ClCompile Include="src\utils\T8_Spline.cpp">
+      <Filter>Source Files\utils</Filter>
+    </ClCompile>
+    <ClCompile Include="src\scene\SplineWireframe.cpp">
+      <Filter>Source Files\scene</Filter>
+    </ClCompile>
+    <ClCompile Include="src\scene\LensFlare.cpp">
+      <Filter>Source Files\scene</Filter>
+    </ClCompile>
+    <ClCompile Include="src\scene\T8_TextRenderer.cpp">
+      <Filter>Source Files\scene</Filter>
+    </ClCompile>
+    <ClCompile Include="src\scene\T8_Quad.cpp">
+      <Filter>Source Files\scene</Filter>
+    </ClCompile>
+    <ClCompile Include="src\scene\RenderQuad.cpp">
+      <Filter>Source Files\scene</Filter>
+    </ClCompile>
+    <ClCompile Include="src\video\GLSLParser.cpp">
+      <Filter>Source Files\video\GL</Filter>
+    </ClCompile>
+    <ClCompile Include="src\scene\RenderMesh.cpp">
+      <Filter>Source Files\scene</Filter>
+    </ClCompile>
+  </ItemGroup>
+  <ItemGroup>
+    <None Include="..\bin\Shaders\FS.glsl">
+      <Filter>Shaders\GLSL</Filter>
+    </None>
+    <None Include="..\bin\Shaders\FS_Mesh.glsl">
+      <Filter>Shaders\GLSL</Filter>
+    </None>
+    <None Include="..\bin\Shaders\FS_Quad.glsl">
+      <Filter>Shaders\GLSL</Filter>
+    </None>
+    <None Include="..\bin\Shaders\FS_Text.glsl">
+      <Filter>Shaders\GLSL</Filter>
+    </None>
+    <None Include="..\bin\Shaders\FS_tri.glsl">
+      <Filter>Shaders\GLSL</Filter>
+    </None>
+    <None Include="..\bin\Shaders\FS_W.glsl">
+      <Filter>Shaders\GLSL</Filter>
+    </None>
+    <None Include="..\bin\Shaders\VS.glsl">
+      <Filter>Shaders\GLSL</Filter>
+    </None>
+    <None Include="..\bin\Shaders\VS_Mesh.glsl">
+      <Filter>Shaders\GLSL</Filter>
+    </None>
+    <None Include="..\bin\Shaders\VS_Quad.glsl">
+      <Filter>Shaders\GLSL</Filter>
+    </None>
+    <None Include="..\bin\Shaders\VS_Text.glsl">
+      <Filter>Shaders\GLSL</Filter>
+    </None>
+    <None Include="..\bin\Shaders\VS_tri.glsl">
+      <Filter>Shaders\GLSL</Filter>
+    </None>
+    <None Include="..\bin\Shaders\VS_W.glsl">
+      <Filter>Shaders\GLSL</Filter>
+    </None>
+  </ItemGroup>
+  <ItemGroup>
+    <FxCompile Include="..\bin\Shaders\FS.hlsl">
+      <Filter>Shaders\D3D11</Filter>
+    </FxCompile>
+    <FxCompile Include="..\bin\Shaders\FS_Mesh.hlsl">
+      <Filter>Shaders\D3D11</Filter>
+    </FxCompile>
+    <FxCompile Include="..\bin\Shaders\FS_Quad.hlsl">
+      <Filter>Shaders\D3D11</Filter>
+    </FxCompile>
+    <FxCompile Include="..\bin\Shaders\FS_Text.hlsl">
+      <Filter>Shaders\D3D11</Filter>
+    </FxCompile>
+    <FxCompile Include="..\bin\Shaders\FS_tri.hlsl">
+      <Filter>Shaders\D3D11</Filter>
+    </FxCompile>
+    <FxCompile Include="..\bin\Shaders\FS_W.hlsl">
+      <Filter>Shaders\D3D11</Filter>
+    </FxCompile>
+    <FxCompile Include="..\bin\Shaders\VS.hlsl">
+      <Filter>Shaders\D3D11</Filter>
+    </FxCompile>
+    <FxCompile Include="..\bin\Shaders\VS_Mesh.hlsl">
+      <Filter>Shaders\D3D11</Filter>
+    </FxCompile>
+    <FxCompile Include="..\bin\Shaders\VS_Quad.hlsl">
+      <Filter>Shaders\D3D11</Filter>
+    </FxCompile>
+    <FxCompile Include="..\bin\Shaders\VS_Text.hlsl">
+      <Filter>Shaders\D3D11</Filter>
+    </FxCompile>
+    <FxCompile Include="..\bin\Shaders\VS_tri.hlsl">
+      <Filter>Shaders\D3D11</Filter>
+    </FxCompile>
+    <FxCompile Include="..\bin\Shaders\VS_W.hlsl">
+      <Filter>Shaders\D3D11</Filter>
+    </FxCompile>
+  </ItemGroup>
+</Project>

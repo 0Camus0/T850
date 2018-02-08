@@ -318,6 +318,10 @@ namespace t800 {
         stmp.Sig = CurrSig;
         tmp.SubSets.push_back(stmp);
 
+        CurrSig |= Signature::FORWARD_PASS;
+        g_pBaseDriver->CreateShader(vstr, fstr, CurrSig);
+        CurrSig ^= Signature::FORWARD_PASS;
+
         CurrSig |= Signature::GBUFF_PASS;
         g_pBaseDriver->CreateShader(vstr, fstr, CurrSig);
         CurrSig ^= Signature::GBUFF_PASS;

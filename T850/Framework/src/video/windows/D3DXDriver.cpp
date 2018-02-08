@@ -126,6 +126,13 @@ namespace t800 {
     return txture;
   }
 
+  Texture * D3DXDevice::CreateCubeMap(const unsigned char * buff, int w, int h)
+  {
+    D3DXTexture* txture = new D3DXTexture;
+    txture->CreateCubeMap(buff, w, h);
+    return txture;
+  }
+
   BaseRT * D3DXDevice::CreateRT(int nrt, int cf, int df, int w, int h, bool genMips)
   {
     BaseRT* rt = new D3DXRT;

@@ -79,7 +79,7 @@ public:
 
   Camera			Cam;
   Camera			LightCam;
-
+  Camera		OmniLightCam[6];
   GaussFilter		ShadowFilter;
   GaussFilter		BloomFilter;
   GaussFilter		NearDOFFilter;
@@ -110,6 +110,9 @@ public:
   int DOFPass;
   int CombineCoCPass;
   int Extra16FPass5x5;
+
+  int OmniShadowDepthPass;
+  int OmniShadowCubePass;
   //int				
 
   int				EnvMapTexIndex;

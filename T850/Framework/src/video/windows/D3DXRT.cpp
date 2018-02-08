@@ -161,14 +161,15 @@ namespace t800 {
     }
     pTextureDepth->x = w;
     pTextureDepth->y = h;
-    pDepthTexture = pTextureDepth;
+    pDepthTexture = ( pTextureDepth);
 
 
     return true;
   }
 
   void D3DXRT::DestroyAPIRT() {
-    pDepthTexture->release();
+      pDepthTexture->release();
+
     for (int i = 0; i < number_RT; i++) {
       vColorTextures[i]->release();
     }
@@ -207,5 +208,8 @@ namespace t800 {
     }
 
     deviceContext->ClearDepthStencilView(D3D11DepthStencilTargetView.Get(), D3D11_CLEAR_DEPTH, 1.0f, 0);
+  }
+  void D3DXRT::ChangeCubeDepthTexture(int i)
+  {
   }
 }

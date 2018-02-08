@@ -133,6 +133,13 @@ namespace t800 {
     return txture;
   }
 
+  Texture * GLDevice::CreateCubeMap(const unsigned char * buff, int w, int h)
+  {
+    GLTexture* txture = new GLTexture;
+    txture->CreateCubeMap(buff, w, h);
+    return txture;
+  }
+
   BaseRT * GLDevice::CreateRT(int nrt, int cf, int df, int w, int h, bool genMips)
   {
     BaseRT* rt = new GLRT;

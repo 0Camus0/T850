@@ -216,12 +216,12 @@ void SC_Tech::CreateAssets() {
   EnvMapTexIndex = g_pBaseDriver->CreateTexture(string("CubeMap_Mountains.dds"));
 
   int index = PrimitiveMgr.CreateMesh("Models/SkyBox.X");
-  Meshes[0].CreateInstance(PrimitiveMgr.GetPrimitive(index), &VP);
-  Meshes[0].TranslateAbsolute(0.0, -10.0f, 0.0f);
-  Meshes[0].Update();
+  Meshes[1].CreateInstance(PrimitiveMgr.GetPrimitive(index), &VP);
+  Meshes[1].TranslateAbsolute(0.0, -10.0f, 0.0f);
+  Meshes[1].Update();
 
   index = PrimitiveMgr.CreateMesh("Models/SponzaEsc.X");
-  Meshes[1].CreateInstance(PrimitiveMgr.GetPrimitive(index), &VP);
+  Meshes[0].CreateInstance(PrimitiveMgr.GetPrimitive(index), &VP);
 
   index = PrimitiveMgr.CreateSpline(m_spline);
   splineWire = (SplineWireframe*)PrimitiveMgr.GetPrimitive(index);
@@ -302,7 +302,7 @@ void SC_Tech::OnUpdate(float _DtSecs) {
   
   totalTime += _DtSecs;
   DtSecs = _DtSecs;
-  Meshes[1].SetParallaxSettings(SceneProp.ParallaxLowSamples, SceneProp.ParallaxHighSamples, SceneProp.ParallaxHeight);
+  Meshes[0].SetParallaxSettings(SceneProp.ParallaxLowSamples, SceneProp.ParallaxHighSamples, SceneProp.ParallaxHeight);
   m_agent.Update(DtSecs);
   ActiveCam->Update(DtSecs);
   VP = ActiveCam->VP;

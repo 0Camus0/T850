@@ -50,6 +50,33 @@ void SC_Night::InitVars() {
   SceneProp.AddCamera(ActiveCam);
   SceneProp.AddLightCamera(&LightCam);
 
+  for (size_t i = 0; i < 6; i++)
+  {
+    OmniLightCam[i].InitPerspective(XVECTOR3(0.0f, 10.0f, 10.0f), Deg2Rad(90.0f), 1.0f, 1.f, 300.0f);
+    OmniLightCam[i].Speed = 0.0f;
+    OmniLightCam[i].Eye = XVECTOR3(-10.0f, 10.0f, 0.0f);
+    OmniLightCam[i].Update(0.0f);
+    SceneProp.AddLightCamera(&OmniLightCam[i]);
+  }
+  //Right
+  OmniLightCam[0].SetLookAt(OmniLightCam[0].Eye + XVECTOR3(10,0,0));
+  OmniLightCam[0].Update(0.0f);
+  //Left
+  OmniLightCam[1].SetLookAt(OmniLightCam[1].Eye + XVECTOR3(-10, 0, 0));
+  OmniLightCam[1].Update(0.0f);
+  //Top
+  OmniLightCam[2].SetLookAt(OmniLightCam[2].Eye + XVECTOR3(0, -10, 0));
+  OmniLightCam[2].Update(0.0f);
+  //Bot
+  OmniLightCam[3].SetLookAt(OmniLightCam[3].Eye + XVECTOR3(0, 10, 0));
+  OmniLightCam[3].Update(0.0f);
+  //Near
+  OmniLightCam[4].SetLookAt(OmniLightCam[4].Eye + XVECTOR3(0, 0, 10));
+  OmniLightCam[4].Update(0.0f);
+  //Far
+  OmniLightCam[5].SetLookAt(OmniLightCam[5].Eye + XVECTOR3(0, 0, -10));
+  OmniLightCam[5].Update(0.0f);
+
   SceneProp.AddLight(XVECTOR3(1000, 2000, 0), XVECTOR3(0.1215, 0.1607, 0.2090), 30000, true);
   SceneProp.ActiveLights = 120;
   for (int i = 0; i < SceneProp.ActiveLights-1; ++i) {
@@ -178,6 +205,9 @@ void SC_Night::InitVars() {
   m_agent.m_velocity = 15.0f;
 }
 void SC_Night::CreateAssets() {
+  //Create Cube map
+  pFramework->pVideoDriver->CreateCubeMap(nullptr, 256, 256);
+
   //Create RT's
   GBufferPass = pFramework->pVideoDriver->CreateRT(4, BaseRT::RGBA8, BaseRT::F32, 0, 0, true);
   DeferredPass = pFramework->pVideoDriver->CreateRT(1, BaseRT::RGBA16F, BaseRT::NOTHING, 0, 0, true);
@@ -191,7 +221,8 @@ void SC_Night::CreateAssets() {
   CombineCoCPass = pFramework->pVideoDriver->CreateRT(1, BaseRT::F16, BaseRT::NOTHING, 512, 512, true);
   CoCHelperPass = pFramework->pVideoDriver->CreateRT(1, BaseRT::F16, BaseRT::NOTHING, 512, 512, false);
   CoCHelperPass2 = pFramework->pVideoDriver->CreateRT(1, BaseRT::F16, BaseRT::NOTHING, 512, 512, false);
-
+  OmniShadowDepthPass = pFramework->pVideoDriver->CreateRT(0, BaseRT::NOTHING, BaseRT::CUBE_F32, 1024, 1024, false);
+  //OmniShadowCubePass = pFramework->pVideoDriver->CreateRT(6, BaseRT::F32, BaseRT::NOTHING, 512, 512, true);
   //
   PrimitiveMgr.Init();
   PrimitiveMgr.SetVP(&VP);
@@ -200,12 +231,12 @@ void SC_Night::CreateAssets() {
   EnvMapTexIndex = g_pBaseDriver->CreateTexture(string("CubeMap_Mountains.dds"));
 
   int index = PrimitiveMgr.CreateMesh("Models/SkyBox.X");
-  Meshes[0].CreateInstance(PrimitiveMgr.GetPrimitive(index), &VP);
-  Meshes[0].TranslateAbsolute(0.0, -10.0f, 0.0f);
-  Meshes[0].Update();
+  Meshes[1].CreateInstance(PrimitiveMgr.GetPrimitive(index), &VP);
+  Meshes[1].TranslateAbsolute(0.0, -10.0f, 0.0f);
+  Meshes[1].Update();
 
   index = PrimitiveMgr.CreateMesh("Models/SponzaEsc.X");
-  Meshes[1].CreateInstance(PrimitiveMgr.GetPrimitive(index), &VP);
+  Meshes[0].CreateInstance(PrimitiveMgr.GetPrimitive(index), &VP);
 
   index = PrimitiveMgr.CreateSpline(m_spline);
   splineWire = (SplineWireframe*)PrimitiveMgr.GetPrimitive(index);
@@ -230,14 +261,14 @@ void SC_Night::CreateAssets() {
   PrimitiveMgr.SetSceneProps(&SceneProp);
 
   m_agent.m_actualPoint = m_spline.GetPoint(m_spline.GetNormalizedOffset(0));
-  ActiveCam->AttachAgent(m_agent);
+  //ActiveCam->AttachAgent(m_agent);
   ActiveCam->m_lookAtCenter = false;
 
   Quads[0].TranslateAbsolute(0.0f, 0.0f, 0.0f);
   Quads[0].Update();
 
-  Quads[1].ScaleAbsolute(0.5);
-  Quads[1].TranslateAbsolute(-0.5f, 0.5f, 0.0f);
+  Quads[1].ScaleAbsolute(0.25);
+  Quads[1].TranslateAbsolute(-0.75f, 0.75f, 0.0f);
   Quads[1].Update();
 
   Quads[2].ScaleAbsolute(0.25f);
@@ -282,7 +313,7 @@ void SC_Night::OnUpdate(float _DtSecs) {
   static float totalTime = 0.0f;
   totalTime += _DtSecs;
   DtSecs = _DtSecs;
-  Meshes[1].SetParallaxSettings(SceneProp.ParallaxLowSamples, SceneProp.ParallaxHighSamples, SceneProp.ParallaxHeight);
+  Meshes[0].SetParallaxSettings(SceneProp.ParallaxLowSamples, SceneProp.ParallaxHighSamples, SceneProp.ParallaxHeight);
   m_agent.Update(DtSecs);
   ActiveCam->Update(DtSecs);
   VP = ActiveCam->VP;
@@ -307,7 +338,7 @@ void SC_Night::OnUpdate(float _DtSecs) {
 
   if (totalTime > 60.0f) {
     totalTime = 0.0;
-    pFramework->pBaseApp->LoadScene(2);
+   // pFramework->pBaseApp->LoadScene(2);
   }
 
 }
@@ -460,6 +491,22 @@ void SC_Night::OnInput(InputManager* IManager) {
 void SC_Night::OnDraw() {
   pFramework->pVideoDriver->SetDepthStencilState(BaseDriver::DEPTH_STENCIL_STATES::READ_WRITE);
 
+  // Omnidirectional Shadow Map Depth Pass
+  pFramework->pVideoDriver->SetCullFace(BaseDriver::FACE_CULLING::BACK_FACES);
+  pFramework->pVideoDriver->PushRT(OmniShadowDepthPass);
+  Meshes[0].SetGlobalSignature(Signature::SHADOW_MAP_PASS);
+  for (size_t i = 0; i < 6; i++)
+  {
+    SceneProp.pCameras[0] = &OmniLightCam[i];
+    pFramework->pVideoDriver->RTs[OmniShadowDepthPass]->ChangeCubeDepthTexture(i);
+    Meshes[0].Draw();
+  }
+  pFramework->pVideoDriver->PopRT();
+  Meshes[0].SetGlobalSignature(Signature::FORWARD_PASS);
+
+  pFramework->pVideoDriver->SetCullFace(BaseDriver::FACE_CULLING::FRONT_FACES);
+
+
   // Shadow Map Depth Pass
   pFramework->pVideoDriver->PushRT(DepthPass);
   SceneProp.pCameras[0] = &LightCam;
@@ -489,7 +536,7 @@ void SC_Night::OnDraw() {
   pFramework->pVideoDriver->PushRT(ShadowAccumPass);
   pFramework->pVideoDriver->Clear();
   Quads[0].SetTexture(pFramework->pVideoDriver->GetRTTexture(GBufferPass, BaseDriver::DEPTH_ATTACHMENT), 0);
-  Quads[0].SetTexture(pFramework->pVideoDriver->GetRTTexture(DepthPass, BaseDriver::DEPTH_ATTACHMENT), 1);
+  Quads[0].SetTexture(pFramework->pVideoDriver->GetRTTexture(OmniShadowDepthPass, BaseDriver::DEPTH_ATTACHMENT), 1);//
   Quads[0].SetTexture(pFramework->pVideoDriver->GetRTTexture(GBufferPass, BaseDriver::COLOR1_ATTACHMENT), 2);
   Quads[0].SetTexture(SceneProp.SSAOKernel.NoiseTex, 3);
   Quads[0].SetGlobalSignature(Signature::SHADOW_COMP_PASS);
@@ -498,18 +545,18 @@ void SC_Night::OnDraw() {
 
 
   // Shadow Map Blur Pass
-  pFramework->pVideoDriver->PushRT(ExtraHelperPass);
-  SceneProp.ActiveGaussKernel = SHADOW_KERNEL;
-  Quads[0].SetTexture(pFramework->pVideoDriver->GetRTTexture(ShadowAccumPass, BaseDriver::COLOR0_ATTACHMENT), 0);
-  Quads[0].SetGlobalSignature(Signature::VERTICAL_BLUR_PASS);
-  Quads[0].Draw();
-  pFramework->pVideoDriver->PopRT();
+  //pFramework->pVideoDriver->PushRT(ExtraHelperPass);
+  //SceneProp.ActiveGaussKernel = SHADOW_KERNEL;
+  //Quads[0].SetTexture(pFramework->pVideoDriver->GetRTTexture(ShadowAccumPass, BaseDriver::COLOR0_ATTACHMENT), 0);
+  //Quads[0].SetGlobalSignature(Signature::VERTICAL_BLUR_PASS);
+  //Quads[0].Draw();
+  //pFramework->pVideoDriver->PopRT();
 
-  pFramework->pVideoDriver->PushRT(ShadowAccumPass);
-  Quads[0].SetTexture(pFramework->pVideoDriver->GetRTTexture(ExtraHelperPass, BaseDriver::COLOR0_ATTACHMENT), 0);
-  Quads[0].SetGlobalSignature(Signature::HORIZONTAL_BLUR_PASS);
-  Quads[0].Draw();
-  pFramework->pVideoDriver->PopRT();
+  //pFramework->pVideoDriver->PushRT(ShadowAccumPass);
+  //Quads[0].SetTexture(pFramework->pVideoDriver->GetRTTexture(ExtraHelperPass, BaseDriver::COLOR0_ATTACHMENT), 0);
+  //Quads[0].SetGlobalSignature(Signature::HORIZONTAL_BLUR_PASS);
+  //Quads[0].Draw();
+  //pFramework->pVideoDriver->PopRT();
 
   // Deferred Pass
   pFramework->pVideoDriver->PushRT(DeferredPass);
@@ -519,7 +566,8 @@ void SC_Night::OnDraw() {
   Quads[0].SetTexture(pFramework->pVideoDriver->GetRTTexture(GBufferPass, BaseDriver::COLOR3_ATTACHMENT), 3);
   Quads[0].SetTexture(pFramework->pVideoDriver->GetRTTexture(GBufferPass, BaseDriver::DEPTH_ATTACHMENT), 4);
   Quads[0].SetTexture(pFramework->pVideoDriver->GetRTTexture(ShadowAccumPass, BaseDriver::COLOR0_ATTACHMENT), 5);
-  Quads[0].SetEnvironmentMap(g_pBaseDriver->GetTexture(EnvMapTexIndex));
+  //Quads[0].SetEnvironmentMap(g_pBaseDriver->GetTexture(EnvMapTexIndex));
+  Quads[0].SetEnvironmentMap(pFramework->pVideoDriver->GetRTTexture(OmniShadowDepthPass, BaseDriver::DEPTH_ATTACHMENT));
   Quads[0].SetGlobalSignature(Signature::DEFERRED_PASS);
   Quads[0].Draw();
   pFramework->pVideoDriver->PopRT();
@@ -596,9 +644,9 @@ void SC_Night::OnDraw() {
   Quads[7].SetGlobalSignature(Signature::VIGNETTE_PASS);
   Quads[7].Draw();
 
-  //  Quads[1].SetTexture(pFramework->pVideoDriver->GetRTTexture(CombineCoCPass, BaseDriver::COLOR0_ATTACHMENT), 0);
-  // Quads[1].SetGlobalSignature(Signature::FSQUAD_1_TEX);
-  //Quads[1].Draw();
+  Quads[1].SetTexture(pFramework->pVideoDriver->GetRTTexture(ShadowAccumPass, BaseDriver::COLOR0_ATTACHMENT), 0);
+  Quads[1].SetGlobalSignature(Signature::FSQUAD_1_TEX);
+  Quads[1].Draw();
 
   //Quads[2].SetTexture(pFramework->pVideoDriver->GetRTTexture(Extra16FPass, BaseDriver::COLOR0_ATTACHMENT), 0);
   //Quads[2].SetGlobalSignature(Signature::FSQUAD_1_TEX);
@@ -608,9 +656,13 @@ void SC_Night::OnDraw() {
   //Quads[3].SetGlobalSignature(Signature::FSQUAD_1_TEX);
   //Quads[3].Draw();
 
-  // Quads[4].SetTexture(pFramework->pVideoDriver->GetRTTexture(ShadowAccumPass, BaseDriver::COLOR0_ATTACHMENT), 0);
-  //  Quads[4].SetGlobalSignature(Signature::FSQUAD_1_TEX);
-  // Quads[4].Draw();
+  //Quads[4].SetTexture(pFramework->pVideoDriver->GetRTTexture(ShadowAccumPass, BaseDriver::COLOR0_ATTACHMENT), 0);
+  //Quads[4].SetGlobalSignature(Signature::FSQUAD_1_TEX);
+  //Quads[4].Draw();
+  //
+  //Quads[4].SetTexture(pFramework->pVideoDriver->GetRTTexture(ShadowAccumPass, BaseDriver::COLOR0_ATTACHMENT), 0);
+  //Quads[4].SetGlobalSignature(Signature::FSQUAD_1_TEX);
+  //Quads[4].Draw();
 
 }
 

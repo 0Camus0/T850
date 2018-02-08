@@ -174,9 +174,10 @@ namespace t800 {
 	CnstBuffer.brightness.z = pScProp->PCFScale;
 
     if (pScProp->pLightCameras.size() > 0) {
-      CnstBuffer.WVPLight = pScProp->pLightCameras[0]->VP;
-      CnstBuffer.LightCameraPos = pScProp->pLightCameras[0]->Eye;
-      CnstBuffer.LightCameraInfo = XVECTOR3(pScProp->pLightCameras[0]->NPlane, pScProp->pLightCameras[0]->FPlane, pScProp->pLightCameras[0]->Fov, 1.0f);
+      int selected = 1;
+      CnstBuffer.WVPLight = pScProp->pLightCameras[selected]->VP;
+      CnstBuffer.LightCameraPos = pScProp->pLightCameras[selected]->Eye;
+      CnstBuffer.LightCameraInfo = XVECTOR3(pScProp->pLightCameras[selected]->NPlane, pScProp->pLightCameras[selected]->FPlane, pScProp->pLightCameras[selected]->Fov, 1.0f);
     }
 
     if (sig&Signature::DEFERRED_PASS) {

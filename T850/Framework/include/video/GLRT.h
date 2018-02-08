@@ -42,6 +42,7 @@ namespace t800 {
     bool	LoadAPIRT() override;
     void	DestroyAPIRT() override;
     void Set(const DeviceContext& context) override;
+    void ChangeCubeDepthTexture(int i);
     std::vector<GLuint>		vFrameBuffers;
     std::vector<GLuint>		vGLColorTex;
     GLuint					DepthTexture;

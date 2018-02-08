@@ -81,6 +81,7 @@ namespace t800 {
     ShaderBase* CreateShader(std::string src_vs, std::string src_fs, unsigned long long sig = T8_NO_SIGNATURE) override;
     Texture* CreateTexture(std::string path) override;
     Texture* CreateTextureFromMemory(const unsigned char *buff, int w, int h, int channels, std::string name) override;
+    Texture* CreateCubeMap(const unsigned char * buff, int w, int h) override;
     BaseRT* CreateRT(int nrt, int cf, int df, int w, int h, bool genMips = false) override; // TODO RT Desc
   private:
   };

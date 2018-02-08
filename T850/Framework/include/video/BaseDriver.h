@@ -54,6 +54,7 @@ namespace t800 {
     virtual ShaderBase* CreateShader(std::string src_vs, std::string src_fs, unsigned long long sig = T8_NO_SIGNATURE) = 0;
     virtual Texture* CreateTexture(std::string path) = 0;
     virtual Texture* CreateTextureFromMemory(const unsigned char *buff, int w, int h, int channels, std::string name) = 0;
+    virtual Texture* CreateCubeMap(const unsigned char * buff, int w, int h) = 0;
     virtual BaseRT* CreateRT(int nrt, int cf, int df, int w, int h, bool genMips = false) = 0;
   };
   /* BUFFERS */
@@ -104,6 +105,7 @@ namespace t800 {
 
     bool			LoadTexture(const char *fn);
     bool			LoadFromMemory(const unsigned char *buff, int w, int h, int channels);
+    bool      CreateCubeMap(const unsigned char *buff, int w, int h);
     void			release();
 
     virtual void	LoadAPITexture(DeviceContext* context, unsigned char* buffer) = 0;
@@ -151,6 +153,7 @@ namespace t800 {
       BGR8,
       BGRA8,
       BGRA32,
+      CUBE_F32,
       NOTHING
     };
 
@@ -161,6 +164,7 @@ namespace t800 {
     virtual void	DestroyAPIRT() = 0;
 
     virtual void Set(const DeviceContext& context) = 0;
+    virtual void ChangeCubeDepthTexture(int i) = 0;
 
     int w;
     int h;
@@ -241,6 +245,7 @@ namespace t800 {
 	virtual void SetCullFace(FACE_CULLING state) = 0;
 
     int 	 CreateTexture(std::string);
+    int    CreateCubeMap(const unsigned char * buff, int w, int h);
     int	   CreateShader(std::string src_vs, std::string src_fs, unsigned long long sig = T8_NO_SIGNATURE);
     int 	 CreateRT(int nrt, int cf, int df, int w, int h, bool genMips = false);
     void 	 ModifyRT(int RTID, int nrt, int cf, int df, int w, int h, bool genMips = false);

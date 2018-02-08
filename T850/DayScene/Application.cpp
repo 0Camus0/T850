@@ -48,7 +48,7 @@ void App::InitVars() {
     it->pFramework = pFramework;
     //it->InitVars();
   }
-  m_actualScene = m_scenes[0];
+  m_actualScene = m_scenes[1];
   m_actualScene->InitVars();
 
 

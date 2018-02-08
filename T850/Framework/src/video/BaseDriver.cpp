@@ -105,6 +105,29 @@ namespace t800 {
     return true;
   }
 
+  bool Texture::CreateCubeMap(const unsigned char * buff, int w, int h)
+  {
+    m_channels = 4;
+    cil_props = CIL_CUBE_MAP;
+    bounded = 1;
+    this->x = w;
+    this->y = h;
+    this->params = params;
+    props = 0;
+
+    if (m_channels == 4) {
+      props |= TEXT_BASIC_FORMAT::CH_RGBA;
+    }
+    else if (m_channels == 3) {
+      props |= TEXT_BASIC_FORMAT::CH_RGB;
+    }
+    else if (m_channels == 1) {
+      props |= TEXT_BASIC_FORMAT::CH_ALPHA;
+    }
+    LoadAPITexture(T8DeviceContext, const_cast<unsigned char*>(buff));
+    return true;
+  }
+
   void Texture::release() {
     DestroyAPITexture();
     delete this;
@@ -401,6 +424,12 @@ namespace t800 {
     }
     Texture *pTex = T8Device->CreateTexture(path);
      Textures.push_back(pTex);
+    return (Textures.size() - 1);
+  }
+  int BaseDriver::CreateCubeMap(const unsigned char * buff, int w, int h)
+  {
+    Texture *pTex = T8Device->CreateCubeMap(buff,w,h);
+    Textures.push_back(pTex);
     return (Textures.size() - 1);
   }
   int BaseDriver::CreateShader(std::string src_vs, std::string src_fs, unsigned long long sig)

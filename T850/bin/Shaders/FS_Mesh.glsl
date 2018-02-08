@@ -287,6 +287,7 @@ void main(){
 #else
 	gl_FragDepth = Pos.z / CameraInfo.y;
 #endif
+	//gl_FragDepth = 1.0; //Borrar
 }
 #else
 	#ifdef ES_30
@@ -436,7 +437,6 @@ void main(){
 	#else
 		gl_FragColor = color;
 	#endif
-	
 }
 
 #endif

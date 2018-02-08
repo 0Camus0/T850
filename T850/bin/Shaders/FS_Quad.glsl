@@ -208,22 +208,57 @@ void main(){
 	
 }
 #elif defined(SHADOW_COMP_PASS)
+#define OMNIDIRECTIONAL_SH
 uniform mediump sampler2D tex0;
+#if defined OMNIDIRECTIONAL_SH
+uniform mediump samplerCube tex1;
+#else
 uniform mediump sampler2DShadow  tex1;
+#endif
 uniform mediump sampler2D tex2; // Normals
 uniform mediump sampler2D tex3; // Noise
 
 highp vec4 CalculateShadow(highp vec4 position){
 highp vec4 FShadow = vec4(1.0,1.0,1.0,1.0);
-highp vec4 LightPos = WVPLight*position;
-		
-#ifdef NON_LINEAR_DEPTH
-	LightPos.xyz /= LightPos.w;
-#else
-	LightPos.xy /= LightPos.w;
-	LightPos.z /= LightCameraInfo.y;
-#endif
 
+	#if defined OMNIDIRECTIONAL_SH
+		highp vec3 sampleOffsetDirections[20] = vec3[]
+		(
+		   vec3( 1,  1,  1), vec3( 1, -1,  1), vec3(-1, -1,  1), vec3(-1,  1,  1), 
+		   vec3( 1,  1, -1), vec3( 1, -1, -1), vec3(-1, -1, -1), vec3(-1,  1, -1),
+		   vec3( 1,  1,  0), vec3( 1, -1,  0), vec3(-1, -1,  0), vec3(-1,  1,  0),
+		   vec3( 1,  0,  1), vec3(-1,  0,  1), vec3( 1,  0, -1), vec3(-1,  0, -1),
+		   vec3( 0,  1,  1), vec3( 0, -1,  1), vec3( 0, -1, -1), vec3( 0,  1, -1)
+		); 
+		highp float viewDistance = length(position.xyz - CameraPosition.xyz);
+		highp float diskRadius = (LightCameraInfo.x + (viewDistance / LightCameraInfo.y)) / LightCameraInfo.y; 
+		highp vec3 fragToLight =  position.xyz - LightCameraPosition.xyz ;
+		fragToLight.y = -fragToLight.y;
+		highp float depthSM = 0.0;
+		highp float shadowVal = 0.0;
+		highp float depthPos = length(fragToLight); 
+		int samples = 20;
+		for (highp int i = 0; i < samples; i += 1){
+			highp vec3 nfragToLight =  fragToLight +  sampleOffsetDirections[i] * diskRadius; 
+			//fragToLight.y = -fragToLight.y;
+			depthSM = texture(tex1, nfragToLight ).r;
+			depthSM = depthSM * LightCameraInfo.y;
+			if( depthPos - 0.15  > depthSM)
+				shadowVal += 1.0;
+			//shadowVal *= 0.75;
+			//shadowVal += 0.25;
+		}
+		shadowVal /= float(samples);
+		shadowVal =  (1.0 - shadowVal);
+		FShadow = shadowVal*vec4(1.0,1.0,1.0,1.0);
+	#else
+	highp vec4 LightPos = WVPLight*position;
+	#ifdef NON_LINEAR_DEPTH
+		LightPos.xyz /= LightPos.w;
+	#else
+		LightPos.xy /= LightPos.w;
+		LightPos.z /= LightCameraInfo.y;
+	#endif
 	highp vec2 SHTC = LightPos.xy*0.5 + 0.5;
 	
 	if(SHTC.x < 1.0 && SHTC.y < 1.0 && SHTC.x  > 0.0 && SHTC.y > 0.0 && LightPos.w > 0.0 && LightPos.z < 1.0 ){
@@ -245,7 +280,7 @@ highp vec4 LightPos = WVPLight*position;
 					#endif
 						Val_1 *= 0.75;
 						Val_1 += 0.25;
-						sum += Val_1;//(depthPos > Val_1) ? 0.25 : 1.0;
+						sum += Val_1; //(depthPos > Val_1) ? 0.25 : 1.0;
 					Total++;
 				}
 			}
@@ -264,7 +299,7 @@ highp vec4 LightPos = WVPLight*position;
 			highp float depthSM;
 			#ifdef ES_30
 				highp float depthSM_1 = texture(tex1,SHTC).r;
-				highp float depthSM_2 = texture(tex4,SHTC).r;
+				//highp float depthSM_2 = texture(tex4,SHTC).r;
 				depthSM = (depthSM_1+depthSM_2)/2.0;
 			#else
 				highp float depthSM_1 = texture2D(tex1,SHTC).r;
@@ -274,13 +309,14 @@ highp vec4 LightPos = WVPLight*position;
 		
 			highp float depthPos = LightPos.z;
 
-			if( depthPos > depthSM)
+			if( depthPos  > depthSM)
 				FShadow = 0.25*vec4(1.0,1.0,1.0,1.0);
 		#endif
 		
 	}else{
 		FShadow = 0.25*vec4(1.0,1.0,1.0,1.0);
 	}
+	#endif
 	return FShadow;
 }
 
@@ -369,15 +405,15 @@ void main(){
 		highp vec4 position = CameraPosition + PosCorner*depth;
 	#endif
 
-	if (toogles.x == 1.0){
+	//if (toogles.x == 1.0){
 		Fcolor = CalculateShadow(position);
-	}
+	//}
 
-	if (toogles.y == 1.0) {
+	/*if (toogles.y == 1.0) {
 		highp vec3 normal = GetNormal(coords);
 		highp float Occlusion = GetOcclusion(depth, coords.xy, position, normal);
 		Fcolor *= Occlusion;
-	}
+	}*/
 
 	
 	#ifdef ES_30

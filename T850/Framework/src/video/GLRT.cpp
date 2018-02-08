@@ -82,13 +82,11 @@ namespace t800 {
 
 
     GLuint fbo;
-    GLuint dtex;
 #if defined(OS_LINUX)
     timeval start;
     gettimeofday(&start, 0);
 #endif
     glGenFramebuffers(1, &fbo);
-
     glBindFramebuffer(GL_FRAMEBUFFER, fbo);
 
 
@@ -99,71 +97,121 @@ namespace t800 {
       Attachments[i] = GL_COLOR_ATTACHMENT1 + (i - 1);
     }
 #endif
-    for (int i = 0; i < number_RT; i++) {
-      GLint cffmt = cfmt;
-      GLint cbysize = bysize;
-      GLuint ctex;
+    GLuint ctex;
+    GLint cffmt = cfmt;
+    GLint cbysize = bysize;
+    if (this->color_format == CUBE_F32) {
       glGenTextures(1, &ctex);
-      glBindTexture(GL_TEXTURE_2D, ctex);
-      glTexImage2D(GL_TEXTURE_2D, 0, cffmt, w, h, 0, cinternal, cbysize, 0);
-	  if (i == 0 && this->color_format != BaseRT::R8) {
-		  glGenerateMipmap(GL_TEXTURE_2D);
-		  glTexParameterf(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR_MIPMAP_LINEAR);
-		  glTexParameterf(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
-	  }
-	  else {
-		  glTexParameterf(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
-		  glTexParameterf(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
-	  }
-      glTexParameterf(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
-      glTexParameterf(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
-
-      GLTexture *pTextureColor = new GLTexture;
-#if defined(USING_OPENGL_ES20)
-      glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, ctex, 0);
-
+      glBindTexture(GL_TEXTURE_CUBE_MAP, ctex);
+      for (int i = 0; i < 6; i++) {
+        glTexImage2D(GL_TEXTURE_CUBE_MAP_POSITIVE_X + i, 0, cffmt, w, h, 0, cinternal, cbysize, NULL);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+        glFramebufferTexture2D(GL_FRAMEBUFFER, Attachments[i], GL_TEXTURE_CUBE_MAP_POSITIVE_X + i, ctex, 0);
+      }
+        GLTexture *pTextureColor = new GLTexture;
+        pTextureColor->x = w;
+        pTextureColor->y = h;
+        pTextureColor->id = ctex;
+        vColorTextures.push_back(pTextureColor);
+        vFrameBuffers.push_back(fbo);
+        vGLColorTex.push_back(ctex);
+    }
+    else {
       for (int i = 0; i < number_RT; i++) {
+        glGenTextures(1, &ctex);
+        glBindTexture(GL_TEXTURE_2D, ctex);
+        glTexImage2D(GL_TEXTURE_2D, 0, cffmt, w, h, 0, cinternal, cbysize, 0);
+        if (i == 0 && this->color_format != BaseRT::R8) {
+          glGenerateMipmap(GL_TEXTURE_2D);
+          glTexParameterf(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR_MIPMAP_LINEAR);
+          glTexParameterf(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+        }
+        else {
+          glTexParameterf(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+          glTexParameterf(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+        }
+        glTexParameterf(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+        glTexParameterf(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+
+        GLTexture *pTextureColor = new GLTexture;
+#if defined(USING_OPENGL_ES20)
+        glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, ctex, 0);
+
+        for (int i = 0; i < number_RT; i++) {
+          pTextureColor->id = ctex;
+          vColorTextures.push_back(pTextureColor);
+          vFrameBuffers.push_back(fbo);
+          vGLColorTex.push_back(ctex);
+      }
+        break;
+#elif  defined(USING_OPENGL_ES30) || defined(USING_OPENGL_ES31)
+        glFramebufferTexture2D(GL_FRAMEBUFFER, Attachments[i], GL_TEXTURE_2D, ctex, 0);
+#else
+        glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0 + i, GL_TEXTURE_2D, ctex, 0);
+#endif
+        pTextureColor->x = w;
+        pTextureColor->y = h;
         pTextureColor->id = ctex;
         vColorTextures.push_back(pTextureColor);
         vFrameBuffers.push_back(fbo);
         vGLColorTex.push_back(ctex);
       }
-      break;
-#elif  defined(USING_OPENGL_ES30) || defined(USING_OPENGL_ES31)
-      glFramebufferTexture2D(GL_FRAMEBUFFER, Attachments[i], GL_TEXTURE_2D, ctex, 0);
-#else
-      glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0 + i, GL_TEXTURE_2D, ctex, 0);
-#endif
-
-      pTextureColor->x = w;
-      pTextureColor->y = h;
-      pTextureColor->id = ctex;
-      vColorTextures.push_back(pTextureColor);
-      vFrameBuffers.push_back(fbo);
-      vGLColorTex.push_back(ctex);
     }
 
+    //GLuint dtex;
     if (number_RT == 0)
       vFrameBuffers.push_back(fbo);
+    if (this->depth_format == CUBE_F32) {
+      GLuint dtex2;
+      glGenTextures(1, &dtex2);
+      glBindTexture(GL_TEXTURE_CUBE_MAP, dtex2);
+      for (int i = 0; i < 6; i++) {
+        glTexImage2D(GL_TEXTURE_CUBE_MAP_POSITIVE_X + i, 0, GL_DEPTH_COMPONENT32F, w, h, 0, GL_DEPTH_COMPONENT, GL_FLOAT, NULL);
+      }
+      glTexParameteri(GL_TEXTURE_CUBE_MAP, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+      glTexParameteri(GL_TEXTURE_CUBE_MAP, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
 
-    glGenTextures(1, &dtex);
-    glBindTexture(GL_TEXTURE_2D, dtex);
+      glTexParameteri(GL_TEXTURE_CUBE_MAP, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+      glTexParameteri(GL_TEXTURE_CUBE_MAP, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+      glFramebufferTexture2D(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_TEXTURE_CUBE_MAP_POSITIVE_X, dtex2, 0);
+      GLTexture *pTextureDepth = new GLTexture;
+      pTextureDepth->x = w;
+      pTextureDepth->y = h;
+      pTextureDepth->id = dtex2;
+      pTextureDepth->glTarget = GL_TEXTURE_CUBE_MAP;
+      this->pDepthTexture = (pTextureDepth);
+      DepthTexture = dtex2;
+    }
+    else {
+      GLuint dtex;
+      glGenTextures(1, &dtex);
+      glBindTexture(GL_TEXTURE_2D, dtex);
 #ifdef USING_OPENGL_ES20
-    glTexImage2D(GL_TEXTURE_2D, 0, GL_DEPTH_COMPONENT, w, h, 0, GL_DEPTH_COMPONENT, GL_UNSIGNED_INT, NULL);
+      glTexImage2D(GL_TEXTURE_2D, 0, GL_DEPTH_COMPONENT, w, h, 0, GL_DEPTH_COMPONENT, GL_UNSIGNED_INT, NULL);
 #else
-    glTexImage2D(GL_TEXTURE_2D, 0, GL_DEPTH_COMPONENT32F, w, h, 0, GL_DEPTH_COMPONENT, GL_FLOAT, NULL);
+      glTexImage2D(GL_TEXTURE_2D, 0, GL_DEPTH_COMPONENT32F, w, h, 0, GL_DEPTH_COMPONENT, GL_FLOAT, NULL);
 #endif
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+      glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+      glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+      glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+      glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
 
-	if (number_RT == 0) {
-		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_COMPARE_MODE, GL_COMPARE_REF_TO_TEXTURE);
-		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_COMPARE_FUNC, GL_LESS);
-	}
+      if (number_RT == 0) {
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_COMPARE_MODE, GL_COMPARE_REF_TO_TEXTURE);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_COMPARE_FUNC, GL_LESS);
+      }
 
-    glFramebufferTexture2D(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_TEXTURE_2D, dtex, 0);
+      glFramebufferTexture2D(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_TEXTURE_2D, dtex, 0);
+      GLTexture *pTextureDepth = new GLTexture;
+      pTextureDepth->x = w;
+      pTextureDepth->y = h;
+      pTextureDepth->id = dtex;
+      this->pDepthTexture = (pTextureDepth);
+      DepthTexture = dtex;
+    }
 
 #if defined(OS_LINUX)
     timeval actual;
@@ -185,13 +233,6 @@ namespace t800 {
 
 #endif
 
-    GLTexture *pTextureDepth = new GLTexture;
-    pTextureDepth->x = w;
-    pTextureDepth->y = h;
-    pTextureDepth->id = dtex;
-    this->pDepthTexture = pTextureDepth;
-    DepthTexture = dtex;
-
 
     return true;
   }
@@ -199,15 +240,10 @@ namespace t800 {
   void GLRT::DestroyAPIRT() {
     GLuint FBO = vFrameBuffers[0];
     glDeleteFramebuffers(1, &FBO);
-    for (int i = 0; i < number_RT; i++) {
-      GLTexture* tex = dynamic_cast<GLTexture*>(vColorTextures[i]);
-      tex->DestroyAPITexture();
-      delete tex;
+    for (int i = 0; i < vColorTextures.size(); i++) {
+      vColorTextures[i]->release();
     }
-
-    GLTexture* tex = dynamic_cast<GLTexture*>(pDepthTexture);
-    tex->DestroyAPITexture();
-    delete tex;
+    pDepthTexture->release();
   }
   void GLRT::Set(const DeviceContext&context)
   {
@@ -224,5 +260,9 @@ namespace t800 {
     glViewport(0, 0,w, h);
 	glClearColor(1.0, 1.0, 1.0, 1.0);
 	glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT | GL_STENCIL_BUFFER_BIT);
+  }
+  void GLRT::ChangeCubeDepthTexture(int i)
+  {
+    glFramebufferTexture2D(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_TEXTURE_CUBE_MAP_POSITIVE_X + i, pDepthTexture->id, 0);
   }
 }

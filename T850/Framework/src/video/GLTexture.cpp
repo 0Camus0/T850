@@ -104,7 +104,8 @@ namespace t800 {
       unsigned char *pHead = buffer;
       for (int i = 0; i < 6; i++) {
         glTexImage2D(GL_TEXTURE_CUBE_MAP_POSITIVE_X + i, 0, glFormat, this->x, this->y, 0, glFormat, glChannel, (void*)(pHead));
-        pHead += bufferSize;
+        if (buffer)
+          pHead += bufferSize;
       }
     }
     else {

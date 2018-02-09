@@ -167,14 +167,14 @@ namespace t800 {
     CnstBuffer.WVP = transform;
     CnstBuffer.World = transform;
     CnstBuffer.WorldView = WV;
-	CnstBuffer.Projection = pActualCamera->VP;
+	  CnstBuffer.Projection = pActualCamera->VP;
     CnstBuffer.CameraPos = pActualCamera->Eye;
     CnstBuffer.brightness.x = m_brightness;
 	CnstBuffer.brightness.y = pScProp->ShadowMapResolution;
 	CnstBuffer.brightness.z = pScProp->PCFScale;
 
     if (pScProp->pLightCameras.size() > 0) {
-      int selected = 1;
+      int selected = pScProp->ActiveLightCamera;
       CnstBuffer.WVPLight = pScProp->pLightCameras[selected]->VP;
       CnstBuffer.LightCameraPos = pScProp->pLightCameras[selected]->Eye;
       CnstBuffer.LightCameraInfo = XVECTOR3(pScProp->pLightCameras[selected]->NPlane, pScProp->pLightCameras[selected]->FPlane, pScProp->pLightCameras[selected]->Fov, 1.0f);

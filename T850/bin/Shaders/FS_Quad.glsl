@@ -585,6 +585,145 @@ void main(){
 	#endif
 }
 
+
+
+#elif defined(RAY_MARCH)
+uniform mediump sampler2D tex0;
+uniform mediump sampler2D tex1;
+//Get a random number
+highp float rand2D(highp vec2 x) {
+  return fract(sin(dot(x.xy,
+    vec2(12.9898, 78.233)))*
+    43758.5453123 *  (LightPositions[0].x*0.1)   );
+}
+//Generate noise
+highp float noise2D( highp vec2 st) {
+  highp vec2 i = floor(st);
+  highp vec2 f = fract(st);
+
+  // Four corners in 2D of a tile
+  highp float a = rand2D(i);
+  highp float b = rand2D(i + vec2(1.0, 0.0));
+  highp float c = rand2D(i + vec2(0.0, 1.0));
+  highp float d = rand2D(i + vec2(1.0, 1.0));
+
+
+  highp vec2 u = smoothstep(0.,1.,f);
+
+  // Mix 4 coorners porcentages
+  return mix(a, b, u.x) +
+    (c - a)* u.y * (1.0 - u.x) +
+    (d - b) * u.x * u.y;
+}
+bool
+IntersectBox(highp vec3 rayO, highp vec3 rayDir, highp vec3 boxmin, highp vec3 boxmax, out highp float tnear,
+  out highp float tfar)
+{
+  // compute intersection of ray with all six bbox planes
+  highp vec3 invR = vec3(1.0,1.0,1.0) / rayDir.xyz;
+  highp vec3 tbot = invR * (boxmin.xyz - rayO);
+  highp vec3 ttop = invR * (boxmax.xyz - rayO);
+  // re-order intersections to find smallest and largest on each axis
+  highp vec3 tmin = min(ttop, tbot);
+  highp vec3 tmax = max(ttop, tbot);
+  // find the largest tmin and the smallest tmax
+  highp vec2 t0 = max(tmin.xx, tmin.yz);
+  tnear = max(t0.x, t0.y);
+  t0 = min(tmax.xx, tmax.yz);
+  tfar = min(t0.x, t0.y);
+  // check for hit
+  bool hit;
+  if ((tnear > tfar))
+    hit = false;
+  else
+    hit = true;
+  return hit;
+}
+highp float distanceFunc(highp vec3 p)
+{
+  highp vec3 sc = vec3(0.5,0.5,0.5);
+  highp float d = length(p - sc);
+  return d;
+}
+
+highp vec4 shade(highp float d)
+{
+  if (d >= 0.0 && d < 0.3) return (mix(vec4(0, .5, 1, .2), vec4(0, 0, 0, 0), (d - 0.6) / 0.2));
+  return vec4(0, 0, 0, 0);
+}
+highp vec4
+Ball(highp vec3 x)
+{
+  highp float time = LightPositions[0].x;
+  highp vec2 uv;
+  uv.x = length(x.xz) / 1.42;
+  uv.y = x.y;//+ turbulence4(noiseSampler, noisePos) * noiseStrength;
+  highp float d = distanceFunc(x);
+  highp float noiseVal = noise2D(uv*40.0);
+  d = d+cos(time*noiseVal)*0.1;
+  d = d + sin(time * 2.0 )*0.2*noiseVal;
+  //return half4(noiseVal, noiseVal, noiseVal, 1);
+  highp vec4 rret = shade(d);
+  //rret.a *=;
+  return rret;
+}
+#define VOLUMEFUNC(x) Ball(x)
+void main(){
+  highp vec2 uv = vecUVCoords.xy;
+  uv.y = 1.0 - uv.y;
+  highp float depth = texture(tex0, uv).r;
+	#ifdef NON_LINEAR_DEPTH
+		highp vec4 position = WVPInverse*vec4( PosCorner.xy ,depth,1.0);
+		position.xyz /= position.w;
+		position.w = 1.0;
+	#else		
+		highp vec4 position = CameraPosition + PosCorner*depth;
+	#endif
+
+
+  const int steps = 64;
+  highp vec4 ray = (position- CameraPosition);
+  highp vec4 rayDir = normalize(ray);
+  highp float rayLength = length(ray);
+
+  highp float tnear;
+  highp float tfar;
+  highp vec3 boxMin = vec3(-2.0);
+  highp vec3 boxMax = vec3(2.0);
+  highp vec3 volPos = toogles.xyz;
+  highp vec3 mulT = volPos ;
+  boxMin += mulT;
+  boxMax += mulT;
+  highp float boxSize = boxMax.x - boxMin.x;
+  bool hit = IntersectBox(CameraPosition.xyz,rayDir.xyz, boxMin, boxMax, tnear, tfar);
+  if (!hit) discard;
+  if (tfar < 0.0) discard;
+  if (tnear > rayLength) discard;//UNCOMMENT
+  if (tnear < 0.0) tnear = 0.0;
+
+  highp vec4 intersectionNear =  CameraPosition + rayDir*tnear;
+  highp vec4 intersectionFar =  CameraPosition + rayDir*tfar;
+
+  //March
+  highp vec4 c = vec4(0.0,0.0,0.0,0.0);
+  //float alpha = 0;
+  highp vec4 step = (intersectionNear- intersectionFar) / vec4(float(steps) - 1.0);
+  highp vec4 P = intersectionFar;
+  for (int i = 0; i<steps; i++) {
+    //if (c.a >= 1.0) break;
+    highp vec3 ppp = (P.xyz - boxMin) / boxSize; //0 - 1 normalized coords
+
+    highp vec4 s = VOLUMEFUNC(ppp);
+    //alpha = s.a + (1.0 - s.a)*alpha;
+    c = s.a*s.rgba + (1.0 - s.a)*c; //TODO: Front to back
+    //s.rgb *= s.a;
+    //c += c *(1.0 - s.a);
+    P += step;
+  }
+  //c /= steps;
+   colorOut = c;
+}
+
 ///////////
 #elif defined(COC_PASS)
 uniform mediump sampler2D tex0;
@@ -640,6 +779,7 @@ void main() {
 	}
 
 }
+
 #elif defined(COMBINE_COC_PASS)
 uniform mediump sampler2D tex0;
 uniform mediump sampler2D tex1;

@@ -533,7 +533,7 @@ void SC_Night::OnDraw() {
   }
   // Omnidirectional Shadow Map Depth Pass
   pFramework->pVideoDriver->SetCullFace(BaseDriver::FACE_CULLING::BACK_FACES);
-  Meshes[0].SetGlobalSignature(Signature::SHADOW_MAP_PASS);
+  Meshes[0].SetGlobalSignature(Signature::RADIAL_DEPTH_PASS);
   for (size_t i = 0; i < 6; i++)
   {
     SceneProp.pCameras[0] = &OmniLightCam[i];
@@ -575,10 +575,10 @@ void SC_Night::OnDraw() {
   pFramework->pVideoDriver->PushRT(ShadowAccumPass);
   pFramework->pVideoDriver->Clear();
   Quads[0].SetTexture(pFramework->pVideoDriver->GetRTTexture(GBufferPass, BaseDriver::DEPTH_ATTACHMENT), 0);
-  Quads[0].SetTexture(pFramework->pVideoDriver->GetRTTexture(OmniShadowDepthPass, BaseDriver::DEPTH_ATTACHMENT), 1);//
+  Quads[0].SetTexture(pFramework->pVideoDriver->GetRTTexture(OmniShadowDepthPass, BaseDriver::DEPTH_ATTACHMENT), 1);
   Quads[0].SetTexture(pFramework->pVideoDriver->GetRTTexture(GBufferPass, BaseDriver::COLOR1_ATTACHMENT), 2);
   Quads[0].SetTexture(SceneProp.SSAOKernel.NoiseTex, 3);
-  Quads[0].SetGlobalSignature(Signature::SHADOW_COMP_PASS);
+  Quads[0].SetGlobalSignature(Signature::SHADOW_COMP_PASS | Signature::USE_OMNIDIRECTIONAL_SHADOWS);
   Quads[0].Draw();
   pFramework->pVideoDriver->PopRT();
   SceneProp.ActiveLightCamera = 0;

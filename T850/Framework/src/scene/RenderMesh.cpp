@@ -330,7 +330,7 @@ namespace t800 {
         g_pBaseDriver->CreateShader(vstr, fstr, CurrSig);
         CurrSig ^= Signature::SHADOW_MAP_PASS;
 
-        CurrSig |= Signature::DEPTH_PRE_PASS;
+        CurrSig |= Signature::RADIAL_DEPTH_PASS;
         g_pBaseDriver->CreateShader(vstr, fstr, CurrSig);
 
       }

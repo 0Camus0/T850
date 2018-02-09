@@ -208,7 +208,6 @@ void main(){
 	
 }
 #elif defined(SHADOW_COMP_PASS)
-#define OMNIDIRECTIONAL_SH
 uniform mediump sampler2D tex0;
 #if defined OMNIDIRECTIONAL_SH
 uniform mediump samplerCube tex1;
@@ -235,7 +234,6 @@ highp vec4 FShadow = vec4(1.0,1.0,1.0,1.0);
 		highp vec3 fragToLight =  new_positionV.xyz - vec4(WorldView * vec4(LightCameraPosition.xyz,1.0)).xyz;
 		highp float depthPos = length(fragToLight); 
 		fragToLight =  position.xyz - LightCameraPosition.xyz;
-		//fragToLight.z = -fragToLight.z;
 		fragToLight.y = -fragToLight.y;
 		highp float depthSM = 0.0;
 		highp float shadowVal = 0.0;
@@ -411,11 +409,11 @@ void main(){
 		Fcolor = CalculateShadow(position);
 	}
 
-	/*if (toogles.y == 1.0) {
+	if (toogles.y == 1.0) {
 		highp vec3 normal = GetNormal(coords);
 		highp float Occlusion = GetOcclusion(depth, coords.xy, position, normal);
 		Fcolor *= Occlusion;
-	}*/
+	}
 
 	
 	#ifdef ES_30

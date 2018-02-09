@@ -49,12 +49,12 @@ void SC_Night::InitVars() {
 
   SceneProp.AddCamera(ActiveCam);
   SceneProp.AddLightCamera(&LightCam);
-
+  omniLightPos = XVECTOR3(-10.0f, 10.0f, 0.0f);
   for (size_t i = 0; i < 6; i++)
   {
-    OmniLightCam[i].InitPerspective(XVECTOR3(0.0f, 10.0f, 10.0f), Deg2Rad(90.0f), 1.0f, 1.f, 300.0f);
+    OmniLightCam[i].InitPerspective(XVECTOR3(0.0f, 10.0f, 10.0f), Deg2Rad(90.0f), 1.0f, 0.1f, 300.0f);
     OmniLightCam[i].Speed = 0.0f;
-    OmniLightCam[i].Eye = XVECTOR3(-10.0f, 10.0f, 0.0f);
+    OmniLightCam[i].Eye = omniLightPos;
     OmniLightCam[i].Update(0.0f);
     SceneProp.AddLightCamera(&OmniLightCam[i]);
   }
@@ -78,8 +78,9 @@ void SC_Night::InitVars() {
   OmniLightCam[5].Update(0.0f);
 
   SceneProp.AddLight(XVECTOR3(1000, 2000, 0), XVECTOR3(0.1215, 0.1607, 0.2090), 30000, true);
+  SceneProp.AddLight(omniLightPos, XVECTOR3(1.0, 0.57, 0.16), 30, true);
   SceneProp.ActiveLights = 120;
-  for (int i = 0; i < SceneProp.ActiveLights-1; ++i) {
+  for (int i = 0; i < SceneProp.ActiveLights-2; ++i) {
     /*SceneProp.AddLight(XVECTOR3(-200 + i*4, 4, -200 + i * 4), XVECTOR3(1.0, 0.57, 0.16), 5, true);*/
     float r = static_cast <float> (rand()) / static_cast <float> (RAND_MAX);
     float g = static_cast <float> (rand()) / static_cast <float> (RAND_MAX);
@@ -238,6 +239,12 @@ void SC_Night::CreateAssets() {
   index = PrimitiveMgr.CreateMesh("Models/SponzaEsc.X");
   Meshes[0].CreateInstance(PrimitiveMgr.GetPrimitive(index), &VP);
 
+  index = PrimitiveMgr.CreateMesh("Models/NuCroc.X");
+  Meshes[2].CreateInstance(PrimitiveMgr.GetPrimitive(index), &VP);
+  Meshes[2].TranslateAbsolute(omniLightPos.x, omniLightPos.y, omniLightPos.z);
+  Meshes[2].ScaleAbsolute(0.01);
+  Meshes[2].Update();
+
   index = PrimitiveMgr.CreateSpline(m_spline);
   splineWire = (SplineWireframe*)PrimitiveMgr.GetPrimitive(index);
   splineInst.CreateInstance(splineWire, &VP);
@@ -327,7 +334,7 @@ void SC_Night::OnUpdate(float _DtSecs) {
   float dist = RADI;
   float Offset = 2.0f*3.1415f / SceneProp.ActiveLights;
   float Offset2 = 4.0f*3.1415f / SceneProp.ActiveLights;
-  for (int i = 0; i<SceneProp.ActiveLights; i++) {
+  for (int i = 2; i<SceneProp.ActiveLights; i++) {
     SceneProp.Lights[i].Position = Position;
     float RadA = dist*0.35f + dist*0.4f * sin(freq + float(i*Offset))*cos(freq + float(i*Offset));
     float RadB = dist*0.35f + dist*0.4f * sin(freq2 + float(i*Offset2))*cos(freq2 + float(i*Offset2));
@@ -335,7 +342,14 @@ void SC_Night::OnUpdate(float _DtSecs) {
     SceneProp.Lights[i].Position.z += RadB*cos(freq + float(i*Offset2));
     SceneProp.Lights[i].Position.y += 10;
   }
-
+  for (size_t i = 0; i < 6; i++)
+  {
+    OmniLightCam[i].Eye = omniLightPos;
+    OmniLightCam[i].Update(0.0f);
+  }
+  Meshes[2].TranslateAbsolute(omniLightPos.x, omniLightPos.y,omniLightPos.z);
+  Meshes[2].Update();
+  SceneProp.Lights[1].Position = omniLightPos;
   if (totalTime > 60.0f) {
     totalTime = 0.0;
    // pFramework->pBaseApp->LoadScene(2);
@@ -363,6 +377,26 @@ void SC_Night::OnInput(InputManager* IManager) {
 
   if (IManager->PressedKey(T800K_RIGHT)) {
     Position.x += 1.0f*speedFactor*DtSecs;
+    changed = true;
+  }
+
+  if (IManager->PressedKey(T800K_i)) {
+    omniLightPos.y += 1.0f*speedFactor*DtSecs;
+    changed = true;
+  }
+
+  if (IManager->PressedKey(T800K_k)) {
+    omniLightPos.y -= 1.0f*speedFactor*DtSecs;
+    changed = true;
+  }
+
+  if (IManager->PressedKey(T800K_j)) {
+    omniLightPos.x -= 1.0f*speedFactor*DtSecs;
+    changed = true;
+  }
+
+  if (IManager->PressedKey(T800K_l)) {
+    omniLightPos.x += 1.0f*speedFactor*DtSecs;
     changed = true;
   }
 
@@ -443,7 +477,7 @@ void SC_Night::OnInput(InputManager* IManager) {
     printf("Position[%f,%f,%f] Rot[%f,%f,%f] Sc[%f]\n", Position.x, Position.y, Position.z, Orientation.x, Orientation.y, Orientation.z, Scaling.x);
   }
 
-  if (IManager->PressedOnceKey(T800K_k)) {
+  if (IManager->PressedOnceKey(T800K_p)) {
     printf("Position[%f, %f, %f]\n\n", ActiveCam->Eye.x, ActiveCam->Eye.y, ActiveCam->Eye.z);
     printf("Orientation[%f, %f, %f]\n\n", ActiveCam->Pitch, ActiveCam->Roll, ActiveCam->Yaw);
   }
@@ -490,10 +524,15 @@ void SC_Night::OnInput(InputManager* IManager) {
 
 void SC_Night::OnDraw() {
   pFramework->pVideoDriver->SetDepthStencilState(BaseDriver::DEPTH_STENCIL_STATES::READ_WRITE);
-
+  pFramework->pVideoDriver->PushRT(OmniShadowDepthPass);
+  SceneProp.ActiveLightCamera = 1;
+  for (size_t i = 0; i < 6; i++)
+  {
+    pFramework->pVideoDriver->RTs[OmniShadowDepthPass]->ChangeCubeDepthTexture(i);
+    pFramework->pVideoDriver->Clear();
+  }
   // Omnidirectional Shadow Map Depth Pass
   pFramework->pVideoDriver->SetCullFace(BaseDriver::FACE_CULLING::BACK_FACES);
-  pFramework->pVideoDriver->PushRT(OmniShadowDepthPass);
   Meshes[0].SetGlobalSignature(Signature::SHADOW_MAP_PASS);
   for (size_t i = 0; i < 6; i++)
   {
@@ -505,25 +544,24 @@ void SC_Night::OnDraw() {
   Meshes[0].SetGlobalSignature(Signature::FORWARD_PASS);
 
   pFramework->pVideoDriver->SetCullFace(BaseDriver::FACE_CULLING::FRONT_FACES);
+  SceneProp.ActiveLightCamera = 0;
+  //// Shadow Map Depth Pass
+  //pFramework->pVideoDriver->PushRT(DepthPass);
+  //SceneProp.pCameras[0] = &LightCam;
+  //pFramework->pVideoDriver->SetCullFace(BaseDriver::FACE_CULLING::BACK_FACES);
+  //for (int i = 0; i < 2; i++) {
+  //  Meshes[i].SetGlobalSignature(Signature::SHADOW_MAP_PASS);
+  //  Meshes[i].Draw();
+  //  Meshes[i].SetGlobalSignature(Signature::FORWARD_PASS);
+  //}
+  //pFramework->pVideoDriver->PopRT();
 
-
-  // Shadow Map Depth Pass
-  pFramework->pVideoDriver->PushRT(DepthPass);
-  SceneProp.pCameras[0] = &LightCam;
-  pFramework->pVideoDriver->SetCullFace(BaseDriver::FACE_CULLING::BACK_FACES);
-  for (int i = 0; i < 2; i++) {
-    Meshes[i].SetGlobalSignature(Signature::SHADOW_MAP_PASS);
-    Meshes[i].Draw();
-    Meshes[i].SetGlobalSignature(Signature::FORWARD_PASS);
-  }
-  pFramework->pVideoDriver->PopRT();
-
-  pFramework->pVideoDriver->SetCullFace(BaseDriver::FACE_CULLING::FRONT_FACES);
+  //pFramework->pVideoDriver->SetCullFace(BaseDriver::FACE_CULLING::FRONT_FACES);
 
   // G Buffer Pass
   pFramework->pVideoDriver->PushRT(GBufferPass);
   SceneProp.pCameras[0] = &Cam;
-  for (int i = 0; i < 2; i++) {
+  for (int i = 0; i < 3; i++) {
     Meshes[i].SetGlobalSignature(Signature::GBUFF_PASS);
     Meshes[i].Draw();
     Meshes[i].SetGlobalSignature(Signature::FORWARD_PASS);
@@ -533,6 +571,7 @@ void SC_Night::OnDraw() {
   pFramework->pVideoDriver->SetDepthStencilState(BaseDriver::DEPTH_STENCIL_STATES::READ);
 
   // Shadow Map Buffer Accumulation + Occlusion 
+  SceneProp.ActiveLightCamera = 1;
   pFramework->pVideoDriver->PushRT(ShadowAccumPass);
   pFramework->pVideoDriver->Clear();
   Quads[0].SetTexture(pFramework->pVideoDriver->GetRTTexture(GBufferPass, BaseDriver::DEPTH_ATTACHMENT), 0);
@@ -542,21 +581,21 @@ void SC_Night::OnDraw() {
   Quads[0].SetGlobalSignature(Signature::SHADOW_COMP_PASS);
   Quads[0].Draw();
   pFramework->pVideoDriver->PopRT();
-
+  SceneProp.ActiveLightCamera = 0;
 
   // Shadow Map Blur Pass
-  //pFramework->pVideoDriver->PushRT(ExtraHelperPass);
-  //SceneProp.ActiveGaussKernel = SHADOW_KERNEL;
-  //Quads[0].SetTexture(pFramework->pVideoDriver->GetRTTexture(ShadowAccumPass, BaseDriver::COLOR0_ATTACHMENT), 0);
-  //Quads[0].SetGlobalSignature(Signature::VERTICAL_BLUR_PASS);
-  //Quads[0].Draw();
-  //pFramework->pVideoDriver->PopRT();
+  pFramework->pVideoDriver->PushRT(ExtraHelperPass);
+  SceneProp.ActiveGaussKernel = SHADOW_KERNEL;
+  Quads[0].SetTexture(pFramework->pVideoDriver->GetRTTexture(ShadowAccumPass, BaseDriver::COLOR0_ATTACHMENT), 0);
+  Quads[0].SetGlobalSignature(Signature::VERTICAL_BLUR_PASS);
+  Quads[0].Draw();
+  pFramework->pVideoDriver->PopRT();
 
-  //pFramework->pVideoDriver->PushRT(ShadowAccumPass);
-  //Quads[0].SetTexture(pFramework->pVideoDriver->GetRTTexture(ExtraHelperPass, BaseDriver::COLOR0_ATTACHMENT), 0);
-  //Quads[0].SetGlobalSignature(Signature::HORIZONTAL_BLUR_PASS);
-  //Quads[0].Draw();
-  //pFramework->pVideoDriver->PopRT();
+  pFramework->pVideoDriver->PushRT(ShadowAccumPass);
+  Quads[0].SetTexture(pFramework->pVideoDriver->GetRTTexture(ExtraHelperPass, BaseDriver::COLOR0_ATTACHMENT), 0);
+  Quads[0].SetGlobalSignature(Signature::HORIZONTAL_BLUR_PASS);
+  Quads[0].Draw();
+  pFramework->pVideoDriver->PopRT();
 
   // Deferred Pass
   pFramework->pVideoDriver->PushRT(DeferredPass);
@@ -566,8 +605,8 @@ void SC_Night::OnDraw() {
   Quads[0].SetTexture(pFramework->pVideoDriver->GetRTTexture(GBufferPass, BaseDriver::COLOR3_ATTACHMENT), 3);
   Quads[0].SetTexture(pFramework->pVideoDriver->GetRTTexture(GBufferPass, BaseDriver::DEPTH_ATTACHMENT), 4);
   Quads[0].SetTexture(pFramework->pVideoDriver->GetRTTexture(ShadowAccumPass, BaseDriver::COLOR0_ATTACHMENT), 5);
-  //Quads[0].SetEnvironmentMap(g_pBaseDriver->GetTexture(EnvMapTexIndex));
-  Quads[0].SetEnvironmentMap(pFramework->pVideoDriver->GetRTTexture(OmniShadowDepthPass, BaseDriver::DEPTH_ATTACHMENT));
+  Quads[0].SetEnvironmentMap(g_pBaseDriver->GetTexture(EnvMapTexIndex));
+  //Quads[0].SetEnvironmentMap(pFramework->pVideoDriver->GetRTTexture(OmniShadowDepthPass, BaseDriver::DEPTH_ATTACHMENT));
   Quads[0].SetGlobalSignature(Signature::DEFERRED_PASS);
   Quads[0].Draw();
   pFramework->pVideoDriver->PopRT();

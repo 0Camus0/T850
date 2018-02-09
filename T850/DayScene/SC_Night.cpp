@@ -604,9 +604,23 @@ void SC_Night::OnDraw() {
   //Quads[0].SetEnvironmentMap(pFramework->pVideoDriver->GetRTTexture(OmniShadowDepthPass, BaseDriver::DEPTH_ATTACHMENT));
   Quads[0].SetGlobalSignature(Signature::DEFERRED_PASS);
   Quads[0].Draw();
+ // pFramework->pVideoDriver->PopRT();
+
+  // Volumetric ball pass
+  pFramework->pVideoDriver->SetBlendState(BaseDriver::BLEND_STATES::ALPHA_BLEND);
+  //pFramework->pVideoDriver->PushRT(DeferredPass);
+  Quads[0].SetTexture(pFramework->pVideoDriver->GetRTTexture(GBufferPass, BaseDriver::DEPTH_ATTACHMENT), 0);
+  Quads[0].SetGlobalSignature(Signature::RAY_MARCH);
+  Quads[0].Draw();
   pFramework->pVideoDriver->PopRT();
 
-
+  //pFramework->pVideoDriver->PushRT(Extra16FPass);
+  //Quads[0].SetTexture(pFramework->pVideoDriver->GetRTTexture(GodRaysCalcPass, BaseDriver::COLOR0_ATTACHMENT), 0);
+  //Quads[0].SetTexture(pFramework->pVideoDriver->GetRTTexture(DeferredPass, BaseDriver::COLOR0_ATTACHMENT), 1);
+  //Quads[0].SetGlobalSignature(Signature::FSQUAD_2_TEX);
+  //Quads[0].Draw();
+  //pFramework->pVideoDriver->PopRT();
+  pFramework->pVideoDriver->SetBlendState(BaseDriver::BLEND_STATES::BLEND_DEFAULT);
   // Bright Pass
   pFramework->pVideoDriver->PushRT(BloomAccumPass);
   Quads[0].SetTexture(pFramework->pVideoDriver->GetRTTexture(DeferredPass, BaseDriver::COLOR0_ATTACHMENT), 0);
@@ -682,9 +696,9 @@ void SC_Night::OnDraw() {
   //Quads[1].SetGlobalSignature(Signature::FSQUAD_1_TEX);
   //Quads[1].Draw();
 
-  //Quads[2].SetTexture(pFramework->pVideoDriver->GetRTTexture(Extra16FPass, BaseDriver::COLOR0_ATTACHMENT), 0);
-  //Quads[2].SetGlobalSignature(Signature::FSQUAD_1_TEX);
-  //Quads[2].Draw();
+  Quads[2].SetTexture(pFramework->pVideoDriver->GetRTTexture(GodRaysCalcPass, BaseDriver::COLOR0_ATTACHMENT), 0);
+  Quads[2].SetGlobalSignature(Signature::FSQUAD_1_TEX);
+  Quads[2].Draw();
 
   //Quads[3].SetTexture(pFramework->pVideoDriver->GetRTTexture(CombineCoCPass, BaseDriver::COLOR0_ATTACHMENT), 0);
   //Quads[3].SetGlobalSignature(Signature::FSQUAD_1_TEX);

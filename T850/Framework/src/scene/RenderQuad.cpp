@@ -153,7 +153,8 @@ namespace t800 {
   }
 
   void RenderQuad::Draw(float *t, float *vp) {
-
+    static float time= 0;
+    time += 1 / 60.0f;
     if (t)
       transform = t;
     unsigned long long sig = SigBase;
@@ -245,7 +246,8 @@ namespace t800 {
 	  CnstBuffer.LightPositions[0].w = (float)Textures[0]->y;
 	}
     else if (sig&Signature::RAY_MARCH) {
-      //CnstBuffer.LightPositions[0].x = time;
+      CnstBuffer.LightPositions[0].x = time;
+      CnstBuffer.toogles = pScProp->pLightCameras[1]->Eye;
 	}
 	else if (sig&Signature::LIGHT_RAY_MARCHING) {
 	  CnstBuffer.LightPositions[0].y = pScProp->LightVolumeSteps;

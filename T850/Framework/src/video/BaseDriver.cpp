@@ -248,14 +248,17 @@ namespace t800 {
         Defines += "#define SSAO_PASS\n\n";
       if (sig&Signature::RAY_MARCH)
         Defines += "#define RAY_MARCH\n\n";
-      if (sig&Signature::DEPTH_PRE_PASS)
-        Defines += "#define DEPTH_PRE_PASS\n\n";
+      if (sig&Signature::RADIAL_DEPTH_PASS)
+        Defines += "#define RADIAL_DEPTH_PASS\n\n";
       if (sig&Signature::LIGHT_RAY_MARCHING)
         Defines += "#define LIGHT_RAY_MARCHING\n\n";
       if (sig&Signature::LIGHT_ADD)
         Defines += "#define LIGHT_ADD\n\n";
       if (sig&Signature::FADE_PASS)
         Defines += "#define FADE\n\n";
+      if (sig&Signature::USE_OMNIDIRECTIONAL_SHADOWS)
+        Defines += "#define OMNIDIRECTIONAL_SH\n\n";
+      
       
       
       

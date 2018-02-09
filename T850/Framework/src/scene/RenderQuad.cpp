@@ -62,6 +62,8 @@ namespace t800 {
 
     Dest = SigBase | Signature::SHADOW_COMP_PASS;
     g_pBaseDriver->CreateShader(vstr, fstr, Dest);
+    Dest = SigBase | Signature::SHADOW_COMP_PASS | Signature::USE_OMNIDIRECTIONAL_SHADOWS;
+    g_pBaseDriver->CreateShader(vstr, fstr, Dest);
 
     Dest = SigBase | Signature::VERTICAL_BLUR_PASS;
     g_pBaseDriver->CreateShader(vstr, fstr, Dest);
@@ -108,8 +110,6 @@ namespace t800 {
     Dest = SigBase | Signature::RAY_MARCH;
     g_pBaseDriver->CreateShader(vstr, fstr, Dest);
 
-    Dest = SigBase | Signature::DEPTH_PRE_PASS;
-    g_pBaseDriver->CreateShader(vstr, fstr, Dest);
 
     Dest = SigBase | Signature::LIGHT_RAY_MARCHING;
     g_pBaseDriver->CreateShader(vstr, fstr, Dest);

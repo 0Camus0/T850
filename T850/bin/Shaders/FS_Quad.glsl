@@ -222,7 +222,7 @@ highp vec4 CalculateShadow(highp vec4 position){
 highp vec4 FShadow = vec4(1.0,1.0,1.0,1.0);
 
 	#if defined OMNIDIRECTIONAL_SH
-		highp vec3 sampleOffsetDirections[20] = vec3[]
+		const highp vec3 sampleOffsetDirections[20] = vec3[]
 		(
 		   vec3( 1,  1,  1), vec3( 1, -1,  1), vec3(-1, -1,  1), vec3(-1,  1,  1), 
 		   vec3( 1,  1, -1), vec3( 1, -1, -1), vec3(-1, -1, -1), vec3(-1,  1, -1),
@@ -230,27 +230,29 @@ highp vec4 FShadow = vec4(1.0,1.0,1.0,1.0);
 		   vec3( 1,  0,  1), vec3(-1,  0,  1), vec3( 1,  0, -1), vec3(-1,  0, -1),
 		   vec3( 0,  1,  1), vec3( 0, -1,  1), vec3( 0, -1, -1), vec3( 0,  1, -1)
 		); 
-		highp float viewDistance = length(position.xyz - CameraPosition.xyz);
-		highp float diskRadius = (LightCameraInfo.x + (viewDistance / LightCameraInfo.y)) / LightCameraInfo.y; 
-		highp vec3 fragToLight =  position.xyz - LightCameraPosition.xyz ;
+		highp float diskRadius = 0.15; 
+		highp vec4 new_positionV = WorldView* vec4(position.xyz, 1.0);
+		highp vec3 fragToLight =  new_positionV.xyz - vec4(WorldView * vec4(LightCameraPosition.xyz,1.0)).xyz;
+		highp float depthPos = length(fragToLight); 
+		fragToLight =  position.xyz - LightCameraPosition.xyz;
+		//fragToLight.z = -fragToLight.z;
 		fragToLight.y = -fragToLight.y;
 		highp float depthSM = 0.0;
 		highp float shadowVal = 0.0;
-		highp float depthPos = length(fragToLight); 
 		int samples = 20;
 		for (highp int i = 0; i < samples; i += 1){
 			highp vec3 nfragToLight =  fragToLight +  sampleOffsetDirections[i] * diskRadius; 
-			//fragToLight.y = -fragToLight.y;
 			depthSM = texture(tex1, nfragToLight ).r;
 			depthSM = depthSM * LightCameraInfo.y;
-			if( depthPos - 0.15  > depthSM)
+			if( depthPos - 0.055  > depthSM)
 				shadowVal += 1.0;
 			//shadowVal *= 0.75;
 			//shadowVal += 0.25;
 		}
 		shadowVal /= float(samples);
-		shadowVal =  (1.0 - shadowVal);
-		FShadow = shadowVal*vec4(1.0,1.0,1.0,1.0);
+		shadowVal *=  0.75;
+		shadowVal =  (1.0 - shadowVal) ;
+		FShadow = shadowVal*vec4(1.0,1.0,1.0,1.0);//texture(tex1, fragToLight ).rrrr;
 	#else
 	highp vec4 LightPos = WVPLight*position;
 	#ifdef NON_LINEAR_DEPTH
@@ -405,9 +407,9 @@ void main(){
 		highp vec4 position = CameraPosition + PosCorner*depth;
 	#endif
 
-	//if (toogles.x == 1.0){
+	if (toogles.x == 1.0){
 		Fcolor = CalculateShadow(position);
-	//}
+	}
 
 	/*if (toogles.y == 1.0) {
 		highp vec3 normal = GetNormal(coords);

@@ -127,6 +127,7 @@ public:
   int				CamSelection;
   int				SceneSettingSelection;
   int				ChangeActiveGaussSelection;
+  XVECTOR3 omniLightPos;
 
   t800::SplineWireframe* splineWire;
   t800::PrimitiveInst splineInst;

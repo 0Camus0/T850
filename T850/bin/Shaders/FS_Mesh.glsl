@@ -281,13 +281,14 @@ void main(){
 	
 }
 #elif defined(SHADOW_MAP_PASS)
+uniform highp mat4 WorldView; //
 void main(){
 #ifdef NON_LINEAR_DEPTH
 	gl_FragDepth = Pos.z / Pos.w;
 #else
-	gl_FragDepth = Pos.z / CameraInfo.y;
+    highp vec4 ff  = WorldView*CameraPosition;
+	gl_FragDepth = length(vec3(Pos.xyz - ff.xyz)) / CameraInfo.y;// Pos.z / CameraInfo.y;
 #endif
-	//gl_FragDepth = 1.0; //Borrar
 }
 #else
 	#ifdef ES_30

@@ -49,7 +49,7 @@ struct SSAOFilter {
 	void Update();
 };
 struct SceneProps{
-	SceneProps() : ActiveCamera(0) , ActiveLights(1), ActiveLightCamera(0), ActiveGaussKernel(0), Exposure(0.3f) , BloomFactor(0.35f) {}
+	SceneProps() : ActiveCamera(0) , ActiveLights(1), ActiveLightCamera(0), ActiveGaussKernel(0), Exposure(0.3f) , BloomFactor(0.35f), ToogleShadow(1), ToogleSSAO(1){}
 
 	void	AddLight(XVECTOR3 Pos, XVECTOR3 Color, float radius, bool enabled);
 	void	RemoveLight(unsigned int index);

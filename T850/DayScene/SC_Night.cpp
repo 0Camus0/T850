@@ -204,6 +204,11 @@ void SC_Night::InitVars() {
   m_agent.m_pSpline = &m_spline;
   m_agent.m_moving = true;
   m_agent.m_velocity = 15.0f;
+
+  m_lightAgent.m_pSpline = &m_spline;
+  m_lightAgent.m_moving = true;
+  m_lightAgent.m_velocity = 15.0f;
+  
 }
 void SC_Night::CreateAssets() {
   //Create Cube map
@@ -268,7 +273,7 @@ void SC_Night::CreateAssets() {
   PrimitiveMgr.SetSceneProps(&SceneProp);
 
   m_agent.m_actualPoint = m_spline.GetPoint(m_spline.GetNormalizedOffset(0));
-  //ActiveCam->AttachAgent(m_agent);
+  ActiveCam->AttachAgent(m_agent);
   ActiveCam->m_lookAtCenter = false;
 
   Quads[0].TranslateAbsolute(0.0f, 0.0f, 0.0f);
@@ -322,6 +327,8 @@ void SC_Night::OnUpdate(float _DtSecs) {
   DtSecs = _DtSecs;
   Meshes[0].SetParallaxSettings(SceneProp.ParallaxLowSamples, SceneProp.ParallaxHighSamples, SceneProp.ParallaxHeight);
   m_agent.Update(DtSecs);
+  m_lightAgent.Update(DtSecs + 0.02);
+  omniLightPos = m_lightAgent.m_actualPoint;
   ActiveCam->Update(DtSecs);
   VP = ActiveCam->VP;
 
@@ -352,7 +359,7 @@ void SC_Night::OnUpdate(float _DtSecs) {
   SceneProp.Lights[1].Position = omniLightPos;
   if (totalTime > 60.0f) {
     totalTime = 0.0;
-   // pFramework->pBaseApp->LoadScene(2);
+    pFramework->pBaseApp->LoadScene(2);
   }
 
 }
@@ -545,18 +552,6 @@ void SC_Night::OnDraw() {
 
   pFramework->pVideoDriver->SetCullFace(BaseDriver::FACE_CULLING::FRONT_FACES);
   SceneProp.ActiveLightCamera = 0;
-  //// Shadow Map Depth Pass
-  //pFramework->pVideoDriver->PushRT(DepthPass);
-  //SceneProp.pCameras[0] = &LightCam;
-  //pFramework->pVideoDriver->SetCullFace(BaseDriver::FACE_CULLING::BACK_FACES);
-  //for (int i = 0; i < 2; i++) {
-  //  Meshes[i].SetGlobalSignature(Signature::SHADOW_MAP_PASS);
-  //  Meshes[i].Draw();
-  //  Meshes[i].SetGlobalSignature(Signature::FORWARD_PASS);
-  //}
-  //pFramework->pVideoDriver->PopRT();
-
-  //pFramework->pVideoDriver->SetCullFace(BaseDriver::FACE_CULLING::FRONT_FACES);
 
   // G Buffer Pass
   pFramework->pVideoDriver->PushRT(GBufferPass);
@@ -683,9 +678,9 @@ void SC_Night::OnDraw() {
   Quads[7].SetGlobalSignature(Signature::VIGNETTE_PASS);
   Quads[7].Draw();
 
-  Quads[1].SetTexture(pFramework->pVideoDriver->GetRTTexture(ShadowAccumPass, BaseDriver::COLOR0_ATTACHMENT), 0);
-  Quads[1].SetGlobalSignature(Signature::FSQUAD_1_TEX);
-  Quads[1].Draw();
+  //Quads[1].SetTexture(pFramework->pVideoDriver->GetRTTexture(ShadowAccumPass, BaseDriver::COLOR0_ATTACHMENT), 0);
+  //Quads[1].SetGlobalSignature(Signature::FSQUAD_1_TEX);
+  //Quads[1].Draw();
 
   //Quads[2].SetTexture(pFramework->pVideoDriver->GetRTTexture(Extra16FPass, BaseDriver::COLOR0_ATTACHMENT), 0);
   //Quads[2].SetGlobalSignature(Signature::FSQUAD_1_TEX);

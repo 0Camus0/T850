@@ -116,6 +116,7 @@ namespace t800 {
     virtual void	GetFormatBpp(unsigned int &props, unsigned int &format, unsigned int &bpp) = 0;
     virtual void  Set(const DeviceContext& deviceContext, unsigned int slot, std::string shaderTextureName) = 0;
     virtual void  SetSampler(const DeviceContext& deviceContext) = 0;
+    
 
     std::string filepath;
     char			optname[128];
@@ -156,7 +157,7 @@ namespace t800 {
       CUBE_F32,
       NOTHING
     };
-
+    
     bool			LoadRT(int nrt, int cf, int df, int w, int h, bool GenMips = false);
     virtual bool	LoadAPIRT() = 0;
 
@@ -242,6 +243,8 @@ namespace t800 {
     virtual void	 SwapBuffers() = 0;
     virtual void SetBlendState(BLEND_STATES state) = 0;
     virtual void SetDepthStencilState(DEPTH_STENCIL_STATES state) = 0;
+
+    virtual void SaveScreenshot(std::string path) = 0;
 	virtual void SetCullFace(FACE_CULLING state) = 0;
 
     int 	 CreateTexture(std::string);

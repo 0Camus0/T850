@@ -30,6 +30,7 @@ namespace t800 {
 
     void  Set(const DeviceContext& deviceContext, unsigned int slot, std::string shaderTextureName) override;
     void  SetSampler(const DeviceContext& deviceContext) override;
+
     unsigned int glTarget;
   private:
     int APITextureLoc;

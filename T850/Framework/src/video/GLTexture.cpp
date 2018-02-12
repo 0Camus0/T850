@@ -141,4 +141,5 @@ namespace t800 {
   void GLTexture::SetSampler(const DeviceContext & deviceContext)
   {
   }
+
 }

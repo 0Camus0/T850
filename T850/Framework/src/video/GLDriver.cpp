@@ -34,8 +34,19 @@
 #endif
 #elif defined(OS_LINUX)
 #include <GL/freeglut.h>
+#ifdef T850_HEADLESS
+#include <EGL/egl.h>
+#include <EGL/eglext.h>
+#include <GLES3/gl31.h>
+#include <assert.h>
+#include <fcntl.h>
+#include <gbm.h>
+#include <stdbool.h>
+#include <stdio.h>
+#include <string.h>
+#include <unistd.h>
 #endif
-
+#endif
 namespace t800 {
   extern Device*            T8Device;
   extern DeviceContext*     T8DeviceContext;
@@ -347,10 +358,38 @@ namespace t800 {
   void	GLDriver::InitDriver() {
     T8Device = new t800::GLDevice;
     T8DeviceContext = new t800::GLDeviceContext;
+#ifdef T850_HEADLESS
+    int32_t fd = open("/dev/dri/renderD128", O_RDWR);
+    struct gbm_device *gbm = gbm_create_device(fd);
+    /* setup EGL from the GBM device */
+    EGLDisplay egl_dpy = eglGetPlatformDisplay(EGL_PLATFORM_GBM_MESA, gbm, NULL);
+    res = eglInitialize(egl_dpy, NULL, NULL);
 
+    const char *egl_extension_st = eglQueryString(egl_dpy, EGL_EXTENSIONS);
+
+    static const EGLint config_attribs[] = {
+      EGL_RENDERABLE_TYPE, EGL_OPENGL_ES3_BIT_KHR,
+      EGL_NONE
+    };
+    EGLConfig cfg;
+    EGLint count;
+
+    res = eglChooseConfig(egl_dpy, config_attribs, &cfg, 1, &count);
+    res = eglBindAPI(EGL_OPENGL_ES_API);
+
+    static const EGLint attribs[] = {
+      EGL_CONTEXT_CLIENT_VERSION, 3,
+      EGL_NONE
+    };
+    EGLContext core_ctx = eglCreateContext(egl_dpy,
+      cfg,
+      EGL_NO_CONTEXT,
+      attribs);
+
+    res = eglMakeCurrent(egl_dpy, EGL_NO_SURFACE, EGL_NO_SURFACE, core_ctx);
+#else
 #if (defined(USING_OPENGL_ES20) || defined(USING_OPENGL_ES30) || defined(USING_OPENGL_ES31)) && defined(USING_SDL)
     EGLint numConfigs;
-
     EGLNativeDisplayType nativeDisplay;
 
     if (!OpenNativeDisplay(&nativeDisplay)) {
@@ -418,7 +457,7 @@ namespace t800 {
     width = sur->w;
     height = sur->h;
 #endif
-
+#endif//HEADLESS
     std::string GL_Version = std::string((const char*)glGetString(GL_VERSION));
     std::string GL_Extensions = std::string((const char*)glGetString(GL_EXTENSIONS));
 
@@ -537,6 +576,49 @@ namespace t800 {
     default:
       break;
     }
+  }
+
+  void GLDriver::SaveScreenshot(std::string path)
+  {
+    unsigned char *pixels;
+    std::ofstream out(path + std::string(".ppm"), std::ios::binary);
+    GLint viewport[4];
+    glGetIntegerv(GL_VIEWPORT, viewport);
+    pixels = new unsigned char[viewport[2] * viewport[3] * 4];
+
+    glReadBuffer(GL_COLOR_ATTACHMENT0);
+    glReadPixels(0, 0, viewport[2], viewport[3], GL_RGBA,
+      GL_UNSIGNED_BYTE, pixels);
+    glReadBuffer(GL_BACK);
+
+    std::string h = std::string("P3\n");
+    out.write(h.c_str(),h.size());
+    h = std::string("# Test Image\n");
+    out.write(h.c_str(), h.size());
+    h = std::string(std::to_string(viewport[2]) + std::string(" ")+ std::to_string( viewport[3]) + std::string("\n"));
+    out.write(h.c_str(), h.size());
+    h = std::string("255\n");
+    out.write(h.c_str(), h.size());
+
+    for (int i = viewport[3] * 4 - 4; i >=0; i-=4)
+    {
+      for (int j = 0; j < viewport[2] * 4; j+=4)
+      {
+        int indx = j + i*viewport[2];
+        unsigned int val = (unsigned int)pixels[indx];
+        out << val;
+        out << " ";
+        val = (unsigned int)pixels[indx +1];
+        out << val;
+        out << " ";
+        val = (unsigned int)pixels[indx +2];
+        out << val;
+        out << " ";
+      }
+      out.put('\n');
+    }
+
+    delete[] pixels;
   }
   
   void GLDriver::SetCullFace(FACE_CULLING state) {

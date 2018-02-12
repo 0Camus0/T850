@@ -148,6 +148,7 @@ namespace t800 {
     void	SetDimensions(int, int);
     void SetBlendState(BLEND_STATES state) override;
     void SetDepthStencilState(DEPTH_STENCIL_STATES state) override;
+    void SaveScreenshot(std::string path) override;
 	void SetCullFace(FACE_CULLING state) override;
 
     void	PopRT();

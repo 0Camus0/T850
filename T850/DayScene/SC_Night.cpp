@@ -201,10 +201,12 @@ void SC_Night::InitVars() {
   m_spline.m_looped = false;
   m_spline.Init();
 
+  m_agent.SetOffset(0);
   m_agent.m_pSpline = &m_spline;
   m_agent.m_moving = true;
   m_agent.m_velocity = 15.0f;
 
+  m_lightAgent.SetOffset(50);
   m_lightAgent.m_pSpline = &m_spline;
   m_lightAgent.m_moving = true;
   m_lightAgent.m_velocity = 15.0f;
@@ -327,7 +329,7 @@ void SC_Night::OnUpdate(float _DtSecs) {
   DtSecs = _DtSecs;
   Meshes[0].SetParallaxSettings(SceneProp.ParallaxLowSamples, SceneProp.ParallaxHighSamples, SceneProp.ParallaxHeight);
   m_agent.Update(DtSecs);
-  m_lightAgent.Update(DtSecs + 0.02);
+  m_lightAgent.Update(DtSecs);
   omniLightPos = m_lightAgent.m_actualPoint;
   ActiveCam->Update(DtSecs);
   VP = ActiveCam->VP;

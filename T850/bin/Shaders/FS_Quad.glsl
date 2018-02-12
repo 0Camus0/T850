@@ -600,17 +600,12 @@ highp float rand2D(highp vec2 x) {
 highp float noise2D( highp vec2 st) {
   highp vec2 i = floor(st);
   highp vec2 f = fract(st);
-
-  // Four corners in 2D of a tile
   highp float a = rand2D(i);
   highp float b = rand2D(i + vec2(1.0, 0.0));
   highp float c = rand2D(i + vec2(0.0, 1.0));
   highp float d = rand2D(i + vec2(1.0, 1.0));
 
-
   highp vec2 u = smoothstep(0.,1.,f);
-
-  // Mix 4 coorners porcentages
   return mix(a, b, u.x) +
     (c - a)* u.y * (1.0 - u.x) +
     (d - b) * u.x * u.y;
@@ -657,14 +652,12 @@ Ball(highp vec3 x)
   highp float time = LightPositions[0].x;
   highp vec2 uv;
   uv.x = length(x.xz) / 1.42;
-  uv.y = x.y;//+ turbulence4(noiseSampler, noisePos) * noiseStrength;
+  uv.y = x.y;
   highp float d = distanceFunc(x);
   highp float noiseVal = noise2D(uv*40.0);
   d = d+cos(time*noiseVal)*0.1;
   d = d + sin(time * 2.0 )*0.2*noiseVal;
-  //return half4(noiseVal, noiseVal, noiseVal, 1);
   highp vec4 rret = shade(d);
-  //rret.a *=;
   return rret;
 }
 #define VOLUMEFUNC(x) Ball(x)
@@ -706,21 +699,14 @@ void main(){
 
   //March
   highp vec4 c = vec4(0.0,0.0,0.0,0.0);
-  //float alpha = 0;
   highp vec4 step = (intersectionNear- intersectionFar) / vec4(float(steps) - 1.0);
   highp vec4 P = intersectionFar;
   for (int i = 0; i<steps; i++) {
-    //if (c.a >= 1.0) break;
     highp vec3 ppp = (P.xyz - boxMin) / boxSize; //0 - 1 normalized coords
-
     highp vec4 s = VOLUMEFUNC(ppp);
-    //alpha = s.a + (1.0 - s.a)*alpha;
     c = s.a*s.rgba + (1.0 - s.a)*c; //TODO: Front to back
-    //s.rgb *= s.a;
-    //c += c *(1.0 - s.a);
     P += step;
   }
-  //c /= steps;
    colorOut = c;
 }
 
@@ -992,9 +978,9 @@ void main(){
 //March
  highp vec4 step = (intersectionNear - intersectionFar) / float(steps - 1);
  highp vec4 P = intersectionFar;
- int xD = int(mod(position.x, 4.0));
- int yD = int(mod(position.y, 4.0));
- P += step * ditherPattern[xD + yD * 4];
+ //int xD = int(mod(position.x, 4.0));
+ //int yD = int(mod(position.y, 4.0));
+ //P += step * ditherPattern[xD + yD * 4];
  highp vec4 accumFog = vec4(0.0,0.0,0.0,0.0);
 
 highp vec4 LightPos;

@@ -190,6 +190,7 @@ void SC_Day::InitVars() {
   m_spline.m_looped = false;
   m_spline.Init();
 
+  m_agent.SetOffset(0);
   m_agent.m_pSpline = &m_spline;
   m_agent.m_moving = true;
   m_agent.m_velocity = 15.0f;
@@ -316,9 +317,15 @@ void SC_Day::OnUpdate(float _DtSecs) {
   SceneProp.pLightCameras[0]->Yaw -= 0.008f *DtSecs;
 
   SceneProp.pLightCameras[0]->Update(DtSecs);
+
+
   if (totalTime > 150.0f) {
     totalTime = 0.0;
+#ifdef T850_HEADLESS
+    exit(0);
+#else
     pFramework->pBaseApp->LoadScene(1);
+#endif
   }
 }
 
@@ -643,10 +650,22 @@ void SC_Day::OnDraw() {
   Quads[0].SetTexture(pFramework->pVideoDriver->GetRTTexture(BloomAccumPass, BaseDriver::COLOR0_ATTACHMENT), 1);
   Quads[0].SetGlobalSignature(Signature::HDR_COMP_PASS);
   Quads[0].Draw();
-  pFramework->pVideoDriver->PopRT();
   
  
-  
+#ifdef T850_HEADLESS
+  //Save file
+  const float timeToScreenshot = 5.0;
+  static float screenshotTime = 0.0;
+  static int screenshotNum = 0;
+  screenshotTime += DtSecs;
+  if (screenshotTime >= timeToScreenshot) {
+    screenshotTime = 0;
+    pFramework->pVideoDriver->SaveScreenshot("Test_" + std::to_string(screenshotNum));
+    screenshotNum++;
+  }
+#else
+  pFramework->pVideoDriver->PopRT();
+
   // Final Draw
   Quads[7].SetTexture(pFramework->pVideoDriver->GetRTTexture(ExtraHelperPass, BaseDriver::COLOR0_ATTACHMENT), 0);
   Quads[7].SetGlobalSignature(Signature::VIGNETTE_PASS);
@@ -671,6 +690,7 @@ void SC_Day::OnDraw() {
   if (SceneProp.pCameras[0]->Eye.y > 80) {
     m_flare.Draw();
   }
+#endif
 }
 
 void  SC_Day::ChangeSettingsOnPlus() {

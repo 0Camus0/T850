@@ -7,7 +7,7 @@ using namespace t800;
 #define MEDIUMQ 2
 #define LOWQ 3
 
-#define QUALITY_SELECTED MEDIUMQ
+#define QUALITY_SELECTED LOWQ
 
 #if   QUALITY_SELECTED == HIGHQ
 #define MAX_QUALITY
@@ -185,6 +185,7 @@ void SC_Tech::InitVars() {
   m_spline.m_looped = false;
   m_spline.Init();
 
+  m_agent.SetOffset(0);
   m_agent.m_pSpline = &m_spline;
   m_agent.m_moving = true;
   m_agent.m_velocity = 15.0f;

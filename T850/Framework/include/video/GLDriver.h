@@ -14,9 +14,19 @@
 #define T800_GLDRIVER_H
 
 #include <Config.h>
-
 #include <video/BaseDriver.h>
-
+#ifdef T850_HEADLESS
+#include <EGL/egl.h>
+#include <EGL/eglext.h>
+#include <GLES3/gl31.h>
+#include <assert.h>
+#include <fcntl.h>
+#include <gbm.h>
+#include <stdbool.h>
+#include <stdio.h>
+#include <string.h>
+#include <unistd.h>
+#else
 #ifdef OS_WINDOWS
 #if defined(USING_OPENGL_ES20)
 #include <EGL/egl.h>
@@ -50,6 +60,7 @@
 #include <GL/glew.h>
 #else
 #include <GL/glew.h>
+#endif
 #endif
 #endif
 

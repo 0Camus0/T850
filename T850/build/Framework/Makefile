@@ -48,10 +48,10 @@ RM = /usr/bin/cmake -E remove -f
 EQUALS = =
 
 # The top-level source directory on which CMake was run.
-CMAKE_SOURCE_DIR = /home/Camus/Puga/T800
+CMAKE_SOURCE_DIR = /home/Camus/Dev/T850/T850/T850
 
 # The top-level build directory on which CMake was run.
-CMAKE_BINARY_DIR = /home/Camus/Puga/T800/build
+CMAKE_BINARY_DIR = /home/Camus/Dev/T850/T850/T850/build
 
 #=============================================================================
 # Targets provided globally by CMake.
@@ -124,14 +124,14 @@ edit_cache/fast: edit_cache
 
 # The main all target
 all: cmake_check_build_system
-	cd /home/Camus/Puga/T800/build && $(CMAKE_COMMAND) -E cmake_progress_start /home/Camus/Puga/T800/build/CMakeFiles /home/Camus/Puga/T800/build/Framework/CMakeFiles/progress.marks
-	cd /home/Camus/Puga/T800/build && $(MAKE) -f CMakeFiles/Makefile2 Framework/all
-	$(CMAKE_COMMAND) -E cmake_progress_start /home/Camus/Puga/T800/build/CMakeFiles 0
+	cd /home/Camus/Dev/T850/T850/T850/build && $(CMAKE_COMMAND) -E cmake_progress_start /home/Camus/Dev/T850/T850/T850/build/CMakeFiles /home/Camus/Dev/T850/T850/T850/build/Framework/CMakeFiles/progress.marks
+	cd /home/Camus/Dev/T850/T850/T850/build && $(MAKE) -f CMakeFiles/Makefile2 Framework/all
+	$(CMAKE_COMMAND) -E cmake_progress_start /home/Camus/Dev/T850/T850/T850/build/CMakeFiles 0
 .PHONY : all
 
 # The main clean target
 clean:
-	cd /home/Camus/Puga/T800/build && $(MAKE) -f CMakeFiles/Makefile2 Framework/clean
+	cd /home/Camus/Dev/T850/T850/T850/build && $(MAKE) -f CMakeFiles/Makefile2 Framework/clean
 .PHONY : clean
 
 # The main clean target
@@ -141,22 +141,22 @@ clean/fast: clean
 
 # Prepare targets for installation.
 preinstall: all
-	cd /home/Camus/Puga/T800/build && $(MAKE) -f CMakeFiles/Makefile2 Framework/preinstall
+	cd /home/Camus/Dev/T850/T850/T850/build && $(MAKE) -f CMakeFiles/Makefile2 Framework/preinstall
 .PHONY : preinstall
 
 # Prepare targets for installation.
 preinstall/fast:
-	cd /home/Camus/Puga/T800/build && $(MAKE) -f CMakeFiles/Makefile2 Framework/preinstall
+	cd /home/Camus/Dev/T850/T850/T850/build && $(MAKE) -f CMakeFiles/Makefile2 Framework/preinstall
 .PHONY : preinstall/fast
 
 # clear depends
 depend:
-	cd /home/Camus/Puga/T800/build && $(CMAKE_COMMAND) -H$(CMAKE_SOURCE_DIR) -B$(CMAKE_BINARY_DIR) --check-build-system CMakeFiles/Makefile.cmake 1
+	cd /home/Camus/Dev/T850/T850/T850/build && $(CMAKE_COMMAND) -H$(CMAKE_SOURCE_DIR) -B$(CMAKE_BINARY_DIR) --check-build-system CMakeFiles/Makefile.cmake 1
 .PHONY : depend
 
 # Convenience name for target.
 Framework/CMakeFiles/T800Framework.dir/rule:
-	cd /home/Camus/Puga/T800/build && $(MAKE) -f CMakeFiles/Makefile2 Framework/CMakeFiles/T800Framework.dir/rule
+	cd /home/Camus/Dev/T850/T850/T850/build && $(MAKE) -f CMakeFiles/Makefile2 Framework/CMakeFiles/T800Framework.dir/rule
 .PHONY : Framework/CMakeFiles/T800Framework.dir/rule
 
 # Convenience name for target.
@@ -166,7 +166,7 @@ T800Framework: Framework/CMakeFiles/T800Framework.dir/rule
 
 # fast build rule for target.
 T800Framework/fast:
-	cd /home/Camus/Puga/T800/build && $(MAKE) -f Framework/CMakeFiles/T800Framework.dir/build.make Framework/CMakeFiles/T800Framework.dir/build
+	cd /home/Camus/Dev/T850/T850/T850/build && $(MAKE) -f Framework/CMakeFiles/T800Framework.dir/build.make Framework/CMakeFiles/T800Framework.dir/build
 .PHONY : T800Framework/fast
 
 __/Librerias/tinyxml2/tinyxml2.o: __/Librerias/tinyxml2/tinyxml2.cpp.o
@@ -175,7 +175,7 @@ __/Librerias/tinyxml2/tinyxml2.o: __/Librerias/tinyxml2/tinyxml2.cpp.o
 
 # target to build an object file
 __/Librerias/tinyxml2/tinyxml2.cpp.o:
-	cd /home/Camus/Puga/T800/build && $(MAKE) -f Framework/CMakeFiles/T800Framework.dir/build.make Framework/CMakeFiles/T800Framework.dir/__/Librerias/tinyxml2/tinyxml2.cpp.o
+	cd /home/Camus/Dev/T850/T850/T850/build && $(MAKE) -f Framework/CMakeFiles/T800Framework.dir/build.make Framework/CMakeFiles/T800Framework.dir/__/Librerias/tinyxml2/tinyxml2.cpp.o
 .PHONY : __/Librerias/tinyxml2/tinyxml2.cpp.o
 
 __/Librerias/tinyxml2/tinyxml2.i: __/Librerias/tinyxml2/tinyxml2.cpp.i
@@ -184,7 +184,7 @@ __/Librerias/tinyxml2/tinyxml2.i: __/Librerias/tinyxml2/tinyxml2.cpp.i
 
 # target to preprocess a source file
 __/Librerias/tinyxml2/tinyxml2.cpp.i:
-	cd /home/Camus/Puga/T800/build && $(MAKE) -f Framework/CMakeFiles/T800Framework.dir/build.make Framework/CMakeFiles/T800Framework.dir/__/Librerias/tinyxml2/tinyxml2.cpp.i
+	cd /home/Camus/Dev/T850/T850/T850/build && $(MAKE) -f Framework/CMakeFiles/T800Framework.dir/build.make Framework/CMakeFiles/T800Framework.dir/__/Librerias/tinyxml2/tinyxml2.cpp.i
 .PHONY : __/Librerias/tinyxml2/tinyxml2.cpp.i
 
 __/Librerias/tinyxml2/tinyxml2.s: __/Librerias/tinyxml2/tinyxml2.cpp.s
@@ -193,7 +193,7 @@ __/Librerias/tinyxml2/tinyxml2.s: __/Librerias/tinyxml2/tinyxml2.cpp.s
 
 # target to generate assembly for a file
 __/Librerias/tinyxml2/tinyxml2.cpp.s:
-	cd /home/Camus/Puga/T800/build && $(MAKE) -f Framework/CMakeFiles/T800Framework.dir/build.make Framework/CMakeFiles/T800Framework.dir/__/Librerias/tinyxml2/tinyxml2.cpp.s
+	cd /home/Camus/Dev/T850/T850/T850/build && $(MAKE) -f Framework/CMakeFiles/T800Framework.dir/build.make Framework/CMakeFiles/T800Framework.dir/__/Librerias/tinyxml2/tinyxml2.cpp.s
 .PHONY : __/Librerias/tinyxml2/tinyxml2.cpp.s
 
 src/core/Core.o: src/core/Core.cpp.o
@@ -202,7 +202,7 @@ src/core/Core.o: src/core/Core.cpp.o
 
 # target to build an object file
 src/core/Core.cpp.o:
-	cd /home/Camus/Puga/T800/build && $(MAKE) -f Framework/CMakeFiles/T800Framework.dir/build.make Framework/CMakeFiles/T800Framework.dir/src/core/Core.cpp.o
+	cd /home/Camus/Dev/T850/T850/T850/build && $(MAKE) -f Framework/CMakeFiles/T800Framework.dir/build.make Framework/CMakeFiles/T800Framework.dir/src/core/Core.cpp.o
 .PHONY : src/core/Core.cpp.o
 
 src/core/Core.i: src/core/Core.cpp.i
@@ -211,7 +211,7 @@ src/core/Core.i: src/core/Core.cpp.i
 
 # target to preprocess a source file
 src/core/Core.cpp.i:
-	cd /home/Camus/Puga/T800/build && $(MAKE) -f Framework/CMakeFiles/T800Framework.dir/build.make Framework/CMakeFiles/T800Framework.dir/src/core/Core.cpp.i
+	cd /home/Camus/Dev/T850/T850/T850/build && $(MAKE) -f Framework/CMakeFiles/T800Framework.dir/build.make Framework/CMakeFiles/T800Framework.dir/src/core/Core.cpp.i
 .PHONY : src/core/Core.cpp.i
 
 src/core/Core.s: src/core/Core.cpp.s
@@ -220,7 +220,7 @@ src/core/Core.s: src/core/Core.cpp.s
 
 # target to generate assembly for a file
 src/core/Core.cpp.s:
-	cd /home/Camus/Puga/T800/build && $(MAKE) -f Framework/CMakeFiles/T800Framework.dir/build.make Framework/CMakeFiles/T800Framework.dir/src/core/Core.cpp.s
+	cd /home/Camus/Dev/T850/T850/T850/build && $(MAKE) -f Framework/CMakeFiles/T800Framework.dir/build.make Framework/CMakeFiles/T800Framework.dir/src/core/Core.cpp.s
 .PHONY : src/core/Core.cpp.s
 
 src/core/LinuxFramework.o: src/core/LinuxFramework.cpp.o
@@ -229,7 +229,7 @@ src/core/LinuxFramework.o: src/core/LinuxFramework.cpp.o
 
 # target to build an object file
 src/core/LinuxFramework.cpp.o:
-	cd /home/Camus/Puga/T800/build && $(MAKE) -f Framework/CMakeFiles/T800Framework.dir/build.make Framework/CMakeFiles/T800Framework.dir/src/core/LinuxFramework.cpp.o
+	cd /home/Camus/Dev/T850/T850/T850/build && $(MAKE) -f Framework/CMakeFiles/T800Framework.dir/build.make Framework/CMakeFiles/T800Framework.dir/src/core/LinuxFramework.cpp.o
 .PHONY : src/core/LinuxFramework.cpp.o
 
 src/core/LinuxFramework.i: src/core/LinuxFramework.cpp.i
@@ -238,7 +238,7 @@ src/core/LinuxFramework.i: src/core/LinuxFramework.cpp.i
 
 # target to preprocess a source file
 src/core/LinuxFramework.cpp.i:
-	cd /home/Camus/Puga/T800/build && $(MAKE) -f Framework/CMakeFiles/T800Framework.dir/build.make Framework/CMakeFiles/T800Framework.dir/src/core/LinuxFramework.cpp.i
+	cd /home/Camus/Dev/T850/T850/T850/build && $(MAKE) -f Framework/CMakeFiles/T800Framework.dir/build.make Framework/CMakeFiles/T800Framework.dir/src/core/LinuxFramework.cpp.i
 .PHONY : src/core/LinuxFramework.cpp.i
 
 src/core/LinuxFramework.s: src/core/LinuxFramework.cpp.s
@@ -247,35 +247,35 @@ src/core/LinuxFramework.s: src/core/LinuxFramework.cpp.s
 
 # target to generate assembly for a file
 src/core/LinuxFramework.cpp.s:
-	cd /home/Camus/Puga/T800/build && $(MAKE) -f Framework/CMakeFiles/T800Framework.dir/build.make Framework/CMakeFiles/T800Framework.dir/src/core/LinuxFramework.cpp.s
+	cd /home/Camus/Dev/T850/T850/T850/build && $(MAKE) -f Framework/CMakeFiles/T800Framework.dir/build.make Framework/CMakeFiles/T800Framework.dir/src/core/LinuxFramework.cpp.s
 .PHONY : src/core/LinuxFramework.cpp.s
 
-src/scene/Mesh.o: src/scene/Mesh.cpp.o
+src/scene/LensFlare.o: src/scene/LensFlare.cpp.o
 
-.PHONY : src/scene/Mesh.o
+.PHONY : src/scene/LensFlare.o
 
 # target to build an object file
-src/scene/Mesh.cpp.o:
-	cd /home/Camus/Puga/T800/build && $(MAKE) -f Framework/CMakeFiles/T800Framework.dir/build.make Framework/CMakeFiles/T800Framework.dir/src/scene/Mesh.cpp.o
-.PHONY : src/scene/Mesh.cpp.o
+src/scene/LensFlare.cpp.o:
+	cd /home/Camus/Dev/T850/T850/T850/build && $(MAKE) -f Framework/CMakeFiles/T800Framework.dir/build.make Framework/CMakeFiles/T800Framework.dir/src/scene/LensFlare.cpp.o
+.PHONY : src/scene/LensFlare.cpp.o
 
-src/scene/Mesh.i: src/scene/Mesh.cpp.i
+src/scene/LensFlare.i: src/scene/LensFlare.cpp.i
 
-.PHONY : src/scene/Mesh.i
+.PHONY : src/scene/LensFlare.i
 
 # target to preprocess a source file
-src/scene/Mesh.cpp.i:
-	cd /home/Camus/Puga/T800/build && $(MAKE) -f Framework/CMakeFiles/T800Framework.dir/build.make Framework/CMakeFiles/T800Framework.dir/src/scene/Mesh.cpp.i
-.PHONY : src/scene/Mesh.cpp.i
+src/scene/LensFlare.cpp.i:
+	cd /home/Camus/Dev/T850/T850/T850/build && $(MAKE) -f Framework/CMakeFiles/T800Framework.dir/build.make Framework/CMakeFiles/T800Framework.dir/src/scene/LensFlare.cpp.i
+.PHONY : src/scene/LensFlare.cpp.i
 
-src/scene/Mesh.s: src/scene/Mesh.cpp.s
+src/scene/LensFlare.s: src/scene/LensFlare.cpp.s
 
-.PHONY : src/scene/Mesh.s
+.PHONY : src/scene/LensFlare.s
 
 # target to generate assembly for a file
-src/scene/Mesh.cpp.s:
-	cd /home/Camus/Puga/T800/build && $(MAKE) -f Framework/CMakeFiles/T800Framework.dir/build.make Framework/CMakeFiles/T800Framework.dir/src/scene/Mesh.cpp.s
-.PHONY : src/scene/Mesh.cpp.s
+src/scene/LensFlare.cpp.s:
+	cd /home/Camus/Dev/T850/T850/T850/build && $(MAKE) -f Framework/CMakeFiles/T800Framework.dir/build.make Framework/CMakeFiles/T800Framework.dir/src/scene/LensFlare.cpp.s
+.PHONY : src/scene/LensFlare.cpp.s
 
 src/scene/PrimitiveInstance.o: src/scene/PrimitiveInstance.cpp.o
 
@@ -283,7 +283,7 @@ src/scene/PrimitiveInstance.o: src/scene/PrimitiveInstance.cpp.o
 
 # target to build an object file
 src/scene/PrimitiveInstance.cpp.o:
-	cd /home/Camus/Puga/T800/build && $(MAKE) -f Framework/CMakeFiles/T800Framework.dir/build.make Framework/CMakeFiles/T800Framework.dir/src/scene/PrimitiveInstance.cpp.o
+	cd /home/Camus/Dev/T850/T850/T850/build && $(MAKE) -f Framework/CMakeFiles/T800Framework.dir/build.make Framework/CMakeFiles/T800Framework.dir/src/scene/PrimitiveInstance.cpp.o
 .PHONY : src/scene/PrimitiveInstance.cpp.o
 
 src/scene/PrimitiveInstance.i: src/scene/PrimitiveInstance.cpp.i
@@ -292,7 +292,7 @@ src/scene/PrimitiveInstance.i: src/scene/PrimitiveInstance.cpp.i
 
 # target to preprocess a source file
 src/scene/PrimitiveInstance.cpp.i:
-	cd /home/Camus/Puga/T800/build && $(MAKE) -f Framework/CMakeFiles/T800Framework.dir/build.make Framework/CMakeFiles/T800Framework.dir/src/scene/PrimitiveInstance.cpp.i
+	cd /home/Camus/Dev/T850/T850/T850/build && $(MAKE) -f Framework/CMakeFiles/T800Framework.dir/build.make Framework/CMakeFiles/T800Framework.dir/src/scene/PrimitiveInstance.cpp.i
 .PHONY : src/scene/PrimitiveInstance.cpp.i
 
 src/scene/PrimitiveInstance.s: src/scene/PrimitiveInstance.cpp.s
@@ -301,7 +301,7 @@ src/scene/PrimitiveInstance.s: src/scene/PrimitiveInstance.cpp.s
 
 # target to generate assembly for a file
 src/scene/PrimitiveInstance.cpp.s:
-	cd /home/Camus/Puga/T800/build && $(MAKE) -f Framework/CMakeFiles/T800Framework.dir/build.make Framework/CMakeFiles/T800Framework.dir/src/scene/PrimitiveInstance.cpp.s
+	cd /home/Camus/Dev/T850/T850/T850/build && $(MAKE) -f Framework/CMakeFiles/T800Framework.dir/build.make Framework/CMakeFiles/T800Framework.dir/src/scene/PrimitiveInstance.cpp.s
 .PHONY : src/scene/PrimitiveInstance.cpp.s
 
 src/scene/PrimitiveManager.o: src/scene/PrimitiveManager.cpp.o
@@ -310,7 +310,7 @@ src/scene/PrimitiveManager.o: src/scene/PrimitiveManager.cpp.o
 
 # target to build an object file
 src/scene/PrimitiveManager.cpp.o:
-	cd /home/Camus/Puga/T800/build && $(MAKE) -f Framework/CMakeFiles/T800Framework.dir/build.make Framework/CMakeFiles/T800Framework.dir/src/scene/PrimitiveManager.cpp.o
+	cd /home/Camus/Dev/T850/T850/T850/build && $(MAKE) -f Framework/CMakeFiles/T800Framework.dir/build.make Framework/CMakeFiles/T800Framework.dir/src/scene/PrimitiveManager.cpp.o
 .PHONY : src/scene/PrimitiveManager.cpp.o
 
 src/scene/PrimitiveManager.i: src/scene/PrimitiveManager.cpp.i
@@ -319,7 +319,7 @@ src/scene/PrimitiveManager.i: src/scene/PrimitiveManager.cpp.i
 
 # target to preprocess a source file
 src/scene/PrimitiveManager.cpp.i:
-	cd /home/Camus/Puga/T800/build && $(MAKE) -f Framework/CMakeFiles/T800Framework.dir/build.make Framework/CMakeFiles/T800Framework.dir/src/scene/PrimitiveManager.cpp.i
+	cd /home/Camus/Dev/T850/T850/T850/build && $(MAKE) -f Framework/CMakeFiles/T800Framework.dir/build.make Framework/CMakeFiles/T800Framework.dir/src/scene/PrimitiveManager.cpp.i
 .PHONY : src/scene/PrimitiveManager.cpp.i
 
 src/scene/PrimitiveManager.s: src/scene/PrimitiveManager.cpp.s
@@ -328,35 +328,62 @@ src/scene/PrimitiveManager.s: src/scene/PrimitiveManager.cpp.s
 
 # target to generate assembly for a file
 src/scene/PrimitiveManager.cpp.s:
-	cd /home/Camus/Puga/T800/build && $(MAKE) -f Framework/CMakeFiles/T800Framework.dir/build.make Framework/CMakeFiles/T800Framework.dir/src/scene/PrimitiveManager.cpp.s
+	cd /home/Camus/Dev/T850/T850/T850/build && $(MAKE) -f Framework/CMakeFiles/T800Framework.dir/build.make Framework/CMakeFiles/T800Framework.dir/src/scene/PrimitiveManager.cpp.s
 .PHONY : src/scene/PrimitiveManager.cpp.s
 
-src/scene/Quad.o: src/scene/Quad.cpp.o
+src/scene/RenderMesh.o: src/scene/RenderMesh.cpp.o
 
-.PHONY : src/scene/Quad.o
+.PHONY : src/scene/RenderMesh.o
 
 # target to build an object file
-src/scene/Quad.cpp.o:
-	cd /home/Camus/Puga/T800/build && $(MAKE) -f Framework/CMakeFiles/T800Framework.dir/build.make Framework/CMakeFiles/T800Framework.dir/src/scene/Quad.cpp.o
-.PHONY : src/scene/Quad.cpp.o
+src/scene/RenderMesh.cpp.o:
+	cd /home/Camus/Dev/T850/T850/T850/build && $(MAKE) -f Framework/CMakeFiles/T800Framework.dir/build.make Framework/CMakeFiles/T800Framework.dir/src/scene/RenderMesh.cpp.o
+.PHONY : src/scene/RenderMesh.cpp.o
 
-src/scene/Quad.i: src/scene/Quad.cpp.i
+src/scene/RenderMesh.i: src/scene/RenderMesh.cpp.i
 
-.PHONY : src/scene/Quad.i
+.PHONY : src/scene/RenderMesh.i
 
 # target to preprocess a source file
-src/scene/Quad.cpp.i:
-	cd /home/Camus/Puga/T800/build && $(MAKE) -f Framework/CMakeFiles/T800Framework.dir/build.make Framework/CMakeFiles/T800Framework.dir/src/scene/Quad.cpp.i
-.PHONY : src/scene/Quad.cpp.i
+src/scene/RenderMesh.cpp.i:
+	cd /home/Camus/Dev/T850/T850/T850/build && $(MAKE) -f Framework/CMakeFiles/T800Framework.dir/build.make Framework/CMakeFiles/T800Framework.dir/src/scene/RenderMesh.cpp.i
+.PHONY : src/scene/RenderMesh.cpp.i
 
-src/scene/Quad.s: src/scene/Quad.cpp.s
+src/scene/RenderMesh.s: src/scene/RenderMesh.cpp.s
 
-.PHONY : src/scene/Quad.s
+.PHONY : src/scene/RenderMesh.s
 
 # target to generate assembly for a file
-src/scene/Quad.cpp.s:
-	cd /home/Camus/Puga/T800/build && $(MAKE) -f Framework/CMakeFiles/T800Framework.dir/build.make Framework/CMakeFiles/T800Framework.dir/src/scene/Quad.cpp.s
-.PHONY : src/scene/Quad.cpp.s
+src/scene/RenderMesh.cpp.s:
+	cd /home/Camus/Dev/T850/T850/T850/build && $(MAKE) -f Framework/CMakeFiles/T800Framework.dir/build.make Framework/CMakeFiles/T800Framework.dir/src/scene/RenderMesh.cpp.s
+.PHONY : src/scene/RenderMesh.cpp.s
+
+src/scene/RenderQuad.o: src/scene/RenderQuad.cpp.o
+
+.PHONY : src/scene/RenderQuad.o
+
+# target to build an object file
+src/scene/RenderQuad.cpp.o:
+	cd /home/Camus/Dev/T850/T850/T850/build && $(MAKE) -f Framework/CMakeFiles/T800Framework.dir/build.make Framework/CMakeFiles/T800Framework.dir/src/scene/RenderQuad.cpp.o
+.PHONY : src/scene/RenderQuad.cpp.o
+
+src/scene/RenderQuad.i: src/scene/RenderQuad.cpp.i
+
+.PHONY : src/scene/RenderQuad.i
+
+# target to preprocess a source file
+src/scene/RenderQuad.cpp.i:
+	cd /home/Camus/Dev/T850/T850/T850/build && $(MAKE) -f Framework/CMakeFiles/T800Framework.dir/build.make Framework/CMakeFiles/T800Framework.dir/src/scene/RenderQuad.cpp.i
+.PHONY : src/scene/RenderQuad.cpp.i
+
+src/scene/RenderQuad.s: src/scene/RenderQuad.cpp.s
+
+.PHONY : src/scene/RenderQuad.s
+
+# target to generate assembly for a file
+src/scene/RenderQuad.cpp.s:
+	cd /home/Camus/Dev/T850/T850/T850/build && $(MAKE) -f Framework/CMakeFiles/T800Framework.dir/build.make Framework/CMakeFiles/T800Framework.dir/src/scene/RenderQuad.cpp.s
+.PHONY : src/scene/RenderQuad.cpp.s
 
 src/scene/SceneProp.o: src/scene/SceneProp.cpp.o
 
@@ -364,7 +391,7 @@ src/scene/SceneProp.o: src/scene/SceneProp.cpp.o
 
 # target to build an object file
 src/scene/SceneProp.cpp.o:
-	cd /home/Camus/Puga/T800/build && $(MAKE) -f Framework/CMakeFiles/T800Framework.dir/build.make Framework/CMakeFiles/T800Framework.dir/src/scene/SceneProp.cpp.o
+	cd /home/Camus/Dev/T850/T850/T850/build && $(MAKE) -f Framework/CMakeFiles/T800Framework.dir/build.make Framework/CMakeFiles/T800Framework.dir/src/scene/SceneProp.cpp.o
 .PHONY : src/scene/SceneProp.cpp.o
 
 src/scene/SceneProp.i: src/scene/SceneProp.cpp.i
@@ -373,7 +400,7 @@ src/scene/SceneProp.i: src/scene/SceneProp.cpp.i
 
 # target to preprocess a source file
 src/scene/SceneProp.cpp.i:
-	cd /home/Camus/Puga/T800/build && $(MAKE) -f Framework/CMakeFiles/T800Framework.dir/build.make Framework/CMakeFiles/T800Framework.dir/src/scene/SceneProp.cpp.i
+	cd /home/Camus/Dev/T850/T850/T850/build && $(MAKE) -f Framework/CMakeFiles/T800Framework.dir/build.make Framework/CMakeFiles/T800Framework.dir/src/scene/SceneProp.cpp.i
 .PHONY : src/scene/SceneProp.cpp.i
 
 src/scene/SceneProp.s: src/scene/SceneProp.cpp.s
@@ -382,8 +409,89 @@ src/scene/SceneProp.s: src/scene/SceneProp.cpp.s
 
 # target to generate assembly for a file
 src/scene/SceneProp.cpp.s:
-	cd /home/Camus/Puga/T800/build && $(MAKE) -f Framework/CMakeFiles/T800Framework.dir/build.make Framework/CMakeFiles/T800Framework.dir/src/scene/SceneProp.cpp.s
+	cd /home/Camus/Dev/T850/T850/T850/build && $(MAKE) -f Framework/CMakeFiles/T800Framework.dir/build.make Framework/CMakeFiles/T800Framework.dir/src/scene/SceneProp.cpp.s
 .PHONY : src/scene/SceneProp.cpp.s
+
+src/scene/SplineWireframe.o: src/scene/SplineWireframe.cpp.o
+
+.PHONY : src/scene/SplineWireframe.o
+
+# target to build an object file
+src/scene/SplineWireframe.cpp.o:
+	cd /home/Camus/Dev/T850/T850/T850/build && $(MAKE) -f Framework/CMakeFiles/T800Framework.dir/build.make Framework/CMakeFiles/T800Framework.dir/src/scene/SplineWireframe.cpp.o
+.PHONY : src/scene/SplineWireframe.cpp.o
+
+src/scene/SplineWireframe.i: src/scene/SplineWireframe.cpp.i
+
+.PHONY : src/scene/SplineWireframe.i
+
+# target to preprocess a source file
+src/scene/SplineWireframe.cpp.i:
+	cd /home/Camus/Dev/T850/T850/T850/build && $(MAKE) -f Framework/CMakeFiles/T800Framework.dir/build.make Framework/CMakeFiles/T800Framework.dir/src/scene/SplineWireframe.cpp.i
+.PHONY : src/scene/SplineWireframe.cpp.i
+
+src/scene/SplineWireframe.s: src/scene/SplineWireframe.cpp.s
+
+.PHONY : src/scene/SplineWireframe.s
+
+# target to generate assembly for a file
+src/scene/SplineWireframe.cpp.s:
+	cd /home/Camus/Dev/T850/T850/T850/build && $(MAKE) -f Framework/CMakeFiles/T800Framework.dir/build.make Framework/CMakeFiles/T800Framework.dir/src/scene/SplineWireframe.cpp.s
+.PHONY : src/scene/SplineWireframe.cpp.s
+
+src/scene/T8_Quad.o: src/scene/T8_Quad.cpp.o
+
+.PHONY : src/scene/T8_Quad.o
+
+# target to build an object file
+src/scene/T8_Quad.cpp.o:
+	cd /home/Camus/Dev/T850/T850/T850/build && $(MAKE) -f Framework/CMakeFiles/T800Framework.dir/build.make Framework/CMakeFiles/T800Framework.dir/src/scene/T8_Quad.cpp.o
+.PHONY : src/scene/T8_Quad.cpp.o
+
+src/scene/T8_Quad.i: src/scene/T8_Quad.cpp.i
+
+.PHONY : src/scene/T8_Quad.i
+
+# target to preprocess a source file
+src/scene/T8_Quad.cpp.i:
+	cd /home/Camus/Dev/T850/T850/T850/build && $(MAKE) -f Framework/CMakeFiles/T800Framework.dir/build.make Framework/CMakeFiles/T800Framework.dir/src/scene/T8_Quad.cpp.i
+.PHONY : src/scene/T8_Quad.cpp.i
+
+src/scene/T8_Quad.s: src/scene/T8_Quad.cpp.s
+
+.PHONY : src/scene/T8_Quad.s
+
+# target to generate assembly for a file
+src/scene/T8_Quad.cpp.s:
+	cd /home/Camus/Dev/T850/T850/T850/build && $(MAKE) -f Framework/CMakeFiles/T800Framework.dir/build.make Framework/CMakeFiles/T800Framework.dir/src/scene/T8_Quad.cpp.s
+.PHONY : src/scene/T8_Quad.cpp.s
+
+src/scene/T8_TextRenderer.o: src/scene/T8_TextRenderer.cpp.o
+
+.PHONY : src/scene/T8_TextRenderer.o
+
+# target to build an object file
+src/scene/T8_TextRenderer.cpp.o:
+	cd /home/Camus/Dev/T850/T850/T850/build && $(MAKE) -f Framework/CMakeFiles/T800Framework.dir/build.make Framework/CMakeFiles/T800Framework.dir/src/scene/T8_TextRenderer.cpp.o
+.PHONY : src/scene/T8_TextRenderer.cpp.o
+
+src/scene/T8_TextRenderer.i: src/scene/T8_TextRenderer.cpp.i
+
+.PHONY : src/scene/T8_TextRenderer.i
+
+# target to preprocess a source file
+src/scene/T8_TextRenderer.cpp.i:
+	cd /home/Camus/Dev/T850/T850/T850/build && $(MAKE) -f Framework/CMakeFiles/T800Framework.dir/build.make Framework/CMakeFiles/T800Framework.dir/src/scene/T8_TextRenderer.cpp.i
+.PHONY : src/scene/T8_TextRenderer.cpp.i
+
+src/scene/T8_TextRenderer.s: src/scene/T8_TextRenderer.cpp.s
+
+.PHONY : src/scene/T8_TextRenderer.s
+
+# target to generate assembly for a file
+src/scene/T8_TextRenderer.cpp.s:
+	cd /home/Camus/Dev/T850/T850/T850/build && $(MAKE) -f Framework/CMakeFiles/T800Framework.dir/build.make Framework/CMakeFiles/T800Framework.dir/src/scene/T8_TextRenderer.cpp.s
+.PHONY : src/scene/T8_TextRenderer.cpp.s
 
 src/utils/Camera.o: src/utils/Camera.cpp.o
 
@@ -391,7 +499,7 @@ src/utils/Camera.o: src/utils/Camera.cpp.o
 
 # target to build an object file
 src/utils/Camera.cpp.o:
-	cd /home/Camus/Puga/T800/build && $(MAKE) -f Framework/CMakeFiles/T800Framework.dir/build.make Framework/CMakeFiles/T800Framework.dir/src/utils/Camera.cpp.o
+	cd /home/Camus/Dev/T850/T850/T850/build && $(MAKE) -f Framework/CMakeFiles/T800Framework.dir/build.make Framework/CMakeFiles/T800Framework.dir/src/utils/Camera.cpp.o
 .PHONY : src/utils/Camera.cpp.o
 
 src/utils/Camera.i: src/utils/Camera.cpp.i
@@ -400,7 +508,7 @@ src/utils/Camera.i: src/utils/Camera.cpp.i
 
 # target to preprocess a source file
 src/utils/Camera.cpp.i:
-	cd /home/Camus/Puga/T800/build && $(MAKE) -f Framework/CMakeFiles/T800Framework.dir/build.make Framework/CMakeFiles/T800Framework.dir/src/utils/Camera.cpp.i
+	cd /home/Camus/Dev/T850/T850/T850/build && $(MAKE) -f Framework/CMakeFiles/T800Framework.dir/build.make Framework/CMakeFiles/T800Framework.dir/src/utils/Camera.cpp.i
 .PHONY : src/utils/Camera.cpp.i
 
 src/utils/Camera.s: src/utils/Camera.cpp.s
@@ -409,7 +517,7 @@ src/utils/Camera.s: src/utils/Camera.cpp.s
 
 # target to generate assembly for a file
 src/utils/Camera.cpp.s:
-	cd /home/Camus/Puga/T800/build && $(MAKE) -f Framework/CMakeFiles/T800Framework.dir/build.make Framework/CMakeFiles/T800Framework.dir/src/utils/Camera.cpp.s
+	cd /home/Camus/Dev/T850/T850/T850/build && $(MAKE) -f Framework/CMakeFiles/T800Framework.dir/build.make Framework/CMakeFiles/T800Framework.dir/src/utils/Camera.cpp.s
 .PHONY : src/utils/Camera.cpp.s
 
 src/utils/InputManager.o: src/utils/InputManager.cpp.o
@@ -418,7 +526,7 @@ src/utils/InputManager.o: src/utils/InputManager.cpp.o
 
 # target to build an object file
 src/utils/InputManager.cpp.o:
-	cd /home/Camus/Puga/T800/build && $(MAKE) -f Framework/CMakeFiles/T800Framework.dir/build.make Framework/CMakeFiles/T800Framework.dir/src/utils/InputManager.cpp.o
+	cd /home/Camus/Dev/T850/T850/T850/build && $(MAKE) -f Framework/CMakeFiles/T800Framework.dir/build.make Framework/CMakeFiles/T800Framework.dir/src/utils/InputManager.cpp.o
 .PHONY : src/utils/InputManager.cpp.o
 
 src/utils/InputManager.i: src/utils/InputManager.cpp.i
@@ -427,7 +535,7 @@ src/utils/InputManager.i: src/utils/InputManager.cpp.i
 
 # target to preprocess a source file
 src/utils/InputManager.cpp.i:
-	cd /home/Camus/Puga/T800/build && $(MAKE) -f Framework/CMakeFiles/T800Framework.dir/build.make Framework/CMakeFiles/T800Framework.dir/src/utils/InputManager.cpp.i
+	cd /home/Camus/Dev/T850/T850/T850/build && $(MAKE) -f Framework/CMakeFiles/T800Framework.dir/build.make Framework/CMakeFiles/T800Framework.dir/src/utils/InputManager.cpp.i
 .PHONY : src/utils/InputManager.cpp.i
 
 src/utils/InputManager.s: src/utils/InputManager.cpp.s
@@ -436,7 +544,7 @@ src/utils/InputManager.s: src/utils/InputManager.cpp.s
 
 # target to generate assembly for a file
 src/utils/InputManager.cpp.s:
-	cd /home/Camus/Puga/T800/build && $(MAKE) -f Framework/CMakeFiles/T800Framework.dir/build.make Framework/CMakeFiles/T800Framework.dir/src/utils/InputManager.cpp.s
+	cd /home/Camus/Dev/T850/T850/T850/build && $(MAKE) -f Framework/CMakeFiles/T800Framework.dir/build.make Framework/CMakeFiles/T800Framework.dir/src/utils/InputManager.cpp.s
 .PHONY : src/utils/InputManager.cpp.s
 
 src/utils/ResourceManager.o: src/utils/ResourceManager.cpp.o
@@ -445,7 +553,7 @@ src/utils/ResourceManager.o: src/utils/ResourceManager.cpp.o
 
 # target to build an object file
 src/utils/ResourceManager.cpp.o:
-	cd /home/Camus/Puga/T800/build && $(MAKE) -f Framework/CMakeFiles/T800Framework.dir/build.make Framework/CMakeFiles/T800Framework.dir/src/utils/ResourceManager.cpp.o
+	cd /home/Camus/Dev/T850/T850/T850/build && $(MAKE) -f Framework/CMakeFiles/T800Framework.dir/build.make Framework/CMakeFiles/T800Framework.dir/src/utils/ResourceManager.cpp.o
 .PHONY : src/utils/ResourceManager.cpp.o
 
 src/utils/ResourceManager.i: src/utils/ResourceManager.cpp.i
@@ -454,7 +562,7 @@ src/utils/ResourceManager.i: src/utils/ResourceManager.cpp.i
 
 # target to preprocess a source file
 src/utils/ResourceManager.cpp.i:
-	cd /home/Camus/Puga/T800/build && $(MAKE) -f Framework/CMakeFiles/T800Framework.dir/build.make Framework/CMakeFiles/T800Framework.dir/src/utils/ResourceManager.cpp.i
+	cd /home/Camus/Dev/T850/T850/T850/build && $(MAKE) -f Framework/CMakeFiles/T800Framework.dir/build.make Framework/CMakeFiles/T800Framework.dir/src/utils/ResourceManager.cpp.i
 .PHONY : src/utils/ResourceManager.cpp.i
 
 src/utils/ResourceManager.s: src/utils/ResourceManager.cpp.s
@@ -463,8 +571,35 @@ src/utils/ResourceManager.s: src/utils/ResourceManager.cpp.s
 
 # target to generate assembly for a file
 src/utils/ResourceManager.cpp.s:
-	cd /home/Camus/Puga/T800/build && $(MAKE) -f Framework/CMakeFiles/T800Framework.dir/build.make Framework/CMakeFiles/T800Framework.dir/src/utils/ResourceManager.cpp.s
+	cd /home/Camus/Dev/T850/T850/T850/build && $(MAKE) -f Framework/CMakeFiles/T800Framework.dir/build.make Framework/CMakeFiles/T800Framework.dir/src/utils/ResourceManager.cpp.s
 .PHONY : src/utils/ResourceManager.cpp.s
+
+src/utils/T8_Spline.o: src/utils/T8_Spline.cpp.o
+
+.PHONY : src/utils/T8_Spline.o
+
+# target to build an object file
+src/utils/T8_Spline.cpp.o:
+	cd /home/Camus/Dev/T850/T850/T850/build && $(MAKE) -f Framework/CMakeFiles/T800Framework.dir/build.make Framework/CMakeFiles/T800Framework.dir/src/utils/T8_Spline.cpp.o
+.PHONY : src/utils/T8_Spline.cpp.o
+
+src/utils/T8_Spline.i: src/utils/T8_Spline.cpp.i
+
+.PHONY : src/utils/T8_Spline.i
+
+# target to preprocess a source file
+src/utils/T8_Spline.cpp.i:
+	cd /home/Camus/Dev/T850/T850/T850/build && $(MAKE) -f Framework/CMakeFiles/T800Framework.dir/build.make Framework/CMakeFiles/T800Framework.dir/src/utils/T8_Spline.cpp.i
+.PHONY : src/utils/T8_Spline.cpp.i
+
+src/utils/T8_Spline.s: src/utils/T8_Spline.cpp.s
+
+.PHONY : src/utils/T8_Spline.s
+
+# target to generate assembly for a file
+src/utils/T8_Spline.cpp.s:
+	cd /home/Camus/Dev/T850/T850/T850/build && $(MAKE) -f Framework/CMakeFiles/T800Framework.dir/build.make Framework/CMakeFiles/T800Framework.dir/src/utils/T8_Spline.cpp.s
+.PHONY : src/utils/T8_Spline.cpp.s
 
 src/utils/T8_Technique.o: src/utils/T8_Technique.cpp.o
 
@@ -472,7 +607,7 @@ src/utils/T8_Technique.o: src/utils/T8_Technique.cpp.o
 
 # target to build an object file
 src/utils/T8_Technique.cpp.o:
-	cd /home/Camus/Puga/T800/build && $(MAKE) -f Framework/CMakeFiles/T800Framework.dir/build.make Framework/CMakeFiles/T800Framework.dir/src/utils/T8_Technique.cpp.o
+	cd /home/Camus/Dev/T850/T850/T850/build && $(MAKE) -f Framework/CMakeFiles/T800Framework.dir/build.make Framework/CMakeFiles/T800Framework.dir/src/utils/T8_Technique.cpp.o
 .PHONY : src/utils/T8_Technique.cpp.o
 
 src/utils/T8_Technique.i: src/utils/T8_Technique.cpp.i
@@ -481,7 +616,7 @@ src/utils/T8_Technique.i: src/utils/T8_Technique.cpp.i
 
 # target to preprocess a source file
 src/utils/T8_Technique.cpp.i:
-	cd /home/Camus/Puga/T800/build && $(MAKE) -f Framework/CMakeFiles/T800Framework.dir/build.make Framework/CMakeFiles/T800Framework.dir/src/utils/T8_Technique.cpp.i
+	cd /home/Camus/Dev/T850/T850/T850/build && $(MAKE) -f Framework/CMakeFiles/T800Framework.dir/build.make Framework/CMakeFiles/T800Framework.dir/src/utils/T8_Technique.cpp.i
 .PHONY : src/utils/T8_Technique.cpp.i
 
 src/utils/T8_Technique.s: src/utils/T8_Technique.cpp.s
@@ -490,7 +625,7 @@ src/utils/T8_Technique.s: src/utils/T8_Technique.cpp.s
 
 # target to generate assembly for a file
 src/utils/T8_Technique.cpp.s:
-	cd /home/Camus/Puga/T800/build && $(MAKE) -f Framework/CMakeFiles/T800Framework.dir/build.make Framework/CMakeFiles/T800Framework.dir/src/utils/T8_Technique.cpp.s
+	cd /home/Camus/Dev/T850/T850/T850/build && $(MAKE) -f Framework/CMakeFiles/T800Framework.dir/build.make Framework/CMakeFiles/T800Framework.dir/src/utils/T8_Technique.cpp.s
 .PHONY : src/utils/T8_Technique.cpp.s
 
 src/utils/Timer.o: src/utils/Timer.cpp.o
@@ -499,7 +634,7 @@ src/utils/Timer.o: src/utils/Timer.cpp.o
 
 # target to build an object file
 src/utils/Timer.cpp.o:
-	cd /home/Camus/Puga/T800/build && $(MAKE) -f Framework/CMakeFiles/T800Framework.dir/build.make Framework/CMakeFiles/T800Framework.dir/src/utils/Timer.cpp.o
+	cd /home/Camus/Dev/T850/T850/T850/build && $(MAKE) -f Framework/CMakeFiles/T800Framework.dir/build.make Framework/CMakeFiles/T800Framework.dir/src/utils/Timer.cpp.o
 .PHONY : src/utils/Timer.cpp.o
 
 src/utils/Timer.i: src/utils/Timer.cpp.i
@@ -508,7 +643,7 @@ src/utils/Timer.i: src/utils/Timer.cpp.i
 
 # target to preprocess a source file
 src/utils/Timer.cpp.i:
-	cd /home/Camus/Puga/T800/build && $(MAKE) -f Framework/CMakeFiles/T800Framework.dir/build.make Framework/CMakeFiles/T800Framework.dir/src/utils/Timer.cpp.i
+	cd /home/Camus/Dev/T850/T850/T850/build && $(MAKE) -f Framework/CMakeFiles/T800Framework.dir/build.make Framework/CMakeFiles/T800Framework.dir/src/utils/Timer.cpp.i
 .PHONY : src/utils/Timer.cpp.i
 
 src/utils/Timer.s: src/utils/Timer.cpp.s
@@ -517,7 +652,7 @@ src/utils/Timer.s: src/utils/Timer.cpp.s
 
 # target to generate assembly for a file
 src/utils/Timer.cpp.s:
-	cd /home/Camus/Puga/T800/build && $(MAKE) -f Framework/CMakeFiles/T800Framework.dir/build.make Framework/CMakeFiles/T800Framework.dir/src/utils/Timer.cpp.s
+	cd /home/Camus/Dev/T850/T850/T850/build && $(MAKE) -f Framework/CMakeFiles/T800Framework.dir/build.make Framework/CMakeFiles/T800Framework.dir/src/utils/Timer.cpp.s
 .PHONY : src/utils/Timer.cpp.s
 
 src/utils/Utils.o: src/utils/Utils.cpp.o
@@ -526,7 +661,7 @@ src/utils/Utils.o: src/utils/Utils.cpp.o
 
 # target to build an object file
 src/utils/Utils.cpp.o:
-	cd /home/Camus/Puga/T800/build && $(MAKE) -f Framework/CMakeFiles/T800Framework.dir/build.make Framework/CMakeFiles/T800Framework.dir/src/utils/Utils.cpp.o
+	cd /home/Camus/Dev/T850/T850/T850/build && $(MAKE) -f Framework/CMakeFiles/T800Framework.dir/build.make Framework/CMakeFiles/T800Framework.dir/src/utils/Utils.cpp.o
 .PHONY : src/utils/Utils.cpp.o
 
 src/utils/Utils.i: src/utils/Utils.cpp.i
@@ -535,7 +670,7 @@ src/utils/Utils.i: src/utils/Utils.cpp.i
 
 # target to preprocess a source file
 src/utils/Utils.cpp.i:
-	cd /home/Camus/Puga/T800/build && $(MAKE) -f Framework/CMakeFiles/T800Framework.dir/build.make Framework/CMakeFiles/T800Framework.dir/src/utils/Utils.cpp.i
+	cd /home/Camus/Dev/T850/T850/T850/build && $(MAKE) -f Framework/CMakeFiles/T800Framework.dir/build.make Framework/CMakeFiles/T800Framework.dir/src/utils/Utils.cpp.i
 .PHONY : src/utils/Utils.cpp.i
 
 src/utils/Utils.s: src/utils/Utils.cpp.s
@@ -544,7 +679,7 @@ src/utils/Utils.s: src/utils/Utils.cpp.s
 
 # target to generate assembly for a file
 src/utils/Utils.cpp.s:
-	cd /home/Camus/Puga/T800/build && $(MAKE) -f Framework/CMakeFiles/T800Framework.dir/build.make Framework/CMakeFiles/T800Framework.dir/src/utils/Utils.cpp.s
+	cd /home/Camus/Dev/T850/T850/T850/build && $(MAKE) -f Framework/CMakeFiles/T800Framework.dir/build.make Framework/CMakeFiles/T800Framework.dir/src/utils/Utils.cpp.s
 .PHONY : src/utils/Utils.cpp.s
 
 src/utils/XDataBase.o: src/utils/XDataBase.cpp.o
@@ -553,7 +688,7 @@ src/utils/XDataBase.o: src/utils/XDataBase.cpp.o
 
 # target to build an object file
 src/utils/XDataBase.cpp.o:
-	cd /home/Camus/Puga/T800/build && $(MAKE) -f Framework/CMakeFiles/T800Framework.dir/build.make Framework/CMakeFiles/T800Framework.dir/src/utils/XDataBase.cpp.o
+	cd /home/Camus/Dev/T850/T850/T850/build && $(MAKE) -f Framework/CMakeFiles/T800Framework.dir/build.make Framework/CMakeFiles/T800Framework.dir/src/utils/XDataBase.cpp.o
 .PHONY : src/utils/XDataBase.cpp.o
 
 src/utils/XDataBase.i: src/utils/XDataBase.cpp.i
@@ -562,7 +697,7 @@ src/utils/XDataBase.i: src/utils/XDataBase.cpp.i
 
 # target to preprocess a source file
 src/utils/XDataBase.cpp.i:
-	cd /home/Camus/Puga/T800/build && $(MAKE) -f Framework/CMakeFiles/T800Framework.dir/build.make Framework/CMakeFiles/T800Framework.dir/src/utils/XDataBase.cpp.i
+	cd /home/Camus/Dev/T850/T850/T850/build && $(MAKE) -f Framework/CMakeFiles/T800Framework.dir/build.make Framework/CMakeFiles/T800Framework.dir/src/utils/XDataBase.cpp.i
 .PHONY : src/utils/XDataBase.cpp.i
 
 src/utils/XDataBase.s: src/utils/XDataBase.cpp.s
@@ -571,7 +706,7 @@ src/utils/XDataBase.s: src/utils/XDataBase.cpp.s
 
 # target to generate assembly for a file
 src/utils/XDataBase.cpp.s:
-	cd /home/Camus/Puga/T800/build && $(MAKE) -f Framework/CMakeFiles/T800Framework.dir/build.make Framework/CMakeFiles/T800Framework.dir/src/utils/XDataBase.cpp.s
+	cd /home/Camus/Dev/T850/T850/T850/build && $(MAKE) -f Framework/CMakeFiles/T800Framework.dir/build.make Framework/CMakeFiles/T800Framework.dir/src/utils/XDataBase.cpp.s
 .PHONY : src/utils/XDataBase.cpp.s
 
 src/utils/XMaths.o: src/utils/XMaths.cpp.o
@@ -580,7 +715,7 @@ src/utils/XMaths.o: src/utils/XMaths.cpp.o
 
 # target to build an object file
 src/utils/XMaths.cpp.o:
-	cd /home/Camus/Puga/T800/build && $(MAKE) -f Framework/CMakeFiles/T800Framework.dir/build.make Framework/CMakeFiles/T800Framework.dir/src/utils/XMaths.cpp.o
+	cd /home/Camus/Dev/T850/T850/T850/build && $(MAKE) -f Framework/CMakeFiles/T800Framework.dir/build.make Framework/CMakeFiles/T800Framework.dir/src/utils/XMaths.cpp.o
 .PHONY : src/utils/XMaths.cpp.o
 
 src/utils/XMaths.i: src/utils/XMaths.cpp.i
@@ -589,7 +724,7 @@ src/utils/XMaths.i: src/utils/XMaths.cpp.i
 
 # target to preprocess a source file
 src/utils/XMaths.cpp.i:
-	cd /home/Camus/Puga/T800/build && $(MAKE) -f Framework/CMakeFiles/T800Framework.dir/build.make Framework/CMakeFiles/T800Framework.dir/src/utils/XMaths.cpp.i
+	cd /home/Camus/Dev/T850/T850/T850/build && $(MAKE) -f Framework/CMakeFiles/T800Framework.dir/build.make Framework/CMakeFiles/T800Framework.dir/src/utils/XMaths.cpp.i
 .PHONY : src/utils/XMaths.cpp.i
 
 src/utils/XMaths.s: src/utils/XMaths.cpp.s
@@ -598,7 +733,7 @@ src/utils/XMaths.s: src/utils/XMaths.cpp.s
 
 # target to generate assembly for a file
 src/utils/XMaths.cpp.s:
-	cd /home/Camus/Puga/T800/build && $(MAKE) -f Framework/CMakeFiles/T800Framework.dir/build.make Framework/CMakeFiles/T800Framework.dir/src/utils/XMaths.cpp.s
+	cd /home/Camus/Dev/T850/T850/T850/build && $(MAKE) -f Framework/CMakeFiles/T800Framework.dir/build.make Framework/CMakeFiles/T800Framework.dir/src/utils/XMaths.cpp.s
 .PHONY : src/utils/XMaths.cpp.s
 
 src/utils/cil.o: src/utils/cil.cpp.o
@@ -607,7 +742,7 @@ src/utils/cil.o: src/utils/cil.cpp.o
 
 # target to build an object file
 src/utils/cil.cpp.o:
-	cd /home/Camus/Puga/T800/build && $(MAKE) -f Framework/CMakeFiles/T800Framework.dir/build.make Framework/CMakeFiles/T800Framework.dir/src/utils/cil.cpp.o
+	cd /home/Camus/Dev/T850/T850/T850/build && $(MAKE) -f Framework/CMakeFiles/T800Framework.dir/build.make Framework/CMakeFiles/T800Framework.dir/src/utils/cil.cpp.o
 .PHONY : src/utils/cil.cpp.o
 
 src/utils/cil.i: src/utils/cil.cpp.i
@@ -616,7 +751,7 @@ src/utils/cil.i: src/utils/cil.cpp.i
 
 # target to preprocess a source file
 src/utils/cil.cpp.i:
-	cd /home/Camus/Puga/T800/build && $(MAKE) -f Framework/CMakeFiles/T800Framework.dir/build.make Framework/CMakeFiles/T800Framework.dir/src/utils/cil.cpp.i
+	cd /home/Camus/Dev/T850/T850/T850/build && $(MAKE) -f Framework/CMakeFiles/T800Framework.dir/build.make Framework/CMakeFiles/T800Framework.dir/src/utils/cil.cpp.i
 .PHONY : src/utils/cil.cpp.i
 
 src/utils/cil.s: src/utils/cil.cpp.s
@@ -625,7 +760,7 @@ src/utils/cil.s: src/utils/cil.cpp.s
 
 # target to generate assembly for a file
 src/utils/cil.cpp.s:
-	cd /home/Camus/Puga/T800/build && $(MAKE) -f Framework/CMakeFiles/T800Framework.dir/build.make Framework/CMakeFiles/T800Framework.dir/src/utils/cil.cpp.s
+	cd /home/Camus/Dev/T850/T850/T850/build && $(MAKE) -f Framework/CMakeFiles/T800Framework.dir/build.make Framework/CMakeFiles/T800Framework.dir/src/utils/cil.cpp.s
 .PHONY : src/utils/cil.cpp.s
 
 src/video/BaseDriver.o: src/video/BaseDriver.cpp.o
@@ -634,7 +769,7 @@ src/video/BaseDriver.o: src/video/BaseDriver.cpp.o
 
 # target to build an object file
 src/video/BaseDriver.cpp.o:
-	cd /home/Camus/Puga/T800/build && $(MAKE) -f Framework/CMakeFiles/T800Framework.dir/build.make Framework/CMakeFiles/T800Framework.dir/src/video/BaseDriver.cpp.o
+	cd /home/Camus/Dev/T850/T850/T850/build && $(MAKE) -f Framework/CMakeFiles/T800Framework.dir/build.make Framework/CMakeFiles/T800Framework.dir/src/video/BaseDriver.cpp.o
 .PHONY : src/video/BaseDriver.cpp.o
 
 src/video/BaseDriver.i: src/video/BaseDriver.cpp.i
@@ -643,7 +778,7 @@ src/video/BaseDriver.i: src/video/BaseDriver.cpp.i
 
 # target to preprocess a source file
 src/video/BaseDriver.cpp.i:
-	cd /home/Camus/Puga/T800/build && $(MAKE) -f Framework/CMakeFiles/T800Framework.dir/build.make Framework/CMakeFiles/T800Framework.dir/src/video/BaseDriver.cpp.i
+	cd /home/Camus/Dev/T850/T850/T850/build && $(MAKE) -f Framework/CMakeFiles/T800Framework.dir/build.make Framework/CMakeFiles/T800Framework.dir/src/video/BaseDriver.cpp.i
 .PHONY : src/video/BaseDriver.cpp.i
 
 src/video/BaseDriver.s: src/video/BaseDriver.cpp.s
@@ -652,7 +787,7 @@ src/video/BaseDriver.s: src/video/BaseDriver.cpp.s
 
 # target to generate assembly for a file
 src/video/BaseDriver.cpp.s:
-	cd /home/Camus/Puga/T800/build && $(MAKE) -f Framework/CMakeFiles/T800Framework.dir/build.make Framework/CMakeFiles/T800Framework.dir/src/video/BaseDriver.cpp.s
+	cd /home/Camus/Dev/T850/T850/T850/build && $(MAKE) -f Framework/CMakeFiles/T800Framework.dir/build.make Framework/CMakeFiles/T800Framework.dir/src/video/BaseDriver.cpp.s
 .PHONY : src/video/BaseDriver.cpp.s
 
 src/video/GLDriver.o: src/video/GLDriver.cpp.o
@@ -661,7 +796,7 @@ src/video/GLDriver.o: src/video/GLDriver.cpp.o
 
 # target to build an object file
 src/video/GLDriver.cpp.o:
-	cd /home/Camus/Puga/T800/build && $(MAKE) -f Framework/CMakeFiles/T800Framework.dir/build.make Framework/CMakeFiles/T800Framework.dir/src/video/GLDriver.cpp.o
+	cd /home/Camus/Dev/T850/T850/T850/build && $(MAKE) -f Framework/CMakeFiles/T800Framework.dir/build.make Framework/CMakeFiles/T800Framework.dir/src/video/GLDriver.cpp.o
 .PHONY : src/video/GLDriver.cpp.o
 
 src/video/GLDriver.i: src/video/GLDriver.cpp.i
@@ -670,7 +805,7 @@ src/video/GLDriver.i: src/video/GLDriver.cpp.i
 
 # target to preprocess a source file
 src/video/GLDriver.cpp.i:
-	cd /home/Camus/Puga/T800/build && $(MAKE) -f Framework/CMakeFiles/T800Framework.dir/build.make Framework/CMakeFiles/T800Framework.dir/src/video/GLDriver.cpp.i
+	cd /home/Camus/Dev/T850/T850/T850/build && $(MAKE) -f Framework/CMakeFiles/T800Framework.dir/build.make Framework/CMakeFiles/T800Framework.dir/src/video/GLDriver.cpp.i
 .PHONY : src/video/GLDriver.cpp.i
 
 src/video/GLDriver.s: src/video/GLDriver.cpp.s
@@ -679,7 +814,7 @@ src/video/GLDriver.s: src/video/GLDriver.cpp.s
 
 # target to generate assembly for a file
 src/video/GLDriver.cpp.s:
-	cd /home/Camus/Puga/T800/build && $(MAKE) -f Framework/CMakeFiles/T800Framework.dir/build.make Framework/CMakeFiles/T800Framework.dir/src/video/GLDriver.cpp.s
+	cd /home/Camus/Dev/T850/T850/T850/build && $(MAKE) -f Framework/CMakeFiles/T800Framework.dir/build.make Framework/CMakeFiles/T800Framework.dir/src/video/GLDriver.cpp.s
 .PHONY : src/video/GLDriver.cpp.s
 
 src/video/GLRT.o: src/video/GLRT.cpp.o
@@ -688,7 +823,7 @@ src/video/GLRT.o: src/video/GLRT.cpp.o
 
 # target to build an object file
 src/video/GLRT.cpp.o:
-	cd /home/Camus/Puga/T800/build && $(MAKE) -f Framework/CMakeFiles/T800Framework.dir/build.make Framework/CMakeFiles/T800Framework.dir/src/video/GLRT.cpp.o
+	cd /home/Camus/Dev/T850/T850/T850/build && $(MAKE) -f Framework/CMakeFiles/T800Framework.dir/build.make Framework/CMakeFiles/T800Framework.dir/src/video/GLRT.cpp.o
 .PHONY : src/video/GLRT.cpp.o
 
 src/video/GLRT.i: src/video/GLRT.cpp.i
@@ -697,7 +832,7 @@ src/video/GLRT.i: src/video/GLRT.cpp.i
 
 # target to preprocess a source file
 src/video/GLRT.cpp.i:
-	cd /home/Camus/Puga/T800/build && $(MAKE) -f Framework/CMakeFiles/T800Framework.dir/build.make Framework/CMakeFiles/T800Framework.dir/src/video/GLRT.cpp.i
+	cd /home/Camus/Dev/T850/T850/T850/build && $(MAKE) -f Framework/CMakeFiles/T800Framework.dir/build.make Framework/CMakeFiles/T800Framework.dir/src/video/GLRT.cpp.i
 .PHONY : src/video/GLRT.cpp.i
 
 src/video/GLRT.s: src/video/GLRT.cpp.s
@@ -706,8 +841,35 @@ src/video/GLRT.s: src/video/GLRT.cpp.s
 
 # target to generate assembly for a file
 src/video/GLRT.cpp.s:
-	cd /home/Camus/Puga/T800/build && $(MAKE) -f Framework/CMakeFiles/T800Framework.dir/build.make Framework/CMakeFiles/T800Framework.dir/src/video/GLRT.cpp.s
+	cd /home/Camus/Dev/T850/T850/T850/build && $(MAKE) -f Framework/CMakeFiles/T800Framework.dir/build.make Framework/CMakeFiles/T800Framework.dir/src/video/GLRT.cpp.s
 .PHONY : src/video/GLRT.cpp.s
+
+src/video/GLSLParser.o: src/video/GLSLParser.cpp.o
+
+.PHONY : src/video/GLSLParser.o
+
+# target to build an object file
+src/video/GLSLParser.cpp.o:
+	cd /home/Camus/Dev/T850/T850/T850/build && $(MAKE) -f Framework/CMakeFiles/T800Framework.dir/build.make Framework/CMakeFiles/T800Framework.dir/src/video/GLSLParser.cpp.o
+.PHONY : src/video/GLSLParser.cpp.o
+
+src/video/GLSLParser.i: src/video/GLSLParser.cpp.i
+
+.PHONY : src/video/GLSLParser.i
+
+# target to preprocess a source file
+src/video/GLSLParser.cpp.i:
+	cd /home/Camus/Dev/T850/T850/T850/build && $(MAKE) -f Framework/CMakeFiles/T800Framework.dir/build.make Framework/CMakeFiles/T800Framework.dir/src/video/GLSLParser.cpp.i
+.PHONY : src/video/GLSLParser.cpp.i
+
+src/video/GLSLParser.s: src/video/GLSLParser.cpp.s
+
+.PHONY : src/video/GLSLParser.s
+
+# target to generate assembly for a file
+src/video/GLSLParser.cpp.s:
+	cd /home/Camus/Dev/T850/T850/T850/build && $(MAKE) -f Framework/CMakeFiles/T800Framework.dir/build.make Framework/CMakeFiles/T800Framework.dir/src/video/GLSLParser.cpp.s
+.PHONY : src/video/GLSLParser.cpp.s
 
 src/video/GLShader.o: src/video/GLShader.cpp.o
 
@@ -715,7 +877,7 @@ src/video/GLShader.o: src/video/GLShader.cpp.o
 
 # target to build an object file
 src/video/GLShader.cpp.o:
-	cd /home/Camus/Puga/T800/build && $(MAKE) -f Framework/CMakeFiles/T800Framework.dir/build.make Framework/CMakeFiles/T800Framework.dir/src/video/GLShader.cpp.o
+	cd /home/Camus/Dev/T850/T850/T850/build && $(MAKE) -f Framework/CMakeFiles/T800Framework.dir/build.make Framework/CMakeFiles/T800Framework.dir/src/video/GLShader.cpp.o
 .PHONY : src/video/GLShader.cpp.o
 
 src/video/GLShader.i: src/video/GLShader.cpp.i
@@ -724,7 +886,7 @@ src/video/GLShader.i: src/video/GLShader.cpp.i
 
 # target to preprocess a source file
 src/video/GLShader.cpp.i:
-	cd /home/Camus/Puga/T800/build && $(MAKE) -f Framework/CMakeFiles/T800Framework.dir/build.make Framework/CMakeFiles/T800Framework.dir/src/video/GLShader.cpp.i
+	cd /home/Camus/Dev/T850/T850/T850/build && $(MAKE) -f Framework/CMakeFiles/T800Framework.dir/build.make Framework/CMakeFiles/T800Framework.dir/src/video/GLShader.cpp.i
 .PHONY : src/video/GLShader.cpp.i
 
 src/video/GLShader.s: src/video/GLShader.cpp.s
@@ -733,7 +895,7 @@ src/video/GLShader.s: src/video/GLShader.cpp.s
 
 # target to generate assembly for a file
 src/video/GLShader.cpp.s:
-	cd /home/Camus/Puga/T800/build && $(MAKE) -f Framework/CMakeFiles/T800Framework.dir/build.make Framework/CMakeFiles/T800Framework.dir/src/video/GLShader.cpp.s
+	cd /home/Camus/Dev/T850/T850/T850/build && $(MAKE) -f Framework/CMakeFiles/T800Framework.dir/build.make Framework/CMakeFiles/T800Framework.dir/src/video/GLShader.cpp.s
 .PHONY : src/video/GLShader.cpp.s
 
 src/video/GLTexture.o: src/video/GLTexture.cpp.o
@@ -742,7 +904,7 @@ src/video/GLTexture.o: src/video/GLTexture.cpp.o
 
 # target to build an object file
 src/video/GLTexture.cpp.o:
-	cd /home/Camus/Puga/T800/build && $(MAKE) -f Framework/CMakeFiles/T800Framework.dir/build.make Framework/CMakeFiles/T800Framework.dir/src/video/GLTexture.cpp.o
+	cd /home/Camus/Dev/T850/T850/T850/build && $(MAKE) -f Framework/CMakeFiles/T800Framework.dir/build.make Framework/CMakeFiles/T800Framework.dir/src/video/GLTexture.cpp.o
 .PHONY : src/video/GLTexture.cpp.o
 
 src/video/GLTexture.i: src/video/GLTexture.cpp.i
@@ -751,7 +913,7 @@ src/video/GLTexture.i: src/video/GLTexture.cpp.i
 
 # target to preprocess a source file
 src/video/GLTexture.cpp.i:
-	cd /home/Camus/Puga/T800/build && $(MAKE) -f Framework/CMakeFiles/T800Framework.dir/build.make Framework/CMakeFiles/T800Framework.dir/src/video/GLTexture.cpp.i
+	cd /home/Camus/Dev/T850/T850/T850/build && $(MAKE) -f Framework/CMakeFiles/T800Framework.dir/build.make Framework/CMakeFiles/T800Framework.dir/src/video/GLTexture.cpp.i
 .PHONY : src/video/GLTexture.cpp.i
 
 src/video/GLTexture.s: src/video/GLTexture.cpp.s
@@ -760,7 +922,7 @@ src/video/GLTexture.s: src/video/GLTexture.cpp.s
 
 # target to generate assembly for a file
 src/video/GLTexture.cpp.s:
-	cd /home/Camus/Puga/T800/build && $(MAKE) -f Framework/CMakeFiles/T800Framework.dir/build.make Framework/CMakeFiles/T800Framework.dir/src/video/GLTexture.cpp.s
+	cd /home/Camus/Dev/T850/T850/T850/build && $(MAKE) -f Framework/CMakeFiles/T800Framework.dir/build.make Framework/CMakeFiles/T800Framework.dir/src/video/GLTexture.cpp.s
 .PHONY : src/video/GLTexture.cpp.s
 
 # Help Target
@@ -785,21 +947,33 @@ help:
 	@echo "... src/core/LinuxFramework.o"
 	@echo "... src/core/LinuxFramework.i"
 	@echo "... src/core/LinuxFramework.s"
-	@echo "... src/scene/Mesh.o"
-	@echo "... src/scene/Mesh.i"
-	@echo "... src/scene/Mesh.s"
+	@echo "... src/scene/LensFlare.o"
+	@echo "... src/scene/LensFlare.i"
+	@echo "... src/scene/LensFlare.s"
 	@echo "... src/scene/PrimitiveInstance.o"
 	@echo "... src/scene/PrimitiveInstance.i"
 	@echo "... src/scene/PrimitiveInstance.s"
 	@echo "... src/scene/PrimitiveManager.o"
 	@echo "... src/scene/PrimitiveManager.i"
 	@echo "... src/scene/PrimitiveManager.s"
-	@echo "... src/scene/Quad.o"
-	@echo "... src/scene/Quad.i"
-	@echo "... src/scene/Quad.s"
+	@echo "... src/scene/RenderMesh.o"
+	@echo "... src/scene/RenderMesh.i"
+	@echo "... src/scene/RenderMesh.s"
+	@echo "... src/scene/RenderQuad.o"
+	@echo "... src/scene/RenderQuad.i"
+	@echo "... src/scene/RenderQuad.s"
 	@echo "... src/scene/SceneProp.o"
 	@echo "... src/scene/SceneProp.i"
 	@echo "... src/scene/SceneProp.s"
+	@echo "... src/scene/SplineWireframe.o"
+	@echo "... src/scene/SplineWireframe.i"
+	@echo "... src/scene/SplineWireframe.s"
+	@echo "... src/scene/T8_Quad.o"
+	@echo "... src/scene/T8_Quad.i"
+	@echo "... src/scene/T8_Quad.s"
+	@echo "... src/scene/T8_TextRenderer.o"
+	@echo "... src/scene/T8_TextRenderer.i"
+	@echo "... src/scene/T8_TextRenderer.s"
 	@echo "... src/utils/Camera.o"
 	@echo "... src/utils/Camera.i"
 	@echo "... src/utils/Camera.s"
@@ -809,6 +983,9 @@ help:
 	@echo "... src/utils/ResourceManager.o"
 	@echo "... src/utils/ResourceManager.i"
 	@echo "... src/utils/ResourceManager.s"
+	@echo "... src/utils/T8_Spline.o"
+	@echo "... src/utils/T8_Spline.i"
+	@echo "... src/utils/T8_Spline.s"
 	@echo "... src/utils/T8_Technique.o"
 	@echo "... src/utils/T8_Technique.i"
 	@echo "... src/utils/T8_Technique.s"
@@ -836,6 +1013,9 @@ help:
 	@echo "... src/video/GLRT.o"
 	@echo "... src/video/GLRT.i"
 	@echo "... src/video/GLRT.s"
+	@echo "... src/video/GLSLParser.o"
+	@echo "... src/video/GLSLParser.i"
+	@echo "... src/video/GLSLParser.s"
 	@echo "... src/video/GLShader.o"
 	@echo "... src/video/GLShader.i"
 	@echo "... src/video/GLShader.s"
@@ -853,6 +1033,6 @@ help:
 # No rule that depends on this can have commands that come from listfiles
 # because they might be regenerated.
 cmake_check_build_system:
-	cd /home/Camus/Puga/T800/build && $(CMAKE_COMMAND) -H$(CMAKE_SOURCE_DIR) -B$(CMAKE_BINARY_DIR) --check-build-system CMakeFiles/Makefile.cmake 0
+	cd /home/Camus/Dev/T850/T850/T850/build && $(CMAKE_COMMAND) -H$(CMAKE_SOURCE_DIR) -B$(CMAKE_BINARY_DIR) --check-build-system CMakeFiles/Makefile.cmake 0
 .PHONY : cmake_check_build_system
 

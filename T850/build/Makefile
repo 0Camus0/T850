@@ -48,10 +48,10 @@ RM = /usr/bin/cmake -E remove -f
 EQUALS = =
 
 # The top-level source directory on which CMake was run.
-CMAKE_SOURCE_DIR = /home/Camus/Puga/T800
+CMAKE_SOURCE_DIR = /home/Camus/Dev/T850/T850/T850
 
 # The top-level build directory on which CMake was run.
-CMAKE_BINARY_DIR = /home/Camus/Puga/T800/build
+CMAKE_BINARY_DIR = /home/Camus/Dev/T850/T850/T850/build
 
 #=============================================================================
 # Targets provided globally by CMake.
@@ -124,9 +124,9 @@ edit_cache/fast: edit_cache
 
 # The main all target
 all: cmake_check_build_system
-	$(CMAKE_COMMAND) -E cmake_progress_start /home/Camus/Puga/T800/build/CMakeFiles /home/Camus/Puga/T800/build/CMakeFiles/progress.marks
+	$(CMAKE_COMMAND) -E cmake_progress_start /home/Camus/Dev/T850/T850/T850/build/CMakeFiles /home/Camus/Dev/T850/T850/T850/build/CMakeFiles/progress.marks
 	$(MAKE) -f CMakeFiles/Makefile2 all
-	$(CMAKE_COMMAND) -E cmake_progress_start /home/Camus/Puga/T800/build/CMakeFiles 0
+	$(CMAKE_COMMAND) -E cmake_progress_start /home/Camus/Dev/T850/T850/T850/build/CMakeFiles 0
 .PHONY : all
 
 # The main clean target
@@ -155,19 +155,6 @@ depend:
 .PHONY : depend
 
 #=============================================================================
-# Target rules for targets named GLSLParser
-
-# Build rule for target.
-GLSLParser: cmake_check_build_system
-	$(MAKE) -f CMakeFiles/Makefile2 GLSLParser
-.PHONY : GLSLParser
-
-# fast build rule for target.
-GLSLParser/fast:
-	$(MAKE) -f GLSLParser/CMakeFiles/GLSLParser.dir/build.make GLSLParser/CMakeFiles/GLSLParser.dir/build
-.PHONY : GLSLParser/fast
-
-#=============================================================================
 # Target rules for targets named T800Framework
 
 # Build rule for target.
@@ -190,7 +177,7 @@ App: cmake_check_build_system
 
 # fast build rule for target.
 App/fast:
-	$(MAKE) -f App/CMakeFiles/App.dir/build.make App/CMakeFiles/App.dir/build
+	$(MAKE) -f DayScene/CMakeFiles/App.dir/build.make DayScene/CMakeFiles/App.dir/build
 .PHONY : App/fast
 
 # Help Target
@@ -205,7 +192,6 @@ help:
 	@echo "... install/local"
 	@echo "... rebuild_cache"
 	@echo "... edit_cache"
-	@echo "... GLSLParser"
 	@echo "... T800Framework"
 	@echo "... App"
 .PHONY : help

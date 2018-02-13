@@ -98,10 +98,10 @@
 #define USING_SDL
 #endif
 
-#define USE_HEADLESS 1
-#if USE_HEADLESS
-#define T850_HEADLESS
-#endif
+//#define USE_HEADLESS 1
+//#if USE_HEADLESS
+//#define T850_HEADLESS
+//#endif
 
 #ifdef OS_WINDOWS
 #ifdef T850_HEADLESS

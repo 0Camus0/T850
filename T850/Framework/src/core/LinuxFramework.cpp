@@ -52,8 +52,7 @@ void LinuxFramework::InitGlobalVars(){
 void LinuxFramework::OnCreateApplication(ApplicationDesc desc){
     aplicationDescriptor = desc;
     m_inited = true;
-
-#ifdef USING_WAYLAND_NATIVE
+#ifdef USING_WAYLAND_NATIVE 
     printf("Using Wayland Camus\n");
 #else
     printf("Using Wayland Freeglut\n");
@@ -74,7 +73,7 @@ void LinuxFramework::OnCreateApplication(ApplicationDesc desc){
            height = atoi( g_args[i+1].c_str() );
         }
 	}
-
+#ifndef T850_HEADLESS
 #ifdef USING_FREEGLUT
     glutInit(&req,0);
     glutInitContextProfile(GLUT_CORE_PROFILE);
@@ -98,6 +97,7 @@ void LinuxFramework::OnCreateApplication(ApplicationDesc desc){
     glutKeyboardFunc(KeyboardEvent);
     glutKeyboardUpFunc(KeyboardReleaseEvent);
 #elif defined(USING_WAYLAND_NATIVE)
+
     wlnd_display = wl_display_connect(NULL);
     if (wlnd_display == NULL) {
         fprintf(stderr, "Can't connect to display\n");
@@ -194,6 +194,7 @@ void LinuxFramework::OnCreateApplication(ApplicationDesc desc){
 		return;
 	}
 #endif
+#endif //headless
     pVideoDriver = new GLDriver;
     pVideoDriver->SetDimensions(width, height);
 

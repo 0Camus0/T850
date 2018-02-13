@@ -21,6 +21,8 @@
 #include <iterator>
 #include <fstream>
 
+
+
 #ifdef OS_WINDOWS
 #if defined(USING_OPENGL_ES20)
 #pragma comment(lib,"libEGL.lib")
@@ -34,18 +36,6 @@
 #endif
 #elif defined(OS_LINUX)
 #include <GL/freeglut.h>
-#ifdef T850_HEADLESS
-#include <EGL/egl.h>
-#include <EGL/eglext.h>
-#include <GLES3/gl31.h>
-#include <assert.h>
-#include <fcntl.h>
-#include <gbm.h>
-#include <stdbool.h>
-#include <stdio.h>
-#include <string.h>
-#include <unistd.h>
-#endif
 #endif
 namespace t800 {
   extern Device*            T8Device;
@@ -359,34 +349,51 @@ namespace t800 {
     T8Device = new t800::GLDevice;
     T8DeviceContext = new t800::GLDeviceContext;
 #ifdef T850_HEADLESS
-    int32_t fd = open("/dev/dri/renderD128", O_RDWR);
-    struct gbm_device *gbm = gbm_create_device(fd);
-    /* setup EGL from the GBM device */
-    EGLDisplay egl_dpy = eglGetPlatformDisplay(EGL_PLATFORM_GBM_MESA, gbm, NULL);
-    res = eglInitialize(egl_dpy, NULL, NULL);
-
-    const char *egl_extension_st = eglQueryString(egl_dpy, EGL_EXTENSIONS);
-
-    static const EGLint config_attribs[] = {
+    std::cout << "USING HEADLESS CONTEXT" << std::endl;
+    bool res;
+    int32_t fd = open ("/dev/dri/renderD128", O_RDWR);
+    assert (fd > 0);
+ 
+   struct gbm_device *gbm = gbm_create_device (fd);
+   assert (gbm != NULL);
+ 
+   /* setup EGL from the GBM device */
+   EGLDisplay egl_dpy = eglGetPlatformDisplay (EGL_PLATFORM_GBM_MESA, gbm, NULL);
+   assert (egl_dpy != NULL);
+ 
+   res = eglInitialize (egl_dpy, NULL, NULL);
+   assert (res);
+ 
+   const char *egl_extension_st = eglQueryString (egl_dpy, EGL_EXTENSIONS);
+   assert (strstr (egl_extension_st, "EGL_KHR_create_context") != NULL);
+   assert (strstr (egl_extension_st, "EGL_KHR_surfaceless_context") != NULL);
+ 
+   static const EGLint config_attribs[] = {
       EGL_RENDERABLE_TYPE, EGL_OPENGL_ES3_BIT_KHR,
       EGL_NONE
-    };
-    EGLConfig cfg;
-    EGLint count;
-
-    res = eglChooseConfig(egl_dpy, config_attribs, &cfg, 1, &count);
-    res = eglBindAPI(EGL_OPENGL_ES_API);
-
-    static const EGLint attribs[] = {
+   };
+   EGLConfig cfg;
+   EGLint count;
+ 
+   res = eglChooseConfig (egl_dpy, config_attribs, &cfg, 1, &count);
+   assert (res);
+ 
+   res = eglBindAPI (EGL_OPENGL_ES_API);
+   assert (res);
+ 
+   static const EGLint attribs[] = {
       EGL_CONTEXT_CLIENT_VERSION, 3,
       EGL_NONE
-    };
-    EGLContext core_ctx = eglCreateContext(egl_dpy,
-      cfg,
-      EGL_NO_CONTEXT,
-      attribs);
+   };
+   EGLContext core_ctx = eglCreateContext (egl_dpy,
+                                           cfg,
+                                           EGL_NO_CONTEXT,
+                                           attribs);
+   assert (core_ctx != EGL_NO_CONTEXT);
+ 
+   res = eglMakeCurrent (egl_dpy, EGL_NO_SURFACE, EGL_NO_SURFACE, core_ctx);
+   assert (res);
 
-    res = eglMakeCurrent(egl_dpy, EGL_NO_SURFACE, EGL_NO_SURFACE, core_ctx);
 #else
 #if (defined(USING_OPENGL_ES20) || defined(USING_OPENGL_ES30) || defined(USING_OPENGL_ES31)) && defined(USING_SDL)
     EGLint numConfigs;

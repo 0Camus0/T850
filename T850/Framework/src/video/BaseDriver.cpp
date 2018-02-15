@@ -421,7 +421,7 @@ namespace t800 {
   int BaseDriver::CreateTexture(std::string path)
   {
     for (unsigned int i = 0; i < Textures.size(); i++) {
-      if (Textures[i]->filepath == path) {
+      if (Textures[i]->filepath == "Textures/" + path) {
         return i;
       }
     }

@@ -213,9 +213,6 @@ void SC_Night::InitVars() {
   
 }
 void SC_Night::CreateAssets() {
-  //Create Cube map
-  pFramework->pVideoDriver->CreateCubeMap(nullptr, 256, 256);
-
   //Create RT's
   GBufferPass = pFramework->pVideoDriver->CreateRT(4, BaseRT::RGBA8, BaseRT::F32, 0, 0, true);
   DeferredPass = pFramework->pVideoDriver->CreateRT(1, BaseRT::RGBA16F, BaseRT::NOTHING, 0, 0, true);
@@ -698,9 +695,9 @@ void SC_Night::OnDraw() {
   //Quads[1].SetGlobalSignature(Signature::FSQUAD_1_TEX);
   //Quads[1].Draw();
 
-  Quads[2].SetTexture(pFramework->pVideoDriver->GetRTTexture(GodRaysCalcPass, BaseDriver::COLOR0_ATTACHMENT), 0);
-  Quads[2].SetGlobalSignature(Signature::FSQUAD_1_TEX);
-  Quads[2].Draw();
+  //Quads[2].SetTexture(pFramework->pVideoDriver->GetRTTexture(GodRaysCalcPass, BaseDriver::COLOR0_ATTACHMENT), 0);
+  //Quads[2].SetGlobalSignature(Signature::FSQUAD_1_TEX);
+  //Quads[2].Draw();
 
   //Quads[3].SetTexture(pFramework->pVideoDriver->GetRTTexture(CombineCoCPass, BaseDriver::COLOR0_ATTACHMENT), 0);
   //Quads[3].SetGlobalSignature(Signature::FSQUAD_1_TEX);

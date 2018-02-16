@@ -621,7 +621,7 @@ unsigned char*	cil_load(const char* filename, int *x, int *y, unsigned int *mipm
 		props_ = CIL_LOADED_WITH_STB | CIL_RAW; 
 		in_.close();
 		int channels;
-		unsigned char * buffer = stbi_load(filename, x, y, &channels, 0);
+		unsigned char * buffer = stbi_load(filename, x, y, &channels, 4);
 		props_ |= (channels == 3) ? CIL_RGB : CIL_RGBA;
 		*mipmaps = 1;
 		*buffersize = (*x)*(*y) * channels;

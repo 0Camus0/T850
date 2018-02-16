@@ -46,26 +46,111 @@ uniform mediump sampler2D tex3;
 uniform mediump sampler2D tex4;
 uniform mediump sampler2D tex5;
 uniform mediump samplerCube texEnv;
+
+highp vec3 NormalDistribution(highp float NdotH, highp float roughness)
+{
+	//Using GGX
+	highp float a = roughness*roughness;
+	highp float a2 = a*a;
+
+	highp float NdotH2 = NdotH*NdotH;
+
+	highp float Num = a2;
+	highp float Denom = (NdotH2 * (a2 - 1.0f) + 1.0f);
+	Denom = 3.1415926 * Denom * Denom;
+
+	highp float res = Num / Denom;
+
+	return vec3(res, res, res);
+}
+
+highp vec3 FresnelCalc(highp float VdotH, highp vec3 specColor)
+{
+	//Using Schlick
+	return (specColor + (1.0f - specColor) * pow(1.0f - VdotH, 5.0f));
+}
+
+highp vec3 fresnelSchlickRoughness(highp float cosTheta, highp vec3 F0, highp float roughness)
+{
+    return F0 + (max(vec3(1.0 - roughness), F0) - F0) * pow(1.0 - cosTheta, 5.0);
+}   
+
+
+highp float GeometrySchlickGGX(highp float Ndot, highp float roughness)
+{
+	highp float r = (roughness + 1.0);
+    highp float k = (r*r) / 8.0;
+
+    highp float Num   = Ndot;
+    highp float Denom = Ndot * (1.0 - k) + k;
+	
+    return clamp(Num / Denom, 0.0f, 1.0f);
+}
+
+highp vec3 GeometricShadowing(highp float NdotL, highp float NdotV, highp float roughness)
+{
+	//Using Geometry Smith
+	highp float ggx1 = GeometrySchlickGGX(NdotL, roughness);
+	highp float ggx2 = GeometrySchlickGGX(NdotV, roughness);
+
+	highp float res = clamp(ggx1 * ggx2, 0.0f, 1.0f);
+
+	return vec3(res, res, res);
+}
+
+highp vec3 CalculateSpecular(mediump vec3 specularColor, highp vec3 normal, highp vec3 view, highp vec3 halfvector, highp vec3 light, highp float roughness)
+{
+	highp float NdotH = max(dot(normal, halfvector), 0.0f);
+	highp float VdotH = clamp(dot(view, halfvector), 0.0f, 1.0f);
+	highp float NdotL = clamp(dot(normal, light), 0.0f, 1.0f);
+	highp float NdotV = clamp(dot(normal, view), 0.0f, 1.0f);
+
+	highp vec3 Num = FresnelCalc(VdotH, specularColor)*NormalDistribution(NdotH, roughness)*GeometricShadowing(NdotL, NdotV, roughness);
+	highp float denomRes = (4.0f * (NdotL*NdotV) + 0.01f);
+	highp vec3 Denom = vec3(denomRes, denomRes, denomRes);
+
+	return (Num/Denom);
+}
+
+highp vec3 CalculateDiffuse(highp vec3 albedoColor, highp vec3 normal, highp vec3 light)
+{
+	mediump float att			 = 1.0;
+	att		 	     = dot(normal, light)*0.5 + 0.5;
+	att				 = pow( att , 2.0 );	
+	att				 = clamp( att , 0.0 , 1.0 );
+	return albedoColor*clamp(dot(normal, light), 0.0f, 1.0f);
+}
+
 void main(){
 	lowp vec2 coords = vecUVCoords;
 	coords.y = 1.0 - coords.y;
 
 	lowp vec4 Final  =  vec4(0.0,0.0,0.0,1.0);
 	lowp float Shadow = 1.0;
-	
+
+	highp vec4 ToLineal = vec4(2.2f, 2.2f, 2.2f, 2.2f);
+	highp vec4 TosRGB = vec4(1.0f/2.2f, 1.0f/2.2f, 1.0f/2.2f, 1.0f/2.2f);
+
 	#ifdef ES_30
-		lowp vec4 color  =  texture(tex0,coords);
+		highp vec4 Albedo  =  texture(tex0,coords, 0.0f);
+		highp vec4 SpecularColor = texture(tex2, coords);
+
+		Albedo.xyz = pow(Albedo.xyz, ToLineal.xyz);
+		//SpecularColor.xyz = pow(SpecularColor.xyz, ToLineal.xyz);
+
 		lowp vec4 matId  =	texture(tex3,coords);
-	#else
-		lowp vec4 color  =  texture2D(tex0,coords);
-		lowp vec4 matId  =	texture2D(tex3,coords);
-	#endif
-	
-	#ifdef ES_30
 		highp float depth = texture(tex4,coords).r;
 	#else
+		highp vec4 Albedo  =  texture2D(tex0,coords);
+		highp vec4 SpecularColor = texture2D(tex2, coords);
+
+		//Albedo.xyz = pow(Albedo, ToLineal.xyz);
+		//SpecularColor.xyz = pow(SpecularColor, ToLineal.xyz);
+
+		lowp vec4 matId  =	texture2D(tex3,coords);
 		highp float depth = texture2D(tex4,coords).r;
 	#endif
+
 		
 #ifdef NON_LINEAR_DEPTH
 		highp vec2 vcoord = coords *2.0 - 1.0;
@@ -77,13 +162,7 @@ void main(){
 
 	highp vec3 EyeDir = normalize(CameraPosition-position).xyz;
 
-#ifdef ES_30
-	lowp vec4 specularmap = texture(tex2, coords);
-#else
-	lowp vec4 specularmap = texture2D(tex2, coords);
-#endif	
-
-	int MatId = int(specularmap.a*255.0);
+	int MatId = int(SpecularColor.a*255.0);
 	
 	if(MatId == 0){
 		highp vec3 EyeDir_mod = -EyeDir;
@@ -105,9 +184,7 @@ void main(){
 #endif
 
 		highp float cutoff = 0.8;
-		lowp vec4 Lambert = vec4(1.0,1.0,1.0,1.0);
-		lowp vec4 Specular = vec4(1.0,1.0,1.0,1.0);
-		lowp vec4 Fresnel	 =  vec4(1.0,1.0,1.0,1.0);
+
 
 		#ifdef ES_30
 			highp vec4 normalmap = texture(tex1,coords);
@@ -118,12 +195,16 @@ void main(){
 		highp vec3 normal = normalmap.xyz*2.0 - 1.0;
 		normal = normalize(normal);
 		
-		highp vec3 ReflectedVec = reflect(-EyeDir,normal.xyz);	
+		highp vec3 ReflectedVec = reflect(-EyeDir, normal.xyz);	
+		ReflectedVec.y = ReflectedVec.y;
+		ReflectedVec.x = -ReflectedVec.x;
+		ReflectedVec.z = -ReflectedVec.z;
+
 		highp float ratio = 1.0/1.52;
 		highp vec3 R = refract(-EyeDir,normal.xyz,ratio);
 		
 		#ifdef ES_30
-			mediump vec3 RefleCol =vec3(0.0,0.0,0.0) /*texture( texEnv, ReflectedVec ).zyx*/;
+			 /*texture( texEnv, ReflectedVec ).zyx*/
 		#else
 			mediump vec3 RefleCol = textureCube( texEnv, ReflectedVec ).zyx;
 		#endif		
@@ -134,36 +215,28 @@ void main(){
 			mediump vec3 RefraCol = vec3(1.0,1.0,1.0) /*textureCube( texEnv, R ).zyx*/;
 		#endif	
 
-		
+		highp float rough = normalmap.a;
+
 		highp int NumLights =  int(CameraInfo.w);
 			for(highp int i=0;i<NumLights;i++){
 				highp float Rad = LightRadius[i >> 2][i & 3];
 				highp float dist = distance(LightPositions[i],position);
-				if(dist < (Rad*2.0)){
-					Lambert  = LightColors[i];
-					Specular = LightColors[i];
-					Fresnel	 = LightColors[i];			
-					
-					highp  vec3  LightDir = normalize(LightPositions[i]-position).xyz;
-					highp float   att		 = 1.0;
-					att		 	     = dot(normal.xyz,LightDir)*0.5 + 0.5;
-					att				 = pow( att , 2.0 );	
-					att				 = clamp( att , 0.0 , 1.0 );
-					Lambert			*= color*att;
-				
 
-					highp float specIntesivity = color.a * 255.0;
-					highp float shinness = normalmap.a * 255.0;
+				if(dist < (Rad*2.0))
+				{	
+					highp float gloss = normalmap.a;
 
-					lowp vec4 mSpecular = vec4(1.0, 1.0, 1.0, 1.0);
-					highp float specular;
-					lowp vec3 mReflectedLight = normalize(EyeDir + LightDir);
-					specular = max( dot(mReflectedLight, normal.xyz), 0.0);
-					specular = pow(specular, shinness);
-					specular *= clamp(att*4.0,0.0,1.0);
-					mSpecular *= specular;
-					mSpecular *= specularmap;
-					
+					highp vec3 LightDir = normalize(LightPositions[i]-position).xyz;
+
+					highp vec3 Half = normalize(EyeDir + LightDir);
+
+					highp vec3 Diffuse = CalculateDiffuse(Albedo.xyz, normal, LightDir)*LightColors[i].xyz;
+
+					highp vec3 SpecularRes = CalculateSpecular(Albedo.xyz, normal, EyeDir, Half, LightDir, rough)*LightColors[i].xyz;
+									
+					highp vec3 Ks = SpecularRes;
+					highp vec3 Kd = vec3(1.0f, 1.0f, 1.0f) - SpecularRes;
+
 					highp float d = max(dist - Rad, 0.0);
 					highp float denom = d/Rad + 1.0;
 					
@@ -171,9 +244,8 @@ void main(){
 					 
 					attenuation = (attenuation - cutoff) / (1.0 - cutoff);
 					attenuation = max(attenuation, 0.0);
-						
-					Final += Lambert*attenuation;
-					Final += mSpecular*attenuation*Shadow;
+
+					Final.xyz += SpecularRes.xyz*attenuation + attenuation*Kd*Diffuse;
 				}
 			}
 		if(MatId == 3 || MatId == 4){
@@ -191,13 +263,19 @@ void main(){
 			FresnelAtt 		= 1.0 - FresnelAtt;
 			FresnelAtt		= pow( FresnelAtt , 5.0 );	
 			FresnelAtt 		= clamp(FresnelAtt , 0.0 , 1.0 );
-			Fresnel 		= FresnelCol*FresnelIntensity*FresnelAtt;
+			//Fresnel 		= FresnelCol*FresnelIntensity*FresnelAtt;
 		
-			Final += Fresnel;
+			//Final += Fresnel;
 		}		
 
-		Final.xyz *= Shadow;
-			
+			highp vec3 kSpecular = fresnelSchlickRoughness(max(dot(normal, EyeDir), 0.0f), Albedo.xyz, rough);
+	 		highp vec3 RefleCol = texture( texEnv, ReflectedVec , rough*4.0f).zyx;
+
+	 		Final.xyz += RefleCol*kSpecular.xyz;
+
+			Final.xyz *= Shadow;
+
+			//Final.xyz = vec3(rough, rough, rough);
 	}
 	
 #ifdef ES_30

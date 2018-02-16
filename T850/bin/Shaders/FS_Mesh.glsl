@@ -130,7 +130,7 @@ void main(){
 	lowp vec4 reflect  = vec4(0.5,0.5,0.5,1.0);
 
 	mediump float specIntesivity = 0.8;
-	mediump float shinness = 2.0;
+	mediump float roughness = 0.0;
 
 	normal.xyz   = normalize(hnormal).xyz;  
 	highp vec2 parallaxCoords =  vecUVCoords;
@@ -216,12 +216,12 @@ void main(){
 	
 	#ifdef GLOSS_MAP
 		#ifdef ES_30
-			shinness = texture(GlossTex,parallaxCoords).r + shinness;
+			roughness = texture(GlossTex,parallaxCoords).r;
 		#else
-			shinness = texture2D(GlossTex,parallaxCoords).r + shinness;
+			roughness = texture2D(GlossTex,parallaxCoords).r;
 		#endif
 	#else
-		shinness = Intensities.y / 255.0;
+		roughness = 0.5f;
 	#endif
 			
 		normal.xyz		 = normal.xyz*0.5 + 0.5;	
@@ -230,7 +230,7 @@ void main(){
 		colorOut_0.rgb  = color.rgb;
 		colorOut_0.a 	= Intensities.x / 255.0;
 		colorOut_1.rgb  = normal.xyz;
-		colorOut_1.a 	= shinness;
+		colorOut_1.a 	= roughness;
 
 		colorOut_2.rgb  = specular.rgb;
 
@@ -256,7 +256,7 @@ void main(){
 		gl_FragData[0].a 	= Intensities.x / 255.0;
 		
 		gl_FragData[1].rgb  = normal.xyz;
-		gl_FragData[1].a 	= shinness;
+		gl_FragData[1].a 	= roughness;
 
 		gl_FragData[2].rgb  = specular.rgb;
 		

@@ -57,6 +57,7 @@
     <ClInclude Include="T8_descriptors.h" />
   </ItemGroup>
   <ItemGroup>
+    <ClCompile Include="..\Librerias\tinyxml2\tinyxml2.cpp" />
     <ClCompile Include="src\core\Core.cpp" />
     <ClCompile Include="src\core\windows\Win32Framework.cpp" />
     <ClCompile Include="src\scene\LensFlare.cpp" />
@@ -255,7 +256,7 @@
     <ConfigurationType>StaticLibrary</ConfigurationType>
     <UseDebugLibraries>false</UseDebugLibraries>
     <PlatformToolset>v140</PlatformToolset>
-    <WholeProgramOptimization>true</WholeProgramOptimization>
+    <WholeProgramOptimization>false</WholeProgramOptimization>
     <CharacterSet>Unicode</CharacterSet>
   </PropertyGroup>
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'" Label="Configuration">

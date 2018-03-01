@@ -30,7 +30,7 @@ using namespace t800;
 extern std::vector<std::string> g_args;
 
 
-#include "utils/T8_Technique.h"
+
 #include "SC_Day.h"
 #include "SC_Night.h"
 #include "SC_Tech.h"

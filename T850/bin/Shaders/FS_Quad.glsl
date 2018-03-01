@@ -268,7 +268,7 @@ void main(){
 			//Final += Fresnel;
 		}		
 
-			highp vec3 kSpecular = fresnelSchlickRoughness(max(dot(normal, EyeDir), 0.0f), Albedo.xyz, rough);
+			highp vec3 kSpecular = clamp( fresnelSchlickRoughness(max(dot(normal, EyeDir), 0.0f), Albedo.xyz, rough) , 0.0 , 1.0 );
 	 		highp vec3 RefleCol = texture( texEnv, ReflectedVec , rough*4.0f).zyx;
 
 	 		Final.xyz += RefleCol*kSpecular.xyz;

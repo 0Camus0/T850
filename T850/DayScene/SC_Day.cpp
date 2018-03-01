@@ -8,7 +8,7 @@ using namespace t800;
 #define MEDIUMQ 2
 #define LOWQ 3
 
-#define QUALITY_SELECTED LOWQ
+#define QUALITY_SELECTED HIGHQ
 
 #if   QUALITY_SELECTED == HIGHQ
 #define MAX_QUALITY
@@ -77,18 +77,18 @@ void SC_Day::InitVars() {
   SceneProp.FocalLength = 50;
   SceneProp.MaxCoc = 2.5;
 #ifdef  MAX_QUALITY
-  SceneProp.DOF_Near_Samples_squared = 2.0f;
-  SceneProp.DOF_Far_Samples_squared = 4.0f;
-  SceneProp.ShadowMapResolution = 4096.0f;
+  SceneProp.DOF_Near_Samples_squared = 1.0f;
+  SceneProp.DOF_Far_Samples_squared = 3.0f;
+  SceneProp.ShadowMapResolution = 2048.0f;
   SceneProp.GoodRaysResolution = 0.0f;
   SceneProp.PCFScale = 1.5f;
-  SceneProp.PCFSamples = 2.0f;
+  SceneProp.PCFSamples = 3.0f;
   SceneProp.ParallaxLowSamples = 20.0f;
-  SceneProp.ParallaxHighSamples = 40.0f;
-  SceneProp.ParallaxHeight = 0.03f;
-  SceneProp.LightVolumeSteps = 1024.0f;
+  SceneProp.ParallaxHighSamples = 30.0f;
+  SceneProp.ParallaxHeight = 0.02f;
+  SceneProp.LightVolumeSteps = 256.0f;
   SceneProp.SSAOKernel.Radius = 1.5f;
-  SceneProp.SSAOKernel.KernelSize = 128;
+  SceneProp.SSAOKernel.KernelSize = 32;
 #elif defined(MEDIUM_QUALITY)
   SceneProp.DOF_Near_Samples_squared = 1.0f;
   SceneProp.DOF_Far_Samples_squared = 3.0f;

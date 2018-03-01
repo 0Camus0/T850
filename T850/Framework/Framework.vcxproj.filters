@@ -54,6 +54,9 @@
     <Filter Include="Shaders\GLSL">
       <UniqueIdentifier>{afb89638-cc69-44cd-840d-7cef05f91e0f}</UniqueIdentifier>
     </Filter>
+    <Filter Include="Source Files\ext">
+      <UniqueIdentifier>{fa54be3f-6764-487d-a20f-9adc6984e9b3}</UniqueIdentifier>
+    </Filter>
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="include\core\Core.h">
@@ -258,6 +261,9 @@
     </ClCompile>
     <ClCompile Include="src\scene\RenderMesh.cpp">
       <Filter>Source Files\scene</Filter>
+    </ClCompile>
+    <ClCompile Include="..\Librerias\tinyxml2\tinyxml2.cpp">
+      <Filter>Source Files\ext</Filter>
     </ClCompile>
   </ItemGroup>
   <ItemGroup>

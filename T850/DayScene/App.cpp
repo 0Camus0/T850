@@ -24,6 +24,7 @@
 #include <vector>
 
 #include <T8_descriptors.h>
+#include <utils/DescriptorLoader.h>
 
 std::vector<std::string> g_args;
 
@@ -32,11 +33,19 @@ t800::RootFramework *pFrameWork = 0;
 
 int main(int arg,char ** args){
   t800::ApplicationDesc desc;
-  desc.api = t800::GRAPHICS_API::OPENGL;
-  desc.height = 720;
-  desc.width = 1280;
-  desc.videoMode = t800::T8_VIDEO_MODE::WINDOWED;
-  desc.title = "T800 Project";
+
+  if (!LoadDescriptor(desc)) {
+      desc.api = t800::GRAPHICS_API::OPENGL;
+      desc.height = 600;
+      desc.width = 800;
+      desc.videoMode = t800::T8_VIDEO_MODE::WINDOWED;
+      desc.qualitylevel = 0;
+      desc.enableguclogging = 1;
+      desc.gucverbosity = 2;
+      desc.gucenableparam = 0;
+      desc.timerunning = 60;
+      desc.title = "T850 Project";
+  }
 
     for(int i=0;i<arg;i++){
         g_args.push_back( std::string( args[i] ) );

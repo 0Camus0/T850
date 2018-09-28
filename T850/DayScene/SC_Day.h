@@ -62,6 +62,9 @@ class SC_Day : public t800::SceneBase
   void CreateAssets();
   void DestroyAssets();
 
+  void DrawNormal();
+  void DrawSimple();
+
   void ChangeSettingsOnPlus();
   void ChangeSettingsOnMinus();
   void printCurrSelection();

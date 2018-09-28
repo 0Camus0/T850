@@ -76,6 +76,7 @@ namespace t800 {
     BaseDriver		*pVideoDriver;
     AppBase			*pBaseApp;
     bool m_inited;
+    bool  m_alive;
     ApplicationDesc aplicationDescriptor;
   };
 }

@@ -47,4 +47,6 @@ unsigned int createShader(unsigned int type, char* pSource);
 char *file2string(const char *path);
 std::string RemovePath(std::string p);
 
+
+
 #endif

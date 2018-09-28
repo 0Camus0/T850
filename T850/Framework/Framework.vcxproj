@@ -33,6 +33,7 @@
     <ClInclude Include="include\scene\T8_Quad.h" />
     <ClInclude Include="include\scene\T8_TextRenderer.h" />
     <ClInclude Include="include\utils\cil.h" />
+    <ClInclude Include="include\utils\DescriptorLoader.h" />
     <ClInclude Include="include\utils\InputManager.h" />
     <ClInclude Include="include\utils\ResourceManager.h" />
     <ClInclude Include="include\utils\T8_Spline.h" />
@@ -70,6 +71,7 @@
     <ClCompile Include="src\scene\T8_Quad.cpp" />
     <ClCompile Include="src\scene\T8_TextRenderer.cpp" />
     <ClCompile Include="src\utils\cil.cpp" />
+    <ClCompile Include="src\utils\DescriptorLoader.cpp" />
     <ClCompile Include="src\utils\InputManager.cpp" />
     <ClCompile Include="src\utils\ResourceManager.cpp" />
     <ClCompile Include="src\utils\T8_Spline.cpp" />
@@ -250,14 +252,14 @@
     <ConfigurationType>StaticLibrary</ConfigurationType>
     <UseDebugLibraries>true</UseDebugLibraries>
     <PlatformToolset>v140</PlatformToolset>
-    <CharacterSet>Unicode</CharacterSet>
+    <CharacterSet>MultiByte</CharacterSet>
   </PropertyGroup>
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|Win32'" Label="Configuration">
     <ConfigurationType>StaticLibrary</ConfigurationType>
     <UseDebugLibraries>false</UseDebugLibraries>
     <PlatformToolset>v140</PlatformToolset>
     <WholeProgramOptimization>false</WholeProgramOptimization>
-    <CharacterSet>Unicode</CharacterSet>
+    <CharacterSet>MultiByte</CharacterSet>
   </PropertyGroup>
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'" Label="Configuration">
     <ConfigurationType>StaticLibrary</ConfigurationType>
@@ -315,7 +317,7 @@
       <WarningLevel>Level3</WarningLevel>
       <Optimization>Disabled</Optimization>
       <PreprocessorDefinitions>WIN32;_CRT_SECURE_NO_WARNINGS;_DEBUG;_LIB;GLEW_STATIC;%(PreprocessorDefinitions)</PreprocessorDefinitions>
-      <AdditionalIncludeDirectories>$(SolutionDir)Librerias\tinyxml2\include;$(ProjectDir);$(ProjectDir)include;$(SolutionDir)Librerias\SDL-1.2.14\include;$(SolutionDir)Librerias\OGLES2\pvr\include;$(SolutionDir)Librerias\stb\include;$(SolutionDir)Librerias\glew-2.0.0\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>$(SolutionDir)Librerias\tinyxml2\include;$(ProjectDir);$(ProjectDir)include;$(SolutionDir)Librerias\SDL-1.2.14\include;$(SolutionDir)Librerias\OGLES2\pvr\include;$(SolutionDir)Librerias\stb\include;$(SolutionDir)Librerias\glew-2.0.0\include;$(SolutionDir)Librerias\json\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
       <RuntimeLibrary>MultiThreadedDebug</RuntimeLibrary>
       <MultiProcessorCompilation>true</MultiProcessorCompilation>
       <MinimalRebuild>false</MinimalRebuild>
@@ -345,7 +347,7 @@
       <FunctionLevelLinking>true</FunctionLevelLinking>
       <IntrinsicFunctions>true</IntrinsicFunctions>
       <PreprocessorDefinitions>WIN32;_CRT_SECURE_NO_WARNINGS;NDEBUG;_LIB;GLEW_STATIC;%(PreprocessorDefinitions)</PreprocessorDefinitions>
-      <AdditionalIncludeDirectories>$(SolutionDir)Librerias\tinyxml2\include;$(ProjectDir);$(ProjectDir)include;$(SolutionDir)Librerias\SDL-1.2.14\include;$(SolutionDir)Librerias\OGLES2\pvr\include;$(SolutionDir)Librerias\stb\include;$(SolutionDir)Librerias\glew-2.0.0\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>$(SolutionDir)Librerias\tinyxml2\include;$(ProjectDir);$(ProjectDir)include;$(SolutionDir)Librerias\SDL-1.2.14\include;$(SolutionDir)Librerias\OGLES2\pvr\include;$(SolutionDir)Librerias\stb\include;$(SolutionDir)Librerias\glew-2.0.0\include;$(SolutionDir)Librerias\json\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
       <RuntimeLibrary>MultiThreaded</RuntimeLibrary>
       <MultiProcessorCompilation>true</MultiProcessorCompilation>
     </ClCompile>

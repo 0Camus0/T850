@@ -1,0 +1,11 @@
+{ "settings":{
+    "width"             : 1920,
+    "height"            : 1200,
+    "fullscreen"        : 1,
+    "qualitylevel"      : 3,
+    "GuCEnableLogging"  : 1,
+    "GuCEnableParam"    : 0,
+    "GuCVerbosity"      : 2,
+    "TimeRunning"       : 30
+    }
+}

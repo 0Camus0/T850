@@ -1,6 +1,7 @@
 #ifndef T800_DESCRIPTORS_H
 #define T800_DESCRIPTORS_H
 #include <video/ShaderBase.h>
+#include <string>
 namespace t800 {
 namespace T8_BUFFER_USAGE{
   enum E {
@@ -260,11 +261,20 @@ enum Signature : unsigned long long {
     T8_VIDEO_MODE::E videoMode;
     unsigned int width;
     unsigned int height;
+    unsigned int qualitylevel;
+    unsigned int enableguclogging;
+    unsigned int gucenableparam;
+    unsigned int gucverbosity;
+    unsigned int timerunning;
     std::string title;
     ApplicationDesc() {
       api = GRAPHICS_API::D3D11;
       width = 1280;
       height = 720;
+      qualitylevel = 0;
+      gucenableparam = 0;
+      gucverbosity = 0;
+      timerunning = 0;
       title = "My New Project";
       videoMode = T8_VIDEO_MODE::WINDOWED;
     }

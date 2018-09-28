@@ -42,8 +42,8 @@ void App::InitVars() {
   FirstFrame = true;
 
   m_scenes.push_back(new SC_Day());
-  m_scenes.push_back(new SC_Night());
-  m_scenes.push_back(new SC_Tech());
+ // m_scenes.push_back(new SC_Night());
+ // m_scenes.push_back(new SC_Tech());
   for (auto &it : m_scenes) {
     it->pFramework = pFramework;
     //it->InitVars();

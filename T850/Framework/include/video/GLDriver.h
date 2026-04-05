@@ -40,10 +40,10 @@
 #include <GLES3/gl31.h>
 #elif defined(USING_OPENGL)
 #include <GL/glew.h>
-#include <SDL/SDL.h>
+#include <SDL3/SDL.h>
 #else
 #include <GL/glew.h>
-#include <SDL/SDL.h>
+#include <SDL3/SDL.h>
 #endif
 #elif defined(OS_LINUX)
 #if defined(USING_OPENGL_ES20)
@@ -179,6 +179,7 @@ namespace t800 {
 #if defined(USING_OPENGL) || defined(USING_OPENGL_ES30) || defined(USING_OPENGL_ES31)
     static GLenum		DrawBuffers[16];
 #endif
+    void*               m_sdlWindow = nullptr;
     std::vector<std::string>	ExtensionsTok;
     std::string					Extensions;
 

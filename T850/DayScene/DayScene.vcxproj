@@ -1,4 +1,4 @@
-﻿<?xml version="1.0" encoding="utf-8"?>
+<?xml version="1.0" encoding="utf-8"?>
 <Project DefaultTargets="Build" ToolsVersion="14.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
   <ItemGroup Label="ProjectConfigurations">
     <ProjectConfiguration Include="Debug|Win32">
@@ -17,45 +17,64 @@
       <Configuration>Release</Configuration>
       <Platform>x64</Platform>
     </ProjectConfiguration>
+    <ProjectConfiguration Include="Debug|ARM64">
+      <Configuration>Debug</Configuration>
+      <Platform>ARM64</Platform>
+    </ProjectConfiguration>
+    <ProjectConfiguration Include="Release|ARM64">
+      <Configuration>Release</Configuration>
+      <Platform>ARM64</Platform>
+    </ProjectConfiguration>
   </ItemGroup>
   <PropertyGroup Label="Globals">
     <ProjectGuid>{8F4A8F13-C29C-4BA3-A673-2AB797440C0C}</ProjectGuid>
     <Keyword>Win32Proj</Keyword>
     <RootNamespace>TestApp</RootNamespace>
-    <WindowsTargetPlatformVersion>8.1</WindowsTargetPlatformVersion>
+    <WindowsTargetPlatformVersion>10.0</WindowsTargetPlatformVersion>
   </PropertyGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.Default.props" />
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'" Label="Configuration">
     <ConfigurationType>Application</ConfigurationType>
     <UseDebugLibraries>true</UseDebugLibraries>
-    <PlatformToolset>v140</PlatformToolset>
+    <PlatformToolset>v143</PlatformToolset>
     <CharacterSet>MultiByte</CharacterSet>
   </PropertyGroup>
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|Win32'" Label="Configuration">
     <ConfigurationType>Application</ConfigurationType>
     <UseDebugLibraries>false</UseDebugLibraries>
-    <PlatformToolset>v140</PlatformToolset>
+    <PlatformToolset>v143</PlatformToolset>
     <WholeProgramOptimization>false</WholeProgramOptimization>
     <CharacterSet>MultiByte</CharacterSet>
   </PropertyGroup>
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'" Label="Configuration">
     <ConfigurationType>Application</ConfigurationType>
     <UseDebugLibraries>true</UseDebugLibraries>
-    <PlatformToolset>v140</PlatformToolset>
+    <PlatformToolset>v143</PlatformToolset>
+    <CharacterSet>Unicode</CharacterSet>
+  </PropertyGroup>
+  <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|ARM64'" Label="Configuration">
+    <ConfigurationType>Application</ConfigurationType>
+    <UseDebugLibraries>true</UseDebugLibraries>
+    <PlatformToolset>v143</PlatformToolset>
     <CharacterSet>Unicode</CharacterSet>
   </PropertyGroup>
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'" Label="Configuration">
     <ConfigurationType>Application</ConfigurationType>
     <UseDebugLibraries>false</UseDebugLibraries>
-    <PlatformToolset>v140</PlatformToolset>
+    <PlatformToolset>v143</PlatformToolset>
+    <WholeProgramOptimization>true</WholeProgramOptimization>
+    <CharacterSet>Unicode</CharacterSet>
+  </PropertyGroup>
+  <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|ARM64'" Label="Configuration">
+    <ConfigurationType>Application</ConfigurationType>
+    <UseDebugLibraries>false</UseDebugLibraries>
+    <PlatformToolset>v143</PlatformToolset>
     <WholeProgramOptimization>true</WholeProgramOptimization>
     <CharacterSet>Unicode</CharacterSet>
   </PropertyGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.props" />
-  <ImportGroup Label="ExtensionSettings">
-  </ImportGroup>
-  <ImportGroup Label="Shared">
-  </ImportGroup>
+  <ImportGroup Label="ExtensionSettings"></ImportGroup>
+  <ImportGroup Label="Shared"></ImportGroup>
   <ImportGroup Label="PropertySheets" Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">
     <Import Project="$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props" Condition="exists('$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props')" Label="LocalAppDataPlatform" />
   </ImportGroup>
@@ -65,38 +84,68 @@
   <ImportGroup Label="PropertySheets" Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">
     <Import Project="$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props" Condition="exists('$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props')" Label="LocalAppDataPlatform" />
   </ImportGroup>
+  <ImportGroup Label="PropertySheets" Condition="'$(Configuration)|$(Platform)'=='Debug|ARM64'">
+    <Import Project="$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props" Condition="exists('$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props')" Label="LocalAppDataPlatform" />
+  </ImportGroup>
   <ImportGroup Label="PropertySheets" Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
     <Import Project="$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props" Condition="exists('$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props')" Label="LocalAppDataPlatform" />
   </ImportGroup>
-  <PropertyGroup Label="UserMacros" />
+  <ImportGroup Label="PropertySheets" Condition="'$(Configuration)|$(Platform)'=='Release|ARM64'">
+    <Import Project="$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props" Condition="exists('$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props')" Label="LocalAppDataPlatform" />
+  </ImportGroup>
+    <PropertyGroup Label="UserMacros" />
+  <PropertyGroup Condition="'$(Platform)'=='Win32'">
+    <T8Arch>x86</T8Arch>
+    <T8VcpkgStatic>$(SolutionDir)Librerias\vcpkg\installed\x86-windows-static</T8VcpkgStatic>
+    <T8VcpkgDynamic>$(SolutionDir)Librerias\vcpkg\installed\x86-windows</T8VcpkgDynamic>
+  </PropertyGroup>
+  <PropertyGroup Condition="'$(Platform)'=='x64'">
+    <T8Arch>x64</T8Arch>
+    <T8VcpkgStatic>$(SolutionDir)Librerias\vcpkg\installed\x64-windows-static</T8VcpkgStatic>
+    <T8VcpkgDynamic>$(SolutionDir)Librerias\vcpkg\installed\x64-windows</T8VcpkgDynamic>
+  </PropertyGroup>
+  <PropertyGroup Condition="'$(Platform)'=='ARM64'">
+    <T8Arch>arm64</T8Arch>
+    <T8VcpkgStatic>$(SolutionDir)Librerias\vcpkg\installed\arm64-windows-static</T8VcpkgStatic>
+    <T8VcpkgDynamic>$(SolutionDir)Librerias\vcpkg\installed\arm64-windows</T8VcpkgDynamic>
+  </PropertyGroup>
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">
     <LinkIncremental>true</LinkIncremental>
-    <OutDir>$(SolutionDir)Bin\</OutDir>
+    <OutDir>$(SolutionDir)bin\$(T8Arch)\$(Configuration)\</OutDir>
     <IntDir>$(SolutionDir)Lib\VStuff\$(ProjectName)\$(Configuration)\$(Platform)\</IntDir>
   </PropertyGroup>
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">
     <LinkIncremental>true</LinkIncremental>
     <IntDir>$(SolutionDir)Lib\VStuff\$(ProjectName)\$(Configuration)\$(Platform)\</IntDir>
-    <OutDir>$(SolutionDir)Bin\</OutDir>
+    <OutDir>$(SolutionDir)bin\$(T8Arch)\$(Configuration)\</OutDir>
+  </PropertyGroup>
+  <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|ARM64'">
+    <LinkIncremental>true</LinkIncremental>
+    <IntDir>$(SolutionDir)Lib\VStuff\$(ProjectName)\$(Configuration)\$(Platform)\</IntDir>
+    <OutDir>$(SolutionDir)bin\$(T8Arch)\$(Configuration)\</OutDir>
   </PropertyGroup>
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">
     <LinkIncremental>false</LinkIncremental>
-    <OutDir>$(SolutionDir)Bin\</OutDir>
+    <OutDir>$(SolutionDir)bin\$(T8Arch)\$(Configuration)\</OutDir>
     <IntDir>$(SolutionDir)Lib\VStuff\$(ProjectName)\$(Configuration)\$(Platform)\</IntDir>
   </PropertyGroup>
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
     <LinkIncremental>false</LinkIncremental>
     <IntDir>$(SolutionDir)Lib\VStuff\$(ProjectName)\$(Configuration)\$(Platform)\</IntDir>
-    <OutDir>$(SolutionDir)Bin\</OutDir>
+    <OutDir>$(SolutionDir)bin\$(T8Arch)\$(Configuration)\</OutDir>
+  </PropertyGroup>
+  <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|ARM64'">
+    <LinkIncremental>false</LinkIncremental>
+    <IntDir>$(SolutionDir)Lib\VStuff\$(ProjectName)\$(Configuration)\$(Platform)\</IntDir>
+    <OutDir>$(SolutionDir)bin\$(T8Arch)\$(Configuration)\</OutDir>
   </PropertyGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">
     <ClCompile>
-      <PrecompiledHeader>
-      </PrecompiledHeader>
+      <PrecompiledHeader></PrecompiledHeader>
       <WarningLevel>Level3</WarningLevel>
       <Optimization>Disabled</Optimization>
       <PreprocessorDefinitions>WIN32;_CRT_SECURE_NO_WARNINGS;_DEBUG;_CONSOLE;GLEW_STATIC;%(PreprocessorDefinitions)</PreprocessorDefinitions>
-      <AdditionalIncludeDirectories>$(SolutionDir)Librerias\tinyxml2\include;$(SolutionDir)Framework;$(SolutionDir)Framework\include;$(SolutionDir)Librerias\SDL-1.2.14\include;$(SolutionDir)Librerias\OGLES2\pvr\include;$(SolutionDir)Librerias\stb\include;$(SolutionDir)Librerias\glew-2.0.0\include</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>$(SolutionDir)Librerias\tinyxml2\include;$(SolutionDir)Framework;$(SolutionDir)Framework\include;$(SolutionDir)Librerias\SDL3\include;$(T8VcpkgStatic)\include;$(T8VcpkgDynamic)\include;$(SolutionDir)Librerias\stb\include</AdditionalIncludeDirectories>
       <RuntimeLibrary>MultiThreadedDebug</RuntimeLibrary>
       <MultiProcessorCompilation>true</MultiProcessorCompilation>
       <MinimalRebuild>false</MinimalRebuild>
@@ -104,62 +153,181 @@
     <Link>
       <SubSystem>Console</SubSystem>
       <GenerateDebugInformation>true</GenerateDebugInformation>
-      <AdditionalLibraryDirectories>$(SolutionDir)Librerias\tinyxml2\lib;$(SolutionDir)Lib\$(Configuration)\$(Platform)\;$(SolutionDir)$(Configuration);$(SolutionDir)Librerias\SDL-1.2.14\lib;$(SolutionDir)Librerias\OGLES2\pvr\lib;$(SolutionDir)Librerias\glew-2.0.0\lib;%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
-      <AdditionalDependencies>dxguid.lib;Frameworkd.lib;SDL.lib;D3D11.lib;D3DCompiler.lib;%(AdditionalDependencies)</AdditionalDependencies>
+      <AdditionalLibraryDirectories>$(SolutionDir)Librerias\tinyxml2\lib;$(SolutionDir)Lib\$(Configuration)\$(Platform)\;$(SolutionDir)$(Configuration);$(SolutionDir)Librerias\SDL3\lib\$(T8Arch);$(T8VcpkgStatic)\lib;$(T8VcpkgDynamic)\lib;%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
+      <AdditionalDependencies>dxguid.lib;Frameworkd.lib;SDL3.lib;D3D11.lib;D3DCompiler.lib;%(AdditionalDependencies)</AdditionalDependencies>
       <OutputFile>$(OutDir)$(TargetName)$(TargetExt)</OutputFile>
     </Link>
+    <PostBuildEvent>
+      <Command>if not exist "$(OutDir)Shaders" mklink /J "$(OutDir)Shaders" "$(SolutionDir)Assets\Shaders"
+if not exist "$(OutDir)Models" mklink /J "$(OutDir)Models" "$(SolutionDir)Assets\Models"
+if not exist "$(OutDir)Fonts" mklink /J "$(OutDir)Fonts" "$(SolutionDir)Assets\Fonts"
+if not exist "$(OutDir)Textures" mklink /J "$(OutDir)Textures" "$(SolutionDir)Assets\Textures"
+if not exist "$(OutDir)Techniques" mklink /J "$(OutDir)Techniques" "$(SolutionDir)Assets\Techniques"
+copy /Y "$(SolutionDir)Librerias\SDL3\lib\$(T8Arch)\SDL3.dll" "$(OutDir)"
+copy /Y "$(T8VcpkgDynamic)\bin\libEGL.dll" "$(OutDir)"
+copy /Y "$(T8VcpkgDynamic)\bin\libGLESv2.dll" "$(OutDir)"
+copy /Y "$(T8VcpkgDynamic)\bin\zlib1.dll" "$(OutDir)"</Command>
+    </PostBuildEvent>
   </ItemDefinitionGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">
     <ClCompile>
-      <PrecompiledHeader>
-      </PrecompiledHeader>
+      <PrecompiledHeader></PrecompiledHeader>
       <WarningLevel>Level3</WarningLevel>
       <Optimization>Disabled</Optimization>
-      <PreprocessorDefinitions>_DEBUG;_CONSOLE;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <PreprocessorDefinitions>_CRT_SECURE_NO_WARNINGS;_DEBUG;_CONSOLE;GLEW_STATIC;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <AdditionalIncludeDirectories>$(SolutionDir)Librerias\tinyxml2\include;$(SolutionDir)Framework;$(SolutionDir)Framework\include;$(SolutionDir)Librerias\SDL3\include;$(T8VcpkgStatic)\include;$(T8VcpkgDynamic)\include;$(SolutionDir)Librerias\stb\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <RuntimeLibrary>MultiThreadedDebug</RuntimeLibrary>
+      <MultiProcessorCompilation>true</MultiProcessorCompilation>
+      <MinimalRebuild>false</MinimalRebuild>
     </ClCompile>
     <Link>
       <SubSystem>Console</SubSystem>
       <GenerateDebugInformation>true</GenerateDebugInformation>
+      <AdditionalLibraryDirectories>$(SolutionDir)Librerias\tinyxml2\lib;$(SolutionDir)Lib\$(Configuration)\$(Platform)\;$(SolutionDir)$(Configuration);$(SolutionDir)Librerias\SDL3\lib\$(T8Arch);$(T8VcpkgStatic)\lib;$(T8VcpkgDynamic)\lib;%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
+      <AdditionalDependencies>dxguid.lib;Frameworkd.lib;SDL3.lib;D3D11.lib;D3DCompiler.lib;%(AdditionalDependencies)</AdditionalDependencies>
+      <OutputFile>$(OutDir)$(TargetName)$(TargetExt)</OutputFile>
     </Link>
+    <PostBuildEvent>
+      <Command>if not exist "$(OutDir)Shaders" mklink /J "$(OutDir)Shaders" "$(SolutionDir)Assets\Shaders"
+if not exist "$(OutDir)Models" mklink /J "$(OutDir)Models" "$(SolutionDir)Assets\Models"
+if not exist "$(OutDir)Fonts" mklink /J "$(OutDir)Fonts" "$(SolutionDir)Assets\Fonts"
+if not exist "$(OutDir)Textures" mklink /J "$(OutDir)Textures" "$(SolutionDir)Assets\Textures"
+if not exist "$(OutDir)Techniques" mklink /J "$(OutDir)Techniques" "$(SolutionDir)Assets\Techniques"
+copy /Y "$(SolutionDir)Librerias\SDL3\lib\$(T8Arch)\SDL3.dll" "$(OutDir)"
+copy /Y "$(T8VcpkgDynamic)\bin\libEGL.dll" "$(OutDir)"
+copy /Y "$(T8VcpkgDynamic)\bin\libGLESv2.dll" "$(OutDir)"
+copy /Y "$(T8VcpkgDynamic)\bin\zlib1.dll" "$(OutDir)"</Command>
+    </PostBuildEvent>
+  </ItemDefinitionGroup>
+  <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Debug|ARM64'">
+    <ClCompile>
+      <PrecompiledHeader></PrecompiledHeader>
+      <WarningLevel>Level3</WarningLevel>
+      <Optimization>Disabled</Optimization>
+      <PreprocessorDefinitions>_CRT_SECURE_NO_WARNINGS;_DEBUG;_CONSOLE;GLEW_STATIC;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <AdditionalIncludeDirectories>$(SolutionDir)Librerias\tinyxml2\include;$(SolutionDir)Framework;$(SolutionDir)Framework\include;$(SolutionDir)Librerias\SDL3\include;$(T8VcpkgStatic)\include;$(T8VcpkgDynamic)\include;$(SolutionDir)Librerias\stb\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <RuntimeLibrary>MultiThreadedDebug</RuntimeLibrary>
+      <MultiProcessorCompilation>true</MultiProcessorCompilation>
+      <MinimalRebuild>false</MinimalRebuild>
+    </ClCompile>
+    <Link>
+      <SubSystem>Console</SubSystem>
+      <GenerateDebugInformation>true</GenerateDebugInformation>
+      <AdditionalLibraryDirectories>$(SolutionDir)Librerias\tinyxml2\lib;$(SolutionDir)Lib\$(Configuration)\$(Platform)\;$(SolutionDir)$(Configuration);$(SolutionDir)Librerias\SDL3\lib\$(T8Arch);$(T8VcpkgStatic)\lib;$(T8VcpkgDynamic)\lib;%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
+      <AdditionalDependencies>dxguid.lib;Frameworkd.lib;SDL3.lib;D3D11.lib;D3DCompiler.lib;%(AdditionalDependencies)</AdditionalDependencies>
+      <OutputFile>$(OutDir)$(TargetName)$(TargetExt)</OutputFile>
+    </Link>
+    <PostBuildEvent>
+      <Command>if not exist "$(OutDir)Shaders" mklink /J "$(OutDir)Shaders" "$(SolutionDir)Assets\Shaders"
+if not exist "$(OutDir)Models" mklink /J "$(OutDir)Models" "$(SolutionDir)Assets\Models"
+if not exist "$(OutDir)Fonts" mklink /J "$(OutDir)Fonts" "$(SolutionDir)Assets\Fonts"
+if not exist "$(OutDir)Textures" mklink /J "$(OutDir)Textures" "$(SolutionDir)Assets\Textures"
+if not exist "$(OutDir)Techniques" mklink /J "$(OutDir)Techniques" "$(SolutionDir)Assets\Techniques"
+copy /Y "$(SolutionDir)Librerias\SDL3\lib\$(T8Arch)\SDL3.dll" "$(OutDir)"
+copy /Y "$(T8VcpkgDynamic)\bin\libEGL.dll" "$(OutDir)"
+copy /Y "$(T8VcpkgDynamic)\bin\libGLESv2.dll" "$(OutDir)"
+copy /Y "$(T8VcpkgDynamic)\bin\zlib1.dll" "$(OutDir)"</Command>
+    </PostBuildEvent>
   </ItemDefinitionGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">
     <ClCompile>
       <WarningLevel>Level3</WarningLevel>
-      <PrecompiledHeader>
-      </PrecompiledHeader>
+      <PrecompiledHeader></PrecompiledHeader>
       <Optimization>Full</Optimization>
       <FunctionLevelLinking>true</FunctionLevelLinking>
       <IntrinsicFunctions>true</IntrinsicFunctions>
       <PreprocessorDefinitions>WIN32;_CRT_SECURE_NO_WARNINGS;NDEBUG;_CONSOLE;GLEW_STATIC;%(PreprocessorDefinitions)</PreprocessorDefinitions>
-      <AdditionalIncludeDirectories>$(SolutionDir)Librerias\tinyxml2\include;$(SolutionDir)Framework;$(SolutionDir)Framework\include;$(SolutionDir)Librerias\SDL-1.2.14\include;$(SolutionDir)Librerias\OGLES2\pvr\include;$(SolutionDir)Librerias\stb\include;$(SolutionDir)Librerias\glew-2.0.0\include</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>$(SolutionDir)Librerias\tinyxml2\include;$(SolutionDir)Framework;$(SolutionDir)Framework\include;$(SolutionDir)Librerias\SDL3\include;$(T8VcpkgStatic)\include;$(T8VcpkgDynamic)\include;$(SolutionDir)Librerias\stb\include</AdditionalIncludeDirectories>
       <RuntimeLibrary>MultiThreaded</RuntimeLibrary>
       <MultiProcessorCompilation>true</MultiProcessorCompilation>
     </ClCompile>
     <Link>
       <SubSystem>Console</SubSystem>
       <GenerateDebugInformation>true</GenerateDebugInformation>
-      <AdditionalLibraryDirectories>$(SolutionDir)Librerias\tinyxml2\lib;$(SolutionDir)Lib\$(Configuration)\$(Platform)\;$(SolutionDir)$(Configuration);$(SolutionDir)Librerias\SDL-1.2.14\lib;$(SolutionDir)Librerias\OGLES2\pvr\lib;$(SolutionDir)Librerias\glew-2.0.0\lib;%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
-      <AdditionalDependencies>dxguid.lib;Framework.lib;SDL.lib;D3D11.lib;D3DCompiler.lib;%(AdditionalDependencies)</AdditionalDependencies>
+      <AdditionalLibraryDirectories>$(SolutionDir)Librerias\tinyxml2\lib;$(SolutionDir)Lib\$(Configuration)\$(Platform)\;$(SolutionDir)$(Configuration);$(SolutionDir)Librerias\SDL3\lib\$(T8Arch);$(T8VcpkgStatic)\lib;$(T8VcpkgDynamic)\lib;%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
+      <AdditionalDependencies>dxguid.lib;Framework.lib;SDL3.lib;D3D11.lib;D3DCompiler.lib;%(AdditionalDependencies)</AdditionalDependencies>
       <OutputFile>$(OutDir)$(TargetName)$(TargetExt)</OutputFile>
       <LinkTimeCodeGeneration>Default</LinkTimeCodeGeneration>
     </Link>
+    <PostBuildEvent>
+      <Command>if not exist "$(OutDir)Shaders" mklink /J "$(OutDir)Shaders" "$(SolutionDir)Assets\Shaders"
+if not exist "$(OutDir)Models" mklink /J "$(OutDir)Models" "$(SolutionDir)Assets\Models"
+if not exist "$(OutDir)Fonts" mklink /J "$(OutDir)Fonts" "$(SolutionDir)Assets\Fonts"
+if not exist "$(OutDir)Textures" mklink /J "$(OutDir)Textures" "$(SolutionDir)Assets\Textures"
+if not exist "$(OutDir)Techniques" mklink /J "$(OutDir)Techniques" "$(SolutionDir)Assets\Techniques"
+copy /Y "$(SolutionDir)Librerias\SDL3\lib\$(T8Arch)\SDL3.dll" "$(OutDir)"
+copy /Y "$(T8VcpkgDynamic)\bin\libEGL.dll" "$(OutDir)"
+copy /Y "$(T8VcpkgDynamic)\bin\libGLESv2.dll" "$(OutDir)"
+copy /Y "$(T8VcpkgDynamic)\bin\zlib1.dll" "$(OutDir)"</Command>
+    </PostBuildEvent>
   </ItemDefinitionGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
     <ClCompile>
       <WarningLevel>Level3</WarningLevel>
-      <PrecompiledHeader>
-      </PrecompiledHeader>
+      <PrecompiledHeader></PrecompiledHeader>
       <Optimization>MaxSpeed</Optimization>
       <FunctionLevelLinking>true</FunctionLevelLinking>
       <IntrinsicFunctions>true</IntrinsicFunctions>
-      <PreprocessorDefinitions>NDEBUG;_CONSOLE;GLEW_STATIC;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <PreprocessorDefinitions>_CRT_SECURE_NO_WARNINGS;NDEBUG;_CONSOLE;GLEW_STATIC;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <AdditionalIncludeDirectories>$(SolutionDir)Librerias\tinyxml2\include;$(SolutionDir)Framework;$(SolutionDir)Framework\include;$(SolutionDir)Librerias\SDL3\include;$(T8VcpkgStatic)\include;$(T8VcpkgDynamic)\include;$(SolutionDir)Librerias\stb\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <RuntimeLibrary>MultiThreaded</RuntimeLibrary>
+      <MultiProcessorCompilation>true</MultiProcessorCompilation>
     </ClCompile>
     <Link>
       <SubSystem>Console</SubSystem>
       <EnableCOMDATFolding>true</EnableCOMDATFolding>
       <OptimizeReferences>true</OptimizeReferences>
       <GenerateDebugInformation>true</GenerateDebugInformation>
+      <AdditionalLibraryDirectories>$(SolutionDir)Librerias\tinyxml2\lib;$(SolutionDir)Lib\$(Configuration)\$(Platform)\;$(SolutionDir)$(Configuration);$(SolutionDir)Librerias\SDL3\lib\$(T8Arch);$(T8VcpkgStatic)\lib;$(T8VcpkgDynamic)\lib;%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
+      <AdditionalDependencies>dxguid.lib;Framework.lib;SDL3.lib;D3D11.lib;D3DCompiler.lib;%(AdditionalDependencies)</AdditionalDependencies>
+      <OutputFile>$(OutDir)$(TargetName)$(TargetExt)</OutputFile>
+      <LinkTimeCodeGeneration>Default</LinkTimeCodeGeneration>
     </Link>
+    <PostBuildEvent>
+      <Command>if not exist "$(OutDir)Shaders" mklink /J "$(OutDir)Shaders" "$(SolutionDir)Assets\Shaders"
+if not exist "$(OutDir)Models" mklink /J "$(OutDir)Models" "$(SolutionDir)Assets\Models"
+if not exist "$(OutDir)Fonts" mklink /J "$(OutDir)Fonts" "$(SolutionDir)Assets\Fonts"
+if not exist "$(OutDir)Textures" mklink /J "$(OutDir)Textures" "$(SolutionDir)Assets\Textures"
+if not exist "$(OutDir)Techniques" mklink /J "$(OutDir)Techniques" "$(SolutionDir)Assets\Techniques"
+copy /Y "$(SolutionDir)Librerias\SDL3\lib\$(T8Arch)\SDL3.dll" "$(OutDir)"
+copy /Y "$(T8VcpkgDynamic)\bin\libEGL.dll" "$(OutDir)"
+copy /Y "$(T8VcpkgDynamic)\bin\libGLESv2.dll" "$(OutDir)"
+copy /Y "$(T8VcpkgDynamic)\bin\zlib1.dll" "$(OutDir)"</Command>
+    </PostBuildEvent>
+  </ItemDefinitionGroup>
+  <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Release|ARM64'">
+    <ClCompile>
+      <WarningLevel>Level3</WarningLevel>
+      <PrecompiledHeader></PrecompiledHeader>
+      <Optimization>MaxSpeed</Optimization>
+      <FunctionLevelLinking>true</FunctionLevelLinking>
+      <IntrinsicFunctions>true</IntrinsicFunctions>
+      <PreprocessorDefinitions>_CRT_SECURE_NO_WARNINGS;NDEBUG;_CONSOLE;GLEW_STATIC;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <AdditionalIncludeDirectories>$(SolutionDir)Librerias\tinyxml2\include;$(SolutionDir)Framework;$(SolutionDir)Framework\include;$(SolutionDir)Librerias\SDL3\include;$(T8VcpkgStatic)\include;$(T8VcpkgDynamic)\include;$(SolutionDir)Librerias\stb\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <RuntimeLibrary>MultiThreaded</RuntimeLibrary>
+      <MultiProcessorCompilation>true</MultiProcessorCompilation>
+    </ClCompile>
+    <Link>
+      <SubSystem>Console</SubSystem>
+      <EnableCOMDATFolding>true</EnableCOMDATFolding>
+      <OptimizeReferences>true</OptimizeReferences>
+      <GenerateDebugInformation>true</GenerateDebugInformation>
+      <AdditionalLibraryDirectories>$(SolutionDir)Librerias\tinyxml2\lib;$(SolutionDir)Lib\$(Configuration)\$(Platform)\;$(SolutionDir)$(Configuration);$(SolutionDir)Librerias\SDL3\lib\$(T8Arch);$(T8VcpkgStatic)\lib;$(T8VcpkgDynamic)\lib;%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
+      <AdditionalDependencies>dxguid.lib;Framework.lib;SDL3.lib;D3D11.lib;D3DCompiler.lib;%(AdditionalDependencies)</AdditionalDependencies>
+      <OutputFile>$(OutDir)$(TargetName)$(TargetExt)</OutputFile>
+      <LinkTimeCodeGeneration>Default</LinkTimeCodeGeneration>
+    </Link>
+    <PostBuildEvent>
+      <Command>if not exist "$(OutDir)Shaders" mklink /J "$(OutDir)Shaders" "$(SolutionDir)Assets\Shaders"
+if not exist "$(OutDir)Models" mklink /J "$(OutDir)Models" "$(SolutionDir)Assets\Models"
+if not exist "$(OutDir)Fonts" mklink /J "$(OutDir)Fonts" "$(SolutionDir)Assets\Fonts"
+if not exist "$(OutDir)Textures" mklink /J "$(OutDir)Textures" "$(SolutionDir)Assets\Textures"
+if not exist "$(OutDir)Techniques" mklink /J "$(OutDir)Techniques" "$(SolutionDir)Assets\Techniques"
+copy /Y "$(SolutionDir)Librerias\SDL3\lib\$(T8Arch)\SDL3.dll" "$(OutDir)"
+copy /Y "$(T8VcpkgDynamic)\bin\libEGL.dll" "$(OutDir)"
+copy /Y "$(T8VcpkgDynamic)\bin\libGLESv2.dll" "$(OutDir)"
+copy /Y "$(T8VcpkgDynamic)\bin\zlib1.dll" "$(OutDir)"</Command>
+    </PostBuildEvent>
   </ItemDefinitionGroup>
   <ItemGroup>
     <ClCompile Include="Application.cpp" />
@@ -175,6 +343,5 @@
     <ClInclude Include="SC_Tech.h" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
-  <ImportGroup Label="ExtensionTargets">
-  </ImportGroup>
+  <ImportGroup Label="ExtensionTargets"></ImportGroup>
 </Project>

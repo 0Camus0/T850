@@ -119,7 +119,8 @@ namespace t800 {
     void SetDepthStencilState(DEPTH_STENCIL_STATES state) override;
 	  void SetCullFace(FACE_CULLING state) override;
 
-    void SaveScreenshot(std::string path) override {};
+    void SaveScreenshot(std::string path) override;
+    void SaveRTToFile(int rtID, int attachment, std::string path) override;
 
     void	 PopRT();
 

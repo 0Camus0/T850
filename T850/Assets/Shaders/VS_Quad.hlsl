@@ -4,6 +4,7 @@ cbuffer ConstantBuffer{
 	float4x4 WorldView;
 	float4x4 WVPInverse;
 	float4x4 WVPLight;
+	float4x4 Projection;
 	float4	 LightPositions[128];
 	float4	 LightColors[128];
   float4	 LightRadius[32];
@@ -13,7 +14,7 @@ cbuffer ConstantBuffer{
 	float4 	 LightCameraInfo;
 
 	float4   brightness;
-
+	float4   toogles;
 }
 
 struct VS_INPUT{

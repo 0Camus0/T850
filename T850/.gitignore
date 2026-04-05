@@ -11,3 +11,5 @@
 *.sdf
 /Example/bin/*.iobj
 /Example/bin/*.ipdb
+
+T850/Librerias/vcpkg/

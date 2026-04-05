@@ -162,6 +162,7 @@ namespace t800 {
     }
     pTextureDepth->x = w;
     pTextureDepth->y = h;
+    pTextureDepth->SetTextureParams();
     pDepthTexture = ( pTextureDepth);
 
 

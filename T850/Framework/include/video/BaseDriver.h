@@ -245,6 +245,7 @@ namespace t800 {
     virtual void SetDepthStencilState(DEPTH_STENCIL_STATES state) = 0;
 
     virtual void SaveScreenshot(std::string path) = 0;
+    virtual void SaveRTToFile(int rtID, int attachment, std::string path) {}
 	virtual void SetCullFace(FACE_CULLING state) = 0;
 
     int 	 CreateTexture(std::string);

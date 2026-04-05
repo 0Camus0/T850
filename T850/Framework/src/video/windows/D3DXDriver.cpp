@@ -13,9 +13,12 @@
 #include <video/windows/D3DXDriver.h>
 #include <video/windows/D3DXRT.h>
 #include <video/windows/D3DXShader.h>
+#include <video/windows/D3DXTexture.h>
 
 #include <iostream>
 #include <string>
+#include <fstream>
+#include <vector>
 
 
 
@@ -639,5 +642,111 @@ namespace t800 {
 
     }
 
+  }
+
+  static void SaveD3D11TextureToPPM(ID3D11Texture2D* srcTex, std::string path) {
+    ID3D11Device* device = reinterpret_cast<ID3D11Device*>(T8Device->GetAPIObject());
+    ID3D11DeviceContext* deviceContext = reinterpret_cast<ID3D11DeviceContext*>(T8DeviceContext->GetAPIObject());
+
+    D3D11_TEXTURE2D_DESC desc;
+    srcTex->GetDesc(&desc);
+
+    // Resolve typeless formats to concrete formats for the staging texture
+    DXGI_FORMAT readFormat = desc.Format;
+    if (readFormat == DXGI_FORMAT_R32_TYPELESS)        readFormat = DXGI_FORMAT_R32_FLOAT;
+    else if (readFormat == DXGI_FORMAT_R16_TYPELESS)    readFormat = DXGI_FORMAT_R16_FLOAT;
+    else if (readFormat == DXGI_FORMAT_R24G8_TYPELESS)  readFormat = DXGI_FORMAT_R32_FLOAT;
+
+    D3D11_TEXTURE2D_DESC stagingDesc = desc;
+    stagingDesc.Format = readFormat;
+    stagingDesc.Usage = D3D11_USAGE_STAGING;
+    stagingDesc.BindFlags = 0;
+    stagingDesc.CPUAccessFlags = D3D11_CPU_ACCESS_READ;
+    stagingDesc.MiscFlags = 0;
+    stagingDesc.MipLevels = 1;
+    stagingDesc.ArraySize = 1;
+
+    ComPtr<ID3D11Texture2D> stagingTex;
+    HRESULT hr = device->CreateTexture2D(&stagingDesc, nullptr, &stagingTex);
+    if (FAILED(hr)) { std::cout << "  ERROR: CreateTexture2D staging failed hr=0x" << std::hex << hr << std::dec << " fmt=" << readFormat << std::endl; return; }
+
+    deviceContext->CopySubresourceRegion(stagingTex.Get(), 0, 0, 0, 0, srcTex, 0, nullptr);
+
+    D3D11_MAPPED_SUBRESOURCE mapped;
+    hr = deviceContext->Map(stagingTex.Get(), 0, D3D11_MAP_READ, 0, &mapped);
+    if (FAILED(hr)) { std::cout << "  ERROR: Map failed hr=0x" << std::hex << hr << std::dec << std::endl; return; }
+
+    unsigned int w = desc.Width;
+    unsigned int h = desc.Height;
+
+    // Convert to RGB byte buffer first, then write as binary PPM P6
+    std::vector<unsigned char> rgbBuf(w * h * 3);
+    unsigned char* data = reinterpret_cast<unsigned char*>(mapped.pData);
+
+    auto half2float = [](unsigned short h) -> float {
+      unsigned int sign = (h >> 15) & 1;
+      unsigned int exp = (h >> 10) & 0x1F;
+      unsigned int mant = h & 0x3FF;
+      if (exp == 0) return 0.0f;
+      if (exp == 31) return sign ? -1e30f : 1e30f;
+      float f = powf(2.0f, (float)(exp - 15)) * (1.0f + mant / 1024.0f);
+      return sign ? -f : f;
+    };
+
+    for (unsigned int y = 0; y < h; y++) {
+      unsigned char* row = data + y * mapped.RowPitch;
+      for (unsigned int x = 0; x < w; x++) {
+        unsigned int r = 0, g = 0, b = 0;
+        if (readFormat == DXGI_FORMAT_R8G8B8A8_UNORM) {
+          r = row[x * 4]; g = row[x * 4 + 1]; b = row[x * 4 + 2];
+        } else if (readFormat == DXGI_FORMAT_B8G8R8A8_UNORM || readFormat == DXGI_FORMAT_B8G8R8A8_UNORM_SRGB) {
+          b = row[x * 4]; g = row[x * 4 + 1]; r = row[x * 4 + 2];
+        } else if (readFormat == DXGI_FORMAT_R8_UNORM) {
+          r = g = b = row[x];
+        } else if (readFormat == DXGI_FORMAT_R16G16B16A16_FLOAT) {
+          const unsigned short* hf = reinterpret_cast<const unsigned short*>(row) + x * 4;
+          float rf = half2float(hf[0]), gf = half2float(hf[1]), bf = half2float(hf[2]);
+          rf = rf < 0.f ? 0.f : (rf > 1.f ? 1.f : rf);
+          gf = gf < 0.f ? 0.f : (gf > 1.f ? 1.f : gf);
+          bf = bf < 0.f ? 0.f : (bf > 1.f ? 1.f : bf);
+          r = (unsigned int)(rf * 255.f); g = (unsigned int)(gf * 255.f); b = (unsigned int)(bf * 255.f);
+        } else if (readFormat == DXGI_FORMAT_R32_FLOAT) {
+          float v = *(reinterpret_cast<const float*>(row) + x);
+          v = v < 0.f ? 0.f : (v > 1.f ? 1.f : v);
+          r = g = b = (unsigned int)(v * 255.f);
+        } else if (readFormat == DXGI_FORMAT_R16_FLOAT) {
+          float v = half2float(*(reinterpret_cast<const unsigned short*>(row) + x));
+          v = v < 0.f ? 0.f : (v > 1.f ? 1.f : v);
+          r = g = b = (unsigned int)(v * 255.f);
+        } else {
+          r = row[x * 4]; g = row[x * 4 + 1]; b = row[x * 4 + 2];
+        }
+        unsigned int idx = (y * w + x) * 3;
+        rgbBuf[idx] = (unsigned char)r; rgbBuf[idx+1] = (unsigned char)g; rgbBuf[idx+2] = (unsigned char)b;
+      }
+    }
+
+    deviceContext->Unmap(stagingTex.Get(), 0);
+
+    std::ofstream out(path + ".ppm", std::ios::binary);
+    out << "P6\n" << w << " " << h << "\n255\n";
+    out.write(reinterpret_cast<const char*>(rgbBuf.data()), rgbBuf.size());
+  }
+
+  void D3DXDriver::SaveScreenshot(std::string path) {
+    ComPtr<ID3D11Texture2D> backBuffer;
+    HRESULT hr = DXGISwapchain->GetBuffer(0, __uuidof(ID3D11Texture2D), &backBuffer);
+    if (FAILED(hr)) return;
+    SaveD3D11TextureToPPM(backBuffer.Get(), path);
+  }
+
+  void D3DXDriver::SaveRTToFile(int rtID, int attachment, std::string path) {
+    if (rtID < 0 || rtID >= (int)RTs.size())
+      return;
+    Texture* tex = GetRTTexture(rtID, attachment);
+    if (!tex) return;
+    D3DXTexture* d3dTex = dynamic_cast<D3DXTexture*>(tex);
+    if (!d3dTex || !d3dTex->Tex) return;
+    SaveD3D11TextureToPPM(d3dTex->Tex.Get(), path);
   }
 }

@@ -15,11 +15,8 @@
 
 #include <Config.h>
 
-#ifdef USING_SDL
-#include <SDL/SDL_keysym.h>
-#elif defined(USING_FREEGLUT)
-#include <GL/freeglut.h>
-#endif
+// SDL3 key mapping: SDL3 keycodes for ASCII keys (< 128) match STDKEYS directly.
+// For extended keys we provide a mapping function below the STDKEYS enum.
 
 enum STDKEYS {
 	T800K_UNKNOWN		= 0,
@@ -281,5 +278,61 @@ public:
 	int		xDelta;
 	int 	yDelta;
 };
+
+// Maps SDL3 keycodes (which are large values for non-ASCII keys) to STDKEYS values.
+// ASCII-range keycodes (< 128) already match STDKEYS. Extended keys need explicit mapping.
+inline int SDL3KeyToSTDKEY(unsigned int sdlKey) {
+	if (sdlKey < 128) return (int)sdlKey;
+	switch (sdlKey) {
+	case 0x40000052u: return T800K_UP;
+	case 0x40000051u: return T800K_DOWN;
+	case 0x40000050u: return T800K_LEFT;
+	case 0x4000004fu: return T800K_RIGHT;
+	case 0x40000062u: return T800K_KP0;
+	case 0x40000059u: return T800K_KP1;
+	case 0x4000005au: return T800K_KP2;
+	case 0x4000005bu: return T800K_KP3;
+	case 0x4000005cu: return T800K_KP4;
+	case 0x4000005du: return T800K_KP5;
+	case 0x4000005eu: return T800K_KP6;
+	case 0x4000005fu: return T800K_KP7;
+	case 0x40000060u: return T800K_KP8;
+	case 0x40000061u: return T800K_KP9;
+	case 0x40000063u: return T800K_KP_PERIOD;
+	case 0x40000054u: return T800K_KP_DIVIDE;
+	case 0x40000055u: return T800K_KP_MULTIPLY;
+	case 0x40000056u: return T800K_KP_MINUS;
+	case 0x40000057u: return T800K_KP_PLUS;
+	case 0x40000058u: return T800K_KP_ENTER;
+	case 0x40000067u: return T800K_KP_EQUALS;
+	case 0x4000004au: return T800K_HOME;
+	case 0x4000004du: return T800K_END;
+	case 0x4000004bu: return T800K_PAGEUP;
+	case 0x4000004eu: return T800K_PAGEDOWN;
+	case 0x40000049u: return T800K_INSERT;
+	case 0x4000003au: return T800K_F1;
+	case 0x4000003bu: return T800K_F2;
+	case 0x4000003cu: return T800K_F3;
+	case 0x4000003du: return T800K_F4;
+	case 0x4000003eu: return T800K_F5;
+	case 0x4000003fu: return T800K_F6;
+	case 0x40000040u: return T800K_F7;
+	case 0x40000041u: return T800K_F8;
+	case 0x40000042u: return T800K_F9;
+	case 0x40000043u: return T800K_F10;
+	case 0x40000044u: return T800K_F11;
+	case 0x40000045u: return T800K_F12;
+	case 0x40000053u: return T800K_NUMLOCK;
+	case 0x40000039u: return T800K_CAPSLOCK;
+	case 0x40000047u: return T800K_SCROLLOCK;
+	case 0x400000e5u: return T800K_RSHIFT;
+	case 0x400000e1u: return T800K_LSHIFT;
+	case 0x400000e4u: return T800K_RCTRL;
+	case 0x400000e0u: return T800K_LCTRL;
+	case 0x400000e6u: return T800K_RALT;
+	case 0x400000e2u: return T800K_LALT;
+	default: return T800K_UNKNOWN;
+	}
+}
 
 #endif

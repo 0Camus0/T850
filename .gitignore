@@ -1,3 +1,27 @@
-/T850/Lib/Release/Win32/*.lib
-/T850/bin/*.exe
-/T850/Lib/Debug/Win32/Frameworkd.lib
+# ── Build outputs ──
+/T850/Lib/
+/T850/bin/x86/
+/T850/bin/x64/
+/T850/bin/arm64/
+
+# ── IDE / editor ──
+/T850/.vs/
+/T850/.vscode/
+*.user
+*.suo
+*.ncb
+*.opendb
+*.db
+*.ipch
+
+# ── vcpkg build-time artifacts (huge, reproducible) ──
+/T850/Librerias/vcpkg/buildtrees/
+/T850/Librerias/vcpkg/packages/
+/T850/Librerias/vcpkg/downloads/
+/T850/Librerias/vcpkg/.git/
+
+# ── vcpkg installed: exclude debug builds, ANGLE static lib, PDBs ──
+/T850/Librerias/vcpkg/installed/*/debug/
+/T850/Librerias/vcpkg/installed/vcpkg/
+**/ANGLE.lib
+*.pdb

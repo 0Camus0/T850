@@ -16,8 +16,8 @@
 #if defined(OS_WINDOWS)
 #include <video/windows/D3DXDriver.h>
 #endif
-// SDL
-#include <SDL/SDL.h>
+// SDL3
+#include <SDL3/SDL.h>
 // Windows
 #include <windows.h>
 #include <mmsystem.h>
@@ -29,7 +29,7 @@ namespace t800 {
 
   void Win32Framework::OnCreateApplication(ApplicationDesc desc) {
     aplicationDescriptor = desc;
-    if (SDL_Init(SDL_INIT_VIDEO) < 0) {
+    if (!SDL_Init(SDL_INIT_VIDEO)) {
       printf("Video initialization failed: %s\n", SDL_GetError());
     }
     pBaseApp->InitVars();
@@ -40,6 +40,14 @@ namespace t800 {
     pBaseApp->DestroyAssets();
     pVideoDriver->DestroyDriver();
     delete pVideoDriver;
+    if (m_glContext) {
+      SDL_GL_DestroyContext(m_glContext);
+      m_glContext = nullptr;
+    }
+    if (m_pWindow) {
+      SDL_DestroyWindow(m_pWindow);
+      m_pWindow = nullptr;
+    }
     SDL_Quit();
     m_inited = false;
   }
@@ -57,18 +65,23 @@ namespace t800 {
     SDL_Event       evento;
     while (SDL_PollEvent(&evento)) {
       switch (evento.type) {
-      case SDL_KEYDOWN: {
-        if (evento.key.keysym.sym == SDLK_ESCAPE) {
+      case SDL_EVENT_KEY_DOWN: {
+        int t800key = SDL3KeyToSTDKEY((unsigned int)evento.key.key);
+        if (t800key == T800K_ESCAPE) {
           m_alive = false;
         }
-        pBaseApp->IManager.KeyStates[0][evento.key.keysym.sym] = true;
+        if (t800key >= 0 && t800key < MAXKEYS)
+          pBaseApp->IManager.KeyStates[0][t800key] = true;
       }break;
-      case SDL_KEYUP: {
-        pBaseApp->IManager.KeyStates[0][evento.key.keysym.sym] = false;
-        pBaseApp->IManager.KeyStates[1][evento.key.keysym.sym] = false;
+      case SDL_EVENT_KEY_UP: {
+        int t800key = SDL3KeyToSTDKEY((unsigned int)evento.key.key);
+        if (t800key >= 0 && t800key < MAXKEYS) {
+          pBaseApp->IManager.KeyStates[0][t800key] = false;
+          pBaseApp->IManager.KeyStates[1][t800key] = false;
+        }
       }break;
 
-	  case SDL_QUIT: {
+	  case SDL_EVENT_QUIT: {
 		  m_alive = false;
 	  }break;
 
@@ -78,7 +91,6 @@ namespace t800 {
     static int yDelta = 0;
     int x = 0, y = 0;
 
-    //SDL_GetMouseState(&x, &y);
 	POINT point;
 	GetCursorPos(&point);
 	x = point.x;
@@ -109,37 +121,57 @@ namespace t800 {
       pVideoDriver->DestroyDriver();
       delete pVideoDriver;
     }
+
+    // Destroy previous SDL window/context if changing API
+    if (m_glContext) {
+      SDL_GL_DestroyContext(m_glContext);
+      m_glContext = nullptr;
+    }
+    if (m_pWindow) {
+      SDL_DestroyWindow(m_pWindow);
+      m_pWindow = nullptr;
+    }
+
     std::string title = aplicationDescriptor.title;
     if (api == GRAPHICS_API::OPENGL)
       title += "   GL";
     else
       title += "   D3D11";
 
-    SDL_WM_SetCaption(title.c_str(), 0);
-
-    int flags = SDL_HWSURFACE;
+    Uint64 flags = 0;
 
 	if (aplicationDescriptor.videoMode == t800::T8_VIDEO_MODE::FULLSCREEN) {
-		flags |= SDL_FULLSCREEN;
+		flags |= SDL_WINDOW_FULLSCREEN;
 	}
 
     if (api == GRAPHICS_API::OPENGL) {
-      flags = flags | SDL_OPENGL;
+#if defined(USING_OPENGL)
+      flags |= SDL_WINDOW_OPENGL;
       SDL_GL_SetAttribute(SDL_GL_DEPTH_SIZE, 24);
+#endif
     }
 
-    if (SDL_SetVideoMode(aplicationDescriptor.width, aplicationDescriptor.height, 32, flags) == 0) {
-      printf("Video mode set failed: %s\n", SDL_GetError());
+    m_pWindow = SDL_CreateWindow(title.c_str(), aplicationDescriptor.width, aplicationDescriptor.height, flags);
+    if (!m_pWindow) {
+      printf("Window creation failed: %s\n", SDL_GetError());
     }
-    if (api == GRAPHICS_API::OPENGL)
+
+    if (api == GRAPHICS_API::OPENGL) {
+#if defined(USING_OPENGL)
+      m_glContext = SDL_GL_CreateContext(m_pWindow);
+      if (!m_glContext) {
+        printf("GL context creation failed: %s\n", SDL_GetError());
+      }
+#endif
       pVideoDriver = new GLDriver;
+    }
     else {
       pVideoDriver = new D3DXDriver;
       pVideoDriver->SetDimensions(aplicationDescriptor.width, aplicationDescriptor.height);
     }
 
     g_pBaseDriver = pVideoDriver;
-    pVideoDriver->SetWindow(0);
+    pVideoDriver->SetWindow(m_pWindow);
     pVideoDriver->InitDriver();
     pBaseApp->CreateAssets();
   }

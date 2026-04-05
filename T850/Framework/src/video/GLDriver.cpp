@@ -584,47 +584,148 @@ namespace t800 {
     }
   }
 
-  void GLDriver::SaveScreenshot(std::string path)
-  {
-    unsigned char *pixels;
-    std::ofstream out(path + std::string(".ppm"), std::ios::binary);
-    GLint viewport[4];
-    glGetIntegerv(GL_VIEWPORT, viewport);
-    pixels = new unsigned char[viewport[2] * viewport[3] * 4];
+  static void WritePPM(const std::string& path, int w, int h, const std::vector<unsigned char>& rgbBuf) {
+    std::ofstream out(path + ".ppm", std::ios::binary);
+    out << "P6\n" << w << " " << h << "\n255\n";
+    out.write(reinterpret_cast<const char*>(rgbBuf.data()), rgbBuf.size());
+  }
 
-    glReadBuffer(GL_COLOR_ATTACHMENT0);
-    glReadPixels(0, 0, viewport[2], viewport[3], GL_RGBA,
-      GL_UNSIGNED_BYTE, pixels);
-    glReadBuffer(GL_BACK);
+  // Read pixels from the currently bound FBO, flip vertically, write PPM.
+  // readFormat: GL_RGBA, GL_RED, or GL_DEPTH_COMPONENT
+  // readType: GL_UNSIGNED_BYTE, GL_FLOAT, GL_HALF_FLOAT
+  static void ReadFBOToPPM(int w, int h, GLenum readFormat, GLenum readType, const std::string& path) {
+    std::vector<unsigned char> rgbBuf(w * h * 3);
 
-    std::string h = std::string("P3\n");
-    out.write(h.c_str(),h.size());
-    h = std::string("# Test Image\n");
-    out.write(h.c_str(), h.size());
-    h = std::string(std::to_string(viewport[2]) + std::string(" ")+ std::to_string( viewport[3]) + std::string("\n"));
-    out.write(h.c_str(), h.size());
-    h = std::string("255\n");
-    out.write(h.c_str(), h.size());
+    int channels = (readFormat == GL_RGBA) ? 4 : 1;
 
-    for (int i = viewport[3] * 4 - 4; i >=0; i-=4)
-    {
-      for (int j = 0; j < viewport[2] * 4; j+=4)
-      {
-        int indx = j + i*viewport[2];
-        unsigned int val = (unsigned int)pixels[indx];
-        out << val;
-        out << " ";
-        val = (unsigned int)pixels[indx +1];
-        out << val;
-        out << " ";
-        val = (unsigned int)pixels[indx +2];
-        out << val;
-        out << " ";
+    if (readType == GL_UNSIGNED_BYTE) {
+      std::vector<unsigned char> pixels(w * h * channels);
+      glReadPixels(0, 0, w, h, readFormat, GL_UNSIGNED_BYTE, pixels.data());
+      for (int y = 0; y < h; y++) {
+        int srcRow = (h - 1 - y);
+        for (int x = 0; x < w; x++) {
+          int dstIdx = (y * w + x) * 3;
+          if (channels == 4) {
+            int srcIdx = (srcRow * w + x) * 4;
+            rgbBuf[dstIdx]     = pixels[srcIdx];
+            rgbBuf[dstIdx + 1] = pixels[srcIdx + 1];
+            rgbBuf[dstIdx + 2] = pixels[srcIdx + 2];
+          } else {
+            unsigned char v = pixels[srcRow * w + x];
+            rgbBuf[dstIdx] = rgbBuf[dstIdx + 1] = rgbBuf[dstIdx + 2] = v;
+          }
+        }
       }
-      out.put('\n');
+    } else {
+      // Read as float (works for GL_FLOAT and GL_HALF_FLOAT via GLES3 readback)
+      std::vector<float> fPixels(w * h * channels);
+      glReadPixels(0, 0, w, h, readFormat, GL_FLOAT, fPixels.data());
+      for (int y = 0; y < h; y++) {
+        int srcRow = (h - 1 - y);
+        for (int x = 0; x < w; x++) {
+          int dstIdx = (y * w + x) * 3;
+          if (channels == 4) {
+            int srcIdx = (srcRow * w + x) * 4;
+            for (int c = 0; c < 3; c++) {
+              float v = fPixels[srcIdx + c];
+              v = v < 0.f ? 0.f : (v > 1.f ? 1.f : v);
+              rgbBuf[dstIdx + c] = (unsigned char)(v * 255.f);
+            }
+          } else {
+            float v = fPixels[srcRow * w + x];
+            v = v < 0.f ? 0.f : (v > 1.f ? 1.f : v);
+            unsigned char b = (unsigned char)(v * 255.f);
+            rgbBuf[dstIdx] = rgbBuf[dstIdx + 1] = rgbBuf[dstIdx + 2] = b;
+          }
+        }
+      }
     }
 
-    delete[] pixels;
+    WritePPM(path, w, h, rgbBuf);
+  }
+
+  void GLDriver::SaveScreenshot(std::string path)
+  {
+    GLint viewport[4];
+    glGetIntegerv(GL_VIEWPORT, viewport);
+    ReadFBOToPPM(viewport[2], viewport[3], GL_RGBA, GL_UNSIGNED_BYTE, path);
+  }
+
+  void GLDriver::SaveRTToFile(int rtID, int attachment, std::string path) {
+    if (rtID < 0 || rtID >= (int)RTs.size())
+      return;
+
+    BaseRT* rt = RTs[rtID];
+    GLRT* glrt = static_cast<GLRT*>(rt);
+
+    // Save current FBO and viewport
+    GLint prevFBO = 0;
+    GLint prevViewport[4];
+    glGetIntegerv(GL_FRAMEBUFFER_BINDING, &prevFBO);
+    glGetIntegerv(GL_VIEWPORT, prevViewport);
+
+    // Bind the RT's FBO
+    glBindFramebuffer(GL_FRAMEBUFFER, glrt->vFrameBuffers[0]);
+    glViewport(0, 0, rt->w, rt->h);
+
+    if (attachment == DEPTH_ATTACHMENT) {
+      // For depth: create a temporary FBO with the depth texture attached
+      // and try to read it. If that fails, output a placeholder.
+      GLuint tmpFBO;
+      glGenFramebuffers(1, &tmpFBO);
+      glBindFramebuffer(GL_FRAMEBUFFER, tmpFBO);
+      glFramebufferTexture2D(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_TEXTURE_2D, glrt->DepthTexture, 0);
+      // Must disable color writes for depth-only FBO
+      glDrawBuffers(0, nullptr);
+      glReadBuffer(GL_NONE);
+
+      // Try reading depth
+      std::vector<float> depthPixels(rt->w * rt->h);
+      glReadPixels(0, 0, rt->w, rt->h, GL_DEPTH_COMPONENT, GL_FLOAT, depthPixels.data());
+      GLenum err = glGetError();
+
+      std::vector<unsigned char> rgbBuf(rt->w * rt->h * 3);
+      if (err == GL_NO_ERROR) {
+        for (int y = 0; y < rt->h; y++) {
+          int srcRow = (rt->h - 1 - y);
+          for (int x = 0; x < rt->w; x++) {
+            float v = depthPixels[srcRow * rt->w + x];
+            v = v < 0.f ? 0.f : (v > 1.f ? 1.f : v);
+            unsigned char b = (unsigned char)(v * 255.f);
+            int dstIdx = (y * rt->w + x) * 3;
+            rgbBuf[dstIdx] = rgbBuf[dstIdx + 1] = rgbBuf[dstIdx + 2] = b;
+          }
+        }
+      }
+      // else: rgbBuf stays zero-initialized (black image as fallback)
+      WritePPM(path, rt->w, rt->h, rgbBuf);
+      glDeleteFramebuffers(1, &tmpFBO);
+    } else {
+      // Color attachment
+      int colorIndex = attachment; // COLOR0_ATTACHMENT=0, COLOR1_ATTACHMENT=1, etc.
+      glReadBuffer(GL_COLOR_ATTACHMENT0 + colorIndex);
+
+      GLenum readFormat = GL_RGBA;
+      GLenum readType = GL_UNSIGNED_BYTE;
+      switch (rt->color_format) {
+        case BaseRT::R8:
+          readFormat = GL_RGBA; readType = GL_UNSIGNED_BYTE; break;
+        case BaseRT::F16:
+        case BaseRT::F32:
+          readFormat = GL_RGBA; readType = GL_FLOAT; break;
+        case BaseRT::RGBA16F:
+        case BaseRT::RGBA32F:
+          readFormat = GL_RGBA; readType = GL_FLOAT; break;
+        default:
+          readFormat = GL_RGBA; readType = GL_UNSIGNED_BYTE; break;
+      }
+
+      ReadFBOToPPM(rt->w, rt->h, readFormat, readType, path);
+    }
+
+    // Restore previous FBO and viewport
+    glBindFramebuffer(GL_FRAMEBUFFER, prevFBO);
+    glViewport(prevViewport[0], prevViewport[1], prevViewport[2], prevViewport[3]);
   }
   
   void GLDriver::SetCullFace(FACE_CULLING state) {

@@ -27,6 +27,12 @@
 
 std::vector<std::string> g_args;
 
+// RT Dump configuration (set via command-line)
+bool   g_dumpEnabled = false;
+bool   g_dumpByFrame = false;     // true = frame-based, false = time-based
+int    g_dumpFrame   = -1;        // frame number to dump at
+float  g_dumpSeconds = -1.0f;     // seconds to dump at
+
 t800::AppBase		  *pApp = 0;
 t800::RootFramework *pFrameWork = 0;
 
@@ -41,6 +47,34 @@ int main(int arg,char ** args){
     for(int i=0;i<arg;i++){
         g_args.push_back( std::string( args[i] ) );
     }
+
+  // Parse command-line arguments
+  for (int i = 1; i < arg; i++) {
+    std::string a = args[i];
+    if (a == "--api" && i + 1 < arg) {
+      std::string val = args[++i];
+      if (val == "gl" || val == "GL" || val == "opengl" || val == "OpenGL")
+        desc.api = t800::GRAPHICS_API::OPENGL;
+      else if (val == "d3d11" || val == "D3D11" || val == "dx11")
+        desc.api = t800::GRAPHICS_API::D3D11;
+    }
+    else if (a == "--dump-frame" && i + 1 < arg) {
+      g_dumpEnabled = true;
+      g_dumpByFrame = true;
+      g_dumpFrame = std::stoi(args[++i]);
+    }
+    else if (a == "--dump-seconds" && i + 1 < arg) {
+      g_dumpEnabled = true;
+      g_dumpByFrame = false;
+      g_dumpSeconds = std::stof(args[++i]);
+    }
+    else if (a == "--width" && i + 1 < arg) {
+      desc.width = std::stoi(args[++i]);
+    }
+    else if (a == "--height" && i + 1 < arg) {
+      desc.height = std::stoi(args[++i]);
+    }
+  }
 
 	pApp = new App;
 #ifdef OS_LINUX

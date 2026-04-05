@@ -32,7 +32,7 @@ t800::RootFramework *pFrameWork = 0;
 
 int main(int arg,char ** args){
   t800::ApplicationDesc desc;
-  desc.api = t800::GRAPHICS_API::OPENGL;
+  desc.api = t800::GRAPHICS_API::D3D11;
   desc.height = 720;
   desc.width = 1280;
   desc.videoMode = t800::T8_VIDEO_MODE::WINDOWED;

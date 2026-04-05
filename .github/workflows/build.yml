@@ -23,6 +23,11 @@ jobs:
       - name: Setup MSBuild
         uses: microsoft/setup-msbuild@v2
 
+      - name: Clone vcpkg
+        shell: pwsh
+        run: |
+          git clone https://github.com/microsoft/vcpkg.git T850/Librerias/vcpkg
+
       - name: Cache vcpkg packages
         uses: actions/cache@v4
         with:

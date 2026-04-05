@@ -116,6 +116,7 @@ namespace t800 {
       }
       pTextureColor->x = w;
       pTextureColor->y = h;
+      pTextureColor->SetTextureParams();
       vColorTextures.push_back(pTextureColor);
     }
 
@@ -198,9 +199,9 @@ namespace t800 {
     deviceContext->RSSetViewports(1, &viewport_RT);
 
     float rgba[4];
-    rgba[0] = 0.5f;
-    rgba[1] = 0.5f;
-    rgba[2] = 0.5f;
+    rgba[0] = 1.0f;
+    rgba[1] = 1.0f;
+    rgba[2] = 1.0f;
     rgba[3] = 1.0f;
 
     for (int i = 0; i < number_RT; i++) {

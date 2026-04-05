@@ -44,7 +44,7 @@ namespace xF {
 		int	GetxTemplateType(std::string Line, std::string *retName = 0);
 
 		void		ProcessFrameBlock(std::string &actual);
-		void		ProcessMeshBlock(std::string actual);
+		void		ProcessMeshBlock(const std::string &actual);
 		void		ProcessNormalsBlock(xF::xMeshGeometry *pGeometry);
 		void		ProcessTexCoordinatesBlock(xF::xMeshGeometry *pGeometry);
 		void		ProcessDeclDataBlock(xF::xMeshGeometry *pGeometry);
@@ -53,7 +53,7 @@ namespace xF {
 		void		ProcessSkinWeights(xF::xMeshGeometry* pGeometry);
 
 		void		ProcessTicksPerSecond(xF::xAnimationInfo* pAnimation);
-		void		ProcessAnimationSet(xF::xAnimationInfo* pAnimation, const std::string name);
+		void		ProcessAnimationSet(xF::xAnimationInfo* pAnimation, const std::string &name);
 
 		void		GetNextEndBracket();
 

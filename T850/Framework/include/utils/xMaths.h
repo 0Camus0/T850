@@ -166,7 +166,7 @@ float CadenaAnumeroFlotantePersonalizada(char *c);
 		void XMatRotationYRH(XMATRIX44 &, const float &);
 		void XMatRotationZLH(XMATRIX44 &, const float &);
 		void XMatRotationZRH(XMATRIX44 &, const float &);
-		void XMatTranspose(XMATRIX44 &,  XMATRIX44 );
+		void XMatTranspose(XMATRIX44 &, const XMATRIX44 &);
 		void XMatIdentity(XMATRIX44 &);
 		void XMatViewLookAtLH(XMATRIX44 &, const XVECTOR3 &, const XVECTOR3 &, const XVECTOR3 &);
 		void XMatViewLookAtRH(XMATRIX44 &, const XVECTOR3 &, const XVECTOR3 &, const XVECTOR3 &);
@@ -199,10 +199,6 @@ float CadenaAnumeroFlotantePersonalizada(char *c);
 			XVECTOR2(const float &xp, const float &yp) :x(xp), y(yp) {}
 
 			XVECTOR2 & operator= (const XVECTOR2 & other) {
-				this->x = other.x; this->y = other.y;
-				return *this;
-			}
-			XVECTOR2 & operator= (XVECTOR2 & other) {
 				this->x = other.x; this->y = other.y;
 				return *this;
 			}
@@ -276,10 +272,6 @@ float CadenaAnumeroFlotantePersonalizada(char *c);
 			XVECTOR3(const double &xp, const double &yp, const double &zp, const double &wp) :x((float)xp), y((float)yp), z((float)zp), w((float)wp) { }
 			*/
 			XVECTOR3 & operator= (const XVECTOR3 & other) {
-				this->x = other.x; this->y = other.y; this->z = other.z; this->w = other.w;
-				return *this;
-			}
-			XVECTOR3 & operator= (XVECTOR3 & other) {
 				this->x = other.x; this->y = other.y; this->z = other.z; this->w = other.w;
 				return *this;
 			}
@@ -376,13 +368,9 @@ float CadenaAnumeroFlotantePersonalizada(char *c);
 				this->m41 = other.m41; this->m42 = other.m42; this->m43 = other.m43; this->m44 = other.m44;
 				return *this;
 			}
-			XMATRIX44 & operator= (XMATRIX44 & other) {
-				this->m11 = other.m11; this->m12 = other.m12; this->m13 = other.m13; this->m14 = other.m14;
-				this->m21 = other.m21; this->m22 = other.m22; this->m23 = other.m23; this->m24 = other.m24;
-				this->m31 = other.m31; this->m32 = other.m32; this->m33 = other.m33; this->m34 = other.m34;
-				this->m41 = other.m41; this->m42 = other.m42; this->m43 = other.m43; this->m44 = other.m44;
-				return *this;
-			}
+
+			XMATRIX44(XMATRIX44&& other) noexcept = default;
+			XMATRIX44& operator=(XMATRIX44&& other) noexcept = default;
 
 			XMATRIX44& operator *= (const XMATRIX44&);
 			XMATRIX44& operator += (const XMATRIX44&);

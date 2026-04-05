@@ -683,7 +683,7 @@ namespace xF {
 			m_Stack.pop();
 	}
 
-	void XDataBase::ProcessMeshBlock(std::string actual) {
+	void XDataBase::ProcessMeshBlock(const std::string &actual) {
 #if PROFILE_MESH_BLOCK
 		PROFILING_SCOPE("ProcessMeshBlock")
 #endif
@@ -981,7 +981,7 @@ namespace xF {
 #endif
 	}
 
-	void XDataBase::ProcessAnimationSet(xF::xAnimationInfo* pAnimation, const std::string name) {
+	void XDataBase::ProcessAnimationSet(xF::xAnimationInfo* pAnimation, const std::string &name) {
 #if PROFILE_ANIMATION_SET
 		PROFILING_SCOPE("ProcessAnimationSet")
 #endif

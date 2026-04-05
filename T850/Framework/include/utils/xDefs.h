@@ -257,7 +257,7 @@ namespace xF {
 		STDRGBAColor() : r(0.0f) , g(0.0f) , b(0.0f) , a(0.0f){	}
 
 		STDRGBAColor(const float vr, const float vg, const float vb, const float v_a)
-			: r(vr), g(vg), b(vg), a(v_a){	}
+			: r(vr), g(vg), b(vb), a(v_a){	}
 
 		union {
 			xFLOAT v[4];
@@ -409,6 +409,10 @@ namespace xF {
 		xFinalGeometry(const xFinalGeometry &fg) { *this = fg; }
 		xFinalGeometry(xFinalGeometry &fg) { *this = fg; }
 		xFinalGeometry & operator= (const xFinalGeometry & other) {
+			if (this == &other) return *this;
+			delete[] pData;
+			delete[] pDataDest;
+
 			this->Id = other.Id;
 			this->IdIBO = other.IdIBO;
 			this->VertexSize = other.VertexSize;
@@ -424,38 +428,50 @@ namespace xF {
 				pDataDest[i] = other.pDataDest[i];
 			}
 
-			for (std::size_t i = 0; i < other.Subsets.size(); i++) {
-				this->Subsets.push_back(other.Subsets[i]);
-			}
+			this->Subsets = other.Subsets;
 
 			return *this;
 		}
-		xFinalGeometry & operator= (xFinalGeometry & other) {
-			this->Id = other.Id;
-			this->IdIBO = other.IdIBO;
-			this->VertexSize = other.VertexSize;
-			this->NumVertex = other.NumVertex;
+		xFinalGeometry(xFinalGeometry&& other) noexcept
+			: pData(other.pData), pDataDest(other.pDataDest), Subsets(std::move(other.Subsets)),
+			  ShaderProg(other.ShaderProg), vertexAttribLoc(other.vertexAttribLoc),
+			  normalAttribLoc(other.normalAttribLoc), tangentAttribLoc(other.tangentAttribLoc),
+			  binormalAttribLoc(other.binormalAttribLoc), uvAttribLoc(other.uvAttribLoc),
+			  uvSecAttribLoc(other.uvSecAttribLoc), matWorldViewProjUniformLoc(other.matWorldViewProjUniformLoc),
+			  matWorldUniformLoc(other.matWorldUniformLoc), Id(other.Id), IdIBO(other.IdIBO),
+			  VertexSize(other.VertexSize), NumVertex(other.NumVertex)
+		{
+			other.pData = 0;
+			other.pDataDest = 0;
+		}
 
-			unsigned int NumFloatsPerVertex = this->VertexSize / 4;
-			unsigned int NumFloatsPerGeometry = NumFloatsPerVertex*this->NumVertex;
+		xFinalGeometry& operator=(xFinalGeometry&& other) noexcept {
+			if (this == &other) return *this;
+			delete[] pData;
+			delete[] pDataDest;
 
-			pData = new float[NumFloatsPerGeometry];
-			pDataDest = new float[NumFloatsPerGeometry];
-			for (unsigned int i = 0; i < NumFloatsPerGeometry; i++) {
-				pData[i] = other.pData[i];
-				pDataDest[i] = other.pDataDest[i];
-			}
-
-			for (unsigned int i = 0; i < other.Subsets.size(); i++) {
-				this->Subsets.push_back(other.Subsets[i]);
-			}
-
+			pData = other.pData; other.pData = 0;
+			pDataDest = other.pDataDest; other.pDataDest = 0;
+			Subsets = std::move(other.Subsets);
+			ShaderProg = other.ShaderProg;
+			vertexAttribLoc = other.vertexAttribLoc;
+			normalAttribLoc = other.normalAttribLoc;
+			tangentAttribLoc = other.tangentAttribLoc;
+			binormalAttribLoc = other.binormalAttribLoc;
+			uvAttribLoc = other.uvAttribLoc;
+			uvSecAttribLoc = other.uvSecAttribLoc;
+			matWorldViewProjUniformLoc = other.matWorldViewProjUniformLoc;
+			matWorldUniformLoc = other.matWorldUniformLoc;
+			Id = other.Id; IdIBO = other.IdIBO;
+			VertexSize = other.VertexSize; NumVertex = other.NumVertex;
 			return *this;
 		}
+
 		~xFinalGeometry() {
-//			delete[] pData;
-	//		delete[] pDataDest;
-	//		pData = 0;
+			delete[] pData;
+			delete[] pDataDest;
+			pData = 0;
+			pDataDest = 0;
 		}
 
 		float					*pData;

@@ -671,12 +671,28 @@ void SC_Day::OnDraw() {
   Quads[7].SetGlobalSignature(Signature::VIGNETTE_PASS);
   Quads[7].Draw();
 
-  // RT Dump: save key render targets after 5 seconds (once)
+  // RT Dump: save key render targets (configurable via command-line)
   {
     static float dumpTimer = 0.0f;
-    static bool dumped = false;
+    static int   dumpFrameCounter = 0;
+    static bool  dumped = false;
     dumpTimer += DtSecs;
-    if (!dumped && dumpTimer >= 5.0f) {
+    dumpFrameCounter++;
+
+    extern bool  g_dumpEnabled;
+    extern bool  g_dumpByFrame;
+    extern int   g_dumpFrame;
+    extern float g_dumpSeconds;
+
+    bool shouldDump = false;
+    if (g_dumpEnabled && !dumped) {
+      if (g_dumpByFrame && dumpFrameCounter >= g_dumpFrame)
+        shouldDump = true;
+      else if (!g_dumpByFrame && dumpTimer >= g_dumpSeconds)
+        shouldDump = true;
+    }
+
+    if (shouldDump) {
       dumped = true;
       std::string prefix = "RT_Dump_";
       pFramework->pVideoDriver->SaveScreenshot(prefix + "BackBuffer");
@@ -690,7 +706,7 @@ void SC_Day::OnDraw() {
       pFramework->pVideoDriver->SaveRTToFile(ExtraHelperPass,  BaseDriver::COLOR0_ATTACHMENT, prefix + "HDR_Final");
       pFramework->pVideoDriver->SaveRTToFile(BloomAccumPass,   BaseDriver::COLOR0_ATTACHMENT, prefix + "Bloom");
       pFramework->pVideoDriver->SaveRTToFile(GodRaysCalcPass,  BaseDriver::COLOR0_ATTACHMENT, prefix + "GodRays");
-      std::cout << "RT dump complete: 10 RT files + backbuffer saved" << std::endl;
+      std::cout << "RT dump complete (frame " << dumpFrameCounter << ", time " << dumpTimer << "s): 10 RT files + backbuffer saved" << std::endl;
     }
   }
   /*

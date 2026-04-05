@@ -28,7 +28,7 @@
 #include <GL/glew.h>
 #else
 #include <GL/glew.h>
-#include <SDL/SDL.h>
+#include <SDL3/SDL.h>
 #endif
 
 #include <utils/Utils.h>

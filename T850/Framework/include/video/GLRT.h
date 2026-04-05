@@ -30,7 +30,7 @@
 #else
 #include <GL/glew.h>
 #ifdef USING_SDL
-#include <SDL/SDL.h>
+#include <SDL3/SDL.h>
 #endif
 #endif
 

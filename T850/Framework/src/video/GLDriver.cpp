@@ -31,7 +31,7 @@
 #pragma comment(lib,"libEGL.lib")
 #pragma comment(lib,"libGLESv2.lib")
 #elif defined(USING_OPENGL)
-#pragma comment(lib,"glew.lib")
+#pragma comment(lib,"libglew32.lib")
 #pragma comment(lib,"OpenGL32.Lib")
 #endif
 #elif defined(OS_LINUX)
@@ -460,9 +460,7 @@ namespace t800 {
     else {
       printf("GLEW OK\n");
     }
-    SDL_Surface *sur = SDL_GetVideoSurface();
-    width = sur->w;
-    height = sur->h;
+    SDL_GetWindowSizeInPixels((SDL_Window*)m_sdlWindow, &width, &height);
 #endif
 #endif//HEADLESS
     std::string GL_Version = std::string((const char*)glGetString(GL_VERSION));
@@ -527,6 +525,7 @@ namespace t800 {
 #if (defined(USING_OPENGL_ES20) || defined(USING_OPENGL_ES30) || defined(USING_OPENGL_ES31)) && defined(OS_WINDOWS)
     eglWindow = GetActiveWindow();
 #endif
+    m_sdlWindow = window;
   }
 
   void	GLDriver::SetDimensions(int w, int h) {
@@ -657,7 +656,7 @@ namespace t800 {
 #if defined(USING_OPENGL_ES20) || defined(USING_OPENGL_ES30)
     eglSwapBuffers(eglDisplay, eglSurface);
 #elif defined(USING_OPENGL)
-    SDL_GL_SwapBuffers();
+    SDL_GL_SwapWindow((SDL_Window*)m_sdlWindow);
 #endif
 #elif defined(OS_LINUX)
 #ifdef USING_FREEGLUT

@@ -18,12 +18,15 @@
 #include <core/Core.h>
 #include <video/BaseDriver.h>
 
+struct SDL_Window;
+struct SDL_GLContextState;
+typedef struct SDL_GLContextState *SDL_GLContext;
 
 #include <memory>
 namespace t800 {
   class Win32Framework : public RootFramework {
   public:
-    Win32Framework(AppBase *pBaseApp) : RootFramework(pBaseApp), m_alive(true) {
+    Win32Framework(AppBase *pBaseApp) : RootFramework(pBaseApp), m_alive(true), m_pWindow(nullptr), m_glContext(nullptr) {
       pBaseApp->SetParentFramework(this);
       m_inited = false;
     }
@@ -39,6 +42,8 @@ namespace t800 {
     ~Win32Framework() {	}
 
     bool	m_alive;
+    SDL_Window* m_pWindow;
+    SDL_GLContext m_glContext;
   private:
   };
 }

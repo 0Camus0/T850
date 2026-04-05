@@ -670,6 +670,29 @@ void SC_Day::OnDraw() {
   Quads[7].SetTexture(pFramework->pVideoDriver->GetRTTexture(ExtraHelperPass, BaseDriver::COLOR0_ATTACHMENT), 0);
   Quads[7].SetGlobalSignature(Signature::VIGNETTE_PASS);
   Quads[7].Draw();
+
+  // RT Dump: save key render targets after 5 seconds (once)
+  {
+    static float dumpTimer = 0.0f;
+    static bool dumped = false;
+    dumpTimer += DtSecs;
+    if (!dumped && dumpTimer >= 5.0f) {
+      dumped = true;
+      std::string prefix = "RT_Dump_";
+      pFramework->pVideoDriver->SaveScreenshot(prefix + "BackBuffer");
+      pFramework->pVideoDriver->SaveRTToFile(GBufferPass,      BaseDriver::COLOR0_ATTACHMENT, prefix + "GBuffer_Color0");
+      pFramework->pVideoDriver->SaveRTToFile(GBufferPass,      BaseDriver::COLOR1_ATTACHMENT, prefix + "GBuffer_Normals");
+      pFramework->pVideoDriver->SaveRTToFile(GBufferPass,      BaseDriver::DEPTH_ATTACHMENT,  prefix + "GBuffer_Depth");
+      pFramework->pVideoDriver->SaveRTToFile(DepthPass,        BaseDriver::DEPTH_ATTACHMENT,  prefix + "ShadowMap_Depth");
+      pFramework->pVideoDriver->SaveRTToFile(ShadowAccumPass,  BaseDriver::COLOR0_ATTACHMENT, prefix + "ShadowAccum");
+      pFramework->pVideoDriver->SaveRTToFile(DeferredPass,     BaseDriver::COLOR0_ATTACHMENT, prefix + "Deferred");
+      pFramework->pVideoDriver->SaveRTToFile(Extra16FPass,     BaseDriver::COLOR0_ATTACHMENT, prefix + "Extra16F");
+      pFramework->pVideoDriver->SaveRTToFile(ExtraHelperPass,  BaseDriver::COLOR0_ATTACHMENT, prefix + "HDR_Final");
+      pFramework->pVideoDriver->SaveRTToFile(BloomAccumPass,   BaseDriver::COLOR0_ATTACHMENT, prefix + "Bloom");
+      pFramework->pVideoDriver->SaveRTToFile(GodRaysCalcPass,  BaseDriver::COLOR0_ATTACHMENT, prefix + "GodRays");
+      std::cout << "RT dump complete: 10 RT files + backbuffer saved" << std::endl;
+    }
+  }
   /*
   Quads[1].SetTexture(pFramework->pVideoDriver->GetRTTexture(DepthPass, BaseDriver::DEPTH_ATTACHMENT), 0);
   Quads[1].SetGlobalSignature(Signature::FSQUAD_3_TEX);

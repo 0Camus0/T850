@@ -226,9 +226,12 @@ namespace t800 {
       }
     }
     else if (sig&Signature::HDR_COMP_PASS || sig&Signature::BRIGHT_PASS || sig&Signature::FSQUAD_3_TEX) {
-      //D3D11_TEXTURE2D_DESC pDesc;
-      //reinterpret_cast<D3DXTexture*>(d3dxTextures[0])->Tex->GetDesc(&pDesc);
-      CnstBuffer.CameraPos.w = 10.0f;//(float)pDesc.MipLevels;
+      if (Textures[0]) {
+        unsigned int maxDim = Textures[0]->x > Textures[0]->y ? Textures[0]->x : Textures[0]->y;
+        int mipLevels = 1;
+        while (maxDim > 1) { maxDim >>= 1; mipLevels++; }
+        CnstBuffer.CameraPos.w = (float)mipLevels;
+      }
       CnstBuffer.LightPositions[0].x = pScProp->BloomFactor;
       CnstBuffer.LightPositions[0].y = pScProp->Exposure;
     }
@@ -273,7 +276,8 @@ namespace t800 {
     if (EnvMap)
       EnvMap->Set(*T8DeviceContext, 6, "texEnv");
 
-    //reinterpret_cast<ID3D11DeviceContext*>(T8DeviceContext->GetAPIObject())->PSSetSamplers(0, 1, &pSampler);
+    if (Textures[0])
+      Textures[0]->SetSampler(*T8DeviceContext);
 
     T8DeviceContext->SetPrimitiveTopology(T8_TOPOLOGY::TRIANLE_LIST);
     T8DeviceContext->DrawIndexed(6, 0, 0);

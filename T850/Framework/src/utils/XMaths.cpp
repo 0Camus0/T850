@@ -143,54 +143,54 @@ std::vector<sample_> UpdateKernel(float sigma, float kernelSize, float Samplecou
 
  void XMatRotationXLH(XMATRIX44 &mpout, const float &rads) {
 	mpout.m[0][0] = 1.0f;
-	mpout.m[1][1] = std::cos(rads);
-	mpout.m[1][2] = std::sin(rads);
-	mpout.m[2][1] = -std::sin(rads);
-	mpout.m[2][2] = std::cos(rads);
+	mpout.m[1][1] = cosf(rads);
+	mpout.m[1][2] = sinf(rads);
+	mpout.m[2][1] = -sinf(rads);
+	mpout.m[2][2] = cosf(rads);
 }
 
  void XMatRotationXRH(XMATRIX44 &mpout, const float &rads) {
 	mpout.m[0][0] = 1.0f;
-	mpout.m[1][1] = std::cos(rads);
-	mpout.m[1][2] = -std::sin(rads);
-	mpout.m[2][1] = std::sin(rads);
-	mpout.m[2][2] = std::cos(rads);
+	mpout.m[1][1] = cosf(rads);
+	mpout.m[1][2] = -sinf(rads);
+	mpout.m[2][1] = sinf(rads);
+	mpout.m[2][2] = cosf(rads);
 }
 
  void XMatRotationYLH(XMATRIX44 &mpout, const float &rads) {
 	mpout.m[1][1] = 1.0f;
-	mpout.m[0][0] = std::cos(rads);
-	mpout.m[0][2] = -std::sin(rads);
-	mpout.m[2][0] = std::sin(rads);
-	mpout.m[2][2] = std::cos(rads);
+	mpout.m[0][0] = cosf(rads);
+	mpout.m[0][2] = -sinf(rads);
+	mpout.m[2][0] = sinf(rads);
+	mpout.m[2][2] = cosf(rads);
 }
 
  void XMatRotationYRH(XMATRIX44 &mpout, const float &rads) {
 	mpout.m[1][1] = 1.0f;
-	mpout.m[0][0] = std::cos(rads);
-	mpout.m[0][2] = std::sin(rads);
-	mpout.m[2][0] = -std::sin(rads);
-	mpout.m[2][2] = std::cos(rads);
+	mpout.m[0][0] = cosf(rads);
+	mpout.m[0][2] = sinf(rads);
+	mpout.m[2][0] = -sinf(rads);
+	mpout.m[2][2] = cosf(rads);
 }
 
  void XMatRotationZLH(XMATRIX44 &mpout, const float &rads) {
 	mpout.m[2][2] = 1.0f;
-	mpout.m[0][0] = std::cos(rads);
-	mpout.m[0][1] = std::sin(rads);
-	mpout.m[1][0] = -std::sin(rads);
-	mpout.m[1][1] = std::cos(rads);
+	mpout.m[0][0] = cosf(rads);
+	mpout.m[0][1] = sinf(rads);
+	mpout.m[1][0] = -sinf(rads);
+	mpout.m[1][1] = cosf(rads);
 }
 
  void XMatRotationZRH(XMATRIX44 &mpout, const float &rads) {
 	mpout.m[2][2] = 1.0f;
-	mpout.m[0][0] = std::cos(rads);
-	mpout.m[0][1] = -std::sin(rads);
-	mpout.m[1][0] = std::sin(rads);
-	mpout.m[1][1] = std::cos(rads);
+	mpout.m[0][0] = cosf(rads);
+	mpout.m[0][1] = -sinf(rads);
+	mpout.m[1][0] = sinf(rads);
+	mpout.m[1][1] = cosf(rads);
 }
 
 
- void XMatTranspose(XMATRIX44 &mpout, const XMATRIX44 mat) {
+ void XMatTranspose(XMATRIX44 &mpout, const XMATRIX44 &mat) {
 	for (int i = 0; i < 4; i++) {
 		for (int j = 0; j < 4; j++) {
 			mpout.m[i][j] = mat.m[j][i];
@@ -295,13 +295,13 @@ std::vector<sample_> UpdateKernel(float sigma, float kernelSize, float Samplecou
 	 float x, y;
 	 float ang = FOV / 2.0f;
 
-	 y = cos(ang) / sin(ang);
+	 y = cosf(ang) / sinf(ang);
 	 x = y / Aspect;
 
 	 mpout.m[0][0] = x;
 	 mpout.m[1][1] = y;
 	 mpout.m[2][2] = FarPlane / (FarPlane - NearPlane);
-	 mpout.m[2][3] = 1.0;
+	 mpout.m[2][3] = 1.0f;
 	 mpout.m[3][2] = -(NearPlane*FarPlane) / (FarPlane - NearPlane);
 	 mpout.m[3][3] = 0.0f;
 
@@ -312,13 +312,13 @@ std::vector<sample_> UpdateKernel(float sigma, float kernelSize, float Samplecou
 	 float x, y;
 	 float ang = FOV / 2.0f;
 
-	 y = cos(ang) / sin(ang);
+	 y = cosf(ang) / sinf(ang);
 	 x = y / Aspect;
 
 	 mpout.m[0][0] = x;
 	 mpout.m[1][1] = y;
 	 mpout.m[2][2] = FarPlane / (NearPlane-FarPlane);
-	 mpout.m[2][3] = -1.0;
+	 mpout.m[2][3] = -1.0f;
 	 mpout.m[3][2] = (NearPlane*FarPlane) / (NearPlane-FarPlane);
 	 mpout.m[3][3] = 0.0f;
 }
@@ -340,8 +340,8 @@ std::vector<sample_> UpdateKernel(float sigma, float kernelSize, float Samplecou
 }
 
  void XMatRotationAxisRH(XMATRIX44 &mpout, const XVECTOR3 &axis, const float &angle) {
-	float cosangle = std::cos(angle);
-	float sinangle = std::sin(angle);
+	float cosangle = cosf(angle);
+	float sinangle = sinf(angle);
 	float A = 1.0f - cosangle;
 
 	mpout.m[0][0] = A*axis.x*axis.x + cosangle;
@@ -363,8 +363,8 @@ std::vector<sample_> UpdateKernel(float sigma, float kernelSize, float Samplecou
 }
 
  void XMatRotationAxisLH(XMATRIX44 &mpout, const XVECTOR3 &axis, const float &angle) {
-	float cosangle = std::cos(angle);
-	float sinangle = std::sin(angle);
+	float cosangle = cosf(angle);
+	float sinangle = sinf(angle);
 	float A = 1.0f - cosangle;
 
 	mpout.m[0][0] = A*axis.x*axis.x + cosangle;
@@ -428,7 +428,9 @@ std::vector<sample_> UpdateKernel(float sigma, float kernelSize, float Samplecou
 }
 
  void XVec3Normalize(XVECTOR3 &pOut, const XVECTOR3 &pV) {
-	float v = 1.0f / sqrtf(pV.x * pV.x + pV.y * pV.y + pV.z * pV.z);
+	float mag2 = pV.x * pV.x + pV.y * pV.y + pV.z * pV.z;
+	if (mag2 < xSMALLFLOAT) { pOut.x = pOut.y = pOut.z = 0.0f; return; }
+	float v = 1.0f / sqrtf(mag2);
 	pOut.x = pV.x * v;
 	pOut.y = pV.y * v;
 	pOut.z = pV.z * v;
@@ -504,7 +506,8 @@ std::vector<sample_> UpdateKernel(float sigma, float kernelSize, float Samplecou
 
  void XVECTOR2::Normalize()
 {
-	float mod = sqrt(x*x + y*y);
+	float mod = sqrtf(x*x + y*y);
+	if (mod < xSMALLFLOAT) return;
 	x /= mod;
 	y /= mod;
 }
@@ -521,7 +524,7 @@ std::vector<sample_> UpdateKernel(float sigma, float kernelSize, float Samplecou
 
  float XVECTOR2::Length()
 {
-	return sqrt(x*x + y*y);
+	return sqrtf(x*x + y*y);
 }
 
  XVECTOR3::operator float* ()
@@ -619,7 +622,8 @@ std::vector<sample_> UpdateKernel(float sigma, float kernelSize, float Samplecou
 
  void XVECTOR3::Normalize()
 {
-	float mod = sqrt(x*x + y*y + z*z);
+	float mod = sqrtf(x*x + y*y + z*z);
+	if (mod < xSMALLFLOAT) return;
 	x /= mod;
 	y /= mod;
 	z /= mod;
@@ -627,7 +631,7 @@ std::vector<sample_> UpdateKernel(float sigma, float kernelSize, float Samplecou
 
  float XVECTOR3::Length()
 {
-	return sqrt(x*x + y*y + z*z);
+	return sqrtf(x*x + y*y + z*z);
 }
 
  XMATRIX44_64::XMATRIX44_64() {

@@ -1,0 +1,137 @@
+name: Build
+
+on:
+  push:
+    branches: [ master ]
+    tags: [ 'v*' ]
+  pull_request:
+    branches: [ master ]
+
+jobs:
+  build:
+    runs-on: windows-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        platform: [x86, x64, ARM64]
+        configuration: [Debug, Release]
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup MSBuild
+        uses: microsoft/setup-msbuild@v2
+
+      - name: Cache vcpkg packages
+        uses: actions/cache@v4
+        with:
+          path: T850/Librerias/vcpkg/installed
+          key: vcpkg-${{ matrix.platform }}-${{ hashFiles('.github/workflows/build.yml') }}
+          restore-keys: |
+            vcpkg-${{ matrix.platform }}-
+
+      - name: Bootstrap vcpkg
+        shell: pwsh
+        run: |
+          cd T850/Librerias/vcpkg
+          ./bootstrap-vcpkg.bat -disableMetrics
+
+      - name: Install vcpkg packages (x86)
+        if: matrix.platform == 'x86'
+        shell: pwsh
+        run: |
+          cd T850/Librerias/vcpkg
+          ./vcpkg.exe install glew:x86-windows-static angle:x86-windows
+
+      - name: Install vcpkg packages (x64)
+        if: matrix.platform == 'x64'
+        shell: pwsh
+        run: |
+          cd T850/Librerias/vcpkg
+          ./vcpkg.exe install glew:x64-windows-static angle:x64-windows
+
+      - name: Install vcpkg packages (ARM64)
+        if: matrix.platform == 'ARM64'
+        shell: pwsh
+        run: |
+          cd T850/Librerias/vcpkg
+          ./vcpkg.exe install glew:arm64-windows-static angle:arm64-windows
+
+      - name: Build
+        shell: pwsh
+        run: |
+          msbuild T850/T850.sln `
+            /t:Build `
+            /p:Configuration=${{ matrix.configuration }} `
+            /p:Platform=${{ matrix.platform }} `
+            /m /nologo /v:minimal
+
+      - name: Set arch name
+        id: arch
+        shell: pwsh
+        run: |
+          $map = @{ "x86" = "x86"; "x64" = "x64"; "ARM64" = "arm64" }
+          $arch = $map["${{ matrix.platform }}"]
+          echo "name=$arch" >> $env:GITHUB_OUTPUT
+
+      - name: Verify build output
+        shell: pwsh
+        run: |
+          $exe = "T850/bin/${{ steps.arch.outputs.name }}/${{ matrix.configuration }}/DayScene.exe"
+          if (-not (Test-Path $exe)) { throw "Build output not found: $exe" }
+          Write-Host "Build succeeded: $exe"
+
+      - name: Upload build artifacts
+        if: matrix.configuration == 'Release'
+        uses: actions/upload-artifact@v4
+        with:
+          name: T850-${{ steps.arch.outputs.name }}-${{ matrix.configuration }}
+          path: |
+            T850/bin/${{ steps.arch.outputs.name }}/${{ matrix.configuration }}/DayScene.exe
+            T850/bin/${{ steps.arch.outputs.name }}/${{ matrix.configuration }}/*.dll
+
+  release:
+    needs: build
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: windows-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Package releases
+        shell: pwsh
+        run: |
+          $assets = "T850/Assets"
+          foreach ($dir in Get-ChildItem -Path artifacts -Directory) {
+            $name = $dir.Name
+            $staging = "staging/$name"
+            New-Item -ItemType Directory -Path $staging -Force | Out-Null
+
+            # Copy executable and DLLs
+            Copy-Item "$($dir.FullName)/*" -Destination $staging -Recurse
+
+            # Copy assets
+            Copy-Item "$assets/Shaders"    -Destination "$staging/Shaders"    -Recurse
+            Copy-Item "$assets/Models"     -Destination "$staging/Models"     -Recurse
+            Copy-Item "$assets/Fonts"      -Destination "$staging/Fonts"      -Recurse
+            Copy-Item "$assets/Textures"   -Destination "$staging/Textures"   -Recurse
+            Copy-Item "$assets/Techniques" -Destination "$staging/Techniques" -Recurse
+
+            # Create zip
+            Compress-Archive -Path "$staging/*" -DestinationPath "$name.zip"
+          }
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: "*.zip"
+          generate_release_notes: true

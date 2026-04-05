@@ -406,8 +406,8 @@ namespace xF {
 		}
 
 
-		xFinalGeometry(const xFinalGeometry &fg) { *this = fg; }
-		xFinalGeometry(xFinalGeometry &fg) { *this = fg; }
+		xFinalGeometry(const xFinalGeometry &fg) : pData(0), pDataDest(0) { *this = fg; }
+		xFinalGeometry(xFinalGeometry &fg) : pData(0), pDataDest(0) { *this = fg; }
 		xFinalGeometry & operator= (const xFinalGeometry & other) {
 			if (this == &other) return *this;
 			delete[] pData;

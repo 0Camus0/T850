@@ -1,0 +1,15 @@
+{
+  "architecture": "x64",
+  "configuration": "Release",
+  "api": "d3d11",
+  "display": {
+    "width": 1280,
+    "height": 720
+  },
+  "dump": {
+    "enabled": false,
+    "trigger": "seconds",
+    "seconds": 5,
+    "frame": 300
+  }
+}

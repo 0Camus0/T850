@@ -689,7 +689,7 @@ namespace t800 {
       unsigned int mant = h & 0x3FF;
       if (exp == 0) return 0.0f;
       if (exp == 31) return sign ? -1e30f : 1e30f;
-      float f = powf(2.0f, (float)(exp - 15)) * (1.0f + mant / 1024.0f);
+      float f = powf(2.0f, (float)((int)exp - 15)) * (1.0f + mant / 1024.0f);
       return sign ? -f : f;
     };
 

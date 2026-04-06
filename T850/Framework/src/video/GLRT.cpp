@@ -31,7 +31,7 @@ namespace t800 {
       bysize = GL_UNSIGNED_BYTE;
     }break;
     case BaseRT::R8:
-      cfmt = GL_RED;
+      cfmt = GL_R8;
       cinternal = GL_RED;
       bysize = GL_UNSIGNED_BYTE;
       break;
@@ -201,7 +201,9 @@ namespace t800 {
 
       if (number_RT == 0) {
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_COMPARE_MODE, GL_COMPARE_REF_TO_TEXTURE);
-        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_COMPARE_FUNC, GL_LESS);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_COMPARE_FUNC, GL_LEQUAL);
+      } else {
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_COMPARE_MODE, GL_NONE);
       }
 
       glFramebufferTexture2D(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_TEXTURE_2D, dtex, 0);

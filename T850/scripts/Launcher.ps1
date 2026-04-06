@@ -6,7 +6,7 @@ Add-Type -AssemblyName PresentationFramework, PresentationCore, WindowsBase
 $xaml = @"
 <Window xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-        Title="T850 Engine Launcher" Height="520" Width="480"
+        Title="T850 Engine Launcher" Height="580" Width="480"
         WindowStartupLocation="CenterScreen" ResizeMode="NoResize"
         Background="#1E1E2E" Foreground="#CDD6F4">
     <Window.Resources>
@@ -47,7 +47,8 @@ $xaml = @"
             <Setter Property="VerticalContentAlignment" Value="Center"/>
         </Style>
 
-        <Style TargetType="TextBlock">
+        <!-- Label style (keyed — does NOT bleed into ComboBox/CheckBox/Button) -->
+        <Style x:Key="LabelStyle" TargetType="TextBlock">
             <Setter Property="Foreground" Value="{StaticResource SubtextBrush}"/>
             <Setter Property="FontSize" Value="13"/>
             <Setter Property="Margin" Value="0,0,0,4"/>
@@ -77,7 +78,7 @@ $xaml = @"
             <TextBlock Text="T850 ENGINE" FontSize="28" FontWeight="Bold"
                        Foreground="{StaticResource AccentBrush}" Margin="0"/>
             <TextBlock Text="Deferred Rendering Demo Launcher" FontSize="13"
-                       Foreground="{StaticResource SubtextBrush}" Margin="0,2,0,0"/>
+                       Foreground="#A6ADC8" Margin="0,2,0,0"/>
         </StackPanel>
 
         <!-- Build Configuration -->
@@ -93,7 +94,7 @@ $xaml = @"
                         <ColumnDefinition Width="*"/>
                     </Grid.ColumnDefinitions>
                     <StackPanel Grid.Column="0">
-                        <TextBlock Text="Architecture"/>
+                        <TextBlock Text="Architecture" Style="{StaticResource LabelStyle}"/>
                         <ComboBox Name="cmbArch">
                             <ComboBoxItem Content="x64" IsSelected="True"/>
                             <ComboBoxItem Content="x86"/>
@@ -101,7 +102,7 @@ $xaml = @"
                         </ComboBox>
                     </StackPanel>
                     <StackPanel Grid.Column="2">
-                        <TextBlock Text="Configuration"/>
+                        <TextBlock Text="Configuration" Style="{StaticResource LabelStyle}"/>
                         <ComboBox Name="cmbConfig">
                             <ComboBoxItem Content="Release" IsSelected="True"/>
                             <ComboBoxItem Content="Debug"/>
@@ -145,11 +146,11 @@ $xaml = @"
                             <ColumnDefinition Width="*"/>
                         </Grid.ColumnDefinitions>
                         <StackPanel Grid.Column="0" Name="pnlSeconds">
-                            <TextBlock Text="Seconds"/>
+                            <TextBlock Text="Seconds" Style="{StaticResource LabelStyle}"/>
                             <TextBox Name="txtSeconds" Text="5"/>
                         </StackPanel>
                         <StackPanel Grid.Column="2" Name="pnlFrame" IsEnabled="False">
-                            <TextBlock Text="Frame Number"/>
+                            <TextBlock Text="Frame Number" Style="{StaticResource LabelStyle}"/>
                             <TextBox Name="txtFrame" Text="300"/>
                         </StackPanel>
                     </Grid>
@@ -170,11 +171,11 @@ $xaml = @"
                         <ColumnDefinition Width="*"/>
                     </Grid.ColumnDefinitions>
                     <StackPanel Grid.Column="0">
-                        <TextBlock Text="Width"/>
+                        <TextBlock Text="Width" Style="{StaticResource LabelStyle}"/>
                         <TextBox Name="txtWidth" Text="1280"/>
                     </StackPanel>
                     <StackPanel Grid.Column="2">
-                        <TextBlock Text="Height"/>
+                        <TextBlock Text="Height" Style="{StaticResource LabelStyle}"/>
                         <TextBox Name="txtHeight" Text="720"/>
                     </StackPanel>
                 </Grid>
@@ -184,24 +185,41 @@ $xaml = @"
         <!-- Status + Command Preview -->
         <StackPanel Grid.Row="5" VerticalAlignment="Bottom" Margin="0,0,0,12">
             <TextBlock Name="txtStatus" Text="" FontSize="12"
-                       Foreground="{StaticResource SubtextBrush}" Margin="0,0,0,4"
+                       Foreground="#A6ADC8" Margin="0,0,0,4"
                        TextWrapping="Wrap"/>
             <TextBlock Name="txtCmdPreview" Text="" FontSize="11"
-                       Foreground="{StaticResource Surface2Brush}" Margin="0"
+                       Foreground="#45475A" Margin="0"
                        TextWrapping="Wrap" FontFamily="Consolas"/>
         </StackPanel>
 
-        <!-- Launch Button -->
-        <Button Grid.Row="6" Name="btnLaunch" Content="LAUNCH" Height="44"
-                FontSize="16" FontWeight="Bold" Cursor="Hand"
-                Background="{StaticResource AccentBrush}" Foreground="#1E1E2E"
-                BorderThickness="0">
-            <Button.Resources>
-                <Style TargetType="Border">
-                    <Setter Property="CornerRadius" Value="6"/>
-                </Style>
-            </Button.Resources>
-        </Button>
+        <!-- Buttons -->
+        <Grid Grid.Row="6">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="*"/>
+                <ColumnDefinition Width="12"/>
+                <ColumnDefinition Width="*"/>
+            </Grid.ColumnDefinitions>
+            <Button Grid.Column="0" Name="btnRun" Content="&#x25B6;  RUN" Height="48"
+                    FontSize="18" FontWeight="Bold" Cursor="Hand"
+                    Background="{StaticResource GreenBrush}" Foreground="#1E1E2E"
+                    BorderThickness="0">
+                <Button.Resources>
+                    <Style TargetType="Border">
+                        <Setter Property="CornerRadius" Value="6"/>
+                    </Style>
+                </Button.Resources>
+            </Button>
+            <Button Grid.Column="2" Name="btnLaunch" Content="LAUNCH" Height="48"
+                    FontSize="16" FontWeight="Bold" Cursor="Hand"
+                    Background="{StaticResource AccentBrush}" Foreground="#1E1E2E"
+                    BorderThickness="0">
+                <Button.Resources>
+                    <Style TargetType="Border">
+                        <Setter Property="CornerRadius" Value="6"/>
+                    </Style>
+                </Button.Resources>
+            </Button>
+        </Grid>
     </Grid>
 </Window>
 "@
@@ -226,6 +244,7 @@ $txtWidth       = $window.FindName("txtWidth")
 $txtHeight      = $window.FindName("txtHeight")
 $txtStatus      = $window.FindName("txtStatus")
 $txtCmdPreview  = $window.FindName("txtCmdPreview")
+$btnRun         = $window.FindName("btnRun")
 $btnLaunch      = $window.FindName("btnLaunch")
 
 # Resolve root directory: if running from ps2exe, use exe location; otherwise script location
@@ -355,10 +374,12 @@ function Update-Preview {
         $txtStatus.Text = "Ready to launch"
         $txtStatus.Foreground = $window.FindResource("GreenBrush")
         $btnLaunch.IsEnabled = $true
+        $btnRun.IsEnabled    = $true
     } else {
         $txtStatus.Text = "Executable not found - build this configuration first"
         $txtStatus.Foreground = $window.FindResource("RedBrush")
         $btnLaunch.IsEnabled = $false
+        $btnRun.IsEnabled    = $false
     }
 }
 
@@ -392,7 +413,30 @@ $txtFrame.Add_TextChanged({ Update-Preview })
 $txtWidth.Add_TextChanged({ Update-Preview })
 $txtHeight.Add_TextChanged({ Update-Preview })
 
-# Launch button
+# RUN button — launch the app with current settings (no dump override)
+$btnRun.Add_Click({
+    $cmd = Get-LaunchCommand
+    if (-not (Test-Path $cmd.ExePath)) {
+        [System.Windows.MessageBox]::Show(
+            ("Executable not found:" + "`n" + $cmd.ExePath + "`n`n" + "Please build this configuration first."),
+            "T850 Launcher", "OK", "Error")
+        return
+    }
+
+    Save-Config
+
+    $txtStatus.Text = "Running..."
+    $txtStatus.Foreground = $window.FindResource("GreenBrush")
+    $window.Dispatcher.Invoke([Action]{}, [System.Windows.Threading.DispatcherPriority]::Background)
+
+    $workDir = Split-Path -Parent $cmd.ExePath
+    Start-Process -FilePath $cmd.ExePath -ArgumentList $cmd.Args -WorkingDirectory $workDir
+
+    $txtStatus.Text = "Process running"
+    $txtStatus.Foreground = $window.FindResource("GreenBrush")
+})
+
+# Launch button — same but labelled separately for dump/advanced use
 $btnLaunch.Add_Click({
     $cmd = Get-LaunchCommand
     if (-not (Test-Path $cmd.ExePath)) {

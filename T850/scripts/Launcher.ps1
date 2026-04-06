@@ -1,5 +1,5 @@
 # T850 Engine Launcher
-# Professional WPF GUI for launching DayScene with configurable options
+# WPF GUI for launching DayScene — reads/writes config.json
 
 Add-Type -AssemblyName PresentationFramework, PresentationCore, WindowsBase
 
@@ -10,7 +10,6 @@ $xaml = @"
         WindowStartupLocation="CenterScreen" ResizeMode="NoResize"
         Background="#1E1E2E" Foreground="#CDD6F4">
     <Window.Resources>
-        <!-- Accent color brush -->
         <SolidColorBrush x:Key="AccentBrush" Color="#89B4FA"/>
         <SolidColorBrush x:Key="AccentHoverBrush" Color="#B4D0FB"/>
         <SolidColorBrush x:Key="SurfaceBrush" Color="#313244"/>
@@ -20,7 +19,6 @@ $xaml = @"
         <SolidColorBrush x:Key="GreenBrush" Color="#A6E3A1"/>
         <SolidColorBrush x:Key="RedBrush" Color="#F38BA8"/>
 
-        <!-- ComboBox style -->
         <Style TargetType="ComboBox">
             <Setter Property="Background" Value="{StaticResource SurfaceBrush}"/>
             <Setter Property="Foreground" Value="{StaticResource TextBrush}"/>
@@ -31,7 +29,6 @@ $xaml = @"
             <Setter Property="Height" Value="36"/>
         </Style>
 
-        <!-- TextBox style -->
         <Style TargetType="TextBox">
             <Setter Property="Background" Value="{StaticResource SurfaceBrush}"/>
             <Setter Property="Foreground" Value="{StaticResource TextBrush}"/>
@@ -44,21 +41,18 @@ $xaml = @"
             <Setter Property="CaretBrush" Value="{StaticResource TextBrush}"/>
         </Style>
 
-        <!-- CheckBox style -->
         <Style TargetType="CheckBox">
             <Setter Property="Foreground" Value="{StaticResource TextBrush}"/>
             <Setter Property="FontSize" Value="14"/>
             <Setter Property="VerticalContentAlignment" Value="Center"/>
         </Style>
 
-        <!-- Label style -->
         <Style TargetType="TextBlock">
             <Setter Property="Foreground" Value="{StaticResource SubtextBrush}"/>
             <Setter Property="FontSize" Value="13"/>
             <Setter Property="Margin" Value="0,0,0,4"/>
         </Style>
 
-        <!-- RadioButton style -->
         <Style TargetType="RadioButton">
             <Setter Property="Foreground" Value="{StaticResource TextBrush}"/>
             <Setter Property="FontSize" Value="13"/>
@@ -217,40 +211,117 @@ $reader = [System.Xml.XmlReader]::Create([System.IO.StringReader]::new($xaml))
 $window = [System.Windows.Markup.XamlReader]::Load($reader)
 
 # Get controls
-$cmbArch       = $window.FindName("cmbArch")
-$cmbConfig     = $window.FindName("cmbConfig")
-$cmbApi        = $window.FindName("cmbApi")
-$chkDump       = $window.FindName("chkDump")
+$cmbArch        = $window.FindName("cmbArch")
+$cmbConfig      = $window.FindName("cmbConfig")
+$cmbApi         = $window.FindName("cmbApi")
+$chkDump        = $window.FindName("chkDump")
 $pnlDumpOptions = $window.FindName("pnlDumpOptions")
-$rbSeconds     = $window.FindName("rbSeconds")
-$rbFrame       = $window.FindName("rbFrame")
-$pnlSeconds    = $window.FindName("pnlSeconds")
-$pnlFrame      = $window.FindName("pnlFrame")
-$txtSeconds    = $window.FindName("txtSeconds")
-$txtFrame      = $window.FindName("txtFrame")
-$txtWidth      = $window.FindName("txtWidth")
-$txtHeight     = $window.FindName("txtHeight")
-$txtStatus     = $window.FindName("txtStatus")
-$txtCmdPreview = $window.FindName("txtCmdPreview")
-$btnLaunch     = $window.FindName("btnLaunch")
+$rbSeconds      = $window.FindName("rbSeconds")
+$rbFrame        = $window.FindName("rbFrame")
+$pnlSeconds     = $window.FindName("pnlSeconds")
+$pnlFrame       = $window.FindName("pnlFrame")
+$txtSeconds     = $window.FindName("txtSeconds")
+$txtFrame       = $window.FindName("txtFrame")
+$txtWidth       = $window.FindName("txtWidth")
+$txtHeight      = $window.FindName("txtHeight")
+$txtStatus      = $window.FindName("txtStatus")
+$txtCmdPreview  = $window.FindName("txtCmdPreview")
+$btnLaunch      = $window.FindName("btnLaunch")
 
-# Script root (directory containing this script)
-$scriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
+# Resolve root directory: if running from ps2exe, use exe location; otherwise script location
+if ($MyInvocation.MyCommand.Path) {
+    $rootDir = Split-Path -Parent $MyInvocation.MyCommand.Path
+} else {
+    $rootDir = (Get-Location).Path
+}
+# If launched from scripts/, go up one level
+if ((Split-Path -Leaf $rootDir) -eq "scripts") {
+    $rootDir = Split-Path -Parent $rootDir
+}
 
-# Helper: Build the command-line string
+$configPath = Join-Path $rootDir "config.json"
+
+# ── Config load/save ──
+
+function Load-Config {
+    if (-not (Test-Path $configPath)) { return }
+    try {
+        $cfg = Get-Content $configPath -Raw | ConvertFrom-Json
+
+        # Architecture
+        foreach ($item in $cmbArch.Items) {
+            if ($item.Content -ieq $cfg.architecture) {
+                $cmbArch.SelectedItem = $item; break
+            }
+        }
+        # Configuration
+        foreach ($item in $cmbConfig.Items) {
+            if ($item.Content -ieq $cfg.configuration) {
+                $cmbConfig.SelectedItem = $item; break
+            }
+        }
+        # API
+        foreach ($item in $cmbApi.Items) {
+            if ($item.Tag -ieq $cfg.api) {
+                $cmbApi.SelectedItem = $item; break
+            }
+        }
+        # Display
+        if ($cfg.display) {
+            if ($cfg.display.width)  { $txtWidth.Text  = $cfg.display.width.ToString() }
+            if ($cfg.display.height) { $txtHeight.Text = $cfg.display.height.ToString() }
+        }
+        # Dump
+        if ($cfg.dump) {
+            $chkDump.IsChecked = [bool]$cfg.dump.enabled
+            if ($cfg.dump.trigger -eq "frame") {
+                $rbFrame.IsChecked   = $true
+                $rbSeconds.IsChecked = $false
+            } else {
+                $rbSeconds.IsChecked = $true
+                $rbFrame.IsChecked   = $false
+            }
+            if ($cfg.dump.seconds) { $txtSeconds.Text = $cfg.dump.seconds.ToString() }
+            if ($cfg.dump.frame)   { $txtFrame.Text   = $cfg.dump.frame.ToString() }
+        }
+    } catch {
+        # Silently ignore corrupt config — defaults will be used
+    }
+}
+
+function Save-Config {
+    $cfg = @{
+        architecture  = ($cmbArch.SelectedItem).Content.ToString().ToLower()
+        configuration = ($cmbConfig.SelectedItem).Content.ToString()
+        api           = ($cmbApi.SelectedItem).Tag.ToString()
+        display = @{
+            width  = [int]$txtWidth.Text
+            height = [int]$txtHeight.Text
+        }
+        dump = @{
+            enabled = [bool]$chkDump.IsChecked
+            trigger = if ($rbFrame.IsChecked) { "frame" } else { "seconds" }
+            seconds = [int]$txtSeconds.Text
+            frame   = [int]$txtFrame.Text
+        }
+    }
+    $cfg | ConvertTo-Json -Depth 3 | Set-Content $configPath -Encoding UTF8
+}
+
+# ── Helpers ──
+
 function Get-LaunchCommand {
     $arch   = ($cmbArch.SelectedItem).Content.ToString().ToLower()
     $config = ($cmbConfig.SelectedItem).Content.ToString()
     $apiTag = ($cmbApi.SelectedItem).Tag.ToString()
 
-    # Map arch names to folder names
     $archFolder = switch ($arch) {
         "arm64" { "arm64" }
         "x86"   { "x86"   }
         default { "x64"   }
     }
 
-    $exePath = Join-Path $scriptDir "bin\$archFolder\$config\DayScene.exe"
+    $exePath = Join-Path $rootDir "bin\$archFolder\$config\DayScene.exe"
     $argList = @("--api", $apiTag)
 
     if ($chkDump.IsChecked) {
@@ -276,7 +347,6 @@ function Get-LaunchCommand {
     }
 }
 
-# Helper: Update status and command preview
 function Update-Preview {
     $cmd = Get-LaunchCommand
     $txtCmdPreview.Text = $cmd.Display
@@ -292,7 +362,8 @@ function Update-Preview {
     }
 }
 
-# Wire up events
+# ── Events ──
+
 $chkDump.Add_Checked({
     $pnlDumpOptions.IsEnabled = $true
     Update-Preview
@@ -313,7 +384,6 @@ $rbFrame.Add_Checked({
     Update-Preview
 })
 
-# Update preview on any selection change
 $cmbArch.Add_SelectionChanged({ Update-Preview })
 $cmbConfig.Add_SelectionChanged({ Update-Preview })
 $cmbApi.Add_SelectionChanged({ Update-Preview })
@@ -332,11 +402,13 @@ $btnLaunch.Add_Click({
         return
     }
 
+    # Save settings to config.json before launching
+    Save-Config
+
     $txtStatus.Text = "Launching..."
     $txtStatus.Foreground = $window.FindResource("AccentBrush")
     $window.Dispatcher.Invoke([Action]{}, [System.Windows.Threading.DispatcherPriority]::Background)
 
-    # Set working directory to the exe's folder (assets are relative)
     $workDir = Split-Path -Parent $cmd.ExePath
     Start-Process -FilePath $cmd.ExePath -ArgumentList $cmd.Args -WorkingDirectory $workDir
 
@@ -344,8 +416,9 @@ $btnLaunch.Add_Click({
     $txtStatus.Foreground = $window.FindResource("GreenBrush")
 })
 
-# Initialize preview
+# ── Initialize ──
+
+Load-Config
 Update-Preview
 
-# Show window
 $window.ShowDialog() | Out-Null

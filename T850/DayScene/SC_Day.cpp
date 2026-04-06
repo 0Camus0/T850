@@ -197,7 +197,7 @@ void SC_Day::InitVars() {
 }
 void SC_Day::CreateAssets() {
   //Create RT's
-  GBufferPass = pFramework->pVideoDriver->CreateRT(4, BaseRT::RGBA8, BaseRT::F32, 0, 0, true);
+  GBufferPass = pFramework->pVideoDriver->CreateRT(5, BaseRT::RGBA16F, BaseRT::F32, 0, 0, true);
   DeferredPass = pFramework->pVideoDriver->CreateRT(1, BaseRT::RGBA16F, BaseRT::NOTHING, 0, 0, true);
   Extra16FPass = pFramework->pVideoDriver->CreateRT(1, BaseRT::RGBA16F, BaseRT::NOTHING, 0, 0, true);
   DepthPass = pFramework->pVideoDriver->CreateRT(0, BaseRT::NOTHING, BaseRT::F32, (int)SceneProp.ShadowMapResolution, (int)SceneProp.ShadowMapResolution, false);
@@ -305,18 +305,48 @@ void SC_Day::DestroyAssets() {
 
 void SC_Day::OnUpdate(float _DtSecs) {
   static float totalTime = 0.0f;
+  static int frameCounter = 0;
   totalTime += _DtSecs;
+  frameCounter++;
   DtSecs = _DtSecs;
   Meshes[0].SetParallaxSettings(SceneProp.ParallaxLowSamples, SceneProp.ParallaxHighSamples, SceneProp.ParallaxHeight);
-  m_agent.Update(DtSecs);
 
+  // When dump-frame is used, freeze cameras to initial state at the dump frame
+  // This ensures both D3D11 and GL render the exact same scene
+  extern bool  g_dumpEnabled;
+  extern bool  g_dumpByFrame;
+  extern int   g_dumpFrame;
 
-  ActiveCam->Update(DtSecs);
-  VP = ActiveCam->VP;
-  SceneProp.Lights[0].Position = LightCam.Eye;
-  SceneProp.pLightCameras[0]->Yaw -= 0.008f *DtSecs;
+  bool freezeCamera = g_dumpEnabled && g_dumpByFrame && (frameCounter >= g_dumpFrame);
 
-  SceneProp.pLightCameras[0]->Update(DtSecs);
+  if (freezeCamera) {
+    // Disable external agent control so Update doesn't override Eye
+    Cam.m_externalControl = false;
+
+    // Reset main camera to initial state
+    Cam.Eye = XVECTOR3(0.0f, 9.75f, -31.0f);
+    Cam.Pitch = 0.14f;
+    Cam.Roll = 0.0f;
+    Cam.Yaw = 0.020f;
+    Cam.Update(0.0f);
+
+    // Reset light camera to initial state
+    LightCam.Eye = XVECTOR3(25.0f, 100.0f, 0.0f);
+    LightCam.Pitch = 1.12f;
+    LightCam.Roll = 0.0f;
+    LightCam.Yaw = -0.9f;
+    LightCam.Update(0.0f);
+
+    VP = ActiveCam->VP;
+    SceneProp.Lights[0].Position = LightCam.Eye;
+  } else {
+    m_agent.Update(DtSecs);
+    ActiveCam->Update(DtSecs);
+    VP = ActiveCam->VP;
+    SceneProp.Lights[0].Position = LightCam.Eye;
+    SceneProp.pLightCameras[0]->Yaw -= 0.008f *DtSecs;
+    SceneProp.pLightCameras[0]->Update(DtSecs);
+  }
 
 
   if (totalTime > 150.0f) {
@@ -524,7 +554,7 @@ void SC_Day::OnDraw() {
   // Shadow Map Buffer Accumulation + Occlusion 
   pFramework->pVideoDriver->PushRT(ShadowAccumPass);
   pFramework->pVideoDriver->Clear();
-  Quads[0].SetTexture(pFramework->pVideoDriver->GetRTTexture(GBufferPass, BaseDriver::DEPTH_ATTACHMENT), 0);
+  Quads[0].SetTexture(pFramework->pVideoDriver->GetRTTexture(GBufferPass, BaseDriver::COLOR4_ATTACHMENT), 0);
   Quads[0].SetTexture(pFramework->pVideoDriver->GetRTTexture(DepthPass, BaseDriver::DEPTH_ATTACHMENT), 1);
   Quads[0].SetTexture(pFramework->pVideoDriver->GetRTTexture(GBufferPass, BaseDriver::COLOR1_ATTACHMENT), 2);
   Quads[0].SetTexture(SceneProp.SSAOKernel.NoiseTex, 3);
@@ -554,7 +584,7 @@ void SC_Day::OnDraw() {
   Quads[0].SetTexture(pFramework->pVideoDriver->GetRTTexture(GBufferPass, BaseDriver::COLOR1_ATTACHMENT), 1);
   Quads[0].SetTexture(pFramework->pVideoDriver->GetRTTexture(GBufferPass, BaseDriver::COLOR2_ATTACHMENT), 2);
   Quads[0].SetTexture(pFramework->pVideoDriver->GetRTTexture(GBufferPass, BaseDriver::COLOR3_ATTACHMENT), 3);
-  Quads[0].SetTexture(pFramework->pVideoDriver->GetRTTexture(GBufferPass, BaseDriver::DEPTH_ATTACHMENT), 4);
+  Quads[0].SetTexture(pFramework->pVideoDriver->GetRTTexture(GBufferPass, BaseDriver::COLOR4_ATTACHMENT), 4);
   Quads[0].SetTexture(pFramework->pVideoDriver->GetRTTexture(ShadowAccumPass, BaseDriver::COLOR0_ATTACHMENT), 5);
   Quads[0].SetEnvironmentMap(g_pBaseDriver->GetTexture(EnvMapTexIndex));
   Quads[0].SetGlobalSignature(Signature::DEFERRED_PASS);
@@ -565,7 +595,7 @@ void SC_Day::OnDraw() {
   // God Rays and Volumetric Pass
   pFramework->pVideoDriver->PushRT(GodRaysCalcPass);
   Quads[0].SetGlobalSignature(Signature::LIGHT_RAY_MARCHING);
-  Quads[0].SetTexture(pFramework->pVideoDriver->GetRTTexture(GBufferPass, BaseDriver::DEPTH_ATTACHMENT), 0);
+  Quads[0].SetTexture(pFramework->pVideoDriver->GetRTTexture(GBufferPass, BaseDriver::COLOR4_ATTACHMENT), 0);
   Quads[0].SetTexture(pFramework->pVideoDriver->GetRTTexture(DepthPass, BaseDriver::DEPTH_ATTACHMENT), 1);
   Quads[0].Draw();
   pFramework->pVideoDriver->PopRT();
@@ -618,7 +648,7 @@ void SC_Day::OnDraw() {
   //DOF PASS
   pFramework->pVideoDriver->PushRT(CoCPass);
   Quads[0].SetGlobalSignature(Signature::COC_PASS);
-  Quads[0].SetTexture(pFramework->pVideoDriver->GetRTTexture(GBufferPass, BaseDriver::DEPTH_ATTACHMENT), 0);
+  Quads[0].SetTexture(pFramework->pVideoDriver->GetRTTexture(GBufferPass, BaseDriver::COLOR4_ATTACHMENT), 0);
   Quads[0].Draw();
   pFramework->pVideoDriver->PopRT();
 
@@ -698,7 +728,7 @@ void SC_Day::OnDraw() {
       pFramework->pVideoDriver->SaveScreenshot(prefix + "BackBuffer");
       pFramework->pVideoDriver->SaveRTToFile(GBufferPass,      BaseDriver::COLOR0_ATTACHMENT, prefix + "GBuffer_Color0");
       pFramework->pVideoDriver->SaveRTToFile(GBufferPass,      BaseDriver::COLOR1_ATTACHMENT, prefix + "GBuffer_Normals");
-      pFramework->pVideoDriver->SaveRTToFile(GBufferPass,      BaseDriver::DEPTH_ATTACHMENT,  prefix + "GBuffer_Depth");
+      pFramework->pVideoDriver->SaveRTToFile(GBufferPass,      BaseDriver::COLOR4_ATTACHMENT, prefix + "GBuffer_Depth");
       pFramework->pVideoDriver->SaveRTToFile(DepthPass,        BaseDriver::DEPTH_ATTACHMENT,  prefix + "ShadowMap_Depth");
       pFramework->pVideoDriver->SaveRTToFile(ShadowAccumPass,  BaseDriver::COLOR0_ATTACHMENT, prefix + "ShadowAccum");
       pFramework->pVideoDriver->SaveRTToFile(DeferredPass,     BaseDriver::COLOR0_ATTACHMENT, prefix + "Deferred");
@@ -706,6 +736,16 @@ void SC_Day::OnDraw() {
       pFramework->pVideoDriver->SaveRTToFile(ExtraHelperPass,  BaseDriver::COLOR0_ATTACHMENT, prefix + "HDR_Final");
       pFramework->pVideoDriver->SaveRTToFile(BloomAccumPass,   BaseDriver::COLOR0_ATTACHMENT, prefix + "Bloom");
       pFramework->pVideoDriver->SaveRTToFile(GodRaysCalcPass,  BaseDriver::COLOR0_ATTACHMENT, prefix + "GodRays");
+      // Log camera state for cross-API verification
+      std::cout << "=== DUMP CAMERA STATE ===" << std::endl;
+      std::cout << "Cam Eye: " << Cam.Eye.x << ", " << Cam.Eye.y << ", " << Cam.Eye.z << std::endl;
+      std::cout << "Cam Pitch/Roll/Yaw: " << Cam.Pitch << ", " << Cam.Roll << ", " << Cam.Yaw << std::endl;
+      std::cout << "LightCam Eye: " << LightCam.Eye.x << ", " << LightCam.Eye.y << ", " << LightCam.Eye.z << std::endl;
+      std::cout << "LightCam Pitch/Roll/Yaw: " << LightCam.Pitch << ", " << LightCam.Roll << ", " << LightCam.Yaw << std::endl;
+      std::cout << "VP[0]: " << VP.m[0][0] << ", " << VP.m[0][1] << ", " << VP.m[0][2] << ", " << VP.m[0][3] << std::endl;
+      std::cout << "VP[1]: " << VP.m[1][0] << ", " << VP.m[1][1] << ", " << VP.m[1][2] << ", " << VP.m[1][3] << std::endl;
+      std::cout << "VP[2]: " << VP.m[2][0] << ", " << VP.m[2][1] << ", " << VP.m[2][2] << ", " << VP.m[2][3] << std::endl;
+      std::cout << "VP[3]: " << VP.m[3][0] << ", " << VP.m[3][1] << ", " << VP.m[3][2] << ", " << VP.m[3][3] << std::endl;
       std::cout << "RT dump complete (frame " << dumpFrameCounter << ", time " << dumpTimer << "s): 10 RT files + backbuffer saved" << std::endl;
     }
   }

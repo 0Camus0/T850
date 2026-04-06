@@ -122,6 +122,7 @@ void main(){
 	layout(location = 1) out highp vec4 colorOut_1;
 	layout(location = 2) out highp vec4 colorOut_2;
 	layout(location = 3) out highp vec4 colorOut_3;
+	layout(location = 4) out highp vec4 colorOut_4;
 #endif
 void main(){
 	lowp vec4 color    = vec4(0.5,0.5,0.5,1.0);
@@ -244,12 +245,11 @@ void main(){
 		colorOut_2.a = Intensities.w / 255.0;
 
 		colorOut_3	= vec4(FresnelColor.rgb, Intensities.z);
-		
 
 		#ifdef NON_LINEAR_DEPTH
-			gl_FragDepth = Pos.z / Pos.w;
+			colorOut_4	= vec4(Pos.z / Pos.w, 0.0, 0.0, 0.0);
 		#else
-			gl_FragDepth = Pos.z / CameraInfo.y;
+			colorOut_4	= vec4(Pos.z / CameraInfo.y, 0.0, 0.0, 0.0);
 		#endif
 	#else
 		gl_FragData[0].rgb  = color.rgb;
@@ -271,7 +271,8 @@ void main(){
 		
 
 		gl_FragData[3]	= vec4(FresnelColor.rgb, Intensities.z);
-		
+		gl_FragData[4]	= vec4(Pos.z / CameraInfo.y, 0.0, 0.0, 0.0);
+
 		#ifdef NON_LINEAR_DEPTH
 			gl_FragDepth	= Pos.z / Pos.w;
 		#else

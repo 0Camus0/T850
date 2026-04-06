@@ -214,7 +214,7 @@ void SC_Night::InitVars() {
 }
 void SC_Night::CreateAssets() {
   //Create RT's
-  GBufferPass = pFramework->pVideoDriver->CreateRT(4, BaseRT::RGBA8, BaseRT::F32, 0, 0, true);
+  GBufferPass = pFramework->pVideoDriver->CreateRT(5, BaseRT::RGBA16F, BaseRT::F32, 0, 0, true);
   DeferredPass = pFramework->pVideoDriver->CreateRT(1, BaseRT::RGBA16F, BaseRT::NOTHING, 0, 0, true);
   Extra16FPass = pFramework->pVideoDriver->CreateRT(1, BaseRT::RGBA16F, BaseRT::NOTHING, 0, 0, true);
   DepthPass = pFramework->pVideoDriver->CreateRT(0, BaseRT::NOTHING, BaseRT::F32, (int)SceneProp.ShadowMapResolution, (int)SceneProp.ShadowMapResolution, false);
@@ -568,7 +568,7 @@ void SC_Night::OnDraw() {
   SceneProp.ActiveLightCamera = 1;
   pFramework->pVideoDriver->PushRT(ShadowAccumPass);
   pFramework->pVideoDriver->Clear();
-  Quads[0].SetTexture(pFramework->pVideoDriver->GetRTTexture(GBufferPass, BaseDriver::DEPTH_ATTACHMENT), 0);
+  Quads[0].SetTexture(pFramework->pVideoDriver->GetRTTexture(GBufferPass, BaseDriver::COLOR4_ATTACHMENT), 0);
   Quads[0].SetTexture(pFramework->pVideoDriver->GetRTTexture(OmniShadowDepthPass, BaseDriver::DEPTH_ATTACHMENT), 1);
   Quads[0].SetTexture(pFramework->pVideoDriver->GetRTTexture(GBufferPass, BaseDriver::COLOR1_ATTACHMENT), 2);
   Quads[0].SetTexture(SceneProp.SSAOKernel.NoiseTex, 3);
@@ -597,7 +597,7 @@ void SC_Night::OnDraw() {
   Quads[0].SetTexture(pFramework->pVideoDriver->GetRTTexture(GBufferPass, BaseDriver::COLOR1_ATTACHMENT), 1);
   Quads[0].SetTexture(pFramework->pVideoDriver->GetRTTexture(GBufferPass, BaseDriver::COLOR2_ATTACHMENT), 2);
   Quads[0].SetTexture(pFramework->pVideoDriver->GetRTTexture(GBufferPass, BaseDriver::COLOR3_ATTACHMENT), 3);
-  Quads[0].SetTexture(pFramework->pVideoDriver->GetRTTexture(GBufferPass, BaseDriver::DEPTH_ATTACHMENT), 4);
+  Quads[0].SetTexture(pFramework->pVideoDriver->GetRTTexture(GBufferPass, BaseDriver::COLOR4_ATTACHMENT), 4);
   Quads[0].SetTexture(pFramework->pVideoDriver->GetRTTexture(ShadowAccumPass, BaseDriver::COLOR0_ATTACHMENT), 5);
   Quads[0].SetEnvironmentMap(g_pBaseDriver->GetTexture(EnvMapTexIndex));
   //Quads[0].SetEnvironmentMap(pFramework->pVideoDriver->GetRTTexture(OmniShadowDepthPass, BaseDriver::DEPTH_ATTACHMENT));
@@ -608,7 +608,7 @@ void SC_Night::OnDraw() {
   // Volumetric ball pass
   pFramework->pVideoDriver->SetBlendState(BaseDriver::BLEND_STATES::ALPHA_BLEND);
   //pFramework->pVideoDriver->PushRT(DeferredPass);
-  Quads[0].SetTexture(pFramework->pVideoDriver->GetRTTexture(GBufferPass, BaseDriver::DEPTH_ATTACHMENT), 0);
+  Quads[0].SetTexture(pFramework->pVideoDriver->GetRTTexture(GBufferPass, BaseDriver::COLOR4_ATTACHMENT), 0);
   Quads[0].SetGlobalSignature(Signature::RAY_MARCH);
   Quads[0].Draw();
   pFramework->pVideoDriver->PopRT();
@@ -645,7 +645,7 @@ void SC_Night::OnDraw() {
   //DOF PASS
   pFramework->pVideoDriver->PushRT(CoCPass);
   Quads[0].SetGlobalSignature(Signature::COC_PASS);
-  Quads[0].SetTexture(pFramework->pVideoDriver->GetRTTexture(GBufferPass, BaseDriver::DEPTH_ATTACHMENT), 0);
+  Quads[0].SetTexture(pFramework->pVideoDriver->GetRTTexture(GBufferPass, BaseDriver::COLOR4_ATTACHMENT), 0);
   Quads[0].Draw();
   pFramework->pVideoDriver->PopRT();
 

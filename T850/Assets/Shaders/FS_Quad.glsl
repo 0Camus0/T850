@@ -286,7 +286,7 @@ void main(){
 	
 }
 #elif defined(SHADOW_COMP_PASS)
-uniform mediump sampler2D tex0;
+uniform highp sampler2D tex0;
 #if defined OMNIDIRECTIONAL_SH
 uniform mediump samplerCube tex1;
 #else
@@ -350,7 +350,7 @@ highp vec4 FShadow = vec4(1.0,1.0,1.0,1.0);
 				for (x = -Origin; x <= Origin; x += 1.0){
 					highp float Val_1;					
 					#ifdef ES_30
-						highp vec3 Coords_Final = vec3(SHTC.xy + (brightness.z / brightness.y)*vec2(x, y), LightPos.z);
+						highp vec3 Coords_Final = vec3(SHTC.xy + (brightness.z / brightness.y)*vec2(x, y), LightPos.z - 0.000005);
 						Val_1 = texture(tex1, Coords_Final);
 					#else
 						highp vec4 Coords_Final = vec4(SHTC.xy + (brightness.z / brightness.y)*vec2(x, y), LightPos.z, LightPos.w);
@@ -666,7 +666,7 @@ void main(){
 
 
 #elif defined(RAY_MARCH)
-uniform mediump sampler2D tex0;
+uniform highp sampler2D tex0;
 uniform mediump sampler2D tex1;
 //Get a random number
 highp float rand2D(highp vec2 x) {
@@ -790,7 +790,7 @@ void main(){
 
 ///////////
 #elif defined(COC_PASS)
-uniform mediump sampler2D tex0;
+uniform highp sampler2D tex0;
 #ifdef ES_30
 	//layout(location = 0) out highp vec4 colorOut;
 	layout(location = 1) out highp vec4 colorOut_1;
@@ -1032,7 +1032,7 @@ highp float ComputeScattering(highp float lightDotView)
   result /= (4.0f * PI * pow(1.0 + G_SCATTERING * G_SCATTERING - (2.0f * G_SCATTERING) *      lightDotView, 1.5));
   return result;
 }
-uniform mediump sampler2D tex0;
+uniform highp sampler2D tex0;
 uniform mediump sampler2DShadow  tex1;
 void main(){
   const highp float ditherPattern[16] = float[]( 0.0f, 0.5f, 0.125f, 0.625f,0.75f, 0.22f, 0.875f, 0.375f,0.1875f, 0.6875f, 0.0625f, 0.5625, 0.9375f, 0.4375f, 0.8125f, 0.3125);
@@ -1066,15 +1066,15 @@ highp vec2 SHTC;
 highp float depthValue;
 highp vec4 sunDir;
 highp vec3 scattering;
-const highp vec3 lightColor = vec3(0.9803, 0.8392, 0.9470);
+const highp vec3 lightColor = vec3(0.9803, 0.8392, 0.6470);
 for (int i = 0; i<steps; i++) {
   LightPos = WVPLight* P;
   LightPos.xy /= LightPos.w;
   LightPos.z /= LightCameraInfo.y;
   SHTC = LightPos.xy*0.5 + 0.5;
 
-  highp vec3 Coords_Final = vec3(SHTC.xy, LightPos.z);
-  highp float Val_1 = texture(tex1, Coords_Final, 0.0005);
+  highp vec3 Coords_Final = vec3(SHTC.xy, LightPos.z - 0.00005);
+  highp float Val_1 = texture(tex1, Coords_Final);
 
   if (Val_1 > 0.0 && SHTC.x < 1.0 && SHTC.y < 1.0 && SHTC.x  > 0.0 && SHTC.y > 0.0 && LightPos.w > 0.0 && LightPos.z < 1.0) {
     sunDir = normalize(P - LightCameraPosition);
@@ -1103,10 +1103,10 @@ void main() {
 
 
 
-  const highp float raysIntensity = 1.0;
+  const highp float raysIntensity = 1.6;
   highp vec4 col = texture(tex1, uv.xy);
   highp vec4 vol = texture(tex0, uv.xy);
-  //vol.rgb = pow(vol.rgb, vec3(2.2,2.2,2.2));
+  vol.rgb = pow(vol.rgb, vec3(2.2, 2.2, 2.2));
   col += vol * vec4(raysIntensity, raysIntensity, raysIntensity, raysIntensity);
   //col -= lerp(vec4(0.0,0.0,0.0,0.0), vec4(1.0,1.0,1.0,1.0) - vol, raysIntensity);
 

@@ -709,7 +709,7 @@ namespace t800 {
       GLenum readType = GL_UNSIGNED_BYTE;
       switch (rt->color_format) {
         case BaseRT::R8:
-          readFormat = GL_RGBA; readType = GL_UNSIGNED_BYTE; break;
+          readFormat = GL_RED; readType = GL_UNSIGNED_BYTE; break;
         case BaseRT::F16:
         case BaseRT::F32:
           readFormat = GL_RGBA; readType = GL_FLOAT; break;

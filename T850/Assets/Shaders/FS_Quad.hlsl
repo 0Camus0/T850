@@ -39,12 +39,80 @@ Texture2D tex3 : register(t3);
 Texture2D tex4 : register(t4);
 Texture2D tex5 : register(t5);
 TextureCube texEnv : register(t6);
+
+float3 NormalDistribution(float NdotH, float roughness)
+{
+	// GGX
+	float a = roughness * roughness;
+	float a2 = a * a;
+	float NdotH2 = NdotH * NdotH;
+	float Num = a2;
+	float Denom = (NdotH2 * (a2 - 1.0f) + 1.0f);
+	Denom = 3.1415926 * Denom * Denom;
+	float res = Num / Denom;
+	return float3(res, res, res);
+}
+
+float3 FresnelCalc(float VdotH, float3 specColor)
+{
+	// Schlick
+	return (specColor + (1.0f - specColor) * pow(1.0f - VdotH, 5.0f));
+}
+
+float3 fresnelSchlickRoughness(float cosTheta, float3 F0, float roughness)
+{
+	return F0 + (max(float3(1.0 - roughness, 1.0 - roughness, 1.0 - roughness), F0) - F0) * pow(1.0 - cosTheta, 5.0);
+}
+
+float GeometrySchlickGGX(float Ndot, float roughness)
+{
+	float r = (roughness + 1.0);
+	float k = (r * r) / 8.0;
+	float Num = Ndot;
+	float Denom = Ndot * (1.0 - k) + k;
+	return clamp(Num / Denom, 0.0f, 1.0f);
+}
+
+float3 GeometricShadowing(float NdotL, float NdotV, float roughness)
+{
+	// Geometry Smith
+	float ggx1 = GeometrySchlickGGX(NdotL, roughness);
+	float ggx2 = GeometrySchlickGGX(NdotV, roughness);
+	float res = clamp(ggx1 * ggx2, 0.0f, 1.0f);
+	return float3(res, res, res);
+}
+
+float3 CalculateSpecular(float3 specularColor, float3 normal, float3 view, float3 halfvector, float3 light, float roughness)
+{
+	float NdotH = max(dot(normal, halfvector), 0.0f);
+	float VdotH = clamp(dot(view, halfvector), 0.0f, 1.0f);
+	float NdotL = clamp(dot(normal, light), 0.0f, 1.0f);
+	float NdotV = clamp(dot(normal, view), 0.0f, 1.0f);
+
+	float3 Num = FresnelCalc(VdotH, specularColor) * NormalDistribution(NdotH, roughness) * GeometricShadowing(NdotL, NdotV, roughness);
+	float denomRes = (4.0f * (NdotL * NdotV) + 0.01f);
+	float3 Denom = float3(denomRes, denomRes, denomRes);
+
+	return (Num / Denom);
+}
+
+float3 CalculateDiffuse(float3 albedoColor, float3 normal, float3 light)
+{
+	return albedoColor * clamp(dot(normal, light), 0.0f, 1.0f);
+}
+
 float4 FS( VS_OUTPUT input ) : SV_TARGET {
 	float4 Final = float4(0.0,0.0,0.0,1.0);
-	float4 color  =  tex0.Sample( SS, input.texture0);
-	float4 matId  =	tex3.Sample( SS, input.texture0);
-	float depth = tex4.Sample( SS, input.texture0 ).r;
-	
+	float Shadow = 1.0;
+
+	float4 Albedo = tex0.Sample(SS, input.texture0);
+	float4 SpecularColor = tex2.Sample(SS, input.texture0);
+
+	Albedo.xyz = pow(Albedo.xyz, float3(2.2, 2.2, 2.2));
+
+	float4 matId = tex3.Sample(SS, input.texture0);
+	float depth = tex4.Sample(SS, input.texture0).r;
+
 	#ifdef NON_LINEAR_DEPTH
 		float4 position = mul(WVPInverse,float4( input.PosCorner.xy ,depth,1.0));
 		position.xyz /= position.w;
@@ -52,111 +120,77 @@ float4 FS( VS_OUTPUT input ) : SV_TARGET {
 		float4 position = CameraPosition + input.PosCorner*depth;
 	#endif
 	 
-	 float3  EyeDir   = normalize(CameraPosition-position).xyz;
-	 
-	if(matId.r == 1.0 && matId.g == 0.0){		
-		float3 RefCol = texEnv.Sample( SS, -EyeDir ).zyx; //TODO: add technique
-		Final.xyz = RefCol.xyz; //TODO: add technique
-	}else{
+	float3 EyeDir = normalize(CameraPosition - position).xyz;
+
+	int MatId = (int)(SpecularColor.a * 255.0);
+
+	if(MatId == 0){
+		float3 EyeDir_mod = -EyeDir;
+		EyeDir_mod.x = -EyeDir_mod.x;
+		EyeDir_mod.z = -EyeDir_mod.z;
+		float3 RefCol = texEnv.Sample(SS, EyeDir_mod).zyx;
+		Final.xyz = RefCol.xyz * 2.0;
+	} else if(MatId > 0) {
+		Shadow = tex5.Sample(SS, input.texture0).r;
+
 		float cutoff = 0.8;
-		float4 Lambert = float4(1.0,1.0,1.0,1.0);
-		float4 Specular = float4(1.0,1.0,1.0,1.0);
-		float4 Fresnel	 =  float4(1.0,1.0,1.0,1.0);
-		float4 Ambient	 =  color;
-	
-		float4 normalmap = tex1.Sample( SS, input.texture0 );
-		float3 normal = normalmap.xyz*2 - 1;
+
+		float4 normalmap = tex1.Sample(SS, input.texture0);
+		float3 normal = normalmap.xyz * 2.0 - 1.0;
 		normal = normalize(normal);
 
-		float4 specularmap = tex2.Sample( SS, input.texture0);
-		
-		float3 ReflectedVec = normalize(reflect(-EyeDir,normal.xyz));	
-		float ratio = 1.0/1.52;
-		float3 R = refract(-EyeDir,normal.xyz,ratio);
-		float3 RefleCol = float3(0.0,0.0,0.0) /*texEnv.Sample( SS, ReflectedVec ).zyx *//*TODO: add technique*/;
-		float3 RefraCol = float3(1.0,1.0,1.0) /*texEnv.Sample( SS, R ).zyx*//* TODO: add technique*/;
-		
+		float3 ReflectedVec = reflect(-EyeDir, normal.xyz);
+		ReflectedVec.x = -ReflectedVec.x;
+		ReflectedVec.z = -ReflectedVec.z;
+
+		float rough = normalmap.a;
+
 		int NumLights = (int)CameraInfo.w;
-    //float trueRad[128] = (float[128])LightRadius;
-			for(int i=0;i<NumLights;i++){
-        float Rad = LightRadius[i >> 2][i & 3];
-				float dist = distance(LightPositions[i],position);
-				if(dist < Rad*2.0){
-					Lambert  = LightColors[i];
-					Specular = LightColors[i];
-					Fresnel	 =  LightColors[i];			
-					
-					float3	LightDir = normalize(LightPositions[i]-position).xyz;
-					float   att		 = 1.0;
-					att		 	     = dot(normal.xyz,LightDir)*0.5 + 0.5;;
-					att				 = pow( att , 2.0 );	
-					att				 = clamp( att , 0.0 , 1.0 );
-					Lambert			*= color*att;
-					
-					float  specular  = 0.0;
-					float specIntesivity = 1.5;
-					float shinness = 4.0;	
-										
-					float3 ReflectedLight = normalize(EyeDir+LightDir); 
-					specular = max ( dot(ReflectedLight,normal.xyz)*0.5 + 0.5, 0.0);	
-					specular = pow( specular ,shinness);	
+		[loop] for(int i = 0; i < NumLights; i++){
+			float Rad = LightRadius[i >> 2][i & 3];
+			float dist = distance(LightPositions[i], position);
 
-					specular *= att;
-					specular *= specIntesivity;
-					Specular *= specular;
-					Specular.xyz *= specularmap.xyz;
-									
-					float d = max(dist - Rad, 0.0);
-					float denom = d/Rad + 1.0;
-					
-					float attenuation = 1.0 / (denom*denom);
-					 
-					attenuation = (attenuation - cutoff) / (1.0 - cutoff);
-					attenuation = clamp(attenuation, 0.0,1.0);
-						
-					Final += Lambert*attenuation;
-					Final += Specular*attenuation;
-				}
+			if(dist < (Rad * 2.0))
+			{
+				float3 LightDir = normalize(LightPositions[i] - position).xyz;
+				float3 Half = normalize(EyeDir + LightDir);
+
+				float3 Diffuse = CalculateDiffuse(Albedo.xyz, normal, LightDir) * LightColors[i].xyz;
+				float3 SpecularRes = CalculateSpecular(Albedo.xyz, normal, EyeDir, Half, LightDir, rough) * LightColors[i].xyz;
+
+				float3 Ks = SpecularRes;
+				float3 Kd = float3(1.0f, 1.0f, 1.0f) - SpecularRes;
+
+				float d = max(dist - Rad, 0.0);
+				float denom = d / Rad + 1.0;
+
+				float attenuation = 1.0 / (denom * denom);
+				attenuation = (attenuation - cutoff) / (1.0 - cutoff);
+				attenuation = max(attenuation, 0.0);
+
+				Final.xyz += SpecularRes.xyz * attenuation + attenuation * Kd * Diffuse;
 			}
-		if(matId.b == 0.0){
-			float  FresnelAtt	= dot(normal.xyz,EyeDir);
-			float  FresnelIntensity = 6.0f;
-			float4 FresnelCol = float4(RefleCol.xyz,1.0);
-
-			FresnelAtt		= abs(FresnelAtt);
-			FresnelAtt 		= 1.0 - FresnelAtt;
-			FresnelAtt 		= clamp( FresnelAtt , 0.0 , 1.0 );
-			FresnelAtt		= pow( FresnelAtt , 4.0 );	
-			FresnelAtt 		= clamp(FresnelAtt , 0.0 , 1.0 );
-			Fresnel 		= FresnelCol*FresnelIntensity*FresnelAtt;
-		
-			//Final += Fresnel;		
-			//Final.xyz += 0.26*RefraCol.xyz;
-			//Final = float4(1,0,1,1);
 		}
-		//Final += Ambient*0.2;
-		Final.xyz *= tex5.Sample( SS, input.texture0).r;
-		
+
+		float3 kSpecular = clamp(fresnelSchlickRoughness(max(dot(normal, EyeDir), 0.0f), Albedo.xyz, rough), 0.0, 1.0);
+		float3 RefleCol = texEnv.SampleLevel(SS, ReflectedVec, rough * 4.0f).zyx;
+
+		Final.xyz += RefleCol * kSpecular.xyz;
+
+		Final.xyz *= Shadow;
 	}
 	return Final;
-
 }
 #elif defined(SHADOW_COMP_PASS)
 Texture2D tex0 : register(t0);
 Texture2D tex1 : register(t1);
-float4 FS( VS_OUTPUT input ) : SV_TARGET {
-	float4 Fcolor = float4(1.0,1.0,1.0,1.0);
-	float depth = tex0.Sample( SS, input.texture0 );
-	
-	#ifdef NON_LINEAR_DEPTH
-		float4 position = mul(WVPInverse,float4( input.PosCorner.xy ,depth,1.0));
-		position.xyz /= position.w;
-		position.w = 1.0;
-	#else		
-		float4 position = CameraPosition + input.PosCorner*depth;
-	#endif
-	
-	float4 LightPos = mul(WVPLight , position);
+Texture2D tex2 : register(t2); // Normals
+Texture2D tex3 : register(t3); // Noise
+
+float4 CalculateShadow(float4 position) {
+	float4 FShadow = float4(1.0,1.0,1.0,1.0);
+
+	float4 LightPos = mul(WVPLight, position);
 #ifdef NON_LINEAR_DEPTH
 	LightPos.xyz /= LightPos.w;
 #else
@@ -164,20 +198,105 @@ float4 FS( VS_OUTPUT input ) : SV_TARGET {
 	LightPos.z /= LightCameraInfo.y;
 #endif
 	float2 SHTC = LightPos.xy*0.5 + 0.5;
-	
-	if(SHTC.x < 1.0 && SHTC.y < 1.0 && SHTC.x  > 0.0 && SHTC.y > 0.0 && LightPos.w > 0.0 && LightPos.z < 1.0 ){
-		SHTC.y = 1.0 - SHTC.y;				
-		float depthSM = tex1.Sample( SS, SHTC );
-		float depthPos = LightPos.z;
-		depthSM += 0.000005;
-		if( depthPos > depthSM)
-			Fcolor = 0.25*float4(1.0,1.0,1.0,1.0);	  
-		
-	}else{
-		Fcolor = float4(1.0,1.0,1.0,1.0);
+	SHTC.y = 1.0 - SHTC.y;
+
+	if(SHTC.x < 1.0 && SHTC.y < 1.0 && SHTC.x > 0.0 && SHTC.y > 0.0 && LightPos.w > 0.0 && LightPos.z < 1.0) {
+		float sum = 0.0;
+		float x, y;
+		float Total = 0.0;
+		float Origin = brightness.x;
+		[loop] for (y = -Origin; y <= Origin; y += 1.0) {
+			[loop] for (x = -Origin; x <= Origin; x += 1.0) {
+				float2 offset = (brightness.z / brightness.y) * float2(x, y);
+				float depthSM = tex1.Sample(SS, SHTC.xy + offset);
+				depthSM += 0.000005;
+				float Val_1 = (LightPos.z > depthSM) ? 0.0 : 1.0;
+				Val_1 *= 0.75;
+				Val_1 += 0.25;
+				sum += Val_1;
+				Total++;
+			}
+		}
+		float shadowCoeff = sum / Total;
+		FShadow = shadowCoeff * float4(1.0,1.0,1.0,1.0);
+	} else {
+		FShadow = 0.25 * float4(1.0,1.0,1.0,1.0);
 	}
-	
-	  return Fcolor;
+
+	return FShadow;
+}
+
+float3 GetNormal(float2 coords) {
+	float4 normalmap = tex2.Sample(SS, coords);
+	float3 normal = normalmap.xyz * 2.0 - 1.0;
+	normal = normalize(normal);
+	return normal;
+}
+
+float GetOcclusion(float depth, float2 uv, float4 position, float3 normal, float4 posCorner) {
+	float Radius = LightPositions[0].y;
+	float2 Scale = float2(LightPositions[0].z / brightness.w, LightPositions[0].w / brightness.w);
+	float3 pVec = tex3.Sample(SS, Scale * uv).xyz * 2.0 - 1.0;
+
+	float3 tangent = normalize(pVec - normal * dot(pVec, normal));
+	float3 bitangent = cross(normal, tangent);
+	float3x3 tbn = float3x3(tangent, bitangent, normal);
+
+	float occlusion = 0.0;
+	int KernelSize = (int)LightPositions[0].x;
+	[loop] for (int i = 0; i < KernelSize; ++i) {
+		float3 Spheresample = mul(LightPositions[i+1].xyz, tbn);
+		Spheresample = Spheresample * Radius + position.xyz;
+		float4 SpheresampleV = mul(WorldView, float4(Spheresample, 1.0));
+
+		float4 offset = mul(Projection, float4(Spheresample, 1.0));
+		offset.xy /= offset.w;
+		offset.xy = offset.xy * 0.5 + 0.5;
+		offset.y = 1.0 - offset.y;
+
+		float sampleDepth = tex0.Sample(SS, offset.xy).r;
+
+	#ifdef NON_LINEAR_DEPTH
+		float4 new_position = mul(WVPInverse, float4(posCorner.xy, sampleDepth, 1.0));
+		new_position.xyz /= new_position.w;
+		new_position.w = 1.0;
+	#else
+		float4 new_position = CameraPosition + posCorner * sampleDepth;
+	#endif
+
+		float4 new_positionV = mul(WorldView, float4(new_position.xyz, 1.0));
+
+		float rangeCheck = abs(SpheresampleV.z - new_positionV.z) < Radius ? 1.0 : 0.0;
+		occlusion += ((new_positionV.z < SpheresampleV.z) ? 1.0 : 0.0) * rangeCheck;
+	}
+
+	occlusion = 1.0 - (occlusion / LightPositions[0].x);
+	return occlusion;
+}
+
+float4 FS( VS_OUTPUT input ) : SV_TARGET {
+	float4 Fcolor = float4(1.0,1.0,1.0,1.0);
+	float depth = tex0.Sample( SS, input.texture0 );
+
+	#ifdef NON_LINEAR_DEPTH
+		float4 position = mul(WVPInverse,float4( input.PosCorner.xy ,depth,1.0));
+		position.xyz /= position.w;
+		position.w = 1.0;
+	#else		
+		float4 position = CameraPosition + input.PosCorner*depth;
+	#endif
+
+	if (toogles.x == 1.0) {
+		Fcolor = CalculateShadow(position);
+	}
+
+	if (toogles.y == 1.0) {
+		float3 normal = GetNormal(input.texture0);
+		float Occlusion = GetOcclusion(depth, input.texture0.xy, position, normal, input.PosCorner);
+		Fcolor *= Occlusion;
+	}
+
+	return Fcolor;
 }
 #elif defined(VERTICAL_BLUR_PASS)
 Texture2D tex0 : register(t0);
@@ -677,7 +796,7 @@ float4 FS(VS_OUTPUT input) : SV_TARGET{
   //float alpha = 0;
   half4 step = (intersectionNear- intersectionFar) / (steps - 1);
   half4 P = intersectionFar;
-  for (int i = 0; i<steps; i++) {
+  [loop] for (int i = 0; i<steps; i++) {
     //if (c.a >= 1.0) break;
     half3 ppp = (P - boxMin) / boxSize; //0 - 1 normalized coords
 
@@ -703,7 +822,6 @@ float ComputeScattering(float lightDotView)
 Texture2D tex0 : register(t0);
 Texture2D tex1 : register(t1);
 float4 FS(VS_OUTPUT input) : SV_TARGET{
-  //return float4(1,0,1,1);
   float depth = tex0.Sample(SS, input.texture0);
 #ifdef NON_LINEAR_DEPTH
 float4 position = mul(WVPInverse,float4(input.PosCorner.xy ,depth,1.0));
@@ -711,7 +829,7 @@ position.xyz /= position.w;
 #else		
 float4 position = CameraPosition + input.PosCorner*depth;
 #endif
-const int steps = 128;
+int steps = (int)LightPositions[0].y;
 float4 ray = (position - CameraPosition);
 float4 rayDir = normalize(ray);
 float rayLength = length(ray);
@@ -720,33 +838,29 @@ float4 intersectionNear = CameraPosition;
 float4 intersectionFar = position;
 
 //March
-float4 c = 0;
-float4 step = (intersectionNear - intersectionFar) / (steps - 1);
+float4 step = (intersectionNear - intersectionFar) / (float)(steps - 1);
 float4 P = intersectionFar;
 float3 accumFog = 0.0f.xxx;
 
-float4 LightPos = mul(WVPLight, position);
-LightPos.xy /= LightPos.w;
-LightPos.z /= LightCameraInfo.y;
-float2 SHTC = LightPos.xy*0.5 + 0.5;
-SHTC.y = 1.0 - SHTC.y;
-for (int i = 0; i<steps; i++) {
+const float3 lightColor = float3(0.9803, 0.8392, 0.6470);
+[loop] for (int i = 0; i<steps; i++) {
   float4 LightPos = mul(WVPLight, P);
   LightPos.xy /= LightPos.w;
   LightPos.z /= LightCameraInfo.y;
   float2 SHTC = LightPos.xy*0.5 + 0.5;
   SHTC.y = 1.0 - SHTC.y;
   float depthValue = tex1.Sample(SS, SHTC);
+  depthValue += 0.00005;
 
-  if (depthValue > LightPos.z-0.00005)
+  if (depthValue > LightPos.z && SHTC.x < 1.0 && SHTC.y < 1.0 && SHTC.x > 0.0 && SHTC.y > 0.0 && LightPos.w > 0.0 && LightPos.z < 1.0)
   {
     float4 sunDir = normalize(P - LightCameraPosition);
-    float3 scattering = ComputeScattering(dot(rayDir.rgb, sunDir.rgb)).xxx * float3(0.9803, 0.8392, 0.6470);
+    float3 scattering = lightColor * ComputeScattering(dot(rayDir.rgb, sunDir.rgb));
     accumFog += scattering ;
   }
   P += step;
 }
-accumFog /= steps;
+accumFog /= (float)steps;
 accumFog = pow(accumFog, float3(0.4545, 0.4545, 0.4545));
 return float4(accumFog,1);
 }

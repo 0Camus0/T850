@@ -100,6 +100,7 @@ struct FS_OUT{
 	float4 color1 : SV_TARGET1;	
 	float4 color2 : SV_TARGET2;
 	float4 color3 : SV_TARGET3;
+	float4 color4 : SV_TARGET4;
 	float  depth  : SV_Depth;
 };
 
@@ -163,8 +164,10 @@ FS_OUT FS( VS_OUTPUT input )   {
 	
 #ifdef NON_LINEAR_DEPTH
 		fout.depth		= input.Pos.z / input.Pos.w;
+		fout.color4		= float4(input.Pos.z / input.Pos.w, 0, 0, 0);
 #else
 		fout.depth		= input.Pos.z / CameraInfo.y;
+		fout.color4		= float4(input.Pos.z / CameraInfo.y, 0, 0, 0);
 #endif
 	
 	return fout;	

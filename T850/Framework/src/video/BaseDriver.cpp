@@ -165,12 +165,8 @@ namespace t800 {
       }
 #else
       if (g_pBaseDriver->m_currentAPI == GRAPHICS_API::OPENGL) {
-        Defines += "#version 330\n\n";
+        Defines += "#version 300 es\n\n";
         Defines += "#define ES_30\n\n";
-
-		Defines += "#define lowp \n\n";
-		Defines += "#define mediump \n\n";
-		Defines += "#define highp \n\n";
       }
 #endif
 #if VDEBUG_NO_LIGHT

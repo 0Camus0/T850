@@ -1,5 +1,141 @@
 #include "SC_Day.h"
+#include <chrono>
+#include <iomanip>
+#include <fstream>
+#include <sstream>
+#include <cstdio>
+#include <cstring>
+#ifdef OS_WINDOWS
+#include <windows.h>
+#else
+#include <sys/stat.h>
+#endif
 using namespace t800;
+
+// ── Minimal JSON value extraction (no library needed) ──
+
+static size_t findJsonSection(const std::string& json, const std::string& key, size_t start = 0) {
+  std::string needle = "\"" + key + "\"";
+  return json.find(needle, start);
+}
+
+static float extractFloat(const std::string& json, size_t regionStart, const std::string& key) {
+  size_t pos = findJsonSection(json, key, regionStart);
+  if (pos == std::string::npos) return 0.0f;
+  pos = json.find(':', pos);
+  if (pos == std::string::npos) return 0.0f;
+  return std::stof(json.substr(pos + 1));
+}
+
+static void extractFloat3(const std::string& json, size_t regionStart, const std::string& key, float out[3]) {
+  size_t pos = findJsonSection(json, key, regionStart);
+  if (pos == std::string::npos) return;
+  pos = json.find('[', pos);
+  if (pos == std::string::npos) return;
+  if (sscanf(json.c_str() + pos, "[%f , %f , %f]", &out[0], &out[1], &out[2]) != 3)
+    sscanf(json.c_str() + pos, "[%f,%f,%f]", &out[0], &out[1], &out[2]);
+}
+
+struct FeedCameraState {
+  float eye[3];
+  float pitch, roll, yaw;
+  XMATRIX44 View, Projection, VP;
+  bool hasMatrices;
+};
+
+static bool extractMatrix(const std::string& json, size_t regionStart, const std::string& key, XMATRIX44& mat) {
+  size_t pos = findJsonSection(json, key, regionStart);
+  if (pos == std::string::npos) return false;
+  pos = json.find('[', pos);
+  if (pos == std::string::npos) return false;
+  for (int r = 0; r < 4; r++) {
+    pos = json.find('[', pos + 1);
+    if (pos == std::string::npos) return false;
+    if (sscanf(json.c_str() + pos, "[%f , %f , %f , %f]",
+               &mat.m[r][0], &mat.m[r][1], &mat.m[r][2], &mat.m[r][3]) != 4)
+      return false;
+    pos = json.find(']', pos);
+  }
+  return true;
+}
+
+static bool loadFeedMatrices(const std::string& path, FeedCameraState& cam, FeedCameraState& lightCam) {
+  std::ifstream f(path);
+  if (!f.is_open()) {
+    printf("[feedMatrices] ERROR: cannot open '%s'\n", path.c_str());
+    return false;
+  }
+  std::stringstream ss;
+  ss << f.rdbuf();
+  std::string json = ss.str();
+
+  // If this is the old .txt format, try to parse that instead
+  if (json.find('{') == std::string::npos) {
+    // Old key=value format
+    auto getVal = [&](const char* key) -> float {
+      std::string k = std::string(key) + "=";
+      size_t p = json.find(k);
+      if (p == std::string::npos) return 0.0f;
+      return std::stof(json.substr(p + k.size()));
+    };
+    auto getVec = [&](const char* key, float out[3]) {
+      std::string k = std::string(key) + "=";
+      size_t p = json.find(k);
+      if (p == std::string::npos) return;
+      sscanf(json.c_str() + p + k.size(), "%f,%f,%f", &out[0], &out[1], &out[2]);
+    };
+    getVec("Cam.Eye", cam.eye);
+    cam.pitch = getVal("Cam.Pitch");
+    cam.roll = getVal("Cam.Roll");
+    cam.yaw = getVal("Cam.Yaw");
+    getVec("LightCam.Eye", lightCam.eye);
+    lightCam.pitch = getVal("LightCam.Pitch");
+    lightCam.roll = getVal("LightCam.Roll");
+    lightCam.yaw = getVal("LightCam.Yaw");
+    printf("[feedMatrices] Loaded (txt format) from '%s'\n", path.c_str());
+    return true;
+  }
+
+  // JSON format
+  size_t camSec = findJsonSection(json, "cam");
+  size_t lightSec = findJsonSection(json, "lightCam");
+  if (camSec == std::string::npos || lightSec == std::string::npos) {
+    printf("[feedMatrices] ERROR: missing 'cam' or 'lightCam' section\n");
+    return false;
+  }
+
+  extractFloat3(json, camSec, "eye", cam.eye);
+  cam.pitch = extractFloat(json, camSec, "pitch");
+  cam.roll = extractFloat(json, camSec, "roll");
+  cam.yaw = extractFloat(json, camSec, "yaw");
+
+  extractFloat3(json, lightSec, "eye", lightCam.eye);
+  lightCam.pitch = extractFloat(json, lightSec, "pitch");
+  lightCam.roll = extractFloat(json, lightSec, "roll");
+  lightCam.yaw = extractFloat(json, lightSec, "yaw");
+
+  // Parse precomputed matrices if available
+  cam.hasMatrices = false;
+  lightCam.hasMatrices = false;
+  size_t matSec = findJsonSection(json, "matrices");
+  if (matSec != std::string::npos) {
+    cam.hasMatrices = extractMatrix(json, matSec, "camView", cam.View) &&
+                      extractMatrix(json, matSec, "camProjection", cam.Projection) &&
+                      extractMatrix(json, matSec, "camVP", cam.VP);
+    lightCam.hasMatrices = extractMatrix(json, matSec, "lightCamView", lightCam.View) &&
+                           extractMatrix(json, matSec, "lightCamProjection", lightCam.Projection) &&
+                           extractMatrix(json, matSec, "lightCamVP", lightCam.VP);
+  }
+
+  printf("[feedMatrices] Loaded from '%s'\n", path.c_str());
+  printf("  Cam: eye=[%.6f, %.6f, %.6f] pitch=%.6f roll=%.6f yaw=%.6f matrices=%s\n",
+    cam.eye[0], cam.eye[1], cam.eye[2], cam.pitch, cam.roll, cam.yaw,
+    cam.hasMatrices ? "yes" : "no");
+  printf("  Light: eye=[%.6f, %.6f, %.6f] pitch=%.6f roll=%.6f yaw=%.6f matrices=%s\n",
+    lightCam.eye[0], lightCam.eye[1], lightCam.eye[2], lightCam.pitch, lightCam.roll, lightCam.yaw,
+    lightCam.hasMatrices ? "yes" : "no");
+  return true;
+}
 
 #define NUM_LIGHTS 1
 #define RADI 170.0f
@@ -311,35 +447,71 @@ void SC_Day::OnUpdate(float _DtSecs) {
   DtSecs = _DtSecs;
   Meshes[0].SetParallaxSettings(SceneProp.ParallaxLowSamples, SceneProp.ParallaxHighSamples, SceneProp.ParallaxHeight);
 
-  // When dump-frame is used, freeze cameras to initial state at the dump frame
-  // This ensures both D3D11 and GL render the exact same scene
-  extern bool  g_dumpEnabled;
-  extern bool  g_dumpByFrame;
-  extern int   g_dumpFrame;
+  // Check if debugFrames spacebar dump was requested
+  extern bool g_debugDumpRequested;
+  extern std::string g_feedMatricesPath;
+  extern bool g_dumpEnabled;
 
-  bool freezeCamera = g_dumpEnabled && g_dumpByFrame && (frameCounter >= g_dumpFrame);
+  // --feedMatrices: apply camera state and schedule dump after a few warm-up frames
+  static int feedState = 0; // 0=pending, 1=applied (warming up), 2=dump requested
+  static const int FEED_WARMUP_FRAMES = 3;
+  static int feedWarmup = 0;
+  if (!g_feedMatricesPath.empty() && feedState == 0) {
+    feedState = 1;
+    FeedCameraState camState = {}, lightState = {};
+    if (loadFeedMatrices(g_feedMatricesPath, camState, lightState)) {
+      // Detach spline agent so Update() uses our manual Eye/Pitch/Yaw
+      Cam.m_externalControl = false;
 
-  if (freezeCamera) {
-    // Disable external agent control so Update doesn't override Eye
-    Cam.m_externalControl = false;
+      Cam.Eye = XVECTOR3(camState.eye[0], camState.eye[1], camState.eye[2]);
+      Cam.Pitch = camState.pitch;
+      Cam.Roll = camState.roll;
+      Cam.Yaw = camState.yaw;
+      Cam.Velocity = XVECTOR3(0, 0, 0);
+      Cam.Update(0.0f);
+      if (camState.hasMatrices) {
+        Cam.View = camState.View;
+        Cam.Projection = camState.Projection;
+        Cam.VP = camState.VP;
+      }
 
-    // Reset main camera to initial state
-    Cam.Eye = XVECTOR3(0.0f, 9.75f, -31.0f);
-    Cam.Pitch = 0.14f;
-    Cam.Roll = 0.0f;
-    Cam.Yaw = 0.020f;
-    Cam.Update(0.0f);
+      LightCam.Eye = XVECTOR3(lightState.eye[0], lightState.eye[1], lightState.eye[2]);
+      LightCam.Pitch = lightState.pitch;
+      LightCam.Roll = lightState.roll;
+      LightCam.Yaw = lightState.yaw;
+      LightCam.Velocity = XVECTOR3(0, 0, 0);
+      LightCam.Update(0.0f);
+      if (lightState.hasMatrices) {
+        LightCam.View = lightState.View;
+        LightCam.Projection = lightState.Projection;
+        LightCam.VP = lightState.VP;
+      }
 
-    // Reset light camera to initial state
-    LightCam.Eye = XVECTOR3(25.0f, 100.0f, 0.0f);
-    LightCam.Pitch = 1.12f;
-    LightCam.Roll = 0.0f;
-    LightCam.Yaw = -0.9f;
-    LightCam.Update(0.0f);
+      VP = ActiveCam->VP;
+      SceneProp.Lights[0].Position = LightCam.Eye;
 
-    VP = ActiveCam->VP;
-    SceneProp.Lights[0].Position = LightCam.Eye;
-  } else {
+      printf("[feedMatrices] Camera applied, warming up %d frames before dump...\n", FEED_WARMUP_FRAMES);
+      fflush(stdout);
+    } else {
+      printf("[feedMatrices] Failed to load matrices, continuing normally.\n");
+      fflush(stdout);
+      feedState = 2; // skip warmup, continue normal
+      g_feedMatricesPath.clear();
+    }
+  }
+  // During warmup: keep camera frozen but let render pipeline stabilize
+  if (!g_feedMatricesPath.empty() && feedState == 1) {
+    feedWarmup++;
+    if (feedWarmup >= FEED_WARMUP_FRAMES) {
+      feedState = 2;
+      g_dumpEnabled = true;
+      g_debugDumpRequested = true;
+      printf("[feedMatrices] Warm-up done, triggering dump on frame %d\n", frameCounter);
+      fflush(stdout);
+    }
+  }
+
+  if (!g_debugDumpRequested && feedState != 1) {
     m_agent.Update(DtSecs);
     ActiveCam->Update(DtSecs);
     VP = ActiveCam->VP;
@@ -507,6 +679,16 @@ void SC_Day::OnInput(InputManager* IManager) {
 	  ActiveCam->MoveRoll(-DtSecs);
   }
 
+  if (IManager->PressedOnceKey(T800K_SPACE)) {
+    extern bool g_debugFrames;
+    extern bool g_debugDumpRequested;
+    extern bool g_dumpEnabled;
+    if (g_debugFrames) {
+      g_debugDumpRequested = true;
+      g_dumpEnabled = true;
+    }
+  }
+
   if (IManager->PressedOnceKey(T800K_1)) {
     pFramework->ChangeAPI(GRAPHICS_API::D3D11);
   }
@@ -517,10 +699,14 @@ void SC_Day::OnInput(InputManager* IManager) {
   if (IManager->PressedOnceKey(T800K_3)) {
     pFramework->pVideoDriver->ModifyRT(DepthPass,0, BaseRT::NOTHING, BaseRT::F32, 128, 128, false);
   }
-  float yaw = 0.005f*static_cast<float>(IManager->xDelta);
-  ActiveCam->MoveYaw(yaw);
-  float pitch = 0.005f*static_cast<float>(IManager->yDelta);
-  ActiveCam->MovePitch(pitch);
+  // Skip mouse-driven camera movement when feedMatrices is active
+  extern std::string g_feedMatricesPath;
+  if (g_feedMatricesPath.empty()) {
+    float yaw = 0.005f*static_cast<float>(IManager->xDelta);
+    ActiveCam->MoveYaw(yaw);
+    float pitch = 0.005f*static_cast<float>(IManager->yDelta);
+    ActiveCam->MovePitch(pitch);
+  }
 }
 
 void SC_Day::OnDraw() {
@@ -714,9 +900,13 @@ void SC_Day::OnDraw() {
     extern int   g_dumpFrame;
     extern float g_dumpSeconds;
 
+    extern bool  g_debugDumpRequested;
+
     bool shouldDump = false;
     if (g_dumpEnabled && !dumped) {
-      if (g_dumpByFrame && dumpFrameCounter >= g_dumpFrame)
+      if (g_debugDumpRequested)
+        shouldDump = true;
+      else if (g_dumpByFrame && dumpFrameCounter >= g_dumpFrame)
         shouldDump = true;
       else if (!g_dumpByFrame && dumpTimer >= g_dumpSeconds)
         shouldDump = true;
@@ -724,7 +914,29 @@ void SC_Day::OnDraw() {
 
     if (shouldDump) {
       dumped = true;
-      std::string prefix = "RT_Dump_";
+
+      // Build timestamped output directory
+      auto now = std::chrono::system_clock::now();
+      auto tt = std::chrono::system_clock::to_time_t(now);
+      struct tm lt;
+#ifdef OS_WINDOWS
+      localtime_s(&lt, &tt);
+#else
+      localtime_r(&tt, &lt);
+#endif
+      char tsBuf[64];
+      std::snprintf(tsBuf, sizeof(tsBuf), "%04d%02d%02d_%02d%02d%02d",
+        lt.tm_year + 1900, lt.tm_mon + 1, lt.tm_mday,
+        lt.tm_hour, lt.tm_min, lt.tm_sec);
+
+      std::string apiName = (pFramework->pVideoDriver->m_currentAPI == GRAPHICS_API::D3D11) ? "d3d11" : "gl";
+      std::string dumpDir = "dumps_" + apiName + "_f" + std::to_string(dumpFrameCounter) + "_" + tsBuf;
+#ifdef OS_WINDOWS
+      CreateDirectoryA(dumpDir.c_str(), NULL);
+#else
+      mkdir(dumpDir.c_str(), 0755);
+#endif
+      std::string prefix = dumpDir + "/RT_Dump_";
       pFramework->pVideoDriver->SaveScreenshot(prefix + "BackBuffer");
       pFramework->pVideoDriver->SaveRTToFile(GBufferPass,      BaseDriver::COLOR0_ATTACHMENT, prefix + "GBuffer_Color0");
       pFramework->pVideoDriver->SaveRTToFile(GBufferPass,      BaseDriver::COLOR1_ATTACHMENT, prefix + "GBuffer_Normals");
@@ -736,17 +948,88 @@ void SC_Day::OnDraw() {
       pFramework->pVideoDriver->SaveRTToFile(ExtraHelperPass,  BaseDriver::COLOR0_ATTACHMENT, prefix + "HDR_Final");
       pFramework->pVideoDriver->SaveRTToFile(BloomAccumPass,   BaseDriver::COLOR0_ATTACHMENT, prefix + "Bloom");
       pFramework->pVideoDriver->SaveRTToFile(GodRaysCalcPass,  BaseDriver::COLOR0_ATTACHMENT, prefix + "GodRays");
-      // Log camera state for cross-API verification
-      std::cout << "=== DUMP CAMERA STATE ===" << std::endl;
+
+      // Log all camera/matrix state for cross-API verification
+      auto dumpMatrix = [](std::ostream& os, const char* name, const XMATRIX44& mat) {
+        os << name << ":\n";
+        for (int r = 0; r < 4; r++)
+          os << "  [" << r << "]: " << mat.m[r][0] << ", " << mat.m[r][1] << ", " << mat.m[r][2] << ", " << mat.m[r][3] << "\n";
+      };
+
+      // Compute effective pitch/yaw from the Look vector (these are
+      // the values actually used by the View matrix, which may differ
+      // from Cam.Pitch/Cam.Yaw when the spline agent controls the camera).
+      float camEffPitch = asinf(-Cam.Look.y);
+      float camEffYaw   = atan2f(Cam.Look.x, Cam.Look.z);
+      float lcEffPitch  = asinf(-LightCam.Look.y);
+      float lcEffYaw    = atan2f(LightCam.Look.x, LightCam.Look.z);
+
+      std::cout << "=== DUMP STATE (frame " << dumpFrameCounter << ", " << apiName << ", dt=" << DtSecs << "s) ===" << std::endl;
       std::cout << "Cam Eye: " << Cam.Eye.x << ", " << Cam.Eye.y << ", " << Cam.Eye.z << std::endl;
-      std::cout << "Cam Pitch/Roll/Yaw: " << Cam.Pitch << ", " << Cam.Roll << ", " << Cam.Yaw << std::endl;
+      std::cout << "Cam Pitch: " << camEffPitch << " Roll: " << Cam.Roll << " Yaw: " << camEffYaw << std::endl;
       std::cout << "LightCam Eye: " << LightCam.Eye.x << ", " << LightCam.Eye.y << ", " << LightCam.Eye.z << std::endl;
-      std::cout << "LightCam Pitch/Roll/Yaw: " << LightCam.Pitch << ", " << LightCam.Roll << ", " << LightCam.Yaw << std::endl;
-      std::cout << "VP[0]: " << VP.m[0][0] << ", " << VP.m[0][1] << ", " << VP.m[0][2] << ", " << VP.m[0][3] << std::endl;
-      std::cout << "VP[1]: " << VP.m[1][0] << ", " << VP.m[1][1] << ", " << VP.m[1][2] << ", " << VP.m[1][3] << std::endl;
-      std::cout << "VP[2]: " << VP.m[2][0] << ", " << VP.m[2][1] << ", " << VP.m[2][2] << ", " << VP.m[2][3] << std::endl;
-      std::cout << "VP[3]: " << VP.m[3][0] << ", " << VP.m[3][1] << ", " << VP.m[3][2] << ", " << VP.m[3][3] << std::endl;
-      std::cout << "RT dump complete (frame " << dumpFrameCounter << ", time " << dumpTimer << "s): 10 RT files + backbuffer saved" << std::endl;
+      std::cout << "LightCam Pitch: " << lcEffPitch << " Roll: " << LightCam.Roll << " Yaw: " << lcEffYaw << std::endl;
+      dumpMatrix(std::cout, "Cam.View", Cam.View);
+      dumpMatrix(std::cout, "Cam.Projection", Cam.Projection);
+      dumpMatrix(std::cout, "Cam.VP", Cam.VP);
+      dumpMatrix(std::cout, "LightCam.View", LightCam.View);
+      dumpMatrix(std::cout, "LightCam.Projection", LightCam.Projection);
+      dumpMatrix(std::cout, "LightCam.VP", LightCam.VP);
+      dumpMatrix(std::cout, "VP (active)", VP);
+
+      // Write matrices as JSON for easy reuse with --feedMatrices
+      auto jsonMat = [](std::ostream& os, const char* name, const XMATRIX44& mat, bool last = false) {
+        os << "    \"" << name << "\": [\n";
+        for (int r = 0; r < 4; r++) {
+          os << "      [" << mat.m[r][0] << ", " << mat.m[r][1] << ", " << mat.m[r][2] << ", " << mat.m[r][3] << "]";
+          os << (r < 3 ? ",\n" : "\n");
+        }
+        os << "    ]" << (last ? "\n" : ",\n");
+      };
+
+      std::ofstream matFile(dumpDir + "/matrices.json");
+      if (matFile.is_open()) {
+        matFile << std::setprecision(10);
+        matFile << "{\n";
+        matFile << "  \"frame\": " << dumpFrameCounter << ",\n";
+        matFile << "  \"api\": \"" << apiName << "\",\n";
+        matFile << "  \"dt\": " << DtSecs << ",\n";
+        matFile << "  \"cam\": {\n";
+        matFile << "    \"eye\": [" << Cam.Eye.x << ", " << Cam.Eye.y << ", " << Cam.Eye.z << "],\n";
+        matFile << "    \"pitch\": " << camEffPitch << ",\n";
+        matFile << "    \"roll\": " << Cam.Roll << ",\n";
+        matFile << "    \"yaw\": " << camEffYaw << "\n";
+        matFile << "  },\n";
+        matFile << "  \"lightCam\": {\n";
+        matFile << "    \"eye\": [" << LightCam.Eye.x << ", " << LightCam.Eye.y << ", " << LightCam.Eye.z << "],\n";
+        matFile << "    \"pitch\": " << lcEffPitch << ",\n";
+        matFile << "    \"roll\": " << LightCam.Roll << ",\n";
+        matFile << "    \"yaw\": " << lcEffYaw << "\n";
+        matFile << "  },\n";
+        matFile << "  \"matrices\": {\n";
+        jsonMat(matFile, "camView", Cam.View);
+        jsonMat(matFile, "camProjection", Cam.Projection);
+        jsonMat(matFile, "camVP", Cam.VP);
+        jsonMat(matFile, "lightCamView", LightCam.View);
+        jsonMat(matFile, "lightCamProjection", LightCam.Projection);
+        jsonMat(matFile, "lightCamVP", LightCam.VP, true);
+        matFile << "  }\n";
+        matFile << "}\n";
+      }
+
+      std::cout << "RT dump complete -> " << dumpDir << "/ (11 files)" << std::endl;
+
+      // Exit the application after dumping (unless --keepRunning)
+      extern bool g_keepRunning;
+      if (!g_keepRunning) {
+        exit(0);
+      } else {
+        g_dumpEnabled = false;
+        g_debugDumpRequested = false;
+        dumped = false;
+        printf("[keepRunning] Dump done, continuing...\n");
+        fflush(stdout);
+      }
     }
   }
   /*

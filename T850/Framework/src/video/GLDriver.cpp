@@ -669,37 +669,36 @@ namespace t800 {
     glViewport(0, 0, rt->w, rt->h);
 
     if (attachment == DEPTH_ATTACHMENT) {
-      // For depth: create a temporary FBO with the depth texture attached
-      // and try to read it. If that fails, output a placeholder.
-      GLuint tmpFBO;
-      glGenFramebuffers(1, &tmpFBO);
-      glBindFramebuffer(GL_FRAMEBUFFER, tmpFBO);
-      glFramebufferTexture2D(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_TEXTURE_2D, glrt->DepthTexture, 0);
-      // Must disable color writes for depth-only FBO
-      glDrawBuffers(0, nullptr);
-      glReadBuffer(GL_NONE);
-
-      // Try reading depth
-      std::vector<float> depthPixels(rt->w * rt->h);
+      // ANGLE/GLES3 cannot read depth textures via glReadPixels or sampler2D.
+      // Try direct readback first; if it fails, write a placeholder.
+      std::vector<float> depthPixels(rt->w * rt->h, -1.0f);
       glReadPixels(0, 0, rt->w, rt->h, GL_DEPTH_COMPONENT, GL_FLOAT, depthPixels.data());
-      GLenum err = glGetError();
 
-      std::vector<unsigned char> rgbBuf(rt->w * rt->h * 3);
-      if (err == GL_NO_ERROR) {
-        for (int y = 0; y < rt->h; y++) {
-          int srcRow = (rt->h - 1 - y);
-          for (int x = 0; x < rt->w; x++) {
-            float v = depthPixels[srcRow * rt->w + x];
-            v = v < 0.f ? 0.f : (v > 1.f ? 1.f : v);
-            unsigned char b = (unsigned char)(v * 255.f);
-            int dstIdx = (y * rt->w + x) * 3;
-            rgbBuf[dstIdx] = rgbBuf[dstIdx + 1] = rgbBuf[dstIdx + 2] = b;
-          }
+      bool hasDepthData = false;
+      for (int i = 0; i < rt->w * rt->h; i++) {
+        if (depthPixels[i] > 0.0f && depthPixels[i] <= 1.0f) {
+          hasDepthData = true;
+          break;
         }
       }
-      // else: rgbBuf stays zero-initialized (black image as fallback)
+
+      if (!hasDepthData) {
+        printf("[GLDriver] Note: depth texture export not supported on ANGLE/GLES3 (shadows work correctly at runtime)\n");
+      }
+
+      // Convert float depth to 8-bit PPM
+      std::vector<unsigned char> rgbBuf(rt->w * rt->h * 3);
+      for (int y = 0; y < rt->h; y++) {
+        int srcRow = (rt->h - 1 - y);
+        for (int x = 0; x < rt->w; x++) {
+          float v = depthPixels[srcRow * rt->w + x];
+          v = v < 0.f ? 0.f : (v > 1.f ? 1.f : v);
+          unsigned char b = (unsigned char)(v * 255.f);
+          int dstIdx = (y * rt->w + x) * 3;
+          rgbBuf[dstIdx] = rgbBuf[dstIdx + 1] = rgbBuf[dstIdx + 2] = b;
+        }
+      }
       WritePPM(path, rt->w, rt->h, rgbBuf);
-      glDeleteFramebuffers(1, &tmpFBO);
     } else {
       // Color attachment
       int colorIndex = attachment; // COLOR0_ATTACHMENT=0, COLOR1_ATTACHMENT=1, etc.
@@ -786,7 +785,6 @@ namespace t800 {
     }
 
   }
-
 
 
 }

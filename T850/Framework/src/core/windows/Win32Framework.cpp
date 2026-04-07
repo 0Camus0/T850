@@ -89,13 +89,19 @@ namespace t800 {
     }
     static int xDelta = 0;
     static int yDelta = 0;
+    static bool firstCall = true;
     int x = 0, y = 0;
 
 	POINT point;
 	GetCursorPos(&point);
 	x = point.x;
 	y = point.y;
-	
+
+    if (firstCall) {
+      firstCall = false;
+      xDelta = x;
+      yDelta = y;
+    }
 
     xDelta = x - xDelta;
     yDelta = y - yDelta;

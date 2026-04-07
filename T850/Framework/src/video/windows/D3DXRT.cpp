@@ -162,6 +162,7 @@ namespace t800 {
     }
     pTextureDepth->x = w;
     pTextureDepth->y = h;
+    pTextureDepth->params |= TEXT_BASIC_PARAMS::CLAMP_TO_BORDER;
     pTextureDepth->SetTextureParams();
     pDepthTexture = ( pTextureDepth);
 

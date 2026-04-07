@@ -1,15 +1,21 @@
-{
-  "architecture": "x64",
-  "configuration": "Release",
-  "api": "d3d11",
-  "display": {
-    "width": 1280,
-    "height": 720
-  },
-  "dump": {
-    "enabled": false,
-    "trigger": "seconds",
-    "seconds": 5,
-    "frame": 300
-  }
+﻿{
+    "configuration":  "Release",
+    "keepRunning":  true,
+    "dump":  {
+                 "seconds":  5,
+                 "trigger":  "frame",
+                 "frame":  750,
+                 "enabled":  false
+             },
+    "debugFrames":  false,
+    "architecture":  "x64",
+    "feedMatrices":  {
+                         "path":  "D:\\Code\\Game\\T850\\T850\\bin\\x64\\Release\\dumps_d3d11_f3_20260406_191642\\matrices.json",
+                         "enabled":  true
+                     },
+    "display":  {
+                    "height":  720,
+                    "width":  1280
+                },
+    "api":  "gl"
 }

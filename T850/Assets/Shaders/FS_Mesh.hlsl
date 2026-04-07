@@ -8,6 +8,11 @@ cbuffer ConstantBuffer{
 	float4   CameraPosition;
 	float4 	 CameraInfo;
 	float4	 Ambient;
+	float4   DiffuseColor;
+	float4   SpecularColor;
+	float4   FresnelColor;
+	float4   Intensities;
+	float4   ParallaxSettings;
 }
 
 #define PHONG 1
@@ -63,6 +68,10 @@ Texture2D TextureNormal : register(t3);
 
 TextureCube texEnv : register(t4);
 
+#ifdef HEIGHT_MAP
+Texture2D TextureHeight : register(t5);
+#endif
+
 SamplerState SS;
 
 struct VS_OUTPUT{
@@ -110,32 +119,66 @@ FS_OUT FS( VS_OUTPUT input )   {
 	float4  specular 	= float4(0.5,0.5,0.5,1.0);
 	float4  reflect		= float4(0.5,0.5,0.5,1.0);
 	
-	float specIntesivity = 0.8;
-	float shinness = 2.0;
-	
+	float specIntesivity = Intensities.x;
+	float roughness = 0.0;
+
+	normal.xyz   = normalize(input.hnormal).xyz;
+
+	float2 parallaxCoords = input.texture0;
+	#if defined(HEIGHT_MAP) || defined(NORMAL_MAP)
+		float3 tangent	 = normalize(input.htangent).xyz;
+		float3 binormal	 = normalize(input.hbinormal).xyz;
+		float3x3 TBN    = float3x3(tangent, binormal, normal.xyz);
+	#endif
+	#ifdef HEIGHT_MAP
+		float heightScale = ParallaxSettings.z;
+		float3 viewDir = mul(TBN, normalize(CameraPosition.xyz - input.WorldPos.xyz));
+		viewDir = normalize(viewDir);
+		float minLayers = ParallaxSettings.x;
+		float maxLayers = ParallaxSettings.y;
+		float numLayers = lerp(maxLayers, minLayers, abs(dot(float3(0.0, 0.0, 1.0), viewDir)));
+		float layerDepth = 1.0 / numLayers;
+		float prevDepthMapValue = 0.0;
+		float2 P = -viewDir.xy * heightScale / viewDir.z;
+		float2 deltaTexCoords = P * layerDepth;
+		deltaTexCoords.y = -deltaTexCoords.y;
+
+		float currentDepthMapValue = TextureHeight.SampleGrad(SS, parallaxCoords, ddx(parallaxCoords), ddy(parallaxCoords)).r;
+		float currentRayZ = 1.0 - layerDepth;
+		float prevRayZ = 1.0 - layerDepth;
+		[loop] while (currentRayZ > currentDepthMapValue) {
+			currentDepthMapValue = TextureHeight.SampleGrad(SS, parallaxCoords, ddx(input.texture0), ddy(input.texture0)).r;
+			prevDepthMapValue = currentDepthMapValue;
+			parallaxCoords += deltaTexCoords;
+			prevRayZ = currentRayZ;
+			currentRayZ -= layerDepth;
+		}
+		float2 prevTexCoords = parallaxCoords - deltaTexCoords;
+		float weight = (prevDepthMapValue - prevRayZ) / (prevDepthMapValue - currentDepthMapValue + currentRayZ - prevRayZ);
+		parallaxCoords = prevTexCoords * weight + parallaxCoords * (1.0 - weight);
+	#endif
+
 	#ifdef DIFFUSE_MAP
-		color = TextureRGB.Sample( SS, input.texture0 );	
+		color = TextureRGB.Sample( SS, parallaxCoords );	
 	#endif
 	
-	normal.xyz   = normalize(input.hnormal).xyz;
 	#ifdef NORMAL_MAP	
-		float3 normalTex = TextureNormal.Sample( SS, input.texture0 ).xyz;
+		float3 normalTex = TextureNormal.Sample( SS, parallaxCoords ).xyz;
 		normalTex 		 = 	normalTex*float3(2.0,2.0,2.0) - float3(1.0,1.0,1.0);
 		normalTex		 = normalize(normalTex);
 		normalTex.g 	 = -normalTex.g;
-		float3 tangent	 = normalize(input.htangent).xyz;
-		float3 binormal	 = normalize(input.hbinormal).xyz;
-		float3x3	TBN  =  float3x3(tangent,binormal,normal.xyz);
 		normal.xyz		 = mul(normalTex,TBN);
 		normal.xyz		 = normalize(normal.xyz);
 	#endif
 
 	#ifdef SPECULAR_MAP
-		specular.rgb = TextureSpecular.Sample( SS, input.texture0 ).rgb;	
+		specular.rgb = TextureSpecular.Sample( SS, parallaxCoords ).rgb;	
 	#endif
 	
 	#ifdef GLOSS_MAP
-		shinness = TextureGloss.Sample( SS, input.texture0 ).r + shinness;
+		roughness = TextureGloss.Sample( SS, parallaxCoords ).r;
+	#else
+		roughness = 0.5;
 	#endif
 	
 	float3  EyeDir   = normalize(CameraPosition-input.WorldPos).xyz;
@@ -144,23 +187,15 @@ FS_OUT FS( VS_OUTPUT input )   {
 
 	FS_OUT fout;
 	fout.color0.rgb = color.rgb;
-	fout.color0.a 	= specIntesivity;
+	fout.color0.a 	= Intensities.x / 255.0;
 	
 	fout.color1.rgb = normal.xyz;
-	fout.color1.a 	= shinness;	
+	fout.color1.a 	= roughness;	
 	
 	fout.color2.rgb = specular.rgb;
-	fout.color2.a 	= shinness;
+	fout.color2.a 	= Intensities.w / 255.0;
 	
-	#ifdef NO_LIGHT
-		fout.color3 	= float4(1.0,0.0,1.0,1.0);
-	#else
-		#ifdef NORMAL_MAP	
-		fout.color3 	= float4(0.0,0.0,0.0,1.0);
-		#else
-		fout.color3 	= float4(0.0,0.0,1.0,1.0);
-		#endif
-	#endif
+	fout.color3 = float4(FresnelColor.rgb, Intensities.z);
 	
 #ifdef NON_LINEAR_DEPTH
 		fout.depth		= input.Pos.z / input.Pos.w;

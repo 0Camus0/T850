@@ -40,6 +40,14 @@ namespace t800 {
       sdesc.AddressW = D3D11_TEXTURE_ADDRESS_MIRROR;
     }
 
+    if (params & TEXT_BASIC_PARAMS::CLAMP_TO_BORDER) {
+      sdesc.AddressU = D3D11_TEXTURE_ADDRESS_BORDER;
+      sdesc.AddressV = D3D11_TEXTURE_ADDRESS_BORDER;
+      sdesc.AddressW = D3D11_TEXTURE_ADDRESS_BORDER;
+      sdesc.Filter = D3D11_FILTER_MIN_MAG_MIP_LINEAR;
+      sdesc.MaxAnisotropy = 1;
+    }
+
     sdesc.BorderColor[0] = 0.0f;
     sdesc.BorderColor[1] = 0.0f;
     sdesc.BorderColor[2] = 0.0f;
@@ -156,8 +164,8 @@ namespace t800 {
     reinterpret_cast<ID3D11DeviceContext*>(deviceContext.GetAPIObject())->PSSetShaderResources(slot, 1, pSRVTex.GetAddressOf());
   }
 
-  void D3DXTexture::SetSampler(const DeviceContext & deviceContext)
+  void D3DXTexture::SetSampler(const DeviceContext & deviceContext, unsigned int slot)
   {
-    reinterpret_cast<ID3D11DeviceContext*>(deviceContext.GetAPIObject())->PSSetSamplers(0, 1, pSampler.GetAddressOf());
+    reinterpret_cast<ID3D11DeviceContext*>(deviceContext.GetAPIObject())->PSSetSamplers(slot, 1, pSampler.GetAddressOf());
   }
 }

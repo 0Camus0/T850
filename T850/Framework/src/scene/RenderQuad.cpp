@@ -277,7 +277,9 @@ namespace t800 {
       EnvMap->Set(*T8DeviceContext, 6, "texEnv");
 
     if (Textures[0])
-      Textures[0]->SetSampler(*T8DeviceContext);
+      Textures[0]->SetSampler(*T8DeviceContext, 0);
+    if (Textures[1])
+      Textures[1]->SetSampler(*T8DeviceContext, 1);
 
     T8DeviceContext->SetPrimitiveTopology(T8_TOPOLOGY::TRIANLE_LIST);
     T8DeviceContext->DrawIndexed(6, 0, 0);

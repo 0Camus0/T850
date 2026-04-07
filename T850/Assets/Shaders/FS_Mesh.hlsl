@@ -190,9 +190,9 @@ FS_OUT FS( VS_OUTPUT input )   {
 	fout.color0.a 	= Intensities.x / 255.0;
 	
 	fout.color1.rgb = normal.xyz;
+	fout.color2.rgb = specular.rgb;
 	fout.color1.a 	= roughness;	
 	
-	fout.color2.rgb = specular.rgb;
 	fout.color2.a 	= Intensities.w / 255.0;
 	
 	fout.color3 = float4(FresnelColor.rgb, Intensities.z);

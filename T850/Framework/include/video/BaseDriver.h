@@ -115,7 +115,7 @@ namespace t800 {
     virtual void	SetTextureParams() = 0;
     virtual void	GetFormatBpp(unsigned int &props, unsigned int &format, unsigned int &bpp) = 0;
     virtual void  Set(const DeviceContext& deviceContext, unsigned int slot, std::string shaderTextureName) = 0;
-    virtual void  SetSampler(const DeviceContext& deviceContext) = 0;
+    virtual void  SetSampler(const DeviceContext& deviceContext, unsigned int slot = 0) = 0;
     
 
     std::string filepath;

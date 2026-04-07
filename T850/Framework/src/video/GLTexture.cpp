@@ -59,6 +59,12 @@ namespace t800 {
     if (params & TEXT_BASIC_PARAMS::TILED)
       glWrap = GL_REPEAT;
 
+    if (params & TEXT_BASIC_PARAMS::CLAMP_TO_BORDER) {
+      glWrap = 0x812D; // GL_CLAMP_TO_BORDER
+      float borderColor[] = { 0.0f, 0.0f, 0.0f, 0.0f };
+      glTexParameterfv(glTarget, 0x1004, borderColor); // GL_TEXTURE_BORDER_COLOR
+    }
+
     glTexParameteri(glTarget, GL_TEXTURE_MIN_FILTER, glFiltering);
     glTexParameteri(glTarget, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
     glTexParameteri(glTarget, GL_TEXTURE_WRAP_S, glWrap);
@@ -138,7 +144,7 @@ namespace t800 {
     }
   }
 
-  void GLTexture::SetSampler(const DeviceContext & deviceContext)
+  void GLTexture::SetSampler(const DeviceContext & deviceContext, unsigned int slot)
   {
   }
 

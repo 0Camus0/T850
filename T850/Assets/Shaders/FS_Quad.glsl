@@ -348,17 +348,22 @@ highp vec4 FShadow = vec4(1.0,1.0,1.0,1.0);
 			highp float depthPos = LightPos.z;
 			for (y = -Origin; y <= Origin; y += 1.0){
 				for (x = -Origin; x <= Origin; x += 1.0){
-					highp float Val_1;					
-					#ifdef ES_30
-						highp vec3 Coords_Final = vec3(SHTC.xy + (brightness.z / brightness.y)*vec2(x, y), LightPos.z - 0.000005);
-						Val_1 = texture(tex1, Coords_Final);
-					#else
-						highp vec4 Coords_Final = vec4(SHTC.xy + (brightness.z / brightness.y)*vec2(x, y), LightPos.z, LightPos.w);
-						Val_1 = shadow2DProj(tex1, Coords_Final).r;
-					#endif
-						Val_1 *= 0.75;
-						Val_1 += 0.25;
-						sum += Val_1; //(depthPos > Val_1) ? 0.25 : 1.0;
+					highp float Val_1;
+					highp vec2 sampleUV = SHTC.xy + (brightness.z / brightness.y)*vec2(x, y);
+					if (sampleUV.x < 0.0 || sampleUV.x > 1.0 || sampleUV.y < 0.0 || sampleUV.y > 1.0) {
+						Val_1 = 0.0;
+					} else {
+						#ifdef ES_30
+							highp vec3 Coords_Final = vec3(sampleUV, LightPos.z - 0.000005);
+							Val_1 = texture(tex1, Coords_Final);
+						#else
+							highp vec4 Coords_Final = vec4(sampleUV, LightPos.z, LightPos.w);
+							Val_1 = shadow2DProj(tex1, Coords_Final).r;
+						#endif
+					}
+					Val_1 *= 0.75;
+					Val_1 += 0.25;
+					sum += Val_1;
 					Total++;
 				}
 			}
@@ -1063,7 +1068,6 @@ void main(){
 
 highp vec4 LightPos;
 highp vec2 SHTC;
-highp float depthValue;
 highp vec4 sunDir;
 highp vec3 scattering;
 const highp vec3 lightColor = vec3(0.9803, 0.8392, 0.6470);
@@ -1072,6 +1076,7 @@ for (int i = 0; i<steps; i++) {
   LightPos.xy /= LightPos.w;
   LightPos.z /= LightCameraInfo.y;
   SHTC = LightPos.xy*0.5 + 0.5;
+  SHTC.y = 1.0 - SHTC.y;
 
   highp vec3 Coords_Final = vec3(SHTC.xy, LightPos.z - 0.00005);
   highp float Val_1 = texture(tex1, Coords_Final);
@@ -1087,7 +1092,7 @@ accumFog /= vec4(steps,steps,steps,steps);
 accumFog = pow(accumFog,  vec4(0.4545,0.4545,0.4545,0.4545));
 
   #ifdef ES_30
-	colorOut = vec4(accumFog.rgb , 1.0);
+	colorOut = vec4(accumFog.rgb, 1.0);
 #else
 	gl_FragColor = vec4(accumFog.rgb , 1.0);
 #endif

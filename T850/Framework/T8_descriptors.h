@@ -195,7 +195,8 @@ enum TEXT_BASIC_FORMAT {
 enum TEXT_BASIC_PARAMS {
   TILED = 1,
   CLAMP_TO_EDGE = 2,
-  MIPMAPS = 4
+  MIPMAPS = 4,
+  CLAMP_TO_BORDER = 8
 };
 
 enum Signature : unsigned long long {

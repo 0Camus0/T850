@@ -7,10 +7,10 @@
                  "frame":  750,
                  "enabled":  false
              },
-    "debugFrames":  false,
+    "debugFrames":  true,
     "architecture":  "x64",
     "feedMatrices":  {
-                         "path":  "D:\\Code\\Game\\T850\\T850\\bin\\x64\\Release\\dumps_d3d11_f3_20260406_191642\\matrices.json",
+                         "path":  "D:\\Code\\Game\\T850\\T850\\bin\\x64\\Release\\dumps_d3d11_f5822_20260406_210606\\matrices.json",
                          "enabled":  true
                      },
     "display":  {

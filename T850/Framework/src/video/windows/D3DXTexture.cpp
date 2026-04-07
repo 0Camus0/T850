@@ -35,9 +35,9 @@ namespace t800 {
     }
 
     if (params & TEXT_BASIC_PARAMS::TILED) {
-      sdesc.AddressU = D3D11_TEXTURE_ADDRESS_MIRROR;
-      sdesc.AddressV = D3D11_TEXTURE_ADDRESS_MIRROR;
-      sdesc.AddressW = D3D11_TEXTURE_ADDRESS_MIRROR;
+      sdesc.AddressU = D3D11_TEXTURE_ADDRESS_WRAP;
+      sdesc.AddressV = D3D11_TEXTURE_ADDRESS_WRAP;
+      sdesc.AddressW = D3D11_TEXTURE_ADDRESS_WRAP;
     }
 
     if (params & TEXT_BASIC_PARAMS::CLAMP_TO_BORDER) {

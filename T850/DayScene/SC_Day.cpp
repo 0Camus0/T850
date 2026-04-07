@@ -36,12 +36,21 @@ static void extractFloat3(const std::string& json, size_t regionStart, const std
     sscanf(json.c_str() + pos, "[%f,%f,%f]", &out[0], &out[1], &out[2]);
 }
 
+struct FeedLightState {
+  float position[3];
+  float color[3];
+  float radius;
+  bool  valid;
+};
+
 struct FeedCameraState {
   float eye[3];
   float pitch, roll, yaw;
   XMATRIX44 View, Projection, VP;
   bool hasMatrices;
 };
+
+static const int MAX_FEED_LIGHTS = 8;
 
 static bool extractMatrix(const std::string& json, size_t regionStart, const std::string& key, XMATRIX44& mat) {
   size_t pos = findJsonSection(json, key, regionStart);
@@ -59,7 +68,9 @@ static bool extractMatrix(const std::string& json, size_t regionStart, const std
   return true;
 }
 
-static bool loadFeedMatrices(const std::string& path, FeedCameraState& cam, FeedCameraState& lightCam) {
+static bool loadFeedMatrices(const std::string& path, FeedCameraState& cam, FeedCameraState& lightCam,
+                             FeedLightState* lights, int& numLights) {
+  numLights = 0;
   std::ifstream f(path);
   if (!f.is_open()) {
     printf("[feedMatrices] ERROR: cannot open '%s'\n", path.c_str());
@@ -114,6 +125,39 @@ static bool loadFeedMatrices(const std::string& path, FeedCameraState& cam, Feed
   lightCam.roll = extractFloat(json, lightSec, "roll");
   lightCam.yaw = extractFloat(json, lightSec, "yaw");
 
+  // Parse lights array if available
+  size_t lightsSec = findJsonSection(json, "lights");
+  if (lightsSec != std::string::npos) {
+    // Find the opening '[' of the lights array
+    size_t arrStart = json.find('[', lightsSec);
+    if (arrStart != std::string::npos) {
+      // Find the matching ']' for the lights array (skip nested brackets)
+      size_t arrEnd = std::string::npos;
+      int depth = 0;
+      for (size_t i = arrStart; i < json.size(); i++) {
+        if (json[i] == '[') depth++;
+        else if (json[i] == ']') { depth--; if (depth == 0) { arrEnd = i; break; } }
+      }
+      if (arrEnd == std::string::npos) arrEnd = json.size();
+      size_t pos = arrStart;
+      while (numLights < MAX_FEED_LIGHTS) {
+        size_t objStart = json.find('{', pos);
+        if (objStart == std::string::npos || objStart >= arrEnd) break;
+        // Find matching '}'
+        size_t objEnd = json.find('}', objStart);
+        if (objEnd == std::string::npos) break;
+        FeedLightState& lt = lights[numLights];
+        lt.valid = false;
+        extractFloat3(json, objStart, "position", lt.position);
+        extractFloat3(json, objStart, "color", lt.color);
+        lt.radius = extractFloat(json, objStart, "radius");
+        lt.valid = true;
+        numLights++;
+        pos = objEnd + 1;
+      }
+    }
+  }
+
   // Parse precomputed matrices if available
   cam.hasMatrices = false;
   lightCam.hasMatrices = false;
@@ -134,6 +178,8 @@ static bool loadFeedMatrices(const std::string& path, FeedCameraState& cam, Feed
   printf("  Light: eye=[%.6f, %.6f, %.6f] pitch=%.6f roll=%.6f yaw=%.6f matrices=%s\n",
     lightCam.eye[0], lightCam.eye[1], lightCam.eye[2], lightCam.pitch, lightCam.roll, lightCam.yaw,
     lightCam.hasMatrices ? "yes" : "no");
+  if (numLights > 0)
+    printf("  Lights: %d loaded\n", numLights);
   return true;
 }
 
@@ -257,7 +303,7 @@ void SC_Day::InitVars() {
 
 
   SceneProp.ToogleShadow = true;
-  SceneProp.ToogleSSAO = true;
+  SceneProp.ToogleSSAO = false;
   SceneProp.AutoFocus = true;
 
 
@@ -459,7 +505,9 @@ void SC_Day::OnUpdate(float _DtSecs) {
   if (!g_feedMatricesPath.empty() && feedState == 0) {
     feedState = 1;
     FeedCameraState camState = {}, lightState = {};
-    if (loadFeedMatrices(g_feedMatricesPath, camState, lightState)) {
+    FeedLightState feedLights[MAX_FEED_LIGHTS] = {};
+    int feedNumLights = 0;
+    if (loadFeedMatrices(g_feedMatricesPath, camState, lightState, feedLights, feedNumLights)) {
       // Detach spline agent so Update() uses our manual Eye/Pitch/Yaw
       Cam.m_externalControl = false;
 
@@ -490,6 +538,15 @@ void SC_Day::OnUpdate(float _DtSecs) {
       VP = ActiveCam->VP;
       SceneProp.Lights[0].Position = LightCam.Eye;
 
+      // Apply light positions from JSON
+      for (int i = 0; i < feedNumLights && i < (int)SceneProp.Lights.size(); i++) {
+        if (feedLights[i].valid) {
+          SceneProp.Lights[i].Position = XVECTOR3(feedLights[i].position[0], feedLights[i].position[1], feedLights[i].position[2]);
+          SceneProp.Lights[i].Color    = XVECTOR3(feedLights[i].color[0], feedLights[i].color[1], feedLights[i].color[2]);
+          SceneProp.Lights[i].radius   = feedLights[i].radius;
+        }
+      }
+
       printf("[feedMatrices] Camera applied, warming up %d frames before dump...\n", FEED_WARMUP_FRAMES);
       fflush(stdout);
     } else {
@@ -511,7 +568,8 @@ void SC_Day::OnUpdate(float _DtSecs) {
     }
   }
 
-  if (!g_debugDumpRequested && feedState != 1) {
+  // Skip all camera/light updates when feedMatrices is active (fully static scene)
+  if (!g_debugDumpRequested && feedState == 0) {
     m_agent.Update(DtSecs);
     ActiveCam->Update(DtSecs);
     VP = ActiveCam->VP;
@@ -977,6 +1035,15 @@ void SC_Day::OnDraw() {
       dumpMatrix(std::cout, "LightCam.VP", LightCam.VP);
       dumpMatrix(std::cout, "VP (active)", VP);
 
+      // Dump scene lights
+      std::cout << "Lights (" << SceneProp.Lights.size() << "):" << std::endl;
+      for (size_t i = 0; i < SceneProp.Lights.size(); i++) {
+        const Light& lt = SceneProp.Lights[i];
+        std::cout << "  [" << i << "] Pos=(" << lt.Position.x << ", " << lt.Position.y << ", " << lt.Position.z
+                  << ") Col=(" << lt.Color.x << ", " << lt.Color.y << ", " << lt.Color.z
+                  << ") R=" << lt.radius << std::endl;
+      }
+
       // Write matrices as JSON for easy reuse with --feedMatrices
       auto jsonMat = [](std::ostream& os, const char* name, const XMATRIX44& mat, bool last = false) {
         os << "    \"" << name << "\": [\n";
@@ -1006,6 +1073,18 @@ void SC_Day::OnDraw() {
         matFile << "    \"roll\": " << LightCam.Roll << ",\n";
         matFile << "    \"yaw\": " << lcEffYaw << "\n";
         matFile << "  },\n";
+
+        // Dump all scene lights
+        matFile << "  \"lights\": [\n";
+        for (size_t i = 0; i < SceneProp.Lights.size(); i++) {
+          const Light& lt = SceneProp.Lights[i];
+          matFile << "    { \"position\": [" << lt.Position.x << ", " << lt.Position.y << ", " << lt.Position.z << "]";
+          matFile << ", \"color\": [" << lt.Color.x << ", " << lt.Color.y << ", " << lt.Color.z << "]";
+          matFile << ", \"radius\": " << lt.radius << " }";
+          matFile << (i + 1 < SceneProp.Lights.size() ? ",\n" : "\n");
+        }
+        matFile << "  ],\n";
+
         matFile << "  \"matrices\": {\n";
         jsonMat(matFile, "camView", Cam.View);
         jsonMat(matFile, "camProjection", Cam.Projection);

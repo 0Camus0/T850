@@ -10,12 +10,12 @@
     "debugFrames":  true,
     "architecture":  "x64",
     "feedMatrices":  {
-                         "path":  "D:\\Code\\Game\\T850\\T850\\bin\\x64\\Release\\dumps_d3d11_f5822_20260406_210606\\matrices.json",
+                         "path":  "D:\\Code\\Game\\T850\\T850\\bin\\x64\\Release\\dumps_d3d11_f3283_20260407_082257\\matrices.json",
                          "enabled":  true
                      },
     "display":  {
                     "height":  720,
                     "width":  1280
                 },
-    "api":  "gl"
+    "api":  "d3d11"
 }

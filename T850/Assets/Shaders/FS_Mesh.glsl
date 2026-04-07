@@ -231,9 +231,8 @@ void main(){
 		colorOut_0.rgb  = color.rgb;
 		colorOut_0.a 	= Intensities.x / 255.0;
 		colorOut_1.rgb  = normal.xyz;
-		colorOut_1.a 	= roughness;
-
 		colorOut_2.rgb  = specular.rgb;
+		colorOut_1.a 	= roughness;
 
 		// Mat Id 
 		// 0 No Light
@@ -419,10 +418,6 @@ void main(){
 		
 		#ifdef DIFFUSE
 			Final += Lambert;
-		#endif
-		
-		#ifdef SPECULAR
-			Final += Specular;
 		#endif
 		
 		#ifdef SPECULAR

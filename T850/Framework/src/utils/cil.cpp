@@ -622,9 +622,9 @@ unsigned char*	cil_load(const char* filename, int *x, int *y, unsigned int *mipm
 		in_.close();
 		int channels;
 		unsigned char * buffer = stbi_load(filename, x, y, &channels, 4);
-		props_ |= (channels == 3) ? CIL_RGB : CIL_RGBA;
+		props_ |= CIL_RGBA;            // stbi_load always returns 4 channels (forced above)
 		*mipmaps = 1;
-		*buffersize = (*x)*(*y) * channels;
+		*buffersize = (*x)*(*y) * 4;   // buffer is always 4 bytes/pixel
 		*props = props_;
 #if FORCE_LOW_RES_TEXTURES
 		if (buffer) {

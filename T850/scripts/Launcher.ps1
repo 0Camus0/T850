@@ -267,6 +267,15 @@ $xaml = @"
             <TextBlock Name="txtCmdPreview" Text="" FontSize="11"
                        Foreground="#45475A" Margin="0"
                        TextWrapping="Wrap" FontFamily="Consolas"/>
+            <!-- Build output log -->
+            <Border Name="pnlBuildOutput" Background="#0D1117" CornerRadius="4"
+                    Margin="0,8,0,0" Padding="2" MaxHeight="200"
+                    Visibility="Collapsed">
+                <ScrollViewer Name="svBuildOutput" VerticalScrollBarVisibility="Auto">
+                    <TextBlock Name="txtBuildOutput" FontFamily="Consolas" FontSize="11"
+                               Foreground="#C9D1D9" TextWrapping="Wrap" Padding="6"/>
+                </ScrollViewer>
+            </Border>
         </StackPanel>
 
         <!-- Buttons -->
@@ -276,9 +285,9 @@ $xaml = @"
                 <ColumnDefinition Width="12"/>
                 <ColumnDefinition Width="*"/>
             </Grid.ColumnDefinitions>
-            <Button Grid.Column="0" Name="btnRun" Content="&#x25B6;  RUN" Height="48"
-                    FontSize="18" FontWeight="Bold" Cursor="Hand"
-                    Background="{StaticResource GreenBrush}" Foreground="#1E1E2E"
+            <Button Grid.Column="0" Name="btnBuild" Content="BUILD" Height="48"
+                    FontSize="16" FontWeight="Bold" Cursor="Hand"
+                    Background="#F9E2AF" Foreground="#1E1E2E"
                     BorderThickness="0">
                 <Button.Resources>
                     <Style TargetType="Border">
@@ -286,9 +295,9 @@ $xaml = @"
                     </Style>
                 </Button.Resources>
             </Button>
-            <Button Grid.Column="2" Name="btnLaunch" Content="LAUNCH" Height="48"
-                    FontSize="16" FontWeight="Bold" Cursor="Hand"
-                    Background="{StaticResource AccentBrush}" Foreground="#1E1E2E"
+            <Button Grid.Column="2" Name="btnRun" Content="&#x25B6;  RUN" Height="48"
+                    FontSize="18" FontWeight="Bold" Cursor="Hand"
+                    Background="{StaticResource GreenBrush}" Foreground="#1E1E2E"
                     BorderThickness="0">
                 <Button.Resources>
                     <Style TargetType="Border">
@@ -327,8 +336,11 @@ $txtWidth       = $window.FindName("txtWidth")
 $txtHeight      = $window.FindName("txtHeight")
 $txtStatus      = $window.FindName("txtStatus")
 $txtCmdPreview  = $window.FindName("txtCmdPreview")
+$pnlBuildOutput = $window.FindName("pnlBuildOutput")
+$svBuildOutput  = $window.FindName("svBuildOutput")
+$txtBuildOutput = $window.FindName("txtBuildOutput")
+$btnBuild       = $window.FindName("btnBuild")
 $btnRun         = $window.FindName("btnRun")
-$btnLaunch      = $window.FindName("btnLaunch")
 
 # Resolve root directory: if running from ps2exe, use exe location; otherwise script location
 if ($MyInvocation.MyCommand.Path) {
@@ -431,6 +443,32 @@ function Save-Config {
 
 # ── Helpers ──
 
+function Find-MSBuild {
+    $progX86 = [System.Environment]::GetFolderPath("ProgramFilesX86")
+    $progFiles = [System.Environment]::GetFolderPath("ProgramFiles")
+    $candidates = @(
+        (Join-Path $progX86  "Microsoft Visual Studio\2022\BuildTools\MSBuild\Current\Bin\MSBuild.exe"),
+        (Join-Path $progFiles "Microsoft Visual Studio\2022\Community\MSBuild\Current\Bin\MSBuild.exe"),
+        (Join-Path $progFiles "Microsoft Visual Studio\2022\Professional\MSBuild\Current\Bin\MSBuild.exe"),
+        (Join-Path $progFiles "Microsoft Visual Studio\2022\Enterprise\MSBuild\Current\Bin\MSBuild.exe"),
+        (Join-Path $progX86  "Microsoft Visual Studio\2019\BuildTools\MSBuild\Current\Bin\MSBuild.exe"),
+        (Join-Path $progX86  "Microsoft Visual Studio\2019\Community\MSBuild\Current\Bin\MSBuild.exe")
+    )
+    foreach ($c in $candidates) {
+        if (Test-Path $c) { return $c }
+    }
+    # Fallback: vswhere
+    $vswhere = Join-Path $progX86 "Microsoft Visual Studio\Installer\vswhere.exe"
+    if (Test-Path $vswhere) {
+        $vsPath = & $vswhere -latest -products * -requires Microsoft.Component.MSBuild -property installationPath 2>$null
+        if ($vsPath) {
+            $candidate = Join-Path $vsPath "MSBuild\Current\Bin\MSBuild.exe"
+            if (Test-Path $candidate) { return $candidate }
+        }
+    }
+    return $null
+}
+
 function Get-LaunchCommand {
     $arch   = ($cmbArch.SelectedItem).Content.ToString().ToLower()
     $config = ($cmbConfig.SelectedItem).Content.ToString()
@@ -485,15 +523,13 @@ function Update-Preview {
     $txtCmdPreview.Text = $cmd.Display
 
     if (Test-Path $cmd.ExePath) {
-        $txtStatus.Text = "Ready to launch"
+        $txtStatus.Text = "Ready to run"
         $txtStatus.Foreground = $window.FindResource("GreenBrush")
-        $btnLaunch.IsEnabled = $true
-        $btnRun.IsEnabled    = $true
+        $btnRun.IsEnabled = $true
     } else {
         $txtStatus.Text = "Executable not found - build this configuration first"
         $txtStatus.Foreground = $window.FindResource("RedBrush")
-        $btnLaunch.IsEnabled = $false
-        $btnRun.IsEnabled    = $false
+        $btnRun.IsEnabled = $false
     }
 }
 
@@ -552,6 +588,138 @@ $txtFrame.Add_TextChanged({ Update-Preview })
 $txtWidth.Add_TextChanged({ Update-Preview })
 $txtHeight.Add_TextChanged({ Update-Preview })
 
+# BUILD button — build the solution with selected config/platform
+$btnBuild.Add_Click({
+    $arch   = ($cmbArch.SelectedItem).Content.ToString().ToLower()
+    $config = ($cmbConfig.SelectedItem).Content.ToString()
+
+    $platform = switch ($arch) {
+        "arm64" { "ARM64" }
+        "x86"   { "x86" }
+        default { "x64" }
+    }
+
+    # Locate the build script
+    $buildScript = Join-Path $rootDir "scripts\build.ps1"
+    if (-not (Test-Path $buildScript)) {
+        [System.Windows.MessageBox]::Show(
+            ("Build script not found:" + "`n" + $buildScript),
+            "T850 Launcher", "OK", "Error")
+        return
+    }
+
+    # Disable buttons during build
+    $btnBuild.IsEnabled  = $false
+    $btnRun.IsEnabled    = $false
+    $btnBuild.Content    = "BUILDING..."
+
+    # Show build output panel
+    $txtBuildOutput.Text = ""
+    $pnlBuildOutput.Visibility = [System.Windows.Visibility]::Visible
+
+    $txtStatus.Text = "Building $config|$platform ..."
+    $txtStatus.Foreground = $window.FindResource("AccentBrush")
+    $window.Dispatcher.Invoke([Action]{}, [System.Windows.Threading.DispatcherPriority]::Background)
+
+    Save-Config
+
+    # Find MSBuild
+    $msbuild = Find-MSBuild
+    if (-not $msbuild) {
+        $txtBuildOutput.Text = "ERROR: MSBuild not found. Install Visual Studio Build Tools."
+        $txtStatus.Text = "Build failed - MSBuild not found"
+        $txtStatus.Foreground = $window.FindResource("RedBrush")
+        $btnBuild.IsEnabled = $true
+        $btnBuild.Content = "BUILD"
+        Update-Preview
+        return
+    }
+
+    # Start MSBuild as a process and read output asynchronously
+    $slnPath = Join-Path $rootDir "T850.sln"
+    $psi = New-Object System.Diagnostics.ProcessStartInfo
+    $psi.FileName = $msbuild
+    $msbArgs = '"{0}" /p:Configuration={1} /p:Platform={2} /t:Rebuild /v:minimal' -f $slnPath, $config, $platform
+    $psi.Arguments = $msbArgs
+    $psi.UseShellExecute = $false
+    $psi.RedirectStandardOutput = $true
+    $psi.RedirectStandardError  = $true
+    $psi.CreateNoWindow = $true
+    $psi.WorkingDirectory = $rootDir
+
+    $proc = New-Object System.Diagnostics.Process
+    $proc.StartInfo = $psi
+
+    $buildLog   = New-Object System.Text.StringBuilder
+    $errorLines = New-Object System.Collections.Generic.List[string]
+
+    try {
+        $proc.Start() | Out-Null
+
+        # Read stdout + stderr synchronously on UI thread with Dispatcher pumping
+        $stdoutTask = $proc.StandardOutput.ReadToEndAsync()
+        $stderrTask = $proc.StandardError.ReadToEndAsync()
+
+        # Pump the dispatcher while waiting for process to exit
+        $sw = [System.Diagnostics.Stopwatch]::StartNew()
+        while (-not $proc.HasExited) {
+            $window.Dispatcher.Invoke([Action]{}, [System.Windows.Threading.DispatcherPriority]::Background)
+            Start-Sleep -Milliseconds 100
+            $elapsed = $sw.Elapsed.ToString("mm\:ss")
+            $txtStatus.Text = "Building $config|$platform ... ($elapsed)"
+        }
+        $proc.WaitForExit()
+        $sw.Stop()
+
+        $stdout = $stdoutTask.Result
+        $stderr = $stderrTask.Result
+
+        $nl = [System.Environment]::NewLine
+        $allOutput = ($stdout + $nl + $stderr).Trim()
+
+        # Extract errors for display
+        $allLines = $allOutput -split $nl
+        $allLines | ForEach-Object {
+            $line = $_.Trim()
+            if ($line -match ": error ") {
+                $errorLines.Add($line)
+            }
+        }
+
+        # Trim output to last ~80 lines max for display
+        if ($allLines.Count -gt 80) {
+            $allLines = @("... (truncated, showing last 80 lines) ...") + ($allLines | Select-Object -Last 80)
+        }
+        $txtBuildOutput.Text = ($allLines -join $nl)
+        $svBuildOutput.ScrollToEnd()
+
+        $exitCode = $proc.ExitCode
+        if ($exitCode -eq 0) {
+            $txtStatus.Text = "Build succeeded - $config|$platform"
+            $txtStatus.Foreground = $window.FindResource("GreenBrush")
+        } else {
+            if ($errorLines.Count -gt 0) {
+                $txtStatus.Text = "Build FAILED ($($errorLines.Count) error(s))"
+                $txtStatus.Foreground = $window.FindResource("RedBrush")
+            } else {
+                $txtStatus.Text = "Build FAILED (exit code $exitCode)"
+                $txtStatus.Foreground = $window.FindResource("RedBrush")
+            }
+        }
+    } catch {
+        $txtBuildOutput.Text = "Exception: $($_.Exception.Message)"
+        $txtStatus.Text = "Build error"
+        $txtStatus.Foreground = $window.FindResource("RedBrush")
+    } finally {
+        if ($proc -and -not $proc.HasExited) {
+            try { $proc.Kill() } catch {}
+        }
+        $btnBuild.Content = "BUILD"
+        $btnBuild.IsEnabled = $true
+        Update-Preview
+    }
+})
+
 # RUN button — launch the app with current settings (no dump override)
 $btnRun.Add_Click({
     $cmd = Get-LaunchCommand
@@ -572,30 +740,6 @@ $btnRun.Add_Click({
     Start-Process -FilePath $cmd.ExePath -ArgumentList $cmd.Args -WorkingDirectory $workDir
 
     $txtStatus.Text = "Process running"
-    $txtStatus.Foreground = $window.FindResource("GreenBrush")
-})
-
-# Launch button — same but labelled separately for dump/advanced use
-$btnLaunch.Add_Click({
-    $cmd = Get-LaunchCommand
-    if (-not (Test-Path $cmd.ExePath)) {
-        [System.Windows.MessageBox]::Show(
-            ("Executable not found:" + "`n" + $cmd.ExePath + "`n`n" + "Please build this configuration first."),
-            "T850 Launcher", "OK", "Error")
-        return
-    }
-
-    # Save settings to config.json before launching
-    Save-Config
-
-    $txtStatus.Text = "Launching..."
-    $txtStatus.Foreground = $window.FindResource("AccentBrush")
-    $window.Dispatcher.Invoke([Action]{}, [System.Windows.Threading.DispatcherPriority]::Background)
-
-    $workDir = Split-Path -Parent $cmd.ExePath
-    Start-Process -FilePath $cmd.ExePath -ArgumentList $cmd.Args -WorkingDirectory $workDir
-
-    $txtStatus.Text = "Process launched"
     $txtStatus.Foreground = $window.FindResource("GreenBrush")
 })
 

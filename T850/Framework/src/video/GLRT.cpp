@@ -196,8 +196,10 @@ namespace t800 {
 #endif
       glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
       glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
-      glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
-      glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+      glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, 0x812D); // GL_CLAMP_TO_BORDER
+      glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, 0x812D); // GL_CLAMP_TO_BORDER
+      float borderColor[] = { 0.0f, 0.0f, 0.0f, 0.0f };
+      glTexParameterfv(GL_TEXTURE_2D, 0x1004, borderColor); // GL_TEXTURE_BORDER_COLOR
 
       if (number_RT == 0) {
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_COMPARE_MODE, GL_COMPARE_REF_TO_TEXTURE);

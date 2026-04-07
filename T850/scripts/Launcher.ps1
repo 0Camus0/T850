@@ -1,32 +1,87 @@
 # T850 Engine Launcher
 # WPF GUI for launching DayScene — reads/writes config.json
 
-Add-Type -AssemblyName PresentationFramework, PresentationCore, WindowsBase
+Add-Type -AssemblyName PresentationFramework, PresentationCore, WindowsBase, System.Windows.Forms
 
 $xaml = @"
 <Window xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-        Title="T850 Engine Launcher" Height="580" Width="480"
-        WindowStartupLocation="CenterScreen" ResizeMode="NoResize"
-        Background="#1E1E2E" Foreground="#CDD6F4">
+        Title="T850 Engine Launcher" SizeToContent="Height" Width="500" MinWidth="420"
+        WindowStartupLocation="CenterScreen" ResizeMode="CanResize"
+        Background="#1B1B2F" Foreground="#E0E0E0">
     <Window.Resources>
-        <SolidColorBrush x:Key="AccentBrush" Color="#89B4FA"/>
-        <SolidColorBrush x:Key="AccentHoverBrush" Color="#B4D0FB"/>
-        <SolidColorBrush x:Key="SurfaceBrush" Color="#313244"/>
-        <SolidColorBrush x:Key="Surface2Brush" Color="#45475A"/>
-        <SolidColorBrush x:Key="TextBrush" Color="#CDD6F4"/>
-        <SolidColorBrush x:Key="SubtextBrush" Color="#A6ADC8"/>
+        <SolidColorBrush x:Key="AccentBrush" Color="#6C63FF"/>
+        <SolidColorBrush x:Key="AccentHoverBrush" Color="#8B85FF"/>
+        <SolidColorBrush x:Key="SurfaceBrush" Color="#162447"/>
+        <SolidColorBrush x:Key="Surface2Brush" Color="#1F4068"/>
+        <SolidColorBrush x:Key="TextBrush" Color="#E0E0E0"/>
+        <SolidColorBrush x:Key="SubtextBrush" Color="#A0A0B8"/>
         <SolidColorBrush x:Key="GreenBrush" Color="#A6E3A1"/>
         <SolidColorBrush x:Key="RedBrush" Color="#F38BA8"/>
 
+        <!-- ComboBox: force light text via a custom ControlTemplate -->
+        <ControlTemplate x:Key="ComboBoxToggleButton" TargetType="ToggleButton">
+            <Grid>
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition/>
+                    <ColumnDefinition Width="28"/>
+                </Grid.ColumnDefinitions>
+                <Border x:Name="Border" Grid.ColumnSpan="2" CornerRadius="4"
+                        Background="{StaticResource Surface2Brush}"
+                        BorderBrush="{StaticResource Surface2Brush}" BorderThickness="1"/>
+                <Path x:Name="Arrow" Grid.Column="1" HorizontalAlignment="Center" VerticalAlignment="Center"
+                      Data="M 0 0 L 4 4 L 8 0 Z" Fill="{StaticResource TextBrush}"/>
+            </Grid>
+        </ControlTemplate>
         <Style TargetType="ComboBox">
-            <Setter Property="Background" Value="{StaticResource SurfaceBrush}"/>
             <Setter Property="Foreground" Value="{StaticResource TextBrush}"/>
-            <Setter Property="BorderBrush" Value="{StaticResource Surface2Brush}"/>
-            <Setter Property="BorderThickness" Value="1"/>
-            <Setter Property="Padding" Value="8,6"/>
             <Setter Property="FontSize" Value="14"/>
             <Setter Property="Height" Value="36"/>
+            <Setter Property="SnapsToDevicePixels" Value="True"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="ComboBox">
+                        <Grid>
+                            <ToggleButton Name="ToggleButton" Template="{StaticResource ComboBoxToggleButton}"
+                                          Focusable="False" IsChecked="{Binding Path=IsDropDownOpen, Mode=TwoWay, RelativeSource={RelativeSource TemplatedParent}}"
+                                          ClickMode="Press"/>
+                            <ContentPresenter Name="ContentSite" IsHitTestVisible="False"
+                                              Content="{TemplateBinding SelectionBoxItem}"
+                                              ContentTemplate="{TemplateBinding SelectionBoxItemTemplate}"
+                                              ContentTemplateSelector="{TemplateBinding ItemTemplateSelector}"
+                                              Margin="10,3,28,3" VerticalAlignment="Center" HorizontalAlignment="Left">
+                                <ContentPresenter.Resources>
+                                    <Style TargetType="TextBlock">
+                                        <Setter Property="Foreground" Value="{StaticResource TextBrush}"/>
+                                    </Style>
+                                </ContentPresenter.Resources>
+                            </ContentPresenter>
+                            <Popup Name="Popup" Placement="Bottom" IsOpen="{TemplateBinding IsDropDownOpen}"
+                                   AllowsTransparency="True" Focusable="False" PopupAnimation="Slide">
+                                <Grid Name="DropDown" SnapsToDevicePixels="True"
+                                      MinWidth="{TemplateBinding ActualWidth}" MaxHeight="{TemplateBinding MaxDropDownHeight}">
+                                    <Border x:Name="DropDownBorder" Background="{StaticResource SurfaceBrush}"
+                                            BorderBrush="{StaticResource Surface2Brush}" BorderThickness="1" CornerRadius="4"/>
+                                    <ScrollViewer Margin="2" SnapsToDevicePixels="True">
+                                        <StackPanel IsItemsHost="True" KeyboardNavigation.DirectionalNavigation="Contained"/>
+                                    </ScrollViewer>
+                                </Grid>
+                            </Popup>
+                        </Grid>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+        <Style TargetType="ComboBoxItem">
+            <Setter Property="Foreground" Value="{StaticResource TextBrush}"/>
+            <Setter Property="Background" Value="{StaticResource SurfaceBrush}"/>
+            <Setter Property="Padding" Value="8,5"/>
+            <Setter Property="FontSize" Value="14"/>
+            <Style.Triggers>
+                <Trigger Property="IsHighlighted" Value="True">
+                    <Setter Property="Background" Value="{StaticResource Surface2Brush}"/>
+                </Trigger>
+            </Style.Triggers>
         </Style>
 
         <Style TargetType="TextBox">
@@ -132,6 +187,28 @@ $xaml = @"
                 <TextBlock Text="RENDER TARGET DUMP" FontSize="12" FontWeight="SemiBold"
                            Foreground="{StaticResource AccentBrush}" Margin="0,0,0,10"/>
                 <CheckBox Name="chkDump" Content="Enable RT dump on run" Margin="0,0,0,10"/>
+                <CheckBox Name="chkDebugFrames" Content="Debug Frames (spacebar dumps + exits)" Margin="0,0,0,10"/>
+                <CheckBox Name="chkFeedMatrices" Content="Feed Matrices (replay camera position)" Margin="0,0,0,6"/>
+                <CheckBox Name="chkKeepRunning" Content="Keep running after dump" Margin="0,0,0,10"/>
+                <Grid Name="pnlFeedMatrices" IsEnabled="False" Margin="20,0,0,10">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="*"/>
+                        <ColumnDefinition Width="8"/>
+                        <ColumnDefinition Width="Auto"/>
+                    </Grid.ColumnDefinitions>
+                    <TextBox Grid.Column="0" Name="txtFeedMatricesPath" IsReadOnly="True"
+                             FontSize="11" VerticalContentAlignment="Center"/>
+                    <Button Grid.Column="2" Name="btnBrowseMatrices" Content="Browse..."
+                            Padding="10,4" FontSize="12" Cursor="Hand"
+                            Background="{StaticResource Surface2Brush}" Foreground="{StaticResource TextBrush}"
+                            BorderThickness="0">
+                        <Button.Resources>
+                            <Style TargetType="Border">
+                                <Setter Property="CornerRadius" Value="4"/>
+                            </Style>
+                        </Button.Resources>
+                    </Button>
+                </Grid>
                 <StackPanel Name="pnlDumpOptions" IsEnabled="False">
                     <StackPanel Orientation="Horizontal" Margin="0,0,0,8">
                         <RadioButton Name="rbSeconds" Content="Dump at second"
@@ -233,6 +310,12 @@ $cmbArch        = $window.FindName("cmbArch")
 $cmbConfig      = $window.FindName("cmbConfig")
 $cmbApi         = $window.FindName("cmbApi")
 $chkDump        = $window.FindName("chkDump")
+$chkDebugFrames = $window.FindName("chkDebugFrames")
+$chkKeepRunning = $window.FindName("chkKeepRunning")
+$chkFeedMatrices  = $window.FindName("chkFeedMatrices")
+$pnlFeedMatrices  = $window.FindName("pnlFeedMatrices")
+$txtFeedMatricesPath = $window.FindName("txtFeedMatricesPath")
+$btnBrowseMatrices   = $window.FindName("btnBrowseMatrices")
 $pnlDumpOptions = $window.FindName("pnlDumpOptions")
 $rbSeconds      = $window.FindName("rbSeconds")
 $rbFrame        = $window.FindName("rbFrame")
@@ -290,6 +373,19 @@ function Load-Config {
             if ($cfg.display.width)  { $txtWidth.Text  = $cfg.display.width.ToString() }
             if ($cfg.display.height) { $txtHeight.Text = $cfg.display.height.ToString() }
         }
+        # Debug Frames
+        if ($cfg.PSObject.Properties['debugFrames']) {
+            $chkDebugFrames.IsChecked = [bool]$cfg.debugFrames
+        }
+        # Keep Running
+        if ($cfg.PSObject.Properties['keepRunning']) {
+            $chkKeepRunning.IsChecked = [bool]$cfg.keepRunning
+        }
+        # Feed Matrices
+        if ($cfg.PSObject.Properties['feedMatrices']) {
+            $chkFeedMatrices.IsChecked = [bool]$cfg.feedMatrices.enabled
+            if ($cfg.feedMatrices.path) { $txtFeedMatricesPath.Text = $cfg.feedMatrices.path }
+        }
         # Dump
         if ($cfg.dump) {
             $chkDump.IsChecked = [bool]$cfg.dump.enabled
@@ -317,6 +413,12 @@ function Save-Config {
             width  = [int]$txtWidth.Text
             height = [int]$txtHeight.Text
         }
+        debugFrames = [bool]$chkDebugFrames.IsChecked
+        keepRunning = [bool]$chkKeepRunning.IsChecked
+        feedMatrices = @{
+            enabled = [bool]$chkFeedMatrices.IsChecked
+            path    = $txtFeedMatricesPath.Text
+        }
         dump = @{
             enabled = [bool]$chkDump.IsChecked
             trigger = if ($rbFrame.IsChecked) { "frame" } else { "seconds" }
@@ -342,6 +444,18 @@ function Get-LaunchCommand {
 
     $exePath = Join-Path $rootDir "bin\$archFolder\$config\DayScene.exe"
     $argList = @("--api", $apiTag)
+
+    if ($chkDebugFrames.IsChecked) {
+        $argList += "--debugFrames"
+    }
+
+    if ($chkFeedMatrices.IsChecked -and $txtFeedMatricesPath.Text) {
+        $argList += @("--feedMatrices", ('"{0}"' -f $txtFeedMatricesPath.Text))
+    }
+
+    if ($chkKeepRunning.IsChecked) {
+        $argList += "--keepRunning"
+    }
 
     if ($chkDump.IsChecked) {
         if ($rbFrame.IsChecked) {
@@ -403,6 +517,31 @@ $rbFrame.Add_Checked({
     $pnlSeconds.IsEnabled = $false
     $pnlFrame.IsEnabled   = $true
     Update-Preview
+})
+
+$chkDebugFrames.Add_Checked({ Update-Preview })
+$chkDebugFrames.Add_Unchecked({ Update-Preview })
+
+$chkKeepRunning.Add_Checked({ Update-Preview })
+$chkKeepRunning.Add_Unchecked({ Update-Preview })
+
+$chkFeedMatrices.Add_Checked({
+    $pnlFeedMatrices.IsEnabled = $true
+    Update-Preview
+})
+$chkFeedMatrices.Add_Unchecked({
+    $pnlFeedMatrices.IsEnabled = $false
+    Update-Preview
+})
+
+$btnBrowseMatrices.Add_Click({
+    $dlg = New-Object System.Windows.Forms.OpenFileDialog
+    $dlg.Title  = "Select matrices file"
+    $dlg.Filter = "Matrices files (*.json;*.txt)|*.json;*.txt|All files (*.*)|*.*"
+    if ($dlg.ShowDialog() -eq [System.Windows.Forms.DialogResult]::OK) {
+        $txtFeedMatricesPath.Text = $dlg.FileName
+        Update-Preview
+    }
 })
 
 $cmbArch.Add_SelectionChanged({ Update-Preview })

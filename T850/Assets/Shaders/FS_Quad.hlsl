@@ -24,7 +24,8 @@ struct VS_OUTPUT{
 	float4 PosCorner : VPOS;
 };
 
-SamplerState SS;
+SamplerState SS  : register(s0);
+SamplerState SS1 : register(s1);
 
 float roundTo(float num,float decimals){
 	float shift = pow(10.0,decimals);
@@ -208,9 +209,15 @@ float4 CalculateShadow(float4 position) {
 		[loop] for (y = -Origin; y <= Origin; y += 1.0) {
 			[loop] for (x = -Origin; x <= Origin; x += 1.0) {
 				float2 offset = (brightness.z / brightness.y) * float2(x, y);
-				float depthSM = tex1.Sample(SS, SHTC.xy + offset);
-				depthSM += 0.000005;
-				float Val_1 = (LightPos.z > depthSM) ? 0.0 : 1.0;
+				float2 sampleUV = SHTC.xy + offset;
+				float Val_1;
+				if (sampleUV.x < 0.0 || sampleUV.x > 1.0 || sampleUV.y < 0.0 || sampleUV.y > 1.0) {
+					Val_1 = 0.0;
+				} else {
+					float depthSM = tex1.Sample(SS1, sampleUV);
+					depthSM += 0.000005;
+					Val_1 = (LightPos.z > depthSM) ? 0.0 : 1.0;
+				}
 				Val_1 *= 0.75;
 				Val_1 += 0.25;
 				sum += Val_1;
@@ -525,9 +532,9 @@ float4 FS(VS_OUTPUT input) : SV_TARGET{
 Texture2D tex0 : register(t0);
 float4 FS(VS_OUTPUT input) : SV_TARGET{
   float2 uv = input.texture0.xy;
-  const float2 defaultPos = float2(0.8, 0.2);
-  const float2 raysCenter = float2(0.435, 0.99);
-  const float raySize = 3.0;
+  const float2 defaultPos = float2(0.8, 0.4);
+  const float2 raysCenter = float2(0.435, 1.0 - 0.59);
+  const float raySize = 0.2;
   float scale = (1.0 - defaultPos.y) * raySize;
   const float accum = 1.0 / (float)raysSamples;
   scale = lerp(1.0, 1.0 - accum, scale);
@@ -849,7 +856,7 @@ const float3 lightColor = float3(0.9803, 0.8392, 0.6470);
   LightPos.z /= LightCameraInfo.y;
   float2 SHTC = LightPos.xy*0.5 + 0.5;
   SHTC.y = 1.0 - SHTC.y;
-  float depthValue = tex1.Sample(SS, SHTC);
+  float depthValue = tex1.Sample(SS1, SHTC);
   depthValue += 0.00005;
 
   if (depthValue > LightPos.z && SHTC.x < 1.0 && SHTC.y < 1.0 && SHTC.x > 0.0 && SHTC.y > 0.0 && LightPos.w > 0.0 && LightPos.z < 1.0)

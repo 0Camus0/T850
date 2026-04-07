@@ -32,6 +32,10 @@ bool   g_dumpEnabled = false;
 bool   g_dumpByFrame = false;     // true = frame-based, false = time-based
 int    g_dumpFrame   = -1;        // frame number to dump at
 float  g_dumpSeconds = -1.0f;     // seconds to dump at
+bool   g_debugFrames = false;     // --debugFrames: spacebar pauses + dumps + exits
+bool   g_debugDumpRequested = false; // set by spacebar press
+std::string g_feedMatricesPath;      // --feedMatrices: path to matrices.json to replay
+bool   g_keepRunning = false;        // --keepRunning: don't exit after dump
 
 t800::AppBase		  *pApp = 0;
 t800::RootFramework *pFrameWork = 0;
@@ -67,6 +71,19 @@ int main(int arg,char ** args){
       g_dumpEnabled = true;
       g_dumpByFrame = false;
       g_dumpSeconds = std::stof(args[++i]);
+    }
+    else if (a == "--debugFrames") {
+      g_debugFrames = true;
+    }
+    else if (a == "--feedMatrices" && i + 1 < arg) {
+      g_feedMatricesPath = args[++i];
+      // Strip surrounding quotes if present (from launcher)
+      if (g_feedMatricesPath.size() >= 2 && g_feedMatricesPath.front() == '"' && g_feedMatricesPath.back() == '"') {
+        g_feedMatricesPath = g_feedMatricesPath.substr(1, g_feedMatricesPath.size() - 2);
+      }
+    }
+    else if (a == "--keepRunning") {
+      g_keepRunning = true;
     }
     else if (a == "--width" && i + 1 < arg) {
       desc.width = std::stoi(args[++i]);

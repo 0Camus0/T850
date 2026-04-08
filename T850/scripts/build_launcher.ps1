@@ -24,6 +24,7 @@ $params = @{
     inputFile  = $source
     outputFile = $output
     noConsole  = $NoConsole
+    iconFile   = (Join-Path $rootDir "Resources\T850.ico")
     title      = "T850 Engine Launcher"
     company    = "T850"
     product    = "T850 Engine"

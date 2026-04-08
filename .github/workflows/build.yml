@@ -112,6 +112,14 @@ jobs:
         with:
           path: artifacts
 
+      - name: Build launcher
+        shell: pwsh
+        run: |
+          if (-not (Get-Module ps2exe -ListAvailable)) {
+            Install-Module ps2exe -Scope CurrentUser -Force
+          }
+          & T850/scripts/build_launcher.ps1
+
       - name: Package releases
         shell: pwsh
         run: |
@@ -123,6 +131,9 @@ jobs:
 
             # Copy executable and DLLs
             Copy-Item "$($dir.FullName)/*" -Destination $staging -Recurse
+
+            # Copy launcher
+            Copy-Item "T850/T850Launcher.exe" -Destination $staging
 
             # Copy assets
             Copy-Item "$assets/Shaders"    -Destination "$staging/Shaders"    -Recurse

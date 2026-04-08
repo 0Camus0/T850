@@ -162,6 +162,46 @@ namespace t800 {
       printf("Window creation failed: %s\n", SDL_GetError());
     }
 
+    // Set window icon from embedded exe resource
+    {
+      HICON hIcon = LoadIcon(GetModuleHandle(NULL), TEXT("IDI_ICON1"));
+      if (hIcon) {
+        ICONINFO ii;
+        if (GetIconInfo(hIcon, &ii)) {
+          BITMAP bm;
+          GetObject(ii.hbmColor, sizeof(bm), &bm);
+          int w = bm.bmWidth;
+          int h = bm.bmHeight;
+          BITMAPINFOHEADER bi = {};
+          bi.biSize = sizeof(bi);
+          bi.biWidth = w;
+          bi.biHeight = -h; // top-down
+          bi.biPlanes = 1;
+          bi.biBitCount = 32;
+          bi.biCompression = BI_RGB;
+          HDC hdc = GetDC(NULL);
+          unsigned char* pixels = new unsigned char[w * h * 4];
+          GetDIBits(hdc, ii.hbmColor, 0, h, pixels, (BITMAPINFO*)&bi, DIB_RGB_COLORS);
+          ReleaseDC(NULL, hdc);
+          // GDI returns BGRA, SDL wants RGBA — swap R and B
+          for (int i = 0; i < w * h * 4; i += 4) {
+            unsigned char tmp = pixels[i];
+            pixels[i] = pixels[i + 2];
+            pixels[i + 2] = tmp;
+          }
+          SDL_Surface* icon = SDL_CreateSurfaceFrom(w, h, SDL_PIXELFORMAT_RGBA32, pixels, w * 4);
+          if (icon) {
+            SDL_SetWindowIcon(m_pWindow, icon);
+            SDL_DestroySurface(icon);
+          }
+          delete[] pixels;
+          DeleteObject(ii.hbmColor);
+          DeleteObject(ii.hbmMask);
+        }
+        DestroyIcon(hIcon);
+      }
+    }
+
     if (api == GRAPHICS_API::OPENGL) {
 #if defined(USING_OPENGL)
       m_glContext = SDL_GL_CreateContext(m_pWindow);

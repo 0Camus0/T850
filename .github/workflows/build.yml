@@ -118,7 +118,7 @@ jobs:
           if (-not (Get-Module ps2exe -ListAvailable)) {
             Install-Module ps2exe -Scope CurrentUser -Force
           }
-          & T850/scripts/build_launcher.ps1
+          & T850/scripts/build_launcher_release.ps1
 
       - name: Package releases
         shell: pwsh

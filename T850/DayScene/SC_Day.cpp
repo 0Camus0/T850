@@ -217,7 +217,7 @@ void SC_Day::InitVars() {
   Cam.Yaw = 0.020f;
   Cam.Update(0.0f);
 
-  LightCam.InitOrtho(XVECTOR3(0.0f, 100.0f, 10.0f), 130.0f, 130.0f, 10.0f, 600.0f);
+  LightCam.InitOrtho(XVECTOR3(0.0f, 100.0f, 10.0f), 130.0f, 130.0f, 0.1f, 600.0f);
   LightCam.Speed = 10.0f;
   LightCam.Eye = XVECTOR3(25.0f, 100.0f, 0.0f);
   LightCam.Pitch = 1.12f;
@@ -1261,6 +1261,20 @@ void  SC_Day::ChangeSettingsOnPlus() {
 	  SceneProp.ToogleSSAO = 1;
 	  cout << "[CHANGLE_SSAO_TOOGLE] Previous Value[" << prevVal << "] Actual Value[" << SceneProp.ToogleSSAO << "]" << endl;
   }break;
+  case CHANGE_LIGHT_NEAR_PLANE: {
+    float prevVal = LightCam.NPlane;
+    LightCam.NPlane += 1.0f;
+    LightCam.CreatePojection();
+    LightCam.Update(0);
+    cout << "[CHANGE_LIGHT_NEAR_PLANE] Previous Value[" << prevVal << "] Actual Value[" << LightCam.NPlane << "]" << endl;
+  }break;
+  case CHANGE_LIGHT_FAR_PLANE: {
+    float prevVal = LightCam.FPlane;
+    LightCam.FPlane += 10.0f;
+    LightCam.CreatePojection();
+    LightCam.Update(0);
+    cout << "[CHANGE_LIGHT_FAR_PLANE] Previous Value[" << prevVal << "] Actual Value[" << LightCam.FPlane << "]" << endl;
+  }break;
   }
 }
 
@@ -1397,6 +1411,22 @@ void  SC_Day::ChangeSettingsOnMinus() {
 	  SceneProp.ToogleSSAO = 0;
 	  cout << "[CHANGLE_SSAO_TOOGLE] Previous Value[" << prevVal << "] Actual Value[" << SceneProp.ToogleSSAO << "]" << endl;
   }break;
+  case CHANGE_LIGHT_NEAR_PLANE: {
+    float prevVal = LightCam.NPlane;
+    LightCam.NPlane -= 1.0f;
+    if (LightCam.NPlane < 0.1f) LightCam.NPlane = 0.1f;
+    LightCam.CreatePojection();
+    LightCam.Update(0);
+    cout << "[CHANGE_LIGHT_NEAR_PLANE] Previous Value[" << prevVal << "] Actual Value[" << LightCam.NPlane << "]" << endl;
+  }break;
+  case CHANGE_LIGHT_FAR_PLANE: {
+    float prevVal = LightCam.FPlane;
+    LightCam.FPlane -= 10.0f;
+    if (LightCam.FPlane < 1.0f) LightCam.FPlane = 1.0f;
+    LightCam.CreatePojection();
+    LightCam.Update(0);
+    cout << "[CHANGE_LIGHT_FAR_PLANE] Previous Value[" << prevVal << "] Actual Value[" << LightCam.FPlane << "]" << endl;
+  }break;
   }
 }
 
@@ -1470,6 +1500,12 @@ void SC_Day::printCurrSelection() {
   }break;
   case CHANGLE_SSAO_TOOGLE: {
 	  cout << "Option[CHANGLE_SSAO_TOOGLE] Value[" << SceneProp.ToogleSSAO << "]" << endl;
+  }break;
+  case CHANGE_LIGHT_NEAR_PLANE: {
+    cout << "Option[CHANGE_LIGHT_NEAR_PLANE] Value[" << LightCam.NPlane << "]" << endl;
+  }break;
+  case CHANGE_LIGHT_FAR_PLANE: {
+    cout << "Option[CHANGE_LIGHT_FAR_PLANE] Value[" << LightCam.FPlane << "]" << endl;
   }break;
   }
 }

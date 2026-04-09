@@ -1,17 +1,17 @@
 ﻿{
     "configuration":  "Release",
-    "keepRunning":  true,
+    "keepRunning":  false,
     "dump":  {
                  "seconds":  5,
                  "trigger":  "frame",
                  "frame":  750,
                  "enabled":  false
              },
-    "debugFrames":  true,
+    "debugFrames":  false,
     "architecture":  "x64",
     "feedMatrices":  {
                          "path":  "D:\\Code\\Game\\T850\\T850\\bin\\x64\\Release\\dumps_d3d11_f3283_20260407_082257\\matrices.json",
-                         "enabled":  true
+                         "enabled":  false
                      },
     "display":  {
                     "height":  720,

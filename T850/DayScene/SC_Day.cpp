@@ -303,7 +303,7 @@ void SC_Day::InitVars() {
 
 
   SceneProp.ToogleShadow = true;
-  SceneProp.ToogleSSAO = false;
+  SceneProp.ToogleSSAO = true;
   SceneProp.AutoFocus = true;
 
 

@@ -1,0 +1,9 @@
+﻿D3D11: 1280x720, GL: 1280x720
+Normal:  diff_pct=24.4% max=188 avg=2.72
+GL Y-flip: diff_pct=98.5% max=252 avg=49.26
+  center     D3D=[ 23  78 162] GL=[ 23  78 162] GL_flip=[ 24  79 163]
+  top-left   D3D=[172 153 118] GL=[173 154 127] GL_flip=[161 143 118]
+  top-right  D3D=[163 154 134] GL=[170 160 140] GL_flip=[197 184 157]
+  bot-left   D3D=[177 160 128] GL=[186 169 133] GL_flip=[185 168 145]
+  bot-right  D3D=[192 180 144] GL=[190 175 137] GL_flip=[167 156 137]
+GL BGR:  diff_pct=74.8% max=187 avg=43.75

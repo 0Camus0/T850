@@ -216,22 +216,27 @@ void SC_Night::InitVars() {
   
 }
 void SC_Night::CreateAssets() {
-  //Create RT's
-  GBufferPass = pFramework->pVideoDriver->CreateRT(5, BaseRT::RGBA16F, BaseRT::F32, 0, 0, true);
-  DeferredPass = pFramework->pVideoDriver->CreateRT(1, BaseRT::RGBA16F, BaseRT::NOTHING, 0, 0, true);
-  Extra16FPass = pFramework->pVideoDriver->CreateRT(1, BaseRT::RGBA16F, BaseRT::NOTHING, 0, 0, true);
-  DepthPass = pFramework->pVideoDriver->CreateRT(0, BaseRT::NOTHING, BaseRT::F32, (int)SceneProp.ShadowMapResolution, (int)SceneProp.ShadowMapResolution, false);
-  ShadowAccumPass = pFramework->pVideoDriver->CreateRT(1, BaseRT::RGBA8, BaseRT::NOTHING, 0, 0, true);
-  ExtraHelperPass = pFramework->pVideoDriver->CreateRT(1, BaseRT::RGBA8, BaseRT::NOTHING, 0, 0, true);
-  BloomAccumPass = pFramework->pVideoDriver->CreateRT(1, BaseRT::RGBA8, BaseRT::NOTHING, 512, 512, true);
-  GodRaysCalcPass = pFramework->pVideoDriver->CreateRT(1, BaseRT::RGBA8, BaseRT::NOTHING, 512, 512, true);
-  CoCPass = pFramework->pVideoDriver->CreateRT(2, BaseRT::F16, BaseRT::NOTHING, 512, 512, true);
-  CombineCoCPass = pFramework->pVideoDriver->CreateRT(1, BaseRT::F16, BaseRT::NOTHING, 512, 512, true);
-  CoCHelperPass = pFramework->pVideoDriver->CreateRT(1, BaseRT::F16, BaseRT::NOTHING, 512, 512, false);
-  CoCHelperPass2 = pFramework->pVideoDriver->CreateRT(1, BaseRT::F16, BaseRT::NOTHING, 512, 512, false);
-  OmniShadowDepthPass = pFramework->pVideoDriver->CreateRT(0, BaseRT::NOTHING, BaseRT::CUBE_F32, 1024, 1024, false);
-  //OmniShadowCubePass = pFramework->pVideoDriver->CreateRT(6, BaseRT::F32, BaseRT::NOTHING, 512, 512, true);
-  //
+  //Create RT's via RenderGraph
+  if (!m_renderGraph.Load("Scenes/SC_Night_RenderGraph.json")) {
+    printf("[SC_Night] ERROR: Failed to load render graph\n");
+    return;
+  }
+  m_renderGraph.CreateRenderTargets(pFramework->pVideoDriver, SceneProp);
+  m_renderGraph.PrintGraph();
+
+  // Alias RT handles for debug display
+  GBufferPass      = m_renderGraph.GetRTHandle("GBuffer");
+  DeferredPass     = m_renderGraph.GetRTHandle("Deferred");
+  Extra16FPass     = m_renderGraph.GetRTHandle("Extra16F");
+  ShadowAccumPass  = m_renderGraph.GetRTHandle("ShadowAccum");
+  ExtraHelperPass  = m_renderGraph.GetRTHandle("ExtraHelper");
+  BloomAccumPass   = m_renderGraph.GetRTHandle("BloomAccum");
+  GodRaysCalcPass  = m_renderGraph.GetRTHandle("GodRaysCalc");
+  CoCPass          = m_renderGraph.GetRTHandle("CoC");
+  CombineCoCPass   = m_renderGraph.GetRTHandle("CombineCoC");
+  CoCHelperPass    = m_renderGraph.GetRTHandle("CoCHelper");
+  CoCHelperPass2   = m_renderGraph.GetRTHandle("CoCHelper2");
+  OmniShadowDepthPass = m_renderGraph.GetRTHandle("OmniShadowDepth");
   PrimitiveMgr.Init();
   PrimitiveMgr.SetVP(&VP);
   SceneProp.SSAOKernel.InitTexture();
@@ -532,188 +537,17 @@ void SC_Night::OnInput(InputManager* IManager) {
 }
 
 void SC_Night::OnDraw() {
-  pFramework->pVideoDriver->SetDepthStencilState(BaseDriver::DEPTH_STENCIL_STATES::READ_WRITE);
-  pFramework->pVideoDriver->PushRT(OmniShadowDepthPass);
-  SceneProp.ActiveLightCamera = 1;
-  for (size_t i = 0; i < 6; i++)
-  {
-    pFramework->pVideoDriver->RTs[OmniShadowDepthPass]->ChangeCubeDepthTexture(static_cast<int>(i));
-    pFramework->pVideoDriver->Clear();
-  }
-  // Omnidirectional Shadow Map Depth Pass
-  pFramework->pVideoDriver->SetCullFace(BaseDriver::FACE_CULLING::BACK_FACES);
-  Meshes[0].SetGlobalSignature(Signature::RADIAL_DEPTH_PASS);
-  for (size_t i = 0; i < 6; i++)
-  {
-    SceneProp.pCameras[0] = &OmniLightCam[i];
-    pFramework->pVideoDriver->RTs[OmniShadowDepthPass]->ChangeCubeDepthTexture(static_cast<int>(i));
-    Meshes[0].Draw();
-  }
-  pFramework->pVideoDriver->PopRT();
-  Meshes[0].SetGlobalSignature(Signature::FORWARD_PASS);
-
-  pFramework->pVideoDriver->SetCullFace(BaseDriver::FACE_CULLING::FRONT_FACES);
-  SceneProp.ActiveLightCamera = 0;
-
-  // G Buffer Pass
-  pFramework->pVideoDriver->PushRT(GBufferPass);
-  SceneProp.pCameras[0] = &Cam;
-  for (int i = 0; i < 3; i++) {
-    Meshes[i].SetGlobalSignature(Signature::GBUFF_PASS);
-    Meshes[i].Draw();
-    Meshes[i].SetGlobalSignature(Signature::FORWARD_PASS);
-  }
-  pFramework->pVideoDriver->PopRT();
-
-  pFramework->pVideoDriver->SetDepthStencilState(BaseDriver::DEPTH_STENCIL_STATES::READ);
-
-  // Shadow Map Buffer Accumulation + Occlusion 
-  SceneProp.ActiveLightCamera = 1;
-  pFramework->pVideoDriver->PushRT(ShadowAccumPass);
-  pFramework->pVideoDriver->Clear();
-  Quads[0].SetTexture(pFramework->pVideoDriver->GetRTTexture(GBufferPass, BaseDriver::COLOR4_ATTACHMENT), 0);
-  Quads[0].SetTexture(pFramework->pVideoDriver->GetRTTexture(OmniShadowDepthPass, BaseDriver::DEPTH_ATTACHMENT), 1);
-  Quads[0].SetTexture(pFramework->pVideoDriver->GetRTTexture(GBufferPass, BaseDriver::COLOR1_ATTACHMENT), 2);
-  Quads[0].SetTexture(SceneProp.SSAOKernel.NoiseTex, 3);
-  Quads[0].SetGlobalSignature(Signature::SHADOW_COMP_PASS | Signature::USE_OMNIDIRECTIONAL_SHADOWS);
-  Quads[0].Draw();
-  pFramework->pVideoDriver->PopRT();
-  SceneProp.ActiveLightCamera = 0;
-
-  // Shadow Map Blur Pass
-  pFramework->pVideoDriver->PushRT(ExtraHelperPass);
-  SceneProp.ActiveGaussKernel = SHADOW_KERNEL;
-  Quads[0].SetTexture(pFramework->pVideoDriver->GetRTTexture(ShadowAccumPass, BaseDriver::COLOR0_ATTACHMENT), 0);
-  Quads[0].SetGlobalSignature(Signature::VERTICAL_BLUR_PASS);
-  Quads[0].Draw();
-  pFramework->pVideoDriver->PopRT();
-
-  pFramework->pVideoDriver->PushRT(ShadowAccumPass);
-  Quads[0].SetTexture(pFramework->pVideoDriver->GetRTTexture(ExtraHelperPass, BaseDriver::COLOR0_ATTACHMENT), 0);
-  Quads[0].SetGlobalSignature(Signature::HORIZONTAL_BLUR_PASS);
-  Quads[0].Draw();
-  pFramework->pVideoDriver->PopRT();
-
-  // Deferred Pass
-  pFramework->pVideoDriver->PushRT(DeferredPass);
-  Quads[0].SetTexture(pFramework->pVideoDriver->GetRTTexture(GBufferPass, BaseDriver::COLOR0_ATTACHMENT), 0);
-  Quads[0].SetTexture(pFramework->pVideoDriver->GetRTTexture(GBufferPass, BaseDriver::COLOR1_ATTACHMENT), 1);
-  Quads[0].SetTexture(pFramework->pVideoDriver->GetRTTexture(GBufferPass, BaseDriver::COLOR2_ATTACHMENT), 2);
-  Quads[0].SetTexture(pFramework->pVideoDriver->GetRTTexture(GBufferPass, BaseDriver::COLOR3_ATTACHMENT), 3);
-  Quads[0].SetTexture(pFramework->pVideoDriver->GetRTTexture(GBufferPass, BaseDriver::COLOR4_ATTACHMENT), 4);
-  Quads[0].SetTexture(pFramework->pVideoDriver->GetRTTexture(ShadowAccumPass, BaseDriver::COLOR0_ATTACHMENT), 5);
-  Quads[0].SetEnvironmentMap(g_pBaseDriver->GetTexture(EnvMapTexIndex));
-  //Quads[0].SetEnvironmentMap(pFramework->pVideoDriver->GetRTTexture(OmniShadowDepthPass, BaseDriver::DEPTH_ATTACHMENT));
-  Quads[0].SetGlobalSignature(Signature::DEFERRED_PASS);
-  Quads[0].Draw();
- // pFramework->pVideoDriver->PopRT();
-
-  // Volumetric ball pass
-  pFramework->pVideoDriver->SetBlendState(BaseDriver::BLEND_STATES::ALPHA_BLEND);
-  //pFramework->pVideoDriver->PushRT(DeferredPass);
-  Quads[0].SetTexture(pFramework->pVideoDriver->GetRTTexture(GBufferPass, BaseDriver::COLOR4_ATTACHMENT), 0);
-  Quads[0].SetGlobalSignature(Signature::RAY_MARCH);
-  Quads[0].Draw();
-  pFramework->pVideoDriver->PopRT();
-
-  //pFramework->pVideoDriver->PushRT(Extra16FPass);
-  //Quads[0].SetTexture(pFramework->pVideoDriver->GetRTTexture(GodRaysCalcPass, BaseDriver::COLOR0_ATTACHMENT), 0);
-  //Quads[0].SetTexture(pFramework->pVideoDriver->GetRTTexture(DeferredPass, BaseDriver::COLOR0_ATTACHMENT), 1);
-  //Quads[0].SetGlobalSignature(Signature::FSQUAD_2_TEX);
-  //Quads[0].Draw();
-  //pFramework->pVideoDriver->PopRT();
-  pFramework->pVideoDriver->SetBlendState(BaseDriver::BLEND_STATES::BLEND_DEFAULT);
-  // Bright Pass
-  pFramework->pVideoDriver->PushRT(BloomAccumPass);
-  Quads[0].SetTexture(pFramework->pVideoDriver->GetRTTexture(DeferredPass, BaseDriver::COLOR0_ATTACHMENT), 0);
-  Quads[0].SetGlobalSignature(Signature::BRIGHT_PASS);
-  Quads[0].Draw();
-  pFramework->pVideoDriver->PopRT();
-
-  SceneProp.ActiveGaussKernel = BLOOM_KERNEL;
-  pFramework->pVideoDriver->PushRT(ExtraHelperPass);
-  Quads[0].SetTexture(pFramework->pVideoDriver->GetRTTexture(BloomAccumPass, BaseDriver::COLOR0_ATTACHMENT), 0);
-  Quads[0].SetGlobalSignature(Signature::HORIZONTAL_BLUR_PASS);
-  Quads[0].Draw();
-  pFramework->pVideoDriver->PopRT();
-
-  pFramework->pVideoDriver->PushRT(BloomAccumPass);
-  Quads[0].SetTexture(pFramework->pVideoDriver->GetRTTexture(ExtraHelperPass, BaseDriver::COLOR0_ATTACHMENT), 0);
-  Quads[0].SetGlobalSignature(Signature::VERTICAL_BLUR_PASS);
-  Quads[0].Draw();
-  pFramework->pVideoDriver->PopRT();
-
-
-  SceneProp.ActiveGaussKernel = DOF_KERNEL;
-  //DOF PASS
-  pFramework->pVideoDriver->PushRT(CoCPass);
-  Quads[0].SetGlobalSignature(Signature::COC_PASS);
-  Quads[0].SetTexture(pFramework->pVideoDriver->GetRTTexture(GBufferPass, BaseDriver::COLOR4_ATTACHMENT), 0);
-  Quads[0].Draw();
-  pFramework->pVideoDriver->PopRT();
-
-  //COMBINE COC
-  pFramework->pVideoDriver->PushRT(CombineCoCPass);
-  Quads[0].SetGlobalSignature(Signature::COMBINE_COC_PASS);
-  Quads[0].SetTexture(pFramework->pVideoDriver->GetRTTexture(CoCPass, BaseDriver::COLOR0_ATTACHMENT), 0);
-  Quads[0].SetTexture(pFramework->pVideoDriver->GetRTTexture(CoCPass, BaseDriver::COLOR1_ATTACHMENT), 1);
-  Quads[0].Draw();
-  pFramework->pVideoDriver->PopRT();
-  ////DOF_BLUR
-  pFramework->pVideoDriver->PushRT(Extra16FPass);
-  Quads[0].SetGlobalSignature(Signature::DOF_PASS);
-  Quads[0].SetTexture(pFramework->pVideoDriver->GetRTTexture(DeferredPass, BaseDriver::COLOR0_ATTACHMENT), 0);
-  Quads[0].SetTexture(pFramework->pVideoDriver->GetRTTexture(CombineCoCPass, BaseDriver::COLOR0_ATTACHMENT), 1);
-  Quads[0].Draw();
-  pFramework->pVideoDriver->PopRT();
-
-  pFramework->pVideoDriver->PushRT(DeferredPass);
-  Quads[0].SetGlobalSignature(Signature::DOF_PASS_2);
-  Quads[0].SetTexture(pFramework->pVideoDriver->GetRTTexture(Extra16FPass, BaseDriver::COLOR0_ATTACHMENT), 0);
-  Quads[0].SetTexture(pFramework->pVideoDriver->GetRTTexture(CombineCoCPass, BaseDriver::COLOR0_ATTACHMENT), 1);
-  Quads[0].Draw();
-  pFramework->pVideoDriver->PopRT();
-
-  // HDR Composition Pass
-  pFramework->pVideoDriver->PushRT(ExtraHelperPass);
-#if	SEPARATED_BLUR
-  Quads[0].SetTexture(pFramework->pVideoDriver->GetRTTexture(DeferredPass, BaseDriver::COLOR0_ATTACHMENT), 0);
-  Quads[0].SetTexture(pFramework->pVideoDriver->GetRTTexture(BloomAccumPass, BaseDriver::COLOR0_ATTACHMENT), 1);
-  Quads[0].SetGlobalSignature(Signature::HDR_COMP_PASS);
-  Quads[0].Draw();
-#else
-  PrimitiveMgr.GetPrimitive(QuadIndex)->SetTexture(pFramework->pVideoDriver->GetRTTexture(DeferredPass, BaseDriver::COLOR0_ATTACHMENT), 0);
-  PrimitiveMgr.GetPrimitive(QuadIndex)->SetTexture(pFramework->pVideoDriver->GetRTTexture(ExtraHelperPass, BaseDriver::COLOR0_ATTACHMENT), 1);
-  Quads[0].SetSignature(Signature::HDR_COMP_PASS);
-  Quads[0].Draw();
-#endif
-  pFramework->pVideoDriver->PopRT();
-
-  // Final Draw
-  Quads[7].SetTexture(pFramework->pVideoDriver->GetRTTexture(ExtraHelperPass, BaseDriver::COLOR0_ATTACHMENT), 0);
-  Quads[7].SetGlobalSignature(Signature::VIGNETTE_PASS);
-  Quads[7].Draw();
-
-  //Quads[1].SetTexture(pFramework->pVideoDriver->GetRTTexture(ShadowAccumPass, BaseDriver::COLOR0_ATTACHMENT), 0);
-  //Quads[1].SetGlobalSignature(Signature::FSQUAD_1_TEX);
-  //Quads[1].Draw();
-
-  //Quads[2].SetTexture(pFramework->pVideoDriver->GetRTTexture(GodRaysCalcPass, BaseDriver::COLOR0_ATTACHMENT), 0);
-  //Quads[2].SetGlobalSignature(Signature::FSQUAD_1_TEX);
-  //Quads[2].Draw();
-
-  //Quads[3].SetTexture(pFramework->pVideoDriver->GetRTTexture(CombineCoCPass, BaseDriver::COLOR0_ATTACHMENT), 0);
-  //Quads[3].SetGlobalSignature(Signature::FSQUAD_1_TEX);
-  //Quads[3].Draw();
-
-  //Quads[4].SetTexture(pFramework->pVideoDriver->GetRTTexture(ShadowAccumPass, BaseDriver::COLOR0_ATTACHMENT), 0);
-  //Quads[4].SetGlobalSignature(Signature::FSQUAD_1_TEX);
-  //Quads[4].Draw();
-  //
-  //Quads[4].SetTexture(pFramework->pVideoDriver->GetRTTexture(ShadowAccumPass, BaseDriver::COLOR0_ATTACHMENT), 0);
-  //Quads[4].SetGlobalSignature(Signature::FSQUAD_1_TEX);
-  //Quads[4].Draw();
-
+  // Execute the render graph (all passes including final vignette)
+  m_renderGraph.Execute(
+    pFramework->pVideoDriver,
+    SceneProp,
+    Meshes, 3,
+    Quads,
+    &Cam,
+    &LightCam,
+    OmniLightCam,
+    EnvMapTexIndex
+  );
 }
 
 void  SC_Night::ChangeSettingsOnPlus() {

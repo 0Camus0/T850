@@ -194,6 +194,22 @@ void SC_Tech::InitVars() {
   m_agent.m_velocity = 15.0f;
 
   totalTime = 0.0f;
+
+  // Initialize frame dumper from command-line globals
+  extern bool g_dumpEnabled, g_dumpByFrame, g_debugFrames, g_keepRunning;
+  extern int g_dumpFrame, g_startScene;
+  extern float g_dumpSeconds;
+  extern std::string g_replaySnapshotPath;
+  FrameDumperConfig dumpCfg;
+  dumpCfg.dumpEnabled     = g_dumpEnabled;
+  dumpCfg.dumpByFrame     = g_dumpByFrame;
+  dumpCfg.dumpFrame       = g_dumpFrame;
+  dumpCfg.dumpSeconds     = g_dumpSeconds;
+  dumpCfg.debugFrames     = g_debugFrames;
+  dumpCfg.keepRunning     = g_keepRunning;
+  dumpCfg.replaySnapshotPath = g_replaySnapshotPath;
+  dumpCfg.sceneIndex      = g_startScene;
+  m_dumper.Init(dumpCfg);
 }
 void SC_Tech::CreateAssets() {
   //Create RT's via RenderGraph
@@ -315,10 +331,23 @@ void SC_Tech::OnUpdate(float _DtSecs) {
   totalTime += _DtSecs;
   DtSecs = _DtSecs;
   Meshes[0].SetParallaxSettings(SceneProp.ParallaxLowSamples, SceneProp.ParallaxHighSamples, SceneProp.ParallaxHeight);
-  m_agent.Update(DtSecs);
-  ActiveCam->Update(DtSecs);
-  VP = ActiveCam->VP;
-  SceneProp.Lights[0].Position = LightCam.Eye;
+
+  // Replay snapshot: load and apply (one-time)
+  if (m_dumper.HasPendingReplay()) {
+    if (m_dumper.LoadReplaySnapshot()) {
+      m_dumper.ApplySnapshot(Cam, LightCam, SceneProp);
+      VP = ActiveCam->VP;
+    }
+  }
+  m_dumper.UpdateReplayState();
+
+  // Normal camera/light updates (skipped when replay is active or dump pending)
+  if (!m_dumper.SkipCameraUpdates()) {
+    m_agent.Update(DtSecs);
+    ActiveCam->Update(DtSecs);
+    VP = ActiveCam->VP;
+    SceneProp.Lights[0].Position = LightCam.Eye;
+  }
 
   if (totalTime > 45.0f) {
     totalTime = 0.0;
@@ -356,10 +385,18 @@ void SC_Tech::OnInput(InputManager* IManager) {
   if (IManager->PressedOnceKey(T800K_2)) {
     pFramework->ChangeAPI(GRAPHICS_API::OPENGL);
   }
-  float yaw = 0.005f*static_cast<float>(IManager->xDelta);
-  ActiveCam->MoveYaw(yaw);
-  float pitch = 0.005f*static_cast<float>(IManager->yDelta);
-  ActiveCam->MovePitch(pitch);
+
+  if (IManager->PressedOnceKey(T800K_SPACE)) {
+    m_dumper.RequestDump();
+  }
+
+  // Skip mouse-driven camera movement when replay snapshot is active
+  if (!m_dumper.IsReplayActive()) {
+    float yaw = 0.005f*static_cast<float>(IManager->xDelta);
+    ActiveCam->MoveYaw(yaw);
+    float pitch = 0.005f*static_cast<float>(IManager->yDelta);
+    ActiveCam->MovePitch(pitch);
+  }
 }
 
 void SC_Tech::OnDraw() {
@@ -418,6 +455,24 @@ void SC_Tech::OnDraw() {
   Quads[7].SetTexture(pFramework->pVideoDriver->GetRTTexture(selected, attachment), 0);
   Quads[7].SetGlobalSignature(Signature::FSQUAD_1_TEX);
   Quads[7].Draw();
+
+  // RT Dump via FrameDumper
+  if (m_dumper.ShouldDump(DtSecs)) {
+    std::vector<RTDumpEntry> rts = {
+      {GBufferPass,     BaseDriver::COLOR0_ATTACHMENT, "GBuffer_Color0"},
+      {GBufferPass,     BaseDriver::COLOR1_ATTACHMENT, "GBuffer_Normals"},
+      {GBufferPass,     BaseDriver::COLOR2_ATTACHMENT, "GBuffer_Color2"},
+      {DepthPass,       BaseDriver::DEPTH_ATTACHMENT,  "ShadowMap_Depth"},
+      {DeferredPass,    BaseDriver::COLOR0_ATTACHMENT, "Deferred"},
+      {ShadowAccumPass, BaseDriver::COLOR0_ATTACHMENT, "ShadowAccum"},
+      {Extra16FPass,    BaseDriver::COLOR0_ATTACHMENT, "Extra16F"},
+      {ExtraHelperPass, BaseDriver::COLOR0_ATTACHMENT, "HDR_Final"},
+      {BloomAccumPass,  BaseDriver::COLOR0_ATTACHMENT, "Bloom"},
+      {GodRaysCalcPass, BaseDriver::COLOR0_ATTACHMENT, "GodRays"},
+    };
+    m_dumper.DumpFrame(pFramework->pVideoDriver, Cam, LightCam, SceneProp, rts, DtSecs);
+    if (m_dumper.ShouldExit()) exit(0);
+  }
 }
 
 

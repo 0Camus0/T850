@@ -190,21 +190,21 @@ $xaml = @"
         <Border Grid.Row="3" Background="{StaticResource SurfaceBrush}"
                 CornerRadius="8" Padding="16,12" Margin="0,0,0,12">
             <StackPanel>
-                <TextBlock Text="RENDER TARGET DUMP" FontSize="12" FontWeight="SemiBold"
+                <TextBlock Text="SNAPSHOT" FontSize="12" FontWeight="SemiBold"
                            Foreground="{StaticResource AccentBrush}" Margin="0,0,0,10"/>
-                <CheckBox Name="chkDump" Content="Enable RT dump on run" Margin="0,0,0,10"/>
+                <CheckBox Name="chkDump" Content="Enable snapshot dump on run" Margin="0,0,0,10"/>
                 <CheckBox Name="chkDebugFrames" Content="Debug Frames (spacebar dumps + exits)" Margin="0,0,0,10"/>
-                <CheckBox Name="chkFeedMatrices" Content="Feed Matrices (replay camera position)" Margin="0,0,0,6"/>
+                <CheckBox Name="chkReplaySnapshot" Content="Replay Snapshot (restore full scene state)" Margin="0,0,0,6"/>
                 <CheckBox Name="chkKeepRunning" Content="Keep running after dump" Margin="0,0,0,10"/>
-                <Grid Name="pnlFeedMatrices" IsEnabled="False" Margin="20,0,0,10">
+                <Grid Name="pnlReplaySnapshot" IsEnabled="False" Margin="20,0,0,10">
                     <Grid.ColumnDefinitions>
                         <ColumnDefinition Width="*"/>
                         <ColumnDefinition Width="8"/>
                         <ColumnDefinition Width="Auto"/>
                     </Grid.ColumnDefinitions>
-                    <TextBox Grid.Column="0" Name="txtFeedMatricesPath" IsReadOnly="True"
+                    <TextBox Grid.Column="0" Name="txtReplaySnapshotPath" IsReadOnly="True"
                              FontSize="11" VerticalContentAlignment="Center"/>
-                    <Button Grid.Column="2" Name="btnBrowseMatrices" Content="Browse..."
+                    <Button Grid.Column="2" Name="btnBrowseSnapshot" Content="Browse..."
                             Padding="10,4" FontSize="12" Cursor="Hand"
                             Background="{StaticResource Surface2Brush}" Foreground="{StaticResource TextBrush}"
                             BorderThickness="0">
@@ -345,10 +345,10 @@ $cmbApi         = $window.FindName("cmbApi")
 $chkDump        = $window.FindName("chkDump")
 $chkDebugFrames = $window.FindName("chkDebugFrames")
 $chkKeepRunning = $window.FindName("chkKeepRunning")
-$chkFeedMatrices  = $window.FindName("chkFeedMatrices")
-$pnlFeedMatrices  = $window.FindName("pnlFeedMatrices")
-$txtFeedMatricesPath = $window.FindName("txtFeedMatricesPath")
-$btnBrowseMatrices   = $window.FindName("btnBrowseMatrices")
+$chkReplaySnapshot   = $window.FindName("chkReplaySnapshot")
+$pnlReplaySnapshot   = $window.FindName("pnlReplaySnapshot")
+$txtReplaySnapshotPath = $window.FindName("txtReplaySnapshotPath")
+$btnBrowseSnapshot     = $window.FindName("btnBrowseSnapshot")
 $pnlDumpOptions = $window.FindName("pnlDumpOptions")
 $rbSeconds      = $window.FindName("rbSeconds")
 $rbFrame        = $window.FindName("rbFrame")
@@ -429,10 +429,10 @@ function Load-Config {
         if ($cfg.PSObject.Properties['keepRunning']) {
             $chkKeepRunning.IsChecked = [bool]$cfg.keepRunning
         }
-        # Feed Matrices
-        if ($cfg.PSObject.Properties['feedMatrices']) {
-            $chkFeedMatrices.IsChecked = [bool]$cfg.feedMatrices.enabled
-            if ($cfg.feedMatrices.path) { $txtFeedMatricesPath.Text = $cfg.feedMatrices.path }
+        # Replay Snapshot
+        if ($cfg.PSObject.Properties['replaySnapshot']) {
+            $chkReplaySnapshot.IsChecked = [bool]$cfg.replaySnapshot.enabled
+            if ($cfg.replaySnapshot.path) { $txtReplaySnapshotPath.Text = $cfg.replaySnapshot.path }
         }
         # Dump
         if ($cfg.dump) {
@@ -465,9 +465,9 @@ function Save-Config {
         }
         debugFrames = [bool]$chkDebugFrames.IsChecked
         keepRunning = [bool]$chkKeepRunning.IsChecked
-        feedMatrices = @{
-            enabled = [bool]$chkFeedMatrices.IsChecked
-            path    = $txtFeedMatricesPath.Text
+        replaySnapshot = @{
+            enabled = [bool]$chkReplaySnapshot.IsChecked
+            path    = $txtReplaySnapshotPath.Text
         }
         dump = @{
             enabled = [bool]$chkDump.IsChecked
@@ -525,8 +525,8 @@ function Get-LaunchCommand {
         $argList += "--debugFrames"
     }
 
-    if ($chkFeedMatrices.IsChecked -and $txtFeedMatricesPath.Text) {
-        $argList += @("--feedMatrices", ('"{0}"' -f $txtFeedMatricesPath.Text))
+    if ($chkReplaySnapshot.IsChecked -and $txtReplaySnapshotPath.Text) {
+        $argList += @("--replaySnapshot", ('"{0}"' -f $txtReplaySnapshotPath.Text))
     }
 
     if ($chkKeepRunning.IsChecked) {
@@ -535,10 +535,10 @@ function Get-LaunchCommand {
 
     if ($chkDump.IsChecked) {
         if ($rbFrame.IsChecked) {
-            $argList += "--dump-frame"
+            $argList += "--dumpSnapshot-frame"
             $argList += $txtFrame.Text
         } else {
-            $argList += "--dump-seconds"
+            $argList += "--dumpSnapshot-seconds"
             $argList += $txtSeconds.Text
         }
     }
@@ -608,21 +608,21 @@ $chkDebugFrames.Add_Unchecked({ Update-Preview })
 $chkKeepRunning.Add_Checked({ Update-Preview })
 $chkKeepRunning.Add_Unchecked({ Update-Preview })
 
-$chkFeedMatrices.Add_Checked({
-    $pnlFeedMatrices.IsEnabled = $true
+$chkReplaySnapshot.Add_Checked({
+    $pnlReplaySnapshot.IsEnabled = $true
     Update-Preview
 })
-$chkFeedMatrices.Add_Unchecked({
-    $pnlFeedMatrices.IsEnabled = $false
+$chkReplaySnapshot.Add_Unchecked({
+    $pnlReplaySnapshot.IsEnabled = $false
     Update-Preview
 })
 
-$btnBrowseMatrices.Add_Click({
+$btnBrowseSnapshot.Add_Click({
     $dlg = New-Object System.Windows.Forms.OpenFileDialog
-    $dlg.Title  = "Select matrices file"
-    $dlg.Filter = "Matrices files (*.json;*.txt)|*.json;*.txt|All files (*.*)|*.*"
+    $dlg.Title  = "Select snapshot file"
+    $dlg.Filter = "Snapshot files (*.json)|*.json|All files (*.*)|*.*"
     if ($dlg.ShowDialog() -eq [System.Windows.Forms.DialogResult]::OK) {
-        $txtFeedMatricesPath.Text = $dlg.FileName
+        $txtReplaySnapshotPath.Text = $dlg.FileName
         Update-Preview
     }
 })

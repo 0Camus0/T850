@@ -8,6 +8,7 @@
 // Forward declarations (no engine headers needed in this header)
 class Camera;
 struct SceneProps;
+struct XVECTOR3;
 
 namespace t800 {
   class BaseDriver;
@@ -17,12 +18,14 @@ namespace t800 {
 
   // ── JSON-clean data structs (only std types, no engine deps) ──
 
-  struct FeedCamJson {
+  struct SnapshotCamJson {
     std::array<float, 3> eye = {0, 0, 0};
     float pitch = 0, roll = 0, yaw = 0;
+    float speed = 10.0f;
+    float fov = 0, aspect_ratio = 0, near_plane = 0, far_plane = 0;
   };
 
-  struct FeedLightJson {
+  struct SnapshotLightJson {
     std::array<float, 3> position = {0, 0, 0};
     std::array<float, 3> color = {1, 1, 1};
     float radius = 100.0f;
@@ -30,7 +33,7 @@ namespace t800 {
 
   using Mat4Json = std::array<std::array<float, 4>, 4>;
 
-  struct FeedMatricesJson {
+  struct SnapshotMatricesJson {
     Mat4Json camView = {};
     Mat4Json camProjection = {};
     Mat4Json camVP = {};
@@ -39,19 +42,50 @@ namespace t800 {
     Mat4Json lightCamVP = {};
   };
 
-  struct FeedFileJson {
+  // Scene-specific rendering settings
+  struct SnapshotScenePropsJson {
+    float exposure = 0.3f;
+    float bloom_factor = 0.35f;
+    float shadow_map_resolution = 2048.0f;
+    float pcf_scale = 2.1f;
+    float pcf_samples = 3.0f;
+    float parallax_low = 10.0f;
+    float parallax_high = 18.0f;
+    float parallax_height = 0.02f;
+    float light_volume_steps = 96.0f;
+    float aperture = 120.0f;
+    float focal_length = 50.0f;
+    float focus_depth = 0.0f;
+    float max_coc = 2.5f;
+    int active_lights = 1;
+    int active_light_camera = 0;
+    int toggle_shadow = 1;
+    int toggle_ssao = 1;
+  };
+
+  // Night scene extra state: omni light cameras + omni position
+  struct SnapshotOmniJson {
+    std::array<float, 3> omni_light_pos = {0, 0, 0};
+    std::vector<SnapshotCamJson> omni_cameras;  // 6 face cameras
+  };
+
+  // The complete snapshot file
+  struct SnapshotJson {
     int frame = 0;
+    int scene = 0;           // 0=Day, 1=Night, 2=Tech
     std::string api;
     float dt = 0;
-    FeedCamJson cam;
-    FeedCamJson lightCam;
-    std::vector<FeedLightJson> lights;
-    std::optional<FeedMatricesJson> matrices;
+    SnapshotCamJson cam;
+    SnapshotCamJson light_cam;
+    std::vector<SnapshotLightJson> lights;
+    SnapshotScenePropsJson scene_props;
+    std::optional<SnapshotMatricesJson> matrices;
+    std::optional<SnapshotOmniJson> omni;  // Night scene only
   };
 
   // JSON I/O (glaze-based, implemented in FrameDumperIO.cpp)
-  bool LoadFeedFile(const std::string& path, FeedFileJson& data);
-  bool SaveFeedFile(const std::string& path, const FeedFileJson& data);
+  bool LoadSnapshot(const std::string& path, SnapshotJson& data);
+  bool SaveSnapshot(const std::string& path, const SnapshotJson& data);
 
   // ── Configuration (mirrors command-line flags) ──
 
@@ -62,7 +96,8 @@ namespace t800 {
     float dumpSeconds     = -1.0f;
     bool  debugFrames     = false;   // --debugFrames: spacebar dumps
     bool  keepRunning     = false;   // --keepRunning: don't exit after dump
-    std::string feedMatricesPath;    // --feedMatrices: path to replay
+    std::string replaySnapshotPath;  // --replaySnapshot: path to snapshot.json
+    int   sceneIndex      = 0;       // which scene we're in (for snapshot metadata)
   };
 
   // ── RT dump entry (scene provides the list of RTs to dump) ──
@@ -73,7 +108,7 @@ namespace t800 {
     std::string name;
   };
 
-  // ── FrameDumper: feed-matrix loading, camera replay, frame dumping ──
+  // ── FrameDumper: snapshot loading, state replay, frame dumping ──
 
   class FrameDumper {
   public:
@@ -81,12 +116,16 @@ namespace t800 {
 
     void Init(const FrameDumperConfig& config);
 
-    // ── Feed matrices ──
-    bool HasPendingFeed() const;
-    bool LoadFeedMatrices();
-    void ApplyFeedState(Camera& cam, Camera& lightCam, SceneProps& props);
-    void UpdateFeedState();
-    bool IsFeedActive() const;
+    // ── Replay snapshot ──
+    bool HasPendingReplay() const;
+    bool LoadReplaySnapshot();
+
+    // Apply snapshot to scene cameras, lights, and props.
+    // omniCams/omniLightPos are optional (Night scene only).
+    void ApplySnapshot(Camera& cam, Camera& lightCam, SceneProps& props,
+                       Camera* omniCams = nullptr, XVECTOR3* omniLightPos = nullptr);
+    void UpdateReplayState();
+    bool IsReplayActive() const;
 
     // ── Dump control ──
     void RequestDump();                     // spacebar
@@ -95,7 +134,9 @@ namespace t800 {
                    Camera& cam, Camera& lightCam,
                    const SceneProps& props,
                    const std::vector<RTDumpEntry>& rts,
-                   float dt);
+                   float dt,
+                   Camera* omniCams = nullptr,
+                   const XVECTOR3* omniLightPos = nullptr);
     bool ShouldExit() const;
 
     // ── Query ──
@@ -104,11 +145,11 @@ namespace t800 {
   private:
     FrameDumperConfig config_;
 
-    // Feed state
-    FeedFileJson feedData_;
-    bool hasFeedData_       = false;
-    int  feedState_         = 0;     // 0=pending, 1=warmup, 2=done
-    int  feedWarmup_        = 0;
+    // Replay state
+    SnapshotJson replayData_;
+    bool hasReplayData_     = false;
+    int  replayState_       = 0;     // 0=pending, 1=warmup, 2=done
+    int  replayWarmup_      = 0;
     static const int WARMUP_FRAMES = 3;
 
     // Dump state
@@ -120,10 +161,11 @@ namespace t800 {
 
     // Helpers
     std::string BuildDumpDir(const std::string& apiName);
-    void WriteMatricesJson(const std::string& path,
-                           Camera& cam, Camera& lightCam,
-                           const SceneProps& props,
-                           int frame, const std::string& apiName, float dt);
+    void WriteSnapshot(const std::string& path,
+                       Camera& cam, Camera& lightCam,
+                       const SceneProps& props,
+                       int frame, const std::string& apiName, float dt,
+                       Camera* omniCams, const XVECTOR3* omniLightPos);
     void LogCameraState(Camera& cam, Camera& lightCam,
                         const SceneProps& props,
                         int frame, const std::string& apiName, float dt);

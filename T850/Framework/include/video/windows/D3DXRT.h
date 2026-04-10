@@ -37,6 +37,8 @@ namespace t800 {
     std::vector<ComPtr<ID3D11Texture2D>>			vD3D11ColorTex;
     ComPtr<ID3D11Texture2D>							D3D11DepthTex;
     ComPtr<ID3D11DepthStencilView>					D3D11DepthStencilTargetView;
+    bool isCubeDepth = false;
+    ComPtr<ID3D11DepthStencilView>  D3D11CubeFaceDSVs[6];
   };
 }
 

@@ -44,9 +44,9 @@ void SC_Day::InitVars() {
 
   // Initialize frame dumper from command-line globals
   extern bool g_dumpEnabled, g_dumpByFrame, g_debugFrames, g_keepRunning;
-  extern int g_dumpFrame;
+  extern int g_dumpFrame, g_startScene;
   extern float g_dumpSeconds;
-  extern std::string g_feedMatricesPath;
+  extern std::string g_replaySnapshotPath;
   FrameDumperConfig dumpCfg;
   dumpCfg.dumpEnabled     = g_dumpEnabled;
   dumpCfg.dumpByFrame     = g_dumpByFrame;
@@ -54,7 +54,8 @@ void SC_Day::InitVars() {
   dumpCfg.dumpSeconds     = g_dumpSeconds;
   dumpCfg.debugFrames     = g_debugFrames;
   dumpCfg.keepRunning     = g_keepRunning;
-  dumpCfg.feedMatricesPath = g_feedMatricesPath;
+  dumpCfg.replaySnapshotPath = g_replaySnapshotPath;
+  dumpCfg.sceneIndex      = g_startScene;
   m_dumper.Init(dumpCfg);
 }
 void SC_Day::CreateAssets() {
@@ -187,14 +188,14 @@ void SC_Day::OnUpdate(float _DtSecs) {
   DtSecs = _DtSecs;
   Meshes[0].SetParallaxSettings(SceneProp.ParallaxLowSamples, SceneProp.ParallaxHighSamples, SceneProp.ParallaxHeight);
 
-  // Feed matrices: load and apply (one-time)
-  if (m_dumper.HasPendingFeed()) {
-    if (m_dumper.LoadFeedMatrices()) {
-      m_dumper.ApplyFeedState(Cam, LightCam, SceneProp);
+  // Replay snapshot: load and apply (one-time)
+  if (m_dumper.HasPendingReplay()) {
+    if (m_dumper.LoadReplaySnapshot()) {
+      m_dumper.ApplySnapshot(Cam, LightCam, SceneProp);
       VP = ActiveCam->VP;
     }
   }
-  m_dumper.UpdateFeedState();
+  m_dumper.UpdateReplayState();
 
   // Normal camera/light updates (skipped when feed is active or dump pending)
   if (!m_dumper.SkipCameraUpdates()) {
@@ -382,8 +383,8 @@ void SC_Day::OnInput(InputManager* IManager) {
   if (IManager->PressedOnceKey(T800K_3)) {
     pFramework->pVideoDriver->ModifyRT(DepthPass,0, BaseRT::NOTHING, BaseRT::F32, 128, 128, false);
   }
-  // Skip mouse-driven camera movement when feedMatrices is active
-  if (!m_dumper.IsFeedActive()) {
+  // Skip mouse-driven camera movement when replay snapshot is active
+  if (!m_dumper.IsReplayActive()) {
     float yaw = 0.005f*static_cast<float>(IManager->xDelta);
     ActiveCam->MoveYaw(yaw);
     float pitch = 0.005f*static_cast<float>(IManager->yDelta);

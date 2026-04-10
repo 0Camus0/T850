@@ -3,7 +3,14 @@
 #define STB_IMAGE_IMPLEMENTATION
 #include <stb_image.h>
 
-void checkformat(ifstream &in_, unsigned int &prop) {
+using std::ifstream;
+using std::cout;
+using std::endl;
+using std::max;
+using std::streampos;
+using std::ios;
+
+void checkformat(std::ifstream &in_, unsigned int &prop) {
 	std::streampos begPos = in_.tellg();
 
 	in_.seekg(begPos);

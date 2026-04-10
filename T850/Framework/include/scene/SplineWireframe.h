@@ -15,7 +15,7 @@ namespace t800 {
     };
     SplineWireframe() {
     }
-    void Load(char *) {};
+    void Load(const char *) {};
     void Create();
     void Transform(float *t);
     void Draw(float *t, float *vp);

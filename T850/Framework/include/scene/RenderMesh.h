@@ -133,7 +133,7 @@ namespace t800 {
       std::vector<SubSetInfo>	SubSets;
     };
 
-    void Load(char *);
+    void Load(const char *);
     void Create();
     void Transform(float *t);
     void Draw(float *t, float *vp);

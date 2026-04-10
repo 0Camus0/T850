@@ -8,13 +8,13 @@
 #include <cstdio>
 #include <cstring>
 
-// ── Glaze-based JSON I/O for feed matrices files ──
+// ── Glaze-based JSON I/O for snapshot files ──
 
 namespace t800 {
 
 // ── Legacy .txt format parser ──
 
-static bool ParseLegacyTxt(const std::string& content, FeedFileJson& data) {
+static bool ParseLegacyTxt(const std::string& content, SnapshotJson& data) {
   auto getVal = [&](const char* key) -> float {
     std::string k = std::string(key) + "=";
     size_t p = content.find(k);
@@ -32,12 +32,13 @@ static bool ParseLegacyTxt(const std::string& content, FeedFileJson& data) {
   data.cam.pitch = getVal("Cam.Pitch");
   data.cam.roll  = getVal("Cam.Roll");
   data.cam.yaw   = getVal("Cam.Yaw");
-  getVec("LightCam.Eye", data.lightCam.eye);
-  data.lightCam.pitch = getVal("LightCam.Pitch");
-  data.lightCam.roll  = getVal("LightCam.Roll");
-  data.lightCam.yaw   = getVal("LightCam.Yaw");
-  // No matrices or lights in legacy format
+  getVec("LightCam.Eye", data.light_cam.eye);
+  data.light_cam.pitch = getVal("LightCam.Pitch");
+  data.light_cam.roll  = getVal("LightCam.Roll");
+  data.light_cam.yaw   = getVal("LightCam.Yaw");
+  // No matrices, lights, or scene props in legacy format
   data.matrices = std::nullopt;
+  data.omni = std::nullopt;
   data.lights.clear();
 
   printf("[FrameDumper] Loaded legacy .txt format\n");
@@ -46,7 +47,7 @@ static bool ParseLegacyTxt(const std::string& content, FeedFileJson& data) {
 
 // ── Load ──
 
-bool LoadFeedFile(const std::string& path, FeedFileJson& data) {
+bool LoadSnapshot(const std::string& path, SnapshotJson& data) {
   std::ifstream f(path);
   if (!f.is_open()) {
     printf("[FrameDumper] ERROR: cannot open '%s'\n", path.c_str());
@@ -70,18 +71,19 @@ bool LoadFeedFile(const std::string& path, FeedFileJson& data) {
     return false;
   }
 
-  printf("[FrameDumper] Loaded '%s': %zu lights, matrices=%s\n",
-         path.c_str(), data.lights.size(),
-         data.matrices.has_value() ? "yes" : "no");
+  printf("[FrameDumper] Loaded '%s': scene=%d, %zu lights, matrices=%s, omni=%s\n",
+         path.c_str(), data.scene, data.lights.size(),
+         data.matrices.has_value() ? "yes" : "no",
+         data.omni.has_value() ? "yes" : "no");
   return true;
 }
 
 // ── Save ──
 
-bool SaveFeedFile(const std::string& path, const FeedFileJson& data) {
+bool SaveSnapshot(const std::string& path, const SnapshotJson& data) {
   auto result = glz::write<glz::opts{.prettify = true}>(data);
   if (!result) {
-    printf("[FrameDumper] ERROR: failed to serialize feed data\n");
+    printf("[FrameDumper] ERROR: failed to serialize snapshot data\n");
     return false;
   }
 

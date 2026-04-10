@@ -214,6 +214,21 @@ void SC_Night::InitVars() {
   m_lightAgent.m_moving = true;
   m_lightAgent.m_velocity = 15.0f;
   
+  // Initialize frame dumper from command-line globals
+  extern bool g_dumpEnabled, g_dumpByFrame, g_debugFrames, g_keepRunning;
+  extern int g_dumpFrame, g_startScene;
+  extern float g_dumpSeconds;
+  extern std::string g_replaySnapshotPath;
+  FrameDumperConfig dumpCfg;
+  dumpCfg.dumpEnabled     = g_dumpEnabled;
+  dumpCfg.dumpByFrame     = g_dumpByFrame;
+  dumpCfg.dumpFrame       = g_dumpFrame;
+  dumpCfg.dumpSeconds     = g_dumpSeconds;
+  dumpCfg.debugFrames     = g_debugFrames;
+  dumpCfg.keepRunning     = g_keepRunning;
+  dumpCfg.replaySnapshotPath = g_replaySnapshotPath;
+  dumpCfg.sceneIndex      = g_startScene;
+  m_dumper.Init(dumpCfg);
 }
 void SC_Night::CreateAssets() {
   //Create RT's via RenderGraph
@@ -333,11 +348,24 @@ void SC_Night::OnUpdate(float _DtSecs) {
   totalTime += _DtSecs;
   DtSecs = _DtSecs;
   Meshes[0].SetParallaxSettings(SceneProp.ParallaxLowSamples, SceneProp.ParallaxHighSamples, SceneProp.ParallaxHeight);
-  m_agent.Update(DtSecs);
-  m_lightAgent.Update(DtSecs);
-  omniLightPos = m_lightAgent.m_actualPoint;
-  ActiveCam->Update(DtSecs);
-  VP = ActiveCam->VP;
+
+  // Replay snapshot: load and apply (one-time)
+  if (m_dumper.HasPendingReplay()) {
+    if (m_dumper.LoadReplaySnapshot()) {
+      m_dumper.ApplySnapshot(Cam, LightCam, SceneProp, OmniLightCam, &omniLightPos);
+      VP = ActiveCam->VP;
+    }
+  }
+  m_dumper.UpdateReplayState();
+
+  // Normal camera/light updates (skipped when replay is active or dump pending)
+  if (!m_dumper.SkipCameraUpdates()) {
+    m_agent.Update(DtSecs);
+    m_lightAgent.Update(DtSecs);
+    omniLightPos = m_lightAgent.m_actualPoint;
+    ActiveCam->Update(DtSecs);
+    VP = ActiveCam->VP;
+  }
 
   float speed = 0.5f;
   static float freq = 0.0f;
@@ -530,10 +558,18 @@ void SC_Night::OnInput(InputManager* IManager) {
   if (IManager->PressedOnceKey(T800K_2)) {
     pFramework->ChangeAPI(GRAPHICS_API::OPENGL);
   }
-  float yaw = 0.005f*static_cast<float>(IManager->xDelta);
-  ActiveCam->MoveYaw(yaw);
-  float pitch = 0.005f*static_cast<float>(IManager->yDelta);
-  ActiveCam->MovePitch(pitch);
+
+  if (IManager->PressedOnceKey(T800K_SPACE)) {
+    m_dumper.RequestDump();
+  }
+
+  // Skip mouse-driven camera movement when replay snapshot is active
+  if (!m_dumper.IsReplayActive()) {
+    float yaw = 0.005f*static_cast<float>(IManager->xDelta);
+    ActiveCam->MoveYaw(yaw);
+    float pitch = 0.005f*static_cast<float>(IManager->yDelta);
+    ActiveCam->MovePitch(pitch);
+  }
 }
 
 void SC_Night::OnDraw() {
@@ -548,6 +584,25 @@ void SC_Night::OnDraw() {
     OmniLightCam,
     EnvMapTexIndex
   );
+
+  // RT Dump via FrameDumper
+  if (m_dumper.ShouldDump(DtSecs)) {
+    std::vector<RTDumpEntry> rts = {
+      {GBufferPass,         BaseDriver::COLOR0_ATTACHMENT, "GBuffer_Color0"},
+      {GBufferPass,         BaseDriver::COLOR1_ATTACHMENT, "GBuffer_Normals"},
+      {GBufferPass,         BaseDriver::COLOR4_ATTACHMENT, "GBuffer_Depth"},
+      {DeferredPass,        BaseDriver::COLOR0_ATTACHMENT, "Deferred"},
+      {ShadowAccumPass,     BaseDriver::COLOR0_ATTACHMENT, "ShadowAccum"},
+      {Extra16FPass,        BaseDriver::COLOR0_ATTACHMENT, "Extra16F"},
+      {ExtraHelperPass,     BaseDriver::COLOR0_ATTACHMENT, "HDR_Final"},
+      {BloomAccumPass,      BaseDriver::COLOR0_ATTACHMENT, "Bloom"},
+      {GodRaysCalcPass,     BaseDriver::COLOR0_ATTACHMENT, "GodRays"},
+      {OmniShadowDepthPass, BaseDriver::DEPTH_ATTACHMENT,  "OmniShadowDepth"},
+    };
+    m_dumper.DumpFrame(pFramework->pVideoDriver, Cam, LightCam, SceneProp, rts, DtSecs,
+                       OmniLightCam, &omniLightPos);
+    if (m_dumper.ShouldExit()) exit(0);
+  }
 }
 
 void  SC_Night::ChangeSettingsOnPlus() {

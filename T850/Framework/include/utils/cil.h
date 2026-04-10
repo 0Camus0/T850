@@ -7,7 +7,6 @@
 #include <iostream>
 #include <cstddef>
 #include <algorithm>
-using namespace std;
 
 #define CIL_CALL_STB 1
 #define CIL_LOG_OUTPUT 1
@@ -196,14 +195,14 @@ struct DDS_HEADER {
 	unsigned int           dwReserved2;
 };
 
-void checkformat(ifstream &in_, unsigned int &prop);
+void checkformat(std::ifstream &in_, unsigned int &prop);
 void pvr_set_pix_format(uint32_t& pix_format, unsigned int &prop);
 void pvr_set_channel_type(uint32_t& c_type, unsigned int &prop);
-unsigned char*	load_pvr(ifstream &in_, int &x, int &y, unsigned int &mipmaps, unsigned int &prop, unsigned int &buffersize);
+unsigned char*	load_pvr(std::ifstream &in_, int &x, int &y, unsigned int &mipmaps, unsigned int &prop, unsigned int &buffersize);
 void ktx_set_pix_format(unsigned int &format, unsigned int &prop);
-unsigned char*	load_ktx(ifstream &in_, int &x, int &y, unsigned int &mipmaps, unsigned int &prop, unsigned int &buffersize);
+unsigned char*	load_ktx(std::ifstream &in_, int &x, int &y, unsigned int &mipmaps, unsigned int &prop, unsigned int &buffersize);
 void dds_set_pix_format(unsigned int &format, unsigned int &bppinfo, unsigned int &prop);
-unsigned char*	load_dds(ifstream &in_, int &x, int &y, unsigned int &mipmaps, unsigned int &prop, unsigned int &buffersize);
+unsigned char*	load_dds(std::ifstream &in_, int &x, int &y, unsigned int &mipmaps, unsigned int &prop, unsigned int &buffersize);
 void cil_free_buffer(unsigned char *pbuff,unsigned int prop=0);
 unsigned char*	cil_load(const char* filename, int *x, int *y, unsigned int *mipmaps, unsigned int *props, unsigned int *buffersize, unsigned int ForceResizeFactor = 0);
 

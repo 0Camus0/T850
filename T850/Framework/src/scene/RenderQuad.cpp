@@ -183,8 +183,8 @@ namespace t800 {
 
     if (sig&Signature::DEFERRED_PASS) {
       unsigned int numLights = pScProp->ActiveLights;
-      if (numLights >= pScProp->Lights.size())
-        numLights = pScProp->Lights.size();
+      if (numLights >= static_cast<unsigned int>(pScProp->Lights.size()))
+        numLights = static_cast<unsigned int>(pScProp->Lights.size());
 
       CnstBuffer.CameraInfo = XVECTOR3(pActualCamera->NPlane, pActualCamera->FPlane, pActualCamera->Fov, float(numLights));
 

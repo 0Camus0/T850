@@ -99,7 +99,8 @@ unsigned int createShader(unsigned int type, char* pSource) {
 
 char *file2string(const char *path) {
 	FILE *fd;
-	long len, r;
+	long len;
+	size_t r;
 	char *str;
 	if (!(fd = fopen(path, "r"))) {
 		fprintf(stderr, "Can't open file '%s'\n", path);
@@ -117,8 +118,8 @@ char *file2string(const char *path) {
 
 std::string RemovePath(std::string p) {
 	std::string path = p;
-	int firstSlash = path.find_last_of("\\") + 1;
-	int Length = path.size() - firstSlash;
+	size_t firstSlash = path.find_last_of("\\") + 1;
+	size_t Length = path.size() - firstSlash;
 	path = path.substr(firstSlash, Length);
 	return path;
 }

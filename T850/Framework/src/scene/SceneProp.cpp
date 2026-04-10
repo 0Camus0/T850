@@ -91,7 +91,7 @@ void SSAOFilter::InitTexture() {
 			*pChar = 255; pChar++;
 		
 	}
-	string dummy;
+	std::string dummy;
 	NoiseTex = t800::T8Device->CreateTextureFromMemory(Noise, SSAO_NOISE_SIZE, SSAO_NOISE_SIZE, 4, dummy);
 	NoiseTex->params |= t800::TEXT_BASIC_PARAMS::TILED;
 	NoiseTex->SetTextureParams();

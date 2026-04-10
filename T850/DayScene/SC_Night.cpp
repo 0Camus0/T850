@@ -1,5 +1,8 @@
 #include "SC_Night.h"
 using namespace t800;
+using std::cout;
+using std::endl;
+using std::string;
 #define SEPARATED_BLUR 1
 #define DEGENERATED_FBO_TEST 0
 
@@ -237,7 +240,7 @@ void SC_Night::CreateAssets() {
 
   int index = PrimitiveMgr.CreateMesh("Models/SkyBox.X");
   Meshes[1].CreateInstance(PrimitiveMgr.GetPrimitive(index), &VP);
-  Meshes[1].TranslateAbsolute(0.0, -10.0f, 0.0f);
+  Meshes[1].TranslateAbsolute(0.0f, -10.0f, 0.0f);
   Meshes[1].Update();
 
   index = PrimitiveMgr.CreateMesh("Models/SponzaEsc.X");
@@ -246,7 +249,7 @@ void SC_Night::CreateAssets() {
   index = PrimitiveMgr.CreateMesh("Models/NuCroc.X");
   Meshes[2].CreateInstance(PrimitiveMgr.GetPrimitive(index), &VP);
   Meshes[2].TranslateAbsolute(omniLightPos.x, omniLightPos.y, omniLightPos.z);
-  Meshes[2].ScaleAbsolute(0.01);
+  Meshes[2].ScaleAbsolute(0.01f);
   Meshes[2].Update();
 
   index = PrimitiveMgr.CreateSpline(m_spline);
@@ -534,7 +537,7 @@ void SC_Night::OnDraw() {
   SceneProp.ActiveLightCamera = 1;
   for (size_t i = 0; i < 6; i++)
   {
-    pFramework->pVideoDriver->RTs[OmniShadowDepthPass]->ChangeCubeDepthTexture(i);
+    pFramework->pVideoDriver->RTs[OmniShadowDepthPass]->ChangeCubeDepthTexture(static_cast<int>(i));
     pFramework->pVideoDriver->Clear();
   }
   // Omnidirectional Shadow Map Depth Pass
@@ -543,7 +546,7 @@ void SC_Night::OnDraw() {
   for (size_t i = 0; i < 6; i++)
   {
     SceneProp.pCameras[0] = &OmniLightCam[i];
-    pFramework->pVideoDriver->RTs[OmniShadowDepthPass]->ChangeCubeDepthTexture(i);
+    pFramework->pVideoDriver->RTs[OmniShadowDepthPass]->ChangeCubeDepthTexture(static_cast<int>(i));
     Meshes[0].Draw();
   }
   pFramework->pVideoDriver->PopRT();
@@ -737,7 +740,7 @@ void  SC_Night::ChangeSettingsOnPlus() {
     int prevVal = ChangeActiveGaussSelection;
     ChangeActiveGaussSelection++;
     if (ChangeActiveGaussSelection >= (int)SceneProp.pGaussKernels.size()) {
-      ChangeActiveGaussSelection = SceneProp.pGaussKernels.size() - 1;
+      ChangeActiveGaussSelection = static_cast<int>(SceneProp.pGaussKernels.size()) - 1;
     }
     cout << "[CHANGE_ACTIVE_GAUSS_KERNEL] Previous Value[" << prevVal << "] Actual Value[" << ChangeActiveGaussSelection << "]" << endl;
   }break;

@@ -11,6 +11,7 @@
 *********************************************************/
 
 #include <core/Core.h>
+#include <core/DevLayer.h>
 
 #include <scene/PrimitiveManager.h>
 #include <scene/PrimitiveInstance.h>
@@ -52,6 +53,7 @@ public:
   t800::TextRenderer m_textRender;
   std::vector<t800::SceneBase*> m_scenes;
   t800::SceneBase* m_actualScene;
+  t800::DevLayer m_devLayer;
   t800::PrimitiveInst	Quads[10];
   t800::PrimitiveManager PrimitiveMgr;
   XMATRIX44 VP;

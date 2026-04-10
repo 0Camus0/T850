@@ -4,6 +4,9 @@
 #include <utils/Timer.h>
 #include <scene/SplineWireframe.h>
 #include <utils/T8_Spline.h>
+#include <scene/SceneSetup.h>
+#include <scene/RenderGraph.h>
+#include <debug/FrameDumper.h>
 #include <scene/LensFlare.h>
 #include <scene/T8_TextRenderer.h>
 #include <Config.h>
@@ -77,12 +80,9 @@ class SC_Day : public t800::SceneBase
 
   t800::PrimitiveInst	Quads[10];
 
-  Camera			Cam;
-  Camera			LightCam;
-
-  GaussFilter		ShadowFilter;
-  GaussFilter		BloomFilter;
-  GaussFilter		NearDOFFilter;
+  t800::SceneSetup  m_sceneSetup;
+  t800::RenderGraph  m_renderGraph;
+  t800::FrameDumper  m_dumper;
 
   Camera			*ActiveCam;
 
@@ -129,9 +129,6 @@ class SC_Day : public t800::SceneBase
 
   t800::SplineWireframe* splineWire;
   t800::PrimitiveInst splineInst;
-  t800::SplineAgent m_agent;
-  t800::Spline m_spline;
-
   t800::LensFlare m_flare;
   XMATRIX44 m;
 };

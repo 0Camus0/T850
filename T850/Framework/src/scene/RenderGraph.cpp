@@ -1,0 +1,531 @@
+#include <scene/RenderGraph.h>
+#include <scene/RenderGraphDescriptor.h>
+#include <scene/SceneProp.h>
+#include <scene/PrimitiveInstance.h>
+#include <utils/Camera.h>
+#include <video/BaseDriver.h>
+#include <T8_descriptors.h>
+
+#pragma warning(push)
+#pragma warning(disable: 4267 4244)
+#include <glaze/glaze.hpp>
+#pragma warning(pop)
+
+#include <fstream>
+#include <sstream>
+#include <cstdio>
+#include <unordered_map>
+
+namespace t800 {
+
+// ---- JSON loading via glaze ----
+
+bool LoadRenderGraphDescriptor(const std::string& path, RenderGraphDesc& desc) {
+  std::ifstream file(path);
+  if (!file.is_open()) {
+    printf("[RenderGraph] ERROR: cannot open '%s'\n", path.c_str());
+    return false;
+  }
+
+  std::stringstream ss;
+  ss << file.rdbuf();
+  std::string json = ss.str();
+
+  auto ec = glz::read<glz::opts{.error_on_unknown_keys = false}>(desc, json);
+  if (ec) {
+    std::string err = glz::format_error(ec, json);
+    printf("[RenderGraph] ERROR parsing '%s': %s\n", path.c_str(), err.c_str());
+    return false;
+  }
+
+  printf("[RenderGraph] Loaded '%s': %zu render targets, %zu passes\n",
+         path.c_str(), desc.render_targets.size(), desc.passes.size());
+  return true;
+}
+
+// ---- String -> enum resolution tables ----
+
+static const std::unordered_map<std::string, int> s_attachmentMap = {
+  {"DEPTH",  BaseDriver::DEPTH_ATTACHMENT},
+  {"COLOR0", BaseDriver::COLOR0_ATTACHMENT},
+  {"COLOR1", BaseDriver::COLOR1_ATTACHMENT},
+  {"COLOR2", BaseDriver::COLOR2_ATTACHMENT},
+  {"COLOR3", BaseDriver::COLOR3_ATTACHMENT},
+  {"COLOR4", BaseDriver::COLOR4_ATTACHMENT},
+  {"COLOR5", BaseDriver::COLOR5_ATTACHMENT},
+  {"COLOR6", BaseDriver::COLOR6_ATTACHMENT},
+  {"COLOR7", BaseDriver::COLOR7_ATTACHMENT},
+};
+
+static const std::unordered_map<std::string, int> s_colorFormatMap = {
+  {"NONE",    BaseRT::NOTHING},
+  {"RGBA8",   BaseRT::RGBA8},
+  {"RGBA16F", BaseRT::RGBA16F},
+  {"RGBA32F", BaseRT::RGBA32F},
+  {"R8",      BaseRT::R8},
+  {"F16",     BaseRT::F16},
+  {"RGB8",    BaseRT::RGB8},
+};
+
+static const std::unordered_map<std::string, int> s_depthFormatMap = {
+  {"NONE",    BaseRT::NOTHING},
+  {"F32",     BaseRT::F32},
+  {"CUBE_F32", BaseRT::CUBE_F32},
+};
+
+static const std::unordered_map<std::string, unsigned long long> s_signatureMap = {
+  {"FORWARD_PASS",          Signature::FORWARD_PASS},
+  {"GBUFF_PASS",            Signature::GBUFF_PASS},
+  {"SHADOW_MAP_PASS",       Signature::SHADOW_MAP_PASS},
+  {"FSQUAD_1_TEX",          Signature::FSQUAD_1_TEX},
+  {"FSQUAD_2_TEX",          Signature::FSQUAD_2_TEX},
+  {"FSQUAD_3_TEX",          Signature::FSQUAD_3_TEX},
+  {"DEFERRED_PASS",         Signature::DEFERRED_PASS},
+  {"SHADOW_COMP_PASS",      Signature::SHADOW_COMP_PASS},
+  {"VERTICAL_BLUR_PASS",    Signature::VERTICAL_BLUR_PASS},
+  {"HORIZONTAL_BLUR_PASS",  Signature::HORIZONTAL_BLUR_PASS},
+  {"BRIGHT_PASS",           Signature::BRIGHT_PASS},
+  {"HDR_COMP_PASS",         Signature::HDR_COMP_PASS},
+  {"COC_PASS",              Signature::COC_PASS},
+  {"COMBINE_COC_PASS",      Signature::COMBINE_COC_PASS},
+  {"DOF_PASS",              Signature::DOF_PASS},
+  {"DOF_PASS_2",            Signature::DOF_PASS_2},
+  {"VIGNETTE_PASS",         Signature::VIGNETTE_PASS},
+  {"RAY_MARCH",             Signature::RAY_MARCH},
+  {"RADIAL_DEPTH_PASS",     Signature::RADIAL_DEPTH_PASS},
+  {"LIGHT_RAY_MARCHING",    Signature::LIGHT_RAY_MARCHING},
+  {"LIGHT_ADD",             Signature::LIGHT_ADD},
+  {"USE_OMNIDIRECTIONAL_SHADOWS", Signature::USE_OMNIDIRECTIONAL_SHADOWS},
+  {"FADE_PASS",             Signature::FADE_PASS},
+};
+
+static const std::unordered_map<std::string, int> s_depthStencilMap = {
+  {"READ_WRITE", BaseDriver::READ_WRITE},
+  {"READ",       BaseDriver::READ},
+  {"NONE",       BaseDriver::NONE},
+};
+
+static const std::unordered_map<std::string, int> s_cullFaceMap = {
+  {"FRONT_FACES",    BaseDriver::FRONT_FACES},
+  {"BACK_FACES",     BaseDriver::BACK_FACES},
+  {"FRONT_AND_BACK", BaseDriver::FRONT_AND_BACK},
+};
+
+static const std::unordered_map<std::string, int> s_blendMap = {
+  {"BLEND_DEFAULT",     BaseDriver::BLEND_DEFAULT},
+  {"BLEND_OPAQUE",      BaseDriver::BLEND_OPAQUE},
+  {"ADDITIVE",          BaseDriver::ADDITIVE},
+  {"ALPHA_BLEND",       BaseDriver::ALPHA_BLEND},
+  {"NON_PREMULTIPLIED", BaseDriver::NON_PREMULTIPLIED},
+};
+
+int RenderGraph::ResolveAttachment(const std::string& name) {
+  auto it = s_attachmentMap.find(name);
+  return (it != s_attachmentMap.end()) ? it->second : BaseDriver::COLOR0_ATTACHMENT;
+}
+
+int RenderGraph::ResolveColorFormat(const std::string& name) {
+  auto it = s_colorFormatMap.find(name);
+  return (it != s_colorFormatMap.end()) ? it->second : BaseRT::RGBA8;
+}
+
+int RenderGraph::ResolveDepthFormat(const std::string& name) {
+  auto it = s_depthFormatMap.find(name);
+  return (it != s_depthFormatMap.end()) ? it->second : BaseRT::NOTHING;
+}
+
+unsigned long long RenderGraph::ResolveSignature(const std::string& name) {
+  auto it = s_signatureMap.find(name);
+  if (it != s_signatureMap.end()) return it->second;
+  printf("[RenderGraph] WARNING: unknown signature '%s'\n", name.c_str());
+  return 0;
+}
+
+int RenderGraph::ResolveDepthStencilState(const std::string& name) {
+  if (name.empty()) return -1;
+  auto it = s_depthStencilMap.find(name);
+  return (it != s_depthStencilMap.end()) ? it->second : -1;
+}
+
+int RenderGraph::ResolveCullFace(const std::string& name) {
+  if (name.empty()) return -1;
+  auto it = s_cullFaceMap.find(name);
+  return (it != s_cullFaceMap.end()) ? it->second : -1;
+}
+
+int RenderGraph::ResolveBlendState(const std::string& name) {
+  if (name.empty()) return -1;
+  auto it = s_blendMap.find(name);
+  return (it != s_blendMap.end()) ? it->second : -1;
+}
+
+// ---- Parse "RTName:ATTACHMENT" ----
+
+RenderGraph::ResolvedTexture RenderGraph::ResolveTextureInput(const std::string& source) const {
+  ResolvedTexture result{};
+  result.rt_handle = -1;
+  result.attachment = BaseDriver::COLOR0_ATTACHMENT;
+  result.is_builtin = false;
+
+  if (source.empty()) return result;
+
+  // Built-in textures: @ssao_noise, @environment_map
+  if (source[0] == '@') {
+    result.is_builtin = true;
+    result.builtin = source;
+    return result;
+  }
+
+  // Parse "RTName:ATTACHMENT"
+  auto colon = source.find(':');
+  if (colon == std::string::npos) {
+    // Just an RT name, default to COLOR0
+    auto it = m_rtHandles.find(source);
+    if (it != m_rtHandles.end()) result.rt_handle = it->second;
+    else printf("[RenderGraph] WARNING: unknown RT '%s'\n", source.c_str());
+    return result;
+  }
+
+  std::string rtName = source.substr(0, colon);
+  std::string attName = source.substr(colon + 1);
+
+  auto it = m_rtHandles.find(rtName);
+  if (it != m_rtHandles.end()) result.rt_handle = it->second;
+  else printf("[RenderGraph] WARNING: unknown RT '%s' in '%s'\n", rtName.c_str(), source.c_str());
+
+  result.attachment = ResolveAttachment(attName);
+  return result;
+}
+
+// ---- Load & Build ----
+
+bool RenderGraph::Load(const std::string& path) {
+  if (!LoadRenderGraphDescriptor(path, m_desc))
+    return false;
+
+  // Graph is built after CreateRenderTargets (needs RT handle map)
+  return true;
+}
+
+void RenderGraph::CreateRenderTargets(BaseDriver* driver, const SceneProps& props) {
+  m_rtHandles.clear();
+
+  for (const auto& rt : m_desc.render_targets) {
+    int cf = ResolveColorFormat(rt.color_format);
+    int df = ResolveDepthFormat(rt.depth_format);
+
+    int w = rt.size[0];
+    int h = rt.size[1];
+
+    // Resolve size references
+    if (!rt.size_ref.empty()) {
+      if (rt.size_ref == "$shadow_resolution") {
+        w = h = static_cast<int>(props.ShadowMapResolution);
+      } else if (rt.size_ref == "$god_rays_resolution") {
+        w = h = static_cast<int>(props.GoodRaysResolution);
+      }
+    }
+
+    int handle = driver->CreateRT(rt.color_count, cf, df, w, h, rt.linear_filter);
+    m_rtHandles[rt.name] = handle;
+
+    printf("[RenderGraph] Created RT '%s' -> handle %d (%dx%d, %d colors, cf=%s, df=%s)\n",
+           rt.name.c_str(), handle, w, h, rt.color_count,
+           rt.color_format.c_str(), rt.depth_format.c_str());
+  }
+
+  // Now that RT handles are resolved, build the DAG
+  BuildGraph();
+}
+
+void RenderGraph::BuildGraph() {
+  m_nodes.clear();
+  m_edges.clear();
+
+  // Map pass names to indices for dependency tracking
+  std::unordered_map<std::string, int> passIndex;
+  for (int i = 0; i < static_cast<int>(m_desc.passes.size()); i++) {
+    passIndex[m_desc.passes[i].name] = i;
+  }
+
+  // Build a map: RT name -> index of the last pass that wrote to it
+  // (updated as we scan passes in order)
+  std::unordered_map<std::string, int> lastWriter;
+
+  m_nodes.resize(m_desc.passes.size());
+
+  for (int i = 0; i < static_cast<int>(m_desc.passes.size()); i++) {
+    const auto& passDesc = m_desc.passes[i];
+    auto& node = m_nodes[i];
+    node.index = i;
+    node.desc = &m_desc.passes[i];
+
+    // Resolve RT handle for this pass's target
+    if (!passDesc.target.empty()) {
+      auto it = m_rtHandles.find(passDesc.target);
+      node.rt_handle = (it != m_rtHandles.end()) ? it->second : -1;
+    } else {
+      node.rt_handle = -1;
+    }
+
+    // Scan inputs to build edges
+    for (const auto& input : passDesc.inputs) {
+      if (input.source.empty() || input.source[0] == '@')
+        continue;  // built-in, no graph edge
+
+      // Extract RT name from "RTName:ATTACHMENT"
+      std::string rtName = input.source;
+      auto colon = rtName.find(':');
+      if (colon != std::string::npos)
+        rtName = rtName.substr(0, colon);
+
+      auto writerIt = lastWriter.find(rtName);
+      if (writerIt != lastWriter.end()) {
+        int fromPass = writerIt->second;
+
+        GraphEdge edge;
+        edge.from_pass = fromPass;
+        edge.to_pass = i;
+        edge.rt = rtName;
+        edge.attachment = ResolveAttachment(
+          (colon != std::string::npos) ? input.source.substr(colon + 1) : "COLOR0");
+        edge.slot = input.slot;
+        m_edges.push_back(edge);
+
+        // Record adjacency
+        if (std::find(node.inputs_from.begin(), node.inputs_from.end(), fromPass) == node.inputs_from.end())
+          node.inputs_from.push_back(fromPass);
+        if (std::find(m_nodes[fromPass].outputs_to.begin(), m_nodes[fromPass].outputs_to.end(), i) == m_nodes[fromPass].outputs_to.end())
+          m_nodes[fromPass].outputs_to.push_back(i);
+      }
+    }
+
+    // This pass writes to its target RT
+    if (!passDesc.target.empty()) {
+      lastWriter[passDesc.target] = i;
+    }
+  }
+
+  printf("[RenderGraph] Built graph: %zu nodes, %zu edges\n", m_nodes.size(), m_edges.size());
+}
+
+int RenderGraph::GetRTHandle(const std::string& name) const {
+  auto it = m_rtHandles.find(name);
+  return (it != m_rtHandles.end()) ? it->second : -1;
+}
+
+// ---- Print ----
+
+void RenderGraph::PrintGraph() const {
+  printf("\n=== Render Graph ===\n");
+  for (const auto& node : m_nodes) {
+    printf("[%2d] %-30s -> RT: %-20s (handle %d)\n",
+           node.index,
+           node.desc->name.c_str(),
+           node.desc->target.c_str(),
+           node.rt_handle);
+
+    if (!node.inputs_from.empty()) {
+      printf("       depends on: ");
+      for (int dep : node.inputs_from) printf("[%d]%s ", dep, m_nodes[dep].desc->name.c_str());
+      printf("\n");
+    }
+    if (!node.outputs_to.empty()) {
+      printf("       feeds into: ");
+      for (int out : node.outputs_to) printf("[%d]%s ", out, m_nodes[out].desc->name.c_str());
+      printf("\n");
+    }
+  }
+
+  printf("\n--- Edges ---\n");
+  for (const auto& e : m_edges) {
+    printf("  [%d]%s -(%s:%d)-> [%d]%s slot %d\n",
+           e.from_pass, m_nodes[e.from_pass].desc->name.c_str(),
+           e.rt.c_str(), e.attachment,
+           e.to_pass, m_nodes[e.to_pass].desc->name.c_str(),
+           e.slot);
+  }
+  printf("====================\n\n");
+}
+
+// ---- Execution ----
+
+void RenderGraph::Execute(
+  BaseDriver* driver,
+  SceneProps& props,
+  PrimitiveInst* meshes, int meshCount,
+  PrimitiveInst* quads,
+  ::Camera* mainCam,
+  ::Camera* lightCam,
+  ::Camera* omniCams,
+  int envMapTexIndex)
+{
+  for (const auto& node : m_nodes) {
+    ExecutePass(node, driver, props, meshes, meshCount, quads,
+                mainCam, lightCam, omniCams, envMapTexIndex);
+  }
+}
+
+void RenderGraph::ExecutePass(
+  const GraphNode& node,
+  BaseDriver* driver,
+  SceneProps& props,
+  PrimitiveInst* meshes, int meshCount,
+  PrimitiveInst* quads,
+  ::Camera* mainCam,
+  ::Camera* lightCam,
+  ::Camera* omniCams,
+  int envMapTexIndex)
+{
+  const auto& pass = *node.desc;
+
+  // Pre-pass state changes
+  int ds = ResolveDepthStencilState(pass.state.depth_stencil);
+  if (ds >= 0) driver->SetDepthStencilState(static_cast<BaseDriver::DEPTH_STENCIL_STATES>(ds));
+
+  int cf = ResolveCullFace(pass.state.cull_face);
+  if (cf >= 0) driver->SetCullFace(static_cast<BaseDriver::FACE_CULLING>(cf));
+
+  int bs = ResolveBlendState(pass.state.blend);
+  if (bs >= 0) driver->SetBlendState(static_cast<BaseDriver::BLEND_STATES>(bs));
+
+  // Camera selection
+  if (pass.camera == "light" && lightCam) {
+    props.pCameras[0] = lightCam;
+  } else if (pass.camera == "main" && mainCam) {
+    props.pCameras[0] = mainCam;
+  }
+
+  // Active light camera
+  if (pass.active_light_camera >= 0) {
+    props.ActiveLightCamera = pass.active_light_camera;
+  }
+
+  // Gauss kernel selection
+  if (pass.gauss_kernel >= 0) {
+    props.ActiveGaussKernel = pass.gauss_kernel;
+  }
+
+  // Cubemap loop pass
+  if (pass.cube_faces > 0 && node.rt_handle >= 0) {
+    driver->PushRT(node.rt_handle);
+
+    // Clear all faces first
+    for (int face = 0; face < pass.cube_faces; face++) {
+      driver->RTs[node.rt_handle]->ChangeCubeDepthTexture(face);
+      driver->Clear();
+    }
+
+    // Draw each face
+    for (int face = 0; face < pass.cube_faces; face++) {
+      if (pass.per_face_camera == "omni" && omniCams) {
+        props.pCameras[0] = &omniCams[face];
+      }
+      driver->RTs[node.rt_handle]->ChangeCubeDepthTexture(face);
+
+      for (const auto& draw : pass.draws) {
+        unsigned long long sig = ResolveSignature(draw.signature);
+        for (const auto& extraSig : draw.extra_signatures)
+          sig |= ResolveSignature(extraSig);
+
+        for (int mi : draw.mesh_indices) {
+          if (mi < meshCount) {
+            meshes[mi].SetGlobalSignature(sig);
+            meshes[mi].Draw();
+            meshes[mi].SetGlobalSignature(Signature::FORWARD_PASS);
+          }
+        }
+      }
+    }
+
+    driver->PopRT();
+
+    // Restore camera after cubemap faces
+    if (pass.per_face_camera == "omni" && mainCam) {
+      props.pCameras[0] = mainCam;
+    }
+  }
+  else {
+    // Standard pass: push RT, bind textures, draw, pop
+
+    // Push RT (if we have a target)
+    if (node.rt_handle >= 0) {
+      driver->PushRT(node.rt_handle);
+    }
+
+    if (pass.clear) {
+      driver->Clear();
+    }
+
+    // Bind input textures
+    for (const auto& input : pass.inputs) {
+      auto resolved = ResolveTextureInput(input.source);
+
+      if (resolved.is_builtin) {
+        if (resolved.builtin == "@ssao_noise") {
+          quads[0].SetTexture(props.SSAOKernel.NoiseTex, input.slot);
+        }
+        // Other built-ins can be added here
+      } else if (resolved.rt_handle >= 0) {
+        Texture* tex = driver->GetRTTexture(resolved.rt_handle, resolved.attachment);
+        quads[0].SetTexture(tex, input.slot);
+      }
+    }
+
+    // Bind environment map
+    if (pass.bind_environment_map && envMapTexIndex >= 0) {
+      quads[0].SetEnvironmentMap(driver->GetTexture(envMapTexIndex));
+    }
+
+    // Execute draw commands
+    for (const auto& draw : pass.draws) {
+      unsigned long long sig = ResolveSignature(draw.signature);
+      for (const auto& extraSig : draw.extra_signatures)
+        sig |= ResolveSignature(extraSig);
+
+      if (draw.type == "mesh") {
+        for (int mi : draw.mesh_indices) {
+          if (mi < meshCount) {
+            meshes[mi].SetGlobalSignature(sig);
+            meshes[mi].Draw();
+            meshes[mi].SetGlobalSignature(Signature::FORWARD_PASS);
+          }
+        }
+      }
+      else if (draw.type == "final_quad") {
+        quads[7].SetTexture(quads[0].Textures[0], 0);
+        // Re-bind: final quad gets its texture from the pass inputs
+        for (const auto& input : pass.inputs) {
+          auto resolved = ResolveTextureInput(input.source);
+          if (!resolved.is_builtin && resolved.rt_handle >= 0) {
+            quads[7].SetTexture(driver->GetRTTexture(resolved.rt_handle, resolved.attachment), input.slot);
+          }
+        }
+        quads[7].SetGlobalSignature(sig);
+        quads[7].Draw();
+      }
+      else {
+        // fullscreen_quad (default)
+        quads[0].SetGlobalSignature(sig);
+        quads[0].Draw();
+      }
+    }
+
+    // Pop RT
+    if (node.rt_handle >= 0 && pass.pop) {
+      driver->PopRT();
+    }
+  }
+
+  // Post-pass state restoration
+  int postDs = ResolveDepthStencilState(pass.post_state.depth_stencil);
+  if (postDs >= 0) driver->SetDepthStencilState(static_cast<BaseDriver::DEPTH_STENCIL_STATES>(postDs));
+
+  int postCf = ResolveCullFace(pass.post_state.cull_face);
+  if (postCf >= 0) driver->SetCullFace(static_cast<BaseDriver::FACE_CULLING>(postCf));
+
+  int postBs = ResolveBlendState(pass.post_state.blend);
+  if (postBs >= 0) driver->SetBlendState(static_cast<BaseDriver::BLEND_STATES>(postBs));
+}
+
+} // namespace t800

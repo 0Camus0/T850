@@ -84,7 +84,7 @@ namespace t800 {
         m_quads[j].Update();
       }
       
-      for (int j = m_quads.size()-1; j > 0; j--) {
+      for (int j = static_cast<int>(m_quads.size()) - 1; j > 0; j--) {
         m_quads[j].SetBrightness(brightness);
         m_quads[j].Draw();
       }

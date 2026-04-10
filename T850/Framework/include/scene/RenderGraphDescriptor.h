@@ -76,6 +76,9 @@ namespace t800 {
     // Pop the RT after drawing? (false for Night's deferred->volumetric continuation)
     bool pop = true;
 
+    // Push the RT before drawing? (false to reuse the RT already on the stack from a previous pop=false pass)
+    bool push = true;
+
     // Cubemap loop: draw this pass once per cube face
     int cube_faces = 0;           // 0 = not a cubemap loop, 6 = cubemap
     std::string per_face_camera;  // "omni" = use omni light cameras 0..5

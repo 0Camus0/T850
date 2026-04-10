@@ -12,7 +12,7 @@ namespace t800 {
     }
     for (std::size_t i = 0; i < (m_points.size()- 3); i++)
     {
-    	m_totalLength += (m_points[i].m_length = GetSegmentLength(i));
+    	m_totalLength += (m_points[i].m_length = GetSegmentLength(static_cast<int>(i)));
       if (m_points[i].m_LookAtCenter) {
         float		_Yaw;
         float		_Pitch;
@@ -38,9 +38,9 @@ namespace t800 {
     else
     {
     	p1 = (int)t;
-    	p2 = (p1 + 1) % m_points.size();
-    	p3 = (p2 + 1) % m_points.size();
-    	p0 = p1 >= 1 ? p1 - 1 : m_points.size() - 1;
+    	p2 = static_cast<int>((p1 + 1) % m_points.size());
+    	p3 = static_cast<int>((p2 + 1) % m_points.size());
+    	p0 = p1 >= 1 ? p1 - 1 : static_cast<int>(m_points.size()) - 1;
     }
     
     t = t - (int)t;
@@ -80,9 +80,9 @@ namespace t800 {
     else
     {
     	p1 = (int)t;
-    	p2 = (p1 + 1) % m_points.size();
-    	p3 = (p2 + 1) % m_points.size();
-    	p0 = p1 >= 1 ? p1 - 1 : m_points.size() - 1;
+    	p2 = static_cast<int>((p1 + 1) % m_points.size());
+    	p3 = static_cast<int>((p2 + 1) % m_points.size());
+    	p0 = p1 >= 1 ? p1 - 1 : static_cast<int>(m_points.size()) - 1;
     }
     
     t = t - (int)t;

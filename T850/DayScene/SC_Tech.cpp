@@ -1,5 +1,8 @@
 #include "SC_Tech.h"
 using namespace t800;
+using std::cout;
+using std::endl;
+using std::string;
 #define NUM_LIGHTS 1
 #define RADI 170.0f
 

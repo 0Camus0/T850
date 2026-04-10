@@ -51,12 +51,12 @@ void SplineWireframe::Create()
   bdesc.usage = T8_BUFFER_USAGE::DEFAULT;
   CB = (t800::ConstantBuffer*)T8Device->CreateBuffer(T8_BUFFER_TYPE::CONSTANT, bdesc);
 
-  bdesc.byteWidth = sizeof(Vert) * vertices.size();
+  bdesc.byteWidth = static_cast<int>(sizeof(Vert) * vertices.size());
   bdesc.usage = T8_BUFFER_USAGE::DEFAULT;
   VB = (t800::VertexBuffer*)T8Device->CreateBuffer(T8_BUFFER_TYPE::VERTEX, bdesc, &vertices[0]);
 
 
-  bdesc.byteWidth = indices.size() * sizeof(unsigned short);
+  bdesc.byteWidth = static_cast<int>(indices.size() * sizeof(unsigned short));
   bdesc.usage = T8_BUFFER_USAGE::DEFAULT;
   IB = (t800::IndexBuffer*)T8Device->CreateBuffer(T8_BUFFER_TYPE::INDEX, bdesc, &indices[0]);
   
@@ -75,7 +75,7 @@ void SplineWireframe::Draw(float * t, float * vp)
   CB->UpdateFromBuffer(*T8DeviceContext, &constantBuff.WVP[0]);
   CB->Set(*T8DeviceContext);
   T8DeviceContext->SetPrimitiveTopology(T8_TOPOLOGY::LINE_STRIP);
-  T8DeviceContext->DrawIndexed(vertices.size(), 0, 0);
+  T8DeviceContext->DrawIndexed(static_cast<unsigned>(vertices.size()), 0, 0);
 }
 void SplineWireframe::Destroy()
 {

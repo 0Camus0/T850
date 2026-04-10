@@ -1,0 +1,118 @@
+{
+  "name": "SC_Tech",
+  "cameras": [
+    {
+      "position": [0.0, 1.0, 10.0],
+      "eye": [0.0, 9.75, -31.0],
+      "pitch": 0.14,
+      "roll": 0.0,
+      "yaw": 0.02,
+      "speed": 10.0,
+      "fov": 0.817,
+      "aspect": 1.7778,
+      "width": 0.0,
+      "height": 0.0,
+      "near_plane": 2.0,
+      "far_plane": 12000.0,
+      "ortho": false,
+      "left_handed": true
+    }
+  ],
+  "light_cameras": [
+    {
+      "position": [0.0, 100.0, 10.0],
+      "eye": [64.0, 205.0, 0.0],
+      "pitch": 1.310797,
+      "roll": 0.0,
+      "yaw": -1.569204,
+      "speed": 10.0,
+      "fov": 0.7854,
+      "aspect": 1.0,
+      "width": 0.0,
+      "height": 0.0,
+      "near_plane": 110.0,
+      "far_plane": 280.0,
+      "ortho": false,
+      "left_handed": true
+    }
+  ],
+  "lights": [
+    { "position": [64.0, 205.0, 0.0], "color": [1.0, 1.0, 1.0], "radius": 30000.0, "enabled": true },
+    { "position": [-55.0, 10.0, 0.0], "color": [1.0, 0.57, 0.16], "radius": 60.0, "enabled": true },
+    { "position": [55.0, 10.0, 0.0], "color": [1.0, 0.57, 0.16], "radius": 60.0, "enabled": true },
+    { "position": [60.0, 10.0, 30.0], "color": [1.0, 0.57, 0.16], "radius": 60.0, "enabled": true },
+    { "position": [60.0, 10.0, -30.0], "color": [1.0, 0.57, 0.16], "radius": 60.0, "enabled": true }
+  ],
+  "gauss_filters": [
+    { "kernel_size": 4, "radius": 1.0, "sigma": 1.0 },
+    { "kernel_size": 11, "radius": 2.5, "sigma": 4.5 },
+    { "kernel_size": 23, "radius": 3.0, "sigma": 6.0 }
+  ],
+  "splines": [
+    {
+      "points": [
+        { "position": [80.0, 90.0, -80.0], "velocity": 3.0 },
+        { "position": [80.0, 90.0, -20.0], "velocity": 6.0 },
+        { "position": [20.0, 110.0, 0.0], "velocity": 20.0 },
+        { "position": [30.0, 20.0, 0.0], "velocity": 7.0 },
+        { "position": [40.0, 6.0, 0.0], "velocity": 7.0 },
+        { "position": [50.0, 4.0, 20.0], "velocity": 7.0 },
+        { "position": [40.0, 4.0, 20.0], "velocity": 7.0 },
+        { "position": [0.0, 4.0, 20.0], "velocity": 7.0 },
+        { "position": [-50.0, 3.0, 20.0], "velocity": 7.0 },
+        { "position": [-50.0, 6.0, 0.0], "velocity": 7.0 },
+        { "position": [-20.0, 15.0, 0.0], "velocity": 7.0 },
+        { "position": [0.0, 10.0, 0.0], "velocity": 7.0 },
+        { "position": [-40.0, 25.0, 3.0], "velocity": 10.0 },
+        { "position": [-55.0, 30.0, 5.0], "velocity": 10.0 },
+        { "position": [-55.0, 30.0, -25.0], "velocity": 3.0 },
+        { "position": [-65.0, 25.0, 0.0], "velocity": 3.0 },
+        { "position": [-60.0, 25.0, 25.0], "velocity": 3.0 },
+        { "position": [-35.0, 30.0, -20.0], "velocity": 10.0 },
+        { "position": [15.0, 30.0, -20.0], "velocity": 10.0 },
+        { "position": [25.0, 30.0, 20.0], "velocity": 10.0 },
+        { "position": [50.0, 30.0, 20.0], "velocity": 10.0 },
+        { "position": [50.0, 30.0, -20.0], "velocity": 10.0 },
+        { "position": [-50.0, 30.0, -20.0], "velocity": 10.0 },
+        { "position": [-50.0, 30.0, 0.0], "velocity": 10.0 },
+        { "position": [-30.0, 30.0, 0.0], "velocity": 10.0 },
+        { "position": [0.0, 5.0, 0.0], "velocity": 10.0 }
+      ],
+      "looped": false,
+      "agent_velocity": 15.0,
+      "agent_offset": 0,
+      "attached_camera": 0
+    }
+  ],
+  "meshes": [
+    "Models/SponzaEsc.X",
+    "Models/SkyBox.X"
+  ],
+  "environment_map": "CubeMap_Mountains.dds",
+  "quality": {
+    "shadow_map_resolution": 2048.0,
+    "god_rays_resolution": 0.0,
+    "pcf_scale": 2.1,
+    "pcf_samples": 3.0,
+    "parallax_low_samples": 10.0,
+    "parallax_high_samples": 18.0,
+    "parallax_height": 0.02,
+    "light_volume_steps": 96.0,
+    "ssao_kernel_size": 32,
+    "ssao_radius": 1.5,
+    "dof_near_samples": 1.0,
+    "dof_far_samples": 3.0
+  },
+  "settings": {
+    "exposure": 0.3,
+    "bloom_factor": 0.35,
+    "aperture": 120.0,
+    "focal_length": 50.0,
+    "max_coc": 2.5,
+    "ambient_color": [0.8, 0.8, 0.8],
+    "active_lights": 5,
+    "shadow_enabled": true,
+    "ssao_enabled": true,
+    "auto_focus": true
+  }
+}

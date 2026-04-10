@@ -34,7 +34,7 @@ int    g_dumpFrame   = -1;        // frame number to dump at
 float  g_dumpSeconds = -1.0f;     // seconds to dump at
 bool   g_debugFrames = false;     // --debugFrames: spacebar pauses + dumps + exits
 bool   g_debugDumpRequested = false; // set by spacebar press
-std::string g_feedMatricesPath;      // --feedMatrices: path to matrices.json to replay
+std::string g_replaySnapshotPath;    // --replaySnapshot: path to snapshot.json to replay
 bool   g_keepRunning = false;        // --keepRunning: don't exit after dump
 int    g_startScene  = 0;            // --scene: starting scene index (0=Day, 1=Night, 2=Tech)
 bool   g_fullscreen  = false;        // --fullscreen: launch in fullscreen mode
@@ -69,7 +69,7 @@ int main(int arg,char ** args){
       g_dumpByFrame = true;
       g_dumpFrame = std::stoi(args[++i]);
     }
-    else if (a == "--dump-seconds" && i + 1 < arg) {
+    else if (a == "--dumpSnapshot-seconds" && i + 1 < arg) {
       g_dumpEnabled = true;
       g_dumpByFrame = false;
       g_dumpSeconds = std::stof(args[++i]);
@@ -77,11 +77,11 @@ int main(int arg,char ** args){
     else if (a == "--debugFrames") {
       g_debugFrames = true;
     }
-    else if (a == "--feedMatrices" && i + 1 < arg) {
-      g_feedMatricesPath = args[++i];
+    else if (a == "--replaySnapshot" && i + 1 < arg) {
+      g_replaySnapshotPath = args[++i];
       // Strip surrounding quotes if present (from launcher)
-      if (g_feedMatricesPath.size() >= 2 && g_feedMatricesPath.front() == '"' && g_feedMatricesPath.back() == '"') {
-        g_feedMatricesPath = g_feedMatricesPath.substr(1, g_feedMatricesPath.size() - 2);
+      if (g_replaySnapshotPath.size() >= 2 && g_replaySnapshotPath.front() == '"' && g_replaySnapshotPath.back() == '"') {
+        g_replaySnapshotPath = g_replaySnapshotPath.substr(1, g_replaySnapshotPath.size() - 2);
       }
     }
     else if (a == "--keepRunning") {

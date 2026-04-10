@@ -1,21 +1,23 @@
 ﻿{
     "configuration":  "Release",
-    "keepRunning":  false,
+    "keepRunning":  true,
     "dump":  {
                  "seconds":  5,
                  "trigger":  "frame",
                  "frame":  750,
                  "enabled":  false
              },
-    "debugFrames":  false,
+    "debugFrames":  true,
     "architecture":  "x64",
-    "feedMatrices":  {
-                         "path":  "D:\\Code\\Game\\T850\\T850\\bin\\x64\\Release\\dumps_d3d11_f2928_20260410_100454\\matrices.json",
-                         "enabled":  false
-                     },
     "display":  {
+                    "scene":  1,
+                    "width":  1280,
                     "height":  720,
-                    "width":  1280
+                    "fullscreen":  false
                 },
-    "api":  "d3d11"
+    "replaySnapshot":  {
+                           "path":  "D:\\Code\\Game\\T850\\T850\\bin\\x64\\Release\\dumps_d3d11_f7809_20260410_135201\\snapshot.json",
+                           "enabled":  true
+                       },
+    "api":  "gl"
 }

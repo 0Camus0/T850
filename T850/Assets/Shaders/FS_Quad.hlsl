@@ -786,13 +786,16 @@ float4 FS(VS_OUTPUT input) : SV_TARGET{
 
   half tnear;
   half tfar;
-  half boxMin = -20;
-  half boxMax = 20;
-  half boxSize = boxMax - boxMin;
+  half3 boxMin = half3(-2.0, -2.0, -2.0);
+  half3 boxMax = half3(2.0, 2.0, 2.0);
+  half3 volPos = toogles.xyz;
+  boxMin += volPos;
+  boxMax += volPos;
+  half boxSize = boxMax.x - boxMin.x;
   bool hit = IntersectBox(CameraPosition,rayDir, boxMin, boxMax, tnear, tfar);
   if (!hit) discard;
   if (tfar < 0.0) discard;
-  //if (tnear > rayLength) discard;//UNCOMMENT
+  if (tnear > rayLength) discard;
   if (tnear < 0.0) tnear = 0.0;
 
   half4 intersectionNear =  CameraPosition + rayDir*tnear;

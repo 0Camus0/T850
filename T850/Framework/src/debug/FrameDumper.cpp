@@ -35,13 +35,39 @@ static Mat4Json ToJson(const XMATRIX44& mat) {
   return j;
 }
 
+// ── Camera <-> SnapshotCamJson helpers ──
+
+static SnapshotCamJson CamToJson(Camera& cam) {
+  SnapshotCamJson j;
+  j.eye = { cam.Eye.x, cam.Eye.y, cam.Eye.z };
+  j.pitch = asinf(-cam.Look.y);
+  j.roll = cam.Roll;
+  j.yaw = atan2f(cam.Look.x, cam.Look.z);
+  j.speed = cam.Speed;
+  j.fov = cam.Fov;
+  j.aspect_ratio = cam.AspectRatio;
+  j.near_plane = cam.NPlane;
+  j.far_plane = cam.FPlane;
+  return j;
+}
+
+static void JsonToCam(const SnapshotCamJson& j, Camera& cam) {
+  cam.Eye = XVECTOR3(j.eye[0], j.eye[1], j.eye[2]);
+  cam.Pitch = j.pitch;
+  cam.Roll = j.roll;
+  cam.Yaw = j.yaw;
+  cam.Speed = j.speed;
+  cam.Velocity = XVECTOR3(0, 0, 0);
+  cam.Update(0.0f);
+}
+
 // ── Init ──
 
 void FrameDumper::Init(const FrameDumperConfig& config) {
   config_ = config;
-  hasFeedData_ = false;
-  feedState_ = 0;
-  feedWarmup_ = 0;
+  hasReplayData_ = false;
+  replayState_ = 0;
+  replayWarmup_ = 0;
   dumpTimer_ = 0.0f;
   dumpFrameCounter_ = 0;
   dumped_ = false;
@@ -49,93 +75,117 @@ void FrameDumper::Init(const FrameDumperConfig& config) {
   shouldExit_ = false;
 }
 
-// ── Feed matrices ──
+// ── Replay snapshot ──
 
-bool FrameDumper::HasPendingFeed() const {
-  return !config_.feedMatricesPath.empty() && feedState_ == 0;
+bool FrameDumper::HasPendingReplay() const {
+  return !config_.replaySnapshotPath.empty() && replayState_ == 0;
 }
 
-bool FrameDumper::LoadFeedMatrices() {
-  if (config_.feedMatricesPath.empty()) return false;
+bool FrameDumper::LoadReplaySnapshot() {
+  if (config_.replaySnapshotPath.empty()) return false;
 
-  if (LoadFeedFile(config_.feedMatricesPath, feedData_)) {
-    hasFeedData_ = true;
-    feedState_ = 1; // enter warmup
+  if (LoadSnapshot(config_.replaySnapshotPath, replayData_)) {
+    hasReplayData_ = true;
+    replayState_ = 1; // enter warmup
     return true;
   } else {
-    feedState_ = 2;
-    config_.feedMatricesPath.clear();
+    replayState_ = 2;
     printf("[FrameDumper] Failed to load '%s', continuing normally.\n",
-           config_.feedMatricesPath.c_str());
+           config_.replaySnapshotPath.c_str());
+    config_.replaySnapshotPath.clear();
     return false;
   }
 }
 
-void FrameDumper::ApplyFeedState(Camera& cam, Camera& lightCam, SceneProps& props) {
-  if (!hasFeedData_) return;
+void FrameDumper::ApplySnapshot(Camera& cam, Camera& lightCam, SceneProps& props,
+                                Camera* omniCams, XVECTOR3* omniLightPos) {
+  if (!hasReplayData_) return;
 
   // Disable spline agent control
   cam.m_externalControl = false;
 
-  cam.Eye = XVECTOR3(feedData_.cam.eye[0], feedData_.cam.eye[1], feedData_.cam.eye[2]);
-  cam.Pitch = feedData_.cam.pitch;
-  cam.Roll = feedData_.cam.roll;
-  cam.Yaw = feedData_.cam.yaw;
-  cam.Velocity = XVECTOR3(0, 0, 0);
-  cam.Update(0.0f);
-
-  if (feedData_.matrices.has_value()) {
-    cam.View       = FromJson(feedData_.matrices->camView);
-    cam.Projection = FromJson(feedData_.matrices->camProjection);
-    cam.VP         = FromJson(feedData_.matrices->camVP);
+  // Restore main camera
+  JsonToCam(replayData_.cam, cam);
+  if (replayData_.matrices.has_value()) {
+    cam.View       = FromJson(replayData_.matrices->camView);
+    cam.Projection = FromJson(replayData_.matrices->camProjection);
+    cam.VP         = FromJson(replayData_.matrices->camVP);
   }
 
-  lightCam.Eye = XVECTOR3(feedData_.lightCam.eye[0], feedData_.lightCam.eye[1], feedData_.lightCam.eye[2]);
-  lightCam.Pitch = feedData_.lightCam.pitch;
-  lightCam.Roll = feedData_.lightCam.roll;
-  lightCam.Yaw = feedData_.lightCam.yaw;
-  lightCam.Velocity = XVECTOR3(0, 0, 0);
-  lightCam.Update(0.0f);
-
-  if (feedData_.matrices.has_value()) {
-    lightCam.View       = FromJson(feedData_.matrices->lightCamView);
-    lightCam.Projection = FromJson(feedData_.matrices->lightCamProjection);
-    lightCam.VP         = FromJson(feedData_.matrices->lightCamVP);
+  // Restore light camera
+  JsonToCam(replayData_.light_cam, lightCam);
+  if (replayData_.matrices.has_value()) {
+    lightCam.View       = FromJson(replayData_.matrices->lightCamView);
+    lightCam.Projection = FromJson(replayData_.matrices->lightCamProjection);
+    lightCam.VP         = FromJson(replayData_.matrices->lightCamVP);
   }
 
-  // Apply light data from feed
+  // Restore lights
   if (!props.Lights.empty())
     props.Lights[0].Position = lightCam.Eye;
 
-  for (size_t i = 0; i < feedData_.lights.size() && i < props.Lights.size(); i++) {
-    auto& fl = feedData_.lights[i];
+  for (size_t i = 0; i < replayData_.lights.size() && i < props.Lights.size(); i++) {
+    auto& fl = replayData_.lights[i];
     props.Lights[i].Position = XVECTOR3(fl.position[0], fl.position[1], fl.position[2]);
     props.Lights[i].Color    = XVECTOR3(fl.color[0], fl.color[1], fl.color[2]);
     props.Lights[i].radius   = fl.radius;
   }
 
-  printf("[FrameDumper] Camera state applied, warming up %d frames before dump...\n", WARMUP_FRAMES);
+  // Restore scene properties
+  auto& sp = replayData_.scene_props;
+  props.Exposure = sp.exposure;
+  props.BloomFactor = sp.bloom_factor;
+  props.ShadowMapResolution = sp.shadow_map_resolution;
+  props.PCFScale = sp.pcf_scale;
+  props.PCFSamples = sp.pcf_samples;
+  props.ParallaxLowSamples = sp.parallax_low;
+  props.ParallaxHighSamples = sp.parallax_high;
+  props.ParallaxHeight = sp.parallax_height;
+  props.LightVolumeSteps = sp.light_volume_steps;
+  props.Aperture = sp.aperture;
+  props.FocalLength = sp.focal_length;
+  props.FocusDepth = sp.focus_depth;
+  props.MaxCoc = sp.max_coc;
+  props.ActiveLights = sp.active_lights;
+  props.ActiveLightCamera = sp.active_light_camera;
+  props.ToogleShadow = sp.toggle_shadow;
+  props.ToogleSSAO = sp.toggle_ssao;
+
+  // Restore Night scene omni state
+  if (replayData_.omni.has_value() && omniLightPos) {
+    auto& omni = *replayData_.omni;
+    *omniLightPos = XVECTOR3(omni.omni_light_pos[0], omni.omni_light_pos[1], omni.omni_light_pos[2]);
+
+    if (omniCams) {
+      for (size_t i = 0; i < omni.omni_cameras.size() && i < 6; i++) {
+        JsonToCam(omni.omni_cameras[i], omniCams[i]);
+      }
+    }
+  }
+
+  printf("[FrameDumper] Snapshot applied (scene=%d, %zu lights), warming up %d frames before dump...\n",
+         replayData_.scene, replayData_.lights.size(), WARMUP_FRAMES);
   fflush(stdout);
 }
 
-void FrameDumper::UpdateFeedState() {
-  if (feedState_ != 1) return;
+void FrameDumper::UpdateReplayState() {
+  if (replayState_ != 1) return;
 
-  feedWarmup_++;
-  if (feedWarmup_ >= WARMUP_FRAMES) {
-    feedState_ = 2;
+  replayWarmup_++;
+  if (replayWarmup_ >= WARMUP_FRAMES) {
+    replayState_ = 2;
     debugDumpRequested_ = true;
     printf("[FrameDumper] Warm-up done, triggering dump\n");
     fflush(stdout);
   }
 }
 
-bool FrameDumper::IsFeedActive() const {
-  return hasFeedData_ || !config_.feedMatricesPath.empty();
+bool FrameDumper::IsReplayActive() const {
+  return hasReplayData_ || !config_.replaySnapshotPath.empty();
 }
 
 bool FrameDumper::SkipCameraUpdates() const {
-  if (feedState_ != 0) return true;
+  if (replayState_ != 0) return true;
   if (debugDumpRequested_) return true;
   return false;
 }
@@ -154,7 +204,7 @@ bool FrameDumper::ShouldDump(float dt) {
 
   if (dumped_) return false;
 
-  // Explicit dump request (spacebar or feed warmup) always fires
+  // Explicit dump request (spacebar or replay warmup) always fires
   if (debugDumpRequested_) return true;
 
   // Timed/frame-based dumps require dumpEnabled from command line
@@ -176,7 +226,9 @@ void FrameDumper::DumpFrame(BaseDriver* driver,
                             Camera& cam, Camera& lightCam,
                             const SceneProps& props,
                             const std::vector<RTDumpEntry>& rts,
-                            float dt) {
+                            float dt,
+                            Camera* omniCams,
+                            const XVECTOR3* omniLightPos) {
   dumped_ = true;
 
   std::string apiName = (driver->m_currentAPI == GRAPHICS_API::D3D11) ? "d3d11" : "gl";
@@ -196,10 +248,10 @@ void FrameDumper::DumpFrame(BaseDriver* driver,
     driver->SaveRTToFile(rt.rtID, rt.attachment, prefix + rt.name);
   }
 
-  // Log + write matrices.json
+  // Log + write snapshot.json
   LogCameraState(cam, lightCam, props, dumpFrameCounter_, apiName, dt);
-  WriteMatricesJson(dumpDir + "/matrices.json", cam, lightCam, props,
-                    dumpFrameCounter_, apiName, dt);
+  WriteSnapshot(dumpDir + "/snapshot.json", cam, lightCam, props,
+                dumpFrameCounter_, apiName, dt, omniCams, omniLightPos);
 
   std::cout << "RT dump complete -> " << dumpDir << "/ (" << (rts.size() + 1) << " files)" << std::endl;
 
@@ -273,40 +325,52 @@ void FrameDumper::LogCameraState(Camera& cam, Camera& lightCam,
   }
 }
 
-void FrameDumper::WriteMatricesJson(const std::string& path,
-                                    Camera& cam, Camera& lightCam,
-                                    const SceneProps& props,
-                                    int frame, const std::string& apiName, float dt) {
-  float camEffPitch = asinf(-cam.Look.y);
-  float camEffYaw   = atan2f(cam.Look.x, cam.Look.z);
-  float lcEffPitch  = asinf(-lightCam.Look.y);
-  float lcEffYaw    = atan2f(lightCam.Look.x, lightCam.Look.z);
-
-  FeedFileJson out;
+void FrameDumper::WriteSnapshot(const std::string& path,
+                                Camera& cam, Camera& lightCam,
+                                const SceneProps& props,
+                                int frame, const std::string& apiName, float dt,
+                                Camera* omniCams, const XVECTOR3* omniLightPos) {
+  SnapshotJson out;
   out.frame = frame;
+  out.scene = config_.sceneIndex;
   out.api = apiName;
   out.dt = dt;
 
-  out.cam.eye = { cam.Eye.x, cam.Eye.y, cam.Eye.z };
-  out.cam.pitch = camEffPitch;
-  out.cam.roll = cam.Roll;
-  out.cam.yaw = camEffYaw;
+  out.cam = CamToJson(cam);
+  out.light_cam = CamToJson(lightCam);
 
-  out.lightCam.eye = { lightCam.Eye.x, lightCam.Eye.y, lightCam.Eye.z };
-  out.lightCam.pitch = lcEffPitch;
-  out.lightCam.roll = lightCam.Roll;
-  out.lightCam.yaw = lcEffYaw;
-
+  // Lights
   for (size_t i = 0; i < props.Lights.size(); i++) {
     const Light& lt = props.Lights[i];
-    FeedLightJson flt;
+    SnapshotLightJson flt;
     flt.position = { lt.Position.x, lt.Position.y, lt.Position.z };
     flt.color = { lt.Color.x, lt.Color.y, lt.Color.z };
     flt.radius = lt.radius;
     out.lights.push_back(flt);
   }
 
-  FeedMatricesJson mats;
+  // Scene properties
+  auto& sp = out.scene_props;
+  sp.exposure = props.Exposure;
+  sp.bloom_factor = props.BloomFactor;
+  sp.shadow_map_resolution = props.ShadowMapResolution;
+  sp.pcf_scale = props.PCFScale;
+  sp.pcf_samples = props.PCFSamples;
+  sp.parallax_low = props.ParallaxLowSamples;
+  sp.parallax_high = props.ParallaxHighSamples;
+  sp.parallax_height = props.ParallaxHeight;
+  sp.light_volume_steps = props.LightVolumeSteps;
+  sp.aperture = props.Aperture;
+  sp.focal_length = props.FocalLength;
+  sp.focus_depth = props.FocusDepth;
+  sp.max_coc = props.MaxCoc;
+  sp.active_lights = props.ActiveLights;
+  sp.active_light_camera = props.ActiveLightCamera;
+  sp.toggle_shadow = props.ToogleShadow;
+  sp.toggle_ssao = props.ToogleSSAO;
+
+  // Matrices
+  SnapshotMatricesJson mats;
   mats.camView       = ToJson(cam.View);
   mats.camProjection = ToJson(cam.Projection);
   mats.camVP         = ToJson(cam.VP);
@@ -315,7 +379,17 @@ void FrameDumper::WriteMatricesJson(const std::string& path,
   mats.lightCamVP         = ToJson(lightCam.VP);
   out.matrices = mats;
 
-  SaveFeedFile(path, out);
+  // Night scene omni data
+  if (omniCams && omniLightPos) {
+    SnapshotOmniJson omni;
+    omni.omni_light_pos = { omniLightPos->x, omniLightPos->y, omniLightPos->z };
+    for (int i = 0; i < 6; i++) {
+      omni.omni_cameras.push_back(CamToJson(omniCams[i]));
+    }
+    out.omni = omni;
+  }
+
+  SaveSnapshot(path, out);
 }
 
 } // namespace t800

@@ -65,6 +65,12 @@ namespace t800 {
       depthShaderViewFormat = DXGI_FORMAT_D32_FLOAT;
       depthResourceViewFormat = DXGI_FORMAT_R32_FLOAT;
     }break;
+    case BaseRT::CUBE_F32: {
+      depthFormat = DXGI_FORMAT_R32_TYPELESS;
+      depthShaderViewFormat = DXGI_FORMAT_D32_FLOAT;
+      depthResourceViewFormat = DXGI_FORMAT_R32_FLOAT;
+      isCubeDepth = true;
+    }break;
     }
 
 
@@ -121,39 +127,74 @@ namespace t800 {
     }
 
     D3D11_TEXTURE2D_DESC descDepth;
+    ZeroMemory(&descDepth, sizeof(descDepth));
     descDepth.Width = w;
     descDepth.Height = h;
     descDepth.MipLevels = 1;
-    descDepth.ArraySize = 1;
     descDepth.Format = depthFormat;
     descDepth.SampleDesc.Count = 1;
     descDepth.SampleDesc.Quality = 0;
     descDepth.Usage = D3D11_USAGE_DEFAULT;
     descDepth.BindFlags = D3D11_BIND_SHADER_RESOURCE | D3D11_BIND_DEPTH_STENCIL;
     descDepth.CPUAccessFlags = 0;
-    descDepth.MiscFlags = 0;
+
+    if (isCubeDepth) {
+      descDepth.ArraySize = 6;
+      descDepth.MiscFlags = D3D11_RESOURCE_MISC_TEXTURECUBE;
+    } else {
+      descDepth.ArraySize = 1;
+      descDepth.MiscFlags = 0;
+    }
+
     hr = device->CreateTexture2D(&descDepth, NULL, &D3D11DepthTex);
     if (hr != S_OK) {
       std::cout << "Error loading RT depth texture " << std::endl;
       exit(444);
     }
-    D3D11_DEPTH_STENCIL_VIEW_DESC dsvd;
-    ZeroMemory(&dsvd, sizeof(dsvd));
-    dsvd.Format = depthShaderViewFormat;
-    dsvd.ViewDimension = D3D11_DSV_DIMENSION_TEXTURE2D;
-    hr = device->CreateDepthStencilView(D3D11DepthTex.Get(), &dsvd, &D3D11DepthStencilTargetView);
-    if (hr != S_OK) {
-      std::cout << "Error creating Depth Stencil View " << std::endl;
-      exit(444);
+
+    if (isCubeDepth) {
+      // Create per-face DSVs for cubemap rendering
+      for (int face = 0; face < 6; face++) {
+        D3D11_DEPTH_STENCIL_VIEW_DESC dsvd;
+        ZeroMemory(&dsvd, sizeof(dsvd));
+        dsvd.Format = depthShaderViewFormat;
+        dsvd.ViewDimension = D3D11_DSV_DIMENSION_TEXTURE2DARRAY;
+        dsvd.Texture2DArray.MipSlice = 0;
+        dsvd.Texture2DArray.FirstArraySlice = face;
+        dsvd.Texture2DArray.ArraySize = 1;
+        hr = device->CreateDepthStencilView(D3D11DepthTex.Get(), &dsvd, &D3D11CubeFaceDSVs[face]);
+        if (hr != S_OK) {
+          std::cout << "Error creating Cube Depth Stencil View face " << face << std::endl;
+          exit(444);
+        }
+      }
+      D3D11DepthStencilTargetView = D3D11CubeFaceDSVs[0];
+    } else {
+      D3D11_DEPTH_STENCIL_VIEW_DESC dsvd;
+      ZeroMemory(&dsvd, sizeof(dsvd));
+      dsvd.Format = depthShaderViewFormat;
+      dsvd.ViewDimension = D3D11_DSV_DIMENSION_TEXTURE2D;
+      hr = device->CreateDepthStencilView(D3D11DepthTex.Get(), &dsvd, &D3D11DepthStencilTargetView);
+      if (hr != S_OK) {
+        std::cout << "Error creating Depth Stencil View " << std::endl;
+        exit(444);
+      }
     }
 
     D3DXTexture *pTextureDepth = new D3DXTexture;
     pTextureDepth->Tex = D3D11DepthTex;
     D3D11_SHADER_RESOURCE_VIEW_DESC shaderResourceViewDesc;
+    ZeroMemory(&shaderResourceViewDesc, sizeof(shaderResourceViewDesc));
     shaderResourceViewDesc.Format = depthResourceViewFormat;
-    shaderResourceViewDesc.ViewDimension = D3D11_SRV_DIMENSION_TEXTURE2D;
-    shaderResourceViewDesc.Texture2D.MostDetailedMip = 0;
-    shaderResourceViewDesc.Texture2D.MipLevels = 1;
+    if (isCubeDepth) {
+      shaderResourceViewDesc.ViewDimension = D3D11_SRV_DIMENSION_TEXTURECUBE;
+      shaderResourceViewDesc.TextureCube.MostDetailedMip = 0;
+      shaderResourceViewDesc.TextureCube.MipLevels = 1;
+    } else {
+      shaderResourceViewDesc.ViewDimension = D3D11_SRV_DIMENSION_TEXTURE2D;
+      shaderResourceViewDesc.Texture2D.MostDetailedMip = 0;
+      shaderResourceViewDesc.Texture2D.MipLevels = 1;
+    }
     hr = device->CreateShaderResourceView(D3D11DepthTex.Get(), &shaderResourceViewDesc, &pTextureDepth->pSRVTex);
     if (hr != S_OK) {
       delete pTextureDepth;
@@ -188,6 +229,15 @@ namespace t800 {
     if (number_RT == 0)
       RTVA.push_back(0);
 
+    // For cube depth, clear all 6 faces then bind face 0
+    if (isCubeDepth) {
+      for (int face = 0; face < 6; face++) {
+        deviceContext->OMSetRenderTargets(number_RT, &RTVA[0][0], D3D11CubeFaceDSVs[face].Get());
+        deviceContext->ClearDepthStencilView(D3D11CubeFaceDSVs[face].Get(), D3D11_CLEAR_DEPTH, 1.0f, 0);
+      }
+      D3D11DepthStencilTargetView = D3D11CubeFaceDSVs[0];
+    }
+
     deviceContext->OMSetRenderTargets(number_RT, &RTVA[0][0], D3D11DepthStencilTargetView.Get());
 
     D3D11_VIEWPORT viewport_RT;
@@ -210,9 +260,28 @@ namespace t800 {
       deviceContext->ClearRenderTargetView(vD3D11RenderTargetView[i].Get(), rgba);
     }
 
-    deviceContext->ClearDepthStencilView(D3D11DepthStencilTargetView.Get(), D3D11_CLEAR_DEPTH, 1.0f, 0);
+    if (!isCubeDepth) {
+      deviceContext->ClearDepthStencilView(D3D11DepthStencilTargetView.Get(), D3D11_CLEAR_DEPTH, 1.0f, 0);
+    }
   }
   void D3DXRT::ChangeCubeDepthTexture(int i)
   {
+    if (!isCubeDepth || i < 0 || i >= 6) return;
+
+    ID3D11DeviceContext* deviceContext = reinterpret_cast<ID3D11DeviceContext*>(T8DeviceContext->GetAPIObject());
+
+    D3D11DepthStencilTargetView = D3D11CubeFaceDSVs[i];
+
+    // Re-bind OM targets with the new face DSV
+    if (number_RT > 0) {
+      std::vector<ID3D11RenderTargetView**> RTVA;
+      for (int j = 0; j < number_RT; j++) {
+        RTVA.push_back(vD3D11RenderTargetView[j].GetAddressOf());
+      }
+      deviceContext->OMSetRenderTargets(number_RT, &RTVA[0][0], D3D11DepthStencilTargetView.Get());
+    } else {
+      ID3D11RenderTargetView* nullRTV = nullptr;
+      deviceContext->OMSetRenderTargets(0, &nullRTV, D3D11DepthStencilTargetView.Get());
+    }
   }
 }

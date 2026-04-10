@@ -7,6 +7,7 @@
 #include <scene/LensFlare.h>
 #include <scene/RenderGraph.h>
 #include <scene/T8_TextRenderer.h>
+#include <debug/FrameDumper.h>
 #include <Config.h>
 
 
@@ -131,6 +132,7 @@ public:
   XVECTOR3 omniLightPos;
 
   t800::RenderGraph m_renderGraph;
+  t800::FrameDumper m_dumper;
   t800::SplineWireframe* splineWire;
   t800::PrimitiveInst splineInst;
   t800::SplineAgent m_agent;

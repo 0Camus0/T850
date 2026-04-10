@@ -51,6 +51,8 @@ void App::InitVars() {
   m_actualScene = m_scenes[0];
   m_actualScene->InitVars();
 
+  m_devLayer.Init(pFramework);
+  m_devLayer.SetActiveScene(m_actualScene);
 
   Cam.InitPerspective(XVECTOR3(0.0f, 1.0f, 10.0f), Deg2Rad(46.8f), 1280.0f / 720.0f, 2.0f, 12000.0f);
   Cam.Speed = 10.0f;
@@ -71,6 +73,7 @@ void App::LoadScene(int id) {
 
   m_actualScene = m_scenes[id];
   m_actualScene->OnLoadScene();
+  m_devLayer.SetActiveScene(m_actualScene);
   FadeFX(0.5,false);
 }
 
@@ -107,7 +110,7 @@ void App::OnUpdate() {
      m_fpsCol = XVECTOR3(0.2, 0.8, 0.2);
      timeAccum = 0;
    }
-   m_actualScene->OnUpdate(DtSecs);
+   m_devLayer.Update(DtSecs);
    
    OnInput();
    OnDraw();
@@ -116,7 +119,7 @@ void App::OnUpdate() {
 void App::OnDraw() {
   pFramework->pVideoDriver->Clear();
   FirstFrame = false;
-  m_actualScene->OnDraw();
+  m_devLayer.Draw();
   m_textRender.Draw(-0.9f, -0.8f, m_fpsCol, m_fpsString);
   if (fading) {
     pFramework->pVideoDriver->SetBlendState(BaseDriver::ALPHA_BLEND);
@@ -140,7 +143,7 @@ void App::OnDraw() {
 void App::OnInput() {
 	if (FirstFrame)
 		return;
-  m_actualScene->OnInput(&IManager);
+  m_devLayer.ProcessInput(&IManager);
 }
 
 void App::OnPause() {

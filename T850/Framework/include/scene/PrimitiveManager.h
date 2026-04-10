@@ -34,7 +34,7 @@ namespace t800 {
     }
     int  CreateTriangle();
     int	 CreateCube();
-    int	 CreateMesh(char *fname);
+    int	 CreateMesh(const char *fname);
     int  CreateSpline(Spline& spline);
 
     void SetSceneProps(SceneProps *p);

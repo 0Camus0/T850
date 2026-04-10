@@ -32,7 +32,7 @@ namespace t800 {
     return (int)(primitives.size() - 1);
   }
 
-  int	 PrimitiveManager::CreateMesh(char *fname) {
+  int	 PrimitiveManager::CreateMesh(const char *fname) {
     PrimitiveBase *primitive = new RenderMesh();
     primitive->Load(fname);
     primitive->Create();

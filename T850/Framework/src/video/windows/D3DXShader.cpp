@@ -104,7 +104,7 @@ namespace t800 {
     }
     reflect->Release();
 
-    hr = device->CreateInputLayout(&VertexDecl[0], VertexDecl.size(), VS_blob->GetBufferPointer(), VS_blob->GetBufferSize(), &Layout);
+    hr = device->CreateInputLayout(&VertexDecl[0], static_cast<UINT>(VertexDecl.size()), VS_blob->GetBufferPointer(), VS_blob->GetBufferSize(), &Layout);
     if (hr != S_OK) {
       printf("Error Creating Input Layout\n");
       return false;

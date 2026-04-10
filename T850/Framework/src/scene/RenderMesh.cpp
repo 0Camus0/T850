@@ -31,7 +31,7 @@ namespace t800 {
   extern DeviceContext*     T8DeviceContext;
 
   
-  void RenderMesh::Load(char *filename)
+  void RenderMesh::Load(const char *filename)
   {
     xFile = pApp->resourceManager.Load(filename);
   }
@@ -48,8 +48,8 @@ namespace t800 {
       bdesc.usage = T8_BUFFER_USAGE::DEFAULT;
       it_MeshInfo->CB = (t800::ConstantBuffer*)T8Device->CreateBuffer(T8_BUFFER_TYPE::CONSTANT, bdesc);
 
-      int NumMaterials = pActual->MaterialList.Materials.size();
-      int NumFaceIndices = pActual->MaterialList.FaceIndices.size();
+      int NumMaterials = static_cast<int>(pActual->MaterialList.Materials.size());
+      int NumFaceIndices = static_cast<int>(pActual->MaterialList.FaceIndices.size());
 
       for (int j = 0; j < NumMaterials; j++) {
         xSubsetInfo *subinfo = &it->Subsets[j];
@@ -200,7 +200,7 @@ namespace t800 {
       }
 #endif
 
-      buffdesc.byteWidth = pActual->Triangles.size() * sizeof(unsigned short);
+      buffdesc.byteWidth = static_cast<int>(pActual->Triangles.size() * sizeof(unsigned short));
       buffdesc.usage = T8_BUFFER_USAGE::DEFAULT;
       it_MeshInfo->IB = (t800::IndexBuffer*)T8Device->CreateBuffer(T8_BUFFER_TYPE::INDEX, buffdesc, &pActual->Triangles[0]);
     }
@@ -244,7 +244,7 @@ namespace t800 {
         Sig |= Signature::HAS_BINORMALS;
 
       MeshInfo tmp;
-      int NumMaterials = pActual->MaterialList.Materials.size();
+      int NumMaterials = static_cast<int>(pActual->MaterialList.Materials.size());
       for (int j = 0; j < NumMaterials; j++) {
         unsigned long long CurrSig = Sig;
         xSubsetInfo *subinfo = &it->Subsets[j];

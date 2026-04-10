@@ -54,7 +54,7 @@ void GLSL_Parser::Process(std::string &b) {
 	std::istringstream iss(b);
 	std::vector<std::string> tokens{ std::istream_iterator<std::string>{iss},std::istream_iterator<std::string>{} };
 
-	int pos = 0;
+	std::string::size_type pos = 0;
 	for (std::size_t i = 0; i < tokens.size(); i++)	{
 		
 		if ((pos = tokens[i].find("uniform")) != std::string::npos) {
@@ -72,7 +72,7 @@ void GLSL_Parser::Process(std::string &b) {
 }
 
 void GLSL_Parser::ProcessToken(std::size_t &pos, std::vector<std::string> &v) {
-	int token_pos = pos;
+	std::size_t token_pos = pos;
 	for (;;) {
 		if (v[token_pos].find(";") != std::string::npos) break;
 		token_pos++;
@@ -150,9 +150,9 @@ void GLSL_Parser::DetermineType(GLSL_Var_ &var, std::string &str) {
 
 void GLSL_Parser::DetermineArrayNum(GLSL_Var_ & var, std::string & str)
 {
-  int arrPos = str.find("[");
+  auto arrPos = str.find("[");
   if (arrPos != std::string::npos) {
-    int arrFPos = str.find("]");
+    auto arrFPos = str.find("]");
     std::string numStr = str.substr(arrPos+1,arrFPos);
     var.numItems = atoi(numStr.c_str());
     var.name = str.substr(0, arrPos);

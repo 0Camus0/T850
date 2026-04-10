@@ -424,13 +424,13 @@ namespace t800 {
     }
     Texture *pTex = T8Device->CreateTexture(path);
      Textures.push_back(pTex);
-    return (Textures.size() - 1);
+    return static_cast<int>(Textures.size() - 1);
   }
   int BaseDriver::CreateCubeMap(const unsigned char * buff, int w, int h)
   {
     Texture *pTex = T8Device->CreateCubeMap(buff,w,h);
     Textures.push_back(pTex);
-    return (Textures.size() - 1);
+    return static_cast<int>(Textures.size() - 1);
   }
   int BaseDriver::CreateShader(std::string src_vs, std::string src_fs, unsigned long long sig)
   {
@@ -444,7 +444,7 @@ namespace t800 {
     ShaderBase* shader = T8Device->CreateShader(src_vs, src_fs, sig);
     if (shader != nullptr) {
       m_signatureShaders.push_back(shader);
-      return (m_signatureShaders.size() - 1);
+      return static_cast<int>(m_signatureShaders.size() - 1);
     }
     return -1;
   }
@@ -458,7 +458,7 @@ namespace t800 {
     pRT->number_RT = nrt;
     if (pRT!= nullptr) {
       RTs.push_back(pRT);
-      return (RTs.size() - 1);
+      return static_cast<int>(RTs.size() - 1);
     }
     return -1;
   }

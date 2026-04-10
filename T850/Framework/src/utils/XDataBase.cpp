@@ -13,6 +13,12 @@
 
 #include <utils/XDataBase.h>
 
+using std::ifstream;
+using std::ios;
+using std::cout;
+using std::endl;
+using std::stringstream;
+
 #define DEBUG_COUTS 0
 #define DEBUG_GET_TEMPLATE 0
 
@@ -314,10 +320,10 @@ namespace xF {
 			}
 
 
-			xDWORD NumMaterials = pActual->MaterialList.Materials.size();
+			xDWORD NumMaterials = static_cast<xDWORD>(pActual->MaterialList.Materials.size());
 			tmpGeo.Subsets.reserve(NumMaterials);
 
-			xDWORD NumFaceIndices = pActual->MaterialList.FaceIndices.size();
+			xDWORD NumFaceIndices = static_cast<xDWORD>(pActual->MaterialList.FaceIndices.size());
 
 
 			for (unsigned int j = 0; j < NumMaterials; j++) {
@@ -571,7 +577,7 @@ namespace xF {
 			}
 		}
 
-		m_pActualMesh->Skeleton.NumBones = m_pActualMesh->Skeleton.Bones.size();
+		m_pActualMesh->Skeleton.NumBones = static_cast<unsigned int>(m_pActualMesh->Skeleton.Bones.size());
 		m_pActualMesh->SkeletonAnimated.NumBones = m_pActualMesh->Skeleton.NumBones;
 		m_pActualMesh->SkeletonAnimated.Bones = std::vector<xBone>(m_pActualMesh->Skeleton.Bones);
 
@@ -621,7 +627,7 @@ namespace xF {
 						for (unsigned int i = 0; i < m_pActualMesh->Skeleton.Bones.size(); i++) {
 							if (m_pActualMesh->Skeleton.Bones[i].Name.compare(m_Stack.top()) == 0) {
 								tmp.Dad = i;
-								m_pActualMesh->Skeleton.Bones[i].Sons.push_back(m_pActualMesh->Skeleton.Bones.size());
+								m_pActualMesh->Skeleton.Bones[i].Sons.push_back(static_cast<unsigned int>(m_pActualMesh->Skeleton.Bones.size()));
 								//	m_pActualMesh->SkeletonAnimated.Bones[i].Sons.push_back(m_pActualMesh->SkeletonAnimated.Bones.size());
 
 								break;
@@ -1173,7 +1179,7 @@ namespace xF {
 
 		for(std::size_t i =0;i<m_pActualMesh->Skeleton.Bones.size();i++){
 			if(strcmp(cBoneName, m_pActualMesh->Skeleton.Bones[i].Name.c_str())==0){
-				pCurrentAnimBone->BoneID = i;
+				pCurrentAnimBone->BoneID = static_cast<unsigned int>(i);
 				break;
 			}
 		}
@@ -3067,7 +3073,7 @@ namespace xF {
 
 		#endif
 
-		xDWORD NumVertices = pGeometry->Positions.size();
+		xDWORD NumVertices = static_cast<xDWORD>(pGeometry->Positions.size());
 #if USE_VECTOR_RESERVE_AND_PUSH
 		float x = 0.0f, y = 0.0f, z = 0.0f, w = 0.0f;
 #endif

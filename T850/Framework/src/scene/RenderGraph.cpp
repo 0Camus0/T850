@@ -448,8 +448,8 @@ void RenderGraph::ExecutePass(
   else {
     // Standard pass: push RT, bind textures, draw, pop
 
-    // Push RT (if we have a target)
-    if (node.rt_handle >= 0) {
+    // Push RT (if we have a target and push is enabled)
+    if (node.rt_handle >= 0 && pass.push) {
       driver->PushRT(node.rt_handle);
     }
 
@@ -512,7 +512,9 @@ void RenderGraph::ExecutePass(
     }
 
     // Pop RT
-    if (node.rt_handle >= 0 && pass.pop) {
+    bool didPush = (node.rt_handle >= 0 && pass.push);
+    bool inheritedRT = (!pass.push && node.rt_handle >= 0);
+    if (pass.pop && (didPush || inheritedRT)) {
       driver->PopRT();
     }
   }

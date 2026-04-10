@@ -36,6 +36,8 @@ bool   g_debugFrames = false;     // --debugFrames: spacebar pauses + dumps + ex
 bool   g_debugDumpRequested = false; // set by spacebar press
 std::string g_feedMatricesPath;      // --feedMatrices: path to matrices.json to replay
 bool   g_keepRunning = false;        // --keepRunning: don't exit after dump
+int    g_startScene  = 0;            // --scene: starting scene index (0=Day, 1=Night, 2=Tech)
+bool   g_fullscreen  = false;        // --fullscreen: launch in fullscreen mode
 
 t800::AppBase		  *pApp = 0;
 t800::RootFramework *pFrameWork = 0;
@@ -91,7 +93,16 @@ int main(int arg,char ** args){
     else if (a == "--height" && i + 1 < arg) {
       desc.height = std::stoi(args[++i]);
     }
+    else if (a == "--scene" && i + 1 < arg) {
+      g_startScene = std::stoi(args[++i]);
+    }
+    else if (a == "--fullscreen") {
+      g_fullscreen = true;
+    }
   }
+
+  if (g_fullscreen)
+    desc.videoMode = t800::T8_VIDEO_MODE::FULLSCREEN;
 
 	pApp = new App;
 #ifdef OS_LINUX

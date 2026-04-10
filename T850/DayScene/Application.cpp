@@ -28,6 +28,7 @@
 
 using namespace t800;
 extern std::vector<std::string> g_args;
+extern int g_startScene;
 
 
 
@@ -48,7 +49,8 @@ void App::InitVars() {
     it->pFramework = pFramework;
     //it->InitVars();
   }
-  m_actualScene = m_scenes[0];
+  int sceneIdx = (g_startScene >= 0 && g_startScene < (int)m_scenes.size()) ? g_startScene : 0;
+  m_actualScene = m_scenes[sceneIdx];
   m_actualScene->InitVars();
 
   m_devLayer.Init(pFramework);

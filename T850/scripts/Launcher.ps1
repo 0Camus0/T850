@@ -241,12 +241,30 @@ $xaml = @"
             </StackPanel>
         </Border>
 
-        <!-- Resolution -->
+        <!-- Display -->
         <Border Grid.Row="4" Background="{StaticResource SurfaceBrush}"
                 CornerRadius="8" Padding="16,12" Margin="0,0,0,12">
             <StackPanel>
                 <TextBlock Text="DISPLAY" FontSize="12" FontWeight="SemiBold"
                            Foreground="{StaticResource AccentBrush}" Margin="0,0,0,10"/>
+                <Grid Margin="0,0,0,10">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="*"/>
+                        <ColumnDefinition Width="12"/>
+                        <ColumnDefinition Width="*"/>
+                    </Grid.ColumnDefinitions>
+                    <StackPanel Grid.Column="0">
+                        <TextBlock Text="Scene" Style="{StaticResource LabelStyle}"/>
+                        <ComboBox Name="cmbScene">
+                            <ComboBoxItem Content="Day" Tag="0" IsSelected="True"/>
+                            <ComboBoxItem Content="Night" Tag="1"/>
+                            <ComboBoxItem Content="Tech" Tag="2"/>
+                        </ComboBox>
+                    </StackPanel>
+                    <StackPanel Grid.Column="2" VerticalAlignment="Bottom">
+                        <CheckBox Name="chkFullscreen" Content="Fullscreen" Margin="0,0,0,8"/>
+                    </StackPanel>
+                </Grid>
                 <Grid>
                     <Grid.ColumnDefinitions>
                         <ColumnDefinition Width="*"/>
@@ -338,6 +356,8 @@ $pnlSeconds     = $window.FindName("pnlSeconds")
 $pnlFrame       = $window.FindName("pnlFrame")
 $txtSeconds     = $window.FindName("txtSeconds")
 $txtFrame       = $window.FindName("txtFrame")
+$cmbScene       = $window.FindName("cmbScene")
+$chkFullscreen  = $window.FindName("chkFullscreen")
 $txtWidth       = $window.FindName("txtWidth")
 $txtHeight      = $window.FindName("txtHeight")
 $txtStatus      = $window.FindName("txtStatus")
@@ -390,6 +410,16 @@ function Load-Config {
         if ($cfg.display) {
             if ($cfg.display.width)  { $txtWidth.Text  = $cfg.display.width.ToString() }
             if ($cfg.display.height) { $txtHeight.Text = $cfg.display.height.ToString() }
+            if ($cfg.display.PSObject.Properties['fullscreen']) {
+                $chkFullscreen.IsChecked = [bool]$cfg.display.fullscreen
+            }
+            if ($cfg.display.PSObject.Properties['scene']) {
+                foreach ($item in $cmbScene.Items) {
+                    if ($item.Tag -eq $cfg.display.scene.ToString()) {
+                        $cmbScene.SelectedItem = $item; break
+                    }
+                }
+            }
         }
         # Debug Frames
         if ($cfg.PSObject.Properties['debugFrames']) {
@@ -428,8 +458,10 @@ function Save-Config {
         configuration = ($cmbConfig.SelectedItem).Content.ToString()
         api           = ($cmbApi.SelectedItem).Tag.ToString()
         display = @{
-            width  = [int]$txtWidth.Text
-            height = [int]$txtHeight.Text
+            width      = [int]$txtWidth.Text
+            height     = [int]$txtHeight.Text
+            fullscreen = [bool]$chkFullscreen.IsChecked
+            scene      = [int]($cmbScene.SelectedItem).Tag.ToString()
         }
         debugFrames = [bool]$chkDebugFrames.IsChecked
         keepRunning = [bool]$chkKeepRunning.IsChecked
@@ -511,6 +543,15 @@ function Get-LaunchCommand {
         }
     }
 
+    $sceneTag = ($cmbScene.SelectedItem).Tag.ToString()
+    if ($sceneTag -ne "0") {
+        $argList += @("--scene", $sceneTag)
+    }
+
+    if ($chkFullscreen.IsChecked) {
+        $argList += "--fullscreen"
+    }
+
     $w = $txtWidth.Text
     $h = $txtHeight.Text
     if ($w -and $h) {
@@ -589,6 +630,9 @@ $btnBrowseMatrices.Add_Click({
 $cmbArch.Add_SelectionChanged({ Update-Preview })
 $cmbConfig.Add_SelectionChanged({ Update-Preview })
 $cmbApi.Add_SelectionChanged({ Update-Preview })
+$cmbScene.Add_SelectionChanged({ Update-Preview })
+$chkFullscreen.Add_Checked({ Update-Preview })
+$chkFullscreen.Add_Unchecked({ Update-Preview })
 $txtSeconds.Add_TextChanged({ Update-Preview })
 $txtFrame.Add_TextChanged({ Update-Preview })
 $txtWidth.Add_TextChanged({ Update-Preview })

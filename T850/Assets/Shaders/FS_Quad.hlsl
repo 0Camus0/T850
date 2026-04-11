@@ -26,8 +26,6 @@ struct VS_OUTPUT{
 
 SamplerState SS  : register(s0);
 SamplerState SS1 : register(s1);
-SamplerState SS2 : register(s2);
-SamplerState SS3 : register(s3);
 
 float roundTo(float num,float decimals){
 	float shift = pow(10.0,decimals);
@@ -186,45 +184,13 @@ float4 FS( VS_OUTPUT input ) : SV_TARGET {
 }
 #elif defined(SHADOW_COMP_PASS)
 Texture2D tex0 : register(t0);
-#ifdef OMNIDIRECTIONAL_SH
-TextureCube tex1 : register(t1);
-#else
 Texture2D tex1 : register(t1);
-#endif
 Texture2D tex2 : register(t2); // Normals
 Texture2D tex3 : register(t3); // Noise
 
 float4 CalculateShadow(float4 position) {
 	float4 FShadow = float4(1.0,1.0,1.0,1.0);
 
-#ifdef OMNIDIRECTIONAL_SH
-	const float3 sampleOffsetDirections[20] = {
-		float3( 1,  1,  1), float3( 1, -1,  1), float3(-1, -1,  1), float3(-1,  1,  1),
-		float3( 1,  1, -1), float3( 1, -1, -1), float3(-1, -1, -1), float3(-1,  1, -1),
-		float3( 1,  1,  0), float3( 1, -1,  0), float3(-1, -1,  0), float3(-1,  1,  0),
-		float3( 1,  0,  1), float3(-1,  0,  1), float3( 1,  0, -1), float3(-1,  0, -1),
-		float3( 0,  1,  1), float3( 0, -1,  1), float3( 0, -1, -1), float3( 0,  1, -1)
-	};
-	float diskRadius = 0.15;
-	float4 new_positionV = mul(WorldView, float4(position.xyz, 1.0));
-	float3 fragToLight = new_positionV.xyz - mul(WorldView, float4(LightCameraPosition.xyz, 1.0)).xyz;
-	float depthPos = length(fragToLight);
-	fragToLight = position.xyz - LightCameraPosition.xyz;
-	fragToLight.y = -fragToLight.y;
-	float shadowVal = 0.0;
-	int samples = 20;
-	[loop] for (int i = 0; i < samples; i++) {
-		float3 nfragToLight = fragToLight + sampleOffsetDirections[i] * diskRadius;
-		float depthSM = tex1.Sample(SS, nfragToLight).r;
-		depthSM = depthSM * LightCameraInfo.y;
-		if (depthPos - 0.055 > depthSM)
-			shadowVal += 1.0;
-	}
-	shadowVal /= float(samples);
-	shadowVal *= 0.75;
-	shadowVal = (1.0 - shadowVal);
-	FShadow = shadowVal * float4(1.0,1.0,1.0,1.0);
-#else
 	float4 LightPos = mul(WVPLight, position);
 #ifdef NON_LINEAR_DEPTH
 	LightPos.xyz /= LightPos.w;
@@ -263,13 +229,12 @@ float4 CalculateShadow(float4 position) {
 	} else {
 		FShadow = 0.25 * float4(1.0,1.0,1.0,1.0);
 	}
-#endif
 
 	return FShadow;
 }
 
 float3 GetNormal(float2 coords) {
-	float4 normalmap = tex2.Sample(SS2, coords);
+	float4 normalmap = tex2.Sample(SS, coords);
 	float3 normal = normalmap.xyz * 2.0 - 1.0;
 	normal = normalize(normal);
 	return normal;
@@ -278,7 +243,7 @@ float3 GetNormal(float2 coords) {
 float GetOcclusion(float depth, float2 uv, float4 position, float3 normal, float4 posCorner) {
 	float Radius = LightPositions[0].y;
 	float2 Scale = float2(LightPositions[0].z / brightness.w, LightPositions[0].w / brightness.w);
-	float3 pVec = tex3.Sample(SS3, Scale * uv).xyz * 2.0 - 1.0;
+	float3 pVec = tex3.Sample(SS, Scale * uv).xyz * 2.0 - 1.0;
 
 	float3 tangent = normalize(pVec - normal * dot(pVec, normal));
 	float3 bitangent = cross(normal, tangent);
@@ -327,21 +292,6 @@ float4 FS( VS_OUTPUT input ) : SV_TARGET {
 	#else		
 		float4 position = CameraPosition + input.PosCorner*depth;
 	#endif
-
-	// Debug modes via toogles.z
-	if (toogles.z == 1.0) { return float4(depth, depth, depth, 1.0); }
-	if (toogles.z == 2.0) { float3 n = GetNormal(input.texture0); return float4(n * 0.5 + 0.5, 1.0); }
-	if (toogles.z == 3.0) {
-		float2 Scale = float2(LightPositions[0].z / brightness.w, LightPositions[0].w / brightness.w);
-		float3 pVec = tex3.Sample(SS3, Scale * input.texture0.xy).xyz;
-		return float4(pVec, 1.0);
-	}
-	if (toogles.z == 4.0) { return float4(0.5, 0.5, 0.5, 1.0); }
-	if (toogles.z == 5.0) {
-		float3 normal = GetNormal(input.texture0);
-		float Occlusion = GetOcclusion(depth, input.texture0.xy, position, normal, input.PosCorner);
-		return float4(Occlusion, Occlusion, Occlusion, 1.0);
-	}
 
 	if (toogles.x == 1.0) {
 		Fcolor = CalculateShadow(position);
@@ -836,16 +786,13 @@ float4 FS(VS_OUTPUT input) : SV_TARGET{
 
   half tnear;
   half tfar;
-  half3 boxMin = half3(-2.0, -2.0, -2.0);
-  half3 boxMax = half3(2.0, 2.0, 2.0);
-  half3 volPos = toogles.xyz;
-  boxMin += volPos;
-  boxMax += volPos;
-  half boxSize = boxMax.x - boxMin.x;
+  half boxMin = -20;
+  half boxMax = 20;
+  half boxSize = boxMax - boxMin;
   bool hit = IntersectBox(CameraPosition,rayDir, boxMin, boxMax, tnear, tfar);
   if (!hit) discard;
   if (tfar < 0.0) discard;
-  if (tnear > rayLength) discard;
+  //if (tnear > rayLength) discard;//UNCOMMENT
   if (tnear < 0.0) tnear = 0.0;
 
   half4 intersectionNear =  CameraPosition + rayDir*tnear;
@@ -903,15 +850,6 @@ float4 P = intersectionFar;
 float3 accumFog = 0.0f.xxx;
 
 const float3 lightColor = float3(0.9803, 0.8392, 0.6470);
-
-// Debug mode 6: test texture reads — scale up small values
-if (toogles.z == 6.0) {
-  float rawDepth = tex0.Sample(SS, input.texture0).r;
-  float rawShadow_SS1 = tex1.Sample(SS1, float2(0.5, 0.5)).r;
-  float rawShadow_SS0 = tex1.Sample(SS, float2(0.5, 0.5)).r;
-  return float4(saturate(rawShadow_SS0 * 100.0), saturate(rawShadow_SS1 * 100.0), saturate(rawDepth * 100.0), 1.0);
-}
-
 [loop] for (int i = 0; i<steps; i++) {
   float4 LightPos = mul(WVPLight, P);
   LightPos.xy /= LightPos.w;
@@ -921,7 +859,7 @@ if (toogles.z == 6.0) {
   float depthValue = tex1.Sample(SS1, SHTC);
   depthValue += 0.00005;
 
-  if (depthValue <= LightPos.z && SHTC.x < 1.0 && SHTC.y < 1.0 && SHTC.x > 0.0 && SHTC.y > 0.0 && LightPos.w > 0.0 && LightPos.z < 1.0)
+  if (depthValue > LightPos.z && SHTC.x < 1.0 && SHTC.y < 1.0 && SHTC.x > 0.0 && SHTC.y > 0.0 && LightPos.w > 0.0 && LightPos.z < 1.0)
   {
     float4 sunDir = normalize(P - LightCameraPosition);
     float3 scattering = lightColor * ComputeScattering(dot(rayDir.rgb, sunDir.rgb));

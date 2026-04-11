@@ -61,6 +61,7 @@ namespace t800 {
     int active_light_camera = 0;
     int toggle_shadow = 1;
     int toggle_ssao = 1;
+    int debug_mode = 0;
   };
 
   // Night scene extra state: omni light cameras + omni position

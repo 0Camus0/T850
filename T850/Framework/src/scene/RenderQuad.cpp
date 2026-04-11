@@ -203,6 +203,7 @@ namespace t800 {
 		CnstBuffer.brightness.w = pScProp->SSAOKernel.NoiseSize;
 		CnstBuffer.toogles.x = (float)pScProp->ToogleShadow;
 		CnstBuffer.toogles.y = (float)pScProp->ToogleSSAO;
+		CnstBuffer.toogles.z = (float)pScProp->DebugMode;
 		for (unsigned int i = 1; i < pScProp->SSAOKernel.vSSAOKernel.size(); i++) {
 			CnstBuffer.LightPositions[i] = pScProp->SSAOKernel.vSSAOKernel[i-1];
 		}
@@ -254,6 +255,7 @@ namespace t800 {
 	}
 	else if (sig&Signature::LIGHT_RAY_MARCHING) {
 	  CnstBuffer.LightPositions[0].y = pScProp->LightVolumeSteps;
+	  CnstBuffer.toogles.z = (float)pScProp->DebugMode;
 	}
 
     m_quad.Set();
@@ -280,6 +282,14 @@ namespace t800 {
       Textures[0]->SetSampler(*T8DeviceContext, 0);
     if (Textures[1])
       Textures[1]->SetSampler(*T8DeviceContext, 1);
+    if (Textures[2])
+      Textures[2]->SetSampler(*T8DeviceContext, 2);
+    if (Textures[3])
+      Textures[3]->SetSampler(*T8DeviceContext, 3);
+    if (Textures[4])
+      Textures[4]->SetSampler(*T8DeviceContext, 4);
+    if (Textures[5])
+      Textures[5]->SetSampler(*T8DeviceContext, 5);
 
     T8DeviceContext->SetPrimitiveTopology(T8_TOPOLOGY::TRIANLE_LIST);
     T8DeviceContext->DrawIndexed(6, 0, 0);

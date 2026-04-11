@@ -468,8 +468,6 @@ void RenderGraph::ExecutePass(
         // Other built-ins can be added here
       } else if (resolved.rt_handle >= 0) {
         Texture* tex = driver->GetRTTexture(resolved.rt_handle, resolved.attachment);
-        printf("[RG] Pass '%s': binding input '%s' (rt=%d att=%d) -> slot %d, tex=%p\n",
-               pass.name.c_str(), input.source.c_str(), resolved.rt_handle, resolved.attachment, input.slot, (void*)tex);
         quads[0].SetTexture(tex, input.slot);
       }
     }

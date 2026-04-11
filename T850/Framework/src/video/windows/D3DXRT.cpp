@@ -122,6 +122,9 @@ namespace t800 {
       }
       pTextureColor->x = w;
       pTextureColor->y = h;
+      if (!GenMips || i > 0) {
+        pTextureColor->params = TEXT_BASIC_PARAMS::LINEAR_FILTER;
+      }
       pTextureColor->SetTextureParams();
       vColorTextures.push_back(pTextureColor);
     }

@@ -196,7 +196,9 @@ enum TEXT_BASIC_PARAMS {
   TILED = 1,
   CLAMP_TO_EDGE = 2,
   MIPMAPS = 4,
-  CLAMP_TO_BORDER = 8
+  CLAMP_TO_BORDER = 8,
+  NEAREST_FILTER = 16,
+  LINEAR_FILTER = 32
 };
 
 enum Signature : unsigned long long {

@@ -93,8 +93,13 @@ void SSAOFilter::InitTexture() {
 	}
 	std::string dummy;
 	NoiseTex = t800::T8Device->CreateTextureFromMemory(Noise, SSAO_NOISE_SIZE, SSAO_NOISE_SIZE, 4, dummy);
-	NoiseTex->params |= t800::TEXT_BASIC_PARAMS::TILED;
+	NoiseTex->params |= t800::TEXT_BASIC_PARAMS::TILED | t800::TEXT_BASIC_PARAMS::NEAREST_FILTER;
 	NoiseTex->SetTextureParams();
+	// Debug: dump raw noise bytes
+	printf("NOISE_RAW(%dx%d):", SSAO_NOISE_SIZE, SSAO_NOISE_SIZE);
+	for (int i = 0; i < SSAO_NOISE_SIZE*SSAO_NOISE_SIZE; i++)
+		printf(" %02X%02X", Noise[i*4], Noise[i*4+1]);
+	printf("\n"); fflush(stdout);
 }
 
 void SSAOFilter::Update() {

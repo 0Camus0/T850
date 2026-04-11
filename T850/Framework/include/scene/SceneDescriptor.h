@@ -84,6 +84,7 @@ namespace t800 {
     bool shadow_enabled = true;
     bool ssao_enabled = true;
     bool auto_focus = true;
+    int debug_mode = 0;
   };
 
   struct SceneDescriptor {

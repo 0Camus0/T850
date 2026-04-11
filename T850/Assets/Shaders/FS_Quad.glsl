@@ -488,67 +488,17 @@ void main(){
 		highp vec4 position = CameraPosition + PosCorner*depth;
 	#endif
 
-	// Debug modes via toogles.z
-	if (toogles.z == 1.0) {
-		#ifdef ES_30
-			colorOut = vec4(depth, depth, depth, 1.0);
-		#else
-			gl_FragColor = vec4(depth, depth, depth, 1.0);
-		#endif
-		return;
-	}
-	if (toogles.z == 2.0) {
-		highp vec3 n = GetNormal(coords);
-		#ifdef ES_30
-			colorOut = vec4(n * 0.5 + 0.5, 1.0);
-		#else
-			gl_FragColor = vec4(n * 0.5 + 0.5, 1.0);
-		#endif
-		return;
-	}
-	if (toogles.z == 3.0) {
-		highp vec2 Scale = vec2(LightPositions[0].z/brightness.w, LightPositions[0].w/brightness.w);
-		#ifdef ES_30
-			highp vec3 pVec = texture(tex3, Scale * vecUVCoords.xy).xyz;
-		#else
-			highp vec3 pVec = texture2D(tex3, Scale * vecUVCoords.xy).xyz;
-		#endif
-		#ifdef ES_30
-			colorOut = vec4(pVec, 1.0);
-		#else
-			gl_FragColor = vec4(pVec, 1.0);
-		#endif
-		return;
-	}
-	if (toogles.z == 4.0) {
-		#ifdef ES_30
-			colorOut = vec4(0.5, 0.5, 0.5, 1.0);
-		#else
-			gl_FragColor = vec4(0.5, 0.5, 0.5, 1.0);
-		#endif
-		return;
-	}
-	if (toogles.z == 5.0) {
-		highp vec3 normal = GetNormal(coords);
-		highp float Occlusion = GetOcclusion(depth, vecUVCoords.xy, position, normal);
-		#ifdef ES_30
-			colorOut = vec4(Occlusion, Occlusion, Occlusion, 1.0);
-		#else
-			gl_FragColor = vec4(Occlusion, Occlusion, Occlusion, 1.0);
-		#endif
-		return;
-	}
-
 	if (toogles.x == 1.0){
 		Fcolor = CalculateShadow(position);
 	}
 
 	if (toogles.y == 1.0) {
 		highp vec3 normal = GetNormal(coords);
-		highp float Occlusion = GetOcclusion(depth, vecUVCoords.xy, position, normal);
+		highp float Occlusion = GetOcclusion(depth, coords.xy, position, normal);
 		Fcolor *= Occlusion;
 	}
 
+	
 	#ifdef ES_30
 		colorOut = Fcolor;
 	#else
@@ -1121,32 +1071,11 @@ highp vec2 SHTC;
 highp vec4 sunDir;
 highp vec3 scattering;
 const highp vec3 lightColor = vec3(0.9803, 0.8392, 0.6470);
-
-// Debug: output first sample's depth comparison values
-if (toogles.z == 6.0) {
-  LightPos = WVPLight * P;
-  LightPos.xy /= LightPos.w;
-  LightPos.z /= LightCameraInfo.y;
-  SHTC = LightPos.xy*0.5 + 0.5;
-  SHTC.y = 1.0 - SHTC.y;
-  // For GL, read raw depth via the comparison sampler — Val_1 is 0 or 1
-  highp vec3 Coords_Dbg = vec3(SHTC.xy, LightPos.z - 0.00005);
-  highp float Val_Dbg = texture(tex1, Coords_Dbg);
-  float inBounds = (SHTC.x < 1.0 && SHTC.y < 1.0 && SHTC.x > 0.0 && SHTC.y > 0.0 && LightPos.w > 0.0 && LightPos.z < 1.0) ? 1.0 : 0.0;
-  #ifdef ES_30
-    colorOut = vec4(Val_Dbg, LightPos.z, inBounds, 1.0);
-  #else
-    gl_FragColor = vec4(Val_Dbg, LightPos.z, inBounds, 1.0);
-  #endif
-  return;
-}
-
 for (int i = 0; i<steps; i++) {
   LightPos = WVPLight* P;
   LightPos.xy /= LightPos.w;
   LightPos.z /= LightCameraInfo.y;
   SHTC = LightPos.xy*0.5 + 0.5;
-  SHTC.y = 1.0 - SHTC.y;
 
   highp vec3 Coords_Final = vec3(SHTC.xy, LightPos.z - 0.00005);
   highp float Val_1 = texture(tex1, Coords_Final);

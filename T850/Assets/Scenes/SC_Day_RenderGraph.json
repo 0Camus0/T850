@@ -88,6 +88,7 @@
     {
       "name": "God Rays",
       "target": "GodRaysCalc",
+      "state": { "depth_stencil": "NONE" },
       "inputs": [
         { "source": "GBuffer:COLOR4",  "slot": 0 },
         { "source": "DepthPass:DEPTH", "slot": 1 }

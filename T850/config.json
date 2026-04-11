@@ -1,6 +1,6 @@
 ﻿{
     "configuration":  "Release",
-    "keepRunning":  true,
+    "keepRunning":  false,
     "dump":  {
                  "seconds":  5,
                  "trigger":  "frame",
@@ -10,14 +10,14 @@
     "debugFrames":  true,
     "architecture":  "x64",
     "display":  {
-                    "scene":  1,
-                    "width":  1280,
-                    "height":  720,
+                    "scene":  0,
+                    "width":  640,
+                    "height":  320,
                     "fullscreen":  false
                 },
     "replaySnapshot":  {
-                           "path":  "D:\\Code\\Game\\T850\\T850\\bin\\x64\\Release\\dumps_d3d11_f7809_20260410_135201\\snapshot.json",
+                           "path":  "D:\\Code\\Game\\T850\\T850\\bin\\x64\\Release\\debug_godrays.json",
                            "enabled":  true
                        },
-    "api":  "gl"
+    "api":  "d3d11"
 }

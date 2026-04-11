@@ -150,8 +150,7 @@ void FrameDumper::ApplySnapshot(Camera& cam, Camera& lightCam, SceneProps& props
   props.ActiveLightCamera = sp.active_light_camera;
   props.ToogleShadow = sp.toggle_shadow;
   props.ToogleSSAO = sp.toggle_ssao;
-
-  // Restore Night scene omni state
+  props.DebugMode = sp.debug_mode;
   if (replayData_.omni.has_value() && omniLightPos) {
     auto& omni = *replayData_.omni;
     *omniLightPos = XVECTOR3(omni.omni_light_pos[0], omni.omni_light_pos[1], omni.omni_light_pos[2]);
@@ -368,8 +367,7 @@ void FrameDumper::WriteSnapshot(const std::string& path,
   sp.active_light_camera = props.ActiveLightCamera;
   sp.toggle_shadow = props.ToogleShadow;
   sp.toggle_ssao = props.ToogleSSAO;
-
-  // Matrices
+  sp.debug_mode = props.DebugMode;
   SnapshotMatricesJson mats;
   mats.camView       = ToJson(cam.View);
   mats.camProjection = ToJson(cam.Projection);

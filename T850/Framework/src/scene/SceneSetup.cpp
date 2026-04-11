@@ -128,6 +128,7 @@ void SceneSetup::Apply(SceneProps& props) {
   props.ActiveLights = s.active_lights;
   props.ToogleShadow = s.shadow_enabled;
   props.ToogleSSAO = s.ssao_enabled;
+  props.DebugMode = s.debug_mode;
   props.AutoFocus = s.auto_focus;
   props.ActiveGaussKernel = 0;
 }

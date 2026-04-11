@@ -65,14 +65,24 @@ namespace t800 {
       glTexParameterfv(glTarget, 0x1004, borderColor); // GL_TEXTURE_BORDER_COLOR
     }
 
-    glTexParameteri(glTarget, GL_TEXTURE_MIN_FILTER, glFiltering);
-    glTexParameteri(glTarget, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+    if (params & TEXT_BASIC_PARAMS::NEAREST_FILTER) {
+      glFiltering = GL_NEAREST;
+      glTexParameteri(glTarget, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+      glTexParameteri(glTarget, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+      glTexParameteri(glTarget, GL_TEXTURE_BASE_LEVEL, 0);
+      glTexParameteri(glTarget, GL_TEXTURE_MAX_LEVEL, 0);
+    } else {
+      glTexParameteri(glTarget, GL_TEXTURE_MIN_FILTER, glFiltering);
+      glTexParameteri(glTarget, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+    }
     glTexParameteri(glTarget, GL_TEXTURE_WRAP_S, glWrap);
     glTexParameteri(glTarget, GL_TEXTURE_WRAP_T, glWrap);
 
-    int Max = 1;
-    glGetIntegerv(GL_MAX_TEXTURE_MAX_ANISOTROPY_EXT, &Max);
-    glTexParameteri(glTarget, GL_TEXTURE_MAX_ANISOTROPY_EXT, Max);
+    if (!(params & TEXT_BASIC_PARAMS::NEAREST_FILTER)) {
+      int Max = 1;
+      glGetIntegerv(GL_MAX_TEXTURE_MAX_ANISOTROPY_EXT, &Max);
+      glTexParameteri(glTarget, GL_TEXTURE_MAX_ANISOTROPY_EXT, Max);
+    }
 
     glBindTexture(glTarget, 0);
   }

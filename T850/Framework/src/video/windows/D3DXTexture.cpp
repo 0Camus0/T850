@@ -24,6 +24,15 @@ namespace t800 {
     sdesc.Filter = D3D11_FILTER_ANISOTROPIC;
     sdesc.MaxAnisotropy = 16;
 
+    if (params & TEXT_BASIC_PARAMS::NEAREST_FILTER) {
+      sdesc.Filter = D3D11_FILTER_MIN_MAG_MIP_POINT;
+      sdesc.MaxAnisotropy = 1;
+    }
+    else if (params & TEXT_BASIC_PARAMS::LINEAR_FILTER) {
+      sdesc.Filter = D3D11_FILTER_MIN_MAG_LINEAR_MIP_POINT;
+      sdesc.MaxAnisotropy = 1;
+    }
+
     sdesc.AddressU = D3D11_TEXTURE_ADDRESS_CLAMP;
     sdesc.AddressV = D3D11_TEXTURE_ADDRESS_CLAMP;
     sdesc.AddressW = D3D11_TEXTURE_ADDRESS_CLAMP;
@@ -53,9 +62,8 @@ namespace t800 {
     sdesc.BorderColor[2] = 0.0f;
     sdesc.BorderColor[3] = 0.0f;
     sdesc.MinLOD = 0.0f;
-    sdesc.MaxLOD = D3D11_FLOAT32_MAX;
+    sdesc.MaxLOD = (params & (TEXT_BASIC_PARAMS::NEAREST_FILTER | TEXT_BASIC_PARAMS::LINEAR_FILTER)) ? 0.0f : D3D11_FLOAT32_MAX;
     sdesc.MipLODBias = 0.0f;
-    sdesc.MaxAnisotropy = 16;
 
     device->CreateSamplerState(&sdesc, pSampler.GetAddressOf());
 

@@ -921,7 +921,7 @@ if (toogles.z == 6.0) {
   float depthValue = tex1.Sample(SS1, SHTC);
   depthValue += 0.00005;
 
-  if (depthValue > LightPos.z && SHTC.x < 1.0 && SHTC.y < 1.0 && SHTC.x > 0.0 && SHTC.y > 0.0 && LightPos.w > 0.0 && LightPos.z < 1.0)
+  if (depthValue <= LightPos.z && SHTC.x < 1.0 && SHTC.y < 1.0 && SHTC.x > 0.0 && SHTC.y > 0.0 && LightPos.w > 0.0 && LightPos.z < 1.0)
   {
     float4 sunDir = normalize(P - LightCameraPosition);
     float3 scattering = lightColor * ComputeScattering(dot(rayDir.rgb, sunDir.rgb));

@@ -87,6 +87,15 @@ namespace t800 {
     int debug_mode = 0;
   };
 
+  struct SliderDesc {
+    std::string name;
+    std::string label;
+    float min_val = 0.0f;
+    float max_val = 1.0f;
+    float step = 0.1f;
+    float default_val = 0.5f;
+  };
+
   struct SceneDescriptor {
     std::string name;
     std::vector<CameraDesc> cameras;
@@ -98,6 +107,7 @@ namespace t800 {
     std::string environment_map;
     QualityDesc quality;
     SceneSettingsDesc settings;
+    std::vector<SliderDesc> sliders;
   };
 
   // Load a SceneDescriptor from a JSON file.

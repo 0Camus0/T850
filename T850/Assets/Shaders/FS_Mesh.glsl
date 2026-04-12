@@ -1,3 +1,7 @@
+#ifdef ES_30
+precision mediump float;
+#endif
+
 uniform mediump sampler2D DiffuseTex;
 
 #ifdef SPECULAR_MAP

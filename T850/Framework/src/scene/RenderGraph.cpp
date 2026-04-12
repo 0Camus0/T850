@@ -86,6 +86,8 @@ static const std::unordered_map<std::string, unsigned long long> s_signatureMap 
   {"HORIZONTAL_BLUR_PASS",  Signature::HORIZONTAL_BLUR_PASS},
   {"BRIGHT_PASS",           Signature::BRIGHT_PASS},
   {"HDR_COMP_PASS",         Signature::HDR_COMP_PASS},
+  {"LUMINANCE_MAP_PASS",    Signature::LUMINANCE_MAP_PASS},
+  {"ADAPT_LUMINANCE_PASS",  Signature::ADAPT_LUMINANCE_PASS},
   {"COC_PASS",              Signature::COC_PASS},
   {"COMBINE_COC_PASS",      Signature::COMBINE_COC_PASS},
   {"DOF_PASS",              Signature::DOF_PASS},

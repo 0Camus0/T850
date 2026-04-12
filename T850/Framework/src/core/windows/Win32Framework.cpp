@@ -85,6 +85,19 @@ namespace t800 {
 		  m_alive = false;
 	  }break;
 
+      case SDL_EVENT_MOUSE_BUTTON_DOWN: {
+        int btn = evento.button.button - 1; // SDL buttons are 1-based
+        if (btn >= 0 && btn < MAXMOUSEBUTTONS)
+          pBaseApp->IManager.MouseButtonStates[0][btn] = true;
+      }break;
+      case SDL_EVENT_MOUSE_BUTTON_UP: {
+        int btn = evento.button.button - 1;
+        if (btn >= 0 && btn < MAXMOUSEBUTTONS) {
+          pBaseApp->IManager.MouseButtonStates[0][btn] = false;
+          pBaseApp->IManager.MouseButtonStates[1][btn] = false;
+        }
+      }break;
+
       }
     }
     static int xDelta = 0;
@@ -96,6 +109,15 @@ namespace t800 {
 	GetCursorPos(&point);
 	x = point.x;
 	y = point.y;
+
+    // Window-relative mouse position for GUI
+    POINT clientPt = point;
+    HWND hwnd = (HWND)SDL_GetPointerProperty(SDL_GetWindowProperties(m_pWindow), SDL_PROP_WINDOW_WIN32_HWND_POINTER, NULL);
+    if (hwnd) {
+      ScreenToClient(hwnd, &clientPt);
+    }
+    pBaseApp->IManager.mouseX = clientPt.x;
+    pBaseApp->IManager.mouseY = clientPt.y;
 
     if (firstCall) {
       firstCall = false;

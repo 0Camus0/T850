@@ -1,4 +1,5 @@
 #ifdef ES_30
+	precision mediump float;
 	layout(location = 0) out highp vec4 colorOut;
 #endif
 void main(){

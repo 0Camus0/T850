@@ -46,6 +46,8 @@ namespace t800 {
   struct SnapshotScenePropsJson {
     float exposure = 0.3f;
     float bloom_factor = 0.35f;
+    float tone_map_white_level = 4.0f;
+    float luminance_tau = 1.1f;
     float shadow_map_resolution = 2048.0f;
     float pcf_scale = 2.1f;
     float pcf_samples = 3.0f;

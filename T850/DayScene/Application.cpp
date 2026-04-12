@@ -135,6 +135,8 @@ void App::OnUpdate() {
      m_fpsCol = XVECTOR3(0.2, 0.8, 0.2);
      timeAccum = 0;
    }
+   // Feed FPS text to GUI so it can be displayed as a movable element
+   m_devLayer.GetGUI().SetFPSText(m_fpsString, m_fpsCol);
    m_devLayer.Update(DtSecs);
    
    OnInput();
@@ -146,7 +148,10 @@ void App::OnDraw() {
   pFramework->pVideoDriver->Clear();
   FirstFrame = false;
   m_devLayer.Draw();
-  m_textRender.Draw(-0.9f, -0.8f, m_fpsCol, m_fpsString);
+  // Only draw standalone FPS text when GUI overlay is not visible
+  if (!m_devLayer.GetGUI().IsVisible()) {
+    m_textRender.Draw(-0.9f, -0.8f, m_fpsCol, m_fpsString);
+  }
   if (fading) {
     pFramework->pVideoDriver->SetBlendState(BaseDriver::ALPHA_BLEND);
     pFramework->pVideoDriver->SetDepthStencilState(BaseDriver::READ);

@@ -32,6 +32,7 @@ class SC_Day : public t800::SceneBase
   enum {
     CHANGE_EXPOSURE = 0,
     CHANGE_BLOOM_FACTOR,
+    CHANGE_BLOOM_THRESHOLD,
     CHANGE_TM_WHITE_LEVEL,
     CHANGE_TM_ADAPT_TAU,
     CHANGE_NUM_LIGHTS,
@@ -57,6 +58,7 @@ class SC_Day : public t800::SceneBase
 	CHANGLE_SSAO_TOOGLE,
     CHANGE_LIGHT_NEAR_PLANE,
     CHANGE_LIGHT_FAR_PLANE,
+    CHANGE_DEBUG_RT,
     CHANGE_MAX_NUM_OPTIONS
   };
   public:
@@ -140,6 +142,7 @@ class SC_Day : public t800::SceneBase
   int				CamSelection;
   int				SceneSettingSelection;
   int				ChangeActiveGaussSelection;
+  int       m_debugRTSelection = 0;
 
   t800::SplineWireframe* splineWire;
   t800::PrimitiveInst splineInst;

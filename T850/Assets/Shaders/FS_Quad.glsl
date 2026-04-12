@@ -516,7 +516,7 @@ void main(){
 	mediump vec4 Sum = vec4(0.0,0.0,0.0,1.0);
 	mediump vec2 U = LightPositions[0].y*vec2( 1.0/LightPositions[0].z,1.0/LightPositions[0].w);
 	highp int KernelSize = int(LightPositions[0].x);
-	highp float Origin = -(float(KernelSize)-2.0)/2.0;
+	highp float Origin = -(float(KernelSize)-3.0)/2.0;
 	mediump float V = (Origin);
 	mediump vec2 Texcoords;
 	for(mediump int i=1;i<(KernelSize-1);i++){	
@@ -544,7 +544,7 @@ void main(){
 	mediump vec4 Sum = vec4(0.0,0.0,0.0,1.0);
 	mediump vec2 U = LightPositions[0].y*vec2( 1.0/LightPositions[0].z,1.0/LightPositions[0].w);
 	highp int KernelSize = int(LightPositions[0].x);
-	highp float Origin = -(float(KernelSize)-2.0)/2.0;
+	highp float Origin = -(float(KernelSize)-3.0)/2.0;
 	mediump float H = Origin;
 	mediump vec2 Texcoords;
 	for(mediump int i=1;i<(KernelSize-1);i++){	
@@ -572,7 +572,7 @@ void main(){
 	mediump vec4 Sum = vec4(0.0,0.0,0.0,1.0);
 	mediump vec2 U = LightPositions[0].y*vec2( 1.0/LightPositions[0].z,1.0/LightPositions[0].w);
 	highp int KernelSize = int(LightPositions[0].x);
-	highp float Origin = -(float(KernelSize)-2.0)/2.0;
+	highp float Origin = -(float(KernelSize)-3.0)/2.0;
 	mediump float H = Origin;
 	mediump float V = Origin;
 	mediump vec2 Texcoords;	
@@ -612,7 +612,7 @@ void main(){
 	
 	mediump float lum = dot( Col.rgb, vec3( 0.299, 0.587, 0.114 ) );
 
-    if( lum < 0.7 )
+    if( lum < LightPositions[0].x )
         Col = vec4( 0.0f, 0.0f, 0.0f, 1.0f );
 	else{
 		//Col.rgb *= Col.rgb;

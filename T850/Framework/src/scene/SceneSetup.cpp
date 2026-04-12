@@ -120,6 +120,7 @@ void SceneSetup::Apply(SceneProps& props) {
   auto& s = descriptor.settings;
   props.Exposure = s.exposure;
   props.BloomFactor = s.bloom_factor;
+  props.BloomThreshold = s.bloom_threshold;
   props.Aperture = s.aperture;
   props.FocalLength = s.focal_length;
   props.MaxCoc = s.max_coc;

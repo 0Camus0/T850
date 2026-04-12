@@ -40,6 +40,8 @@ namespace t800 {
     void Destroy();
 
     void AddSlider(const SliderDesc& desc, int settingIndex);
+    void AddFPSLabel();
+    void SetFPSText(const std::string& text, const XVECTOR3& color);
     void ClearSliders();
 
     void Update(const InputManager& input, int screenW, int screenH);
@@ -60,6 +62,12 @@ namespace t800 {
     bool IsEditMode() const { return m_editMode; }
     void SetSnapToGrid(bool s) { m_snapToGrid = s; }
     bool IsSnapToGrid() const { return m_snapToGrid; }
+
+    // Grid resize (+/-)
+    void GrowGrid(float delta);
+
+    // Apply the last-edited element's scale to all elements of the same kind
+    void ApplyUniformScale();
 
     // Layout save/load
     bool SaveLayout(const std::string& path);
@@ -104,6 +112,8 @@ namespace t800 {
     // Edit‑mode tracking
     GUIElement* m_dragTarget   = nullptr;
     GUIElement* m_resizeTarget = nullptr;
+    GUIElement* m_lastEdited   = nullptr;  // last element that was dragged/resized
+    GUILabel*   m_fpsLabel     = nullptr;  // FPS label element (owned via m_elements)
     bool m_wasMouseDown = false;
   };
 

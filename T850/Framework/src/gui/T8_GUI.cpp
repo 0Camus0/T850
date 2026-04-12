@@ -185,8 +185,10 @@ void GUIManager::ClearSliders() {
   for (auto* e : m_elements) delete e;
   m_elements.clear();
   m_sliderPairs.clear();
+  m_fpsLabel   = nullptr;
   m_dragTarget = nullptr;
   m_resizeTarget = nullptr;
+  m_lastEdited = nullptr;
 }
 
 GUISliderBar* GUIManager::FindSlider(const std::string& name) {
@@ -196,47 +198,100 @@ GUISliderBar* GUIManager::FindSlider(const std::string& name) {
   return nullptr;
 }
 
+// ─── FPS label ───────────────────────────────────────────────────────
+void GUIManager::AddFPSLabel() {
+  auto* lbl = new GUILabel();
+  lbl->id    = "label_fps";
+  lbl->text  = "FPS ---";
+  lbl->color = XVECTOR3(0.2f, 0.8f, 0.2f);
+  lbl->isFPS = true;
+  m_elements.push_back(lbl);
+  m_fpsLabel = lbl;
+}
+
+void GUIManager::SetFPSText(const std::string& text, const XVECTOR3& color) {
+  if (m_fpsLabel) {
+    m_fpsLabel->text  = text;
+    m_fpsLabel->color = color;
+  }
+}
+
 // ─── Layout ─────────────────────────────────────────────────
 void GUIManager::LayoutSliders(int screenW, int screenH) {
   m_layout.Compute(screenW, screenH);
 
-  float startX = (float)screenW - m_layout.marginRight - m_layout.sliderW;
-  float startY = m_layout.marginTop;
+  float screenWf = (float)screenW;
+  float screenHf = (float)screenH;
 
   // Build a temporary draw context for text measurement
   GUIDrawContext tmpCtx;
   tmpCtx.text    = &m_textRenderer;
-  tmpCtx.screenW = (float)screenW;
-  tmpCtx.screenH = (float)screenH;
+  tmpCtx.screenW = screenWf;
+  tmpCtx.screenH = screenHf;
+
+  // Compute natural text height
+  float charH = m_layout.fontSize * screenHf / m_layout.textureSize;
+
+  // Pre-measure maximum label width for uniform columns
+  float maxLabelW = 0.0f;
+  for (auto& sp : m_sliderPairs) {
+    char buf[128];
+    snprintf(buf, sizeof(buf), "%s: %.2f", sp.slider->label.c_str(), sp.slider->maxVal);
+    sp.label->text = buf;
+    sp.label->FitToText(tmpCtx);
+    if (sp.label->w > maxLabelW) maxLabelW = sp.label->w;
+  }
+
+  float groupW = maxLabelW + m_layout.labelGap + m_layout.sliderW;
+  float groupSpacingX = groupW + m_layout.marginRight;
+
+  // Snap starting position to grid
+  float startX = m_gridCellW;
+  float startY = m_gridCellH;
+
+  // Determine how many columns fit on screen
+  int cols = (std::max)(1, (int)((screenWf - startX) / groupSpacingX));
 
   for (size_t i = 0; i < m_sliderPairs.size(); i++) {
     auto& sp = m_sliderPairs[i];
-    float rowY = startY + (float)i * m_layout.spacingY;
+    int col = (int)(i % cols);
+    int row = (int)(i / cols);
 
-    // Slider bar position & size
-    sp.slider->x        = startX;
-    sp.slider->y        = rowY;
-    sp.slider->w        = m_layout.sliderW;
-    sp.slider->h        = m_layout.sliderH;
-    sp.slider->knobSize = m_layout.knobSize;
+    float cellX = startX + col * groupSpacingX;
+    float rowY  = startY + row * m_layout.spacingY;
 
-    // Build label text
+    // Snap label position to grid
+    float labelX = std::round(cellX / m_gridCellW) * m_gridCellW;
+    float labelY = std::round(rowY  / m_gridCellH) * m_gridCellH;
+
+    // Label
     char buf[128];
     snprintf(buf, sizeof(buf), "%s: %.2f", sp.slider->label.c_str(), sp.slider->value);
     sp.label->text = buf;
-
-    // Fit label to text and position to the left of the bar
     sp.label->FitToText(tmpCtx);
-    sp.label->x = sp.slider->x - m_layout.labelGap - sp.label->w;
-    // Vertically centre label with bar
-    float charH = m_layout.fontSize * (float)screenH / m_layout.textureSize;
-    sp.label->y = rowY + sp.slider->h * 0.5f - charH * 0.5f;
+    sp.label->x = labelX;
+    sp.label->y = labelY;
     sp.label->h = charH;
+
+    // Slider bar right after label
+    float barX = labelX + maxLabelW + m_layout.labelGap;
+    barX = std::round(barX / m_gridCellW) * m_gridCellW;
+    sp.slider->x        = barX;
+    sp.slider->y        = labelY;
+    sp.slider->w        = m_layout.sliderW;
+    sp.slider->h        = m_layout.sliderH;
+    sp.slider->knobSize = m_layout.knobSize;
+  }
+
+  // Position FPS label at bottom-left, grid-aligned
+  if (m_fpsLabel) {
+    m_fpsLabel->FitToText(tmpCtx);
+    m_fpsLabel->x = m_gridCellW;
+    m_fpsLabel->y = std::round((screenHf - m_gridCellH - charH) / m_gridCellH) * m_gridCellH;
+    m_fpsLabel->h = charH;
   }
 
   // Clamp all elements inside the screen
-  float screenWf = (float)screenW;
-  float screenHf = (float)screenH;
   for (auto* e : m_elements) {
     if (e->x < 0.0f)               e->x = 0.0f;
     if (e->y < 0.0f)               e->y = 0.0f;
@@ -274,6 +329,7 @@ void GUIManager::UpdateEditMode(float mx, float my, bool mouseDown) {
     if (m_resizeTarget) {
       m_resizeTarget->resizing = false;
       m_resizeTarget->OnResizeEnd();
+      m_lastEdited = m_resizeTarget;
       m_resizeTarget = nullptr;
       RebakeFontIfNeeded();
     }
@@ -282,6 +338,7 @@ void GUIManager::UpdateEditMode(float mx, float my, bool mouseDown) {
       if (m_snapToGrid) {
         m_dragTarget->SnapToGrid(m_gridCellW, m_gridCellH);
       }
+      m_lastEdited = m_dragTarget;
       m_dragTarget = nullptr;
     }
     return;
@@ -318,6 +375,7 @@ void GUIManager::UpdateEditMode(float mx, float my, bool mouseDown) {
         e->resizeOrigMX = mx;
         e->resizeOrigMY = my;
         m_resizeTarget = e;
+        printf("[GUI Edit] Selected: %s\n", e->id.c_str());
         return;
       }
     }
@@ -331,6 +389,7 @@ void GUIManager::UpdateEditMode(float mx, float my, bool mouseDown) {
         e->dragOffX  = mx - e->x;
         e->dragOffY  = my - e->y;
         m_dragTarget = e;
+        printf("[GUI Edit] Selected: %s\n", e->id.c_str());
         return;
       }
     }
@@ -395,6 +454,18 @@ void GUIManager::Draw() {
     g_pBaseDriver->SetDepthStencilState(BaseDriver::DEPTH_STENCIL_STATES::NONE);
   }
 
+  // Draw FPS label
+  if (m_fpsLabel && m_fpsLabel->visible) {
+    m_fpsLabel->Draw(m_ctx);
+
+    // Restore GUI render state after text draw
+    m_quad.Set();
+    m_shader->Set(*T8DeviceContext);
+    T8DeviceContext->SetPrimitiveTopology(T8_TOPOLOGY::TRIANLE_LIST);
+    g_pBaseDriver->SetBlendState(BaseDriver::BLEND_STATES::ALPHA_BLEND);
+    g_pBaseDriver->SetDepthStencilState(BaseDriver::DEPTH_STENCIL_STATES::NONE);
+  }
+
   // Draw edit overlays on top
   if (m_editMode) {
     DrawEditOverlays();
@@ -444,11 +515,55 @@ void GUIManager::RebakeFontIfNeeded() {
     if (sp.label->h > maxH)
       maxH = sp.label->h;
   }
+  if (m_fpsLabel && m_fpsLabel->h > maxH)
+    maxH = m_fpsLabel->h;
 
   // Only rebake if the largest label exceeds the baked glyph height
   if (maxH > charH * 1.05f) {
     float newFontSize = maxH * (float)m_textRenderer.m_textureSize / screenH;
     m_textRenderer.Rebake(newFontSize);
+  }
+}
+
+// ─── Grid resize (+/-) ──────────────────────────────────────
+void GUIManager::GrowGrid(float delta) {
+  m_gridCellW = (std::max)(10.0f, m_gridCellW + delta);
+  m_gridCellH = (std::max)(10.0f, m_gridCellH + delta);
+  printf("[GUI Edit] Grid cell size: %.0f x %.0f\n", m_gridCellW, m_gridCellH);
+}
+
+// ─── Apply uniform scale ────────────────────────────────────
+void GUIManager::ApplyUniformScale() {
+  if (!m_lastEdited) {
+    printf("[GUI Edit] No element was edited yet\n");
+    return;
+  }
+
+  float newW = m_lastEdited->w;
+  float newH = m_lastEdited->h;
+
+  // Determine element type by trying dynamic_cast
+  GUISliderBar* asSlider = dynamic_cast<GUISliderBar*>(m_lastEdited);
+  GUILabel*     asLabel  = dynamic_cast<GUILabel*>(m_lastEdited);
+
+  if (asSlider) {
+    // Apply to all slider bars
+    for (auto& sp : m_sliderPairs) {
+      sp.slider->w = newW;
+      sp.slider->h = newH;
+      sp.slider->knobSize = newH;
+    }
+    printf("[GUI Edit] Applied slider scale (%.0f x %.0f) to all sliders\n", newW, newH);
+  } else if (asLabel) {
+    // Apply height (scale) to all labels
+    for (auto& sp : m_sliderPairs) {
+      sp.label->h = newH;
+    }
+    if (m_fpsLabel) {
+      m_fpsLabel->h = newH;
+    }
+    printf("[GUI Edit] Applied label height (%.0f) to all labels\n", newH);
+    RebakeFontIfNeeded();
   }
 }
 

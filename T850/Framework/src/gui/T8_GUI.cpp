@@ -1,6 +1,13 @@
 #include "gui/T8_GUI.h"
 #include "gui/SliderBarData.h"
 #include "gui/SliderKnobData.h"
+#include "gui/CheckBoxBoxData.h"
+#include "gui/CheckBoxCheckData.h"
+#include "gui/SelectorBarData.h"
+#include "gui/SelectorBtnLeftData.h"
+#include "gui/SelectorBtnRightData.h"
+#include "gui/SelectorBtnLeftPressedData.h"
+#include "gui/SelectorBtnRightPressedData.h"
 
 #include <video/GLShader.h>
 #include <video/GLDriver.h>
@@ -143,6 +150,104 @@ void GUIManager::InitTextures() {
     unsigned char white[4] = {255, 255, 255, 255};
     m_whiteTexture = T8Device->CreateTextureFromMemory(white, 1, 1, 4, "gui_white_1x1");
   }
+  // Checkbox box
+  {
+    int total = GUI_CHECKBOX_BOX_WIDTH * GUI_CHECKBOX_BOX_HEIGHT;
+    std::vector<unsigned char> rgba(total * 4);
+    for (int i = 0; i < total; i++) {
+      uint32_t px = GUI_CHECKBOX_BOX_DATA[i];
+      rgba[i * 4 + 0] = (unsigned char)(px & 0xFF);
+      rgba[i * 4 + 1] = (unsigned char)((px >> 8) & 0xFF);
+      rgba[i * 4 + 2] = (unsigned char)((px >> 16) & 0xFF);
+      rgba[i * 4 + 3] = (unsigned char)((px >> 24) & 0xFF);
+    }
+    m_checkBoxTexture = T8Device->CreateTextureFromMemory(
+      rgba.data(), GUI_CHECKBOX_BOX_WIDTH, GUI_CHECKBOX_BOX_HEIGHT, 4, "gui_checkbox_box");
+  }
+  // Checkbox check mark
+  {
+    int total = GUI_CHECKBOX_CHECK_WIDTH * GUI_CHECKBOX_CHECK_HEIGHT;
+    std::vector<unsigned char> rgba(total * 4);
+    for (int i = 0; i < total; i++) {
+      uint32_t px = GUI_CHECKBOX_CHECK_DATA[i];
+      rgba[i * 4 + 0] = (unsigned char)(px & 0xFF);
+      rgba[i * 4 + 1] = (unsigned char)((px >> 8) & 0xFF);
+      rgba[i * 4 + 2] = (unsigned char)((px >> 16) & 0xFF);
+      rgba[i * 4 + 3] = (unsigned char)((px >> 24) & 0xFF);
+    }
+    m_checkMarkTexture = T8Device->CreateTextureFromMemory(
+      rgba.data(), GUI_CHECKBOX_CHECK_WIDTH, GUI_CHECKBOX_CHECK_HEIGHT, 4, "gui_checkbox_check");
+  }
+  // Selector bar
+  {
+    int total = GUI_SELECTOR_BAR_WIDTH * GUI_SELECTOR_BAR_HEIGHT;
+    std::vector<unsigned char> rgba(total * 4);
+    for (int i = 0; i < total; i++) {
+      uint32_t px = GUI_SELECTOR_BAR_DATA[i];
+      rgba[i * 4 + 0] = (unsigned char)(px & 0xFF);
+      rgba[i * 4 + 1] = (unsigned char)((px >> 8) & 0xFF);
+      rgba[i * 4 + 2] = (unsigned char)((px >> 16) & 0xFF);
+      rgba[i * 4 + 3] = (unsigned char)((px >> 24) & 0xFF);
+    }
+    m_selectorBarTexture = T8Device->CreateTextureFromMemory(
+      rgba.data(), GUI_SELECTOR_BAR_WIDTH, GUI_SELECTOR_BAR_HEIGHT, 4, "gui_selector_bar");
+  }
+  // Selector button left (non-pressed)
+  {
+    int total = GUI_SELECTOR_BTN_LEFT_WIDTH * GUI_SELECTOR_BTN_LEFT_HEIGHT;
+    std::vector<unsigned char> rgba(total * 4);
+    for (int i = 0; i < total; i++) {
+      uint32_t px = GUI_SELECTOR_BTN_LEFT_DATA[i];
+      rgba[i * 4 + 0] = (unsigned char)(px & 0xFF);
+      rgba[i * 4 + 1] = (unsigned char)((px >> 8) & 0xFF);
+      rgba[i * 4 + 2] = (unsigned char)((px >> 16) & 0xFF);
+      rgba[i * 4 + 3] = (unsigned char)((px >> 24) & 0xFF);
+    }
+    m_selectorBtnLeftTexture = T8Device->CreateTextureFromMemory(
+      rgba.data(), GUI_SELECTOR_BTN_LEFT_WIDTH, GUI_SELECTOR_BTN_LEFT_HEIGHT, 4, "gui_selector_btn_left");
+  }
+  // Selector button right (non-pressed)
+  {
+    int total = GUI_SELECTOR_BTN_RIGHT_WIDTH * GUI_SELECTOR_BTN_RIGHT_HEIGHT;
+    std::vector<unsigned char> rgba(total * 4);
+    for (int i = 0; i < total; i++) {
+      uint32_t px = GUI_SELECTOR_BTN_RIGHT_DATA[i];
+      rgba[i * 4 + 0] = (unsigned char)(px & 0xFF);
+      rgba[i * 4 + 1] = (unsigned char)((px >> 8) & 0xFF);
+      rgba[i * 4 + 2] = (unsigned char)((px >> 16) & 0xFF);
+      rgba[i * 4 + 3] = (unsigned char)((px >> 24) & 0xFF);
+    }
+    m_selectorBtnRightTexture = T8Device->CreateTextureFromMemory(
+      rgba.data(), GUI_SELECTOR_BTN_RIGHT_WIDTH, GUI_SELECTOR_BTN_RIGHT_HEIGHT, 4, "gui_selector_btn_right");
+  }
+  // Selector button left (pressed)
+  {
+    int total = GUI_SELECTOR_BTN_LEFT_PRESSED_WIDTH * GUI_SELECTOR_BTN_LEFT_PRESSED_HEIGHT;
+    std::vector<unsigned char> rgba(total * 4);
+    for (int i = 0; i < total; i++) {
+      uint32_t px = GUI_SELECTOR_BTN_LEFT_PRESSED_DATA[i];
+      rgba[i * 4 + 0] = (unsigned char)(px & 0xFF);
+      rgba[i * 4 + 1] = (unsigned char)((px >> 8) & 0xFF);
+      rgba[i * 4 + 2] = (unsigned char)((px >> 16) & 0xFF);
+      rgba[i * 4 + 3] = (unsigned char)((px >> 24) & 0xFF);
+    }
+    m_selectorBtnLeftPressTexture = T8Device->CreateTextureFromMemory(
+      rgba.data(), GUI_SELECTOR_BTN_LEFT_PRESSED_WIDTH, GUI_SELECTOR_BTN_LEFT_PRESSED_HEIGHT, 4, "gui_selector_btn_left_press");
+  }
+  // Selector button right (pressed)
+  {
+    int total = GUI_SELECTOR_BTN_RIGHT_PRESSED_WIDTH * GUI_SELECTOR_BTN_RIGHT_PRESSED_HEIGHT;
+    std::vector<unsigned char> rgba(total * 4);
+    for (int i = 0; i < total; i++) {
+      uint32_t px = GUI_SELECTOR_BTN_RIGHT_PRESSED_DATA[i];
+      rgba[i * 4 + 0] = (unsigned char)(px & 0xFF);
+      rgba[i * 4 + 1] = (unsigned char)((px >> 8) & 0xFF);
+      rgba[i * 4 + 2] = (unsigned char)((px >> 16) & 0xFF);
+      rgba[i * 4 + 3] = (unsigned char)((px >> 24) & 0xFF);
+    }
+    m_selectorBtnRightPressTexture = T8Device->CreateTextureFromMemory(
+      rgba.data(), GUI_SELECTOR_BTN_RIGHT_PRESSED_WIDTH, GUI_SELECTOR_BTN_RIGHT_PRESSED_HEIGHT, 4, "gui_selector_btn_right_press");
+  }
 }
 
 void GUIManager::Destroy() {
@@ -185,6 +290,8 @@ void GUIManager::ClearSliders() {
   for (auto* e : m_elements) delete e;
   m_elements.clear();
   m_sliderPairs.clear();
+  m_checkboxPairs.clear();
+  m_selectorPairs.clear();
   m_fpsLabel   = nullptr;
   m_dragTarget = nullptr;
   m_resizeTarget = nullptr;
@@ -196,6 +303,45 @@ GUISliderBar* GUIManager::FindSlider(const std::string& name) {
     if (sp.slider->name == name) return sp.slider;
   }
   return nullptr;
+}
+
+// ─── Checkbox management ────────────────────────────────────
+void GUIManager::AddCheckbox(const CheckboxDesc& desc, int settingIndex) {
+  auto* lbl = new GUILabel();
+  lbl->id    = "label_" + desc.name;
+  lbl->text  = desc.label;
+  lbl->color = XVECTOR3(0.9f, 0.85f, 0.8f);
+
+  auto* cb = new GUICheckbox();
+  cb->id           = "checkbox_" + desc.name;
+  cb->name         = desc.name;
+  cb->label        = desc.label;
+  cb->checked      = desc.default_val;
+  cb->settingIndex = settingIndex;
+
+  m_elements.push_back(lbl);
+  m_elements.push_back(cb);
+  m_checkboxPairs.push_back({lbl, cb});
+}
+
+// ─── Selector management ────────────────────────────────────
+void GUIManager::AddSelector(const SelectorDesc& desc, int settingIndex) {
+  auto* lbl = new GUILabel();
+  lbl->id    = "label_" + desc.name;
+  lbl->text  = desc.label;
+  lbl->color = XVECTOR3(0.9f, 0.85f, 0.8f);
+
+  auto* sel = new GUISelector();
+  sel->id            = "selector_" + desc.name;
+  sel->name          = desc.name;
+  sel->label         = desc.label;
+  sel->options       = desc.options;
+  sel->selectedIndex = desc.default_index;
+  sel->settingIndex  = settingIndex;
+
+  m_elements.push_back(lbl);
+  m_elements.push_back(sel);
+  m_selectorPairs.push_back({lbl, sel});
 }
 
 // ─── FPS label ───────────────────────────────────────────────────────
@@ -232,12 +378,20 @@ void GUIManager::LayoutSliders(int screenW, int screenH) {
   // Compute natural text height
   float charH = m_layout.fontSize * screenHf / m_layout.textureSize;
 
-  // Pre-measure maximum label width for uniform columns
+  // Pre-measure maximum label width across ALL control types for uniform columns
   float maxLabelW = 0.0f;
   for (auto& sp : m_sliderPairs) {
     char buf[128];
     snprintf(buf, sizeof(buf), "%s: %.2f", sp.slider->label.c_str(), sp.slider->maxVal);
     sp.label->text = buf;
+    sp.label->FitToText(tmpCtx);
+    if (sp.label->w > maxLabelW) maxLabelW = sp.label->w;
+  }
+  for (auto& cp : m_checkboxPairs) {
+    cp.label->FitToText(tmpCtx);
+    if (cp.label->w > maxLabelW) maxLabelW = cp.label->w;
+  }
+  for (auto& sp : m_selectorPairs) {
     sp.label->FitToText(tmpCtx);
     if (sp.label->w > maxLabelW) maxLabelW = sp.label->w;
   }
@@ -252,19 +406,20 @@ void GUIManager::LayoutSliders(int screenW, int screenH) {
   // Determine how many columns fit on screen
   int cols = (std::max)(1, (int)((screenWf - startX) / groupSpacingX));
 
-  for (size_t i = 0; i < m_sliderPairs.size(); i++) {
+  // Layout all controls in a continuous grid: sliders first, then checkboxes, then selectors
+  int itemIdx = 0;
+
+  for (size_t i = 0; i < m_sliderPairs.size(); i++, itemIdx++) {
     auto& sp = m_sliderPairs[i];
-    int col = (int)(i % cols);
-    int row = (int)(i / cols);
+    int col = itemIdx % cols;
+    int row = itemIdx / cols;
 
     float cellX = startX + col * groupSpacingX;
     float rowY  = startY + row * m_layout.spacingY;
 
-    // Snap label position to grid
     float labelX = std::round(cellX / m_gridCellW) * m_gridCellW;
     float labelY = std::round(rowY  / m_gridCellH) * m_gridCellH;
 
-    // Label
     char buf[128];
     snprintf(buf, sizeof(buf), "%s: %.2f", sp.slider->label.c_str(), sp.slider->value);
     sp.label->text = buf;
@@ -273,7 +428,6 @@ void GUIManager::LayoutSliders(int screenW, int screenH) {
     sp.label->y = labelY;
     sp.label->h = charH;
 
-    // Slider bar right after label
     float barX = labelX + maxLabelW + m_layout.labelGap;
     barX = std::round(barX / m_gridCellW) * m_gridCellW;
     sp.slider->x        = barX;
@@ -281,6 +435,55 @@ void GUIManager::LayoutSliders(int screenW, int screenH) {
     sp.slider->w        = m_layout.sliderW;
     sp.slider->h        = m_layout.sliderH;
     sp.slider->knobSize = m_layout.knobSize;
+  }
+
+  for (size_t i = 0; i < m_checkboxPairs.size(); i++, itemIdx++) {
+    auto& cp = m_checkboxPairs[i];
+    int col = itemIdx % cols;
+    int row = itemIdx / cols;
+
+    float cellX = startX + col * groupSpacingX;
+    float rowY  = startY + row * m_layout.spacingY;
+
+    float labelX = std::round(cellX / m_gridCellW) * m_gridCellW;
+    float labelY = std::round(rowY  / m_gridCellH) * m_gridCellH;
+
+    cp.label->FitToText(tmpCtx);
+    cp.label->x = labelX;
+    cp.label->y = labelY;
+    cp.label->h = charH;
+
+    float cbX = labelX + maxLabelW + m_layout.labelGap;
+    cbX = std::round(cbX / m_gridCellW) * m_gridCellW;
+    cp.checkbox->x = cbX;
+    cp.checkbox->y = labelY;
+    cp.checkbox->w = m_layout.sliderH;  // square checkbox
+    cp.checkbox->h = m_layout.sliderH;
+  }
+
+  for (size_t i = 0; i < m_selectorPairs.size(); i++, itemIdx++) {
+    auto& sp = m_selectorPairs[i];
+    int col = itemIdx % cols;
+    int row = itemIdx / cols;
+
+    float cellX = startX + col * groupSpacingX;
+    float rowY  = startY + row * m_layout.spacingY;
+
+    float labelX = std::round(cellX / m_gridCellW) * m_gridCellW;
+    float labelY = std::round(rowY  / m_gridCellH) * m_gridCellH;
+
+    sp.label->FitToText(tmpCtx);
+    sp.label->x = labelX;
+    sp.label->y = labelY;
+    sp.label->h = charH;
+
+    float selX = labelX + maxLabelW + m_layout.labelGap;
+    selX = std::round(selX / m_gridCellW) * m_gridCellW;
+    sp.selector->x       = selX;
+    sp.selector->y       = labelY;
+    sp.selector->w       = m_layout.sliderW;
+    sp.selector->h       = m_layout.sliderH;
+    sp.selector->btnSize = m_layout.sliderH;
   }
 
   // Position FPS label at bottom-left, grid-aligned
@@ -314,6 +517,14 @@ void GUIManager::Update(const InputManager& input, int screenW, int screenH) {
     // Normal slider interaction
     for (auto& sp : m_sliderPairs) {
       sp.slider->UpdateInteraction(mx, my, mouseDown);
+    }
+    // Checkbox interaction
+    for (auto& cp : m_checkboxPairs) {
+      cp.checkbox->UpdateInteraction(mx, my, mouseDown);
+    }
+    // Selector interaction
+    for (auto& sp : m_selectorPairs) {
+      sp.selector->UpdateInteraction(mx, my, mouseDown);
     }
   }
 
@@ -411,6 +622,13 @@ void GUIManager::Draw() {
   m_ctx.barTex     = m_barTexture;
   m_ctx.knobTex    = m_knobTexture;
   m_ctx.whiteTex   = m_whiteTexture;
+  m_ctx.checkBoxTex  = m_checkBoxTexture;
+  m_ctx.checkMarkTex = m_checkMarkTexture;
+  m_ctx.selectorBarTex       = m_selectorBarTexture;
+  m_ctx.selectorBtnLeftTex   = m_selectorBtnLeftTexture;
+  m_ctx.selectorBtnRightTex  = m_selectorBtnRightTexture;
+  m_ctx.selectorBtnLeftPressTex  = m_selectorBtnLeftPressTexture;
+  m_ctx.selectorBtnRightPressTex = m_selectorBtnRightPressTexture;
   m_ctx.screenW    = screenW;
   m_ctx.screenH    = screenH;
   m_ctx.editMode   = m_editMode;
@@ -447,6 +665,49 @@ void GUIManager::Draw() {
     sp.label->Draw(m_ctx);
 
     // Restore GUI render state after text draw
+    m_quad.Set();
+    m_shader->Set(*T8DeviceContext);
+    T8DeviceContext->SetPrimitiveTopology(T8_TOPOLOGY::TRIANLE_LIST);
+    g_pBaseDriver->SetBlendState(BaseDriver::BLEND_STATES::ALPHA_BLEND);
+    g_pBaseDriver->SetDepthStencilState(BaseDriver::DEPTH_STENCIL_STATES::NONE);
+  }
+
+  // Draw checkbox pairs
+  for (auto& cp : m_checkboxPairs) {
+    if (!cp.checkbox->visible) continue;
+
+    // Draw checkbox (box + check overlay)
+    cp.checkbox->Draw(m_ctx);
+
+    // Draw label
+    cp.label->Draw(m_ctx);
+
+    // Restore GUI render state after text draw
+    m_quad.Set();
+    m_shader->Set(*T8DeviceContext);
+    T8DeviceContext->SetPrimitiveTopology(T8_TOPOLOGY::TRIANLE_LIST);
+    g_pBaseDriver->SetBlendState(BaseDriver::BLEND_STATES::ALPHA_BLEND);
+    g_pBaseDriver->SetDepthStencilState(BaseDriver::DEPTH_STENCIL_STATES::NONE);
+  }
+
+  // Draw selector pairs
+  for (auto& sp : m_selectorPairs) {
+    if (!sp.selector->visible) continue;
+
+    // Draw selector (bar + buttons)
+    sp.selector->Draw(m_ctx);
+
+    // Restore GUI render state after text draw (selector draws text)
+    m_quad.Set();
+    m_shader->Set(*T8DeviceContext);
+    T8DeviceContext->SetPrimitiveTopology(T8_TOPOLOGY::TRIANLE_LIST);
+    g_pBaseDriver->SetBlendState(BaseDriver::BLEND_STATES::ALPHA_BLEND);
+    g_pBaseDriver->SetDepthStencilState(BaseDriver::DEPTH_STENCIL_STATES::NONE);
+
+    // Draw label
+    sp.label->Draw(m_ctx);
+
+    // Restore GUI render state
     m_quad.Set();
     m_shader->Set(*T8DeviceContext);
     T8DeviceContext->SetPrimitiveTopology(T8_TOPOLOGY::TRIANLE_LIST);
@@ -543,8 +804,10 @@ void GUIManager::ApplyUniformScale() {
   float newH = m_lastEdited->h;
 
   // Determine element type by trying dynamic_cast
-  GUISliderBar* asSlider = dynamic_cast<GUISliderBar*>(m_lastEdited);
-  GUILabel*     asLabel  = dynamic_cast<GUILabel*>(m_lastEdited);
+  GUISliderBar* asSlider   = dynamic_cast<GUISliderBar*>(m_lastEdited);
+  GUILabel*     asLabel    = dynamic_cast<GUILabel*>(m_lastEdited);
+  GUICheckbox*  asCheckbox = dynamic_cast<GUICheckbox*>(m_lastEdited);
+  GUISelector*  asSelector = dynamic_cast<GUISelector*>(m_lastEdited);
 
   if (asSlider) {
     // Apply to all slider bars
@@ -554,6 +817,19 @@ void GUIManager::ApplyUniformScale() {
       sp.slider->knobSize = newH;
     }
     printf("[GUI Edit] Applied slider scale (%.0f x %.0f) to all sliders\n", newW, newH);
+  } else if (asCheckbox) {
+    for (auto& cp : m_checkboxPairs) {
+      cp.checkbox->w = newH;  // keep square
+      cp.checkbox->h = newH;
+    }
+    printf("[GUI Edit] Applied checkbox scale (%.0f) to all checkboxes\n", newH);
+  } else if (asSelector) {
+    for (auto& sp : m_selectorPairs) {
+      sp.selector->w = newW;
+      sp.selector->h = newH;
+      sp.selector->btnSize = newH;
+    }
+    printf("[GUI Edit] Applied selector scale (%.0f x %.0f) to all selectors\n", newW, newH);
   } else if (asLabel) {
     // Apply height (scale) to all labels
     for (auto& sp : m_sliderPairs) {

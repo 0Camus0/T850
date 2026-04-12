@@ -375,56 +375,49 @@ float4 FS( VS_OUTPUT input ) : SV_TARGET {
 	
 	
 }
+#elif defined(LUMINANCE_MAP_PASS)
+Texture2D tex0 : register(t0);
+float4 FS(VS_OUTPUT input) : SV_TARGET {
+  float3 color = tex0.Sample(SS, input.texture0).rgb;
+  float luminance = max(dot(color.rgb, float3(0.299f, 0.587f, 0.114f)), 0.0001f);
+  float logLum = log(luminance);
+  return float4(logLum, 1.0f, 1.0f, 1.0f);
+}
+#elif defined(ADAPT_LUMINANCE_PASS)
+Texture2D tex0 : register(t0);
+Texture2D tex1 : register(t1);
+float4 FS(VS_OUTPUT input) : SV_TARGET {
+  float2 center = float2(0.5f, 0.5f);
+  float lastLum = exp(tex0.Sample(SS, center).r);
+  float currentLogLum = tex1.SampleLevel(SS, center, CameraPosition.w).r;
+  float currentLum = exp(currentLogLum);
+
+  float dt = max(LightPositions[1].y, 0.0f);
+  float tau = max(LightPositions[1].x, 0.0001f);
+  float adaptedLum = lastLum + (currentLum - lastLum) * (1.0f - exp(-dt * tau));
+  float adaptedLogLum = log(max(adaptedLum, 0.0001f));
+  return float4(adaptedLogLum, 1.0f, 1.0f, 1.0f);
+}
 #elif defined(HDR_COMP_PASS)
 Texture2D tex0 : register(t0);
 Texture2D tex1 : register(t1);
 Texture2D tex2 : register(t2);
 float4 FS( VS_OUTPUT input ) : SV_TARGET {
-/*
-	int mip = ((int)CameraPosition.w) - 1;
-	float3 color = tex0.Sample( SS, input.texture0).rgb;
-	float avgLuminance = dot( tex0.SampleLevel( SS, input.texture0 , mip).rgb , float3(0.299f, 0.587f, 0.114f) );
+  float3 hdrColor = tex0.Sample(SS, input.texture0).rgb;
+  float avgLuminance = exp(tex2.Sample(SS, float2(0.5f, 0.5f)).r);
 
-	// exposure
-	float keyValue = LightPositions[0].y;
-	float BloomFac = LightPositions[0].x;
-	float linearExposure = keyValue / avgLuminance;
-//	float exposure = max(linearExposure, 0.0001f);
-    color *= linearExposure;
+  avgLuminance = max(avgLuminance, 0.001f);
+  float keyValue = 1.03f - (2.0f / (2.0f + log10(avgLuminance + 1.0f)));
+  float linearExposure = keyValue / avgLuminance;
+  float exposureComp = LightPositions[0].y;
+  float3 color = exp2(log2(max(linearExposure, 0.0001f)) + exposureComp) * hdrColor;
 
-	// filmic tonemapping
-    color = max(0, color - 0.004f);
-    color = (color * (6.2f * color + 0.5f)) / (color * (6.2f * color + 1.7f)+ 0.06f);
-    // result has 1/2.2 baked in
-    float4 FCol = float4(pow(color, 2.2f),1.0);
-	
-	
-	float3 Bloom = tex1.Sample( SS, input.texture0).rgb*BloomFac;
-	
+  float pixelLuminance = max(dot(color, float3(0.299f, 0.587f, 0.114f)), 0.0001f);
+  float whiteLevel = max(LightPositions[0].z, 0.001f);
+  float toneMappedLuminance = pixelLuminance * (1.0f + pixelLuminance / (whiteLevel * whiteLevel)) / (1.0f + pixelLuminance);
+  float3 toneMapped = toneMappedLuminance * (color / pixelLuminance);
 
-	return float4(FCol * (BloomFac-Bloom) + Bloom, 1.0f);
-	*/
-	
-	
-	int mip = ((int)CameraPosition.w) - 1;
-	float4 color = tex0.Sample( SS, input.texture0);
-	float avgLuminance = dot( tex0.SampleLevel( SS, input.texture0 , mip).rgb , float3(0.299f, 0.587f, 0.114f) );
-    float exposure = 0;
-	     	
-    avgLuminance = max(avgLuminance, 0.001f);
-    float keyValue = 0;
-    keyValue = 1.03f - (2.0f / (2 + log10(avgLuminance + 1)));
-
-    float linearExposure = (keyValue / avgLuminance);
-    exposure = log2(max(linearExposure, 0.0001f));
-    color = exp2(exposure) * color;
-    
- 	
- 	float pixelLuminance = max(dot(color.rgb, float3(0.299f, 0.587f, 0.114f)), 0.0001f);
-    float toneMappedLuminance = log10(1 + pixelLuminance) / log10(1.0 + LightPositions[0].y);
-	color = toneMappedLuminance * pow(color / pixelLuminance, 1.0f); 
-	color.a = 1.0;
-	return color + LightPositions[0].x*tex1.Sample( SS, input.texture0);
+  return float4(toneMapped + LightPositions[0].x * tex1.Sample(SS, input.texture0).rgb, 1.0f);
 }
 #elif defined(COC_PASS)
 struct FS_OUT{

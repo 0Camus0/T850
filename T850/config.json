@@ -1,6 +1,18 @@
 ﻿{
-    "configuration":  "Release",
     "keepRunning":  false,
+    "api":  "gl",
+    "architecture":  "x64",
+    "display":  {
+                    "scene":  0,
+                    "width":  1920,
+                    "height":  1080,
+                    "fullscreen":  false
+                },
+    "replaySnapshot":  {
+                           "path":  "D:\\Code\\Game\\T850\\T850\\bin\\x64\\Release\\dumps_gl_f4715_20260410_234726\\snapshot.json",
+                           "enabled":  false
+                       },
+    "configuration":  "Release",
     "dump":  {
                  "seconds":  5,
                  "trigger":  "frame",
@@ -8,16 +20,8 @@
                  "enabled":  false
              },
     "debugFrames":  false,
-    "architecture":  "x64",
-    "display":  {
-                    "scene":  0,
-                    "width":  640,
-                    "height":  320,
-                    "fullscreen":  false
-                },
-    "replaySnapshot":  {
-                           "path":  "D:\\Code\\Game\\T850\\T850\\bin\\x64\\Release\\debug_godrays.json",
-                           "enabled":  true
-                       },
-    "api":  "d3d11"
+    "devTools":  {
+                     "guiSnap":  true,
+                     "guiEdit":  true
+                 }
 }

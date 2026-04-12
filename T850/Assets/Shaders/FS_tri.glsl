@@ -1,5 +1,6 @@
 #ifdef ES_30
-	int highp vec3 VertexColor;
+	precision mediump float;
+	in highp vec3 VertexColor;
 	layout(location = 0) out highp vec4 colorOut;
 #else
 	varying highp vec3 VertexColor;

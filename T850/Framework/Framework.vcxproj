@@ -46,6 +46,10 @@
     <ClInclude Include="include\scene\SplineWireframe.h" />
     <ClInclude Include="include\scene\T8_Quad.h" />
     <ClInclude Include="include\scene\T8_TextRenderer.h" />
+    <ClInclude Include="include\gui\GUIElement.h" />
+    <ClInclude Include="include\gui\T8_GUI.h" />
+    <ClInclude Include="include\gui\SliderBarData.h" />
+    <ClInclude Include="include\gui\SliderKnobData.h" />
     <ClInclude Include="include\utils\cil.h" />
     <ClInclude Include="include\utils\InputManager.h" />
     <ClInclude Include="include\utils\ResourceManager.h" />
@@ -96,6 +100,8 @@
     <ClCompile Include="src\scene\SplineWireframe.cpp" />
     <ClCompile Include="src\scene\T8_Quad.cpp" />
     <ClCompile Include="src\scene\T8_TextRenderer.cpp" />
+    <ClCompile Include="src\gui\GUIElement.cpp" />
+    <ClCompile Include="src\gui\T8_GUI.cpp" />
     <ClCompile Include="src\utils\cil.cpp" />
     <ClCompile Include="src\utils\InputManager.cpp" />
     <ClCompile Include="src\utils\ResourceManager.cpp" />

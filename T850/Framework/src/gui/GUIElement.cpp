@@ -197,4 +197,115 @@ void GUISliderBar::UpdateInteraction(float mx, float my, bool mouseDown) {
   }
 }
 
+// ═══════════════════════════════════════════════════════════
+//  GUICheckbox
+// ═══════════════════════════════════════════════════════════
+
+void GUICheckbox::Draw(GUIDrawContext& ctx) {
+  if (!visible) return;
+
+  // Draw box texture (always)
+  XVECTOR3 tint(1.0f, 1.0f, 1.0f);
+  if (ctx.checkBoxTex)
+    ctx.DrawTexturedQuad(x, y, h, h, ctx.checkBoxTex, tint);
+
+  // Draw check mark overlay when checked
+  if (checked && ctx.checkMarkTex)
+    ctx.DrawTexturedQuad(x, y, h, h, ctx.checkMarkTex, tint);
+}
+
+void GUICheckbox::UpdateInteraction(float mx, float my, bool mouseDown) {
+  justToggled = false;
+  // Toggle on click (press-then-release inside the box area)
+  bool over = (mx >= x && mx <= x + h && my >= y && my <= y + h);
+  if (!mouseDown && wasMouseDown && over) {
+    checked = !checked;
+    justToggled = true;
+  }
+  wasMouseDown = mouseDown;
+}
+
+// ═══════════════════════════════════════════════════════════
+//  GUISelector
+// ═══════════════════════════════════════════════════════════
+
+static const std::string s_emptyOption = "---";
+
+const std::string& GUISelector::CurrentOption() const {
+  if (options.empty()) return s_emptyOption;
+  return options[selectedIndex];
+}
+
+void GUISelector::SelectNext() {
+  if (options.empty()) return;
+  selectedIndex = (selectedIndex + 1) % (int)options.size();
+  justChanged = true;
+}
+
+void GUISelector::SelectPrev() {
+  if (options.empty()) return;
+  selectedIndex = (selectedIndex - 1 + (int)options.size()) % (int)options.size();
+  justChanged = true;
+}
+
+void GUISelector::Draw(GUIDrawContext& ctx) {
+  if (!visible) return;
+
+  float barX = x + btnSize;
+  float barW = w - btnSize * 2.0f;
+  XVECTOR3 tint(1.0f, 1.0f, 1.0f);
+
+  // Draw bar background
+  if (ctx.selectorBarTex)
+    ctx.DrawTexturedQuad(barX, y, barW, h, ctx.selectorBarTex, tint);
+
+  // Left button
+  Texture* leftTex = leftPressed ? ctx.selectorBtnLeftPressTex : ctx.selectorBtnLeftTex;
+  if (leftTex)
+    ctx.DrawTexturedQuad(x, y, btnSize, h, leftTex, tint);
+
+  // Right button
+  Texture* rightTex = rightPressed ? ctx.selectorBtnRightPressTex : ctx.selectorBtnRightTex;
+  if (rightTex)
+    ctx.DrawTexturedQuad(x + w - btnSize, y, btnSize, h, rightTex, tint);
+
+  // Draw current option text centered on bar
+  if (ctx.text) {
+    int sw = (int)ctx.screenW;
+    int sh = (int)ctx.screenH;
+    float charH = ctx.text->m_fontSize * ctx.screenH / (float)ctx.text->m_textureSize;
+    float scale = (charH > 0.0f && h > 0.0f) ? h / charH : 1.0f;
+
+    const std::string& opt = CurrentOption();
+    float textW = ctx.text->MeasurePixel(opt, sw, sh) * scale;
+    float textX = barX + (barW - textW) * 0.5f;
+    float textY = y;
+    XVECTOR3 textColor(0.9f, 0.85f, 0.8f);
+    ctx.text->DrawPixelScaled(textX, textY, scale, scale, sw, sh, textColor, opt);
+  }
+}
+
+void GUISelector::UpdateInteraction(float mx, float my, bool mouseDown) {
+  justChanged = false;
+
+  // Left button hit area
+  leftHover  = (mx >= x && mx <= x + btnSize && my >= y && my <= y + h);
+  // Right button hit area
+  rightHover = (mx >= x + w - btnSize && mx <= x + w && my >= y && my <= y + h);
+
+  bool justPressed  = mouseDown && !wasMouseDown;
+
+  leftPressed  = leftHover && mouseDown;
+  rightPressed = rightHover && mouseDown;
+
+  if (justPressed && leftHover) {
+    SelectPrev();
+  }
+  if (justPressed && rightHover) {
+    SelectNext();
+  }
+
+  wasMouseDown = mouseDown;
+}
+
 } // namespace t800

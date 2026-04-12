@@ -34,12 +34,26 @@ namespace t800 {
     GUISliderBar* slider  = nullptr;  // owned via m_elements
   };
 
+  // Pairs a label element with its checkbox element
+  struct GUICheckboxPair {
+    GUILabel*    label    = nullptr;
+    GUICheckbox* checkbox = nullptr;
+  };
+
+  // Pairs a label element with its selector element
+  struct GUISelectorPair {
+    GUILabel*    label    = nullptr;
+    GUISelector* selector = nullptr;
+  };
+
   class GUIManager {
   public:
     void Init(int screenW, int screenH);
     void Destroy();
 
     void AddSlider(const SliderDesc& desc, int settingIndex);
+    void AddCheckbox(const CheckboxDesc& desc, int settingIndex);
+    void AddSelector(const SelectorDesc& desc, int settingIndex);
     void AddFPSLabel();
     void SetFPSText(const std::string& text, const XVECTOR3& color);
     void ClearSliders();
@@ -52,6 +66,12 @@ namespace t800 {
     // Access slider pairs for scene sync
     std::vector<GUISliderPair>& GetSliderPairs() { return m_sliderPairs; }
     GUISliderBar* FindSlider(const std::string& name);
+
+    // Access checkbox pairs for scene sync
+    std::vector<GUICheckboxPair>& GetCheckboxPairs() { return m_checkboxPairs; }
+
+    // Access selector pairs for scene sync
+    std::vector<GUISelectorPair>& GetSelectorPairs() { return m_selectorPairs; }
 
     bool IsVisible() const { return m_visible; }
     void SetVisible(bool v) { m_visible = v; }
@@ -87,8 +107,10 @@ namespace t800 {
     void RebakeFontIfNeeded();
 
     // ── State ──
-    std::vector<GUIElement*>     m_elements;      // owns all elements
-    std::vector<GUISliderPair>   m_sliderPairs;   // indexed links
+    std::vector<GUIElement*>       m_elements;      // owns all elements
+    std::vector<GUISliderPair>     m_sliderPairs;   // indexed links
+    std::vector<GUICheckboxPair>   m_checkboxPairs;
+    std::vector<GUISelectorPair>   m_selectorPairs;
 
     TextRenderer  m_textRenderer;
     GUILayout     m_layout;
@@ -97,6 +119,17 @@ namespace t800 {
     Texture* m_barTexture   = nullptr;
     Texture* m_knobTexture  = nullptr;
     Texture* m_whiteTexture = nullptr;
+
+    // Checkbox textures
+    Texture* m_checkBoxTexture  = nullptr;
+    Texture* m_checkMarkTexture = nullptr;
+
+    // Selector textures
+    Texture* m_selectorBarTexture       = nullptr;
+    Texture* m_selectorBtnLeftTexture   = nullptr;
+    Texture* m_selectorBtnRightTexture  = nullptr;
+    Texture* m_selectorBtnLeftPressTexture  = nullptr;
+    Texture* m_selectorBtnRightPressTexture = nullptr;
 
     Quad          m_quad;
     ShaderBase*   m_shader = nullptr;

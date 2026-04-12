@@ -20,16 +20,23 @@ void SplineWireframe::Create()
   std::string vstr = std::string(vsSourceP);
   std::string fstr = std::string(fsSourceP);
 
-#ifdef USING_OPENGL
-  std::string Defines = "";
-  Defines += "#version 130\n\n";
-  Defines += "#define lowp \n\n";
-  Defines += "#define mediump \n\n";
-  Defines += "#define highp \n\n";
-
-  vstr = Defines + vstr;
-  fstr = Defines + fstr;
+  if (g_pBaseDriver->m_currentAPI == GRAPHICS_API::OPENGL) {
+#if defined(USING_OPENGL)
+    std::string Defines = "";
+    Defines += "#version 130\n\n";
+    Defines += "#define lowp \n\n";
+    Defines += "#define mediump \n\n";
+    Defines += "#define highp \n\n";
+    vstr = Defines + vstr;
+    fstr = Defines + fstr;
+#elif defined(USING_GL_COMMON)
+    std::string Defines = "";
+    Defines += "#version 300 es\n\n";
+    Defines += "#define ES_30\n\n";
+    vstr = Defines + vstr;
+    fstr = Defines + fstr;
 #endif
+  }
 
   free(vsSourceP);
   free(fsSourceP);

@@ -124,6 +124,7 @@ $xaml = @"
             <RowDefinition Height="Auto"/>
             <RowDefinition Height="Auto"/>
             <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>
             <RowDefinition Height="*"/>
             <RowDefinition Height="Auto"/>
         </Grid.RowDefinitions>
@@ -283,8 +284,19 @@ $xaml = @"
             </StackPanel>
         </Border>
 
+        <!-- Dev Tools -->
+        <Border Grid.Row="5" Background="{StaticResource SurfaceBrush}"
+                CornerRadius="8" Padding="16,12" Margin="0,0,0,12">
+            <StackPanel>
+                <TextBlock Text="DEV TOOLS" FontSize="12" FontWeight="SemiBold"
+                           Foreground="{StaticResource AccentBrush}" Margin="0,0,0,10"/>
+                <CheckBox Name="chkGuiEdit" Content="GUI Edit Mode (move/scale elements)" Margin="0,0,0,6"/>
+                <CheckBox Name="chkGuiSnap" Content="Snap to Grid (auto-align)" Margin="0,0,0,6"/>
+            </StackPanel>
+        </Border>
+
         <!-- Status + Command Preview -->
-        <StackPanel Grid.Row="5" VerticalAlignment="Bottom" Margin="0,0,0,12">
+        <StackPanel Grid.Row="6" VerticalAlignment="Bottom" Margin="0,0,0,12">
             <TextBlock Name="txtStatus" Text="" FontSize="12"
                        Foreground="#A6ADC8" Margin="0,0,0,4"
                        TextWrapping="Wrap"/>
@@ -303,7 +315,7 @@ $xaml = @"
         </StackPanel>
 
         <!-- Buttons -->
-        <Grid Grid.Row="6">
+        <Grid Grid.Row="7">
             <Grid.ColumnDefinitions>
                 <ColumnDefinition Width="*"/>
                 <ColumnDefinition Width="12"/>
@@ -367,6 +379,8 @@ $svBuildOutput  = $window.FindName("svBuildOutput")
 $txtBuildOutput = $window.FindName("txtBuildOutput")
 $btnBuild       = $window.FindName("btnBuild")
 $btnRun         = $window.FindName("btnRun")
+$chkGuiEdit     = $window.FindName("chkGuiEdit")
+$chkGuiSnap     = $window.FindName("chkGuiSnap")
 
 # Resolve root directory: if running from ps2exe, use exe location; otherwise script location
 if ($MyInvocation.MyCommand.Path) {
@@ -447,6 +461,15 @@ function Load-Config {
             if ($cfg.dump.seconds) { $txtSeconds.Text = $cfg.dump.seconds.ToString() }
             if ($cfg.dump.frame)   { $txtFrame.Text   = $cfg.dump.frame.ToString() }
         }
+        # Dev Tools
+        if ($cfg.devTools) {
+            if ($cfg.devTools.PSObject.Properties['guiEdit']) {
+                $chkGuiEdit.IsChecked = [bool]$cfg.devTools.guiEdit
+            }
+            if ($cfg.devTools.PSObject.Properties['guiSnap']) {
+                $chkGuiSnap.IsChecked = [bool]$cfg.devTools.guiSnap
+            }
+        }
     } catch {
         # Silently ignore corrupt config — defaults will be used
     }
@@ -474,6 +497,10 @@ function Save-Config {
             trigger = if ($rbFrame.IsChecked) { "frame" } else { "seconds" }
             seconds = [int]$txtSeconds.Text
             frame   = [int]$txtFrame.Text
+        }
+        devTools = @{
+            guiEdit = [bool]$chkGuiEdit.IsChecked
+            guiSnap = [bool]$chkGuiSnap.IsChecked
         }
     }
     $cfg | ConvertTo-Json -Depth 3 | Set-Content $configPath -Encoding UTF8
@@ -558,6 +585,13 @@ function Get-LaunchCommand {
         $argList += @("--width", $w, "--height", $h)
     }
 
+    if ($chkGuiEdit.IsChecked) {
+        $argList += "--guiEdit"
+    }
+    if ($chkGuiSnap.IsChecked) {
+        $argList += "--guiSnap"
+    }
+
     return @{
         ExePath = $exePath
         Args    = $argList
@@ -633,6 +667,10 @@ $cmbApi.Add_SelectionChanged({ Update-Preview })
 $cmbScene.Add_SelectionChanged({ Update-Preview })
 $chkFullscreen.Add_Checked({ Update-Preview })
 $chkFullscreen.Add_Unchecked({ Update-Preview })
+$chkGuiEdit.Add_Checked({ Update-Preview })
+$chkGuiEdit.Add_Unchecked({ Update-Preview })
+$chkGuiSnap.Add_Checked({ Update-Preview })
+$chkGuiSnap.Add_Unchecked({ Update-Preview })
 $txtSeconds.Add_TextChanged({ Update-Preview })
 $txtFrame.Add_TextChanged({ Update-Preview })
 $txtWidth.Add_TextChanged({ Update-Preview })

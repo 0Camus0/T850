@@ -77,6 +77,9 @@ void SC_Day::CreateAssets() {
   BloomAccumPass   = m_renderGraph.GetRTHandle("BloomAccum");
   GodRaysCalcPass  = m_renderGraph.GetRTHandle("GodRaysCalc");
   GodRaysCalcExtraPass = m_renderGraph.GetRTHandle("GodRaysCalcExtra");
+  LuminanceMapPass = m_renderGraph.GetRTHandle("LuminanceMap");
+  AdaptedLumCurrentPass = m_renderGraph.GetRTHandle("AdaptedLumCurrent");
+  AdaptedLumPrevPass = m_renderGraph.GetRTHandle("AdaptedLumPrev");
   CoCPass          = m_renderGraph.GetRTHandle("CoC");
   CombineCoCPass   = m_renderGraph.GetRTHandle("CombineCoC");
   CoCHelperPass    = m_renderGraph.GetRTHandle("CoCHelper");
@@ -186,6 +189,7 @@ void SC_Day::OnUpdate(float _DtSecs) {
   totalTime += _DtSecs;
   frameCounter++;
   DtSecs = _DtSecs;
+  SceneProp.FrameDeltaSec = DtSecs;
   Meshes[0].SetParallaxSettings(SceneProp.ParallaxLowSamples, SceneProp.ParallaxHighSamples, SceneProp.ParallaxHeight);
 
   // Replay snapshot: load and apply (one-time)
@@ -206,7 +210,6 @@ void SC_Day::OnUpdate(float _DtSecs) {
     SceneProp.pLightCameras[0]->Yaw -= 0.008f *DtSecs;
     SceneProp.pLightCameras[0]->Update(DtSecs);
   }
-
 
   if (totalTime > 150.0f) {
     totalTime = 0.0;
@@ -433,6 +436,9 @@ void SC_Day::OnDraw() {
       {ExtraHelperPass, BaseDriver::COLOR0_ATTACHMENT, "HDR_Final"},
       {BloomAccumPass,  BaseDriver::COLOR0_ATTACHMENT, "Bloom"},
       {GodRaysCalcPass, BaseDriver::COLOR0_ATTACHMENT, "GodRays"},
+      {LuminanceMapPass, BaseDriver::COLOR0_ATTACHMENT, "LuminanceMap"},
+      {AdaptedLumCurrentPass, BaseDriver::COLOR0_ATTACHMENT, "AdaptedLumCurrent"},
+      {AdaptedLumPrevPass, BaseDriver::COLOR0_ATTACHMENT, "AdaptedLumPrev"},
     };
     m_dumper.DumpFrame(pFramework->pVideoDriver, Cam, LightCam, SceneProp, rts, DtSecs);
     if (m_dumper.ShouldExit()) exit(0);
@@ -441,6 +447,7 @@ void SC_Day::OnDraw() {
   if (SceneProp.pCameras[0]->Eye.y > 80) {
     m_flare.Draw();
   }
+
 #endif
 }
 
@@ -456,6 +463,16 @@ void  SC_Day::ChangeSettingsOnPlus() {
     float prevVal = SceneProp.BloomFactor;
     SceneProp.BloomFactor += 0.1f;
     cout << "[CHANGE_BLOOM_FACTOR] Previous Value[" << prevVal << "] Actual Value[" << SceneProp.BloomFactor << "]" << endl;
+  }break;
+  case CHANGE_TM_WHITE_LEVEL: {
+    float prevVal = SceneProp.ToneMapWhiteLevel;
+    SceneProp.ToneMapWhiteLevel += 0.25f;
+    cout << "[CHANGE_TM_WHITE_LEVEL] Previous Value[" << prevVal << "] Actual Value[" << SceneProp.ToneMapWhiteLevel << "]" << endl;
+  }break;
+  case CHANGE_TM_ADAPT_TAU: {
+    float prevVal = SceneProp.LuminanceTau;
+    SceneProp.LuminanceTau += 0.1f;
+    cout << "[CHANGE_TM_ADAPT_TAU] Previous Value[" << prevVal << "] Actual Value[" << SceneProp.LuminanceTau << "]" << endl;
   }break;
   case CHANGE_NUM_LIGHTS: {
     int prevVal = SceneProp.ActiveLights;
@@ -601,6 +618,18 @@ void  SC_Day::ChangeSettingsOnMinus() {
     float prevVal = SceneProp.BloomFactor;
     SceneProp.BloomFactor -= 0.1f;
     cout << "[CHANGE_BLOOM_FACTOR] Previous Value[" << prevVal << "] Actual Value[" << SceneProp.BloomFactor << "]" << endl;
+  }break;
+  case CHANGE_TM_WHITE_LEVEL: {
+    float prevVal = SceneProp.ToneMapWhiteLevel;
+    SceneProp.ToneMapWhiteLevel -= 0.25f;
+    if (SceneProp.ToneMapWhiteLevel < 0.5f) SceneProp.ToneMapWhiteLevel = 0.5f;
+    cout << "[CHANGE_TM_WHITE_LEVEL] Previous Value[" << prevVal << "] Actual Value[" << SceneProp.ToneMapWhiteLevel << "]" << endl;
+  }break;
+  case CHANGE_TM_ADAPT_TAU: {
+    float prevVal = SceneProp.LuminanceTau;
+    SceneProp.LuminanceTau -= 0.1f;
+    if (SceneProp.LuminanceTau < 0.05f) SceneProp.LuminanceTau = 0.05f;
+    cout << "[CHANGE_TM_ADAPT_TAU] Previous Value[" << prevVal << "] Actual Value[" << SceneProp.LuminanceTau << "]" << endl;
   }break;
   case CHANGE_NUM_LIGHTS: {
     int prevVal = SceneProp.ActiveLights;
@@ -751,6 +780,12 @@ void SC_Day::printCurrSelection() {
   case CHANGE_BLOOM_FACTOR: {
     cout << "Option[CHANGE_BLOOM_FACTOR] Value[" << SceneProp.BloomFactor << "]" << endl;
   }break;
+  case CHANGE_TM_WHITE_LEVEL: {
+    cout << "Option[CHANGE_TM_WHITE_LEVEL] Value[" << SceneProp.ToneMapWhiteLevel << "]" << endl;
+  }break;
+  case CHANGE_TM_ADAPT_TAU: {
+    cout << "Option[CHANGE_TM_ADAPT_TAU] Value[" << SceneProp.LuminanceTau << "]" << endl;
+  }break;
   case CHANGE_NUM_LIGHTS: {
     cout << "Option[CHANGE_NUM_LIGHTS] Value[" << SceneProp.ActiveLights << "]" << endl;
   }break;
@@ -820,5 +855,94 @@ void SC_Day::printCurrSelection() {
   case CHANGE_LIGHT_FAR_PLANE: {
     cout << "Option[CHANGE_LIGHT_FAR_PLANE] Value[" << LightCam.FPlane << "]" << endl;
   }break;
+  }
+}
+
+void SC_Day::PopulateGUI(t800::GUIManager& gui) {
+  struct SliderMapping {
+    const char* name;
+    int settingIndex;
+  };
+  static const SliderMapping mappings[] = {
+    {"exposure",              CHANGE_EXPOSURE},
+    {"bloom_factor",          CHANGE_BLOOM_FACTOR},
+    {"tm_white_level",        CHANGE_TM_WHITE_LEVEL},
+    {"tm_adapt_tau",          CHANGE_TM_ADAPT_TAU},
+    {"pcf_radius",            CHANGE_PCF_RADIUS},
+    {"pcf_samples",           CHANGE_PCF_SAMPLES},
+    {"ssao_kernel_size",      CHANGE_SSAO_KERNEL_SIZE},
+    {"ssao_radius",           CHANGE_SSAO_RADIUS},
+    {"dof_aperture",          CHANGE_DOF_APERTURE},
+    {"dof_focal_length",      CHANGE_DOF_FOCAL_LENGHT},
+    {"dof_max_coc",           CHANGE_DOF_MAX_COC},
+    {"dof_far_samples",       CHANGE_DOF_FAR_SAMPLE},
+    {"dof_near_samples",      CHANGE_DOF_NEAR_SAMPLE},
+    {"parallax_low_samples",  CHANGE_PARALLAX_LOW_SAMPLES},
+    {"parallax_high_samples", CHANGE_PARALLAX_HIGH_SAMPLES},
+    {"parallax_height",       CHANGE_PARALLAX_HEIGHT},
+    {"light_volume_steps",    CHANGE_LIGHT_VOLUME_STEPS},
+  };
+
+  auto& sliderDescs = m_sceneSetup.descriptor.sliders;
+  for (auto& sd : sliderDescs) {
+    int settingIdx = -1;
+    for (auto& m : mappings) {
+      if (sd.name == m.name) {
+        settingIdx = m.settingIndex;
+        break;
+      }
+    }
+    gui.AddSlider(sd, settingIdx);
+  }
+}
+
+void SC_Day::SyncToGUI(t800::GUIManager& gui) {
+  for (auto& sp : gui.GetSliderPairs()) {
+    auto* slider = sp.slider;
+    switch (slider->settingIndex) {
+    case CHANGE_EXPOSURE:           slider->SetValue(SceneProp.Exposure); break;
+    case CHANGE_BLOOM_FACTOR:       slider->SetValue(SceneProp.BloomFactor); break;
+    case CHANGE_TM_WHITE_LEVEL:     slider->SetValue(SceneProp.ToneMapWhiteLevel); break;
+    case CHANGE_TM_ADAPT_TAU:       slider->SetValue(SceneProp.LuminanceTau); break;
+    case CHANGE_PCF_RADIUS:         slider->SetValue(SceneProp.PCFScale); break;
+    case CHANGE_PCF_SAMPLES:        slider->SetValue(SceneProp.PCFSamples); break;
+    case CHANGE_SSAO_KERNEL_SIZE:   slider->SetValue((float)SceneProp.SSAOKernel.KernelSize); break;
+    case CHANGE_SSAO_RADIUS:        slider->SetValue(SceneProp.SSAOKernel.Radius); break;
+    case CHANGE_DOF_APERTURE:       slider->SetValue(SceneProp.Aperture); break;
+    case CHANGE_DOF_FOCAL_LENGHT:   slider->SetValue(SceneProp.FocalLength); break;
+    case CHANGE_DOF_MAX_COC:        slider->SetValue(SceneProp.MaxCoc); break;
+    case CHANGE_DOF_FAR_SAMPLE:     slider->SetValue(SceneProp.DOF_Far_Samples_squared); break;
+    case CHANGE_DOF_NEAR_SAMPLE:    slider->SetValue(SceneProp.DOF_Near_Samples_squared); break;
+    case CHANGE_PARALLAX_LOW_SAMPLES:  slider->SetValue(SceneProp.ParallaxLowSamples); break;
+    case CHANGE_PARALLAX_HIGH_SAMPLES: slider->SetValue(SceneProp.ParallaxHighSamples); break;
+    case CHANGE_PARALLAX_HEIGHT:    slider->SetValue(SceneProp.ParallaxHeight); break;
+    case CHANGE_LIGHT_VOLUME_STEPS: slider->SetValue(SceneProp.LightVolumeSteps); break;
+    }
+  }
+}
+
+void SC_Day::SyncFromGUI(t800::GUIManager& gui) {
+  for (auto& sp : gui.GetSliderPairs()) {
+    auto* slider = sp.slider;
+    if (!slider->knobDragging && !slider->knobHover) continue;
+    switch (slider->settingIndex) {
+    case CHANGE_EXPOSURE:           SceneProp.Exposure = slider->value; break;
+    case CHANGE_BLOOM_FACTOR:       SceneProp.BloomFactor = slider->value; break;
+    case CHANGE_TM_WHITE_LEVEL:     SceneProp.ToneMapWhiteLevel = slider->value; break;
+    case CHANGE_TM_ADAPT_TAU:       SceneProp.LuminanceTau = slider->value; break;
+    case CHANGE_PCF_RADIUS:         SceneProp.PCFScale = slider->value; break;
+    case CHANGE_PCF_SAMPLES:        SceneProp.PCFSamples = slider->value; break;
+    case CHANGE_SSAO_KERNEL_SIZE:   SceneProp.SSAOKernel.KernelSize = (int)slider->value; SceneProp.SSAOKernel.Update(); break;
+    case CHANGE_SSAO_RADIUS:        SceneProp.SSAOKernel.Radius = slider->value; break;
+    case CHANGE_DOF_APERTURE:       SceneProp.Aperture = slider->value; break;
+    case CHANGE_DOF_FOCAL_LENGHT:   SceneProp.FocalLength = slider->value; break;
+    case CHANGE_DOF_MAX_COC:        SceneProp.MaxCoc = slider->value; break;
+    case CHANGE_DOF_FAR_SAMPLE:     SceneProp.DOF_Far_Samples_squared = slider->value; break;
+    case CHANGE_DOF_NEAR_SAMPLE:    SceneProp.DOF_Near_Samples_squared = slider->value; break;
+    case CHANGE_PARALLAX_LOW_SAMPLES:  SceneProp.ParallaxLowSamples = slider->value; break;
+    case CHANGE_PARALLAX_HIGH_SAMPLES: SceneProp.ParallaxHighSamples = slider->value; break;
+    case CHANGE_PARALLAX_HEIGHT:    SceneProp.ParallaxHeight = slider->value; break;
+    case CHANGE_LIGHT_VOLUME_STEPS: SceneProp.LightVolumeSteps = slider->value; break;
+    }
   }
 }

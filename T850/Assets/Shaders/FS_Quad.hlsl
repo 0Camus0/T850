@@ -311,7 +311,7 @@ float4 FS( VS_OUTPUT input ) : SV_TARGET {
 	float4 Sum = float4(0.0,0.0,0.0,1.0);
 	float2 U = LightPositions[0].y*float2( 1.0/LightPositions[0].z,1.0/LightPositions[0].w);
 	int KernelSize = (int)LightPositions[0].x;
-	float Origin = -((((float)(KernelSize))-2.0)/2.0);
+	float Origin = -((((float)(KernelSize))-3.0)/2.0);
 	float V = Origin;
 	float2 Texcoords;
 	for(int i=1;i<(KernelSize-1);i++){	
@@ -327,7 +327,7 @@ float4 FS( VS_OUTPUT input ) : SV_TARGET {
 	float4 Sum = float4(0.0,0.0,0.0,1.0);
 	float2 U = LightPositions[0].y*float2( 1.0/LightPositions[0].z,1.0/LightPositions[0].w);
 	int KernelSize = (int)LightPositions[0].x;
-	float Origin = -((((float)(KernelSize))-2.0)/2.0);
+	float Origin = -((((float)(KernelSize))-3.0)/2.0);
 	float H = Origin;
 	float2 Texcoords;
 	for(int i=1;i<(KernelSize-1);i++){	
@@ -343,7 +343,7 @@ float4 FS( VS_OUTPUT input ) : SV_TARGET {
 	float4 Sum = float4(0.0,0.0,0.0,1.0);
 	float2 U = LightPositions[0].y*float2( 1.0/LightPositions[0].z,1.0/LightPositions[0].w);
 	int KernelSize = (int)LightPositions[0].x;
-	float Origin = -((((float)(KernelSize))-2.0)/2.0);
+	float Origin = -((((float)(KernelSize))-3.0)/2.0);
 	float H = Origin;
 	float V = Origin;
 	float2 Texcoords;	
@@ -368,7 +368,7 @@ float4 FS( VS_OUTPUT input ) : SV_TARGET {
 	
 	float FLum = dot(color.rgb, float3(0.299f, 0.587f, 0.114f));
 	
-	if(FLum < 0.7)//0.7
+	if(FLum < LightPositions[0].x)
 		color = float4(0.0,0.0,0.0,1.0);
 		
 	return color;

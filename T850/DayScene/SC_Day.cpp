@@ -41,6 +41,7 @@ void SC_Day::InitVars() {
 
   ActiveCam = m_sceneSetup.GetCamera(0);
   ChangeActiveGaussSelection = SHADOW_KERNEL;
+  m_debugRTSelection = 0;
   RTIndex = -1;
 
   // Initialize frame dumper from command-line globals
@@ -445,6 +446,33 @@ void SC_Day::OnDraw() {
     if (m_dumper.ShouldExit()) exit(0);
   }
 
+  // Debug RT override: draw selected render target fullscreen
+  if (m_debugRTSelection > 0) {
+    int selected = -1;
+    int attachment = BaseDriver::COLOR0_ATTACHMENT;
+    switch (m_debugRTSelection) {
+    case 1:  selected = GBufferPass;     attachment = BaseDriver::COLOR0_ATTACHMENT; break; // Albedo
+    case 2:  selected = GBufferPass;     attachment = BaseDriver::COLOR1_ATTACHMENT; break; // Normals
+    case 3:  selected = GBufferPass;     attachment = BaseDriver::COLOR2_ATTACHMENT; break; // Specular
+    case 4:  selected = GBufferPass;     attachment = BaseDriver::COLOR3_ATTACHMENT; break; // Emissive
+    case 5:  selected = GBufferPass;     attachment = BaseDriver::COLOR4_ATTACHMENT; break; // GBuf Depth
+    case 6:  selected = DepthPass;       attachment = BaseDriver::DEPTH_ATTACHMENT;  break; // Shadow Map
+    case 7:  selected = ShadowAccumPass; attachment = BaseDriver::COLOR0_ATTACHMENT; break; // Shadow Accum
+    case 8:  selected = DeferredPass;    attachment = BaseDriver::COLOR0_ATTACHMENT; break; // Deferred
+    case 9:  selected = Extra16FPass;    attachment = BaseDriver::COLOR0_ATTACHMENT; break; // Extra16F
+    case 10: selected = ExtraHelperPass; attachment = BaseDriver::COLOR0_ATTACHMENT; break; // HDR
+    case 11: selected = BloomAccumPass;  attachment = BaseDriver::COLOR0_ATTACHMENT; break; // Bloom
+    case 12: selected = GodRaysCalcPass; attachment = BaseDriver::COLOR0_ATTACHMENT; break; // God Rays
+    case 13: selected = LuminanceMapPass;attachment = BaseDriver::COLOR0_ATTACHMENT; break; // Luminance
+    case 14: selected = CoCPass;         attachment = BaseDriver::COLOR0_ATTACHMENT; break; // CoC
+    }
+    if (selected >= 0) {
+      Quads[7].SetTexture(pFramework->pVideoDriver->GetRTTexture(selected, attachment), 0);
+      Quads[7].SetGlobalSignature(Signature::FSQUAD_1_TEX);
+      Quads[7].Draw();
+    }
+  }
+
   if (SceneProp.pCameras[0]->Eye.y > 80) {
     m_flare.Draw();
   }
@@ -464,6 +492,11 @@ void  SC_Day::ChangeSettingsOnPlus() {
     float prevVal = SceneProp.BloomFactor;
     SceneProp.BloomFactor += 0.1f;
     cout << "[CHANGE_BLOOM_FACTOR] Previous Value[" << prevVal << "] Actual Value[" << SceneProp.BloomFactor << "]" << endl;
+  }break;
+  case CHANGE_BLOOM_THRESHOLD: {
+    float prevVal = SceneProp.BloomThreshold;
+    SceneProp.BloomThreshold += 0.05f;
+    cout << "[CHANGE_BLOOM_THRESHOLD] Previous Value[" << prevVal << "] Actual Value[" << SceneProp.BloomThreshold << "]" << endl;
   }break;
   case CHANGE_TM_WHITE_LEVEL: {
     float prevVal = SceneProp.ToneMapWhiteLevel;
@@ -619,6 +652,12 @@ void  SC_Day::ChangeSettingsOnMinus() {
     float prevVal = SceneProp.BloomFactor;
     SceneProp.BloomFactor -= 0.1f;
     cout << "[CHANGE_BLOOM_FACTOR] Previous Value[" << prevVal << "] Actual Value[" << SceneProp.BloomFactor << "]" << endl;
+  }break;
+  case CHANGE_BLOOM_THRESHOLD: {
+    float prevVal = SceneProp.BloomThreshold;
+    SceneProp.BloomThreshold -= 0.05f;
+    if (SceneProp.BloomThreshold < 0.0f) SceneProp.BloomThreshold = 0.0f;
+    cout << "[CHANGE_BLOOM_THRESHOLD] Previous Value[" << prevVal << "] Actual Value[" << SceneProp.BloomThreshold << "]" << endl;
   }break;
   case CHANGE_TM_WHITE_LEVEL: {
     float prevVal = SceneProp.ToneMapWhiteLevel;
@@ -781,6 +820,9 @@ void SC_Day::printCurrSelection() {
   case CHANGE_BLOOM_FACTOR: {
     cout << "Option[CHANGE_BLOOM_FACTOR] Value[" << SceneProp.BloomFactor << "]" << endl;
   }break;
+  case CHANGE_BLOOM_THRESHOLD: {
+    cout << "Option[CHANGE_BLOOM_THRESHOLD] Value[" << SceneProp.BloomThreshold << "]" << endl;
+  }break;
   case CHANGE_TM_WHITE_LEVEL: {
     cout << "Option[CHANGE_TM_WHITE_LEVEL] Value[" << SceneProp.ToneMapWhiteLevel << "]" << endl;
   }break;
@@ -880,6 +922,7 @@ void SC_Day::PopulateGUI(t800::GUIManager& gui) {
   static const SliderMapping mappings[] = {
     {"exposure",              CHANGE_EXPOSURE},
     {"bloom_factor",          CHANGE_BLOOM_FACTOR},
+    {"bloom_threshold",       CHANGE_BLOOM_THRESHOLD},
     {"tm_white_level",        CHANGE_TM_WHITE_LEVEL},
     {"tm_adapt_tau",          CHANGE_TM_ADAPT_TAU},
     {"pcf_radius",            CHANGE_PCF_RADIUS},
@@ -943,6 +986,7 @@ void SC_Day::PopulateGUI(t800::GUIManager& gui) {
     {"num_lights",          CHANGE_NUM_LIGHTS},
     {"active_gauss_kernel",      CHANGE_ACTIVE_GAUSS_KERNEL},
     {"gauss_kernel_sample_count", CHANGE_GAUSS_KERNEL_SAMPLE_COUNT},
+    {"debug_render_target",       CHANGE_DEBUG_RT},
   };
 
   auto& selDescs = m_sceneSetup.descriptor.selectors;
@@ -964,6 +1008,7 @@ void SC_Day::SyncToGUI(t800::GUIManager& gui) {
     switch (slider->settingIndex) {
     case CHANGE_EXPOSURE:           slider->SetValue(SceneProp.Exposure); break;
     case CHANGE_BLOOM_FACTOR:       slider->SetValue(SceneProp.BloomFactor); break;
+    case CHANGE_BLOOM_THRESHOLD:     slider->SetValue(SceneProp.BloomThreshold); break;
     case CHANGE_TM_WHITE_LEVEL:     slider->SetValue(SceneProp.ToneMapWhiteLevel); break;
     case CHANGE_TM_ADAPT_TAU:       slider->SetValue(SceneProp.LuminanceTau); break;
     case CHANGE_PCF_RADIUS:         slider->SetValue(SceneProp.PCFScale); break;
@@ -1003,6 +1048,7 @@ void SC_Day::SyncToGUI(t800::GUIManager& gui) {
         if (std::atoi(sel->options[i].c_str()) == ks) { sel->selectedIndex = i; break; }
       }
     } break;
+    case CHANGE_DEBUG_RT: sel->selectedIndex = m_debugRTSelection; break;
     }
   }
 }
@@ -1014,6 +1060,7 @@ void SC_Day::SyncFromGUI(t800::GUIManager& gui) {
     switch (slider->settingIndex) {
     case CHANGE_EXPOSURE:           SceneProp.Exposure = slider->value; break;
     case CHANGE_BLOOM_FACTOR:       SceneProp.BloomFactor = slider->value; break;
+    case CHANGE_BLOOM_THRESHOLD:     SceneProp.BloomThreshold = slider->value; break;
     case CHANGE_TM_WHITE_LEVEL:     SceneProp.ToneMapWhiteLevel = slider->value; break;
     case CHANGE_TM_ADAPT_TAU:       SceneProp.LuminanceTau = slider->value; break;
     case CHANGE_PCF_RADIUS:         SceneProp.PCFScale = slider->value; break;
@@ -1064,6 +1111,9 @@ void SC_Day::SyncFromGUI(t800::GUIManager& gui) {
       SceneProp.pGaussKernels[ChangeActiveGaussSelection]->kernelSize = newSize;
       SceneProp.pGaussKernels[ChangeActiveGaussSelection]->Update();
     } break;
+    case CHANGE_DEBUG_RT:
+      m_debugRTSelection = sel->selectedIndex;
+      break;
     }
   }
 }

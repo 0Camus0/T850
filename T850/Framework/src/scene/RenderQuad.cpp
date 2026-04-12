@@ -245,6 +245,10 @@ namespace t800 {
         CnstBuffer.CameraPos.w = (float)(mipLevels - 1);
       }
 
+      if (sig&Signature::BRIGHT_PASS) {
+        CnstBuffer.LightPositions[0].x = pScProp->BloomThreshold;
+      }
+
       if (sig&Signature::HDR_COMP_PASS) {
         CnstBuffer.LightPositions[0].x = pScProp->BloomFactor;
         CnstBuffer.LightPositions[0].y = pScProp->Exposure;

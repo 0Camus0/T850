@@ -49,7 +49,7 @@ struct SSAOFilter {
 	void Update();
 };
 struct SceneProps{
-SceneProps() : ActiveCamera(0) , ActiveLights(1), ActiveLightCamera(0), ActiveGaussKernel(0), Exposure(0.3f) , BloomFactor(0.35f), ToneMapWhiteLevel(4.0f), LuminanceTau(1.1f), FrameDeltaSec(1.0f / 60.0f), ToogleShadow(1), ToogleSSAO(1), DebugMode(0){}
+SceneProps() : ActiveCamera(0) , ActiveLights(1), ActiveLightCamera(0), ActiveGaussKernel(0), Exposure(0.3f) , BloomFactor(0.35f), BloomThreshold(0.7f), ToneMapWhiteLevel(4.0f), LuminanceTau(1.1f), FrameDeltaSec(1.0f / 60.0f), ToogleShadow(1), ToogleSSAO(1), DebugMode(0){}
 
 	void	AddLight(XVECTOR3 Pos, XVECTOR3 Color, float radius, bool enabled);
 	void	RemoveLight(unsigned int index);
@@ -95,6 +95,7 @@ SceneProps() : ActiveCamera(0) , ActiveLights(1), ActiveLightCamera(0), ActiveGa
 	// HDR
 	float	Exposure;
 	float	BloomFactor;
+	float	BloomThreshold;
 	float ToneMapWhiteLevel;
 	float LuminanceTau;
 	float FrameDeltaSec;

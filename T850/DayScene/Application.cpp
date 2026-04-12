@@ -29,6 +29,11 @@
 using namespace t800;
 extern std::vector<std::string> g_args;
 extern int g_startScene;
+extern bool g_guiOnStart;
+extern bool g_guiScreenshot;
+extern std::string g_guiScreenshotPath;
+extern bool g_guiEdit;
+extern bool g_guiSnap;
 
 
 
@@ -76,6 +81,7 @@ void App::LoadScene(int id) {
   m_actualScene = m_scenes[id];
   m_actualScene->OnLoadScene();
   m_devLayer.SetActiveScene(m_actualScene);
+  m_devLayer.RebuildGUIForScene();
   FadeFX(0.5,false);
 }
 
@@ -85,15 +91,32 @@ void App::LoadAssets()
 
 void App::CreateAssets() {
   m_actualScene->CreateAssets();
-  m_textRender.LoadFromFile(36,"Fonts/tahomabd.ttf",512.0f);
+  m_textRender.LoadFromFile(36,"Fonts/Martius-LV9L4.ttf",512.0f);
   PrimitiveMgr.Init();
   PrimitiveMgr.SetVP(&VP);
   PrimitiveMgr.SetSceneProps(&SceneProp);
   Quads[0].CreateInstance(PrimitiveMgr.GetPrimitive(PrimitiveManager::QUAD), &VP);
-  FadeFX(0.5, false);
+
+  // Build GUI before FadeFX so it's visible during fade frames
+  m_devLayer.RebuildGUIForScene();
+  if (g_guiOnStart) {
+    m_devLayer.GetGUI().SetVisible(true);
+  }
+  if (g_guiEdit) {
+    m_devLayer.SetEditMode(true);
+  }
+  if (g_guiSnap) {
+    m_devLayer.SetSnapToGrid(true);
+  }
+
+  // Skip fade when doing an automated screenshot
+  if (!g_guiScreenshot) {
+    FadeFX(0.5, false);
+  }
 }
 
 void App::DestroyAssets() {
+   m_devLayer.Destroy();
    m_textRender.Destroy(); 
    m_actualScene->DestroyAssets();
 }
@@ -119,6 +142,7 @@ void App::OnUpdate() {
 }
 
 void App::OnDraw() {
+  static int frameCount = 0;
   pFramework->pVideoDriver->Clear();
   FirstFrame = false;
   m_devLayer.Draw();
@@ -136,6 +160,15 @@ void App::OnDraw() {
     pFramework->pVideoDriver->SetBlendState(BaseDriver::BLEND_DEFAULT);
     pFramework->pVideoDriver->SetDepthStencilState(BaseDriver::DEPTH_DEFAULT);
   }
+
+  // --guiScreenshot: after a few frames (let scene stabilise), save backbuffer and exit
+  if (g_guiScreenshot && frameCount >= 3) {
+    pFramework->pVideoDriver->SaveScreenshot(g_guiScreenshotPath);
+    printf("[guiScreenshot] Saved to %s\n", g_guiScreenshotPath.c_str());
+    pFramework->pVideoDriver->SwapBuffers();
+    exit(0);
+  }
+  frameCount++;
 
   pFramework->pVideoDriver->SwapBuffers();
 }

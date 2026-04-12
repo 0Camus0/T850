@@ -9,6 +9,7 @@
 #include <debug/FrameDumper.h>
 #include <scene/LensFlare.h>
 #include <scene/T8_TextRenderer.h>
+#include <gui/T8_GUI.h>
 #include <Config.h>
 
 
@@ -31,6 +32,8 @@ class SC_Day : public t800::SceneBase
   enum {
     CHANGE_EXPOSURE = 0,
     CHANGE_BLOOM_FACTOR,
+    CHANGE_TM_WHITE_LEVEL,
+    CHANGE_TM_ADAPT_TAU,
     CHANGE_NUM_LIGHTS,
     CHANGE_ACTIVE_GAUSS_KERNEL,
     CHANGE_GAUSS_KERNEL_SAMPLE_COUNT,
@@ -71,6 +74,11 @@ class SC_Day : public t800::SceneBase
   void ChangeSettingsOnMinus();
   void printCurrSelection();
 
+  // GUI hooks (called by DevLayer)
+  void PopulateGUI(t800::GUIManager& gui) override;
+  void SyncToGUI(t800::GUIManager& gui) override;
+  void SyncFromGUI(t800::GUIManager& gui) override;
+
   float DtSecs;
   t800::PrimitiveManager PrimitiveMgr;
   t800::PrimitiveInst	Cubes[10];
@@ -105,6 +113,9 @@ class SC_Day : public t800::SceneBase
   int Extra16FPass;
   int GodRaysCalcPass;
   int GodRaysCalcExtraPass;
+  int LuminanceMapPass;
+  int AdaptedLumCurrentPass;
+  int AdaptedLumPrevPass;
 
   int CoCPass;
   int CoCHelperPass;

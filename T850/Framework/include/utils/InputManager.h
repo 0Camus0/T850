@@ -277,6 +277,8 @@ public:
 
 	int		xDelta;
 	int 	yDelta;
+	int		mouseX;
+	int		mouseY;
 };
 
 // Maps SDL3 keycodes (which are large values for non-ASCII keys) to STDKEYS values.

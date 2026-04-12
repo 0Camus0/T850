@@ -113,5 +113,24 @@
     "shadow_enabled": true,
     "ssao_enabled": true,
     "auto_focus": true
-  }
+  },
+  "sliders": [
+    { "name": "exposure",              "label": "Exposure",             "min_val": 0.0, "max_val": 5.0,    "step": 0.1,   "default_val": 0.3 },
+    { "name": "bloom_factor",          "label": "Bloom Factor",        "min_val": 0.0, "max_val": 2.0,    "step": 0.1,   "default_val": 0.35 },
+    { "name": "tm_white_level",        "label": "TM White Level",      "min_val": 0.5, "max_val": 20.0,   "step": 0.25,  "default_val": 4.0 },
+    { "name": "tm_adapt_tau",          "label": "TM Adapt Tau",        "min_val": 0.05,"max_val": 5.0,    "step": 0.1,   "default_val": 1.1 },
+    { "name": "pcf_radius",            "label": "PCF Radius",          "min_val": 0.1, "max_val": 10.0,   "step": 0.1,   "default_val": 1.5 },
+    { "name": "pcf_samples",           "label": "PCF Samples",         "min_val": 1.0, "max_val": 16.0,   "step": 1.0,   "default_val": 3.0 },
+    { "name": "ssao_kernel_size",      "label": "SSAO Kernel Size",    "min_val": 2.0, "max_val": 128.0,  "step": 2.0,   "default_val": 32.0 },
+    { "name": "ssao_radius",           "label": "SSAO Radius",         "min_val": 0.1, "max_val": 10.0,   "step": 0.5,   "default_val": 1.5 },
+    { "name": "dof_aperture",          "label": "DOF Aperture",        "min_val": 0.0, "max_val": 500.0,  "step": 10.0,  "default_val": 120.0 },
+    { "name": "dof_focal_length",      "label": "DOF Focal Length",    "min_val": 1.0, "max_val": 500.0,  "step": 10.0,  "default_val": 50.0 },
+    { "name": "dof_max_coc",           "label": "DOF Max CoC",         "min_val": 0.1, "max_val": 20.0,   "step": 0.5,   "default_val": 2.5 },
+    { "name": "dof_far_samples",       "label": "DOF Far Samples",     "min_val": 1.0, "max_val": 16.0,   "step": 1.0,   "default_val": 3.0 },
+    { "name": "dof_near_samples",      "label": "DOF Near Samples",    "min_val": 1.0, "max_val": 16.0,   "step": 1.0,   "default_val": 1.0 },
+    { "name": "parallax_low_samples",  "label": "Parallax Low",        "min_val": 5.0, "max_val": 100.0,  "step": 5.0,   "default_val": 20.0 },
+    { "name": "parallax_high_samples", "label": "Parallax High",       "min_val": 10.0,"max_val": 200.0,  "step": 10.0,  "default_val": 30.0 },
+    { "name": "parallax_height",       "label": "Parallax Height",     "min_val": 0.0, "max_val": 0.2,    "step": 0.01,  "default_val": 0.02 },
+    { "name": "light_volume_steps",    "label": "Light Vol Steps",     "min_val": 16.0,"max_val": 512.0,  "step": 16.0,  "default_val": 256.0 }
+  ]
 }

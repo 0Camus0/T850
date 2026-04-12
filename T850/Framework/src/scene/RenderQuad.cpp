@@ -80,6 +80,12 @@ namespace t800 {
     Dest = SigBase | Signature::HDR_COMP_PASS;
     g_pBaseDriver->CreateShader(vstr, fstr, Dest);
 
+    Dest = SigBase | Signature::LUMINANCE_MAP_PASS;
+    g_pBaseDriver->CreateShader(vstr, fstr, Dest);
+
+    Dest = SigBase | Signature::ADAPT_LUMINANCE_PASS;
+    g_pBaseDriver->CreateShader(vstr, fstr, Dest);
+
     Dest = SigBase | Signature::COC_PASS;
     g_pBaseDriver->CreateShader(vstr, fstr, Dest);
 
@@ -226,15 +232,29 @@ namespace t800 {
         CnstBuffer.LightPositions[i].x = roundTo(pScProp->pGaussKernels[pScProp->ActiveGaussKernel]->vGaussKernel[i].x, 6.0f);
       }
     }
-    else if (sig&Signature::HDR_COMP_PASS || sig&Signature::BRIGHT_PASS || sig&Signature::FSQUAD_3_TEX) {
-      if (Textures[0]) {
-        unsigned int maxDim = Textures[0]->x > Textures[0]->y ? Textures[0]->x : Textures[0]->y;
+    else if (sig&Signature::HDR_COMP_PASS || sig&Signature::BRIGHT_PASS || sig&Signature::FSQUAD_3_TEX || sig&Signature::LUMINANCE_MAP_PASS || sig&Signature::ADAPT_LUMINANCE_PASS) {
+      Texture* mipSource = Textures[0];
+      if ((sig&Signature::ADAPT_LUMINANCE_PASS) && Textures[1]) {
+        mipSource = Textures[1];
+      }
+
+      if (mipSource) {
+        unsigned int maxDim = mipSource->x > mipSource->y ? mipSource->x : mipSource->y;
         int mipLevels = 1;
         while (maxDim > 1) { maxDim >>= 1; mipLevels++; }
-        CnstBuffer.CameraPos.w = (float)mipLevels;
+        CnstBuffer.CameraPos.w = (float)(mipLevels - 1);
       }
-      CnstBuffer.LightPositions[0].x = pScProp->BloomFactor;
-      CnstBuffer.LightPositions[0].y = pScProp->Exposure;
+
+      if (sig&Signature::HDR_COMP_PASS) {
+        CnstBuffer.LightPositions[0].x = pScProp->BloomFactor;
+        CnstBuffer.LightPositions[0].y = pScProp->Exposure;
+        CnstBuffer.LightPositions[0].z = pScProp->ToneMapWhiteLevel;
+      }
+
+      if (sig&Signature::ADAPT_LUMINANCE_PASS) {
+        CnstBuffer.LightPositions[1].x = pScProp->LuminanceTau;
+        CnstBuffer.LightPositions[1].y = pScProp->FrameDeltaSec;
+      }
     }
     else if (sig&Signature::COC_PASS ) {
       CnstBuffer.LightPositions[0].x = pScProp->Aperture;

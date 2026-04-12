@@ -38,6 +38,11 @@ std::string g_replaySnapshotPath;    // --replaySnapshot: path to snapshot.json 
 bool   g_keepRunning = false;        // --keepRunning: don't exit after dump
 int    g_startScene  = 0;            // --scene: starting scene index (0=Day, 1=Night, 2=Tech)
 bool   g_fullscreen  = false;        // --fullscreen: launch in fullscreen mode
+bool   g_guiOnStart  = false;        // --gui: show GUI sliders on startup
+bool   g_guiScreenshot = false;      // --guiScreenshot: render 1 frame with GUI, save screenshot, exit
+std::string g_guiScreenshotPath = "gui_screenshot.ppm"; // output path for --guiScreenshot
+bool   g_guiEdit     = false;        // --guiEdit: enable GUI edit mode (move/scale elements)
+bool   g_guiSnap     = false;        // --guiSnap: snap elements to grid when moving
 
 t800::AppBase		  *pApp = 0;
 t800::RootFramework *pFrameWork = 0;
@@ -98,6 +103,25 @@ int main(int arg,char ** args){
     }
     else if (a == "--fullscreen") {
       g_fullscreen = true;
+    }
+    else if (a == "--gui") {
+      g_guiOnStart = true;
+    }
+    else if (a == "--guiScreenshot" && i + 1 < arg) {
+      g_guiScreenshot = true;
+      g_guiOnStart = true;  // implies --gui
+      g_guiScreenshotPath = args[++i];
+    }
+    else if (a == "--guiScreenshot") {
+      g_guiScreenshot = true;
+      g_guiOnStart = true;
+    }
+    else if (a == "--guiEdit") {
+      g_guiEdit = true;
+      g_guiOnStart = true;  // implies --gui
+    }
+    else if (a == "--guiSnap") {
+      g_guiSnap = true;
     }
   }
 

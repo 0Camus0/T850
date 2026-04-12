@@ -19,7 +19,9 @@
 #include <utils/InputManager.h>
 #include <utils/ResourceManager.h>
 #include <scene/SceneProp.h>
+
 namespace t800 {
+  class GUIManager;   // forward
   class RootFramework;
   class AppBase {
   public:
@@ -57,6 +59,12 @@ namespace t800 {
     virtual void InitVars() = 0;
     virtual void CreateAssets() = 0;
     virtual void DestroyAssets() = 0;
+
+    // GUI hooks – override in scene to participate in DevLayer GUI
+    virtual void PopulateGUI(GUIManager& /*gui*/) {}
+    virtual void SyncToGUI(GUIManager& /*gui*/)   {}   // scene props → sliders
+    virtual void SyncFromGUI(GUIManager& /*gui*/) {}   // sliders → scene props
+
     SceneProps		SceneProp;
     RootFramework	*pFramework;
   };

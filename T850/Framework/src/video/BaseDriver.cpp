@@ -227,6 +227,10 @@ namespace t800 {
         Defines += "#define BRIGHT_PASS\n\n";
       if (sig&Signature::HDR_COMP_PASS)
         Defines += "#define HDR_COMP_PASS\n\n";
+      if (sig&Signature::LUMINANCE_MAP_PASS)
+        Defines += "#define LUMINANCE_MAP_PASS\n\n";
+      if (sig&Signature::ADAPT_LUMINANCE_PASS)
+        Defines += "#define ADAPT_LUMINANCE_PASS\n\n";
       if (sig&Signature::COC_PASS)
         Defines += "#define COC_PASS\n\n";
       if (sig&Signature::COMBINE_COC_PASS)

@@ -135,6 +135,8 @@ void FrameDumper::ApplySnapshot(Camera& cam, Camera& lightCam, SceneProps& props
   auto& sp = replayData_.scene_props;
   props.Exposure = sp.exposure;
   props.BloomFactor = sp.bloom_factor;
+  props.ToneMapWhiteLevel = sp.tone_map_white_level;
+  props.LuminanceTau = sp.luminance_tau;
   props.ShadowMapResolution = sp.shadow_map_resolution;
   props.PCFScale = sp.pcf_scale;
   props.PCFSamples = sp.pcf_samples;
@@ -352,6 +354,8 @@ void FrameDumper::WriteSnapshot(const std::string& path,
   auto& sp = out.scene_props;
   sp.exposure = props.Exposure;
   sp.bloom_factor = props.BloomFactor;
+  sp.tone_map_white_level = props.ToneMapWhiteLevel;
+  sp.luminance_tau = props.LuminanceTau;
   sp.shadow_map_resolution = props.ShadowMapResolution;
   sp.pcf_scale = props.PCFScale;
   sp.pcf_samples = props.PCFSamples;

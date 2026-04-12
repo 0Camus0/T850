@@ -49,7 +49,7 @@ public:
   Timer			FadeTimer;
   bool			FirstFrame;
   std::string m_fpsString;
-  XVECTOR3 m_fpsCol;
+  XVECTOR3 m_fpsCol = XVECTOR3(0.2f, 0.8f, 0.2f);
   t800::TextRenderer m_textRender;
   std::vector<t800::SceneBase*> m_scenes;
   t800::SceneBase* m_actualScene;

@@ -1,6 +1,7 @@
 uniform highp sampler2D diffuse;
 
 #ifdef ES_30
+	precision mediump float;
 	in highp vec2 vecUVCoords;
 #else
 	varying highp vec2 vecUVCoords;

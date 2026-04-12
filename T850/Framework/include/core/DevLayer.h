@@ -2,23 +2,22 @@
 #define T800_DEVLAYER_H
 
 #include <core/Core.h>
+#include <gui/T8_GUI.h>
 
 namespace t800 {
 
-  // DevLayer sits between the Framework and the Scene.
-  // The Framework calls DevLayer, which forwards to the active SceneBase
-  // and can inject debug/GUI rendering around the scene's own drawing.
   class DevLayer {
   public:
     DevLayer();
 
     void Init(RootFramework* framework);
+    void Destroy();
 
     // Scene lifecycle
     void SetActiveScene(SceneBase* scene);
     SceneBase* GetActiveScene() const;
 
-    // Per-frame forwarding (call these instead of calling scene directly)
+    // Per-frame forwarding
     void Update(float dt);
     void Draw();
     void ProcessInput(InputManager* input);
@@ -27,16 +26,19 @@ namespace t800 {
     void LoadScene(SceneBase* scene);
     void UnloadScene();
 
-    // Debug controls
-    void SetShowDebugOverlay(bool show) { m_showDebugOverlay = show; }
-    bool GetShowDebugOverlay() const { return m_showDebugOverlay; }
+    GUIManager& GetGUI() { return m_gui; }
+    void RebuildGUIForScene();
+
+    void SetEditMode(bool e);
+    void SetSnapToGrid(bool s);
 
   private:
-    void DrawDebugOverlay();
+    static constexpr const char* kLayoutPath = "gui_layout.json";
 
     RootFramework* m_framework;
     SceneBase* m_activeScene;
-    bool m_showDebugOverlay;
+    GUIManager m_gui;
+    bool m_guiInited;
   };
 
 } // namespace t800

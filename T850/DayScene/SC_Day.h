@@ -79,6 +79,9 @@ class SC_Day : public t800::SceneBase
   void SyncToGUI(t800::GUIManager& gui) override;
   void SyncFromGUI(t800::GUIManager& gui) override;
 
+  // Helper: find selector index for a light count value
+  int FindLightOption(int activeLights);
+
   float DtSecs;
   t800::PrimitiveManager PrimitiveMgr;
   t800::PrimitiveInst	Cubes[10];

@@ -10,6 +10,7 @@
     { "name": "ShadowAccum",      "color_count": 1, "color_format": "R8",      "depth_format": "NONE", "size": [0,0], "linear_filter": true },
     { "name": "ExtraHelper",      "color_count": 1, "color_format": "RGBA8",   "depth_format": "NONE", "size": [0,0], "linear_filter": true },
     { "name": "BloomAccum",       "color_count": 1, "color_format": "RGBA8",   "depth_format": "NONE", "size": [512,512], "linear_filter": true },
+    { "name": "BloomHelper",      "color_count": 1, "color_format": "RGBA8",   "depth_format": "NONE", "size": [512,512], "linear_filter": true },
     { "name": "GodRaysCalc",      "color_count": 1, "color_format": "RGBA8",   "depth_format": "NONE", "size": [0,0], "linear_filter": true, "size_ref": "$god_rays_resolution" },
     { "name": "GodRaysCalcExtra", "color_count": 1, "color_format": "RGBA8",   "depth_format": "NONE", "size": [0,0], "linear_filter": true, "size_ref": "$god_rays_resolution" },
     { "name": "CoC",              "color_count": 2, "color_format": "F16",      "depth_format": "NONE", "size": [512,512], "linear_filter": true },
@@ -174,7 +175,7 @@
     },
     {
       "name": "Bloom Blur H",
-      "target": "ExtraHelper",
+      "target": "BloomHelper",
       "gauss_kernel": 1,
       "inputs": [
         { "source": "BloomAccum:COLOR0", "slot": 0 }
@@ -187,7 +188,7 @@
       "name": "Bloom Blur V",
       "target": "BloomAccum",
       "inputs": [
-        { "source": "ExtraHelper:COLOR0", "slot": 0 }
+        { "source": "BloomHelper:COLOR0", "slot": 0 }
       ],
       "draws": [
         { "type": "fullscreen_quad", "signature": "VERTICAL_BLUR_PASS" }

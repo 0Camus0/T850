@@ -31,6 +31,7 @@ namespace t800 {
 
     void SetEditMode(bool e);
     void SetSnapToGrid(bool s);
+    bool IsPaused() const { return m_paused; }
 
   private:
     static constexpr const char* kLayoutPath = "gui_layout.json";
@@ -39,6 +40,7 @@ namespace t800 {
     SceneBase* m_activeScene;
     GUIManager m_gui;
     bool m_guiInited;
+    bool m_paused = false;
   };
 
 } // namespace t800

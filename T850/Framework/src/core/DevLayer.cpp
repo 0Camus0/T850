@@ -32,11 +32,13 @@ void DevLayer::RebuildGUIForScene() {
   // Initialise the GUI system once (textures, shader, font).
   if (!m_guiInited && g_pBaseDriver) {
     m_gui.Init(g_pBaseDriver->width, g_pBaseDriver->height);
+    m_gui.AddFPSLabel();
     m_guiInited = true;
   }
 
   // Clear old sliders and let the new scene populate them.
   m_gui.ClearSliders();
+  m_gui.AddFPSLabel();
   if (m_activeScene) {
     m_activeScene->PopulateGUI(m_gui);
     m_gui.LayoutSliders(g_pBaseDriver->width, g_pBaseDriver->height);
@@ -52,8 +54,10 @@ void DevLayer::SetSnapToGrid(bool s) { m_gui.SetSnapToGrid(s); }
 
 void DevLayer::Update(float dt) {
   if (m_activeScene) {
-    m_activeScene->OnUpdate(dt);
-    // Push changed slider values into scene props each frame
+    if (!m_paused) {
+      m_activeScene->OnUpdate(dt);
+    }
+    // Push changed slider values into scene props each frame (even when paused)
     if (m_gui.IsVisible()) {
       m_activeScene->SyncFromGUI(m_gui);
     }
@@ -69,10 +73,6 @@ void DevLayer::Draw() {
 }
 
 void DevLayer::ProcessInput(InputManager* input) {
-  if (m_activeScene) {
-    m_activeScene->OnInput(input);
-  }
-
   // Toggle GUI with G key
   if (input->PressedOnceKey(T800K_g)) {
     m_gui.ToggleVisible();
@@ -80,6 +80,34 @@ void DevLayer::ProcessInput(InputManager* input) {
   // Tab: save layout when in edit mode
   if (input->PressedOnceKey(T800K_TAB) && m_gui.IsEditMode()) {
     m_gui.SaveLayout(kLayoutPath);
+  }
+  // +/-: adjust grid size in edit mode (consume keys so scene doesn't see them)
+  if (m_gui.IsEditMode()) {
+    if (input->PressedOnceKey(T800K_PLUS) || input->PressedOnceKey(T800K_KP_PLUS)) {
+      m_gui.GrowGrid(5.0f);
+      input->KeyStates[0][T800K_PLUS]    = false;
+      input->KeyStates[0][T800K_KP_PLUS] = false;
+    }
+    if (input->PressedOnceKey(T800K_MINUS) || input->PressedOnceKey(T800K_KP_MINUS)) {
+      m_gui.GrowGrid(-5.0f);
+      input->KeyStates[0][T800K_MINUS]    = false;
+      input->KeyStates[0][T800K_KP_MINUS] = false;
+    }
+    // Enter: apply last-edited element's scale to all elements of the same kind
+    if (input->PressedOnceKey(T800K_RETURN)) {
+      m_gui.ApplyUniformScale();
+    }
+  }
+
+  // Pause toggle
+  if (input->PressedOnceKey(T800K_p)) {
+    m_paused = !m_paused;
+    printf("[DevLayer] %s\n", m_paused ? "PAUSED" : "RESUMED");
+  }
+
+  // Forward input to the active scene (skip when paused so mouse/keys don't move cameras)
+  if (m_activeScene && !m_paused) {
+    m_activeScene->OnInput(input);
   }
   // Update GUI interaction
   if (m_guiInited) {

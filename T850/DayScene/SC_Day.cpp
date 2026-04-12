@@ -1,6 +1,7 @@
 #include "SC_Day.h"
 #include <iostream>
 #include <cstdio>
+#include <cstdlib>
 using namespace t800;
 using std::cout;
 using std::endl;
@@ -858,6 +859,19 @@ void SC_Day::printCurrSelection() {
   }
 }
 
+int SC_Day::FindLightOption(int activeLights) {
+  // Match against the selector options: "1","2","4","8","16","32","64","127"
+  auto& selPairs = m_sceneSetup.descriptor.selectors;
+  for (auto& sd : selPairs) {
+    if (sd.name == "num_lights") {
+      for (size_t i = 0; i < sd.options.size(); i++) {
+        if (std::atoi(sd.options[i].c_str()) == activeLights) return (int)i;
+      }
+    }
+  }
+  return 0;
+}
+
 void SC_Day::PopulateGUI(t800::GUIManager& gui) {
   struct SliderMapping {
     const char* name;
@@ -881,6 +895,8 @@ void SC_Day::PopulateGUI(t800::GUIManager& gui) {
     {"parallax_high_samples", CHANGE_PARALLAX_HIGH_SAMPLES},
     {"parallax_height",       CHANGE_PARALLAX_HEIGHT},
     {"light_volume_steps",    CHANGE_LIGHT_VOLUME_STEPS},
+    {"gauss_kernel_radius",   CHANGE_GAUSS_KERNEL_RADIUS},
+    {"gauss_kernel_deviation", CHANGE_GAUSS_KERNEL_DEVIATION},
   };
 
   auto& sliderDescs = m_sceneSetup.descriptor.sliders;
@@ -893,6 +909,52 @@ void SC_Day::PopulateGUI(t800::GUIManager& gui) {
       }
     }
     gui.AddSlider(sd, settingIdx);
+  }
+
+  // Checkbox mappings
+  struct CheckboxMapping {
+    const char* name;
+    int settingIndex;
+  };
+  static const CheckboxMapping cbMappings[] = {
+    {"shadow_toggle",   CHANGE_PCF_TOOGLE},
+    {"ssao_toggle",     CHANGLE_SSAO_TOOGLE},
+    {"dof_auto_focus",  CHANGE_DOF_AUTO_FOCUS},
+  };
+
+  auto& cbDescs = m_sceneSetup.descriptor.checkboxes;
+  for (auto& cd : cbDescs) {
+    int settingIdx = -1;
+    for (auto& m : cbMappings) {
+      if (cd.name == m.name) {
+        settingIdx = m.settingIndex;
+        break;
+      }
+    }
+    gui.AddCheckbox(cd, settingIdx);
+  }
+
+  // Selector mappings
+  struct SelectorMapping {
+    const char* name;
+    int settingIndex;
+  };
+  static const SelectorMapping selMappings[] = {
+    {"num_lights",          CHANGE_NUM_LIGHTS},
+    {"active_gauss_kernel",      CHANGE_ACTIVE_GAUSS_KERNEL},
+    {"gauss_kernel_sample_count", CHANGE_GAUSS_KERNEL_SAMPLE_COUNT},
+  };
+
+  auto& selDescs = m_sceneSetup.descriptor.selectors;
+  for (auto& sd : selDescs) {
+    int settingIdx = -1;
+    for (auto& m : selMappings) {
+      if (sd.name == m.name) {
+        settingIdx = m.settingIndex;
+        break;
+      }
+    }
+    gui.AddSelector(sd, settingIdx);
   }
 }
 
@@ -917,6 +979,30 @@ void SC_Day::SyncToGUI(t800::GUIManager& gui) {
     case CHANGE_PARALLAX_HIGH_SAMPLES: slider->SetValue(SceneProp.ParallaxHighSamples); break;
     case CHANGE_PARALLAX_HEIGHT:    slider->SetValue(SceneProp.ParallaxHeight); break;
     case CHANGE_LIGHT_VOLUME_STEPS: slider->SetValue(SceneProp.LightVolumeSteps); break;
+    case CHANGE_GAUSS_KERNEL_RADIUS:   slider->SetValue(SceneProp.pGaussKernels[ChangeActiveGaussSelection]->radius); break;
+    case CHANGE_GAUSS_KERNEL_DEVIATION: slider->SetValue(SceneProp.pGaussKernels[ChangeActiveGaussSelection]->sigma); break;
+    }
+  }
+  for (auto& cp : gui.GetCheckboxPairs()) {
+    auto* cb = cp.checkbox;
+    switch (cb->settingIndex) {
+    case CHANGE_PCF_TOOGLE:     cb->checked = (SceneProp.ToogleShadow != 0); break;
+    case CHANGLE_SSAO_TOOGLE:   cb->checked = (SceneProp.ToogleSSAO != 0); break;
+    case CHANGE_DOF_AUTO_FOCUS: cb->checked = SceneProp.AutoFocus; break;
+    }
+  }
+  for (auto& sp : gui.GetSelectorPairs()) {
+    auto* sel = sp.selector;
+    switch (sel->settingIndex) {
+    case CHANGE_NUM_LIGHTS:         sel->selectedIndex = FindLightOption(SceneProp.ActiveLights); break;
+    case CHANGE_ACTIVE_GAUSS_KERNEL: sel->selectedIndex = ChangeActiveGaussSelection; break;
+    case CHANGE_GAUSS_KERNEL_SAMPLE_COUNT: {
+      int ks = SceneProp.pGaussKernels[ChangeActiveGaussSelection]->kernelSize;
+      // Find matching option index for the kernel size
+      for (int i = 0; i < (int)sel->options.size(); i++) {
+        if (std::atoi(sel->options[i].c_str()) == ks) { sel->selectedIndex = i; break; }
+      }
+    } break;
     }
   }
 }
@@ -943,6 +1029,41 @@ void SC_Day::SyncFromGUI(t800::GUIManager& gui) {
     case CHANGE_PARALLAX_HIGH_SAMPLES: SceneProp.ParallaxHighSamples = slider->value; break;
     case CHANGE_PARALLAX_HEIGHT:    SceneProp.ParallaxHeight = slider->value; break;
     case CHANGE_LIGHT_VOLUME_STEPS: SceneProp.LightVolumeSteps = slider->value; break;
+    case CHANGE_GAUSS_KERNEL_RADIUS:
+      SceneProp.pGaussKernels[ChangeActiveGaussSelection]->radius = slider->value;
+      SceneProp.pGaussKernels[ChangeActiveGaussSelection]->Update();
+      break;
+    case CHANGE_GAUSS_KERNEL_DEVIATION:
+      SceneProp.pGaussKernels[ChangeActiveGaussSelection]->sigma = slider->value;
+      SceneProp.pGaussKernels[ChangeActiveGaussSelection]->Update();
+      break;
+    }
+  }
+  for (auto& cp : gui.GetCheckboxPairs()) {
+    auto* cb = cp.checkbox;
+    if (!cb->justToggled) continue;
+    switch (cb->settingIndex) {
+    case CHANGE_PCF_TOOGLE:     SceneProp.ToogleShadow = cb->checked ? 1 : 0; break;
+    case CHANGLE_SSAO_TOOGLE:   SceneProp.ToogleSSAO = cb->checked ? 1 : 0; break;
+    case CHANGE_DOF_AUTO_FOCUS: SceneProp.AutoFocus = cb->checked; break;
+    }
+  }
+  for (auto& sp : gui.GetSelectorPairs()) {
+    auto* sel = sp.selector;
+    if (!sel->justChanged) continue;
+    switch (sel->settingIndex) {
+    case CHANGE_NUM_LIGHTS: {
+      int val = std::atoi(sel->CurrentOption().c_str());
+      SceneProp.ActiveLights = val;
+    } break;
+    case CHANGE_ACTIVE_GAUSS_KERNEL:
+      ChangeActiveGaussSelection = sel->selectedIndex;
+      break;
+    case CHANGE_GAUSS_KERNEL_SAMPLE_COUNT: {
+      int newSize = std::atoi(sel->CurrentOption().c_str());
+      SceneProp.pGaussKernels[ChangeActiveGaussSelection]->kernelSize = newSize;
+      SceneProp.pGaussKernels[ChangeActiveGaussSelection]->Update();
+    } break;
     }
   }
 }

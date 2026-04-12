@@ -21,6 +21,16 @@ namespace t800 {
     Texture*        barTex     = nullptr;
     Texture*        knobTex    = nullptr;
     Texture*        whiteTex   = nullptr;   // 1x1 white pixel for solid quads
+    // Checkbox textures
+    Texture*        checkBoxTex  = nullptr;
+    Texture*        checkMarkTex = nullptr;
+    // Selector textures
+    Texture*        selectorBarTex       = nullptr;
+    Texture*        selectorBtnLeftTex   = nullptr;
+    Texture*        selectorBtnRightTex  = nullptr;
+    Texture*        selectorBtnLeftPressTex  = nullptr;
+    Texture*        selectorBtnRightPressTex = nullptr;
+
     float           screenW    = 1280.0f;
     float           screenH    = 720.0f;
     bool            editMode   = false;
@@ -111,6 +121,49 @@ namespace t800 {
 
     void SetValue(float v);
     float GetKnobX() const;
+
+    void Draw(GUIDrawContext& ctx) override;
+    void UpdateInteraction(float mx, float my, bool mouseDown);
+  };
+
+  // ─── Checkbox: box + check overlay, toggle on click ───
+  class GUICheckbox : public GUIElement {
+  public:
+    std::string name;           // matches CheckboxDesc::name
+    std::string label;
+    bool  checked      = false;
+    int   settingIndex = -1;
+
+    // Interaction state
+    bool  wasMouseDown = false;
+    bool  justToggled  = false;   // true on the frame a toggle happened
+
+    void Draw(GUIDrawContext& ctx) override;
+    void UpdateInteraction(float mx, float my, bool mouseDown);
+  };
+
+  // ─── Selector: bar + label + left/right arrow buttons ───
+  class GUISelector : public GUIElement {
+  public:
+    std::string name;
+    std::string label;
+    std::vector<std::string> options;
+    int   selectedIndex = 0;
+    int   settingIndex  = -1;
+
+    float btnSize       = 25.0f;  // square button side
+
+    // Button interaction state
+    bool  leftHover     = false;
+    bool  rightHover    = false;
+    bool  leftPressed   = false;
+    bool  rightPressed  = false;
+    bool  wasMouseDown  = false;
+    bool  justChanged   = false;  // true on the frame index changed
+
+    const std::string& CurrentOption() const;
+    void SelectNext();
+    void SelectPrev();
 
     void Draw(GUIDrawContext& ctx) override;
     void UpdateInteraction(float mx, float my, bool mouseDown);

@@ -96,6 +96,19 @@ namespace t800 {
     float default_val = 0.5f;
   };
 
+  struct CheckboxDesc {
+    std::string name;
+    std::string label;
+    bool default_val = false;
+  };
+
+  struct SelectorDesc {
+    std::string name;
+    std::string label;
+    std::vector<std::string> options;
+    int default_index = 0;
+  };
+
   struct SceneDescriptor {
     std::string name;
     std::vector<CameraDesc> cameras;
@@ -108,6 +121,8 @@ namespace t800 {
     QualityDesc quality;
     SceneSettingsDesc settings;
     std::vector<SliderDesc> sliders;
+    std::vector<CheckboxDesc> checkboxes;
+    std::vector<SelectorDesc> selectors;
   };
 
   // Load a SceneDescriptor from a JSON file.

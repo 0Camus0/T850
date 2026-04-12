@@ -81,6 +81,7 @@ namespace t800 {
   public:
     std::string text;
     XVECTOR3    color = XVECTOR3(0.9f, 0.85f, 0.8f);
+    bool        isFPS = false;  // marks the FPS label (standalone, not part of a slider pair)
 
     void Draw(GUIDrawContext& ctx) override;
     void OnResizeEnd() override;

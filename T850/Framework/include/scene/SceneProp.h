@@ -19,12 +19,19 @@
 #include <utils/Camera.h>
 #include <vector>
 
+enum LightType {
+	LIGHT_DIRECTIONAL = 0,
+	LIGHT_POINT = 1,
+};
+
 struct Light{
 	XVECTOR3 Position;
+	XVECTOR3 Direction;  // normalized, for directional lights
 	XVECTOR3 Color;
-	int		 Type;
+	LightType Type;
 	int		 Enabled;
-  float radius;
+	float    radius;
+	float    Intensity;
 };
 
 struct GaussFilter{
@@ -51,7 +58,8 @@ struct SSAOFilter {
 struct SceneProps{
 SceneProps() : ActiveCamera(0) , ActiveLights(1), ActiveLightCamera(0), ActiveGaussKernel(0), Exposure(0.0f) , BloomFactor(0.35f), BloomThreshold(2.0f), ToneMapWhiteLevel(4.0f), LuminanceTau(1.1f), FrameDeltaSec(1.0f / 60.0f), ToogleShadow(1), ToogleSSAO(1), DebugMode(0){}
 
-	void	AddLight(XVECTOR3 Pos, XVECTOR3 Color, float radius, bool enabled);
+	void	AddLight(XVECTOR3 Pos, XVECTOR3 Color, float radius, float intensity, LightType type, bool enabled);
+	void	AddDirectionalLight(XVECTOR3 Dir, XVECTOR3 Color, float intensity, bool enabled);
 	void	RemoveLight(unsigned int index);
 	void	SetLightPos(unsigned int index, XVECTOR3);
 

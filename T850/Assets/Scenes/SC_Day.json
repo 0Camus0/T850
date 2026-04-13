@@ -1,155 +1,719 @@
 {
-  "name": "SC_Day",
-  "cameras": [
-    {
-      "position": [0.0, 1.0, 10.0],
-      "eye": [0.0, 9.75, -31.0],
-      "pitch": 0.14,
-      "roll": 0.0,
-      "yaw": 0.02,
-      "speed": 10.0,
-      "fov": 0.817,
-      "aspect": 1.7778,
-      "width": 0.0,
-      "height": 0.0,
-      "near_plane": 2.0,
-      "far_plane": 12000.0,
-      "ortho": false,
-      "left_handed": true
-    }
-  ],
-  "light_cameras": [
-    {
-      "position": [0.0, 100.0, 10.0],
-      "eye": [25.0, 100.0, 0.0],
-      "pitch": 1.12,
-      "roll": 0.0,
-      "yaw": -0.9,
-      "speed": 10.0,
-      "fov": 0.0,
-      "aspect": 0.0,
-      "width": 130.0,
-      "height": 130.0,
-      "near_plane": 0.1,
-      "far_plane": 600.0,
-      "ortho": true,
-      "left_handed": true
-    }
-  ],
-  "lights": [
-    { "position": [25.0, 100.0, 0.0], "color": [1.0, 1.0, 1.0], "radius": 30000.0, "enabled": true },
-    { "position": [-55.0, 10.0, 0.0], "color": [1.0, 0.57, 0.16], "radius": 60.0, "enabled": true },
-    { "position": [55.0, 10.0, 0.0], "color": [1.0, 0.57, 0.16], "radius": 60.0, "enabled": true },
-    { "position": [60.0, 10.0, 30.0], "color": [1.0, 0.57, 0.16], "radius": 60.0, "enabled": true },
-    { "position": [60.0, 10.0, -30.0], "color": [1.0, 0.57, 0.16], "radius": 60.0, "enabled": true }
-  ],
-  "gauss_filters": [
-    { "kernel_size": 4, "radius": 1.0, "sigma": 1.0 },
-    { "kernel_size": 11, "radius": 2.5, "sigma": 4.5 },
-    { "kernel_size": 8, "radius": 2.5, "sigma": 4.5 }
-  ],
-  "splines": [
-    {
-      "points": [
-        { "position": [80.0, 90.0, -80.0], "velocity": 3.0 },
-        { "position": [80.0, 90.0, -20.0], "velocity": 6.0 },
-        { "position": [20.0, 110.0, 0.0], "velocity": 20.0 },
-        { "position": [30.0, 20.0, 0.0], "velocity": 7.0 },
-        { "position": [40.0, 6.0, 0.0], "velocity": 7.0 },
-        { "position": [50.0, 4.0, 20.0], "velocity": 7.0 },
-        { "position": [40.0, 4.0, 20.0], "velocity": 7.0 },
-        { "position": [0.0, 4.0, 20.0], "velocity": 7.0 },
-        { "position": [-50.0, 3.0, 20.0], "velocity": 7.0 },
-        { "position": [-50.0, 6.0, 0.0], "velocity": 7.0 },
-        { "position": [-20.0, 15.0, 0.0], "velocity": 7.0 },
-        { "position": [0.0, 10.0, 0.0], "velocity": 7.0 },
-        { "position": [-40.0, 25.0, 3.0], "velocity": 10.0 },
-        { "position": [-55.0, 30.0, 5.0], "velocity": 10.0 },
-        { "position": [-55.0, 30.0, -25.0], "velocity": 3.0 },
-        { "position": [-65.0, 25.0, 0.0], "velocity": 3.0 },
-        { "position": [-60.0, 25.0, 25.0], "velocity": 3.0 },
-        { "position": [-35.0, 30.0, -20.0], "velocity": 10.0 },
-        { "position": [15.0, 30.0, -20.0], "velocity": 10.0 },
-        { "position": [25.0, 30.0, 20.0], "velocity": 10.0 },
-        { "position": [50.0, 30.0, 20.0], "velocity": 10.0 },
-        { "position": [50.0, 30.0, -20.0], "velocity": 10.0 },
-        { "position": [-50.0, 30.0, -20.0], "velocity": 10.0 },
-        { "position": [-50.0, 30.0, 0.0], "velocity": 10.0 },
-        { "position": [-30.0, 30.0, 0.0], "velocity": 10.0 },
-        { "position": [0.0, 5.0, 0.0], "velocity": 10.0 }
+   "name": "SC_Day",
+   "cameras": [
+      {
+         "position": [
+            -48.41179,
+            16.226902,
+            4.558856
+         ],
+         "eye": [
+            0,
+            9.75,
+            -31
+         ],
+         "pitch": -0.054999996,
+         "roll": 0,
+         "yaw": 1.4449948,
+         "speed": 10,
+         "fov": 1.0471976,
+         "aspect": 1.7778,
+         "width": 1280,
+         "height": 720,
+         "near_plane": 2,
+         "far_plane": 12000,
+         "ortho": false,
+         "left_handed": true
+      }
+   ],
+   "light_cameras": [
+      {
+         "position": [
+            25,
+            100,
+            0
+         ],
+         "eye": [
+            25,
+            100,
+            0
+         ],
+         "pitch": 1.12,
+         "roll": 0,
+         "yaw": -1.2317667,
+         "speed": 10,
+         "fov": 0.7853982,
+         "aspect": 1,
+         "width": 130,
+         "height": 130,
+         "near_plane": 0.1,
+         "far_plane": 600,
+         "ortho": true,
+         "left_handed": true
+      }
+   ],
+   "lights": [
+      {
+         "type": "directional",
+         "position": [
+            25,
+            100,
+            0
+         ],
+         "direction": [
+            -0.19518003,
+            -0.9759001,
+            0.097590014
+         ],
+         "color": [
+            1,
+            0.98,
+            0.92
+         ],
+         "radius": 0,
+         "intensity": 1,
+         "enabled": true
+      },
+      {
+         "type": "point",
+         "position": [
+            -55,
+            10,
+            0
+         ],
+         "direction": [
+            0,
+            -1,
+            0
+         ],
+         "color": [
+            1,
+            0.57,
+            0.16
+         ],
+         "radius": 60,
+         "intensity": 1,
+         "enabled": true
+      },
+      {
+         "type": "point",
+         "position": [
+            55,
+            10,
+            0
+         ],
+         "direction": [
+            0,
+            -1,
+            0
+         ],
+         "color": [
+            1,
+            0.57,
+            0.16
+         ],
+         "radius": 60,
+         "intensity": 1,
+         "enabled": true
+      },
+      {
+         "type": "point",
+         "position": [
+            60,
+            10,
+            30
+         ],
+         "direction": [
+            0,
+            -1,
+            0
+         ],
+         "color": [
+            1,
+            0.57,
+            0.16
+         ],
+         "radius": 60,
+         "intensity": 1,
+         "enabled": true
+      },
+      {
+         "type": "point",
+         "position": [
+            60,
+            10,
+            -30
+         ],
+         "direction": [
+            0,
+            -1,
+            0
+         ],
+         "color": [
+            1,
+            0.57,
+            0.16
+         ],
+         "radius": 60,
+         "intensity": 1,
+         "enabled": true
+      }
+   ],
+   "gauss_filters": [
+      {
+         "kernel_size": 3,
+         "radius": 1,
+         "sigma": 1.5
+      },
+      {
+         "kernel_size": 11,
+         "radius": 1,
+         "sigma": 4
+      },
+      {
+         "kernel_size": 5,
+         "radius": 1,
+         "sigma": 4
+      }
+   ],
+   "splines": [
+      {
+         "points": [
+            {
+               "position": [
+                  80,
+                  90,
+                  -80
+               ],
+               "velocity": 3
+            },
+            {
+               "position": [
+                  80,
+                  90,
+                  -20
+               ],
+               "velocity": 6
+            },
+            {
+               "position": [
+                  20,
+                  110,
+                  0
+               ],
+               "velocity": 20
+            },
+            {
+               "position": [
+                  30,
+                  20,
+                  0
+               ],
+               "velocity": 7
+            },
+            {
+               "position": [
+                  40,
+                  6,
+                  0
+               ],
+               "velocity": 7
+            },
+            {
+               "position": [
+                  50,
+                  4,
+                  20
+               ],
+               "velocity": 7
+            },
+            {
+               "position": [
+                  40,
+                  4,
+                  20
+               ],
+               "velocity": 7
+            },
+            {
+               "position": [
+                  0,
+                  4,
+                  20
+               ],
+               "velocity": 7
+            },
+            {
+               "position": [
+                  -50,
+                  3,
+                  20
+               ],
+               "velocity": 7
+            },
+            {
+               "position": [
+                  -50,
+                  6,
+                  0
+               ],
+               "velocity": 7
+            },
+            {
+               "position": [
+                  -20,
+                  15,
+                  0
+               ],
+               "velocity": 7
+            },
+            {
+               "position": [
+                  0,
+                  10,
+                  0
+               ],
+               "velocity": 7
+            },
+            {
+               "position": [
+                  -40,
+                  25,
+                  3
+               ],
+               "velocity": 10
+            },
+            {
+               "position": [
+                  -55,
+                  30,
+                  5
+               ],
+               "velocity": 10
+            },
+            {
+               "position": [
+                  -55,
+                  30,
+                  -25
+               ],
+               "velocity": 3
+            },
+            {
+               "position": [
+                  -65,
+                  25,
+                  0
+               ],
+               "velocity": 3
+            },
+            {
+               "position": [
+                  -60,
+                  25,
+                  25
+               ],
+               "velocity": 3
+            },
+            {
+               "position": [
+                  -35,
+                  30,
+                  -20
+               ],
+               "velocity": 10
+            },
+            {
+               "position": [
+                  15,
+                  30,
+                  -20
+               ],
+               "velocity": 10
+            },
+            {
+               "position": [
+                  25,
+                  30,
+                  20
+               ],
+               "velocity": 10
+            },
+            {
+               "position": [
+                  50,
+                  30,
+                  20
+               ],
+               "velocity": 10
+            },
+            {
+               "position": [
+                  50,
+                  30,
+                  -20
+               ],
+               "velocity": 10
+            },
+            {
+               "position": [
+                  -50,
+                  30,
+                  -20
+               ],
+               "velocity": 10
+            },
+            {
+               "position": [
+                  -50,
+                  30,
+                  0
+               ],
+               "velocity": 10
+            },
+            {
+               "position": [
+                  -30,
+                  30,
+                  0
+               ],
+               "velocity": 10
+            },
+            {
+               "position": [
+                  0,
+                  5,
+                  0
+               ],
+               "velocity": 10
+            }
+         ],
+         "looped": false,
+         "agent_velocity": 15,
+         "agent_offset": 0,
+         "attached_camera": 0
+      }
+   ],
+   "meshes": [
+      "Models/SponzaEsc.X"
+   ],
+   "environment_map": "CubeMap_Mountains.dds",
+   "quality": {
+      "shadow_map_resolution": 2048,
+      "god_rays_resolution": 0,
+      "pcf_scale": 0.8,
+      "pcf_samples": 2,
+      "parallax_low_samples": 20,
+      "parallax_high_samples": 30,
+      "parallax_height": 0.02,
+      "light_volume_steps": 256,
+      "ssao_kernel_size": 12,
+      "ssao_radius": 1.6,
+      "dof_near_samples": 2,
+      "dof_far_samples": 5
+   },
+   "settings": {
+      "exposure": 1.9000006,
+      "bloom_factor": 1,
+      "bloom_threshold": 2.5,
+      "tone_map_white_level": 4,
+      "luminance_tau": 1.15,
+      "aperture": 70,
+      "focal_length": 1,
+      "max_coc": 0.6,
+      "ambient_color": [
+         0.8,
+         0.8,
+         0.8
       ],
-      "looped": false,
-      "agent_velocity": 15.0,
-      "agent_offset": 0,
-      "attached_camera": 0
-    }
-  ],
-  "meshes": [
-    "Models/SponzaEsc.X"
-  ],
-  "environment_map": "CubeMap_Mountains.dds",
-  "quality": {
-    "shadow_map_resolution": 2048.0,
-    "god_rays_resolution": 0.0,
-    "pcf_scale": 1.5,
-    "pcf_samples": 3.0,
-    "parallax_low_samples": 20.0,
-    "parallax_high_samples": 30.0,
-    "parallax_height": 0.02,
-    "light_volume_steps": 256.0,
-    "ssao_kernel_size": 32,
-    "ssao_radius": 1.5,
-    "dof_near_samples": 1.0,
-    "dof_far_samples": 3.0
-  },
-  "settings": {
-    "exposure": 0.0,
-    "bloom_factor": 0.35,
-    "bloom_threshold": 2.0,
-    "aperture": 120.0,
-    "focal_length": 50.0,
-    "max_coc": 2.5,
-    "ambient_color": [0.8, 0.8, 0.8],
-    "active_lights": 5,
-    "shadow_enabled": true,
-    "ssao_enabled": true,
-    "auto_focus": true
-  },
-  "sliders": [
-    { "name": "exposure",              "label": "Exposure",             "min_val": -10.0, "max_val": 10.0, "step": 0.1,   "default_val": 0.0 },
-    { "name": "bloom_factor",          "label": "Bloom Magnitude",    "min_val": 0.0, "max_val": 2.0,    "step": 0.1,   "default_val": 0.35 },
-    { "name": "bloom_threshold",       "label": "Bloom Threshold",     "min_val": 0.0, "max_val": 10.0,   "step": 0.1,   "default_val": 2.0 },
-    { "name": "tm_white_level",        "label": "TM White Level",      "min_val": 0.5, "max_val": 20.0,   "step": 0.25,  "default_val": 4.0 },
-    { "name": "tm_adapt_tau",          "label": "TM Adapt Tau",        "min_val": 0.05,"max_val": 5.0,    "step": 0.1,   "default_val": 1.1 },
-    { "name": "pcf_radius",            "label": "PCF Radius",          "min_val": 0.1, "max_val": 10.0,   "step": 0.1,   "default_val": 1.5 },
-    { "name": "pcf_samples",           "label": "PCF Samples",         "min_val": 1.0, "max_val": 16.0,   "step": 1.0,   "default_val": 3.0 },
-    { "name": "ssao_kernel_size",      "label": "SSAO Kernel Size",    "min_val": 2.0, "max_val": 128.0,  "step": 2.0,   "default_val": 32.0 },
-    { "name": "ssao_radius",           "label": "SSAO Radius",         "min_val": 0.1, "max_val": 10.0,   "step": 0.5,   "default_val": 1.5 },
-    { "name": "dof_aperture",          "label": "DOF Aperture",        "min_val": 0.0, "max_val": 500.0,  "step": 10.0,  "default_val": 120.0 },
-    { "name": "dof_focal_length",      "label": "DOF Focal Length",    "min_val": 1.0, "max_val": 500.0,  "step": 10.0,  "default_val": 50.0 },
-    { "name": "dof_max_coc",           "label": "DOF Max CoC",         "min_val": 0.1, "max_val": 20.0,   "step": 0.5,   "default_val": 2.5 },
-    { "name": "dof_far_samples",       "label": "DOF Far Samples",     "min_val": 1.0, "max_val": 16.0,   "step": 1.0,   "default_val": 3.0 },
-    { "name": "dof_near_samples",      "label": "DOF Near Samples",    "min_val": 1.0, "max_val": 16.0,   "step": 1.0,   "default_val": 1.0 },
-    { "name": "parallax_low_samples",  "label": "Parallax Low",        "min_val": 5.0, "max_val": 100.0,  "step": 5.0,   "default_val": 20.0 },
-    { "name": "parallax_high_samples", "label": "Parallax High",       "min_val": 10.0,"max_val": 200.0,  "step": 10.0,  "default_val": 30.0 },
-    { "name": "parallax_height",       "label": "Parallax Height",     "min_val": 0.0, "max_val": 0.2,    "step": 0.01,  "default_val": 0.02 },
-    { "name": "light_volume_steps",    "label": "Light Vol Steps",     "min_val": 16.0,"max_val": 512.0,  "step": 16.0,  "default_val": 256.0 },
-    { "name": "gauss_kernel_radius",   "label": "Gauss Radius",      "min_val": 0.5, "max_val": 10.0,   "step": 0.5,   "default_val": 1.0 },
-    { "name": "gauss_kernel_deviation", "label": "Gauss Sigma",       "min_val": 0.5, "max_val": 10.0,   "step": 0.5,   "default_val": 1.0 },
-    { "name": "fov",                    "label": "FOV (degrees)",      "min_val": 60.0, "max_val": 150.0,  "step": 1.0,   "default_val": 45.0 }
-  ],
-  "checkboxes": [
-    { "name": "shadow_toggle",  "label": "Shadows",    "default_val": true },
-    { "name": "ssao_toggle",    "label": "SSAO",       "default_val": true },
-    { "name": "dof_auto_focus", "label": "AutoFocus",  "default_val": true },
-    { "name": "show_spline",    "label": "Show Spline", "default_val": false },
-    { "name": "show_lights",    "label": "Show Lights", "default_val": false }
-  ],
-  "selectors": [
-    { "name": "num_lights",          "label": "Num Lights",   "options": ["1","2","4","8","16","32","64","127"], "default_index": 2 },
-    { "name": "active_gauss_kernel",      "label": "Gauss Kernel",  "options": ["Shadow","Bloom","DoF"],                    "default_index": 0 },
-    { "name": "gauss_kernel_sample_count", "label": "Gauss Samples", "options": ["3","5","7","9","11","13","15","21","27","33","39","45"], "default_index": 0 },
-    { "name": "debug_render_target", "label": "Debug RT", "options": ["Final","Albedo","Normals","Specular","Emissive","GBuf Depth","Shadow Map","Shadow Accum","Deferred","Extra16F","HDR","Bloom","God Rays","Luminance","CoC"], "default_index": 0 },
-    { "name": "active_camera",      "label": "Camera",    "options": ["Spline","Free","Light"], "default_index": 0 }
-  ]
+      "active_lights": 1,
+      "shadow_enabled": true,
+      "ssao_enabled": true,
+      "auto_focus": true,
+      "debug_mode": 0
+   },
+   "sliders": [
+      {
+         "name": "exposure",
+         "label": "Exposure",
+         "min_val": -10,
+         "max_val": 10,
+         "step": 0.1,
+         "default_val": 0
+      },
+      {
+         "name": "bloom_factor",
+         "label": "Bloom Magnitude",
+         "min_val": 0,
+         "max_val": 2,
+         "step": 0.1,
+         "default_val": 0.35
+      },
+      {
+         "name": "bloom_threshold",
+         "label": "Bloom Threshold",
+         "min_val": 0,
+         "max_val": 10,
+         "step": 0.1,
+         "default_val": 2
+      },
+      {
+         "name": "tm_white_level",
+         "label": "TM White Level",
+         "min_val": 0.5,
+         "max_val": 20,
+         "step": 0.25,
+         "default_val": 4
+      },
+      {
+         "name": "tm_adapt_tau",
+         "label": "TM Adapt Tau",
+         "min_val": 0.05,
+         "max_val": 5,
+         "step": 0.1,
+         "default_val": 1.1
+      },
+      {
+         "name": "pcf_radius",
+         "label": "PCF Radius",
+         "min_val": 0.1,
+         "max_val": 10,
+         "step": 0.1,
+         "default_val": 1.5
+      },
+      {
+         "name": "pcf_samples",
+         "label": "PCF Samples",
+         "min_val": 1,
+         "max_val": 16,
+         "step": 1,
+         "default_val": 3
+      },
+      {
+         "name": "ssao_kernel_size",
+         "label": "SSAO Kernel Size",
+         "min_val": 2,
+         "max_val": 128,
+         "step": 2,
+         "default_val": 32
+      },
+      {
+         "name": "ssao_radius",
+         "label": "SSAO Radius",
+         "min_val": 0.1,
+         "max_val": 10,
+         "step": 0.5,
+         "default_val": 1.5
+      },
+      {
+         "name": "dof_aperture",
+         "label": "DOF Aperture",
+         "min_val": 0,
+         "max_val": 500,
+         "step": 10,
+         "default_val": 120
+      },
+      {
+         "name": "dof_focal_length",
+         "label": "DOF Focal Length",
+         "min_val": 1,
+         "max_val": 500,
+         "step": 10,
+         "default_val": 50
+      },
+      {
+         "name": "dof_max_coc",
+         "label": "DOF Max CoC",
+         "min_val": 0.1,
+         "max_val": 20,
+         "step": 0.5,
+         "default_val": 2.5
+      },
+      {
+         "name": "dof_far_samples",
+         "label": "DOF Far Samples",
+         "min_val": 1,
+         "max_val": 16,
+         "step": 1,
+         "default_val": 3
+      },
+      {
+         "name": "dof_near_samples",
+         "label": "DOF Near Samples",
+         "min_val": 1,
+         "max_val": 16,
+         "step": 1,
+         "default_val": 1
+      },
+      {
+         "name": "parallax_low_samples",
+         "label": "Parallax Low",
+         "min_val": 5,
+         "max_val": 100,
+         "step": 5,
+         "default_val": 20
+      },
+      {
+         "name": "parallax_high_samples",
+         "label": "Parallax High",
+         "min_val": 10,
+         "max_val": 200,
+         "step": 10,
+         "default_val": 30
+      },
+      {
+         "name": "parallax_height",
+         "label": "Parallax Height",
+         "min_val": 0,
+         "max_val": 0.2,
+         "step": 0.01,
+         "default_val": 0.02
+      },
+      {
+         "name": "light_volume_steps",
+         "label": "Light Vol Steps",
+         "min_val": 16,
+         "max_val": 512,
+         "step": 16,
+         "default_val": 256
+      },
+      {
+         "name": "gauss_kernel_radius",
+         "label": "Gauss Radius",
+         "min_val": 0.5,
+         "max_val": 10,
+         "step": 0.5,
+         "default_val": 1
+      },
+      {
+         "name": "gauss_kernel_deviation",
+         "label": "Gauss Sigma",
+         "min_val": 0.5,
+         "max_val": 10,
+         "step": 0.5,
+         "default_val": 1
+      },
+      {
+         "name": "fov",
+         "label": "FOV (degrees)",
+         "min_val": 60,
+         "max_val": 150,
+         "step": 1,
+         "default_val": 45
+      },
+      {
+         "name": "light_intensity",
+         "label": "Light Intensity",
+         "min_val": 0.1,
+         "max_val": 20,
+         "step": 0.1,
+         "default_val": 5
+      }
+   ],
+   "checkboxes": [
+      {
+         "name": "shadow_toggle",
+         "label": "Shadows",
+         "default_val": true
+      },
+      {
+         "name": "ssao_toggle",
+         "label": "SSAO",
+         "default_val": true
+      },
+      {
+         "name": "dof_auto_focus",
+         "label": "AutoFocus",
+         "default_val": true
+      },
+      {
+         "name": "show_spline",
+         "label": "Show Spline",
+         "default_val": false
+      },
+      {
+         "name": "show_lights",
+         "label": "Show Lights",
+         "default_val": false
+      }
+   ],
+   "selectors": [
+      {
+         "name": "num_lights",
+         "label": "Num Lights",
+         "options": [
+            "1",
+            "2",
+            "4",
+            "8",
+            "16",
+            "32",
+            "64",
+            "127"
+         ],
+         "default_index": 2
+      },
+      {
+         "name": "active_gauss_kernel",
+         "label": "Gauss Kernel",
+         "options": [
+            "Shadow",
+            "Bloom",
+            "DoF"
+         ],
+         "default_index": 0
+      },
+      {
+         "name": "gauss_kernel_sample_count",
+         "label": "Gauss Samples",
+         "options": [
+            "3",
+            "5",
+            "7",
+            "9",
+            "11",
+            "13",
+            "15",
+            "21",
+            "27",
+            "33",
+            "39",
+            "45"
+         ],
+         "default_index": 0
+      },
+      {
+         "name": "debug_render_target",
+         "label": "Debug RT",
+         "options": [
+            "Final",
+            "Albedo",
+            "Normals",
+            "Specular",
+            "Emissive",
+            "GBuf Depth",
+            "Shadow Map",
+            "Shadow Accum",
+            "Deferred",
+            "Extra16F",
+            "HDR",
+            "Bloom",
+            "God Rays",
+            "Luminance",
+            "CoC",
+            "Bright"
+         ],
+         "default_index": 0
+      },
+      {
+         "name": "active_camera",
+         "label": "Camera",
+         "options": [
+            "Spline",
+            "Free",
+            "Light"
+         ],
+         "default_index": 0
+      }
+   ]
 }

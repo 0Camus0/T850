@@ -148,28 +148,46 @@ float4 FS( VS_OUTPUT input ) : SV_TARGET {
 
 		int NumLights = (int)CameraInfo.w;
 		[loop] for(int i = 0; i < NumLights; i++){
-			float Rad = LightRadius[i >> 2][i & 3];
-			float dist = distance(LightPositions[i], position);
+			float lightType = LightPositions[i].w;
+			float intensity = LightColors[i].w;
 
-			if(dist < (Rad * 2.0))
-			{
-				float3 LightDir = normalize(LightPositions[i] - position).xyz;
+			if(lightType < 0.5) {
+				// Directional light
+				float3 LightDir = normalize(-LightPositions[i].xyz);
 				float3 Half = normalize(EyeDir + LightDir);
 
-				float3 Diffuse = CalculateDiffuse(Albedo.xyz, normal, LightDir) * LightColors[i].xyz;
-				float3 SpecularRes = CalculateSpecular(Albedo.xyz, normal, EyeDir, Half, LightDir, rough) * LightColors[i].xyz;
+				float3 Diffuse = CalculateDiffuse(Albedo.xyz, normal, LightDir) * LightColors[i].xyz * intensity;
+				float3 SpecularRes = CalculateSpecular(Albedo.xyz, normal, EyeDir, Half, LightDir, rough) * LightColors[i].xyz * intensity;
 
 				float3 Ks = SpecularRes;
 				float3 Kd = float3(1.0f, 1.0f, 1.0f) - SpecularRes;
 
-				float d = max(dist - Rad, 0.0);
-				float denom = d / Rad + 1.0;
+				Final.xyz += SpecularRes.xyz + Kd * Diffuse;
+			} else {
+				// Point light
+				float Rad = LightRadius[i >> 2][i & 3];
+				float dist = distance(LightPositions[i], position);
 
-				float attenuation = 1.0 / (denom * denom);
-				attenuation = (attenuation - cutoff) / (1.0 - cutoff);
-				attenuation = max(attenuation, 0.0);
+				if(dist < (Rad * 2.0))
+				{
+					float3 LightDir = normalize(LightPositions[i] - position).xyz;
+					float3 Half = normalize(EyeDir + LightDir);
 
-				Final.xyz += SpecularRes.xyz * attenuation + attenuation * Kd * Diffuse;
+					float3 Diffuse = CalculateDiffuse(Albedo.xyz, normal, LightDir) * LightColors[i].xyz * intensity;
+					float3 SpecularRes = CalculateSpecular(Albedo.xyz, normal, EyeDir, Half, LightDir, rough) * LightColors[i].xyz * intensity;
+
+					float3 Ks = SpecularRes;
+					float3 Kd = float3(1.0f, 1.0f, 1.0f) - SpecularRes;
+
+					float d = max(dist - Rad, 0.0);
+					float denom = d / Rad + 1.0;
+
+					float attenuation = 1.0 / (denom * denom);
+					attenuation = (attenuation - cutoff) / (1.0 - cutoff);
+					attenuation = max(attenuation, 0.0);
+
+					Final.xyz += SpecularRes.xyz * attenuation + attenuation * Kd * Diffuse;
+				}
 			}
 		}
 

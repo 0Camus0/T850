@@ -80,6 +80,7 @@ void SC_Day::CreateAssets() {
   ShadowAccumPass  = m_renderGraph.GetRTHandle("ShadowAccum");
   ExtraHelperPass  = m_renderGraph.GetRTHandle("ExtraHelper");
   BloomAccumPass   = m_renderGraph.GetRTHandle("BloomAccum");
+  BrightPassPass   = m_renderGraph.GetRTHandle("BrightPass");
   GodRaysCalcPass  = m_renderGraph.GetRTHandle("GodRaysCalc");
   GodRaysCalcExtraPass = m_renderGraph.GetRTHandle("GodRaysCalcExtra");
   LuminanceMapPass = m_renderGraph.GetRTHandle("LuminanceMap");
@@ -130,6 +131,7 @@ void SC_Day::CreateAssets() {
   PrimitiveMgr.SetSceneProps(&SceneProp);
 
   m_wireframeSphere.Create(8, 16);
+  m_wireframeArrow.Create(24, 6);
 
   t800::Spline& m_spline = m_sceneSetup.splines[0];
   t800::SplineAgent& m_agent = m_sceneSetup.agents[0];
@@ -487,6 +489,7 @@ void SC_Day::OnDraw() {
     case 12: selected = GodRaysCalcPass; attachment = BaseDriver::COLOR0_ATTACHMENT; break; // God Rays
     case 13: selected = LuminanceMapPass;attachment = BaseDriver::COLOR0_ATTACHMENT; break; // Luminance
     case 14: selected = CoCPass;         attachment = BaseDriver::COLOR0_ATTACHMENT; break; // CoC
+    case 15: selected = BrightPassPass;  attachment = BaseDriver::COLOR0_ATTACHMENT; break; // Bright
     }
     if (selected >= 0) {
       Quads[7].SetTexture(pFramework->pVideoDriver->GetRTTexture(selected, attachment), 0);
@@ -504,13 +507,20 @@ void SC_Day::OnDraw() {
     splineInst.Draw();
   }
 
-  // Draw light spheres overlay
+  // Draw light gizmos overlay
   if (m_showLights) {
     unsigned int numLights = SceneProp.ActiveLights;
     if (numLights > SceneProp.Lights.size())
       numLights = static_cast<unsigned int>(SceneProp.Lights.size());
     for (unsigned int i = 0; i < numLights; i++) {
-      m_wireframeSphere.Draw(VP, SceneProp.Lights[i].Position, SceneProp.Lights[i].radius);
+      Light& light = SceneProp.Lights[i];
+      if (light.Type == LIGHT_DIRECTIONAL) {
+        // Draw arrow gizmo at an editor position above scene center
+        XVECTOR3 gizmoPos(0.0f, 80.0f, 0.0f);
+        m_wireframeArrow.Draw(VP, gizmoPos, light.Direction, 10.0f);
+      } else {
+        m_wireframeSphere.Draw(VP, light.Position, light.radius);
+      }
     }
   }
 
@@ -687,6 +697,14 @@ void  SC_Day::ChangeSettingsOnPlus() {
   case CHANGE_SHOW_LIGHTS: {
     m_showLights = true;
     cout << "[CHANGE_SHOW_LIGHTS] Value[" << (int)m_showLights << "]" << endl;
+  }break;
+  case CHANGE_LIGHT_INTENSITY: {
+    if (!SceneProp.Lights.empty()) {
+      float prevVal = SceneProp.Lights[0].Intensity;
+      SceneProp.Lights[0].Intensity += 0.5f;
+      if (SceneProp.Lights[0].Intensity > 20.0f) SceneProp.Lights[0].Intensity = 20.0f;
+      cout << "[CHANGE_LIGHT_INTENSITY] Previous Value[" << prevVal << "] Actual Value[" << SceneProp.Lights[0].Intensity << "]" << endl;
+    }
   }break;
   }
 }
@@ -873,6 +891,14 @@ void  SC_Day::ChangeSettingsOnMinus() {
     m_showLights = false;
     cout << "[CHANGE_SHOW_LIGHTS] Value[" << (int)m_showLights << "]" << endl;
   }break;
+  case CHANGE_LIGHT_INTENSITY: {
+    if (!SceneProp.Lights.empty()) {
+      float prevVal = SceneProp.Lights[0].Intensity;
+      SceneProp.Lights[0].Intensity -= 0.5f;
+      if (SceneProp.Lights[0].Intensity < 0.1f) SceneProp.Lights[0].Intensity = 0.1f;
+      cout << "[CHANGE_LIGHT_INTENSITY] Previous Value[" << prevVal << "] Actual Value[" << SceneProp.Lights[0].Intensity << "]" << endl;
+    }
+  }break;
   }
 }
 
@@ -972,6 +998,10 @@ void SC_Day::printCurrSelection() {
   case CHANGE_SHOW_LIGHTS: {
     cout << "Option[CHANGE_SHOW_LIGHTS] Value[" << (int)m_showLights << "]" << endl;
   }break;
+  case CHANGE_LIGHT_INTENSITY: {
+    if (!SceneProp.Lights.empty())
+      cout << "Option[CHANGE_LIGHT_INTENSITY] Value[" << SceneProp.Lights[0].Intensity << "]" << endl;
+  }break;
   }
 }
 
@@ -1015,6 +1045,7 @@ void SC_Day::PopulateGUI(t800::GUIManager& gui) {
     {"gauss_kernel_radius",   CHANGE_GAUSS_KERNEL_RADIUS},
     {"gauss_kernel_deviation", CHANGE_GAUSS_KERNEL_DEVIATION},
     {"fov",                    CHANGE_FOV},
+    {"light_intensity",        CHANGE_LIGHT_INTENSITY},
   };
 
   auto& sliderDescs = m_sceneSetup.descriptor.sliders;
@@ -1105,6 +1136,7 @@ void SC_Day::SyncToGUI(t800::GUIManager& gui) {
     case CHANGE_GAUSS_KERNEL_RADIUS:   slider->SetValue(SceneProp.pGaussKernels[ChangeActiveGaussSelection]->radius); break;
     case CHANGE_GAUSS_KERNEL_DEVIATION: slider->SetValue(SceneProp.pGaussKernels[ChangeActiveGaussSelection]->sigma); break;
     case CHANGE_FOV:                slider->SetValue(Rad2Deg(ActiveCam->Fov)); break;
+    case CHANGE_LIGHT_INTENSITY:    if (!SceneProp.Lights.empty()) slider->SetValue(SceneProp.Lights[0].Intensity); break;
     }
   }
   for (auto& cp : gui.GetCheckboxPairs()) {
@@ -1169,6 +1201,9 @@ void SC_Day::SyncFromGUI(t800::GUIManager& gui) {
     case CHANGE_FOV:
       ActiveCam->SetFov(Deg2Rad(slider->value));
       break;
+    case CHANGE_LIGHT_INTENSITY:
+      if (!SceneProp.Lights.empty()) SceneProp.Lights[0].Intensity = slider->value;
+      break;
     }
   }
   for (auto& cp : gui.GetCheckboxPairs()) {
@@ -1224,4 +1259,8 @@ void SC_Day::SyncFromGUI(t800::GUIManager& gui) {
     } break;
     }
   }
+}
+
+void SC_Day::SaveSceneState() {
+  m_sceneSetup.SaveState(this, "Scenes/SC_Day.json");
 }

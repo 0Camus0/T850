@@ -80,15 +80,15 @@ void SC_Night::InitVars() {
   OmniLightCam[5].SetLookAt(OmniLightCam[5].Eye + XVECTOR3(0, 0, -10));
   OmniLightCam[5].Update(0.0f);
 
-  SceneProp.AddLight(XVECTOR3(1000, 2000, 0), XVECTOR3(0.1215, 0.1607, 0.2090), 30000, true);
-  SceneProp.AddLight(omniLightPos, XVECTOR3(1.0, 0.57, 0.16), 30, true);
+  SceneProp.AddDirectionalLight(XVECTOR3(0.0f, -1.0f, 0.0f), XVECTOR3(0.1215, 0.1607, 0.2090), 1.0f, true);
+  SceneProp.AddLight(omniLightPos, XVECTOR3(1.0, 0.57, 0.16), 30, 1.0f, LIGHT_POINT, true);
   SceneProp.ActiveLights = 120;
   for (int i = 0; i < SceneProp.ActiveLights-2; ++i) {
     /*SceneProp.AddLight(XVECTOR3(-200 + i*4, 4, -200 + i * 4), XVECTOR3(1.0, 0.57, 0.16), 5, true);*/
     float r = static_cast <float> (rand()) / static_cast <float> (RAND_MAX);
     float g = static_cast <float> (rand()) / static_cast <float> (RAND_MAX);
     float b = static_cast <float> (rand()) / static_cast <float> (RAND_MAX);
-    SceneProp.AddLight(XVECTOR3(0.0f, 15.0f, 0.0f), XVECTOR3(r, g, b), 10, true);
+    SceneProp.AddLight(XVECTOR3(0.0f, 15.0f, 0.0f), XVECTOR3(r, g, b), 10, 1.0f, LIGHT_POINT, true);
   }
 
   SceneProp.AmbientColor = XVECTOR3(0.8f, 0.8f, 0.8f);

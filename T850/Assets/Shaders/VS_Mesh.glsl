@@ -87,7 +87,7 @@ uniform highp vec4 CameraInfo;
 uniform highp vec4 AmbientColor;
 uniform highp vec4 DiffuseColor;
 uniform highp vec4 SpecularColor;
-uniform highp vec4 FresnelColor;
+uniform highp vec4 PBRParams;
 uniform highp vec4 Intensities;
 uniform highp vec4 ParallaxSettings;
 

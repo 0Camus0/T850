@@ -82,22 +82,27 @@ namespace t800 {
 			  }
 
 			  if (mDef->NameParam == "FresnelColor") {
-				  it_subsetinfo->FresnelColor.x = mDef->CaseFloat[0];
-				  it_subsetinfo->FresnelColor.y = mDef->CaseFloat[1];
-				  it_subsetinfo->FresnelColor.z = mDef->CaseFloat[2];
-				  it_subsetinfo->FresnelColor.w = 1.0f;
+				  // Legacy: ignored in PBR
+			  }
+
+			  if (mDef->NameParam == "pbrMetallic") {
+				  it_subsetinfo->PBRParams.x = mDef->CaseFloat[0];
+			  }
+
+			  if (mDef->NameParam == "pbrRoughness") {
+				  it_subsetinfo->PBRParams.y = mDef->CaseFloat[0];
 			  }
 
 			  if (mDef->NameParam == "speclevel") {
-				  it_subsetinfo->Intensities.x = mDef->CaseFloat[0];
+				  // Legacy: ignored in PBR
 			  }
 
 			  if (mDef->NameParam == "glossiness") {
-				  it_subsetinfo->Intensities.y = mDef->CaseFloat[0];
+				  // Legacy: ignored in PBR
 			  }
 
 			  if (mDef->NameParam == "FresnelMult") {
-				  it_subsetinfo->Intensities.z = mDef->CaseFloat[0];
+				  // Legacy: ignored in PBR
 			  }
 		  }
 
@@ -145,6 +150,14 @@ namespace t800 {
               std::cout << "path[" << path << "]" << std::endl;
 #endif
               it_subsetinfo->ParalaxId = LoadTex(path, material, &it_subsetinfo->ParalaxTex);;
+            }
+
+            if (mDef->NameParam == "metallicMap") {
+              std::string path = RemovePath(mDef->CaseString);
+#if DEBUG_MODEL
+              std::cout << "path[" << path << "]" << std::endl;
+#endif
+              it_subsetinfo->MetallicId = LoadTex(path, material, &it_subsetinfo->MetallicTex);
             }
           }
         }
@@ -276,6 +289,10 @@ namespace t800 {
             if (mDef->NameParam == "heightMap") {//
               CurrSig |= Signature::HEIGHT_MAP;
             }
+
+            if (mDef->NameParam == "metallicMap") {
+              CurrSig |= Signature::METALLIC_MAP;
+            }
           }
 
           if (mDef->Type == xF::xEFFECTENUM::STDX_DWORDS) {
@@ -295,17 +312,11 @@ namespace t800 {
 		if (CurrSig&Signature::USE_NO_LIGHT) {
 			stmp.MatID = 0;
 		}
-		else if (!(CurrSig&Signature::NORMAL_MAP) && !(CurrSig&Signature::USE_FRESNEL)) {
+		else if (!(CurrSig&Signature::NORMAL_MAP)) {
 			stmp.MatID = 1;
 		}
-		else if (CurrSig&Signature::NORMAL_MAP && !(CurrSig&Signature::USE_FRESNEL)) {
+		else {
 			stmp.MatID = 2;
-		}
-		else if (CurrSig&Signature::NORMAL_MAP && (CurrSig&Signature::USE_FRESNEL)) {
-			stmp.MatID = 3;
-		}
-		else if (!(CurrSig&Signature::NORMAL_MAP) && (CurrSig&Signature::USE_FRESNEL)) {
-			stmp.MatID = 4;
 		}
 
 		if (CurrSig&Signature::USE_NO_LIGHT)
@@ -404,6 +415,7 @@ namespace t800 {
       it_MeshInfo->CnstBuffer.CameraPos = pActualCamera->Eye;      
       it_MeshInfo->CnstBuffer.CameraInfo = infoCam;
 	  it_MeshInfo->CnstBuffer.ParallaxSettings = XVECTOR3(m_fParallaxLowSamples, m_fParallaxHighSamples, m_fParallaxHeight);
+	  it_MeshInfo->CnstBuffer.ParallaxSettings.w = m_fParallaxEnabled;
 
       unsigned int stride = it_MeshInfo->VertexSize;
       unsigned int offset = 0;
@@ -420,7 +432,7 @@ namespace t800 {
 		it_MeshInfo->CnstBuffer.AmbientColor = sub_info->AmbientColor;
 		it_MeshInfo->CnstBuffer.DiffuseColor = sub_info->DiffuseColor;
 		it_MeshInfo->CnstBuffer.SpecularColor = sub_info->SpecularColor;
-		it_MeshInfo->CnstBuffer.FresnelColor = sub_info->FresnelColor;
+		it_MeshInfo->CnstBuffer.PBRParams = sub_info->PBRParams;
 		it_MeshInfo->CnstBuffer.Intensities = sub_info->Intensities;
 		it_MeshInfo->CnstBuffer.Intensities.w = (float)sub_info->MatID;
 
@@ -458,6 +470,9 @@ namespace t800 {
         }
         if (s->Sig&Signature::HEIGHT_MAP) {
           sub_info->ParalaxTex->Set(*T8DeviceContext, 5, "HeightTex");
+        }
+        if (s->Sig&Signature::METALLIC_MAP) {
+          sub_info->MetallicTex->Set(*T8DeviceContext, 6, "MetallicTex");
         }
         if (s->Sig&Signature::DIFFUSE_MAP) {
           sub_info->DiffuseTex->SetSampler(*T8DeviceContext);

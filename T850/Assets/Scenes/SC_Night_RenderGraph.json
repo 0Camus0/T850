@@ -191,12 +191,12 @@
       ]
     },
     {
-      "name": "Vignette",
+      "name": "BackBuffer",
       "inputs": [
         { "source": "ExtraHelper:COLOR0", "slot": 0 }
       ],
       "draws": [
-        { "type": "final_quad", "signature": "VIGNETTE_PASS" }
+        { "type": "final_quad", "signature": "BACKBUFFER_PASS" }
       ]
     }
   ]

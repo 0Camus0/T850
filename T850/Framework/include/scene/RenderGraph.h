@@ -6,6 +6,7 @@
 #include <string>
 #include <vector>
 #include <unordered_map>
+#include <unordered_set>
 
 class Camera;
 
@@ -76,7 +77,15 @@ namespace t800 {
     // Print the graph structure to stdout (for debugging).
     void PrintGraph() const;
 
+    // Runtime pass enable/disable
+    void DisablePass(const std::string& name) { m_disabledPasses.insert(name); }
+    void EnablePass(const std::string& name)  { m_disabledPasses.erase(name); }
+    void SetPassEnabled(const std::string& name, bool enabled) {
+      if (enabled) EnablePass(name); else DisablePass(name);
+    }
+
   private:
+    std::unordered_set<std::string> m_disabledPasses;
     RenderGraphDesc m_desc;
 
     // Resolved graph

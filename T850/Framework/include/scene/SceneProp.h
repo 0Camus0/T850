@@ -88,7 +88,12 @@ SceneProps() : ActiveCamera(0) , ActiveLights(1), ActiveLightCamera(0), ActiveGa
 
 	int ToogleShadow;
 	int ToogleSSAO;
+	int ToogleDOF = 1;
+	int ToogleParallax = 1;
+	int ToogleGodRays = 1;
 	int DebugMode;
+
+	float ShadowBias = 0.000005f;
 
 	float ShadowMapResolution;
   float  GoodRaysResolution;

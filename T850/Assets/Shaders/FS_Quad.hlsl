@@ -107,11 +107,13 @@ float4 FS( VS_OUTPUT input ) : SV_TARGET {
 	float Shadow = 1.0;
 
 	float4 Albedo = tex0.Sample(SS, input.texture0);
-	float4 SpecularColor = tex2.Sample(SS, input.texture0);
+	float4 PBRData = tex2.Sample(SS, input.texture0);
 
 	Albedo.xyz = pow(Albedo.xyz, float3(2.2, 2.2, 2.2));
 
-	float4 matId = tex3.Sample(SS, input.texture0);
+	float metallic = PBRData.r;
+	float3 F0 = lerp(float3(0.04, 0.04, 0.04), Albedo.xyz, metallic);
+
 	float depth = tex4.Sample(SS, input.texture0).r;
 
 	#ifdef NON_LINEAR_DEPTH
@@ -123,13 +125,13 @@ float4 FS( VS_OUTPUT input ) : SV_TARGET {
 	 
 	float3 EyeDir = normalize(CameraPosition - position).xyz;
 
-	int MatId = (int)(SpecularColor.a * 255.0);
+	int MatId = (int)(PBRData.a * 255.0);
 
 	if(MatId == 0){
 		float3 EyeDir_mod = -EyeDir;
 		EyeDir_mod.x = -EyeDir_mod.x;
 		EyeDir_mod.z = -EyeDir_mod.z;
-		float3 RefCol = texEnv.Sample(SS, EyeDir_mod).zyx;
+		float3 RefCol = texEnv.Sample(SS, EyeDir_mod).xyz;
 		Final.xyz = RefCol.xyz * 2.0;
 	} else if(MatId > 0) {
 		Shadow = tex5.Sample(SS, input.texture0).r;
@@ -157,10 +159,11 @@ float4 FS( VS_OUTPUT input ) : SV_TARGET {
 				float3 Half = normalize(EyeDir + LightDir);
 
 				float3 Diffuse = CalculateDiffuse(Albedo.xyz, normal, LightDir) * LightColors[i].xyz * intensity;
-				float3 SpecularRes = CalculateSpecular(Albedo.xyz, normal, EyeDir, Half, LightDir, rough) * LightColors[i].xyz * intensity;
+				float3 SpecularRes = CalculateSpecular(F0, normal, EyeDir, Half, LightDir, rough) * LightColors[i].xyz * intensity;
 
-				float3 Ks = SpecularRes;
-				float3 Kd = float3(1.0f, 1.0f, 1.0f) - SpecularRes;
+				float VdotH = clamp(dot(EyeDir, Half), 0.0f, 1.0f);
+				float3 F = FresnelCalc(VdotH, F0);
+				float3 Kd = (float3(1.0f, 1.0f, 1.0f) - F) * (1.0f - metallic);
 
 				Final.xyz += SpecularRes.xyz + Kd * Diffuse;
 			} else {
@@ -174,10 +177,11 @@ float4 FS( VS_OUTPUT input ) : SV_TARGET {
 					float3 Half = normalize(EyeDir + LightDir);
 
 					float3 Diffuse = CalculateDiffuse(Albedo.xyz, normal, LightDir) * LightColors[i].xyz * intensity;
-					float3 SpecularRes = CalculateSpecular(Albedo.xyz, normal, EyeDir, Half, LightDir, rough) * LightColors[i].xyz * intensity;
+					float3 SpecularRes = CalculateSpecular(F0, normal, EyeDir, Half, LightDir, rough) * LightColors[i].xyz * intensity;
 
-					float3 Ks = SpecularRes;
-					float3 Kd = float3(1.0f, 1.0f, 1.0f) - SpecularRes;
+					float VdotH = clamp(dot(EyeDir, Half), 0.0f, 1.0f);
+					float3 F = FresnelCalc(VdotH, F0);
+					float3 Kd = (float3(1.0f, 1.0f, 1.0f) - F) * (1.0f - metallic);
 
 					float d = max(dist - Rad, 0.0);
 					float denom = d / Rad + 1.0;
@@ -191,10 +195,11 @@ float4 FS( VS_OUTPUT input ) : SV_TARGET {
 			}
 		}
 
-		float3 kSpecular = clamp(fresnelSchlickRoughness(max(dot(normal, EyeDir), 0.0f), Albedo.xyz, rough), 0.0, 1.0);
-		float3 RefleCol = texEnv.SampleLevel(SS, ReflectedVec, rough * 4.0f).zyx;
+		float3 kSpecular = clamp(fresnelSchlickRoughness(max(dot(normal, EyeDir), 0.0f), F0, rough), 0.0, 1.0);
+		float3 RefleCol = texEnv.SampleLevel(SS, ReflectedVec, rough * 4.0f).xyz;
+		float envAtten = (1.0f - rough) * (1.0f - rough);
 
-		Final.xyz += RefleCol * kSpecular.xyz;
+		Final.xyz += RefleCol * kSpecular.xyz * envAtten;
 
 		Final.xyz *= Shadow;
 	}
@@ -233,7 +238,7 @@ float4 CalculateShadow(float4 position) {
 					Val_1 = 0.0;
 				} else {
 					float depthSM = tex1.Sample(SS1, sampleUV);
-					depthSM += 0.000005;
+					depthSM += toogles.w;
 					Val_1 = (LightPos.z > depthSM) ? 0.0 : 1.0;
 				}
 				Val_1 *= 0.75;
@@ -532,17 +537,10 @@ color.a = 1.0;
 return color;
 }
 
-#elif defined(VIGNETTE_PASS)
+#elif defined(BACKBUFFER_PASS)
 Texture2D tex0 : register(t0);
 float4 FS(VS_OUTPUT input) : SV_TARGET{
-  float Falloff = 0.45;
-  float4 color;
-  color.x =  tex0.Sample(SS, input.texture0.xy + 0.0019).r;
-  color.y = tex0.Sample(SS, input.texture0.xy).g;
-  color.z = tex0.Sample(SS, input.texture0.xy  - 0.0019).b;
-  float2 uv = input.texture0.xy;
-  float e = 1-max((distance(uv, float2(0.5, 0.5)) - Falloff) * 1.25, 0.0);;
-  return float4(color.rgb * e , 1.0);
+  return tex0.Sample(SS, input.texture0.xy);
 }
 
 #elif defined(GOD_RAY_CALCULATION_PASS)
@@ -847,6 +845,7 @@ float ComputeScattering(float lightDotView)
 Texture2D tex0 : register(t0);
 Texture2D tex1 : register(t1);
 float4 FS(VS_OUTPUT input) : SV_TARGET{
+  if (toogles.w == 0.0) return float4(0,0,0,1);
   float depth = tex0.Sample(SS, input.texture0);
 #ifdef NON_LINEAR_DEPTH
 float4 position = mul(WVPInverse,float4(input.PosCorner.xy ,depth,1.0));

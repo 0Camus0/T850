@@ -3,18 +3,18 @@
    "cameras": [
       {
          "position": [
-            -48.41179,
-            16.226902,
-            4.558856
+            -56.867134,
+            30,
+            -8.630686
          ],
          "eye": [
             0,
             9.75,
             -31
          ],
-         "pitch": -0.054999996,
+         "pitch": 0.6600028,
          "roll": 0,
-         "yaw": 1.4449948,
+         "yaw": 4.9750566,
          "speed": 10,
          "fov": 1.0471976,
          "aspect": 1.7778,
@@ -38,9 +38,9 @@
             100,
             0
          ],
-         "pitch": 1.12,
+         "pitch": 1.3299998,
          "roll": 0,
-         "yaw": -1.2317667,
+         "yaw": -6.9872084,
          "speed": 10,
          "fov": 0.7853982,
          "aspect": 1,
@@ -61,9 +61,9 @@
             0
          ],
          "direction": [
-            -0.19518003,
-            -0.9759001,
-            0.097590014
+            -0.15435286,
+            -0.9711483,
+            0.18178591
          ],
          "color": [
             1,
@@ -71,7 +71,7 @@
             0.92
          ],
          "radius": 0,
-         "intensity": 1,
+         "intensity": 2,
          "enabled": true
       },
       {
@@ -161,14 +161,14 @@
    ],
    "gauss_filters": [
       {
-         "kernel_size": 3,
+         "kernel_size": 5,
          "radius": 1,
-         "sigma": 1.5
+         "sigma": 3
       },
       {
-         "kernel_size": 11,
-         "radius": 1,
-         "sigma": 4
+         "kernel_size": 9,
+         "radius": 1.5,
+         "sigma": 5
       },
       {
          "kernel_size": 5,
@@ -397,7 +397,7 @@
    "meshes": [
       "Models/SponzaEsc.X"
    ],
-   "environment_map": "CubeMap_Mountains.dds",
+   "environment_map": "sky/CubeMap_Mountains.dds",
    "quality": {
       "shadow_map_resolution": 2048,
       "god_rays_resolution": 0,
@@ -407,17 +407,17 @@
       "parallax_high_samples": 30,
       "parallax_height": 0.02,
       "light_volume_steps": 256,
-      "ssao_kernel_size": 12,
-      "ssao_radius": 1.6,
+      "ssao_kernel_size": 20,
+      "ssao_radius": 1.1,
       "dof_near_samples": 2,
       "dof_far_samples": 5
    },
    "settings": {
-      "exposure": 1.9000006,
+      "exposure": 1.1000004,
       "bloom_factor": 1,
-      "bloom_threshold": 2.5,
-      "tone_map_white_level": 4,
-      "luminance_tau": 1.15,
+      "bloom_threshold": 1.5,
+      "tone_map_white_level": 5.5,
+      "luminance_tau": 0.65000004,
       "aperture": 70,
       "focal_length": 1,
       "max_coc": 0.6,
@@ -429,8 +429,12 @@
       "active_lights": 1,
       "shadow_enabled": true,
       "ssao_enabled": true,
+      "dof_enabled": true,
+      "parallax_enabled": true,
+      "godrays_enabled": true,
       "auto_focus": true,
-      "debug_mode": 0
+      "debug_mode": 0,
+      "shadow_bias": 0.000005
    },
    "sliders": [
       {
@@ -608,6 +612,14 @@
          "max_val": 20,
          "step": 0.1,
          "default_val": 5
+      },
+      {
+         "name": "shadow_bias",
+         "label": "Shadow Bias",
+         "min_val": 0,
+         "max_val": 0.001,
+         "step": 0.000001,
+         "default_val": 0.000005
       }
    ],
    "checkboxes": [
@@ -635,6 +647,21 @@
          "name": "show_lights",
          "label": "Show Lights",
          "default_val": false
+      },
+      {
+         "name": "dof_toggle",
+         "label": "DOF",
+         "default_val": true
+      },
+      {
+         "name": "parallax_toggle",
+         "label": "Parallax",
+         "default_val": true
+      },
+      {
+         "name": "godrays_toggle",
+         "label": "God Rays",
+         "default_val": true
       }
    ],
    "selectors": [
@@ -714,6 +741,24 @@
             "Light"
          ],
          "default_index": 0
+      },
+      {
+         "name": "cubemap",
+         "label": "Cubemap",
+         "options": [
+            "Pisa.dds",
+            "Ennis.dds",
+            "Glacier.dds",
+            "GraceCathedral.dds",
+            "Uffizi.dds",
+            "Doge.dds",
+            "CubeMap_Granja_DXT1.dds",
+            "CubeMap_Granja_RAW.dds",
+            "CubeMap_Mountains.dds",
+            "CubeMap_SkyDawn.dds",
+            "CubeMap_SkyWater.dds"
+         ],
+         "default_index": 8
       }
    ]
 }

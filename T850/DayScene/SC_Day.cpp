@@ -98,7 +98,7 @@ void SC_Day::CreateAssets() {
 
   SceneProp.SSAOKernel.InitTexture();
 
-  EnvMapTexIndex = g_pBaseDriver->CreateTexture(string("CubeMap_Mountains.dds"));
+  EnvMapTexIndex = g_pBaseDriver->CreateTexture(m_sceneSetup.environmentMap);
 
   int index = PrimitiveMgr.CreateMesh("Models/SkyBox.X");
   Meshes[1].CreateInstance(PrimitiveMgr.GetPrimitive(index), &VP);
@@ -169,6 +169,28 @@ void SC_Day::CreateAssets() {
   Quads[7].ScaleAbsolute(1.0f);
   Quads[7].TranslateAbsolute(0.0f, 0.0f, 0.1f);
   Quads[7].Update();
+
+  // Apply persisted toggle states that need post-asset setup
+  bool dofOn = (SceneProp.ToogleDOF != 0);
+  m_renderGraph.SetPassEnabled("CoC", dofOn);
+  m_renderGraph.SetPassEnabled("Combine CoC", dofOn);
+  m_renderGraph.SetPassEnabled("DOF", dofOn);
+  m_renderGraph.SetPassEnabled("DOF 2", dofOn);
+  Meshes[0].SetParallaxEnabled(SceneProp.ToogleParallax != 0);
+
+  // Sync cubemap index to match loaded environment_map
+  auto& selDescs = m_sceneSetup.descriptor.selectors;
+  for (auto& sd : selDescs) {
+    if (sd.name == "cubemap") {
+      std::string envFile = m_sceneSetup.environmentMap;
+      size_t slashPos = envFile.rfind('/');
+      if (slashPos != std::string::npos) envFile = envFile.substr(slashPos + 1);
+      for (int i = 0; i < (int)sd.options.size(); i++) {
+        if (sd.options[i] == envFile) { m_currentCubemapIndex = i; break; }
+      }
+      break;
+    }
+  }
 }
 
 void SC_Day::OnLoadScene() {
@@ -195,7 +217,9 @@ void SC_Day::OnUpdate(float _DtSecs) {
 
   static float totalTime = 0.0f;
   static int frameCounter = 0;
-  totalTime += _DtSecs;
+  // Only advance scene timer when spline camera is driving the tour
+  if (ActiveCam->m_externalControl)
+    totalTime += _DtSecs;
   frameCounter++;
   DtSecs = _DtSecs;
   SceneProp.FrameDeltaSec = DtSecs;
@@ -216,6 +240,7 @@ void SC_Day::OnUpdate(float _DtSecs) {
     ActiveCam->Update(DtSecs);
     VP = ActiveCam->VP;
     SceneProp.Lights[0].Position = LightCam.Eye;
+    SceneProp.Lights[0].Direction = LightCam.Look;
     SceneProp.pLightCameras[0]->Yaw -= 0.008f *DtSecs;
     SceneProp.pLightCameras[0]->Update(DtSecs);
   }
@@ -454,6 +479,8 @@ void SC_Day::OnDraw() {
     std::vector<RTDumpEntry> rts = {
       {GBufferPass,     BaseDriver::COLOR0_ATTACHMENT, "GBuffer_Color0"},
       {GBufferPass,     BaseDriver::COLOR1_ATTACHMENT, "GBuffer_Normals"},
+      {GBufferPass,     BaseDriver::COLOR2_ATTACHMENT, "GBuffer_Color2"},
+      {GBufferPass,     BaseDriver::COLOR3_ATTACHMENT, "GBuffer_Color3"},
       {GBufferPass,     BaseDriver::COLOR4_ATTACHMENT, "GBuffer_Depth"},
       {DepthPass,       BaseDriver::DEPTH_ATTACHMENT,  "ShadowMap_Depth"},
       {ShadowAccumPass, BaseDriver::COLOR0_ATTACHMENT, "ShadowAccum"},
@@ -1046,6 +1073,7 @@ void SC_Day::PopulateGUI(t800::GUIManager& gui) {
     {"gauss_kernel_deviation", CHANGE_GAUSS_KERNEL_DEVIATION},
     {"fov",                    CHANGE_FOV},
     {"light_intensity",        CHANGE_LIGHT_INTENSITY},
+    {"shadow_bias",             CHANGE_SHADOW_BIAS},
   };
 
   auto& sliderDescs = m_sceneSetup.descriptor.sliders;
@@ -1071,6 +1099,9 @@ void SC_Day::PopulateGUI(t800::GUIManager& gui) {
     {"dof_auto_focus",  CHANGE_DOF_AUTO_FOCUS},
     {"show_spline",    CHANGE_SHOW_SPLINE},
     {"show_lights",    CHANGE_SHOW_LIGHTS},
+    {"dof_toggle",     CHANGE_DOF_TOGGLE},
+    {"parallax_toggle", CHANGE_PARALLAX_TOGGLE},
+    {"godrays_toggle", CHANGE_GODRAYS_TOGGLE},
   };
 
   auto& cbDescs = m_sceneSetup.descriptor.checkboxes;
@@ -1096,6 +1127,7 @@ void SC_Day::PopulateGUI(t800::GUIManager& gui) {
     {"gauss_kernel_sample_count", CHANGE_GAUSS_KERNEL_SAMPLE_COUNT},
     {"debug_render_target",       CHANGE_DEBUG_RT},
     {"active_camera",               CHANGE_ACTIVE_CAMERA},
+    {"cubemap",                     CHANGE_CUBEMAP},
   };
 
   auto& selDescs = m_sceneSetup.descriptor.selectors;
@@ -1137,6 +1169,7 @@ void SC_Day::SyncToGUI(t800::GUIManager& gui) {
     case CHANGE_GAUSS_KERNEL_DEVIATION: slider->SetValue(SceneProp.pGaussKernels[ChangeActiveGaussSelection]->sigma); break;
     case CHANGE_FOV:                slider->SetValue(Rad2Deg(ActiveCam->Fov)); break;
     case CHANGE_LIGHT_INTENSITY:    if (!SceneProp.Lights.empty()) slider->SetValue(SceneProp.Lights[0].Intensity); break;
+    case CHANGE_SHADOW_BIAS:        slider->SetValue(SceneProp.ShadowBias); break;
     }
   }
   for (auto& cp : gui.GetCheckboxPairs()) {
@@ -1147,6 +1180,9 @@ void SC_Day::SyncToGUI(t800::GUIManager& gui) {
     case CHANGE_DOF_AUTO_FOCUS: cb->checked = SceneProp.AutoFocus; break;
     case CHANGE_SHOW_SPLINE:    cb->checked = m_showSpline; break;
     case CHANGE_SHOW_LIGHTS:    cb->checked = m_showLights; break;
+    case CHANGE_DOF_TOGGLE:     cb->checked = (SceneProp.ToogleDOF != 0); break;
+    case CHANGE_PARALLAX_TOGGLE: cb->checked = (SceneProp.ToogleParallax != 0); break;
+    case CHANGE_GODRAYS_TOGGLE: cb->checked = (SceneProp.ToogleGodRays != 0); break;
     }
   }
   for (auto& sp : gui.GetSelectorPairs()) {
@@ -1163,6 +1199,7 @@ void SC_Day::SyncToGUI(t800::GUIManager& gui) {
     } break;
     case CHANGE_DEBUG_RT: sel->selectedIndex = m_debugRTSelection; break;
     case CHANGE_ACTIVE_CAMERA: sel->selectedIndex = m_activeCameraIndex; break;
+    case CHANGE_CUBEMAP: sel->selectedIndex = m_currentCubemapIndex; break;
     }
   }
 }
@@ -1204,6 +1241,9 @@ void SC_Day::SyncFromGUI(t800::GUIManager& gui) {
     case CHANGE_LIGHT_INTENSITY:
       if (!SceneProp.Lights.empty()) SceneProp.Lights[0].Intensity = slider->value;
       break;
+    case CHANGE_SHADOW_BIAS:
+      SceneProp.ShadowBias = slider->value;
+      break;
     }
   }
   for (auto& cp : gui.GetCheckboxPairs()) {
@@ -1215,6 +1255,20 @@ void SC_Day::SyncFromGUI(t800::GUIManager& gui) {
     case CHANGE_DOF_AUTO_FOCUS: SceneProp.AutoFocus = cb->checked; break;
     case CHANGE_SHOW_SPLINE:    m_showSpline = cb->checked; break;
     case CHANGE_SHOW_LIGHTS:    m_showLights = cb->checked; break;
+    case CHANGE_DOF_TOGGLE:
+      SceneProp.ToogleDOF = cb->checked ? 1 : 0;
+      m_renderGraph.SetPassEnabled("CoC", cb->checked);
+      m_renderGraph.SetPassEnabled("Combine CoC", cb->checked);
+      m_renderGraph.SetPassEnabled("DOF", cb->checked);
+      m_renderGraph.SetPassEnabled("DOF 2", cb->checked);
+      break;
+    case CHANGE_PARALLAX_TOGGLE:
+      SceneProp.ToogleParallax = cb->checked ? 1 : 0;
+      Meshes[0].SetParallaxEnabled(cb->checked);
+      break;
+    case CHANGE_GODRAYS_TOGGLE:
+      SceneProp.ToogleGodRays = cb->checked ? 1 : 0;
+      break;
     }
   }
   for (auto& sp : gui.GetSelectorPairs()) {
@@ -1257,10 +1311,44 @@ void SC_Day::SyncFromGUI(t800::GUIManager& gui) {
       }
       SceneProp.pCameras[0] = ActiveCam;
     } break;
+    case CHANGE_CUBEMAP: {
+      if (sel->selectedIndex != m_currentCubemapIndex) {
+        m_currentCubemapIndex = sel->selectedIndex;
+        // Unload current cubemap
+        g_pBaseDriver->DestroyTexture(EnvMapTexIndex);
+        // Load new cubemap
+        std::string newPath = "sky/" + sel->CurrentOption();
+        EnvMapTexIndex = g_pBaseDriver->CreateTexture(newPath);
+        Quads[0].SetEnvironmentMap(g_pBaseDriver->GetTexture(EnvMapTexIndex));
+      }
+    } break;
     }
   }
 }
 
 void SC_Day::SaveSceneState() {
+  // Sync cubemap path back to descriptor before saving
+  auto& selDescs = m_sceneSetup.descriptor.selectors;
+  for (auto& sd : selDescs) {
+    if (sd.name == "cubemap" && m_currentCubemapIndex < (int)sd.options.size()) {
+      m_sceneSetup.descriptor.environment_map = "sky/" + sd.options[m_currentCubemapIndex];
+      m_sceneSetup.environmentMap = m_sceneSetup.descriptor.environment_map;
+      sd.default_index = m_currentCubemapIndex;
+    }
+  }
+
+  // Sync GUI element defaults to match current runtime state
+  for (auto& sd : m_sceneSetup.descriptor.sliders) {
+    if (sd.name == "shadow_bias") sd.default_val = SceneProp.ShadowBias;
+  }
+  for (auto& cd : m_sceneSetup.descriptor.checkboxes) {
+    if (cd.name == "dof_toggle")       cd.default_val = (SceneProp.ToogleDOF != 0);
+    else if (cd.name == "parallax_toggle")  cd.default_val = (SceneProp.ToogleParallax != 0);
+    else if (cd.name == "godrays_toggle")   cd.default_val = (SceneProp.ToogleGodRays != 0);
+    else if (cd.name == "shadow_toggle")    cd.default_val = (SceneProp.ToogleShadow != 0);
+    else if (cd.name == "ssao_toggle")      cd.default_val = (SceneProp.ToogleSSAO != 0);
+    else if (cd.name == "dof_auto_focus")   cd.default_val = SceneProp.AutoFocus;
+  }
+
   m_sceneSetup.SaveState(this, "Scenes/SC_Day.json");
 }

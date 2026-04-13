@@ -139,8 +139,12 @@ void SceneSetup::Apply(SceneProps& props) {
   props.ActiveLights = s.active_lights;
   props.ToogleShadow = s.shadow_enabled;
   props.ToogleSSAO = s.ssao_enabled;
+  props.ToogleDOF = s.dof_enabled;
+  props.ToogleParallax = s.parallax_enabled;
+  props.ToogleGodRays = s.godrays_enabled;
   props.DebugMode = s.debug_mode;
   props.AutoFocus = s.auto_focus;
+  props.ShadowBias = s.shadow_bias;
   props.ActiveGaussKernel = 0;
 }
 
@@ -257,8 +261,12 @@ void SceneSetup::SaveState(SceneBase* scene, const std::string& jsonPath) {
   s.active_lights = props.ActiveLights;
   s.shadow_enabled = (props.ToogleShadow != 0);
   s.ssao_enabled = (props.ToogleSSAO != 0);
+  s.dof_enabled = (props.ToogleDOF != 0);
+  s.parallax_enabled = (props.ToogleParallax != 0);
+  s.godrays_enabled = (props.ToogleGodRays != 0);
   s.auto_focus = props.AutoFocus;
   s.debug_mode = props.DebugMode;
+  s.shadow_bias = props.ShadowBias;
 
   SaveSceneDescriptor(jsonPath, desc);
 }

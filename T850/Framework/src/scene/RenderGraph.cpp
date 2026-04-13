@@ -92,7 +92,7 @@ static const std::unordered_map<std::string, unsigned long long> s_signatureMap 
   {"COMBINE_COC_PASS",      Signature::COMBINE_COC_PASS},
   {"DOF_PASS",              Signature::DOF_PASS},
   {"DOF_PASS_2",            Signature::DOF_PASS_2},
-  {"VIGNETTE_PASS",         Signature::VIGNETTE_PASS},
+  {"BACKBUFFER_PASS",        Signature::BACKBUFFER_PASS},
   {"RAY_MARCH",             Signature::RAY_MARCH},
   {"RADIAL_DEPTH_PASS",     Signature::RADIAL_DEPTH_PASS},
   {"LIGHT_RAY_MARCHING",    Signature::LIGHT_RAY_MARCHING},
@@ -363,6 +363,7 @@ void RenderGraph::Execute(
   int envMapTexIndex)
 {
   for (const auto& node : m_nodes) {
+    if (m_disabledPasses.count(node.desc->name)) continue;
     ExecutePass(node, driver, props, meshes, meshCount, quads,
                 mainCam, lightCam, omniCams, envMapTexIndex);
   }

@@ -241,7 +241,7 @@ void SC_Tech::CreateAssets() {
 
   SceneProp.SSAOKernel.InitTexture();
 
-  EnvMapTexIndex = g_pBaseDriver->CreateTexture(string("CubeMap_Mountains.dds"));
+  EnvMapTexIndex = g_pBaseDriver->CreateTexture(string("sky/Pisa.dds"));
 
   int index = PrimitiveMgr.CreateMesh("Models/SkyBox.X");
   Meshes[1].CreateInstance(PrimitiveMgr.GetPrimitive(index), &VP);

@@ -141,6 +141,8 @@ jobs:
             Copy-Item "$assets/Fonts"      -Destination "$staging/Fonts"      -Recurse
             Copy-Item "$assets/Textures"   -Destination "$staging/Textures"   -Recurse
             Copy-Item "$assets/Techniques" -Destination "$staging/Techniques" -Recurse
+            Copy-Item "$assets/Scenes"     -Destination "$staging/Scenes"     -Recurse
+            Copy-Item "$assets/Layouts"    -Destination "$staging/Layouts"    -Recurse
 
             # Create zip
             Compress-Archive -Path "$staging/*" -DestinationPath "$name.zip"

@@ -93,6 +93,7 @@ namespace t800 {
 
   void GLTexture::LoadAPITexture(DeviceContext* context, unsigned char* buffer) {
     unsigned int glFormat = 0;
+    unsigned int glInternalFormat = 0;
     unsigned int glChannel = GL_UNSIGNED_BYTE;
 
     if (cil_props & CIL_CUBE_MAP)
@@ -100,12 +101,20 @@ namespace t800 {
     else
       glTarget = GL_TEXTURE_2D;
 
-    if (this->props&TEXT_BASIC_FORMAT::CH_ALPHA)
-      glFormat = GL_ALPHA;
-    else if (this->props&TEXT_BASIC_FORMAT::CH_RGB)
-      glFormat = GL_RGB;
-    else if (this->props&TEXT_BASIC_FORMAT::CH_RGBA)
+    if (cil_props & CIL_HALF_FLOAT) {
       glFormat = GL_RGBA;
+      glInternalFormat = GL_RGBA16F;
+      glChannel = GL_HALF_FLOAT;
+    } else if (this->props&TEXT_BASIC_FORMAT::CH_ALPHA) {
+      glFormat = GL_ALPHA;
+      glInternalFormat = GL_ALPHA;
+    } else if (this->props&TEXT_BASIC_FORMAT::CH_RGB) {
+      glFormat = GL_RGB;
+      glInternalFormat = GL_RGB;
+    } else if (this->props&TEXT_BASIC_FORMAT::CH_RGBA) {
+      glFormat = GL_RGBA;
+      glInternalFormat = GL_RGBA;
+    }
 
     glGenTextures(1, &id);
     glBindTexture(glTarget, id);
@@ -119,13 +128,13 @@ namespace t800 {
       int bufferSize = this->size / 6;
       unsigned char *pHead = buffer;
       for (int i = 0; i < 6; i++) {
-        glTexImage2D(GL_TEXTURE_CUBE_MAP_POSITIVE_X + i, 0, glFormat, this->x, this->y, 0, glFormat, glChannel, (void*)(pHead));
+        glTexImage2D(GL_TEXTURE_CUBE_MAP_POSITIVE_X + i, 0, glInternalFormat, this->x, this->y, 0, glFormat, glChannel, (void*)(pHead));
         if (buffer)
           pHead += bufferSize;
       }
     }
     else {
-      glTexImage2D(glTarget, 0, glFormat, this->x, this->y, 0, glFormat, glChannel, (void*)(buffer));
+      glTexImage2D(glTarget, 0, glInternalFormat, this->x, this->y, 0, glFormat, glChannel, (void*)(buffer));
     }
 
     glGenerateMipmap(glTarget);
@@ -134,7 +143,51 @@ namespace t800 {
   }
 
   void GLTexture::LoadAPITextureCompressed(unsigned char* buffer) {
+    unsigned int glFormat = CIL_COMPRESSED_RGBA_S3TC_DXT1_EXT;
+    int blockSize = 8;
+    if (cil_props & CIL_DXT3) {
+      glFormat = CIL_COMPRESSED_RGBA_S3TC_DXT3_EXT;
+      blockSize = 16;
+    } else if (cil_props & CIL_DXT5) {
+      glFormat = CIL_COMPRESSED_RGBA_S3TC_DXT5_EXT;
+      blockSize = 16;
+    }
 
+    int numFaces = (cil_props & CIL_CUBE_MAP) ? 6 : 1;
+    int mipCount = (mipmaps > 0) ? mipmaps : 1;
+
+    if (cil_props & CIL_CUBE_MAP)
+      glTarget = GL_TEXTURE_CUBE_MAP;
+    else
+      glTarget = GL_TEXTURE_2D;
+
+    glGenTextures(1, &id);
+    glBindTexture(glTarget, id);
+
+    unsigned char* pData = buffer;
+
+    for (int face = 0; face < numFaces; face++) {
+      unsigned int target = (cil_props & CIL_CUBE_MAP)
+        ? (GL_TEXTURE_CUBE_MAP_POSITIVE_X + face)
+        : GL_TEXTURE_2D;
+      int w = this->x;
+      int h = this->y;
+      for (int mip = 0; mip < mipCount; mip++) {
+        int wBlocks = (w + 3) / 4;
+        int hBlocks = (h + 3) / 4;
+        if (wBlocks < 1) wBlocks = 1;
+        if (hBlocks < 1) hBlocks = 1;
+        int mipSize = wBlocks * hBlocks * blockSize;
+
+        glCompressedTexImage2D(target, mip, glFormat, w, h, 0, mipSize, pData);
+
+        pData += mipSize;
+        w >>= 1; if (w < 1) w = 1;
+        h >>= 1; if (h < 1) h = 1;
+      }
+    }
+
+    SetTextureParams();
   }
 
   void GLTexture::DestroyAPITexture() {

@@ -68,7 +68,11 @@ namespace t800 {
     memcpy(&optname[0], fn, strlen(fn));
     optname[strlen(fn)] = '\0';
 
-    LoadAPITexture(T8DeviceContext, buffer);
+    if (cil_props & CIL_COMPRESSED) {
+      LoadAPITextureCompressed(buffer);
+    } else {
+      LoadAPITexture(T8DeviceContext, buffer);
+    }
     if (found) {
       cil_free_buffer(buffer);
     }
@@ -199,6 +203,8 @@ namespace t800 {
         Defines += "#define REFLECT_MAP\n\n";
       if (sig&Signature::HEIGHT_MAP)
         Defines += "#define HEIGHT_MAP\n\n";
+      if (sig&Signature::METALLIC_MAP)
+        Defines += "#define METALLIC_MAP\n\n";
       if (sig&Signature::USE_NO_LIGHT)
         Defines += "#define NO_LIGHT\n\n";
       if (sig&Signature::GBUFF_PASS)
@@ -239,8 +245,8 @@ namespace t800 {
         Defines += "#define DOF_PASS\n\n";
       if (sig&Signature::DOF_PASS_2)
         Defines += "#define DOF_PASS_2\n\n";
-      if (sig&Signature::VIGNETTE_PASS)
-        Defines += "#define VIGNETTE_PASS\n\n";
+      if (sig&Signature::BACKBUFFER_PASS)
+        Defines += "#define BACKBUFFER_PASS\n\n";
       if (sig&Signature::GOD_RAY_CALCULATION_PASS)
         Defines += "#define GOD_RAY_CALCULATION_PASS\n\n";
       if (sig&Signature::GOD_RAY_BLEND_PASS)
@@ -421,13 +427,22 @@ namespace t800 {
   }
   int BaseDriver::CreateTexture(std::string path)
   {
+    int firstFreeSlot = -1;
     for (unsigned int i = 0; i < Textures.size(); i++) {
+      if (Textures[i] == nullptr) {
+        if (firstFreeSlot < 0) firstFreeSlot = i;
+        continue;
+      }
       if (Textures[i]->filepath == "Textures/" + path) {
         return i;
       }
     }
     Texture *pTex = T8Device->CreateTexture(path);
-     Textures.push_back(pTex);
+    if (firstFreeSlot >= 0) {
+      Textures[firstFreeSlot] = pTex;
+      return firstFreeSlot;
+    }
+    Textures.push_back(pTex);
     return static_cast<int>(Textures.size() - 1);
   }
   int BaseDriver::CreateCubeMap(const unsigned char * buff, int w, int h)

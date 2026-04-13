@@ -254,10 +254,10 @@ namespace t800 {
     deviceContext->RSSetViewports(1, &viewport_RT);
 
     float rgba[4];
-    rgba[0] = 1.0f;
-    rgba[1] = 1.0f;
-    rgba[2] = 1.0f;
-    rgba[3] = 1.0f;
+    rgba[0] = 0.0f;
+    rgba[1] = 0.0f;
+    rgba[2] = 0.0f;
+    rgba[3] = 0.0f;
 
     for (int i = 0; i < number_RT; i++) {
       deviceContext->ClearRenderTargetView(vD3D11RenderTargetView[i].Get(), rgba);

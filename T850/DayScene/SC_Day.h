@@ -66,6 +66,11 @@ class SC_Day : public t800::SceneBase
     CHANGE_SHOW_SPLINE,
     CHANGE_SHOW_LIGHTS,
     CHANGE_LIGHT_INTENSITY,
+    CHANGE_DOF_TOGGLE,
+    CHANGE_PARALLAX_TOGGLE,
+    CHANGE_GODRAYS_TOGGLE,
+    CHANGE_SHADOW_BIAS,
+    CHANGE_CUBEMAP,
     CHANGE_MAX_NUM_OPTIONS
   };
   public:
@@ -157,6 +162,8 @@ class SC_Day : public t800::SceneBase
   bool      m_showSpline = false;
   bool      m_showLights = false;
   int       m_activeCameraIndex = 0;
+  std::vector<std::string> m_cubemapNames;
+  int       m_currentCubemapIndex = 0;
 
   t800::SplineWireframe* splineWire;
   t800::PrimitiveInst splineInst;

@@ -89,8 +89,12 @@ namespace t800 {
     int active_lights = 5;
     bool shadow_enabled = true;
     bool ssao_enabled = true;
+    bool dof_enabled = true;
+    bool parallax_enabled = true;
+    bool godrays_enabled = true;
     bool auto_focus = true;
     int debug_mode = 0;
+    float shadow_bias = 0.000005f;
   };
 
   struct SliderDesc {

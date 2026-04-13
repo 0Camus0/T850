@@ -59,6 +59,9 @@ namespace t800 {
 		m_fParallaxHighSamples = hsamples;
 		m_fParallaxHeight = height;
 	}
+	void SetParallaxEnabled(bool enabled) {
+		m_fParallaxEnabled = enabled ? 1.0f : 0.0f;
+	}
     Texture*				 Textures[8];
     Texture*			     EnvMap;
     unsigned long long gSig;
@@ -66,6 +69,7 @@ namespace t800 {
 	float m_fParallaxLowSamples;
 	float m_fParallaxHighSamples;
 	float m_fParallaxHeight;
+	float m_fParallaxEnabled = 1.0f;
   };
 }
 

@@ -1,6 +1,6 @@
 ﻿{
     "keepRunning":  false,
-    "api":  "gl",
+    "api":  "d3d11",
     "architecture":  "x64",
     "display":  {
                     "scene":  0,
@@ -9,7 +9,7 @@
                     "fullscreen":  false
                 },
     "replaySnapshot":  {
-                           "path":  "D:\\Code\\Game\\T850\\T850\\bin\\x64\\Release\\dumps_gl_f4715_20260410_234726\\snapshot.json",
+                           "path":  "D:\\Code\\Game\\T850\\T850\\bin\\x64\\Release\\dumps_gl_f6460_20260413_093840\\snapshot.json",
                            "enabled":  false
                        },
     "configuration":  "Release",

@@ -103,7 +103,7 @@
     "Models/SkyBox.X",
     "Models/NuCroc.X"
   ],
-  "environment_map": "CubeMap_Mountains.dds",
+  "environment_map": "sky/Pisa.dds",
   "quality": {
     "shadow_map_resolution": 2048.0,
     "god_rays_resolution": 0.0,

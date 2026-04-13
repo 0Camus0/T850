@@ -99,7 +99,7 @@ namespace t800 {
     g_pBaseDriver->CreateShader(vstr, fstr, Dest);
 
 
-    Dest = SigBase | Signature::VIGNETTE_PASS;
+    Dest = SigBase | Signature::BACKBUFFER_PASS;
     g_pBaseDriver->CreateShader(vstr, fstr, Dest);
 
     Dest = SigBase | Signature::GOD_RAY_CALCULATION_PASS;
@@ -217,6 +217,7 @@ namespace t800 {
 		CnstBuffer.toogles.x = (float)pScProp->ToogleShadow;
 		CnstBuffer.toogles.y = (float)pScProp->ToogleSSAO;
 		CnstBuffer.toogles.z = (float)pScProp->DebugMode;
+		CnstBuffer.toogles.w = pScProp->ShadowBias;
 		for (unsigned int i = 1; i < pScProp->SSAOKernel.vSSAOKernel.size(); i++) {
 			CnstBuffer.LightPositions[i] = pScProp->SSAOKernel.vSSAOKernel[i-1];
 		}
@@ -289,6 +290,7 @@ namespace t800 {
 	else if (sig&Signature::LIGHT_RAY_MARCHING) {
 	  CnstBuffer.LightPositions[0].y = pScProp->LightVolumeSteps;
 	  CnstBuffer.toogles.z = (float)pScProp->DebugMode;
+	  CnstBuffer.toogles.w = (float)pScProp->ToogleGodRays;
 	}
 
     m_quad.Set();

@@ -134,21 +134,21 @@ void main(){
 
 	#ifdef ES_30
 		highp vec4 Albedo  =  texture(tex0,coords, 0.0f);
-		highp vec4 SpecularColor = texture(tex2, coords);
+		highp vec4 PBRData = texture(tex2, coords);
 
 		Albedo.xyz = pow(Albedo.xyz, ToLineal.xyz);
-		//SpecularColor.xyz = pow(SpecularColor.xyz, ToLineal.xyz);
 
-		lowp vec4 matId  =	texture(tex3,coords);
+		highp float metallic = PBRData.r;
+		highp vec3 F0 = mix(vec3(0.04, 0.04, 0.04), Albedo.xyz, metallic);
+
 		highp float depth = texture(tex4,coords).r;
 	#else
 		highp vec4 Albedo  =  texture2D(tex0,coords);
-		highp vec4 SpecularColor = texture2D(tex2, coords);
+		highp vec4 PBRData = texture2D(tex2, coords);
 
-		//Albedo.xyz = pow(Albedo, ToLineal.xyz);
-		//SpecularColor.xyz = pow(SpecularColor, ToLineal.xyz);
+		highp float metallic = PBRData.r;
+		highp vec3 F0 = mix(vec3(0.04, 0.04, 0.04), Albedo.xyz, metallic);
 
-		lowp vec4 matId  =	texture2D(tex3,coords);
 		highp float depth = texture2D(tex4,coords).r;
 	#endif
 
@@ -163,16 +163,16 @@ void main(){
 
 	highp vec3 EyeDir = normalize(CameraPosition-position).xyz;
 
-	int MatId = int(SpecularColor.a*255.0);
+	int MatId = int(PBRData.a*255.0);
 	
 	if(MatId == 0){
 		highp vec3 EyeDir_mod = -EyeDir;
 		EyeDir_mod.x =  -EyeDir_mod.x;
 		EyeDir_mod.z =  -EyeDir_mod.z;
 		#ifdef ES_30
-			mediump vec3 RefCol = texture( texEnv, EyeDir_mod ).zyx;
+			mediump vec3 RefCol = texture( texEnv, EyeDir_mod ).xyz;
 		#else
-			mediump vec3 RefCol = textureCube( texEnv, EyeDir_mod ).zyx;
+			mediump vec3 RefCol = textureCube( texEnv, EyeDir_mod ).xyz;
 		#endif
 			
 		Final.xyz = RefCol.xyz*2.0;
@@ -205,15 +205,15 @@ void main(){
 		highp vec3 R = refract(-EyeDir,normal.xyz,ratio);
 		
 		#ifdef ES_30
-			 /*texture( texEnv, ReflectedVec ).zyx*/
+			 /*texture( texEnv, ReflectedVec ).xyz*/
 		#else
-			mediump vec3 RefleCol = textureCube( texEnv, ReflectedVec ).zyx;
+			mediump vec3 RefleCol = textureCube( texEnv, ReflectedVec ).xyz;
 		#endif		
 		
 		#ifdef ES_30
-			mediump vec3 RefraCol = vec3(1.0,1.0,1.0) /*texture( texEnv, R ).zyx*/;
+			mediump vec3 RefraCol = vec3(1.0,1.0,1.0) /*texture( texEnv, R ).xyz*/;
 		#else
-			mediump vec3 RefraCol = vec3(1.0,1.0,1.0) /*textureCube( texEnv, R ).zyx*/;
+			mediump vec3 RefraCol = vec3(1.0,1.0,1.0) /*textureCube( texEnv, R ).xyz*/;
 		#endif	
 
 		highp float rough = normalmap.a;
@@ -229,10 +229,11 @@ void main(){
 					highp vec3 Half = normalize(EyeDir + LightDir);
 
 					highp vec3 Diffuse = CalculateDiffuse(Albedo.xyz, normal, LightDir)*LightColors[i].xyz*intensity;
-					highp vec3 SpecularRes = CalculateSpecular(Albedo.xyz, normal, EyeDir, Half, LightDir, rough)*LightColors[i].xyz*intensity;
+					highp vec3 SpecularRes = CalculateSpecular(F0, normal, EyeDir, Half, LightDir, rough)*LightColors[i].xyz*intensity;
 
-					highp vec3 Ks = SpecularRes;
-					highp vec3 Kd = vec3(1.0f, 1.0f, 1.0f) - SpecularRes;
+					highp float VdotH = clamp(dot(EyeDir, Half), 0.0, 1.0);
+					highp vec3 F = FresnelCalc(VdotH, F0);
+					highp vec3 Kd = (vec3(1.0f, 1.0f, 1.0f) - F) * (1.0f - metallic);
 
 					Final.xyz += SpecularRes.xyz + Kd*Diffuse;
 				} else {
@@ -248,10 +249,11 @@ void main(){
 						highp vec3 Half = normalize(EyeDir + LightDir);
 
 						highp vec3 Diffuse = CalculateDiffuse(Albedo.xyz, normal, LightDir)*LightColors[i].xyz*intensity;
-						highp vec3 SpecularRes = CalculateSpecular(Albedo.xyz, normal, EyeDir, Half, LightDir, rough)*LightColors[i].xyz*intensity;
+						highp vec3 SpecularRes = CalculateSpecular(F0, normal, EyeDir, Half, LightDir, rough)*LightColors[i].xyz*intensity;
 
-						highp vec3 Ks = SpecularRes;
-						highp vec3 Kd = vec3(1.0f, 1.0f, 1.0f) - SpecularRes;
+						highp float VdotH = clamp(dot(EyeDir, Half), 0.0, 1.0);
+						highp vec3 F = FresnelCalc(VdotH, F0);
+						highp vec3 Kd = (vec3(1.0f, 1.0f, 1.0f) - F) * (1.0f - metallic);
 
 						highp float d = max(dist - Rad, 0.0);
 						highp float denom = d/Rad + 1.0;
@@ -264,30 +266,13 @@ void main(){
 					}
 				}
 			}
-		if(MatId == 3 || MatId == 4){
+		// MatId 3/4 Fresnel removed (PBR computes Fresnel from metallic + F0)		
 
-#ifdef ES_30
-			lowp vec4 fresnelColor = texture(tex3, coords);
-#else
-			lowp vec4 fresnelColor = texture2D(tex3, coords);
+			highp vec3 kSpecular = clamp( fresnelSchlickRoughness(max(dot(normal, EyeDir), 0.0f), F0, rough) , 0.0 , 1.0 );
+	 		highp vec3 RefleCol = texture( texEnv, ReflectedVec , rough*4.0f).xyz;
+			highp float envAtten = (1.0 - rough) * (1.0 - rough);
 
-#endif	
-			highp float  FresnelAtt	= clamp(abs(dot(normal.xyz,EyeDir)),0.0,1.0);
-			highp float  FresnelIntensity = fresnelColor.a;
-			lowp vec4 FresnelCol = vec4(fresnelColor.xyz,1.0);
-		
-			FresnelAtt 		= 1.0 - FresnelAtt;
-			FresnelAtt		= pow( FresnelAtt , 5.0 );	
-			FresnelAtt 		= clamp(FresnelAtt , 0.0 , 1.0 );
-			//Fresnel 		= FresnelCol*FresnelIntensity*FresnelAtt;
-		
-			//Final += Fresnel;
-		}		
-
-			highp vec3 kSpecular = clamp( fresnelSchlickRoughness(max(dot(normal, EyeDir), 0.0f), Albedo.xyz, rough) , 0.0 , 1.0 );
-	 		highp vec3 RefleCol = texture( texEnv, ReflectedVec , rough*4.0f).zyx;
-
-	 		Final.xyz += RefleCol*kSpecular.xyz;
+	 		Final.xyz += RefleCol*kSpecular.xyz*envAtten;
 
 			Final.xyz *= Shadow;
 
@@ -370,7 +355,7 @@ highp vec4 FShadow = vec4(1.0,1.0,1.0,1.0);
 						Val_1 = 0.0;
 					} else {
 						#ifdef ES_30
-							highp vec3 Coords_Final = vec3(sampleUV, LightPos.z - 0.000005);
+							highp vec3 Coords_Final = vec3(sampleUV, LightPos.z - toogles.w);
 							Val_1 = texture(tex1, Coords_Final);
 						#else
 							highp vec4 Coords_Final = vec4(sampleUV, LightPos.z, LightPos.w);
@@ -982,24 +967,17 @@ color.a = 1.0;
 #endif
 }
 //////////////
-#elif defined(VIGNETTE_PASS)
+#elif defined(BACKBUFFER_PASS)
 uniform mediump sampler2D tex0;
 void main() {
-  const highp float Falloff = 0.45;
-  highp vec4 color;
   lowp vec2 coords = vecUVCoords;
   coords.y = 1.0 - coords.y;
-  color.x =  texture(tex0, coords.xy + 0.0019).r;
-  color.y = texture(tex0, coords.xy).g;
-  color.z = texture(tex0, coords.xy  - 0.0019).b;
-  highp vec2 uv = coords.xy;
-  highp float e = 1.0-max((distance(uv, vec2(0.5, 0.5)) - Falloff) * 1.25, 0.0);
+  highp vec4 color = texture(tex0, coords.xy);
 #ifdef ES_30
-	colorOut = vec4(color.rgb * e , 1.0);
+	colorOut = color;
 #else
-	gl_FragColor = vec4(color.rgb * e , 1.0);
+	gl_FragColor = color;
 #endif
-
 }
 
 #elif defined(GOD_RAY_CALCULATION_PASS)
@@ -1077,6 +1055,14 @@ highp float ComputeScattering(highp float lightDotView)
 uniform highp sampler2D tex0;
 uniform mediump sampler2DShadow  tex1;
 void main(){
+  if (toogles.w == 0.0) {
+    #ifdef ES_30
+      colorOut = vec4(0.0, 0.0, 0.0, 1.0);
+    #else
+      gl_FragColor = vec4(0.0, 0.0, 0.0, 1.0);
+    #endif
+    return;
+  }
   const highp float ditherPattern[16] = float[]( 0.0f, 0.5f, 0.125f, 0.625f,0.75f, 0.22f, 0.875f, 0.375f,0.1875f, 0.6875f, 0.0625f, 0.5625, 0.9375f, 0.4375f, 0.8125f, 0.3125);
   highp vec2 uv = vecUVCoords.xy;
   uv.y = 1.0 - uv.y;

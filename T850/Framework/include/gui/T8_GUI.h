@@ -61,6 +61,9 @@ namespace t800 {
     void Update(const InputManager& input, int screenW, int screenH);
     void Draw();
 
+    // Draw only the FPS label (for use when GUI overlay is hidden)
+    void DrawFPSOnly();
+
     void LayoutSliders(int screenW, int screenH);
 
     // Access slider pairs for scene sync

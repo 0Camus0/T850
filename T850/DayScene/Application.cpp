@@ -148,9 +148,9 @@ void App::OnDraw() {
   pFramework->pVideoDriver->Clear();
   FirstFrame = false;
   m_devLayer.Draw();
-  // Only draw standalone FPS text when GUI overlay is not visible
+  // Draw FPS label using layout position when GUI overlay is not visible
   if (!m_devLayer.GetGUI().IsVisible()) {
-    m_textRender.Draw(-0.9f, -0.8f, m_fpsCol, m_fpsString);
+    m_devLayer.GetGUI().DrawFPSOnly();
   }
   if (fading) {
     pFramework->pVideoDriver->SetBlendState(BaseDriver::ALPHA_BLEND);
@@ -175,7 +175,9 @@ void App::OnDraw() {
   }
   frameCount++;
 
-  pFramework->pVideoDriver->SwapBuffers();
+  // Skip presenting the first frame (black with only text)
+  if (frameCount > 1)
+    pFramework->pVideoDriver->SwapBuffers();
 }
 
 

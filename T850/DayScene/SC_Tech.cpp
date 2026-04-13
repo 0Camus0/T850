@@ -50,11 +50,11 @@ void SC_Tech::InitVars() {
   SceneProp.AddCamera(ActiveCam);
   SceneProp.AddLightCamera(&LightCam);
 
-  SceneProp.AddLight(LightCam.Eye, XVECTOR3(1, 1, 1), 30000, true);
-  SceneProp.AddLight(XVECTOR3(-55, 10, 0), XVECTOR3(1.0, 0.57, 0.16), 60, true);
-  SceneProp.AddLight(XVECTOR3(55, 10, 0), XVECTOR3(1.0, 0.57, 0.16), 60, true);
-  SceneProp.AddLight(XVECTOR3(60, 10, 30), XVECTOR3(1.0, 0.57, 0.16), 60, true);
-  SceneProp.AddLight(XVECTOR3(60, 10, -30), XVECTOR3(1.0, 0.57, 0.16), 60, true);
+  SceneProp.AddDirectionalLight(XVECTOR3(-0.2f, -1.0f, 0.1f), XVECTOR3(1, 1, 1), 5.0f, true);
+  SceneProp.AddLight(XVECTOR3(-55, 10, 0), XVECTOR3(1.0, 0.57, 0.16), 60, 1.0f, LIGHT_POINT, true);
+  SceneProp.AddLight(XVECTOR3(55, 10, 0), XVECTOR3(1.0, 0.57, 0.16), 60, 1.0f, LIGHT_POINT, true);
+  SceneProp.AddLight(XVECTOR3(60, 10, 30), XVECTOR3(1.0, 0.57, 0.16), 60, 1.0f, LIGHT_POINT, true);
+  SceneProp.AddLight(XVECTOR3(60, 10, -30), XVECTOR3(1.0, 0.57, 0.16), 60, 1.0f, LIGHT_POINT, true);
   SceneProp.ActiveLights = 5;
   SceneProp.AmbientColor = XVECTOR3(0.8f, 0.8f, 0.8f);
 

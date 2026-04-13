@@ -77,9 +77,13 @@ void DevLayer::ProcessInput(InputManager* input) {
   if (input->PressedOnceKey(T800K_g)) {
     m_gui.ToggleVisible();
   }
-  // Tab: save layout when in edit mode
-  if (input->PressedOnceKey(T800K_TAB) && m_gui.IsEditMode()) {
-    m_gui.SaveLayout(kLayoutPath);
+  // Tab: save layout when in edit mode, dump scene state otherwise
+  if (input->PressedOnceKey(T800K_TAB)) {
+    if (m_gui.IsEditMode()) {
+      m_gui.SaveLayout(kLayoutPath);
+    } else if (m_activeScene) {
+      m_activeScene->SaveSceneState();
+    }
   }
   // +/-: adjust grid size in edit mode (consume keys so scene doesn't see them)
   if (m_gui.IsEditMode()) {

@@ -195,9 +195,16 @@ namespace t800 {
       CnstBuffer.CameraInfo = XVECTOR3(pActualCamera->NPlane, pActualCamera->FPlane, pActualCamera->Fov, float(numLights));
 
       for (unsigned int i = 0; i < numLights; i++) {
-        CnstBuffer.LightPositions[i] = pScProp->Lights[i].Position;
-        CnstBuffer.LightColors[i] = pScProp->Lights[i].Color;
-        CnstBuffer.LightRadius[i] = pScProp->Lights[i].radius;
+        Light& light = pScProp->Lights[i];
+        if (light.Type == LIGHT_DIRECTIONAL) {
+          // Pack direction into position, type=0.0 in w
+          CnstBuffer.LightPositions[i] = XVECTOR3(light.Direction.x, light.Direction.y, light.Direction.z, 0.0f);
+        } else {
+          // Pack position, type=1.0 in w
+          CnstBuffer.LightPositions[i] = XVECTOR3(light.Position.x, light.Position.y, light.Position.z, 1.0f);
+        }
+        CnstBuffer.LightColors[i] = XVECTOR3(light.Color.x, light.Color.y, light.Color.z, light.Intensity);
+        CnstBuffer.LightRadius[i] = light.radius;
       }
     }
 	else if (sig&Signature::SHADOW_COMP_PASS) {

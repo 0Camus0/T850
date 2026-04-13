@@ -247,6 +247,8 @@ namespace t800 {
 
       if (sig&Signature::BRIGHT_PASS) {
         CnstBuffer.LightPositions[0].x = pScProp->BloomThreshold;
+        CnstBuffer.LightPositions[0].y = pScProp->Exposure;
+        CnstBuffer.LightPositions[0].z = pScProp->ToneMapWhiteLevel;
       }
 
       if (sig&Signature::HDR_COMP_PASS) {

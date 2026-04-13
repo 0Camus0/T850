@@ -600,28 +600,30 @@ void main(){
 }
 #elif defined(BRIGHT_PASS)
 uniform mediump sampler2D tex0;
+uniform mediump sampler2D tex1;
 void main(){
-	lowp vec2 coords = vecUVCoords;
+	highp vec2 coords = vecUVCoords;
 	coords.y = 1.0 - coords.y;
-	
-	#ifdef ES_30
-		mediump vec4 Col = texture( tex0, coords);
-	#else
-		mediump vec4 Col = texture2D( tex0, coords );
-	#endif
-	
-	mediump float lum = dot( Col.rgb, vec3( 0.299, 0.587, 0.114 ) );
 
-    if( lum < LightPositions[0].x )
-        Col = vec4( 0.0f, 0.0f, 0.0f, 1.0f );
-	else{
-		//Col.rgb *= Col.rgb;
-	}
-	
+	highp vec3 color = texture(tex0, coords).rgb;
+	highp float avgLuminance = exp(texture(tex1, vec2(0.5, 0.5)).r);
+
+	avgLuminance = max(avgLuminance, 0.001f);
+	highp float keyValue = 1.03f - (2.0f / (2.0f + log(avgLuminance + 1.0f) / log(10.0f)));
+	highp float linearExposure = keyValue / avgLuminance;
+	highp float exposureComp = LightPositions[0].y;
+	highp float threshold = LightPositions[0].x;
+	color = exp2(log2(max(linearExposure, 0.0001f)) + exposureComp - threshold) * color;
+
+	highp float pixelLuminance = max(dot(color, vec3(0.299f, 0.587f, 0.114f)), 0.0001f);
+	highp float whiteLevel = max(LightPositions[0].z, 0.001f);
+	highp float toneMappedLuminance = pixelLuminance * (1.0f + pixelLuminance / (whiteLevel * whiteLevel)) / (1.0f + pixelLuminance);
+	highp vec3 toneMapped = toneMappedLuminance * (color / pixelLuminance);
+
 	#ifdef ES_30
-		colorOut = Col;
+		colorOut = vec4(toneMapped, 1.0f);
 	#else
-		gl_FragColor = Col;
+		gl_FragColor = vec4(toneMapped, 1.0f);
 	#endif
 }
 #elif defined(LUMINANCE_MAP_PASS)

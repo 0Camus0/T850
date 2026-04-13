@@ -363,17 +363,24 @@ float4 FS( VS_OUTPUT input ) : SV_TARGET {
 }
 #elif defined(BRIGHT_PASS)
 Texture2D tex0 : register(t0);
+Texture2D tex1 : register(t1);
 float4 FS( VS_OUTPUT input ) : SV_TARGET {
-	float4 color = tex0.Sample( SS, input.texture0);
-	
-	float FLum = dot(color.rgb, float3(0.299f, 0.587f, 0.114f));
-	
-	if(FLum < LightPositions[0].x)
-		color = float4(0.0,0.0,0.0,1.0);
-		
-	return color;
-	
-	
+	float3 color = tex0.Sample(SS, input.texture0).rgb;
+	float avgLuminance = exp(tex1.Sample(SS, float2(0.5f, 0.5f)).r);
+
+	avgLuminance = max(avgLuminance, 0.001f);
+	float keyValue = 1.03f - (2.0f / (2.0f + log10(avgLuminance + 1.0f)));
+	float linearExposure = keyValue / avgLuminance;
+	float exposureComp = LightPositions[0].y;
+	float threshold = LightPositions[0].x;
+	color = exp2(log2(max(linearExposure, 0.0001f)) + exposureComp - threshold) * color;
+
+	float pixelLuminance = max(dot(color, float3(0.299f, 0.587f, 0.114f)), 0.0001f);
+	float whiteLevel = max(LightPositions[0].z, 0.001f);
+	float toneMappedLuminance = pixelLuminance * (1.0f + pixelLuminance / (whiteLevel * whiteLevel)) / (1.0f + pixelLuminance);
+	float3 toneMapped = toneMappedLuminance * (color / pixelLuminance);
+
+	return float4(toneMapped, 1.0f);
 }
 #elif defined(LUMINANCE_MAP_PASS)
 Texture2D tex0 : register(t0);

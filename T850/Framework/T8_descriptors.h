@@ -216,6 +216,7 @@ enum Signature : unsigned long long {
   NORMAL_MAP				= 0x100,
   REFLECT_MAP				= 0x200,
   HEIGHT_MAP				= 0x400,
+  METALLIC_MAP				= 0x800000000000,
 
   // CASES
   USE_NO_LIGHT				= 0x800,
@@ -243,7 +244,7 @@ enum Signature : unsigned long long {
   COMBINE_COC_PASS			= 0x10000000,
   DOF_PASS					= 0x20000000,
   DOF_PASS_2				= 0x40000000,
-  VIGNETTE_PASS				= 0x80000000,
+  BACKBUFFER_PASS			= 0x80000000,
   GOD_RAY_CALCULATION_PASS	= 0x100000000,
   GOD_RAY_BLEND_PASS		= 0x200000000,
   SSAO_PASS					= 0x400000000,

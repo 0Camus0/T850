@@ -443,7 +443,7 @@ void dds_set_pix_format(unsigned int &format, unsigned int &bppinfo, unsigned in
 		prop |= CIL_COMPRESSED;
 	}break;
 	case CIL_FOURCC_DXT3: {
-		prop |= CIL_DXT5;
+		prop |= CIL_DXT3;
 		prop |= CIL_BPP_8;
 		prop |= CIL_COMPRESSED;
 	}break;
@@ -451,6 +451,11 @@ void dds_set_pix_format(unsigned int &format, unsigned int &bppinfo, unsigned in
 		prop |= CIL_DXT5;
 		prop |= CIL_BPP_8;
 		prop |= CIL_COMPRESSED;
+	}break;
+	case CIL_FOURCC_RGBA16F: {
+		prop |= CIL_RAW;
+		prop |= CIL_RGBA;
+		prop |= CIL_HALF_FLOAT;
 	}break;
 	}
 }
@@ -533,7 +538,10 @@ unsigned char*	load_dds(ifstream &in_, int &x, int &y, unsigned int &mipmaps, un
 		}
 	}
 	else {
-		bpp = (prop&CIL_RGB) ? 24 : 32;
+		if (prop & CIL_HALF_FLOAT)
+			bpp = 64;
+		else
+			bpp = (prop&CIL_RGB) ? 24 : 32;
 		mipmaps = mipmaps == 0 ? 1 : mipmaps;
 		for (int i = 0; i < numFaces; i++) {
 			widthBlocks = x;

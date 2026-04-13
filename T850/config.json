@@ -1,6 +1,6 @@
 ﻿{
     "keepRunning":  false,
-    "api":  "d3d11",
+    "api":  "gl",
     "architecture":  "x64",
     "display":  {
                     "scene":  0,

@@ -74,9 +74,9 @@ namespace t800 {
   };
 
   struct SceneSettingsDesc {
-    float exposure = 0.3f;
+    float exposure = 0.0f;
     float bloom_factor = 0.35f;
-    float bloom_threshold = 0.7f;
+    float bloom_threshold = 2.0f;
     float aperture = 120.0f;
     float focal_length = 50.0f;
     float max_coc = 2.5f;

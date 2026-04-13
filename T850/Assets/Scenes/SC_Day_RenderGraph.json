@@ -167,7 +167,8 @@
       "name": "Bright",
       "target": "BloomAccum",
       "inputs": [
-        { "source": "Extra16F:COLOR0", "slot": 0 }
+        { "source": "Extra16F:COLOR0", "slot": 0 },
+        { "source": "AdaptedLumCurrent:COLOR0", "slot": 1 }
       ],
       "draws": [
         { "type": "fullscreen_quad", "signature": "BRIGHT_PASS" }

@@ -42,6 +42,9 @@ void SC_Day::InitVars() {
   ActiveCam = m_sceneSetup.GetCamera(0);
   ChangeActiveGaussSelection = SHADOW_KERNEL;
   m_debugRTSelection = 0;
+  m_showSpline = false;
+  m_showLights = false;
+  m_activeCameraIndex = 0;
   RTIndex = -1;
 
   // Initialize frame dumper from command-line globals
@@ -125,6 +128,8 @@ void SC_Day::CreateAssets() {
   Quads[7].CreateInstance(PrimitiveMgr.GetPrimitive(PrimitiveManager::QUAD), &m);
 
   PrimitiveMgr.SetSceneProps(&SceneProp);
+
+  m_wireframeSphere.Create(8, 16);
 
   t800::Spline& m_spline = m_sceneSetup.splines[0];
   t800::SplineAgent& m_agent = m_sceneSetup.agents[0];
@@ -342,6 +347,23 @@ void SC_Day::OnInput(InputManager* IManager) {
     SceneProp.pCameras[0] = ActiveCam;
   }
 
+  // Toggle spline-guided / free camera
+  if (IManager->PressedOnceKey(T800K_t)) {
+    if (ActiveCam->m_externalControl) {
+      // Detach from spline: keep current position and orientation
+      ActiveCam->DettachAgent();
+      ActiveCam->m_externalControl = false;
+      cout << "[CAMERA] Switched to FREE camera" << endl;
+    }
+    else {
+      // Re-attach to spline agent
+      t800::SplineAgent& agent = m_sceneSetup.agents[0];
+      ActiveCam->AttachAgent(agent);
+      ActiveCam->m_lookAtCenter = false;
+      cout << "[CAMERA] Switched to SPLINE camera" << endl;
+    }
+  }
+
   if (IManager->PressedKey(T800K_w)) {
     ActiveCam->MoveForward(DtSecs);
   }
@@ -477,6 +499,21 @@ void SC_Day::OnDraw() {
     m_flare.Draw();
   }
 
+  // Draw spline wireframe overlay
+  if (m_showSpline) {
+    splineInst.Draw();
+  }
+
+  // Draw light spheres overlay
+  if (m_showLights) {
+    unsigned int numLights = SceneProp.ActiveLights;
+    if (numLights > SceneProp.Lights.size())
+      numLights = static_cast<unsigned int>(SceneProp.Lights.size());
+    for (unsigned int i = 0; i < numLights; i++) {
+      m_wireframeSphere.Draw(VP, SceneProp.Lights[i].Position, SceneProp.Lights[i].radius);
+    }
+  }
+
 #endif
 }
 
@@ -495,7 +532,7 @@ void  SC_Day::ChangeSettingsOnPlus() {
   }break;
   case CHANGE_BLOOM_THRESHOLD: {
     float prevVal = SceneProp.BloomThreshold;
-    SceneProp.BloomThreshold += 0.05f;
+    SceneProp.BloomThreshold += 0.5f;
     cout << "[CHANGE_BLOOM_THRESHOLD] Previous Value[" << prevVal << "] Actual Value[" << SceneProp.BloomThreshold << "]" << endl;
   }break;
   case CHANGE_TM_WHITE_LEVEL: {
@@ -637,6 +674,20 @@ void  SC_Day::ChangeSettingsOnPlus() {
     LightCam.Update(0);
     cout << "[CHANGE_LIGHT_FAR_PLANE] Previous Value[" << prevVal << "] Actual Value[" << LightCam.FPlane << "]" << endl;
   }break;
+  case CHANGE_FOV: {
+    float prevVal = ActiveCam->Fov;
+    ActiveCam->SetFov(ActiveCam->Fov + Deg2Rad(5.0f));
+    if (ActiveCam->Fov > Deg2Rad(150.0f)) ActiveCam->SetFov(Deg2Rad(150.0f));
+    cout << "[CHANGE_FOV] Previous Value[" << Rad2Deg(prevVal) << "] Actual Value[" << Rad2Deg(ActiveCam->Fov) << "]" << endl;
+  }break;
+  case CHANGE_SHOW_SPLINE: {
+    m_showSpline = true;
+    cout << "[CHANGE_SHOW_SPLINE] Value[" << (int)m_showSpline << "]" << endl;
+  }break;
+  case CHANGE_SHOW_LIGHTS: {
+    m_showLights = true;
+    cout << "[CHANGE_SHOW_LIGHTS] Value[" << (int)m_showLights << "]" << endl;
+  }break;
   }
 }
 
@@ -655,7 +706,7 @@ void  SC_Day::ChangeSettingsOnMinus() {
   }break;
   case CHANGE_BLOOM_THRESHOLD: {
     float prevVal = SceneProp.BloomThreshold;
-    SceneProp.BloomThreshold -= 0.05f;
+    SceneProp.BloomThreshold -= 0.5f;
     if (SceneProp.BloomThreshold < 0.0f) SceneProp.BloomThreshold = 0.0f;
     cout << "[CHANGE_BLOOM_THRESHOLD] Previous Value[" << prevVal << "] Actual Value[" << SceneProp.BloomThreshold << "]" << endl;
   }break;
@@ -808,6 +859,20 @@ void  SC_Day::ChangeSettingsOnMinus() {
     LightCam.Update(0);
     cout << "[CHANGE_LIGHT_FAR_PLANE] Previous Value[" << prevVal << "] Actual Value[" << LightCam.FPlane << "]" << endl;
   }break;
+  case CHANGE_FOV: {
+    float prevVal = ActiveCam->Fov;
+    ActiveCam->SetFov(ActiveCam->Fov - Deg2Rad(5.0f));
+    if (ActiveCam->Fov < Deg2Rad(60.0f)) ActiveCam->SetFov(Deg2Rad(60.0f));
+    cout << "[CHANGE_FOV] Previous Value[" << Rad2Deg(prevVal) << "] Actual Value[" << Rad2Deg(ActiveCam->Fov) << "]" << endl;
+  }break;
+  case CHANGE_SHOW_SPLINE: {
+    m_showSpline = false;
+    cout << "[CHANGE_SHOW_SPLINE] Value[" << (int)m_showSpline << "]" << endl;
+  }break;
+  case CHANGE_SHOW_LIGHTS: {
+    m_showLights = false;
+    cout << "[CHANGE_SHOW_LIGHTS] Value[" << (int)m_showLights << "]" << endl;
+  }break;
   }
 }
 
@@ -898,6 +963,15 @@ void SC_Day::printCurrSelection() {
   case CHANGE_LIGHT_FAR_PLANE: {
     cout << "Option[CHANGE_LIGHT_FAR_PLANE] Value[" << LightCam.FPlane << "]" << endl;
   }break;
+  case CHANGE_FOV: {
+    cout << "Option[CHANGE_FOV] Value[" << Rad2Deg(ActiveCam->Fov) << "]" << endl;
+  }break;
+  case CHANGE_SHOW_SPLINE: {
+    cout << "Option[CHANGE_SHOW_SPLINE] Value[" << (int)m_showSpline << "]" << endl;
+  }break;
+  case CHANGE_SHOW_LIGHTS: {
+    cout << "Option[CHANGE_SHOW_LIGHTS] Value[" << (int)m_showLights << "]" << endl;
+  }break;
   }
 }
 
@@ -940,6 +1014,7 @@ void SC_Day::PopulateGUI(t800::GUIManager& gui) {
     {"light_volume_steps",    CHANGE_LIGHT_VOLUME_STEPS},
     {"gauss_kernel_radius",   CHANGE_GAUSS_KERNEL_RADIUS},
     {"gauss_kernel_deviation", CHANGE_GAUSS_KERNEL_DEVIATION},
+    {"fov",                    CHANGE_FOV},
   };
 
   auto& sliderDescs = m_sceneSetup.descriptor.sliders;
@@ -963,6 +1038,8 @@ void SC_Day::PopulateGUI(t800::GUIManager& gui) {
     {"shadow_toggle",   CHANGE_PCF_TOOGLE},
     {"ssao_toggle",     CHANGLE_SSAO_TOOGLE},
     {"dof_auto_focus",  CHANGE_DOF_AUTO_FOCUS},
+    {"show_spline",    CHANGE_SHOW_SPLINE},
+    {"show_lights",    CHANGE_SHOW_LIGHTS},
   };
 
   auto& cbDescs = m_sceneSetup.descriptor.checkboxes;
@@ -987,6 +1064,7 @@ void SC_Day::PopulateGUI(t800::GUIManager& gui) {
     {"active_gauss_kernel",      CHANGE_ACTIVE_GAUSS_KERNEL},
     {"gauss_kernel_sample_count", CHANGE_GAUSS_KERNEL_SAMPLE_COUNT},
     {"debug_render_target",       CHANGE_DEBUG_RT},
+    {"active_camera",               CHANGE_ACTIVE_CAMERA},
   };
 
   auto& selDescs = m_sceneSetup.descriptor.selectors;
@@ -1026,6 +1104,7 @@ void SC_Day::SyncToGUI(t800::GUIManager& gui) {
     case CHANGE_LIGHT_VOLUME_STEPS: slider->SetValue(SceneProp.LightVolumeSteps); break;
     case CHANGE_GAUSS_KERNEL_RADIUS:   slider->SetValue(SceneProp.pGaussKernels[ChangeActiveGaussSelection]->radius); break;
     case CHANGE_GAUSS_KERNEL_DEVIATION: slider->SetValue(SceneProp.pGaussKernels[ChangeActiveGaussSelection]->sigma); break;
+    case CHANGE_FOV:                slider->SetValue(Rad2Deg(ActiveCam->Fov)); break;
     }
   }
   for (auto& cp : gui.GetCheckboxPairs()) {
@@ -1034,6 +1113,8 @@ void SC_Day::SyncToGUI(t800::GUIManager& gui) {
     case CHANGE_PCF_TOOGLE:     cb->checked = (SceneProp.ToogleShadow != 0); break;
     case CHANGLE_SSAO_TOOGLE:   cb->checked = (SceneProp.ToogleSSAO != 0); break;
     case CHANGE_DOF_AUTO_FOCUS: cb->checked = SceneProp.AutoFocus; break;
+    case CHANGE_SHOW_SPLINE:    cb->checked = m_showSpline; break;
+    case CHANGE_SHOW_LIGHTS:    cb->checked = m_showLights; break;
     }
   }
   for (auto& sp : gui.GetSelectorPairs()) {
@@ -1049,6 +1130,7 @@ void SC_Day::SyncToGUI(t800::GUIManager& gui) {
       }
     } break;
     case CHANGE_DEBUG_RT: sel->selectedIndex = m_debugRTSelection; break;
+    case CHANGE_ACTIVE_CAMERA: sel->selectedIndex = m_activeCameraIndex; break;
     }
   }
 }
@@ -1084,6 +1166,9 @@ void SC_Day::SyncFromGUI(t800::GUIManager& gui) {
       SceneProp.pGaussKernels[ChangeActiveGaussSelection]->sigma = slider->value;
       SceneProp.pGaussKernels[ChangeActiveGaussSelection]->Update();
       break;
+    case CHANGE_FOV:
+      ActiveCam->SetFov(Deg2Rad(slider->value));
+      break;
     }
   }
   for (auto& cp : gui.GetCheckboxPairs()) {
@@ -1093,6 +1178,8 @@ void SC_Day::SyncFromGUI(t800::GUIManager& gui) {
     case CHANGE_PCF_TOOGLE:     SceneProp.ToogleShadow = cb->checked ? 1 : 0; break;
     case CHANGLE_SSAO_TOOGLE:   SceneProp.ToogleSSAO = cb->checked ? 1 : 0; break;
     case CHANGE_DOF_AUTO_FOCUS: SceneProp.AutoFocus = cb->checked; break;
+    case CHANGE_SHOW_SPLINE:    m_showSpline = cb->checked; break;
+    case CHANGE_SHOW_LIGHTS:    m_showLights = cb->checked; break;
     }
   }
   for (auto& sp : gui.GetSelectorPairs()) {
@@ -1114,6 +1201,27 @@ void SC_Day::SyncFromGUI(t800::GUIManager& gui) {
     case CHANGE_DEBUG_RT:
       m_debugRTSelection = sel->selectedIndex;
       break;
+    case CHANGE_ACTIVE_CAMERA: {
+      m_activeCameraIndex = sel->selectedIndex;
+      Camera& LightCam = m_sceneSetup.lightCameras[0];
+      Camera& Cam = m_sceneSetup.cameras[0];
+      if (m_activeCameraIndex == 0) {
+        // Spline
+        ActiveCam = &Cam;
+        t800::SplineAgent& agent = m_sceneSetup.agents[0];
+        ActiveCam->AttachAgent(agent);
+        ActiveCam->m_lookAtCenter = false;
+      } else if (m_activeCameraIndex == 1) {
+        // Free
+        ActiveCam = &Cam;
+        ActiveCam->DettachAgent();
+        ActiveCam->m_externalControl = false;
+      } else {
+        // Light
+        ActiveCam = &LightCam;
+      }
+      SceneProp.pCameras[0] = ActiveCam;
+    } break;
     }
   }
 }

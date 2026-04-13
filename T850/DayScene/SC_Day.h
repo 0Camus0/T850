@@ -3,6 +3,7 @@
 #include <utils/Camera.h>
 #include <utils/Timer.h>
 #include <scene/SplineWireframe.h>
+#include <scene/WireframeSphere.h>
 #include <utils/T8_Spline.h>
 #include <scene/SceneSetup.h>
 #include <scene/RenderGraph.h>
@@ -59,6 +60,10 @@ class SC_Day : public t800::SceneBase
     CHANGE_LIGHT_NEAR_PLANE,
     CHANGE_LIGHT_FAR_PLANE,
     CHANGE_DEBUG_RT,
+    CHANGE_ACTIVE_CAMERA,
+    CHANGE_FOV,
+    CHANGE_SHOW_SPLINE,
+    CHANGE_SHOW_LIGHTS,
     CHANGE_MAX_NUM_OPTIONS
   };
   public:
@@ -143,9 +148,13 @@ class SC_Day : public t800::SceneBase
   int				SceneSettingSelection;
   int				ChangeActiveGaussSelection;
   int       m_debugRTSelection = 0;
+  bool      m_showSpline = false;
+  bool      m_showLights = false;
+  int       m_activeCameraIndex = 0;
 
   t800::SplineWireframe* splineWire;
   t800::PrimitiveInst splineInst;
+  t800::WireframeSphere m_wireframeSphere;
   t800::LensFlare m_flare;
   XMATRIX44 m;
 };

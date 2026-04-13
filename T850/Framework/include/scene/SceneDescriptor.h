@@ -33,9 +33,12 @@ namespace t800 {
   };
 
   struct LightDesc {
+    std::string type = "point";  // "directional" or "point"
     std::array<float, 3> position = {0, 0, 0};
+    std::array<float, 3> direction = {0, -1, 0};  // for directional lights
     std::array<float, 3> color = {1, 1, 1};
     float radius = 100.0f;
+    float intensity = 1.0f;
     bool enabled = true;
   };
 
@@ -77,6 +80,8 @@ namespace t800 {
     float exposure = 0.0f;
     float bloom_factor = 0.35f;
     float bloom_threshold = 2.0f;
+    float tone_map_white_level = 4.0f;
+    float luminance_tau = 1.1f;
     float aperture = 120.0f;
     float focal_length = 50.0f;
     float max_coc = 2.5f;

@@ -736,6 +736,30 @@ void GUIManager::Draw() {
   g_pBaseDriver->SetDepthStencilState(BaseDriver::DEPTH_STENCIL_STATES::DEPTH_DEFAULT);
 }
 
+void GUIManager::DrawFPSOnly() {
+  if (!m_initialized || !m_fpsLabel || !m_fpsLabel->visible) return;
+
+  float screenW = (float)g_pBaseDriver->width;
+  float screenH = (float)g_pBaseDriver->height;
+
+  m_ctx.text       = &m_textRenderer;
+  m_ctx.quad       = &m_quad;
+  m_ctx.shader     = m_shader;
+  m_ctx.cb         = m_CB;
+  m_ctx.screenW    = screenW;
+  m_ctx.screenH    = screenH;
+  m_ctx.editMode   = false;
+  m_ctx.snapToGrid = false;
+
+  g_pBaseDriver->SetBlendState(BaseDriver::BLEND_STATES::ALPHA_BLEND);
+  g_pBaseDriver->SetDepthStencilState(BaseDriver::DEPTH_STENCIL_STATES::NONE);
+
+  m_fpsLabel->Draw(m_ctx);
+
+  g_pBaseDriver->SetBlendState(BaseDriver::BLEND_STATES::BLEND_DEFAULT);
+  g_pBaseDriver->SetDepthStencilState(BaseDriver::DEPTH_STENCIL_STATES::DEPTH_DEFAULT);
+}
+
 void GUIManager::DrawGrid() {
   m_quad.Set();
   m_shader->Set(*T8DeviceContext);
@@ -849,21 +873,36 @@ void GUIManager::ApplyUniformScale() {
 
 struct ElementLayoutEntry {
   std::string id;
-  float x = 0, y = 0, w = 0, h = 0;
+  float x = 0, y = 0, w = 0, h = 0;  // normalized: x,w in [0,1] of refW; y,h in [0,1] of refH
 };
 
 struct GUILayoutFile {
+  float ref_width  = 1920.0f;   // screen width when layout was authored
+  float ref_height = 1080.0f;   // screen height when layout was authored
   std::vector<ElementLayoutEntry> elements;
-  float gridCellW = 40.0f;
-  float gridCellH = 40.0f;
+  float gridCellW = 40.0f;      // normalized to ref_height
+  float gridCellH = 40.0f;      // normalized to ref_height
 };
 
 bool GUIManager::SaveLayout(const std::string& path) {
+  float screenW = (float)g_pBaseDriver->width;
+  float screenH = (float)g_pBaseDriver->height;
+
   GUILayoutFile lf;
-  lf.gridCellW = m_gridCellW;
-  lf.gridCellH = m_gridCellH;
+  lf.ref_width  = screenW;
+  lf.ref_height = screenH;
+  // Normalize grid cells by reference height (uniform scale)
+  lf.gridCellW = m_gridCellW / screenH;
+  lf.gridCellH = m_gridCellH / screenH;
+  // Normalize element coords: positions by respective axis, sizes by height
   for (auto* e : m_elements) {
-    lf.elements.push_back({e->id, e->x, e->y, e->w, e->h});
+    lf.elements.push_back({
+      e->id,
+      e->x / screenW,   // X position: fraction of width
+      e->y / screenH,   // Y position: fraction of height
+      e->w / screenH,   // width:  fraction of height (uniform)
+      e->h / screenH    // height: fraction of height (uniform)
+    });
   }
   auto result = glz::write<glz::opts{.prettify = true}>(lf);
   if (!result) {
@@ -898,22 +937,29 @@ bool GUIManager::LoadLayout(const std::string& path) {
     return false;
   }
 
-  m_gridCellW = lf.gridCellW;
-  m_gridCellH = lf.gridCellH;
+  float curW = (float)g_pBaseDriver->width;
+  float curH = (float)g_pBaseDriver->height;
 
-  // Apply positions/sizes by matching element IDs
+  // Denormalize grid cells (stored as fraction of ref height)
+  m_gridCellW = lf.gridCellW * curH;
+  m_gridCellH = lf.gridCellH * curH;
+
+  // Denormalize element coords:
+  //   positions: X by current width, Y by current height
+  //   sizes:     both by current height (uniform — preserves proportions)
   for (auto& entry : lf.elements) {
     for (auto* e : m_elements) {
       if (e->id == entry.id) {
-        e->x = entry.x;
-        e->y = entry.y;
-        e->w = entry.w;
-        e->h = entry.h;
+        e->x = entry.x * curW;
+        e->y = entry.y * curH;
+        e->w = entry.w * curH;
+        e->h = entry.h * curH;
         break;
       }
     }
   }
-  printf("[GUIManager] Layout loaded from '%s' (%zu entries)\n", path.c_str(), lf.elements.size());
+  printf("[GUIManager] Layout loaded from '%s' (%zu entries, ref %.0fx%.0f -> %.0fx%.0f)\n",
+         path.c_str(), lf.elements.size(), lf.ref_width, lf.ref_height, curW, curH);
   RebakeFontIfNeeded();
   return true;
 }

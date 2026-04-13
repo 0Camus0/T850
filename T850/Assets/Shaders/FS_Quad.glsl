@@ -220,33 +220,48 @@ void main(){
 
 		highp int NumLights =  int(CameraInfo.w);
 			for(highp int i=0;i<NumLights;i++){
-				highp float Rad = LightRadius[i >> 2][i & 3];
-				highp float dist = distance(LightPositions[i],position);
+				highp float lightType = LightPositions[i].w;
+				highp float intensity = LightColors[i].w;
 
-				if(dist < (Rad*2.0))
-				{	
-					highp float gloss = normalmap.a;
-
-					highp vec3 LightDir = normalize(LightPositions[i]-position).xyz;
-
+				if(lightType < 0.5) {
+					// Directional light
+					highp vec3 LightDir = normalize(-LightPositions[i].xyz);
 					highp vec3 Half = normalize(EyeDir + LightDir);
 
-					highp vec3 Diffuse = CalculateDiffuse(Albedo.xyz, normal, LightDir)*LightColors[i].xyz;
+					highp vec3 Diffuse = CalculateDiffuse(Albedo.xyz, normal, LightDir)*LightColors[i].xyz*intensity;
+					highp vec3 SpecularRes = CalculateSpecular(Albedo.xyz, normal, EyeDir, Half, LightDir, rough)*LightColors[i].xyz*intensity;
 
-					highp vec3 SpecularRes = CalculateSpecular(Albedo.xyz, normal, EyeDir, Half, LightDir, rough)*LightColors[i].xyz;
-									
 					highp vec3 Ks = SpecularRes;
 					highp vec3 Kd = vec3(1.0f, 1.0f, 1.0f) - SpecularRes;
 
-					highp float d = max(dist - Rad, 0.0);
-					highp float denom = d/Rad + 1.0;
-					
-					highp float attenuation = 1.0 / (denom*denom);
-					 
-					attenuation = (attenuation - cutoff) / (1.0 - cutoff);
-					attenuation = max(attenuation, 0.0);
+					Final.xyz += SpecularRes.xyz + Kd*Diffuse;
+				} else {
+					// Point light
+					highp float Rad = LightRadius[i >> 2][i & 3];
+					highp float dist = distance(LightPositions[i],position);
 
-					Final.xyz += SpecularRes.xyz*attenuation + attenuation*Kd*Diffuse;
+					if(dist < (Rad*2.0))
+					{
+						highp float gloss = normalmap.a;
+
+						highp vec3 LightDir = normalize(LightPositions[i]-position).xyz;
+						highp vec3 Half = normalize(EyeDir + LightDir);
+
+						highp vec3 Diffuse = CalculateDiffuse(Albedo.xyz, normal, LightDir)*LightColors[i].xyz*intensity;
+						highp vec3 SpecularRes = CalculateSpecular(Albedo.xyz, normal, EyeDir, Half, LightDir, rough)*LightColors[i].xyz*intensity;
+
+						highp vec3 Ks = SpecularRes;
+						highp vec3 Kd = vec3(1.0f, 1.0f, 1.0f) - SpecularRes;
+
+						highp float d = max(dist - Rad, 0.0);
+						highp float denom = d/Rad + 1.0;
+
+						highp float attenuation = 1.0 / (denom*denom);
+						attenuation = (attenuation - cutoff) / (1.0 - cutoff);
+						attenuation = max(attenuation, 0.0);
+
+						Final.xyz += SpecularRes.xyz*attenuation + attenuation*Kd*Diffuse;
+					}
 				}
 			}
 		if(MatId == 3 || MatId == 4){

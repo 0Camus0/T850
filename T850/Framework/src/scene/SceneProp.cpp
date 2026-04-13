@@ -25,12 +25,30 @@ namespace t800 {
 	extern DeviceContext*     T8DeviceContext;
 }
 
-void	SceneProps::AddLight(XVECTOR3 Pos, XVECTOR3 Color,float radius, bool enabled){
+void	SceneProps::AddLight(XVECTOR3 Pos, XVECTOR3 Color, float radius, float intensity, LightType type, bool enabled){
 	Light l;
 	l.Position=Pos;
+	l.Direction = XVECTOR3(0, -1, 0);
 	l.Color=Color;
 	l.Enabled=(int)enabled;
-  l.radius = radius;
+	l.radius = radius;
+	l.Intensity = intensity;
+	l.Type = type;
+	Lights.push_back(l);
+}
+
+void	SceneProps::AddDirectionalLight(XVECTOR3 Dir, XVECTOR3 Color, float intensity, bool enabled){
+	Light l;
+	l.Position = XVECTOR3(0, 0, 0);
+	// Normalize direction
+	float len = sqrtf(Dir.x*Dir.x + Dir.y*Dir.y + Dir.z*Dir.z);
+	if (len > 0.0001f) { Dir.x /= len; Dir.y /= len; Dir.z /= len; }
+	l.Direction = Dir;
+	l.Color = Color;
+	l.Enabled = (int)enabled;
+	l.radius = 0.0f;
+	l.Intensity = intensity;
+	l.Type = LIGHT_DIRECTIONAL;
 	Lights.push_back(l);
 }
 

@@ -1,4 +1,5 @@
 #include <scene/SceneSetup.h>
+#include <core/Core.h>
 #include <cstdio>
 
 namespace t800 {
@@ -90,10 +91,17 @@ void SceneSetup::Apply(SceneProps& props) {
 
   // Add lights
   for (auto& ld : descriptor.lights) {
-    props.AddLight(
-      XVECTOR3(ld.position[0], ld.position[1], ld.position[2]),
-      XVECTOR3(ld.color[0], ld.color[1], ld.color[2]),
-      ld.radius, ld.enabled);
+    if (ld.type == "directional") {
+      props.AddDirectionalLight(
+        XVECTOR3(ld.direction[0], ld.direction[1], ld.direction[2]),
+        XVECTOR3(ld.color[0], ld.color[1], ld.color[2]),
+        ld.intensity, ld.enabled);
+    } else {
+      props.AddLight(
+        XVECTOR3(ld.position[0], ld.position[1], ld.position[2]),
+        XVECTOR3(ld.color[0], ld.color[1], ld.color[2]),
+        ld.radius, ld.intensity, LIGHT_POINT, ld.enabled);
+    }
   }
 
   // Wire gauss filters
@@ -121,6 +129,8 @@ void SceneSetup::Apply(SceneProps& props) {
   props.Exposure = s.exposure;
   props.BloomFactor = s.bloom_factor;
   props.BloomThreshold = s.bloom_threshold;
+  props.ToneMapWhiteLevel = s.tone_map_white_level;
+  props.LuminanceTau = s.luminance_tau;
   props.Aperture = s.aperture;
   props.FocalLength = s.focal_length;
   props.MaxCoc = s.max_coc;
@@ -152,6 +162,105 @@ Spline* SceneSetup::GetSpline(int index) {
 
 SplineAgent* SceneSetup::GetAgent(int index) {
   return (index >= 0 && index < (int)agents.size()) ? &agents[index] : nullptr;
+}
+
+void SceneSetup::SaveState(SceneBase* scene, const std::string& jsonPath) {
+  auto& props = scene->SceneProp;
+  auto& desc  = descriptor;
+
+  // Write cameras back
+  for (int i = 0; i < (int)cameras.size() && i < (int)desc.cameras.size(); i++) {
+    Camera& cam = cameras[i];
+    auto& cd = desc.cameras[i];
+    cd.position = {cam.Eye.x, cam.Eye.y, cam.Eye.z};
+    cd.pitch = cam.Pitch;
+    cd.roll = cam.Roll;
+    cd.yaw = cam.Yaw;
+    cd.speed = cam.Speed;
+    cd.fov = cam.Fov;
+    cd.aspect = cam.AspectRatio;
+    cd.width = cam.Width;
+    cd.height = cam.Height;
+    cd.near_plane = cam.NPlane;
+    cd.far_plane = cam.FPlane;
+    cd.ortho = cam.Ortho;
+    cd.left_handed = cam.LeftHanded;
+  }
+
+  // Write light cameras back
+  for (int i = 0; i < (int)lightCameras.size() && i < (int)desc.light_cameras.size(); i++) {
+    Camera& cam = lightCameras[i];
+    auto& cd = desc.light_cameras[i];
+    cd.position = {cam.Eye.x, cam.Eye.y, cam.Eye.z};
+    cd.pitch = cam.Pitch;
+    cd.roll = cam.Roll;
+    cd.yaw = cam.Yaw;
+    cd.speed = cam.Speed;
+    cd.fov = cam.Fov;
+    cd.aspect = cam.AspectRatio;
+    cd.width = cam.Width;
+    cd.height = cam.Height;
+    cd.near_plane = cam.NPlane;
+    cd.far_plane = cam.FPlane;
+    cd.ortho = cam.Ortho;
+    cd.left_handed = cam.LeftHanded;
+  }
+
+  // Write lights back
+  for (int i = 0; i < (int)props.Lights.size() && i < (int)desc.lights.size(); i++) {
+    Light& l = props.Lights[i];
+    auto& ld = desc.lights[i];
+    ld.position = {l.Position.x, l.Position.y, l.Position.z};
+    ld.direction = {l.Direction.x, l.Direction.y, l.Direction.z};
+    ld.color = {l.Color.x, l.Color.y, l.Color.z};
+    ld.radius = l.radius;
+    ld.intensity = l.Intensity;
+    ld.enabled = l.Enabled;
+    ld.type = (l.Type == LIGHT_DIRECTIONAL) ? "directional" : "point";
+  }
+
+  // Write gauss filters back
+  for (int i = 0; i < (int)gaussFilters.size() && i < (int)desc.gauss_filters.size(); i++) {
+    GaussFilter& gf = gaussFilters[i];
+    auto& gd = desc.gauss_filters[i];
+    gd.kernel_size = gf.kernelSize;
+    gd.radius = gf.radius;
+    gd.sigma = gf.sigma;
+  }
+
+  // Quality settings
+  auto& q = desc.quality;
+  q.shadow_map_resolution = props.ShadowMapResolution;
+  q.god_rays_resolution = props.GoodRaysResolution;
+  q.pcf_scale = props.PCFScale;
+  q.pcf_samples = props.PCFSamples;
+  q.parallax_low_samples = props.ParallaxLowSamples;
+  q.parallax_high_samples = props.ParallaxHighSamples;
+  q.parallax_height = props.ParallaxHeight;
+  q.light_volume_steps = props.LightVolumeSteps;
+  q.ssao_kernel_size = props.SSAOKernel.KernelSize;
+  q.ssao_radius = props.SSAOKernel.Radius;
+  q.dof_near_samples = props.DOF_Near_Samples_squared;
+  q.dof_far_samples = props.DOF_Far_Samples_squared;
+
+  // Scene settings
+  auto& s = desc.settings;
+  s.exposure = props.Exposure;
+  s.bloom_factor = props.BloomFactor;
+  s.bloom_threshold = props.BloomThreshold;
+  s.tone_map_white_level = props.ToneMapWhiteLevel;
+  s.luminance_tau = props.LuminanceTau;
+  s.aperture = props.Aperture;
+  s.focal_length = props.FocalLength;
+  s.max_coc = props.MaxCoc;
+  s.ambient_color = {props.AmbientColor.x, props.AmbientColor.y, props.AmbientColor.z};
+  s.active_lights = props.ActiveLights;
+  s.shadow_enabled = (props.ToogleShadow != 0);
+  s.ssao_enabled = (props.ToogleSSAO != 0);
+  s.auto_focus = props.AutoFocus;
+  s.debug_mode = props.DebugMode;
+
+  SaveSceneDescriptor(jsonPath, desc);
 }
 
 } // namespace t800

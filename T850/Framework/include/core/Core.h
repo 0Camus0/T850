@@ -65,6 +65,9 @@ namespace t800 {
     virtual void SyncToGUI(GUIManager& /*gui*/)   {}   // scene props → sliders
     virtual void SyncFromGUI(GUIManager& /*gui*/) {}   // sliders → scene props
 
+    // Dump current scene state back to its JSON file
+    virtual void SaveSceneState() {}
+
     SceneProps		SceneProp;
     RootFramework	*pFramework;
   };

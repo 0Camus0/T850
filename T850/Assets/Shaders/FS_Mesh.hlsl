@@ -10,8 +10,8 @@ cbuffer ConstantBuffer{
 	float4	 Ambient;
 	float4   DiffuseColor;
 	float4   SpecularColor;
-	float4   FresnelColor;
-	float4   Intensities;
+	float4   PBRParams;        // .x=metallic .y=roughness (fallbacks)
+	float4   Intensities;      // .w=MatID
 	float4   ParallaxSettings;
 }
 
@@ -72,6 +72,10 @@ TextureCube texEnv : register(t4);
 Texture2D TextureHeight : register(t5);
 #endif
 
+#ifdef METALLIC_MAP
+Texture2D TextureMetallic : register(t6);
+#endif
+
 SamplerState SS;
 
 struct VS_OUTPUT{
@@ -116,11 +120,10 @@ struct FS_OUT{
 FS_OUT FS( VS_OUTPUT input )   {
 	float4  color 		= float4(0.5,0.5,0.5,1.0);
 	float4  normal 		= float4(0.5,0.5,0.5,1.0);
-	float4  specular 	= float4(0.5,0.5,0.5,1.0);
+	float   metallic    = PBRParams.x;
 	float4  reflect		= float4(0.5,0.5,0.5,1.0);
 	
-	float specIntesivity = Intensities.x;
-	float roughness = 0.0;
+	float roughness = PBRParams.y;
 
 	normal.xyz   = normalize(input.hnormal).xyz;
 
@@ -131,6 +134,7 @@ FS_OUT FS( VS_OUTPUT input )   {
 		float3x3 TBN    = float3x3(tangent, binormal, normal.xyz);
 	#endif
 	#ifdef HEIGHT_MAP
+	  if (ParallaxSettings.w > 0.5) {
 		float heightScale = ParallaxSettings.z;
 		float3 viewDir = mul(TBN, normalize(CameraPosition.xyz - input.WorldPos.xyz));
 		viewDir = normalize(viewDir);
@@ -156,6 +160,7 @@ FS_OUT FS( VS_OUTPUT input )   {
 		float2 prevTexCoords = parallaxCoords - deltaTexCoords;
 		float weight = (prevDepthMapValue - prevRayZ) / (prevDepthMapValue - currentDepthMapValue + currentRayZ - prevRayZ);
 		parallaxCoords = prevTexCoords * weight + parallaxCoords * (1.0 - weight);
+	  }
 	#endif
 
 	#ifdef DIFFUSE_MAP
@@ -172,13 +177,15 @@ FS_OUT FS( VS_OUTPUT input )   {
 	#endif
 
 	#ifdef SPECULAR_MAP
-		specular.rgb = TextureSpecular.Sample( SS, parallaxCoords ).rgb;	
+		// Legacy: specular map ignored in metallic PBR workflow
 	#endif
 	
+	#ifdef METALLIC_MAP
+		metallic = TextureMetallic.Sample( SS, parallaxCoords ).r;
+	#endif
+
 	#ifdef GLOSS_MAP
 		roughness = TextureGloss.Sample( SS, parallaxCoords ).r;
-	#else
-		roughness = 0.5;
 	#endif
 	
 	float3  EyeDir   = normalize(CameraPosition-input.WorldPos).xyz;
@@ -187,15 +194,17 @@ FS_OUT FS( VS_OUTPUT input )   {
 
 	FS_OUT fout;
 	fout.color0.rgb = color.rgb;
-	fout.color0.a 	= Intensities.x / 255.0;
+	fout.color0.a 	= 0.0;
 	
 	fout.color1.rgb = normal.xyz;
-	fout.color2.rgb = specular.rgb;
 	fout.color1.a 	= roughness;	
 	
+	fout.color2.r   = metallic;
+	fout.color2.g   = 0.0;
+	fout.color2.b   = 0.0;
 	fout.color2.a 	= Intensities.w / 255.0;
 	
-	fout.color3 = float4(FresnelColor.rgb, Intensities.z);
+	fout.color3 = float4(0.0, 0.0, 0.0, 0.0);
 	
 #ifdef NON_LINEAR_DEPTH
 		fout.depth		= input.Pos.z / input.Pos.w;

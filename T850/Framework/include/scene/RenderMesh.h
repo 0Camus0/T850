@@ -70,8 +70,8 @@ namespace t800 {
       XVECTOR3  AmbientColor;
 	  XVECTOR3  DiffuseColor;
 	  XVECTOR3  SpecularColor;
-	  XVECTOR3  FresnelColor;
-	  XVECTOR3  Intensities;
+	  XVECTOR3  PBRParams;       // .x=metallic .y=roughness (fallbacks)
+	  XVECTOR3  Intensities;     // .w=MatID
 	  XVECTOR3  ParallaxSettings;
     };
 
@@ -80,9 +80,11 @@ namespace t800 {
 		SubSetInfo() {
 			AmbientColor = XVECTOR3(0.0f, 0.0f, 0.0f, 1.0f);
 			DiffuseColor = XVECTOR3(0.5f, 0.5f, 0.5f, 1.0f);
-			SpecularColor = XVECTOR3(1.0f, 1.0f, 1.0f, 1.0f);
-			FresnelColor = XVECTOR3(1.0f, 1.0f, 1.0f, 1.0f);
-			Intensities = XVECTOR3(1.0f, 8.0f, 1.0f, 1.0f);
+			SpecularColor = XVECTOR3(0.04f, 0.04f, 0.04f, 1.0f);
+			PBRParams = XVECTOR3(0.0f, 0.8f, 0.0f, 0.0f);  // metallic=0, roughness=0.8
+			Intensities = XVECTOR3(0.0f, 0.0f, 0.0f, 1.0f);
+			MetallicTex = nullptr;
+			MetallicId = -1;
 			bUseFresnel = false;
 			MatID = 0;
 		}
@@ -95,11 +97,12 @@ namespace t800 {
       Texture*					NormalTex;
       Texture*					ReflectTex;
       Texture*					ParalaxTex;
+      Texture*					MetallicTex;
 
 	  XVECTOR3		  AmbientColor;
 	  XVECTOR3	      DiffuseColor;
 	  XVECTOR3		  SpecularColor;
-	  XVECTOR3		  FresnelColor;
+	  XVECTOR3		  PBRParams;       // .x=metallic .y=roughness
 	  XVECTOR3        Intensities;
 
       int					DiffuseId;
@@ -108,6 +111,7 @@ namespace t800 {
       int					NormalId;
       int					ReflectId;
       int					ParalaxId;
+      int					MetallicId;
 	  
 	  int					MatID;
 

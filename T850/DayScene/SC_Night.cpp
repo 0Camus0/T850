@@ -256,7 +256,7 @@ void SC_Night::CreateAssets() {
   PrimitiveMgr.SetVP(&VP);
   SceneProp.SSAOKernel.InitTexture();
 
-  EnvMapTexIndex = g_pBaseDriver->CreateTexture(string("CubeMap_Mountains.dds"));
+  EnvMapTexIndex = g_pBaseDriver->CreateTexture(string("sky/Pisa.dds"));
 
   int index = PrimitiveMgr.CreateMesh("Models/SkyBox.X");
   Meshes[1].CreateInstance(PrimitiveMgr.GetPrimitive(index), &VP);
@@ -345,7 +345,9 @@ void SC_Night::DestroyAssets() {
 
 void SC_Night::OnUpdate(float _DtSecs) {
   static float totalTime = 0.0f;
-  totalTime += _DtSecs;
+  // Only advance scene timer when spline camera is driving the tour
+  if (ActiveCam->m_externalControl)
+    totalTime += _DtSecs;
   DtSecs = _DtSecs;
   Meshes[0].SetParallaxSettings(SceneProp.ParallaxLowSamples, SceneProp.ParallaxHighSamples, SceneProp.ParallaxHeight);
 
@@ -573,7 +575,7 @@ void SC_Night::OnInput(InputManager* IManager) {
 }
 
 void SC_Night::OnDraw() {
-  // Execute the render graph (all passes including final vignette)
+  // Execute the render graph (all passes including final backbuffer)
   m_renderGraph.Execute(
     pFramework->pVideoDriver,
     SceneProp,

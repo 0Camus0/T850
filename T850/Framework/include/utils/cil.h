@@ -79,6 +79,7 @@
 #define CIL_FOURCC_DXT3  0x33545844l 
 #define CIL_FOURCC_DXT5  0x35545844l 
 #define CIL_FOURCC_RAW	 0
+#define CIL_FOURCC_RGBA16F 113
 
 // KTX formats
 #define CIL_ETC1_RGB8_OES						0x8D64
@@ -121,11 +122,13 @@
 #define CIL_ETC1				(1 << 23)
 #define CIL_ETC2				(1 << 24)
 #define CIL_DXT1				(1 << 25)
+#define CIL_DXT3				(1 << 29)
 #define CIL_DXT5				(1 << 26)
 #define CIL_PVRTC2				(1 << 27)
 #define CIL_PVRTC4				(1 << 28)
 #define CIL_PVRTCII2			(1 << 29)
 #define CIL_PVRTCII4			(1 << 30)
+#define CIL_HALF_FLOAT			(1u << 31)
 
 struct pvr_v3_header {
 	uint32_t		version;

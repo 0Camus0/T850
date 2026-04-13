@@ -20,6 +20,10 @@ uniform mediump sampler2D NormalTex;
 uniform mediump sampler2D HeightTex;
 #endif
 
+#ifdef METALLIC_MAP
+uniform mediump sampler2D MetallicTex;
+#endif
+
 uniform highp vec4 LightPos;
 uniform highp vec4 LightColor;
 uniform highp vec4 CameraPosition;
@@ -27,8 +31,8 @@ uniform highp vec4 CameraInfo;
 uniform highp vec4 AmbientColor;
 uniform highp vec4 DiffuseColor;
 uniform highp vec4 SpecularColor;
-uniform highp vec4 FresnelColor;
-uniform highp vec4 Intensities;
+uniform highp vec4 PBRParams;        // .x=metallic .y=roughness (fallbacks)
+uniform highp vec4 Intensities;      // .w=MatID
 uniform highp vec4 ParallaxSettings;
 
 
@@ -131,11 +135,10 @@ void main(){
 void main(){
 	lowp vec4 color    = vec4(0.5,0.5,0.5,1.0);
 	highp vec4 normal   = vec4(0.5,0.5,0.5,1.0);
-	lowp vec4 specular = vec4(0.5,0.5,0.5,1.0);
+	mediump float metallic = PBRParams.x;
 	lowp vec4 reflect  = vec4(0.5,0.5,0.5,1.0);
 
-	mediump float specIntesivity = 0.8;
-	mediump float roughness = 0.0;
+	mediump float roughness = PBRParams.y;
 
 	normal.xyz   = normalize(hnormal).xyz;  
 	highp vec2 parallaxCoords =  vecUVCoords;
@@ -146,6 +149,7 @@ void main(){
 
 	#endif
 	#ifdef HEIGHT_MAP
+	  if (ParallaxSettings.w > 0.5) {
 		highp float heightScale = ParallaxSettings.z;
 		lowp mat3 TBN_transposed = transpose(TBN);
 		highp vec3 viewDir   = TBN_transposed * normalize( CameraPosition.xyz-WorldPos.xyz);
@@ -178,7 +182,7 @@ void main(){
 			highp vec2 prevTexCoords = parallaxCoords - deltaTexCoords;
 			highp float weight = (prevDepthMapValue - prevRayZ) /(prevDepthMapValue - currentDepthMapValue + currentRayZ - prevRayZ);
 			parallaxCoords = prevTexCoords * weight + parallaxCoords * (1.0 - weight);
-
+	  }
 		//parallaxCoords = vecUVCoords;
 	#endif
 
@@ -210,44 +214,40 @@ void main(){
 	#endif
 
 	#ifdef SPECULAR_MAP
-		#ifdef ES_30
-			specular = texture(SpecularTex,parallaxCoords);
-		#else
-			specular = texture2D(SpecularTex,parallaxCoords);
-		#endif
-	#else
-		specular = SpecularColor;
+		// Legacy: specular map ignored in metallic PBR workflow
 	#endif
-	
+
+	#ifdef METALLIC_MAP
+		#ifdef ES_30
+			metallic = texture(MetallicTex,parallaxCoords).r;
+		#else
+			metallic = texture2D(MetallicTex,parallaxCoords).r;
+		#endif
+	#endif
+
 	#ifdef GLOSS_MAP
 		#ifdef ES_30
 			roughness = texture(GlossTex,parallaxCoords).r;
 		#else
 			roughness = texture2D(GlossTex,parallaxCoords).r;
 		#endif
-	#else
-		roughness = 0.5f;
 	#endif
 			
 		normal.xyz		 = normal.xyz*0.5 + 0.5;	
 	
 	#ifdef ES_30
 		colorOut_0.rgb  = color.rgb;
-		colorOut_0.a 	= Intensities.x / 255.0;
+		colorOut_0.a 	= 0.0;
 		colorOut_1.rgb  = normal.xyz;
-		colorOut_2.rgb  = specular.rgb;
 		colorOut_1.a 	= roughness;
 
-		// Mat Id 
-		// 0 No Light
-		// 1 No Normal Map
-		// 2 Normal Map 
-		// 3 Normal Map  + Fresnel
-		// 4 No Normal Map + Fresnel
-
+		colorOut_2.r    = metallic;
+		colorOut_2.g    = 0.0;
+		colorOut_2.b    = 0.0;
+		// Mat Id: 0=NoLight, 1=NoNormalMap, 2=NormalMap
 		colorOut_2.a = Intensities.w / 255.0;
 
-		colorOut_3	= vec4(FresnelColor.rgb, Intensities.z);
+		colorOut_3	= vec4(0.0, 0.0, 0.0, 0.0);
 
 		#ifdef NON_LINEAR_DEPTH
 			colorOut_4	= vec4(Pos.z / Pos.w, 0.0, 0.0, 0.0);
@@ -256,24 +256,18 @@ void main(){
 		#endif
 	#else
 		gl_FragData[0].rgb  = color.rgb;
-		gl_FragData[0].a 	= Intensities.x / 255.0;
+		gl_FragData[0].a 	= 0.0;
 		
 		gl_FragData[1].rgb  = normal.xyz;
 		gl_FragData[1].a 	= roughness;
 
-		gl_FragData[2].rgb  = specular.rgb;
-		
-		// Mat Id 
-		// 0 No Light
-		// 1 No Normal Map
-		// 2 Normal Map 
-		// 3 Normal Map  + Fresnel
-		// 4 No Normal Map + Fresnel
-		
+		gl_FragData[2].r    = metallic;
+		gl_FragData[2].g    = 0.0;
+		gl_FragData[2].b    = 0.0;
+		// Mat Id: 0=NoLight, 1=NoNormalMap, 2=NormalMap
 		gl_FragData[2].a = Intensities.w / 255.0;
-		
 
-		gl_FragData[3]	= vec4(FresnelColor.rgb, Intensities.z);
+		gl_FragData[3]	= vec4(0.0, 0.0, 0.0, 0.0);
 		gl_FragData[4]	= vec4(Pos.z / CameraInfo.y, 0.0, 0.0, 0.0);
 
 		#ifdef NON_LINEAR_DEPTH

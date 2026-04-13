@@ -34,7 +34,7 @@ namespace t800 {
     bool IsPaused() const { return m_paused; }
 
   private:
-    static constexpr const char* kLayoutPath = "gui_layout.json";
+    static constexpr const char* kLayoutPath = "Layouts/gui_layout.json";
 
     RootFramework* m_framework;
     SceneBase* m_activeScene;

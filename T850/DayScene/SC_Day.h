@@ -4,6 +4,7 @@
 #include <utils/Timer.h>
 #include <scene/SplineWireframe.h>
 #include <scene/WireframeSphere.h>
+#include <scene/WireframeArrow.h>
 #include <utils/T8_Spline.h>
 #include <scene/SceneSetup.h>
 #include <scene/RenderGraph.h>
@@ -64,6 +65,7 @@ class SC_Day : public t800::SceneBase
     CHANGE_FOV,
     CHANGE_SHOW_SPLINE,
     CHANGE_SHOW_LIGHTS,
+    CHANGE_LIGHT_INTENSITY,
     CHANGE_MAX_NUM_OPTIONS
   };
   public:
@@ -85,6 +87,9 @@ class SC_Day : public t800::SceneBase
   void PopulateGUI(t800::GUIManager& gui) override;
   void SyncToGUI(t800::GUIManager& gui) override;
   void SyncFromGUI(t800::GUIManager& gui) override;
+
+  // Dump scene state to JSON
+  void SaveSceneState() override;
 
   // Helper: find selector index for a light count value
   int FindLightOption(int activeLights);
@@ -119,6 +124,7 @@ class SC_Day : public t800::SceneBase
   int				DepthPass;
   int				ShadowAccumPass;
   int				BloomAccumPass;
+  int       BrightPassPass;
   int				ExtraHelperPass;
   int Extra16FPass;
   int GodRaysCalcPass;
@@ -155,6 +161,7 @@ class SC_Day : public t800::SceneBase
   t800::SplineWireframe* splineWire;
   t800::PrimitiveInst splineInst;
   t800::WireframeSphere m_wireframeSphere;
+  t800::WireframeArrow m_wireframeArrow;
   t800::LensFlare m_flare;
   XMATRIX44 m;
 };

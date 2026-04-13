@@ -10,6 +10,7 @@
     { "name": "ShadowAccum",      "color_count": 1, "color_format": "R8",      "depth_format": "NONE", "size": [0,0], "linear_filter": true },
     { "name": "ExtraHelper",      "color_count": 1, "color_format": "RGBA8",   "depth_format": "NONE", "size": [0,0], "linear_filter": true },
     { "name": "BloomAccum",       "color_count": 1, "color_format": "RGBA8",   "depth_format": "NONE", "size": [512,512], "linear_filter": true },
+    { "name": "BrightPass",       "color_count": 1, "color_format": "RGBA8",   "depth_format": "NONE", "size": [512,512], "linear_filter": true },
     { "name": "BloomHelper",      "color_count": 1, "color_format": "RGBA8",   "depth_format": "NONE", "size": [512,512], "linear_filter": true },
     { "name": "GodRaysCalc",      "color_count": 1, "color_format": "RGBA8",   "depth_format": "NONE", "size": [0,0], "linear_filter": true, "size_ref": "$god_rays_resolution" },
     { "name": "GodRaysCalcExtra", "color_count": 1, "color_format": "RGBA8",   "depth_format": "NONE", "size": [0,0], "linear_filter": true, "size_ref": "$god_rays_resolution" },
@@ -165,7 +166,7 @@
     },
     {
       "name": "Bright",
-      "target": "BloomAccum",
+      "target": "BrightPass",
       "inputs": [
         { "source": "Extra16F:COLOR0", "slot": 0 },
         { "source": "AdaptedLumCurrent:COLOR0", "slot": 1 }
@@ -179,7 +180,7 @@
       "target": "BloomHelper",
       "gauss_kernel": 1,
       "inputs": [
-        { "source": "BloomAccum:COLOR0", "slot": 0 }
+        { "source": "BrightPass:COLOR0", "slot": 0 }
       ],
       "draws": [
         { "type": "fullscreen_quad", "signature": "HORIZONTAL_BLUR_PASS" }

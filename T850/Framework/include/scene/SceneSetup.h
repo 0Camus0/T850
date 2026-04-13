@@ -10,6 +10,8 @@
 
 namespace t800 {
 
+  class SceneBase;  // forward
+
   // SceneSetup: loads a JSON scene descriptor and builds all scene objects.
   // Owns cameras, light cameras, gauss filters, splines, and spline agents.
   // Call Load() to parse and build, then Apply() to wire into a SceneProps.
@@ -26,6 +28,9 @@ namespace t800 {
 
     // Wire built objects into a SceneProps instance.
     void Apply(SceneProps& props);
+
+    // Write current runtime state back to descriptor and save to JSON.
+    void SaveState(SceneBase* scene, const std::string& jsonPath);
 
     // ── Built objects (owned by SceneSetup) ──
     std::vector<Camera>       cameras;

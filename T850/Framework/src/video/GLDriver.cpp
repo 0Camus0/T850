@@ -116,7 +116,10 @@ namespace t800 {
   ShaderBase * GLDevice::CreateShader(std::string src_vs, std::string src_fs, unsigned long long sig)
   {
     ShaderBase *sh = new GLShader();
-    sh->CreateShader(src_vs, src_fs,sig);
+    if (!sh->CreateShader(src_vs, src_fs, sig)) {
+      delete sh;
+      return nullptr;
+    }
     return sh;
   }
 

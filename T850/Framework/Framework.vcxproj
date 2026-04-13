@@ -45,6 +45,7 @@
     <ClInclude Include="include\scene\SceneProp.h" />
     <ClInclude Include="include\scene\SplineWireframe.h" />
     <ClInclude Include="include\scene\WireframeSphere.h" />
+    <ClInclude Include="include\scene\WireframeArrow.h" />
     <ClInclude Include="include\scene\T8_Quad.h" />
     <ClInclude Include="include\scene\T8_TextRenderer.h" />
     <ClInclude Include="include\gui\GUIElement.h" />
@@ -100,6 +101,7 @@
     <ClCompile Include="src\scene\SceneProp.cpp" />
     <ClCompile Include="src\scene\SplineWireframe.cpp" />
     <ClCompile Include="src\scene\WireframeSphere.cpp" />
+    <ClCompile Include="src\scene\WireframeArrow.cpp" />
     <ClCompile Include="src\scene\T8_Quad.cpp" />
     <ClCompile Include="src\scene\T8_TextRenderer.cpp" />
     <ClCompile Include="src\gui\GUIElement.cpp" />

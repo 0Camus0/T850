@@ -6,7 +6,7 @@ Add-Type -AssemblyName PresentationFramework, PresentationCore, WindowsBase, Sys
 $xaml = @"
 <Window xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-        Title="T850 Engine Launcher" SizeToContent="Height" Width="500" MinWidth="420"
+    Title="T850 Engine Launcher" SizeToContent="Height" Width="920" MinWidth="760"
         WindowStartupLocation="CenterScreen" ResizeMode="CanResize"
         Background="#1B1B2F" Foreground="#E0E0E0">
     <Window.Resources>
@@ -125,12 +125,15 @@ $xaml = @"
             <RowDefinition Height="Auto"/>
             <RowDefinition Height="Auto"/>
             <RowDefinition Height="Auto"/>
-            <RowDefinition Height="*"/>
-            <RowDefinition Height="Auto"/>
         </Grid.RowDefinitions>
+        <Grid.ColumnDefinitions>
+            <ColumnDefinition Width="*"/>
+            <ColumnDefinition Width="16"/>
+            <ColumnDefinition Width="*"/>
+        </Grid.ColumnDefinitions>
 
         <!-- Header -->
-        <StackPanel Grid.Row="0" Margin="0,0,0,20">
+        <StackPanel Grid.Row="0" Grid.ColumnSpan="3" Margin="0,0,0,20">
             <StackPanel Orientation="Horizontal">
                 <TextBlock Text="T850 ENGINE" FontSize="28" FontWeight="Bold"
                            Foreground="{StaticResource AccentBrush}" Margin="0"/>
@@ -144,7 +147,7 @@ $xaml = @"
         </StackPanel>
 
         <!-- Build Configuration -->
-        <Border Grid.Row="1" Background="{StaticResource SurfaceBrush}"
+        <Border Grid.Row="1" Grid.Column="0" Background="{StaticResource SurfaceBrush}"
                 CornerRadius="8" Padding="16,12" Margin="0,0,0,12">
             <StackPanel>
                 <TextBlock Text="BUILD CONFIGURATION" FontSize="12" FontWeight="SemiBold"
@@ -175,7 +178,7 @@ $xaml = @"
         </Border>
 
         <!-- Graphics API -->
-        <Border Grid.Row="2" Background="{StaticResource SurfaceBrush}"
+        <Border Grid.Row="2" Grid.Column="0" Background="{StaticResource SurfaceBrush}"
                 CornerRadius="8" Padding="16,12" Margin="0,0,0,12">
             <StackPanel>
                 <TextBlock Text="GRAPHICS API" FontSize="12" FontWeight="SemiBold"
@@ -188,7 +191,7 @@ $xaml = @"
         </Border>
 
         <!-- RT Dump Settings -->
-        <Border Grid.Row="3" Background="{StaticResource SurfaceBrush}"
+        <Border Grid.Row="1" Grid.Column="2" Background="{StaticResource SurfaceBrush}"
                 CornerRadius="8" Padding="16,12" Margin="0,0,0,12">
             <StackPanel>
                 <TextBlock Text="SNAPSHOT" FontSize="12" FontWeight="SemiBold"
@@ -243,7 +246,7 @@ $xaml = @"
         </Border>
 
         <!-- Display -->
-        <Border Grid.Row="4" Background="{StaticResource SurfaceBrush}"
+        <Border Grid.Row="3" Grid.Column="0" Background="{StaticResource SurfaceBrush}"
                 CornerRadius="8" Padding="16,12" Margin="0,0,0,12">
             <StackPanel>
                 <TextBlock Text="DISPLAY" FontSize="12" FontWeight="SemiBold"
@@ -285,7 +288,7 @@ $xaml = @"
         </Border>
 
         <!-- Dev Tools -->
-        <Border Grid.Row="5" Background="{StaticResource SurfaceBrush}"
+        <Border Grid.Row="2" Grid.Column="2" Background="{StaticResource SurfaceBrush}"
                 CornerRadius="8" Padding="16,12" Margin="0,0,0,12">
             <StackPanel>
                 <TextBlock Text="DEV TOOLS" FontSize="12" FontWeight="SemiBold"
@@ -293,20 +296,29 @@ $xaml = @"
                 <StackPanel Margin="0,0,0,10">
                     <TextBlock Text="Log Level" Style="{StaticResource LabelStyle}"/>
                     <ComboBox Name="cmbLogLevel">
-                        <ComboBoxItem Content="Error" Tag="error" IsSelected="True"/>
+                        <ComboBoxItem Content="Error" Tag="error"/>
                         <ComboBoxItem Content="Info" Tag="info"/>
                         <ComboBoxItem Content="Debug" Tag="debug"/>
-                        <ComboBoxItem Content="Verbose" Tag="verbose"/>
+                        <ComboBoxItem Content="Verbose" Tag="verbose" IsSelected="True"/>
                     </ComboBox>
                 </StackPanel>
                 <CheckBox Name="chkLogToFile" Content="Save log to file" Margin="0,0,0,6"/>
                 <CheckBox Name="chkGuiEdit" Content="GUI Edit Mode (move/scale elements)" Margin="0,0,0,6"/>
+                <CheckBox Name="chkGuiControlEdit" Content="GUI Control Edit Mode (knob/buttons/check)" Margin="0,0,0,6"/>
+                <StackPanel Name="pnlGuiControlTarget" Margin="20,0,0,6" IsEnabled="False">
+                    <TextBlock Text="Control Target" Style="{StaticResource LabelStyle}"/>
+                    <ComboBox Name="cmbGuiControlTarget">
+                        <ComboBoxItem Content="Slider Knob" Tag="slider_knob" IsSelected="True"/>
+                        <ComboBoxItem Content="Selector Control (Both Buttons)" Tag="selector_control"/>
+                        <ComboBoxItem Content="Checkbox Check Mark" Tag="checkbox_mark"/>
+                    </ComboBox>
+                </StackPanel>
                 <CheckBox Name="chkGuiSnap" Content="Snap to Grid (auto-align)" Margin="0,0,0,6"/>
             </StackPanel>
         </Border>
 
         <!-- Status + Command Preview -->
-        <StackPanel Grid.Row="6" VerticalAlignment="Bottom" Margin="0,0,0,12">
+        <StackPanel Grid.Row="4" Grid.ColumnSpan="3" VerticalAlignment="Bottom" Margin="0,0,0,12">
             <TextBlock Name="txtStatus" Text="" FontSize="12"
                        Foreground="#A6ADC8" Margin="0,0,0,4"
                        TextWrapping="Wrap"/>
@@ -325,7 +337,7 @@ $xaml = @"
         </StackPanel>
 
         <!-- Buttons -->
-        <Grid Grid.Row="7">
+        <Grid Grid.Row="5" Grid.ColumnSpan="3">
             <Grid.ColumnDefinitions>
                 <ColumnDefinition Width="*"/>
                 <ColumnDefinition Width="12"/>
@@ -390,6 +402,9 @@ $txtBuildOutput = $window.FindName("txtBuildOutput")
 $btnBuild       = $window.FindName("btnBuild")
 $btnRun         = $window.FindName("btnRun")
 $chkGuiEdit     = $window.FindName("chkGuiEdit")
+$chkGuiControlEdit = $window.FindName("chkGuiControlEdit")
+$pnlGuiControlTarget = $window.FindName("pnlGuiControlTarget")
+$cmbGuiControlTarget = $window.FindName("cmbGuiControlTarget")
 $chkGuiSnap     = $window.FindName("chkGuiSnap")
 $cmbLogLevel    = $window.FindName("cmbLogLevel")
 $chkLogToFile   = $window.FindName("chkLogToFile")
@@ -478,6 +493,20 @@ function Load-Config {
             if ($cfg.devTools.PSObject.Properties['guiEdit']) {
                 $chkGuiEdit.IsChecked = [bool]$cfg.devTools.guiEdit
             }
+            if ($cfg.devTools.PSObject.Properties['guiControlEdit']) {
+                $chkGuiControlEdit.IsChecked = [bool]$cfg.devTools.guiControlEdit
+            }
+            if ($cfg.devTools.PSObject.Properties['guiControlTarget']) {
+                $targetTag = $cfg.devTools.guiControlTarget
+                if ($targetTag -ieq 'selector_left' -or $targetTag -ieq 'selector_right') {
+                    $targetTag = 'selector_control'
+                }
+                foreach ($item in $cmbGuiControlTarget.Items) {
+                    if ($item.Tag -ieq $targetTag) {
+                        $cmbGuiControlTarget.SelectedItem = $item; break
+                    }
+                }
+            }
             if ($cfg.devTools.PSObject.Properties['guiSnap']) {
                 $chkGuiSnap.IsChecked = [bool]$cfg.devTools.guiSnap
             }
@@ -522,6 +551,8 @@ function Save-Config {
         }
         devTools = @{
             guiEdit   = [bool]$chkGuiEdit.IsChecked
+            guiControlEdit = [bool]$chkGuiControlEdit.IsChecked
+            guiControlTarget = ($cmbGuiControlTarget.SelectedItem).Tag.ToString()
             guiSnap   = [bool]$chkGuiSnap.IsChecked
             logLevel  = ($cmbLogLevel.SelectedItem).Tag.ToString()
             logToFile = [bool]$chkLogToFile.IsChecked
@@ -612,6 +643,10 @@ function Get-LaunchCommand {
     if ($chkGuiEdit.IsChecked) {
         $argList += "--guiEdit"
     }
+    if ($chkGuiControlEdit.IsChecked) {
+        $argList += "--guiControlEdit"
+        $argList += @("--guiControlTarget", ($cmbGuiControlTarget.SelectedItem).Tag.ToString())
+    }
     if ($chkGuiSnap.IsChecked) {
         $argList += "--guiSnap"
     }
@@ -648,6 +683,11 @@ function Update-Preview {
         $txtStatus.Foreground = $window.FindResource("RedBrush")
         $btnRun.IsEnabled = $false
     }
+}
+
+function Update-GuiControlEditUI {
+    $enabled = [bool]$chkGuiControlEdit.IsChecked
+    $pnlGuiControlTarget.IsEnabled = $enabled
 }
 
 # ── Events ──
@@ -703,8 +743,22 @@ $cmbApi.Add_SelectionChanged({ Update-Preview })
 $cmbScene.Add_SelectionChanged({ Update-Preview })
 $chkFullscreen.Add_Checked({ Update-Preview })
 $chkFullscreen.Add_Unchecked({ Update-Preview })
-$chkGuiEdit.Add_Checked({ Update-Preview })
+$chkGuiEdit.Add_Checked({
+    if ($chkGuiControlEdit.IsChecked) { $chkGuiControlEdit.IsChecked = $false }
+    Update-GuiControlEditUI
+    Update-Preview
+})
 $chkGuiEdit.Add_Unchecked({ Update-Preview })
+$chkGuiControlEdit.Add_Checked({
+    if ($chkGuiEdit.IsChecked) { $chkGuiEdit.IsChecked = $false }
+    Update-GuiControlEditUI
+    Update-Preview
+})
+$chkGuiControlEdit.Add_Unchecked({
+    Update-GuiControlEditUI
+    Update-Preview
+})
+$cmbGuiControlTarget.Add_SelectionChanged({ Update-Preview })
 $chkGuiSnap.Add_Checked({ Update-Preview })
 $chkGuiSnap.Add_Unchecked({ Update-Preview })
 $chkLogToFile.Add_Checked({ Update-Preview })
@@ -873,6 +927,7 @@ $btnRun.Add_Click({
 # ── Initialize ──
 
 Load-Config
+Update-GuiControlEditUI
 Update-Preview
 
 $window.ShowDialog() | Out-Null

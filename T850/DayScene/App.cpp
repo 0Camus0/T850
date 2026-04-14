@@ -45,7 +45,9 @@ bool   g_guiScreenshot = false;      // --guiScreenshot: render 1 frame with GUI
 std::string g_guiScreenshotPath = "gui_screenshot.ppm"; // output path for --guiScreenshot
 bool   g_guiEdit     = false;        // --guiEdit: enable GUI edit mode (move/scale elements)
 bool   g_guiSnap     = false;        // --guiSnap: snap elements to grid when moving
-int    g_logLevel    = 0;            // --logLevel: 0=Error,1=Info,2=Debug,3=Verbose
+bool   g_guiControlEdit = false;     // --guiControlEdit: edit control internals (knob/buttons/check)
+std::string g_guiControlTarget = "slider_knob"; // --guiControlTarget <slider_knob|selector_control|checkbox_mark>
+int    g_logLevel    = 3;            // --logLevel: 0=Error,1=Info,2=Debug,3=Verbose
 std::string g_logFile;              // --logFile <path>: write log to file (append, flush-per-entry)
 
 t800::AppBase		  *pApp = 0;
@@ -127,6 +129,13 @@ int main(int arg,char ** args){
     else if (a == "--guiSnap") {
       g_guiSnap = true;
     }
+    else if (a == "--guiControlEdit") {
+      g_guiControlEdit = true;
+      g_guiOnStart = true; // implies --gui
+    }
+    else if (a == "--guiControlTarget" && i + 1 < arg) {
+      g_guiControlTarget = args[++i];
+    }
     else if (a == "--logLevel" && i + 1 < arg) {
       std::string val = args[++i];
       if (val == "error"   || val == "0") g_logLevel = 0;
@@ -154,6 +163,9 @@ int main(int arg,char ** args){
 
   // Initialize logging
   uint32_t logBackends = t800::Log::T8_LOG_BACKEND_CONSOLE;
+#ifdef OS_WINDOWS
+  logBackends |= t800::Log::T8_LOG_BACKEND_DEBUG_OUTPUT;  // also emit to VS Output window
+#endif
   if (!g_logFile.empty())
     logBackends |= t800::Log::T8_LOG_BACKEND_FILE;
 

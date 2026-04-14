@@ -17,12 +17,12 @@
 #include <Config.h>
 #include <string>
 #include <vector>
+#include <unordered_map>
 #include "T8_descriptors.h"
 #include "utils/T8_Technique.h"
 
 
 namespace t800 {
-#define T8_NO_SIGNATURE -1
   class Buffer;
   class VertexBuffer;
   class IndexBuffer;
@@ -51,7 +51,7 @@ namespace t800 {
 
     virtual void release() = 0;
     virtual Buffer* CreateBuffer(T8_BUFFER_TYPE::E bufferType, BufferDesc desc, void* initialData = nullptr) = 0;
-    virtual ShaderBase* CreateShader(std::string src_vs, std::string src_fs, unsigned long long sig = T8_NO_SIGNATURE) = 0;
+    virtual ShaderBase* CreateShader(std::string src_vs, std::string src_fs, ShaderKey key = ShaderKey(), const std::string& vs_name = "", const std::string& fs_name = "") = 0;
     virtual Texture* CreateTexture(std::string path) = 0;
     virtual Texture* CreateTextureFromMemory(const unsigned char *buff, int w, int h, int channels, std::string name) = 0;
     virtual Texture* CreateCubeMap(const unsigned char * buff, int w, int h) = 0;
@@ -179,14 +179,14 @@ namespace t800 {
   };
   class ShaderBase {
   public:
-    ShaderBase() : Sig(T8_NO_SIGNATURE) {	}
-    bool CreateShader(std::string src_vs, std::string src_fs, unsigned long long sig = T8_NO_SIGNATURE);
-    virtual bool    CreateShaderAPI(std::string src_vs, std::string src_fs, unsigned long long sig) = 0;
+    ShaderBase() {}
+    bool CreateShader(std::string src_vs, std::string src_fs, ShaderKey key = ShaderKey(), const std::string& vs_name = "", const std::string& fs_name = "");
+    virtual bool    CreateShaderAPI(std::string src_vs, std::string src_fs, const std::string& vs_name = "", const std::string& fs_name = "") = 0;
     virtual void  Set(const t800::DeviceContext& deviceContext) = 0;
     virtual void DestroyAPIShader() = 0;
     void release();
 
-    unsigned long long	Sig;
+    ShaderKey key;
   };
 
   class BaseDriver {
@@ -250,7 +250,7 @@ namespace t800 {
 
     int 	 CreateTexture(std::string);
     int    CreateCubeMap(const unsigned char * buff, int w, int h);
-    int	   CreateShader(std::string src_vs, std::string src_fs, unsigned long long sig = T8_NO_SIGNATURE);
+    int	   CreateShader(std::string src_vs, std::string src_fs, ShaderKey key = ShaderKey(), const std::string& vs_name = "", const std::string& fs_name = "");
     int 	 CreateRT(int nrt, int cf, int df, int w, int h, bool genMips = false);
     void 	 ModifyRT(int RTID, int nrt, int cf, int df, int w, int h, bool genMips = false);
     int    CreateTechnique(std::string path);
@@ -260,7 +260,7 @@ namespace t800 {
 
 
     Texture* GetRTTexture(int id, int index);
-    ShaderBase*	GetShaderSig(unsigned long long sig);
+    ShaderBase*	GetShader(ShaderKey key);
     ShaderBase*	GetShaderIdx(int id);
     Texture* GetTexture(int id);
     T8Technique* GetTechnique(int id);
@@ -280,7 +280,8 @@ namespace t800 {
 
 
     std::vector<T8Technique*> m_techniques;
-    std::vector<ShaderBase*>	m_signatureShaders;
+    std::vector<ShaderBase*>	m_shaders;
+    std::unordered_map<uint32_t, ShaderBase*> m_shaderCache;
     std::vector<BaseRT*>		RTs;
     std::vector<Texture*>		Textures;
     int							CurrentRT;

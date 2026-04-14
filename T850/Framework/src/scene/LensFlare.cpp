@@ -22,7 +22,8 @@ namespace t800 {
     m_quads.resize(10);
     m_quads[0].CreateInstance(mngr.GetPrimitive(PrimitiveManager::QUAD), &m_proj);
     m_quads[0].SetTexture(g_pBaseDriver->GetTexture(g_pBaseDriver->CreateTexture("lens5.png")), 0);
-    m_quads[0].SetGlobalSignature(Signature::FSQUAD_1_TEX);
+    ShaderKey flKey(0); flKey.setPass(PassType::FSQUAD_1_TEX); flKey.bits |= ShaderKey::HAS_TEXCOORD0;
+    m_quads[0].SetGlobalKey(flKey);
     m_quads[0].ScaleAbsolute(aspectRatio*m_sunSize, 1 * m_sunSize, 1);
     m_quads[0].Update();
 
@@ -33,7 +34,7 @@ namespace t800 {
     }
     for (int i = 1; i < 10; i++) {
       m_quads[i].CreateInstance(mngr.GetPrimitive(PrimitiveManager::QUAD), &m_proj);
-      m_quads[i].SetGlobalSignature(Signature::FSQUAD_1_TEX);
+      m_quads[i].SetGlobalKey(flKey);
       m_quads[i].Update();
       m_quads[i].SetTexture(g_pBaseDriver->GetTexture(m_flareTextureID[i-1]), 0);
     };

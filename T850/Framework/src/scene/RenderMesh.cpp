@@ -22,6 +22,7 @@
 #include <video/windows/D3DXDriver.h>
 #endif
 #include "core/Core.h"
+#include <utils/Log.h>
 
 #define CHANGE_TO_RH 0
 #define DEBUG_MODEL 0
@@ -38,6 +39,7 @@ namespace t800 {
 
   void RenderMesh::Create() {
     GatherInfo();
+    T8_LOG_INFO("Mesh Create: %zu geometries, building GPU buffers", xFile->MeshInfo.size());
     for (std::size_t i = 0; i < xFile->MeshInfo.size(); i++) {
       xFinalGeometry *it = &xFile->MeshInfo[i];
       xMeshGeometry *pActual = &xFile->XMeshDataBase[0]->Geometry[i];
@@ -204,6 +206,9 @@ namespace t800 {
       buffdesc.usage = T8_BUFFER_USAGE::DEFAULT;
       it_MeshInfo->VB = (t800::VertexBuffer*)T8Device->CreateBuffer(T8_BUFFER_TYPE::VERTEX, buffdesc, &it->pData[0]);
 
+      T8_LOG_DEBUG("  Geometry %zu: VB=%u bytes (stride=%u, %d verts), IB=%zu tris",
+                   i, buffdesc.byteWidth, it->VertexSize, pActual->NumVertices, pActual->Triangles.size()/3);
+
 #if CHANGE_TO_RH
       for (std::size_t a = 0; a < pActual->Triangles.size(); a += 3) {
         unsigned short i0 = pActual->Triangles[a + 0];
@@ -225,13 +230,18 @@ namespace t800 {
 
     char *vsSourceP;
     char *fsSourceP;
+    std::string vsName, fsName;
     if (g_pBaseDriver->m_currentAPI == GRAPHICS_API::OPENGL) {
       vsSourceP = file2string("Shaders/VS_Mesh.glsl");
       fsSourceP = file2string("Shaders/FS_Mesh.glsl");
+      vsName = "VS_Mesh.glsl";
+      fsName = "FS_Mesh.glsl";
     }
     else {
       vsSourceP = file2string("Shaders/VS_Mesh.hlsl");
       fsSourceP = file2string("Shaders/FS_Mesh.hlsl");
+      vsName = "VS_Mesh.hlsl";
+      fsName = "FS_Mesh.hlsl";
     }
 
     std::string vstr = std::string(vsSourceP);
@@ -243,107 +253,101 @@ namespace t800 {
     for (std::size_t i = 0; i < xFile->MeshInfo.size(); i++) {
       xFinalGeometry *it = &xFile->MeshInfo[i];
       xMeshGeometry *pActual = &xFile->XMeshDataBase[0]->Geometry[i];
-      unsigned long long Sig = 0;
+      ShaderKey baseKey(0);
+
+      T8_LOG_VERBOSE("Mesh geometry %zu: attrs=0x%X, %d materials",
+                     i, pActual->VertexAttributes, (int)pActual->MaterialList.Materials.size());
 
       if (pActual->VertexAttributes&xMeshGeometry::HAS_NORMAL)
-        Sig |= Signature::HAS_NORMALS;
+        baseKey.bits |= ShaderKey::HAS_NORMALS;
       if (pActual->VertexAttributes&xMeshGeometry::HAS_TEXCOORD0)
-        Sig |= Signature::HAS_TEXCOORDS0;
+        baseKey.bits |= ShaderKey::HAS_TEXCOORD0;
       if (pActual->VertexAttributes&xMeshGeometry::HAS_TEXCOORD1)
-        Sig |= Signature::HAS_TEXCOORDS1;
+        baseKey.bits |= ShaderKey::HAS_TEXCOORD1;
       if (pActual->VertexAttributes&xMeshGeometry::HAS_TANGENT)
-        Sig |= Signature::HAS_TANGENTS;
+        baseKey.bits |= ShaderKey::HAS_TANGENTS;
       if (pActual->VertexAttributes&xMeshGeometry::HAS_BINORMAL)
-        Sig |= Signature::HAS_BINORMALS;
+        baseKey.bits |= ShaderKey::HAS_BINORMALS;
 
       MeshInfo tmp;
       int NumMaterials = static_cast<int>(pActual->MaterialList.Materials.size());
       for (int j = 0; j < NumMaterials; j++) {
-        unsigned long long CurrSig = Sig;
+        ShaderKey matKey(baseKey.bits);
         xSubsetInfo *subinfo = &it->Subsets[j];
         xMaterial *material = &pActual->MaterialList.Materials[j];
         SubSetInfo stmp;
 
-        std::string Defines = "";
+        bool bNoLight = false;
+        bool bUseFresnel = false;
 
         for (unsigned int k = 0; k < material->EffectInstance.pDefaults.size(); k++) {
           xEffectDefault *mDef = &material->EffectInstance.pDefaults[k];		
 
           if (mDef->Type == xF::xEFFECTENUM::STDX_STRINGS) {
-            if (mDef->NameParam == "diffuseMap") {
-              CurrSig |= Signature::DIFFUSE_MAP;
-            }
-
-            if (mDef->NameParam == "specularMap") {
-              CurrSig |= Signature::SPECULAR_MAP;
-            }
-
-            if (mDef->NameParam == "glossMap") {
-              CurrSig |= Signature::GLOSS_MAP;
-            }
-
-            if (mDef->NameParam == "normalMap") {
-              CurrSig |= Signature::NORMAL_MAP;
-            }
-
-            if (mDef->NameParam == "heightMap") {//
-              CurrSig |= Signature::HEIGHT_MAP;
-            }
-
-            if (mDef->NameParam == "metallicMap") {
-              CurrSig |= Signature::METALLIC_MAP;
-            }
+            if (mDef->NameParam == "diffuseMap")
+              matKey.bits |= ShaderKey::DIFFUSE_MAP;
+            if (mDef->NameParam == "specularMap")
+              matKey.bits |= ShaderKey::SPECULAR_MAP;
+            if (mDef->NameParam == "glossMap")
+              matKey.bits |= ShaderKey::GLOSS_MAP;
+            if (mDef->NameParam == "normalMap")
+              matKey.bits |= ShaderKey::NORMAL_MAP;
+            if (mDef->NameParam == "heightMap")
+              matKey.bits |= ShaderKey::HEIGHT_MAP;
+            if (mDef->NameParam == "metallicMap")
+              matKey.bits |= ShaderKey::METALLIC_MAP;
           }
 
           if (mDef->Type == xF::xEFFECTENUM::STDX_DWORDS) {
             if (mDef->NameParam == "NoLighting") {
               if (mDef->CaseDWORD == 1) {
-                CurrSig |= Signature::USE_NO_LIGHT;
+                bNoLight = true;
               }
             }
 			if (mDef->NameParam == "bUseFresnel") {
 				if (mDef->CaseDWORD == 1) {
-					CurrSig |= Signature::USE_FRESNEL;
+					bUseFresnel = true;
 				}
 			}
           }
         }
 		
-		if (CurrSig&Signature::USE_NO_LIGHT) {
+		if (bNoLight) {
 			stmp.MatID = 0;
 		}
-		else if (!(CurrSig&Signature::NORMAL_MAP)) {
+		else if (!matKey.has(ShaderKey::NORMAL_MAP)) {
 			stmp.MatID = 1;
 		}
 		else {
 			stmp.MatID = 2;
 		}
 
-		if (CurrSig&Signature::USE_NO_LIGHT)
-			CurrSig ^= Signature::USE_NO_LIGHT;
+		stmp.bUseFresnel = bUseFresnel;
+        stmp.key = matKey;
 
-		if (CurrSig&Signature::USE_FRESNEL)
-			CurrSig ^= Signature::USE_FRESNEL;
+        T8_LOG_VERBOSE("  Material %d: key=0x%08X noLight=%d fresnel=%d matID=%d",
+                       j, matKey.bits, (int)bNoLight, (int)bUseFresnel, stmp.MatID);
 
-        g_pBaseDriver->CreateShader(vstr, fstr, CurrSig);
-        stmp.Sig = CurrSig;
+        // Pre-compile pass variants
+        bool hasHeight = matKey.has(ShaderKey::HEIGHT_MAP);
+        g_pBaseDriver->CreateShader(vstr, fstr, matKey, vsName, fsName);
+
+        static const uint8_t passes[] = {
+          PassType::FORWARD, PassType::GBUFFER,
+          PassType::SHADOW_MAP, PassType::RADIAL_DEPTH
+        };
+        for (uint8_t pass : passes) {
+          ShaderKey k(matKey.bits);
+          k.setPass(pass);
+          g_pBaseDriver->CreateShader(vstr, fstr, k, vsName, fsName);
+          if (hasHeight && (pass == PassType::GBUFFER || pass == PassType::FORWARD)) {
+            ShaderKey kp(k.bits);
+            kp.bits |= ShaderKey::PARALLAX;
+            g_pBaseDriver->CreateShader(vstr, fstr, kp, vsName, fsName);
+          }
+        }
+
         tmp.SubSets.push_back(stmp);
-
-        CurrSig |= Signature::FORWARD_PASS;
-        g_pBaseDriver->CreateShader(vstr, fstr, CurrSig);
-        CurrSig ^= Signature::FORWARD_PASS;
-
-        CurrSig |= Signature::GBUFF_PASS;
-        g_pBaseDriver->CreateShader(vstr, fstr, CurrSig);
-        CurrSig ^= Signature::GBUFF_PASS;
-
-        CurrSig |= Signature::SHADOW_MAP_PASS;
-        g_pBaseDriver->CreateShader(vstr, fstr, CurrSig);
-        CurrSig ^= Signature::SHADOW_MAP_PASS;
-
-        CurrSig |= Signature::RADIAL_DEPTH_PASS;
-        g_pBaseDriver->CreateShader(vstr, fstr, CurrSig);
-
       }
 
       Info.push_back(tmp);
@@ -420,7 +424,6 @@ namespace t800 {
       unsigned int stride = it_MeshInfo->VertexSize;
       unsigned int offset = 0;
 
-      long long Sig = -1;
       ShaderBase *s = 0;
       ShaderBase *last = (ShaderBase*)32;
       it_MeshInfo->VB->Set(*T8DeviceContext, stride, offset);
@@ -438,9 +441,19 @@ namespace t800 {
 
         sub_info->IB->Set(*T8DeviceContext, 0, T8_IB_FORMAR::R16);
 
-        unsigned long long sig = sub_info->Sig;
-        sig |= gSig;
-        s = g_pBaseDriver->GetShaderSig(sig);
+        // Build final shader key: material features + global pass + toggles
+        ShaderKey finalKey(sub_info->key.bits);
+        finalKey.setPass(gKey.getPass());
+        constexpr uint32_t featureMask = (1u << ShaderKey::PASS_SHIFT) - 1;
+        finalKey.bits |= (gKey.bits & featureMask);
+        if (finalKey.has(ShaderKey::HEIGHT_MAP) && m_fParallaxEnabled > 0.5f) {
+          uint8_t pass = finalKey.getPass();
+          if (pass == PassType::GBUFFER || pass == PassType::FORWARD)
+            finalKey.bits |= ShaderKey::PARALLAX;
+        }
+
+        s = g_pBaseDriver->GetShader(finalKey);
+        if (!s) continue;
 
      //   if (s != last)
           update = true;
@@ -451,30 +464,30 @@ namespace t800 {
           it_MeshInfo->CB->UpdateFromBuffer(*T8DeviceContext, &it_MeshInfo->CnstBuffer.WVP[0]);
           it_MeshInfo->CB->Set(*T8DeviceContext);
         }
-        if (s->Sig&Signature::DIFFUSE_MAP) {
+        if (s->key.has(ShaderKey::DIFFUSE_MAP)) {
           sub_info->DiffuseTex->Set(*T8DeviceContext, 0, "DiffuseTex");
         }
-        if (s->Sig&Signature::SPECULAR_MAP) {
+        if (s->key.has(ShaderKey::SPECULAR_MAP)) {
           sub_info->SpecularTex->Set(*T8DeviceContext, 1, "SpecularTex");
         }
 
-        if (s->Sig&Signature::GLOSS_MAP) {
+        if (s->key.has(ShaderKey::GLOSS_MAP)) {
           sub_info->GlossfTex->Set(*T8DeviceContext, 2, "GlossTex");
         }
 
-        if (s->Sig&Signature::NORMAL_MAP) {
+        if (s->key.has(ShaderKey::NORMAL_MAP)) {
           sub_info->NormalTex->Set(*T8DeviceContext, 3, "NormalTex");
         }
         if (EnvMap) {
           EnvMap->Set(*T8DeviceContext, 4, "texEnv");
         }
-        if (s->Sig&Signature::HEIGHT_MAP) {
+        if (s->key.has(ShaderKey::HEIGHT_MAP)) {
           sub_info->ParalaxTex->Set(*T8DeviceContext, 5, "HeightTex");
         }
-        if (s->Sig&Signature::METALLIC_MAP) {
+        if (s->key.has(ShaderKey::METALLIC_MAP)) {
           sub_info->MetallicTex->Set(*T8DeviceContext, 6, "MetallicTex");
         }
-        if (s->Sig&Signature::DIFFUSE_MAP) {
+        if (s->key.has(ShaderKey::DIFFUSE_MAP)) {
           sub_info->DiffuseTex->SetSampler(*T8DeviceContext);
         }
 

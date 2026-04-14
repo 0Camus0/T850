@@ -96,6 +96,30 @@ namespace t800 {
     bdesc.usage = T8_BUFFER_USAGE::DEFAULT;
     m_CB = (t800::ConstantBuffer*)T8Device->CreateBuffer(T8_BUFFER_TYPE::CONSTANT, bdesc);
 
+    // Pre-allocate batch VB/IB for text batching
+    {
+      t800::BufferDesc vbDesc;
+      vbDesc.byteWidth = sizeof(Quad::Vertex) * kMaxBatchChars * 4;
+      vbDesc.usage = T8_BUFFER_USAGE::DEFAULT;
+      m_batchVB = (t800::VertexBuffer*)T8Device->CreateBuffer(T8_BUFFER_TYPE::VERTEX, vbDesc);
+
+      // Build index buffer: 0,1,2, 0,2,3,  4,5,6, 4,6,7, ...
+      unsigned short batchIndices[kMaxBatchChars * 6];
+      for (int i = 0; i < kMaxBatchChars; i++) {
+        unsigned short base = (unsigned short)(i * 4);
+        batchIndices[i * 6 + 0] = base + 2;
+        batchIndices[i * 6 + 1] = base + 1;
+        batchIndices[i * 6 + 2] = base + 0;
+        batchIndices[i * 6 + 3] = base + 3;
+        batchIndices[i * 6 + 4] = base + 2;
+        batchIndices[i * 6 + 5] = base + 0;
+      }
+      t800::BufferDesc ibDesc;
+      ibDesc.byteWidth = sizeof(unsigned short) * kMaxBatchChars * 6;
+      ibDesc.usage = T8_BUFFER_USAGE::DEFAULT;
+      m_batchIB = (t800::IndexBuffer*)T8Device->CreateBuffer(T8_BUFFER_TYPE::INDEX, ibDesc, batchIndices);
+    }
+
     /*DEALLOCATE MEMORY*/
     delete[] temp_bitmap;
     delete[]ttf_buffer;
@@ -240,6 +264,79 @@ namespace t800 {
 
     g_pBaseDriver->SetBlendState(BaseDriver::BLEND_STATES::BLEND_DEFAULT);
     g_pBaseDriver->SetDepthStencilState(BaseDriver::DEPTH_STENCIL_STATES::DEPTH_DEFAULT);
+
+    return MeasurePixel(text, screenW, screenH) * scaleX;
+  }
+
+  void TextRenderer::BeginBatch() {
+    m_batchActive = true;
+    g_pBaseDriver->SetBlendState(BaseDriver::BLEND_STATES::ALPHA_BLEND);
+    g_pBaseDriver->SetDepthStencilState(BaseDriver::DEPTH_STENCIL_STATES::NONE);
+
+    unsigned int stride = sizeof(Quad::Vertex);
+    unsigned int offset = 0;
+    m_batchVB->Set(*T8DeviceContext, stride, offset);
+    m_batchIB->Set(*T8DeviceContext, 0, T8_IB_FORMAR::R16);
+    m_shader->Set(*T8DeviceContext);
+    T8DeviceContext->SetPrimitiveTopology(T8_TOPOLOGY::TRIANLE_LIST);
+    ftex->Set(*T8DeviceContext, 0, "tex0");
+  }
+
+  void TextRenderer::EndBatch() {
+    m_batchActive = false;
+    g_pBaseDriver->SetBlendState(BaseDriver::BLEND_STATES::BLEND_DEFAULT);
+    g_pBaseDriver->SetDepthStencilState(BaseDriver::DEPTH_STENCIL_STATES::DEPTH_DEFAULT);
+  }
+
+  float TextRenderer::DrawPixelScaledBatched(float px, float py, float scaleX, float scaleY,
+                                              int screenW, int screenH,
+                                              const XVECTOR3& color, const std::string& text) {
+    // Update color CB (small — just 12 bytes)
+    m_CB->UpdateFromBuffer(*T8DeviceContext, &color.x);
+    m_CB->Set(*T8DeviceContext);
+
+    float sw = (float)screenW;
+    float sh = (float)screenH;
+    float ts = (float)m_textureSize;
+
+    float curX = 0.0f;
+    float curY = m_ascent;
+
+    int charCount = 0;
+    const char* pT = text.c_str();
+    while (*pT && charCount < kMaxBatchChars) {
+      if (*pT >= 32 && (unsigned char)*pT < 128) {
+        stbtt_aligned_quad q;
+        stbtt_GetBakedQuad(cdata, m_textureSize, m_textureSize, *pT - 32,
+                           &curX, &curY, &q, 1);
+
+        float gx0 = px + q.x0 * (sw / ts) * scaleX;
+        float gy0 = py + q.y0 * (sh / ts) * scaleY;
+        float gx1 = px + q.x1 * (sw / ts) * scaleX;
+        float gy1 = py + q.y1 * (sh / ts) * scaleY;
+
+        float nx0 = (gx0 / sw) * 2.0f - 1.0f;
+        float ny0 = 1.0f - (gy0 / sh) * 2.0f;
+        float nx1 = (gx1 / sw) * 2.0f - 1.0f;
+        float ny1 = 1.0f - (gy1 / sh) * 2.0f;
+
+        int vi = charCount * 4;
+        m_batchVerts[vi + 0] = {nx0, ny0, 0.0f, 1.0f, q.s0, q.t0};
+        m_batchVerts[vi + 1] = {nx0, ny1, 0.0f, 1.0f, q.s0, q.t1};
+        m_batchVerts[vi + 2] = {nx1, ny1, 0.0f, 1.0f, q.s1, q.t1};
+        m_batchVerts[vi + 3] = {nx1, ny0, 0.0f, 1.0f, q.s1, q.t0};
+        charCount++;
+      }
+      pT++;
+    }
+
+    if (charCount > 0) {
+      // Upload only the used portion and draw
+      m_batchVB->descriptor.byteWidth = sizeof(Quad::Vertex) * charCount * 4;
+      m_batchVB->UpdateFromBuffer(*T8DeviceContext, m_batchVerts);
+      m_batchVB->descriptor.byteWidth = sizeof(Quad::Vertex) * kMaxBatchChars * 4;
+      T8DeviceContext->DrawIndexed(charCount * 6, 0, 0);
+    }
 
     return MeasurePixel(text, screenW, screenH) * scaleX;
   }

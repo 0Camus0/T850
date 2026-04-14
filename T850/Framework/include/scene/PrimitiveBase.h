@@ -27,7 +27,8 @@ namespace t800 {
 
   class PrimitiveBase {
   public:
-    PrimitiveBase() : pScProp(0), gSig(0) {
+    PrimitiveBase() : pScProp(0) {
+      gKey.bits = 0;
       for (int i = 0; i < 8; i++) {
         Textures[i] = 0;
       }
@@ -44,7 +45,7 @@ namespace t800 {
     void SetSceneProps(SceneProps *p) { pScProp = p; }
     SceneProps				*pScProp;
   protected:
-    void SetGlobalSignature(unsigned long long f) { gSig = f; }
+    void SetGlobalKey(ShaderKey k) { gKey = k; }
     void SetTexture(Texture* tex, int index) {
       Textures[index] = tex;
     }
@@ -64,7 +65,7 @@ namespace t800 {
 	}
     Texture*				 Textures[8];
     Texture*			     EnvMap;
-    unsigned long long gSig;
+    ShaderKey gKey;
     float m_brightness;
 	float m_fParallaxLowSamples;
 	float m_fParallaxHighSamples;

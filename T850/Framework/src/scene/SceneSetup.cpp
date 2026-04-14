@@ -1,12 +1,13 @@
 #include <scene/SceneSetup.h>
 #include <core/Core.h>
 #include <cstdio>
+#include <utils/Log.h>
 
 namespace t800 {
 
 bool SceneSetup::Load(const std::string& jsonPath) {
   if (!LoadSceneDescriptor(jsonPath, descriptor)) {
-    printf("[SceneSetup] Failed to load '%s'\n", jsonPath.c_str());
+    T8_LOG_ERROR("[SceneSetup] Failed to load '%s'", jsonPath.c_str());
     return false;
   }
 
@@ -75,9 +76,9 @@ bool SceneSetup::Load(const std::string& jsonPath) {
     agents[i].m_velocity = sp.agent_velocity;
   }
 
-  printf("[SceneSetup] Built '%s': %zu cam, %zu lightcam, %zu lights, %zu gauss, %zu splines\n",
-         name.c_str(), cameras.size(), lightCameras.size(),
-         descriptor.lights.size(), gaussFilters.size(), splines.size());
+  T8_LOG_INFO("[SceneSetup] Built '%s': %zu cam, %zu lightcam, %zu lights, %zu gauss, %zu splines",
+              name.c_str(), cameras.size(), lightCameras.size(),
+              descriptor.lights.size(), gaussFilters.size(), splines.size());
 
   return true;
 }
@@ -145,6 +146,9 @@ void SceneSetup::Apply(SceneProps& props) {
   props.DebugMode = s.debug_mode;
   props.AutoFocus = s.auto_focus;
   props.ShadowBias = s.shadow_bias;
+  props.ShadowMin  = s.shadow_min;
+  props.EnvFactor  = s.env_factor;
+  props.GodRaysFactor = s.godrays_factor;
   props.ActiveGaussKernel = 0;
 }
 
@@ -267,6 +271,9 @@ void SceneSetup::SaveState(SceneBase* scene, const std::string& jsonPath) {
   s.auto_focus = props.AutoFocus;
   s.debug_mode = props.DebugMode;
   s.shadow_bias = props.ShadowBias;
+  s.shadow_min  = props.ShadowMin;
+  s.env_factor  = props.EnvFactor;
+  s.godrays_factor = props.GodRaysFactor;
 
   SaveSceneDescriptor(jsonPath, desc);
 }

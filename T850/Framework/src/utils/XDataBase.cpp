@@ -12,6 +12,7 @@
 
 
 #include <utils/XDataBase.h>
+#include <utils/Log.h>
 
 using std::ifstream;
 using std::ios;
@@ -74,7 +75,8 @@ using std::stringstream;
 #define USE_VECTOR_ARRAY_MODE 1
 
 
-#define  LogPrintDebug printf
+#define  LogPrintDebug(...) T8_LOG_VERBOSE(__VA_ARGS__)
+#define  LogPrintWarning(...) T8_LOG_DEBUG(__VA_ARGS__)
 
 
 const char* xTemplatesc_Str[] = {

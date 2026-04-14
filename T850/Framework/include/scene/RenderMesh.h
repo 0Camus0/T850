@@ -88,7 +88,7 @@ namespace t800 {
 			bUseFresnel = false;
 			MatID = 0;
 		}
-      unsigned long long		Sig;
+      ShaderKey		key;
 
       t800::IndexBuffer*  	IB;
       Texture*					DiffuseTex;

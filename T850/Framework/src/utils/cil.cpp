@@ -2,6 +2,7 @@
 
 #define STB_IMAGE_IMPLEMENTATION
 #include <stb_image.h>
+#include <utils/Log.h>
 
 using std::ifstream;
 using std::cout;
@@ -195,17 +196,10 @@ unsigned char*	load_pvr(ifstream &in_, int &x, int &y, unsigned int &mipmaps, un
 	}
 
 #if CIL_LOG_OUTPUT
-	cout << "PVR Data: " << endl
-		<< "Version: " << header.version << endl
-		<< "Pixel format: " << header.pix_format_0 << endl
-		<< "Channel type: " << header.channel_type << endl
-		<< "Height: " << header.height << endl
-		<< "Width: " << header.width << endl
-		<< "Depth: " << header.depth << endl
-		<< "Surfaces: " << header.surfaces << endl
-		<< "Faces: " << header.faces << endl
-		<< "Mipmap count: " << header.mipmaps_c << endl
-		<< "Size meta: " << header.metadata_size << endl;
+	T8_LOG_VERBOSE("PVR Data: Version=%u PixFmt=%llu ChanType=%u %ux%ux%u Surfaces=%u Faces=%u Mips=%u MetaSize=%u",
+		header.version, header.pix_format_0, header.channel_type,
+		header.width, header.height, header.depth,
+		header.surfaces, header.faces, header.mipmaps_c, header.metadata_size);
 #endif
 
 	x = header.width;
@@ -226,16 +220,11 @@ unsigned char*	load_pvr(ifstream &in_, int &x, int &y, unsigned int &mipmaps, un
 	metadata[meta.size] = '\0';
 
 #if CIL_LOG_OUTPUT
-	cout << "Metadata: " << endl
-
-		<< "Fourcc 0: " << meta.fourcc[0] << endl
-		<< "Fourcc 1: " << meta.fourcc[1] << endl
-		<< "Fourcc 2: " << meta.fourcc[2] << endl
-		<< "Fourcc 3: " << (int)meta.fourcc[3] << endl
-		<< "Key: " << meta.key << endl
-		<< "Data size: " << meta.size << endl;
+	T8_LOG_VERBOSE("PVR Metadata: fourcc=[%c%c%c%d] key=%u dataSize=%u",
+		meta.fourcc[0], meta.fourcc[1], meta.fourcc[2], (int)meta.fourcc[3],
+		meta.key, meta.size);
 	for (unsigned int i = 0; i < meta.size; i++) {
-		cout << "Meta " << i << ": " << (int)metadata[i] << endl;
+		T8_LOG_VERBOSE("  Meta %u: %d", i, (int)metadata[i]);
 	}
 #endif
 	delete[] metadata;
@@ -360,18 +349,10 @@ unsigned char*	load_ktx(ifstream &in_, int &x, int &y, unsigned int &mipmaps, un
 	in_.read((char*)&header, sizeof(ktx_header));
 
 #if CIL_LOG_OUTPUT
-	cout << "KTX Data: " << endl
-		<< "GLType: " << header.gltype << endl
-		<< "GLFormat: " << header.glformat << endl
-		<< "GLInternalFormat: " << header.glinternalformat << endl
-		<< "GLTypeSize: " << header.gltypesize << endl
-		<< "Height: " << header.height << endl
-		<< "Width: " << header.width << endl
-		<< "Depth: " << header.depth << endl
-		<< "Surfaces: " << header.surfaces << endl
-		<< "Faces: " << header.faces << endl
-		<< "Mipmap count: " << header.mipmaps_c << endl
-		<< "Size Key: " << header.keyvaluedatasize << endl;
+	T8_LOG_VERBOSE("KTX Data: GLType=%u GLFmt=%u GLIntFmt=%u TypeSize=%u %ux%ux%u Surfaces=%u Faces=%u Mips=%u KeySize=%u",
+		header.gltype, header.glformat, header.glinternalformat, header.gltypesize,
+		header.width, header.height, header.depth,
+		header.surfaces, header.faces, header.mipmaps_c, header.keyvaluedatasize);
 #endif
 	if (header.mipmaps_c == 0)
 		header.mipmaps_c = 1;
@@ -478,33 +459,17 @@ unsigned char*	load_dds(ifstream &in_, int &x, int &y, unsigned int &mipmaps, un
 	}
 
 #if CIL_LOG_OUTPUT
-	cout << "DDS Data: " << endl
-		<< "	dwSize: " << header.dwSize << endl
-		<< "	dwFlags: " << header.dwFlags << endl
-		<< "	dwHeight: " << header.dwHeight << endl
-		<< "	dwWidth: " << header.dwWidth << endl
-		<< "	dwPitchOrLinearSize: " << header.dwPitchOrLinearSize << endl
-		<< "	dwDepth: " << header.dwDepth << endl
-		<< "	dwMipMapCount: " << header.dwMipMapCount << endl
-		<< "	dwCaps: " << header.dwCaps << endl
-		<< "	dwCaps2: " << header.dwCaps2 << endl
-		<< "	dwCaps3: " << header.dwCaps3 << endl
-		<< "	dwCaps4: " << header.dwCaps4 << endl
-		<< "	dwReserved2: " << header.dwMipMapCount << endl << endl;
-
-	cout << "DDS Pixel Format: " << endl
-		<< "	dwSize: " << header.ddspf.dwSize << endl
-		<< "	dwFlags: " << header.ddspf.dwFlags << endl
-		<< "	dwFourCC: " << header.ddspf.dwFourCC << endl
-		<< "	dwRGBBitCount: " << header.ddspf.dwRGBBitCount << endl
-		<< "	dwRBitMask: " << header.ddspf.dwRBitMask << endl
-		<< "	dwGBitMask: " << header.ddspf.dwGBitMask << endl
-		<< "	dwBBitMask: " << header.ddspf.dwBBitMask << endl
-		<< "	dwABitMask: " << header.ddspf.dwABitMask << endl;
-
+	T8_LOG_VERBOSE("DDS Data: size=%u flags=0x%X %ux%u pitch=%u depth=%u mips=%u caps=%u,%u,%u,%u",
+		header.dwSize, header.dwFlags, header.dwWidth, header.dwHeight,
+		header.dwPitchOrLinearSize, header.dwDepth, header.dwMipMapCount,
+		header.dwCaps, header.dwCaps2, header.dwCaps3, header.dwCaps4);
+	T8_LOG_VERBOSE("DDS PixFmt: size=%u flags=0x%X fourCC=%u rgbBits=%u R=0x%X G=0x%X B=0x%X A=0x%X",
+		header.ddspf.dwSize, header.ddspf.dwFlags, header.ddspf.dwFourCC,
+		header.ddspf.dwRGBBitCount, header.ddspf.dwRBitMask,
+		header.ddspf.dwGBitMask, header.ddspf.dwBBitMask, header.ddspf.dwABitMask);
 	char *FourCC;
 	FourCC = (char*)&header.ddspf.dwFourCC;
-	cout << "	FOURCC: " << FourCC << endl;
+	T8_LOG_VERBOSE("DDS FOURCC: %s", FourCC);
 #endif
 	x = header.dwWidth;
 	y = header.dwHeight;

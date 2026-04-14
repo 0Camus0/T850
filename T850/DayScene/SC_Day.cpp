@@ -2,6 +2,7 @@
 #include <iostream>
 #include <cstdio>
 #include <cstdlib>
+#include <utils/Log.h>
 using namespace t800;
 using std::cout;
 using std::endl;
@@ -34,7 +35,7 @@ void SC_Day::InitVars() {
   SceneSettingSelection = CHANGE_EXPOSURE;
 
   if (!m_sceneSetup.Load("Scenes/SC_Day.json")) {
-    printf("[SC_Day] ERROR: Failed to load Scenes/SC_Day.json\n");
+    T8_LOG_ERROR("[SC_Day] Failed to load Scenes/SC_Day.json");
     return;
   }
   m_sceneSetup.Apply(SceneProp);
@@ -66,7 +67,7 @@ void SC_Day::InitVars() {
 void SC_Day::CreateAssets() {
   //Create RT's via RenderGraph
   if (!m_renderGraph.Load("Scenes/SC_Day_RenderGraph.json")) {
-    printf("[SC_Day] ERROR: Failed to load render graph\n");
+    T8_LOG_ERROR("[SC_Day] Failed to load render graph");
     return;
   }
   m_renderGraph.CreateRenderTargets(pFramework->pVideoDriver, SceneProp);
@@ -355,12 +356,12 @@ void SC_Day::OnInput(InputManager* IManager) {
 
   bool displayInfo = false;
   if (changed && displayInfo) {
-    printf("Position[%f,%f,%f] Rot[%f,%f,%f] Sc[%f]\n", Position.x, Position.y, Position.z, Orientation.x, Orientation.y, Orientation.z, Scaling.x);
+    T8_LOG_VERBOSE("Position[%f,%f,%f] Rot[%f,%f,%f] Sc[%f]", Position.x, Position.y, Position.z, Orientation.x, Orientation.y, Orientation.z, Scaling.x);
   }
 
   if (IManager->PressedOnceKey(T800K_k)) {
-    printf("Position[%f, %f, %f]\n\n", ActiveCam->Eye.x, ActiveCam->Eye.y, ActiveCam->Eye.z);
-    printf("Orientation[%f, %f, %f]\n\n", ActiveCam->Pitch, ActiveCam->Roll, ActiveCam->Yaw);
+    T8_LOG_INFO("Position[%f, %f, %f]", ActiveCam->Eye.x, ActiveCam->Eye.y, ActiveCam->Eye.z);
+    T8_LOG_INFO("Orientation[%f, %f, %f]", ActiveCam->Pitch, ActiveCam->Roll, ActiveCam->Yaw);
   }
 
 
@@ -380,14 +381,14 @@ void SC_Day::OnInput(InputManager* IManager) {
       // Detach from spline: keep current position and orientation
       ActiveCam->DettachAgent();
       ActiveCam->m_externalControl = false;
-      cout << "[CAMERA] Switched to FREE camera" << endl;
+      T8_LOG_INFO("[CAMERA] Switched to FREE camera");
     }
     else {
       // Re-attach to spline agent
       t800::SplineAgent& agent = m_sceneSetup.agents[0];
       ActiveCam->AttachAgent(agent);
       ActiveCam->m_lookAtCenter = false;
-      cout << "[CAMERA] Switched to SPLINE camera" << endl;
+      T8_LOG_INFO("[CAMERA] Switched to SPLINE camera");
     }
   }
 
@@ -520,7 +521,8 @@ void SC_Day::OnDraw() {
     }
     if (selected >= 0) {
       Quads[7].SetTexture(pFramework->pVideoDriver->GetRTTexture(selected, attachment), 0);
-      Quads[7].SetGlobalSignature(Signature::FSQUAD_1_TEX);
+      ShaderKey dbgKey(0); dbgKey.setPass(PassType::FSQUAD_1_TEX); dbgKey.bits |= ShaderKey::HAS_TEXCOORD0;
+      Quads[7].SetGlobalKey(dbgKey);
       Quads[7].Draw();
     }
   }
@@ -560,27 +562,27 @@ void  SC_Day::ChangeSettingsOnPlus() {
   case CHANGE_EXPOSURE: {
     float prevVal = SceneProp.Exposure;
     SceneProp.Exposure += 0.1f;
-    cout << "[CHANGE_EXPOSURE] Previous Value[" << prevVal << "] Actual Value[" << SceneProp.Exposure << "]" << endl;
+    T8_LOG_VERBOSE("[CHANGE_EXPOSURE] Previous Value[%f] Actual Value[%f]", prevVal, SceneProp.Exposure);
   }break;
   case CHANGE_BLOOM_FACTOR: {
     float prevVal = SceneProp.BloomFactor;
     SceneProp.BloomFactor += 0.1f;
-    cout << "[CHANGE_BLOOM_FACTOR] Previous Value[" << prevVal << "] Actual Value[" << SceneProp.BloomFactor << "]" << endl;
+    T8_LOG_VERBOSE("[CHANGE_BLOOM_FACTOR] Previous Value[%f] Actual Value[%f]", prevVal, SceneProp.BloomFactor);
   }break;
   case CHANGE_BLOOM_THRESHOLD: {
     float prevVal = SceneProp.BloomThreshold;
     SceneProp.BloomThreshold += 0.5f;
-    cout << "[CHANGE_BLOOM_THRESHOLD] Previous Value[" << prevVal << "] Actual Value[" << SceneProp.BloomThreshold << "]" << endl;
+    T8_LOG_VERBOSE("[CHANGE_BLOOM_THRESHOLD] Previous Value[%f] Actual Value[%f]", prevVal, SceneProp.BloomThreshold);
   }break;
   case CHANGE_TM_WHITE_LEVEL: {
     float prevVal = SceneProp.ToneMapWhiteLevel;
     SceneProp.ToneMapWhiteLevel += 0.25f;
-    cout << "[CHANGE_TM_WHITE_LEVEL] Previous Value[" << prevVal << "] Actual Value[" << SceneProp.ToneMapWhiteLevel << "]" << endl;
+    T8_LOG_VERBOSE("[CHANGE_TM_WHITE_LEVEL] Previous Value[%f] Actual Value[%f]", prevVal, SceneProp.ToneMapWhiteLevel);
   }break;
   case CHANGE_TM_ADAPT_TAU: {
     float prevVal = SceneProp.LuminanceTau;
     SceneProp.LuminanceTau += 0.1f;
-    cout << "[CHANGE_TM_ADAPT_TAU] Previous Value[" << prevVal << "] Actual Value[" << SceneProp.LuminanceTau << "]" << endl;
+    T8_LOG_VERBOSE("[CHANGE_TM_ADAPT_TAU] Previous Value[%f] Actual Value[%f]", prevVal, SceneProp.LuminanceTau);
   }break;
   case CHANGE_NUM_LIGHTS: {
     int prevVal = SceneProp.ActiveLights;
@@ -588,7 +590,7 @@ void  SC_Day::ChangeSettingsOnPlus() {
     if (SceneProp.ActiveLights >= 127) {
       SceneProp.ActiveLights = 127;
     }
-    cout << "[CHANGE_NUM_LIGHTS] Previous Value[" << prevVal << "] Actual Value[" << SceneProp.ActiveLights << "]" << endl;
+    T8_LOG_VERBOSE("[CHANGE_NUM_LIGHTS] Previous Value[%d] Actual Value[%d]", prevVal, SceneProp.ActiveLights);
   }break;
   case CHANGE_ACTIVE_GAUSS_KERNEL: {
     int prevVal = ChangeActiveGaussSelection;
@@ -596,141 +598,141 @@ void  SC_Day::ChangeSettingsOnPlus() {
     if (ChangeActiveGaussSelection >= (int)SceneProp.pGaussKernels.size()) {
       ChangeActiveGaussSelection = static_cast<int>(SceneProp.pGaussKernels.size()) - 1;
     }
-    cout << "[CHANGE_ACTIVE_GAUSS_KERNEL] Previous Value[" << prevVal << "] Actual Value[" << ChangeActiveGaussSelection << "]" << endl;
+    T8_LOG_VERBOSE("[CHANGE_ACTIVE_GAUSS_KERNEL] Previous Value[%d] Actual Value[%d]", prevVal, ChangeActiveGaussSelection);
   }break;
   case CHANGE_GAUSS_KERNEL_SAMPLE_COUNT: {
     int prevVal = SceneProp.pGaussKernels[ChangeActiveGaussSelection]->kernelSize;
     SceneProp.pGaussKernels[ChangeActiveGaussSelection]->kernelSize += 2;
     SceneProp.pGaussKernels[ChangeActiveGaussSelection]->Update();
-    cout << "[CHANGE_GAUSS_KERNEL_SAMPLE_COUNT] Previous Value[" << prevVal << "] Actual Value[" << SceneProp.pGaussKernels[ChangeActiveGaussSelection]->kernelSize << "]" << endl;
+    T8_LOG_VERBOSE("[CHANGE_GAUSS_KERNEL_SAMPLE_COUNT] Previous Value[%d] Actual Value[%d]", prevVal, SceneProp.pGaussKernels[ChangeActiveGaussSelection]->kernelSize);
   }break;
   case CHANGE_GAUSS_KERNEL_RADIUS: {
     float prevVal = SceneProp.pGaussKernels[ChangeActiveGaussSelection]->radius;
     SceneProp.pGaussKernels[ChangeActiveGaussSelection]->radius += 0.5;
     SceneProp.pGaussKernels[ChangeActiveGaussSelection]->Update();
-    cout << "[CHANGE_GAUSS_KERNEL_RADIUS] Previous Value[" << prevVal << "] Actual Value[" << SceneProp.pGaussKernels[ChangeActiveGaussSelection]->radius << "]" << endl;
+    T8_LOG_VERBOSE("[CHANGE_GAUSS_KERNEL_RADIUS] Previous Value[%f] Actual Value[%f]", prevVal, SceneProp.pGaussKernels[ChangeActiveGaussSelection]->radius);
   }break;
   case CHANGE_GAUSS_KERNEL_DEVIATION: {
     float prevVal = SceneProp.pGaussKernels[ChangeActiveGaussSelection]->sigma;
     SceneProp.pGaussKernels[ChangeActiveGaussSelection]->sigma += 0.5;
     SceneProp.pGaussKernels[ChangeActiveGaussSelection]->Update();
-    cout << "[CHANGE_GAUSS_KERNEL_DEVIATION] Previous Value[" << prevVal << "] Actual Value[" << SceneProp.pGaussKernels[ChangeActiveGaussSelection]->sigma << "]" << endl;
+    T8_LOG_VERBOSE("[CHANGE_GAUSS_KERNEL_DEVIATION] Previous Value[%f] Actual Value[%f]", prevVal, SceneProp.pGaussKernels[ChangeActiveGaussSelection]->sigma);
   }break;
   case CHANGE_PCF_RADIUS: {
     float prevVal = SceneProp.PCFScale;
     SceneProp.PCFScale += 0.1f;
-    cout << "[CHANGE_PCF_RADIUS] Previous Value[" << prevVal << "] Actual Value[" << SceneProp.PCFScale << "]" << endl;
+    T8_LOG_VERBOSE("[CHANGE_PCF_RADIUS] Previous Value[%f] Actual Value[%f]", prevVal, SceneProp.PCFScale);
   }break;
   case CHANGE_PCF_SAMPLES: {
     float prevVal = SceneProp.PCFSamples;
     SceneProp.PCFSamples++;
-    cout << "[CHANGE_PCF_SAMPLES] Previous Value[" << prevVal << "] Actual Value[" << SceneProp.PCFSamples << "]" << endl;
+    T8_LOG_VERBOSE("[CHANGE_PCF_SAMPLES] Previous Value[%f] Actual Value[%f]", prevVal, SceneProp.PCFSamples);
   }break;
   case CHANGE_SSAO_KERNEL_SIZE: {
     float prevVal = (float)SceneProp.SSAOKernel.KernelSize;
     SceneProp.SSAOKernel.KernelSize += 2;
     SceneProp.SSAOKernel.Update();
-    cout << "[CHANGE_SSAO_KERNEL_SIZE] Previous Value[" << prevVal << "] Actual Value[" << SceneProp.SSAOKernel.KernelSize << "]" << endl;
+    T8_LOG_VERBOSE("[CHANGE_SSAO_KERNEL_SIZE] Previous Value[%f] Actual Value[%d]", prevVal, SceneProp.SSAOKernel.KernelSize);
   }break;
   case CHANGE_SSAO_RADIUS: {
     float prevVal = SceneProp.SSAOKernel.Radius;
     SceneProp.SSAOKernel.Radius += 0.5f;
-    cout << "[CHANGE_SSAO_RADIUS] Previous Value[" << prevVal << "] Actual Value[" << SceneProp.SSAOKernel.Radius << "]" << endl;
+    T8_LOG_VERBOSE("[CHANGE_SSAO_RADIUS] Previous Value[%f] Actual Value[%f]", prevVal, SceneProp.SSAOKernel.Radius);
   }break;
   case CHANGE_DOF_APERTURE: {
     float prevVal = SceneProp.Aperture;
     SceneProp.Aperture += 10.0f;
-    cout << "[CHANGE_DOF_APERTURE] Previous Value[" << prevVal << "] Actual Value[" << SceneProp.Aperture << "]" << endl;
+    T8_LOG_VERBOSE("[CHANGE_DOF_APERTURE] Previous Value[%f] Actual Value[%f]", prevVal, SceneProp.Aperture);
   }break;
   case CHANGE_DOF_FOCAL_LENGHT: {
     float prevVal = SceneProp.FocalLength;
     SceneProp.FocalLength += 10.0f;
-    cout << "[CHANGE_DOF_FOCAL_LENGHT] Previous Value[" << prevVal << "] Actual Value[" << SceneProp.FocalLength << "]" << endl;
+    T8_LOG_VERBOSE("[CHANGE_DOF_FOCAL_LENGHT] Previous Value[%f] Actual Value[%f]", prevVal, SceneProp.FocalLength);
   }break;
   case CHANGE_DOF_MAX_COC: {
     float prevVal = SceneProp.MaxCoc;
     SceneProp.MaxCoc += 0.5f;
-    cout << "[CHANGE_DOF_MAX_COC] Previous Value[" << prevVal << "] Actual Value[" << SceneProp.MaxCoc << "]" << endl;
+    T8_LOG_VERBOSE("[CHANGE_DOF_MAX_COC] Previous Value[%f] Actual Value[%f]", prevVal, SceneProp.MaxCoc);
   }break;
   case CHANGE_DOF_FAR_SAMPLE: {
     float prevVal = SceneProp.DOF_Far_Samples_squared;
     SceneProp.DOF_Far_Samples_squared += 1.0f;
-    cout << "[CHANGE_DOF_FAR_SAMPLE] Previous Value[" << prevVal << "] Actual Value[" << SceneProp.DOF_Far_Samples_squared << "]" << endl;
+    T8_LOG_VERBOSE("[CHANGE_DOF_FAR_SAMPLE] Previous Value[%f] Actual Value[%f]", prevVal, SceneProp.DOF_Far_Samples_squared);
   }break;
   case CHANGE_DOF_NEAR_SAMPLE: {
     float prevVal = SceneProp.DOF_Near_Samples_squared;
     SceneProp.DOF_Near_Samples_squared += 1.0f;
-    cout << "[CHANGE_DOF_NEAR_SAMPLE] Previous Value[" << prevVal << "] Actual Value[" << SceneProp.DOF_Near_Samples_squared << "]" << endl;
+    T8_LOG_VERBOSE("[CHANGE_DOF_NEAR_SAMPLE] Previous Value[%f] Actual Value[%f]", prevVal, SceneProp.DOF_Near_Samples_squared);
   }break;
   case CHANGE_DOF_AUTO_FOCUS: {
     bool prevVal = SceneProp.AutoFocus;
     SceneProp.AutoFocus = true;
-    cout << "[CHANGE_DOF_AUTO_FOCUS] Previous Value[" << prevVal << "] Actual Value[" << (int)SceneProp.AutoFocus << "]" << endl;
+    T8_LOG_VERBOSE("[CHANGE_DOF_AUTO_FOCUS] Previous Value[%d] Actual Value[%d]", (int)prevVal, (int)SceneProp.AutoFocus);
   }break;
   case CHANGE_PARALLAX_LOW_SAMPLES: {
     float prevVal = SceneProp.ParallaxLowSamples;
     SceneProp.ParallaxLowSamples += 5.0f;
-    cout << "[CHANGE_PARALLAX_LOW_SAMPLES] Previous Value[" << prevVal << "] Actual Value[" << SceneProp.ParallaxLowSamples << "]" << endl;
+    T8_LOG_VERBOSE("[CHANGE_PARALLAX_LOW_SAMPLES] Previous Value[%f] Actual Value[%f]", prevVal, SceneProp.ParallaxLowSamples);
   }break;
   case CHANGE_PARALLAX_HIGH_SAMPLES: {
     float prevVal = SceneProp.ParallaxHighSamples;
     SceneProp.ParallaxHighSamples += 10.0f;
-    cout << "[CHANGE_PARALLAX_HIGH_SAMPLES] Previous Value[" << prevVal << "] Actual Value[" << SceneProp.ParallaxHighSamples << "]" << endl;
+    T8_LOG_VERBOSE("[CHANGE_PARALLAX_HIGH_SAMPLES] Previous Value[%f] Actual Value[%f]", prevVal, SceneProp.ParallaxHighSamples);
   }break;
   case CHANGE_PARALLAX_HEIGHT: {
     float prevVal = SceneProp.ParallaxHeight;
     SceneProp.ParallaxHeight += 0.01f;
-    cout << "[CHANGE_PARALLAX_HEIGHT] Previous Value[" << prevVal << "] Actual Value[" << SceneProp.ParallaxHeight << "]" << endl;
+    T8_LOG_VERBOSE("[CHANGE_PARALLAX_HEIGHT] Previous Value[%f] Actual Value[%f]", prevVal, SceneProp.ParallaxHeight);
   }break;
   case CHANGE_LIGHT_VOLUME_STEPS: {
     float prevVal = SceneProp.LightVolumeSteps;
     SceneProp.LightVolumeSteps += 16.0f;
-    cout << "[CHANGE_LIGHT_VOLUME_STEPS] Previous Value[" << prevVal << "] Actual Value[" << SceneProp.LightVolumeSteps << "]" << endl;
+    T8_LOG_VERBOSE("[CHANGE_LIGHT_VOLUME_STEPS] Previous Value[%f] Actual Value[%f]", prevVal, SceneProp.LightVolumeSteps);
   }break;
   case CHANGE_PCF_TOOGLE: {
 	  int prevVal = SceneProp.ToogleShadow;
 	  SceneProp.ToogleShadow = 1;
-	  cout << "[CHANGE_PCF_TOOGLE] Previous Value[" << prevVal << "] Actual Value[" << SceneProp.ToogleShadow << "]" << endl;
+	  T8_LOG_VERBOSE("[CHANGE_PCF_TOOGLE] Previous Value[%d] Actual Value[%d]", prevVal, SceneProp.ToogleShadow);
   }break;
   case CHANGLE_SSAO_TOOGLE: {
 	  int prevVal = SceneProp.ToogleSSAO;
 	  SceneProp.ToogleSSAO = 1;
-	  cout << "[CHANGLE_SSAO_TOOGLE] Previous Value[" << prevVal << "] Actual Value[" << SceneProp.ToogleSSAO << "]" << endl;
+	  T8_LOG_VERBOSE("[CHANGLE_SSAO_TOOGLE] Previous Value[%d] Actual Value[%d]", prevVal, SceneProp.ToogleSSAO);
   }break;
   case CHANGE_LIGHT_NEAR_PLANE: {
     float prevVal = LightCam.NPlane;
     LightCam.NPlane += 1.0f;
     LightCam.CreatePojection();
     LightCam.Update(0);
-    cout << "[CHANGE_LIGHT_NEAR_PLANE] Previous Value[" << prevVal << "] Actual Value[" << LightCam.NPlane << "]" << endl;
+    T8_LOG_VERBOSE("[CHANGE_LIGHT_NEAR_PLANE] Previous Value[%f] Actual Value[%f]", prevVal, LightCam.NPlane);
   }break;
   case CHANGE_LIGHT_FAR_PLANE: {
     float prevVal = LightCam.FPlane;
     LightCam.FPlane += 10.0f;
     LightCam.CreatePojection();
     LightCam.Update(0);
-    cout << "[CHANGE_LIGHT_FAR_PLANE] Previous Value[" << prevVal << "] Actual Value[" << LightCam.FPlane << "]" << endl;
+    T8_LOG_VERBOSE("[CHANGE_LIGHT_FAR_PLANE] Previous Value[%f] Actual Value[%f]", prevVal, LightCam.FPlane);
   }break;
   case CHANGE_FOV: {
     float prevVal = ActiveCam->Fov;
     ActiveCam->SetFov(ActiveCam->Fov + Deg2Rad(5.0f));
     if (ActiveCam->Fov > Deg2Rad(150.0f)) ActiveCam->SetFov(Deg2Rad(150.0f));
-    cout << "[CHANGE_FOV] Previous Value[" << Rad2Deg(prevVal) << "] Actual Value[" << Rad2Deg(ActiveCam->Fov) << "]" << endl;
+    T8_LOG_VERBOSE("[CHANGE_FOV] Previous Value[%f] Actual Value[%f]", Rad2Deg(prevVal), Rad2Deg(ActiveCam->Fov));
   }break;
   case CHANGE_SHOW_SPLINE: {
     m_showSpline = true;
-    cout << "[CHANGE_SHOW_SPLINE] Value[" << (int)m_showSpline << "]" << endl;
+    T8_LOG_VERBOSE("[CHANGE_SHOW_SPLINE] Value[%d]", (int)m_showSpline);
   }break;
   case CHANGE_SHOW_LIGHTS: {
     m_showLights = true;
-    cout << "[CHANGE_SHOW_LIGHTS] Value[" << (int)m_showLights << "]" << endl;
+    T8_LOG_VERBOSE("[CHANGE_SHOW_LIGHTS] Value[%d]", (int)m_showLights);
   }break;
   case CHANGE_LIGHT_INTENSITY: {
     if (!SceneProp.Lights.empty()) {
       float prevVal = SceneProp.Lights[0].Intensity;
       SceneProp.Lights[0].Intensity += 0.5f;
       if (SceneProp.Lights[0].Intensity > 20.0f) SceneProp.Lights[0].Intensity = 20.0f;
-      cout << "[CHANGE_LIGHT_INTENSITY] Previous Value[" << prevVal << "] Actual Value[" << SceneProp.Lights[0].Intensity << "]" << endl;
+      T8_LOG_VERBOSE("[CHANGE_LIGHT_INTENSITY] Previous Value[%f] Actual Value[%f]", prevVal, SceneProp.Lights[0].Intensity);
     }
   }break;
   }
@@ -742,30 +744,30 @@ void  SC_Day::ChangeSettingsOnMinus() {
   case CHANGE_EXPOSURE: {
     float prevVal = SceneProp.Exposure;
     SceneProp.Exposure -= 0.1f;
-    cout << "[CHANGE_EXPOSURE] Previous Value[" << prevVal << "] Actual Value[" << SceneProp.Exposure << "]" << endl;
+    T8_LOG_VERBOSE("[CHANGE_EXPOSURE] Previous Value[%f] Actual Value[%f]", prevVal, SceneProp.Exposure);
   }break;
   case CHANGE_BLOOM_FACTOR: {
     float prevVal = SceneProp.BloomFactor;
     SceneProp.BloomFactor -= 0.1f;
-    cout << "[CHANGE_BLOOM_FACTOR] Previous Value[" << prevVal << "] Actual Value[" << SceneProp.BloomFactor << "]" << endl;
+    T8_LOG_VERBOSE("[CHANGE_BLOOM_FACTOR] Previous Value[%f] Actual Value[%f]", prevVal, SceneProp.BloomFactor);
   }break;
   case CHANGE_BLOOM_THRESHOLD: {
     float prevVal = SceneProp.BloomThreshold;
     SceneProp.BloomThreshold -= 0.5f;
     if (SceneProp.BloomThreshold < 0.0f) SceneProp.BloomThreshold = 0.0f;
-    cout << "[CHANGE_BLOOM_THRESHOLD] Previous Value[" << prevVal << "] Actual Value[" << SceneProp.BloomThreshold << "]" << endl;
+    T8_LOG_VERBOSE("[CHANGE_BLOOM_THRESHOLD] Previous Value[%f] Actual Value[%f]", prevVal, SceneProp.BloomThreshold);
   }break;
   case CHANGE_TM_WHITE_LEVEL: {
     float prevVal = SceneProp.ToneMapWhiteLevel;
     SceneProp.ToneMapWhiteLevel -= 0.25f;
     if (SceneProp.ToneMapWhiteLevel < 0.5f) SceneProp.ToneMapWhiteLevel = 0.5f;
-    cout << "[CHANGE_TM_WHITE_LEVEL] Previous Value[" << prevVal << "] Actual Value[" << SceneProp.ToneMapWhiteLevel << "]" << endl;
+    T8_LOG_VERBOSE("[CHANGE_TM_WHITE_LEVEL] Previous Value[%f] Actual Value[%f]", prevVal, SceneProp.ToneMapWhiteLevel);
   }break;
   case CHANGE_TM_ADAPT_TAU: {
     float prevVal = SceneProp.LuminanceTau;
     SceneProp.LuminanceTau -= 0.1f;
     if (SceneProp.LuminanceTau < 0.05f) SceneProp.LuminanceTau = 0.05f;
-    cout << "[CHANGE_TM_ADAPT_TAU] Previous Value[" << prevVal << "] Actual Value[" << SceneProp.LuminanceTau << "]" << endl;
+    T8_LOG_VERBOSE("[CHANGE_TM_ADAPT_TAU] Previous Value[%f] Actual Value[%f]", prevVal, SceneProp.LuminanceTau);
   }break;
   case CHANGE_NUM_LIGHTS: {
     int prevVal = SceneProp.ActiveLights;
@@ -773,7 +775,7 @@ void  SC_Day::ChangeSettingsOnMinus() {
     if (SceneProp.ActiveLights <= 0) {
       SceneProp.ActiveLights = 1;
     }
-    cout << "[CHANGE_NUM_LIGHTS] Previous Value[" << prevVal << "] Actual Value[" << SceneProp.ActiveLights << "]" << endl;
+    T8_LOG_VERBOSE("[CHANGE_NUM_LIGHTS] Previous Value[%d] Actual Value[%d]", prevVal, SceneProp.ActiveLights);
   }break;
   case CHANGE_ACTIVE_GAUSS_KERNEL: {
     int prevVal = ChangeActiveGaussSelection;
@@ -781,7 +783,7 @@ void  SC_Day::ChangeSettingsOnMinus() {
     if (ChangeActiveGaussSelection < 0) {
       ChangeActiveGaussSelection = 0;
     }
-    cout << "[CHANGE_ACTIVE_GAUSS_KERNEL] Previous Value[" << prevVal << "] Actual Value[" << ChangeActiveGaussSelection << "]" << endl;
+    T8_LOG_VERBOSE("[CHANGE_ACTIVE_GAUSS_KERNEL] Previous Value[%d] Actual Value[%d]", prevVal, ChangeActiveGaussSelection);
   }break;
   case CHANGE_GAUSS_KERNEL_SAMPLE_COUNT: {
     int prevVal = SceneProp.pGaussKernels[ChangeActiveGaussSelection]->kernelSize;
@@ -790,7 +792,7 @@ void  SC_Day::ChangeSettingsOnMinus() {
       SceneProp.pGaussKernels[ChangeActiveGaussSelection]->kernelSize = 3;
     }
     SceneProp.pGaussKernels[ChangeActiveGaussSelection]->Update();
-    cout << "[CHANGE_GAUSS_KERNEL_SAMPLE_COUNT] Previous Value[" << prevVal << "] Actual Value[" << SceneProp.pGaussKernels[ChangeActiveGaussSelection]->kernelSize << "]" << endl;
+    T8_LOG_VERBOSE("[CHANGE_GAUSS_KERNEL_SAMPLE_COUNT] Previous Value[%d] Actual Value[%d]", prevVal, SceneProp.pGaussKernels[ChangeActiveGaussSelection]->kernelSize);
   }break;
   case CHANGE_GAUSS_KERNEL_RADIUS: {
     float prevVal = SceneProp.pGaussKernels[ChangeActiveGaussSelection]->radius;
@@ -799,94 +801,94 @@ void  SC_Day::ChangeSettingsOnMinus() {
       SceneProp.pGaussKernels[ChangeActiveGaussSelection]->radius = 0.5f;
     }
     SceneProp.pGaussKernels[ChangeActiveGaussSelection]->Update();
-    cout << "[CHANGE_GAUSS_KERNEL_RADIUS] Previous Value[" << prevVal << "] Actual Value[" << SceneProp.pGaussKernels[ChangeActiveGaussSelection]->radius << "]" << endl;
+    T8_LOG_VERBOSE("[CHANGE_GAUSS_KERNEL_RADIUS] Previous Value[%f] Actual Value[%f]", prevVal, SceneProp.pGaussKernels[ChangeActiveGaussSelection]->radius);
   }break;
   case CHANGE_GAUSS_KERNEL_DEVIATION: {
     float prevVal = SceneProp.pGaussKernels[ChangeActiveGaussSelection]->sigma;
     SceneProp.pGaussKernels[ChangeActiveGaussSelection]->sigma -= 0.5;
     SceneProp.pGaussKernels[ChangeActiveGaussSelection]->Update();
-    cout << "[CHANGE_GAUSS_KERNEL_DEVIATION] Previous Value[" << prevVal << "] Actual Value[" << SceneProp.pGaussKernels[ChangeActiveGaussSelection]->sigma << "]" << endl;
+    T8_LOG_VERBOSE("[CHANGE_GAUSS_KERNEL_DEVIATION] Previous Value[%f] Actual Value[%f]", prevVal, SceneProp.pGaussKernels[ChangeActiveGaussSelection]->sigma);
   }break;
   case CHANGE_PCF_RADIUS: {
     float prevVal = SceneProp.PCFScale;
     SceneProp.PCFScale -= 0.1f;
-    cout << "[CHANGE_PCF_RADIUS] Previous Value[" << prevVal << "] Actual Value[" << SceneProp.PCFScale << "]" << endl;
+    T8_LOG_VERBOSE("[CHANGE_PCF_RADIUS] Previous Value[%f] Actual Value[%f]", prevVal, SceneProp.PCFScale);
   }break;
   case CHANGE_PCF_SAMPLES: {
     float prevVal = SceneProp.PCFSamples;
     SceneProp.PCFSamples--;
-    cout << "[CHANGE_PCF_SAMPLES] Previous Value[" << prevVal << "] Actual Value[" << SceneProp.PCFSamples << "]" << endl;
+    T8_LOG_VERBOSE("[CHANGE_PCF_SAMPLES] Previous Value[%f] Actual Value[%f]", prevVal, SceneProp.PCFSamples);
   }break;
   case CHANGE_SSAO_KERNEL_SIZE: {
     float prevVal = (float)SceneProp.SSAOKernel.KernelSize;
     SceneProp.SSAOKernel.KernelSize -= 2;
     SceneProp.SSAOKernel.Update();
-    cout << "[CHANGE_SSAO_KERNEL_SIZE] Previous Value[" << prevVal << "] Actual Value[" << SceneProp.SSAOKernel.KernelSize << "]" << endl;
+    T8_LOG_VERBOSE("[CHANGE_SSAO_KERNEL_SIZE] Previous Value[%f] Actual Value[%d]", prevVal, SceneProp.SSAOKernel.KernelSize);
   }break;
   case CHANGE_SSAO_RADIUS: {
     float prevVal = SceneProp.SSAOKernel.Radius;
     SceneProp.SSAOKernel.Radius -= 0.5f;
-    cout << "[CHANGE_SSAO_RADIUS] Previous Value[" << prevVal << "] Actual Value[" << SceneProp.SSAOKernel.Radius << "]" << endl;
+    T8_LOG_VERBOSE("[CHANGE_SSAO_RADIUS] Previous Value[%f] Actual Value[%f]", prevVal, SceneProp.SSAOKernel.Radius);
   }break;
   case CHANGE_DOF_APERTURE: {
     float prevVal = SceneProp.Aperture;
     SceneProp.Aperture -= 10.0f;
-    cout << "[CHANGE_DOF_APERTURE] Previous Value[" << prevVal << "] Actual Value[" << SceneProp.Aperture << "]" << endl;
+    T8_LOG_VERBOSE("[CHANGE_DOF_APERTURE] Previous Value[%f] Actual Value[%f]", prevVal, SceneProp.Aperture);
   }break;
   case CHANGE_DOF_FOCAL_LENGHT: {
     float prevVal = SceneProp.FocalLength;
     SceneProp.FocalLength -= 10.0f;
-    cout << "[CHANGE_DOF_FOCAL_LENGHT] Previous Value[" << prevVal << "] Actual Value[" << SceneProp.FocalLength << "]" << endl;
+    T8_LOG_VERBOSE("[CHANGE_DOF_FOCAL_LENGHT] Previous Value[%f] Actual Value[%f]", prevVal, SceneProp.FocalLength);
   }break;
   case CHANGE_DOF_MAX_COC: {
     float prevVal = SceneProp.MaxCoc;
     SceneProp.MaxCoc -= 0.5f;
-    cout << "[CHANGE_DOF_MAX_COC] Previous Value[" << prevVal << "] Actual Value[" << SceneProp.MaxCoc << "]" << endl;
+    T8_LOG_VERBOSE("[CHANGE_DOF_MAX_COC] Previous Value[%f] Actual Value[%f]", prevVal, SceneProp.MaxCoc);
   }break;
   case CHANGE_DOF_FAR_SAMPLE: {
     float prevVal = SceneProp.DOF_Far_Samples_squared;
     SceneProp.DOF_Far_Samples_squared -= 1.0f;
-    cout << "[CHANGE_DOF_FAR_SAMPLE] Previous Value[" << prevVal << "] Actual Value[" << SceneProp.DOF_Far_Samples_squared << "]" << endl;
+    T8_LOG_VERBOSE("[CHANGE_DOF_FAR_SAMPLE] Previous Value[%f] Actual Value[%f]", prevVal, SceneProp.DOF_Far_Samples_squared);
   }break;
   case CHANGE_DOF_NEAR_SAMPLE: {
     float prevVal = SceneProp.DOF_Near_Samples_squared;
     SceneProp.DOF_Near_Samples_squared -= 1.0f;
-    cout << "[CHANGE_DOF_NEAR_SAMPLE] Previous Value[" << prevVal << "] Actual Value[" << SceneProp.DOF_Near_Samples_squared << "]" << endl;
+    T8_LOG_VERBOSE("[CHANGE_DOF_NEAR_SAMPLE] Previous Value[%f] Actual Value[%f]", prevVal, SceneProp.DOF_Near_Samples_squared);
   }break;
   case CHANGE_DOF_AUTO_FOCUS: {
     bool prevVal = SceneProp.AutoFocus;
     SceneProp.AutoFocus = false;
-    cout << "[CHANGE_DOF_AUTO_FOCUS] Previous Value[" << prevVal << "] Actual Value[" << (int)SceneProp.AutoFocus << "]" << endl;
+    T8_LOG_VERBOSE("[CHANGE_DOF_AUTO_FOCUS] Previous Value[%d] Actual Value[%d]", (int)prevVal, (int)SceneProp.AutoFocus);
   }break;
   case CHANGE_PARALLAX_LOW_SAMPLES: {
     float prevVal = SceneProp.ParallaxLowSamples;
     SceneProp.ParallaxLowSamples -= 5.0f;
-    cout << "[CHANGE_PARALLAX_LOW_SAMPLES] Previous Value[" << prevVal << "] Actual Value[" << SceneProp.ParallaxLowSamples << "]" << endl;
+    T8_LOG_VERBOSE("[CHANGE_PARALLAX_LOW_SAMPLES] Previous Value[%f] Actual Value[%f]", prevVal, SceneProp.ParallaxLowSamples);
   }break;
   case CHANGE_PARALLAX_HIGH_SAMPLES: {
     float prevVal = SceneProp.ParallaxHighSamples;
     SceneProp.ParallaxHighSamples -= 10.0f;
-    cout << "[CHANGE_PARALLAX_HIGH_SAMPLES] Previous Value[" << prevVal << "] Actual Value[" << SceneProp.ParallaxHighSamples << "]" << endl;
+    T8_LOG_VERBOSE("[CHANGE_PARALLAX_HIGH_SAMPLES] Previous Value[%f] Actual Value[%f]", prevVal, SceneProp.ParallaxHighSamples);
   }break;
   case CHANGE_PARALLAX_HEIGHT: {
     float prevVal = SceneProp.ParallaxHeight;
     SceneProp.ParallaxHeight -= 0.01f;
-    cout << "[CHANGE_PARALLAX_HEIGHT] Previous Value[" << prevVal << "] Actual Value[" << SceneProp.ParallaxHeight << "]" << endl;
+    T8_LOG_VERBOSE("[CHANGE_PARALLAX_HEIGHT] Previous Value[%f] Actual Value[%f]", prevVal, SceneProp.ParallaxHeight);
   }break;
   case CHANGE_LIGHT_VOLUME_STEPS: {
     float prevVal = SceneProp.LightVolumeSteps;
     SceneProp.LightVolumeSteps -= 16.0f;
-    cout << "[CHANGE_LIGHT_VOLUME_STEPS] Previous Value[" << prevVal << "] Actual Value[" << SceneProp.LightVolumeSteps << "]" << endl;
+    T8_LOG_VERBOSE("[CHANGE_LIGHT_VOLUME_STEPS] Previous Value[%f] Actual Value[%f]", prevVal, SceneProp.LightVolumeSteps);
   }break;
   case CHANGE_PCF_TOOGLE: {
 	  int prevVal = SceneProp.ToogleShadow;
 	  SceneProp.ToogleShadow = 0;
-	  cout << "[CHANGE_PCF_TOOGLE] Previous Value[" << prevVal << "] Actual Value[" << SceneProp.ToogleShadow << "]" << endl;
+	  T8_LOG_VERBOSE("[CHANGE_PCF_TOOGLE] Previous Value[%d] Actual Value[%d]", prevVal, SceneProp.ToogleShadow);
   }break;
   case CHANGLE_SSAO_TOOGLE: {
 	  int prevVal = SceneProp.ToogleSSAO;
 	  SceneProp.ToogleSSAO = 0;
-	  cout << "[CHANGLE_SSAO_TOOGLE] Previous Value[" << prevVal << "] Actual Value[" << SceneProp.ToogleSSAO << "]" << endl;
+	  T8_LOG_VERBOSE("[CHANGLE_SSAO_TOOGLE] Previous Value[%d] Actual Value[%d]", prevVal, SceneProp.ToogleSSAO);
   }break;
   case CHANGE_LIGHT_NEAR_PLANE: {
     float prevVal = LightCam.NPlane;
@@ -894,7 +896,7 @@ void  SC_Day::ChangeSettingsOnMinus() {
     if (LightCam.NPlane < 0.1f) LightCam.NPlane = 0.1f;
     LightCam.CreatePojection();
     LightCam.Update(0);
-    cout << "[CHANGE_LIGHT_NEAR_PLANE] Previous Value[" << prevVal << "] Actual Value[" << LightCam.NPlane << "]" << endl;
+    T8_LOG_VERBOSE("[CHANGE_LIGHT_NEAR_PLANE] Previous Value[%f] Actual Value[%f]", prevVal, LightCam.NPlane);
   }break;
   case CHANGE_LIGHT_FAR_PLANE: {
     float prevVal = LightCam.FPlane;
@@ -902,28 +904,28 @@ void  SC_Day::ChangeSettingsOnMinus() {
     if (LightCam.FPlane < 1.0f) LightCam.FPlane = 1.0f;
     LightCam.CreatePojection();
     LightCam.Update(0);
-    cout << "[CHANGE_LIGHT_FAR_PLANE] Previous Value[" << prevVal << "] Actual Value[" << LightCam.FPlane << "]" << endl;
+    T8_LOG_VERBOSE("[CHANGE_LIGHT_FAR_PLANE] Previous Value[%f] Actual Value[%f]", prevVal, LightCam.FPlane);
   }break;
   case CHANGE_FOV: {
     float prevVal = ActiveCam->Fov;
     ActiveCam->SetFov(ActiveCam->Fov - Deg2Rad(5.0f));
     if (ActiveCam->Fov < Deg2Rad(60.0f)) ActiveCam->SetFov(Deg2Rad(60.0f));
-    cout << "[CHANGE_FOV] Previous Value[" << Rad2Deg(prevVal) << "] Actual Value[" << Rad2Deg(ActiveCam->Fov) << "]" << endl;
+    T8_LOG_VERBOSE("[CHANGE_FOV] Previous Value[%f] Actual Value[%f]", Rad2Deg(prevVal), Rad2Deg(ActiveCam->Fov));
   }break;
   case CHANGE_SHOW_SPLINE: {
     m_showSpline = false;
-    cout << "[CHANGE_SHOW_SPLINE] Value[" << (int)m_showSpline << "]" << endl;
+    T8_LOG_VERBOSE("[CHANGE_SHOW_SPLINE] Value[%d]", (int)m_showSpline);
   }break;
   case CHANGE_SHOW_LIGHTS: {
     m_showLights = false;
-    cout << "[CHANGE_SHOW_LIGHTS] Value[" << (int)m_showLights << "]" << endl;
+    T8_LOG_VERBOSE("[CHANGE_SHOW_LIGHTS] Value[%d]", (int)m_showLights);
   }break;
   case CHANGE_LIGHT_INTENSITY: {
     if (!SceneProp.Lights.empty()) {
       float prevVal = SceneProp.Lights[0].Intensity;
       SceneProp.Lights[0].Intensity -= 0.5f;
       if (SceneProp.Lights[0].Intensity < 0.1f) SceneProp.Lights[0].Intensity = 0.1f;
-      cout << "[CHANGE_LIGHT_INTENSITY] Previous Value[" << prevVal << "] Actual Value[" << SceneProp.Lights[0].Intensity << "]" << endl;
+      T8_LOG_VERBOSE("[CHANGE_LIGHT_INTENSITY] Previous Value[%f] Actual Value[%f]", prevVal, SceneProp.Lights[0].Intensity);
     }
   }break;
   }
@@ -933,101 +935,101 @@ void SC_Day::printCurrSelection() {
   Camera& LightCam = m_sceneSetup.lightCameras[0];
   switch (SceneSettingSelection) {
   case CHANGE_EXPOSURE: {
-    cout << "Option[CHANGE_EXPOSURE] Value[" << SceneProp.Exposure << "]" << endl;
+    T8_LOG_VERBOSE("Option[CHANGE_EXPOSURE] Value[%f]", SceneProp.Exposure);
   }break;
   case CHANGE_BLOOM_FACTOR: {
-    cout << "Option[CHANGE_BLOOM_FACTOR] Value[" << SceneProp.BloomFactor << "]" << endl;
+    T8_LOG_VERBOSE("Option[CHANGE_BLOOM_FACTOR] Value[%f]", SceneProp.BloomFactor);
   }break;
   case CHANGE_BLOOM_THRESHOLD: {
-    cout << "Option[CHANGE_BLOOM_THRESHOLD] Value[" << SceneProp.BloomThreshold << "]" << endl;
+    T8_LOG_VERBOSE("Option[CHANGE_BLOOM_THRESHOLD] Value[%f]", SceneProp.BloomThreshold);
   }break;
   case CHANGE_TM_WHITE_LEVEL: {
-    cout << "Option[CHANGE_TM_WHITE_LEVEL] Value[" << SceneProp.ToneMapWhiteLevel << "]" << endl;
+    T8_LOG_VERBOSE("Option[CHANGE_TM_WHITE_LEVEL] Value[%f]", SceneProp.ToneMapWhiteLevel);
   }break;
   case CHANGE_TM_ADAPT_TAU: {
-    cout << "Option[CHANGE_TM_ADAPT_TAU] Value[" << SceneProp.LuminanceTau << "]" << endl;
+    T8_LOG_VERBOSE("Option[CHANGE_TM_ADAPT_TAU] Value[%f]", SceneProp.LuminanceTau);
   }break;
   case CHANGE_NUM_LIGHTS: {
-    cout << "Option[CHANGE_NUM_LIGHTS] Value[" << SceneProp.ActiveLights << "]" << endl;
+    T8_LOG_VERBOSE("Option[CHANGE_NUM_LIGHTS] Value[%d]", SceneProp.ActiveLights);
   }break;
   case CHANGE_ACTIVE_GAUSS_KERNEL: {
-    cout << "Option[CHANGE_ACTIVE_GAUSS_KERNEL] Value[" << ChangeActiveGaussSelection << "]" << endl;
+    T8_LOG_VERBOSE("Option[CHANGE_ACTIVE_GAUSS_KERNEL] Value[%d]", ChangeActiveGaussSelection);
   }break;
   case CHANGE_GAUSS_KERNEL_SAMPLE_COUNT: {
-    cout << "Option[CHANGE_GAUSS_KERNEL_SAMPLE_COUNT] Value[" << SceneProp.pGaussKernels[ChangeActiveGaussSelection]->kernelSize << "]" << endl;
+    T8_LOG_VERBOSE("Option[CHANGE_GAUSS_KERNEL_SAMPLE_COUNT] Value[%d]", SceneProp.pGaussKernels[ChangeActiveGaussSelection]->kernelSize);
   }break;
   case CHANGE_GAUSS_KERNEL_RADIUS: {
-    cout << "Option[CHANGE_GAUSS_KERNEL_RADIUS] Value[" << SceneProp.pGaussKernels[ChangeActiveGaussSelection]->radius << "]" << endl;
+    T8_LOG_VERBOSE("Option[CHANGE_GAUSS_KERNEL_RADIUS] Value[%f]", SceneProp.pGaussKernels[ChangeActiveGaussSelection]->radius);
   }break;
   case CHANGE_GAUSS_KERNEL_DEVIATION: {
-    cout << "Option[CHANGE_GAUSS_KERNEL_DEVIATION] Value[" << SceneProp.pGaussKernels[ChangeActiveGaussSelection]->sigma << "]" << endl;
+    T8_LOG_VERBOSE("Option[CHANGE_GAUSS_KERNEL_DEVIATION] Value[%f]", SceneProp.pGaussKernels[ChangeActiveGaussSelection]->sigma);
   }break;
   case CHANGE_PCF_RADIUS: {
-    cout << "Option[CHANGE_PCF_RADIUS] Value[" << SceneProp.PCFScale << "]" << endl;
+    T8_LOG_VERBOSE("Option[CHANGE_PCF_RADIUS] Value[%f]", SceneProp.PCFScale);
   }break;
   case CHANGE_PCF_SAMPLES: {
-    cout << "Option[CHANGE_PCF_SAMPLES] Value[" << SceneProp.PCFSamples << "]" << endl;
+    T8_LOG_VERBOSE("Option[CHANGE_PCF_SAMPLES] Value[%f]", SceneProp.PCFSamples);
   }break;
   case CHANGE_SSAO_KERNEL_SIZE: {
-    cout << "Option[CHANGE_SSAO_KERNEL_SIZE] Value[" << SceneProp.SSAOKernel.KernelSize << "]" << endl;
+    T8_LOG_VERBOSE("Option[CHANGE_SSAO_KERNEL_SIZE] Value[%d]", SceneProp.SSAOKernel.KernelSize);
   }break;
   case CHANGE_SSAO_RADIUS: {
-    cout << "Option[CHANGE_SSAO_RADIUS] Value[" << SceneProp.SSAOKernel.Radius << "]" << endl;
+    T8_LOG_VERBOSE("Option[CHANGE_SSAO_RADIUS] Value[%f]", SceneProp.SSAOKernel.Radius);
   }break;
   case CHANGE_DOF_APERTURE: {
-    cout << "Option[CHANGE_DOF_APERTURE] Value[" << SceneProp.Aperture << "]" << endl;
+    T8_LOG_VERBOSE("Option[CHANGE_DOF_APERTURE] Value[%f]", SceneProp.Aperture);
   }break;
   case CHANGE_DOF_FOCAL_LENGHT: {
-    cout << "Option[CHANGE_DOF_FOCAL_LENGHT] Value[" << SceneProp.FocalLength << "]" << endl;
+    T8_LOG_VERBOSE("Option[CHANGE_DOF_FOCAL_LENGHT] Value[%f]", SceneProp.FocalLength);
   }break;
   case CHANGE_DOF_MAX_COC: {
-    cout << "Option[CHANGE_DOF_MAX_COC] Value[" << SceneProp.MaxCoc << "]" << endl;
+    T8_LOG_VERBOSE("Option[CHANGE_DOF_MAX_COC] Value[%f]", SceneProp.MaxCoc);
   }break;
   case CHANGE_DOF_FAR_SAMPLE: {
-    cout << "Option[CHANGE_DOF_FAR_SAMPLE] Value[" << SceneProp.DOF_Far_Samples_squared << "]" << endl;
+    T8_LOG_VERBOSE("Option[CHANGE_DOF_FAR_SAMPLE] Value[%f]", SceneProp.DOF_Far_Samples_squared);
   }break;
   case CHANGE_DOF_NEAR_SAMPLE: {
-    cout << "Option[CHANGE_DOF_NEAR_SAMPLE] Value[" << SceneProp.DOF_Near_Samples_squared << "]" << endl;
+    T8_LOG_VERBOSE("Option[CHANGE_DOF_NEAR_SAMPLE] Value[%f]", SceneProp.DOF_Near_Samples_squared);
   }break;
   case CHANGE_DOF_AUTO_FOCUS: {
-    cout << "Option[CHANGE_DOF_AUTO_FOCUS] Value[" << (int)SceneProp.AutoFocus << "]" << endl;
+    T8_LOG_VERBOSE("Option[CHANGE_DOF_AUTO_FOCUS] Value[%d]", (int)SceneProp.AutoFocus);
   }break;
   case CHANGE_PARALLAX_LOW_SAMPLES: {
-    cout << "Option[CHANGE_PARALLAX_LOW_SAMPLES] Value[" << SceneProp.ParallaxLowSamples << "]" << endl;
+    T8_LOG_VERBOSE("Option[CHANGE_PARALLAX_LOW_SAMPLES] Value[%f]", SceneProp.ParallaxLowSamples);
   }break;
   case CHANGE_PARALLAX_HIGH_SAMPLES: {
-    cout << "Option[CHANGE_PARALLAX_HIGH_SAMPLES] Value[" << SceneProp.ParallaxHighSamples << "]" << endl;
+    T8_LOG_VERBOSE("Option[CHANGE_PARALLAX_HIGH_SAMPLES] Value[%f]", SceneProp.ParallaxHighSamples);
   }break;
   case CHANGE_PARALLAX_HEIGHT: {
-    cout << "Option[CHANGE_PARALLAX_HEIGHT] Value[" << SceneProp.ParallaxHeight << "]" << endl;
+    T8_LOG_VERBOSE("Option[CHANGE_PARALLAX_HEIGHT] Value[%f]", SceneProp.ParallaxHeight);
   }break;
   case CHANGE_LIGHT_VOLUME_STEPS: {
-    cout << "Option[CHANGE_LIGHT_VOLUME_STEPS] Value[" << SceneProp.LightVolumeSteps << "]" << endl;
+    T8_LOG_VERBOSE("Option[CHANGE_LIGHT_VOLUME_STEPS] Value[%f]", SceneProp.LightVolumeSteps);
   }break;
   case CHANGE_PCF_TOOGLE: {
-	  cout << "Option[CHANGE_PCF_TOOGLE] Value[" << SceneProp.ToogleShadow << "]" << endl;
+	  T8_LOG_VERBOSE("Option[CHANGE_PCF_TOOGLE] Value[%d]", SceneProp.ToogleShadow);
   }break;
   case CHANGLE_SSAO_TOOGLE: {
-	  cout << "Option[CHANGLE_SSAO_TOOGLE] Value[" << SceneProp.ToogleSSAO << "]" << endl;
+	  T8_LOG_VERBOSE("Option[CHANGLE_SSAO_TOOGLE] Value[%d]", SceneProp.ToogleSSAO);
   }break;
   case CHANGE_LIGHT_NEAR_PLANE: {
-    cout << "Option[CHANGE_LIGHT_NEAR_PLANE] Value[" << LightCam.NPlane << "]" << endl;
+    T8_LOG_VERBOSE("Option[CHANGE_LIGHT_NEAR_PLANE] Value[%f]", LightCam.NPlane);
   }break;
   case CHANGE_LIGHT_FAR_PLANE: {
-    cout << "Option[CHANGE_LIGHT_FAR_PLANE] Value[" << LightCam.FPlane << "]" << endl;
+    T8_LOG_VERBOSE("Option[CHANGE_LIGHT_FAR_PLANE] Value[%f]", LightCam.FPlane);
   }break;
   case CHANGE_FOV: {
-    cout << "Option[CHANGE_FOV] Value[" << Rad2Deg(ActiveCam->Fov) << "]" << endl;
+    T8_LOG_VERBOSE("Option[CHANGE_FOV] Value[%f]", Rad2Deg(ActiveCam->Fov));
   }break;
   case CHANGE_SHOW_SPLINE: {
-    cout << "Option[CHANGE_SHOW_SPLINE] Value[" << (int)m_showSpline << "]" << endl;
+    T8_LOG_VERBOSE("Option[CHANGE_SHOW_SPLINE] Value[%d]", (int)m_showSpline);
   }break;
   case CHANGE_SHOW_LIGHTS: {
-    cout << "Option[CHANGE_SHOW_LIGHTS] Value[" << (int)m_showLights << "]" << endl;
+    T8_LOG_VERBOSE("Option[CHANGE_SHOW_LIGHTS] Value[%d]", (int)m_showLights);
   }break;
   case CHANGE_LIGHT_INTENSITY: {
     if (!SceneProp.Lights.empty())
-      cout << "Option[CHANGE_LIGHT_INTENSITY] Value[" << SceneProp.Lights[0].Intensity << "]" << endl;
+      T8_LOG_VERBOSE("Option[CHANGE_LIGHT_INTENSITY] Value[%f]", SceneProp.Lights[0].Intensity);
   }break;
   }
 }
@@ -1069,11 +1071,14 @@ void SC_Day::PopulateGUI(t800::GUIManager& gui) {
     {"parallax_high_samples", CHANGE_PARALLAX_HIGH_SAMPLES},
     {"parallax_height",       CHANGE_PARALLAX_HEIGHT},
     {"light_volume_steps",    CHANGE_LIGHT_VOLUME_STEPS},
+    {"godrays_factor",        CHANGE_GODRAYS_FACTOR},
     {"gauss_kernel_radius",   CHANGE_GAUSS_KERNEL_RADIUS},
     {"gauss_kernel_deviation", CHANGE_GAUSS_KERNEL_DEVIATION},
     {"fov",                    CHANGE_FOV},
     {"light_intensity",        CHANGE_LIGHT_INTENSITY},
     {"shadow_bias",             CHANGE_SHADOW_BIAS},
+    {"shadow_min",              CHANGE_SHADOW_MIN},
+    {"env_factor",              CHANGE_ENV_FACTOR},
   };
 
   auto& sliderDescs = m_sceneSetup.descriptor.sliders;
@@ -1165,11 +1170,14 @@ void SC_Day::SyncToGUI(t800::GUIManager& gui) {
     case CHANGE_PARALLAX_HIGH_SAMPLES: slider->SetValue(SceneProp.ParallaxHighSamples); break;
     case CHANGE_PARALLAX_HEIGHT:    slider->SetValue(SceneProp.ParallaxHeight); break;
     case CHANGE_LIGHT_VOLUME_STEPS: slider->SetValue(SceneProp.LightVolumeSteps); break;
+    case CHANGE_GODRAYS_FACTOR:    slider->SetValue(SceneProp.GodRaysFactor); break;
     case CHANGE_GAUSS_KERNEL_RADIUS:   slider->SetValue(SceneProp.pGaussKernels[ChangeActiveGaussSelection]->radius); break;
     case CHANGE_GAUSS_KERNEL_DEVIATION: slider->SetValue(SceneProp.pGaussKernels[ChangeActiveGaussSelection]->sigma); break;
     case CHANGE_FOV:                slider->SetValue(Rad2Deg(ActiveCam->Fov)); break;
     case CHANGE_LIGHT_INTENSITY:    if (!SceneProp.Lights.empty()) slider->SetValue(SceneProp.Lights[0].Intensity); break;
     case CHANGE_SHADOW_BIAS:        slider->SetValue(SceneProp.ShadowBias); break;
+    case CHANGE_SHADOW_MIN:         slider->SetValue(SceneProp.ShadowMin); break;
+    case CHANGE_ENV_FACTOR:         slider->SetValue(SceneProp.EnvFactor); break;
     }
   }
   for (auto& cp : gui.GetCheckboxPairs()) {
@@ -1227,6 +1235,7 @@ void SC_Day::SyncFromGUI(t800::GUIManager& gui) {
     case CHANGE_PARALLAX_HIGH_SAMPLES: SceneProp.ParallaxHighSamples = slider->value; break;
     case CHANGE_PARALLAX_HEIGHT:    SceneProp.ParallaxHeight = slider->value; break;
     case CHANGE_LIGHT_VOLUME_STEPS: SceneProp.LightVolumeSteps = slider->value; break;
+    case CHANGE_GODRAYS_FACTOR:    SceneProp.GodRaysFactor = slider->value; break;
     case CHANGE_GAUSS_KERNEL_RADIUS:
       SceneProp.pGaussKernels[ChangeActiveGaussSelection]->radius = slider->value;
       SceneProp.pGaussKernels[ChangeActiveGaussSelection]->Update();
@@ -1243,6 +1252,12 @@ void SC_Day::SyncFromGUI(t800::GUIManager& gui) {
       break;
     case CHANGE_SHADOW_BIAS:
       SceneProp.ShadowBias = slider->value;
+      break;
+    case CHANGE_SHADOW_MIN:
+      SceneProp.ShadowMin = slider->value;
+      break;
+    case CHANGE_ENV_FACTOR:
+      SceneProp.EnvFactor = slider->value;
       break;
     }
   }
@@ -1340,6 +1355,9 @@ void SC_Day::SaveSceneState() {
   // Sync GUI element defaults to match current runtime state
   for (auto& sd : m_sceneSetup.descriptor.sliders) {
     if (sd.name == "shadow_bias") sd.default_val = SceneProp.ShadowBias;
+    else if (sd.name == "shadow_min")  sd.default_val = SceneProp.ShadowMin;
+    else if (sd.name == "env_factor")  sd.default_val = SceneProp.EnvFactor;
+    else if (sd.name == "godrays_factor") sd.default_val = SceneProp.GodRaysFactor;
   }
   for (auto& cd : m_sceneSetup.descriptor.checkboxes) {
     if (cd.name == "dof_toggle")       cd.default_val = (SceneProp.ToogleDOF != 0);

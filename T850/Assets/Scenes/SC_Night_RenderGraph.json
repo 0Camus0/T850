@@ -44,7 +44,7 @@
       "inputs": [
         { "source": "GBuffer:COLOR4",          "slot": 0 },
         { "source": "OmniShadowDepth:DEPTH",   "slot": 1 },
-        { "source": "GBuffer:COLOR1",           "slot": 2 },
+        { "source": "GBuffer:COLOR3",           "slot": 2 },
         { "source": "@ssao_noise",              "slot": 3 }
       ],
       "draws": [

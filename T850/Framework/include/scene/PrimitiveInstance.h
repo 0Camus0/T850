@@ -23,7 +23,7 @@ namespace t800 {
   class PrimitiveInst {
   public:
     void	CreateInstance(PrimitiveBase *pPrim, XMATRIX44 *pVP) {
-      gSig = 0; 
+      gKey.bits = 0; 
       for (int i = 0; i < 8; i++) {
         Textures[i] = 0;
       }
@@ -63,7 +63,7 @@ namespace t800 {
     void SetVisible(bool f) { Visible = f; }
 
     //
-    void SetGlobalSignature(unsigned long long f) { gSig = f; }
+    void SetGlobalKey(ShaderKey k) { gKey = k; }
     void SetTexture(Texture* tex, int index) {
       Textures[index] = tex;
     }
@@ -84,7 +84,7 @@ namespace t800 {
 	}
     Texture*				 Textures[8];
     Texture*			     EnvMap;
-    unsigned long long gSig;
+    ShaderKey gKey;
     float m_brightness;
     //
 

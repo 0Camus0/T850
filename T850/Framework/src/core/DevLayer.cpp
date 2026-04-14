@@ -48,10 +48,13 @@ void DevLayer::RebuildGUIForScene() {
 
   // Try to load a saved layout (overrides default positions)
   m_gui.LoadLayout(kLayoutPath);
+  m_gui.LoadControlLayout(kControlLayoutPath);
 }
 
 void DevLayer::SetEditMode(bool e) { m_gui.SetEditMode(e); }
 void DevLayer::SetSnapToGrid(bool s) { m_gui.SetSnapToGrid(s); }
+void DevLayer::SetControlEditMode(bool e) { m_gui.SetControlEditMode(e); }
+bool DevLayer::SetControlEditTargetByName(const std::string& targetName) { return m_gui.SetControlEditTargetByName(targetName); }
 
 void DevLayer::Update(float dt) {
   if (m_activeScene) {
@@ -80,14 +83,29 @@ void DevLayer::ProcessInput(InputManager* input) {
   }
   // Tab: save layout when in edit mode, dump scene state otherwise
   if (input->PressedOnceKey(T800K_TAB)) {
-    if (m_gui.IsEditMode()) {
+    if (m_gui.IsControlEditMode()) {
+      m_gui.HandleControlEditTab(kControlLayoutPath);
+    } else if (m_gui.IsEditMode()) {
       m_gui.SaveLayout(kLayoutPath);
     } else if (m_activeScene) {
       m_activeScene->SaveSceneState();
     }
   }
-  // +/-: adjust grid size in edit mode (consume keys so scene doesn't see them)
-  if (m_gui.IsEditMode()) {
+  // +/- controls:
+  // - regular edit mode: grid size
+  // - control edit mode: preview visual scale only (not saved)
+  if (m_gui.IsControlEditMode()) {
+    if (input->PressedOnceKey(T800K_PLUS) || input->PressedOnceKey(T800K_KP_PLUS)) {
+      m_gui.AdjustControlPreviewScale(0.05f);
+      input->KeyStates[0][T800K_PLUS]    = false;
+      input->KeyStates[0][T800K_KP_PLUS] = false;
+    }
+    if (input->PressedOnceKey(T800K_MINUS) || input->PressedOnceKey(T800K_KP_MINUS)) {
+      m_gui.AdjustControlPreviewScale(-0.05f);
+      input->KeyStates[0][T800K_MINUS]    = false;
+      input->KeyStates[0][T800K_KP_MINUS] = false;
+    }
+  } else if (m_gui.IsEditMode()) {
     if (input->PressedOnceKey(T800K_PLUS) || input->PressedOnceKey(T800K_KP_PLUS)) {
       m_gui.GrowGrid(5.0f);
       input->KeyStates[0][T800K_PLUS]    = false;

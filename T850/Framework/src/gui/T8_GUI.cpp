@@ -1,13 +1,4 @@
 #include "gui/T8_GUI.h"
-#include "gui/SliderBarData.h"
-#include "gui/SliderKnobData.h"
-#include "gui/CheckBoxBoxData.h"
-#include "gui/CheckBoxCheckData.h"
-#include "gui/SelectorBarData.h"
-#include "gui/SelectorBtnLeftData.h"
-#include "gui/SelectorBtnRightData.h"
-#include "gui/SelectorBtnLeftPressedData.h"
-#include "gui/SelectorBtnRightPressedData.h"
 #include <utils/Log.h>
 
 #include <video/GLShader.h>
@@ -118,137 +109,36 @@ void GUIManager::InitShader() {
 }
 
 void GUIManager::InitTextures() {
-  // Slider bar
-  {
-    int total = GUI_SLIDER_BAR_WIDTH * GUI_SLIDER_BAR_HEIGHT;
-    std::vector<unsigned char> rgba(total * 4);
-    for (int i = 0; i < total; i++) {
-      uint32_t px = GUI_SLIDER_BAR_DATA[i];
-      rgba[i * 4 + 0] = (unsigned char)(px & 0xFF);
-      rgba[i * 4 + 1] = (unsigned char)((px >> 8) & 0xFF);
-      rgba[i * 4 + 2] = (unsigned char)((px >> 16) & 0xFF);
-      rgba[i * 4 + 3] = (unsigned char)((px >> 24) & 0xFF);
+  auto loadGuiTexture = [&](const char* name) -> Texture* {
+    // Load from Assets/Layouts/Textures at runtime.
+    // The texture loader roots at "Textures/", so "../Layouts/..." resolves to Assets/Layouts.
+    std::string path = std::string("../Layouts/Textures/") + name;
+    Texture* t = T8Device->CreateTexture(path);
+    if (!t) {
+      T8_LOG_ERROR("[GUIManager] Failed to load GUI texture '%s'", path.c_str());
+      return nullptr;
     }
-    m_barTexture = T8Device->CreateTextureFromMemory(
-      rgba.data(), GUI_SLIDER_BAR_WIDTH, GUI_SLIDER_BAR_HEIGHT, 4, "gui_slider_bar");
-  }
-  // Slider knob
-  {
-    int total = GUI_SLIDER_KNOB_WIDTH * GUI_SLIDER_KNOB_HEIGHT;
-    std::vector<unsigned char> rgba(total * 4);
-    for (int i = 0; i < total; i++) {
-      uint32_t px = GUI_SLIDER_KNOB_DATA[i];
-      rgba[i * 4 + 0] = (unsigned char)(px & 0xFF);
-      rgba[i * 4 + 1] = (unsigned char)((px >> 8) & 0xFF);
-      rgba[i * 4 + 2] = (unsigned char)((px >> 16) & 0xFF);
-      rgba[i * 4 + 3] = (unsigned char)((px >> 24) & 0xFF);
-    }
-    m_knobTexture = T8Device->CreateTextureFromMemory(
-      rgba.data(), GUI_SLIDER_KNOB_WIDTH, GUI_SLIDER_KNOB_HEIGHT, 4, "gui_slider_knob");
-  }
+    // High quality UI sampling: trilinear/aniso with mipmaps, clamped edges.
+    t->params = TEXT_BASIC_PARAMS::CLAMP_TO_EDGE | TEXT_BASIC_PARAMS::MIPMAPS;
+    t->SetTextureParams();
+    return t;
+  };
+
+  m_barTexture = loadGuiTexture("SliderBar.png");
+  m_knobTexture = loadGuiTexture("SliderKnob.png");
   // 1x1 white pixel for solid-colour quads
   {
     unsigned char white[4] = {255, 255, 255, 255};
     m_whiteTexture = T8Device->CreateTextureFromMemory(white, 1, 1, 4, "gui_white_1x1");
   }
-  // Checkbox box
-  {
-    int total = GUI_CHECKBOX_BOX_WIDTH * GUI_CHECKBOX_BOX_HEIGHT;
-    std::vector<unsigned char> rgba(total * 4);
-    for (int i = 0; i < total; i++) {
-      uint32_t px = GUI_CHECKBOX_BOX_DATA[i];
-      rgba[i * 4 + 0] = (unsigned char)(px & 0xFF);
-      rgba[i * 4 + 1] = (unsigned char)((px >> 8) & 0xFF);
-      rgba[i * 4 + 2] = (unsigned char)((px >> 16) & 0xFF);
-      rgba[i * 4 + 3] = (unsigned char)((px >> 24) & 0xFF);
-    }
-    m_checkBoxTexture = T8Device->CreateTextureFromMemory(
-      rgba.data(), GUI_CHECKBOX_BOX_WIDTH, GUI_CHECKBOX_BOX_HEIGHT, 4, "gui_checkbox_box");
-  }
-  // Checkbox check mark
-  {
-    int total = GUI_CHECKBOX_CHECK_WIDTH * GUI_CHECKBOX_CHECK_HEIGHT;
-    std::vector<unsigned char> rgba(total * 4);
-    for (int i = 0; i < total; i++) {
-      uint32_t px = GUI_CHECKBOX_CHECK_DATA[i];
-      rgba[i * 4 + 0] = (unsigned char)(px & 0xFF);
-      rgba[i * 4 + 1] = (unsigned char)((px >> 8) & 0xFF);
-      rgba[i * 4 + 2] = (unsigned char)((px >> 16) & 0xFF);
-      rgba[i * 4 + 3] = (unsigned char)((px >> 24) & 0xFF);
-    }
-    m_checkMarkTexture = T8Device->CreateTextureFromMemory(
-      rgba.data(), GUI_CHECKBOX_CHECK_WIDTH, GUI_CHECKBOX_CHECK_HEIGHT, 4, "gui_checkbox_check");
-  }
-  // Selector bar
-  {
-    int total = GUI_SELECTOR_BAR_WIDTH * GUI_SELECTOR_BAR_HEIGHT;
-    std::vector<unsigned char> rgba(total * 4);
-    for (int i = 0; i < total; i++) {
-      uint32_t px = GUI_SELECTOR_BAR_DATA[i];
-      rgba[i * 4 + 0] = (unsigned char)(px & 0xFF);
-      rgba[i * 4 + 1] = (unsigned char)((px >> 8) & 0xFF);
-      rgba[i * 4 + 2] = (unsigned char)((px >> 16) & 0xFF);
-      rgba[i * 4 + 3] = (unsigned char)((px >> 24) & 0xFF);
-    }
-    m_selectorBarTexture = T8Device->CreateTextureFromMemory(
-      rgba.data(), GUI_SELECTOR_BAR_WIDTH, GUI_SELECTOR_BAR_HEIGHT, 4, "gui_selector_bar");
-  }
-  // Selector button left (non-pressed)
-  {
-    int total = GUI_SELECTOR_BTN_LEFT_WIDTH * GUI_SELECTOR_BTN_LEFT_HEIGHT;
-    std::vector<unsigned char> rgba(total * 4);
-    for (int i = 0; i < total; i++) {
-      uint32_t px = GUI_SELECTOR_BTN_LEFT_DATA[i];
-      rgba[i * 4 + 0] = (unsigned char)(px & 0xFF);
-      rgba[i * 4 + 1] = (unsigned char)((px >> 8) & 0xFF);
-      rgba[i * 4 + 2] = (unsigned char)((px >> 16) & 0xFF);
-      rgba[i * 4 + 3] = (unsigned char)((px >> 24) & 0xFF);
-    }
-    m_selectorBtnLeftTexture = T8Device->CreateTextureFromMemory(
-      rgba.data(), GUI_SELECTOR_BTN_LEFT_WIDTH, GUI_SELECTOR_BTN_LEFT_HEIGHT, 4, "gui_selector_btn_left");
-  }
-  // Selector button right (non-pressed)
-  {
-    int total = GUI_SELECTOR_BTN_RIGHT_WIDTH * GUI_SELECTOR_BTN_RIGHT_HEIGHT;
-    std::vector<unsigned char> rgba(total * 4);
-    for (int i = 0; i < total; i++) {
-      uint32_t px = GUI_SELECTOR_BTN_RIGHT_DATA[i];
-      rgba[i * 4 + 0] = (unsigned char)(px & 0xFF);
-      rgba[i * 4 + 1] = (unsigned char)((px >> 8) & 0xFF);
-      rgba[i * 4 + 2] = (unsigned char)((px >> 16) & 0xFF);
-      rgba[i * 4 + 3] = (unsigned char)((px >> 24) & 0xFF);
-    }
-    m_selectorBtnRightTexture = T8Device->CreateTextureFromMemory(
-      rgba.data(), GUI_SELECTOR_BTN_RIGHT_WIDTH, GUI_SELECTOR_BTN_RIGHT_HEIGHT, 4, "gui_selector_btn_right");
-  }
-  // Selector button left (pressed)
-  {
-    int total = GUI_SELECTOR_BTN_LEFT_PRESSED_WIDTH * GUI_SELECTOR_BTN_LEFT_PRESSED_HEIGHT;
-    std::vector<unsigned char> rgba(total * 4);
-    for (int i = 0; i < total; i++) {
-      uint32_t px = GUI_SELECTOR_BTN_LEFT_PRESSED_DATA[i];
-      rgba[i * 4 + 0] = (unsigned char)(px & 0xFF);
-      rgba[i * 4 + 1] = (unsigned char)((px >> 8) & 0xFF);
-      rgba[i * 4 + 2] = (unsigned char)((px >> 16) & 0xFF);
-      rgba[i * 4 + 3] = (unsigned char)((px >> 24) & 0xFF);
-    }
-    m_selectorBtnLeftPressTexture = T8Device->CreateTextureFromMemory(
-      rgba.data(), GUI_SELECTOR_BTN_LEFT_PRESSED_WIDTH, GUI_SELECTOR_BTN_LEFT_PRESSED_HEIGHT, 4, "gui_selector_btn_left_press");
-  }
-  // Selector button right (pressed)
-  {
-    int total = GUI_SELECTOR_BTN_RIGHT_PRESSED_WIDTH * GUI_SELECTOR_BTN_RIGHT_PRESSED_HEIGHT;
-    std::vector<unsigned char> rgba(total * 4);
-    for (int i = 0; i < total; i++) {
-      uint32_t px = GUI_SELECTOR_BTN_RIGHT_PRESSED_DATA[i];
-      rgba[i * 4 + 0] = (unsigned char)(px & 0xFF);
-      rgba[i * 4 + 1] = (unsigned char)((px >> 8) & 0xFF);
-      rgba[i * 4 + 2] = (unsigned char)((px >> 16) & 0xFF);
-      rgba[i * 4 + 3] = (unsigned char)((px >> 24) & 0xFF);
-    }
-    m_selectorBtnRightPressTexture = T8Device->CreateTextureFromMemory(
-      rgba.data(), GUI_SELECTOR_BTN_RIGHT_PRESSED_WIDTH, GUI_SELECTOR_BTN_RIGHT_PRESSED_HEIGHT, 4, "gui_selector_btn_right_press");
-  }
+  m_checkBoxTexture = loadGuiTexture("GUI_CheckBox_Box.png");
+  m_checkMarkTexture = loadGuiTexture("GUI_Checkbox_Check.png");
+
+  m_selectorBarTexture = loadGuiTexture("GUI_DropBar.png");
+  m_selectorBtnLeftTexture = loadGuiTexture("GUI_DropNonPressedLeft.png");
+  m_selectorBtnRightTexture = loadGuiTexture("GUI_DropNonPressedRight.png");
+  m_selectorBtnLeftPressTexture = loadGuiTexture("GUI_DropPressedLeft.png");
+  m_selectorBtnRightPressTexture = loadGuiTexture("GUI_DropPressedRight.png");
 }
 
 void GUIManager::Destroy() {
@@ -297,6 +187,9 @@ void GUIManager::ClearSliders() {
   m_dragTarget = nullptr;
   m_resizeTarget = nullptr;
   m_lastEdited = nullptr;
+  m_controlEditRect = {};
+  m_controlDragActive = false;
+  m_controlResizeActive = false;
 }
 
 GUISliderBar* GUIManager::FindSlider(const std::string& name) {
@@ -514,6 +407,8 @@ void GUIManager::LayoutSliders(int screenW, int screenH) {
     if (e->x + e->w > screenWf)    e->x = screenWf - e->w;
     if (e->y + e->h > screenHf)    e->y = screenHf - e->h;
   }
+
+  ApplyControlLayoutToElements();
 }
 
 // ─── Update ─────────────────────────────────────────────────
@@ -526,6 +421,8 @@ void GUIManager::Update(const InputManager& input, int screenW, int screenH) {
 
   if (m_editMode) {
     UpdateEditMode(mx, my, mouseDown);
+  } else if (m_controlEditMode) {
+    UpdateControlEditMode(mx, my, mouseDown);
   } else {
     // Normal slider interaction
     for (auto& sp : m_sliderPairs) {
@@ -671,9 +568,33 @@ void GUIManager::Draw() {
   m_ctx.snapToGrid = m_snapToGrid;
   m_ctx.gridCellW  = m_gridCellW;
   m_ctx.gridCellH  = m_gridCellH;
+  m_ctx.sliderKnobScaleX = m_controlLayout.sliderKnobScaleX;
+  m_ctx.sliderKnobScaleY = m_controlLayout.sliderKnobScaleY;
+  m_ctx.sliderKnobOffsetX = m_controlLayout.sliderKnobOffsetX;
+  m_ctx.sliderKnobOffsetY = m_controlLayout.sliderKnobOffsetY;
+  m_ctx.selectorLeftScaleX = m_controlLayout.selectorLeftScaleX;
+  m_ctx.selectorLeftScaleY = m_controlLayout.selectorLeftScaleY;
+  m_ctx.selectorLeftOffsetX = m_controlLayout.selectorLeftOffsetX;
+  m_ctx.selectorLeftOffsetY = m_controlLayout.selectorLeftOffsetY;
+  m_ctx.selectorRightScaleX = m_controlLayout.selectorRightScaleX;
+  m_ctx.selectorRightScaleY = m_controlLayout.selectorRightScaleY;
+  m_ctx.selectorRightOffsetX = m_controlLayout.selectorRightOffsetX;
+  m_ctx.selectorRightOffsetY = m_controlLayout.selectorRightOffsetY;
+  m_ctx.checkboxMarkScaleX = m_controlLayout.checkboxMarkScaleX;
+  m_ctx.checkboxMarkScaleY = m_controlLayout.checkboxMarkScaleY;
+  m_ctx.checkboxMarkOffsetX = m_controlLayout.checkboxMarkOffsetX;
+  m_ctx.checkboxMarkOffsetY = m_controlLayout.checkboxMarkOffsetY;
 
   g_pBaseDriver->SetBlendState(BaseDriver::BLEND_STATES::ALPHA_BLEND);
   g_pBaseDriver->SetDepthStencilState(BaseDriver::DEPTH_STENCIL_STATES::NONE);
+
+  if (m_controlEditMode) {
+    DrawControlEditPreview();
+    DrawControlEditOverlay();
+    g_pBaseDriver->SetBlendState(BaseDriver::BLEND_STATES::BLEND_DEFAULT);
+    g_pBaseDriver->SetDepthStencilState(BaseDriver::DEPTH_STENCIL_STATES::DEPTH_DEFAULT);
+    return;
+  }
 
   // Draw grid first (behind everything) in edit mode
   if (m_editMode) {
@@ -789,6 +710,114 @@ void GUIManager::DrawGrid() {
   }
 }
 
+void GUIManager::DrawControlEditPreview() {
+  m_quad.Set();
+  m_shader->Set(*T8DeviceContext);
+  T8DeviceContext->SetPrimitiveTopology(T8_TOPOLOGY::TRIANLE_LIST);
+
+  float screenW = m_ctx.screenW;
+  float screenH = m_ctx.screenH;
+
+  // Draw a neutral full-screen parent bounds reference first.
+  XVECTOR3 neutral(0.12f, 0.12f, 0.12f);
+  m_ctx.DrawSolidQuad(0.0f, 0.0f, screenW, screenH, neutral);
+
+  // Grid over neutral background for alignment in control-edit mode.
+  DrawGrid();
+
+  auto fitRect = [&](float srcW, float srcH) {
+    float safeW = (std::max)(1.0f, srcW);
+    float safeH = (std::max)(1.0f, srcH);
+    float targetW = screenW * m_controlPreviewVisualScale;
+    float targetH = screenH * m_controlPreviewVisualScale;
+    float s = (std::min)(targetW / safeW, targetH / safeH);
+    float w = safeW * s;
+    float h = safeH * s;
+    float x = (screenW - w) * 0.5f;
+    float y = (screenH - h) * 0.5f;
+    return ControlEditRect{ x, y, w, h, true };
+  };
+
+  auto mapRectToPreview = [&](const ControlEditRect& r, const ControlEditRect& p) {
+    ControlEditRect out;
+    out.valid = r.valid && p.valid;
+    if (!out.valid) return out;
+    out.x = p.x + (r.x / screenW) * p.w;
+    out.y = p.y + (r.y / screenH) * p.h;
+    out.w = (r.w / screenW) * p.w;
+    out.h = (r.h / screenH) * p.h;
+    return out;
+  };
+
+  switch (m_controlEditTarget) {
+    case GUIControlEditTarget::SliderKnob: {
+      // Parent bar in original texture aspect ratio.
+      float barW = m_barTexture ? (float)m_barTexture->x : 256.0f;
+      float barH = m_barTexture ? (float)m_barTexture->y : 32.0f;
+      ControlEditRect parent = fitRect(barW, barH);
+      if (m_barTexture) {
+        m_ctx.DrawTexturedQuad(parent.x, parent.y, parent.w, parent.h, m_barTexture, XVECTOR3(1.0f, 1.0f, 1.0f));
+      }
+      if (m_knobTexture && m_controlEditRect.valid) {
+        m_ctx.DrawTexturedQuad(m_controlEditRect.x, m_controlEditRect.y, m_controlEditRect.w, m_controlEditRect.h,
+                               m_knobTexture, XVECTOR3(1.0f, 1.0f, 1.0f));
+      }
+      break;
+    }
+    case GUIControlEditTarget::SelectorControl: {
+      // Parent selector in original aspect ratio.  Bar = full parent rect.
+      float sbw = m_selectorBarTexture ? (float)m_selectorBarTexture->x : 256.0f;
+      float sbh = m_selectorBarTexture ? (float)m_selectorBarTexture->y : 32.0f;
+      float blw = m_selectorBtnLeftTexture ? (float)m_selectorBtnLeftTexture->x : 32.0f;
+      float brw = m_selectorBtnRightTexture ? (float)m_selectorBtnRightTexture->x : 32.0f;
+      float sw = sbw + blw + brw;
+      float sh = sbh;
+      ControlEditRect parent = fitRect(sw, sh);
+
+      // Bar fills the full parent rect
+      if (m_selectorBarTexture) {
+        m_ctx.DrawTexturedQuad(parent.x, parent.y, parent.w, parent.h, m_selectorBarTexture, XVECTOR3(1.0f, 1.0f, 1.0f));
+      }
+
+      if (m_selectorBtnLeftTexture && m_controlEditRect.valid) {
+        if (m_controlActiveSubpart == GUIControlSubpart::SelectorLeft) {
+          m_ctx.DrawTexturedQuad(m_controlEditRect.x, m_controlEditRect.y, m_controlEditRect.w, m_controlEditRect.h,
+                                 m_selectorBtnLeftTexture, XVECTOR3(1.0f, 1.0f, 1.0f));
+        } else {
+          m_ctx.DrawTexturedQuad(m_controlEditRectSecondary.x, m_controlEditRectSecondary.y,
+                                 m_controlEditRectSecondary.w, m_controlEditRectSecondary.h,
+                                 m_selectorBtnLeftTexture, XVECTOR3(1.0f, 1.0f, 1.0f));
+        }
+      }
+      if (m_selectorBtnRightTexture && m_controlEditRect.valid) {
+        if (m_controlActiveSubpart == GUIControlSubpart::SelectorRight) {
+          m_ctx.DrawTexturedQuad(m_controlEditRect.x, m_controlEditRect.y, m_controlEditRect.w, m_controlEditRect.h,
+                                 m_selectorBtnRightTexture, XVECTOR3(1.0f, 1.0f, 1.0f));
+        } else {
+          m_ctx.DrawTexturedQuad(m_controlEditRectSecondary.x, m_controlEditRectSecondary.y,
+                                 m_controlEditRectSecondary.w, m_controlEditRectSecondary.h,
+                                 m_selectorBtnRightTexture, XVECTOR3(1.0f, 1.0f, 1.0f));
+        }
+      }
+      break;
+    }
+    case GUIControlEditTarget::CheckboxMark: {
+      // Parent checkbox box in original aspect ratio.
+      float cbW = m_checkBoxTexture ? (float)m_checkBoxTexture->x : 64.0f;
+      float cbH = m_checkBoxTexture ? (float)m_checkBoxTexture->y : 64.0f;
+      ControlEditRect parent = fitRect(cbW, cbH);
+      if (m_checkBoxTexture) {
+        m_ctx.DrawTexturedQuad(parent.x, parent.y, parent.w, parent.h, m_checkBoxTexture, XVECTOR3(1.0f, 1.0f, 1.0f));
+      }
+      if (m_checkMarkTexture && m_controlEditRect.valid) {
+        m_ctx.DrawTexturedQuad(m_controlEditRect.x, m_controlEditRect.y, m_controlEditRect.w, m_controlEditRect.h,
+                               m_checkMarkTexture, XVECTOR3(1.0f, 1.0f, 1.0f));
+      }
+      break;
+    }
+  }
+}
+
 void GUIManager::DrawEditOverlays() {
   // Ensure GUI shader is active for the solid-colour quads
   m_quad.Set();
@@ -797,6 +826,332 @@ void GUIManager::DrawEditOverlays() {
 
   for (auto* e : m_elements) {
     e->DrawEditOverlay(m_ctx);
+  }
+}
+
+void GUIManager::SetControlEditMode(bool e) {
+  m_controlEditMode = e;
+  if (m_controlEditMode) {
+    m_editMode = false;
+    m_controlDragActive = false;
+    m_controlResizeActive = false;
+    m_controlActiveSubpart = GUIControlSubpart::Primary;
+    m_sliderCalibrationStep = 0;
+  }
+}
+
+void GUIManager::SetEditMode(bool e) {
+  m_editMode = e;
+  if (m_editMode) {
+    m_controlEditMode = false;
+    m_controlDragActive = false;
+    m_controlResizeActive = false;
+  }
+}
+
+bool GUIManager::SetControlEditTargetByName(const std::string& targetName) {
+  if (targetName == "slider_knob") {
+    m_controlEditTarget = GUIControlEditTarget::SliderKnob;
+    m_controlActiveSubpart = GUIControlSubpart::Primary;
+    m_sliderCalibrationStep = 0;
+    return true;
+  }
+  if (targetName == "selector_control" || targetName == "selector_left" || targetName == "selector_right") {
+    m_controlEditTarget = GUIControlEditTarget::SelectorControl;
+    m_controlActiveSubpart = (targetName == "selector_right") ? GUIControlSubpart::SelectorRight : GUIControlSubpart::SelectorLeft;
+    m_sliderCalibrationStep = 0;
+    return true;
+  }
+  if (targetName == "checkbox_mark") {
+    m_controlEditTarget = GUIControlEditTarget::CheckboxMark;
+    m_controlActiveSubpart = GUIControlSubpart::Primary;
+    m_sliderCalibrationStep = 0;
+    return true;
+  }
+  return false;
+}
+
+const char* GUIManager::GetControlEditTargetName() const {
+  switch (m_controlEditTarget) {
+    case GUIControlEditTarget::SliderKnob: return "slider_knob";
+    case GUIControlEditTarget::SelectorControl: return "selector_control";
+    case GUIControlEditTarget::CheckboxMark: return "checkbox_mark";
+    default: return "slider_knob";
+  }
+}
+
+void GUIManager::ApplyControlLayoutToElements() {
+  for (auto& sp : m_sliderPairs) {
+    sp.slider->knobScaleX = m_controlLayout.sliderKnobScaleX;
+    sp.slider->knobScaleY = m_controlLayout.sliderKnobScaleY;
+    sp.slider->knobOffsetX = m_controlLayout.sliderKnobOffsetX;
+    sp.slider->knobOffsetY = m_controlLayout.sliderKnobOffsetY;
+    sp.slider->knobRangeCalibrated = m_controlLayout.sliderKnobRangeCalibrated;
+    sp.slider->knobMinNorm = m_controlLayout.sliderKnobMinNorm;
+    sp.slider->knobMaxNorm = m_controlLayout.sliderKnobMaxNorm;
+  }
+  for (auto& cp : m_checkboxPairs) {
+    cp.checkbox->markScaleX = m_controlLayout.checkboxMarkScaleX;
+    cp.checkbox->markScaleY = m_controlLayout.checkboxMarkScaleY;
+    cp.checkbox->markOffsetX = m_controlLayout.checkboxMarkOffsetX;
+    cp.checkbox->markOffsetY = m_controlLayout.checkboxMarkOffsetY;
+  }
+  for (auto& sp : m_selectorPairs) {
+    sp.selector->leftScaleX = m_controlLayout.selectorLeftScaleX;
+    sp.selector->leftScaleY = m_controlLayout.selectorLeftScaleY;
+    sp.selector->leftOffsetX = m_controlLayout.selectorLeftOffsetX;
+    sp.selector->leftOffsetY = m_controlLayout.selectorLeftOffsetY;
+    sp.selector->rightScaleX = m_controlLayout.selectorRightScaleX;
+    sp.selector->rightScaleY = m_controlLayout.selectorRightScaleY;
+    sp.selector->rightOffsetX = m_controlLayout.selectorRightOffsetX;
+    sp.selector->rightOffsetY = m_controlLayout.selectorRightOffsetY;
+  }
+}
+
+void GUIManager::UpdateControlEditMode(float mx, float my, bool mouseDown) {
+  m_controlEditRect.valid = false;
+  m_controlEditRectSecondary.valid = false;
+  float screenW = m_ctx.screenW > 0.0f ? m_ctx.screenW : (float)g_pBaseDriver->width;
+  float screenH = m_ctx.screenH > 0.0f ? m_ctx.screenH : (float)g_pBaseDriver->height;
+
+  auto fitRect = [&](float srcW, float srcH) {
+    float safeW = (std::max)(1.0f, srcW);
+    float safeH = (std::max)(1.0f, srcH);
+    float targetW = screenW * m_controlPreviewVisualScale;
+    float targetH = screenH * m_controlPreviewVisualScale;
+    float s = (std::min)(targetW / safeW, targetH / safeH);
+    float w = safeW * s;
+    float h = safeH * s;
+    float x = (screenW - w) * 0.5f;
+    float y = (screenH - h) * 0.5f;
+    return ControlEditRect{ x, y, w, h, true };
+  };
+
+  auto updateFromRect = [&]() {
+    if (!m_controlEditRect.valid) return;
+    float partW = (std::max)(1.0f, m_controlEditRect.w);
+    float partH = (std::max)(1.0f, m_controlEditRect.h);
+    float cx = (screenW - partW) * 0.5f;
+    float cy = (screenH - partH) * 0.5f;
+
+    switch (m_controlEditTarget) {
+      case GUIControlEditTarget::SliderKnob: {
+        float barW = m_barTexture ? (float)m_barTexture->x : 256.0f;
+        float barH = m_barTexture ? (float)m_barTexture->y : 32.0f;
+        ControlEditRect parent = fitRect(barW, barH);
+        float baseW = parent.h;
+        float baseX = parent.x + 0.5f * (std::max)(0.0f, parent.w - baseW);
+        m_controlLayout.sliderKnobScaleX = partW / (std::max)(1.0f, baseW);
+        m_controlLayout.sliderKnobScaleY = partH / (std::max)(1.0f, parent.h);
+        m_controlLayout.sliderKnobOffsetX = (m_controlEditRect.x - baseX - (baseW - partW) * 0.5f) / (std::max)(1.0f, parent.h);
+        m_controlLayout.sliderKnobOffsetY = (m_controlEditRect.y - parent.y - (parent.h - partH) * 0.5f) / (std::max)(1.0f, parent.h);
+        break;
+      }
+      case GUIControlEditTarget::SelectorControl: {
+        float sbw = m_selectorBarTexture ? (float)m_selectorBarTexture->x : 256.0f;
+        float sbh = m_selectorBarTexture ? (float)m_selectorBarTexture->y : 32.0f;
+        float blw = m_selectorBtnLeftTexture ? (float)m_selectorBtnLeftTexture->x : 32.0f;
+        float brw = m_selectorBtnRightTexture ? (float)m_selectorBtnRightTexture->x : 32.0f;
+        ControlEditRect parent = fitRect(sbw + blw + brw, sbh);
+        float baseW = parent.h;
+        float baseY = parent.y;
+        if (m_controlActiveSubpart == GUIControlSubpart::SelectorRight) {
+          float baseX = parent.x + parent.w - baseW;
+          m_controlLayout.selectorRightScaleX = partW / (std::max)(1.0f, baseW);
+          m_controlLayout.selectorRightScaleY = partH / (std::max)(1.0f, parent.h);
+          m_controlLayout.selectorRightOffsetX = (m_controlEditRect.x - baseX - (baseW - partW) * 0.5f) / (std::max)(1.0f, parent.h);
+          m_controlLayout.selectorRightOffsetY = (m_controlEditRect.y - baseY - (parent.h - partH) * 0.5f) / (std::max)(1.0f, parent.h);
+        } else {
+          float baseX = parent.x;
+          m_controlLayout.selectorLeftScaleX = partW / (std::max)(1.0f, baseW);
+          m_controlLayout.selectorLeftScaleY = partH / (std::max)(1.0f, parent.h);
+          m_controlLayout.selectorLeftOffsetX = (m_controlEditRect.x - baseX - (baseW - partW) * 0.5f) / (std::max)(1.0f, parent.h);
+          m_controlLayout.selectorLeftOffsetY = (m_controlEditRect.y - baseY - (parent.h - partH) * 0.5f) / (std::max)(1.0f, parent.h);
+        }
+        break;
+      }
+      case GUIControlEditTarget::CheckboxMark: {
+        float cbW = m_checkBoxTexture ? (float)m_checkBoxTexture->x : 64.0f;
+        float cbH = m_checkBoxTexture ? (float)m_checkBoxTexture->y : 64.0f;
+        ControlEditRect parent = fitRect(cbW, cbH);
+        m_controlLayout.checkboxMarkScaleX = partW / (std::max)(1.0f, parent.w);
+        m_controlLayout.checkboxMarkScaleY = partH / (std::max)(1.0f, parent.h);
+        m_controlLayout.checkboxMarkOffsetX = (m_controlEditRect.x - parent.x - (parent.w - partW) * 0.5f) / (std::max)(1.0f, parent.h);
+        m_controlLayout.checkboxMarkOffsetY = (m_controlEditRect.y - parent.y - (parent.h - partH) * 0.5f) / (std::max)(1.0f, parent.h);
+        break;
+      }
+    }
+    ApplyControlLayoutToElements();
+  };
+
+  auto computeRect = [&]() {
+    switch (m_controlEditTarget) {
+      case GUIControlEditTarget::SliderKnob: {
+        float barW = m_barTexture ? (float)m_barTexture->x : 256.0f;
+        float barH = m_barTexture ? (float)m_barTexture->y : 32.0f;
+        ControlEditRect parent = fitRect(barW, barH);
+        float baseW = parent.h;
+        float baseX = parent.x + 0.5f * (std::max)(0.0f, parent.w - baseW);
+        float kW = (std::max)(4.0f, baseW * m_controlLayout.sliderKnobScaleX);
+        float kH = (std::max)(4.0f, parent.h * m_controlLayout.sliderKnobScaleY);
+        m_controlEditRect.x = baseX + m_controlLayout.sliderKnobOffsetX * parent.h + (baseW - kW) * 0.5f;
+        m_controlEditRect.y = parent.y + m_controlLayout.sliderKnobOffsetY * parent.h + (parent.h - kH) * 0.5f;
+        m_controlEditRect.w = kW;
+        m_controlEditRect.h = kH;
+        m_controlEditRect.valid = true;
+        return;
+      }
+      case GUIControlEditTarget::SelectorControl: {
+        float sbw = m_selectorBarTexture ? (float)m_selectorBarTexture->x : 256.0f;
+        float sbh = m_selectorBarTexture ? (float)m_selectorBarTexture->y : 32.0f;
+        float blw = m_selectorBtnLeftTexture ? (float)m_selectorBtnLeftTexture->x : 32.0f;
+        float brw = m_selectorBtnRightTexture ? (float)m_selectorBtnRightTexture->x : 32.0f;
+        ControlEditRect parent = fitRect(sbw + blw + brw, sbh);
+        float baseW = parent.h;
+        float baseY = parent.y;
+
+        float lW = (std::max)(4.0f, baseW * m_controlLayout.selectorLeftScaleX);
+        float lH = (std::max)(4.0f, parent.h * m_controlLayout.selectorLeftScaleY);
+        float lX = parent.x + m_controlLayout.selectorLeftOffsetX * parent.h + (baseW - lW) * 0.5f;
+        float lY = baseY + m_controlLayout.selectorLeftOffsetY * parent.h + (parent.h - lH) * 0.5f;
+
+        float rW = (std::max)(4.0f, baseW * m_controlLayout.selectorRightScaleX);
+        float rH = (std::max)(4.0f, parent.h * m_controlLayout.selectorRightScaleY);
+        float rX = (parent.x + parent.w - baseW) + m_controlLayout.selectorRightOffsetX * parent.h + (baseW - rW) * 0.5f;
+        float rY = baseY + m_controlLayout.selectorRightOffsetY * parent.h + (parent.h - rH) * 0.5f;
+
+        if (m_controlActiveSubpart == GUIControlSubpart::SelectorRight) {
+          m_controlEditRect = { rX, rY, rW, rH, true };
+          m_controlEditRectSecondary = { lX, lY, lW, lH, true };
+        } else {
+          m_controlEditRect = { lX, lY, lW, lH, true };
+          m_controlEditRectSecondary = { rX, rY, rW, rH, true };
+        }
+        return;
+      }
+      case GUIControlEditTarget::CheckboxMark: {
+        float cbW = m_checkBoxTexture ? (float)m_checkBoxTexture->x : 64.0f;
+        float cbH = m_checkBoxTexture ? (float)m_checkBoxTexture->y : 64.0f;
+        ControlEditRect parent = fitRect(cbW, cbH);
+        float mW = (std::max)(4.0f, parent.w * m_controlLayout.checkboxMarkScaleX);
+        float mH = (std::max)(4.0f, parent.h * m_controlLayout.checkboxMarkScaleY);
+        m_controlEditRect.x = parent.x + m_controlLayout.checkboxMarkOffsetX * parent.h + (parent.w - mW) * 0.5f;
+        m_controlEditRect.y = parent.y + m_controlLayout.checkboxMarkOffsetY * parent.h + (parent.h - mH) * 0.5f;
+        m_controlEditRect.w = mW;
+        m_controlEditRect.h = mH;
+        m_controlEditRect.valid = true;
+        return;
+      }
+    }
+  };
+
+  computeRect();
+  if (!m_controlEditRect.valid) {
+    return;
+  }
+
+  bool justPressed = mouseDown && !m_wasMouseDown;
+  bool justReleased = !mouseDown && m_wasMouseDown;
+
+  float hs = GUIElement::kScaleHandleSize;
+  float hx = m_controlEditRect.x + m_controlEditRect.w - hs;
+  float hy = m_controlEditRect.y + m_controlEditRect.h - hs;
+  bool overHandle = (mx >= hx && mx <= hx + hs && my >= hy && my <= hy + hs);
+  bool overBody = (mx >= m_controlEditRect.x && mx <= m_controlEditRect.x + m_controlEditRect.w &&
+                   my >= m_controlEditRect.y && my <= m_controlEditRect.y + m_controlEditRect.h);
+  bool overSecondary = m_controlEditRectSecondary.valid &&
+                       (mx >= m_controlEditRectSecondary.x && mx <= m_controlEditRectSecondary.x + m_controlEditRectSecondary.w &&
+                        my >= m_controlEditRectSecondary.y && my <= m_controlEditRectSecondary.y + m_controlEditRectSecondary.h);
+
+  if (justReleased) {
+    if (m_snapToGrid) {
+      m_controlEditRect.x = std::round(m_controlEditRect.x / m_gridCellW) * m_gridCellW;
+      m_controlEditRect.y = std::round(m_controlEditRect.y / m_gridCellH) * m_gridCellH;
+      updateFromRect();
+    }
+    m_controlDragActive = false;
+    m_controlResizeActive = false;
+    return;
+  }
+
+  if (mouseDown && m_controlResizeActive) {
+    float dw = mx - m_controlResizeOrigMX;
+    float dh = my - m_controlResizeOrigMY;
+    m_controlEditRect.w = (std::max)(4.0f, m_controlResizeOrigW + dw);
+    m_controlEditRect.h = (std::max)(4.0f, m_controlResizeOrigH + dh);
+    m_controlEditRect.x = m_controlResizeOrigX;
+    m_controlEditRect.y = m_controlResizeOrigY;
+    updateFromRect();
+    return;
+  }
+
+  if (mouseDown && m_controlDragActive) {
+    m_controlEditRect.x = mx - m_controlDragOffX;
+    m_controlEditRect.y = my - m_controlDragOffY;
+    if (m_snapToGrid) {
+      m_controlEditRect.x = std::round(m_controlEditRect.x / m_gridCellW) * m_gridCellW;
+      m_controlEditRect.y = std::round(m_controlEditRect.y / m_gridCellH) * m_gridCellH;
+    }
+    updateFromRect();
+    return;
+  }
+
+  if (justPressed) {
+    if (m_controlEditTarget == GUIControlEditTarget::SelectorControl && overSecondary) {
+      m_controlActiveSubpart = (m_controlActiveSubpart == GUIControlSubpart::SelectorLeft)
+                                 ? GUIControlSubpart::SelectorRight
+                                 : GUIControlSubpart::SelectorLeft;
+      computeRect();
+      overHandle = false;
+      overBody = true;
+    }
+
+    if (overHandle) {
+      m_controlResizeActive = true;
+      m_controlResizeOrigW = m_controlEditRect.w;
+      m_controlResizeOrigH = m_controlEditRect.h;
+      m_controlResizeOrigMX = mx;
+      m_controlResizeOrigMY = my;
+      m_controlResizeOrigX = m_controlEditRect.x;
+      m_controlResizeOrigY = m_controlEditRect.y;
+      return;
+    }
+    if (overBody) {
+      m_controlDragActive = true;
+      m_controlDragOffX = mx - m_controlEditRect.x;
+      m_controlDragOffY = my - m_controlEditRect.y;
+      return;
+    }
+  }
+}
+
+void GUIManager::DrawControlEditRectOverlay(float x, float y, float w, float h, const XVECTOR3& color, bool drawHandle) {
+  const float lineW = 1.0f;
+  m_ctx.DrawSolidQuad(x, y, w, lineW, color);
+  m_ctx.DrawSolidQuad(x, y + h - lineW, w, lineW, color);
+  m_ctx.DrawSolidQuad(x, y, lineW, h, color);
+  m_ctx.DrawSolidQuad(x + w - lineW, y, lineW, h, color);
+
+  if (drawHandle) {
+    float hs = GUIElement::kScaleHandleSize;
+    XVECTOR3 handleColor(0.1f, 1.0f, 0.2f);
+    m_ctx.DrawSolidQuad(x + w - hs, y + h - hs, hs, hs, handleColor);
+  }
+}
+
+void GUIManager::DrawControlEditOverlay() {
+  if (!m_controlEditRect.valid) return;
+
+  m_quad.Set();
+  m_shader->Set(*T8DeviceContext);
+  T8DeviceContext->SetPrimitiveTopology(T8_TOPOLOGY::TRIANLE_LIST);
+  XVECTOR3 activeColor(1.0f, 0.6f, 0.1f);
+  XVECTOR3 secondaryColor(0.2f, 0.8f, 1.0f);
+  DrawControlEditRectOverlay(m_controlEditRect.x, m_controlEditRect.y, m_controlEditRect.w, m_controlEditRect.h, activeColor, true);
+  if (m_controlEditTarget == GUIControlEditTarget::SelectorControl && m_controlEditRectSecondary.valid) {
+    DrawControlEditRectOverlay(m_controlEditRectSecondary.x, m_controlEditRectSecondary.y,
+                               m_controlEditRectSecondary.w, m_controlEditRectSecondary.h,
+                               secondaryColor, false);
   }
 }
 
@@ -826,6 +1181,11 @@ void GUIManager::GrowGrid(float delta) {
   m_gridCellW = (std::max)(10.0f, m_gridCellW + delta);
   m_gridCellH = (std::max)(10.0f, m_gridCellH + delta);
   T8_LOG_DEBUG("[GUI Edit] Grid cell size: %.0f x %.0f", m_gridCellW, m_gridCellH);
+}
+
+void GUIManager::AdjustControlPreviewScale(float delta) {
+  m_controlPreviewVisualScale = (std::max)(0.10f, (std::min)(0.95f, m_controlPreviewVisualScale + delta));
+  T8_LOG_DEBUG("[GUI Control Edit] Preview scale: %.2f", m_controlPreviewVisualScale);
 }
 
 // ─── Apply uniform scale ────────────────────────────────────
@@ -893,6 +1253,31 @@ struct GUILayoutFile {
   std::vector<ElementLayoutEntry> elements;
   float gridCellW = 40.0f;      // normalized to ref_height
   float gridCellH = 40.0f;      // normalized to ref_height
+};
+
+struct GUIControlLayoutFile {
+  float sliderKnobScaleX = 1.0f;
+  float sliderKnobScaleY = 1.0f;
+  float sliderKnobOffsetX = 0.0f;
+  float sliderKnobOffsetY = 0.0f;
+  bool sliderKnobRangeCalibrated = false;
+  float sliderKnobMinNorm = 0.0f;
+  float sliderKnobMaxNorm = 1.0f;
+
+  float selectorLeftScaleX = 1.0f;
+  float selectorLeftScaleY = 1.0f;
+  float selectorLeftOffsetX = 0.0f;
+  float selectorLeftOffsetY = 0.0f;
+
+  float selectorRightScaleX = 1.0f;
+  float selectorRightScaleY = 1.0f;
+  float selectorRightOffsetX = 0.0f;
+  float selectorRightOffsetY = 0.0f;
+
+  float checkboxMarkScaleX = 1.0f;
+  float checkboxMarkScaleY = 1.0f;
+  float checkboxMarkOffsetX = 0.0f;
+  float checkboxMarkOffsetY = 0.0f;
 };
 
 bool GUIManager::SaveLayout(const std::string& path) {
@@ -965,6 +1350,12 @@ bool GUIManager::LoadLayout(const std::string& path) {
         e->y = entry.y * curH;
         e->w = entry.w * curH;
         e->h = entry.h * curH;
+        // Keep internal sizing in sync with loaded dimensions
+        if (auto* sl = dynamic_cast<GUISliderBar*>(e)) {
+          sl->knobSize = e->h;
+        } else if (auto* sel = dynamic_cast<GUISelector*>(e)) {
+          sel->btnSize = e->h;
+        }
         break;
       }
     }
@@ -972,7 +1363,140 @@ bool GUIManager::LoadLayout(const std::string& path) {
   T8_LOG_INFO("[GUIManager] Layout loaded from '%s' (%zu entries, ref %.0fx%.0f -> %.0fx%.0f)",
          path.c_str(), lf.elements.size(), lf.ref_width, lf.ref_height, curW, curH);
   RebakeFontIfNeeded();
+  ApplyControlLayoutToElements();
   return true;
+}
+
+bool GUIManager::SaveControlLayout(const std::string& path) {
+  GUIControlLayoutFile f;
+  f.sliderKnobScaleX = m_controlLayout.sliderKnobScaleX;
+  f.sliderKnobScaleY = m_controlLayout.sliderKnobScaleY;
+  f.sliderKnobOffsetX = m_controlLayout.sliderKnobOffsetX;
+  f.sliderKnobOffsetY = m_controlLayout.sliderKnobOffsetY;
+  f.sliderKnobRangeCalibrated = m_controlLayout.sliderKnobRangeCalibrated;
+  f.sliderKnobMinNorm = m_controlLayout.sliderKnobMinNorm;
+  f.sliderKnobMaxNorm = m_controlLayout.sliderKnobMaxNorm;
+  f.selectorLeftScaleX = m_controlLayout.selectorLeftScaleX;
+  f.selectorLeftScaleY = m_controlLayout.selectorLeftScaleY;
+  f.selectorLeftOffsetX = m_controlLayout.selectorLeftOffsetX;
+  f.selectorLeftOffsetY = m_controlLayout.selectorLeftOffsetY;
+  f.selectorRightScaleX = m_controlLayout.selectorRightScaleX;
+  f.selectorRightScaleY = m_controlLayout.selectorRightScaleY;
+  f.selectorRightOffsetX = m_controlLayout.selectorRightOffsetX;
+  f.selectorRightOffsetY = m_controlLayout.selectorRightOffsetY;
+  f.checkboxMarkScaleX = m_controlLayout.checkboxMarkScaleX;
+  f.checkboxMarkScaleY = m_controlLayout.checkboxMarkScaleY;
+  f.checkboxMarkOffsetX = m_controlLayout.checkboxMarkOffsetX;
+  f.checkboxMarkOffsetY = m_controlLayout.checkboxMarkOffsetY;
+
+  auto result = glz::write<glz::opts{.prettify = true}>(f);
+  if (!result) {
+    T8_LOG_ERROR("[GUIManager] Failed to serialize control layout");
+    return false;
+  }
+  std::ofstream file(path);
+  if (!file.is_open()) {
+    T8_LOG_ERROR("[GUIManager] Cannot write '%s'", path.c_str());
+    return false;
+  }
+  file << result.value();
+  T8_LOG_INFO("[GUIManager] Control layout saved to '%s' (target=%s)", path.c_str(), GetControlEditTargetName());
+  return true;
+}
+
+bool GUIManager::LoadControlLayout(const std::string& path) {
+  std::ifstream file(path);
+  if (!file.is_open()) {
+    T8_LOG_INFO("[GUIManager] No control layout file '%s' -- using defaults", path.c_str());
+    ApplyControlLayoutToElements();
+    return false;
+  }
+  std::stringstream ss;
+  ss << file.rdbuf();
+  std::string json = ss.str();
+
+  GUIControlLayoutFile f;
+  auto ec = glz::read<glz::opts{.error_on_unknown_keys = false}>(f, json);
+  if (ec) {
+    std::string err = glz::format_error(ec, json);
+    T8_LOG_ERROR("[GUIManager] Control layout parse error '%s': %s", path.c_str(), err.c_str());
+    return false;
+  }
+
+  m_controlLayout.sliderKnobScaleX = f.sliderKnobScaleX;
+  m_controlLayout.sliderKnobScaleY = f.sliderKnobScaleY;
+  m_controlLayout.sliderKnobOffsetX = f.sliderKnobOffsetX;
+  m_controlLayout.sliderKnobOffsetY = f.sliderKnobOffsetY;
+  m_controlLayout.sliderKnobRangeCalibrated = f.sliderKnobRangeCalibrated;
+  m_controlLayout.sliderKnobMinNorm = f.sliderKnobMinNorm;
+  m_controlLayout.sliderKnobMaxNorm = f.sliderKnobMaxNorm;
+  m_controlLayout.selectorLeftScaleX = f.selectorLeftScaleX;
+  m_controlLayout.selectorLeftScaleY = f.selectorLeftScaleY;
+  m_controlLayout.selectorLeftOffsetX = f.selectorLeftOffsetX;
+  m_controlLayout.selectorLeftOffsetY = f.selectorLeftOffsetY;
+  m_controlLayout.selectorRightScaleX = f.selectorRightScaleX;
+  m_controlLayout.selectorRightScaleY = f.selectorRightScaleY;
+  m_controlLayout.selectorRightOffsetX = f.selectorRightOffsetX;
+  m_controlLayout.selectorRightOffsetY = f.selectorRightOffsetY;
+  m_controlLayout.checkboxMarkScaleX = f.checkboxMarkScaleX;
+  m_controlLayout.checkboxMarkScaleY = f.checkboxMarkScaleY;
+  m_controlLayout.checkboxMarkOffsetX = f.checkboxMarkOffsetX;
+  m_controlLayout.checkboxMarkOffsetY = f.checkboxMarkOffsetY;
+
+  ApplyControlLayoutToElements();
+  T8_LOG_INFO("[GUIManager] Control layout loaded from '%s'", path.c_str());
+  return true;
+}
+
+bool GUIManager::HandleControlEditTab(const std::string& path) {
+  if (!m_controlEditMode) {
+    return false;
+  }
+
+  if (m_controlEditTarget != GUIControlEditTarget::SliderKnob || !m_controlEditRect.valid) {
+    return SaveControlLayout(path);
+  }
+
+  float screenW = m_ctx.screenW > 0.0f ? m_ctx.screenW : (float)g_pBaseDriver->width;
+  float screenH = m_ctx.screenH > 0.0f ? m_ctx.screenH : (float)g_pBaseDriver->height;
+  float barW = m_barTexture ? (float)m_barTexture->x : 256.0f;
+  float barH = m_barTexture ? (float)m_barTexture->y : 32.0f;
+  float safeW = (std::max)(1.0f, barW);
+  float safeH = (std::max)(1.0f, barH);
+  float targetW = screenW * m_controlPreviewVisualScale;
+  float targetH = screenH * m_controlPreviewVisualScale;
+  float s = (std::min)(targetW / safeW, targetH / safeH);
+  float parentW = safeW * s;
+  float parentX = (screenW - parentW) * 0.5f;
+
+  // Capture knob CENTER as fraction of preview bar width
+  float knobCenterX = m_controlEditRect.x + m_controlEditRect.w * 0.5f;
+  float centerNorm = (knobCenterX - parentX) / (std::max)(1.0f, parentW);
+  centerNorm = (std::max)(0.0f, (std::min)(1.0f, centerNorm));
+
+  if (m_sliderCalibrationStep == 0) {
+    m_controlLayout.sliderKnobMinNorm = centerNorm;
+    m_sliderCalibrationStep = 1;
+    T8_LOG_INFO("[GUI Control Edit] Slider calibration: min captured (%.4f). Move knob to MAX and press TAB again.", centerNorm);
+    return true;
+  }
+
+  m_controlLayout.sliderKnobMaxNorm = centerNorm;
+  if (m_controlLayout.sliderKnobMaxNorm < m_controlLayout.sliderKnobMinNorm) {
+    std::swap(m_controlLayout.sliderKnobMinNorm, m_controlLayout.sliderKnobMaxNorm);
+  }
+
+  m_controlLayout.sliderKnobRangeCalibrated =
+    std::abs(m_controlLayout.sliderKnobMaxNorm - m_controlLayout.sliderKnobMinNorm) > 0.0001f;
+
+  ApplyControlLayoutToElements();
+  m_sliderCalibrationStep = 0;
+  T8_LOG_INFO("[GUI Control Edit] Slider calibration: max captured (%.4f), calibrated=%d, range=[%.4f, %.4f]",
+              centerNorm,
+              (int)m_controlLayout.sliderKnobRangeCalibrated,
+              m_controlLayout.sliderKnobMinNorm,
+              m_controlLayout.sliderKnobMaxNorm);
+  return SaveControlLayout(path);
 }
 
 } // namespace t800

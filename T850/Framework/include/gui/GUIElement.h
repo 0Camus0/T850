@@ -38,6 +38,27 @@ namespace t800 {
     float           gridCellW  = 40.0f;
     float           gridCellH  = 40.0f;
 
+    // Control-shape layout tuning (shared across all instances of each control kind)
+    float sliderKnobScaleX   = 1.0f;
+    float sliderKnobScaleY   = 1.0f;
+    float sliderKnobOffsetX  = 0.0f; // in bar-height units
+    float sliderKnobOffsetY  = 0.0f; // in bar-height units
+
+    float selectorLeftScaleX   = 1.0f;
+    float selectorLeftScaleY   = 1.0f;
+    float selectorLeftOffsetX  = 0.0f; // in selector-height units
+    float selectorLeftOffsetY  = 0.0f; // in selector-height units
+
+    float selectorRightScaleX  = 1.0f;
+    float selectorRightScaleY  = 1.0f;
+    float selectorRightOffsetX = 0.0f; // in selector-height units
+    float selectorRightOffsetY = 0.0f; // in selector-height units
+
+    float checkboxMarkScaleX   = 1.0f;
+    float checkboxMarkScaleY   = 1.0f;
+    float checkboxMarkOffsetX  = 0.0f; // in checkbox-height units
+    float checkboxMarkOffsetY  = 0.0f; // in checkbox-height units
+
     // Helper: draw a solid‑colour quad (uses whiteTex + tint)
     void DrawSolidQuad(float px, float py, float w, float h,
                        const XVECTOR3& color, float alpha = 1.0f);
@@ -114,10 +135,20 @@ namespace t800 {
     int   settingIndex = -1;
 
     float knobSize   = 25.0f;   // knob square side
+    float knobScaleX = 1.0f;
+    float knobScaleY = 1.0f;
+    float knobOffsetX = 0.0f; // in bar-height units
+    float knobOffsetY = 0.0f; // in bar-height units
+
+    // Optional calibrated travel range (knob CENTER as fraction of bar width).
+    bool  knobRangeCalibrated = false;
+    float knobMinNorm = 0.0f; // knob center at value=0 as fraction of bar width
+    float knobMaxNorm = 1.0f; // knob center at value=1 as fraction of bar width
 
     // Interaction state (normal mode)
     bool  knobHover    = false;
     bool  knobDragging = false;
+    float knobDragAnchorOff = 0.0f; // mouse offset from knob center at drag start
 
     void SetValue(float v);
     float GetKnobX() const;
@@ -138,6 +169,11 @@ namespace t800 {
     bool  wasMouseDown = false;
     bool  justToggled  = false;   // true on the frame a toggle happened
 
+    float markScaleX = 1.0f;
+    float markScaleY = 1.0f;
+    float markOffsetX = 0.0f; // in checkbox-height units
+    float markOffsetY = 0.0f; // in checkbox-height units
+
     void Draw(GUIDrawContext& ctx) override;
     void UpdateInteraction(float mx, float my, bool mouseDown);
   };
@@ -152,6 +188,16 @@ namespace t800 {
     int   settingIndex  = -1;
 
     float btnSize       = 25.0f;  // square button side
+
+    float leftScaleX = 1.0f;
+    float leftScaleY = 1.0f;
+    float leftOffsetX = 0.0f; // in selector-height units
+    float leftOffsetY = 0.0f; // in selector-height units
+
+    float rightScaleX = 1.0f;
+    float rightScaleY = 1.0f;
+    float rightOffsetX = 0.0f; // in selector-height units
+    float rightOffsetY = 0.0f; // in selector-height units
 
     // Button interaction state
     bool  leftHover     = false;

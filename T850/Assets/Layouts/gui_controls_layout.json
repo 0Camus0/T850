@@ -1,0 +1,21 @@
+{
+   "sliderKnobScaleX": 0.48525423,
+   "sliderKnobScaleY": 0.4652534,
+   "sliderKnobOffsetX": 2.1176271,
+   "sliderKnobOffsetY": -0.079873286,
+   "sliderKnobRangeCalibrated": true,
+   "sliderKnobMinNorm": 0.15181606,
+   "sliderKnobMaxNorm": 0.8529378,
+   "selectorLeftScaleX": 0.6973917,
+   "selectorLeftScaleY": 0.6433545,
+   "selectorLeftOffsetX": -2.70186,
+   "selectorLeftOffsetY": -0.11062025,
+   "selectorRightScaleX": 0.6433545,
+   "selectorRightScaleY": 0.6217396,
+   "selectorRightOffsetX": 1.5349678,
+   "selectorRightOffsetY": -0.12142769,
+   "checkboxMarkScaleX": 1,
+   "checkboxMarkScaleY": 1,
+   "checkboxMarkOffsetX": 0,
+   "checkboxMarkOffsetY": 0
+}

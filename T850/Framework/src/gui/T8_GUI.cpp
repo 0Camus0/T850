@@ -8,6 +8,7 @@
 #include "gui/SelectorBtnRightData.h"
 #include "gui/SelectorBtnLeftPressedData.h"
 #include "gui/SelectorBtnRightPressedData.h"
+#include <utils/Log.h>
 
 #include <video/GLShader.h>
 #include <video/GLDriver.h>
@@ -73,7 +74,7 @@ void GUIManager::Init(int screenW, int screenH) {
 
   m_initialized = true;
   m_visible = false;
-  printf("[GUIManager] Initialized  scale=%.2f  fontSize=%.1f  visible=%d\n",
+  T8_LOG_INFO("[GUIManager] Initialized  scale=%.2f  fontSize=%.1f  visible=%d",
          m_layout.scale, m_layout.fontSize, (int)m_visible);
 }
 
@@ -516,15 +517,38 @@ void GUIManager::Update(const InputManager& input, int screenW, int screenH) {
   } else {
     // Normal slider interaction
     for (auto& sp : m_sliderPairs) {
+      float before = sp.slider->value;
       sp.slider->UpdateInteraction(mx, my, mouseDown);
+      float after = sp.slider->value;
+      if (before != after) {
+        const char* sliderName = sp.slider->label.empty() ? sp.slider->name.c_str() : sp.slider->label.c_str();
+        T8_LOG_INFO("[GUI] Slider '%s' changed: %.4f -> %.4f", sliderName, before, after);
+      }
     }
     // Checkbox interaction
     for (auto& cp : m_checkboxPairs) {
+      bool before = cp.checkbox->checked;
       cp.checkbox->UpdateInteraction(mx, my, mouseDown);
+      bool after = cp.checkbox->checked;
+      if (before != after) {
+        const char* checkboxName = cp.checkbox->label.empty() ? cp.checkbox->name.c_str() : cp.checkbox->label.c_str();
+        T8_LOG_INFO("[GUI] Checkbox '%s' changed: %s -> %s", checkboxName, before ? "true" : "false", after ? "true" : "false");
+      }
     }
     // Selector interaction
     for (auto& sp : m_selectorPairs) {
+      int beforeIdx = sp.selector->selectedIndex;
       sp.selector->UpdateInteraction(mx, my, mouseDown);
+      int afterIdx = sp.selector->selectedIndex;
+      if (beforeIdx != afterIdx) {
+        const char* selectorName = sp.selector->label.empty() ? sp.selector->name.c_str() : sp.selector->label.c_str();
+        T8_LOG_INFO("[GUI] Selector '%s' changed: [%d] %s -> [%d] %s",
+                    selectorName,
+                    beforeIdx,
+                    (beforeIdx >= 0 && beforeIdx < (int)sp.selector->options.size()) ? sp.selector->options[beforeIdx].c_str() : "<invalid>",
+                    afterIdx,
+                    (afterIdx >= 0 && afterIdx < (int)sp.selector->options.size()) ? sp.selector->options[afterIdx].c_str() : "<invalid>");
+      }
     }
   }
 
@@ -586,7 +610,7 @@ void GUIManager::UpdateEditMode(float mx, float my, bool mouseDown) {
         e->resizeOrigMX = mx;
         e->resizeOrigMY = my;
         m_resizeTarget = e;
-        printf("[GUI Edit] Selected: %s\n", e->id.c_str());
+        T8_LOG_DEBUG("[GUI Edit] Selected: %s", e->id.c_str());
         return;
       }
     }
@@ -600,7 +624,7 @@ void GUIManager::UpdateEditMode(float mx, float my, bool mouseDown) {
         e->dragOffX  = mx - e->x;
         e->dragOffY  = my - e->y;
         m_dragTarget = e;
-        printf("[GUI Edit] Selected: %s\n", e->id.c_str());
+        T8_LOG_DEBUG("[GUI Edit] Selected: %s", e->id.c_str());
         return;
       }
     }
@@ -649,83 +673,56 @@ void GUIManager::Draw() {
   m_shader->Set(*T8DeviceContext);
   T8DeviceContext->SetPrimitiveTopology(T8_TOPOLOGY::TRIANLE_LIST);
 
-  // Update label texts with current values and draw all slider pairs
+  // ── Pass 1: all quads (slider bars/knobs, checkboxes, selector bars/buttons) ──
+
+  // Update label texts with current values and draw slider quads
   for (auto& sp : m_sliderPairs) {
     if (!sp.slider->visible) continue;
 
-    // Update label text
     char buf[128];
     snprintf(buf, sizeof(buf), "%s: %.2f", sp.slider->label.c_str(), sp.slider->value);
     sp.label->text = buf;
 
-    // Draw slider bar + knob
     sp.slider->Draw(m_ctx);
-
-    // Draw label (switches to text shader internally)
-    sp.label->Draw(m_ctx);
-
-    // Restore GUI render state after text draw
-    m_quad.Set();
-    m_shader->Set(*T8DeviceContext);
-    T8DeviceContext->SetPrimitiveTopology(T8_TOPOLOGY::TRIANLE_LIST);
-    g_pBaseDriver->SetBlendState(BaseDriver::BLEND_STATES::ALPHA_BLEND);
-    g_pBaseDriver->SetDepthStencilState(BaseDriver::DEPTH_STENCIL_STATES::NONE);
   }
 
-  // Draw checkbox pairs
+  // Draw checkbox quads
   for (auto& cp : m_checkboxPairs) {
     if (!cp.checkbox->visible) continue;
-
-    // Draw checkbox (box + check overlay)
     cp.checkbox->Draw(m_ctx);
-
-    // Draw label
-    cp.label->Draw(m_ctx);
-
-    // Restore GUI render state after text draw
-    m_quad.Set();
-    m_shader->Set(*T8DeviceContext);
-    T8DeviceContext->SetPrimitiveTopology(T8_TOPOLOGY::TRIANLE_LIST);
-    g_pBaseDriver->SetBlendState(BaseDriver::BLEND_STATES::ALPHA_BLEND);
-    g_pBaseDriver->SetDepthStencilState(BaseDriver::DEPTH_STENCIL_STATES::NONE);
   }
 
-  // Draw selector pairs
+  // Draw selector quads (bar + buttons only, no text)
   for (auto& sp : m_selectorPairs) {
     if (!sp.selector->visible) continue;
-
-    // Draw selector (bar + buttons)
-    sp.selector->Draw(m_ctx);
-
-    // Restore GUI render state after text draw (selector draws text)
-    m_quad.Set();
-    m_shader->Set(*T8DeviceContext);
-    T8DeviceContext->SetPrimitiveTopology(T8_TOPOLOGY::TRIANLE_LIST);
-    g_pBaseDriver->SetBlendState(BaseDriver::BLEND_STATES::ALPHA_BLEND);
-    g_pBaseDriver->SetDepthStencilState(BaseDriver::DEPTH_STENCIL_STATES::NONE);
-
-    // Draw label
-    sp.label->Draw(m_ctx);
-
-    // Restore GUI render state
-    m_quad.Set();
-    m_shader->Set(*T8DeviceContext);
-    T8DeviceContext->SetPrimitiveTopology(T8_TOPOLOGY::TRIANLE_LIST);
-    g_pBaseDriver->SetBlendState(BaseDriver::BLEND_STATES::ALPHA_BLEND);
-    g_pBaseDriver->SetDepthStencilState(BaseDriver::DEPTH_STENCIL_STATES::NONE);
+    sp.selector->DrawQuadsOnly(m_ctx);
   }
 
-  // Draw FPS label
+  // ── Pass 2: all text in one batch (single shader switch, one draw call per string) ──
+
+  m_textRenderer.BeginBatch();
+
+  for (auto& sp : m_sliderPairs) {
+    if (!sp.slider->visible) continue;
+    sp.label->Draw(m_ctx);
+  }
+
+  for (auto& cp : m_checkboxPairs) {
+    if (!cp.checkbox->visible) continue;
+    cp.label->Draw(m_ctx);
+  }
+
+  for (auto& sp : m_selectorPairs) {
+    if (!sp.selector->visible) continue;
+    sp.selector->DrawTextBatched(m_ctx);
+    sp.label->Draw(m_ctx);
+  }
+
   if (m_fpsLabel && m_fpsLabel->visible) {
     m_fpsLabel->Draw(m_ctx);
-
-    // Restore GUI render state after text draw
-    m_quad.Set();
-    m_shader->Set(*T8DeviceContext);
-    T8DeviceContext->SetPrimitiveTopology(T8_TOPOLOGY::TRIANLE_LIST);
-    g_pBaseDriver->SetBlendState(BaseDriver::BLEND_STATES::ALPHA_BLEND);
-    g_pBaseDriver->SetDepthStencilState(BaseDriver::DEPTH_STENCIL_STATES::NONE);
   }
+
+  m_textRenderer.EndBatch();
 
   // Draw edit overlays on top
   if (m_editMode) {
@@ -754,7 +751,9 @@ void GUIManager::DrawFPSOnly() {
   g_pBaseDriver->SetBlendState(BaseDriver::BLEND_STATES::ALPHA_BLEND);
   g_pBaseDriver->SetDepthStencilState(BaseDriver::DEPTH_STENCIL_STATES::NONE);
 
+  m_textRenderer.BeginBatch();
   m_fpsLabel->Draw(m_ctx);
+  m_textRenderer.EndBatch();
 
   g_pBaseDriver->SetBlendState(BaseDriver::BLEND_STATES::BLEND_DEFAULT);
   g_pBaseDriver->SetDepthStencilState(BaseDriver::DEPTH_STENCIL_STATES::DEPTH_DEFAULT);
@@ -814,13 +813,13 @@ void GUIManager::RebakeFontIfNeeded() {
 void GUIManager::GrowGrid(float delta) {
   m_gridCellW = (std::max)(10.0f, m_gridCellW + delta);
   m_gridCellH = (std::max)(10.0f, m_gridCellH + delta);
-  printf("[GUI Edit] Grid cell size: %.0f x %.0f\n", m_gridCellW, m_gridCellH);
+  T8_LOG_DEBUG("[GUI Edit] Grid cell size: %.0f x %.0f", m_gridCellW, m_gridCellH);
 }
 
 // ─── Apply uniform scale ────────────────────────────────────
 void GUIManager::ApplyUniformScale() {
   if (!m_lastEdited) {
-    printf("[GUI Edit] No element was edited yet\n");
+    T8_LOG_DEBUG("[GUI Edit] No element was edited yet");
     return;
   }
 
@@ -840,20 +839,20 @@ void GUIManager::ApplyUniformScale() {
       sp.slider->h = newH;
       sp.slider->knobSize = newH;
     }
-    printf("[GUI Edit] Applied slider scale (%.0f x %.0f) to all sliders\n", newW, newH);
+    T8_LOG_DEBUG("[GUI Edit] Applied slider scale (%.0f x %.0f) to all sliders", newW, newH);
   } else if (asCheckbox) {
     for (auto& cp : m_checkboxPairs) {
       cp.checkbox->w = newH;  // keep square
       cp.checkbox->h = newH;
     }
-    printf("[GUI Edit] Applied checkbox scale (%.0f) to all checkboxes\n", newH);
+    T8_LOG_DEBUG("[GUI Edit] Applied checkbox scale (%.0f) to all checkboxes", newH);
   } else if (asSelector) {
     for (auto& sp : m_selectorPairs) {
       sp.selector->w = newW;
       sp.selector->h = newH;
       sp.selector->btnSize = newH;
     }
-    printf("[GUI Edit] Applied selector scale (%.0f x %.0f) to all selectors\n", newW, newH);
+    T8_LOG_DEBUG("[GUI Edit] Applied selector scale (%.0f x %.0f) to all selectors", newW, newH);
   } else if (asLabel) {
     // Apply height (scale) to all labels
     for (auto& sp : m_sliderPairs) {
@@ -862,7 +861,7 @@ void GUIManager::ApplyUniformScale() {
     if (m_fpsLabel) {
       m_fpsLabel->h = newH;
     }
-    printf("[GUI Edit] Applied label height (%.0f) to all labels\n", newH);
+    T8_LOG_DEBUG("[GUI Edit] Applied label height (%.0f) to all labels", newH);
     RebakeFontIfNeeded();
   }
 }
@@ -906,23 +905,23 @@ bool GUIManager::SaveLayout(const std::string& path) {
   }
   auto result = glz::write<glz::opts{.prettify = true}>(lf);
   if (!result) {
-    printf("[GUIManager] ERROR: failed to serialize layout\n");
+    T8_LOG_ERROR("[GUIManager] Failed to serialize layout");
     return false;
   }
   std::ofstream file(path);
   if (!file.is_open()) {
-    printf("[GUIManager] ERROR: cannot write '%s'\n", path.c_str());
+    T8_LOG_ERROR("[GUIManager] Cannot write '%s'", path.c_str());
     return false;
   }
   file << result.value();
-  printf("[GUIManager] Layout saved to '%s' (%zu elements)\n", path.c_str(), m_elements.size());
+  T8_LOG_INFO("[GUIManager] Layout saved to '%s' (%zu elements)", path.c_str(), m_elements.size());
   return true;
 }
 
 bool GUIManager::LoadLayout(const std::string& path) {
   std::ifstream file(path);
   if (!file.is_open()) {
-    printf("[GUIManager] No layout file '%s' — using defaults\n", path.c_str());
+    T8_LOG_INFO("[GUIManager] No layout file '%s' -- using defaults", path.c_str());
     return false;
   }
   std::stringstream ss;
@@ -933,7 +932,7 @@ bool GUIManager::LoadLayout(const std::string& path) {
   auto ec = glz::read<glz::opts{.error_on_unknown_keys = false}>(lf, json);
   if (ec) {
     std::string err = glz::format_error(ec, json);
-    printf("[GUIManager] ERROR parsing '%s': %s\n", path.c_str(), err.c_str());
+    T8_LOG_ERROR("[GUIManager] Parse error '%s': %s", path.c_str(), err.c_str());
     return false;
   }
 
@@ -958,7 +957,7 @@ bool GUIManager::LoadLayout(const std::string& path) {
       }
     }
   }
-  printf("[GUIManager] Layout loaded from '%s' (%zu entries, ref %.0fx%.0f -> %.0fx%.0f)\n",
+  T8_LOG_INFO("[GUIManager] Layout loaded from '%s' (%zu entries, ref %.0fx%.0f -> %.0fx%.0f)",
          path.c_str(), lf.elements.size(), lf.ref_width, lf.ref_height, curW, curH);
   RebakeFontIfNeeded();
   return true;

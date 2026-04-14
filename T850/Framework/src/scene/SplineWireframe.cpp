@@ -41,7 +41,7 @@ void SplineWireframe::Create()
   free(vsSourceP);
   free(fsSourceP);
 
-  shaderID = g_pBaseDriver->CreateShader(vstr, fstr, T8_NO_SIGNATURE);
+  shaderID = g_pBaseDriver->CreateShader(vstr, fstr);
   s = g_pBaseDriver->GetShaderIdx(shaderID);
 
 

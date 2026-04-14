@@ -18,10 +18,6 @@ extern DeviceContext* T8DeviceContext;
 void GUIDrawContext::DrawSolidQuad(float px, float py, float w, float h,
                                     const XVECTOR3& color, float alpha) {
   if (!whiteTex || !quad || !shader || !cb) return;
-
-  XVECTOR3 tint = color;
-  cb->UpdateFromBuffer(*T8DeviceContext, &tint.x);
-  cb->Set(*T8DeviceContext);
   DrawTexturedQuad(px, py, w, h, whiteTex, color);
 }
 
@@ -107,7 +103,10 @@ void GUILabel::Draw(GUIDrawContext& ctx) {
   float natW = ctx.text->MeasurePixel(text, sw, sh);
   w = natW * scale;
 
-  ctx.text->DrawPixelScaled(x, y, scale, scale, sw, sh, color, text);
+  if (ctx.text->m_batchActive)
+    ctx.text->DrawPixelScaledBatched(x, y, scale, scale, sw, sh, color, text);
+  else
+    ctx.text->DrawPixelScaled(x, y, scale, scale, sw, sh, color, text);
 }
 
 void GUILabel::OnResizeEnd() {
@@ -249,6 +248,26 @@ void GUISelector::SelectPrev() {
 }
 
 void GUISelector::Draw(GUIDrawContext& ctx) {
+  DrawQuadsOnly(ctx);
+  // Draw current option text centered on bar
+  if (ctx.text) {
+    int sw = (int)ctx.screenW;
+    int sh = (int)ctx.screenH;
+    float charH = ctx.text->m_fontSize * ctx.screenH / (float)ctx.text->m_textureSize;
+    float scale = (charH > 0.0f && h > 0.0f) ? h / charH : 1.0f;
+
+    const std::string& opt = CurrentOption();
+    float textW = ctx.text->MeasurePixel(opt, sw, sh) * scale;
+    float barX = x + btnSize;
+    float barW = w - btnSize * 2.0f;
+    float textX = barX + (barW - textW) * 0.5f;
+    float textY = y;
+    XVECTOR3 textColor(0.9f, 0.85f, 0.8f);
+    ctx.text->DrawPixelScaled(textX, textY, scale, scale, sw, sh, textColor, opt);
+  }
+}
+
+void GUISelector::DrawQuadsOnly(GUIDrawContext& ctx) {
   if (!visible) return;
 
   float barX = x + btnSize;
@@ -268,21 +287,24 @@ void GUISelector::Draw(GUIDrawContext& ctx) {
   Texture* rightTex = rightPressed ? ctx.selectorBtnRightPressTex : ctx.selectorBtnRightTex;
   if (rightTex)
     ctx.DrawTexturedQuad(x + w - btnSize, y, btnSize, h, rightTex, tint);
+}
 
-  // Draw current option text centered on bar
-  if (ctx.text) {
-    int sw = (int)ctx.screenW;
-    int sh = (int)ctx.screenH;
-    float charH = ctx.text->m_fontSize * ctx.screenH / (float)ctx.text->m_textureSize;
-    float scale = (charH > 0.0f && h > 0.0f) ? h / charH : 1.0f;
+void GUISelector::DrawTextBatched(GUIDrawContext& ctx) {
+  if (!visible || !ctx.text) return;
 
-    const std::string& opt = CurrentOption();
-    float textW = ctx.text->MeasurePixel(opt, sw, sh) * scale;
-    float textX = barX + (barW - textW) * 0.5f;
-    float textY = y;
-    XVECTOR3 textColor(0.9f, 0.85f, 0.8f);
-    ctx.text->DrawPixelScaled(textX, textY, scale, scale, sw, sh, textColor, opt);
-  }
+  int sw = (int)ctx.screenW;
+  int sh = (int)ctx.screenH;
+  float charH = ctx.text->m_fontSize * ctx.screenH / (float)ctx.text->m_textureSize;
+  float scale = (charH > 0.0f && h > 0.0f) ? h / charH : 1.0f;
+
+  float barX = x + btnSize;
+  float barW = w - btnSize * 2.0f;
+  const std::string& opt = CurrentOption();
+  float textW = ctx.text->MeasurePixel(opt, sw, sh) * scale;
+  float textX = barX + (barW - textW) * 0.5f;
+  float textY = y;
+  XVECTOR3 textColor(0.9f, 0.85f, 0.8f);
+  ctx.text->DrawPixelScaledBatched(textX, textY, scale, scale, sw, sh, textColor, opt);
 }
 
 void GUISelector::UpdateInteraction(float mx, float my, bool mouseDown) {

@@ -166,6 +166,8 @@ namespace t800 {
     void SelectPrev();
 
     void Draw(GUIDrawContext& ctx) override;
+    void DrawQuadsOnly(GUIDrawContext& ctx);   // bar + buttons, no text
+    void DrawTextBatched(GUIDrawContext& ctx);  // option text only (batch must be active)
     void UpdateInteraction(float mx, float my, bool mouseDown);
   };
 

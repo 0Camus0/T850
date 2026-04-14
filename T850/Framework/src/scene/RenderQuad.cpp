@@ -19,24 +19,29 @@
 #include <video/windows/D3DXShader.h>
 #include <video/windows/D3DXDriver.h>
 #endif
+#include <utils/Log.h>
 namespace t800 {
   extern Device*            T8Device;
   extern DeviceContext*     T8DeviceContext;
 
   void RenderQuad::Create() {
     m_quad.Init();
-    SigBase = Signature::HAS_TEXCOORDS0;
-    unsigned long long Dest;
+    sigBase.bits = ShaderKey::HAS_TEXCOORD0;
 
     char *vsSourceP;
     char *fsSourceP;
+    std::string vsName, fsName;
     if (g_pBaseDriver->m_currentAPI == GRAPHICS_API::OPENGL) {
       vsSourceP = file2string("Shaders/VS_Quad.glsl");
       fsSourceP = file2string("Shaders/FS_Quad.glsl");
+      vsName = "VS_Quad.glsl";
+      fsName = "FS_Quad.glsl";
     }
     else {
       vsSourceP = file2string("Shaders/VS_Quad.hlsl");
       fsSourceP = file2string("Shaders/FS_Quad.hlsl");
+      vsName = "VS_Quad.hlsl";
+      fsName = "FS_Quad.hlsl";
     }
 
 
@@ -46,92 +51,60 @@ namespace t800 {
     free(vsSourceP);
     free(fsSourceP);
 
-    int shaderID = g_pBaseDriver->CreateShader(vstr, fstr, SigBase);
+    int shaderID = g_pBaseDriver->CreateShader(vstr, fstr, sigBase, vsName, fsName);
 
-    Dest = SigBase | Signature::DEFERRED_PASS;
-    g_pBaseDriver->CreateShader(vstr, fstr, Dest);
+    // Simple pass variants (no toggle combinations)
+    static const uint8_t simplePasses[] = {
+      PassType::DEFERRED, PassType::FSQUAD_1_TEX, PassType::FSQUAD_2_TEX,
+      PassType::FSQUAD_3_TEX, PassType::VERTICAL_BLUR, PassType::HORIZONTAL_BLUR,
+      PassType::ONE_PASS_BLUR, PassType::BRIGHT, PassType::HDR_COMP,
+      PassType::LUMINANCE_MAP, PassType::ADAPT_LUMINANCE, PassType::COMBINE_COC,
+      PassType::DOF, PassType::DOF_2, PassType::BACKBUFFER,
+      PassType::GOD_RAY_CALCULATION, PassType::GOD_RAY_BLEND,
+      PassType::SSAO, PassType::RAY_MARCH, PassType::LIGHT_ADD, PassType::FADE
+    };
+    for (uint8_t p : simplePasses) {
+      ShaderKey k(sigBase.bits);
+      k.setPass(p);
+      g_pBaseDriver->CreateShader(vstr, fstr, k, vsName, fsName);
+    }
 
-    Dest = SigBase | Signature::FSQUAD_1_TEX;
-    g_pBaseDriver->CreateShader(vstr, fstr, Dest);
+    // SHADOW_COMP: 4 toggle variants (+-SHADOWS +-SSAO), also with OMNI_SHADOWS
+    for (int sh = 0; sh <= 1; sh++) {
+      for (int ao = 0; ao <= 1; ao++) {
+        ShaderKey k(sigBase.bits);
+        k.setPass(PassType::SHADOW_COMP);
+        if (sh) k.bits |= ShaderKey::SHADOWS;
+        if (ao) k.bits |= ShaderKey::SSAO;
+        g_pBaseDriver->CreateShader(vstr, fstr, k, vsName, fsName);
+        ShaderKey ko(k.bits);
+        ko.bits |= ShaderKey::OMNI_SHADOWS;
+        g_pBaseDriver->CreateShader(vstr, fstr, ko, vsName, fsName);
+      }
+    }
 
-    Dest = SigBase | Signature::FSQUAD_2_TEX;
-    g_pBaseDriver->CreateShader(vstr, fstr, Dest);
+    // COC: 2 variants (+-AUTO_FOCUS)
+    for (int af = 0; af <= 1; af++) {
+      ShaderKey k(sigBase.bits);
+      k.setPass(PassType::COC);
+      if (af) k.bits |= ShaderKey::AUTO_FOCUS;
+      g_pBaseDriver->CreateShader(vstr, fstr, k, vsName, fsName);
+    }
 
-    Dest = SigBase | Signature::FSQUAD_3_TEX;
-    g_pBaseDriver->CreateShader(vstr, fstr, Dest);
-
-    Dest = SigBase | Signature::SHADOW_COMP_PASS;
-    g_pBaseDriver->CreateShader(vstr, fstr, Dest);
-    Dest = SigBase | Signature::SHADOW_COMP_PASS | Signature::USE_OMNIDIRECTIONAL_SHADOWS;
-    g_pBaseDriver->CreateShader(vstr, fstr, Dest);
-
-    Dest = SigBase | Signature::VERTICAL_BLUR_PASS;
-    g_pBaseDriver->CreateShader(vstr, fstr, Dest);
-
-    Dest = SigBase | Signature::HORIZONTAL_BLUR_PASS;
-    g_pBaseDriver->CreateShader(vstr, fstr, Dest);
-
-    Dest = SigBase | Signature::ONE_PASS_BLUR;
-    g_pBaseDriver->CreateShader(vstr, fstr, Dest);
-
-    Dest = SigBase | Signature::BRIGHT_PASS;
-    g_pBaseDriver->CreateShader(vstr, fstr, Dest);
-
-    Dest = SigBase | Signature::HDR_COMP_PASS;
-    g_pBaseDriver->CreateShader(vstr, fstr, Dest);
-
-    Dest = SigBase | Signature::LUMINANCE_MAP_PASS;
-    g_pBaseDriver->CreateShader(vstr, fstr, Dest);
-
-    Dest = SigBase | Signature::ADAPT_LUMINANCE_PASS;
-    g_pBaseDriver->CreateShader(vstr, fstr, Dest);
-
-    Dest = SigBase | Signature::COC_PASS;
-    g_pBaseDriver->CreateShader(vstr, fstr, Dest);
-
-    Dest = SigBase | Signature::COMBINE_COC_PASS;
-    g_pBaseDriver->CreateShader(vstr, fstr, Dest);
-
-    Dest = SigBase | Signature::DOF_PASS;
-    g_pBaseDriver->CreateShader(vstr, fstr, Dest);
-
-    Dest = SigBase | Signature::DOF_PASS_2;
-    g_pBaseDriver->CreateShader(vstr, fstr, Dest);
-
-
-    Dest = SigBase | Signature::BACKBUFFER_PASS;
-    g_pBaseDriver->CreateShader(vstr, fstr, Dest);
-
-    Dest = SigBase | Signature::GOD_RAY_CALCULATION_PASS;
-    g_pBaseDriver->CreateShader(vstr, fstr, Dest);
-    
-
-    Dest = SigBase | Signature::GOD_RAY_BLEND_PASS;
-    g_pBaseDriver->CreateShader(vstr, fstr, Dest);
-
-
-    Dest = SigBase | Signature::SSAO_PASS;
-    g_pBaseDriver->CreateShader(vstr, fstr, Dest);
-    
-    Dest = SigBase | Signature::RAY_MARCH;
-    g_pBaseDriver->CreateShader(vstr, fstr, Dest);
-
-
-    Dest = SigBase | Signature::LIGHT_RAY_MARCHING;
-    g_pBaseDriver->CreateShader(vstr, fstr, Dest);
-
-    Dest = SigBase | Signature::LIGHT_ADD;
-    g_pBaseDriver->CreateShader(vstr, fstr, Dest);
-
-    Dest = SigBase | Signature::FADE_PASS;
-    g_pBaseDriver->CreateShader(vstr, fstr, Dest);
-    
+    // LIGHT_RAY_MARCHING: 2 variants (+-GOD_RAYS)
+    for (int gr = 0; gr <= 1; gr++) {
+      ShaderKey k(sigBase.bits);
+      k.setPass(PassType::LIGHT_RAY_MARCHING);
+      if (gr) k.bits |= ShaderKey::GOD_RAYS;
+      g_pBaseDriver->CreateShader(vstr, fstr, k, vsName, fsName);
+    }
     
     
 
     
 
     ShaderBase* s = g_pBaseDriver->GetShaderIdx(shaderID);
+    T8_LOG_INFO("RenderQuad created: %zu shader variants compiled", g_pBaseDriver->m_shaderCache.size());
 
 
     t800::BufferDesc bdesc;
@@ -163,9 +136,29 @@ namespace t800 {
     time += 1 / 60.0f;
     if (t)
       transform = t;
-    unsigned long long sig = SigBase;
-    sig |= gSig;
-    ShaderBase * s = g_pBaseDriver->GetShaderSig(sig);
+
+    // Build final shader key: base features + global pass + toggles
+    ShaderKey finalKey(sigBase.bits);
+    finalKey.setPass(gKey.getPass());
+    constexpr uint32_t featureMask = (1u << ShaderKey::PASS_SHIFT) - 1;
+    finalKey.bits |= (gKey.bits & featureMask);
+
+    uint8_t pass = finalKey.getPass();
+
+    // Add toggle bits based on pass and scene properties
+    if (pass == PassType::SHADOW_COMP) {
+      if (pScProp->ToogleShadow) finalKey.bits |= ShaderKey::SHADOWS;
+      if (pScProp->ToogleSSAO)   finalKey.bits |= ShaderKey::SSAO;
+    }
+    else if (pass == PassType::COC) {
+      if (pScProp->AutoFocus)     finalKey.bits |= ShaderKey::AUTO_FOCUS;
+    }
+    else if (pass == PassType::LIGHT_RAY_MARCHING) {
+      if (pScProp->ToogleGodRays) finalKey.bits |= ShaderKey::GOD_RAYS;
+    }
+
+    ShaderBase * s = g_pBaseDriver->GetShader(finalKey);
+    if (!s) return;
 
     Camera *pActualCamera = pScProp->pCameras[0];
     XMATRIX44 VP = pActualCamera->VP;
@@ -187,42 +180,40 @@ namespace t800 {
       CnstBuffer.LightCameraInfo = XVECTOR3(pScProp->pLightCameras[selected]->NPlane, pScProp->pLightCameras[selected]->FPlane, pScProp->pLightCameras[selected]->Fov, 1.0f);
     }
 
-    if (sig&Signature::DEFERRED_PASS) {
+    if (pass == PassType::DEFERRED) {
       unsigned int numLights = pScProp->ActiveLights;
       if (numLights >= static_cast<unsigned int>(pScProp->Lights.size()))
         numLights = static_cast<unsigned int>(pScProp->Lights.size());
 
       CnstBuffer.CameraInfo = XVECTOR3(pActualCamera->NPlane, pActualCamera->FPlane, pActualCamera->Fov, float(numLights));
+      CnstBuffer.toogles.x = pScProp->EnvFactor;
 
       for (unsigned int i = 0; i < numLights; i++) {
         Light& light = pScProp->Lights[i];
         if (light.Type == LIGHT_DIRECTIONAL) {
-          // Pack direction into position, type=0.0 in w
           CnstBuffer.LightPositions[i] = XVECTOR3(light.Direction.x, light.Direction.y, light.Direction.z, 0.0f);
         } else {
-          // Pack position, type=1.0 in w
           CnstBuffer.LightPositions[i] = XVECTOR3(light.Position.x, light.Position.y, light.Position.z, 1.0f);
         }
         CnstBuffer.LightColors[i] = XVECTOR3(light.Color.x, light.Color.y, light.Color.z, light.Intensity);
         CnstBuffer.LightRadius[i] = light.radius;
       }
     }
-	else if (sig&Signature::SHADOW_COMP_PASS) {
+	else if (pass == PassType::SHADOW_COMP) {
 		CnstBuffer.LightPositions[0].x = (float)pScProp->SSAOKernel.KernelSize;
 		CnstBuffer.LightPositions[0].y = pScProp->SSAOKernel.Radius;
 		CnstBuffer.LightPositions[0].z = (float)Textures[0]->x;
 		CnstBuffer.LightPositions[0].w = (float)Textures[0]->y;
 		CnstBuffer.brightness.x = pScProp->PCFSamples;
 		CnstBuffer.brightness.w = pScProp->SSAOKernel.NoiseSize;
-		CnstBuffer.toogles.x = (float)pScProp->ToogleShadow;
-		CnstBuffer.toogles.y = (float)pScProp->ToogleSSAO;
-		CnstBuffer.toogles.z = (float)pScProp->DebugMode;
-		CnstBuffer.toogles.w = pScProp->ShadowBias;
+    CnstBuffer.toogles.x = pScProp->ShadowMin;
+    CnstBuffer.toogles.z = (float)pScProp->DebugMode;
+    CnstBuffer.toogles.w = pScProp->ShadowBias;
 		for (unsigned int i = 1; i < pScProp->SSAOKernel.vSSAOKernel.size(); i++) {
 			CnstBuffer.LightPositions[i] = pScProp->SSAOKernel.vSSAOKernel[i-1];
 		}
 	}
-    else if (sig&Signature::ONE_PASS_BLUR) {
+    else if (pass == PassType::ONE_PASS_BLUR) {
       CnstBuffer.LightPositions[0].x = pScProp->pGaussKernels[pScProp->ActiveGaussKernel]->vGaussKernel[0].x;
       CnstBuffer.LightPositions[0].y = pScProp->pGaussKernels[pScProp->ActiveGaussKernel]->vGaussKernel[0].y;
       CnstBuffer.LightPositions[0].z = (float)Textures[0]->x;
@@ -231,7 +222,7 @@ namespace t800 {
         CnstBuffer.LightPositions[i] = pScProp->pGaussKernels[pScProp->ActiveGaussKernel]->vGaussKernel[i];
       }
     }
-    else if (sig&Signature::VERTICAL_BLUR_PASS || sig&Signature::HORIZONTAL_BLUR_PASS) {
+    else if (pass == PassType::VERTICAL_BLUR || pass == PassType::HORIZONTAL_BLUR) {
       CnstBuffer.LightPositions[0].x = pScProp->pGaussKernels[pScProp->ActiveGaussKernel]->vGaussKernel[0].x;
       CnstBuffer.LightPositions[0].y = pScProp->pGaussKernels[pScProp->ActiveGaussKernel]->vGaussKernel[0].y;
       CnstBuffer.LightPositions[0].z = (float)Textures[0]->x;
@@ -240,9 +231,9 @@ namespace t800 {
         CnstBuffer.LightPositions[i].x = roundTo(pScProp->pGaussKernels[pScProp->ActiveGaussKernel]->vGaussKernel[i].x, 6.0f);
       }
     }
-    else if (sig&Signature::HDR_COMP_PASS || sig&Signature::BRIGHT_PASS || sig&Signature::FSQUAD_3_TEX || sig&Signature::LUMINANCE_MAP_PASS || sig&Signature::ADAPT_LUMINANCE_PASS) {
+    else if (pass == PassType::HDR_COMP || pass == PassType::BRIGHT || pass == PassType::FSQUAD_3_TEX || pass == PassType::LUMINANCE_MAP || pass == PassType::ADAPT_LUMINANCE) {
       Texture* mipSource = Textures[0];
-      if ((sig&Signature::ADAPT_LUMINANCE_PASS) && Textures[1]) {
+      if ((pass == PassType::ADAPT_LUMINANCE) && Textures[1]) {
         mipSource = Textures[1];
       }
 
@@ -253,44 +244,43 @@ namespace t800 {
         CnstBuffer.CameraPos.w = (float)(mipLevels - 1);
       }
 
-      if (sig&Signature::BRIGHT_PASS) {
+      if (pass == PassType::BRIGHT) {
         CnstBuffer.LightPositions[0].x = pScProp->BloomThreshold;
         CnstBuffer.LightPositions[0].y = pScProp->Exposure;
         CnstBuffer.LightPositions[0].z = pScProp->ToneMapWhiteLevel;
       }
 
-      if (sig&Signature::HDR_COMP_PASS) {
+      if (pass == PassType::HDR_COMP) {
         CnstBuffer.LightPositions[0].x = pScProp->BloomFactor;
         CnstBuffer.LightPositions[0].y = pScProp->Exposure;
         CnstBuffer.LightPositions[0].z = pScProp->ToneMapWhiteLevel;
       }
 
-      if (sig&Signature::ADAPT_LUMINANCE_PASS) {
+      if (pass == PassType::ADAPT_LUMINANCE) {
         CnstBuffer.LightPositions[1].x = pScProp->LuminanceTau;
         CnstBuffer.LightPositions[1].y = pScProp->FrameDeltaSec;
       }
     }
-    else if (sig&Signature::COC_PASS ) {
+    else if (pass == PassType::COC) {
       CnstBuffer.LightPositions[0].x = pScProp->Aperture;
       CnstBuffer.LightPositions[0].y = pScProp->FocalLength;
       CnstBuffer.LightPositions[0].z = pScProp->FocusDepth;
       CnstBuffer.LightPositions[0].w = pScProp->MaxCoc;
-      CnstBuffer.LightPositions[1].x = pScProp->AutoFocus ? 1.0f : 0.0f;
     }
-	else if (sig&Signature::DOF_PASS || sig&Signature::DOF_PASS_2) {
+	else if (pass == PassType::DOF || pass == PassType::DOF_2) {
 	  CnstBuffer.LightPositions[0].x = pScProp->DOF_Near_Samples_squared;
 	  CnstBuffer.LightPositions[0].y = pScProp->DOF_Far_Samples_squared;
 	  CnstBuffer.LightPositions[0].z = (float)Textures[0]->x;
 	  CnstBuffer.LightPositions[0].w = (float)Textures[0]->y;
 	}
-    else if (sig&Signature::RAY_MARCH) {
+    else if (pass == PassType::RAY_MARCH) {
       CnstBuffer.LightPositions[0].x = time;
       CnstBuffer.toogles = pScProp->pLightCameras[1]->Eye;
 	}
-	else if (sig&Signature::LIGHT_RAY_MARCHING) {
+	else if (pass == PassType::LIGHT_RAY_MARCHING) {
 	  CnstBuffer.LightPositions[0].y = pScProp->LightVolumeSteps;
+    CnstBuffer.toogles.x = pScProp->GodRaysFactor;
 	  CnstBuffer.toogles.z = (float)pScProp->DebugMode;
-	  CnstBuffer.toogles.w = (float)pScProp->ToogleGodRays;
 	}
 
     m_quad.Set();

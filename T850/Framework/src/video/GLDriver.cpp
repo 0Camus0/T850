@@ -20,6 +20,7 @@
 #include <algorithm>
 #include <iterator>
 #include <fstream>
+#include <utils/Log.h>
 
 
 
@@ -113,10 +114,10 @@ namespace t800 {
     return retBuff;
   }
 
-  ShaderBase * GLDevice::CreateShader(std::string src_vs, std::string src_fs, unsigned long long sig)
+  ShaderBase * GLDevice::CreateShader(std::string src_vs, std::string src_fs, ShaderKey key, const std::string& vs_name, const std::string& fs_name)
   {
     ShaderBase *sh = new GLShader();
-    if (!sh->CreateShader(src_vs, src_fs, sig)) {
+    if (!sh->CreateShader(src_vs, src_fs, key, vs_name, fs_name)) {
       delete sh;
       return nullptr;
     }
@@ -335,7 +336,7 @@ namespace t800 {
 
     EGLint iErr = eglGetError();
     if (iErr != EGL_SUCCESS) {
-      std::cout << "EGL CALL: " << c_ptr << " Error Code: " << iErr << std::endl;
+      T8_LOG_ERROR("EGL CALL: %s Error Code: %d", c_ptr, iErr);
     }
 
   }
@@ -352,7 +353,7 @@ namespace t800 {
     T8Device = new t800::GLDevice;
     T8DeviceContext = new t800::GLDeviceContext;
 #ifdef T850_HEADLESS
-    std::cout << "USING HEADLESS CONTEXT" << std::endl;
+    T8_LOG_INFO("USING HEADLESS CONTEXT");
     bool res;
     int32_t fd = open ("/dev/dri/renderD128", O_RDWR);
     assert (fd > 0);
@@ -403,7 +404,7 @@ namespace t800 {
     EGLNativeDisplayType nativeDisplay;
 
     if (!OpenNativeDisplay(&nativeDisplay)) {
-      std::cout << "can't open native display" << std::endl;
+      T8_LOG_ERROR("Can't open native display");
     }
 
     eglDisplay = eglGetDisplay(nativeDisplay);
@@ -413,10 +414,10 @@ namespace t800 {
     EGLint iMajorVersion, iMinorVersion;
 
     if (!eglInitialize(eglDisplay, &iMajorVersion, &iMinorVersion)) {
-      std::cout << "Failed to initialize egl" << std::endl;
+      T8_LOG_ERROR("Failed to initialize EGL");
     }
     else {
-      std::cout << "EGL version " << iMajorVersion << "." << iMinorVersion << std::endl;
+      T8_LOG_INFO("EGL version %d.%d", iMajorVersion, iMinorVersion);
     }
 
     eglBindAPI(EGL_OPENGL_ES_API);
@@ -434,7 +435,7 @@ namespace t800 {
     };
 
     if (!eglChooseConfig(eglDisplay, attribs, &eglConfig, 1, &numConfigs)) {
-      std::cout << "Failed to choose config" << std::endl;
+      T8_LOG_ERROR("Failed to choose EGL config");
     }
 
     EGLError("eglChooseConfig");
@@ -449,7 +450,7 @@ namespace t800 {
     EGLError("eglCreateContext");
 
     if (eglMakeCurrent(eglDisplay, eglSurface, eglSurface, eglContext) == EGL_FALSE) {
-      std::cout << "Failed to make current" << std::endl;
+      T8_LOG_ERROR("Failed to make EGL context current");
       return;
     }
 
@@ -458,10 +459,10 @@ namespace t800 {
 #elif defined(USING_OPENGL)
     GLenum err = glewInit();
     if (GLEW_OK != err) {
-      printf("Error: %s\n", glewGetErrorString(err));
+      T8_LOG_ERROR("GLEW init error: %s", glewGetErrorString(err));
     }
     else {
-      printf("GLEW OK\n");
+      T8_LOG_INFO("GLEW OK");
     }
     SDL_GetWindowSizeInPixels((SDL_Window*)m_sdlWindow, &width, &height);
 #endif
@@ -476,14 +477,14 @@ namespace t800 {
     ExtensionsTok = tokens;
     Extensions = GL_Extensions;
 
-    std::cout << "GL Version: " << GL_Version << "\n\nExtensions\n\n";
+    T8_LOG_INFO("GL Version: %s", GL_Version.c_str());
 
     for (unsigned int i = 0; i < ExtensionsTok.size(); i++) {
-      printf("[%s]\n", ExtensionsTok[i].c_str());
+      T8_LOG_VERBOSE("[%s]", ExtensionsTok[i].c_str());
     }
 
     const unsigned char *version = glGetString(GL_SHADING_LANGUAGE_VERSION);
-    printf("GLSL Ver: %s \n", version);
+    T8_LOG_INFO("GLSL Ver: %s", version);
 
     glEnable(GL_DEPTH_TEST);
     glClearDepthf(1.0f);
@@ -686,7 +687,7 @@ namespace t800 {
       }
 
       if (!hasDepthData) {
-        printf("[GLDriver] Note: depth texture export not supported on ANGLE/GLES3 (shadows work correctly at runtime)\n");
+        T8_LOG_INFO("[GLDriver] Depth texture export not supported on ANGLE/GLES3 (shadows work correctly at runtime)");
       }
 
       // Convert float depth to 8-bit PPM

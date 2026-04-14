@@ -11,6 +11,7 @@
 *********************************************************/
 #include <video/BaseDriver.h>
 #include <utils/cil.h>
+#include <utils/Log.h>
 #include <iostream>
 #include <string>
 #include <fstream>
@@ -39,7 +40,7 @@ namespace t800 {
       x = g_chkr.width;
       y = g_chkr.height;
       m_channels = g_chkr.bytes_per_pixel;
-      std::cout << "Texture [" << filepath << "] not found, loading checker" << std::endl;
+      T8_LOG_ERROR("Texture '%s' not found, loading checker", filepath.c_str());
     }
     else {
       //buffer = stbi_load(filepath.c_str(), &x, &y, &channels, 0);
@@ -152,9 +153,9 @@ namespace t800 {
     delete this;
   }
 
-  bool ShaderBase::CreateShader(std::string src_vs, std::string src_fs, unsigned long long sig) {
-    if (sig != T8_NO_SIGNATURE) {
-      std::string Defines = "";
+  bool ShaderBase::CreateShader(std::string src_vs, std::string src_fs, ShaderKey key, const std::string& vs_name, const std::string& fs_name) {
+    std::string Defines;
+    if (key.isValid()) {
 
       bool LinearDepth = true;
 
@@ -176,114 +177,82 @@ namespace t800 {
 #if VDEBUG_NO_LIGHT
       Defines += "#define NO_LIGHT\n\n";
 #endif
-
 #if VDEBUG_SIMPLE_COLOR
       Defines += "#define SIMPLE_COLOR\n\n";
 #endif
 
-      if (sig&Signature::HAS_NORMALS)
-        Defines += "#define USE_NORMALS\n\n";
-      if (sig&Signature::HAS_TEXCOORDS0)
-        Defines += "#define USE_TEXCOORD0\n\n";
-      if (sig&Signature::HAS_TEXCOORDS1)
-        Defines += "#define USE_TEXCOORD1\n\n";
-      if (sig&Signature::HAS_TANGENTS)
-        Defines += "#define USE_TANGENTS\n\n";
-      if (sig&Signature::HAS_BINORMALS)
-        Defines += "#define USE_BINORMALS\n\n";
-      if (sig&Signature::DIFFUSE_MAP)
-        Defines += "#define DIFFUSE_MAP\n\n";
-      if (sig&Signature::SPECULAR_MAP)
-        Defines += "#define SPECULAR_MAP\n\n";
-      if (sig&Signature::GLOSS_MAP)
-        Defines += "#define GLOSS_MAP\n\n";
-      if (sig&Signature::NORMAL_MAP)
-        Defines += "#define NORMAL_MAP\n\n";
-      if (sig&Signature::REFLECT_MAP)
-        Defines += "#define REFLECT_MAP\n\n";
-      if (sig&Signature::HEIGHT_MAP)
-        Defines += "#define HEIGHT_MAP\n\n";
-      if (sig&Signature::METALLIC_MAP)
-        Defines += "#define METALLIC_MAP\n\n";
-      if (sig&Signature::USE_NO_LIGHT)
-        Defines += "#define NO_LIGHT\n\n";
-      if (sig&Signature::GBUFF_PASS)
-        Defines += "#define G_BUFFER_PASS\n\n";
-      if (sig&Signature::FSQUAD_1_TEX)
-        Defines += "#define FSQUAD_1_TEX\n\n";
-      if (sig&Signature::FSQUAD_2_TEX)
-        Defines += "#define FSQUAD_2_TEX\n\n";
-      if (sig&Signature::FSQUAD_3_TEX)
-        Defines += "#define FSQUAD_3_TEX\n\n";
-      if (sig&Signature::SHADOW_MAP_PASS)
-        Defines += "#define SHADOW_MAP_PASS\n\n";
-      if (!LinearDepth)
-        Defines += "#define NON_LINEAR_DEPTH\n\n";
-      if (sig&Signature::SHADOW_COMP_PASS)
-        Defines += "#define SHADOW_COMP_PASS\n\n";
-      if (sig&Signature::DEFERRED_PASS)
-        Defines += "#define DEFERRED_PASS\n\n";
-      if (sig&Signature::VERTICAL_BLUR_PASS)
-        Defines += "#define VERTICAL_BLUR_PASS\n\n";
-      if (sig&Signature::HORIZONTAL_BLUR_PASS)
-        Defines += "#define HORIZONTAL_BLUR_PASS\n\n";
-      if (sig&Signature::ONE_PASS_BLUR)
-        Defines += "#define ONE_PASS_BLUR\n\n";
-      if (sig&Signature::BRIGHT_PASS)
-        Defines += "#define BRIGHT_PASS\n\n";
-      if (sig&Signature::HDR_COMP_PASS)
-        Defines += "#define HDR_COMP_PASS\n\n";
-      if (sig&Signature::LUMINANCE_MAP_PASS)
-        Defines += "#define LUMINANCE_MAP_PASS\n\n";
-      if (sig&Signature::ADAPT_LUMINANCE_PASS)
-        Defines += "#define ADAPT_LUMINANCE_PASS\n\n";
-      if (sig&Signature::COC_PASS)
-        Defines += "#define COC_PASS\n\n";
-      if (sig&Signature::COMBINE_COC_PASS)
-        Defines += "#define COMBINE_COC_PASS\n\n";
-      if (sig&Signature::DOF_PASS)
-        Defines += "#define DOF_PASS\n\n";
-      if (sig&Signature::DOF_PASS_2)
-        Defines += "#define DOF_PASS_2\n\n";
-      if (sig&Signature::BACKBUFFER_PASS)
-        Defines += "#define BACKBUFFER_PASS\n\n";
-      if (sig&Signature::GOD_RAY_CALCULATION_PASS)
-        Defines += "#define GOD_RAY_CALCULATION_PASS\n\n";
-      if (sig&Signature::GOD_RAY_BLEND_PASS)
-        Defines += "#define GOD_RAY_BLEND_PASS\n\n";
-      if (sig&Signature::SSAO_PASS)
-        Defines += "#define SSAO_PASS\n\n";
-      if (sig&Signature::RAY_MARCH)
-        Defines += "#define RAY_MARCH\n\n";
-      if (sig&Signature::RADIAL_DEPTH_PASS)
-        Defines += "#define RADIAL_DEPTH_PASS\n\n";
-      if (sig&Signature::LIGHT_RAY_MARCHING)
-        Defines += "#define LIGHT_RAY_MARCHING\n\n";
-      if (sig&Signature::LIGHT_ADD)
-        Defines += "#define LIGHT_ADD\n\n";
-      if (sig&Signature::FADE_PASS)
-        Defines += "#define FADE\n\n";
-      if (sig&Signature::USE_OMNIDIRECTIONAL_SHADOWS)
-        Defines += "#define OMNIDIRECTIONAL_SH\n\n";
-      
-      
-      
-      
-      
-      
-      
-      
+      // Vertex attributes
+      if (key.has(ShaderKey::HAS_NORMALS))    Defines += "#define USE_NORMALS\n\n";
+      if (key.has(ShaderKey::HAS_TEXCOORD0))  Defines += "#define USE_TEXCOORD0\n\n";
+      if (key.has(ShaderKey::HAS_TEXCOORD1))  Defines += "#define USE_TEXCOORD1\n\n";
+      if (key.has(ShaderKey::HAS_TANGENTS))   Defines += "#define USE_TANGENTS\n\n";
+      if (key.has(ShaderKey::HAS_BINORMALS))  Defines += "#define USE_BINORMALS\n\n";
+
+      // Texture maps
+      if (key.has(ShaderKey::DIFFUSE_MAP))    Defines += "#define DIFFUSE_MAP\n\n";
+      if (key.has(ShaderKey::SPECULAR_MAP))   Defines += "#define SPECULAR_MAP\n\n";
+      if (key.has(ShaderKey::GLOSS_MAP))      Defines += "#define GLOSS_MAP\n\n";
+      if (key.has(ShaderKey::NORMAL_MAP))     Defines += "#define NORMAL_MAP\n\n";
+      if (key.has(ShaderKey::REFLECT_MAP))    Defines += "#define REFLECT_MAP\n\n";
+      if (key.has(ShaderKey::HEIGHT_MAP))     Defines += "#define HEIGHT_MAP\n\n";
+      if (key.has(ShaderKey::METALLIC_MAP))   Defines += "#define METALLIC_MAP\n\n";
+
+      // Special modes
+      if (key.has(ShaderKey::NO_LIGHT))       Defines += "#define NO_LIGHT\n\n";
+      if (key.has(ShaderKey::OMNI_SHADOWS))   Defines += "#define OMNIDIRECTIONAL_SH\n\n";
+
+      // Effect toggles
+      if (key.has(ShaderKey::PARALLAX))       Defines += "#define ENABLE_PARALLAX\n\n";
+      if (key.has(ShaderKey::SHADOWS))        Defines += "#define ENABLE_SHADOWS\n\n";
+      if (key.has(ShaderKey::SSAO))           Defines += "#define ENABLE_SSAO\n\n";
+      if (key.has(ShaderKey::AUTO_FOCUS))     Defines += "#define AUTO_FOCUS\n\n";
+      if (key.has(ShaderKey::GOD_RAYS))       Defines += "#define ENABLE_GOD_RAYS\n\n";
+
+      // Pass type
+      switch (key.getPass()) {
+      case PassType::FORWARD:            break; // default forward path, no define needed
+      case PassType::GBUFFER:            Defines += "#define G_BUFFER_PASS\n\n"; break;
+      case PassType::SHADOW_MAP:         Defines += "#define SHADOW_MAP_PASS\n\n"; break;
+      case PassType::FSQUAD_1_TEX:       Defines += "#define FSQUAD_1_TEX\n\n"; break;
+      case PassType::FSQUAD_2_TEX:       Defines += "#define FSQUAD_2_TEX\n\n"; break;
+      case PassType::FSQUAD_3_TEX:       Defines += "#define FSQUAD_3_TEX\n\n"; break;
+      case PassType::DEFERRED:           Defines += "#define DEFERRED_PASS\n\n"; break;
+      case PassType::SHADOW_COMP:        Defines += "#define SHADOW_COMP_PASS\n\n"; break;
+      case PassType::VERTICAL_BLUR:      Defines += "#define VERTICAL_BLUR_PASS\n\n"; break;
+      case PassType::HORIZONTAL_BLUR:    Defines += "#define HORIZONTAL_BLUR_PASS\n\n"; break;
+      case PassType::ONE_PASS_BLUR:      Defines += "#define ONE_PASS_BLUR\n\n"; break;
+      case PassType::BRIGHT:             Defines += "#define BRIGHT_PASS\n\n"; break;
+      case PassType::HDR_COMP:           Defines += "#define HDR_COMP_PASS\n\n"; break;
+      case PassType::LUMINANCE_MAP:      Defines += "#define LUMINANCE_MAP_PASS\n\n"; break;
+      case PassType::ADAPT_LUMINANCE:    Defines += "#define ADAPT_LUMINANCE_PASS\n\n"; break;
+      case PassType::COC:                Defines += "#define COC_PASS\n\n"; break;
+      case PassType::COMBINE_COC:        Defines += "#define COMBINE_COC_PASS\n\n"; break;
+      case PassType::DOF:                Defines += "#define DOF_PASS\n\n"; break;
+      case PassType::DOF_2:              Defines += "#define DOF_PASS_2\n\n"; break;
+      case PassType::BACKBUFFER:         Defines += "#define BACKBUFFER_PASS\n\n"; break;
+      case PassType::GOD_RAY_CALCULATION: Defines += "#define GOD_RAY_CALCULATION_PASS\n\n"; break;
+      case PassType::GOD_RAY_BLEND:      Defines += "#define GOD_RAY_BLEND_PASS\n\n"; break;
+      case PassType::SSAO:               Defines += "#define SSAO_PASS\n\n"; break;
+      case PassType::RAY_MARCH:          Defines += "#define RAY_MARCH\n\n"; break;
+      case PassType::RADIAL_DEPTH:       Defines += "#define RADIAL_DEPTH_PASS\n\n"; break;
+      case PassType::LIGHT_RAY_MARCHING: Defines += "#define LIGHT_RAY_MARCHING\n\n"; break;
+      case PassType::LIGHT_ADD:          Defines += "#define LIGHT_ADD\n\n"; break;
+      case PassType::FADE:               Defines += "#define FADE\n\n"; break;
+      default: break;
+      }
 
       if (!LinearDepth)
         Defines += "#define NON_LINEAR_DEPTH\n\n";
-
-      //	cout << "Compiling with the following signature[ " << Defines << endl << "]" << endl;
 
       src_vs = Defines + src_vs;
       src_fs = Defines + src_fs;
     }
-    this->Sig = sig;
-    return CreateShaderAPI(src_vs, src_fs, sig);
+    this->key = key;
+    if (!CreateShaderAPI(src_vs, src_fs, vs_name, fs_name)) {
+      T8_LOG_ERROR("Shader defines for failed key 0x%08X [VS='%s' FS='%s']:\n%s", key.bits, vs_name.c_str(), fs_name.c_str(), Defines.c_str());
+      return false;
+    }
+    return true;
   }
   void ShaderBase::release()
   {
@@ -302,28 +271,28 @@ namespace t800 {
       return RTs[id]->vColorTextures[index];
     }
   }
-  ShaderBase * BaseDriver::GetShaderSig(unsigned long long sig)
+  ShaderBase * BaseDriver::GetShader(ShaderKey key)
   {
-    for (unsigned int i = 0; i < m_signatureShaders.size(); i++) {
-      if (m_signatureShaders[i]->Sig == sig) {
-        return m_signatureShaders[i];
-      }
-    }
+    auto it = m_shaderCache.find(key.bits);
+    if (it != m_shaderCache.end())
+      return it->second;
+    fprintf(stderr, "[ShaderKey] GetShader miss: key 0x%08X (pass=%d)\n", key.bits, key.getPass());
+    T8_LOG_ERROR("GetShader miss: key 0x%08X (pass=%d)", key.bits, key.getPass());
     return nullptr;
   }
   ShaderBase * BaseDriver::GetShaderIdx(int id)
   {
-    if (id < 0 || id >= (int)m_signatureShaders.size()) {
-      printf("Warning null ptr ShaderBase Idx\n");
+    if (id < 0 || id >= (int)m_shaders.size()) {
+      T8_LOG_ERROR("GetShaderIdx: invalid id %d (size=%d)", id, (int)m_shaders.size());
       return nullptr;
     }
 
-    return m_signatureShaders[id];
+    return m_shaders[id];
   }
   Texture * BaseDriver::GetTexture(int id)
   {
     if (id < 0 || id >= (int)Textures.size()) {
-      printf("Warning null ptr Textures Idx\n");
+      T8_LOG_ERROR("GetTexture: invalid id %d (size=%d)", id, (int)Textures.size());
       return 0;
     }
 
@@ -331,11 +300,12 @@ namespace t800 {
   }
   void BaseDriver::DestroyShaders()
   {
-    for (unsigned int i = 0; i < m_signatureShaders.size(); i++) {
-      m_signatureShaders[i]->release();
-      m_signatureShaders[i] = nullptr;
+    for (unsigned int i = 0; i < m_shaders.size(); i++) {
+      m_shaders[i]->release();
+      m_shaders[i] = nullptr;
     }
-    m_signatureShaders.clear();
+    m_shaders.clear();
+    m_shaderCache.clear();
   }
   void BaseDriver::DestroyRTs()
   {
@@ -417,13 +387,14 @@ namespace t800 {
   }
   void BaseDriver::DestroyShader(int id)
   {
-    if (id >= 0 && id < (int)m_signatureShaders.size()) {
-      if (m_signatureShaders[id] != nullptr) {
-        m_signatureShaders[id]->release();
-        m_signatureShaders[id] = nullptr;
+    if (id >= 0 && id < (int)m_shaders.size()) {
+      if (m_shaders[id] != nullptr) {
+        if (m_shaders[id]->key.isValid())
+          m_shaderCache.erase(m_shaders[id]->key.bits);
+        m_shaders[id]->release();
+        m_shaders[id] = nullptr;
       }
     }
-
   }
   int BaseDriver::CreateTexture(std::string path)
   {
@@ -440,9 +411,11 @@ namespace t800 {
     Texture *pTex = T8Device->CreateTexture(path);
     if (firstFreeSlot >= 0) {
       Textures[firstFreeSlot] = pTex;
+      T8_LOG_DEBUG("Texture created: '%s' -> slot %d (%dx%d)", path.c_str(), firstFreeSlot, pTex->x, pTex->y);
       return firstFreeSlot;
     }
     Textures.push_back(pTex);
+    T8_LOG_DEBUG("Texture created: '%s' -> slot %d (%dx%d)", path.c_str(), (int)(Textures.size()-1), pTex->x, pTex->y);
     return static_cast<int>(Textures.size() - 1);
   }
   int BaseDriver::CreateCubeMap(const unsigned char * buff, int w, int h)
@@ -451,20 +424,29 @@ namespace t800 {
     Textures.push_back(pTex);
     return static_cast<int>(Textures.size() - 1);
   }
-  int BaseDriver::CreateShader(std::string src_vs, std::string src_fs, unsigned long long sig)
+  int BaseDriver::CreateShader(std::string src_vs, std::string src_fs, ShaderKey key, const std::string& vs_name, const std::string& fs_name)
   {
-    if (sig != T8_NO_SIGNATURE) {
-      for (unsigned int i = 0; i < m_signatureShaders.size(); i++) {
-        if (m_signatureShaders[i]->Sig == sig) {
-          return i;
+    if (key.isValid()) {
+      auto it = m_shaderCache.find(key.bits);
+      if (it != m_shaderCache.end()) {
+        // Already compiled — find its index
+        for (int i = 0; i < (int)m_shaders.size(); i++) {
+          if (m_shaders[i] == it->second)
+            return i;
         }
       }
     }
-    ShaderBase* shader = T8Device->CreateShader(src_vs, src_fs, sig);
+    ShaderBase* shader = T8Device->CreateShader(src_vs, src_fs, key, vs_name, fs_name);
     if (shader != nullptr) {
-      m_signatureShaders.push_back(shader);
-      return static_cast<int>(m_signatureShaders.size() - 1);
+      m_shaders.push_back(shader);
+      int idx = static_cast<int>(m_shaders.size() - 1);
+      if (key.isValid()) {
+        m_shaderCache[key.bits] = shader;
+        T8_LOG_DEBUG("Shader compiled: key=0x%08X pass=%d -> idx %d", key.bits, key.getPass(), idx);
+      }
+      return idx;
     }
+    T8_LOG_ERROR("Shader compilation FAILED: key=0x%08X pass=%d", key.bits, key.getPass());
     return -1;
   }
   int BaseDriver::CreateRT(int nrt, int cf, int df, int w, int h, bool genMips)
@@ -477,6 +459,7 @@ namespace t800 {
     pRT->number_RT = nrt;
     if (pRT!= nullptr) {
       RTs.push_back(pRT);
+      T8_LOG_DEBUG("RenderTarget created: handle %d (%dx%d, %d color attachments)", (int)(RTs.size()-1), w, h, nrt);
       return static_cast<int>(RTs.size() - 1);
     }
     return -1;

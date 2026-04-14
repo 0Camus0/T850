@@ -28,7 +28,7 @@ namespace t800 {
   class D3DXShader : public ShaderBase {
   public:
 
-    bool CreateShaderAPI(std::string src_vs, std::string src_fs, unsigned long long sig);
+    bool CreateShaderAPI(std::string src_vs, std::string src_fs, const std::string& vs_name = "", const std::string& fs_name = "");
     void  Set(const DeviceContext& deviceContext) override;
     void DestroyAPIShader() override;
     ComPtr<ID3D11VertexShader>  pVS;

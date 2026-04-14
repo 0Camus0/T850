@@ -6,13 +6,14 @@
 #include <fstream>
 #include <sstream>
 #include <cstdio>
+#include <utils/Log.h>
 
 namespace t800 {
 
 bool LoadSceneDescriptor(const std::string& path, SceneDescriptor& desc) {
   std::ifstream file(path);
   if (!file.is_open()) {
-    printf("[SceneDescriptor] ERROR: cannot open '%s'\n", path.c_str());
+    T8_LOG_ERROR("[SceneDescriptor] Cannot open '%s'", path.c_str());
     return false;
   }
 
@@ -23,35 +24,31 @@ bool LoadSceneDescriptor(const std::string& path, SceneDescriptor& desc) {
   auto ec = glz::read<glz::opts{.error_on_unknown_keys = false}>(desc, json);
   if (ec) {
     std::string err = glz::format_error(ec, json);
-    printf("[SceneDescriptor] ERROR parsing '%s': %s\n", path.c_str(), err.c_str());
+    T8_LOG_ERROR("[SceneDescriptor] Parse error '%s': %s", path.c_str(), err.c_str());
     return false;
   }
 
-  printf("[SceneDescriptor] Loaded '%s': %zu cameras, %zu light cameras, %zu lights, %zu splines, %zu meshes\n",
-         path.c_str(),
-         desc.cameras.size(),
-         desc.light_cameras.size(),
-         desc.lights.size(),
-         desc.splines.size(),
-         desc.meshes.size());
+  T8_LOG_INFO("[SceneDescriptor] Loaded '%s': %zu cameras, %zu light cameras, %zu lights, %zu splines, %zu meshes",
+              path.c_str(), desc.cameras.size(), desc.light_cameras.size(),
+              desc.lights.size(), desc.splines.size(), desc.meshes.size());
   return true;
 }
 
 bool SaveSceneDescriptor(const std::string& path, const SceneDescriptor& desc) {
   auto result = glz::write<glz::opts{.prettify = true}>(desc);
   if (!result) {
-    printf("[SceneDescriptor] ERROR: failed to serialize scene\n");
+    T8_LOG_ERROR("[SceneDescriptor] Failed to serialize scene");
     return false;
   }
 
   std::ofstream file(path);
   if (!file.is_open()) {
-    printf("[SceneDescriptor] ERROR: cannot write '%s'\n", path.c_str());
+    T8_LOG_ERROR("[SceneDescriptor] Cannot write '%s'", path.c_str());
     return false;
   }
 
   file << result.value();
-  printf("[SceneDescriptor] Saved '%s'\n", path.c_str());
+  T8_LOG_INFO("[SceneDescriptor] Saved '%s'", path.c_str());
   return true;
 }
 

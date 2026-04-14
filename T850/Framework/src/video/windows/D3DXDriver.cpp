@@ -19,6 +19,7 @@
 #include <string>
 #include <fstream>
 #include <vector>
+#include <utils/Log.h>
 
 
 
@@ -108,10 +109,10 @@ namespace t800 {
     return retBuff;
   }
 
-  ShaderBase * D3DXDevice::CreateShader(std::string src_vs, std::string src_fs, unsigned long long sig)
+  ShaderBase * D3DXDevice::CreateShader(std::string src_vs, std::string src_fs, ShaderKey key, const std::string& vs_name, const std::string& fs_name)
   {
     ShaderBase *sh = new D3DXShader();
-    if (!sh->CreateShader(src_vs, src_fs, sig)) {
+    if (!sh->CreateShader(src_vs, src_fs, key, vs_name, fs_name)) {
       delete sh;
       return nullptr;
     }
@@ -671,13 +672,13 @@ namespace t800 {
 
     ComPtr<ID3D11Texture2D> stagingTex;
     HRESULT hr = device->CreateTexture2D(&stagingDesc, nullptr, &stagingTex);
-    if (FAILED(hr)) { std::cout << "  ERROR: CreateTexture2D staging failed hr=0x" << std::hex << hr << std::dec << " fmt=" << readFormat << std::endl; return; }
+    if (FAILED(hr)) { T8_LOG_ERROR("CreateTexture2D staging failed hr=0x%08X fmt=%d", hr, readFormat); return; }
 
     deviceContext->CopySubresourceRegion(stagingTex.Get(), 0, 0, 0, 0, srcTex, 0, nullptr);
 
     D3D11_MAPPED_SUBRESOURCE mapped;
     hr = deviceContext->Map(stagingTex.Get(), 0, D3D11_MAP_READ, 0, &mapped);
-    if (FAILED(hr)) { std::cout << "  ERROR: Map failed hr=0x" << std::hex << hr << std::dec << std::endl; return; }
+    if (FAILED(hr)) { T8_LOG_ERROR("Map failed hr=0x%08X", hr); return; }
 
     unsigned int w = desc.Width;
     unsigned int h = desc.Height;

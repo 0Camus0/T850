@@ -155,39 +155,76 @@ void GUISliderBar::Draw(GUIDrawContext& ctx) {
   XVECTOR3 barTint(1.0f, 1.0f, 1.0f);
   ctx.DrawTexturedQuad(x, y, w, h, ctx.barTex, barTint);
 
-  // Knob: square side = bar height, centered on bar
-  float kSize = h;
-  float kx = GetKnobX();
-  float kHalf = kSize * 0.5f;
-  float ky = y + h * 0.5f - kHalf;    // vertically centred on bar
+  // Knob: tunable offset/scale relative to bar height.
+  float baseW = h;
+  float baseH = h;
+  float baseY = y;
+  float kW = (std::max)(4.0f, baseW * knobScaleX);
+  float kH = (std::max)(4.0f, baseH * knobScaleY);
+  float kx = 0.0f;
+  if (knobRangeCalibrated) {
+    // min/max are knob CENTER as fraction of bar width.
+    float t = (std::max)(0.0f, (std::min)(1.0f, normValue));
+    float centerNorm = knobMinNorm + (knobMaxNorm - knobMinNorm) * t;
+    kx = x + centerNorm * w - kW * 0.5f;
+  } else {
+    float baseX = x + normValue * (std::max)(0.0f, w - baseW);
+    kx = baseX + knobOffsetX * h + (baseW - kW) * 0.5f;
+  }
+  float ky = baseY + knobOffsetY * h + (baseH - kH) * 0.5f;
   XVECTOR3 knobTint = (knobHover || knobDragging)
     ? XVECTOR3(1.5f, 1.5f, 1.5f)
     : XVECTOR3(1.0f, 1.0f, 1.0f);
-  ctx.DrawTexturedQuad(kx - kHalf, ky, kSize, kSize, ctx.knobTex, knobTint);
+  ctx.DrawTexturedQuad(kx, ky, kW, kH, ctx.knobTex, knobTint);
 }
 
 void GUISliderBar::UpdateInteraction(float mx, float my, bool mouseDown) {
-  float kSize = h;                               // knob square = bar height
-  float kHalf = kSize * 0.5f;
-  float kx    = GetKnobX();
-  float ky0   = y + h * 0.5f - kHalf;            // = y
+  float baseW = h;
+  float baseH = h;
+  float baseY = y;
+  float kW = (std::max)(4.0f, baseW * knobScaleX);
+  float kH = (std::max)(4.0f, baseH * knobScaleY);
+  float kx = 0.0f;
+  if (knobRangeCalibrated) {
+    float t = (std::max)(0.0f, (std::min)(1.0f, normValue));
+    float centerNorm = knobMinNorm + (knobMaxNorm - knobMinNorm) * t;
+    kx = x + centerNorm * w - kW * 0.5f;
+  } else {
+    float baseX = x + normValue * (std::max)(0.0f, w - baseW);
+    kx = baseX + knobOffsetX * h + (baseW - kW) * 0.5f;
+  }
+  float ky = baseY + knobOffsetY * h + (baseH - kH) * 0.5f;
+  float knobCenterX = kx + kW * 0.5f;
 
-  knobHover = (mx >= kx - kHalf && mx <= kx + kHalf &&
-               my >= ky0 && my <= ky0 + kSize);
+  knobHover = (mx >= kx && mx <= kx + kW &&
+               my >= ky && my <= ky + kH);
 
   bool barHover = (mx >= x && mx <= x + w && my >= y && my <= y + h);
 
-  float range = (std::max)(0.0f, w - kSize);
-
   if (mouseDown && !knobDragging && (knobHover || barHover)) {
     knobDragging = true;
-    float norm = (range > 0.0f) ? (mx - x - kHalf) / range : 0.0f;
-    norm = (std::max)(0.0f, (std::min)(1.0f, norm));
-    SetValue(minVal + norm * (maxVal - minVal));
+    if (knobHover) {
+      // Clicked on knob: remember offset so it doesn't jump
+      knobDragAnchorOff = mx - knobCenterX;
+    } else {
+      // Clicked on bar: snap knob center to mouse
+      knobDragAnchorOff = 0.0f;
+    }
   }
   if (knobDragging) {
     if (mouseDown) {
-      float norm = (range > 0.0f) ? (mx - x - kHalf) / range : 0.0f;
+      float desiredCenter = mx - knobDragAnchorOff;
+      float norm = 0.0f;
+      if (knobRangeCalibrated) {
+        float minCX = x + knobMinNorm * w;
+        float maxCX = x + knobMaxNorm * w;
+        float span = maxCX - minCX;
+        norm = (std::abs(span) > 0.0001f) ? (desiredCenter - minCX) / span : 0.0f;
+      } else {
+        float range = (std::max)(0.0f, w - baseW);
+        float kHalf = baseW * 0.5f;
+        norm = (range > 0.0f) ? (desiredCenter - x - kHalf) / range : 0.0f;
+      }
       norm = (std::max)(0.0f, (std::min)(1.0f, norm));
       SetValue(minVal + norm * (maxVal - minVal));
     } else {
@@ -209,8 +246,15 @@ void GUICheckbox::Draw(GUIDrawContext& ctx) {
     ctx.DrawTexturedQuad(x, y, h, h, ctx.checkBoxTex, tint);
 
   // Draw check mark overlay when checked
-  if (checked && ctx.checkMarkTex)
-    ctx.DrawTexturedQuad(x, y, h, h, ctx.checkMarkTex, tint);
+  if (checked && ctx.checkMarkTex) {
+    float baseW = h;
+    float baseH = h;
+    float markW = (std::max)(4.0f, baseW * markScaleX);
+    float markH = (std::max)(4.0f, baseH * markScaleY);
+    float markX = x + markOffsetX * h + (baseW - markW) * 0.5f;
+    float markY = y + markOffsetY * h + (baseH - markH) * 0.5f;
+    ctx.DrawTexturedQuad(markX, markY, markW, markH, ctx.checkMarkTex, tint);
+  }
 }
 
 void GUICheckbox::UpdateInteraction(float mx, float my, bool mouseDown) {
@@ -249,7 +293,7 @@ void GUISelector::SelectPrev() {
 
 void GUISelector::Draw(GUIDrawContext& ctx) {
   DrawQuadsOnly(ctx);
-  // Draw current option text centered on bar
+  // Draw current option text centered on bar (bar = full element bounds)
   if (ctx.text) {
     int sw = (int)ctx.screenW;
     int sh = (int)ctx.screenH;
@@ -258,9 +302,7 @@ void GUISelector::Draw(GUIDrawContext& ctx) {
 
     const std::string& opt = CurrentOption();
     float textW = ctx.text->MeasurePixel(opt, sw, sh) * scale;
-    float barX = x + btnSize;
-    float barW = w - btnSize * 2.0f;
-    float textX = barX + (barW - textW) * 0.5f;
+    float textX = x + (w - textW) * 0.5f;
     float textY = y;
     XVECTOR3 textColor(0.9f, 0.85f, 0.8f);
     ctx.text->DrawPixelScaled(textX, textY, scale, scale, sw, sh, textColor, opt);
@@ -270,23 +312,33 @@ void GUISelector::Draw(GUIDrawContext& ctx) {
 void GUISelector::DrawQuadsOnly(GUIDrawContext& ctx) {
   if (!visible) return;
 
-  float barX = x + btnSize;
-  float barW = w - btnSize * 2.0f;
   XVECTOR3 tint(1.0f, 1.0f, 1.0f);
 
-  // Draw bar background
+  // Bar drawn at full element bounds
   if (ctx.selectorBarTex)
-    ctx.DrawTexturedQuad(barX, y, barW, h, ctx.selectorBarTex, tint);
+    ctx.DrawTexturedQuad(x, y, w, h, ctx.selectorBarTex, tint);
+
+  // Left button: base at element left edge
+  float leftW = (std::max)(4.0f, btnSize * leftScaleX);
+  float leftH = (std::max)(4.0f, h * leftScaleY);
+  float leftX = x + leftOffsetX * h + (btnSize - leftW) * 0.5f;
+  float leftY = y + leftOffsetY * h + (h - leftH) * 0.5f;
+
+  // Right button: base at element right edge
+  float rightW = (std::max)(4.0f, btnSize * rightScaleX);
+  float rightH = (std::max)(4.0f, h * rightScaleY);
+  float rightX = (x + w - btnSize) + rightOffsetX * h + (btnSize - rightW) * 0.5f;
+  float rightY = y + rightOffsetY * h + (h - rightH) * 0.5f;
 
   // Left button
   Texture* leftTex = leftPressed ? ctx.selectorBtnLeftPressTex : ctx.selectorBtnLeftTex;
   if (leftTex)
-    ctx.DrawTexturedQuad(x, y, btnSize, h, leftTex, tint);
+    ctx.DrawTexturedQuad(leftX, leftY, leftW, leftH, leftTex, tint);
 
   // Right button
   Texture* rightTex = rightPressed ? ctx.selectorBtnRightPressTex : ctx.selectorBtnRightTex;
   if (rightTex)
-    ctx.DrawTexturedQuad(x + w - btnSize, y, btnSize, h, rightTex, tint);
+    ctx.DrawTexturedQuad(rightX, rightY, rightW, rightH, rightTex, tint);
 }
 
 void GUISelector::DrawTextBatched(GUIDrawContext& ctx) {
@@ -297,11 +349,10 @@ void GUISelector::DrawTextBatched(GUIDrawContext& ctx) {
   float charH = ctx.text->m_fontSize * ctx.screenH / (float)ctx.text->m_textureSize;
   float scale = (charH > 0.0f && h > 0.0f) ? h / charH : 1.0f;
 
-  float barX = x + btnSize;
-  float barW = w - btnSize * 2.0f;
+  // Text centered on bar (bar = full element bounds)
   const std::string& opt = CurrentOption();
   float textW = ctx.text->MeasurePixel(opt, sw, sh) * scale;
-  float textX = barX + (barW - textW) * 0.5f;
+  float textX = x + (w - textW) * 0.5f;
   float textY = y;
   XVECTOR3 textColor(0.9f, 0.85f, 0.8f);
   ctx.text->DrawPixelScaledBatched(textX, textY, scale, scale, sw, sh, textColor, opt);
@@ -310,10 +361,19 @@ void GUISelector::DrawTextBatched(GUIDrawContext& ctx) {
 void GUISelector::UpdateInteraction(float mx, float my, bool mouseDown) {
   justChanged = false;
 
-  // Left button hit area
-  leftHover  = (mx >= x && mx <= x + btnSize && my >= y && my <= y + h);
-  // Right button hit area
-  rightHover = (mx >= x + w - btnSize && mx <= x + w && my >= y && my <= y + h);
+  // Hit test against tuned button rectangles.
+  float leftW = (std::max)(4.0f, btnSize * leftScaleX);
+  float leftH = (std::max)(4.0f, h * leftScaleY);
+  float leftX = x + leftOffsetX * h + (btnSize - leftW) * 0.5f;
+  float leftY = y + leftOffsetY * h + (h - leftH) * 0.5f;
+
+  float rightW = (std::max)(4.0f, btnSize * rightScaleX);
+  float rightH = (std::max)(4.0f, h * rightScaleY);
+  float rightX = (x + w - btnSize) + rightOffsetX * h + (btnSize - rightW) * 0.5f;
+  float rightY = y + rightOffsetY * h + (h - rightH) * 0.5f;
+
+  leftHover  = (mx >= leftX && mx <= leftX + leftW && my >= leftY && my <= leftY + leftH);
+  rightHover = (mx >= rightX && mx <= rightX + rightW && my >= rightY && my <= rightY + rightH);
 
   bool justPressed  = mouseDown && !wasMouseDown;
 

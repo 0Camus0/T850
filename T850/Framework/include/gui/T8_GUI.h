@@ -11,6 +11,18 @@
 
 namespace t800 {
 
+  enum class GUIControlEditTarget {
+    SliderKnob,
+    SelectorControl,
+    CheckboxMark
+  };
+
+  enum class GUIControlSubpart {
+    Primary,
+    SelectorLeft,
+    SelectorRight
+  };
+
   // ─── Responsive layout computed from screen dimensions ───
   struct GUILayout {
     float scale       = 1.0f;
@@ -81,13 +93,20 @@ namespace t800 {
     void ToggleVisible() { m_visible = !m_visible; }
 
     // Edit mode
-    void SetEditMode(bool e) { m_editMode = e; }
+    void SetEditMode(bool e);
     bool IsEditMode() const { return m_editMode; }
     void SetSnapToGrid(bool s) { m_snapToGrid = s; }
     bool IsSnapToGrid() const { return m_snapToGrid; }
 
+    // Control-shape edit mode (edits internals like slider knob / selector buttons)
+    void SetControlEditMode(bool e);
+    bool IsControlEditMode() const { return m_controlEditMode; }
+    bool SetControlEditTargetByName(const std::string& targetName);
+    const char* GetControlEditTargetName() const;
+
     // Grid resize (+/-)
     void GrowGrid(float delta);
+    void AdjustControlPreviewScale(float delta);
 
     // Apply the last-edited element's scale to all elements of the same kind
     void ApplyUniformScale();
@@ -95,6 +114,9 @@ namespace t800 {
     // Layout save/load
     bool SaveLayout(const std::string& path);
     bool LoadLayout(const std::string& path);
+    bool SaveControlLayout(const std::string& path);
+    bool LoadControlLayout(const std::string& path);
+    bool HandleControlEditTab(const std::string& path);
 
     // All elements (for iteration)
     std::vector<GUIElement*>& GetElements() { return m_elements; }
@@ -105,9 +127,14 @@ namespace t800 {
 
     // Edit‑mode helpers
     void UpdateEditMode(float mx, float my, bool mouseDown);
+    void UpdateControlEditMode(float mx, float my, bool mouseDown);
     void DrawGrid();
     void DrawEditOverlays();
+    void DrawControlEditPreview();
+    void DrawControlEditOverlay();
+    void DrawControlEditRectOverlay(float x, float y, float w, float h, const XVECTOR3& color, bool drawHandle);
     void RebakeFontIfNeeded();
+    void ApplyControlLayoutToElements();
 
     // ── State ──
     std::vector<GUIElement*>       m_elements;      // owns all elements
@@ -142,8 +169,63 @@ namespace t800 {
     bool m_initialized  = false;
     bool m_editMode     = false;
     bool m_snapToGrid   = false;
+    bool m_controlEditMode = false;
     float m_gridCellW   = 40.0f;
     float m_gridCellH   = 40.0f;
+
+    GUIControlEditTarget m_controlEditTarget = GUIControlEditTarget::SliderKnob;
+    GUIControlSubpart m_controlActiveSubpart = GUIControlSubpart::Primary;
+    float m_controlPreviewVisualScale = 0.65f; // Visual-only zoom for control edit preview.
+
+    struct ControlLayoutState {
+      float sliderKnobScaleX = 1.0f;
+      float sliderKnobScaleY = 1.0f;
+      float sliderKnobOffsetX = 0.0f;
+      float sliderKnobOffsetY = 0.0f;
+      bool  sliderKnobRangeCalibrated = false;
+      float sliderKnobMinNorm = 0.0f;
+      float sliderKnobMaxNorm = 1.0f;
+
+      float selectorLeftScaleX = 1.0f;
+      float selectorLeftScaleY = 1.0f;
+      float selectorLeftOffsetX = 0.0f;
+      float selectorLeftOffsetY = 0.0f;
+
+      float selectorRightScaleX = 1.0f;
+      float selectorRightScaleY = 1.0f;
+      float selectorRightOffsetX = 0.0f;
+      float selectorRightOffsetY = 0.0f;
+
+      float checkboxMarkScaleX = 1.0f;
+      float checkboxMarkScaleY = 1.0f;
+      float checkboxMarkOffsetX = 0.0f;
+      float checkboxMarkOffsetY = 0.0f;
+    };
+
+    ControlLayoutState m_controlLayout;
+
+    struct ControlEditRect {
+      float x = 0.0f;
+      float y = 0.0f;
+      float w = 10.0f;
+      float h = 10.0f;
+      bool valid = false;
+    } m_controlEditRect;
+
+    ControlEditRect m_controlEditRectSecondary;
+
+    bool  m_controlDragActive = false;
+    bool  m_controlResizeActive = false;
+    float m_controlDragOffX = 0.0f;
+    float m_controlDragOffY = 0.0f;
+    float m_controlResizeOrigW = 0.0f;
+    float m_controlResizeOrigH = 0.0f;
+    float m_controlResizeOrigMX = 0.0f;
+    float m_controlResizeOrigMY = 0.0f;
+    float m_controlResizeOrigX = 0.0f;
+    float m_controlResizeOrigY = 0.0f;
+
+    int   m_sliderCalibrationStep = 0; // 0: waiting min, 1: waiting max
 
     // Edit‑mode tracking
     GUIElement* m_dragTarget   = nullptr;

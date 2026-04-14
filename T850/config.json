@@ -9,7 +9,7 @@
                     "fullscreen":  false
                 },
     "replaySnapshot":  {
-                           "path":  "D:\\Code\\Game\\T850\\T850\\bin\\x64\\Release\\dumps_gl_f6460_20260413_093840\\snapshot.json",
+                           "path":  "D:\\Code\\Game\\T850\\T850\\bin\\x64\\Release\\dumps_d3d11_f14515_20260413_212355\\snapshot.json",
                            "enabled":  false
                        },
     "configuration":  "Release",
@@ -21,9 +21,11 @@
              },
     "debugFrames":  false,
     "devTools":  {
-                     "guiEdit":  false,
+                     "guiControlEdit":  false,
+                     "guiControlTarget":  "selector_control",
+                     "logLevel":  "verbose",
                      "logToFile":  false,
-                     "logLevel":  "error",
+                     "guiEdit":  false,
                      "guiSnap":  false
                  }
 }

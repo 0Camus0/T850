@@ -13,6 +13,7 @@
 #include "Application.h"
 #include <video/BaseDriver.h>
 #include <utils/InputManager.h>
+#include <utils/Log.h>
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -34,6 +35,8 @@ extern bool g_guiScreenshot;
 extern std::string g_guiScreenshotPath;
 extern bool g_guiEdit;
 extern bool g_guiSnap;
+extern bool g_guiControlEdit;
+extern std::string g_guiControlTarget;
 
 
 
@@ -104,6 +107,12 @@ void App::CreateAssets() {
   }
   if (g_guiEdit) {
     m_devLayer.SetEditMode(true);
+  }
+  if (g_guiControlEdit) {
+    m_devLayer.SetControlEditMode(true);
+    if (!m_devLayer.SetControlEditTargetByName(g_guiControlTarget)) {
+      T8_LOG_ERROR("[App] Unknown gui control target '%s' (expected slider_knob|selector_control|checkbox_mark)", g_guiControlTarget.c_str());
+    }
   }
   if (g_guiSnap) {
     m_devLayer.SetSnapToGrid(true);

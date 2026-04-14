@@ -5,7 +5,7 @@
 
 namespace t800 {
 #define BUFFER_OFFSET(i) ((char *)NULL + (i))
-  bool GLShader::CreateShaderAPI(std::string src_vs, std::string src_fs, unsigned long long sig) {
+  bool GLShader::CreateShaderAPI(std::string src_vs, std::string src_fs, const std::string& vs_name, const std::string& fs_name) {
 
     ShaderProg = glCreateProgram();
 

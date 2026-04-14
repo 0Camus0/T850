@@ -94,6 +94,9 @@ SceneProps() : ActiveCamera(0) , ActiveLights(1), ActiveLightCamera(0), ActiveGa
 	int DebugMode;
 
 	float ShadowBias = 0.000005f;
+	float ShadowMin = 0.25f;
+	float EnvFactor = 1.0f;
+	float GodRaysFactor = 1.0f;
 
 	float ShadowMapResolution;
   float  GoodRaysResolution;

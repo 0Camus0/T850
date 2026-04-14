@@ -1,22 +1,23 @@
 #include <video/windows/D3DXShader.h>
+#include <utils/Log.h>
 
 
 namespace t800 {
   extern Device*            T8Device;
   extern DeviceContext*     T8DeviceContext;
 
-  bool D3DXShader::CreateShaderAPI(std::string src_vs, std::string src_fs, unsigned long long sig) {
+  bool D3DXShader::CreateShaderAPI(std::string src_vs, std::string src_fs, const std::string& vs_name, const std::string& fs_name) {
     ID3D11Device* device = reinterpret_cast<ID3D11Device*>(T8Device->GetAPIObject());
     ID3D11DeviceContext* deviceContext = reinterpret_cast<ID3D11DeviceContext*>(T8DeviceContext->GetAPIObject());
     HRESULT hr = S_OK;
     {
       VS_blob = nullptr;
       ComPtr<ID3DBlob> errorBlob = nullptr;
-      hr = D3DCompile(src_vs.c_str(), src_vs.size(), 0, 0, 0, "VS", "vs_5_0", 0, 0, &VS_blob, &errorBlob);
+      hr = D3DCompile(src_vs.c_str(), src_vs.size(), vs_name.empty() ? nullptr : vs_name.c_str(), 0, 0, "VS", "vs_5_0", 0, 0, &VS_blob, &errorBlob);
       if (hr != S_OK) {
 
         if (errorBlob) {
-          printf("ErrorBlob shader VS[%s] [%s]\n\n", src_vs.c_str(), (char*)errorBlob->GetBufferPointer());
+          T8_LOG_ERROR("VS compile error: %s", (char*)errorBlob->GetBufferPointer());
           return false;
         }
 
@@ -27,7 +28,7 @@ namespace t800 {
 
       hr = device->CreateVertexShader(VS_blob->GetBufferPointer(), VS_blob->GetBufferSize(), 0, &pVS);
       if (hr != S_OK) {
-        printf("Error Creating Vertex Shader\n");
+        T8_LOG_ERROR("CreateVertexShader failed (hr=0x%08X)", (unsigned)hr);
         exit(666);
       }
     }
@@ -35,10 +36,10 @@ namespace t800 {
     {
       FS_blob = nullptr;
       ComPtr<ID3DBlob> errorBlob = nullptr;
-      hr = D3DCompile(src_fs.c_str(), src_fs.size(), 0, 0, 0, "FS", "ps_5_0", 0, 0, &FS_blob, &errorBlob);
+      hr = D3DCompile(src_fs.c_str(), src_fs.size(), fs_name.empty() ? nullptr : fs_name.c_str(), 0, 0, "FS", "ps_5_0", 0, 0, &FS_blob, &errorBlob);
       if (hr != S_OK) {
         if (errorBlob) {
-          printf("ErrorBlob shader FS [%s] [%s]\n\n", src_fs.c_str(), (char*)errorBlob->GetBufferPointer());
+          T8_LOG_ERROR("PS compile error: %s", (char*)errorBlob->GetBufferPointer());
           return false;
         }
 
@@ -49,7 +50,7 @@ namespace t800 {
 
       hr = device->CreatePixelShader(FS_blob->GetBufferPointer(), FS_blob->GetBufferSize(), 0, &pFS);
       if (hr != S_OK) {
-        printf("Error Creating Pixel Shader\n");
+        T8_LOG_ERROR("CreatePixelShader failed (hr=0x%08X)", (unsigned)hr);
         return false;
       }
     }
@@ -102,13 +103,18 @@ namespace t800 {
 
       VertexDecl.push_back(ie);
     }
-    reflect->Release();
-
     hr = device->CreateInputLayout(&VertexDecl[0], static_cast<UINT>(VertexDecl.size()), VS_blob->GetBufferPointer(), VS_blob->GetBufferSize(), &Layout);
     if (hr != S_OK) {
-      printf("Error Creating Input Layout\n");
+      T8_LOG_ERROR("CreateInputLayout failed (hr=0x%08X) — %d element(s), stride=%d  [VS='%s' FS='%s']:", (unsigned)hr, (int)VertexDecl.size(), offset, vs_name.c_str(), fs_name.c_str());
+      for (int i = 0; i < (int)VertexDecl.size(); i++) {
+        const auto& e = VertexDecl[i];
+        T8_LOG_ERROR("  [%d] Semantic='%s' Index=%u Format=%u Offset=%u", i, e.SemanticName, e.SemanticIndex, (unsigned)e.Format, e.AlignedByteOffset);
+      }
+      reflect->Release();
       return false;
     }
+
+    reflect->Release();
 
     return true;
   }

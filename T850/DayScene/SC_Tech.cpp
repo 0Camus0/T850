@@ -453,7 +453,8 @@ void SC_Tech::OnDraw() {
     attachment = BaseDriver::COLOR0_ATTACHMENT;
   }
   Quads[7].SetTexture(pFramework->pVideoDriver->GetRTTexture(selected, attachment), 0);
-  Quads[7].SetGlobalSignature(Signature::FSQUAD_1_TEX);
+  ShaderKey dbgKey(0); dbgKey.setPass(PassType::FSQUAD_1_TEX); dbgKey.bits |= ShaderKey::HAS_TEXCOORD0;
+  Quads[7].SetGlobalKey(dbgKey);
   Quads[7].Draw();
 
   // RT Dump via FrameDumper

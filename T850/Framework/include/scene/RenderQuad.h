@@ -58,7 +58,7 @@ namespace t800 {
     void Draw(float *t, float *vp);
     void Destroy();
 
-    unsigned int	SigBase;
+    ShaderKey	sigBase;
     ConstantBuffer* pd3dConstantBuffer;
     //ID3D11SamplerState*  pSampler;
     Quad m_quad;

@@ -1,5 +1,6 @@
 #include <core/DevLayer.h>
 #include <cstdio>
+#include <utils/Log.h>
 
 namespace t800 {
 
@@ -106,7 +107,7 @@ void DevLayer::ProcessInput(InputManager* input) {
   // Pause toggle
   if (input->PressedOnceKey(T800K_p)) {
     m_paused = !m_paused;
-    printf("[DevLayer] %s\n", m_paused ? "PAUSED" : "RESUMED");
+    T8_LOG_INFO("[DevLayer] %s", m_paused ? "PAUSED" : "RESUMED");
   }
 
   // Forward input to the active scene (skip when paused so mouse/keys don't move cameras)

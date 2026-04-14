@@ -42,7 +42,7 @@ namespace t800 {
 
 	  virtual ~GLShader() {}
 
-	  bool CreateShaderAPI(std::string src_vs, std::string src_fs, unsigned long long sig) override;
+	  bool CreateShaderAPI(std::string src_vs, std::string src_fs, const std::string& vs_name = "", const std::string& fs_name = "") override;
     void  Set(const DeviceContext& deviceContext) override;
     void DestroyAPIShader() override;
 	  unsigned int ShaderProg;

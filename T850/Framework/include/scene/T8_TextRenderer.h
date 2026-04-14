@@ -8,6 +8,8 @@
 namespace t800 {
   class TextRenderer {
   public:
+    static constexpr int kMaxBatchChars = 256;
+
     stbtt_fontinfo font;
 
     stbtt_bakedchar cdata[96]; // ASCII 32..126 is 95 glyphsl
@@ -29,6 +31,16 @@ namespace t800 {
     float MeasurePixel(const std::string& text, int screenW, int screenH);
     void Destroy();
 
+    // Begin/End batched text drawing — sets state once, draws all text between.
+    void BeginBatch();
+    void EndBatch();
+
+    // Batched version: collects all chars into one VB, one draw call per string.
+    // Must be called between BeginBatch/EndBatch.
+    float DrawPixelScaledBatched(float px, float py, float scaleX, float scaleY,
+                                  int screenW, int screenH,
+                                  const XVECTOR3& color, const std::string& text);
+
     int m_textureSize;
     float m_fontSize;
     float m_ascent;       // ascent in baked-texture pixels (set by LoadFromFile)
@@ -37,5 +49,10 @@ namespace t800 {
     ConstantBuffer* m_CB;
     Quad m_quad;
 
+    // Batched text rendering resources
+    VertexBuffer* m_batchVB = nullptr;
+    IndexBuffer*  m_batchIB = nullptr;
+    Quad::Vertex  m_batchVerts[kMaxBatchChars * 4];
+    bool          m_batchActive = false;
   };
 }

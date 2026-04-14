@@ -1,7 +1,105 @@
 #ifndef T800_DESCRIPTORS_H
 #define T800_DESCRIPTORS_H
 #include <video/ShaderBase.h>
+#include <cstdint>
+
 namespace t800 {
+
+// ── Pass type (mutually exclusive, 6 bits → 64 max) ──
+namespace PassType {
+  enum E : uint8_t {
+    NONE = 0,
+    FORWARD,
+    GBUFFER,
+    SHADOW_MAP,
+    FSQUAD_1_TEX,
+    FSQUAD_2_TEX,
+    FSQUAD_3_TEX,
+    FSQUAD_TESTING,
+    DEFERRED,
+    SHADOW_COMP,
+    VERTICAL_BLUR,
+    HORIZONTAL_BLUR,
+    ONE_PASS_BLUR,
+    BRIGHT,
+    HDR_COMP,
+    LUMINANCE_MAP,
+    ADAPT_LUMINANCE,
+    COC,
+    COMBINE_COC,
+    DOF,
+    DOF_2,
+    BACKBUFFER,
+    GOD_RAY_CALCULATION,
+    GOD_RAY_BLEND,
+    SSAO,
+    RAY_MARCH,
+    RADIAL_DEPTH,
+    LIGHT_RAY_MARCHING,
+    LIGHT_ADD,
+    FADE,
+    COUNT
+  };
+}
+
+// ── Structured shader key: 32 bits ──
+//  Bits  0-4:  vertex attributes (5)
+//  Bits  5-11: texture maps (7)
+//  Bits 12-14: special modes (3)
+//  Bits 15-19: effect toggles (5)
+//  Bits 20-25: pass type (6-bit enum)
+//  Bits 26-31: reserved (6)
+struct ShaderKey {
+  uint32_t bits;
+
+  constexpr ShaderKey() : bits(0xFFFFFFFF) {}
+  constexpr explicit ShaderKey(uint32_t b) : bits(b) {}
+
+  // ── Vertex attributes ──
+  static constexpr uint32_t HAS_NORMALS    = 1u << 0;
+  static constexpr uint32_t HAS_TANGENTS   = 1u << 1;
+  static constexpr uint32_t HAS_BINORMALS  = 1u << 2;
+  static constexpr uint32_t HAS_TEXCOORD0  = 1u << 3;
+  static constexpr uint32_t HAS_TEXCOORD1  = 1u << 4;
+
+  // ── Texture maps ──
+  static constexpr uint32_t DIFFUSE_MAP    = 1u << 5;
+  static constexpr uint32_t SPECULAR_MAP   = 1u << 6;
+  static constexpr uint32_t GLOSS_MAP      = 1u << 7;
+  static constexpr uint32_t NORMAL_MAP     = 1u << 8;
+  static constexpr uint32_t REFLECT_MAP    = 1u << 9;
+  static constexpr uint32_t HEIGHT_MAP     = 1u << 10;
+  static constexpr uint32_t METALLIC_MAP   = 1u << 11;
+
+  // ── Special modes ──
+  static constexpr uint32_t NO_LIGHT       = 1u << 12;
+  static constexpr uint32_t FRESNEL        = 1u << 13;
+  static constexpr uint32_t OMNI_SHADOWS   = 1u << 14;
+
+  // ── Effect toggles (converted from runtime branches) ──
+  static constexpr uint32_t PARALLAX       = 1u << 15;
+  static constexpr uint32_t SHADOWS        = 1u << 16;
+  static constexpr uint32_t SSAO           = 1u << 17;
+  static constexpr uint32_t AUTO_FOCUS     = 1u << 18;
+  static constexpr uint32_t GOD_RAYS       = 1u << 19;
+
+  // ── Pass type (6 bits) ──
+  static constexpr uint32_t PASS_SHIFT = 20;
+  static constexpr uint32_t PASS_MASK  = 0x3Fu << PASS_SHIFT;
+
+  void    setPass(uint8_t p) { bits = (bits & ~PASS_MASK) | (uint32_t(p) << PASS_SHIFT); }
+  uint8_t getPass() const    { return (bits >> PASS_SHIFT) & 0x3F; }
+
+  bool has(uint32_t flag) const { return (bits & flag) != 0; }
+  bool isValid() const { return bits != 0xFFFFFFFF; }
+
+  bool operator==(const ShaderKey& o) const { return bits == o.bits; }
+  bool operator!=(const ShaderKey& o) const { return bits != o.bits; }
+};
+
+struct ShaderKeyHash {
+  size_t operator()(const ShaderKey& k) const { return std::hash<uint32_t>()(k.bits); }
+};
 namespace T8_BUFFER_USAGE{
   enum E {
     DEFAULT,
@@ -199,60 +297,6 @@ enum TEXT_BASIC_PARAMS {
   CLAMP_TO_BORDER = 8,
   NEAREST_FILTER = 16,
   LINEAR_FILTER = 32
-};
-
-enum Signature : unsigned long long {
-  // ATTRIBUTES
-  HAS_NORMALS				= 0x1,
-  HAS_TANGENTS				= 0x2,
-  HAS_BINORMALS				= 0x4,
-  HAS_TEXCOORDS0			= 0x8,
-  HAS_TEXCOORDS1			= 0x10,
-
-  // MAPS
-  DIFFUSE_MAP				= 0x20,
-  SPECULAR_MAP				= 0x40,
-  GLOSS_MAP					= 0x80,
-  NORMAL_MAP				= 0x100,
-  REFLECT_MAP				= 0x200,
-  HEIGHT_MAP				= 0x400,
-  METALLIC_MAP				= 0x800000000000,
-
-  // CASES
-  USE_NO_LIGHT				= 0x800,
-  USE_FRESNEL				= 0x1000,
-  USE_OMNIDIRECTIONAL_SHADOWS = 0x10000000000,
-
-  // PASSES
-  FORWARD_PASS				= 0x2000,
-  GBUFF_PASS				= 0x4000,
-  SHADOW_MAP_PASS			= 0x8000,
-  FSQUAD_1_TEX				= 0x10000,
-  FSQUAD_2_TEX				= 0x20000,
-  FSQUAD_3_TEX				= 0x40000,
-  FSQUAD_TESTING			= 0x80000,
-  DEFERRED_PASS				= 0x100000,
-  SHADOW_COMP_PASS			= 0x200000,
-  VERTICAL_BLUR_PASS		= 0x400000,
-  HORIZONTAL_BLUR_PASS		= 0x800000,
-  ONE_PASS_BLUR				= 0x1000000,
-  BRIGHT_PASS				= 0x2000000,
-  HDR_COMP_PASS				= 0x4000000,
-  LUMINANCE_MAP_PASS      = 0x200000000000,
-  ADAPT_LUMINANCE_PASS    = 0x400000000000,
-  COC_PASS					= 0x8000000,
-  COMBINE_COC_PASS			= 0x10000000,
-  DOF_PASS					= 0x20000000,
-  DOF_PASS_2				= 0x40000000,
-  BACKBUFFER_PASS			= 0x80000000,
-  GOD_RAY_CALCULATION_PASS	= 0x100000000,
-  GOD_RAY_BLEND_PASS		= 0x200000000,
-  SSAO_PASS					= 0x400000000,
-  RAY_MARCH					= 0x800000000,
-  RADIAL_DEPTH_PASS = 0x1000000000,
-  LIGHT_RAY_MARCHING		= 0x2000000000,
-  LIGHT_ADD					= 0x4000000000,
-  FADE_PASS					= 0x8000000000
 };
 
 

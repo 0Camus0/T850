@@ -15,6 +15,7 @@
 #include <scene/RenderMesh.h>
 #include <scene/RenderQuad.h>
 #include <scene/SplineWireframe.h>
+#include <utils/Log.h>
 
 namespace t800 {
   PrimitiveBase*	PrimitiveManager::GetPrimitive(unsigned int index) const {
@@ -35,8 +36,10 @@ namespace t800 {
   int	 PrimitiveManager::CreateMesh(const char *fname) {
     PrimitiveBase *primitive = new RenderMesh();
     primitive->Load(fname);
+    T8_LOG_INFO("Loading mesh: '%s'", fname);
     primitive->Create();
     primitives.push_back(primitive);
+    T8_LOG_INFO("Mesh '%s' ready (primitive %d)", fname, (int)(primitives.size()-1));
     return (int)(primitives.size() - 1);
   }
 

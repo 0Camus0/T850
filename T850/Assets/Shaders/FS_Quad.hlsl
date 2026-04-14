@@ -142,6 +142,9 @@ float4 FS( VS_OUTPUT input ) : SV_TARGET {
 		float3 normal = normalmap.xyz * 2.0 - 1.0;
 		normal = normalize(normal);
 
+		float3 geoNormal = tex3.Sample(SS, input.texture0).xyz * 2.0 - 1.0;
+		geoNormal = normalize(geoNormal);
+
 		float3 ReflectedVec = reflect(-EyeDir, normal.xyz);
 		ReflectedVec.x = -ReflectedVec.x;
 		ReflectedVec.z = -ReflectedVec.z;
@@ -165,7 +168,8 @@ float4 FS( VS_OUTPUT input ) : SV_TARGET {
 				float3 F = FresnelCalc(VdotH, F0);
 				float3 Kd = (float3(1.0f, 1.0f, 1.0f) - F) * (1.0f - metallic);
 
-				Final.xyz += SpecularRes.xyz + Kd * Diffuse;
+				float geoHorizon = saturate(dot(geoNormal, LightDir));
+				Final.xyz += (SpecularRes.xyz + Kd * Diffuse) * geoHorizon;
 			} else {
 				// Point light
 				float Rad = LightRadius[i >> 2][i & 3];
@@ -190,7 +194,8 @@ float4 FS( VS_OUTPUT input ) : SV_TARGET {
 					attenuation = (attenuation - cutoff) / (1.0 - cutoff);
 					attenuation = max(attenuation, 0.0);
 
-					Final.xyz += SpecularRes.xyz * attenuation + attenuation * Kd * Diffuse;
+					float geoHorizon = saturate(dot(geoNormal, LightDir));
+					Final.xyz += (SpecularRes.xyz * attenuation + attenuation * Kd * Diffuse) * geoHorizon;
 				}
 			}
 		}
@@ -199,7 +204,7 @@ float4 FS( VS_OUTPUT input ) : SV_TARGET {
 		float3 RefleCol = texEnv.SampleLevel(SS, ReflectedVec, rough * 4.0f).xyz;
 		float envAtten = (1.0f - rough) * (1.0f - rough);
 
-		Final.xyz += RefleCol * kSpecular.xyz * envAtten;
+    Final.xyz += RefleCol * kSpecular.xyz * envAtten * toogles.x;
 
 		Final.xyz *= Shadow;
 	}
@@ -208,7 +213,7 @@ float4 FS( VS_OUTPUT input ) : SV_TARGET {
 #elif defined(SHADOW_COMP_PASS)
 Texture2D tex0 : register(t0);
 Texture2D tex1 : register(t1);
-Texture2D tex2 : register(t2); // Normals
+Texture2D tex2 : register(t2); // Normals (geometric)
 Texture2D tex3 : register(t3); // Noise
 
 float4 CalculateShadow(float4 position) {
@@ -241,8 +246,7 @@ float4 CalculateShadow(float4 position) {
 					depthSM += toogles.w;
 					Val_1 = (LightPos.z > depthSM) ? 0.0 : 1.0;
 				}
-				Val_1 *= 0.75;
-				Val_1 += 0.25;
+        Val_1 = Val_1 * (1.0 - toogles.x) + toogles.x;
 				sum += Val_1;
 				Total++;
 			}
@@ -250,7 +254,7 @@ float4 CalculateShadow(float4 position) {
 		float shadowCoeff = sum / Total;
 		FShadow = shadowCoeff * float4(1.0,1.0,1.0,1.0);
 	} else {
-		FShadow = 0.25 * float4(1.0,1.0,1.0,1.0);
+    FShadow = toogles.x * float4(1.0,1.0,1.0,1.0);
 	}
 
 	return FShadow;
@@ -316,15 +320,15 @@ float4 FS( VS_OUTPUT input ) : SV_TARGET {
 		float4 position = CameraPosition + input.PosCorner*depth;
 	#endif
 
-	if (toogles.x == 1.0) {
+	#ifdef ENABLE_SHADOWS
 		Fcolor = CalculateShadow(position);
-	}
+	#endif
 
-	if (toogles.y == 1.0) {
+	#ifdef ENABLE_SSAO
 		float3 normal = GetNormal(input.texture0);
 		float Occlusion = GetOcclusion(depth, input.texture0.xy, position, normal, input.PosCorner);
 		Fcolor *= Occlusion;
-	}
+	#endif
 
 	return Fcolor;
 }
@@ -459,10 +463,11 @@ FS_OUT FS( VS_OUTPUT input ) : SV_TARGET {
 	float aperture = LightPositions[0].x;
 	float focalLength = LightPositions[0].y;
   float depthFocus;
-  if (LightPositions[1].x)
+  #ifdef AUTO_FOCUS
     depthFocus = tex0.Sample(SS, float2(0.5, 0.5)).r;// Auto Focus center
-  else
+  #else
     depthFocus = LightPositions[0].z;
+  #endif
 
 	FS_OUT OUT;
 	float z = tex0.Sample( SS, input.texture0.xy ).r;
@@ -562,6 +567,7 @@ float4 FS(VS_OUTPUT input) : SV_TARGET{
   float3 rays =  col * accum;
   rays = pow(rays, float3(0.4545, 0.4545, 0.4545));
   rays = smoothstep(defaultPos.x, 1.0, rays);
+  rays *= toogles.x;
   return float4(rays , 1.0);
 }
 
@@ -845,7 +851,9 @@ float ComputeScattering(float lightDotView)
 Texture2D tex0 : register(t0);
 Texture2D tex1 : register(t1);
 float4 FS(VS_OUTPUT input) : SV_TARGET{
-  if (toogles.w == 0.0) return float4(0,0,0,1);
+  #ifndef ENABLE_GOD_RAYS
+  return float4(0,0,0,1);
+  #else
   float depth = tex0.Sample(SS, input.texture0);
 #ifdef NON_LINEAR_DEPTH
 float4 position = mul(WVPInverse,float4(input.PosCorner.xy ,depth,1.0));
@@ -886,7 +894,9 @@ const float3 lightColor = float3(0.9803, 0.8392, 0.6470);
 }
 accumFog /= (float)steps;
 accumFog = pow(accumFog, float3(0.4545, 0.4545, 0.4545));
+accumFog *= toogles.x;
 return float4(accumFog,1);
+  #endif
 }
 #elif defined(LIGHT_ADD)
 Texture2D tex0 : register(t0);

@@ -290,6 +290,16 @@ $xaml = @"
             <StackPanel>
                 <TextBlock Text="DEV TOOLS" FontSize="12" FontWeight="SemiBold"
                            Foreground="{StaticResource AccentBrush}" Margin="0,0,0,10"/>
+                <StackPanel Margin="0,0,0,10">
+                    <TextBlock Text="Log Level" Style="{StaticResource LabelStyle}"/>
+                    <ComboBox Name="cmbLogLevel">
+                        <ComboBoxItem Content="Error" Tag="error" IsSelected="True"/>
+                        <ComboBoxItem Content="Info" Tag="info"/>
+                        <ComboBoxItem Content="Debug" Tag="debug"/>
+                        <ComboBoxItem Content="Verbose" Tag="verbose"/>
+                    </ComboBox>
+                </StackPanel>
+                <CheckBox Name="chkLogToFile" Content="Save log to file" Margin="0,0,0,6"/>
                 <CheckBox Name="chkGuiEdit" Content="GUI Edit Mode (move/scale elements)" Margin="0,0,0,6"/>
                 <CheckBox Name="chkGuiSnap" Content="Snap to Grid (auto-align)" Margin="0,0,0,6"/>
             </StackPanel>
@@ -381,6 +391,8 @@ $btnBuild       = $window.FindName("btnBuild")
 $btnRun         = $window.FindName("btnRun")
 $chkGuiEdit     = $window.FindName("chkGuiEdit")
 $chkGuiSnap     = $window.FindName("chkGuiSnap")
+$cmbLogLevel    = $window.FindName("cmbLogLevel")
+$chkLogToFile   = $window.FindName("chkLogToFile")
 
 # Resolve root directory: if running from ps2exe, use exe location; otherwise script location
 if ($MyInvocation.MyCommand.Path) {
@@ -469,6 +481,16 @@ function Load-Config {
             if ($cfg.devTools.PSObject.Properties['guiSnap']) {
                 $chkGuiSnap.IsChecked = [bool]$cfg.devTools.guiSnap
             }
+            if ($cfg.devTools.PSObject.Properties['logLevel']) {
+                foreach ($item in $cmbLogLevel.Items) {
+                    if ($item.Tag -ieq $cfg.devTools.logLevel) {
+                        $cmbLogLevel.SelectedItem = $item; break
+                    }
+                }
+            }
+            if ($cfg.devTools.PSObject.Properties['logToFile']) {
+                $chkLogToFile.IsChecked = [bool]$cfg.devTools.logToFile
+            }
         }
     } catch {
         # Silently ignore corrupt config — defaults will be used
@@ -499,8 +521,10 @@ function Save-Config {
             frame   = [int]$txtFrame.Text
         }
         devTools = @{
-            guiEdit = [bool]$chkGuiEdit.IsChecked
-            guiSnap = [bool]$chkGuiSnap.IsChecked
+            guiEdit   = [bool]$chkGuiEdit.IsChecked
+            guiSnap   = [bool]$chkGuiSnap.IsChecked
+            logLevel  = ($cmbLogLevel.SelectedItem).Tag.ToString()
+            logToFile = [bool]$chkLogToFile.IsChecked
         }
     }
     $cfg | ConvertTo-Json -Depth 3 | Set-Content $configPath -Encoding UTF8
@@ -592,6 +616,18 @@ function Get-LaunchCommand {
         $argList += "--guiSnap"
     }
 
+    $logTag = ($cmbLogLevel.SelectedItem).Tag.ToString()
+    if ($logTag -ne "error") {
+        $argList += @("--logLevel", $logTag)
+    }
+
+    if ($chkLogToFile.IsChecked) {
+        $apiTag = ($cmbApi.SelectedItem).Tag.ToString()
+        $ts = Get-Date -Format "yyyyMMdd_HHmmss"
+        $logFilename = "logs\T850_${ts}_${apiTag}.log"
+        $argList += @("--logFile", $logFilename)
+    }
+
     return @{
         ExePath = $exePath
         Args    = $argList
@@ -671,6 +707,9 @@ $chkGuiEdit.Add_Checked({ Update-Preview })
 $chkGuiEdit.Add_Unchecked({ Update-Preview })
 $chkGuiSnap.Add_Checked({ Update-Preview })
 $chkGuiSnap.Add_Unchecked({ Update-Preview })
+$chkLogToFile.Add_Checked({ Update-Preview })
+$chkLogToFile.Add_Unchecked({ Update-Preview })
+$cmbLogLevel.Add_SelectionChanged({ Update-Preview })
 $txtSeconds.Add_TextChanged({ Update-Preview })
 $txtFrame.Add_TextChanged({ Update-Preview })
 $txtWidth.Add_TextChanged({ Update-Preview })

@@ -3,18 +3,18 @@
    "cameras": [
       {
          "position": [
-            -56.867134,
-            30,
-            -8.630686
+            -42.651352,
+            27.677036,
+            3.3487148
          ],
          "eye": [
             0,
             9.75,
             -31
          ],
-         "pitch": 0.6600028,
+         "pitch": 0.24500442,
          "roll": 0,
-         "yaw": 4.9750566,
+         "yaw": 7.8350697,
          "speed": 10,
          "fov": 1.0471976,
          "aspect": 1.7778,
@@ -40,7 +40,7 @@
          ],
          "pitch": 1.3299998,
          "roll": 0,
-         "yaw": -6.9872084,
+         "yaw": -7.6334434,
          "speed": 10,
          "fov": 0.7853982,
          "aspect": 1,
@@ -61,9 +61,9 @@
             0
          ],
          "direction": [
-            -0.15435286,
+            -0.2326974,
             -0.9711483,
-            0.18178591
+            0.05218083
          ],
          "color": [
             1,
@@ -71,7 +71,7 @@
             0.92
          ],
          "radius": 0,
-         "intensity": 2,
+         "intensity": 4.3,
          "enabled": true
       },
       {
@@ -397,7 +397,7 @@
    "meshes": [
       "Models/SponzaEsc.X"
    ],
-   "environment_map": "sky/CubeMap_Mountains.dds",
+   "environment_map": "sky/CubeMap_SkyWater.dds",
    "quality": {
       "shadow_map_resolution": 2048,
       "god_rays_resolution": 0,
@@ -414,7 +414,7 @@
    },
    "settings": {
       "exposure": 1.1000004,
-      "bloom_factor": 1,
+      "bloom_factor": 0.4,
       "bloom_threshold": 1.5,
       "tone_map_white_level": 5.5,
       "luminance_tau": 0.65000004,
@@ -434,7 +434,10 @@
       "godrays_enabled": true,
       "auto_focus": true,
       "debug_mode": 0,
-      "shadow_bias": 0.000005
+      "shadow_bias": 0.000005,
+      "shadow_min": 0.29999998,
+      "env_factor": 1.6,
+      "godrays_factor": 0.7
    },
    "sliders": [
       {
@@ -582,6 +585,14 @@
          "default_val": 256
       },
       {
+         "name": "godrays_factor",
+         "label": "God Rays Factor",
+         "min_val": 0,
+         "max_val": 3,
+         "step": 0.05,
+         "default_val": 0.7
+      },
+      {
          "name": "gauss_kernel_radius",
          "label": "Gauss Radius",
          "min_val": 0.5,
@@ -617,9 +628,25 @@
          "name": "shadow_bias",
          "label": "Shadow Bias",
          "min_val": 0,
-         "max_val": 0.001,
-         "step": 0.000001,
+         "max_val": 0.00005,
+         "step": 1.0E-7,
          "default_val": 0.000005
+      },
+      {
+         "name": "shadow_min",
+         "label": "Shadow Min",
+         "min_val": 0,
+         "max_val": 0.75,
+         "step": 0.01,
+         "default_val": 0.29999998
+      },
+      {
+         "name": "env_factor",
+         "label": "Env Factor",
+         "min_val": 0,
+         "max_val": 2,
+         "step": 0.05,
+         "default_val": 1.6
       }
    ],
    "checkboxes": [
@@ -758,7 +785,7 @@
             "CubeMap_SkyDawn.dds",
             "CubeMap_SkyWater.dds"
          ],
-         "default_index": 8
+         "default_index": 10
       }
    ]
 }

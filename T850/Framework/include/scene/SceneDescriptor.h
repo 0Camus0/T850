@@ -95,6 +95,9 @@ namespace t800 {
     bool auto_focus = true;
     int debug_mode = 0;
     float shadow_bias = 0.000005f;
+    float shadow_min = 0.25f;
+    float env_factor = 1.0f;
+    float godrays_factor = 1.0f;
   };
 
   struct SliderDesc {

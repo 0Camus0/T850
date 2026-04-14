@@ -21,7 +21,9 @@
              },
     "debugFrames":  false,
     "devTools":  {
-                     "guiSnap":  false,
-                     "guiEdit":  false
+                     "guiEdit":  false,
+                     "logToFile":  false,
+                     "logLevel":  "error",
+                     "guiSnap":  false
                  }
 }

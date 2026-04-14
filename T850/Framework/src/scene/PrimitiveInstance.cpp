@@ -75,7 +75,7 @@ namespace t800 {
     if (!Visible)
       return;
     pBase->SetEnvironmentMap(EnvMap);
-    pBase->SetGlobalSignature(gSig);
+    pBase->SetGlobalKey(gKey);
     pBase->SetTexture(Textures[0], 0);
     pBase->SetTexture(Textures[1], 1);
     pBase->SetTexture(Textures[2], 2);

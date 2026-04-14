@@ -126,6 +126,7 @@ FS_OUT FS( VS_OUTPUT input )   {
 	float roughness = PBRParams.y;
 
 	normal.xyz   = normalize(input.hnormal).xyz;
+	float3 geoNormal = normal.xyz;
 
 	float2 parallaxCoords = input.texture0;
 	#if defined(HEIGHT_MAP) || defined(NORMAL_MAP)
@@ -133,8 +134,7 @@ FS_OUT FS( VS_OUTPUT input )   {
 		float3 binormal	 = normalize(input.hbinormal).xyz;
 		float3x3 TBN    = float3x3(tangent, binormal, normal.xyz);
 	#endif
-	#ifdef HEIGHT_MAP
-	  if (ParallaxSettings.w > 0.5) {
+	#if defined(HEIGHT_MAP) && defined(ENABLE_PARALLAX)
 		float heightScale = ParallaxSettings.z;
 		float3 viewDir = mul(TBN, normalize(CameraPosition.xyz - input.WorldPos.xyz));
 		viewDir = normalize(viewDir);
@@ -160,7 +160,6 @@ FS_OUT FS( VS_OUTPUT input )   {
 		float2 prevTexCoords = parallaxCoords - deltaTexCoords;
 		float weight = (prevDepthMapValue - prevRayZ) / (prevDepthMapValue - currentDepthMapValue + currentRayZ - prevRayZ);
 		parallaxCoords = prevTexCoords * weight + parallaxCoords * (1.0 - weight);
-	  }
 	#endif
 
 	#ifdef DIFFUSE_MAP
@@ -204,7 +203,7 @@ FS_OUT FS( VS_OUTPUT input )   {
 	fout.color2.b   = 0.0;
 	fout.color2.a 	= Intensities.w / 255.0;
 	
-	fout.color3 = float4(0.0, 0.0, 0.0, 0.0);
+	fout.color3 = float4(geoNormal * 0.5 + 0.5, 0.0);
 	
 #ifdef NON_LINEAR_DEPTH
 		fout.depth		= input.Pos.z / input.Pos.w;

@@ -22,8 +22,10 @@
 #include <iostream>
 #include <string>
 #include <vector>
+#include <filesystem>
 
 #include <T8_descriptors.h>
+#include <utils/Log.h>
 
 std::vector<std::string> g_args;
 
@@ -43,6 +45,8 @@ bool   g_guiScreenshot = false;      // --guiScreenshot: render 1 frame with GUI
 std::string g_guiScreenshotPath = "gui_screenshot.ppm"; // output path for --guiScreenshot
 bool   g_guiEdit     = false;        // --guiEdit: enable GUI edit mode (move/scale elements)
 bool   g_guiSnap     = false;        // --guiSnap: snap elements to grid when moving
+int    g_logLevel    = 0;            // --logLevel: 0=Error,1=Info,2=Debug,3=Verbose
+std::string g_logFile;              // --logFile <path>: write log to file (append, flush-per-entry)
 
 t800::AppBase		  *pApp = 0;
 t800::RootFramework *pFrameWork = 0;
@@ -123,10 +127,42 @@ int main(int arg,char ** args){
     else if (a == "--guiSnap") {
       g_guiSnap = true;
     }
+    else if (a == "--logLevel" && i + 1 < arg) {
+      std::string val = args[++i];
+      if (val == "error"   || val == "0") g_logLevel = 0;
+      else if (val == "info"  || val == "1") g_logLevel = 1;
+      else if (val == "debug" || val == "2") g_logLevel = 2;
+      else if (val == "verbose" || val == "3") g_logLevel = 3;
+    }
+    else if (a == "--logFile" && i + 1 < arg) {
+      g_logFile = args[++i];
+    }
   }
 
   if (g_fullscreen)
     desc.videoMode = t800::T8_VIDEO_MODE::FULLSCREEN;
+
+  // Create log directory if a file path was requested
+  if (!g_logFile.empty()) {
+    auto parent = std::filesystem::path(g_logFile).parent_path();
+    if (!parent.empty())
+      std::filesystem::create_directories(parent);
+  }
+
+  // Determine API display name for session tag
+  const char* apiTag = (desc.api == t800::GRAPHICS_API::OPENGL) ? "gl" : "d3d11";
+
+  // Initialize logging
+  uint32_t logBackends = t800::Log::T8_LOG_BACKEND_CONSOLE;
+  if (!g_logFile.empty())
+    logBackends |= t800::Log::T8_LOG_BACKEND_FILE;
+
+  t800::Log::Init(
+    static_cast<t800::Log::Level>(g_logLevel),
+    logBackends,
+    g_logFile.empty() ? nullptr : g_logFile.c_str()
+  );
+  t800::Log::SetSessionTag(apiTag);
 
 	pApp = new App;
 #ifdef OS_LINUX
@@ -143,6 +179,8 @@ int main(int arg,char ** args){
 
 	delete pFrameWork;
 	delete pApp;
+
+	t800::Log::Shutdown();
 
     return 0;
 }

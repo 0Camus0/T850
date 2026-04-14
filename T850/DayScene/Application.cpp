@@ -156,7 +156,8 @@ void App::OnDraw() {
     pFramework->pVideoDriver->SetBlendState(BaseDriver::ALPHA_BLEND);
     pFramework->pVideoDriver->SetDepthStencilState(BaseDriver::READ);
     //Fade
-    Quads[0].SetGlobalSignature(Signature::FADE_PASS);
+    ShaderKey fadeKey(0); fadeKey.setPass(PassType::FADE); fadeKey.bits |= ShaderKey::HAS_TEXCOORD0;
+    Quads[0].SetGlobalKey(fadeKey);
     if (fadeOut)
       Quads[0].SetBrightness(totalFadeTime / _fadeTime);
     else

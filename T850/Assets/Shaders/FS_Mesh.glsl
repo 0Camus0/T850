@@ -141,6 +141,7 @@ void main(){
 	mediump float roughness = PBRParams.y;
 
 	normal.xyz   = normalize(hnormal).xyz;  
+	highp vec3 geoNormal = normal.xyz;
 	highp vec2 parallaxCoords =  vecUVCoords;
 	#if defined HEIGHT_MAP || defined NORMAL_MAP
 		lowp vec3 tangent	 = normalize(htangent).xyz;
@@ -148,8 +149,7 @@ void main(){
 		lowp mat3	TBN 	 = mat3(tangent,binormal,normal);
 
 	#endif
-	#ifdef HEIGHT_MAP
-	  if (ParallaxSettings.w > 0.5) {
+	#if defined(HEIGHT_MAP) && defined(ENABLE_PARALLAX)
 		highp float heightScale = ParallaxSettings.z;
 		lowp mat3 TBN_transposed = transpose(TBN);
 		highp vec3 viewDir   = TBN_transposed * normalize( CameraPosition.xyz-WorldPos.xyz);
@@ -182,7 +182,6 @@ void main(){
 			highp vec2 prevTexCoords = parallaxCoords - deltaTexCoords;
 			highp float weight = (prevDepthMapValue - prevRayZ) /(prevDepthMapValue - currentDepthMapValue + currentRayZ - prevRayZ);
 			parallaxCoords = prevTexCoords * weight + parallaxCoords * (1.0 - weight);
-	  }
 		//parallaxCoords = vecUVCoords;
 	#endif
 
@@ -247,7 +246,7 @@ void main(){
 		// Mat Id: 0=NoLight, 1=NoNormalMap, 2=NormalMap
 		colorOut_2.a = Intensities.w / 255.0;
 
-		colorOut_3	= vec4(0.0, 0.0, 0.0, 0.0);
+		colorOut_3	= vec4(geoNormal * 0.5 + 0.5, 0.0);
 
 		#ifdef NON_LINEAR_DEPTH
 			colorOut_4	= vec4(Pos.z / Pos.w, 0.0, 0.0, 0.0);
@@ -267,7 +266,7 @@ void main(){
 		// Mat Id: 0=NoLight, 1=NoNormalMap, 2=NormalMap
 		gl_FragData[2].a = Intensities.w / 255.0;
 
-		gl_FragData[3]	= vec4(0.0, 0.0, 0.0, 0.0);
+		gl_FragData[3]	= vec4(geoNormal * 0.5 + 0.5, 0.0);
 		gl_FragData[4]	= vec4(Pos.z / CameraInfo.y, 0.0, 0.0, 0.0);
 
 		#ifdef NON_LINEAR_DEPTH

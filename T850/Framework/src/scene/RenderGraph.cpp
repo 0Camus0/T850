@@ -5,6 +5,7 @@
 #include <utils/Camera.h>
 #include <video/BaseDriver.h>
 #include <T8_descriptors.h>
+#include <utils/Log.h>
 
 #pragma warning(push)
 #pragma warning(disable: 4267 4244)
@@ -23,7 +24,7 @@ namespace t800 {
 bool LoadRenderGraphDescriptor(const std::string& path, RenderGraphDesc& desc) {
   std::ifstream file(path);
   if (!file.is_open()) {
-    printf("[RenderGraph] ERROR: cannot open '%s'\n", path.c_str());
+    T8_LOG_ERROR("[RenderGraph] Cannot open '%s'", path.c_str());
     return false;
   }
 
@@ -34,12 +35,12 @@ bool LoadRenderGraphDescriptor(const std::string& path, RenderGraphDesc& desc) {
   auto ec = glz::read<glz::opts{.error_on_unknown_keys = false}>(desc, json);
   if (ec) {
     std::string err = glz::format_error(ec, json);
-    printf("[RenderGraph] ERROR parsing '%s': %s\n", path.c_str(), err.c_str());
+    T8_LOG_ERROR("[RenderGraph] Parse error '%s': %s", path.c_str(), err.c_str());
     return false;
   }
 
-  printf("[RenderGraph] Loaded '%s': %zu render targets, %zu passes\n",
-         path.c_str(), desc.render_targets.size(), desc.passes.size());
+  T8_LOG_INFO("[RenderGraph] Loaded '%s': %zu render targets, %zu passes",
+              path.c_str(), desc.render_targets.size(), desc.passes.size());
   return true;
 }
 
@@ -73,32 +74,40 @@ static const std::unordered_map<std::string, int> s_depthFormatMap = {
   {"CUBE_F32", BaseRT::CUBE_F32},
 };
 
-static const std::unordered_map<std::string, unsigned long long> s_signatureMap = {
-  {"FORWARD_PASS",          Signature::FORWARD_PASS},
-  {"GBUFF_PASS",            Signature::GBUFF_PASS},
-  {"SHADOW_MAP_PASS",       Signature::SHADOW_MAP_PASS},
-  {"FSQUAD_1_TEX",          Signature::FSQUAD_1_TEX},
-  {"FSQUAD_2_TEX",          Signature::FSQUAD_2_TEX},
-  {"FSQUAD_3_TEX",          Signature::FSQUAD_3_TEX},
-  {"DEFERRED_PASS",         Signature::DEFERRED_PASS},
-  {"SHADOW_COMP_PASS",      Signature::SHADOW_COMP_PASS},
-  {"VERTICAL_BLUR_PASS",    Signature::VERTICAL_BLUR_PASS},
-  {"HORIZONTAL_BLUR_PASS",  Signature::HORIZONTAL_BLUR_PASS},
-  {"BRIGHT_PASS",           Signature::BRIGHT_PASS},
-  {"HDR_COMP_PASS",         Signature::HDR_COMP_PASS},
-  {"LUMINANCE_MAP_PASS",    Signature::LUMINANCE_MAP_PASS},
-  {"ADAPT_LUMINANCE_PASS",  Signature::ADAPT_LUMINANCE_PASS},
-  {"COC_PASS",              Signature::COC_PASS},
-  {"COMBINE_COC_PASS",      Signature::COMBINE_COC_PASS},
-  {"DOF_PASS",              Signature::DOF_PASS},
-  {"DOF_PASS_2",            Signature::DOF_PASS_2},
-  {"BACKBUFFER_PASS",        Signature::BACKBUFFER_PASS},
-  {"RAY_MARCH",             Signature::RAY_MARCH},
-  {"RADIAL_DEPTH_PASS",     Signature::RADIAL_DEPTH_PASS},
-  {"LIGHT_RAY_MARCHING",    Signature::LIGHT_RAY_MARCHING},
-  {"LIGHT_ADD",             Signature::LIGHT_ADD},
-  {"USE_OMNIDIRECTIONAL_SHADOWS", Signature::USE_OMNIDIRECTIONAL_SHADOWS},
-  {"FADE_PASS",             Signature::FADE_PASS},
+// Pass name -> PassType::E
+static const std::unordered_map<std::string, uint8_t> s_passMap = {
+  {"FORWARD_PASS",          PassType::FORWARD},
+  {"GBUFF_PASS",            PassType::GBUFFER},
+  {"SHADOW_MAP_PASS",       PassType::SHADOW_MAP},
+  {"FSQUAD_1_TEX",          PassType::FSQUAD_1_TEX},
+  {"FSQUAD_2_TEX",          PassType::FSQUAD_2_TEX},
+  {"FSQUAD_3_TEX",          PassType::FSQUAD_3_TEX},
+  {"DEFERRED_PASS",         PassType::DEFERRED},
+  {"SHADOW_COMP_PASS",      PassType::SHADOW_COMP},
+  {"VERTICAL_BLUR_PASS",    PassType::VERTICAL_BLUR},
+  {"HORIZONTAL_BLUR_PASS",  PassType::HORIZONTAL_BLUR},
+  {"BRIGHT_PASS",           PassType::BRIGHT},
+  {"HDR_COMP_PASS",         PassType::HDR_COMP},
+  {"LUMINANCE_MAP_PASS",    PassType::LUMINANCE_MAP},
+  {"ADAPT_LUMINANCE_PASS",  PassType::ADAPT_LUMINANCE},
+  {"COC_PASS",              PassType::COC},
+  {"COMBINE_COC_PASS",      PassType::COMBINE_COC},
+  {"DOF_PASS",              PassType::DOF},
+  {"DOF_PASS_2",            PassType::DOF_2},
+  {"BACKBUFFER_PASS",       PassType::BACKBUFFER},
+  {"RAY_MARCH",             PassType::RAY_MARCH},
+  {"RADIAL_DEPTH_PASS",     PassType::RADIAL_DEPTH},
+  {"LIGHT_RAY_MARCHING",    PassType::LIGHT_RAY_MARCHING},
+  {"LIGHT_ADD",             PassType::LIGHT_ADD},
+  {"FADE_PASS",             PassType::FADE},
+  {"GOD_RAY_CALCULATION_PASS", PassType::GOD_RAY_CALCULATION},
+  {"GOD_RAY_BLEND_PASS",    PassType::GOD_RAY_BLEND},
+  {"SSAO_PASS",             PassType::SSAO},
+};
+
+// Feature name -> ShaderKey feature bit
+static const std::unordered_map<std::string, uint32_t> s_featureMap = {
+  {"USE_OMNIDIRECTIONAL_SHADOWS", ShaderKey::OMNI_SHADOWS},
 };
 
 static const std::unordered_map<std::string, int> s_depthStencilMap = {
@@ -136,11 +145,20 @@ int RenderGraph::ResolveDepthFormat(const std::string& name) {
   return (it != s_depthFormatMap.end()) ? it->second : BaseRT::NOTHING;
 }
 
-unsigned long long RenderGraph::ResolveSignature(const std::string& name) {
-  auto it = s_signatureMap.find(name);
-  if (it != s_signatureMap.end()) return it->second;
-  printf("[RenderGraph] WARNING: unknown signature '%s'\n", name.c_str());
-  return 0;
+ShaderKey RenderGraph::ResolveSignature(const std::string& name) {
+  ShaderKey key(0);
+  auto pit = s_passMap.find(name);
+  if (pit != s_passMap.end()) {
+    key.setPass(pit->second);
+    return key;
+  }
+  auto fit = s_featureMap.find(name);
+  if (fit != s_featureMap.end()) {
+    key.bits = fit->second;
+    return key;
+  }
+  T8_LOG_ERROR("[RenderGraph] Unknown signature '%s'", name.c_str());
+  return key;
 }
 
 int RenderGraph::ResolveDepthStencilState(const std::string& name) {
@@ -184,7 +202,7 @@ RenderGraph::ResolvedTexture RenderGraph::ResolveTextureInput(const std::string&
     // Just an RT name, default to COLOR0
     auto it = m_rtHandles.find(source);
     if (it != m_rtHandles.end()) result.rt_handle = it->second;
-    else printf("[RenderGraph] WARNING: unknown RT '%s'\n", source.c_str());
+    else T8_LOG_ERROR("[RenderGraph] Unknown RT '%s'", source.c_str());
     return result;
   }
 
@@ -193,7 +211,7 @@ RenderGraph::ResolvedTexture RenderGraph::ResolveTextureInput(const std::string&
 
   auto it = m_rtHandles.find(rtName);
   if (it != m_rtHandles.end()) result.rt_handle = it->second;
-  else printf("[RenderGraph] WARNING: unknown RT '%s' in '%s'\n", rtName.c_str(), source.c_str());
+  else T8_LOG_ERROR("[RenderGraph] Unknown RT '%s' in '%s'", rtName.c_str(), source.c_str());
 
   result.attachment = ResolveAttachment(attName);
   return result;
@@ -231,9 +249,9 @@ void RenderGraph::CreateRenderTargets(BaseDriver* driver, const SceneProps& prop
     int handle = driver->CreateRT(rt.color_count, cf, df, w, h, rt.linear_filter);
     m_rtHandles[rt.name] = handle;
 
-    printf("[RenderGraph] Created RT '%s' -> handle %d (%dx%d, %d colors, cf=%s, df=%s)\n",
-           rt.name.c_str(), handle, w, h, rt.color_count,
-           rt.color_format.c_str(), rt.depth_format.c_str());
+    T8_LOG_INFO("[RenderGraph] Created RT '%s' -> handle %d (%dx%d, %d colors, cf=%s, df=%s)",
+                rt.name.c_str(), handle, w, h, rt.color_count,
+                rt.color_format.c_str(), rt.depth_format.c_str());
   }
 
   // Now that RT handles are resolved, build the DAG
@@ -308,7 +326,7 @@ void RenderGraph::BuildGraph() {
     }
   }
 
-  printf("[RenderGraph] Built graph: %zu nodes, %zu edges\n", m_nodes.size(), m_edges.size());
+  T8_LOG_INFO("[RenderGraph] Built graph: %zu nodes, %zu edges", m_nodes.size(), m_edges.size());
 }
 
 int RenderGraph::GetRTHandle(const std::string& name) const {
@@ -319,6 +337,7 @@ int RenderGraph::GetRTHandle(const std::string& name) const {
 // ---- Print ----
 
 void RenderGraph::PrintGraph() const {
+  if (t800::Log::GetMaxLevel() < t800::Log::LVL_DEBUG) return;
   printf("\n=== Render Graph ===\n");
   for (const auto& node : m_nodes) {
     printf("[%2d] %-30s -> RT: %-20s (handle %d)\n",
@@ -427,15 +446,18 @@ void RenderGraph::ExecutePass(
       driver->RTs[node.rt_handle]->ChangeCubeDepthTexture(face);
 
       for (const auto& draw : pass.draws) {
-        unsigned long long sig = ResolveSignature(draw.signature);
-        for (const auto& extraSig : draw.extra_signatures)
-          sig |= ResolveSignature(extraSig);
+        ShaderKey sig = ResolveSignature(draw.signature);
+        for (const auto& extraSig : draw.extra_signatures) {
+          ShaderKey extra = ResolveSignature(extraSig);
+          sig.bits |= extra.bits;
+        }
 
         for (int mi : draw.mesh_indices) {
           if (mi < meshCount) {
-            meshes[mi].SetGlobalSignature(sig);
+            meshes[mi].SetGlobalKey(sig);
             meshes[mi].Draw();
-            meshes[mi].SetGlobalSignature(Signature::FORWARD_PASS);
+            ShaderKey fwd(0); fwd.setPass(PassType::FORWARD);
+            meshes[mi].SetGlobalKey(fwd);
           }
         }
       }
@@ -482,16 +504,19 @@ void RenderGraph::ExecutePass(
 
     // Execute draw commands
     for (const auto& draw : pass.draws) {
-      unsigned long long sig = ResolveSignature(draw.signature);
-      for (const auto& extraSig : draw.extra_signatures)
-        sig |= ResolveSignature(extraSig);
+      ShaderKey sig = ResolveSignature(draw.signature);
+      for (const auto& extraSig : draw.extra_signatures) {
+        ShaderKey extra = ResolveSignature(extraSig);
+        sig.bits |= extra.bits;
+      }
 
       if (draw.type == "mesh") {
         for (int mi : draw.mesh_indices) {
           if (mi < meshCount) {
-            meshes[mi].SetGlobalSignature(sig);
+            meshes[mi].SetGlobalKey(sig);
             meshes[mi].Draw();
-            meshes[mi].SetGlobalSignature(Signature::FORWARD_PASS);
+            ShaderKey fwd(0); fwd.setPass(PassType::FORWARD);
+            meshes[mi].SetGlobalKey(fwd);
           }
         }
       }
@@ -504,12 +529,12 @@ void RenderGraph::ExecutePass(
             quads[7].SetTexture(driver->GetRTTexture(resolved.rt_handle, resolved.attachment), input.slot);
           }
         }
-        quads[7].SetGlobalSignature(sig);
+        quads[7].SetGlobalKey(sig);
         quads[7].Draw();
       }
       else {
         // fullscreen_quad (default)
-        quads[0].SetGlobalSignature(sig);
+        quads[0].SetGlobalKey(sig);
         quads[0].Draw();
       }
     }

@@ -8,6 +8,7 @@
 #include <cstdio>
 #include <cmath>
 #include <chrono>
+#include <utils/Log.h>
 #include <ctime>
 #ifdef OS_WINDOWS
 #include <windows.h>
@@ -90,7 +91,7 @@ bool FrameDumper::LoadReplaySnapshot() {
     return true;
   } else {
     replayState_ = 2;
-    printf("[FrameDumper] Failed to load '%s', continuing normally.\n",
+    T8_LOG_ERROR("[FrameDumper] Failed to load '%s', continuing normally.",
            config_.replaySnapshotPath.c_str());
     config_.replaySnapshotPath.clear();
     return false;
@@ -164,7 +165,7 @@ void FrameDumper::ApplySnapshot(Camera& cam, Camera& lightCam, SceneProps& props
     }
   }
 
-  printf("[FrameDumper] Snapshot applied (scene=%d, %zu lights), warming up %d frames before dump...\n",
+  T8_LOG_INFO("[FrameDumper] Snapshot applied (scene=%d, %zu lights), warming up %d frames before dump...",
          replayData_.scene, replayData_.lights.size(), WARMUP_FRAMES);
   fflush(stdout);
 }
@@ -176,7 +177,7 @@ void FrameDumper::UpdateReplayState() {
   if (replayWarmup_ >= WARMUP_FRAMES) {
     replayState_ = 2;
     debugDumpRequested_ = true;
-    printf("[FrameDumper] Warm-up done, triggering dump\n");
+    T8_LOG_INFO("[FrameDumper] Warm-up done, triggering dump");
     fflush(stdout);
   }
 }
@@ -254,7 +255,7 @@ void FrameDumper::DumpFrame(BaseDriver* driver,
   WriteSnapshot(dumpDir + "/snapshot.json", cam, lightCam, props,
                 dumpFrameCounter_, apiName, dt, omniCams, omniLightPos);
 
-  std::cout << "RT dump complete -> " << dumpDir << "/ (" << (rts.size() + 1) << " files)" << std::endl;
+  T8_LOG_INFO("RT dump complete -> %s/ (%zu files)", dumpDir.c_str(), rts.size() + 1);
 
   // Post-dump behavior
   if (!config_.keepRunning) {
@@ -262,7 +263,7 @@ void FrameDumper::DumpFrame(BaseDriver* driver,
   } else {
     dumped_ = false;
     debugDumpRequested_ = false;
-    printf("[keepRunning] Dump done, continuing...\n");
+    T8_LOG_INFO("[keepRunning] Dump done, continuing...");
     fflush(stdout);
   }
 }
@@ -294,35 +295,29 @@ void FrameDumper::LogCameraState(Camera& cam, Camera& lightCam,
   float lcEffPitch  = asinf(-lightCam.Look.y);
   float lcEffYaw    = atan2f(lightCam.Look.x, lightCam.Look.z);
 
-  auto dumpMatrix = [](std::ostream& os, const char* name, const XMATRIX44& mat) {
-    os << name << ":\n";
+  auto dumpMatrix = [](const char* name, const XMATRIX44& mat) {
     for (int r = 0; r < 4; r++)
-      os << "  [" << r << "]: " << mat.m[r][0] << ", "
-         << mat.m[r][1] << ", " << mat.m[r][2] << ", " << mat.m[r][3] << "\n";
+      T8_LOG_DEBUG("  %s[%d]: %f, %f, %f, %f", name, r, mat.m[r][0], mat.m[r][1], mat.m[r][2], mat.m[r][3]);
   };
 
-  std::cout << "=== DUMP STATE (frame " << frame << ", " << apiName
-            << ", dt=" << dt << "s) ===" << std::endl;
-  std::cout << "Cam Eye: " << cam.Eye.x << ", " << cam.Eye.y << ", " << cam.Eye.z << std::endl;
-  std::cout << "Cam Pitch: " << camEffPitch << " Roll: " << cam.Roll << " Yaw: " << camEffYaw << std::endl;
-  std::cout << "LightCam Eye: " << lightCam.Eye.x << ", " << lightCam.Eye.y
-            << ", " << lightCam.Eye.z << std::endl;
-  std::cout << "LightCam Pitch: " << lcEffPitch << " Roll: " << lightCam.Roll
-            << " Yaw: " << lcEffYaw << std::endl;
-  dumpMatrix(std::cout, "Cam.View", cam.View);
-  dumpMatrix(std::cout, "Cam.Projection", cam.Projection);
-  dumpMatrix(std::cout, "Cam.VP", cam.VP);
-  dumpMatrix(std::cout, "LightCam.View", lightCam.View);
-  dumpMatrix(std::cout, "LightCam.Projection", lightCam.Projection);
-  dumpMatrix(std::cout, "LightCam.VP", lightCam.VP);
+  T8_LOG_DEBUG("=== DUMP STATE (frame %d, %s, dt=%fs) ===", frame, apiName.c_str(), dt);
+  T8_LOG_DEBUG("Cam Eye: %f, %f, %f", cam.Eye.x, cam.Eye.y, cam.Eye.z);
+  T8_LOG_DEBUG("Cam Pitch: %f Roll: %f Yaw: %f", camEffPitch, cam.Roll, camEffYaw);
+  T8_LOG_DEBUG("LightCam Eye: %f, %f, %f", lightCam.Eye.x, lightCam.Eye.y, lightCam.Eye.z);
+  T8_LOG_DEBUG("LightCam Pitch: %f Roll: %f Yaw: %f", lcEffPitch, lightCam.Roll, lcEffYaw);
+  dumpMatrix("Cam.View", cam.View);
+  dumpMatrix("Cam.Projection", cam.Projection);
+  dumpMatrix("Cam.VP", cam.VP);
+  dumpMatrix("LightCam.View", lightCam.View);
+  dumpMatrix("LightCam.Projection", lightCam.Projection);
+  dumpMatrix("LightCam.VP", lightCam.VP);
 
-  std::cout << "Lights (" << props.Lights.size() << "):" << std::endl;
+  T8_LOG_DEBUG("Lights (%zu):", props.Lights.size());
   for (size_t i = 0; i < props.Lights.size(); i++) {
     const Light& lt = props.Lights[i];
-    std::cout << "  [" << i << "] Pos=(" << lt.Position.x << ", "
-              << lt.Position.y << ", " << lt.Position.z
-              << ") Col=(" << lt.Color.x << ", " << lt.Color.y << ", " << lt.Color.z
-              << ") R=" << lt.radius << std::endl;
+    T8_LOG_DEBUG("  [%zu] Pos=(%f, %f, %f) Col=(%f, %f, %f) R=%f",
+              i, lt.Position.x, lt.Position.y, lt.Position.z,
+              lt.Color.x, lt.Color.y, lt.Color.z, lt.radius);
   }
 }
 

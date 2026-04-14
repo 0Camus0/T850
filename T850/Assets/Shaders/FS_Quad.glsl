@@ -196,6 +196,13 @@ void main(){
 		highp vec3 normal = normalmap.xyz*2.0 - 1.0;
 		normal = normalize(normal);
 		
+		#ifdef ES_30
+			highp vec3 geoNormal = texture(tex3, coords).xyz * 2.0 - 1.0;
+		#else
+			highp vec3 geoNormal = texture2D(tex3, coords).xyz * 2.0 - 1.0;
+		#endif
+		geoNormal = normalize(geoNormal);
+		
 		highp vec3 ReflectedVec = reflect(-EyeDir, normal.xyz);	
 		ReflectedVec.y = ReflectedVec.y;
 		ReflectedVec.x = -ReflectedVec.x;
@@ -235,7 +242,8 @@ void main(){
 					highp vec3 F = FresnelCalc(VdotH, F0);
 					highp vec3 Kd = (vec3(1.0f, 1.0f, 1.0f) - F) * (1.0f - metallic);
 
-					Final.xyz += SpecularRes.xyz + Kd*Diffuse;
+					highp float geoHorizon = clamp(dot(geoNormal, LightDir), 0.0, 1.0);
+					Final.xyz += (SpecularRes.xyz + Kd*Diffuse) * geoHorizon;
 				} else {
 					// Point light
 					highp float Rad = LightRadius[i >> 2][i & 3];
@@ -262,7 +270,8 @@ void main(){
 						attenuation = (attenuation - cutoff) / (1.0 - cutoff);
 						attenuation = max(attenuation, 0.0);
 
-						Final.xyz += SpecularRes.xyz*attenuation + attenuation*Kd*Diffuse;
+						highp float geoHorizon = clamp(dot(geoNormal, LightDir), 0.0, 1.0);
+						Final.xyz += (SpecularRes.xyz*attenuation + attenuation*Kd*Diffuse) * geoHorizon;
 					}
 				}
 			}
@@ -272,7 +281,7 @@ void main(){
 	 		highp vec3 RefleCol = texture( texEnv, ReflectedVec , rough*4.0f).xyz;
 			highp float envAtten = (1.0 - rough) * (1.0 - rough);
 
-	 		Final.xyz += RefleCol*kSpecular.xyz*envAtten;
+	 		Final.xyz += RefleCol*kSpecular.xyz*envAtten * toogles.x;
 
 			Final.xyz *= Shadow;
 
@@ -293,7 +302,7 @@ uniform mediump samplerCube tex1;
 #else
 uniform mediump sampler2DShadow  tex1;
 #endif
-uniform mediump sampler2D tex2; // Normals
+uniform mediump sampler2D tex2; // Normals (geometric)
 uniform mediump sampler2D tex3; // Noise
 
 highp vec4 CalculateShadow(highp vec4 position){
@@ -327,8 +336,7 @@ highp vec4 FShadow = vec4(1.0,1.0,1.0,1.0);
 			//shadowVal += 0.25;
 		}
 		shadowVal /= float(samples);
-		shadowVal *=  0.75;
-		shadowVal =  (1.0 - shadowVal) ;
+		shadowVal = 1.0 - shadowVal * (1.0 - toogles.x);
 		FShadow = shadowVal*vec4(1.0,1.0,1.0,1.0);//texture(tex1, fragToLight ).rrrr;
 	#else
 	highp vec4 LightPos = WVPLight*position;
@@ -363,7 +371,7 @@ highp vec4 FShadow = vec4(1.0,1.0,1.0,1.0);
 						#endif
 					}
 					Val_1 *= 0.75;
-					Val_1 += 0.25;
+					Val_1 = Val_1 * (1.0 - toogles.x) + toogles.x;
 					sum += Val_1;
 					Total++;
 				}
@@ -394,11 +402,11 @@ highp vec4 FShadow = vec4(1.0,1.0,1.0,1.0);
 			highp float depthPos = LightPos.z;
 
 			if( depthPos  > depthSM)
-				FShadow = 0.25*vec4(1.0,1.0,1.0,1.0);
+				FShadow = toogles.x*vec4(1.0,1.0,1.0,1.0);
 		#endif
 		
 	}else{
-		FShadow = 0.25*vec4(1.0,1.0,1.0,1.0);
+		FShadow = toogles.x*vec4(1.0,1.0,1.0,1.0);
 	}
 	#endif
 	return FShadow;
@@ -489,15 +497,15 @@ void main(){
 		highp vec4 position = CameraPosition + PosCorner*depth;
 	#endif
 
-	if (toogles.x == 1.0){
+	#ifdef ENABLE_SHADOWS
 		Fcolor = CalculateShadow(position);
-	}
+	#endif
 
-	if (toogles.y == 1.0) {
+	#ifdef ENABLE_SSAO
 		highp vec3 normal = GetNormal(coords);
 		highp float Occlusion = GetOcclusion(depth, coords.xy, position, normal);
 		Fcolor *= Occlusion;
-	}
+	#endif
 
 	
 	#ifdef ES_30
@@ -828,14 +836,15 @@ void main() {
 	highp float aperture = LightPositions[0].x;
 	highp float focalLength = LightPositions[0].y;
     highp float depthFocus;
-  if (LightPositions[1].x == 1.0)
+  #ifdef AUTO_FOCUS
   	#ifdef ES_30
     depthFocus = texture(tex0, vec2(0.5, 0.5)).r;// Auto Focus center
 	#else
 	depthFocus = texture2D(tex0, vec2(0.5, 0.5)).r;// Auto Focus center
 	#endif
-  else
+  #else
     depthFocus = LightPositions[0].z;
+  #endif
 	#ifdef ES_30
 	highp float z = texture( tex0, coords ).r;
 	#else 
@@ -1000,6 +1009,7 @@ void main() {
   highp vec3 rays =  col * vec3(accum,accum,accum);
   rays = pow(rays,  vec3(0.4545,0.4545,0.4545));
   rays = smoothstep(defaultPos.x, 1.0, rays);
+	rays *= toogles.x;
 
   #ifdef ES_30
 	colorOut = vec4(rays , 1.0);
@@ -1055,14 +1065,14 @@ highp float ComputeScattering(highp float lightDotView)
 uniform highp sampler2D tex0;
 uniform mediump sampler2DShadow  tex1;
 void main(){
-  if (toogles.w == 0.0) {
+  #ifndef ENABLE_GOD_RAYS
     #ifdef ES_30
       colorOut = vec4(0.0, 0.0, 0.0, 1.0);
     #else
       gl_FragColor = vec4(0.0, 0.0, 0.0, 1.0);
     #endif
     return;
-  }
+  #endif
   const highp float ditherPattern[16] = float[]( 0.0f, 0.5f, 0.125f, 0.625f,0.75f, 0.22f, 0.875f, 0.375f,0.1875f, 0.6875f, 0.0625f, 0.5625, 0.9375f, 0.4375f, 0.8125f, 0.3125);
   highp vec2 uv = vecUVCoords.xy;
   uv.y = 1.0 - uv.y;
@@ -1112,6 +1122,7 @@ for (int i = 0; i<steps; i++) {
 }
 accumFog /= vec4(steps,steps,steps,steps);
 accumFog = pow(accumFog,  vec4(0.4545,0.4545,0.4545,0.4545));
+accumFog *= vec4(toogles.x, toogles.x, toogles.x, 1.0);
 
   #ifdef ES_30
 	colorOut = vec4(accumFog.rgb, 1.0);

@@ -109,7 +109,7 @@ namespace t800 {
     static int ResolveAttachment(const std::string& name);
     static int ResolveColorFormat(const std::string& name);
     static int ResolveDepthFormat(const std::string& name);
-    static unsigned long long ResolveSignature(const std::string& name);
+    static ShaderKey ResolveSignature(const std::string& name);
     static int ResolveDepthStencilState(const std::string& name);
     static int ResolveCullFace(const std::string& name);
     static int ResolveBlendState(const std::string& name);

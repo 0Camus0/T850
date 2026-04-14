@@ -383,7 +383,13 @@ void GUIManager::LayoutSliders(int screenW, int screenH) {
   float maxLabelW = 0.0f;
   for (auto& sp : m_sliderPairs) {
     char buf[128];
-    snprintf(buf, sizeof(buf), "%s: %.2f", sp.slider->label.c_str(), sp.slider->maxVal);
+    char valueBuf[32];
+    if (sp.slider->name == "shadow_bias") {
+      snprintf(valueBuf, sizeof(valueBuf), "%.2e", sp.slider->maxVal);
+    } else {
+      snprintf(valueBuf, sizeof(valueBuf), "%.2f", sp.slider->maxVal);
+    }
+    snprintf(buf, sizeof(buf), "%s: %s", sp.slider->label.c_str(), valueBuf);
     sp.label->text = buf;
     sp.label->FitToText(tmpCtx);
     if (sp.label->w > maxLabelW) maxLabelW = sp.label->w;
@@ -422,7 +428,13 @@ void GUIManager::LayoutSliders(int screenW, int screenH) {
     float labelY = std::round(rowY  / m_gridCellH) * m_gridCellH;
 
     char buf[128];
-    snprintf(buf, sizeof(buf), "%s: %.2f", sp.slider->label.c_str(), sp.slider->value);
+    char valueBuf[32];
+    if (sp.slider->name == "shadow_bias") {
+      snprintf(valueBuf, sizeof(valueBuf), "%.2e", sp.slider->value);
+    } else {
+      snprintf(valueBuf, sizeof(valueBuf), "%.2f", sp.slider->value);
+    }
+    snprintf(buf, sizeof(buf), "%s: %s", sp.slider->label.c_str(), valueBuf);
     sp.label->text = buf;
     sp.label->FitToText(tmpCtx);
     sp.label->x = labelX;

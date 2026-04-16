@@ -25,6 +25,7 @@
 #include <sstream>
 #include <cstdio>
 #include <cmath>
+#include <chrono>
 
 namespace t800 {
 
@@ -139,6 +140,13 @@ void GUIManager::InitTextures() {
   m_selectorBtnRightTexture = loadGuiTexture("GUI_DropNonPressedRight.png");
   m_selectorBtnLeftPressTexture = loadGuiTexture("GUI_DropPressedLeft.png");
   m_selectorBtnRightPressTexture = loadGuiTexture("GUI_DropPressedRight.png");
+
+  // Line-edit popup
+  m_popupBgTexture            = loadGuiTexture("PopupBackground.png");
+  m_popupOkTexture            = loadGuiTexture("PopUpOKNonPressed.png");
+  m_popupOkPressedTexture     = loadGuiTexture("PopUpOKPressed.png");
+  m_popupCancelTexture        = loadGuiTexture("PopUpCancelNonPressed.png");
+  m_popupCancelPressedTexture = loadGuiTexture("PopUpCancelPressed.png");
 }
 
 void GUIManager::Destroy() {
@@ -412,18 +420,57 @@ void GUIManager::LayoutSliders(int screenW, int screenH) {
 }
 
 // ─── Update ─────────────────────────────────────────────────
-void GUIManager::Update(const InputManager& input, int screenW, int screenH) {
+void GUIManager::Update(InputManager& input, int screenW, int screenH) {
   if (!m_visible) return;
 
   float mx = (float)input.mouseX;
   float my = (float)input.mouseY;
   bool mouseDown = input.MouseButtonStates[0][0];
 
+  // Popup (line-edit) takes priority over all other modes
+  if (m_popupActive) {
+    UpdatePopup(input, mx, my, mouseDown);
+    m_wasMouseDown = mouseDown;
+    // Don't let text input leak into next frame even if popup not active
+    input.textInput.clear();
+    return;
+  }
+  // Drop any text input accumulated while popup is not active
+  input.textInput.clear();
+
   if (m_editMode) {
     UpdateEditMode(mx, my, mouseDown);
   } else if (m_controlEditMode) {
     UpdateControlEditMode(mx, my, mouseDown);
   } else {
+    // Double-click on any label opens the line-edit popup (normal flow).
+    bool justPressed = mouseDown && !m_wasMouseDown;
+    if (justPressed) {
+      for (auto* e : m_elements) {
+        if (!e->visible) continue;
+        auto* lbl = dynamic_cast<GUILabel*>(e);
+        if (!lbl || lbl->isFPS) continue;
+        if (!lbl->HitTest(mx, my)) continue;
+        auto nowMs = std::chrono::duration_cast<std::chrono::milliseconds>(
+                       std::chrono::steady_clock::now().time_since_epoch()).count();
+        const uint64_t kDblClickMs = 400;
+        const float kDblClickPx = 8.0f;
+        bool isDbl = (m_lastClickElement == lbl) &&
+                     ((uint64_t)nowMs - m_lastClickTimeMs <= kDblClickMs) &&
+                     (std::abs(mx - m_lastClickX) <= kDblClickPx) &&
+                     (std::abs(my - m_lastClickY) <= kDblClickPx);
+        m_lastClickTimeMs = (uint64_t)nowMs;
+        m_lastClickElement = lbl;
+        m_lastClickX = mx;
+        m_lastClickY = my;
+        if (isDbl) {
+          OpenPopupFor(lbl);
+          m_wasMouseDown = mouseDown;
+          return;
+        }
+        break; // Consumed the click for dbl-click tracking
+      }
+    }
     // Normal slider interaction
     for (auto& sp : m_sliderPairs) {
       float before = sp.slider->value;
@@ -528,6 +575,28 @@ void GUIManager::UpdateEditMode(float mx, float my, bool mouseDown) {
       auto* e = m_elements[i];
       if (!e->visible) continue;
       if (e->HitTest(mx, my)) {
+        // Double-click on a label opens the text-edit popup.
+        if (auto* lbl = dynamic_cast<GUILabel*>(e)) {
+          auto nowMs = std::chrono::duration_cast<std::chrono::milliseconds>(
+                         std::chrono::steady_clock::now().time_since_epoch()).count();
+          const uint64_t kDblClickMs = 400;
+          const float kDblClickPx = 8.0f;
+          bool isDbl = (m_lastClickElement == e) &&
+                       ((uint64_t)nowMs - m_lastClickTimeMs <= kDblClickMs) &&
+                       (std::abs(mx - m_lastClickX) <= kDblClickPx) &&
+                       (std::abs(my - m_lastClickY) <= kDblClickPx);
+          m_lastClickTimeMs = (uint64_t)nowMs;
+          m_lastClickElement = e;
+          m_lastClickX = mx;
+          m_lastClickY = my;
+          if (isDbl) {
+            OpenPopupFor(lbl);
+            return;
+          }
+        } else {
+          // Clicked a non-label: reset double-click tracking
+          m_lastClickElement = nullptr;
+        }
         e->selected  = true;
         e->dragging  = true;
         e->dragOffX  = mx - e->x;
@@ -562,6 +631,11 @@ void GUIManager::Draw() {
   m_ctx.selectorBtnRightTex  = m_selectorBtnRightTexture;
   m_ctx.selectorBtnLeftPressTex  = m_selectorBtnLeftPressTexture;
   m_ctx.selectorBtnRightPressTex = m_selectorBtnRightPressTexture;
+  m_ctx.popupBgTex             = m_popupBgTexture;
+  m_ctx.popupOkTex             = m_popupOkTexture;
+  m_ctx.popupOkPressedTex      = m_popupOkPressedTexture;
+  m_ctx.popupCancelTex         = m_popupCancelTexture;
+  m_ctx.popupCancelPressedTex  = m_popupCancelPressedTexture;
   m_ctx.screenW    = screenW;
   m_ctx.screenH    = screenH;
   m_ctx.editMode   = m_editMode;
@@ -584,6 +658,18 @@ void GUIManager::Draw() {
   m_ctx.checkboxMarkScaleY = m_controlLayout.checkboxMarkScaleY;
   m_ctx.checkboxMarkOffsetX = m_controlLayout.checkboxMarkOffsetX;
   m_ctx.checkboxMarkOffsetY = m_controlLayout.checkboxMarkOffsetY;
+  m_ctx.popupBgScaleX    = m_controlLayout.popupBgScaleX;
+  m_ctx.popupBgScaleY    = m_controlLayout.popupBgScaleY;
+  m_ctx.popupOkScaleX    = m_controlLayout.popupOkScaleX;
+  m_ctx.popupOkScaleY    = m_controlLayout.popupOkScaleY;
+  m_ctx.popupOkOffsetX   = m_controlLayout.popupOkOffsetX;
+  m_ctx.popupOkOffsetY   = m_controlLayout.popupOkOffsetY;
+  m_ctx.popupCancelScaleX  = m_controlLayout.popupCancelScaleX;
+  m_ctx.popupCancelScaleY  = m_controlLayout.popupCancelScaleY;
+  m_ctx.popupCancelOffsetX = m_controlLayout.popupCancelOffsetX;
+  m_ctx.popupCancelOffsetY = m_controlLayout.popupCancelOffsetY;
+  m_ctx.popupTextScaleX  = m_controlLayout.popupTextScaleX;
+  m_ctx.popupTextScaleY  = m_controlLayout.popupTextScaleY;
 
   g_pBaseDriver->SetBlendState(BaseDriver::BLEND_STATES::ALPHA_BLEND);
   g_pBaseDriver->SetDepthStencilState(BaseDriver::DEPTH_STENCIL_STATES::NONE);
@@ -662,6 +748,11 @@ void GUIManager::Draw() {
     DrawEditOverlays();
   }
 
+  // Line-edit popup draws on top of everything
+  if (m_popupActive) {
+    DrawPopup();
+  }
+
   g_pBaseDriver->SetBlendState(BaseDriver::BLEND_STATES::BLEND_DEFAULT);
   g_pBaseDriver->SetDepthStencilState(BaseDriver::DEPTH_STENCIL_STATES::DEPTH_DEFAULT);
 }
@@ -711,6 +802,10 @@ void GUIManager::DrawGrid() {
 }
 
 void GUIManager::DrawControlEditPreview() {
+  // Ensure alpha blend is enabled so textures with transparent regions composite correctly.
+  g_pBaseDriver->SetBlendState(BaseDriver::BLEND_STATES::ALPHA_BLEND);
+  g_pBaseDriver->SetDepthStencilState(BaseDriver::DEPTH_STENCIL_STATES::NONE);
+
   m_quad.Set();
   m_shader->Set(*T8DeviceContext);
   T8DeviceContext->SetPrimitiveTopology(T8_TOPOLOGY::TRIANLE_LIST);
@@ -815,6 +910,32 @@ void GUIManager::DrawControlEditPreview() {
       }
       break;
     }
+    case GUIControlEditTarget::LineEditControl: {
+      // Render the popup preview with current layout. The active subpart rect is drawn via DrawControlEditOverlay.
+      float bgX, bgY, bgW, bgH, okX, okY, okW, okH, caX, caY, caW, caH;
+      GetPopupRects(bgX, bgY, bgW, bgH, okX, okY, okW, okH, caX, caY, caW, caH);
+      if (m_popupBgTexture)
+        m_ctx.DrawTexturedQuad(bgX, bgY, bgW, bgH, m_popupBgTexture, XVECTOR3(1.0f, 1.0f, 1.0f));
+      if (m_popupOkTexture)
+        m_ctx.DrawTexturedQuad(okX, okY, okW, okH, m_popupOkTexture, XVECTOR3(1.0f, 1.0f, 1.0f));
+      if (m_popupCancelTexture)
+        m_ctx.DrawTexturedQuad(caX, caY, caW, caH, m_popupCancelTexture, XVECTOR3(1.0f, 1.0f, 1.0f));
+      // Example text centered on bg (matches runtime text placement).
+      if (m_ctx.text) {
+        int sw = (int)m_ctx.screenW;
+        int sh = (int)m_ctx.screenH;
+        float charH = m_textRenderer.m_fontSize * m_ctx.screenH / (float)m_textRenderer.m_textureSize;
+        float targetH = bgH * m_controlLayout.popupTextScaleY * 0.25f;
+        float scaleY = (charH > 0.0f) ? targetH / charH : 1.0f;
+        float scaleX = scaleY * m_controlLayout.popupTextScaleX / (std::max)(0.0001f, m_controlLayout.popupTextScaleY);
+        std::string exemplar = "Example";
+        float textW = m_textRenderer.MeasurePixel(exemplar, sw, sh) * scaleX;
+        float textX = bgX + (bgW - textW) * 0.5f;
+        float textY = bgY + (bgH - targetH) * 0.5f - bgH * 0.15f;
+        m_textRenderer.DrawPixelScaled(textX, textY, scaleX, scaleY, sw, sh, XVECTOR3(1.0f, 1.0f, 1.0f), exemplar);
+      }
+      break;
+    }
   }
 }
 
@@ -868,6 +989,14 @@ bool GUIManager::SetControlEditTargetByName(const std::string& targetName) {
     m_sliderCalibrationStep = 0;
     return true;
   }
+  if (targetName == "linedit_popup" || targetName == "linedit_control" || targetName == "linedit_ok" ||
+      targetName == "linedit_cancel" || targetName == "linedit_text") {
+    m_controlEditTarget = GUIControlEditTarget::LineEditControl;
+    // All popup parts share one edit session; start on background.
+    m_controlActiveSubpart = GUIControlSubpart::Primary;
+    m_sliderCalibrationStep = 0;
+    return true;
+  }
   return false;
 }
 
@@ -876,6 +1005,7 @@ const char* GUIManager::GetControlEditTargetName() const {
     case GUIControlEditTarget::SliderKnob: return "slider_knob";
     case GUIControlEditTarget::SelectorControl: return "selector_control";
     case GUIControlEditTarget::CheckboxMark: return "checkbox_mark";
+    case GUIControlEditTarget::LineEditControl: return "linedit_popup";
     default: return "slider_knob";
   }
 }
@@ -980,6 +1110,64 @@ void GUIManager::UpdateControlEditMode(float mx, float my, bool mouseDown) {
         m_controlLayout.checkboxMarkOffsetY = (m_controlEditRect.y - parent.y - (parent.h - partH) * 0.5f) / (std::max)(1.0f, parent.h);
         break;
       }
+      case GUIControlEditTarget::LineEditControl: {
+        // Need current popup geometry to back out normalized values
+        float bgX, bgY, bgW, bgH, okX, okY, okW, okH, caX, caY, caW, caH;
+        GetPopupRects(bgX, bgY, bgW, bgH, okX, okY, okW, okH, caX, caY, caW, caH);
+        float bgCX = bgX + bgW * 0.5f;
+        float bgCY = bgY + bgH * 0.5f;
+        switch (m_controlActiveSubpart) {
+          case GUIControlSubpart::PopupOk: {
+            // Keep the OK button's native aspect ratio when scaling.
+            float baseH = bgH * 0.25f; // baseline
+            m_controlLayout.popupOkScaleY = partH / (std::max)(1.0f, baseH);
+            float srcW = m_popupOkTexture ? (float)m_popupOkTexture->x : 100.0f;
+            float srcH = m_popupOkTexture ? (float)m_popupOkTexture->y : 40.0f;
+            float implWFromY = (srcH > 0.0f ? (srcW / srcH) : 2.5f) * partH;
+            m_controlLayout.popupOkScaleX = m_controlLayout.popupOkScaleY * (partW / (std::max)(1.0f, implWFromY));
+            float centerX = m_controlEditRect.x + partW * 0.5f;
+            float centerY = m_controlEditRect.y + partH * 0.5f;
+            m_controlLayout.popupOkOffsetX = (centerX - bgCX) / (std::max)(1.0f, bgH);
+            m_controlLayout.popupOkOffsetY = (centerY - bgCY) / (std::max)(1.0f, bgH);
+            break;
+          }
+          case GUIControlSubpart::PopupCancel: {
+            float baseH = bgH * 0.25f;
+            m_controlLayout.popupCancelScaleY = partH / (std::max)(1.0f, baseH);
+            float srcW = m_popupCancelTexture ? (float)m_popupCancelTexture->x : 100.0f;
+            float srcH = m_popupCancelTexture ? (float)m_popupCancelTexture->y : 40.0f;
+            float implWFromY = (srcH > 0.0f ? (srcW / srcH) : 2.5f) * partH;
+            m_controlLayout.popupCancelScaleX = m_controlLayout.popupCancelScaleY * (partW / (std::max)(1.0f, implWFromY));
+            float centerX = m_controlEditRect.x + partW * 0.5f;
+            float centerY = m_controlEditRect.y + partH * 0.5f;
+            m_controlLayout.popupCancelOffsetX = (centerX - bgCX) / (std::max)(1.0f, bgH);
+            m_controlLayout.popupCancelOffsetY = (centerY - bgCY) / (std::max)(1.0f, bgH);
+            break;
+          }
+          case GUIControlSubpart::PopupText: {
+            float baseH = bgH * 0.25f;
+            m_controlLayout.popupTextScaleY = partH / (std::max)(1.0f, baseH);
+            // Match X scale to rect width, using the CURRENT scaleY (partH/charH) so that
+            // width/height can be adjusted independently without cross-coupling.
+            float charH = m_textRenderer.m_fontSize * m_ctx.screenH / (float)m_textRenderer.m_textureSize;
+            float scaleY = (charH > 0.0f) ? partH / charH : 1.0f;
+            float natW = m_textRenderer.MeasurePixel("Example", (int)m_ctx.screenW, (int)m_ctx.screenH) * scaleY;
+            m_controlLayout.popupTextScaleX = m_controlLayout.popupTextScaleY * (partW / (std::max)(1.0f, natW));
+            break;
+          }
+          default: {
+            // Primary: edit background size.
+            float baseH = (m_ctx.screenH > 0.0f ? m_ctx.screenH : (float)g_pBaseDriver->height) * 0.30f;
+            m_controlLayout.popupBgScaleY = partH / (std::max)(1.0f, baseH);
+            float srcW = m_popupBgTexture ? (float)m_popupBgTexture->x : 400.0f;
+            float srcH = m_popupBgTexture ? (float)m_popupBgTexture->y : 160.0f;
+            float implWFromY = (srcH > 0.0f ? (srcW / srcH) : 2.5f) * partH;
+            m_controlLayout.popupBgScaleX = m_controlLayout.popupBgScaleY * (partW / (std::max)(1.0f, implWFromY));
+            break;
+          }
+        }
+        break;
+      }
     }
     ApplyControlLayoutToElements();
   };
@@ -1042,6 +1230,38 @@ void GUIManager::UpdateControlEditMode(float mx, float my, bool mouseDown) {
         m_controlEditRect.valid = true;
         return;
       }
+      case GUIControlEditTarget::LineEditControl: {
+        float bgX, bgY, bgW, bgH, okX, okY, okW, okH, caX, caY, caW, caH;
+        GetPopupRects(bgX, bgY, bgW, bgH, okX, okY, okW, okH, caX, caY, caW, caH);
+        switch (m_controlActiveSubpart) {
+          case GUIControlSubpart::PopupOk:
+            m_controlEditRect = { okX, okY, okW, okH, true };
+            break;
+          case GUIControlSubpart::PopupCancel:
+            m_controlEditRect = { caX, caY, caW, caH, true };
+            break;
+          case GUIControlSubpart::PopupText: {
+            // Represent text rect as the baseline example text area
+            int sw = (int)m_ctx.screenW;
+            int sh = (int)m_ctx.screenH;
+            float charH = m_textRenderer.m_fontSize * m_ctx.screenH / (float)m_textRenderer.m_textureSize;
+            float targetH = bgH * m_controlLayout.popupTextScaleY * 0.25f;
+            float scaleY = (charH > 0.0f) ? targetH / charH : 1.0f;
+            float scaleX = scaleY * m_controlLayout.popupTextScaleX / (std::max)(0.0001f, m_controlLayout.popupTextScaleY);
+            float natW = m_textRenderer.MeasurePixel("Example", sw, sh) * scaleX;
+            float tW = (std::max)(8.0f, natW);
+            float tH = (std::max)(4.0f, targetH);
+            m_controlEditRect = { bgX + (bgW - tW) * 0.5f,
+                                  bgY + (bgH - tH) * 0.5f - bgH * 0.15f,
+                                  tW, tH, true };
+            break;
+          }
+          default:
+            m_controlEditRect = { bgX, bgY, bgW, bgH, true };
+            break;
+        }
+        return;
+      }
     }
   };
 
@@ -1071,6 +1291,11 @@ void GUIManager::UpdateControlEditMode(float mx, float my, bool mouseDown) {
     }
     m_controlDragActive = false;
     m_controlResizeActive = false;
+    // Popup text can grow arbitrarily; ensure the font atlas is baked at sufficient resolution.
+    if (m_controlEditTarget == GUIControlEditTarget::LineEditControl &&
+        m_controlActiveSubpart == GUIControlSubpart::PopupText) {
+      RebakeFontIfNeeded();
+    }
     return;
   }
 
@@ -1104,6 +1329,46 @@ void GUIManager::UpdateControlEditMode(float mx, float my, bool mouseDown) {
       computeRect();
       overHandle = false;
       overBody = true;
+    }
+
+    // Line-edit popup: pick whichever subpart was clicked (bg/ok/cancel/text).
+    if (m_controlEditTarget == GUIControlEditTarget::LineEditControl) {
+      float bgX, bgY, bgW, bgH, okX, okY, okW, okH, caX, caY, caW, caH;
+      GetPopupRects(bgX, bgY, bgW, bgH, okX, okY, okW, okH, caX, caY, caW, caH);
+
+      int sw = (int)m_ctx.screenW;
+      int sh = (int)m_ctx.screenH;
+      float charH = m_textRenderer.m_fontSize * m_ctx.screenH / (float)m_textRenderer.m_textureSize;
+      float targetH = bgH * m_controlLayout.popupTextScaleY * 0.25f;
+      float scaleY = (charH > 0.0f) ? targetH / charH : 1.0f;
+      float scaleX = scaleY * m_controlLayout.popupTextScaleX / (std::max)(0.0001f, m_controlLayout.popupTextScaleY);
+      float natW = m_textRenderer.MeasurePixel("Example", sw, sh) * scaleX;
+      float tW = (std::max)(8.0f, natW);
+      float tH = (std::max)(4.0f, targetH);
+      float tX = bgX + (bgW - tW) * 0.5f;
+      float tY = bgY + (bgH - tH) * 0.5f - bgH * 0.15f;
+
+      auto hit = [&](float x, float y, float w, float h) {
+        return (mx >= x && mx <= x + w && my >= y && my <= y + h);
+      };
+
+      // Priority: smaller rects first so they win over the background they sit on.
+      GUIControlSubpart picked = m_controlActiveSubpart;
+      if      (hit(okX, okY, okW, okH))                 picked = GUIControlSubpart::PopupOk;
+      else if (hit(caX, caY, caW, caH))                 picked = GUIControlSubpart::PopupCancel;
+      else if (hit(tX, tY, tW, tH))                     picked = GUIControlSubpart::PopupText;
+      else if (hit(bgX, bgY, bgW, bgH))                 picked = GUIControlSubpart::Primary;
+
+      if (picked != m_controlActiveSubpart) {
+        m_controlActiveSubpart = picked;
+        computeRect();
+        // Recompute handle/body for the new active rect.
+        hx = m_controlEditRect.x + m_controlEditRect.w - hs;
+        hy = m_controlEditRect.y + m_controlEditRect.h - hs;
+        overHandle = (mx >= hx && mx <= hx + hs && my >= hy && my <= hy + hs);
+        overBody = (mx >= m_controlEditRect.x && mx <= m_controlEditRect.x + m_controlEditRect.w &&
+                    my >= m_controlEditRect.y && my <= m_controlEditRect.y + m_controlEditRect.h);
+      }
     }
 
     if (overHandle) {
@@ -1147,6 +1412,36 @@ void GUIManager::DrawControlEditOverlay() {
   T8DeviceContext->SetPrimitiveTopology(T8_TOPOLOGY::TRIANLE_LIST);
   XVECTOR3 activeColor(1.0f, 0.6f, 0.1f);
   XVECTOR3 secondaryColor(0.2f, 0.8f, 1.0f);
+
+  // For the popup, draw all four subpart outlines; only the active one gets the handle.
+  if (m_controlEditTarget == GUIControlEditTarget::LineEditControl) {
+    float bgX, bgY, bgW, bgH, okX, okY, okW, okH, caX, caY, caW, caH;
+    GetPopupRects(bgX, bgY, bgW, bgH, okX, okY, okW, okH, caX, caY, caW, caH);
+
+    int sw = (int)m_ctx.screenW;
+    int sh = (int)m_ctx.screenH;
+    float charH = m_textRenderer.m_fontSize * m_ctx.screenH / (float)m_textRenderer.m_textureSize;
+    float targetH = bgH * m_controlLayout.popupTextScaleY * 0.25f;
+    float scaleY = (charH > 0.0f) ? targetH / charH : 1.0f;
+    float scaleX = scaleY * m_controlLayout.popupTextScaleX / (std::max)(0.0001f, m_controlLayout.popupTextScaleY);
+    float natW = m_textRenderer.MeasurePixel("Example", sw, sh) * scaleX;
+    float tW = (std::max)(8.0f, natW);
+    float tH = (std::max)(4.0f, targetH);
+    float tX = bgX + (bgW - tW) * 0.5f;
+    float tY = bgY + (bgH - tH) * 0.5f - bgH * 0.15f;
+
+    auto drawSub = [&](GUIControlSubpart kind, float x, float y, float w, float h) {
+      bool isActive = (m_controlActiveSubpart == kind);
+      const XVECTOR3& c = isActive ? activeColor : secondaryColor;
+      DrawControlEditRectOverlay(x, y, w, h, c, isActive);
+    };
+    drawSub(GUIControlSubpart::Primary,     bgX, bgY, bgW, bgH);
+    drawSub(GUIControlSubpart::PopupOk,     okX, okY, okW, okH);
+    drawSub(GUIControlSubpart::PopupCancel, caX, caY, caW, caH);
+    drawSub(GUIControlSubpart::PopupText,   tX, tY, tW, tH);
+    return;
+  }
+
   DrawControlEditRectOverlay(m_controlEditRect.x, m_controlEditRect.y, m_controlEditRect.w, m_controlEditRect.h, activeColor, true);
   if (m_controlEditTarget == GUIControlEditTarget::SelectorControl && m_controlEditRectSecondary.valid) {
     DrawControlEditRectOverlay(m_controlEditRectSecondary.x, m_controlEditRectSecondary.y,
@@ -1166,8 +1461,24 @@ void GUIManager::RebakeFontIfNeeded() {
     if (sp.label->h > maxH)
       maxH = sp.label->h;
   }
+  for (auto& cp : m_checkboxPairs) {
+    if (cp.label->h > maxH)
+      maxH = cp.label->h;
+  }
+  for (auto& sp : m_selectorPairs) {
+    if (sp.label->h > maxH)
+      maxH = sp.label->h;
+  }
   if (m_fpsLabel && m_fpsLabel->h > maxH)
     maxH = m_fpsLabel->h;
+
+  // Also account for the popup text target height so popup text stays crisp when scaled up.
+  {
+    float sh = (m_ctx.screenH > 0.0f) ? m_ctx.screenH : screenH;
+    float popupBgH = sh * 0.30f * m_controlLayout.popupBgScaleY;
+    float popupTextH = popupBgH * m_controlLayout.popupTextScaleY * 0.25f;
+    if (popupTextH > maxH) maxH = popupTextH;
+  }
 
   // Only rebake if the largest label exceeds the baked glyph height
   if (maxH > charH * 1.05f) {
@@ -1230,6 +1541,12 @@ void GUIManager::ApplyUniformScale() {
     for (auto& sp : m_sliderPairs) {
       sp.label->h = newH;
     }
+    for (auto& cp : m_checkboxPairs) {
+      cp.label->h = newH;
+    }
+    for (auto& sp : m_selectorPairs) {
+      sp.label->h = newH;
+    }
     if (m_fpsLabel) {
       m_fpsLabel->h = newH;
     }
@@ -1245,6 +1562,7 @@ void GUIManager::ApplyUniformScale() {
 struct ElementLayoutEntry {
   std::string id;
   float x = 0, y = 0, w = 0, h = 0;  // normalized: x,w in [0,1] of refW; y,h in [0,1] of refH
+  std::string label;                 // optional: custom label text for slider/checkbox/selector
 };
 
 struct GUILayoutFile {
@@ -1278,6 +1596,19 @@ struct GUIControlLayoutFile {
   float checkboxMarkScaleY = 1.0f;
   float checkboxMarkOffsetX = 0.0f;
   float checkboxMarkOffsetY = 0.0f;
+
+  float popupBgScaleX = 1.0f;
+  float popupBgScaleY = 1.0f;
+  float popupOkScaleX = 1.0f;
+  float popupOkScaleY = 1.0f;
+  float popupOkOffsetX = -0.30f;
+  float popupOkOffsetY = 0.35f;
+  float popupCancelScaleX = 1.0f;
+  float popupCancelScaleY = 1.0f;
+  float popupCancelOffsetX = 0.30f;
+  float popupCancelOffsetY = 0.35f;
+  float popupTextScaleX = 0.6f;
+  float popupTextScaleY = 0.6f;
 };
 
 bool GUIManager::SaveLayout(const std::string& path) {
@@ -1292,12 +1623,17 @@ bool GUIManager::SaveLayout(const std::string& path) {
   lf.gridCellH = m_gridCellH / screenH;
   // Normalize element coords: positions by respective axis, sizes by height
   for (auto* e : m_elements) {
+    std::string labelField;
+    if (auto* sl = dynamic_cast<GUISliderBar*>(e))       labelField = sl->label;
+    else if (auto* cb = dynamic_cast<GUICheckbox*>(e))   labelField = cb->label;
+    else if (auto* se = dynamic_cast<GUISelector*>(e))   labelField = se->label;
     lf.elements.push_back({
       e->id,
       e->x / screenW,   // X position: fraction of width
       e->y / screenH,   // Y position: fraction of height
       e->w / screenH,   // width:  fraction of height (uniform)
-      e->h / screenH    // height: fraction of height (uniform)
+      e->h / screenH,   // height: fraction of height (uniform)
+      labelField
     });
   }
   auto result = glz::write<glz::opts{.prettify = true}>(lf);
@@ -1312,6 +1648,7 @@ bool GUIManager::SaveLayout(const std::string& path) {
   }
   file << result.value();
   T8_LOG_INFO("[GUIManager] Layout saved to '%s' (%zu elements)", path.c_str(), m_elements.size());
+  m_layoutDirty = false;
   return true;
 }
 
@@ -1353,8 +1690,12 @@ bool GUIManager::LoadLayout(const std::string& path) {
         // Keep internal sizing in sync with loaded dimensions
         if (auto* sl = dynamic_cast<GUISliderBar*>(e)) {
           sl->knobSize = e->h;
+          if (!entry.label.empty()) sl->label = entry.label;
         } else if (auto* sel = dynamic_cast<GUISelector*>(e)) {
           sel->btnSize = e->h;
+          if (!entry.label.empty()) sel->label = entry.label;
+        } else if (auto* cb = dynamic_cast<GUICheckbox*>(e)) {
+          if (!entry.label.empty()) cb->label = entry.label;
         }
         break;
       }
@@ -1362,6 +1703,14 @@ bool GUIManager::LoadLayout(const std::string& path) {
   }
   T8_LOG_INFO("[GUIManager] Layout loaded from '%s' (%zu entries, ref %.0fx%.0f -> %.0fx%.0f)",
          path.c_str(), lf.elements.size(), lf.ref_width, lf.ref_height, curW, curH);
+  // Mirror restored labels into their paired GUILabel->text so they show immediately.
+  for (auto& cp : m_checkboxPairs) {
+    if (cp.label && cp.checkbox) cp.label->text = cp.checkbox->label;
+  }
+  for (auto& sp : m_selectorPairs) {
+    if (sp.label && sp.selector) sp.label->text = sp.selector->label;
+  }
+  // Slider paired labels are regenerated each frame in Draw (label: value).
   RebakeFontIfNeeded();
   ApplyControlLayoutToElements();
   return true;
@@ -1388,6 +1737,18 @@ bool GUIManager::SaveControlLayout(const std::string& path) {
   f.checkboxMarkScaleY = m_controlLayout.checkboxMarkScaleY;
   f.checkboxMarkOffsetX = m_controlLayout.checkboxMarkOffsetX;
   f.checkboxMarkOffsetY = m_controlLayout.checkboxMarkOffsetY;
+  f.popupBgScaleX = m_controlLayout.popupBgScaleX;
+  f.popupBgScaleY = m_controlLayout.popupBgScaleY;
+  f.popupOkScaleX = m_controlLayout.popupOkScaleX;
+  f.popupOkScaleY = m_controlLayout.popupOkScaleY;
+  f.popupOkOffsetX = m_controlLayout.popupOkOffsetX;
+  f.popupOkOffsetY = m_controlLayout.popupOkOffsetY;
+  f.popupCancelScaleX = m_controlLayout.popupCancelScaleX;
+  f.popupCancelScaleY = m_controlLayout.popupCancelScaleY;
+  f.popupCancelOffsetX = m_controlLayout.popupCancelOffsetX;
+  f.popupCancelOffsetY = m_controlLayout.popupCancelOffsetY;
+  f.popupTextScaleX = m_controlLayout.popupTextScaleX;
+  f.popupTextScaleY = m_controlLayout.popupTextScaleY;
 
   auto result = glz::write<glz::opts{.prettify = true}>(f);
   if (!result) {
@@ -1442,8 +1803,21 @@ bool GUIManager::LoadControlLayout(const std::string& path) {
   m_controlLayout.checkboxMarkScaleY = f.checkboxMarkScaleY;
   m_controlLayout.checkboxMarkOffsetX = f.checkboxMarkOffsetX;
   m_controlLayout.checkboxMarkOffsetY = f.checkboxMarkOffsetY;
+  m_controlLayout.popupBgScaleX = f.popupBgScaleX;
+  m_controlLayout.popupBgScaleY = f.popupBgScaleY;
+  m_controlLayout.popupOkScaleX = f.popupOkScaleX;
+  m_controlLayout.popupOkScaleY = f.popupOkScaleY;
+  m_controlLayout.popupOkOffsetX = f.popupOkOffsetX;
+  m_controlLayout.popupOkOffsetY = f.popupOkOffsetY;
+  m_controlLayout.popupCancelScaleX = f.popupCancelScaleX;
+  m_controlLayout.popupCancelScaleY = f.popupCancelScaleY;
+  m_controlLayout.popupCancelOffsetX = f.popupCancelOffsetX;
+  m_controlLayout.popupCancelOffsetY = f.popupCancelOffsetY;
+  m_controlLayout.popupTextScaleX = f.popupTextScaleX;
+  m_controlLayout.popupTextScaleY = f.popupTextScaleY;
 
   ApplyControlLayoutToElements();
+  RebakeFontIfNeeded();
   T8_LOG_INFO("[GUIManager] Control layout loaded from '%s'", path.c_str());
   return true;
 }
@@ -1497,6 +1871,231 @@ bool GUIManager::HandleControlEditTab(const std::string& path) {
               m_controlLayout.sliderKnobMinNorm,
               m_controlLayout.sliderKnobMaxNorm);
   return SaveControlLayout(path);
+}
+
+// ═══════════════════════════════════════════════════════════
+//  Line-edit popup
+// ═══════════════════════════════════════════════════════════
+
+void GUIManager::OpenPopupFor(GUILabel* label) {
+  if (!label) return;
+  if (label->isFPS) return; // FPS text is updated each frame; not user-editable.
+
+  // Resolve what field the popup edits so the user sees the editable part
+  m_popupTargetLabel    = label;
+  m_popupTargetSlider   = nullptr;
+  m_popupTargetCheckbox = nullptr;
+  m_popupTargetSelector = nullptr;
+
+  for (auto& sp : m_sliderPairs) {
+    if (sp.label == label) { m_popupTargetSlider = sp.slider; break; }
+  }
+  if (!m_popupTargetSlider) {
+    for (auto& cp : m_checkboxPairs) {
+      if (cp.label == label) { m_popupTargetCheckbox = cp.checkbox; break; }
+    }
+  }
+  if (!m_popupTargetSlider && !m_popupTargetCheckbox) {
+    for (auto& sp : m_selectorPairs) {
+      if (sp.label == label) { m_popupTargetSelector = sp.selector; break; }
+    }
+  }
+
+  if (m_popupTargetSlider)        m_popupText = m_popupTargetSlider->label;
+  else if (m_popupTargetCheckbox) m_popupText = m_popupTargetCheckbox->label;
+  else if (m_popupTargetSelector) m_popupText = m_popupTargetSelector->label;
+  else                            m_popupText = label->text;
+
+  m_popupCaret = (int)m_popupText.size();
+  m_popupBlink = 0.0f;
+  m_popupActive = true;
+  m_popupWasMouseDown = true; // user is still holding mouse from the double-click
+  m_popupOkPressed = false;
+  m_popupCancelPressed = false;
+  T8_LOG_INFO("[GUI Popup] Opened for label '%s' (text='%s')",
+              label->id.c_str(), m_popupText.c_str());
+}
+
+void GUIManager::ClosePopupAndCommit(bool commit) {
+  if (!m_popupActive) return;
+  if (commit && m_popupTargetLabel) {
+    if (m_popupTargetSlider) {
+      m_popupTargetSlider->label = m_popupText;
+    } else if (m_popupTargetCheckbox) {
+      m_popupTargetCheckbox->label = m_popupText;
+      m_popupTargetLabel->text = m_popupText;
+    } else if (m_popupTargetSelector) {
+      m_popupTargetSelector->label = m_popupText;
+      m_popupTargetLabel->text = m_popupText;
+    } else {
+      m_popupTargetLabel->text = m_popupText;
+    }
+    m_layoutDirty = true;
+    T8_LOG_INFO("[GUI Popup] Committed text '%s' to label '%s' (layout dirty)",
+                m_popupText.c_str(), m_popupTargetLabel->id.c_str());
+  } else {
+    T8_LOG_INFO("[GUI Popup] Cancelled");
+  }
+  m_popupActive = false;
+  m_popupTargetLabel    = nullptr;
+  m_popupTargetSlider   = nullptr;
+  m_popupTargetCheckbox = nullptr;
+  m_popupTargetSelector = nullptr;
+  m_popupText.clear();
+  m_popupCaret = 0;
+}
+
+void GUIManager::GetPopupRects(float& bgX, float& bgY, float& bgW, float& bgH,
+                                float& okX, float& okY, float& okW, float& okH,
+                                float& cancelX, float& cancelY, float& cancelW, float& cancelH) const {
+  float screenW = m_ctx.screenW > 0.0f ? m_ctx.screenW : (float)g_pBaseDriver->width;
+  float screenH = m_ctx.screenH > 0.0f ? m_ctx.screenH : (float)g_pBaseDriver->height;
+
+  // Popup background size: driven by texture aspect & bg scale, centered on screen.
+  float srcW = m_popupBgTexture ? (float)m_popupBgTexture->x : 400.0f;
+  float srcH = m_popupBgTexture ? (float)m_popupBgTexture->y : 160.0f;
+  float baseH = screenH * 0.30f; // baseline height (30% of screen)
+  bgH = baseH * m_controlLayout.popupBgScaleY;
+  bgW = (srcH > 0.0f ? (srcW / srcH) : 2.5f) * bgH * m_controlLayout.popupBgScaleX / (std::max)(0.0001f, m_controlLayout.popupBgScaleY);
+  bgX = (screenW - bgW) * 0.5f;
+  bgY = (screenH - bgH) * 0.5f;
+
+  // Buttons: scaled to native aspect relative to bg height, positioned via offsets from bg center.
+  float okSrcW = m_popupOkTexture ? (float)m_popupOkTexture->x : 100.0f;
+  float okSrcH = m_popupOkTexture ? (float)m_popupOkTexture->y : 40.0f;
+  okH = bgH * m_controlLayout.popupOkScaleY * 0.25f; // 25% of bg height baseline
+  okW = (okSrcH > 0.0f ? (okSrcW / okSrcH) : 2.5f) * okH * m_controlLayout.popupOkScaleX / (std::max)(0.0001f, m_controlLayout.popupOkScaleY);
+  float bgCX = bgX + bgW * 0.5f;
+  float bgCY = bgY + bgH * 0.5f;
+  okX = bgCX + m_controlLayout.popupOkOffsetX * bgH - okW * 0.5f;
+  okY = bgCY + m_controlLayout.popupOkOffsetY * bgH - okH * 0.5f;
+
+  float caSrcW = m_popupCancelTexture ? (float)m_popupCancelTexture->x : 100.0f;
+  float caSrcH = m_popupCancelTexture ? (float)m_popupCancelTexture->y : 40.0f;
+  cancelH = bgH * m_controlLayout.popupCancelScaleY * 0.25f;
+  cancelW = (caSrcH > 0.0f ? (caSrcW / caSrcH) : 2.5f) * cancelH * m_controlLayout.popupCancelScaleX / (std::max)(0.0001f, m_controlLayout.popupCancelScaleY);
+  cancelX = bgCX + m_controlLayout.popupCancelOffsetX * bgH - cancelW * 0.5f;
+  cancelY = bgCY + m_controlLayout.popupCancelOffsetY * bgH - cancelH * 0.5f;
+}
+
+void GUIManager::UpdatePopup(InputManager& input, float mx, float my, bool mouseDown) {
+  // Keyboard handling (edge-triggered)
+  auto pressed = [&](int key) -> bool {
+    // PressedOnceKey uses edge latch; we need a local check because we may call multiple times
+    if (key < 0 || key >= MAXKEYS) return false;
+    bool now = input.KeyStates[0][key];
+    bool latched = input.KeyStates[1][key];
+    if (now && !latched) { input.KeyStates[1][key] = true; return true; }
+    return false;
+  };
+
+  if (pressed(T800K_ESCAPE)) {
+    ClosePopupAndCommit(false);
+    return;
+  }
+  if (pressed(T800K_RETURN) || pressed(T800K_KP_ENTER)) {
+    ClosePopupAndCommit(true);
+    return;
+  }
+  if (pressed(T800K_BACKSPACE)) {
+    if (m_popupCaret > 0) {
+      m_popupText.erase(m_popupCaret - 1, 1);
+      m_popupCaret--;
+    }
+  }
+  if (pressed(T800K_DELETE)) {
+    if (m_popupCaret < (int)m_popupText.size()) {
+      m_popupText.erase(m_popupCaret, 1);
+    }
+  }
+  if (pressed(T800K_LEFT)) {
+    if (m_popupCaret > 0) m_popupCaret--;
+  }
+  if (pressed(T800K_RIGHT)) {
+    if (m_popupCaret < (int)m_popupText.size()) m_popupCaret++;
+  }
+  if (pressed(T800K_HOME)) {
+    m_popupCaret = 0;
+  }
+  if (pressed(T800K_END)) {
+    m_popupCaret = (int)m_popupText.size();
+  }
+
+  // Consume text input buffer (UTF-8 chars)
+  if (!input.textInput.empty()) {
+    m_popupText.insert(m_popupCaret, input.textInput);
+    m_popupCaret += (int)input.textInput.size();
+    input.textInput.clear();
+  }
+
+  // Blink timer (approx 60fps)
+  m_popupBlink += 1.0f / 60.0f;
+  if (m_popupBlink > 1.0f) m_popupBlink -= 1.0f;
+
+  // Mouse on buttons
+  float bgX, bgY, bgW, bgH, okX, okY, okW, okH, cancelX, cancelY, cancelW, cancelH;
+  GetPopupRects(bgX, bgY, bgW, bgH, okX, okY, okW, okH, cancelX, cancelY, cancelW, cancelH);
+  bool overOk     = (mx >= okX && mx <= okX + okW && my >= okY && my <= okY + okH);
+  bool overCancel = (mx >= cancelX && mx <= cancelX + cancelW && my >= cancelY && my <= cancelY + cancelH);
+  m_popupOkPressed     = overOk && mouseDown;
+  m_popupCancelPressed = overCancel && mouseDown;
+  bool justReleased = !mouseDown && m_popupWasMouseDown;
+  if (justReleased) {
+    if (overOk)     { ClosePopupAndCommit(true);  m_popupWasMouseDown = mouseDown; return; }
+    if (overCancel) { ClosePopupAndCommit(false); m_popupWasMouseDown = mouseDown; return; }
+  }
+  m_popupWasMouseDown = mouseDown;
+}
+
+void GUIManager::DrawPopup() {
+  if (!m_popupActive) return;
+
+  // The text batch pass that runs before us ends with BLEND_DEFAULT (no blending).
+  // Transparent regions of the OK/Cancel PNGs would otherwise render as opaque,
+  // which under GL hides the buttons completely.
+  g_pBaseDriver->SetBlendState(BaseDriver::BLEND_STATES::ALPHA_BLEND);
+  g_pBaseDriver->SetDepthStencilState(BaseDriver::DEPTH_STENCIL_STATES::NONE);
+
+  m_quad.Set();
+  m_shader->Set(*T8DeviceContext);
+  T8DeviceContext->SetPrimitiveTopology(T8_TOPOLOGY::TRIANLE_LIST);
+
+  // No full-screen dim; popup is modal via input routing, not via visual overlay.
+  float bgX, bgY, bgW, bgH, okX, okY, okW, okH, cancelX, cancelY, cancelW, cancelH;
+  GetPopupRects(bgX, bgY, bgW, bgH, okX, okY, okW, okH, cancelX, cancelY, cancelW, cancelH);
+
+  XVECTOR3 tint(1.0f, 1.0f, 1.0f);
+  if (m_popupBgTexture)
+    m_ctx.DrawTexturedQuad(bgX, bgY, bgW, bgH, m_popupBgTexture, tint);
+
+  Texture* okTex = m_popupOkPressed ? m_popupOkPressedTexture : m_popupOkTexture;
+  if (okTex) m_ctx.DrawTexturedQuad(okX, okY, okW, okH, okTex, tint);
+  Texture* caTex = m_popupCancelPressed ? m_popupCancelPressedTexture : m_popupCancelTexture;
+  if (caTex) m_ctx.DrawTexturedQuad(cancelX, cancelY, cancelW, cancelH, caTex, tint);
+
+  // Draw text centered on background
+  if (m_ctx.text) {
+    int sw = (int)m_ctx.screenW;
+    int sh = (int)m_ctx.screenH;
+    float charH = m_textRenderer.m_fontSize * m_ctx.screenH / (float)m_textRenderer.m_textureSize;
+    float targetH = bgH * m_controlLayout.popupTextScaleY * 0.25f;
+    float scaleY = (charH > 0.0f) ? targetH / charH : 1.0f;
+    float scaleX = scaleY * m_controlLayout.popupTextScaleX / (std::max)(0.0001f, m_controlLayout.popupTextScaleY);
+    float textW = m_textRenderer.MeasurePixel(m_popupText, sw, sh) * scaleX;
+    float textX = bgX + (bgW - textW) * 0.5f;
+    float textY = bgY + (bgH - targetH) * 0.5f - bgH * 0.15f; // above buttons
+    XVECTOR3 color(1.0f, 1.0f, 1.0f);
+    m_textRenderer.DrawPixelScaled(textX, textY, scaleX, scaleY, sw, sh, color, m_popupText);
+
+    // Caret
+    if (m_popupBlink < 0.5f) {
+      std::string pre = m_popupText.substr(0, (std::max)(0, (std::min)((int)m_popupText.size(), m_popupCaret)));
+      float preW = m_textRenderer.MeasurePixel(pre, sw, sh) * scaleX;
+      float caretX = textX + preW;
+      float caretW = (std::max)(1.0f, scaleX * 2.0f);
+      m_ctx.DrawSolidQuad(caretX, textY, caretW, targetH, color);
+    }
+  }
 }
 
 } // namespace t800

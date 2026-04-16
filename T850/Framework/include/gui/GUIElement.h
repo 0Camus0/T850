@@ -30,6 +30,12 @@ namespace t800 {
     Texture*        selectorBtnRightTex  = nullptr;
     Texture*        selectorBtnLeftPressTex  = nullptr;
     Texture*        selectorBtnRightPressTex = nullptr;
+    // Line-edit popup textures
+    Texture*        popupBgTex            = nullptr;
+    Texture*        popupOkTex            = nullptr;
+    Texture*        popupOkPressedTex     = nullptr;
+    Texture*        popupCancelTex        = nullptr;
+    Texture*        popupCancelPressedTex = nullptr;
 
     float           screenW    = 1280.0f;
     float           screenH    = 720.0f;
@@ -58,6 +64,20 @@ namespace t800 {
     float checkboxMarkScaleY   = 1.0f;
     float checkboxMarkOffsetX  = 0.0f; // in checkbox-height units
     float checkboxMarkOffsetY  = 0.0f; // in checkbox-height units
+
+    // Line-edit popup layout (all scale/offset in popup-background-height units).
+    float popupBgScaleX    = 1.0f;
+    float popupBgScaleY    = 1.0f;
+    float popupOkScaleX    = 1.0f;
+    float popupOkScaleY    = 1.0f;
+    float popupOkOffsetX   = 0.0f;
+    float popupOkOffsetY   = 0.0f;
+    float popupCancelScaleX  = 1.0f;
+    float popupCancelScaleY  = 1.0f;
+    float popupCancelOffsetX = 0.0f;
+    float popupCancelOffsetY = 0.0f;
+    float popupTextScaleX  = 1.0f;  // scale of popup text relative to bg height
+    float popupTextScaleY  = 1.0f;
 
     // Helper: draw a solid‑colour quad (uses whiteTex + tint)
     void DrawSolidQuad(float px, float py, float w, float h,

@@ -14,13 +14,17 @@ namespace t800 {
   enum class GUIControlEditTarget {
     SliderKnob,
     SelectorControl,
-    CheckboxMark
+    CheckboxMark,
+    LineEditControl
   };
 
   enum class GUIControlSubpart {
     Primary,
     SelectorLeft,
-    SelectorRight
+    SelectorRight,
+    PopupOk,
+    PopupCancel,
+    PopupText
   };
 
   // ─── Responsive layout computed from screen dimensions ───
@@ -70,7 +74,7 @@ namespace t800 {
     void SetFPSText(const std::string& text, const XVECTOR3& color);
     void ClearSliders();
 
-    void Update(const InputManager& input, int screenW, int screenH);
+    void Update(InputManager& input, int screenW, int screenH);
     void Draw();
 
     // Draw only the FPS label (for use when GUI overlay is hidden)
@@ -118,6 +122,12 @@ namespace t800 {
     bool LoadControlLayout(const std::string& path);
     bool HandleControlEditTab(const std::string& path);
 
+    // Dirty flag for regular-flow label edits via popup; set on commit, cleared on save.
+    bool IsLayoutDirty() const { return m_layoutDirty; }
+
+    // Popup status (used by DevLayer/Framework to implement modality).
+    bool IsPopupActive() const { return m_popupActive; }
+
     // All elements (for iteration)
     std::vector<GUIElement*>& GetElements() { return m_elements; }
 
@@ -135,6 +145,15 @@ namespace t800 {
     void DrawControlEditRectOverlay(float x, float y, float w, float h, const XVECTOR3& color, bool drawHandle);
     void RebakeFontIfNeeded();
     void ApplyControlLayoutToElements();
+
+    // Popup helpers
+    void OpenPopupFor(GUILabel* label);
+    void ClosePopupAndCommit(bool commit);
+    void DrawPopup();
+    void UpdatePopup(InputManager& input, float mx, float my, bool mouseDown);
+    void GetPopupRects(float& bgX, float& bgY, float& bgW, float& bgH,
+                       float& okX, float& okY, float& okW, float& okH,
+                       float& cancelX, float& cancelY, float& cancelW, float& cancelH) const;
 
     // ── State ──
     std::vector<GUIElement*>       m_elements;      // owns all elements
@@ -160,6 +179,13 @@ namespace t800 {
     Texture* m_selectorBtnRightTexture  = nullptr;
     Texture* m_selectorBtnLeftPressTexture  = nullptr;
     Texture* m_selectorBtnRightPressTexture = nullptr;
+
+    // Line-edit popup textures
+    Texture* m_popupBgTexture            = nullptr;
+    Texture* m_popupOkTexture            = nullptr;
+    Texture* m_popupOkPressedTexture     = nullptr;
+    Texture* m_popupCancelTexture        = nullptr;
+    Texture* m_popupCancelPressedTexture = nullptr;
 
     Quad          m_quad;
     ShaderBase*   m_shader = nullptr;
@@ -200,6 +226,20 @@ namespace t800 {
       float checkboxMarkScaleY = 1.0f;
       float checkboxMarkOffsetX = 0.0f;
       float checkboxMarkOffsetY = 0.0f;
+
+      // Line-edit popup
+      float popupBgScaleX    = 1.0f;
+      float popupBgScaleY    = 1.0f;
+      float popupOkScaleX    = 1.0f;
+      float popupOkScaleY    = 1.0f;
+      float popupOkOffsetX   = -0.30f; // relative to bg-height, from bg center-X
+      float popupOkOffsetY   = 0.35f;  // relative to bg-height, from bg center-Y
+      float popupCancelScaleX  = 1.0f;
+      float popupCancelScaleY  = 1.0f;
+      float popupCancelOffsetX = 0.30f;
+      float popupCancelOffsetY = 0.35f;
+      float popupTextScaleX  = 0.6f;   // text height as fraction of bg height
+      float popupTextScaleY  = 0.6f;
     };
 
     ControlLayoutState m_controlLayout;
@@ -227,12 +267,31 @@ namespace t800 {
 
     int   m_sliderCalibrationStep = 0; // 0: waiting min, 1: waiting max
 
+    // ── Line-edit popup state ──
+    bool        m_popupActive = false;
+    GUILabel*   m_popupTargetLabel = nullptr;  // label element being edited
+    GUISliderBar*  m_popupTargetSlider   = nullptr; // if non-null, label belongs to this slider; edit slider->label
+    GUICheckbox*   m_popupTargetCheckbox = nullptr; // if non-null, edit checkbox->label (mirrored into label->text)
+    GUISelector*   m_popupTargetSelector = nullptr; // if non-null, edit selector->label
+    std::string m_popupText;       // current edit buffer
+    int         m_popupCaret = 0;  // caret position (char index in utf-8 bytes)
+    float       m_popupBlink = 0.0f;
+    bool        m_popupWasMouseDown = false;
+    bool        m_popupOkPressed = false;
+    bool        m_popupCancelPressed = false;
+    // Double-click detection (on labels)
+    uint64_t    m_lastClickTimeMs = 0;
+    GUIElement* m_lastClickElement = nullptr;
+    float       m_lastClickX = 0.0f;
+    float       m_lastClickY = 0.0f;
+
     // Edit‑mode tracking
     GUIElement* m_dragTarget   = nullptr;
     GUIElement* m_resizeTarget = nullptr;
     GUIElement* m_lastEdited   = nullptr;  // last element that was dragged/resized
     GUILabel*   m_fpsLabel     = nullptr;  // FPS label element (owned via m_elements)
     bool m_wasMouseDown = false;
+    bool m_layoutDirty  = false;           // Set when popup commits a label change in regular flow
   };
 
 } // namespace t800

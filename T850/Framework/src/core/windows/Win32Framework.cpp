@@ -68,7 +68,10 @@ namespace t800 {
       case SDL_EVENT_KEY_DOWN: {
         int t800key = SDL3KeyToSTDKEY((unsigned int)evento.key.key);
         if (t800key == T800K_ESCAPE) {
-          m_alive = false;
+          // Modal UI (e.g. line-edit popup) consumes Escape; don't quit the app.
+          if (!pBaseApp || !pBaseApp->IsModalActive()) {
+            m_alive = false;
+          }
         }
         if (t800key >= 0 && t800key < MAXKEYS)
           pBaseApp->IManager.KeyStates[0][t800key] = true;
@@ -95,6 +98,12 @@ namespace t800 {
         if (btn >= 0 && btn < MAXMOUSEBUTTONS) {
           pBaseApp->IManager.MouseButtonStates[0][btn] = false;
           pBaseApp->IManager.MouseButtonStates[1][btn] = false;
+        }
+      }break;
+
+      case SDL_EVENT_TEXT_INPUT: {
+        if (evento.text.text) {
+          pBaseApp->IManager.textInput.append(evento.text.text);
         }
       }break;
 
@@ -183,6 +192,9 @@ namespace t800 {
     if (!m_pWindow) {
       printf("Window creation failed: %s\n", SDL_GetError());
     }
+
+    // Enable text input so SDL_EVENT_TEXT_INPUT events are generated for GUI line-edit fields.
+    SDL_StartTextInput(m_pWindow);
 
     // Set window icon from embedded exe resource
     {

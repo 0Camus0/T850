@@ -209,3 +209,7 @@ void App::OnResume() {
 void App::OnReset() {
 
 }
+
+bool App::IsModalActive() const {
+  return m_devLayer.GetGUI().IsPopupActive();
+}

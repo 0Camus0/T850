@@ -14,6 +14,7 @@
 #define T800_INPUT_MANAGER_H
 
 #include <Config.h>
+#include <string>
 
 // SDL3 key mapping: SDL3 keycodes for ASCII keys (< 128) match STDKEYS directly.
 // For extended keys we provide a mapping function below the STDKEYS enum.
@@ -279,6 +280,10 @@ public:
 	int 	yDelta;
 	int		mouseX;
 	int		mouseY;
+
+	// UTF-8 characters produced by SDL_EVENT_TEXT_INPUT during the last frame.
+	// Consumers read and clear this buffer each frame.
+	std::string textInput;
 };
 
 // Maps SDL3 keycodes (which are large values for non-ASCII keys) to STDKEYS values.

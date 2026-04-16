@@ -34,11 +34,21 @@ void GUIDrawContext::DrawTexturedQuad(float px, float py, float w, float h,
   float x1 = ((px + w) / screenW) * 2.0f - 1.0f;
   float y1 = 1.0f - (py / screenH) * 2.0f;
 
+  // GL samples textures with v=0 at the bottom row of pixel data, while the
+  // texture loader uploads image data top-first (row 0 == top of image).
+  // Under D3D11, texel (0,0) is top-left so the UVs below render correctly.
+  // Under GL, we flip V so the top of the quad samples the top of the image
+  // (otherwise asymmetric GUI textures — e.g. the checkmark arrow — appear
+  // upside down). This affects every GUI quad drawn through this helper.
+  const bool gl = (g_pBaseDriver && g_pBaseDriver->m_currentAPI == GRAPHICS_API::OPENGL);
+  const float vTop = gl ? 1.0f : 0.0f;
+  const float vBot = gl ? 0.0f : 1.0f;
+
   Quad::Vertex verts[4] = {
-    {x0, y1, 0.0f, 1.0f, 0.0f, 0.0f},
-    {x0, y0, 0.0f, 1.0f, 0.0f, 1.0f},
-    {x1, y0, 0.0f, 1.0f, 1.0f, 1.0f},
-    {x1, y1, 0.0f, 1.0f, 1.0f, 0.0f},
+    {x0, y1, 0.0f, 1.0f, 0.0f, vTop},
+    {x0, y0, 0.0f, 1.0f, 0.0f, vBot},
+    {x1, y0, 0.0f, 1.0f, 1.0f, vBot},
+    {x1, y1, 0.0f, 1.0f, 1.0f, vTop},
   };
   quad->m_VB->UpdateFromBuffer(*T8DeviceContext, verts);
   tex->Set(*T8DeviceContext, 0, "tex0");

@@ -311,6 +311,7 @@ $xaml = @"
                         <ComboBoxItem Content="Slider Knob" Tag="slider_knob" IsSelected="True"/>
                         <ComboBoxItem Content="Selector Control (Both Buttons)" Tag="selector_control"/>
                         <ComboBoxItem Content="Checkbox Check Mark" Tag="checkbox_mark"/>
+                        <ComboBoxItem Content="Line-Edit Popup (Background + OK + Cancel + Text)" Tag="linedit_popup"/>
                     </ComboBox>
                 </StackPanel>
                 <CheckBox Name="chkGuiSnap" Content="Snap to Grid (auto-align)" Margin="0,0,0,6"/>
@@ -652,9 +653,7 @@ function Get-LaunchCommand {
     }
 
     $logTag = ($cmbLogLevel.SelectedItem).Tag.ToString()
-    if ($logTag -ne "error") {
-        $argList += @("--logLevel", $logTag)
-    }
+    $argList += @("--logLevel", $logTag)
 
     if ($chkLogToFile.IsChecked) {
         $apiTag = ($cmbApi.SelectedItem).Tag.ToString()

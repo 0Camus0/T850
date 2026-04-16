@@ -42,6 +42,9 @@ public:
 
   void LoadScene(int id);
 
+  // Modal state (DevLayer's GUI popup) — queried by the framework to block Esc-to-quit.
+  bool IsModalActive() const override;
+
 
   Timer			DtTimer;
   float			DtSecs;

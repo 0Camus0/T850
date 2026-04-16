@@ -38,6 +38,11 @@ namespace t800 {
     virtual void OnReset() = 0;
 
     virtual void LoadScene(int id) = 0;
+
+    // Return true if the app is currently showing a modal UI (e.g. a line-edit popup).
+    // Frameworks use this to suppress global keys like Escape-to-quit while modal.
+    virtual bool IsModalActive() const { return false; }
+
     void	SetParentFramework(RootFramework* pParentFramework) {
       pFramework = pParentFramework;
     }

@@ -28,6 +28,7 @@ namespace t800 {
     void UnloadScene();
 
     GUIManager& GetGUI() { return m_gui; }
+    const GUIManager& GetGUI() const { return m_gui; }
     void RebuildGUIForScene();
 
     void SetEditMode(bool e);

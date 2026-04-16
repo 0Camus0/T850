@@ -64,6 +64,7 @@ void DevLayer::Update(float dt) {
     // Push changed slider values into scene props each frame (even when paused)
     if (m_gui.IsVisible()) {
       m_activeScene->SyncFromGUI(m_gui);
+      m_activeScene->SyncToGUI(m_gui);
     }
   }
 }
@@ -77,15 +78,26 @@ void DevLayer::Draw() {
 }
 
 void DevLayer::ProcessInput(InputManager* input) {
+  // Let the GUI (including a modal popup) consume input first.
+  if (m_guiInited) {
+    m_gui.Update(*input, g_pBaseDriver->width, g_pBaseDriver->height);
+  }
+  // When a line-edit popup is active, all other keyboard/mouse handling is suppressed.
+  if (m_gui.IsPopupActive()) {
+    return;
+  }
   // Toggle GUI with G key
   if (input->PressedOnceKey(T800K_g)) {
     m_gui.ToggleVisible();
   }
-  // Tab: save layout when in edit mode, dump scene state otherwise
+  // Tab: save layout when in edit mode or when user has made label edits via the popup in
+  // the regular flow, otherwise dump scene state.
   if (input->PressedOnceKey(T800K_TAB)) {
     if (m_gui.IsControlEditMode()) {
       m_gui.HandleControlEditTab(kControlLayoutPath);
     } else if (m_gui.IsEditMode()) {
+      m_gui.SaveLayout(kLayoutPath);
+    } else if (m_gui.IsVisible() && m_gui.IsLayoutDirty()) {
       m_gui.SaveLayout(kLayoutPath);
     } else if (m_activeScene) {
       m_activeScene->SaveSceneState();
@@ -132,10 +144,7 @@ void DevLayer::ProcessInput(InputManager* input) {
   if (m_activeScene && !m_paused) {
     m_activeScene->OnInput(input);
   }
-  // Update GUI interaction
-  if (m_guiInited) {
-    m_gui.Update(*input, g_pBaseDriver->width, g_pBaseDriver->height);
-  }
+  // GUI update already ran at the top of ProcessInput (so popups can pre-empt input).
 }
 
 void DevLayer::LoadScene(SceneBase* scene) {

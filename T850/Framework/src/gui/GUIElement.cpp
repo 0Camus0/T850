@@ -95,6 +95,16 @@ void GUIElement::DrawEditOverlay(GUIDrawContext& ctx) {
   ctx.DrawSolidQuad(x + w - hs, y + h - hs, hs, hs, handleColor);
 }
 
+void GUIElement::DrawGroupHighlight(GUIDrawContext& ctx) {
+  if (!visible || !groupHighlighted) return;
+  float lineW = 2.0f;
+  XVECTOR3 hlColor(0.0f, 0.7f, 1.0f);
+  ctx.DrawSolidQuad(x, y, w, lineW, hlColor);
+  ctx.DrawSolidQuad(x, y + h - lineW, w, lineW, hlColor);
+  ctx.DrawSolidQuad(x, y, lineW, h, hlColor);
+  ctx.DrawSolidQuad(x + w - lineW, y, lineW, h, hlColor);
+}
+
 // ═══════════════════════════════════════════════════════════
 //  GUILabel
 // ═══════════════════════════════════════════════════════════

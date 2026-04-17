@@ -90,6 +90,23 @@ void DevLayer::ProcessInput(InputManager* input) {
   if (input->PressedOnceKey(T800K_g)) {
     m_gui.ToggleVisible();
   }
+  // F1: toggle group edit mode
+  if (input->PressedOnceKey(T800K_F1) && m_gui.IsVisible()) {
+    if (m_gui.IsGroupEditMode()) {
+      m_gui.ExitGroupEditMode();
+    } else {
+      m_gui.EnterGroupEditMode();
+    }
+  }
+  // F2 in group edit mode: delete all custom groups
+  if (m_gui.IsGroupEditMode() && input->PressedOnceKey(T800K_F2)) {
+    m_gui.DeleteAllCustomGroups();
+    m_gui.ExitGroupEditMode();
+  }
+  // Enter in group edit mode: open group name popup
+  if (m_gui.IsGroupEditMode() && input->PressedOnceKey(T800K_RETURN)) {
+    m_gui.OpenGroupNamePopup();
+  }
   // Tab: save layout when in edit mode or when user has made label edits via the popup in
   // the regular flow, otherwise dump scene state.
   if (input->PressedOnceKey(T800K_TAB)) {
@@ -131,6 +148,13 @@ void DevLayer::ProcessInput(InputManager* input) {
     // Enter: apply last-edited element's scale to all elements of the same kind
     if (input->PressedOnceKey(T800K_RETURN)) {
       m_gui.ApplyUniformScale();
+    }
+    // Left/Right arrows: switch group while in edit mode
+    if (input->PressedOnceKey(T800K_LEFT)) {
+      m_gui.SwitchToPrevGroup();
+    }
+    if (input->PressedOnceKey(T800K_RIGHT)) {
+      m_gui.SwitchToNextGroup();
     }
   }
 

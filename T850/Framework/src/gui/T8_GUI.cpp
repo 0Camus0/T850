@@ -198,6 +198,22 @@ void GUIManager::ClearSliders() {
   m_controlEditRect = {};
   m_controlDragActive = false;
   m_controlResizeActive = false;
+
+  // Reset group system
+  m_groups.clear();
+  m_groups.push_back({"Global", {}});
+  m_activeGroupIndex = 0;
+  m_groupEditMode = false;
+  m_popupForGroupName = false;
+  m_groupEditSelectedIds.clear();
+  m_groupSelector.id = "group_selector";
+  m_groupSelector.name = "group_selector";
+  m_groupSelector.options = {"Global"};
+  m_groupSelector.selectedIndex = 0;
+  m_groupSelector.justChanged = false;
+  m_groupSelectorLabel.id = "group_selector_label";
+  m_groupSelectorLabel.text = "Group:";
+  m_groupSelectorLabel.color = XVECTOR3(0.9f, 0.85f, 0.8f);
 }
 
 GUISliderBar* GUIManager::FindSlider(const std::string& name) {
@@ -408,6 +424,22 @@ void GUIManager::LayoutSliders(int screenW, int screenH) {
     m_fpsLabel->h = charH;
   }
 
+  // Position group selector at top-left (above main grid)
+  {
+    m_groupSelectorLabel.text = "Group:";
+    m_groupSelectorLabel.FitToText(tmpCtx);
+    m_groupSelectorLabel.x = m_gridCellW;
+    m_groupSelectorLabel.y = 2.0f;
+    m_groupSelectorLabel.h = charH;
+
+    float selX = m_groupSelectorLabel.x + m_groupSelectorLabel.w + m_layout.labelGap;
+    m_groupSelector.x       = selX;
+    m_groupSelector.y       = 2.0f;
+    m_groupSelector.w       = m_layout.sliderW;
+    m_groupSelector.h       = m_layout.sliderH;
+    m_groupSelector.btnSize = m_layout.sliderH;
+  }
+
   // Clamp all elements inside the screen
   for (auto* e : m_elements) {
     if (e->x < 0.0f)               e->x = 0.0f;
@@ -438,11 +470,18 @@ void GUIManager::Update(InputManager& input, int screenW, int screenH) {
   // Drop any text input accumulated while popup is not active
   input.textInput.clear();
 
-  if (m_editMode) {
+  if (m_groupEditMode) {
+    UpdateGroupEditMode(input, mx, my, mouseDown);
+  } else if (m_editMode) {
     UpdateEditMode(mx, my, mouseDown);
   } else if (m_controlEditMode) {
     UpdateControlEditMode(mx, my, mouseDown);
   } else {
+    // Update group selector
+    m_groupSelector.UpdateInteraction(mx, my, mouseDown);
+    if (m_groupSelector.justChanged) {
+      SwitchToGroup(m_groupSelector.selectedIndex);
+    }
     // Double-click on any label opens the line-edit popup (normal flow).
     bool justPressed = mouseDown && !m_wasMouseDown;
     if (justPressed) {
@@ -473,6 +512,7 @@ void GUIManager::Update(InputManager& input, int screenW, int screenH) {
     }
     // Normal slider interaction
     for (auto& sp : m_sliderPairs) {
+      if (!sp.slider->visible) continue;
       float before = sp.slider->value;
       sp.slider->UpdateInteraction(mx, my, mouseDown);
       float after = sp.slider->value;
@@ -483,6 +523,7 @@ void GUIManager::Update(InputManager& input, int screenW, int screenH) {
     }
     // Checkbox interaction
     for (auto& cp : m_checkboxPairs) {
+      if (!cp.checkbox->visible) continue;
       bool before = cp.checkbox->checked;
       cp.checkbox->UpdateInteraction(mx, my, mouseDown);
       bool after = cp.checkbox->checked;
@@ -493,6 +534,7 @@ void GUIManager::Update(InputManager& input, int screenW, int screenH) {
     }
     // Selector interaction
     for (auto& sp : m_selectorPairs) {
+      if (!sp.selector->visible) continue;
       int beforeIdx = sp.selector->selectedIndex;
       sp.selector->UpdateInteraction(mx, my, mouseDown);
       int afterIdx = sp.selector->selectedIndex;
@@ -551,12 +593,19 @@ void GUIManager::UpdateEditMode(float mx, float my, bool mouseDown) {
 
   // ── Handle new press ──
   if (justPressed) {
+    // Build combined list: scene elements + group selector pair
+    std::vector<GUIElement*> allEditable;
+    allEditable.reserve(m_elements.size() + 2);
+    allEditable.insert(allEditable.end(), m_elements.begin(), m_elements.end());
+    allEditable.push_back(&m_groupSelectorLabel);
+    allEditable.push_back(&m_groupSelector);
+
     // Deselect all first
-    for (auto* e : m_elements) e->selected = false;
+    for (auto* e : allEditable) e->selected = false;
 
     // Check scale handles first (higher priority)
-    for (int i = (int)m_elements.size() - 1; i >= 0; i--) {
-      auto* e = m_elements[i];
+    for (int i = (int)allEditable.size() - 1; i >= 0; i--) {
+      auto* e = allEditable[i];
       if (!e->visible) continue;
       if (e->HitTestScaleHandle(mx, my)) {
         e->selected   = true;
@@ -571,8 +620,8 @@ void GUIManager::UpdateEditMode(float mx, float my, bool mouseDown) {
       }
     }
     // Check drag (body hit test)
-    for (int i = (int)m_elements.size() - 1; i >= 0; i--) {
-      auto* e = m_elements[i];
+    for (int i = (int)allEditable.size() - 1; i >= 0; i--) {
+      auto* e = allEditable[i];
       if (!e->visible) continue;
       if (e->HitTest(mx, my)) {
         // Double-click on a label opens the text-edit popup.
@@ -717,6 +766,9 @@ void GUIManager::Draw() {
     sp.selector->DrawQuadsOnly(m_ctx);
   }
 
+  // Draw group selector quads (always visible)
+  m_groupSelector.DrawQuadsOnly(m_ctx);
+
   // ── Pass 2: all text in one batch (single shader switch, one draw call per string) ──
 
   m_textRenderer.BeginBatch();
@@ -741,11 +793,20 @@ void GUIManager::Draw() {
     m_fpsLabel->Draw(m_ctx);
   }
 
+  // Group selector text (always visible)
+  m_groupSelector.DrawTextBatched(m_ctx);
+  m_groupSelectorLabel.Draw(m_ctx);
+
   m_textRenderer.EndBatch();
 
   // Draw edit overlays on top
   if (m_editMode) {
     DrawEditOverlays();
+  }
+
+  // Draw group-edit highlights on top
+  if (m_groupEditMode) {
+    DrawGroupEditHighlights();
   }
 
   // Line-edit popup draws on top of everything
@@ -948,6 +1009,9 @@ void GUIManager::DrawEditOverlays() {
   for (auto* e : m_elements) {
     e->DrawEditOverlay(m_ctx);
   }
+  // Group selector pair
+  m_groupSelectorLabel.DrawEditOverlay(m_ctx);
+  m_groupSelector.DrawEditOverlay(m_ctx);
 }
 
 void GUIManager::SetControlEditMode(bool e) {
@@ -1036,6 +1100,15 @@ void GUIManager::ApplyControlLayoutToElements() {
     sp.selector->rightOffsetX = m_controlLayout.selectorRightOffsetX;
     sp.selector->rightOffsetY = m_controlLayout.selectorRightOffsetY;
   }
+  // Also apply to the group selector
+  m_groupSelector.leftScaleX  = m_controlLayout.selectorLeftScaleX;
+  m_groupSelector.leftScaleY  = m_controlLayout.selectorLeftScaleY;
+  m_groupSelector.leftOffsetX = m_controlLayout.selectorLeftOffsetX;
+  m_groupSelector.leftOffsetY = m_controlLayout.selectorLeftOffsetY;
+  m_groupSelector.rightScaleX  = m_controlLayout.selectorRightScaleX;
+  m_groupSelector.rightScaleY  = m_controlLayout.selectorRightScaleY;
+  m_groupSelector.rightOffsetX = m_controlLayout.selectorRightOffsetX;
+  m_groupSelector.rightOffsetY = m_controlLayout.selectorRightOffsetY;
 }
 
 void GUIManager::UpdateControlEditMode(float mx, float my, bool mouseDown) {
@@ -1565,12 +1638,25 @@ struct ElementLayoutEntry {
   std::string label;                 // optional: custom label text for slider/checkbox/selector
 };
 
+struct GroupLayoutFileEntry {
+  std::string name;
+  std::vector<std::string> element_ids;      // widget IDs in this group; empty = all (Global)
+  std::vector<ElementLayoutEntry> elements;  // per-group element positions
+};
+
+struct GroupSelectorLayoutEntry {
+  float label_x = 0, label_y = 0, label_w = 0, label_h = 0;
+  float sel_x = 0, sel_y = 0, sel_w = 0, sel_h = 0;
+};
+
 struct GUILayoutFile {
   float ref_width  = 1920.0f;   // screen width when layout was authored
   float ref_height = 1080.0f;   // screen height when layout was authored
-  std::vector<ElementLayoutEntry> elements;
+  std::vector<ElementLayoutEntry> elements; // backward-compat (Global positions)
   float gridCellW = 40.0f;      // normalized to ref_height
   float gridCellH = 40.0f;      // normalized to ref_height
+  std::vector<GroupLayoutFileEntry> groups;  // group definitions & per-group layouts
+  GroupSelectorLayoutEntry group_selector;   // group selector position
 };
 
 struct GUIControlLayoutFile {
@@ -1615,27 +1701,49 @@ bool GUIManager::SaveLayout(const std::string& path) {
   float screenW = (float)g_pBaseDriver->width;
   float screenH = (float)g_pBaseDriver->height;
 
+  // Capture current group's live positions into its saved layout
+  CaptureGroupLayout(m_activeGroupIndex);
+
+  // Always capture FPS into Global so its position is saved uniformly.
+  if (m_activeGroupIndex != 0) {
+    SyncFPSToGlobalLayout();
+  }
+
   GUILayoutFile lf;
   lf.ref_width  = screenW;
   lf.ref_height = screenH;
   // Normalize grid cells by reference height (uniform scale)
   lf.gridCellW = m_gridCellW / screenH;
   lf.gridCellH = m_gridCellH / screenH;
-  // Normalize element coords: positions by respective axis, sizes by height
-  for (auto* e : m_elements) {
-    std::string labelField;
-    if (auto* sl = dynamic_cast<GUISliderBar*>(e))       labelField = sl->label;
-    else if (auto* cb = dynamic_cast<GUICheckbox*>(e))   labelField = cb->label;
-    else if (auto* se = dynamic_cast<GUISelector*>(e))   labelField = se->label;
-    lf.elements.push_back({
-      e->id,
-      e->x / screenW,   // X position: fraction of width
-      e->y / screenH,   // Y position: fraction of height
-      e->w / screenH,   // width:  fraction of height (uniform)
-      e->h / screenH,   // height: fraction of height (uniform)
-      labelField
-    });
+
+  // Legacy "elements" field: Global group positions for backward compat
+  if (!m_groups.empty()) {
+    for (auto& el : m_groups[0].layout) {
+      lf.elements.push_back({el.id, el.x, el.y, el.w, el.h, el.label});
+    }
   }
+
+  // Save all groups
+  for (auto& g : m_groups) {
+    GroupLayoutFileEntry ge;
+    ge.name = g.name;
+    ge.element_ids = g.elementIds;
+    for (auto& el : g.layout) {
+      ge.elements.push_back({el.id, el.x, el.y, el.w, el.h, el.label});
+    }
+    lf.groups.push_back(ge);
+  }
+
+  // Save group selector position (normalized)
+  lf.group_selector.label_x = m_groupSelectorLabel.x / screenW;
+  lf.group_selector.label_y = m_groupSelectorLabel.y / screenH;
+  lf.group_selector.label_w = m_groupSelectorLabel.w / screenH;
+  lf.group_selector.label_h = m_groupSelectorLabel.h / screenH;
+  lf.group_selector.sel_x   = m_groupSelector.x / screenW;
+  lf.group_selector.sel_y   = m_groupSelector.y / screenH;
+  lf.group_selector.sel_w   = m_groupSelector.w / screenH;
+  lf.group_selector.sel_h   = m_groupSelector.h / screenH;
+
   auto result = glz::write<glz::opts{.prettify = true}>(lf);
   if (!result) {
     T8_LOG_ERROR("[GUIManager] Failed to serialize layout");
@@ -1647,7 +1755,8 @@ bool GUIManager::SaveLayout(const std::string& path) {
     return false;
   }
   file << result.value();
-  T8_LOG_INFO("[GUIManager] Layout saved to '%s' (%zu elements)", path.c_str(), m_elements.size());
+  T8_LOG_INFO("[GUIManager] Layout saved to '%s' (%zu elements, %zu groups)",
+         path.c_str(), m_elements.size(), m_groups.size());
   m_layoutDirty = false;
   return true;
 }
@@ -1677,32 +1786,66 @@ bool GUIManager::LoadLayout(const std::string& path) {
   m_gridCellW = lf.gridCellW * curH;
   m_gridCellH = lf.gridCellH * curH;
 
-  // Denormalize element coords:
-  //   positions: X by current width, Y by current height
-  //   sizes:     both by current height (uniform — preserves proportions)
-  for (auto& entry : lf.elements) {
-    for (auto* e : m_elements) {
-      if (e->id == entry.id) {
-        e->x = entry.x * curW;
-        e->y = entry.y * curH;
-        e->w = entry.w * curH;
-        e->h = entry.h * curH;
-        // Keep internal sizing in sync with loaded dimensions
-        if (auto* sl = dynamic_cast<GUISliderBar*>(e)) {
-          sl->knobSize = e->h;
-          if (!entry.label.empty()) sl->label = entry.label;
-        } else if (auto* sel = dynamic_cast<GUISelector*>(e)) {
-          sel->btnSize = e->h;
-          if (!entry.label.empty()) sel->label = entry.label;
-        } else if (auto* cb = dynamic_cast<GUICheckbox*>(e)) {
-          if (!entry.label.empty()) cb->label = entry.label;
+  auto applyEntriesToElements = [&](const std::vector<ElementLayoutEntry>& entries) {
+    for (auto& entry : entries) {
+      for (auto* e : m_elements) {
+        if (e->id == entry.id) {
+          e->x = entry.x * curW;
+          e->y = entry.y * curH;
+          e->w = entry.w * curH;
+          e->h = entry.h * curH;
+          if (auto* sl = dynamic_cast<GUISliderBar*>(e)) {
+            sl->knobSize = e->h;
+            if (!entry.label.empty()) sl->label = entry.label;
+          } else if (auto* sel = dynamic_cast<GUISelector*>(e)) {
+            sel->btnSize = e->h;
+            if (!entry.label.empty()) sel->label = entry.label;
+          } else if (auto* cb = dynamic_cast<GUICheckbox*>(e)) {
+            if (!entry.label.empty()) cb->label = entry.label;
+          }
+          break;
         }
-        break;
       }
     }
+  };
+
+  if (!lf.groups.empty()) {
+    // Load groups
+    m_groups.clear();
+    m_groupSelector.options.clear();
+    for (auto& ge : lf.groups) {
+      GUIGroup g;
+      g.name = ge.name;
+      g.elementIds = ge.element_ids;
+      for (auto& el : ge.elements) {
+        g.layout.push_back({el.id, el.x, el.y, el.w, el.h, el.label});
+      }
+      m_groups.push_back(g);
+      m_groupSelector.options.push_back(ge.name);
+    }
+    m_activeGroupIndex = 0;
+    m_groupSelector.selectedIndex = 0;
+    // Apply Global group layout and visibility
+    applyEntriesToElements(lf.groups[0].elements);
+    ApplyGroupVisibility();
+    T8_LOG_INFO("[GUIManager] Layout loaded from '%s' (%zu groups, ref %.0fx%.0f -> %.0fx%.0f)",
+           path.c_str(), m_groups.size(), lf.ref_width, lf.ref_height, curW, curH);
+  } else {
+    // Legacy format: treat "elements" as Global group
+    m_groups.clear();
+    GUIGroup globalGroup;
+    globalGroup.name = "Global";
+    for (auto& entry : lf.elements) {
+      globalGroup.layout.push_back({entry.id, entry.x, entry.y, entry.w, entry.h, entry.label});
+    }
+    m_groups.push_back(globalGroup);
+    m_groupSelector.options = {"Global"};
+    m_activeGroupIndex = 0;
+    m_groupSelector.selectedIndex = 0;
+    applyEntriesToElements(lf.elements);
+    T8_LOG_INFO("[GUIManager] Layout loaded from '%s' (%zu entries, ref %.0fx%.0f -> %.0fx%.0f)",
+           path.c_str(), lf.elements.size(), lf.ref_width, lf.ref_height, curW, curH);
   }
-  T8_LOG_INFO("[GUIManager] Layout loaded from '%s' (%zu entries, ref %.0fx%.0f -> %.0fx%.0f)",
-         path.c_str(), lf.elements.size(), lf.ref_width, lf.ref_height, curW, curH);
   // Mirror restored labels into their paired GUILabel->text so they show immediately.
   for (auto& cp : m_checkboxPairs) {
     if (cp.label && cp.checkbox) cp.label->text = cp.checkbox->label;
@@ -1713,6 +1856,21 @@ bool GUIManager::LoadLayout(const std::string& path) {
   // Slider paired labels are regenerated each frame in Draw (label: value).
   RebakeFontIfNeeded();
   ApplyControlLayoutToElements();
+
+  // Restore group selector position (if saved)
+  auto& gs = lf.group_selector;
+  if (gs.sel_w > 0.0f && gs.sel_h > 0.0f) {
+    m_groupSelectorLabel.x = gs.label_x * curW;
+    m_groupSelectorLabel.y = gs.label_y * curH;
+    m_groupSelectorLabel.w = gs.label_w * curH;
+    m_groupSelectorLabel.h = gs.label_h * curH;
+    m_groupSelector.x      = gs.sel_x * curW;
+    m_groupSelector.y      = gs.sel_y * curH;
+    m_groupSelector.w      = gs.sel_w * curH;
+    m_groupSelector.h      = gs.sel_h * curH;
+    m_groupSelector.btnSize = m_groupSelector.h;
+  }
+
   return true;
 }
 
@@ -1918,6 +2076,29 @@ void GUIManager::OpenPopupFor(GUILabel* label) {
 
 void GUIManager::ClosePopupAndCommit(bool commit) {
   if (!m_popupActive) return;
+
+  if (m_popupForGroupName) {
+    if (commit && !m_popupText.empty()) {
+      CreateGroupFromSelection(m_popupText);
+      m_groupEditMode = false;
+      ClearGroupHighlights();
+      m_layoutDirty = true;
+      T8_LOG_INFO("[GUI Popup] Group '%s' created with %zu elements",
+                  m_popupText.c_str(), m_groupEditSelectedIds.size());
+    } else {
+      T8_LOG_INFO("[GUI Popup] Group naming cancelled, staying in group edit mode");
+    }
+    m_popupForGroupName = false;
+    m_popupActive = false;
+    m_popupTargetLabel    = nullptr;
+    m_popupTargetSlider   = nullptr;
+    m_popupTargetCheckbox = nullptr;
+    m_popupTargetSelector = nullptr;
+    m_popupText.clear();
+    m_popupCaret = 0;
+    return;
+  }
+
   if (commit && m_popupTargetLabel) {
     if (m_popupTargetSlider) {
       m_popupTargetSlider->label = m_popupText;
@@ -2087,6 +2268,16 @@ void GUIManager::DrawPopup() {
     XVECTOR3 color(1.0f, 1.0f, 1.0f);
     m_textRenderer.DrawPixelScaled(textX, textY, scaleX, scaleY, sw, sh, color, m_popupText);
 
+    // DrawPixelScaled switches to the text shader and resets blend/depth to
+    // defaults.  Restore the GUI shader + alpha blend before drawing the caret,
+    // otherwise the caret quad renders through the text shader and produces a
+    // white flash (especially visible when popup text is empty).
+    g_pBaseDriver->SetBlendState(BaseDriver::BLEND_STATES::ALPHA_BLEND);
+    g_pBaseDriver->SetDepthStencilState(BaseDriver::DEPTH_STENCIL_STATES::NONE);
+    m_quad.Set();
+    m_shader->Set(*T8DeviceContext);
+    T8DeviceContext->SetPrimitiveTopology(T8_TOPOLOGY::TRIANLE_LIST);
+
     // Caret
     if (m_popupBlink < 0.5f) {
       std::string pre = m_popupText.substr(0, (std::max)(0, (std::min)((int)m_popupText.size(), m_popupCaret)));
@@ -2096,6 +2287,323 @@ void GUIManager::DrawPopup() {
       m_ctx.DrawSolidQuad(caretX, textY, caretW, targetH, color);
     }
   }
+}
+
+// ═══════════════════════════════════════════════════════════
+//  Group system
+// ═══════════════════════════════════════════════════════════
+
+void GUIManager::EnterGroupEditMode() {
+  if (m_groupEditMode) return;
+  m_groupEditMode = true;
+  m_editMode = false;
+  m_controlEditMode = false;
+  m_groupEditSelectedIds.clear();
+  ClearGroupHighlights();
+  T8_LOG_INFO("[GUI] Entered group edit mode. Click controls to select, Enter to name group.");
+}
+
+void GUIManager::ExitGroupEditMode() {
+  m_groupEditMode = false;
+  ClearGroupHighlights();
+  m_groupEditSelectedIds.clear();
+  T8_LOG_INFO("[GUI] Exited group edit mode.");
+}
+
+void GUIManager::OpenGroupNamePopup() {
+  if (m_groupEditSelectedIds.empty()) {
+    T8_LOG_INFO("[GUI] No controls selected for group.");
+    return;
+  }
+  m_popupForGroupName = true;
+  m_popupActive = true;
+  m_popupText.clear();
+  m_popupCaret = 0;
+  m_popupBlink = 0.0f;
+  m_popupWasMouseDown = true;
+  m_popupOkPressed = false;
+  m_popupCancelPressed = false;
+  m_popupTargetLabel = nullptr;
+  m_popupTargetSlider = nullptr;
+  m_popupTargetCheckbox = nullptr;
+  m_popupTargetSelector = nullptr;
+  T8_LOG_INFO("[GUI] Group name popup opened (%zu controls selected).",
+              m_groupEditSelectedIds.size());
+}
+
+void GUIManager::DeleteAllCustomGroups() {
+  if (m_groups.size() <= 1) {
+    T8_LOG_INFO("[GUI] No custom groups to delete.");
+    return;
+  }
+  // Capture current layout before switching
+  CaptureGroupLayout(m_activeGroupIndex);
+
+  // Keep only Global (index 0)
+  m_groups.resize(1);
+  m_groupSelector.options.resize(1);
+  m_activeGroupIndex = 0;
+  m_groupSelector.selectedIndex = 0;
+  ApplyGroupVisibility();
+  ApplyGroupLayout(0);
+  m_layoutDirty = true;
+  T8_LOG_INFO("[GUI] All custom groups deleted. Reverted to Global.");
+}
+
+void GUIManager::SwitchToGroup(int index) {
+  if (index < 0 || index >= (int)m_groups.size()) return;
+  if (index == m_activeGroupIndex) return;
+
+  // Capture the current group's live positions
+  CaptureGroupLayout(m_activeGroupIndex);
+
+  // Always keep FPS position in sync with Global.
+  if (m_activeGroupIndex != 0) {
+    SyncFPSToGlobalLayout();
+  }
+
+  m_activeGroupIndex = index;
+  m_groupSelector.selectedIndex = index;
+
+  ApplyGroupVisibility();
+  ApplyGroupLayout(index);
+  T8_LOG_INFO("[GUI] Switched to group '%s' (index %d).",
+              m_groups[index].name.c_str(), index);
+}
+
+void GUIManager::SwitchToPrevGroup() {
+  if (m_groups.size() <= 1) return;
+  int prev = (m_activeGroupIndex - 1 + (int)m_groups.size()) % (int)m_groups.size();
+  SwitchToGroup(prev);
+}
+
+void GUIManager::SwitchToNextGroup() {
+  if (m_groups.size() <= 1) return;
+  int next = (m_activeGroupIndex + 1) % (int)m_groups.size();
+  SwitchToGroup(next);
+}
+
+void GUIManager::ApplyGroupVisibility() {
+  if (m_activeGroupIndex < 0 || m_activeGroupIndex >= (int)m_groups.size()) return;
+  const auto& group = m_groups[m_activeGroupIndex];
+
+  if (group.elementIds.empty()) {
+    // Global: all visible
+    for (auto* e : m_elements) {
+      e->visible = true;
+    }
+  } else {
+    // Custom group: only selected widget pairs visible
+    for (auto* e : m_elements) {
+      // FPS label always visible
+      if (e == m_fpsLabel) { e->visible = true; continue; }
+
+      std::string wid = FindPairedWidgetId(e);
+      if (wid.empty()) {
+        e->visible = false;
+        continue;
+      }
+      e->visible = std::find(group.elementIds.begin(), group.elementIds.end(), wid) != group.elementIds.end();
+    }
+  }
+}
+
+void GUIManager::CaptureGroupLayout(int groupIndex) {
+  if (groupIndex < 0 || groupIndex >= (int)m_groups.size()) return;
+  auto& group = m_groups[groupIndex];
+
+  float screenW = (float)g_pBaseDriver->width;
+  float screenH = (float)g_pBaseDriver->height;
+
+  group.layout.clear();
+
+  for (auto* e : m_elements) {
+    // FPS is global-only: only capture it in the Global group (index 0).
+    if (e == m_fpsLabel && groupIndex != 0) continue;
+
+    // For Global, save all. For custom, save only elements in the group.
+    if (!group.elementIds.empty()) {
+      if (e != m_fpsLabel) {
+        std::string wid = FindPairedWidgetId(e);
+        if (wid.empty()) continue;
+        if (std::find(group.elementIds.begin(), group.elementIds.end(), wid) == group.elementIds.end())
+          continue;
+      }
+    }
+
+    GUIGroup::ElemLayout el;
+    el.id = e->id;
+    el.x = e->x / screenW;
+    el.y = e->y / screenH;
+    el.w = e->w / screenH;
+    el.h = e->h / screenH;
+    if (auto* sl = dynamic_cast<GUISliderBar*>(e))     el.label = sl->label;
+    else if (auto* cb = dynamic_cast<GUICheckbox*>(e)) el.label = cb->label;
+    else if (auto* se = dynamic_cast<GUISelector*>(e)) el.label = se->label;
+    group.layout.push_back(el);
+  }
+}
+
+void GUIManager::ApplyGroupLayout(int groupIndex) {
+  if (groupIndex < 0 || groupIndex >= (int)m_groups.size()) return;
+  const auto& group = m_groups[groupIndex];
+
+  if (group.layout.empty()) return; // no saved layout, keep current positions
+
+  float curW = (float)g_pBaseDriver->width;
+  float curH = (float)g_pBaseDriver->height;
+
+  for (auto& el : group.layout) {
+    for (auto* e : m_elements) {
+      if (e->id == el.id) {
+        // FPS position is global — never overwrite it per-group.
+        if (e == m_fpsLabel) break;
+
+        e->x = el.x * curW;
+        e->y = el.y * curH;
+        e->w = el.w * curH;
+        e->h = el.h * curH;
+        if (auto* sl = dynamic_cast<GUISliderBar*>(e)) {
+          sl->knobSize = e->h;
+          if (!el.label.empty()) sl->label = el.label;
+        } else if (auto* sel = dynamic_cast<GUISelector*>(e)) {
+          sel->btnSize = e->h;
+          if (!el.label.empty()) sel->label = el.label;
+        } else if (auto* cb = dynamic_cast<GUICheckbox*>(e)) {
+          if (!el.label.empty()) cb->label = el.label;
+        }
+        break;
+      }
+    }
+  }
+}
+
+void GUIManager::CreateGroupFromSelection(const std::string& name) {
+  GUIGroup group;
+  group.name = name;
+  group.elementIds = m_groupEditSelectedIds;
+
+  // Capture current positions for the selected elements
+  float screenW = (float)g_pBaseDriver->width;
+  float screenH = (float)g_pBaseDriver->height;
+
+  for (auto* e : m_elements) {
+    std::string wid = FindPairedWidgetId(e);
+    if (wid.empty()) continue;
+    if (std::find(group.elementIds.begin(), group.elementIds.end(), wid) == group.elementIds.end())
+      continue;
+
+    GUIGroup::ElemLayout el;
+    el.id = e->id;
+    el.x = e->x / screenW;
+    el.y = e->y / screenH;
+    el.w = e->w / screenH;
+    el.h = e->h / screenH;
+    if (auto* sl = dynamic_cast<GUISliderBar*>(e))     el.label = sl->label;
+    else if (auto* cb = dynamic_cast<GUICheckbox*>(e)) el.label = cb->label;
+    else if (auto* se = dynamic_cast<GUISelector*>(e)) el.label = se->label;
+    group.layout.push_back(el);
+  }
+
+  m_groups.push_back(group);
+  m_groupSelector.options.push_back(name);
+
+  // Auto-switch to the new group
+  SwitchToGroup((int)m_groups.size() - 1);
+}
+
+std::string GUIManager::FindPairedWidgetId(GUIElement* element) const {
+  for (auto& sp : m_sliderPairs) {
+    if (sp.label == element || sp.slider == element) return sp.slider->id;
+  }
+  for (auto& cp : m_checkboxPairs) {
+    if (cp.label == element || cp.checkbox == element) return cp.checkbox->id;
+  }
+  for (auto& sp : m_selectorPairs) {
+    if (sp.label == element || sp.selector == element) return sp.selector->id;
+  }
+  return "";
+}
+
+void GUIManager::ClearGroupHighlights() {
+  for (auto* e : m_elements) {
+    e->groupHighlighted = false;
+  }
+}
+
+void GUIManager::SyncFPSToGlobalLayout() {
+  if (m_groups.empty() || !m_fpsLabel) return;
+  float screenW = (float)g_pBaseDriver->width;
+  float screenH = (float)g_pBaseDriver->height;
+
+  GUIGroup::ElemLayout el;
+  el.id = m_fpsLabel->id;
+  el.x = m_fpsLabel->x / screenW;
+  el.y = m_fpsLabel->y / screenH;
+  el.w = m_fpsLabel->w / screenH;
+  el.h = m_fpsLabel->h / screenH;
+
+  // Update existing FPS entry in Global or append it
+  auto& globalLayout = m_groups[0].layout;
+  for (auto& entry : globalLayout) {
+    if (entry.id == el.id) {
+      entry.x = el.x;
+      entry.y = el.y;
+      entry.w = el.w;
+      entry.h = el.h;
+      return;
+    }
+  }
+  globalLayout.push_back(el);
+}
+
+void GUIManager::UpdateGroupEditMode(InputManager& input, float mx, float my, bool mouseDown) {
+  bool justPressed = mouseDown && !m_wasMouseDown;
+
+  if (justPressed) {
+    // Find which element was clicked
+    for (int i = (int)m_elements.size() - 1; i >= 0; i--) {
+      auto* e = m_elements[i];
+      if (!e->visible) continue;
+      if (e == m_fpsLabel) continue; // Can't select FPS
+      if (!e->HitTest(mx, my)) continue;
+
+      std::string wid = FindPairedWidgetId(e);
+      if (wid.empty()) continue; // Not part of a known pair
+
+      // Toggle selection
+      auto it = std::find(m_groupEditSelectedIds.begin(), m_groupEditSelectedIds.end(), wid);
+      if (it != m_groupEditSelectedIds.end()) {
+        m_groupEditSelectedIds.erase(it);
+      } else {
+        m_groupEditSelectedIds.push_back(wid);
+      }
+
+      // Update highlights for the pair
+      for (auto* el : m_elements) {
+        std::string elWid = FindPairedWidgetId(el);
+        if (elWid == wid) {
+          bool selected = std::find(m_groupEditSelectedIds.begin(), m_groupEditSelectedIds.end(), wid) != m_groupEditSelectedIds.end();
+          el->groupHighlighted = selected;
+        }
+      }
+      break; // Only process topmost element
+    }
+  }
+}
+
+void GUIManager::DrawGroupEditHighlights() {
+  m_quad.Set();
+  m_shader->Set(*T8DeviceContext);
+  T8DeviceContext->SetPrimitiveTopology(T8_TOPOLOGY::TRIANLE_LIST);
+
+  for (auto* e : m_elements) {
+    e->DrawGroupHighlight(m_ctx);
+  }
+}
+
+void GUIManager::DrawGroupSelector() {
+  // Group selector is drawn as part of the main Draw pass (quads + text batch)
 }
 
 } // namespace t800

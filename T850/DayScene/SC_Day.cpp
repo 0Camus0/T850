@@ -224,7 +224,6 @@ void SC_Day::OnUpdate(float _DtSecs) {
   frameCounter++;
   DtSecs = _DtSecs;
   SceneProp.FrameDeltaSec = DtSecs;
-  Meshes[0].SetParallaxSettings(SceneProp.ParallaxLowSamples, SceneProp.ParallaxHighSamples, SceneProp.ParallaxHeight);
 
   // Replay snapshot: load and apply (one-time)
   if (m_dumper.HasPendingReplay()) {
@@ -1246,6 +1245,10 @@ void SC_Day::SyncFromGUI(t800::GUIManager& gui) {
       break;
     case CHANGE_FOV:
       ActiveCam->SetFov(Deg2Rad(slider->value));
+      // Recompute VP so FOV changes are visible even when paused
+      // (Camera::Update is skipped while paused, leaving VP stale).
+      ActiveCam->VP = ActiveCam->View * ActiveCam->Projection;
+      VP = ActiveCam->VP;
       break;
     case CHANGE_LIGHT_INTENSITY:
       if (!SceneProp.Lights.empty()) SceneProp.Lights[0].Intensity = slider->value;
@@ -1261,6 +1264,10 @@ void SC_Day::SyncFromGUI(t800::GUIManager& gui) {
       break;
     }
   }
+
+  // Apply parallax settings immediately so changes are visible even when paused.
+  Meshes[0].SetParallaxSettings(SceneProp.ParallaxLowSamples, SceneProp.ParallaxHighSamples, SceneProp.ParallaxHeight);
+
   for (auto& cp : gui.GetCheckboxPairs()) {
     auto* cb = cp.checkbox;
     if (!cb->justToggled) continue;

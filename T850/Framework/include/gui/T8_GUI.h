@@ -62,6 +62,18 @@ namespace t800 {
     GUISelector* selector = nullptr;
   };
 
+  // A named group that controls element visibility and has its own layout
+  struct GUIGroup {
+    std::string name;
+    std::vector<std::string> elementIds; // widget IDs; empty = all (Global)
+    struct ElemLayout {
+      std::string id;
+      float x = 0, y = 0, w = 0, h = 0; // normalized
+      std::string label;
+    };
+    std::vector<ElemLayout> layout; // per-group element positions (normalized)
+  };
+
   class GUIManager {
   public:
     void Init(int screenW, int screenH);
@@ -130,6 +142,18 @@ namespace t800 {
 
     // All elements (for iteration)
     std::vector<GUIElement*>& GetElements() { return m_elements; }
+
+    // Group system
+    void EnterGroupEditMode();
+    void ExitGroupEditMode();
+    bool IsGroupEditMode() const { return m_groupEditMode; }
+    void DeleteAllCustomGroups();
+    void SwitchToGroup(int index);
+    void SwitchToPrevGroup();
+    void SwitchToNextGroup();
+    void OpenGroupNamePopup();
+    int  GetActiveGroupIndex() const { return m_activeGroupIndex; }
+    int  GetGroupCount() const { return (int)m_groups.size(); }
 
   private:
     void InitTextures();
@@ -292,6 +316,26 @@ namespace t800 {
     GUILabel*   m_fpsLabel     = nullptr;  // FPS label element (owned via m_elements)
     bool m_wasMouseDown = false;
     bool m_layoutDirty  = false;           // Set when popup commits a label change in regular flow
+
+    // ── Group system ──
+    GUISelector  m_groupSelector;
+    GUILabel     m_groupSelectorLabel;
+    std::vector<GUIGroup> m_groups;         // index 0 = "Global"
+    int  m_activeGroupIndex = 0;
+    bool m_groupEditMode    = false;
+    bool m_popupForGroupName = false;
+    std::vector<std::string> m_groupEditSelectedIds;
+
+    void UpdateGroupEditMode(InputManager& input, float mx, float my, bool mouseDown);
+    void DrawGroupEditHighlights();
+    void DrawGroupSelector();
+    void ApplyGroupVisibility();
+    void CaptureGroupLayout(int groupIndex);
+    void ApplyGroupLayout(int groupIndex);
+    void CreateGroupFromSelection(const std::string& name);
+    std::string FindPairedWidgetId(GUIElement* element) const;
+    void ClearGroupHighlights();
+    void SyncFPSToGlobalLayout();
   };
 
 } // namespace t800

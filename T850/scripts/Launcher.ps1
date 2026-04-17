@@ -819,7 +819,7 @@ $btnBuild.Add_Click({
     $slnPath = Join-Path $rootDir "T850.sln"
     $psi = New-Object System.Diagnostics.ProcessStartInfo
     $psi.FileName = $msbuild
-    $msbArgs = '"{0}" /p:Configuration={1} /p:Platform={2} /t:Rebuild /v:minimal' -f $slnPath, $config, $platform
+    $msbArgs = '"{0}" /p:Configuration={1} /p:Platform={2} /t:Rebuild /v:minimal /m' -f $slnPath, $config, $platform
     $psi.Arguments = $msbArgs
     $psi.UseShellExecute = $false
     $psi.RedirectStandardOutput = $true

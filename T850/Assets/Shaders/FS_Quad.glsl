@@ -283,7 +283,8 @@ void main(){
 
 	 		Final.xyz += RefleCol*kSpecular.xyz*envAtten * toogles.x;
 
-			Final.xyz *= Shadow;
+			highp float selfShadow = PBRData.g;
+			Final.xyz *= Shadow * selfShadow;
 
 			//Final.xyz = vec3(rough, rough, rough);
 	}

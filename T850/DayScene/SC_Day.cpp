@@ -178,6 +178,15 @@ void SC_Day::CreateAssets() {
   m_renderGraph.SetPassEnabled("DOF", dofOn);
   m_renderGraph.SetPassEnabled("DOF 2", dofOn);
   Meshes[0].SetParallaxEnabled(SceneProp.ToogleParallax != 0);
+  Meshes[0].SetParallaxShadowEnabled(SceneProp.ToogleParallaxShadow != 0);
+
+  // Initialize light camera direction so LightDir is valid from the first frame
+  {
+    Camera& LightCam = m_sceneSetup.lightCameras[0];
+    LightCam.Update(0.0f);
+    SceneProp.Lights[0].Position = LightCam.Eye;
+    SceneProp.Lights[0].Direction = LightCam.Look;
+  }
 
   // Sync cubemap index to match loaded environment_map
   auto& selDescs = m_sceneSetup.descriptor.selectors;
@@ -224,6 +233,7 @@ void SC_Day::OnUpdate(float _DtSecs) {
   frameCounter++;
   DtSecs = _DtSecs;
   SceneProp.FrameDeltaSec = DtSecs;
+  Meshes[0].SetParallaxSettings(SceneProp.ParallaxLowSamples, SceneProp.ParallaxHighSamples, SceneProp.ParallaxHeight);
 
   // Replay snapshot: load and apply (one-time)
   if (m_dumper.HasPendingReplay()) {
@@ -239,10 +249,11 @@ void SC_Day::OnUpdate(float _DtSecs) {
     m_agent.Update(DtSecs);
     ActiveCam->Update(DtSecs);
     VP = ActiveCam->VP;
-    SceneProp.Lights[0].Position = LightCam.Eye;
-    SceneProp.Lights[0].Direction = LightCam.Look;
     SceneProp.pLightCameras[0]->Yaw -= 0.008f *DtSecs;
     SceneProp.pLightCameras[0]->Update(DtSecs);
+    // Capture light position AFTER auto-rotation so shadow matches lighting
+    SceneProp.Lights[0].Position = LightCam.Eye;
+    SceneProp.Lights[0].Direction = LightCam.Look;
   }
 
   if (totalTime > 150.0f) {
@@ -1069,6 +1080,10 @@ void SC_Day::PopulateGUI(t800::GUIManager& gui) {
     {"parallax_low_samples",  CHANGE_PARALLAX_LOW_SAMPLES},
     {"parallax_high_samples", CHANGE_PARALLAX_HIGH_SAMPLES},
     {"parallax_height",       CHANGE_PARALLAX_HEIGHT},
+    {"parallax_shadow_min_layers", CHANGE_PARALLAX_SHADOW_MIN_LAYERS},
+    {"parallax_shadow_max_layers", CHANGE_PARALLAX_SHADOW_MAX_LAYERS},
+    {"parallax_shadow_softness",   CHANGE_PARALLAX_SHADOW_SOFTNESS},
+    {"parallax_shadow_strength",   CHANGE_PARALLAX_SHADOW_STRENGTH},
     {"light_volume_steps",    CHANGE_LIGHT_VOLUME_STEPS},
     {"godrays_factor",        CHANGE_GODRAYS_FACTOR},
     {"gauss_kernel_radius",   CHANGE_GAUSS_KERNEL_RADIUS},
@@ -1105,6 +1120,7 @@ void SC_Day::PopulateGUI(t800::GUIManager& gui) {
     {"show_lights",    CHANGE_SHOW_LIGHTS},
     {"dof_toggle",     CHANGE_DOF_TOGGLE},
     {"parallax_toggle", CHANGE_PARALLAX_TOGGLE},
+    {"parallax_shadow_toggle", CHANGE_PARALLAX_SHADOW_TOGGLE},
     {"godrays_toggle", CHANGE_GODRAYS_TOGGLE},
   };
 
@@ -1168,6 +1184,10 @@ void SC_Day::SyncToGUI(t800::GUIManager& gui) {
     case CHANGE_PARALLAX_LOW_SAMPLES:  slider->SetValue(SceneProp.ParallaxLowSamples); break;
     case CHANGE_PARALLAX_HIGH_SAMPLES: slider->SetValue(SceneProp.ParallaxHighSamples); break;
     case CHANGE_PARALLAX_HEIGHT:    slider->SetValue(SceneProp.ParallaxHeight); break;
+    case CHANGE_PARALLAX_SHADOW_MIN_LAYERS: slider->SetValue(SceneProp.ParallaxShadowMinLayers); break;
+    case CHANGE_PARALLAX_SHADOW_MAX_LAYERS: slider->SetValue(SceneProp.ParallaxShadowMaxLayers); break;
+    case CHANGE_PARALLAX_SHADOW_SOFTNESS:   slider->SetValue(SceneProp.ParallaxShadowSoftness); break;
+    case CHANGE_PARALLAX_SHADOW_STRENGTH:   slider->SetValue(SceneProp.ParallaxShadowStrength); break;
     case CHANGE_LIGHT_VOLUME_STEPS: slider->SetValue(SceneProp.LightVolumeSteps); break;
     case CHANGE_GODRAYS_FACTOR:    slider->SetValue(SceneProp.GodRaysFactor); break;
     case CHANGE_GAUSS_KERNEL_RADIUS:   slider->SetValue(SceneProp.pGaussKernels[ChangeActiveGaussSelection]->radius); break;
@@ -1189,6 +1209,7 @@ void SC_Day::SyncToGUI(t800::GUIManager& gui) {
     case CHANGE_SHOW_LIGHTS:    cb->checked = m_showLights; break;
     case CHANGE_DOF_TOGGLE:     cb->checked = (SceneProp.ToogleDOF != 0); break;
     case CHANGE_PARALLAX_TOGGLE: cb->checked = (SceneProp.ToogleParallax != 0); break;
+    case CHANGE_PARALLAX_SHADOW_TOGGLE: cb->checked = (SceneProp.ToogleParallaxShadow != 0); break;
     case CHANGE_GODRAYS_TOGGLE: cb->checked = (SceneProp.ToogleGodRays != 0); break;
     }
   }
@@ -1233,6 +1254,10 @@ void SC_Day::SyncFromGUI(t800::GUIManager& gui) {
     case CHANGE_PARALLAX_LOW_SAMPLES:  SceneProp.ParallaxLowSamples = slider->value; break;
     case CHANGE_PARALLAX_HIGH_SAMPLES: SceneProp.ParallaxHighSamples = slider->value; break;
     case CHANGE_PARALLAX_HEIGHT:    SceneProp.ParallaxHeight = slider->value; break;
+    case CHANGE_PARALLAX_SHADOW_MIN_LAYERS: SceneProp.ParallaxShadowMinLayers = slider->value; break;
+    case CHANGE_PARALLAX_SHADOW_MAX_LAYERS: SceneProp.ParallaxShadowMaxLayers = slider->value; break;
+    case CHANGE_PARALLAX_SHADOW_SOFTNESS:   SceneProp.ParallaxShadowSoftness = slider->value; break;
+    case CHANGE_PARALLAX_SHADOW_STRENGTH:   SceneProp.ParallaxShadowStrength = slider->value; break;
     case CHANGE_LIGHT_VOLUME_STEPS: SceneProp.LightVolumeSteps = slider->value; break;
     case CHANGE_GODRAYS_FACTOR:    SceneProp.GodRaysFactor = slider->value; break;
     case CHANGE_GAUSS_KERNEL_RADIUS:
@@ -1267,6 +1292,8 @@ void SC_Day::SyncFromGUI(t800::GUIManager& gui) {
 
   // Apply parallax settings immediately so changes are visible even when paused.
   Meshes[0].SetParallaxSettings(SceneProp.ParallaxLowSamples, SceneProp.ParallaxHighSamples, SceneProp.ParallaxHeight);
+  Meshes[0].SetParallaxShadowSettings(SceneProp.ParallaxShadowMinLayers, SceneProp.ParallaxShadowMaxLayers,
+                                       SceneProp.ParallaxShadowSoftness, SceneProp.ParallaxShadowStrength);
 
   for (auto& cp : gui.GetCheckboxPairs()) {
     auto* cb = cp.checkbox;
@@ -1287,6 +1314,15 @@ void SC_Day::SyncFromGUI(t800::GUIManager& gui) {
     case CHANGE_PARALLAX_TOGGLE:
       SceneProp.ToogleParallax = cb->checked ? 1 : 0;
       Meshes[0].SetParallaxEnabled(cb->checked);
+      break;
+    case CHANGE_PARALLAX_SHADOW_TOGGLE:
+      SceneProp.ToogleParallaxShadow = cb->checked ? 1 : 0;
+      // Toggle via strength uniform: 0 = disabled, saved value = enabled
+      if (cb->checked) {
+        SceneProp.ParallaxShadowStrength = 1.0f; // restore default
+      } else {
+        SceneProp.ParallaxShadowStrength = 0.0f; // disable
+      }
       break;
     case CHANGE_GODRAYS_TOGGLE:
       SceneProp.ToogleGodRays = cb->checked ? 1 : 0;

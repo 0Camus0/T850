@@ -90,6 +90,8 @@ uniform highp vec4 SpecularColor;
 uniform highp vec4 PBRParams;
 uniform highp vec4 Intensities;
 uniform highp vec4 ParallaxSettings;
+uniform highp vec4 ParallaxShadowSettings;
+uniform highp vec4 Light0Direction;
 
 void main(){
 #ifdef SHADOW_MAP_PASS

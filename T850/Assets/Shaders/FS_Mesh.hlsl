@@ -13,6 +13,8 @@ cbuffer ConstantBuffer{
 	float4   PBRParams;        // .x=metallic .y=roughness (fallbacks)
 	float4   Intensities;      // .w=MatID
 	float4   ParallaxSettings;
+	float4   ParallaxShadowSettings;
+	float4   Light0Direction;
 }
 
 #define PHONG 1
@@ -188,6 +190,51 @@ FS_OUT FS( VS_OUTPUT input )   {
 	#endif
 	
 	float3  EyeDir   = normalize(CameraPosition-input.WorldPos).xyz;
+
+	// Parallax self-shadowing: march from POM surface point toward the light
+	float selfShadow = 1.0;
+	#if defined(HEIGHT_MAP) && defined(ENABLE_PARALLAX)
+	{
+		float2 ssDxx = ddx(input.texture0);
+		float2 ssDyy = ddy(input.texture0);
+		float ssStartZ = TextureHeight.SampleGrad(SS, parallaxCoords, ssDxx, ssDyy).r;
+
+		float shadowStrength = ParallaxShadowSettings.w;
+		if (shadowStrength > 0.001) {
+			float lightDirLen = length(Light0Direction.xyz);
+			if (lightDirLen > 0.001) {
+				float3 lightDirTS = mul(TBN, normalize(-Light0Direction.xyz));
+				lightDirTS = normalize(lightDirTS);
+
+				if (lightDirTS.z > 0.01) {
+					float numLayers = lerp(ParallaxShadowSettings.y, ParallaxShadowSettings.x, abs(lightDirTS.z));
+					float layerStep = 1.0 / numLayers;
+					float heightScale = ParallaxSettings.z;
+					float2 P_light = lightDirTS.xy * heightScale / lightDirTS.z;
+					float2 deltaUV = P_light * layerStep;
+					deltaUV.y = -deltaUV.y;
+
+					float2 currentUV = parallaxCoords;
+					float currentRayZ = ssStartZ;
+					float shadowSoftness = ParallaxShadowSettings.z;
+
+					[loop] for (int si = 0; si < int(numLayers); si++) {
+						currentRayZ += layerStep;
+						currentUV += deltaUV;
+						if (currentRayZ >= 1.0) break;
+						float h = TextureHeight.SampleGrad(SS, currentUV, ssDxx, ssDyy).r;
+						if (h > currentRayZ) {
+							float penumbra = float(si + 1) / numLayers;
+							selfShadow = min(selfShadow, lerp(0.0, penumbra, shadowSoftness));
+						}
+					}
+					selfShadow = lerp(1.0, selfShadow, shadowStrength);
+				}
+			}
+		}
+	}
+	#endif
+
 	normal.xyz		 = normal.xyz*0.5 + 0.5;	
 
 
@@ -199,7 +246,7 @@ FS_OUT FS( VS_OUTPUT input )   {
 	fout.color1.a 	= roughness;	
 	
 	fout.color2.r   = metallic;
-	fout.color2.g   = 0.0;
+	fout.color2.g   = selfShadow;
 	fout.color2.b   = 0.0;
 	fout.color2.a 	= Intensities.w / 255.0;
 	

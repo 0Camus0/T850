@@ -206,7 +206,8 @@ float4 FS( VS_OUTPUT input ) : SV_TARGET {
 
     Final.xyz += RefleCol * kSpecular.xyz * envAtten * toogles.x;
 
-		Final.xyz *= Shadow;
+		float selfShadow = PBRData.g;
+		Final.xyz *= Shadow * selfShadow;
 	}
 	return Final;
 }

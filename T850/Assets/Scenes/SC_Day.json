@@ -577,6 +577,38 @@
          "default_val": 0.02
       },
       {
+         "name": "parallax_shadow_min_layers",
+         "label": "PX Shd Min",
+         "min_val": 4,
+         "max_val": 32,
+         "step": 2,
+         "default_val": 8
+      },
+      {
+         "name": "parallax_shadow_max_layers",
+         "label": "PX Shd Max",
+         "min_val": 8,
+         "max_val": 64,
+         "step": 4,
+         "default_val": 32
+      },
+      {
+         "name": "parallax_shadow_softness",
+         "label": "PX Shd Soft",
+         "min_val": 0,
+         "max_val": 1,
+         "step": 0.05,
+         "default_val": 0.5
+      },
+      {
+         "name": "parallax_shadow_strength",
+         "label": "PX Shd Strength",
+         "min_val": 0,
+         "max_val": 1,
+         "step": 0.05,
+         "default_val": 1.0
+      },
+      {
          "name": "light_volume_steps",
          "label": "Light Vol Steps",
          "min_val": 16,
@@ -683,6 +715,11 @@
       {
          "name": "parallax_toggle",
          "label": "Parallax",
+         "default_val": true
+      },
+      {
+         "name": "parallax_shadow_toggle",
+         "label": "PX Self-Shadow",
          "default_val": true
       },
       {

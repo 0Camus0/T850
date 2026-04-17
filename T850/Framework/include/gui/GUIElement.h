@@ -108,6 +108,9 @@ namespace t800 {
     float resizeOrigMX = 0.0f;
     float resizeOrigMY = 0.0f;
 
+    // ── Group‑edit‑mode state ──
+    bool  groupHighlighted = false;
+
     static constexpr float kScaleHandleSize = 8.0f;
 
     virtual ~GUIElement() = default;
@@ -118,6 +121,9 @@ namespace t800 {
 
     // Edit overlay: bounding box + scale handle
     void DrawEditOverlay(GUIDrawContext& ctx);
+
+    // Group‑edit highlight overlay
+    void DrawGroupHighlight(GUIDrawContext& ctx);
 
     // Hit testing
     bool HitTest(float px, float py) const;

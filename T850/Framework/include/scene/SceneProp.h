@@ -26,7 +26,7 @@ enum LightType {
 
 struct Light{
 	XVECTOR3 Position;
-	XVECTOR3 Direction;  // normalized, for directional lights
+	XVECTOR3 Direction = XVECTOR3(0.0f, -1.0f, 0.0f);  // normalized, for directional lights
 	XVECTOR3 Color;
 	LightType Type;
 	int		 Enabled;
@@ -90,6 +90,7 @@ SceneProps() : ActiveCamera(0) , ActiveLights(1), ActiveLightCamera(0), ActiveGa
 	int ToogleSSAO;
 	int ToogleDOF = 1;
 	int ToogleParallax = 1;
+	int ToogleParallaxShadow = 1;
 	int ToogleGodRays = 1;
 	int DebugMode;
 
@@ -106,6 +107,10 @@ SceneProps() : ActiveCamera(0) , ActiveLights(1), ActiveLightCamera(0), ActiveGa
 	float ParallaxLowSamples;
 	float ParallaxHighSamples;
 	float ParallaxHeight;
+	float ParallaxShadowMinLayers = 8.0f;
+	float ParallaxShadowMaxLayers = 32.0f;
+	float ParallaxShadowSoftness = 0.5f;
+	float ParallaxShadowStrength = 1.0f;
 
 	float LightVolumeSteps;
 	// HDR

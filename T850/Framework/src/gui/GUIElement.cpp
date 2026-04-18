@@ -24,6 +24,13 @@ void GUIDrawContext::DrawSolidQuad(float px, float py, float w, float h,
 
 void GUIDrawContext::DrawTexturedQuad(float px, float py, float w, float h,
                                       Texture* tex, const XVECTOR3& tint) {
+  AtlasRegion full; // defaults to 0,0,1,1
+  DrawTexturedQuad(px, py, w, h, tex, tint, full);
+}
+
+void GUIDrawContext::DrawTexturedQuad(float px, float py, float w, float h,
+                                      Texture* tex, const XVECTOR3& tint,
+                                      const AtlasRegion& region) {
   if (!tex || !quad || !shader || !cb) return;
 
   XVECTOR3 t = tint;
@@ -38,18 +45,20 @@ void GUIDrawContext::DrawTexturedQuad(float px, float py, float w, float h,
   // GL samples textures with v=0 at the bottom row of pixel data, while the
   // texture loader uploads image data top-first (row 0 == top of image).
   // Under D3D11, texel (0,0) is top-left so the UVs below render correctly.
-  // Under GL, we flip V so the top of the quad samples the top of the image
-  // (otherwise asymmetric GUI textures — e.g. the checkmark arrow — appear
-  // upside down). This affects every GUI quad drawn through this helper.
+  // Under GL, we flip V so the top of the quad samples the top of the image.
+  // This works correctly for atlas sub-regions because we flip the region's
+  // v0/v1 within the atlas coordinate space.
   const bool gl = (g_pBaseDriver && g_pBaseDriver->m_currentAPI == GRAPHICS_API::OPENGL);
-  const float vTop = gl ? 1.0f : 0.0f;
-  const float vBot = gl ? 0.0f : 1.0f;
+  const float uLeft  = region.u0;
+  const float uRight = region.u1;
+  const float vTop = gl ? (1.0f - region.v0) : region.v0;
+  const float vBot = gl ? (1.0f - region.v1) : region.v1;
 
   Quad::Vertex verts[4] = {
-    {x0, y1, 0.0f, 1.0f, 0.0f, vTop},
-    {x0, y0, 0.0f, 1.0f, 0.0f, vBot},
-    {x1, y0, 0.0f, 1.0f, 1.0f, vBot},
-    {x1, y1, 0.0f, 1.0f, 1.0f, vTop},
+    {x0, y1, 0.0f, 1.0f, uLeft,  vTop},
+    {x0, y0, 0.0f, 1.0f, uLeft,  vBot},
+    {x1, y0, 0.0f, 1.0f, uRight, vBot},
+    {x1, y1, 0.0f, 1.0f, uRight, vTop},
   };
   quad->m_VB->UpdateFromBuffer(*T8DeviceContext, verts);
   tex->Set(*T8DeviceContext, 0, "tex0");
@@ -174,7 +183,7 @@ void GUISliderBar::Draw(GUIDrawContext& ctx) {
 
   // Bar
   XVECTOR3 barTint(1.0f, 1.0f, 1.0f);
-  ctx.DrawTexturedQuad(x, y, w, h, ctx.barTex, barTint);
+  ctx.DrawTexturedQuad(x, y, w, h, ctx.barTex, barTint, ctx.barRegion);
 
   // Knob: tunable offset/scale relative to bar height.
   float baseW = h;
@@ -196,7 +205,7 @@ void GUISliderBar::Draw(GUIDrawContext& ctx) {
   XVECTOR3 knobTint = (knobHover || knobDragging)
     ? XVECTOR3(1.5f, 1.5f, 1.5f)
     : XVECTOR3(1.0f, 1.0f, 1.0f);
-  ctx.DrawTexturedQuad(kx, ky, kW, kH, ctx.knobTex, knobTint);
+  ctx.DrawTexturedQuad(kx, ky, kW, kH, ctx.knobTex, knobTint, ctx.knobRegion);
 }
 
 void GUISliderBar::UpdateInteraction(float mx, float my, bool mouseDown) {
@@ -264,7 +273,7 @@ void GUICheckbox::Draw(GUIDrawContext& ctx) {
   // Draw box texture (always)
   XVECTOR3 tint(1.0f, 1.0f, 1.0f);
   if (ctx.checkBoxTex)
-    ctx.DrawTexturedQuad(x, y, h, h, ctx.checkBoxTex, tint);
+    ctx.DrawTexturedQuad(x, y, h, h, ctx.checkBoxTex, tint, ctx.checkBoxRegion);
 
   // Draw check mark overlay when checked
   if (checked && ctx.checkMarkTex) {
@@ -274,7 +283,7 @@ void GUICheckbox::Draw(GUIDrawContext& ctx) {
     float markH = (std::max)(4.0f, baseH * markScaleY);
     float markX = x + markOffsetX * h + (baseW - markW) * 0.5f;
     float markY = y + markOffsetY * h + (baseH - markH) * 0.5f;
-    ctx.DrawTexturedQuad(markX, markY, markW, markH, ctx.checkMarkTex, tint);
+    ctx.DrawTexturedQuad(markX, markY, markW, markH, ctx.checkMarkTex, tint, ctx.checkMarkRegion);
   }
 }
 
@@ -337,7 +346,7 @@ void GUISelector::DrawQuadsOnly(GUIDrawContext& ctx) {
 
   // Bar drawn at full element bounds
   if (ctx.selectorBarTex)
-    ctx.DrawTexturedQuad(x, y, w, h, ctx.selectorBarTex, tint);
+    ctx.DrawTexturedQuad(x, y, w, h, ctx.selectorBarTex, tint, ctx.selectorBarRegion);
 
   // Left button: base at element left edge
   float leftW = (std::max)(4.0f, btnSize * leftScaleX);
@@ -353,13 +362,15 @@ void GUISelector::DrawQuadsOnly(GUIDrawContext& ctx) {
 
   // Left button
   Texture* leftTex = leftPressed ? ctx.selectorBtnLeftPressTex : ctx.selectorBtnLeftTex;
+  const AtlasRegion& leftRegion = leftPressed ? ctx.selectorBtnLeftPressRegion : ctx.selectorBtnLeftRegion;
   if (leftTex)
-    ctx.DrawTexturedQuad(leftX, leftY, leftW, leftH, leftTex, tint);
+    ctx.DrawTexturedQuad(leftX, leftY, leftW, leftH, leftTex, tint, leftRegion);
 
   // Right button
   Texture* rightTex = rightPressed ? ctx.selectorBtnRightPressTex : ctx.selectorBtnRightTex;
+  const AtlasRegion& rightRegion = rightPressed ? ctx.selectorBtnRightPressRegion : ctx.selectorBtnRightRegion;
   if (rightTex)
-    ctx.DrawTexturedQuad(rightX, rightY, rightW, rightH, rightTex, tint);
+    ctx.DrawTexturedQuad(rightX, rightY, rightW, rightH, rightTex, tint, rightRegion);
 }
 
 void GUISelector::DrawTextBatched(GUIDrawContext& ctx) {

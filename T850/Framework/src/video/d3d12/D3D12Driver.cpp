@@ -356,20 +356,39 @@ namespace t800 {
   }
 
   void D3D12VertexBuffer::Set(const DeviceContext& deviceContext, const unsigned stride, const unsigned offset) {
-    T8_LOG_TRACE("[D3D12] VB::Set stride=%u", stride);
+    T8_LOG_TRACE("[D3D12] VB::Set stride=%u gpuVA=0x%llX size=%u", stride, m_view.BufferLocation, m_view.SizeInBytes);
     const_cast<DeviceContext*>(&deviceContext)->actualVertexBuffer = (VertexBuffer*)this;
     m_view.StrideInBytes = stride;
     auto* cmdList = static_cast<const D3D12DeviceContext*>(&deviceContext)->GetCommandList();
     cmdList->IASetVertexBuffers(0, 1, &m_view);
   }
 
-  void D3D12VertexBuffer::UpdateFromSystemCopy(const DeviceContext&) {
-    if (m_mappedData && !sysMemCpy.empty())
-      memcpy(m_mappedData, sysMemCpy.data(), sysMemCpy.size());
+  void D3D12VertexBuffer::UpdateFromSystemCopy(const DeviceContext& deviceContext) {
+    if (!sysMemCpy.empty()) {
+      // D3D12: suballocate from the per-frame ring buffer so each draw
+      // within the same command list sees its own vertex data.
+      auto* driver = GetD3D12Driver();
+      UINT size = (UINT)sysMemCpy.size();
+      D3D12_GPU_VIRTUAL_ADDRESS gpuAddr = driver->AllocateRingData(sysMemCpy.data(), size);
+      m_view.BufferLocation = gpuAddr;
+      m_view.SizeInBytes = size;
+      // Rebind so the next DrawIndexed picks up the new address
+      auto* cmdList = static_cast<const D3D12DeviceContext*>(&deviceContext)->GetCommandList();
+      cmdList->IASetVertexBuffers(0, 1, &m_view);
+    }
   }
-  void D3D12VertexBuffer::UpdateFromBuffer(const DeviceContext&, const void* buffer) {
+  void D3D12VertexBuffer::UpdateFromBuffer(const DeviceContext& deviceContext, const void* buffer) {
     sysMemCpy.assign((char*)buffer, (char*)buffer + descriptor.byteWidth);
-    if (m_mappedData) memcpy(m_mappedData, buffer, descriptor.byteWidth);
+    // D3D12: suballocate from the per-frame ring buffer so each draw
+    // within the same command list sees its own vertex data.
+    auto* driver = GetD3D12Driver();
+    UINT size = descriptor.byteWidth;
+    D3D12_GPU_VIRTUAL_ADDRESS gpuAddr = driver->AllocateRingData(buffer, size);
+    m_view.BufferLocation = gpuAddr;
+    m_view.SizeInBytes = size;
+    // Rebind so the next DrawIndexed picks up the new address
+    auto* cmdList = static_cast<const D3D12DeviceContext*>(&deviceContext)->GetCommandList();
+    cmdList->IASetVertexBuffers(0, 1, &m_view);
   }
   void D3D12VertexBuffer::release() {
     if (m_mappedData) { m_buffer->Unmap(0, nullptr); m_mappedData = nullptr; }
@@ -517,13 +536,17 @@ namespace t800 {
       rtvFormat = DXGI_FORMAT_UNKNOWN;
     }
 
+    // When depth is disabled, keep DSV format matching the bound depth buffer
+    // (the depth test/write is disabled in the PSO's DepthStencilState already)
+
     D3D12PipelineKey key = {};
-    key.shaderKey = shader->key.bits;
+    key.shaderPtr = reinterpret_cast<uintptr_t>(shader);
     key.blend = (uint8_t)m_currentBlend;
     key.depth = (uint8_t)m_currentDepth;
     key.cull = (uint8_t)m_currentCull;
     key.numRTVs = numRTVs;
     key.rtvFormat = rtvFormat;
+    key.dsvFormat = dsvFormat;
 
     auto it = m_psoCache.find(key);
     if (it != m_psoCache.end()) return it->second.Get();
@@ -607,13 +630,13 @@ namespace t800 {
     ComPtr<ID3D12PipelineState> psoObj;
     HRESULT hr = device->CreateGraphicsPipelineState(&pso, IID_PPV_ARGS(&psoObj));
     if (FAILED(hr)) {
-      T8_LOG_ERROR("[D3D12] CreatePSO failed hr=0x%08X key=0x%08X blend=%d depth=%d cull=%d nRTV=%d fmt=%d",
-                   hr, key.shaderKey, key.blend, key.depth, key.cull, key.numRTVs, key.rtvFormat);
+      T8_LOG_ERROR("[D3D12] CreatePSO failed hr=0x%08X shader=%p blend=%d depth=%d cull=%d nRTV=%d fmt=%d",
+                   hr, shader, key.blend, key.depth, key.cull, key.numRTVs, key.rtvFormat);
       return nullptr;
     }
 
-    T8_LOG_DEBUG("[D3D12] PSO created: shader=0x%08X blend=%d depth=%d cull=%d nRTV=%d",
-                 key.shaderKey, key.blend, key.depth, key.cull, key.numRTVs);
+    T8_LOG_DEBUG("[D3D12] PSO created: shader=%p blend=%d depth=%d cull=%d nRTV=%d",
+                 shader, key.blend, key.depth, key.cull, key.numRTVs);
     m_psoCache[key] = psoObj;
     return psoObj.Get();
   }
@@ -911,6 +934,7 @@ namespace t800 {
   }
 
   void D3D12Driver::SetCullFace(FACE_CULLING state) {
+    T8_LOG_TRACE("[D3D12] SetCullFace(%d)", state);
     m_currentCull = state; m_FaceCulling = state;
   }
 
@@ -1105,6 +1129,12 @@ namespace t800 {
       m_heaps[D3D12Heap::SAMPLER].GetHeap()
     };
     m_commandList->SetDescriptorHeaps(2, heaps);
+
+    // Rebind back buffer render targets, viewport, and scissor
+    // (OM state is lost after command list reset)
+    m_commandList->OMSetRenderTargets(1, &m_backBufferRTVs[m_currentBackBuffer], FALSE, &m_depthDSV);
+    m_commandList->RSSetViewports(1, &m_viewport);
+    m_commandList->RSSetScissorRects(1, &m_scissorRect);
   }
 
   void D3D12Driver::SaveRTToFile(int rtID, int attachment, std::string path) {
@@ -1124,6 +1154,14 @@ namespace t800 {
 
   void D3D12Driver::UploadBufferData(ID3D12Resource*, const void*, size_t, D3D12_RESOURCE_STATES) {}
 
+  void D3D12Driver::BindBackBufferNoDSV() {
+    T8_LOG_TRACE("[D3D12] BindBackBufferNoDSV: bb=%u viewport=%.0fx%.0f", m_currentBackBuffer, m_viewport.Width, m_viewport.Height);
+    // Pass the DSV even for depth-disabled draws — D3D12 is okay with an unused DSV bound
+    m_commandList->OMSetRenderTargets(1, &m_backBufferRTVs[m_currentBackBuffer], FALSE, &m_depthDSV);
+    m_commandList->RSSetViewports(1, &m_viewport);
+    m_commandList->RSSetScissorRects(1, &m_scissorRect);
+  }
+
   // ══════════════════════════════════════════════════════
   //  D3D12Driver — Dynamic CB ring allocator
   // ══════════════════════════════════════════════════════
@@ -1132,6 +1170,23 @@ namespace t800 {
     UINT alignedSize = (dataSize + 255) & ~255;
     if (m_cbRingOffset + alignedSize > kCBRingBufferSize) {
       T8_LOG_ERROR("[D3D12] CB ring buffer overflow! offset=%u + size=%u > %u", m_cbRingOffset, alignedSize, kCBRingBufferSize);
+      m_cbRingOffset = 0;
+    }
+
+    UINT bufIdx = m_currentBackBuffer;
+    unsigned char* dst = (unsigned char*)m_cbRingMapped[bufIdx] + m_cbRingOffset;
+    memcpy(dst, data, dataSize);
+
+    D3D12_GPU_VIRTUAL_ADDRESS gpuAddr = m_cbRingBuffers[bufIdx]->GetGPUVirtualAddress() + m_cbRingOffset;
+    m_cbRingOffset += alignedSize;
+    return gpuAddr;
+  }
+
+  D3D12_GPU_VIRTUAL_ADDRESS D3D12Driver::AllocateRingData(const void* data, UINT dataSize) {
+    // Use 256-byte alignment to stay compatible with CBV allocations from the same ring buffer
+    UINT alignedSize = (dataSize + 255) & ~255;
+    if (m_cbRingOffset + alignedSize > kCBRingBufferSize) {
+      T8_LOG_ERROR("[D3D12] Ring buffer overflow! offset=%u + size=%u > %u", m_cbRingOffset, alignedSize, kCBRingBufferSize);
       m_cbRingOffset = 0;
     }
 

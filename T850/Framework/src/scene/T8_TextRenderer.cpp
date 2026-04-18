@@ -54,6 +54,10 @@ namespace t800 {
     }
 
     ftex = T8Device->CreateTextureFromMemory(temp_bitmap, m_textureSize, m_textureSize, 1, path);
+    if (ftex) {
+      ftex->params = TEXT_BASIC_PARAMS::CLAMP_TO_EDGE;
+      ftex->SetTextureParams();
+    }
     //Create Quad
     m_quad.Init();
     /*SHADERS*/

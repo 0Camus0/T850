@@ -17,16 +17,16 @@
                  "seconds":  5,
                  "trigger":  "frame",
                  "frame":  750,
-                 "enabled":  false
+                 "enabled":  true
              },
     "debugFrames":  false,
     "devTools":  {
                      "guiControlEdit":  false,
                      "d3d12Debug":  false,
-                     "guiControlTarget":  "linedit_popup",
+                     "guiControlTarget":  "slider_knob",
                      "logLevel":  "error",
                      "logToFile":  false,
                      "guiEdit":  false,
-                     "guiSnap":  false
+                     "guiSnap":  true
                  }
 }

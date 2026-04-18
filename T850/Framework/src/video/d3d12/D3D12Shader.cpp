@@ -237,10 +237,13 @@ namespace t800 {
       }
     }
 
-    // Get or create PSO for current state
+    // Get or create PSO for current state (dsvFmt may be overridden to UNKNOWN inside if depth==NONE)
     ID3D12PipelineState* pso = driver->GetOrCreatePSO(this, numRTVs, rtvFmt, dsvFmt);
     if (pso) {
       cmdList->SetPipelineState(pso);
+      T8_LOG_TRACE("[D3D12] Shader::Set PSO=%p numRTVs=%d rtvFmt=%d dsvFmt=%d", pso, numRTVs, rtvFmt, dsvFmt);
+    } else {
+      T8_LOG_ERROR("[D3D12] Shader::Set PSO is NULL! key=0x%08X", key.bits);
     }
 
     // Bind default sampler if shader uses one

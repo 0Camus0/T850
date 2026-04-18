@@ -26,6 +26,7 @@
 
 #include <T8_descriptors.h>
 #include <utils/Log.h>
+#include <utils/GUIAtlasGenerator.h>
 
 std::vector<std::string> g_args;
 
@@ -51,6 +52,8 @@ int    g_logLevel    = 3;            // --logLevel: 0=Error,1=Info,2=Debug,3=Ver
 std::string g_logFile;              // --logFile <path>: write log to file (append, flush-per-entry)
 bool   g_d3d12Debug  = false;       // --d3d12debug: enable D3D12 debug layer
 bool   g_testGui    = false;        // --testGui: minimal GUI rendering test (skip scene)
+bool   g_createAtlas = false;       // --createAtlas: generate GUI texture atlas and exit
+int    g_atlasMaxSprite = 256;      // --atlasMaxSprite: max sprite dimension in atlas
 
 t800::AppBase		  *pApp = 0;
 t800::RootFramework *pFrameWork = 0;
@@ -157,6 +160,12 @@ int main(int arg,char ** args){
     else if (a == "--testGui") {
       g_testGui = true;
     }
+    else if (a == "--createAtlas" || a == "--updateAtlas") {
+      g_createAtlas = true;
+    }
+    else if (a == "--atlasMaxSprite" && i + 1 < arg) {
+      g_atlasMaxSprite = std::stoi(args[++i]);
+    }
   }
 
   if (g_fullscreen)
@@ -189,6 +198,43 @@ int main(int arg,char ** args){
   );
   t800::Log::SetSessionTag(apiTag);
 
+  // --createAtlas / --updateAtlas: generate atlas and exit (no window needed)
+  if (g_createAtlas) {
+    t800::GUIAtlasGenerator gen;
+
+    // Source textures in Assets/Layouts/Textures/
+    const char* layoutDir = "Assets/Layouts/Textures/";
+    struct TexDef { const char* name; const char* file; };
+    TexDef texDefs[] = {
+      {"SliderBar",              "SliderBar.png"},
+      {"SliderKnob",             "SliderKnob.png"},
+      {"GUI_CheckBox_Box",       "GUI_CheckBox_Box.png"},
+      {"GUI_Checkbox_Check",     "GUI_Checkbox_Check.png"},
+      {"GUI_DropBar",            "GUI_DropBar.png"},
+      {"GUI_DropNonPressedLeft",  "GUI_DropNonPressedLeft.png"},
+      {"GUI_DropNonPressedRight", "GUI_DropNonPressedRight.png"},
+      {"GUI_DropPressedLeft",     "GUI_DropPressedLeft.png"},
+      {"GUI_DropPressedRight",    "GUI_DropPressedRight.png"},
+      {"PopupBackground",        "PopupBackground.png"},
+      {"PopUpOKNonPressed",      "PopUpOKNonPressed.png"},
+      {"PopUpOkPressed",         "PopUpOkPressed.png"},
+      {"PopUpCancelNonPressed",  "PopUpCancelNonPressed.png"},
+      {"PopUpCancelPressed",     "PopUpCancelPressed.png"},
+    };
+    for (auto& td : texDefs) {
+      gen.AddImage(td.name, std::string(layoutDir) + td.file);
+    }
+
+    if (gen.Generate(4096, g_atlasMaxSprite, 2)) {
+      gen.Save("Assets/Layouts/gui_atlas.png", "Assets/Layouts/gui_atlas.json");
+      printf("[createAtlas] Atlas generated successfully (%dx%d)\n",
+             gen.GetWidth(), gen.GetHeight());
+    } else {
+      fprintf(stderr, "[createAtlas] Atlas generation failed\n");
+    }
+    t800::Log::Shutdown();
+    return 0;
+  }
 	pApp = new App;
 #ifdef OS_LINUX
     pFrameWork = new t800::LinuxFramework((t800::AppBase*)pApp);

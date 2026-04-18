@@ -3,6 +3,7 @@
 #include <vector>
 #include <algorithm>
 #include <utils/xMaths.h>
+#include <utils/GUIAtlasGenerator.h>  // AtlasRegion
 
 namespace t800 {
 
@@ -82,9 +83,39 @@ namespace t800 {
     // Helper: draw a solid‑colour quad (uses whiteTex + tint)
     void DrawSolidQuad(float px, float py, float w, float h,
                        const XVECTOR3& color, float alpha = 1.0f);
-    // Helper: draw a textured quad with tint
+    // Helper: draw a textured quad with tint (full UV range)
     void DrawTexturedQuad(float px, float py, float w, float h,
                           Texture* tex, const XVECTOR3& tint);
+    // Helper: draw a textured quad with tint using atlas sub-region UVs
+    void DrawTexturedQuad(float px, float py, float w, float h,
+                          Texture* tex, const XVECTOR3& tint,
+                          const AtlasRegion& region);
+
+    // ── Atlas regions (populated when atlas is loaded) ──
+    AtlasRegion barRegion;
+    AtlasRegion knobRegion;
+    AtlasRegion checkBoxRegion;
+    AtlasRegion checkMarkRegion;
+    AtlasRegion selectorBarRegion;
+    AtlasRegion selectorBtnLeftRegion;
+    AtlasRegion selectorBtnRightRegion;
+    AtlasRegion selectorBtnLeftPressRegion;
+    AtlasRegion selectorBtnRightPressRegion;
+    AtlasRegion popupBgRegion;
+    AtlasRegion popupOkRegion;
+    AtlasRegion popupOkPressedRegion;
+    AtlasRegion popupCancelRegion;
+    AtlasRegion popupCancelPressedRegion;
+
+    // ── Source dimensions for aspect-ratio code (atlas sprites) ──
+    float barSrcW = 256.0f, barSrcH = 32.0f;
+    float selectorBarSrcW = 256.0f, selectorBarSrcH = 32.0f;
+    float selectorBtnLeftSrcW = 32.0f;
+    float selectorBtnRightSrcW = 32.0f;
+    float checkBoxSrcW = 64.0f, checkBoxSrcH = 64.0f;
+    float popupBgSrcW = 400.0f, popupBgSrcH = 160.0f;
+    float popupOkSrcW = 100.0f, popupOkSrcH = 40.0f;
+    float popupCancelSrcW = 100.0f, popupCancelSrcH = 40.0f;
   };
 
   // ─── Base class for every GUI widget ───

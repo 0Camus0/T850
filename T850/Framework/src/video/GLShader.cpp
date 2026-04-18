@@ -1,5 +1,6 @@
 #include <video/GLShader.h>
 #include <utils/Utils.h>
+#include <utils/Log.h>
 #include "video/GLDriver.h"
 
 
@@ -134,6 +135,7 @@ namespace t800 {
 
   void GLShader::Set(const DeviceContext & deviceContext)
   {
+    T8_LOG_TRACE("[GL] Shader::Set key=0x%08X prog=%d", key.bits, ShaderProg);
     const_cast<DeviceContext*>(&deviceContext)->actualShaderSet = (ShaderBase*)this;
     int stride = reinterpret_cast<const GLDeviceContext*>(&deviceContext)->internalStride;
     glUseProgram(ShaderProg);

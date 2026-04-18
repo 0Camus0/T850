@@ -142,6 +142,7 @@ int main(int arg,char ** args){
       else if (val == "info"  || val == "1") g_logLevel = 1;
       else if (val == "debug" || val == "2") g_logLevel = 2;
       else if (val == "verbose" || val == "3") g_logLevel = 3;
+      else if (val == "trace"   || val == "4") g_logLevel = 4;
     }
     else if (a == "--logFile" && i + 1 < arg) {
       g_logFile = args[++i];

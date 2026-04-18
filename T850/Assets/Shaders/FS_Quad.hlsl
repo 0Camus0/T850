@@ -940,6 +940,10 @@ float4 FS( VS_OUTPUT input ) : SV_TARGET {
 	float avgLuminance = dot( tex0.SampleLevel( SS, input.texture0 , mip).rgb , float3(0.299f, 0.587f, 0.114f) );
 	return float4(avgLuminance,avgLuminance,avgLuminance,1.0);
 }
+#elif defined(FADE)
+float4 FS( VS_OUTPUT input ) : SV_TARGET {
+	return float4(0.0, 0.0, 0.0, brightness.x);
+}
 #else
 Texture2D tex0 : register(t0);
 float4 FS( VS_OUTPUT input ) : SV_TARGET {

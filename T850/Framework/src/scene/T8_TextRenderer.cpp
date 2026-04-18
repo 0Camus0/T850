@@ -1,4 +1,5 @@
 #include "scene/T8_TextRenderer.h"
+#include <utils/Log.h>
 #define STB_TRUETYPE_IMPLEMENTATION
 #include <stb_truetype.h>
 #include <fstream>
@@ -269,6 +270,7 @@ namespace t800 {
   }
 
   void TextRenderer::BeginBatch() {
+    T8_LOG_TRACE("[TextRenderer] BeginBatch");
     m_batchActive = true;
     g_pBaseDriver->SetBlendState(BaseDriver::BLEND_STATES::ALPHA_BLEND);
     g_pBaseDriver->SetDepthStencilState(BaseDriver::DEPTH_STENCIL_STATES::NONE);
@@ -283,6 +285,7 @@ namespace t800 {
   }
 
   void TextRenderer::EndBatch() {
+    T8_LOG_TRACE("[TextRenderer] EndBatch");
     m_batchActive = false;
     g_pBaseDriver->SetBlendState(BaseDriver::BLEND_STATES::BLEND_DEFAULT);
     g_pBaseDriver->SetDepthStencilState(BaseDriver::DEPTH_STENCIL_STATES::DEPTH_DEFAULT);

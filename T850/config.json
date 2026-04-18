@@ -1,6 +1,6 @@
 ﻿{
     "keepRunning":  false,
-    "api":  "d3d11",
+    "api":  "glew",
     "architecture":  "x64",
     "display":  {
                     "scene":  0,
@@ -23,8 +23,8 @@
     "devTools":  {
                      "guiControlEdit":  false,
                      "guiControlTarget":  "linedit_popup",
-                     "logLevel":  "error",
-                     "logToFile":  false,
+                     "logLevel":  "trace",
+                     "logToFile":  true,
                      "guiEdit":  false,
                      "guiSnap":  false
                  }

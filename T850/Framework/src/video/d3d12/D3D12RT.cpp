@@ -41,6 +41,7 @@ namespace t800 {
     DXGI_FORMAT dsvFmt = DXGI_FORMAT_D32_FLOAT;
     DXGI_FORMAT srvDepthFmt = DXGI_FORMAT_R32_FLOAT;
     isCubeDepth = (depth_format == BaseRT::CUBE_F32);
+    colorFormat = cfmt;  // cache for PSO lookup
 
     // Color attachments
     for (int i = 0; i < number_RT; i++) {

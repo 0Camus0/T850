@@ -11,6 +11,7 @@
 *********************************************************/
 
 #include <video/GLTexture.h>
+#include <utils/Log.h>
 
 #if defined(USING_OPENGL_ES20)
 #include <GLES2/gl2.h>
@@ -196,6 +197,7 @@ namespace t800 {
 
   void GLTexture::Set(const DeviceContext & deviceContext, unsigned int slot, std::string name)
   {
+    T8_LOG_TRACE("[GL] Texture::Set slot=%u name='%s' file='%s'", slot, name.c_str(), filepath.c_str());
     m_shaderTextureName = name;
     int slot_active = GL_TEXTURE0 + slot;
     int deb = reinterpret_cast<GLShader*>(deviceContext.actualShaderSet)->ShaderProg;

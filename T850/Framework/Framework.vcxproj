@@ -71,10 +71,14 @@
     <ClInclude Include="include\video\GLSLParser.h" />
     <ClInclude Include="include\video\GLTexture.h" />
     <ClInclude Include="include\video\ShaderBase.h" />
-    <ClInclude Include="include\video\windows\D3DXDriver.h" />
-    <ClInclude Include="include\video\windows\D3DXRT.h" />
-    <ClInclude Include="include\video\windows\D3DXShader.h" />
-    <ClInclude Include="include\video\windows\D3DXTexture.h" />
+    <ClInclude Include="include\video\windows\D3D11Driver.h" />
+    <ClInclude Include="include\video\windows\D3D11RT.h" />
+    <ClInclude Include="include\video\windows\D3D11Shader.h" />
+    <ClInclude Include="include\video\windows\D3D11Texture.h" />
+    <ClInclude Include="include\video\d3d12\D3D12Driver.h" />
+    <ClInclude Include="include\video\d3d12\D3D12Shader.h" />
+    <ClInclude Include="include\video\d3d12\D3D12RT.h" />
+    <ClInclude Include="include\video\d3d12\D3D12Texture.h" />
     <ClInclude Include="T8_descriptors.h" />
   </ItemGroup>
   <ItemGroup>
@@ -124,10 +128,14 @@
     <ClCompile Include="src\video\GLShader.cpp" />
     <ClCompile Include="src\video\GLSLParser.cpp" />
     <ClCompile Include="src\video\GLTexture.cpp" />
-    <ClCompile Include="src\video\windows\D3DXDriver.cpp" />
-    <ClCompile Include="src\video\windows\D3DXRT.cpp" />
-    <ClCompile Include="src\video\windows\D3DXShader.cpp" />
-    <ClCompile Include="src\video\windows\D3DXTexture.cpp" />
+    <ClCompile Include="src\video\windows\D3D11Driver.cpp" />
+    <ClCompile Include="src\video\windows\D3D11RT.cpp" />
+    <ClCompile Include="src\video\windows\D3D11Shader.cpp" />
+    <ClCompile Include="src\video\windows\D3D11Texture.cpp" />
+    <ClCompile Include="src\video\d3d12\D3D12Driver.cpp" />
+    <ClCompile Include="src\video\d3d12\D3D12Shader.cpp" />
+    <ClCompile Include="src\video\d3d12\D3D12RT.cpp" />
+    <ClCompile Include="src\video\d3d12\D3D12Texture.cpp" />
   </ItemGroup>
   <ItemGroup>
     <None Include="..\Assets\Shaders\FS.glsl">

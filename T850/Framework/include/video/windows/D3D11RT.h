@@ -10,34 +10,37 @@
 * ** Enjoy, learn and share.
 *********************************************************/
 
-#ifndef T800_D3DXSHADER_H
-#define T800_D3DXSHADER_H
+#ifndef T800_D3D11RT_H
+#define T800_D3D11RT_H
 
 #include <Config.h>
 
 #include <video/BaseDriver.h>
+#include <video/windows/D3D11Texture.h>
+
 #include <d3d11.h>
 #include <dxgi.h>
-#include <D3Dcompiler.h>
+#include <vector>
 
 #include <wrl.h>
 #include <wrl/client.h>
 using namespace Microsoft::WRL;
 
 namespace t800 {
-  class D3DXShader : public ShaderBase {
+  class D3DXRT : public BaseRT {
   public:
-
-    bool CreateShaderAPI(std::string src_vs, std::string src_fs, const std::string& vs_name = "", const std::string& fs_name = "");
-    void  Set(const DeviceContext& deviceContext) override;
-    void DestroyAPIShader() override;
-    ComPtr<ID3D11VertexShader>  pVS;
-    ComPtr<ID3D11PixelShader>   pFS;
-    ComPtr<ID3DBlob>            VS_blob;
-    ComPtr<ID3DBlob>            FS_blob;
-    ComPtr<ID3D11InputLayout>   Layout;
-    std::vector<D3D11_INPUT_ELEMENT_DESC>	VertexDecl;
+    bool			LoadAPIRT();
+    void			DestroyAPIRT();
+    void Set(const DeviceContext& context) override;
+    void ChangeCubeDepthTexture(int i) override;
+    std::vector<ComPtr<ID3D11RenderTargetView>>		vD3D11RenderTargetView;
+    std::vector<ComPtr<ID3D11Texture2D>>			vD3D11ColorTex;
+    ComPtr<ID3D11Texture2D>							D3D11DepthTex;
+    ComPtr<ID3D11DepthStencilView>					D3D11DepthStencilTargetView;
+    bool isCubeDepth = false;
+    ComPtr<ID3D11DepthStencilView>  D3D11CubeFaceDSVs[6];
   };
 }
+
 
 #endif

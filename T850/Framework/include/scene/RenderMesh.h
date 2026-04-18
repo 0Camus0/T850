@@ -31,7 +31,7 @@
 #endif
 
 #if defined(OS_WINDOWS)
-#include <video/windows/D3DXTexture.h>
+#include <video/windows/D3D11Texture.h>
 #include <D3Dcompiler.h>
 #endif
 
@@ -73,8 +73,9 @@ namespace t800 {
 	  XVECTOR3  PBRParams;       // .x=metallic .y=roughness (fallbacks)
 	  XVECTOR3  Intensities;     // .w=MatID
 	  XVECTOR3  ParallaxSettings;
+	  XVECTOR3  ParallaxShadowSettings;
+	  XVECTOR3  Light0Dir;
     };
-
 
     struct SubSetInfo {
 		SubSetInfo() {

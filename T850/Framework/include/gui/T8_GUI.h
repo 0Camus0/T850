@@ -87,6 +87,7 @@ namespace t800 {
     void ClearSliders();
 
     void Update(InputManager& input, int screenW, int screenH);
+    void UpdateButtons(InputManager& input);
     void Draw();
 
     // Draw only the FPS label (for use when GUI overlay is hidden)
@@ -210,6 +211,12 @@ namespace t800 {
     Texture* m_popupOkPressedTexture     = nullptr;
     Texture* m_popupCancelTexture        = nullptr;
     Texture* m_popupCancelPressedTexture = nullptr;
+
+    // GUI / Back button textures
+    Texture* m_guiBtnNormalTex  = nullptr;
+    Texture* m_guiBtnPressedTex = nullptr;
+    Texture* m_backBtnNormalTex  = nullptr;
+    Texture* m_backBtnPressedTex = nullptr;
 
     Quad          m_quad;
     ShaderBase*   m_shader = nullptr;
@@ -336,6 +343,10 @@ namespace t800 {
     std::string FindPairedWidgetId(GUIElement* element) const;
     void ClearGroupHighlights();
     void SyncFPSToGlobalLayout();
+
+    // GUI / Back buttons (standalone, not in m_elements)
+    GUIButton m_guiButton;
+    GUIButton m_backButton;
   };
 
 } // namespace t800

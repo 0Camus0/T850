@@ -14,7 +14,8 @@
 
 #include <video/GLDriver.h>
 #if defined(OS_WINDOWS)
-#include <video/windows/D3DXDriver.h>
+#include <video/windows/D3D11Driver.h>
+#include <video/d3d12/D3D12Driver.h>
 #endif
 // SDL3
 #include <SDL3/SDL.h>
@@ -172,6 +173,8 @@ namespace t800 {
     std::string title = aplicationDescriptor.title;
     if (api == GRAPHICS_API::OPENGL)
       title += "   GL";
+    else if (api == GRAPHICS_API::D3D12)
+      title += "   D3D12";
     else
       title += "   D3D11";
 
@@ -245,6 +248,10 @@ namespace t800 {
 #endif
       pVideoDriver = new GLDriver;
     }
+    else if (api == GRAPHICS_API::D3D12) {
+      pVideoDriver = new D3D12Driver;
+      pVideoDriver->SetDimensions(aplicationDescriptor.width, aplicationDescriptor.height);
+    }
     else {
       pVideoDriver = new D3DXDriver;
       pVideoDriver->SetDimensions(aplicationDescriptor.width, aplicationDescriptor.height);
@@ -254,5 +261,7 @@ namespace t800 {
     pVideoDriver->SetWindow(m_pWindow);
     pVideoDriver->InitDriver();
     pBaseApp->CreateAssets();
+    // For D3D12: record where permanent descriptors end so per-frame dynamic CBVs start after them
+    pVideoDriver->BuildPipelineObjects();
   }
 }

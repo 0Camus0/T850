@@ -18,8 +18,8 @@
 #include <video/GLDriver.h>
 
 #if defined(OS_WINDOWS)
-#include <video/windows/D3DXShader.h>
-#include <video/windows/D3DXDriver.h>
+#include <video/windows/D3D11Shader.h>
+#include <video/windows/D3D11Driver.h>
 #endif
 #include "core/Core.h"
 #include <utils/Log.h>
@@ -420,6 +420,9 @@ namespace t800 {
       it_MeshInfo->CnstBuffer.CameraInfo = infoCam;
 	  it_MeshInfo->CnstBuffer.ParallaxSettings = XVECTOR3(m_fParallaxLowSamples, m_fParallaxHighSamples, m_fParallaxHeight);
 	  it_MeshInfo->CnstBuffer.ParallaxSettings.w = m_fParallaxEnabled;
+	  it_MeshInfo->CnstBuffer.ParallaxShadowSettings = XVECTOR3(m_fParallaxShadowMinLayers, m_fParallaxShadowMaxLayers, m_fParallaxShadowSoftness);
+	  it_MeshInfo->CnstBuffer.ParallaxShadowSettings.w = m_fParallaxShadowStrength;
+	  it_MeshInfo->CnstBuffer.Light0Dir = pScProp->Lights[0].Direction;
 
       unsigned int stride = it_MeshInfo->VertexSize;
       unsigned int offset = 0;
@@ -448,8 +451,9 @@ namespace t800 {
         finalKey.bits |= (gKey.bits & featureMask);
         if (finalKey.has(ShaderKey::HEIGHT_MAP) && m_fParallaxEnabled > 0.5f) {
           uint8_t pass = finalKey.getPass();
-          if (pass == PassType::GBUFFER || pass == PassType::FORWARD)
+          if (pass == PassType::GBUFFER || pass == PassType::FORWARD) {
             finalKey.bits |= ShaderKey::PARALLAX;
+          }
         }
 
         s = g_pBaseDriver->GetShader(finalKey);

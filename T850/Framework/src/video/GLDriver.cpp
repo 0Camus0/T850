@@ -539,6 +539,8 @@ namespace t800 {
 
   void GLDriver::SetBlendState(BLEND_STATES state)
   {
+    static const char* names[] = {"BLEND_DEFAULT","BLEND_OPAQUE","ADDITIVE","ALPHA_BLEND","NON_PREMULTIPLIED"};
+    T8_LOG_TRACE("[GL] SetBlendState(%s)", (state >= 0 && state <= 4) ? names[state] : "?");
     switch (state)
     {
     case t800::BaseDriver::BLEND_DEFAULT:
@@ -565,6 +567,8 @@ namespace t800 {
 
   void GLDriver::SetDepthStencilState(DEPTH_STENCIL_STATES state)
   {
+    static const char* names[] = {"DEPTH_DEFAULT","READ_WRITE","NONE","READ"};
+    T8_LOG_TRACE("[GL] SetDepthStencilState(%s)", (state >= 0 && state <= 3) ? names[state] : "?");
     switch (state)
     {
     case t800::BaseDriver::DEPTH_DEFAULT:
@@ -756,6 +760,7 @@ namespace t800 {
   }
 
   void	GLDriver::SwapBuffers() {
+    T8_LOG_TRACE("[GLDriver] SwapBuffers");
 #ifdef OS_WINDOWS
 #if defined(USING_OPENGL_ES20) || defined(USING_OPENGL_ES30)
     eglSwapBuffers(eglDisplay, eglSurface);

@@ -40,6 +40,7 @@ namespace Log {
       case LVL_INFO:    return "INFO ";
       case LVL_DEBUG:   return "DEBUG";
       case LVL_VERBOSE: return "VERB ";
+      case LVL_TRACE:   return "TRACE";
       default:          return "?????";
     }
   }
@@ -105,6 +106,7 @@ namespace Log {
       case LVL_INFO:    attr = s_defaultAttribs;                        break;
       case LVL_DEBUG:   attr = FOREGROUND_GREEN | FOREGROUND_INTENSITY; break;
       case LVL_VERBOSE: attr = FOREGROUND_INTENSITY;                    break; // dark gray
+      case LVL_TRACE:   attr = FOREGROUND_BLUE | FOREGROUND_INTENSITY;  break; // blue
       default:          attr = s_defaultAttribs;                        break;
     }
     SetConsoleTextAttribute(s_console, attr);
@@ -120,6 +122,7 @@ namespace Log {
       case LVL_INFO:    return "\033[0m";    // default
       case LVL_DEBUG:   return "\033[32m";   // green
       case LVL_VERBOSE: return "\033[90m";   // dark gray
+      case LVL_TRACE:   return "\033[34m";   // blue
       default:          return "\033[0m";
     }
   }

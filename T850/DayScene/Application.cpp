@@ -154,14 +154,17 @@ void App::OnUpdate() {
 
 void App::OnDraw() {
   static int frameCount = 0;
+  T8_LOG_TRACE("[Frame %d] === OnDraw BEGIN ===", frameCount);
   pFramework->pVideoDriver->Clear();
   FirstFrame = false;
   m_devLayer.Draw();
   // Draw FPS label using layout position when GUI overlay is not visible
   if (!m_devLayer.GetGUI().IsVisible()) {
+    T8_LOG_TRACE("[Frame %d] DrawFPSOnly (GUI hidden)", frameCount);
     m_devLayer.GetGUI().DrawFPSOnly();
   }
   if (fading) {
+    T8_LOG_TRACE("[Frame %d] Fade quad draw", frameCount);
     pFramework->pVideoDriver->SetBlendState(BaseDriver::ALPHA_BLEND);
     pFramework->pVideoDriver->SetDepthStencilState(BaseDriver::READ);
     //Fade
@@ -186,8 +189,12 @@ void App::OnDraw() {
   frameCount++;
 
   // Skip presenting the first frame (black with only text)
-  if (frameCount > 1)
+  if (frameCount > 1) {
+    T8_LOG_TRACE("[Frame %d] === SwapBuffers ===" , frameCount);
     pFramework->pVideoDriver->SwapBuffers();
+  } else {
+    T8_LOG_TRACE("[Frame %d] === SKIPPED SwapBuffers (first frame) ===" , frameCount);
+  }
 }
 
 

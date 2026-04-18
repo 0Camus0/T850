@@ -66,6 +66,9 @@ void GUIManager::Init(int screenW, int screenH) {
 
   m_initialized = true;
   m_visible = false;
+  // Buttons start hidden until LayoutSliders positions them
+  m_guiButton.visible = false;
+  m_backButton.visible = false;
   T8_LOG_INFO("[GUIManager] Initialized  scale=%.2f  fontSize=%.1f  visible=%d",
          m_layout.scale, m_layout.fontSize, (int)m_visible);
 }
@@ -147,6 +150,30 @@ void GUIManager::InitTextures() {
   m_popupOkPressedTexture     = loadGuiTexture("PopUpOKPressed.png");
   m_popupCancelTexture        = loadGuiTexture("PopUpCancelNonPressed.png");
   m_popupCancelPressedTexture = loadGuiTexture("PopUpCancelPressed.png");
+
+  // GUI / Back buttons (loaded from Textures/UI/)
+  auto loadUITexture = [&](const char* name) -> Texture* {
+    std::string path = std::string("UI/") + name;
+    Texture* t = T8Device->CreateTexture(path);
+    if (!t) {
+      T8_LOG_ERROR("[GUIManager] Failed to load UI texture '%s'", path.c_str());
+      return nullptr;
+    }
+    t->params = TEXT_BASIC_PARAMS::CLAMP_TO_EDGE | TEXT_BASIC_PARAMS::MIPMAPS;
+    t->SetTextureParams();
+    return t;
+  };
+
+  m_guiBtnNormalTex  = loadUITexture("GUINonPressed.png");
+  m_guiBtnPressedTex = loadUITexture("GUIPressed.png");
+  m_backBtnNormalTex  = loadUITexture("BackNonPressed.png");
+  m_backBtnPressedTex = loadUITexture("BackPressed.png");
+
+  // Wire button textures
+  m_guiButton.texNormal  = m_guiBtnNormalTex;
+  m_guiButton.texPressed = m_guiBtnPressedTex;
+  m_backButton.texNormal  = m_backBtnNormalTex;
+  m_backButton.texPressed = m_backBtnPressedTex;
 }
 
 void GUIManager::Destroy() {
@@ -440,6 +467,37 @@ void GUIManager::LayoutSliders(int screenW, int screenH) {
     m_groupSelector.btnSize = m_layout.sliderH;
   }
 
+  // Position GUI button: top-right, double FPS label height
+  {
+    float btnH = charH * 2.0f;
+    // Maintain aspect ratio from texture
+    float aspect = 1.0f;
+    if (m_guiBtnNormalTex && m_guiBtnNormalTex->y > 0)
+      aspect = (float)m_guiBtnNormalTex->x / (float)m_guiBtnNormalTex->y;
+    float btnW = btnH * aspect;
+    m_guiButton.x = screenWf - btnW - 4.0f;
+    m_guiButton.y = 4.0f;
+    m_guiButton.w = btnW;
+    m_guiButton.h = btnH;
+  }
+
+  // Position Back button: bottom-center, double FPS label height
+  {
+    float btnH = charH * 2.0f;
+    float aspect = 1.0f;
+    if (m_backBtnNormalTex && m_backBtnNormalTex->y > 0)
+      aspect = (float)m_backBtnNormalTex->x / (float)m_backBtnNormalTex->y;
+    float btnW = btnH * aspect;
+    m_backButton.x = (screenWf - btnW) * 0.5f;
+    m_backButton.y = screenHf - btnH - 4.0f;
+    m_backButton.w = btnW;
+    m_backButton.h = btnH;
+  }
+
+  // Buttons are now positioned — make them visible
+  m_guiButton.visible = true;
+  m_backButton.visible = true;
+
   // Clamp all elements inside the screen
   for (auto* e : m_elements) {
     if (e->x < 0.0f)               e->x = 0.0f;
@@ -452,6 +510,29 @@ void GUIManager::LayoutSliders(int screenW, int screenH) {
 }
 
 // ─── Update ─────────────────────────────────────────────────
+void GUIManager::UpdateButtons(InputManager& input) {
+  float mx = (float)input.mouseX;
+  float my = (float)input.mouseY;
+  bool mouseDown = input.MouseButtonStates[0][0];
+
+  if (!m_visible) {
+    // GUI is hidden: only the GUI button is active
+    m_guiButton.UpdateInteraction(mx, my, mouseDown);
+    if (m_guiButton.justClicked) {
+      SetVisible(true);
+    }
+  } else {
+    // GUI is visible: only the Back button is active (not in edit modes)
+    m_guiButton.justClicked = false;
+    if (!m_editMode && !m_controlEditMode && !m_groupEditMode && !m_popupActive) {
+      m_backButton.UpdateInteraction(mx, my, mouseDown);
+      if (m_backButton.justClicked) {
+        SetVisible(false);
+      }
+    }
+  }
+}
+
 void GUIManager::Update(InputManager& input, int screenW, int screenH) {
   if (!m_visible) return;
 
@@ -661,6 +742,7 @@ void GUIManager::UpdateEditMode(float mx, float my, bool mouseDown) {
 // ─── Draw ───────────────────────────────────────────────────
 void GUIManager::Draw() {
   if (!m_visible || !m_initialized) return;
+  T8_LOG_TRACE("[GUIManager::Draw] BEGIN (visible=%d)", (int)m_visible);
 
   float screenW = (float)g_pBaseDriver->width;
   float screenH = (float)g_pBaseDriver->height;
@@ -799,6 +881,16 @@ void GUIManager::Draw() {
 
   m_textRenderer.EndBatch();
 
+  // Back button (visible when GUI is shown, not in edit modes)
+  if (!m_editMode && !m_controlEditMode && !m_groupEditMode) {
+    g_pBaseDriver->SetBlendState(BaseDriver::BLEND_STATES::ALPHA_BLEND);
+    g_pBaseDriver->SetDepthStencilState(BaseDriver::DEPTH_STENCIL_STATES::NONE);
+    m_quad.Set();
+    m_shader->Set(*T8DeviceContext);
+    T8DeviceContext->SetPrimitiveTopology(T8_TOPOLOGY::TRIANLE_LIST);
+    m_backButton.Draw(m_ctx);
+  }
+
   // Draw edit overlays on top
   if (m_editMode) {
     DrawEditOverlays();
@@ -820,6 +912,7 @@ void GUIManager::Draw() {
 
 void GUIManager::DrawFPSOnly() {
   if (!m_initialized || !m_fpsLabel || !m_fpsLabel->visible) return;
+  T8_LOG_TRACE("[GUIManager::DrawFPSOnly] BEGIN");
 
   float screenW = (float)g_pBaseDriver->width;
   float screenH = (float)g_pBaseDriver->height;
@@ -839,6 +932,14 @@ void GUIManager::DrawFPSOnly() {
   m_textRenderer.BeginBatch();
   m_fpsLabel->Draw(m_ctx);
   m_textRenderer.EndBatch();
+
+  // GUI button (visible when GUI overlay is hidden)
+  g_pBaseDriver->SetBlendState(BaseDriver::BLEND_STATES::ALPHA_BLEND);
+  g_pBaseDriver->SetDepthStencilState(BaseDriver::DEPTH_STENCIL_STATES::NONE);
+  m_quad.Set();
+  m_shader->Set(*T8DeviceContext);
+  T8DeviceContext->SetPrimitiveTopology(T8_TOPOLOGY::TRIANLE_LIST);
+  m_guiButton.Draw(m_ctx);
 
   g_pBaseDriver->SetBlendState(BaseDriver::BLEND_STATES::BLEND_DEFAULT);
   g_pBaseDriver->SetDepthStencilState(BaseDriver::DEPTH_STENCIL_STATES::DEPTH_DEFAULT);

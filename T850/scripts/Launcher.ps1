@@ -185,7 +185,8 @@ $xaml = @"
                            Foreground="{StaticResource AccentBrush}" Margin="0,0,0,10"/>
                 <ComboBox Name="cmbApi">
                     <ComboBoxItem Content="D3D11 (Direct3D 11)" IsSelected="True" Tag="d3d11"/>
-                    <ComboBoxItem Content="OpenGL (Desktop GL 3.3)" Tag="gl"/>
+                    <ComboBoxItem Content="GL ES (ANGLE)" Tag="gl"/>
+                    <ComboBoxItem Content="GL (Desktop GLEW)" Tag="glew"/>
                 </ComboBox>
             </StackPanel>
         </Border>
@@ -300,6 +301,7 @@ $xaml = @"
                         <ComboBoxItem Content="Info" Tag="info"/>
                         <ComboBoxItem Content="Debug" Tag="debug"/>
                         <ComboBoxItem Content="Verbose" Tag="verbose" IsSelected="True"/>
+                        <ComboBoxItem Content="Trace" Tag="trace"/>
                     </ComboBox>
                 </StackPanel>
                 <CheckBox Name="chkLogToFile" Content="Save log to file" Margin="0,0,0,6"/>
@@ -564,6 +566,32 @@ function Save-Config {
 
 # ── Helpers ──
 
+function Patch-GLDriverConfig {
+    param([string]$ApiTag)
+    $configH = Join-Path $rootDir "Framework\Config.h"
+    if (-not (Test-Path $configH)) {
+        return "Config.h not found at $configH"
+    }
+    $content = Get-Content $configH -Raw
+    $desired = switch ($ApiTag) {
+        "glew" { "OGL" }
+        "gl"   { "OGLES30" }
+        default { $null }
+    }
+    if (-not $desired) { return $null }  # D3D11 — no GL config change needed
+    if ($content -match '#define\s+GL_DRIVER_SELECTED\s+(\w+)') {
+        $current = $Matches[1]
+        if ($current -ne $desired) {
+            $content = $content -replace '#define\s+GL_DRIVER_SELECTED\s+\w+', "#define GL_DRIVER_SELECTED $desired"
+            Set-Content $configH $content -NoNewline -Encoding UTF8
+            return "Patched Config.h: GL_DRIVER_SELECTED $current -> $desired"
+        } else {
+            return "Config.h already set to GL_DRIVER_SELECTED $desired"
+        }
+    }
+    return "Could not find GL_DRIVER_SELECTED in Config.h"
+}
+
 function Find-MSBuild {
     $progX86 = [System.Environment]::GetFolderPath("ProgramFilesX86")
     $progFiles = [System.Environment]::GetFolderPath("ProgramFiles")
@@ -602,7 +630,9 @@ function Get-LaunchCommand {
     }
 
     $exePath = Join-Path $rootDir "bin\$archFolder\$config\DayScene.exe"
-    $argList = @("--api", $apiTag)
+    # Map "glew" -> "gl" for the engine's --api flag (both use GRAPHICS_API::OPENGL)
+    $engineApi = if ($apiTag -eq "glew") { "gl" } else { $apiTag }
+    $argList = @("--api", $engineApi)
 
     if ($chkDebugFrames.IsChecked) {
         $argList += "--debugFrames"
@@ -802,6 +832,13 @@ $btnBuild.Add_Click({
     $window.Dispatcher.Invoke([Action]{}, [System.Windows.Threading.DispatcherPriority]::Background)
 
     Save-Config
+
+    # Patch Config.h for GL driver selection (GLEW vs ANGLE)
+    $apiTag = ($cmbApi.SelectedItem).Tag.ToString()
+    $patchResult = Patch-GLDriverConfig -ApiTag $apiTag
+    if ($patchResult) {
+        $txtBuildOutput.Text += $patchResult + "`r`n"
+    }
 
     # Find MSBuild
     $msbuild = Find-MSBuild

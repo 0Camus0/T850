@@ -1,4 +1,4 @@
-/*********************************************************
+﻿/*********************************************************
 * Copyright (C) 2017 Daniel Enriquez (camus_mm@hotmail.com)
 * All Rights Reserved
 *
@@ -51,7 +51,7 @@
 #define OGLES31 4
 #define OGL 5
 
-#define GL_DRIVER_SELECTED OGLES30
+#define GL_DRIVER_SELECTED OGL
 
 #if   GL_DRIVER_SELECTED == OGLES20
 	#define USING_OPENGL_ES20

@@ -502,14 +502,12 @@ namespace t800 {
     auto* shader = static_cast<D3D12Shader*>(deviceContext.actualShaderSet);
     if (shader && shader->cbvSlot >= 0 && !sysMemCpy.empty()) {
       auto* driver = GetD3D12Driver();
-      D3D12_GPU_DESCRIPTOR_HANDLE gpuH = driver->AllocateDynamicCBV(sysMemCpy.data(), (UINT)sysMemCpy.size());
-      T8_LOG_TRACE("[D3D12] CB::Set cbvSlot=%d gpuH=0x%llX dataSize=%d first4floats=[%f,%f,%f,%f]",
-                   shader->cbvSlot, gpuH.ptr, (int)sysMemCpy.size(),
-                   sysMemCpy.size() >= 16 ? *(float*)&sysMemCpy[0] : 0.f,
-                   sysMemCpy.size() >= 16 ? *(float*)&sysMemCpy[4] : 0.f,
-                   sysMemCpy.size() >= 16 ? *(float*)&sysMemCpy[8] : 0.f,
-                   sysMemCpy.size() >= 16 ? *(float*)&sysMemCpy[12] : 0.f);
-      cmdList->SetGraphicsRootDescriptorTable(shader->cbvSlot, gpuH);
+      // Allocate ring buffer space for this draw's CB data
+      D3D12_GPU_VIRTUAL_ADDRESS gpuAddr = driver->AllocateCBData(sysMemCpy.data(), (UINT)sysMemCpy.size());
+      // Bind inline root CBV — no descriptor table / CreateConstantBufferView needed
+      cmdList->SetGraphicsRootConstantBufferView(shader->cbvSlot, gpuAddr);
+      T8_LOG_TRACE("[D3D12] CB::Set cbvSlot=%d gpuVA=0x%llX dataSize=%d",
+                   shader->cbvSlot, gpuAddr, (int)sysMemCpy.size());
     }
   }
 
@@ -649,12 +647,12 @@ namespace t800 {
   void D3D12Driver::SetDimensions(int w, int h) { width = w; height = h; }
 
   void D3D12Driver::CreateDevice() {
-    // Always enable debug layer for D3D12
-    {
+    // Enable debug layer only when requested (--d3d12debug flag)
+    if (g_d3d12Debug) {
       ComPtr<ID3D12Debug> debugController;
       if (SUCCEEDED(D3D12GetDebugInterface(IID_PPV_ARGS(&debugController)))) {
         debugController->EnableDebugLayer();
-        T8_LOG_INFO("[D3D12] Debug layer ENABLED");
+        T8_LOG_INFO("[D3D12] Debug layer ENABLED (--d3d12debug)");
       } else {
         T8_LOG_ERROR("[D3D12] D3D12GetDebugInterface failed");
       }
@@ -700,6 +698,7 @@ namespace t800 {
     sc.Width = width; sc.Height = height; sc.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
     sc.SampleDesc.Count = 1; sc.BufferUsage = DXGI_USAGE_RENDER_TARGET_OUTPUT;
     sc.BufferCount = kBackBufferCount; sc.SwapEffect = DXGI_SWAP_EFFECT_FLIP_DISCARD;
+    sc.Flags = DXGI_SWAP_CHAIN_FLAG_ALLOW_TEARING; // enable tearing for uncapped FPS
     ComPtr<IDXGISwapChain1> sc1;
     m_dxgiFactory->CreateSwapChainForHwnd(m_commandQueue.Get(), m_hwnd, &sc, nullptr, nullptr, &sc1);
     sc1.As(&m_swapChain);
@@ -786,8 +785,10 @@ namespace t800 {
     m_viewport = { 0.f, 0.f, (float)width, (float)height, 0.f, 1.f };
     m_scissorRect = { 0, 0, (LONG)width, (LONG)height };
 
-    // Always start debug message polling thread
-    StartDebugMessageThread();
+    // Start debug message polling thread only when debug layer is enabled
+    if (g_d3d12Debug) {
+      StartDebugMessageThread();
+    }
 
     T8_LOG_INFO("[D3D12] Driver initialized (%dx%d)", width, height);
   }
@@ -862,12 +863,9 @@ namespace t800 {
     m_commandList->SetDescriptorHeaps(2, heaps);
 
     m_cbRingOffset = 0;
-    if (m_dynamicDescriptorBase == 0) {
-      m_dynamicDescriptorBase = m_heaps[D3D12Heap::CBV_SRV_UAV_VISIBLE].GetCurrentIndex();
-      T8_LOG_INFO("[D3D12] Dynamic descriptor base auto-set to %llu in BeginFrame",
-                  (unsigned long long)m_dynamicDescriptorBase);
-    }
     m_dynamicDescriptorOffset = 0;
+    m_lastPSO = nullptr;
+    m_lastRootSig = nullptr;
   }
 
   void D3D12Driver::EndFrame() {}
@@ -905,6 +903,20 @@ namespace t800 {
 
   void D3D12Driver::SwapBuffers() {
     T8_LOG_TRACE("[D3D12] SwapBuffers");
+
+    // Frame timing
+    static LARGE_INTEGER freq = {}; 
+    static LARGE_INTEGER lastSwap = {};
+    static int frameNum = 0;
+    if (freq.QuadPart == 0) { QueryPerformanceFrequency(&freq); QueryPerformanceCounter(&lastSwap); }
+    LARGE_INTEGER now; QueryPerformanceCounter(&now);
+    double ms = (now.QuadPart - lastSwap.QuadPart) * 1000.0 / freq.QuadPart;
+    lastSwap = now;
+    frameNum++;
+    if (frameNum % 60 == 0) {
+      T8_LOG_INFO("[D3D12] Frame %d: %.1fms (%.1f FPS)", frameNum, ms, 1000.0/ms);
+    }
+
     D3D12_RESOURCE_BARRIER b = {};
     b.Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
     b.Transition.pResource = m_backBuffers[m_currentBackBuffer].Get();
@@ -915,8 +927,15 @@ namespace t800 {
     m_commandList->Close();
     ID3D12CommandList* lists[] = { m_commandList.Get() };
     m_commandQueue->ExecuteCommandLists(1, lists);
-    m_swapChain->Present(0, 0);
-    WaitForFence();
+    m_swapChain->Present(0, DXGI_PRESENT_ALLOW_TEARING);
+
+    // Signal the fence for this frame — DON'T wait here.
+    // BeginFrame will wait only when it needs to reuse this buffer's allocator,
+    // which gives the GPU a full frame of latency to finish.
+    const UINT64 fenceVal = m_nextFenceValue++;
+    m_commandQueue->Signal(m_fence.Get(), fenceVal);
+    m_frameFenceValues[m_currentBackBuffer] = fenceVal;
+
     m_currentBackBuffer = m_swapChain->GetCurrentBackBufferIndex();
     m_frameStarted = false;
 

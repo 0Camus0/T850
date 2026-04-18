@@ -58,25 +58,36 @@ namespace t800 {
 
     T8_LOG_DEBUG("[D3D12] Root signature: %d resources", (int)resources.size());
 
-    // Build root parameters — one descriptor table per resource
+    // Build root parameters — CBVs use inline root descriptors (no descriptor table needed),
+    // SRVs and Samplers use descriptor tables.
     std::vector<D3D12_DESCRIPTOR_RANGE> ranges(resources.size());
     std::vector<D3D12_ROOT_PARAMETER>   params(resources.size());
 
     for (int i = 0; i < (int)resources.size(); i++) {
       auto& r = resources[i];
 
-      ranges[i] = {};
-      ranges[i].RangeType = r.rangeType;
-      ranges[i].NumDescriptors = 1;
-      ranges[i].BaseShaderRegister = r.reg;
-      ranges[i].RegisterSpace = r.space;
-      ranges[i].OffsetInDescriptorsFromTableStart = D3D12_DESCRIPTOR_RANGE_OFFSET_APPEND;
+      if (r.rangeType == D3D12_DESCRIPTOR_RANGE_TYPE_CBV) {
+        // Inline root CBV — binds a GPU VA directly, no descriptor table overhead
+        params[i] = {};
+        params[i].ParameterType = D3D12_ROOT_PARAMETER_TYPE_CBV;
+        params[i].Descriptor.ShaderRegister = r.reg;
+        params[i].Descriptor.RegisterSpace  = r.space;
+        params[i].ShaderVisibility = D3D12_SHADER_VISIBILITY_ALL;
+      } else {
+        // SRV and Sampler — use descriptor tables
+        ranges[i] = {};
+        ranges[i].RangeType = r.rangeType;
+        ranges[i].NumDescriptors = 1;
+        ranges[i].BaseShaderRegister = r.reg;
+        ranges[i].RegisterSpace = r.space;
+        ranges[i].OffsetInDescriptorsFromTableStart = D3D12_DESCRIPTOR_RANGE_OFFSET_APPEND;
 
-      params[i] = {};
-      params[i].ParameterType = D3D12_ROOT_PARAMETER_TYPE_DESCRIPTOR_TABLE;
-      params[i].DescriptorTable.NumDescriptorRanges = 1;
-      params[i].DescriptorTable.pDescriptorRanges = &ranges[i];
-      params[i].ShaderVisibility = D3D12_SHADER_VISIBILITY_ALL;
+        params[i] = {};
+        params[i].ParameterType = D3D12_ROOT_PARAMETER_TYPE_DESCRIPTOR_TABLE;
+        params[i].DescriptorTable.NumDescriptorRanges = 1;
+        params[i].DescriptorTable.pDescriptorRanges = &ranges[i];
+        params[i].ShaderVisibility = D3D12_SHADER_VISIBILITY_ALL;
+      }
 
       if (r.rangeType == D3D12_DESCRIPTOR_RANGE_TYPE_CBV && r.reg == 0) cbvSlot = i;
       if (r.rangeType == D3D12_DESCRIPTOR_RANGE_TYPE_SRV) srvSlots[r.reg] = i;
@@ -217,9 +228,6 @@ namespace t800 {
     auto* cmdList = static_cast<const D3D12DeviceContext*>(&deviceContext)->GetCommandList();
     auto* driver = GetD3D12Driver();
 
-    // Set root signature
-    cmdList->SetGraphicsRootSignature(pRootSignature.Get());
-
     // Determine current RT configuration for PSO
     uint8_t numRTVs = 1;
     DXGI_FORMAT rtvFmt = DXGI_FORMAT_R8G8B8A8_UNORM;
@@ -229,21 +237,22 @@ namespace t800 {
     if (curRT >= 0 && curRT < (int)driver->RTs.size()) {
       D3D12RT* rt = static_cast<D3D12RT*>(driver->RTs[curRT]);
       numRTVs = (uint8_t)(rt->number_RT > 0 ? rt->number_RT : 0);
-      if (!rt->vColorResources.empty()) {
-        D3D12_RESOURCE_DESC desc = rt->vColorResources[0]->GetDesc();
-        rtvFmt = desc.Format;
-      } else if (rt->number_RT == 0) {
-        rtvFmt = DXGI_FORMAT_UNKNOWN;
-      }
+      rtvFmt = rt->colorFormat;  // cached format — no COM call
+      if (rt->number_RT == 0) rtvFmt = DXGI_FORMAT_UNKNOWN;
     }
 
-    // Get or create PSO for current state (dsvFmt may be overridden to UNKNOWN inside if depth==NONE)
+    // Get or create PSO for current state
     ID3D12PipelineState* pso = driver->GetOrCreatePSO(this, numRTVs, rtvFmt, dsvFmt);
-    if (pso) {
+
+    // Skip redundant root signature and PSO binds
+    ID3D12RootSignature* rootSig = pRootSignature.Get();
+    if (rootSig != driver->m_lastRootSig) {
+      cmdList->SetGraphicsRootSignature(rootSig);
+      driver->m_lastRootSig = rootSig;
+    }
+    if (pso && pso != driver->m_lastPSO) {
       cmdList->SetPipelineState(pso);
-      T8_LOG_TRACE("[D3D12] Shader::Set PSO=%p numRTVs=%d rtvFmt=%d dsvFmt=%d", pso, numRTVs, rtvFmt, dsvFmt);
-    } else {
-      T8_LOG_ERROR("[D3D12] Shader::Set PSO is NULL! key=0x%08X", key.bits);
+      driver->m_lastPSO = pso;
     }
 
     // Bind default sampler if shader uses one

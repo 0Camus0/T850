@@ -9,7 +9,7 @@
                     "fullscreen":  false
                 },
     "replaySnapshot":  {
-                           "path":  "D:\\Code\\Game\\T850\\T850\\bin\\x64\\Release\\dumps_d3d11_f1280_20260417_132128\\snapshot.json",
+                           "path":  "D:\\Code\\Game\\T850\\T850\\bin\\x64\\Release\\dumps_d3d12_f1664_20260417_232407\\snapshot.json",
                            "enabled":  false
                        },
     "configuration":  "Release",

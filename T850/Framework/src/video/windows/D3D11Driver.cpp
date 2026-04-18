@@ -10,10 +10,10 @@
 * ** Enjoy, learn and share.
 *********************************************************/
 
-#include <video/windows/D3DXDriver.h>
-#include <video/windows/D3DXRT.h>
-#include <video/windows/D3DXShader.h>
-#include <video/windows/D3DXTexture.h>
+#include <video/windows/D3D11Driver.h>
+#include <video/windows/D3D11RT.h>
+#include <video/windows/D3D11Shader.h>
+#include <video/windows/D3D11Texture.h>
 
 #include <iostream>
 #include <string>

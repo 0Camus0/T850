@@ -22,7 +22,7 @@
 
 #include <video/GLTexture.h>
 #if defined(OS_WINDOWS)
-#include <video/windows/D3DXTexture.h>
+#include <video/windows/D3D11Texture.h>
 #endif
 
 #include "scene/T8_Quad.h"

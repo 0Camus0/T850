@@ -64,6 +64,7 @@
     <ClInclude Include="include\utils\XDataBase.h" />
     <ClInclude Include="include\utils\xDefs.h" />
     <ClInclude Include="include\utils\xMaths.h" />
+    <ClInclude Include="include\utils\GUIAtlasGenerator.h" />
     <ClInclude Include="include\video\BaseDriver.h" />
     <ClInclude Include="include\video\GLDriver.h" />
     <ClInclude Include="include\video\GLRT.h" />
@@ -122,6 +123,7 @@
     <ClCompile Include="src\utils\Camera.cpp" />
     <ClCompile Include="src\utils\XDataBase.cpp" />
     <ClCompile Include="src\utils\XMaths.cpp" />
+    <ClCompile Include="src\utils\GUIAtlasGenerator.cpp" />
     <ClCompile Include="src\video\BaseDriver.cpp" />
     <ClCompile Include="src\video\GLDriver.cpp" />
     <ClCompile Include="src\video\GLRT.cpp" />

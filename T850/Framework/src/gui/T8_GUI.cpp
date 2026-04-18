@@ -134,6 +134,10 @@ void GUIManager::InitTextures() {
   {
     unsigned char white[4] = {255, 255, 255, 255};
     m_whiteTexture = T8Device->CreateTextureFromMemory(white, 1, 1, 4, "gui_white_1x1");
+    if (m_whiteTexture) {
+      m_whiteTexture->params = TEXT_BASIC_PARAMS::CLAMP_TO_EDGE;
+      m_whiteTexture->SetTextureParams();
+    }
   }
   m_checkBoxTexture = loadGuiTexture("GUI_CheckBox_Box.png");
   m_checkMarkTexture = loadGuiTexture("GUI_Checkbox_Check.png");
@@ -804,6 +808,7 @@ void GUIManager::Draw() {
 
   g_pBaseDriver->SetBlendState(BaseDriver::BLEND_STATES::ALPHA_BLEND);
   g_pBaseDriver->SetDepthStencilState(BaseDriver::DEPTH_STENCIL_STATES::NONE);
+  g_pBaseDriver->SetCullFace(BaseDriver::FACE_CULLING::FRONT_AND_BACK);
 
   if (m_controlEditMode) {
     DrawControlEditPreview();
@@ -928,6 +933,7 @@ void GUIManager::DrawFPSOnly() {
 
   g_pBaseDriver->SetBlendState(BaseDriver::BLEND_STATES::ALPHA_BLEND);
   g_pBaseDriver->SetDepthStencilState(BaseDriver::DEPTH_STENCIL_STATES::NONE);
+  g_pBaseDriver->SetCullFace(BaseDriver::FACE_CULLING::FRONT_AND_BACK);
 
   m_textRenderer.BeginBatch();
   m_fpsLabel->Draw(m_ctx);

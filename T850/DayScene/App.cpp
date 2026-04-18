@@ -49,6 +49,7 @@ bool   g_guiControlEdit = false;     // --guiControlEdit: edit control internals
 std::string g_guiControlTarget = "slider_knob"; // --guiControlTarget <slider_knob|selector_control|checkbox_mark>
 int    g_logLevel    = 3;            // --logLevel: 0=Error,1=Info,2=Debug,3=Verbose
 std::string g_logFile;              // --logFile <path>: write log to file (append, flush-per-entry)
+bool   g_d3d12Debug  = false;       // --d3d12debug: enable D3D12 debug layer
 
 t800::AppBase		  *pApp = 0;
 t800::RootFramework *pFrameWork = 0;
@@ -72,6 +73,8 @@ int main(int arg,char ** args){
       std::string val = args[++i];
       if (val == "gl" || val == "GL" || val == "opengl" || val == "OpenGL")
         desc.api = t800::GRAPHICS_API::OPENGL;
+      else if (val == "d3d12" || val == "D3D12" || val == "dx12")
+        desc.api = t800::GRAPHICS_API::D3D12;
       else if (val == "d3d11" || val == "D3D11" || val == "dx11")
         desc.api = t800::GRAPHICS_API::D3D11;
     }
@@ -147,6 +150,9 @@ int main(int arg,char ** args){
     else if (a == "--logFile" && i + 1 < arg) {
       g_logFile = args[++i];
     }
+    else if (a == "--d3d12debug") {
+      g_d3d12Debug = true;
+    }
   }
 
   if (g_fullscreen)
@@ -160,7 +166,9 @@ int main(int arg,char ** args){
   }
 
   // Determine API display name for session tag
-  const char* apiTag = (desc.api == t800::GRAPHICS_API::OPENGL) ? "gl" : "d3d11";
+  const char* apiTag = (desc.api == t800::GRAPHICS_API::OPENGL) ? "gl"
+                     : (desc.api == t800::GRAPHICS_API::D3D12)  ? "d3d12"
+                     : "d3d11";
 
   // Initialize logging
   uint32_t logBackends = t800::Log::T8_LOG_BACKEND_CONSOLE;

@@ -233,7 +233,8 @@ void FrameDumper::DumpFrame(BaseDriver* driver,
                             const XVECTOR3* omniLightPos) {
   dumped_ = true;
 
-  std::string apiName = (driver->m_currentAPI == GRAPHICS_API::D3D11) ? "d3d11" : "gl";
+  std::string apiName = (driver->m_currentAPI == GRAPHICS_API::D3D12) ? "d3d12"
+                       : (driver->m_currentAPI == GRAPHICS_API::D3D11) ? "d3d11" : "gl";
   std::string dumpDir = BuildDumpDir(apiName);
 
 #ifdef OS_WINDOWS

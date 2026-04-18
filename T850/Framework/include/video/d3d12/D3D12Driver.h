@@ -173,27 +173,29 @@ namespace t800 {
   //  D3D12 Pipeline State cache key
   // ══════════════════════════════════════════════════════
   struct D3D12PipelineKey {
-    uint32_t shaderKey;
+    uintptr_t shaderPtr;   // shader object address — unique per shader
     uint8_t  blend;
     uint8_t  depth;
     uint8_t  cull;
     uint8_t  numRTVs;
     DXGI_FORMAT rtvFormat;
+    DXGI_FORMAT dsvFormat;
     bool operator==(const D3D12PipelineKey& o) const {
-      return shaderKey == o.shaderKey && blend == o.blend &&
+      return shaderPtr == o.shaderPtr && blend == o.blend &&
              depth == o.depth && cull == o.cull && numRTVs == o.numRTVs &&
-             rtvFormat == o.rtvFormat;
+             rtvFormat == o.rtvFormat && dsvFormat == o.dsvFormat;
     }
   };
 
   struct D3D12PipelineKeyHash {
     size_t operator()(const D3D12PipelineKey& k) const {
-      size_t h = std::hash<uint32_t>()(k.shaderKey);
+      size_t h = std::hash<uintptr_t>()(k.shaderPtr);
       h ^= std::hash<uint8_t>()(k.blend)    << 1;
       h ^= std::hash<uint8_t>()(k.depth)    << 2;
       h ^= std::hash<uint8_t>()(k.cull)     << 3;
       h ^= std::hash<uint8_t>()(k.numRTVs)  << 4;
       h ^= std::hash<uint32_t>()((uint32_t)k.rtvFormat) << 5;
+      h ^= std::hash<uint32_t>()((uint32_t)k.dsvFormat) << 6;
       return h;
     }
   };
@@ -247,8 +249,16 @@ namespace t800 {
     // Default sampler GPU handle
     D3D12_GPU_DESCRIPTOR_HANDLE GetDefaultSamplerGPU() const { return m_defaultSamplerGPU; }
 
+    // Rebind back buffer without DSV (for GUI/overlay draws with depth disabled)
+    void BindBackBufferNoDSV();
+
+    DEPTH_STENCIL_STATES GetCurrentDepthState() const { return m_currentDepth; }
+
     // Per-frame CB ring allocator: returns GPU VA of a 256-aligned region with data copied
     D3D12_GPU_VIRTUAL_ADDRESS AllocateCBData(const void* data, UINT dataSize);
+
+    // Per-frame ring allocator for vertex/index data (16-byte aligned)
+    D3D12_GPU_VIRTUAL_ADDRESS AllocateRingData(const void* data, UINT dataSize);
 
     // Per-frame dynamic CBV descriptor: copies data to ring buffer, creates CBV, returns GPU handle
     D3D12_GPU_DESCRIPTOR_HANDLE AllocateDynamicCBV(const void* data, UINT dataSize);

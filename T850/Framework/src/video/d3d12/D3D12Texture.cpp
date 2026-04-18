@@ -323,7 +323,7 @@ namespace t800 {
   // ══════════════════════════════════════════════════════
 
   void D3D12Texture::Set(const DeviceContext& deviceContext, unsigned int slot, std::string shaderTextureName) {
-    T8_LOG_TRACE("[D3D12] Texture::Set slot=%u name='%s' file='%s'", slot, shaderTextureName.c_str(), filepath.c_str());
+    T8_LOG_TRACE("[D3D12] Texture::Set slot=%u name='%s' file='%s' srvGPU=0x%llX", slot, shaderTextureName.c_str(), filepath.c_str(), srvGPU.ptr);
     auto* cmdList = static_cast<const D3D12DeviceContext*>(&deviceContext)->GetCommandList();
     auto* shader = static_cast<D3D12Shader*>(deviceContext.actualShaderSet);
     if (!shader) return;

@@ -14,6 +14,7 @@
 #include <video/BaseDriver.h>
 #include <utils/InputManager.h>
 #include <utils/Log.h>
+#include <utils/Utils.h>
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -37,6 +38,12 @@ extern bool g_guiEdit;
 extern bool g_guiSnap;
 extern bool g_guiControlEdit;
 extern std::string g_guiControlTarget;
+extern bool g_testGui;
+
+namespace t800 {
+  extern Device*       T8Device;
+  extern DeviceContext* T8DeviceContext;
+}
 
 
 
@@ -157,6 +164,69 @@ void App::OnDraw() {
   T8_LOG_TRACE("[Frame %d] === OnDraw BEGIN ===", frameCount);
   pFramework->pVideoDriver->Clear();
   FirstFrame = false;
+
+  // ── Minimal GUI test: draw scene FIRST, then overlay a red quad ──
+  if (g_testGui) {
+    static Quad testQuad;
+    static ShaderBase* testShader = nullptr;
+    static ConstantBuffer* testCB = nullptr;
+    static Texture* testTex = nullptr;
+    static bool testInited = false;
+
+    if (!testInited) {
+      testQuad.Init();
+      unsigned char white[4] = {255, 255, 255, 255};
+      testTex = t800::T8Device->CreateTextureFromMemory(white, 1, 1, 4, "testGui_white");
+      if (testTex) { testTex->params = TEXT_BASIC_PARAMS::CLAMP_TO_EDGE; testTex->SetTextureParams(); }
+      char* vs = file2string("Shaders/VS_GUI.hlsl");
+      char* fs = file2string("Shaders/FS_GUI.hlsl");
+      if (vs && fs) {
+        int id = pFramework->pVideoDriver->CreateShader(std::string(vs), std::string(fs));
+        testShader = pFramework->pVideoDriver->GetShaderIdx(id);
+        free(vs); free(fs);
+      }
+      BufferDesc bd; bd.byteWidth = sizeof(XVECTOR3); bd.usage = T8_BUFFER_USAGE::DEFAULT;
+      testCB = (ConstantBuffer*)t800::T8Device->CreateBuffer(T8_BUFFER_TYPE::CONSTANT, bd);
+      testInited = true;
+    }
+
+    // Draw the full scene first (this is what breaks GUI)
+    m_devLayer.Draw();
+
+    if (testShader && testCB && testTex && frameCount >= 2) {
+      // Now try to draw a red quad ON TOP of the scene
+      pFramework->pVideoDriver->SetBlendState(BaseDriver::ALPHA_BLEND);
+      pFramework->pVideoDriver->SetDepthStencilState(BaseDriver::NONE);
+      pFramework->pVideoDriver->SetCullFace(BaseDriver::FRONT_AND_BACK);
+
+      testQuad.Set();
+      testShader->Set(*t800::T8DeviceContext);
+      t800::T8DeviceContext->SetPrimitiveTopology(T8_TOPOLOGY::TRIANLE_LIST);
+
+      XVECTOR3 tint(1.0f, 0.0f, 0.0f);
+      testCB->UpdateFromBuffer(*t800::T8DeviceContext, &tint.x);
+      testCB->Set(*t800::T8DeviceContext);
+      Quad::Vertex verts[4] = {
+        {-0.5f,  0.5f, 0.0f, 1.0f,  0.0f, 0.0f},
+        {-0.5f, -0.5f, 0.0f, 1.0f,  0.0f, 1.0f},
+        { 0.5f, -0.5f, 0.0f, 1.0f,  1.0f, 1.0f},
+        { 0.5f,  0.5f, 0.0f, 1.0f,  1.0f, 0.0f},
+      };
+      testQuad.m_VB->UpdateFromBuffer(*t800::T8DeviceContext, verts);
+      testTex->Set(*t800::T8DeviceContext, 0, "tex0");
+      t800::T8DeviceContext->DrawIndexed(6, 0, 0);
+
+      if (frameCount == 3) {
+        pFramework->pVideoDriver->SaveScreenshot("testGui_result");
+        pFramework->pVideoDriver->SwapBuffers();
+        exit(0);
+      }
+    }
+
+    frameCount++;
+    if (frameCount > 1) pFramework->pVideoDriver->SwapBuffers();
+    return;
+  }
 
   m_devLayer.Draw();
   // Draw FPS label using layout position when GUI overlay is not visible

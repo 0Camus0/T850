@@ -185,7 +185,9 @@ $xaml = @"
                            Foreground="{StaticResource AccentBrush}" Margin="0,0,0,10"/>
                 <ComboBox Name="cmbApi">
                     <ComboBoxItem Content="D3D11 (Direct3D 11)" IsSelected="True" Tag="d3d11"/>
-                    <ComboBoxItem Content="OpenGL (Desktop GL 3.3)" Tag="gl"/>
+                    <ComboBoxItem Content="D3D12 (Direct3D 12)" Tag="d3d12"/>
+                    <ComboBoxItem Content="GL ES (ANGLE)" Tag="gl"/>
+                    <ComboBoxItem Content="GL (Desktop GLEW)" Tag="glew"/>
                 </ComboBox>
             </StackPanel>
         </Border>
@@ -300,9 +302,11 @@ $xaml = @"
                         <ComboBoxItem Content="Info" Tag="info"/>
                         <ComboBoxItem Content="Debug" Tag="debug"/>
                         <ComboBoxItem Content="Verbose" Tag="verbose" IsSelected="True"/>
+                        <ComboBoxItem Content="Trace" Tag="trace"/>
                     </ComboBox>
                 </StackPanel>
                 <CheckBox Name="chkLogToFile" Content="Save log to file" Margin="0,0,0,6"/>
+                <CheckBox Name="chkD3D12Debug" Content="D3D12 Debug Layer (validates API usage)" Margin="0,0,0,6"/>
                 <CheckBox Name="chkGuiEdit" Content="GUI Edit Mode (move/scale elements)" Margin="0,0,0,6"/>
                 <CheckBox Name="chkGuiControlEdit" Content="GUI Control Edit Mode (knob/buttons/check)" Margin="0,0,0,6"/>
                 <StackPanel Name="pnlGuiControlTarget" Margin="20,0,0,6" IsEnabled="False">
@@ -409,6 +413,7 @@ $cmbGuiControlTarget = $window.FindName("cmbGuiControlTarget")
 $chkGuiSnap     = $window.FindName("chkGuiSnap")
 $cmbLogLevel    = $window.FindName("cmbLogLevel")
 $chkLogToFile   = $window.FindName("chkLogToFile")
+$chkD3D12Debug  = $window.FindName("chkD3D12Debug")
 
 # Resolve root directory: if running from ps2exe, use exe location; otherwise script location
 if ($MyInvocation.MyCommand.Path) {
@@ -521,6 +526,9 @@ function Load-Config {
             if ($cfg.devTools.PSObject.Properties['logToFile']) {
                 $chkLogToFile.IsChecked = [bool]$cfg.devTools.logToFile
             }
+            if ($cfg.devTools.PSObject.Properties['d3d12Debug']) {
+                $chkD3D12Debug.IsChecked = [bool]$cfg.devTools.d3d12Debug
+            }
         }
     } catch {
         # Silently ignore corrupt config — defaults will be used
@@ -557,12 +565,39 @@ function Save-Config {
             guiSnap   = [bool]$chkGuiSnap.IsChecked
             logLevel  = ($cmbLogLevel.SelectedItem).Tag.ToString()
             logToFile = [bool]$chkLogToFile.IsChecked
+            d3d12Debug = [bool]$chkD3D12Debug.IsChecked
         }
     }
     $cfg | ConvertTo-Json -Depth 3 | Set-Content $configPath -Encoding UTF8
 }
 
 # ── Helpers ──
+
+function Patch-GLDriverConfig {
+    param([string]$ApiTag)
+    $configH = Join-Path $rootDir "Framework\Config.h"
+    if (-not (Test-Path $configH)) {
+        return "Config.h not found at $configH"
+    }
+    $content = Get-Content $configH -Raw
+    $desired = switch ($ApiTag) {
+        "glew" { "OGL" }
+        "gl"   { "OGLES30" }
+        default { $null }
+    }
+    if (-not $desired) { return $null }  # D3D11 — no GL config change needed
+    if ($content -match '#define\s+GL_DRIVER_SELECTED\s+(\w+)') {
+        $current = $Matches[1]
+        if ($current -ne $desired) {
+            $content = $content -replace '#define\s+GL_DRIVER_SELECTED\s+\w+', "#define GL_DRIVER_SELECTED $desired"
+            Set-Content $configH $content -NoNewline -Encoding UTF8
+            return "Patched Config.h: GL_DRIVER_SELECTED $current -> $desired"
+        } else {
+            return "Config.h already set to GL_DRIVER_SELECTED $desired"
+        }
+    }
+    return "Could not find GL_DRIVER_SELECTED in Config.h"
+}
 
 function Find-MSBuild {
     $progX86 = [System.Environment]::GetFolderPath("ProgramFilesX86")
@@ -602,7 +637,9 @@ function Get-LaunchCommand {
     }
 
     $exePath = Join-Path $rootDir "bin\$archFolder\$config\DayScene.exe"
-    $argList = @("--api", $apiTag)
+    # Map "glew" -> "gl" for the engine's --api flag (both use GRAPHICS_API::OPENGL)
+    $engineApi = if ($apiTag -eq "glew") { "gl" } else { $apiTag }
+    $argList = @("--api", $engineApi)
 
     if ($chkDebugFrames.IsChecked) {
         $argList += "--debugFrames"
@@ -660,6 +697,17 @@ function Get-LaunchCommand {
         $ts = Get-Date -Format "yyyyMMdd_HHmmss"
         $logFilename = "logs\T850_${ts}_${apiTag}.log"
         $argList += @("--logFile", $logFilename)
+    }
+
+    if ($chkD3D12Debug.IsChecked) {
+        $argList += "--d3d12debug"
+        # Force log to file when debug layer is active
+        if (-not $chkLogToFile.IsChecked) {
+            $apiTag = ($cmbApi.SelectedItem).Tag.ToString()
+            $ts = Get-Date -Format "yyyyMMdd_HHmmss"
+            $logFilename = "logs\T850_${ts}_${apiTag}_debug.log"
+            $argList += @("--logFile", $logFilename)
+        }
     }
 
     return @{
@@ -802,6 +850,13 @@ $btnBuild.Add_Click({
     $window.Dispatcher.Invoke([Action]{}, [System.Windows.Threading.DispatcherPriority]::Background)
 
     Save-Config
+
+    # Patch Config.h for GL driver selection (GLEW vs ANGLE)
+    $apiTag = ($cmbApi.SelectedItem).Tag.ToString()
+    $patchResult = Patch-GLDriverConfig -ApiTag $apiTag
+    if ($patchResult) {
+        $txtBuildOutput.Text += $patchResult + "`r`n"
+    }
 
     # Find MSBuild
     $msbuild = Find-MSBuild

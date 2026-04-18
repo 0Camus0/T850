@@ -101,6 +101,8 @@ namespace t800 {
     GLint cffmt = cfmt;
     GLint cbysize = bysize;
     if (this->color_format == CUBE_F32) {
+      GLenum CubeAttachments[] = { GL_COLOR_ATTACHMENT0, GL_COLOR_ATTACHMENT1, GL_COLOR_ATTACHMENT2,
+                                    GL_COLOR_ATTACHMENT3, GL_COLOR_ATTACHMENT4, GL_COLOR_ATTACHMENT5 };
       glGenTextures(1, &ctex);
       glBindTexture(GL_TEXTURE_CUBE_MAP, ctex);
       for (int i = 0; i < 6; i++) {
@@ -109,7 +111,7 @@ namespace t800 {
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
-        glFramebufferTexture2D(GL_FRAMEBUFFER, Attachments[i], GL_TEXTURE_CUBE_MAP_POSITIVE_X + i, ctex, 0);
+        glFramebufferTexture2D(GL_FRAMEBUFFER, CubeAttachments[i], GL_TEXTURE_CUBE_MAP_POSITIVE_X + i, ctex, 0);
       }
         GLTexture *pTextureColor = new GLTexture;
         pTextureColor->x = w;

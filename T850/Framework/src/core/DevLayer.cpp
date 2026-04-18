@@ -71,15 +71,18 @@ void DevLayer::Update(float dt) {
 
 void DevLayer::Draw() {
   if (m_activeScene) {
+    T8_LOG_TRACE("[DevLayer] Scene OnDraw");
     m_activeScene->OnDraw();
   }
   // GUI draws on top of the scene
+  T8_LOG_TRACE("[DevLayer] GUI Draw (visible=%d)", (int)m_gui.IsVisible());
   m_gui.Draw();
 }
 
 void DevLayer::ProcessInput(InputManager* input) {
   // Let the GUI (including a modal popup) consume input first.
   if (m_guiInited) {
+    m_gui.UpdateButtons(*input);
     m_gui.Update(*input, g_pBaseDriver->width, g_pBaseDriver->height);
   }
   // When a line-edit popup is active, all other keyboard/mouse handling is suppressed.

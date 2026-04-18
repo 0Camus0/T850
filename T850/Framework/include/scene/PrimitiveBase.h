@@ -63,6 +63,12 @@ namespace t800 {
 	void SetParallaxEnabled(bool enabled) {
 		m_fParallaxEnabled = enabled ? 1.0f : 0.0f;
 	}
+	void SetParallaxShadowSettings(float minLayers, float maxLayers, float softness, float strength) {
+		m_fParallaxShadowMinLayers = minLayers;
+		m_fParallaxShadowMaxLayers = maxLayers;
+		m_fParallaxShadowSoftness = softness;
+		m_fParallaxShadowStrength = strength;
+	}
     Texture*				 Textures[8];
     Texture*			     EnvMap;
     ShaderKey gKey;
@@ -71,6 +77,15 @@ namespace t800 {
 	float m_fParallaxHighSamples;
 	float m_fParallaxHeight;
 	float m_fParallaxEnabled = 1.0f;
+	float m_fParallaxShadowMinLayers = 8.0f;
+	float m_fParallaxShadowMaxLayers = 32.0f;
+	float m_fParallaxShadowSoftness = 0.5f;
+	float m_fParallaxShadowStrength = 1.0f;
+	float m_fParallaxShadowEnabled = 1.0f;
+
+	void SetParallaxShadowEnabled(bool enabled) {
+		m_fParallaxShadowEnabled = enabled ? 1.0f : 0.0f;
+	}
   };
 }
 

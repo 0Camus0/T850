@@ -10,10 +10,10 @@
 * ** Enjoy, learn and share.
 *********************************************************/
 
-#include <video/windows/D3DXDriver.h>
-#include <video/windows/D3DXRT.h>
-#include <video/windows/D3DXShader.h>
-#include <video/windows/D3DXTexture.h>
+#include <video/windows/D3D11Driver.h>
+#include <video/windows/D3D11RT.h>
+#include <video/windows/D3D11Shader.h>
+#include <video/windows/D3D11Texture.h>
 
 #include <iostream>
 #include <string>
@@ -564,6 +564,8 @@ namespace t800 {
 
   void D3DXDriver::SetBlendState(BLEND_STATES state)
   {
+    static const char* names[] = {"BLEND_DEFAULT","BLEND_OPAQUE","ADDITIVE","ALPHA_BLEND","NON_PREMULTIPLIED"};
+    T8_LOG_TRACE("[D3D11] SetBlendState(%s)", (state >= 0 && state <= 4) ? names[state] : "?");
     ID3D11DeviceContext* deviceContext = reinterpret_cast<ID3D11DeviceContext*>(T8DeviceContext->GetAPIObject());
     switch (state)
     {
@@ -588,6 +590,8 @@ namespace t800 {
 
   void D3DXDriver::SetDepthStencilState(DEPTH_STENCIL_STATES state)
   {
+    static const char* names[] = {"DEPTH_DEFAULT","READ_WRITE","NONE","READ"};
+    T8_LOG_TRACE("[D3D11] SetDepthStencilState(%s)", (state >= 0 && state <= 3) ? names[state] : "?");
     ID3D11DeviceContext* deviceContext = reinterpret_cast<ID3D11DeviceContext*>(T8DeviceContext->GetAPIObject());
     switch (state)
     {
@@ -627,6 +631,7 @@ namespace t800 {
   }
 
   void D3DXDriver::SwapBuffers() {
+    T8_LOG_TRACE("[D3DXDriver] SwapBuffers/Present");
     // Swap between back and front buffer
     DXGISwapchain->Present(0, 0);
   }

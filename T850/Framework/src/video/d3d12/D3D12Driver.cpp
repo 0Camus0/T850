@@ -1,11 +1,7 @@
 /*********************************************************
-* T850 Engine — D3D12 Backend Implementation
-*
-* Phase 2: Full resource implementations.
-* Shader (HLSL compile + reflect + root signature + PSO)
-* Texture (upload + SRV)
-* Buffers (VB, IB, CB with upload heap)
-* Render Targets (color + depth with SRV)
+* T850 Engine — D3D12 Backend
+* D3D12Driver.cpp: Driver lifecycle, Heap, Device, DeviceContext,
+*                  Buffers (VB, IB, CB), PSO cache, debug layer.
 *********************************************************/
 
 #include <video/d3d12/D3D12Driver.h>
@@ -32,12 +28,14 @@ namespace t800 {
   extern Device*        T8Device;
   extern DeviceContext*  T8DeviceContext;
 
-  // Helper: get D3D12Driver from global
+  // ══════════════════════════════════════════════════════
+  //  Shared helpers — used by all D3D12 source files
+  // ══════════════════════════════════════════════════════
   static D3D12Driver* GetD3D12Driver() { return static_cast<D3D12Driver*>(g_pBaseDriver); }
   static ID3D12Device* GetNativeDevice() { return static_cast<D3D12Device*>(T8Device)->GetNativeDevice(); }
 
   // ══════════════════════════════════════════════════════
-  //  D3D12Heap (unchanged from Phase 1)
+  //  D3D12Heap
   // ══════════════════════════════════════════════════════
 
   bool D3D12Heap::Create(ID3D12Device* device, D3D12_DESCRIPTOR_HEAP_TYPE type,
@@ -131,7 +129,6 @@ namespace t800 {
       HRESULT hr = m_infoQueue->GetMessage(i, msg, &size);
       if (FAILED(hr)) continue;
 
-      // Format timestamp
       auto now = std::chrono::system_clock::now();
       auto time_t_now = std::chrono::system_clock::to_time_t(now);
       auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(
@@ -142,7 +139,6 @@ namespace t800 {
       snprintf(timeBuf, sizeof(timeBuf), "%02d:%02d:%02d.%03d",
                tm_buf.tm_hour, tm_buf.tm_min, tm_buf.tm_sec, (int)ms.count());
 
-      // Write to debug log file
       {
         std::lock_guard<std::mutex> lock(m_debugLogMutex);
         if (m_debugLogFile.is_open()) {
@@ -155,7 +151,6 @@ namespace t800 {
         }
       }
 
-      // Also emit to the main log for ERROR/CORRUPTION severity
       if (msg->Severity == D3D12_MESSAGE_SEVERITY_ERROR ||
           msg->Severity == D3D12_MESSAGE_SEVERITY_CORRUPTION) {
         T8_LOG_ERROR("[D3D12-DBG] [%s] %s", D3D12CategoryToStr(msg->Category), msg->pDescription);
@@ -168,22 +163,17 @@ namespace t800 {
   void D3D12Driver::StartDebugMessageThread() {
     ID3D12Device* device = static_cast<D3D12Device*>(T8Device)->GetNativeDevice();
 
-    // Query InfoQueue from device
     HRESULT hr = device->QueryInterface(IID_PPV_ARGS(&m_infoQueue));
     if (FAILED(hr) || !m_infoQueue) {
-      T8_LOG_ERROR("[D3D12] Failed to get ID3D12InfoQueue — debug messages unavailable");
+      T8_LOG_ERROR("[D3D12] Failed to get ID3D12InfoQueue");
       return;
     }
 
-    // Configure: don't break on errors (we'll poll instead), store all messages
     m_infoQueue->SetBreakOnSeverity(D3D12_MESSAGE_SEVERITY_CORRUPTION, FALSE);
     m_infoQueue->SetBreakOnSeverity(D3D12_MESSAGE_SEVERITY_ERROR, FALSE);
     m_infoQueue->SetBreakOnSeverity(D3D12_MESSAGE_SEVERITY_WARNING, FALSE);
-
-    // Allow large message storage
     m_infoQueue->SetMessageCountLimit(4096);
 
-    // Determine debug log file path from the main log path
     std::string debugLogPath;
     if (!g_logFile.empty()) {
       std::filesystem::path p(g_logFile);
@@ -191,7 +181,6 @@ namespace t800 {
       std::string ext  = p.extension().string();
       debugLogPath = (p.parent_path() / (stem + "_d3d12debug" + ext)).string();
     } else {
-      // Fallback: create in current directory with timestamp
       auto now = std::chrono::system_clock::now();
       auto tt = std::chrono::system_clock::to_time_t(now);
       struct tm tm_buf;
@@ -201,7 +190,6 @@ namespace t800 {
                tm_buf.tm_year + 1900, tm_buf.tm_mon + 1, tm_buf.tm_mday,
                tm_buf.tm_hour, tm_buf.tm_min, tm_buf.tm_sec);
       debugLogPath = buf;
-      // Ensure directory exists
       std::filesystem::create_directories(std::filesystem::path(debugLogPath).parent_path());
     }
 
@@ -211,23 +199,19 @@ namespace t800 {
       return;
     }
 
-    // Write header
     m_debugLogFile << "=== D3D12 Debug Layer Messages ===\n";
     m_debugLogFile << "Log file: " << debugLogPath << "\n";
-    m_debugLogFile << "GPU-based validation: ENABLED\n";
     m_debugLogFile << "==================================\n\n";
     m_debugLogFile.flush();
 
     T8_LOG_INFO("[D3D12] Debug message log: %s", debugLogPath.c_str());
 
-    // Start polling thread
     m_debugThreadRunning = true;
     m_debugThread = std::thread([this]() {
       while (m_debugThreadRunning) {
         PollDebugMessages();
-        std::this_thread::sleep_for(std::chrono::milliseconds(16)); // ~60Hz poll
+        std::this_thread::sleep_for(std::chrono::milliseconds(16));
       }
-      // Final poll to catch any remaining messages
       PollDebugMessages();
     });
 
@@ -242,7 +226,6 @@ namespace t800 {
       m_debugThread.join();
     }
 
-    // Final flush
     {
       std::lock_guard<std::mutex> lock(m_debugLogMutex);
       if (m_debugLogFile.is_open()) {
@@ -337,510 +320,9 @@ namespace t800 {
   }
 
   // ══════════════════════════════════════════════════════
-  //  D3D12Shader
+  //  D3D12 Buffers — Vertex Buffer
   // ══════════════════════════════════════════════════════
 
-  bool D3D12Shader::BuildRootSignature(ID3D12Device* device,
-                                        ID3D12ShaderReflection* vsReflect,
-                                        ID3D12ShaderReflection* fsReflect) {
-    // Collect all bound resources from both VS and FS
-    struct BoundResource { D3D12_DESCRIPTOR_RANGE_TYPE rangeType; UINT reg; UINT space; std::string name; };
-    std::vector<BoundResource> resources;
-    auto collectResources = [&](ID3D12ShaderReflection* reflect) {
-      D3D12_SHADER_DESC sd; reflect->GetDesc(&sd);
-      for (UINT i = 0; i < sd.BoundResources; i++) {
-        D3D12_SHADER_INPUT_BIND_DESC bd; reflect->GetResourceBindingDesc(i, &bd);
-        D3D12_DESCRIPTOR_RANGE_TYPE rt;
-        switch (bd.Type) {
-          case D3D_SIT_CBUFFER:    rt = D3D12_DESCRIPTOR_RANGE_TYPE_CBV; break;
-          case D3D_SIT_TEXTURE:    rt = D3D12_DESCRIPTOR_RANGE_TYPE_SRV; break;
-          case D3D_SIT_SAMPLER:    rt = D3D12_DESCRIPTOR_RANGE_TYPE_SAMPLER; break;
-          case D3D_SIT_STRUCTURED: rt = D3D12_DESCRIPTOR_RANGE_TYPE_SRV; break;
-          default: continue;
-        }
-        // Dedup by register+type
-        bool found = false;
-        for (auto& r : resources)
-          if (r.rangeType == rt && r.reg == bd.BindPoint) { found = true; break; }
-        if (!found)
-          resources.push_back({ rt, bd.BindPoint, bd.Space, bd.Name });
-      }
-    };
-    collectResources(vsReflect);
-    collectResources(fsReflect);
-
-    // Sort: CBV first, then SRV, then SAMPLER
-    std::sort(resources.begin(), resources.end(), [](const BoundResource& a, const BoundResource& b) {
-      return a.rangeType < b.rangeType || (a.rangeType == b.rangeType && a.reg < b.reg);
-    });
-
-    T8_LOG_DEBUG("[D3D12] Root signature: %d resources", (int)resources.size());
-
-    // Build root parameters — one descriptor table per resource
-    std::vector<D3D12_DESCRIPTOR_RANGE> ranges(resources.size());
-    std::vector<D3D12_ROOT_PARAMETER>   params(resources.size());
-
-    for (int i = 0; i < (int)resources.size(); i++) {
-      auto& r = resources[i];
-
-      ranges[i] = {};
-      ranges[i].RangeType = r.rangeType;
-      ranges[i].NumDescriptors = 1;
-      ranges[i].BaseShaderRegister = r.reg;
-      ranges[i].RegisterSpace = r.space;
-      ranges[i].OffsetInDescriptorsFromTableStart = D3D12_DESCRIPTOR_RANGE_OFFSET_APPEND;
-
-      params[i] = {};
-      params[i].ParameterType = D3D12_ROOT_PARAMETER_TYPE_DESCRIPTOR_TABLE;
-      params[i].DescriptorTable.NumDescriptorRanges = 1;
-      params[i].DescriptorTable.pDescriptorRanges = &ranges[i];
-      params[i].ShaderVisibility = D3D12_SHADER_VISIBILITY_ALL;
-
-      if (r.rangeType == D3D12_DESCRIPTOR_RANGE_TYPE_CBV && r.reg == 0) cbvSlot = i;
-      if (r.rangeType == D3D12_DESCRIPTOR_RANGE_TYPE_SRV) srvSlots[r.reg] = i;
-      if (r.rangeType == D3D12_DESCRIPTOR_RANGE_TYPE_SAMPLER && r.reg == 0) samplerSlot = i;
-
-      T8_LOG_VERBOSE("[D3D12]   RootParam[%d] type=%d reg=%u name='%s'", i, r.rangeType, r.reg, r.name.c_str());
-    }
-
-    D3D12_ROOT_SIGNATURE_DESC rsDesc = {};
-    rsDesc.NumParameters = (UINT)params.size();
-    rsDesc.pParameters = params.data();
-    rsDesc.Flags = D3D12_ROOT_SIGNATURE_FLAG_ALLOW_INPUT_ASSEMBLER_INPUT_LAYOUT;
-
-    ComPtr<ID3DBlob> sigBlob, errBlob;
-    HRESULT hr = D3D12SerializeRootSignature(&rsDesc, D3D_ROOT_SIGNATURE_VERSION_1, &sigBlob, &errBlob);
-    if (FAILED(hr)) {
-      T8_LOG_ERROR("[D3D12] SerializeRootSignature failed: %s",
-                   errBlob ? (char*)errBlob->GetBufferPointer() : "unknown");
-      return false;
-    }
-
-    hr = device->CreateRootSignature(0, sigBlob->GetBufferPointer(), sigBlob->GetBufferSize(),
-                                      IID_PPV_ARGS(&pRootSignature));
-    if (FAILED(hr)) {
-      T8_LOG_ERROR("[D3D12] CreateRootSignature failed hr=0x%08X", hr);
-      return false;
-    }
-
-    T8_LOG_DEBUG("[D3D12] Root signature created: cbvSlot=%d samplerSlot=%d srvSlots=%d",
-                 cbvSlot, samplerSlot, (int)srvSlots.size());
-    return true;
-  }
-
-  bool D3D12Shader::CreateShaderAPI(std::string src_vs, std::string src_fs,
-                                     const std::string& vs_name, const std::string& fs_name) {
-    ID3D12Device* device = GetNativeDevice();
-
-    // ── Compile VS ──
-    {
-      ComPtr<ID3DBlob> errBlob;
-      HRESULT hr = D3DCompile(src_vs.c_str(), src_vs.size(),
-                               vs_name.empty() ? nullptr : vs_name.c_str(),
-                               nullptr, nullptr, "VS", "vs_5_0", 0, 0, &VS_blob, &errBlob);
-      if (FAILED(hr)) {
-        T8_LOG_ERROR("[D3D12] VS compile error: %s", errBlob ? (char*)errBlob->GetBufferPointer() : "unknown");
-        return false;
-      }
-      T8_LOG_VERBOSE("[D3D12] VS compiled: %u bytes [%s]", (unsigned)VS_blob->GetBufferSize(), vs_name.c_str());
-    }
-
-    // ── Compile FS ──
-    {
-      ComPtr<ID3DBlob> errBlob;
-      HRESULT hr = D3DCompile(src_fs.c_str(), src_fs.size(),
-                               fs_name.empty() ? nullptr : fs_name.c_str(),
-                               nullptr, nullptr, "FS", "ps_5_0", 0, 0, &FS_blob, &errBlob);
-      if (FAILED(hr)) {
-        T8_LOG_ERROR("[D3D12] FS compile error: %s", errBlob ? (char*)errBlob->GetBufferPointer() : "unknown");
-        return false;
-      }
-      T8_LOG_VERBOSE("[D3D12] FS compiled: %u bytes [%s]", (unsigned)FS_blob->GetBufferSize(), fs_name.c_str());
-    }
-
-    // ── Reflect VS for input layout ──
-    ComPtr<ID3D12ShaderReflection> vsReflect;
-    D3DReflect(VS_blob->GetBufferPointer(), VS_blob->GetBufferSize(), IID_PPV_ARGS(&vsReflect));
-    D3D12_SHADER_DESC vsDesc; vsReflect->GetDesc(&vsDesc);
-
-    int offset = 0;
-    m_semanticNames.clear();
-    VertexDecl.clear();
-    // First pass: collect all semantic names (to avoid vector reallocation invalidating pointers)
-    for (UINT i = 0; i < vsDesc.InputParameters; i++) {
-      D3D12_SIGNATURE_PARAMETER_DESC pd; vsReflect->GetInputParameterDesc(i, &pd);
-      m_semanticNames.push_back(pd.SemanticName);
-    }
-    // Second pass: build input element descs with stable pointers
-    for (UINT i = 0; i < vsDesc.InputParameters; i++) {
-      D3D12_SIGNATURE_PARAMETER_DESC pd; vsReflect->GetInputParameterDesc(i, &pd);
-
-      D3D12_INPUT_ELEMENT_DESC ie = {};
-      ie.SemanticName = m_semanticNames[i].c_str();
-      ie.SemanticIndex = pd.SemanticIndex;
-      ie.InputSlot = 0;
-      ie.AlignedByteOffset = offset;
-      ie.InputSlotClass = D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA;
-
-      if (pd.Mask == 1) {
-        ie.Format = (pd.ComponentType == D3D_REGISTER_COMPONENT_FLOAT32) ? DXGI_FORMAT_R32_FLOAT
-                  : (pd.ComponentType == D3D_REGISTER_COMPONENT_UINT32)  ? DXGI_FORMAT_R32_UINT
-                  : DXGI_FORMAT_R32_SINT;
-        offset += 4;
-      } else if (pd.Mask <= 3) {
-        ie.Format = (pd.ComponentType == D3D_REGISTER_COMPONENT_FLOAT32) ? DXGI_FORMAT_R32G32_FLOAT
-                  : (pd.ComponentType == D3D_REGISTER_COMPONENT_UINT32)  ? DXGI_FORMAT_R32G32_UINT
-                  : DXGI_FORMAT_R32G32_SINT;
-        offset += 8;
-      } else if (pd.Mask <= 7) {
-        ie.Format = (pd.ComponentType == D3D_REGISTER_COMPONENT_FLOAT32) ? DXGI_FORMAT_R32G32B32_FLOAT
-                  : (pd.ComponentType == D3D_REGISTER_COMPONENT_UINT32)  ? DXGI_FORMAT_R32G32B32_UINT
-                  : DXGI_FORMAT_R32G32B32_SINT;
-        offset += 12;
-      } else {
-        ie.Format = (pd.ComponentType == D3D_REGISTER_COMPONENT_FLOAT32) ? DXGI_FORMAT_R32G32B32A32_FLOAT
-                  : (pd.ComponentType == D3D_REGISTER_COMPONENT_UINT32)  ? DXGI_FORMAT_R32G32B32A32_UINT
-                  : DXGI_FORMAT_R32G32B32A32_SINT;
-        offset += 16;
-      }
-      VertexDecl.push_back(ie);
-    }
-    vertexStride = offset;
-    T8_LOG_VERBOSE("[D3D12] Input layout: %d elements, stride=%d", (int)VertexDecl.size(), vertexStride);
-
-    // ── Reflect FS ──
-    ComPtr<ID3D12ShaderReflection> fsReflect;
-    D3DReflect(FS_blob->GetBufferPointer(), FS_blob->GetBufferSize(), IID_PPV_ARGS(&fsReflect));
-
-    // ── Build root signature from reflection ──
-    if (!BuildRootSignature(device, vsReflect.Get(), fsReflect.Get())) return false;
-
-    T8_LOG_INFO("[D3D12] Shader created: key=0x%08X stride=%d rootParams: cbv=%d sampler=%d srvs=%d",
-                key.bits, vertexStride, cbvSlot, samplerSlot, (int)srvSlots.size());
-    return true;
-  }
-
-  void D3D12Shader::Set(const DeviceContext& deviceContext) {
-    T8_LOG_TRACE("[D3D12] Shader::Set key=0x%08X", key.bits);
-    const_cast<DeviceContext*>(&deviceContext)->actualShaderSet = (ShaderBase*)this;
-
-    auto* cmdList = static_cast<const D3D12DeviceContext*>(&deviceContext)->GetCommandList();
-    auto* driver = GetD3D12Driver();
-
-    // Set root signature
-    cmdList->SetGraphicsRootSignature(pRootSignature.Get());
-
-    // Determine current RT configuration for PSO
-    uint8_t numRTVs = 1;
-    DXGI_FORMAT rtvFmt = DXGI_FORMAT_R8G8B8A8_UNORM;
-    DXGI_FORMAT dsvFmt = DXGI_FORMAT_D32_FLOAT;
-
-    int curRT = driver->CurrentRT;
-    if (curRT >= 0 && curRT < (int)driver->RTs.size()) {
-      D3D12RT* rt = static_cast<D3D12RT*>(driver->RTs[curRT]);
-      // Use the RT's actual color count; depth-only uses 0
-      numRTVs = (uint8_t)(rt->number_RT > 0 ? rt->number_RT : 0);
-      if (!rt->vColorResources.empty()) {
-        D3D12_RESOURCE_DESC desc = rt->vColorResources[0]->GetDesc();
-        rtvFmt = desc.Format;
-      } else if (rt->number_RT == 0) {
-        rtvFmt = DXGI_FORMAT_UNKNOWN; // depth-only — no color
-      }
-    }
-    // Back buffer: 1 RTV R8G8B8A8
-    // Depth-only RT: 0 RTVs with UNKNOWN format
-
-    // Get or create PSO for current state
-    ID3D12PipelineState* pso = driver->GetOrCreatePSO(this, numRTVs, rtvFmt, dsvFmt);
-    if (pso) {
-      cmdList->SetPipelineState(pso);
-    }
-
-    // Bind default sampler if shader uses one
-    if (samplerSlot >= 0) {
-      cmdList->SetGraphicsRootDescriptorTable(samplerSlot, driver->GetDefaultSamplerGPU());
-    }
-  }
-
-  void D3D12Shader::DestroyAPIShader() {
-    VS_blob.Reset(); FS_blob.Reset();
-    pRootSignature.Reset();
-    VertexDecl.clear(); m_semanticNames.clear();
-    srvSlots.clear();
-  }
-
-  // ══════════════════════════════════════════════════════
-  //  D3D12Texture
-  // ══════════════════════════════════════════════════════
-
-  void D3D12Texture::LoadAPITexture(DeviceContext* context, unsigned char* buffer) {
-    ID3D12Device* device = GetNativeDevice();
-    auto* driver = GetD3D12Driver();
-
-    DXGI_FORMAT fmt = DXGI_FORMAT_R8G8B8A8_UNORM;
-    int bytesPerPixel = 4;
-    if (this->props & TEXT_BASIC_FORMAT::CH_ALPHA) { fmt = DXGI_FORMAT_R8_UNORM; bytesPerPixel = 1; }
-    if (cil_props & CIL_HALF_FLOAT) { fmt = DXGI_FORMAT_R16G16B16A16_FLOAT; bytesPerPixel = 8; }
-
-    bool isCube = (cil_props & CIL_CUBE_MAP) != 0;
-    UINT arraySize = isCube ? 6 : 1;
-
-    // Create texture resource
-    D3D12_RESOURCE_DESC texDesc = {};
-    texDesc.Dimension = D3D12_RESOURCE_DIMENSION_TEXTURE2D;
-    texDesc.Width = this->x;
-    texDesc.Height = this->y;
-    texDesc.DepthOrArraySize = arraySize;
-    texDesc.MipLevels = 1;
-    texDesc.Format = fmt;
-    texDesc.SampleDesc.Count = 1;
-    texDesc.Flags = D3D12_RESOURCE_FLAG_NONE;
-
-    D3D12_HEAP_PROPERTIES heapProps = {}; heapProps.Type = D3D12_HEAP_TYPE_DEFAULT;
-    HRESULT hr = device->CreateCommittedResource(&heapProps, D3D12_HEAP_FLAG_NONE, &texDesc,
-                                                  D3D12_RESOURCE_STATE_COPY_DEST, nullptr,
-                                                  IID_PPV_ARGS(&pTexResource));
-    if (FAILED(hr)) {
-      T8_LOG_ERROR("[D3D12] Texture CreateCommittedResource failed hr=0x%08X (%ux%u)", hr, this->x, this->y);
-      this->id = (unsigned)-1; return;
-    }
-
-    // Upload via staging buffer
-    UINT64 uploadSize = 0;
-    D3D12_PLACED_SUBRESOURCE_FOOTPRINT footprints[6];
-    UINT numRows[6]; UINT64 rowSizes[6];
-    device->GetCopyableFootprints(&texDesc, 0, arraySize, 0, footprints, numRows, rowSizes, &uploadSize);
-
-    D3D12_RESOURCE_DESC uploadDesc = {};
-    uploadDesc.Dimension = D3D12_RESOURCE_DIMENSION_BUFFER;
-    uploadDesc.Width = uploadSize;
-    uploadDesc.Height = 1; uploadDesc.DepthOrArraySize = 1; uploadDesc.MipLevels = 1;
-    uploadDesc.SampleDesc.Count = 1;
-    uploadDesc.Layout = D3D12_TEXTURE_LAYOUT_ROW_MAJOR;
-
-    D3D12_HEAP_PROPERTIES uploadHeap = {}; uploadHeap.Type = D3D12_HEAP_TYPE_UPLOAD;
-    ComPtr<ID3D12Resource> uploadBuf;
-    device->CreateCommittedResource(&uploadHeap, D3D12_HEAP_FLAG_NONE, &uploadDesc,
-                                     D3D12_RESOURCE_STATE_GENERIC_READ, nullptr, IID_PPV_ARGS(&uploadBuf));
-
-    // Map and copy
-    void* mapped = nullptr;
-    uploadBuf->Map(0, nullptr, &mapped);
-    UINT srcPitch = this->x * bytesPerPixel;
-    for (UINT face = 0; face < arraySize; face++) {
-      auto& fp = footprints[face];
-      unsigned char* src = buffer + face * (this->x * this->y * bytesPerPixel);
-      unsigned char* dst = (unsigned char*)mapped + fp.Offset;
-      for (UINT row = 0; row < numRows[face]; row++) {
-        memcpy(dst + row * fp.Footprint.RowPitch, src + row * srcPitch,
-               (size_t)(srcPitch < fp.Footprint.RowPitch ? srcPitch : fp.Footprint.RowPitch));
-      }
-    }
-    uploadBuf->Unmap(0, nullptr);
-
-    // Copy via temp command list
-    ComPtr<ID3D12CommandAllocator> tmpAlloc;
-    ComPtr<ID3D12GraphicsCommandList> tmpList;
-    device->CreateCommandAllocator(D3D12_COMMAND_LIST_TYPE_DIRECT, IID_PPV_ARGS(&tmpAlloc));
-    device->CreateCommandList(0, D3D12_COMMAND_LIST_TYPE_DIRECT, tmpAlloc.Get(), nullptr, IID_PPV_ARGS(&tmpList));
-
-    for (UINT face = 0; face < arraySize; face++) {
-      D3D12_TEXTURE_COPY_LOCATION dst = {}, src = {};
-      dst.pResource = pTexResource.Get();
-      dst.Type = D3D12_TEXTURE_COPY_TYPE_SUBRESOURCE_INDEX;
-      dst.SubresourceIndex = face;
-      src.pResource = uploadBuf.Get();
-      src.Type = D3D12_TEXTURE_COPY_TYPE_PLACED_FOOTPRINT;
-      src.PlacedFootprint = footprints[face];
-      tmpList->CopyTextureRegion(&dst, 0, 0, 0, &src, nullptr);
-    }
-
-    // Barrier: COPY_DEST → PIXEL_SHADER_RESOURCE
-    D3D12_RESOURCE_BARRIER barrier = {};
-    barrier.Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
-    barrier.Transition.pResource = pTexResource.Get();
-    barrier.Transition.StateBefore = D3D12_RESOURCE_STATE_COPY_DEST;
-    barrier.Transition.StateAfter = D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE;
-    barrier.Transition.Subresource = D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES;
-    tmpList->ResourceBarrier(1, &barrier);
-
-    tmpList->Close();
-    ID3D12CommandList* lists[] = { tmpList.Get() };
-    driver->GetCmdQueue()->ExecuteCommandLists(1, lists);
-
-    // Fence wait for upload
-    ComPtr<ID3D12Fence> tmpFence;
-    device->CreateFence(0, D3D12_FENCE_FLAG_NONE, IID_PPV_ARGS(&tmpFence));
-    HANDLE evt = CreateEvent(nullptr, FALSE, FALSE, nullptr);
-    driver->GetCmdQueue()->Signal(tmpFence.Get(), 1);
-    if (tmpFence->GetCompletedValue() < 1) {
-      tmpFence->SetEventOnCompletion(1, evt);
-      WaitForSingleObject(evt, INFINITE);
-    }
-    CloseHandle(evt);
-
-    // Create SRV
-    D3D12_SHADER_RESOURCE_VIEW_DESC srvDesc = {};
-    srvDesc.Format = fmt;
-    srvDesc.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
-    if (isCube) {
-      srvDesc.ViewDimension = D3D12_SRV_DIMENSION_TEXTURECUBE;
-      srvDesc.TextureCube.MipLevels = 1;
-    } else {
-      srvDesc.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE2D;
-      srvDesc.Texture2D.MipLevels = 1;
-    }
-
-    srvCPU = driver->GetHeap(D3D12Heap::CBV_SRV_UAV_VISIBLE).AllocateCPU();
-    srvGPU = driver->GetHeap(D3D12Heap::CBV_SRV_UAV_VISIBLE).AllocateGPU();
-    device->CreateShaderResourceView(pTexResource.Get(), &srvDesc, srvCPU);
-
-    static int texId = 0;
-    this->id = texId++;
-
-    T8_LOG_DEBUG("[D3D12] Texture created: '%s' -> slot %d (%ux%u, fmt=%d%s)",
-                 filepath.c_str(), this->id, this->x, this->y, fmt, isCube ? ", cube" : "");
-  }
-
-  void D3D12Texture::LoadAPITextureCompressed(unsigned char* buffer) {
-    ID3D12Device* device = GetNativeDevice();
-    auto* driver = GetD3D12Driver();
-
-    DXGI_FORMAT fmt = DXGI_FORMAT_BC1_UNORM;
-    int blockSize = 8;
-    if (cil_props & CIL_DXT3) { fmt = DXGI_FORMAT_BC2_UNORM; blockSize = 16; }
-    else if (cil_props & CIL_DXT5) { fmt = DXGI_FORMAT_BC3_UNORM; blockSize = 16; }
-
-    bool isCube = (cil_props & CIL_CUBE_MAP) != 0;
-    UINT numFaces = isCube ? 6 : 1;
-    UINT mipCount = (mipmaps > 0) ? mipmaps : 1;
-
-    D3D12_RESOURCE_DESC texDesc = {};
-    texDesc.Dimension = D3D12_RESOURCE_DIMENSION_TEXTURE2D;
-    texDesc.Width = this->x; texDesc.Height = this->y;
-    texDesc.DepthOrArraySize = numFaces;
-    texDesc.MipLevels = mipCount;
-    texDesc.Format = fmt;
-    texDesc.SampleDesc.Count = 1;
-
-    D3D12_HEAP_PROPERTIES heapProps = {}; heapProps.Type = D3D12_HEAP_TYPE_DEFAULT;
-    HRESULT hr = device->CreateCommittedResource(&heapProps, D3D12_HEAP_FLAG_NONE, &texDesc,
-                                                  D3D12_RESOURCE_STATE_COPY_DEST, nullptr,
-                                                  IID_PPV_ARGS(&pTexResource));
-    if (FAILED(hr)) { this->id = (unsigned)-1; T8_LOG_ERROR("[D3D12] Compressed tex create failed"); return; }
-
-    UINT totalSubs = numFaces * mipCount;
-    std::vector<D3D12_PLACED_SUBRESOURCE_FOOTPRINT> footprints(totalSubs);
-    std::vector<UINT> numRows(totalSubs);
-    std::vector<UINT64> rowSizes(totalSubs);
-    UINT64 uploadSize = 0;
-    device->GetCopyableFootprints(&texDesc, 0, totalSubs, 0, footprints.data(), numRows.data(), rowSizes.data(), &uploadSize);
-
-    D3D12_RESOURCE_DESC uploadDesc = {};
-    uploadDesc.Dimension = D3D12_RESOURCE_DIMENSION_BUFFER;
-    uploadDesc.Width = uploadSize;
-    uploadDesc.Height = 1; uploadDesc.DepthOrArraySize = 1; uploadDesc.MipLevels = 1;
-    uploadDesc.SampleDesc.Count = 1; uploadDesc.Layout = D3D12_TEXTURE_LAYOUT_ROW_MAJOR;
-
-    D3D12_HEAP_PROPERTIES uploadHeap = {}; uploadHeap.Type = D3D12_HEAP_TYPE_UPLOAD;
-    ComPtr<ID3D12Resource> uploadBuf;
-    device->CreateCommittedResource(&uploadHeap, D3D12_HEAP_FLAG_NONE, &uploadDesc,
-                                     D3D12_RESOURCE_STATE_GENERIC_READ, nullptr, IID_PPV_ARGS(&uploadBuf));
-
-    void* mapped = nullptr;
-    uploadBuf->Map(0, nullptr, &mapped);
-    unsigned char* pData = buffer;
-    for (UINT face = 0; face < numFaces; face++) {
-      int w = this->x, h = this->y;
-      for (UINT mip = 0; mip < mipCount; mip++) {
-        UINT sub = face * mipCount + mip;
-        int wBlocks = (w + 3) / 4; if (wBlocks < 1) wBlocks = 1;
-        int hBlocks = (h + 3) / 4; if (hBlocks < 1) hBlocks = 1;
-        UINT srcPitch = wBlocks * blockSize;
-        auto& fp = footprints[sub];
-        unsigned char* dst = (unsigned char*)mapped + fp.Offset;
-        for (int row = 0; row < hBlocks; row++) {
-          memcpy(dst + row * fp.Footprint.RowPitch, pData + row * srcPitch, srcPitch);
-        }
-        pData += wBlocks * hBlocks * blockSize;
-        w >>= 1; if (w < 1) w = 1;
-        h >>= 1; if (h < 1) h = 1;
-      }
-    }
-    uploadBuf->Unmap(0, nullptr);
-
-    // Copy + transition
-    ComPtr<ID3D12CommandAllocator> tmpAlloc;
-    ComPtr<ID3D12GraphicsCommandList> tmpList;
-    device->CreateCommandAllocator(D3D12_COMMAND_LIST_TYPE_DIRECT, IID_PPV_ARGS(&tmpAlloc));
-    device->CreateCommandList(0, D3D12_COMMAND_LIST_TYPE_DIRECT, tmpAlloc.Get(), nullptr, IID_PPV_ARGS(&tmpList));
-
-    for (UINT sub = 0; sub < totalSubs; sub++) {
-      D3D12_TEXTURE_COPY_LOCATION dst = {}, src = {};
-      dst.pResource = pTexResource.Get(); dst.Type = D3D12_TEXTURE_COPY_TYPE_SUBRESOURCE_INDEX; dst.SubresourceIndex = sub;
-      src.pResource = uploadBuf.Get(); src.Type = D3D12_TEXTURE_COPY_TYPE_PLACED_FOOTPRINT; src.PlacedFootprint = footprints[sub];
-      tmpList->CopyTextureRegion(&dst, 0, 0, 0, &src, nullptr);
-    }
-    D3D12_RESOURCE_BARRIER barrier = {};
-    barrier.Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
-    barrier.Transition.pResource = pTexResource.Get();
-    barrier.Transition.StateBefore = D3D12_RESOURCE_STATE_COPY_DEST;
-    barrier.Transition.StateAfter = D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE;
-    barrier.Transition.Subresource = D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES;
-    tmpList->ResourceBarrier(1, &barrier);
-    tmpList->Close();
-
-    ID3D12CommandList* lists[] = { tmpList.Get() };
-    driver->GetCmdQueue()->ExecuteCommandLists(1, lists);
-    ComPtr<ID3D12Fence> tmpFence;
-    device->CreateFence(0, D3D12_FENCE_FLAG_NONE, IID_PPV_ARGS(&tmpFence));
-    HANDLE evt = CreateEvent(nullptr, FALSE, FALSE, nullptr);
-    driver->GetCmdQueue()->Signal(tmpFence.Get(), 1);
-    if (tmpFence->GetCompletedValue() < 1) { tmpFence->SetEventOnCompletion(1, evt); WaitForSingleObject(evt, INFINITE); }
-    CloseHandle(evt);
-
-    // SRV
-    D3D12_SHADER_RESOURCE_VIEW_DESC srvDesc = {};
-    srvDesc.Format = fmt;
-    srvDesc.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
-    if (isCube) { srvDesc.ViewDimension = D3D12_SRV_DIMENSION_TEXTURECUBE; srvDesc.TextureCube.MipLevels = mipCount; }
-    else { srvDesc.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE2D; srvDesc.Texture2D.MipLevels = mipCount; }
-
-    srvCPU = driver->GetHeap(D3D12Heap::CBV_SRV_UAV_VISIBLE).AllocateCPU();
-    srvGPU = driver->GetHeap(D3D12Heap::CBV_SRV_UAV_VISIBLE).AllocateGPU();
-    device->CreateShaderResourceView(pTexResource.Get(), &srvDesc, srvCPU);
-
-    static int texId = 0;
-    this->id = texId++;
-    T8_LOG_DEBUG("[D3D12] Compressed texture created: '%s' -> slot %d (%ux%u, fmt=%d, mips=%u)",
-                 filepath.c_str(), this->id, this->x, this->y, fmt, mipCount);
-  }
-
-  void D3D12Texture::DestroyAPITexture() { pTexResource.Reset(); }
-  void D3D12Texture::SetTextureParams() { /* Sampler is shared, set at driver level */ }
-  void D3D12Texture::GetFormatBpp(unsigned int&, unsigned int&, unsigned int&) {}
-
-  void D3D12Texture::Set(const DeviceContext& deviceContext, unsigned int slot, std::string shaderTextureName) {
-    T8_LOG_TRACE("[D3D12] Texture::Set slot=%u name='%s' file='%s'", slot, shaderTextureName.c_str(), filepath.c_str());
-    auto* cmdList = static_cast<const D3D12DeviceContext*>(&deviceContext)->GetCommandList();
-    auto* shader = static_cast<D3D12Shader*>(deviceContext.actualShaderSet);
-    if (!shader) return;
-
-    auto it = shader->srvSlots.find(slot);
-    if (it != shader->srvSlots.end()) {
-      cmdList->SetGraphicsRootDescriptorTable(it->second, srvGPU);
-    }
-  }
-
-  void D3D12Texture::SetSampler(const DeviceContext&, unsigned int) {
-    // Sampler is set globally via D3D12Shader::Set
-  }
-
-  // ══════════════════════════════════════════════════════
-  //  D3D12 Buffers
-  // ══════════════════════════════════════════════════════
-
-  // ── Vertex Buffer ──
   void* D3D12VertexBuffer::GetAPIObject() const { return (void*)m_buffer.Get(); }
   void** D3D12VertexBuffer::GetAPIObjectReference() const { return nullptr; }
 
@@ -848,7 +330,6 @@ namespace t800 {
     descriptor = desc;
     ID3D12Device* dev = GetNativeDevice();
 
-    // Always create as upload heap for simplicity (dynamic)
     D3D12_HEAP_PROPERTIES heapProps = {}; heapProps.Type = D3D12_HEAP_TYPE_UPLOAD;
     D3D12_RESOURCE_DESC bufDesc = {};
     bufDesc.Dimension = D3D12_RESOURCE_DIMENSION_BUFFER;
@@ -870,7 +351,7 @@ namespace t800 {
 
     m_view.BufferLocation = m_buffer->GetGPUVirtualAddress();
     m_view.SizeInBytes = desc.byteWidth;
-    m_view.StrideInBytes = 0; // Set during Set() call
+    m_view.StrideInBytes = 0;
     T8_LOG_DEBUG("[D3D12] VB created: %d bytes", desc.byteWidth);
   }
 
@@ -895,7 +376,10 @@ namespace t800 {
     m_buffer.Reset(); sysMemCpy.clear(); delete this;
   }
 
-  // ── Index Buffer ──
+  // ══════════════════════════════════════════════════════
+  //  D3D12 Buffers — Index Buffer
+  // ══════════════════════════════════════════════════════
+
   void* D3D12IndexBuffer::GetAPIObject() const { return (void*)m_buffer.Get(); }
   void** D3D12IndexBuffer::GetAPIObjectReference() const { return nullptr; }
 
@@ -947,7 +431,10 @@ namespace t800 {
     m_buffer.Reset(); sysMemCpy.clear(); delete this;
   }
 
-  // ── Constant Buffer ──
+  // ══════════════════════════════════════════════════════
+  //  D3D12 Buffers — Constant Buffer
+  // ══════════════════════════════════════════════════════
+
   void* D3D12ConstantBuffer::GetAPIObject() const { return (void*)m_buffer.Get(); }
   void** D3D12ConstantBuffer::GetAPIObjectReference() const { return nullptr; }
 
@@ -956,7 +443,7 @@ namespace t800 {
     ID3D12Device* dev = GetNativeDevice();
     auto* driver = GetD3D12Driver();
 
-    m_alignedSize = (desc.byteWidth + 255) & ~255; // 256-byte aligned
+    m_alignedSize = (desc.byteWidth + 255) & ~255;
 
     D3D12_HEAP_PROPERTIES heapProps = {}; heapProps.Type = D3D12_HEAP_TYPE_UPLOAD;
     D3D12_RESOURCE_DESC bufDesc = {};
@@ -995,7 +482,6 @@ namespace t800 {
     auto* cmdList = static_cast<const D3D12DeviceContext*>(&deviceContext)->GetCommandList();
     auto* shader = static_cast<D3D12Shader*>(deviceContext.actualShaderSet);
     if (shader && shader->cbvSlot >= 0 && !sysMemCpy.empty()) {
-      // Allocate a per-draw CBV: copies data to ring buffer + creates temp descriptor
       auto* driver = GetD3D12Driver();
       D3D12_GPU_DESCRIPTOR_HANDLE gpuH = driver->AllocateDynamicCBV(sysMemCpy.data(), (UINT)sysMemCpy.size());
       T8_LOG_TRACE("[D3D12] CB::Set cbvSlot=%d gpuH=0x%llX dataSize=%d first4floats=[%f,%f,%f,%f]",
@@ -1021,205 +507,11 @@ namespace t800 {
   }
 
   // ══════════════════════════════════════════════════════
-  //  D3D12RT — Render Target
-  // ══════════════════════════════════════════════════════
-
-  bool D3D12RT::LoadAPIRT() {
-    ID3D12Device* device = GetNativeDevice();
-    auto* driver = GetD3D12Driver();
-
-    DXGI_FORMAT cfmt = DXGI_FORMAT_R8G8B8A8_UNORM;
-    switch (color_format) {
-      case BaseRT::NOTHING: cfmt = DXGI_FORMAT_R8G8B8A8_UNORM; number_RT = 0; break;
-      case BaseRT::R8:      cfmt = DXGI_FORMAT_R8_UNORM; break;
-      case BaseRT::F16:     cfmt = DXGI_FORMAT_R16_FLOAT; break;
-      case BaseRT::F32:     cfmt = DXGI_FORMAT_R32_FLOAT; break;
-      case BaseRT::RGBA8:   cfmt = DXGI_FORMAT_R8G8B8A8_UNORM; break;
-      case BaseRT::RGBA16F: cfmt = DXGI_FORMAT_R16G16B16A16_FLOAT; break;
-      case BaseRT::RGBA32F: cfmt = DXGI_FORMAT_R32G32B32A32_FLOAT; break;
-      default: break;
-    }
-
-    DXGI_FORMAT depthFmt = DXGI_FORMAT_R32_TYPELESS;
-    DXGI_FORMAT dsvFmt = DXGI_FORMAT_D32_FLOAT;
-    DXGI_FORMAT srvDepthFmt = DXGI_FORMAT_R32_FLOAT;
-    isCubeDepth = (depth_format == BaseRT::CUBE_F32);
-
-    // ── Color attachments ──
-    for (int i = 0; i < number_RT; i++) {
-      D3D12_RESOURCE_DESC desc = {};
-      desc.Dimension = D3D12_RESOURCE_DIMENSION_TEXTURE2D;
-      desc.Width = w; desc.Height = h; desc.DepthOrArraySize = 1;
-      desc.MipLevels = 1; desc.Format = cfmt;
-      desc.SampleDesc.Count = 1;
-      desc.Flags = D3D12_RESOURCE_FLAG_ALLOW_RENDER_TARGET;
-
-      D3D12_CLEAR_VALUE clearVal = {}; clearVal.Format = cfmt;
-      D3D12_HEAP_PROPERTIES heapProps = {}; heapProps.Type = D3D12_HEAP_TYPE_DEFAULT;
-
-      ComPtr<ID3D12Resource> colorRes;
-      HRESULT hr = device->CreateCommittedResource(&heapProps, D3D12_HEAP_FLAG_NONE, &desc,
-                                                    D3D12_RESOURCE_STATE_RENDER_TARGET, &clearVal,
-                                                    IID_PPV_ARGS(&colorRes));
-      if (FAILED(hr)) { T8_LOG_ERROR("[D3D12] RT color[%d] create failed hr=0x%08X", i, hr); return false; }
-      vColorResources.push_back(colorRes);
-      vColorStates.push_back(D3D12_RESOURCE_STATE_RENDER_TARGET);
-
-      // RTV
-      D3D12_CPU_DESCRIPTOR_HANDLE rtv = driver->GetHeap(D3D12Heap::RTV).AllocateCPU();
-      device->CreateRenderTargetView(colorRes.Get(), nullptr, rtv);
-      vRTVHandles.push_back(rtv);
-
-      // SRV for reading as texture
-      D3D12Texture* colorTex = new D3D12Texture;
-      colorTex->pTexResource = colorRes;
-      colorTex->x = w; colorTex->y = h;
-      D3D12_SHADER_RESOURCE_VIEW_DESC srvDesc = {};
-      srvDesc.Format = cfmt;
-      srvDesc.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE2D;
-      srvDesc.Texture2D.MipLevels = 1;
-      srvDesc.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
-      colorTex->srvCPU = driver->GetHeap(D3D12Heap::CBV_SRV_UAV_VISIBLE).AllocateCPU();
-      colorTex->srvGPU = driver->GetHeap(D3D12Heap::CBV_SRV_UAV_VISIBLE).AllocateGPU();
-      device->CreateShaderResourceView(colorRes.Get(), &srvDesc, colorTex->srvCPU);
-      vColorTextures.push_back(colorTex);
-
-      T8_LOG_DEBUG("[D3D12] RT color[%d] created: %dx%d fmt=%d", i, w, h, cfmt);
-    }
-
-    // ── Depth attachment ──
-    D3D12_RESOURCE_DESC depthDesc = {};
-    depthDesc.Dimension = D3D12_RESOURCE_DIMENSION_TEXTURE2D;
-    depthDesc.Width = w; depthDesc.Height = h;
-    depthDesc.DepthOrArraySize = isCubeDepth ? 6 : 1;
-    depthDesc.MipLevels = 1; depthDesc.Format = depthFmt;
-    depthDesc.SampleDesc.Count = 1;
-    depthDesc.Flags = D3D12_RESOURCE_FLAG_ALLOW_DEPTH_STENCIL;
-
-    D3D12_CLEAR_VALUE depthClear = {}; depthClear.Format = dsvFmt;
-    depthClear.DepthStencil.Depth = 1.0f;
-    D3D12_HEAP_PROPERTIES heapProps = {}; heapProps.Type = D3D12_HEAP_TYPE_DEFAULT;
-
-    HRESULT hr = device->CreateCommittedResource(&heapProps, D3D12_HEAP_FLAG_NONE, &depthDesc,
-                                                  D3D12_RESOURCE_STATE_DEPTH_WRITE, &depthClear,
-                                                  IID_PPV_ARGS(&depthResource));
-    if (FAILED(hr)) { T8_LOG_ERROR("[D3D12] RT depth create failed hr=0x%08X", hr); return false; }
-    depthState = D3D12_RESOURCE_STATE_DEPTH_WRITE;
-
-    if (isCubeDepth) {
-      for (int face = 0; face < 6; face++) {
-        D3D12_DEPTH_STENCIL_VIEW_DESC dsvDesc = {};
-        dsvDesc.Format = dsvFmt;
-        dsvDesc.ViewDimension = D3D12_DSV_DIMENSION_TEXTURE2DARRAY;
-        dsvDesc.Texture2DArray.FirstArraySlice = face;
-        dsvDesc.Texture2DArray.ArraySize = 1;
-        cubeFaceDSVs[face] = driver->GetHeap(D3D12Heap::DSV).AllocateCPU();
-        device->CreateDepthStencilView(depthResource.Get(), &dsvDesc, cubeFaceDSVs[face]);
-      }
-      depthDSV = cubeFaceDSVs[0];
-    } else {
-      D3D12_DEPTH_STENCIL_VIEW_DESC dsvDesc = {};
-      dsvDesc.Format = dsvFmt;
-      dsvDesc.ViewDimension = D3D12_DSV_DIMENSION_TEXTURE2D;
-      depthDSV = driver->GetHeap(D3D12Heap::DSV).AllocateCPU();
-      device->CreateDepthStencilView(depthResource.Get(), &dsvDesc, depthDSV);
-    }
-
-    // Depth SRV
-    D3D12Texture* depthTex = new D3D12Texture;
-    depthTex->pTexResource = depthResource;
-    depthTex->x = w; depthTex->y = h;
-    D3D12_SHADER_RESOURCE_VIEW_DESC depthSrvDesc = {};
-    depthSrvDesc.Format = srvDepthFmt;
-    depthSrvDesc.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
-    if (isCubeDepth) {
-      depthSrvDesc.ViewDimension = D3D12_SRV_DIMENSION_TEXTURECUBE;
-      depthSrvDesc.TextureCube.MipLevels = 1;
-    } else {
-      depthSrvDesc.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE2D;
-      depthSrvDesc.Texture2D.MipLevels = 1;
-    }
-    depthTex->srvCPU = driver->GetHeap(D3D12Heap::CBV_SRV_UAV_VISIBLE).AllocateCPU();
-    depthTex->srvGPU = driver->GetHeap(D3D12Heap::CBV_SRV_UAV_VISIBLE).AllocateGPU();
-    device->CreateShaderResourceView(depthResource.Get(), &depthSrvDesc, depthTex->srvCPU);
-    pDepthTexture = depthTex;
-
-    T8_LOG_INFO("[D3D12] RT created: %dx%d, %d colors (fmt=%d), depth (cube=%d)", w, h, number_RT, cfmt, isCubeDepth);
-    return true;
-  }
-
-  void D3D12RT::DestroyAPIRT() {
-    if (pDepthTexture) { pDepthTexture->release(); pDepthTexture = nullptr; }
-    for (auto* t : vColorTextures) t->release();
-    vColorTextures.clear();
-    vColorResources.clear();
-    vRTVHandles.clear();
-    depthResource.Reset();
-  }
-
-  void D3D12RT::Set(const DeviceContext& context) {
-    auto* cmdList = static_cast<const D3D12DeviceContext*>(&context)->GetCommandList();
-    auto* driver = GetD3D12Driver();
-
-    T8_LOG_TRACE("[D3D12] RT::Set %dx%d colors=%d depth=%s", w, h, number_RT, isCubeDepth ? "cube" : "2D");
-
-    // Transition colors to RENDER_TARGET if needed
-    for (int i = 0; i < number_RT; i++) {
-      if (vColorStates[i] != D3D12_RESOURCE_STATE_RENDER_TARGET) {
-        D3D12_RESOURCE_BARRIER b = {};
-        b.Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
-        b.Transition.pResource = vColorResources[i].Get();
-        b.Transition.StateBefore = vColorStates[i];
-        b.Transition.StateAfter = D3D12_RESOURCE_STATE_RENDER_TARGET;
-        b.Transition.Subresource = D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES;
-        cmdList->ResourceBarrier(1, &b);
-        vColorStates[i] = D3D12_RESOURCE_STATE_RENDER_TARGET;
-      }
-    }
-
-    // Transition depth to DEPTH_WRITE if needed
-    if (depthResource && depthState != D3D12_RESOURCE_STATE_DEPTH_WRITE) {
-      D3D12_RESOURCE_BARRIER b = {};
-      b.Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
-      b.Transition.pResource = depthResource.Get();
-      b.Transition.StateBefore = depthState;
-      b.Transition.StateAfter = D3D12_RESOURCE_STATE_DEPTH_WRITE;
-      b.Transition.Subresource = D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES;
-      cmdList->ResourceBarrier(1, &b);
-      depthState = D3D12_RESOURCE_STATE_DEPTH_WRITE;
-    }
-
-    // Set render targets
-    if (number_RT > 0)
-      cmdList->OMSetRenderTargets(number_RT, vRTVHandles.data(), FALSE, &depthDSV);
-    else
-      cmdList->OMSetRenderTargets(0, nullptr, FALSE, &depthDSV);
-
-    // Viewport + scissor
-    D3D12_VIEWPORT vp = { 0.f, 0.f, (float)w, (float)h, 0.f, 1.f };
-    D3D12_RECT sc = { 0, 0, (LONG)w, (LONG)h };
-    cmdList->RSSetViewports(1, &vp);
-    cmdList->RSSetScissorRects(1, &sc);
-
-    // Clear
-    float black[4] = { 0, 0, 0, 0 };
-    for (int i = 0; i < number_RT; i++)
-      cmdList->ClearRenderTargetView(vRTVHandles[i], black, 0, nullptr);
-    cmdList->ClearDepthStencilView(depthDSV, D3D12_CLEAR_FLAG_DEPTH, 1.0f, 0, 0, nullptr);
-  }
-
-  void D3D12RT::ChangeCubeDepthTexture(int i) {
-    if (!isCubeDepth || i < 0 || i >= 6) return;
-    depthDSV = cubeFaceDSVs[i];
-  }
-
-  // ══════════════════════════════════════════════════════
   //  D3D12Driver — PSO Cache
   // ══════════════════════════════════════════════════════
 
   ID3D12PipelineState* D3D12Driver::GetOrCreatePSO(D3D12Shader* shader, uint8_t numRTVs,
                                                      DXGI_FORMAT rtvFormat, DXGI_FORMAT dsvFormat) {
-    // Normalize: depth-only passes use 0 RTVs with UNKNOWN format
     if (rtvFormat == DXGI_FORMAT_UNKNOWN) {
       numRTVs = 0;
       rtvFormat = DXGI_FORMAT_UNKNOWN;
@@ -1236,7 +528,6 @@ namespace t800 {
     auto it = m_psoCache.find(key);
     if (it != m_psoCache.end()) return it->second.Get();
 
-    // Create new PSO
     ID3D12Device* device = static_cast<D3D12Device*>(T8Device)->GetNativeDevice();
 
     D3D12_GRAPHICS_PIPELINE_STATE_DESC pso = {};
@@ -1254,7 +545,7 @@ namespace t800 {
     for (int i = 0; i < numRTVs; i++) pso.RTVFormats[i] = rtvFormat;
     pso.DSVFormat = dsvFormat;
 
-    // Rasterizer — match D3D11 default (CullMode=BACK, FrontCounterClockwise=FALSE)
+    // Rasterizer
     pso.RasterizerState.FillMode = D3D12_FILL_MODE_SOLID;
     switch (m_currentCull) {
       case FRONT_FACES:     pso.RasterizerState.CullMode = D3D12_CULL_MODE_BACK;  break;
@@ -1316,18 +607,8 @@ namespace t800 {
     ComPtr<ID3D12PipelineState> psoObj;
     HRESULT hr = device->CreateGraphicsPipelineState(&pso, IID_PPV_ARGS(&psoObj));
     if (FAILED(hr)) {
-      T8_LOG_ERROR("[D3D12] CreatePSO failed hr=0x%08X key=0x%08X blend=%d depth=%d cull=%d nRTV=%d fmt=%d inputElems=%d",
-                   hr, key.shaderKey, key.blend, key.depth, key.cull, key.numRTVs, key.rtvFormat,
-                   (int)shader->VertexDecl.size());
-      // Log PSO details for debugging
-      T8_LOG_ERROR("[D3D12]   VS size=%u FS size=%u rootSig=%p stride=%d",
-                   (unsigned)shader->VS_blob->GetBufferSize(), (unsigned)shader->FS_blob->GetBufferSize(),
-                   shader->pRootSignature.Get(), shader->vertexStride);
-      for (int i = 0; i < (int)shader->VertexDecl.size(); i++) {
-        auto& e = shader->VertexDecl[i];
-        T8_LOG_ERROR("[D3D12]   InputElem[%d] Semantic='%s' Idx=%u Fmt=%u Offset=%u",
-                     i, e.SemanticName, e.SemanticIndex, (unsigned)e.Format, e.AlignedByteOffset);
-      }
+      T8_LOG_ERROR("[D3D12] CreatePSO failed hr=0x%08X key=0x%08X blend=%d depth=%d cull=%d nRTV=%d fmt=%d",
+                   hr, key.shaderKey, key.blend, key.depth, key.cull, key.numRTVs, key.rtvFormat);
       return nullptr;
     }
 
@@ -1338,24 +619,19 @@ namespace t800 {
   }
 
   // ══════════════════════════════════════════════════════
-  //  D3D12Driver — Core lifecycle (mostly unchanged from Phase 1)
+  //  D3D12Driver — Core lifecycle
   // ══════════════════════════════════════════════════════
 
   void D3D12Driver::SetWindow(void* window) { m_hwnd = GetActiveWindow(); }
   void D3D12Driver::SetDimensions(int w, int h) { width = w; height = h; }
 
   void D3D12Driver::CreateDevice() {
-    if (g_d3d12Debug) {
+    // Always enable debug layer for D3D12
+    {
       ComPtr<ID3D12Debug> debugController;
       if (SUCCEEDED(D3D12GetDebugInterface(IID_PPV_ARGS(&debugController)))) {
         debugController->EnableDebugLayer();
-        T8_LOG_INFO("[D3D12] Debug layer ENABLED (--d3d12debug)");
-        // GPU-based validation disabled — too slow with many shaders (minutes per PSO)
-        // Enable manually for targeted debugging if needed
-        // ComPtr<ID3D12Debug1> debug1;
-        // if (SUCCEEDED(debugController.As(&debug1))) {
-        //   debug1->SetEnableGPUBasedValidation(TRUE);
-        // }
+        T8_LOG_INFO("[D3D12] Debug layer ENABLED");
       } else {
         T8_LOG_ERROR("[D3D12] D3D12GetDebugInterface failed");
       }
@@ -1412,7 +688,7 @@ namespace t800 {
     ID3D12Device* device = static_cast<D3D12Device*>(T8Device)->GetNativeDevice();
     m_heaps[D3D12Heap::CBV_SRV_UAV_VISIBLE].Create(device, D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV, 65536, true);
     m_heaps[D3D12Heap::CBV_SRV_UAV_NOT_VISIBLE].Create(device, D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV, 512, false);
-    m_heaps[D3D12Heap::SAMPLER].Create(device, D3D12_DESCRIPTOR_HEAP_TYPE_SAMPLER, 64, true);
+    m_heaps[D3D12Heap::SAMPLER].Create(device, D3D12_DESCRIPTOR_HEAP_TYPE_SAMPLER, 256, true);
     m_heaps[D3D12Heap::RTV].Create(device, D3D12_DESCRIPTOR_HEAP_TYPE_RTV, 128, false);
     m_heaps[D3D12Heap::DSV].Create(device, D3D12_DESCRIPTOR_HEAP_TYPE_DSV, 64, false);
   }
@@ -1487,10 +763,8 @@ namespace t800 {
     m_viewport = { 0.f, 0.f, (float)width, (float)height, 0.f, 1.f };
     m_scissorRect = { 0, 0, (LONG)width, (LONG)height };
 
-    // Start debug message polling thread (if --d3d12debug)
-    if (g_d3d12Debug) {
-      StartDebugMessageThread();
-    }
+    // Always start debug message polling thread
+    StartDebugMessageThread();
 
     T8_LOG_INFO("[D3D12] Driver initialized (%dx%d)", width, height);
   }
@@ -1500,9 +774,7 @@ namespace t800 {
   void D3D12Driver::Update() {}
 
   void D3D12Driver::DestroyDriver() {
-    // Stop debug thread first — it references the device
     StopDebugMessageThread();
-
     WaitForGPU();
     DestroyShaders(); DestroyRTs(); DestroyTextures();
     m_psoCache.clear();
@@ -1521,13 +793,14 @@ namespace t800 {
     T8_LOG_INFO("[D3D12] Driver destroyed");
   }
 
+  // ══════════════════════════════════════════════════════
+  //  D3D12Driver — Synchronization
+  // ══════════════════════════════════════════════════════
+
   void D3D12Driver::WaitForFence() {
-    // Signal with the next monotonic value
     const UINT64 fenceToSignal = m_nextFenceValue++;
     m_commandQueue->Signal(m_fence.Get(), fenceToSignal);
-    // Record which fence value this back buffer needs to complete before reuse
     m_frameFenceValues[m_currentBackBuffer] = fenceToSignal;
-    // Wait for completion
     if (m_fence->GetCompletedValue() < fenceToSignal) {
       m_fence->SetEventOnCompletion(fenceToSignal, m_fenceEvent);
       WaitForSingleObject(m_fenceEvent, INFINITE);
@@ -1535,34 +808,29 @@ namespace t800 {
   }
 
   void D3D12Driver::WaitForGPU() {
-    // Signal and wait for ALL in-flight work
     const UINT64 fenceToSignal = m_nextFenceValue++;
     m_commandQueue->Signal(m_fence.Get(), fenceToSignal);
     if (m_fence->GetCompletedValue() < fenceToSignal) {
       m_fence->SetEventOnCompletion(fenceToSignal, m_fenceEvent);
       WaitForSingleObject(m_fenceEvent, INFINITE);
     }
-    // All frames are now complete
     for (UINT i = 0; i < kBackBufferCount; i++)
       m_frameFenceValues[i] = fenceToSignal;
   }
 
+  // ══════════════════════════════════════════════════════
+  //  D3D12Driver — Frame lifecycle
+  // ══════════════════════════════════════════════════════
+
   void D3D12Driver::BeginFrame() {
-    // Wait for the previous frame that used this back buffer's allocator to complete
     const UINT64 lastFenceForThisBuffer = m_frameFenceValues[m_currentBackBuffer];
     if (m_fence->GetCompletedValue() < lastFenceForThisBuffer) {
       m_fence->SetEventOnCompletion(lastFenceForThisBuffer, m_fenceEvent);
       WaitForSingleObject(m_fenceEvent, INFINITE);
     }
 
-    HRESULT hr = m_commandAllocators[m_currentBackBuffer]->Reset();
-    if (FAILED(hr)) {
-      T8_LOG_ERROR("[D3D12] BeginFrame: Allocator[%u] Reset failed hr=0x%08X", m_currentBackBuffer, hr);
-    }
-    hr = m_commandList->Reset(m_commandAllocators[m_currentBackBuffer].Get(), nullptr);
-    if (FAILED(hr)) {
-      T8_LOG_ERROR("[D3D12] BeginFrame: CommandList Reset failed hr=0x%08X", hr);
-    }
+    m_commandAllocators[m_currentBackBuffer]->Reset();
+    m_commandList->Reset(m_commandAllocators[m_currentBackBuffer].Get(), nullptr);
     static_cast<D3D12DeviceContext*>(T8DeviceContext)->m_commandList = m_commandList;
     ID3D12DescriptorHeap* heaps[] = {
       m_heaps[D3D12Heap::CBV_SRV_UAV_VISIBLE].GetHeap(),
@@ -1570,10 +838,7 @@ namespace t800 {
     };
     m_commandList->SetDescriptorHeaps(2, heaps);
 
-    // Reset CB ring allocator for this frame
     m_cbRingOffset = 0;
-    // Reset dynamic descriptor allocator for this frame
-    // If BuildPipelineObjects hasn't been called yet, snapshot the current heap index
     if (m_dynamicDescriptorBase == 0) {
       m_dynamicDescriptorBase = m_heaps[D3D12Heap::CBV_SRV_UAV_VISIBLE].GetCurrentIndex();
       T8_LOG_INFO("[D3D12] Dynamic descriptor base auto-set to %llu in BeginFrame",
@@ -1585,20 +850,17 @@ namespace t800 {
   void D3D12Driver::EndFrame() {}
 
   void D3D12Driver::BuildPipelineObjects() {
-    // Record where permanent descriptors (textures, RTs, initial CBs) end
     m_dynamicDescriptorBase = m_heaps[D3D12Heap::CBV_SRV_UAV_VISIBLE].GetCurrentIndex();
     m_dynamicDescriptorOffset = 0;
-    T8_LOG_ERROR("[D3D12] *** BuildPipelineObjects called! Dynamic descriptor base = %llu ***",
+    T8_LOG_INFO("[D3D12] BuildPipelineObjects: dynamic descriptor base = %llu",
                 (unsigned long long)m_dynamicDescriptorBase);
   }
 
   void D3D12Driver::Clear() {
-    // Only call BeginFrame once per frame (on the first Clear call)
     if (!m_frameStarted) {
       BeginFrame();
       m_frameStarted = true;
 
-      // Transition back buffer: PRESENT → RENDER_TARGET
       D3D12_RESOURCE_BARRIER b = {};
       b.Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
       b.Transition.pResource = m_backBuffers[m_currentBackBuffer].Get();
@@ -1608,8 +870,6 @@ namespace t800 {
       m_commandList->ResourceBarrier(1, &b);
     }
 
-    // If we're on a custom RT, clear that RT (D3D12RT::Set already clears)
-    // If on back buffer, clear back buffer
     if (CurrentRT < 0) {
       m_commandList->OMSetRenderTargets(1, &m_backBufferRTVs[m_currentBackBuffer], FALSE, &m_depthDSV);
       m_commandList->RSSetViewports(1, &m_viewport);
@@ -1618,7 +878,6 @@ namespace t800 {
       m_commandList->ClearRenderTargetView(m_backBufferRTVs[m_currentBackBuffer], cc, 0, nullptr);
       m_commandList->ClearDepthStencilView(m_depthDSV, D3D12_CLEAR_FLAG_DEPTH, 1.0f, 0, 0, nullptr);
     }
-    // If on a custom RT, the RT's Set() already cleared it.
   }
 
   void D3D12Driver::SwapBuffers() {
@@ -1636,9 +895,8 @@ namespace t800 {
     m_swapChain->Present(0, 0);
     WaitForFence();
     m_currentBackBuffer = m_swapChain->GetCurrentBackBufferIndex();
-    m_frameStarted = false; // Ready for next frame's Clear→BeginFrame
+    m_frameStarted = false;
 
-    // Flush debug messages after each frame (synchronous — we just waited on fence)
     if (m_infoQueue) PollDebugMessages();
   }
 
@@ -1658,10 +916,8 @@ namespace t800 {
 
   void D3D12Driver::PopRT() {
     T8_LOG_TRACE("[D3D12] PopRT (CurrentRT=%d)", CurrentRT);
-    // Transition RT colors back to SRV for reading
     if (CurrentRT >= 0 && CurrentRT < (int)RTs.size()) {
       D3D12RT* rt = static_cast<D3D12RT*>(RTs[CurrentRT]);
-      // Color attachments: RT → SRV
       for (int i = 0; i < rt->number_RT; i++) {
         if (rt->vColorStates[i] != D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE) {
           D3D12_RESOURCE_BARRIER b = {};
@@ -1674,7 +930,6 @@ namespace t800 {
           rt->vColorStates[i] = D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE;
         }
       }
-      // Depth attachment: DEPTH_WRITE → DEPTH_READ|PIXEL_SHADER_RESOURCE
       if (rt->depthResource && rt->depthState == D3D12_RESOURCE_STATE_DEPTH_WRITE) {
         D3D12_RESOURCE_BARRIER b = {};
         b.Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
@@ -1686,15 +941,16 @@ namespace t800 {
         rt->depthState = D3D12_RESOURCE_STATE_DEPTH_READ | D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE;
       }
     }
-    // Restore back buffer as render target
     m_commandList->OMSetRenderTargets(1, &m_backBufferRTVs[m_currentBackBuffer], FALSE, &m_depthDSV);
     m_commandList->RSSetViewports(1, &m_viewport);
     m_commandList->RSSetScissorRects(1, &m_scissorRect);
-    // Reset CurrentRT so PSO creation knows we're on the back buffer
     CurrentRT = -1;
   }
 
-  // ── D3D12 Readback helper ──
+  // ══════════════════════════════════════════════════════
+  //  D3D12Driver — Readback / Screenshot
+  // ══════════════════════════════════════════════════════
+
   static void SaveD3D12ResourceToPPM(ID3D12Resource* srcResource, D3D12_RESOURCE_STATES currentState,
                                       const std::string& path, D3D12Driver* driver) {
     ID3D12Device* device = GetNativeDevice();
@@ -1703,18 +959,15 @@ namespace t800 {
     UINT h = desc.Height;
     DXGI_FORMAT fmt = desc.Format;
 
-    // Resolve typeless formats
     if (fmt == DXGI_FORMAT_R32_TYPELESS) fmt = DXGI_FORMAT_R32_FLOAT;
     else if (fmt == DXGI_FORMAT_R16_TYPELESS) fmt = DXGI_FORMAT_R16_FLOAT;
 
-    // Get layout for readback
     D3D12_PLACED_SUBRESOURCE_FOOTPRINT footprint = {};
     UINT numRows = 0; UINT64 rowSize = 0, totalSize = 0;
     D3D12_RESOURCE_DESC readDesc = desc;
-    readDesc.Format = fmt; // use concrete format
+    readDesc.Format = fmt;
     device->GetCopyableFootprints(&readDesc, 0, 1, 0, &footprint, &numRows, &rowSize, &totalSize);
 
-    // Create readback buffer
     D3D12_HEAP_PROPERTIES heapProps = {}; heapProps.Type = D3D12_HEAP_TYPE_READBACK;
     D3D12_RESOURCE_DESC bufDesc = {};
     bufDesc.Dimension = D3D12_RESOURCE_DIMENSION_BUFFER;
@@ -1726,13 +979,11 @@ namespace t800 {
     device->CreateCommittedResource(&heapProps, D3D12_HEAP_FLAG_NONE, &bufDesc,
                                      D3D12_RESOURCE_STATE_COPY_DEST, nullptr, IID_PPV_ARGS(&readbackBuf));
 
-    // Temp command list for copy
     ComPtr<ID3D12CommandAllocator> tmpAlloc;
     ComPtr<ID3D12GraphicsCommandList> tmpList;
     device->CreateCommandAllocator(D3D12_COMMAND_LIST_TYPE_DIRECT, IID_PPV_ARGS(&tmpAlloc));
     device->CreateCommandList(0, D3D12_COMMAND_LIST_TYPE_DIRECT, tmpAlloc.Get(), nullptr, IID_PPV_ARGS(&tmpList));
 
-    // Transition to COPY_SOURCE if needed
     if (currentState != D3D12_RESOURCE_STATE_COPY_SOURCE) {
       D3D12_RESOURCE_BARRIER b = {};
       b.Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
@@ -1743,7 +994,6 @@ namespace t800 {
       tmpList->ResourceBarrier(1, &b);
     }
 
-    // Copy texture to readback buffer
     D3D12_TEXTURE_COPY_LOCATION dstLoc = {}, srcLoc = {};
     dstLoc.pResource = readbackBuf.Get();
     dstLoc.Type = D3D12_TEXTURE_COPY_TYPE_PLACED_FOOTPRINT;
@@ -1753,7 +1003,6 @@ namespace t800 {
     srcLoc.SubresourceIndex = 0;
     tmpList->CopyTextureRegion(&dstLoc, 0, 0, 0, &srcLoc, nullptr);
 
-    // Transition back
     if (currentState != D3D12_RESOURCE_STATE_COPY_SOURCE) {
       D3D12_RESOURCE_BARRIER b = {};
       b.Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
@@ -1768,7 +1017,6 @@ namespace t800 {
     ID3D12CommandList* lists[] = { tmpList.Get() };
     driver->GetCmdQueue()->ExecuteCommandLists(1, lists);
 
-    // Fence wait
     ComPtr<ID3D12Fence> tmpFence;
     device->CreateFence(0, D3D12_FENCE_FLAG_NONE, IID_PPV_ARGS(&tmpFence));
     HANDLE evt = CreateEvent(nullptr, FALSE, FALSE, nullptr);
@@ -1779,7 +1027,6 @@ namespace t800 {
     }
     CloseHandle(evt);
 
-    // Map and convert to RGB
     void* mapped = nullptr;
     readbackBuf->Map(0, nullptr, &mapped);
 
@@ -1839,9 +1086,25 @@ namespace t800 {
   }
 
   void D3D12Driver::SaveScreenshot(std::string path) {
+    // The current frame's command list is still open. Close and execute it first,
+    // then do the readback, then reopen for any subsequent rendering.
+    m_commandList->Close();
+    ID3D12CommandList* lists[] = { m_commandList.Get() };
+    m_commandQueue->ExecuteCommandLists(1, lists);
     WaitForGPU();
+
+    // Now the backbuffer has the rendered content
     SaveD3D12ResourceToPPM(m_backBuffers[m_currentBackBuffer].Get(),
-                            D3D12_RESOURCE_STATE_PRESENT, path, this);
+                            D3D12_RESOURCE_STATE_RENDER_TARGET, path, this);
+
+    // Reopen the command list for any subsequent work in this frame
+    m_commandAllocators[m_currentBackBuffer]->Reset();
+    m_commandList->Reset(m_commandAllocators[m_currentBackBuffer].Get(), nullptr);
+    ID3D12DescriptorHeap* heaps[] = {
+      m_heaps[D3D12Heap::CBV_SRV_UAV_VISIBLE].GetHeap(),
+      m_heaps[D3D12Heap::SAMPLER].GetHeap()
+    };
+    m_commandList->SetDescriptorHeaps(2, heaps);
   }
 
   void D3D12Driver::SaveRTToFile(int rtID, int attachment, std::string path) {
@@ -1859,15 +1122,17 @@ namespace t800 {
     }
   }
 
-  void D3D12Driver::UploadBufferData(ID3D12Resource*, const void*, size_t, D3D12_RESOURCE_STATES) {
-    // Implemented inline in texture/buffer creation using temp command lists
-  }
+  void D3D12Driver::UploadBufferData(ID3D12Resource*, const void*, size_t, D3D12_RESOURCE_STATES) {}
+
+  // ══════════════════════════════════════════════════════
+  //  D3D12Driver — Dynamic CB ring allocator
+  // ══════════════════════════════════════════════════════
 
   D3D12_GPU_VIRTUAL_ADDRESS D3D12Driver::AllocateCBData(const void* data, UINT dataSize) {
     UINT alignedSize = (dataSize + 255) & ~255;
     if (m_cbRingOffset + alignedSize > kCBRingBufferSize) {
       T8_LOG_ERROR("[D3D12] CB ring buffer overflow! offset=%u + size=%u > %u", m_cbRingOffset, alignedSize, kCBRingBufferSize);
-      m_cbRingOffset = 0; // wrap around (may cause artifacts but won't crash)
+      m_cbRingOffset = 0;
     }
 
     UINT bufIdx = m_currentBackBuffer;
@@ -1880,10 +1145,8 @@ namespace t800 {
   }
 
   D3D12_GPU_DESCRIPTOR_HANDLE D3D12Driver::AllocateDynamicCBV(const void* data, UINT dataSize) {
-    // 1. Copy data to ring buffer
     D3D12_GPU_VIRTUAL_ADDRESS gpuAddr = AllocateCBData(data, dataSize);
 
-    // 2. Create CBV descriptor in the dynamic region of the shader-visible heap
     ID3D12Device* dev = static_cast<D3D12Device*>(T8Device)->GetNativeDevice();
     auto& heap = m_heaps[D3D12Heap::CBV_SRV_UAV_VISIBLE];
 
@@ -1891,7 +1154,7 @@ namespace t800 {
     if (descIndex >= 65536) {
       T8_LOG_ERROR("[D3D12] Dynamic descriptor overflow! base=%llu offset=%llu",
                    (unsigned long long)m_dynamicDescriptorBase, (unsigned long long)m_dynamicDescriptorOffset);
-      descIndex = m_dynamicDescriptorBase; // fallback
+      descIndex = m_dynamicDescriptorBase;
     }
     D3D12_CPU_DESCRIPTOR_HANDLE cpuH = heap.GetCPUAt(descIndex);
     D3D12_GPU_DESCRIPTOR_HANDLE gpuH = heap.GetGPUAt(descIndex);

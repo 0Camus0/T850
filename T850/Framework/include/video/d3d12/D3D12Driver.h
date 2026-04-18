@@ -1,8 +1,8 @@
 /*********************************************************
 * T850 Engine — D3D12 Backend
 *
-* Phase 2: Shader, Texture, Buffer, RT implementations.
-* All D3D12-specific classes in one header (matches D3DXDriver.h pattern).
+* D3D12Driver.h: Driver, Device, DeviceContext, Heap,
+*                Buffers (VB, IB, CB), PSO cache.
 *********************************************************/
 
 #ifndef T800_D3D12DRIVER_H
@@ -26,6 +26,11 @@ using Microsoft::WRL::ComPtr;
 #include <atomic>
 #include <fstream>
 #include <mutex>
+
+// Split headers
+#include <video/d3d12/D3D12Shader.h>
+#include <video/d3d12/D3D12Texture.h>
+#include <video/d3d12/D3D12RT.h>
 
 namespace t800 {
 
@@ -64,55 +69,6 @@ namespace t800 {
     uint64_t m_currentCount   = 0;
     uint64_t m_incrementSize  = 0;
     bool     m_shaderVisible  = false;
-  };
-
-  // ══════════════════════════════════════════════════════
-  //  D3D12 Shader
-  // ══════════════════════════════════════════════════════
-  class D3D12Shader : public ShaderBase {
-  public:
-    bool CreateShaderAPI(std::string src_vs, std::string src_fs,
-                         const std::string& vs_name = "", const std::string& fs_name = "") override;
-    void Set(const DeviceContext& deviceContext) override;
-    void DestroyAPIShader() override;
-
-    ComPtr<ID3DBlob>            VS_blob;
-    ComPtr<ID3DBlob>            FS_blob;
-    ComPtr<ID3D12RootSignature> pRootSignature;
-    std::vector<D3D12_INPUT_ELEMENT_DESC> VertexDecl;
-    int vertexStride = 0;
-
-    // Root parameter slot indices (resolved during reflection)
-    int cbvSlot = -1;      // root param index for constant buffer b0
-    int samplerSlot = -1;  // root param index for sampler s0
-    // SRV slots: root param index for each texture register t0..tN
-    std::unordered_map<int, int> srvSlots; // register → root param index
-
-  private:
-    bool BuildRootSignature(ID3D12Device* device, ID3D12ShaderReflection* vsReflect,
-                            ID3D12ShaderReflection* fsReflect);
-    // Storage for semantic name strings (must outlive VertexDecl)
-    std::vector<std::string> m_semanticNames;
-  };
-
-  // ══════════════════════════════════════════════════════
-  //  D3D12 Texture
-  // ══════════════════════════════════════════════════════
-  class D3D12Texture : public Texture {
-  public:
-    D3D12Texture() {}
-
-    void LoadAPITexture(DeviceContext* context, unsigned char* buffer) override;
-    void LoadAPITextureCompressed(unsigned char* buffer) override;
-    void DestroyAPITexture() override;
-    void SetTextureParams() override;
-    void GetFormatBpp(unsigned int& props, unsigned int& format, unsigned int& bpp) override;
-    void Set(const DeviceContext& deviceContext, unsigned int slot, std::string shaderTextureName) override;
-    void SetSampler(const DeviceContext& deviceContext, unsigned int slot = 0) override;
-
-    ComPtr<ID3D12Resource> pTexResource;
-    D3D12_CPU_DESCRIPTOR_HANDLE srvCPU = {};
-    D3D12_GPU_DESCRIPTOR_HANDLE srvGPU = {};
   };
 
   // ══════════════════════════════════════════════════════
@@ -171,24 +127,6 @@ namespace t800 {
   // ══════════════════════════════════════════════════════
   //  D3D12 Render Target
   // ══════════════════════════════════════════════════════
-  class D3D12RT : public BaseRT {
-  public:
-    bool LoadAPIRT() override;
-    void DestroyAPIRT() override;
-    void Set(const DeviceContext& context) override;
-    void ChangeCubeDepthTexture(int i) override;
-
-    std::vector<ComPtr<ID3D12Resource>>       vColorResources;
-    std::vector<D3D12_CPU_DESCRIPTOR_HANDLE>  vRTVHandles;
-    ComPtr<ID3D12Resource>                    depthResource;
-    D3D12_CPU_DESCRIPTOR_HANDLE               depthDSV = {};
-    bool isCubeDepth = false;
-    D3D12_CPU_DESCRIPTOR_HANDLE               cubeFaceDSVs[6] = {};
-    // Track resource states for barriers
-    std::vector<D3D12_RESOURCE_STATES>        vColorStates;
-    D3D12_RESOURCE_STATES                     depthState = D3D12_RESOURCE_STATE_DEPTH_WRITE;
-  };
-
   // ══════════════════════════════════════════════════════
   //  D3D12 Device Context
   // ══════════════════════════════════════════════════════

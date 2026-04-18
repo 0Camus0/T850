@@ -1,6 +1,6 @@
 ﻿{
     "keepRunning":  false,
-    "api":  "glew",
+    "api":  "d3d12",
     "architecture":  "x64",
     "display":  {
                     "scene":  0,
@@ -22,9 +22,10 @@
     "debugFrames":  false,
     "devTools":  {
                      "guiControlEdit":  false,
+                     "d3d12Debug":  false,
                      "guiControlTarget":  "linedit_popup",
-                     "logLevel":  "trace",
-                     "logToFile":  true,
+                     "logLevel":  "error",
+                     "logToFile":  false,
                      "guiEdit":  false,
                      "guiSnap":  false
                  }

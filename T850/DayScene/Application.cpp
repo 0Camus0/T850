@@ -157,6 +157,7 @@ void App::OnDraw() {
   T8_LOG_TRACE("[Frame %d] === OnDraw BEGIN ===", frameCount);
   pFramework->pVideoDriver->Clear();
   FirstFrame = false;
+
   m_devLayer.Draw();
   // Draw FPS label using layout position when GUI overlay is not visible
   if (!m_devLayer.GetGUI().IsVisible()) {

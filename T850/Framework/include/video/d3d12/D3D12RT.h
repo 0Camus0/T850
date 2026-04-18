@@ -25,6 +25,7 @@ namespace t800 {
     std::vector<D3D12_CPU_DESCRIPTOR_HANDLE>  vRTVHandles;
     ComPtr<ID3D12Resource>                    depthResource;
     D3D12_CPU_DESCRIPTOR_HANDLE               depthDSV = {};
+    DXGI_FORMAT                               colorFormat = DXGI_FORMAT_R8G8B8A8_UNORM;
     bool isCubeDepth = false;
     D3D12_CPU_DESCRIPTOR_HANDLE               cubeFaceDSVs[6] = {};
     // Track resource states for barriers

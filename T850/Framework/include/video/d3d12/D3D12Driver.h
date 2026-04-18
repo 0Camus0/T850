@@ -205,7 +205,7 @@ namespace t800 {
   // ══════════════════════════════════════════════════════
   class D3D12Driver : public BaseDriver {
   public:
-    static const UINT kBackBufferCount = 2;
+    static const UINT kBackBufferCount = 3;  // triple-buffer for full CPU-GPU overlap
 
     D3D12Driver() { m_currentAPI = GRAPHICS_API::D3D12; }
 
@@ -264,6 +264,7 @@ namespace t800 {
     D3D12_GPU_DESCRIPTOR_HANDLE AllocateDynamicCBV(const void* data, UINT dataSize);
 
   private:
+    friend class D3D12Shader;
     void CreateDevice();
     void CreateCommandInfrastructure();
     void CreateSwapChain();
@@ -325,6 +326,10 @@ namespace t800 {
     DEPTH_STENCIL_STATES   m_currentDepth = DEPTH_DEFAULT;
     FACE_CULLING           m_currentCull  = FRONT_FACES;
     bool                   m_frameStarted = false;  // tracks whether BeginFrame was called this frame
+
+    // Last-bound state for redundancy elimination
+    ID3D12PipelineState*   m_lastPSO = nullptr;
+    ID3D12RootSignature*   m_lastRootSig = nullptr;
 
     // PSO cache: lazy-created per (shader × blend × depth × cull × RT config)
     std::unordered_map<D3D12PipelineKey, ComPtr<ID3D12PipelineState>, D3D12PipelineKeyHash> m_psoCache;

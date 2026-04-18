@@ -14,7 +14,7 @@
 
 #include <video/GLDriver.h>
 #if defined(OS_WINDOWS)
-#include <video/windows/D3DXDriver.h>
+#include <video/windows/D3D11Driver.h>
 #include <video/d3d12/D3D12Driver.h>
 #endif
 // SDL3

@@ -10,7 +10,7 @@
 * ** Enjoy, learn and share.
 *********************************************************/
 
-#include <video/windows/D3DXTexture.h>
+#include <video/windows/D3D11Texture.h>
 #include <utils/Log.h>
 
 namespace t800 {

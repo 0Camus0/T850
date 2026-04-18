@@ -10,7 +10,7 @@
 * ** Enjoy, learn and share.
 *********************************************************/
 
-#include <video/windows/D3DXRT.h>
+#include <video/windows/D3D11RT.h>
 #include <iostream>
 
 namespace t800 {

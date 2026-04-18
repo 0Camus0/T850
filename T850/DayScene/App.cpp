@@ -50,6 +50,7 @@ std::string g_guiControlTarget = "slider_knob"; // --guiControlTarget <slider_kn
 int    g_logLevel    = 3;            // --logLevel: 0=Error,1=Info,2=Debug,3=Verbose
 std::string g_logFile;              // --logFile <path>: write log to file (append, flush-per-entry)
 bool   g_d3d12Debug  = false;       // --d3d12debug: enable D3D12 debug layer
+bool   g_testGui    = false;        // --testGui: minimal GUI rendering test (skip scene)
 
 t800::AppBase		  *pApp = 0;
 t800::RootFramework *pFrameWork = 0;
@@ -152,6 +153,9 @@ int main(int arg,char ** args){
     }
     else if (a == "--d3d12debug") {
       g_d3d12Debug = true;
+    }
+    else if (a == "--testGui") {
+      g_testGui = true;
     }
   }
 

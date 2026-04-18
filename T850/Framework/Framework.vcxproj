@@ -75,6 +75,7 @@
     <ClInclude Include="include\video\windows\D3DXRT.h" />
     <ClInclude Include="include\video\windows\D3DXShader.h" />
     <ClInclude Include="include\video\windows\D3DXTexture.h" />
+    <ClInclude Include="include\video\d3d12\D3D12Driver.h" />
     <ClInclude Include="T8_descriptors.h" />
   </ItemGroup>
   <ItemGroup>
@@ -128,6 +129,7 @@
     <ClCompile Include="src\video\windows\D3DXRT.cpp" />
     <ClCompile Include="src\video\windows\D3DXShader.cpp" />
     <ClCompile Include="src\video\windows\D3DXTexture.cpp" />
+    <ClCompile Include="src\video\d3d12\D3D12Driver.cpp" />
   </ItemGroup>
   <ItemGroup>
     <None Include="..\Assets\Shaders\FS.glsl">

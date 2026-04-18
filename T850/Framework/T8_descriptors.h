@@ -83,6 +83,9 @@ struct ShaderKey {
   static constexpr uint32_t AUTO_FOCUS     = 1u << 18;
   static constexpr uint32_t GOD_RAYS       = 1u << 19;
 
+  // ── Extended toggles (bits 26+) ──
+  static constexpr uint32_t PARALLAX_SHADOW = 1u << 26;
+
   // ── Pass type (6 bits) ──
   static constexpr uint32_t PASS_SHIFT = 20;
   static constexpr uint32_t PASS_MASK  = 0x3Fu << PASS_SHIFT;
@@ -273,7 +276,8 @@ namespace T8_FORMAT {
 namespace GRAPHICS_API {
   enum E {
     OPENGL,
-    D3D11
+    D3D11,
+    D3D12
   };
 }
 

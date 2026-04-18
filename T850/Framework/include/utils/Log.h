@@ -29,6 +29,7 @@ namespace Log {
     LVL_INFO    = 1,
     LVL_DEBUG   = 2,
     LVL_VERBOSE = 3,
+    LVL_TRACE   = 4,
   };
 
   enum Backend : uint32_t {
@@ -60,5 +61,6 @@ namespace Log {
 #define T8_LOG_INFO(fmt, ...)    do { if (t800::Log::GetMaxLevel() >= t800::Log::LVL_INFO)    t800::Log::Write(t800::Log::LVL_INFO,    __FILE__, __LINE__, fmt, ##__VA_ARGS__); } while(0)
 #define T8_LOG_DEBUG(fmt, ...)   do { if (t800::Log::GetMaxLevel() >= t800::Log::LVL_DEBUG)   t800::Log::Write(t800::Log::LVL_DEBUG,   __FILE__, __LINE__, fmt, ##__VA_ARGS__); } while(0)
 #define T8_LOG_VERBOSE(fmt, ...) do { if (t800::Log::GetMaxLevel() >= t800::Log::LVL_VERBOSE) t800::Log::Write(t800::Log::LVL_VERBOSE, __FILE__, __LINE__, fmt, ##__VA_ARGS__); } while(0)
+#define T8_LOG_TRACE(fmt, ...)   do { if (t800::Log::GetMaxLevel() >= t800::Log::LVL_TRACE)   t800::Log::Write(t800::Log::LVL_TRACE,   __FILE__, __LINE__, fmt, ##__VA_ARGS__); } while(0)
 
 #endif // T800_LOG_H

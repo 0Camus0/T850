@@ -248,6 +248,14 @@ namespace t800 {
     virtual void SaveRTToFile(int rtID, int attachment, std::string path) {}
 	virtual void SetCullFace(FACE_CULLING state) = 0;
 
+    // ── D3D12/Vulkan explicit API (no-ops for D3D11/GL) ──
+    virtual void BuildPipelineObjects() {}
+    virtual void BeginFrame() {}
+    virtual void EndFrame() {}
+    virtual void WaitForGPU() {}
+    virtual void SetViewport(float x, float y, float w, float h) {}
+    virtual void SetScissorRect(int x, int y, int w, int h) {}
+
     int 	 CreateTexture(std::string);
     int    CreateCubeMap(const unsigned char * buff, int w, int h);
     int	   CreateShader(std::string src_vs, std::string src_fs, ShaderKey key = ShaderKey(), const std::string& vs_name = "", const std::string& fs_name = "");

@@ -243,4 +243,23 @@ namespace t800 {
     void UpdateInteraction(float mx, float my, bool mouseDown);
   };
 
+  // ─── Simple textured button with pressed/non-pressed states ───
+  class GUIButton {
+  public:
+    float x = 0.0f, y = 0.0f, w = 0.0f, h = 0.0f;
+    bool  visible = false;
+    bool  pressed = false;
+    bool  justClicked = false;  // true on the frame of release-inside
+
+    Texture* texNormal  = nullptr;
+    Texture* texPressed = nullptr;
+
+    void Draw(GUIDrawContext& ctx);
+    void UpdateInteraction(float mx, float my, bool mouseDown);
+
+  private:
+    bool  wasMouseDown = false;
+    bool  hover = false;
+  };
+
 } // namespace t800

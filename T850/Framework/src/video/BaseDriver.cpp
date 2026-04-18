@@ -332,6 +332,7 @@ namespace t800 {
     if (id < 0 || id >= (int)RTs.size())
       return;
 
+    T8_LOG_TRACE("[BaseDriver] PushRT(%d) colors=%d %dx%d", id, RTs[id]->number_RT, RTs[id]->w, RTs[id]->h);
     CurrentRT = id;
     RTs[id]->Set(*T8DeviceContext);
   }

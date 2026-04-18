@@ -16,8 +16,8 @@
 #include <video/GLShader.h>
 #include <video/GLDriver.h>
 #if defined(OS_WINDOWS)
-#include <video/windows/D3DXShader.h>
-#include <video/windows/D3DXDriver.h>
+#include <video/windows/D3D11Shader.h>
+#include <video/windows/D3D11Driver.h>
 #endif
 
 namespace t800 {

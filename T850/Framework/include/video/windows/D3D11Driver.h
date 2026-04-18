@@ -10,8 +10,8 @@
 * ** Enjoy, learn and share.
 *********************************************************/
 
-#ifndef T800_D3DXDRIVER_H
-#define T800_D3DXDRIVER_H
+#ifndef T800_D3D11DRIVER_H
+#define T800_D3D11DRIVER_H
 
 #include <Config.h>
 

@@ -2,6 +2,7 @@
 #include <scene/T8_TextRenderer.h>
 #include <scene/T8_Quad.h>
 #include <video/BaseDriver.h>
+#include <utils/Log.h>
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
@@ -407,6 +408,35 @@ void GUISelector::UpdateInteraction(float mx, float my, bool mouseDown) {
     SelectNext();
   }
 
+  wasMouseDown = mouseDown;
+}
+
+// ═══════════════════════════════════════════════════════════
+//  GUIButton
+// ═══════════════════════════════════════════════════════════
+
+void GUIButton::Draw(GUIDrawContext& ctx) {
+  if (!visible || !texNormal) return;
+  Texture* tex = (pressed && texPressed) ? texPressed : texNormal;
+  if (!tex) return;
+  // Guard against drawing with uninitialized/default size
+  if (w <= 0.0f || h <= 0.0f) return;
+  T8_LOG_TRACE("[GUIButton] Draw at (%.1f,%.1f) size %.1fx%.1f visible=%d", x, y, w, h, (int)visible);
+  XVECTOR3 tint(1.0f, 1.0f, 1.0f);
+  ctx.DrawTexturedQuad(x, y, w, h, tex, tint);
+}
+
+void GUIButton::UpdateInteraction(float mx, float my, bool mouseDown) {
+  justClicked = false;
+  if (!visible) return;
+
+  hover = (mx >= x && mx <= x + w && my >= y && my <= y + h);
+  pressed = hover && mouseDown;
+
+  bool justReleased = !mouseDown && wasMouseDown;
+  if (justReleased && hover) {
+    justClicked = true;
+  }
   wasMouseDown = mouseDown;
 }
 

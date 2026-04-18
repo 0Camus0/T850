@@ -34,6 +34,8 @@ uniform highp vec4 SpecularColor;
 uniform highp vec4 PBRParams;        // .x=metallic .y=roughness (fallbacks)
 uniform highp vec4 Intensities;      // .w=MatID
 uniform highp vec4 ParallaxSettings;
+uniform highp vec4 ParallaxShadowSettings;
+uniform highp vec4 Light0Direction;
 
 
 #define PHONG 1
@@ -232,7 +234,52 @@ void main(){
 		#endif
 	#endif
 			
-		normal.xyz		 = normal.xyz*0.5 + 0.5;	
+		normal.xyz		 = normal.xyz*0.5 + 0.5;
+
+	// Parallax self-shadowing: march from POM surface point toward the light
+	highp float selfShadow = 1.0;
+	#if defined(HEIGHT_MAP) && defined(ENABLE_PARALLAX)
+	{
+		highp vec2 ssDxx = dFdx(vecUVCoords);
+		highp vec2 ssDyy = dFdy(vecUVCoords);
+		highp float ssStartZ = textureGrad(HeightTex, parallaxCoords, ssDxx, ssDyy).r;
+
+		highp float shadowStrength = ParallaxShadowSettings.w;
+		if (shadowStrength > 0.001) {
+			highp float lightDirLen = length(Light0Direction.xyz);
+			if (lightDirLen > 0.001) {
+				lowp mat3 TBN_t = transpose(TBN);
+				highp vec3 lightDirTS = TBN_t * normalize(-Light0Direction.xyz);
+				lightDirTS = normalize(lightDirTS);
+
+				if (lightDirTS.z > 0.01) {
+					highp float numLayers = mix(ParallaxShadowSettings.y, ParallaxShadowSettings.x, abs(lightDirTS.z));
+					highp float layerStep = 1.0 / numLayers;
+					highp float heightScale = ParallaxSettings.z;
+					highp vec2 P_light = lightDirTS.xy * heightScale / lightDirTS.z;
+					highp vec2 deltaUV = P_light * layerStep;
+					deltaUV.y = -deltaUV.y;
+
+					highp vec2 currentUV = parallaxCoords;
+					highp float currentRayZ = ssStartZ;
+					highp float shadowSoftness = ParallaxShadowSettings.z;
+
+					for (int si = 0; si < int(numLayers); si++) {
+						currentRayZ += layerStep;
+						currentUV += deltaUV;
+						if (currentRayZ >= 1.0) break;
+						highp float h = textureGrad(HeightTex, currentUV, ssDxx, ssDyy).r;
+						if (h > currentRayZ) {
+							highp float penumbra = float(si + 1) / numLayers;
+							selfShadow = min(selfShadow, mix(0.0, penumbra, shadowSoftness));
+						}
+					}
+					selfShadow = mix(1.0, selfShadow, shadowStrength);
+				}
+			}
+		}
+	}
+	#endif
 	
 	#ifdef ES_30
 		colorOut_0.rgb  = color.rgb;
@@ -241,7 +288,7 @@ void main(){
 		colorOut_1.a 	= roughness;
 
 		colorOut_2.r    = metallic;
-		colorOut_2.g    = 0.0;
+		colorOut_2.g    = selfShadow;
 		colorOut_2.b    = 0.0;
 		// Mat Id: 0=NoLight, 1=NoNormalMap, 2=NormalMap
 		colorOut_2.a = Intensities.w / 255.0;
@@ -261,7 +308,7 @@ void main(){
 		gl_FragData[1].a 	= roughness;
 
 		gl_FragData[2].r    = metallic;
-		gl_FragData[2].g    = 0.0;
+		gl_FragData[2].g    = selfShadow;
 		gl_FragData[2].b    = 0.0;
 		// Mat Id: 0=NoLight, 1=NoNormalMap, 2=NormalMap
 		gl_FragData[2].a = Intensities.w / 255.0;

@@ -10,7 +10,8 @@
 * ** Enjoy, learn and share.
 *********************************************************/
 
-#include <video/windows/D3DXTexture.h>
+#include <video/windows/D3D11Texture.h>
+#include <utils/Log.h>
 
 namespace t800 {
   extern Device*            T8Device;
@@ -250,6 +251,7 @@ namespace t800 {
 
   void D3DXTexture::Set(const DeviceContext & deviceContext, unsigned int slot, std::string shaderTextureName)
   {
+    T8_LOG_TRACE("[D3D11] Texture::Set slot=%u name='%s' file='%s'", slot, shaderTextureName.c_str(), filepath.c_str());
     reinterpret_cast<ID3D11DeviceContext*>(deviceContext.GetAPIObject())->PSSetShaderResources(slot, 1, pSRVTex.GetAddressOf());
   }
 

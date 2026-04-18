@@ -82,6 +82,12 @@ namespace t800 {
 	void SetParallaxEnabled(bool enabled) {
 		if (pBase) pBase->SetParallaxEnabled(enabled);
 	}
+	void SetParallaxShadowSettings(float minLayers, float maxLayers, float softness, float strength) {
+		if (pBase) pBase->SetParallaxShadowSettings(minLayers, maxLayers, softness, strength);
+	}
+	void SetParallaxShadowEnabled(bool enabled) {
+		if (pBase) pBase->SetParallaxShadowEnabled(enabled);
+	}
     Texture*				 Textures[8];
     Texture*			     EnvMap;
     ShaderKey gKey;

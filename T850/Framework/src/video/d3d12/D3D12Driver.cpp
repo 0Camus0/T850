@@ -848,20 +848,26 @@ namespace t800 {
   // ══════════════════════════════════════════════════════
 
   void D3D12Driver::BeginFrame() {
-    const UINT64 lastFenceForThisBuffer = m_frameFenceValues[m_currentBackBuffer];
-    if (m_fence->GetCompletedValue() < lastFenceForThisBuffer) {
-      m_fence->SetEventOnCompletion(lastFenceForThisBuffer, m_fenceEvent);
-      WaitForSingleObject(m_fenceEvent, INFINITE);
+    {
+      T8_PROFILE_CPU_SCOPE(t800::g_profiler, "D3D12_FenceWait");
+      const UINT64 lastFenceForThisBuffer = m_frameFenceValues[m_currentBackBuffer];
+      if (m_fence->GetCompletedValue() < lastFenceForThisBuffer) {
+        m_fence->SetEventOnCompletion(lastFenceForThisBuffer, m_fenceEvent);
+        WaitForSingleObject(m_fenceEvent, INFINITE);
+      }
     }
 
-    m_commandAllocators[m_currentBackBuffer]->Reset();
-    m_commandList->Reset(m_commandAllocators[m_currentBackBuffer].Get(), nullptr);
-    static_cast<D3D12DeviceContext*>(T8DeviceContext)->m_commandList = m_commandList;
-    ID3D12DescriptorHeap* heaps[] = {
-      m_heaps[D3D12Heap::CBV_SRV_UAV_VISIBLE].GetHeap(),
-      m_heaps[D3D12Heap::SAMPLER].GetHeap()
-    };
-    m_commandList->SetDescriptorHeaps(2, heaps);
+    {
+      T8_PROFILE_CPU_SCOPE(t800::g_profiler, "D3D12_CmdListReset");
+      m_commandAllocators[m_currentBackBuffer]->Reset();
+      m_commandList->Reset(m_commandAllocators[m_currentBackBuffer].Get(), nullptr);
+      static_cast<D3D12DeviceContext*>(T8DeviceContext)->m_commandList = m_commandList;
+      ID3D12DescriptorHeap* heaps[] = {
+        m_heaps[D3D12Heap::CBV_SRV_UAV_VISIBLE].GetHeap(),
+        m_heaps[D3D12Heap::SAMPLER].GetHeap()
+      };
+      m_commandList->SetDescriptorHeaps(2, heaps);
+    }
 
     m_cbRingOffset = 0;
     m_dynamicDescriptorOffset = 0;
@@ -903,7 +909,6 @@ namespace t800 {
   }
 
   void D3D12Driver::SwapBuffers() {
-    T8_PROFILE_SCOPE(t800::g_profiler, "D3D12_Present");
     T8_LOG_TRACE("[D3D12] SwapBuffers");
 
     // Frame timing
@@ -919,17 +924,24 @@ namespace t800 {
       T8_LOG_INFO("[D3D12] Frame %d: %.1fms (%.1f FPS)", frameNum, ms, 1000.0/ms);
     }
 
-    D3D12_RESOURCE_BARRIER b = {};
-    b.Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
-    b.Transition.pResource = m_backBuffers[m_currentBackBuffer].Get();
-    b.Transition.StateBefore = D3D12_RESOURCE_STATE_RENDER_TARGET;
-    b.Transition.StateAfter = D3D12_RESOURCE_STATE_PRESENT;
-    b.Transition.Subresource = D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES;
-    m_commandList->ResourceBarrier(1, &b);
-    m_commandList->Close();
-    ID3D12CommandList* lists[] = { m_commandList.Get() };
-    m_commandQueue->ExecuteCommandLists(1, lists);
-    m_swapChain->Present(0, DXGI_PRESENT_ALLOW_TEARING);
+    {
+      T8_PROFILE_CPU_SCOPE(t800::g_profiler, "D3D12_CmdClose+Execute");
+      D3D12_RESOURCE_BARRIER b = {};
+      b.Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
+      b.Transition.pResource = m_backBuffers[m_currentBackBuffer].Get();
+      b.Transition.StateBefore = D3D12_RESOURCE_STATE_RENDER_TARGET;
+      b.Transition.StateAfter = D3D12_RESOURCE_STATE_PRESENT;
+      b.Transition.Subresource = D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES;
+      m_commandList->ResourceBarrier(1, &b);
+      m_commandList->Close();
+      ID3D12CommandList* lists[] = { m_commandList.Get() };
+      m_commandQueue->ExecuteCommandLists(1, lists);
+    }
+
+    {
+      T8_PROFILE_CPU_SCOPE(t800::g_profiler, "D3D12_Present_Call");
+      m_swapChain->Present(0, DXGI_PRESENT_ALLOW_TEARING);
+    }
 
     // Signal the fence for this frame — DON'T wait here.
     // BeginFrame will wait only when it needs to reuse this buffer's allocator,

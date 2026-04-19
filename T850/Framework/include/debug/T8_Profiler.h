@@ -1,6 +1,12 @@
 #pragma once
 // ─── T8 Profiler: Cross-API GPU + CPU Frame Profiling ────
 //
+// Guarded by T8_ENABLE_PROFILER.  When undefined, all profiler
+// calls compile to no-ops with zero runtime cost.
+//
+// To enable: add T8_ENABLE_PROFILER to preprocessor defines
+// (the build script does this for profiling builds).
+//
 // Usage:
 //   1. Call Init() after driver creation
 //   2. Call BeginFrame() / EndFrame() around each frame
@@ -10,7 +16,9 @@
 // GPU timestamps are collected asynchronously (results from frame N-2).
 // CPU timestamps use QueryPerformanceCounter.
 //
-// Enable via --profile CLI flag.
+// Enable via --profile CLI flag + T8_ENABLE_PROFILER define.
+
+#ifdef T8_ENABLE_PROFILER
 
 #include <string>
 #include <vector>
@@ -56,6 +64,10 @@ namespace t800 {
     void BeginScope(const char* name);
     void EndScope();
 
+    // CPU-only scope (no GPU timestamp, just QPC)
+    void BeginCPUScope(const char* name);
+    void EndCPUScope();
+
     // Reporting
     int  GetFrameCount() const { return m_frameCount; }
     const std::vector<ProfileScope>& GetScopes() const { return m_scopes; }
@@ -68,6 +80,7 @@ namespace t800 {
       int    scopeIndex = -1;
       int64_t cpuBegin = 0;
       int64_t cpuEnd   = 0;
+      bool   cpuOnly   = false;  // true = no GPU timestamp for this scope
     };
 
     int FindOrCreateScope(const char* name);
@@ -103,7 +116,7 @@ namespace t800 {
     void*        m_gpuState    = nullptr;
   };
 
-  // ── RAII scoped timer ──
+  // ── RAII scoped timer (GPU + CPU) ──
   struct ProfileScopeGuard {
     T8Profiler* profiler;
     ProfileScopeGuard(T8Profiler* p, const char* name) : profiler(p) {
@@ -114,11 +127,37 @@ namespace t800 {
     }
   };
 
-  // Convenience macro
-  #define T8_PROFILE_SCOPE(profiler, name) \
-    t800::ProfileScopeGuard _t8prof##__LINE__((profiler), (name))
+  // ── RAII CPU-only scoped timer (no GPU timestamp) ──
+  struct CPUProfileScopeGuard {
+    T8Profiler* profiler;
+    CPUProfileScopeGuard(T8Profiler* p, const char* name) : profiler(p) {
+      if (profiler) profiler->BeginCPUScope(name);
+    }
+    ~CPUProfileScopeGuard() {
+      if (profiler) profiler->EndCPUScope();
+    }
+  };
 
   // Global profiler instance (set by framework)
   extern T8Profiler* g_profiler;
 
 } // namespace t800
+
+// ── Active macros ──
+#define T8_PROFILE_SCOPE(profiler, name) \
+  t800::ProfileScopeGuard _t8prof##__LINE__((profiler), (name))
+
+#define T8_PROFILE_CPU_SCOPE(profiler, name) \
+  t800::CPUProfileScopeGuard _t8cpuprof##__LINE__((profiler), (name))
+
+#else // T8_ENABLE_PROFILER not defined — everything compiles away
+
+namespace t800 {
+  class T8Profiler;
+  inline T8Profiler* g_profiler = nullptr;
+}
+
+#define T8_PROFILE_SCOPE(profiler, name)     ((void)0)
+#define T8_PROFILE_CPU_SCOPE(profiler, name) ((void)0)
+
+#endif // T8_ENABLE_PROFILER

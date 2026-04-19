@@ -40,8 +40,10 @@ extern bool g_guiSnap;
 extern bool g_guiControlEdit;
 extern std::string g_guiControlTarget;
 extern bool g_testGui;
+#ifdef T8_ENABLE_PROFILER
 extern bool g_profile;
 extern int  g_profileFrames;
+#endif
 
 namespace t800 {
   extern Device*       T8Device;
@@ -100,11 +102,12 @@ void App::LoadScene(int id) {
 
 void App::LoadAssets()
 {
-  // Initialize profiler if requested
+#ifdef T8_ENABLE_PROFILER
   if (g_profile && !t800::g_profiler) {
     t800::g_profiler = new t800::T8Profiler();
     t800::g_profiler->Init(pFramework->pVideoDriver);
   }
+#endif
 }
 
 void App::CreateAssets() {
@@ -139,17 +142,21 @@ void App::CreateAssets() {
   }
 
   // Initialize profiler if requested (after driver is fully set up)
+#ifdef T8_ENABLE_PROFILER
   if (g_profile && !t800::g_profiler) {
     t800::g_profiler = new t800::T8Profiler();
     t800::g_profiler->Init(pFramework->pVideoDriver);
   }
+#endif
 }
 
 void App::DestroyAssets() {
+#ifdef T8_ENABLE_PROFILER
    if (t800::g_profiler) {
      delete t800::g_profiler;
      t800::g_profiler = nullptr;
    }
+#endif
    m_devLayer.Destroy();
    m_textRender.Destroy(); 
    m_actualScene->DestroyAssets();
@@ -178,7 +185,9 @@ void App::OnUpdate() {
 }
 
 void App::OnDraw() {
+#ifdef T8_ENABLE_PROFILER
   if (t800::g_profiler) t800::g_profiler->BeginFrame();
+#endif
   static int frameCount = 0;
   T8_LOG_TRACE("[Frame %d] === OnDraw BEGIN ===", frameCount);
   pFramework->pVideoDriver->Clear();
@@ -278,6 +287,7 @@ void App::OnDraw() {
   }
   frameCount++;
 
+#ifdef T8_ENABLE_PROFILER
   if (t800::g_profiler) {
     t800::g_profiler->EndFrame();
     static bool reported = false;
@@ -289,6 +299,7 @@ void App::OnDraw() {
       t800::g_profiler->Reset();
     }
   }
+#endif
 
   // Skip presenting the first frame (black with only text)
   if (frameCount > 1) {

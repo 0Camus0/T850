@@ -12,6 +12,8 @@
 #include <glaze/glaze.hpp>
 #pragma warning(pop)
 
+#include <debug/T8_Profiler.h>
+
 #include <fstream>
 #include <sstream>
 #include <cstdio>
@@ -400,6 +402,7 @@ void RenderGraph::ExecutePass(
   int envMapTexIndex)
 {
   const auto& pass = *node.desc;
+  T8_PROFILE_SCOPE(t800::g_profiler, pass.name.c_str());
 
   // Pre-pass state changes
   int ds = ResolveDepthStencilState(pass.state.depth_stencil);

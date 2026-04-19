@@ -25,6 +25,7 @@ endif()
 set(LIBRARY_OUTPUT_PATH ${PROJECT_SOURCE_DIR}/../Lib)
 file(GLOB SOURCES src/video/*.cpp 
 src/utils/*.cpp 
+src/utils/gltf/*.cpp 
 src/scene/*.cpp 
 src/core/*.cpp
 ${PROJECT_SOURCE_DIR}/../Librerias/tinyxml2/tinyxml2.cpp)
@@ -32,6 +33,7 @@ ${PROJECT_SOURCE_DIR}/../Librerias/tinyxml2/tinyxml2.cpp)
 add_library(T800Framework ${SOURCES})
 target_include_directories(T800Framework PUBLIC $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}>
 $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}>/include
+$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}>/../Librerias/glaze/include
 $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}>/../GLSLParser/Include)
 
 target_link_libraries(T800Framework )

@@ -81,6 +81,11 @@
 		<Unit filename="include/utils/XDataBase.h" />
 		<Unit filename="include/utils/xDefs.h" />
 		<Unit filename="include/utils/xMaths.h" />
+		<Unit filename="include/utils/gltf/GLTFTypes.h" />
+		<Unit filename="include/utils/gltf/GLTFLoader.h" />
+		<Unit filename="include/utils/gltf/GLTFAccessor.h" />
+		<Unit filename="include/utils/gltf/GLTFImage.h" />
+		<Unit filename="include/utils/gltf/GLTFMaterial.h" />
 		<Unit filename="include/video/BaseDriver.h" />
 		<Unit filename="include/video/D3DXDriver.h" />
 		<Unit filename="include/video/D3DXRT.h" />
@@ -117,6 +122,14 @@
 		<Unit filename="src/utils/Utils.cpp" />
 		<Unit filename="src/utils/XDataBase.cpp" />
 		<Unit filename="src/utils/XMaths.cpp" />
+		<Unit filename="src/utils/gltf/GLTFLoader.cpp" />
+		<Unit filename="src/utils/gltf/GLTFJson.cpp" />
+		<Unit filename="src/utils/gltf/GLTFAccessor.cpp" />
+		<Unit filename="src/utils/gltf/GLTFBase64.cpp" />
+		<Unit filename="src/utils/gltf/GLTFImage.cpp" />
+		<Unit filename="src/utils/gltf/GLTFMaterial.cpp" />
+		<Unit filename="src/utils/gltf/GLTFMesh.cpp" />
+		<Unit filename="src/utils/gltf/GLTFAnimation.cpp" />
 		<Unit filename="src/video/BaseDriver.cpp" />
 		<Unit filename="src/video/D3DXDriver.cpp">
 			<Option compile="0" />

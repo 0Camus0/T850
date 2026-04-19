@@ -30,6 +30,9 @@
 
 #include <core/Core.h>
 #include <utils/Timer.h>
+#include <scene/PrimitiveManager.h>
+#include <scene/PrimitiveInstance.h>
+#include <scene/SceneProp.h>
 
 #include <string>
 
@@ -38,6 +41,7 @@
 #include "EditorGrid.h"
 #include "EditorGizmo.h"
 #include "EditorMesh.h"
+#include "EditorImGui.h"
 
 namespace t8ditor {
 
@@ -67,6 +71,8 @@ namespace t8ditor {
   private:
     // Keep input handling and scene update logically separated.
     void ProcessSelectionInput();
+    // (Re)load a .x mesh into the lit rendering pipeline.
+    void ImportMesh(const std::string& path);
 
     Timer m_dtTimer;
     float m_dtSecs   = 0.0f;
@@ -76,9 +82,17 @@ namespace t8ditor {
     EditorLineRenderer  m_lines;
     EditorGrid          m_grid;
     EditorGizmo         m_gizmo;
-    EditorMesh          m_mesh;
+    EditorMesh          m_mesh;      // wireframe overlay (kept for toggle)
+
+    // Lit/textured rendering via the Framework pipeline
+    SceneProps            m_sceneProps;
+    t800::PrimitiveManager m_primMgr;
+    t800::PrimitiveInst   m_meshInst;
+    int                   m_meshPrimId = -1;  // -1 = no lit mesh loaded
+    XMATRIX44             m_vp;               // VP matrix for the prim mgr
 
     bool m_assetsCreated = false;
+    bool m_imguiReady   = false;
   };
 
 } // namespace t8ditor

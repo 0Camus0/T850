@@ -177,6 +177,31 @@ empty start" feel without pulling in ImGui yet:
 the keyboard-driven selection editing with proper inspector panels and
 ImGuizmo handles.
 
+**Phase 1c — ImGui + lit rendering (this PR).** Adds ImGui, textured
+mesh display, and the file import workflow:
+
+- **Dear ImGui 1.92.7** (docking branch) integrated via vcpkg with
+  SDL3, D3D11, D3D12, and OpenGL3 backends. SDL event watcher
+  (`SDL_AddEventWatch`) intercepts events for ImGui without modifying
+  `Win32Framework.cpp`.
+- **Menu bar**: File (Import .x, Load Scene, Save Scene, Exit),
+  View (placeholder panel toggles), Help.
+- **File > Import .x**: native Windows `GetOpenFileNameW` dialog
+  filtered to `.x` files. Loads the mesh through the full rendering
+  pipeline and frames the camera on it.
+- **Lit/textured mesh display**: meshes are now rendered through
+  `PrimitiveManager` → `PrimitiveInst` → `RenderMesh` with the
+  FORWARD shader pass. Materials, diffuse maps, normal maps, specular
+  maps, metallic maps are all loaded automatically from `.x` files.
+- **Camera headlamp**: a directional light follows the camera
+  eye → target direction (like 3ds Max default viewport shading).
+  Ambient 0.15 gray so shadow areas aren't pure black.
+- **Mouse wheel zoom**: captured via the SDL event watcher, applied
+  as `distance *= pow(ZoomSpeed, -wheelDelta)`.
+- **Z key**: resets camera to default position/orientation.
+- **EditorMesh** kept as wireframe overlay source for a future
+  "wireframe on shaded" toggle.
+
 ### Phase 2 — Core editor features
 
 - Scene hierarchy tree with selection and drag-reparent.

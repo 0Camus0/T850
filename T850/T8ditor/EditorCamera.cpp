@@ -42,7 +42,14 @@ void EditorCamera::Frame() {
   m_distance = FrameDistance;
 }
 
-void EditorCamera::Update(float dtSecs, InputManager& im) {
+void EditorCamera::ResetToDefault() {
+  m_target   = XVECTOR3(0.0f, 0.0f, 0.0f);
+  m_yaw      = 0.0f;
+  m_pitch    = -0.4f;
+  m_distance = FrameDistance;
+}
+
+void EditorCamera::Update(float dtSecs, InputManager& im, float wheelDelta) {
   // ── Mouse-driven controls ──
   // SDL middle = button index 1, right = index 2 (Win32Framework.cpp).
   const bool middleDown = im.PressedMouseButton(1);
@@ -81,6 +88,10 @@ void EditorCamera::Update(float dtSecs, InputManager& im) {
     m_distance -= KeyZoomRate * dtSecs * std::max(1.0f, m_distance * 0.1f);
   if (im.PressedKey(T800K_MINUS) || im.PressedKey(T800K_KP_MINUS))
     m_distance += KeyZoomRate * dtSecs * std::max(1.0f, m_distance * 0.1f);
+
+  // Mouse wheel zoom (captured via SDL event watcher in EditorImGui).
+  if (wheelDelta != 0.0f)
+    m_distance *= std::pow(ZoomSpeed, -wheelDelta);
 
   // Frame selection.
   if (im.PressedOnceKey(T800K_f))

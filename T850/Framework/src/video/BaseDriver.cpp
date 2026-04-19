@@ -173,12 +173,6 @@ namespace t800 {
         Defines += "#version 300 es\n\n";
         Defines += "#define ES_30\n\n";
       }
-      else if (g_pBaseDriver->m_currentAPI == GRAPHICS_API::VULKAN) {
-        // Vulkan SPIR-V needs GLSL >= 140. Use the ES_30 code path
-        // which uses in/out instead of attribute/varying.
-        Defines += "#version 450\n\n";
-        Defines += "#define ES_30\n\n";
-      }
 #endif
 #if VDEBUG_NO_LIGHT
       Defines += "#define NO_LIGHT\n\n";

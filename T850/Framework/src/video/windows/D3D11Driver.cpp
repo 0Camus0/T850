@@ -557,6 +557,17 @@ namespace t800 {
     hwnd = GetActiveWindow(); // Get the HWND of the window
   }
 
+  void D3DXDriver::SetWindowHandle(const WindowHandle& handle) {
+    // Editor host path: use the explicit HWND it provides (e.g. a child
+    // window that owns the viewport). Falls back to GetActiveWindow() so
+    // the legacy SDL-driven flow keeps behaving exactly as before.
+    if (handle.kind == WindowHandle::WIN32_HWND && handle.nativeHandle) {
+      hwnd = reinterpret_cast<HWND>(handle.nativeHandle);
+    } else {
+      hwnd = GetActiveWindow();
+    }
+  }
+
   void D3DXDriver::SetDimensions(int w, int h) {
     width = w;
     height = h;

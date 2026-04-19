@@ -1,0 +1,2 @@
+// T8ditor.rc - Application icon resource (reuses the T850 icon).
+IDI_ICON1 ICON "..\\Resources\\T850.ico"

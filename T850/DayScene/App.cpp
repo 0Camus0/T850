@@ -86,6 +86,8 @@ int main(int arg,char ** args){
         desc.api = t800::GRAPHICS_API::D3D12;
       else if (val == "d3d11" || val == "D3D11" || val == "dx11")
         desc.api = t800::GRAPHICS_API::D3D11;
+      else if (val == "vulkan" || val == "Vulkan" || val == "vk")
+        desc.api = t800::GRAPHICS_API::VULKAN;
     }
     else if (a == "--dump-frame" && i + 1 < arg) {
       g_dumpEnabled = true;

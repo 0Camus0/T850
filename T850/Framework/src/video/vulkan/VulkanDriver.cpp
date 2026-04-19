@@ -1596,7 +1596,20 @@ namespace t800 {
       T8_LOG_ERROR("[Vulkan] vkCreateRenderPass failed res=%d", res);
       return;
     }
-    T8_LOG_INFO("[Vulkan] Backbuffer render pass created");
+
+    // Create a LOAD variant for restarting the backbuffer pass after RT pops
+    colorAttachment.loadOp = VK_ATTACHMENT_LOAD_OP_LOAD;
+    colorAttachment.initialLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+    depthAttachment.loadOp = VK_ATTACHMENT_LOAD_OP_LOAD;
+    depthAttachment.initialLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
+    attachments[0] = colorAttachment;
+    attachments[1] = depthAttachment;
+    res = vkCreateRenderPass(m_device, &rpCI, nullptr, &m_backbufferRenderPassLoad);
+    if (res != VK_SUCCESS) {
+      T8_LOG_ERROR("[Vulkan] vkCreateRenderPass (load) failed res=%d", res);
+    }
+
+    T8_LOG_INFO("[Vulkan] Backbuffer render passes created (clear + load)");
   }
 
   void VulkanDriver::CreateDepthBuffer() {
@@ -1826,6 +1839,7 @@ namespace t800 {
     if (m_depthImage)     { vmaDestroyImage(m_allocator, m_depthImage, m_depthAllocation); m_depthImage = VK_NULL_HANDLE; }
 
     if (m_backbufferRenderPass) { vkDestroyRenderPass(m_device, m_backbufferRenderPass, nullptr); m_backbufferRenderPass = VK_NULL_HANDLE; }
+    if (m_backbufferRenderPassLoad) { vkDestroyRenderPass(m_device, m_backbufferRenderPassLoad, nullptr); m_backbufferRenderPassLoad = VK_NULL_HANDLE; }
 
     for (auto& iv : m_swapChainImageViews)
       vkDestroyImageView(m_device, iv, nullptr);
@@ -1944,6 +1958,7 @@ namespace t800 {
 
       vkCmdBeginRenderPass(cmd, &rpBegin, VK_SUBPASS_CONTENTS_INLINE);
       m_activeRenderPass = m_backbufferRenderPass;
+      m_renderPassActive = true;
 
       vkCmdSetViewport(cmd, 0, 1, &m_viewport);
       vkCmdSetScissor(cmd, 0, 1, &m_scissorRect);
@@ -1953,8 +1968,11 @@ namespace t800 {
   void VulkanDriver::SwapBuffers() {
     VkCommandBuffer cmd = m_commandBuffers[m_currentFrame];
 
-    // End the render pass
-    vkCmdEndRenderPass(cmd);
+    // End the render pass if one is active
+    if (m_renderPassActive) {
+      vkCmdEndRenderPass(cmd);
+      m_renderPassActive = false;
+    }
 
     // End command buffer
     vkEndCommandBuffer(cmd);
@@ -2033,21 +2051,17 @@ namespace t800 {
                               VK_IMAGE_ASPECT_DEPTH_BIT);
       }
 
-      // 4. Restore the backbuffer render pass
-      VkClearValue clearValues[2] = {};
-      clearValues[0].color = { {0.9f, 0.9f, 0.9f, 1.0f} };
-      clearValues[1].depthStencil = { 1.0f, 0 };
-
+      // 4. Restore the backbuffer render pass (LOAD variant to preserve content)
       VkRenderPassBeginInfo rpBegin = { VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO };
-      rpBegin.renderPass = m_backbufferRenderPass;
+      rpBegin.renderPass = m_backbufferRenderPassLoad;
       rpBegin.framebuffer = m_backbufferFramebuffers[m_imageIndex];
       rpBegin.renderArea.offset = { 0, 0 };
       rpBegin.renderArea.extent = m_swapChainExtent;
-      rpBegin.clearValueCount = 2;
-      rpBegin.pClearValues = clearValues;
+      rpBegin.clearValueCount = 0;
 
       vkCmdBeginRenderPass(cmd, &rpBegin, VK_SUBPASS_CONTENTS_INLINE);
-      m_activeRenderPass = m_backbufferRenderPass;
+      m_activeRenderPass = m_backbufferRenderPassLoad;
+      m_renderPassActive = true;
 
       vkCmdSetViewport(cmd, 0, 1, &m_viewport);
       vkCmdSetScissor(cmd, 0, 1, &m_scissorRect);

@@ -273,6 +273,7 @@ namespace t800 {
     VkQueue            GetGraphicsQueue() const { return m_graphicsQueue; }
     uint32_t           GetGraphicsQueueFamily() const { return m_graphicsQueueFamily; }
     VkRenderPass       GetBackbufferRenderPass() const { return m_backbufferRenderPass; }
+    VkCommandPool      GetTransientCommandPool() const { return m_transientCommandPool; }
 
     DEPTH_STENCIL_STATES GetCurrentDepthState() const { return m_currentDepth; }
 

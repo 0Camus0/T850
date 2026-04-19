@@ -9,6 +9,7 @@
 #ifdef OS_WINDOWS
 
 #include <utils/Log.h>
+#include <debug/T8_Profiler.h>
 #include <iostream>
 #include <string>
 #include <cassert>
@@ -902,6 +903,7 @@ namespace t800 {
   }
 
   void D3D12Driver::SwapBuffers() {
+    T8_PROFILE_SCOPE(t800::g_profiler, "D3D12_Present");
     T8_LOG_TRACE("[D3D12] SwapBuffers");
 
     // Frame timing

@@ -446,7 +446,10 @@ void SC_Day::OnInput(InputManager* IManager) {
     pFramework->ChangeAPI(GRAPHICS_API::OPENGL);
   }
   if (IManager->PressedOnceKey(T800K_3)) {
-    pFramework->pVideoDriver->ModifyRT(DepthPass,0, BaseRT::NOTHING, BaseRT::F32, 128, 128, false);
+    pFramework->ChangeAPI(GRAPHICS_API::D3D12);
+  }
+  if (IManager->PressedOnceKey(T800K_4)) {
+    pFramework->ChangeAPI(GRAPHICS_API::VULKAN);
   }
   // Skip mouse-driven camera movement when replay snapshot is active
   if (!m_dumper.IsReplayActive()) {

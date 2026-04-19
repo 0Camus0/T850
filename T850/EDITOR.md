@@ -137,6 +137,21 @@ internals later.
   console, and a viewport panel that renders to an offscreen RT shown via
   `ImGui::Image` (or to a child HWND swapchain via the Phase 0 plumbing).
 
+**Status:** Phase 1a (project scaffold) landed. The new project lives at
+`T850/T8ditor/` and is named **`T8ditor`** (the document still refers to
+`T850Editor` above for historical continuity; both names refer to the same
+project). `T8ditor.vcxproj` is added to `T850.sln` with a `ProjectReference`
+on `Framework.vcxproj`, mirroring DayScene's toolchain (same configs,
+`T8VcpkgStatic` / `T8VcpkgDynamic` env vars, `bin\<arch>\<config>\` output).
+A matching `T8ditor/CMakeLists.txt` is wired into the top-level Linux build.
+The shipped stub is intentionally minimal: a `t8ditor::EditorApp` derived
+from `t800::AppBase` that runs through the existing `Win32Framework` /
+`LinuxFramework` loop and clears the back-buffer each frame. **No ImGui
+dependency is added in this phase**, so no vcpkg manifest changes are
+required to build it. ImGui (docking + viewports), the panels, and the
+viewport host land in Phase 1b once the project structure has been verified
+on a Windows build.
+
 ### Phase 2 — Core editor features
 
 - Scene hierarchy tree with selection and drag-reparent.

@@ -52,6 +52,7 @@ namespace t800 {
 
       int NumMaterials = static_cast<int>(pActual->MaterialList.Materials.size());
       int NumFaceIndices = static_cast<int>(pActual->MaterialList.FaceIndices.size());
+      const bool kUse32 = pActual->Indices32Bit;
 
       for (int j = 0; j < NumMaterials; j++) {
         xSubsetInfo *subinfo = &it->Subsets[j];
@@ -166,37 +167,75 @@ namespace t800 {
 
         it_subsetinfo->NumTris = subinfo->NumTris;
         it_subsetinfo->NumVertex = subinfo->NumVertex;
-        unsigned short *tmpIndexex = new unsigned short[it_subsetinfo->NumVertex];
-        int counter = 0;
-        bool first = false;
-        for (int k = 0; k < NumFaceIndices; k++) {
-          if (pActual->MaterialList.FaceIndices[k] == j) {
-            unsigned int index = k * 3;
-            if (!first) {
-              it_subsetinfo->TriStart = k;
-              it_subsetinfo->VertexStart = index;
-              first = true;
-            }
+        it_subsetinfo->IB32Bit = kUse32;
+        // Allocate temp index storage matching the source width. Both
+        // branches build the same {first vertex of each face} order,
+        // mirroring the legacy 16-bit path. For glTF >65 535-vertex
+        // primitives the loader sets `Indices32Bit` and populates
+        // `Triangles32`; the legacy `.x` loader keeps the 16-bit path.
+        if (!kUse32) {
+          unsigned short *tmpIndexex = new unsigned short[it_subsetinfo->NumVertex];
+          int counter = 0;
+          bool first = false;
+          for (int k = 0; k < NumFaceIndices; k++) {
+            if (pActual->MaterialList.FaceIndices[k] == j) {
+              unsigned int index = k * 3;
+              if (!first) {
+                it_subsetinfo->TriStart = k;
+                it_subsetinfo->VertexStart = index;
+                first = true;
+              }
 
 #if CHANGE_TO_RH
-            tmpIndexex[counter++] = pActual->Triangles[index + 2];
-            tmpIndexex[counter++] = pActual->Triangles[index + 1];
-            tmpIndexex[counter++] = pActual->Triangles[index];
+              tmpIndexex[counter++] = pActual->Triangles[index + 2];
+              tmpIndexex[counter++] = pActual->Triangles[index + 1];
+              tmpIndexex[counter++] = pActual->Triangles[index];
 #else
-            tmpIndexex[counter++] = pActual->Triangles[index];
-            tmpIndexex[counter++] = pActual->Triangles[index + 1];
-            tmpIndexex[counter++] = pActual->Triangles[index + 2];
+              tmpIndexex[counter++] = pActual->Triangles[index];
+              tmpIndexex[counter++] = pActual->Triangles[index + 1];
+              tmpIndexex[counter++] = pActual->Triangles[index + 2];
 #endif
+            }
           }
+
+          t800::BufferDesc bdesc;
+          bdesc.byteWidth = it_subsetinfo->NumTris * 3 * sizeof(unsigned short);
+          bdesc.usage = T8_BUFFER_USAGE::DEFAULT;
+          it_subsetinfo->IB = (t800::IndexBuffer*)T8Device->CreateBuffer(T8_BUFFER_TYPE::INDEX, bdesc, tmpIndexex);
+
+          delete[] tmpIndexex;
+        } else {
+          unsigned int *tmpIndexex = new unsigned int[it_subsetinfo->NumVertex];
+          int counter = 0;
+          bool first = false;
+          for (int k = 0; k < NumFaceIndices; k++) {
+            if (pActual->MaterialList.FaceIndices[k] == j) {
+              unsigned int index = k * 3;
+              if (!first) {
+                it_subsetinfo->TriStart = k;
+                it_subsetinfo->VertexStart = index;
+                first = true;
+              }
+
+#if CHANGE_TO_RH
+              tmpIndexex[counter++] = pActual->Triangles32[index + 2];
+              tmpIndexex[counter++] = pActual->Triangles32[index + 1];
+              tmpIndexex[counter++] = pActual->Triangles32[index];
+#else
+              tmpIndexex[counter++] = pActual->Triangles32[index];
+              tmpIndexex[counter++] = pActual->Triangles32[index + 1];
+              tmpIndexex[counter++] = pActual->Triangles32[index + 2];
+#endif
+            }
+          }
+
+          t800::BufferDesc bdesc;
+          bdesc.byteWidth = it_subsetinfo->NumTris * 3 * sizeof(unsigned int);
+          bdesc.usage = T8_BUFFER_USAGE::DEFAULT;
+          it_subsetinfo->IB = (t800::IndexBuffer*)T8Device->CreateBuffer(T8_BUFFER_TYPE::INDEX, bdesc, tmpIndexex);
+
+          delete[] tmpIndexex;
         }
-
-
-        t800::BufferDesc bdesc;
-        bdesc.byteWidth = it_subsetinfo->NumTris * 3 * sizeof(unsigned short);
-        bdesc.usage = T8_BUFFER_USAGE::DEFAULT;
-        it_subsetinfo->IB = (t800::IndexBuffer*)T8Device->CreateBuffer(T8_BUFFER_TYPE::INDEX, bdesc, tmpIndexex);
-
-        delete[] tmpIndexex;
       }
 
       it_MeshInfo->VertexSize = it->VertexSize;
@@ -206,21 +245,38 @@ namespace t800 {
       buffdesc.usage = T8_BUFFER_USAGE::DEFAULT;
       it_MeshInfo->VB = (t800::VertexBuffer*)T8Device->CreateBuffer(T8_BUFFER_TYPE::VERTEX, buffdesc, &it->pData[0]);
 
-      T8_LOG_DEBUG("  Geometry %zu: VB=%u bytes (stride=%u, %d verts), IB=%zu tris",
-                   i, buffdesc.byteWidth, it->VertexSize, pActual->NumVertices, pActual->Triangles.size()/3);
+      T8_LOG_DEBUG("  Geometry %zu: VB=%u bytes (stride=%u, %d verts), IB=%zu tris%s",
+                   i, buffdesc.byteWidth, it->VertexSize, pActual->NumVertices,
+                   (kUse32 ? pActual->Triangles32.size() : pActual->Triangles.size())/3,
+                   kUse32 ? " [32-bit]" : "");
 
 #if CHANGE_TO_RH
-      for (std::size_t a = 0; a < pActual->Triangles.size(); a += 3) {
-        unsigned short i0 = pActual->Triangles[a + 0];
-        unsigned short i2 = pActual->Triangles[a + 2];
-        pActual->Triangles[a + 0] = i2;
-        pActual->Triangles[a + 2] = i0;
+      if (!kUse32) {
+        for (std::size_t a = 0; a < pActual->Triangles.size(); a += 3) {
+          unsigned short i0 = pActual->Triangles[a + 0];
+          unsigned short i2 = pActual->Triangles[a + 2];
+          pActual->Triangles[a + 0] = i2;
+          pActual->Triangles[a + 2] = i0;
+        }
+      } else {
+        for (std::size_t a = 0; a < pActual->Triangles32.size(); a += 3) {
+          unsigned int i0 = pActual->Triangles32[a + 0];
+          unsigned int i2 = pActual->Triangles32[a + 2];
+          pActual->Triangles32[a + 0] = i2;
+          pActual->Triangles32[a + 2] = i0;
+        }
       }
 #endif
 
-      buffdesc.byteWidth = static_cast<int>(pActual->Triangles.size() * sizeof(unsigned short));
-      buffdesc.usage = T8_BUFFER_USAGE::DEFAULT;
-      it_MeshInfo->IB = (t800::IndexBuffer*)T8Device->CreateBuffer(T8_BUFFER_TYPE::INDEX, buffdesc, &pActual->Triangles[0]);
+      if (!kUse32) {
+        buffdesc.byteWidth = static_cast<int>(pActual->Triangles.size() * sizeof(unsigned short));
+        buffdesc.usage = T8_BUFFER_USAGE::DEFAULT;
+        it_MeshInfo->IB = (t800::IndexBuffer*)T8Device->CreateBuffer(T8_BUFFER_TYPE::INDEX, buffdesc, &pActual->Triangles[0]);
+      } else {
+        buffdesc.byteWidth = static_cast<int>(pActual->Triangles32.size() * sizeof(unsigned int));
+        buffdesc.usage = T8_BUFFER_USAGE::DEFAULT;
+        it_MeshInfo->IB = (t800::IndexBuffer*)T8Device->CreateBuffer(T8_BUFFER_TYPE::INDEX, buffdesc, &pActual->Triangles32[0]);
+      }
     }
 
     XMatIdentity(transform);
@@ -442,7 +498,9 @@ namespace t800 {
 		it_MeshInfo->CnstBuffer.Intensities = sub_info->Intensities;
 		it_MeshInfo->CnstBuffer.Intensities.w = (float)sub_info->MatID;
 
-        sub_info->IB->Set(*T8DeviceContext, 0, T8_IB_FORMAR::R16);
+        sub_info->IB->Set(*T8DeviceContext, 0,
+                          sub_info->IB32Bit ? T8_IB_FORMAR::R32
+                                            : T8_IB_FORMAR::R16);
 
         // Build final shader key: material features + global pass + toggles
         ShaderKey finalKey(sub_info->key.bits);

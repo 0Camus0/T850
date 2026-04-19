@@ -48,7 +48,7 @@ void GUIDrawContext::DrawTexturedQuad(float px, float py, float w, float h,
   // Under GL, we flip V so the top of the quad samples the top of the image.
   // This works correctly for atlas sub-regions because we flip the region's
   // v0/v1 within the atlas coordinate space.
-  const bool gl = (g_pBaseDriver && g_pBaseDriver->m_currentAPI == GRAPHICS_API::OPENGL);
+  const bool gl = (g_pBaseDriver && g_pBaseDriver->NeedsVFlip());
   const float uLeft  = region.u0;
   const float uRight = region.u1;
   const float vTop = gl ? (1.0f - region.v0) : region.v0;

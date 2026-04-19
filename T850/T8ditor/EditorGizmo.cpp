@@ -120,7 +120,7 @@ unsigned BuildCircle(std::vector<float>& verts,
                      int axis, int segments) {
   const unsigned baseV = (unsigned)(verts.size() / 4);
   const unsigned baseI = (unsigned)idx.size();
-  const float twoPi = 6.28318530717958647692f;
+  const float twoPi = 2.0f * xPI;
   for (int i = 0; i < segments; ++i) {
     const float t = (float)i / (float)segments * twoPi;
     const float c = std::cos(t);

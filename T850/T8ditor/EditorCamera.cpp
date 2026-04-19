@@ -5,6 +5,7 @@
 #include "EditorCamera.h"
 
 #include <utils/InputManager.h>
+#include <utils/xMaths.h>   // xPI
 #include <cmath>
 
 namespace t8ditor {
@@ -16,7 +17,7 @@ void EditorCamera::Init(int viewportWidth, int viewportHeight,
   m_viewportW = viewportWidth  > 0 ? viewportWidth  : 1;
   m_viewportH = viewportHeight > 0 ? viewportHeight : 1;
 
-  const float fovRad = fovDeg * (3.14159265358979323846f / 180.0f);
+  const float fovRad = fovDeg * (xPI / 180.0f);
   const float aspect = (float)m_viewportW / (float)m_viewportH;
 
   // Initial eye is computed by RecomputeEye(); pass a placeholder.

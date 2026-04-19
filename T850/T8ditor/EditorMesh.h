@@ -18,6 +18,7 @@
 
 #include "EditorLineRenderer.h"
 
+#include <utils/Picking.h>
 #include <string>
 
 namespace t8ditor {
@@ -40,9 +41,14 @@ public:
   XVECTOR3& EulerRadians()  { return m_euler; }
   XVECTOR3& Scale()         { return m_scale; }
 
-  // Center of the mesh's loaded geometry in *local* space (used by the
-  // editor camera's "frame selection" so it can centre on the model).
+  // Center of the mesh's loaded geometry in *local* space.
   const XVECTOR3& LocalCenter() const { return m_localCenter; }
+
+  // Local-space axis-aligned bounding box.
+  const t800::AABB& LocalAABB() const { return m_localAABB; }
+
+  // World-space AABB (local AABB transformed by current TRS).
+  t800::AABB WorldAABB() const { return m_localAABB.Transformed(BuildWorld()); }
 
   // Compose the world matrix from position/rotation/scale (TRS).
   XMATRIX44 BuildWorld() const;
@@ -63,6 +69,7 @@ private:
   XVECTOR3 m_euler       = XVECTOR3(0.0f, 0.0f, 0.0f); // radians, XYZ
   XVECTOR3 m_scale       = XVECTOR3(1.0f, 1.0f, 1.0f);
   XVECTOR3 m_localCenter = XVECTOR3(0.0f, 0.0f, 0.0f);
+  t800::AABB m_localAABB;
 };
 
 } // namespace t8ditor

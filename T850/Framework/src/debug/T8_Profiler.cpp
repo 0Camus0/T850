@@ -1,4 +1,7 @@
 #include <debug/T8_Profiler.h>
+
+#ifdef T8_ENABLE_PROFILER
+
 #include <video/BaseDriver.h>
 #include <utils/Log.h>
 
@@ -342,6 +345,46 @@ void T8Profiler::EndScope() {
   }
 }
 
+// CPU-only scope (no GPU timestamp — safe to call outside command list recording)
+void T8Profiler::BeginCPUScope(const char* name) {
+  if (!m_initialized) return;
+  if (m_activeQueryCount >= m_maxScopes) return;
+
+  int queryIdx = m_activeQueryCount;
+  int scopeIdx = FindOrCreateScope(name);
+
+  m_frameQueries[queryIdx].scopeIndex = scopeIdx;
+  m_frameQueries[queryIdx].cpuOnly = true;
+
+#ifdef OS_WINDOWS
+  LARGE_INTEGER now;
+  QueryPerformanceCounter(&now);
+  m_frameQueries[queryIdx].cpuBegin = now.QuadPart;
+#endif
+
+  m_activeQueryCount++;
+}
+
+void T8Profiler::EndCPUScope() {
+  if (!m_initialized) return;
+  if (m_activeQueryCount <= 0) return;
+
+  int queryIdx = m_activeQueryCount - 1;
+
+#ifdef OS_WINDOWS
+  LARGE_INTEGER now;
+  QueryPerformanceCounter(&now);
+  m_frameQueries[queryIdx].cpuEnd = now.QuadPart;
+#endif
+
+  auto& fq = m_frameQueries[queryIdx];
+  if (fq.scopeIndex >= 0 && fq.scopeIndex < (int)m_scopes.size()) {
+    double cpuMs = (double)(fq.cpuEnd - fq.cpuBegin) * 1000.0 / (double)m_cpuFreq;
+    m_scopes[fq.scopeIndex].cpuTotalMs += cpuMs;
+    m_scopes[fq.scopeIndex].sampleCount++;
+  }
+}
+
 // ═════════════════════════════════════════════════════════════
 //  GPU Scope Implementation
 // ═════════════════════════════════════════════════════════════
@@ -525,3 +568,5 @@ void T8Profiler::Reset() {
 }
 
 } // namespace t800
+
+#endif // T8_ENABLE_PROFILER

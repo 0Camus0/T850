@@ -126,9 +126,14 @@ namespace t800 {
   }
 
   void VulkanDeviceContext::DrawIndexed(unsigned vertexCount, unsigned startIndex, unsigned startVertex) {
-    T8_LOG_TRACE("[Vulkan] DrawIndexed(%u, %u, %u)", vertexCount, startIndex, startVertex);
-    if (m_commandBuffer)
-      vkCmdDrawIndexed(m_commandBuffer, vertexCount, 1, startIndex, (int32_t)startVertex, 0);
+    if (!m_commandBuffer) return;
+
+    auto* driver = GetVkDriver();
+    VulkanShader* shader = static_cast<VulkanShader*>(actualShaderSet);
+    if (shader && shader->m_descriptorSetLayout)
+      driver->BindPendingDescriptors(m_commandBuffer, shader);
+
+    vkCmdDrawIndexed(m_commandBuffer, vertexCount, 1, startIndex, (int32_t)startVertex, 0);
   }
 
   // ══════════════════════════════════════════════════════
@@ -360,9 +365,11 @@ namespace t800 {
 
   void VulkanConstantBuffer::Set(const DeviceContext& deviceContext) {
     const_cast<DeviceContext*>(&deviceContext)->actualConstantBuffer = (ConstantBuffer*)this;
-    // CB data is pushed via the per-frame ring buffer in the descriptor update path.
-    // Actual binding happens during VulkanShader::Set via push descriptors or descriptor sets.
-    T8_LOG_TRACE("[Vulkan] CB::Set dataSize=%d", (int)sysMemCpy.size());
+    auto* driver = GetVkDriver();
+    if (!sysMemCpy.empty()) {
+      driver->m_pendingCB = driver->AllocateCBData(sysMemCpy.data(), (uint32_t)sysMemCpy.size());
+      driver->m_cbDirty = true;
+    }
   }
 
   void VulkanConstantBuffer::UpdateFromSystemCopy(const DeviceContext& deviceContext) {
@@ -583,7 +590,10 @@ namespace t800 {
   }
 
   void VulkanTexture::Set(const DeviceContext& deviceContext, unsigned int slot, std::string shaderTextureName) {
-    T8_LOG_TRACE("[Vulkan] Texture::Set slot=%u name=%s", slot, shaderTextureName.c_str());
+    if (slot >= 8) return;
+    auto* driver = GetVkDriver();
+    driver->m_pendingTextures[slot].imageView = m_imageView;
+    driver->m_pendingTextures[slot].sampler = m_sampler;
   }
 
   void VulkanTexture::SetSampler(const DeviceContext& deviceContext, unsigned int slot) {
@@ -886,6 +896,7 @@ namespace t800 {
     rpBegin.pClearValues = clearValues.data();
 
     vkCmdBeginRenderPass(cmd, &rpBegin, VK_SUBPASS_CONTENTS_INLINE);
+    driver->SetActiveRenderPass(m_renderPass);
 
     // Set viewport and scissor to RT dimensions
     VkViewport viewport = {};
@@ -1065,7 +1076,20 @@ namespace t800 {
   void VulkanShader::Set(const DeviceContext& deviceContext) {
     const_cast<DeviceContext*>(&deviceContext)->actualShaderSet = this;
     auto* driver = GetVkDriver();
-    VkPipeline pipeline = driver->GetOrCreatePipeline(this);
+
+    // Determine current render target format for pipeline creation
+    uint8_t numColorAttachments = 1;
+    VkFormat colorFormat = driver->m_swapChainFormat;
+    VkFormat depthFormat = VK_FORMAT_D32_SFLOAT;
+
+    if (driver->CurrentRT >= 0 && driver->CurrentRT < (int)driver->RTs.size()) {
+      VulkanRT* rt = static_cast<VulkanRT*>(driver->RTs[driver->CurrentRT]);
+      numColorAttachments = (uint8_t)rt->number_RT;
+      colorFormat = rt->m_colorFormat;
+      depthFormat = (rt->depth_format != BaseRT::NOTHING) ? rt->m_depthFormat : VK_FORMAT_UNDEFINED;
+    }
+
+    VkPipeline pipeline = driver->GetOrCreatePipeline(this, numColorAttachments, colorFormat, depthFormat);
     if (!pipeline) return;
 
     VkCommandBuffer cmd = static_cast<const VulkanDeviceContext*>(&deviceContext)->GetCommandBuffer();
@@ -1226,7 +1250,7 @@ namespace t800 {
     pipelineCI.pColorBlendState = &colorBlend;
     pipelineCI.pDynamicState = &dynamicState;
     pipelineCI.layout = shader->m_pipelineLayout;
-    pipelineCI.renderPass = m_backbufferRenderPass;
+    pipelineCI.renderPass = m_activeRenderPass ? m_activeRenderPass : m_backbufferRenderPass;
     pipelineCI.subpass = 0;
 
     VkPipeline pipeline = VK_NULL_HANDLE;
@@ -1693,6 +1717,8 @@ namespace t800 {
     m_viewport = { 0.f, 0.f, (float)width, (float)height, 0.f, 1.f };
     m_scissorRect = { {0, 0}, {(uint32_t)width, (uint32_t)height} };
 
+    CreateDummyTexture();
+
     T8_LOG_INFO("[Vulkan] Driver initialized (%dx%d)", width, height);
   }
 
@@ -1712,6 +1738,11 @@ namespace t800 {
     m_pipelineCache.clear();
 
     if (m_vkPipelineCache) { vkDestroyPipelineCache(m_device, m_vkPipelineCache, nullptr); m_vkPipelineCache = VK_NULL_HANDLE; }
+
+    // Destroy dummy texture
+    if (m_dummySampler)   { vkDestroySampler(m_device, m_dummySampler, nullptr); m_dummySampler = VK_NULL_HANDLE; }
+    if (m_dummyImageView) { vkDestroyImageView(m_device, m_dummyImageView, nullptr); m_dummyImageView = VK_NULL_HANDLE; }
+    if (m_dummyImage)     { vmaDestroyImage(m_allocator, m_dummyImage, m_dummyAllocation); m_dummyImage = VK_NULL_HANDLE; }
 
     // Destroy CB ring buffers
     for (uint32_t i = 0; i < kBackBufferCount; i++) {
@@ -1809,7 +1840,19 @@ namespace t800 {
 
     static_cast<VulkanDeviceContext*>(T8DeviceContext)->m_commandBuffer = cmd;
 
+    // Reset per-frame descriptor pool and pending state
+    vkResetDescriptorPool(m_device, m_descriptorPool, 0);
     m_cbRingOffset = 0;
+    m_cbDirty = false;
+    memset(m_pendingTextures, 0, sizeof(m_pendingTextures));
+
+    // Reserve a dummy CB region so draws without explicit CB still have valid descriptors
+    m_pendingCB = {};
+    m_pendingCB.buffer = m_cbRingBuffers[m_currentFrame];
+    m_pendingCB.offset = 0;
+    m_pendingCB.range  = 256;
+    m_cbRingOffset = 256;
+
     m_lastPipeline = VK_NULL_HANDLE;
     m_lastPipelineLayout = VK_NULL_HANDLE;
   }
@@ -1842,6 +1885,7 @@ namespace t800 {
       rpBegin.pClearValues = clearValues;
 
       vkCmdBeginRenderPass(cmd, &rpBegin, VK_SUBPASS_CONTENTS_INLINE);
+      m_activeRenderPass = m_backbufferRenderPass;
 
       vkCmdSetViewport(cmd, 0, 1, &m_viewport);
       vkCmdSetScissor(cmd, 0, 1, &m_scissorRect);
@@ -1945,6 +1989,7 @@ namespace t800 {
       rpBegin.pClearValues = clearValues;
 
       vkCmdBeginRenderPass(cmd, &rpBegin, VK_SUBPASS_CONTENTS_INLINE);
+      m_activeRenderPass = m_backbufferRenderPass;
 
       vkCmdSetViewport(cmd, 0, 1, &m_viewport);
       vkCmdSetScissor(cmd, 0, 1, &m_scissorRect);
@@ -2035,6 +2080,165 @@ namespace t800 {
     T8_LOG_TRACE("[Vulkan] BindBackBufferNoDepth");
     // In Vulkan, depth test is controlled by PSO state (NONE), so this is a no-op.
     // The depth attachment remains bound but the pipeline disables depth testing.
+  }
+
+  // ══════════════════════════════════════════════════════
+  //  VulkanDriver — Descriptor set allocation & binding
+  // ══════════════════════════════════════════════════════
+
+  VkDescriptorSet VulkanDriver::AllocateDescriptorSet(VkDescriptorSetLayout layout) {
+    VkDescriptorSetAllocateInfo allocInfo = { VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO };
+    allocInfo.descriptorPool = m_descriptorPool;
+    allocInfo.descriptorSetCount = 1;
+    allocInfo.pSetLayouts = &layout;
+
+    VkDescriptorSet ds = VK_NULL_HANDLE;
+    VkResult res = vkAllocateDescriptorSets(m_device, &allocInfo, &ds);
+    if (res != VK_SUCCESS) {
+      T8_LOG_ERROR("[Vulkan] AllocateDescriptorSets failed res=%d", res);
+      return VK_NULL_HANDLE;
+    }
+    return ds;
+  }
+
+  void VulkanDriver::BindPendingDescriptors(VkCommandBuffer cmd, VulkanShader* shader) {
+    VkDescriptorSet ds = AllocateDescriptorSet(shader->m_descriptorSetLayout);
+    if (!ds) return;
+
+    VkWriteDescriptorSet writes[9] = {};
+    VkDescriptorImageInfo imageInfos[8] = {};
+    uint32_t writeCount = 0;
+
+    // Binding 0: UBO
+    writes[writeCount] = { VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET };
+    writes[writeCount].dstSet = ds;
+    writes[writeCount].dstBinding = 0;
+    writes[writeCount].descriptorCount = 1;
+    writes[writeCount].descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+    writes[writeCount].pBufferInfo = &m_pendingCB;
+    writeCount++;
+
+    // Bindings 1-8: combined image samplers
+    for (int i = 0; i < 8; i++) {
+      imageInfos[i].imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+      imageInfos[i].imageView = m_pendingTextures[i].imageView ? m_pendingTextures[i].imageView : m_dummyImageView;
+      imageInfos[i].sampler   = m_pendingTextures[i].sampler   ? m_pendingTextures[i].sampler   : m_dummySampler;
+
+      writes[writeCount] = { VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET };
+      writes[writeCount].dstSet = ds;
+      writes[writeCount].dstBinding = 1 + i;
+      writes[writeCount].descriptorCount = 1;
+      writes[writeCount].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+      writes[writeCount].pImageInfo = &imageInfos[i];
+      writeCount++;
+    }
+
+    vkUpdateDescriptorSets(m_device, writeCount, writes, 0, nullptr);
+    vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS,
+                            shader->m_pipelineLayout, 0, 1, &ds, 0, nullptr);
+  }
+
+  // ══════════════════════════════════════════════════════
+  //  VulkanDriver — Dummy texture for unbound slots
+  // ══════════════════════════════════════════════════════
+
+  void VulkanDriver::CreateDummyTexture() {
+    // 1x1 white pixel
+    uint8_t pixel[4] = { 255, 255, 255, 255 };
+
+    VkImageCreateInfo imgCI = { VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO };
+    imgCI.imageType = VK_IMAGE_TYPE_2D;
+    imgCI.format = VK_FORMAT_R8G8B8A8_UNORM;
+    imgCI.extent = { 1, 1, 1 };
+    imgCI.mipLevels = 1;
+    imgCI.arrayLayers = 1;
+    imgCI.samples = VK_SAMPLE_COUNT_1_BIT;
+    imgCI.tiling = VK_IMAGE_TILING_OPTIMAL;
+    imgCI.usage = VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT;
+    imgCI.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+    imgCI.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+
+    VmaAllocationCreateInfo allocCI = {};
+    allocCI.usage = VMA_MEMORY_USAGE_AUTO;
+
+    vmaCreateImage(m_allocator, &imgCI, &allocCI, &m_dummyImage, &m_dummyAllocation, nullptr);
+
+    // Upload pixel via staging buffer
+    VkBufferCreateInfo stagingInfo = { VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO };
+    stagingInfo.size = 4;
+    stagingInfo.usage = VK_BUFFER_USAGE_TRANSFER_SRC_BIT;
+
+    VmaAllocationCreateInfo stagingAllocCI = {};
+    stagingAllocCI.usage = VMA_MEMORY_USAGE_AUTO;
+    stagingAllocCI.flags = VMA_ALLOCATION_CREATE_HOST_ACCESS_SEQUENTIAL_WRITE_BIT |
+                           VMA_ALLOCATION_CREATE_MAPPED_BIT;
+
+    VkBuffer stagingBuffer;
+    VmaAllocation stagingAlloc;
+    VmaAllocationInfo stagingAllocInfo;
+    vmaCreateBuffer(m_allocator, &stagingInfo, &stagingAllocCI, &stagingBuffer, &stagingAlloc, &stagingAllocInfo);
+    memcpy(stagingAllocInfo.pMappedData, pixel, 4);
+
+    VkCommandBufferAllocateInfo cmdAlloc = { VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO };
+    cmdAlloc.commandPool = m_transientCommandPool;
+    cmdAlloc.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
+    cmdAlloc.commandBufferCount = 1;
+
+    VkCommandBuffer cmd;
+    vkAllocateCommandBuffers(m_device, &cmdAlloc, &cmd);
+
+    VkCommandBufferBeginInfo beginInfo = { VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO };
+    beginInfo.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
+    vkBeginCommandBuffer(cmd, &beginInfo);
+
+    TransitionImageLayout(cmd, m_dummyImage,
+                          VK_IMAGE_LAYOUT_UNDEFINED,
+                          VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+                          VK_IMAGE_ASPECT_COLOR_BIT);
+
+    VkBufferImageCopy region = {};
+    region.imageSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+    region.imageSubresource.layerCount = 1;
+    region.imageExtent = { 1, 1, 1 };
+    vkCmdCopyBufferToImage(cmd, stagingBuffer, m_dummyImage,
+                           VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &region);
+
+    TransitionImageLayout(cmd, m_dummyImage,
+                          VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+                          VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
+                          VK_IMAGE_ASPECT_COLOR_BIT);
+
+    vkEndCommandBuffer(cmd);
+
+    VkSubmitInfo submitInfo = { VK_STRUCTURE_TYPE_SUBMIT_INFO };
+    submitInfo.commandBufferCount = 1;
+    submitInfo.pCommandBuffers = &cmd;
+    vkQueueSubmit(m_graphicsQueue, 1, &submitInfo, VK_NULL_HANDLE);
+    vkQueueWaitIdle(m_graphicsQueue);
+
+    vkFreeCommandBuffers(m_device, m_transientCommandPool, 1, &cmd);
+    vmaDestroyBuffer(m_allocator, stagingBuffer, stagingAlloc);
+
+    // Image view
+    VkImageViewCreateInfo ivCI = { VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO };
+    ivCI.image = m_dummyImage;
+    ivCI.viewType = VK_IMAGE_VIEW_TYPE_2D;
+    ivCI.format = VK_FORMAT_R8G8B8A8_UNORM;
+    ivCI.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+    ivCI.subresourceRange.levelCount = 1;
+    ivCI.subresourceRange.layerCount = 1;
+    vkCreateImageView(m_device, &ivCI, nullptr, &m_dummyImageView);
+
+    // Sampler
+    VkSamplerCreateInfo sampCI = { VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO };
+    sampCI.magFilter = VK_FILTER_NEAREST;
+    sampCI.minFilter = VK_FILTER_NEAREST;
+    sampCI.addressModeU = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
+    sampCI.addressModeV = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
+    sampCI.addressModeW = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
+    vkCreateSampler(m_device, &sampCI, nullptr, &m_dummySampler);
+
+    T8_LOG_INFO("[Vulkan] Dummy 1x1 texture created");
   }
 
 } // namespace t800

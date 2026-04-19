@@ -195,9 +195,7 @@ bool FrameDumper::SkipCameraUpdates() const {
 // ── Dump control ──
 
 void FrameDumper::RequestDump() {
-  if (config_.debugFrames) {
-    debugDumpRequested_ = true;
-  }
+  debugDumpRequested_ = true;
 }
 
 bool FrameDumper::ShouldDump(float dt) {

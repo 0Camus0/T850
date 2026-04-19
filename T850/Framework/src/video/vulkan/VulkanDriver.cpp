@@ -940,7 +940,7 @@ namespace t800 {
     return mod;
   }
 
-  static bool CompileGLSLToSPIRV(const std::string& source, glslang_stage_t stage,
+  static bool CompileHLSLToSPIRV(const std::string& source, glslang_stage_t stage,
                                    std::vector<uint32_t>& spirv, const std::string& debugName) {
     if (!s_glslangInitialized) {
       glslang_initialize_process();
@@ -949,27 +949,22 @@ namespace t800 {
 
     const char* src = source.c_str();
     glslang_input_t input = {};
-    input.language = GLSLANG_SOURCE_GLSL;
+    input.language = GLSLANG_SOURCE_HLSL;
     input.stage = stage;
-    input.client = GLSLANG_CLIENT_NONE;              // don't enforce Vulkan rules during parse
-    input.client_version = (glslang_target_client_version_t)0;
-    input.target_language = GLSLANG_TARGET_SPV;      // output SPIR-V
+    input.client = GLSLANG_CLIENT_VULKAN;
+    input.client_version = GLSLANG_TARGET_VULKAN_1_0;
+    input.target_language = GLSLANG_TARGET_SPV;
     input.target_language_version = GLSLANG_TARGET_SPV_1_0;
     input.code = src;
-    input.default_version = 130;
+    input.default_version = 100;
     input.default_profile = GLSLANG_NO_PROFILE;
     input.force_default_version_and_profile = false;
     input.forward_compatible = false;
-    input.messages = (glslang_messages_t)(GLSLANG_MSG_DEFAULT_BIT | GLSLANG_MSG_SPV_RULES_BIT);
+    input.messages = (glslang_messages_t)(GLSLANG_MSG_DEFAULT_BIT | GLSLANG_MSG_SPV_RULES_BIT | GLSLANG_MSG_VULKAN_RULES_BIT);
     input.resource = glslang_default_resource();
 
-    // Auto-assign locations for in/out variables (GLSL shaders don't have layout(location=N))
-    input.force_default_version_and_profile = false;
     glslang_shader_t* shader = glslang_shader_create(&input);
     glslang_shader_set_options(shader, GLSLANG_SHADER_AUTO_MAP_BINDINGS | GLSLANG_SHADER_AUTO_MAP_LOCATIONS);
-    // Wrap standalone uniforms into a default uniform block (GLSL → Vulkan SPIR-V compat)
-    glslang_shader_set_default_uniform_block_set_and_binding(shader, 0, 0);
-    glslang_shader_set_default_uniform_block_name(shader, "DefaultUniforms");
     if (!glslang_shader_preprocess(shader, &input)) {
       T8_LOG_ERROR("[Vulkan] Shader preprocess failed (%s): %s", debugName.c_str(), glslang_shader_get_info_log(shader));
       glslang_shader_delete(shader);
@@ -1012,17 +1007,17 @@ namespace t800 {
     auto* driver = GetVkDriver();
     VkDevice device = driver->GetDevice();
 
-    // Compile vertex shader
+    // Compile vertex shader (HLSL → SPIR-V)
     std::vector<uint32_t> vsSPIRV;
-    if (!CompileGLSLToSPIRV(src_vs, GLSLANG_STAGE_VERTEX, vsSPIRV, vs_name.empty() ? "VS" : vs_name)) {
+    if (!CompileHLSLToSPIRV(src_vs, GLSLANG_STAGE_VERTEX, vsSPIRV, vs_name.empty() ? "VS" : vs_name)) {
       return false;
     }
     m_vertModule = CreateShaderModule(device, vsSPIRV.data(), vsSPIRV.size() * sizeof(uint32_t));
     if (!m_vertModule) return false;
 
-    // Compile fragment shader
+    // Compile fragment shader (HLSL → SPIR-V)
     std::vector<uint32_t> fsSPIRV;
-    if (!CompileGLSLToSPIRV(src_fs, GLSLANG_STAGE_FRAGMENT, fsSPIRV, fs_name.empty() ? "FS" : fs_name)) {
+    if (!CompileHLSLToSPIRV(src_fs, GLSLANG_STAGE_FRAGMENT, fsSPIRV, fs_name.empty() ? "FS" : fs_name)) {
       return false;
     }
     m_fragModule = CreateShaderModule(device, fsSPIRV.data(), fsSPIRV.size() * sizeof(uint32_t));

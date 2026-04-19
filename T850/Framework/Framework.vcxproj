@@ -78,6 +78,7 @@
     <ClInclude Include="include\video\windows\D3D11Shader.h" />
     <ClInclude Include="include\video\windows\D3D11Texture.h" />
     <ClInclude Include="include\video\d3d12\D3D12Driver.h" />
+    <ClInclude Include="include\video\vulkan\VulkanDriver.h" />
     <ClInclude Include="include\video\d3d12\D3D12Shader.h" />
     <ClInclude Include="include\video\d3d12\D3D12RT.h" />
     <ClInclude Include="include\video\d3d12\D3D12Texture.h" />
@@ -140,6 +141,7 @@
     <ClCompile Include="src\video\d3d12\D3D12Shader.cpp" />
     <ClCompile Include="src\video\d3d12\D3D12RT.cpp" />
     <ClCompile Include="src\video\d3d12\D3D12Texture.cpp" />
+    <ClCompile Include="src\video\vulkan\VulkanDriver.cpp" />
   </ItemGroup>
   <ItemGroup>
     <None Include="..\Assets\Shaders\FS.glsl">

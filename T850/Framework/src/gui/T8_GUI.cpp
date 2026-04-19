@@ -77,7 +77,7 @@ void GUIManager::Init(int screenW, int screenH) {
 void GUIManager::InitShader() {
   char* vsSourceP;
   char* fsSourceP;
-  if (g_pBaseDriver->m_currentAPI == GRAPHICS_API::OPENGL) {
+  if (g_pBaseDriver->UsesGLSL()) {
     vsSourceP = file2string("Shaders/VS_GUI.glsl");
     fsSourceP = file2string("Shaders/FS_GUI.glsl");
   } else {
@@ -88,7 +88,7 @@ void GUIManager::InitShader() {
   std::string vstr(vsSourceP);
   std::string fstr(fsSourceP);
 
-  if (g_pBaseDriver->m_currentAPI == GRAPHICS_API::OPENGL) {
+  if (g_pBaseDriver->UsesGLSL()) {
 #if defined(USING_OPENGL)
     std::string Defines;
     Defines += "#version 130\n\n";

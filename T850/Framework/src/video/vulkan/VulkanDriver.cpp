@@ -1121,14 +1121,23 @@ namespace t800 {
     }
 
     CreateDevice();
+    T8_LOG_INFO("[Vulkan] >> CreateAllocator...");
     CreateAllocator();
+    T8_LOG_INFO("[Vulkan] >> CreateCommandInfrastructure...");
     CreateCommandInfrastructure();
+    T8_LOG_INFO("[Vulkan] >> CreateSwapChain...");
     CreateSwapChain();
+    T8_LOG_INFO("[Vulkan] >> CreateBackBufferViews...");
     CreateBackBufferViews();
+    T8_LOG_INFO("[Vulkan] >> CreateRenderPass...");
     CreateRenderPass();
+    T8_LOG_INFO("[Vulkan] >> CreateDepthBuffer...");
     CreateDepthBuffer();
+    T8_LOG_INFO("[Vulkan] >> CreateFramebuffers...");
     CreateFramebuffers();
+    T8_LOG_INFO("[Vulkan] >> CreateSyncObjects...");
     CreateSyncObjects();
+    T8_LOG_INFO("[Vulkan] >> CreateDescriptorPool...");
     CreateDescriptorPool();
 
     // Pipeline cache

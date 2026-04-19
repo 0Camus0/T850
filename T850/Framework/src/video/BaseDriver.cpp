@@ -173,6 +173,10 @@ namespace t800 {
         Defines += "#version 300 es\n\n";
         Defines += "#define ES_30\n\n";
       }
+      else if (g_pBaseDriver->m_currentAPI == GRAPHICS_API::VULKAN) {
+        Defines += "#version 450\n\n";
+        Defines += "#extension GL_ARB_separate_shader_objects : enable\n\n";
+      }
 #endif
 #if VDEBUG_NO_LIGHT
       Defines += "#define NO_LIGHT\n\n";

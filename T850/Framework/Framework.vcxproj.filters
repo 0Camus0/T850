@@ -92,6 +92,9 @@
     <ClInclude Include="include\video\BaseDriver.h">
       <Filter>Header Files\video</Filter>
     </ClInclude>
+    <ClInclude Include="include\video\WindowHandle.h">
+      <Filter>Header Files\video</Filter>
+    </ClInclude>
     <ClInclude Include="Config.h">
       <Filter>Header Files</Filter>
     </ClInclude>

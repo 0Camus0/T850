@@ -216,6 +216,7 @@ namespace t800 {
     void Update() override;
     void DestroyDriver() override;
     void SetWindow(void* window) override;
+    void SetWindowHandle(const WindowHandle& handle) override;
     void SetDimensions(int w, int h) override;
     void Clear() override;
     void SwapBuffers() override;

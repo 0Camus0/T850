@@ -295,6 +295,9 @@
     <ClCompile Include="..\Librerias\tinyxml2\tinyxml2.cpp">
       <Filter>Source Files\ext</Filter>
     </ClCompile>
+    <ClCompile Include="..\Librerias\mikktspace\src\mikktspace.c">
+      <Filter>Source Files\ext</Filter>
+    </ClCompile>
     <ClCompile Include="src\utils\gltf\GLTFLoader.cpp">
       <Filter>Source Files\utils\gltf</Filter>
     </ClCompile>

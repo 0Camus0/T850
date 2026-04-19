@@ -25,6 +25,8 @@
 #include <utils/xMaths.h>
 #include <utils/Log.h>
 
+#include <mikktspace.h>
+
 #include <algorithm>
 #include <cmath>
 #include <cstdint>
@@ -170,9 +172,120 @@ bool BuildTriangleIndices(const Primitive& prim, std::size_t vertexCount,
   return true;
 }
 
-// ── Naive per-triangle tangent generation (used as a quality-bump
-// fallback when a normal map is bound but TANGENT is absent). The plan
-// (§6.4) explicitly notes this can be replaced with MikkTSpace later.
+// ── MikkTSpace tangent generation (plan §6.4) ────────────────────────
+//
+// Mikk's contract is per-(face, vertex_in_face): the same vertex may
+// receive different tangents from different faces. Our pipeline does
+// not duplicate vertices (POSITION accessor count == vertex count), so
+// we average the per-face tangents into per-vertex slots and re-orthonormalise
+// against the vertex normal. The bitangent sign is taken from the first
+// face that wrote the slot — for assets coming out of standard DCCs
+// (Blender, Substance, Maya) all faces sharing a vertex agree on the
+// sign, so this is correct in practice and matches the behaviour of
+// other Mikk integrations that don't split vertices (e.g. tinygltf-based
+// loaders, glTF-Sample-Viewer's CPU path).
+struct MikkCtx {
+  const std::vector<float>*    positions;  // N*3
+  const std::vector<float>*    normals;    // N*3
+  const std::vector<float>*    uvs;        // N*2
+  const std::vector<uint32_t>* tris;       // 3*F
+  std::vector<float>*          accumXYZ;   // N*3, summed
+  std::vector<float>*          firstSign;  // N, first writer's sign (0 = unset)
+};
+
+int MikkGetNumFaces(const SMikkTSpaceContext* c) {
+  auto* ctx = static_cast<MikkCtx*>(c->m_pUserData);
+  return static_cast<int>(ctx->tris->size() / 3);
+}
+int MikkGetNumVerticesOfFace(const SMikkTSpaceContext*, int) { return 3; }
+
+uint32_t MikkVertexIndex(const MikkCtx* ctx, int iFace, int iVert) {
+  return (*ctx->tris)[static_cast<std::size_t>(iFace) * 3 + iVert];
+}
+
+void MikkGetPosition(const SMikkTSpaceContext* c, float fv[], int iFace, int iVert) {
+  auto* ctx = static_cast<MikkCtx*>(c->m_pUserData);
+  uint32_t i = MikkVertexIndex(ctx, iFace, iVert);
+  fv[0] = (*ctx->positions)[i*3+0];
+  fv[1] = (*ctx->positions)[i*3+1];
+  fv[2] = (*ctx->positions)[i*3+2];
+}
+void MikkGetNormal(const SMikkTSpaceContext* c, float fv[], int iFace, int iVert) {
+  auto* ctx = static_cast<MikkCtx*>(c->m_pUserData);
+  uint32_t i = MikkVertexIndex(ctx, iFace, iVert);
+  fv[0] = (*ctx->normals)[i*3+0];
+  fv[1] = (*ctx->normals)[i*3+1];
+  fv[2] = (*ctx->normals)[i*3+2];
+}
+void MikkGetTexCoord(const SMikkTSpaceContext* c, float fv[], int iFace, int iVert) {
+  auto* ctx = static_cast<MikkCtx*>(c->m_pUserData);
+  uint32_t i = MikkVertexIndex(ctx, iFace, iVert);
+  fv[0] = (*ctx->uvs)[i*2+0];
+  fv[1] = (*ctx->uvs)[i*2+1];
+}
+void MikkSetTSpaceBasic(const SMikkTSpaceContext* c, const float fvTangent[],
+                        float fSign, int iFace, int iVert) {
+  auto* ctx = static_cast<MikkCtx*>(c->m_pUserData);
+  uint32_t i = MikkVertexIndex(ctx, iFace, iVert);
+  (*ctx->accumXYZ)[i*3+0] += fvTangent[0];
+  (*ctx->accumXYZ)[i*3+1] += fvTangent[1];
+  (*ctx->accumXYZ)[i*3+2] += fvTangent[2];
+  if ((*ctx->firstSign)[i] == 0.0f) (*ctx->firstSign)[i] = fSign;
+}
+
+bool GenerateMikkTSpaceTangents(const std::vector<float>& positions,
+                                const std::vector<float>& normals,
+                                const std::vector<float>& uvs,
+                                const std::vector<uint32_t>& tris,
+                                std::vector<float>& outTangents) {
+  const std::size_t N = positions.size() / 3;
+  if (N == 0 || tris.size() < 3 || normals.size() != N * 3
+      || uvs.size() != N * 2) {
+    return false;
+  }
+  std::vector<float> accum(N * 3, 0.0f);
+  std::vector<float> firstSign(N, 0.0f);
+
+  MikkCtx user{ &positions, &normals, &uvs, &tris, &accum, &firstSign };
+
+  SMikkTSpaceInterface iface{};
+  iface.m_getNumFaces          = MikkGetNumFaces;
+  iface.m_getNumVerticesOfFace = MikkGetNumVerticesOfFace;
+  iface.m_getPosition          = MikkGetPosition;
+  iface.m_getNormal            = MikkGetNormal;
+  iface.m_getTexCoord          = MikkGetTexCoord;
+  iface.m_setTSpaceBasic       = MikkSetTSpaceBasic;
+
+  SMikkTSpaceContext mctx{};
+  mctx.m_pInterface = &iface;
+  mctx.m_pUserData  = &user;
+
+  if (!genTangSpaceDefault(&mctx)) {
+    T8_LOG_ERROR("[glTF] MikkTSpace failed; falling back to naive tangents");
+    return false;
+  }
+
+  outTangents.assign(N * 4, 0.0f);
+  for (std::size_t i = 0; i < N; ++i) {
+    float tx = accum[i*3+0], ty = accum[i*3+1], tz = accum[i*3+2];
+    // Re-orthonormalise tangent against the vertex normal so the
+    // averaged tangent stays in the tangent plane: T = normalize(T - (T·N)N).
+    float nx = normals[i*3+0], ny = normals[i*3+1], nz = normals[i*3+2];
+    float dot = tx*nx + ty*ny + tz*nz;
+    tx -= dot*nx; ty -= dot*ny; tz -= dot*nz;
+    float l = std::sqrt(tx*tx + ty*ty + tz*tz);
+    if (l > 1e-8f) { tx/=l; ty/=l; tz/=l; }
+    float sign = (firstSign[i] == 0.0f) ? 1.0f : firstSign[i];
+    outTangents[i*4+0] = tx;
+    outTangents[i*4+1] = ty;
+    outTangents[i*4+2] = tz;
+    outTangents[i*4+3] = sign;
+  }
+  return true;
+}
+
+// ── Naive per-triangle tangent generation. Used as a fallback when
+// MikkTSpace cannot run (degenerate input — e.g. no UV0 or no normals).
 void GenerateNaiveTangents(const std::vector<float>& positions,   // size N*3
                            const std::vector<float>& uvs,         // size N*2
                            const std::vector<uint32_t>& tris,
@@ -279,13 +392,17 @@ bool BuildGeometry(const Document& doc,
   if (!BuildTriangleIndices(prim, N, srcIdx, tris)) return false;
 
   // Auto-generate tangents if a normal map is present in the material
-  // but TANGENT is missing. The check on the material is left to the
-  // caller (it knows whether the material wants normal mapping); for
-  // simplicity we always generate when UV0+normals exist and tangents
-  // are absent. Cheap relative to the rest of loading.
+  // but TANGENT is missing. We always try MikkTSpace first (industry
+  // standard, matches Blender / Substance / Unity). If that fails for
+  // any reason (degenerate input), fall back to the naive per-triangle
+  // accumulator so a normal-mapped mesh still gets *something*.
   if (!hasTangent && hasUV0 && hasNormal) {
-    GenerateNaiveTangents(pos, uv0, tris, tan);
-    hasTangent = (tan.size() == N * 4);
+    if (GenerateMikkTSpaceTangents(pos, nrm, uv0, tris, tan)) {
+      hasTangent = true;
+    } else {
+      GenerateNaiveTangents(pos, uv0, tris, tan);
+      hasTangent = (tan.size() == N * 4);
+    }
   }
 
   // ── Set engine attribute mask and per-vertex containers. ──

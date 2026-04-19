@@ -15,6 +15,7 @@
 
 #include <d3d12.h>
 #include <dxgi1_4.h>
+#include <dxgi1_5.h>
 #include <D3Dcompiler.h>
 
 #include <wrl.h>
@@ -290,6 +291,10 @@ namespace t800 {
     UINT64              m_nextFenceValue = 1;              // next value to signal
     UINT64              m_frameFenceValues[kBackBufferCount] = {}; // value each BB must reach before reuse
     HANDLE              m_fenceEvent = nullptr;
+
+    // Tearing / waitable swap chain
+    bool                m_tearingSupported = false;
+    HANDLE              m_swapChainWaitableObject = nullptr;
 
     // Back buffers
     ComPtr<ID3D12Resource> m_backBuffers[kBackBufferCount];

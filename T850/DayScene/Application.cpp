@@ -297,6 +297,9 @@ void App::OnDraw() {
                   t800::g_profiler->GetFrameCount());
       t800::g_profiler->Report();
       t800::g_profiler->Reset();
+      // Exit after profiling is complete
+      pFramework->pVideoDriver->SwapBuffers();
+      exit(0);
     }
   }
 #endif

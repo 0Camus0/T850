@@ -682,16 +682,17 @@ namespace t800 {
     ID3D12Device* device = static_cast<D3D12Device*>(T8Device)->GetNativeDevice();
     D3D12_COMMAND_QUEUE_DESC qDesc = {}; qDesc.Type = D3D12_COMMAND_LIST_TYPE_DIRECT;
     device->CreateCommandQueue(&qDesc, IID_PPV_ARGS(&m_commandQueue));
-    for (UINT i = 0; i < kBackBufferCount; i++)
+    for (UINT i = 0; i < kBackBufferCount; i++) {
       device->CreateCommandAllocator(D3D12_COMMAND_LIST_TYPE_DIRECT, IID_PPV_ARGS(&m_commandAllocators[i]));
-    device->CreateCommandList(0, D3D12_COMMAND_LIST_TYPE_DIRECT, m_commandAllocators[0].Get(), nullptr, IID_PPV_ARGS(&m_commandList));
-    m_commandList->Close();
-    static_cast<D3D12DeviceContext*>(T8DeviceContext)->m_commandList = m_commandList;
+      device->CreateCommandList(0, D3D12_COMMAND_LIST_TYPE_DIRECT, m_commandAllocators[i].Get(), nullptr, IID_PPV_ARGS(&m_commandLists[i]));
+      m_commandLists[i]->Close();
+    }
+    static_cast<D3D12DeviceContext*>(T8DeviceContext)->m_commandList = m_commandLists[0];
     device->CreateFence(0, D3D12_FENCE_FLAG_NONE, IID_PPV_ARGS(&m_fence));
     m_nextFenceValue = 1;
-    m_frameFenceValues[0] = m_frameFenceValues[1] = 0;
+    for (UINT i = 0; i < kBackBufferCount; i++) m_frameFenceValues[i] = 0;
     m_fenceEvent = CreateEvent(nullptr, FALSE, FALSE, nullptr);
-    T8_LOG_INFO("[D3D12] Command infrastructure created");
+    T8_LOG_INFO("[D3D12] Command infrastructure created (%d lists + %d allocators)", kBackBufferCount, kBackBufferCount);
   }
 
   void D3D12Driver::CreateSwapChain() {
@@ -811,7 +812,7 @@ namespace t800 {
     if (m_fenceEvent) { CloseHandle(m_fenceEvent); m_fenceEvent = nullptr; }
     m_depthBuffer.Reset();
     for (UINT i = 0; i < kBackBufferCount; i++) { m_backBuffers[i].Reset(); m_commandAllocators[i].Reset(); }
-    m_commandList.Reset(); m_fence.Reset(); m_commandQueue.Reset(); m_swapChain.Reset();
+    for(auto& cl:m_commandLists)cl.Reset(); m_fence.Reset(); m_commandQueue.Reset(); m_swapChain.Reset();
     T8Device->release(); T8DeviceContext->release();
     delete T8Device; delete T8DeviceContext; T8Device = nullptr; T8DeviceContext = nullptr;
     m_dxgiFactory.Reset();
@@ -859,14 +860,15 @@ namespace t800 {
 
     {
       T8_PROFILE_CPU_SCOPE(t800::g_profiler, "D3D12_CmdListReset");
+      auto& cmdList = m_commandLists[m_currentBackBuffer];
       m_commandAllocators[m_currentBackBuffer]->Reset();
-      m_commandList->Reset(m_commandAllocators[m_currentBackBuffer].Get(), nullptr);
-      static_cast<D3D12DeviceContext*>(T8DeviceContext)->m_commandList = m_commandList;
+      cmdList->Reset(m_commandAllocators[m_currentBackBuffer].Get(), nullptr);
+      static_cast<D3D12DeviceContext*>(T8DeviceContext)->m_commandList = cmdList;
       ID3D12DescriptorHeap* heaps[] = {
         m_heaps[D3D12Heap::CBV_SRV_UAV_VISIBLE].GetHeap(),
         m_heaps[D3D12Heap::SAMPLER].GetHeap()
       };
-      m_commandList->SetDescriptorHeaps(2, heaps);
+      cmdList->SetDescriptorHeaps(2, heaps);
     }
 
     m_cbRingOffset = 0;
@@ -895,16 +897,16 @@ namespace t800 {
       b.Transition.StateBefore = D3D12_RESOURCE_STATE_PRESENT;
       b.Transition.StateAfter = D3D12_RESOURCE_STATE_RENDER_TARGET;
       b.Transition.Subresource = D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES;
-      m_commandList->ResourceBarrier(1, &b);
+      m_commandLists[m_currentBackBuffer]->ResourceBarrier(1, &b);
     }
 
     if (CurrentRT < 0) {
-      m_commandList->OMSetRenderTargets(1, &m_backBufferRTVs[m_currentBackBuffer], FALSE, &m_depthDSV);
-      m_commandList->RSSetViewports(1, &m_viewport);
-      m_commandList->RSSetScissorRects(1, &m_scissorRect);
+      m_commandLists[m_currentBackBuffer]->OMSetRenderTargets(1, &m_backBufferRTVs[m_currentBackBuffer], FALSE, &m_depthDSV);
+      m_commandLists[m_currentBackBuffer]->RSSetViewports(1, &m_viewport);
+      m_commandLists[m_currentBackBuffer]->RSSetScissorRects(1, &m_scissorRect);
       const float cc[4] = { 0.9f, 0.9f, 0.9f, 1.0f };
-      m_commandList->ClearRenderTargetView(m_backBufferRTVs[m_currentBackBuffer], cc, 0, nullptr);
-      m_commandList->ClearDepthStencilView(m_depthDSV, D3D12_CLEAR_FLAG_DEPTH, 1.0f, 0, 0, nullptr);
+      m_commandLists[m_currentBackBuffer]->ClearRenderTargetView(m_backBufferRTVs[m_currentBackBuffer], cc, 0, nullptr);
+      m_commandLists[m_currentBackBuffer]->ClearDepthStencilView(m_depthDSV, D3D12_CLEAR_FLAG_DEPTH, 1.0f, 0, 0, nullptr);
     }
   }
 
@@ -932,9 +934,9 @@ namespace t800 {
       b.Transition.StateBefore = D3D12_RESOURCE_STATE_RENDER_TARGET;
       b.Transition.StateAfter = D3D12_RESOURCE_STATE_PRESENT;
       b.Transition.Subresource = D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES;
-      m_commandList->ResourceBarrier(1, &b);
-      m_commandList->Close();
-      ID3D12CommandList* lists[] = { m_commandList.Get() };
+      m_commandLists[m_currentBackBuffer]->ResourceBarrier(1, &b);
+      m_commandLists[m_currentBackBuffer]->Close();
+      ID3D12CommandList* lists[] = { m_commandLists[m_currentBackBuffer].Get() };
       m_commandQueue->ExecuteCommandLists(1, lists);
     }
 
@@ -983,7 +985,7 @@ namespace t800 {
           b.Transition.StateBefore = rt->vColorStates[i];
           b.Transition.StateAfter = D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE;
           b.Transition.Subresource = D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES;
-          m_commandList->ResourceBarrier(1, &b);
+          m_commandLists[m_currentBackBuffer]->ResourceBarrier(1, &b);
           rt->vColorStates[i] = D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE;
         }
       }
@@ -994,13 +996,13 @@ namespace t800 {
         b.Transition.StateBefore = D3D12_RESOURCE_STATE_DEPTH_WRITE;
         b.Transition.StateAfter = D3D12_RESOURCE_STATE_DEPTH_READ | D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE;
         b.Transition.Subresource = D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES;
-        m_commandList->ResourceBarrier(1, &b);
+        m_commandLists[m_currentBackBuffer]->ResourceBarrier(1, &b);
         rt->depthState = D3D12_RESOURCE_STATE_DEPTH_READ | D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE;
       }
     }
-    m_commandList->OMSetRenderTargets(1, &m_backBufferRTVs[m_currentBackBuffer], FALSE, &m_depthDSV);
-    m_commandList->RSSetViewports(1, &m_viewport);
-    m_commandList->RSSetScissorRects(1, &m_scissorRect);
+    m_commandLists[m_currentBackBuffer]->OMSetRenderTargets(1, &m_backBufferRTVs[m_currentBackBuffer], FALSE, &m_depthDSV);
+    m_commandLists[m_currentBackBuffer]->RSSetViewports(1, &m_viewport);
+    m_commandLists[m_currentBackBuffer]->RSSetScissorRects(1, &m_scissorRect);
     CurrentRT = -1;
   }
 
@@ -1145,8 +1147,8 @@ namespace t800 {
   void D3D12Driver::SaveScreenshot(std::string path) {
     // The current frame's command list is still open. Close and execute it first,
     // then do the readback, then reopen for any subsequent rendering.
-    m_commandList->Close();
-    ID3D12CommandList* lists[] = { m_commandList.Get() };
+    m_commandLists[m_currentBackBuffer]->Close();
+    ID3D12CommandList* lists[] = { m_commandLists[m_currentBackBuffer].Get() };
     m_commandQueue->ExecuteCommandLists(1, lists);
     WaitForGPU();
 
@@ -1156,18 +1158,18 @@ namespace t800 {
 
     // Reopen the command list for any subsequent work in this frame
     m_commandAllocators[m_currentBackBuffer]->Reset();
-    m_commandList->Reset(m_commandAllocators[m_currentBackBuffer].Get(), nullptr);
+    m_commandLists[m_currentBackBuffer]->Reset(m_commandAllocators[m_currentBackBuffer].Get(), nullptr);
     ID3D12DescriptorHeap* heaps[] = {
       m_heaps[D3D12Heap::CBV_SRV_UAV_VISIBLE].GetHeap(),
       m_heaps[D3D12Heap::SAMPLER].GetHeap()
     };
-    m_commandList->SetDescriptorHeaps(2, heaps);
+    m_commandLists[m_currentBackBuffer]->SetDescriptorHeaps(2, heaps);
 
     // Rebind back buffer render targets, viewport, and scissor
     // (OM state is lost after command list reset)
-    m_commandList->OMSetRenderTargets(1, &m_backBufferRTVs[m_currentBackBuffer], FALSE, &m_depthDSV);
-    m_commandList->RSSetViewports(1, &m_viewport);
-    m_commandList->RSSetScissorRects(1, &m_scissorRect);
+    m_commandLists[m_currentBackBuffer]->OMSetRenderTargets(1, &m_backBufferRTVs[m_currentBackBuffer], FALSE, &m_depthDSV);
+    m_commandLists[m_currentBackBuffer]->RSSetViewports(1, &m_viewport);
+    m_commandLists[m_currentBackBuffer]->RSSetScissorRects(1, &m_scissorRect);
   }
 
   void D3D12Driver::SaveRTToFile(int rtID, int attachment, std::string path) {
@@ -1190,9 +1192,9 @@ namespace t800 {
   void D3D12Driver::BindBackBufferNoDSV() {
     T8_LOG_TRACE("[D3D12] BindBackBufferNoDSV: bb=%u viewport=%.0fx%.0f", m_currentBackBuffer, m_viewport.Width, m_viewport.Height);
     // Pass the DSV even for depth-disabled draws — D3D12 is okay with an unused DSV bound
-    m_commandList->OMSetRenderTargets(1, &m_backBufferRTVs[m_currentBackBuffer], FALSE, &m_depthDSV);
-    m_commandList->RSSetViewports(1, &m_viewport);
-    m_commandList->RSSetScissorRects(1, &m_scissorRect);
+    m_commandLists[m_currentBackBuffer]->OMSetRenderTargets(1, &m_backBufferRTVs[m_currentBackBuffer], FALSE, &m_depthDSV);
+    m_commandLists[m_currentBackBuffer]->RSSetViewports(1, &m_viewport);
+    m_commandLists[m_currentBackBuffer]->RSSetScissorRects(1, &m_scissorRect);
   }
 
   // ══════════════════════════════════════════════════════

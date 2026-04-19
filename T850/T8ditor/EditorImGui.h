@@ -7,14 +7,15 @@
 * NewFrame / RenderDrawData calls that EditorApp hooks
 * into its draw loop.
 *
-* Also owns the top-level menu bar and any modal dialogs
-* (file-open, file-save, import).
+* Also owns the top-level menu bar, tool panels (hierarchy,
+* inspector, console), and modal dialogs.
 *********************************************************/
 
 #ifndef T8DITOR_EDITORIMGUI_H
 #define T8DITOR_EDITORIMGUI_H
 
 #include <string>
+#include <utils/xMaths.h>
 
 struct SDL_Window;
 
@@ -39,8 +40,32 @@ namespace t8ditor {
     bool wantsExit     = false;   // File > Exit
   };
 
+  // Persistent panel visibility — pass references from EditorApp.
+  struct PanelVisibility {
+    bool showHierarchy  = true;
+    bool showInspector  = true;
+    bool showConsole    = true;
+    bool showWireframe  = false;
+  };
+
   // Draw the main menu bar. Returns actions triggered this frame.
-  MenuAction ImGuiDrawMenuBar();
+  // `panels` is read/written for the View menu checkboxes.
+  MenuAction ImGuiDrawMenuBar(PanelVisibility& panels);
+
+  // ── Panels ─────────────────────────────────────────
+  void ImGuiDrawHierarchyPanel(const char* meshName, bool hasMesh);
+
+  // Inspector panel: T/R/S sliders for the selection.
+  // `eulerDeg` is in degrees for display; caller converts to/from radians.
+  void ImGuiDrawInspectorPanel(XVECTOR3& pos, XVECTOR3& eulerDeg,
+                               XVECTOR3& scale, bool hasMesh);
+
+  // Console panel: scrollable log viewer.
+  void ImGuiDrawConsolePanel();
+
+  // ── Log capture ────────────────────────────────────
+  void ImGuiLogCaptureStart();
+  void ImGuiLogCaptureStop();
 
   // ── Mouse wheel (captured via SDL event watcher) ────
   // Returns accumulated wheel delta since last call, then resets.

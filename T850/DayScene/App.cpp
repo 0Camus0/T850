@@ -55,8 +55,10 @@ bool   g_d3d12Debug  = false;       // --d3d12debug: enable D3D12 debug layer
 bool   g_testGui    = false;        // --testGui: minimal GUI rendering test (skip scene)
 bool   g_createAtlas = false;       // --createAtlas: generate GUI texture atlas and exit
 int    g_atlasMaxSprite = 256;      // --atlasMaxSprite: max sprite dimension in atlas
+#ifdef T8_ENABLE_PROFILER
 bool   g_profile = false;           // --profile: enable GPU+CPU profiling
 int    g_profileFrames = 300;       // --profileFrames: how many frames to profile
+#endif
 
 t800::AppBase		  *pApp = 0;
 t800::RootFramework *pFrameWork = 0;
@@ -169,12 +171,14 @@ int main(int arg,char ** args){
     else if (a == "--atlasMaxSprite" && i + 1 < arg) {
       g_atlasMaxSprite = std::stoi(args[++i]);
     }
+#ifdef T8_ENABLE_PROFILER
     else if (a == "--profile") {
       g_profile = true;
     }
     else if (a == "--profileFrames" && i + 1 < arg) {
       g_profileFrames = std::stoi(args[++i]);
     }
+#endif
   }
 
   if (g_fullscreen)

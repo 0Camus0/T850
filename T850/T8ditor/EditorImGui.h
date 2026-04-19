@@ -58,7 +58,9 @@ namespace t8ditor {
   int ImGuiDrawToolbar(int currentMode);
 
   // ── Panels ─────────────────────────────────────────
-  void ImGuiDrawHierarchyPanel(const char* meshName, bool hasMesh);
+  // Hierarchy panel: lists scene objects. Returns true if user clicked
+  // a mesh entry (sets `selected` accordingly).
+  bool ImGuiDrawHierarchyPanel(const char* meshName, bool hasMesh, bool& selected);
 
   // Inspector panel: T/R/S sliders for the selection.
   // `eulerDeg` is in degrees for display; caller converts to/from radians.

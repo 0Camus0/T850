@@ -72,6 +72,7 @@ namespace t8ditor {
     void ProcessSelectionInput();
     void ImportMesh(const std::string& path);
     void CheckResize();
+    void HandleMousePick();
 
     Timer m_dtTimer;
     float m_dtSecs   = 0.0f;
@@ -99,6 +100,9 @@ namespace t8ditor {
     // Resize tracking — poll SDL window size each frame
     int  m_lastW = 0;
     int  m_lastH = 0;
+
+    // Selection — currently single-object; -1 = nothing selected
+    bool m_meshSelected = false;
   };
 
 } // namespace t8ditor

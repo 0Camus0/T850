@@ -20,6 +20,7 @@
 #include <utils/Log.h>
 #include <debug/T8_Profiler.h>
 #include <iostream>
+#include <fstream>
 #include <string>
 #include <cassert>
 #include <cstring>
@@ -1999,7 +2000,116 @@ namespace t800 {
   }
 
   void VulkanDriver::SaveScreenshot(std::string path) {
-    T8_LOG_INFO("[Vulkan] TODO: SaveScreenshot('%s') — not implemented", path.c_str());
+    // End the current render pass if active
+    VkCommandBuffer cmd = m_commandBuffers[m_currentFrame];
+    if (m_renderPassActive) {
+      vkCmdEndRenderPass(cmd);
+      m_renderPassActive = false;
+    }
+
+    // Close and submit current command buffer, wait for GPU
+    vkEndCommandBuffer(cmd);
+    VkSubmitInfo submitInfo = { VK_STRUCTURE_TYPE_SUBMIT_INFO };
+    submitInfo.commandBufferCount = 1;
+    submitInfo.pCommandBuffers = &cmd;
+    vkQueueSubmit(m_graphicsQueue, 1, &submitInfo, VK_NULL_HANDLE);
+    vkQueueWaitIdle(m_graphicsQueue);
+
+    // Get swap chain image
+    VkImage srcImage = m_swapChainImages[m_imageIndex];
+    uint32_t w = (uint32_t)width;
+    uint32_t h = (uint32_t)height;
+
+    // Create staging buffer for readback
+    VkDeviceSize bufSize = w * h * 4;
+    VkBufferCreateInfo bufInfo = { VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO };
+    bufInfo.size = bufSize;
+    bufInfo.usage = VK_BUFFER_USAGE_TRANSFER_DST_BIT;
+    VmaAllocationCreateInfo allocCI = {};
+    allocCI.usage = VMA_MEMORY_USAGE_AUTO;
+    allocCI.flags = VMA_ALLOCATION_CREATE_HOST_ACCESS_RANDOM_BIT | VMA_ALLOCATION_CREATE_MAPPED_BIT;
+    VkBuffer stagingBuf;
+    VmaAllocation stagingAlloc;
+    VmaAllocationInfo stagingAllocInfo;
+    vmaCreateBuffer(m_allocator, &bufInfo, &allocCI, &stagingBuf, &stagingAlloc, &stagingAllocInfo);
+
+    // Record copy command
+    VkCommandBuffer copyCmd;
+    VkCommandBufferAllocateInfo cmdAlloc = { VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO };
+    cmdAlloc.commandPool = m_transientCommandPool;
+    cmdAlloc.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
+    cmdAlloc.commandBufferCount = 1;
+    vkAllocateCommandBuffers(m_device, &cmdAlloc, &copyCmd);
+
+    VkCommandBufferBeginInfo beginInfo = { VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO };
+    beginInfo.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
+    vkBeginCommandBuffer(copyCmd, &beginInfo);
+
+    // Transition swapchain image to TRANSFER_SRC
+    TransitionImageLayout(copyCmd, srcImage,
+      VK_IMAGE_LAYOUT_PRESENT_SRC_KHR, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+      VK_IMAGE_ASPECT_COLOR_BIT);
+
+    VkBufferImageCopy region = {};
+    region.imageSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+    region.imageSubresource.layerCount = 1;
+    region.imageExtent = { w, h, 1 };
+    vkCmdCopyImageToBuffer(copyCmd, srcImage, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+                           stagingBuf, 1, &region);
+
+    // Transition back to PRESENT_SRC
+    TransitionImageLayout(copyCmd, srcImage,
+      VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, VK_IMAGE_LAYOUT_PRESENT_SRC_KHR,
+      VK_IMAGE_ASPECT_COLOR_BIT);
+
+    vkEndCommandBuffer(copyCmd);
+    VkSubmitInfo copySubmit = { VK_STRUCTURE_TYPE_SUBMIT_INFO };
+    copySubmit.commandBufferCount = 1;
+    copySubmit.pCommandBuffers = &copyCmd;
+    vkQueueSubmit(m_graphicsQueue, 1, &copySubmit, VK_NULL_HANDLE);
+    vkQueueWaitIdle(m_graphicsQueue);
+
+    // Read pixels and write PPM
+    const uint8_t* pixels = (const uint8_t*)stagingAllocInfo.pMappedData;
+    std::vector<uint8_t> rgb(w * h * 3);
+    for (uint32_t i = 0; i < w * h; i++) {
+      rgb[i * 3 + 0] = pixels[i * 4 + 0]; // R (or B if BGRA)
+      rgb[i * 3 + 1] = pixels[i * 4 + 1]; // G
+      rgb[i * 3 + 2] = pixels[i * 4 + 2]; // B (or R if BGRA)
+    }
+
+    // Check if format is BGRA and swap
+    if (m_swapChainFormat == VK_FORMAT_B8G8R8A8_UNORM || m_swapChainFormat == VK_FORMAT_B8G8R8A8_SRGB) {
+      for (uint32_t i = 0; i < w * h; i++) {
+        std::swap(rgb[i * 3 + 0], rgb[i * 3 + 2]);
+      }
+    }
+
+    std::ofstream out(path + ".ppm", std::ios::binary);
+    out << "P6\n" << w << " " << h << "\n255\n";
+    out.write((const char*)rgb.data(), rgb.size());
+    T8_LOG_INFO("[Vulkan] Saved %s.ppm (%ux%u)", path.c_str(), w, h);
+
+    vkFreeCommandBuffers(m_device, m_transientCommandPool, 1, &copyCmd);
+    vmaDestroyBuffer(m_allocator, stagingBuf, stagingAlloc);
+
+    // Reopen command buffer for continued rendering
+    vkResetCommandBuffer(m_commandBuffers[m_currentFrame], 0);
+    vkBeginCommandBuffer(m_commandBuffers[m_currentFrame], &beginInfo);
+
+    // Restart backbuffer render pass
+    VkRenderPassBeginInfo rpBegin = { VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO };
+    rpBegin.renderPass = m_backbufferRenderPass;
+    rpBegin.framebuffer = m_backbufferFramebuffers[m_imageIndex];
+    rpBegin.renderArea.extent = { (uint32_t)width, (uint32_t)height };
+    VkClearValue clears[2] = {};
+    clears[0].color = {{0.9f, 0.9f, 0.9f, 1.0f}};
+    clears[1].depthStencil = {1.0f, 0};
+    rpBegin.clearValueCount = 2;
+    rpBegin.pClearValues = clears;
+    vkCmdBeginRenderPass(m_commandBuffers[m_currentFrame], &rpBegin, VK_SUBPASS_CONTENTS_INLINE);
+    m_renderPassActive = true;
+    m_activeRenderPass = m_backbufferRenderPass;
   }
 
   void VulkanDriver::SaveRTToFile(int rtID, int attachment, std::string path) {

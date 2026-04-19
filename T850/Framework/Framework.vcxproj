@@ -65,6 +65,7 @@
     <ClInclude Include="include\utils\xDefs.h" />
     <ClInclude Include="include\utils\xMaths.h" />
     <ClInclude Include="include\video\BaseDriver.h" />
+    <ClInclude Include="include\video\WindowHandle.h" />
     <ClInclude Include="include\video\GLDriver.h" />
     <ClInclude Include="include\video\GLRT.h" />
     <ClInclude Include="include\video\GLShader.h" />

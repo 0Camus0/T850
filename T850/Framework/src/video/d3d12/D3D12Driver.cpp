@@ -644,6 +644,17 @@ namespace t800 {
   // ══════════════════════════════════════════════════════
 
   void D3D12Driver::SetWindow(void* window) { m_hwnd = GetActiveWindow(); }
+
+  void D3D12Driver::SetWindowHandle(const WindowHandle& handle) {
+    // Editor host path: honor an explicit HWND (e.g. an editor child window
+    // hosting the viewport). Falls back to GetActiveWindow() so the legacy
+    // SDL-driven flow keeps behaving exactly as before.
+    if (handle.kind == WindowHandle::WIN32_HWND && handle.nativeHandle) {
+      m_hwnd = reinterpret_cast<HWND>(handle.nativeHandle);
+    } else {
+      m_hwnd = GetActiveWindow();
+    }
+  }
   void D3D12Driver::SetDimensions(int w, int h) { width = w; height = h; }
 
   void D3D12Driver::CreateDevice() {

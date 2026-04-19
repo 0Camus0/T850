@@ -356,6 +356,7 @@ namespace t800 {
 
     // Default backbuffer render pass & framebuffers
     VkRenderPass    m_backbufferRenderPass = VK_NULL_HANDLE;
+    VkRenderPass    m_backbufferRenderPassLoad = VK_NULL_HANDLE;  // LOAD_OP_LOAD variant for restarts
     VkFramebuffer   m_backbufferFramebuffers[kBackBufferCount] = {};
 
     // Command infrastructure — one buffer + allocator per frame in flight

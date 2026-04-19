@@ -291,8 +291,28 @@ namespace t800 {
     // Rebind back buffer without depth (for GUI/overlay draws)
     void BindBackBufferNoDepth();
 
+    // Descriptor set allocation from the per-frame pool
+    VkDescriptorSet AllocateDescriptorSet(VkDescriptorSetLayout layout);
+
+    // Write pending CB + textures into a descriptor set and bind it
+    void BindPendingDescriptors(VkCommandBuffer cmd, VulkanShader* shader);
+
+    // Currently active render pass (backbuffer or RT)
+    VkRenderPass GetCurrentRenderPass() const { return m_activeRenderPass; }
+    void SetActiveRenderPass(VkRenderPass rp) { m_activeRenderPass = rp; }
+
+    // Pending texture/CB bindings set by Texture::Set / CB::Set
+    struct PendingTextureBinding {
+      VkImageView imageView = VK_NULL_HANDLE;
+      VkSampler   sampler   = VK_NULL_HANDLE;
+    };
+    PendingTextureBinding m_pendingTextures[8] = {};
+    VkDescriptorBufferInfo m_pendingCB = {};
+    bool m_cbDirty = false;
+
   private:
     friend class VulkanShader;
+    friend class VulkanDeviceContext;
 
     void CreateInstance();
     void CreateDevice();
@@ -376,6 +396,16 @@ namespace t800 {
     // Last-bound state for redundancy elimination
     VkPipeline      m_lastPipeline = VK_NULL_HANDLE;
     VkPipelineLayout m_lastPipelineLayout = VK_NULL_HANDLE;
+
+    // Active render pass (set when beginning backbuffer or RT render passes)
+    VkRenderPass    m_activeRenderPass = VK_NULL_HANDLE;
+
+    // Dummy 1x1 texture for unbound descriptor slots
+    VkImage         m_dummyImage = VK_NULL_HANDLE;
+    VmaAllocation   m_dummyAllocation = VK_NULL_HANDLE;
+    VkImageView     m_dummyImageView = VK_NULL_HANDLE;
+    VkSampler       m_dummySampler = VK_NULL_HANDLE;
+    void            CreateDummyTexture();
 
     // Pipeline cache: lazy-created per (shader × blend × depth × cull × attachment config)
     std::unordered_map<VulkanPipelineKey, VkPipeline, VulkanPipelineKeyHash> m_pipelineCache;

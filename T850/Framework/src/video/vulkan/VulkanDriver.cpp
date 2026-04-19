@@ -1140,6 +1140,36 @@ namespace t800 {
                 vs_name.c_str(), fs_name.c_str(),
                 bindings.size(), cbvBinding,
                 m_vertexAttributes.size(), vertexStride);
+
+#ifdef T8_DUMP_SHADER_REFLECTION
+    T8_LOG_INFO("[VK_REFL] === key=0x%08X VS='%s' FS='%s' ===", key.bits, vs_name.c_str(), fs_name.c_str());
+    T8_LOG_INFO("[VK_REFL] VS Inputs (%zu):", vsRefl.stageInputs.size());
+    for (size_t idx = 0; idx < vsRefl.stageInputs.size(); idx++) {
+      auto& inp = vsRefl.stageInputs[idx];
+      T8_LOG_INFO("[VK_REFL]   [%zu] '%s'  location=%u  components=%u",
+                  idx, inp.name.c_str(), inp.location, inp.vecSize);
+    }
+    T8_LOG_INFO("[VK_REFL] VS stride=%d", vertexStride);
+    T8_LOG_INFO("[VK_REFL] VS UBOs (%zu):", vsRefl.uniformBuffers.size());
+    for (auto& ub : vsRefl.uniformBuffers)
+      T8_LOG_INFO("[VK_REFL]   '%s' set=%u binding=%u", ub.name.c_str(), ub.set, ub.binding);
+    T8_LOG_INFO("[VK_REFL] VS Textures (%zu):", vsRefl.sampledImages.size());
+    for (auto& si : vsRefl.sampledImages)
+      T8_LOG_INFO("[VK_REFL]   '%s' set=%u binding=%u", si.name.c_str(), si.set, si.binding);
+    T8_LOG_INFO("[VK_REFL] FS UBOs (%zu):", fsRefl.uniformBuffers.size());
+    for (auto& ub : fsRefl.uniformBuffers)
+      T8_LOG_INFO("[VK_REFL]   '%s' set=%u binding=%u", ub.name.c_str(), ub.set, ub.binding);
+    T8_LOG_INFO("[VK_REFL] FS Textures (%zu):", fsRefl.sampledImages.size());
+    for (auto& si : fsRefl.sampledImages)
+      T8_LOG_INFO("[VK_REFL]   '%s' set=%u binding=%u", si.name.c_str(), si.set, si.binding);
+    T8_LOG_INFO("[VK_REFL] Descriptor layout bindings:");
+    for (auto& b : bindings)
+      T8_LOG_INFO("[VK_REFL]   binding=%u type=%d stages=0x%X",
+                  b.binding, b.descriptorType, b.stageFlags);
+    T8_LOG_INFO("[VK_REFL] srvBindings: [%d,%d,%d,%d,%d,%d,%d,%d]",
+                srvBindings[0], srvBindings[1], srvBindings[2], srvBindings[3],
+                srvBindings[4], srvBindings[5], srvBindings[6], srvBindings[7]);
+#endif
     return true;
   }
 
@@ -1366,8 +1396,26 @@ namespace t800 {
     for (uint32_t i = 0; i < sdlExtCount; i++)
       extensions.push_back(sdlExts[i]);
 
-#ifdef _DEBUG
-    extensions.push_back(VK_EXT_DEBUG_UTILS_EXTENSION_NAME);
+#ifdef T8_VULKAN_VALIDATION
+    // Check if validation layer is available
+    uint32_t layerCount = 0;
+    vkEnumerateInstanceLayerProperties(&layerCount, nullptr);
+    std::vector<VkLayerProperties> availableLayers(layerCount);
+    vkEnumerateInstanceLayerProperties(&layerCount, availableLayers.data());
+    bool validationAvailable = false;
+    for (auto& lp : availableLayers) {
+      if (strcmp(lp.layerName, "VK_LAYER_KHRONOS_validation") == 0) {
+        validationAvailable = true;
+        break;
+      }
+    }
+    const char* validationLayers[] = { "VK_LAYER_KHRONOS_validation" };
+    if (validationAvailable) {
+      extensions.push_back(VK_EXT_DEBUG_UTILS_EXTENSION_NAME);
+      T8_LOG_INFO("[Vulkan] Validation layer available — enabling");
+    } else {
+      T8_LOG_INFO("[Vulkan] Validation layer NOT available — install Vulkan SDK for validation");
+    }
 #endif
 
     VkInstanceCreateInfo ci = { VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO };
@@ -1375,10 +1423,11 @@ namespace t800 {
     ci.enabledExtensionCount = (uint32_t)extensions.size();
     ci.ppEnabledExtensionNames = extensions.data();
 
-#ifdef _DEBUG
-    const char* validationLayers[] = { "VK_LAYER_KHRONOS_validation" };
-    ci.enabledLayerCount = 1;
-    ci.ppEnabledLayerNames = validationLayers;
+#ifdef T8_VULKAN_VALIDATION
+    if (validationAvailable) {
+      ci.enabledLayerCount = 1;
+      ci.ppEnabledLayerNames = validationLayers;
+    }
 #endif
 
     VkResult res = vkCreateInstance(&ci, nullptr, &m_instance);
@@ -1742,6 +1791,34 @@ namespace t800 {
 
     CreateInstance();
 
+#ifdef T8_VULKAN_VALIDATION
+    // Setup debug messenger for validation layer output
+    {
+      auto createFunc = (PFN_vkCreateDebugUtilsMessengerEXT)
+          vkGetInstanceProcAddr(m_instance, "vkCreateDebugUtilsMessengerEXT");
+      if (createFunc) {
+        VkDebugUtilsMessengerCreateInfoEXT dbgCI = { VK_STRUCTURE_TYPE_DEBUG_UTILS_MESSENGER_CREATE_INFO_EXT };
+        dbgCI.messageSeverity = VK_DEBUG_UTILS_MESSAGE_SEVERITY_WARNING_BIT_EXT |
+                                 VK_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT;
+        dbgCI.messageType = VK_DEBUG_UTILS_MESSAGE_TYPE_GENERAL_BIT_EXT |
+                             VK_DEBUG_UTILS_MESSAGE_TYPE_VALIDATION_BIT_EXT |
+                             VK_DEBUG_UTILS_MESSAGE_TYPE_PERFORMANCE_BIT_EXT;
+        dbgCI.pfnUserCallback = [](VkDebugUtilsMessageSeverityFlagBitsEXT severity,
+                                    VkDebugUtilsMessageTypeFlagsEXT,
+                                    const VkDebugUtilsMessengerCallbackDataEXT* data,
+                                    void*) -> VkBool32 {
+          if (severity & VK_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT)
+            T8_LOG_ERROR("[VK_VALIDATION] %s", data->pMessage);
+          else
+            T8_LOG_INFO("[VK_VALIDATION] %s", data->pMessage);
+          return VK_FALSE;
+        };
+        createFunc(m_instance, &dbgCI, nullptr, &m_debugMessenger);
+        T8_LOG_INFO("[Vulkan] Validation layers enabled with debug messenger");
+      }
+    }
+#endif
+
     // Create surface via SDL — m_hwnd holds the SDL_Window* passed through SetWindow()
     if (m_hwnd && m_instance) {
       SDL_Window* sdlWin = (SDL_Window*)m_hwnd;
@@ -1869,7 +1946,7 @@ namespace t800 {
 
     if (m_device) { vkDestroyDevice(m_device, nullptr); m_device = VK_NULL_HANDLE; }
 
-#ifdef _DEBUG
+#ifdef T8_VULKAN_VALIDATION
     if (m_debugMessenger) {
       auto func = (PFN_vkDestroyDebugUtilsMessengerEXT)vkGetInstanceProcAddr(m_instance, "vkDestroyDebugUtilsMessengerEXT");
       if (func) func(m_instance, m_debugMessenger, nullptr);

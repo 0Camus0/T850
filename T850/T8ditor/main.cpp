@@ -30,6 +30,11 @@
 
 #include "EditorApp.h"
 
+namespace t8ditor {
+  // Defined in EditorApp.cpp.
+  void SetStartupMeshPath(const std::string& p);
+}
+
 static t800::AppBase*       g_pApp       = nullptr;
 static t800::RootFramework* g_pFramework = nullptr;
 
@@ -46,6 +51,7 @@ int main(int argc, char** argv) {
   // DayScene's flags so existing dev workflows transfer.
   int   logLevel = 3;
   std::string logFile;
+  std::string meshPath;
 
   for (int i = 1; i < argc; ++i) {
     std::string a = argv[i];
@@ -57,6 +63,7 @@ int main(int argc, char** argv) {
     }
     else if (a == "--width"  && i + 1 < argc) desc.width  = std::stoi(argv[++i]);
     else if (a == "--height" && i + 1 < argc) desc.height = std::stoi(argv[++i]);
+    else if (a == "--mesh"   && i + 1 < argc) meshPath = argv[++i];
     else if (a == "--logFile" && i + 1 < argc) logFile = argv[++i];
     else if (a == "--logLevel" && i + 1 < argc) {
       std::string v = argv[++i];
@@ -87,6 +94,15 @@ int main(int argc, char** argv) {
     logFile.empty() ? nullptr : logFile.c_str()
   );
   t800::Log::SetSessionTag("t8ditor");
+
+  // Default to a sample model if the user didn't pick one — Models/SkyBox.X
+  // ships with the repo and is loaded by DayScene, so it's known-good.
+  if (meshPath.empty()) {
+    if (std::filesystem::exists("Models/SkyBox.X")) {
+      meshPath = "Models/SkyBox.X";
+    }
+  }
+  t8ditor::SetStartupMeshPath(meshPath);
 
   g_pApp = new t8ditor::EditorApp();
 

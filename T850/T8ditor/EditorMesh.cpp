@@ -114,8 +114,11 @@ XMATRIX44 EditorMesh::BuildWorld() const {
   XMatRotationY(Ry, m_euler.y);
   XMatRotationZ(Rz, m_euler.z);
   XMatTranslation(T, m_position.x, m_position.y, m_position.z);
-  // T * R * S — applied right-to-left to local-space points.
-  M = S * Rz * Ry * Rx * T;
+  // The xMaths system uses row-vector / row-major matrices (D3DX-style):
+  // a point row `v` is transformed as `v * M`, so reading the chain left to
+  // right gives the order in which transforms are applied. Match
+  // PrimitiveInst::Update (Scale, RotationX, RotationY, RotationZ, Position).
+  M = S * Rx * Ry * Rz * T;
   return M;
 }
 

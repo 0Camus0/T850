@@ -107,10 +107,11 @@ void EditorApp::OnInput() {
 void EditorApp::ProcessSelectionInput() {
   if (!m_mesh.IsLoaded()) return;
 
-  // Step rate scales gently with the camera distance so manipulation
-  // feels consistent across zoom levels.
-  const float dist = 1.0f; // could be derived from camera; fixed for now
-  const float linRate = 5.0f * m_dtSecs * dist;
+  // Step rate. Linear motion is in world units/sec; rotation in rad/sec;
+  // scale step is multiplicative per second. Tied directly to dt rather
+  // than camera distance because the user manipulates with the keyboard
+  // and an absolute rate is more predictable than a distance-relative one.
+  const float linRate = 5.0f * m_dtSecs;
   const float rotRate = 1.5f * m_dtSecs;
   const float sclStep = 1.0f + 0.5f * m_dtSecs; // multiplicative
 

@@ -20,22 +20,31 @@ We have a third executable, **`T8ditor.exe`**, that:
 
 1. Opens its own window through the existing `Win32Framework` /
    `LinuxFramework` event loop (no fork of the framework).
-2. Links `Framework.lib` exactly like `DayScene.exe` does.
-3. Renders a recognisable **"Blender / 3dsMax empty start"** viewport:
+2. Links `Framework.lib` + `imgui.lib` (vcpkg, static).
+3. Renders a **3ds Max / Blender-style viewport** with:
    - XZ reference grid (red X axis, blue Z axis, neutral minor lines).
-   - Three-axis transform gizmo on the active selection
-     (translate / rotate / scale, RGB-coloured per axis, mode toggled
+   - Three-axis transform gizmo (translate / rotate / scale, toggled
      with `W` / `E` / `R`).
-   - Optional wireframe display of an `.x` mesh loaded from the CLI.
-4. Is driven by an **orbit camera** (middle-drag = orbit, Shift+middle
-   = pan, arrow keys orbit when no mouse, `+` / `-` zoom, `F` frame
-   selection).
-5. Lets the user **manipulate the loaded mesh** with the keyboard
-   (`J`/`L` X, `U`/`O` Y, `I`/`K` Z, `[`/`]` rotate Y, `;` / `'` scale).
+   - **Lit/textured mesh display** via Framework's full
+     `PrimitiveManager` → `PrimitiveInst` → `RenderMesh` pipeline.
+     Materials, diffuse maps, normal maps, specular maps, metallic maps
+     are all loaded automatically from `.x` files.
+   - A **camera-attached directional light** (headlamp) that follows
+     the camera eye → target direction, mimicking 3ds Max viewport
+     shading.
+4. Has a **Dear ImGui menu bar** (File > Import .x / Load Scene /
+   Save Scene / Exit; View; Help).
+5. **File > Import .x** opens a native Windows `GetOpenFileNameW`
+   dialog filtered to `.x` files.
+6. Is driven by an **orbit camera**: middle-drag = orbit,
+   Shift+middle = pan, **mouse wheel = zoom**, `+`/`-` = zoom,
+   `F` = frame selection, **`Z` = reset to default position**.
+7. Lets the user **manipulate the loaded mesh** with the keyboard
+   (`J`/`L` X, `U`/`O` Y, `I`/`K` Z, `[`/`]` rotate Y, `;`/`'` scale).
 
-What we **do not** yet have: ImGui panels, mouse-drag interactive
-gizmos, mouse picking, mouse-wheel zoom, PBR-lit mesh display, or a
-scene-graph / multi-object selection model. Those are Phase 1c+.
+What we **do not** yet have: ImGui inspector/hierarchy/console panels,
+mouse-drag interactive gizmos, mouse picking, multi-object scenes,
+scene save/load, or ImGuizmo. Those are Phase 1c+ / Phase 2.
 
 ---
 
@@ -62,17 +71,18 @@ T850/
 │   └── DayScene.vcxproj                  # builds DayScene.exe (the runtime)
 │
 └── T8ditor/                              # NEW project (T8ditor.exe)
-    ├── T8ditor.vcxproj                   # links Framework.lib
+    ├── T8ditor.vcxproj                   # links Framework.lib + imgui.lib
     ├── T8ditor.vcxproj.filters
     ├── T8ditor.rc
     ├── CMakeLists.txt                    # globs *.cpp; mirrors DayScene's link list
-    ├── main.cpp                          # entry point + CLI parsing
+    ├── main.cpp                          # entry point + CLI parsing + globals
     ├── EditorApp.{h,cpp}                 # AppBase subclass (host + per-frame loop)
-    ├── EditorCamera.{h,cpp}              # orbit/pan/zoom around Target
+    ├── EditorCamera.{h,cpp}              # orbit/pan/zoom/wheel around Target
+    ├── EditorImGui.{h,cpp}               # ImGui init/shutdown/render + menu bar + file dialog
     ├── EditorLineRenderer.{h,cpp}        # shared shader + CB + draw helper
     ├── EditorGrid.{h,cpp}                # XZ reference grid
     ├── EditorGizmo.{h,cpp}               # translate/rotate/scale visualisation
-    └── EditorMesh.{h,cpp}                # .x file loader → wireframe
+    └── EditorMesh.{h,cpp}                # .x file loader → wireframe overlay
 ```
 
 ---
@@ -97,31 +107,67 @@ T850/
 
 ### 3.2 `T8ditor/EditorApp.{h,cpp}`
 
-`t8ditor::EditorApp : public t800::AppBase`. Owns the four editor
-sub-systems as members:
+`t8ditor::EditorApp : public t800::AppBase`. Owns the editor
+sub-systems and the lit rendering pipeline:
 
 ```cpp
-EditorCamera        m_camera;
-EditorLineRenderer  m_lines;
-EditorGrid          m_grid;
-EditorGizmo         m_gizmo;
-EditorMesh          m_mesh;
+EditorCamera          m_camera;
+EditorLineRenderer    m_lines;
+EditorGrid            m_grid;
+EditorGizmo           m_gizmo;
+EditorMesh            m_mesh;       // wireframe overlay
+SceneProps            m_sceneProps;  // lights + camera for lit rendering
+t800::PrimitiveManager m_primMgr;   // full material/texture pipeline
+t800::PrimitiveInst   m_meshInst;   // lit mesh instance
 ```
 
 Per-frame order in `OnUpdate()` → `OnInput()` → `OnDraw()`:
 
-1. `OnInput()` — `W`/`E`/`R` toggle gizmo mode (single-press semantics
-   via `IManager.PressedOnceKey`). Then `m_camera.Update(dt, IManager)`,
+1. `OnInput()` — `W`/`E`/`R` toggle gizmo mode. `Z` resets camera.
+   Consumes mouse wheel delta from `ImGuiConsumeWheelDelta()`.
+   Then `m_camera.Update(dt, IManager, wheelDelta)`,
    then `ProcessSelectionInput()` (keyboard manipulation of the mesh's
    T/R/S).
-2. `OnDraw()` — `BeginFrame` → `Clear` → grid → mesh wireframe → gizmo
-   (always last so it renders on top) → `SwapBuffers` → `EndFrame`.
+2. `OnDraw()` — `BeginFrame` → `Clear` → update headlamp light
+   direction to follow camera → lit mesh `Draw()` with FORWARD pass
+   → grid → gizmo (always on top) → `ImGuiNewFrame` → menu bar →
+   `ImGuiRender` → `SwapBuffers` → `EndFrame`.
 
 The gizmo is drawn at the **mesh's translation only** (not the full
 TRS), so it doesn't visually inherit the mesh's rotation or scale.
 
 `g_startupMeshPath` is a file-static `std::string` set by
 `SetStartupMeshPath()` (called from `main.cpp`).
+
+`ImportMesh(path)` handles loading through both the lit pipeline
+(`PrimitiveManager::CreateMesh`) and the wireframe overlay
+(`EditorMesh::Load`), then calls `SetSceneProps` so the new
+primitive gets the scene props, and frames the camera.
+
+### 3.2b `T8ditor/EditorImGui.{h,cpp}` — NEW
+
+ImGui integration layer. Handles:
+
+- **Lifecycle:** `ImGuiInit(fw)`, `ImGuiShutdown()`, `ImGuiNewFrame()`,
+  `ImGuiRender()`. Auto-detects the graphics API and initialises the
+  correct backend (D3D11 via `ImGui_ImplDX11_Init`, D3D12 via
+  `ImGui_ImplDX12_Init` with a dedicated SRV heap, OpenGL via
+  `ImGui_ImplOpenGL3_Init`).
+- **SDL event watcher:** `SDL_AddEventWatch` intercepts SDL events for
+  ImGui input without modifying `Win32Framework.cpp`. Also captures
+  `SDL_EVENT_MOUSE_WHEEL` for the editor camera.
+- **Menu bar:** `ImGuiDrawMenuBar()` returns a `MenuAction` struct with
+  booleans for each action (Import .x, Load Scene, Save Scene, Exit).
+- **File dialog:** `OpenFileDialog(filter, title)` wraps Win32
+  `GetOpenFileNameW`, returns UTF-8 path or empty string on cancel.
+- **Mouse wheel:** `ImGuiConsumeWheelDelta()` returns accumulated
+  wheel ticks since last call, then resets.
+
+Key API types for D3D11/D3D12 access:
+- D3D11: `T8Device->GetAPIObject()`, `T8DeviceContext->GetAPIObject()`
+- D3D12: `static_cast<D3D12Device*>(T8Device)->GetNativeDevice()`,
+  `D3D12Driver::GetCmdList()`, `GetCmdQueue()`
+- SDL window: `static_cast<Win32Framework*>(fw)->m_pWindow`
 
 ### 3.3 `T8ditor/EditorCamera.{h,cpp}`
 
@@ -272,9 +318,14 @@ Hard limits / behaviours worth knowing:
 Prereqs (per stored memories):
 
 - VS 2022 + MSBuild.
-- Environment variables `T8VcpkgStatic` and `T8VcpkgDynamic` pointing
-  at vcpkg installed-triplet dirs (referenced by
-  `Framework.vcxproj:459`).
+- vcpkg dependencies installed in `Librerias/vcpkg/`:
+  - `angle` (GLES via ANGLE: `libEGL.dll`, `libGLESv2.dll`)
+  - `zlib` (`zlib1.dll`)
+  - `glew` (GLEW headers + lib)
+  - `imgui[docking-experimental,sdl3-binding,win32-binding,dx11-binding,dx12-binding,opengl3-binding]`
+  - All for both `x64-windows-static` and `x64-windows` triplets.
+  - Bootstrap vcpkg: `cd Librerias/vcpkg && bootstrap-vcpkg.bat`
+  - Install all: see `scripts/` or run the vcpkg commands directly.
 
 Commands:
 
@@ -339,8 +390,9 @@ editor sources.
 | --------------------- | ------------------------------------ |
 | Orbit                 | Middle-drag, or Right-drag, or Arrow keys |
 | Pan                   | Shift + Middle-drag                  |
-| Zoom in / out         | `+` / `-` (`=` also works for `+`)   |
+| Zoom in / out         | Mouse wheel, or `+` / `-`            |
 | Frame selection       | `F`                                  |
+| Reset to default      | `Z`                                  |
 
 ### Gizmo mode
 
@@ -382,30 +434,37 @@ Forking each callsite to add a colour parameter would have churned
 shipped runtime code with no gain for DayScene. Instead we shipped a
 parallel renderer + shader for the editor.
 
-### 6.2 Why bypass `RenderMesh` for `.x` display?
+### 6.2 Lit rendering via `PrimitiveManager` (Phase 1c)
 
-`RenderMesh::Create` walks the material list and compiles a shader
-per `ShaderKey` permutation, expects `SceneProps*` (lights, cameras,
-ambient, exposure, ...) to be wired up, and binds 8 textures per
-subset. None of that is meaningful in an empty editor scene.
+As of Phase 1c, meshes are rendered through the Framework's full
+`PrimitiveManager` → `PrimitiveInst` → `RenderMesh` pipeline. This
+means materials, diffuse/normal/specular/metallic maps, and PBR
+params are loaded automatically from `.x` files. A camera-attached
+directional light (headlamp) provides viewport shading like 3ds Max.
 
-`EditorMesh` does the absolute minimum: positions VB + line-list IB.
-You can recognise the model. Lighting, materials, and PBR display are
-follow-up work — see § 7.
+`EditorMesh` is kept as a **wireframe overlay** source (for a future
+toggle) and to compute the mesh's local-space AABB center for camera
+framing.
 
-### 6.3 Why no ImGui yet?
+**Critical ordering gotcha:** `PrimitiveManager::SetSceneProps()` only
+sets `pScProp` on primitives that exist at the time of the call.
+After `CreateMesh()` adds a new primitive, you **must** call
+`SetSceneProps()` again — otherwise the new `RenderMesh` has
+`pScProp = nullptr` and crashes on the first `Draw()` accessing
+`pScProp->pCameras[0]`.
 
-Phase 1a explicitly deferred the ImGui dependency until the project
-scaffolding was proven on Windows. Phase 1b (this slice) keeps the
-"no new third-party dependency" promise while still delivering a
-useful editor-101 viewport. ImGui + ImGuizmo land in Phase 1c.
+### 6.3 ImGui integration (Phase 1c)
+
+ImGui 1.92.7 (docking branch) is installed via vcpkg with backends
+for SDL3, D3D11, D3D12, and OpenGL3. The SDL event watcher pattern
+(`SDL_AddEventWatch`) lets ImGui process events without modifying
+`Win32Framework.cpp`.
 
 ### 6.4 Why keyboard manipulation of the selection?
 
-Without ImGui's input filtering and without mouse-drag gizmo handles,
-a keyboard editor lets the user *prove the gizmo is updating
-correctly* (you can watch the arrows move with the mesh). It's
-explicitly a stop-gap for Phase 1c.
+Without mouse-drag gizmo handles, a keyboard editor lets the user
+*prove the gizmo is updating correctly* (you can watch the arrows
+move with the mesh). It's a stop-gap for ImGuizmo integration.
 
 ---
 
@@ -415,80 +474,54 @@ The following is the **recommended order** for the next agent. Each
 item is sized so it can land as a single PR without blocking the
 others.
 
-### P0 — make the current slice production-quality on Windows
+### P0 — polish the current viewport
 
-These aren't "new features" — they're loose ends that we couldn't
-verify from the Linux sandbox.
-
-1. **Smoke-test on Windows.**
-   - Build with the MSBuild command in § 4.
-   - Run `T8ditor.exe --api d3d11`, `--api d3d12`, `--api gl`.
-   - Verify: window opens, grid appears, gizmo appears, mesh loads.
-   - If GL fails to render, check the GLSL CB byte-offset trap
-     described in § 3.5 — likeliest culprit.
-2. **Wire SDL `MOUSEWHEEL` events into `InputManager`.**
-   - Currently `Win32Framework.cpp` polls cursor position via
-     `GetCursorPos` and never sees wheel events.
-   - Add an `InputManager::wheelDelta` field and a poll in the SDL
-     event pump.
-   - Then in `EditorCamera::Update`, multiply distance by
-     `pow(ZoomSpeed, -wheelDelta)` (or similar). `ZoomSpeed` already
-     exists as a tunable.
-3. **Resize handling.**
+1. **Resize handling.**
    - `Win32Framework` currently rebuilds the swapchain on resize but
      doesn't notify the app. Add an `EditorCamera::SetViewportSize`
      call from `EditorApp` when the framework's `aplicationDescriptor`
      dimensions change between frames (cheap polling).
+2. **Wireframe overlay toggle.**
+   - `EditorMesh` still exists alongside the lit `PrimitiveInst`.
+     Add a View menu toggle to draw the wireframe overlay on top of
+     the lit mesh (Maya-style "wireframe on shaded").
+3. **Test D3D12 and GL backends.**
+   - Run `T8ditor.exe --api d3d12` and `--api gl`.
+   - D3D12: verify ImGui's dedicated SRV heap works.
+   - GL: check the GLSL CB byte-offset trap (§ 8.1).
 
-### P1 — make the gizmo *do* something
+### P1 — ImGui panels
 
-4. **Mouse picking on the gizmo handles.**
-   - Implement a ray-vs-cylinder (translate shaft) /
-     ray-vs-torus-segment (rotate ring) / ray-vs-cube (scale tip)
-     hit test in screen space.
-   - On `MouseDown` over a handle, store `m_activeAxis` and the
-     hit point in world space.
-   - On `MouseDrag`, project the cursor onto the active axis line
-     (translate) / the rotation plane (rotate) / the axis scalar
-     (scale) and apply the delta to the mesh's TRS.
-   - Reference: ImGuizmo's `ComputeTripodAxisAndVisibility` &
-     `HandleTranslation`. We don't need ImGuizmo itself for this
-     slice — a 200-line bespoke implementation is enough.
+4. **Hierarchy panel.**
+   - Lists "Scene Root → mesh name". Click to select.
+5. **Inspector panel.**
+   - T/R/S sliders for the selected mesh's transform.
+   - Replaces the keyboard-driven `ProcessSelectionInput()`.
+6. **Console panel.**
+   - Mirrors `T8_LOG` output in an ImGui scrollable text window.
+7. **File > Load Scene / Save Scene.**
+   - Define a minimal JSON scene format (array of mesh paths + TRS).
+   - Wire to file dialogs (same `OpenFileDialog` / a new
+     `SaveFileDialog` wrapper around `GetSaveFileNameW`).
 
-### P2 — bring in ImGui
+### P2 — interactive gizmos
 
-This is the official "Phase 1c" hand-off point.
-
-5. **Add ImGui (docking branch) + ImGui_ImplSDL3 + an ImGui backend
-   per renderer.**
-   - Vcpkg manifest update — add `imgui[docking-experimental,sdl3-binding,dx11-binding,dx12-binding,opengl3-binding]`.
-   - Initialise in `EditorApp::CreateAssets` after the driver is up.
-   - Minimal panels for first cut: **Hierarchy** (lists "Scene Root
-     → mesh"), **Inspector** (T/R/S sliders for the selection),
-     **Console** (mirrors `T8_LOG` output), **Viewport** (the
-     existing render, optionally inside an `ImGui::Image` of an
-     offscreen RT).
-6. **Add ImGuizmo for proper interactive gizmos.**
-   - Replaces `EditorGizmo`'s draw-only path (or wraps it).
+8. **Add ImGuizmo for proper interactive gizmos.**
+   - Install via vcpkg: `imguizmo`.
+   - Replaces `EditorGizmo`'s draw-only path.
    - Bind to the same `m_mesh` transform that the keyboard editor
      uses, so both input paths stay coherent.
+9. **Mouse picking on the mesh.**
+   - Color-id RT or ray-vs-AABB walk over the scene.
 
-### P3 — proper rendering of `.x` files
+### P3 — multi-object & scene management
 
-7. **Optional: PBR-lit display through `RenderMesh`.**
-   - Stand up a minimal `SceneProps` (one directional light, one
-     camera, default exposure) inside `EditorApp`.
-   - Use `PrimitiveManager::CreateMesh(path)` instead of the
-     bespoke wireframe loader.
-   - Keep wireframe as a viewport-overlay toggle (Maya-style
-     "wireframe on shaded").
-8. **Multi-mesh scene + selection model.**
-   - Replace the single `EditorMesh m_mesh` with
-     `std::vector<EditorMesh>` and an `int m_selectedIndex`.
-   - Selection driven by Hierarchy panel clicks (P2).
-9. **Save / load the editor scene to JSON.**
-   - One JSON per scene listing each mesh's path + TRS.
-   - Reuse the JSON library already used for `gui_atlas.json`.
+10. **Multi-mesh scene + selection model.**
+    - Replace the single `EditorMesh m_mesh` with
+      `std::vector<EditorMesh>` and an `int m_selectedIndex`.
+    - Selection driven by Hierarchy panel clicks.
+11. **Undo/redo command stack.**
+    - Track transform changes as commands.
 
 ### P4 — nice-to-haves
 
@@ -496,6 +529,7 @@ This is the official "Phase 1c" hand-off point.
 - Distance-scaled gizmo (constant pixel size on screen).
 - Camera presets (top / front / side / persp) on numpad keys.
 - "Look through camera" (use a scene camera as the editor camera).
+- Hot-reload of shaders and textures.
 
 ---
 
@@ -551,6 +585,36 @@ guess — it's not the same as Win32 `VK_*` ordering.
 work directly (`T800K_w == 'w' == 119`). Function keys, modifiers,
 and arrows go through the mapping table. If you add a key binding,
 test it on Windows — the Linux mapping isn't necessarily complete.
+
+### 8.7 `pApp` global must be set in T8ditor's `main.cpp`
+
+`RenderMesh::Load()` accesses `pApp->resourceManager.Load(filename)`.
+This global is defined in `DayScene/App.cpp` for DayScene, but
+T8ditor needs its own definition. `main.cpp` declares
+`t800::AppBase* pApp = nullptr;` and sets it to the EditorApp
+instance right after construction: `pApp = g_pApp;`. Without this,
+any call to `PrimitiveManager::CreateMesh()` will crash.
+
+### 8.8 `ShaderKey` is inside `namespace t800`
+
+Despite being defined at what looks like global scope in
+`T8_descriptors.h`, `ShaderKey` is actually inside `namespace t800 {`
+(opened at line 6 of that file). Use `t800::ShaderKey` from editor
+code.
+
+### 8.9 `PrimitiveManager::SetSceneProps()` ordering
+
+`SetSceneProps()` iterates the `primitives` vector and sets `pScProp`
+on each. After `CreateMesh()` adds a new primitive, you **must** call
+`SetSceneProps()` again — otherwise the new `RenderMesh` has
+`pScProp = nullptr` and crashes on `Draw()`. See § 6.2.
+
+### 8.10 ImGui vcpkg library names
+
+Debug builds link `imguid.lib` (note the `d` suffix), Release link
+`imgui.lib`. Debug lib is in `$(T8VcpkgStatic)\debug\lib` (must be
+on the library search path for Debug configs). Both are from the
+`x64-windows-static` triplet.
 
 ---
 

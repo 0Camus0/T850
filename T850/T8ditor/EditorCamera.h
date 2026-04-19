@@ -37,7 +37,8 @@ public:
 
   // Per-frame: poll the InputManager (mouse + keys), update spherical
   // coordinates, recompute the view/proj on the wrapped Camera.
-  void Update(float dtSecs, InputManager& im);
+  // wheelDelta: accumulated mouse wheel ticks since last frame (positive = zoom in).
+  void Update(float dtSecs, InputManager& im, float wheelDelta = 0.0f);
 
   // Notify the camera of a new viewport size (e.g. window resize).
   void SetViewportSize(int w, int h);
@@ -49,6 +50,9 @@ public:
 
   // Frame the target — re-center distance to FrameDistance.
   void Frame();
+
+  // Reset camera to the default position and orientation.
+  void ResetToDefault();
 
   // Underlying Framework camera (for VP, Eye, Look). Const access to
   // discourage callers from mutating it directly.

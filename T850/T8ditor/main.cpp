@@ -30,6 +30,13 @@
 
 #include "EditorApp.h"
 
+// Globals expected by Framework (D3D12Driver.cpp uses extern references).
+bool        g_d3d12Debug = false;
+std::string g_logFile;
+
+// Global expected by Framework (RenderMesh.cpp uses extern reference).
+t800::AppBase* pApp = nullptr;
+
 namespace t8ditor {
   // Defined in EditorApp.cpp.
   void SetStartupMeshPath(const std::string& p);
@@ -105,6 +112,7 @@ int main(int argc, char** argv) {
   t8ditor::SetStartupMeshPath(meshPath);
 
   g_pApp = new t8ditor::EditorApp();
+  pApp   = g_pApp;  // RenderMesh::Load() uses this global
 
 #ifdef OS_LINUX
   g_pFramework = new t800::LinuxFramework(g_pApp);

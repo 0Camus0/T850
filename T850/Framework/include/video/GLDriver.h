@@ -158,6 +158,7 @@ namespace t800 {
     void	SetWindow(void *window);
     void  SetWindowHandle(const WindowHandle& handle) override;
     void	SetDimensions(int, int);
+    bool  ResizeSwapchain(int newW, int newH) override;
     void SetBlendState(BLEND_STATES state) override;
     void SetDepthStencilState(DEPTH_STENCIL_STATES state) override;
     void SaveScreenshot(std::string path) override;

@@ -553,6 +553,15 @@ namespace t800 {
     height = h;
   }
 
+  bool GLDriver::ResizeSwapchain(int newW, int newH) {
+    if (newW <= 0 || newH <= 0) return false;
+    width  = newW;
+    height = newH;
+    glViewport(0, 0, newW, newH);
+    T8_LOG_INFO("[GL] Viewport resized to %dx%d", newW, newH);
+    return true;
+  }
+
   void GLDriver::SetBlendState(BLEND_STATES state)
   {
     static const char* names[] = {"BLEND_DEFAULT","BLEND_OPAQUE","ADDITIVE","ALPHA_BLEND","NON_PREMULTIPLIED"};

@@ -271,6 +271,11 @@ namespace t800 {
     virtual void SetViewport(float x, float y, float w, float h) {}
     virtual void SetScissorRect(int x, int y, int w, int h) {}
 
+    // Resize the swapchain, back-buffer RTVs, and depth buffer to the new
+    // pixel dimensions. Returns true on success. Implementations must flush
+    // the GPU before releasing/recreating resources.
+    virtual bool ResizeSwapchain(int newW, int newH) { return false; }
+
     int 	 CreateTexture(std::string);
     int    CreateCubeMap(const unsigned char * buff, int w, int h);
     int	   CreateShader(std::string src_vs, std::string src_fs, ShaderKey key = ShaderKey(), const std::string& vs_name = "", const std::string& fs_name = "");

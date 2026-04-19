@@ -657,6 +657,63 @@ namespace t800 {
   }
   void D3D12Driver::SetDimensions(int w, int h) { width = w; height = h; }
 
+  bool D3D12Driver::ResizeSwapchain(int newW, int newH) {
+    if (newW <= 0 || newH <= 0) return false;
+    if (!m_swapChain) return false;
+
+    // Flush all in-flight GPU work
+    WaitForGPU();
+
+    // Release back buffer references (but keep the RTV descriptor handles — we reuse them)
+    for (UINT i = 0; i < kBackBufferCount; i++)
+      m_backBuffers[i].Reset();
+    m_depthBuffer.Reset();
+
+    HRESULT hr = m_swapChain->ResizeBuffers(kBackBufferCount, (UINT)newW, (UINT)newH,
+                                             DXGI_FORMAT_R8G8B8A8_UNORM,
+                                             DXGI_SWAP_CHAIN_FLAG_ALLOW_TEARING);
+    if (FAILED(hr)) {
+      T8_LOG_ERROR("[D3D12] ResizeBuffers failed (0x%08X)", (unsigned)hr);
+      return false;
+    }
+
+    // Recreate back buffer RTVs at the same descriptor slots
+    ID3D12Device* device = static_cast<D3D12Device*>(T8Device)->GetNativeDevice();
+    for (UINT i = 0; i < kBackBufferCount; i++) {
+      m_swapChain->GetBuffer(i, IID_PPV_ARGS(&m_backBuffers[i]));
+      device->CreateRenderTargetView(m_backBuffers[i].Get(), nullptr, m_backBufferRTVs[i]);
+    }
+
+    // Recreate depth buffer at the same DSV descriptor slot
+    width = newW; height = newH;
+    D3D12_RESOURCE_DESC dd = {};
+    dd.Dimension = D3D12_RESOURCE_DIMENSION_TEXTURE2D;
+    dd.Width = (UINT)newW; dd.Height = (UINT)newH;
+    dd.DepthOrArraySize = 1; dd.MipLevels = 1;
+    dd.Format = DXGI_FORMAT_D32_FLOAT; dd.SampleDesc.Count = 1;
+    dd.Flags = D3D12_RESOURCE_FLAG_ALLOW_DEPTH_STENCIL;
+    D3D12_CLEAR_VALUE cv = {}; cv.Format = DXGI_FORMAT_D32_FLOAT; cv.DepthStencil.Depth = 1.0f;
+    D3D12_HEAP_PROPERTIES hp = {}; hp.Type = D3D12_HEAP_TYPE_DEFAULT;
+    hr = device->CreateCommittedResource(&hp, D3D12_HEAP_FLAG_NONE, &dd,
+                                          D3D12_RESOURCE_STATE_DEPTH_WRITE, &cv,
+                                          IID_PPV_ARGS(&m_depthBuffer));
+    if (FAILED(hr)) {
+      T8_LOG_ERROR("[D3D12] Depth buffer recreate failed (0x%08X)", (unsigned)hr);
+      return false;
+    }
+    D3D12_DEPTH_STENCIL_VIEW_DESC dv = {};
+    dv.Format = DXGI_FORMAT_D32_FLOAT; dv.ViewDimension = D3D12_DSV_DIMENSION_TEXTURE2D;
+    device->CreateDepthStencilView(m_depthBuffer.Get(), &dv, m_depthDSV);
+
+    // Update current back buffer index, viewport, and scissor
+    m_currentBackBuffer = m_swapChain->GetCurrentBackBufferIndex();
+    m_viewport = { 0.f, 0.f, (float)newW, (float)newH, 0.f, 1.f };
+    m_scissorRect = { 0, 0, (LONG)newW, (LONG)newH };
+
+    T8_LOG_INFO("[D3D12] Swapchain resized to %dx%d", newW, newH);
+    return true;
+  }
+
   void D3D12Driver::CreateDevice() {
     // Enable debug layer only when requested (--d3d12debug flag)
     if (g_d3d12Debug) {

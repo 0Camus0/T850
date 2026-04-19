@@ -340,37 +340,49 @@ bool BuildGeometry(const Document& doc,
     }
   }
 
-  // Triangle list — engine triangle stride is xWORD (16-bit). When max
-  // index would overflow we split the primitive: the simplest correct
-  // approach is to remap to a dense [0, 65535] window, but Phase 1
-  // assets stay under that limit for small/medium meshes. If we do
-  // overflow, we log a clear error so it's caught immediately.
-  geom.Triangles.resize(tris.size());
-  bool oversize = false;
-  for (std::size_t t = 0; t < tris.size(); t += 3) {
-    uint32_t a = tris[t + 0], b = tris[t + 1], c = tris[t + 2];
-    if (a > 0xFFFFu || b > 0xFFFFu || c > 0xFFFFu) {
-      oversize = true;
-      break;
-    }
-    if (kFlipToLeftHanded) {
-      // Reverse winding to keep CCW after Z negation.
-      geom.Triangles[t + 0] = static_cast<xF::xWORD>(a);
-      geom.Triangles[t + 1] = static_cast<xF::xWORD>(c);
-      geom.Triangles[t + 2] = static_cast<xF::xWORD>(b);
-    } else {
-      geom.Triangles[t + 0] = static_cast<xF::xWORD>(a);
-      geom.Triangles[t + 1] = static_cast<xF::xWORD>(b);
-      geom.Triangles[t + 2] = static_cast<xF::xWORD>(c);
-    }
+  // Triangle list. The engine has historically used 16-bit indices
+  // (xWORD), but the renderer now also supports 32-bit IBs (selected
+  // per-geometry via xMeshGeometry::Indices32Bit). We pick the narrowest
+  // width that fits the largest source index, keeping the vast majority
+  // of game/scene assets on the cheaper 16-bit path.
+  bool needs32 = false;
+  for (uint32_t v : tris) {
+    if (v > 0xFFFFu) { needs32 = true; break; }
   }
-  if (oversize) {
-    T8_LOG_ERROR("[glTF] primitive has %zu vertices > 65535; 32-bit IB "
-                 "support is Phase 2", N);
-    return false;
+  geom.Indices32Bit = needs32;
+  if (!needs32) {
+    geom.Triangles.resize(tris.size());
+    for (std::size_t t = 0; t < tris.size(); t += 3) {
+      uint32_t a = tris[t + 0], b = tris[t + 1], c = tris[t + 2];
+      if (kFlipToLeftHanded) {
+        // Reverse winding to keep CCW after Z negation.
+        geom.Triangles[t + 0] = static_cast<xF::xWORD>(a);
+        geom.Triangles[t + 1] = static_cast<xF::xWORD>(c);
+        geom.Triangles[t + 2] = static_cast<xF::xWORD>(b);
+      } else {
+        geom.Triangles[t + 0] = static_cast<xF::xWORD>(a);
+        geom.Triangles[t + 1] = static_cast<xF::xWORD>(b);
+        geom.Triangles[t + 2] = static_cast<xF::xWORD>(c);
+      }
+    }
+  } else {
+    geom.Triangles32.resize(tris.size());
+    for (std::size_t t = 0; t < tris.size(); t += 3) {
+      uint32_t a = tris[t + 0], b = tris[t + 1], c = tris[t + 2];
+      if (kFlipToLeftHanded) {
+        geom.Triangles32[t + 0] = a;
+        geom.Triangles32[t + 1] = c;
+        geom.Triangles32[t + 2] = b;
+      } else {
+        geom.Triangles32[t + 0] = a;
+        geom.Triangles32[t + 1] = b;
+        geom.Triangles32[t + 2] = c;
+      }
+    }
+    T8_LOG_INFO("[glTF] primitive uses 32-bit IB (%zu vertices)", N);
   }
-  geom.NumTriangles = static_cast<xF::xDWORD>(geom.Triangles.size() / 3);
-  geom.NumIndices   = static_cast<xF::xDWORD>(geom.Triangles.size());
+  geom.NumTriangles = static_cast<xF::xDWORD>(tris.size() / 3);
+  geom.NumIndices   = static_cast<xF::xDWORD>(tris.size());
 
   // Single-material primitive → MaterialList of size 1, FaceIndices
   // all zero. The Material payload itself is filled by the caller.

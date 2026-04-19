@@ -123,6 +123,7 @@ namespace t800 {
       unsigned int		VertexSize;
       bool				bAlignedVertex;
 	  bool				bUseFresnel;
+	  bool				IB32Bit = false;   // selects R16/R32 in Set()
     };
 
 

@@ -114,6 +114,7 @@ namespace t800 {
     void	Update();
     void	DestroyDriver();
     void	SetWindow(void *window);
+    void  SetWindowHandle(const WindowHandle& handle) override;
     void	SetDimensions(int, int);
     void SetBlendState(BLEND_STATES state) override;
     void SetDepthStencilState(DEPTH_STENCIL_STATES state) override;

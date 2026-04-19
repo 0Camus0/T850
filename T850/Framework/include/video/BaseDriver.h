@@ -20,6 +20,7 @@
 #include <unordered_map>
 #include "T8_descriptors.h"
 #include "utils/T8_Technique.h"
+#include "video/WindowHandle.h"
 
 
 namespace t800 {
@@ -238,6 +239,20 @@ namespace t800 {
     virtual void	 Update() = 0;
     virtual void	 DestroyDriver() = 0;
     virtual void	 SetWindow(void *window) = 0;
+    // Editor-friendly entry point: pass either an SDL_Window* or a native
+    // HWND via a tagged WindowHandle. Default impl preserves the legacy
+    // SDL path so existing callers (Win32Framework -> SetWindow(SDL_Window*))
+    // keep working unchanged. Backends override to honor an explicit HWND
+    // from an editor host instead of GetActiveWindow().
+    virtual void   SetWindowHandle(const WindowHandle& handle) {
+      if (handle.kind == WindowHandle::SDL_WINDOW) {
+        SetWindow(handle.sdlWindow);
+      } else if (handle.kind == WindowHandle::WIN32_HWND) {
+        SetWindow(handle.nativeHandle);
+      } else {
+        SetWindow(nullptr);
+      }
+    }
     virtual void	 SetDimensions(int, int) = 0;
     virtual void	 Clear() = 0;
     virtual void	 SwapBuffers() = 0;

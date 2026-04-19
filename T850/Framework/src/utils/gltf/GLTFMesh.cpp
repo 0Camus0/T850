@@ -465,6 +465,7 @@ void BuildSubsets(xF::xMeshGeometry& geom, xF::xFinalGeometry& fg) {
     s.NumVertex   = s.NumTris * 3;
     s.VertexSize  = fg.VertexSize;
     s.VertexAttrib = geom.VertexAttributes;
+    s.bAlignedVertex = true;
     fg.Subsets.push_back(s);
   }
 }

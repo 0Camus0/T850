@@ -90,6 +90,16 @@ void EditorApp::CreateAssets() {
 
   m_assetsCreated = true;
 
+  // Make the editor window resizable (SDL flag wasn't set at creation time).
+  // Must be done after each window creation (ChangeAPI recreates the window).
+#ifdef OS_WINDOWS
+  {
+    auto* w32 = static_cast<t800::Win32Framework*>(pFramework);
+    if (w32 && w32->m_pWindow)
+      SDL_SetWindowResizable(w32->m_pWindow, true);
+  }
+#endif
+
   m_imguiReady = ImGuiInit(pFramework);
   if (!m_imguiReady)
     T8_LOG_ERROR("[T8ditor] ImGui init failed — editor panels will be unavailable");
@@ -154,10 +164,14 @@ void EditorApp::CheckResize() {
   int w = 0, h = 0;
   SDL_GetWindowSizeInPixels(w32->m_pWindow, &w, &h);
   if (w > 0 && h > 0 && (w != m_lastW || h != m_lastH)) {
-    m_lastW = w;
-    m_lastH = h;
-    m_camera.SetViewportSize(w, h);
-    T8_LOG_DEBUG("[T8ditor] Viewport resized to %dx%d", w, h);
+    if (pFramework->pVideoDriver->ResizeSwapchain(w, h)) {
+      m_lastW = w;
+      m_lastH = h;
+      m_camera.SetViewportSize(w, h);
+      // Keep the framework descriptor in sync so ChangeAPI uses the current size
+      pFramework->aplicationDescriptor.width  = w;
+      pFramework->aplicationDescriptor.height = h;
+    }
   }
 #endif
 }

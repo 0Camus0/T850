@@ -38,6 +38,7 @@
     <ClInclude Include="include\scene\PrimitiveManager.h" />
     <ClInclude Include="include\scene\RenderQuad.h" />
     <ClInclude Include="include\debug\FrameDumper.h" />
+    <ClInclude Include="include\debug\T8_Profiler.h" />
     <ClInclude Include="include\scene\RenderGraph.h" />
     <ClInclude Include="include\scene\RenderGraphDescriptor.h" />
     <ClInclude Include="include\scene\SceneDescriptor.h" />
@@ -101,6 +102,7 @@
     <ClCompile Include="src\scene\RenderQuad.cpp" />
     <ClCompile Include="src\debug\FrameDumper.cpp" />
     <ClCompile Include="src\debug\FrameDumperIO.cpp" />
+    <ClCompile Include="src\debug\T8_Profiler.cpp" />
     <ClCompile Include="src\scene\RenderGraph.cpp" />
     <ClCompile Include="src\scene\SceneDescriptor.cpp" />
     <ClCompile Include="src\scene\SceneSetup.cpp" />

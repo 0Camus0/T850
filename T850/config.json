@@ -1,6 +1,6 @@
 ﻿{
     "keepRunning":  false,
-    "api":  "d3d12",
+    "api":  "glew",
     "architecture":  "x64",
     "display":  {
                     "scene":  0,
@@ -9,8 +9,8 @@
                     "fullscreen":  false
                 },
     "replaySnapshot":  {
-                           "path":  "D:\\Code\\Game\\T850\\T850\\bin\\x64\\Release\\dumps_d3d12_f1664_20260417_232407\\snapshot.json",
-                           "enabled":  false
+                           "path":  "D:\\Code\\Game\\T850\\T850\\bin\\x64\\Release\\dumps_d3d12_f211_20260418_182717\\snapshot.json",
+                           "enabled":  true
                        },
     "configuration":  "Release",
     "dump":  {
@@ -27,6 +27,6 @@
                      "logLevel":  "error",
                      "logToFile":  false,
                      "guiEdit":  false,
-                     "guiSnap":  true
+                     "guiSnap":  false
                  }
 }

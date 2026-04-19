@@ -561,6 +561,14 @@ void SC_Night::OnInput(InputManager* IManager) {
     pFramework->ChangeAPI(GRAPHICS_API::OPENGL);
   }
 
+  if (IManager->PressedOnceKey(T800K_3)) {
+    pFramework->ChangeAPI(GRAPHICS_API::D3D12);
+  }
+
+  if (IManager->PressedOnceKey(T800K_4)) {
+    pFramework->ChangeAPI(GRAPHICS_API::VULKAN);
+  }
+
   if (IManager->PressedOnceKey(T800K_SPACE)) {
     m_dumper.RequestDump();
   }

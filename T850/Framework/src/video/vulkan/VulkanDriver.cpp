@@ -700,7 +700,7 @@ namespace t800 {
       depthImgCI.arrayLayers = 1;
       depthImgCI.samples = VK_SAMPLE_COUNT_1_BIT;
       depthImgCI.tiling = VK_IMAGE_TILING_OPTIMAL;
-      depthImgCI.usage = VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT;
+      depthImgCI.usage = VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT;
       depthImgCI.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
       depthImgCI.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
 
@@ -863,10 +863,8 @@ namespace t800 {
     auto* driver = GetVkDriver();
     VkCommandBuffer cmd = static_cast<const VulkanDeviceContext*>(&context)->GetCommandBuffer();
 
-    // If inside the backbuffer render pass, end it first
-    if (driver->CurrentRT < 0) {
-      vkCmdEndRenderPass(cmd);
-    }
+    // End any active render pass before starting the RT pass
+    driver->EndRenderPassIfActive(cmd);
 
     // Transition color images to COLOR_ATTACHMENT if needed
     for (int i = 0; i < number_RT; i++) {
@@ -901,6 +899,7 @@ namespace t800 {
 
     vkCmdBeginRenderPass(cmd, &rpBegin, VK_SUBPASS_CONTENTS_INLINE);
     driver->SetActiveRenderPass(m_renderPass);
+    driver->SetRenderPassActive(true);
 
     // Set viewport and scissor to RT dimensions
     VkViewport viewport = {};
@@ -1064,16 +1063,18 @@ namespace t800 {
       b.stageFlags |= VK_SHADER_STAGE_FRAGMENT_BIT;
       if (cbvBinding < 0) cbvBinding = (int)ub.binding;
     }
-    // FS sampled images (textures) — sorted by binding (= HLSL register order)
-    for (int idx = 0; idx < (int)fsRefl.sampledImages.size() && idx < 8; idx++) {
+    // FS sampled images (textures) — derive engine slot from binding (undo +1 texture shift)
+    for (int idx = 0; idx < (int)fsRefl.sampledImages.size(); idx++) {
       auto& si = fsRefl.sampledImages[idx];
       auto& b = bindingMap[si.binding];
       b.binding = si.binding;
       b.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
       b.descriptorCount = 1;
       b.stageFlags |= VK_SHADER_STAGE_FRAGMENT_BIT;
-      // slot idx = register(tN) in HLSL = engine texture slot
-      srvBindings[idx] = (int)si.binding;
+      int engineSlot = (int)si.binding - 1;
+      if (engineSlot >= 0 && engineSlot < 8) {
+        srvBindings[engineSlot] = (int)si.binding;
+      }
     }
     // VS sampled images (if any)
     for (auto& si : vsRefl.sampledImages) {
@@ -1569,7 +1570,7 @@ namespace t800 {
     scCI.imageColorSpace = colorSpace;
     scCI.imageExtent = m_swapChainExtent;
     scCI.imageArrayLayers = 1;
-    scCI.imageUsage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT;
+    scCI.imageUsage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT;
     scCI.imageSharingMode = VK_SHARING_MODE_EXCLUSIVE;
     scCI.preTransform = surfCaps.currentTransform;
     scCI.compositeAlpha = VK_COMPOSITE_ALPHA_OPAQUE_BIT_KHR;
@@ -1682,7 +1683,7 @@ namespace t800 {
     imgCI.arrayLayers = 1;
     imgCI.samples = VK_SAMPLE_COUNT_1_BIT;
     imgCI.tiling = VK_IMAGE_TILING_OPTIMAL;
-    imgCI.usage = VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT;
+    imgCI.usage = VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT;
 
     VmaAllocationCreateInfo allocCI = {};
     allocCI.usage = VMA_MEMORY_USAGE_AUTO;
@@ -1778,11 +1779,13 @@ namespace t800 {
     dpCI.pPoolSizes = poolSizes;
     dpCI.flags = VK_DESCRIPTOR_POOL_CREATE_FREE_DESCRIPTOR_SET_BIT;
 
-    VkResult res = vkCreateDescriptorPool(m_device, &dpCI, nullptr, &m_descriptorPool);
-    if (res != VK_SUCCESS) {
-      T8_LOG_ERROR("[Vulkan] vkCreateDescriptorPool failed res=%d", res);
+    for (uint32_t i = 0; i < kBackBufferCount; i++) {
+      VkResult res = vkCreateDescriptorPool(m_device, &dpCI, nullptr, &m_descriptorPools[i]);
+      if (res != VK_SUCCESS) {
+        T8_LOG_ERROR("[Vulkan] vkCreateDescriptorPool[%u] failed res=%d", i, res);
+      }
     }
-    T8_LOG_INFO("[Vulkan] Descriptor pool created");
+    T8_LOG_INFO("[Vulkan] Descriptor pools created (%u)", kBackBufferCount);
   }
 
   void VulkanDriver::InitDriver() {
@@ -1913,7 +1916,9 @@ namespace t800 {
       }
     }
 
-    if (m_descriptorPool) { vkDestroyDescriptorPool(m_device, m_descriptorPool, nullptr); m_descriptorPool = VK_NULL_HANDLE; }
+    for (uint32_t i = 0; i < kBackBufferCount; i++) {
+      if (m_descriptorPools[i]) { vkDestroyDescriptorPool(m_device, m_descriptorPools[i], nullptr); m_descriptorPools[i] = VK_NULL_HANDLE; }
+    }
 
     for (uint32_t i = 0; i < kBackBufferCount; i++) {
       if (m_imageAvailableSemaphores[i]) vkDestroySemaphore(m_device, m_imageAvailableSemaphores[i], nullptr);
@@ -2002,7 +2007,7 @@ namespace t800 {
     static_cast<VulkanDeviceContext*>(T8DeviceContext)->m_commandBuffer = cmd;
 
     // Reset per-frame descriptor pool and pending state
-    vkResetDescriptorPool(m_device, m_descriptorPool, 0);
+    vkResetDescriptorPool(m_device, m_descriptorPools[m_currentFrame], 0);
     m_cbRingOffset = 0;
     m_cbDirty = false;
     memset(m_pendingTextures, 0, sizeof(m_pendingTextures));
@@ -2032,6 +2037,9 @@ namespace t800 {
 
     if (CurrentRT < 0) {
       VkCommandBuffer cmd = m_commandBuffers[m_currentFrame];
+
+      // End any active render pass before starting a new one
+      EndRenderPassIfActive(cmd);
 
       VkClearValue clearValues[2] = {};
       clearValues[0].color = { {0.9f, 0.9f, 0.9f, 1.0f} };
@@ -2119,8 +2127,11 @@ namespace t800 {
       VulkanRT* rt = static_cast<VulkanRT*>(RTs[CurrentRT]);
       VkCommandBuffer cmd = m_commandBuffers[m_currentFrame];
 
-      // 1. End the current RT's render pass
-      vkCmdEndRenderPass(cmd);
+      // 1. End the current RT's render pass (guarded)
+      if (m_renderPassActive) {
+        vkCmdEndRenderPass(cmd);
+        m_renderPassActive = false;
+      }
 
       // 2. Transition color images from COLOR_ATTACHMENT → SHADER_READ_ONLY
       for (int i = 0; i < rt->number_RT; i++) {
@@ -2517,7 +2528,7 @@ reopen:
 
   VkDescriptorSet VulkanDriver::AllocateDescriptorSet(VkDescriptorSetLayout layout) {
     VkDescriptorSetAllocateInfo allocInfo = { VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO };
-    allocInfo.descriptorPool = m_descriptorPool;
+    allocInfo.descriptorPool = m_descriptorPools[m_currentFrame];
     allocInfo.descriptorSetCount = 1;
     allocInfo.pSetLayouts = &layout;
 

@@ -302,6 +302,15 @@ namespace t800 {
     VkRenderPass GetCurrentRenderPass() const { return m_activeRenderPass; }
     void SetActiveRenderPass(VkRenderPass rp) { m_activeRenderPass = rp; }
 
+    // End the currently active render pass (if any) — safe to call even when none is active
+    void EndRenderPassIfActive(VkCommandBuffer cmd) {
+      if (m_renderPassActive) {
+        vkCmdEndRenderPass(cmd);
+        m_renderPassActive = false;
+      }
+    }
+    void SetRenderPassActive(bool active) { m_renderPassActive = active; }
+
     // Pending texture/CB bindings set by Texture::Set / CB::Set
     struct PendingTextureBinding {
       VkImageView imageView = VK_NULL_HANDLE;
@@ -372,8 +381,8 @@ namespace t800 {
     uint32_t        m_currentFrame = 0;
     bool            m_renderPassActive = false;
 
-    // Descriptors
-    VkDescriptorPool        m_descriptorPool = VK_NULL_HANDLE;
+    // Descriptors — one pool per frame in flight to avoid resetting in-use pools
+    VkDescriptorPool        m_descriptorPools[kBackBufferCount] = {};
     VkDescriptorSetLayout   m_globalDescriptorSetLayout = VK_NULL_HANDLE;
 
     // VMA allocator

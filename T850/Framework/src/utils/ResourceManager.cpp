@@ -14,7 +14,9 @@ namespace t800 {
     if (dot == std::string::npos) return {};
     std::string ext = path.substr(dot + 1);
     std::transform(ext.begin(), ext.end(), ext.begin(),
-                   [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+                   [](unsigned char c) {
+                     return static_cast<char>(static_cast<unsigned char>(std::tolower(c)));
+                   });
     return ext;
   }
 

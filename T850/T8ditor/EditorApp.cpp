@@ -1,6 +1,6 @@
 /*********************************************************
-* T8ditor — EditorApp implementation. See header.
-*********************************************************/
+ * T8ditor — EditorApp implementation. See header.
+ *********************************************************/
 
 #include "EditorApp.h"
 
@@ -15,6 +15,9 @@
 #include <cmath>
 #include <filesystem>
 
+#include <imgui.h>
+#include <SDL3/SDL.h>
+
 #ifdef OS_WINDOWS
 #include <core/windows/Win32Framework.h>
 #endif
@@ -22,8 +25,9 @@
 namespace t8ditor {
 
 namespace {
-  // Set by main.cpp before EditorApp is constructed.
   std::string g_startupMeshPath;
+  const float kRadToDeg = 180.0f / xPI;
+  const float kDegToRad = xPI / 180.0f;
 }
 
 void SetStartupMeshPath(const std::string& p) {
@@ -53,6 +57,8 @@ void EditorApp::CreateAssets() {
   m_camera.Init(w, h, /*fovDeg=*/50.0f);
   m_camera.SetTarget(XVECTOR3(0.0f, 0.0f, 0.0f));
   m_camera.Frame();
+  m_lastW = w;
+  m_lastH = h;
 
   if (!m_lines.Create()) {
     T8_LOG_ERROR("[T8ditor] EditorLineRenderer::Create failed — grid/gizmo will be inert");
@@ -60,14 +66,13 @@ void EditorApp::CreateAssets() {
   m_grid.Create(/*halfExtent=*/10, /*spacing=*/1.0f);
   m_gizmo.Create();
 
-  // ── Set up lit rendering pipeline ──
   // Camera-attached directional light (like 3ds Max viewport headlamp)
   m_sceneProps.AddCamera(&m_camera.GetCameraMutable());
   m_sceneProps.AddDirectionalLight(
-    XVECTOR3(0.0f, -1.0f, 0.0f),   // direction (updated per-frame to follow camera)
-    XVECTOR3(1.0f, 1.0f, 1.0f),    // white
-    1.5f,                           // intensity
-    true                            // enabled
+    XVECTOR3(0.0f, -1.0f, 0.0f),
+    XVECTOR3(1.0f, 1.0f, 1.0f),
+    1.5f,
+    true
   );
   m_sceneProps.ActiveLights = 1;
   m_sceneProps.AmbientColor = XVECTOR3(0.15f, 0.15f, 0.15f);
@@ -77,10 +82,6 @@ void EditorApp::CreateAssets() {
   m_primMgr.SetVP(&m_vp);
   m_primMgr.SetSceneProps(&m_sceneProps);
 
-  // Forward pass key for direct drawing (no deferred, no shadows)
-  // (created locally in OnDraw each frame)
-
-  // Optional mesh load
   if (!g_startupMeshPath.empty()) {
     ImportMesh(g_startupMeshPath);
   } else {
@@ -89,26 +90,24 @@ void EditorApp::CreateAssets() {
 
   m_assetsCreated = true;
 
-  // Initialise ImGui after the driver is fully up.
   m_imguiReady = ImGuiInit(pFramework);
   if (!m_imguiReady)
     T8_LOG_ERROR("[T8ditor] ImGui init failed — editor panels will be unavailable");
+  else
+    ImGuiLogCaptureStart();
 
   T8_LOG_INFO("[T8ditor] CreateAssets done (viewport %dx%d)", w, h);
 }
 
 void EditorApp::ImportMesh(const std::string& path) {
-  // Check file exists before attempting to load
   if (!std::filesystem::exists(path)) {
     T8_LOG_ERROR("[T8ditor] Mesh file not found: %s", path.c_str());
     return;
   }
 
-  // Destroy previous lit mesh instance (wireframe too)
   m_mesh.Destroy();
   m_meshPrimId = -1;
 
-  // Load through the Framework's full pipeline (textures, materials, shaders)
   int id = m_primMgr.CreateMesh(path.c_str());
   if (id < 0) {
     T8_LOG_ERROR("[T8ditor] Failed to load mesh: %s", path.c_str());
@@ -118,26 +117,22 @@ void EditorApp::ImportMesh(const std::string& path) {
   m_meshInst.CreateInstance(m_primMgr.GetPrimitive(id), &m_vp);
   m_meshInst.Update();
 
-  // SetSceneProps must be called after CreateMesh — CreateMesh adds a new
-  // primitive to the vector, and SetSceneProps only covers existing entries.
+  // SetSceneProps must be called after CreateMesh (see HANDOFF.md § 8.9)
   m_primMgr.SetSceneProps(&m_sceneProps);
 
-  // Also load wireframe for overlay toggle
   m_mesh.Load(path);
 
-  // Frame the camera on the mesh
   m_camera.SetTarget(m_mesh.LocalCenter());
   m_camera.Frame();
 
   T8_LOG_INFO("[T8ditor] Loaded lit mesh: %s", path.c_str());
 }
 
-void EditorApp::LoadAssets() {
-  // AppBase declares this pure-virtual but the framework loop never calls it.
-}
+void EditorApp::LoadAssets() {}
 
 void EditorApp::DestroyAssets() {
   if (m_imguiReady) {
+    ImGuiLogCaptureStop();
     ImGuiShutdown();
     m_imguiReady = false;
   }
@@ -151,6 +146,22 @@ void EditorApp::DestroyAssets() {
   T8_LOG_INFO("[T8ditor] DestroyAssets");
 }
 
+// ── Resize handling ───────────────────────────────────
+void EditorApp::CheckResize() {
+#ifdef OS_WINDOWS
+  auto* w32 = static_cast<t800::Win32Framework*>(pFramework);
+  if (!w32 || !w32->m_pWindow) return;
+  int w = 0, h = 0;
+  SDL_GetWindowSizeInPixels(w32->m_pWindow, &w, &h);
+  if (w > 0 && h > 0 && (w != m_lastW || h != m_lastH)) {
+    m_lastW = w;
+    m_lastH = h;
+    m_camera.SetViewportSize(w, h);
+    T8_LOG_DEBUG("[T8ditor] Viewport resized to %dx%d", w, h);
+  }
+#endif
+}
+
 void EditorApp::OnUpdate() {
   m_dtTimer.Update();
   m_dtSecs = m_dtTimer.GetDTSecs();
@@ -160,36 +171,40 @@ void EditorApp::OnUpdate() {
   }
   m_sceneProps.FrameDeltaSec = m_dtSecs;
 
+  CheckResize();
   OnInput();
   OnDraw();
 }
 
 void EditorApp::OnInput() {
-  // Mode toggles (W/E/R) — single-press semantics so holding doesn't cycle.
-  if (IManager.PressedOnceKey(T800K_w)) m_gizmo.SetMode(GizmoMode::Translate);
-  if (IManager.PressedOnceKey(T800K_e)) m_gizmo.SetMode(GizmoMode::Rotate);
-  if (IManager.PressedOnceKey(T800K_r)) m_gizmo.SetMode(GizmoMode::Scale);
+  // Let ImGui consume input first — don't orbit/move when interacting with panels.
+  const ImGuiIO& io = ImGui::GetIO();
+  const bool imguiWantsMouse    = io.WantCaptureMouse;
+  const bool imguiWantsKeyboard = io.WantCaptureKeyboard;
 
-  // Z — reset camera to default position
-  if (IManager.PressedOnceKey(T800K_z))
-    m_camera.ResetToDefault();
+  if (!imguiWantsKeyboard) {
+    if (IManager.PressedOnceKey(T800K_w)) m_gizmo.SetMode(GizmoMode::Translate);
+    if (IManager.PressedOnceKey(T800K_e)) m_gizmo.SetMode(GizmoMode::Rotate);
+    if (IManager.PressedOnceKey(T800K_r)) m_gizmo.SetMode(GizmoMode::Scale);
+    if (IManager.PressedOnceKey(T800K_z)) m_camera.ResetToDefault();
+  }
 
-  // Consume wheel delta accumulated by the SDL event watcher
   float wheel = ImGuiConsumeWheelDelta();
-  m_camera.Update(m_dtSecs, IManager, wheel);
-  ProcessSelectionInput();
+  m_camera.Update(m_dtSecs, IManager,
+                  imguiWantsMouse ? 0.0f : wheel,
+                  imguiWantsMouse,
+                  imguiWantsKeyboard);
+
+  if (!imguiWantsKeyboard)
+    ProcessSelectionInput();
 }
 
 void EditorApp::ProcessSelectionInput() {
   if (!m_mesh.IsLoaded()) return;
 
-  // Step rate. Linear motion is in world units/sec; rotation in rad/sec;
-  // scale step is multiplicative per second. Tied directly to dt rather
-  // than camera distance because the user manipulates with the keyboard
-  // and an absolute rate is more predictable than a distance-relative one.
   const float linRate = 5.0f * m_dtSecs;
   const float rotRate = 1.5f * m_dtSecs;
-  const float sclStep = 1.0f + 0.5f * m_dtSecs; // multiplicative
+  const float sclStep = 1.0f + 0.5f * m_dtSecs;
 
   XVECTOR3& pos = m_mesh.Position();
   XVECTOR3& eul = m_mesh.EulerRadians();
@@ -237,7 +252,6 @@ void EditorApp::OnDraw() {
 
     // ── Lit/textured mesh ──
     if (m_meshPrimId >= 0) {
-      // Apply selection transform to the instance
       const XVECTOR3& pos = m_mesh.Position();
       const XVECTOR3& eul = m_mesh.EulerRadians();
       const XVECTOR3& scl = m_mesh.Scale();
@@ -251,6 +265,13 @@ void EditorApp::OnDraw() {
       m_meshInst.SetGlobalKey(fwdKey);
       m_meshInst.Update();
       m_meshInst.Draw();
+    }
+
+    // ── Wireframe overlay (x-ray, no depth test) ──
+    if (m_panels.showWireframe && m_mesh.IsLoaded() && m_lines.IsReady()) {
+      drv->SetDepthStencilState(t800::BaseDriver::NONE);
+      m_mesh.Draw(m_lines, cam.VP);
+      drv->SetDepthStencilState(t800::BaseDriver::DEPTH_DEFAULT);
     }
 
     // ── Editor overlays (grid, gizmo) ──
@@ -275,12 +296,14 @@ void EditorApp::OnDraw() {
   if (m_imguiReady) {
     ImGuiNewFrame();
 
-    MenuAction menuAction = ImGuiDrawMenuBar();
+    MenuAction menuAction = ImGuiDrawMenuBar(m_panels);
 
     // Handle menu actions
     if (menuAction.wantsExit) {
+#ifdef OS_WINDOWS
       auto* w32fw = static_cast<t800::Win32Framework*>(pFramework);
       w32fw->m_alive = false;
+#endif
     }
     if (menuAction.wantsImportX) {
       std::string path = OpenFileDialog(
@@ -289,6 +312,37 @@ void EditorApp::OnDraw() {
       if (!path.empty()) {
         ImportMesh(path);
       }
+    }
+
+    // ── Panels ──
+    if (m_panels.showHierarchy) {
+      const char* meshName = m_mesh.IsLoaded() ? m_mesh.Path().c_str() : nullptr;
+      ImGuiDrawHierarchyPanel(meshName, m_mesh.IsLoaded());
+    }
+
+    if (m_panels.showInspector) {
+      XVECTOR3 pos = m_mesh.Position();
+      XVECTOR3 eulerDeg(
+        m_mesh.EulerRadians().x * kRadToDeg,
+        m_mesh.EulerRadians().y * kRadToDeg,
+        m_mesh.EulerRadians().z * kRadToDeg
+      );
+      XVECTOR3 scl = m_mesh.Scale();
+
+      ImGuiDrawInspectorPanel(pos, eulerDeg, scl, m_mesh.IsLoaded());
+
+      // Write back if mesh is loaded (inspector may have changed values)
+      if (m_mesh.IsLoaded()) {
+        m_mesh.Position() = pos;
+        m_mesh.EulerRadians().x = eulerDeg.x * kDegToRad;
+        m_mesh.EulerRadians().y = eulerDeg.y * kDegToRad;
+        m_mesh.EulerRadians().z = eulerDeg.z * kDegToRad;
+        m_mesh.Scale() = scl;
+      }
+    }
+
+    if (m_panels.showConsole) {
+      ImGuiDrawConsolePanel();
     }
 
     ImGuiRender();
@@ -302,8 +356,6 @@ void EditorApp::OnPause()  { bPaused = true;  }
 void EditorApp::OnResume() { bPaused = false; }
 void EditorApp::OnReset()  {}
 
-void EditorApp::LoadScene(int /*id*/) {
-  // Editor opens scenes through asset-browser UI (not by index). No-op for now.
-}
+void EditorApp::LoadScene(int /*id*/) {}
 
 } // namespace t8ditor

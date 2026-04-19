@@ -1,6 +1,6 @@
 /*********************************************************
-* T8ditor — ImGui integration layer.  See header.
-*********************************************************/
+ * T8ditor — ImGui integration layer.  See header.
+ *********************************************************/
 
 #include "EditorImGui.h"
 
@@ -27,6 +27,10 @@
 #endif
 #include <imgui_impl_opengl3.h>
 
+#include <cmath>
+#include <mutex>
+#include <vector>
+
 // Framework globals
 namespace t800 {
   extern Device*        T8Device;
@@ -46,15 +50,39 @@ static float                  s_wheelAccum = 0.0f;
 static ID3D12DescriptorHeap*  s_d3d12SrvHeap = nullptr;
 #endif
 
+// ── Log capture ring buffer ───────────────────────────
+static const int              kMaxLogLines = 500;
+struct LogLine {
+  t800::Log::Level level;
+  std::string      text;
+};
+static std::vector<LogLine>   s_logLines;
+static std::mutex             s_logMutex;
+static bool                   s_logAutoScroll = true;
+
+static void EditorLogCallback(t800::Log::Level level, const char* msg) {
+  std::lock_guard<std::mutex> lock(s_logMutex);
+  if (s_logLines.size() >= (size_t)kMaxLogLines)
+    s_logLines.erase(s_logLines.begin());
+  s_logLines.push_back({ level, std::string(msg) });
+}
+
+void ImGuiLogCaptureStart() {
+  t800::Log::SetCallback(EditorLogCallback);
+}
+
+void ImGuiLogCaptureStop() {
+  t800::Log::SetCallback(nullptr);
+  std::lock_guard<std::mutex> lock(s_logMutex);
+  s_logLines.clear();
+}
+
 // ── SDL3 event watcher ────────────────────────────────
-// Installed via SDL_AddEventWatch so ImGui sees events
-// even though Win32Framework owns the SDL_PollEvent loop.
 static bool sdlEventWatcher(void* /*userdata*/, SDL_Event* event) {
   ImGui_ImplSDL3_ProcessEvent(event);
-  // Capture mouse wheel for the editor camera
   if (event->type == SDL_EVENT_MOUSE_WHEEL)
     s_wheelAccum += event->wheel.y;
-  return true;  // let the event propagate to the framework
+  return true;
 }
 
 // ── Init ──────────────────────────────────────────────
@@ -62,14 +90,10 @@ bool ImGuiInit(t800::RootFramework* fw) {
   if (s_inited) return true;
   if (!fw || !fw->pVideoDriver) return false;
 
-  // We need the Win32Framework to get the SDL window.
-  // RootFramework doesn't expose m_pWindow, but Win32Framework
-  // (the only concrete framework on Windows) does.
 #ifdef OS_WINDOWS
   auto* w32 = static_cast<t800::Win32Framework*>(fw);
   s_sdlWindow = w32->m_pWindow;
 #else
-  // Linux path — LinuxFramework has its own window member.
   s_sdlWindow = nullptr;
 #endif
 
@@ -124,7 +148,6 @@ bool ImGuiInit(t800::RootFramework* fw) {
     auto* d3d12Drv = static_cast<t800::D3D12Driver*>(fw->pVideoDriver);
     ID3D12Device* device = static_cast<t800::D3D12Device*>(t800::T8Device)->GetNativeDevice();
 
-    // Create a dedicated SRV descriptor heap for ImGui (small, shader-visible)
     D3D12_DESCRIPTOR_HEAP_DESC desc = {};
     desc.Type           = D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV;
     desc.NumDescriptors = 64;
@@ -157,7 +180,6 @@ bool ImGuiInit(t800::RootFramework* fw) {
     return false;
   }
 
-  // Install SDL event watcher so ImGui receives events
   SDL_AddEventWatch(sdlEventWatcher, nullptr);
 
   s_inited = true;
@@ -186,9 +208,7 @@ void ImGuiShutdown() {
   }
 
   ImGui_ImplSDL3_Shutdown();
-
   SDL_RemoveEventWatch(sdlEventWatcher, nullptr);
-
   ImGui::DestroyContext();
   s_inited = false;
   T8_LOG_INFO("[T8ditor] ImGui shut down");
@@ -223,7 +243,6 @@ void ImGuiRender() {
     ImGui_ImplDX11_RenderDrawData(drawData);
   }
   else if (s_api == t800::GRAPHICS_API::D3D12) {
-    // Bind ImGui's SRV heap before rendering
     auto* d3d12Drv = static_cast<t800::D3D12Driver*>(t800::g_pBaseDriver);
     ID3D12GraphicsCommandList* cmdList = d3d12Drv->GetCmdList();
     ID3D12DescriptorHeap* heaps[] = { s_d3d12SrvHeap };
@@ -237,7 +256,7 @@ void ImGuiRender() {
 }
 
 // ── Menu bar ──────────────────────────────────────────
-MenuAction ImGuiDrawMenuBar() {
+MenuAction ImGuiDrawMenuBar(PanelVisibility& panels) {
   MenuAction action;
   if (!s_inited) return action;
 
@@ -257,10 +276,11 @@ MenuAction ImGuiDrawMenuBar() {
     }
 
     if (ImGui::BeginMenu("View")) {
-      // Placeholder — panels toggle will go here
-      ImGui::MenuItem("Hierarchy", nullptr, false, false);
-      ImGui::MenuItem("Inspector", nullptr, false, false);
-      ImGui::MenuItem("Console",   nullptr, false, false);
+      ImGui::MenuItem("Hierarchy", nullptr, &panels.showHierarchy);
+      ImGui::MenuItem("Inspector", nullptr, &panels.showInspector);
+      ImGui::MenuItem("Console",   nullptr, &panels.showConsole);
+      ImGui::Separator();
+      ImGui::MenuItem("Wireframe Overlay", nullptr, &panels.showWireframe);
       ImGui::EndMenu();
     }
 
@@ -277,6 +297,114 @@ MenuAction ImGuiDrawMenuBar() {
   return action;
 }
 
+// ── Hierarchy panel ───────────────────────────────────
+void ImGuiDrawHierarchyPanel(const char* meshName, bool hasMesh) {
+  ImGui::SetNextWindowSize(ImVec2(250, 300), ImGuiCond_FirstUseEver);
+  if (!ImGui::Begin("Hierarchy")) {
+    ImGui::End();
+    return;
+  }
+
+  ImGuiTreeNodeFlags rootFlags = ImGuiTreeNodeFlags_OpenOnArrow
+                               | ImGuiTreeNodeFlags_DefaultOpen;
+
+  if (ImGui::TreeNodeEx("Scene Root", rootFlags)) {
+    if (hasMesh && meshName) {
+      ImGuiTreeNodeFlags leafFlags = ImGuiTreeNodeFlags_Leaf
+                                   | ImGuiTreeNodeFlags_Selected
+                                   | ImGuiTreeNodeFlags_SpanAvailWidth;
+      ImGui::TreeNodeEx(meshName, leafFlags);
+      ImGui::TreePop();
+    }
+    ImGui::TreePop();
+  }
+
+  ImGui::End();
+}
+
+// ── Inspector panel ───────────────────────────────────
+void ImGuiDrawInspectorPanel(XVECTOR3& pos, XVECTOR3& eulerDeg,
+                             XVECTOR3& scale, bool hasMesh) {
+  ImGui::SetNextWindowSize(ImVec2(300, 350), ImGuiCond_FirstUseEver);
+  if (!ImGui::Begin("Inspector")) {
+    ImGui::End();
+    return;
+  }
+
+  if (!hasMesh) {
+    ImGui::TextDisabled("No mesh loaded.");
+    ImGui::End();
+    return;
+  }
+
+  ImGui::SeparatorText("Transform");
+
+  float p[3] = { pos.x, pos.y, pos.z };
+  if (ImGui::DragFloat3("Position", p, 0.1f)) {
+    pos.x = p[0]; pos.y = p[1]; pos.z = p[2];
+  }
+
+  float r[3] = { eulerDeg.x, eulerDeg.y, eulerDeg.z };
+  if (ImGui::DragFloat3("Rotation", r, 0.5f)) {
+    eulerDeg.x = r[0]; eulerDeg.y = r[1]; eulerDeg.z = r[2];
+  }
+
+  float s[3] = { scale.x, scale.y, scale.z };
+  if (ImGui::DragFloat3("Scale", s, 0.01f, 0.01f, 100.0f)) {
+    scale.x = s[0]; scale.y = s[1]; scale.z = s[2];
+  }
+
+  ImGui::End();
+}
+
+// ── Console panel ─────────────────────────────────────
+static ImVec4 LogLevelColor(t800::Log::Level lvl) {
+  switch (lvl) {
+    case t800::Log::LVL_ERROR:   return ImVec4(1.0f, 0.3f, 0.3f, 1.0f);
+    case t800::Log::LVL_INFO:    return ImVec4(0.9f, 0.9f, 0.9f, 1.0f);
+    case t800::Log::LVL_DEBUG:   return ImVec4(0.4f, 0.9f, 0.4f, 1.0f);
+    case t800::Log::LVL_VERBOSE: return ImVec4(0.6f, 0.6f, 0.6f, 1.0f);
+    case t800::Log::LVL_TRACE:   return ImVec4(0.5f, 0.5f, 1.0f, 1.0f);
+    default:                     return ImVec4(1.0f, 1.0f, 1.0f, 1.0f);
+  }
+}
+
+void ImGuiDrawConsolePanel() {
+  ImGui::SetNextWindowSize(ImVec2(600, 200), ImGuiCond_FirstUseEver);
+  if (!ImGui::Begin("Console")) {
+    ImGui::End();
+    return;
+  }
+
+  // Clear button
+  if (ImGui::SmallButton("Clear")) {
+    std::lock_guard<std::mutex> lock(s_logMutex);
+    s_logLines.clear();
+  }
+  ImGui::SameLine();
+  ImGui::Checkbox("Auto-scroll", &s_logAutoScroll);
+  ImGui::Separator();
+
+  // Scrollable log region
+  ImGui::BeginChild("LogScroll", ImVec2(0, 0), ImGuiChildFlags_None,
+                    ImGuiWindowFlags_HorizontalScrollbar);
+
+  {
+    std::lock_guard<std::mutex> lock(s_logMutex);
+    for (const auto& line : s_logLines) {
+      ImGui::PushStyleColor(ImGuiCol_Text, LogLevelColor(line.level));
+      ImGui::TextUnformatted(line.text.c_str());
+      ImGui::PopStyleColor();
+    }
+  }
+
+  if (s_logAutoScroll && ImGui::GetScrollY() >= ImGui::GetScrollMaxY())
+    ImGui::SetScrollHereY(1.0f);
+
+  ImGui::EndChild();
+  ImGui::End();
+}
+
 // ── Mouse wheel ───────────────────────────────────────
 float ImGuiConsumeWheelDelta() {
   float d = s_wheelAccum;
@@ -286,7 +414,7 @@ float ImGuiConsumeWheelDelta() {
 
 // ── File dialog (Win32) ───────────────────────────────
 #ifdef OS_WINDOWS
-#include <commdlg.h>   // GetOpenFileNameW
+#include <commdlg.h>
 #include <windows.h>
 #endif
 
@@ -303,7 +431,6 @@ std::string OpenFileDialog(const wchar_t* filter, const wchar_t* title) {
   ofn.Flags       = OFN_FILEMUSTEXIST | OFN_PATHMUSTEXIST | OFN_NOCHANGEDIR;
 
   if (GetOpenFileNameW(&ofn)) {
-    // Convert wchar_t to UTF-8 std::string
     int len = WideCharToMultiByte(CP_UTF8, 0, path, -1, nullptr, 0, nullptr, nullptr);
     if (len > 0) {
       std::string result(len - 1, '\0');

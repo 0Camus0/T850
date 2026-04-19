@@ -232,7 +232,9 @@ void FrameDumper::DumpFrame(BaseDriver* driver,
   dumped_ = true;
 
   std::string apiName = (driver->m_currentAPI == GRAPHICS_API::D3D12) ? "d3d12"
-                       : (driver->m_currentAPI == GRAPHICS_API::D3D11) ? "d3d11" : "gl";
+                       : (driver->m_currentAPI == GRAPHICS_API::D3D11) ? "d3d11"
+                       : (driver->m_currentAPI == GRAPHICS_API::VULKAN) ? "vulkan"
+                       : "gl";
   std::string dumpDir = BuildDumpDir(apiName);
 
 #ifdef OS_WINDOWS

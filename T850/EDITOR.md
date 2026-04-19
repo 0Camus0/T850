@@ -144,13 +144,38 @@ project). `T8ditor.vcxproj` is added to `T850.sln` with a `ProjectReference`
 on `Framework.vcxproj`, mirroring DayScene's toolchain (same configs,
 `T8VcpkgStatic` / `T8VcpkgDynamic` env vars, `bin\<arch>\<config>\` output).
 A matching `T8ditor/CMakeLists.txt` is wired into the top-level Linux build.
-The shipped stub is intentionally minimal: a `t8ditor::EditorApp` derived
-from `t800::AppBase` that runs through the existing `Win32Framework` /
-`LinuxFramework` loop and clears the back-buffer each frame. **No ImGui
-dependency is added in this phase**, so no vcpkg manifest changes are
-required to build it. ImGui (docking + viewports), the panels, and the
-viewport host land in Phase 1b once the project structure has been verified
-on a Windows build.
+
+**Phase 1b — basic viewport controls (this PR).** Adds the "blender/3dsmax
+empty start" feel without pulling in ImGui yet:
+
+- **Editor camera** (`EditorCamera`): orbits a `Target` point with
+  middle-drag (or right-drag for 3-button mice); shift+middle pans;
+  arrow keys orbit when no mouse is connected; `+`/`-` zoom; `F` frames
+  the selection. Wraps Framework's `Camera` for VP composition.
+- **Reference grid** (`EditorGrid`): XZ-plane grid with neutral minor
+  lines and red X / blue Z principal axes.
+- **Three-axis transform gizmo** (`EditorGizmo`): drawn at the selection
+  origin in red/green/blue. Modes toggled with `W` (translate, arrows),
+  `E` (rotate, axis-aligned circles), `R` (scale, arrows w/ cube tips).
+  Visualisation only — interactive mouse-drag dragging arrives with
+  ImGuizmo in Phase 1c.
+- **Wireframe `.x` viewer** (`EditorMesh`): loads a `.x` file via
+  Framework's `xF::XDataBase` and draws its triangle edges as a line
+  list. Bypasses Framework's full PBR `RenderMesh` pipeline so the
+  editor doesn't have to set up RTs / SceneProps / shader keys this
+  early. Pass via `--mesh <path>`; defaults to `Models/SkyBox.X` if
+  no flag given.
+- **Keyboard manipulation of the selection**: `J`/`L` (X), `U`/`O` (Y),
+  `I`/`K` (Z) translate; `[`/`]` rotate around Y; `;` / `'` uniform
+  scale.
+- **Editor-only colour-uniform line shader** in `Assets/Shaders/`
+  (`VS_/FS_EditorLine.{hlsl,glsl}`). Kept editor-side so the existing
+  `VS_W` / `FS_W` shaders used by `SplineWireframe` and `WireframeArrow`
+  are untouched.
+
+**No ImGui dependency yet** — Phase 1c layers ImGui on top, replacing
+the keyboard-driven selection editing with proper inspector panels and
+ImGuizmo handles.
 
 ### Phase 2 — Core editor features
 

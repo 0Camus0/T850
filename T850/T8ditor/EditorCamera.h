@@ -38,7 +38,10 @@ public:
   // Per-frame: poll the InputManager (mouse + keys), update spherical
   // coordinates, recompute the view/proj on the wrapped Camera.
   // wheelDelta: accumulated mouse wheel ticks since last frame (positive = zoom in).
-  void Update(float dtSecs, InputManager& im, float wheelDelta = 0.0f);
+  // skipMouse: when true, skip mouse orbit/pan (ImGui has focus).
+  // skipKeyboard: when true, skip arrow/zoom/frame keys (ImGui has focus).
+  void Update(float dtSecs, InputManager& im, float wheelDelta = 0.0f,
+              bool skipMouse = false, bool skipKeyboard = false);
 
   // Notify the camera of a new viewport size (e.g. window resize).
   void SetViewportSize(int w, int h);
@@ -78,8 +81,11 @@ private:
   XVECTOR3  m_target;
 
   // Spherical coords around m_target.
-  float m_yaw      = 0.0f;     // radians, 0 = +Z forward
-  float m_pitch    = -0.4f;    // radians, downward tilt for a starter view
+  // 3dsmax-style default: camera in the upper-right quadrant, looking down
+  // at the grid from above. Yaw ≈ -43° rotates from +Z toward -X; pitch
+  // ≈ +23° elevates the eye above the target.
+  float m_yaw      = -0.75f;   // radians, ~-43° — upper-right quadrant
+  float m_pitch    =  0.4f;    // radians, +23° — above the grid
   float m_distance = 30.0f;    // world units
 
   int m_viewportW = 1280;

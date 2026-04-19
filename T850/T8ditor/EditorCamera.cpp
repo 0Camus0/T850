@@ -44,58 +44,58 @@ void EditorCamera::Frame() {
 
 void EditorCamera::ResetToDefault() {
   m_target   = XVECTOR3(0.0f, 0.0f, 0.0f);
-  m_yaw      = 0.0f;
-  m_pitch    = -0.4f;
+  m_yaw      = -0.75f;   // ~-43° — upper-right quadrant (3dsmax style)
+  m_pitch    =  0.4f;    // +23° — above the grid looking down
   m_distance = FrameDistance;
 }
 
-void EditorCamera::Update(float dtSecs, InputManager& im, float wheelDelta) {
-  // ── Mouse-driven controls ──
-  // SDL middle = button index 1, right = index 2 (Win32Framework.cpp).
-  const bool middleDown = im.PressedMouseButton(1);
-  const bool rightDown  = im.PressedMouseButton(2);
-  const bool shiftDown  = im.PressedKey(T800K_LSHIFT) || im.PressedKey(T800K_RSHIFT);
+void EditorCamera::Update(float dtSecs, InputManager& im, float wheelDelta,
+                          bool skipMouse, bool skipKeyboard) {
+  // ── Mouse-driven controls (skip when ImGui wants the mouse) ──
+  if (!skipMouse) {
+    const bool middleDown = im.PressedMouseButton(1);
+    const bool rightDown  = im.PressedMouseButton(2);
+    const bool shiftDown  = im.PressedKey(T800K_LSHIFT) || im.PressedKey(T800K_RSHIFT);
 
-  if (middleDown || rightDown) {
-    const float dx = (float)im.xDelta;
-    const float dy = (float)im.yDelta;
+    if (middleDown || rightDown) {
+      const float dx = (float)im.xDelta;
+      const float dy = (float)im.yDelta;
 
-    if (middleDown && shiftDown) {
-      // Pan: slide target on the camera's right/up plane. Scale by distance
-      // so panning feels consistent at all zoom levels.
-      const float panScale = PanSpeed * m_distance;
-      m_target.x -= m_cam.Right.x * dx * panScale;
-      m_target.y -= m_cam.Right.y * dx * panScale;
-      m_target.z -= m_cam.Right.z * dx * panScale;
-      m_target.x += m_cam.Up.x * dy * panScale;
-      m_target.y += m_cam.Up.y * dy * panScale;
-      m_target.z += m_cam.Up.z * dy * panScale;
-    } else {
-      // Orbit
-      m_yaw   += dx * OrbitSpeed;
-      m_pitch += dy * OrbitSpeed;
+      if (middleDown && shiftDown) {
+        const float panScale = PanSpeed * m_distance;
+        m_target.x -= m_cam.Right.x * dx * panScale;
+        m_target.y -= m_cam.Right.y * dx * panScale;
+        m_target.z -= m_cam.Right.z * dx * panScale;
+        m_target.x += m_cam.Up.x * dy * panScale;
+        m_target.y += m_cam.Up.y * dy * panScale;
+        m_target.z += m_cam.Up.z * dy * panScale;
+      } else {
+        m_yaw   += dx * OrbitSpeed;
+        m_pitch += dy * OrbitSpeed;
+      }
     }
   }
 
-  // ── Keyboard fallback (works without a 3-button mouse) ──
-  if (im.PressedKey(T800K_LEFT))  m_yaw   -= KeyOrbitRate * dtSecs;
-  if (im.PressedKey(T800K_RIGHT)) m_yaw   += KeyOrbitRate * dtSecs;
-  if (im.PressedKey(T800K_UP))    m_pitch -= KeyOrbitRate * dtSecs;
-  if (im.PressedKey(T800K_DOWN))  m_pitch += KeyOrbitRate * dtSecs;
+  // ── Keyboard fallback (skip when ImGui wants the keyboard) ──
+  if (!skipKeyboard) {
+    if (im.PressedKey(T800K_LEFT))  m_yaw   -= KeyOrbitRate * dtSecs;
+    if (im.PressedKey(T800K_RIGHT)) m_yaw   += KeyOrbitRate * dtSecs;
+    if (im.PressedKey(T800K_UP))    m_pitch -= KeyOrbitRate * dtSecs;
+    if (im.PressedKey(T800K_DOWN))  m_pitch += KeyOrbitRate * dtSecs;
 
-  // Zoom via +/- (no SDL mouse-wheel routing in Win32Framework yet).
-  if (im.PressedKey(T800K_PLUS) || im.PressedKey(T800K_EQUALS) || im.PressedKey(T800K_KP_PLUS))
-    m_distance -= KeyZoomRate * dtSecs * std::max(1.0f, m_distance * 0.1f);
-  if (im.PressedKey(T800K_MINUS) || im.PressedKey(T800K_KP_MINUS))
-    m_distance += KeyZoomRate * dtSecs * std::max(1.0f, m_distance * 0.1f);
+    if (im.PressedKey(T800K_PLUS) || im.PressedKey(T800K_EQUALS) || im.PressedKey(T800K_KP_PLUS))
+      m_distance -= KeyZoomRate * dtSecs * std::max(1.0f, m_distance * 0.1f);
+    if (im.PressedKey(T800K_MINUS) || im.PressedKey(T800K_KP_MINUS))
+      m_distance += KeyZoomRate * dtSecs * std::max(1.0f, m_distance * 0.1f);
 
-  // Mouse wheel zoom (captured via SDL event watcher in EditorImGui).
+    if (im.PressedOnceKey(T800K_f))
+      Frame();
+  }
+
+  // Mouse wheel zoom (always active — the caller already zeros wheelDelta
+  // when ImGui wants the mouse, so no extra gate needed here).
   if (wheelDelta != 0.0f)
     m_distance *= std::pow(ZoomSpeed, -wheelDelta);
-
-  // Frame selection.
-  if (im.PressedOnceKey(T800K_f))
-    Frame();
 
   // ── Clamp & apply ──
   if (m_pitch < MinPitch) m_pitch = MinPitch;

@@ -69,10 +69,9 @@ namespace t8ditor {
     void LoadScene(int id) override;
 
   private:
-    // Keep input handling and scene update logically separated.
     void ProcessSelectionInput();
-    // (Re)load a .x mesh into the lit rendering pipeline.
     void ImportMesh(const std::string& path);
+    void CheckResize();
 
     Timer m_dtTimer;
     float m_dtSecs   = 0.0f;
@@ -93,6 +92,13 @@ namespace t8ditor {
 
     bool m_assetsCreated = false;
     bool m_imguiReady   = false;
+
+    // Panel visibility (persists across frames)
+    PanelVisibility m_panels;
+
+    // Resize tracking — poll SDL window size each frame
+    int  m_lastW = 0;
+    int  m_lastH = 0;
   };
 
 } // namespace t8ditor

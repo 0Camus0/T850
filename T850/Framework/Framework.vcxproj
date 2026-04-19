@@ -61,6 +61,7 @@
     <ClInclude Include="include\utils\Timer.h" />
     <ClInclude Include="include\utils\Utils.h" />
     <ClInclude Include="include\utils\Camera.h" />
+    <ClInclude Include="include\utils\Picking.h" />
     <ClInclude Include="include\utils\XDataBase.h" />
     <ClInclude Include="include\utils\xDefs.h" />
     <ClInclude Include="include\utils\xMaths.h" />
@@ -121,6 +122,7 @@
     <ClCompile Include="src\utils\Timer.cpp" />
     <ClCompile Include="src\utils\Utils.cpp" />
     <ClCompile Include="src\utils\Camera.cpp" />
+    <ClCompile Include="src\utils\Picking.cpp" />
     <ClCompile Include="src\utils\XDataBase.cpp" />
     <ClCompile Include="src\utils\XMaths.cpp" />
     <ClCompile Include="src\video\BaseDriver.cpp" />

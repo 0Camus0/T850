@@ -154,9 +154,10 @@ namespace t800 {
     std::vector<VkVertexInputAttributeDescription> m_vertexAttributes;
     VkVertexInputBindingDescription                m_vertexBinding = {};
 
-    // Descriptor binding indices (resolved during reflection)
+    // Descriptor binding indices (resolved from SPIR-V reflection)
     int cbvBinding = -1;
-    std::unordered_map<int, int> srvBindings; // register -> binding index
+    int srvBindings[8] = {-1,-1,-1,-1,-1,-1,-1,-1}; // slot → binding index
+    int maxBinding = 0;  // highest binding number in the layout
   };
 
   // ══════════════════════════════════════════════════════

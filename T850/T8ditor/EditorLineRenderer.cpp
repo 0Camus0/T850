@@ -110,7 +110,9 @@ void EditorLineRenderer::DrawLines(const XMATRIX44& world,
   ib->Set(*t800::T8DeviceContext, 0, ibFormat);
   vb->Set(*t800::T8DeviceContext, vertexStride, 0);
   m_shader->Set(*t800::T8DeviceContext);
-  m_cb->UpdateFromBuffer(*t800::T8DeviceContext, &cb.WVP[0]);
+  // Upload the whole CB struct (WVP + LineColor) — matches the byte layout
+  // declared in VS_EditorLine.hlsl/.glsl.
+  m_cb->UpdateFromBuffer(*t800::T8DeviceContext, &cb);
   m_cb->Set(*t800::T8DeviceContext);
   t800::T8DeviceContext->SetPrimitiveTopology(t800::T8_TOPOLOGY::LINE_LIST);
   t800::T8DeviceContext->DrawIndexed(indexCount, 0, 0);

@@ -573,6 +573,71 @@ namespace t800 {
     height = h;
   }
 
+  bool D3DXDriver::ResizeSwapchain(int newW, int newH) {
+    if (newW <= 0 || newH <= 0) return false;
+    if (!DXGISwapchain) return false;
+
+    ID3D11Device* device = reinterpret_cast<ID3D11Device*>(T8Device->GetAPIObject());
+    ID3D11DeviceContext* deviceContext = reinterpret_cast<ID3D11DeviceContext*>(T8DeviceContext->GetAPIObject());
+    if (!device || !deviceContext) return false;
+
+    // Unbind render targets before resizing
+    deviceContext->OMSetRenderTargets(0, nullptr, nullptr);
+    D3D11RenderTargetView.Reset();
+    D3D11DepthStencilTargetView.Reset();
+    D3D11DepthTex.Reset();
+
+    HRESULT hr = DXGISwapchain->ResizeBuffers(0, (UINT)newW, (UINT)newH,
+                                               DXGI_FORMAT_UNKNOWN, 0);
+    if (FAILED(hr)) {
+      T8_LOG_ERROR("[D3D11] ResizeBuffers failed (0x%08X)", (unsigned)hr);
+      return false;
+    }
+
+    // Recreate RTV from the new back buffer
+    ComPtr<ID3D11Texture2D> backBuffer;
+    hr = DXGISwapchain->GetBuffer(0, __uuidof(ID3D11Texture2D), &backBuffer);
+    if (FAILED(hr)) return false;
+    hr = device->CreateRenderTargetView(backBuffer.Get(), nullptr, &D3D11RenderTargetView);
+    if (FAILED(hr)) return false;
+
+    // Recreate depth buffer at the new size
+    D3D11_TEXTURE2D_DESC depthDesc = {};
+    depthDesc.Width            = (UINT)newW;
+    depthDesc.Height           = (UINT)newH;
+    depthDesc.MipLevels        = 1;
+    depthDesc.ArraySize        = 1;
+    depthDesc.Format           = DXGI_FORMAT_D24_UNORM_S8_UINT;
+    depthDesc.SampleDesc.Count = 1;
+    depthDesc.Usage            = D3D11_USAGE_DEFAULT;
+    depthDesc.BindFlags        = D3D11_BIND_DEPTH_STENCIL;
+    hr = device->CreateTexture2D(&depthDesc, nullptr, &D3D11DepthTex);
+    if (FAILED(hr)) return false;
+
+    D3D11_DEPTH_STENCIL_VIEW_DESC dsvd = {};
+    dsvd.Format        = DXGI_FORMAT_D24_UNORM_S8_UINT;
+    dsvd.ViewDimension = D3D11_DSV_DIMENSION_TEXTURE2D;
+    hr = device->CreateDepthStencilView(D3D11DepthTex.Get(), &dsvd, &D3D11DepthStencilTargetView);
+    if (FAILED(hr)) return false;
+
+    // Rebind and update viewport
+    deviceContext->OMSetRenderTargets(1, D3D11RenderTargetView.GetAddressOf(),
+                                     D3D11DepthStencilTargetView.Get());
+
+    viewport.TopLeftX = 0;
+    viewport.TopLeftY = 0;
+    viewport.Width    = (float)newW;
+    viewport.Height   = (float)newH;
+    viewport.MinDepth = 0;
+    viewport.MaxDepth = 1;
+    deviceContext->RSSetViewports(1, &viewport);
+
+    width  = newW;
+    height = newH;
+    T8_LOG_INFO("[D3D11] Swapchain resized to %dx%d", newW, newH);
+    return true;
+  }
+
   void D3DXDriver::SetBlendState(BLEND_STATES state)
   {
     static const char* names[] = {"BLEND_DEFAULT","BLEND_OPAQUE","ADDITIVE","ALPHA_BLEND","NON_PREMULTIPLIED"};

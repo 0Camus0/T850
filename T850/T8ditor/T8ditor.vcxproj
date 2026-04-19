@@ -356,9 +356,19 @@ copy /Y "$(T8VcpkgDynamic)\bin\zlib1.dll" "$(OutDir)"</Command>
   <ItemGroup>
     <ClCompile Include="main.cpp" />
     <ClCompile Include="EditorApp.cpp" />
+    <ClCompile Include="EditorCamera.cpp" />
+    <ClCompile Include="EditorLineRenderer.cpp" />
+    <ClCompile Include="EditorGrid.cpp" />
+    <ClCompile Include="EditorGizmo.cpp" />
+    <ClCompile Include="EditorMesh.cpp" />
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="EditorApp.h" />
+    <ClInclude Include="EditorCamera.h" />
+    <ClInclude Include="EditorLineRenderer.h" />
+    <ClInclude Include="EditorGrid.h" />
+    <ClInclude Include="EditorGizmo.h" />
+    <ClInclude Include="EditorMesh.h" />
   </ItemGroup>
   <ItemGroup>
     <ResourceCompile Include="T8ditor.rc" />

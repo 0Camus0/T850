@@ -1,21 +1,29 @@
 /*********************************************************
 * Copyright (C) 2017 Daniel Enriquez (camus_mm@hotmail.com)
 * All Rights Reserved
-*
-* You may use, distribute and modify this code under the
-* following terms:
-* ** Do not claim that you wrote this software
-* ** A mention would be appreciated but not needed
-* ** I do not and will not provide support, this software is "as is"
-* ** Enjoy, learn and share.
 *********************************************************/
 
-// EditorApp — minimal AppBase subclass that hosts the T8ditor.exe shell.
+// EditorApp — AppBase subclass that hosts the T8ditor.exe shell.
 //
-// This is intentionally a stub for Phase 1 of the editor roadmap (see
-// EDITOR.md). It opens the same window the runtime uses, links Framework.lib,
-// and runs through Win32Framework/LinuxFramework, but does not yet pull in
-// ImGui or render a scene. Phases 1+ layer the editor UI on top.
+// Phase 1b ("editor 101"): orbit camera, XZ reference grid, three-axis
+// transform gizmo on the active selection, and wireframe display of an
+// optional .x mesh. Keyboard manipulates the selection (no mouse-drag
+// gizmo dragging yet — that lands with ImGui+ImGuizmo in Phase 1c).
+//
+// Hot-keys (when no modifier is down):
+//   W / E / R   : switch gizmo to Translate / Rotate / Scale
+//   Arrow keys  : (no mouse) orbit camera
+//   I / K       : translate selection along world Z
+//   J / L       : translate selection along world X
+//   U / O       : translate selection along world Y
+//   [ / ]       : rotate selection around world Y
+//   ; / '       : scale selection down / up (uniform)
+//   F           : frame selection (re-center camera distance)
+//
+// Mouse:
+//   middle-drag         : orbit camera around target
+//   shift+middle-drag   : pan target
+//   right-drag          : orbit (alternate)
 
 #ifndef T8DITOR_EDITORAPP_H
 #define T8DITOR_EDITORAPP_H
@@ -23,7 +31,18 @@
 #include <core/Core.h>
 #include <utils/Timer.h>
 
+#include <string>
+
+#include "EditorCamera.h"
+#include "EditorLineRenderer.h"
+#include "EditorGrid.h"
+#include "EditorGizmo.h"
+#include "EditorMesh.h"
+
 namespace t8ditor {
+
+  // Set by main.cpp before constructing the app.
+  void SetStartupMeshPath(const std::string& p);
 
   class EditorApp : public t800::AppBase {
   public:
@@ -46,8 +65,20 @@ namespace t8ditor {
     void LoadScene(int id) override;
 
   private:
+    // Keep input handling and scene update logically separated.
+    void ProcessSelectionInput();
+
     Timer m_dtTimer;
-    float m_dtSecs = 0.0f;
+    float m_dtSecs   = 0.0f;
+    bool  m_firstFrame = true;
+
+    EditorCamera        m_camera;
+    EditorLineRenderer  m_lines;
+    EditorGrid          m_grid;
+    EditorGizmo         m_gizmo;
+    EditorMesh          m_mesh;
+
+    bool m_assetsCreated = false;
   };
 
 } // namespace t8ditor

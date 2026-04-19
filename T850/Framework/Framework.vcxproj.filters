@@ -57,6 +57,12 @@
     <Filter Include="Source Files\ext">
       <UniqueIdentifier>{fa54be3f-6764-487d-a20f-9adc6984e9b3}</UniqueIdentifier>
     </Filter>
+    <Filter Include="Source Files\utils\gltf">
+      <UniqueIdentifier>{a8f01eaf-2c4f-4e2a-9e5c-3d22c1e07f01}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Header Files\utils\gltf">
+      <UniqueIdentifier>{b3c4d6f0-7e1f-4f1e-9b3a-2a01a8e0f902}</UniqueIdentifier>
+    </Filter>
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="include\core\Core.h">
@@ -76,6 +82,21 @@
     </ClInclude>
     <ClInclude Include="include\utils\xMaths.h">
       <Filter>Header Files\utils</Filter>
+    </ClInclude>
+    <ClInclude Include="include\utils\gltf\GLTFTypes.h">
+      <Filter>Header Files\utils\gltf</Filter>
+    </ClInclude>
+    <ClInclude Include="include\utils\gltf\GLTFLoader.h">
+      <Filter>Header Files\utils\gltf</Filter>
+    </ClInclude>
+    <ClInclude Include="include\utils\gltf\GLTFAccessor.h">
+      <Filter>Header Files\utils\gltf</Filter>
+    </ClInclude>
+    <ClInclude Include="include\utils\gltf\GLTFImage.h">
+      <Filter>Header Files\utils\gltf</Filter>
+    </ClInclude>
+    <ClInclude Include="include\utils\gltf\GLTFMaterial.h">
+      <Filter>Header Files\utils\gltf</Filter>
     </ClInclude>
     <ClInclude Include="include\scene\PrimitiveBase.h">
       <Filter>Header Files\scene</Filter>
@@ -273,6 +294,30 @@
     </ClCompile>
     <ClCompile Include="..\Librerias\tinyxml2\tinyxml2.cpp">
       <Filter>Source Files\ext</Filter>
+    </ClCompile>
+    <ClCompile Include="src\utils\gltf\GLTFLoader.cpp">
+      <Filter>Source Files\utils\gltf</Filter>
+    </ClCompile>
+    <ClCompile Include="src\utils\gltf\GLTFJson.cpp">
+      <Filter>Source Files\utils\gltf</Filter>
+    </ClCompile>
+    <ClCompile Include="src\utils\gltf\GLTFAccessor.cpp">
+      <Filter>Source Files\utils\gltf</Filter>
+    </ClCompile>
+    <ClCompile Include="src\utils\gltf\GLTFBase64.cpp">
+      <Filter>Source Files\utils\gltf</Filter>
+    </ClCompile>
+    <ClCompile Include="src\utils\gltf\GLTFImage.cpp">
+      <Filter>Source Files\utils\gltf</Filter>
+    </ClCompile>
+    <ClCompile Include="src\utils\gltf\GLTFMaterial.cpp">
+      <Filter>Source Files\utils\gltf</Filter>
+    </ClCompile>
+    <ClCompile Include="src\utils\gltf\GLTFMesh.cpp">
+      <Filter>Source Files\utils\gltf</Filter>
+    </ClCompile>
+    <ClCompile Include="src\utils\gltf\GLTFAnimation.cpp">
+      <Filter>Source Files\utils\gltf</Filter>
     </ClCompile>
   </ItemGroup>
   <ItemGroup>

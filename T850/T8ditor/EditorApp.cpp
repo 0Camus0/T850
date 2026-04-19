@@ -312,6 +312,10 @@ void EditorApp::OnDraw() {
 
     MenuAction menuAction = ImGuiDrawMenuBar(m_panels);
 
+    // Toolbar — gizmo mode buttons
+    int mode = ImGuiDrawToolbar((int)m_gizmo.Mode());
+    m_gizmo.SetMode((GizmoMode)mode);
+
     // Handle menu actions
     if (menuAction.wantsExit) {
 #ifdef OS_WINDOWS

@@ -1071,7 +1071,8 @@ namespace t800 {
       b.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
       b.descriptorCount = 1;
       b.stageFlags |= VK_SHADER_STAGE_FRAGMENT_BIT;
-      int engineSlot = (int)si.binding - 1;
+      // Texture binding N maps to engine slot N (register(tN) → binding N)
+      int engineSlot = (int)si.binding;
       if (engineSlot >= 0 && engineSlot < 8) {
         srvBindings[engineSlot] = (int)si.binding;
       }

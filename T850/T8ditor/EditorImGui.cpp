@@ -297,6 +297,53 @@ MenuAction ImGuiDrawMenuBar(PanelVisibility& panels) {
   return action;
 }
 
+// ── Toolbar ───────────────────────────────────────────
+// Modes: 0=Translate, 1=Rotate, 2=Scale  (matches GizmoMode enum)
+int ImGuiDrawToolbar(int currentMode) {
+  if (!s_inited) return currentMode;
+
+  // Position just below the main menu bar
+  float menuBarHeight = ImGui::GetFrameHeight();
+  ImGuiViewport* vp = ImGui::GetMainViewport();
+
+  ImGui::SetNextWindowPos(ImVec2(vp->WorkPos.x, vp->WorkPos.y), ImGuiCond_Always);
+  ImGui::SetNextWindowSize(ImVec2(vp->WorkSize.x, 0), ImGuiCond_Always);
+
+  ImGuiWindowFlags flags = ImGuiWindowFlags_NoTitleBar
+                         | ImGuiWindowFlags_NoResize
+                         | ImGuiWindowFlags_NoMove
+                         | ImGuiWindowFlags_NoScrollbar
+                         | ImGuiWindowFlags_NoSavedSettings
+                         | ImGuiWindowFlags_NoDocking;
+
+  ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(6, 4));
+  ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize, 0.0f);
+
+  if (ImGui::Begin("##Toolbar", nullptr, flags)) {
+    // Highlight color for the active tool
+    ImVec4 activeCol  = ImGui::GetStyleColorVec4(ImGuiCol_ButtonActive);
+    ImVec4 normalCol  = ImGui::GetStyleColorVec4(ImGuiCol_Button);
+    ImVec2 btnSize(70, 0);
+
+    auto ToolButton = [&](const char* label, int mode) {
+      if (currentMode == mode)
+        ImGui::PushStyleColor(ImGuiCol_Button, activeCol);
+      if (ImGui::Button(label, btnSize))
+        currentMode = mode;
+      if (currentMode == mode)
+        ImGui::PopStyleColor();
+    };
+
+    ToolButton("Move (W)",   0);  ImGui::SameLine();
+    ToolButton("Rotate (E)", 1);  ImGui::SameLine();
+    ToolButton("Scale (R)",  2);
+  }
+  ImGui::End();
+  ImGui::PopStyleVar(2);
+
+  return currentMode;
+}
+
 // ── Hierarchy panel ───────────────────────────────────
 void ImGuiDrawHierarchyPanel(const char* meshName, bool hasMesh) {
   ImGui::SetNextWindowSize(ImVec2(250, 300), ImGuiCond_FirstUseEver);

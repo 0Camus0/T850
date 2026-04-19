@@ -368,6 +368,7 @@ namespace t800 {
     VkSemaphore     m_renderFinishedSemaphores[kBackBufferCount] = {};
     VkFence         m_inFlightFences[kBackBufferCount] = {};
     uint32_t        m_currentFrame = 0;
+    bool            m_renderPassActive = false;
 
     // Descriptors
     VkDescriptorPool        m_descriptorPool = VK_NULL_HANDLE;

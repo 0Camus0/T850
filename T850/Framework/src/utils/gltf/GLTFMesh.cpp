@@ -284,13 +284,7 @@ bool BuildGeometry(const Document& doc,
   // simplicity we always generate when UV0+normals exist and tangents
   // are absent. Cheap relative to the rest of loading.
   if (!hasTangent && hasUV0 && hasNormal) {
-    std::vector<float> packedPos(N * 3);
-    for (std::size_t i = 0; i < N; ++i) {
-      packedPos[i*3+0] = pos[i*3+0];
-      packedPos[i*3+1] = pos[i*3+1];
-      packedPos[i*3+2] = pos[i*3+2];
-    }
-    GenerateNaiveTangents(packedPos, uv0, tris, tan);
+    GenerateNaiveTangents(pos, uv0, tris, tan);
     hasTangent = (tan.size() == N * 4);
   }
 

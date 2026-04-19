@@ -525,6 +525,13 @@ namespace xF {
 		std::vector<XVECTOR2>	 TexCoordinates[4];
 
 		std::vector<xWORD>		 Triangles;
+		// Optional 32-bit index storage for primitives whose vertex count
+		// exceeds 65535. When `Indices32Bit` is true, consumers (e.g.
+		// RenderMesh::Create) must read `Triangles32` instead of
+		// `Triangles`. Kept as a parallel field so the legacy `.x`
+		// loader, which always emits 16-bit indices, is unaffected.
+		std::vector<xDWORD>		 Triangles32;
+		bool					 Indices32Bit = false;
 		xSkinInfo				 Info;
 		xMaterialList			 MaterialList;
 

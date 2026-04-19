@@ -26,6 +26,7 @@
 #include <stb_image.h>
 
 #include <cstring>
+#include <fstream>
 #include <string>
 #include <vector>
 
@@ -114,10 +115,46 @@ bool ResolveImage(const Document& doc, int imageIndex,
   }
   const Image& img = doc.images[imageIndex];
 
-  // External file path → defer loading to RenderMesh::LoadTex.
+  // External file path → load relative to the .gltf, decode with
+  // stb_image, and pre-register under "Textures/<basename>" so a later
+  // RenderMesh::LoadTex(<basename>) finds it via the existing driver
+  // texture cache. Doing this in the loader (rather than deferring to
+  // RenderMesh) is required because BaseDriver::CreateTexture prepends
+  // "Textures/" to every path it receives — but typical glTF asset
+  // bundles ship their textures alongside the .gltf, not under
+  // Textures/. By materialising the bytes here we keep the existing
+  // per-backend disk loader (cil) untouched and make path resolution
+  // self-contained.
   if (img.uri && img.uri->compare(0, 5, "data:") != 0) {
-    outName = *img.uri;       // stored relative to .gltf
-    outSlot = -1;             // RenderMesh will CreateTexture(outName)
+    std::string dir;
+    {
+      auto s = doc._sourcePath.find_last_of("/\\");
+      if (s != std::string::npos) dir = doc._sourcePath.substr(0, s + 1);
+    }
+    std::string fullPath = dir + *img.uri;
+    std::ifstream f(fullPath, std::ios::binary | std::ios::ate);
+    if (!f.is_open()) {
+      T8_LOG_ERROR("[glTF] image %d: cannot open '%s'", imageIndex, fullPath.c_str());
+      return false;
+    }
+    std::streamsize sz = f.tellg();
+    if (sz <= 0) {
+      T8_LOG_ERROR("[glTF] image %d: empty file '%s'", imageIndex, fullPath.c_str());
+      return false;
+    }
+    f.seekg(0, std::ios::beg);
+    std::vector<unsigned char> bytes(static_cast<std::size_t>(sz));
+    if (!f.read(reinterpret_cast<char*>(bytes.data()), sz)) {
+      T8_LOG_ERROR("[glTF] image %d: short read on '%s'", imageIndex, fullPath.c_str());
+      return false;
+    }
+    // Cache key: keep the original URI so multiple primitives that
+    // share the same texture hit the same driver slot.
+    std::string keyName = *img.uri;
+    int slot = RegisterEncoded(bytes.data(), bytes.size(), keyName);
+    if (slot < 0) return false;
+    outName = keyName;
+    outSlot = slot;
     return true;
   }
 

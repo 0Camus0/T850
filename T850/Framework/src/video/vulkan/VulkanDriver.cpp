@@ -18,6 +18,7 @@
 #include <SDL3/SDL_vulkan.h>
 
 #include <utils/Log.h>
+#include <utils/SPIRVReflection.h>
 #include <debug/T8_Profiler.h>
 #include <iostream>
 #include <fstream>
@@ -595,6 +596,8 @@ namespace t800 {
     auto* driver = GetVkDriver();
     driver->m_pendingTextures[slot].imageView = m_imageView;
     driver->m_pendingTextures[slot].sampler = m_sampler;
+    T8_LOG_DEBUG("[Vulkan] Texture::Set slot=%u view=%p sampler=%p name=%s",
+                slot, (void*)m_imageView, (void*)m_sampler, shaderTextureName.c_str());
   }
 
   void VulkanTexture::SetSampler(const DeviceContext& deviceContext, unsigned int slot) {
@@ -965,9 +968,14 @@ namespace t800 {
 
     glslang_shader_t* shader = glslang_shader_create(&input);
     glslang_shader_set_options(shader, GLSLANG_SHADER_AUTO_MAP_BINDINGS | GLSLANG_SHADER_AUTO_MAP_LOCATIONS);
-    // Set entry point for HLSL (VS/FS function names, glslang renames to "main" in SPIR-V)
+    // Set entry point for HLSL
     const char* entryPoint = (stage == GLSLANG_STAGE_VERTEX) ? "VS" : "FS";
     glslang_shader_set_entry_point(shader, entryPoint);
+    // Shift UBO binding up to avoid collision with textures at binding 0-7
+    glslang_shader_shift_binding(shader, GLSLANG_RESOURCE_TYPE_UBO, 16);
+    // Shift texture/sampler bindings by 1 so register(t0)→binding 1 (binding 0 = UBO)
+    glslang_shader_shift_binding(shader, GLSLANG_RESOURCE_TYPE_TEXTURE, 1);
+    glslang_shader_shift_binding(shader, GLSLANG_RESOURCE_TYPE_SAMPLER, 1);
     if (!glslang_shader_preprocess(shader, &input)) {
       T8_LOG_ERROR("[Vulkan] Shader preprocess failed (%s): %s", debugName.c_str(), glslang_shader_get_info_log(shader));
       glslang_shader_delete(shader);
@@ -1015,6 +1023,9 @@ namespace t800 {
     if (!CompileHLSLToSPIRV(src_vs, GLSLANG_STAGE_VERTEX, vsSPIRV, vs_name.empty() ? "VS" : vs_name)) {
       return false;
     }
+    // Patch SPIR-V: shift UBO bindings to avoid collision with textures at binding 0+
+    SPIRVReflection::ShiftUBOBindings(vsSPIRV.data(), vsSPIRV.size(), 16);
+
     m_vertModule = CreateShaderModule(device, vsSPIRV.data(), vsSPIRV.size() * sizeof(uint32_t));
     if (!m_vertModule) return false;
 
@@ -1023,30 +1034,66 @@ namespace t800 {
     if (!CompileHLSLToSPIRV(src_fs, GLSLANG_STAGE_FRAGMENT, fsSPIRV, fs_name.empty() ? "FS" : fs_name)) {
       return false;
     }
+    SPIRVReflection::ShiftUBOBindings(fsSPIRV.data(), fsSPIRV.size(), 16);
     m_fragModule = CreateShaderModule(device, fsSPIRV.data(), fsSPIRV.size() * sizeof(uint32_t));
     if (!m_fragModule) return false;
 
-    // Create a minimal descriptor set layout (one UBO binding, up to 8 texture bindings)
+    // ── SPIR-V Reflection ──
+    SPIRVReflection vsRefl, fsRefl;
+    vsRefl.Parse(vsSPIRV.data(), vsSPIRV.size());
+    fsRefl.Parse(fsSPIRV.data(), fsSPIRV.size());
+
+    // Build descriptor set layout from reflected bindings
+    std::unordered_map<uint32_t, VkDescriptorSetLayoutBinding> bindingMap;
+
+    // VS uniform buffers
+    for (auto& ub : vsRefl.uniformBuffers) {
+      auto& b = bindingMap[ub.binding];
+      b.binding = ub.binding;
+      b.descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+      b.descriptorCount = 1;
+      b.stageFlags |= VK_SHADER_STAGE_VERTEX_BIT;
+      cbvBinding = (int)ub.binding;
+    }
+    // FS uniform buffers
+    for (auto& ub : fsRefl.uniformBuffers) {
+      auto& b = bindingMap[ub.binding];
+      b.binding = ub.binding;
+      b.descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+      b.descriptorCount = 1;
+      b.stageFlags |= VK_SHADER_STAGE_FRAGMENT_BIT;
+      if (cbvBinding < 0) cbvBinding = (int)ub.binding;
+    }
+    // FS sampled images (textures) — sorted by binding (= HLSL register order)
+    for (int idx = 0; idx < (int)fsRefl.sampledImages.size() && idx < 8; idx++) {
+      auto& si = fsRefl.sampledImages[idx];
+      auto& b = bindingMap[si.binding];
+      b.binding = si.binding;
+      b.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+      b.descriptorCount = 1;
+      b.stageFlags |= VK_SHADER_STAGE_FRAGMENT_BIT;
+      // slot idx = register(tN) in HLSL = engine texture slot
+      srvBindings[idx] = (int)si.binding;
+    }
+    // VS sampled images (if any)
+    for (auto& si : vsRefl.sampledImages) {
+      auto& b = bindingMap[si.binding];
+      b.binding = si.binding;
+      b.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+      b.descriptorCount = 1;
+      b.stageFlags |= VK_SHADER_STAGE_VERTEX_BIT;
+    }
+
+    // Sort bindings and create layout
     std::vector<VkDescriptorSetLayoutBinding> bindings;
+    for (auto& [idx, b] : bindingMap) bindings.push_back(b);
+    std::sort(bindings.begin(), bindings.end(),
+      [](const auto& a, const auto& b) { return a.binding < b.binding; });
 
-    // Binding 0: UBO (vertex + fragment)
-    VkDescriptorSetLayoutBinding uboBinding = {};
-    uboBinding.binding = 0;
-    uboBinding.descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
-    uboBinding.descriptorCount = 1;
-    uboBinding.stageFlags = VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT;
-    bindings.push_back(uboBinding);
-    cbvBinding = 0;
-
-    // Bindings 1-8: combined image samplers
-    for (int i = 0; i < 8; i++) {
-      VkDescriptorSetLayoutBinding texBinding = {};
-      texBinding.binding = 1 + i;
-      texBinding.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-      texBinding.descriptorCount = 1;
-      texBinding.stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
-      bindings.push_back(texBinding);
-      srvBindings[i] = 1 + i;
+    // Track the max binding for descriptor writes
+    maxBinding = 0;
+    for (auto& b : bindings) {
+      if (b.binding > (uint32_t)maxBinding) maxBinding = (int)b.binding;
     }
 
     VkDescriptorSetLayoutCreateInfo dslCI = { VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO };
@@ -1068,66 +1115,31 @@ namespace t800 {
       return false;
     }
 
-    T8_LOG_INFO("[Vulkan] Shader created: VS='%s' FS='%s'", vs_name.c_str(), fs_name.c_str());
-
-    // Build vertex input layout from shader key (matches HLSL VS_INPUT struct order)
+    // ── Vertex input from VS reflection ──
     m_vertexAttributes.clear();
     uint32_t offset = 0;
-    uint32_t location = 0;
-
-    // POSITION is always present: float4
-    {
+    for (auto& inp : vsRefl.stageInputs) {
       VkVertexInputAttributeDescription attr = {};
-      attr.location = location++;
+      attr.location = inp.location;
       attr.binding = 0;
-      attr.format = VK_FORMAT_R32G32B32A32_SFLOAT;
       attr.offset = offset;
+      switch (inp.vecSize) {
+        case 1: attr.format = VK_FORMAT_R32_SFLOAT;          offset += 4;  break;
+        case 2: attr.format = VK_FORMAT_R32G32_SFLOAT;       offset += 8;  break;
+        case 3: attr.format = VK_FORMAT_R32G32B32_SFLOAT;    offset += 12; break;
+        default: attr.format = VK_FORMAT_R32G32B32A32_SFLOAT; offset += 16; break;
+      }
       m_vertexAttributes.push_back(attr);
-      offset += 16;
     }
-
-    if (key.has(ShaderKey::HAS_NORMALS)) {
-      VkVertexInputAttributeDescription attr = {};
-      attr.location = location++;
-      attr.binding = 0;
-      attr.format = VK_FORMAT_R32G32B32A32_SFLOAT;
-      attr.offset = offset;
-      m_vertexAttributes.push_back(attr);
-      offset += 16;
-    }
-    if (key.has(ShaderKey::HAS_TANGENTS)) {
-      VkVertexInputAttributeDescription attr = {};
-      attr.location = location++;
-      attr.binding = 0;
-      attr.format = VK_FORMAT_R32G32B32A32_SFLOAT;
-      attr.offset = offset;
-      m_vertexAttributes.push_back(attr);
-      offset += 16;
-    }
-    if (key.has(ShaderKey::HAS_BINORMALS)) {
-      VkVertexInputAttributeDescription attr = {};
-      attr.location = location++;
-      attr.binding = 0;
-      attr.format = VK_FORMAT_R32G32B32A32_SFLOAT;
-      attr.offset = offset;
-      m_vertexAttributes.push_back(attr);
-      offset += 16;
-    }
-    if (key.has(ShaderKey::HAS_TEXCOORD0)) {
-      VkVertexInputAttributeDescription attr = {};
-      attr.location = location++;
-      attr.binding = 0;
-      attr.format = VK_FORMAT_R32G32_SFLOAT;
-      attr.offset = offset;
-      m_vertexAttributes.push_back(attr);
-      offset += 8;
-    }
-
     vertexStride = offset;
     m_vertexBinding.binding = 0;
     m_vertexBinding.stride = vertexStride;
     m_vertexBinding.inputRate = VK_VERTEX_INPUT_RATE_VERTEX;
 
+    T8_LOG_INFO("[Vulkan] Shader '%s'/'%s': %zu bindings (cbv=%d), %zu inputs (stride=%d)",
+                vs_name.c_str(), fs_name.c_str(),
+                bindings.size(), cbvBinding,
+                m_vertexAttributes.size(), vertexStride);
     return true;
   }
 
@@ -1319,8 +1331,8 @@ namespace t800 {
       return VK_NULL_HANDLE;
     }
 
-    T8_LOG_DEBUG("[Vulkan] Pipeline created: shader=%p blend=%d depth=%d cull=%d",
-                 shader, key.blend, key.depth, key.cull);
+    T8_LOG_DEBUG("[Vulkan] Pipeline created: shader=%p blend=%d depth=%d cull=%d colors=%d renderPass=%p",
+                 shader, key.blend, key.depth, key.cull, key.numColorAttachments, pipelineCI.renderPass);
     m_pipelineCache[key] = pipeline;
     return pipeline;
   }
@@ -2184,7 +2196,166 @@ namespace t800 {
   }
 
   void VulkanDriver::SaveRTToFile(int rtID, int attachment, std::string path) {
-    T8_LOG_INFO("[Vulkan] TODO: SaveRTToFile(rt=%d, att=%d, '%s') — not implemented", rtID, attachment, path.c_str());
+    if (rtID < 0 || rtID >= (int)RTs.size() || !RTs[rtID]) return;
+    VulkanRT* rt = static_cast<VulkanRT*>(RTs[rtID]);
+
+    VkCommandBuffer cmd = m_commandBuffers[m_currentFrame];
+
+    // End any active render pass before readback
+    if (m_renderPassActive) {
+      vkCmdEndRenderPass(cmd);
+      m_renderPassActive = false;
+    }
+
+    // Flush command buffer
+    vkEndCommandBuffer(cmd);
+    VkSubmitInfo submitInfo = { VK_STRUCTURE_TYPE_SUBMIT_INFO };
+    submitInfo.commandBufferCount = 1;
+    submitInfo.pCommandBuffers = &cmd;
+    vkQueueSubmit(m_graphicsQueue, 1, &submitInfo, VK_NULL_HANDLE);
+    vkQueueWaitIdle(m_graphicsQueue);
+
+    VkImage srcImage = VK_NULL_HANDLE;
+    VkImageLayout srcLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+    VkFormat fmt = VK_FORMAT_R8G8B8A8_UNORM;
+    uint32_t w = (uint32_t)rt->w;
+    uint32_t h = (uint32_t)rt->h;
+    VkImageAspectFlags aspect = VK_IMAGE_ASPECT_COLOR_BIT;
+
+    if (attachment == DEPTH_ATTACHMENT) {
+      if (!rt->m_depthImage) goto reopen;
+      srcImage = rt->m_depthImage;
+      fmt = rt->m_depthFormat;
+      aspect = VK_IMAGE_ASPECT_DEPTH_BIT;
+    } else if (attachment >= 0 && attachment < rt->number_RT) {
+      srcImage = rt->vColorImages[attachment];
+      fmt = rt->m_colorFormat;
+    } else {
+      goto reopen;
+    }
+
+    {
+      // Determine bytes per pixel from format
+      uint32_t bpp = 4;
+      bool isFloat16 = (fmt == VK_FORMAT_R16_SFLOAT || fmt == VK_FORMAT_R16G16B16A16_SFLOAT);
+      bool isFloat32 = (fmt == VK_FORMAT_R32_SFLOAT || fmt == VK_FORMAT_D32_SFLOAT);
+      bool isR8 = (fmt == VK_FORMAT_R8_UNORM);
+      if (isFloat16) bpp = (fmt == VK_FORMAT_R16_SFLOAT) ? 2 : 8;
+      else if (isFloat32) bpp = 4;
+      else if (isR8) bpp = 1;
+
+      VkDeviceSize bufSize = (VkDeviceSize)w * h * bpp;
+      VkBufferCreateInfo bufCI = { VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO };
+      bufCI.size = bufSize;
+      bufCI.usage = VK_BUFFER_USAGE_TRANSFER_DST_BIT;
+      VmaAllocationCreateInfo allocCI = {};
+      allocCI.usage = VMA_MEMORY_USAGE_AUTO;
+      allocCI.flags = VMA_ALLOCATION_CREATE_HOST_ACCESS_RANDOM_BIT | VMA_ALLOCATION_CREATE_MAPPED_BIT;
+      VkBuffer stagingBuf;
+      VmaAllocation stagingAlloc;
+      VmaAllocationInfo stagingInfo;
+      vmaCreateBuffer(m_allocator, &bufCI, &allocCI, &stagingBuf, &stagingAlloc, &stagingInfo);
+
+      // Record copy
+      VkCommandBuffer copyCmd;
+      VkCommandBufferAllocateInfo cmdAlloc = { VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO };
+      cmdAlloc.commandPool = m_transientCommandPool;
+      cmdAlloc.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
+      cmdAlloc.commandBufferCount = 1;
+      vkAllocateCommandBuffers(m_device, &cmdAlloc, &copyCmd);
+      VkCommandBufferBeginInfo beginCI = { VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO };
+      beginCI.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
+      vkBeginCommandBuffer(copyCmd, &beginCI);
+
+      TransitionImageLayout(copyCmd, srcImage, srcLayout, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, aspect);
+
+      VkBufferImageCopy region = {};
+      region.imageSubresource.aspectMask = aspect;
+      region.imageSubresource.layerCount = 1;
+      region.imageExtent = { w, h, 1 };
+      vkCmdCopyImageToBuffer(copyCmd, srcImage, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, stagingBuf, 1, &region);
+
+      TransitionImageLayout(copyCmd, srcImage, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, srcLayout, aspect);
+
+      vkEndCommandBuffer(copyCmd);
+      VkSubmitInfo copySubmit = { VK_STRUCTURE_TYPE_SUBMIT_INFO };
+      copySubmit.commandBufferCount = 1;
+      copySubmit.pCommandBuffers = &copyCmd;
+      vkQueueSubmit(m_graphicsQueue, 1, &copySubmit, VK_NULL_HANDLE);
+      vkQueueWaitIdle(m_graphicsQueue);
+
+      // Convert to RGB PPM
+      const uint8_t* pixels = (const uint8_t*)stagingInfo.pMappedData;
+      std::vector<uint8_t> rgb(w * h * 3);
+      for (uint32_t i = 0; i < w * h; i++) {
+        if (bpp == 4 && !isFloat32) {
+          rgb[i*3+0] = pixels[i*4+0];
+          rgb[i*3+1] = pixels[i*4+1];
+          rgb[i*3+2] = pixels[i*4+2];
+        } else if (isFloat16 && bpp == 8) {
+          // RGBA16F: rough conversion (just take top byte of each half-float)
+          const uint16_t* fp = (const uint16_t*)(pixels + i * 8);
+          auto h2f = [](uint16_t h) -> float {
+            uint32_t sign = (h >> 15) & 1; uint32_t exp = (h >> 10) & 0x1F; uint32_t mant = h & 0x3FF;
+            if (exp == 0) return sign ? -0.0f : 0.0f;
+            if (exp == 31) return sign ? -1e30f : 1e30f;
+            float f = (float)(mant) / 1024.0f + 1.0f;
+            f *= (float)(1 << (exp - 15));
+            return sign ? -f : f;
+          };
+          for (int c = 0; c < 3; c++) {
+            float v = h2f(fp[c]);
+            v = v < 0 ? 0 : (v > 1 ? 1 : v);
+            rgb[i*3+c] = (uint8_t)(v * 255.0f);
+          }
+        } else if (isR8) {
+          rgb[i*3+0] = rgb[i*3+1] = rgb[i*3+2] = pixels[i];
+        } else if (isFloat32) {
+          const float* fp = (const float*)(pixels + i * 4);
+          float v = *fp; v = v < 0 ? 0 : (v > 1 ? 1 : v);
+          uint8_t b = (uint8_t)(v * 255.0f);
+          rgb[i*3+0] = rgb[i*3+1] = rgb[i*3+2] = b;
+        } else if (isFloat16 && bpp == 2) {
+          const uint16_t* fp = (const uint16_t*)(pixels + i * 2);
+          float v = (float)(*fp) / 65535.0f;
+          uint8_t b = (uint8_t)(v * 255.0f);
+          rgb[i*3+0] = rgb[i*3+1] = rgb[i*3+2] = b;
+        }
+      }
+
+      // BGRA swap for backbuffer format
+      if (fmt == VK_FORMAT_B8G8R8A8_UNORM || fmt == VK_FORMAT_B8G8R8A8_SRGB) {
+        for (uint32_t i = 0; i < w * h; i++)
+          std::swap(rgb[i*3+0], rgb[i*3+2]);
+      }
+
+      std::ofstream out(path + ".ppm", std::ios::binary);
+      out << "P6\n" << w << " " << h << "\n255\n";
+      out.write((const char*)rgb.data(), rgb.size());
+      T8_LOG_INFO("[Vulkan] Saved %s.ppm (%ux%u fmt=%d)", path.c_str(), w, h, (int)fmt);
+
+      vkFreeCommandBuffers(m_device, m_transientCommandPool, 1, &copyCmd);
+      vmaDestroyBuffer(m_allocator, stagingBuf, stagingAlloc);
+    }
+
+reopen:
+    // Reopen command buffer
+    vkResetCommandBuffer(m_commandBuffers[m_currentFrame], 0);
+    VkCommandBufferBeginInfo beginInfo = { VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO };
+    beginInfo.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
+    vkBeginCommandBuffer(m_commandBuffers[m_currentFrame], &beginInfo);
+
+    // Restart backbuffer render pass (LOAD to preserve)
+    VkRenderPassBeginInfo rpBegin = { VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO };
+    rpBegin.renderPass = m_backbufferRenderPassLoad;
+    rpBegin.framebuffer = m_backbufferFramebuffers[m_imageIndex];
+    rpBegin.renderArea.extent = m_swapChainExtent;
+    vkCmdBeginRenderPass(m_commandBuffers[m_currentFrame], &rpBegin, VK_SUBPASS_CONTENTS_INLINE);
+    m_renderPassActive = true;
+    m_activeRenderPass = m_backbufferRenderPassLoad;
+
+    vkCmdSetViewport(m_commandBuffers[m_currentFrame], 0, 1, &m_viewport);
+    vkCmdSetScissor(m_commandBuffers[m_currentFrame], 0, 1, &m_scissorRect);
   }
 
   // ══════════════════════════════════════════════════════
@@ -2286,35 +2457,44 @@ namespace t800 {
     VkDescriptorSet ds = AllocateDescriptorSet(shader->m_descriptorSetLayout);
     if (!ds) return;
 
-    VkWriteDescriptorSet writes[9] = {};
-    VkDescriptorImageInfo imageInfos[8] = {};
-    uint32_t writeCount = 0;
+    std::vector<VkWriteDescriptorSet> writes;
+    std::vector<VkDescriptorImageInfo> imageInfos;
+    writes.reserve(16);
+    imageInfos.reserve(8);
 
-    // Binding 0: UBO
-    writes[writeCount] = { VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET };
-    writes[writeCount].dstSet = ds;
-    writes[writeCount].dstBinding = 0;
-    writes[writeCount].descriptorCount = 1;
-    writes[writeCount].descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
-    writes[writeCount].pBufferInfo = &m_pendingCB;
-    writeCount++;
-
-    // Bindings 1-8: combined image samplers
-    for (int i = 0; i < 8; i++) {
-      imageInfos[i].imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
-      imageInfos[i].imageView = m_pendingTextures[i].imageView ? m_pendingTextures[i].imageView : m_dummyImageView;
-      imageInfos[i].sampler   = m_pendingTextures[i].sampler   ? m_pendingTextures[i].sampler   : m_dummySampler;
-
-      writes[writeCount] = { VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET };
-      writes[writeCount].dstSet = ds;
-      writes[writeCount].dstBinding = 1 + i;
-      writes[writeCount].descriptorCount = 1;
-      writes[writeCount].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-      writes[writeCount].pImageInfo = &imageInfos[i];
-      writeCount++;
+    // UBO binding
+    if (shader->cbvBinding >= 0) {
+      VkWriteDescriptorSet w = { VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET };
+      w.dstSet = ds;
+      w.dstBinding = (uint32_t)shader->cbvBinding;
+      w.descriptorCount = 1;
+      w.descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+      w.pBufferInfo = &m_pendingCB;
+      writes.push_back(w);
     }
 
-    vkUpdateDescriptorSets(m_device, writeCount, writes, 0, nullptr);
+    // Texture bindings (from reflected srv bindings)
+    for (int slot = 0; slot < 8; slot++) {
+      if (shader->srvBindings[slot] < 0) continue;
+
+      VkDescriptorImageInfo imgInfo = {};
+      imgInfo.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+      imgInfo.imageView = m_pendingTextures[slot].imageView ? m_pendingTextures[slot].imageView : m_dummyImageView;
+      imgInfo.sampler   = m_pendingTextures[slot].sampler   ? m_pendingTextures[slot].sampler   : m_dummySampler;
+      imageInfos.push_back(imgInfo);
+
+      VkWriteDescriptorSet w = { VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET };
+      w.dstSet = ds;
+      w.dstBinding = (uint32_t)shader->srvBindings[slot];
+      w.descriptorCount = 1;
+      w.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+      w.pImageInfo = &imageInfos.back();
+      writes.push_back(w);
+    }
+
+    if (!writes.empty()) {
+      vkUpdateDescriptorSets(m_device, (uint32_t)writes.size(), writes.data(), 0, nullptr);
+    }
     vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS,
                             shader->m_pipelineLayout, 0, 1, &ds, 0, nullptr);
   }

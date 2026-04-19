@@ -196,6 +196,7 @@ int main(int arg,char ** args){
   // Determine API display name for session tag
   const char* apiTag = (desc.api == t800::GRAPHICS_API::OPENGL) ? "gl"
                      : (desc.api == t800::GRAPHICS_API::D3D12)  ? "d3d12"
+                     : (desc.api == t800::GRAPHICS_API::VULKAN) ? "vulkan"
                      : "d3d11";
 
   // Initialize logging

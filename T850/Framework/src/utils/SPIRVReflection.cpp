@@ -212,14 +212,17 @@ bool SPIRVReflection::Parse(const uint32_t* code, size_t wordCount) {
         info.storageClass == SpvStorageClassUniformConstant) {
       // Distinguish UBO from sampled image by pointee type
       if (pointeeKind == TypeInfo::SampledImage ||
-          pointeeKind == TypeInfo::Image ||
-          pointeeKind == TypeInfo::Sampler) {
+          pointeeKind == TypeInfo::Image) {
+        // Image or SampledImage → texture binding
         SPIRVBinding b;
         b.name    = info.name;
         b.set     = info.set;
         b.binding = info.binding;
         b.id      = id;
         sampledImages.push_back(b);
+      } else if (pointeeKind == TypeInfo::Sampler) {
+        // Skip standalone samplers — they share binding with the paired Image
+        // and will be combined into COMBINED_IMAGE_SAMPLER descriptors
       } else {
         // Struct/block → UBO
         SPIRVBinding b;

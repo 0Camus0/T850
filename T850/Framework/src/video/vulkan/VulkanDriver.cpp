@@ -35,6 +35,83 @@ namespace t800 {
   // ══════════════════════════════════════════════════════
   static VulkanDriver* GetVkDriver() { return static_cast<VulkanDriver*>(g_pBaseDriver); }
 
+  static void TransitionImageLayout(VkCommandBuffer cmd, VkImage image,
+                                    VkImageLayout oldLayout, VkImageLayout newLayout,
+                                    VkImageAspectFlags aspectMask) {
+    VkImageMemoryBarrier barrier = { VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER };
+    barrier.oldLayout = oldLayout;
+    barrier.newLayout = newLayout;
+    barrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+    barrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+    barrier.image = image;
+    barrier.subresourceRange.aspectMask = aspectMask;
+    barrier.subresourceRange.baseMipLevel = 0;
+    barrier.subresourceRange.levelCount = 1;
+    barrier.subresourceRange.baseArrayLayer = 0;
+    barrier.subresourceRange.layerCount = 1;
+
+    VkPipelineStageFlags srcStage = 0;
+    VkPipelineStageFlags dstStage = 0;
+
+    if (oldLayout == VK_IMAGE_LAYOUT_UNDEFINED && newLayout == VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL) {
+      barrier.srcAccessMask = 0;
+      barrier.dstAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+      srcStage = VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT;
+      dstStage = VK_PIPELINE_STAGE_TRANSFER_BIT;
+    }
+    else if (oldLayout == VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL && newLayout == VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL) {
+      barrier.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+      barrier.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
+      srcStage = VK_PIPELINE_STAGE_TRANSFER_BIT;
+      dstStage = VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT;
+    }
+    else if (oldLayout == VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL && newLayout == VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL) {
+      barrier.srcAccessMask = VK_ACCESS_SHADER_READ_BIT;
+      barrier.dstAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
+      srcStage = VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT;
+      dstStage = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
+    }
+    else if (oldLayout == VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL && newLayout == VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL) {
+      barrier.srcAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
+      barrier.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
+      srcStage = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
+      dstStage = VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT;
+    }
+    else if (oldLayout == VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL && newLayout == VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL) {
+      barrier.srcAccessMask = VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;
+      barrier.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
+      srcStage = VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT;
+      dstStage = VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT;
+    }
+    else if (oldLayout == VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL && newLayout == VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL) {
+      barrier.srcAccessMask = VK_ACCESS_SHADER_READ_BIT;
+      barrier.dstAccessMask = VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;
+      srcStage = VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT;
+      dstStage = VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT;
+    }
+    else if (oldLayout == VK_IMAGE_LAYOUT_UNDEFINED && newLayout == VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL) {
+      barrier.srcAccessMask = 0;
+      barrier.dstAccessMask = VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;
+      srcStage = VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT;
+      dstStage = VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT;
+    }
+    else if (oldLayout == VK_IMAGE_LAYOUT_UNDEFINED && newLayout == VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL) {
+      barrier.srcAccessMask = 0;
+      barrier.dstAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
+      srcStage = VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT;
+      dstStage = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
+    }
+    else {
+      barrier.srcAccessMask = VK_ACCESS_MEMORY_WRITE_BIT;
+      barrier.dstAccessMask = VK_ACCESS_MEMORY_READ_BIT;
+      srcStage = VK_PIPELINE_STAGE_ALL_COMMANDS_BIT;
+      dstStage = VK_PIPELINE_STAGE_ALL_COMMANDS_BIT;
+    }
+
+    vkCmdPipelineBarrier(cmd, srcStage, dstStage, 0,
+                         0, nullptr, 0, nullptr, 1, &barrier);
+  }
+
   // ══════════════════════════════════════════════════════
   //  VulkanDeviceContext
   // ══════════════════════════════════════════════════════
@@ -315,7 +392,132 @@ namespace t800 {
   // ══════════════════════════════════════════════════════
 
   void VulkanTexture::LoadAPITexture(DeviceContext* context, unsigned char* buffer) {
-    T8_LOG_INFO("[Vulkan] TODO: LoadAPITexture (%ux%u)", x, y);
+    auto* driver = GetVkDriver();
+    VkDevice device = driver->GetDevice();
+    VmaAllocator allocator = driver->GetAllocator();
+
+    // Determine format based on channel count
+    switch (m_channels) {
+      case 1: m_format = VK_FORMAT_R8_UNORM;       break;
+      case 3: m_format = VK_FORMAT_R8G8B8_UNORM;   break;
+      case 4:
+      default: m_format = VK_FORMAT_R8G8B8A8_UNORM; break;
+    }
+
+    VkDeviceSize imageSize = (VkDeviceSize)x * y * m_channels;
+
+    // 1. Create VkImage
+    VkImageCreateInfo imgCI = { VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO };
+    imgCI.imageType = VK_IMAGE_TYPE_2D;
+    imgCI.format = m_format;
+    imgCI.extent = { x, y, 1 };
+    imgCI.mipLevels = 1;
+    imgCI.arrayLayers = 1;
+    imgCI.samples = VK_SAMPLE_COUNT_1_BIT;
+    imgCI.tiling = VK_IMAGE_TILING_OPTIMAL;
+    imgCI.usage = VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT;
+    imgCI.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+    imgCI.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+
+    VmaAllocationCreateInfo allocCI = {};
+    allocCI.usage = VMA_MEMORY_USAGE_AUTO;
+
+    VkResult res = vmaCreateImage(allocator, &imgCI, &allocCI, &m_image, &m_allocation, nullptr);
+    if (res != VK_SUCCESS) {
+      T8_LOG_ERROR("[Vulkan] Texture image creation failed res=%d", res);
+      return;
+    }
+
+    // 2. Create staging buffer and copy pixel data
+    VkBufferCreateInfo stagingInfo = { VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO };
+    stagingInfo.size = imageSize;
+    stagingInfo.usage = VK_BUFFER_USAGE_TRANSFER_SRC_BIT;
+
+    VmaAllocationCreateInfo stagingAllocCI = {};
+    stagingAllocCI.usage = VMA_MEMORY_USAGE_AUTO;
+    stagingAllocCI.flags = VMA_ALLOCATION_CREATE_HOST_ACCESS_SEQUENTIAL_WRITE_BIT |
+                           VMA_ALLOCATION_CREATE_MAPPED_BIT;
+
+    VkBuffer stagingBuffer;
+    VmaAllocation stagingAlloc;
+    VmaAllocationInfo stagingAllocInfo;
+    vmaCreateBuffer(allocator, &stagingInfo, &stagingAllocCI, &stagingBuffer, &stagingAlloc, &stagingAllocInfo);
+    memcpy(stagingAllocInfo.pMappedData, buffer, imageSize);
+
+    // 3. Record transient command buffer
+    VkCommandBufferAllocateInfo cmdAlloc = { VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO };
+    cmdAlloc.commandPool = driver->GetTransientCommandPool();
+    cmdAlloc.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
+    cmdAlloc.commandBufferCount = 1;
+
+    VkCommandBuffer cmd;
+    vkAllocateCommandBuffers(device, &cmdAlloc, &cmd);
+
+    VkCommandBufferBeginInfo beginInfo = { VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO };
+    beginInfo.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
+    vkBeginCommandBuffer(cmd, &beginInfo);
+
+    // 3a. Transition UNDEFINED → TRANSFER_DST_OPTIMAL
+    TransitionImageLayout(cmd, m_image,
+                          VK_IMAGE_LAYOUT_UNDEFINED,
+                          VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+                          VK_IMAGE_ASPECT_COLOR_BIT);
+
+    // 3b. Copy staging buffer → image
+    VkBufferImageCopy region = {};
+    region.bufferOffset = 0;
+    region.bufferRowLength = 0;
+    region.bufferImageHeight = 0;
+    region.imageSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+    region.imageSubresource.mipLevel = 0;
+    region.imageSubresource.baseArrayLayer = 0;
+    region.imageSubresource.layerCount = 1;
+    region.imageOffset = { 0, 0, 0 };
+    region.imageExtent = { x, y, 1 };
+    vkCmdCopyBufferToImage(cmd, stagingBuffer, m_image,
+                           VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &region);
+
+    // 3c. Transition TRANSFER_DST_OPTIMAL → SHADER_READ_ONLY_OPTIMAL
+    TransitionImageLayout(cmd, m_image,
+                          VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+                          VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
+                          VK_IMAGE_ASPECT_COLOR_BIT);
+
+    vkEndCommandBuffer(cmd);
+
+    // 4. Submit and wait
+    VkSubmitInfo submitInfo = { VK_STRUCTURE_TYPE_SUBMIT_INFO };
+    submitInfo.commandBufferCount = 1;
+    submitInfo.pCommandBuffers = &cmd;
+    vkQueueSubmit(driver->GetGraphicsQueue(), 1, &submitInfo, VK_NULL_HANDLE);
+    vkQueueWaitIdle(driver->GetGraphicsQueue());
+
+    vkFreeCommandBuffers(device, driver->GetTransientCommandPool(), 1, &cmd);
+
+    // 5. Free staging buffer
+    vmaDestroyBuffer(allocator, stagingBuffer, stagingAlloc);
+
+    // 6. Create VkImageView
+    VkImageViewCreateInfo ivCI = { VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO };
+    ivCI.image = m_image;
+    ivCI.viewType = VK_IMAGE_VIEW_TYPE_2D;
+    ivCI.format = m_format;
+    ivCI.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+    ivCI.subresourceRange.baseMipLevel = 0;
+    ivCI.subresourceRange.levelCount = 1;
+    ivCI.subresourceRange.baseArrayLayer = 0;
+    ivCI.subresourceRange.layerCount = 1;
+
+    res = vkCreateImageView(device, &ivCI, nullptr, &m_imageView);
+    if (res != VK_SUCCESS) {
+      T8_LOG_ERROR("[Vulkan] Texture image view creation failed res=%d", res);
+      return;
+    }
+
+    // 7. Create VkSampler
+    SetTextureParams();
+
+    T8_LOG_INFO("[Vulkan] LoadAPITexture OK (%ux%u ch=%u fmt=%d)", x, y, m_channels, m_format);
   }
 
   void VulkanTexture::LoadAPITextureCompressed(unsigned char* buffer) {
@@ -333,7 +535,45 @@ namespace t800 {
   }
 
   void VulkanTexture::SetTextureParams() {
-    T8_LOG_TRACE("[Vulkan] TODO: SetTextureParams");
+    auto* driver = GetVkDriver();
+    VkDevice device = driver->GetDevice();
+
+    // Destroy old sampler if recreating
+    if (m_sampler) {
+      vkDestroySampler(device, m_sampler, nullptr);
+      m_sampler = VK_NULL_HANDLE;
+    }
+
+    VkSamplerAddressMode addressMode = VK_SAMPLER_ADDRESS_MODE_REPEAT;
+    if (params & CLAMP_TO_EDGE)
+      addressMode = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
+    else if (params & CLAMP_TO_BORDER)
+      addressMode = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_BORDER;
+
+    VkFilter filter = VK_FILTER_LINEAR;
+    if (params & NEAREST_FILTER)
+      filter = VK_FILTER_NEAREST;
+
+    VkSamplerCreateInfo samplerCI = { VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO };
+    samplerCI.magFilter = filter;
+    samplerCI.minFilter = filter;
+    samplerCI.addressModeU = addressMode;
+    samplerCI.addressModeV = addressMode;
+    samplerCI.addressModeW = addressMode;
+    samplerCI.anisotropyEnable = VK_FALSE;
+    samplerCI.maxAnisotropy = 1.0f;
+    samplerCI.borderColor = VK_BORDER_COLOR_FLOAT_OPAQUE_BLACK;
+    samplerCI.unnormalizedCoordinates = VK_FALSE;
+    samplerCI.compareEnable = VK_FALSE;
+    samplerCI.mipmapMode = VK_SAMPLER_MIPMAP_MODE_LINEAR;
+    samplerCI.mipLodBias = 0.0f;
+    samplerCI.minLod = 0.0f;
+    samplerCI.maxLod = (params & MIPMAPS) ? VK_LOD_CLAMP_NONE : 0.0f;
+
+    VkResult res = vkCreateSampler(device, &samplerCI, nullptr, &m_sampler);
+    if (res != VK_SUCCESS) {
+      T8_LOG_ERROR("[Vulkan] Sampler creation failed res=%d", res);
+    }
   }
 
   void VulkanTexture::GetFormatBpp(unsigned int& props, unsigned int& format, unsigned int& bpp) {
@@ -355,7 +595,230 @@ namespace t800 {
   // ══════════════════════════════════════════════════════
 
   bool VulkanRT::LoadAPIRT() {
-    T8_LOG_INFO("[Vulkan] TODO: LoadAPIRT (%dx%d, %d color attachments)", w, h, number_RT);
+    auto* driver = GetVkDriver();
+    VkDevice device = driver->GetDevice();
+    VmaAllocator allocator = driver->GetAllocator();
+
+    // Map color_format enum to VkFormat
+    switch (color_format) {
+      case BaseRT::RGBA8:    m_colorFormat = VK_FORMAT_R8G8B8A8_UNORM;       break;
+      case BaseRT::RGBA16F:  m_colorFormat = VK_FORMAT_R16G16B16A16_SFLOAT;  break;
+      case BaseRT::F16:      m_colorFormat = VK_FORMAT_R16_SFLOAT;           break;
+      case BaseRT::R8:       m_colorFormat = VK_FORMAT_R8_UNORM;             break;
+      case BaseRT::F32:      m_colorFormat = VK_FORMAT_R32_SFLOAT;           break;
+      default:               m_colorFormat = VK_FORMAT_R8G8B8A8_UNORM;       break;
+    }
+
+    // ── 1. Color attachments ──
+    vColorImages.resize(number_RT);
+    vColorAllocations.resize(number_RT);
+    vColorImageViews.resize(number_RT);
+    vColorLayouts.resize(number_RT);
+    vColorTextures.resize(number_RT);
+
+    for (int i = 0; i < number_RT; i++) {
+      VkImageCreateInfo imgCI = { VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO };
+      imgCI.imageType = VK_IMAGE_TYPE_2D;
+      imgCI.format = m_colorFormat;
+      imgCI.extent = { (uint32_t)w, (uint32_t)h, 1 };
+      imgCI.mipLevels = 1;
+      imgCI.arrayLayers = 1;
+      imgCI.samples = VK_SAMPLE_COUNT_1_BIT;
+      imgCI.tiling = VK_IMAGE_TILING_OPTIMAL;
+      imgCI.usage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT;
+      imgCI.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+      imgCI.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+
+      VmaAllocationCreateInfo allocCI = {};
+      allocCI.usage = VMA_MEMORY_USAGE_AUTO;
+
+      VkResult res = vmaCreateImage(allocator, &imgCI, &allocCI, &vColorImages[i], &vColorAllocations[i], nullptr);
+      if (res != VK_SUCCESS) {
+        T8_LOG_ERROR("[Vulkan] RT color image[%d] creation failed res=%d", i, res);
+        return false;
+      }
+
+      VkImageViewCreateInfo ivCI = { VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO };
+      ivCI.image = vColorImages[i];
+      ivCI.viewType = VK_IMAGE_VIEW_TYPE_2D;
+      ivCI.format = m_colorFormat;
+      ivCI.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+      ivCI.subresourceRange.baseMipLevel = 0;
+      ivCI.subresourceRange.levelCount = 1;
+      ivCI.subresourceRange.baseArrayLayer = 0;
+      ivCI.subresourceRange.layerCount = 1;
+
+      res = vkCreateImageView(device, &ivCI, nullptr, &vColorImageViews[i]);
+      if (res != VK_SUCCESS) {
+        T8_LOG_ERROR("[Vulkan] RT color image view[%d] creation failed res=%d", i, res);
+        return false;
+      }
+
+      vColorLayouts[i] = VK_IMAGE_LAYOUT_UNDEFINED;
+
+      // Create wrapper Texture for this color attachment
+      VulkanTexture* tex = new VulkanTexture;
+      tex->m_image = vColorImages[i];
+      tex->m_imageView = vColorImageViews[i];
+      tex->m_format = m_colorFormat;
+      tex->x = (unsigned int)w;
+      tex->y = (unsigned int)h;
+      tex->m_channels = 4;
+      tex->params = CLAMP_TO_EDGE;
+      tex->SetTextureParams();
+      vColorTextures[i] = tex;
+    }
+
+    // ── 2. Depth attachment ──
+    bool hasDepth = (depth_format != BaseRT::NOTHING);
+    if (hasDepth) {
+      switch (depth_format) {
+        case BaseRT::F32:  m_depthFormat = VK_FORMAT_D32_SFLOAT; break;
+        case BaseRT::FD16: m_depthFormat = VK_FORMAT_D16_UNORM;  break;
+        default:           m_depthFormat = VK_FORMAT_D32_SFLOAT; break;
+      }
+
+      VkImageCreateInfo depthImgCI = { VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO };
+      depthImgCI.imageType = VK_IMAGE_TYPE_2D;
+      depthImgCI.format = m_depthFormat;
+      depthImgCI.extent = { (uint32_t)w, (uint32_t)h, 1 };
+      depthImgCI.mipLevels = 1;
+      depthImgCI.arrayLayers = 1;
+      depthImgCI.samples = VK_SAMPLE_COUNT_1_BIT;
+      depthImgCI.tiling = VK_IMAGE_TILING_OPTIMAL;
+      depthImgCI.usage = VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT;
+      depthImgCI.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+      depthImgCI.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+
+      VmaAllocationCreateInfo depthAllocCI = {};
+      depthAllocCI.usage = VMA_MEMORY_USAGE_AUTO;
+
+      VkResult res = vmaCreateImage(allocator, &depthImgCI, &depthAllocCI, &m_depthImage, &m_depthAllocation, nullptr);
+      if (res != VK_SUCCESS) {
+        T8_LOG_ERROR("[Vulkan] RT depth image creation failed res=%d", res);
+        return false;
+      }
+
+      VkImageViewCreateInfo divCI = { VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO };
+      divCI.image = m_depthImage;
+      divCI.viewType = VK_IMAGE_VIEW_TYPE_2D;
+      divCI.format = m_depthFormat;
+      divCI.subresourceRange.aspectMask = VK_IMAGE_ASPECT_DEPTH_BIT;
+      divCI.subresourceRange.baseMipLevel = 0;
+      divCI.subresourceRange.levelCount = 1;
+      divCI.subresourceRange.baseArrayLayer = 0;
+      divCI.subresourceRange.layerCount = 1;
+
+      res = vkCreateImageView(device, &divCI, nullptr, &m_depthImageView);
+      if (res != VK_SUCCESS) {
+        T8_LOG_ERROR("[Vulkan] RT depth image view creation failed res=%d", res);
+        return false;
+      }
+
+      // Create wrapper Texture for depth attachment
+      VulkanTexture* depthTex = new VulkanTexture;
+      depthTex->m_image = m_depthImage;
+      depthTex->m_imageView = m_depthImageView;
+      depthTex->m_format = m_depthFormat;
+      depthTex->x = (unsigned int)w;
+      depthTex->y = (unsigned int)h;
+      depthTex->m_channels = 1;
+      depthTex->params = CLAMP_TO_EDGE;
+      depthTex->SetTextureParams();
+      pDepthTexture = depthTex;
+    }
+
+    // ── 3. VkRenderPass ──
+    std::vector<VkAttachmentDescription> attachments;
+    std::vector<VkAttachmentReference> colorRefs;
+
+    for (int i = 0; i < number_RT; i++) {
+      VkAttachmentDescription colorAtt = {};
+      colorAtt.format = m_colorFormat;
+      colorAtt.samples = VK_SAMPLE_COUNT_1_BIT;
+      colorAtt.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
+      colorAtt.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
+      colorAtt.stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
+      colorAtt.stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
+      colorAtt.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+      colorAtt.finalLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+      attachments.push_back(colorAtt);
+
+      VkAttachmentReference ref = {};
+      ref.attachment = (uint32_t)i;
+      ref.layout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+      colorRefs.push_back(ref);
+    }
+
+    VkAttachmentReference depthRef = {};
+    if (hasDepth) {
+      VkAttachmentDescription depthAtt = {};
+      depthAtt.format = m_depthFormat;
+      depthAtt.samples = VK_SAMPLE_COUNT_1_BIT;
+      depthAtt.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
+      depthAtt.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
+      depthAtt.stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
+      depthAtt.stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
+      depthAtt.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+      depthAtt.finalLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
+      attachments.push_back(depthAtt);
+
+      depthRef.attachment = (uint32_t)number_RT;
+      depthRef.layout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
+    }
+
+    VkSubpassDescription subpass = {};
+    subpass.pipelineBindPoint = VK_PIPELINE_BIND_POINT_GRAPHICS;
+    subpass.colorAttachmentCount = (uint32_t)number_RT;
+    subpass.pColorAttachments = colorRefs.data();
+    subpass.pDepthStencilAttachment = hasDepth ? &depthRef : nullptr;
+
+    VkSubpassDependency dependency = {};
+    dependency.srcSubpass = VK_SUBPASS_EXTERNAL;
+    dependency.dstSubpass = 0;
+    dependency.srcStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT | VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT;
+    dependency.dstStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT | VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT;
+    dependency.srcAccessMask = 0;
+    dependency.dstAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
+    if (hasDepth)
+      dependency.dstAccessMask |= VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;
+
+    VkRenderPassCreateInfo rpCI = { VK_STRUCTURE_TYPE_RENDER_PASS_CREATE_INFO };
+    rpCI.attachmentCount = (uint32_t)attachments.size();
+    rpCI.pAttachments = attachments.data();
+    rpCI.subpassCount = 1;
+    rpCI.pSubpasses = &subpass;
+    rpCI.dependencyCount = 1;
+    rpCI.pDependencies = &dependency;
+
+    VkResult res = vkCreateRenderPass(device, &rpCI, nullptr, &m_renderPass);
+    if (res != VK_SUCCESS) {
+      T8_LOG_ERROR("[Vulkan] RT render pass creation failed res=%d", res);
+      return false;
+    }
+
+    // ── 4. VkFramebuffer ──
+    std::vector<VkImageView> fbAttachments;
+    for (int i = 0; i < number_RT; i++)
+      fbAttachments.push_back(vColorImageViews[i]);
+    if (hasDepth)
+      fbAttachments.push_back(m_depthImageView);
+
+    VkFramebufferCreateInfo fbCI = { VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO };
+    fbCI.renderPass = m_renderPass;
+    fbCI.attachmentCount = (uint32_t)fbAttachments.size();
+    fbCI.pAttachments = fbAttachments.data();
+    fbCI.width = (uint32_t)w;
+    fbCI.height = (uint32_t)h;
+    fbCI.layers = 1;
+
+    res = vkCreateFramebuffer(device, &fbCI, nullptr, &m_framebuffer);
+    if (res != VK_SUCCESS) {
+      T8_LOG_ERROR("[Vulkan] RT framebuffer creation failed res=%d", res);
+      return false;
+    }
+
+    T8_LOG_INFO("[Vulkan] LoadAPIRT OK (%dx%d, %d color, depth=%s)", w, h, number_RT, hasDepth ? "yes" : "no");
     return true;
   }
 
@@ -383,7 +846,63 @@ namespace t800 {
   }
 
   void VulkanRT::Set(const DeviceContext& context) {
-    T8_LOG_TRACE("[Vulkan] TODO: RT::Set");
+    auto* driver = GetVkDriver();
+    VkCommandBuffer cmd = static_cast<const VulkanDeviceContext*>(&context)->GetCommandBuffer();
+
+    // If inside the backbuffer render pass, end it first
+    if (driver->CurrentRT < 0) {
+      vkCmdEndRenderPass(cmd);
+    }
+
+    // Transition color images to COLOR_ATTACHMENT if needed
+    for (int i = 0; i < number_RT; i++) {
+      if (vColorLayouts[i] == VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL) {
+        TransitionImageLayout(cmd, vColorImages[i],
+                              VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
+                              VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
+                              VK_IMAGE_ASPECT_COLOR_BIT);
+      }
+      vColorLayouts[i] = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+    }
+
+    // Begin the RT's own render pass with clear values
+    bool hasDepth = (depth_format != BaseRT::NOTHING);
+    std::vector<VkClearValue> clearValues(number_RT);
+    for (int i = 0; i < number_RT; i++)
+      clearValues[i].color = { {0.0f, 0.0f, 0.0f, 1.0f} };
+
+    if (hasDepth) {
+      VkClearValue depthClear = {};
+      depthClear.depthStencil = { 1.0f, 0 };
+      clearValues.push_back(depthClear);
+    }
+
+    VkRenderPassBeginInfo rpBegin = { VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO };
+    rpBegin.renderPass = m_renderPass;
+    rpBegin.framebuffer = m_framebuffer;
+    rpBegin.renderArea.offset = { 0, 0 };
+    rpBegin.renderArea.extent = { (uint32_t)w, (uint32_t)h };
+    rpBegin.clearValueCount = (uint32_t)clearValues.size();
+    rpBegin.pClearValues = clearValues.data();
+
+    vkCmdBeginRenderPass(cmd, &rpBegin, VK_SUBPASS_CONTENTS_INLINE);
+
+    // Set viewport and scissor to RT dimensions
+    VkViewport viewport = {};
+    viewport.x = 0.0f;
+    viewport.y = 0.0f;
+    viewport.width = (float)w;
+    viewport.height = (float)h;
+    viewport.minDepth = 0.0f;
+    viewport.maxDepth = 1.0f;
+    vkCmdSetViewport(cmd, 0, 1, &viewport);
+
+    VkRect2D scissor = {};
+    scissor.offset = { 0, 0 };
+    scissor.extent = { (uint32_t)w, (uint32_t)h };
+    vkCmdSetScissor(cmd, 0, 1, &scissor);
+
+    T8_LOG_TRACE("[Vulkan] RT::Set %dx%d (%d attachments)", w, h, number_RT);
   }
 
   void VulkanRT::ChangeCubeDepthTexture(int i) {
@@ -420,19 +939,25 @@ namespace t800 {
     glslang_input_t input = {};
     input.language = GLSLANG_SOURCE_GLSL;
     input.stage = stage;
-    input.client = GLSLANG_CLIENT_VULKAN;
-    input.client_version = GLSLANG_TARGET_VULKAN_1_0;
-    input.target_language = GLSLANG_TARGET_SPV;
+    input.client = GLSLANG_CLIENT_NONE;              // don't enforce Vulkan rules during parse
+    input.client_version = (glslang_target_client_version_t)0;
+    input.target_language = GLSLANG_TARGET_SPV;      // output SPIR-V
     input.target_language_version = GLSLANG_TARGET_SPV_1_0;
     input.code = src;
-    input.default_version = 450;
+    input.default_version = 130;
     input.default_profile = GLSLANG_NO_PROFILE;
     input.force_default_version_and_profile = false;
     input.forward_compatible = false;
-    input.messages = GLSLANG_MSG_DEFAULT_BIT;
+    input.messages = (glslang_messages_t)(GLSLANG_MSG_DEFAULT_BIT | GLSLANG_MSG_SPV_RULES_BIT);
     input.resource = glslang_default_resource();
 
+    // Auto-assign locations for in/out variables (GLSL shaders don't have layout(location=N))
+    input.force_default_version_and_profile = false;
     glslang_shader_t* shader = glslang_shader_create(&input);
+    glslang_shader_set_options(shader, GLSLANG_SHADER_AUTO_MAP_BINDINGS | GLSLANG_SHADER_AUTO_MAP_LOCATIONS);
+    // Wrap standalone uniforms into a default uniform block (GLSL → Vulkan SPIR-V compat)
+    glslang_shader_set_default_uniform_block_set_and_binding(shader, 0, 0);
+    glslang_shader_set_default_uniform_block_name(shader, "DefaultUniforms");
     if (!glslang_shader_preprocess(shader, &input)) {
       T8_LOG_ERROR("[Vulkan] Shader preprocess failed (%s): %s", debugName.c_str(), glslang_shader_get_info_log(shader));
       glslang_shader_delete(shader);
@@ -1380,7 +1905,51 @@ namespace t800 {
 
   void VulkanDriver::PopRT() {
     T8_LOG_TRACE("[Vulkan] PopRT (CurrentRT=%d)", CurrentRT);
-    // TODO: end current RT render pass, transition resources, rebind backbuffer
+
+    if (CurrentRT >= 0 && CurrentRT < (int)RTs.size() && RTs[CurrentRT]) {
+      VulkanRT* rt = static_cast<VulkanRT*>(RTs[CurrentRT]);
+      VkCommandBuffer cmd = m_commandBuffers[m_currentFrame];
+
+      // 1. End the current RT's render pass
+      vkCmdEndRenderPass(cmd);
+
+      // 2. Transition color images from COLOR_ATTACHMENT → SHADER_READ_ONLY
+      for (int i = 0; i < rt->number_RT; i++) {
+        TransitionImageLayout(cmd, rt->vColorImages[i],
+                              VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
+                              VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
+                              VK_IMAGE_ASPECT_COLOR_BIT);
+        rt->vColorLayouts[i] = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+      }
+
+      // 3. Transition depth from DEPTH_STENCIL_ATTACHMENT → SHADER_READ_ONLY
+      bool hasDepth = (rt->depth_format != BaseRT::NOTHING);
+      if (hasDepth && rt->m_depthImage) {
+        TransitionImageLayout(cmd, rt->m_depthImage,
+                              VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL,
+                              VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
+                              VK_IMAGE_ASPECT_DEPTH_BIT);
+      }
+
+      // 4. Restore the backbuffer render pass
+      VkClearValue clearValues[2] = {};
+      clearValues[0].color = { {0.9f, 0.9f, 0.9f, 1.0f} };
+      clearValues[1].depthStencil = { 1.0f, 0 };
+
+      VkRenderPassBeginInfo rpBegin = { VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO };
+      rpBegin.renderPass = m_backbufferRenderPass;
+      rpBegin.framebuffer = m_backbufferFramebuffers[m_imageIndex];
+      rpBegin.renderArea.offset = { 0, 0 };
+      rpBegin.renderArea.extent = m_swapChainExtent;
+      rpBegin.clearValueCount = 2;
+      rpBegin.pClearValues = clearValues;
+
+      vkCmdBeginRenderPass(cmd, &rpBegin, VK_SUBPASS_CONTENTS_INLINE);
+
+      vkCmdSetViewport(cmd, 0, 1, &m_viewport);
+      vkCmdSetScissor(cmd, 0, 1, &m_scissorRect);
+    }
+
     CurrentRT = -1;
   }
 

@@ -167,6 +167,11 @@ void DevLayer::ProcessInput(InputManager* input) {
     T8_LOG_INFO("[DevLayer] %s", m_paused ? "PAUSED" : "RESUMED");
   }
 
+  // Spacebar dump works even when paused
+  if (input->PressedOnceKey(T800K_SPACE)) {
+    if (m_activeScene) m_activeScene->RequestDump();
+  }
+
   // Forward input to the active scene (skip when paused so mouse/keys don't move cameras)
   if (m_activeScene && !m_paused) {
     m_activeScene->OnInput(input);

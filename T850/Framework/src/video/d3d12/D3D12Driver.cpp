@@ -659,8 +659,22 @@ namespace t800 {
       }
     }
 
-    HRESULT hr = CreateDXGIFactory1(IID_PPV_ARGS(&m_dxgiFactory));
-    if (FAILED(hr)) { T8_LOG_ERROR("[D3D12] CreateDXGIFactory1 failed hr=0x%08X", hr); return; }
+    HRESULT hr = CreateDXGIFactory2(0, IID_PPV_ARGS(&m_dxgiFactory));
+    if (FAILED(hr)) {
+      hr = CreateDXGIFactory1(IID_PPV_ARGS(&m_dxgiFactory));
+      if (FAILED(hr)) { T8_LOG_ERROR("[D3D12] CreateDXGIFactory failed hr=0x%08X", hr); return; }
+    }
+
+    // Check tearing support
+    ComPtr<IDXGIFactory5> factory5;
+    m_tearingSupported = false;
+    if (SUCCEEDED(m_dxgiFactory.As(&factory5))) {
+      BOOL allow = FALSE;
+      if (SUCCEEDED(factory5->CheckFeatureSupport(DXGI_FEATURE_PRESENT_ALLOW_TEARING, &allow, sizeof(allow)))) {
+        m_tearingSupported = (allow == TRUE);
+      }
+    }
+    T8_LOG_INFO("[D3D12] Tearing support: %s", m_tearingSupported ? "YES" : "NO");
 
     ComPtr<IDXGIAdapter1> adapter;
     for (UINT i = 0; m_dxgiFactory->EnumAdapters1(i, &adapter) != DXGI_ERROR_NOT_FOUND; i++) {
@@ -700,12 +714,28 @@ namespace t800 {
     sc.Width = width; sc.Height = height; sc.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
     sc.SampleDesc.Count = 1; sc.BufferUsage = DXGI_USAGE_RENDER_TARGET_OUTPUT;
     sc.BufferCount = kBackBufferCount; sc.SwapEffect = DXGI_SWAP_EFFECT_FLIP_DISCARD;
-    sc.Flags = DXGI_SWAP_CHAIN_FLAG_ALLOW_TEARING; // enable tearing for uncapped FPS
+    sc.Flags = DXGI_SWAP_CHAIN_FLAG_FRAME_LATENCY_WAITABLE_OBJECT;
+    if (m_tearingSupported)
+      sc.Flags |= DXGI_SWAP_CHAIN_FLAG_ALLOW_TEARING;
+
     ComPtr<IDXGISwapChain1> sc1;
     m_dxgiFactory->CreateSwapChainForHwnd(m_commandQueue.Get(), m_hwnd, &sc, nullptr, nullptr, &sc1);
     sc1.As(&m_swapChain);
+
+    // Disable ALT+ENTER fullscreen toggle (interferes with Independent Flip)
+    m_dxgiFactory->MakeWindowAssociation(m_hwnd, DXGI_MWA_NO_ALT_ENTER);
+
+    // Set max frame latency for waitable swap chain
+    ComPtr<IDXGISwapChain2> sc2;
+    if (SUCCEEDED(m_swapChain.As(&sc2))) {
+      sc2->SetMaximumFrameLatency(kBackBufferCount);
+      m_swapChainWaitableObject = sc2->GetFrameLatencyWaitableObject();
+      T8_LOG_INFO("[D3D12] Waitable swap chain enabled (latency=%u)", kBackBufferCount);
+    }
+
     m_currentBackBuffer = m_swapChain->GetCurrentBackBufferIndex();
-    T8_LOG_INFO("[D3D12] Swap chain created (%dx%d, %u buffers)", width, height, kBackBufferCount);
+    T8_LOG_INFO("[D3D12] Swap chain created (%dx%d, %u buffers, tearing=%s)",
+                width, height, kBackBufferCount, m_tearingSupported ? "on" : "off");
   }
 
   void D3D12Driver::CreateHeaps() {
@@ -851,6 +881,11 @@ namespace t800 {
   void D3D12Driver::BeginFrame() {
     {
       T8_PROFILE_CPU_SCOPE(t800::g_profiler, "D3D12_FenceWait");
+      // Wait on waitable swap chain (controls frame pacing)
+      if (m_swapChainWaitableObject) {
+        WaitForSingleObject(m_swapChainWaitableObject, 1000);
+      }
+      // Also wait for the specific backbuffer's fence to ensure its allocator is safe to reset
       const UINT64 lastFenceForThisBuffer = m_frameFenceValues[m_currentBackBuffer];
       if (m_fence->GetCompletedValue() < lastFenceForThisBuffer) {
         m_fence->SetEventOnCompletion(lastFenceForThisBuffer, m_fenceEvent);
@@ -942,7 +977,8 @@ namespace t800 {
 
     {
       T8_PROFILE_CPU_SCOPE(t800::g_profiler, "D3D12_Present_Call");
-      m_swapChain->Present(0, DXGI_PRESENT_ALLOW_TEARING);
+      UINT presentFlags = m_tearingSupported ? DXGI_PRESENT_ALLOW_TEARING : 0;
+      m_swapChain->Present(0, presentFlags);
     }
 
     // Signal the fence for this frame — DON'T wait here.

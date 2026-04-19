@@ -15,6 +15,7 @@
 #include <utils/InputManager.h>
 #include <utils/Log.h>
 #include <utils/Utils.h>
+#include <debug/T8_Profiler.h>
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -39,6 +40,8 @@ extern bool g_guiSnap;
 extern bool g_guiControlEdit;
 extern std::string g_guiControlTarget;
 extern bool g_testGui;
+extern bool g_profile;
+extern int  g_profileFrames;
 
 namespace t800 {
   extern Device*       T8Device;
@@ -97,6 +100,11 @@ void App::LoadScene(int id) {
 
 void App::LoadAssets()
 {
+  // Initialize profiler if requested
+  if (g_profile && !t800::g_profiler) {
+    t800::g_profiler = new t800::T8Profiler();
+    t800::g_profiler->Init(pFramework->pVideoDriver);
+  }
 }
 
 void App::CreateAssets() {
@@ -129,9 +137,19 @@ void App::CreateAssets() {
   if (!g_guiScreenshot) {
     FadeFX(0.5, false);
   }
+
+  // Initialize profiler if requested (after driver is fully set up)
+  if (g_profile && !t800::g_profiler) {
+    t800::g_profiler = new t800::T8Profiler();
+    t800::g_profiler->Init(pFramework->pVideoDriver);
+  }
 }
 
 void App::DestroyAssets() {
+   if (t800::g_profiler) {
+     delete t800::g_profiler;
+     t800::g_profiler = nullptr;
+   }
    m_devLayer.Destroy();
    m_textRender.Destroy(); 
    m_actualScene->DestroyAssets();
@@ -160,6 +178,7 @@ void App::OnUpdate() {
 }
 
 void App::OnDraw() {
+  if (t800::g_profiler) t800::g_profiler->BeginFrame();
   static int frameCount = 0;
   T8_LOG_TRACE("[Frame %d] === OnDraw BEGIN ===", frameCount);
   pFramework->pVideoDriver->Clear();
@@ -258,6 +277,18 @@ void App::OnDraw() {
     exit(0);
   }
   frameCount++;
+
+  if (t800::g_profiler) {
+    t800::g_profiler->EndFrame();
+    static bool reported = false;
+    if (!reported && t800::g_profiler->GetFrameCount() >= g_profileFrames) {
+      reported = true;
+      T8_LOG_INFO("[App] Profiler reached %d frames, printing report...",
+                  t800::g_profiler->GetFrameCount());
+      t800::g_profiler->Report();
+      t800::g_profiler->Reset();
+    }
+  }
 
   // Skip presenting the first frame (black with only text)
   if (frameCount > 1) {

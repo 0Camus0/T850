@@ -52,6 +52,11 @@ namespace t8ditor {
   // `panels` is read/written for the View menu checkboxes.
   MenuAction ImGuiDrawMenuBar(PanelVisibility& panels);
 
+  // ── Toolbar ─────────────────────────────────────────
+  // Draws a horizontal button bar just below the menu bar.
+  // `currentMode` is the active gizmo mode; returns the (possibly new) mode.
+  int ImGuiDrawToolbar(int currentMode);
+
   // ── Panels ─────────────────────────────────────────
   void ImGuiDrawHierarchyPanel(const char* meshName, bool hasMesh);
 

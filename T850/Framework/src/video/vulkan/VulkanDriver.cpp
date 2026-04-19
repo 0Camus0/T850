@@ -965,6 +965,9 @@ namespace t800 {
 
     glslang_shader_t* shader = glslang_shader_create(&input);
     glslang_shader_set_options(shader, GLSLANG_SHADER_AUTO_MAP_BINDINGS | GLSLANG_SHADER_AUTO_MAP_LOCATIONS);
+    // Set entry point for HLSL (VS/FS function names, glslang renames to "main" in SPIR-V)
+    const char* entryPoint = (stage == GLSLANG_STAGE_VERTEX) ? "VS" : "FS";
+    glslang_shader_set_entry_point(shader, entryPoint);
     if (!glslang_shader_preprocess(shader, &input)) {
       T8_LOG_ERROR("[Vulkan] Shader preprocess failed (%s): %s", debugName.c_str(), glslang_shader_get_info_log(shader));
       glslang_shader_delete(shader);
@@ -1066,6 +1069,65 @@ namespace t800 {
     }
 
     T8_LOG_INFO("[Vulkan] Shader created: VS='%s' FS='%s'", vs_name.c_str(), fs_name.c_str());
+
+    // Build vertex input layout from shader key (matches HLSL VS_INPUT struct order)
+    m_vertexAttributes.clear();
+    uint32_t offset = 0;
+    uint32_t location = 0;
+
+    // POSITION is always present: float4
+    {
+      VkVertexInputAttributeDescription attr = {};
+      attr.location = location++;
+      attr.binding = 0;
+      attr.format = VK_FORMAT_R32G32B32A32_SFLOAT;
+      attr.offset = offset;
+      m_vertexAttributes.push_back(attr);
+      offset += 16;
+    }
+
+    if (key.has(ShaderKey::HAS_NORMALS)) {
+      VkVertexInputAttributeDescription attr = {};
+      attr.location = location++;
+      attr.binding = 0;
+      attr.format = VK_FORMAT_R32G32B32A32_SFLOAT;
+      attr.offset = offset;
+      m_vertexAttributes.push_back(attr);
+      offset += 16;
+    }
+    if (key.has(ShaderKey::HAS_TANGENTS)) {
+      VkVertexInputAttributeDescription attr = {};
+      attr.location = location++;
+      attr.binding = 0;
+      attr.format = VK_FORMAT_R32G32B32A32_SFLOAT;
+      attr.offset = offset;
+      m_vertexAttributes.push_back(attr);
+      offset += 16;
+    }
+    if (key.has(ShaderKey::HAS_BINORMALS)) {
+      VkVertexInputAttributeDescription attr = {};
+      attr.location = location++;
+      attr.binding = 0;
+      attr.format = VK_FORMAT_R32G32B32A32_SFLOAT;
+      attr.offset = offset;
+      m_vertexAttributes.push_back(attr);
+      offset += 16;
+    }
+    if (key.has(ShaderKey::HAS_TEXCOORD0)) {
+      VkVertexInputAttributeDescription attr = {};
+      attr.location = location++;
+      attr.binding = 0;
+      attr.format = VK_FORMAT_R32G32_SFLOAT;
+      attr.offset = offset;
+      m_vertexAttributes.push_back(attr);
+      offset += 8;
+    }
+
+    vertexStride = offset;
+    m_vertexBinding.binding = 0;
+    m_vertexBinding.stride = vertexStride;
+    m_vertexBinding.inputRate = VK_VERTEX_INPUT_RATE_VERTEX;
+
     return true;
   }
 
@@ -1124,11 +1186,11 @@ namespace t800 {
     stages[0].sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
     stages[0].stage = VK_SHADER_STAGE_VERTEX_BIT;
     stages[0].module = shader->m_vertModule;
-    stages[0].pName = "main";
+    stages[0].pName = "VS";
     stages[1].sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
     stages[1].stage = VK_SHADER_STAGE_FRAGMENT_BIT;
     stages[1].module = shader->m_fragModule;
-    stages[1].pName = "main";
+    stages[1].pName = "FS";
 
     // Vertex input (use shader's reflection data or empty for now)
     VkPipelineVertexInputStateCreateInfo vertexInput = { VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO };

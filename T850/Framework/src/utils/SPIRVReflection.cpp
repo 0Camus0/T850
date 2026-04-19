@@ -203,7 +203,7 @@ bool SPIRVReflection::Parse(const uint32_t* code, size_t wordCount) {
     }
 
     // Debug: log every variable
-    #if 1
+    #if 0 // enable for raw SPIR-V variable dump
     T8_LOG_INFO("[SPIRVRefl] ID=%u name='%s' storage=%u binding=%u set=%u pointeeKind=%d",
            id, info.name.c_str(), info.storageClass, info.binding, info.set, (int)pointeeKind);
     #endif

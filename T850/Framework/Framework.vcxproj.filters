@@ -104,6 +104,9 @@
     <ClInclude Include="include\utils\Camera.h">
       <Filter>Header Files\utils</Filter>
     </ClInclude>
+    <ClInclude Include="include\utils\Picking.h">
+      <Filter>Header Files\utils</Filter>
+    </ClInclude>
     <ClInclude Include="include\video\GLDriver.h">
       <Filter>Header Files\video\GL</Filter>
     </ClInclude>
@@ -200,6 +203,9 @@
       <Filter>Source Files\utils</Filter>
     </ClCompile>
     <ClCompile Include="src\utils\Camera.cpp">
+      <Filter>Source Files\utils</Filter>
+    </ClCompile>
+    <ClCompile Include="src\utils\Picking.cpp">
       <Filter>Source Files\utils</Filter>
     </ClCompile>
     <ClCompile Include="src\video\BaseDriver.cpp">

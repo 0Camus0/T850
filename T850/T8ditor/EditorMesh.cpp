@@ -95,6 +95,11 @@ bool EditorMesh::Load(const std::string& path) {
                            (bbMin[1] + bbMax[1]) * 0.5f,
                            (bbMin[2] + bbMax[2]) * 0.5f);
 
+  m_localAABB = t800::AABB(
+    XVECTOR3(bbMin[0], bbMin[1], bbMin[2]),
+    XVECTOR3(bbMax[0], bbMax[1], bbMax[2])
+  );
+
   T8_LOG_INFO("[T8ditor] EditorMesh: loaded '%s' (%u verts, %u line indices)",
               path.c_str(), (unsigned)(verts.size() / 4), m_indexCount);
   return true;

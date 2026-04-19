@@ -345,11 +345,13 @@ int ImGuiDrawToolbar(int currentMode) {
 }
 
 // ── Hierarchy panel ───────────────────────────────────
-void ImGuiDrawHierarchyPanel(const char* meshName, bool hasMesh) {
+bool ImGuiDrawHierarchyPanel(const char* meshName, bool hasMesh, bool& selected) {
+  bool selectionChanged = false;
+
   ImGui::SetNextWindowSize(ImVec2(250, 300), ImGuiCond_FirstUseEver);
   if (!ImGui::Begin("Hierarchy")) {
     ImGui::End();
-    return;
+    return false;
   }
 
   ImGuiTreeNodeFlags rootFlags = ImGuiTreeNodeFlags_OpenOnArrow
@@ -358,15 +360,23 @@ void ImGuiDrawHierarchyPanel(const char* meshName, bool hasMesh) {
   if (ImGui::TreeNodeEx("Scene Root", rootFlags)) {
     if (hasMesh && meshName) {
       ImGuiTreeNodeFlags leafFlags = ImGuiTreeNodeFlags_Leaf
-                                   | ImGuiTreeNodeFlags_Selected
                                    | ImGuiTreeNodeFlags_SpanAvailWidth;
-      ImGui::TreeNodeEx(meshName, leafFlags);
-      ImGui::TreePop();
+      if (selected)
+        leafFlags |= ImGuiTreeNodeFlags_Selected;
+
+      bool nodeOpen = ImGui::TreeNodeEx(meshName, leafFlags);
+      if (ImGui::IsItemClicked()) {
+        selected = !selected;
+        selectionChanged = true;
+      }
+      if (nodeOpen)
+        ImGui::TreePop();
     }
     ImGui::TreePop();
   }
 
   ImGui::End();
+  return selectionChanged;
 }
 
 // ── Inspector panel ───────────────────────────────────

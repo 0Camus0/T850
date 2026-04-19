@@ -9,6 +9,7 @@
 #include <utils/InputManager.h>
 #include <utils/Log.h>
 #include <utils/xMaths.h>
+#include <utils/Picking.h>
 
 #include <T8_descriptors.h>
 
@@ -135,6 +136,8 @@ void EditorApp::ImportMesh(const std::string& path) {
   m_camera.SetTarget(m_mesh.LocalCenter());
   m_camera.Frame();
 
+  m_meshSelected = true;  // auto-select on import
+
   T8_LOG_INFO("[T8ditor] Loaded lit mesh: %s", path.c_str());
 }
 
@@ -211,6 +214,9 @@ void EditorApp::OnInput() {
 
   if (!imguiWantsKeyboard)
     ProcessSelectionInput();
+
+  if (!imguiWantsMouse)
+    HandleMousePick();
 }
 
 void EditorApp::ProcessSelectionInput() {
@@ -239,6 +245,35 @@ void EditorApp::ProcessSelectionInput() {
   }
   if (IManager.PressedKey(T800K_SEMICOLON)) {
     scl.x /= sclStep; scl.y /= sclStep; scl.z /= sclStep;
+  }
+}
+
+void EditorApp::HandleMousePick() {
+  // Left-click to pick (SDL left = button index 0, single-press semantics)
+  if (!IManager.PressedOnceMouseButton(0)) return;
+
+  if (!m_mesh.IsLoaded()) {
+    m_meshSelected = false;
+    return;
+  }
+
+  // Build the inverse VP matrix
+  XMATRIX44 invVP;
+  m_vp.Inverse(&invVP);
+
+  // Build world-space ray from the mouse position
+  t800::Ray ray = t800::ScreenPointToRay(
+    (float)IManager.mouseX, (float)IManager.mouseY,
+    0, 0, m_lastW, m_lastH, invVP);
+
+  // Test against the mesh's world-space AABB
+  t800::AABB worldBox = m_mesh.WorldAABB();
+  float t = 0.0f;
+  if (t800::RayIntersectsAABB(ray, worldBox, t)) {
+    m_meshSelected = true;
+    T8_LOG_DEBUG("[T8ditor] Picked mesh at t=%.2f", t);
+  } else {
+    m_meshSelected = false;
   }
 }
 
@@ -293,15 +328,12 @@ void EditorApp::OnDraw() {
       const XMATRIX44 vp = cam.VP;
       m_grid.Draw(m_lines, vp);
 
-      if (m_mesh.IsLoaded()) {
+      // Gizmo only draws when a mesh is selected
+      if (m_meshSelected && m_mesh.IsLoaded()) {
         XMATRIX44 selWorld;
         const XVECTOR3& p = m_mesh.Position();
         XMatTranslation(selWorld, p.x, p.y, p.z);
         m_gizmo.Draw(m_lines, vp, selWorld);
-      } else {
-        XMATRIX44 origin;
-        XMatIdentity(origin);
-        m_gizmo.Draw(m_lines, vp, origin);
       }
     }
   }
@@ -335,10 +367,10 @@ void EditorApp::OnDraw() {
     // ── Panels ──
     if (m_panels.showHierarchy) {
       const char* meshName = m_mesh.IsLoaded() ? m_mesh.Path().c_str() : nullptr;
-      ImGuiDrawHierarchyPanel(meshName, m_mesh.IsLoaded());
+      ImGuiDrawHierarchyPanel(meshName, m_mesh.IsLoaded(), m_meshSelected);
     }
 
-    if (m_panels.showInspector) {
+    if (m_panels.showInspector && m_meshSelected) {
       XVECTOR3 pos = m_mesh.Position();
       XVECTOR3 eulerDeg(
         m_mesh.EulerRadians().x * kRadToDeg,

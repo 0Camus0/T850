@@ -101,6 +101,9 @@
       <DisableSpecificWarnings Condition="'$(Configuration)|$(Platform)'=='Debug|ARM64'">4267;%(DisableSpecificWarnings)</DisableSpecificWarnings>
       <DisableSpecificWarnings Condition="'$(Configuration)|$(Platform)'=='Release|ARM64'">4267;%(DisableSpecificWarnings)</DisableSpecificWarnings>
     </ClCompile>
+    <ClCompile Include="..\Librerias\mikktspace\src\mikktspace.c">
+      <CompileAs>CompileAsC</CompileAs>
+    </ClCompile>
     <ClCompile Include="src\core\Core.cpp" />
     <ClCompile Include="src\core\DevLayer.cpp" />
     <ClCompile Include="src\core\windows\Win32Framework.cpp" />

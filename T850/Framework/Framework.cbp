@@ -53,6 +53,7 @@
 			<Add directory="include" />
 			<Add directory="../Framework" />
 			<Add directory="../Librerias/stb/include" />
+			<Add directory="../Librerias/mikktspace/include" />
 			<Add directory="../Librerias/freeglut-linux/include" />
 			<Add directory="../Librerias/glew-2.0.0/include" />
 		</Compiler>

@@ -18,6 +18,8 @@ struct SceneObject {
   int                   primId = -1;
   std::string           name;
   bool                  visible = true;
+  bool                  frozen  = false;  // visible but not selectable
+  bool                  showWire = false; // per-object wireframe override
 };
 
 // ── Camera ───────────────────────────────────────────
@@ -34,6 +36,8 @@ struct SceneCamera {
   float       orthoH   = 15.0f;
   float       nearPlane = 0.1f;
   float       farPlane  = 1000.0f;
+  bool        visible   = true;
+  bool        frozen    = false;
 };
 
 // ── Light ────────────────────────────────────────────
@@ -49,6 +53,8 @@ struct SceneLight {
   float           intensity = 1.5f;
   float           radius    = 10.0f;  // omni only
   bool            enabled   = true;
+  bool            visible   = true;
+  bool            frozen    = false;
 };
 
 } // namespace t8ditor

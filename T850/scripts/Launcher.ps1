@@ -347,6 +347,8 @@ $xaml = @"
                 <ColumnDefinition Width="*"/>
                 <ColumnDefinition Width="12"/>
                 <ColumnDefinition Width="*"/>
+                <ColumnDefinition Width="12"/>
+                <ColumnDefinition Width="*"/>
             </Grid.ColumnDefinitions>
             <Button Grid.Column="0" Name="btnBuild" Content="BUILD" Height="48"
                     FontSize="16" FontWeight="Bold" Cursor="Hand"
@@ -361,6 +363,16 @@ $xaml = @"
             <Button Grid.Column="2" Name="btnRun" Content="&#x25B6;  RUN" Height="48"
                     FontSize="18" FontWeight="Bold" Cursor="Hand"
                     Background="{StaticResource GreenBrush}" Foreground="#1E1E2E"
+                    BorderThickness="0">
+                <Button.Resources>
+                    <Style TargetType="Border">
+                        <Setter Property="CornerRadius" Value="6"/>
+                    </Style>
+                </Button.Resources>
+            </Button>
+            <Button Grid.Column="4" Name="btnEditor" Content="&#x270E;  EDITOR" Height="48"
+                    FontSize="18" FontWeight="Bold" Cursor="Hand"
+                    Background="{StaticResource AccentBrush}" Foreground="#E0E0E0"
                     BorderThickness="0">
                 <Button.Resources>
                     <Style TargetType="Border">
@@ -406,6 +418,7 @@ $svBuildOutput  = $window.FindName("svBuildOutput")
 $txtBuildOutput = $window.FindName("txtBuildOutput")
 $btnBuild       = $window.FindName("btnBuild")
 $btnRun         = $window.FindName("btnRun")
+$btnEditor      = $window.FindName("btnEditor")
 $chkGuiEdit     = $window.FindName("chkGuiEdit")
 $chkGuiControlEdit = $window.FindName("chkGuiControlEdit")
 $pnlGuiControlTarget = $window.FindName("pnlGuiControlTarget")
@@ -717,6 +730,56 @@ function Get-LaunchCommand {
     }
 }
 
+function Get-EditorLaunchCommand {
+    $arch   = ($cmbArch.SelectedItem).Content.ToString().ToLower()
+    $config = ($cmbConfig.SelectedItem).Content.ToString()
+    $apiTag = ($cmbApi.SelectedItem).Tag.ToString()
+
+    $archFolder = switch ($arch) {
+        "arm64" { "arm64" }
+        "x86"   { "x86"   }
+        default { "x64"   }
+    }
+
+    $exePath = Join-Path $rootDir "bin\$archFolder\$config\T8ditor.exe"
+    $engineApi = if ($apiTag -eq "glew") { "gl" } else { $apiTag }
+    $argList = @("--api", $engineApi)
+
+    if ($chkFullscreen.IsChecked) {
+        $argList += "--fullscreen"
+    }
+
+    $w = $txtWidth.Text
+    $h = $txtHeight.Text
+    if ($w -and $h) {
+        $argList += @("--width", $w, "--height", $h)
+    }
+
+    $logTag = ($cmbLogLevel.SelectedItem).Tag.ToString()
+    $argList += @("--logLevel", $logTag)
+
+    if ($chkLogToFile.IsChecked) {
+        $ts = Get-Date -Format "yyyyMMdd_HHmmss"
+        $logFilename = "logs\T8ditor_${ts}_${engineApi}.log"
+        $argList += @("--logFile", $logFilename)
+    }
+
+    if ($chkD3D12Debug.IsChecked) {
+        $argList += "--d3d12debug"
+        if (-not $chkLogToFile.IsChecked) {
+            $ts = Get-Date -Format "yyyyMMdd_HHmmss"
+            $logFilename = "logs\T8ditor_${ts}_${engineApi}_debug.log"
+            $argList += @("--logFile", $logFilename)
+        }
+    }
+
+    return @{
+        ExePath = $exePath
+        Args    = $argList
+        Display = ('"' + $exePath + '" ' + ($argList -join ' '))
+    }
+}
+
 function Update-Preview {
     $cmd = Get-LaunchCommand
     $txtCmdPreview.Text = $cmd.Display
@@ -730,6 +793,10 @@ function Update-Preview {
         $txtStatus.Foreground = $window.FindResource("RedBrush")
         $btnRun.IsEnabled = $false
     }
+
+    # Also check editor exe
+    $editorCmd = Get-EditorLaunchCommand
+    $btnEditor.IsEnabled = (Test-Path $editorCmd.ExePath)
 }
 
 function Update-GuiControlEditUI {
@@ -976,6 +1043,29 @@ $btnRun.Add_Click({
 
     $txtStatus.Text = "Process running"
     $txtStatus.Foreground = $window.FindResource("GreenBrush")
+})
+
+# EDITOR button — launch T8ditor with current graphics/resolution/log settings
+$btnEditor.Add_Click({
+    $cmd = Get-EditorLaunchCommand
+    if (-not (Test-Path $cmd.ExePath)) {
+        [System.Windows.MessageBox]::Show(
+            ("Editor not found:" + "`n" + $cmd.ExePath + "`n`n" + "Please build this configuration first."),
+            "T850 Launcher", "OK", "Error")
+        return
+    }
+
+    Save-Config
+
+    $txtStatus.Text = "Editor running..."
+    $txtStatus.Foreground = $window.FindResource("AccentBrush")
+    $window.Dispatcher.Invoke([Action]{}, [System.Windows.Threading.DispatcherPriority]::Background)
+
+    $workDir = Split-Path -Parent $cmd.ExePath
+    Start-Process -FilePath $cmd.ExePath -ArgumentList $cmd.Args -WorkingDirectory $workDir
+
+    $txtStatus.Text = "Editor running"
+    $txtStatus.Foreground = $window.FindResource("AccentBrush")
 })
 
 # ── Initialize ──

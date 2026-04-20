@@ -157,7 +157,7 @@
       <SubSystem>Console</SubSystem>
       <GenerateDebugInformation>true</GenerateDebugInformation>
       <AdditionalLibraryDirectories>$(SolutionDir)Librerias\tinyxml2\lib;$(SolutionDir)Lib\$(Configuration)\$(Platform)\;$(SolutionDir)$(Configuration);$(SolutionDir)Librerias\SDL3\lib\$(T8Arch);$(T8VcpkgStatic)\lib;$(T8VcpkgStatic)\debug\lib;$(T8VcpkgDynamic)\lib;%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
-      <AdditionalDependencies>dxguid.lib;Frameworkd.lib;SDL3.lib;D3D11.lib;D3DCompiler.lib;imguid.lib;%(AdditionalDependencies)</AdditionalDependencies>
+      <AdditionalDependencies>dxguid.lib;Frameworkd.lib;SDL3.lib;D3D11.lib;D3DCompiler.lib;imguid.lib;imguizmo.lib;%(AdditionalDependencies)</AdditionalDependencies>
       <OutputFile>$(OutDir)$(TargetName)$(TargetExt)</OutputFile>
     </Link>
     <PostBuildEvent>
@@ -192,7 +192,7 @@ copy /Y "$(T8VcpkgDynamic)\bin\zlib1.dll" "$(OutDir)"</Command>
       <SubSystem>Console</SubSystem>
       <GenerateDebugInformation>true</GenerateDebugInformation>
       <AdditionalLibraryDirectories>$(SolutionDir)Librerias\tinyxml2\lib;$(SolutionDir)Lib\$(Configuration)\$(Platform)\;$(SolutionDir)$(Configuration);$(SolutionDir)Librerias\SDL3\lib\$(T8Arch);$(T8VcpkgStatic)\lib;$(T8VcpkgStatic)\debug\lib;$(T8VcpkgDynamic)\lib;%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
-      <AdditionalDependencies>dxguid.lib;Frameworkd.lib;SDL3.lib;D3D11.lib;D3DCompiler.lib;imguid.lib;%(AdditionalDependencies)</AdditionalDependencies>
+      <AdditionalDependencies>dxguid.lib;Frameworkd.lib;SDL3.lib;D3D11.lib;D3DCompiler.lib;imguid.lib;imguizmo.lib;%(AdditionalDependencies)</AdditionalDependencies>
       <OutputFile>$(OutDir)$(TargetName)$(TargetExt)</OutputFile>
     </Link>
     <PostBuildEvent>
@@ -227,7 +227,7 @@ copy /Y "$(T8VcpkgDynamic)\bin\zlib1.dll" "$(OutDir)"</Command>
       <SubSystem>Console</SubSystem>
       <GenerateDebugInformation>true</GenerateDebugInformation>
       <AdditionalLibraryDirectories>$(SolutionDir)Librerias\tinyxml2\lib;$(SolutionDir)Lib\$(Configuration)\$(Platform)\;$(SolutionDir)$(Configuration);$(SolutionDir)Librerias\SDL3\lib\$(T8Arch);$(T8VcpkgStatic)\lib;$(T8VcpkgStatic)\debug\lib;$(T8VcpkgDynamic)\lib;%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
-      <AdditionalDependencies>dxguid.lib;Frameworkd.lib;SDL3.lib;D3D11.lib;D3DCompiler.lib;imguid.lib;%(AdditionalDependencies)</AdditionalDependencies>
+      <AdditionalDependencies>dxguid.lib;Frameworkd.lib;SDL3.lib;D3D11.lib;D3DCompiler.lib;imguid.lib;imguizmo.lib;%(AdditionalDependencies)</AdditionalDependencies>
       <OutputFile>$(OutDir)$(TargetName)$(TargetExt)</OutputFile>
     </Link>
     <PostBuildEvent>
@@ -263,7 +263,7 @@ copy /Y "$(T8VcpkgDynamic)\bin\zlib1.dll" "$(OutDir)"</Command>
       <SubSystem>Console</SubSystem>
       <GenerateDebugInformation>true</GenerateDebugInformation>
       <AdditionalLibraryDirectories>$(SolutionDir)Librerias\tinyxml2\lib;$(SolutionDir)Lib\$(Configuration)\$(Platform)\;$(SolutionDir)$(Configuration);$(SolutionDir)Librerias\SDL3\lib\$(T8Arch);$(T8VcpkgStatic)\lib;$(T8VcpkgDynamic)\lib;%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
-      <AdditionalDependencies>dxguid.lib;Framework.lib;SDL3.lib;D3D11.lib;D3DCompiler.lib;imgui.lib;%(AdditionalDependencies)</AdditionalDependencies>
+      <AdditionalDependencies>dxguid.lib;Framework.lib;SDL3.lib;D3D11.lib;D3DCompiler.lib;imgui.lib;imguizmo.lib;%(AdditionalDependencies)</AdditionalDependencies>
       <OutputFile>$(OutDir)$(TargetName)$(TargetExt)</OutputFile>
       <LinkTimeCodeGeneration>Default</LinkTimeCodeGeneration>
     </Link>
@@ -302,7 +302,7 @@ copy /Y "$(T8VcpkgDynamic)\bin\zlib1.dll" "$(OutDir)"</Command>
       <OptimizeReferences>true</OptimizeReferences>
       <GenerateDebugInformation>true</GenerateDebugInformation>
       <AdditionalLibraryDirectories>$(SolutionDir)Librerias\tinyxml2\lib;$(SolutionDir)Lib\$(Configuration)\$(Platform)\;$(SolutionDir)$(Configuration);$(SolutionDir)Librerias\SDL3\lib\$(T8Arch);$(T8VcpkgStatic)\lib;$(T8VcpkgDynamic)\lib;%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
-      <AdditionalDependencies>dxguid.lib;Framework.lib;SDL3.lib;D3D11.lib;D3DCompiler.lib;imgui.lib;%(AdditionalDependencies)</AdditionalDependencies>
+      <AdditionalDependencies>dxguid.lib;Framework.lib;SDL3.lib;D3D11.lib;D3DCompiler.lib;imgui.lib;imguizmo.lib;%(AdditionalDependencies)</AdditionalDependencies>
       <OutputFile>$(OutDir)$(TargetName)$(TargetExt)</OutputFile>
       <LinkTimeCodeGeneration>Default</LinkTimeCodeGeneration>
     </Link>
@@ -341,7 +341,7 @@ copy /Y "$(T8VcpkgDynamic)\bin\zlib1.dll" "$(OutDir)"</Command>
       <OptimizeReferences>true</OptimizeReferences>
       <GenerateDebugInformation>true</GenerateDebugInformation>
       <AdditionalLibraryDirectories>$(SolutionDir)Librerias\tinyxml2\lib;$(SolutionDir)Lib\$(Configuration)\$(Platform)\;$(SolutionDir)$(Configuration);$(SolutionDir)Librerias\SDL3\lib\$(T8Arch);$(T8VcpkgStatic)\lib;$(T8VcpkgDynamic)\lib;%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
-      <AdditionalDependencies>dxguid.lib;Framework.lib;SDL3.lib;D3D11.lib;D3DCompiler.lib;imgui.lib;%(AdditionalDependencies)</AdditionalDependencies>
+      <AdditionalDependencies>dxguid.lib;Framework.lib;SDL3.lib;D3D11.lib;D3DCompiler.lib;imgui.lib;imguizmo.lib;%(AdditionalDependencies)</AdditionalDependencies>
       <OutputFile>$(OutDir)$(TargetName)$(TargetExt)</OutputFile>
       <LinkTimeCodeGeneration>Default</LinkTimeCodeGeneration>
     </Link>

@@ -391,18 +391,6 @@ void EditorApp::OnUpdate() {
 
   CheckResize();
 
-  // Update camera orbit target only when selection changes (not every frame,
-  // otherwise translating via ImGuizmo creates a feedback loop).
-  {
-    static int s_prevSelectedIdx = -2; // -2 = uninitialized
-    if (g_selectedIdx != s_prevSelectedIdx) {
-      s_prevSelectedIdx = g_selectedIdx;
-      SceneObject* sel = SelectedObject();
-      if (sel)
-        m_camera.SetTarget(sel->wireframe.Position());
-    }
-  }
-
   OnInput();
   OnDraw();
 }
@@ -515,7 +503,7 @@ void EditorApp::HandleMousePick() {
 
   // Test meshes
   for (int i = 0; i < (int)g_objects.size(); ++i) {
-    if (!g_objects[i].wireframe.IsLoaded()) continue;
+    if (!g_objects[i].wireframe.IsLoaded() || g_objects[i].frozen) continue;
     t800::AABB worldBox = g_objects[i].wireframe.WorldAABB();
     float t = 0.0f;
     if (t800::RayIntersectsAABB(ray, worldBox, t) && t < bestT) {
@@ -525,6 +513,7 @@ void EditorApp::HandleMousePick() {
 
   // Test cameras (sphere pick around position)
   for (int i = 0; i < (int)g_cameras.size(); ++i) {
+    if (g_cameras[i].frozen || !g_cameras[i].visible) continue;
     t800::BoundingSphere bs;
     bs.center = g_cameras[i].position;
     bs.radius = 1.5f;
@@ -536,6 +525,7 @@ void EditorApp::HandleMousePick() {
 
   // Test lights (sphere pick around position)
   for (int i = 0; i < (int)g_lights.size(); ++i) {
+    if (g_lights[i].frozen || !g_lights[i].visible) continue;
     t800::BoundingSphere bs;
     bs.center = g_lights[i].position;
     bs.radius = (g_lights[i].type == EditorLightType::Omni) ? 1.5f : 2.0f;
@@ -758,7 +748,7 @@ void EditorApp::OnDraw() {
       SceneObject& obj = g_objects[i];
       if (obj.primId < 0 || !obj.visible) continue;
       bool isSelected = (g_selectionType == 0 && i == g_selectedIdx);
-      bool showWire = m_panels.showWireframe || isSelected;
+      bool showWire = m_panels.showWireframe || isSelected || obj.showWire;
       if (showWire && obj.wireframe.IsLoaded() && m_lines.IsReady()) {
         XVECTOR3 savedColor = obj.wireframe.WireColor;
         obj.wireframe.WireColor = isSelected
@@ -771,12 +761,14 @@ void EditorApp::OnDraw() {
       }
     }
 
-    // Camera and light viewport gizmos
+    // Camera and light viewport gizmos (only if visible)
     if (m_lines.IsReady()) {
       for (int i = 0; i < (int)g_cameras.size(); ++i)
-        DrawCameraGizmo(m_lines, cam.VP, g_cameras[i], g_selectionType == 1 && i == g_selectedIdx);
+        if (g_cameras[i].visible)
+          DrawCameraGizmo(m_lines, cam.VP, g_cameras[i], g_selectionType == 1 && i == g_selectedIdx);
       for (int i = 0; i < (int)g_lights.size(); ++i)
-        DrawLightGizmo(m_lines, cam.VP, g_lights[i], g_selectionType == 2 && i == g_selectedIdx);
+        if (g_lights[i].visible)
+          DrawLightGizmo(m_lines, cam.VP, g_lights[i], g_selectionType == 2 && i == g_selectedIdx);
     }
 
     // Grid
@@ -890,7 +882,7 @@ void EditorApp::OnDraw() {
       }
     }
     else if (g_selectionType == 2 && g_selectedIdx >= 0 && g_selectedIdx < (int)g_lights.size()) {
-      // ── Light gizmo — translate only via ImGuizmo ──
+      // ── Light gizmo ──
       SceneLight& sl = g_lights[g_selectedIdx];
 
       XMATRIX44 worldMat;
@@ -899,15 +891,25 @@ void EditorApp::OnDraw() {
       XMATRIX44 deltaMatrix;
       XMatIdentity(deltaMatrix);
 
+      // Omni lights: translate + scale (radius). Directional: translate only.
+      ImGuizmo::OPERATION lightOp = ImGuizmo::TRANSLATE;
+      if (sl.type == EditorLightType::Omni && mode == 2)
+        lightOp = ImGuizmo::TRANSLATE | ImGuizmo::SCALEU;
+
       bool manipulated = ImGuizmo::Manipulate(
         &cam2.View.m[0][0], &cam2.Projection.m[0][0],
-        ImGuizmo::TRANSLATE, ImGuizmo::WORLD,
+        lightOp, ImGuizmo::WORLD,
         &worldMat.m[0][0], &deltaMatrix.m[0][0]);
 
       if (manipulated) {
         float translation[3], rotation[3], scale[3];
         ImGuizmo::DecomposeMatrixToComponents(&worldMat.m[0][0], translation, rotation, scale);
         sl.position = XVECTOR3(translation[0], translation[1], translation[2]);
+        if (sl.type == EditorLightType::Omni && mode == 2) {
+          float avgScale = (scale[0] + scale[1] + scale[2]) / 3.0f;
+          sl.radius *= avgScale;
+          if (sl.radius < 0.1f) sl.radius = 0.1f;
+        }
       }
     }
 
@@ -985,76 +987,89 @@ void EditorApp::OnDraw() {
 
     // Panels
     if (m_panels.showHierarchy) {
-      ImGui::SetNextWindowSize(ImVec2(280, 400), ImGuiCond_FirstUseEver);
+      ImGui::SetNextWindowSize(ImVec2(350, 400), ImGuiCond_FirstUseEver);
       if (ImGui::Begin("Hierarchy")) {
+        ImGui::TextDisabled("Eye=show  F=freeze  W=wire");
+        ImGui::Separator();
         if (ImGui::TreeNodeEx("Scene Root", ImGuiTreeNodeFlags_OpenOnArrow | ImGuiTreeNodeFlags_DefaultOpen)) {
-          // Meshes — checkbox = visible
+          // Meshes
           if (ImGui::TreeNodeEx("Meshes", ImGuiTreeNodeFlags_DefaultOpen)) {
             for (int i = 0; i < (int)g_objects.size(); ++i) {
+              auto& o = g_objects[i];
               ImGui::PushID(i + 10000);
-              ImGui::Checkbox("##vis", &g_objects[i].visible);
-              ImGui::SameLine();
+              ImGui::Checkbox("##vis", &o.visible); ImGui::SameLine();
+              ImGui::Checkbox("##frz", &o.frozen);  ImGui::SameLine();
+              ImGui::Checkbox("##wir", &o.showWire); ImGui::SameLine();
               ImGuiTreeNodeFlags flags = ImGuiTreeNodeFlags_Leaf | ImGuiTreeNodeFlags_SpanAvailWidth;
               if (g_selectionType == 0 && i == g_selectedIdx) flags |= ImGuiTreeNodeFlags_Selected;
-              bool nodeOpen = ImGui::TreeNodeEx(g_objects[i].name.c_str(), flags);
-              if (ImGui::IsItemClicked()) {
-                if (g_selectionType == 0 && g_selectedIdx == i) { g_selectedIdx = -1; }
+              if (o.frozen) ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.5f,0.5f,0.5f,1));
+              bool nodeOpen = ImGui::TreeNodeEx(o.name.c_str(), flags);
+              if (ImGui::IsItemClicked() && !o.frozen) {
+                if (g_selectionType == 0 && g_selectedIdx == i) g_selectedIdx = -1;
                 else { g_selectedIdx = i; g_selectionType = 0; }
               }
+              if (o.frozen) ImGui::PopStyleColor();
               if (nodeOpen) ImGui::TreePop();
               ImGui::PopID();
             }
             ImGui::TreePop();
           }
-          // Cameras — checkbox = active camera (radio-like: only one at a time)
+          // Cameras
           if (ImGui::TreeNodeEx("Cameras", ImGuiTreeNodeFlags_DefaultOpen)) {
-            // Default editor camera (always first, index -1)
             {
               bool isDefault = (g_activeCameraIdx < 0);
               ImGui::PushID(20000);
-              if (ImGui::RadioButton("##act", isDefault))
-                g_activeCameraIdx = -1;
+              if (ImGui::RadioButton("##act", isDefault)) g_activeCameraIdx = -1;
               ImGui::SameLine();
               ImGuiTreeNodeFlags flags = ImGuiTreeNodeFlags_Leaf | ImGuiTreeNodeFlags_SpanAvailWidth;
-              bool nodeOpen = ImGui::TreeNodeEx("[E] Editor Camera", flags);
-              if (nodeOpen) ImGui::TreePop();
+              ImGui::TreeNodeEx("[E] Editor Camera", flags);
+              ImGui::TreePop();
               ImGui::PopID();
             }
             for (int i = 0; i < (int)g_cameras.size(); ++i) {
+              auto& c = g_cameras[i];
               ImGui::PushID(i + 20001);
               bool isActive = (g_activeCameraIdx == i);
               if (ImGui::RadioButton("##act", isActive))
                 g_activeCameraIdx = isActive ? -1 : i;
               ImGui::SameLine();
+              ImGui::Checkbox("##vis", &c.visible); ImGui::SameLine();
+              ImGui::Checkbox("##frz", &c.frozen);  ImGui::SameLine();
               ImGuiTreeNodeFlags flags = ImGuiTreeNodeFlags_Leaf | ImGuiTreeNodeFlags_SpanAvailWidth;
               if (g_selectionType == 1 && i == g_selectedIdx) flags |= ImGuiTreeNodeFlags_Selected;
-              const char* icon = (g_cameras[i].type == CameraType::Perspective) ? "[P] " : "[O] ";
-              std::string label = icon + g_cameras[i].name;
+              if (c.frozen) ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.5f,0.5f,0.5f,1));
+              const char* icon = (c.type == CameraType::Perspective) ? "[P] " : "[O] ";
+              std::string label = icon + c.name;
               bool nodeOpen = ImGui::TreeNodeEx(label.c_str(), flags);
-              if (ImGui::IsItemClicked()) {
-                if (g_selectionType == 1 && g_selectedIdx == i) { g_selectedIdx = -1; }
+              if (ImGui::IsItemClicked() && !c.frozen) {
+                if (g_selectionType == 1 && g_selectedIdx == i) g_selectedIdx = -1;
                 else { g_selectedIdx = i; g_selectionType = 1; }
               }
+              if (c.frozen) ImGui::PopStyleColor();
               if (nodeOpen) ImGui::TreePop();
               ImGui::PopID();
             }
             ImGui::TreePop();
           }
-          // Lights — checkbox = enabled
+          // Lights
           if (ImGui::TreeNodeEx("Lights", ImGuiTreeNodeFlags_DefaultOpen)) {
             for (int i = 0; i < (int)g_lights.size(); ++i) {
+              auto& l = g_lights[i];
               ImGui::PushID(i + 30000);
-              ImGui::Checkbox("##en", &g_lights[i].enabled);
-              ImGui::SameLine();
+              ImGui::Checkbox("##en",  &l.enabled); ImGui::SameLine();
+              ImGui::Checkbox("##vis", &l.visible); ImGui::SameLine();
+              ImGui::Checkbox("##frz", &l.frozen);  ImGui::SameLine();
               ImGuiTreeNodeFlags flags = ImGuiTreeNodeFlags_Leaf | ImGuiTreeNodeFlags_SpanAvailWidth;
               if (g_selectionType == 2 && i == g_selectedIdx) flags |= ImGuiTreeNodeFlags_Selected;
-              const char* icon = (g_lights[i].type == EditorLightType::Directional) ? "[D] " : "[O] ";
-              std::string label = icon + g_lights[i].name;
+              if (l.frozen) ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.5f,0.5f,0.5f,1));
+              const char* icon = (l.type == EditorLightType::Directional) ? "[D] " : "[O] ";
+              std::string label = icon + l.name;
               bool nodeOpen = ImGui::TreeNodeEx(label.c_str(), flags);
-              if (ImGui::IsItemClicked()) {
-                if (g_selectionType == 2 && g_selectedIdx == i) { g_selectedIdx = -1; }
+              if (ImGui::IsItemClicked() && !l.frozen) {
+                if (g_selectionType == 2 && g_selectedIdx == i) g_selectedIdx = -1;
                 else { g_selectedIdx = i; g_selectionType = 2; }
               }
+              if (l.frozen) ImGui::PopStyleColor();
               if (nodeOpen) ImGui::TreePop();
               ImGui::PopID();
             }

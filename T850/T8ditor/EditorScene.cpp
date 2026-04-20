@@ -7,7 +7,15 @@
 #include <Config.h>
 #include <utils/Log.h>
 
+// Suppress warnings from third-party glaze headers
+#ifdef _MSC_VER
+#pragma warning(push)
+#pragma warning(disable: 4267) // dragonbox.hpp size_t to int conversion
+#endif
 #include <glaze/glaze.hpp>
+#ifdef _MSC_VER
+#pragma warning(pop)
+#endif
 
 #include <fstream>
 #include <sstream>

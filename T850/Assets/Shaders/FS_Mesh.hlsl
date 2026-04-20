@@ -182,10 +182,12 @@ FS_OUT FS( VS_OUTPUT input )   {
 	#endif
 	
 	#ifdef METALLIC_MAP
-		metallic = TextureMetallic.Sample( SS, parallaxCoords ).r;
-	#endif
-
-	#ifdef GLOSS_MAP
+		// glTF metallic-roughness: B=metallic, G=roughness, multiply by uniform factors
+		float4 mrSample = TextureMetallic.Sample( SS, parallaxCoords );
+		metallic  = PBRParams.x * mrSample.b;
+		roughness = PBRParams.y * mrSample.g;
+	#elif defined(GLOSS_MAP)
+		// Legacy: separate roughness texture in R channel
 		roughness = TextureGloss.Sample( SS, parallaxCoords ).r;
 	#endif
 	

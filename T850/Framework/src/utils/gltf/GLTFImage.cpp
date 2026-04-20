@@ -23,6 +23,7 @@
 #include <video/BaseDriver.h>
 #include <utils/Log.h>
 
+#define STBIR_INCLUDE_STB_IMAGE_RESIZE_H // skip bundled resize impl (defined in cil.cpp)
 #include <stb_image.h>
 
 #include <cstring>

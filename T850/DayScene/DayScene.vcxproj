@@ -265,7 +265,7 @@ copy /Y "$(T8VcpkgDynamic)\bin\zlib1.dll" "$(OutDir)"</Command>
       <AdditionalLibraryDirectories>$(SolutionDir)Librerias\tinyxml2\lib;$(SolutionDir)Lib\$(Configuration)\$(Platform)\;$(SolutionDir)$(Configuration);$(SolutionDir)Librerias\SDL3\lib\$(T8Arch);$(T8VcpkgStatic)\lib;$(T8VcpkgDynamic)\lib;%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
       <AdditionalDependencies>dxguid.lib;Framework.lib;SDL3.lib;D3D11.lib;D3DCompiler.lib;%(AdditionalDependencies)</AdditionalDependencies>
       <OutputFile>$(OutDir)$(TargetName)$(TargetExt)</OutputFile>
-      <LinkTimeCodeGeneration>Default</LinkTimeCodeGeneration>
+      <LinkTimeCodeGeneration>UseLinkTimeCodeGeneration</LinkTimeCodeGeneration>
     </Link>
     <PostBuildEvent>
       <Command>if not exist "$(OutDir)Shaders" mklink /J "$(OutDir)Shaders" "$(SolutionDir)Assets\Shaders"
@@ -304,7 +304,7 @@ copy /Y "$(T8VcpkgDynamic)\bin\zlib1.dll" "$(OutDir)"</Command>
       <AdditionalLibraryDirectories>$(SolutionDir)Librerias\tinyxml2\lib;$(SolutionDir)Lib\$(Configuration)\$(Platform)\;$(SolutionDir)$(Configuration);$(SolutionDir)Librerias\SDL3\lib\$(T8Arch);$(T8VcpkgStatic)\lib;$(T8VcpkgDynamic)\lib;%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
       <AdditionalDependencies>dxguid.lib;Framework.lib;SDL3.lib;D3D11.lib;D3DCompiler.lib;%(AdditionalDependencies)</AdditionalDependencies>
       <OutputFile>$(OutDir)$(TargetName)$(TargetExt)</OutputFile>
-      <LinkTimeCodeGeneration>Default</LinkTimeCodeGeneration>
+      <LinkTimeCodeGeneration>UseLinkTimeCodeGeneration</LinkTimeCodeGeneration>
     </Link>
     <PostBuildEvent>
       <Command>if not exist "$(OutDir)Shaders" mklink /J "$(OutDir)Shaders" "$(SolutionDir)Assets\Shaders"
@@ -343,7 +343,7 @@ copy /Y "$(T8VcpkgDynamic)\bin\zlib1.dll" "$(OutDir)"</Command>
       <AdditionalLibraryDirectories>$(SolutionDir)Librerias\tinyxml2\lib;$(SolutionDir)Lib\$(Configuration)\$(Platform)\;$(SolutionDir)$(Configuration);$(SolutionDir)Librerias\SDL3\lib\$(T8Arch);$(T8VcpkgStatic)\lib;$(T8VcpkgDynamic)\lib;%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
       <AdditionalDependencies>dxguid.lib;Framework.lib;SDL3.lib;D3D11.lib;D3DCompiler.lib;%(AdditionalDependencies)</AdditionalDependencies>
       <OutputFile>$(OutDir)$(TargetName)$(TargetExt)</OutputFile>
-      <LinkTimeCodeGeneration>Default</LinkTimeCodeGeneration>
+      <LinkTimeCodeGeneration>UseLinkTimeCodeGeneration</LinkTimeCodeGeneration>
     </Link>
     <PostBuildEvent>
       <Command>if not exist "$(OutDir)Shaders" mklink /J "$(OutDir)Shaders" "$(SolutionDir)Assets\Shaders"

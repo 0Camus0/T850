@@ -93,5 +93,8 @@ void SplineWireframe::Draw(float * t, float * vp)
 }
 void SplineWireframe::Destroy()
 {
+  if (VB) { VB->release(); VB = nullptr; }
+  if (IB) { IB->release(); IB = nullptr; }
+  if (CB) { CB->release(); CB = nullptr; }
 }
 }

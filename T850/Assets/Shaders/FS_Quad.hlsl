@@ -155,6 +155,9 @@ float4 FS( VS_OUTPUT input ) : SV_TARGET {
 
 		float rough = normalmap.a;
 
+		// Accumulate direct and indirect lighting separately
+		float3 directLight = float3(0.0, 0.0, 0.0);
+
 		int NumLights = (int)CameraInfo.w;
 		[loop] for(int i = 0; i < NumLights; i++){
 			float lightType = LightPositions[i].w;
@@ -173,7 +176,7 @@ float4 FS( VS_OUTPUT input ) : SV_TARGET {
 				float3 Kd = (float3(1.0f, 1.0f, 1.0f) - F) * (1.0f - metallic);
 
 				float geoHorizon = saturate(dot(geoNormal, LightDir));
-				Final.xyz += (SpecularRes.xyz + Kd * Diffuse) * geoHorizon;
+				directLight += (SpecularRes.xyz + Kd * Diffuse) * geoHorizon;
 			} else {
 				// Point light
 				float Rad = LightRadius[i >> 2][i & 3];
@@ -199,19 +202,33 @@ float4 FS( VS_OUTPUT input ) : SV_TARGET {
 					attenuation = max(attenuation, 0.0);
 
 					float geoHorizon = saturate(dot(geoNormal, LightDir));
-					Final.xyz += (SpecularRes.xyz * attenuation + attenuation * Kd * Diffuse) * geoHorizon;
+					directLight += (SpecularRes.xyz * attenuation + attenuation * Kd * Diffuse) * geoHorizon;
 				}
 			}
 		}
 
+		// Apply shadow only to direct lighting
+		float selfShadow = PBRData.g;
+		Final.xyz += directLight * Shadow * selfShadow;
+
+		// Indirect lighting (IBL + ambient) — NOT affected by shadow
 		float3 kSpecular = clamp(fresnelSchlickRoughness(max(dot(normal, EyeDir), 0.0f), F0, rough), 0.0, 1.0);
+		float3 kDiffuseEnv = (float3(1.0f, 1.0f, 1.0f) - kSpecular) * (1.0f - metallic);
+
+		// Specular IBL: env reflection
 		float3 RefleCol = texEnv.SampleLevel(SS, ReflectedVec, rough * 4.0f).xyz;
 		float envAtten = (1.0f - rough) * (1.0f - rough);
+		Final.xyz += RefleCol * kSpecular.xyz * envAtten * toogles.x;
 
-    Final.xyz += RefleCol * kSpecular.xyz * envAtten * toogles.x;
+		// Diffuse IBL: approximate irradiance from env cubemap at high mip
+		float3 irradianceDir = normal;
+		irradianceDir.x = -irradianceDir.x;
+		irradianceDir.z = -irradianceDir.z;
+		float3 irradiance = texEnv.SampleLevel(SS, irradianceDir, 6.0f).xyz;
+		Final.xyz += irradiance * Albedo.xyz * kDiffuseEnv * toogles.x;
 
-		float selfShadow = PBRData.g;
-		Final.xyz *= Shadow * selfShadow;
+		// Ambient minimum (toogles.y = ambient intensity)
+		Final.xyz += Albedo.xyz * toogles.y * kDiffuseEnv;
 	}
 	return Final;
 }

@@ -123,6 +123,9 @@ void WireframeSphere::Draw(const XMATRIX44& vp, const XVECTOR3& center, float ra
 }
 
 void WireframeSphere::Destroy() {
+  if (VB) { VB->release(); VB = nullptr; }
+  if (IB) { IB->release(); IB = nullptr; }
+  if (CB) { CB->release(); CB = nullptr; }
 }
 
 }

@@ -324,8 +324,10 @@ void EditorApp::OnDraw() {
       m_meshInst.Draw();
     }
 
-    // ── Wireframe overlay (x-ray, no depth test) ──
-    if (m_panels.showWireframe && m_mesh.IsLoaded() && m_lines.IsReady()) {
+    // ── Wireframe overlay ──
+    // Show when View > Wireframe Overlay is on, OR when the mesh is selected
+    // (selection highlight = solid + wireframe, like 3dsmax)
+    if ((m_panels.showWireframe || m_meshSelected) && m_mesh.IsLoaded() && m_lines.IsReady()) {
       drv->SetDepthStencilState(t800::BaseDriver::NONE);
       m_mesh.Draw(m_lines, cam.VP);
       drv->SetDepthStencilState(t800::BaseDriver::DEPTH_DEFAULT);

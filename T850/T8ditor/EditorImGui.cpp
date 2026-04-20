@@ -283,6 +283,7 @@ MenuAction ImGuiDrawMenuBar(PanelVisibility& panels) {
       ImGui::MenuItem("Console",   nullptr, &panels.showConsole);
       ImGui::Separator();
       ImGui::MenuItem("Wireframe Overlay", nullptr, &panels.showWireframe);
+      ImGui::MenuItem("Show Skybox",       nullptr, &panels.showSkybox);
       ImGui::EndMenu();
     }
 

@@ -91,6 +91,11 @@ namespace t8ditor {
     int                   m_meshPrimId = -1;  // -1 = no lit mesh loaded
     XMATRIX44             m_vp;               // VP matrix for the prim mgr
 
+    // Persistent skybox (editor backdrop, not part of the scene)
+    t800::PrimitiveManager m_skyboxMgr;
+    t800::PrimitiveInst   m_skyboxInst;
+    int                   m_skyboxPrimId = -1;
+
     bool m_assetsCreated = false;
     bool m_imguiReady   = false;
 
@@ -108,3 +113,4 @@ namespace t8ditor {
 } // namespace t8ditor
 
 #endif // T8DITOR_EDITORAPP_H
+

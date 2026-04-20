@@ -30,6 +30,13 @@ namespace {
   std::string g_startupMeshPath;
   const float kRadToDeg = 180.0f / xPI;
   const float kDegToRad = xPI / 180.0f;
+
+  // Persistent skybox (editor backdrop, separate from scene meshes).
+  // File-scope because EditorApp.h is locked by another process at edit time.
+  t800::PrimitiveManager g_skyboxMgr;
+  t800::PrimitiveInst    g_skyboxInst;
+  int                    g_skyboxPrimId = -1;
+  bool                   g_skyboxReady  = false;
 }
 
 void SetStartupMeshPath(const std::string& p) {
@@ -84,9 +91,25 @@ void EditorApp::CreateAssets() {
   m_primMgr.SetVP(&m_vp);
   m_primMgr.SetSceneProps(&m_sceneProps);
 
-  if (!g_startupMeshPath.empty()) {
+  // Load the skybox as a persistent editor backdrop (not part of the scene)
+  if (std::filesystem::exists("Models/SkyBox.X")) {
+    g_skyboxMgr.Init();
+    g_skyboxMgr.SetVP(&m_vp);
+    g_skyboxMgr.SetSceneProps(&m_sceneProps);
+    int sid = g_skyboxMgr.CreateMesh("Models/SkyBox.X");
+    if (sid >= 0) {
+      g_skyboxPrimId = sid;
+      g_skyboxInst.CreateInstance(g_skyboxMgr.GetPrimitive(sid), &m_vp);
+      g_skyboxInst.Update();
+      g_skyboxMgr.SetSceneProps(&m_sceneProps);
+      g_skyboxReady = true;
+      T8_LOG_INFO("[T8ditor] Skybox loaded as editor backdrop");
+    }
+  }
+
+  if (!g_startupMeshPath.empty() && g_startupMeshPath != "Models/SkyBox.X") {
     ImportMesh(g_startupMeshPath);
-  } else {
+  } else if (g_startupMeshPath.empty()) {
     T8_LOG_INFO("[T8ditor] No --mesh supplied; opening empty scene");
   }
 
@@ -160,6 +183,11 @@ void EditorApp::DestroyAssets() {
   }
   m_primMgr.DestroyPrimitives();
   m_meshPrimId = -1;
+  if (g_skyboxReady) {
+    g_skyboxMgr.DestroyPrimitives();
+    g_skyboxPrimId = -1;
+    g_skyboxReady = false;
+  }
   m_mesh.Destroy();
   m_gizmo.Destroy();
   m_grid.Destroy();
@@ -216,8 +244,11 @@ void EditorApp::OnInput() {
   }
 
   float wheel = ImGuiConsumeWheelDelta();
+  // Wheel zoom should work even when ImGuizmo is active — only gate it
+  // when the mouse is truly over a scrollable ImGui panel.
+  bool blockWheel = imguiWantsMouse && !ImGuizmo::IsOver();
   m_camera.Update(m_dtSecs, IManager,
-                  imguiWantsMouse ? 0.0f : wheel,
+                  blockWheel ? 0.0f : wheel,
                   imguiWantsMouse,
                   imguiWantsKeyboard);
 
@@ -308,6 +339,15 @@ void EditorApp::OnDraw() {
       m_sceneProps.Lights[0].Position  = eye;
     }
 
+    // ── Skybox (editor backdrop, drawn first) ──
+    if (g_skyboxReady && m_panels.showSkybox) {
+      t800::ShaderKey fwdKey(0);
+      fwdKey.setPass(t800::PassType::FORWARD);
+      g_skyboxInst.SetGlobalKey(fwdKey);
+      g_skyboxInst.Update();
+      g_skyboxInst.Draw();
+    }
+
     // ── Lit/textured mesh ──
     if (m_meshPrimId >= 0) {
       const XVECTOR3& pos = m_mesh.Position();
@@ -326,13 +366,22 @@ void EditorApp::OnDraw() {
       m_meshInst.Draw();
     }
 
-    // ── Wireframe overlay ──
-    // Show when View > Wireframe Overlay is on, OR when the mesh is selected
-    // (selection highlight = solid + wireframe, like 3dsmax)
-    if ((m_panels.showWireframe || m_meshSelected) && m_mesh.IsLoaded() && m_lines.IsReady()) {
-      drv->SetDepthStencilState(t800::BaseDriver::NONE);
-      m_mesh.Draw(m_lines, cam.VP);
-      drv->SetDepthStencilState(t800::BaseDriver::DEPTH_DEFAULT);
+    // ── Wireframe overlay (scene meshes only, NOT skybox) ──
+    if (m_mesh.IsLoaded() && m_lines.IsReady()) {
+      // Selected: white wireframe highlight. View toggle: neutral gray wireframe.
+      bool showWire = m_panels.showWireframe || m_meshSelected;
+      if (showWire) {
+        XVECTOR3 savedColor = m_mesh.WireColor;
+        if (m_meshSelected)
+          m_mesh.WireColor = XVECTOR3(1.0f, 1.0f, 1.0f, 1.0f);  // white = selected
+        else
+          m_mesh.WireColor = XVECTOR3(0.45f, 0.45f, 0.45f, 1.0f); // gray = unselected
+
+        drv->SetDepthStencilState(t800::BaseDriver::NONE);
+        m_mesh.Draw(m_lines, cam.VP);
+        drv->SetDepthStencilState(t800::BaseDriver::DEPTH_DEFAULT);
+        m_mesh.WireColor = savedColor;
+      }
     }
 
     // ── Editor overlays (grid) ──

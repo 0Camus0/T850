@@ -339,20 +339,47 @@ void EditorApp::HandleMousePick() {
 
   // Test all objects, pick the closest
   float bestT = FLT_MAX;
-  int   bestIdx = -1;
+  int   bestIdx  = -1;
+  int   bestType = 0;
+
+  // Test meshes
   for (int i = 0; i < (int)g_objects.size(); ++i) {
     if (!g_objects[i].wireframe.IsLoaded()) continue;
     t800::AABB worldBox = g_objects[i].wireframe.WorldAABB();
     float t = 0.0f;
     if (t800::RayIntersectsAABB(ray, worldBox, t) && t < bestT) {
-      bestT = t;
-      bestIdx = i;
+      bestT = t; bestIdx = i; bestType = 0;
     }
   }
 
-  g_selectedIdx = bestIdx;
-  g_selectionType = (bestIdx >= 0) ? 0 : g_selectionType;
-  if (bestIdx < 0) g_selectedIdx = -1;  // click on nothing = deselect
+  // Test cameras (sphere pick around position)
+  for (int i = 0; i < (int)g_cameras.size(); ++i) {
+    t800::BoundingSphere bs;
+    bs.center = g_cameras[i].position;
+    bs.radius = 1.5f;
+    float t = 0.0f;
+    if (t800::RayIntersectsSphere(ray, bs, t) && t < bestT) {
+      bestT = t; bestIdx = i; bestType = 1;
+    }
+  }
+
+  // Test lights (sphere pick around position)
+  for (int i = 0; i < (int)g_lights.size(); ++i) {
+    t800::BoundingSphere bs;
+    bs.center = g_lights[i].position;
+    bs.radius = (g_lights[i].type == EditorLightType::Omni) ? 1.5f : 2.0f;
+    float t = 0.0f;
+    if (t800::RayIntersectsSphere(ray, bs, t) && t < bestT) {
+      bestT = t; bestIdx = i; bestType = 2;
+    }
+  }
+
+  if (bestIdx >= 0) {
+    g_selectedIdx   = bestIdx;
+    g_selectionType = bestType;
+  } else {
+    g_selectedIdx = -1;
+  }
 }
 
 void EditorApp::OnDraw() {
@@ -363,7 +390,26 @@ void EditorApp::OnDraw() {
   drv->Clear();
 
   if (m_assetsCreated) {
-    const ::Camera& cam = m_camera.GetCamera();
+    // Determine which camera drives rendering
+    ::Camera activeCam;
+    bool usingSceneCamera = false;
+
+    if (g_activeCameraIdx >= 0 && g_activeCameraIdx < (int)g_cameras.size()) {
+      // Use a scene camera
+      SceneCamera& sc = g_cameras[g_activeCameraIdx];
+      float aspect = (m_lastW > 0 && m_lastH > 0) ? (float)m_lastW / (float)m_lastH : 16.0f/9.0f;
+      if (sc.type == CameraType::Perspective) {
+        activeCam.InitPerspective(sc.position, sc.fovDeg * (xPI / 180.0f), aspect, sc.nearPlane, sc.farPlane);
+      } else {
+        activeCam.InitOrtho(sc.position, sc.orthoW, sc.orthoH, sc.nearPlane, sc.farPlane);
+      }
+      activeCam.Eye = sc.position;
+      activeCam.SetLookAt(sc.target);
+      activeCam.Update(0.0f);
+      usingSceneCamera = true;
+    }
+
+    const ::Camera& cam = usingSceneCamera ? activeCam : m_camera.GetCamera();
     m_vp = cam.VP;
 
     // Update headlamp (light 0) direction from camera
@@ -377,18 +423,28 @@ void EditorApp::OnDraw() {
       m_sceneProps.Lights[0].Position  = eye;
     }
 
-    // Sync scene lights from editor lights (headlamp is index 0, user lights start at 1)
+    // Sync scene lights from editor lights.
+    // Headlamp is at index 0. User lights are indices 1..N.
+    // We resize the vector to match and update in-place to avoid reallocation.
     {
-      // Resize sceneProps to hold headlamp + all user lights
-      while (m_sceneProps.Lights.size() > 1)
-        m_sceneProps.RemoveLight((unsigned)(m_sceneProps.Lights.size() - 1));
+      size_t needed = 1 + g_lights.size(); // headlamp + user lights
+      // Grow or shrink
+      while (m_sceneProps.Lights.size() > needed)
+        m_sceneProps.Lights.pop_back();
+      while (m_sceneProps.Lights.size() < needed)
+        m_sceneProps.Lights.push_back(Light{});
+
+      // Update user lights in-place (index 1..N)
+      int slot = 1;
       for (auto& lt : g_lights) {
-        if (!lt.enabled) continue;
-        if (lt.type == EditorLightType::Directional) {
-          m_sceneProps.AddDirectionalLight(lt.direction, lt.color, lt.intensity, true);
-        } else {
-          m_sceneProps.AddLight(lt.position, lt.color, lt.radius, lt.intensity, LIGHT_POINT, true);
-        }
+        Light& target = m_sceneProps.Lights[slot++];
+        target.Position  = lt.position;
+        target.Direction = lt.direction;
+        target.Color     = lt.color;
+        target.Intensity = lt.intensity;
+        target.radius    = lt.radius;
+        target.Enabled   = lt.enabled ? 1 : 0;
+        target.Type      = (lt.type == EditorLightType::Directional) ? LIGHT_DIRECTIONAL : LIGHT_POINT;
       }
       m_sceneProps.ActiveLights = (int)m_sceneProps.Lights.size();
     }

@@ -4,6 +4,8 @@
 
 #include "EditorApp.h"
 #include "SceneObject.h"
+#include "EditorScene.h"
+#include "UndoRedo.h"
 
 #include <core/Core.h>
 #include <video/BaseDriver.h>
@@ -41,6 +43,13 @@ namespace {
   // Multi-mesh scene objects (file-scope because EditorApp.h is locked).
   std::vector<SceneObject> g_objects;
   int                      g_selectedIdx = -1;
+
+  // Undo/redo
+  UndoStack g_undoStack;
+
+  // ImGuizmo drag tracking — accumulate a single undo command per drag
+  bool           g_gizmoDragging = false;
+  TransformState g_gizmoDragStart;
 }
 
 void SetStartupMeshPath(const std::string& p) {
@@ -237,10 +246,25 @@ void EditorApp::OnInput() {
   const bool imguiWantsKeyboard = io.WantCaptureKeyboard;
 
   if (!imguiWantsKeyboard) {
+    const bool ctrlDown = IManager.PressedKey(T800K_LCTRL) || IManager.PressedKey(T800K_RCTRL);
+    const bool shiftDown = IManager.PressedKey(T800K_LSHIFT) || IManager.PressedKey(T800K_RSHIFT);
+
     if (IManager.PressedOnceKey(T800K_w)) m_gizmo.SetMode(GizmoMode::Translate);
     if (IManager.PressedOnceKey(T800K_e)) m_gizmo.SetMode(GizmoMode::Rotate);
     if (IManager.PressedOnceKey(T800K_r)) m_gizmo.SetMode(GizmoMode::Scale);
-    if (IManager.PressedOnceKey(T800K_z)) m_camera.ResetToDefault();
+
+    // Z = reset camera (only without Ctrl). Ctrl+Z = undo, Ctrl+Shift+Z = redo.
+    if (IManager.PressedOnceKey(T800K_z)) {
+      if (ctrlDown && shiftDown)
+        g_undoStack.Redo();
+      else if (ctrlDown)
+        g_undoStack.Undo();
+      else
+        m_camera.ResetToDefault();
+    }
+    // Ctrl+Y also redoes
+    if (ctrlDown && IManager.PressedOnceKey(T800K_y))
+      g_undoStack.Redo();
   }
 
   float wheel = ImGuiConsumeWheelDelta();
@@ -397,6 +421,16 @@ void EditorApp::OnDraw() {
     if (sel && sel->wireframe.IsLoaded()) {
       const ::Camera& cam2 = m_camera.GetCamera();
       XMATRIX44 worldMat = sel->wireframe.BuildWorld();
+
+      // Track drag start for undo
+      bool isUsingNow = ImGuizmo::IsUsing();
+      if (isUsingNow && !g_gizmoDragging) {
+        g_gizmoDragging = true;
+        g_gizmoDragStart = { sel->wireframe.Position(),
+                             sel->wireframe.EulerRadians(),
+                             sel->wireframe.Scale() };
+      }
+
       bool manipulated = ImGuizmoManipulate(
         &cam2.View.m[0][0], &cam2.Projection.m[0][0],
         mode, &worldMat.m[0][0]);
@@ -407,6 +441,25 @@ void EditorApp::OnDraw() {
         sel->wireframe.EulerRadians() = XVECTOR3(
           rotation[0] * kDegToRad, rotation[1] * kDegToRad, rotation[2] * kDegToRad);
         sel->wireframe.Scale() = XVECTOR3(scale[0], scale[1], scale[2]);
+      }
+
+      // On drag end, push one undo command for the entire drag
+      if (!isUsingNow && g_gizmoDragging) {
+        g_gizmoDragging = false;
+        TransformState after = { sel->wireframe.Position(),
+                                 sel->wireframe.EulerRadians(),
+                                 sel->wireframe.Scale() };
+        int idx = g_selectedIdx;
+        auto cmd = std::make_unique<TransformCommand>(
+          idx, g_gizmoDragStart, after,
+          [idx](const TransformState& s) {
+            if (idx >= 0 && idx < (int)g_objects.size()) {
+              g_objects[idx].wireframe.Position()     = s.position;
+              g_objects[idx].wireframe.EulerRadians() = s.eulerRad;
+              g_objects[idx].wireframe.Scale()         = s.scale;
+            }
+          });
+        g_undoStack.Push(std::move(cmd));
       }
     }
 
@@ -422,6 +475,68 @@ void EditorApp::OnDraw() {
         L"DirectX Mesh (*.x)\0*.x\0All Files (*.*)\0*.*\0",
         L"Import .x Mesh");
       if (!path.empty()) ImportMesh(path);
+    }
+    if (menuAction.wantsSaveScene) {
+      std::string path = SaveFileDialog(
+        L"T8ditor Scene (*.t8scene)\0*.t8scene\0JSON (*.json)\0*.json\0All Files (*.*)\0*.*\0",
+        L"Save Scene", L"t8scene");
+      if (!path.empty()) {
+        SceneFile sf;
+        sf.editor.camera_target   = { m_camera.GetTarget().x, m_camera.GetTarget().y, m_camera.GetTarget().z };
+        sf.editor.show_skybox     = m_panels.showSkybox;
+        sf.editor.show_wireframe  = m_panels.showWireframe;
+        for (auto& obj : g_objects) {
+          SceneObjectDesc od;
+          od.name     = obj.name;
+          od.mesh     = obj.name;
+          od.position = { obj.wireframe.Position().x, obj.wireframe.Position().y, obj.wireframe.Position().z };
+          od.rotation = { obj.wireframe.EulerRadians().x * kRadToDeg,
+                          obj.wireframe.EulerRadians().y * kRadToDeg,
+                          obj.wireframe.EulerRadians().z * kRadToDeg };
+          od.scale    = { obj.wireframe.Scale().x, obj.wireframe.Scale().y, obj.wireframe.Scale().z };
+          sf.objects.push_back(od);
+        }
+        SaveSceneToFile(sf, path);
+      }
+    }
+    if (menuAction.wantsLoadScene) {
+      std::string path = OpenFileDialog(
+        L"T8ditor Scene (*.t8scene)\0*.t8scene\0JSON (*.json)\0*.json\0All Files (*.*)\0*.*\0",
+        L"Load Scene");
+      if (!path.empty()) {
+        SceneFile sf;
+        if (LoadSceneFromFile(path, sf)) {
+          // Clear current scene
+          m_primMgr.DestroyPrimitives();
+          g_objects.clear();
+          g_selectedIdx = -1;
+          g_undoStack.Clear();
+          m_primMgr.Init();
+          m_primMgr.SetVP(&m_vp);
+          m_primMgr.SetSceneProps(&m_sceneProps);
+
+          // Load objects
+          for (auto& od : sf.objects) {
+            ImportMesh(od.mesh);
+            if (!g_objects.empty()) {
+              auto& obj = g_objects.back();
+              obj.name = od.name;
+              obj.wireframe.Position() = XVECTOR3(od.position.x, od.position.y, od.position.z);
+              obj.wireframe.EulerRadians() = XVECTOR3(
+                od.rotation.x * kDegToRad, od.rotation.y * kDegToRad, od.rotation.z * kDegToRad);
+              obj.wireframe.Scale() = XVECTOR3(od.scale.x, od.scale.y, od.scale.z);
+            }
+          }
+
+          // Restore editor state
+          m_panels.showSkybox    = sf.editor.show_skybox;
+          m_panels.showWireframe = sf.editor.show_wireframe;
+          m_camera.SetTarget(XVECTOR3(sf.editor.camera_target.x,
+                                       sf.editor.camera_target.y,
+                                       sf.editor.camera_target.z));
+          g_selectedIdx = -1;
+        }
+      }
     }
 
     // Panels

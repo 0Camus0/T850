@@ -12,6 +12,7 @@
 #ifdef OS_WINDOWS
 #include <video/d3d12/D3D12Driver.h>
 #include <video/windows/D3D11Driver.h>
+#include <video/vulkan/VulkanDriver.h>
 #include <d3d12.h>
 #include <d3d11.h>
 #include <wrl/client.h>
@@ -64,6 +65,24 @@ struct D3D11ProfileState {
   int writeSet = 0;
   int maxQueries = 0;
 };
+
+struct VulkanProfileState {
+  VkQueryPool queryPool = VK_NULL_HANDLE;
+  VkBuffer    readbackBuffer = VK_NULL_HANDLE;
+  VmaAllocation readbackAllocation = VK_NULL_HANDLE;
+  uint64_t*   mappedData = nullptr;
+  float       timestampPeriod = 0.0f;  // nanoseconds per tick
+  int         maxQueries = 0;          // 2 per scope (begin + end)
+  int         writeFrame = 0;
+  bool        needsReset = false;      // deferred reset flag
+  static const int kFrameDelay = 3;    // match kBackBufferCount
+  struct FrameRecord {
+    int activeCount = 0;
+    int scopeIndices[64] = {};
+    bool cpuOnly[64] = {};  // true if scope had no GPU timestamp
+  };
+  FrameRecord frameRecords[kFrameDelay];
+};
 #endif
 
 struct GLProfileState {
@@ -102,6 +121,9 @@ void T8Profiler::Init(BaseDriver* driver, int maxScopes) {
   } else if (driver->m_currentAPI == GRAPHICS_API::OPENGL) {
     m_apiType = 3;
     InitGPU_GL();
+  } else if (driver->m_currentAPI == GRAPHICS_API::VULKAN) {
+    m_apiType = 4;
+    InitGPU_Vulkan();
   }
 
   m_initialized = true;
@@ -205,10 +227,47 @@ void T8Profiler::InitGPU_GL() {
   m_gpuState = state;
 }
 
+void T8Profiler::InitGPU_Vulkan() {
+#ifdef OS_WINDOWS
+  auto* state = new VulkanProfileState();
+  state->maxQueries = m_maxScopes * 2;  // begin + end per scope
+
+  auto* vkDrv = static_cast<VulkanDriver*>(m_driver);
+  VkDevice device = vkDrv->GetDevice();
+  VkPhysicalDevice physDevice = vkDrv->GetPhysicalDevice();
+
+  // Query timestamp period (nanoseconds per tick)
+  VkPhysicalDeviceProperties props;
+  vkGetPhysicalDeviceProperties(physDevice, &props);
+  state->timestampPeriod = props.limits.timestampPeriod;
+
+  // Create query pool: maxQueries * kFrameDelay slots
+  int totalSlots = state->maxQueries * VulkanProfileState::kFrameDelay;
+  VkQueryPoolCreateInfo poolInfo = { VK_STRUCTURE_TYPE_QUERY_POOL_CREATE_INFO };
+  poolInfo.queryType = VK_QUERY_TYPE_TIMESTAMP;
+  poolInfo.queryCount = totalSlots;
+  vkCreateQueryPool(device, &poolInfo, nullptr, &state->queryPool);
+
+  // Reset all queries at init (device-level reset via command buffer)
+  // Queries will be reset per-frame in BeginFrame.
+
+  T8_LOG_INFO("[Profiler] Vulkan GPU timestamp period: %.3f ns/tick (%d query slots)",
+              state->timestampPeriod, totalSlots);
+  m_gpuState = state;
+#endif
+}
+
 void T8Profiler::DestroyGPU() {
 #ifdef OS_WINDOWS
   if (m_apiType == 1) delete static_cast<D3D12ProfileState*>(m_gpuState);
   if (m_apiType == 2) delete static_cast<D3D11ProfileState*>(m_gpuState);
+  if (m_apiType == 4) {
+    auto* state = static_cast<VulkanProfileState*>(m_gpuState);
+    auto* vkDrv = static_cast<VulkanDriver*>(m_driver);
+    VkDevice device = vkDrv->GetDevice();
+    if (state->queryPool) vkDestroyQueryPool(device, state->queryPool, nullptr);
+    delete state;
+  }
 #endif
   if (m_apiType == 3) {
     auto* state = static_cast<GLProfileState*>(m_gpuState);
@@ -241,6 +300,11 @@ void T8Profiler::BeginFrame() {
     // D3D11: flip write set
     auto* state = static_cast<D3D11ProfileState*>(m_gpuState);
     state->writeSet = 1 - state->writeSet;
+  }
+  else if (m_apiType == 4) {
+    // Vulkan: mark that query pool needs reset (flushed from VulkanDriver::BeginFrame)
+    auto* state = static_cast<VulkanProfileState*>(m_gpuState);
+    state->needsReset = true;
   }
 #endif
   if (m_apiType == 3) {
@@ -276,6 +340,20 @@ void T8Profiler::EndFrame() {
     }
     state->writeFrame++;
   }
+  else if (m_apiType == 4) {
+    // Vulkan: save scope mappings for this frame
+    auto* state = static_cast<VulkanProfileState*>(m_gpuState);
+    int frameSlot = state->writeFrame % VulkanProfileState::kFrameDelay;
+
+    auto& rec = state->frameRecords[frameSlot];
+    rec.activeCount = m_activeQueryCount;
+    for (int i = 0; i < m_activeQueryCount && i < 64; i++) {
+      rec.scopeIndices[i] = m_frameQueries[i].scopeIndex;
+      rec.cpuOnly[i] = m_frameQueries[i].cpuOnly;
+    }
+
+    state->writeFrame++;
+  }
 #endif
 
   m_frameCount++;
@@ -303,6 +381,7 @@ void T8Profiler::BeginScope(const char* name) {
   int scopeIdx = FindOrCreateScope(name);
 
   m_frameQueries[queryIdx].scopeIndex = scopeIdx;
+  m_frameQueries[queryIdx].cpuOnly = false;
 
   // CPU timestamp
 #ifdef OS_WINDOWS
@@ -385,6 +464,21 @@ void T8Profiler::EndCPUScope() {
   }
 }
 
+void T8Profiler::FlushVulkanQueryReset(void* commandBuffer) {
+#ifdef OS_WINDOWS
+  if (m_apiType == 4 && m_gpuState) {
+    auto* state = static_cast<VulkanProfileState*>(m_gpuState);
+    if (state->needsReset) {
+      VkCommandBuffer cmd = static_cast<VkCommandBuffer>(commandBuffer);
+      int frameSlot = state->writeFrame % VulkanProfileState::kFrameDelay;
+      int baseQuery = frameSlot * state->maxQueries;
+      vkCmdResetQueryPool(cmd, state->queryPool, baseQuery, state->maxQueries);
+      state->needsReset = false;
+    }
+  }
+#endif
+}
+
 // ═════════════════════════════════════════════════════════════
 //  GPU Scope Implementation
 // ═════════════════════════════════════════════════════════════
@@ -405,6 +499,14 @@ void T8Profiler::BeginGPUScope(int queryIndex) {
     auto& qp = state->querySets[state->writeSet][queryIndex];
     ctx->Begin(qp.disjoint.Get());
     ctx->End(qp.begin.Get());
+  }
+  else if (m_apiType == 4) {
+    auto* state = static_cast<VulkanProfileState*>(m_gpuState);
+    auto* vkCtx = static_cast<VulkanDeviceContext*>(T8DeviceContext);
+    VkCommandBuffer cmd = vkCtx->GetCommandBuffer();
+    int frameSlot = state->writeFrame % VulkanProfileState::kFrameDelay;
+    int slot = frameSlot * state->maxQueries + queryIndex * 2;
+    vkCmdWriteTimestamp(cmd, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, state->queryPool, slot);
   }
 #endif
 #if defined(USING_OPENGL)
@@ -432,6 +534,14 @@ void T8Profiler::EndGPUScope(int queryIndex) {
     ctx->End(qp.end.Get());
     ctx->End(qp.disjoint.Get());
     qp.pending = true;
+  }
+  else if (m_apiType == 4) {
+    auto* state = static_cast<VulkanProfileState*>(m_gpuState);
+    auto* vkCtx = static_cast<VulkanDeviceContext*>(T8DeviceContext);
+    VkCommandBuffer cmd = vkCtx->GetCommandBuffer();
+    int frameSlot = state->writeFrame % VulkanProfileState::kFrameDelay;
+    int slot = frameSlot * state->maxQueries + queryIndex * 2 + 1;
+    vkCmdWriteTimestamp(cmd, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, state->queryPool, slot);
   }
 #endif
 #if defined(USING_OPENGL)
@@ -501,6 +611,39 @@ void T8Profiler::ResolveGPUFrame() {
         m_scopes[m_frameQueries[i].scopeIndex].sampleCount++;
       }
       qp.pending = false;
+    }
+  }
+  else if (m_apiType == 4 && m_gpuState) {
+    auto* state = static_cast<VulkanProfileState*>(m_gpuState);
+    int readFrame = state->writeFrame - VulkanProfileState::kFrameDelay;
+    if (readFrame < 0) return;
+
+    int frameSlot = readFrame % VulkanProfileState::kFrameDelay;
+    auto& rec = state->frameRecords[frameSlot];
+    if (rec.activeCount <= 0) return;
+
+    VkDevice device = static_cast<VulkanDriver*>(m_driver)->GetDevice();
+    int baseQuery = frameSlot * state->maxQueries;
+
+    // Read per-scope, skipping CPU-only scopes (no GPU timestamps written)
+    for (int i = 0; i < rec.activeCount && i < 64; i++) {
+      if (rec.cpuOnly[i]) continue;
+      int scopeIdx = rec.scopeIndices[i];
+      if (scopeIdx < 0 || scopeIdx >= (int)m_scopes.size()) continue;
+
+      uint64_t timestamps[2] = {};
+      int queryStart = baseQuery + i * 2;
+      VkResult res = vkGetQueryPoolResults(device, state->queryPool,
+        queryStart, 2,
+        sizeof(timestamps), timestamps,
+        sizeof(uint64_t),
+        VK_QUERY_RESULT_64_BIT | VK_QUERY_RESULT_WAIT_BIT);
+
+      if (res == VK_SUCCESS) {
+        double gpuMs = (double)(timestamps[1] - timestamps[0]) * (double)state->timestampPeriod / 1000000.0;
+        m_scopes[scopeIdx].gpuTotalMs += gpuMs;
+        m_scopes[scopeIdx].sampleCount++;
+      }
     }
   }
 #endif

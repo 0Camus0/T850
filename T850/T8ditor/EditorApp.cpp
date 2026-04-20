@@ -888,6 +888,9 @@ void EditorApp::OnDraw() {
       if (!path.empty()) {
         SceneFile sf;
         if (LoadSceneFromFile(path, sf)) {
+          // Flush GPU before destroying resources (D3D12 has in-flight commands)
+          pFramework->pVideoDriver->WaitForGPU();
+
           // Clear current scene
           m_primMgr.DestroyPrimitives();
           g_objects.clear();

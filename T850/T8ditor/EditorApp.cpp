@@ -85,6 +85,9 @@ namespace {
 
   // Dummy environment map (1x1 gray cube for skybox matID=0)
   int g_dummyEnvMapIdx = -1;
+
+  // Pending scene load — deferred to execute before next frame's BeginFrame
+  std::string g_pendingLoadPath;
 }
 
 void SetStartupMeshPath(const std::string& p) {
@@ -297,6 +300,94 @@ void EditorApp::OnUpdate() {
   m_dtSecs = m_dtTimer.GetDTSecs();
   if (m_firstFrame) { m_dtSecs = 1.0f / 60.0f; m_firstFrame = false; }
   m_sceneProps.FrameDeltaSec = m_dtSecs;
+
+  // Execute deferred scene load BEFORE any GPU work this frame
+  if (!g_pendingLoadPath.empty()) {
+    SceneFile sf;
+    if (LoadSceneFromFile(g_pendingLoadPath, sf)) {
+      // Flush all GPU work from previous frames
+      pFramework->pVideoDriver->WaitForGPU();
+
+      // Destroy old scene
+      m_primMgr.DestroyPrimitives();
+      g_objects.clear();
+      g_cameras.clear();
+      g_lights.clear();
+      g_selectedIdx = -1;
+      g_selectionType = 0;
+      g_activeCameraIdx = -1;
+      g_undoStack.Clear();
+
+      // Rebuild primitive manager
+      m_primMgr.Init();
+      m_primMgr.SetVP(&m_vp);
+      m_primMgr.SetSceneProps(&m_sceneProps);
+
+      // Recreate deferred quads from fresh QUAD primitive
+      if (g_deferredReady) {
+        for (int i = 0; i < 8; ++i) {
+          g_quads[i].CreateInstance(m_primMgr.GetPrimitive(t800::PrimitiveManager::QUAD), &g_quadVP);
+          g_quads[i].Update();
+        }
+        if (!pFramework->pVideoDriver->RTs.empty()) {
+          auto* gbufferRT = pFramework->pVideoDriver->RTs[0];
+          for (int j = 0; j < (int)gbufferRT->vColorTextures.size() && j < 5; ++j)
+            g_quads[0].SetTexture(gbufferRT->vColorTextures[j], j);
+          if (gbufferRT->pDepthTexture)
+            g_quads[0].SetTexture(gbufferRT->pDepthTexture, 4);
+        }
+        if (g_dummyWhiteTex)
+          g_quads[0].SetTexture(g_dummyWhiteTex, 5);
+        if (g_dummyEnvMapIdx >= 0)
+          g_quads[0].SetEnvironmentMap(t800::g_pBaseDriver->GetTexture(g_dummyEnvMapIdx));
+        m_primMgr.SetSceneProps(&m_sceneProps);
+      }
+
+      // Load mesh objects
+      for (auto& od : sf.objects) {
+        ImportMesh(od.mesh);
+        if (!g_objects.empty()) {
+          auto& obj = g_objects.back();
+          obj.name = od.name;
+          obj.wireframe.Position() = XVECTOR3(od.position.x, od.position.y, od.position.z);
+          obj.wireframe.EulerRadians() = XVECTOR3(
+            od.rotation.x * kDegToRad, od.rotation.y * kDegToRad, od.rotation.z * kDegToRad);
+          obj.wireframe.Scale() = XVECTOR3(od.scale.x, od.scale.y, od.scale.z);
+        }
+      }
+
+      // Load cameras
+      for (auto& cd : sf.cameras) {
+        SceneCamera c;
+        c.name = cd.name; c.type = (CameraType)cd.type;
+        c.position = XVECTOR3(cd.position.x, cd.position.y, cd.position.z);
+        c.target = XVECTOR3(cd.target.x, cd.target.y, cd.target.z);
+        c.fovDeg = cd.fov_deg; c.orthoW = cd.ortho_w; c.orthoH = cd.ortho_h;
+        c.nearPlane = cd.near_plane; c.farPlane = cd.far_plane;
+        g_cameras.push_back(c);
+      }
+
+      // Load lights
+      for (auto& ld : sf.lights) {
+        SceneLight l;
+        l.name = ld.name; l.type = (EditorLightType)ld.type;
+        l.position = XVECTOR3(ld.position.x, ld.position.y, ld.position.z);
+        l.direction = XVECTOR3(ld.direction.x, ld.direction.y, ld.direction.z);
+        l.color = XVECTOR3(ld.color.x, ld.color.y, ld.color.z);
+        l.intensity = ld.intensity; l.radius = ld.radius; l.enabled = ld.enabled;
+        g_lights.push_back(l);
+      }
+
+      // Restore editor state
+      m_panels.showSkybox    = sf.editor.show_skybox;
+      m_panels.showWireframe = sf.editor.show_wireframe;
+      m_camera.SetTarget(XVECTOR3(sf.editor.camera_target.x,
+                                   sf.editor.camera_target.y,
+                                   sf.editor.camera_target.z));
+      g_selectedIdx = -1;
+    }
+    g_pendingLoadPath.clear();
+  }
 
   CheckResize();
 
@@ -886,95 +977,9 @@ void EditorApp::OnDraw() {
         L"T8ditor Scene (*.t8scene)\0*.t8scene\0JSON (*.json)\0*.json\0All Files (*.*)\0*.*\0",
         L"Load Scene");
       if (!path.empty()) {
-        SceneFile sf;
-        if (LoadSceneFromFile(path, sf)) {
-          // Flush GPU before destroying resources (D3D12 has in-flight commands)
-          pFramework->pVideoDriver->WaitForGPU();
-
-          // Clear current scene
-          m_primMgr.DestroyPrimitives();
-          g_objects.clear();
-          g_cameras.clear();
-          g_lights.clear();
-          g_selectedIdx = -1;
-          g_selectionType = 0;
-          g_activeCameraIdx = -1;
-          g_undoStack.Clear();
-          m_primMgr.Init();
-          m_primMgr.SetVP(&m_vp);
-          m_primMgr.SetSceneProps(&m_sceneProps);
-
-          // Recreate deferred quads (old QUAD primitive was destroyed)
-          if (g_deferredReady) {
-            for (int i = 0; i < 8; ++i) {
-              g_quads[i].CreateInstance(m_primMgr.GetPrimitive(t800::PrimitiveManager::QUAD), &g_quadVP);
-              g_quads[i].Update();
-            }
-            // Rebind G-buffer textures and env map
-            if (!pFramework->pVideoDriver->RTs.empty()) {
-              auto* gbufferRT = pFramework->pVideoDriver->RTs[0];
-              for (int j = 0; j < (int)gbufferRT->vColorTextures.size() && j < 5; ++j)
-                g_quads[0].SetTexture(gbufferRT->vColorTextures[j], j);
-              if (gbufferRT->pDepthTexture)
-                g_quads[0].SetTexture(gbufferRT->pDepthTexture, 4);
-            }
-            if (g_dummyWhiteTex)
-              g_quads[0].SetTexture(g_dummyWhiteTex, 5);
-            if (g_dummyEnvMapIdx >= 0)
-              g_quads[0].SetEnvironmentMap(t800::g_pBaseDriver->GetTexture(g_dummyEnvMapIdx));
-            m_primMgr.SetSceneProps(&m_sceneProps);
-          }
-
-          // Load mesh objects
-          for (auto& od : sf.objects) {
-            ImportMesh(od.mesh);
-            if (!g_objects.empty()) {
-              auto& obj = g_objects.back();
-              obj.name = od.name;
-              obj.wireframe.Position() = XVECTOR3(od.position.x, od.position.y, od.position.z);
-              obj.wireframe.EulerRadians() = XVECTOR3(
-                od.rotation.x * kDegToRad, od.rotation.y * kDegToRad, od.rotation.z * kDegToRad);
-              obj.wireframe.Scale() = XVECTOR3(od.scale.x, od.scale.y, od.scale.z);
-            }
-          }
-
-          // Load cameras
-          for (auto& cd : sf.cameras) {
-            SceneCamera c;
-            c.name      = cd.name;
-            c.type      = (CameraType)cd.type;
-            c.position  = XVECTOR3(cd.position.x, cd.position.y, cd.position.z);
-            c.target    = XVECTOR3(cd.target.x, cd.target.y, cd.target.z);
-            c.fovDeg    = cd.fov_deg;
-            c.orthoW    = cd.ortho_w;
-            c.orthoH    = cd.ortho_h;
-            c.nearPlane = cd.near_plane;
-            c.farPlane  = cd.far_plane;
-            g_cameras.push_back(c);
-          }
-
-          // Load lights
-          for (auto& ld : sf.lights) {
-            SceneLight l;
-            l.name      = ld.name;
-            l.type      = (EditorLightType)ld.type;
-            l.position  = XVECTOR3(ld.position.x, ld.position.y, ld.position.z);
-            l.direction = XVECTOR3(ld.direction.x, ld.direction.y, ld.direction.z);
-            l.color     = XVECTOR3(ld.color.x, ld.color.y, ld.color.z);
-            l.intensity = ld.intensity;
-            l.radius    = ld.radius;
-            l.enabled   = ld.enabled;
-            g_lights.push_back(l);
-          }
-
-          // Restore editor state
-          m_panels.showSkybox    = sf.editor.show_skybox;
-          m_panels.showWireframe = sf.editor.show_wireframe;
-          m_camera.SetTarget(XVECTOR3(sf.editor.camera_target.x,
-                                       sf.editor.camera_target.y,
-                                       sf.editor.camera_target.z));
-          g_selectedIdx = -1;
-        }
+        // Defer the actual load to the start of the next frame (before BeginFrame)
+        // to avoid destroying GPU resources mid-command-list on D3D12.
+        g_pendingLoadPath = path;
       }
     }
 

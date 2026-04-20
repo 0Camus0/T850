@@ -215,10 +215,17 @@ void EditorApp::OnUpdate() {
 
   CheckResize();
 
-  // Update camera orbit target to selected object's position
-  SceneObject* sel = SelectedObject();
-  if (sel)
-    m_camera.SetTarget(sel->wireframe.Position());
+  // Update camera orbit target only when selection changes (not every frame,
+  // otherwise translating via ImGuizmo creates a feedback loop).
+  {
+    static int s_prevSelectedIdx = -2; // -2 = uninitialized
+    if (g_selectedIdx != s_prevSelectedIdx) {
+      s_prevSelectedIdx = g_selectedIdx;
+      SceneObject* sel = SelectedObject();
+      if (sel)
+        m_camera.SetTarget(sel->wireframe.Position());
+    }
+  }
 
   OnInput();
   OnDraw();

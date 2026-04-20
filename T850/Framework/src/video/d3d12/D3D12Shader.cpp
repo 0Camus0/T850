@@ -212,6 +212,39 @@ namespace t800 {
     // Build root signature from reflection
     if (!BuildRootSignature(device, vsReflect.Get(), fsReflect.Get())) return false;
 
+#ifdef T8_DUMP_SHADER_REFLECTION
+    // Dump D3D12 reflection as reference for validating SPIR-V reflection
+    T8_LOG_INFO("[D3D12_REFL] === key=0x%08X VS='%s' FS='%s' ===", key.bits, vs_name.c_str(), fs_name.c_str());
+    T8_LOG_INFO("[D3D12_REFL] VS Inputs (%u):", vsDesc.InputParameters);
+    for (UINT i = 0; i < vsDesc.InputParameters; i++) {
+      D3D12_SIGNATURE_PARAMETER_DESC pd; vsReflect->GetInputParameterDesc(i, &pd);
+      int components = 0;
+      if (pd.Mask == 1) components = 1;
+      else if (pd.Mask <= 3) components = 2;
+      else if (pd.Mask <= 7) components = 3;
+      else components = 4;
+      T8_LOG_INFO("[D3D12_REFL]   [%u] %s%u  components=%d  offset=%d",
+                  i, pd.SemanticName, pd.SemanticIndex, components,
+                  VertexDecl[i].AlignedByteOffset);
+    }
+    T8_LOG_INFO("[D3D12_REFL] VS stride=%d", vertexStride);
+
+    T8_LOG_INFO("[D3D12_REFL] VS Resources (%u):", vsDesc.BoundResources);
+    for (UINT i = 0; i < vsDesc.BoundResources; i++) {
+      D3D12_SHADER_INPUT_BIND_DESC bd; vsReflect->GetResourceBindingDesc(i, &bd);
+      T8_LOG_INFO("[D3D12_REFL]   [%u] '%s' type=%d bindPoint=%u bindCount=%u space=%u",
+                  i, bd.Name, bd.Type, bd.BindPoint, bd.BindCount, bd.Space);
+    }
+
+    D3D12_SHADER_DESC fsDesc2; fsReflect->GetDesc(&fsDesc2);
+    T8_LOG_INFO("[D3D12_REFL] FS Resources (%u):", fsDesc2.BoundResources);
+    for (UINT i = 0; i < fsDesc2.BoundResources; i++) {
+      D3D12_SHADER_INPUT_BIND_DESC bd; fsReflect->GetResourceBindingDesc(i, &bd);
+      T8_LOG_INFO("[D3D12_REFL]   [%u] '%s' type=%d bindPoint=%u bindCount=%u space=%u",
+                  i, bd.Name, bd.Type, bd.BindPoint, bd.BindCount, bd.Space);
+    }
+#endif
+
     T8_LOG_INFO("[D3D12] Shader created: key=0x%08X stride=%d rootParams: cbv=%d sampler=%d srvs=%d",
                 key.bits, vertexStride, cbvSlot, samplerSlot, (int)srvSlots.size());
     return true;

@@ -538,6 +538,31 @@ void EditorApp::OnDraw() {
           od.scale    = { obj.wireframe.Scale().x, obj.wireframe.Scale().y, obj.wireframe.Scale().z };
           sf.objects.push_back(od);
         }
+        for (auto& c : g_cameras) {
+          SceneCameraDesc cd;
+          cd.name       = c.name;
+          cd.type       = (int)c.type;
+          cd.position   = { c.position.x, c.position.y, c.position.z };
+          cd.target     = { c.target.x, c.target.y, c.target.z };
+          cd.fov_deg    = c.fovDeg;
+          cd.ortho_w    = c.orthoW;
+          cd.ortho_h    = c.orthoH;
+          cd.near_plane = c.nearPlane;
+          cd.far_plane  = c.farPlane;
+          sf.cameras.push_back(cd);
+        }
+        for (auto& l : g_lights) {
+          SceneLightDesc ld;
+          ld.name      = l.name;
+          ld.type      = (int)l.type;
+          ld.position  = { l.position.x, l.position.y, l.position.z };
+          ld.direction = { l.direction.x, l.direction.y, l.direction.z };
+          ld.color     = { l.color.x, l.color.y, l.color.z };
+          ld.intensity = l.intensity;
+          ld.radius    = l.radius;
+          ld.enabled   = l.enabled;
+          sf.lights.push_back(ld);
+        }
         SaveSceneToFile(sf, path);
       }
     }
@@ -551,13 +576,16 @@ void EditorApp::OnDraw() {
           // Clear current scene
           m_primMgr.DestroyPrimitives();
           g_objects.clear();
+          g_cameras.clear();
+          g_lights.clear();
           g_selectedIdx = -1;
+          g_selectionType = 0;
           g_undoStack.Clear();
           m_primMgr.Init();
           m_primMgr.SetVP(&m_vp);
           m_primMgr.SetSceneProps(&m_sceneProps);
 
-          // Load objects
+          // Load mesh objects
           for (auto& od : sf.objects) {
             ImportMesh(od.mesh);
             if (!g_objects.empty()) {
@@ -568,6 +596,35 @@ void EditorApp::OnDraw() {
                 od.rotation.x * kDegToRad, od.rotation.y * kDegToRad, od.rotation.z * kDegToRad);
               obj.wireframe.Scale() = XVECTOR3(od.scale.x, od.scale.y, od.scale.z);
             }
+          }
+
+          // Load cameras
+          for (auto& cd : sf.cameras) {
+            SceneCamera c;
+            c.name      = cd.name;
+            c.type      = (CameraType)cd.type;
+            c.position  = XVECTOR3(cd.position.x, cd.position.y, cd.position.z);
+            c.target    = XVECTOR3(cd.target.x, cd.target.y, cd.target.z);
+            c.fovDeg    = cd.fov_deg;
+            c.orthoW    = cd.ortho_w;
+            c.orthoH    = cd.ortho_h;
+            c.nearPlane = cd.near_plane;
+            c.farPlane  = cd.far_plane;
+            g_cameras.push_back(c);
+          }
+
+          // Load lights
+          for (auto& ld : sf.lights) {
+            SceneLight l;
+            l.name      = ld.name;
+            l.type      = (EditorLightType)ld.type;
+            l.position  = XVECTOR3(ld.position.x, ld.position.y, ld.position.z);
+            l.direction = XVECTOR3(ld.direction.x, ld.direction.y, ld.direction.z);
+            l.color     = XVECTOR3(ld.color.x, ld.color.y, ld.color.z);
+            l.intensity = ld.intensity;
+            l.radius    = ld.radius;
+            l.enabled   = ld.enabled;
+            g_lights.push_back(l);
           }
 
           // Restore editor state

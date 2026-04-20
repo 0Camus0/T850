@@ -717,8 +717,9 @@ void EditorApp::OnDraw() {
       drv->PopRT();
 
       // BackBuffer pass: show selected RT or deferred result
-      // Use BLEND_OPAQUE to fully overwrite (no alpha blending with backbuffer)
-      drv->SetBlendState(t800::BaseDriver::BLEND_OPAQUE);
+      // Use ALPHA_BLEND so empty pixels (alpha=0 from RT clear) show the
+      // backbuffer clear color (#3A3A3A) instead of black
+      drv->SetBlendState(t800::BaseDriver::ALPHA_BLEND);
       drv->SetDepthStencilState(t800::BaseDriver::NONE);
 
       // If RT debug panel has a specific RT selected, show that instead

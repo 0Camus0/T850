@@ -667,6 +667,7 @@ namespace t800 {
       hr = CreateDXGIFactory1(IID_PPV_ARGS(&m_dxgiFactory));
       if (FAILED(hr)) { T8_LOG_ERROR("[D3D12] CreateDXGIFactory failed hr=0x%08X", hr); return; }
     }
+    T8_LOG_INFO("[D3D12] DXGI factory created");
 
     // Check tearing support
     ComPtr<IDXGIFactory5> factory5;
@@ -698,18 +699,21 @@ namespace t800 {
   void D3D12Driver::CreateCommandInfrastructure() {
     ID3D12Device* device = static_cast<D3D12Device*>(T8Device)->GetNativeDevice();
     D3D12_COMMAND_QUEUE_DESC qDesc = {}; qDesc.Type = D3D12_COMMAND_LIST_TYPE_DIRECT;
-    device->CreateCommandQueue(&qDesc, IID_PPV_ARGS(&m_commandQueue));
+    HRESULT hr = device->CreateCommandQueue(&qDesc, IID_PPV_ARGS(&m_commandQueue));
+    if (FAILED(hr)) { T8_LOG_ERROR("[D3D12] CreateCommandQueue failed hr=0x%08X", hr); return; }
     for (UINT i = 0; i < kBackBufferCount; i++) {
       device->CreateCommandAllocator(D3D12_COMMAND_LIST_TYPE_DIRECT, IID_PPV_ARGS(&m_commandAllocators[i]));
       device->CreateCommandList(0, D3D12_COMMAND_LIST_TYPE_DIRECT, m_commandAllocators[i].Get(), nullptr, IID_PPV_ARGS(&m_commandLists[i]));
       m_commandLists[i]->Close();
     }
     static_cast<D3D12DeviceContext*>(T8DeviceContext)->m_commandList = m_commandLists[0];
-    device->CreateFence(0, D3D12_FENCE_FLAG_NONE, IID_PPV_ARGS(&m_fence));
+    hr = device->CreateFence(0, D3D12_FENCE_FLAG_NONE, IID_PPV_ARGS(&m_fence));
+    if (FAILED(hr)) { T8_LOG_ERROR("[D3D12] CreateFence failed hr=0x%08X", hr); return; }
     m_nextFenceValue = 1;
     for (UINT i = 0; i < kBackBufferCount; i++) m_frameFenceValues[i] = 0;
     m_fenceEvent = CreateEvent(nullptr, FALSE, FALSE, nullptr);
     T8_LOG_INFO("[D3D12] Command infrastructure created (%d lists + %d allocators)", kBackBufferCount, kBackBufferCount);
+    T8_LOG_INFO("[D3D12] Sync objects created (fence + %u frames in flight)", kBackBufferCount);
   }
 
   void D3D12Driver::CreateSwapChain() {
@@ -722,7 +726,8 @@ namespace t800 {
       sc.Flags |= DXGI_SWAP_CHAIN_FLAG_ALLOW_TEARING;
 
     ComPtr<IDXGISwapChain1> sc1;
-    m_dxgiFactory->CreateSwapChainForHwnd(m_commandQueue.Get(), m_hwnd, &sc, nullptr, nullptr, &sc1);
+    HRESULT hr = m_dxgiFactory->CreateSwapChainForHwnd(m_commandQueue.Get(), m_hwnd, &sc, nullptr, nullptr, &sc1);
+    if (FAILED(hr)) { T8_LOG_ERROR("[D3D12] CreateSwapChain failed hr=0x%08X", hr); return; }
     sc1.As(&m_swapChain);
 
     // Disable ALT+ENTER fullscreen toggle (interferes with Independent Flip)
@@ -748,6 +753,7 @@ namespace t800 {
     m_heaps[D3D12Heap::SAMPLER].Create(device, D3D12_DESCRIPTOR_HEAP_TYPE_SAMPLER, 256, true);
     m_heaps[D3D12Heap::RTV].Create(device, D3D12_DESCRIPTOR_HEAP_TYPE_RTV, 128, false);
     m_heaps[D3D12Heap::DSV].Create(device, D3D12_DESCRIPTOR_HEAP_TYPE_DSV, 64, false);
+    T8_LOG_INFO("[D3D12] Descriptor heaps created (%d)", D3D12Heap::MAX);
   }
 
   void D3D12Driver::CreateBackBufferViews() {
@@ -768,7 +774,8 @@ namespace t800 {
     dd.Flags = D3D12_RESOURCE_FLAG_ALLOW_DEPTH_STENCIL;
     D3D12_CLEAR_VALUE cv = {}; cv.Format = DXGI_FORMAT_D32_FLOAT; cv.DepthStencil.Depth = 1.0f;
     D3D12_HEAP_PROPERTIES hp = {}; hp.Type = D3D12_HEAP_TYPE_DEFAULT;
-    device->CreateCommittedResource(&hp, D3D12_HEAP_FLAG_NONE, &dd, D3D12_RESOURCE_STATE_DEPTH_WRITE, &cv, IID_PPV_ARGS(&m_depthBuffer));
+    HRESULT hr = device->CreateCommittedResource(&hp, D3D12_HEAP_FLAG_NONE, &dd, D3D12_RESOURCE_STATE_DEPTH_WRITE, &cv, IID_PPV_ARGS(&m_depthBuffer));
+    if (FAILED(hr)) { T8_LOG_ERROR("[D3D12] Depth buffer creation failed hr=0x%08X", hr); return; }
     D3D12_DEPTH_STENCIL_VIEW_DESC dv = {}; dv.Format = DXGI_FORMAT_D32_FLOAT; dv.ViewDimension = D3D12_DSV_DIMENSION_TEXTURE2D;
     m_depthDSV = m_heaps[D3D12Heap::DSV].AllocateCPU();
     device->CreateDepthStencilView(m_depthBuffer.Get(), &dv, m_depthDSV);
@@ -791,12 +798,19 @@ namespace t800 {
   void D3D12Driver::InitDriver() {
     T8Device = new D3D12Device;
     T8DeviceContext = new D3D12DeviceContext;
+    T8_LOG_INFO("[D3D12] >> CreateDevice...");
     CreateDevice();
+    T8_LOG_INFO("[D3D12] >> CreateCommandInfrastructure...");
     CreateCommandInfrastructure();
+    T8_LOG_INFO("[D3D12] >> CreateSwapChain...");
     CreateSwapChain();
+    T8_LOG_INFO("[D3D12] >> CreateHeaps...");
     CreateHeaps();
+    T8_LOG_INFO("[D3D12] >> CreateBackBufferViews...");
     CreateBackBufferViews();
+    T8_LOG_INFO("[D3D12] >> CreateDepthBuffer...");
     CreateDepthBuffer();
+    T8_LOG_INFO("[D3D12] >> CreateDefaultSampler...");
     CreateDefaultSampler();
 
     // Create per-frame CB ring buffers
@@ -809,9 +823,10 @@ namespace t800 {
       rd.Height = 1; rd.DepthOrArraySize = 1; rd.MipLevels = 1;
       rd.SampleDesc.Count = 1; rd.Layout = D3D12_TEXTURE_LAYOUT_ROW_MAJOR;
       for (UINT i = 0; i < kBackBufferCount; i++) {
-        device->CreateCommittedResource(&hp, D3D12_HEAP_FLAG_NONE, &rd,
+        HRESULT hrRing = device->CreateCommittedResource(&hp, D3D12_HEAP_FLAG_NONE, &rd,
                                          D3D12_RESOURCE_STATE_GENERIC_READ, nullptr,
                                          IID_PPV_ARGS(&m_cbRingBuffers[i]));
+        if (FAILED(hrRing)) { T8_LOG_ERROR("[D3D12] CB ring buffer[%u] creation failed hr=0x%08X", i, hrRing); return; }
         m_cbRingBuffers[i]->Map(0, nullptr, &m_cbRingMapped[i]);
       }
       T8_LOG_INFO("[D3D12] CB ring buffers created (%u KB x %u)", kCBRingBufferSize / 1024, kBackBufferCount);

@@ -305,6 +305,36 @@ void GUIManager::Destroy() {
     m_quad.Destroy();
     m_CB->release();
     m_textRenderer.Destroy();
+
+    // Release GUI textures (created via CreateTextureFromMemory, not tracked by driver)
+    if (m_atlasTexture) {
+      // Atlas mode: all individual textures point to the shared atlas — only release once
+      m_atlasTexture->release();
+      m_atlasTexture = nullptr;
+    } else {
+      // Individual textures: release each one
+      auto releaseTex = [](Texture*& t) { if (t) { t->release(); t = nullptr; } };
+      releaseTex(m_barTexture);
+      releaseTex(m_knobTexture);
+      releaseTex(m_whiteTexture);
+      releaseTex(m_checkBoxTexture);
+      releaseTex(m_checkMarkTexture);
+      releaseTex(m_selectorBarTexture);
+      releaseTex(m_selectorBtnLeftTexture);
+      releaseTex(m_selectorBtnRightTexture);
+      releaseTex(m_selectorBtnLeftPressTexture);
+      releaseTex(m_selectorBtnRightPressTexture);
+      releaseTex(m_popupBgTexture);
+      releaseTex(m_popupOkTexture);
+      releaseTex(m_popupOkPressedTexture);
+      releaseTex(m_popupCancelTexture);
+      releaseTex(m_popupCancelPressedTexture);
+    }
+    auto releaseTex = [](Texture*& t) { if (t) { t->release(); t = nullptr; } };
+    releaseTex(m_guiBtnNormalTex);
+    releaseTex(m_guiBtnPressedTex);
+    releaseTex(m_backBtnNormalTex);
+    releaseTex(m_backBtnPressedTex);
   }
   for (auto* e : m_elements) delete e;
   m_elements.clear();

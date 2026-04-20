@@ -208,7 +208,9 @@ void main(){
 		#endif
 		normalTex 		 	 = normalTex*vec3(2.0,2.0,2.0) - vec3(1.0,1.0,1.0);
 		normalTex		 	 = normalize(normalTex);
+		#ifndef GLTF_TANGENT_SPACE
 		normalTex.g 	 	 = -normalTex.g;
+		#endif
 
 		normal.xyz		 	 = TBN*normalTex;
 		normal.xyz		 	 = normalize(normal.xyz);
@@ -393,7 +395,9 @@ void main(){
 			#endif
 			normalTex 		 = normalTex*vec3(2.0,2.0,2.0) - vec3(1.0,1.0,1.0);
 			normalTex		 = normalize(normalTex);
+			#ifndef GLTF_TANGENT_SPACE
 			normalTex.g 	 = -normalTex.g;
+			#endif
 			lowp vec3 tangent	 = normalize(htangent).xyz;
 			lowp vec3 binormal	 = normalize(hbinormal).xyz;
 			lowp mat3	TBN = mat3(tangent,binormal,normal);

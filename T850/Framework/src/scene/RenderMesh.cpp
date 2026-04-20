@@ -12,8 +12,11 @@
 
 #include <video/BaseDriver.h>
 #include <iostream>
+#include <cmath>
+#include <algorithm>
 
 #include <scene/RenderMesh.h>
+#include <utils/ThreadPool.h>
 #include <video/GLShader.h>
 #include <video/GLDriver.h>
 
@@ -203,6 +206,14 @@ namespace t800 {
           bdesc.usage = T8_BUFFER_USAGE::DEFAULT;
           it_subsetinfo->IB = (t800::IndexBuffer*)T8Device->CreateBuffer(T8_BUFFER_TYPE::INDEX, bdesc, tmpIndexex);
 
+          // Compute per-subset AABB from referenced vertices
+          it_subsetinfo->bounds.Reset();
+          unsigned int stride16 = it->VertexSize / sizeof(float);
+          for (int vi = 0; vi < counter; vi++) {
+            unsigned int idx = tmpIndexex[vi];
+            it_subsetinfo->bounds.Expand(it->pData[idx*stride16], it->pData[idx*stride16+1], it->pData[idx*stride16+2]);
+          }
+
           delete[] tmpIndexex;
         } else {
           unsigned int *tmpIndexex = new unsigned int[it_subsetinfo->NumVertex];
@@ -234,6 +245,14 @@ namespace t800 {
           bdesc.usage = T8_BUFFER_USAGE::DEFAULT;
           it_subsetinfo->IB = (t800::IndexBuffer*)T8Device->CreateBuffer(T8_BUFFER_TYPE::INDEX, bdesc, tmpIndexex);
 
+          // Compute per-subset AABB from referenced vertices
+          it_subsetinfo->bounds.Reset();
+          unsigned int stride32 = it->VertexSize / sizeof(float);
+          for (int vi = 0; vi < counter; vi++) {
+            unsigned int idx = tmpIndexex[vi];
+            it_subsetinfo->bounds.Expand(it->pData[idx*stride32], it->pData[idx*stride32+1], it->pData[idx*stride32+2]);
+          }
+
           delete[] tmpIndexex;
         }
       }
@@ -244,6 +263,16 @@ namespace t800 {
       buffdesc.byteWidth = pActual->NumVertices*it->VertexSize;
       buffdesc.usage = T8_BUFFER_USAGE::DEFAULT;
       it_MeshInfo->VB = (t800::VertexBuffer*)T8Device->CreateBuffer(T8_BUFFER_TYPE::VERTEX, buffdesc, &it->pData[0]);
+
+      // Compute AABB from vertex positions (first 3 floats of each vertex)
+      it_MeshInfo->bounds.Reset();
+      unsigned int stride = it->VertexSize / sizeof(float);
+      for (unsigned int v = 0; v < pActual->NumVertices; v++) {
+        float px = it->pData[v * stride + 0];
+        float py = it->pData[v * stride + 1];
+        float pz = it->pData[v * stride + 2];
+        it_MeshInfo->bounds.Expand(px, py, pz);
+      }
 
       T8_LOG_DEBUG("  Geometry %zu: VB=%u bytes (stride=%u, %d verts), IB=%zu tris%s",
                    i, buffdesc.byteWidth, it->VertexSize, pActual->NumVertices,
@@ -365,6 +394,11 @@ namespace t800 {
 					bUseFresnel = true;
 				}
 			}
+			if (mDef->NameParam == "gltfTangentSpace") {
+				if (mDef->CaseDWORD == 1) {
+					matKey.bits |= ShaderKey::GLTF_TANGENT_SPACE;
+				}
+			}
           }
         }
 		
@@ -452,15 +486,100 @@ namespace t800 {
     transform = t;
   }
 
+  // Extract 6 frustum planes from a row-vector VP matrix.
+  // Each plane is stored as (nx, ny, nz, d) in XVECTOR3 (using .x,.y,.z,.w).
+  // Plane equation: nx*x + ny*y + nz*z + d >= 0 means inside.
+  void RenderMesh::ExtractFrustumPlanes(const XMATRIX44& vp, XVECTOR3 planes[6]) {
+    // Row-vector convention: point * M. Planes from columns+rows of the VP matrix.
+    // Left
+    planes[0] = XVECTOR3(vp.m14 + vp.m11, vp.m24 + vp.m21, vp.m34 + vp.m31, vp.m44 + vp.m41);
+    // Right
+    planes[1] = XVECTOR3(vp.m14 - vp.m11, vp.m24 - vp.m21, vp.m34 - vp.m31, vp.m44 - vp.m41);
+    // Bottom
+    planes[2] = XVECTOR3(vp.m14 + vp.m12, vp.m24 + vp.m22, vp.m34 + vp.m32, vp.m44 + vp.m42);
+    // Top
+    planes[3] = XVECTOR3(vp.m14 - vp.m12, vp.m24 - vp.m22, vp.m34 - vp.m32, vp.m44 - vp.m42);
+    // Near
+    planes[4] = XVECTOR3(vp.m13, vp.m23, vp.m33, vp.m43);
+    // Far
+    planes[5] = XVECTOR3(vp.m14 - vp.m13, vp.m24 - vp.m23, vp.m34 - vp.m33, vp.m44 - vp.m43);
+    // Normalize each plane
+    for (int i = 0; i < 6; i++) {
+      float len = std::sqrt(planes[i].x*planes[i].x + planes[i].y*planes[i].y + planes[i].z*planes[i].z);
+      if (len > 1e-8f) {
+        planes[i].x /= len; planes[i].y /= len; planes[i].z /= len; planes[i].w /= len;
+      }
+    }
+  }
+
+  // Test AABB (in local space) transformed by world matrix against frustum planes.
+  // Returns true if AABB is at least partially inside the frustum.
+  bool RenderMesh::AABBInsideFrustum(const AABB& box, const XMATRIX44& world, const XVECTOR3 planes[6]) {
+    // Transform the 8 AABB corners to world space
+    float corners[8][3];
+    float bmin[3] = { box.min.x, box.min.y, box.min.z };
+    float bmax[3] = { box.max.x, box.max.y, box.max.z };
+    for (int c = 0; c < 8; c++) {
+      float lx = (c & 1) ? bmax[0] : bmin[0];
+      float ly = (c & 2) ? bmax[1] : bmin[1];
+      float lz = (c & 4) ? bmax[2] : bmin[2];
+      // Row-vector: [lx,ly,lz,1] * world
+      corners[c][0] = lx*world.m11 + ly*world.m21 + lz*world.m31 + world.m41;
+      corners[c][1] = lx*world.m12 + ly*world.m22 + lz*world.m32 + world.m42;
+      corners[c][2] = lx*world.m13 + ly*world.m23 + lz*world.m33 + world.m43;
+    }
+    // For each plane, check if all 8 corners are outside
+    for (int p = 0; p < 6; p++) {
+      int outside = 0;
+      for (int c = 0; c < 8; c++) {
+        float dist = planes[p].x*corners[c][0] + planes[p].y*corners[c][1] + planes[p].z*corners[c][2] + planes[p].w;
+        if (dist < 0.0f) outside++;
+      }
+      if (outside == 8) return false; // all corners outside this plane
+    }
+    return true;
+  }
+
   void RenderMesh::Draw(float *t, float *vp) {
     if (t)
       transform = t;
 
     Camera *pActualCamera = pScProp->pCameras[0];
 
-    for (std::size_t i = 0; i < xFile->MeshInfo.size(); i++) {
+    // Extract frustum planes once per draw call
+    XVECTOR3 frustumPlanes[6];
+    ExtractFrustumPlanes(pActualCamera->VP, frustumPlanes);
+
+    std::size_t numGeometries = xFile->MeshInfo.size();
+    m_totalSubsets = 0;
+    m_drawnSubsets = 0;
+    m_culledMeshes = 0;
+
+    // Build visibility mask — parallel for large meshes, serial for small
+    std::vector<uint8_t> visible(numGeometries, 0);
+    static constexpr int kParallelCullThreshold = 256;
+
+    if (static_cast<int>(numGeometries) >= kParallelCullThreshold && g_threadPool) {
+      XMATRIX44 worldCopy = transform;
+      g_threadPool->ParallelFor(0, static_cast<int>(numGeometries), [&](int i) {
+        visible[i] = AABBInsideFrustum(Info[i].bounds, worldCopy, frustumPlanes) ? 1 : 0;
+      });
+    } else {
+      for (std::size_t i = 0; i < numGeometries; i++) {
+        visible[i] = AABBInsideFrustum(Info[i].bounds, transform, frustumPlanes) ? 1 : 0;
+      }
+    }
+
+    for (std::size_t i = 0; i < numGeometries; i++) {
       MeshInfo  *it_MeshInfo = &Info[i];
       xMeshGeometry *pActual = &xFile->XMeshDataBase[0]->Geometry[i];
+
+      m_totalSubsets += static_cast<int>(it_MeshInfo->SubSets.size());
+
+      if (!visible[i]) {
+        m_culledMeshes++;
+        continue;
+      }
 
       XMATRIX44 VP = pActualCamera->VP;
       XMATRIX44 WVP = transform*VP;
@@ -487,9 +606,26 @@ namespace t800 {
       ShaderBase *last = (ShaderBase*)32;
       it_MeshInfo->VB->Set(*T8DeviceContext, stride, offset);
 
-      for (std::size_t k = 0; k < it_MeshInfo->SubSets.size(); k++) {
+      // Build sorted draw order by shader key to minimize PSO switches
+      std::size_t numSubsets = it_MeshInfo->SubSets.size();
+      std::vector<std::size_t> drawOrder(numSubsets);
+      for (std::size_t k = 0; k < numSubsets; k++) drawOrder[k] = k;
+      uint8_t currentPass = gKey.getPass();
+      std::stable_sort(drawOrder.begin(), drawOrder.end(),
+        [&](std::size_t a, std::size_t b) {
+          ShaderKey ka(it_MeshInfo->SubSets[a].key.bits); ka.setPass(currentPass);
+          ShaderKey kb(it_MeshInfo->SubSets[b].key.bits); kb.setPass(currentPass);
+          return ka.bits < kb.bits;
+        });
+
+      for (std::size_t ki = 0; ki < numSubsets; ki++) {
+        std::size_t k = drawOrder[ki];
         bool update = false;
         SubSetInfo *sub_info = &it_MeshInfo->SubSets[k];
+
+        // Per-subset frustum cull
+        if (!AABBInsideFrustum(sub_info->bounds, transform, frustumPlanes))
+          continue;
 
 		it_MeshInfo->CnstBuffer.AmbientColor = sub_info->AmbientColor;
 		it_MeshInfo->CnstBuffer.DiffuseColor = sub_info->DiffuseColor;
@@ -555,6 +691,7 @@ namespace t800 {
 
         T8DeviceContext->SetPrimitiveTopology(T8_TOPOLOGY::TRIANLE_LIST);
         T8DeviceContext->DrawIndexed(sub_info->NumVertex, 0, 0);
+        m_drawnSubsets++;
         last = s;
       }
     }

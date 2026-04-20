@@ -53,6 +53,7 @@ struct SSAOFilter {
 	t800::Texture* NoiseTex;
 	std::vector<XVECTOR3> vSSAOKernel;
 	void InitTexture();
+	void Destroy();
 	void Update();
 };
 struct SceneProps{

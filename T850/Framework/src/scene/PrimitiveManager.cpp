@@ -67,6 +67,7 @@ namespace t800 {
 
   void PrimitiveManager::Init()
   {
+    if (!primitives.empty()) return; // already initialised
     primitives.resize(COUNT);
     primitives[QUAD] = new RenderQuad();
     primitives[QUAD]->Create();
@@ -80,8 +81,10 @@ namespace t800 {
 
   void PrimitiveManager::DestroyPrimitives() {
     for (unsigned int i = 0; i < primitives.size(); i++) {
-      primitives[i]->Destroy();
-      delete primitives[i];
+      if (primitives[i]) {
+        primitives[i]->Destroy();
+        delete primitives[i];
+      }
     }
     primitives.clear();
   }

@@ -243,17 +243,34 @@ $xaml = @"
                        TextWrapping="Wrap" FontFamily="Consolas"/>
         </StackPanel>
 
-        <!-- Run Button -->
-        <Button Grid.Row="5" Name="btnRun" Content="&#x25B6;  RUN" Height="48"
-                FontSize="18" FontWeight="Bold" Cursor="Hand"
-                Background="{StaticResource GreenBrush}" Foreground="#1E1E2E"
-                BorderThickness="0">
-            <Button.Resources>
-                <Style TargetType="Border">
-                    <Setter Property="CornerRadius" Value="6"/>
-                </Style>
-            </Button.Resources>
-        </Button>
+        <!-- Buttons -->
+        <Grid Grid.Row="5">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="*"/>
+                <ColumnDefinition Width="12"/>
+                <ColumnDefinition Width="*"/>
+            </Grid.ColumnDefinitions>
+            <Button Grid.Column="0" Name="btnRun" Content="&#x25B6;  RUN" Height="48"
+                    FontSize="18" FontWeight="Bold" Cursor="Hand"
+                    Background="{StaticResource GreenBrush}" Foreground="#1E1E2E"
+                    BorderThickness="0">
+                <Button.Resources>
+                    <Style TargetType="Border">
+                        <Setter Property="CornerRadius" Value="6"/>
+                    </Style>
+                </Button.Resources>
+            </Button>
+            <Button Grid.Column="2" Name="btnEditor" Content="&#x270E;  EDITOR" Height="48"
+                    FontSize="18" FontWeight="Bold" Cursor="Hand"
+                    Background="{StaticResource AccentBrush}" Foreground="#E0E0E0"
+                    BorderThickness="0">
+                <Button.Resources>
+                    <Style TargetType="Border">
+                        <Setter Property="CornerRadius" Value="6"/>
+                    </Style>
+                </Button.Resources>
+            </Button>
+        </Grid>
     </Grid>
 </Window>
 "@
@@ -283,6 +300,7 @@ $txtHeight      = $window.FindName("txtHeight")
 $txtStatus      = $window.FindName("txtStatus")
 $txtCmdPreview  = $window.FindName("txtCmdPreview")
 $btnRun         = $window.FindName("btnRun")
+$btnEditor      = $window.FindName("btnEditor")
 
 # Resolve root directory: use exe location (or script location for dev)
 if ($MyInvocation.MyCommand.Path) {
@@ -408,6 +426,25 @@ function Get-LaunchCommand {
     }
 }
 
+function Get-EditorLaunchCommand {
+    $apiTag = ($cmbApi.SelectedItem).Tag.ToString()
+
+    $exePath = Join-Path $rootDir "T8ditor.exe"
+    $argList = @("--api", $apiTag)
+
+    $w = $txtWidth.Text
+    $h = $txtHeight.Text
+    if ($w -and $h) {
+        $argList += @("--width", $w, "--height", $h)
+    }
+
+    return @{
+        ExePath = $exePath
+        Args    = $argList
+        Display = ('"' + $exePath + '" ' + ($argList -join ' '))
+    }
+}
+
 function Update-Preview {
     $cmd = Get-LaunchCommand
     $txtCmdPreview.Text = $cmd.Display
@@ -421,6 +458,10 @@ function Update-Preview {
         $txtStatus.Foreground = $window.FindResource("RedBrush")
         $btnRun.IsEnabled = $false
     }
+
+    # Also check editor exe
+    $editorCmd = Get-EditorLaunchCommand
+    $btnEditor.IsEnabled = (Test-Path $editorCmd.ExePath)
 }
 
 # ── Events ──
@@ -497,6 +538,29 @@ $btnRun.Add_Click({
 
     $txtStatus.Text = "Process running"
     $txtStatus.Foreground = $window.FindResource("GreenBrush")
+})
+
+# EDITOR button
+$btnEditor.Add_Click({
+    $cmd = Get-EditorLaunchCommand
+    if (-not (Test-Path $cmd.ExePath)) {
+        [System.Windows.MessageBox]::Show(
+            ("T8ditor.exe not found in:" + "`n" + $rootDir),
+            "T850 Launcher", "OK", "Error")
+        return
+    }
+
+    Save-Config
+
+    $txtStatus.Text = "Editor running..."
+    $txtStatus.Foreground = $window.FindResource("AccentBrush")
+    $window.Dispatcher.Invoke([Action]{}, [System.Windows.Threading.DispatcherPriority]::Background)
+
+    $workDir = $rootDir
+    Start-Process -FilePath $cmd.ExePath -ArgumentList $cmd.Args -WorkingDirectory $workDir
+
+    $txtStatus.Text = "Editor running"
+    $txtStatus.Foreground = $window.FindResource("AccentBrush")
 })
 
 # ── Initialize ──

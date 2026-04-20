@@ -38,6 +38,8 @@ namespace t800 {
     double gpuTotalMs = 0.0;   // accumulated GPU time
     double cpuTotalMs = 0.0;   // accumulated CPU time
     int    sampleCount = 0;
+    int    drawCalls = 0;
+    int    triangles = 0;
 
     double GpuAvgMs() const { return sampleCount > 0 ? gpuTotalMs / sampleCount : 0.0; }
     double CpuAvgMs() const { return sampleCount > 0 ? cpuTotalMs / sampleCount : 0.0; }
@@ -67,6 +69,9 @@ namespace t800 {
     // CPU-only scope (no GPU timestamp, just QPC)
     void BeginCPUScope(const char* name);
     void EndCPUScope();
+
+    // Draw call tracking (called from DrawIndexed)
+    void AddDrawCall(int vertexCount);
 
     // Vulkan: flush deferred query pool reset (call after vkBeginCommandBuffer, before render pass)
     void FlushVulkanQueryReset(void* commandBuffer);

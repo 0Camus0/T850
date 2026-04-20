@@ -276,6 +276,7 @@ namespace t800 {
     VkDevice           GetDevice() const { return m_device; }
     VmaAllocator       GetAllocator() const { return m_allocator; }
     VkPhysicalDevice   GetPhysicalDevice() const { return m_physicalDevice; }
+    VkInstance          GetInstance() const { return m_instance; }
     VkQueue            GetGraphicsQueue() const { return m_graphicsQueue; }
     uint32_t           GetGraphicsQueueFamily() const { return m_graphicsQueueFamily; }
     VkRenderPass       GetBackbufferRenderPass() const { return m_backbufferRenderPass; }

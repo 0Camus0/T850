@@ -115,6 +115,9 @@ bool ImGuiInit(t800::RootFramework* fw) {
   io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;
   io.ConfigFlags |= ImGuiConfigFlags_DockingEnable;
 
+  // Save/load layout to imgui_layout.ini in the working directory
+  io.IniFilename = "imgui_layout.ini";
+
   // Dark theme
   ImGui::StyleColorsDark();
   ImGuiStyle& style = ImGui::GetStyle();
@@ -232,6 +235,9 @@ void ImGuiNewFrame() {
 
   ImGui_ImplSDL3_NewFrame();
   ImGui::NewFrame();
+
+  // Create a dockspace over the entire viewport so panels can dock to edges
+  ImGui::DockSpaceOverViewport(0, ImGui::GetMainViewport(), ImGuiDockNodeFlags_PassthruCentralNode);
 }
 
 // ── Render ────────────────────────────────────────────

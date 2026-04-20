@@ -290,6 +290,28 @@ void EditorApp::CheckResize() {
       m_camera.SetViewportSize(w, h);
       pFramework->aplicationDescriptor.width  = w;
       pFramework->aplicationDescriptor.height = h;
+
+      // Recreate deferred render targets at new resolution
+      if (g_deferredReady) {
+        pFramework->pVideoDriver->WaitForGPU();
+        // Destroy old RTs
+        pFramework->pVideoDriver->DestroyRTs();
+        // Recreate at new size (CreateRT with w=0,h=0 uses driver width/height)
+        g_renderGraph.CreateRenderTargets(pFramework->pVideoDriver, m_sceneProps);
+        // Rebind G-buffer textures to quads
+        if (!pFramework->pVideoDriver->RTs.empty()) {
+          auto* gbufferRT = pFramework->pVideoDriver->RTs[0];
+          for (int j = 0; j < (int)gbufferRT->vColorTextures.size() && j < 5; ++j)
+            g_quads[0].SetTexture(gbufferRT->vColorTextures[j], j);
+          if (gbufferRT->pDepthTexture)
+            g_quads[0].SetTexture(gbufferRT->pDepthTexture, 4);
+        }
+        if (g_dummyWhiteTex)
+          g_quads[0].SetTexture(g_dummyWhiteTex, 5);
+        if (g_dummyEnvMapIdx >= 0)
+          g_quads[0].SetEnvironmentMap(t800::g_pBaseDriver->GetTexture(g_dummyEnvMapIdx));
+        T8_LOG_INFO("[T8ditor] Render targets recreated at %dx%d", w, h);
+      }
     }
   }
 #endif

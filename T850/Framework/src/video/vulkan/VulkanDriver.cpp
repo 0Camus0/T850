@@ -1082,12 +1082,34 @@ namespace t800 {
     if (m_framebuffer) { vkDestroyFramebuffer(device, m_framebuffer, nullptr); m_framebuffer = VK_NULL_HANDLE; }
     if (m_renderPass)  { vkDestroyRenderPass(device, m_renderPass, nullptr); m_renderPass = VK_NULL_HANDLE; }
 
+    // Destroy sampler from color texture wrappers (image/view destroyed below separately)
+    for (auto* tex : vColorTextures) {
+      if (tex) {
+        VulkanTexture* vt = static_cast<VulkanTexture*>(tex);
+        if (vt->m_sampler) { vkDestroySampler(device, vt->m_sampler, nullptr); vt->m_sampler = VK_NULL_HANDLE; }
+        vt->m_image = VK_NULL_HANDLE;      // prevent double-free
+        vt->m_imageView = VK_NULL_HANDLE;
+        delete vt;
+      }
+    }
+    vColorTextures.clear();
+
     for (auto& view : vColorImageViews) vkDestroyImageView(device, view, nullptr);
     for (size_t i = 0; i < vColorImages.size(); i++) vmaDestroyImage(allocator, vColorImages[i], vColorAllocations[i]);
     vColorImageViews.clear();
     vColorImages.clear();
     vColorAllocations.clear();
     vColorLayouts.clear();
+
+    // Destroy depth texture wrapper sampler (image/view destroyed below)
+    if (pDepthTexture) {
+      VulkanTexture* dt = static_cast<VulkanTexture*>(pDepthTexture);
+      if (dt->m_sampler) { vkDestroySampler(device, dt->m_sampler, nullptr); dt->m_sampler = VK_NULL_HANDLE; }
+      dt->m_image = VK_NULL_HANDLE;
+      dt->m_imageView = VK_NULL_HANDLE;
+      delete dt;
+      pDepthTexture = nullptr;
+    }
 
     if (m_depthImageView) { vkDestroyImageView(device, m_depthImageView, nullptr); m_depthImageView = VK_NULL_HANDLE; }
     if (m_depthImage)     { vmaDestroyImage(allocator, m_depthImage, m_depthAllocation); m_depthImage = VK_NULL_HANDLE; }

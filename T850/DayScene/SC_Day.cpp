@@ -214,6 +214,7 @@ void SC_Day::OnDestoryScene() {
 }
 
 void SC_Day::DestroyAssets() {
+  SceneProp.SSAOKernel.Destroy();
   m_wireframeSphere.Destroy();
   m_wireframeArrow.Destroy();
   PrimitiveMgr.DestroyPrimitives();

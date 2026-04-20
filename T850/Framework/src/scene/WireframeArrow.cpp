@@ -175,6 +175,7 @@ void WireframeArrow::Draw(const XMATRIX44& vp, const XVECTOR3& position, const X
 void WireframeArrow::Destroy() {
   if (VB) { VB->release(); VB = nullptr; }
   if (IB) { IB->release(); IB = nullptr; }
+  if (CB) { CB->release(); CB = nullptr; }
 }
 
 } // namespace t800

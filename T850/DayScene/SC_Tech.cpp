@@ -320,6 +320,7 @@ void SC_Tech::OnDestoryScene() {
 }
 
 void SC_Tech::DestroyAssets() {
+  SceneProp.SSAOKernel.Destroy();
   PrimitiveMgr.DestroyPrimitives();
   pFramework->pVideoDriver->DestroyRTs();
   //pFramework->pVideoDriver->DestroyShaders();

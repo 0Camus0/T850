@@ -411,6 +411,9 @@ bool BuildGeometry(const Document& doc,
   geom.VertexAttributes = xF::xMeshGeometry::HAS_POSITION;
   if (hasNormal)  geom.VertexAttributes |= xF::xMeshGeometry::HAS_NORMAL;
   if (hasTangent) geom.VertexAttributes |= xF::xMeshGeometry::HAS_TANGENT;
+  // Binormals are always generated alongside tangents (cross(N,T)*sign)
+  bool hasBinormal = hasTangent && hasNormal;
+  if (hasBinormal) geom.VertexAttributes |= xF::xMeshGeometry::HAS_BINORMAL;
   if (hasUV0)     geom.VertexAttributes |= xF::xMeshGeometry::HAS_TEXCOORD0;
   if (hasUV1)     geom.VertexAttributes |= xF::xMeshGeometry::HAS_TEXCOORD1;
   if (hasColor)   geom.VertexAttributes |= xF::xMeshGeometry::HAS_VERTEXCOLOR;
@@ -418,6 +421,7 @@ bool BuildGeometry(const Document& doc,
   geom.Positions.resize(N);
   if (hasNormal)  geom.Normals.resize(N);
   if (hasTangent) geom.Tangents.resize(N);
+  if (hasBinormal) geom.Binormals.resize(N);
   if (hasUV0)     geom.TexCoordinates[0].resize(N);
   if (hasUV1)     geom.TexCoordinates[1].resize(N);
   if (hasColor)   geom.VertexColors.resize(N);
@@ -442,6 +446,16 @@ bool BuildGeometry(const Document& doc,
       float l = std::sqrt(x*x + y*y + z*z);
       if (l > 1e-8f) { x /= l; y /= l; z /= l; }
       geom.Tangents[i] = XVECTOR3(x, y, z);
+    }
+    if (hasBinormal) {
+      // B = cross(N, T) * tangent.w  (bitangent sign from glTF/MikkTSpace)
+      XVECTOR3 N = geom.Normals[i];
+      XVECTOR3 T = geom.Tangents[i];
+      float sign = (tan.size() > i*4+3) ? tan[i*4+3] : 1.0f;
+      XVECTOR3 B(N.y*T.z - N.z*T.y, N.z*T.x - N.x*T.z, N.x*T.y - N.y*T.x);
+      float bl = std::sqrt(B.x*B.x + B.y*B.y + B.z*B.z);
+      if (bl > 1e-8f) { B.x /= bl; B.y /= bl; B.z /= bl; }
+      geom.Binormals[i] = XVECTOR3(B.x*sign, B.y*sign, B.z*sign);
     }
     if (hasUV0) {
       geom.TexCoordinates[0][i].x = uv0[i*2+0];

@@ -550,6 +550,8 @@ void EditorApp::OnDraw() {
       // GBuffer pass: draw all meshes into the G-buffer RT
       drv->PushRT(0); // GBuffer RT
       drv->Clear();
+      drv->SetBlendState(t800::BaseDriver::BLEND_DEFAULT);
+      drv->SetDepthStencilState(t800::BaseDriver::READ_WRITE);
       drv->SetCullFace(t800::BaseDriver::FRONT_AND_BACK); // no culling
       for (auto* inst : ptrs) {
         t800::ShaderKey gk(0);
@@ -564,6 +566,8 @@ void EditorApp::OnDraw() {
 
       // Deferred pass: fullscreen quad reads G-buffer, evaluates all lights
       drv->PushRT(1); // Deferred RT
+      drv->SetBlendState(t800::BaseDriver::BLEND_DEFAULT);
+      drv->SetDepthStencilState(t800::BaseDriver::NONE);
       // Bind G-buffer textures to quads[0]
       for (int j = 0; j < (int)drv->RTs[0]->vColorTextures.size() && j < 5; ++j)
         g_quads[0].SetTexture(drv->RTs[0]->vColorTextures[j], j);
@@ -576,6 +580,8 @@ void EditorApp::OnDraw() {
       drv->PopRT();
 
       // BackBuffer pass: final quad copies deferred output to screen
+      drv->SetBlendState(t800::BaseDriver::BLEND_DEFAULT);
+      drv->SetDepthStencilState(t800::BaseDriver::NONE);
       g_quads[7].SetTexture(drv->GetRTTexture(1, 0), 0); // Deferred:COLOR0
       {
         t800::ShaderKey bk(0);

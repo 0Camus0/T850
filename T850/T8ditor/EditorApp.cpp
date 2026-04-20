@@ -672,70 +672,49 @@ void EditorApp::OnDraw() {
       visibleCount++;
     }
 
-    // Render meshes: deferred on D3D11/D3D12, forward on GL
+    // Render meshes: deferred via render graph on D3D11/D3D12, forward on GL
     bool useDeferred = g_deferredReady
                     && drv->m_currentAPI != t800::GRAPHICS_API::OPENGL;
 
     if (useDeferred) {
-      std::vector<t800::PrimitiveInst*> ptrs;
-      for (auto& obj : g_objects)
-        if (obj.primId >= 0 && obj.visible) ptrs.push_back(&obj.litInst);
+      // Build mesh array: skybox first (index 0), then scene meshes
+      // The render graph JSON controls which indices are drawn in each pass.
+      std::vector<t800::PrimitiveInst*> allMeshes;
 
-      // GBuffer pass: draw skybox + all meshes into the G-buffer RT
-      drv->PushRT(0);
-      drv->SetBlendState(t800::BaseDriver::BLEND_DEFAULT);
-      drv->SetDepthStencilState(t800::BaseDriver::READ_WRITE);
-
-      // Skybox into GBuffer (drawn first, at max depth, scene meshes overdraw it)
+      // Skybox at index 0
       if (g_skyboxReady && m_panels.showSkybox) {
-        t800::ShaderKey gk(0);
-        gk.setPass(t800::PassType::GBUFFER);
-        g_skyboxInst.SetGlobalKey(gk);
         g_skyboxInst.Update();
-        g_skyboxInst.Draw();
-        t800::ShaderKey fwd(0); fwd.setPass(t800::PassType::FORWARD);
-        g_skyboxInst.SetGlobalKey(fwd);
+        allMeshes.push_back(&g_skyboxInst);
       }
 
-      // Scene meshes into GBuffer
-      for (auto* inst : ptrs) {
-        t800::ShaderKey gk(0);
-        gk.setPass(t800::PassType::GBUFFER);
-        inst->SetGlobalKey(gk);
-        inst->Draw();
-        t800::ShaderKey fwd(0); fwd.setPass(t800::PassType::FORWARD);
-        inst->SetGlobalKey(fwd);
-      }
-      drv->SetDepthStencilState(t800::BaseDriver::READ);
-      drv->PopRT();
+      // Scene meshes
+      for (auto& obj : g_objects)
+        if (obj.primId >= 0 && obj.visible)
+          allMeshes.push_back(&obj.litInst);
 
-      // Deferred pass: fullscreen quad reads G-buffer, evaluates all lights
-      drv->PushRT(1); // Deferred RT
-      drv->SetBlendState(t800::BaseDriver::BLEND_DEFAULT);
-      drv->SetDepthStencilState(t800::BaseDriver::NONE);
-      // Bind G-buffer textures to quads[0]
-      for (int j = 0; j < (int)drv->RTs[0]->vColorTextures.size() && j < 5; ++j)
-        g_quads[0].SetTexture(drv->RTs[0]->vColorTextures[j], j);
-      // Slot 5: shadow accumulation — use dummy white (no shadows = full light)
+      // Bind shadow dummy and env map to quads[0] before execute
       if (g_dummyWhiteTex)
         g_quads[0].SetTexture(g_dummyWhiteTex, 5);
-      {
-        t800::ShaderKey dk(0);
-        dk.setPass(t800::PassType::DEFERRED);
-        g_quads[0].SetGlobalKey(dk);
-        g_quads[0].Draw();
-      }
-      drv->PopRT();
+      if (g_dummyEnvMapIdx >= 0)
+        g_quads[0].SetEnvironmentMap(t800::g_pBaseDriver->GetTexture(g_dummyEnvMapIdx));
 
-      // BackBuffer pass: show selected RT or deferred result
-      // Use ALPHA_BLEND so empty pixels (alpha=0 from RT clear) show the
-      // backbuffer clear color (#3A3A3A) instead of black
-      drv->SetBlendState(t800::BaseDriver::ALPHA_BLEND);
-      drv->SetDepthStencilState(t800::BaseDriver::NONE);
+      // Execute the render graph (GBuffer -> Deferred -> BackBuffer)
+      // RenderGraph::Execute needs a contiguous PrimitiveInst array.
+      // We copy the instances (shallow — pBase pointer stays valid).
+      std::vector<t800::PrimitiveInst> meshArray;
+      meshArray.reserve(allMeshes.size());
+      for (auto* p : allMeshes) meshArray.push_back(*p);
 
-      // If RT debug panel has a specific RT selected, show that instead
+      ::Camera* mainCam = m_sceneProps.pCameras[0];
+      g_renderGraph.Execute(drv, m_sceneProps,
+        meshArray.data(), (int)meshArray.size(),
+        g_quads, mainCam, nullptr, nullptr,
+        g_dummyEnvMapIdx);
+
+      // RT debug override: if a specific RT is selected, draw it to backbuffer
       if (g_debugRT >= 0) {
-        // Map globalIdx to RT/attachment
+        drv->SetBlendState(t800::BaseDriver::ALPHA_BLEND);
+        drv->SetDepthStencilState(t800::BaseDriver::NONE);
         int gi = 0;
         t800::Texture* debugTex = nullptr;
         for (int rtIdx = 0; rtIdx < (int)drv->RTs.size() && !debugTex; ++rtIdx) {
@@ -752,20 +731,13 @@ void EditorApp::OnDraw() {
         }
         if (debugTex) {
           g_quads[7].SetTexture(debugTex, 0);
-        } else {
-          g_quads[7].SetTexture(drv->GetRTTexture(1, 0), 0);
+          t800::ShaderKey bk(0);
+          bk.setPass(t800::PassType::BACKBUFFER);
+          g_quads[7].SetGlobalKey(bk);
+          g_quads[7].Draw();
         }
-      } else {
-        g_quads[7].SetTexture(drv->GetRTTexture(1, 0), 0); // Deferred:COLOR0
+        drv->SetDepthStencilState(t800::BaseDriver::DEPTH_DEFAULT);
       }
-      {
-        t800::ShaderKey bk(0);
-        bk.setPass(t800::PassType::BACKBUFFER);
-        g_quads[7].SetGlobalKey(bk);
-        g_quads[7].Draw();
-      }
-      drv->SetDepthStencilState(t800::BaseDriver::DEPTH_DEFAULT);
-      drv->SetCullFace(t800::BaseDriver::FRONT_AND_BACK);
     } else {
       // Forward rendering (GL, or deferred not ready)
       // Skybox forward

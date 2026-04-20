@@ -857,58 +857,85 @@ void EditorApp::OnDraw() {
       // ── Camera gizmo — use translate-only via ImGuizmo ──
       SceneCamera& sc = g_cameras[g_selectedIdx];
 
+      // Camera position gizmo
+      ImGuizmo::SetID(0);
       XMATRIX44 worldMat;
       XMatTranslation(worldMat, sc.position.x, sc.position.y, sc.position.z);
 
-      XMATRIX44 deltaMatrix;
-      XMatIdentity(deltaMatrix);
-
-      // Only translate mode for cameras — rotate/scale handled in inspector
       bool manipulated = ImGuizmo::Manipulate(
         &cam2.View.m[0][0], &cam2.Projection.m[0][0],
         ImGuizmo::TRANSLATE, ImGuizmo::WORLD,
-        &worldMat.m[0][0], &deltaMatrix.m[0][0]);
+        &worldMat.m[0][0], nullptr);
 
       if (manipulated) {
-        float translation[3], rotation[3], scale[3];
-        ImGuizmo::DecomposeMatrixToComponents(&worldMat.m[0][0], translation, rotation, scale);
-        XVECTOR3 delta(translation[0] - sc.position.x,
-                       translation[1] - sc.position.y,
-                       translation[2] - sc.position.z);
-        sc.position = XVECTOR3(translation[0], translation[1], translation[2]);
+        float t[3], r[3], s[3];
+        ImGuizmo::DecomposeMatrixToComponents(&worldMat.m[0][0], t, r, s);
+        XVECTOR3 delta(t[0] - sc.position.x, t[1] - sc.position.y, t[2] - sc.position.z);
+        sc.position = XVECTOR3(t[0], t[1], t[2]);
         sc.target.x += delta.x;
         sc.target.y += delta.y;
         sc.target.z += delta.z;
       }
+
+      // Camera target gizmo (separate ImGuizmo ID so both can coexist)
+      ImGuizmo::SetID(1);
+      XMATRIX44 targetMat;
+      XMatTranslation(targetMat, sc.target.x, sc.target.y, sc.target.z);
+
+      bool targetMoved = ImGuizmo::Manipulate(
+        &cam2.View.m[0][0], &cam2.Projection.m[0][0],
+        ImGuizmo::TRANSLATE, ImGuizmo::WORLD,
+        &targetMat.m[0][0], nullptr);
+
+      if (targetMoved) {
+        float t[3], r[3], s[3];
+        ImGuizmo::DecomposeMatrixToComponents(&targetMat.m[0][0], t, r, s);
+        sc.target = XVECTOR3(t[0], t[1], t[2]);
+      }
+      ImGuizmo::SetID(-1); // reset
     }
     else if (g_selectionType == 2 && g_selectedIdx >= 0 && g_selectedIdx < (int)g_lights.size()) {
       // ── Light gizmo ──
       SceneLight& sl = g_lights[g_selectedIdx];
 
-      XMATRIX44 worldMat;
-      XMatTranslation(worldMat, sl.position.x, sl.position.y, sl.position.z);
+      if (sl.type == EditorLightType::Omni && mode == 2) {
+        // Scale mode for omni: use delta matrix to adjust radius
+        XMATRIX44 worldMat;
+        XMatScaling(worldMat, sl.radius, sl.radius, sl.radius);
+        // Set translation
+        worldMat.m[3][0] = sl.position.x;
+        worldMat.m[3][1] = sl.position.y;
+        worldMat.m[3][2] = sl.position.z;
 
-      XMATRIX44 deltaMatrix;
-      XMatIdentity(deltaMatrix);
+        XMATRIX44 deltaMatrix;
+        XMatIdentity(deltaMatrix);
 
-      // Omni lights: translate + scale (radius). Directional: translate only.
-      ImGuizmo::OPERATION lightOp = ImGuizmo::TRANSLATE;
-      if (sl.type == EditorLightType::Omni && mode == 2)
-        lightOp = ImGuizmo::TRANSLATE | ImGuizmo::SCALEU;
+        bool manipulated = ImGuizmo::Manipulate(
+          &cam2.View.m[0][0], &cam2.Projection.m[0][0],
+          ImGuizmo::SCALEU, ImGuizmo::WORLD,
+          &worldMat.m[0][0], &deltaMatrix.m[0][0]);
 
-      bool manipulated = ImGuizmo::Manipulate(
-        &cam2.View.m[0][0], &cam2.Projection.m[0][0],
-        lightOp, ImGuizmo::WORLD,
-        &worldMat.m[0][0], &deltaMatrix.m[0][0]);
-
-      if (manipulated) {
-        float translation[3], rotation[3], scale[3];
-        ImGuizmo::DecomposeMatrixToComponents(&worldMat.m[0][0], translation, rotation, scale);
-        sl.position = XVECTOR3(translation[0], translation[1], translation[2]);
-        if (sl.type == EditorLightType::Omni && mode == 2) {
-          float avgScale = (scale[0] + scale[1] + scale[2]) / 3.0f;
-          sl.radius *= avgScale;
+        if (manipulated) {
+          float dt[3], dr[3], ds[3];
+          ImGuizmo::DecomposeMatrixToComponents(&deltaMatrix.m[0][0], dt, dr, ds);
+          float deltaScale = (ds[0] + ds[1] + ds[2]) / 3.0f;
+          sl.radius *= deltaScale;
           if (sl.radius < 0.1f) sl.radius = 0.1f;
+        }
+      } else {
+        // Translate mode
+        XMATRIX44 worldMat;
+        XMatTranslation(worldMat, sl.position.x, sl.position.y, sl.position.z);
+
+        bool manipulated = ImGuizmo::Manipulate(
+          &cam2.View.m[0][0], &cam2.Projection.m[0][0],
+          ImGuizmo::TRANSLATE, ImGuizmo::WORLD,
+          &worldMat.m[0][0], nullptr);
+
+        if (manipulated) {
+          float t[3], r[3], s[3];
+          ImGuizmo::DecomposeMatrixToComponents(&worldMat.m[0][0], t, r, s);
+          sl.position = XVECTOR3(t[0], t[1], t[2]);
         }
       }
     }

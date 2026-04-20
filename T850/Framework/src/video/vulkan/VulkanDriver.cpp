@@ -136,6 +136,9 @@ namespace t800 {
       driver->BindPendingDescriptors(m_commandBuffer, shader);
 
     vkCmdDrawIndexed(m_commandBuffer, vertexCount, 1, startIndex, (int32_t)startVertex, 0);
+#ifdef T8_ENABLE_PROFILER
+    if (t800::g_profiler) t800::g_profiler->AddDrawCall(vertexCount);
+#endif
   }
 
   // ══════════════════════════════════════════════════════

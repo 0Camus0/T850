@@ -263,6 +263,9 @@ namespace t800 {
   void D3D12DeviceContext::DrawIndexed(unsigned vertexCount, unsigned startIndex, unsigned startVertex) {
     T8_LOG_TRACE("[D3D12] DrawIndexed(%u, %u, %u)", vertexCount, startIndex, startVertex);
     m_commandList->DrawIndexedInstanced(vertexCount, 1, startIndex, startVertex, 0);
+#ifdef T8_ENABLE_PROFILER
+    if (t800::g_profiler) t800::g_profiler->AddDrawCall(vertexCount);
+#endif
   }
 
   // ══════════════════════════════════════════════════════
@@ -881,11 +884,7 @@ namespace t800 {
   void D3D12Driver::BeginFrame() {
     {
       T8_PROFILE_CPU_SCOPE(t800::g_profiler, "D3D12_FenceWait");
-      // Wait on waitable swap chain (controls frame pacing)
-      if (m_swapChainWaitableObject) {
-        WaitForSingleObject(m_swapChainWaitableObject, 1000);
-      }
-      // Also wait for the specific backbuffer's fence to ensure its allocator is safe to reset
+      // Wait for the specific backbuffer's fence to ensure its allocator is safe to reset
       const UINT64 lastFenceForThisBuffer = m_frameFenceValues[m_currentBackBuffer];
       if (m_fence->GetCompletedValue() < lastFenceForThisBuffer) {
         m_fence->SetEventOnCompletion(lastFenceForThisBuffer, m_fenceEvent);

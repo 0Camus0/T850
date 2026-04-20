@@ -75,6 +75,7 @@ struct VulkanProfileState {
   int         maxQueries = 0;          // 2 per scope (begin + end)
   int         writeFrame = 0;
   bool        needsReset = false;      // deferred reset flag
+  bool        hasCalibratedTimestamps = false;
   static const int kFrameDelay = 3;    // match kBackBufferCount
   struct FrameRecord {
     int activeCount = 0;
@@ -253,6 +254,46 @@ void T8Profiler::InitGPU_Vulkan() {
 
   T8_LOG_INFO("[Profiler] Vulkan GPU timestamp period: %.3f ns/tick (%d query slots)",
               state->timestampPeriod, totalSlots);
+
+  // Check calibrated timestamp support
+  auto vkGetCalibratedTimestampsEXT = (PFN_vkGetCalibratedTimestampsEXT)
+      vkGetDeviceProcAddr(device, "vkGetCalibratedTimestampsEXT");
+  if (vkGetCalibratedTimestampsEXT) {
+    auto vkGetPhysicalDeviceCalibrateableTimeDomainsEXT = (PFN_vkGetPhysicalDeviceCalibrateableTimeDomainsEXT)
+        vkGetInstanceProcAddr(vkDrv->GetInstance(), "vkGetPhysicalDeviceCalibrateableTimeDomainsEXT");
+    if (vkGetPhysicalDeviceCalibrateableTimeDomainsEXT) {
+      uint32_t domainCount = 0;
+      vkGetPhysicalDeviceCalibrateableTimeDomainsEXT(vkDrv->GetPhysicalDevice(), &domainCount, nullptr);
+      std::vector<VkTimeDomainEXT> domains(domainCount);
+      vkGetPhysicalDeviceCalibrateableTimeDomainsEXT(vkDrv->GetPhysicalDevice(), &domainCount, domains.data());
+
+      bool hasDevice = false, hasQPC = false;
+      for (auto d : domains) {
+        if (d == VK_TIME_DOMAIN_DEVICE_EXT) hasDevice = true;
+        if (d == VK_TIME_DOMAIN_QUERY_PERFORMANCE_COUNTER_EXT) hasQPC = true;
+      }
+
+      if (hasDevice && hasQPC) {
+        VkCalibratedTimestampInfoEXT infos[2] = {};
+        infos[0].sType = VK_STRUCTURE_TYPE_CALIBRATED_TIMESTAMP_INFO_EXT;
+        infos[0].timeDomain = VK_TIME_DOMAIN_DEVICE_EXT;
+        infos[1].sType = VK_STRUCTURE_TYPE_CALIBRATED_TIMESTAMP_INFO_EXT;
+        infos[1].timeDomain = VK_TIME_DOMAIN_QUERY_PERFORMANCE_COUNTER_EXT;
+
+        uint64_t timestamps[2];
+        uint64_t maxDeviation;
+        vkGetCalibratedTimestampsEXT(device, 2, infos, timestamps, &maxDeviation);
+
+        T8_LOG_INFO("[Profiler] Calibrated timestamps: GPU=%llu QPC=%llu deviation=%llu ns",
+                    timestamps[0], timestamps[1], maxDeviation);
+        T8_LOG_INFO("[Profiler] Max deviation: %.3f us", maxDeviation * state->timestampPeriod / 1000.0);
+      }
+    }
+    state->hasCalibratedTimestamps = true;
+  } else {
+    T8_LOG_INFO("[Profiler] vkGetCalibratedTimestampsEXT not available");
+  }
+
   m_gpuState = state;
 #endif
 }
@@ -461,6 +502,16 @@ void T8Profiler::EndCPUScope() {
     double cpuMs = (double)(fq.cpuEnd - fq.cpuBegin) * 1000.0 / (double)m_cpuFreq;
     m_scopes[fq.scopeIndex].cpuTotalMs += cpuMs;
     m_scopes[fq.scopeIndex].sampleCount++;
+  }
+}
+
+void T8Profiler::AddDrawCall(int vertexCount) {
+  if (!m_initialized || m_activeQueryCount <= 0) return;
+  int queryIdx = m_activeQueryCount - 1;
+  auto& fq = m_frameQueries[queryIdx];
+  if (fq.scopeIndex >= 0 && fq.scopeIndex < (int)m_scopes.size()) {
+    m_scopes[fq.scopeIndex].drawCalls++;
+    m_scopes[fq.scopeIndex].triangles += vertexCount / 3;
   }
 }
 
@@ -677,11 +728,11 @@ void T8Profiler::ResolveGPUFrame() {
 // ═════════════════════════════════════════════════════════════
 
 void T8Profiler::Report(int topN) const {
-  T8_LOG_INFO("╔══════════════════════════════════════════════════════════════╗");
-  T8_LOG_INFO("║  PROFILER REPORT  (%d frames)                               ║", m_frameCount);
-  T8_LOG_INFO("╠═══════════════════════════════╦═══════════╦═══════════╦═════╣");
-  T8_LOG_INFO("║ Scope                         ║  GPU avg  ║  CPU avg  ║  N  ║");
-  T8_LOG_INFO("╠═══════════════════════════════╬═══════════╬═══════════╬═════╣");
+  T8_LOG_INFO("╔══════════════════════════════════════════════════════════════════════════════╗");
+  T8_LOG_INFO("║  PROFILER REPORT  (%d frames)                                               ║", m_frameCount);
+  T8_LOG_INFO("╠═══════════════════════════════╦═══════════╦═══════════╦═══════╦════════╦═════╣");
+  T8_LOG_INFO("║ Scope                         ║  GPU avg  ║  CPU avg  ║ Draws ║  Tris  ║  N  ║");
+  T8_LOG_INFO("╠═══════════════════════════════╬═══════════╬═══════════╬═══════╬════════╬═════╣");
 
   // Sort by GPU time descending
   std::vector<int> order(m_scopes.size());
@@ -691,18 +742,21 @@ void T8Profiler::Report(int topN) const {
   });
 
   double totalGpu = 0, totalCpu = 0;
+  int totalDraws = 0, totalTris = 0;
   int count = topN > 0 ? (std::min)(topN, (int)order.size()) : (int)order.size();
   for (int i = 0; i < count; i++) {
     auto& s = m_scopes[order[i]];
-    T8_LOG_INFO("║ %-29s ║ %7.3fms ║ %7.3fms ║ %3d ║",
-      s.name.c_str(), s.GpuAvgMs(), s.CpuAvgMs(), s.sampleCount);
+    T8_LOG_INFO("║ %-29s ║ %7.3fms ║ %7.3fms ║ %5d ║ %6d ║ %3d ║",
+      s.name.c_str(), s.GpuAvgMs(), s.CpuAvgMs(), s.drawCalls, s.triangles, s.sampleCount);
     totalGpu += s.GpuAvgMs();
     totalCpu += s.CpuAvgMs();
+    totalDraws += s.drawCalls;
+    totalTris += s.triangles;
   }
 
-  T8_LOG_INFO("╠═══════════════════════════════╬═══════════╬═══════════╬═════╣");
-  T8_LOG_INFO("║ TOTAL                         ║ %7.3fms ║ %7.3fms ║     ║", totalGpu, totalCpu);
-  T8_LOG_INFO("╚═══════════════════════════════╩═══════════╩═══════════╩═════╝");
+  T8_LOG_INFO("╠═══════════════════════════════╬═══════════╬═══════════╬═══════╬════════╬═════╣");
+  T8_LOG_INFO("║ TOTAL                         ║ %7.3fms ║ %7.3fms ║ %5d ║ %6d ║     ║", totalGpu, totalCpu, totalDraws, totalTris);
+  T8_LOG_INFO("╚═══════════════════════════════╩═══════════╩═══════════╩═══════╩════════╩═════╝");
 }
 
 void T8Profiler::Reset() {

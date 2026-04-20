@@ -214,6 +214,8 @@ void SC_Day::OnDestoryScene() {
 }
 
 void SC_Day::DestroyAssets() {
+  m_wireframeSphere.Destroy();
+  m_wireframeArrow.Destroy();
   PrimitiveMgr.DestroyPrimitives();
   pFramework->pVideoDriver->DestroyRTs();
   //pFramework->pVideoDriver->DestroyShaders();

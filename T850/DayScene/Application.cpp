@@ -13,6 +13,7 @@
 #include "Application.h"
 #include <video/BaseDriver.h>
 #include <utils/InputManager.h>
+#include <SDL3/SDL.h>
 #include <utils/Log.h>
 #include <utils/Utils.h>
 #include <debug/T8_Profiler.h>
@@ -297,8 +298,11 @@ void App::OnDraw() {
                   t800::g_profiler->GetFrameCount());
       t800::g_profiler->Report();
       t800::g_profiler->Reset();
-      // Exit after profiling is complete
+      // Clean shutdown after profiling
       pFramework->pVideoDriver->SwapBuffers();
+      pFramework->pVideoDriver->FlushGPUResources();
+      DestroyAssets();
+      pFramework->pVideoDriver->DestroyDriver();
       exit(0);
     }
   }

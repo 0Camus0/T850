@@ -1,6 +1,6 @@
 ﻿{
     "keepRunning":  false,
-    "api":  "d3d12",
+    "api":  "vulkan",
     "architecture":  "x64",
     "display":  {
                     "scene":  0,
@@ -10,22 +10,22 @@
                 },
     "replaySnapshot":  {
                            "path":  "D:\\Code\\Game\\T850\\T850\\bin\\x64\\Release\\dumps_vulkan_f1324_20260419_195612\\snapshot.json",
-                           "enabled":  true
+                           "enabled":  false
                        },
     "configuration":  "Release",
     "dump":  {
                  "seconds":  5,
                  "trigger":  "frame",
                  "frame":  750,
-                 "enabled":  true
+                 "enabled":  false
              },
-    "debugFrames":  true,
+    "debugFrames":  false,
     "devTools":  {
                      "guiControlEdit":  false,
                      "d3d12Debug":  false,
                      "guiControlTarget":  "slider_knob",
                      "logLevel":  "error",
-                     "logToFile":  false,
+                     "logToFile":  true,
                      "guiEdit":  false,
                      "guiSnap":  false
                  }

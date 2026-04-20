@@ -123,6 +123,7 @@ $xaml = @"
             <RowDefinition Height="Auto"/>
             <RowDefinition Height="Auto"/>
             <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>
             <RowDefinition Height="*"/>
             <RowDefinition Height="Auto"/>
         </Grid.RowDefinitions>
@@ -149,7 +150,10 @@ $xaml = @"
                            Foreground="{StaticResource AccentBrush}" Margin="0,0,0,10"/>
                 <ComboBox Name="cmbApi">
                     <ComboBoxItem Content="D3D11 (Direct3D 11)" IsSelected="True" Tag="d3d11"/>
-                    <ComboBoxItem Content="OpenGL (Desktop GL 3.3)" Tag="gl"/>
+                    <ComboBoxItem Content="D3D12 (Direct3D 12)" Tag="d3d12"/>
+                    <ComboBoxItem Content="Vulkan" Tag="vulkan"/>
+                    <ComboBoxItem Content="GL ES (ANGLE)" Tag="gl"/>
+                    <ComboBoxItem Content="GL (Desktop GLEW)" Tag="glew"/>
                 </ComboBox>
             </StackPanel>
         </Border>
@@ -209,12 +213,30 @@ $xaml = @"
             </StackPanel>
         </Border>
 
-        <!-- Resolution -->
+        <!-- Display -->
         <Border Grid.Row="3" Background="{StaticResource SurfaceBrush}"
                 CornerRadius="8" Padding="16,12" Margin="0,0,0,12">
             <StackPanel>
                 <TextBlock Text="DISPLAY" FontSize="12" FontWeight="SemiBold"
                            Foreground="{StaticResource AccentBrush}" Margin="0,0,0,10"/>
+                <Grid Margin="0,0,0,10">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="*"/>
+                        <ColumnDefinition Width="12"/>
+                        <ColumnDefinition Width="*"/>
+                    </Grid.ColumnDefinitions>
+                    <StackPanel Grid.Column="0">
+                        <TextBlock Text="Scene" Style="{StaticResource LabelStyle}"/>
+                        <ComboBox Name="cmbScene">
+                            <ComboBoxItem Content="Day" Tag="0" IsSelected="True"/>
+                            <ComboBoxItem Content="Night" Tag="1"/>
+                            <ComboBoxItem Content="Tech" Tag="2"/>
+                        </ComboBox>
+                    </StackPanel>
+                    <StackPanel Grid.Column="2" VerticalAlignment="Bottom">
+                        <CheckBox Name="chkFullscreen" Content="Fullscreen" Margin="0,0,0,8"/>
+                    </StackPanel>
+                </Grid>
                 <Grid>
                     <Grid.ColumnDefinitions>
                         <ColumnDefinition Width="*"/>
@@ -233,8 +255,37 @@ $xaml = @"
             </StackPanel>
         </Border>
 
+        <!-- Logging -->
+        <Border Grid.Row="4" Background="{StaticResource SurfaceBrush}"
+                CornerRadius="8" Padding="16,12" Margin="0,0,0,12">
+            <StackPanel>
+                <TextBlock Text="LOGGING" FontSize="12" FontWeight="SemiBold"
+                           Foreground="{StaticResource AccentBrush}" Margin="0,0,0,10"/>
+                <Grid Margin="0,0,0,8">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="*"/>
+                        <ColumnDefinition Width="12"/>
+                        <ColumnDefinition Width="*"/>
+                    </Grid.ColumnDefinitions>
+                    <StackPanel Grid.Column="0">
+                        <TextBlock Text="Log Level" Style="{StaticResource LabelStyle}"/>
+                        <ComboBox Name="cmbLogLevel">
+                            <ComboBoxItem Content="Error" Tag="error"/>
+                            <ComboBoxItem Content="Info" Tag="info" IsSelected="True"/>
+                            <ComboBoxItem Content="Debug" Tag="debug"/>
+                            <ComboBoxItem Content="Verbose" Tag="verbose"/>
+                            <ComboBoxItem Content="Trace" Tag="trace"/>
+                        </ComboBox>
+                    </StackPanel>
+                    <StackPanel Grid.Column="2" VerticalAlignment="Bottom">
+                        <CheckBox Name="chkLogToFile" Content="Save log to file" Margin="0,0,0,8"/>
+                    </StackPanel>
+                </Grid>
+            </StackPanel>
+        </Border>
+
         <!-- Status + Command Preview -->
-        <StackPanel Grid.Row="4" VerticalAlignment="Bottom" Margin="0,0,0,12">
+        <StackPanel Grid.Row="5" VerticalAlignment="Bottom" Margin="0,0,0,12">
             <TextBlock Name="txtStatus" Text="" FontSize="12"
                        Foreground="#A6ADC8" Margin="0,0,0,4"
                        TextWrapping="Wrap"/>
@@ -244,7 +295,7 @@ $xaml = @"
         </StackPanel>
 
         <!-- Run Button -->
-        <Button Grid.Row="5" Name="btnRun" Content="&#x25B6;  RUN" Height="48"
+        <Button Grid.Row="6" Name="btnRun" Content="&#x25B6;  RUN" Height="48"
                 FontSize="18" FontWeight="Bold" Cursor="Hand"
                 Background="{StaticResource GreenBrush}" Foreground="#1E1E2E"
                 BorderThickness="0">
@@ -278,8 +329,12 @@ $pnlSeconds     = $window.FindName("pnlSeconds")
 $pnlFrame       = $window.FindName("pnlFrame")
 $txtSeconds     = $window.FindName("txtSeconds")
 $txtFrame       = $window.FindName("txtFrame")
+$cmbScene       = $window.FindName("cmbScene")
+$chkFullscreen  = $window.FindName("chkFullscreen")
 $txtWidth       = $window.FindName("txtWidth")
 $txtHeight      = $window.FindName("txtHeight")
+$cmbLogLevel    = $window.FindName("cmbLogLevel")
+$chkLogToFile   = $window.FindName("chkLogToFile")
 $txtStatus      = $window.FindName("txtStatus")
 $txtCmdPreview  = $window.FindName("txtCmdPreview")
 $btnRun         = $window.FindName("btnRun")
@@ -310,6 +365,16 @@ function Load-Config {
         if ($cfg.display) {
             if ($cfg.display.width)  { $txtWidth.Text  = $cfg.display.width.ToString() }
             if ($cfg.display.height) { $txtHeight.Text = $cfg.display.height.ToString() }
+            if ($cfg.display.PSObject.Properties['fullscreen']) {
+                $chkFullscreen.IsChecked = [bool]$cfg.display.fullscreen
+            }
+            if ($cfg.display.PSObject.Properties['scene']) {
+                foreach ($item in $cmbScene.Items) {
+                    if ($item.Tag -eq $cfg.display.scene.ToString()) {
+                        $cmbScene.SelectedItem = $item; break
+                    }
+                }
+            }
         }
         # Debug Frames
         if ($cfg.PSObject.Properties['debugFrames']) {
@@ -337,6 +402,17 @@ function Load-Config {
             if ($cfg.dump.seconds) { $txtSeconds.Text = $cfg.dump.seconds.ToString() }
             if ($cfg.dump.frame)   { $txtFrame.Text   = $cfg.dump.frame.ToString() }
         }
+        # Logging
+        if ($cfg.PSObject.Properties['logLevel']) {
+            foreach ($item in $cmbLogLevel.Items) {
+                if ($item.Tag -ieq $cfg.logLevel) {
+                    $cmbLogLevel.SelectedItem = $item; break
+                }
+            }
+        }
+        if ($cfg.PSObject.Properties['logToFile']) {
+            $chkLogToFile.IsChecked = [bool]$cfg.logToFile
+        }
     } catch {
         # Silently ignore corrupt config — defaults will be used
     }
@@ -346,8 +422,10 @@ function Save-Config {
     $cfg = @{
         api           = ($cmbApi.SelectedItem).Tag.ToString()
         display = @{
-            width  = [int]$txtWidth.Text
-            height = [int]$txtHeight.Text
+            width      = [int]$txtWidth.Text
+            height     = [int]$txtHeight.Text
+            fullscreen = [bool]$chkFullscreen.IsChecked
+            scene      = [int]($cmbScene.SelectedItem).Tag
         }
         debugFrames = [bool]$chkDebugFrames.IsChecked
         keepRunning = [bool]$chkKeepRunning.IsChecked
@@ -361,6 +439,8 @@ function Save-Config {
             seconds = [int]$txtSeconds.Text
             frame   = [int]$txtFrame.Text
         }
+        logLevel  = ($cmbLogLevel.SelectedItem).Tag.ToString()
+        logToFile = [bool]$chkLogToFile.IsChecked
     }
     $cfg | ConvertTo-Json -Depth 3 | Set-Content $configPath -Encoding UTF8
 }
@@ -395,10 +475,28 @@ function Get-LaunchCommand {
         }
     }
 
+    $sceneTag = ($cmbScene.SelectedItem).Tag.ToString()
+    if ($sceneTag -ne "0") {
+        $argList += @("--scene", $sceneTag)
+    }
+
+    if ($chkFullscreen.IsChecked) {
+        $argList += "--fullscreen"
+    }
+
     $w = $txtWidth.Text
     $h = $txtHeight.Text
     if ($w -and $h) {
         $argList += @("--width", $w, "--height", $h)
+    }
+
+    $logTag = ($cmbLogLevel.SelectedItem).Tag.ToString()
+    $argList += @("--logLevel", $logTag)
+
+    if ($chkLogToFile.IsChecked) {
+        $ts = Get-Date -Format "yyyyMMdd_HHmmss"
+        $logFilename = "logs\T850_${ts}_${apiTag}.log"
+        $argList += @("--logFile", $logFilename)
     }
 
     return @{
@@ -471,6 +569,12 @@ $btnBrowseMatrices.Add_Click({
 })
 
 $cmbApi.Add_SelectionChanged({ Update-Preview })
+$cmbScene.Add_SelectionChanged({ Update-Preview })
+$chkFullscreen.Add_Checked({ Update-Preview })
+$chkFullscreen.Add_Unchecked({ Update-Preview })
+$cmbLogLevel.Add_SelectionChanged({ Update-Preview })
+$chkLogToFile.Add_Checked({ Update-Preview })
+$chkLogToFile.Add_Unchecked({ Update-Preview })
 $txtSeconds.Add_TextChanged({ Update-Preview })
 $txtFrame.Add_TextChanged({ Update-Preview })
 $txtWidth.Add_TextChanged({ Update-Preview })

@@ -535,8 +535,11 @@ void EditorApp::OnDraw() {
       visibleCount++;
     }
 
-    // Render meshes through deferred pipeline or forward fallback
-    if (g_deferredReady && visibleCount > 0) {
+    // Render meshes: deferred on D3D11/D3D12, forward on GL
+    bool useDeferred = g_deferredReady && visibleCount > 0
+                    && drv->m_currentAPI != t800::GRAPHICS_API::OPENGL;
+
+    if (useDeferred) {
       // Build contiguous array of PrimitiveInst for the render graph
       // (use the actual litInst objects, not copies, to preserve internal state)
       std::vector<t800::PrimitiveInst*> ptrs;
@@ -592,8 +595,8 @@ void EditorApp::OnDraw() {
       }
       drv->SetDepthStencilState(t800::BaseDriver::DEPTH_DEFAULT);
       drv->SetCullFace(t800::BaseDriver::FRONT_AND_BACK);
-    } else if (!g_deferredReady) {
-      // Forward fallback
+    } else {
+      // Forward rendering (GL, or deferred not ready)
       for (int i = 0; i < (int)g_objects.size(); ++i) {
         SceneObject& obj = g_objects[i];
         if (obj.primId < 0 || !obj.visible) continue;

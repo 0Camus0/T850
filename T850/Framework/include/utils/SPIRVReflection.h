@@ -20,6 +20,7 @@ namespace t800 {
     uint32_t    set     = 0;
     uint32_t    binding = 0;
     uint32_t    id      = 0;    // SPIR-V result ID
+    bool        isCubemap = false; // true if OpTypeImage has Dim=Cube
   };
 
   struct SPIRVInput {

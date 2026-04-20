@@ -300,8 +300,9 @@ namespace t800 {
       Textures[4]->Set(*T8DeviceContext, 4, "tex4");
     if (Textures[5])
       Textures[5]->Set(*T8DeviceContext, 5, "tex5");
-    if (EnvMap)
+    if (EnvMap) {
       EnvMap->Set(*T8DeviceContext, 6, "texEnv");
+    }
 
     if (Textures[0])
       Textures[0]->SetSampler(*T8DeviceContext, 0);

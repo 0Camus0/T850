@@ -117,6 +117,14 @@ void EditorApp::ImportMesh(const std::string& path) {
   }
 
   m_mesh.Destroy();
+
+  // Destroy the previous lit primitive (PrimitiveManager only has bulk destroy)
+  if (m_meshPrimId >= 0) {
+    m_primMgr.DestroyPrimitives();
+    m_primMgr.Init();
+    m_primMgr.SetVP(&m_vp);
+    m_primMgr.SetSceneProps(&m_sceneProps);
+  }
   m_meshPrimId = -1;
 
   int id = m_primMgr.CreateMesh(path.c_str());

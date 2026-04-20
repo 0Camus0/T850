@@ -341,6 +341,7 @@ void SC_Night::OnDestoryScene() {
 }
 
 void SC_Night::DestroyAssets() {
+  SceneProp.SSAOKernel.Destroy();
   PrimitiveMgr.DestroyPrimitives();
 }
 

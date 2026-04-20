@@ -120,6 +120,10 @@ void SSAOFilter::InitTexture() {
 	printf("\n"); fflush(stdout);
 }
 
+void SSAOFilter::Destroy() {
+	if (NoiseTex) { NoiseTex->release(); NoiseTex = nullptr; }
+}
+
 void SSAOFilter::Update() {
 	vSSAOKernel.clear();
 	for (int i = 0; i < KernelSize; i++) {

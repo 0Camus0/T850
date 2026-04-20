@@ -160,6 +160,7 @@ void App::DestroyAssets() {
 #endif
    m_devLayer.Destroy();
    m_textRender.Destroy(); 
+   PrimitiveMgr.DestroyPrimitives();
    m_actualScene->DestroyAssets();
 }
 
@@ -298,12 +299,12 @@ void App::OnDraw() {
                   t800::g_profiler->GetFrameCount());
       t800::g_profiler->Report();
       t800::g_profiler->Reset();
-      // Clean shutdown after profiling
-      pFramework->pVideoDriver->SwapBuffers();
+      // Clean shutdown after profiling — use _exit to skip static destructors
+      // which may reference already-freed driver/framework objects.
       pFramework->pVideoDriver->FlushGPUResources();
       DestroyAssets();
       pFramework->pVideoDriver->DestroyDriver();
-      exit(0);
+      _exit(0);
     }
   }
 #endif

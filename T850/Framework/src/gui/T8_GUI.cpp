@@ -311,6 +311,8 @@ void GUIManager::Destroy() {
       // Atlas mode: all individual textures point to the shared atlas — only release once
       m_atlasTexture->release();
       m_atlasTexture = nullptr;
+      // m_whiteTexture is always created independently (1x1 white pixel)
+      if (m_whiteTexture) { m_whiteTexture->release(); m_whiteTexture = nullptr; }
     } else {
       // Individual textures: release each one
       auto releaseTex = [](Texture*& t) { if (t) { t->release(); t = nullptr; } };

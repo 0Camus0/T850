@@ -269,6 +269,7 @@ namespace t800 {
     void BeginFrame() override;
     void EndFrame() override;
     void WaitForGPU() override;
+    void FlushGPUResources() override;
     void BuildPipelineObjects() override;
 
     // ── Accessors ──

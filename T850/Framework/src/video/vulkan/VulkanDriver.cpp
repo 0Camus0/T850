@@ -129,6 +129,7 @@ namespace t800 {
 
   void VulkanDeviceContext::DrawIndexed(unsigned vertexCount, unsigned startIndex, unsigned startVertex) {
     if (!m_commandBuffer) return;
+    T8_LOG_TRACE("[Vulkan] DrawIndexed(%u, %u, %u)", vertexCount, startIndex, startVertex);
 
     auto* driver = GetVkDriver();
     VulkanShader* shader = static_cast<VulkanShader*>(actualShaderSet);
@@ -237,9 +238,11 @@ namespace t800 {
     const_cast<DeviceContext*>(&deviceContext)->actualVertexBuffer = (VertexBuffer*)this;
     VkCommandBuffer cmd = static_cast<const VulkanDeviceContext*>(&deviceContext)->GetCommandBuffer();
     if (m_usesRing) {
+      T8_LOG_TRACE("[Vulkan] VB::Set stride=%u ringOffset=%llu size=%u", stride, m_ringOffset, descriptor.byteWidth);
       VkDeviceSize off = m_ringOffset;
       vkCmdBindVertexBuffers(cmd, 0, 1, &m_ringBuffer, &off);
     } else {
+      T8_LOG_TRACE("[Vulkan] VB::Set stride=%u offset=%u size=%u", stride, offset, descriptor.byteWidth);
       VkDeviceSize off = offset;
       vkCmdBindVertexBuffers(cmd, 0, 1, &m_buffer, &off);
     }
@@ -392,6 +395,7 @@ namespace t800 {
     if (!sysMemCpy.empty()) {
       driver->m_pendingCB = driver->AllocateCBData(sysMemCpy.data(), (uint32_t)sysMemCpy.size());
       driver->m_cbDirty = true;
+      T8_LOG_TRACE("[Vulkan] CB::Set offset=%llu dataSize=%u", driver->m_pendingCB.offset, (uint32_t)sysMemCpy.size());
     }
   }
 
@@ -2318,6 +2322,7 @@ namespace t800 {
   }
 
   void VulkanDriver::SwapBuffers() {
+    T8_LOG_TRACE("[Vulkan] SwapBuffers");
     VkCommandBuffer cmd = m_commandBuffers[m_currentFrame];
 
     // End the render pass if one is active

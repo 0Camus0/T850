@@ -29,6 +29,10 @@
 #include <core/windows/Win32Framework.h>
 #endif
 
+namespace t800 {
+  extern Device* T8Device;
+}
+
 namespace t8ditor {
 
 namespace {
@@ -75,6 +79,9 @@ namespace {
 
   // RT debug: which RT attachment to display (-1 = backbuffer)
   int g_debugRT = -1;
+
+  // Dummy 1x1 white texture for shadow slot (deferred pass expects shadow at slot 5)
+  t800::Texture* g_dummyWhiteTex = nullptr;
 }
 
 void SetStartupMeshPath(const std::string& p) {
@@ -162,6 +169,12 @@ void EditorApp::CreateAssets() {
     }
     g_deferredReady = true;
     m_primMgr.SetSceneProps(&m_sceneProps); // re-set so QUAD gets pScProp
+
+    // Create a 1x1 white texture for shadow slot (deferred shader reads
+    // shadow from tex5; without it, Shadow=0 and everything multiplies to black)
+    unsigned char white[4] = { 255, 255, 255, 255 };
+    g_dummyWhiteTex = t800::T8Device->CreateTextureFromMemory(white, 1, 1, 4, "dummyWhite");
+
     T8_LOG_INFO("[T8ditor] Deferred render graph ready");
   } else {
     T8_LOG_ERROR("[T8ditor] Render graph load failed — using forward fallback");
@@ -571,6 +584,9 @@ void EditorApp::OnDraw() {
       // Bind G-buffer textures to quads[0]
       for (int j = 0; j < (int)drv->RTs[0]->vColorTextures.size() && j < 5; ++j)
         g_quads[0].SetTexture(drv->RTs[0]->vColorTextures[j], j);
+      // Slot 5: shadow accumulation — use dummy white (no shadows = full light)
+      if (g_dummyWhiteTex)
+        g_quads[0].SetTexture(g_dummyWhiteTex, 5);
       {
         t800::ShaderKey dk(0);
         dk.setPass(t800::PassType::DEFERRED);

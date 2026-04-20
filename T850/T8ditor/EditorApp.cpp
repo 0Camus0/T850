@@ -5,6 +5,7 @@
 #include "EditorApp.h"
 #include "SceneObject.h"
 #include "EditorScene.h"
+#include "EditorSceneGizmos.h"
 #include "UndoRedo.h"
 
 #include <core/Core.h>
@@ -413,6 +414,14 @@ void EditorApp::OnDraw() {
         drv->SetDepthStencilState(t800::BaseDriver::DEPTH_DEFAULT);
         obj.wireframe.WireColor = savedColor;
       }
+    }
+
+    // Camera and light viewport gizmos
+    if (m_lines.IsReady()) {
+      for (int i = 0; i < (int)g_cameras.size(); ++i)
+        DrawCameraGizmo(m_lines, cam.VP, g_cameras[i], g_selectionType == 1 && i == g_selectedIdx);
+      for (int i = 0; i < (int)g_lights.size(); ++i)
+        DrawLightGizmo(m_lines, cam.VP, g_lights[i], g_selectionType == 2 && i == g_selectedIdx);
     }
 
     // Grid

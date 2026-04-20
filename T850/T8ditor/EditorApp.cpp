@@ -161,6 +161,7 @@ void EditorApp::CreateAssets() {
         g_quads[0].SetTexture(gbufferRT->pDepthTexture, 4);
     }
     g_deferredReady = true;
+    m_primMgr.SetSceneProps(&m_sceneProps); // re-set so QUAD gets pScProp
     T8_LOG_INFO("[T8ditor] Deferred render graph ready");
   } else {
     T8_LOG_ERROR("[T8ditor] Render graph load failed — using forward fallback");
@@ -590,6 +591,15 @@ void EditorApp::OnDraw() {
         g_quads[7].Draw();
       }
       drv->SetDepthStencilState(t800::BaseDriver::DEPTH_DEFAULT);
+
+      // Also draw all meshes forward on top (for models without GBUFFER shaders)
+      drv->SetCullFace(t800::BaseDriver::FRONT_AND_BACK);
+      for (auto* inst : ptrs) {
+        t800::ShaderKey fwdKey(0);
+        fwdKey.setPass(t800::PassType::FORWARD);
+        inst->SetGlobalKey(fwdKey);
+        inst->Draw();
+      }
     } else if (!g_deferredReady) {
       // Forward fallback
       for (int i = 0; i < (int)g_objects.size(); ++i) {

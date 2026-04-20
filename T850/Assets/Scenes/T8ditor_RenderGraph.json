@@ -1,0 +1,31 @@
+{
+  "render_targets": [
+    { "name": "GBuffer",  "color_count": 5, "color_format": "RGBA16F", "depth_format": "F32",  "size": [0,0], "linear_filter": true },
+    { "name": "Deferred", "color_count": 1, "color_format": "RGBA16F", "depth_format": "NONE", "size": [0,0], "linear_filter": true }
+  ],
+  "passes": [
+    {
+      "name": "GBuffer",
+      "target": "GBuffer",
+      "camera": "main",
+      "draws": [
+        { "type": "mesh", "mesh_indices": [], "signature": "GBUFF_PASS" }
+      ],
+      "post_state": { "depth_stencil": "READ" }
+    },
+    {
+      "name": "Deferred",
+      "target": "Deferred",
+      "inputs": [
+        { "source": "GBuffer:COLOR0", "slot": 0 },
+        { "source": "GBuffer:COLOR1", "slot": 1 },
+        { "source": "GBuffer:COLOR2", "slot": 2 },
+        { "source": "GBuffer:COLOR3", "slot": 3 },
+        { "source": "GBuffer:COLOR4", "slot": 4 }
+      ],
+      "draws": [
+        { "type": "fullscreen_quad", "signature": "DEFERRED_PASS" }
+      ]
+    }
+  ]
+}

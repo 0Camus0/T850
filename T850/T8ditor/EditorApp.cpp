@@ -583,10 +583,35 @@ void EditorApp::OnDraw() {
       }
       drv->PopRT();
 
-      // BackBuffer pass: final quad copies deferred output to screen
+      // BackBuffer pass: show selected RT or deferred result
       drv->SetBlendState(t800::BaseDriver::BLEND_DEFAULT);
       drv->SetDepthStencilState(t800::BaseDriver::NONE);
-      g_quads[7].SetTexture(drv->GetRTTexture(1, 0), 0); // Deferred:COLOR0
+
+      // If RT debug panel has a specific RT selected, show that instead
+      if (g_debugRT >= 0) {
+        // Map globalIdx to RT/attachment
+        int gi = 0;
+        t800::Texture* debugTex = nullptr;
+        for (int rtIdx = 0; rtIdx < (int)drv->RTs.size() && !debugTex; ++rtIdx) {
+          auto* rt = drv->RTs[rtIdx];
+          if (!rt) continue;
+          for (int ci = 0; ci < (int)rt->vColorTextures.size(); ++ci) {
+            if (gi == g_debugRT) { debugTex = rt->vColorTextures[ci]; break; }
+            gi++;
+          }
+          if (!debugTex && rt->pDepthTexture) {
+            if (gi == g_debugRT) debugTex = rt->pDepthTexture;
+            gi++;
+          }
+        }
+        if (debugTex) {
+          g_quads[7].SetTexture(debugTex, 0);
+        } else {
+          g_quads[7].SetTexture(drv->GetRTTexture(1, 0), 0);
+        }
+      } else {
+        g_quads[7].SetTexture(drv->GetRTTexture(1, 0), 0); // Deferred:COLOR0
+      }
       {
         t800::ShaderKey bk(0);
         bk.setPass(t800::PassType::BACKBUFFER);

@@ -314,9 +314,10 @@ void EditorApp::OnDraw() {
       const XVECTOR3& eul = m_mesh.EulerRadians();
       const XVECTOR3& scl = m_mesh.Scale();
       m_meshInst.TranslateAbsolute(pos.x, pos.y, pos.z);
-      m_meshInst.RotateXAbsolute(eul.x);
-      m_meshInst.RotateYAbsolute(eul.y);
-      m_meshInst.RotateZAbsolute(eul.z);
+      // PrimitiveInst::RotateXAbsolute expects degrees (calls Deg2Rad internally)
+      m_meshInst.RotateXAbsolute(eul.x * kRadToDeg);
+      m_meshInst.RotateYAbsolute(eul.y * kRadToDeg);
+      m_meshInst.RotateZAbsolute(eul.z * kRadToDeg);
       m_meshInst.ScaleAbsolute(scl.x, scl.y, scl.z);
       t800::ShaderKey fwdKey(0);
       fwdKey.setPass(t800::PassType::FORWARD);

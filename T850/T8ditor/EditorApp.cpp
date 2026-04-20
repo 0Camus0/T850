@@ -62,6 +62,9 @@ namespace {
   // ImGuizmo drag tracking
   bool           g_gizmoDragging = false;
   TransformState g_gizmoDragStart;
+
+  // Persistent camera for scene camera viewport switching
+  ::Camera g_viewCamera;
 }
 
 void SetStartupMeshPath(const std::string& p) {
@@ -282,27 +285,26 @@ void EditorApp::OnInput() {
     // Ctrl+Y also redoes
     if (ctrlDown && IManager.PressedOnceKey(T800K_y))
       g_undoStack.Redo();
+  }
 
-    // Delete key — remove selected camera/light/mesh
-    if (IManager.PressedOnceKey(T800K_DELETE) && g_selectedIdx >= 0) {
-      if (g_selectionType == 1 && g_selectedIdx < (int)g_cameras.size()) {
-        // If deleting the active camera, switch back to editor camera
-        if (g_activeCameraIdx == g_selectedIdx) g_activeCameraIdx = -1;
-        else if (g_activeCameraIdx > g_selectedIdx) g_activeCameraIdx--;
-        g_cameras.erase(g_cameras.begin() + g_selectedIdx);
-        g_selectedIdx = -1;
-        T8_LOG_INFO("[T8ditor] Camera deleted");
-      }
-      else if (g_selectionType == 2 && g_selectedIdx < (int)g_lights.size()) {
-        g_lights.erase(g_lights.begin() + g_selectedIdx);
-        g_selectedIdx = -1;
-        T8_LOG_INFO("[T8ditor] Light deleted");
-      }
-      else if (g_selectionType == 0 && g_selectedIdx < (int)g_objects.size()) {
-        g_objects.erase(g_objects.begin() + g_selectedIdx);
-        g_selectedIdx = -1;
-        T8_LOG_INFO("[T8ditor] Mesh deleted");
-      }
+  // Delete key — works even when ImGui panels have focus (but not during text input)
+  if (!io.WantTextInput && IManager.PressedOnceKey(T800K_DELETE) && g_selectedIdx >= 0) {
+    if (g_selectionType == 1 && g_selectedIdx < (int)g_cameras.size()) {
+      if (g_activeCameraIdx == g_selectedIdx) g_activeCameraIdx = -1;
+      else if (g_activeCameraIdx > g_selectedIdx) g_activeCameraIdx--;
+      g_cameras.erase(g_cameras.begin() + g_selectedIdx);
+      g_selectedIdx = -1;
+      T8_LOG_INFO("[T8ditor] Camera deleted");
+    }
+    else if (g_selectionType == 2 && g_selectedIdx < (int)g_lights.size()) {
+      g_lights.erase(g_lights.begin() + g_selectedIdx);
+      g_selectedIdx = -1;
+      T8_LOG_INFO("[T8ditor] Light deleted");
+    }
+    else if (g_selectionType == 0 && g_selectedIdx < (int)g_objects.size()) {
+      g_objects.erase(g_objects.begin() + g_selectedIdx);
+      g_selectedIdx = -1;
+      T8_LOG_INFO("[T8ditor] Mesh deleted");
     }
   }
 
@@ -413,25 +415,28 @@ void EditorApp::OnDraw() {
 
   if (m_assetsCreated) {
     // Determine which camera drives rendering
-    ::Camera activeCam;
-    bool usingSceneCamera = false;
-
     if (g_activeCameraIdx >= 0 && g_activeCameraIdx < (int)g_cameras.size()) {
-      // Use a scene camera
+      // Build a persistent Camera from the scene camera
       SceneCamera& sc = g_cameras[g_activeCameraIdx];
       float aspect = (m_lastW > 0 && m_lastH > 0) ? (float)m_lastW / (float)m_lastH : 16.0f/9.0f;
       if (sc.type == CameraType::Perspective) {
-        activeCam.InitPerspective(sc.position, sc.fovDeg * (xPI / 180.0f), aspect, sc.nearPlane, sc.farPlane);
+        g_viewCamera.InitPerspective(sc.position, sc.fovDeg * (xPI / 180.0f), aspect, sc.nearPlane, sc.farPlane);
       } else {
-        activeCam.InitOrtho(sc.position, sc.orthoW, sc.orthoH, sc.nearPlane, sc.farPlane);
+        g_viewCamera.InitOrtho(sc.position, sc.orthoW, sc.orthoH, sc.nearPlane, sc.farPlane);
       }
-      activeCam.Eye = sc.position;
-      activeCam.SetLookAt(sc.target);
-      activeCam.Update(0.0f);
-      usingSceneCamera = true;
+      g_viewCamera.Eye = sc.position;
+      g_viewCamera.SetLookAt(sc.target);
+      g_viewCamera.Update(0.0f);
+      // Point the scene props active camera at our persistent camera
+      if (!m_sceneProps.pCameras.empty())
+        m_sceneProps.pCameras[0] = &g_viewCamera;
+    } else {
+      // Editor orbit camera
+      if (!m_sceneProps.pCameras.empty())
+        m_sceneProps.pCameras[0] = &m_camera.GetCameraMutable();
     }
 
-    const ::Camera& cam = usingSceneCamera ? activeCam : m_camera.GetCamera();
+    const ::Camera& cam = *m_sceneProps.pCameras[0];
     m_vp = cam.VP;
 
     // Update headlamp (light 0) direction from camera

@@ -963,7 +963,7 @@ namespace t800 {
       m_commandList->OMSetRenderTargets(1, &m_backBufferRTVs[m_currentBackBuffer], FALSE, &m_depthDSV);
       m_commandList->RSSetViewports(1, &m_viewport);
       m_commandList->RSSetScissorRects(1, &m_scissorRect);
-      const float cc[4] = { 0.9f, 0.9f, 0.9f, 1.0f };
+      const float cc[4] = { 0.227f, 0.227f, 0.227f, 1.0f };
       m_commandList->ClearRenderTargetView(m_backBufferRTVs[m_currentBackBuffer], cc, 0, nullptr);
       m_commandList->ClearDepthStencilView(m_depthDSV, D3D12_CLEAR_FLAG_DEPTH, 1.0f, 0, 0, nullptr);
     }

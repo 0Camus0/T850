@@ -430,14 +430,23 @@ void EditorApp::OnInput() {
     if (IManager.PressedOnceKey(T800K_e)) m_gizmo.SetMode(GizmoMode::Rotate);
     if (IManager.PressedOnceKey(T800K_r)) m_gizmo.SetMode(GizmoMode::Scale);
 
-    // Z = reset camera (only without Ctrl). Ctrl+Z = undo, Ctrl+Shift+Z = redo.
+    // Z key behavior:
+    // Ctrl+Z = undo, Ctrl+Shift+Z = redo
+    // Z alone: if mesh selected → frame camera on it; else reset camera
     if (IManager.PressedOnceKey(T800K_z)) {
       if (ctrlDown && shiftDown)
         g_undoStack.Redo();
       else if (ctrlDown)
         g_undoStack.Undo();
-      else
-        m_camera.ResetToDefault();
+      else {
+        SceneObject* sel = SelectedObject();
+        if (sel && sel->wireframe.IsLoaded()) {
+          m_camera.SetTarget(sel->wireframe.Position());
+          m_camera.Frame();
+        } else {
+          m_camera.ResetToDefault();
+        }
+      }
     }
     // Ctrl+Y also redoes
     if (ctrlDown && IManager.PressedOnceKey(T800K_y))

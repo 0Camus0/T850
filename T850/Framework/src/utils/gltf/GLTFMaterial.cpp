@@ -152,6 +152,7 @@ void ConvertMaterial(const Document& doc, int materialIndex,
   AddDword(outMat, "alphaMode", alphaMode);
   if (alphaMode == 1u) AddFloats(outMat, "alphaCutoff", {m.alphaCutoff});
   AddDword(outMat, "doubleSided", m.doubleSided ? 1u : 0u);
+  AddDword(outMat, "gltfTangentSpace", 1u);
 }
 
 } // namespace gltf

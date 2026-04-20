@@ -129,7 +129,7 @@ float4 FS( VS_OUTPUT input ) : SV_TARGET {
 	 
 	float3 EyeDir = normalize(CameraPosition - position).xyz;
 
-	int MatId = (int)(PBRData.a * 255.0);
+	int MatId = (int)(PBRData.a * 255.0 + 0.5);
 
 	if(MatId == 0){
 		float3 EyeDir_mod = -EyeDir;

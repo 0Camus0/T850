@@ -44,10 +44,18 @@ namespace {
   std::vector<SceneObject> g_objects;
   int                      g_selectedIdx = -1;
 
+  // Cameras and lights in the scene
+  std::vector<SceneCamera> g_cameras;
+  std::vector<SceneLight>  g_lights;
+
+  // Selection: what type of entity is selected
+  // 0=mesh, 1=camera, 2=light. Index is g_selectedIdx into the respective vector.
+  int g_selectionType = 0;  // 0=mesh by default
+
   // Undo/redo
   UndoStack g_undoStack;
 
-  // ImGuizmo drag tracking — accumulate a single undo command per drag
+  // ImGuizmo drag tracking
   bool           g_gizmoDragging = false;
   TransformState g_gizmoDragStart;
 }
@@ -58,7 +66,7 @@ void SetStartupMeshPath(const std::string& p) {
 
 // Helpers to access current selection
 static SceneObject* SelectedObject() {
-  if (g_selectedIdx >= 0 && g_selectedIdx < (int)g_objects.size())
+  if (g_selectionType == 0 && g_selectedIdx >= 0 && g_selectedIdx < (int)g_objects.size())
     return &g_objects[g_selectedIdx];
   return nullptr;
 }
@@ -185,7 +193,11 @@ void EditorApp::DestroyAssets() {
   }
   m_primMgr.DestroyPrimitives();
   g_objects.clear();
+  g_cameras.clear();
+  g_lights.clear();
   g_selectedIdx = -1;
+  g_selectionType = 0;
+  g_undoStack.Clear();
   if (g_skyboxReady) {
     g_skyboxMgr.DestroyPrimitives();
     g_skyboxPrimId = -1;
@@ -334,6 +346,8 @@ void EditorApp::HandleMousePick() {
   }
 
   g_selectedIdx = bestIdx;
+  g_selectionType = (bestIdx >= 0) ? 0 : g_selectionType;
+  if (bestIdx < 0) g_selectedIdx = -1;  // click on nothing = deselect
 }
 
 void EditorApp::OnDraw() {
@@ -387,7 +401,7 @@ void EditorApp::OnDraw() {
       obj.litInst.Draw();
 
       // Wireframe overlay
-      bool isSelected = (i == g_selectedIdx);
+      bool isSelected = (g_selectionType == 0 && i == g_selectedIdx);
       bool showWire = m_panels.showWireframe || isSelected;
       if (showWire && obj.wireframe.IsLoaded() && m_lines.IsReady()) {
         XVECTOR3 savedColor = obj.wireframe.WireColor;
@@ -412,8 +426,27 @@ void EditorApp::OnDraw() {
 
     MenuAction menuAction = ImGuiDrawMenuBar(m_panels);
 
-    int mode = ImGuiDrawToolbar((int)m_gizmo.Mode());
+    int addCamera = -1, addLight = -1;
+    int mode = ImGuiDrawToolbar((int)m_gizmo.Mode(), addCamera, addLight);
     m_gizmo.SetMode((GizmoMode)mode);
+
+    // Handle add camera/light from toolbar
+    if (addCamera >= 0) {
+      SceneCamera cam;
+      cam.name = "Camera " + std::to_string(g_cameras.size());
+      cam.type = (addCamera == 1) ? CameraType::Orthographic : CameraType::Perspective;
+      g_cameras.push_back(cam);
+      g_selectedIdx   = (int)g_cameras.size() - 1;
+      g_selectionType = 1;
+    }
+    if (addLight >= 0) {
+      SceneLight lt;
+      lt.name = "Light " + std::to_string(g_lights.size());
+      lt.type = (addLight == 1) ? EditorLightType::Omni : EditorLightType::Directional;
+      g_lights.push_back(lt);
+      g_selectedIdx   = (int)g_lights.size() - 1;
+      g_selectionType = 2;
+    }
 
     // ImGuizmo on selected object
     ImGuizmoBeginFrame(0, 0, m_lastW, m_lastH, false);
@@ -541,17 +574,54 @@ void EditorApp::OnDraw() {
 
     // Panels
     if (m_panels.showHierarchy) {
-      // Build names list for all objects
-      ImGui::SetNextWindowSize(ImVec2(250, 300), ImGuiCond_FirstUseEver);
+      ImGui::SetNextWindowSize(ImVec2(250, 400), ImGuiCond_FirstUseEver);
       if (ImGui::Begin("Hierarchy")) {
         if (ImGui::TreeNodeEx("Scene Root", ImGuiTreeNodeFlags_OpenOnArrow | ImGuiTreeNodeFlags_DefaultOpen)) {
-          for (int i = 0; i < (int)g_objects.size(); ++i) {
-            ImGuiTreeNodeFlags flags = ImGuiTreeNodeFlags_Leaf | ImGuiTreeNodeFlags_SpanAvailWidth;
-            if (i == g_selectedIdx) flags |= ImGuiTreeNodeFlags_Selected;
-            bool nodeOpen = ImGui::TreeNodeEx(g_objects[i].name.c_str(), flags);
-            if (ImGui::IsItemClicked())
-              g_selectedIdx = (g_selectedIdx == i) ? -1 : i;
-            if (nodeOpen) ImGui::TreePop();
+          // Meshes
+          if (!g_objects.empty() && ImGui::TreeNodeEx("Meshes", ImGuiTreeNodeFlags_DefaultOpen)) {
+            for (int i = 0; i < (int)g_objects.size(); ++i) {
+              ImGuiTreeNodeFlags flags = ImGuiTreeNodeFlags_Leaf | ImGuiTreeNodeFlags_SpanAvailWidth;
+              if (g_selectionType == 0 && i == g_selectedIdx) flags |= ImGuiTreeNodeFlags_Selected;
+              bool nodeOpen = ImGui::TreeNodeEx(g_objects[i].name.c_str(), flags);
+              if (ImGui::IsItemClicked()) {
+                if (g_selectionType == 0 && g_selectedIdx == i) { g_selectedIdx = -1; }
+                else { g_selectedIdx = i; g_selectionType = 0; }
+              }
+              if (nodeOpen) ImGui::TreePop();
+            }
+            ImGui::TreePop();
+          }
+          // Cameras
+          if (!g_cameras.empty() && ImGui::TreeNodeEx("Cameras", ImGuiTreeNodeFlags_DefaultOpen)) {
+            for (int i = 0; i < (int)g_cameras.size(); ++i) {
+              ImGuiTreeNodeFlags flags = ImGuiTreeNodeFlags_Leaf | ImGuiTreeNodeFlags_SpanAvailWidth;
+              if (g_selectionType == 1 && i == g_selectedIdx) flags |= ImGuiTreeNodeFlags_Selected;
+              const char* icon = (g_cameras[i].type == CameraType::Perspective) ? "[P] " : "[O] ";
+              std::string label = icon + g_cameras[i].name;
+              bool nodeOpen = ImGui::TreeNodeEx(label.c_str(), flags);
+              if (ImGui::IsItemClicked()) {
+                if (g_selectionType == 1 && g_selectedIdx == i) { g_selectedIdx = -1; }
+                else { g_selectedIdx = i; g_selectionType = 1; }
+              }
+              if (nodeOpen) ImGui::TreePop();
+            }
+            ImGui::TreePop();
+          }
+          // Lights
+          if (!g_lights.empty() && ImGui::TreeNodeEx("Lights", ImGuiTreeNodeFlags_DefaultOpen)) {
+            for (int i = 0; i < (int)g_lights.size(); ++i) {
+              ImGuiTreeNodeFlags flags = ImGuiTreeNodeFlags_Leaf | ImGuiTreeNodeFlags_SpanAvailWidth;
+              if (g_selectionType == 2 && i == g_selectedIdx) flags |= ImGuiTreeNodeFlags_Selected;
+              const char* icon = (g_lights[i].type == EditorLightType::Directional) ? "[D] " : "[O] ";
+              std::string label = icon + g_lights[i].name;
+              bool nodeOpen = ImGui::TreeNodeEx(label.c_str(), flags);
+              if (ImGui::IsItemClicked()) {
+                if (g_selectionType == 2 && g_selectedIdx == i) { g_selectedIdx = -1; }
+                else { g_selectedIdx = i; g_selectionType = 2; }
+              }
+              if (nodeOpen) ImGui::TreePop();
+            }
+            ImGui::TreePop();
           }
           ImGui::TreePop();
         }
@@ -559,21 +629,79 @@ void EditorApp::OnDraw() {
       ImGui::End();
     }
 
-    if (m_panels.showInspector && sel) {
-      XVECTOR3 pos = sel->wireframe.Position();
-      XVECTOR3 eulerDeg(
-        sel->wireframe.EulerRadians().x * kRadToDeg,
-        sel->wireframe.EulerRadians().y * kRadToDeg,
-        sel->wireframe.EulerRadians().z * kRadToDeg);
-      XVECTOR3 scl = sel->wireframe.Scale();
-      ImGuiDrawInspectorPanel(pos, eulerDeg, scl, sel->wireframe.IsLoaded());
-      if (sel->wireframe.IsLoaded()) {
-        sel->wireframe.Position() = pos;
-        sel->wireframe.EulerRadians().x = eulerDeg.x * kDegToRad;
-        sel->wireframe.EulerRadians().y = eulerDeg.y * kDegToRad;
-        sel->wireframe.EulerRadians().z = eulerDeg.z * kDegToRad;
-        sel->wireframe.Scale() = scl;
+    // ── Inspector ──
+    if (m_panels.showInspector && g_selectedIdx >= 0) {
+      ImGui::SetNextWindowSize(ImVec2(300, 400), ImGuiCond_FirstUseEver);
+      if (ImGui::Begin("Inspector")) {
+        if (g_selectionType == 0 && sel) {
+          // Mesh inspector
+          ImGui::SeparatorText("Transform");
+          XVECTOR3 pos = sel->wireframe.Position();
+          XVECTOR3 eulerDeg(sel->wireframe.EulerRadians().x * kRadToDeg,
+                            sel->wireframe.EulerRadians().y * kRadToDeg,
+                            sel->wireframe.EulerRadians().z * kRadToDeg);
+          XVECTOR3 scl = sel->wireframe.Scale();
+          float p[3] = {pos.x, pos.y, pos.z};
+          float r[3] = {eulerDeg.x, eulerDeg.y, eulerDeg.z};
+          float s[3] = {scl.x, scl.y, scl.z};
+          if (ImGui::DragFloat3("Position", p, 0.1f)) { pos.x=p[0]; pos.y=p[1]; pos.z=p[2]; }
+          if (ImGui::DragFloat3("Rotation", r, 0.5f)) { eulerDeg.x=r[0]; eulerDeg.y=r[1]; eulerDeg.z=r[2]; }
+          if (ImGui::DragFloat3("Scale", s, 0.01f, 0.01f, 100.0f)) { scl.x=s[0]; scl.y=s[1]; scl.z=s[2]; }
+          sel->wireframe.Position() = pos;
+          sel->wireframe.EulerRadians() = XVECTOR3(eulerDeg.x*kDegToRad, eulerDeg.y*kDegToRad, eulerDeg.z*kDegToRad);
+          sel->wireframe.Scale() = scl;
+        }
+        else if (g_selectionType == 1 && g_selectedIdx < (int)g_cameras.size()) {
+          // Camera inspector
+          SceneCamera& cam = g_cameras[g_selectedIdx];
+          ImGui::SeparatorText("Camera");
+          const char* types[] = { "Perspective", "Orthographic" };
+          int t = (int)cam.type;
+          if (ImGui::Combo("Type", &t, types, 2))
+            cam.type = (CameraType)t;
+          float cp[3] = {cam.position.x, cam.position.y, cam.position.z};
+          if (ImGui::DragFloat3("Position", cp, 0.1f))
+            cam.position = XVECTOR3(cp[0], cp[1], cp[2]);
+          float ct[3] = {cam.target.x, cam.target.y, cam.target.z};
+          if (ImGui::DragFloat3("Target", ct, 0.1f))
+            cam.target = XVECTOR3(ct[0], ct[1], ct[2]);
+          if (cam.type == CameraType::Perspective) {
+            ImGui::DragFloat("FOV (deg)", &cam.fovDeg, 0.5f, 5.0f, 170.0f);
+          } else {
+            ImGui::DragFloat("Ortho Width", &cam.orthoW, 0.1f, 0.1f, 1000.0f);
+            ImGui::DragFloat("Ortho Height", &cam.orthoH, 0.1f, 0.1f, 1000.0f);
+          }
+          ImGui::DragFloat("Near Plane", &cam.nearPlane, 0.01f, 0.001f, cam.farPlane - 0.01f);
+          ImGui::DragFloat("Far Plane",  &cam.farPlane,  1.0f, cam.nearPlane + 0.01f, 100000.0f);
+        }
+        else if (g_selectionType == 2 && g_selectedIdx < (int)g_lights.size()) {
+          // Light inspector
+          SceneLight& lt = g_lights[g_selectedIdx];
+          ImGui::SeparatorText("Light");
+          const char* types[] = { "Directional", "Omni" };
+          int t = (int)lt.type;
+          if (ImGui::Combo("Type", &t, types, 2))
+            lt.type = (EditorLightType)t;
+          float lp[3] = {lt.position.x, lt.position.y, lt.position.z};
+          if (ImGui::DragFloat3("Position", lp, 0.1f))
+            lt.position = XVECTOR3(lp[0], lp[1], lp[2]);
+          if (lt.type == EditorLightType::Directional) {
+            float ld[3] = {lt.direction.x, lt.direction.y, lt.direction.z};
+            if (ImGui::DragFloat3("Direction", ld, 0.01f)) {
+              lt.direction = XVECTOR3(ld[0], ld[1], ld[2]);
+              lt.direction.Normalize();
+            }
+          } else {
+            ImGui::DragFloat("Radius", &lt.radius, 0.1f, 0.1f, 10000.0f);
+          }
+          float c[3] = {lt.color.x, lt.color.y, lt.color.z};
+          if (ImGui::ColorEdit3("Color", c))
+            lt.color = XVECTOR3(c[0], c[1], c[2]);
+          ImGui::DragFloat("Intensity", &lt.intensity, 0.05f, 0.0f, 100.0f);
+          ImGui::Checkbox("Enabled", &lt.enabled);
+        }
       }
+      ImGui::End();
     }
 
     if (m_panels.showConsole)

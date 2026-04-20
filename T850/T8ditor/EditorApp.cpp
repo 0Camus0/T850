@@ -282,6 +282,28 @@ void EditorApp::OnInput() {
     // Ctrl+Y also redoes
     if (ctrlDown && IManager.PressedOnceKey(T800K_y))
       g_undoStack.Redo();
+
+    // Delete key — remove selected camera/light/mesh
+    if (IManager.PressedOnceKey(T800K_DELETE) && g_selectedIdx >= 0) {
+      if (g_selectionType == 1 && g_selectedIdx < (int)g_cameras.size()) {
+        // If deleting the active camera, switch back to editor camera
+        if (g_activeCameraIdx == g_selectedIdx) g_activeCameraIdx = -1;
+        else if (g_activeCameraIdx > g_selectedIdx) g_activeCameraIdx--;
+        g_cameras.erase(g_cameras.begin() + g_selectedIdx);
+        g_selectedIdx = -1;
+        T8_LOG_INFO("[T8ditor] Camera deleted");
+      }
+      else if (g_selectionType == 2 && g_selectedIdx < (int)g_lights.size()) {
+        g_lights.erase(g_lights.begin() + g_selectedIdx);
+        g_selectedIdx = -1;
+        T8_LOG_INFO("[T8ditor] Light deleted");
+      }
+      else if (g_selectionType == 0 && g_selectedIdx < (int)g_objects.size()) {
+        g_objects.erase(g_objects.begin() + g_selectedIdx);
+        g_selectedIdx = -1;
+        T8_LOG_INFO("[T8ditor] Mesh deleted");
+      }
+    }
   }
 
   float wheel = ImGuiConsumeWheelDelta();
@@ -583,103 +605,52 @@ void EditorApp::OnDraw() {
       }
     }
     else if (g_selectionType == 1 && g_selectedIdx >= 0 && g_selectedIdx < (int)g_cameras.size()) {
-      // ── Camera gizmo ──
-      // Translate = move position. Rotate = reorient target. Scale = adjust FOV/ortho size.
+      // ── Camera gizmo — use translate-only via ImGuizmo ──
       SceneCamera& sc = g_cameras[g_selectedIdx];
 
-      // Build a world matrix from camera position + orientation toward target
       XMATRIX44 worldMat;
       XMatTranslation(worldMat, sc.position.x, sc.position.y, sc.position.z);
 
-      bool manipulated = ImGuizmoManipulate(
+      XMATRIX44 deltaMatrix;
+      XMatIdentity(deltaMatrix);
+
+      // Only translate mode for cameras — rotate/scale handled in inspector
+      bool manipulated = ImGuizmo::Manipulate(
         &cam2.View.m[0][0], &cam2.Projection.m[0][0],
-        mode, &worldMat.m[0][0]);
+        ImGuizmo::TRANSLATE, ImGuizmo::WORLD,
+        &worldMat.m[0][0], &deltaMatrix.m[0][0]);
+
       if (manipulated) {
         float translation[3], rotation[3], scale[3];
         ImGuizmo::DecomposeMatrixToComponents(&worldMat.m[0][0], translation, rotation, scale);
-
-        if (mode == 0) {
-          // Translate: move camera, keep target offset
-          XVECTOR3 delta(translation[0] - sc.position.x,
-                         translation[1] - sc.position.y,
-                         translation[2] - sc.position.z);
-          sc.position = XVECTOR3(translation[0], translation[1], translation[2]);
-          sc.target.x += delta.x;
-          sc.target.y += delta.y;
-          sc.target.z += delta.z;
-        } else if (mode == 1) {
-          // Rotate: pivot the target around the camera position
-          XVECTOR3 offset(sc.target.x - sc.position.x,
-                          sc.target.y - sc.position.y,
-                          sc.target.z - sc.position.z);
-          float dist = offset.Length();
-          if (dist < 0.01f) dist = 1.0f;
-          // Build rotation matrix from decomposed euler
-          XMATRIX44 Rx, Ry, Rz, R;
-          XMatRotationX(Rx, rotation[0] * kDegToRad);
-          XMatRotationY(Ry, rotation[1] * kDegToRad);
-          XMatRotationZ(Rz, rotation[2] * kDegToRad);
-          R = Rx * Ry * Rz;
-          // Default forward is +Z
-          XVECTOR3 fwd = t800::TransformDirection(XVECTOR3(0, 0, 1), R);
-          fwd.Normalize();
-          sc.target = XVECTOR3(sc.position.x + fwd.x * dist,
-                               sc.position.y + fwd.y * dist,
-                               sc.position.z + fwd.z * dist);
-        } else if (mode == 2) {
-          // Scale: adjust FOV or ortho size
-          float avgScale = (scale[0] + scale[1] + scale[2]) / 3.0f;
-          if (sc.type == CameraType::Perspective) {
-            sc.fovDeg *= avgScale;
-            if (sc.fovDeg < 5.0f)   sc.fovDeg = 5.0f;
-            if (sc.fovDeg > 170.0f) sc.fovDeg = 170.0f;
-          } else {
-            sc.orthoW *= avgScale;
-            sc.orthoH *= avgScale;
-          }
-        }
+        XVECTOR3 delta(translation[0] - sc.position.x,
+                       translation[1] - sc.position.y,
+                       translation[2] - sc.position.z);
+        sc.position = XVECTOR3(translation[0], translation[1], translation[2]);
+        sc.target.x += delta.x;
+        sc.target.y += delta.y;
+        sc.target.z += delta.z;
       }
     }
     else if (g_selectionType == 2 && g_selectedIdx >= 0 && g_selectedIdx < (int)g_lights.size()) {
-      // ── Light gizmo ──
-      // Translate = move. Rotate = change direction (directional). Scale = intensity/radius.
+      // ── Light gizmo — translate only via ImGuizmo ──
       SceneLight& sl = g_lights[g_selectedIdx];
 
       XMATRIX44 worldMat;
       XMatTranslation(worldMat, sl.position.x, sl.position.y, sl.position.z);
 
-      bool manipulated = ImGuizmoManipulate(
+      XMATRIX44 deltaMatrix;
+      XMatIdentity(deltaMatrix);
+
+      bool manipulated = ImGuizmo::Manipulate(
         &cam2.View.m[0][0], &cam2.Projection.m[0][0],
-        mode, &worldMat.m[0][0]);
+        ImGuizmo::TRANSLATE, ImGuizmo::WORLD,
+        &worldMat.m[0][0], &deltaMatrix.m[0][0]);
+
       if (manipulated) {
         float translation[3], rotation[3], scale[3];
         ImGuizmo::DecomposeMatrixToComponents(&worldMat.m[0][0], translation, rotation, scale);
-
-        if (mode == 0) {
-          // Translate
-          sl.position = XVECTOR3(translation[0], translation[1], translation[2]);
-        } else if (mode == 1) {
-          // Rotate: change direction for directional lights
-          if (sl.type == EditorLightType::Directional) {
-            XMATRIX44 Rx, Ry, Rz, R;
-            XMatRotationX(Rx, rotation[0] * kDegToRad);
-            XMatRotationY(Ry, rotation[1] * kDegToRad);
-            XMatRotationZ(Rz, rotation[2] * kDegToRad);
-            R = Rx * Ry * Rz;
-            sl.direction = t800::TransformDirection(XVECTOR3(0, -1, 0), R);
-            sl.direction.Normalize();
-          }
-        } else if (mode == 2) {
-          // Scale: adjust intensity or radius
-          float avgScale = (scale[0] + scale[1] + scale[2]) / 3.0f;
-          if (sl.type == EditorLightType::Omni) {
-            sl.radius *= avgScale;
-            if (sl.radius < 0.1f) sl.radius = 0.1f;
-          } else {
-            sl.intensity *= avgScale;
-            if (sl.intensity < 0.0f) sl.intensity = 0.0f;
-          }
-        }
+        sl.position = XVECTOR3(translation[0], translation[1], translation[2]);
       }
     }
 

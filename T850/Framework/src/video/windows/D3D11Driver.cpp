@@ -689,7 +689,27 @@ namespace t800 {
   }
 
   void D3DXDriver::SetCullFace(FACE_CULLING state) {
-	  // TO FILL
+    ID3D11Device* device = reinterpret_cast<ID3D11Device*>(T8Device->GetAPIObject());
+    ID3D11DeviceContext* deviceContext = reinterpret_cast<ID3D11DeviceContext*>(T8DeviceContext->GetAPIObject());
+
+    D3D11_RASTERIZER_DESC rd = {};
+    rd.FillMode = D3D11_FILL_SOLID;
+    rd.DepthClipEnable = TRUE;
+    rd.MultisampleEnable = FALSE;
+    rd.AntialiasedLineEnable = FALSE;
+
+    switch (state) {
+      case FRONT_FACES:       rd.CullMode = D3D11_CULL_FRONT; break;
+      case BACK_FACES:        rd.CullMode = D3D11_CULL_BACK;  break;
+      case FRONT_AND_BACK:    rd.CullMode = D3D11_CULL_NONE;  break; // "cull none" = draw all
+      default:                rd.CullMode = D3D11_CULL_BACK;  break;
+    }
+
+    ID3D11RasterizerState* rs = nullptr;
+    if (SUCCEEDED(device->CreateRasterizerState(&rd, &rs))) {
+      deviceContext->RSSetState(rs);
+      rs->Release();
+    }
   }
 
   void D3DXDriver::Clear() {

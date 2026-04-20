@@ -1,8 +1,9 @@
 /*********************************************************
- * T8ditor — EditorApp implementation. See header.
+ * T8ditor - EditorApp implementation. See header.
  *********************************************************/
 
 #include "EditorApp.h"
+#include "SceneObject.h"
 
 #include <core/Core.h>
 #include <video/BaseDriver.h>
@@ -32,15 +33,25 @@ namespace {
   const float kDegToRad = xPI / 180.0f;
 
   // Persistent skybox (editor backdrop, separate from scene meshes).
-  // File-scope because EditorApp.h is locked by another process at edit time.
   t800::PrimitiveManager g_skyboxMgr;
   t800::PrimitiveInst    g_skyboxInst;
   int                    g_skyboxPrimId = -1;
   bool                   g_skyboxReady  = false;
+
+  // Multi-mesh scene objects (file-scope because EditorApp.h is locked).
+  std::vector<SceneObject> g_objects;
+  int                      g_selectedIdx = -1;
 }
 
 void SetStartupMeshPath(const std::string& p) {
   g_startupMeshPath = p;
+}
+
+// Helpers to access current selection
+static SceneObject* SelectedObject() {
+  if (g_selectedIdx >= 0 && g_selectedIdx < (int)g_objects.size())
+    return &g_objects[g_selectedIdx];
+  return nullptr;
 }
 
 void EditorApp::InitVars() {
@@ -53,36 +64,29 @@ void EditorApp::InitVars() {
 
 void EditorApp::CreateAssets() {
   if (m_assetsCreated) return;
-
   if (!pFramework || !pFramework->pVideoDriver) {
     T8_LOG_ERROR("[T8ditor] CreateAssets called before driver init");
     return;
   }
 
   const auto& desc = pFramework->aplicationDescriptor;
-  const int  w = (int)desc.width;
-  const int  h = (int)desc.height;
+  const int w = (int)desc.width;
+  const int h = (int)desc.height;
 
-  m_camera.Init(w, h, /*fovDeg=*/50.0f);
+  m_camera.Init(w, h, 50.0f);
   m_camera.SetTarget(XVECTOR3(0.0f, 0.0f, 0.0f));
   m_camera.Frame();
   m_lastW = w;
   m_lastH = h;
 
-  if (!m_lines.Create()) {
-    T8_LOG_ERROR("[T8ditor] EditorLineRenderer::Create failed — grid/gizmo will be inert");
-  }
-  m_grid.Create(/*halfExtent=*/10, /*spacing=*/1.0f);
+  if (!m_lines.Create())
+    T8_LOG_ERROR("[T8ditor] EditorLineRenderer::Create failed");
+  m_grid.Create(10, 1.0f);
   m_gizmo.Create();
 
-  // Camera-attached directional light (like 3ds Max viewport headlamp)
   m_sceneProps.AddCamera(&m_camera.GetCameraMutable());
   m_sceneProps.AddDirectionalLight(
-    XVECTOR3(0.0f, -1.0f, 0.0f),
-    XVECTOR3(1.0f, 1.0f, 1.0f),
-    1.5f,
-    true
-  );
+    XVECTOR3(0.0f, -1.0f, 0.0f), XVECTOR3(1.0f, 1.0f, 1.0f), 1.5f, true);
   m_sceneProps.ActiveLights = 1;
   m_sceneProps.AmbientColor = XVECTOR3(0.15f, 0.15f, 0.15f);
 
@@ -91,7 +95,7 @@ void EditorApp::CreateAssets() {
   m_primMgr.SetVP(&m_vp);
   m_primMgr.SetSceneProps(&m_sceneProps);
 
-  // Load the skybox as a persistent editor backdrop (not part of the scene)
+  // Load skybox as persistent editor backdrop
   if (std::filesystem::exists("Models/SkyBox.X")) {
     g_skyboxMgr.Init();
     g_skyboxMgr.SetVP(&m_vp);
@@ -103,20 +107,14 @@ void EditorApp::CreateAssets() {
       g_skyboxInst.Update();
       g_skyboxMgr.SetSceneProps(&m_sceneProps);
       g_skyboxReady = true;
-      T8_LOG_INFO("[T8ditor] Skybox loaded as editor backdrop");
     }
   }
 
-  if (!g_startupMeshPath.empty() && g_startupMeshPath != "Models/SkyBox.X") {
+  if (!g_startupMeshPath.empty() && g_startupMeshPath != "Models/SkyBox.X")
     ImportMesh(g_startupMeshPath);
-  } else if (g_startupMeshPath.empty()) {
-    T8_LOG_INFO("[T8ditor] No --mesh supplied; opening empty scene");
-  }
 
   m_assetsCreated = true;
 
-  // Make the editor window resizable (SDL flag wasn't set at creation time).
-  // Must be done after each window creation (ChangeAPI recreates the window).
 #ifdef OS_WINDOWS
   {
     auto* w32 = static_cast<t800::Win32Framework*>(pFramework);
@@ -127,11 +125,11 @@ void EditorApp::CreateAssets() {
 
   m_imguiReady = ImGuiInit(pFramework);
   if (!m_imguiReady)
-    T8_LOG_ERROR("[T8ditor] ImGui init failed — editor panels will be unavailable");
+    T8_LOG_ERROR("[T8ditor] ImGui init failed");
   else
     ImGuiLogCaptureStart();
 
-  T8_LOG_INFO("[T8ditor] CreateAssets done (viewport %dx%d)", w, h);
+  T8_LOG_INFO("[T8ditor] CreateAssets done (%dx%d)", w, h);
 }
 
 void EditorApp::ImportMesh(const std::string& path) {
@@ -140,37 +138,32 @@ void EditorApp::ImportMesh(const std::string& path) {
     return;
   }
 
-  m_mesh.Destroy();
-
-  // Destroy the previous lit primitive (PrimitiveManager only has bulk destroy)
-  if (m_meshPrimId >= 0) {
-    m_primMgr.DestroyPrimitives();
-    m_primMgr.Init();
-    m_primMgr.SetVP(&m_vp);
-    m_primMgr.SetSceneProps(&m_sceneProps);
-  }
-  m_meshPrimId = -1;
-
+  // Create a new scene object (append, don't replace)
   int id = m_primMgr.CreateMesh(path.c_str());
   if (id < 0) {
     T8_LOG_ERROR("[T8ditor] Failed to load mesh: %s", path.c_str());
     return;
   }
-  m_meshPrimId = id;
-  m_meshInst.CreateInstance(m_primMgr.GetPrimitive(id), &m_vp);
-  m_meshInst.Update();
 
-  // SetSceneProps must be called after CreateMesh (see HANDOFF.md § 8.9)
+  g_objects.emplace_back();
+  SceneObject& obj = g_objects.back();
+  obj.primId = id;
+  obj.name   = path;
+  obj.litInst.CreateInstance(m_primMgr.GetPrimitive(id), &m_vp);
+  obj.litInst.Update();
+
   m_primMgr.SetSceneProps(&m_sceneProps);
 
-  m_mesh.Load(path);
+  obj.wireframe.Load(path);
 
-  m_camera.SetTarget(m_mesh.LocalCenter());
+  // Select the newly imported mesh
+  g_selectedIdx = (int)g_objects.size() - 1;
+
+  // Frame the camera on it
+  m_camera.SetTarget(obj.wireframe.LocalCenter());
   m_camera.Frame();
 
-  m_meshSelected = true;  // auto-select on import
-
-  T8_LOG_INFO("[T8ditor] Loaded lit mesh: %s", path.c_str());
+  T8_LOG_INFO("[T8ditor] Loaded mesh [%d]: %s", g_selectedIdx, path.c_str());
 }
 
 void EditorApp::LoadAssets() {}
@@ -182,13 +175,13 @@ void EditorApp::DestroyAssets() {
     m_imguiReady = false;
   }
   m_primMgr.DestroyPrimitives();
-  m_meshPrimId = -1;
+  g_objects.clear();
+  g_selectedIdx = -1;
   if (g_skyboxReady) {
     g_skyboxMgr.DestroyPrimitives();
     g_skyboxPrimId = -1;
     g_skyboxReady = false;
   }
-  m_mesh.Destroy();
   m_gizmo.Destroy();
   m_grid.Destroy();
   m_lines.Destroy();
@@ -196,7 +189,6 @@ void EditorApp::DestroyAssets() {
   T8_LOG_INFO("[T8ditor] DestroyAssets");
 }
 
-// ── Resize handling ───────────────────────────────────
 void EditorApp::CheckResize() {
 #ifdef OS_WINDOWS
   auto* w32 = static_cast<t800::Win32Framework*>(pFramework);
@@ -208,7 +200,6 @@ void EditorApp::CheckResize() {
       m_lastW = w;
       m_lastH = h;
       m_camera.SetViewportSize(w, h);
-      // Keep the framework descriptor in sync so ChangeAPI uses the current size
       pFramework->aplicationDescriptor.width  = w;
       pFramework->aplicationDescriptor.height = h;
     }
@@ -219,19 +210,21 @@ void EditorApp::CheckResize() {
 void EditorApp::OnUpdate() {
   m_dtTimer.Update();
   m_dtSecs = m_dtTimer.GetDTSecs();
-  if (m_firstFrame) {
-    m_dtSecs = 1.0f / 60.0f;
-    m_firstFrame = false;
-  }
+  if (m_firstFrame) { m_dtSecs = 1.0f / 60.0f; m_firstFrame = false; }
   m_sceneProps.FrameDeltaSec = m_dtSecs;
 
   CheckResize();
+
+  // Update camera orbit target to selected object's position
+  SceneObject* sel = SelectedObject();
+  if (sel)
+    m_camera.SetTarget(sel->wireframe.Position());
+
   OnInput();
   OnDraw();
 }
 
 void EditorApp::OnInput() {
-  // Let ImGui consume input first — don't orbit/move when interacting with panels.
   const ImGuiIO& io = ImGui::GetIO();
   const bool imguiWantsMouse    = io.WantCaptureMouse;
   const bool imguiWantsKeyboard = io.WantCaptureKeyboard;
@@ -244,8 +237,6 @@ void EditorApp::OnInput() {
   }
 
   float wheel = ImGuiConsumeWheelDelta();
-  // Wheel zoom should work even when ImGuizmo is active — only gate it
-  // when the mouse is truly over a scrollable ImGui panel.
   bool blockWheel = imguiWantsMouse && !ImGuizmo::IsOver();
   m_camera.Update(m_dtSecs, IManager,
                   blockWheel ? 0.0f : wheel,
@@ -260,15 +251,16 @@ void EditorApp::OnInput() {
 }
 
 void EditorApp::ProcessSelectionInput() {
-  if (!m_mesh.IsLoaded()) return;
+  SceneObject* sel = SelectedObject();
+  if (!sel || !sel->wireframe.IsLoaded()) return;
 
   const float linRate = 5.0f * m_dtSecs;
   const float rotRate = 1.5f * m_dtSecs;
   const float sclStep = 1.0f + 0.5f * m_dtSecs;
 
-  XVECTOR3& pos = m_mesh.Position();
-  XVECTOR3& eul = m_mesh.EulerRadians();
-  XVECTOR3& scl = m_mesh.Scale();
+  XVECTOR3& pos = sel->wireframe.Position();
+  XVECTOR3& eul = sel->wireframe.EulerRadians();
+  XVECTOR3& scl = sel->wireframe.Scale();
 
   if (IManager.PressedKey(T800K_l)) pos.x += linRate;
   if (IManager.PressedKey(T800K_j)) pos.x -= linRate;
@@ -289,32 +281,28 @@ void EditorApp::ProcessSelectionInput() {
 }
 
 void EditorApp::HandleMousePick() {
-  // Left-click to pick (SDL left = button index 0, single-press semantics)
   if (!IManager.PressedOnceMouseButton(0)) return;
 
-  if (!m_mesh.IsLoaded()) {
-    m_meshSelected = false;
-    return;
-  }
-
-  // Build the inverse VP matrix
   XMATRIX44 invVP;
   m_vp.Inverse(&invVP);
-
-  // Build world-space ray from the mouse position
   t800::Ray ray = t800::ScreenPointToRay(
     (float)IManager.mouseX, (float)IManager.mouseY,
     0, 0, m_lastW, m_lastH, invVP);
 
-  // Test against the mesh's world-space AABB
-  t800::AABB worldBox = m_mesh.WorldAABB();
-  float t = 0.0f;
-  if (t800::RayIntersectsAABB(ray, worldBox, t)) {
-    m_meshSelected = true;
-    T8_LOG_DEBUG("[T8ditor] Picked mesh at t=%.2f", t);
-  } else {
-    m_meshSelected = false;
+  // Test all objects, pick the closest
+  float bestT = FLT_MAX;
+  int   bestIdx = -1;
+  for (int i = 0; i < (int)g_objects.size(); ++i) {
+    if (!g_objects[i].wireframe.IsLoaded()) continue;
+    t800::AABB worldBox = g_objects[i].wireframe.WorldAABB();
+    float t = 0.0f;
+    if (t800::RayIntersectsAABB(ray, worldBox, t) && t < bestT) {
+      bestT = t;
+      bestIdx = i;
+    }
   }
+
+  g_selectedIdx = bestIdx;
 }
 
 void EditorApp::OnDraw() {
@@ -328,7 +316,7 @@ void EditorApp::OnDraw() {
     const ::Camera& cam = m_camera.GetCamera();
     m_vp = cam.VP;
 
-    // Update headlamp: directional light points from camera eye toward target
+    // Update headlamp direction
     if (!m_sceneProps.Lights.empty()) {
       XVECTOR3 look = cam.Look;
       XVECTOR3 eye  = cam.Eye;
@@ -339,7 +327,7 @@ void EditorApp::OnDraw() {
       m_sceneProps.Lights[0].Position  = eye;
     }
 
-    // ── Skybox (editor backdrop, drawn first) ──
+    // Skybox (editor backdrop)
     if (g_skyboxReady && m_panels.showSkybox) {
       t800::ShaderKey fwdKey(0);
       fwdKey.setPass(t800::PassType::FORWARD);
@@ -348,94 +336,74 @@ void EditorApp::OnDraw() {
       g_skyboxInst.Draw();
     }
 
-    // ── Lit/textured mesh ──
-    if (m_meshPrimId >= 0) {
-      const XVECTOR3& pos = m_mesh.Position();
-      const XVECTOR3& eul = m_mesh.EulerRadians();
-      const XVECTOR3& scl = m_mesh.Scale();
-      m_meshInst.TranslateAbsolute(pos.x, pos.y, pos.z);
-      // PrimitiveInst::RotateXAbsolute expects degrees (calls Deg2Rad internally)
-      m_meshInst.RotateXAbsolute(eul.x * kRadToDeg);
-      m_meshInst.RotateYAbsolute(eul.y * kRadToDeg);
-      m_meshInst.RotateZAbsolute(eul.z * kRadToDeg);
-      m_meshInst.ScaleAbsolute(scl.x, scl.y, scl.z);
+    // All scene objects
+    for (int i = 0; i < (int)g_objects.size(); ++i) {
+      SceneObject& obj = g_objects[i];
+      if (obj.primId < 0) continue;
+
+      const XVECTOR3& pos = obj.wireframe.Position();
+      const XVECTOR3& eul = obj.wireframe.EulerRadians();
+      const XVECTOR3& scl = obj.wireframe.Scale();
+      obj.litInst.TranslateAbsolute(pos.x, pos.y, pos.z);
+      obj.litInst.RotateXAbsolute(eul.x * kRadToDeg);
+      obj.litInst.RotateYAbsolute(eul.y * kRadToDeg);
+      obj.litInst.RotateZAbsolute(eul.z * kRadToDeg);
+      obj.litInst.ScaleAbsolute(scl.x, scl.y, scl.z);
       t800::ShaderKey fwdKey(0);
       fwdKey.setPass(t800::PassType::FORWARD);
-      m_meshInst.SetGlobalKey(fwdKey);
-      m_meshInst.Update();
-      m_meshInst.Draw();
-    }
+      obj.litInst.SetGlobalKey(fwdKey);
+      obj.litInst.Update();
+      obj.litInst.Draw();
 
-    // ── Wireframe overlay (scene meshes only, NOT skybox) ──
-    if (m_mesh.IsLoaded() && m_lines.IsReady()) {
-      // Selected: white wireframe highlight. View toggle: neutral gray wireframe.
-      bool showWire = m_panels.showWireframe || m_meshSelected;
-      if (showWire) {
-        XVECTOR3 savedColor = m_mesh.WireColor;
-        if (m_meshSelected)
-          m_mesh.WireColor = XVECTOR3(1.0f, 1.0f, 1.0f, 1.0f);  // white = selected
-        else
-          m_mesh.WireColor = XVECTOR3(0.45f, 0.45f, 0.45f, 1.0f); // gray = unselected
-
+      // Wireframe overlay
+      bool isSelected = (i == g_selectedIdx);
+      bool showWire = m_panels.showWireframe || isSelected;
+      if (showWire && obj.wireframe.IsLoaded() && m_lines.IsReady()) {
+        XVECTOR3 savedColor = obj.wireframe.WireColor;
+        obj.wireframe.WireColor = isSelected
+          ? XVECTOR3(1.0f, 1.0f, 1.0f, 1.0f)
+          : XVECTOR3(0.45f, 0.45f, 0.45f, 1.0f);
         drv->SetDepthStencilState(t800::BaseDriver::NONE);
-        m_mesh.Draw(m_lines, cam.VP);
+        obj.wireframe.Draw(m_lines, cam.VP);
         drv->SetDepthStencilState(t800::BaseDriver::DEPTH_DEFAULT);
-        m_mesh.WireColor = savedColor;
+        obj.wireframe.WireColor = savedColor;
       }
     }
 
-    // ── Editor overlays (grid) ──
-    if (m_lines.IsReady()) {
-      const XMATRIX44 vp = cam.VP;
-      m_grid.Draw(m_lines, vp);
-      // Visual-only EditorGizmo replaced by ImGuizmo (drawn in ImGui pass below)
-    }
+    // Grid
+    if (m_lines.IsReady())
+      m_grid.Draw(m_lines, cam.VP);
   }
 
-  // ── ImGui overlay ──
+  // ImGui overlay
   if (m_imguiReady) {
     ImGuiNewFrame();
 
     MenuAction menuAction = ImGuiDrawMenuBar(m_panels);
 
-    // Toolbar — gizmo mode buttons
     int mode = ImGuiDrawToolbar((int)m_gizmo.Mode());
     m_gizmo.SetMode((GizmoMode)mode);
 
-    // ── ImGuizmo interactive gizmo ──
+    // ImGuizmo on selected object
     ImGuizmoBeginFrame(0, 0, m_lastW, m_lastH, false);
-
-    if (m_meshSelected && m_mesh.IsLoaded()) {
+    SceneObject* sel = SelectedObject();
+    if (sel && sel->wireframe.IsLoaded()) {
       const ::Camera& cam2 = m_camera.GetCamera();
-
-      // Build the object's world matrix from current T/R/S
-      XMATRIX44 worldMat = m_mesh.BuildWorld();
-
-      // ImGuizmo::Manipulate takes float[16] for view, proj, and world.
-      // Our engine uses row-major (D3DX-style) which is memory-compatible
-      // with ImGuizmo's expected layout.
+      XMATRIX44 worldMat = sel->wireframe.BuildWorld();
       bool manipulated = ImGuizmoManipulate(
-        &cam2.View.m[0][0],
-        &cam2.Projection.m[0][0],
-        mode,
-        &worldMat.m[0][0]);
-
+        &cam2.View.m[0][0], &cam2.Projection.m[0][0],
+        mode, &worldMat.m[0][0]);
       if (manipulated) {
-        // Decompose the modified world matrix back into T/R/S
         float translation[3], rotation[3], scale[3];
-        ImGuizmo::DecomposeMatrixToComponents(
-          &worldMat.m[0][0], translation, rotation, scale);
-
-        m_mesh.Position()    = XVECTOR3(translation[0], translation[1], translation[2]);
-        m_mesh.EulerRadians() = XVECTOR3(
-          rotation[0] * kDegToRad,
-          rotation[1] * kDegToRad,
-          rotation[2] * kDegToRad);
-        m_mesh.Scale() = XVECTOR3(scale[0], scale[1], scale[2]);
+        ImGuizmo::DecomposeMatrixToComponents(&worldMat.m[0][0], translation, rotation, scale);
+        sel->wireframe.Position() = XVECTOR3(translation[0], translation[1], translation[2]);
+        sel->wireframe.EulerRadians() = XVECTOR3(
+          rotation[0] * kDegToRad, rotation[1] * kDegToRad, rotation[2] * kDegToRad);
+        sel->wireframe.Scale() = XVECTOR3(scale[0], scale[1], scale[2]);
       }
     }
 
-    // Handle menu actions
+    // Menu actions
     if (menuAction.wantsExit) {
 #ifdef OS_WINDOWS
       auto* w32fw = static_cast<t800::Win32Framework*>(pFramework);
@@ -446,41 +414,48 @@ void EditorApp::OnDraw() {
       std::string path = OpenFileDialog(
         L"DirectX Mesh (*.x)\0*.x\0All Files (*.*)\0*.*\0",
         L"Import .x Mesh");
-      if (!path.empty()) {
-        ImportMesh(path);
-      }
+      if (!path.empty()) ImportMesh(path);
     }
 
-    // ── Panels ──
+    // Panels
     if (m_panels.showHierarchy) {
-      const char* meshName = m_mesh.IsLoaded() ? m_mesh.Path().c_str() : nullptr;
-      ImGuiDrawHierarchyPanel(meshName, m_mesh.IsLoaded(), m_meshSelected);
+      // Build names list for all objects
+      ImGui::SetNextWindowSize(ImVec2(250, 300), ImGuiCond_FirstUseEver);
+      if (ImGui::Begin("Hierarchy")) {
+        if (ImGui::TreeNodeEx("Scene Root", ImGuiTreeNodeFlags_OpenOnArrow | ImGuiTreeNodeFlags_DefaultOpen)) {
+          for (int i = 0; i < (int)g_objects.size(); ++i) {
+            ImGuiTreeNodeFlags flags = ImGuiTreeNodeFlags_Leaf | ImGuiTreeNodeFlags_SpanAvailWidth;
+            if (i == g_selectedIdx) flags |= ImGuiTreeNodeFlags_Selected;
+            bool nodeOpen = ImGui::TreeNodeEx(g_objects[i].name.c_str(), flags);
+            if (ImGui::IsItemClicked())
+              g_selectedIdx = (g_selectedIdx == i) ? -1 : i;
+            if (nodeOpen) ImGui::TreePop();
+          }
+          ImGui::TreePop();
+        }
+      }
+      ImGui::End();
     }
 
-    if (m_panels.showInspector && m_meshSelected) {
-      XVECTOR3 pos = m_mesh.Position();
+    if (m_panels.showInspector && sel) {
+      XVECTOR3 pos = sel->wireframe.Position();
       XVECTOR3 eulerDeg(
-        m_mesh.EulerRadians().x * kRadToDeg,
-        m_mesh.EulerRadians().y * kRadToDeg,
-        m_mesh.EulerRadians().z * kRadToDeg
-      );
-      XVECTOR3 scl = m_mesh.Scale();
-
-      ImGuiDrawInspectorPanel(pos, eulerDeg, scl, m_mesh.IsLoaded());
-
-      // Write back if mesh is loaded (inspector may have changed values)
-      if (m_mesh.IsLoaded()) {
-        m_mesh.Position() = pos;
-        m_mesh.EulerRadians().x = eulerDeg.x * kDegToRad;
-        m_mesh.EulerRadians().y = eulerDeg.y * kDegToRad;
-        m_mesh.EulerRadians().z = eulerDeg.z * kDegToRad;
-        m_mesh.Scale() = scl;
+        sel->wireframe.EulerRadians().x * kRadToDeg,
+        sel->wireframe.EulerRadians().y * kRadToDeg,
+        sel->wireframe.EulerRadians().z * kRadToDeg);
+      XVECTOR3 scl = sel->wireframe.Scale();
+      ImGuiDrawInspectorPanel(pos, eulerDeg, scl, sel->wireframe.IsLoaded());
+      if (sel->wireframe.IsLoaded()) {
+        sel->wireframe.Position() = pos;
+        sel->wireframe.EulerRadians().x = eulerDeg.x * kDegToRad;
+        sel->wireframe.EulerRadians().y = eulerDeg.y * kDegToRad;
+        sel->wireframe.EulerRadians().z = eulerDeg.z * kDegToRad;
+        sel->wireframe.Scale() = scl;
       }
     }
 
-    if (m_panels.showConsole) {
+    if (m_panels.showConsole)
       ImGuiDrawConsolePanel();
-    }
 
     ImGuiRender();
   }
@@ -492,7 +467,6 @@ void EditorApp::OnDraw() {
 void EditorApp::OnPause()  { bPaused = true;  }
 void EditorApp::OnResume() { bPaused = false; }
 void EditorApp::OnReset()  {}
-
-void EditorApp::LoadScene(int /*id*/) {}
+void EditorApp::LoadScene(int) {}
 
 } // namespace t8ditor

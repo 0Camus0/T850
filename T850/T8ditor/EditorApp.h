@@ -1,29 +1,7 @@
 /*********************************************************
-* Copyright (C) 2017 Daniel Enriquez (camus_mm@hotmail.com)
-* All Rights Reserved
-*********************************************************/
-
-// EditorApp — AppBase subclass that hosts the T8ditor.exe shell.
-//
-// Phase 1b ("editor 101"): orbit camera, XZ reference grid, three-axis
-// transform gizmo on the active selection, and wireframe display of an
-// optional .x mesh. Keyboard manipulates the selection (no mouse-drag
-// gizmo dragging yet — that lands with ImGui+ImGuizmo in Phase 1c).
-//
-// Hot-keys (when no modifier is down):
-//   W / E / R   : switch gizmo to Translate / Rotate / Scale
-//   Arrow keys  : (no mouse) orbit camera
-//   I / K       : translate selection along world Z
-//   J / L       : translate selection along world X
-//   U / O       : translate selection along world Y
-//   [ / ]       : rotate selection around world Y
-//   ; / '       : scale selection down / up (uniform)
-//   F           : frame selection (re-center camera distance)
-//
-// Mouse:
-//   middle-drag         : orbit camera around target
-//   shift+middle-drag   : pan target
-//   right-drag          : orbit (alternate)
+ * Copyright (C) 2017 Daniel Enriquez (camus_mm@hotmail.com)
+ * All Rights Reserved
+ *********************************************************/
 
 #ifndef T8DITOR_EDITORAPP_H
 #define T8DITOR_EDITORAPP_H
@@ -35,6 +13,7 @@
 #include <scene/SceneProp.h>
 
 #include <string>
+#include <vector>
 
 #include "EditorCamera.h"
 #include "EditorLineRenderer.h"
@@ -45,14 +24,20 @@
 
 namespace t8ditor {
 
-  // Set by main.cpp before constructing the app.
   void SetStartupMeshPath(const std::string& p);
+
+  // Per-object data for multi-mesh scenes.
+  struct SceneObject {
+    EditorMesh            wireframe;   // wireframe overlay + AABB + transform
+    t800::PrimitiveInst   litInst;     // lit/textured rendering instance
+    int                   primId = -1; // index into m_primMgr.primitives
+    std::string           name;        // display name (file path or user label)
+  };
 
   class EditorApp : public t800::AppBase {
   public:
     EditorApp() : AppBase() {}
 
-    // AppBase contract.
     void InitVars() override;
     void CreateAssets() override;
     void LoadAssets() override;
@@ -82,35 +67,25 @@ namespace t8ditor {
     EditorLineRenderer  m_lines;
     EditorGrid          m_grid;
     EditorGizmo         m_gizmo;
-    EditorMesh          m_mesh;      // wireframe overlay (kept for toggle)
 
-    // Lit/textured rendering via the Framework pipeline
+    // Scene objects (multi-mesh)
+    std::vector<SceneObject> m_objects;
+    int  m_selectedIdx = -1;  // -1 = nothing selected
+
+    // Lit rendering pipeline (shared by all scene objects)
     SceneProps            m_sceneProps;
     t800::PrimitiveManager m_primMgr;
-    t800::PrimitiveInst   m_meshInst;
-    int                   m_meshPrimId = -1;  // -1 = no lit mesh loaded
-    XMATRIX44             m_vp;               // VP matrix for the prim mgr
-
-    // Persistent skybox (editor backdrop, not part of the scene)
-    t800::PrimitiveManager m_skyboxMgr;
-    t800::PrimitiveInst   m_skyboxInst;
-    int                   m_skyboxPrimId = -1;
+    XMATRIX44             m_vp;
 
     bool m_assetsCreated = false;
     bool m_imguiReady   = false;
 
-    // Panel visibility (persists across frames)
     PanelVisibility m_panels;
 
-    // Resize tracking — poll SDL window size each frame
     int  m_lastW = 0;
     int  m_lastH = 0;
-
-    // Selection — currently single-object; -1 = nothing selected
-    bool m_meshSelected = false;
   };
 
 } // namespace t8ditor
 
 #endif // T8DITOR_EDITORAPP_H
-

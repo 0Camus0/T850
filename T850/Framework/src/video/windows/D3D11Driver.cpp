@@ -715,9 +715,9 @@ namespace t800 {
   void D3DXDriver::Clear() {
     ID3D11DeviceContext* deviceContext = reinterpret_cast<ID3D11DeviceContext*>(T8DeviceContext->GetAPIObject());
     float rgba[4];
-    rgba[0] = 0.9f;
-    rgba[1] = 0.9f;
-    rgba[2] = 0.9f;
+    rgba[0] = 0.227f;
+    rgba[1] = 0.227f;
+    rgba[2] = 0.227f;
     rgba[3] = 1.0f;
 
     // Clearing the Main Render Target View

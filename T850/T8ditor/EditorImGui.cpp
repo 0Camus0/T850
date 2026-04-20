@@ -23,6 +23,7 @@
 #  include <imgui_impl_dx12.h>
 #  include <d3d11.h>
 #  include <video/d3d12/D3D12Driver.h>
+#  include <video/windows/D3D11Texture.h>
 #  include <core/windows/Win32Framework.h>
 #endif
 #include <imgui_impl_opengl3.h>
@@ -284,6 +285,8 @@ MenuAction ImGuiDrawMenuBar(PanelVisibility& panels) {
       ImGui::Separator();
       ImGui::MenuItem("Wireframe Overlay", nullptr, &panels.showWireframe);
       ImGui::MenuItem("Show Skybox",       nullptr, &panels.showSkybox);
+      ImGui::Separator();
+      ImGui::MenuItem("RT Debug",          nullptr, &panels.showRTDebug);
       ImGui::EndMenu();
     }
 
@@ -484,6 +487,99 @@ void ImGuiDrawConsolePanel() {
 
   ImGui::EndChild();
   ImGui::End();
+}
+
+// ── RT Debug panel ────────────────────────────────────
+
+int ImGuiDrawRTDebugPanel(int selectedRT) {
+  if (!s_inited) return selectedRT;
+
+  ImGui::SetNextWindowSize(ImVec2(320, 500), ImGuiCond_FirstUseEver);
+  if (!ImGui::Begin("Render Targets")) {
+    ImGui::End();
+    return selectedRT;
+  }
+
+  // "BackBuffer" entry (selectedRT = -1)
+  {
+    bool isSel = (selectedRT < 0);
+    if (isSel) ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1, 1, 0, 1));
+    if (ImGui::Selectable("BackBuffer (default)", isSel))
+      selectedRT = -1;
+    if (isSel) ImGui::PopStyleColor();
+  }
+  ImGui::Separator();
+
+  t800::BaseDriver* drv = t800::g_pBaseDriver;
+  if (!drv) { ImGui::End(); return selectedRT; }
+
+  // Helper to get SRV for ImGui::Image (D3D11 only)
+  auto GetSRV = [&](t800::Texture* tex) -> ImTextureID {
+#ifdef OS_WINDOWS
+    if (s_api == t800::GRAPHICS_API::D3D11 && tex) {
+      // D3DXTexture has pSRVTex as a public ComPtr
+      auto* d3dTex = static_cast<t800::D3DXTexture*>(tex);
+      return (ImTextureID)d3dTex->pSRVTex.Get();
+    }
+#endif
+    return (ImTextureID)nullptr;
+  };
+
+  int globalIdx = 0;
+  for (int rtIdx = 0; rtIdx < (int)drv->RTs.size(); ++rtIdx) {
+    t800::BaseRT* rt = drv->RTs[rtIdx];
+    if (!rt) continue;
+
+    ImGui::PushID(rtIdx);
+
+    for (int ci = 0; ci < (int)rt->vColorTextures.size(); ++ci) {
+      t800::Texture* tex = rt->vColorTextures[ci];
+      if (!tex) continue;
+
+      char label[128];
+      snprintf(label, sizeof(label), "RT%d : Color%d (%ux%u)", rtIdx, ci, tex->x, tex->y);
+
+      bool isSel = (selectedRT == globalIdx);
+      if (isSel) ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1, 1, 0, 1));
+
+      ImTextureID srv = GetSRV(tex);
+      if (srv) {
+        ImGui::Image(srv, ImVec2(140, 79));
+        if (ImGui::IsItemClicked()) selectedRT = globalIdx;
+      }
+
+      if (ImGui::Selectable(label, isSel))
+        selectedRT = globalIdx;
+
+      if (isSel) ImGui::PopStyleColor();
+      globalIdx++;
+    }
+
+    if (rt->pDepthTexture) {
+      char label[128];
+      snprintf(label, sizeof(label), "RT%d : Depth (%ux%u)", rtIdx, rt->pDepthTexture->x, rt->pDepthTexture->y);
+      bool isSel = (selectedRT == globalIdx);
+      if (isSel) ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1, 1, 0, 1));
+
+      ImTextureID srv = GetSRV(rt->pDepthTexture);
+      if (srv) {
+        ImGui::Image(srv, ImVec2(140, 79));
+        if (ImGui::IsItemClicked()) selectedRT = globalIdx;
+      }
+
+      if (ImGui::Selectable(label, isSel))
+        selectedRT = globalIdx;
+
+      if (isSel) ImGui::PopStyleColor();
+      globalIdx++;
+    }
+
+    ImGui::Separator();
+    ImGui::PopID();
+  }
+
+  ImGui::End();
+  return selectedRT;
 }
 
 // ── ImGuizmo ──────────────────────────────────────────

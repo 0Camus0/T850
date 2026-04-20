@@ -71,6 +71,9 @@ namespace {
   t800::RenderGraph   g_renderGraph;
   t800::PrimitiveInst g_quads[8];
   bool                g_deferredReady = false;
+
+  // RT debug: which RT attachment to display (-1 = backbuffer)
+  int g_debugRT = -1;
 }
 
 void SetStartupMeshPath(const std::string& p) {
@@ -1001,6 +1004,9 @@ void EditorApp::OnDraw() {
 
     if (m_panels.showConsole)
       ImGuiDrawConsolePanel();
+
+    if (m_panels.showRTDebug)
+      g_debugRT = ImGuiDrawRTDebugPanel(g_debugRT);
 
     ImGuiRender();
   }

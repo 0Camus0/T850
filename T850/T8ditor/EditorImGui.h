@@ -47,6 +47,7 @@ namespace t8ditor {
     bool showConsole    = true;
     bool showWireframe  = false;
     bool showSkybox     = true;
+    bool showRTDebug    = false;
   };
 
   // Draw the main menu bar. Returns actions triggered this frame.
@@ -71,6 +72,11 @@ namespace t8ditor {
 
   // Console panel: scrollable log viewer.
   void ImGuiDrawConsolePanel();
+
+  // RT Debug panel: shows thumbnails of all render targets.
+  // `selectedRT` is the currently selected RT index (-1 = backbuffer).
+  // Returns the newly selected RT index (or -1).
+  int ImGuiDrawRTDebugPanel(int selectedRT);
 
   // ── Log capture ────────────────────────────────────
   void ImGuiLogCaptureStart();

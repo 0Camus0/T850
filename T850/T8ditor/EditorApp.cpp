@@ -10,7 +10,6 @@
 
 #include <core/Core.h>
 #include <video/BaseDriver.h>
-#include <scene/RenderGraph.h>
 #include <utils/InputManager.h>
 #include <utils/Log.h>
 #include <utils/xMaths.h>
@@ -66,11 +65,6 @@ namespace {
 
   // Persistent camera for scene camera viewport switching
   ::Camera g_viewCamera;
-
-  // Deferred render graph
-  t800::RenderGraph  g_renderGraph;
-  t800::PrimitiveInst g_quads[8]; // fullscreen quads for deferred passes
-  bool               g_deferredReady = false;
 }
 
 void SetStartupMeshPath(const std::string& p) {
@@ -138,23 +132,6 @@ void EditorApp::CreateAssets() {
       g_skyboxMgr.SetSceneProps(&m_sceneProps);
       g_skyboxReady = true;
     }
-  }
-
-  // Set up deferred render graph
-  if (g_renderGraph.Load("Scenes/T8ditor_RenderGraph.json")) {
-    g_renderGraph.CreateRenderTargets(pFramework->pVideoDriver, m_sceneProps);
-    // Create fullscreen quads for deferred passes
-    XMATRIX44 identity;
-    XMatIdentity(identity);
-    for (int i = 0; i < 8; ++i) {
-      g_quads[i].CreateInstance(m_primMgr.GetPrimitive(t800::PrimitiveManager::QUAD), &m_vp);
-      g_quads[i].TranslateAbsolute(0, 0, 0);
-      g_quads[i].Update();
-    }
-    g_deferredReady = true;
-    T8_LOG_INFO("[T8ditor] Deferred render graph loaded");
-  } else {
-    T8_LOG_ERROR("[T8ditor] Failed to load deferred render graph — falling back to forward");
   }
 
   if (!g_startupMeshPath.empty() && g_startupMeshPath != "Models/SkyBox.X")
@@ -499,7 +476,7 @@ void EditorApp::OnDraw() {
       m_sceneProps.ActiveLights = (int)m_sceneProps.Lights.size();
     }
 
-    // Skybox (editor backdrop, always forward)
+    // Skybox (editor backdrop)
     if (g_skyboxReady && m_panels.showSkybox) {
       t800::ShaderKey fwdKey(0);
       fwdKey.setPass(t800::PassType::FORWARD);
@@ -508,12 +485,11 @@ void EditorApp::OnDraw() {
       g_skyboxInst.Draw();
     }
 
-    // Update all mesh instance transforms before rendering
-    // Build a temporary array of PrimitiveInst pointers for the render graph
-    std::vector<t800::PrimitiveInst*> meshInstPtrs;
+    // All scene meshes (forward rendering)
     for (int i = 0; i < (int)g_objects.size(); ++i) {
       SceneObject& obj = g_objects[i];
       if (obj.primId < 0 || !obj.visible) continue;
+
       const XVECTOR3& pos = obj.wireframe.Position();
       const XVECTOR3& eul = obj.wireframe.EulerRadians();
       const XVECTOR3& scl = obj.wireframe.Scale();
@@ -522,39 +498,13 @@ void EditorApp::OnDraw() {
       obj.litInst.RotateYAbsolute(eul.y * kRadToDeg);
       obj.litInst.RotateZAbsolute(eul.z * kRadToDeg);
       obj.litInst.ScaleAbsolute(scl.x, scl.y, scl.z);
+      t800::ShaderKey fwdKey(0);
+      fwdKey.setPass(t800::PassType::FORWARD);
+      obj.litInst.SetGlobalKey(fwdKey);
       obj.litInst.Update();
-      meshInstPtrs.push_back(&obj.litInst);
-    }
+      obj.litInst.Draw();
 
-    // Render meshes through deferred pipeline (multi-light) or forward fallback
-    if (g_deferredReady && !meshInstPtrs.empty()) {
-      // Build a contiguous array for the render graph
-      // RenderGraph::Execute takes PrimitiveInst* (array), not pointers
-      // We need to copy to a temp contiguous array
-      std::vector<t800::PrimitiveInst> meshInstCopies;
-      meshInstCopies.reserve(meshInstPtrs.size());
-      for (auto* p : meshInstPtrs) meshInstCopies.push_back(*p);
-
-      ::Camera* mainCam = m_sceneProps.pCameras[0];
-      g_renderGraph.Execute(
-        drv, m_sceneProps,
-        meshInstCopies.data(), (int)meshInstCopies.size(),
-        g_quads,
-        mainCam, nullptr, nullptr, -1);
-    } else {
-      // Forward fallback
-      for (auto* inst : meshInstPtrs) {
-        t800::ShaderKey fwdKey(0);
-        fwdKey.setPass(t800::PassType::FORWARD);
-        inst->SetGlobalKey(fwdKey);
-        inst->Draw();
-      }
-    }
-
-    // Wireframe overlays (drawn after deferred resolve, on backbuffer)
-    for (int i = 0; i < (int)g_objects.size(); ++i) {
-      SceneObject& obj = g_objects[i];
-      if (obj.primId < 0 || !obj.visible) continue;
+      // Wireframe overlay
       bool isSelected = (g_selectionType == 0 && i == g_selectedIdx);
       bool showWire = m_panels.showWireframe || isSelected;
       if (showWire && obj.wireframe.IsLoaded() && m_lines.IsReady()) {

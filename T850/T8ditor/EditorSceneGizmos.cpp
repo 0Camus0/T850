@@ -191,21 +191,40 @@ void DrawCameraGizmo(EditorLineRenderer& lines, const XMATRIX44& vp,
                      const SceneCamera& cam, bool selected) {
   if (!lines.IsReady()) return;
 
-  std::vector<float> verts;
-  std::vector<unsigned short> idx;
-  BuildFrustumGeometry(cam, verts, idx);
+  // Cache VB/IB — only rebuild when camera params change
+  static t800::VertexBuffer* s_vb = nullptr;
+  static t800::IndexBuffer*  s_ib = nullptr;
+  static unsigned s_idxCount = 0;
+  static float s_lastFov = -1, s_lastNear = -1, s_lastFar = -1;
+  static float s_lastPx = 1e30f, s_lastPy = 1e30f, s_lastPz = 1e30f;
+  static float s_lastTx = 1e30f, s_lastTy = 1e30f, s_lastTz = 1e30f;
+  static int   s_lastType = -1;
 
-  if (verts.empty() || idx.empty()) return;
+  bool needRebuild = (s_vb == nullptr
+    || s_lastFov != cam.fovDeg || s_lastNear != cam.nearPlane || s_lastFar != cam.farPlane
+    || s_lastPx != cam.position.x || s_lastPy != cam.position.y || s_lastPz != cam.position.z
+    || s_lastTx != cam.target.x || s_lastTy != cam.target.y || s_lastTz != cam.target.z
+    || s_lastType != (int)cam.type);
 
-  auto* vb = EditorLineRenderer::CreatePositionVB(verts.data(), (unsigned)(verts.size() / 4));
-  auto* ib = EditorLineRenderer::CreateIndexBuffer16(idx.data(), (unsigned)idx.size());
-  if (!vb || !ib) return;
+  if (needRebuild) {
+    std::vector<float> verts;
+    std::vector<unsigned short> idx;
+    BuildFrustumGeometry(cam, verts, idx);
+    if (verts.empty() || idx.empty()) return;
+    s_vb = EditorLineRenderer::CreatePositionVB(verts.data(), (unsigned)(verts.size() / 4));
+    s_ib = EditorLineRenderer::CreateIndexBuffer16(idx.data(), (unsigned)idx.size());
+    s_idxCount = (unsigned)idx.size();
+    s_lastFov = cam.fovDeg; s_lastNear = cam.nearPlane; s_lastFar = cam.farPlane;
+    s_lastPx = cam.position.x; s_lastPy = cam.position.y; s_lastPz = cam.position.z;
+    s_lastTx = cam.target.x; s_lastTy = cam.target.y; s_lastTz = cam.target.z;
+    s_lastType = (int)cam.type;
+  }
+  if (!s_vb || !s_ib) return;
 
   XMATRIX44 identity;
   XMatIdentity(identity);
-
   const XVECTOR3& color = selected ? kSelectedColor : kCameraColor;
-  lines.DrawLines(identity, vp, color, vb, ib, (unsigned)idx.size(), 16);
+  lines.DrawLines(identity, vp, color, s_vb, s_ib, s_idxCount, 16);
 }
 
 // ── Light gizmo ───────────────────────────────────────
@@ -242,16 +261,35 @@ void DrawLightGizmo(EditorLineRenderer& lines, const XMATRIX44& vp,
 
   if (verts.empty() || idx.empty()) return;
 
-  auto* vb = EditorLineRenderer::CreatePositionVB(verts.data(), (unsigned)(verts.size() / 4));
-  auto* ib = EditorLineRenderer::CreateIndexBuffer16(idx.data(), (unsigned)idx.size());
-  if (!vb || !ib) return;
+  // Cache VB/IB — rebuild only when light params change
+  static t800::VertexBuffer* s_vb = nullptr;
+  static t800::IndexBuffer*  s_ib = nullptr;
+  static unsigned s_idxCount = 0;
+  static float s_lPx = 1e30f, s_lPy = 1e30f, s_lPz = 1e30f;
+  static float s_lDx = 1e30f, s_lDy = 1e30f, s_lDz = 1e30f;
+  static float s_lRad = -1; static int s_lType = -1;
+
+  bool needRebuild = (s_vb == nullptr
+    || s_lPx != lt.position.x || s_lPy != lt.position.y || s_lPz != lt.position.z
+    || s_lDx != lt.direction.x || s_lDy != lt.direction.y || s_lDz != lt.direction.z
+    || s_lRad != lt.radius || s_lType != (int)lt.type);
+
+  if (needRebuild) {
+    s_vb = EditorLineRenderer::CreatePositionVB(verts.data(), (unsigned)(verts.size() / 4));
+    s_ib = EditorLineRenderer::CreateIndexBuffer16(idx.data(), (unsigned)idx.size());
+    s_idxCount = (unsigned)idx.size();
+    s_lPx = lt.position.x; s_lPy = lt.position.y; s_lPz = lt.position.z;
+    s_lDx = lt.direction.x; s_lDy = lt.direction.y; s_lDz = lt.direction.z;
+    s_lRad = lt.radius; s_lType = (int)lt.type;
+  }
+  if (!s_vb || !s_ib) return;
 
   XMATRIX44 identity;
   XMatIdentity(identity);
 
   const XVECTOR3& baseColor = (lt.type == EditorLightType::Directional) ? kDirLightColor : kOmniLightColor;
   const XVECTOR3& color = selected ? kSelectedColor : baseColor;
-  lines.DrawLines(identity, vp, color, vb, ib, (unsigned)idx.size(), 16);
+  lines.DrawLines(identity, vp, color, s_vb, s_ib, s_idxCount, 16);
 }
 
 } // namespace t8ditor

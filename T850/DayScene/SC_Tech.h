@@ -64,6 +64,7 @@ public:
   void InitVars();
   void CreateAssets();
   void DestroyAssets();
+  void RequestDump() override { m_dumper.RequestDump(); }
 
   float DtSecs;
   t800::PrimitiveManager PrimitiveMgr;

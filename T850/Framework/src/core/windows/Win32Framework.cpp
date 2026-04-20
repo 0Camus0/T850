@@ -16,6 +16,7 @@
 #if defined(OS_WINDOWS)
 #include <video/windows/D3D11Driver.h>
 #include <video/d3d12/D3D12Driver.h>
+#include <video/vulkan/VulkanDriver.h>
 #endif
 // SDL3
 #include <SDL3/SDL.h>
@@ -175,6 +176,8 @@ namespace t800 {
       title += "   GL";
     else if (api == GRAPHICS_API::D3D12)
       title += "   D3D12";
+    else if (api == GRAPHICS_API::VULKAN)
+      title += "   Vulkan";
     else
       title += "   D3D11";
 
@@ -189,6 +192,9 @@ namespace t800 {
       flags |= SDL_WINDOW_OPENGL;
       SDL_GL_SetAttribute(SDL_GL_DEPTH_SIZE, 24);
 #endif
+    }
+    else if (api == GRAPHICS_API::VULKAN) {
+      flags |= SDL_WINDOW_VULKAN;
     }
 
     m_pWindow = SDL_CreateWindow(title.c_str(), aplicationDescriptor.width, aplicationDescriptor.height, flags);
@@ -250,6 +256,10 @@ namespace t800 {
     }
     else if (api == GRAPHICS_API::D3D12) {
       pVideoDriver = new D3D12Driver;
+      pVideoDriver->SetDimensions(aplicationDescriptor.width, aplicationDescriptor.height);
+    }
+    else if (api == GRAPHICS_API::VULKAN) {
+      pVideoDriver = new VulkanDriver;
       pVideoDriver->SetDimensions(aplicationDescriptor.width, aplicationDescriptor.height);
     }
     else {

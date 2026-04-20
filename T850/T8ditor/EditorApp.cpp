@@ -53,6 +53,9 @@ namespace {
   // 0=mesh, 1=camera, 2=light. Index is g_selectedIdx into the respective vector.
   int g_selectionType = 0;  // 0=mesh by default
 
+  // Active camera index (-1 = default editor camera)
+  int g_activeCameraIdx = -1;
+
   // Undo/redo
   UndoStack g_undoStack;
 
@@ -198,6 +201,7 @@ void EditorApp::DestroyAssets() {
   g_lights.clear();
   g_selectedIdx = -1;
   g_selectionType = 0;
+  g_activeCameraIdx = -1;
   g_undoStack.Clear();
   if (g_skyboxReady) {
     g_skyboxMgr.DestroyPrimitives();
@@ -362,7 +366,7 @@ void EditorApp::OnDraw() {
     const ::Camera& cam = m_camera.GetCamera();
     m_vp = cam.VP;
 
-    // Update headlamp direction
+    // Update headlamp (light 0) direction from camera
     if (!m_sceneProps.Lights.empty()) {
       XVECTOR3 look = cam.Look;
       XVECTOR3 eye  = cam.Eye;
@@ -371,6 +375,22 @@ void EditorApp::OnDraw() {
       if (len > 0.0001f) { dir.x /= len; dir.y /= len; dir.z /= len; }
       m_sceneProps.Lights[0].Direction = dir;
       m_sceneProps.Lights[0].Position  = eye;
+    }
+
+    // Sync scene lights from editor lights (headlamp is index 0, user lights start at 1)
+    {
+      // Resize sceneProps to hold headlamp + all user lights
+      while (m_sceneProps.Lights.size() > 1)
+        m_sceneProps.RemoveLight((unsigned)(m_sceneProps.Lights.size() - 1));
+      for (auto& lt : g_lights) {
+        if (!lt.enabled) continue;
+        if (lt.type == EditorLightType::Directional) {
+          m_sceneProps.AddDirectionalLight(lt.direction, lt.color, lt.intensity, true);
+        } else {
+          m_sceneProps.AddLight(lt.position, lt.color, lt.radius, lt.intensity, LIGHT_POINT, true);
+        }
+      }
+      m_sceneProps.ActiveLights = (int)m_sceneProps.Lights.size();
     }
 
     // Skybox (editor backdrop)
@@ -385,7 +405,7 @@ void EditorApp::OnDraw() {
     // All scene objects
     for (int i = 0; i < (int)g_objects.size(); ++i) {
       SceneObject& obj = g_objects[i];
-      if (obj.primId < 0) continue;
+      if (obj.primId < 0 || !obj.visible) continue;
 
       const XVECTOR3& pos = obj.wireframe.Position();
       const XVECTOR3& eul = obj.wireframe.EulerRadians();
@@ -640,12 +660,15 @@ void EditorApp::OnDraw() {
 
     // Panels
     if (m_panels.showHierarchy) {
-      ImGui::SetNextWindowSize(ImVec2(250, 400), ImGuiCond_FirstUseEver);
+      ImGui::SetNextWindowSize(ImVec2(280, 400), ImGuiCond_FirstUseEver);
       if (ImGui::Begin("Hierarchy")) {
         if (ImGui::TreeNodeEx("Scene Root", ImGuiTreeNodeFlags_OpenOnArrow | ImGuiTreeNodeFlags_DefaultOpen)) {
-          // Meshes
-          if (!g_objects.empty() && ImGui::TreeNodeEx("Meshes", ImGuiTreeNodeFlags_DefaultOpen)) {
+          // Meshes — checkbox = visible
+          if (ImGui::TreeNodeEx("Meshes", ImGuiTreeNodeFlags_DefaultOpen)) {
             for (int i = 0; i < (int)g_objects.size(); ++i) {
+              ImGui::PushID(i + 10000);
+              ImGui::Checkbox("##vis", &g_objects[i].visible);
+              ImGui::SameLine();
               ImGuiTreeNodeFlags flags = ImGuiTreeNodeFlags_Leaf | ImGuiTreeNodeFlags_SpanAvailWidth;
               if (g_selectionType == 0 && i == g_selectedIdx) flags |= ImGuiTreeNodeFlags_Selected;
               bool nodeOpen = ImGui::TreeNodeEx(g_objects[i].name.c_str(), flags);
@@ -654,12 +677,30 @@ void EditorApp::OnDraw() {
                 else { g_selectedIdx = i; g_selectionType = 0; }
               }
               if (nodeOpen) ImGui::TreePop();
+              ImGui::PopID();
             }
             ImGui::TreePop();
           }
-          // Cameras
-          if (!g_cameras.empty() && ImGui::TreeNodeEx("Cameras", ImGuiTreeNodeFlags_DefaultOpen)) {
+          // Cameras — checkbox = active camera (radio-like: only one at a time)
+          if (ImGui::TreeNodeEx("Cameras", ImGuiTreeNodeFlags_DefaultOpen)) {
+            // Default editor camera (always first, index -1)
+            {
+              bool isDefault = (g_activeCameraIdx < 0);
+              ImGui::PushID(20000);
+              if (ImGui::RadioButton("##act", isDefault))
+                g_activeCameraIdx = -1;
+              ImGui::SameLine();
+              ImGuiTreeNodeFlags flags = ImGuiTreeNodeFlags_Leaf | ImGuiTreeNodeFlags_SpanAvailWidth;
+              bool nodeOpen = ImGui::TreeNodeEx("[E] Editor Camera", flags);
+              if (nodeOpen) ImGui::TreePop();
+              ImGui::PopID();
+            }
             for (int i = 0; i < (int)g_cameras.size(); ++i) {
+              ImGui::PushID(i + 20001);
+              bool isActive = (g_activeCameraIdx == i);
+              if (ImGui::RadioButton("##act", isActive))
+                g_activeCameraIdx = isActive ? -1 : i;
+              ImGui::SameLine();
               ImGuiTreeNodeFlags flags = ImGuiTreeNodeFlags_Leaf | ImGuiTreeNodeFlags_SpanAvailWidth;
               if (g_selectionType == 1 && i == g_selectedIdx) flags |= ImGuiTreeNodeFlags_Selected;
               const char* icon = (g_cameras[i].type == CameraType::Perspective) ? "[P] " : "[O] ";
@@ -670,12 +711,16 @@ void EditorApp::OnDraw() {
                 else { g_selectedIdx = i; g_selectionType = 1; }
               }
               if (nodeOpen) ImGui::TreePop();
+              ImGui::PopID();
             }
             ImGui::TreePop();
           }
-          // Lights
-          if (!g_lights.empty() && ImGui::TreeNodeEx("Lights", ImGuiTreeNodeFlags_DefaultOpen)) {
+          // Lights — checkbox = enabled
+          if (ImGui::TreeNodeEx("Lights", ImGuiTreeNodeFlags_DefaultOpen)) {
             for (int i = 0; i < (int)g_lights.size(); ++i) {
+              ImGui::PushID(i + 30000);
+              ImGui::Checkbox("##en", &g_lights[i].enabled);
+              ImGui::SameLine();
               ImGuiTreeNodeFlags flags = ImGuiTreeNodeFlags_Leaf | ImGuiTreeNodeFlags_SpanAvailWidth;
               if (g_selectionType == 2 && i == g_selectedIdx) flags |= ImGuiTreeNodeFlags_Selected;
               const char* icon = (g_lights[i].type == EditorLightType::Directional) ? "[D] " : "[O] ";
@@ -686,6 +731,7 @@ void EditorApp::OnDraw() {
                 else { g_selectedIdx = i; g_selectionType = 2; }
               }
               if (nodeOpen) ImGui::TreePop();
+              ImGui::PopID();
             }
             ImGui::TreePop();
           }

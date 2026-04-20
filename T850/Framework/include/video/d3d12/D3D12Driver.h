@@ -15,6 +15,7 @@
 
 #include <d3d12.h>
 #include <dxgi1_4.h>
+#include <dxgi1_5.h>
 #include <D3Dcompiler.h>
 
 #include <wrl.h>
@@ -234,7 +235,7 @@ namespace t800 {
 
     // ── Helpers for resource creation ──
     D3D12Heap& GetHeap(D3D12Heap::Type type) { return m_heaps[type]; }
-    ID3D12GraphicsCommandList* GetCmdList() const { return m_commandList.Get(); }
+    ID3D12GraphicsCommandList* GetCmdList() const { return m_commandLists[m_currentBackBuffer].Get(); }
     ID3D12CommandQueue*        GetCmdQueue() const { return m_commandQueue.Get(); }
 
     // Upload helper: copies data to GPU using a temp command list
@@ -280,16 +281,20 @@ namespace t800 {
     ComPtr<IDXGIFactory4>       m_dxgiFactory;
     ComPtr<IDXGISwapChain3>     m_swapChain;
 
-    // Command infrastructure
+    // Command infrastructure — one list+allocator per back buffer for full overlap
     ComPtr<ID3D12CommandQueue>         m_commandQueue;
     ComPtr<ID3D12CommandAllocator>     m_commandAllocators[kBackBufferCount];
-    ComPtr<ID3D12GraphicsCommandList>  m_commandList;
+    ComPtr<ID3D12GraphicsCommandList>  m_commandLists[kBackBufferCount];
 
     // Synchronization — single monotonically increasing fence
     ComPtr<ID3D12Fence> m_fence;
     UINT64              m_nextFenceValue = 1;              // next value to signal
     UINT64              m_frameFenceValues[kBackBufferCount] = {}; // value each BB must reach before reuse
     HANDLE              m_fenceEvent = nullptr;
+
+    // Tearing / waitable swap chain
+    bool                m_tearingSupported = false;
+    HANDLE              m_swapChainWaitableObject = nullptr;
 
     // Back buffers
     ComPtr<ID3D12Resource> m_backBuffers[kBackBufferCount];

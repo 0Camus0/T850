@@ -65,6 +65,7 @@ public:
   void InitVars() override;
   void CreateAssets() override;
   void DestroyAssets() override;
+  void RequestDump() override { m_dumper.RequestDump(); }
 
   void ChangeSettingsOnPlus();
   void ChangeSettingsOnMinus();

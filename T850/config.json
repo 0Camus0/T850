@@ -9,8 +9,8 @@
                     "fullscreen":  false
                 },
     "replaySnapshot":  {
-                           "path":  "D:\\Code\\Game\\T850\\T850\\bin\\x64\\Release\\dumps_d3d12_f1664_20260417_232407\\snapshot.json",
-                           "enabled":  false
+                           "path":  "D:\\Code\\Game\\T850\\T850\\bin\\x64\\Release\\dumps_vulkan_f1324_20260419_195612\\snapshot.json",
+                           "enabled":  true
                        },
     "configuration":  "Release",
     "dump":  {
@@ -19,7 +19,7 @@
                  "frame":  750,
                  "enabled":  true
              },
-    "debugFrames":  false,
+    "debugFrames":  true,
     "devTools":  {
                      "guiControlEdit":  false,
                      "d3d12Debug":  false,
@@ -27,6 +27,6 @@
                      "logLevel":  "error",
                      "logToFile":  false,
                      "guiEdit":  false,
-                     "guiSnap":  true
+                     "guiSnap":  false
                  }
 }

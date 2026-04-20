@@ -231,7 +231,7 @@ namespace t800 {
     char *vsSourceP;
     char *fsSourceP;
     std::string vsName, fsName;
-    if (g_pBaseDriver->m_currentAPI == GRAPHICS_API::OPENGL) {
+    if (g_pBaseDriver->UsesGLSL()) {
       vsSourceP = file2string("Shaders/VS_Mesh.glsl");
       fsSourceP = file2string("Shaders/FS_Mesh.glsl");
       vsName = "VS_Mesh.glsl";

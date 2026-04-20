@@ -232,6 +232,11 @@ namespace t800 {
 	};
    
     BaseDriver() : CurrentRT(-1) , m_FaceCulling(FRONT_FACES) {  }
+
+    // Returns true if this API uses GLSL shaders (OpenGL only; Vulkan uses HLSL→SPIR-V)
+    bool UsesGLSL() const { return m_currentAPI == GRAPHICS_API::OPENGL; }
+    // Returns true if GL-style V-flip is needed (OpenGL only; Vulkan uses top-left like D3D)
+    bool NeedsVFlip() const { return m_currentAPI == GRAPHICS_API::OPENGL; }
     virtual	void	 InitDriver() = 0;
     virtual void	 CreateSurfaces() = 0;
     virtual void	 DestroySurfaces() = 0;

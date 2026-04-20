@@ -550,6 +550,7 @@ void EditorApp::OnDraw() {
       // GBuffer pass: draw all meshes into the G-buffer RT
       drv->PushRT(0); // GBuffer RT
       drv->Clear();
+      drv->SetCullFace(t800::BaseDriver::FRONT_AND_BACK); // no culling
       for (auto* inst : ptrs) {
         t800::ShaderKey gk(0);
         gk.setPass(t800::PassType::GBUFFER);

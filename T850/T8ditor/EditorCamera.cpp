@@ -55,13 +55,13 @@ void EditorCamera::Update(float dtSecs, InputManager& im, float wheelDelta,
   if (!skipMouse) {
     const bool middleDown = im.PressedMouseButton(1);
     const bool rightDown  = im.PressedMouseButton(2);
-    const bool shiftDown  = im.PressedKey(T800K_LSHIFT) || im.PressedKey(T800K_RSHIFT);
 
     if (middleDown || rightDown) {
       const float dx = (float)im.xDelta;
       const float dy = (float)im.yDelta;
 
-      if (middleDown && shiftDown) {
+      if (middleDown) {
+        // Middle-drag = pan (3dsmax style: no modifier needed)
         const float panScale = PanSpeed * m_distance;
         m_target.x -= m_cam.Right.x * dx * panScale;
         m_target.y -= m_cam.Right.y * dx * panScale;
@@ -70,6 +70,7 @@ void EditorCamera::Update(float dtSecs, InputManager& im, float wheelDelta,
         m_target.y += m_cam.Up.y * dy * panScale;
         m_target.z += m_cam.Up.z * dy * panScale;
       } else {
+        // Right-drag = orbit
         m_yaw   += dx * OrbitSpeed;
         m_pitch += dy * OrbitSpeed;
       }

@@ -4,6 +4,7 @@
 
 #include "EditorScene.h"
 
+#include <Config.h>
 #include <utils/Log.h>
 
 #include <glaze/glaze.hpp>
@@ -13,8 +14,8 @@
 #include <filesystem>
 
 #ifdef OS_WINDOWS
-#include <commdlg.h>
 #include <windows.h>
+#include <commdlg.h>
 #endif
 
 namespace t8ditor {

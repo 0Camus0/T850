@@ -17,6 +17,7 @@ struct SceneObject {
   t800::PrimitiveInst   litInst;
   int                   primId = -1;
   std::string           name;
+  bool                  visible = true;
 };
 
 // ── Camera ───────────────────────────────────────────

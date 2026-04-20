@@ -2136,9 +2136,9 @@ namespace t800 {
   void VulkanDriver::DestroySurfaces() {}
   void VulkanDriver::Update() {}
 
-  void VulkanDriver::DestroyDriver() {
+  void VulkanDriver::FlushGPUResources() {
+    if (!m_device) return;
     WaitForGPU();
-
     // Reset all command buffers to release references to resources
     for (uint32_t i = 0; i < kBackBufferCount; i++) {
       if (m_commandBuffers[i])
@@ -2149,6 +2149,11 @@ namespace t800 {
       if (m_descriptorPools[i])
         vkResetDescriptorPool(m_device, m_descriptorPools[i], 0);
     }
+    T8_LOG_INFO("[Vulkan] GPU flushed, command buffers and descriptor pools reset");
+  }
+
+  void VulkanDriver::DestroyDriver() {
+    FlushGPUResources();
 
     DestroyShaders();
     DestroyRTs();

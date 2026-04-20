@@ -39,6 +39,7 @@ namespace t800 {
     m_inited = true;
   }
   void Win32Framework::OnDestroyApplication() {
+    pVideoDriver->FlushGPUResources();  // release cmd buffer/descriptor refs before scene cleanup
     pBaseApp->DestroyAssets();
     pVideoDriver->DestroyDriver();
     delete pVideoDriver;
@@ -156,6 +157,7 @@ namespace t800 {
     }
 #endif
     if (m_inited) {
+      pVideoDriver->FlushGPUResources();  // release cmd buffer/descriptor refs before scene cleanup
       pBaseApp->DestroyAssets();
       pVideoDriver->DestroyDriver();
       delete pVideoDriver;

@@ -707,21 +707,6 @@ namespace t800 {
   }
 
   void D3DXDriver::SwapBuffers() {
-    T8_LOG_TRACE("[D3DXDriver] SwapBuffers/Present");
-
-    // Frame timing
-    static LARGE_INTEGER freq = {}; 
-    static LARGE_INTEGER lastSwap = {};
-    static int frameNum = 0;
-    if (freq.QuadPart == 0) { QueryPerformanceFrequency(&freq); QueryPerformanceCounter(&lastSwap); }
-    LARGE_INTEGER now; QueryPerformanceCounter(&now);
-    double ms = (now.QuadPart - lastSwap.QuadPart) * 1000.0 / freq.QuadPart;
-    lastSwap = now;
-    frameNum++;
-    if (frameNum % 60 == 0) {
-      T8_LOG_INFO("[D3D11] Frame %d: %.1fms (%.1f FPS)", frameNum, ms, 1000.0/ms);
-    }
-
     // Swap between back and front buffer
     DXGISwapchain->Present(0, 0);
   }

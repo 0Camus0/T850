@@ -970,20 +970,6 @@ namespace t800 {
   }
 
   void D3D12Driver::SwapBuffers() {
-    T8_LOG_TRACE("[D3D12] SwapBuffers");
-
-    // Frame timing
-    static LARGE_INTEGER freq = {}; 
-    static LARGE_INTEGER lastSwap = {};
-    static int frameNum = 0;
-    if (freq.QuadPart == 0) { QueryPerformanceFrequency(&freq); QueryPerformanceCounter(&lastSwap); }
-    LARGE_INTEGER now; QueryPerformanceCounter(&now);
-    double ms = (now.QuadPart - lastSwap.QuadPart) * 1000.0 / freq.QuadPart;
-    lastSwap = now;
-    frameNum++;
-    if (frameNum % 60 == 0) {
-      T8_LOG_INFO("[D3D12] Frame %d: %.1fms (%.1f FPS)", frameNum, ms, 1000.0/ms);
-    }
 
     D3D12_RESOURCE_BARRIER b = {};
     b.Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;

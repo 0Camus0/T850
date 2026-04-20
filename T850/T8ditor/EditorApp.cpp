@@ -896,10 +896,32 @@ void EditorApp::OnDraw() {
           g_lights.clear();
           g_selectedIdx = -1;
           g_selectionType = 0;
+          g_activeCameraIdx = -1;
           g_undoStack.Clear();
           m_primMgr.Init();
           m_primMgr.SetVP(&m_vp);
           m_primMgr.SetSceneProps(&m_sceneProps);
+
+          // Recreate deferred quads (old QUAD primitive was destroyed)
+          if (g_deferredReady) {
+            for (int i = 0; i < 8; ++i) {
+              g_quads[i].CreateInstance(m_primMgr.GetPrimitive(t800::PrimitiveManager::QUAD), &g_quadVP);
+              g_quads[i].Update();
+            }
+            // Rebind G-buffer textures and env map
+            if (!pFramework->pVideoDriver->RTs.empty()) {
+              auto* gbufferRT = pFramework->pVideoDriver->RTs[0];
+              for (int j = 0; j < (int)gbufferRT->vColorTextures.size() && j < 5; ++j)
+                g_quads[0].SetTexture(gbufferRT->vColorTextures[j], j);
+              if (gbufferRT->pDepthTexture)
+                g_quads[0].SetTexture(gbufferRT->pDepthTexture, 4);
+            }
+            if (g_dummyWhiteTex)
+              g_quads[0].SetTexture(g_dummyWhiteTex, 5);
+            if (g_dummyEnvMapIdx >= 0)
+              g_quads[0].SetEnvironmentMap(t800::g_pBaseDriver->GetTexture(g_dummyEnvMapIdx));
+            m_primMgr.SetSceneProps(&m_sceneProps);
+          }
 
           // Load mesh objects
           for (auto& od : sf.objects) {

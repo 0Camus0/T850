@@ -57,6 +57,9 @@ public:
   // Reset camera to the default position and orientation.
   void ResetToDefault();
 
+  // Reset yaw/pitch/distance to defaults but keep the current target.
+  void ResetViewAngle();
+
   // Underlying Framework camera (for VP, Eye, Look). Const access to
   // discourage callers from mutating it directly.
   const ::Camera& GetCamera() const { return m_cam; }

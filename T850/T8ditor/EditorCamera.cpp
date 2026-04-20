@@ -49,6 +49,13 @@ void EditorCamera::ResetToDefault() {
   m_distance = FrameDistance;
 }
 
+void EditorCamera::ResetViewAngle() {
+  // Reset viewing angle and distance but keep the current target
+  m_yaw      = -0.75f;
+  m_pitch    =  0.4f;
+  m_distance = FrameDistance;
+}
+
 void EditorCamera::Update(float dtSecs, InputManager& im, float wheelDelta,
                           bool skipMouse, bool skipKeyboard) {
   // ── Mouse-driven controls (skip when ImGui wants the mouse) ──

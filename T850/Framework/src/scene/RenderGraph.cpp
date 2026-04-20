@@ -511,12 +511,22 @@ void RenderGraph::ExecutePass(
       }
 
       if (draw.type == "mesh") {
-        for (int mi : draw.mesh_indices) {
-          if (mi < meshCount) {
+        if (draw.mesh_indices.empty()) {
+          // Empty array = draw ALL meshes
+          for (int mi = 0; mi < meshCount; ++mi) {
             meshes[mi].SetGlobalKey(sig);
             meshes[mi].Draw();
             ShaderKey fwd(0); fwd.setPass(PassType::FORWARD);
             meshes[mi].SetGlobalKey(fwd);
+          }
+        } else {
+          for (int mi : draw.mesh_indices) {
+            if (mi >= 0 && mi < meshCount) {
+              meshes[mi].SetGlobalKey(sig);
+              meshes[mi].Draw();
+              ShaderKey fwd(0); fwd.setPass(PassType::FORWARD);
+              meshes[mi].SetGlobalKey(fwd);
+            }
           }
         }
       }

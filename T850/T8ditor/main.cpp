@@ -47,7 +47,7 @@ static t800::RootFramework* g_pFramework = nullptr;
 
 int main(int argc, char** argv) {
   t800::ApplicationDesc desc;
-  desc.api       = t800::GRAPHICS_API::D3D12;
+  desc.api       = t800::GRAPHICS_API::D3D11;
   desc.height    = 720;
   desc.width     = 1280;
   desc.videoMode = t800::T8_VIDEO_MODE::WINDOWED;
@@ -134,4 +134,3 @@ int main(int argc, char** argv) {
   t800::Log::Shutdown();
   return 0;
 }
-

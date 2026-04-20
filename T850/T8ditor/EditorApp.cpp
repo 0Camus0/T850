@@ -517,8 +517,8 @@ void EditorApp::OnDraw() {
       g_skyboxInst.Draw();
     }
 
-    // Update all mesh transforms before the render graph executes
-    std::vector<t800::PrimitiveInst> meshInsts;
+    // Update all mesh transforms
+    int visibleCount = 0;
     for (int i = 0; i < (int)g_objects.size(); ++i) {
       SceneObject& obj = g_objects[i];
       if (obj.primId < 0 || !obj.visible) continue;
@@ -531,17 +531,60 @@ void EditorApp::OnDraw() {
       obj.litInst.RotateZAbsolute(eul.z * kRadToDeg);
       obj.litInst.ScaleAbsolute(scl.x, scl.y, scl.z);
       obj.litInst.Update();
-      meshInsts.push_back(obj.litInst);
+      visibleCount++;
     }
 
-    // Render meshes through deferred pipeline (GBuffer -> Deferred -> BackBuffer)
-    if (g_deferredReady && !meshInsts.empty()) {
+    // Render meshes through deferred pipeline or forward fallback
+    if (g_deferredReady && visibleCount > 0) {
+      // Build contiguous array of PrimitiveInst for the render graph
+      // (use the actual litInst objects, not copies, to preserve internal state)
+      std::vector<t800::PrimitiveInst*> ptrs;
+      for (auto& obj : g_objects)
+        if (obj.primId >= 0 && obj.visible) ptrs.push_back(&obj.litInst);
+
+      // RenderGraph::Execute needs a contiguous PrimitiveInst array.
+      // We'll call it once per mesh since we can't easily make a contiguous
+      // array from non-contiguous objects. Instead, execute passes manually.
       ::Camera* mainCam = m_sceneProps.pCameras[0];
-      g_renderGraph.Execute(drv, m_sceneProps,
-        meshInsts.data(), (int)meshInsts.size(),
-        g_quads, mainCam, nullptr, nullptr, -1);
+
+      // GBuffer pass: draw all meshes into the G-buffer RT
+      drv->PushRT(0); // GBuffer RT
+      drv->Clear();
+      for (auto* inst : ptrs) {
+        t800::ShaderKey gk(0);
+        gk.setPass(t800::PassType::GBUFFER);
+        inst->SetGlobalKey(gk);
+        inst->Draw();
+        t800::ShaderKey fwd(0); fwd.setPass(t800::PassType::FORWARD);
+        inst->SetGlobalKey(fwd);
+      }
+      drv->SetDepthStencilState(t800::BaseDriver::READ);
+      drv->PopRT();
+
+      // Deferred pass: fullscreen quad reads G-buffer, evaluates all lights
+      drv->PushRT(1); // Deferred RT
+      // Bind G-buffer textures to quads[0]
+      for (int j = 0; j < (int)drv->RTs[0]->vColorTextures.size() && j < 5; ++j)
+        g_quads[0].SetTexture(drv->RTs[0]->vColorTextures[j], j);
+      {
+        t800::ShaderKey dk(0);
+        dk.setPass(t800::PassType::DEFERRED);
+        g_quads[0].SetGlobalKey(dk);
+        g_quads[0].Draw();
+      }
+      drv->PopRT();
+
+      // BackBuffer pass: final quad copies deferred output to screen
+      g_quads[7].SetTexture(drv->GetRTTexture(1, 0), 0); // Deferred:COLOR0
+      {
+        t800::ShaderKey bk(0);
+        bk.setPass(t800::PassType::BACKBUFFER);
+        g_quads[7].SetGlobalKey(bk);
+        g_quads[7].Draw();
+      }
+      drv->SetDepthStencilState(t800::BaseDriver::DEPTH_DEFAULT);
     } else if (!g_deferredReady) {
-      // Forward fallback if render graph failed to load
+      // Forward fallback
       for (int i = 0; i < (int)g_objects.size(); ++i) {
         SceneObject& obj = g_objects[i];
         if (obj.primId < 0 || !obj.visible) continue;

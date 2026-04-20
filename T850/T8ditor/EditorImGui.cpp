@@ -326,11 +326,12 @@ int ImGuiDrawToolbar(int currentMode) {
     ImVec2 btnSize(70, 0);
 
     auto ToolButton = [&](const char* label, int mode) {
-      if (currentMode == mode)
+      bool isActive = (currentMode == mode);
+      if (isActive)
         ImGui::PushStyleColor(ImGuiCol_Button, activeCol);
       if (ImGui::Button(label, btnSize))
         currentMode = mode;
-      if (currentMode == mode)
+      if (isActive)
         ImGui::PopStyleColor();
     };
 

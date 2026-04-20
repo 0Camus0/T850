@@ -17,6 +17,7 @@
 #include <filesystem>
 
 #include <imgui.h>
+#include <ImGuizmo.h>
 #include <SDL3/SDL.h>
 
 #ifdef OS_WINDOWS
@@ -333,18 +334,11 @@ void EditorApp::OnDraw() {
       drv->SetDepthStencilState(t800::BaseDriver::DEPTH_DEFAULT);
     }
 
-    // ── Editor overlays (grid, gizmo) ──
+    // ── Editor overlays (grid) ──
     if (m_lines.IsReady()) {
       const XMATRIX44 vp = cam.VP;
       m_grid.Draw(m_lines, vp);
-
-      // Gizmo only draws when a mesh is selected
-      if (m_meshSelected && m_mesh.IsLoaded()) {
-        XMATRIX44 selWorld;
-        const XVECTOR3& p = m_mesh.Position();
-        XMatTranslation(selWorld, p.x, p.y, p.z);
-        m_gizmo.Draw(m_lines, vp, selWorld);
-      }
+      // Visual-only EditorGizmo replaced by ImGuizmo (drawn in ImGui pass below)
     }
   }
 
@@ -357,6 +351,39 @@ void EditorApp::OnDraw() {
     // Toolbar — gizmo mode buttons
     int mode = ImGuiDrawToolbar((int)m_gizmo.Mode());
     m_gizmo.SetMode((GizmoMode)mode);
+
+    // ── ImGuizmo interactive gizmo ──
+    ImGuizmoBeginFrame(0, 0, m_lastW, m_lastH, false);
+
+    if (m_meshSelected && m_mesh.IsLoaded()) {
+      const ::Camera& cam2 = m_camera.GetCamera();
+
+      // Build the object's world matrix from current T/R/S
+      XMATRIX44 worldMat = m_mesh.BuildWorld();
+
+      // ImGuizmo::Manipulate takes float[16] for view, proj, and world.
+      // Our engine uses row-major (D3DX-style) which is memory-compatible
+      // with ImGuizmo's expected layout.
+      bool manipulated = ImGuizmoManipulate(
+        &cam2.View.m[0][0],
+        &cam2.Projection.m[0][0],
+        mode,
+        &worldMat.m[0][0]);
+
+      if (manipulated) {
+        // Decompose the modified world matrix back into T/R/S
+        float translation[3], rotation[3], scale[3];
+        ImGuizmo::DecomposeMatrixToComponents(
+          &worldMat.m[0][0], translation, rotation, scale);
+
+        m_mesh.Position()    = XVECTOR3(translation[0], translation[1], translation[2]);
+        m_mesh.EulerRadians() = XVECTOR3(
+          rotation[0] * kDegToRad,
+          rotation[1] * kDegToRad,
+          rotation[2] * kDegToRad);
+        m_mesh.Scale() = XVECTOR3(scale[0], scale[1], scale[2]);
+      }
+    }
 
     // Handle menu actions
     if (menuAction.wantsExit) {

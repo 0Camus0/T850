@@ -74,6 +74,18 @@ namespace t8ditor {
   void ImGuiLogCaptureStart();
   void ImGuiLogCaptureStop();
 
+  // ── ImGuizmo interactive gizmo ───────────────────────
+  // Call once per frame before Manipulate.
+  void ImGuizmoBeginFrame(int vpX, int vpY, int vpW, int vpH, bool ortho);
+
+  // Draw an interactive gizmo for the given object matrix.
+  // `view` and `proj` are the camera's View and Projection matrices (float[16]).
+  // `worldMatrix` is the object's world matrix (float[16]) — modified in-place.
+  // `operation`: 0=Translate, 1=Rotate, 2=Scale (matches GizmoMode enum).
+  // Returns true if the user manipulated the gizmo this frame.
+  bool ImGuizmoManipulate(const float* view, const float* proj,
+                          int operation, float* worldMatrix);
+
   // ── Mouse wheel (captured via SDL event watcher) ────
   // Returns accumulated wheel delta since last call, then resets.
   float ImGuiConsumeWheelDelta();

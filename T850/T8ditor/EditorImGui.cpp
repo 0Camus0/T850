@@ -31,6 +31,8 @@
 #include <mutex>
 #include <vector>
 
+#include <ImGuizmo.h>
+
 // Framework globals
 namespace t800 {
   extern Device*        T8Device;
@@ -461,6 +463,28 @@ void ImGuiDrawConsolePanel() {
 
   ImGui::EndChild();
   ImGui::End();
+}
+
+// ── ImGuizmo ──────────────────────────────────────────
+
+void ImGuizmoBeginFrame(int vpX, int vpY, int vpW, int vpH, bool ortho) {
+  ImGuizmo::BeginFrame();
+  ImGuizmo::SetOrthographic(ortho);
+  ImGuizmo::SetRect((float)vpX, (float)vpY, (float)vpW, (float)vpH);
+}
+
+bool ImGuizmoManipulate(const float* view, const float* proj,
+                        int operation, float* worldMatrix) {
+  ImGuizmo::OPERATION op;
+  switch (operation) {
+    case 0:  op = ImGuizmo::TRANSLATE; break;
+    case 1:  op = ImGuizmo::ROTATE;    break;
+    case 2:  op = ImGuizmo::SCALE;     break;
+    default: op = ImGuizmo::TRANSLATE; break;
+  }
+
+  return ImGuizmo::Manipulate(view, proj, op, ImGuizmo::WORLD,
+                              worldMatrix, nullptr, nullptr);
 }
 
 // ── Mouse wheel ───────────────────────────────────────

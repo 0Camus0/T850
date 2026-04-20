@@ -509,15 +509,6 @@ void EditorApp::OnDraw() {
       m_sceneProps.ActiveLights = (int)m_sceneProps.Lights.size();
     }
 
-    // Skybox (editor backdrop, always forward — not part of scene graph)
-    if (g_skyboxReady && m_panels.showSkybox) {
-      t800::ShaderKey fwdKey(0);
-      fwdKey.setPass(t800::PassType::FORWARD);
-      g_skyboxInst.SetGlobalKey(fwdKey);
-      g_skyboxInst.Update();
-      g_skyboxInst.Draw();
-    }
-
     // Update all mesh transforms
     int visibleCount = 0;
     for (int i = 0; i < (int)g_objects.size(); ++i) {
@@ -536,27 +527,32 @@ void EditorApp::OnDraw() {
     }
 
     // Render meshes: deferred on D3D11/D3D12, forward on GL
-    bool useDeferred = g_deferredReady && visibleCount > 0
+    bool useDeferred = g_deferredReady
                     && drv->m_currentAPI != t800::GRAPHICS_API::OPENGL;
 
     if (useDeferred) {
-      // Build contiguous array of PrimitiveInst for the render graph
-      // (use the actual litInst objects, not copies, to preserve internal state)
       std::vector<t800::PrimitiveInst*> ptrs;
       for (auto& obj : g_objects)
         if (obj.primId >= 0 && obj.visible) ptrs.push_back(&obj.litInst);
 
-      // RenderGraph::Execute needs a contiguous PrimitiveInst array.
-      // We'll call it once per mesh since we can't easily make a contiguous
-      // array from non-contiguous objects. Instead, execute passes manually.
-      ::Camera* mainCam = m_sceneProps.pCameras[0];
-
-      // GBuffer pass: draw all meshes into the G-buffer RT
-      drv->PushRT(0); // GBuffer RT
-      drv->Clear();
+      // GBuffer pass: draw skybox + all meshes into the G-buffer RT
+      drv->PushRT(0);
       drv->SetBlendState(t800::BaseDriver::BLEND_DEFAULT);
       drv->SetDepthStencilState(t800::BaseDriver::READ_WRITE);
-      drv->SetCullFace(t800::BaseDriver::FRONT_AND_BACK); // no culling
+      drv->SetCullFace(t800::BaseDriver::FRONT_AND_BACK);
+
+      // Skybox into GBuffer (drawn first, at max depth, scene meshes overdraw it)
+      if (g_skyboxReady && m_panels.showSkybox) {
+        t800::ShaderKey gk(0);
+        gk.setPass(t800::PassType::GBUFFER);
+        g_skyboxInst.SetGlobalKey(gk);
+        g_skyboxInst.Update();
+        g_skyboxInst.Draw();
+        t800::ShaderKey fwd(0); fwd.setPass(t800::PassType::FORWARD);
+        g_skyboxInst.SetGlobalKey(fwd);
+      }
+
+      // Scene meshes into GBuffer
       for (auto* inst : ptrs) {
         t800::ShaderKey gk(0);
         gk.setPass(t800::PassType::GBUFFER);
@@ -584,7 +580,8 @@ void EditorApp::OnDraw() {
       drv->PopRT();
 
       // BackBuffer pass: show selected RT or deferred result
-      drv->SetBlendState(t800::BaseDriver::BLEND_DEFAULT);
+      // Use BLEND_OPAQUE to fully overwrite (no alpha blending with backbuffer)
+      drv->SetBlendState(t800::BaseDriver::BLEND_OPAQUE);
       drv->SetDepthStencilState(t800::BaseDriver::NONE);
 
       // If RT debug panel has a specific RT selected, show that instead
@@ -622,6 +619,14 @@ void EditorApp::OnDraw() {
       drv->SetCullFace(t800::BaseDriver::FRONT_AND_BACK);
     } else {
       // Forward rendering (GL, or deferred not ready)
+      // Skybox forward
+      if (g_skyboxReady && m_panels.showSkybox) {
+        t800::ShaderKey fwdKey(0);
+        fwdKey.setPass(t800::PassType::FORWARD);
+        g_skyboxInst.SetGlobalKey(fwdKey);
+        g_skyboxInst.Update();
+        g_skyboxInst.Draw();
+      }
       for (int i = 0; i < (int)g_objects.size(); ++i) {
         SceneObject& obj = g_objects[i];
         if (obj.primId < 0 || !obj.visible) continue;

@@ -326,7 +326,7 @@ void SC_Night::CreateAssets() {
   Quads[6].Update();
 
   Quads[7].ScaleAbsolute(1.0f);
-  Quads[7].TranslateAbsolute(0.0f, 0.0f, 0.1f);
+  Quads[7].TranslateAbsolute(0.0f, 0.0f, 0.0f);
   Quads[7].Update();
 }
 

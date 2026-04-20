@@ -233,8 +233,13 @@ namespace t800 {
   void VulkanVertexBuffer::Set(const DeviceContext& deviceContext, const unsigned stride, const unsigned offset) {
     const_cast<DeviceContext*>(&deviceContext)->actualVertexBuffer = (VertexBuffer*)this;
     VkCommandBuffer cmd = static_cast<const VulkanDeviceContext*>(&deviceContext)->GetCommandBuffer();
-    VkDeviceSize off = offset;
-    vkCmdBindVertexBuffers(cmd, 0, 1, &m_buffer, &off);
+    if (m_usesRing) {
+      VkDeviceSize off = m_ringOffset;
+      vkCmdBindVertexBuffers(cmd, 0, 1, &m_ringBuffer, &off);
+    } else {
+      VkDeviceSize off = offset;
+      vkCmdBindVertexBuffers(cmd, 0, 1, &m_buffer, &off);
+    }
   }
 
   void VulkanVertexBuffer::UpdateFromSystemCopy(const DeviceContext& deviceContext) {
@@ -244,7 +249,20 @@ namespace t800 {
 
   void VulkanVertexBuffer::UpdateFromBuffer(const DeviceContext& deviceContext, const void* buffer) {
     sysMemCpy.assign((char*)buffer, (char*)buffer + descriptor.byteWidth);
-    if (m_mappedData) memcpy(m_mappedData, buffer, descriptor.byteWidth);
+    // Allocate from per-frame ring buffer so each draw gets its own copy
+    auto* driver = GetVkDriver();
+    auto alloc = driver->AllocateVBRing(buffer, descriptor.byteWidth);
+    if (alloc.valid) {
+      m_ringBuffer = alloc.buffer;
+      m_ringOffset = alloc.offset;
+      m_usesRing = true;
+      // Rebind immediately so the next DrawIndexed uses the new allocation
+      VkCommandBuffer cmd = static_cast<const VulkanDeviceContext*>(&deviceContext)->GetCommandBuffer();
+      vkCmdBindVertexBuffers(cmd, 0, 1, &m_ringBuffer, &alloc.offset);
+    } else {
+      if (m_mappedData) memcpy(m_mappedData, buffer, descriptor.byteWidth);
+      m_usesRing = false;
+    }
   }
 
   void VulkanVertexBuffer::release() {
@@ -405,15 +423,32 @@ namespace t800 {
     VkDevice device = driver->GetDevice();
     VmaAllocator allocator = driver->GetAllocator();
 
-    // Determine format based on channel count
-    switch (m_channels) {
-      case 1: m_format = VK_FORMAT_R8_UNORM;       break;
-      case 3: m_format = VK_FORMAT_R8G8B8_UNORM;   break;
-      case 4:
-      default: m_format = VK_FORMAT_R8G8B8A8_UNORM; break;
+    // Vulkan doesn't widely support RGB8 — always use RGBA8 for 3-channel textures
+    unsigned char* uploadBuf = buffer;
+    std::vector<unsigned char> rgbaTmp;
+    int uploadChannels = m_channels;
+    if (m_channels == 3) {
+      uploadChannels = 4;
+      rgbaTmp.resize((size_t)x * y * 4);
+      for (unsigned int i = 0; i < x * y; i++) {
+        rgbaTmp[i * 4 + 0] = buffer[i * 3 + 0];
+        rgbaTmp[i * 4 + 1] = buffer[i * 3 + 1];
+        rgbaTmp[i * 4 + 2] = buffer[i * 3 + 2];
+        rgbaTmp[i * 4 + 3] = 255;
+      }
+      uploadBuf = rgbaTmp.data();
     }
 
-    VkDeviceSize imageSize = (VkDeviceSize)x * y * m_channels;
+    switch (uploadChannels) {
+      case 1:  m_format = VK_FORMAT_R8_UNORM;        break;
+      case 4:
+      default: m_format = VK_FORMAT_R8G8B8A8_UNORM;  break;
+    }
+
+    VkDeviceSize imageSize = (VkDeviceSize)x * y * uploadChannels;
+    bool isCube = (cil_props & CIL_CUBE_MAP) != 0;
+    uint32_t layerCount = isCube ? 6 : 1;
+    VkDeviceSize totalSize = imageSize * layerCount;
 
     // 1. Create VkImage
     VkImageCreateInfo imgCI = { VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO };
@@ -421,25 +456,29 @@ namespace t800 {
     imgCI.format = m_format;
     imgCI.extent = { x, y, 1 };
     imgCI.mipLevels = 1;
-    imgCI.arrayLayers = 1;
+    imgCI.arrayLayers = layerCount;
     imgCI.samples = VK_SAMPLE_COUNT_1_BIT;
     imgCI.tiling = VK_IMAGE_TILING_OPTIMAL;
     imgCI.usage = VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT;
     imgCI.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
     imgCI.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+    if (isCube) imgCI.flags = VK_IMAGE_CREATE_CUBE_COMPATIBLE_BIT;
 
     VmaAllocationCreateInfo allocCI = {};
     allocCI.usage = VMA_MEMORY_USAGE_AUTO;
 
     VkResult res = vmaCreateImage(allocator, &imgCI, &allocCI, &m_image, &m_allocation, nullptr);
     if (res != VK_SUCCESS) {
-      T8_LOG_ERROR("[Vulkan] Texture image creation failed res=%d", res);
+      T8_LOG_ERROR("[Vulkan] Texture image creation failed res=%d (%ux%u layers=%u cube=%d)", res, x, y, layerCount, (int)isCube);
       return;
+    }
+    if (isCube) {
+      T8_LOG_INFO("[Vulkan] Cubemap image created: %ux%u x6 faces, fmt=%d", x, y, (int)m_format);
     }
 
     // 2. Create staging buffer and copy pixel data
     VkBufferCreateInfo stagingInfo = { VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO };
-    stagingInfo.size = imageSize;
+    stagingInfo.size = totalSize;
     stagingInfo.usage = VK_BUFFER_USAGE_TRANSFER_SRC_BIT;
 
     VmaAllocationCreateInfo stagingAllocCI = {};
@@ -451,7 +490,7 @@ namespace t800 {
     VmaAllocation stagingAlloc;
     VmaAllocationInfo stagingAllocInfo;
     vmaCreateBuffer(allocator, &stagingInfo, &stagingAllocCI, &stagingBuffer, &stagingAlloc, &stagingAllocInfo);
-    memcpy(stagingAllocInfo.pMappedData, buffer, imageSize);
+    memcpy(stagingAllocInfo.pMappedData, uploadBuf, totalSize);
 
     // 3. Record transient command buffer
     VkCommandBufferAllocateInfo cmdAlloc = { VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO };
@@ -466,31 +505,54 @@ namespace t800 {
     beginInfo.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
     vkBeginCommandBuffer(cmd, &beginInfo);
 
-    // 3a. Transition UNDEFINED → TRANSFER_DST_OPTIMAL
-    TransitionImageLayout(cmd, m_image,
-                          VK_IMAGE_LAYOUT_UNDEFINED,
-                          VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
-                          VK_IMAGE_ASPECT_COLOR_BIT);
+    // 3a. Transition UNDEFINED → TRANSFER_DST_OPTIMAL (all layers)
+    {
+      VkImageMemoryBarrier barrier = { VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER };
+      barrier.oldLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+      barrier.newLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+      barrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+      barrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+      barrier.image = m_image;
+      barrier.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+      barrier.subresourceRange.levelCount = 1;
+      barrier.subresourceRange.layerCount = layerCount;
+      barrier.srcAccessMask = 0;
+      barrier.dstAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+      vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,
+                           VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 0, nullptr, 0, nullptr, 1, &barrier);
+    }
 
-    // 3b. Copy staging buffer → image
-    VkBufferImageCopy region = {};
-    region.bufferOffset = 0;
-    region.bufferRowLength = 0;
-    region.bufferImageHeight = 0;
-    region.imageSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
-    region.imageSubresource.mipLevel = 0;
-    region.imageSubresource.baseArrayLayer = 0;
-    region.imageSubresource.layerCount = 1;
-    region.imageOffset = { 0, 0, 0 };
-    region.imageExtent = { x, y, 1 };
+    // 3b. Copy staging buffer → image (one region per face/layer)
+    std::vector<VkBufferImageCopy> regions(layerCount);
+    for (uint32_t face = 0; face < layerCount; face++) {
+      regions[face] = {};
+      regions[face].bufferOffset = face * imageSize;
+      regions[face].imageSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+      regions[face].imageSubresource.mipLevel = 0;
+      regions[face].imageSubresource.baseArrayLayer = face;
+      regions[face].imageSubresource.layerCount = 1;
+      regions[face].imageExtent = { x, y, 1 };
+    }
     vkCmdCopyBufferToImage(cmd, stagingBuffer, m_image,
-                           VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &region);
+                           VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+                           layerCount, regions.data());
 
-    // 3c. Transition TRANSFER_DST_OPTIMAL → SHADER_READ_ONLY_OPTIMAL
-    TransitionImageLayout(cmd, m_image,
-                          VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
-                          VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
-                          VK_IMAGE_ASPECT_COLOR_BIT);
+    // 3c. Transition TRANSFER_DST_OPTIMAL → SHADER_READ_ONLY_OPTIMAL (all layers)
+    {
+      VkImageMemoryBarrier barrier = { VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER };
+      barrier.oldLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+      barrier.newLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+      barrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+      barrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+      barrier.image = m_image;
+      barrier.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+      barrier.subresourceRange.levelCount = 1;
+      barrier.subresourceRange.layerCount = layerCount;
+      barrier.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+      barrier.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
+      vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_TRANSFER_BIT,
+                           VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT, 0, 0, nullptr, 0, nullptr, 1, &barrier);
+    }
 
     vkEndCommandBuffer(cmd);
 
@@ -509,13 +571,20 @@ namespace t800 {
     // 6. Create VkImageView
     VkImageViewCreateInfo ivCI = { VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO };
     ivCI.image = m_image;
-    ivCI.viewType = VK_IMAGE_VIEW_TYPE_2D;
+    ivCI.viewType = isCube ? VK_IMAGE_VIEW_TYPE_CUBE : VK_IMAGE_VIEW_TYPE_2D;
     ivCI.format = m_format;
+    // R8 textures: replicate R to all channels (matches D3D11 behavior where R8 = (R,R,R,R))
+    if (m_format == VK_FORMAT_R8_UNORM) {
+      ivCI.components.r = VK_COMPONENT_SWIZZLE_R;
+      ivCI.components.g = VK_COMPONENT_SWIZZLE_R;
+      ivCI.components.b = VK_COMPONENT_SWIZZLE_R;
+      ivCI.components.a = VK_COMPONENT_SWIZZLE_R;
+    }
     ivCI.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
     ivCI.subresourceRange.baseMipLevel = 0;
     ivCI.subresourceRange.levelCount = 1;
     ivCI.subresourceRange.baseArrayLayer = 0;
-    ivCI.subresourceRange.layerCount = 1;
+    ivCI.subresourceRange.layerCount = layerCount;
 
     res = vkCreateImageView(device, &ivCI, nullptr, &m_imageView);
     if (res != VK_SUCCESS) {
@@ -530,7 +599,138 @@ namespace t800 {
   }
 
   void VulkanTexture::LoadAPITextureCompressed(unsigned char* buffer) {
-    T8_LOG_INFO("[Vulkan] TODO: LoadAPITextureCompressed");
+    auto* driver = GetVkDriver();
+    VkDevice device = driver->GetDevice();
+    VmaAllocator allocator = driver->GetAllocator();
+
+    VkFormat fmt = VK_FORMAT_BC1_RGB_UNORM_BLOCK;
+    int blockSize = 8;
+    if (cil_props & CIL_DXT3) { fmt = VK_FORMAT_BC2_UNORM_BLOCK; blockSize = 16; }
+    else if (cil_props & CIL_DXT5) { fmt = VK_FORMAT_BC3_UNORM_BLOCK; blockSize = 16; }
+    m_format = fmt;
+
+    bool isCube = (cil_props & CIL_CUBE_MAP) != 0;
+    uint32_t numFaces = isCube ? 6 : 1;
+    uint32_t mipCount = (mipmaps > 0) ? mipmaps : 1;
+
+    VkImageCreateInfo imgCI = { VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO };
+    imgCI.imageType = VK_IMAGE_TYPE_2D;
+    imgCI.format = fmt;
+    imgCI.extent = { x, y, 1 };
+    imgCI.mipLevels = mipCount;
+    imgCI.arrayLayers = numFaces;
+    imgCI.samples = VK_SAMPLE_COUNT_1_BIT;
+    imgCI.tiling = VK_IMAGE_TILING_OPTIMAL;
+    imgCI.usage = VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT;
+    imgCI.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+    if (isCube) imgCI.flags = VK_IMAGE_CREATE_CUBE_COMPATIBLE_BIT;
+
+    VmaAllocationCreateInfo allocCI = {};
+    allocCI.usage = VMA_MEMORY_USAGE_AUTO;
+    VkResult res = vmaCreateImage(allocator, &imgCI, &allocCI, &m_image, &m_allocation, nullptr);
+    if (res != VK_SUCCESS) {
+      T8_LOG_ERROR("[Vulkan] Compressed tex image failed res=%d (%ux%u)", res, x, y);
+      return;
+    }
+
+    // Compute total upload size and build copy regions
+    std::vector<VkBufferImageCopy> regions;
+    VkDeviceSize totalSize = 0;
+    unsigned char* pData = buffer;
+    for (uint32_t face = 0; face < numFaces; face++) {
+      uint32_t w = this->x, h = this->y;
+      for (uint32_t mip = 0; mip < mipCount; mip++) {
+        uint32_t wBlocks = (w + 3) / 4; if (wBlocks < 1) wBlocks = 1;
+        uint32_t hBlocks = (h + 3) / 4; if (hBlocks < 1) hBlocks = 1;
+        VkDeviceSize mipSize = (VkDeviceSize)wBlocks * hBlocks * blockSize;
+
+        VkBufferImageCopy region = {};
+        region.bufferOffset = totalSize;
+        region.imageSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+        region.imageSubresource.mipLevel = mip;
+        region.imageSubresource.baseArrayLayer = face;
+        region.imageSubresource.layerCount = 1;
+        region.imageExtent = { w, h, 1 };
+        regions.push_back(region);
+
+        totalSize += mipSize;
+        w >>= 1; if (w < 1) w = 1;
+        h >>= 1; if (h < 1) h = 1;
+      }
+    }
+
+    // Staging buffer
+    VkBufferCreateInfo stagingInfo = { VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO };
+    stagingInfo.size = totalSize;
+    stagingInfo.usage = VK_BUFFER_USAGE_TRANSFER_SRC_BIT;
+    VmaAllocationCreateInfo stagingAllocCI = {};
+    stagingAllocCI.usage = VMA_MEMORY_USAGE_AUTO;
+    stagingAllocCI.flags = VMA_ALLOCATION_CREATE_HOST_ACCESS_SEQUENTIAL_WRITE_BIT | VMA_ALLOCATION_CREATE_MAPPED_BIT;
+    VkBuffer stagingBuffer; VmaAllocation stagingAlloc; VmaAllocationInfo stagingAllocInfo;
+    vmaCreateBuffer(allocator, &stagingInfo, &stagingAllocCI, &stagingBuffer, &stagingAlloc, &stagingAllocInfo);
+    memcpy(stagingAllocInfo.pMappedData, buffer, totalSize);
+
+    // Record copy
+    VkCommandBuffer cmd;
+    VkCommandBufferAllocateInfo cmdAlloc = { VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO };
+    cmdAlloc.commandPool = driver->GetTransientCommandPool();
+    cmdAlloc.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
+    cmdAlloc.commandBufferCount = 1;
+    vkAllocateCommandBuffers(device, &cmdAlloc, &cmd);
+    VkCommandBufferBeginInfo beginInfo = { VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO };
+    beginInfo.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
+    vkBeginCommandBuffer(cmd, &beginInfo);
+
+    // Transition all subresources to TRANSFER_DST
+    VkImageMemoryBarrier barrier = { VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER };
+    barrier.oldLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+    barrier.newLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+    barrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+    barrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+    barrier.image = m_image;
+    barrier.subresourceRange = { VK_IMAGE_ASPECT_COLOR_BIT, 0, mipCount, 0, numFaces };
+    barrier.srcAccessMask = 0;
+    barrier.dstAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+    vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT,
+                         0, 0, nullptr, 0, nullptr, 1, &barrier);
+
+    vkCmdCopyBufferToImage(cmd, stagingBuffer, m_image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+                           (uint32_t)regions.size(), regions.data());
+
+    barrier.oldLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+    barrier.newLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+    barrier.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+    barrier.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
+    vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
+                         0, 0, nullptr, 0, nullptr, 1, &barrier);
+
+    vkEndCommandBuffer(cmd);
+    VkSubmitInfo submitInfo = { VK_STRUCTURE_TYPE_SUBMIT_INFO };
+    submitInfo.commandBufferCount = 1;
+    submitInfo.pCommandBuffers = &cmd;
+    vkQueueSubmit(driver->GetGraphicsQueue(), 1, &submitInfo, VK_NULL_HANDLE);
+    vkQueueWaitIdle(driver->GetGraphicsQueue());
+    vkFreeCommandBuffers(device, driver->GetTransientCommandPool(), 1, &cmd);
+    vmaDestroyBuffer(allocator, stagingBuffer, stagingAlloc);
+
+    // Image view
+    VkImageViewCreateInfo ivCI = { VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO };
+    ivCI.image = m_image;
+    ivCI.viewType = isCube ? VK_IMAGE_VIEW_TYPE_CUBE : VK_IMAGE_VIEW_TYPE_2D;
+    ivCI.format = fmt;
+    ivCI.subresourceRange = { VK_IMAGE_ASPECT_COLOR_BIT, 0, mipCount, 0, numFaces };
+    res = vkCreateImageView(device, &ivCI, nullptr, &m_imageView);
+    if (res != VK_SUCCESS) {
+      T8_LOG_ERROR("[Vulkan] Compressed tex view failed res=%d", res);
+      return;
+    }
+
+    // Sampler with mipmaps
+    params |= MIPMAPS;
+    SetTextureParams();
+
+    T8_LOG_INFO("[Vulkan] Compressed texture OK: %ux%u fmt=%d mips=%u faces=%u cube=%d",
+                x, y, (int)fmt, mipCount, numFaces, (int)isCube);
   }
 
   void VulkanTexture::DestroyAPITexture() {
@@ -832,6 +1032,37 @@ namespace t800 {
       return false;
     }
 
+    // Initialize color images to SHADER_READ_ONLY_OPTIMAL so they're valid when first sampled
+    {
+      VkCommandBuffer initCmd;
+      VkCommandBufferAllocateInfo cmdAlloc = { VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO };
+      cmdAlloc.commandPool = driver->GetTransientCommandPool();
+      cmdAlloc.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
+      cmdAlloc.commandBufferCount = 1;
+      vkAllocateCommandBuffers(device, &cmdAlloc, &initCmd);
+      VkCommandBufferBeginInfo beginCI = { VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO };
+      beginCI.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
+      vkBeginCommandBuffer(initCmd, &beginCI);
+      for (int i = 0; i < number_RT; i++) {
+        TransitionImageLayout(initCmd, vColorImages[i],
+          VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
+          VK_IMAGE_ASPECT_COLOR_BIT);
+        vColorLayouts[i] = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+      }
+      if (hasDepth && m_depthImage) {
+        TransitionImageLayout(initCmd, m_depthImage,
+          VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
+          VK_IMAGE_ASPECT_DEPTH_BIT);
+      }
+      vkEndCommandBuffer(initCmd);
+      VkSubmitInfo initSubmit = { VK_STRUCTURE_TYPE_SUBMIT_INFO };
+      initSubmit.commandBufferCount = 1;
+      initSubmit.pCommandBuffers = &initCmd;
+      vkQueueSubmit(driver->GetGraphicsQueue(), 1, &initSubmit, VK_NULL_HANDLE);
+      vkQueueWaitIdle(driver->GetGraphicsQueue());
+      vkFreeCommandBuffers(device, driver->GetTransientCommandPool(), 1, &initCmd);
+    }
+
     T8_LOG_INFO("[Vulkan] LoadAPIRT OK (%dx%d, %d color, depth=%s)", w, h, number_RT, hasDepth ? "yes" : "no");
     return true;
   }
@@ -901,12 +1132,12 @@ namespace t800 {
     driver->SetActiveRenderPass(m_renderPass);
     driver->SetRenderPassActive(true);
 
-    // Set viewport and scissor to RT dimensions
+    // Set viewport and scissor to RT dimensions (negative height for Y-flip)
     VkViewport viewport = {};
     viewport.x = 0.0f;
-    viewport.y = 0.0f;
+    viewport.y = (float)h;
     viewport.width = (float)w;
-    viewport.height = (float)h;
+    viewport.height = -(float)h;
     viewport.minDepth = 0.0f;
     viewport.maxDepth = 1.0f;
     vkCmdSetViewport(cmd, 0, 1, &viewport);
@@ -1075,6 +1306,7 @@ namespace t800 {
       int engineSlot = (int)si.binding;
       if (engineSlot >= 0 && engineSlot < 8) {
         srvBindings[engineSlot] = (int)si.binding;
+        srvIsCubemap[engineSlot] = si.isCubemap;
       }
     }
     // VS sampled images (if any)
@@ -1263,7 +1495,8 @@ namespace t800 {
       case FRONT_AND_BACK: rasterizer.cullMode = VK_CULL_MODE_NONE;      break;
       default:             rasterizer.cullMode = VK_CULL_MODE_BACK_BIT;  break;
     }
-    rasterizer.frontFace = VK_FRONT_FACE_COUNTER_CLOCKWISE;
+    // Negative viewport height flips winding, so use clockwise front face
+    rasterizer.frontFace = VK_FRONT_FACE_CLOCKWISE;
     rasterizer.depthClampEnable = VK_FALSE;
     rasterizer.rasterizerDiscardEnable = VK_FALSE;
     rasterizer.depthBiasEnable = VK_FALSE;
@@ -1484,7 +1717,10 @@ namespace t800 {
     queueCI.queueCount = 1;
     queueCI.pQueuePriorities = &queuePriority;
 
-    const char* deviceExtensions[] = { VK_KHR_SWAPCHAIN_EXTENSION_NAME };
+    const char* deviceExtensions[] = {
+      VK_KHR_SWAPCHAIN_EXTENSION_NAME,
+      VK_KHR_MAINTENANCE1_EXTENSION_NAME,  // negative viewport height for Y-flip
+    };
 
     VkPhysicalDeviceFeatures deviceFeatures = {};
     deviceFeatures.samplerAnisotropy = VK_TRUE;
@@ -1492,7 +1728,7 @@ namespace t800 {
     VkDeviceCreateInfo deviceCI = { VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO };
     deviceCI.queueCreateInfoCount = 1;
     deviceCI.pQueueCreateInfos = &queueCI;
-    deviceCI.enabledExtensionCount = 1;
+    deviceCI.enabledExtensionCount = 2;
     deviceCI.ppEnabledExtensionNames = deviceExtensions;
     deviceCI.pEnabledFeatures = &deviceFeatures;
 
@@ -1616,7 +1852,7 @@ namespace t800 {
     colorAttachment.stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
     colorAttachment.stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
     colorAttachment.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
-    colorAttachment.finalLayout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
+    colorAttachment.finalLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
 
     VkAttachmentDescription depthAttachment = {};
     depthAttachment.format = VK_FORMAT_D32_SFLOAT;
@@ -1712,7 +1948,9 @@ namespace t800 {
   }
 
   void VulkanDriver::CreateFramebuffers() {
-    for (uint32_t i = 0; i < (uint32_t)m_swapChainImageViews.size() && i < kBackBufferCount; i++) {
+    uint32_t imageCount = (uint32_t)m_swapChainImageViews.size();
+    m_backbufferFramebuffers.resize(imageCount, VK_NULL_HANDLE);
+    for (uint32_t i = 0; i < imageCount; i++) {
       VkImageView attachments[] = { m_swapChainImageViews[i], m_depthImageView };
 
       VkFramebufferCreateInfo fbCI = { VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO };
@@ -1878,7 +2116,8 @@ namespace t800 {
       T8_LOG_INFO("[Vulkan] CB ring buffers created (%u KB x %u)", kCBRingBufferSize / 1024, kBackBufferCount);
     }
 
-    m_viewport = { 0.f, 0.f, (float)width, (float)height, 0.f, 1.f };
+    // Negative height flips Y to match D3D/GL NDC (requires VK_KHR_maintenance1)
+    m_viewport = { 0.f, (float)height, (float)width, -(float)height, 0.f, 1.f };
     m_scissorRect = { {0, 0}, {(uint32_t)width, (uint32_t)height} };
 
     CreateDummyTexture();
@@ -1907,6 +2146,8 @@ namespace t800 {
     if (m_dummySampler)   { vkDestroySampler(m_device, m_dummySampler, nullptr); m_dummySampler = VK_NULL_HANDLE; }
     if (m_dummyImageView) { vkDestroyImageView(m_device, m_dummyImageView, nullptr); m_dummyImageView = VK_NULL_HANDLE; }
     if (m_dummyImage)     { vmaDestroyImage(m_allocator, m_dummyImage, m_dummyAllocation); m_dummyImage = VK_NULL_HANDLE; }
+    if (m_dummyCubeImageView) { vkDestroyImageView(m_device, m_dummyCubeImageView, nullptr); m_dummyCubeImageView = VK_NULL_HANDLE; }
+    if (m_dummyCubeImage) { vmaDestroyImage(m_allocator, m_dummyCubeImage, m_dummyCubeAllocation); m_dummyCubeImage = VK_NULL_HANDLE; }
 
     // Destroy CB ring buffers
     for (uint32_t i = 0; i < kBackBufferCount; i++) {
@@ -1929,6 +2170,7 @@ namespace t800 {
 
     for (auto& fb : m_backbufferFramebuffers)
       if (fb) { vkDestroyFramebuffer(m_device, fb, nullptr); fb = VK_NULL_HANDLE; }
+    m_backbufferFramebuffers.clear();
 
     if (m_depthImageView) { vkDestroyImageView(m_device, m_depthImageView, nullptr); m_depthImageView = VK_NULL_HANDLE; }
     if (m_depthImage)     { vmaDestroyImage(m_allocator, m_depthImage, m_depthAllocation); m_depthImage = VK_NULL_HANDLE; }
@@ -2022,6 +2264,7 @@ namespace t800 {
 
     m_lastPipeline = VK_NULL_HANDLE;
     m_lastPipelineLayout = VK_NULL_HANDLE;
+    m_screenshotConsumedSemaphore = false;
   }
 
   void VulkanDriver::EndFrame() {}
@@ -2072,6 +2315,12 @@ namespace t800 {
       m_renderPassActive = false;
     }
 
+    // Transition backbuffer from COLOR_ATTACHMENT → PRESENT_SRC for presentation
+    TransitionImageLayout(cmd, m_swapChainImages[m_imageIndex],
+                          VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
+                          VK_IMAGE_LAYOUT_PRESENT_SRC_KHR,
+                          VK_IMAGE_ASPECT_COLOR_BIT);
+
     // End command buffer
     vkEndCommandBuffer(cmd);
 
@@ -2081,7 +2330,7 @@ namespace t800 {
     VkSemaphore signalSemaphores[] = { m_renderFinishedSemaphores[m_currentFrame] };
 
     VkSubmitInfo submitInfo = { VK_STRUCTURE_TYPE_SUBMIT_INFO };
-    submitInfo.waitSemaphoreCount = 1;
+    submitInfo.waitSemaphoreCount = m_screenshotConsumedSemaphore ? 0 : 1;
     submitInfo.pWaitSemaphores = waitSemaphores;
     submitInfo.pWaitDstStageMask = waitStages;
     submitInfo.commandBufferCount = 1;
@@ -2180,12 +2429,19 @@ namespace t800 {
     }
 
     // Close and submit current command buffer, wait for GPU
+    // Must wait on image-available semaphore (first submit using this swapchain image)
     vkEndCommandBuffer(cmd);
+    VkSemaphore waitSem[] = { m_imageAvailableSemaphores[m_currentFrame] };
+    VkPipelineStageFlags waitStage[] = { VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT };
     VkSubmitInfo submitInfo = { VK_STRUCTURE_TYPE_SUBMIT_INFO };
+    submitInfo.waitSemaphoreCount = m_screenshotConsumedSemaphore ? 0 : 1;
+    submitInfo.pWaitSemaphores = waitSem;
+    submitInfo.pWaitDstStageMask = waitStage;
     submitInfo.commandBufferCount = 1;
     submitInfo.pCommandBuffers = &cmd;
     vkQueueSubmit(m_graphicsQueue, 1, &submitInfo, VK_NULL_HANDLE);
     vkQueueWaitIdle(m_graphicsQueue);
+    m_screenshotConsumedSemaphore = true;
 
     // Get swap chain image
     VkImage srcImage = m_swapChainImages[m_imageIndex];
@@ -2217,9 +2473,9 @@ namespace t800 {
     beginInfo.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
     vkBeginCommandBuffer(copyCmd, &beginInfo);
 
-    // Transition swapchain image to TRANSFER_SRC
+    // Transition swapchain image to TRANSFER_SRC (image is in COLOR_ATTACHMENT after render pass)
     TransitionImageLayout(copyCmd, srcImage,
-      VK_IMAGE_LAYOUT_PRESENT_SRC_KHR, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+      VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
       VK_IMAGE_ASPECT_COLOR_BIT);
 
     VkBufferImageCopy region = {};
@@ -2229,9 +2485,9 @@ namespace t800 {
     vkCmdCopyImageToBuffer(copyCmd, srcImage, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
                            stagingBuf, 1, &region);
 
-    // Transition back to PRESENT_SRC
+    // Transition back to COLOR_ATTACHMENT (we restart the render pass next)
     TransitionImageLayout(copyCmd, srcImage,
-      VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, VK_IMAGE_LAYOUT_PRESENT_SRC_KHR,
+      VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
       VK_IMAGE_ASPECT_COLOR_BIT);
 
     vkEndCommandBuffer(copyCmd);
@@ -2382,14 +2638,13 @@ namespace t800 {
           rgb[i*3+1] = pixels[i*4+1];
           rgb[i*3+2] = pixels[i*4+2];
         } else if (isFloat16 && bpp == 8) {
-          // RGBA16F: rough conversion (just take top byte of each half-float)
+          // RGBA16F → uint8 via IEEE 754 half-float decode
           const uint16_t* fp = (const uint16_t*)(pixels + i * 8);
           auto h2f = [](uint16_t h) -> float {
             uint32_t sign = (h >> 15) & 1; uint32_t exp = (h >> 10) & 0x1F; uint32_t mant = h & 0x3FF;
             if (exp == 0) return sign ? -0.0f : 0.0f;
             if (exp == 31) return sign ? -1e30f : 1e30f;
-            float f = (float)(mant) / 1024.0f + 1.0f;
-            f *= (float)(1 << (exp - 15));
+            float f = ((float)mant / 1024.0f + 1.0f) * ldexpf(1.0f, (int)exp - 15);
             return sign ? -f : f;
           };
           for (int c = 0; c < 3; c++) {
@@ -2517,6 +2772,23 @@ reopen:
     return info;
   }
 
+  VulkanDriver::VBRingAlloc VulkanDriver::AllocateVBRing(const void* data, uint32_t size) {
+    // Must align to 256 so subsequent UBO allocations from the same ring stay aligned
+    uint32_t aligned = (size + 255) & ~255u;
+    if (m_cbRingOffset + aligned > kCBRingBufferSize) {
+      return { VK_NULL_HANDLE, 0, false };
+    }
+    uint32_t bufIdx = m_currentFrame;
+    unsigned char* dst = (unsigned char*)m_cbRingMapped[bufIdx] + m_cbRingOffset;
+    memcpy(dst, data, size);
+    VBRingAlloc alloc;
+    alloc.buffer = m_cbRingBuffers[bufIdx];
+    alloc.offset = m_cbRingOffset;
+    alloc.valid = true;
+    m_cbRingOffset += aligned;
+    return alloc;
+  }
+
   void VulkanDriver::BindBackBufferNoDepth() {
     T8_LOG_TRACE("[Vulkan] BindBackBufferNoDepth");
     // In Vulkan, depth test is controlled by PSO state (NONE), so this is a no-op.
@@ -2568,8 +2840,11 @@ reopen:
 
       VkDescriptorImageInfo imgInfo = {};
       imgInfo.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
-      imgInfo.imageView = m_pendingTextures[slot].imageView ? m_pendingTextures[slot].imageView : m_dummyImageView;
+      // Use cubemap dummy for slots that expect cubemap views
+      VkImageView defaultView = shader->srvIsCubemap[slot] ? m_dummyCubeImageView : m_dummyImageView;
+      imgInfo.imageView = m_pendingTextures[slot].imageView ? m_pendingTextures[slot].imageView : defaultView;
       imgInfo.sampler   = m_pendingTextures[slot].sampler   ? m_pendingTextures[slot].sampler   : m_dummySampler;
+
       imageInfos.push_back(imgInfo);
 
       VkWriteDescriptorSet w = { VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET };
@@ -2688,7 +2963,50 @@ reopen:
     sampCI.addressModeW = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
     vkCreateSampler(m_device, &sampCI, nullptr, &m_dummySampler);
 
-    T8_LOG_INFO("[Vulkan] Dummy 1x1 texture created");
+    // Dummy cubemap (1x1x6 faces) for unbound cubemap slots (e.g. texEnv)
+    VkImageCreateInfo cubeCI = imgCI;
+    cubeCI.flags = VK_IMAGE_CREATE_CUBE_COMPATIBLE_BIT;
+    cubeCI.arrayLayers = 6;
+    VkImage dummyCubeImage = VK_NULL_HANDLE;
+    VmaAllocation dummyCubeAlloc = VK_NULL_HANDLE;
+    vmaCreateImage(m_allocator, &cubeCI, &allocCI, &dummyCubeImage, &dummyCubeAlloc, nullptr);
+
+    // Transition cube to SHADER_READ_ONLY
+    {
+      VkCommandBuffer cubeCmd;
+      vkAllocateCommandBuffers(m_device, &cmdAlloc, &cubeCmd);
+      vkBeginCommandBuffer(cubeCmd, &beginInfo);
+      VkImageMemoryBarrier barrier = { VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER };
+      barrier.oldLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+      barrier.newLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+      barrier.image = dummyCubeImage;
+      barrier.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+      barrier.subresourceRange.levelCount = 1;
+      barrier.subresourceRange.layerCount = 6;
+      barrier.srcAccessMask = 0;
+      barrier.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
+      vkCmdPipelineBarrier(cubeCmd, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,
+                           VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT, 0,
+                           0, nullptr, 0, nullptr, 1, &barrier);
+      vkEndCommandBuffer(cubeCmd);
+      VkSubmitInfo cubeSubmit = { VK_STRUCTURE_TYPE_SUBMIT_INFO };
+      cubeSubmit.commandBufferCount = 1;
+      cubeSubmit.pCommandBuffers = &cubeCmd;
+      vkQueueSubmit(m_graphicsQueue, 1, &cubeSubmit, VK_NULL_HANDLE);
+      vkQueueWaitIdle(m_graphicsQueue);
+      vkFreeCommandBuffers(m_device, m_transientCommandPool, 1, &cubeCmd);
+    }
+
+    VkImageViewCreateInfo cubeIvCI = ivCI;
+    cubeIvCI.image = dummyCubeImage;
+    cubeIvCI.viewType = VK_IMAGE_VIEW_TYPE_CUBE;
+    cubeIvCI.subresourceRange.layerCount = 6;
+    vkCreateImageView(m_device, &cubeIvCI, nullptr, &m_dummyCubeImageView);
+
+    m_dummyCubeImage = dummyCubeImage;
+    m_dummyCubeAllocation = dummyCubeAlloc;
+
+    T8_LOG_INFO("[Vulkan] Dummy textures created (2D + Cube)");
   }
 
 } // namespace t800

@@ -441,8 +441,12 @@ void EditorApp::OnInput() {
       else {
         SceneObject* sel = SelectedObject();
         if (sel && sel->wireframe.IsLoaded()) {
-          m_camera.SetTarget(sel->wireframe.Position());
-          m_camera.Frame();
+          // Center camera on the selected model's position with default viewing angle
+          XVECTOR3 modelPos = sel->wireframe.Position();
+          m_camera.SetTarget(modelPos);
+          m_camera.ResetViewAngle();  // reset yaw/pitch/distance to default, keep target
+          T8_LOG_INFO("[T8ditor] View centered on model at (%.1f, %.1f, %.1f)",
+                      modelPos.x, modelPos.y, modelPos.z);
         } else {
           m_camera.ResetToDefault();
         }

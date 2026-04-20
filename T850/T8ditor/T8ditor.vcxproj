@@ -148,6 +148,7 @@
       <AdditionalIncludeDirectories>$(SolutionDir)Librerias\glaze\include;$(SolutionDir)Librerias\tinyxml2\include;$(SolutionDir)Framework;$(SolutionDir)Framework\include;$(SolutionDir)Librerias\SDL3\include;$(T8VcpkgStatic)\include;$(T8VcpkgDynamic)\include;$(SolutionDir)Librerias\stb\include</AdditionalIncludeDirectories>
       <RuntimeLibrary>MultiThreadedDebug</RuntimeLibrary>
       <MultiProcessorCompilation>true</MultiProcessorCompilation>
+      <DebugInformationFormat>OldStyle</DebugInformationFormat>
       <MinimalRebuild>false</MinimalRebuild>
       <LanguageStandard>stdcpp23</LanguageStandard>
       <AdditionalOptions>/FS /Zc:preprocessor %(AdditionalOptions)</AdditionalOptions>
@@ -182,6 +183,7 @@ copy /Y "$(T8VcpkgDynamic)\bin\zlib1.dll" "$(OutDir)"</Command>
       <AdditionalIncludeDirectories>$(SolutionDir)Librerias\glaze\include;$(SolutionDir)Librerias\tinyxml2\include;$(SolutionDir)Framework;$(SolutionDir)Framework\include;$(SolutionDir)Librerias\SDL3\include;$(T8VcpkgStatic)\include;$(T8VcpkgDynamic)\include;$(SolutionDir)Librerias\stb\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
       <RuntimeLibrary>MultiThreadedDebug</RuntimeLibrary>
       <MultiProcessorCompilation>true</MultiProcessorCompilation>
+      <DebugInformationFormat>OldStyle</DebugInformationFormat>
       <MinimalRebuild>false</MinimalRebuild>
       <LanguageStandard>stdcpp23</LanguageStandard>
       <AdditionalOptions>/FS /Zc:preprocessor %(AdditionalOptions)</AdditionalOptions>
@@ -216,6 +218,7 @@ copy /Y "$(T8VcpkgDynamic)\bin\zlib1.dll" "$(OutDir)"</Command>
       <AdditionalIncludeDirectories>$(SolutionDir)Librerias\glaze\include;$(SolutionDir)Librerias\tinyxml2\include;$(SolutionDir)Framework;$(SolutionDir)Framework\include;$(SolutionDir)Librerias\SDL3\include;$(T8VcpkgStatic)\include;$(T8VcpkgDynamic)\include;$(SolutionDir)Librerias\stb\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
       <RuntimeLibrary>MultiThreadedDebug</RuntimeLibrary>
       <MultiProcessorCompilation>true</MultiProcessorCompilation>
+      <DebugInformationFormat>OldStyle</DebugInformationFormat>
       <MinimalRebuild>false</MinimalRebuild>
       <LanguageStandard>stdcpp23</LanguageStandard>
       <AdditionalOptions>/FS /Zc:preprocessor %(AdditionalOptions)</AdditionalOptions>
@@ -252,6 +255,7 @@ copy /Y "$(T8VcpkgDynamic)\bin\zlib1.dll" "$(OutDir)"</Command>
       <AdditionalIncludeDirectories>$(SolutionDir)Librerias\glaze\include;$(SolutionDir)Librerias\tinyxml2\include;$(SolutionDir)Framework;$(SolutionDir)Framework\include;$(SolutionDir)Librerias\SDL3\include;$(T8VcpkgStatic)\include;$(T8VcpkgDynamic)\include;$(SolutionDir)Librerias\stb\include</AdditionalIncludeDirectories>
       <RuntimeLibrary>MultiThreaded</RuntimeLibrary>
       <MultiProcessorCompilation>true</MultiProcessorCompilation>
+      <DebugInformationFormat>OldStyle</DebugInformationFormat>
       <LanguageStandard>stdcpp23</LanguageStandard>
       <AdditionalOptions>/FS /Zc:preprocessor %(AdditionalOptions)</AdditionalOptions>
     </ClCompile>
@@ -288,6 +292,7 @@ copy /Y "$(T8VcpkgDynamic)\bin\zlib1.dll" "$(OutDir)"</Command>
       <AdditionalIncludeDirectories>$(SolutionDir)Librerias\glaze\include;$(SolutionDir)Librerias\tinyxml2\include;$(SolutionDir)Framework;$(SolutionDir)Framework\include;$(SolutionDir)Librerias\SDL3\include;$(T8VcpkgStatic)\include;$(T8VcpkgDynamic)\include;$(SolutionDir)Librerias\stb\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
       <RuntimeLibrary>MultiThreaded</RuntimeLibrary>
       <MultiProcessorCompilation>true</MultiProcessorCompilation>
+      <DebugInformationFormat>OldStyle</DebugInformationFormat>
       <LanguageStandard>stdcpp23</LanguageStandard>
       <AdditionalOptions>/FS /Zc:preprocessor %(AdditionalOptions)</AdditionalOptions>
     </ClCompile>
@@ -326,6 +331,7 @@ copy /Y "$(T8VcpkgDynamic)\bin\zlib1.dll" "$(OutDir)"</Command>
       <AdditionalIncludeDirectories>$(SolutionDir)Librerias\glaze\include;$(SolutionDir)Librerias\tinyxml2\include;$(SolutionDir)Framework;$(SolutionDir)Framework\include;$(SolutionDir)Librerias\SDL3\include;$(T8VcpkgStatic)\include;$(T8VcpkgDynamic)\include;$(SolutionDir)Librerias\stb\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
       <RuntimeLibrary>MultiThreaded</RuntimeLibrary>
       <MultiProcessorCompilation>true</MultiProcessorCompilation>
+      <DebugInformationFormat>OldStyle</DebugInformationFormat>
       <LanguageStandard>stdcpp23</LanguageStandard>
       <AdditionalOptions>/FS /Zc:preprocessor %(AdditionalOptions)</AdditionalOptions>
     </ClCompile>

@@ -456,6 +456,7 @@
       <AdditionalIncludeDirectories>$(SolutionDir)Librerias\glaze\include;$(SolutionDir)Librerias\tinyxml2\include;$(ProjectDir);$(ProjectDir)include;$(SolutionDir)Librerias\SDL3\include;$(T8VcpkgStatic)\include;$(T8VcpkgDynamic)\include;$(SolutionDir)Librerias\stb\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
       <RuntimeLibrary>MultiThreadedDebug</RuntimeLibrary>
       <MultiProcessorCompilation>true</MultiProcessorCompilation>
+      <DebugInformationFormat>OldStyle</DebugInformationFormat>
       <MinimalRebuild>false</MinimalRebuild>
       <LanguageStandard>stdcpp23</LanguageStandard>
       <AdditionalOptions>/Zc:preprocessor %(AdditionalOptions)</AdditionalOptions>
@@ -473,6 +474,7 @@
       <AdditionalIncludeDirectories>$(SolutionDir)Librerias\glaze\include;$(SolutionDir)Librerias\tinyxml2\include;$(ProjectDir);$(ProjectDir)include;$(SolutionDir)Librerias\SDL3\include;$(T8VcpkgStatic)\include;$(T8VcpkgDynamic)\include;$(SolutionDir)Librerias\stb\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
       <RuntimeLibrary>MultiThreadedDebug</RuntimeLibrary>
       <MultiProcessorCompilation>true</MultiProcessorCompilation>
+      <DebugInformationFormat>OldStyle</DebugInformationFormat>
       <MinimalRebuild>false</MinimalRebuild>
       <LanguageStandard>stdcpp23</LanguageStandard>
       <AdditionalOptions>/Zc:preprocessor %(AdditionalOptions)</AdditionalOptions>
@@ -490,6 +492,7 @@
       <AdditionalIncludeDirectories>$(SolutionDir)Librerias\glaze\include;$(SolutionDir)Librerias\tinyxml2\include;$(ProjectDir);$(ProjectDir)include;$(SolutionDir)Librerias\SDL3\include;$(T8VcpkgStatic)\include;$(T8VcpkgDynamic)\include;$(SolutionDir)Librerias\stb\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
       <RuntimeLibrary>MultiThreadedDebug</RuntimeLibrary>
       <MultiProcessorCompilation>true</MultiProcessorCompilation>
+      <DebugInformationFormat>OldStyle</DebugInformationFormat>
       <MinimalRebuild>false</MinimalRebuild>
       <LanguageStandard>stdcpp23</LanguageStandard>
       <AdditionalOptions>/Zc:preprocessor %(AdditionalOptions)</AdditionalOptions>
@@ -509,6 +512,7 @@
       <AdditionalIncludeDirectories>$(SolutionDir)Librerias\glaze\include;$(SolutionDir)Librerias\tinyxml2\include;$(ProjectDir);$(ProjectDir)include;$(SolutionDir)Librerias\SDL3\include;$(T8VcpkgStatic)\include;$(T8VcpkgDynamic)\include;$(SolutionDir)Librerias\stb\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
       <RuntimeLibrary>MultiThreaded</RuntimeLibrary>
       <MultiProcessorCompilation>true</MultiProcessorCompilation>
+      <DebugInformationFormat>OldStyle</DebugInformationFormat>
       <LanguageStandard>stdcpp23</LanguageStandard>
       <AdditionalOptions>/Zc:preprocessor %(AdditionalOptions)</AdditionalOptions>
     </ClCompile>
@@ -535,6 +539,7 @@
       <AdditionalIncludeDirectories>$(SolutionDir)Librerias\glaze\include;$(SolutionDir)Librerias\tinyxml2\include;$(ProjectDir);$(ProjectDir)include;$(SolutionDir)Librerias\SDL3\include;$(T8VcpkgStatic)\include;$(T8VcpkgDynamic)\include;$(SolutionDir)Librerias\stb\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
       <RuntimeLibrary>MultiThreaded</RuntimeLibrary>
       <MultiProcessorCompilation>true</MultiProcessorCompilation>
+      <DebugInformationFormat>OldStyle</DebugInformationFormat>
       <LanguageStandard>stdcpp23</LanguageStandard>
       <AdditionalOptions>/Zc:preprocessor %(AdditionalOptions)</AdditionalOptions>
     </ClCompile>
@@ -561,6 +566,7 @@
       <AdditionalIncludeDirectories>$(SolutionDir)Librerias\glaze\include;$(SolutionDir)Librerias\tinyxml2\include;$(ProjectDir);$(ProjectDir)include;$(SolutionDir)Librerias\SDL3\include;$(T8VcpkgStatic)\include;$(T8VcpkgDynamic)\include;$(SolutionDir)Librerias\stb\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
       <RuntimeLibrary>MultiThreaded</RuntimeLibrary>
       <MultiProcessorCompilation>true</MultiProcessorCompilation>
+      <DebugInformationFormat>OldStyle</DebugInformationFormat>
       <LanguageStandard>stdcpp23</LanguageStandard>
       <AdditionalOptions>/Zc:preprocessor %(AdditionalOptions)</AdditionalOptions>
     </ClCompile>

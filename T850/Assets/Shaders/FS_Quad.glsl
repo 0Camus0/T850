@@ -163,7 +163,7 @@ void main(){
 
 	highp vec3 EyeDir = normalize(CameraPosition-position).xyz;
 
-	int MatId = int(PBRData.a*255.0);
+	int MatId = int(PBRData.a * 255.0 + 0.5);
 	
 	if(MatId == 0){
 		highp vec3 EyeDir_mod = -EyeDir;

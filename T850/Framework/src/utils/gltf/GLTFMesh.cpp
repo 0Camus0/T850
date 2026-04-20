@@ -20,10 +20,12 @@
 #include <utils/gltf/GLTFLoader.h>
 #include <utils/gltf/GLTFAccessor.h>
 #include <utils/gltf/GLTFMaterial.h>
+#include <utils/gltf/GLTFImage.h>
 #include <utils/gltf/GLTFTypes.h>
 #include <utils/XDataBase.h>
 #include <utils/xMaths.h>
 #include <utils/Log.h>
+#include <utils/ThreadPool.h>
 
 #include <mikktspace.h>
 
@@ -334,59 +336,104 @@ void GenerateNaiveTangents(const std::vector<float>& positions,   // size N*3
 bool BuildGeometry(const Document& doc,
                    const Primitive& prim,
                    const XMATRIX44& worldMatrix,
-                   xF::xMeshGeometry& geom) {
+                   xF::xMeshGeometry& geom,
+                   DracoDecodeResult* preDecoded = nullptr) {
   geom = xF::xMeshGeometry{};
 
-  // POSITION is required.
-  if (prim.attributes.POSITION < 0) {
-    T8_LOG_ERROR("[glTF] primitive missing POSITION attribute");
-    return false;
-  }
+  // Check for Draco compression — use pre-decoded data if available
+  bool useDraco = preDecoded != nullptr
+    || (prim.extensions.has_value()
+        && prim.extensions->KHR_draco_mesh_compression.has_value());
+
   std::vector<float> pos, nrm, tan, uv0, uv1, col;
   int posElem = 0, nrmElem = 0, tanElem = 0;
   int uv0Elem = 0, uv1Elem = 0, colElem = 0;
-
-  if (!ReadAccessorFloats(doc, prim.attributes.POSITION, pos, &posElem)
-      || posElem != 3) {
-    T8_LOG_ERROR("[glTF] POSITION accessor invalid");
-    return false;
-  }
-  const std::size_t N = pos.size() / 3;
+  std::size_t N = 0;
 
   bool hasNormal  = false, hasTangent = false;
   bool hasUV0     = false, hasUV1     = false;
   bool hasColor   = false;
 
-  if (prim.attributes.NORMAL >= 0
-      && ReadAccessorFloats(doc, prim.attributes.NORMAL, nrm, &nrmElem)
-      && nrmElem == 3 && nrm.size() == N * 3) {
-    hasNormal = true;
-  }
-  if (prim.attributes.TANGENT >= 0
-      && ReadAccessorFloats(doc, prim.attributes.TANGENT, tan, &tanElem)
-      && tanElem == 4 && tan.size() == N * 4) {
-    hasTangent = true;
-  }
-  if (prim.attributes.TEXCOORD_0 >= 0
-      && ReadAccessorFloats(doc, prim.attributes.TEXCOORD_0, uv0, &uv0Elem)
-      && uv0Elem == 2 && uv0.size() == N * 2) {
-    hasUV0 = true;
-  }
-  if (prim.attributes.TEXCOORD_1 >= 0
-      && ReadAccessorFloats(doc, prim.attributes.TEXCOORD_1, uv1, &uv1Elem)
-      && uv1Elem == 2 && uv1.size() == N * 2) {
-    hasUV1 = true;
-  }
-  if (prim.attributes.COLOR_0 >= 0
-      && ReadAccessorFloats(doc, prim.attributes.COLOR_0, col, &colElem)
-      && (colElem == 3 || colElem == 4)) {
-    hasColor = true;
-  }
-
-  // Indices.
   std::vector<uint32_t> srcIdx;
-  if (prim.indices) {
-    if (!ReadAccessorIndices(doc, *prim.indices, srcIdx)) return false;
+
+  if (useDraco) {
+    // Use pre-decoded data or decode inline
+    DracoDecodeResult localResult;
+    DracoDecodeResult* dr = preDecoded;
+    if (!dr) {
+      const auto& dracoExt = *prim.extensions->KHR_draco_mesh_compression;
+      if (!DecodeDracoMesh(doc, dracoExt, localResult)) {
+        T8_LOG_ERROR("[glTF] Draco decode failed for primitive");
+        return false;
+      }
+      dr = &localResult;
+    }
+    N = dr->vertexCount;
+    pos = std::move(dr->positions);  posElem = 3;
+    srcIdx = std::move(dr->indices);
+
+    if (!dr->normals.empty()) {
+      nrm = std::move(dr->normals); nrmElem = 3; hasNormal = true;
+    }
+    if (!dr->tangents.empty()) {
+      tan = std::move(dr->tangents); tanElem = 4; hasTangent = true;
+    }
+    if (!dr->texcoord0.empty()) {
+      uv0 = std::move(dr->texcoord0); uv0Elem = 2; hasUV0 = true;
+    }
+    if (!dr->texcoord1.empty()) {
+      uv1 = std::move(dr->texcoord1); uv1Elem = 2; hasUV1 = true;
+    }
+    if (!dr->colors.empty()) {
+      col = std::move(dr->colors);
+      colElem = static_cast<int>(col.size() / N);
+      hasColor = (colElem == 3 || colElem == 4);
+    }
+  } else {
+    // Standard accessor path
+    // POSITION is required.
+    if (prim.attributes.POSITION < 0) {
+      T8_LOG_ERROR("[glTF] primitive missing POSITION attribute");
+      return false;
+    }
+
+    if (!ReadAccessorFloats(doc, prim.attributes.POSITION, pos, &posElem)
+        || posElem != 3) {
+      T8_LOG_ERROR("[glTF] POSITION accessor invalid");
+      return false;
+    }
+    N = pos.size() / 3;
+
+    if (prim.attributes.NORMAL >= 0
+        && ReadAccessorFloats(doc, prim.attributes.NORMAL, nrm, &nrmElem)
+        && nrmElem == 3 && nrm.size() == N * 3) {
+      hasNormal = true;
+    }
+    if (prim.attributes.TANGENT >= 0
+        && ReadAccessorFloats(doc, prim.attributes.TANGENT, tan, &tanElem)
+        && tanElem == 4 && tan.size() == N * 4) {
+      hasTangent = true;
+    }
+    if (prim.attributes.TEXCOORD_0 >= 0
+        && ReadAccessorFloats(doc, prim.attributes.TEXCOORD_0, uv0, &uv0Elem)
+        && uv0Elem == 2 && uv0.size() == N * 2) {
+      hasUV0 = true;
+    }
+    if (prim.attributes.TEXCOORD_1 >= 0
+        && ReadAccessorFloats(doc, prim.attributes.TEXCOORD_1, uv1, &uv1Elem)
+        && uv1Elem == 2 && uv1.size() == N * 2) {
+      hasUV1 = true;
+    }
+    if (prim.attributes.COLOR_0 >= 0
+        && ReadAccessorFloats(doc, prim.attributes.COLOR_0, col, &colElem)
+        && (colElem == 3 || colElem == 4)) {
+      hasColor = true;
+    }
+
+    // Indices.
+    if (prim.indices) {
+      if (!ReadAccessorIndices(doc, *prim.indices, srcIdx)) return false;
+    }
   }
   std::vector<uint32_t> tris;
   if (!BuildTriangleIndices(prim, N, srcIdx, tris)) return false;
@@ -403,6 +450,31 @@ bool BuildGeometry(const Document& doc,
       GenerateNaiveTangents(pos, uv0, tris, tan);
       hasTangent = (tan.size() == N * 4);
     }
+  }
+
+  // Generate flat normals if the mesh lacks NORMAL attribute.
+  // The shader pipeline requires normals for G-buffer output.
+  if (!hasNormal && !pos.empty()) {
+    nrm.resize(N * 3, 0.0f);
+    // Accumulate face normals per vertex
+    for (std::size_t fi = 0; fi + 2 < tris.size(); fi += 3) {
+      uint32_t i0 = tris[fi], i1 = tris[fi+1], i2 = tris[fi+2];
+      if (i0 >= N || i1 >= N || i2 >= N) continue;
+      float ax = pos[i1*3]-pos[i0*3], ay = pos[i1*3+1]-pos[i0*3+1], az = pos[i1*3+2]-pos[i0*3+2];
+      float bx = pos[i2*3]-pos[i0*3], by = pos[i2*3+1]-pos[i0*3+1], bz = pos[i2*3+2]-pos[i0*3+2];
+      float nx = ay*bz - az*by, ny = az*bx - ax*bz, nz = ax*by - ay*bx;
+      nrm[i0*3]+=nx; nrm[i0*3+1]+=ny; nrm[i0*3+2]+=nz;
+      nrm[i1*3]+=nx; nrm[i1*3+1]+=ny; nrm[i1*3+2]+=nz;
+      nrm[i2*3]+=nx; nrm[i2*3+1]+=ny; nrm[i2*3+2]+=nz;
+    }
+    for (std::size_t vi = 0; vi < N; vi++) {
+      float l = std::sqrt(nrm[vi*3]*nrm[vi*3] + nrm[vi*3+1]*nrm[vi*3+1] + nrm[vi*3+2]*nrm[vi*3+2]);
+      if (l > 1e-8f) { nrm[vi*3]/=l; nrm[vi*3+1]/=l; nrm[vi*3+2]/=l; }
+      else { nrm[vi*3]=0; nrm[vi*3+1]=1; nrm[vi*3+2]=0; }
+    }
+    hasNormal = true;
+    nrmElem = 3;
+    T8_LOG_DEBUG("[glTF] Generated flat normals for %zu vertices", N);
   }
 
   // ── Set engine attribute mask and per-vertex containers. ──
@@ -449,9 +521,12 @@ bool BuildGeometry(const Document& doc,
     }
     if (hasBinormal) {
       // B = cross(N, T) * tangent.w  (bitangent sign from glTF/MikkTSpace)
+      // When flipping to LH (Z-negation), cross(N_lh, T_lh) = -B_correct_lh,
+      // so we must also negate tangent.w to compensate.
       XVECTOR3 N = geom.Normals[i];
       XVECTOR3 T = geom.Tangents[i];
       float sign = (tan.size() > i*4+3) ? tan[i*4+3] : 1.0f;
+      if (kFlipToLeftHanded) sign = -sign;
       XVECTOR3 B(N.y*T.z - N.z*T.y, N.z*T.x - N.x*T.z, N.x*T.y - N.y*T.x);
       float bl = std::sqrt(B.x*B.x + B.y*B.y + B.z*B.z);
       if (bl > 1e-8f) { B.x /= bl; B.y /= bl; B.z /= bl; }
@@ -667,37 +742,108 @@ bool ConvertToXDatabase(const Document& doc, xF::XDataBase& out,
   mc->Geometry.reserve(totalPrims);
   out.MeshInfo.reserve(totalPrims);
 
-  for (auto& kv : instances) {
-    int meshIdx = kv.first;
-    const XMATRIX44& world = kv.second;
+  // Pre-resolve all images in parallel (CPU decode + serial GPU upload).
+  // Subsequent ConvertMaterial calls will hit the texture cache.
+  if (!doc.images.empty()) {
+    std::vector<std::string> imgNames;
+    std::vector<int> imgSlots;
+    ResolveAllImages(doc, imgNames, imgSlots);
+  }
+
+  // ── Parallel Draco pre-decode ──────────────────────────────────
+  // Build a flat list of all (instance, primitive) pairs and pre-decode
+  // any Draco-compressed primitives in parallel before the serial loop.
+  struct PrimJob {
+    int instanceIdx;
+    std::size_t primIdx;
+    const Primitive* prim;
+    DracoDecodeResult dracoResult;
+    bool hasDraco = false;
+    bool decodeOk = false;
+  };
+
+  std::vector<PrimJob> jobs;
+  jobs.reserve(totalPrims);
+  for (int ii = 0; ii < static_cast<int>(instances.size()); ii++) {
+    int meshIdx = instances[ii].first;
     if (meshIdx < 0 || meshIdx >= static_cast<int>(doc.meshes.size())) continue;
     const Mesh& m = doc.meshes[meshIdx];
-
     for (std::size_t pi = 0; pi < m.primitives.size(); ++pi) {
-      const Primitive& prim = m.primitives[pi];
-      mc->Geometry.emplace_back();
-      xF::xMeshGeometry& geom = mc->Geometry.back();
-      if (!BuildGeometry(doc, prim, world, geom)) {
-        T8_LOG_ERROR("[glTF] '%s' mesh %d primitive %zu: build failed — skipped",
-                     sourcePath.c_str(), meshIdx, pi);
-        mc->Geometry.pop_back();
-        continue;
-      }
-      if (!m.name.empty()) geom.Name = m.name;
-
-      // Material: glTF allows -1 (no material) — handled by ConvertMaterial.
-      ConvertMaterial(doc, prim.material.value_or(-1),
-                      geom.MaterialList.Materials[0]);
-
-      // Build the corresponding interleaved xFinalGeometry.
-      out.MeshInfo.emplace_back();
-      xF::xFinalGeometry& fg = out.MeshInfo.back();
-      BuildFinalGeometry(geom, fg);
-      BuildSubsets(geom, fg);
-      // Engine reads pActual->VertexSize after CreateSubSets — set it
-      // here for parity with the legacy path.
-      geom.VertexSize = fg.VertexSize;
+      PrimJob j;
+      j.instanceIdx = ii;
+      j.primIdx = pi;
+      j.prim = &m.primitives[pi];
+      j.hasDraco = j.prim->extensions.has_value()
+        && j.prim->extensions->KHR_draco_mesh_compression.has_value();
+      jobs.push_back(std::move(j));
     }
+  }
+
+  // Decode Draco meshes in parallel (CPU-only, thread-safe)
+  int dracoCount = 0;
+  for (auto& j : jobs) { if (j.hasDraco) dracoCount++; }
+  if (dracoCount > 0 && g_threadPool) {
+    T8_LOG_INFO("[glTF] Decoding %d Draco meshes with %u threads",
+                dracoCount, g_threadPool->NumWorkers());
+    g_threadPool->ParallelFor(0, static_cast<int>(jobs.size()), [&](int i) {
+      PrimJob& j = jobs[i];
+      if (!j.hasDraco) return;
+      const auto& dracoExt = *j.prim->extensions->KHR_draco_mesh_compression;
+      j.decodeOk = DecodeDracoMesh(doc, dracoExt, j.dracoResult);
+    });
+    T8_LOG_INFO("[glTF] Draco decode complete");
+  } else if (dracoCount > 0) {
+    // Serial fallback
+    for (auto& j : jobs) {
+      if (!j.hasDraco) continue;
+      const auto& dracoExt = *j.prim->extensions->KHR_draco_mesh_compression;
+      j.decodeOk = DecodeDracoMesh(doc, dracoExt, j.dracoResult);
+    }
+  }
+
+  // ── Serial geometry build ──────────────────────────────────────
+  for (auto& job : jobs) {
+    int meshIdx = instances[job.instanceIdx].first;
+    const XMATRIX44& world = instances[job.instanceIdx].second;
+    const Mesh& m = doc.meshes[meshIdx];
+    const Primitive& prim = *job.prim;
+
+    // If Draco was needed but failed, skip
+    if (job.hasDraco && !job.decodeOk) {
+      T8_LOG_ERROR("[glTF] '%s' mesh %d primitive %zu: Draco decode failed — skipped",
+                   sourcePath.c_str(), meshIdx, job.primIdx);
+      continue;
+    }
+
+    mc->Geometry.emplace_back();
+    xF::xMeshGeometry& geom = mc->Geometry.back();
+
+    // Pass pre-decoded Draco data if available
+    bool ok;
+    if (job.hasDraco) {
+      ok = BuildGeometry(doc, prim, world, geom, &job.dracoResult);
+    } else {
+      ok = BuildGeometry(doc, prim, world, geom);
+    }
+
+    if (!ok) {
+      T8_LOG_ERROR("[glTF] '%s' mesh %d primitive %zu: build failed — skipped",
+                   sourcePath.c_str(), meshIdx, job.primIdx);
+      mc->Geometry.pop_back();
+      continue;
+    }
+    if (!m.name.empty()) geom.Name = m.name;
+
+    // Material: glTF allows -1 (no material) — handled by ConvertMaterial.
+    ConvertMaterial(doc, prim.material.value_or(-1),
+                    geom.MaterialList.Materials[0]);
+
+    // Build the corresponding interleaved xFinalGeometry.
+    out.MeshInfo.emplace_back();
+    xF::xFinalGeometry& fg = out.MeshInfo.back();
+    BuildFinalGeometry(geom, fg);
+    BuildSubsets(geom, fg);
+    geom.VertexSize = fg.VertexSize;
   }
 
   T8_LOG_INFO("[glTF] '%s' converted: %zu geometries / %zu mesh instances",

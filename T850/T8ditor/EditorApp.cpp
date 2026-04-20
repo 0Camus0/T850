@@ -71,6 +71,7 @@ namespace {
   t800::RenderGraph   g_renderGraph;
   t800::PrimitiveInst g_quads[8];
   bool                g_deferredReady = false;
+  XMATRIX44           g_quadVP;  // persistent identity matrix for screen-space quads
 
   // RT debug: which RT attachment to display (-1 = backbuffer)
   int g_debugRT = -1;
@@ -146,10 +147,9 @@ void EditorApp::CreateAssets() {
   // Set up deferred render graph
   if (g_renderGraph.Load("Scenes/T8ditor_RenderGraph.json")) {
     g_renderGraph.CreateRenderTargets(pFramework->pVideoDriver, m_sceneProps);
-    XMATRIX44 identity;
-    XMatIdentity(identity);
+    XMatIdentity(g_quadVP);
     for (int i = 0; i < 8; ++i) {
-      g_quads[i].CreateInstance(m_primMgr.GetPrimitive(t800::PrimitiveManager::QUAD), &identity);
+      g_quads[i].CreateInstance(m_primMgr.GetPrimitive(t800::PrimitiveManager::QUAD), &g_quadVP);
       g_quads[i].Update();
     }
     // Bind the G-buffer textures to quads[0] — the deferred lighting quad reads from these
@@ -591,15 +591,7 @@ void EditorApp::OnDraw() {
         g_quads[7].Draw();
       }
       drv->SetDepthStencilState(t800::BaseDriver::DEPTH_DEFAULT);
-
-      // Also draw all meshes forward on top (for models without GBUFFER shaders)
       drv->SetCullFace(t800::BaseDriver::FRONT_AND_BACK);
-      for (auto* inst : ptrs) {
-        t800::ShaderKey fwdKey(0);
-        fwdKey.setPass(t800::PassType::FORWARD);
-        inst->SetGlobalKey(fwdKey);
-        inst->Draw();
-      }
     } else if (!g_deferredReady) {
       // Forward fallback
       for (int i = 0; i < (int)g_objects.size(); ++i) {

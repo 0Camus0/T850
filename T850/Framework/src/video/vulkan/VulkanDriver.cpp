@@ -2138,6 +2138,18 @@ namespace t800 {
 
   void VulkanDriver::DestroyDriver() {
     WaitForGPU();
+
+    // Reset all command buffers to release references to resources
+    for (uint32_t i = 0; i < kBackBufferCount; i++) {
+      if (m_commandBuffers[i])
+        vkResetCommandBuffer(m_commandBuffers[i], 0);
+    }
+    // Reset descriptor pools to release descriptor set references
+    for (uint32_t i = 0; i < kBackBufferCount; i++) {
+      if (m_descriptorPools[i])
+        vkResetDescriptorPool(m_device, m_descriptorPools[i], 0);
+    }
+
     DestroyShaders();
     DestroyRTs();
     DestroyTextures();

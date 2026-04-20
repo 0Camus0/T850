@@ -26,6 +26,18 @@
       "draws": [
         { "type": "fullscreen_quad", "signature": "DEFERRED_PASS" }
       ]
+    },
+    {
+      "name": "BackBuffer",
+      "target": "",
+      "push": false,
+      "pop": false,
+      "inputs": [
+        { "source": "Deferred:COLOR0", "slot": 0 }
+      ],
+      "draws": [
+        { "type": "final_quad", "signature": "BACKBUFFER_PASS" }
+      ]
     }
   ]
 }

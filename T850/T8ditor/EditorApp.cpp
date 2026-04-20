@@ -136,6 +136,7 @@ void EditorApp::CreateAssets() {
     XVECTOR3(0.0f, -1.0f, 0.0f), XVECTOR3(1.0f, 1.0f, 1.0f), 1.5f, true);
   m_sceneProps.ActiveLights = 1;
   m_sceneProps.AmbientColor = XVECTOR3(0.15f, 0.15f, 0.15f);
+  m_sceneProps.EnvFactor = 0.3f;  // reduced env reflections (no HDR tone mapping)
 
   XMatIdentity(m_vp);
   m_primMgr.Init();
@@ -546,26 +547,28 @@ void EditorApp::HandleMousePick() {
     }
   }
 
-  // Test cameras (sphere pick around position)
+  // Test cameras (AABB pick — virtual bounding box around position)
   for (int i = 0; i < (int)g_cameras.size(); ++i) {
     if (g_cameras[i].frozen || !g_cameras[i].visible) continue;
-    t800::BoundingSphere bs;
-    bs.center = g_cameras[i].position;
-    bs.radius = 1.5f;
+    float hs = 2.0f; // half-size of virtual bounding box
+    t800::AABB box(
+      XVECTOR3(g_cameras[i].position.x - hs, g_cameras[i].position.y - hs, g_cameras[i].position.z - hs),
+      XVECTOR3(g_cameras[i].position.x + hs, g_cameras[i].position.y + hs, g_cameras[i].position.z + hs));
     float t = 0.0f;
-    if (t800::RayIntersectsSphere(ray, bs, t) && t < bestT) {
+    if (t800::RayIntersectsAABB(ray, box, t) && t < bestT) {
       bestT = t; bestIdx = i; bestType = 1;
     }
   }
 
-  // Test lights (sphere pick around position)
+  // Test lights (AABB pick — virtual bounding box around position)
   for (int i = 0; i < (int)g_lights.size(); ++i) {
     if (g_lights[i].frozen || !g_lights[i].visible) continue;
-    t800::BoundingSphere bs;
-    bs.center = g_lights[i].position;
-    bs.radius = (g_lights[i].type == EditorLightType::Omni) ? 1.5f : 2.0f;
+    float hs = (g_lights[i].type == EditorLightType::Omni) ? 2.5f : 2.0f;
+    t800::AABB box(
+      XVECTOR3(g_lights[i].position.x - hs, g_lights[i].position.y - hs, g_lights[i].position.z - hs),
+      XVECTOR3(g_lights[i].position.x + hs, g_lights[i].position.y + hs, g_lights[i].position.z + hs));
     float t = 0.0f;
-    if (t800::RayIntersectsSphere(ray, bs, t) && t < bestT) {
+    if (t800::RayIntersectsAABB(ray, box, t) && t < bestT) {
       bestT = t; bestIdx = i; bestType = 2;
     }
   }
@@ -623,26 +626,30 @@ void EditorApp::OnDraw() {
     }
 
     // Sync scene lights from editor lights.
-    // Headlamp is at index 0. User lights are indices 1..N.
-    // We resize the vector to match and update in-place to avoid reallocation.
+    // Headlamp is at index 0. Only ENABLED user lights are added after it.
     {
-      size_t needed = 1 + g_lights.size(); // headlamp + user lights
-      // Grow or shrink
+      // Count enabled lights
+      int enabledCount = 0;
+      for (auto& lt : g_lights)
+        if (lt.enabled) enabledCount++;
+
+      size_t needed = 1 + enabledCount; // headlamp + enabled user lights
       while (m_sceneProps.Lights.size() > needed)
         m_sceneProps.Lights.pop_back();
       while (m_sceneProps.Lights.size() < needed)
         m_sceneProps.Lights.push_back(Light{});
 
-      // Update user lights in-place (index 1..N)
+      // Update enabled user lights only (skip disabled)
       int slot = 1;
       for (auto& lt : g_lights) {
+        if (!lt.enabled) continue;
         Light& target = m_sceneProps.Lights[slot++];
         target.Position  = lt.position;
         target.Direction = lt.direction;
         target.Color     = lt.color;
         target.Intensity = lt.intensity;
         target.radius    = lt.radius;
-        target.Enabled   = lt.enabled ? 1 : 0;
+        target.Enabled   = 1;
         target.Type      = (lt.type == EditorLightType::Directional) ? LIGHT_DIRECTIONAL : LIGHT_POINT;
       }
       m_sceneProps.ActiveLights = (int)m_sceneProps.Lights.size();

@@ -80,8 +80,11 @@ namespace {
   // RT debug: which RT attachment to display (-1 = backbuffer)
   int g_debugRT = -1;
 
-  // Dummy 1x1 white texture for shadow slot (deferred pass expects shadow at slot 5)
+  // Dummy 1x1 white texture for shadow slot
   t800::Texture* g_dummyWhiteTex = nullptr;
+
+  // Dummy environment map (1x1 gray cube for skybox matID=0)
+  int g_dummyEnvMapIdx = -1;
 }
 
 void SetStartupMeshPath(const std::string& p) {
@@ -174,6 +177,13 @@ void EditorApp::CreateAssets() {
     // shadow from tex5; without it, Shadow=0 and everything multiplies to black)
     unsigned char white[4] = { 255, 255, 255, 255 };
     g_dummyWhiteTex = t800::T8Device->CreateTextureFromMemory(white, 1, 1, 4, "dummyWhite");
+
+    // Load environment cubemap for skybox (matID=0 in deferred shader samples texEnv)
+    g_dummyEnvMapIdx = t800::g_pBaseDriver->CreateTexture("sky/CubeMap_SkyWater.dds");
+    if (g_dummyEnvMapIdx >= 0) {
+      g_quads[0].SetEnvironmentMap(t800::g_pBaseDriver->GetTexture(g_dummyEnvMapIdx));
+      T8_LOG_INFO("[T8ditor] Environment cubemap loaded");
+    }
 
     T8_LOG_INFO("[T8ditor] Deferred render graph ready");
   } else {

@@ -2229,8 +2229,11 @@ namespace t800 {
   // ══════════════════════════════════════════════════════
 
   void VulkanDriver::BeginFrame() {
-    WaitForFence(m_currentFrame);
-    vkResetFences(m_device, 1, &m_inFlightFences[m_currentFrame]);
+    {
+      T8_PROFILE_CPU_SCOPE(t800::g_profiler, "VK_FenceWait");
+      WaitForFence(m_currentFrame);
+      vkResetFences(m_device, 1, &m_inFlightFences[m_currentFrame]);
+    }
 
     VkResult res = vkAcquireNextImageKHR(m_device, m_swapChain, UINT64_MAX,
                                           m_imageAvailableSemaphores[m_currentFrame],
@@ -2248,6 +2251,11 @@ namespace t800 {
     vkBeginCommandBuffer(cmd, &beginInfo);
 
     static_cast<VulkanDeviceContext*>(T8DeviceContext)->m_commandBuffer = cmd;
+
+    // Flush profiler query pool reset (must happen before any render pass)
+#ifdef T8_ENABLE_PROFILER
+    if (t800::g_profiler) t800::g_profiler->FlushVulkanQueryReset(cmd);
+#endif
 
     // Reset per-frame descriptor pool and pending state
     vkResetDescriptorPool(m_device, m_descriptorPools[m_currentFrame], 0);

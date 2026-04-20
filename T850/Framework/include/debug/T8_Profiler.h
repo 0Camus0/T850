@@ -68,6 +68,9 @@ namespace t800 {
     void BeginCPUScope(const char* name);
     void EndCPUScope();
 
+    // Vulkan: flush deferred query pool reset (call after vkBeginCommandBuffer, before render pass)
+    void FlushVulkanQueryReset(void* commandBuffer);
+
     // Reporting
     int  GetFrameCount() const { return m_frameCount; }
     const std::vector<ProfileScope>& GetScopes() const { return m_scopes; }
@@ -89,6 +92,7 @@ namespace t800 {
     void InitGPU_D3D12();
     void InitGPU_D3D11();
     void InitGPU_GL();
+    void InitGPU_Vulkan();
     void DestroyGPU();
 
     void BeginGPUScope(int queryIndex);
@@ -100,7 +104,7 @@ namespace t800 {
     BaseDriver*  m_driver      = nullptr;
     int          m_maxScopes   = 64;
     int          m_frameCount  = 0;
-    int          m_apiType     = 0;  // 0=unknown, 1=D3D12, 2=D3D11, 3=GL
+    int          m_apiType     = 0;  // 0=unknown, 1=D3D12, 2=D3D11, 3=GL, 4=Vulkan
 
     // CPU timing
     int64_t      m_cpuFreq     = 0;

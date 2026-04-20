@@ -562,7 +562,6 @@ void EditorApp::OnDraw() {
       drv->PushRT(0);
       drv->SetBlendState(t800::BaseDriver::BLEND_DEFAULT);
       drv->SetDepthStencilState(t800::BaseDriver::READ_WRITE);
-      drv->SetCullFace(t800::BaseDriver::FRONT_AND_BACK);
 
       // Skybox into GBuffer (drawn first, at max depth, scene meshes overdraw it)
       if (g_skyboxReady && m_panels.showSkybox) {

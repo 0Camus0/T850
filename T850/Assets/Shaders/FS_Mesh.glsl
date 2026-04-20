@@ -219,14 +219,16 @@ void main(){
 	#endif
 
 	#ifdef METALLIC_MAP
+		// glTF metallic-roughness: B=metallic, G=roughness, multiply by uniform factors
 		#ifdef ES_30
-			metallic = texture(MetallicTex,parallaxCoords).r;
+			vec4 mrSample = texture(MetallicTex,parallaxCoords);
 		#else
-			metallic = texture2D(MetallicTex,parallaxCoords).r;
+			vec4 mrSample = texture2D(MetallicTex,parallaxCoords);
 		#endif
-	#endif
-
-	#ifdef GLOSS_MAP
+		metallic  = PBRParams.x * mrSample.b;
+		roughness = PBRParams.y * mrSample.g;
+	#elif defined(GLOSS_MAP)
+		// Legacy: separate roughness texture in R channel
 		#ifdef ES_30
 			roughness = texture(GlossTex,parallaxCoords).r;
 		#else

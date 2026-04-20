@@ -401,6 +401,9 @@ namespace t800 {
   void TextRenderer::Destroy()
   {
     m_quad.Destroy();
-    m_CB->release();
+    if (m_CB) { m_CB->release(); m_CB = nullptr; }
+    if (m_batchVB) { m_batchVB->release(); m_batchVB = nullptr; }
+    if (m_batchIB) { m_batchIB->release(); m_batchIB = nullptr; }
+    if (ftex) { ftex->release(); ftex = nullptr; }
   }
 }

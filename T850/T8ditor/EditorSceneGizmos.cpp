@@ -106,6 +106,29 @@ void BuildFrustumGeometry(const SceneCamera& cam,
   L(0,1); L(1,2); L(2,3); L(3,0); // near quad
   L(4,5); L(5,6); L(6,7); L(7,4); // far quad
   L(0,4); L(1,5); L(2,6); L(3,7); // connecting edges
+
+  // Small wireframe cube at target position (8 corners + 12 edges)
+  float th = 0.3f; // half-size
+  XVECTOR3 tgt = cam.target;
+  unsigned short tb = (unsigned short)(verts.size() / 4);
+  float tc[8][3] = {
+    {tgt.x-th, tgt.y-th, tgt.z-th}, {tgt.x+th, tgt.y-th, tgt.z-th},
+    {tgt.x+th, tgt.y+th, tgt.z-th}, {tgt.x-th, tgt.y+th, tgt.z-th},
+    {tgt.x-th, tgt.y-th, tgt.z+th}, {tgt.x+th, tgt.y-th, tgt.z+th},
+    {tgt.x+th, tgt.y+th, tgt.z+th}, {tgt.x-th, tgt.y+th, tgt.z+th},
+  };
+  for (int i = 0; i < 8; ++i) {
+    verts.push_back(tc[i][0]); verts.push_back(tc[i][1]); verts.push_back(tc[i][2]); verts.push_back(1.0f);
+  }
+  L(tb+0,tb+1); L(tb+1,tb+2); L(tb+2,tb+3); L(tb+3,tb+0);
+  L(tb+4,tb+5); L(tb+5,tb+6); L(tb+6,tb+7); L(tb+7,tb+4);
+  L(tb+0,tb+4); L(tb+1,tb+5); L(tb+2,tb+6); L(tb+3,tb+7);
+
+  // Line from camera position to target
+  unsigned short pl = (unsigned short)(verts.size() / 4);
+  verts.push_back(cam.position.x); verts.push_back(cam.position.y); verts.push_back(cam.position.z); verts.push_back(1.0f);
+  verts.push_back(cam.target.x); verts.push_back(cam.target.y); verts.push_back(cam.target.z); verts.push_back(1.0f);
+  idx.push_back(pl); idx.push_back(pl+1);
 }
 
 // Build a circle of line segments in world space.

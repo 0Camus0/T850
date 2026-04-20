@@ -42,6 +42,10 @@ namespace t800 {
     VkBuffer        m_buffer = VK_NULL_HANDLE;
     VmaAllocation   m_allocation = VK_NULL_HANDLE;
     void*           m_mappedData = nullptr;
+    // Ring-buffer suballocation for dynamic updates (GUI quads)
+    VkBuffer        m_ringBuffer = VK_NULL_HANDLE;
+    VkDeviceSize    m_ringOffset = 0;
+    bool            m_usesRing = false;
   };
 
   // ══════════════════════════════════════════════════════
@@ -157,6 +161,7 @@ namespace t800 {
     // Descriptor binding indices (resolved from SPIR-V reflection)
     int cbvBinding = -1;
     int srvBindings[8] = {-1,-1,-1,-1,-1,-1,-1,-1}; // slot → binding index
+    bool srvIsCubemap[8] = {};  // true if slot expects a cubemap view
     int maxBinding = 0;  // highest binding number in the layout
   };
 
@@ -320,6 +325,10 @@ namespace t800 {
     VkDescriptorBufferInfo m_pendingCB = {};
     bool m_cbDirty = false;
 
+    // Allocate vertex data from the per-frame ring buffer (for dynamic VBs like GUI quads)
+    struct VBRingAlloc { VkBuffer buffer; VkDeviceSize offset; bool valid; };
+    VBRingAlloc AllocateVBRing(const void* data, uint32_t size);
+
   private:
     friend class VulkanShader;
     friend class VulkanDeviceContext;
@@ -367,7 +376,7 @@ namespace t800 {
     // Default backbuffer render pass & framebuffers
     VkRenderPass    m_backbufferRenderPass = VK_NULL_HANDLE;
     VkRenderPass    m_backbufferRenderPassLoad = VK_NULL_HANDLE;  // LOAD_OP_LOAD variant for restarts
-    VkFramebuffer   m_backbufferFramebuffers[kBackBufferCount] = {};
+    std::vector<VkFramebuffer> m_backbufferFramebuffers;
 
     // Command infrastructure — one buffer + allocator per frame in flight
     VkCommandPool       m_commandPool = VK_NULL_HANDLE;
@@ -404,6 +413,7 @@ namespace t800 {
     DEPTH_STENCIL_STATES   m_currentDepth = DEPTH_DEFAULT;
     FACE_CULLING           m_currentCull  = FRONT_FACES;
     bool                   m_frameStarted = false;
+    bool                   m_screenshotConsumedSemaphore = false;
 
     // Last-bound state for redundancy elimination
     VkPipeline      m_lastPipeline = VK_NULL_HANDLE;
@@ -417,6 +427,9 @@ namespace t800 {
     VmaAllocation   m_dummyAllocation = VK_NULL_HANDLE;
     VkImageView     m_dummyImageView = VK_NULL_HANDLE;
     VkSampler       m_dummySampler = VK_NULL_HANDLE;
+    VkImage         m_dummyCubeImage = VK_NULL_HANDLE;
+    VmaAllocation   m_dummyCubeAllocation = VK_NULL_HANDLE;
+    VkImageView     m_dummyCubeImageView = VK_NULL_HANDLE;
     void            CreateDummyTexture();
 
     // Pipeline cache: lazy-created per (shader × blend × depth × cull × attachment config)

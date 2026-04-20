@@ -74,6 +74,7 @@ bool SPIRVReflection::Parse(const uint32_t* code, size_t wordCount) {
     uint32_t pointeeType = 0;   // for pointers
     uint32_t storageClass = ~0u;
     uint32_t elementType = 0;   // for arrays/vectors
+    bool     isCubemap = false;  // true if Image with Dim=Cube
   };
   std::unordered_map<uint32_t, TypeInfo> types;
 
@@ -148,7 +149,12 @@ bool SPIRVReflection::Parse(const uint32_t* code, size_t wordCount) {
         break;
 
       case SpvOpTypeImage:
-        if (instrLen >= 2) { types[code[i+1]].kind = TypeInfo::Image; }
+        if (instrLen >= 2) {
+          types[code[i+1]].kind = TypeInfo::Image;
+          // Dim is at operand index 3 (word i+3): 0=1D, 1=2D, 2=3D, 3=Cube
+          if (instrLen >= 4 && code[i+3] == 3)
+            types[code[i+1]].isCubemap = true;
+        }
         break;
 
       case SpvOpTypeSampler:
@@ -156,7 +162,13 @@ bool SPIRVReflection::Parse(const uint32_t* code, size_t wordCount) {
         break;
 
       case SpvOpTypeSampledImage:
-        if (instrLen >= 2) { types[code[i+1]].kind = TypeInfo::SampledImage; }
+        if (instrLen >= 3) {
+          types[code[i+1]].kind = TypeInfo::SampledImage;
+          types[code[i+1]].elementType = code[i+2]; // underlying Image type
+          // Propagate cubemap flag from the underlying Image type
+          if (types.count(code[i+2]) && types[code[i+2]].isCubemap)
+            types[code[i+1]].isCubemap = true;
+        }
         break;
 
       case SpvOpTypeStruct:
@@ -219,6 +231,18 @@ bool SPIRVReflection::Parse(const uint32_t* code, size_t wordCount) {
         b.set     = info.set;
         b.binding = info.binding;
         b.id      = id;
+        // Check cubemap: walk SampledImage → Image → check dim
+        b.isCubemap = false;
+        if (types.count(pointeeTypeId)) {
+          auto& pt = types[pointeeTypeId];
+          if (pt.isCubemap) {
+            b.isCubemap = true;
+          } else if (pt.kind == TypeInfo::SampledImage && pt.elementType != 0) {
+            uint32_t imgTypeId = pt.elementType;
+            if (types.count(imgTypeId) && types[imgTypeId].isCubemap)
+              b.isCubemap = true;
+          }
+        }
         sampledImages.push_back(b);
       } else if (pointeeKind == TypeInfo::Sampler) {
         // Skip standalone samplers — they share binding with the paired Image

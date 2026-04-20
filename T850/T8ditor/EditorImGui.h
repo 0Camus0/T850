@@ -56,7 +56,8 @@ namespace t8ditor {
   // ── Toolbar ─────────────────────────────────────────
   // Draws a horizontal button bar just below the menu bar.
   // `currentMode` is the active gizmo mode; returns the (possibly new) mode.
-  int ImGuiDrawToolbar(int currentMode);
+  // `addCamera`/`addLight` are set to the type to add (0=persp/dir, 1=ortho/omni, -1=none).
+  int ImGuiDrawToolbar(int currentMode, int& addCamera, int& addLight);
 
   // ── Panels ─────────────────────────────────────────
   // Hierarchy panel: lists scene objects. Returns true if user clicked

@@ -367,6 +367,7 @@ copy /Y "$(T8VcpkgDynamic)\bin\zlib1.dll" "$(OutDir)"</Command>
     <ClCompile Include="EditorGrid.cpp" />
     <ClCompile Include="EditorGizmo.cpp" />
     <ClCompile Include="EditorMesh.cpp" />
+    <ClCompile Include="EditorScene.cpp" />
     <ClCompile Include="EditorImGui.cpp" />
   </ItemGroup>
   <ItemGroup>
@@ -376,6 +377,9 @@ copy /Y "$(T8VcpkgDynamic)\bin\zlib1.dll" "$(OutDir)"</Command>
     <ClInclude Include="EditorGrid.h" />
     <ClInclude Include="EditorGizmo.h" />
     <ClInclude Include="EditorMesh.h" />
+    <ClInclude Include="EditorScene.h" />
+    <ClInclude Include="SceneObject.h" />
+    <ClInclude Include="UndoRedo.h" />
     <ClInclude Include="EditorImGui.h" />
   </ItemGroup>
   <ItemGroup>

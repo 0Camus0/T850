@@ -46,6 +46,7 @@ namespace t8ditor {
     bool showInspector  = true;
     bool showConsole    = true;
     bool showWireframe  = false;
+    bool showSkybox     = true;
   };
 
   // Draw the main menu bar. Returns actions triggered this frame.

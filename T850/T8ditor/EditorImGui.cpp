@@ -301,14 +301,12 @@ MenuAction ImGuiDrawMenuBar(PanelVisibility& panels) {
 }
 
 // ── Toolbar ───────────────────────────────────────────
-// Modes: 0=Translate, 1=Rotate, 2=Scale  (matches GizmoMode enum)
-int ImGuiDrawToolbar(int currentMode) {
+int ImGuiDrawToolbar(int currentMode, int& addCamera, int& addLight) {
+  addCamera = -1;
+  addLight  = -1;
   if (!s_inited) return currentMode;
 
-  // Position just below the main menu bar
-  float menuBarHeight = ImGui::GetFrameHeight();
   ImGuiViewport* vp = ImGui::GetMainViewport();
-
   ImGui::SetNextWindowPos(ImVec2(vp->WorkPos.x, vp->WorkPos.y), ImGuiCond_Always);
   ImGui::SetNextWindowSize(ImVec2(vp->WorkSize.x, 0), ImGuiCond_Always);
 
@@ -323,9 +321,7 @@ int ImGuiDrawToolbar(int currentMode) {
   ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize, 0.0f);
 
   if (ImGui::Begin("##Toolbar", nullptr, flags)) {
-    // Highlight color for the active tool
-    ImVec4 activeCol  = ImGui::GetStyleColorVec4(ImGuiCol_ButtonActive);
-    ImVec4 normalCol  = ImGui::GetStyleColorVec4(ImGuiCol_Button);
+    ImVec4 activeCol = ImGui::GetStyleColorVec4(ImGuiCol_ButtonActive);
     ImVec2 btnSize(70, 0);
 
     auto ToolButton = [&](const char* label, int mode) {
@@ -341,6 +337,30 @@ int ImGuiDrawToolbar(int currentMode) {
     ToolButton("Move (W)",   0);  ImGui::SameLine();
     ToolButton("Rotate (E)", 1);  ImGui::SameLine();
     ToolButton("Scale (R)",  2);
+
+    ImGui::SameLine();
+    ImGui::Text("|");
+    ImGui::SameLine();
+
+    // Camera add button with popup
+    if (ImGui::Button("+ Camera", ImVec2(75, 0)))
+      ImGui::OpenPopup("AddCameraPopup");
+    if (ImGui::BeginPopup("AddCameraPopup")) {
+      if (ImGui::MenuItem("Perspective"))  addCamera = 0;
+      if (ImGui::MenuItem("Orthographic")) addCamera = 1;
+      ImGui::EndPopup();
+    }
+
+    ImGui::SameLine();
+
+    // Light add button with popup
+    if (ImGui::Button("+ Light", ImVec2(65, 0)))
+      ImGui::OpenPopup("AddLightPopup");
+    if (ImGui::BeginPopup("AddLightPopup")) {
+      if (ImGui::MenuItem("Directional")) addLight = 0;
+      if (ImGui::MenuItem("Omni"))        addLight = 1;
+      ImGui::EndPopup();
+    }
   }
   ImGui::End();
   ImGui::PopStyleVar(2);

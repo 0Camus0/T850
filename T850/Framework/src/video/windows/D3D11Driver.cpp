@@ -713,7 +713,11 @@ namespace t800 {
   }
 
   void D3DXDriver::Clear() {
-    ClearWithColor(0.227f, 0.227f, 0.227f, 1.0f);
+    if (CurrentRT >= 0 && CurrentRT < (int)RTs.size()) {
+      ClearWithColor(0.0f, 0.0f, 0.0f, 0.0f);
+    } else {
+      ClearWithColor(0.227f, 0.227f, 0.227f, 1.0f);
+    }
   }
 
   void D3DXDriver::ClearWithColor(float r, float g, float b, float a) {

@@ -959,7 +959,14 @@ namespace t800 {
       m_commandList->ResourceBarrier(1, &b);
     }
 
-    if (CurrentRT < 0) {
+    if (CurrentRT >= 0 && CurrentRT < (int)RTs.size()) {
+      const float cc[4] = { 0.0f, 0.0f, 0.0f, 0.0f };
+      D3D12RT* rt = static_cast<D3D12RT*>(RTs[CurrentRT]);
+      for (auto& rtv : rt->vRTVHandles)
+        m_commandList->ClearRenderTargetView(rtv, cc, 0, nullptr);
+      if (rt->depthResource)
+        m_commandList->ClearDepthStencilView(rt->depthDSV, D3D12_CLEAR_FLAG_DEPTH, 1.0f, 0, 0, nullptr);
+    } else {
       m_commandList->OMSetRenderTargets(1, &m_backBufferRTVs[m_currentBackBuffer], FALSE, &m_depthDSV);
       m_commandList->RSSetViewports(1, &m_viewport);
       m_commandList->RSSetScissorRects(1, &m_scissorRect);

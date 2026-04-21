@@ -446,16 +446,27 @@ namespace t800 {
       uploadBuf = rgbaTmp.data();
     }
 
-    switch (uploadChannels) {
-      case 1:  m_format = VK_FORMAT_R8_UNORM;        break;
-      case 4:
-      default: m_format = VK_FORMAT_R8G8B8A8_UNORM;  break;
+    // Determine format and bytes per pixel
+    bool isHalfFloat = (cil_props & CIL_HALF_FLOAT) != 0;
+    int bytesPerPixel = isHalfFloat ? 8 : uploadChannels;
+
+    if (isHalfFloat) {
+      m_format = VK_FORMAT_R16G16B16A16_SFLOAT;
+    } else {
+      switch (uploadChannels) {
+        case 1:  m_format = VK_FORMAT_R8_UNORM;        break;
+        case 4:
+        default: m_format = VK_FORMAT_R8G8B8A8_UNORM;  break;
+      }
     }
 
-    VkDeviceSize imageSize = (VkDeviceSize)x * y * uploadChannels;
+    VkDeviceSize imageSize = (VkDeviceSize)x * y * bytesPerPixel;
     bool isCube = (cil_props & CIL_CUBE_MAP) != 0;
     uint32_t layerCount = isCube ? 6 : 1;
-    VkDeviceSize totalSize = imageSize * layerCount;
+    // For cubemaps, the DDS buffer stores all mip levels per face. Use
+    // total size / 6 to correctly stride over each face's full mip chain.
+    VkDeviceSize faceStride = isCube ? (this->size / layerCount) : imageSize;
+    VkDeviceSize totalSize = isCube ? this->size : imageSize;
 
     // 1. Create VkImage
     VkImageCreateInfo imgCI = { VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO };
@@ -533,7 +544,7 @@ namespace t800 {
     std::vector<VkBufferImageCopy> regions(layerCount);
     for (uint32_t face = 0; face < layerCount; face++) {
       regions[face] = {};
-      regions[face].bufferOffset = face * imageSize;
+      regions[face].bufferOffset = face * faceStride;
       regions[face].imageSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
       regions[face].imageSubresource.mipLevel = 0;
       regions[face].imageSubresource.baseArrayLayer = face;
@@ -1141,7 +1152,7 @@ namespace t800 {
     bool hasDepth = (depth_format != BaseRT::NOTHING);
     std::vector<VkClearValue> clearValues(number_RT);
     for (int i = 0; i < number_RT; i++)
-      clearValues[i].color = { {0.0f, 0.0f, 0.0f, 1.0f} };
+      clearValues[i].color = { {0.0f, 0.0f, 0.0f, 0.0f} };
 
     if (hasDepth) {
       VkClearValue depthClear = {};

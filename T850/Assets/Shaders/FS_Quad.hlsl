@@ -21,7 +21,7 @@ struct VS_OUTPUT{
     float4 hposition : SV_POSITION;
     float2 texture0  : TEXCOORD;
 	float4 Pos		: TEXCOORD1;
-	float4 PosCorner : VPOS;
+	float4 PosCorner : TEXCOORD2;
 };
 
 SamplerState SS  : register(s0);
@@ -116,10 +116,6 @@ float4 FS( VS_OUTPUT input ) : SV_TARGET {
 
 	float depth = tex4.Sample(SS, input.texture0).r;
 
-	// No geometry drawn at this pixel — let clear color show through
-	if (depth <= 0.0001)
-		discard;
-
 	#ifdef NON_LINEAR_DEPTH
 		float4 position = mul(WVPInverse,float4( input.PosCorner.xy ,depth,1.0));
 		position.xyz /= position.w;
@@ -129,14 +125,15 @@ float4 FS( VS_OUTPUT input ) : SV_TARGET {
 	 
 	float3 EyeDir = normalize(CameraPosition - position).xyz;
 
-	int MatId = (int)(PBRData.a * 255.0);
+	int MatId = (int)(PBRData.a * 255.0 + 0.5);
 
 	if(MatId == 0){
-		float3 EyeDir_mod = -EyeDir;
-		EyeDir_mod.x = -EyeDir_mod.x;
-		EyeDir_mod.z = -EyeDir_mod.z;
-		float3 RefCol = texEnv.Sample(SS, EyeDir_mod).xyz;
-		Final.xyz = RefCol.xyz * 2.0;
+		// Sky: use the interpolated view ray (PosCorner from VS_Quad).
+		float3 skyDir = normalize(input.PosCorner.xyz);
+		skyDir.x = -skyDir.x;
+		skyDir.z = -skyDir.z;
+		float3 RefCol = texEnv.Sample(SS, skyDir).xyz;
+		Final.xyz = RefCol.xyz * toogles.x;
 	} else if(MatId > 0) {
 		Shadow = tex5.Sample(SS, input.texture0).r;
 
@@ -154,6 +151,9 @@ float4 FS( VS_OUTPUT input ) : SV_TARGET {
 		ReflectedVec.z = -ReflectedVec.z;
 
 		float rough = normalmap.a;
+
+		// Accumulate direct and indirect lighting separately
+		float3 directLight = float3(0.0, 0.0, 0.0);
 
 		int NumLights = (int)CameraInfo.w;
 		[loop] for(int i = 0; i < NumLights; i++){
@@ -173,7 +173,7 @@ float4 FS( VS_OUTPUT input ) : SV_TARGET {
 				float3 Kd = (float3(1.0f, 1.0f, 1.0f) - F) * (1.0f - metallic);
 
 				float geoHorizon = saturate(dot(geoNormal, LightDir));
-				Final.xyz += (SpecularRes.xyz + Kd * Diffuse) * geoHorizon;
+				directLight += (SpecularRes.xyz + Kd * Diffuse) * geoHorizon;
 			} else {
 				// Point light
 				float Rad = LightRadius[i >> 2][i & 3];
@@ -199,20 +199,35 @@ float4 FS( VS_OUTPUT input ) : SV_TARGET {
 					attenuation = max(attenuation, 0.0);
 
 					float geoHorizon = saturate(dot(geoNormal, LightDir));
-					Final.xyz += (SpecularRes.xyz * attenuation + attenuation * Kd * Diffuse) * geoHorizon;
+					directLight += (SpecularRes.xyz * attenuation + attenuation * Kd * Diffuse) * geoHorizon;
 				}
 			}
 		}
 
+		// Apply shadow only to direct lighting
+		float selfShadow = PBRData.g;
+		Final.xyz += directLight * Shadow * selfShadow;
+
+		// Indirect lighting (IBL + ambient) — NOT affected by shadow
 		float3 kSpecular = clamp(fresnelSchlickRoughness(max(dot(normal, EyeDir), 0.0f), F0, rough), 0.0, 1.0);
+		float3 kDiffuseEnv = (float3(1.0f, 1.0f, 1.0f) - kSpecular) * (1.0f - metallic);
+
+		// Specular IBL: env reflection
 		float3 RefleCol = texEnv.SampleLevel(SS, ReflectedVec, rough * 4.0f).xyz;
 		float envAtten = (1.0f - rough) * (1.0f - rough);
+		Final.xyz += RefleCol * kSpecular.xyz * envAtten * toogles.x;
 
-    Final.xyz += RefleCol * kSpecular.xyz * envAtten * toogles.x;
+		// Diffuse IBL: approximate irradiance from env cubemap at high mip
+		float3 irradianceDir = normal;
+		irradianceDir.x = -irradianceDir.x;
+		irradianceDir.z = -irradianceDir.z;
+		float3 irradiance = texEnv.SampleLevel(SS, irradianceDir, 6.0f).xyz;
+		Final.xyz += irradiance * Albedo.xyz * kDiffuseEnv * toogles.x;
 
-		float selfShadow = PBRData.g;
-		Final.xyz *= Shadow * selfShadow;
+		// Ambient minimum (toogles.y = ambient intensity)
+		Final.xyz += Albedo.xyz * toogles.y * kDiffuseEnv;
 	}
+
 	return Final;
 }
 #elif defined(DEFERRED_LDR_PASS)

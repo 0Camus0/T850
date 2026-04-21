@@ -66,8 +66,8 @@ echo  T850 — Installing vcpkg dependencies
 echo ════════════════════════════════════════
 
 :: ── Common packages for all platforms ──
-set "PACKAGES=glew vulkan-headers vulkan-loader vulkan-memory-allocator glslang"
-set "PACKAGES_DYNAMIC=angle"
+set "PACKAGES=glew vulkan-headers vulkan-loader vulkan-memory-allocator glslang draco"
+set "PACKAGES_DYNAMIC=angle draco"
 
 :: ── x64 (always) ──
 echo.
@@ -80,6 +80,11 @@ for %%p in (%PACKAGES_DYNAMIC%) do (
     echo   %%p:x64-windows
     "%VCPKG_EXE%" install %%p:x64-windows --no-print-usage 2>nul
 )
+:: Editor dependencies (x64 only)
+echo   imgui:x64-windows-static (editor)
+"%VCPKG_EXE%" install "imgui[docking-experimental,dx11-binding,dx12-binding,opengl3-binding,sdl3-binding,win32-binding]:x64-windows-static" --no-print-usage 2>nul
+echo   imguizmo:x64-windows-static (editor)
+"%VCPKG_EXE%" install imguizmo:x64-windows-static --no-print-usage 2>nul
 
 :: ── x86 (optional) ──
 if %BUILD_X86%==1 (

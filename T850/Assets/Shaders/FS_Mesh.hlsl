@@ -131,6 +131,7 @@ FS_OUT FS( VS_OUTPUT input )   {
 	float3 geoNormal = normal.xyz;
 
 	float2 parallaxCoords = input.texture0;
+
 	#if defined(HEIGHT_MAP) || defined(NORMAL_MAP)
 		float3 tangent	 = normalize(input.htangent).xyz;
 		float3 binormal	 = normalize(input.hbinormal).xyz;
@@ -166,13 +167,17 @@ FS_OUT FS( VS_OUTPUT input )   {
 
 	#ifdef DIFFUSE_MAP
 		color = TextureRGB.Sample( SS, parallaxCoords );	
+	#else
+		color = DiffuseColor;
 	#endif
-	
+
 	#ifdef NORMAL_MAP	
 		float3 normalTex = TextureNormal.Sample( SS, parallaxCoords ).xyz;
 		normalTex 		 = 	normalTex*float3(2.0,2.0,2.0) - float3(1.0,1.0,1.0);
 		normalTex		 = normalize(normalTex);
+		#ifndef GLTF_TANGENT_SPACE
 		normalTex.g 	 = -normalTex.g;
+		#endif
 		normal.xyz		 = mul(normalTex,TBN);
 		normal.xyz		 = normalize(normal.xyz);
 	#endif
@@ -182,10 +187,12 @@ FS_OUT FS( VS_OUTPUT input )   {
 	#endif
 	
 	#ifdef METALLIC_MAP
-		metallic = TextureMetallic.Sample( SS, parallaxCoords ).r;
-	#endif
-
-	#ifdef GLOSS_MAP
+		// glTF metallic-roughness: B=metallic, G=roughness, multiply by uniform factors
+		float4 mrSample = TextureMetallic.Sample( SS, parallaxCoords );
+		metallic  = PBRParams.x * mrSample.b;
+		roughness = PBRParams.y * mrSample.g;
+	#elif defined(GLOSS_MAP)
+		// Legacy: separate roughness texture in R channel
 		roughness = TextureGloss.Sample( SS, parallaxCoords ).r;
 	#endif
 	
@@ -288,6 +295,8 @@ float4 FS( VS_OUTPUT input )  : SV_TARGET {
 	#else
 		#ifdef DIFFUSE_MAP
 		color = TextureRGB.Sample( SS, input.texture0 );	
+		#else
+		color = DiffuseColor;
 		#endif
 		
 		#ifdef SPECULAR_MAP
@@ -310,7 +319,9 @@ float4 FS( VS_OUTPUT input )  : SV_TARGET {
 			float3 normalTex = TextureNormal.Sample( SS, input.texture0 ).xyz;
 			normalTex 		 = 	normalTex*float3(2.0,2.0,2.0) - float3(1.0,1.0,1.0);
 			normalTex		 = normalize(normalTex);
+			#ifndef GLTF_TANGENT_SPACE
 			normalTex.g 	 = -normalTex.g;
+			#endif
 			float3 tangent	 = normalize(input.htangent).xyz;
 			float3 binormal	 = normalize(input.hbinormal).xyz;
 			float3x3	TBN  =  float3x3(tangent,binormal,normal);

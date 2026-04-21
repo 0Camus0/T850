@@ -157,7 +157,7 @@
       <SubSystem>Console</SubSystem>
       <GenerateDebugInformation>true</GenerateDebugInformation>
       <AdditionalLibraryDirectories>$(SolutionDir)Librerias\tinyxml2\lib;$(SolutionDir)Lib\$(Configuration)\$(Platform)\;$(SolutionDir)$(Configuration);$(SolutionDir)Librerias\SDL3\lib\$(T8Arch);$(T8VcpkgStatic)\debug\lib;$(T8VcpkgStatic)\lib;$(T8VcpkgDynamic)\lib;%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
-      <AdditionalDependencies>dxguid.lib;Frameworkd.lib;SDL3.lib;D3D11.lib;D3DCompiler.lib;vulkan-1.lib;glslangd.lib;SPIRVd.lib;glslang-default-resource-limitsd.lib;%(AdditionalDependencies)</AdditionalDependencies>
+      <AdditionalDependencies>dxguid.lib;Frameworkd.lib;SDL3.lib;D3D11.lib;D3DCompiler.lib;vulkan-1.lib;$(T8VcpkgDynamic)\lib\draco.lib;glslangd.lib;SPIRVd.lib;glslang-default-resource-limitsd.lib;%(AdditionalDependencies)</AdditionalDependencies>
       <OutputFile>$(OutDir)$(TargetName)$(TargetExt)</OutputFile>
     </Link>
     <PostBuildEvent>
@@ -171,7 +171,8 @@ if not exist "$(OutDir)Layouts" mklink /J "$(OutDir)Layouts" "$(SolutionDir)Asse
 copy /Y "$(SolutionDir)Librerias\SDL3\lib\$(T8Arch)\SDL3.dll" "$(OutDir)"
 copy /Y "$(T8VcpkgDynamic)\bin\libEGL.dll" "$(OutDir)"
 copy /Y "$(T8VcpkgDynamic)\bin\libGLESv2.dll" "$(OutDir)"
-copy /Y "$(T8VcpkgDynamic)\bin\zlib1.dll" "$(OutDir)"</Command>
+copy /Y "$(T8VcpkgDynamic)\bin\zlib1.dll" "$(OutDir)"
+copy /Y "$(T8VcpkgDynamic)\bin\draco.dll" "$(OutDir)"</Command>
     </PostBuildEvent>
   </ItemDefinitionGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">
@@ -192,7 +193,7 @@ copy /Y "$(T8VcpkgDynamic)\bin\zlib1.dll" "$(OutDir)"</Command>
       <SubSystem>Console</SubSystem>
       <GenerateDebugInformation>true</GenerateDebugInformation>
       <AdditionalLibraryDirectories>$(SolutionDir)Librerias\tinyxml2\lib;$(SolutionDir)Lib\$(Configuration)\$(Platform)\;$(SolutionDir)$(Configuration);$(SolutionDir)Librerias\SDL3\lib\$(T8Arch);$(T8VcpkgStatic)\debug\lib;$(T8VcpkgStatic)\lib;$(T8VcpkgDynamic)\lib;%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
-      <AdditionalDependencies>dxguid.lib;Frameworkd.lib;SDL3.lib;D3D11.lib;D3DCompiler.lib;vulkan-1.lib;glslangd.lib;SPIRVd.lib;glslang-default-resource-limitsd.lib;%(AdditionalDependencies)</AdditionalDependencies>
+      <AdditionalDependencies>dxguid.lib;Frameworkd.lib;SDL3.lib;D3D11.lib;D3DCompiler.lib;vulkan-1.lib;$(T8VcpkgDynamic)\lib\draco.lib;glslangd.lib;SPIRVd.lib;glslang-default-resource-limitsd.lib;%(AdditionalDependencies)</AdditionalDependencies>
       <OutputFile>$(OutDir)$(TargetName)$(TargetExt)</OutputFile>
     </Link>
     <PostBuildEvent>
@@ -206,7 +207,8 @@ if not exist "$(OutDir)Layouts" mklink /J "$(OutDir)Layouts" "$(SolutionDir)Asse
 copy /Y "$(SolutionDir)Librerias\SDL3\lib\$(T8Arch)\SDL3.dll" "$(OutDir)"
 copy /Y "$(T8VcpkgDynamic)\bin\libEGL.dll" "$(OutDir)"
 copy /Y "$(T8VcpkgDynamic)\bin\libGLESv2.dll" "$(OutDir)"
-copy /Y "$(T8VcpkgDynamic)\bin\zlib1.dll" "$(OutDir)"</Command>
+copy /Y "$(T8VcpkgDynamic)\bin\zlib1.dll" "$(OutDir)"
+copy /Y "$(T8VcpkgDynamic)\bin\draco.dll" "$(OutDir)"</Command>
     </PostBuildEvent>
   </ItemDefinitionGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Debug|ARM64'">
@@ -227,7 +229,7 @@ copy /Y "$(T8VcpkgDynamic)\bin\zlib1.dll" "$(OutDir)"</Command>
       <SubSystem>Console</SubSystem>
       <GenerateDebugInformation>true</GenerateDebugInformation>
       <AdditionalLibraryDirectories>$(SolutionDir)Librerias\tinyxml2\lib;$(SolutionDir)Lib\$(Configuration)\$(Platform)\;$(SolutionDir)$(Configuration);$(SolutionDir)Librerias\SDL3\lib\$(T8Arch);$(T8VcpkgStatic)\debug\lib;$(T8VcpkgStatic)\lib;$(T8VcpkgDynamic)\lib;%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
-      <AdditionalDependencies>dxguid.lib;Frameworkd.lib;SDL3.lib;D3D11.lib;D3DCompiler.lib;vulkan-1.lib;glslangd.lib;SPIRVd.lib;glslang-default-resource-limitsd.lib;%(AdditionalDependencies)</AdditionalDependencies>
+      <AdditionalDependencies>dxguid.lib;Frameworkd.lib;SDL3.lib;D3D11.lib;D3DCompiler.lib;vulkan-1.lib;$(T8VcpkgDynamic)\lib\draco.lib;glslangd.lib;SPIRVd.lib;glslang-default-resource-limitsd.lib;%(AdditionalDependencies)</AdditionalDependencies>
       <OutputFile>$(OutDir)$(TargetName)$(TargetExt)</OutputFile>
     </Link>
     <PostBuildEvent>
@@ -241,7 +243,8 @@ if not exist "$(OutDir)Layouts" mklink /J "$(OutDir)Layouts" "$(SolutionDir)Asse
 copy /Y "$(SolutionDir)Librerias\SDL3\lib\$(T8Arch)\SDL3.dll" "$(OutDir)"
 copy /Y "$(T8VcpkgDynamic)\bin\libEGL.dll" "$(OutDir)"
 copy /Y "$(T8VcpkgDynamic)\bin\libGLESv2.dll" "$(OutDir)"
-copy /Y "$(T8VcpkgDynamic)\bin\zlib1.dll" "$(OutDir)"</Command>
+copy /Y "$(T8VcpkgDynamic)\bin\zlib1.dll" "$(OutDir)"
+copy /Y "$(T8VcpkgDynamic)\bin\draco.dll" "$(OutDir)"</Command>
     </PostBuildEvent>
   </ItemDefinitionGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">
@@ -263,7 +266,7 @@ copy /Y "$(T8VcpkgDynamic)\bin\zlib1.dll" "$(OutDir)"</Command>
       <SubSystem>Console</SubSystem>
       <GenerateDebugInformation>true</GenerateDebugInformation>
       <AdditionalLibraryDirectories>$(SolutionDir)Librerias\tinyxml2\lib;$(SolutionDir)Lib\$(Configuration)\$(Platform)\;$(SolutionDir)$(Configuration);$(SolutionDir)Librerias\SDL3\lib\$(T8Arch);$(T8VcpkgStatic)\lib;$(T8VcpkgDynamic)\lib;%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
-      <AdditionalDependencies>dxguid.lib;Framework.lib;SDL3.lib;D3D11.lib;D3DCompiler.lib;vulkan-1.lib;glslang.lib;SPIRV.lib;glslang-default-resource-limits.lib;%(AdditionalDependencies)</AdditionalDependencies>
+      <AdditionalDependencies>dxguid.lib;Framework.lib;SDL3.lib;D3D11.lib;D3DCompiler.lib;vulkan-1.lib;$(T8VcpkgDynamic)\lib\draco.lib;glslang.lib;SPIRV.lib;glslang-default-resource-limits.lib;%(AdditionalDependencies)</AdditionalDependencies>
       <OutputFile>$(OutDir)$(TargetName)$(TargetExt)</OutputFile>
       <LinkTimeCodeGeneration>UseLinkTimeCodeGeneration</LinkTimeCodeGeneration>
     </Link>
@@ -278,7 +281,8 @@ if not exist "$(OutDir)Layouts" mklink /J "$(OutDir)Layouts" "$(SolutionDir)Asse
 copy /Y "$(SolutionDir)Librerias\SDL3\lib\$(T8Arch)\SDL3.dll" "$(OutDir)"
 copy /Y "$(T8VcpkgDynamic)\bin\libEGL.dll" "$(OutDir)"
 copy /Y "$(T8VcpkgDynamic)\bin\libGLESv2.dll" "$(OutDir)"
-copy /Y "$(T8VcpkgDynamic)\bin\zlib1.dll" "$(OutDir)"</Command>
+copy /Y "$(T8VcpkgDynamic)\bin\zlib1.dll" "$(OutDir)"
+copy /Y "$(T8VcpkgDynamic)\bin\draco.dll" "$(OutDir)"</Command>
     </PostBuildEvent>
   </ItemDefinitionGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
@@ -302,7 +306,7 @@ copy /Y "$(T8VcpkgDynamic)\bin\zlib1.dll" "$(OutDir)"</Command>
       <OptimizeReferences>true</OptimizeReferences>
       <GenerateDebugInformation>true</GenerateDebugInformation>
       <AdditionalLibraryDirectories>$(SolutionDir)Librerias\tinyxml2\lib;$(SolutionDir)Lib\$(Configuration)\$(Platform)\;$(SolutionDir)$(Configuration);$(SolutionDir)Librerias\SDL3\lib\$(T8Arch);$(T8VcpkgStatic)\lib;$(T8VcpkgDynamic)\lib;%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
-      <AdditionalDependencies>dxguid.lib;Framework.lib;SDL3.lib;D3D11.lib;D3DCompiler.lib;vulkan-1.lib;glslang.lib;SPIRV.lib;glslang-default-resource-limits.lib;%(AdditionalDependencies)</AdditionalDependencies>
+      <AdditionalDependencies>dxguid.lib;Framework.lib;SDL3.lib;D3D11.lib;D3DCompiler.lib;vulkan-1.lib;$(T8VcpkgDynamic)\lib\draco.lib;glslang.lib;SPIRV.lib;glslang-default-resource-limits.lib;%(AdditionalDependencies)</AdditionalDependencies>
       <OutputFile>$(OutDir)$(TargetName)$(TargetExt)</OutputFile>
       <LinkTimeCodeGeneration>UseLinkTimeCodeGeneration</LinkTimeCodeGeneration>
     </Link>
@@ -317,7 +321,8 @@ if not exist "$(OutDir)Layouts" mklink /J "$(OutDir)Layouts" "$(SolutionDir)Asse
 copy /Y "$(SolutionDir)Librerias\SDL3\lib\$(T8Arch)\SDL3.dll" "$(OutDir)"
 copy /Y "$(T8VcpkgDynamic)\bin\libEGL.dll" "$(OutDir)"
 copy /Y "$(T8VcpkgDynamic)\bin\libGLESv2.dll" "$(OutDir)"
-copy /Y "$(T8VcpkgDynamic)\bin\zlib1.dll" "$(OutDir)"</Command>
+copy /Y "$(T8VcpkgDynamic)\bin\zlib1.dll" "$(OutDir)"
+copy /Y "$(T8VcpkgDynamic)\bin\draco.dll" "$(OutDir)"</Command>
     </PostBuildEvent>
   </ItemDefinitionGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Release|ARM64'">
@@ -341,7 +346,7 @@ copy /Y "$(T8VcpkgDynamic)\bin\zlib1.dll" "$(OutDir)"</Command>
       <OptimizeReferences>true</OptimizeReferences>
       <GenerateDebugInformation>true</GenerateDebugInformation>
       <AdditionalLibraryDirectories>$(SolutionDir)Librerias\tinyxml2\lib;$(SolutionDir)Lib\$(Configuration)\$(Platform)\;$(SolutionDir)$(Configuration);$(SolutionDir)Librerias\SDL3\lib\$(T8Arch);$(T8VcpkgStatic)\lib;$(T8VcpkgDynamic)\lib;%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
-      <AdditionalDependencies>dxguid.lib;Framework.lib;SDL3.lib;D3D11.lib;D3DCompiler.lib;vulkan-1.lib;glslang.lib;SPIRV.lib;glslang-default-resource-limits.lib;%(AdditionalDependencies)</AdditionalDependencies>
+      <AdditionalDependencies>dxguid.lib;Framework.lib;SDL3.lib;D3D11.lib;D3DCompiler.lib;vulkan-1.lib;$(T8VcpkgDynamic)\lib\draco.lib;glslang.lib;SPIRV.lib;glslang-default-resource-limits.lib;%(AdditionalDependencies)</AdditionalDependencies>
       <OutputFile>$(OutDir)$(TargetName)$(TargetExt)</OutputFile>
       <LinkTimeCodeGeneration>UseLinkTimeCodeGeneration</LinkTimeCodeGeneration>
     </Link>
@@ -356,7 +361,8 @@ if not exist "$(OutDir)Layouts" mklink /J "$(OutDir)Layouts" "$(SolutionDir)Asse
 copy /Y "$(SolutionDir)Librerias\SDL3\lib\$(T8Arch)\SDL3.dll" "$(OutDir)"
 copy /Y "$(T8VcpkgDynamic)\bin\libEGL.dll" "$(OutDir)"
 copy /Y "$(T8VcpkgDynamic)\bin\libGLESv2.dll" "$(OutDir)"
-copy /Y "$(T8VcpkgDynamic)\bin\zlib1.dll" "$(OutDir)"</Command>
+copy /Y "$(T8VcpkgDynamic)\bin\zlib1.dll" "$(OutDir)"
+copy /Y "$(T8VcpkgDynamic)\bin\draco.dll" "$(OutDir)"</Command>
     </PostBuildEvent>
   </ItemDefinitionGroup>
   <ItemGroup>
@@ -365,12 +371,14 @@ copy /Y "$(T8VcpkgDynamic)\bin\zlib1.dll" "$(OutDir)"</Command>
     <ClCompile Include="SC_Day.cpp" />
     <ClCompile Include="SC_Night.cpp" />
     <ClCompile Include="SC_Tech.cpp" />
+    <ClCompile Include="SC_SandBox.cpp" />
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="Application.h" />
     <ClInclude Include="SC_Day.h" />
     <ClInclude Include="SC_Night.h" />
     <ClInclude Include="SC_Tech.h" />
+    <ClInclude Include="SC_SandBox.h" />
   </ItemGroup>
   <ItemGroup>
     <ResourceCompile Include="DayScene.rc" />

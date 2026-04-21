@@ -28,6 +28,8 @@
 #include <utils/Log.h>
 #include <utils/GUIAtlasGenerator.h>
 #include <debug/T8_Profiler.h>
+#include <utils/gltf/GLTFLoader.h>
+#include <utils/gltf/GLTFAccessor.h>
 
 std::vector<std::string> g_args;
 
@@ -59,6 +61,7 @@ int    g_atlasMaxSprite = 256;      // --atlasMaxSprite: max sprite dimension in
 bool   g_profile = false;           // --profile: enable GPU+CPU profiling
 int    g_profileFrames = 300;       // --profileFrames: how many frames to profile
 #endif
+std::string g_modelPath = "Models/DamagedHelmet.glb"; // --model <path>: glTF model for Sandbox
 
 t800::AppBase		  *pApp = 0;
 t800::RootFramework *pFrameWork = 0;
@@ -181,6 +184,66 @@ int main(int arg,char ** args){
       g_profileFrames = std::stoi(args[++i]);
     }
 #endif
+    else if (a == "--model" && i + 1 < arg) {
+      g_modelPath = args[++i];
+    }
+    else if (a == "--validateGltf" && i + 1 < arg) {
+      // Offline parser conformance harness (plan §8). Loads a .gltf or
+      // .glb file and prints a structural summary plus the first vertex
+      // of each primitive. Exits without booting the renderer, so it
+      // works on systems with no graphics device available (e.g. CI).
+      std::string path = args[++i];
+      // Strip surrounding quotes if present (from launcher).
+      if (path.size() >= 2 && path.front() == '"' && path.back() == '"') {
+        path = path.substr(1, path.size() - 2);
+      }
+      // Bring up logging early enough to surface loader messages.
+      t800::Log::Init(t800::Log::LVL_INFO,
+                      t800::Log::T8_LOG_BACKEND_CONSOLE, nullptr);
+
+      t800::gltf::Document doc;
+      if (!t800::gltf::LoadGLTF(path, doc)) {
+        std::cerr << "[validateGltf] FAILED to load '" << path << "'\n";
+        t800::Log::Shutdown();
+        return 1;
+      }
+      std::cout << "[validateGltf] " << path << "\n"
+                << "  asset.version       : " << doc.asset.version << "\n"
+                << "  scenes / nodes      : " << doc.scenes.size()
+                << " / " << doc.nodes.size() << "\n"
+                << "  meshes / accessors  : " << doc.meshes.size()
+                << " / " << doc.accessors.size() << "\n"
+                << "  materials / textures: " << doc.materials.size()
+                << " / " << doc.textures.size() << "\n"
+                << "  images / samplers   : " << doc.images.size()
+                << " / " << doc.samplers.size() << "\n"
+                << "  skins / animations  : " << doc.skins.size()
+                << " / " << doc.animations.size() << "\n"
+                << "  buffers / bufViews  : " << doc.buffers.size()
+                << " / " << doc.bufferViews.size() << "\n";
+
+      std::size_t primCount = 0;
+      for (std::size_t mi = 0; mi < doc.meshes.size(); ++mi) {
+        const auto& m = doc.meshes[mi];
+        for (std::size_t pi = 0; pi < m.primitives.size(); ++pi, ++primCount) {
+          const auto& p = m.primitives[pi];
+          std::cout << "  mesh[" << mi << "].prim[" << pi << "]"
+                    << " mode=" << p.mode
+                    << " mat=" << (p.material ? *p.material : -1);
+          if (p.attributes.POSITION >= 0) {
+            std::vector<float> pos; int e = 0;
+            if (t800::gltf::ReadAccessorFloats(doc, p.attributes.POSITION, pos, &e)
+                && e == 3 && pos.size() >= 3) {
+              std::cout << " v0=(" << pos[0] << "," << pos[1] << "," << pos[2] << ")";
+            }
+          }
+          std::cout << "\n";
+        }
+      }
+      std::cout << "[validateGltf] OK: " << primCount << " primitives total\n";
+      t800::Log::Shutdown();
+      return 0;
+    }
   }
 
   if (g_fullscreen)

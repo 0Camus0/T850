@@ -134,10 +134,10 @@ Built from scratch with no third-party glTF library:
 
 ## Editor Guide (T8ditor)
 
-T8ditor is a standalone scene editor that ships alongside the engine. It uses ImGui for its interface and always runs on D3D12. Launch it from the **EDITOR** button in the Launcher, or directly:
+T8ditor is a standalone scene editor that ships alongside the engine. It always runs on D3D12. Launch it from the **EDITOR** button in the Launcher, or directly:
 
 ```
-T8ditor.exe --api d3d12 --width 1920 --height 1080
+T8ditor.exe --width 1920 --height 1080
 ```
 
 ### Importing .X Models

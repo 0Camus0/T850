@@ -1,0 +1,122 @@
+{
+   "version": 1,
+   "editor": {
+      "camera_target": {
+         "x": -59.569725,
+         "y": 74.11359,
+         "z": -7.97535
+      },
+      "camera_yaw": -0.75,
+      "camera_pitch": 0.4,
+      "camera_distance": 30,
+      "show_skybox": false,
+      "show_wireframe": false
+   },
+   "objects": [
+      {
+         "name": "D:\\Code\\T8editor\\T850\\T850\\Assets\\Models\\NuBatman.X",
+         "mesh": "D:\\Code\\T8editor\\T850\\T850\\Assets\\Models\\NuBatman.X",
+         "position": {
+            "x": 34.127884,
+            "y": 0,
+            "z": 0
+         },
+         "rotation": {
+            "x": 0,
+            "y": -0,
+            "z": 0
+         },
+         "scale": {
+            "x": 1,
+            "y": 1,
+            "z": 1
+         }
+      },
+      {
+         "name": "D:\\Code\\T8editor\\T850\\T850\\Assets\\Models\\NuVenomJok.X",
+         "mesh": "D:\\Code\\T8editor\\T850\\T850\\Assets\\Models\\NuVenomJok.X",
+         "position": {
+            "x": -31.532234,
+            "y": 0,
+            "z": 0
+         },
+         "rotation": {
+            "x": 0,
+            "y": -0,
+            "z": 0
+         },
+         "scale": {
+            "x": 0.6,
+            "y": 0.6,
+            "z": 0.6
+         }
+      }
+   ],
+   "cameras": [
+      {
+         "name": "Camera 0",
+         "type": 0,
+         "position": {
+            "x": 0.16580248,
+            "y": 43.411922,
+            "z": -22.007027
+         },
+         "target": {
+            "x": 0.16580248,
+            "y": 38.411922,
+            "z": -12.007027
+         },
+         "fov_deg": 50,
+         "ortho_w": 20,
+         "ortho_h": 15,
+         "near_plane": 0.1,
+         "far_plane": 1000
+      }
+   ],
+   "lights": [
+      {
+         "name": "Light 0",
+         "type": 1,
+         "position": {
+            "x": 8.449663,
+            "y": 39.2948,
+            "z": -20.34425
+         },
+         "direction": {
+            "x": 0,
+            "y": -1,
+            "z": 0
+         },
+         "color": {
+            "x": 1,
+            "y": 0,
+            "z": 0
+         },
+         "intensity": 1.5,
+         "radius": 44.5,
+         "enabled": true
+      },
+      {
+         "name": "Light 1",
+         "type": 1,
+         "position": {
+            "x": -39.619343,
+            "y": 30.116108,
+            "z": -23.512224
+         },
+         "direction": {
+            "x": 0,
+            "y": -1,
+            "z": 0
+         },
+         "color": {
+            "x": 0.06079393,
+            "y": 0.5392157,
+            "z": 0.38443214
+         },
+         "intensity": 1.5,
+         "radius": 83.3,
+         "enabled": true
+      }
+   ]
+}

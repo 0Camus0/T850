@@ -558,9 +558,85 @@ namespace t800 {
     hwnd = GetActiveWindow(); // Get the HWND of the window
   }
 
+  void D3DXDriver::SetWindowHandle(const WindowHandle& handle) {
+    // Editor host path: use the explicit HWND it provides (e.g. a child
+    // window that owns the viewport). Falls back to GetActiveWindow() so
+    // the legacy SDL-driven flow keeps behaving exactly as before.
+    if (handle.kind == WindowHandle::WIN32_HWND && handle.nativeHandle) {
+      hwnd = reinterpret_cast<HWND>(handle.nativeHandle);
+    } else {
+      hwnd = GetActiveWindow();
+    }
+  }
+
   void D3DXDriver::SetDimensions(int w, int h) {
     width = w;
     height = h;
+  }
+
+  bool D3DXDriver::ResizeSwapchain(int newW, int newH) {
+    if (newW <= 0 || newH <= 0) return false;
+    if (!DXGISwapchain) return false;
+
+    ID3D11Device* device = reinterpret_cast<ID3D11Device*>(T8Device->GetAPIObject());
+    ID3D11DeviceContext* deviceContext = reinterpret_cast<ID3D11DeviceContext*>(T8DeviceContext->GetAPIObject());
+    if (!device || !deviceContext) return false;
+
+    // Unbind render targets before resizing
+    deviceContext->OMSetRenderTargets(0, nullptr, nullptr);
+    D3D11RenderTargetView.Reset();
+    D3D11DepthStencilTargetView.Reset();
+    D3D11DepthTex.Reset();
+
+    HRESULT hr = DXGISwapchain->ResizeBuffers(0, (UINT)newW, (UINT)newH,
+                                               DXGI_FORMAT_UNKNOWN, 0);
+    if (FAILED(hr)) {
+      T8_LOG_ERROR("[D3D11] ResizeBuffers failed (0x%08X)", (unsigned)hr);
+      return false;
+    }
+
+    // Recreate RTV from the new back buffer
+    ComPtr<ID3D11Texture2D> backBuffer;
+    hr = DXGISwapchain->GetBuffer(0, __uuidof(ID3D11Texture2D), &backBuffer);
+    if (FAILED(hr)) return false;
+    hr = device->CreateRenderTargetView(backBuffer.Get(), nullptr, &D3D11RenderTargetView);
+    if (FAILED(hr)) return false;
+
+    // Recreate depth buffer at the new size
+    D3D11_TEXTURE2D_DESC depthDesc = {};
+    depthDesc.Width            = (UINT)newW;
+    depthDesc.Height           = (UINT)newH;
+    depthDesc.MipLevels        = 1;
+    depthDesc.ArraySize        = 1;
+    depthDesc.Format           = DXGI_FORMAT_D24_UNORM_S8_UINT;
+    depthDesc.SampleDesc.Count = 1;
+    depthDesc.Usage            = D3D11_USAGE_DEFAULT;
+    depthDesc.BindFlags        = D3D11_BIND_DEPTH_STENCIL;
+    hr = device->CreateTexture2D(&depthDesc, nullptr, &D3D11DepthTex);
+    if (FAILED(hr)) return false;
+
+    D3D11_DEPTH_STENCIL_VIEW_DESC dsvd = {};
+    dsvd.Format        = DXGI_FORMAT_D24_UNORM_S8_UINT;
+    dsvd.ViewDimension = D3D11_DSV_DIMENSION_TEXTURE2D;
+    hr = device->CreateDepthStencilView(D3D11DepthTex.Get(), &dsvd, &D3D11DepthStencilTargetView);
+    if (FAILED(hr)) return false;
+
+    // Rebind and update viewport
+    deviceContext->OMSetRenderTargets(1, D3D11RenderTargetView.GetAddressOf(),
+                                     D3D11DepthStencilTargetView.Get());
+
+    viewport.TopLeftX = 0;
+    viewport.TopLeftY = 0;
+    viewport.Width    = (float)newW;
+    viewport.Height   = (float)newH;
+    viewport.MinDepth = 0;
+    viewport.MaxDepth = 1;
+    deviceContext->RSSetViewports(1, &viewport);
+
+    width  = newW;
+    height = newH;
+    T8_LOG_INFO("[D3D11] Swapchain resized to %dx%d", newW, newH);
+    return true;
   }
 
   void D3DXDriver::SetBlendState(BLEND_STATES state)
@@ -614,21 +690,49 @@ namespace t800 {
   }
 
   void D3DXDriver::SetCullFace(FACE_CULLING state) {
-	  // TO FILL
+    ID3D11Device* device = reinterpret_cast<ID3D11Device*>(T8Device->GetAPIObject());
+    ID3D11DeviceContext* deviceContext = reinterpret_cast<ID3D11DeviceContext*>(T8DeviceContext->GetAPIObject());
+
+    D3D11_RASTERIZER_DESC rd = {};
+    rd.FillMode = D3D11_FILL_SOLID;
+    rd.DepthClipEnable = TRUE;
+    rd.MultisampleEnable = FALSE;
+    rd.AntialiasedLineEnable = FALSE;
+
+    switch (state) {
+      case FRONT_FACES:       rd.CullMode = D3D11_CULL_BACK;  break;
+      case BACK_FACES:        rd.CullMode = D3D11_CULL_FRONT; break;
+      case FRONT_AND_BACK:    rd.CullMode = D3D11_CULL_NONE;  break;
+      default:                rd.CullMode = D3D11_CULL_BACK;  break;
+    }
+
+    ID3D11RasterizerState* rs = nullptr;
+    if (SUCCEEDED(device->CreateRasterizerState(&rd, &rs))) {
+      deviceContext->RSSetState(rs);
+      rs->Release();
+    }
   }
 
   void D3DXDriver::Clear() {
     ID3D11DeviceContext* deviceContext = reinterpret_cast<ID3D11DeviceContext*>(T8DeviceContext->GetAPIObject());
-    float rgba[4];
-    rgba[0] = 0.9f;
-    rgba[1] = 0.9f;
-    rgba[2] = 0.9f;
-    rgba[3] = 1.0f;
-
-    // Clearing the Main Render Target View
+    float rgba[4] = { 0.227f, 0.227f, 0.227f, 1.0f };
     deviceContext->ClearRenderTargetView(D3D11RenderTargetView.Get(), rgba);
-    // Clearing the Depth Buffer
     deviceContext->ClearDepthStencilView(D3D11DepthStencilTargetView.Get(), D3D11_CLEAR_DEPTH, 1.0f, 0);
+  }
+
+  void D3DXDriver::ClearWithColor(float r, float g, float b, float a) {
+    ID3D11DeviceContext* deviceContext = reinterpret_cast<ID3D11DeviceContext*>(T8DeviceContext->GetAPIObject());
+    float rgba[4] = { r, g, b, a };
+    if (CurrentRT >= 0 && CurrentRT < (int)RTs.size()) {
+      D3DXRT* rt = static_cast<D3DXRT*>(RTs[CurrentRT]);
+      for (auto& rtv : rt->vD3D11RenderTargetView)
+        deviceContext->ClearRenderTargetView(rtv.Get(), rgba);
+      if (rt->D3D11DepthStencilTargetView)
+        deviceContext->ClearDepthStencilView(rt->D3D11DepthStencilTargetView.Get(), D3D11_CLEAR_DEPTH, 1.0f, 0);
+    } else {
+      deviceContext->ClearRenderTargetView(D3D11RenderTargetView.Get(), rgba);
+      deviceContext->ClearDepthStencilView(D3D11DepthStencilTargetView.Get(), D3D11_CLEAR_DEPTH, 1.0f, 0);
+    }
   }
 
   void D3DXDriver::SwapBuffers() {
@@ -667,6 +771,7 @@ namespace t800 {
 
     }
 
+    CurrentRT = -1;
   }
 
   static void SaveD3D11TextureToPPM(ID3D11Texture2D* srcTex, std::string path) {

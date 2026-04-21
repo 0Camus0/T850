@@ -20,6 +20,7 @@
 #include <unordered_map>
 #include "T8_descriptors.h"
 #include "utils/T8_Technique.h"
+#include "video/WindowHandle.h"
 
 
 namespace t800 {
@@ -159,6 +160,8 @@ namespace t800 {
     };
     
     bool			LoadRT(int nrt, int cf, int df, int w, int h, bool GenMips = false);
+    // Per-attachment color formats (overrides single cf when non-empty)
+    bool			LoadRT(int nrt, const std::vector<int>& perColorFormats, int df, int w, int h, bool GenMips = false);
     virtual bool	LoadAPIRT() = 0;
 
     void			release();
@@ -173,6 +176,7 @@ namespace t800 {
     int color_format;
     int depth_format;
     bool GenMips;
+    std::vector<int> perColorFormats;  // per-attachment formats (empty = use color_format for all)
 
     std::vector<Texture*>							vColorTextures;
     Texture*										pDepthTexture;
@@ -243,8 +247,23 @@ namespace t800 {
     virtual void	 Update() = 0;
     virtual void	 DestroyDriver() = 0;
     virtual void	 SetWindow(void *window) = 0;
+    // Editor-friendly entry point: pass either an SDL_Window* or a native
+    // HWND via a tagged WindowHandle. Default impl preserves the legacy
+    // SDL path so existing callers (Win32Framework -> SetWindow(SDL_Window*))
+    // keep working unchanged. Backends override to honor an explicit HWND
+    // from an editor host instead of GetActiveWindow().
+    virtual void   SetWindowHandle(const WindowHandle& handle) {
+      if (handle.kind == WindowHandle::SDL_WINDOW) {
+        SetWindow(handle.sdlWindow);
+      } else if (handle.kind == WindowHandle::WIN32_HWND) {
+        SetWindow(handle.nativeHandle);
+      } else {
+        SetWindow(nullptr);
+      }
+    }
     virtual void	 SetDimensions(int, int) = 0;
     virtual void	 Clear() = 0;
+    virtual void	 ClearWithColor(float r, float g, float b, float a) { Clear(); }
     virtual void	 SwapBuffers() = 0;
     virtual void SetBlendState(BLEND_STATES state) = 0;
     virtual void SetDepthStencilState(DEPTH_STENCIL_STATES state) = 0;
@@ -262,10 +281,16 @@ namespace t800 {
     virtual void SetViewport(float x, float y, float w, float h) {}
     virtual void SetScissorRect(int x, int y, int w, int h) {}
 
+    // Resize the swapchain, back-buffer RTVs, and depth buffer to the new
+    // pixel dimensions. Returns true on success. Implementations must flush
+    // the GPU before releasing/recreating resources.
+    virtual bool ResizeSwapchain(int newW, int newH) { return false; }
+
     int 	 CreateTexture(std::string);
     int    CreateCubeMap(const unsigned char * buff, int w, int h);
     int	   CreateShader(std::string src_vs, std::string src_fs, ShaderKey key = ShaderKey(), const std::string& vs_name = "", const std::string& fs_name = "");
     int 	 CreateRT(int nrt, int cf, int df, int w, int h, bool genMips = false);
+    int    CreateRT(int nrt, const std::vector<int>& perColorFormats, int df, int w, int h, bool genMips = false);
     void 	 ModifyRT(int RTID, int nrt, int cf, int df, int w, int h, bool genMips = false);
     int    CreateTechnique(std::string path);
 

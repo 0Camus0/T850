@@ -26,6 +26,7 @@ namespace Log {
   static std::mutex s_mutex;
   static bool      s_initialized = false;
   static char      s_sessionTag[32] = {0};
+  static LogCallback s_callback = nullptr;
 
 #ifdef OS_WINDOWS
   static HANDLE    s_console   = INVALID_HANDLE_VALUE;
@@ -182,6 +183,11 @@ namespace Log {
       s_sessionTag[0] = '\0';
   }
 
+  void SetCallback(LogCallback cb) {
+    std::lock_guard<std::mutex> lock(s_mutex);
+    s_callback = cb;
+  }
+
   void Write(Level level, const char* file, int line, const char* fmt, ...) {
     if (level > s_maxLevel) return;
 
@@ -218,32 +224,43 @@ namespace Log {
                timestamp, pid, tid, ram, tag, userMsg, fname, line);
     }
 
-    std::lock_guard<std::mutex> lock(s_mutex);
+    {
+      std::lock_guard<std::mutex> lock(s_mutex);
 
-    // Console backend
-    if (s_backends & T8_LOG_BACKEND_CONSOLE) {
+      // Console backend
+      if (s_backends & T8_LOG_BACKEND_CONSOLE) {
 #ifdef OS_WINDOWS
-      SetConsoleColor(level);
-      printf("%s\n", fullLine);
-      ResetConsoleColor();
+        SetConsoleColor(level);
+        printf("%s\n", fullLine);
+        ResetConsoleColor();
 #else
-      printf("%s%s\033[0m\n", AnsiColor(level), fullLine);
+        printf("%s%s\033[0m\n", AnsiColor(level), fullLine);
 #endif
-    }
+      }
 
-    // OutputDebugString backend (Windows only)
+      // OutputDebugString backend (Windows only)
 #ifdef OS_WINDOWS
-    if (s_backends & T8_LOG_BACKEND_DEBUG_OUTPUT) {
-      OutputDebugStringA(fullLine);
-      OutputDebugStringA("\n");
-    }
+      if (s_backends & T8_LOG_BACKEND_DEBUG_OUTPUT) {
+        OutputDebugStringA(fullLine);
+        OutputDebugStringA("\n");
+      }
 #endif
 
-    // File backend
-    if ((s_backends & T8_LOG_BACKEND_FILE) && s_file) {
-      fprintf(s_file, "%s\n", fullLine);
-      fflush(s_file);
+      // File backend
+      if ((s_backends & T8_LOG_BACKEND_FILE) && s_file) {
+        fprintf(s_file, "%s\n", fullLine);
+        fflush(s_file);
+      }
+    } // unlock s_mutex
+
+    // User callback — called OUTSIDE the mutex so the callback can safely
+    // acquire its own lock without ABBA risk.
+    LogCallback cb = nullptr;
+    {
+      std::lock_guard<std::mutex> lock(s_mutex);
+      cb = s_callback;
     }
+    if (cb) cb(level, fullLine);
   }
 
 } // namespace Log

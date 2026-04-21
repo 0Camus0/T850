@@ -217,8 +217,11 @@ namespace t800 {
     void Update() override;
     void DestroyDriver() override;
     void SetWindow(void* window) override;
+    void SetWindowHandle(const WindowHandle& handle) override;
     void SetDimensions(int w, int h) override;
+    bool ResizeSwapchain(int newW, int newH) override;
     void Clear() override;
+    void ClearWithColor(float r, float g, float b, float a) override;
     void SwapBuffers() override;
     void SetBlendState(BLEND_STATES state) override;
     void SetDepthStencilState(DEPTH_STENCIL_STATES state) override;

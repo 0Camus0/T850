@@ -800,19 +800,29 @@ function Update-Preview {
     $cmd = Get-LaunchCommand
     $txtCmdPreview.Text = $cmd.Display
 
-    if (Test-Path $cmd.ExePath) {
-        $txtStatus.Text = "Ready to run"
+    $sceneOk = Test-Path $cmd.ExePath
+    $editorCmd = Get-EditorLaunchCommand
+    $editorOk = Test-Path $editorCmd.ExePath
+
+    if ($sceneOk -and $editorOk) {
+        $txtStatus.Text = "Ready to run (Scene + Editor)"
         $txtStatus.Foreground = $window.FindResource("GreenBrush")
         $btnRun.IsEnabled = $true
+        $btnEditor.IsEnabled = $true
+    } elseif ($sceneOk) {
+        $txtStatus.Text = "Scene ready, Editor not found - build required"
+        $txtStatus.Foreground = $window.FindResource("GreenBrush")
+        $btnRun.IsEnabled = $true
+        $btnEditor.IsEnabled = $false
     } else {
-        $txtStatus.Text = "Executable not found - build this configuration first"
+        $missing = @()
+        if (-not $sceneOk) { $missing += "DayScene.exe" }
+        if (-not $editorOk) { $missing += "T8ditor.exe" }
+        $txtStatus.Text = "Not found: $($missing -join ', ') - build this configuration first"
         $txtStatus.Foreground = $window.FindResource("RedBrush")
         $btnRun.IsEnabled = $false
+        $btnEditor.IsEnabled = $false
     }
-
-    # Also check editor exe
-    $editorCmd = Get-EditorLaunchCommand
-    $btnEditor.IsEnabled = (Test-Path $editorCmd.ExePath)
 }
 
 function Update-GuiControlEditUI {

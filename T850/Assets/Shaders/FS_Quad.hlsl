@@ -32,18 +32,10 @@ float roundTo(float num,float decimals){
 	return round(num*shift) / shift;
 }
 
-#ifdef DEFERRED_PASS
-Texture2D tex0 : register(t0);
-Texture2D tex1 : register(t1);
-Texture2D tex2 : register(t2);
-Texture2D tex3 : register(t3);
-Texture2D tex4 : register(t4);
-Texture2D tex5 : register(t5);
-TextureCube texEnv : register(t6);
-
+// PBR helper functions shared by DEFERRED_PASS and DEFERRED_LDR_PASS
+#if defined(DEFERRED_PASS) || defined(DEFERRED_LDR_PASS)
 float3 NormalDistribution(float NdotH, float roughness)
 {
-	// GGX
 	float a = roughness * roughness;
 	float a2 = a * a;
 	float NdotH2 = NdotH * NdotH;
@@ -56,7 +48,6 @@ float3 NormalDistribution(float NdotH, float roughness)
 
 float3 FresnelCalc(float VdotH, float3 specColor)
 {
-	// Schlick
 	return (specColor + (1.0f - specColor) * pow(1.0f - VdotH, 5.0f));
 }
 
@@ -76,7 +67,6 @@ float GeometrySchlickGGX(float Ndot, float roughness)
 
 float3 GeometricShadowing(float NdotL, float NdotV, float roughness)
 {
-	// Geometry Smith
 	float ggx1 = GeometrySchlickGGX(NdotL, roughness);
 	float ggx2 = GeometrySchlickGGX(NdotV, roughness);
 	float res = clamp(ggx1 * ggx2, 0.0f, 1.0f);
@@ -101,6 +91,16 @@ float3 CalculateDiffuse(float3 albedoColor, float3 normal, float3 light)
 {
 	return albedoColor * clamp(dot(normal, light), 0.0f, 1.0f);
 }
+#endif
+
+#ifdef DEFERRED_PASS
+Texture2D tex0 : register(t0);
+Texture2D tex1 : register(t1);
+Texture2D tex2 : register(t2);
+Texture2D tex3 : register(t3);
+Texture2D tex4 : register(t4);
+Texture2D tex5 : register(t5);
+TextureCube texEnv : register(t6);
 
 float4 FS( VS_OUTPUT input ) : SV_TARGET {
 	float4 Final = float4(0.0,0.0,0.0,1.0);

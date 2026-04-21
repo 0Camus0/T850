@@ -212,17 +212,17 @@ float4 FS( VS_OUTPUT input ) : SV_TARGET {
 		float3 kSpecular = clamp(fresnelSchlickRoughness(max(dot(normal, EyeDir), 0.0f), F0, rough), 0.0, 1.0);
 		float3 kDiffuseEnv = (float3(1.0f, 1.0f, 1.0f) - kSpecular) * (1.0f - metallic);
 
-		// Specular IBL: env reflection
+		// Specular IBL: env reflection (toogles.z = IBL factor)
 		float3 RefleCol = texEnv.SampleLevel(SS, ReflectedVec, rough * 4.0f).xyz;
 		float envAtten = (1.0f - rough) * (1.0f - rough);
-		Final.xyz += RefleCol * kSpecular.xyz * envAtten * toogles.x;
+		Final.xyz += RefleCol * kSpecular.xyz * envAtten * toogles.z;
 
 		// Diffuse IBL: approximate irradiance from env cubemap at high mip
 		float3 irradianceDir = normal;
 		irradianceDir.x = -irradianceDir.x;
 		irradianceDir.z = -irradianceDir.z;
 		float3 irradiance = texEnv.SampleLevel(SS, irradianceDir, 6.0f).xyz;
-		Final.xyz += irradiance * Albedo.xyz * kDiffuseEnv * toogles.x;
+		Final.xyz += irradiance * Albedo.xyz * kDiffuseEnv * toogles.z;
 
 		// Ambient minimum (toogles.y = ambient intensity)
 		Final.xyz += Albedo.xyz * toogles.y * kDiffuseEnv;
@@ -319,7 +319,7 @@ float4 FS(VS_OUTPUT input) : SV_TARGET {
 		float3 kSpecular = clamp(fresnelSchlickRoughness(max(dot(normal, EyeDir), 0.0f), F0, rough), 0.0, 1.0);
 		float3 RefleCol = texEnv.SampleLevel(SS, ReflectedVec, rough * 4.0f).xyz;
 		float envAtten = (1.0f - rough) * (1.0f - rough);
-		Final.xyz += RefleCol * kSpecular.xyz * envAtten * toogles.x;
+		Final.xyz += RefleCol * kSpecular.xyz * envAtten * toogles.z;
 
 		float selfShadow = PBRData.g;
 		Final.xyz *= Shadow * selfShadow;

@@ -3,18 +3,18 @@
    "cameras": [
       {
          "position": [
-            56.84391,
-            101.90019,
-            -8.127772
+            -45.78652,
+            31.024137,
+            -0.6973086
          ],
          "eye": [
             0,
             9.75,
             -31
          ],
-         "pitch": -0.62499577,
+         "pitch": -0.23499528,
          "roll": 0,
-         "yaw": 7.120059,
+         "yaw": 12.010115,
          "speed": 10,
          "fov": 1.0471976,
          "aspect": 1.7778,
@@ -40,7 +40,7 @@
          ],
          "pitch": 1.3299998,
          "roll": 0,
-         "yaw": -7.653671,
+         "yaw": -7.9799366,
          "speed": 10,
          "fov": 0.7853982,
          "aspect": 1,
@@ -61,9 +61,9 @@
             0
          ],
          "direction": [
-            -0.23370592,
-            -0.9711483,
-            0.04746004
+            -0.23658708,
+            -0.9711484,
+            -0.029957913
          ],
          "color": [
             1,
@@ -161,9 +161,9 @@
    ],
    "gauss_filters": [
       {
-         "kernel_size": 5,
+         "kernel_size": 15,
          "radius": 1,
-         "sigma": 3
+         "sigma": 7
       },
       {
          "kernel_size": 9,
@@ -414,8 +414,8 @@
    },
    "settings": {
       "exposure": 1.1000004,
-      "bloom_factor": 0.4,
-      "bloom_threshold": 1.5,
+      "bloom_factor": 0.6,
+      "bloom_threshold": 1.2,
       "tone_map_white_level": 5.5,
       "luminance_tau": 0.65000004,
       "aperture": 70,
@@ -435,9 +435,10 @@
       "auto_focus": true,
       "debug_mode": 0,
       "shadow_bias": 0.000005,
-      "shadow_min": 0.29999998,
-      "env_factor": 1.6,
-      "godrays_factor": 0.7
+      "shadow_min": 0,
+      "env_factor": 8.1,
+      "ibl_factor": 0.2,
+      "godrays_factor": 1.5
    },
    "sliders": [
       {
@@ -606,7 +607,7 @@
          "min_val": 0,
          "max_val": 1,
          "step": 0.05,
-         "default_val": 1.0
+         "default_val": 1
       },
       {
          "name": "light_volume_steps",
@@ -622,7 +623,7 @@
          "min_val": 0,
          "max_val": 3,
          "step": 0.05,
-         "default_val": 0.7
+         "default_val": 1.5
       },
       {
          "name": "gauss_kernel_radius",
@@ -670,15 +671,23 @@
          "min_val": 0,
          "max_val": 0.75,
          "step": 0.01,
-         "default_val": 0.29999998
+         "default_val": 0
       },
       {
          "name": "env_factor",
          "label": "Env Factor",
          "min_val": 0,
-         "max_val": 2,
+         "max_val": 10,
          "step": 0.05,
-         "default_val": 1.6
+         "default_val": 8.1
+      },
+      {
+         "name": "ibl_factor",
+         "label": "IBL Factor",
+         "min_val": 0,
+         "max_val": 5,
+         "step": 0.05,
+         "default_val": 0.2
       }
    ],
    "checkboxes": [

@@ -1115,6 +1115,7 @@ void SC_Day::PopulateGUI(t800::GUIManager& gui) {
     {"shadow_bias",             CHANGE_SHADOW_BIAS},
     {"shadow_min",              CHANGE_SHADOW_MIN},
     {"env_factor",              CHANGE_ENV_FACTOR},
+    {"ibl_factor",               CHANGE_IBL_FACTOR},
   };
 
   auto& sliderDescs = m_sceneSetup.descriptor.sliders;
@@ -1219,6 +1220,7 @@ void SC_Day::SyncToGUI(t800::GUIManager& gui) {
     case CHANGE_SHADOW_BIAS:        slider->SetValue(SceneProp.ShadowBias); break;
     case CHANGE_SHADOW_MIN:         slider->SetValue(SceneProp.ShadowMin); break;
     case CHANGE_ENV_FACTOR:         slider->SetValue(SceneProp.EnvFactor); break;
+    case CHANGE_IBL_FACTOR:         slider->SetValue(SceneProp.IBLFactor); break;
     }
   }
   for (auto& cp : gui.GetCheckboxPairs()) {
@@ -1308,6 +1310,9 @@ void SC_Day::SyncFromGUI(t800::GUIManager& gui) {
       break;
     case CHANGE_ENV_FACTOR:
       SceneProp.EnvFactor = slider->value;
+      break;
+    case CHANGE_IBL_FACTOR:
+      SceneProp.IBLFactor = slider->value;
       break;
     }
   }
@@ -1417,6 +1422,7 @@ void SC_Day::SaveSceneState() {
     if (sd.name == "shadow_bias") sd.default_val = SceneProp.ShadowBias;
     else if (sd.name == "shadow_min")  sd.default_val = SceneProp.ShadowMin;
     else if (sd.name == "env_factor")  sd.default_val = SceneProp.EnvFactor;
+    else if (sd.name == "ibl_factor")   sd.default_val = SceneProp.IBLFactor;
     else if (sd.name == "godrays_factor") sd.default_val = SceneProp.GodRaysFactor;
   }
   for (auto& cd : m_sceneSetup.descriptor.checkboxes) {

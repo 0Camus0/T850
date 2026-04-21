@@ -195,13 +195,25 @@ bool LoadGLTF(const std::string& path, Document& out) {
   }
   out._sourcePath = path;
 
-  // Hard-fail on required extensions we don't implement (none yet).
+  // Hard-fail on required extensions we don't implement.
+  // Supported extensions are allowed through.
+  static const std::vector<std::string> kSupportedExtensions = {
+    "KHR_draco_mesh_compression",
+  };
   if (!out.extensionsRequired.empty()) {
-    std::string list;
-    for (auto& e : out.extensionsRequired) { list += e; list += " "; }
-    T8_LOG_ERROR("[glTF] '%s' requires extensions not implemented: %s",
-                 path.c_str(), list.c_str());
-    return false;
+    std::string unsupported;
+    for (auto& e : out.extensionsRequired) {
+      bool supported = false;
+      for (auto& s : kSupportedExtensions) {
+        if (e == s) { supported = true; break; }
+      }
+      if (!supported) { unsupported += e; unsupported += " "; }
+    }
+    if (!unsupported.empty()) {
+      T8_LOG_ERROR("[glTF] '%s' requires extensions not implemented: %s",
+                   path.c_str(), unsupported.c_str());
+      return false;
+    }
   }
 
   if (!ResolveBuffers(out, path, std::move(glbBin))) {

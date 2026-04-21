@@ -175,12 +175,12 @@ namespace t800 {
       LinearDepth = true; // Force for ES 2.0
 #endif
 
-#if defined(USING_OPENGL_ES30) || defined(USING_OPENGL_ES31)
+#if defined(USING_OPENGL)
       if (g_pBaseDriver->m_currentAPI == GRAPHICS_API::OPENGL) {
-        Defines += "#version 300 es\n\n";
+        Defines += "#version 330\n\n";
         Defines += "#define ES_30\n\n";
       }
-#else
+#elif defined(USING_OPENGL_ES30) || defined(USING_OPENGL_ES31)
       if (g_pBaseDriver->m_currentAPI == GRAPHICS_API::OPENGL) {
         Defines += "#version 300 es\n\n";
         Defines += "#define ES_30\n\n";

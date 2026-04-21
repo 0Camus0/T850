@@ -3,9 +3,11 @@
 #include <utils/Log.h>
 #include <scene/PrimitiveManager.h>
 #include <scene/PrimitiveInstance.h>
+#include <scene/RenderMesh.h>
 #include <scene/SceneDescriptor.h>
 #include <iostream>
 #include <string>
+#include <cmath>
 
 using namespace t800;
 using std::string;
@@ -20,6 +22,14 @@ void SC_SandBox::InitVars() {
   Cam.Yaw = 0.0f;
   Cam.m_externalControl = false;
   Cam.Update(0.0f);
+
+  // Initialize orbit camera defaults
+  m_orbitTarget = XVECTOR3(0, 0, 0);
+  m_panOffset   = XVECTOR3(0, 0, 0);
+  m_orbitYaw    = 0.0f;
+  m_orbitPitch  = 0.0f;
+  m_orbitDist   = 5.0f;
+  m_modelRadius = 1.0f;
 
   LightCam.InitPerspective(XVECTOR3(0.0f, 100.0f, 10.0f), Deg2Rad(45.0f), 1.0f, 10.0f, 500.0f);
   LightCam.Speed = 10.0f;
@@ -74,27 +84,41 @@ void SC_SandBox::InitVars() {
   SceneProp.BloomThreshold = 1.5f;
   SceneProp.ToneMapWhiteLevel = 5.5f;
   SceneProp.LuminanceTau = 1.1f;
+
+  // Initialize frame dumper from command-line globals
+  extern bool g_dumpEnabled, g_dumpByFrame, g_debugFrames, g_keepRunning;
+  extern int g_dumpFrame, g_startScene;
+  extern float g_dumpSeconds;
+  extern std::string g_replaySnapshotPath;
+  t800::FrameDumperConfig dumpCfg;
+  dumpCfg.dumpEnabled        = g_dumpEnabled;
+  dumpCfg.dumpByFrame        = g_dumpByFrame;
+  dumpCfg.dumpFrame          = g_dumpFrame;
+  dumpCfg.dumpSeconds        = g_dumpSeconds;
+  dumpCfg.debugFrames        = g_debugFrames;
+  dumpCfg.keepRunning        = g_keepRunning;
+  dumpCfg.replaySnapshotPath = g_replaySnapshotPath;
+  dumpCfg.sceneIndex         = g_startScene;
+  m_dumper.Init(dumpCfg);
 }
 
 void SC_SandBox::CreateAssets() {
-  if (!m_renderGraph.Load("Scenes/SC_Tech_RenderGraph.json")) {
+  if (!m_renderGraph.Load("Scenes/SC_SandBox_RenderGraph.json")) {
     T8_LOG_ERROR("[SC_SandBox] Failed to load render graph");
     return;
   }
   m_renderGraph.CreateRenderTargets(pFramework->pVideoDriver, SceneProp);
 
-  GBufferPass      = m_renderGraph.GetRTHandle("GBuffer");
-  DeferredPass     = m_renderGraph.GetRTHandle("Deferred");
-  Extra16FPass     = m_renderGraph.GetRTHandle("Extra16F");
-  DepthPass        = m_renderGraph.GetRTHandle("DepthPass");
-  ShadowAccumPass  = m_renderGraph.GetRTHandle("ShadowAccum");
-  ExtraHelperPass  = m_renderGraph.GetRTHandle("ExtraHelper");
-  BloomAccumPass   = m_renderGraph.GetRTHandle("BloomAccum");
-  GodRaysCalcPass  = m_renderGraph.GetRTHandle("GodRaysCalc");
-  CoCPass          = m_renderGraph.GetRTHandle("CoC");
-  CombineCoCPass   = m_renderGraph.GetRTHandle("CombineCoC");
-  CoCHelperPass    = m_renderGraph.GetRTHandle("CoCHelper");
-  CoCHelperPass2   = m_renderGraph.GetRTHandle("CoCHelper2");
+  GBufferPass           = m_renderGraph.GetRTHandle("GBuffer");
+  DeferredPass          = m_renderGraph.GetRTHandle("Deferred");
+  Extra16FPass          = m_renderGraph.GetRTHandle("Extra16F");
+  DepthPass             = m_renderGraph.GetRTHandle("DepthPass");
+  ShadowAccumPass       = m_renderGraph.GetRTHandle("ShadowAccum");
+  ExtraHelperPass       = m_renderGraph.GetRTHandle("ExtraHelper");
+  BloomAccumPass        = m_renderGraph.GetRTHandle("BloomAccum");
+  LuminanceMapPass      = m_renderGraph.GetRTHandle("LuminanceMap");
+  AdaptedLumCurrentPass = m_renderGraph.GetRTHandle("AdaptedLumCurrent");
+  AdaptedLumPrevPass    = m_renderGraph.GetRTHandle("AdaptedLumPrev");
 
   PrimitiveMgr.Init();
   PrimitiveMgr.SetVP(&VP);
@@ -103,14 +127,22 @@ void SC_SandBox::CreateAssets() {
 
   EnvMapTexIndex = g_pBaseDriver->CreateTexture(string("sky/Ennis.dds"));
 
+  extern std::string g_modelPath;
+
   // Load the glTF model
-  int index = PrimitiveMgr.CreateMesh("Models/AE44_blender_nodraco.glb");
+  int index = PrimitiveMgr.CreateMesh(g_modelPath.c_str());
   if (index < 0) {
-    T8_LOG_ERROR("[SC_SandBox] Failed to load Models/AE44_blender_nodraco.glb");
+    T8_LOG_ERROR("[SC_SandBox] Failed to load '%s'", g_modelPath.c_str());
   } else {
-    T8_LOG_INFO("[SC_SandBox] Loaded glTF model, primitive index=%d", index);
+    T8_LOG_INFO("[SC_SandBox] Loaded model '%s', primitive index=%d", g_modelPath.c_str(), index);
     Meshes[0].CreateInstance(PrimitiveMgr.GetPrimitive(index), &VP);
+    FitModelToView();
   }
+
+  // No SkyBox mesh needed — cleared GBuffer pixels (MatId=0) sample
+  // the environment cubemap directly in the deferred pass using the
+  // interpolated view ray (PosCorner). This avoids cull-face issues
+  // and works across all APIs.
 
   // Fullscreen quad setup
   m.Identity();
@@ -129,6 +161,10 @@ void SC_SandBox::CreateAssets() {
 
   Quads[0].TranslateAbsolute(0.0f, 0.0f, 0.0f);
   Quads[0].Update();
+
+  // Debug visualization
+  m_debugText.LoadFromFile(24, "Fonts/Martius-LV9L4.ttf", 512.0f);
+  m_debugSphere.Create(6, 12);
 }
 
 void SC_SandBox::OnLoadScene() {
@@ -149,33 +185,96 @@ void SC_SandBox::OnUpdate(float _DtSecs) {
   DtSecs = _DtSecs;
   SceneProp.FrameDeltaSec = DtSecs;
 
-  ActiveCam->Update(DtSecs);
-  VP = ActiveCam->VP;
+  // Apply deferred cubemap change BEFORE any rendering begins.
+  // D3D12 texture upload submits a temp command list + fence wait, which
+  // conflicts with the main command list if done mid-frame.
+  if (!m_pendingCubemap.empty()) {
+    T8_LOG_INFO("[SC_SandBox] Loading cubemap '%s' (old slot=%d)",
+                m_pendingCubemap.c_str(), EnvMapTexIndex);
+    // Flush GPU before destroying — D3D12 may still reference the old
+    // texture from the previous frame's command list.
+    g_pBaseDriver->WaitForGPU();
+    if (EnvMapTexIndex >= 0) {
+      g_pBaseDriver->DestroyTexture(EnvMapTexIndex);
+      EnvMapTexIndex = -1;
+    }
+    EnvMapTexIndex = g_pBaseDriver->CreateTexture(m_pendingCubemap);
+    Texture* newTex = g_pBaseDriver->GetTexture(EnvMapTexIndex);
+    T8_LOG_INFO("[SC_SandBox] Cubemap loaded: slot=%d tex=%p (%dx%d)",
+                EnvMapTexIndex, newTex, newTex ? newTex->x : 0, newTex ? newTex->y : 0);
+    Quads[0].SetEnvironmentMap(newTex);
+    if (Meshes[0].pBase) {
+      Meshes[0].SetEnvironmentMap(newTex);
+    }
+    m_pendingCubemap.clear();
+  }
 
-  SceneProp.Lights[0].Position = LightCam.Eye;
-  SceneProp.Lights[0].Direction = LightCam.Look;
+  // Replay snapshot: load and apply (one-time)
+  if (m_dumper.HasPendingReplay()) {
+    if (m_dumper.LoadReplaySnapshot()) {
+      m_dumper.ApplySnapshot(Cam, LightCam, SceneProp);
+      VP = Cam.VP;
+    }
+  }
+  m_dumper.UpdateReplayState();
+
+  if (!m_dumper.SkipCameraUpdates()) {
+    ComputeOrbitCamera();
+    VP = Cam.VP;
+    SceneProp.Lights[0].Position = LightCam.Eye;
+    SceneProp.Lights[0].Direction = LightCam.Look;
+  }
 }
 
 void SC_SandBox::OnInput(InputManager* IManager) {
-  // WASD + QE free camera movement
-  if (IManager->PressedKey(T800K_w))
-    ActiveCam->MoveForward(DtSecs);
-  if (IManager->PressedKey(T800K_s))
-    ActiveCam->MoveBackward(DtSecs);
-  if (IManager->PressedKey(T800K_a))
-    ActiveCam->StrafeLeft(DtSecs);
-  if (IManager->PressedKey(T800K_d))
-    ActiveCam->StrafeRight(DtSecs);
-  if (IManager->PressedKey(T800K_q))
-    ActiveCam->MoveUp(DtSecs);
-  if (IManager->PressedKey(T800K_e))
-    ActiveCam->MoveDown(DtSecs);
+  // Spacebar: request frame dump (--debugFrames mode)
+  if (IManager->PressedOnceKey(T800K_SPACE)) {
+    m_dumper.RequestDump();
+  }
+
+  // Skip mouse-driven camera when replay snapshot is active
+  if (m_dumper.IsReplayActive()) return;
+
+  float dx = static_cast<float>(IManager->xDelta);
+  float dy = static_cast<float>(IManager->yDelta);
+
+  // Left click + drag: orbit rotate
+  if (IManager->PressedMouseButton(0)) {
+    m_orbitYaw   += dx * 0.005f;
+    m_orbitPitch += dy * 0.005f;
+    // Clamp pitch to avoid gimbal lock
+    const float maxP = Deg2Rad(89.0f);
+    if (m_orbitPitch >  maxP) m_orbitPitch =  maxP;
+    if (m_orbitPitch < -maxP) m_orbitPitch = -maxP;
+  }
+
+  // Right click + drag: zoom (vertical drag)
+  if (IManager->PressedMouseButton(2)) {
+    m_orbitDist -= dy * 0.02f * m_modelRadius;
+    if (m_orbitDist < m_modelRadius * 0.05f)
+      m_orbitDist = m_modelRadius * 0.05f;
+  }
+
+  // Middle click + drag: pan
+  if (IManager->PressedMouseButton(1)) {
+    float panSpeed = m_orbitDist * 0.002f;
+    // Pan along camera right and up axes
+    m_panOffset += Cam.Right * (-dx * panSpeed);
+    m_panOffset += Cam.Up    * ( dy * panSpeed);
+  }
+
+  // Mouse wheel: zoom
+  if (IManager->scrollDelta != 0.0f) {
+    m_orbitDist -= IManager->scrollDelta * 0.15f * m_modelRadius;
+    if (m_orbitDist < m_modelRadius * 0.05f)
+      m_orbitDist = m_modelRadius * 0.05f;
+  }
 
   // Print camera position
   if (IManager->PressedOnceKey(T800K_k)) {
-    T8_LOG_INFO("Eye[%f, %f, %f] Pitch=%f Yaw=%f",
-      ActiveCam->Eye.x, ActiveCam->Eye.y, ActiveCam->Eye.z,
-      ActiveCam->Pitch, ActiveCam->Yaw);
+    T8_LOG_INFO("Orbit: target[%f,%f,%f] dist=%f yaw=%f pitch=%f",
+      m_orbitTarget.x, m_orbitTarget.y, m_orbitTarget.z,
+      m_orbitDist, m_orbitYaw, m_orbitPitch);
   }
 
   // API switching
@@ -184,11 +283,61 @@ void SC_SandBox::OnInput(InputManager* IManager) {
   if (IManager->PressedOnceKey(T800K_2))
     pFramework->ChangeAPI(GRAPHICS_API::OPENGL);
 
-  // Mouse look
-  float yaw = 0.005f * static_cast<float>(IManager->xDelta);
-  ActiveCam->MoveYaw(yaw);
-  float pitch = 0.005f * static_cast<float>(IManager->yDelta);
-  ActiveCam->MovePitch(pitch);
+  // Debug toggles
+  if (IManager->PressedOnceKey(T800K_F2))
+    m_showCullStats = !m_showCullStats;
+  if (IManager->PressedOnceKey(T800K_F3))
+    m_showAABBs = !m_showAABBs;
+}
+
+void SC_SandBox::FitModelToView() {
+  if (!Meshes[0].pBase) return;
+  RenderMesh* rm = static_cast<RenderMesh*>(Meshes[0].pBase);
+
+  // Compute the union of all geometry AABBs
+  RenderMesh::AABB total;
+  total.Reset();
+  for (auto& mi : rm->Info) {
+    total.Expand(mi.bounds.min.x, mi.bounds.min.y, mi.bounds.min.z);
+    total.Expand(mi.bounds.max.x, mi.bounds.max.y, mi.bounds.max.z);
+  }
+
+  m_orbitTarget = XVECTOR3(
+    (total.min.x + total.max.x) * 0.5f,
+    (total.min.y + total.max.y) * 0.5f,
+    (total.min.z + total.max.z) * 0.5f);
+  m_panOffset = XVECTOR3(0, 0, 0);
+
+  float ex = (total.max.x - total.min.x) * 0.5f;
+  float ey = (total.max.y - total.min.y) * 0.5f;
+  float ez = (total.max.z - total.min.z) * 0.5f;
+  m_modelRadius = std::sqrt(ex*ex + ey*ey + ez*ez);
+  if (m_modelRadius < 1e-4f) m_modelRadius = 1.0f;
+
+  // Place camera at a distance that fits the bounding sphere in the FOV
+  float halfFov = Cam.Fov * 0.5f;
+  m_orbitDist = m_modelRadius / std::tan(halfFov);
+  m_orbitYaw = 0.0f;
+  m_orbitPitch = 0.0f;
+
+  // Adjust near/far planes to the model scale
+  Cam.NPlane = m_modelRadius * 0.01f;
+  Cam.FPlane = m_modelRadius * 100.0f;
+  Cam.CreatePojection();
+
+  T8_LOG_INFO("[SC_SandBox] Model center=(%.2f,%.2f,%.2f) radius=%.2f dist=%.2f",
+    m_orbitTarget.x, m_orbitTarget.y, m_orbitTarget.z, m_modelRadius, m_orbitDist);
+}
+
+void SC_SandBox::ComputeOrbitCamera() {
+  // Spherical coordinates around the target
+  XVECTOR3 target = m_orbitTarget + m_panOffset;
+  float cy = std::cos(m_orbitYaw),   sy = std::sin(m_orbitYaw);
+  float cp = std::cos(m_orbitPitch), sp = std::sin(m_orbitPitch);
+
+  XVECTOR3 offset(sy * cp, sp, cy * cp);
+  Cam.Eye = target + offset * m_orbitDist;
+  Cam.SetLookAt(target);
 }
 
 void SC_SandBox::OnDraw() {
@@ -203,6 +352,27 @@ void SC_SandBox::OnDraw() {
     nullptr,
     EnvMapTexIndex
   );
+
+  // RT Dump via FrameDumper
+  if (m_dumper.ShouldDump(DtSecs)) {
+    std::vector<t800::RTDumpEntry> rts = {
+      {GBufferPass,           BaseDriver::COLOR0_ATTACHMENT, "GBuffer_Albedo"},
+      {GBufferPass,           BaseDriver::COLOR1_ATTACHMENT, "GBuffer_Normals"},
+      {GBufferPass,           BaseDriver::COLOR2_ATTACHMENT, "GBuffer_PBR"},
+      {GBufferPass,           BaseDriver::COLOR3_ATTACHMENT, "GBuffer_GeoNormal"},
+      {GBufferPass,           BaseDriver::COLOR4_ATTACHMENT, "GBuffer_Depth"},
+      {DepthPass,             BaseDriver::DEPTH_ATTACHMENT,  "ShadowMap_Depth"},
+      {ShadowAccumPass,       BaseDriver::COLOR0_ATTACHMENT, "ShadowAccum"},
+      {DeferredPass,          BaseDriver::COLOR0_ATTACHMENT, "Deferred"},
+      {Extra16FPass,          BaseDriver::COLOR0_ATTACHMENT, "Extra16F"},
+      {ExtraHelperPass,       BaseDriver::COLOR0_ATTACHMENT, "HDR_Final"},
+      {BloomAccumPass,        BaseDriver::COLOR0_ATTACHMENT, "Bloom"},
+      {LuminanceMapPass,      BaseDriver::COLOR0_ATTACHMENT, "LuminanceMap"},
+      {AdaptedLumCurrentPass, BaseDriver::COLOR0_ATTACHMENT, "AdaptedLumCurrent"},
+    };
+    m_dumper.DumpFrame(pFramework->pVideoDriver, Cam, LightCam, SceneProp, rts, DtSecs);
+    if (m_dumper.ShouldExit()) exit(0);
+  }
 
   // Blit final HDR result to backbuffer
   int selected = ExtraHelperPass;
@@ -221,8 +391,8 @@ void SC_SandBox::OnDraw() {
     case 9:  selected = Extra16FPass;    attachment = BaseDriver::COLOR0_ATTACHMENT; break;
     case 10: selected = ExtraHelperPass; attachment = BaseDriver::COLOR0_ATTACHMENT; break;
     case 11: selected = BloomAccumPass;  attachment = BaseDriver::COLOR0_ATTACHMENT; break;
-    case 12: selected = GodRaysCalcPass; attachment = BaseDriver::COLOR0_ATTACHMENT; break;
-    case 13: selected = CoCPass;         attachment = BaseDriver::COLOR0_ATTACHMENT; break;
+    case 12: selected = LuminanceMapPass; attachment = BaseDriver::COLOR0_ATTACHMENT; break;
+    case 13: selected = AdaptedLumCurrentPass; attachment = BaseDriver::COLOR0_ATTACHMENT; break;
     }
   }
 
@@ -232,12 +402,59 @@ void SC_SandBox::OnDraw() {
   finalKey.bits |= ShaderKey::HAS_TEXCOORD0;
   Quads[7].SetGlobalKey(finalKey);
   Quads[7].Draw();
+
+  // Debug: draw wireframe AABBs for visible meshes
+  if (m_showAABBs && Meshes[0].pBase) {
+    RenderMesh* rm = static_cast<RenderMesh*>(Meshes[0].pBase);
+    XVECTOR3 frustumPlanes[6];
+    RenderMesh::ExtractFrustumPlanes(Cam.VP, frustumPlanes);
+
+    pFramework->pVideoDriver->SetDepthStencilState(BaseDriver::NONE);
+    pFramework->pVideoDriver->SetBlendState(BaseDriver::ALPHA_BLEND);
+    for (std::size_t i = 0; i < rm->Info.size(); i++) {
+      RenderMesh::AABB& box = rm->Info[i].bounds;
+      if (!RenderMesh::AABBInsideFrustum(box, rm->transform, frustumPlanes))
+        continue;
+      XVECTOR3 center((box.min.x+box.max.x)*0.5f, (box.min.y+box.max.y)*0.5f, (box.min.z+box.max.z)*0.5f);
+      float ex = (box.max.x-box.min.x)*0.5f;
+      float ey = (box.max.y-box.min.y)*0.5f;
+      float ez = (box.max.z-box.min.z)*0.5f;
+      float radius = std::sqrt(ex*ex + ey*ey + ez*ez);
+      m_debugSphere.Draw(VP, center, radius);
+    }
+    pFramework->pVideoDriver->SetDepthStencilState(BaseDriver::DEPTH_DEFAULT);
+    pFramework->pVideoDriver->SetBlendState(BaseDriver::BLEND_DEFAULT);
+  }
+
+  // Debug: on-screen cull stats
+  if (m_showCullStats && Meshes[0].pBase) {
+    RenderMesh* rm = static_cast<RenderMesh*>(Meshes[0].pBase);
+    int w = g_pBaseDriver->width;
+    int h = g_pBaseDriver->height;
+
+    pFramework->pVideoDriver->SetBlendState(BaseDriver::ALPHA_BLEND);
+    pFramework->pVideoDriver->SetDepthStencilState(BaseDriver::NONE);
+
+    char buf[256];
+    snprintf(buf, sizeof(buf), "Meshes: %d/%zu  Culled: %d  Subsets drawn: %d/%d",
+             (int)rm->Info.size() - rm->m_culledMeshes, rm->Info.size(),
+             rm->m_culledMeshes, rm->m_drawnSubsets, rm->m_totalSubsets);
+    XVECTOR3 yellow(1.0f, 1.0f, 0.2f);
+    m_debugText.DrawPixel(10.0f, 40.0f, w, h, yellow, buf);
+
+    snprintf(buf, sizeof(buf), "F2: stats  F3: AABBs  K: cam pos");
+    XVECTOR3 gray(0.7f, 0.7f, 0.7f);
+    m_debugText.DrawPixel(10.0f, 65.0f, w, h, gray, buf);
+
+    pFramework->pVideoDriver->SetBlendState(BaseDriver::BLEND_DEFAULT);
+    pFramework->pVideoDriver->SetDepthStencilState(BaseDriver::DEPTH_DEFAULT);
+  }
 }
 
 void SC_SandBox::PopulateGUI(t800::GUIManager& gui) {
-  // Load SC_Day.json for its slider/checkbox/selector descriptions
+  // Load SC_SandBox.json for GUI descriptors
   if (m_guiSetup.descriptor.name.empty()) {
-    m_guiSetup.Load("Scenes/SC_Day.json");
+    m_guiSetup.Load("Scenes/SC_SandBox.json");
   }
 
   struct SliderMapping { const char* name; int settingIndex; };
@@ -292,6 +509,9 @@ void SC_SandBox::PopulateGUI(t800::GUIManager& gui) {
   struct SelectorMapping { const char* name; int settingIndex; };
   static const SelectorMapping selMappings[] = {
     {"debug_render_target", CHANGE_DEBUG_RT},
+    {"cubemap",             CHANGE_CUBEMAP},
+    {"gauss_kernel_sample_count", CHANGE_GAUSS_KERNEL_SAMPLE_COUNT},
+    {"active_gauss_kernel",        CHANGE_ACTIVE_GAUSS_KERNEL},
   };
 
   for (auto& sd : m_guiSetup.descriptor.selectors) {
@@ -345,6 +565,17 @@ void SC_SandBox::SyncToGUI(t800::GUIManager& gui) {
     auto* sel = sp.selector;
     switch (sel->settingIndex) {
     case CHANGE_DEBUG_RT: sel->selectedIndex = m_debugRTSelection; break;
+    case CHANGE_CUBEMAP:  sel->selectedIndex = m_currentCubemapIndex; break;
+    case CHANGE_GAUSS_KERNEL_SAMPLE_COUNT: {
+      int ks = SceneProp.pGaussKernels[ChangeActiveGaussSelection]->kernelSize;
+      std::string ksStr = std::to_string(ks);
+      for (int i = 0; i < (int)sel->options.size(); i++) {
+        if (sel->options[i] == ksStr) { sel->selectedIndex = i; break; }
+      }
+    } break;
+    case CHANGE_ACTIVE_GAUSS_KERNEL:
+      sel->selectedIndex = ChangeActiveGaussSelection;
+      break;
     }
   }
 }
@@ -397,6 +628,21 @@ void SC_SandBox::SyncFromGUI(t800::GUIManager& gui) {
     switch (sel->settingIndex) {
     case CHANGE_DEBUG_RT:
       m_debugRTSelection = sel->selectedIndex;
+      break;
+    case CHANGE_CUBEMAP: {
+      if (sel->selectedIndex != m_currentCubemapIndex) {
+        m_currentCubemapIndex = sel->selectedIndex;
+        m_pendingCubemap = "sky/" + sel->CurrentOption();
+        T8_LOG_INFO("[SC_SandBox] Cubemap change queued: '%s'", m_pendingCubemap.c_str());
+      }
+    } break;
+    case CHANGE_GAUSS_KERNEL_SAMPLE_COUNT: {
+      int newSize = std::atoi(sel->CurrentOption().c_str());
+      SceneProp.pGaussKernels[ChangeActiveGaussSelection]->kernelSize = newSize;
+      SceneProp.pGaussKernels[ChangeActiveGaussSelection]->Update();
+    } break;
+    case CHANGE_ACTIVE_GAUSS_KERNEL:
+      ChangeActiveGaussSelection = sel->selectedIndex;
       break;
     }
   }

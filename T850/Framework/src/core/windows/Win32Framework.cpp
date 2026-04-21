@@ -23,6 +23,8 @@
 // Windows
 #include <windows.h>
 #include <mmsystem.h>
+#include <utils/ThreadPool.h>
+#include <utils/Log.h>
 namespace t800 {
   void Win32Framework::InitGlobalVars() {
 
@@ -31,6 +33,7 @@ namespace t800 {
 
   void Win32Framework::OnCreateApplication(ApplicationDesc desc) {
     aplicationDescriptor = desc;
+    InitGlobalThreadPool();
     if (!SDL_Init(SDL_INIT_VIDEO)) {
       printf("Video initialization failed: %s\n", SDL_GetError());
     }
@@ -43,6 +46,7 @@ namespace t800 {
     pBaseApp->DestroyAssets();
     pVideoDriver->DestroyDriver();
     delete pVideoDriver;
+    ShutdownGlobalThreadPool();
     if (m_glContext) {
       SDL_GL_DestroyContext(m_glContext);
       m_glContext = nullptr;
@@ -65,6 +69,7 @@ namespace t800 {
     }
   }
   void Win32Framework::ProcessInput() {
+    pBaseApp->IManager.scrollDelta = 0.0f;
     SDL_Event       evento;
     while (SDL_PollEvent(&evento)) {
       switch (evento.type) {
@@ -108,6 +113,12 @@ namespace t800 {
         if (evento.text.text) {
           pBaseApp->IManager.textInput.append(evento.text.text);
         }
+      }break;
+
+      case SDL_EVENT_MOUSE_WHEEL: {
+        float wy = evento.wheel.y;
+        if (evento.wheel.direction == SDL_MOUSEWHEEL_FLIPPED) wy = -wy;
+        pBaseApp->IManager.scrollDelta += wy;
       }break;
 
       }
@@ -191,8 +202,12 @@ namespace t800 {
 
     if (api == GRAPHICS_API::OPENGL) {
 #if defined(USING_OPENGL)
+      SDL_SetHint(SDL_HINT_OPENGL_ES_DRIVER, "0");
       flags |= SDL_WINDOW_OPENGL;
       SDL_GL_SetAttribute(SDL_GL_DEPTH_SIZE, 24);
+      T8_LOG_INFO("SDL_WINDOW_OPENGL flag set, depth=24 (WGL forced)");
+#else
+      T8_LOG_ERROR("USING_OPENGL not defined — GL context will NOT be created");
 #endif
     }
     else if (api == GRAPHICS_API::VULKAN) {
@@ -251,8 +266,12 @@ namespace t800 {
 #if defined(USING_OPENGL)
       m_glContext = SDL_GL_CreateContext(m_pWindow);
       if (!m_glContext) {
-        printf("GL context creation failed: %s\n", SDL_GetError());
+        T8_LOG_ERROR("GL context creation failed: %s", SDL_GetError());
+      } else {
+        T8_LOG_INFO("SDL GL context created OK");
       }
+#else
+      T8_LOG_ERROR("USING_OPENGL not defined — skipping SDL_GL_CreateContext");
 #endif
       pVideoDriver = new GLDriver;
     }

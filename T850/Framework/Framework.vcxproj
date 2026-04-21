@@ -60,6 +60,7 @@
     <ClInclude Include="include\utils\T8_Spline.h" />
     <ClInclude Include="include\utils\T8_Technique.h" />
     <ClInclude Include="include\utils\Timer.h" />
+    <ClInclude Include="include\utils\ThreadPool.h" />
     <ClInclude Include="include\utils\Utils.h" />
     <ClInclude Include="include\utils\Camera.h" />
     <ClInclude Include="include\utils\Picking.h" />

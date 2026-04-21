@@ -30,6 +30,8 @@
 #include <fstream>
 #include <string>
 #include <vector>
+#include <utils/ThreadPool.h>
+#include <utils/Log.h>
 
 namespace t800 {
 // T8Device is the per-API device singleton declared in BaseDriver.cpp.
@@ -210,6 +212,148 @@ bool ResolveImage(const Document& doc, int imageIndex,
 
   T8_LOG_ERROR("[glTF] image %d has neither uri nor bufferView", imageIndex);
   return false;
+}
+
+// ── Batch-parallel image resolution ────────────────────────────────
+void ResolveAllImages(const Document& doc,
+                      std::vector<std::string>& outNames,
+                      std::vector<int>& outSlots) {
+  int numImages = static_cast<int>(doc.images.size());
+  outNames.resize(numImages);
+  outSlots.resize(numImages, -1);
+  if (numImages == 0) return;
+
+  // Per-image CPU decode result
+  struct DecodeResult {
+    std::string keyName;
+    std::vector<unsigned char> rawBytes; // encoded bytes for stbi
+    unsigned char* pixels = nullptr;     // decoded RGBA (needs stbi_image_free)
+    int w = 0, h = 0;
+    bool external = false; // true = file URI, use existing path
+    bool ok = false;
+  };
+  std::vector<DecodeResult> results(numImages);
+
+  // Phase 1: Gather encoded bytes (disk I/O + base64 decode) — serial
+  // because disk I/O from multiple threads on the same file isn't faster
+  for (int i = 0; i < numImages; i++) {
+    const Image& img = doc.images[i];
+    DecodeResult& r = results[i];
+
+    // Build cache key
+    std::string baseKey = !img.name.empty()
+        ? img.name
+        : (Stem(doc._sourcePath) + "_img" + std::to_string(i));
+    if (baseKey.find('.') == std::string::npos) baseKey += ".png";
+
+    if (img.uri && img.uri->compare(0, 5, "data:") != 0) {
+      // External file — just record the URI, let serial path handle it
+      r.keyName = *img.uri;
+      r.external = true;
+      r.ok = true;
+      continue;
+    }
+
+    if (img.uri && img.uri->compare(0, 5, "data:") == 0) {
+      // Data URI — base64 decode
+      std::vector<unsigned char> decoded;
+      if (Base64Decode(img.uri->c_str() + img.uri->find(',') + 1,
+                        img.uri->size() - img.uri->find(',') - 1,
+                        decoded)) {
+        r.keyName = baseKey;
+        r.rawBytes = std::move(decoded);
+        r.ok = true;
+      }
+      continue;
+    }
+
+    if (img.bufferView) {
+      int bvIdx = *img.bufferView;
+      if (bvIdx >= 0 && bvIdx < static_cast<int>(doc.bufferViews.size())) {
+        const BufferView& bv = doc.bufferViews[bvIdx];
+        if (bv.buffer >= 0 && bv.buffer < static_cast<int>(doc._bufferData.size())) {
+          const auto& buf = doc._bufferData[bv.buffer];
+          if (bv.byteOffset + bv.byteLength <= buf.size()) {
+            r.keyName = baseKey;
+            // Reference buffer data directly — no copy needed, buffer outlives decode
+            r.rawBytes.assign(buf.data() + bv.byteOffset,
+                              buf.data() + bv.byteOffset + bv.byteLength);
+            r.ok = true;
+          }
+        }
+      }
+    }
+  }
+
+  // Phase 2: Parallel stbi decode (CPU-only, thread-safe)
+  {
+    t800::ThreadPool pool;
+    T8_LOG_INFO("[glTF] Decoding %d images with %u threads", numImages, pool.NumWorkers());
+
+    pool.ParallelFor(0, numImages, [&](int i) {
+      DecodeResult& r = results[i];
+      if (!r.ok || r.external || r.rawBytes.empty()) return;
+
+      int ch = 0;
+      r.pixels = stbi_load_from_memory(r.rawBytes.data(),
+                                        static_cast<int>(r.rawBytes.size()),
+                                        &r.w, &r.h, &ch, 4);
+      if (!r.pixels) {
+        r.ok = false;
+      }
+      // Free raw bytes now that we have decoded pixels
+      r.rawBytes.clear();
+      r.rawBytes.shrink_to_fit();
+    });
+  }
+
+  // Phase 3: Serial GPU upload + driver cache insertion
+  for (int i = 0; i < numImages; i++) {
+    DecodeResult& r = results[i];
+    if (!r.ok) continue;
+
+    if (r.external) {
+      // External file — use existing single-image path
+      ResolveImage(doc, i, outNames[i], outSlots[i]);
+      continue;
+    }
+
+    if (!r.pixels) continue;
+
+    std::string filepath = "Textures/" + r.keyName;
+    int existing = FindTextureSlot(filepath);
+    if (existing >= 0) {
+      outNames[i] = r.keyName;
+      outSlots[i] = existing;
+      stbi_image_free(r.pixels);
+      continue;
+    }
+
+    ::t800::Texture* t = ::t800::T8Device->CreateTextureFromMemory(
+        r.pixels, r.w, r.h, 4, r.keyName);
+    stbi_image_free(r.pixels);
+
+    if (!t) continue;
+    t->filepath = filepath;
+
+    auto* drv = g_pBaseDriver;
+    bool reused = false;
+    for (std::size_t s = 0; s < drv->Textures.size(); ++s) {
+      if (drv->Textures[s] == nullptr) {
+        drv->Textures[s] = t;
+        outSlots[i] = static_cast<int>(s);
+        reused = true;
+        break;
+      }
+    }
+    if (!reused) {
+      drv->Textures.push_back(t);
+      outSlots[i] = static_cast<int>(drv->Textures.size() - 1);
+    }
+    outNames[i] = r.keyName;
+  }
+
+  T8_LOG_INFO("[glTF] Image resolution complete: %d images", numImages);
 }
 
 } // namespace gltf

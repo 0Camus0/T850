@@ -8,6 +8,8 @@
       "name": "GBuffer",
       "target": "GBuffer",
       "camera": "main",
+      "clear": true,
+      "state": { "blend": "BLEND_OPAQUE", "depth_stencil": "READ_WRITE" },
       "draws": [
         { "type": "mesh", "mesh_indices": [], "signature": "GBUFF_PASS" }
       ],
@@ -16,6 +18,8 @@
     {
       "name": "Deferred",
       "target": "Deferred",
+      "clear": true,
+      "state": { "blend": "BLEND_OPAQUE", "depth_stencil": "NONE" },
       "inputs": [
         { "source": "GBuffer:COLOR0", "slot": 0 },
         { "source": "GBuffer:COLOR1", "slot": 1 },
@@ -32,11 +36,14 @@
       "target": "",
       "push": false,
       "pop": false,
+      "clear": true,
+      "clear_color": [0.227, 0.227, 0.227, 1.0],
+      "state": { "blend": "BLEND_OPAQUE", "depth_stencil": "NONE" },
       "inputs": [
         { "source": "Deferred:COLOR0", "slot": 0 }
       ],
       "draws": [
-        { "type": "final_quad", "signature": "BACKBUFFER_PASS" }
+        { "type": "fullscreen_quad", "signature": "FSQUAD_1_TEX" }
       ]
     }
   ]

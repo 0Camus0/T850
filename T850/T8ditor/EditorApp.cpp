@@ -713,7 +713,7 @@ void EditorApp::OnDraw() {
 
       // RT debug override: if a specific RT is selected, draw it to backbuffer
       if (g_debugRT >= 0) {
-        drv->SetBlendState(t800::BaseDriver::ALPHA_BLEND);
+        drv->SetBlendState(t800::BaseDriver::BLEND_OPAQUE);
         drv->SetDepthStencilState(t800::BaseDriver::NONE);
         int gi = 0;
         t800::Texture* debugTex = nullptr;

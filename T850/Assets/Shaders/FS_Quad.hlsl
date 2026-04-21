@@ -132,11 +132,14 @@ float4 FS( VS_OUTPUT input ) : SV_TARGET {
 	int MatId = (int)(PBRData.a * 255.0 + 0.5);
 
 	if(MatId == 0){
-		float3 EyeDir_mod = -EyeDir;
-		EyeDir_mod.x = -EyeDir_mod.x;
-		EyeDir_mod.z = -EyeDir_mod.z;
-		float3 RefCol = texEnv.Sample(SS, EyeDir_mod).xyz;
-		Final.xyz = RefCol.xyz * 2.0;
+		// Sky: use the interpolated view ray directly (PosCorner is the
+		// world-space direction from camera to far-plane corner).  This
+		// avoids NaN when depth=0 (cleared GBuffer pixels with no geometry).
+		float3 skyDir = normalize(input.PosCorner.xyz);
+		skyDir.x = -skyDir.x;
+		skyDir.z = -skyDir.z;
+		float3 RefCol = texEnv.Sample(SS, skyDir).xyz;
+		Final.xyz = RefCol.xyz;
 	} else if(MatId > 0) {
 		Shadow = tex5.Sample(SS, input.texture0).r;
 

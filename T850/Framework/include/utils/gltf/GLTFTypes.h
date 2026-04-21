@@ -202,11 +202,21 @@ struct PrimitiveAttributes {
   int WEIGHTS_0  = -1;
 };
 
+struct DracoMeshCompression {
+  int bufferView = -1;
+  PrimitiveAttributes attributes;
+};
+
+struct PrimitiveExtensions {
+  std::optional<DracoMeshCompression> KHR_draco_mesh_compression;
+};
+
 struct Primitive {
   PrimitiveAttributes attributes;
   std::optional<int>  indices;
   std::optional<int>  material;
   int                 mode = PM_TRIANGLES;
+  std::optional<PrimitiveExtensions> extensions;
 };
 
 struct Mesh {

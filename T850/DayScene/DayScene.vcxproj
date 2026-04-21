@@ -171,7 +171,8 @@ if not exist "$(OutDir)Layouts" mklink /J "$(OutDir)Layouts" "$(SolutionDir)Asse
 copy /Y "$(SolutionDir)Librerias\SDL3\lib\$(T8Arch)\SDL3.dll" "$(OutDir)"
 copy /Y "$(T8VcpkgDynamic)\bin\libEGL.dll" "$(OutDir)"
 copy /Y "$(T8VcpkgDynamic)\bin\libGLESv2.dll" "$(OutDir)"
-copy /Y "$(T8VcpkgDynamic)\bin\zlib1.dll" "$(OutDir)"</Command>
+copy /Y "$(T8VcpkgDynamic)\bin\zlib1.dll" "$(OutDir)"
+copy /Y "$(T8VcpkgDynamic)\bin\draco.dll" "$(OutDir)"</Command>
     </PostBuildEvent>
   </ItemDefinitionGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">
@@ -206,7 +207,8 @@ if not exist "$(OutDir)Layouts" mklink /J "$(OutDir)Layouts" "$(SolutionDir)Asse
 copy /Y "$(SolutionDir)Librerias\SDL3\lib\$(T8Arch)\SDL3.dll" "$(OutDir)"
 copy /Y "$(T8VcpkgDynamic)\bin\libEGL.dll" "$(OutDir)"
 copy /Y "$(T8VcpkgDynamic)\bin\libGLESv2.dll" "$(OutDir)"
-copy /Y "$(T8VcpkgDynamic)\bin\zlib1.dll" "$(OutDir)"</Command>
+copy /Y "$(T8VcpkgDynamic)\bin\zlib1.dll" "$(OutDir)"
+copy /Y "$(T8VcpkgDynamic)\bin\draco.dll" "$(OutDir)"</Command>
     </PostBuildEvent>
   </ItemDefinitionGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Debug|ARM64'">
@@ -241,7 +243,8 @@ if not exist "$(OutDir)Layouts" mklink /J "$(OutDir)Layouts" "$(SolutionDir)Asse
 copy /Y "$(SolutionDir)Librerias\SDL3\lib\$(T8Arch)\SDL3.dll" "$(OutDir)"
 copy /Y "$(T8VcpkgDynamic)\bin\libEGL.dll" "$(OutDir)"
 copy /Y "$(T8VcpkgDynamic)\bin\libGLESv2.dll" "$(OutDir)"
-copy /Y "$(T8VcpkgDynamic)\bin\zlib1.dll" "$(OutDir)"</Command>
+copy /Y "$(T8VcpkgDynamic)\bin\zlib1.dll" "$(OutDir)"
+copy /Y "$(T8VcpkgDynamic)\bin\draco.dll" "$(OutDir)"</Command>
     </PostBuildEvent>
   </ItemDefinitionGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">
@@ -278,7 +281,8 @@ if not exist "$(OutDir)Layouts" mklink /J "$(OutDir)Layouts" "$(SolutionDir)Asse
 copy /Y "$(SolutionDir)Librerias\SDL3\lib\$(T8Arch)\SDL3.dll" "$(OutDir)"
 copy /Y "$(T8VcpkgDynamic)\bin\libEGL.dll" "$(OutDir)"
 copy /Y "$(T8VcpkgDynamic)\bin\libGLESv2.dll" "$(OutDir)"
-copy /Y "$(T8VcpkgDynamic)\bin\zlib1.dll" "$(OutDir)"</Command>
+copy /Y "$(T8VcpkgDynamic)\bin\zlib1.dll" "$(OutDir)"
+copy /Y "$(T8VcpkgDynamic)\bin\draco.dll" "$(OutDir)"</Command>
     </PostBuildEvent>
   </ItemDefinitionGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
@@ -317,7 +321,8 @@ if not exist "$(OutDir)Layouts" mklink /J "$(OutDir)Layouts" "$(SolutionDir)Asse
 copy /Y "$(SolutionDir)Librerias\SDL3\lib\$(T8Arch)\SDL3.dll" "$(OutDir)"
 copy /Y "$(T8VcpkgDynamic)\bin\libEGL.dll" "$(OutDir)"
 copy /Y "$(T8VcpkgDynamic)\bin\libGLESv2.dll" "$(OutDir)"
-copy /Y "$(T8VcpkgDynamic)\bin\zlib1.dll" "$(OutDir)"</Command>
+copy /Y "$(T8VcpkgDynamic)\bin\zlib1.dll" "$(OutDir)"
+copy /Y "$(T8VcpkgDynamic)\bin\draco.dll" "$(OutDir)"</Command>
     </PostBuildEvent>
   </ItemDefinitionGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Release|ARM64'">
@@ -356,7 +361,8 @@ if not exist "$(OutDir)Layouts" mklink /J "$(OutDir)Layouts" "$(SolutionDir)Asse
 copy /Y "$(SolutionDir)Librerias\SDL3\lib\$(T8Arch)\SDL3.dll" "$(OutDir)"
 copy /Y "$(T8VcpkgDynamic)\bin\libEGL.dll" "$(OutDir)"
 copy /Y "$(T8VcpkgDynamic)\bin\libGLESv2.dll" "$(OutDir)"
-copy /Y "$(T8VcpkgDynamic)\bin\zlib1.dll" "$(OutDir)"</Command>
+copy /Y "$(T8VcpkgDynamic)\bin\zlib1.dll" "$(OutDir)"
+copy /Y "$(T8VcpkgDynamic)\bin\draco.dll" "$(OutDir)"</Command>
     </PostBuildEvent>
   </ItemDefinitionGroup>
   <ItemGroup>

@@ -34,6 +34,7 @@
       "name": "GBuffer",
       "target": "GBuffer",
       "camera": "main",
+      "clear": true,
       "draws": [
         { "type": "mesh", "mesh_indices": [0, 1], "signature": "GBUFF_PASS" }
       ],

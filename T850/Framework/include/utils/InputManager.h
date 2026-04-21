@@ -280,6 +280,7 @@ public:
 	int 	yDelta;
 	int		mouseX;
 	int		mouseY;
+	float	scrollDelta; // mouse wheel: positive = scroll up, negative = scroll down
 
 	// UTF-8 characters produced by SDL_EVENT_TEXT_INPUT during the last frame.
 	// Consumers read and clear this buffer each frame.

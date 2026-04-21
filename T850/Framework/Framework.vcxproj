@@ -74,7 +74,6 @@
     <ClInclude Include="include\utils\gltf\GLTFAccessor.h" />
     <ClInclude Include="include\utils\gltf\GLTFImage.h" />
     <ClInclude Include="include\utils\gltf\GLTFMaterial.h" />
-    <ClInclude Include="include\utils\ThreadPool.h" />
     <ClInclude Include="include\video\BaseDriver.h" />
     <ClInclude Include="include\video\WindowHandle.h" />
     <ClInclude Include="include\video\GLDriver.h" />

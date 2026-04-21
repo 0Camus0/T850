@@ -160,6 +160,8 @@ namespace t800 {
     };
     
     bool			LoadRT(int nrt, int cf, int df, int w, int h, bool GenMips = false);
+    // Per-attachment color formats (overrides single cf when non-empty)
+    bool			LoadRT(int nrt, const std::vector<int>& perColorFormats, int df, int w, int h, bool GenMips = false);
     virtual bool	LoadAPIRT() = 0;
 
     void			release();
@@ -174,6 +176,7 @@ namespace t800 {
     int color_format;
     int depth_format;
     bool GenMips;
+    std::vector<int> perColorFormats;  // per-attachment formats (empty = use color_format for all)
 
     std::vector<Texture*>							vColorTextures;
     Texture*										pDepthTexture;
@@ -281,6 +284,7 @@ namespace t800 {
     int    CreateCubeMap(const unsigned char * buff, int w, int h);
     int	   CreateShader(std::string src_vs, std::string src_fs, ShaderKey key = ShaderKey(), const std::string& vs_name = "", const std::string& fs_name = "");
     int 	 CreateRT(int nrt, int cf, int df, int w, int h, bool genMips = false);
+    int    CreateRT(int nrt, const std::vector<int>& perColorFormats, int df, int w, int h, bool genMips = false);
     void 	 ModifyRT(int RTID, int nrt, int cf, int df, int w, int h, bool genMips = false);
     int    CreateTechnique(std::string path);
 

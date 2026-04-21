@@ -237,7 +237,6 @@ void RenderGraph::CreateRenderTargets(BaseDriver* driver, const SceneProps& prop
     int w = rt.size[0];
     int h = rt.size[1];
 
-    // Resolve size references
     if (!rt.size_ref.empty()) {
       if (rt.size_ref == "$shadow_resolution") {
         w = h = static_cast<int>(props.ShadowMapResolution);
@@ -246,7 +245,16 @@ void RenderGraph::CreateRenderTargets(BaseDriver* driver, const SceneProps& prop
       }
     }
 
-    int handle = driver->CreateRT(rt.color_count, cf, df, w, h, rt.linear_filter);
+    int handle;
+    if (!rt.color_formats.empty()) {
+      // Per-attachment formats specified in JSON
+      std::vector<int> perCF;
+      for (const auto& fmt : rt.color_formats)
+        perCF.push_back(ResolveColorFormat(fmt));
+      handle = driver->CreateRT(rt.color_count, perCF, df, w, h, rt.linear_filter);
+    } else {
+      handle = driver->CreateRT(rt.color_count, cf, df, w, h, rt.linear_filter);
+    }
     m_rtHandles[rt.name] = handle;
 
     T8_LOG_INFO("[RenderGraph] Created RT '%s' -> handle %d (%dx%d, %d colors, cf=%s, df=%s)",

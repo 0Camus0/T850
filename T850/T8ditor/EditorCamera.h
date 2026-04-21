@@ -77,6 +77,14 @@ public:
   float MaxPitch     =  1.55f;
   float FrameDistance = 30.0f;
 
+  // Orbit state accessors (for scene save/load)
+  float GetYaw()      const { return m_yaw; }
+  float GetPitch()    const { return m_pitch; }
+  float GetDistance()  const { return m_distance; }
+  void  SetOrbitState(float yaw, float pitch, float dist) {
+    m_yaw = yaw; m_pitch = pitch; m_distance = dist; RecomputeEye();
+  }
+
 private:
   void RecomputeEye();
 

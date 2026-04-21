@@ -289,14 +289,14 @@ void main(){
 			// Specular IBL: env reflection
 	 		highp vec3 RefleCol2 = texture( texEnv, ReflectedVec , rough*4.0f).xyz;
 			highp float envAtten = (1.0 - rough) * (1.0 - rough);
-	 		Final.xyz += RefleCol2*kSpecular.xyz*envAtten * toogles.x;
+	 		Final.xyz += RefleCol2*kSpecular.xyz*envAtten * toogles.z;
 
 			// Diffuse IBL: approximate irradiance from env cubemap at high mip
 			highp vec3 irradianceDir = normal;
 			irradianceDir.x = -irradianceDir.x;
 			irradianceDir.z = -irradianceDir.z;
 			highp vec3 irradiance = texture( texEnv, irradianceDir, 6.0).xyz;
-			Final.xyz += irradiance * Albedo.xyz * kDiffuseEnv * toogles.x;
+			Final.xyz += irradiance * Albedo.xyz * kDiffuseEnv * toogles.z;
 
 			// Ambient minimum (toogles.y = ambient intensity)
 			Final.xyz += Albedo.xyz * toogles.y * kDiffuseEnv;

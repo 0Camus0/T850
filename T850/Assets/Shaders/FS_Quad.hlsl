@@ -227,6 +227,7 @@ float4 FS( VS_OUTPUT input ) : SV_TARGET {
 		// Ambient minimum (toogles.y = ambient intensity)
 		Final.xyz += Albedo.xyz * toogles.y * kDiffuseEnv;
 	}
+
 	return Final;
 }
 #elif defined(DEFERRED_LDR_PASS)

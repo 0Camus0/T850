@@ -1030,6 +1030,8 @@ $btnBuild.Add_Click({
         if ($exitCode -eq 0) {
             $txtStatus.Text = "Build succeeded - $config|$platform"
             $txtStatus.Foreground = $window.FindResource("GreenBrush")
+            # Refresh model list — build creates symlinks to Models/ etc.
+            Populate-ModelList
         } else {
             if ($errorLines.Count -gt 0) {
                 $txtStatus.Text = "Build FAILED ($($errorLines.Count) error(s))"

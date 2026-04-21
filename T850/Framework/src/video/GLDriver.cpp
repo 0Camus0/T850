@@ -818,6 +818,7 @@ namespace t800 {
       }
     }
 
+    CurrentRT = -1;
   }
 
 

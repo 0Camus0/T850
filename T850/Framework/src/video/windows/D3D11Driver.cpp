@@ -700,9 +700,9 @@ namespace t800 {
     rd.AntialiasedLineEnable = FALSE;
 
     switch (state) {
-      case FRONT_FACES:       rd.CullMode = D3D11_CULL_FRONT; break;
-      case BACK_FACES:        rd.CullMode = D3D11_CULL_BACK;  break;
-      case FRONT_AND_BACK:    rd.CullMode = D3D11_CULL_NONE;  break; // "cull none" = draw all
+      case FRONT_FACES:       rd.CullMode = D3D11_CULL_BACK;  break;
+      case BACK_FACES:        rd.CullMode = D3D11_CULL_FRONT; break;
+      case FRONT_AND_BACK:    rd.CullMode = D3D11_CULL_NONE;  break;
       default:                rd.CullMode = D3D11_CULL_BACK;  break;
     }
 

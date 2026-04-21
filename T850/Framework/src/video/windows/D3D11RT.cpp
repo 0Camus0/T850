@@ -80,7 +80,21 @@ namespace t800 {
       desc.Width = w;
       desc.Height = h;
       desc.ArraySize = 1;
-      desc.Format = cfmt;
+      // Use per-attachment format if available, otherwise single cfmt
+      DXGI_FORMAT thisFmt = cfmt;
+      if (!perColorFormats.empty() && i < (int)perColorFormats.size()) {
+        switch (perColorFormats[i]) {
+          case BaseRT::R8:      thisFmt = DXGI_FORMAT_R8_UNORM; break;
+          case BaseRT::F16:     thisFmt = DXGI_FORMAT_R16_FLOAT; break;
+          case BaseRT::F32:     thisFmt = DXGI_FORMAT_R32_FLOAT; break;
+          case BaseRT::RGB8:
+          case BaseRT::RGBA8:   thisFmt = DXGI_FORMAT_R8G8B8A8_UNORM; break;
+          case BaseRT::RGBA16F: thisFmt = DXGI_FORMAT_R16G16B16A16_FLOAT; break;
+          case BaseRT::RGBA32F: thisFmt = DXGI_FORMAT_R32G32B32A32_FLOAT; break;
+          default: break;
+        }
+      }
+      desc.Format = thisFmt;
       desc.SampleDesc.Count = 1;
       desc.BindFlags = D3D11_BIND_SHADER_RESOURCE | D3D11_BIND_RENDER_TARGET;
       desc.Usage = D3D11_USAGE_DEFAULT;

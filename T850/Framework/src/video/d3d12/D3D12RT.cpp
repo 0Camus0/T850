@@ -45,14 +45,28 @@ namespace t800 {
 
     // Color attachments
     for (int i = 0; i < number_RT; i++) {
+      // Per-attachment format if available
+      DXGI_FORMAT thisFmt = cfmt;
+      if (!perColorFormats.empty() && i < (int)perColorFormats.size()) {
+        switch (perColorFormats[i]) {
+          case BaseRT::R8:      thisFmt = DXGI_FORMAT_R8_UNORM; break;
+          case BaseRT::F16:     thisFmt = DXGI_FORMAT_R16_FLOAT; break;
+          case BaseRT::F32:     thisFmt = DXGI_FORMAT_R32_FLOAT; break;
+          case BaseRT::RGBA8:   thisFmt = DXGI_FORMAT_R8G8B8A8_UNORM; break;
+          case BaseRT::RGBA16F: thisFmt = DXGI_FORMAT_R16G16B16A16_FLOAT; break;
+          case BaseRT::RGBA32F: thisFmt = DXGI_FORMAT_R32G32B32A32_FLOAT; break;
+          default: break;
+        }
+      }
+
       D3D12_RESOURCE_DESC desc = {};
       desc.Dimension = D3D12_RESOURCE_DIMENSION_TEXTURE2D;
       desc.Width = w; desc.Height = h; desc.DepthOrArraySize = 1;
-      desc.MipLevels = 1; desc.Format = cfmt;
+      desc.MipLevels = 1; desc.Format = thisFmt;
       desc.SampleDesc.Count = 1;
       desc.Flags = D3D12_RESOURCE_FLAG_ALLOW_RENDER_TARGET;
 
-      D3D12_CLEAR_VALUE clearVal = {}; clearVal.Format = cfmt;
+      D3D12_CLEAR_VALUE clearVal = {}; clearVal.Format = thisFmt;
       D3D12_HEAP_PROPERTIES heapProps = {}; heapProps.Type = D3D12_HEAP_TYPE_DEFAULT;
 
       ComPtr<ID3D12Resource> colorRes;
@@ -73,7 +87,7 @@ namespace t800 {
       colorTex->pTexResource = colorRes;
       colorTex->x = w; colorTex->y = h;
       D3D12_SHADER_RESOURCE_VIEW_DESC srvDesc = {};
-      srvDesc.Format = cfmt;
+      srvDesc.Format = thisFmt;
       srvDesc.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE2D;
       srvDesc.Texture2D.MipLevels = 1;
       srvDesc.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
@@ -82,7 +96,7 @@ namespace t800 {
       device->CreateShaderResourceView(colorRes.Get(), &srvDesc, colorTex->srvCPU);
       vColorTextures.push_back(colorTex);
 
-      T8_LOG_DEBUG("[D3D12] RT color[%d] created: %dx%d fmt=%d", i, w, h, cfmt);
+      T8_LOG_DEBUG("[D3D12] RT color[%d] created: %dx%d fmt=%d", i, w, h, thisFmt);
     }
 
     // Depth attachment

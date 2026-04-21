@@ -368,8 +368,10 @@ namespace t800 {
   void BaseDriver::DestroyTextures()
   {
     for (unsigned int i = 0; i < Textures.size(); i++) {
-      Textures[i]->release();
-      Textures[i] = nullptr;
+      if (Textures[i]) {
+        Textures[i]->release();
+        Textures[i] = nullptr;
+      }
     }
     Textures.clear();
   }

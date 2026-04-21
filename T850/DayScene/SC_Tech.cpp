@@ -200,6 +200,7 @@ void SC_Tech::InitVars() {
   extern int g_dumpFrame, g_startScene;
   extern float g_dumpSeconds;
   extern std::string g_replaySnapshotPath;
+  extern bool g_profile;
   FrameDumperConfig dumpCfg;
   dumpCfg.dumpEnabled     = g_dumpEnabled;
   dumpCfg.dumpByFrame     = g_dumpByFrame;
@@ -305,7 +306,7 @@ void SC_Tech::CreateAssets() {
   Quads[6].Update();
 
   Quads[7].ScaleAbsolute(1.0f);
-  Quads[7].TranslateAbsolute(0.0f, 0.0f, 0.1f);
+  Quads[7].TranslateAbsolute(0.0f, 0.0f, 0.0f);
   Quads[7].Update();
 }
 
@@ -319,6 +320,7 @@ void SC_Tech::OnDestoryScene() {
 }
 
 void SC_Tech::DestroyAssets() {
+  SceneProp.SSAOKernel.Destroy();
   PrimitiveMgr.DestroyPrimitives();
   pFramework->pVideoDriver->DestroyRTs();
   //pFramework->pVideoDriver->DestroyShaders();
@@ -384,6 +386,14 @@ void SC_Tech::OnInput(InputManager* IManager) {
 
   if (IManager->PressedOnceKey(T800K_2)) {
     pFramework->ChangeAPI(GRAPHICS_API::OPENGL);
+  }
+
+  if (IManager->PressedOnceKey(T800K_3)) {
+    pFramework->ChangeAPI(GRAPHICS_API::D3D12);
+  }
+
+  if (IManager->PressedOnceKey(T800K_4)) {
+    pFramework->ChangeAPI(GRAPHICS_API::VULKAN);
   }
 
   if (IManager->PressedOnceKey(T800K_SPACE)) {
@@ -457,8 +467,9 @@ void SC_Tech::OnDraw() {
   Quads[7].SetGlobalKey(dbgKey);
   Quads[7].Draw();
 
-  // RT Dump via FrameDumper
-  if (m_dumper.ShouldDump(DtSecs)) {
+  // RT Dump via FrameDumper (skip when profiling — GPU queries conflict with dump's cmd buffer reset)
+  extern bool g_profile;
+  if (m_dumper.ShouldDump(DtSecs) && !g_profile) {
     std::vector<RTDumpEntry> rts = {
       {GBufferPass,     BaseDriver::COLOR0_ATTACHMENT, "GBuffer_Color0"},
       {GBufferPass,     BaseDriver::COLOR1_ATTACHMENT, "GBuffer_Normals"},
@@ -472,7 +483,8 @@ void SC_Tech::OnDraw() {
       {GodRaysCalcPass, BaseDriver::COLOR0_ATTACHMENT, "GodRays"},
     };
     m_dumper.DumpFrame(pFramework->pVideoDriver, Cam, LightCam, SceneProp, rts, DtSecs);
-    if (m_dumper.ShouldExit()) exit(0);
+    extern bool g_profile;
+    if (m_dumper.ShouldExit() && !g_profile) exit(0);
   }
 }
 

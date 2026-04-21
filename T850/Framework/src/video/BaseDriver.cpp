@@ -175,12 +175,12 @@ namespace t800 {
       LinearDepth = true; // Force for ES 2.0
 #endif
 
-#if defined(USING_OPENGL_ES30) || defined(USING_OPENGL_ES31)
+#if defined(USING_OPENGL)
       if (g_pBaseDriver->m_currentAPI == GRAPHICS_API::OPENGL) {
-        Defines += "#version 300 es\n\n";
+        Defines += "#version 330\n\n";
         Defines += "#define ES_30\n\n";
       }
-#else
+#elif defined(USING_OPENGL_ES30) || defined(USING_OPENGL_ES31)
       if (g_pBaseDriver->m_currentAPI == GRAPHICS_API::OPENGL) {
         Defines += "#version 300 es\n\n";
         Defines += "#define ES_30\n\n";
@@ -208,6 +208,9 @@ namespace t800 {
       if (key.has(ShaderKey::REFLECT_MAP))    Defines += "#define REFLECT_MAP\n\n";
       if (key.has(ShaderKey::HEIGHT_MAP))     Defines += "#define HEIGHT_MAP\n\n";
       if (key.has(ShaderKey::METALLIC_MAP))   Defines += "#define METALLIC_MAP\n\n";
+
+      // Material conventions
+      if (key.has(ShaderKey::GLTF_TANGENT_SPACE)) Defines += "#define GLTF_TANGENT_SPACE\n\n";
 
       // Special modes
       if (key.has(ShaderKey::NO_LIGHT))       Defines += "#define NO_LIGHT\n\n";

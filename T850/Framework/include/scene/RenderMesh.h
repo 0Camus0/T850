@@ -77,6 +77,19 @@ namespace t800 {
 	  XVECTOR3  Light0Dir;
     };
 
+    struct AABB {
+      XVECTOR3 min;
+      XVECTOR3 max;
+      void Reset() {
+        min = XVECTOR3( 1e18f,  1e18f,  1e18f);
+        max = XVECTOR3(-1e18f, -1e18f, -1e18f);
+      }
+      void Expand(float x, float y, float z) {
+        if (x < min.x) min.x = x; if (y < min.y) min.y = y; if (z < min.z) min.z = z;
+        if (x > max.x) max.x = x; if (y > max.y) max.y = y; if (z > max.z) max.z = z;
+      }
+    };
+
     struct SubSetInfo {
 		SubSetInfo() {
 			AmbientColor = XVECTOR3(0.0f, 0.0f, 0.0f, 1.0f);
@@ -123,8 +136,10 @@ namespace t800 {
       unsigned int		VertexSize;
       bool				bAlignedVertex;
 	  bool				bUseFresnel;
-    };
+	  bool				IB32Bit = false;   // selects R16/R32 in Set()
 
+      AABB bounds;  // per-subset bounding box for fine-grained culling
+    };
 
     struct MeshInfo {
       unsigned int			 VertexSize;
@@ -136,6 +151,8 @@ namespace t800 {
       RenderMesh::CBuffer			CnstBuffer;
 
       std::vector<SubSetInfo>	SubSets;
+
+      AABB bounds;
     };
 
     void Load(const char *);
@@ -146,6 +163,15 @@ namespace t800 {
 
     void GatherInfo();
     int  LoadTex(std::string p, xF::xMaterial *mat, Texture** tex);
+
+    // Frustum culling: extract 6 planes from row-vector VP matrix
+    static void ExtractFrustumPlanes(const XMATRIX44& vp, XVECTOR3 planes[6]);
+    static bool AABBInsideFrustum(const AABB& box, const XMATRIX44& world, const XVECTOR3 planes[6]);
+
+    // Culling stats (per frame)
+    mutable int m_totalSubsets = 0;
+    mutable int m_drawnSubsets = 0;
+    mutable int m_culledMeshes = 0;
 
     Texture*	d3dxEnvMap;
 

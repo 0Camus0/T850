@@ -320,7 +320,7 @@ namespace t800 {
     D3D12_RECT     m_scissorRect = {};
 
     // Per-frame constant buffer ring allocator
-    static const UINT kCBRingBufferSize = 4 * 1024 * 1024; // 4MB per frame
+    static const UINT kCBRingBufferSize = 4 * 1024 * 1024; // 4 MB per frame
     ComPtr<ID3D12Resource> m_cbRingBuffers[kBackBufferCount];
     void*                  m_cbRingMapped[kBackBufferCount] = {};
     UINT                   m_cbRingOffset = 0;  // current offset within active ring buffer

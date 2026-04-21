@@ -1,6 +1,6 @@
 # build_launcher_release.ps1
-# Compiles scripts/Launcher_Release.ps1 into T850Launcher.exe in the repo root.
-# This is the release version shipped in GitHub packages (no BUILD button).
+# Compiles scripts/Launcher_Release.ps1 into T850Launcher.exe and copies it
+# to each bin/<arch>/<config>/ folder alongside DayScene.exe and T8ditor.exe.
 # Requires: Install-Module ps2exe -Scope CurrentUser
 
 param(
@@ -36,6 +36,17 @@ Invoke-ps2exe @params
 
 if (Test-Path $output) {
     Write-Host "Success: $output" -ForegroundColor Green
+
+    # Copy to all bin/<arch>/<config>/ folders that contain DayScene.exe
+    $binDir = Join-Path $rootDir "bin"
+    if (Test-Path $binDir) {
+        Get-ChildItem $binDir -Recurse -Filter "DayScene.exe" | ForEach-Object {
+            $targetDir = $_.DirectoryName
+            $dest = Join-Path $targetDir "T850Launcher.exe"
+            Copy-Item $output $dest -Force
+            Write-Host "  Copied to $dest" -ForegroundColor DarkCyan
+        }
+    }
 } else {
     Write-Host "Build failed." -ForegroundColor Red
     exit 1

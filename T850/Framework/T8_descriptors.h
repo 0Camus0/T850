@@ -86,6 +86,7 @@ struct ShaderKey {
 
   // ── Extended toggles (bits 26+) ──
   static constexpr uint32_t PARALLAX_SHADOW = 1u << 26;
+  static constexpr uint32_t GLTF_TANGENT_SPACE = 1u << 27;
 
   // ── Pass type (6 bits) ──
   static constexpr uint32_t PASS_SHIFT = 20;

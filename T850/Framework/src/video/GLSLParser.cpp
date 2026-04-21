@@ -6,6 +6,7 @@
 #include <algorithm>
 #include <iterator>
 #include <fstream>
+#include <set>
 
 
 GLSL_Parser::GLSL_Parser(){
@@ -49,9 +50,68 @@ void GLSL_Parser::ParseFromMemory(std::string VSSrc_, std::string FSSrc_) {
   Process(buffer_fragment);
 }
 
+// Simple #ifdef/#ifndef/#else/#endif preprocessor so the parser only
+// sees declarations from active code blocks.  Handles #define at the
+// top of the source (from ShaderKey → Defines) and nested #ifdef.
+static std::string PreprocessIfdefs(const std::string& src) {
+  std::istringstream iss(src);
+  std::string line, result;
+  std::set<std::string> defines;
+  // Stack: true = current block is active
+  std::vector<bool> stack;
+  stack.push_back(true); // top-level is always active
+
+  while (std::getline(iss, line)) {
+    // Trim leading whitespace for directive detection
+    std::size_t first = line.find_first_not_of(" \t");
+    if (first == std::string::npos) { result += '\n'; continue; }
+    std::string trimmed = line.substr(first);
+
+    if (trimmed.rfind("#define ", 0) == 0 && stack.back()) {
+      std::string sym = trimmed.substr(8);
+      auto sp = sym.find_first_of(" \t\r\n");
+      if (sp != std::string::npos) sym = sym.substr(0, sp);
+      defines.insert(sym);
+      result += '\n'; // don't emit the #define line
+    } else if (trimmed.rfind("#ifdef ", 0) == 0) {
+      std::string sym = trimmed.substr(7);
+      auto sp = sym.find_first_of(" \t\r\n");
+      if (sp != std::string::npos) sym = sym.substr(0, sp);
+      stack.push_back(stack.back() && defines.count(sym));
+      result += '\n';
+    } else if (trimmed.rfind("#ifndef ", 0) == 0) {
+      std::string sym = trimmed.substr(8);
+      auto sp = sym.find_first_of(" \t\r\n");
+      if (sp != std::string::npos) sym = sym.substr(0, sp);
+      stack.push_back(stack.back() && !defines.count(sym));
+      result += '\n';
+    } else if (trimmed.rfind("#else", 0) == 0) {
+      if (stack.size() > 1) {
+        bool parentActive = stack[stack.size()-2];
+        stack.back() = parentActive && !stack.back();
+      }
+      result += '\n';
+    } else if (trimmed.rfind("#endif", 0) == 0) {
+      if (stack.size() > 1) stack.pop_back();
+      result += '\n';
+    } else if (trimmed.rfind("#if ", 0) == 0 || trimmed.rfind("#elif", 0) == 0) {
+      // Can't evaluate arbitrary expressions — assume active if parent is
+      stack.push_back(stack.back());
+      result += '\n';
+    } else {
+      if (stack.back())
+        result += line + '\n';
+      else
+        result += '\n'; // keep line count stable
+    }
+  }
+  return result;
+}
+
 void GLSL_Parser::Process(std::string &b) {
 
-	std::istringstream iss(b);
+	std::string preprocessed = PreprocessIfdefs(b);
+	std::istringstream iss(preprocessed);
 	std::vector<std::string> tokens{ std::istream_iterator<std::string>{iss},std::istream_iterator<std::string>{} };
 
 	std::string::size_type pos = 0;
@@ -66,6 +126,15 @@ void GLSL_Parser::Process(std::string &b) {
 		}
 
 		if ((pos = tokens[i].find("attribute")) != std::string::npos) {
+			ProcessToken(i, tokens);
+		}
+
+		// GLSL 330 / ES 3.0: 'in' replaces 'attribute' (vertex) and
+		// 'varying' (fragment). Only match the exact token "in" to
+		// avoid false positives on words like "int", "input", etc.
+		// Only process in vertex shader stage — fragment 'in' varyings
+		// are not needed for vertex attribute layout computation.
+		if (tokens[i] == "in" && current_stage == hyperspace::shader::stage_::VERTEX_SHADER) {
 			ProcessToken(i, tokens);
 		}
 	}
@@ -109,6 +178,15 @@ void GLSL_Parser::DetermineSemantic(GLSL_Var_ &var, std::string &str) {
 		var.sem = hyperspace::shader::semantic_::VARYING;
 	}else if (str.find("attribute") != std::string::npos) {
 		var.sem = hyperspace::shader::semantic_::ATTRIBUTE;
+	}else if (str == "in") {
+		// GLSL 330 / ES 3.0: 'in' = attribute in vertex, varying in fragment
+		if (current_stage == hyperspace::shader::stage_::VERTEX_SHADER)
+			var.sem = hyperspace::shader::semantic_::ATTRIBUTE;
+		else
+			var.sem = hyperspace::shader::semantic_::VARYING;
+	}else if (str == "out") {
+		// 'out' in vertex shader = varying output (not tracked here)
+		var.sem = hyperspace::shader::semantic_::VARYING;
 	}else {
 		var.sem = hyperspace::shader::semantic_::UNKNOWN_SEMANTIC;
 	}

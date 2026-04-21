@@ -426,7 +426,7 @@ namespace t800 {
 
     const EGLint attribs[] = {
       EGL_SURFACE_TYPE,	EGL_WINDOW_BIT,
-      EGL_RENDERABLE_TYPE,	EGL_OPENGL_ES2_BIT,
+      EGL_RENDERABLE_TYPE,	EGL_OPENGL_ES3_BIT_KHR,
       EGL_BLUE_SIZE,		8,
       EGL_GREEN_SIZE,		8,
       EGL_RED_SIZE,		8,
@@ -444,7 +444,7 @@ namespace t800 {
 
     EGLError("eglCreateWindowSurface");
 
-    EGLint ai32ContextAttribs[] = { EGL_CONTEXT_CLIENT_VERSION, 2, EGL_NONE };
+    EGLint ai32ContextAttribs[] = { EGL_CONTEXT_CLIENT_VERSION, 3, EGL_NONE };
     eglContext = eglCreateContext(eglDisplay, eglConfig, NULL, ai32ContextAttribs);
 
     EGLError("eglCreateContext");
@@ -787,7 +787,7 @@ namespace t800 {
   void	GLDriver::SwapBuffers() {
     T8_LOG_TRACE("[GLDriver] SwapBuffers");
 #ifdef OS_WINDOWS
-#if defined(USING_OPENGL_ES20) || defined(USING_OPENGL_ES30)
+#if defined(USING_OPENGL_ES20) || defined(USING_OPENGL_ES30) || defined(USING_OPENGL_ES31)
     eglSwapBuffers(eglDisplay, eglSurface);
 #elif defined(USING_OPENGL)
     SDL_GL_SwapWindow((SDL_Window*)m_sdlWindow);

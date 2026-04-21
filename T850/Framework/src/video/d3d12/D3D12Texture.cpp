@@ -76,9 +76,13 @@ namespace t800 {
     void* mapped = nullptr;
     uploadBuf->Map(0, nullptr, &mapped);
     UINT srcPitch = this->x * bytesPerPixel;
+    // For cubemaps the DDS buffer stores all mip levels per face
+    // consecutively. Use total size / 6 to correctly stride over
+    // each face's full mip chain (not just mip-0).
+    UINT faceStride = isCube ? (this->size / arraySize) : (this->x * this->y * bytesPerPixel);
     for (UINT face = 0; face < arraySize; face++) {
       auto& fp = footprints[face];
-      unsigned char* src = buffer + face * (this->x * this->y * bytesPerPixel);
+      unsigned char* src = buffer + face * faceStride;
       unsigned char* dst = (unsigned char*)mapped + fp.Offset;
       for (UINT row = 0; row < numRows[face]; row++) {
         memcpy(dst + row * fp.Footprint.RowPitch, src + row * srcPitch,

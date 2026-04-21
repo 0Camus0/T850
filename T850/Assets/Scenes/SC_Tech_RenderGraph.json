@@ -11,7 +11,10 @@
     { "name": "CoC",              "color_count": 2, "color_format": "F16",      "depth_format": "NONE", "size": [512,512], "linear_filter": true },
     { "name": "CombineCoC",       "color_count": 1, "color_format": "F16",      "depth_format": "NONE", "size": [512,512], "linear_filter": true },
     { "name": "CoCHelper",        "color_count": 1, "color_format": "F16",      "depth_format": "NONE", "size": [512,512], "linear_filter": false },
-    { "name": "CoCHelper2",       "color_count": 1, "color_format": "F16",      "depth_format": "NONE", "size": [512,512], "linear_filter": false }
+    { "name": "CoCHelper2",       "color_count": 1, "color_format": "F16",      "depth_format": "NONE", "size": [512,512], "linear_filter": false },
+    { "name": "LuminanceMap",     "color_count": 1, "color_format": "F16",      "depth_format": "NONE", "size": [0,0], "linear_filter": true },
+    { "name": "AdaptedLumCurrent","color_count": 1, "color_format": "F16",      "depth_format": "NONE", "size": [1,1], "linear_filter": false },
+    { "name": "AdaptedLumPrev",   "color_count": 1, "color_format": "F16",      "depth_format": "NONE", "size": [1,1], "linear_filter": false }
   ],
   "passes": [
     {
@@ -107,10 +110,42 @@
       ]
     },
     {
+      "name": "Luminance Map",
+      "target": "LuminanceMap",
+      "inputs": [
+        { "source": "Extra16F:COLOR0", "slot": 0 }
+      ],
+      "draws": [
+        { "type": "fullscreen_quad", "signature": "LUMINANCE_MAP_PASS" }
+      ]
+    },
+    {
+      "name": "Adapt Luminance",
+      "target": "AdaptedLumCurrent",
+      "inputs": [
+        { "source": "AdaptedLumPrev:COLOR0", "slot": 0 },
+        { "source": "LuminanceMap:COLOR0", "slot": 1 }
+      ],
+      "draws": [
+        { "type": "fullscreen_quad", "signature": "ADAPT_LUMINANCE_PASS" }
+      ]
+    },
+    {
+      "name": "Store Adapted Luminance",
+      "target": "AdaptedLumPrev",
+      "inputs": [
+        { "source": "AdaptedLumCurrent:COLOR0", "slot": 0 }
+      ],
+      "draws": [
+        { "type": "fullscreen_quad", "signature": "FSQUAD_1_TEX" }
+      ]
+    },
+    {
       "name": "Bright",
       "target": "BloomAccum",
       "inputs": [
-        { "source": "Extra16F:COLOR0", "slot": 0 }
+        { "source": "Extra16F:COLOR0", "slot": 0 },
+        { "source": "AdaptedLumCurrent:COLOR0", "slot": 1 }
       ],
       "draws": [
         { "type": "fullscreen_quad", "signature": "BRIGHT_PASS" }
@@ -186,7 +221,8 @@
       "target": "ExtraHelper",
       "inputs": [
         { "source": "Extra16F:COLOR0",   "slot": 0 },
-        { "source": "BloomAccum:COLOR0", "slot": 1 }
+        { "source": "BloomAccum:COLOR0", "slot": 1 },
+        { "source": "AdaptedLumCurrent:COLOR0", "slot": 2 }
       ],
       "draws": [
         { "type": "fullscreen_quad", "signature": "HDR_COMP_PASS" }

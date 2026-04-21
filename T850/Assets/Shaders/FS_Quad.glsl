@@ -166,16 +166,19 @@ void main(){
 	int MatId = int(PBRData.a * 255.0 + 0.5);
 	
 	if(MatId == 0){
-		highp vec3 EyeDir_mod = -EyeDir;
-		EyeDir_mod.x =  -EyeDir_mod.x;
-		EyeDir_mod.z =  -EyeDir_mod.z;
+		// Sky: use the interpolated view ray directly (PosCorner is the
+		// world-space direction from camera to far-plane corner).  This
+		// avoids NaN when depth=0 (cleared GBuffer pixels with no geometry).
+		highp vec3 skyDir = normalize(PosCorner.xyz);
+		skyDir.x = -skyDir.x;
+		skyDir.z = -skyDir.z;
 		#ifdef ES_30
-			mediump vec3 RefCol = texture( texEnv, EyeDir_mod ).xyz;
+			mediump vec3 RefCol = texture( texEnv, skyDir ).xyz;
 		#else
-			mediump vec3 RefCol = textureCube( texEnv, EyeDir_mod ).xyz;
+			mediump vec3 RefCol = textureCube( texEnv, skyDir ).xyz;
 		#endif
 			
-		Final.xyz = RefCol.xyz*2.0;
+		Final.xyz = RefCol.xyz;
 	}else if(MatId > 0){
 
 #ifdef ES_30

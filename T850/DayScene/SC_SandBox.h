@@ -7,6 +7,9 @@
 #include <utils/Timer.h>
 #include <scene/SceneSetup.h>
 #include <scene/RenderGraph.h>
+#include <scene/WireframeSphere.h>
+#include <scene/T8_TextRenderer.h>
+#include <debug/FrameDumper.h>
 #include <gui/T8_GUI.h>
 #include <Config.h>
 
@@ -39,6 +42,9 @@ class SC_SandBox : public t800::SceneBase
     CHANGE_PCF_TOOGLE,
     CHANGLE_SSAO_TOOGLE,
     CHANGE_DEBUG_RT,
+    CHANGE_CUBEMAP,
+    CHANGE_GAUSS_KERNEL_SAMPLE_COUNT,
+    CHANGE_ACTIVE_GAUSS_KERNEL,
     CHANGE_MAX_NUM_OPTIONS
   };
 public:
@@ -62,9 +68,9 @@ public:
   t800::PrimitiveInst Quads[10];
 
   t800::RenderGraph m_renderGraph;
-  t800::SceneSetup m_guiSetup; // loaded from SC_Day.json for GUI descriptors
-
-  int ChangeActiveGaussSelection = 0;
+  t800::SceneSetup m_guiSetup; // loaded from SC_SandBox.json for GUI descriptors
+  t800::FrameDumper m_dumper;
+  int ChangeActiveGaussSelection = 1; // 0=Shadow, 1=Bloom, 2=DOF
   int m_debugRTSelection = 0;
 
   Camera Cam;
@@ -86,9 +92,26 @@ public:
   int ShadowAccumPass = -1;
   int ExtraHelperPass = -1;
   int BloomAccumPass = -1;
-  int GodRaysCalcPass = -1;
-  int CoCPass = -1;
-  int CombineCoCPass = -1;
-  int CoCHelperPass = -1;
-  int CoCHelperPass2 = -1;
+  int LuminanceMapPass = -1;
+  int AdaptedLumCurrentPass = -1;
+  int AdaptedLumPrevPass = -1;
+
+  int m_currentCubemapIndex = 0;
+  std::string m_pendingCubemap; // deferred load — set in SyncFromGUI, applied in OnUpdate
+
+  t800::TextRenderer m_debugText;
+  t800::WireframeSphere m_debugSphere;
+  bool m_showCullStats = false;
+  bool m_showAABBs = false;
+
+  // Orbit camera state
+  XVECTOR3 m_orbitTarget;    // center of the model (world space)
+  XVECTOR3 m_panOffset;      // accumulated pan offset
+  float m_orbitYaw   = 0.0f;
+  float m_orbitPitch = 0.3f;
+  float m_orbitDist  = 5.0f;
+  float m_modelRadius = 1.0f;
+
+  void ComputeOrbitCamera();
+  void FitModelToView();
 };

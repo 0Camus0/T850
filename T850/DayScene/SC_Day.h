@@ -173,6 +173,7 @@ class SC_Day : public t800::SceneBase
   int       m_activeCameraIndex = 0;
   std::vector<std::string> m_cubemapNames;
   int       m_currentCubemapIndex = 0;
+  std::string m_pendingCubemap; // deferred load for D3D12 safety
 
   t800::SplineWireframe* splineWire;
   t800::PrimitiveInst splineInst;

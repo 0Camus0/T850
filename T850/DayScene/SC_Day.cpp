@@ -237,6 +237,18 @@ void SC_Day::OnUpdate(float _DtSecs) {
   frameCounter++;
   DtSecs = _DtSecs;
   SceneProp.FrameDeltaSec = DtSecs;
+
+  // Apply deferred cubemap change BEFORE rendering begins.
+  if (!m_pendingCubemap.empty()) {
+    // Flush GPU before destroying — D3D12 may still reference the old
+    // texture from the previous frame's command list.
+    g_pBaseDriver->WaitForGPU();
+    g_pBaseDriver->DestroyTexture(EnvMapTexIndex);
+    EnvMapTexIndex = g_pBaseDriver->CreateTexture(m_pendingCubemap);
+    Quads[0].SetEnvironmentMap(g_pBaseDriver->GetTexture(EnvMapTexIndex));
+    m_pendingCubemap.clear();
+  }
+
   Meshes[0].SetParallaxSettings(SceneProp.ParallaxLowSamples, SceneProp.ParallaxHighSamples, SceneProp.ParallaxHeight);
 
   // Replay snapshot: load and apply (one-time)
@@ -537,6 +549,7 @@ void SC_Day::OnDraw() {
     case 13: selected = LuminanceMapPass;attachment = BaseDriver::COLOR0_ATTACHMENT; break; // Luminance
     case 14: selected = CoCPass;         attachment = BaseDriver::COLOR0_ATTACHMENT; break; // CoC
     case 15: selected = BrightPassPass;  attachment = BaseDriver::COLOR0_ATTACHMENT; break; // Bright
+    case 16: selected = AdaptedLumCurrentPass; attachment = BaseDriver::COLOR0_ATTACHMENT; break; // Adapted Lum
     }
     if (selected >= 0) {
       Quads[7].SetTexture(pFramework->pVideoDriver->GetRTTexture(selected, attachment), 0);
@@ -1381,12 +1394,7 @@ void SC_Day::SyncFromGUI(t800::GUIManager& gui) {
     case CHANGE_CUBEMAP: {
       if (sel->selectedIndex != m_currentCubemapIndex) {
         m_currentCubemapIndex = sel->selectedIndex;
-        // Unload current cubemap
-        g_pBaseDriver->DestroyTexture(EnvMapTexIndex);
-        // Load new cubemap
-        std::string newPath = "sky/" + sel->CurrentOption();
-        EnvMapTexIndex = g_pBaseDriver->CreateTexture(newPath);
-        Quads[0].SetEnvironmentMap(g_pBaseDriver->GetTexture(EnvMapTexIndex));
+        m_pendingCubemap = "sky/" + sel->CurrentOption();
       }
     } break;
     }

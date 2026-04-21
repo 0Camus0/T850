@@ -1152,7 +1152,7 @@ namespace t800 {
     bool hasDepth = (depth_format != BaseRT::NOTHING);
     std::vector<VkClearValue> clearValues(number_RT);
     for (int i = 0; i < number_RT; i++)
-      clearValues[i].color = { {0.0f, 0.0f, 0.0f, 1.0f} };
+      clearValues[i].color = { {0.0f, 0.0f, 0.0f, 0.0f} };
 
     if (hasDepth) {
       VkClearValue depthClear = {};

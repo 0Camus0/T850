@@ -133,7 +133,7 @@ float4 FS( VS_OUTPUT input ) : SV_TARGET {
 		skyDir.x = -skyDir.x;
 		skyDir.z = -skyDir.z;
 		float3 RefCol = texEnv.Sample(SS, skyDir).xyz;
-		Final.xyz = RefCol.xyz * 2.0;
+		Final.xyz = RefCol.xyz * toogles.x;
 	} else if(MatId > 0) {
 		Shadow = tex5.Sample(SS, input.texture0).r;
 

@@ -152,8 +152,7 @@ $xaml = @"
                     <ComboBoxItem Content="D3D11 (Direct3D 11)" IsSelected="True" Tag="d3d11"/>
                     <ComboBoxItem Content="D3D12 (Direct3D 12)" Tag="d3d12"/>
                     <ComboBoxItem Content="Vulkan" Tag="vulkan"/>
-                    <ComboBoxItem Content="GL ES (ANGLE)" Tag="gl"/>
-                    <ComboBoxItem Content="GL (Desktop GLEW)" Tag="glew"/>
+                    <ComboBoxItem Content="OpenGL (Desktop GL 3.3)" Tag="gl"/>
                 </ComboBox>
             </StackPanel>
         </Border>

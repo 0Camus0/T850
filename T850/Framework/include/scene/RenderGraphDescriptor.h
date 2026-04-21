@@ -49,6 +49,8 @@ namespace t800 {
     std::string name;             // Human-readable label (becomes node ID)
     std::string target;           // RT name to push, or "" for no push (continuation)
     bool clear = false;
+    std::array<float, 4> clear_color = {0, 0, 0, 0};  // RGBA clear color (used when clear=true)
+    float clear_depth = 1.0f;                           // Depth clear value
 
     // State changes before this pass
     StateDesc state;

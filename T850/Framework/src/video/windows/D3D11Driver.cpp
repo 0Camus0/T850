@@ -713,16 +713,13 @@ namespace t800 {
   }
 
   void D3DXDriver::Clear() {
-    ID3D11DeviceContext* deviceContext = reinterpret_cast<ID3D11DeviceContext*>(T8DeviceContext->GetAPIObject());
-    float rgba[4];
-    rgba[0] = 0.227f;
-    rgba[1] = 0.227f;
-    rgba[2] = 0.227f;
-    rgba[3] = 1.0f;
+    ClearWithColor(0.227f, 0.227f, 0.227f, 1.0f);
+  }
 
-    // Clearing the Main Render Target View
+  void D3DXDriver::ClearWithColor(float r, float g, float b, float a) {
+    ID3D11DeviceContext* deviceContext = reinterpret_cast<ID3D11DeviceContext*>(T8DeviceContext->GetAPIObject());
+    float rgba[4] = { r, g, b, a };
     deviceContext->ClearRenderTargetView(D3D11RenderTargetView.Get(), rgba);
-    // Clearing the Depth Buffer
     deviceContext->ClearDepthStencilView(D3D11DepthStencilTargetView.Get(), D3D11_CLEAR_DEPTH, 1.0f, 0);
   }
 

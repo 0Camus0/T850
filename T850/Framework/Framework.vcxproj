@@ -62,12 +62,14 @@
     <ClInclude Include="include\utils\Timer.h" />
     <ClInclude Include="include\utils\Utils.h" />
     <ClInclude Include="include\utils\Camera.h" />
+    <ClInclude Include="include\utils\Picking.h" />
     <ClInclude Include="include\utils\XDataBase.h" />
     <ClInclude Include="include\utils\xDefs.h" />
     <ClInclude Include="include\utils\xMaths.h" />
     <ClInclude Include="include\utils\GUIAtlasGenerator.h" />
     <ClInclude Include="include\utils\SPIRVReflection.h" />
     <ClInclude Include="include\video\BaseDriver.h" />
+    <ClInclude Include="include\video\WindowHandle.h" />
     <ClInclude Include="include\video\GLDriver.h" />
     <ClInclude Include="include\video\GLRT.h" />
     <ClInclude Include="include\video\GLShader.h" />
@@ -125,6 +127,7 @@
     <ClCompile Include="src\utils\Timer.cpp" />
     <ClCompile Include="src\utils\Utils.cpp" />
     <ClCompile Include="src\utils\Camera.cpp" />
+    <ClCompile Include="src\utils\Picking.cpp" />
     <ClCompile Include="src\utils\XDataBase.cpp" />
     <ClCompile Include="src\utils\XMaths.cpp" />
     <ClCompile Include="src\utils\GUIAtlasGenerator.cpp" />
@@ -461,6 +464,7 @@
       <AdditionalIncludeDirectories>$(SolutionDir)Librerias\glaze\include;$(SolutionDir)Librerias\tinyxml2\include;$(ProjectDir);$(ProjectDir)include;$(SolutionDir)Librerias\SDL3\include;$(T8VcpkgStatic)\include;$(T8VcpkgDynamic)\include;$(SolutionDir)Librerias\stb\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
       <RuntimeLibrary>MultiThreadedDebug</RuntimeLibrary>
       <MultiProcessorCompilation>true</MultiProcessorCompilation>
+      <DebugInformationFormat>OldStyle</DebugInformationFormat>
       <MinimalRebuild>false</MinimalRebuild>
       <LanguageStandard>stdcpp23</LanguageStandard>
       <AdditionalOptions>/Zc:preprocessor %(AdditionalOptions)</AdditionalOptions>
@@ -478,6 +482,7 @@
       <AdditionalIncludeDirectories>$(SolutionDir)Librerias\glaze\include;$(SolutionDir)Librerias\tinyxml2\include;$(ProjectDir);$(ProjectDir)include;$(SolutionDir)Librerias\SDL3\include;$(T8VcpkgStatic)\include;$(T8VcpkgDynamic)\include;$(SolutionDir)Librerias\stb\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
       <RuntimeLibrary>MultiThreadedDebug</RuntimeLibrary>
       <MultiProcessorCompilation>true</MultiProcessorCompilation>
+      <DebugInformationFormat>OldStyle</DebugInformationFormat>
       <MinimalRebuild>false</MinimalRebuild>
       <LanguageStandard>stdcpp23</LanguageStandard>
       <AdditionalOptions>/Zc:preprocessor %(AdditionalOptions)</AdditionalOptions>
@@ -495,6 +500,7 @@
       <AdditionalIncludeDirectories>$(SolutionDir)Librerias\glaze\include;$(SolutionDir)Librerias\tinyxml2\include;$(ProjectDir);$(ProjectDir)include;$(SolutionDir)Librerias\SDL3\include;$(T8VcpkgStatic)\include;$(T8VcpkgDynamic)\include;$(SolutionDir)Librerias\stb\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
       <RuntimeLibrary>MultiThreadedDebug</RuntimeLibrary>
       <MultiProcessorCompilation>true</MultiProcessorCompilation>
+      <DebugInformationFormat>OldStyle</DebugInformationFormat>
       <MinimalRebuild>false</MinimalRebuild>
       <LanguageStandard>stdcpp23</LanguageStandard>
       <AdditionalOptions>/Zc:preprocessor %(AdditionalOptions)</AdditionalOptions>
@@ -514,6 +520,7 @@
       <AdditionalIncludeDirectories>$(SolutionDir)Librerias\glaze\include;$(SolutionDir)Librerias\tinyxml2\include;$(ProjectDir);$(ProjectDir)include;$(SolutionDir)Librerias\SDL3\include;$(T8VcpkgStatic)\include;$(T8VcpkgDynamic)\include;$(SolutionDir)Librerias\stb\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
       <RuntimeLibrary>MultiThreaded</RuntimeLibrary>
       <MultiProcessorCompilation>true</MultiProcessorCompilation>
+      <DebugInformationFormat>OldStyle</DebugInformationFormat>
       <LanguageStandard>stdcpp23</LanguageStandard>
       <AdditionalOptions>/Zc:preprocessor %(AdditionalOptions)</AdditionalOptions>
     </ClCompile>
@@ -540,6 +547,7 @@
       <AdditionalIncludeDirectories>$(SolutionDir)Librerias\glaze\include;$(SolutionDir)Librerias\tinyxml2\include;$(ProjectDir);$(ProjectDir)include;$(SolutionDir)Librerias\SDL3\include;$(T8VcpkgStatic)\include;$(T8VcpkgDynamic)\include;$(SolutionDir)Librerias\stb\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
       <RuntimeLibrary>MultiThreaded</RuntimeLibrary>
       <MultiProcessorCompilation>true</MultiProcessorCompilation>
+      <DebugInformationFormat>OldStyle</DebugInformationFormat>
       <LanguageStandard>stdcpp23</LanguageStandard>
       <AdditionalOptions>/Zc:preprocessor %(AdditionalOptions)</AdditionalOptions>
     </ClCompile>
@@ -566,6 +574,7 @@
       <AdditionalIncludeDirectories>$(SolutionDir)Librerias\glaze\include;$(SolutionDir)Librerias\tinyxml2\include;$(ProjectDir);$(ProjectDir)include;$(SolutionDir)Librerias\SDL3\include;$(T8VcpkgStatic)\include;$(T8VcpkgDynamic)\include;$(SolutionDir)Librerias\stb\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
       <RuntimeLibrary>MultiThreaded</RuntimeLibrary>
       <MultiProcessorCompilation>true</MultiProcessorCompilation>
+      <DebugInformationFormat>OldStyle</DebugInformationFormat>
       <LanguageStandard>stdcpp23</LanguageStandard>
       <AdditionalOptions>/Zc:preprocessor %(AdditionalOptions)</AdditionalOptions>
     </ClCompile>

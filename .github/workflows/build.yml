@@ -54,7 +54,7 @@ jobs:
         shell: pwsh
         run: |
           cd T850/Librerias/vcpkg
-          ./vcpkg.exe install glew:x64-windows-static angle:x64-windows vulkan-headers:x64-windows-static vulkan-loader:x64-windows-static vulkan-memory-allocator:x64-windows-static glslang:x64-windows-static
+          ./vcpkg.exe install glew:x64-windows-static angle:x64-windows vulkan-headers:x64-windows-static vulkan-loader:x64-windows-static vulkan-memory-allocator:x64-windows-static glslang:x64-windows-static "imgui[docking-experimental,dx11-binding,dx12-binding,opengl3-binding,sdl3-binding,win32-binding]:x64-windows-static" imguizmo:x64-windows-static
 
       - name: Install vcpkg packages (ARM64)
         if: matrix.platform == 'ARM64'
@@ -66,11 +66,20 @@ jobs:
       - name: Build
         shell: pwsh
         run: |
-          msbuild T850/T850.sln `
-            /t:Build `
-            /p:Configuration=${{ matrix.configuration }} `
-            /p:Platform=${{ matrix.platform }} `
-            /m /nologo /v:minimal
+          if ("${{ matrix.platform }}" -eq "x64") {
+            msbuild T850/T850.sln `
+              /t:Build `
+              /p:Configuration=${{ matrix.configuration }} `
+              /p:Platform=${{ matrix.platform }} `
+              /m /nologo /v:minimal
+          } else {
+            # T8ditor only targets x64; build Framework + DayScene for other platforms
+            msbuild T850/T850.sln `
+              /t:Framework`;DayScene `
+              /p:Configuration=${{ matrix.configuration }} `
+              /p:Platform=${{ matrix.platform }} `
+              /m /nologo /v:minimal
+          }
 
       - name: Set arch name
         id: arch
@@ -86,6 +95,8 @@ jobs:
           $exe = "T850/bin/${{ steps.arch.outputs.name }}/${{ matrix.configuration }}/DayScene.exe"
           if (-not (Test-Path $exe)) { throw "Build output not found: $exe" }
           Write-Host "Build succeeded: $exe"
+          $editor = "T850/bin/${{ steps.arch.outputs.name }}/${{ matrix.configuration }}/T8ditor.exe"
+          if (Test-Path $editor) { Write-Host "Editor built: $editor" }
 
       - name: Upload build artifacts
         if: matrix.configuration == 'Release'
@@ -94,6 +105,7 @@ jobs:
           name: T850-${{ steps.arch.outputs.name }}-${{ matrix.configuration }}
           path: |
             T850/bin/${{ steps.arch.outputs.name }}/${{ matrix.configuration }}/DayScene.exe
+            T850/bin/${{ steps.arch.outputs.name }}/${{ matrix.configuration }}/T8ditor.exe
             T850/bin/${{ steps.arch.outputs.name }}/${{ matrix.configuration }}/*.dll
 
   release:
@@ -143,6 +155,11 @@ jobs:
             Copy-Item "$assets/Techniques" -Destination "$staging/Techniques" -Recurse
             Copy-Item "$assets/Scenes"     -Destination "$staging/Scenes"     -Recurse
             Copy-Item "$assets/Layouts"    -Destination "$staging/Layouts"    -Recurse
+
+            # Copy config
+            if (Test-Path "T850/config.json") {
+              Copy-Item "T850/config.json" -Destination $staging
+            }
 
             # Create zip
             Compress-Archive -Path "$staging/*" -DestinationPath "$name.zip"

@@ -105,6 +105,7 @@ static const std::unordered_map<std::string, uint8_t> s_passMap = {
   {"GOD_RAY_CALCULATION_PASS", PassType::GOD_RAY_CALCULATION},
   {"GOD_RAY_BLEND_PASS",    PassType::GOD_RAY_BLEND},
   {"SSAO_PASS",             PassType::SSAO},
+  {"DEFERRED_LDR_PASS",     PassType::DEFERRED_LDR},
 };
 
 // Feature name -> ShaderKey feature bit
@@ -239,7 +240,6 @@ void RenderGraph::CreateRenderTargets(BaseDriver* driver, const SceneProps& prop
     int w = rt.size[0];
     int h = rt.size[1];
 
-    // Resolve size references
     if (!rt.size_ref.empty()) {
       if (rt.size_ref == "$shadow_resolution") {
         w = h = static_cast<int>(props.ShadowMapResolution);
@@ -248,7 +248,16 @@ void RenderGraph::CreateRenderTargets(BaseDriver* driver, const SceneProps& prop
       }
     }
 
-    int handle = driver->CreateRT(rt.color_count, cf, df, w, h, rt.linear_filter);
+    int handle;
+    if (!rt.color_formats.empty()) {
+      // Per-attachment formats specified in JSON
+      std::vector<int> perCF;
+      for (const auto& fmt : rt.color_formats)
+        perCF.push_back(ResolveColorFormat(fmt));
+      handle = driver->CreateRT(rt.color_count, perCF, df, w, h, rt.linear_filter);
+    } else {
+      handle = driver->CreateRT(rt.color_count, cf, df, w, h, rt.linear_filter);
+    }
     m_rtHandles[rt.name] = handle;
 
     T8_LOG_INFO("[RenderGraph] Created RT '%s' -> handle %d (%dx%d, %d colors, cf=%s, df=%s)",
@@ -482,7 +491,8 @@ void RenderGraph::ExecutePass(
     }
 
     if (pass.clear) {
-      driver->Clear();
+      driver->ClearWithColor(pass.clear_color[0], pass.clear_color[1],
+                             pass.clear_color[2], pass.clear_color[3]);
     }
 
     // Bind input textures
@@ -514,12 +524,22 @@ void RenderGraph::ExecutePass(
       }
 
       if (draw.type == "mesh") {
-        for (int mi : draw.mesh_indices) {
-          if (mi < meshCount) {
+        if (draw.mesh_indices.empty()) {
+          // Empty array = draw ALL meshes
+          for (int mi = 0; mi < meshCount; ++mi) {
             meshes[mi].SetGlobalKey(sig);
             meshes[mi].Draw();
             ShaderKey fwd(0); fwd.setPass(PassType::FORWARD);
             meshes[mi].SetGlobalKey(fwd);
+          }
+        } else {
+          for (int mi : draw.mesh_indices) {
+            if (mi >= 0 && mi < meshCount) {
+              meshes[mi].SetGlobalKey(sig);
+              meshes[mi].Draw();
+              ShaderKey fwd(0); fwd.setPass(PassType::FORWARD);
+              meshes[mi].SetGlobalKey(fwd);
+            }
           }
         }
       }

@@ -145,6 +145,18 @@ namespace t800 {
     this->w = w;
     this->h = h;
     this->GenMips = GenMips;
+    this->perColorFormats.clear();
+    return LoadAPIRT();
+  }
+
+  bool BaseRT::LoadRT(int nrt, const std::vector<int>& perCF, int df, int w, int h, bool GenMips) {
+    this->number_RT = nrt;
+    this->color_format = perCF.empty() ? RGBA8 : perCF[0]; // fallback
+    this->depth_format = df;
+    this->w = w;
+    this->h = h;
+    this->GenMips = GenMips;
+    this->perColorFormats = perCF;
     return LoadAPIRT();
   }
 
@@ -238,6 +250,7 @@ namespace t800 {
       case PassType::LIGHT_RAY_MARCHING: Defines += "#define LIGHT_RAY_MARCHING\n\n"; break;
       case PassType::LIGHT_ADD:          Defines += "#define LIGHT_ADD\n\n"; break;
       case PassType::FADE:               Defines += "#define FADE\n\n"; break;
+      case PassType::DEFERRED_LDR:       Defines += "#define DEFERRED_LDR_PASS\n\n"; break;
       default: break;
       }
 
@@ -463,6 +476,22 @@ namespace t800 {
     if (pRT!= nullptr) {
       RTs.push_back(pRT);
       T8_LOG_DEBUG("RenderTarget created: handle %d (%dx%d, %d color attachments)", (int)(RTs.size()-1), w, h, nrt);
+      return static_cast<int>(RTs.size() - 1);
+    }
+    return -1;
+  }
+  int BaseDriver::CreateRT(int nrt, const std::vector<int>& perColorFormats, int df, int w, int h, bool genMips)
+  {
+    if (w == 0) w = width;
+    if (h == 0) h = height;
+    int cf = perColorFormats.empty() ? BaseRT::RGBA8 : perColorFormats[0];
+    BaseRT* pRT = T8Device->CreateRT(nrt, cf, df, w, h, genMips);
+    if (pRT) {
+      // Reload with per-attachment formats
+      pRT->DestroyAPIRT();
+      pRT->LoadRT(nrt, perColorFormats, df, w, h, genMips);
+      RTs.push_back(pRT);
+      T8_LOG_DEBUG("RenderTarget created (per-format): handle %d (%dx%d, %d colors)", (int)(RTs.size()-1), w, h, nrt);
       return static_cast<int>(RTs.size() - 1);
     }
     return -1;

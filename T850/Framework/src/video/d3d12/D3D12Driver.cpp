@@ -9,6 +9,7 @@
 #ifdef OS_WINDOWS
 
 #include <utils/Log.h>
+#include <debug/T8_Profiler.h>
 #include <iostream>
 #include <string>
 #include <cassert>
@@ -262,6 +263,9 @@ namespace t800 {
   void D3D12DeviceContext::DrawIndexed(unsigned vertexCount, unsigned startIndex, unsigned startVertex) {
     T8_LOG_TRACE("[D3D12] DrawIndexed(%u, %u, %u)", vertexCount, startIndex, startVertex);
     m_commandList->DrawIndexedInstanced(vertexCount, 1, startIndex, startVertex, 0);
+#ifdef T8_ENABLE_PROFILER
+    if (t800::g_profiler) t800::g_profiler->AddDrawCall(vertexCount);
+#endif
   }
 
   // ══════════════════════════════════════════════════════
@@ -726,8 +730,23 @@ namespace t800 {
       }
     }
 
-    HRESULT hr = CreateDXGIFactory1(IID_PPV_ARGS(&m_dxgiFactory));
-    if (FAILED(hr)) { T8_LOG_ERROR("[D3D12] CreateDXGIFactory1 failed hr=0x%08X", hr); return; }
+    HRESULT hr = CreateDXGIFactory2(0, IID_PPV_ARGS(&m_dxgiFactory));
+    if (FAILED(hr)) {
+      hr = CreateDXGIFactory1(IID_PPV_ARGS(&m_dxgiFactory));
+      if (FAILED(hr)) { T8_LOG_ERROR("[D3D12] CreateDXGIFactory failed hr=0x%08X", hr); return; }
+    }
+    T8_LOG_INFO("[D3D12] DXGI factory created");
+
+    // Check tearing support
+    ComPtr<IDXGIFactory5> factory5;
+    m_tearingSupported = false;
+    if (SUCCEEDED(m_dxgiFactory.As(&factory5))) {
+      BOOL allow = FALSE;
+      if (SUCCEEDED(factory5->CheckFeatureSupport(DXGI_FEATURE_PRESENT_ALLOW_TEARING, &allow, sizeof(allow)))) {
+        m_tearingSupported = (allow == TRUE);
+      }
+    }
+    T8_LOG_INFO("[D3D12] Tearing support: %s", m_tearingSupported ? "YES" : "NO");
 
     ComPtr<IDXGIAdapter1> adapter;
     for (UINT i = 0; m_dxgiFactory->EnumAdapters1(i, &adapter) != DXGI_ERROR_NOT_FOUND; i++) {
@@ -748,17 +767,21 @@ namespace t800 {
   void D3D12Driver::CreateCommandInfrastructure() {
     ID3D12Device* device = static_cast<D3D12Device*>(T8Device)->GetNativeDevice();
     D3D12_COMMAND_QUEUE_DESC qDesc = {}; qDesc.Type = D3D12_COMMAND_LIST_TYPE_DIRECT;
-    device->CreateCommandQueue(&qDesc, IID_PPV_ARGS(&m_commandQueue));
-    for (UINT i = 0; i < kBackBufferCount; i++)
+    HRESULT hr = device->CreateCommandQueue(&qDesc, IID_PPV_ARGS(&m_commandQueue));
+    if (FAILED(hr)) { T8_LOG_ERROR("[D3D12] CreateCommandQueue failed hr=0x%08X", hr); return; }
+    for (UINT i = 0; i < kBackBufferCount; i++) {
       device->CreateCommandAllocator(D3D12_COMMAND_LIST_TYPE_DIRECT, IID_PPV_ARGS(&m_commandAllocators[i]));
-    device->CreateCommandList(0, D3D12_COMMAND_LIST_TYPE_DIRECT, m_commandAllocators[0].Get(), nullptr, IID_PPV_ARGS(&m_commandList));
-    m_commandList->Close();
-    static_cast<D3D12DeviceContext*>(T8DeviceContext)->m_commandList = m_commandList;
-    device->CreateFence(0, D3D12_FENCE_FLAG_NONE, IID_PPV_ARGS(&m_fence));
+      device->CreateCommandList(0, D3D12_COMMAND_LIST_TYPE_DIRECT, m_commandAllocators[i].Get(), nullptr, IID_PPV_ARGS(&m_commandLists[i]));
+      m_commandLists[i]->Close();
+    }
+    static_cast<D3D12DeviceContext*>(T8DeviceContext)->m_commandList = m_commandLists[0];
+    hr = device->CreateFence(0, D3D12_FENCE_FLAG_NONE, IID_PPV_ARGS(&m_fence));
+    if (FAILED(hr)) { T8_LOG_ERROR("[D3D12] CreateFence failed hr=0x%08X", hr); return; }
     m_nextFenceValue = 1;
-    m_frameFenceValues[0] = m_frameFenceValues[1] = 0;
+    for (UINT i = 0; i < kBackBufferCount; i++) m_frameFenceValues[i] = 0;
     m_fenceEvent = CreateEvent(nullptr, FALSE, FALSE, nullptr);
-    T8_LOG_INFO("[D3D12] Command infrastructure created");
+    T8_LOG_INFO("[D3D12] Command infrastructure created (%d lists + %d allocators)", kBackBufferCount, kBackBufferCount);
+    T8_LOG_INFO("[D3D12] Sync objects created (fence + %u frames in flight)", kBackBufferCount);
   }
 
   void D3D12Driver::CreateSwapChain() {
@@ -766,12 +789,29 @@ namespace t800 {
     sc.Width = width; sc.Height = height; sc.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
     sc.SampleDesc.Count = 1; sc.BufferUsage = DXGI_USAGE_RENDER_TARGET_OUTPUT;
     sc.BufferCount = kBackBufferCount; sc.SwapEffect = DXGI_SWAP_EFFECT_FLIP_DISCARD;
-    sc.Flags = DXGI_SWAP_CHAIN_FLAG_ALLOW_TEARING; // enable tearing for uncapped FPS
+    sc.Flags = DXGI_SWAP_CHAIN_FLAG_FRAME_LATENCY_WAITABLE_OBJECT;
+    if (m_tearingSupported)
+      sc.Flags |= DXGI_SWAP_CHAIN_FLAG_ALLOW_TEARING;
+
     ComPtr<IDXGISwapChain1> sc1;
-    m_dxgiFactory->CreateSwapChainForHwnd(m_commandQueue.Get(), m_hwnd, &sc, nullptr, nullptr, &sc1);
+    HRESULT hr = m_dxgiFactory->CreateSwapChainForHwnd(m_commandQueue.Get(), m_hwnd, &sc, nullptr, nullptr, &sc1);
+    if (FAILED(hr)) { T8_LOG_ERROR("[D3D12] CreateSwapChain failed hr=0x%08X", hr); return; }
     sc1.As(&m_swapChain);
+
+    // Disable ALT+ENTER fullscreen toggle (interferes with Independent Flip)
+    m_dxgiFactory->MakeWindowAssociation(m_hwnd, DXGI_MWA_NO_ALT_ENTER);
+
+    // Set max frame latency for waitable swap chain
+    ComPtr<IDXGISwapChain2> sc2;
+    if (SUCCEEDED(m_swapChain.As(&sc2))) {
+      sc2->SetMaximumFrameLatency(kBackBufferCount);
+      m_swapChainWaitableObject = sc2->GetFrameLatencyWaitableObject();
+      T8_LOG_INFO("[D3D12] Waitable swap chain enabled (latency=%u)", kBackBufferCount);
+    }
+
     m_currentBackBuffer = m_swapChain->GetCurrentBackBufferIndex();
-    T8_LOG_INFO("[D3D12] Swap chain created (%dx%d, %u buffers)", width, height, kBackBufferCount);
+    T8_LOG_INFO("[D3D12] Swap chain created (%dx%d, %u buffers, tearing=%s)",
+                width, height, kBackBufferCount, m_tearingSupported ? "on" : "off");
   }
 
   void D3D12Driver::CreateHeaps() {
@@ -781,6 +821,7 @@ namespace t800 {
     m_heaps[D3D12Heap::SAMPLER].Create(device, D3D12_DESCRIPTOR_HEAP_TYPE_SAMPLER, 256, true);
     m_heaps[D3D12Heap::RTV].Create(device, D3D12_DESCRIPTOR_HEAP_TYPE_RTV, 128, false);
     m_heaps[D3D12Heap::DSV].Create(device, D3D12_DESCRIPTOR_HEAP_TYPE_DSV, 64, false);
+    T8_LOG_INFO("[D3D12] Descriptor heaps created (%d)", D3D12Heap::MAX);
   }
 
   void D3D12Driver::CreateBackBufferViews() {
@@ -801,7 +842,8 @@ namespace t800 {
     dd.Flags = D3D12_RESOURCE_FLAG_ALLOW_DEPTH_STENCIL;
     D3D12_CLEAR_VALUE cv = {}; cv.Format = DXGI_FORMAT_D32_FLOAT; cv.DepthStencil.Depth = 1.0f;
     D3D12_HEAP_PROPERTIES hp = {}; hp.Type = D3D12_HEAP_TYPE_DEFAULT;
-    device->CreateCommittedResource(&hp, D3D12_HEAP_FLAG_NONE, &dd, D3D12_RESOURCE_STATE_DEPTH_WRITE, &cv, IID_PPV_ARGS(&m_depthBuffer));
+    HRESULT hr = device->CreateCommittedResource(&hp, D3D12_HEAP_FLAG_NONE, &dd, D3D12_RESOURCE_STATE_DEPTH_WRITE, &cv, IID_PPV_ARGS(&m_depthBuffer));
+    if (FAILED(hr)) { T8_LOG_ERROR("[D3D12] Depth buffer creation failed hr=0x%08X", hr); return; }
     D3D12_DEPTH_STENCIL_VIEW_DESC dv = {}; dv.Format = DXGI_FORMAT_D32_FLOAT; dv.ViewDimension = D3D12_DSV_DIMENSION_TEXTURE2D;
     m_depthDSV = m_heaps[D3D12Heap::DSV].AllocateCPU();
     device->CreateDepthStencilView(m_depthBuffer.Get(), &dv, m_depthDSV);
@@ -824,12 +866,19 @@ namespace t800 {
   void D3D12Driver::InitDriver() {
     T8Device = new D3D12Device;
     T8DeviceContext = new D3D12DeviceContext;
+    T8_LOG_INFO("[D3D12] >> CreateDevice...");
     CreateDevice();
+    T8_LOG_INFO("[D3D12] >> CreateCommandInfrastructure...");
     CreateCommandInfrastructure();
+    T8_LOG_INFO("[D3D12] >> CreateSwapChain...");
     CreateSwapChain();
+    T8_LOG_INFO("[D3D12] >> CreateHeaps...");
     CreateHeaps();
+    T8_LOG_INFO("[D3D12] >> CreateBackBufferViews...");
     CreateBackBufferViews();
+    T8_LOG_INFO("[D3D12] >> CreateDepthBuffer...");
     CreateDepthBuffer();
+    T8_LOG_INFO("[D3D12] >> CreateDefaultSampler...");
     CreateDefaultSampler();
 
     // Create per-frame CB ring buffers
@@ -842,9 +891,10 @@ namespace t800 {
       rd.Height = 1; rd.DepthOrArraySize = 1; rd.MipLevels = 1;
       rd.SampleDesc.Count = 1; rd.Layout = D3D12_TEXTURE_LAYOUT_ROW_MAJOR;
       for (UINT i = 0; i < kBackBufferCount; i++) {
-        device->CreateCommittedResource(&hp, D3D12_HEAP_FLAG_NONE, &rd,
+        HRESULT hrRing = device->CreateCommittedResource(&hp, D3D12_HEAP_FLAG_NONE, &rd,
                                          D3D12_RESOURCE_STATE_GENERIC_READ, nullptr,
                                          IID_PPV_ARGS(&m_cbRingBuffers[i]));
+        if (FAILED(hrRing)) { T8_LOG_ERROR("[D3D12] CB ring buffer[%u] creation failed hr=0x%08X", i, hrRing); return; }
         m_cbRingBuffers[i]->Map(0, nullptr, &m_cbRingMapped[i]);
       }
       T8_LOG_INFO("[D3D12] CB ring buffers created (%u KB x %u)", kCBRingBufferSize / 1024, kBackBufferCount);
@@ -878,7 +928,7 @@ namespace t800 {
     if (m_fenceEvent) { CloseHandle(m_fenceEvent); m_fenceEvent = nullptr; }
     m_depthBuffer.Reset();
     for (UINT i = 0; i < kBackBufferCount; i++) { m_backBuffers[i].Reset(); m_commandAllocators[i].Reset(); }
-    m_commandList.Reset(); m_fence.Reset(); m_commandQueue.Reset(); m_swapChain.Reset();
+    for(auto& cl:m_commandLists)cl.Reset(); m_fence.Reset(); m_commandQueue.Reset(); m_swapChain.Reset();
     T8Device->release(); T8DeviceContext->release();
     delete T8Device; delete T8DeviceContext; T8Device = nullptr; T8DeviceContext = nullptr;
     m_dxgiFactory.Reset();
@@ -915,20 +965,28 @@ namespace t800 {
   // ══════════════════════════════════════════════════════
 
   void D3D12Driver::BeginFrame() {
-    const UINT64 lastFenceForThisBuffer = m_frameFenceValues[m_currentBackBuffer];
-    if (m_fence->GetCompletedValue() < lastFenceForThisBuffer) {
-      m_fence->SetEventOnCompletion(lastFenceForThisBuffer, m_fenceEvent);
-      WaitForSingleObject(m_fenceEvent, INFINITE);
+    {
+      T8_PROFILE_CPU_SCOPE(t800::g_profiler, "D3D12_FenceWait");
+      // Wait for the specific backbuffer's fence to ensure its allocator is safe to reset
+      const UINT64 lastFenceForThisBuffer = m_frameFenceValues[m_currentBackBuffer];
+      if (m_fence->GetCompletedValue() < lastFenceForThisBuffer) {
+        m_fence->SetEventOnCompletion(lastFenceForThisBuffer, m_fenceEvent);
+        WaitForSingleObject(m_fenceEvent, INFINITE);
+      }
     }
 
-    m_commandAllocators[m_currentBackBuffer]->Reset();
-    m_commandList->Reset(m_commandAllocators[m_currentBackBuffer].Get(), nullptr);
-    static_cast<D3D12DeviceContext*>(T8DeviceContext)->m_commandList = m_commandList;
-    ID3D12DescriptorHeap* heaps[] = {
-      m_heaps[D3D12Heap::CBV_SRV_UAV_VISIBLE].GetHeap(),
-      m_heaps[D3D12Heap::SAMPLER].GetHeap()
-    };
-    m_commandList->SetDescriptorHeaps(2, heaps);
+    {
+      T8_PROFILE_CPU_SCOPE(t800::g_profiler, "D3D12_CmdListReset");
+      auto& cmdList = m_commandLists[m_currentBackBuffer];
+      m_commandAllocators[m_currentBackBuffer]->Reset();
+      cmdList->Reset(m_commandAllocators[m_currentBackBuffer].Get(), nullptr);
+      static_cast<D3D12DeviceContext*>(T8DeviceContext)->m_commandList = cmdList;
+      ID3D12DescriptorHeap* heaps[] = {
+        m_heaps[D3D12Heap::CBV_SRV_UAV_VISIBLE].GetHeap(),
+        m_heaps[D3D12Heap::SAMPLER].GetHeap()
+      };
+      cmdList->SetDescriptorHeaps(2, heaps);
+    }
 
     m_cbRingOffset = 0;
     m_dynamicDescriptorOffset = 0;
@@ -956,23 +1014,23 @@ namespace t800 {
       b.Transition.StateBefore = D3D12_RESOURCE_STATE_PRESENT;
       b.Transition.StateAfter = D3D12_RESOURCE_STATE_RENDER_TARGET;
       b.Transition.Subresource = D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES;
-      m_commandList->ResourceBarrier(1, &b);
+      m_commandLists[m_currentBackBuffer]->ResourceBarrier(1, &b);
     }
 
     if (CurrentRT >= 0 && CurrentRT < (int)RTs.size()) {
       const float cc[4] = { 0.0f, 0.0f, 0.0f, 0.0f };
       D3D12RT* rt = static_cast<D3D12RT*>(RTs[CurrentRT]);
       for (auto& rtv : rt->vRTVHandles)
-        m_commandList->ClearRenderTargetView(rtv, cc, 0, nullptr);
+        m_commandLists[m_currentBackBuffer]->ClearRenderTargetView(rtv, cc, 0, nullptr);
       if (rt->depthResource)
-        m_commandList->ClearDepthStencilView(rt->depthDSV, D3D12_CLEAR_FLAG_DEPTH, 1.0f, 0, 0, nullptr);
+        m_commandLists[m_currentBackBuffer]->ClearDepthStencilView(rt->depthDSV, D3D12_CLEAR_FLAG_DEPTH, 1.0f, 0, 0, nullptr);
     } else {
-      m_commandList->OMSetRenderTargets(1, &m_backBufferRTVs[m_currentBackBuffer], FALSE, &m_depthDSV);
-      m_commandList->RSSetViewports(1, &m_viewport);
-      m_commandList->RSSetScissorRects(1, &m_scissorRect);
+      m_commandLists[m_currentBackBuffer]->OMSetRenderTargets(1, &m_backBufferRTVs[m_currentBackBuffer], FALSE, &m_depthDSV);
+      m_commandLists[m_currentBackBuffer]->RSSetViewports(1, &m_viewport);
+      m_commandLists[m_currentBackBuffer]->RSSetScissorRects(1, &m_scissorRect);
       const float cc[4] = { 0.227f, 0.227f, 0.227f, 1.0f };
-      m_commandList->ClearRenderTargetView(m_backBufferRTVs[m_currentBackBuffer], cc, 0, nullptr);
-      m_commandList->ClearDepthStencilView(m_depthDSV, D3D12_CLEAR_FLAG_DEPTH, 1.0f, 0, 0, nullptr);
+      m_commandLists[m_currentBackBuffer]->ClearRenderTargetView(m_backBufferRTVs[m_currentBackBuffer], cc, 0, nullptr);
+      m_commandLists[m_currentBackBuffer]->ClearDepthStencilView(m_depthDSV, D3D12_CLEAR_FLAG_DEPTH, 1.0f, 0, 0, nullptr);
     }
   }
 
@@ -981,28 +1039,36 @@ namespace t800 {
     if (CurrentRT >= 0 && CurrentRT < (int)RTs.size()) {
       D3D12RT* rt = static_cast<D3D12RT*>(RTs[CurrentRT]);
       for (auto& rtv : rt->vRTVHandles)
-        m_commandList->ClearRenderTargetView(rtv, cc, 0, nullptr);
+        m_commandLists[m_currentBackBuffer]->ClearRenderTargetView(rtv, cc, 0, nullptr);
       if (rt->depthResource)
-        m_commandList->ClearDepthStencilView(rt->depthDSV, D3D12_CLEAR_FLAG_DEPTH, 1.0f, 0, 0, nullptr);
+        m_commandLists[m_currentBackBuffer]->ClearDepthStencilView(rt->depthDSV, D3D12_CLEAR_FLAG_DEPTH, 1.0f, 0, 0, nullptr);
     } else {
-      m_commandList->ClearRenderTargetView(m_backBufferRTVs[m_currentBackBuffer], cc, 0, nullptr);
-      m_commandList->ClearDepthStencilView(m_depthDSV, D3D12_CLEAR_FLAG_DEPTH, 1.0f, 0, 0, nullptr);
+      m_commandLists[m_currentBackBuffer]->ClearRenderTargetView(m_backBufferRTVs[m_currentBackBuffer], cc, 0, nullptr);
+      m_commandLists[m_currentBackBuffer]->ClearDepthStencilView(m_depthDSV, D3D12_CLEAR_FLAG_DEPTH, 1.0f, 0, 0, nullptr);
     }
   }
 
   void D3D12Driver::SwapBuffers() {
 
-    D3D12_RESOURCE_BARRIER b = {};
-    b.Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
-    b.Transition.pResource = m_backBuffers[m_currentBackBuffer].Get();
-    b.Transition.StateBefore = D3D12_RESOURCE_STATE_RENDER_TARGET;
-    b.Transition.StateAfter = D3D12_RESOURCE_STATE_PRESENT;
-    b.Transition.Subresource = D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES;
-    m_commandList->ResourceBarrier(1, &b);
-    m_commandList->Close();
-    ID3D12CommandList* lists[] = { m_commandList.Get() };
-    m_commandQueue->ExecuteCommandLists(1, lists);
-    m_swapChain->Present(0, DXGI_PRESENT_ALLOW_TEARING);
+    {
+      T8_PROFILE_CPU_SCOPE(t800::g_profiler, "D3D12_CmdClose+Execute");
+      D3D12_RESOURCE_BARRIER b = {};
+      b.Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
+      b.Transition.pResource = m_backBuffers[m_currentBackBuffer].Get();
+      b.Transition.StateBefore = D3D12_RESOURCE_STATE_RENDER_TARGET;
+      b.Transition.StateAfter = D3D12_RESOURCE_STATE_PRESENT;
+      b.Transition.Subresource = D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES;
+      m_commandLists[m_currentBackBuffer]->ResourceBarrier(1, &b);
+      m_commandLists[m_currentBackBuffer]->Close();
+      ID3D12CommandList* lists[] = { m_commandLists[m_currentBackBuffer].Get() };
+      m_commandQueue->ExecuteCommandLists(1, lists);
+    }
+
+    {
+      T8_PROFILE_CPU_SCOPE(t800::g_profiler, "D3D12_Present_Call");
+      UINT presentFlags = m_tearingSupported ? DXGI_PRESENT_ALLOW_TEARING : 0;
+      m_swapChain->Present(0, presentFlags);
+    }
 
     // Signal the fence for this frame — DON'T wait here.
     // BeginFrame will wait only when it needs to reuse this buffer's allocator,
@@ -1044,7 +1110,7 @@ namespace t800 {
           b.Transition.StateBefore = rt->vColorStates[i];
           b.Transition.StateAfter = D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE;
           b.Transition.Subresource = D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES;
-          m_commandList->ResourceBarrier(1, &b);
+          m_commandLists[m_currentBackBuffer]->ResourceBarrier(1, &b);
           rt->vColorStates[i] = D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE;
         }
       }
@@ -1055,13 +1121,13 @@ namespace t800 {
         b.Transition.StateBefore = D3D12_RESOURCE_STATE_DEPTH_WRITE;
         b.Transition.StateAfter = D3D12_RESOURCE_STATE_DEPTH_READ | D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE;
         b.Transition.Subresource = D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES;
-        m_commandList->ResourceBarrier(1, &b);
+        m_commandLists[m_currentBackBuffer]->ResourceBarrier(1, &b);
         rt->depthState = D3D12_RESOURCE_STATE_DEPTH_READ | D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE;
       }
     }
-    m_commandList->OMSetRenderTargets(1, &m_backBufferRTVs[m_currentBackBuffer], FALSE, &m_depthDSV);
-    m_commandList->RSSetViewports(1, &m_viewport);
-    m_commandList->RSSetScissorRects(1, &m_scissorRect);
+    m_commandLists[m_currentBackBuffer]->OMSetRenderTargets(1, &m_backBufferRTVs[m_currentBackBuffer], FALSE, &m_depthDSV);
+    m_commandLists[m_currentBackBuffer]->RSSetViewports(1, &m_viewport);
+    m_commandLists[m_currentBackBuffer]->RSSetScissorRects(1, &m_scissorRect);
     CurrentRT = -1;
   }
 
@@ -1206,8 +1272,8 @@ namespace t800 {
   void D3D12Driver::SaveScreenshot(std::string path) {
     // The current frame's command list is still open. Close and execute it first,
     // then do the readback, then reopen for any subsequent rendering.
-    m_commandList->Close();
-    ID3D12CommandList* lists[] = { m_commandList.Get() };
+    m_commandLists[m_currentBackBuffer]->Close();
+    ID3D12CommandList* lists[] = { m_commandLists[m_currentBackBuffer].Get() };
     m_commandQueue->ExecuteCommandLists(1, lists);
     WaitForGPU();
 
@@ -1217,18 +1283,18 @@ namespace t800 {
 
     // Reopen the command list for any subsequent work in this frame
     m_commandAllocators[m_currentBackBuffer]->Reset();
-    m_commandList->Reset(m_commandAllocators[m_currentBackBuffer].Get(), nullptr);
+    m_commandLists[m_currentBackBuffer]->Reset(m_commandAllocators[m_currentBackBuffer].Get(), nullptr);
     ID3D12DescriptorHeap* heaps[] = {
       m_heaps[D3D12Heap::CBV_SRV_UAV_VISIBLE].GetHeap(),
       m_heaps[D3D12Heap::SAMPLER].GetHeap()
     };
-    m_commandList->SetDescriptorHeaps(2, heaps);
+    m_commandLists[m_currentBackBuffer]->SetDescriptorHeaps(2, heaps);
 
     // Rebind back buffer render targets, viewport, and scissor
     // (OM state is lost after command list reset)
-    m_commandList->OMSetRenderTargets(1, &m_backBufferRTVs[m_currentBackBuffer], FALSE, &m_depthDSV);
-    m_commandList->RSSetViewports(1, &m_viewport);
-    m_commandList->RSSetScissorRects(1, &m_scissorRect);
+    m_commandLists[m_currentBackBuffer]->OMSetRenderTargets(1, &m_backBufferRTVs[m_currentBackBuffer], FALSE, &m_depthDSV);
+    m_commandLists[m_currentBackBuffer]->RSSetViewports(1, &m_viewport);
+    m_commandLists[m_currentBackBuffer]->RSSetScissorRects(1, &m_scissorRect);
   }
 
   void D3D12Driver::SaveRTToFile(int rtID, int attachment, std::string path) {
@@ -1251,9 +1317,9 @@ namespace t800 {
   void D3D12Driver::BindBackBufferNoDSV() {
     T8_LOG_TRACE("[D3D12] BindBackBufferNoDSV: bb=%u viewport=%.0fx%.0f", m_currentBackBuffer, m_viewport.Width, m_viewport.Height);
     // Pass the DSV even for depth-disabled draws — D3D12 is okay with an unused DSV bound
-    m_commandList->OMSetRenderTargets(1, &m_backBufferRTVs[m_currentBackBuffer], FALSE, &m_depthDSV);
-    m_commandList->RSSetViewports(1, &m_viewport);
-    m_commandList->RSSetScissorRects(1, &m_scissorRect);
+    m_commandLists[m_currentBackBuffer]->OMSetRenderTargets(1, &m_backBufferRTVs[m_currentBackBuffer], FALSE, &m_depthDSV);
+    m_commandLists[m_currentBackBuffer]->RSSetViewports(1, &m_viewport);
+    m_commandLists[m_currentBackBuffer]->RSSetScissorRects(1, &m_scissorRect);
   }
 
   // ══════════════════════════════════════════════════════

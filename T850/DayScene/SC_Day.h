@@ -103,6 +103,7 @@ class SC_Day : public t800::SceneBase
 
   // Dump scene state to JSON
   void SaveSceneState() override;
+  void RequestDump() override { m_dumper.RequestDump(); }
 
   // Helper: find selector index for a light count value
   int FindLightOption(int activeLights);

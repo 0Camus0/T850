@@ -38,6 +38,7 @@ namespace PassType {
     LIGHT_RAY_MARCHING,
     LIGHT_ADD,
     FADE,
+    DEFERRED_LDR,
     COUNT
   };
 }

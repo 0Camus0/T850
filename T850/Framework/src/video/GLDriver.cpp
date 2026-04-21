@@ -532,9 +532,34 @@ namespace t800 {
     m_sdlWindow = window;
   }
 
+  void  GLDriver::SetWindowHandle(const WindowHandle& handle) {
+    // Editor host path: GL via EGL on Windows can target an explicit HWND
+    // (editor child window). The desktop SDL/GL path still expects an
+    // SDL_Window* for context creation, so we keep that field too.
+#if (defined(USING_OPENGL_ES20) || defined(USING_OPENGL_ES30) || defined(USING_OPENGL_ES31)) && defined(OS_WINDOWS)
+    if (handle.kind == WindowHandle::WIN32_HWND && handle.nativeHandle) {
+      eglWindow = reinterpret_cast<EGLNativeWindowType>(handle.nativeHandle);
+    } else {
+      eglWindow = GetActiveWindow();
+    }
+#endif
+    if (handle.kind == WindowHandle::SDL_WINDOW) {
+      m_sdlWindow = handle.sdlWindow;
+    }
+  }
+
   void	GLDriver::SetDimensions(int w, int h) {
     width = w;
     height = h;
+  }
+
+  bool GLDriver::ResizeSwapchain(int newW, int newH) {
+    if (newW <= 0 || newH <= 0) return false;
+    width  = newW;
+    height = newH;
+    glViewport(0, 0, newW, newH);
+    T8_LOG_INFO("[GL] Viewport resized to %dx%d", newW, newH);
+    return true;
   }
 
   void GLDriver::SetBlendState(BLEND_STATES state)
@@ -793,6 +818,7 @@ namespace t800 {
       }
     }
 
+    CurrentRT = -1;
   }
 
 

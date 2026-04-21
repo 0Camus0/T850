@@ -55,7 +55,7 @@ namespace t800 {
 
     // Simple pass variants (no toggle combinations)
     static const uint8_t simplePasses[] = {
-      PassType::DEFERRED, PassType::FSQUAD_1_TEX, PassType::FSQUAD_2_TEX,
+      PassType::DEFERRED, PassType::DEFERRED_LDR, PassType::FSQUAD_1_TEX, PassType::FSQUAD_2_TEX,
       PassType::FSQUAD_3_TEX, PassType::VERTICAL_BLUR, PassType::HORIZONTAL_BLUR,
       PassType::ONE_PASS_BLUR, PassType::BRIGHT, PassType::HDR_COMP,
       PassType::LUMINANCE_MAP, PassType::ADAPT_LUMINANCE, PassType::COMBINE_COC,
@@ -180,7 +180,7 @@ namespace t800 {
       CnstBuffer.LightCameraInfo = XVECTOR3(pScProp->pLightCameras[selected]->NPlane, pScProp->pLightCameras[selected]->FPlane, pScProp->pLightCameras[selected]->Fov, 1.0f);
     }
 
-    if (pass == PassType::DEFERRED) {
+    if (pass == PassType::DEFERRED || pass == PassType::DEFERRED_LDR) {
       unsigned int numLights = pScProp->ActiveLights;
       if (numLights >= static_cast<unsigned int>(pScProp->Lights.size()))
         numLights = static_cast<unsigned int>(pScProp->Lights.size());

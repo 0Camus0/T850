@@ -12,7 +12,8 @@ namespace t800 {
   struct RTDesc {
     std::string name;
     int color_count = 1;
-    std::string color_format = "RGBA8";    // RGBA16F, RGBA8, R8, F16, NONE
+    std::string color_format = "RGBA8";    // default for all (used when color_formats is empty)
+    std::vector<std::string> color_formats; // per-attachment formats (overrides color_format if non-empty)
     std::string depth_format = "NONE";     // F32, CUBE_F32, NONE
     std::array<int, 2> size = {0, 0};      // [0,0] = screen size
     bool linear_filter = true;
@@ -49,6 +50,8 @@ namespace t800 {
     std::string name;             // Human-readable label (becomes node ID)
     std::string target;           // RT name to push, or "" for no push (continuation)
     bool clear = false;
+    std::array<float, 4> clear_color = {0, 0, 0, 0};  // RGBA clear color (used when clear=true)
+    float clear_depth = 1.0f;                           // Depth clear value
 
     // State changes before this pass
     StateDesc state;

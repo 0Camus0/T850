@@ -114,6 +114,7 @@ namespace t800 {
     void	Update();
     void	DestroyDriver();
     void	SetWindow(void *window);
+    void  SetWindowHandle(const WindowHandle& handle) override;
     void	SetDimensions(int, int);
     void SetBlendState(BLEND_STATES state) override;
     void SetDepthStencilState(DEPTH_STENCIL_STATES state) override;
@@ -122,9 +123,12 @@ namespace t800 {
     void SaveScreenshot(std::string path) override;
     void SaveRTToFile(int rtID, int attachment, std::string path) override;
 
+    bool ResizeSwapchain(int newW, int newH) override;
+
     void	 PopRT();
 
     void	Clear();
+    void	ClearWithColor(float r, float g, float b, float a) override;
     void	SwapBuffers();
 
     HWND	hwnd;

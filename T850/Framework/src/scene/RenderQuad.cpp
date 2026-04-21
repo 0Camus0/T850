@@ -187,6 +187,8 @@ namespace t800 {
 
       CnstBuffer.CameraInfo = XVECTOR3(pActualCamera->NPlane, pActualCamera->FPlane, pActualCamera->Fov, float(numLights));
       CnstBuffer.toogles.x = pScProp->EnvFactor;
+      // Ambient intensity: average of AmbientColor components
+      CnstBuffer.toogles.y = (pScProp->AmbientColor.x + pScProp->AmbientColor.y + pScProp->AmbientColor.z) / 3.0f;
 
       for (unsigned int i = 0; i < numLights; i++) {
         Light& light = pScProp->Lights[i];
@@ -259,6 +261,12 @@ namespace t800 {
       if (pass == PassType::ADAPT_LUMINANCE) {
         CnstBuffer.LightPositions[1].x = pScProp->LuminanceTau;
         CnstBuffer.LightPositions[1].y = pScProp->FrameDeltaSec;
+        static int adaptLogCount = 0;
+        if (adaptLogCount++ % 300 == 0) {
+          T8_LOG_INFO("[AdaptLum] tau=%.4f dt=%.6f mipLevel=%.0f",
+                      pScProp->LuminanceTau, pScProp->FrameDeltaSec,
+                      CnstBuffer.CameraPos.w);
+        }
       }
     }
     else if (pass == PassType::COC) {

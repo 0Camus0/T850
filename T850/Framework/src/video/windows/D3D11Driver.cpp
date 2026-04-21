@@ -719,8 +719,16 @@ namespace t800 {
   void D3DXDriver::ClearWithColor(float r, float g, float b, float a) {
     ID3D11DeviceContext* deviceContext = reinterpret_cast<ID3D11DeviceContext*>(T8DeviceContext->GetAPIObject());
     float rgba[4] = { r, g, b, a };
-    deviceContext->ClearRenderTargetView(D3D11RenderTargetView.Get(), rgba);
-    deviceContext->ClearDepthStencilView(D3D11DepthStencilTargetView.Get(), D3D11_CLEAR_DEPTH, 1.0f, 0);
+    if (CurrentRT >= 0 && CurrentRT < (int)RTs.size()) {
+      D3DXRT* rt = static_cast<D3DXRT*>(RTs[CurrentRT]);
+      for (auto& rtv : rt->vD3D11RenderTargetView)
+        deviceContext->ClearRenderTargetView(rtv.Get(), rgba);
+      if (rt->D3D11DepthStencilTargetView)
+        deviceContext->ClearDepthStencilView(rt->D3D11DepthStencilTargetView.Get(), D3D11_CLEAR_DEPTH, 1.0f, 0);
+    } else {
+      deviceContext->ClearRenderTargetView(D3D11RenderTargetView.Get(), rgba);
+      deviceContext->ClearDepthStencilView(D3D11DepthStencilTargetView.Get(), D3D11_CLEAR_DEPTH, 1.0f, 0);
+    }
   }
 
   void D3DXDriver::SwapBuffers() {

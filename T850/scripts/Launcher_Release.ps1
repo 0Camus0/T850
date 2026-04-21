@@ -525,10 +525,9 @@ function Get-LaunchCommand {
 }
 
 function Get-EditorLaunchCommand {
-    $apiTag = ($cmbApi.SelectedItem).Tag.ToString()
-
     $exePath = Join-Path $rootDir "T8ditor.exe"
-    $argList = @("--api", $apiTag)
+    # Editor always uses D3D12 regardless of API dropdown
+    $argList = @("--api", "d3d12")
 
     $w = $txtWidth.Text
     $h = $txtHeight.Text

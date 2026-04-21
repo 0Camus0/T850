@@ -116,9 +116,9 @@ float4 FS( VS_OUTPUT input ) : SV_TARGET {
 
 	float depth = tex4.Sample(SS, input.texture0).r;
 
-	// No geometry drawn at this pixel — output clear color
+	// No geometry drawn at this pixel — let clear color show through
 	if (depth <= 0.0001)
-		return Final;
+		discard;
 
 	#ifdef NON_LINEAR_DEPTH
 		float4 position = mul(WVPInverse,float4( input.PosCorner.xy ,depth,1.0));
@@ -235,9 +235,9 @@ float4 FS(VS_OUTPUT input) : SV_TARGET {
 	float3 F0 = lerp(float3(0.04, 0.04, 0.04), Albedo.xyz, metallic);
 	float depth = tex4.Sample(SS, input.texture0).r;
 
-	// No geometry drawn at this pixel — output clear color
+	// No geometry drawn at this pixel — let clear color show through
 	if (depth <= 0.0001)
-		return Final;
+		discard;
 
 #ifdef NON_LINEAR_DEPTH
 	float4 position = mul(WVPInverse, float4(input.PosCorner.xy, depth, 1.0));

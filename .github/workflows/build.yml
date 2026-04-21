@@ -105,6 +105,7 @@ jobs:
           name: T850-${{ steps.arch.outputs.name }}-${{ matrix.configuration }}
           path: |
             T850/bin/${{ steps.arch.outputs.name }}/${{ matrix.configuration }}/DayScene.exe
+            T850/bin/${{ steps.arch.outputs.name }}/${{ matrix.configuration }}/T8ditor.exe
             T850/bin/${{ steps.arch.outputs.name }}/${{ matrix.configuration }}/*.dll
 
   release:
@@ -154,6 +155,11 @@ jobs:
             Copy-Item "$assets/Techniques" -Destination "$staging/Techniques" -Recurse
             Copy-Item "$assets/Scenes"     -Destination "$staging/Scenes"     -Recurse
             Copy-Item "$assets/Layouts"    -Destination "$staging/Layouts"    -Recurse
+
+            # Copy config
+            if (Test-Path "T850/config.json") {
+              Copy-Item "T850/config.json" -Destination $staging
+            }
 
             # Create zip
             Compress-Archive -Path "$staging/*" -DestinationPath "$name.zip"

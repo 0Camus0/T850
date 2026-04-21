@@ -28,7 +28,7 @@
         { "source": "GBuffer:COLOR4", "slot": 4 }
       ],
       "draws": [
-        { "type": "fullscreen_quad", "signature": "DEFERRED_PASS" }
+        { "type": "fullscreen_quad", "signature": "DEFERRED_LDR_PASS" }
       ]
     },
     {

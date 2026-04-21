@@ -550,8 +550,7 @@ function Get-LaunchCommand {
 
 function Get-EditorLaunchCommand {
     $exePath = Join-Path $rootDir "T8ditor.exe"
-    # Editor always uses D3D12 regardless of API dropdown
-    $argList = @("--api", "d3d12")
+    $argList = @()
 
     $w = $txtWidth.Text
     $h = $txtHeight.Text

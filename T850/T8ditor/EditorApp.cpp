@@ -15,6 +15,7 @@
 #include <utils/Log.h>
 #include <utils/xMaths.h>
 #include <utils/Picking.h>
+#include <debug/FrameDumper.h>
 
 #include <T8_descriptors.h>
 
@@ -88,6 +89,10 @@ namespace {
 
   // Pending scene load — deferred to execute before next frame's BeginFrame
   std::string g_pendingLoadPath;
+
+  // Frame dumper for RT snapshot debugging (space key)
+  t800::FrameDumper g_dumper;
+  bool              g_dumperInited = false;
 }
 
 void SetStartupMeshPath(const std::string& p) {
@@ -192,6 +197,15 @@ void EditorApp::CreateAssets() {
     T8_LOG_INFO("[T8ditor] Deferred render graph ready");
   } else {
     T8_LOG_ERROR("[T8ditor] Render graph load failed — using forward fallback");
+  }
+
+  // Initialize frame dumper (space key to dump)
+  {
+    t800::FrameDumperConfig cfg;
+    cfg.debugFrames = true;
+    cfg.keepRunning = true;
+    g_dumper.Init(cfg);
+    g_dumperInited = true;
   }
 
   if (!g_startupMeshPath.empty() && g_startupMeshPath != "Models/SkyBox.X")
@@ -456,6 +470,10 @@ void EditorApp::OnInput() {
     // Ctrl+Y also redoes
     if (ctrlDown && IManager.PressedOnceKey(T800K_y))
       g_undoStack.Redo();
+
+    // Space key — dump frame (all RTs + snapshot)
+    if (IManager.PressedOnceKey(T800K_SPACE) && g_dumperInited)
+      g_dumper.RequestDump();
   }
 
   // Delete key — works even when ImGui panels have focus (but not during text input)
@@ -1206,6 +1224,27 @@ void EditorApp::OnDraw() {
       g_debugRT = ImGuiDrawRTDebugPanel(g_debugRT);
 
     ImGuiRender();
+  }
+
+  // Frame dump (space key) — dump all render graph RTs
+  if (g_dumperInited && g_dumper.ShouldDump(m_dtSecs)) {
+    int gbuf = g_renderGraph.GetRTHandle("GBuffer");
+    int def  = g_renderGraph.GetRTHandle("Deferred");
+    std::vector<t800::RTDumpEntry> rts;
+    if (gbuf >= 0) {
+      rts.push_back({gbuf, t800::BaseDriver::COLOR0_ATTACHMENT, "GBuffer_Albedo"});
+      rts.push_back({gbuf, t800::BaseDriver::COLOR1_ATTACHMENT, "GBuffer_Normals"});
+      rts.push_back({gbuf, t800::BaseDriver::COLOR2_ATTACHMENT, "GBuffer_PBR"});
+      rts.push_back({gbuf, t800::BaseDriver::COLOR3_ATTACHMENT, "GBuffer_GeoNormals"});
+      rts.push_back({gbuf, t800::BaseDriver::COLOR4_ATTACHMENT, "GBuffer_Depth"});
+      rts.push_back({gbuf, t800::BaseDriver::DEPTH_ATTACHMENT,  "GBuffer_HWDepth"});
+    }
+    if (def >= 0) {
+      rts.push_back({def, t800::BaseDriver::COLOR0_ATTACHMENT, "Deferred_Output"});
+    }
+    ::Camera dummyLightCam;
+    g_dumper.DumpFrame(drv, m_camera.GetCameraMutable(), dummyLightCam, m_sceneProps, rts, m_dtSecs);
+    T8_LOG_INFO("[T8ditor] Frame dumped to disk");
   }
 
   drv->SwapBuffers();

@@ -488,13 +488,8 @@ void RenderGraph::ExecutePass(
     }
 
     if (pass.clear) {
-      if (pass.clear_color[0] != 0 || pass.clear_color[1] != 0 ||
-          pass.clear_color[2] != 0 || pass.clear_color[3] != 0) {
-        driver->ClearWithColor(pass.clear_color[0], pass.clear_color[1],
-                               pass.clear_color[2], pass.clear_color[3]);
-      } else {
-        driver->Clear();
-      }
+      driver->ClearWithColor(pass.clear_color[0], pass.clear_color[1],
+                             pass.clear_color[2], pass.clear_color[3]);
     }
 
     // Bind input textures

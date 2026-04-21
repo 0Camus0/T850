@@ -482,6 +482,7 @@ void SC_SandBox::PopulateGUI(t800::GUIManager& gui) {
     {"shadow_bias",           CHANGE_SHADOW_BIAS},
     {"shadow_min",            CHANGE_SHADOW_MIN},
     {"env_factor",            CHANGE_ENV_FACTOR},
+    {"ibl_factor",             CHANGE_IBL_FACTOR},
   };
 
   for (auto& sd : m_guiSetup.descriptor.sliders) {
@@ -550,6 +551,7 @@ void SC_SandBox::SyncToGUI(t800::GUIManager& gui) {
     case CHANGE_SHADOW_BIAS:     slider->SetValue(SceneProp.ShadowBias); break;
     case CHANGE_SHADOW_MIN:      slider->SetValue(SceneProp.ShadowMin); break;
     case CHANGE_ENV_FACTOR:      slider->SetValue(SceneProp.EnvFactor); break;
+    case CHANGE_IBL_FACTOR:      slider->SetValue(SceneProp.IBLFactor); break;
     }
   }
 
@@ -610,6 +612,7 @@ void SC_SandBox::SyncFromGUI(t800::GUIManager& gui) {
     case CHANGE_SHADOW_BIAS:     SceneProp.ShadowBias = slider->value; break;
     case CHANGE_SHADOW_MIN:      SceneProp.ShadowMin = slider->value; break;
     case CHANGE_ENV_FACTOR:      SceneProp.EnvFactor = slider->value; break;
+    case CHANGE_IBL_FACTOR:      SceneProp.IBLFactor = slider->value; break;
     }
   }
 

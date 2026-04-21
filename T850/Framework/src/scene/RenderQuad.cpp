@@ -187,6 +187,7 @@ namespace t800 {
 
       CnstBuffer.CameraInfo = XVECTOR3(pActualCamera->NPlane, pActualCamera->FPlane, pActualCamera->Fov, float(numLights));
       CnstBuffer.toogles.x = pScProp->EnvFactor;
+      CnstBuffer.toogles.z = pScProp->IBLFactor;
       // Ambient intensity: average of AmbientColor components
       CnstBuffer.toogles.y = (pScProp->AmbientColor.x + pScProp->AmbientColor.y + pScProp->AmbientColor.z) / 3.0f;
 

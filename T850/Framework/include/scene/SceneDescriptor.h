@@ -97,6 +97,7 @@ namespace t800 {
     float shadow_bias = 0.000005f;
     float shadow_min = 0.25f;
     float env_factor = 1.0f;
+    float ibl_factor = 1.0f;
     float godrays_factor = 1.0f;
   };
 

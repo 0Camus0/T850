@@ -74,6 +74,7 @@
     "toggle_godrays": false,
     "light_intensity": 5.0,
     "env_factor": 0.3,
+    "ibl_factor": 1.0,
     "shadow_bias": 0.001,
     "shadow_min": 0.2
   },
@@ -93,7 +94,8 @@
     { "name": "light_intensity",       "label": "Light Intensity",   "min_val": 0.0,   "max_val": 20.0,"step": 0.1, "default_val": 5.0 },
     { "name": "shadow_bias",           "label": "Shadow Bias",       "min_val": 0,     "max_val": 0.00005, "step": 1e-7, "default_val": 0.000005 },
     { "name": "shadow_min",            "label": "Shadow Intensity",  "min_val": 0,     "max_val": 1.0,  "step": 0.01, "default_val": 0.2 },
-    { "name": "env_factor",            "label": "Env Factor",        "min_val": 0.0,   "max_val": 5.0, "step": 0.05, "default_val": 1.0 }
+    { "name": "env_factor",            "label": "Env Factor",        "min_val": 0.0,   "max_val": 10.0, "step": 0.05, "default_val": 1.0 },
+    { "name": "ibl_factor",             "label": "IBL Factor",        "min_val": 0.0,   "max_val": 5.0, "step": 0.05, "default_val": 1.0 }
   ],
   "checkboxes": [
     { "name": "shadow_toggle", "label": "Shadows", "default_checked": true },

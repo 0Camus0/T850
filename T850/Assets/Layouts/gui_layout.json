@@ -491,6 +491,22 @@
          "label": "Env Factor"
       },
       {
+         "id": "label_ibl_factor",
+         "x": 0.9114583,
+         "y": 0.32407408,
+         "w": 0.1584362,
+         "h": 0.016203703,
+         "label": ""
+      },
+      {
+         "id": "slider_ibl_factor",
+         "x": 0.9114583,
+         "y": 0.34722224,
+         "w": 0.16666667,
+         "h": 0.025462963,
+         "label": "IBL Factor"
+      },
+      {
          "id": "label_shadow_toggle",
          "x": 0,
          "y": 0.09259259,
@@ -1227,6 +1243,22 @@
                "label": "Env Factor"
             },
             {
+               "id": "label_ibl_factor",
+               "x": 0.9114583,
+               "y": 0.32407408,
+               "w": 0.1584362,
+               "h": 0.016203703,
+               "label": ""
+            },
+            {
+               "id": "slider_ibl_factor",
+               "x": 0.9114583,
+               "y": 0.34722224,
+               "w": 0.16666667,
+               "h": 0.025462963,
+               "label": "IBL Factor"
+            },
+            {
                "id": "label_shadow_toggle",
                "x": 0,
                "y": 0.09259259,
@@ -1959,6 +1991,7 @@
             "slider_exposure",
             "slider_bloom_threshold",
             "slider_env_factor",
+            "slider_ibl_factor",
             "selector_gauss_kernel_sample_count"
          ],
          "elements": [
@@ -2105,6 +2138,22 @@
                "w": 0.26018518,
                "h": 0.02824074,
                "label": "Env Factor"
+            },
+            {
+               "id": "label_ibl_factor",
+               "x": 0.27,
+               "y": 0.9490741,
+               "w": 0.17654319,
+               "h": 0.018055556,
+               "label": ""
+            },
+            {
+               "id": "slider_ibl_factor",
+               "x": 0.257,
+               "y": 0.9722222,
+               "w": 0.26018518,
+               "h": 0.02824074,
+               "label": "IBL Factor"
             },
             {
                "id": "label_show_lights",

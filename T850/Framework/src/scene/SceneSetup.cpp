@@ -148,6 +148,7 @@ void SceneSetup::Apply(SceneProps& props) {
   props.ShadowBias = s.shadow_bias;
   props.ShadowMin  = s.shadow_min;
   props.EnvFactor  = s.env_factor;
+  props.IBLFactor   = s.ibl_factor;
   props.GodRaysFactor = s.godrays_factor;
   props.ActiveGaussKernel = 0;
 }
@@ -273,6 +274,7 @@ void SceneSetup::SaveState(SceneBase* scene, const std::string& jsonPath) {
   s.shadow_bias = props.ShadowBias;
   s.shadow_min  = props.ShadowMin;
   s.env_factor  = props.EnvFactor;
+  s.ibl_factor   = props.IBLFactor;
   s.godrays_factor = props.GodRaysFactor;
 
   SaveSceneDescriptor(jsonPath, desc);

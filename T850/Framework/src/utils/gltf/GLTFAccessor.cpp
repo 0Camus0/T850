@@ -215,9 +215,8 @@ bool ReadAccessorIndices(const Document& doc, int accessorIndex,
 #include <draco/mesh/mesh.h>
 #include <draco/core/decoder_buffer.h>
 
-#ifdef OS_WINDOWS
-#pragma comment(lib, "draco.lib")
-#endif
+// draco.lib is linked via DayScene.vcxproj AdditionalDependencies
+// (uses the dynamic import lib from $(T8VcpkgDynamic)\lib).
 
 namespace t800 {
 namespace gltf {

@@ -21,7 +21,7 @@ struct VS_OUTPUT{
     float4 hposition : SV_POSITION;
     float2 texture0  : TEXCOORD;
 	float4 Pos		: TEXCOORD1;
-	float4 PosCorner : VPOS;
+	float4 PosCorner : TEXCOORD2;
 };
 
 SamplerState SS  : register(s0);
@@ -116,10 +116,6 @@ float4 FS( VS_OUTPUT input ) : SV_TARGET {
 
 	float depth = tex4.Sample(SS, input.texture0).r;
 
-	// No geometry drawn at this pixel — let clear color show through
-	if (depth <= 0.0001)
-		discard;
-
 	#ifdef NON_LINEAR_DEPTH
 		float4 position = mul(WVPInverse,float4( input.PosCorner.xy ,depth,1.0));
 		position.xyz /= position.w;
@@ -132,14 +128,12 @@ float4 FS( VS_OUTPUT input ) : SV_TARGET {
 	int MatId = (int)(PBRData.a * 255.0 + 0.5);
 
 	if(MatId == 0){
-		// Sky: use the interpolated view ray directly (PosCorner is the
-		// world-space direction from camera to far-plane corner).  This
-		// avoids NaN when depth=0 (cleared GBuffer pixels with no geometry).
+		// Sky: use the interpolated view ray (PosCorner from VS_Quad).
 		float3 skyDir = normalize(input.PosCorner.xyz);
 		skyDir.x = -skyDir.x;
 		skyDir.z = -skyDir.z;
 		float3 RefCol = texEnv.Sample(SS, skyDir).xyz;
-		Final.xyz = RefCol.xyz;
+		Final.xyz = RefCol.xyz * 2.0;
 	} else if(MatId > 0) {
 		Shadow = tex5.Sample(SS, input.texture0).r;
 

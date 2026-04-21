@@ -333,8 +333,8 @@ namespace t800 {
   void D3D12VertexBuffer::Create(const Device& device, BufferDesc desc, void* initialData) {
     descriptor = desc;
     ID3D12Device* dev = GetNativeDevice();
+    auto* driver = GetD3D12Driver();
 
-    D3D12_HEAP_PROPERTIES heapProps = {}; heapProps.Type = D3D12_HEAP_TYPE_UPLOAD;
     D3D12_RESOURCE_DESC bufDesc = {};
     bufDesc.Dimension = D3D12_RESOURCE_DIMENSION_BUFFER;
     bufDesc.Width = desc.byteWidth;
@@ -342,21 +342,72 @@ namespace t800 {
     bufDesc.SampleDesc.Count = 1;
     bufDesc.Layout = D3D12_TEXTURE_LAYOUT_ROW_MAJOR;
 
-    HRESULT hr = dev->CreateCommittedResource(&heapProps, D3D12_HEAP_FLAG_NONE, &bufDesc,
-                                               D3D12_RESOURCE_STATE_GENERIC_READ, nullptr,
-                                               IID_PPV_ARGS(&m_buffer));
-    if (FAILED(hr)) { T8_LOG_ERROR("[D3D12] VB create failed hr=0x%08X", hr); return; }
+    if (initialData && desc.usage == T8_BUFFER_USAGE::DEFAULT) {
+      // Static buffer: create in GPU-local DEFAULT heap, upload via staging
+      D3D12_HEAP_PROPERTIES defaultHeap = {}; defaultHeap.Type = D3D12_HEAP_TYPE_DEFAULT;
+      HRESULT hr = dev->CreateCommittedResource(&defaultHeap, D3D12_HEAP_FLAG_NONE, &bufDesc,
+                                                 D3D12_RESOURCE_STATE_COPY_DEST, nullptr,
+                                                 IID_PPV_ARGS(&m_buffer));
+      if (FAILED(hr)) { T8_LOG_ERROR("[D3D12] VB create failed hr=0x%08X", hr); return; }
 
-    m_buffer->Map(0, nullptr, &m_mappedData);
-    if (initialData) {
+      // Upload via temp staging buffer
+      D3D12_HEAP_PROPERTIES uploadHeap = {}; uploadHeap.Type = D3D12_HEAP_TYPE_UPLOAD;
+      ComPtr<ID3D12Resource> staging;
+      dev->CreateCommittedResource(&uploadHeap, D3D12_HEAP_FLAG_NONE, &bufDesc,
+                                    D3D12_RESOURCE_STATE_GENERIC_READ, nullptr,
+                                    IID_PPV_ARGS(&staging));
+      void* mapped = nullptr;
+      staging->Map(0, nullptr, &mapped);
+      memcpy(mapped, initialData, desc.byteWidth);
+      staging->Unmap(0, nullptr);
+
+      ComPtr<ID3D12CommandAllocator> tmpAlloc;
+      ComPtr<ID3D12GraphicsCommandList> tmpList;
+      dev->CreateCommandAllocator(D3D12_COMMAND_LIST_TYPE_DIRECT, IID_PPV_ARGS(&tmpAlloc));
+      dev->CreateCommandList(0, D3D12_COMMAND_LIST_TYPE_DIRECT, tmpAlloc.Get(), nullptr, IID_PPV_ARGS(&tmpList));
+      tmpList->CopyResource(m_buffer.Get(), staging.Get());
+      D3D12_RESOURCE_BARRIER barrier = {};
+      barrier.Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
+      barrier.Transition.pResource = m_buffer.Get();
+      barrier.Transition.StateBefore = D3D12_RESOURCE_STATE_COPY_DEST;
+      barrier.Transition.StateAfter = D3D12_RESOURCE_STATE_VERTEX_AND_CONSTANT_BUFFER;
+      barrier.Transition.Subresource = D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES;
+      tmpList->ResourceBarrier(1, &barrier);
+      tmpList->Close();
+      ID3D12CommandList* lists[] = { tmpList.Get() };
+      driver->GetCmdQueue()->ExecuteCommandLists(1, lists);
+
+      ComPtr<ID3D12Fence> tmpFence;
+      dev->CreateFence(0, D3D12_FENCE_FLAG_NONE, IID_PPV_ARGS(&tmpFence));
+      HANDLE evt = CreateEvent(nullptr, FALSE, FALSE, nullptr);
+      driver->GetCmdQueue()->Signal(tmpFence.Get(), 1);
+      if (tmpFence->GetCompletedValue() < 1) {
+        tmpFence->SetEventOnCompletion(1, evt);
+        WaitForSingleObject(evt, INFINITE);
+      }
+      CloseHandle(evt);
+
       sysMemCpy.assign((char*)initialData, (char*)initialData + desc.byteWidth);
-      memcpy(m_mappedData, initialData, desc.byteWidth);
+      m_mappedData = nullptr; // not persistently mapped for DEFAULT heap
+    } else {
+      // Dynamic buffer or no initial data: use UPLOAD heap (persistently mapped)
+      D3D12_HEAP_PROPERTIES uploadHeap = {}; uploadHeap.Type = D3D12_HEAP_TYPE_UPLOAD;
+      HRESULT hr = dev->CreateCommittedResource(&uploadHeap, D3D12_HEAP_FLAG_NONE, &bufDesc,
+                                                 D3D12_RESOURCE_STATE_GENERIC_READ, nullptr,
+                                                 IID_PPV_ARGS(&m_buffer));
+      if (FAILED(hr)) { T8_LOG_ERROR("[D3D12] VB create failed hr=0x%08X", hr); return; }
+      m_buffer->Map(0, nullptr, &m_mappedData);
+      if (initialData) {
+        sysMemCpy.assign((char*)initialData, (char*)initialData + desc.byteWidth);
+        memcpy(m_mappedData, initialData, desc.byteWidth);
+      }
     }
 
     m_view.BufferLocation = m_buffer->GetGPUVirtualAddress();
     m_view.SizeInBytes = desc.byteWidth;
     m_view.StrideInBytes = 0;
-    T8_LOG_DEBUG("[D3D12] VB created: %d bytes", desc.byteWidth);
+    T8_LOG_DEBUG("[D3D12] VB created: %d bytes%s", desc.byteWidth,
+                 m_mappedData ? " (upload)" : " (default)");
   }
 
   void D3D12VertexBuffer::Set(const DeviceContext& deviceContext, const unsigned stride, const unsigned offset) {
@@ -409,8 +460,8 @@ namespace t800 {
   void D3D12IndexBuffer::Create(const Device& device, BufferDesc desc, void* initialData) {
     descriptor = desc;
     ID3D12Device* dev = GetNativeDevice();
+    auto* driver = GetD3D12Driver();
 
-    D3D12_HEAP_PROPERTIES heapProps = {}; heapProps.Type = D3D12_HEAP_TYPE_UPLOAD;
     D3D12_RESOURCE_DESC bufDesc = {};
     bufDesc.Dimension = D3D12_RESOURCE_DIMENSION_BUFFER;
     bufDesc.Width = desc.byteWidth;
@@ -418,21 +469,70 @@ namespace t800 {
     bufDesc.SampleDesc.Count = 1;
     bufDesc.Layout = D3D12_TEXTURE_LAYOUT_ROW_MAJOR;
 
-    HRESULT hr = dev->CreateCommittedResource(&heapProps, D3D12_HEAP_FLAG_NONE, &bufDesc,
-                                               D3D12_RESOURCE_STATE_GENERIC_READ, nullptr,
-                                               IID_PPV_ARGS(&m_buffer));
-    if (FAILED(hr)) { T8_LOG_ERROR("[D3D12] IB create failed hr=0x%08X", hr); return; }
+    if (initialData && desc.usage == T8_BUFFER_USAGE::DEFAULT) {
+      // Static buffer: create in GPU-local DEFAULT heap, upload via staging
+      D3D12_HEAP_PROPERTIES defaultHeap = {}; defaultHeap.Type = D3D12_HEAP_TYPE_DEFAULT;
+      HRESULT hr = dev->CreateCommittedResource(&defaultHeap, D3D12_HEAP_FLAG_NONE, &bufDesc,
+                                                 D3D12_RESOURCE_STATE_COPY_DEST, nullptr,
+                                                 IID_PPV_ARGS(&m_buffer));
+      if (FAILED(hr)) { T8_LOG_ERROR("[D3D12] IB create failed hr=0x%08X", hr); return; }
 
-    m_buffer->Map(0, nullptr, &m_mappedData);
-    if (initialData) {
+      D3D12_HEAP_PROPERTIES uploadHeap = {}; uploadHeap.Type = D3D12_HEAP_TYPE_UPLOAD;
+      ComPtr<ID3D12Resource> staging;
+      dev->CreateCommittedResource(&uploadHeap, D3D12_HEAP_FLAG_NONE, &bufDesc,
+                                    D3D12_RESOURCE_STATE_GENERIC_READ, nullptr,
+                                    IID_PPV_ARGS(&staging));
+      void* mapped = nullptr;
+      staging->Map(0, nullptr, &mapped);
+      memcpy(mapped, initialData, desc.byteWidth);
+      staging->Unmap(0, nullptr);
+
+      ComPtr<ID3D12CommandAllocator> tmpAlloc;
+      ComPtr<ID3D12GraphicsCommandList> tmpList;
+      dev->CreateCommandAllocator(D3D12_COMMAND_LIST_TYPE_DIRECT, IID_PPV_ARGS(&tmpAlloc));
+      dev->CreateCommandList(0, D3D12_COMMAND_LIST_TYPE_DIRECT, tmpAlloc.Get(), nullptr, IID_PPV_ARGS(&tmpList));
+      tmpList->CopyResource(m_buffer.Get(), staging.Get());
+      D3D12_RESOURCE_BARRIER barrier = {};
+      barrier.Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
+      barrier.Transition.pResource = m_buffer.Get();
+      barrier.Transition.StateBefore = D3D12_RESOURCE_STATE_COPY_DEST;
+      barrier.Transition.StateAfter = D3D12_RESOURCE_STATE_INDEX_BUFFER;
+      barrier.Transition.Subresource = D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES;
+      tmpList->ResourceBarrier(1, &barrier);
+      tmpList->Close();
+      ID3D12CommandList* lists[] = { tmpList.Get() };
+      driver->GetCmdQueue()->ExecuteCommandLists(1, lists);
+
+      ComPtr<ID3D12Fence> tmpFence;
+      dev->CreateFence(0, D3D12_FENCE_FLAG_NONE, IID_PPV_ARGS(&tmpFence));
+      HANDLE evt = CreateEvent(nullptr, FALSE, FALSE, nullptr);
+      driver->GetCmdQueue()->Signal(tmpFence.Get(), 1);
+      if (tmpFence->GetCompletedValue() < 1) {
+        tmpFence->SetEventOnCompletion(1, evt);
+        WaitForSingleObject(evt, INFINITE);
+      }
+      CloseHandle(evt);
+
       sysMemCpy.assign((char*)initialData, (char*)initialData + desc.byteWidth);
-      memcpy(m_mappedData, initialData, desc.byteWidth);
+      m_mappedData = nullptr;
+    } else {
+      D3D12_HEAP_PROPERTIES uploadHeap = {}; uploadHeap.Type = D3D12_HEAP_TYPE_UPLOAD;
+      HRESULT hr = dev->CreateCommittedResource(&uploadHeap, D3D12_HEAP_FLAG_NONE, &bufDesc,
+                                                 D3D12_RESOURCE_STATE_GENERIC_READ, nullptr,
+                                                 IID_PPV_ARGS(&m_buffer));
+      if (FAILED(hr)) { T8_LOG_ERROR("[D3D12] IB create failed hr=0x%08X", hr); return; }
+      m_buffer->Map(0, nullptr, &m_mappedData);
+      if (initialData) {
+        sysMemCpy.assign((char*)initialData, (char*)initialData + desc.byteWidth);
+        memcpy(m_mappedData, initialData, desc.byteWidth);
+      }
     }
 
     m_view.BufferLocation = m_buffer->GetGPUVirtualAddress();
     m_view.SizeInBytes = desc.byteWidth;
     m_view.Format = DXGI_FORMAT_R32_UINT;
-    T8_LOG_DEBUG("[D3D12] IB created: %d bytes", desc.byteWidth);
+    T8_LOG_DEBUG("[D3D12] IB created: %d bytes%s", desc.byteWidth,
+                 m_mappedData ? " (upload)" : " (default)");
   }
 
   void D3D12IndexBuffer::Set(const DeviceContext& deviceContext, const unsigned offset, T8_IB_FORMAR::E format) {

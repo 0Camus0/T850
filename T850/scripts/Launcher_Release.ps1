@@ -6,7 +6,7 @@ Add-Type -AssemblyName PresentationFramework, PresentationCore, WindowsBase, Sys
 $xaml = @"
 <Window xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-        Title="T850 Engine Launcher" SizeToContent="Height" Width="500" MinWidth="420"
+        Title="T850 Engine Launcher" SizeToContent="Height" Width="920" MinWidth="760"
         WindowStartupLocation="CenterScreen" ResizeMode="CanResize"
         Background="#1B1B2F" Foreground="#E0E0E0">
     <Window.Resources>
@@ -124,12 +124,16 @@ $xaml = @"
             <RowDefinition Height="Auto"/>
             <RowDefinition Height="Auto"/>
             <RowDefinition Height="Auto"/>
-            <RowDefinition Height="*"/>
             <RowDefinition Height="Auto"/>
         </Grid.RowDefinitions>
+        <Grid.ColumnDefinitions>
+            <ColumnDefinition Width="*"/>
+            <ColumnDefinition Width="16"/>
+            <ColumnDefinition Width="*"/>
+        </Grid.ColumnDefinitions>
 
         <!-- Header -->
-        <StackPanel Grid.Row="0" Margin="0,0,0,20">
+        <StackPanel Grid.Row="0" Grid.ColumnSpan="3" Margin="0,0,0,20">
             <StackPanel Orientation="Horizontal">
                 <TextBlock Text="T850 ENGINE" FontSize="28" FontWeight="Bold"
                            Foreground="{StaticResource AccentBrush}" Margin="0"/>
@@ -143,7 +147,7 @@ $xaml = @"
         </StackPanel>
 
         <!-- Graphics API -->
-        <Border Grid.Row="1" Background="{StaticResource SurfaceBrush}"
+        <Border Grid.Row="1" Grid.Column="0" Background="{StaticResource SurfaceBrush}"
                 CornerRadius="8" Padding="16,12" Margin="0,0,0,12">
             <StackPanel>
                 <TextBlock Text="GRAPHICS API" FontSize="12" FontWeight="SemiBold"
@@ -152,31 +156,75 @@ $xaml = @"
                     <ComboBoxItem Content="D3D11 (Direct3D 11)" IsSelected="True" Tag="d3d11"/>
                     <ComboBoxItem Content="D3D12 (Direct3D 12)" Tag="d3d12"/>
                     <ComboBoxItem Content="Vulkan" Tag="vulkan"/>
-                    <ComboBoxItem Content="GL ES (ANGLE)" Tag="gl"/>
-                    <ComboBoxItem Content="GL (Desktop GLEW)" Tag="glew"/>
+                    <ComboBoxItem Content="OpenGL (Desktop GL 3.3)" Tag="gl"/>
                 </ComboBox>
             </StackPanel>
         </Border>
 
-        <!-- RT Dump Settings -->
-        <Border Grid.Row="2" Background="{StaticResource SurfaceBrush}"
+        <!-- Display -->
+        <Border Grid.Row="2" Grid.Column="0" Background="{StaticResource SurfaceBrush}"
                 CornerRadius="8" Padding="16,12" Margin="0,0,0,12">
             <StackPanel>
-                <TextBlock Text="RENDER TARGET DUMP" FontSize="12" FontWeight="SemiBold"
+                <TextBlock Text="DISPLAY" FontSize="12" FontWeight="SemiBold"
                            Foreground="{StaticResource AccentBrush}" Margin="0,0,0,10"/>
-                <CheckBox Name="chkDump" Content="Enable RT dump on run" Margin="0,0,0,10"/>
+                <Grid Margin="0,0,0,10">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="*"/>
+                        <ColumnDefinition Width="12"/>
+                        <ColumnDefinition Width="*"/>
+                    </Grid.ColumnDefinitions>
+                    <StackPanel Grid.Column="0">
+                        <TextBlock Text="Scene" Style="{StaticResource LabelStyle}"/>
+                        <ComboBox Name="cmbScene">
+                            <ComboBoxItem Content="Sandbox" Tag="0" IsSelected="True"/>
+                            <ComboBoxItem Content="Day" Tag="1"/>
+                        </ComboBox>
+                    </StackPanel>
+                    <StackPanel Grid.Column="2" VerticalAlignment="Bottom">
+                        <CheckBox Name="chkFullscreen" Content="Fullscreen" Margin="0,0,0,8"/>
+                    </StackPanel>
+                </Grid>
+                <StackPanel Name="pnlModelSelect" Margin="0,6,0,0">
+                    <TextBlock Text="Model (Sandbox)" Style="{StaticResource LabelStyle}"/>
+                    <ComboBox Name="cmbModel"/>
+                </StackPanel>
+                <Grid>
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="*"/>
+                        <ColumnDefinition Width="12"/>
+                        <ColumnDefinition Width="*"/>
+                    </Grid.ColumnDefinitions>
+                    <StackPanel Grid.Column="0">
+                        <TextBlock Text="Width" Style="{StaticResource LabelStyle}"/>
+                        <TextBox Name="txtWidth" Text="1280"/>
+                    </StackPanel>
+                    <StackPanel Grid.Column="2">
+                        <TextBlock Text="Height" Style="{StaticResource LabelStyle}"/>
+                        <TextBox Name="txtHeight" Text="720"/>
+                    </StackPanel>
+                </Grid>
+            </StackPanel>
+        </Border>
+
+        <!-- Snapshot Settings -->
+        <Border Grid.Row="1" Grid.Column="2" Grid.RowSpan="2" Background="{StaticResource SurfaceBrush}"
+                CornerRadius="8" Padding="16,12" Margin="0,0,0,12">
+            <StackPanel>
+                <TextBlock Text="SNAPSHOT" FontSize="12" FontWeight="SemiBold"
+                           Foreground="{StaticResource AccentBrush}" Margin="0,0,0,10"/>
+                <CheckBox Name="chkDump" Content="Enable snapshot dump on run" Margin="0,0,0,10"/>
                 <CheckBox Name="chkDebugFrames" Content="Debug Frames (spacebar dumps + exits)" Margin="0,0,0,10"/>
-                <CheckBox Name="chkFeedMatrices" Content="Feed Matrices (replay camera position)" Margin="0,0,0,6"/>
+                <CheckBox Name="chkReplaySnapshot" Content="Replay Snapshot (restore full scene state)" Margin="0,0,0,6"/>
                 <CheckBox Name="chkKeepRunning" Content="Keep running after dump" Margin="0,0,0,10"/>
-                <Grid Name="pnlFeedMatrices" IsEnabled="False" Margin="20,0,0,10">
+                <Grid Name="pnlReplaySnapshot" IsEnabled="False" Margin="20,0,0,10">
                     <Grid.ColumnDefinitions>
                         <ColumnDefinition Width="*"/>
                         <ColumnDefinition Width="8"/>
                         <ColumnDefinition Width="Auto"/>
                     </Grid.ColumnDefinitions>
-                    <TextBox Grid.Column="0" Name="txtFeedMatricesPath" IsReadOnly="True"
+                    <TextBox Grid.Column="0" Name="txtReplaySnapshotPath" IsReadOnly="True"
                              FontSize="11" VerticalContentAlignment="Center"/>
-                    <Button Grid.Column="2" Name="btnBrowseMatrices" Content="Browse..."
+                    <Button Grid.Column="2" Name="btnBrowseSnapshot" Content="Browse..."
                             Padding="10,4" FontSize="12" Cursor="Hand"
                             Background="{StaticResource Surface2Brush}" Foreground="{StaticResource TextBrush}"
                             BorderThickness="0">
@@ -213,79 +261,28 @@ $xaml = @"
             </StackPanel>
         </Border>
 
-        <!-- Display -->
-        <Border Grid.Row="3" Background="{StaticResource SurfaceBrush}"
-                CornerRadius="8" Padding="16,12" Margin="0,0,0,12">
-            <StackPanel>
-                <TextBlock Text="DISPLAY" FontSize="12" FontWeight="SemiBold"
-                           Foreground="{StaticResource AccentBrush}" Margin="0,0,0,10"/>
-                <Grid Margin="0,0,0,10">
-                    <Grid.ColumnDefinitions>
-                        <ColumnDefinition Width="*"/>
-                        <ColumnDefinition Width="12"/>
-                        <ColumnDefinition Width="*"/>
-                    </Grid.ColumnDefinitions>
-                    <StackPanel Grid.Column="0">
-                        <TextBlock Text="Scene" Style="{StaticResource LabelStyle}"/>
-                        <ComboBox Name="cmbScene">
-                            <ComboBoxItem Content="Day" Tag="0" IsSelected="True"/>
-                            <ComboBoxItem Content="Night" Tag="1"/>
-                            <ComboBoxItem Content="Tech" Tag="2"/>
-                        </ComboBox>
-                    </StackPanel>
-                    <StackPanel Grid.Column="2" VerticalAlignment="Bottom">
-                        <CheckBox Name="chkFullscreen" Content="Fullscreen" Margin="0,0,0,8"/>
-                    </StackPanel>
-                </Grid>
-                <Grid>
-                    <Grid.ColumnDefinitions>
-                        <ColumnDefinition Width="*"/>
-                        <ColumnDefinition Width="12"/>
-                        <ColumnDefinition Width="*"/>
-                    </Grid.ColumnDefinitions>
-                    <StackPanel Grid.Column="0">
-                        <TextBlock Text="Width" Style="{StaticResource LabelStyle}"/>
-                        <TextBox Name="txtWidth" Text="1280"/>
-                    </StackPanel>
-                    <StackPanel Grid.Column="2">
-                        <TextBlock Text="Height" Style="{StaticResource LabelStyle}"/>
-                        <TextBox Name="txtHeight" Text="720"/>
-                    </StackPanel>
-                </Grid>
-            </StackPanel>
-        </Border>
-
         <!-- Logging -->
-        <Border Grid.Row="4" Background="{StaticResource SurfaceBrush}"
+        <Border Grid.Row="3" Grid.Column="0" Background="{StaticResource SurfaceBrush}"
                 CornerRadius="8" Padding="16,12" Margin="0,0,0,12">
             <StackPanel>
                 <TextBlock Text="LOGGING" FontSize="12" FontWeight="SemiBold"
                            Foreground="{StaticResource AccentBrush}" Margin="0,0,0,10"/>
-                <Grid Margin="0,0,0,8">
-                    <Grid.ColumnDefinitions>
-                        <ColumnDefinition Width="*"/>
-                        <ColumnDefinition Width="12"/>
-                        <ColumnDefinition Width="*"/>
-                    </Grid.ColumnDefinitions>
-                    <StackPanel Grid.Column="0">
-                        <TextBlock Text="Log Level" Style="{StaticResource LabelStyle}"/>
-                        <ComboBox Name="cmbLogLevel">
-                            <ComboBoxItem Content="Error" Tag="error"/>
-                            <ComboBoxItem Content="Info" Tag="info" IsSelected="True"/>
-                            <ComboBoxItem Content="Debug" Tag="debug"/>
-                            <ComboBoxItem Content="Verbose" Tag="verbose"/>
-                            <ComboBoxItem Content="Trace" Tag="trace"/>
-                        </ComboBox>
-                    </StackPanel>
-                    <StackPanel Grid.Column="2" VerticalAlignment="Bottom">
-                        <CheckBox Name="chkLogToFile" Content="Save log to file" Margin="0,0,0,8"/>
-                    </StackPanel>
-                </Grid>
+                <StackPanel Margin="0,0,0,10">
+                    <TextBlock Text="Log Level" Style="{StaticResource LabelStyle}"/>
+                    <ComboBox Name="cmbLogLevel">
+                        <ComboBoxItem Content="Error" Tag="error"/>
+                        <ComboBoxItem Content="Info" Tag="info" IsSelected="True"/>
+                        <ComboBoxItem Content="Debug" Tag="debug"/>
+                        <ComboBoxItem Content="Verbose" Tag="verbose"/>
+                        <ComboBoxItem Content="Trace" Tag="trace"/>
+                    </ComboBox>
+                </StackPanel>
+                <CheckBox Name="chkLogToFile" Content="Save log to file" Margin="0,0,0,6"/>
             </StackPanel>
         </Border>
 
         <!-- Status + Command Preview -->
-        <StackPanel Grid.Row="5" VerticalAlignment="Bottom" Margin="0,0,0,12">
+        <StackPanel Grid.Row="4" Grid.ColumnSpan="3" VerticalAlignment="Bottom" Margin="0,0,0,12">
             <TextBlock Name="txtStatus" Text="" FontSize="12"
                        Foreground="#A6ADC8" Margin="0,0,0,4"
                        TextWrapping="Wrap"/>
@@ -295,7 +292,7 @@ $xaml = @"
         </StackPanel>
 
         <!-- Buttons -->
-        <Grid Grid.Row="5">
+        <Grid Grid.Row="5" Grid.ColumnSpan="3">
             <Grid.ColumnDefinitions>
                 <ColumnDefinition Width="*"/>
                 <ColumnDefinition Width="12"/>
@@ -335,10 +332,10 @@ $cmbApi         = $window.FindName("cmbApi")
 $chkDump        = $window.FindName("chkDump")
 $chkDebugFrames = $window.FindName("chkDebugFrames")
 $chkKeepRunning = $window.FindName("chkKeepRunning")
-$chkFeedMatrices  = $window.FindName("chkFeedMatrices")
-$pnlFeedMatrices  = $window.FindName("pnlFeedMatrices")
-$txtFeedMatricesPath = $window.FindName("txtFeedMatricesPath")
-$btnBrowseMatrices   = $window.FindName("btnBrowseMatrices")
+$chkReplaySnapshot   = $window.FindName("chkReplaySnapshot")
+$pnlReplaySnapshot   = $window.FindName("pnlReplaySnapshot")
+$txtReplaySnapshotPath = $window.FindName("txtReplaySnapshotPath")
+$btnBrowseSnapshot     = $window.FindName("btnBrowseSnapshot")
 $pnlDumpOptions = $window.FindName("pnlDumpOptions")
 $rbSeconds      = $window.FindName("rbSeconds")
 $rbFrame        = $window.FindName("rbFrame")
@@ -348,6 +345,8 @@ $txtSeconds     = $window.FindName("txtSeconds")
 $txtFrame       = $window.FindName("txtFrame")
 $cmbScene       = $window.FindName("cmbScene")
 $chkFullscreen  = $window.FindName("chkFullscreen")
+$cmbModel       = $window.FindName("cmbModel")
+$pnlModelSelect = $window.FindName("pnlModelSelect")
 $txtWidth       = $window.FindName("txtWidth")
 $txtHeight      = $window.FindName("txtHeight")
 $cmbLogLevel    = $window.FindName("cmbLogLevel")
@@ -357,11 +356,15 @@ $txtCmdPreview  = $window.FindName("txtCmdPreview")
 $btnRun         = $window.FindName("btnRun")
 $btnEditor      = $window.FindName("btnEditor")
 
-# Resolve root directory: use exe location (or script location for dev)
+# Resolve root directory: if running from ps2exe, use exe location; otherwise script location
 if ($MyInvocation.MyCommand.Path) {
     $rootDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 } else {
     $rootDir = (Get-Location).Path
+}
+# If launched from scripts/, go up one level
+if ((Split-Path -Leaf $rootDir) -eq "scripts") {
+    $rootDir = Split-Path -Parent $rootDir
 }
 
 $configPath = Join-Path $rootDir "config.json"
@@ -393,6 +396,13 @@ function Load-Config {
                     }
                 }
             }
+            if ($cfg.display.PSObject.Properties['model'] -and $cfg.display.model) {
+                foreach ($item in $cmbModel.Items) {
+                    if ($item.Tag -eq $cfg.display.model) {
+                        $cmbModel.SelectedItem = $item; break
+                    }
+                }
+            }
         }
         # Debug Frames
         if ($cfg.PSObject.Properties['debugFrames']) {
@@ -402,10 +412,10 @@ function Load-Config {
         if ($cfg.PSObject.Properties['keepRunning']) {
             $chkKeepRunning.IsChecked = [bool]$cfg.keepRunning
         }
-        # Feed Matrices
-        if ($cfg.PSObject.Properties['feedMatrices']) {
-            $chkFeedMatrices.IsChecked = [bool]$cfg.feedMatrices.enabled
-            if ($cfg.feedMatrices.path) { $txtFeedMatricesPath.Text = $cfg.feedMatrices.path }
+        # Replay Snapshot
+        if ($cfg.PSObject.Properties['replaySnapshot']) {
+            $chkReplaySnapshot.IsChecked = [bool]$cfg.replaySnapshot.enabled
+            if ($cfg.replaySnapshot.path) { $txtReplaySnapshotPath.Text = $cfg.replaySnapshot.path }
         }
         # Dump
         if ($cfg.dump) {
@@ -420,16 +430,24 @@ function Load-Config {
             if ($cfg.dump.seconds) { $txtSeconds.Text = $cfg.dump.seconds.ToString() }
             if ($cfg.dump.frame)   { $txtFrame.Text   = $cfg.dump.frame.ToString() }
         }
-        # Logging
+        # Logging — support both flat and nested devTools format from dev launcher
         if ($cfg.PSObject.Properties['logLevel']) {
             foreach ($item in $cmbLogLevel.Items) {
                 if ($item.Tag -ieq $cfg.logLevel) {
                     $cmbLogLevel.SelectedItem = $item; break
                 }
             }
+        } elseif ($cfg.devTools -and $cfg.devTools.PSObject.Properties['logLevel']) {
+            foreach ($item in $cmbLogLevel.Items) {
+                if ($item.Tag -ieq $cfg.devTools.logLevel) {
+                    $cmbLogLevel.SelectedItem = $item; break
+                }
+            }
         }
         if ($cfg.PSObject.Properties['logToFile']) {
             $chkLogToFile.IsChecked = [bool]$cfg.logToFile
+        } elseif ($cfg.devTools -and $cfg.devTools.PSObject.Properties['logToFile']) {
+            $chkLogToFile.IsChecked = [bool]$cfg.devTools.logToFile
         }
     } catch {
         # Silently ignore corrupt config — defaults will be used
@@ -443,13 +461,14 @@ function Save-Config {
             width      = [int]$txtWidth.Text
             height     = [int]$txtHeight.Text
             fullscreen = [bool]$chkFullscreen.IsChecked
-            scene      = [int]($cmbScene.SelectedItem).Tag
+            scene      = [int]($cmbScene.SelectedItem).Tag.ToString()
+            model      = if ($cmbModel.SelectedItem) { ($cmbModel.SelectedItem).Tag.ToString() } else { "Models/DamagedHelmet.glb" }
         }
         debugFrames = [bool]$chkDebugFrames.IsChecked
         keepRunning = [bool]$chkKeepRunning.IsChecked
-        feedMatrices = @{
-            enabled = [bool]$chkFeedMatrices.IsChecked
-            path    = $txtFeedMatricesPath.Text
+        replaySnapshot = @{
+            enabled = [bool]$chkReplaySnapshot.IsChecked
+            path    = $txtReplaySnapshotPath.Text
         }
         dump = @{
             enabled = [bool]$chkDump.IsChecked
@@ -475,8 +494,8 @@ function Get-LaunchCommand {
         $argList += "--debugFrames"
     }
 
-    if ($chkFeedMatrices.IsChecked -and $txtFeedMatricesPath.Text) {
-        $argList += @("--feedMatrices", ('"{0}"' -f $txtFeedMatricesPath.Text))
+    if ($chkReplaySnapshot.IsChecked -and $txtReplaySnapshotPath.Text) {
+        $argList += @("--replaySnapshot", ('"{0}"' -f $txtReplaySnapshotPath.Text))
     }
 
     if ($chkKeepRunning.IsChecked) {
@@ -485,10 +504,10 @@ function Get-LaunchCommand {
 
     if ($chkDump.IsChecked) {
         if ($rbFrame.IsChecked) {
-            $argList += "--dump-frame"
+            $argList += "--dumpSnapshot-frame"
             $argList += $txtFrame.Text
         } else {
-            $argList += "--dump-seconds"
+            $argList += "--dumpSnapshot-seconds"
             $argList += $txtSeconds.Text
         }
     }
@@ -496,6 +515,11 @@ function Get-LaunchCommand {
     $sceneTag = ($cmbScene.SelectedItem).Tag.ToString()
     if ($sceneTag -ne "0") {
         $argList += @("--scene", $sceneTag)
+    }
+
+    # Model path (for Sandbox scene)
+    if ($cmbModel.SelectedItem) {
+        $argList += @("--model", ($cmbModel.SelectedItem).Tag.ToString())
     }
 
     if ($chkFullscreen.IsChecked) {
@@ -535,6 +559,15 @@ function Get-EditorLaunchCommand {
         $argList += @("--width", $w, "--height", $h)
     }
 
+    $logTag = ($cmbLogLevel.SelectedItem).Tag.ToString()
+    $argList += @("--logLevel", $logTag)
+
+    if ($chkLogToFile.IsChecked) {
+        $ts = Get-Date -Format "yyyyMMdd_HHmmss"
+        $logFilename = "logs\T8ditor_${ts}_d3d12.log"
+        $argList += @("--logFile", $logFilename)
+    }
+
     return @{
         ExePath = $exePath
         Args    = $argList
@@ -546,19 +579,26 @@ function Update-Preview {
     $cmd = Get-LaunchCommand
     $txtCmdPreview.Text = $cmd.Display
 
-    if (Test-Path $cmd.ExePath) {
-        $txtStatus.Text = "Ready to run"
+    $sceneOk = Test-Path $cmd.ExePath
+    $editorCmd = Get-EditorLaunchCommand
+    $editorOk = Test-Path $editorCmd.ExePath
+
+    if ($sceneOk -and $editorOk) {
+        $txtStatus.Text = "Ready to run (Scene + Editor)"
         $txtStatus.Foreground = $window.FindResource("GreenBrush")
         $btnRun.IsEnabled = $true
+        $btnEditor.IsEnabled = $true
+    } elseif ($sceneOk) {
+        $txtStatus.Text = "Scene ready, Editor not found"
+        $txtStatus.Foreground = $window.FindResource("GreenBrush")
+        $btnRun.IsEnabled = $true
+        $btnEditor.IsEnabled = $false
     } else {
         $txtStatus.Text = "DayScene.exe not found in current folder"
         $txtStatus.Foreground = $window.FindResource("RedBrush")
         $btnRun.IsEnabled = $false
+        $btnEditor.IsEnabled = $editorOk
     }
-
-    # Also check editor exe
-    $editorCmd = Get-EditorLaunchCommand
-    $btnEditor.IsEnabled = (Test-Path $editorCmd.ExePath)
 }
 
 # ── Events ──
@@ -589,27 +629,33 @@ $chkDebugFrames.Add_Unchecked({ Update-Preview })
 $chkKeepRunning.Add_Checked({ Update-Preview })
 $chkKeepRunning.Add_Unchecked({ Update-Preview })
 
-$chkFeedMatrices.Add_Checked({
-    $pnlFeedMatrices.IsEnabled = $true
+$chkReplaySnapshot.Add_Checked({
+    $pnlReplaySnapshot.IsEnabled = $true
     Update-Preview
 })
-$chkFeedMatrices.Add_Unchecked({
-    $pnlFeedMatrices.IsEnabled = $false
+$chkReplaySnapshot.Add_Unchecked({
+    $pnlReplaySnapshot.IsEnabled = $false
     Update-Preview
 })
 
-$btnBrowseMatrices.Add_Click({
+$btnBrowseSnapshot.Add_Click({
     $dlg = New-Object System.Windows.Forms.OpenFileDialog
-    $dlg.Title  = "Select matrices file"
-    $dlg.Filter = "Matrices files (*.json;*.txt)|*.json;*.txt|All files (*.*)|*.*"
+    $dlg.Title  = "Select snapshot file"
+    $dlg.Filter = "Snapshot files (*.json)|*.json|All files (*.*)|*.*"
     if ($dlg.ShowDialog() -eq [System.Windows.Forms.DialogResult]::OK) {
-        $txtFeedMatricesPath.Text = $dlg.FileName
+        $txtReplaySnapshotPath.Text = $dlg.FileName
         Update-Preview
     }
 })
 
+$cmbModel.Add_SelectionChanged({ Update-Preview })
+
 $cmbApi.Add_SelectionChanged({ Update-Preview })
-$cmbScene.Add_SelectionChanged({ Update-Preview })
+$cmbScene.Add_SelectionChanged({
+    # Show model selector only for Sandbox scene
+    $pnlModelSelect.Visibility = if (($cmbScene.SelectedItem).Tag.ToString() -eq "0") { "Visible" } else { "Collapsed" }
+    Update-Preview
+})
 $chkFullscreen.Add_Checked({ Update-Preview })
 $chkFullscreen.Add_Unchecked({ Update-Preview })
 $cmbLogLevel.Add_SelectionChanged({ Update-Preview })
@@ -668,6 +714,32 @@ $btnEditor.Add_Click({
 
 # ── Initialize ──
 
+# Scan Models folder for .glb/.gltf files and populate the dropdown
+function Populate-ModelList {
+    $cmbModel.Items.Clear()
+    $modelsDir = Join-Path $rootDir "Models"
+    if (Test-Path $modelsDir) {
+        $files = Get-ChildItem $modelsDir -Filter "*.glb" | Sort-Object Name
+        $files += Get-ChildItem $modelsDir -Filter "*.gltf" | Sort-Object Name
+        foreach ($f in $files) {
+            $item = New-Object System.Windows.Controls.ComboBoxItem
+            $item.Content = $f.Name
+            $item.Tag = "Models/" + $f.Name
+            $cmbModel.Items.Add($item) | Out-Null
+        }
+    }
+    $selected = $false
+    foreach ($item in $cmbModel.Items) {
+        if ($item.Content -eq "DamagedHelmet.glb") {
+            $cmbModel.SelectedItem = $item; $selected = $true; break
+        }
+    }
+    if (-not $selected -and $cmbModel.Items.Count -gt 0) {
+        $cmbModel.SelectedIndex = 0
+    }
+}
+
+Populate-ModelList
 Load-Config
 Update-Preview
 

@@ -187,8 +187,7 @@ $xaml = @"
                     <ComboBoxItem Content="D3D11 (Direct3D 11)" IsSelected="True" Tag="d3d11"/>
                     <ComboBoxItem Content="D3D12 (Direct3D 12)" Tag="d3d12"/>
                     <ComboBoxItem Content="Vulkan" Tag="vulkan"/>
-                    <ComboBoxItem Content="GL ES (ANGLE)" Tag="gl"/>
-                    <ComboBoxItem Content="GL (Desktop GLEW)" Tag="glew"/>
+                    <ComboBoxItem Content="OpenGL (Desktop GL 3.3)" Tag="gl"/>
                 </ComboBox>
             </StackPanel>
         </Border>
@@ -263,15 +262,18 @@ $xaml = @"
                     <StackPanel Grid.Column="0">
                         <TextBlock Text="Scene" Style="{StaticResource LabelStyle}"/>
                         <ComboBox Name="cmbScene">
-                            <ComboBoxItem Content="Day" Tag="0" IsSelected="True"/>
-                            <ComboBoxItem Content="Night" Tag="1"/>
-                            <ComboBoxItem Content="Tech" Tag="2"/>
+                            <ComboBoxItem Content="Sandbox" Tag="0" IsSelected="True"/>
+                            <ComboBoxItem Content="Day" Tag="1"/>
                         </ComboBox>
                     </StackPanel>
                     <StackPanel Grid.Column="2" VerticalAlignment="Bottom">
                         <CheckBox Name="chkFullscreen" Content="Fullscreen" Margin="0,0,0,8"/>
                     </StackPanel>
                 </Grid>
+                <StackPanel Name="pnlModelSelect" Margin="0,6,0,0">
+                    <TextBlock Text="Model (Sandbox)" Style="{StaticResource LabelStyle}"/>
+                    <ComboBox Name="cmbModel"/>
+                </StackPanel>
                 <Grid>
                     <Grid.ColumnDefinitions>
                         <ColumnDefinition Width="*"/>
@@ -410,6 +412,8 @@ $txtSeconds     = $window.FindName("txtSeconds")
 $txtFrame       = $window.FindName("txtFrame")
 $cmbScene       = $window.FindName("cmbScene")
 $chkFullscreen  = $window.FindName("chkFullscreen")
+$cmbModel       = $window.FindName("cmbModel")
+$pnlModelSelect = $window.FindName("pnlModelSelect")
 $txtWidth       = $window.FindName("txtWidth")
 $txtHeight      = $window.FindName("txtHeight")
 $txtStatus      = $window.FindName("txtStatus")
@@ -478,6 +482,13 @@ function Load-Config {
                 foreach ($item in $cmbScene.Items) {
                     if ($item.Tag -eq $cfg.display.scene.ToString()) {
                         $cmbScene.SelectedItem = $item; break
+                    }
+                }
+            }
+            if ($cfg.display.PSObject.Properties['model'] -and $cfg.display.model) {
+                foreach ($item in $cmbModel.Items) {
+                    if ($item.Tag -eq $cfg.display.model) {
+                        $cmbModel.SelectedItem = $item; break
                     }
                 }
             }
@@ -559,6 +570,7 @@ function Save-Config {
             height     = [int]$txtHeight.Text
             fullscreen = [bool]$chkFullscreen.IsChecked
             scene      = [int]($cmbScene.SelectedItem).Tag.ToString()
+            model      = if ($cmbModel.SelectedItem) { ($cmbModel.SelectedItem).Tag.ToString() } else { "Models/DamagedHelmet.glb" }
         }
         debugFrames = [bool]$chkDebugFrames.IsChecked
         keepRunning = [bool]$chkKeepRunning.IsChecked
@@ -595,8 +607,7 @@ function Patch-GLDriverConfig {
     }
     $content = Get-Content $configH -Raw
     $desired = switch ($ApiTag) {
-        "glew" { "OGL" }
-        "gl"   { "OGLES30" }
+        "gl"   { "OGL" }
         default { $null }
     }
     if (-not $desired) { return $null }  # D3D11 — no GL config change needed
@@ -651,9 +662,7 @@ function Get-LaunchCommand {
     }
 
     $exePath = Join-Path $rootDir "bin\$archFolder\$config\DayScene.exe"
-    # Map "glew" -> "gl" for the engine's --api flag (both use GRAPHICS_API::OPENGL)
-    $engineApi = if ($apiTag -eq "glew") { "gl" } else { $apiTag }
-    $argList = @("--api", $engineApi)
+    $argList = @("--api", $apiTag)
 
     if ($chkDebugFrames.IsChecked) {
         $argList += "--debugFrames"
@@ -680,6 +689,11 @@ function Get-LaunchCommand {
     $sceneTag = ($cmbScene.SelectedItem).Tag.ToString()
     if ($sceneTag -ne "0") {
         $argList += @("--scene", $sceneTag)
+    }
+
+    # Model path (for Sandbox scene)
+    if ($cmbModel.SelectedItem) {
+        $argList += @("--model", ($cmbModel.SelectedItem).Tag.ToString())
     }
 
     if ($chkFullscreen.IsChecked) {
@@ -785,19 +799,29 @@ function Update-Preview {
     $cmd = Get-LaunchCommand
     $txtCmdPreview.Text = $cmd.Display
 
-    if (Test-Path $cmd.ExePath) {
-        $txtStatus.Text = "Ready to run"
+    $sceneOk = Test-Path $cmd.ExePath
+    $editorCmd = Get-EditorLaunchCommand
+    $editorOk = Test-Path $editorCmd.ExePath
+
+    if ($sceneOk -and $editorOk) {
+        $txtStatus.Text = "Ready to run (Scene + Editor)"
         $txtStatus.Foreground = $window.FindResource("GreenBrush")
         $btnRun.IsEnabled = $true
+        $btnEditor.IsEnabled = $true
+    } elseif ($sceneOk) {
+        $txtStatus.Text = "Scene ready, Editor not found - build required"
+        $txtStatus.Foreground = $window.FindResource("GreenBrush")
+        $btnRun.IsEnabled = $true
+        $btnEditor.IsEnabled = $false
     } else {
-        $txtStatus.Text = "Executable not found - build this configuration first"
+        $missing = @()
+        if (-not $sceneOk) { $missing += "DayScene.exe" }
+        if (-not $editorOk) { $missing += "T8ditor.exe" }
+        $txtStatus.Text = "Not found: $($missing -join ', ') - build this configuration first"
         $txtStatus.Foreground = $window.FindResource("RedBrush")
         $btnRun.IsEnabled = $false
+        $btnEditor.IsEnabled = $false
     }
-
-    # Also check editor exe
-    $editorCmd = Get-EditorLaunchCommand
-    $btnEditor.IsEnabled = (Test-Path $editorCmd.ExePath)
 }
 
 function Update-GuiControlEditUI {
@@ -852,10 +876,16 @@ $btnBrowseSnapshot.Add_Click({
     }
 })
 
-$cmbArch.Add_SelectionChanged({ Update-Preview })
-$cmbConfig.Add_SelectionChanged({ Update-Preview })
+$cmbModel.Add_SelectionChanged({ Update-Preview })
+
+$cmbArch.Add_SelectionChanged({ Populate-ModelList; Update-Preview })
+$cmbConfig.Add_SelectionChanged({ Populate-ModelList; Update-Preview })
 $cmbApi.Add_SelectionChanged({ Update-Preview })
-$cmbScene.Add_SelectionChanged({ Update-Preview })
+$cmbScene.Add_SelectionChanged({
+    # Show model selector only for Sandbox scene
+    $pnlModelSelect.Visibility = if (($cmbScene.SelectedItem).Tag.ToString() -eq "0") { "Visible" } else { "Collapsed" }
+    Update-Preview
+})
 $chkFullscreen.Add_Checked({ Update-Preview })
 $chkFullscreen.Add_Unchecked({ Update-Preview })
 $chkGuiEdit.Add_Checked({
@@ -1000,6 +1030,8 @@ $btnBuild.Add_Click({
         if ($exitCode -eq 0) {
             $txtStatus.Text = "Build succeeded - $config|$platform"
             $txtStatus.Foreground = $window.FindResource("GreenBrush")
+            # Refresh model list — build creates symlinks to Models/ etc.
+            Populate-ModelList
         } else {
             if ($errorLines.Count -gt 0) {
                 $txtStatus.Text = "Build FAILED ($($errorLines.Count) error(s))"
@@ -1071,6 +1103,36 @@ $btnEditor.Add_Click({
 
 # ── Initialize ──
 
+# Scan Models folder for .glb/.gltf files and populate the dropdown
+function Populate-ModelList {
+    $cmbModel.Items.Clear()
+    $arch = ($cmbArch.SelectedItem).Content.ToString().ToLower()
+    $config = ($cmbConfig.SelectedItem).Content.ToString()
+    $archFolder = switch ($arch) { "arm64" { "arm64" }; "x86" { "x86" }; default { "x64" } }
+    $modelsDir = Join-Path $rootDir "bin\$archFolder\$config\Models"
+    if (Test-Path $modelsDir) {
+        $files = Get-ChildItem $modelsDir -Filter "*.glb" | Sort-Object Name
+        $files += Get-ChildItem $modelsDir -Filter "*.gltf" | Sort-Object Name
+        foreach ($f in $files) {
+            $item = New-Object System.Windows.Controls.ComboBoxItem
+            $item.Content = $f.Name
+            $item.Tag = "Models/" + $f.Name
+            $cmbModel.Items.Add($item) | Out-Null
+        }
+    }
+    # Select DamagedHelmet.glb by default, or first item
+    $selected = $false
+    foreach ($item in $cmbModel.Items) {
+        if ($item.Content -eq "DamagedHelmet.glb") {
+            $cmbModel.SelectedItem = $item; $selected = $true; break
+        }
+    }
+    if (-not $selected -and $cmbModel.Items.Count -gt 0) {
+        $cmbModel.SelectedIndex = 0
+    }
+}
+
+Populate-ModelList
 Load-Config
 Update-GuiControlEditUI
 Update-Preview

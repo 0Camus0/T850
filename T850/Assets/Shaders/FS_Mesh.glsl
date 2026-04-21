@@ -208,7 +208,9 @@ void main(){
 		#endif
 		normalTex 		 	 = normalTex*vec3(2.0,2.0,2.0) - vec3(1.0,1.0,1.0);
 		normalTex		 	 = normalize(normalTex);
+		#ifndef GLTF_TANGENT_SPACE
 		normalTex.g 	 	 = -normalTex.g;
+		#endif
 
 		normal.xyz		 	 = TBN*normalTex;
 		normal.xyz		 	 = normalize(normal.xyz);
@@ -219,14 +221,16 @@ void main(){
 	#endif
 
 	#ifdef METALLIC_MAP
+		// glTF metallic-roughness: B=metallic, G=roughness, multiply by uniform factors
 		#ifdef ES_30
-			metallic = texture(MetallicTex,parallaxCoords).r;
+			vec4 mrSample = texture(MetallicTex,parallaxCoords);
 		#else
-			metallic = texture2D(MetallicTex,parallaxCoords).r;
+			vec4 mrSample = texture2D(MetallicTex,parallaxCoords);
 		#endif
-	#endif
-
-	#ifdef GLOSS_MAP
+		metallic  = PBRParams.x * mrSample.b;
+		roughness = PBRParams.y * mrSample.g;
+	#elif defined(GLOSS_MAP)
+		// Legacy: separate roughness texture in R channel
 		#ifdef ES_30
 			roughness = texture(GlossTex,parallaxCoords).r;
 		#else
@@ -391,7 +395,9 @@ void main(){
 			#endif
 			normalTex 		 = normalTex*vec3(2.0,2.0,2.0) - vec3(1.0,1.0,1.0);
 			normalTex		 = normalize(normalTex);
+			#ifndef GLTF_TANGENT_SPACE
 			normalTex.g 	 = -normalTex.g;
+			#endif
 			lowp vec3 tangent	 = normalize(htangent).xyz;
 			lowp vec3 binormal	 = normalize(hbinormal).xyz;
 			lowp mat3	TBN = mat3(tangent,binormal,normal);

@@ -163,19 +163,20 @@ void main(){
 
 	highp vec3 EyeDir = normalize(CameraPosition-position).xyz;
 
-	int MatId = int(PBRData.a*255.0);
+	int MatId = int(PBRData.a * 255.0 + 0.5);
 	
 	if(MatId == 0){
-		highp vec3 EyeDir_mod = -EyeDir;
-		EyeDir_mod.x =  -EyeDir_mod.x;
-		EyeDir_mod.z =  -EyeDir_mod.z;
+		// Sky: use PosCorner (view ray direction from VS) for cubemap sampling.
+		highp vec3 skyDir = normalize(PosCorner.xyz);
+		skyDir.x = -skyDir.x;
+		skyDir.z = -skyDir.z;
 		#ifdef ES_30
-			mediump vec3 RefCol = texture( texEnv, EyeDir_mod ).xyz;
+			mediump vec3 RefCol = texture( texEnv, skyDir ).xyz;
 		#else
-			mediump vec3 RefCol = textureCube( texEnv, EyeDir_mod ).xyz;
+			mediump vec3 RefCol = textureCube( texEnv, skyDir ).xyz;
 		#endif
 			
-		Final.xyz = RefCol.xyz*2.0;
+		Final.xyz = RefCol.xyz * toogles.x;
 	}else if(MatId > 0){
 
 #ifdef ES_30
@@ -225,6 +226,9 @@ void main(){
 
 		highp float rough = normalmap.a;
 
+		// Accumulate direct and indirect lighting separately
+		highp vec3 directLight = vec3(0.0, 0.0, 0.0);
+
 		highp int NumLights =  int(CameraInfo.w);
 			for(highp int i=0;i<NumLights;i++){
 				highp float lightType = LightPositions[i].w;
@@ -243,7 +247,7 @@ void main(){
 					highp vec3 Kd = (vec3(1.0f, 1.0f, 1.0f) - F) * (1.0f - metallic);
 
 					highp float geoHorizon = clamp(dot(geoNormal, LightDir), 0.0, 1.0);
-					Final.xyz += (SpecularRes.xyz + Kd*Diffuse) * geoHorizon;
+					directLight += (SpecularRes.xyz + Kd*Diffuse) * geoHorizon;
 				} else {
 					// Point light
 					highp float Rad = LightRadius[i >> 2][i & 3];
@@ -251,8 +255,6 @@ void main(){
 
 					if(dist < (Rad*2.0))
 					{
-						highp float gloss = normalmap.a;
-
 						highp vec3 LightDir = normalize(LightPositions[i]-position).xyz;
 						highp vec3 Half = normalize(EyeDir + LightDir);
 
@@ -271,20 +273,33 @@ void main(){
 						attenuation = max(attenuation, 0.0);
 
 						highp float geoHorizon = clamp(dot(geoNormal, LightDir), 0.0, 1.0);
-						Final.xyz += (SpecularRes.xyz*attenuation + attenuation*Kd*Diffuse) * geoHorizon;
+						directLight += (SpecularRes.xyz*attenuation + attenuation*Kd*Diffuse) * geoHorizon;
 					}
 				}
 			}
-		// MatId 3/4 Fresnel removed (PBR computes Fresnel from metallic + F0)		
 
+		// Apply shadow only to direct lighting
+		highp float selfShadow = PBRData.g;
+		Final.xyz += directLight * Shadow * selfShadow;
+
+		// Indirect lighting (IBL + ambient) — NOT affected by shadow
 			highp vec3 kSpecular = clamp( fresnelSchlickRoughness(max(dot(normal, EyeDir), 0.0f), F0, rough) , 0.0 , 1.0 );
-	 		highp vec3 RefleCol = texture( texEnv, ReflectedVec , rough*4.0f).xyz;
+			highp vec3 kDiffuseEnv = (vec3(1.0) - kSpecular) * (1.0 - metallic);
+
+			// Specular IBL: env reflection
+	 		highp vec3 RefleCol2 = texture( texEnv, ReflectedVec , rough*4.0f).xyz;
 			highp float envAtten = (1.0 - rough) * (1.0 - rough);
+	 		Final.xyz += RefleCol2*kSpecular.xyz*envAtten * toogles.x;
 
-	 		Final.xyz += RefleCol*kSpecular.xyz*envAtten * toogles.x;
+			// Diffuse IBL: approximate irradiance from env cubemap at high mip
+			highp vec3 irradianceDir = normal;
+			irradianceDir.x = -irradianceDir.x;
+			irradianceDir.z = -irradianceDir.z;
+			highp vec3 irradiance = texture( texEnv, irradianceDir, 6.0).xyz;
+			Final.xyz += irradiance * Albedo.xyz * kDiffuseEnv * toogles.x;
 
-			highp float selfShadow = PBRData.g;
-			Final.xyz *= Shadow * selfShadow;
+			// Ambient minimum (toogles.y = ambient intensity)
+			Final.xyz += Albedo.xyz * toogles.y * kDiffuseEnv;
 
 			//Final.xyz = vec3(rough, rough, rough);
 	}

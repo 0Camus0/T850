@@ -772,6 +772,7 @@ namespace t800 {
 
     }
 
+    CurrentRT = -1;
   }
 
   static void SaveD3D11TextureToPPM(ID3D11Texture2D* srcTex, std::string path) {

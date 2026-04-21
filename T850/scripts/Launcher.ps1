@@ -757,8 +757,7 @@ function Get-EditorLaunchCommand {
     }
 
     $exePath = Join-Path $rootDir "bin\$archFolder\$config\T8ditor.exe"
-    # Editor always uses D3D12 regardless of API dropdown
-    $argList = @("--api", "d3d12")
+    $argList = @()
 
     if ($chkFullscreen.IsChecked) {
         $argList += "--fullscreen"

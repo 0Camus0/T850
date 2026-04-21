@@ -30,6 +30,29 @@ T850 started as a learning project to understand how real-time rendering works u
   <br><em>PBR metallic-roughness workflow with image-based lighting — Sandbox scene with orbit camera and cubemap selector</em>
 </p>
 
+## Launcher
+
+The release package includes a GUI launcher (`T850Launcher.exe`) that lets you configure everything before running — no command line needed.
+
+<p align="center">
+  <img src="screenshots/Launcher1.png" alt="T850 Launcher — Day scene selected with Vulkan API" width="80%">
+  <br><em>Launcher with Day scene selected — the Sponza atrium with full deferred pipeline, shadows, bloom, god rays, and SSAO</em>
+</p>
+
+- **Graphics API** — Choose between D3D11, D3D12, Vulkan, or OpenGL
+- **Scene** — **Day** loads the Sponza atrium scene with directional sun, point lights, spline camera, and all post-processing effects. **Sandbox** opens the glTF model viewer with orbit camera and PBR rendering.
+- **Resolution** and **Fullscreen** — Set your preferred window size or go fullscreen
+- **Snapshot** — Dump all render targets to disk at a specific frame or time (useful for debugging and comparison across APIs)
+- **Logging** — Set verbosity level and optionally save logs to file
+- **RUN** launches the scene, **EDITOR** opens the built-in T8ditor (always runs on D3D12)
+
+<p align="center">
+  <img src="screenshots/Launcher2.png" alt="T850 Launcher — Sandbox scene with model dropdown" width="80%">
+  <br><em>Sandbox mode scans the Models/ directory and lists all available .glb/.gltf files — drop your own models in and they show up automatically</em>
+</p>
+
+When **Sandbox** is selected, a **Model** dropdown appears listing every `.glb` and `.gltf` file found in the `Models/` directory. Just drop your own glTF models into that folder and they'll appear in the list on the next launch.
+
 ## Features
 
 ### Graphics Backends
@@ -108,6 +131,137 @@ Built from scratch with no third-party glTF library:
 | **Day** | Sponza atrium lit by directional sun + warm point lights; shadows, bloom, DOF, god rays, SSAO, parallax mapping, lens flare; spline camera fly-through |
 | **Night** | Night variant with omnidirectional shadow mapping (cubemap depth), moving light agent on a spline path |
 | **Tech** | Technical showcase scene |
+
+## Editor Guide (T8ditor)
+
+T8ditor is a standalone scene editor that ships alongside the engine. It uses ImGui for its interface and always runs on D3D12. Launch it from the **EDITOR** button in the Launcher, or directly:
+
+```
+T8ditor.exe --api d3d12 --width 1920 --height 1080
+```
+
+### Importing .X Models
+
+There are two ways to bring DirectX `.X` models into the editor:
+
+1. **File → Import .x** (or `Ctrl+I`) — Opens a file dialog. Navigate to any `.X` file on disk, and it will be loaded with all its materials, textures, and normals. The model appears in the viewport and is automatically selected.
+
+2. **Command line** — Pass `--mesh <path>` when launching T8ditor to pre-load a model on startup.
+
+You can import multiple models into the same scene. Each one gets its own entry in the Hierarchy panel on the left.
+
+### Saving and Loading Scenes
+
+Scenes are saved as `.t8scene` files — plain JSON that you can version-control or edit by hand.
+
+- **Save**: `File → Save Scene` (`Ctrl+S`) — Opens a save dialog. Choose a location and filename.
+- **Load**: `File → Load Scene` (`Ctrl+O`) — Opens a file dialog. The current scene is cleared and replaced with the loaded one (the load is deferred to the next frame to safely release GPU resources).
+
+A `.t8scene` file stores everything needed to reconstruct the scene:
+- **Objects** — Mesh file path, position, rotation (degrees), scale, visibility, and frozen state
+- **Cameras** — Name, type (perspective/orthographic), position, target, FOV, near/far planes
+- **Lights** — Name, type (directional/omni), position, direction, color, intensity, radius, enabled state
+- **Editor state** — Camera orbit target, yaw, pitch, distance, wireframe toggle
+
+### Adding Cameras
+
+Click the **+ Camera** button in the toolbar and choose:
+- **Perspective** — Standard 3D camera with FOV and near/far planes
+- **Orthographic** — Flat projection with configurable width/height
+
+Cameras appear in the Hierarchy panel. Select one to see its properties in the Inspector:
+- **Position** and **Target** — Both have separate gizmo handles in the viewport so you can drag them independently
+- **FOV**, **Near/Far Planes** — Adjust in the Inspector panel
+- Use the **radio button** next to a camera in the Hierarchy to make it the active viewport camera. Click **[E] Editor Camera** to return to the free orbit camera.
+
+### Adding Lights
+
+Click the **+ Light** button in the toolbar and choose:
+- **Directional** — Infinite-distance light defined by a direction vector (sun-like)
+- **Omni** — Point light with position, radius, and falloff
+
+Lights appear in the Hierarchy with **Enabled**, **Visible**, and **Frozen** checkboxes. In the Inspector you can adjust:
+- **Color** (color picker), **Intensity**, and **Direction** (directional) or **Radius** (omni)
+- Omni lights can be scaled in the viewport using the Scale gizmo (`R`) — this adjusts the light radius
+
+### Editor Controls
+
+| Key | Action |
+|-----|--------|
+| `W` | Gizmo → Translate |
+| `E` | Gizmo → Rotate |
+| `R` | Gizmo → Scale |
+| `Z` | Frame camera on selected object |
+| `Delete` | Delete selected entity |
+| `Ctrl+Z` | Undo |
+| `Ctrl+Shift+Z` / `Ctrl+Y` | Redo |
+| `Ctrl+S` | Save scene |
+| `Ctrl+O` | Load scene |
+| `Ctrl+I` | Import .X model |
+| `Space` | Dump all render targets to disk |
+
+| Mouse | Action |
+|-------|--------|
+| Middle-drag | Orbit camera around target |
+| Shift + Middle-drag | Pan camera |
+| Right-drag | Orbit (alternate) |
+| Scroll wheel | Zoom in/out |
+| Left-click | Select entity in viewport |
+
+### Scene File Example
+
+Here's what a `.t8scene` file looks like:
+
+```json
+{
+  "version": 1,
+  "editor": {
+    "camera_target": { "x": 0, "y": 3, "z": 0 },
+    "camera_yaw": -45.0,
+    "camera_pitch": 20.0,
+    "camera_distance": 15.0
+  },
+  "objects": [
+    {
+      "name": "Batman",
+      "mesh": "Models/NuBatman.X",
+      "position": { "x": 2, "y": 0, "z": 0 },
+      "rotation": { "x": 0, "y": 180, "z": 0 },
+      "scale": { "x": 1, "y": 1, "z": 1 }
+    }
+  ],
+  "cameras": [
+    {
+      "name": "Main Camera",
+      "type": 0,
+      "position": { "x": 0, "y": 5, "z": -10 },
+      "target": { "x": 0, "y": 0, "z": 0 },
+      "fov_deg": 50,
+      "near_plane": 0.1,
+      "far_plane": 1000
+    }
+  ],
+  "lights": [
+    {
+      "name": "Sun",
+      "type": 0,
+      "direction": { "x": 0.5, "y": -1, "z": 0.3 },
+      "color": { "x": 1, "y": 0.95, "z": 0.85 },
+      "intensity": 2.0,
+      "enabled": true
+    },
+    {
+      "name": "Fill Light",
+      "type": 1,
+      "position": { "x": -5, "y": 8, "z": 3 },
+      "color": { "x": 0.8, "y": 0.9, "z": 1.0 },
+      "intensity": 1.5,
+      "radius": 20,
+      "enabled": true
+    }
+  ]
+}
+```
 
 ## Project Structure
 

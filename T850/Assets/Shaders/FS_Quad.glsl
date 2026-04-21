@@ -166,9 +166,7 @@ void main(){
 	int MatId = int(PBRData.a * 255.0 + 0.5);
 	
 	if(MatId == 0){
-		// Sky: use the interpolated view ray directly (PosCorner is the
-		// world-space direction from camera to far-plane corner).  This
-		// avoids NaN when depth=0 (cleared GBuffer pixels with no geometry).
+		// Sky: use PosCorner (view ray direction from VS) for cubemap sampling.
 		highp vec3 skyDir = normalize(PosCorner.xyz);
 		skyDir.x = -skyDir.x;
 		skyDir.z = -skyDir.z;
@@ -178,7 +176,7 @@ void main(){
 			mediump vec3 RefCol = textureCube( texEnv, skyDir ).xyz;
 		#endif
 			
-		Final.xyz = RefCol.xyz;
+		Final.xyz = RefCol.xyz * 2.0;
 	}else if(MatId > 0){
 
 #ifdef ES_30

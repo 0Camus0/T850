@@ -969,6 +969,13 @@ namespace t800 {
     }
   }
 
+  void D3D12Driver::ClearWithColor(float r, float g, float b, float a) {
+    if (CurrentRT >= 0) return; // only clears backbuffer
+    const float cc[4] = { r, g, b, a };
+    m_commandList->ClearRenderTargetView(m_backBufferRTVs[m_currentBackBuffer], cc, 0, nullptr);
+    m_commandList->ClearDepthStencilView(m_depthDSV, D3D12_CLEAR_FLAG_DEPTH, 1.0f, 0, 0, nullptr);
+  }
+
   void D3D12Driver::SwapBuffers() {
 
     D3D12_RESOURCE_BARRIER b = {};

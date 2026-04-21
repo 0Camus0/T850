@@ -250,6 +250,7 @@ namespace t800 {
       case PassType::LIGHT_RAY_MARCHING: Defines += "#define LIGHT_RAY_MARCHING\n\n"; break;
       case PassType::LIGHT_ADD:          Defines += "#define LIGHT_ADD\n\n"; break;
       case PassType::FADE:               Defines += "#define FADE\n\n"; break;
+      case PassType::DEFERRED_LDR:       Defines += "#define DEFERRED_LDR_PASS\n\n"; break;
       default: break;
       }
 

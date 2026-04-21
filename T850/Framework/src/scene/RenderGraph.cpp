@@ -103,6 +103,7 @@ static const std::unordered_map<std::string, uint8_t> s_passMap = {
   {"GOD_RAY_CALCULATION_PASS", PassType::GOD_RAY_CALCULATION},
   {"GOD_RAY_BLEND_PASS",    PassType::GOD_RAY_BLEND},
   {"SSAO_PASS",             PassType::SSAO},
+  {"DEFERRED_LDR_PASS",     PassType::DEFERRED_LDR},
 };
 
 // Feature name -> ShaderKey feature bit

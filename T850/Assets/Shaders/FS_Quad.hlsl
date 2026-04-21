@@ -211,6 +211,101 @@ float4 FS( VS_OUTPUT input ) : SV_TARGET {
 	}
 	return Final;
 }
+#elif defined(DEFERRED_LDR_PASS)
+// LDR deferred — same as DEFERRED_PASS but clamps output to 0-1 (no HDR)
+Texture2D tex0 : register(t0); // Albedo
+Texture2D tex1 : register(t1); // Normal map
+Texture2D tex2 : register(t2); // PBR data (specular, metallic, matID)
+Texture2D tex3 : register(t3); // Geometric normals
+Texture2D tex4 : register(t4); // Depth
+Texture2D tex5 : register(t5); // Shadow accumulation
+TextureCube texEnv : register(t6);
+
+float4 FS(VS_OUTPUT input) : SV_TARGET {
+	float4 Final = float4(0, 0, 0, 1);
+	float Shadow = 1.0;
+
+	float4 Albedo = tex0.Sample(SS, input.texture0);
+	float4 PBRData = tex2.Sample(SS, input.texture0);
+	float metallic = PBRData.r;
+	float3 F0 = lerp(float3(0.04, 0.04, 0.04), Albedo.xyz, metallic);
+	float depth = tex4.Sample(SS, input.texture0).r;
+
+#ifdef NON_LINEAR_DEPTH
+	float4 position = mul(WVPInverse, float4(input.PosCorner.xy, depth, 1.0));
+	position.xyz /= position.w;
+#else
+	float4 position = CameraPosition + input.PosCorner * depth;
+#endif
+
+	float3 EyeDir = normalize(CameraPosition - position).xyz;
+	int MatId = (int)(PBRData.a * 255.0);
+
+	if (MatId == 0) {
+		float3 EyeDir_mod = -EyeDir;
+		EyeDir_mod.x = -EyeDir_mod.x;
+		EyeDir_mod.z = -EyeDir_mod.z;
+		float3 RefCol = texEnv.Sample(SS, EyeDir_mod).xyz;
+		Final.xyz = RefCol.xyz * 2.0;
+	} else if (MatId > 0) {
+		Shadow = tex5.Sample(SS, input.texture0).r;
+		float cutoff = 0.8;
+		float4 normalmap = tex1.Sample(SS, input.texture0);
+		float3 normal = normalize(normalmap.xyz * 2.0 - 1.0);
+		float3 geoNormal = normalize(tex3.Sample(SS, input.texture0).xyz * 2.0 - 1.0);
+		float rough = normalmap.a;
+
+		int NumLights = (int)CameraInfo.w;
+		[loop] for (int i = 0; i < NumLights; i++) {
+			float lightType = LightPositions[i].w;
+			float intensity = LightColors[i].w;
+			if (lightType < 0.5) {
+				float3 LightDir = normalize(-LightPositions[i].xyz);
+				float3 Half = normalize(EyeDir + LightDir);
+				float3 Diffuse = CalculateDiffuse(Albedo.xyz, normal, LightDir) * LightColors[i].xyz * intensity;
+				float3 SpecularRes = CalculateSpecular(F0, normal, EyeDir, Half, LightDir, rough) * LightColors[i].xyz * intensity;
+				float VdotH = clamp(dot(EyeDir, Half), 0.0f, 1.0f);
+				float3 F = FresnelCalc(VdotH, F0);
+				float3 Kd = (float3(1, 1, 1) - F) * (1.0f - metallic);
+				float geoHorizon = saturate(dot(geoNormal, LightDir));
+				Final.xyz += (SpecularRes.xyz + Kd * Diffuse) * geoHorizon;
+			} else {
+				float Rad = LightRadius[i >> 2][i & 3];
+				float dist = distance(LightPositions[i], position);
+				if (dist < (Rad * 2.0)) {
+					float3 LightDir = normalize(LightPositions[i] - position).xyz;
+					float3 Half = normalize(EyeDir + LightDir);
+					float3 Diffuse = CalculateDiffuse(Albedo.xyz, normal, LightDir) * LightColors[i].xyz * intensity;
+					float3 SpecularRes = CalculateSpecular(F0, normal, EyeDir, Half, LightDir, rough) * LightColors[i].xyz * intensity;
+					float VdotH = clamp(dot(EyeDir, Half), 0.0f, 1.0f);
+					float3 F = FresnelCalc(VdotH, F0);
+					float3 Kd = (float3(1, 1, 1) - F) * (1.0f - metallic);
+					float d = max(dist - Rad, 0.0);
+					float denom = d / Rad + 1.0;
+					float attenuation = 1.0 / (denom * denom);
+					attenuation = max((attenuation - cutoff) / (1.0 - cutoff), 0.0);
+					float geoHorizon = saturate(dot(geoNormal, LightDir));
+					Final.xyz += (SpecularRes.xyz * attenuation + attenuation * Kd * Diffuse) * geoHorizon;
+				}
+			}
+		}
+
+		// Reduced env reflections for LDR
+		float3 ReflectedVec = reflect(-EyeDir, normal.xyz);
+		ReflectedVec.x = -ReflectedVec.x; ReflectedVec.z = -ReflectedVec.z;
+		float3 kSpecular = clamp(fresnelSchlickRoughness(max(dot(normal, EyeDir), 0.0f), F0, rough), 0.0, 1.0);
+		float3 RefleCol = texEnv.SampleLevel(SS, ReflectedVec, rough * 4.0f).xyz;
+		float envAtten = (1.0f - rough) * (1.0f - rough);
+		Final.xyz += RefleCol * kSpecular.xyz * envAtten * toogles.x;
+
+		float selfShadow = PBRData.g;
+		Final.xyz *= Shadow * selfShadow;
+	}
+
+	// Clamp to LDR — no tone mapping, just saturate
+	Final.xyz = saturate(Final.xyz);
+	return Final;
+}
 #elif defined(SHADOW_COMP_PASS)
 Texture2D tex0 : register(t0);
 Texture2D tex1 : register(t1);
@@ -914,7 +1009,7 @@ float4 FS(VS_OUTPUT input) : SV_TARGET{
 #elif defined(FSQUAD_1_TEX)
 Texture2D tex0 : register(t0);
 float4 FS( VS_OUTPUT input ) : SV_TARGET {	
-	return  tex0.Sample( SS, input.texture0.xy ) * brightness.x;
+	return  tex0.Sample( SS, input.texture0.xy );
 
   /*float d = tex0.Sample(SS, input.texture0.xy).r;
   return  float4(d,d,d,1);*/

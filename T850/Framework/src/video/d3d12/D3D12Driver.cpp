@@ -970,10 +970,17 @@ namespace t800 {
   }
 
   void D3D12Driver::ClearWithColor(float r, float g, float b, float a) {
-    if (CurrentRT >= 0) return; // only clears backbuffer
     const float cc[4] = { r, g, b, a };
-    m_commandList->ClearRenderTargetView(m_backBufferRTVs[m_currentBackBuffer], cc, 0, nullptr);
-    m_commandList->ClearDepthStencilView(m_depthDSV, D3D12_CLEAR_FLAG_DEPTH, 1.0f, 0, 0, nullptr);
+    if (CurrentRT >= 0 && CurrentRT < (int)RTs.size()) {
+      D3D12RT* rt = static_cast<D3D12RT*>(RTs[CurrentRT]);
+      for (auto& rtv : rt->vRTVHandles)
+        m_commandList->ClearRenderTargetView(rtv, cc, 0, nullptr);
+      if (rt->depthResource)
+        m_commandList->ClearDepthStencilView(rt->depthDSV, D3D12_CLEAR_FLAG_DEPTH, 1.0f, 0, 0, nullptr);
+    } else {
+      m_commandList->ClearRenderTargetView(m_backBufferRTVs[m_currentBackBuffer], cc, 0, nullptr);
+      m_commandList->ClearDepthStencilView(m_depthDSV, D3D12_CLEAR_FLAG_DEPTH, 1.0f, 0, 0, nullptr);
+    }
   }
 
   void D3D12Driver::SwapBuffers() {

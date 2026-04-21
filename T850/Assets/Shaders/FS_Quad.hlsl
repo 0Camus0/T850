@@ -117,7 +117,7 @@ float4 FS( VS_OUTPUT input ) : SV_TARGET {
 	float depth = tex4.Sample(SS, input.texture0).r;
 
 	// No geometry drawn at this pixel — output clear color
-	if (depth >= 0.9999)
+	if (depth <= 0.0001)
 		return Final;
 
 	#ifdef NON_LINEAR_DEPTH
@@ -236,7 +236,7 @@ float4 FS(VS_OUTPUT input) : SV_TARGET {
 	float depth = tex4.Sample(SS, input.texture0).r;
 
 	// No geometry drawn at this pixel — output clear color
-	if (depth >= 0.9999)
+	if (depth <= 0.0001)
 		return Final;
 
 #ifdef NON_LINEAR_DEPTH

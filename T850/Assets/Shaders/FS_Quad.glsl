@@ -176,7 +176,7 @@ void main(){
 			mediump vec3 RefCol = textureCube( texEnv, skyDir ).xyz;
 		#endif
 			
-		Final.xyz = RefCol.xyz * 2.0;
+		Final.xyz = RefCol.xyz * toogles.x;
 	}else if(MatId > 0){
 
 #ifdef ES_30

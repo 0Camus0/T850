@@ -5,6 +5,7 @@
 #include "EditorSceneGizmos.h"
 #include <utils/xMaths.h>
 #include <cmath>
+#include <cstring>
 #include <vector>
 
 namespace t8ditor {
@@ -208,46 +209,47 @@ void BuildDirLightArrow(const SceneLight& lt,
 
 } // anonymous namespace
 
+// Simple hash combiner for dirty checking
+static uint64_t HashFloats(const float* f, int n) {
+  uint64_t h = 0xcbf29ce484222325ULL;
+  for (int i = 0; i < n; i++) {
+    uint32_t bits;
+    memcpy(&bits, &f[i], 4);
+    h ^= bits;
+    h *= 0x100000001b3ULL;
+  }
+  return h;
+}
+
 // ── Camera gizmo ──────────────────────────────────────
 
 void DrawCameraGizmo(EditorLineRenderer& lines, const XMATRIX44& vp,
                      const SceneCamera& cam, bool selected) {
   if (!lines.IsReady()) return;
 
-  // Cache VB/IB — only rebuild when camera params change
-  static t800::VertexBuffer* s_vb = nullptr;
-  static t800::IndexBuffer*  s_ib = nullptr;
-  static unsigned s_idxCount = 0;
-  static float s_lastFov = -1, s_lastNear = -1, s_lastFar = -1;
-  static float s_lastPx = 1e30f, s_lastPy = 1e30f, s_lastPz = 1e30f;
-  static float s_lastTx = 1e30f, s_lastTy = 1e30f, s_lastTz = 1e30f;
-  static int   s_lastType = -1;
+  // Per-entity cache via cam.gizmo
+  float params[] = { cam.fovDeg, cam.nearPlane, cam.farPlane,
+                     cam.position.x, cam.position.y, cam.position.z,
+                     cam.target.x, cam.target.y, cam.target.z,
+                     (float)cam.type };
+  uint64_t h = HashFloats(params, 10);
 
-  bool needRebuild = (s_vb == nullptr
-    || s_lastFov != cam.fovDeg || s_lastNear != cam.nearPlane || s_lastFar != cam.farPlane
-    || s_lastPx != cam.position.x || s_lastPy != cam.position.y || s_lastPz != cam.position.z
-    || s_lastTx != cam.target.x || s_lastTy != cam.target.y || s_lastTz != cam.target.z
-    || s_lastType != (int)cam.type);
-
-  if (needRebuild) {
+  if (cam.gizmo.vb == nullptr || cam.gizmo.hash != h) {
     std::vector<float> verts;
     std::vector<unsigned short> idx;
     BuildFrustumGeometry(cam, verts, idx);
     if (verts.empty() || idx.empty()) return;
-    s_vb = EditorLineRenderer::CreatePositionVB(verts.data(), (unsigned)(verts.size() / 4));
-    s_ib = EditorLineRenderer::CreateIndexBuffer16(idx.data(), (unsigned)idx.size());
-    s_idxCount = (unsigned)idx.size();
-    s_lastFov = cam.fovDeg; s_lastNear = cam.nearPlane; s_lastFar = cam.farPlane;
-    s_lastPx = cam.position.x; s_lastPy = cam.position.y; s_lastPz = cam.position.z;
-    s_lastTx = cam.target.x; s_lastTy = cam.target.y; s_lastTz = cam.target.z;
-    s_lastType = (int)cam.type;
+    cam.gizmo.vb = EditorLineRenderer::CreatePositionVB(verts.data(), (unsigned)(verts.size() / 4));
+    cam.gizmo.ib = EditorLineRenderer::CreateIndexBuffer16(idx.data(), (unsigned)idx.size());
+    cam.gizmo.count = (unsigned)idx.size();
+    cam.gizmo.hash = h;
   }
-  if (!s_vb || !s_ib) return;
+  if (!cam.gizmo.vb || !cam.gizmo.ib) return;
 
   XMATRIX44 identity;
   XMatIdentity(identity);
   const XVECTOR3& color = selected ? kSelectedColor : kCameraColor;
-  lines.DrawLines(identity, vp, color, s_vb, s_ib, s_idxCount, 16);
+  lines.DrawLines(identity, vp, color, cam.gizmo.vb, cam.gizmo.ib, cam.gizmo.count, 16);
 }
 
 // ── Light gizmo ───────────────────────────────────────
@@ -256,63 +258,51 @@ void DrawLightGizmo(EditorLineRenderer& lines, const XMATRIX44& vp,
                     const SceneLight& lt, bool selected) {
   if (!lines.IsReady()) return;
 
-  std::vector<float> verts;
-  std::vector<unsigned short> idx;
+  // Per-entity cache via lt.gizmo
+  float params[] = { lt.position.x, lt.position.y, lt.position.z,
+                     lt.direction.x, lt.direction.y, lt.direction.z,
+                     lt.radius, (float)lt.type };
+  uint64_t h = HashFloats(params, 8);
 
-  if (lt.type == EditorLightType::Directional) {
-    BuildDirLightArrow(lt, verts, idx);
-  } else {
-    // Omni: 3 circles (XY, XZ, YZ) at the light position
-    XVECTOR3 ax(1,0,0), ay(0,1,0), az(0,0,1);
-    BuildWireCircle(lt.position, lt.radius, ax, ay, 32, verts, idx);
-    BuildWireCircle(lt.position, lt.radius, ax, az, 32, verts, idx);
-    BuildWireCircle(lt.position, lt.radius, ay, az, 32, verts, idx);
+  if (lt.gizmo.vb == nullptr || lt.gizmo.hash != h) {
+    std::vector<float> verts;
+    std::vector<unsigned short> idx;
 
-    // Small cross at center
-    float cs = 0.3f;
-    unsigned short base = (unsigned short)(verts.size() / 4);
-    verts.push_back(lt.position.x - cs); verts.push_back(lt.position.y); verts.push_back(lt.position.z); verts.push_back(1.0f);
-    verts.push_back(lt.position.x + cs); verts.push_back(lt.position.y); verts.push_back(lt.position.z); verts.push_back(1.0f);
-    verts.push_back(lt.position.x); verts.push_back(lt.position.y - cs); verts.push_back(lt.position.z); verts.push_back(1.0f);
-    verts.push_back(lt.position.x); verts.push_back(lt.position.y + cs); verts.push_back(lt.position.z); verts.push_back(1.0f);
-    verts.push_back(lt.position.x); verts.push_back(lt.position.y); verts.push_back(lt.position.z - cs); verts.push_back(1.0f);
-    verts.push_back(lt.position.x); verts.push_back(lt.position.y); verts.push_back(lt.position.z + cs); verts.push_back(1.0f);
-    idx.push_back(base); idx.push_back(base + 1);
-    idx.push_back(base + 2); idx.push_back(base + 3);
-    idx.push_back(base + 4); idx.push_back(base + 5);
+    if (lt.type == EditorLightType::Directional) {
+      BuildDirLightArrow(lt, verts, idx);
+    } else {
+      XVECTOR3 ax(1,0,0), ay(0,1,0), az(0,0,1);
+      BuildWireCircle(lt.position, lt.radius, ax, ay, 32, verts, idx);
+      BuildWireCircle(lt.position, lt.radius, ax, az, 32, verts, idx);
+      BuildWireCircle(lt.position, lt.radius, ay, az, 32, verts, idx);
+
+      float cs = 0.3f;
+      unsigned short base = (unsigned short)(verts.size() / 4);
+      verts.push_back(lt.position.x - cs); verts.push_back(lt.position.y); verts.push_back(lt.position.z); verts.push_back(1.0f);
+      verts.push_back(lt.position.x + cs); verts.push_back(lt.position.y); verts.push_back(lt.position.z); verts.push_back(1.0f);
+      verts.push_back(lt.position.x); verts.push_back(lt.position.y - cs); verts.push_back(lt.position.z); verts.push_back(1.0f);
+      verts.push_back(lt.position.x); verts.push_back(lt.position.y + cs); verts.push_back(lt.position.z); verts.push_back(1.0f);
+      verts.push_back(lt.position.x); verts.push_back(lt.position.y); verts.push_back(lt.position.z - cs); verts.push_back(1.0f);
+      verts.push_back(lt.position.x); verts.push_back(lt.position.y); verts.push_back(lt.position.z + cs); verts.push_back(1.0f);
+      idx.push_back(base); idx.push_back(base + 1);
+      idx.push_back(base + 2); idx.push_back(base + 3);
+      idx.push_back(base + 4); idx.push_back(base + 5);
+    }
+
+    if (verts.empty() || idx.empty()) return;
+    lt.gizmo.vb = EditorLineRenderer::CreatePositionVB(verts.data(), (unsigned)(verts.size() / 4));
+    lt.gizmo.ib = EditorLineRenderer::CreateIndexBuffer16(idx.data(), (unsigned)idx.size());
+    lt.gizmo.count = (unsigned)idx.size();
+    lt.gizmo.hash = h;
   }
-
-  if (verts.empty() || idx.empty()) return;
-
-  // Cache VB/IB — rebuild only when light params change
-  static t800::VertexBuffer* s_vb = nullptr;
-  static t800::IndexBuffer*  s_ib = nullptr;
-  static unsigned s_idxCount = 0;
-  static float s_lPx = 1e30f, s_lPy = 1e30f, s_lPz = 1e30f;
-  static float s_lDx = 1e30f, s_lDy = 1e30f, s_lDz = 1e30f;
-  static float s_lRad = -1; static int s_lType = -1;
-
-  bool needRebuild = (s_vb == nullptr
-    || s_lPx != lt.position.x || s_lPy != lt.position.y || s_lPz != lt.position.z
-    || s_lDx != lt.direction.x || s_lDy != lt.direction.y || s_lDz != lt.direction.z
-    || s_lRad != lt.radius || s_lType != (int)lt.type);
-
-  if (needRebuild) {
-    s_vb = EditorLineRenderer::CreatePositionVB(verts.data(), (unsigned)(verts.size() / 4));
-    s_ib = EditorLineRenderer::CreateIndexBuffer16(idx.data(), (unsigned)idx.size());
-    s_idxCount = (unsigned)idx.size();
-    s_lPx = lt.position.x; s_lPy = lt.position.y; s_lPz = lt.position.z;
-    s_lDx = lt.direction.x; s_lDy = lt.direction.y; s_lDz = lt.direction.z;
-    s_lRad = lt.radius; s_lType = (int)lt.type;
-  }
-  if (!s_vb || !s_ib) return;
+  if (!lt.gizmo.vb || !lt.gizmo.ib) return;
 
   XMATRIX44 identity;
   XMatIdentity(identity);
 
   const XVECTOR3& baseColor = (lt.type == EditorLightType::Directional) ? kDirLightColor : kOmniLightColor;
   const XVECTOR3& color = selected ? kSelectedColor : baseColor;
-  lines.DrawLines(identity, vp, color, s_vb, s_ib, s_idxCount, 16);
+  lines.DrawLines(identity, vp, color, lt.gizmo.vb, lt.gizmo.ib, lt.gizmo.count, 16);
 }
 
 } // namespace t8ditor

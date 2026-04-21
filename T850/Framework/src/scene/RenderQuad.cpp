@@ -261,6 +261,12 @@ namespace t800 {
       if (pass == PassType::ADAPT_LUMINANCE) {
         CnstBuffer.LightPositions[1].x = pScProp->LuminanceTau;
         CnstBuffer.LightPositions[1].y = pScProp->FrameDeltaSec;
+        static int adaptLogCount = 0;
+        if (adaptLogCount++ % 300 == 0) {
+          T8_LOG_INFO("[AdaptLum] tau=%.4f dt=%.6f mipLevel=%.0f",
+                      pScProp->LuminanceTau, pScProp->FrameDeltaSec,
+                      CnstBuffer.CameraPos.w);
+        }
       }
     }
     else if (pass == PassType::COC) {

@@ -209,3 +209,114 @@ bool ReadAccessorIndices(const Document& doc, int accessorIndex,
 
 } // namespace gltf
 } // namespace t800
+
+// ── Draco mesh decompression ───────────────────────────────────────
+#include <draco/compression/decode.h>
+#include <draco/mesh/mesh.h>
+#include <draco/core/decoder_buffer.h>
+
+#ifdef OS_WINDOWS
+#pragma comment(lib, "draco.lib")
+#endif
+
+namespace t800 {
+namespace gltf {
+
+namespace {
+
+// Extract a float attribute from a Draco mesh into a flat vector.
+bool ExtractDracoAttribute(const draco::Mesh& mesh, int dracoAttrId,
+                           int expectedComponents,
+                           std::vector<float>& out) {
+  if (dracoAttrId < 0) return false;
+  const draco::PointAttribute* attr = mesh.GetAttributeByUniqueId(dracoAttrId);
+  if (!attr) return false;
+
+  int numComp = attr->num_components();
+  int count = static_cast<int>(mesh.num_points());
+  out.resize(count * expectedComponents);
+
+  for (int i = 0; i < count; i++) {
+    std::array<float, 4> val = {0, 0, 0, 0};
+    // Map point index to attribute value index, then convert
+    draco::AttributeValueIndex valIdx = attr->mapped_index(draco::PointIndex(i));
+    attr->ConvertValue(valIdx, numComp, val.data());
+    for (int c = 0; c < expectedComponents; c++) {
+      out[i * expectedComponents + c] = (c < numComp) ? val[c] : 0.0f;
+    }
+  }
+  return true;
+}
+
+} // namespace
+
+bool DecodeDracoMesh(const Document& doc,
+                     const DracoMeshCompression& draco,
+                     DracoDecodeResult& result) {
+  if (draco.bufferView < 0 ||
+      draco.bufferView >= static_cast<int>(doc.bufferViews.size())) {
+    T8_LOG_ERROR("[glTF] Draco: invalid bufferView %d", draco.bufferView);
+    return false;
+  }
+
+  const BufferView& bv = doc.bufferViews[draco.bufferView];
+  if (bv.buffer < 0 || bv.buffer >= static_cast<int>(doc._bufferData.size())) {
+    T8_LOG_ERROR("[glTF] Draco: invalid buffer %d", bv.buffer);
+    return false;
+  }
+
+  const auto& buf = doc._bufferData[bv.buffer];
+  if (bv.byteOffset + bv.byteLength > buf.size()) {
+    T8_LOG_ERROR("[glTF] Draco: bufferView OOR");
+    return false;
+  }
+
+  // Decode with Draco
+  draco::DecoderBuffer decoderBuf;
+  decoderBuf.Init(reinterpret_cast<const char*>(buf.data() + bv.byteOffset),
+                  bv.byteLength);
+
+  draco::Decoder decoder;
+  auto statusOr = decoder.DecodeMeshFromBuffer(&decoderBuf);
+  if (!statusOr.ok()) {
+    T8_LOG_ERROR("[glTF] Draco decode failed: %s",
+                 statusOr.status().error_msg());
+    return false;
+  }
+
+  std::unique_ptr<draco::Mesh> mesh = std::move(statusOr).value();
+  result.vertexCount = mesh->num_points();
+
+  // Extract indices
+  int numFaces = static_cast<int>(mesh->num_faces());
+  result.indices.resize(numFaces * 3);
+  result.maxIndex = 0;
+  for (int f = 0; f < numFaces; f++) {
+    const auto& face = mesh->face(draco::FaceIndex(f));
+    for (int c = 0; c < 3; c++) {
+      uint32_t idx = face[c].value();
+      result.indices[f * 3 + c] = idx;
+      if (idx > result.maxIndex) result.maxIndex = idx;
+    }
+  }
+
+  // Extract attributes using the Draco attribute IDs from the extension
+  const auto& attrs = draco.attributes;
+  ExtractDracoAttribute(*mesh, attrs.POSITION,   3, result.positions);
+  ExtractDracoAttribute(*mesh, attrs.NORMAL,     3, result.normals);
+  ExtractDracoAttribute(*mesh, attrs.TANGENT,    4, result.tangents);
+  ExtractDracoAttribute(*mesh, attrs.TEXCOORD_0, 2, result.texcoord0);
+  ExtractDracoAttribute(*mesh, attrs.TEXCOORD_1, 2, result.texcoord1);
+  ExtractDracoAttribute(*mesh, attrs.COLOR_0,    4, result.colors);
+
+  T8_LOG_DEBUG("[glTF] Draco decoded: %zu verts, %d faces",
+               result.vertexCount, numFaces);
+  if (result.positions.size() >= 3) {
+    T8_LOG_DEBUG("[glTF] Draco v0=(%f, %f, %f)",
+                 result.positions[0], result.positions[1], result.positions[2]);
+  }
+  return true;
+}
+
+} // namespace gltf
+} // namespace t800

@@ -131,6 +131,7 @@ FS_OUT FS( VS_OUTPUT input )   {
 	float3 geoNormal = normal.xyz;
 
 	float2 parallaxCoords = input.texture0;
+
 	#if defined(HEIGHT_MAP) || defined(NORMAL_MAP)
 		float3 tangent	 = normalize(input.htangent).xyz;
 		float3 binormal	 = normalize(input.hbinormal).xyz;

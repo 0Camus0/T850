@@ -74,6 +74,25 @@ std::string ResolveTextureName(const Document& doc, int texIdx) {
   return name;
 }
 
+// glTF wrap mode constants (per spec §5.29)
+constexpr int WRAP_REPEAT          = 10497;
+constexpr int WRAP_CLAMP_TO_EDGE   = 33071;
+constexpr int WRAP_MIRRORED_REPEAT = 33648;
+
+// Returns true if the sampler associated with `texIdx` uses tiling
+// (REPEAT or MIRRORED_REPEAT) on either axis. glTF defaults to REPEAT
+// when no sampler is specified.
+bool IsTextureWrapped(const Document& doc, int texIdx) {
+  if (texIdx < 0 || texIdx >= static_cast<int>(doc.textures.size())) return true;
+  const Texture& tex = doc.textures[texIdx];
+  if (!tex.sampler) return true; // no sampler → glTF default is REPEAT
+  int samplerIdx = *tex.sampler;
+  if (samplerIdx < 0 || samplerIdx >= static_cast<int>(doc.samplers.size())) return true;
+  const Sampler& s = doc.samplers[samplerIdx];
+  return s.wrapS == WRAP_REPEAT || s.wrapS == WRAP_MIRRORED_REPEAT
+      || s.wrapT == WRAP_REPEAT || s.wrapT == WRAP_MIRRORED_REPEAT;
+}
+
 } // namespace
 
 void ConvertMaterial(const Document& doc, int materialIndex,
@@ -108,6 +127,10 @@ void ConvertMaterial(const Document& doc, int materialIndex,
     if (pbr.baseColorTexture) {
       std::string n = ResolveTextureName(doc, pbr.baseColorTexture->index);
       if (!n.empty()) AddString(outMat, "diffuseMap", n);
+      if (pbr.baseColorTexture->texCoord != 0)
+        T8_LOG_ERROR("[glTF] material '%s': baseColorTexture.texCoord=%d "
+                     "(only UV0 supported, texture will use wrong UV set)",
+                     m.name.c_str(), pbr.baseColorTexture->texCoord);
     }
 
     AddFloats(outMat, "pbrMetallic",  {pbr.metallicFactor});
@@ -116,6 +139,10 @@ void ConvertMaterial(const Document& doc, int materialIndex,
     if (pbr.metallicRoughnessTexture) {
       std::string n = ResolveTextureName(doc, pbr.metallicRoughnessTexture->index);
       if (!n.empty()) AddString(outMat, "metallicMap", n);
+      if (pbr.metallicRoughnessTexture->texCoord != 0)
+        T8_LOG_ERROR("[glTF] material '%s': metallicRoughnessTexture.texCoord=%d "
+                     "(only UV0 supported)", m.name.c_str(),
+                     pbr.metallicRoughnessTexture->texCoord);
     }
   } else {
     // No PBR block — fall back to defaults.
@@ -127,14 +154,26 @@ void ConvertMaterial(const Document& doc, int materialIndex,
   if (m.normalTexture) {
     std::string n = ResolveTextureName(doc, m.normalTexture->index);
     if (!n.empty()) AddString(outMat, "normalMap", n);
+    if (m.normalTexture->texCoord != 0)
+      T8_LOG_ERROR("[glTF] material '%s': normalTexture.texCoord=%d "
+                   "(only UV0 supported)", m.name.c_str(),
+                   m.normalTexture->texCoord);
   }
   if (m.occlusionTexture) {
     std::string n = ResolveTextureName(doc, m.occlusionTexture->index);
     if (!n.empty()) AddString(outMat, "occlusionMap", n);
+    if (m.occlusionTexture->texCoord != 0)
+      T8_LOG_ERROR("[glTF] material '%s': occlusionTexture.texCoord=%d "
+                   "(only UV0 supported)", m.name.c_str(),
+                   m.occlusionTexture->texCoord);
   }
   if (m.emissiveTexture) {
     std::string n = ResolveTextureName(doc, m.emissiveTexture->index);
     if (!n.empty()) AddString(outMat, "emissiveMap", n);
+    if (m.emissiveTexture->texCoord != 0)
+      T8_LOG_ERROR("[glTF] material '%s': emissiveTexture.texCoord=%d "
+                   "(only UV0 supported)", m.name.c_str(),
+                   m.emissiveTexture->texCoord);
   }
   if (m.emissiveFactor.size() >= 3) {
     const auto& e = m.emissiveFactor;
@@ -153,6 +192,24 @@ void ConvertMaterial(const Document& doc, int materialIndex,
   if (alphaMode == 1u) AddFloats(outMat, "alphaCutoff", {m.alphaCutoff});
   AddDword(outMat, "doubleSided", m.doubleSided ? 1u : 0u);
   AddDword(outMat, "gltfTangentSpace", 1u);
+
+  // Determine wrapping mode from glTF sampler (default is REPEAT).
+  // The engine's "Tiled" flag controls GL_REPEAT vs GL_CLAMP_TO_EDGE.
+  // Check all texture references; any REPEAT/MIRRORED_REPEAT → tiled.
+  bool tiled = false;
+  auto checkTex = [&](int texIdx) {
+    if (IsTextureWrapped(doc, texIdx)) tiled = true;
+  };
+  if (m.pbrMetallicRoughness) {
+    if (m.pbrMetallicRoughness->baseColorTexture)
+      checkTex(m.pbrMetallicRoughness->baseColorTexture->index);
+    if (m.pbrMetallicRoughness->metallicRoughnessTexture)
+      checkTex(m.pbrMetallicRoughness->metallicRoughnessTexture->index);
+  }
+  if (m.normalTexture)    checkTex(m.normalTexture->index);
+  if (m.occlusionTexture) checkTex(m.occlusionTexture->index);
+  if (m.emissiveTexture)  checkTex(m.emissiveTexture->index);
+  AddDword(outMat, "Tiled", tiled ? 1u : 0u);
 }
 
 } // namespace gltf

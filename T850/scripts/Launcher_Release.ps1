@@ -608,6 +608,8 @@ $btnBrowseMatrices.Add_Click({
     }
 })
 
+$cmbModel.Add_SelectionChanged({ Update-Preview })
+
 $cmbApi.Add_SelectionChanged({ Update-Preview })
 $cmbScene.Add_SelectionChanged({ Update-Preview })
 $chkFullscreen.Add_Checked({ Update-Preview })
@@ -668,6 +670,32 @@ $btnEditor.Add_Click({
 
 # ── Initialize ──
 
+# Scan Models folder for .glb/.gltf files and populate the dropdown
+function Populate-ModelList {
+    $cmbModel.Items.Clear()
+    $modelsDir = Join-Path $rootDir "Models"
+    if (Test-Path $modelsDir) {
+        $files = Get-ChildItem $modelsDir -Filter "*.glb" | Sort-Object Name
+        $files += Get-ChildItem $modelsDir -Filter "*.gltf" | Sort-Object Name
+        foreach ($f in $files) {
+            $item = New-Object System.Windows.Controls.ComboBoxItem
+            $item.Content = $f.Name
+            $item.Tag = "Models/" + $f.Name
+            $cmbModel.Items.Add($item) | Out-Null
+        }
+    }
+    $selected = $false
+    foreach ($item in $cmbModel.Items) {
+        if ($item.Content -eq "DamagedHelmet.glb") {
+            $cmbModel.SelectedItem = $item; $selected = $true; break
+        }
+    }
+    if (-not $selected -and $cmbModel.Items.Count -gt 0) {
+        $cmbModel.SelectedIndex = 0
+    }
+}
+
+Populate-ModelList
 Load-Config
 Update-Preview
 

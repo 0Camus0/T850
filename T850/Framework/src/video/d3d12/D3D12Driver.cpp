@@ -648,7 +648,75 @@ namespace t800 {
   // ══════════════════════════════════════════════════════
 
   void D3D12Driver::SetWindow(void* window) { m_hwnd = GetActiveWindow(); }
+
+  void D3D12Driver::SetWindowHandle(const WindowHandle& handle) {
+    // Editor host path: honor an explicit HWND (e.g. an editor child window
+    // hosting the viewport). Falls back to GetActiveWindow() so the legacy
+    // SDL-driven flow keeps behaving exactly as before.
+    if (handle.kind == WindowHandle::WIN32_HWND && handle.nativeHandle) {
+      m_hwnd = reinterpret_cast<HWND>(handle.nativeHandle);
+    } else {
+      m_hwnd = GetActiveWindow();
+    }
+  }
   void D3D12Driver::SetDimensions(int w, int h) { width = w; height = h; }
+
+  bool D3D12Driver::ResizeSwapchain(int newW, int newH) {
+    if (newW <= 0 || newH <= 0) return false;
+    if (!m_swapChain) return false;
+
+    // Flush all in-flight GPU work
+    WaitForGPU();
+
+    // Release back buffer references (but keep the RTV descriptor handles — we reuse them)
+    for (UINT i = 0; i < kBackBufferCount; i++)
+      m_backBuffers[i].Reset();
+    m_depthBuffer.Reset();
+
+    HRESULT hr = m_swapChain->ResizeBuffers(kBackBufferCount, (UINT)newW, (UINT)newH,
+                                             DXGI_FORMAT_R8G8B8A8_UNORM,
+                                             DXGI_SWAP_CHAIN_FLAG_ALLOW_TEARING);
+    if (FAILED(hr)) {
+      T8_LOG_ERROR("[D3D12] ResizeBuffers failed (0x%08X)", (unsigned)hr);
+      return false;
+    }
+
+    // Recreate back buffer RTVs at the same descriptor slots
+    ID3D12Device* device = static_cast<D3D12Device*>(T8Device)->GetNativeDevice();
+    for (UINT i = 0; i < kBackBufferCount; i++) {
+      m_swapChain->GetBuffer(i, IID_PPV_ARGS(&m_backBuffers[i]));
+      device->CreateRenderTargetView(m_backBuffers[i].Get(), nullptr, m_backBufferRTVs[i]);
+    }
+
+    // Recreate depth buffer at the same DSV descriptor slot
+    width = newW; height = newH;
+    D3D12_RESOURCE_DESC dd = {};
+    dd.Dimension = D3D12_RESOURCE_DIMENSION_TEXTURE2D;
+    dd.Width = (UINT)newW; dd.Height = (UINT)newH;
+    dd.DepthOrArraySize = 1; dd.MipLevels = 1;
+    dd.Format = DXGI_FORMAT_D32_FLOAT; dd.SampleDesc.Count = 1;
+    dd.Flags = D3D12_RESOURCE_FLAG_ALLOW_DEPTH_STENCIL;
+    D3D12_CLEAR_VALUE cv = {}; cv.Format = DXGI_FORMAT_D32_FLOAT; cv.DepthStencil.Depth = 1.0f;
+    D3D12_HEAP_PROPERTIES hp = {}; hp.Type = D3D12_HEAP_TYPE_DEFAULT;
+    hr = device->CreateCommittedResource(&hp, D3D12_HEAP_FLAG_NONE, &dd,
+                                          D3D12_RESOURCE_STATE_DEPTH_WRITE, &cv,
+                                          IID_PPV_ARGS(&m_depthBuffer));
+    if (FAILED(hr)) {
+      T8_LOG_ERROR("[D3D12] Depth buffer recreate failed (0x%08X)", (unsigned)hr);
+      return false;
+    }
+    D3D12_DEPTH_STENCIL_VIEW_DESC dv = {};
+    dv.Format = DXGI_FORMAT_D32_FLOAT; dv.ViewDimension = D3D12_DSV_DIMENSION_TEXTURE2D;
+    device->CreateDepthStencilView(m_depthBuffer.Get(), &dv, m_depthDSV);
+
+    // Update current back buffer index, viewport, and scissor
+    m_currentBackBuffer = m_swapChain->GetCurrentBackBufferIndex();
+    m_viewport = { 0.f, 0.f, (float)newW, (float)newH, 0.f, 1.f };
+    m_scissorRect = { 0, 0, (LONG)newW, (LONG)newH };
+
+    T8_LOG_INFO("[D3D12] Swapchain resized to %dx%d", newW, newH);
+    return true;
+  }
 
   void D3D12Driver::CreateDevice() {
     // Enable debug layer only when requested (--d3d12debug flag)
@@ -949,31 +1017,38 @@ namespace t800 {
       m_commandLists[m_currentBackBuffer]->ResourceBarrier(1, &b);
     }
 
-    if (CurrentRT < 0) {
+    if (CurrentRT >= 0 && CurrentRT < (int)RTs.size()) {
+      const float cc[4] = { 0.0f, 0.0f, 0.0f, 0.0f };
+      D3D12RT* rt = static_cast<D3D12RT*>(RTs[CurrentRT]);
+      for (auto& rtv : rt->vRTVHandles)
+        m_commandLists[m_currentBackBuffer]->ClearRenderTargetView(rtv, cc, 0, nullptr);
+      if (rt->depthResource)
+        m_commandLists[m_currentBackBuffer]->ClearDepthStencilView(rt->depthDSV, D3D12_CLEAR_FLAG_DEPTH, 1.0f, 0, 0, nullptr);
+    } else {
       m_commandLists[m_currentBackBuffer]->OMSetRenderTargets(1, &m_backBufferRTVs[m_currentBackBuffer], FALSE, &m_depthDSV);
       m_commandLists[m_currentBackBuffer]->RSSetViewports(1, &m_viewport);
       m_commandLists[m_currentBackBuffer]->RSSetScissorRects(1, &m_scissorRect);
-      const float cc[4] = { 0.9f, 0.9f, 0.9f, 1.0f };
+      const float cc[4] = { 0.227f, 0.227f, 0.227f, 1.0f };
+      m_commandLists[m_currentBackBuffer]->ClearRenderTargetView(m_backBufferRTVs[m_currentBackBuffer], cc, 0, nullptr);
+      m_commandLists[m_currentBackBuffer]->ClearDepthStencilView(m_depthDSV, D3D12_CLEAR_FLAG_DEPTH, 1.0f, 0, 0, nullptr);
+    }
+  }
+
+  void D3D12Driver::ClearWithColor(float r, float g, float b, float a) {
+    const float cc[4] = { r, g, b, a };
+    if (CurrentRT >= 0 && CurrentRT < (int)RTs.size()) {
+      D3D12RT* rt = static_cast<D3D12RT*>(RTs[CurrentRT]);
+      for (auto& rtv : rt->vRTVHandles)
+        m_commandLists[m_currentBackBuffer]->ClearRenderTargetView(rtv, cc, 0, nullptr);
+      if (rt->depthResource)
+        m_commandLists[m_currentBackBuffer]->ClearDepthStencilView(rt->depthDSV, D3D12_CLEAR_FLAG_DEPTH, 1.0f, 0, 0, nullptr);
+    } else {
       m_commandLists[m_currentBackBuffer]->ClearRenderTargetView(m_backBufferRTVs[m_currentBackBuffer], cc, 0, nullptr);
       m_commandLists[m_currentBackBuffer]->ClearDepthStencilView(m_depthDSV, D3D12_CLEAR_FLAG_DEPTH, 1.0f, 0, 0, nullptr);
     }
   }
 
   void D3D12Driver::SwapBuffers() {
-    T8_LOG_TRACE("[D3D12] SwapBuffers");
-
-    // Frame timing
-    static LARGE_INTEGER freq = {}; 
-    static LARGE_INTEGER lastSwap = {};
-    static int frameNum = 0;
-    if (freq.QuadPart == 0) { QueryPerformanceFrequency(&freq); QueryPerformanceCounter(&lastSwap); }
-    LARGE_INTEGER now; QueryPerformanceCounter(&now);
-    double ms = (now.QuadPart - lastSwap.QuadPart) * 1000.0 / freq.QuadPart;
-    lastSwap = now;
-    frameNum++;
-    if (frameNum % 60 == 0) {
-      T8_LOG_INFO("[D3D12] Frame %d: %.1fms (%.1f FPS)", frameNum, ms, 1000.0/ms);
-    }
 
     {
       T8_PROFILE_CPU_SCOPE(t800::g_profiler, "D3D12_CmdClose+Execute");

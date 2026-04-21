@@ -52,6 +52,13 @@ namespace Log {
   // Current max level (for macro short-circuit)
   Level GetMaxLevel();
 
+  // Optional user callback invoked for every log line (after all backends).
+  // Called OUTSIDE the internal mutex, so the callback may acquire its own
+  // lock without risk of ABBA deadlock. The formatted message includes
+  // timestamp, level tag, etc.
+  using LogCallback = void(*)(Level level, const char* formattedMessage);
+  void SetCallback(LogCallback cb);
+
 } // namespace Log
 } // namespace t800
 

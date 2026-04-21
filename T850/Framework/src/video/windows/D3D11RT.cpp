@@ -123,7 +123,7 @@ namespace t800 {
       pTextureColor->Tex = Tex;
 
       D3D11_SHADER_RESOURCE_VIEW_DESC shaderResourceViewDesc;
-      shaderResourceViewDesc.Format = cfmt;
+      shaderResourceViewDesc.Format = thisFmt;
       shaderResourceViewDesc.ViewDimension = D3D11_SRV_DIMENSION_TEXTURE2D;
       shaderResourceViewDesc.Texture2D.MostDetailedMip = 0;
       shaderResourceViewDesc.Texture2D.MipLevels = GenMips ? -1 : 1;

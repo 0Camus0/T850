@@ -390,6 +390,9 @@ void EditorApp::OnUpdate() {
           obj.wireframe.EulerRadians() = XVECTOR3(
             od.rotation.x * kDegToRad, od.rotation.y * kDegToRad, od.rotation.z * kDegToRad);
           obj.wireframe.Scale() = XVECTOR3(od.scale.x, od.scale.y, od.scale.z);
+          obj.visible  = od.visible;
+          obj.frozen   = od.frozen;
+          obj.showWire = od.show_wire;
         }
       }
 
@@ -401,6 +404,7 @@ void EditorApp::OnUpdate() {
         c.target = XVECTOR3(cd.target.x, cd.target.y, cd.target.z);
         c.fovDeg = cd.fov_deg; c.orthoW = cd.ortho_w; c.orthoH = cd.ortho_h;
         c.nearPlane = cd.near_plane; c.farPlane = cd.far_plane;
+        c.visible = cd.visible; c.frozen = cd.frozen;
         g_cameras.push_back(c);
       }
 
@@ -412,6 +416,7 @@ void EditorApp::OnUpdate() {
         l.direction = XVECTOR3(ld.direction.x, ld.direction.y, ld.direction.z);
         l.color = XVECTOR3(ld.color.x, ld.color.y, ld.color.z);
         l.intensity = ld.intensity; l.radius = ld.radius; l.enabled = ld.enabled;
+        l.visible = ld.visible; l.frozen = ld.frozen;
         g_lights.push_back(l);
       }
 
@@ -1010,6 +1015,9 @@ void EditorApp::OnDraw() {
                           obj.wireframe.EulerRadians().y * kRadToDeg,
                           obj.wireframe.EulerRadians().z * kRadToDeg };
           od.scale    = { obj.wireframe.Scale().x, obj.wireframe.Scale().y, obj.wireframe.Scale().z };
+          od.visible   = obj.visible;
+          od.frozen    = obj.frozen;
+          od.show_wire = obj.showWire;
           sf.objects.push_back(od);
         }
         for (auto& c : g_cameras) {
@@ -1023,6 +1031,8 @@ void EditorApp::OnDraw() {
           cd.ortho_h    = c.orthoH;
           cd.near_plane = c.nearPlane;
           cd.far_plane  = c.farPlane;
+          cd.visible    = c.visible;
+          cd.frozen     = c.frozen;
           sf.cameras.push_back(cd);
         }
         for (auto& l : g_lights) {
@@ -1035,6 +1045,8 @@ void EditorApp::OnDraw() {
           ld.intensity = l.intensity;
           ld.radius    = l.radius;
           ld.enabled   = l.enabled;
+          ld.visible   = l.visible;
+          ld.frozen    = l.frozen;
           sf.lights.push_back(ld);
         }
         SaveSceneToFile(sf, path);

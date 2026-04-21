@@ -24,6 +24,9 @@ struct SceneObjectDesc {
   Vec3f       position;
   Vec3f       rotation;      // degrees (human-readable)
   Vec3f       scale = {1,1,1};
+  bool        visible   = true;
+  bool        frozen    = false;
+  bool        show_wire = false;
 };
 
 struct SceneCameraDesc {
@@ -36,6 +39,8 @@ struct SceneCameraDesc {
   float       ortho_h    = 15.0f;
   float       near_plane = 0.1f;
   float       far_plane  = 1000.0f;
+  bool        visible    = true;
+  bool        frozen     = false;
 };
 
 struct SceneLightDesc {
@@ -47,6 +52,8 @@ struct SceneLightDesc {
   float       intensity  = 1.5f;
   float       radius     = 10.0f;
   bool        enabled    = true;
+  bool        visible    = true;
+  bool        frozen     = false;
 };
 
 struct EditorStateDesc {

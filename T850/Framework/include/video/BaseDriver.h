@@ -255,6 +255,7 @@ namespace t800 {
     }
     virtual void	 SetDimensions(int, int) = 0;
     virtual void	 Clear() = 0;
+    virtual void	 ClearWithColor(float r, float g, float b, float a) { Clear(); }
     virtual void	 SwapBuffers() = 0;
     virtual void SetBlendState(BLEND_STATES state) = 0;
     virtual void SetDepthStencilState(DEPTH_STENCIL_STATES state) = 0;

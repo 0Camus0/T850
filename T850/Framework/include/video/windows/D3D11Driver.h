@@ -128,6 +128,7 @@ namespace t800 {
     void	 PopRT();
 
     void	Clear();
+    void	ClearWithColor(float r, float g, float b, float a) override;
     void	SwapBuffers();
 
     HWND	hwnd;

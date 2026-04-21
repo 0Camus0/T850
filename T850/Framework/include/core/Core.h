@@ -73,6 +73,9 @@ namespace t800 {
     // Dump current scene state back to its JSON file
     virtual void SaveSceneState() {}
 
+    // Request a frame dump (spacebar snapshot)
+    virtual void RequestDump() {}
+
     SceneProps		SceneProp;
     RootFramework	*pFramework;
   };

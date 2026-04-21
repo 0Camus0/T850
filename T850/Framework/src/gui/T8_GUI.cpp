@@ -8,6 +8,7 @@
 #include <video/windows/D3D11Driver.h>
 #endif
 #include <utils/Utils.h>
+#include <utils/GUIAtlasGenerator.h>
 
 #ifdef max
 #undef max
@@ -76,7 +77,7 @@ void GUIManager::Init(int screenW, int screenH) {
 void GUIManager::InitShader() {
   char* vsSourceP;
   char* fsSourceP;
-  if (g_pBaseDriver->m_currentAPI == GRAPHICS_API::OPENGL) {
+  if (g_pBaseDriver->UsesGLSL()) {
     vsSourceP = file2string("Shaders/VS_GUI.glsl");
     fsSourceP = file2string("Shaders/FS_GUI.glsl");
   } else {
@@ -87,7 +88,7 @@ void GUIManager::InitShader() {
   std::string vstr(vsSourceP);
   std::string fstr(fsSourceP);
 
-  if (g_pBaseDriver->m_currentAPI == GRAPHICS_API::OPENGL) {
+  if (g_pBaseDriver->UsesGLSL()) {
 #if defined(USING_OPENGL)
     std::string Defines;
     Defines += "#version 130\n\n";
@@ -103,6 +104,13 @@ void GUIManager::InitShader() {
     vstr = Defines + vstr;
     fstr = Defines + fstr;
 #endif
+    if (g_pBaseDriver->m_currentAPI == GRAPHICS_API::VULKAN) {
+      std::string Defines;
+      Defines += "#version 450\n\n";
+      Defines += "#define ES_30\n\n";
+      vstr = Defines + vstr;
+      fstr = Defines + fstr;
+    }
   }
 
   free(vsSourceP);
@@ -112,7 +120,119 @@ void GUIManager::InitShader() {
   m_shader = g_pBaseDriver->GetShaderIdx(shaderID);
 }
 
+bool GUIManager::TryLoadAtlas() {
+  std::vector<AtlasEntry> entries;
+  int atlasW = 0, atlasH = 0;
+  if (!GUIAtlasGenerator::LoadMetadata("Textures/../Layouts/gui_atlas.json", entries, atlasW, atlasH))
+    return false;
+
+  m_atlasTexture = T8Device->CreateTexture("../Layouts/gui_atlas.png");
+  if (!m_atlasTexture) {
+    T8_LOG_ERROR("[GUIManager] Atlas texture 'gui_atlas.png' failed to load");
+    return false;
+  }
+  m_atlasTexture->params = TEXT_BASIC_PARAMS::CLAMP_TO_EDGE | TEXT_BASIC_PARAMS::MIPMAPS;
+  m_atlasTexture->SetTextureParams();
+
+  for (const auto& e : entries) {
+    AtlasRegion r;
+    r.u0 = e.u0; r.v0 = e.v0;
+    r.u1 = e.u1; r.v1 = e.v1;
+
+    if (e.name == "SliderBar") {
+      m_atlasBarRegion = r;
+      m_atlasBarSrcW = (float)e.srcW;
+      m_atlasBarSrcH = (float)e.srcH;
+    } else if (e.name == "SliderKnob") {
+      m_atlasKnobRegion = r;
+    } else if (e.name == "GUI_CheckBox_Box") {
+      m_atlasCheckBoxRegion = r;
+      m_atlasCheckBoxSrcW = (float)e.srcW;
+      m_atlasCheckBoxSrcH = (float)e.srcH;
+    } else if (e.name == "GUI_Checkbox_Check") {
+      m_atlasCheckMarkRegion = r;
+    } else if (e.name == "GUI_DropBar") {
+      m_atlasSelectorBarRegion = r;
+      m_atlasSelectorBarSrcW = (float)e.srcW;
+      m_atlasSelectorBarSrcH = (float)e.srcH;
+    } else if (e.name == "GUI_DropNonPressedLeft") {
+      m_atlasSelectorBtnLeftRegion = r;
+      m_atlasSelectorBtnLeftSrcW = (float)e.srcW;
+    } else if (e.name == "GUI_DropNonPressedRight") {
+      m_atlasSelectorBtnRightRegion = r;
+      m_atlasSelectorBtnRightSrcW = (float)e.srcW;
+    } else if (e.name == "GUI_DropPressedLeft") {
+      m_atlasSelectorBtnLeftPressRegion = r;
+    } else if (e.name == "GUI_DropPressedRight") {
+      m_atlasSelectorBtnRightPressRegion = r;
+    } else if (e.name == "PopupBackground") {
+      m_atlasPopupBgRegion = r;
+      m_atlasPopupBgSrcW = (float)e.srcW;
+      m_atlasPopupBgSrcH = (float)e.srcH;
+    } else if (e.name == "PopUpOKNonPressed") {
+      m_atlasPopupOkRegion = r;
+      m_atlasPopupOkSrcW = (float)e.srcW;
+      m_atlasPopupOkSrcH = (float)e.srcH;
+    } else if (e.name == "PopUpOkPressed") {
+      m_atlasPopupOkPressedRegion = r;
+    } else if (e.name == "PopUpCancelNonPressed") {
+      m_atlasPopupCancelRegion = r;
+      m_atlasPopupCancelSrcW = (float)e.srcW;
+      m_atlasPopupCancelSrcH = (float)e.srcH;
+    } else if (e.name == "PopUpCancelPressed") {
+      m_atlasPopupCancelPressedRegion = r;
+    }
+  }
+
+  m_useAtlas = true;
+  T8_LOG_INFO("[GUIManager] Atlas loaded: %dx%d (%d entries)", atlasW, atlasH, (int)entries.size());
+  return true;
+}
+
 void GUIManager::InitTextures() {
+  if (TryLoadAtlas()) {
+    T8_LOG_INFO("[GUIManager] Using atlas-based GUI textures");
+    // Still need the white 1x1 pixel texture for solid quads
+    unsigned char white[4] = {255, 255, 255, 255};
+    m_whiteTexture = T8Device->CreateTextureFromMemory(white, 1, 1, 4, "gui_white_1x1");
+    if (m_whiteTexture) {
+      m_whiteTexture->params = TEXT_BASIC_PARAMS::CLAMP_TO_EDGE;
+      m_whiteTexture->SetTextureParams();
+    }
+    // UI buttons are NOT in the atlas — load individually
+    auto loadUITexture = [&](const char* name) -> Texture* {
+      std::string path = std::string("UI/") + name;
+      Texture* t = T8Device->CreateTexture(path);
+      if (!t) { T8_LOG_ERROR("[GUIManager] Failed to load UI texture '%s'", path.c_str()); return nullptr; }
+      t->params = TEXT_BASIC_PARAMS::CLAMP_TO_EDGE | TEXT_BASIC_PARAMS::MIPMAPS;
+      t->SetTextureParams();
+      return t;
+    };
+    m_guiBtnNormalTex  = loadUITexture("GUINonPressed.png");
+    m_guiBtnPressedTex = loadUITexture("GUIPressed.png");
+    m_backBtnNormalTex  = loadUITexture("BackNonPressed.png");
+    m_backBtnPressedTex = loadUITexture("BackPressed.png");
+    m_guiButton.texNormal  = m_guiBtnNormalTex;
+    m_guiButton.texPressed = m_guiBtnPressedTex;
+    m_backButton.texNormal  = m_backBtnNormalTex;
+    m_backButton.texPressed = m_backBtnPressedTex;
+    // Point all control texture pointers to the atlas (for code that checks != nullptr)
+    m_barTexture = m_atlasTexture;
+    m_knobTexture = m_atlasTexture;
+    m_checkBoxTexture = m_atlasTexture;
+    m_checkMarkTexture = m_atlasTexture;
+    m_selectorBarTexture = m_atlasTexture;
+    m_selectorBtnLeftTexture = m_atlasTexture;
+    m_selectorBtnRightTexture = m_atlasTexture;
+    m_selectorBtnLeftPressTexture = m_atlasTexture;
+    m_selectorBtnRightPressTexture = m_atlasTexture;
+    m_popupBgTexture = m_atlasTexture;
+    m_popupOkTexture = m_atlasTexture;
+    m_popupOkPressedTexture = m_atlasTexture;
+    m_popupCancelTexture = m_atlasTexture;
+    m_popupCancelPressedTexture = m_atlasTexture;
+    return;
+  }
   auto loadGuiTexture = [&](const char* name) -> Texture* {
     // Load from Assets/Layouts/Textures at runtime.
     // The texture loader roots at "Textures/", so "../Layouts/..." resolves to Assets/Layouts.
@@ -185,6 +305,38 @@ void GUIManager::Destroy() {
     m_quad.Destroy();
     m_CB->release();
     m_textRenderer.Destroy();
+
+    // Release GUI textures (created via CreateTextureFromMemory, not tracked by driver)
+    if (m_atlasTexture) {
+      // Atlas mode: all individual textures point to the shared atlas — only release once
+      m_atlasTexture->release();
+      m_atlasTexture = nullptr;
+      // m_whiteTexture is always created independently (1x1 white pixel)
+      if (m_whiteTexture) { m_whiteTexture->release(); m_whiteTexture = nullptr; }
+    } else {
+      // Individual textures: release each one
+      auto releaseTex = [](Texture*& t) { if (t) { t->release(); t = nullptr; } };
+      releaseTex(m_barTexture);
+      releaseTex(m_knobTexture);
+      releaseTex(m_whiteTexture);
+      releaseTex(m_checkBoxTexture);
+      releaseTex(m_checkMarkTexture);
+      releaseTex(m_selectorBarTexture);
+      releaseTex(m_selectorBtnLeftTexture);
+      releaseTex(m_selectorBtnRightTexture);
+      releaseTex(m_selectorBtnLeftPressTexture);
+      releaseTex(m_selectorBtnRightPressTexture);
+      releaseTex(m_popupBgTexture);
+      releaseTex(m_popupOkTexture);
+      releaseTex(m_popupOkPressedTexture);
+      releaseTex(m_popupCancelTexture);
+      releaseTex(m_popupCancelPressedTexture);
+    }
+    auto releaseTex = [](Texture*& t) { if (t) { t->release(); t = nullptr; } };
+    releaseTex(m_guiBtnNormalTex);
+    releaseTex(m_guiBtnPressedTex);
+    releaseTex(m_backBtnNormalTex);
+    releaseTex(m_backBtnPressedTex);
   }
   for (auto* e : m_elements) delete e;
   m_elements.clear();
@@ -806,6 +958,53 @@ void GUIManager::Draw() {
   m_ctx.popupTextScaleX  = m_controlLayout.popupTextScaleX;
   m_ctx.popupTextScaleY  = m_controlLayout.popupTextScaleY;
 
+  // Atlas regions and source dimensions
+  if (m_useAtlas) {
+    m_ctx.barRegion     = m_atlasBarRegion;
+    m_ctx.knobRegion    = m_atlasKnobRegion;
+    m_ctx.checkBoxRegion  = m_atlasCheckBoxRegion;
+    m_ctx.checkMarkRegion = m_atlasCheckMarkRegion;
+    m_ctx.selectorBarRegion       = m_atlasSelectorBarRegion;
+    m_ctx.selectorBtnLeftRegion   = m_atlasSelectorBtnLeftRegion;
+    m_ctx.selectorBtnRightRegion  = m_atlasSelectorBtnRightRegion;
+    m_ctx.selectorBtnLeftPressRegion  = m_atlasSelectorBtnLeftPressRegion;
+    m_ctx.selectorBtnRightPressRegion = m_atlasSelectorBtnRightPressRegion;
+    m_ctx.popupBgRegion             = m_atlasPopupBgRegion;
+    m_ctx.popupOkRegion             = m_atlasPopupOkRegion;
+    m_ctx.popupOkPressedRegion      = m_atlasPopupOkPressedRegion;
+    m_ctx.popupCancelRegion         = m_atlasPopupCancelRegion;
+    m_ctx.popupCancelPressedRegion  = m_atlasPopupCancelPressedRegion;
+    m_ctx.barSrcW     = m_atlasBarSrcW;
+    m_ctx.barSrcH     = m_atlasBarSrcH;
+    m_ctx.selectorBarSrcW  = m_atlasSelectorBarSrcW;
+    m_ctx.selectorBarSrcH  = m_atlasSelectorBarSrcH;
+    m_ctx.selectorBtnLeftSrcW  = m_atlasSelectorBtnLeftSrcW;
+    m_ctx.selectorBtnRightSrcW = m_atlasSelectorBtnRightSrcW;
+    m_ctx.checkBoxSrcW  = m_atlasCheckBoxSrcW;
+    m_ctx.checkBoxSrcH  = m_atlasCheckBoxSrcH;
+    m_ctx.popupBgSrcW   = m_atlasPopupBgSrcW;
+    m_ctx.popupBgSrcH   = m_atlasPopupBgSrcH;
+    m_ctx.popupOkSrcW   = m_atlasPopupOkSrcW;
+    m_ctx.popupOkSrcH   = m_atlasPopupOkSrcH;
+    m_ctx.popupCancelSrcW = m_atlasPopupCancelSrcW;
+    m_ctx.popupCancelSrcH = m_atlasPopupCancelSrcH;
+  } else {
+    m_ctx.barSrcW = m_barTexture ? (float)m_barTexture->x : 256.0f;
+    m_ctx.barSrcH = m_barTexture ? (float)m_barTexture->y : 32.0f;
+    m_ctx.selectorBarSrcW  = m_selectorBarTexture ? (float)m_selectorBarTexture->x : 256.0f;
+    m_ctx.selectorBarSrcH  = m_selectorBarTexture ? (float)m_selectorBarTexture->y : 32.0f;
+    m_ctx.selectorBtnLeftSrcW  = m_selectorBtnLeftTexture ? (float)m_selectorBtnLeftTexture->x : 32.0f;
+    m_ctx.selectorBtnRightSrcW = m_selectorBtnRightTexture ? (float)m_selectorBtnRightTexture->x : 32.0f;
+    m_ctx.checkBoxSrcW = m_checkBoxTexture ? (float)m_checkBoxTexture->x : 64.0f;
+    m_ctx.checkBoxSrcH = m_checkBoxTexture ? (float)m_checkBoxTexture->y : 64.0f;
+    m_ctx.popupBgSrcW   = m_popupBgTexture ? (float)m_popupBgTexture->x : 400.0f;
+    m_ctx.popupBgSrcH   = m_popupBgTexture ? (float)m_popupBgTexture->y : 160.0f;
+    m_ctx.popupOkSrcW   = m_popupOkTexture ? (float)m_popupOkTexture->x : 100.0f;
+    m_ctx.popupOkSrcH   = m_popupOkTexture ? (float)m_popupOkTexture->y : 40.0f;
+    m_ctx.popupCancelSrcW = m_popupCancelTexture ? (float)m_popupCancelTexture->x : 100.0f;
+    m_ctx.popupCancelSrcH = m_popupCancelTexture ? (float)m_popupCancelTexture->y : 40.0f;
+  }
+
   g_pBaseDriver->SetBlendState(BaseDriver::BLEND_STATES::ALPHA_BLEND);
   g_pBaseDriver->SetDepthStencilState(BaseDriver::DEPTH_STENCIL_STATES::NONE);
   g_pBaseDriver->SetCullFace(BaseDriver::FACE_CULLING::FRONT_AND_BACK);
@@ -1015,66 +1214,66 @@ void GUIManager::DrawControlEditPreview() {
   switch (m_controlEditTarget) {
     case GUIControlEditTarget::SliderKnob: {
       // Parent bar in original texture aspect ratio.
-      float barW = m_barTexture ? (float)m_barTexture->x : 256.0f;
-      float barH = m_barTexture ? (float)m_barTexture->y : 32.0f;
+      float barW = m_ctx.barSrcW;
+      float barH = m_ctx.barSrcH;
       ControlEditRect parent = fitRect(barW, barH);
       if (m_barTexture) {
-        m_ctx.DrawTexturedQuad(parent.x, parent.y, parent.w, parent.h, m_barTexture, XVECTOR3(1.0f, 1.0f, 1.0f));
+        m_ctx.DrawTexturedQuad(parent.x, parent.y, parent.w, parent.h, m_barTexture, XVECTOR3(1.0f, 1.0f, 1.0f), m_ctx.barRegion);
       }
       if (m_knobTexture && m_controlEditRect.valid) {
         m_ctx.DrawTexturedQuad(m_controlEditRect.x, m_controlEditRect.y, m_controlEditRect.w, m_controlEditRect.h,
-                               m_knobTexture, XVECTOR3(1.0f, 1.0f, 1.0f));
+                               m_knobTexture, XVECTOR3(1.0f, 1.0f, 1.0f), m_ctx.knobRegion);
       }
       break;
     }
     case GUIControlEditTarget::SelectorControl: {
       // Parent selector in original aspect ratio.  Bar = full parent rect.
-      float sbw = m_selectorBarTexture ? (float)m_selectorBarTexture->x : 256.0f;
-      float sbh = m_selectorBarTexture ? (float)m_selectorBarTexture->y : 32.0f;
-      float blw = m_selectorBtnLeftTexture ? (float)m_selectorBtnLeftTexture->x : 32.0f;
-      float brw = m_selectorBtnRightTexture ? (float)m_selectorBtnRightTexture->x : 32.0f;
+      float sbw = m_ctx.selectorBarSrcW;
+      float sbh = m_ctx.selectorBarSrcH;
+      float blw = m_ctx.selectorBtnLeftSrcW;
+      float brw = m_ctx.selectorBtnRightSrcW;
       float sw = sbw + blw + brw;
       float sh = sbh;
       ControlEditRect parent = fitRect(sw, sh);
 
       // Bar fills the full parent rect
       if (m_selectorBarTexture) {
-        m_ctx.DrawTexturedQuad(parent.x, parent.y, parent.w, parent.h, m_selectorBarTexture, XVECTOR3(1.0f, 1.0f, 1.0f));
+        m_ctx.DrawTexturedQuad(parent.x, parent.y, parent.w, parent.h, m_selectorBarTexture, XVECTOR3(1.0f, 1.0f, 1.0f), m_ctx.selectorBarRegion);
       }
 
       if (m_selectorBtnLeftTexture && m_controlEditRect.valid) {
         if (m_controlActiveSubpart == GUIControlSubpart::SelectorLeft) {
           m_ctx.DrawTexturedQuad(m_controlEditRect.x, m_controlEditRect.y, m_controlEditRect.w, m_controlEditRect.h,
-                                 m_selectorBtnLeftTexture, XVECTOR3(1.0f, 1.0f, 1.0f));
+                                 m_selectorBtnLeftTexture, XVECTOR3(1.0f, 1.0f, 1.0f), m_ctx.selectorBtnLeftRegion);
         } else {
           m_ctx.DrawTexturedQuad(m_controlEditRectSecondary.x, m_controlEditRectSecondary.y,
                                  m_controlEditRectSecondary.w, m_controlEditRectSecondary.h,
-                                 m_selectorBtnLeftTexture, XVECTOR3(1.0f, 1.0f, 1.0f));
+                                 m_selectorBtnLeftTexture, XVECTOR3(1.0f, 1.0f, 1.0f), m_ctx.selectorBtnLeftRegion);
         }
       }
       if (m_selectorBtnRightTexture && m_controlEditRect.valid) {
         if (m_controlActiveSubpart == GUIControlSubpart::SelectorRight) {
           m_ctx.DrawTexturedQuad(m_controlEditRect.x, m_controlEditRect.y, m_controlEditRect.w, m_controlEditRect.h,
-                                 m_selectorBtnRightTexture, XVECTOR3(1.0f, 1.0f, 1.0f));
+                                 m_selectorBtnRightTexture, XVECTOR3(1.0f, 1.0f, 1.0f), m_ctx.selectorBtnRightRegion);
         } else {
           m_ctx.DrawTexturedQuad(m_controlEditRectSecondary.x, m_controlEditRectSecondary.y,
                                  m_controlEditRectSecondary.w, m_controlEditRectSecondary.h,
-                                 m_selectorBtnRightTexture, XVECTOR3(1.0f, 1.0f, 1.0f));
+                                 m_selectorBtnRightTexture, XVECTOR3(1.0f, 1.0f, 1.0f), m_ctx.selectorBtnRightRegion);
         }
       }
       break;
     }
     case GUIControlEditTarget::CheckboxMark: {
       // Parent checkbox box in original aspect ratio.
-      float cbW = m_checkBoxTexture ? (float)m_checkBoxTexture->x : 64.0f;
-      float cbH = m_checkBoxTexture ? (float)m_checkBoxTexture->y : 64.0f;
+      float cbW = m_ctx.checkBoxSrcW;
+      float cbH = m_ctx.checkBoxSrcH;
       ControlEditRect parent = fitRect(cbW, cbH);
       if (m_checkBoxTexture) {
-        m_ctx.DrawTexturedQuad(parent.x, parent.y, parent.w, parent.h, m_checkBoxTexture, XVECTOR3(1.0f, 1.0f, 1.0f));
+        m_ctx.DrawTexturedQuad(parent.x, parent.y, parent.w, parent.h, m_checkBoxTexture, XVECTOR3(1.0f, 1.0f, 1.0f), m_ctx.checkBoxRegion);
       }
       if (m_checkMarkTexture && m_controlEditRect.valid) {
         m_ctx.DrawTexturedQuad(m_controlEditRect.x, m_controlEditRect.y, m_controlEditRect.w, m_controlEditRect.h,
-                               m_checkMarkTexture, XVECTOR3(1.0f, 1.0f, 1.0f));
+                               m_checkMarkTexture, XVECTOR3(1.0f, 1.0f, 1.0f), m_ctx.checkMarkRegion);
       }
       break;
     }
@@ -1083,11 +1282,11 @@ void GUIManager::DrawControlEditPreview() {
       float bgX, bgY, bgW, bgH, okX, okY, okW, okH, caX, caY, caW, caH;
       GetPopupRects(bgX, bgY, bgW, bgH, okX, okY, okW, okH, caX, caY, caW, caH);
       if (m_popupBgTexture)
-        m_ctx.DrawTexturedQuad(bgX, bgY, bgW, bgH, m_popupBgTexture, XVECTOR3(1.0f, 1.0f, 1.0f));
+        m_ctx.DrawTexturedQuad(bgX, bgY, bgW, bgH, m_popupBgTexture, XVECTOR3(1.0f, 1.0f, 1.0f), m_ctx.popupBgRegion);
       if (m_popupOkTexture)
-        m_ctx.DrawTexturedQuad(okX, okY, okW, okH, m_popupOkTexture, XVECTOR3(1.0f, 1.0f, 1.0f));
+        m_ctx.DrawTexturedQuad(okX, okY, okW, okH, m_popupOkTexture, XVECTOR3(1.0f, 1.0f, 1.0f), m_ctx.popupOkRegion);
       if (m_popupCancelTexture)
-        m_ctx.DrawTexturedQuad(caX, caY, caW, caH, m_popupCancelTexture, XVECTOR3(1.0f, 1.0f, 1.0f));
+        m_ctx.DrawTexturedQuad(caX, caY, caW, caH, m_popupCancelTexture, XVECTOR3(1.0f, 1.0f, 1.0f), m_ctx.popupCancelRegion);
       // Example text centered on bg (matches runtime text placement).
       if (m_ctx.text) {
         int sw = (int)m_ctx.screenW;
@@ -1246,8 +1445,8 @@ void GUIManager::UpdateControlEditMode(float mx, float my, bool mouseDown) {
 
     switch (m_controlEditTarget) {
       case GUIControlEditTarget::SliderKnob: {
-        float barW = m_barTexture ? (float)m_barTexture->x : 256.0f;
-        float barH = m_barTexture ? (float)m_barTexture->y : 32.0f;
+        float barW = m_ctx.barSrcW;
+        float barH = m_ctx.barSrcH;
         ControlEditRect parent = fitRect(barW, barH);
         float baseW = parent.h;
         float baseX = parent.x + 0.5f * (std::max)(0.0f, parent.w - baseW);
@@ -1258,10 +1457,10 @@ void GUIManager::UpdateControlEditMode(float mx, float my, bool mouseDown) {
         break;
       }
       case GUIControlEditTarget::SelectorControl: {
-        float sbw = m_selectorBarTexture ? (float)m_selectorBarTexture->x : 256.0f;
-        float sbh = m_selectorBarTexture ? (float)m_selectorBarTexture->y : 32.0f;
-        float blw = m_selectorBtnLeftTexture ? (float)m_selectorBtnLeftTexture->x : 32.0f;
-        float brw = m_selectorBtnRightTexture ? (float)m_selectorBtnRightTexture->x : 32.0f;
+        float sbw = m_ctx.selectorBarSrcW;
+        float sbh = m_ctx.selectorBarSrcH;
+        float blw = m_ctx.selectorBtnLeftSrcW;
+        float brw = m_ctx.selectorBtnRightSrcW;
         ControlEditRect parent = fitRect(sbw + blw + brw, sbh);
         float baseW = parent.h;
         float baseY = parent.y;
@@ -1281,8 +1480,8 @@ void GUIManager::UpdateControlEditMode(float mx, float my, bool mouseDown) {
         break;
       }
       case GUIControlEditTarget::CheckboxMark: {
-        float cbW = m_checkBoxTexture ? (float)m_checkBoxTexture->x : 64.0f;
-        float cbH = m_checkBoxTexture ? (float)m_checkBoxTexture->y : 64.0f;
+        float cbW = m_ctx.checkBoxSrcW;
+        float cbH = m_ctx.checkBoxSrcH;
         ControlEditRect parent = fitRect(cbW, cbH);
         m_controlLayout.checkboxMarkScaleX = partW / (std::max)(1.0f, parent.w);
         m_controlLayout.checkboxMarkScaleY = partH / (std::max)(1.0f, parent.h);
@@ -1301,8 +1500,8 @@ void GUIManager::UpdateControlEditMode(float mx, float my, bool mouseDown) {
             // Keep the OK button's native aspect ratio when scaling.
             float baseH = bgH * 0.25f; // baseline
             m_controlLayout.popupOkScaleY = partH / (std::max)(1.0f, baseH);
-            float srcW = m_popupOkTexture ? (float)m_popupOkTexture->x : 100.0f;
-            float srcH = m_popupOkTexture ? (float)m_popupOkTexture->y : 40.0f;
+            float srcW = m_ctx.popupOkSrcW;
+            float srcH = m_ctx.popupOkSrcH;
             float implWFromY = (srcH > 0.0f ? (srcW / srcH) : 2.5f) * partH;
             m_controlLayout.popupOkScaleX = m_controlLayout.popupOkScaleY * (partW / (std::max)(1.0f, implWFromY));
             float centerX = m_controlEditRect.x + partW * 0.5f;
@@ -1314,8 +1513,8 @@ void GUIManager::UpdateControlEditMode(float mx, float my, bool mouseDown) {
           case GUIControlSubpart::PopupCancel: {
             float baseH = bgH * 0.25f;
             m_controlLayout.popupCancelScaleY = partH / (std::max)(1.0f, baseH);
-            float srcW = m_popupCancelTexture ? (float)m_popupCancelTexture->x : 100.0f;
-            float srcH = m_popupCancelTexture ? (float)m_popupCancelTexture->y : 40.0f;
+            float srcW = m_ctx.popupCancelSrcW;
+            float srcH = m_ctx.popupCancelSrcH;
             float implWFromY = (srcH > 0.0f ? (srcW / srcH) : 2.5f) * partH;
             m_controlLayout.popupCancelScaleX = m_controlLayout.popupCancelScaleY * (partW / (std::max)(1.0f, implWFromY));
             float centerX = m_controlEditRect.x + partW * 0.5f;
@@ -1339,8 +1538,8 @@ void GUIManager::UpdateControlEditMode(float mx, float my, bool mouseDown) {
             // Primary: edit background size.
             float baseH = (m_ctx.screenH > 0.0f ? m_ctx.screenH : (float)g_pBaseDriver->height) * 0.30f;
             m_controlLayout.popupBgScaleY = partH / (std::max)(1.0f, baseH);
-            float srcW = m_popupBgTexture ? (float)m_popupBgTexture->x : 400.0f;
-            float srcH = m_popupBgTexture ? (float)m_popupBgTexture->y : 160.0f;
+            float srcW = m_ctx.popupBgSrcW;
+            float srcH = m_ctx.popupBgSrcH;
             float implWFromY = (srcH > 0.0f ? (srcW / srcH) : 2.5f) * partH;
             m_controlLayout.popupBgScaleX = m_controlLayout.popupBgScaleY * (partW / (std::max)(1.0f, implWFromY));
             break;
@@ -1355,8 +1554,8 @@ void GUIManager::UpdateControlEditMode(float mx, float my, bool mouseDown) {
   auto computeRect = [&]() {
     switch (m_controlEditTarget) {
       case GUIControlEditTarget::SliderKnob: {
-        float barW = m_barTexture ? (float)m_barTexture->x : 256.0f;
-        float barH = m_barTexture ? (float)m_barTexture->y : 32.0f;
+        float barW = m_ctx.barSrcW;
+        float barH = m_ctx.barSrcH;
         ControlEditRect parent = fitRect(barW, barH);
         float baseW = parent.h;
         float baseX = parent.x + 0.5f * (std::max)(0.0f, parent.w - baseW);
@@ -1370,10 +1569,10 @@ void GUIManager::UpdateControlEditMode(float mx, float my, bool mouseDown) {
         return;
       }
       case GUIControlEditTarget::SelectorControl: {
-        float sbw = m_selectorBarTexture ? (float)m_selectorBarTexture->x : 256.0f;
-        float sbh = m_selectorBarTexture ? (float)m_selectorBarTexture->y : 32.0f;
-        float blw = m_selectorBtnLeftTexture ? (float)m_selectorBtnLeftTexture->x : 32.0f;
-        float brw = m_selectorBtnRightTexture ? (float)m_selectorBtnRightTexture->x : 32.0f;
+        float sbw = m_ctx.selectorBarSrcW;
+        float sbh = m_ctx.selectorBarSrcH;
+        float blw = m_ctx.selectorBtnLeftSrcW;
+        float brw = m_ctx.selectorBtnRightSrcW;
         ControlEditRect parent = fitRect(sbw + blw + brw, sbh);
         float baseW = parent.h;
         float baseY = parent.y;
@@ -1398,8 +1597,8 @@ void GUIManager::UpdateControlEditMode(float mx, float my, bool mouseDown) {
         return;
       }
       case GUIControlEditTarget::CheckboxMark: {
-        float cbW = m_checkBoxTexture ? (float)m_checkBoxTexture->x : 64.0f;
-        float cbH = m_checkBoxTexture ? (float)m_checkBoxTexture->y : 64.0f;
+        float cbW = m_ctx.checkBoxSrcW;
+        float cbH = m_ctx.checkBoxSrcH;
         ControlEditRect parent = fitRect(cbW, cbH);
         float mW = (std::max)(4.0f, parent.w * m_controlLayout.checkboxMarkScaleX);
         float mH = (std::max)(4.0f, parent.h * m_controlLayout.checkboxMarkScaleY);
@@ -2098,8 +2297,8 @@ bool GUIManager::HandleControlEditTab(const std::string& path) {
 
   float screenW = m_ctx.screenW > 0.0f ? m_ctx.screenW : (float)g_pBaseDriver->width;
   float screenH = m_ctx.screenH > 0.0f ? m_ctx.screenH : (float)g_pBaseDriver->height;
-  float barW = m_barTexture ? (float)m_barTexture->x : 256.0f;
-  float barH = m_barTexture ? (float)m_barTexture->y : 32.0f;
+  float barW = m_ctx.barSrcW;
+  float barH = m_ctx.barSrcH;
   float safeW = (std::max)(1.0f, barW);
   float safeH = (std::max)(1.0f, barH);
   float targetW = screenW * m_controlPreviewVisualScale;
@@ -2240,8 +2439,8 @@ void GUIManager::GetPopupRects(float& bgX, float& bgY, float& bgW, float& bgH,
   float screenH = m_ctx.screenH > 0.0f ? m_ctx.screenH : (float)g_pBaseDriver->height;
 
   // Popup background size: driven by texture aspect & bg scale, centered on screen.
-  float srcW = m_popupBgTexture ? (float)m_popupBgTexture->x : 400.0f;
-  float srcH = m_popupBgTexture ? (float)m_popupBgTexture->y : 160.0f;
+  float srcW = m_ctx.popupBgSrcW;
+  float srcH = m_ctx.popupBgSrcH;
   float baseH = screenH * 0.30f; // baseline height (30% of screen)
   bgH = baseH * m_controlLayout.popupBgScaleY;
   bgW = (srcH > 0.0f ? (srcW / srcH) : 2.5f) * bgH * m_controlLayout.popupBgScaleX / (std::max)(0.0001f, m_controlLayout.popupBgScaleY);
@@ -2249,8 +2448,8 @@ void GUIManager::GetPopupRects(float& bgX, float& bgY, float& bgW, float& bgH,
   bgY = (screenH - bgH) * 0.5f;
 
   // Buttons: scaled to native aspect relative to bg height, positioned via offsets from bg center.
-  float okSrcW = m_popupOkTexture ? (float)m_popupOkTexture->x : 100.0f;
-  float okSrcH = m_popupOkTexture ? (float)m_popupOkTexture->y : 40.0f;
+  float okSrcW = m_ctx.popupOkSrcW;
+  float okSrcH = m_ctx.popupOkSrcH;
   okH = bgH * m_controlLayout.popupOkScaleY * 0.25f; // 25% of bg height baseline
   okW = (okSrcH > 0.0f ? (okSrcW / okSrcH) : 2.5f) * okH * m_controlLayout.popupOkScaleX / (std::max)(0.0001f, m_controlLayout.popupOkScaleY);
   float bgCX = bgX + bgW * 0.5f;
@@ -2258,8 +2457,8 @@ void GUIManager::GetPopupRects(float& bgX, float& bgY, float& bgW, float& bgH,
   okX = bgCX + m_controlLayout.popupOkOffsetX * bgH - okW * 0.5f;
   okY = bgCY + m_controlLayout.popupOkOffsetY * bgH - okH * 0.5f;
 
-  float caSrcW = m_popupCancelTexture ? (float)m_popupCancelTexture->x : 100.0f;
-  float caSrcH = m_popupCancelTexture ? (float)m_popupCancelTexture->y : 40.0f;
+  float caSrcW = m_ctx.popupCancelSrcW;
+  float caSrcH = m_ctx.popupCancelSrcH;
   cancelH = bgH * m_controlLayout.popupCancelScaleY * 0.25f;
   cancelW = (caSrcH > 0.0f ? (caSrcW / caSrcH) : 2.5f) * cancelH * m_controlLayout.popupCancelScaleX / (std::max)(0.0001f, m_controlLayout.popupCancelScaleY);
   cancelX = bgCX + m_controlLayout.popupCancelOffsetX * bgH - cancelW * 0.5f;
@@ -2354,12 +2553,14 @@ void GUIManager::DrawPopup() {
 
   XVECTOR3 tint(1.0f, 1.0f, 1.0f);
   if (m_popupBgTexture)
-    m_ctx.DrawTexturedQuad(bgX, bgY, bgW, bgH, m_popupBgTexture, tint);
+    m_ctx.DrawTexturedQuad(bgX, bgY, bgW, bgH, m_popupBgTexture, tint, m_ctx.popupBgRegion);
 
   Texture* okTex = m_popupOkPressed ? m_popupOkPressedTexture : m_popupOkTexture;
-  if (okTex) m_ctx.DrawTexturedQuad(okX, okY, okW, okH, okTex, tint);
+  const AtlasRegion& okRegion = m_popupOkPressed ? m_ctx.popupOkPressedRegion : m_ctx.popupOkRegion;
+  if (okTex) m_ctx.DrawTexturedQuad(okX, okY, okW, okH, okTex, tint, okRegion);
   Texture* caTex = m_popupCancelPressed ? m_popupCancelPressedTexture : m_popupCancelTexture;
-  if (caTex) m_ctx.DrawTexturedQuad(cancelX, cancelY, cancelW, cancelH, caTex, tint);
+  const AtlasRegion& caRegion = m_popupCancelPressed ? m_ctx.popupCancelPressedRegion : m_ctx.popupCancelRegion;
+  if (caTex) m_ctx.DrawTexturedQuad(cancelX, cancelY, cancelW, cancelH, caTex, tint, caRegion);
 
   // Draw text centered on background
   if (m_ctx.text) {

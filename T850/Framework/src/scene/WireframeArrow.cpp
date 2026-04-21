@@ -9,7 +9,7 @@ namespace t800 {
 void WireframeArrow::Create(int circleSegments, int numRays) {
   char* vsSourceP;
   char* fsSourceP;
-  if (g_pBaseDriver->m_currentAPI == GRAPHICS_API::OPENGL) {
+  if (g_pBaseDriver->UsesGLSL()) {
     vsSourceP = file2string("Shaders/VS_W.glsl");
     fsSourceP = file2string("Shaders/FS_W.glsl");
   }
@@ -21,7 +21,7 @@ void WireframeArrow::Create(int circleSegments, int numRays) {
   std::string vstr = std::string(vsSourceP);
   std::string fstr = std::string(fsSourceP);
 
-  if (g_pBaseDriver->m_currentAPI == GRAPHICS_API::OPENGL) {
+  if (g_pBaseDriver->UsesGLSL()) {
 #if defined(USING_OPENGL)
     std::string Defines = "";
     Defines += "#version 130\n\n";
@@ -37,6 +37,13 @@ void WireframeArrow::Create(int circleSegments, int numRays) {
     vstr = Defines + vstr;
     fstr = Defines + fstr;
 #endif
+    if (g_pBaseDriver->m_currentAPI == GRAPHICS_API::VULKAN) {
+      std::string Defines;
+      Defines += "#version 450\n\n";
+      Defines += "#define ES_30\n\n";
+      vstr = Defines + vstr;
+      fstr = Defines + fstr;
+    }
   }
 
   free(vsSourceP);
@@ -166,6 +173,9 @@ void WireframeArrow::Draw(const XMATRIX44& vp, const XVECTOR3& position, const X
 }
 
 void WireframeArrow::Destroy() {
+  if (VB) { VB->release(); VB = nullptr; }
+  if (IB) { IB->release(); IB = nullptr; }
+  if (CB) { CB->release(); CB = nullptr; }
 }
 
 } // namespace t800

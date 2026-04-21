@@ -159,6 +159,7 @@ namespace t800 {
   private:
     void InitTextures();
     void InitShader();
+    bool TryLoadAtlas();  // attempt atlas-based texture init
 
     // Edit‑mode helpers
     void UpdateEditMode(float mx, float my, bool mouseDown);
@@ -217,6 +218,34 @@ namespace t800 {
     Texture* m_guiBtnPressedTex = nullptr;
     Texture* m_backBtnNormalTex  = nullptr;
     Texture* m_backBtnPressedTex = nullptr;
+
+    // ── Atlas system ──
+    Texture* m_atlasTexture = nullptr;
+    bool     m_useAtlas     = false;
+    // Per-sprite atlas regions (valid when m_useAtlas == true)
+    AtlasRegion m_atlasBarRegion;
+    AtlasRegion m_atlasKnobRegion;
+    AtlasRegion m_atlasCheckBoxRegion;
+    AtlasRegion m_atlasCheckMarkRegion;
+    AtlasRegion m_atlasSelectorBarRegion;
+    AtlasRegion m_atlasSelectorBtnLeftRegion;
+    AtlasRegion m_atlasSelectorBtnRightRegion;
+    AtlasRegion m_atlasSelectorBtnLeftPressRegion;
+    AtlasRegion m_atlasSelectorBtnRightPressRegion;
+    AtlasRegion m_atlasPopupBgRegion;
+    AtlasRegion m_atlasPopupOkRegion;
+    AtlasRegion m_atlasPopupOkPressedRegion;
+    AtlasRegion m_atlasPopupCancelRegion;
+    AtlasRegion m_atlasPopupCancelPressedRegion;
+    // Source dims for aspect-ratio code
+    float m_atlasBarSrcW = 256.0f, m_atlasBarSrcH = 32.0f;
+    float m_atlasSelectorBarSrcW = 256.0f, m_atlasSelectorBarSrcH = 32.0f;
+    float m_atlasSelectorBtnLeftSrcW = 32.0f;
+    float m_atlasSelectorBtnRightSrcW = 32.0f;
+    float m_atlasCheckBoxSrcW = 64.0f, m_atlasCheckBoxSrcH = 64.0f;
+    float m_atlasPopupBgSrcW = 400.0f, m_atlasPopupBgSrcH = 160.0f;
+    float m_atlasPopupOkSrcW = 100.0f, m_atlasPopupOkSrcH = 40.0f;
+    float m_atlasPopupCancelSrcW = 100.0f, m_atlasPopupCancelSrcH = 40.0f;
 
     Quad          m_quad;
     ShaderBase*   m_shader = nullptr;

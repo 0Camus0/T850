@@ -6,9 +6,18 @@
 #include "EditorMesh.h"
 #include <scene/PrimitiveInstance.h>
 #include <utils/Camera.h>
+#include <video/BaseDriver.h>
 #include <string>
 
 namespace t8ditor {
+
+// Per-entity gizmo VB/IB cache to avoid per-frame GPU allocation
+struct GizmoCache {
+  t800::VertexBuffer* vb    = nullptr;
+  t800::IndexBuffer*  ib    = nullptr;
+  unsigned            count = 0;
+  uint64_t            hash  = 0;  // dirty check key
+};
 
 // ── Mesh object ──────────────────────────────────────
 
@@ -31,13 +40,14 @@ struct SceneCamera {
   CameraType  type    = CameraType::Perspective;
   XVECTOR3    position = XVECTOR3(0.0f, 5.0f, -10.0f);
   XVECTOR3    target   = XVECTOR3(0.0f, 0.0f, 0.0f);
-  float       fovDeg   = 50.0f;     // perspective only
-  float       orthoW   = 20.0f;     // orthographic only
+  float       fovDeg   = 50.0f;
+  float       orthoW   = 20.0f;
   float       orthoH   = 15.0f;
   float       nearPlane = 0.1f;
   float       farPlane  = 1000.0f;
   bool        visible   = true;
   bool        frozen    = false;
+  mutable GizmoCache gizmo;
 };
 
 // ── Light ────────────────────────────────────────────
@@ -55,6 +65,7 @@ struct SceneLight {
   bool            enabled   = true;
   bool            visible   = true;
   bool            frozen    = false;
+  mutable GizmoCache gizmo;
 };
 
 } // namespace t8ditor

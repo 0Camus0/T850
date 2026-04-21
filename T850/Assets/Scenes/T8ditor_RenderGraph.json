@@ -1,7 +1,7 @@
 {
   "render_targets": [
-    { "name": "GBuffer",  "color_count": 5, "color_format": "RGBA16F", "depth_format": "F32",  "size": [0,0], "linear_filter": true },
-    { "name": "Deferred", "color_count": 1, "color_format": "RGBA16F", "depth_format": "NONE", "size": [0,0], "linear_filter": true }
+    { "name": "GBuffer",  "color_count": 5, "color_formats": ["RGBA8", "RGBA16F", "RGBA8", "RGBA16F", "RGBA16F"], "depth_format": "F32",  "size": [0,0], "linear_filter": true },
+    { "name": "Deferred", "color_count": 1, "color_format": "RGBA8", "depth_format": "NONE", "size": [0,0], "linear_filter": true }
   ],
   "passes": [
     {

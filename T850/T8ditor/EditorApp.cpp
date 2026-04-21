@@ -421,6 +421,9 @@ void EditorApp::OnUpdate() {
       m_camera.SetTarget(XVECTOR3(sf.editor.camera_target.x,
                                    sf.editor.camera_target.y,
                                    sf.editor.camera_target.z));
+      m_camera.SetOrbitState(sf.editor.camera_yaw,
+                             sf.editor.camera_pitch,
+                             sf.editor.camera_distance);
       g_selectedIdx = -1;
     }
     g_pendingLoadPath.clear();
@@ -993,6 +996,9 @@ void EditorApp::OnDraw() {
       if (!path.empty()) {
         SceneFile sf;
         sf.editor.camera_target   = { m_camera.GetTarget().x, m_camera.GetTarget().y, m_camera.GetTarget().z };
+        sf.editor.camera_yaw      = m_camera.GetYaw();
+        sf.editor.camera_pitch    = m_camera.GetPitch();
+        sf.editor.camera_distance = m_camera.GetDistance();
         sf.editor.show_skybox     = m_panels.showSkybox;
         sf.editor.show_wireframe  = m_panels.showWireframe;
         for (auto& obj : g_objects) {

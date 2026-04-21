@@ -743,8 +743,8 @@ function Get-EditorLaunchCommand {
     }
 
     $exePath = Join-Path $rootDir "bin\$archFolder\$config\T8ditor.exe"
-    $engineApi = if ($apiTag -eq "glew") { "gl" } else { $apiTag }
-    $argList = @("--api", $engineApi)
+    # Editor always uses D3D12 regardless of API dropdown
+    $argList = @("--api", "d3d12")
 
     if ($chkFullscreen.IsChecked) {
         $argList += "--fullscreen"
@@ -761,7 +761,7 @@ function Get-EditorLaunchCommand {
 
     if ($chkLogToFile.IsChecked) {
         $ts = Get-Date -Format "yyyyMMdd_HHmmss"
-        $logFilename = "logs\T8ditor_${ts}_${engineApi}.log"
+        $logFilename = "logs\T8ditor_${ts}_d3d12.log"
         $argList += @("--logFile", $logFilename)
     }
 
@@ -769,7 +769,7 @@ function Get-EditorLaunchCommand {
         $argList += "--d3d12debug"
         if (-not $chkLogToFile.IsChecked) {
             $ts = Get-Date -Format "yyyyMMdd_HHmmss"
-            $logFilename = "logs\T8ditor_${ts}_${engineApi}_debug.log"
+            $logFilename = "logs\T8ditor_${ts}_d3d12_debug.log"
             $argList += @("--logFile", $logFilename)
         }
     }

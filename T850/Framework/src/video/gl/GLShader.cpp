@@ -1,8 +1,8 @@
 #include "pch.h"
-#include <video/GLShader.h>
+#include <video/gl/GLShader.h>
 #include <utils/Utils.h>
 #include <utils/Log.h>
-#include "video/GLDriver.h"
+#include "video/gl/GLDriver.h"
 
 
 namespace t800 {

@@ -11,7 +11,7 @@
 * ** Enjoy, learn and share.
 *********************************************************/
 
-#include <video/GLTexture.h>
+#include <video/gl/GLTexture.h>
 #include <utils/Log.h>
 
 #if defined(USING_OPENGL_ES20)
@@ -30,7 +30,7 @@
 #include <SDL3/SDL.h>
 #endif
 
-#include "video/GLShader.h"
+#include "video/gl/GLShader.h"
 
 
 namespace t800 {

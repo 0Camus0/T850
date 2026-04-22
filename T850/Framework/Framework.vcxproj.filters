@@ -54,6 +54,12 @@
     <Filter Include="Shaders\GLSL">
       <UniqueIdentifier>{afb89638-cc69-44cd-840d-7cef05f91e0f}</UniqueIdentifier>
     </Filter>
+    <Filter Include="Header Files\video\d3d12">
+      <UniqueIdentifier>{7a2f8e3d-6c4b-4f1a-9d2e-8f5a3b1c9e0d}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Source Files\video\d3d12">
+      <UniqueIdentifier>{8b3g9f4e-7d5c-5g2b-0e3f-9g6b4c2d0f1e}</UniqueIdentifier>
+    </Filter>
     <Filter Include="Source Files\ext">
       <UniqueIdentifier>{fa54be3f-6764-487d-a20f-9adc6984e9b3}</UniqueIdentifier>
     </Filter>
@@ -188,6 +194,39 @@
     <ClInclude Include="include\video\d3d11\D3D11Texture.h">
       <Filter>Header Files\video\d3d11</Filter>
     </ClInclude>
+    <ClInclude Include="include\video\d3d12\D3D12Driver.h">
+      <Filter>Header Files\video\d3d12</Filter>
+    </ClInclude>
+    <ClInclude Include="include\video\d3d12\D3D12Heap.h">
+      <Filter>Header Files\video\d3d12</Filter>
+    </ClInclude>
+    <ClInclude Include="include\video\d3d12\D3D12VertexBuffer.h">
+      <Filter>Header Files\video\d3d12</Filter>
+    </ClInclude>
+    <ClInclude Include="include\video\d3d12\D3D12IndexBuffer.h">
+      <Filter>Header Files\video\d3d12</Filter>
+    </ClInclude>
+    <ClInclude Include="include\video\d3d12\D3D12ConstantBuffer.h">
+      <Filter>Header Files\video\d3d12</Filter>
+    </ClInclude>
+    <ClInclude Include="include\video\d3d12\D3D12DeviceContext.h">
+      <Filter>Header Files\video\d3d12</Filter>
+    </ClInclude>
+    <ClInclude Include="include\video\d3d12\D3D12Device.h">
+      <Filter>Header Files\video\d3d12</Filter>
+    </ClInclude>
+    <ClInclude Include="include\video\d3d12\D3D12PipelineKey.h">
+      <Filter>Header Files\video\d3d12</Filter>
+    </ClInclude>
+    <ClInclude Include="include\video\d3d12\D3D12Shader.h">
+      <Filter>Header Files\video\d3d12</Filter>
+    </ClInclude>
+    <ClInclude Include="include\video\d3d12\D3D12RT.h">
+      <Filter>Header Files\video\d3d12</Filter>
+    </ClInclude>
+    <ClInclude Include="include\video\d3d12\D3D12Texture.h">
+      <Filter>Header Files\video\d3d12</Filter>
+    </ClInclude>
     <ClInclude Include="include\core\windows\Win32Framework.h">
       <Filter>Header Files\core</Filter>
     </ClInclude>
@@ -321,6 +360,36 @@
     </ClCompile>
     <ClCompile Include="src\video\d3d11\D3D11Texture.cpp">
       <Filter>Source Files\video\d3d11</Filter>
+    </ClCompile>
+    <ClCompile Include="src\video\d3d12\D3D12Driver.cpp">
+      <Filter>Source Files\video\d3d12</Filter>
+    </ClCompile>
+    <ClCompile Include="src\video\d3d12\D3D12Heap.cpp">
+      <Filter>Source Files\video\d3d12</Filter>
+    </ClCompile>
+    <ClCompile Include="src\video\d3d12\D3D12VertexBuffer.cpp">
+      <Filter>Source Files\video\d3d12</Filter>
+    </ClCompile>
+    <ClCompile Include="src\video\d3d12\D3D12IndexBuffer.cpp">
+      <Filter>Source Files\video\d3d12</Filter>
+    </ClCompile>
+    <ClCompile Include="src\video\d3d12\D3D12ConstantBuffer.cpp">
+      <Filter>Source Files\video\d3d12</Filter>
+    </ClCompile>
+    <ClCompile Include="src\video\d3d12\D3D12DeviceContext.cpp">
+      <Filter>Source Files\video\d3d12</Filter>
+    </ClCompile>
+    <ClCompile Include="src\video\d3d12\D3D12Device.cpp">
+      <Filter>Source Files\video\d3d12</Filter>
+    </ClCompile>
+    <ClCompile Include="src\video\d3d12\D3D12Shader.cpp">
+      <Filter>Source Files\video\d3d12</Filter>
+    </ClCompile>
+    <ClCompile Include="src\video\d3d12\D3D12RT.cpp">
+      <Filter>Source Files\video\d3d12</Filter>
+    </ClCompile>
+    <ClCompile Include="src\video\d3d12\D3D12Texture.cpp">
+      <Filter>Source Files\video\d3d12</Filter>
     </ClCompile>
     <ClCompile Include="src\utils\ResourceManager.cpp">
       <Filter>Source Files\utils</Filter>

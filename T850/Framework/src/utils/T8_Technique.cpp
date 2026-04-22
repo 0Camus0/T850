@@ -4,8 +4,8 @@
 #include "video/gl/GLDriver.h"
 #include "video/gl/GLShader.h"
 #if defined(OS_WINDOWS)
-#include <video/windows/D3D11Shader.h>
-#include <video/windows/D3D11Driver.h>
+#include <video/d3d11/D3D11Shader.h>
+#include <video/d3d11/D3D11Driver.h>
 #endif
 namespace t800 {
   void T8TechniqueInfo::ProcessDefine(tinyxml2::XMLElement * element)

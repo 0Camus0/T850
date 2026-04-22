@@ -1,3 +1,4 @@
+#include "pch.h"
 /*********************************************************
  * T850 Engine — Vulkan Backend
  * VulkanDriver.cpp: Driver lifecycle, Device, DeviceContext,
@@ -103,6 +104,12 @@ namespace t800 {
       srcStage = VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT;
       dstStage = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
     }
+    else if (oldLayout == VK_IMAGE_LAYOUT_UNDEFINED && newLayout == VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL) {
+      barrier.srcAccessMask = 0;
+      barrier.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
+      srcStage = VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT;
+      dstStage = VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT;
+    }
     else {
       barrier.srcAccessMask = VK_ACCESS_MEMORY_WRITE_BIT;
       barrier.dstAccessMask = VK_ACCESS_MEMORY_READ_BIT;
@@ -123,8 +130,14 @@ namespace t800 {
   void VulkanDeviceContext::release() { m_commandBuffer = VK_NULL_HANDLE; }
 
   void VulkanDeviceContext::SetPrimitiveTopology(T8_TOPOLOGY::E topology) {
-    // Vulkan sets topology at pipeline creation time; store for later pipeline lookup.
-    (void)topology;
+    switch (topology) {
+      case T8_TOPOLOGY::LINE_LIST:      m_topology = VK_PRIMITIVE_TOPOLOGY_LINE_LIST;      break;
+      case T8_TOPOLOGY::LINE_STRIP:     m_topology = VK_PRIMITIVE_TOPOLOGY_LINE_STRIP;     break;
+      case T8_TOPOLOGY::POINT_LIST:     m_topology = VK_PRIMITIVE_TOPOLOGY_POINT_LIST;     break;
+      case T8_TOPOLOGY::TRIANGLE_STRIP: m_topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_STRIP; break;
+      case T8_TOPOLOGY::TRIANLE_LIST:
+      default:                          m_topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;   break;
+    }
   }
 
   void VulkanDeviceContext::DrawIndexed(unsigned vertexCount, unsigned startIndex, unsigned startVertex) {
@@ -831,14 +844,26 @@ namespace t800 {
     VkDevice device = driver->GetDevice();
     VmaAllocator allocator = driver->GetAllocator();
 
-    // Map color_format enum to VkFormat
-    switch (color_format) {
-      case BaseRT::RGBA8:    m_colorFormat = VK_FORMAT_R8G8B8A8_UNORM;       break;
-      case BaseRT::RGBA16F:  m_colorFormat = VK_FORMAT_R16G16B16A16_SFLOAT;  break;
-      case BaseRT::F16:      m_colorFormat = VK_FORMAT_R16_SFLOAT;           break;
-      case BaseRT::R8:       m_colorFormat = VK_FORMAT_R8_UNORM;             break;
-      case BaseRT::F32:      m_colorFormat = VK_FORMAT_R32_SFLOAT;           break;
-      default:               m_colorFormat = VK_FORMAT_R8G8B8A8_UNORM;       break;
+    // Helper to resolve BaseRT format enum to VkFormat
+    auto resolveFormat = [](int fmt) -> VkFormat {
+      switch (fmt) {
+        case BaseRT::RGBA8:    return VK_FORMAT_R8G8B8A8_UNORM;
+        case BaseRT::RGBA16F:  return VK_FORMAT_R16G16B16A16_SFLOAT;
+        case BaseRT::F16:      return VK_FORMAT_R16_SFLOAT;
+        case BaseRT::R8:       return VK_FORMAT_R8_UNORM;
+        case BaseRT::F32:      return VK_FORMAT_R32_SFLOAT;
+        default:               return VK_FORMAT_R8G8B8A8_UNORM;
+      }
+    };
+
+    // Default color format (used when perColorFormats is empty)
+    m_colorFormat = resolveFormat(color_format);
+
+    // Per-attachment formats (mirrors D3D11/D3D12 behavior)
+    std::vector<VkFormat> colorFormats(number_RT, m_colorFormat);
+    if (!perColorFormats.empty()) {
+      for (int i = 0; i < number_RT && i < (int)perColorFormats.size(); i++)
+        colorFormats[i] = resolveFormat(perColorFormats[i]);
     }
 
     // ── 1. Color attachments ──
@@ -849,9 +874,10 @@ namespace t800 {
     vColorTextures.resize(number_RT);
 
     for (int i = 0; i < number_RT; i++) {
+      VkFormat attachmentFormat = colorFormats[i];
       VkImageCreateInfo imgCI = { VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO };
       imgCI.imageType = VK_IMAGE_TYPE_2D;
-      imgCI.format = m_colorFormat;
+      imgCI.format = attachmentFormat;
       imgCI.extent = { (uint32_t)w, (uint32_t)h, 1 };
       imgCI.mipLevels = 1;
       imgCI.arrayLayers = 1;
@@ -873,7 +899,7 @@ namespace t800 {
       VkImageViewCreateInfo ivCI = { VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO };
       ivCI.image = vColorImages[i];
       ivCI.viewType = VK_IMAGE_VIEW_TYPE_2D;
-      ivCI.format = m_colorFormat;
+      ivCI.format = attachmentFormat;
       ivCI.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
       ivCI.subresourceRange.baseMipLevel = 0;
       ivCI.subresourceRange.levelCount = 1;
@@ -892,7 +918,7 @@ namespace t800 {
       VulkanTexture* tex = new VulkanTexture;
       tex->m_image = vColorImages[i];
       tex->m_imageView = vColorImageViews[i];
-      tex->m_format = m_colorFormat;
+      tex->m_format = attachmentFormat;
       tex->x = (unsigned int)w;
       tex->y = (unsigned int)h;
       tex->m_channels = 4;
@@ -966,7 +992,7 @@ namespace t800 {
 
     for (int i = 0; i < number_RT; i++) {
       VkAttachmentDescription colorAtt = {};
-      colorAtt.format = m_colorFormat;
+      colorAtt.format = colorFormats[i];
       colorAtt.samples = VK_SAMPLE_COUNT_1_BIT;
       colorAtt.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
       colorAtt.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
@@ -1491,11 +1517,16 @@ namespace t800 {
     key.depth = (uint8_t)m_currentDepth;
     key.cull = (uint8_t)m_currentCull;
     key.numColorAttachments = numColorAttachments;
+    key.topology = (uint8_t)static_cast<VulkanDeviceContext*>(T8DeviceContext)->GetTopology();
     key.colorFormat = colorFormat;
     key.depthFormat = depthFormat;
 
     auto it = m_pipelineCache.find(key);
-    if (it != m_pipelineCache.end()) return it->second;
+    if (it != m_pipelineCache.end()) {
+      T8_LOG_TRACE("[Vulkan] Pipeline cache hit: shader=%p topo=%d blend=%d depth=%d",
+                   shader, key.topology, key.blend, key.depth);
+      return it->second;
+    }
 
     // Shader stages
     VkPipelineShaderStageCreateInfo stages[2] = {};
@@ -1518,7 +1549,7 @@ namespace t800 {
     }
 
     VkPipelineInputAssemblyStateCreateInfo inputAssembly = { VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO };
-    inputAssembly.topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
+    inputAssembly.topology = (VkPrimitiveTopology)key.topology;
 
     // Dynamic viewport/scissor
     VkPipelineViewportStateCreateInfo viewportState = { VK_STRUCTURE_TYPE_PIPELINE_VIEWPORT_STATE_CREATE_INFO };
@@ -1625,7 +1656,14 @@ namespace t800 {
     pipelineCI.pColorBlendState = &colorBlend;
     pipelineCI.pDynamicState = &dynamicState;
     pipelineCI.layout = shader->m_pipelineLayout;
-    pipelineCI.renderPass = m_activeRenderPass ? m_activeRenderPass : m_backbufferRenderPass;
+    // Use canonical backbuffer pass for pipeline creation when on backbuffer;
+    // the LOAD variant is render-pass-compatible, so pipelines work with both.
+    if (CurrentRT >= 0 && CurrentRT < (int)RTs.size()) {
+      VulkanRT* rt = static_cast<VulkanRT*>(RTs[CurrentRT]);
+      pipelineCI.renderPass = rt->m_renderPass;
+    } else {
+      pipelineCI.renderPass = m_backbufferRenderPass;
+    }
     pipelineCI.subpass = 0;
 
     VkPipeline pipeline = VK_NULL_HANDLE;
@@ -1636,8 +1674,8 @@ namespace t800 {
       return VK_NULL_HANDLE;
     }
 
-    T8_LOG_DEBUG("[Vulkan] Pipeline created: shader=%p blend=%d depth=%d cull=%d colors=%d renderPass=%p",
-                 shader, key.blend, key.depth, key.cull, key.numColorAttachments, pipelineCI.renderPass);
+    T8_LOG_DEBUG("[Vulkan] Pipeline created: shader=%p blend=%d depth=%d cull=%d topo=%d colors=%d renderPass=%p",
+                 shader, key.blend, key.depth, key.cull, key.topology, key.numColorAttachments, pipelineCI.renderPass);
     m_pipelineCache[key] = pipeline;
     return pipeline;
   }
@@ -1702,6 +1740,17 @@ namespace t800 {
     if (validationAvailable) {
       ci.enabledLayerCount = 1;
       ci.ppEnabledLayerNames = validationLayers;
+
+      // Enable synchronization validation to catch barrier/layout hazards
+      static VkValidationFeatureEnableEXT enabledFeatures[] = {
+        VK_VALIDATION_FEATURE_ENABLE_SYNCHRONIZATION_VALIDATION_EXT,
+        VK_VALIDATION_FEATURE_ENABLE_BEST_PRACTICES_EXT
+      };
+      static VkValidationFeaturesEXT validationFeatures = { VK_STRUCTURE_TYPE_VALIDATION_FEATURES_EXT };
+      validationFeatures.enabledValidationFeatureCount = 2;
+      validationFeatures.pEnabledValidationFeatures = enabledFeatures;
+      ci.pNext = &validationFeatures;
+      T8_LOG_INFO("[Vulkan] Synchronization validation + best practices ENABLED");
     }
 #endif
 
@@ -1750,6 +1799,10 @@ namespace t800 {
       }
     }
     m_presentQueueFamily = m_graphicsQueueFamily;
+
+    // Query features before creating device (best practice)
+    VkPhysicalDeviceFeatures supportedFeatures = {};
+    vkGetPhysicalDeviceFeatures(m_physicalDevice, &supportedFeatures);
 
     float queuePriority = 1.0f;
     VkDeviceQueueCreateInfo queueCI = { VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO };
@@ -1898,7 +1951,7 @@ namespace t800 {
     depthAttachment.format = VK_FORMAT_D32_SFLOAT;
     depthAttachment.samples = VK_SAMPLE_COUNT_1_BIT;
     depthAttachment.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
-    depthAttachment.storeOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
+    depthAttachment.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
     depthAttachment.stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
     depthAttachment.stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
     depthAttachment.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
@@ -1916,9 +1969,9 @@ namespace t800 {
     VkSubpassDependency dependency = {};
     dependency.srcSubpass = VK_SUBPASS_EXTERNAL;
     dependency.dstSubpass = 0;
-    dependency.srcStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT | VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT;
+    dependency.srcStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT | VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT | VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT;
     dependency.dstStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT | VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT;
-    dependency.srcAccessMask = 0;
+    dependency.srcAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT | VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;
     dependency.dstAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT | VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;
 
     VkAttachmentDescription attachments[] = { colorAttachment, depthAttachment };
@@ -2081,7 +2134,8 @@ namespace t800 {
       if (createFunc) {
         VkDebugUtilsMessengerCreateInfoEXT dbgCI = { VK_STRUCTURE_TYPE_DEBUG_UTILS_MESSENGER_CREATE_INFO_EXT };
         dbgCI.messageSeverity = VK_DEBUG_UTILS_MESSAGE_SEVERITY_WARNING_BIT_EXT |
-                                 VK_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT;
+                                 VK_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT |
+                                 VK_DEBUG_UTILS_MESSAGE_SEVERITY_INFO_BIT_EXT;
         dbgCI.messageType = VK_DEBUG_UTILS_MESSAGE_TYPE_GENERAL_BIT_EXT |
                              VK_DEBUG_UTILS_MESSAGE_TYPE_VALIDATION_BIT_EXT |
                              VK_DEBUG_UTILS_MESSAGE_TYPE_PERFORMANCE_BIT_EXT;
@@ -2091,8 +2145,10 @@ namespace t800 {
                                     void*) -> VkBool32 {
           if (severity & VK_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT)
             T8_LOG_ERROR("[VK_VALIDATION] %s", data->pMessage);
+          else if (severity & VK_DEBUG_UTILS_MESSAGE_SEVERITY_WARNING_BIT_EXT)
+            T8_LOG_INFO("[VK_VALIDATION:WARN] %s", data->pMessage);
           else
-            T8_LOG_INFO("[VK_VALIDATION] %s", data->pMessage);
+            T8_LOG_DEBUG("[VK_VALIDATION] %s", data->pMessage);
           return VK_FALSE;
         };
         createFunc(m_instance, &dbgCI, nullptr, &m_debugMessenger);
@@ -2168,6 +2224,58 @@ namespace t800 {
   void VulkanDriver::CreateSurfaces() {}
   void VulkanDriver::DestroySurfaces() {}
   void VulkanDriver::Update() {}
+
+  bool VulkanDriver::ResizeSwapchain(int newW, int newH) {
+    if (newW <= 0 || newH <= 0) return false;
+    T8_LOG_INFO("[Vulkan] ResizeSwapchain %dx%d -> %dx%d", width, height, newW, newH);
+
+    // Flush GPU: wait for idle AND reset command buffers/descriptor pools
+    // so no stale references to resources we're about to destroy
+    FlushGPUResources();
+
+    // Destroy old framebuffers, depth, image views
+    for (auto& fb : m_backbufferFramebuffers)
+      if (fb) vkDestroyFramebuffer(m_device, fb, nullptr);
+    m_backbufferFramebuffers.clear();
+
+    if (m_depthImageView) { vkDestroyImageView(m_device, m_depthImageView, nullptr); m_depthImageView = VK_NULL_HANDLE; }
+    if (m_depthImage) { vmaDestroyImage(m_allocator, m_depthImage, m_depthAllocation); m_depthImage = VK_NULL_HANDLE; }
+
+    for (auto& iv : m_swapChainImageViews)
+      vkDestroyImageView(m_device, iv, nullptr);
+    m_swapChainImageViews.clear();
+    m_swapChainImages.clear();
+
+    // Destroy old swap chain
+    VkSwapchainKHR oldSwapChain = m_swapChain;
+    m_swapChain = VK_NULL_HANDLE;
+    if (oldSwapChain) vkDestroySwapchainKHR(m_device, oldSwapChain, nullptr);
+
+    // Update dimensions
+    width = newW;
+    height = newH;
+
+    // Recreate swap chain, views, depth, framebuffers
+    CreateSwapChain();
+    CreateBackBufferViews();
+    CreateDepthBuffer();
+    CreateFramebuffers();
+
+    // Update viewport
+    m_viewport = { 0.f, (float)height, (float)width, -(float)height, 0.f, 1.f };
+    m_scissorRect = { {0, 0}, {(uint32_t)width, (uint32_t)height} };
+
+    // Invalidate pipeline cache entries that reference the old backbuffer render pass
+    // (render passes themselves are NOT recreated — same formats, same attachments)
+
+    // Reset frame state
+    m_currentFrame = 0;
+    m_frameStarted = false;
+    m_renderPassActive = false;
+
+    T8_LOG_INFO("[Vulkan] Swapchain recreated (%dx%d)", width, height);
+    return true;
+  }
 
   void VulkanDriver::FlushGPUResources() {
     if (!m_device) return;
@@ -2295,8 +2403,25 @@ namespace t800 {
     VkResult res = vkAcquireNextImageKHR(m_device, m_swapChain, UINT64_MAX,
                                           m_imageAvailableSemaphores[m_currentFrame],
                                           VK_NULL_HANDLE, &m_imageIndex);
-    if (res == VK_ERROR_OUT_OF_DATE_KHR) {
-      T8_LOG_INFO("[Vulkan] Swap chain out of date, needs recreation");
+    if (res == VK_ERROR_OUT_OF_DATE_KHR || res == VK_ERROR_SURFACE_LOST_KHR) {
+      T8_LOG_INFO("[Vulkan] Swap chain out of date (res=%d), recreating...", res);
+      ResizeSwapchain(width, height);
+      // After recreation, fences are re-signaled by WaitForGPU inside ResizeSwapchain.
+      // Reset the fence for the current frame before re-acquiring.
+      WaitForFence(m_currentFrame);
+      vkResetFences(m_device, 1, &m_inFlightFences[m_currentFrame]);
+      // Re-acquire after recreation
+      res = vkAcquireNextImageKHR(m_device, m_swapChain, UINT64_MAX,
+                                  m_imageAvailableSemaphores[m_currentFrame],
+                                  VK_NULL_HANDLE, &m_imageIndex);
+      if (res != VK_SUCCESS && res != VK_SUBOPTIMAL_KHR) {
+        T8_LOG_ERROR("[Vulkan] vkAcquireNextImageKHR failed after recreation res=%d", res);
+        m_frameStarted = false;
+        return;
+      }
+    } else if (res != VK_SUCCESS && res != VK_SUBOPTIMAL_KHR) {
+      T8_LOG_ERROR("[Vulkan] vkAcquireNextImageKHR failed res=%d", res);
+      m_frameStarted = false;
       return;
     }
 
@@ -2330,6 +2455,10 @@ namespace t800 {
     m_lastPipeline = VK_NULL_HANDLE;
     m_lastPipelineLayout = VK_NULL_HANDLE;
     m_screenshotConsumedSemaphore = false;
+    m_frameStarted = true;
+
+    // Reset topology to triangle list at the start of each frame
+    static_cast<VulkanDeviceContext*>(T8DeviceContext)->m_topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
   }
 
   void VulkanDriver::EndFrame() {}
@@ -2371,6 +2500,22 @@ namespace t800 {
     }
   }
 
+  void VulkanDriver::EnsureBackbufferRenderPass() {
+    VkCommandBuffer cmd = m_commandBuffers[m_currentFrame];
+    if (!m_renderPassActive) {
+      // Begin the backbuffer render pass with LOAD_OP_LOAD (preserve existing content)
+      VkRenderPassBeginInfo rpInfo = { VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO };
+      rpInfo.renderPass  = m_backbufferRenderPassLoad;
+      rpInfo.framebuffer = m_backbufferFramebuffers[m_imageIndex];
+      rpInfo.renderArea  = m_scissorRect;
+      vkCmdBeginRenderPass(cmd, &rpInfo, VK_SUBPASS_CONTENTS_INLINE);
+      m_renderPassActive = true;
+      m_activeRenderPass = m_backbufferRenderPassLoad;
+      vkCmdSetViewport(cmd, 0, 1, &m_viewport);
+      vkCmdSetScissor(cmd, 0, 1, &m_scissorRect);
+    }
+  }
+
   void VulkanDriver::SwapBuffers() {
     T8_LOG_TRACE("[Vulkan] SwapBuffers");
     VkCommandBuffer cmd = m_commandBuffers[m_currentFrame];
@@ -2388,7 +2533,10 @@ namespace t800 {
                           VK_IMAGE_ASPECT_COLOR_BIT);
 
     // End command buffer
-    vkEndCommandBuffer(cmd);
+    VkResult endRes = vkEndCommandBuffer(cmd);
+    if (endRes != VK_SUCCESS) {
+      T8_LOG_ERROR("[Vulkan] vkEndCommandBuffer failed res=%d", endRes);
+    }
 
     // Submit
     VkSemaphore waitSemaphores[] = { m_imageAvailableSemaphores[m_currentFrame] };
@@ -2404,7 +2552,14 @@ namespace t800 {
     submitInfo.signalSemaphoreCount = 1;
     submitInfo.pSignalSemaphores = signalSemaphores;
 
-    vkQueueSubmit(m_graphicsQueue, 1, &submitInfo, m_inFlightFences[m_currentFrame]);
+    VkResult submitRes = vkQueueSubmit(m_graphicsQueue, 1, &submitInfo, m_inFlightFences[m_currentFrame]);
+    if (submitRes != VK_SUCCESS) {
+      T8_LOG_ERROR("[Vulkan] vkQueueSubmit failed res=%d", submitRes);
+      if (submitRes == VK_ERROR_DEVICE_LOST) {
+        T8_LOG_ERROR("[Vulkan] Device lost! Waiting for idle...");
+        vkDeviceWaitIdle(m_device);
+      }
+    }
 
     // Present
     VkPresentInfoKHR presentInfo = { VK_STRUCTURE_TYPE_PRESENT_INFO_KHR };
@@ -2414,7 +2569,14 @@ namespace t800 {
     presentInfo.pSwapchains = &m_swapChain;
     presentInfo.pImageIndices = &m_imageIndex;
 
-    vkQueuePresentKHR(m_presentQueue, &presentInfo);
+    VkResult presentRes = vkQueuePresentKHR(m_presentQueue, &presentInfo);
+    if (presentRes == VK_ERROR_OUT_OF_DATE_KHR || presentRes == VK_ERROR_SURFACE_LOST_KHR ||
+        presentRes == VK_SUBOPTIMAL_KHR) {
+      T8_LOG_INFO("[Vulkan] Present: swap chain needs recreation (res=%d)", presentRes);
+      // Swapchain will be recreated on next BeginFrame's acquire
+    } else if (presentRes != VK_SUCCESS) {
+      T8_LOG_ERROR("[Vulkan] vkQueuePresentKHR failed res=%d", presentRes);
+    }
 
     m_currentFrame = (m_currentFrame + 1) % kBackBufferCount;
     m_frameStarted = false;

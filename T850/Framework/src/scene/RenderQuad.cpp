@@ -1,3 +1,4 @@
+#include "pch.h"
 /*********************************************************
 * Copyright (C) 2017 Daniel Enriquez (camus_mm@hotmail.com)
 * All Rights Reserved
@@ -28,8 +29,8 @@ namespace t800 {
     m_quad.Init();
     sigBase.bits = ShaderKey::HAS_TEXCOORD0;
 
-    char *vsSourceP;
-    char *fsSourceP;
+    char *vsSourceP = nullptr;
+    char *fsSourceP = nullptr;
     std::string vsName, fsName;
     if (g_pBaseDriver->UsesGLSL()) {
       vsSourceP = file2string("Shaders/VS_Quad.glsl");
@@ -44,6 +45,14 @@ namespace t800 {
       fsName = "FS_Quad.hlsl";
     }
 
+
+    if (!vsSourceP || !fsSourceP) {
+      T8_LOG_INFO("RenderQuad::Create failed loading shader source(s): %s, %s",
+                  vsName.c_str(), fsName.c_str());
+      free(vsSourceP);
+      free(fsSourceP);
+      return;
+    }
 
     std::string vstr = std::string(vsSourceP);
     std::string fstr = std::string(fsSourceP);

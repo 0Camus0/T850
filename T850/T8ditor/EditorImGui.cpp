@@ -27,6 +27,8 @@
 #  include <core/windows/Win32Framework.h>
 #endif
 #include <imgui_impl_opengl3.h>
+#include <imgui_impl_vulkan.h>
+#include <video/vulkan/VulkanDriver.h>
 
 #include <cmath>
 #include <mutex>
@@ -130,8 +132,8 @@ bool ImGuiInit(t800::RootFramework* fw) {
   bool platformOK = false;
 #ifdef OS_WINDOWS
   if (s_api == t800::GRAPHICS_API::OPENGL)
-    platformOK = ImGui_ImplSDL3_InitForOpenGL(s_sdlWindow, nullptr);
-  else
+    platformOK = ImGui_ImplSDL3_InitForOpenGL(s_sdlWindow, nullptr);  else if (s_api == t800::GRAPHICS_API::VULKAN)
+    platformOK = ImGui_ImplSDL3_InitForVulkan(s_sdlWindow);  else
     platformOK = ImGui_ImplSDL3_InitForD3D(s_sdlWindow);
 #else
   platformOK = ImGui_ImplSDL3_InitForOpenGL(s_sdlWindow, nullptr);
@@ -181,6 +183,22 @@ bool ImGuiInit(t800::RootFramework* fw) {
     rendererOK = ImGui_ImplOpenGL3_Init("#version 300 es");
   }
 
+  if (s_api == t800::GRAPHICS_API::VULKAN) {
+    auto* vkDrv = static_cast<t800::VulkanDriver*>(fw->pVideoDriver);
+    ImGui_ImplVulkan_InitInfo vkInit = {};
+    vkInit.ApiVersion       = VK_API_VERSION_1_0;
+    vkInit.Instance         = vkDrv->GetInstance();
+    vkInit.PhysicalDevice   = vkDrv->GetPhysicalDevice();
+    vkInit.Device           = vkDrv->GetDevice();
+    vkInit.QueueFamily      = vkDrv->GetGraphicsQueueFamily();
+    vkInit.Queue            = vkDrv->GetGraphicsQueue();
+    vkInit.DescriptorPoolSize = 64;
+    vkInit.MinImageCount    = t800::VulkanDriver::kBackBufferCount;
+    vkInit.ImageCount       = t800::VulkanDriver::kBackBufferCount;
+    vkInit.PipelineInfoMain.RenderPass = vkDrv->GetBackbufferRenderPass();
+    rendererOK = ImGui_ImplVulkan_Init(&vkInit);
+  }
+
   if (!rendererOK) {
     T8_LOG_ERROR("[T8ditor] ImGui renderer backend init failed (api=%d)", (int)s_api);
     return false;
@@ -212,6 +230,9 @@ void ImGuiShutdown() {
   if (s_api == t800::GRAPHICS_API::OPENGL) {
     ImGui_ImplOpenGL3_Shutdown();
   }
+  if (s_api == t800::GRAPHICS_API::VULKAN) {
+    ImGui_ImplVulkan_Shutdown();
+  }
 
   ImGui_ImplSDL3_Shutdown();
   SDL_RemoveEventWatch(sdlEventWatcher, nullptr);
@@ -232,6 +253,8 @@ void ImGuiNewFrame() {
 #endif
   if (s_api == t800::GRAPHICS_API::OPENGL)
     ImGui_ImplOpenGL3_NewFrame();
+  if (s_api == t800::GRAPHICS_API::VULKAN)
+    ImGui_ImplVulkan_NewFrame();
 
   ImGui_ImplSDL3_NewFrame();
   ImGui::NewFrame();
@@ -262,6 +285,19 @@ void ImGuiRender() {
   if (s_api == t800::GRAPHICS_API::OPENGL) {
     ImGui_ImplOpenGL3_RenderDrawData(drawData);
   }
+  if (s_api == t800::GRAPHICS_API::VULKAN) {
+    auto* vkDrv = static_cast<t800::VulkanDriver*>(t800::g_pBaseDriver);
+    // Clear pending engine texture state so ImGui's own descriptors aren't polluted
+    memset(vkDrv->m_pendingTextures, 0, sizeof(vkDrv->m_pendingTextures));
+    // ImGui Vulkan backend requires an active render pass — ensure backbuffer pass is active
+    vkDrv->EnsureBackbufferRenderPass();
+    VkCommandBuffer cmd = static_cast<t800::VulkanDeviceContext*>(t800::T8DeviceContext)->GetCommandBuffer();
+    if (cmd && drawData) {
+      ImGui_ImplVulkan_RenderDrawData(drawData, cmd);
+    } else {
+      T8_LOG_ERROR("[T8ditor] ImGuiRender: null cmd=%p drawData=%p", (void*)cmd, (void*)drawData);
+    }
+  }
 }
 
 // ── Menu bar ──────────────────────────────────────────
@@ -271,7 +307,7 @@ MenuAction ImGuiDrawMenuBar(PanelVisibility& panels) {
 
   if (ImGui::BeginMainMenuBar()) {
     if (ImGui::BeginMenu("File")) {
-      if (ImGui::MenuItem("Import .x ...", "Ctrl+I"))
+      if (ImGui::MenuItem("Import Mesh ...", "Ctrl+I"))
         action.wantsImportX = true;
       ImGui::Separator();
       if (ImGui::MenuItem("Load Scene ...", "Ctrl+O"))
@@ -310,9 +346,12 @@ MenuAction ImGuiDrawMenuBar(PanelVisibility& panels) {
 }
 
 // ── Toolbar ───────────────────────────────────────────
-int ImGuiDrawToolbar(int currentMode, int& addCamera, int& addLight) {
+int ImGuiDrawToolbar(int currentMode, int& addCamera, int& addLight,
+                     bool& wantsGroup, bool& wantsUngroup, bool hasMultiSelect) {
   addCamera = -1;
   addLight  = -1;
+  wantsGroup = false;
+  wantsUngroup = false;
   if (!s_inited) return currentMode;
 
   ImGuiViewport* vp = ImGui::GetMainViewport();
@@ -343,6 +382,7 @@ int ImGuiDrawToolbar(int currentMode, int& addCamera, int& addLight) {
         ImGui::PopStyleColor();
     };
 
+    ToolButton("Select (Q)", -1); ImGui::SameLine();
     ToolButton("Move (W)",   0);  ImGui::SameLine();
     ToolButton("Rotate (E)", 1);  ImGui::SameLine();
     ToolButton("Scale (R)",  2);
@@ -370,11 +410,97 @@ int ImGuiDrawToolbar(int currentMode, int& addCamera, int& addLight) {
       if (ImGui::MenuItem("Omni"))        addLight = 1;
       ImGui::EndPopup();
     }
+
+    ImGui::SameLine();
+    ImGui::Text("|");
+    ImGui::SameLine();
+
+    // Group / Ungroup buttons
+    if (!hasMultiSelect) ImGui::BeginDisabled();
+    if (ImGui::Button("Group", ImVec2(55, 0)))
+      wantsGroup = true;
+    if (!hasMultiSelect) ImGui::EndDisabled();
+
+    ImGui::SameLine();
+    if (!hasMultiSelect) ImGui::BeginDisabled();
+    if (ImGui::Button("Ungroup", ImVec2(65, 0)))
+      wantsUngroup = true;
+    if (!hasMultiSelect) ImGui::EndDisabled();
   }
   ImGui::End();
   ImGui::PopStyleVar(2);
 
   return currentMode;
+}
+
+// ── Context menu (right-click viewport) ───────────────
+
+ContextAction ImGuiDrawContextMenu(bool hasSelection, bool hasMultiSelect, bool hasGroup) {
+  ContextAction action;
+  if (!s_inited) return action;
+
+  // Suppress context menu if right-click was used for camera rotation (drag).
+  // Track whether the right mouse button was dragged during this press.
+  static bool s_rightWasDragged = false;
+  if (ImGui::IsMouseDragging(ImGuiMouseButton_Right, 3.0f))
+    s_rightWasDragged = true;
+  if (!ImGui::IsMouseDown(ImGuiMouseButton_Right) && s_rightWasDragged) {
+    s_rightWasDragged = false;
+    return action;  // skip popup this frame — user was rotating
+  }
+  if (!ImGui::IsMouseDown(ImGuiMouseButton_Right))
+    s_rightWasDragged = false;
+
+  // Open on right-click in viewport (not over ImGui windows)
+  if (ImGui::BeginPopupContextVoid("##ViewportContext", ImGuiPopupFlags_MouseButtonRight)) {
+
+    // Transform modes
+    ImGui::SeparatorText("Transform");
+    if (ImGui::MenuItem("Select (Q)"))     action.setMode = -1;
+    if (!hasSelection) ImGui::BeginDisabled();
+    if (ImGui::MenuItem("Move (W)"))       action.setMode = 0;
+    if (ImGui::MenuItem("Rotate (E)"))     action.setMode = 1;
+    if (ImGui::MenuItem("Scale (R)"))      action.setMode = 2;
+    if (!hasSelection) ImGui::EndDisabled();
+
+    ImGui::Separator();
+
+    // Selection actions
+    if (!hasSelection) ImGui::BeginDisabled();
+    if (ImGui::MenuItem("Frame View (Z)")) action.wantsFrameView = true;
+    if (ImGui::MenuItem("Delete"))         action.wantsDelete = true;
+    if (!hasSelection) ImGui::EndDisabled();
+
+    ImGui::Separator();
+
+    // Group actions
+    if (!hasMultiSelect) ImGui::BeginDisabled();
+    if (ImGui::MenuItem("Group"))          action.wantsGroup = true;
+    if (!hasMultiSelect) ImGui::EndDisabled();
+
+    if (!hasGroup) ImGui::BeginDisabled();
+    if (ImGui::MenuItem("Ungroup"))        action.wantsUngroup = true;
+    if (!hasGroup) ImGui::EndDisabled();
+
+    ImGui::Separator();
+
+    // Add entities
+    ImGui::SeparatorText("Add");
+    if (ImGui::BeginMenu("Camera")) {
+      if (ImGui::MenuItem("Perspective"))  action.addCamera = 0;
+      if (ImGui::MenuItem("Orthographic")) action.addCamera = 1;
+      ImGui::EndMenu();
+    }
+    if (ImGui::BeginMenu("Light")) {
+      if (ImGui::MenuItem("Directional"))  action.addLight = 0;
+      if (ImGui::MenuItem("Omni"))         action.addLight = 1;
+      ImGui::EndMenu();
+    }
+
+    ImGui::EndPopup();
+  }
+
+  return action;
 }
 
 // ── Hierarchy panel ───────────────────────────────────
@@ -475,7 +601,7 @@ void ImGuiDrawConsolePanel() {
   ImGui::Checkbox("Auto-scroll", &s_logAutoScroll);
   ImGui::Separator();
 
-  // Scrollable log region
+  // Scrollable log region with selectable/copyable text
   ImGui::BeginChild("LogScroll", ImVec2(0, 0), ImGuiChildFlags_None,
                     ImGuiWindowFlags_HorizontalScrollbar);
 
@@ -483,8 +609,12 @@ void ImGuiDrawConsolePanel() {
     std::lock_guard<std::mutex> lock(s_logMutex);
     for (const auto& line : s_logLines) {
       ImGui::PushStyleColor(ImGuiCol_Text, LogLevelColor(line.level));
-      ImGui::TextUnformatted(line.text.c_str());
-      ImGui::PopStyleColor();
+      ImGui::PushStyleColor(ImGuiCol_FrameBg, ImVec4(0, 0, 0, 0));
+      // Selectable text: click to copy the line to clipboard
+      if (ImGui::Selectable(line.text.c_str(), false)) {
+        ImGui::SetClipboardText(line.text.c_str());
+      }
+      ImGui::PopStyleColor(2);
     }
   }
 

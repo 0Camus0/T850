@@ -1,3 +1,4 @@
+#include "pch.h"
 #include <scene/SceneDescriptor.h>
 #pragma warning(push)
 #pragma warning(disable: 4267 4244)

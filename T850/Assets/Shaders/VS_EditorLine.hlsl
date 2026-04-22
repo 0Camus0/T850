@@ -1,10 +1,9 @@
-// Editor line shader — used by the T8ditor host for grid / gizmo / wireframe
-// overlays. Single color per draw via the constant buffer; wireframe meshes
-// vary the color from the CPU side. Kept editor-only so Framework remains
-// UI-toolkit-agnostic.
+// Editor line vertex shader — depth-tested wireframe overlay.
+// Outputs screen UV and linear depth for comparison with GBuffer COLOR4.
 cbuffer ConstantBuffer{
     float4x4 WVP;
     float4   LineColor;
+    float4   DepthParams;  // x=1/viewW, y=1/viewH, z=farPlane, w=unused
 }
 
 struct VS_INPUT{
@@ -12,11 +11,15 @@ struct VS_INPUT{
 };
 
 struct VS_OUTPUT{
-    float4 hposition : SV_POSITION;
+    float4 hposition  : SV_POSITION;
+    float  linearDepth : TEXCOORD0;
 };
 
 VS_OUTPUT VS( VS_INPUT input ){
     VS_OUTPUT OUT;
     OUT.hposition = mul(WVP, input.position);
+    // Linear depth matching GBuffer COLOR4: clipZ / farPlane
+    // (FS_Mesh.hlsl stores input.Pos.z / CameraInfo.y in COLOR4)
+    OUT.linearDepth = OUT.hposition.z / DepthParams.z;
     return OUT;
 }

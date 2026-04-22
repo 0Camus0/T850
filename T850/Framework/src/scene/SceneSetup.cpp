@@ -1,3 +1,4 @@
+#include "pch.h"
 #include <scene/SceneSetup.h>
 #include <core/Core.h>
 #include <cstdio>

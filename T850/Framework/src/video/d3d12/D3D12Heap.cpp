@@ -46,9 +46,18 @@ namespace t800 {
   D3D12_GPU_DESCRIPTOR_HANDLE D3D12Heap::GetGPUStart() const { return m_heap->GetGPUDescriptorHandleForHeapStart(); }
 
   D3D12_CPU_DESCRIPTOR_HANDLE D3D12Heap::AllocateCPU() {
+    if (m_currentCount >= m_maxDescriptors) {
+      T8_LOG_ERROR("[D3D12] Heap AllocateCPU overflow: count=%u max=%u type=%d",
+                   m_currentCount, m_maxDescriptors, m_type);
+      return D3D12_CPU_DESCRIPTOR_HANDLE{ 0 };
+    }
     auto h = GetCPUAt(m_currentCount); m_currentCount++; return h;
   }
   D3D12_GPU_DESCRIPTOR_HANDLE D3D12Heap::AllocateGPU() {
+    if (m_currentCount == 0) {
+      T8_LOG_ERROR("[D3D12] Heap AllocateGPU called without preceding AllocateCPU type=%d", m_type);
+      return D3D12_GPU_DESCRIPTOR_HANDLE{ 0 };
+    }
     return GetGPUAt(m_currentCount - 1); // pair with AllocateCPU
   }
 

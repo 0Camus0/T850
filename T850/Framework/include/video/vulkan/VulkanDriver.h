@@ -177,10 +177,12 @@ namespace t800 {
     void DrawIndexed(unsigned vertexCount, unsigned startIndex, unsigned startVertex) override;
 
     VkCommandBuffer GetCommandBuffer() const { return m_commandBuffer; }
+    VkPrimitiveTopology GetTopology() const { return m_topology; }
 
   private:
     friend class VulkanDriver;
-    VkCommandBuffer m_commandBuffer = VK_NULL_HANDLE;
+    VkCommandBuffer     m_commandBuffer = VK_NULL_HANDLE;
+    VkPrimitiveTopology m_topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
   };
 
   // ══════════════════════════════════════════════════════
@@ -216,12 +218,14 @@ namespace t800 {
     uint8_t   depth;
     uint8_t   cull;
     uint8_t   numColorAttachments;
+    uint8_t   topology;  // VkPrimitiveTopology truncated to 8-bit
     VkFormat  colorFormat;
     VkFormat  depthFormat;
     bool operator==(const VulkanPipelineKey& o) const {
       return shaderPtr == o.shaderPtr && blend == o.blend &&
              depth == o.depth && cull == o.cull &&
              numColorAttachments == o.numColorAttachments &&
+             topology == o.topology &&
              colorFormat == o.colorFormat && depthFormat == o.depthFormat;
     }
   };
@@ -235,6 +239,7 @@ namespace t800 {
       h ^= std::hash<uint8_t>()(k.numColorAttachments) << 4;
       h ^= std::hash<uint32_t>()(static_cast<uint32_t>(k.colorFormat)) << 5;
       h ^= std::hash<uint32_t>()(static_cast<uint32_t>(k.depthFormat)) << 6;
+      h ^= std::hash<uint8_t>()(k.topology) << 7;
       return h;
     }
   };
@@ -264,6 +269,7 @@ namespace t800 {
     void PopRT() override;
     void SaveScreenshot(std::string path) override;
     void SaveRTToFile(int rtID, int attachment, std::string path) override;
+    bool ResizeSwapchain(int newW, int newH) override;
 
     // ── Vulkan-specific overrides ──
     void BeginFrame() override;
@@ -308,6 +314,9 @@ namespace t800 {
     // Currently active render pass (backbuffer or RT)
     VkRenderPass GetCurrentRenderPass() const { return m_activeRenderPass; }
     void SetActiveRenderPass(VkRenderPass rp) { m_activeRenderPass = rp; }
+
+    // Ensure the backbuffer render pass is active (for ImGui overlay rendering)
+    void EnsureBackbufferRenderPass();
 
     // End the currently active render pass (if any) — safe to call even when none is active
     void EndRenderPassIfActive(VkCommandBuffer cmd) {

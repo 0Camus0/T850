@@ -1,3 +1,4 @@
+#include "pch.h"
 #include "utils/GUIAtlasGenerator.h"
 #include <utils/Log.h>
 

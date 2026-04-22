@@ -106,16 +106,30 @@ void EditorLineRenderer::DrawLines(const XMATRIX44& world,
   CBuffer cb;
   cb.WVP       = world * vp;
   cb.LineColor = rgba;
+  cb.DepthParams = XVECTOR3(
+    (m_viewW > 0) ? 1.0f / (float)m_viewW : 1.0f / 1280.0f,
+    (m_viewH > 0) ? 1.0f / (float)m_viewH : 1.0f / 720.0f,
+    m_farPlane,
+    0.005f);  // proportional depth bias (wireDepth *= 1 - bias)
 
   ib->Set(*t800::T8DeviceContext, 0, ibFormat);
   vb->Set(*t800::T8DeviceContext, vertexStride, 0);
+
+  // Set topology BEFORE shader (Vulkan bakes topology into the pipeline at Set time)
+  t800::T8DeviceContext->SetPrimitiveTopology(t800::T8_TOPOLOGY::LINE_LIST);
+
   m_shader->Set(*t800::T8DeviceContext);
-  // Upload the whole CB struct (WVP + LineColor) — matches the byte layout
-  // declared in VS_EditorLine.hlsl/.glsl.
   m_cb->UpdateFromBuffer(*t800::T8DeviceContext, &cb);
   m_cb->Set(*t800::T8DeviceContext);
-  t800::T8DeviceContext->SetPrimitiveTopology(t800::T8_TOPOLOGY::LINE_LIST);
+
+  // Bind depth texture AFTER shader is set (D3D12 needs active root signature)
+  if (m_depthTex)
+    m_depthTex->Set(*t800::T8DeviceContext, 0, "depthTex");
+
   t800::T8DeviceContext->DrawIndexed(indexCount, 0, 0);
+
+  // Reset topology back to triangle list for subsequent draws (meshes, ImGui, etc.)
+  t800::T8DeviceContext->SetPrimitiveTopology(t800::T8_TOPOLOGY::TRIANLE_LIST);
 }
 
 t800::VertexBuffer* EditorLineRenderer::CreatePositionVB(const float* positionsXYZW,
@@ -136,6 +150,16 @@ t800::IndexBuffer* EditorLineRenderer::CreateIndexBuffer16(const unsigned short*
   bd.usage     = t800::T8_BUFFER_USAGE::DEFAULT;
   return (t800::IndexBuffer*)t800::T8Device->CreateBuffer(
       t800::T8_BUFFER_TYPE::INDEX, bd, const_cast<unsigned short*>(indices));
+}
+
+t800::IndexBuffer* EditorLineRenderer::CreateIndexBuffer32(const unsigned int* indices,
+                                                           unsigned numIndices) {
+  if (!t800::T8Device || !indices || numIndices == 0) return nullptr;
+  t800::BufferDesc bd;
+  bd.byteWidth = static_cast<int>(sizeof(unsigned int) * numIndices);
+  bd.usage     = t800::T8_BUFFER_USAGE::DEFAULT;
+  return (t800::IndexBuffer*)t800::T8Device->CreateBuffer(
+      t800::T8_BUFFER_TYPE::INDEX, bd, const_cast<unsigned int*>(indices));
 }
 
 } // namespace t8ditor

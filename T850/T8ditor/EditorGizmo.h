@@ -23,6 +23,7 @@
 namespace t8ditor {
 
 enum class GizmoMode {
+  Select = -1,
   Translate = 0,
   Rotate,
   Scale,

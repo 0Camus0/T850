@@ -1,3 +1,4 @@
+#include "pch.h"
 /*********************************************************
 * T850 Engine — D3D12 Backend
 * D3D12RT.cpp: Render target creation, binding, state transitions

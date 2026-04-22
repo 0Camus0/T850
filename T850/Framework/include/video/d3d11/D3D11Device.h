@@ -16,6 +16,8 @@
 #include <Config.h>
 #include <video\BaseDriver.h>
 #include <d3d11.h>
+#include <wrl.h>
+#include <wrl/client.h>
 #include <string>
 
 namespace t800 {
@@ -32,7 +34,7 @@ namespace t800 {
     Texture* CreateCubeMap(const unsigned char * buff, int w, int h) override;
     BaseRT* CreateRT(int nrt, int cf, int df, int w, int h, bool genMips = false) override;
   private:
-    ID3D11Device* APIDevice;
+    Microsoft::WRL::ComPtr<ID3D11Device> APIDevice;
   };
 }
 

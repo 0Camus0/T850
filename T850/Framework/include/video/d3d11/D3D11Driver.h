@@ -64,19 +64,19 @@ namespace t800 {
     //D3D11_VIEWPORT viewport_RT;
 
     /*STATES*/
-    ID3D11BlendState* m_BlendStateAdditive;
-    ID3D11BlendState* m_BlendStateOpaque;
-    ID3D11BlendState* m_BlendStateAlphaBlend;
-    ID3D11BlendState* m_BlendStateNonPremultiplied;
+    ComPtr<ID3D11BlendState> m_BlendStateAdditive;
+    ComPtr<ID3D11BlendState> m_BlendStateOpaque;
+    ComPtr<ID3D11BlendState> m_BlendStateAlphaBlend;
+    ComPtr<ID3D11BlendState> m_BlendStateNonPremultiplied;
 
-    ID3D11DepthStencilState* m_depthStateReadWrite;
-    ID3D11DepthStencilState* m_depthStateNone;
-    ID3D11DepthStencilState* m_depthStateRead;
+    ComPtr<ID3D11DepthStencilState> m_depthStateReadWrite;
+    ComPtr<ID3D11DepthStencilState> m_depthStateNone;
+    ComPtr<ID3D11DepthStencilState> m_depthStateRead;
 
-    ID3D11RasterizerState* m_RasterStateWireframe;
-    ID3D11RasterizerState* m_RasterStateCullNone;
-    ID3D11RasterizerState* m_RasterStateCullClockWise;
-    ID3D11RasterizerState* m_RasterStateCullCounterClockwise;
+    ComPtr<ID3D11RasterizerState> m_RasterStateWireframe;
+    ComPtr<ID3D11RasterizerState> m_RasterStateCullNone;
+    ComPtr<ID3D11RasterizerState> m_RasterStateCullClockWise;
+    ComPtr<ID3D11RasterizerState> m_RasterStateCullCounterClockwise;
   };
 }
 

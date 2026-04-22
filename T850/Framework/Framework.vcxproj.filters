@@ -161,17 +161,32 @@
     <ClInclude Include="T8_descriptors.h">
       <Filter>Header Files\utils</Filter>
     </ClInclude>
-    <ClInclude Include="include\video\windows\D3DXDriver.h">
-      <Filter>Header Files\video\D3DX</Filter>
+    <ClInclude Include="include\video\d3d11\D3D11DeviceContext.h">
+      <Filter>Header Files\video\d3d11</Filter>
     </ClInclude>
-    <ClInclude Include="include\video\windows\D3DXRT.h">
-      <Filter>Header Files\video\D3DX</Filter>
+    <ClInclude Include="include\video\d3d11\D3D11Device.h">
+      <Filter>Header Files\video\d3d11</Filter>
     </ClInclude>
-    <ClInclude Include="include\video\windows\D3DXShader.h">
-      <Filter>Header Files\video\D3DX</Filter>
+    <ClInclude Include="include\video\d3d11\D3D11VertexBuffer.h">
+      <Filter>Header Files\video\d3d11</Filter>
     </ClInclude>
-    <ClInclude Include="include\video\windows\D3DXTexture.h">
-      <Filter>Header Files\video\D3DX</Filter>
+    <ClInclude Include="include\video\d3d11\D3D11IndexBuffer.h">
+      <Filter>Header Files\video\d3d11</Filter>
+    </ClInclude>
+    <ClInclude Include="include\video\d3d11\D3D11ConstantBuffer.h">
+      <Filter>Header Files\video\d3d11</Filter>
+    </ClInclude>
+    <ClInclude Include="include\video\d3d11\D3D11Driver.h">
+      <Filter>Header Files\video\d3d11</Filter>
+    </ClInclude>
+    <ClInclude Include="include\video\d3d11\D3D11RT.h">
+      <Filter>Header Files\video\d3d11</Filter>
+    </ClInclude>
+    <ClInclude Include="include\video\d3d11\D3D11Shader.h">
+      <Filter>Header Files\video\d3d11</Filter>
+    </ClInclude>
+    <ClInclude Include="include\video\d3d11\D3D11Texture.h">
+      <Filter>Header Files\video\d3d11</Filter>
     </ClInclude>
     <ClInclude Include="include\core\windows\Win32Framework.h">
       <Filter>Header Files\core</Filter>
@@ -280,17 +295,32 @@
     <ClCompile Include="src\core\windows\Win32Framework.cpp">
       <Filter>Source Files\core</Filter>
     </ClCompile>
-    <ClCompile Include="src\video\windows\D3DXDriver.cpp">
-      <Filter>Source Files\video\D3DX</Filter>
+    <ClCompile Include="src\video\d3d11\D3D11DeviceContext.cpp">
+      <Filter>Source Files\video\d3d11</Filter>
     </ClCompile>
-    <ClCompile Include="src\video\windows\D3DXRT.cpp">
-      <Filter>Source Files\video\D3DX</Filter>
+    <ClCompile Include="src\video\d3d11\D3D11Device.cpp">
+      <Filter>Source Files\video\d3d11</Filter>
     </ClCompile>
-    <ClCompile Include="src\video\windows\D3DXShader.cpp">
-      <Filter>Source Files\video\D3DX</Filter>
+    <ClCompile Include="src\video\d3d11\D3D11VertexBuffer.cpp">
+      <Filter>Source Files\video\d3d11</Filter>
     </ClCompile>
-    <ClCompile Include="src\video\windows\D3DXTexture.cpp">
-      <Filter>Source Files\video\D3DX</Filter>
+    <ClCompile Include="src\video\d3d11\D3D11IndexBuffer.cpp">
+      <Filter>Source Files\video\d3d11</Filter>
+    </ClCompile>
+    <ClCompile Include="src\video\d3d11\D3D11ConstantBuffer.cpp">
+      <Filter>Source Files\video\d3d11</Filter>
+    </ClCompile>
+    <ClCompile Include="src\video\d3d11\D3D11Driver.cpp">
+      <Filter>Source Files\video\d3d11</Filter>
+    </ClCompile>
+    <ClCompile Include="src\video\d3d11\D3D11RT.cpp">
+      <Filter>Source Files\video\d3d11</Filter>
+    </ClCompile>
+    <ClCompile Include="src\video\d3d11\D3D11Shader.cpp">
+      <Filter>Source Files\video\d3d11</Filter>
+    </ClCompile>
+    <ClCompile Include="src\video\d3d11\D3D11Texture.cpp">
+      <Filter>Source Files\video\d3d11</Filter>
     </ClCompile>
     <ClCompile Include="src\utils\ResourceManager.cpp">
       <Filter>Source Files\utils</Filter>

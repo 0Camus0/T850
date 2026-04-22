@@ -11,7 +11,7 @@
 * ** Enjoy, learn and share.
 *********************************************************/
 
-#include <video/windows/D3D11Texture.h>
+#include <video/d3d11/D3D11Texture.h>
 #include <utils/Log.h>
 
 namespace t800 {

@@ -18,8 +18,8 @@
 
 #include <scene/RenderMesh.h>
 #include <utils/ThreadPool.h>
-#include <video/GLShader.h>
-#include <video/GLDriver.h>
+#include <video/gl/GLShader.h>
+#include <video/gl/GLDriver.h>
 
 #if defined(OS_WINDOWS)
 #include <video/windows/D3D11Shader.h>

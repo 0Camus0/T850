@@ -11,9 +11,9 @@
 * ** Enjoy, learn and share.
 *********************************************************/
 
-#include <video/GLRT.h>
-#include <video/GLTexture.h>
-#include <video/GLDriver.h>
+#include <video/gl/GLRT.h>
+#include <video/gl/GLTexture.h>
+#include <video/gl/GLDriver.h>
 #include <utils/Utils.h>
 
 #if defined(OS_LINUX)

@@ -33,7 +33,7 @@
 
 #include <utils/Utils.h>
 #include <vector>
-#include <video/GLSLParser.h>
+#include <video/gl/GLSLParser.h>
 
 namespace t800 {
   class GLShader : public ShaderBase {

@@ -549,8 +549,14 @@ function Get-LaunchCommand {
 }
 
 function Get-EditorLaunchCommand {
+    $apiTag = ($cmbApi.SelectedItem).Tag.ToString()
     $exePath = Join-Path $rootDir "T8ditor.exe"
     $argList = @()
+
+    # Editor defaults to D3D12; only pass --api for Vulkan
+    if ($apiTag -eq "vulkan") {
+        $argList += @("--api", "vulkan")
+    }
 
     $w = $txtWidth.Text
     $h = $txtHeight.Text
@@ -563,7 +569,8 @@ function Get-EditorLaunchCommand {
 
     if ($chkLogToFile.IsChecked) {
         $ts = Get-Date -Format "yyyyMMdd_HHmmss"
-        $logFilename = "logs\T8ditor_${ts}_d3d12.log"
+        $editorApi = if ($apiTag -eq "vulkan") { "vulkan" } else { "d3d12" }
+        $logFilename = "logs\T8ditor_${ts}_${editorApi}.log"
         $argList += @("--logFile", $logFilename)
     }
 

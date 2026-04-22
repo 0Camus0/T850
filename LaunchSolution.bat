@@ -82,7 +82,7 @@ for %%p in (%PACKAGES_DYNAMIC%) do (
 )
 :: Editor dependencies (x64 only)
 echo   imgui:x64-windows-static (editor)
-"%VCPKG_EXE%" install "imgui[docking-experimental,dx11-binding,dx12-binding,opengl3-binding,sdl3-binding,win32-binding]:x64-windows-static" --no-print-usage 2>nul
+"%VCPKG_EXE%" install "imgui[docking-experimental,dx11-binding,dx12-binding,vulkan-binding,opengl3-binding,sdl3-binding,win32-binding]:x64-windows-static" --no-print-usage 2>nul
 echo   imguizmo:x64-windows-static (editor)
 "%VCPKG_EXE%" install imguizmo:x64-windows-static --no-print-usage 2>nul
 

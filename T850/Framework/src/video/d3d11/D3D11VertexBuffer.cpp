@@ -16,18 +16,19 @@
 namespace t800 {
   void * D3DXVertexBuffer::GetAPIObject() const
   {
-    return (void*)APIBuffer;
+    return (void*)APIBuffer.Get();
   }
 
   void ** D3DXVertexBuffer::GetAPIObjectReference() const
   {
-    return (void**)&APIBuffer;
+    return reinterpret_cast<void**>(const_cast<Microsoft::WRL::ComPtr<ID3D11Buffer>&>(APIBuffer).GetAddressOf());
   }
 
   void D3DXVertexBuffer::Set(const DeviceContext & deviceContext, const unsigned stride, const unsigned offset)
   {
     const_cast<DeviceContext*>(&deviceContext)->actualVertexBuffer = (VertexBuffer*)this;
-    reinterpret_cast<ID3D11DeviceContext*>(deviceContext.GetAPIObject())->IASetVertexBuffers(0, 1, &APIBuffer, &stride, &offset);
+    ID3D11Buffer* raw = APIBuffer.Get();
+    reinterpret_cast<ID3D11DeviceContext*>(deviceContext.GetAPIObject())->IASetVertexBuffers(0, 1, &raw, &stride, &offset);
   }
   void D3DXVertexBuffer::Create(const Device & device, BufferDesc desc, void * initialData)
   {
@@ -60,27 +61,27 @@ namespace t800 {
     {
       sysMemCpy.assign((char*)initialData, (char*)initialData + desc.byteWidth);
       D3D11_SUBRESOURCE_DATA subData = { initialData, 0, 0 };
-      reinterpret_cast<ID3D11Device*>(device.GetAPIObject())->CreateBuffer(&apiDesc, &subData, &APIBuffer);
+      reinterpret_cast<ID3D11Device*>(device.GetAPIObject())->CreateBuffer(&apiDesc, &subData, APIBuffer.ReleaseAndGetAddressOf());
     }
     else
     {
-      reinterpret_cast<ID3D11Device*>(device.GetAPIObject())->CreateBuffer(&apiDesc, 0, &APIBuffer);
+      reinterpret_cast<ID3D11Device*>(device.GetAPIObject())->CreateBuffer(&apiDesc, 0, APIBuffer.ReleaseAndGetAddressOf());
     }
 
   }
   void D3DXVertexBuffer::UpdateFromSystemCopy(const DeviceContext& deviceContext)
   {
-    reinterpret_cast<ID3D11DeviceContext*>(deviceContext.GetAPIObject())->UpdateSubresource(APIBuffer, 0, 0, &sysMemCpy[0], 0, 0);
+    reinterpret_cast<ID3D11DeviceContext*>(deviceContext.GetAPIObject())->UpdateSubresource(APIBuffer.Get(), 0, 0, &sysMemCpy[0], 0, 0);
   }
   void D3DXVertexBuffer::UpdateFromBuffer(const DeviceContext& deviceContext, const void * buffer)
   {
     sysMemCpy.clear();
     sysMemCpy.assign((char*)buffer, (char*)buffer + descriptor.byteWidth);
-    reinterpret_cast<ID3D11DeviceContext*>(deviceContext.GetAPIObject())->UpdateSubresource(APIBuffer, 0, 0, buffer, 0, 0);
+    reinterpret_cast<ID3D11DeviceContext*>(deviceContext.GetAPIObject())->UpdateSubresource(APIBuffer.Get(), 0, 0, buffer, 0, 0);
   }
   void D3DXVertexBuffer::release()
   {
-    APIBuffer->Release();
+    APIBuffer.Reset();
     sysMemCpy.clear();
     delete this;
   }

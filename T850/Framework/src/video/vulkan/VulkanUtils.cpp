@@ -5,7 +5,7 @@
  *********************************************************/
 
 #include <video/vulkan/VulkanUtils.h>
-#include <video/BaseDriver.h>
+#include <video/vulkan/VulkanDriver.h>
 
 #if defined(OS_WINDOWS)
 

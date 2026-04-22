@@ -109,6 +109,16 @@
     <ClInclude Include="include\video\d3d12\D3D12RT.h" />
     <ClInclude Include="include\video\d3d12\D3D12Texture.h" />
     <ClInclude Include="include\video\vulkan\VulkanDriver.h" />
+    <ClInclude Include="include\video\vulkan\VulkanVertexBuffer.h" />
+    <ClInclude Include="include\video\vulkan\VulkanIndexBuffer.h" />
+    <ClInclude Include="include\video\vulkan\VulkanConstantBuffer.h" />
+    <ClInclude Include="include\video\vulkan\VulkanTexture.h" />
+    <ClInclude Include="include\video\vulkan\VulkanRT.h" />
+    <ClInclude Include="include\video\vulkan\VulkanShader.h" />
+    <ClInclude Include="include\video\vulkan\VulkanDeviceContext.h" />
+    <ClInclude Include="include\video\vulkan\VulkanDevice.h" />
+    <ClInclude Include="include\video\vulkan\VulkanPipelineKey.h" />
+    <ClInclude Include="include\video\vulkan\VulkanUtils.h" />
     <ClInclude Include="T8_descriptors.h" />
   </ItemGroup>
   <ItemGroup>
@@ -196,6 +206,15 @@
     <ClCompile Include="src\video\d3d12\D3D12RT.cpp" />
     <ClCompile Include="src\video\d3d12\D3D12Texture.cpp" />
     <ClCompile Include="src\video\vulkan\VulkanDriver.cpp" />
+    <ClCompile Include="src\video\vulkan\VulkanVertexBuffer.cpp" />
+    <ClCompile Include="src\video\vulkan\VulkanIndexBuffer.cpp" />
+    <ClCompile Include="src\video\vulkan\VulkanConstantBuffer.cpp" />
+    <ClCompile Include="src\video\vulkan\VulkanTexture.cpp" />
+    <ClCompile Include="src\video\vulkan\VulkanRT.cpp" />
+    <ClCompile Include="src\video\vulkan\VulkanShader.cpp" />
+    <ClCompile Include="src\video\vulkan\VulkanDeviceContext.cpp" />
+    <ClCompile Include="src\video\vulkan\VulkanDevice.cpp" />
+    <ClCompile Include="src\video\vulkan\VulkanUtils.cpp" />
     <ClCompile Include="src\utils\gltf\GLTFLoader.cpp" />
     <ClCompile Include="src\utils\gltf\GLTFJson.cpp" />
     <ClCompile Include="src\utils\gltf\GLTFAccessor.cpp" />

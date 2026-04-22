@@ -1,3 +1,4 @@
+#include "pch.h"
 #include "scene/SplineWireframe.h"
 #include "utils/Utils.h"
 namespace t800 {

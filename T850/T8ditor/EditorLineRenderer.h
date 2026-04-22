@@ -22,11 +22,11 @@ namespace t8ditor {
 class EditorLineRenderer {
 public:
   // Constant buffer layout shared with VS_EditorLine.{hlsl,glsl}. Field
-  // order is significant — the GL backend reflects uniforms positionally
-  // (see Framework/src/video/GLShader.cpp).
+  // order is significant — the GL backend reflects uniforms positionally.
   struct CBuffer {
     XMATRIX44 WVP;
-    XVECTOR3  LineColor; // .x .y .z .w (XVECTOR3 carries .w too)
+    XVECTOR3  LineColor;    // .x .y .z .w
+    XVECTOR3  DepthParams;  // .x=1/viewW, .y=1/viewH, .z=unused, .w=unused
   };
 
   EditorLineRenderer();
@@ -37,6 +37,15 @@ public:
   void Destroy();
 
   bool IsReady() const { return m_shader != nullptr && m_cb != nullptr; }
+
+  // Set viewport dimensions for depth comparison (call once per frame or on resize)
+  void SetViewport(int width, int height) { m_viewW = width; m_viewH = height; }
+
+  // Set the GBuffer COLOR4 depth texture for depth-tested wireframe. Pass nullptr to disable.
+  void SetDepthTexture(t800::Texture* depthTex) { m_depthTex = depthTex; }
+
+  // Set the camera far plane (used to compute linear depth matching GBuffer COLOR4)
+  void SetFarPlane(float farPlane) { m_farPlane = farPlane; }
 
   // Issue one indexed line-list draw using the supplied VB/IB. The caller
   // owns the buffers and is responsible for their lifetime.
@@ -56,10 +65,16 @@ public:
                                               unsigned numVertices);
   static t800::IndexBuffer*  CreateIndexBuffer16(const unsigned short* indices,
                                                  unsigned numIndices);
+  static t800::IndexBuffer*  CreateIndexBuffer32(const unsigned int* indices,
+                                                 unsigned numIndices);
 
 private:
-  t800::ShaderBase*     m_shader = nullptr;
-  t800::ConstantBuffer* m_cb     = nullptr;
+  t800::ShaderBase*     m_shader   = nullptr;
+  t800::ConstantBuffer* m_cb       = nullptr;
+  t800::Texture*        m_depthTex = nullptr;
+  int                   m_viewW    = 1280;
+  int                   m_viewH    = 720;
+  float                 m_farPlane = 1000.0f;
 };
 
 } // namespace t8ditor

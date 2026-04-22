@@ -11,10 +11,12 @@
 * ** Enjoy, learn and share.
 *********************************************************/
 
-#include <video/GLDriver.h>
-#include <video/GLTexture.h>
-#include <video/GLRT.h>
-#include <video/GLShader.h>
+#include <video/gl/GLDriver.h>
+#include <video/gl/GLTexture.h>
+#include <video/gl/GLRT.h>
+#include <video/gl/GLShader.h>
+#include <video/gl/GLDevice.h>
+#include <video/gl/GLDeviceContext.h>
 #include <iostream>
 #include <string>
 #include <sstream>
@@ -42,295 +44,6 @@
 namespace t800 {
   extern Device*            T8Device;
   extern DeviceContext*     T8DeviceContext;
-  void * GLDeviceContext::GetAPIObject() const
-  {
-    return nullptr;
-  }
-  void ** GLDeviceContext::GetAPIObjectReference() const
-  {
-    return nullptr;
-  }
-  void GLDeviceContext::release()
-  {
-    delete this;
-  }
-  void GLDeviceContext::SetPrimitiveTopology(T8_TOPOLOGY::E topology)
-  {
-    switch (topology)
-    {
-    case T8_TOPOLOGY::POINT_LIST:
-      internalTopology = GL_POINTS;
-      break;
-    case T8_TOPOLOGY::LINE_LIST:
-      internalTopology = GL_LINES;
-      break;
-    case T8_TOPOLOGY::LINE_STRIP:
-      internalTopology = GL_LINE_STRIP;
-      break;
-    case T8_TOPOLOGY::TRIANLE_LIST:
-      internalTopology = GL_TRIANGLES;
-      break;
-    case T8_TOPOLOGY::TRIANGLE_STRIP:
-      internalTopology = GL_TRIANGLE_STRIP;
-      break;
-    default:
-      internalTopology = GL_TRIANGLES;
-      break;
-    }
-  }
-  void GLDeviceContext::DrawIndexed(unsigned vertexCount, unsigned startIndex, unsigned startVertex)
-  {
-    glDrawElements(internalTopology, vertexCount, internalIBFormat, 0);
-  }
-  void * GLDevice::GetAPIObject() const
-  {
-    return nullptr;
-  }
-  void ** GLDevice::GetAPIObjectReference() const
-  {
-    return nullptr;
-  }
-  void GLDevice::release()
-  {
-    delete this;
-  }
-  Buffer * GLDevice::CreateBuffer(T8_BUFFER_TYPE::E bufferType, BufferDesc desc, void * initialData)
-  {
-    Buffer* retBuff;
-    switch (bufferType)
-    {
-    case T8_BUFFER_TYPE::VERTEX:
-      retBuff = new GLVertexBuffer;
-      break;
-    case T8_BUFFER_TYPE::INDEX:
-      retBuff = new GLIndexBuffer;
-      break;
-    case T8_BUFFER_TYPE::CONSTANT:
-      retBuff = new GLConstantBuffer;
-      break;
-    default:
-      break;
-    }
-    retBuff->Create(*this, desc, initialData);
-    return retBuff;
-  }
-
-  ShaderBase * GLDevice::CreateShader(std::string src_vs, std::string src_fs, ShaderKey key, const std::string& vs_name, const std::string& fs_name)
-  {
-    ShaderBase *sh = new GLShader();
-    if (!sh->CreateShader(src_vs, src_fs, key, vs_name, fs_name)) {
-      delete sh;
-      return nullptr;
-    }
-    return sh;
-  }
-
-  Texture * GLDevice::CreateTexture(std::string path)
-  {
-    GLTexture* txture = new GLTexture;
-    txture->LoadTexture(path.c_str());
-    return txture;
-  }
-
-  Texture * GLDevice::CreateTextureFromMemory(const unsigned char * buff, int w, int h, int channels, std::string name)
-  {
-    GLTexture* txture = new GLTexture;
-    txture->LoadFromMemory(buff, w, h, channels);
-    return txture;
-  }
-
-  Texture * GLDevice::CreateCubeMap(const unsigned char * buff, int w, int h)
-  {
-    GLTexture* txture = new GLTexture;
-    txture->CreateCubeMap(buff, w, h);
-    return txture;
-  }
-
-  BaseRT * GLDevice::CreateRT(int nrt, int cf, int df, int w, int h, bool genMips)
-  {
-    BaseRT* rt = new GLRT;
-    if (rt->LoadRT(nrt, cf, df, w, h, genMips)) {
-      return rt;
-    }
-    delete rt;
-    return nullptr;
-  }
-
-
-  void * GLVertexBuffer::GetAPIObject() const
-  {
-    return nullptr;
-  }
-
-  void ** GLVertexBuffer::GetAPIObjectReference() const
-  {
-    return nullptr;
-  }
-
-  void GLVertexBuffer::Set(const DeviceContext & deviceContext, const unsigned stride, const unsigned offset)
-  {
-    const_cast<DeviceContext*>(&deviceContext)->actualVertexBuffer = (VertexBuffer*)this;
-    reinterpret_cast<GLDeviceContext*>(const_cast<DeviceContext*>(&deviceContext))->internalStride = stride;
-    glBindBuffer(GL_ARRAY_BUFFER, APIID);
-  }
-  void GLVertexBuffer::UpdateFromSystemCopy(const DeviceContext & deviceContext)
-  {
-    glBindBuffer(GL_ARRAY_BUFFER, APIID);
-    glBufferData(GL_ARRAY_BUFFER, descriptor.byteWidth, &sysMemCpy[0], GL_STATIC_DRAW);
-  }
-  void GLVertexBuffer::UpdateFromBuffer(const DeviceContext & deviceContext, const void * buffer)
-  {
-    sysMemCpy.clear();
-    sysMemCpy.assign((char*)buffer, (char*)buffer + descriptor.byteWidth);
-    UpdateFromSystemCopy(deviceContext);
-  }
-  void GLVertexBuffer::release()
-  {
-    sysMemCpy.clear();
-    glDeleteBuffers(1,&APIID);
-    glBindBuffer(GL_ARRAY_BUFFER, 0);
-    delete this;
-  }
-  void GLVertexBuffer::Create(const Device & device, BufferDesc desc, void * initialData)
-  {
-    descriptor = desc;
-    if (initialData) {
-      sysMemCpy.assign((char*)initialData, (char*)initialData + desc.byteWidth);
-    }
-    glGenBuffers(1, &APIID);
-    glBindBuffer(GL_ARRAY_BUFFER, APIID);
-    glBufferData(GL_ARRAY_BUFFER, desc.byteWidth, initialData, GL_STATIC_DRAW);
-    glBindBuffer(GL_ARRAY_BUFFER, 0);
-  }
-
-
-  void * GLIndexBuffer::GetAPIObject() const
-  {
-    return nullptr;
-  }
-
-  void ** GLIndexBuffer::GetAPIObjectReference() const
-  {
-    return nullptr;
-  }
-
-  void GLIndexBuffer::Set(const DeviceContext & deviceContext, const unsigned offset, T8_IB_FORMAR::E format)
-  {
-    switch (format)
-    {
-    case T8_IB_FORMAR::R16:
-      reinterpret_cast<GLDeviceContext*>(const_cast<DeviceContext*>(&deviceContext))->internalIBFormat = GL_UNSIGNED_SHORT;
-      break;
-    case T8_IB_FORMAR::R32:
-      reinterpret_cast<GLDeviceContext*>(const_cast<DeviceContext*>(&deviceContext))->internalIBFormat = GL_UNSIGNED_INT;
-      break;
-    default:
-      break;
-    }
-    const_cast<DeviceContext*>(&deviceContext)->actualIndexBuffer = (IndexBuffer*)this;
-    glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, APIID);
-  }
-  void GLIndexBuffer::UpdateFromSystemCopy(const DeviceContext & deviceContext)
-  {
-    glBindBuffer(GL_ARRAY_BUFFER, APIID);
-    glBufferData(GL_ARRAY_BUFFER, descriptor.byteWidth, &sysMemCpy[0], GL_STATIC_DRAW);
-  }
-  void GLIndexBuffer::UpdateFromBuffer(const DeviceContext & deviceContext, const void * buffer)
-  {
-    sysMemCpy.clear();
-    sysMemCpy.assign((char*)buffer, (char*)buffer + descriptor.byteWidth);
-    UpdateFromSystemCopy(deviceContext);
-  }
-  void GLIndexBuffer::release()
-  {
-    sysMemCpy.clear();
-    glDeleteBuffers(1, &APIID);
-    glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, 0);
-    delete this;
-  }
-  void GLIndexBuffer::Create(const Device & device, BufferDesc desc, void * initialData)
-  {
-    descriptor = desc;
-    if (initialData) {
-      sysMemCpy.assign((char*)initialData, (char*)initialData + desc.byteWidth);
-    }
-    glGenBuffers(1, &APIID);
-    glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, APIID);
-    glBufferData(GL_ELEMENT_ARRAY_BUFFER, desc.byteWidth, initialData, GL_STATIC_DRAW);
-    glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, 0);
-  }
-
-
-  void * GLConstantBuffer::GetAPIObject() const
-  {
-    return nullptr;
-  }
-
-  void ** GLConstantBuffer::GetAPIObjectReference() const
-  {
-    return nullptr;
-  }
-
-  void GLConstantBuffer::Set(const DeviceContext & deviceContext)
-  {
-    const_cast<DeviceContext*>(&deviceContext)->actualConstantBuffer = (ConstantBuffer*)this;
-    GLShader* sh = reinterpret_cast<GLShader*>(deviceContext.actualShaderSet);
-
-    for (auto &it : sh->internalUniformsLocs) {
-      switch (it.type)
-      {
-      case hyperspace::shader::datatype_::INT_:
-        glUniform1i(it.loc, *reinterpret_cast<GLint*>(&sysMemCpy[it.bufferBytePosition]));
-        break;
-      case hyperspace::shader::datatype_::BOOLEAN_:
-        glUniform1i(it.loc, *reinterpret_cast<GLint*>(&sysMemCpy[it.bufferBytePosition]));
-        break;
-      case hyperspace::shader::datatype_::FLOAT_:
-        glUniform1f(it.loc, *reinterpret_cast<GLfloat*>(&sysMemCpy[it.bufferBytePosition]));
-        break;
-      case hyperspace::shader::datatype_::MAT2_:
-        glUniformMatrix2fv(it.loc, it.num, GL_FALSE, reinterpret_cast<GLfloat*>(&sysMemCpy[it.bufferBytePosition]));
-        break;
-      case hyperspace::shader::datatype_::MAT3_:
-        glUniformMatrix3fv(it.loc, it.num, GL_FALSE, reinterpret_cast<GLfloat*>(&sysMemCpy[it.bufferBytePosition]));
-        break;
-      case hyperspace::shader::datatype_::MAT4_:
-        glUniformMatrix4fv(it.loc, it.num, GL_FALSE, reinterpret_cast<GLfloat*>(&sysMemCpy[it.bufferBytePosition]));
-        break;
-      case hyperspace::shader::datatype_::VECTOR2_:
-        glUniform2fv(it.loc, it.num, reinterpret_cast<GLfloat*>(&sysMemCpy[it.bufferBytePosition]));
-        break;
-      case hyperspace::shader::datatype_::VECTOR3_:
-        glUniform3fv(it.loc, it.num, reinterpret_cast<GLfloat*>(&sysMemCpy[it.bufferBytePosition]));
-        break;
-      case hyperspace::shader::datatype_::VECTOR4_:
-        glUniform4fv(it.loc, it.num, reinterpret_cast<GLfloat*>(&sysMemCpy[it.bufferBytePosition]));
-        break;
-      default:
-        break;
-      }
-    }
-  }
-  void GLConstantBuffer::UpdateFromSystemCopy(const DeviceContext & deviceContext)
-  {
-  }
-  void GLConstantBuffer::UpdateFromBuffer(const DeviceContext & deviceContext, const void * buffer)
-  {
-    sysMemCpy.clear();
-    sysMemCpy.assign((char*)buffer, (char*)buffer + descriptor.byteWidth);
-  }
-  void GLConstantBuffer::release()
-  {
-    sysMemCpy.clear();
-  }
-  void GLConstantBuffer::Create(const Device & device, BufferDesc desc, void * initialData)
-  {
-    descriptor = desc;
-    if (initialData) {
-      sysMemCpy.assign((char*)initialData, (char*)initialData + desc.byteWidth);
-    }
-  }
-
 
 #if defined(USING_OPENGL_ES20) || defined(USING_OPENGL_ES30) || defined(USING_OPENGL_ES31)
   void EGLError(const char* c_ptr) {
@@ -534,9 +247,6 @@ namespace t800 {
   }
 
   void  GLDriver::SetWindowHandle(const WindowHandle& handle) {
-    // Editor host path: GL via EGL on Windows can target an explicit HWND
-    // (editor child window). The desktop SDL/GL path still expects an
-    // SDL_Window* for context creation, so we keep that field too.
 #if (defined(USING_OPENGL_ES20) || defined(USING_OPENGL_ES30) || defined(USING_OPENGL_ES31)) && defined(OS_WINDOWS)
     if (handle.kind == WindowHandle::WIN32_HWND && handle.nativeHandle) {
       eglWindow = reinterpret_cast<EGLNativeWindowType>(handle.nativeHandle);
@@ -624,9 +334,6 @@ namespace t800 {
     out.write(reinterpret_cast<const char*>(rgbBuf.data()), rgbBuf.size());
   }
 
-  // Read pixels from the currently bound FBO, flip vertically, write PPM.
-  // readFormat: GL_RGBA, GL_RED, or GL_DEPTH_COMPONENT
-  // readType: GL_UNSIGNED_BYTE, GL_FLOAT, GL_HALF_FLOAT
   static void ReadFBOToPPM(int w, int h, GLenum readFormat, GLenum readType, const std::string& path) {
     std::vector<unsigned char> rgbBuf(w * h * 3);
 
@@ -651,7 +358,6 @@ namespace t800 {
         }
       }
     } else {
-      // Read as float (works for GL_FLOAT and GL_HALF_FLOAT via GLES3 readback)
       std::vector<float> fPixels(w * h * channels);
       glReadPixels(0, 0, w, h, readFormat, GL_FLOAT, fPixels.data());
       for (int y = 0; y < h; y++) {
@@ -692,19 +398,15 @@ namespace t800 {
     BaseRT* rt = RTs[rtID];
     GLRT* glrt = static_cast<GLRT*>(rt);
 
-    // Save current FBO and viewport
     GLint prevFBO = 0;
     GLint prevViewport[4];
     glGetIntegerv(GL_FRAMEBUFFER_BINDING, &prevFBO);
     glGetIntegerv(GL_VIEWPORT, prevViewport);
 
-    // Bind the RT's FBO
     glBindFramebuffer(GL_FRAMEBUFFER, glrt->vFrameBuffers[0]);
     glViewport(0, 0, rt->w, rt->h);
 
     if (attachment == DEPTH_ATTACHMENT) {
-      // ANGLE/GLES3 cannot read depth textures via glReadPixels or sampler2D.
-      // Try direct readback first; if it fails, write a placeholder.
       std::vector<float> depthPixels(rt->w * rt->h, -1.0f);
       glReadPixels(0, 0, rt->w, rt->h, GL_DEPTH_COMPONENT, GL_FLOAT, depthPixels.data());
 
@@ -720,7 +422,6 @@ namespace t800 {
         T8_LOG_INFO("[GLDriver] Depth texture export not supported on ANGLE/GLES3 (shadows work correctly at runtime)");
       }
 
-      // Convert float depth to 8-bit PPM
       std::vector<unsigned char> rgbBuf(rt->w * rt->h * 3);
       for (int y = 0; y < rt->h; y++) {
         int srcRow = (rt->h - 1 - y);
@@ -734,8 +435,7 @@ namespace t800 {
       }
       WritePPM(path, rt->w, rt->h, rgbBuf);
     } else {
-      // Color attachment
-      int colorIndex = attachment; // COLOR0_ATTACHMENT=0, COLOR1_ATTACHMENT=1, etc.
+      int colorIndex = attachment;
       glReadBuffer(GL_COLOR_ATTACHMENT0 + colorIndex);
 
       GLenum readFormat = GL_RGBA;
@@ -756,7 +456,6 @@ namespace t800 {
       ReadFBOToPPM(rt->w, rt->h, readFormat, readType, path);
     }
 
-    // Restore previous FBO and viewport
     glBindFramebuffer(GL_FRAMEBUFFER, prevFBO);
     glViewport(prevViewport[0], prevViewport[1], prevViewport[2], prevViewport[3]);
   }

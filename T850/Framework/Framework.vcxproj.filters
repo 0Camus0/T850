@@ -60,6 +60,12 @@
     <Filter Include="Source Files\video\d3d12">
       <UniqueIdentifier>{8b3g9f4e-7d5c-5g2b-0e3f-9g6b4c2d0f1e}</UniqueIdentifier>
     </Filter>
+    <Filter Include="Header Files\video\vulkan">
+      <UniqueIdentifier>{9c4h0g5f-8e6d-6h3c-1f4g-0h7c5d3e1g2f}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Source Files\video\vulkan">
+      <UniqueIdentifier>{0d5i1h6g-9f7e-7i4d-2g5h-1i8d6e4f2h3g}</UniqueIdentifier>
+    </Filter>
     <Filter Include="Source Files\ext">
       <UniqueIdentifier>{fa54be3f-6764-487d-a20f-9adc6984e9b3}</UniqueIdentifier>
     </Filter>
@@ -227,6 +233,39 @@
     <ClInclude Include="include\video\d3d12\D3D12Texture.h">
       <Filter>Header Files\video\d3d12</Filter>
     </ClInclude>
+    <ClInclude Include="include\video\vulkan\VulkanDriver.h">
+      <Filter>Header Files\video\vulkan</Filter>
+    </ClInclude>
+    <ClInclude Include="include\video\vulkan\VulkanVertexBuffer.h">
+      <Filter>Header Files\video\vulkan</Filter>
+    </ClInclude>
+    <ClInclude Include="include\video\vulkan\VulkanIndexBuffer.h">
+      <Filter>Header Files\video\vulkan</Filter>
+    </ClInclude>
+    <ClInclude Include="include\video\vulkan\VulkanConstantBuffer.h">
+      <Filter>Header Files\video\vulkan</Filter>
+    </ClInclude>
+    <ClInclude Include="include\video\vulkan\VulkanTexture.h">
+      <Filter>Header Files\video\vulkan</Filter>
+    </ClInclude>
+    <ClInclude Include="include\video\vulkan\VulkanRT.h">
+      <Filter>Header Files\video\vulkan</Filter>
+    </ClInclude>
+    <ClInclude Include="include\video\vulkan\VulkanShader.h">
+      <Filter>Header Files\video\vulkan</Filter>
+    </ClInclude>
+    <ClInclude Include="include\video\vulkan\VulkanDeviceContext.h">
+      <Filter>Header Files\video\vulkan</Filter>
+    </ClInclude>
+    <ClInclude Include="include\video\vulkan\VulkanDevice.h">
+      <Filter>Header Files\video\vulkan</Filter>
+    </ClInclude>
+    <ClInclude Include="include\video\vulkan\VulkanPipelineKey.h">
+      <Filter>Header Files\video\vulkan</Filter>
+    </ClInclude>
+    <ClInclude Include="include\video\vulkan\VulkanUtils.h">
+      <Filter>Header Files\video\vulkan</Filter>
+    </ClInclude>
     <ClInclude Include="include\core\windows\Win32Framework.h">
       <Filter>Header Files\core</Filter>
     </ClInclude>
@@ -390,6 +429,36 @@
     </ClCompile>
     <ClCompile Include="src\video\d3d12\D3D12Texture.cpp">
       <Filter>Source Files\video\d3d12</Filter>
+    </ClCompile>
+    <ClCompile Include="src\video\vulkan\VulkanDriver.cpp">
+      <Filter>Source Files\video\vulkan</Filter>
+    </ClCompile>
+    <ClCompile Include="src\video\vulkan\VulkanVertexBuffer.cpp">
+      <Filter>Source Files\video\vulkan</Filter>
+    </ClCompile>
+    <ClCompile Include="src\video\vulkan\VulkanIndexBuffer.cpp">
+      <Filter>Source Files\video\vulkan</Filter>
+    </ClCompile>
+    <ClCompile Include="src\video\vulkan\VulkanConstantBuffer.cpp">
+      <Filter>Source Files\video\vulkan</Filter>
+    </ClCompile>
+    <ClCompile Include="src\video\vulkan\VulkanTexture.cpp">
+      <Filter>Source Files\video\vulkan</Filter>
+    </ClCompile>
+    <ClCompile Include="src\video\vulkan\VulkanRT.cpp">
+      <Filter>Source Files\video\vulkan</Filter>
+    </ClCompile>
+    <ClCompile Include="src\video\vulkan\VulkanShader.cpp">
+      <Filter>Source Files\video\vulkan</Filter>
+    </ClCompile>
+    <ClCompile Include="src\video\vulkan\VulkanDeviceContext.cpp">
+      <Filter>Source Files\video\vulkan</Filter>
+    </ClCompile>
+    <ClCompile Include="src\video\vulkan\VulkanDevice.cpp">
+      <Filter>Source Files\video\vulkan</Filter>
+    </ClCompile>
+    <ClCompile Include="src\video\vulkan\VulkanUtils.cpp">
+      <Filter>Source Files\video\vulkan</Filter>
     </ClCompile>
     <ClCompile Include="src\utils\ResourceManager.cpp">
       <Filter>Source Files\utils</Filter>

@@ -98,10 +98,17 @@
     <ClInclude Include="include\video\d3d11\D3D11Shader.h" />
     <ClInclude Include="include\video\d3d11\D3D11Texture.h" />
     <ClInclude Include="include\video\d3d12\D3D12Driver.h" />
-    <ClInclude Include="include\video\vulkan\VulkanDriver.h" />
+    <ClInclude Include="include\video\d3d12\D3D12Heap.h" />
+    <ClInclude Include="include\video\d3d12\D3D12VertexBuffer.h" />
+    <ClInclude Include="include\video\d3d12\D3D12IndexBuffer.h" />
+    <ClInclude Include="include\video\d3d12\D3D12ConstantBuffer.h" />
+    <ClInclude Include="include\video\d3d12\D3D12DeviceContext.h" />
+    <ClInclude Include="include\video\d3d12\D3D12Device.h" />
+    <ClInclude Include="include\video\d3d12\D3D12PipelineKey.h" />
     <ClInclude Include="include\video\d3d12\D3D12Shader.h" />
     <ClInclude Include="include\video\d3d12\D3D12RT.h" />
     <ClInclude Include="include\video\d3d12\D3D12Texture.h" />
+    <ClInclude Include="include\video\vulkan\VulkanDriver.h" />
     <ClInclude Include="T8_descriptors.h" />
   </ItemGroup>
   <ItemGroup>
@@ -179,6 +186,12 @@
     <ClCompile Include="src\video\d3d11\D3D11Shader.cpp" />
     <ClCompile Include="src\video\d3d11\D3D11Texture.cpp" />
     <ClCompile Include="src\video\d3d12\D3D12Driver.cpp" />
+    <ClCompile Include="src\video\d3d12\D3D12Heap.cpp" />
+    <ClCompile Include="src\video\d3d12\D3D12VertexBuffer.cpp" />
+    <ClCompile Include="src\video\d3d12\D3D12IndexBuffer.cpp" />
+    <ClCompile Include="src\video\d3d12\D3D12ConstantBuffer.cpp" />
+    <ClCompile Include="src\video\d3d12\D3D12DeviceContext.cpp" />
+    <ClCompile Include="src\video\d3d12\D3D12Device.cpp" />
     <ClCompile Include="src\video\d3d12\D3D12Shader.cpp" />
     <ClCompile Include="src\video\d3d12\D3D12RT.cpp" />
     <ClCompile Include="src\video\d3d12\D3D12Texture.cpp" />

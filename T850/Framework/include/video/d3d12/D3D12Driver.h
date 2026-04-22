@@ -1,8 +1,7 @@
 /*********************************************************
 * T850 Engine — D3D12 Backend
 *
-* D3D12Driver.h: Driver, Device, DeviceContext, Heap,
-*                Buffers (VB, IB, CB), PSO cache.
+* D3D12Driver.h: Umbrella header — includes all D3D12 types
 *********************************************************/
 
 #ifndef T800_D3D12DRIVER_H
@@ -28,178 +27,19 @@ using Microsoft::WRL::ComPtr;
 #include <fstream>
 #include <mutex>
 
-// Split headers
+// Per-class headers
+#include <video/d3d12/D3D12Heap.h>
+#include <video/d3d12/D3D12VertexBuffer.h>
+#include <video/d3d12/D3D12IndexBuffer.h>
+#include <video/d3d12/D3D12ConstantBuffer.h>
+#include <video/d3d12/D3D12DeviceContext.h>
+#include <video/d3d12/D3D12Device.h>
+#include <video/d3d12/D3D12PipelineKey.h>
 #include <video/d3d12/D3D12Shader.h>
 #include <video/d3d12/D3D12Texture.h>
 #include <video/d3d12/D3D12RT.h>
 
 namespace t800 {
-
-  // ══════════════════════════════════════════════════════
-  //  D3D12 Descriptor Heap — linear allocator
-  // ══════════════════════════════════════════════════════
-  class D3D12Heap {
-  public:
-    enum Type {
-      CBV_SRV_UAV_VISIBLE = 0,
-      CBV_SRV_UAV_NOT_VISIBLE,
-      SAMPLER,
-      RTV,
-      DSV,
-      MAX
-    };
-
-    bool Create(ID3D12Device* device, D3D12_DESCRIPTOR_HEAP_TYPE type,
-                uint32_t numDescriptors, bool shaderVisible);
-    void Destroy();
-
-    D3D12_CPU_DESCRIPTOR_HANDLE GetCPUStart() const;
-    D3D12_GPU_DESCRIPTOR_HANDLE GetGPUStart() const;
-    D3D12_CPU_DESCRIPTOR_HANDLE AllocateCPU();
-    D3D12_GPU_DESCRIPTOR_HANDLE AllocateGPU();
-    D3D12_CPU_DESCRIPTOR_HANDLE GetCPUAt(uint64_t index) const;
-    D3D12_GPU_DESCRIPTOR_HANDLE GetGPUAt(uint64_t index) const;
-    uint64_t GetCurrentIndex() const { return m_currentCount; }
-    void Increment() { m_currentCount++; }
-    ID3D12DescriptorHeap* GetHeap() const { return m_heap.Get(); }
-
-  private:
-    ComPtr<ID3D12DescriptorHeap> m_heap;
-    D3D12_DESCRIPTOR_HEAP_TYPE   m_type = D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV;
-    uint64_t m_maxDescriptors = 0;
-    uint64_t m_currentCount   = 0;
-    uint64_t m_incrementSize  = 0;
-    bool     m_shaderVisible  = false;
-  };
-
-  // ══════════════════════════════════════════════════════
-  //  D3D12 Buffers
-  // ══════════════════════════════════════════════════════
-  class D3D12VertexBuffer : public VertexBuffer {
-  public:
-    void* GetAPIObject() const override;
-    void** GetAPIObjectReference() const override;
-    void Set(const DeviceContext& deviceContext, const unsigned stride, const unsigned offset) override;
-    void UpdateFromSystemCopy(const DeviceContext& deviceContext) override;
-    void UpdateFromBuffer(const DeviceContext& deviceContext, const void* buffer) override;
-    void release() override;
-  private:
-    friend class D3D12Device;
-    void Create(const Device& device, BufferDesc desc, void* initialData = nullptr) override;
-    ComPtr<ID3D12Resource> m_buffer;
-    D3D12_VERTEX_BUFFER_VIEW m_view = {};
-    void* m_mappedData = nullptr;
-  };
-
-  class D3D12IndexBuffer : public IndexBuffer {
-  public:
-    void* GetAPIObject() const override;
-    void** GetAPIObjectReference() const override;
-    void Set(const DeviceContext& deviceContext, const unsigned offset, T8_IB_FORMAR::E format = T8_IB_FORMAR::R32) override;
-    void UpdateFromSystemCopy(const DeviceContext& deviceContext) override;
-    void UpdateFromBuffer(const DeviceContext& deviceContext, const void* buffer) override;
-    void release() override;
-  private:
-    friend class D3D12Device;
-    void Create(const Device& device, BufferDesc desc, void* initialData = nullptr) override;
-    ComPtr<ID3D12Resource> m_buffer;
-    D3D12_INDEX_BUFFER_VIEW m_view = {};
-    void* m_mappedData = nullptr;
-  };
-
-  class D3D12ConstantBuffer : public ConstantBuffer {
-  public:
-    void* GetAPIObject() const override;
-    void** GetAPIObjectReference() const override;
-    void Set(const DeviceContext& deviceContext) override;
-    void UpdateFromSystemCopy(const DeviceContext& deviceContext) override;
-    void UpdateFromBuffer(const DeviceContext& deviceContext, const void* buffer) override;
-    void release() override;
-  private:
-    friend class D3D12Device;
-    void Create(const Device& device, BufferDesc desc, void* initialData = nullptr) override;
-    ComPtr<ID3D12Resource> m_buffer;
-    D3D12_CPU_DESCRIPTOR_HANDLE m_cpuHandle = {};
-    D3D12_GPU_DESCRIPTOR_HANDLE m_gpuHandle = {};
-    void* m_mappedData = nullptr;
-    uint32_t m_alignedSize = 0;
-  };
-
-  // ══════════════════════════════════════════════════════
-  //  D3D12 Render Target
-  // ══════════════════════════════════════════════════════
-  // ══════════════════════════════════════════════════════
-  //  D3D12 Device Context
-  // ══════════════════════════════════════════════════════
-  class D3D12DeviceContext : public DeviceContext {
-  public:
-    void* GetAPIObject() const override;
-    void** GetAPIObjectReference() const override;
-    void release() override;
-    void SetPrimitiveTopology(T8_TOPOLOGY::E topology) override;
-    void DrawIndexed(unsigned vertexCount, unsigned startIndex, unsigned startVertex) override;
-
-    ID3D12GraphicsCommandList* GetCommandList() const { return m_commandList.Get(); }
-
-  private:
-    friend class D3D12Driver;
-    ComPtr<ID3D12GraphicsCommandList> m_commandList;
-  };
-
-  // ══════════════════════════════════════════════════════
-  //  D3D12 Device
-  // ══════════════════════════════════════════════════════
-  class D3D12Device : public Device {
-  public:
-    void* GetAPIObject() const override;
-    void** GetAPIObjectReference() const override;
-    void release() override;
-
-    Buffer*     CreateBuffer(T8_BUFFER_TYPE::E bufferType, BufferDesc desc, void* initialData = nullptr) override;
-    ShaderBase* CreateShader(std::string src_vs, std::string src_fs, ShaderKey key = ShaderKey(),
-                             const std::string& vs_name = "", const std::string& fs_name = "") override;
-    Texture*    CreateTexture(std::string path) override;
-    Texture*    CreateTextureFromMemory(const unsigned char* buff, int w, int h, int channels, std::string name) override;
-    Texture*    CreateCubeMap(const unsigned char* buff, int w, int h) override;
-    BaseRT*     CreateRT(int nrt, int cf, int df, int w, int h, bool genMips = false) override;
-
-    ID3D12Device* GetNativeDevice() const { return m_device.Get(); }
-
-  private:
-    friend class D3D12Driver;
-    ComPtr<ID3D12Device> m_device;
-  };
-
-  // ══════════════════════════════════════════════════════
-  //  D3D12 Pipeline State cache key
-  // ══════════════════════════════════════════════════════
-  struct D3D12PipelineKey {
-    uintptr_t shaderPtr;   // shader object address — unique per shader
-    uint8_t  blend;
-    uint8_t  depth;
-    uint8_t  cull;
-    uint8_t  numRTVs;
-    DXGI_FORMAT rtvFormat;
-    DXGI_FORMAT dsvFormat;
-    bool operator==(const D3D12PipelineKey& o) const {
-      return shaderPtr == o.shaderPtr && blend == o.blend &&
-             depth == o.depth && cull == o.cull && numRTVs == o.numRTVs &&
-             rtvFormat == o.rtvFormat && dsvFormat == o.dsvFormat;
-    }
-  };
-
-  struct D3D12PipelineKeyHash {
-    size_t operator()(const D3D12PipelineKey& k) const {
-      size_t h = std::hash<uintptr_t>()(k.shaderPtr);
-      h ^= std::hash<uint8_t>()(k.blend)    << 1;
-      h ^= std::hash<uint8_t>()(k.depth)    << 2;
-      h ^= std::hash<uint8_t>()(k.cull)     << 3;
-      h ^= std::hash<uint8_t>()(k.numRTVs)  << 4;
-      h ^= std::hash<uint32_t>()((uint32_t)k.rtvFormat) << 5;
-      h ^= std::hash<uint32_t>()((uint32_t)k.dsvFormat) << 6;
-      return h;
-    }
-  };
 
   // ══════════════════════════════════════════════════════
   //  D3D12 Driver — the main backend

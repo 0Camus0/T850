@@ -22,8 +22,8 @@
 #include <video/gl/GLDriver.h>
 
 #if defined(OS_WINDOWS)
-#include <video/windows/D3D11Shader.h>
-#include <video/windows/D3D11Driver.h>
+#include <video/d3d11/D3D11Shader.h>
+#include <video/d3d11/D3D11Driver.h>
 #endif
 #include "core/Core.h"
 #include <utils/Log.h>

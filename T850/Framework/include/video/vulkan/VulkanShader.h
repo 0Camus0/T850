@@ -8,7 +8,7 @@
 #define T800_VULKANSHADER_H
 
 #include <Config.h>
-#include <video/ShaderBase.h>
+#include <video/BaseDriver.h>
 
 #if defined(OS_WINDOWS)
 

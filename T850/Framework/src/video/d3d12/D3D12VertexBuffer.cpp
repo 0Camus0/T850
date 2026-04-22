@@ -51,11 +51,13 @@ namespace t800 {
       // Upload via temp staging buffer
       D3D12_HEAP_PROPERTIES uploadHeap = {}; uploadHeap.Type = D3D12_HEAP_TYPE_UPLOAD;
       ComPtr<ID3D12Resource> staging;
-      dev->CreateCommittedResource(&uploadHeap, D3D12_HEAP_FLAG_NONE, &bufDesc,
+      hr = dev->CreateCommittedResource(&uploadHeap, D3D12_HEAP_FLAG_NONE, &bufDesc,
                                     D3D12_RESOURCE_STATE_GENERIC_READ, nullptr,
                                     IID_PPV_ARGS(&staging));
+      if (FAILED(hr) || !staging) { T8_LOG_ERROR("[D3D12] VB staging create failed hr=0x%08X", hr); return; }
       void* mapped = nullptr;
-      staging->Map(0, nullptr, &mapped);
+      hr = staging->Map(0, nullptr, &mapped);
+      if (FAILED(hr) || !mapped) { T8_LOG_ERROR("[D3D12] VB staging map failed hr=0x%08X", hr); return; }
       memcpy(mapped, initialData, desc.byteWidth);
       staging->Unmap(0, nullptr);
 

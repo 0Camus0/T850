@@ -73,8 +73,8 @@ namespace t800 {
   }
   void GLIndexBuffer::UpdateFromSystemCopy(const DeviceContext & deviceContext)
   {
-    glBindBuffer(GL_ARRAY_BUFFER, APIID);
-    glBufferData(GL_ARRAY_BUFFER, descriptor.byteWidth, &sysMemCpy[0], GL_STATIC_DRAW);
+    glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, APIID);
+    glBufferData(GL_ELEMENT_ARRAY_BUFFER, descriptor.byteWidth, &sysMemCpy[0], GL_STATIC_DRAW);
   }
   void GLIndexBuffer::UpdateFromBuffer(const DeviceContext & deviceContext, const void * buffer)
   {

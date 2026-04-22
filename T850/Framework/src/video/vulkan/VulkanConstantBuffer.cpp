@@ -31,8 +31,12 @@ namespace t800 {
     auto* driver = GetVkDriver();
     VmaAllocator allocator = driver->GetAllocator();
 
-    // Align to minUniformBufferOffsetAlignment (typically 256)
-    m_alignedSize = (desc.byteWidth + 255) & ~255u;
+    // Align to physical device's minUniformBufferOffsetAlignment (typically 64–256 on desktop GPUs)
+    VkPhysicalDeviceProperties props = {};
+    vkGetPhysicalDeviceProperties(driver->GetPhysicalDevice(), &props);
+    VkDeviceSize uboAlign = props.limits.minUniformBufferOffsetAlignment;
+    if (uboAlign == 0) uboAlign = 256;
+    m_alignedSize = (uint32_t)((desc.byteWidth + (uboAlign - 1)) & ~(uboAlign - 1));
 
     VkBufferCreateInfo bufInfo = { VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO };
     bufInfo.size = m_alignedSize;

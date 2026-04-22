@@ -1,3 +1,4 @@
+#include "pch.h"
 /*********************************************************
 * T850 Engine — D3D12 Backend
 * D3D12Texture.cpp: Texture upload, SRV creation, binding

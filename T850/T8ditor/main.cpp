@@ -53,9 +53,9 @@ int main(int argc, char** argv) {
   desc.videoMode = t800::T8_VIDEO_MODE::WINDOWED;
   desc.title     = "T8ditor";
 
-  // Minimal CLI: --width N, --height N, --logFile PATH,
-  // --logLevel {error|info|debug|verbose|trace|0..4}, --mesh PATH.
-  // The editor always runs on D3D12.
+  // Minimal CLI: --api {d3d12|d3d11|vulkan|gl}, --width N, --height N,
+  // --logFile PATH, --logLevel {error|info|debug|verbose|trace|0..4}, --mesh PATH.
+  // Default API is D3D12.
   int   logLevel = 3;
   std::string logFile;
   std::string meshPath;
@@ -63,7 +63,11 @@ int main(int argc, char** argv) {
   for (int i = 1; i < argc; ++i) {
     std::string a = argv[i];
     if (a == "--api" && i + 1 < argc) {
-      ++i; // consume and ignore — editor always uses D3D12
+      std::string v = argv[++i];
+      if      (v == "d3d12" || v == "D3D12" || v == "dx12")   desc.api = t800::GRAPHICS_API::D3D12;
+      else if (v == "d3d11" || v == "D3D11" || v == "dx11")   desc.api = t800::GRAPHICS_API::D3D11;
+      else if (v == "vulkan" || v == "Vulkan" || v == "vk")   desc.api = t800::GRAPHICS_API::VULKAN;
+      else if (v == "gl" || v == "GL" || v == "opengl")       desc.api = t800::GRAPHICS_API::OPENGL;
     }
     else if (a == "--width"  && i + 1 < argc) desc.width  = std::stoi(argv[++i]);
     else if (a == "--height" && i + 1 < argc) desc.height = std::stoi(argv[++i]);

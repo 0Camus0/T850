@@ -1,3 +1,4 @@
+#include "pch.h"
 #include <debug/T8_Profiler.h>
 
 #ifdef T8_ENABLE_PROFILER

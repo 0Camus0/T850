@@ -12,7 +12,7 @@
 
 #ifdef OS_WINDOWS
 #include <video/d3d12/D3D12Driver.h>
-#include <video/windows/D3D11Driver.h>
+#include <video/d3d11/D3D11Driver.h>
 #include <video/vulkan/VulkanDriver.h>
 #include <d3d12.h>
 #include <d3d11.h>

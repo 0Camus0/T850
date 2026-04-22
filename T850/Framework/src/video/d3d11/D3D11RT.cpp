@@ -11,7 +11,7 @@
 * ** Enjoy, learn and share.
 *********************************************************/
 
-#include <video/windows/D3D11RT.h>
+#include <video/d3d11/D3D11RT.h>
 #include <iostream>
 
 namespace t800 {

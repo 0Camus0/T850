@@ -103,10 +103,19 @@ namespace t800 {
     stagingAllocCI.flags = VMA_ALLOCATION_CREATE_HOST_ACCESS_SEQUENTIAL_WRITE_BIT |
                            VMA_ALLOCATION_CREATE_MAPPED_BIT;
 
-    VkBuffer stagingBuffer;
-    VmaAllocation stagingAlloc;
-    VmaAllocationInfo stagingAllocInfo;
-    vmaCreateBuffer(allocator, &stagingInfo, &stagingAllocCI, &stagingBuffer, &stagingAlloc, &stagingAllocInfo);
+    VkBuffer stagingBuffer = VK_NULL_HANDLE;
+    VmaAllocation stagingAlloc = nullptr;
+    VmaAllocationInfo stagingAllocInfo = {};
+    {
+      VkResult sres = vmaCreateBuffer(allocator, &stagingInfo, &stagingAllocCI, &stagingBuffer, &stagingAlloc, &stagingAllocInfo);
+      if (sres != VK_SUCCESS || !stagingAllocInfo.pMappedData) {
+        T8_LOG_ERROR("[Vulkan] Texture staging buffer creation failed res=%d mapped=%p", sres, stagingAllocInfo.pMappedData);
+        if (stagingBuffer) vmaDestroyBuffer(allocator, stagingBuffer, stagingAlloc);
+        vmaDestroyImage(allocator, m_image, m_allocation);
+        m_image = VK_NULL_HANDLE; m_allocation = nullptr;
+        return;
+      }
+    }
     memcpy(stagingAllocInfo.pMappedData, uploadBuf, totalSize);
 
     // 3. Record transient command buffer
@@ -283,8 +292,17 @@ namespace t800 {
     VmaAllocationCreateInfo stagingAllocCI = {};
     stagingAllocCI.usage = VMA_MEMORY_USAGE_AUTO;
     stagingAllocCI.flags = VMA_ALLOCATION_CREATE_HOST_ACCESS_SEQUENTIAL_WRITE_BIT | VMA_ALLOCATION_CREATE_MAPPED_BIT;
-    VkBuffer stagingBuffer; VmaAllocation stagingAlloc; VmaAllocationInfo stagingAllocInfo;
-    vmaCreateBuffer(allocator, &stagingInfo, &stagingAllocCI, &stagingBuffer, &stagingAlloc, &stagingAllocInfo);
+    VkBuffer stagingBuffer = VK_NULL_HANDLE; VmaAllocation stagingAlloc = nullptr; VmaAllocationInfo stagingAllocInfo = {};
+    {
+      VkResult sres = vmaCreateBuffer(allocator, &stagingInfo, &stagingAllocCI, &stagingBuffer, &stagingAlloc, &stagingAllocInfo);
+      if (sres != VK_SUCCESS || !stagingAllocInfo.pMappedData) {
+        T8_LOG_ERROR("[Vulkan] Compressed texture staging buffer creation failed res=%d mapped=%p", sres, stagingAllocInfo.pMappedData);
+        if (stagingBuffer) vmaDestroyBuffer(allocator, stagingBuffer, stagingAlloc);
+        vmaDestroyImage(allocator, m_image, m_allocation);
+        m_image = VK_NULL_HANDLE; m_allocation = nullptr;
+        return;
+      }
+    }
     memcpy(stagingAllocInfo.pMappedData, buffer, totalSize);
 
     // Record copy

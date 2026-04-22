@@ -1,3 +1,4 @@
+#include "pch.h"
 #include <utils/cil.h>
 
 #define STB_IMAGE_IMPLEMENTATION
@@ -606,7 +607,7 @@ unsigned char*	cil_load(const char* filename, int *x, int *y, unsigned int *mipm
 		*mipmaps = 1;
 		*buffersize = (*x)*(*y) * 4;   // buffer is always 4 bytes/pixel
 		*props = props_;
-#if FORCE_LOW_RES_TEXTURES
+#ifdef FORCE_LOW_RES_TEXTURES
 		if (buffer) {
 
 			int nx = *x / FORCED_FACTOR;

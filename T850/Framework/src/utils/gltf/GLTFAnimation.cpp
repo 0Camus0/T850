@@ -1,3 +1,4 @@
+#include "pch.h"
 /*********************************************************
  * glTF 2.0 — skin / animation conversion.
  *

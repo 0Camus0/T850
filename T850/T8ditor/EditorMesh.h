@@ -1,12 +1,12 @@
 /*********************************************************
-* T8ditor — wireframe display of an .x mesh in the editor viewport.
+* T8ditor — wireframe display of a mesh in the editor viewport.
 *
-* Loads a `.x` file via Framework's `xF::XDataBase` and builds a single
-* wireframe VB + IB (line-list of triangle edges) for display through
-* EditorLineRenderer. This intentionally bypasses Framework's heavy
-* PBR `RenderMesh` path: the editor only needs to *see* the geometry,
-* not light it. Once ImGui + the in-editor scene-graph land, the
-* full-render path can replace this for textured/lit preview.
+* Loads a `.x`, `.glb`, or `.gltf` file and builds a single wireframe
+* VB + IB (line-list of triangle edges) for display through
+* EditorLineRenderer. For glTF files, the Framework's GLTFLoader
+* converts to XDataBase format first. This intentionally bypasses
+* Framework's heavy PBR `RenderMesh` path: the editor only needs to
+* *see* the geometry, not light it.
 *
 * The editor owns the mesh's transform (position/rotation/scale); the
 * user manipulates it via keyboard while a single-mesh selection is
@@ -28,8 +28,8 @@ public:
   EditorMesh()  = default;
   ~EditorMesh() { Destroy(); }
 
-  // Load the .x file at `path` and build the wireframe buffers. Returns
-  // false on any parse/IO/buffer-creation failure (caller can log + skip).
+  // Load a mesh file (.x, .glb, .gltf) and build the wireframe buffers.
+  // Returns false on any parse/IO/buffer-creation failure.
   bool Load(const std::string& path);
   void Destroy();
 
@@ -64,6 +64,7 @@ private:
   t800::VertexBuffer* m_vb = nullptr;
   t800::IndexBuffer*  m_ib = nullptr;
   unsigned m_indexCount = 0;
+  bool     m_use32BitIB = false;
 
   XVECTOR3 m_position    = XVECTOR3(0.0f, 0.0f, 0.0f);
   XVECTOR3 m_euler       = XVECTOR3(0.0f, 0.0f, 0.0f); // radians, XYZ

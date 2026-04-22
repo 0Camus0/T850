@@ -1,3 +1,4 @@
+#include "pch.h"
 #include "scene/WireframeSphere.h"
 #include "utils/Utils.h"
 #include <cmath>

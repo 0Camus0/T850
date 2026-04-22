@@ -179,7 +179,7 @@ namespace t800 {
     std::vector<int> perColorFormats;  // per-attachment formats (empty = use color_format for all)
 
     std::vector<Texture*>							vColorTextures;
-    Texture*										pDepthTexture;
+    Texture*										pDepthTexture = nullptr;
   };
   class ShaderBase {
   public:

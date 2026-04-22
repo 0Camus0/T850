@@ -1768,6 +1768,3 @@ reopen:
 
 #endif // OS_WINDOWS
 
-} // namespace t800
-
-#endif // OS_WINDOWS

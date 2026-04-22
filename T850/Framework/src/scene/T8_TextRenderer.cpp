@@ -1,3 +1,4 @@
+#include "pch.h"
 #include "scene/T8_TextRenderer.h"
 #include <utils/Log.h>
 #define STB_TRUETYPE_IMPLEMENTATION

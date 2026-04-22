@@ -1,4 +1,4 @@
-// SceneObject / SceneCamera / SceneLight — per-entity data for editor scenes.
+// SceneObject / SceneCamera / SceneLight / SceneGroup — per-entity data for editor scenes.
 
 #ifndef T8DITOR_SCENE_OBJECT_H
 #define T8DITOR_SCENE_OBJECT_H
@@ -6,8 +6,11 @@
 #include "EditorMesh.h"
 #include <scene/PrimitiveInstance.h>
 #include <utils/Camera.h>
+#include <utils/Picking.h>
 #include <video/BaseDriver.h>
 #include <string>
+#include <vector>
+#include <set>
 
 namespace t8ditor {
 
@@ -66,6 +69,44 @@ struct SceneLight {
   bool            visible   = true;
   bool            frozen    = false;
   mutable GizmoCache gizmo;
+};
+
+// ── Group (persistent or temporary) ──────────────────
+
+struct SceneGroup {
+  std::string     name;
+  std::set<int>   members;       // indices into g_objects
+  bool            persistent = false;  // true = user clicked "Group", survives click-away
+
+  // Compute combined AABB from all member objects
+  t800::AABB ComputeAABB(const std::vector<SceneObject>& objects) const {
+    t800::AABB combined;
+    bool first = true;
+    for (int idx : members) {
+      if (idx < 0 || idx >= (int)objects.size()) continue;
+      if (!objects[idx].wireframe.IsLoaded()) continue;
+      t800::AABB wb = objects[idx].wireframe.WorldAABB();
+      if (first) { combined = wb; first = false; }
+      else {
+        if (wb.vMin.x < combined.vMin.x) combined.vMin.x = wb.vMin.x;
+        if (wb.vMin.y < combined.vMin.y) combined.vMin.y = wb.vMin.y;
+        if (wb.vMin.z < combined.vMin.z) combined.vMin.z = wb.vMin.z;
+        if (wb.vMax.x > combined.vMax.x) combined.vMax.x = wb.vMax.x;
+        if (wb.vMax.y > combined.vMax.y) combined.vMax.y = wb.vMax.y;
+        if (wb.vMax.z > combined.vMax.z) combined.vMax.z = wb.vMax.z;
+      }
+    }
+    return combined;
+  }
+
+  // Centroid of the combined AABB
+  XVECTOR3 Centroid(const std::vector<SceneObject>& objects) const {
+    t800::AABB bb = ComputeAABB(objects);
+    return XVECTOR3(
+      (bb.vMin.x + bb.vMax.x) * 0.5f,
+      (bb.vMin.y + bb.vMax.y) * 0.5f,
+      (bb.vMin.z + bb.vMax.z) * 0.5f);
+  }
 };
 
 } // namespace t8ditor

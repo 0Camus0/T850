@@ -1,5 +1,5 @@
 /*********************************************************
-* T8ditor — wireframe display of an .x mesh. See header.
+* T8ditor — wireframe display of a mesh in the editor viewport.
 *********************************************************/
 
 #include "EditorMesh.h"
@@ -7,26 +7,51 @@
 #include <utils/Log.h>
 #include <utils/XDataBase.h>
 #include <utils/xMaths.h>
+#include <utils/gltf/GLTFLoader.h>
+#include <utils/gltf/GLTFAccessor.h>
 
 #include <vector>
+#include <algorithm>
+#include <filesystem>
 
 namespace t8ditor {
+
+// Helper: lowercase file extension without dot
+static std::string FileExtLower(const std::string& path) {
+  auto p = std::filesystem::path(path).extension().string();
+  if (!p.empty() && p[0] == '.') p = p.substr(1);
+  std::transform(p.begin(), p.end(), p.begin(), ::tolower);
+  return p;
+}
 
 bool EditorMesh::Load(const std::string& path) {
   Destroy();
   m_path = path;
 
   xF::XDataBase xdb;
-  if (!xdb.LoadXFile(path)) {
-    T8_LOG_ERROR("[T8ditor] EditorMesh: failed to load '%s'", path.c_str());
-    return false;
+  const std::string ext = FileExtLower(path);
+
+  if (ext == "glb" || ext == "gltf") {
+    // glTF path: parse and convert to XDataBase (same as ResourceManager)
+    t800::gltf::Document doc;
+    if (!t800::gltf::LoadGLTF(path, doc) ||
+        !t800::gltf::ConvertToXDatabase(doc, xdb, path)) {
+      T8_LOG_ERROR("[T8ditor] EditorMesh: failed to load glTF '%s'", path.c_str());
+      return false;
+    }
+  } else {
+    // Legacy .X path
+    if (!xdb.LoadXFile(path)) {
+      T8_LOG_ERROR("[T8ditor] EditorMesh: failed to load '%s'", path.c_str());
+      return false;
+    }
   }
 
   // Collect all positions + triangles across every mesh container/geometry.
   // We build a single combined VB and a line-list IB whose entries are the
-  // edges of every triangle.
-  std::vector<float>          verts; // xyzw per vertex
-  std::vector<unsigned short> idx;
+  // edges of every triangle. Use 32-bit indices to support large glTF meshes.
+  std::vector<float>        verts; // xyzw per vertex
+  std::vector<unsigned int> idx;
 
   // Bounding box for centre + initial framing.
   float bbMin[3] = {  1e30f,  1e30f,  1e30f };
@@ -51,19 +76,28 @@ bool EditorMesh::Load(const std::string& path) {
         if (p.z > bbMax[2]) bbMax[2] = p.z;
       }
 
-      // Triangles -> 3 line segments per tri. Indices are 16-bit; this
-      // restricts us to 65k verts per geometry block, which matches the
-      // .x format's xWORD index width.
-      const auto& tris = geom.Triangles; // xWORD = uint16_t
-      const std::size_t n = tris.size();
-      // Triangles is already a flat list of uint16 indices (3 per tri).
-      for (std::size_t t = 0; t + 2 < n; t += 3) {
-        const unsigned short a = (unsigned short)(baseV + tris[t + 0]);
-        const unsigned short b = (unsigned short)(baseV + tris[t + 1]);
-        const unsigned short c = (unsigned short)(baseV + tris[t + 2]);
-        idx.push_back(a); idx.push_back(b);
-        idx.push_back(b); idx.push_back(c);
-        idx.push_back(c); idx.push_back(a);
+      // Triangles -> 3 line segments per tri.
+      // Handle both 16-bit and 32-bit index arrays from XDataBase.
+      if (geom.Indices32Bit && !geom.Triangles32.empty()) {
+        const auto& tris = geom.Triangles32;
+        for (std::size_t t = 0; t + 2 < tris.size(); t += 3) {
+          unsigned int a = baseV + tris[t + 0];
+          unsigned int b = baseV + tris[t + 1];
+          unsigned int c = baseV + tris[t + 2];
+          idx.push_back(a); idx.push_back(b);
+          idx.push_back(b); idx.push_back(c);
+          idx.push_back(c); idx.push_back(a);
+        }
+      } else {
+        const auto& tris = geom.Triangles;
+        for (std::size_t t = 0; t + 2 < tris.size(); t += 3) {
+          unsigned int a = baseV + tris[t + 0];
+          unsigned int b = baseV + tris[t + 1];
+          unsigned int c = baseV + tris[t + 2];
+          idx.push_back(a); idx.push_back(b);
+          idx.push_back(b); idx.push_back(c);
+          idx.push_back(c); idx.push_back(a);
+        }
       }
     }
   }
@@ -73,17 +107,21 @@ bool EditorMesh::Load(const std::string& path) {
     return false;
   }
 
-  // .x format historically uses 16-bit indices. If the merged VB exceeds
-  // 65535 verts we'd need 32-bit; bail out clearly rather than overflow.
-  if ((verts.size() / 4) > 65535) {
-    T8_LOG_ERROR("[T8ditor] EditorMesh: '%s' has >65535 merged verts (%zu); "
-                 "32-bit index path not implemented yet, skipping",
-                 path.c_str(), verts.size() / 4);
-    return false;
+  unsigned numVerts = (unsigned)(verts.size() / 4);
+  m_vb = EditorLineRenderer::CreatePositionVB(verts.data(), numVerts);
+
+  // Use 16-bit IB when possible (saves memory), 32-bit for large meshes
+  if (numVerts <= 65535) {
+    std::vector<unsigned short> idx16(idx.size());
+    for (size_t i = 0; i < idx.size(); i++)
+      idx16[i] = (unsigned short)idx[i];
+    m_ib = EditorLineRenderer::CreateIndexBuffer16(idx16.data(), (unsigned)idx16.size());
+    m_use32BitIB = false;
+  } else {
+    m_ib = EditorLineRenderer::CreateIndexBuffer32(idx.data(), (unsigned)idx.size());
+    m_use32BitIB = true;
   }
 
-  m_vb = EditorLineRenderer::CreatePositionVB(verts.data(), (unsigned)(verts.size() / 4));
-  m_ib = EditorLineRenderer::CreateIndexBuffer16(idx.data(), (unsigned)idx.size());
   m_indexCount = (unsigned)idx.size();
   if (!m_vb || !m_ib) {
     T8_LOG_ERROR("[T8ditor] EditorMesh: GPU buffer creation failed for '%s'", path.c_str());
@@ -130,7 +168,8 @@ XMATRIX44 EditorMesh::BuildWorld() const {
 void EditorMesh::Draw(EditorLineRenderer& lines, const XMATRIX44& vp) {
   if (!IsLoaded() || !lines.IsReady()) return;
   XMATRIX44 world = BuildWorld();
-  lines.DrawLines(world, vp, WireColor, m_vb, m_ib, m_indexCount, /*stride=*/16);
+  auto ibFmt = m_use32BitIB ? t800::T8_IB_FORMAR::R32 : t800::T8_IB_FORMAR::R16;
+  lines.DrawLines(world, vp, WireColor, m_vb, m_ib, m_indexCount, /*stride=*/16, ibFmt);
 }
 
 } // namespace t8ditor

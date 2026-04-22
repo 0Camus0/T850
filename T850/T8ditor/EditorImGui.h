@@ -34,7 +34,7 @@ namespace t8ditor {
 
   // ── Menu bar ───────────────────────────────────────
   struct MenuAction {
-    bool wantsImportX  = false;   // File > Import (.x)
+    bool wantsImportX  = false;   // File > Import Mesh (.x / .glb / .gltf)
     bool wantsLoadScene = false;  // File > Load Scene
     bool wantsSaveScene = false;  // File > Save Scene
     bool wantsExit     = false;   // File > Exit
@@ -58,9 +58,20 @@ namespace t8ditor {
   // Draws a horizontal button bar just below the menu bar.
   // `currentMode` is the active gizmo mode; returns the (possibly new) mode.
   // `addCamera`/`addLight` are set to the type to add (0=persp/dir, 1=ortho/omni, -1=none).
-  int ImGuiDrawToolbar(int currentMode, int& addCamera, int& addLight);
+  int ImGuiDrawToolbar(int currentMode, int& addCamera, int& addLight,
+                       bool& wantsGroup, bool& wantsUngroup, bool hasMultiSelect);
 
-  // ── Panels ─────────────────────────────────────────
+  // ── Context menu (right-click) ─────────────────────
+  struct ContextAction {
+    int  setMode       = -2;  // -2=no change, -1=select, 0/1/2=translate/rotate/scale
+    bool wantsGroup    = false;
+    bool wantsUngroup  = false;
+    bool wantsDelete   = false;
+    bool wantsFrameView = false;
+    int  addCamera     = -1;  // 0=persp, 1=ortho
+    int  addLight      = -1;  // 0=dir, 1=omni
+  };
+  ContextAction ImGuiDrawContextMenu(bool hasSelection, bool hasMultiSelect, bool hasGroup);
   // Hierarchy panel: lists scene objects. Returns true if user clicked
   // a mesh entry (sets `selected` accordingly).
   bool ImGuiDrawHierarchyPanel(const char* meshName, bool hasMesh, bool& selected);

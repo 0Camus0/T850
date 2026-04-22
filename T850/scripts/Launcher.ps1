@@ -353,16 +353,33 @@ $xaml = @"
                 <ColumnDefinition Width="12"/>
                 <ColumnDefinition Width="*"/>
             </Grid.ColumnDefinitions>
-            <Button Grid.Column="0" Name="btnBuild" Content="BUILD" Height="48"
-                    FontSize="16" FontWeight="Bold" Cursor="Hand"
-                    Background="#F9E2AF" Foreground="#1E1E2E"
-                    BorderThickness="0">
-                <Button.Resources>
-                    <Style TargetType="Border">
-                        <Setter Property="CornerRadius" Value="6"/>
-                    </Style>
-                </Button.Resources>
-            </Button>
+            <Grid Grid.Column="0">
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="*"/>
+                    <RowDefinition Height="2"/>
+                    <RowDefinition Height="*"/>
+                </Grid.RowDefinitions>
+                <Button Grid.Row="0" Name="btnRebuild" Content="REBUILD" Height="23"
+                        FontSize="11" FontWeight="Bold" Cursor="Hand"
+                        Background="#E8D9A0" Foreground="#1E1E2E"
+                        BorderThickness="0">
+                    <Button.Resources>
+                        <Style TargetType="Border">
+                            <Setter Property="CornerRadius" Value="6,6,0,0"/>
+                        </Style>
+                    </Button.Resources>
+                </Button>
+                <Button Grid.Row="2" Name="btnBuild" Content="BUILD" Height="23"
+                        FontSize="13" FontWeight="Bold" Cursor="Hand"
+                        Background="#F9E2AF" Foreground="#1E1E2E"
+                        BorderThickness="0">
+                    <Button.Resources>
+                        <Style TargetType="Border">
+                            <Setter Property="CornerRadius" Value="0,0,6,6"/>
+                        </Style>
+                    </Button.Resources>
+                </Button>
+            </Grid>
             <Button Grid.Column="2" Name="btnRun" Content="&#x25B6;  RUN" Height="48"
                     FontSize="18" FontWeight="Bold" Cursor="Hand"
                     Background="{StaticResource GreenBrush}" Foreground="#1E1E2E"
@@ -422,6 +439,7 @@ $pnlBuildOutput = $window.FindName("pnlBuildOutput")
 $svBuildOutput  = $window.FindName("svBuildOutput")
 $txtBuildOutput = $window.FindName("txtBuildOutput")
 $btnBuild       = $window.FindName("btnBuild")
+$btnRebuild     = $window.FindName("btnRebuild")
 $btnRun         = $window.FindName("btnRun")
 $btnEditor      = $window.FindName("btnEditor")
 $chkGuiEdit     = $window.FindName("chkGuiEdit")
@@ -759,6 +777,11 @@ function Get-EditorLaunchCommand {
     $exePath = Join-Path $rootDir "bin\$archFolder\$config\T8ditor.exe"
     $argList = @()
 
+    # Editor defaults to D3D12; pass --api for other backends
+    if ($apiTag -ne "d3d12") {
+        $argList += @("--api", $apiTag)
+    }
+
     if ($chkFullscreen.IsChecked) {
         $argList += "--fullscreen"
     }
@@ -774,7 +797,8 @@ function Get-EditorLaunchCommand {
 
     if ($chkLogToFile.IsChecked) {
         $ts = Get-Date -Format "yyyyMMdd_HHmmss"
-        $logFilename = "logs\T8ditor_${ts}_d3d12.log"
+        $editorApi = if ($apiTag -eq "vulkan") { "vulkan" } else { "d3d12" }
+        $logFilename = "logs\T8ditor_${ts}_${editorApi}.log"
         $argList += @("--logFile", $logFilename)
     }
 
@@ -782,7 +806,8 @@ function Get-EditorLaunchCommand {
         $argList += "--d3d12debug"
         if (-not $chkLogToFile.IsChecked) {
             $ts = Get-Date -Format "yyyyMMdd_HHmmss"
-            $logFilename = "logs\T8ditor_${ts}_d3d12_debug.log"
+            $editorApi = if ($apiTag -eq "vulkan") { "vulkan" } else { "d3d12" }
+            $logFilename = "logs\T8ditor_${ts}_${editorApi}_debug.log"
             $argList += @("--logFile", $logFilename)
         }
     }
@@ -913,8 +938,10 @@ $txtFrame.Add_TextChanged({ Update-Preview })
 $txtWidth.Add_TextChanged({ Update-Preview })
 $txtHeight.Add_TextChanged({ Update-Preview })
 
-# BUILD button — build the solution with selected config/platform
-$btnBuild.Add_Click({
+# Shared build function — $buildTarget is "Build" (incremental) or "Rebuild" (clean)
+function Invoke-Build {
+    param([string]$buildTarget = "Build")
+
     $arch   = ($cmbArch.SelectedItem).Content.ToString().ToLower()
     $config = ($cmbConfig.SelectedItem).Content.ToString()
 
@@ -934,15 +961,17 @@ $btnBuild.Add_Click({
     }
 
     # Disable buttons during build
-    $btnBuild.IsEnabled  = $false
-    $btnRun.IsEnabled    = $false
-    $btnBuild.Content    = "BUILDING..."
+    $btnBuild.IsEnabled   = $false
+    $btnRebuild.IsEnabled = $false
+    $btnRun.IsEnabled     = $false
+    $btnBuild.Content     = "BUILDING..."
 
     # Show build output panel
     $txtBuildOutput.Text = ""
     $pnlBuildOutput.Visibility = [System.Windows.Visibility]::Visible
 
-    $txtStatus.Text = "Building $config|$platform ..."
+    $label = if ($buildTarget -eq "Rebuild") { "Rebuilding" } else { "Building" }
+    $txtStatus.Text = "$label $config|$platform ..."
     $txtStatus.Foreground = $window.FindResource("AccentBrush")
     $window.Dispatcher.Invoke([Action]{}, [System.Windows.Threading.DispatcherPriority]::Background)
 
@@ -962,6 +991,7 @@ $btnBuild.Add_Click({
         $txtStatus.Text = "Build failed - MSBuild not found"
         $txtStatus.Foreground = $window.FindResource("RedBrush")
         $btnBuild.IsEnabled = $true
+        $btnRebuild.IsEnabled = $true
         $btnBuild.Content = "BUILD"
         Update-Preview
         return
@@ -971,7 +1001,7 @@ $btnBuild.Add_Click({
     $slnPath = Join-Path $rootDir "T850.sln"
     $psi = New-Object System.Diagnostics.ProcessStartInfo
     $psi.FileName = $msbuild
-    $msbArgs = '"{0}" /p:Configuration={1} /p:Platform={2} /t:Rebuild /v:minimal /m' -f $slnPath, $config, $platform
+    $msbArgs = '"{0}" /p:Configuration={1} /p:Platform={2} /t:{3} /v:minimal /m' -f $slnPath, $config, $platform, $buildTarget
     $psi.Arguments = $msbArgs
     $psi.UseShellExecute = $false
     $psi.RedirectStandardOutput = $true
@@ -1050,9 +1080,16 @@ $btnBuild.Add_Click({
         }
         $btnBuild.Content = "BUILD"
         $btnBuild.IsEnabled = $true
+        $btnRebuild.IsEnabled = $true
         Update-Preview
     }
-})
+}
+
+# BUILD button — incremental build
+$btnBuild.Add_Click({ Invoke-Build -buildTarget "Build" })
+
+# REBUILD button — clean rebuild
+$btnRebuild.Add_Click({ Invoke-Build -buildTarget "Rebuild" })
 
 # RUN button — launch the app with current settings (no dump override)
 $btnRun.Add_Click({

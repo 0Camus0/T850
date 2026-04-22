@@ -4,6 +4,7 @@
 
 #include "EditorApp.h"
 #include "SceneObject.h"
+#include "SceneGraph.h"
 #include "EditorScene.h"
 #include "EditorSceneGizmos.h"
 #include "UndoRedo.h"
@@ -21,6 +22,8 @@
 
 #include <cmath>
 #include <filesystem>
+#include <set>
+#include <map>
 
 #include <imgui.h>
 #include <ImGuizmo.h>
@@ -51,6 +54,14 @@ namespace {
   std::vector<SceneObject> g_objects;
   int                      g_selectedIdx = -1;
 
+  // Multi-selection: set of selected mesh indices
+  std::set<int>            g_multiSelect;
+
+  // Groups (persistent and temporary)
+  std::vector<SceneGroup>  g_groups;           // persistent groups
+  SceneGroup               g_tempGroup;        // temporary group from multi-select
+  int                      g_activeGroupIdx = -1; // index into g_groups, or -1 for temp/none
+
   // Cameras and lights in the scene
   std::vector<SceneCamera> g_cameras;
   std::vector<SceneLight>  g_lights;
@@ -58,6 +69,10 @@ namespace {
   // Selection: what type of entity is selected
   // 0=mesh, 1=camera, 2=light. Index is g_selectedIdx into the respective vector.
   int g_selectionType = 0;  // 0=mesh by default
+
+  // Marquee box selection state
+  bool     g_marqueeActive = false;
+  ImVec2   g_marqueeStart  = {0, 0};
 
   // Active camera index (-1 = default editor camera)
   int g_activeCameraIdx = -1;
@@ -279,6 +294,9 @@ void EditorApp::DestroyAssets() {
   g_selectedIdx = -1;
   g_selectionType = 0;
   g_activeCameraIdx = -1;
+  g_multiSelect.clear();
+  g_groups.clear();
+  g_activeGroupIdx = -1;
   g_undoStack.Clear();
   if (g_skyboxReady) {
     g_skyboxMgr.DestroyPrimitives();
@@ -308,11 +326,15 @@ void EditorApp::CheckResize() {
 
       // Recreate deferred render targets at new resolution
       if (g_deferredReady) {
-        pFramework->pVideoDriver->WaitForGPU();
+        T8_LOG_INFO("[T8ditor] Resize: flushing GPU before RT recreation");
+        pFramework->pVideoDriver->FlushGPUResources();
+        T8_LOG_INFO("[T8ditor] Resize: destroying old RTs");
         // Destroy old RTs
         pFramework->pVideoDriver->DestroyRTs();
+        T8_LOG_INFO("[T8ditor] Resize: creating new RTs at %dx%d", w, h);
         // Recreate at new size (CreateRT with w=0,h=0 uses driver width/height)
         g_renderGraph.CreateRenderTargets(pFramework->pVideoDriver, m_sceneProps);
+        T8_LOG_INFO("[T8ditor] Resize: rebinding textures");
         // Rebind G-buffer textures to quads
         if (!pFramework->pVideoDriver->RTs.empty()) {
           auto* gbufferRT = pFramework->pVideoDriver->RTs[0];
@@ -353,9 +375,10 @@ void EditorApp::OnUpdate() {
       g_selectedIdx = -1;
       g_selectionType = 0;
       g_activeCameraIdx = -1;
+      g_multiSelect.clear();
+      g_groups.clear();
+      g_activeGroupIdx = -1;
       g_undoStack.Clear();
-
-      // Rebuild primitive manager
       m_primMgr.Init();
       m_primMgr.SetVP(&m_vp);
       m_primMgr.SetSceneProps(&m_sceneProps);
@@ -449,6 +472,7 @@ void EditorApp::OnInput() {
     const bool ctrlDown = IManager.PressedKey(T800K_LCTRL) || IManager.PressedKey(T800K_RCTRL);
     const bool shiftDown = IManager.PressedKey(T800K_LSHIFT) || IManager.PressedKey(T800K_RSHIFT);
 
+    if (IManager.PressedOnceKey(T800K_q)) m_gizmo.SetMode(GizmoMode::Select);
     if (IManager.PressedOnceKey(T800K_w)) m_gizmo.SetMode(GizmoMode::Translate);
     if (IManager.PressedOnceKey(T800K_e)) m_gizmo.SetMode(GizmoMode::Rotate);
     if (IManager.PressedOnceKey(T800K_r)) m_gizmo.SetMode(GizmoMode::Scale);
@@ -515,8 +539,11 @@ void EditorApp::OnInput() {
   if (!imguiWantsKeyboard)
     ProcessSelectionInput();
 
-  if (!imguiWantsMouse)
-    HandleMousePick();
+  if (!imguiWantsMouse) {
+    // Skip mouse pick while multi-select gizmo is active (avoid clearing selection)
+    if (!(g_multiSelect.size() > 1 && m_gizmo.Mode() != GizmoMode::Select && ImGuizmo::IsOver()))
+      HandleMousePick();
+  }
 }
 
 void EditorApp::ProcessSelectionInput() {
@@ -549,8 +576,103 @@ void EditorApp::ProcessSelectionInput() {
   }
 }
 
+// Project a world-space point to screen coordinates.
+static ImVec2 WorldToScreen(const XVECTOR3& p, const XMATRIX44& vp, int w, int h) {
+  // Row-vector: [x,y,z,1] * VP
+  float cx = p.x*vp.m11 + p.y*vp.m21 + p.z*vp.m31 + vp.m41;
+  float cy = p.x*vp.m12 + p.y*vp.m22 + p.z*vp.m32 + vp.m42;
+  float cw = p.x*vp.m14 + p.y*vp.m24 + p.z*vp.m34 + vp.m44;
+  if (std::abs(cw) < 1e-6f) return ImVec2(-1, -1);
+  float ndcX = cx / cw;
+  float ndcY = cy / cw;
+  float sx = (ndcX * 0.5f + 0.5f) * w;
+  float sy = (1.0f - (ndcY * 0.5f + 0.5f)) * h;
+  return ImVec2(sx, sy);
+}
+
+// Test if any part of a world AABB projects inside a screen rectangle.
+static bool AABBInScreenRect(const t800::AABB& box, const XMATRIX44& vp,
+                              int viewW, int viewH,
+                              float rMinX, float rMinY, float rMaxX, float rMaxY) {
+  float sMinX = 1e30f, sMinY = 1e30f, sMaxX = -1e30f, sMaxY = -1e30f;
+  float bmin[3] = { box.vMin.x, box.vMin.y, box.vMin.z };
+  float bmax[3] = { box.vMax.x, box.vMax.y, box.vMax.z };
+  for (int c = 0; c < 8; c++) {
+    float lx = (c & 1) ? bmax[0] : bmin[0];
+    float ly = (c & 2) ? bmax[1] : bmin[1];
+    float lz = (c & 4) ? bmax[2] : bmin[2];
+    ImVec2 s = WorldToScreen(XVECTOR3(lx, ly, lz), vp, viewW, viewH);
+    if (s.x < sMinX) sMinX = s.x;
+    if (s.y < sMinY) sMinY = s.y;
+    if (s.x > sMaxX) sMaxX = s.x;
+    if (s.y > sMaxY) sMaxY = s.y;
+  }
+  // Overlap test
+  return !(sMaxX < rMinX || sMinX > rMaxX || sMaxY < rMinY || sMinY > rMaxY);
+}
+
 void EditorApp::HandleMousePick() {
-  if (!IManager.PressedOnceMouseButton(0)) return;
+  const bool shiftDown = IManager.PressedKey(T800K_LSHIFT) || IManager.PressedKey(T800K_RSHIFT);
+  const bool selectMode = (m_gizmo.Mode() == GizmoMode::Select);
+
+  // Marquee drag in Select mode (skip when Alt is held — Alt+left-drag is orbit)
+  if (selectMode) {
+    const ImGuiIO& io = ImGui::GetIO();
+    if (io.WantCaptureMouse) return;
+    const bool altDown = IManager.PressedKey(T800K_LALT) || IManager.PressedKey(T800K_RALT);
+
+    // Start marquee on mouse press (only if Alt is not held)
+    if (IManager.PressedOnceMouseButton(0) && !altDown) {
+      g_marqueeActive = true;
+      g_marqueeStart = ImVec2((float)IManager.mouseX, (float)IManager.mouseY);
+    }
+
+    // Finish marquee on mouse release
+    if (g_marqueeActive && !IManager.PressedMouseButton(0)) {
+      g_marqueeActive = false;
+      ImVec2 mEnd((float)IManager.mouseX, (float)IManager.mouseY);
+      float dx = mEnd.x - g_marqueeStart.x;
+      float dy = mEnd.y - g_marqueeStart.y;
+
+      if (std::abs(dx) < 5.0f && std::abs(dy) < 5.0f) {
+        // Tiny drag = single click pick
+        goto single_pick;
+      }
+
+      // Build rect (normalize min/max)
+      float rMinX = (g_marqueeStart.x < mEnd.x) ? g_marqueeStart.x : mEnd.x;
+      float rMinY = (g_marqueeStart.y < mEnd.y) ? g_marqueeStart.y : mEnd.y;
+      float rMaxX = (g_marqueeStart.x > mEnd.x) ? g_marqueeStart.x : mEnd.x;
+      float rMaxY = (g_marqueeStart.y > mEnd.y) ? g_marqueeStart.y : mEnd.y;
+
+      if (!shiftDown) g_multiSelect.clear();
+
+      for (int i = 0; i < (int)g_objects.size(); ++i) {
+        if (!g_objects[i].wireframe.IsLoaded() || g_objects[i].frozen || !g_objects[i].visible)
+          continue;
+        t800::AABB worldBox = g_objects[i].wireframe.WorldAABB();
+        if (AABBInScreenRect(worldBox, m_vp, m_lastW, m_lastH, rMinX, rMinY, rMaxX, rMaxY)) {
+          g_multiSelect.insert(i);
+        }
+      }
+
+      // Update single selection to match multi-select state
+      if (g_multiSelect.size() == 1) {
+        g_selectedIdx = *g_multiSelect.begin();
+        g_selectionType = 0;
+      } else if (g_multiSelect.size() > 1) {
+        g_selectedIdx = *g_multiSelect.begin();
+        g_selectionType = 0;
+      } else {
+        g_selectedIdx = -1;
+      }
+      return;
+    }
+    return;
+  }
+
+single_pick:
+  if (!IManager.PressedOnceMouseButton(0) && !selectMode) return;
 
   XMATRIX44 invVP;
   m_vp.Inverse(&invVP);
@@ -576,7 +698,7 @@ void EditorApp::HandleMousePick() {
   // Test cameras (AABB pick — virtual bounding box around position)
   for (int i = 0; i < (int)g_cameras.size(); ++i) {
     if (g_cameras[i].frozen || !g_cameras[i].visible) continue;
-    float hs = 2.0f; // half-size of virtual bounding box
+    float hs = 2.0f;
     t800::AABB box(
       XVECTOR3(g_cameras[i].position.x - hs, g_cameras[i].position.y - hs, g_cameras[i].position.z - hs),
       XVECTOR3(g_cameras[i].position.x + hs, g_cameras[i].position.y + hs, g_cameras[i].position.z + hs));
@@ -602,8 +724,37 @@ void EditorApp::HandleMousePick() {
   if (bestIdx >= 0) {
     g_selectedIdx   = bestIdx;
     g_selectionType = bestType;
+
+    // Multi-select: shift-click adds/removes from set (meshes only)
+    if (bestType == 0) {
+      if (shiftDown) {
+        if (g_multiSelect.count(bestIdx))
+          g_multiSelect.erase(bestIdx);
+        else
+          g_multiSelect.insert(bestIdx);
+      } else {
+        g_multiSelect.clear();
+        // Check if clicked mesh belongs to a persistent group — select entire group
+        bool foundGroup = false;
+        for (auto& grp : g_groups) {
+          if (grp.persistent && grp.members.count(bestIdx)) {
+            g_multiSelect = grp.members;
+            foundGroup = true;
+            break;
+          }
+        }
+        if (!foundGroup)
+          g_multiSelect.insert(bestIdx);
+      }
+    } else {
+      g_multiSelect.clear();
+    }
   } else {
     g_selectedIdx = -1;
+    // Auto-switch to Select mode when deselecting (hides orphaned gizmo)
+    m_gizmo.SetMode(GizmoMode::Select);
+    if (!shiftDown)
+      g_multiSelect.clear();
   }
 }
 
@@ -611,7 +762,9 @@ void EditorApp::OnDraw() {
   if (!pFramework || !pFramework->pVideoDriver) return;
 
   t800::BaseDriver* drv = pFramework->pVideoDriver;
+  T8_LOG_TRACE("[T8ditor] OnDraw: BeginFrame...");
   drv->BeginFrame();
+  T8_LOG_TRACE("[T8ditor] OnDraw: Clear...");
   drv->Clear();
 
   if (m_assetsCreated) {
@@ -732,10 +885,12 @@ void EditorApp::OnDraw() {
       for (auto* p : allMeshes) meshArray.push_back(*p);
 
       ::Camera* mainCam = m_sceneProps.pCameras[0];
+      T8_LOG_TRACE("[T8ditor] OnDraw: RenderGraph Execute (%d meshes)...", (int)meshArray.size());
       g_renderGraph.Execute(drv, m_sceneProps,
         meshArray.data(), (int)meshArray.size(),
         g_quads, mainCam, nullptr, nullptr,
         g_dummyEnvMapIdx);
+      T8_LOG_TRACE("[T8ditor] OnDraw: RenderGraph Execute done");
 
       // RT debug override: if a specific RT is selected, draw it to backbuffer
       if (g_debugRT >= 0) {
@@ -785,17 +940,36 @@ void EditorApp::OnDraw() {
     }
 
     // Wireframe overlays (drawn after deferred resolve, on backbuffer)
+    // Bind GBuffer COLOR4 (linear depth) for depth-tested wireframe
+    if (useDeferred) {
+      int gbufHandle = g_renderGraph.GetRTHandle("GBuffer");
+      if (gbufHandle >= 0 && gbufHandle < (int)drv->RTs.size()) {
+        auto* gbufRT = drv->RTs[gbufHandle];
+        // COLOR4 is the linear depth attachment (viewZ / farPlane)
+        if (gbufRT->vColorTextures.size() > 4) {
+          m_lines.SetDepthTexture(gbufRT->vColorTextures[4]);
+        }
+      }
+      m_lines.SetViewport(m_lastW, m_lastH);
+      m_lines.SetFarPlane(cam.FPlane);
+    } else {
+      m_lines.SetDepthTexture(nullptr);
+    }
+
     for (int i = 0; i < (int)g_objects.size(); ++i) {
       SceneObject& obj = g_objects[i];
       if (obj.primId < 0 || !obj.visible) continue;
-      bool isSelected = (g_selectionType == 0 && i == g_selectedIdx);
+      bool isSelected = (g_selectionType == 0 && i == g_selectedIdx) || g_multiSelect.count(i);
       bool showWire = m_panels.showWireframe || isSelected || obj.showWire;
       if (showWire && obj.wireframe.IsLoaded() && m_lines.IsReady()) {
         XVECTOR3 savedColor = obj.wireframe.WireColor;
-        obj.wireframe.WireColor = isSelected
-          ? XVECTOR3(1.0f, 1.0f, 1.0f, 1.0f)
-          : XVECTOR3(0.45f, 0.45f, 0.45f, 1.0f);
-        drv->SetDepthStencilState(t800::BaseDriver::NONE);
+        if (g_multiSelect.count(i) && g_multiSelect.size() > 1)
+          obj.wireframe.WireColor = XVECTOR3(0.4f, 0.8f, 1.0f, 1.0f); // cyan for multi-select
+        else if (isSelected)
+          obj.wireframe.WireColor = XVECTOR3(1.0f, 1.0f, 1.0f, 1.0f);
+        else
+          obj.wireframe.WireColor = XVECTOR3(0.45f, 0.45f, 0.45f, 1.0f);
+        drv->SetDepthStencilState(t800::BaseDriver::READ);
         obj.wireframe.Draw(m_lines, cam.VP);
         drv->SetDepthStencilState(t800::BaseDriver::DEPTH_DEFAULT);
         obj.wireframe.WireColor = savedColor;
@@ -824,7 +998,9 @@ void EditorApp::OnDraw() {
     MenuAction menuAction = ImGuiDrawMenuBar(m_panels);
 
     int addCamera = -1, addLight = -1;
-    int mode = ImGuiDrawToolbar((int)m_gizmo.Mode(), addCamera, addLight);
+    bool wantsGroup = false, wantsUngroup = false;
+    int mode = ImGuiDrawToolbar((int)m_gizmo.Mode(), addCamera, addLight,
+                                 wantsGroup, wantsUngroup, g_multiSelect.size() >= 2);
     m_gizmo.SetMode((GizmoMode)mode);
 
     // Handle add camera/light from toolbar
@@ -845,11 +1021,288 @@ void EditorApp::OnDraw() {
       g_selectionType = 2;
     }
 
+    // Sync temp group from multi-select
+    g_tempGroup.members = g_multiSelect;
+    g_tempGroup.persistent = false;
+
+    // Right-click context menu
+    {
+      bool hasSel = (g_selectedIdx >= 0) || !g_multiSelect.empty();
+      bool hasMulti = g_multiSelect.size() >= 2;
+      bool hasGrp = false;
+      for (auto& grp : g_groups) {
+        if (grp.persistent && grp.members == g_multiSelect) { hasGrp = true; break; }
+      }
+      ContextAction ctx = ImGuiDrawContextMenu(hasSel, hasMulti, hasGrp);
+      if (ctx.setMode >= -1) m_gizmo.SetMode((GizmoMode)ctx.setMode);
+      if (ctx.wantsGroup) wantsGroup = true;
+      if (ctx.wantsUngroup) wantsUngroup = true;
+      if (ctx.wantsDelete && g_selectedIdx >= 0) {
+        if (g_selectionType == 0 && g_selectedIdx < (int)g_objects.size()) {
+          g_objects.erase(g_objects.begin() + g_selectedIdx);
+          g_multiSelect.erase(g_selectedIdx);
+          g_selectedIdx = -1;
+        } else if (g_selectionType == 1 && g_selectedIdx < (int)g_cameras.size()) {
+          if (g_activeCameraIdx == g_selectedIdx) g_activeCameraIdx = -1;
+          else if (g_activeCameraIdx > g_selectedIdx) g_activeCameraIdx--;
+          g_cameras.erase(g_cameras.begin() + g_selectedIdx);
+          g_selectedIdx = -1;
+        } else if (g_selectionType == 2 && g_selectedIdx < (int)g_lights.size()) {
+          g_lights.erase(g_lights.begin() + g_selectedIdx);
+          g_selectedIdx = -1;
+        }
+      }
+      if (ctx.wantsFrameView) {
+        SceneObject* sel = SelectedObject();
+        if (sel && sel->wireframe.IsLoaded()) {
+          m_camera.SetTarget(sel->wireframe.Position());
+          m_camera.ResetViewAngle();
+        }
+      }
+      if (ctx.addCamera >= 0) {
+        SceneCamera cam;
+        cam.name = "Camera " + std::to_string(g_cameras.size());
+        cam.type = (ctx.addCamera == 1) ? CameraType::Orthographic : CameraType::Perspective;
+        g_cameras.push_back(cam);
+        g_selectedIdx = (int)g_cameras.size() - 1;
+        g_selectionType = 1;
+      }
+      if (ctx.addLight >= 0) {
+        SceneLight lt;
+        lt.name = "Light " + std::to_string(g_lights.size());
+        lt.type = (ctx.addLight == 1) ? EditorLightType::Omni : EditorLightType::Directional;
+        g_lights.push_back(lt);
+        g_selectedIdx = (int)g_lights.size() - 1;
+        g_selectionType = 2;
+      }
+    }
+
+    // Group button / context menu: create persistent group
+    if (wantsGroup && g_multiSelect.size() >= 2) {
+      bool alreadyGrouped = false;
+      for (auto& grp : g_groups) {
+        if (grp.members == g_multiSelect) { alreadyGrouped = true; break; }
+      }
+      if (!alreadyGrouped) {
+        SceneGroup grp;
+        grp.name = "Group " + std::to_string(g_groups.size());
+        grp.members = g_multiSelect;
+        grp.persistent = true;
+        g_groups.push_back(grp);
+        g_activeGroupIdx = (int)g_groups.size() - 1;
+        T8_LOG_INFO("[T8ditor] Created group '%s' with %d objects", grp.name.c_str(), (int)grp.members.size());
+      }
+    }
+
+    // Ungroup button / context menu: dissolve group
+    if (wantsUngroup && g_multiSelect.size() >= 2) {
+      for (int gi = (int)g_groups.size() - 1; gi >= 0; gi--) {
+        if (g_groups[gi].members == g_multiSelect) {
+          T8_LOG_INFO("[T8ditor] Ungrouped '%s'", g_groups[gi].name.c_str());
+          g_groups.erase(g_groups.begin() + gi);
+          if (g_activeGroupIdx == gi) g_activeGroupIdx = -1;
+          else if (g_activeGroupIdx > gi) g_activeGroupIdx--;
+          break;
+        }
+      }
+    }
+
+    // Draw marquee selection rectangle (Select mode)
+    if (g_marqueeActive && m_gizmo.Mode() == GizmoMode::Select) {
+      ImVec2 mPos((float)IManager.mouseX, (float)IManager.mouseY);
+      ImDrawList* dl = ImGui::GetBackgroundDrawList();
+      dl->AddRectFilled(g_marqueeStart, mPos, IM_COL32(100, 100, 255, 40));
+      dl->AddRect(g_marqueeStart, mPos, IM_COL32(100, 100, 255, 200), 0.0f, 0, 1.5f);
+    }
+
+    // Group / multi-select bounding box (corner brackets)
+    if (g_multiSelect.size() > 1) {
+      t800::AABB combined;
+      bool first = true;
+      for (int idx : g_multiSelect) {
+        if (idx < 0 || idx >= (int)g_objects.size()) continue;
+        if (!g_objects[idx].wireframe.IsLoaded() || !g_objects[idx].visible) continue;
+        t800::AABB wb = g_objects[idx].wireframe.WorldAABB();
+        if (first) { combined = wb; first = false; }
+        else {
+          if (wb.vMin.x < combined.vMin.x) combined.vMin.x = wb.vMin.x;
+          if (wb.vMin.y < combined.vMin.y) combined.vMin.y = wb.vMin.y;
+          if (wb.vMin.z < combined.vMin.z) combined.vMin.z = wb.vMin.z;
+          if (wb.vMax.x > combined.vMax.x) combined.vMax.x = wb.vMax.x;
+          if (wb.vMax.y > combined.vMax.y) combined.vMax.y = wb.vMax.y;
+          if (wb.vMax.z > combined.vMax.z) combined.vMax.z = wb.vMax.z;
+        }
+      }
+      if (!first) {
+        const ::Camera& camBB = *m_sceneProps.pCameras[0];
+        float bmin[3] = { combined.vMin.x, combined.vMin.y, combined.vMin.z };
+        float bmax[3] = { combined.vMax.x, combined.vMax.y, combined.vMax.z };
+        ImVec2 corners[8];
+        bool allValid = true;
+        for (int c = 0; c < 8; c++) {
+          float lx = (c & 1) ? bmax[0] : bmin[0];
+          float ly = (c & 2) ? bmax[1] : bmin[1];
+          float lz = (c & 4) ? bmax[2] : bmin[2];
+          corners[c] = WorldToScreen(XVECTOR3(lx, ly, lz), camBB.VP, m_lastW, m_lastH);
+          if (corners[c].x < -5000 || corners[c].y < -5000) allValid = false;
+        }
+        if (allValid) {
+          ImDrawList* dl = ImGui::GetBackgroundDrawList();
+          ImU32 col = IM_COL32(100, 200, 255, 200);
+          float thickness = 1.5f;
+          int edges[12][2] = {
+            {0,1},{2,3},{4,5},{6,7},
+            {0,2},{1,3},{4,6},{5,7},
+            {0,4},{1,5},{2,6},{3,7}
+          };
+          for (int e = 0; e < 12; e++) {
+            ImVec2 a = corners[edges[e][0]];
+            ImVec2 b = corners[edges[e][1]];
+            float dx = b.x - a.x, dy = b.y - a.y;
+            float frac = 0.25f;
+            dl->AddLine(a, ImVec2(a.x + dx * frac, a.y + dy * frac), col, thickness);
+            dl->AddLine(b, ImVec2(b.x - dx * frac, b.y - dy * frac), col, thickness);
+          }
+        }
+      }
+    }
+
     // ImGuizmo on selected entity
     ImGuizmoBeginFrame(0, 0, m_lastW, m_lastH, false);
     const ::Camera& cam2 = m_camera.GetCamera();
 
-    if (g_selectionType == 0) {
+    // Multi-select group gizmo (meshes only, 2+ selected)
+    // Scene-graph approach: root node at centroid, children at offsets.
+    // ImGuizmo manipulates the root; children inherit the transform.
+    if (g_multiSelect.size() > 1) {
+      // Persistent scene-graph helper (survives across frames during drag)
+      static GroupTransformHelper s_groupHelper;
+      static std::map<int, TransformState> s_undoBeforeState;
+
+      // Determine which group to use (persistent or temp)
+      SceneGroup* activeGroup = &g_tempGroup;
+      for (auto& grp : g_groups) {
+        if (grp.members == g_multiSelect) { activeGroup = &grp; break; }
+      }
+
+      XVECTOR3 centroid = activeGroup->Centroid(g_objects);
+
+      // When not dragging, show gizmo at current centroid
+      // (use a temp matrix for display — the real one lives in s_groupHelper)
+      XMATRIX44 displayMat;
+      if (s_groupHelper.IsActive()) {
+        // During drag: use the helper's persistent root matrix
+        // (ImGuizmo already wrote into it last frame)
+      } else {
+        XMatTranslation(displayMat, centroid.x, centroid.y, centroid.z);
+      }
+
+      bool isUsingNow = ImGuizmo::IsUsing();
+
+      // ── Drag start: build the scene graph ──
+      if (isUsingNow && !g_gizmoDragging) {
+        g_gizmoDragging = true;
+
+        // Snapshot original state for undo
+        std::map<int, XVECTOR3> positions, rotations, scales;
+        s_undoBeforeState.clear();
+        for (int idx : g_multiSelect) {
+          if (idx >= 0 && idx < (int)g_objects.size()) {
+            positions[idx] = g_objects[idx].wireframe.Position();
+            rotations[idx] = g_objects[idx].wireframe.EulerRadians();
+            scales[idx]    = g_objects[idx].wireframe.Scale();
+            s_undoBeforeState[idx] = {
+              g_objects[idx].wireframe.Position(),
+              g_objects[idx].wireframe.EulerRadians(),
+              g_objects[idx].wireframe.Scale()
+            };
+          }
+        }
+
+        // Build the node tree: root at centroid, children at offsets
+        s_groupHelper.Begin(centroid, positions, rotations, scales);
+      }
+
+      // ── ImGuizmo manipulate ──
+      int imguizmoMode = mode;
+      if (imguizmoMode < 0) imguizmoMode = 0;
+
+      // Get the matrix pointer: persistent root matrix during drag, temp display otherwise
+      float* matPtr = s_groupHelper.IsActive()
+                    ? s_groupHelper.RootMatrix()
+                    : &displayMat.m[0][0];
+
+      XMATRIX44 deltaMatrix;
+      XMatIdentity(deltaMatrix);
+
+      bool manipulated = ImGuizmo::Manipulate(
+        &cam2.View.m[0][0], &cam2.Projection.m[0][0],
+        (ImGuizmo::OPERATION)((imguizmoMode == 0) ? ImGuizmo::TRANSLATE
+                            : (imguizmoMode == 1) ? ImGuizmo::ROTATE
+                            :                       ImGuizmo::SCALEU),
+        ImGuizmo::WORLD,
+        matPtr, &deltaMatrix.m[0][0]);
+
+      // ── Apply: recompute children's world positions from the scene graph ──
+      if (manipulated && s_groupHelper.IsActive()) {
+        // ImGuizmo already modified the root matrix in place via matPtr.
+        // Recompute children's world transforms through the tree.
+        s_groupHelper.Update();
+
+        // Read back children's world transforms into the scene objects
+        for (int idx : g_multiSelect) {
+          if (idx < 0 || idx >= (int)g_objects.size()) continue;
+
+          XMATRIX44 childWorld = s_groupHelper.ChildWorldMatrix(idx);
+          float t[3], rDeg[3], sComp[3];
+          ImGuizmo::DecomposeMatrixToComponents(&childWorld.m[0][0], t, rDeg, sComp);
+
+          g_objects[idx].wireframe.Position() = XVECTOR3(t[0], t[1], t[2]);
+          g_objects[idx].wireframe.EulerRadians() = XVECTOR3(
+            rDeg[0] * kDegToRad,
+            rDeg[1] * kDegToRad,
+            rDeg[2] * kDegToRad);
+
+          // For scale mode: also scale child meshes
+          if (imguizmoMode == 2) {
+            float sf = s_groupHelper.RootUniformScale();
+            XVECTOR3 origScale = s_groupHelper.OriginalScale(idx);
+            g_objects[idx].wireframe.Scale() = XVECTOR3(
+              origScale.x * sf, origScale.y * sf, origScale.z * sf);
+          }
+        }
+      }
+
+      // ── Drag end: bake and tear down ──
+      if (!isUsingNow && g_gizmoDragging) {
+        g_gizmoDragging = false;
+        s_groupHelper.End();
+
+        // Push undo
+        std::map<int, TransformState> afterState;
+        for (int idx : g_multiSelect) {
+          if (idx >= 0 && idx < (int)g_objects.size()) {
+            afterState[idx] = {
+              g_objects[idx].wireframe.Position(),
+              g_objects[idx].wireframe.EulerRadians(),
+              g_objects[idx].wireframe.Scale()
+            };
+          }
+        }
+        auto cmd = std::make_unique<GroupTransformCommand>(
+          s_undoBeforeState, afterState,
+          [](int idx, const TransformState& s) {
+            if (idx >= 0 && idx < (int)g_objects.size()) {
+              g_objects[idx].wireframe.Position()     = s.position;
+              g_objects[idx].wireframe.EulerRadians() = s.eulerRad;
+              g_objects[idx].wireframe.Scale()         = s.scale;
+            }
+          });
+        g_undoStack.Push(std::move(cmd));
+        s_undoBeforeState.clear();
+      }
+    }
+    else if (g_selectionType == 0) {
       // ── Mesh gizmo ──
       SceneObject* sel = SelectedObject();
       if (sel && sel->wireframe.IsLoaded()) {
@@ -990,8 +1443,8 @@ void EditorApp::OnDraw() {
     }
     if (menuAction.wantsImportX) {
       std::string path = OpenFileDialog(
-        L"DirectX Mesh (*.x)\0*.x\0All Files (*.*)\0*.*\0",
-        L"Import .x Mesh");
+        L"3D Models (*.x;*.glb;*.gltf)\0*.x;*.glb;*.gltf\0DirectX Mesh (*.x)\0*.x\0glTF Binary (*.glb)\0*.glb\0glTF (*.gltf)\0*.gltf\0All Files (*.*)\0*.*\0",
+        L"Import Mesh");
       if (!path.empty()) ImportMesh(path);
     }
     if (menuAction.wantsSaveScene) {
@@ -1070,16 +1523,65 @@ void EditorApp::OnDraw() {
         ImGui::TextDisabled("Eye=show  F=freeze  W=wire");
         ImGui::Separator();
         if (ImGui::TreeNodeEx("Scene Root", ImGuiTreeNodeFlags_OpenOnArrow | ImGuiTreeNodeFlags_DefaultOpen)) {
-          // Meshes
+          // Meshes & Groups
           if (ImGui::TreeNodeEx("Meshes", ImGuiTreeNodeFlags_DefaultOpen)) {
+            // Track which meshes are in persistent groups
+            std::set<int> groupedIndices;
+            for (auto& grp : g_groups)
+              for (int idx : grp.members)
+                groupedIndices.insert(idx);
+
+            // Show persistent groups as collapsible parents
+            for (int gi = 0; gi < (int)g_groups.size(); ++gi) {
+              auto& grp = g_groups[gi];
+              ImGui::PushID(gi + 40000);
+              bool allSelected = true;
+              for (int idx : grp.members)
+                if (!g_multiSelect.count(idx)) { allSelected = false; break; }
+
+              ImGuiTreeNodeFlags grpFlags = ImGuiTreeNodeFlags_OpenOnArrow | ImGuiTreeNodeFlags_DefaultOpen;
+              if (allSelected) grpFlags |= ImGuiTreeNodeFlags_Selected;
+              std::string grpLabel = "[G] " + grp.name;
+              bool grpOpen = ImGui::TreeNodeEx(grpLabel.c_str(), grpFlags);
+              if (ImGui::IsItemClicked()) {
+                // Click on group selects all its members
+                g_multiSelect = grp.members;
+                if (!grp.members.empty()) {
+                  g_selectedIdx = *grp.members.begin();
+                  g_selectionType = 0;
+                }
+              }
+              if (grpOpen) {
+                for (int idx : grp.members) {
+                  if (idx < 0 || idx >= (int)g_objects.size()) continue;
+                  auto& o = g_objects[idx];
+                  ImGui::PushID(idx + 10000);
+                  ImGui::Checkbox("##vis", &o.visible); ImGui::SameLine();
+                  ImGuiTreeNodeFlags flags = ImGuiTreeNodeFlags_Leaf | ImGuiTreeNodeFlags_SpanAvailWidth;
+                  if (g_multiSelect.count(idx)) flags |= ImGuiTreeNodeFlags_Selected;
+                  ImGui::TreeNodeEx(o.name.c_str(), flags);
+                  if (ImGui::IsItemClicked()) {
+                    g_selectedIdx = idx; g_selectionType = 0;
+                  }
+                  ImGui::TreePop();
+                  ImGui::PopID();
+                }
+                ImGui::TreePop();
+              }
+              ImGui::PopID();
+            }
+
+            // Show ungrouped meshes
             for (int i = 0; i < (int)g_objects.size(); ++i) {
+              if (groupedIndices.count(i)) continue; // skip grouped
               auto& o = g_objects[i];
               ImGui::PushID(i + 10000);
               ImGui::Checkbox("##vis", &o.visible); ImGui::SameLine();
               ImGui::Checkbox("##frz", &o.frozen);  ImGui::SameLine();
               ImGui::Checkbox("##wir", &o.showWire); ImGui::SameLine();
               ImGuiTreeNodeFlags flags = ImGuiTreeNodeFlags_Leaf | ImGuiTreeNodeFlags_SpanAvailWidth;
-              if (g_selectionType == 0 && i == g_selectedIdx) flags |= ImGuiTreeNodeFlags_Selected;
+              if ((g_selectionType == 0 && i == g_selectedIdx) || g_multiSelect.count(i))
+                flags |= ImGuiTreeNodeFlags_Selected;
               if (o.frozen) ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.5f,0.5f,0.5f,1));
               bool nodeOpen = ImGui::TreeNodeEx(o.name.c_str(), flags);
               if (ImGui::IsItemClicked() && !o.frozen) {
@@ -1241,7 +1743,9 @@ void EditorApp::OnDraw() {
     if (m_panels.showRTDebug)
       g_debugRT = ImGuiDrawRTDebugPanel(g_debugRT);
 
+    T8_LOG_TRACE("[T8ditor] OnDraw: ImGuiRender...");
     ImGuiRender();
+    T8_LOG_TRACE("[T8ditor] OnDraw: ImGuiRender done");
   }
 
   // Frame dump (space key) — dump all render graph RTs
@@ -1265,8 +1769,11 @@ void EditorApp::OnDraw() {
     T8_LOG_INFO("[T8ditor] Frame dumped to disk");
   }
 
+  T8_LOG_TRACE("[T8ditor] OnDraw: SwapBuffers...");
   drv->SwapBuffers();
+  T8_LOG_TRACE("[T8ditor] OnDraw: EndFrame...");
   drv->EndFrame();
+  T8_LOG_TRACE("[T8ditor] OnDraw: done");
 }
 
 void EditorApp::OnPause()  { bPaused = true;  }

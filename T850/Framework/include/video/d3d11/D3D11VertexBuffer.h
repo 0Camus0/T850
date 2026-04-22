@@ -16,6 +16,8 @@
 #include <Config.h>
 #include <video\BaseDriver.h>
 #include <d3d11.h>
+#include <wrl.h>
+#include <wrl/client.h>
 
 namespace t800 {
   class D3DXVertexBuffer : public VertexBuffer {
@@ -34,7 +36,7 @@ namespace t800 {
   private:
     friend Device;
     void Create(const Device& device, BufferDesc desc, void* initialData = nullptr) override;
-    ID3D11Buffer* APIBuffer;
+    Microsoft::WRL::ComPtr<ID3D11Buffer> APIBuffer;
   };
 }
 

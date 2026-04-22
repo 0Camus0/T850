@@ -133,7 +133,7 @@ namespace t800 {
     CD3D11_DEFAULT def;
     //Opaque
     CD3D11_BLEND_DESC BlendStatedesc(def);
-    device->CreateBlendState(&BlendStatedesc, &m_BlendStateOpaque);
+    device->CreateBlendState(&BlendStatedesc, m_BlendStateOpaque.ReleaseAndGetAddressOf());
     //Additive
     BlendStatedesc = CD3D11_BLEND_DESC(def);
     BlendStatedesc.RenderTarget[0].BlendEnable = TRUE;
@@ -141,7 +141,7 @@ namespace t800 {
       BlendStatedesc.RenderTarget[0].SrcBlendAlpha = D3D11_BLEND_SRC_ALPHA;
     BlendStatedesc.RenderTarget[0].DestBlend =
       BlendStatedesc.RenderTarget[0].DestBlendAlpha = D3D11_BLEND_ONE;
-    device->CreateBlendState(&BlendStatedesc, &m_BlendStateAdditive);
+    device->CreateBlendState(&BlendStatedesc, m_BlendStateAdditive.ReleaseAndGetAddressOf());
     //AlphaBlend
     //BlendStatedesc = CD3D11_BLEND_DESC(def);
     //BlendStatedesc.RenderTarget[0].BlendEnable = TRUE;
@@ -158,7 +158,7 @@ namespace t800 {
     BlendStatedesc.RenderTarget[0].DestBlendAlpha = D3D11_BLEND_ZERO;
     BlendStatedesc.RenderTarget[0].BlendOpAlpha = D3D11_BLEND_OP_ADD;
     BlendStatedesc.RenderTarget[0].RenderTargetWriteMask = D3D11_COLOR_WRITE_ENABLE_ALL;
-    device->CreateBlendState(&BlendStatedesc, &m_BlendStateAlphaBlend);
+    device->CreateBlendState(&BlendStatedesc, m_BlendStateAlphaBlend.ReleaseAndGetAddressOf());
     //NonPremultiplied
     BlendStatedesc = CD3D11_BLEND_DESC(def);
     BlendStatedesc.RenderTarget[0].BlendEnable = TRUE;
@@ -166,25 +166,25 @@ namespace t800 {
       BlendStatedesc.RenderTarget[0].SrcBlendAlpha = D3D11_BLEND_SRC_ALPHA;
     BlendStatedesc.RenderTarget[0].DestBlend =
       BlendStatedesc.RenderTarget[0].DestBlendAlpha = D3D11_BLEND_INV_SRC_ALPHA;
-    device->CreateBlendState(&BlendStatedesc, &m_BlendStateNonPremultiplied);
+    device->CreateBlendState(&BlendStatedesc, m_BlendStateNonPremultiplied.ReleaseAndGetAddressOf());
 
     /*DEPTH STATES*/
 
     //ReadWrite
     CD3D11_DEPTH_STENCIL_DESC BlendDesc(def);
     BlendDesc.DepthFunc = D3D11_COMPARISON_LESS_EQUAL;
-    device->CreateDepthStencilState(&BlendDesc, &m_depthStateReadWrite);
+    device->CreateDepthStencilState(&BlendDesc, m_depthStateReadWrite.ReleaseAndGetAddressOf());
     // DepthNone
     BlendDesc = CD3D11_DEPTH_STENCIL_DESC(def);
     BlendDesc.DepthEnable = FALSE;
     BlendDesc.DepthWriteMask = D3D11_DEPTH_WRITE_MASK_ZERO;
     BlendDesc.DepthFunc = D3D11_COMPARISON_EQUAL;
-    device->CreateDepthStencilState(&BlendDesc, &m_depthStateNone);
+    device->CreateDepthStencilState(&BlendDesc, m_depthStateNone.ReleaseAndGetAddressOf());
     // DepthRead
     BlendDesc = CD3D11_DEPTH_STENCIL_DESC(def);
     BlendDesc.DepthWriteMask = D3D11_DEPTH_WRITE_MASK_ZERO;
     BlendDesc.DepthFunc = D3D11_COMPARISON_LESS_EQUAL;
-    device->CreateDepthStencilState(&BlendDesc, &m_depthStateRead);
+    device->CreateDepthStencilState(&BlendDesc, m_depthStateRead.ReleaseAndGetAddressOf());
 
     /*RASTERIZER STATES*/
 
@@ -209,13 +209,18 @@ namespace t800 {
     DestroyShaders();
     DestroyRTs();
     DestroyTextures();
-    m_BlendStateAdditive->Release();
-    m_BlendStateAlphaBlend->Release();
-    m_BlendStateNonPremultiplied->Release();
-    m_BlendStateOpaque->Release();
-    m_depthStateNone->Release();
-    m_depthStateRead->Release();
-    m_depthStateReadWrite->Release();
+    // ComPtr members release automatically; explicit Reset() makes ordering explicit
+    m_BlendStateAdditive.Reset();
+    m_BlendStateAlphaBlend.Reset();
+    m_BlendStateNonPremultiplied.Reset();
+    m_BlendStateOpaque.Reset();
+    m_depthStateNone.Reset();
+    m_depthStateRead.Reset();
+    m_depthStateReadWrite.Reset();
+    m_RasterStateWireframe.Reset();
+    m_RasterStateCullNone.Reset();
+    m_RasterStateCullClockWise.Reset();
+    m_RasterStateCullCounterClockwise.Reset();
 
     T8Device->release();
     T8DeviceContext->release();
@@ -314,18 +319,18 @@ namespace t800 {
     switch (state)
     {
     case t800::BaseDriver::BLEND_DEFAULT:
-      deviceContext->OMSetBlendState(m_BlendStateOpaque, 0, 0xffffffff);
+      deviceContext->OMSetBlendState(m_BlendStateOpaque.Get(), 0, 0xffffffff);
       break;
     case t800::BaseDriver::BLEND_STATES::BLEND_OPAQUE:
       break;
     case t800::BaseDriver::ADDITIVE:
-      deviceContext->OMSetBlendState(m_BlendStateAdditive, 0, 0xffffffff);
+      deviceContext->OMSetBlendState(m_BlendStateAdditive.Get(), 0, 0xffffffff);
       break;
     case t800::BaseDriver::ALPHA_BLEND:
-      deviceContext->OMSetBlendState(m_BlendStateAlphaBlend, 0, 0xffffffff);
+      deviceContext->OMSetBlendState(m_BlendStateAlphaBlend.Get(), 0, 0xffffffff);
       break;
     case t800::BaseDriver::NON_PREMULTIPLIED:
-      deviceContext->OMSetBlendState(m_BlendStateNonPremultiplied, 0, 0xffffffff);
+      deviceContext->OMSetBlendState(m_BlendStateNonPremultiplied.Get(), 0, 0xffffffff);
       break;
     default:
       break;
@@ -340,16 +345,16 @@ namespace t800 {
     switch (state)
     {
     case t800::BaseDriver::DEPTH_DEFAULT:
-      deviceContext->OMSetDepthStencilState(m_depthStateReadWrite, 1);
+      deviceContext->OMSetDepthStencilState(m_depthStateReadWrite.Get(), 1);
       break;
     case t800::BaseDriver::READ_WRITE:
-      deviceContext->OMSetDepthStencilState(m_depthStateReadWrite, 1);
+      deviceContext->OMSetDepthStencilState(m_depthStateReadWrite.Get(), 1);
       break;
     case t800::BaseDriver::NONE:
-      deviceContext->OMSetDepthStencilState(m_depthStateNone, 1);
+      deviceContext->OMSetDepthStencilState(m_depthStateNone.Get(), 1);
       break;
     case t800::BaseDriver::READ:
-      deviceContext->OMSetDepthStencilState(m_depthStateRead, 1);
+      deviceContext->OMSetDepthStencilState(m_depthStateRead.Get(), 1);
       break;
     default:
       break;

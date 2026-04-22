@@ -16,15 +16,16 @@
 namespace t800 {
   void * D3DXDeviceContext::GetAPIObject() const
   {
-    return (void*)APIContext;
+    return (void*)APIContext.Get();
   }
   void ** D3DXDeviceContext::GetAPIObjectReference() const
   {
-    return (void**)&APIContext;
+    // See D3DXDevice::GetAPIObjectReference for the rationale on this cast.
+    return reinterpret_cast<void**>(const_cast<Microsoft::WRL::ComPtr<ID3D11DeviceContext>&>(APIContext).GetAddressOf());
   }
   void D3DXDeviceContext::release()
   {
-    APIContext->Release();
+    APIContext.Reset();
   }
   void D3DXDeviceContext::SetPrimitiveTopology(T8_TOPOLOGY::E topology)
   {

@@ -16,6 +16,8 @@
 #include <Config.h>
 #include <video\BaseDriver.h>
 #include <d3d11.h>
+#include <wrl.h>
+#include <wrl/client.h>
 
 namespace t800 {
   class D3DXDeviceContext : public DeviceContext {
@@ -27,7 +29,7 @@ namespace t800 {
     void SetPrimitiveTopology(T8_TOPOLOGY::E topology) override;
     void DrawIndexed(unsigned vertexCount, unsigned startIndex, unsigned startVertex) override;
   private:
-    ID3D11DeviceContext* APIContext;
+    Microsoft::WRL::ComPtr<ID3D11DeviceContext> APIContext;
   };
 }
 

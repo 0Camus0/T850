@@ -22,15 +22,18 @@
 namespace t800 {
   void * D3DXDevice::GetAPIObject() const
   {
-    return (void*)APIDevice;
+    return (void*)APIDevice.Get();
   }
   void ** D3DXDevice::GetAPIObjectReference() const
   {
-    return (void**)&APIDevice;
+    // ComPtr stores the raw pointer as its sole member; GetAddressOf() yields T**
+    // suitable for D3D11CreateDeviceAndSwapChain-style out-parameter creation.
+    // Safe here because the ComPtr is empty at creation time (no AddRef leak).
+    return reinterpret_cast<void**>(const_cast<Microsoft::WRL::ComPtr<ID3D11Device>&>(APIDevice).GetAddressOf());
   }
   void D3DXDevice::release()
   {
-    APIDevice->Release();
+    APIDevice.Reset();
   }
 
   Buffer * D3DXDevice::CreateBuffer(T8_BUFFER_TYPE::E bufferType, BufferDesc desc, void* initialData)

@@ -1,3 +1,4 @@
+#include "pch.h"
 #include "scene/LensFlare.h"
 
 namespace t800 {

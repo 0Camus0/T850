@@ -1,3 +1,4 @@
+#include "pch.h"
 #include <debug/FrameDumper.h>
 #include <utils/Camera.h>
 #include <scene/SceneProp.h>

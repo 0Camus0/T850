@@ -128,16 +128,31 @@
     <ClInclude Include="include\utils\Picking.h">
       <Filter>Header Files\utils</Filter>
     </ClInclude>
-    <ClInclude Include="include\video\GLDriver.h">
+    <ClInclude Include="include\video\gl\GLDriver.h">
       <Filter>Header Files\video\GL</Filter>
     </ClInclude>
-    <ClInclude Include="include\video\GLRT.h">
+    <ClInclude Include="include\video\gl\GLDeviceContext.h">
       <Filter>Header Files\video\GL</Filter>
     </ClInclude>
-    <ClInclude Include="include\video\GLShader.h">
+    <ClInclude Include="include\video\gl\GLDevice.h">
       <Filter>Header Files\video\GL</Filter>
     </ClInclude>
-    <ClInclude Include="include\video\GLTexture.h">
+    <ClInclude Include="include\video\gl\GLVertexBuffer.h">
+      <Filter>Header Files\video\GL</Filter>
+    </ClInclude>
+    <ClInclude Include="include\video\gl\GLIndexBuffer.h">
+      <Filter>Header Files\video\GL</Filter>
+    </ClInclude>
+    <ClInclude Include="include\video\gl\GLConstantBuffer.h">
+      <Filter>Header Files\video\GL</Filter>
+    </ClInclude>
+    <ClInclude Include="include\video\gl\GLRT.h">
+      <Filter>Header Files\video\GL</Filter>
+    </ClInclude>
+    <ClInclude Include="include\video\gl\GLShader.h">
+      <Filter>Header Files\video\GL</Filter>
+    </ClInclude>
+    <ClInclude Include="include\video\gl\GLTexture.h">
       <Filter>Header Files\video\GL</Filter>
     </ClInclude>
     <ClInclude Include="include\utils\cil.h">
@@ -185,7 +200,7 @@
     <ClInclude Include="include\scene\RenderQuad.h">
       <Filter>Header Files\scene</Filter>
     </ClInclude>
-    <ClInclude Include="include\video\GLSLParser.h">
+    <ClInclude Include="include\video\gl\GLSLParser.h">
       <Filter>Header Files\video\GL</Filter>
     </ClInclude>
     <ClInclude Include="include\video\ShaderBase.h">
@@ -232,16 +247,31 @@
     <ClCompile Include="src\video\BaseDriver.cpp">
       <Filter>Source Files\video</Filter>
     </ClCompile>
-    <ClCompile Include="src\video\GLDriver.cpp">
+    <ClCompile Include="src\video\gl\GLDriver.cpp">
       <Filter>Source Files\video\GL</Filter>
     </ClCompile>
-    <ClCompile Include="src\video\GLRT.cpp">
+    <ClCompile Include="src\video\gl\GLDeviceContext.cpp">
       <Filter>Source Files\video\GL</Filter>
     </ClCompile>
-    <ClCompile Include="src\video\GLShader.cpp">
+    <ClCompile Include="src\video\gl\GLDevice.cpp">
       <Filter>Source Files\video\GL</Filter>
     </ClCompile>
-    <ClCompile Include="src\video\GLTexture.cpp">
+    <ClCompile Include="src\video\gl\GLVertexBuffer.cpp">
+      <Filter>Source Files\video\GL</Filter>
+    </ClCompile>
+    <ClCompile Include="src\video\gl\GLIndexBuffer.cpp">
+      <Filter>Source Files\video\GL</Filter>
+    </ClCompile>
+    <ClCompile Include="src\video\gl\GLConstantBuffer.cpp">
+      <Filter>Source Files\video\GL</Filter>
+    </ClCompile>
+    <ClCompile Include="src\video\gl\GLRT.cpp">
+      <Filter>Source Files\video\GL</Filter>
+    </ClCompile>
+    <ClCompile Include="src\video\gl\GLShader.cpp">
+      <Filter>Source Files\video\GL</Filter>
+    </ClCompile>
+    <ClCompile Include="src\video\gl\GLTexture.cpp">
       <Filter>Source Files\video\GL</Filter>
     </ClCompile>
     <ClCompile Include="src\utils\cil.cpp">
@@ -286,7 +316,7 @@
     <ClCompile Include="src\scene\RenderQuad.cpp">
       <Filter>Source Files\scene</Filter>
     </ClCompile>
-    <ClCompile Include="src\video\GLSLParser.cpp">
+    <ClCompile Include="src\video\gl\GLSLParser.cpp">
       <Filter>Source Files\video\GL</Filter>
     </ClCompile>
     <ClCompile Include="src\scene\RenderMesh.cpp">

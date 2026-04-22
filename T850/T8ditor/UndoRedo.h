@@ -12,6 +12,7 @@
 #include <utils/xMaths.h>
 #include <string>
 #include <vector>
+#include <map>
 #include <memory>
 #include <functional>
 
@@ -55,6 +56,32 @@ private:
   TransformState m_before;
   TransformState m_after;
   SetFn          m_setFn;
+};
+
+// ── Group transform command ──────────────────────────
+// Stores old and new T/R/S for multiple objects at once.
+
+class GroupTransformCommand : public UndoCommand {
+public:
+  using SetFn = std::function<void(int idx, const TransformState&)>;
+
+  GroupTransformCommand(std::map<int, TransformState> before,
+                        std::map<int, TransformState> after,
+                        SetFn setFn)
+    : m_before(std::move(before)), m_after(std::move(after)), m_setFn(setFn) {}
+
+  void Apply() override {
+    for (auto& [idx, state] : m_after) m_setFn(idx, state);
+  }
+  void Undo() override {
+    for (auto& [idx, state] : m_before) m_setFn(idx, state);
+  }
+  const char* Description() const override { return "Group Transform"; }
+
+private:
+  std::map<int, TransformState> m_before;
+  std::map<int, TransformState> m_after;
+  SetFn m_setFn;
 };
 
 // ── Undo stack ───────────────────────────────────────

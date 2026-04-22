@@ -56,7 +56,7 @@ jobs:
         shell: pwsh
         run: |
           cd T850/Librerias/vcpkg
-          ./vcpkg.exe install glew:x64-windows-static angle:x64-windows draco:x64-windows draco:x64-windows-static vulkan-headers:x64-windows-static vulkan-loader:x64-windows-static vulkan-memory-allocator:x64-windows-static glslang:x64-windows-static "imgui[docking-experimental,dx11-binding,dx12-binding,opengl3-binding,sdl3-binding,win32-binding]:x64-windows-static" imguizmo:x64-windows-static
+          ./vcpkg.exe install glew:x64-windows-static angle:x64-windows draco:x64-windows draco:x64-windows-static vulkan-headers:x64-windows-static vulkan-loader:x64-windows-static vulkan-memory-allocator:x64-windows-static glslang:x64-windows-static "imgui[docking-experimental,dx11-binding,dx12-binding,vulkan-binding,opengl3-binding,sdl3-binding,win32-binding]:x64-windows-static" imguizmo:x64-windows-static
 
       - name: Install vcpkg packages (ARM64)
         if: matrix.platform == 'ARM64'

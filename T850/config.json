@@ -1,5 +1,5 @@
 {
-  "api": "d3d12",
+  "api": "gl",
   "dump": {
     "frame": 750,
     "trigger": "frame",

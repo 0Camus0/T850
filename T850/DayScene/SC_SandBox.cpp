@@ -405,18 +405,18 @@ void SC_SandBox::OnDraw() {
   Quads[7].Draw();
 
   // Draw wireframe and skeleton overlays for skinned meshes
+  // TODO: implement GPU-skinned wireframe (currently disabled — CPU path
+  // crashes on D3D11 and is too slow on Vulkan)
+  /*
   if (Meshes[0].pBase) {
     RenderSkinnedMesh* skinned = dynamic_cast<RenderSkinnedMesh*>(Meshes[0].pBase);
     if (skinned && skinned->HasSkinData()) {
-      // Depth-tested mesh wireframe (green) — disabled: needs GPU skinning
-      // if (m_showWireframe) { ... }
-
-      // Always-visible skeleton wireframe (magenta) — lightweight, OK on CPU
       if (m_showSkeleton) {
         skinned->DrawSkeleton();
       }
     }
   }
+  */
 
   // Debug: draw wireframe AABBs for visible meshes
   if (m_showAABBs && Meshes[0].pBase) {

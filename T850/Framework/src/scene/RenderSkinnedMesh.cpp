@@ -128,8 +128,11 @@ namespace t800 {
     }
 
     // Update animation using scene delta time
-    float deltaTime = pScProp ? pScProp->FrameDeltaSec : (1.0f / 60.0f);
-    m_animController.Update(deltaTime);
+    if (m_playing) {
+      m_animController.SetUseSlerp(m_useSlerp);
+      float deltaTime = pScProp ? pScProp->FrameDeltaSec : (1.0f / 60.0f);
+      m_animController.Update(deltaTime);
+    }
 
     // Copy bone matrices into all skinned cbuffers
     const XMATRIX44* bones = m_animController.GetBoneMatrices();

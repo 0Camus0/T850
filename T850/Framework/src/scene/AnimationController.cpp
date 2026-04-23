@@ -172,7 +172,7 @@ void AnimationController::InterpolateKeys(float dt) {
           float span = nextTick - curTick;
           float t = (span > 0.0f) ? (elapsed - curTick) / span : 0.0f;
           t = (t < 0.0f) ? 0.0f : ((t > 1.0f) ? 1.0f : t);
-          k.RotationKey.Rot = Slerp(cur.Rot, next.Rot, t);
+          k.RotationKey.Rot = m_useSlerp ? Slerp(cur.Rot, next.Rot, t) : Nlerp(cur.Rot, next.Rot, t);
         }
       } else {
         k.StateRot = xF::xAnimationSingleKey::FINISHED;
@@ -298,15 +298,7 @@ XQUATERNION AnimationController::Slerp(const XQUATERNION& a,
   }
 
   if (dot > 0.9995f) {
-    // Linear interpolation for very close quaternions
-    XQUATERNION r(
-      a.x + t * (b2.x - a.x),
-      a.y + t * (b2.y - a.y),
-      a.z + t * (b2.z - a.z),
-      a.w + t * (b2.w - a.w));
-    float len = std::sqrt(r.x*r.x + r.y*r.y + r.z*r.z + r.w*r.w);
-    if (len > 1e-8f) { r.x/=len; r.y/=len; r.z/=len; r.w/=len; }
-    return r;
+    return Nlerp(a, b2, t);
   }
 
   float theta = std::acos(dot);
@@ -319,6 +311,25 @@ XQUATERNION AnimationController::Slerp(const XQUATERNION& a,
     wa * a.y + wb * b2.y,
     wa * a.z + wb * b2.z,
     wa * a.w + wb * b2.w);
+}
+
+// ── NLERP (Normalized LERP) ─────────────────────────────
+
+XQUATERNION AnimationController::Nlerp(const XQUATERNION& a,
+                                        const XQUATERNION& b, float t) {
+  float dot = a.x*b.x + a.y*b.y + a.z*b.z + a.w*b.w;
+  XQUATERNION b2 = b;
+  if (dot < 0.0f) {
+    b2.x = -b2.x; b2.y = -b2.y; b2.z = -b2.z; b2.w = -b2.w;
+  }
+  XQUATERNION r(
+    a.x + t * (b2.x - a.x),
+    a.y + t * (b2.y - a.y),
+    a.z + t * (b2.z - a.z),
+    a.w + t * (b2.w - a.w));
+  float len = std::sqrt(r.x*r.x + r.y*r.y + r.z*r.z + r.w*r.w);
+  if (len > 1e-8f) { r.x/=len; r.y/=len; r.z/=len; r.w/=len; }
+  return r;
 }
 
 // ── Quaternion → row-major rotation matrix ──────────────

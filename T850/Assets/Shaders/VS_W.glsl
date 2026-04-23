@@ -16,7 +16,7 @@
 
 uniform highp mat4 VP;
 #ifdef USE_SKINNING
-uniform highp mat4 BoneMatrices[256];
+uniform highp mat4 BoneMatrices[128];
 #endif
 
 void main(){

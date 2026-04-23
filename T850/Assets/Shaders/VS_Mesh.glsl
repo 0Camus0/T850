@@ -103,12 +103,14 @@ uniform highp vec4 ParallaxSettings;
 uniform highp vec4 ParallaxShadowSettings;
 uniform highp vec4 Light0Direction;
 #ifdef USE_SKINNING
-uniform highp mat4 BoneMatrices[256];
+// GL has lower uniform limits than HLSL (max ~1024 vec4 = 256 mat4 total).
+// With other uniforms taking ~30 vec4, bone array must be <= ~220.
+uniform highp mat4 BoneMatrices[128];
 #endif
 
 void main(){
 #ifdef USE_SKINNING
-	ivec4 idx = ivec4(Joints);
+	ivec4 idx = min(ivec4(Joints), ivec4(127));
 	mat4 skinMatrix = BoneMatrices[idx.x] * Weights.x
 	                + BoneMatrices[idx.y] * Weights.y
 	                + BoneMatrices[idx.z] * Weights.z

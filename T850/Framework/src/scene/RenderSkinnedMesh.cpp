@@ -184,8 +184,9 @@ namespace t800 {
     // Pre-allocate CPU position buffer (filled each frame by UpdateSkinnedPositions)
     m_wirePositions.resize(m_wireTotalVerts * 4, 0.0f);
 
-    // Pre-allocate wireframe VB (will be updated each frame)
-    m_wireVB = LineRenderer::CreatePositionVB(m_wirePositions.data(), m_wireTotalVerts);
+    // Pre-allocate wireframe VB (DYNAMIC — updated each frame via UpdateFromBuffer)
+    m_wireVB = LineRenderer::CreatePositionVB(m_wirePositions.data(), m_wireTotalVerts,
+                                              T8_BUFFER_USAGE::DINAMIC);
   }
 
   void RenderSkinnedMesh::BuildSkeletonBuffers() {
@@ -213,8 +214,9 @@ namespace t800 {
     m_skelIndexCount = (unsigned)lineIdx.size();
     m_skelPositions.resize(vertCount * 4, 0.0f);
 
-    // Pre-allocate skeleton VB (will be updated each frame)
-    m_skelVB = LineRenderer::CreatePositionVB(m_skelPositions.data(), vertCount);
+    // Pre-allocate skeleton VB (DYNAMIC — updated each frame)
+    m_skelVB = LineRenderer::CreatePositionVB(m_skelPositions.data(), vertCount,
+                                              T8_BUFFER_USAGE::DINAMIC);
   }
 
   // ── CPU skinning for wireframe positions ───────────────

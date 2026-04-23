@@ -23,7 +23,31 @@ public:
   void Draw(float *t, float *vp) override;
   void Destroy() override;
 
+  // ── Animation playback API ──
   AnimationController& GetAnimController() { return m_animController; }
+
+  void PlayAnimation()  { m_playing = true; }
+  void PauseAnimation() { m_playing = false; }
+  bool IsPlaying() const { return m_playing; }
+
+  void NextAnimation()  { m_animController.NextAnimationSet(); }
+  void PrevAnimation()  { m_animController.PrevAnimationSet(); }
+  void ResetAnimation() { m_animController.ResetAnimationSet(); }
+
+  void SetAnimSpeed(float speed) { m_animController.SetSpeed(speed); }
+  float GetAnimSpeed() const     { return m_animController.GetSpeed(); }
+
+  void SetLooping(bool loop) { m_animController.SetLooping(loop); }
+  bool IsLooping() const     { return m_animController.IsLooping(); }
+
+  void SetUseSlerp(bool slerp) { m_useSlerp = slerp; }
+  bool GetUseSlerp() const     { return m_useSlerp; }
+
+  int  GetCurrentAnimSet() const { return m_animController.GetCurrentSet(); }
+  int  GetNumAnimSets() const    { return m_animController.GetNumSets(); }
+  int  GetNumBones() const       { return m_animController.GetNumBones(); }
+
+  bool HasSkinData() const { return m_hasSkin; }
 
 private:
   // Extended CBuffer with bone matrices appended
@@ -51,6 +75,8 @@ private:
   AnimationController m_animController;
   std::vector<CBufferSkinned> m_skinnedCBuffers; // one per geometry
   bool m_hasSkin = false;
+  bool m_playing = true;
+  bool m_useSlerp = true;
 };
 
 } // namespace t800

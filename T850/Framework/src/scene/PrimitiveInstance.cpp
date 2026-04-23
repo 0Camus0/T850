@@ -12,6 +12,7 @@
 *********************************************************/
 
 #include <scene/PrimitiveInstance.h>
+#include <scene/RenderSkinnedMesh.h>
 namespace t800 {
   void PrimitiveInst::TranslateAbsolute(float x, float y, float z) {
     XMatTranslation(Position, x, y, z);
@@ -88,5 +89,13 @@ namespace t800 {
     pBase->SetBrightness(m_brightness);
 	pBase->SetParallaxSettings(m_fParallaxLowSamples, m_fParallaxHighSamples, m_fParallaxHeight);
     pBase->Draw(&Final.m[0][0], &(*pViewProj).m[0][0]);
+  }
+
+  RenderSkinnedMesh* PrimitiveInst::GetSkinnedMesh() const {
+    return dynamic_cast<RenderSkinnedMesh*>(pBase);
+  }
+
+  bool PrimitiveInst::IsSkinnedMesh() const {
+    return GetSkinnedMesh() != nullptr;
   }
 }

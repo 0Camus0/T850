@@ -153,11 +153,12 @@ void LineRenderer::DrawLines(const XMATRIX44& world,
 }
 
 VertexBuffer* LineRenderer::CreatePositionVB(const float* positionsXYZW,
-                                             unsigned numVertices) {
+                                             unsigned numVertices,
+                                             T8_BUFFER_USAGE::E usage) {
   if (!T8Device || !positionsXYZW || numVertices == 0) return nullptr;
   BufferDesc bd;
   bd.byteWidth = static_cast<int>(sizeof(float) * 4 * numVertices);
-  bd.usage     = T8_BUFFER_USAGE::DEFAULT;
+  bd.usage     = usage;
   return (VertexBuffer*)T8Device->CreateBuffer(
       T8_BUFFER_TYPE::VERTEX, bd, const_cast<float*>(positionsXYZW));
 }

@@ -64,8 +64,10 @@ public:
                  T8_IB_FORMAR::E ibFormat = T8_IB_FORMAR::R16);
 
   // Helper for callers that want to build a VB of float4 line endpoints (xyzw, w=1).
+  // Use T8_BUFFER_USAGE::DINAMIC for buffers updated every frame.
   static VertexBuffer* CreatePositionVB(const float* positionsXYZW,
-                                        unsigned numVertices);
+                                        unsigned numVertices,
+                                        T8_BUFFER_USAGE::E usage = T8_BUFFER_USAGE::DEFAULT);
   static IndexBuffer*  CreateIndexBuffer16(const unsigned short* indices,
                                            unsigned numIndices);
   static IndexBuffer*  CreateIndexBuffer32(const unsigned int* indices,

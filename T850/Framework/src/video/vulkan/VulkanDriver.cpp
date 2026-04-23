@@ -628,7 +628,7 @@ namespace t800 {
 
   void VulkanDriver::CreateDescriptorPool() {
     VkDescriptorPoolSize poolSizes[] = {
-      { VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1024 },
+      { VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC, 1024 },
       { VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 4096 },
     };
 
@@ -1578,14 +1578,21 @@ reopen:
     writes.reserve(16);
     imageInfos.reserve(8);
 
-    // UBO binding
+    // UBO binding — offset=0 in descriptor, actual offset passed as dynamic offset
+    uint32_t dynamicOffset = 0;
+    VkDescriptorBufferInfo cbBufInfo = {};
     if (shader->cbvBinding >= 0) {
+      cbBufInfo.buffer = m_pendingCB.buffer;
+      cbBufInfo.offset = 0;
+      cbBufInfo.range  = m_pendingCB.range;
+      dynamicOffset    = (uint32_t)m_pendingCB.offset;
+
       VkWriteDescriptorSet w = { VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET };
       w.dstSet = ds;
       w.dstBinding = (uint32_t)shader->cbvBinding;
       w.descriptorCount = 1;
-      w.descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
-      w.pBufferInfo = &m_pendingCB;
+      w.descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC;
+      w.pBufferInfo = &cbBufInfo;
       writes.push_back(w);
     }
 
@@ -1614,8 +1621,12 @@ reopen:
     if (!writes.empty()) {
       vkUpdateDescriptorSets(m_device, (uint32_t)writes.size(), writes.data(), 0, nullptr);
     }
+
+    // Bind with dynamic offset for UBO
+    uint32_t dynOffsetCount = (shader->cbvBinding >= 0) ? 1 : 0;
     vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS,
-                            shader->m_pipelineLayout, 0, 1, &ds, 0, nullptr);
+                            shader->m_pipelineLayout, 0, 1, &ds,
+                            dynOffsetCount, &dynamicOffset);
   }
 
   // ══════════════════════════════════════════════════════

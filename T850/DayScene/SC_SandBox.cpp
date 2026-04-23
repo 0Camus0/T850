@@ -4,6 +4,7 @@
 #include <scene/PrimitiveManager.h>
 #include <scene/PrimitiveInstance.h>
 #include <scene/RenderMesh.h>
+#include <scene/RenderSkinnedMesh.h>
 #include <scene/SceneDescriptor.h>
 #include <iostream>
 #include <string>
@@ -402,6 +403,25 @@ void SC_SandBox::OnDraw() {
   finalKey.bits |= ShaderKey::HAS_TEXCOORD0;
   Quads[7].SetGlobalKey(finalKey);
   Quads[7].Draw();
+
+  // Draw wireframe and skeleton overlays for skinned meshes
+  if (Meshes[0].pBase) {
+    RenderSkinnedMesh* skinned = dynamic_cast<RenderSkinnedMesh*>(Meshes[0].pBase);
+    if (skinned && skinned->HasSkinData()) {
+      // Depth-tested mesh wireframe (green)
+      if (m_showWireframe) {
+        Texture* gbufDepth = pFramework->pVideoDriver->GetRTTexture(GBufferPass, BaseDriver::COLOR4_ATTACHMENT);
+        skinned->DrawWireframe(gbufDepth,
+          g_pBaseDriver->width,
+          g_pBaseDriver->height,
+          Cam.FPlane);
+      }
+      // Always-visible skeleton wireframe (magenta)
+      if (m_showSkeleton) {
+        skinned->DrawSkeleton();
+      }
+    }
+  }
 
   // Debug: draw wireframe AABBs for visible meshes
   if (m_showAABBs && Meshes[0].pBase) {

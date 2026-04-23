@@ -183,6 +183,9 @@ namespace t800 {
 
     // Pre-allocate CPU position buffer (filled each frame by UpdateSkinnedPositions)
     m_wirePositions.resize(m_wireTotalVerts * 4, 0.0f);
+
+    // Pre-allocate wireframe VB (will be updated each frame)
+    m_wireVB = LineRenderer::CreatePositionVB(m_wirePositions.data(), m_wireTotalVerts);
   }
 
   void RenderSkinnedMesh::BuildSkeletonBuffers() {
@@ -209,6 +212,9 @@ namespace t800 {
     m_skelIB = LineRenderer::CreateIndexBuffer16(lineIdx.data(), (unsigned)lineIdx.size());
     m_skelIndexCount = (unsigned)lineIdx.size();
     m_skelPositions.resize(vertCount * 4, 0.0f);
+
+    // Pre-allocate skeleton VB (will be updated each frame)
+    m_skelVB = LineRenderer::CreatePositionVB(m_skelPositions.data(), vertCount);
   }
 
   // ── CPU skinning for wireframe positions ───────────────
@@ -295,7 +301,7 @@ namespace t800 {
   // ── Debug wireframe draw ───────────────────────────────
 
   void RenderSkinnedMesh::DrawWireframe(Texture* depthTex, int viewW, int viewH, float farPlane) {
-    if (!m_hasSkin || !m_wireIB || m_wireIndexCount == 0 || !m_lineRenderer.IsReady())
+    if (!m_hasSkin || !m_wireIB || !m_wireVB || m_wireIndexCount == 0 || !m_lineRenderer.IsReady())
       return;
 
     if (!pScProp || pScProp->pCameras.empty()) return;
@@ -303,10 +309,8 @@ namespace t800 {
 
     UpdateSkinnedPositions();
 
-    // Create a fresh VB from the CPU-skinned positions each frame
-    VertexBuffer* wireVB = LineRenderer::CreatePositionVB(
-        m_wirePositions.data(), m_wireTotalVerts);
-    if (!wireVB) return;
+    // Update existing VB with CPU-skinned positions
+    m_wireVB->UpdateFromBuffer(*T8DeviceContext, m_wirePositions.data());
 
     m_lineRenderer.SetDepthTestEnabled(true);
     m_lineRenderer.SetDepthTexture(depthTex);
@@ -319,13 +323,11 @@ namespace t800 {
     auto ibFmt = m_wireUse32Bit ? T8_IB_FORMAR::R32 : T8_IB_FORMAR::R16;
 
     m_lineRenderer.DrawLines(identity, cam->VP, wireColor,
-                             wireVB, m_wireIB, m_wireIndexCount, 16, ibFmt);
-
-    wireVB->release();
+                             m_wireVB, m_wireIB, m_wireIndexCount, 16, ibFmt);
   }
 
   void RenderSkinnedMesh::DrawSkeleton() {
-    if (!m_hasSkin || !m_skelIB || m_skelIndexCount == 0 || !m_lineRenderer.IsReady())
+    if (!m_hasSkin || !m_skelIB || !m_skelVB || m_skelIndexCount == 0 || !m_lineRenderer.IsReady())
       return;
 
     if (!pScProp || pScProp->pCameras.empty()) return;
@@ -333,10 +335,8 @@ namespace t800 {
 
     UpdateSkeletonPositions();
 
-    unsigned skelVerts = (unsigned)(m_skelPositions.size() / 4);
-    VertexBuffer* skelVB = LineRenderer::CreatePositionVB(
-        m_skelPositions.data(), skelVerts);
-    if (!skelVB) return;
+    // Update existing VB with current bone positions
+    m_skelVB->UpdateFromBuffer(*T8DeviceContext, m_skelPositions.data());
 
     m_lineRenderer.SetDepthTestEnabled(false);
 
@@ -345,9 +345,7 @@ namespace t800 {
     XVECTOR3 skelColor(1.0f, 0.0f, 1.0f, 1.0f);  // magenta
 
     m_lineRenderer.DrawLines(identity, cam->VP, skelColor,
-                             skelVB, m_skelIB, m_skelIndexCount, 16, T8_IB_FORMAR::R16);
-
-    skelVB->release();
+                             m_skelVB, m_skelIB, m_skelIndexCount, 16, T8_IB_FORMAR::R16);
   }
 
   // ── Main draw ──────────────────────────────────────────
@@ -493,7 +491,9 @@ namespace t800 {
 
   void RenderSkinnedMesh::Destroy() {
     m_lineRenderer.Destroy();
+    if (m_wireVB) { m_wireVB->release(); m_wireVB = nullptr; }
     if (m_wireIB) { m_wireIB->release(); m_wireIB = nullptr; }
+    if (m_skelVB) { m_skelVB->release(); m_skelVB = nullptr; }
     if (m_skelIB) { m_skelIB->release(); m_skelIB = nullptr; }
     m_wirePositions.clear();
     m_skelPositions.clear();

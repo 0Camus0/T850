@@ -402,6 +402,8 @@ namespace xF {
 			binormalAttribLoc=-1;
 			uvAttribLoc=-1;
 			uvSecAttribLoc=-1;
+			jointsAttribLoc=-1;
+			weightsAttribLoc=-1;
 		}
 
 
@@ -436,7 +438,8 @@ namespace xF {
 			  ShaderProg(other.ShaderProg), vertexAttribLoc(other.vertexAttribLoc),
 			  normalAttribLoc(other.normalAttribLoc), tangentAttribLoc(other.tangentAttribLoc),
 			  binormalAttribLoc(other.binormalAttribLoc), uvAttribLoc(other.uvAttribLoc),
-			  uvSecAttribLoc(other.uvSecAttribLoc), matWorldViewProjUniformLoc(other.matWorldViewProjUniformLoc),
+			  uvSecAttribLoc(other.uvSecAttribLoc), jointsAttribLoc(other.jointsAttribLoc),
+			  weightsAttribLoc(other.weightsAttribLoc), matWorldViewProjUniformLoc(other.matWorldViewProjUniformLoc),
 			  matWorldUniformLoc(other.matWorldUniformLoc), Id(other.Id), IdIBO(other.IdIBO),
 			  VertexSize(other.VertexSize), NumVertex(other.NumVertex)
 		{
@@ -459,6 +462,8 @@ namespace xF {
 			binormalAttribLoc = other.binormalAttribLoc;
 			uvAttribLoc = other.uvAttribLoc;
 			uvSecAttribLoc = other.uvSecAttribLoc;
+			jointsAttribLoc = other.jointsAttribLoc;
+			weightsAttribLoc = other.weightsAttribLoc;
 			matWorldViewProjUniformLoc = other.matWorldViewProjUniformLoc;
 			matWorldUniformLoc = other.matWorldUniformLoc;
 			Id = other.Id; IdIBO = other.IdIBO;
@@ -483,6 +488,8 @@ namespace xF {
 		int			 binormalAttribLoc;
 		int			 uvAttribLoc;
 		int			 uvSecAttribLoc;
+		int			 jointsAttribLoc;
+		int			 weightsAttribLoc;
 
 		unsigned int			 matWorldViewProjUniformLoc;
 		unsigned int			 matWorldUniformLoc;
@@ -522,6 +529,8 @@ namespace xF {
 		std::vector<XVECTOR3>	 Binormals;
 		std::vector<XVECTOR3>	 VertexColors;
 		std::vector<XVECTOR2>	 TexCoordinates[4];
+		std::vector<XVECTOR3>	 SkinWeights;     // 4 blend weights per vertex (xyzw)
+		std::vector<XVECTOR3>	 SkinIndices;     // 4 joint indices per vertex (xyzw, stored as float)
 
 		std::vector<xWORD>		 Triangles;
 		// Optional 32-bit index storage for primitives whose vertex count

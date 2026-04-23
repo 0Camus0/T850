@@ -338,7 +338,8 @@ bool BuildGeometry(const Document& doc,
                    const Primitive& prim,
                    const XMATRIX44& worldMatrix,
                    xF::xMeshGeometry& geom,
-                   DracoDecodeResult* preDecoded = nullptr) {
+                   DracoDecodeResult* preDecoded = nullptr,
+                   bool isSkinned = false) {
   geom = xF::xMeshGeometry{};
 
   // Check for Draco compression — use pre-decoded data if available
@@ -346,14 +347,16 @@ bool BuildGeometry(const Document& doc,
     || (prim.extensions.has_value()
         && prim.extensions->KHR_draco_mesh_compression.has_value());
 
-  std::vector<float> pos, nrm, tan, uv0, uv1, col;
+  std::vector<float> pos, nrm, tan, uv0, uv1, col, joints, weights;
   int posElem = 0, nrmElem = 0, tanElem = 0;
   int uv0Elem = 0, uv1Elem = 0, colElem = 0;
+  int jointsElem = 0, weightsElem = 0;
   std::size_t N = 0;
 
   bool hasNormal  = false, hasTangent = false;
   bool hasUV0     = false, hasUV1     = false;
   bool hasColor   = false;
+  bool hasJoints  = false, hasWeights = false;
 
   std::vector<uint32_t> srcIdx;
 
@@ -431,6 +434,17 @@ bool BuildGeometry(const Document& doc,
       hasColor = true;
     }
 
+    if (prim.attributes.JOINTS_0 >= 0
+        && ReadAccessorFloats(doc, prim.attributes.JOINTS_0, joints, &jointsElem)
+        && jointsElem == 4 && joints.size() == N * 4) {
+      hasJoints = true;
+    }
+    if (prim.attributes.WEIGHTS_0 >= 0
+        && ReadAccessorFloats(doc, prim.attributes.WEIGHTS_0, weights, &weightsElem)
+        && weightsElem == 4 && weights.size() == N * 4) {
+      hasWeights = true;
+    }
+
     // Indices.
     if (prim.indices) {
       if (!ReadAccessorIndices(doc, *prim.indices, srcIdx)) return false;
@@ -490,6 +504,11 @@ bool BuildGeometry(const Document& doc,
   if (hasUV0)     geom.VertexAttributes |= xF::xMeshGeometry::HAS_TEXCOORD0;
   if (hasUV1)     geom.VertexAttributes |= xF::xMeshGeometry::HAS_TEXCOORD1;
   if (hasColor)   geom.VertexAttributes |= xF::xMeshGeometry::HAS_VERTEXCOLOR;
+  bool hasSkin = hasJoints && hasWeights;
+  if (hasSkin) {
+    geom.VertexAttributes |= xF::xMeshGeometry::HAS_SKINWEIGHTS0;
+    geom.VertexAttributes |= xF::xMeshGeometry::HAS_SKININDEXES0;
+  }
 
   geom.Positions.resize(N);
   if (hasNormal)  geom.Normals.resize(N);
@@ -498,15 +517,24 @@ bool BuildGeometry(const Document& doc,
   if (hasUV0)     geom.TexCoordinates[0].resize(N);
   if (hasUV1)     geom.TexCoordinates[1].resize(N);
   if (hasColor)   geom.VertexColors.resize(N);
+  if (hasSkin) {
+    geom.SkinWeights.resize(N);
+    geom.SkinIndices.resize(N);
+  }
+
+  // Skinned vertices stay in local/bind space — the skinning transform
+  // (InverseBindMatrix * CombinedBoneMatrix) handles placement at runtime.
+  XMATRIX44 xformMatrix = worldMatrix;
+  if (hasSkin) xformMatrix = Identity();
 
   for (std::size_t i = 0; i < N; ++i) {
     float x, y, z;
-    TransformPoint(worldMatrix, pos[i*3+0], pos[i*3+1], pos[i*3+2], x, y, z);
+    TransformPoint(xformMatrix, pos[i*3+0], pos[i*3+1], pos[i*3+2], x, y, z);
     if (kFlipToLeftHanded) z = -z;
     geom.Positions[i] = XVECTOR3(x, y, z);
 
     if (hasNormal) {
-      TransformDir(worldMatrix, nrm[i*3+0], nrm[i*3+1], nrm[i*3+2], x, y, z);
+      TransformDir(xformMatrix, nrm[i*3+0], nrm[i*3+1], nrm[i*3+2], x, y, z);
       if (kFlipToLeftHanded) z = -z;
       // Renormalise — non-uniform scale support is best-effort.
       float l = std::sqrt(x*x + y*y + z*z);
@@ -514,7 +542,7 @@ bool BuildGeometry(const Document& doc,
       geom.Normals[i] = XVECTOR3(x, y, z);
     }
     if (hasTangent) {
-      TransformDir(worldMatrix, tan[i*4+0], tan[i*4+1], tan[i*4+2], x, y, z);
+      TransformDir(xformMatrix, tan[i*4+0], tan[i*4+1], tan[i*4+2], x, y, z);
       if (kFlipToLeftHanded) z = -z;
       float l = std::sqrt(x*x + y*y + z*z);
       if (l > 1e-8f) { x /= l; y /= l; z /= l; }
@@ -544,6 +572,12 @@ bool BuildGeometry(const Document& doc,
     if (hasColor) {
       geom.VertexColors[i] = XVECTOR3(
           col[i*colElem+0], col[i*colElem+1], col[i*colElem+2]);
+    }
+    if (hasSkin) {
+      geom.SkinIndices[i] = XVECTOR3(joints[i*4+0], joints[i*4+1],
+                                      joints[i*4+2], joints[i*4+3]);
+      geom.SkinWeights[i] = XVECTOR3(weights[i*4+0], weights[i*4+1],
+                                      weights[i*4+2], weights[i*4+3]);
     }
   }
 
@@ -616,6 +650,8 @@ void BuildFinalGeometry(const xF::xMeshGeometry& geom,
   if (geom.VertexAttributes & xF::xMeshGeometry::HAS_TEXCOORD1) vsz += 8;
   if (geom.VertexAttributes & xF::xMeshGeometry::HAS_TEXCOORD2) vsz += 8;
   if (geom.VertexAttributes & xF::xMeshGeometry::HAS_TEXCOORD3) vsz += 8;
+  if (geom.VertexAttributes & xF::xMeshGeometry::HAS_SKININDEXES0) vsz += v4;
+  if (geom.VertexAttributes & xF::xMeshGeometry::HAS_SKINWEIGHTS0) vsz += v4;
 
   out.VertexSize = vsz;
   out.NumVertex  = geom.NumVertices;
@@ -666,6 +702,18 @@ void BuildFinalGeometry(const xF::xMeshGeometry& geom,
       out.pData[c++] = geom.TexCoordinates[3][j].x;
       out.pData[c++] = geom.TexCoordinates[3][j].y;
     }
+    if (geom.VertexAttributes & xF::xMeshGeometry::HAS_SKININDEXES0) {
+      out.pData[c++] = geom.SkinIndices[j].x;
+      out.pData[c++] = geom.SkinIndices[j].y;
+      out.pData[c++] = geom.SkinIndices[j].z;
+      out.pData[c++] = geom.SkinIndices[j].w;
+    }
+    if (geom.VertexAttributes & xF::xMeshGeometry::HAS_SKINWEIGHTS0) {
+      out.pData[c++] = geom.SkinWeights[j].x;
+      out.pData[c++] = geom.SkinWeights[j].y;
+      out.pData[c++] = geom.SkinWeights[j].z;
+      out.pData[c++] = geom.SkinWeights[j].w;
+    }
   }
   for (unsigned int j = 0; j < c; ++j) out.pDataDest[j] = out.pData[j];
 }
@@ -691,13 +739,27 @@ void BuildSubsets(xF::xMeshGeometry& geom, xF::xFinalGeometry& fg) {
 
 // ── Scene-graph traversal (compute world matrix per node) ────────────
 
+struct MeshInstance {
+  int meshIdx;
+  XMATRIX44 world;
+  bool isSkinned;
+  int skinIdx;   // doc.skins index, -1 if none
+};
+
 void GatherNodes(const Document& doc, int nodeIdx, const XMATRIX44& parent,
-                 std::vector<std::pair<int, XMATRIX44>>& outMeshInstances) {
+                 std::vector<MeshInstance>& outMeshInstances) {
   if (nodeIdx < 0 || nodeIdx >= static_cast<int>(doc.nodes.size())) return;
   const Node& n = doc.nodes[nodeIdx];
   XMATRIX44 local = NodeLocalMatrix(n);
   XMATRIX44 world = local * parent;  // engine convention: T = local * parent
-  if (n.mesh) outMeshInstances.emplace_back(*n.mesh, world);
+  if (n.mesh) {
+    MeshInstance mi;
+    mi.meshIdx = *n.mesh;
+    mi.world = world;
+    mi.isSkinned = n.skin.has_value();
+    mi.skinIdx = n.skin.value_or(-1);
+    outMeshInstances.push_back(mi);
+  }
   for (int c : n.children) GatherNodes(doc, c, world, outMeshInstances);
 }
 
@@ -717,8 +779,8 @@ bool ConvertToXDatabase(const Document& doc, xF::XDataBase& out,
     }
   }
 
-  // Walk the scene graph collecting (mesh-index, world-matrix) pairs.
-  std::vector<std::pair<int, XMATRIX44>> instances;
+  // Walk the scene graph collecting mesh instances with world matrices.
+  std::vector<MeshInstance> instances;
   XMATRIX44 ident = Identity();
   for (int r : rootNodes) GatherNodes(doc, r, ident, instances);
 
@@ -736,9 +798,9 @@ bool ConvertToXDatabase(const Document& doc, xF::XDataBase& out,
 
   // Reserve for worst-case (every primitive becomes a Geometry).
   std::size_t totalPrims = 0;
-  for (auto& kv : instances) {
-    if (kv.first >= 0 && kv.first < static_cast<int>(doc.meshes.size()))
-      totalPrims += doc.meshes[kv.first].primitives.size();
+  for (auto& inst : instances) {
+    if (inst.meshIdx >= 0 && inst.meshIdx < static_cast<int>(doc.meshes.size()))
+      totalPrims += doc.meshes[inst.meshIdx].primitives.size();
   }
   mc->Geometry.reserve(totalPrims);
   out.MeshInfo.reserve(totalPrims);
@@ -761,12 +823,13 @@ bool ConvertToXDatabase(const Document& doc, xF::XDataBase& out,
     DracoDecodeResult dracoResult;
     bool hasDraco = false;
     bool decodeOk = false;
+    bool isSkinned = false;
   };
 
   std::vector<PrimJob> jobs;
   jobs.reserve(totalPrims);
   for (int ii = 0; ii < static_cast<int>(instances.size()); ii++) {
-    int meshIdx = instances[ii].first;
+    int meshIdx = instances[ii].meshIdx;
     if (meshIdx < 0 || meshIdx >= static_cast<int>(doc.meshes.size())) continue;
     const Mesh& m = doc.meshes[meshIdx];
     for (std::size_t pi = 0; pi < m.primitives.size(); ++pi) {
@@ -776,6 +839,7 @@ bool ConvertToXDatabase(const Document& doc, xF::XDataBase& out,
       j.prim = &m.primitives[pi];
       j.hasDraco = j.prim->extensions.has_value()
         && j.prim->extensions->KHR_draco_mesh_compression.has_value();
+      j.isSkinned = instances[ii].isSkinned;
       jobs.push_back(std::move(j));
     }
   }
@@ -804,8 +868,8 @@ bool ConvertToXDatabase(const Document& doc, xF::XDataBase& out,
 
   // ── Serial geometry build ──────────────────────────────────────
   for (auto& job : jobs) {
-    int meshIdx = instances[job.instanceIdx].first;
-    const XMATRIX44& world = instances[job.instanceIdx].second;
+    int meshIdx = instances[job.instanceIdx].meshIdx;
+    const XMATRIX44& world = instances[job.instanceIdx].world;
     const Mesh& m = doc.meshes[meshIdx];
     const Primitive& prim = *job.prim;
 
@@ -822,9 +886,9 @@ bool ConvertToXDatabase(const Document& doc, xF::XDataBase& out,
     // Pass pre-decoded Draco data if available
     bool ok;
     if (job.hasDraco) {
-      ok = BuildGeometry(doc, prim, world, geom, &job.dracoResult);
+      ok = BuildGeometry(doc, prim, world, geom, &job.dracoResult, job.isSkinned);
     } else {
-      ok = BuildGeometry(doc, prim, world, geom);
+      ok = BuildGeometry(doc, prim, world, geom, nullptr, job.isSkinned);
     }
 
     if (!ok) {

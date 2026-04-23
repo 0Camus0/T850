@@ -14,7 +14,10 @@ cbuffer ConstantBuffer{
 	float4   ParallaxSettings;
 	float4   ParallaxShadowSettings;
 	float4   Light0Direction;
-#ifdef USE_SKINNING
+#ifdef USE_SKINNING_QT
+	float4   BoneQuats[256];   // quaternion (x,y,z,w) per bone
+	float4   BoneTrans[256];   // translation (x,y,z,0) per bone
+#elif defined(USE_SKINNING)
 	float4x4 BoneMatrices[256];
 #endif
 }
@@ -38,7 +41,7 @@ struct VS_INPUT{
     float2 texture0 : TEXCOORD;
 #endif
 
-#ifdef USE_SKINNING
+#if defined(USE_SKINNING) || defined(USE_SKINNING_QT)
 	float4 joints   : BLENDINDICES;
 	float4 weights  : BLENDWEIGHT;
 #endif
@@ -71,7 +74,41 @@ struct VS_OUTPUT{
 VS_OUTPUT VS( VS_INPUT input ){
     VS_OUTPUT OUT;
 
-#ifdef USE_SKINNING
+#ifdef USE_SKINNING_QT
+	// Quaternion+Translation skinning: 2 vec4/bone instead of 4x4 matrix
+	int4 idx = int4(input.joints);
+	// Blend quaternions (NLERP — normalize after weighted sum)
+	float4 q = BoneQuats[idx.x] * input.weights.x
+	          + BoneQuats[idx.y] * input.weights.y
+	          + BoneQuats[idx.z] * input.weights.z
+	          + BoneQuats[idx.w] * input.weights.w;
+	q = normalize(q);
+	// Blend translations
+	float3 t = BoneTrans[idx.x].xyz * input.weights.x
+	         + BoneTrans[idx.y].xyz * input.weights.y
+	         + BoneTrans[idx.z].xyz * input.weights.z
+	         + BoneTrans[idx.w].xyz * input.weights.w;
+	// Apply quaternion rotation: v' = q * v * q^(-1)
+	// Optimized: v' = v + 2 * cross(q.xyz, cross(q.xyz, v) + q.w * v)
+	float3 p = input.position.xyz;
+	float3 u = q.xyz;
+	float  s = q.w;
+	p = p + 2.0 * cross(u, cross(u, p) + s * p);
+	input.position = float4(p + t, 1.0);
+#ifdef USE_NORMALS
+	float3 n = input.normal.xyz;
+	input.normal.xyz = n + 2.0 * cross(u, cross(u, n) + s * n);
+#endif
+#ifdef USE_TANGENTS
+	float3 tg = input.tangent.xyz;
+	input.tangent.xyz = tg + 2.0 * cross(u, cross(u, tg) + s * tg);
+#endif
+#ifdef USE_BINORMALS
+	float3 bn = input.binormal.xyz;
+	input.binormal.xyz = bn + 2.0 * cross(u, cross(u, bn) + s * bn);
+#endif
+
+#elif defined(USE_SKINNING)
 	int4 idx = int4(input.joints);
 	float4x4 skinMatrix = BoneMatrices[idx.x] * input.weights.x
 	                     + BoneMatrices[idx.y] * input.weights.y

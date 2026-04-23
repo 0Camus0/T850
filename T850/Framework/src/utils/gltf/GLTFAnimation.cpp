@@ -31,13 +31,14 @@ static constexpr float kTicksPerSecond = 4800.0f;
 // ── Helper: glTF column-major mat4 → engine row-major XMATRIX44 ─────
 // glTF uses column-vector convention (v' = M * v), stored column-major.
 // Engine uses row-vector convention (v' = v * M), stored row-major.
-// M_engine = M_gltf^T. Reading column-major data directly into row-major
-// storage achieves this transpose implicitly.
+// Convert glTF column-major mat4 → engine row-major XMATRIX44.
+// Direct copy: matches FromColumnMajor16 in GLTFMesh.cpp which is
+// used by the working static mesh path.
 static XMATRIX44 ColMajorToRowMajor(const float* cm) {
   XMATRIX44 m;
   for (int r = 0; r < 4; r++)
     for (int c = 0; c < 4; c++)
-      m.m[r][c] = cm[r * 4 + c];  // direct copy = implicit transpose
+      m.m[r][c] = cm[r * 4 + c];  // direct copy (matches FromColumnMajor16)
   return m;
 }
 
@@ -53,16 +54,17 @@ static XMATRIX44 NodeLocalMatrix(const Node& n) {
   } else {
     S.Identity();
   }
-  // Rotation (quaternion xyzw → row-major rotation matrix)
+  // Rotation (quaternion xyzw → ROW-VECTOR rotation matrix)
+  // Must match MakeTRS in GLTFMesh.cpp: r01=2*(xy+wz), r10=2*(xy-wz)
   if (n.rotation.size() == 4) {
     float qx = n.rotation[0], qy = n.rotation[1];
     float qz = n.rotation[2], qw = n.rotation[3];
     float x2=qx*qx, y2=qy*qy, z2=qz*qz;
     float xy=qx*qy, xz=qx*qz, yz=qy*qz;
     float wx=qw*qx, wy=qw*qy, wz=qw*qz;
-    R.m[0][0]=1-2*(y2+z2); R.m[0][1]=2*(xy-wz);   R.m[0][2]=2*(xz+wy);   R.m[0][3]=0;
-    R.m[1][0]=2*(xy+wz);   R.m[1][1]=1-2*(x2+z2); R.m[1][2]=2*(yz-wx);   R.m[1][3]=0;
-    R.m[2][0]=2*(xz-wy);   R.m[2][1]=2*(yz+wx);   R.m[2][2]=1-2*(x2+y2); R.m[2][3]=0;
+    R.m[0][0]=1-2*(y2+z2); R.m[0][1]=2*(xy+wz);   R.m[0][2]=2*(xz-wy);   R.m[0][3]=0;
+    R.m[1][0]=2*(xy-wz);   R.m[1][1]=1-2*(x2+z2); R.m[1][2]=2*(yz+wx);   R.m[1][3]=0;
+    R.m[2][0]=2*(xz+wy);   R.m[2][1]=2*(yz-wx);   R.m[2][2]=1-2*(x2+y2); R.m[2][3]=0;
     R.m[3][0]=0;            R.m[3][1]=0;            R.m[3][2]=0;            R.m[3][3]=1;
   } else {
     R.Identity();

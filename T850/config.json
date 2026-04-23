@@ -1,5 +1,5 @@
 {
-  "api": "d3d12",
+  "api": "vulkan",
   "dump": {
     "frame": 750,
     "trigger": "frame",
@@ -14,7 +14,7 @@
   "display": {
     "fullscreen": false,
     "scene": 0,
-    "model": "Models/SimpleSkin.gltf",
+    "model": "Models/Dragon.glb",
     "width": 1920,
     "height": 1080
   },

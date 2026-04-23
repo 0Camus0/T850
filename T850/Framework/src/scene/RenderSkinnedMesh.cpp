@@ -359,18 +359,19 @@ namespace t800 {
       return;
     }
 
+    // Dump matrices on first frame for debugging — BEFORE animation update
+    static bool sDumped = false;
+    if (!sDumped) {
+      // First dump the bind-pose state (before animation modifies anything)
+      m_animController.DumpMatrices("anim_debug_bindpose.txt");
+      sDumped = true;
+    }
+
     // Update animation using scene delta time
     if (m_playing) {
       m_animController.SetUseSlerp(m_useSlerp);
       float deltaTime = pScProp ? pScProp->FrameDeltaSec : (1.0f / 60.0f);
       m_animController.Update(deltaTime);
-    }
-
-    // Dump matrices on first frame for debugging
-    static bool sDumped = false;
-    if (!sDumped) {
-      m_animController.DumpMatrices("anim_debug_dump.txt");
-      sDumped = true;
     }
 
     // Copy bone matrices into all skinned cbuffers

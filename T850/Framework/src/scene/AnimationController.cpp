@@ -22,6 +22,7 @@ namespace t800 {
 AnimationController::AnimationController() {
   for (int i = 0; i < kMaxBones; i++) {
     m_finalBoneMatrices[i].Identity();
+    m_invBindPose[i].Identity();
   }
 }
 
@@ -50,6 +51,11 @@ void AnimationController::Init(xF::xAnimationInfo* animInfo,
 
   ResetLocals();
   m_initialized = true;
+
+  // Compute bind-pose combined matrices and our own IBM from them.
+  // This guarantees IBM * BindCombined = Identity exactly, avoiding
+  // accumulated numerical drift from glTF's pre-baked IBM values.
+  ComputeBindPose();
 
   T8_LOG_INFO("[AnimCtrl] Initialized: %d bones, %zu animation sets, %.0f tps",
               m_numBones, m_pAnimInfo->Animations.size(), m_ticksPerSecond);
@@ -275,6 +281,55 @@ void AnimationController::ComputeHierarchy() {
   }
 }
 
+// ── Invert an affine 4x4 matrix (rotation + translation) ──
+
+XMATRIX44 AnimationController::InvertAffine(const XMATRIX44& m) {
+  // For an affine matrix [R|0; T|1] in row-vector convention:
+  // Inverse = [R^T|0; -T*R^T|1]
+  XMATRIX44 inv;
+  // Transpose the 3x3 rotation part
+  for (int r = 0; r < 3; r++)
+    for (int c = 0; c < 3; c++)
+      inv.m[r][c] = m.m[c][r];
+  inv.m[0][3] = 0; inv.m[1][3] = 0; inv.m[2][3] = 0;
+  // Compute -T * R^T (row-vector: new translation = -oldTrans * transposedRot)
+  float tx = m.m[3][0], ty = m.m[3][1], tz = m.m[3][2];
+  inv.m[3][0] = -(tx*inv.m[0][0] + ty*inv.m[1][0] + tz*inv.m[2][0]);
+  inv.m[3][1] = -(tx*inv.m[0][1] + ty*inv.m[1][1] + tz*inv.m[2][1]);
+  inv.m[3][2] = -(tx*inv.m[0][2] + ty*inv.m[1][2] + tz*inv.m[2][2]);
+  inv.m[3][3] = 1.0f;
+  return inv;
+}
+
+// ── Compute bind-pose hierarchy and our own IBM ──────────
+
+void AnimationController::ComputeBindPose() {
+  if (!m_pSkeletonBind || !m_pSkeletonAnim) return;
+
+  auto& bindBones = m_pSkeletonBind->Bones;
+  int n = (m_numBones < static_cast<int>(bindBones.size()))
+        ? m_numBones : static_cast<int>(bindBones.size());
+
+  const XMATRIX44& rootWorld = m_pSkeletonBind->RootParentWorld;
+
+  // Compute bind-pose combined (world) matrices from the ORIGINAL node TRS
+  for (int i = 0; i < n; i++) {
+    if (i == 0 || bindBones[i].Dad == static_cast<unsigned short>(i)) {
+      bindBones[i].Combined = bindBones[i].Bone * rootWorld;
+    } else {
+      unsigned short dad = bindBones[i].Dad;
+      if (dad < n)
+        bindBones[i].Combined = bindBones[i].Bone * bindBones[dad].Combined;
+      else
+        bindBones[i].Combined = bindBones[i].Bone;
+    }
+    // Compute our own IBM as the exact inverse of the bind-pose combined
+    m_invBindPose[i] = InvertAffine(bindBones[i].Combined);
+  }
+
+  T8_LOG_INFO("[AnimCtrl] Bind pose computed: %d bones, own IBMs generated", n);
+}
+
 // ── Compute final bone matrices for shader ─────────────
 // Skinning operates in RH space (IBM and skeleton are in RH row-vector).
 // The Z-flip (RH→LH) is applied once to the final product so it matches
@@ -291,16 +346,17 @@ static XMATRIX44 FlipMatrixZ(const XMATRIX44& m) {
 }
 
 void AnimationController::ComputeFinalMatrices() {
-  if (!m_pSkinWeights || !m_pSkeletonAnim) return;
+  if (!m_pSkeletonAnim) return;
 
   auto& bones = m_pSkeletonAnim->Bones;
-  int n = (m_numBones < static_cast<int>(m_pSkinWeights->size()))
-        ? m_numBones : static_cast<int>(m_pSkinWeights->size());
+  int n = m_numBones < static_cast<int>(bones.size())
+        ? m_numBones : static_cast<int>(bones.size());
 
-  for (int i = 0; i < n && i < static_cast<int>(bones.size()); i++) {
-    // FinalBoneMatrix = FlipZ( IBM_RH * Combined_RH )
-    // This converts the RH skinning result to LH space matching the vertices
-    XMATRIX44 rhResult = (*m_pSkinWeights)[i].MatrixOffset * bones[i].Combined;
+  for (int i = 0; i < n; i++) {
+    // FinalBoneMatrix = FlipZ( OurIBM[i] * AnimCombined[i] )
+    // Using our own IBM (exact inverse of bind-pose combined) instead of
+    // the glTF file's IBM avoids accumulated numerical drift in long chains.
+    XMATRIX44 rhResult = m_invBindPose[i] * bones[i].Combined;
     m_finalBoneMatrices[i] = FlipMatrixZ(rhResult);
   }
   // Remaining slots stay identity

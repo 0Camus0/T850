@@ -14,6 +14,7 @@
 #include <scene/PrimitiveManager.h>
 
 #include <scene/RenderMesh.h>
+#include <scene/RenderSkinnedMesh.h>
 #include <scene/RenderQuad.h>
 #include <scene/SplineWireframe.h>
 #include <utils/Log.h>
@@ -35,10 +36,42 @@ namespace t800 {
   }
 
   int	 PrimitiveManager::CreateMesh(const char *fname) {
-    PrimitiveBase *primitive = new RenderMesh();
-    primitive->Load(fname);
+    // Probe: load to check if the model has skin/animation data
+    RenderMesh* probe = new RenderMesh();
+    probe->Load(fname);
     T8_LOG_INFO("Loading mesh: '%s'", fname);
-    primitive->Create();
+
+    // Check for skin data in any geometry
+    bool hasSkin = false;
+    if (probe->xFile && !probe->xFile->XMeshDataBase.empty()) {
+      xF::xMeshContainer* mc = probe->xFile->XMeshDataBase[0];
+      for (auto& geom : mc->Geometry) {
+        if ((geom.VertexAttributes & xF::xMeshGeometry::HAS_SKINWEIGHTS0) &&
+            (geom.VertexAttributes & xF::xMeshGeometry::HAS_SKININDEXES0)) {
+          hasSkin = true;
+          break;
+        }
+      }
+      // Also check for animation data without skin vertex attribs
+      if (!hasSkin && mc->Animation.isAnimInfo && !mc->Animation.Animations.empty()) {
+        hasSkin = true;
+      }
+    }
+
+    PrimitiveBase* primitive;
+    if (hasSkin) {
+      T8_LOG_INFO("Detected skinned/animated mesh, using RenderSkinnedMesh");
+      RenderSkinnedMesh* skinned = new RenderSkinnedMesh();
+      skinned->xFile = probe->xFile;
+      probe->xFile = nullptr;  // transfer ownership
+      delete probe;
+      skinned->Create();
+      primitive = skinned;
+    } else {
+      probe->Create();
+      primitive = probe;
+    }
+
     primitives.push_back(primitive);
     T8_LOG_INFO("Mesh '%s' ready (primitive %d)", fname, (int)(primitives.size()-1));
     return (int)(primitives.size() - 1);

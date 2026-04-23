@@ -36,6 +36,16 @@
 	#endif
 #endif
 
+#ifdef USE_SKINNING
+	#ifdef ES_30
+		in highp vec4 Joints;
+		in highp vec4 Weights;
+	#else
+		attribute highp vec4 Joints;
+		attribute highp vec4 Weights;
+	#endif
+#endif
+
 
 #ifdef USE_NORMALS
 	#ifdef ES_30
@@ -92,31 +102,63 @@ uniform highp vec4 Intensities;
 uniform highp vec4 ParallaxSettings;
 uniform highp vec4 ParallaxShadowSettings;
 uniform highp vec4 Light0Direction;
+#ifdef USE_SKINNING
+uniform highp mat4 BoneMatrices[128];
+#endif
 
 void main(){
+#ifdef USE_SKINNING
+	ivec4 idx = ivec4(Joints);
+	mat4 skinMatrix = BoneMatrices[idx.x] * Weights.x
+	                + BoneMatrices[idx.y] * Weights.y
+	                + BoneMatrices[idx.z] * Weights.z
+	                + BoneMatrices[idx.w] * Weights.w;
+	vec4 skinnedPos = skinMatrix * Vertex;
+#ifdef USE_NORMALS
+	vec3 skinnedNormal = mat3(skinMatrix) * vec3(Normal);
+#endif
+#ifdef USE_TANGENTS
+	vec3 skinnedTangent = mat3(skinMatrix) * vec3(Tangent);
+#endif
+#ifdef USE_BINORMALS
+	vec3 skinnedBinormal = mat3(skinMatrix) * vec3(Binormal);
+#endif
+#else
+	vec4 skinnedPos = Vertex;
+#ifdef USE_NORMALS
+	vec3 skinnedNormal = vec3(Normal);
+#endif
+#ifdef USE_TANGENTS
+	vec3 skinnedTangent = vec3(Tangent);
+#endif
+#ifdef USE_BINORMALS
+	vec3 skinnedBinormal = vec3(Binormal);
+#endif
+#endif
+
 #ifdef SHADOW_MAP_PASS
-		Pos = WVP*Vertex;
+		Pos = WVP*skinnedPos;
 		gl_Position = Pos;
 #else
 		mat3 RotWorld = mat3(World);
 	#ifdef USE_NORMALS
-		hnormal	= vec4(normalize(RotWorld*vec3(Normal)),1.0);
+		hnormal	= vec4(normalize(RotWorld*skinnedNormal),1.0);
 	#endif
 
 	#ifdef USE_TANGENTS
-		htangent	= vec4(normalize(RotWorld*vec3(Tangent)),1.0);
+		htangent	= vec4(normalize(RotWorld*skinnedTangent),1.0);
 	#endif
 
 	#ifdef USE_BINORMALS
-		hbinormal	= vec4(normalize(RotWorld*vec3(Binormal)),1.0);
+		hbinormal	= vec4(normalize(RotWorld*skinnedBinormal),1.0);
 	#endif
 
 	#ifdef NON_LINEAR_DEPTH
-		Pos 	 = WVP*Vertex;
+		Pos 	 = WVP*skinnedPos;
 	#else
-		Pos 	 = WorldView*Vertex;
+		Pos 	 = WorldView*skinnedPos;
 	#endif
-		WorldPos = World*Vertex;
+		WorldPos = World*skinnedPos;
 		
 	#ifdef USE_TEXCOORD0
 		vecUVCoords = UV;
@@ -126,7 +168,7 @@ void main(){
 	#ifdef NON_LINEAR_DEPTH
 		gl_Position = Pos;
 	#else
-		gl_Position = WVP*Vertex;
+		gl_Position = WVP*skinnedPos;
 	#endif
 #endif
 }

@@ -28,6 +28,11 @@
 #include <utils/Log.h>
 #include <utils/ThreadPool.h>
 
+// Forward declaration (implemented in GLTFAnimation.cpp)
+namespace t800 { namespace gltf {
+  void BuildSkinsAndAnimations(const Document& doc, xF::XDataBase& out);
+}}
+
 #include <mikktspace.h>
 
 #include <algorithm>
@@ -913,6 +918,12 @@ bool ConvertToXDatabase(const Document& doc, xF::XDataBase& out,
 
   T8_LOG_INFO("[glTF] '%s' converted: %zu geometries / %zu mesh instances",
               sourcePath.c_str(), mc->Geometry.size(), instances.size());
+
+  // Build skeleton and animation data (Phase 2)
+  if (!doc.skins.empty() || !doc.animations.empty()) {
+    BuildSkinsAndAnimations(doc, out);
+  }
+
   return !mc->Geometry.empty();
 }
 

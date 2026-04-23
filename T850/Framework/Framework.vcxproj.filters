@@ -284,6 +284,9 @@
     <ClInclude Include="include\scene\RenderSkinnedMesh.h">
       <Filter>Header Files\scene</Filter>
     </ClInclude>
+    <ClInclude Include="include\scene\LineRenderer.h">
+      <Filter>Header Files\scene</Filter>
+    </ClInclude>
     <ClInclude Include="include\scene\AnimationController.h">
       <Filter>Header Files\scene</Filter>
     </ClInclude>
@@ -530,6 +533,9 @@
       <Filter>Source Files\scene</Filter>
     </ClCompile>
     <ClCompile Include="src\scene\RenderSkinnedMesh.cpp">
+      <Filter>Source Files\scene</Filter>
+    </ClCompile>
+    <ClCompile Include="src\scene\LineRenderer.cpp">
       <Filter>Source Files\scene</Filter>
     </ClCompile>
     <ClCompile Include="src\scene\AnimationController.cpp">

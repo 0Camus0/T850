@@ -6,6 +6,9 @@
  * to detect skin data and allocate larger constant buffers
  * that include bone matrices. Overrides Draw() to update
  * animation and upload bone matrices before rendering.
+ *
+ * Also provides debug wireframe (mesh edges with depth test)
+ * and skeleton bone visualization (no depth test, magenta).
  *********************************************************/
 
 #include <video/BaseDriver.h>
@@ -118,7 +121,236 @@ namespace t800 {
     T8_LOG_INFO("[SkinnedMesh] Created with %d bones, %zu animation sets",
                 m_animController.GetNumBones(),
                 mc->Animation.Animations.size());
+
+    // Build wireframe and skeleton debug buffers
+    BuildWireframeBuffers();
+    BuildSkeletonBuffers();
+    m_lineRenderer.Create();
   }
+
+  // ── Wireframe buffer construction ──────────────────────
+
+  void RenderSkinnedMesh::BuildWireframeBuffers() {
+    if (!xFile || xFile->XMeshDataBase.empty()) return;
+    xF::xMeshContainer* mc = xFile->XMeshDataBase[0];
+
+    // Collect positions and triangle-edge indices across all geometries
+    std::vector<unsigned int> lineIdx;
+    m_wireTotalVerts = 0;
+
+    for (auto& geom : mc->Geometry) {
+      unsigned baseV = m_wireTotalVerts;
+      m_wireTotalVerts += (unsigned)geom.Positions.size();
+
+      // Extract edges from triangles
+      if (geom.Indices32Bit && !geom.Triangles32.empty()) {
+        const auto& tris = geom.Triangles32;
+        for (std::size_t t = 0; t + 2 < tris.size(); t += 3) {
+          unsigned int a = baseV + tris[t + 0];
+          unsigned int b = baseV + tris[t + 1];
+          unsigned int c = baseV + tris[t + 2];
+          lineIdx.push_back(a); lineIdx.push_back(b);
+          lineIdx.push_back(b); lineIdx.push_back(c);
+          lineIdx.push_back(c); lineIdx.push_back(a);
+        }
+      } else {
+        const auto& tris = geom.Triangles;
+        for (std::size_t t = 0; t + 2 < tris.size(); t += 3) {
+          unsigned int a = baseV + tris[t + 0];
+          unsigned int b = baseV + tris[t + 1];
+          unsigned int c = baseV + tris[t + 2];
+          lineIdx.push_back(a); lineIdx.push_back(b);
+          lineIdx.push_back(b); lineIdx.push_back(c);
+          lineIdx.push_back(c); lineIdx.push_back(a);
+        }
+      }
+    }
+
+    if (lineIdx.empty() || m_wireTotalVerts == 0) return;
+
+    // Create IB (16-bit when possible)
+    if (m_wireTotalVerts <= 65535) {
+      std::vector<unsigned short> idx16(lineIdx.size());
+      for (std::size_t i = 0; i < lineIdx.size(); i++)
+        idx16[i] = (unsigned short)lineIdx[i];
+      m_wireIB = LineRenderer::CreateIndexBuffer16(idx16.data(), (unsigned)idx16.size());
+      m_wireUse32Bit = false;
+    } else {
+      m_wireIB = LineRenderer::CreateIndexBuffer32(lineIdx.data(), (unsigned)lineIdx.size());
+      m_wireUse32Bit = true;
+    }
+    m_wireIndexCount = (unsigned)lineIdx.size();
+
+    // Pre-allocate CPU position buffer (filled each frame by UpdateSkinnedPositions)
+    m_wirePositions.resize(m_wireTotalVerts * 4, 0.0f);
+  }
+
+  void RenderSkinnedMesh::BuildSkeletonBuffers() {
+    if (!xFile || xFile->XMeshDataBase.empty()) return;
+    xF::xMeshContainer* mc = xFile->XMeshDataBase[0];
+    const auto& bones = mc->SkeletonAnimated.Bones;
+    int n = (int)bones.size();
+    if (n == 0) return;
+
+    // One line segment (2 vertices, 2 indices) per bone that has a parent
+    std::vector<unsigned short> lineIdx;
+    unsigned vertCount = 0;
+    for (int i = 0; i < n; i++) {
+      if (bones[i].Dad != (unsigned short)i && bones[i].Dad < n) {
+        // line from parent position to child position
+        lineIdx.push_back((unsigned short)vertCount);
+        lineIdx.push_back((unsigned short)(vertCount + 1));
+        vertCount += 2;
+      }
+    }
+
+    if (lineIdx.empty()) return;
+
+    m_skelIB = LineRenderer::CreateIndexBuffer16(lineIdx.data(), (unsigned)lineIdx.size());
+    m_skelIndexCount = (unsigned)lineIdx.size();
+    m_skelPositions.resize(vertCount * 4, 0.0f);
+  }
+
+  // ── CPU skinning for wireframe positions ───────────────
+
+  void RenderSkinnedMesh::UpdateSkinnedPositions() {
+    if (!xFile || xFile->XMeshDataBase.empty()) return;
+    xF::xMeshContainer* mc = xFile->XMeshDataBase[0];
+
+    const XMATRIX44* bones = m_animController.GetBoneMatrices();
+    int numBones = m_animController.GetNumBones();
+    unsigned vOff = 0;
+
+    for (auto& geom : mc->Geometry) {
+      bool hasSkin = !geom.SkinWeights.empty() && !geom.SkinIndices.empty();
+      unsigned nv = (unsigned)geom.Positions.size();
+
+      for (unsigned v = 0; v < nv; v++) {
+        float px = geom.Positions[v].x;
+        float py = geom.Positions[v].y;
+        float pz = geom.Positions[v].z;
+        float ox = px, oy = py, oz = pz;
+
+        if (hasSkin && v < (unsigned)geom.SkinIndices.size()) {
+          // Accumulate blended bone matrix
+          XMATRIX44 skinMat;
+          memset(&skinMat, 0, sizeof(skinMat));
+
+          for (int b = 0; b < 4; b++) {
+            int joint = (int)geom.SkinIndices[v].v[b];
+            float weight = geom.SkinWeights[v].v[b];
+            if (weight <= 0.0f) continue;
+            if (joint < 0 || joint >= numBones) continue;
+
+            const XMATRIX44& bm = bones[joint];
+            for (int r = 0; r < 4; r++)
+              for (int c = 0; c < 4; c++)
+                skinMat.m[r][c] += bm.m[r][c] * weight;
+          }
+
+          // Row-vector multiply: pos * skinMat
+          ox = px * skinMat.m[0][0] + py * skinMat.m[1][0] + pz * skinMat.m[2][0] + skinMat.m[3][0];
+          oy = px * skinMat.m[0][1] + py * skinMat.m[1][1] + pz * skinMat.m[2][1] + skinMat.m[3][1];
+          oz = px * skinMat.m[0][2] + py * skinMat.m[1][2] + pz * skinMat.m[2][2] + skinMat.m[3][2];
+        }
+
+        unsigned idx = (vOff + v) * 4;
+        m_wirePositions[idx + 0] = ox;
+        m_wirePositions[idx + 1] = oy;
+        m_wirePositions[idx + 2] = oz;
+        m_wirePositions[idx + 3] = 1.0f;
+      }
+      vOff += nv;
+    }
+  }
+
+  void RenderSkinnedMesh::UpdateSkeletonPositions() {
+    const xF::xSkeleton* skel = m_animController.GetAnimSkeleton();
+    if (!skel) return;
+    const auto& bones = skel->Bones;
+    int n = (int)bones.size();
+
+    // Extract LH world position from each bone's Combined matrix.
+    // Combined is in RH space. LH position = (m[3][0], m[3][1], -m[3][2]).
+    unsigned vOff = 0;
+    for (int i = 0; i < n; i++) {
+      if (bones[i].Dad != (unsigned short)i && bones[i].Dad < n) {
+        unsigned dadIdx = bones[i].Dad;
+        // Parent position
+        m_skelPositions[vOff * 4 + 0] = bones[dadIdx].Combined.m[3][0];
+        m_skelPositions[vOff * 4 + 1] = bones[dadIdx].Combined.m[3][1];
+        m_skelPositions[vOff * 4 + 2] = -bones[dadIdx].Combined.m[3][2];
+        m_skelPositions[vOff * 4 + 3] = 1.0f;
+        vOff++;
+        // Child position
+        m_skelPositions[vOff * 4 + 0] = bones[i].Combined.m[3][0];
+        m_skelPositions[vOff * 4 + 1] = bones[i].Combined.m[3][1];
+        m_skelPositions[vOff * 4 + 2] = -bones[i].Combined.m[3][2];
+        m_skelPositions[vOff * 4 + 3] = 1.0f;
+        vOff++;
+      }
+    }
+  }
+
+  // ── Debug wireframe draw ───────────────────────────────
+
+  void RenderSkinnedMesh::DrawWireframe(Texture* depthTex, int viewW, int viewH, float farPlane) {
+    if (!m_hasSkin || !m_wireIB || m_wireIndexCount == 0 || !m_lineRenderer.IsReady())
+      return;
+
+    if (!pScProp || pScProp->pCameras.empty()) return;
+    Camera* cam = pScProp->pCameras[0];
+
+    UpdateSkinnedPositions();
+
+    // Create a fresh VB from the CPU-skinned positions each frame
+    VertexBuffer* wireVB = LineRenderer::CreatePositionVB(
+        m_wirePositions.data(), m_wireTotalVerts);
+    if (!wireVB) return;
+
+    m_lineRenderer.SetDepthTestEnabled(true);
+    m_lineRenderer.SetDepthTexture(depthTex);
+    m_lineRenderer.SetViewport(viewW, viewH);
+    m_lineRenderer.SetFarPlane(farPlane);
+
+    XMATRIX44 identity;
+    identity.Identity();
+    XVECTOR3 wireColor(0.0f, 1.0f, 0.0f, 1.0f);  // green
+    auto ibFmt = m_wireUse32Bit ? T8_IB_FORMAR::R32 : T8_IB_FORMAR::R16;
+
+    m_lineRenderer.DrawLines(identity, cam->VP, wireColor,
+                             wireVB, m_wireIB, m_wireIndexCount, 16, ibFmt);
+
+    wireVB->release();
+  }
+
+  void RenderSkinnedMesh::DrawSkeleton() {
+    if (!m_hasSkin || !m_skelIB || m_skelIndexCount == 0 || !m_lineRenderer.IsReady())
+      return;
+
+    if (!pScProp || pScProp->pCameras.empty()) return;
+    Camera* cam = pScProp->pCameras[0];
+
+    UpdateSkeletonPositions();
+
+    unsigned skelVerts = (unsigned)(m_skelPositions.size() / 4);
+    VertexBuffer* skelVB = LineRenderer::CreatePositionVB(
+        m_skelPositions.data(), skelVerts);
+    if (!skelVB) return;
+
+    m_lineRenderer.SetDepthTestEnabled(false);
+
+    XMATRIX44 identity;
+    identity.Identity();
+    XVECTOR3 skelColor(1.0f, 0.0f, 1.0f, 1.0f);  // magenta
+
+    m_lineRenderer.DrawLines(identity, cam->VP, skelColor,
+                             skelVB, m_skelIB, m_skelIndexCount, 16, T8_IB_FORMAR::R16);
+
+    skelVB->release();
+  }
+
+  // ── Main draw ──────────────────────────────────────────
 
   void RenderSkinnedMesh::Draw(float *t, float *vp) {
     if (!m_hasSkin) {
@@ -260,6 +492,12 @@ namespace t800 {
   }
 
   void RenderSkinnedMesh::Destroy() {
+    m_lineRenderer.Destroy();
+    if (m_wireIB) { m_wireIB->release(); m_wireIB = nullptr; }
+    if (m_skelIB) { m_skelIB->release(); m_skelIB = nullptr; }
+    m_wirePositions.clear();
+    m_skelPositions.clear();
+
     RenderMesh::Destroy();
     m_skinnedCBuffers.clear();
   }

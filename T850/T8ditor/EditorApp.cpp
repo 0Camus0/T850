@@ -287,6 +287,11 @@ void EditorApp::DestroyAssets() {
     ImGuiShutdown();
     m_imguiReady = false;
   }
+  // Release textures created via CreateTextureFromMemory (not tracked by driver)
+  if (g_dummyWhiteTex) { g_dummyWhiteTex->release(); g_dummyWhiteTex = nullptr; }
+  // g_dummyEnvMapIdx is tracked in the driver's Textures vector and destroyed by DestroyTextures()
+  g_dummyEnvMapIdx = -1;
+
   m_primMgr.DestroyPrimitives();
   g_objects.clear();
   g_cameras.clear();

@@ -1,0 +1,117 @@
+#include "pch.h"
+/*********************************************************
+* Copyright (C) 2017 Daniel Enriquez (camus_mm@hotmail.com)
+* All Rights Reserved
+*
+* You may use, distribute and modify this code under the
+* following terms:
+* ** Do not claim that you wrote this software
+* ** A mention would be appreciated but not needed
+* ** I do not and will not provide support, this software is "as is"
+* ** Enjoy, learn and share.
+*********************************************************/
+
+#include <video/gl/GLConstantBuffer.h>
+#include <video/gl/GLShader.h>
+
+#ifdef T850_HEADLESS
+#include <GLES3/gl31.h>
+#else
+#ifdef OS_WINDOWS
+#if defined(USING_OPENGL_ES20)
+#include <GLES2/gl2.h>
+#elif defined(USING_OPENGL_ES30)
+#include <GLES3/gl3.h>
+#elif defined(USING_OPENGL_ES31)
+#include <GLES3/gl31.h>
+#elif defined(USING_OPENGL)
+#include <GL/glew.h>
+#else
+#include <GL/glew.h>
+#endif
+#elif defined(OS_LINUX)
+#if defined(USING_OPENGL_ES20)
+#include <GLES2/gl2.h>
+#elif defined(USING_OPENGL_ES30)
+#include <GLES3/gl3.h>
+#elif defined(USING_OPENGL_ES31)
+#include <GLES3/gl31.h>
+#elif defined(USING_OPENGL)
+#include <GL/glew.h>
+#else
+#include <GL/glew.h>
+#endif
+#endif
+#endif
+
+namespace t800 {
+  void * GLConstantBuffer::GetAPIObject() const
+  {
+    return nullptr;
+  }
+
+  void ** GLConstantBuffer::GetAPIObjectReference() const
+  {
+    return nullptr;
+  }
+
+  void GLConstantBuffer::Set(const DeviceContext & deviceContext)
+  {
+    const_cast<DeviceContext*>(&deviceContext)->actualConstantBuffer = (ConstantBuffer*)this;
+    GLShader* sh = reinterpret_cast<GLShader*>(deviceContext.actualShaderSet);
+
+    for (auto &it : sh->internalUniformsLocs) {
+      switch (it.type)
+      {
+      case hyperspace::shader::datatype_::INT_:
+        glUniform1i(it.loc, *reinterpret_cast<GLint*>(&sysMemCpy[it.bufferBytePosition]));
+        break;
+      case hyperspace::shader::datatype_::BOOLEAN_:
+        glUniform1i(it.loc, *reinterpret_cast<GLint*>(&sysMemCpy[it.bufferBytePosition]));
+        break;
+      case hyperspace::shader::datatype_::FLOAT_:
+        glUniform1f(it.loc, *reinterpret_cast<GLfloat*>(&sysMemCpy[it.bufferBytePosition]));
+        break;
+      case hyperspace::shader::datatype_::MAT2_:
+        glUniformMatrix2fv(it.loc, it.num, GL_FALSE, reinterpret_cast<GLfloat*>(&sysMemCpy[it.bufferBytePosition]));
+        break;
+      case hyperspace::shader::datatype_::MAT3_:
+        glUniformMatrix3fv(it.loc, it.num, GL_FALSE, reinterpret_cast<GLfloat*>(&sysMemCpy[it.bufferBytePosition]));
+        break;
+      case hyperspace::shader::datatype_::MAT4_:
+        glUniformMatrix4fv(it.loc, it.num, GL_FALSE, reinterpret_cast<GLfloat*>(&sysMemCpy[it.bufferBytePosition]));
+        break;
+      case hyperspace::shader::datatype_::VECTOR2_:
+        glUniform2fv(it.loc, it.num, reinterpret_cast<GLfloat*>(&sysMemCpy[it.bufferBytePosition]));
+        break;
+      case hyperspace::shader::datatype_::VECTOR3_:
+        glUniform3fv(it.loc, it.num, reinterpret_cast<GLfloat*>(&sysMemCpy[it.bufferBytePosition]));
+        break;
+      case hyperspace::shader::datatype_::VECTOR4_:
+        glUniform4fv(it.loc, it.num, reinterpret_cast<GLfloat*>(&sysMemCpy[it.bufferBytePosition]));
+        break;
+      default:
+        break;
+      }
+    }
+  }
+  void GLConstantBuffer::UpdateFromSystemCopy(const DeviceContext & deviceContext)
+  {
+  }
+  void GLConstantBuffer::UpdateFromBuffer(const DeviceContext & deviceContext, const void * buffer)
+  {
+    sysMemCpy.clear();
+    sysMemCpy.assign((char*)buffer, (char*)buffer + descriptor.byteWidth);
+  }
+  void GLConstantBuffer::release()
+  {
+    sysMemCpy.clear();
+  }
+  void GLConstantBuffer::Create(const Device & device, BufferDesc desc, void * initialData)
+  {
+    descriptor = desc;
+    if (initialData) {
+      sysMemCpy.assign((char*)initialData, (char*)initialData + desc.byteWidth);
+    }
+  }
+}

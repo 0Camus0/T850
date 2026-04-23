@@ -14,11 +14,11 @@
 #include <scene/RenderQuad.h>
 #include <utils/Utils.h>
 
-#include <video/GLShader.h>
-#include <video/GLDriver.h>
+#include <video/gl/GLShader.h>
+#include <video/gl/GLDriver.h>
 #if defined(OS_WINDOWS)
-#include <video/windows/D3D11Shader.h>
-#include <video/windows/D3D11Driver.h>
+#include <video/d3d11/D3D11Shader.h>
+#include <video/d3d11/D3D11Driver.h>
 #endif
 #include <utils/Log.h>
 namespace t800 {

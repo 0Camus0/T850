@@ -90,7 +90,8 @@ bool EditorLineRenderer::Create() {
 
 void EditorLineRenderer::Destroy() {
   m_shader = nullptr; // owned by the driver's shader cache
-  m_cb     = nullptr; // CB ownership tracked by the driver
+  if (m_cb) m_cb->release();
+  m_cb = nullptr;
 }
 
 void EditorLineRenderer::DrawLines(const XMATRIX44& world,

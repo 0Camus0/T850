@@ -57,8 +57,8 @@ public:
   bool GetUseQuatSkinning() const  { return m_useQuatSkinning; }
 
   // ── Debug wireframe / skeleton visualization ──
-  // Draw mesh wireframe with depth testing (green)
-  void DrawWireframe(Texture* depthTex, int viewW, int viewH, float farPlane);
+  // Draw mesh wireframe using GPU skinning pipeline (green, LINE_LIST)
+  void DrawWireframe();
   // Draw skeleton bones without depth testing (magenta)
   void DrawSkeleton();
 
@@ -109,7 +109,6 @@ private:
   // ── Wireframe helpers ──
   void BuildWireframeBuffers();
   void BuildSkeletonBuffers();
-  void UpdateSkinnedPositions();
   void UpdateSkeletonPositions();
 
   AnimationController m_animController;
@@ -120,16 +119,17 @@ private:
   bool m_useSlerp = true;
   bool m_useQuatSkinning = true; // default to QT path (smaller CB, fewer ops)
 
-  // ── Wireframe state ──
+  // ── Wireframe state (GPU-skinned) ──
+  struct WireGeo {
+    IndexBuffer* IB = nullptr;
+    unsigned indexCount = 0;
+    bool use32Bit = false;
+  };
+  std::vector<WireGeo> m_wireGeo;      // per-geometry line-list IBs
+  ShaderBase*          m_wireShader = nullptr;
+
+  // Skeleton bone lines (CPU-updated each frame)
   LineRenderer         m_lineRenderer;
-  // Mesh wireframe (edges from triangles, CPU-skinned each frame)
-  VertexBuffer*        m_wireVB         = nullptr;
-  IndexBuffer*         m_wireIB         = nullptr;
-  unsigned             m_wireIndexCount = 0;
-  bool                 m_wireUse32Bit   = false;
-  unsigned             m_wireTotalVerts = 0;
-  std::vector<float>   m_wirePositions;   // xyzw per vertex, updated each frame
-  // Skeleton bone lines (rebuilt each frame from Combined matrices)
   VertexBuffer*        m_skelVB         = nullptr;
   IndexBuffer*         m_skelIB         = nullptr;
   unsigned             m_skelIndexCount = 0;

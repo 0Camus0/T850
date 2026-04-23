@@ -342,6 +342,17 @@ void SC_SandBox::ComputeOrbitCamera() {
 }
 
 void SC_SandBox::OnDraw() {
+  // FPS logging (every 120 frames)
+  static int sFrameCount = 0;
+  static float sAccumTime = 0.0f;
+  sAccumTime += DtSecs;
+  sFrameCount++;
+  if (sFrameCount % 120 == 0) {
+    float avgFps = (sAccumTime > 0.0f) ? (float)sFrameCount / sAccumTime : 0.0f;
+    T8_LOG_INFO("[FPS] %.1f fps (avg over %d frames, dt=%.3f ms)",
+                avgFps, sFrameCount, DtSecs * 1000.0f);
+  }
+
   // Execute the render graph (all passes through HDR Composition)
   m_renderGraph.Execute(
     pFramework->pVideoDriver,

@@ -46,16 +46,9 @@ namespace t800 {
       return;
     }
 
-    // Set up skinning key — use QT by default (HLSL), fall back to matrix for GL
-    uint32_t skinBit = ShaderKey::HAS_SKINNING;
-    if (!g_pBaseDriver->UsesGLSL()) {
-      // HLSL: use quaternion+translation (smaller CB, fewer ALU)
-      skinBit = ShaderKey::HAS_SKINNING_QT;
-      m_useQuatSkinning = true;
-    } else {
-      // GLSL: use matrix path (QT not implemented in GLSL yet)
-      m_useQuatSkinning = false;
-    }
+    // Use quaternion+translation skinning on all backends (smaller CB, fits GL limit)
+    uint32_t skinBit = ShaderKey::HAS_SKINNING_QT;
+    m_useQuatSkinning = true;
 
     for (auto& meshInfo : Info) {
       for (auto& subset : meshInfo.SubSets) {

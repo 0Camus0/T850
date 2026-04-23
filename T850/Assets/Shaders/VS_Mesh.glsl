@@ -36,7 +36,7 @@
 	#endif
 #endif
 
-#ifdef USE_SKINNING
+#if defined(USE_SKINNING) || defined(USE_SKINNING_QT)
 	#ifdef ES_30
 		in highp vec4 Joints;
 		in highp vec4 Weights;
@@ -102,14 +102,46 @@ uniform highp vec4 Intensities;
 uniform highp vec4 ParallaxSettings;
 uniform highp vec4 ParallaxShadowSettings;
 uniform highp vec4 Light0Direction;
-#ifdef USE_SKINNING
-// GL has lower uniform limits than HLSL (max ~1024 vec4 = 256 mat4 total).
-// With other uniforms taking ~30 vec4, bone array must be <= ~220.
+#ifdef USE_SKINNING_QT
+// Quaternion+Translation: 2 vec4/bone — 256 bones = 512 vec4 (fits GL limit)
+uniform highp vec4 BoneQuats[256];
+uniform highp vec4 BoneTrans[256];
+#elif defined(USE_SKINNING)
+// Matrix: 4 vec4/bone — capped at 128 bones on GL (512 vec4)
 uniform highp mat4 BoneMatrices[128];
 #endif
 
 void main(){
-#ifdef USE_SKINNING
+#ifdef USE_SKINNING_QT
+	ivec4 idx = ivec4(Joints);
+	vec4 q = BoneQuats[idx.x] * Weights.x
+	       + BoneQuats[idx.y] * Weights.y
+	       + BoneQuats[idx.z] * Weights.z
+	       + BoneQuats[idx.w] * Weights.w;
+	q = normalize(q);
+	vec3 t = BoneTrans[idx.x].xyz * Weights.x
+	       + BoneTrans[idx.y].xyz * Weights.y
+	       + BoneTrans[idx.z].xyz * Weights.z
+	       + BoneTrans[idx.w].xyz * Weights.w;
+	vec3 p = Vertex.xyz;
+	vec3 u = q.xyz;
+	float s = q.w;
+	p = p + 2.0 * cross(u, cross(u, p) + s * p);
+	vec4 skinnedPos = vec4(p + t, 1.0);
+#ifdef USE_NORMALS
+	vec3 n = Normal.xyz;
+	vec3 skinnedNormal = n + 2.0 * cross(u, cross(u, n) + s * n);
+#endif
+#ifdef USE_TANGENTS
+	vec3 tg = Tangent.xyz;
+	vec3 skinnedTangent = tg + 2.0 * cross(u, cross(u, tg) + s * tg);
+#endif
+#ifdef USE_BINORMALS
+	vec3 bn = Binormal.xyz;
+	vec3 skinnedBinormal = bn + 2.0 * cross(u, cross(u, bn) + s * bn);
+#endif
+
+#elif defined(USE_SKINNING)
 	ivec4 idx = min(ivec4(Joints), ivec4(127));
 	mat4 skinMatrix = BoneMatrices[idx.x] * Weights.x
 	                + BoneMatrices[idx.y] * Weights.y

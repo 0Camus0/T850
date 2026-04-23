@@ -197,10 +197,24 @@ bool EditorGizmo::Create() {
 }
 
 void EditorGizmo::Destroy() {
+  if (m_translateVB)  m_translateVB->release();
+  if (m_translateIBx) m_translateIBx->release();
+  if (m_translateIBy) m_translateIBy->release();
+  if (m_translateIBz) m_translateIBz->release();
   m_translateVB  = nullptr;
   m_translateIBx = m_translateIBy = m_translateIBz = nullptr;
+
+  if (m_rotateVB)  m_rotateVB->release();
+  if (m_rotateIBx) m_rotateIBx->release();
+  if (m_rotateIBy) m_rotateIBy->release();
+  if (m_rotateIBz) m_rotateIBz->release();
   m_rotateVB     = nullptr;
   m_rotateIBx    = m_rotateIBy = m_rotateIBz = nullptr;
+
+  if (m_scaleVB)  m_scaleVB->release();
+  if (m_scaleIBx) m_scaleIBx->release();
+  if (m_scaleIBy) m_scaleIBy->release();
+  if (m_scaleIBz) m_scaleIBz->release();
   m_scaleVB      = nullptr;
   m_scaleIBx     = m_scaleIBy = m_scaleIBz = nullptr;
 }

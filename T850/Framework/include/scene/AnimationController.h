@@ -64,7 +64,11 @@ private:
   void InterpolateKeys(float dt);
   void ComputeHierarchy();
   void ComputeFinalMatrices();
+  void ComputeBindPose();       // compute bind-pose combined + own IBM
   void ResetLocals();
+
+  // Invert a 4x4 affine matrix (rotation + translation)
+  static XMATRIX44 InvertAffine(const XMATRIX44& m);
 
   // Quaternion SLERP
   static XQUATERNION Slerp(const XQUATERNION& a, const XQUATERNION& b, float t);
@@ -79,6 +83,7 @@ private:
   const std::vector<xF::xSkinWeights>* m_pSkinWeights = nullptr;
 
   XMATRIX44 m_finalBoneMatrices[kMaxBones];
+  XMATRIX44 m_invBindPose[kMaxBones]; // our own IBM (computed, not from glTF)
 
   float m_localTime     = 0.0f;
   float m_speed         = 1.0f;

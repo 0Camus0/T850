@@ -23,7 +23,7 @@
 #  include <imgui_impl_dx12.h>
 #  include <d3d11.h>
 #  include <video/d3d12/D3D12Driver.h>
-#  include <video/windows/D3D11Texture.h>
+#  include <video/d3d11/D3D11Texture.h>
 #  include <core/windows/Win32Framework.h>
 #endif
 #include <imgui_impl_opengl3.h>

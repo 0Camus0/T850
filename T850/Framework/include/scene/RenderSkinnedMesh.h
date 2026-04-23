@@ -3,6 +3,7 @@
  *
  * Extends RenderMesh with skeletal animation support.
  * Manages bone matrix upload and animation playback.
+ * Provides debug wireframe and skeleton visualization.
  *********************************************************/
 
 #ifndef T800_RENDER_SKINNED_MESH_H
@@ -11,6 +12,9 @@
 #include <Config.h>
 #include <scene/RenderMesh.h>
 #include <scene/AnimationController.h>
+#include <scene/LineRenderer.h>
+
+#include <vector>
 
 namespace t800 {
 
@@ -49,6 +53,12 @@ public:
 
   bool HasSkinData() const { return m_hasSkin; }
 
+  // ── Debug wireframe / skeleton visualization ──
+  // Draw mesh wireframe with depth testing (green)
+  void DrawWireframe(Texture* depthTex, int viewW, int viewH, float farPlane);
+  // Draw skeleton bones without depth testing (magenta)
+  void DrawSkeleton();
+
 private:
   // Extended CBuffer with bone matrices appended
   struct CBufferSkinned {
@@ -72,11 +82,30 @@ private:
     XMATRIX44 BoneMatrices[kMaxBones];
   };
 
+  // ── Wireframe helpers ──
+  void BuildWireframeBuffers();
+  void BuildSkeletonBuffers();
+  void UpdateSkinnedPositions();
+  void UpdateSkeletonPositions();
+
   AnimationController m_animController;
   std::vector<CBufferSkinned> m_skinnedCBuffers; // one per geometry
   bool m_hasSkin = false;
   bool m_playing = true;
   bool m_useSlerp = true;
+
+  // ── Wireframe state ──
+  LineRenderer         m_lineRenderer;
+  // Mesh wireframe (edges from triangles, CPU-skinned each frame)
+  IndexBuffer*         m_wireIB         = nullptr;
+  unsigned             m_wireIndexCount = 0;
+  bool                 m_wireUse32Bit   = false;
+  unsigned             m_wireTotalVerts = 0;
+  std::vector<float>   m_wirePositions;   // xyzw per vertex, updated each frame
+  // Skeleton bone lines (rebuilt each frame from Combined matrices)
+  IndexBuffer*         m_skelIB         = nullptr;
+  unsigned             m_skelIndexCount = 0;
+  std::vector<float>   m_skelPositions;   // xyzw per bone endpoint
 };
 
 } // namespace t800

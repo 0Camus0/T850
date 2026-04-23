@@ -49,6 +49,9 @@ public:
   const XMATRIX44* GetBoneMatrices() const { return m_finalBoneMatrices; }
   int GetNumBones() const { return m_numBones; }
 
+  // Access the animated skeleton (for debug bone visualization)
+  const xF::xSkeleton* GetAnimSkeleton() const { return m_pSkeletonAnim; }
+
   // The skin weights needed to compute final matrices
   void SetSkinWeights(const std::vector<xF::xSkinWeights>& weights) {
     m_pSkinWeights = &weights;

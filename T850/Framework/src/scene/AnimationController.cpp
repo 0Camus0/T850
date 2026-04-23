@@ -415,7 +415,8 @@ XQUATERNION AnimationController::Nlerp(const XQUATERNION& a,
   return r;
 }
 
-// ── Quaternion → row-major rotation matrix ──────────────
+// ── Quaternion → ROW-VECTOR rotation matrix ─────────────
+// Must match MakeTRS in GLTFMesh.cpp: r01=2*(xy+wz), r10=2*(xy-wz)
 
 XMATRIX44 AnimationController::QuaternionToMatrix(const XQUATERNION& q) {
   float x2 = q.x * q.x, y2 = q.y * q.y, z2 = q.z * q.z;
@@ -423,9 +424,9 @@ XMATRIX44 AnimationController::QuaternionToMatrix(const XQUATERNION& q) {
   float wx = q.w * q.x, wy = q.w * q.y, wz = q.w * q.z;
 
   XMATRIX44 m;
-  m.m[0][0] = 1.0f - 2.0f*(y2+z2); m.m[0][1] = 2.0f*(xy-wz);        m.m[0][2] = 2.0f*(xz+wy);        m.m[0][3] = 0.0f;
-  m.m[1][0] = 2.0f*(xy+wz);        m.m[1][1] = 1.0f - 2.0f*(x2+z2); m.m[1][2] = 2.0f*(yz-wx);        m.m[1][3] = 0.0f;
-  m.m[2][0] = 2.0f*(xz-wy);        m.m[2][1] = 2.0f*(yz+wx);        m.m[2][2] = 1.0f - 2.0f*(x2+y2); m.m[2][3] = 0.0f;
+  m.m[0][0] = 1.0f - 2.0f*(y2+z2); m.m[0][1] = 2.0f*(xy+wz);        m.m[0][2] = 2.0f*(xz-wy);        m.m[0][3] = 0.0f;
+  m.m[1][0] = 2.0f*(xy-wz);        m.m[1][1] = 1.0f - 2.0f*(x2+z2); m.m[1][2] = 2.0f*(yz+wx);        m.m[1][3] = 0.0f;
+  m.m[2][0] = 2.0f*(xz+wy);        m.m[2][1] = 2.0f*(yz-wx);        m.m[2][2] = 1.0f - 2.0f*(x2+y2); m.m[2][3] = 0.0f;
   m.m[3][0] = 0.0f;                m.m[3][1] = 0.0f;                m.m[3][2] = 0.0f;                m.m[3][3] = 1.0f;
   return m;
 }

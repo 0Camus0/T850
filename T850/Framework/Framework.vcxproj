@@ -35,6 +35,7 @@
     <ClInclude Include="include\scene\LensFlare.h" />
     <ClInclude Include="include\scene\RenderMesh.h" />
     <ClInclude Include="include\scene\RenderSkinnedMesh.h" />
+    <ClInclude Include="include\scene\LineRenderer.h" />
     <ClInclude Include="include\scene\AnimationController.h" />
     <ClInclude Include="include\scene\PrimitiveBase.h" />
     <ClInclude Include="include\scene\PrimitiveInstance.h" />
@@ -147,6 +148,7 @@
     <ClCompile Include="src\scene\LensFlare.cpp" />
     <ClCompile Include="src\scene\RenderMesh.cpp" />
     <ClCompile Include="src\scene\RenderSkinnedMesh.cpp" />
+    <ClCompile Include="src\scene\LineRenderer.cpp" />
     <ClCompile Include="src\scene\AnimationController.cpp" />
     <ClCompile Include="src\scene\PrimitiveInstance.cpp" />
     <ClCompile Include="src\scene\PrimitiveManager.cpp" />

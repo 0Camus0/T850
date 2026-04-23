@@ -1,5 +1,5 @@
 {
-  "api": "vulkan",
+  "api": "d3d12",
   "dump": {
     "frame": 750,
     "trigger": "frame",

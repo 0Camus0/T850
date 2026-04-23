@@ -408,15 +408,10 @@ void SC_SandBox::OnDraw() {
   if (Meshes[0].pBase) {
     RenderSkinnedMesh* skinned = dynamic_cast<RenderSkinnedMesh*>(Meshes[0].pBase);
     if (skinned && skinned->HasSkinData()) {
-      // Depth-tested mesh wireframe (green)
-      if (m_showWireframe) {
-        Texture* gbufDepth = pFramework->pVideoDriver->GetRTTexture(GBufferPass, BaseDriver::COLOR4_ATTACHMENT);
-        skinned->DrawWireframe(gbufDepth,
-          g_pBaseDriver->width,
-          g_pBaseDriver->height,
-          Cam.FPlane);
-      }
-      // Always-visible skeleton wireframe (magenta)
+      // Depth-tested mesh wireframe (green) — disabled: needs GPU skinning
+      // if (m_showWireframe) { ... }
+
+      // Always-visible skeleton wireframe (magenta) — lightweight, OK on CPU
       if (m_showSkeleton) {
         skinned->DrawSkeleton();
       }

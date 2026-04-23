@@ -97,12 +97,14 @@ private:
   // ── Wireframe state ──
   LineRenderer         m_lineRenderer;
   // Mesh wireframe (edges from triangles, CPU-skinned each frame)
+  VertexBuffer*        m_wireVB         = nullptr;
   IndexBuffer*         m_wireIB         = nullptr;
   unsigned             m_wireIndexCount = 0;
   bool                 m_wireUse32Bit   = false;
   unsigned             m_wireTotalVerts = 0;
   std::vector<float>   m_wirePositions;   // xyzw per vertex, updated each frame
   // Skeleton bone lines (rebuilt each frame from Combined matrices)
+  VertexBuffer*        m_skelVB         = nullptr;
   IndexBuffer*         m_skelIB         = nullptr;
   unsigned             m_skelIndexCount = 0;
   std::vector<float>   m_skelPositions;   // xyzw per bone endpoint

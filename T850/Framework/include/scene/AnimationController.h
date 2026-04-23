@@ -15,7 +15,7 @@
 
 namespace t800 {
 
-static constexpr int kMaxBones = 128;
+static constexpr int kMaxBones = 256;
 
 class AnimationController {
 public:

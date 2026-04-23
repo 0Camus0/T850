@@ -408,8 +408,15 @@ namespace t800 {
 
     VkPresentModeKHR chosenMode = VK_PRESENT_MODE_FIFO_KHR;
     for (auto mode : presentModes) {
-      if (mode == VK_PRESENT_MODE_MAILBOX_KHR) { chosenMode = mode; break; }
+      if (mode == VK_PRESENT_MODE_IMMEDIATE_KHR) { chosenMode = mode; break; }
     }
+    // Fallback to MAILBOX if IMMEDIATE unavailable
+    if (chosenMode == VK_PRESENT_MODE_FIFO_KHR) {
+      for (auto mode : presentModes) {
+        if (mode == VK_PRESENT_MODE_MAILBOX_KHR) { chosenMode = mode; break; }
+      }
+    }
+    T8_LOG_INFO("[Vulkan] Present mode: %d (0=IMMEDIATE,1=MAILBOX,2=FIFO)", (int)chosenMode);
 
     m_swapChainExtent = { (uint32_t)width, (uint32_t)height };
     if (surfCaps.currentExtent.width != UINT32_MAX)

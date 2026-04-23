@@ -777,9 +777,10 @@ function Get-EditorLaunchCommand {
     $exePath = Join-Path $rootDir "bin\$archFolder\$config\T8ditor.exe"
     $argList = @()
 
-    # Editor defaults to D3D12; pass --api for other backends
-    if ($apiTag -ne "d3d12") {
-        $argList += @("--api", $apiTag)
+    # Editor supports D3D12 and Vulkan only: D3D11/D3D12 -> D3D12, GL/Vulkan -> Vulkan
+    $editorApi = if ($apiTag -eq "vulkan" -or $apiTag -eq "gl") { "vulkan" } else { "d3d12" }
+    if ($editorApi -eq "vulkan") {
+        $argList += @("--api", "vulkan")
     }
 
     if ($chkFullscreen.IsChecked) {
@@ -797,7 +798,6 @@ function Get-EditorLaunchCommand {
 
     if ($chkLogToFile.IsChecked) {
         $ts = Get-Date -Format "yyyyMMdd_HHmmss"
-        $editorApi = if ($apiTag -eq "vulkan") { "vulkan" } else { "d3d12" }
         $logFilename = "logs\T8ditor_${ts}_${editorApi}.log"
         $argList += @("--logFile", $logFilename)
     }
@@ -806,7 +806,6 @@ function Get-EditorLaunchCommand {
         $argList += "--d3d12debug"
         if (-not $chkLogToFile.IsChecked) {
             $ts = Get-Date -Format "yyyyMMdd_HHmmss"
-            $editorApi = if ($apiTag -eq "vulkan") { "vulkan" } else { "d3d12" }
             $logFilename = "logs\T8ditor_${ts}_${editorApi}_debug.log"
             $argList += @("--logFile", $logFilename)
         }

@@ -52,6 +52,9 @@ public:
   // Access the animated skeleton (for debug bone visualization)
   const xF::xSkeleton* GetAnimSkeleton() const { return m_pSkeletonAnim; }
 
+  // Dump all bone matrices to a text file for debugging
+  void DumpMatrices(const char* filename) const;
+
   // The skin weights needed to compute final matrices
   void SetSkinWeights(const std::vector<xF::xSkinWeights>& weights) {
     m_pSkinWeights = &weights;

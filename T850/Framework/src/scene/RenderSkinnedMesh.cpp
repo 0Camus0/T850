@@ -366,6 +366,13 @@ namespace t800 {
       m_animController.Update(deltaTime);
     }
 
+    // Dump matrices on first frame for debugging
+    static bool sDumped = false;
+    if (!sDumped) {
+      m_animController.DumpMatrices("anim_debug_dump.txt");
+      sDumped = true;
+    }
+
     // Copy bone matrices into all skinned cbuffers
     const XMATRIX44* bones = m_animController.GetBoneMatrices();
     int numBones = m_animController.GetNumBones();

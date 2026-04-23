@@ -15,7 +15,7 @@ cbuffer ConstantBuffer{
 	float4   ParallaxShadowSettings;
 	float4   Light0Direction;
 #ifdef USE_SKINNING
-	float4x4 BoneMatrices[128];
+	float4x4 BoneMatrices[256];
 #endif
 }
 

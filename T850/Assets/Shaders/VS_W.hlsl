@@ -4,7 +4,7 @@ cbuffer ConstantBuffer{
 
 #ifdef USE_SKINNING
 cbuffer BoneBuffer{
-	float4x4 BoneMatrices[128];
+	float4x4 BoneMatrices[256];
 }
 #endif
 

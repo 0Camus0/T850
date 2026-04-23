@@ -103,7 +103,7 @@ uniform highp vec4 ParallaxSettings;
 uniform highp vec4 ParallaxShadowSettings;
 uniform highp vec4 Light0Direction;
 #ifdef USE_SKINNING
-uniform highp mat4 BoneMatrices[128];
+uniform highp mat4 BoneMatrices[256];
 #endif
 
 void main(){

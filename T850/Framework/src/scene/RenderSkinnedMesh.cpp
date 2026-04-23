@@ -359,10 +359,12 @@ namespace t800 {
       return;
     }
 
-    // Dump matrices on first frame for debugging — BEFORE animation update
+    // Dump matrices on first frame for debugging — compute bind-pose first
     static bool sDumped = false;
     if (!sDumped) {
-      // First dump the bind-pose state (before animation modifies anything)
+      // Compute hierarchy and finals at bind pose (no animation applied yet)
+      // This tells us if IBM * BindWorldTransform = Identity
+      m_animController.Update(0.0f);  // zero dt = compute hierarchy without advancing time
       m_animController.DumpMatrices("anim_debug_bindpose.txt");
       sDumped = true;
     }

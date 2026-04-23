@@ -208,6 +208,10 @@ namespace t800 {
     void*           m_cbRingMapped[kBackBufferCount] = {};
     uint32_t        m_cbRingOffset = 0;
 
+    // Descriptor set cache — keyed by (layout + texture fingerprint)
+    // Cleared each frame when the descriptor pool is reset.
+    std::unordered_map<uint64_t, VkDescriptorSet> m_descriptorSetCache;
+
     // Cached pipeline state for deferred pipeline lookup
     BLEND_STATES           m_currentBlend = BLEND_DEFAULT;
     DEPTH_STENCIL_STATES   m_currentDepth = DEPTH_DEFAULT;

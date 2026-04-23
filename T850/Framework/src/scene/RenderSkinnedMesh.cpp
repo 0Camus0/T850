@@ -89,6 +89,31 @@ namespace t800 {
       }
     }
 
+    // Compile wireframe shader (VS_Mesh + FS_WireMesh with skinning)
+    {
+      char *vsWireP, *fsWireP;
+      std::string vsWireName, fsWireName;
+      if (g_pBaseDriver->UsesGLSL()) {
+        vsWireP = file2string("Shaders/VS_Mesh.glsl");
+        fsWireP = file2string("Shaders/FS_WireMesh.glsl");
+        vsWireName = "VS_Mesh.glsl"; fsWireName = "FS_WireMesh.glsl";
+      } else {
+        vsWireP = file2string("Shaders/VS_Mesh.hlsl");
+        fsWireP = file2string("Shaders/FS_WireMesh.hlsl");
+        vsWireName = "VS_Mesh.hlsl"; fsWireName = "FS_WireMesh.hlsl";
+      }
+      std::string vsWStr(vsWireP), fsWStr(fsWireP);
+      free(vsWireP); free(fsWireP);
+
+      ShaderKey wireKey(0);
+      wireKey.bits |= skinBit;
+      if (!Info.empty() && !Info[0].SubSets.empty())
+        wireKey.bits |= (Info[0].SubSets[0].key.bits & 0x1F);
+      wireKey.setPass(32); // unused pass type — avoids collision with mesh shaders
+      g_pBaseDriver->CreateShader(vsWStr, fsWStr, wireKey, vsWireName, fsWireName);
+      m_wireShader = g_pBaseDriver->GetShader(wireKey);
+    }
+
     // Allocate constant buffers — size depends on skinning mode
     std::size_t cbSize = m_useQuatSkinning ? sizeof(CBufferSkinnedQT) : sizeof(CBufferSkinned);
     m_skinnedCBuffers.resize(Info.size());
@@ -134,27 +159,22 @@ namespace t800 {
     m_lineRenderer.Create();
   }
 
-  // ── Wireframe buffer construction ──────────────────────
+  // ── Wireframe buffer construction (per-geometry line-list IBs) ─
 
   void RenderSkinnedMesh::BuildWireframeBuffers() {
     if (!xFile || xFile->XMeshDataBase.empty()) return;
     xF::xMeshContainer* mc = xFile->XMeshDataBase[0];
 
-    // Collect positions and triangle-edge indices across all geometries
-    std::vector<unsigned int> lineIdx;
-    m_wireTotalVerts = 0;
+    m_wireGeo.resize(mc->Geometry.size());
 
-    for (auto& geom : mc->Geometry) {
-      unsigned baseV = m_wireTotalVerts;
-      m_wireTotalVerts += (unsigned)geom.Positions.size();
+    for (std::size_t gi = 0; gi < mc->Geometry.size(); gi++) {
+      auto& geom = mc->Geometry[gi];
+      std::vector<unsigned int> lineIdx;
 
-      // Extract edges from triangles
       if (geom.Indices32Bit && !geom.Triangles32.empty()) {
         const auto& tris = geom.Triangles32;
         for (std::size_t t = 0; t + 2 < tris.size(); t += 3) {
-          unsigned int a = baseV + tris[t + 0];
-          unsigned int b = baseV + tris[t + 1];
-          unsigned int c = baseV + tris[t + 2];
+          unsigned int a = tris[t + 0], b = tris[t + 1], c = tris[t + 2];
           lineIdx.push_back(a); lineIdx.push_back(b);
           lineIdx.push_back(b); lineIdx.push_back(c);
           lineIdx.push_back(c); lineIdx.push_back(a);
@@ -162,37 +182,28 @@ namespace t800 {
       } else {
         const auto& tris = geom.Triangles;
         for (std::size_t t = 0; t + 2 < tris.size(); t += 3) {
-          unsigned int a = baseV + tris[t + 0];
-          unsigned int b = baseV + tris[t + 1];
-          unsigned int c = baseV + tris[t + 2];
+          unsigned int a = tris[t + 0], b = tris[t + 1], c = tris[t + 2];
           lineIdx.push_back(a); lineIdx.push_back(b);
           lineIdx.push_back(b); lineIdx.push_back(c);
           lineIdx.push_back(c); lineIdx.push_back(a);
         }
       }
+
+      if (lineIdx.empty()) continue;
+
+      unsigned maxVert = (unsigned)geom.Positions.size();
+      if (maxVert <= 65535) {
+        std::vector<unsigned short> idx16(lineIdx.size());
+        for (std::size_t j = 0; j < lineIdx.size(); j++)
+          idx16[j] = (unsigned short)lineIdx[j];
+        m_wireGeo[gi].IB = LineRenderer::CreateIndexBuffer16(idx16.data(), (unsigned)idx16.size());
+        m_wireGeo[gi].use32Bit = false;
+      } else {
+        m_wireGeo[gi].IB = LineRenderer::CreateIndexBuffer32(lineIdx.data(), (unsigned)lineIdx.size());
+        m_wireGeo[gi].use32Bit = true;
+      }
+      m_wireGeo[gi].indexCount = (unsigned)lineIdx.size();
     }
-
-    if (lineIdx.empty() || m_wireTotalVerts == 0) return;
-
-    // Create IB (16-bit when possible)
-    if (m_wireTotalVerts <= 65535) {
-      std::vector<unsigned short> idx16(lineIdx.size());
-      for (std::size_t i = 0; i < lineIdx.size(); i++)
-        idx16[i] = (unsigned short)lineIdx[i];
-      m_wireIB = LineRenderer::CreateIndexBuffer16(idx16.data(), (unsigned)idx16.size());
-      m_wireUse32Bit = false;
-    } else {
-      m_wireIB = LineRenderer::CreateIndexBuffer32(lineIdx.data(), (unsigned)lineIdx.size());
-      m_wireUse32Bit = true;
-    }
-    m_wireIndexCount = (unsigned)lineIdx.size();
-
-    // Pre-allocate CPU position buffer (filled each frame by UpdateSkinnedPositions)
-    m_wirePositions.resize(m_wireTotalVerts * 4, 0.0f);
-
-    // Pre-allocate wireframe VB (DYNAMIC — updated each frame via UpdateFromBuffer)
-    m_wireVB = LineRenderer::CreatePositionVB(m_wirePositions.data(), m_wireTotalVerts,
-                                              T8_BUFFER_USAGE::DINAMIC);
   }
 
   void RenderSkinnedMesh::BuildSkeletonBuffers() {
@@ -225,58 +236,6 @@ namespace t800 {
                                               T8_BUFFER_USAGE::DINAMIC);
   }
 
-  // ── CPU skinning for wireframe positions ───────────────
-
-  void RenderSkinnedMesh::UpdateSkinnedPositions() {
-    if (!xFile || xFile->XMeshDataBase.empty()) return;
-    xF::xMeshContainer* mc = xFile->XMeshDataBase[0];
-
-    const XMATRIX44* bones = m_animController.GetBoneMatrices();
-    int numBones = m_animController.GetNumBones();
-    unsigned vOff = 0;
-
-    for (auto& geom : mc->Geometry) {
-      bool hasSkin = !geom.SkinWeights.empty() && !geom.SkinIndices.empty();
-      unsigned nv = (unsigned)geom.Positions.size();
-
-      for (unsigned v = 0; v < nv; v++) {
-        float px = geom.Positions[v].x;
-        float py = geom.Positions[v].y;
-        float pz = geom.Positions[v].z;
-        float ox = px, oy = py, oz = pz;
-
-        if (hasSkin && v < (unsigned)geom.SkinIndices.size()) {
-          // Accumulate blended bone matrix
-          XMATRIX44 skinMat;
-          memset(&skinMat, 0, sizeof(skinMat));
-
-          for (int b = 0; b < 4; b++) {
-            int joint = (int)geom.SkinIndices[v].v[b];
-            float weight = geom.SkinWeights[v].v[b];
-            if (weight <= 0.0f) continue;
-            if (joint < 0 || joint >= numBones) continue;
-
-            const XMATRIX44& bm = bones[joint];
-            for (int r = 0; r < 4; r++)
-              for (int c = 0; c < 4; c++)
-                skinMat.m[r][c] += bm.m[r][c] * weight;
-          }
-
-          // Row-vector multiply: pos * skinMat
-          ox = px * skinMat.m[0][0] + py * skinMat.m[1][0] + pz * skinMat.m[2][0] + skinMat.m[3][0];
-          oy = px * skinMat.m[0][1] + py * skinMat.m[1][1] + pz * skinMat.m[2][1] + skinMat.m[3][1];
-          oz = px * skinMat.m[0][2] + py * skinMat.m[1][2] + pz * skinMat.m[2][2] + skinMat.m[3][2];
-        }
-
-        unsigned idx = (vOff + v) * 4;
-        m_wirePositions[idx + 0] = ox;
-        m_wirePositions[idx + 1] = oy;
-        m_wirePositions[idx + 2] = oz;
-        m_wirePositions[idx + 3] = 1.0f;
-      }
-      vOff += nv;
-    }
-  }
 
   void RenderSkinnedMesh::UpdateSkeletonPositions() {
     const xF::xSkeleton* skel = m_animController.GetAnimSkeleton();
@@ -306,32 +265,57 @@ namespace t800 {
     }
   }
 
-  // ── Debug wireframe draw ───────────────────────────────
+  // ── Debug wireframe draw (GPU-skinned) ─────────────────
 
-  void RenderSkinnedMesh::DrawWireframe(Texture* depthTex, int viewW, int viewH, float farPlane) {
-    if (!m_hasSkin || !m_wireIB || !m_wireVB || m_wireIndexCount == 0 || !m_lineRenderer.IsReady())
-      return;
-
+  void RenderSkinnedMesh::DrawWireframe() {
+    if (!m_hasSkin || !m_wireShader || m_wireGeo.empty()) return;
     if (!pScProp || pScProp->pCameras.empty()) return;
+
     Camera* cam = pScProp->pCameras[0];
+    XMATRIX44 WVP = transform * cam->VP;
+    XMATRIX44 WorldView = transform * cam->View;
+    XVECTOR3 infoCam = XVECTOR3(cam->NPlane, cam->FPlane, cam->Fov, 1.0f);
+    XVECTOR3 wireColor(0.0f, 1.0f, 0.0f, 1.0f);
 
-    UpdateSkinnedPositions();
+    for (std::size_t i = 0; i < Info.size() && i < m_wireGeo.size(); i++) {
+      if (!m_wireGeo[i].IB || m_wireGeo[i].indexCount == 0) continue;
 
-    // Update existing VB with CPU-skinned positions
-    m_wireVB->UpdateFromBuffer(*T8DeviceContext, m_wirePositions.data());
+      MeshInfo* mi = &Info[i];
 
-    m_lineRenderer.SetDepthTestEnabled(true);
-    m_lineRenderer.SetDepthTexture(depthTex);
-    m_lineRenderer.SetViewport(viewW, viewH);
-    m_lineRenderer.SetFarPlane(farPlane);
+      if (m_useQuatSkinning) {
+        m_skinnedQTBuffers[i].WVP = WVP;
+        m_skinnedQTBuffers[i].World = transform;
+        m_skinnedQTBuffers[i].WorldView = WorldView;
+        m_skinnedQTBuffers[i].CameraInfo = infoCam;
+        m_skinnedQTBuffers[i].DiffuseColor = wireColor;
+      } else {
+        m_skinnedCBuffers[i].WVP = WVP;
+        m_skinnedCBuffers[i].World = transform;
+        m_skinnedCBuffers[i].WorldView = WorldView;
+        m_skinnedCBuffers[i].CameraInfo = infoCam;
+        m_skinnedCBuffers[i].DiffuseColor = wireColor;
+      }
 
-    XMATRIX44 identity;
-    identity.Identity();
-    XVECTOR3 wireColor(0.0f, 1.0f, 0.0f, 1.0f);  // green
-    auto ibFmt = m_wireUse32Bit ? T8_IB_FORMAR::R32 : T8_IB_FORMAR::R16;
+      mi->VB->Set(*T8DeviceContext, mi->VertexSize, 0);
 
-    m_lineRenderer.DrawLines(identity, cam->VP, wireColor,
-                             m_wireVB, m_wireIB, m_wireIndexCount, 16, ibFmt);
+      auto ibFmt = m_wireGeo[i].use32Bit ? T8_IB_FORMAR::R32 : T8_IB_FORMAR::R16;
+      m_wireGeo[i].IB->Set(*T8DeviceContext, 0, ibFmt);
+
+      T8DeviceContext->SetPrimitiveTopology(T8_TOPOLOGY::LINE_LIST);
+
+      m_wireShader->Set(*T8DeviceContext);
+
+      if (m_useQuatSkinning) {
+        mi->CB->UpdateFromBuffer(*T8DeviceContext, &m_skinnedQTBuffers[i].WVP[0]);
+      } else {
+        mi->CB->UpdateFromBuffer(*T8DeviceContext, &m_skinnedCBuffers[i].WVP[0]);
+      }
+      mi->CB->Set(*T8DeviceContext);
+
+      T8DeviceContext->DrawIndexed(m_wireGeo[i].indexCount, 0, 0);
+
+      T8DeviceContext->SetPrimitiveTopology(T8_TOPOLOGY::TRIANLE_LIST);
+    }
   }
 
   void RenderSkinnedMesh::DrawSkeleton() {
@@ -548,11 +532,13 @@ namespace t800 {
 
   void RenderSkinnedMesh::Destroy() {
     m_lineRenderer.Destroy();
-    if (m_wireVB) { m_wireVB->release(); m_wireVB = nullptr; }
-    if (m_wireIB) { m_wireIB->release(); m_wireIB = nullptr; }
+    for (auto& wg : m_wireGeo) {
+      if (wg.IB) { wg.IB->release(); wg.IB = nullptr; }
+    }
+    m_wireGeo.clear();
+    m_wireShader = nullptr;
     if (m_skelVB) { m_skelVB->release(); m_skelVB = nullptr; }
     if (m_skelIB) { m_skelIB->release(); m_skelIB = nullptr; }
-    m_wirePositions.clear();
     m_skelPositions.clear();
 
     RenderMesh::Destroy();

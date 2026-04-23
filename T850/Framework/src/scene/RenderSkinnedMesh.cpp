@@ -46,10 +46,20 @@ namespace t800 {
       return;
     }
 
-    // Set up HAS_SKINNING in all subset keys and recompile shader variants
+    // Set up skinning key — use QT by default (HLSL), fall back to matrix for GL
+    uint32_t skinBit = ShaderKey::HAS_SKINNING;
+    if (!g_pBaseDriver->UsesGLSL()) {
+      // HLSL: use quaternion+translation (smaller CB, fewer ALU)
+      skinBit = ShaderKey::HAS_SKINNING_QT;
+      m_useQuatSkinning = true;
+    } else {
+      // GLSL: use matrix path (QT not implemented in GLSL yet)
+      m_useQuatSkinning = false;
+    }
+
     for (auto& meshInfo : Info) {
       for (auto& subset : meshInfo.SubSets) {
-        subset.key.bits |= ShaderKey::HAS_SKINNING;
+        subset.key.bits |= skinBit;
       }
     }
 
@@ -86,22 +96,25 @@ namespace t800 {
       }
     }
 
-    // Allocate skinned constant buffers (larger, with bone matrices)
+    // Allocate constant buffers — size depends on skinning mode
+    std::size_t cbSize = m_useQuatSkinning ? sizeof(CBufferSkinnedQT) : sizeof(CBufferSkinned);
     m_skinnedCBuffers.resize(Info.size());
+    m_skinnedQTBuffers.resize(Info.size());
     for (std::size_t i = 0; i < Info.size(); i++) {
-      // Release the old CB and create a larger one
       if (Info[i].CB) {
         Info[i].CB->release();
       }
       BufferDesc bdesc;
-      bdesc.byteWidth = sizeof(CBufferSkinned);
+      bdesc.byteWidth = static_cast<int>(cbSize);
       bdesc.usage = T8_BUFFER_USAGE::DEFAULT;
       Info[i].CB = (t800::ConstantBuffer*)T8Device->CreateBuffer(
           T8_BUFFER_TYPE::CONSTANT, bdesc, nullptr);
 
-      // Initialize bone matrices to identity
+      // Initialize bone data
       for (int b = 0; b < kMaxBones; b++) {
         m_skinnedCBuffers[i].BoneMatrices[b].Identity();
+        m_skinnedQTBuffers[i].BoneQuats[b] = XVECTOR3(0.0f, 0.0f, 0.0f, 1.0f);
+        m_skinnedQTBuffers[i].BoneTrans[b] = XVECTOR3(0.0f, 0.0f, 0.0f, 0.0f);
       }
     }
 
@@ -376,17 +389,29 @@ namespace t800 {
       m_animController.Update(deltaTime);
     }
 
-    // Copy bone matrices into all skinned cbuffers
-    const XMATRIX44* bones = m_animController.GetBoneMatrices();
+    // Copy bone data into skinned cbuffers based on mode
     int numBones = m_animController.GetNumBones();
-    for (std::size_t i = 0; i < m_skinnedCBuffers.size() && i < Info.size(); i++) {
-      // Copy base CBuffer data
-      memcpy(&m_skinnedCBuffers[i].WVP, &Info[i].CnstBuffer.WVP,
-             sizeof(RenderMesh::CBuffer));
-      // Copy bone matrices
-      int count = (numBones < kMaxBones) ? numBones : kMaxBones;
-      for (int b = 0; b < count; b++) {
-        m_skinnedCBuffers[i].BoneMatrices[b] = bones[b];
+    int count = (numBones < kMaxBones) ? numBones : kMaxBones;
+
+    if (m_useQuatSkinning) {
+      const XQUATERNION* quats = m_animController.GetBoneQuats();
+      const XVECTOR3*    trans = m_animController.GetBoneTrans();
+      for (std::size_t i = 0; i < m_skinnedQTBuffers.size() && i < Info.size(); i++) {
+        memcpy(&m_skinnedQTBuffers[i].WVP, &Info[i].CnstBuffer.WVP,
+               sizeof(RenderMesh::CBuffer));
+        for (int b = 0; b < count; b++) {
+          m_skinnedQTBuffers[i].BoneQuats[b] = XVECTOR3(quats[b].x, quats[b].y, quats[b].z, quats[b].w);
+          m_skinnedQTBuffers[i].BoneTrans[b] = trans[b];
+        }
+      }
+    } else {
+      const XMATRIX44* bones = m_animController.GetBoneMatrices();
+      for (std::size_t i = 0; i < m_skinnedCBuffers.size() && i < Info.size(); i++) {
+        memcpy(&m_skinnedCBuffers[i].WVP, &Info[i].CnstBuffer.WVP,
+               sizeof(RenderMesh::CBuffer));
+        for (int b = 0; b < count; b++) {
+          m_skinnedCBuffers[i].BoneMatrices[b] = bones[b];
+        }
       }
     }
 
@@ -407,30 +432,45 @@ namespace t800 {
         continue;
       }
 
-      // Update matrices in the skinned cbuffer
+      // Update matrices in the skinned cbuffer (base portion is same layout for both modes)
       XMATRIX44 WVP = transform * VP;
       XMATRIX44 WorldView = transform * pActualCamera->View;
       XVECTOR3 infoCam = XVECTOR3(pActualCamera->NPlane, pActualCamera->FPlane, pActualCamera->Fov, 1.0f);
 
-      m_skinnedCBuffers[i].WVP = WVP;
-      m_skinnedCBuffers[i].World = transform;
-      m_skinnedCBuffers[i].WorldView = WorldView;
+      // Get pointer to the base CBuffer portion (same offset in both structs)
+      CBufferSkinned& cb = m_skinnedCBuffers[i];
+      CBufferSkinnedQT& cbQT = m_skinnedQTBuffers[i];
+      auto& base = m_useQuatSkinning ? (CBufferSkinned&)cbQT : cb;
+      // Note: CBufferSkinnedQT has same base fields layout as CBufferSkinned
+      // (same first 15 fields). We can safely cast the first portion.
 
-      if (pScProp) {
-        m_skinnedCBuffers[i].Light0Pos = pScProp->Lights[0].Position;
-        m_skinnedCBuffers[i].Light0Col = pScProp->Lights[0].Color;
-        m_skinnedCBuffers[i].CameraPos = pActualCamera->Eye;
-        m_skinnedCBuffers[i].CameraInfo = infoCam;
-        m_skinnedCBuffers[i].Light0Dir = pScProp->Lights[0].Direction;
+      if (m_useQuatSkinning) {
+        cbQT.WVP = WVP; cbQT.World = transform; cbQT.WorldView = WorldView;
+        if (pScProp) {
+          cbQT.Light0Pos = pScProp->Lights[0].Position;
+          cbQT.Light0Col = pScProp->Lights[0].Color;
+          cbQT.CameraPos = pActualCamera->Eye;
+          cbQT.CameraInfo = infoCam;
+          cbQT.Light0Dir = pScProp->Lights[0].Direction;
+        }
+        cbQT.ParallaxSettings = XVECTOR3(m_fParallaxLowSamples, m_fParallaxHighSamples, m_fParallaxHeight);
+        cbQT.ParallaxSettings.w = m_fParallaxEnabled;
+        cbQT.ParallaxShadowSettings = XVECTOR3(m_fParallaxShadowMinLayers, m_fParallaxShadowMaxLayers, m_fParallaxShadowSoftness);
+        cbQT.ParallaxShadowSettings.w = m_fParallaxShadowStrength;
+      } else {
+        cb.WVP = WVP; cb.World = transform; cb.WorldView = WorldView;
+        if (pScProp) {
+          cb.Light0Pos = pScProp->Lights[0].Position;
+          cb.Light0Col = pScProp->Lights[0].Color;
+          cb.CameraPos = pActualCamera->Eye;
+          cb.CameraInfo = infoCam;
+          cb.Light0Dir = pScProp->Lights[0].Direction;
+        }
+        cb.ParallaxSettings = XVECTOR3(m_fParallaxLowSamples, m_fParallaxHighSamples, m_fParallaxHeight);
+        cb.ParallaxSettings.w = m_fParallaxEnabled;
+        cb.ParallaxShadowSettings = XVECTOR3(m_fParallaxShadowMinLayers, m_fParallaxShadowMaxLayers, m_fParallaxShadowSoftness);
+        cb.ParallaxShadowSettings.w = m_fParallaxShadowStrength;
       }
-
-      m_skinnedCBuffers[i].ParallaxSettings = XVECTOR3(
-          m_fParallaxLowSamples, m_fParallaxHighSamples, m_fParallaxHeight);
-      m_skinnedCBuffers[i].ParallaxSettings.w = m_fParallaxEnabled;
-      m_skinnedCBuffers[i].ParallaxShadowSettings = XVECTOR3(
-          m_fParallaxShadowMinLayers, m_fParallaxShadowMaxLayers,
-          m_fParallaxShadowSoftness);
-      m_skinnedCBuffers[i].ParallaxShadowSettings.w = m_fParallaxShadowStrength;
 
       unsigned int stride = it_MeshInfo->VertexSize;
       unsigned int offset = 0;
@@ -446,12 +486,21 @@ namespace t800 {
         if (!AABBInsideFrustum(sub_info->bounds, transform, frustumPlanes))
           continue;
 
-        m_skinnedCBuffers[i].AmbientColor = sub_info->AmbientColor;
-        m_skinnedCBuffers[i].DiffuseColor = sub_info->DiffuseColor;
-        m_skinnedCBuffers[i].SpecularColor = sub_info->SpecularColor;
-        m_skinnedCBuffers[i].PBRParams = sub_info->PBRParams;
-        m_skinnedCBuffers[i].Intensities = sub_info->Intensities;
-        m_skinnedCBuffers[i].Intensities.w = (float)sub_info->MatID;
+        if (m_useQuatSkinning) {
+          cbQT.AmbientColor = sub_info->AmbientColor;
+          cbQT.DiffuseColor = sub_info->DiffuseColor;
+          cbQT.SpecularColor = sub_info->SpecularColor;
+          cbQT.PBRParams = sub_info->PBRParams;
+          cbQT.Intensities = sub_info->Intensities;
+          cbQT.Intensities.w = (float)sub_info->MatID;
+        } else {
+          cb.AmbientColor = sub_info->AmbientColor;
+          cb.DiffuseColor = sub_info->DiffuseColor;
+          cb.SpecularColor = sub_info->SpecularColor;
+          cb.PBRParams = sub_info->PBRParams;
+          cb.Intensities = sub_info->Intensities;
+          cb.Intensities.w = (float)sub_info->MatID;
+        }
 
         sub_info->IB->Set(*T8DeviceContext, 0,
                           sub_info->IB32Bit ? T8_IB_FORMAR::R32
@@ -472,9 +521,12 @@ namespace t800 {
         if (!s) continue;
 
         s->Set(*T8DeviceContext);
-        // Upload the larger skinned CB
-        it_MeshInfo->CB->UpdateFromBuffer(*T8DeviceContext,
-                                           &m_skinnedCBuffers[i].WVP[0]);
+        // Upload the skinned CB (matrix or QT variant)
+        if (m_useQuatSkinning) {
+          it_MeshInfo->CB->UpdateFromBuffer(*T8DeviceContext, &cbQT.WVP[0]);
+        } else {
+          it_MeshInfo->CB->UpdateFromBuffer(*T8DeviceContext, &cb.WVP[0]);
+        }
         it_MeshInfo->CB->Set(*T8DeviceContext);
 
         if (s->key.has(ShaderKey::DIFFUSE_MAP) && sub_info->DiffuseTex)

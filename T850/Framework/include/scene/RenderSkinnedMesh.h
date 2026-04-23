@@ -53,6 +53,9 @@ public:
 
   bool HasSkinData() const { return m_hasSkin; }
 
+  void SetUseQuatSkinning(bool qt) { m_useQuatSkinning = qt; }
+  bool GetUseQuatSkinning() const  { return m_useQuatSkinning; }
+
   // ── Debug wireframe / skeleton visualization ──
   // Draw mesh wireframe with depth testing (green)
   void DrawWireframe(Texture* depthTex, int viewW, int viewH, float farPlane);
@@ -60,7 +63,7 @@ public:
   void DrawSkeleton();
 
 private:
-  // Extended CBuffer with bone matrices appended
+  // Extended CBuffer with bone matrices appended (matrix skinning path)
   struct CBufferSkinned {
     // Same layout as RenderMesh::CBuffer
     XMATRIX44 WVP;
@@ -82,6 +85,27 @@ private:
     XMATRIX44 BoneMatrices[kMaxBones];
   };
 
+  // Extended CBuffer with quaternion+translation (QT skinning path — half the size)
+  struct CBufferSkinnedQT {
+    XMATRIX44 WVP;
+    XMATRIX44 World;
+    XMATRIX44 WorldView;
+    XVECTOR3  Light0Pos;
+    XVECTOR3  Light0Col;
+    XVECTOR3  CameraPos;
+    XVECTOR3  CameraInfo;
+    XVECTOR3  AmbientColor;
+    XVECTOR3  DiffuseColor;
+    XVECTOR3  SpecularColor;
+    XVECTOR3  PBRParams;
+    XVECTOR3  Intensities;
+    XVECTOR3  ParallaxSettings;
+    XVECTOR3  ParallaxShadowSettings;
+    XVECTOR3  Light0Dir;
+    XVECTOR3  BoneQuats[kMaxBones];  // quaternion (x,y,z,w) — uses XVECTOR3 which has 4 floats
+    XVECTOR3  BoneTrans[kMaxBones];  // translation (x,y,z,0)
+  };
+
   // ── Wireframe helpers ──
   void BuildWireframeBuffers();
   void BuildSkeletonBuffers();
@@ -89,10 +113,12 @@ private:
   void UpdateSkeletonPositions();
 
   AnimationController m_animController;
-  std::vector<CBufferSkinned> m_skinnedCBuffers; // one per geometry
+  std::vector<CBufferSkinned> m_skinnedCBuffers;   // matrix path (one per geometry)
+  std::vector<CBufferSkinnedQT> m_skinnedQTBuffers; // quat+trans path
   bool m_hasSkin = false;
   bool m_playing = true;
   bool m_useSlerp = true;
+  bool m_useQuatSkinning = true; // default to QT path (smaller CB, fewer ops)
 
   // ── Wireframe state ──
   LineRenderer         m_lineRenderer;

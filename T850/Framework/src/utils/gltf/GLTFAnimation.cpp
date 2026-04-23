@@ -29,11 +29,15 @@ static constexpr bool kFlipToLeftHanded = true;
 static constexpr float kTicksPerSecond = 4800.0f;
 
 // ── Helper: glTF column-major mat4 → engine row-major XMATRIX44 ─────
+// glTF uses column-vector convention (v' = M * v), stored column-major.
+// Engine uses row-vector convention (v' = v * M), stored row-major.
+// M_engine = M_gltf^T. Reading column-major data directly into row-major
+// storage achieves this transpose implicitly.
 static XMATRIX44 ColMajorToRowMajor(const float* cm) {
   XMATRIX44 m;
   for (int r = 0; r < 4; r++)
     for (int c = 0; c < 4; c++)
-      m.m[r][c] = cm[c * 4 + r];  // transpose
+      m.m[r][c] = cm[r * 4 + c];  // direct copy = implicit transpose
   return m;
 }
 
@@ -147,8 +151,9 @@ void BuildSkinsAndAnimations(const Document& doc,
           bone.Name = doc.nodes[nodeIdx].name;
           boneAnim.Name = bone.Name;
 
-          // Local TRS matrix (bind pose)
-          bone.Bone = NodeLocalMatrix(doc.nodes[nodeIdx]);
+          // Local TRS matrix (bind pose) — Z-flipped to LH space
+          // Must match IBM and animation data which are also Z-flipped
+          bone.Bone = FlipMatrixZ(NodeLocalMatrix(doc.nodes[nodeIdx]));
           boneAnim.Bone = bone.Bone;
         }
 

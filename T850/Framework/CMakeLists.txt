@@ -26,6 +26,10 @@ ${PROJECT_SOURCE_DIR}/../Librerias/mikktspace/include)
 endif()
 set(LIBRARY_OUTPUT_PATH ${PROJECT_SOURCE_DIR}/../Lib)
 file(GLOB SOURCES src/video/*.cpp 
+src/video/gl/*.cpp 
+src/video/d3d11/*.cpp 
+src/video/d3d12/*.cpp 
+src/video/vulkan/*.cpp 
 src/utils/*.cpp 
 src/utils/gltf/*.cpp 
 src/scene/*.cpp 

@@ -23,6 +23,8 @@ AnimationController::AnimationController() {
   for (int i = 0; i < kMaxBones; i++) {
     m_finalBoneMatrices[i].Identity();
     m_invBindPose[i].Identity();
+    m_finalBoneQuats[i] = XQUATERNION(0.0f, 0.0f, 0.0f, 1.0f);
+    m_finalBoneTrans[i] = XVECTOR3(0.0f, 0.0f, 0.0f, 0.0f);
   }
 }
 
@@ -363,9 +365,47 @@ void AnimationController::ComputeFinalMatrices() {
     } else {
       rhResult = m_invBindPose[i] * bones[i].Combined;
     }
-    m_finalBoneMatrices[i] = FlipMatrixZ(rhResult);
+    XMATRIX44 lh = FlipMatrixZ(rhResult);
+    m_finalBoneMatrices[i] = lh;
+
+    // Extract quaternion+translation from the final matrix.
+    // The 3x3 upper-left is a rotation (possibly with minor shear from blending).
+    // Extract translation from row 3 (row-vector convention).
+    m_finalBoneTrans[i] = XVECTOR3(lh.m[3][0], lh.m[3][1], lh.m[3][2], 0.0f);
+
+    // Extract quaternion from 3x3 rotation using Shepperd's method.
+    float tr = lh.m[0][0] + lh.m[1][1] + lh.m[2][2];
+    if (tr > 0.0f) {
+      float s = std::sqrt(tr + 1.0f) * 2.0f;
+      m_finalBoneQuats[i] = XQUATERNION(
+        (lh.m[1][2] - lh.m[2][1]) / s,
+        (lh.m[2][0] - lh.m[0][2]) / s,
+        (lh.m[0][1] - lh.m[1][0]) / s,
+        0.25f * s);
+    } else if (lh.m[0][0] > lh.m[1][1] && lh.m[0][0] > lh.m[2][2]) {
+      float s = std::sqrt(1.0f + lh.m[0][0] - lh.m[1][1] - lh.m[2][2]) * 2.0f;
+      m_finalBoneQuats[i] = XQUATERNION(
+        0.25f * s,
+        (lh.m[0][1] + lh.m[1][0]) / s,
+        (lh.m[2][0] + lh.m[0][2]) / s,
+        (lh.m[1][2] - lh.m[2][1]) / s);
+    } else if (lh.m[1][1] > lh.m[2][2]) {
+      float s = std::sqrt(1.0f + lh.m[1][1] - lh.m[0][0] - lh.m[2][2]) * 2.0f;
+      m_finalBoneQuats[i] = XQUATERNION(
+        (lh.m[0][1] + lh.m[1][0]) / s,
+        0.25f * s,
+        (lh.m[1][2] + lh.m[2][1]) / s,
+        (lh.m[2][0] - lh.m[0][2]) / s);
+    } else {
+      float s = std::sqrt(1.0f + lh.m[2][2] - lh.m[0][0] - lh.m[1][1]) * 2.0f;
+      m_finalBoneQuats[i] = XQUATERNION(
+        (lh.m[2][0] + lh.m[0][2]) / s,
+        (lh.m[1][2] + lh.m[2][1]) / s,
+        0.25f * s,
+        (lh.m[0][1] - lh.m[1][0]) / s);
+    }
   }
-  // Remaining slots stay identity
+  // Remaining slots stay identity (quat=(0,0,0,1), trans=(0,0,0))
 }
 
 // ── SLERP ───────────────────────────────────────────────

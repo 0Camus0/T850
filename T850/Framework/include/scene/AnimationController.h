@@ -44,9 +44,11 @@ public:
   int  GetCurrentSet() const { return m_currentSet; }
   int  GetNumSets() const;
 
-  // After Update(), these contain the final bone matrices
-  // (InverseBindMatrix * CombinedWorldMatrix) ready for the shader.
+  // After Update(), these contain the final bone data ready for the shader.
   const XMATRIX44* GetBoneMatrices() const { return m_finalBoneMatrices; }
+  // Quaternion+Translation alternative (2 vec4/bone instead of 4x4 matrix)
+  const XQUATERNION* GetBoneQuats() const { return m_finalBoneQuats; }
+  const XVECTOR3*    GetBoneTrans() const { return m_finalBoneTrans; }
   int GetNumBones() const { return m_numBones; }
 
   // Access the animated skeleton (for debug bone visualization)
@@ -83,6 +85,8 @@ private:
   const std::vector<xF::xSkinWeights>* m_pSkinWeights = nullptr;
 
   XMATRIX44 m_finalBoneMatrices[kMaxBones];
+  XQUATERNION m_finalBoneQuats[kMaxBones]; // quaternion rotation per bone
+  XVECTOR3    m_finalBoneTrans[kMaxBones]; // translation per bone
   XMATRIX44 m_invBindPose[kMaxBones]; // our own IBM (computed, not from glTF)
 
   float m_localTime     = 0.0f;

@@ -151,9 +151,10 @@ void BuildSkinsAndAnimations(const Document& doc,
           bone.Name = doc.nodes[nodeIdx].name;
           boneAnim.Name = bone.Name;
 
-          // Local TRS matrix (bind pose) — Z-flipped to LH space
-          // Must match IBM and animation data which are also Z-flipped
-          bone.Bone = FlipMatrixZ(NodeLocalMatrix(doc.nodes[nodeIdx]));
+          // Local TRS matrix (bind pose) — kept in RH space.
+          // The Z-flip is applied once to the final bone matrix product
+          // in AnimationController::ComputeFinalMatrices().
+          bone.Bone = NodeLocalMatrix(doc.nodes[nodeIdx]);
           boneAnim.Bone = bone.Bone;
         }
 
@@ -201,10 +202,10 @@ void BuildSkinsAndAnimations(const Document& doc,
           xF::xSkinWeights& sw = geom.Info.SkinWeights[j];
           sw.NodeName = mc->Skeleton.Bones[j].Name;
 
-          // Inverse bind matrix
+          // Inverse bind matrix — kept in RH row-vector space.
+          // The Z-flip is applied once to the final bone matrix product.
           if (hasIBM && static_cast<int>(ibmData.size()) >= (j + 1) * 16) {
             sw.MatrixOffset = ColMajorToRowMajor(&ibmData[j * 16]);
-            sw.MatrixOffset = FlipMatrixZ(sw.MatrixOffset);
           } else {
             sw.MatrixOffset.Identity();
           }
@@ -300,17 +301,15 @@ void BuildSkinsAndAnimations(const Document& doc,
         ab.PositionKeys.resize(numKeys);
         for (int k = 0; k < numKeys; k++) {
           ab.PositionKeys[k].t.i_atTime = static_cast<unsigned int>(times[k] * kTicksPerSecond);
-          XVECTOR3 pos(values[k*3+0], values[k*3+1], values[k*3+2]);
-          ab.PositionKeys[k].Position = FlipPositionZ(pos);
+          ab.PositionKeys[k].Position = XVECTOR3(values[k*3+0], values[k*3+1], values[k*3+2]);
         }
       }
       else if (channel.target.path == "rotation" && valElem == 4) {
         ab.RotationKeys.resize(numKeys);
         for (int k = 0; k < numKeys; k++) {
           ab.RotationKeys[k].t.i_atTime = static_cast<unsigned int>(times[k] * kTicksPerSecond);
-          // glTF quaternion: (x, y, z, w)
-          XQUATERNION q(values[k*4+0], values[k*4+1], values[k*4+2], values[k*4+3]);
-          ab.RotationKeys[k].Rot = FlipQuaternionZ(q);
+          // glTF quaternion: (x, y, z, w) — kept in RH space
+          ab.RotationKeys[k].Rot = XQUATERNION(values[k*4+0], values[k*4+1], values[k*4+2], values[k*4+3]);
         }
       }
       else if (channel.target.path == "scale" && valElem == 3) {
@@ -334,10 +333,9 @@ void BuildSkinsAndAnimations(const Document& doc,
         pk.t.i_atTime = 0;
         if (nodeIdx >= 0 && nodeIdx < static_cast<int>(doc.nodes.size())
             && doc.nodes[nodeIdx].translation.size() == 3) {
-          XVECTOR3 pos(doc.nodes[nodeIdx].translation[0],
-                       doc.nodes[nodeIdx].translation[1],
-                       doc.nodes[nodeIdx].translation[2]);
-          pk.Position = FlipPositionZ(pos);
+          pk.Position = XVECTOR3(doc.nodes[nodeIdx].translation[0],
+                                 doc.nodes[nodeIdx].translation[1],
+                                 doc.nodes[nodeIdx].translation[2]);
         } else {
           pk.Position = XVECTOR3(0.0f, 0.0f, 0.0f);
         }
@@ -348,11 +346,10 @@ void BuildSkinsAndAnimations(const Document& doc,
         rk.t.i_atTime = 0;
         if (nodeIdx >= 0 && nodeIdx < static_cast<int>(doc.nodes.size())
             && doc.nodes[nodeIdx].rotation.size() == 4) {
-          XQUATERNION q(doc.nodes[nodeIdx].rotation[0],
-                        doc.nodes[nodeIdx].rotation[1],
-                        doc.nodes[nodeIdx].rotation[2],
-                        doc.nodes[nodeIdx].rotation[3]);
-          rk.Rot = FlipQuaternionZ(q);
+          rk.Rot = XQUATERNION(doc.nodes[nodeIdx].rotation[0],
+                                doc.nodes[nodeIdx].rotation[1],
+                                doc.nodes[nodeIdx].rotation[2],
+                                doc.nodes[nodeIdx].rotation[3]);
         } else {
           rk.Rot = XQUATERNION(0.0f, 0.0f, 0.0f, 1.0f);
         }

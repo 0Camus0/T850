@@ -270,6 +270,19 @@ void AnimationController::ComputeHierarchy() {
 }
 
 // ── Compute final bone matrices for shader ─────────────
+// Skinning operates in RH space (IBM and skeleton are in RH row-vector).
+// The Z-flip (RH→LH) is applied once to the final product so it matches
+// the LH vertex positions in the vertex buffer.
+
+static XMATRIX44 FlipMatrixZ(const XMATRIX44& m) {
+  XMATRIX44 r = m;
+  for (int i = 0; i < 4; i++) {
+    r.m[2][i] = -r.m[2][i];
+    r.m[i][2] = -r.m[i][2];
+  }
+  r.m[2][2] = m.m[2][2]; // double-negated → restore
+  return r;
+}
 
 void AnimationController::ComputeFinalMatrices() {
   if (!m_pSkinWeights || !m_pSkeletonAnim) return;
@@ -279,8 +292,10 @@ void AnimationController::ComputeFinalMatrices() {
         ? m_numBones : static_cast<int>(m_pSkinWeights->size());
 
   for (int i = 0; i < n && i < static_cast<int>(bones.size()); i++) {
-    // FinalBoneMatrix = InverseBindMatrix * CombinedWorldMatrix
-    m_finalBoneMatrices[i] = (*m_pSkinWeights)[i].MatrixOffset * bones[i].Combined;
+    // FinalBoneMatrix = FlipZ( IBM_RH * Combined_RH )
+    // This converts the RH skinning result to LH space matching the vertices
+    XMATRIX44 rhResult = (*m_pSkinWeights)[i].MatrixOffset * bones[i].Combined;
+    m_finalBoneMatrices[i] = FlipMatrixZ(rhResult);
   }
   // Remaining slots stay identity
 }

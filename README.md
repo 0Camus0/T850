@@ -1,14 +1,22 @@
 # T850
 
+<div align="center">
+
 [![Build](https://github.com/0Camus0/T850/actions/workflows/build.yml/badge.svg)](https://github.com/0Camus0/T850/actions/workflows/build.yml)
+&nbsp;&nbsp;![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20Linux-blue)
+&nbsp;&nbsp;![APIs](https://img.shields.io/badge/APIs-D3D11%20%7C%20D3D12%20%7C%20Vulkan%20%7C%20OpenGL-green)
+&nbsp;&nbsp;![License](https://img.shields.io/badge/license-MIT-yellow)
 
-A cross-platform 3D rendering engine written in C++ with a deferred rendering pipeline, PBR materials, four graphics backends, and a built-in scene editor.
+**A cross-platform 3D rendering engine with a deferred pipeline, PBR materials, four graphics backends, and a built-in scene editor.**
 
-<p align="center">
-  <img src="screenshots/Sponza1.png" alt="T850 — Sponza Atrium with deferred shading, HDR bloom, and volumetric lighting" width="100%">
-</p>
+<img src="screenshots/Sponza1.png" alt="T850 — Sponza Atrium" width="100%">
+<br><sub>Sponza atrium — deferred shading, HDR bloom, volumetric lighting, and SSAO</sub>
 
-## What Is This?
+</div>
+
+---
+
+## Overview
 
 T850 started as a learning project to understand how real-time rendering works under the hood — from raw vertex buffers to full deferred pipelines with post-processing. Over the years it has grown into a multi-API engine that runs the same scene on **D3D11, D3D12, OpenGL, and Vulkan**, loads **glTF 2.0** models with PBR materials, and includes a **built-in editor** for tweaking scenes in real time. It's not trying to be Unity or Unreal — it's a playground for graphics programming where every line of the rendering code is yours to read, break, and learn from.
 
@@ -16,27 +24,41 @@ T850 started as a learning project to understand how real-time rendering works u
 
 <p align="center">
   <img src="screenshots/Sponza2.png" alt="SSAO and shadow mapping in the Sponza atrium" width="100%">
-  <br><em>SSAO, PCF shadow mapping, and deferred lighting in the Sponza atrium</em>
-</p>
-
-<p align="center">
-  <img src="screenshots/Editor.png" alt="T850 Editor with scene hierarchy and gizmos" width="100%">
-  <br><em>Built-in scene editor (T8ditor) with ImGui, gizmos, grid, and real-time parameter tuning</em>
+  <br><sub>SSAO, PCF shadow mapping, and deferred lighting in the Sponza atrium</sub>
 </p>
 
 <p align="center">
   <img src="screenshots/PBR1.png" alt="PBR metallic-roughness rendering with IBL" width="48%" style="display:inline-block">
   <img src="screenshots/PBR2.png" alt="PBR model with environment reflections" width="48%" style="display:inline-block">
-  <br><em>PBR metallic-roughness workflow with image-based lighting — Sandbox scene with orbit camera and cubemap selector</em>
+  <br><sub>PBR metallic-roughness workflow with image-based lighting — Sandbox scene with orbit camera and cubemap selector</sub>
+</p>
+
+### Scene Editor (T8ditor)
+
+<p align="center">
+  <img src="screenshots/Editor.png" alt="T8ditor — scene editor with ImGui and gizmos" width="100%">
+  <br><sub>Built-in scene editor with ImGui panels, transform gizmos, grid overlay, and real-time parameter tuning</sub>
+</p>
+
+<p align="center">
+  <img src="screenshots/Editor2.png" alt="T8ditor — multi-model scene with hierarchy and lights" width="100%">
+  <br><sub>Multi-model scene with translate gizmo, hierarchy panel, omni light gizmos, inspector, and RT debug overlay</sub>
+</p>
+
+<p align="center">
+  <img src="screenshots/Editor3.png" alt="T8ditor — G-Buffer normal visualization" width="48%" style="display:inline-block">
+  <img src="screenshots/Editor4.png" alt="T8ditor — environment reflections with wireframe" width="48%" style="display:inline-block">
+  <br><sub>Left: G-Buffer normals debug view &nbsp;|&nbsp; Right: cubemap environment reflections with wireframe overlay and deferred output</sub>
 </p>
 
 ## Launcher
 
-The release package includes a GUI launcher (`T850Launcher.exe`) that lets you configure everything before running — no command line needed.
+The release package includes a GUI launcher (`T850Launcher.exe`) for configuring and running scenes without the command line.
 
 <p align="center">
-  <img src="screenshots/Launcher1.png" alt="T850 Launcher — Day scene selected with Vulkan API" width="80%">
-  <br><em>Launcher with Day scene selected — the Sponza atrium with full deferred pipeline, shadows, bloom, god rays, and SSAO</em>
+  <img src="screenshots/Launcher1.png" alt="T850 Launcher — Day scene" width="48%" style="display:inline-block">
+  <img src="screenshots/Launcher2.png" alt="T850 Launcher — Sandbox scene" width="48%" style="display:inline-block">
+  <br><sub>Left: Day scene — Sponza with full deferred pipeline &nbsp;|&nbsp; Right: Sandbox mode with model dropdown</sub>
 </p>
 
 - **Graphics API** — Choose between D3D11, D3D12, Vulkan, or OpenGL
@@ -44,14 +66,11 @@ The release package includes a GUI launcher (`T850Launcher.exe`) that lets you c
 - **Resolution** and **Fullscreen** — Set your preferred window size or go fullscreen
 - **Snapshot** — Dump all render targets to disk at a specific frame or time (useful for debugging and comparison across APIs)
 - **Logging** — Set verbosity level and optionally save logs to file
-- **RUN** launches the scene, **EDITOR** opens the built-in T8ditor (always runs on D3D12)
+- **RUN** launches the scene, **EDITOR** opens the built-in T8ditor (runs on D3D12 or Vulkan)
 
-<p align="center">
-  <img src="screenshots/Launcher2.png" alt="T850 Launcher — Sandbox scene with model dropdown" width="80%">
-  <br><em>Sandbox mode scans the Models/ directory and lists all available .glb/.gltf files — drop your own models in and they show up automatically</em>
-</p>
+When **Sandbox** is selected, a **Model** dropdown appears listing every `.glb` and `.gltf` file found in the `Models/` directory. Drop your own glTF models into that folder and they show up automatically.
 
-When **Sandbox** is selected, a **Model** dropdown appears listing every `.glb` and `.gltf` file found in the `Models/` directory. Just drop your own glTF models into that folder and they'll appear in the list on the next launch.
+---
 
 ## Features
 
@@ -99,8 +118,9 @@ Built from scratch with no third-party glTF library:
 - ImGui-based editor with gizmos (translate, rotate, scale)
 - Real-time parameter tuning via GUI sliders, checkboxes, and selectors
 - Grid overlay and line renderer for debugging
+- G-Buffer and render target debug visualization
 - Scene serialization to `.t8scene` JSON format
-- LDR deferred pass with depth-discard for clean viewport
+- Runs on D3D12 or Vulkan
 
 ### Engine Systems
 
@@ -132,9 +152,11 @@ Built from scratch with no third-party glTF library:
 | **Night** | Night variant with omnidirectional shadow mapping (cubemap depth), moving light agent on a spline path |
 | **Tech** | Technical showcase scene |
 
+---
+
 ## Editor Guide (T8ditor)
 
-T8ditor is a standalone scene editor that ships alongside the engine. It always runs on D3D12. Launch it from the **EDITOR** button in the Launcher, or directly:
+T8ditor is a standalone scene editor that ships alongside the engine. It runs on D3D12 or Vulkan. Launch it from the **EDITOR** button in the Launcher, or directly:
 
 ```
 T8ditor.exe --width 1920 --height 1080
@@ -263,6 +285,8 @@ Here's what a `.t8scene` file looks like:
 }
 ```
 
+---
+
 ## Project Structure
 
 ```
@@ -299,6 +323,8 @@ T850/
 │   ├── scripts/                # Build scripts, launchers, analysis tools
 │   └── bin/                    # Build outputs (x86, x64, ARM64)
 ```
+
+---
 
 ## Building from Source
 
@@ -378,6 +404,8 @@ Headless mode (`-DHEADLESS=ON`) enables EGL/GBM offscreen rendering for CI.
 | **glslang** | HLSL → SPIR-V compilation for Vulkan |
 | **ImGui / ImGuizmo** | Editor UI and 3D gizmos |
 | **vcpkg** | Package manager (bundled in repo) |
+
+---
 
 ## License
 

@@ -33,14 +33,8 @@
     <Filter Include="Source Files\utils">
       <UniqueIdentifier>{63e053be-8260-4813-ae01-bc3f06590eb0}</UniqueIdentifier>
     </Filter>
-    <Filter Include="Source Files\video\D3DX">
-      <UniqueIdentifier>{4b25e9ac-1ed0-4f5f-a772-8acfcfc07838}</UniqueIdentifier>
-    </Filter>
     <Filter Include="Source Files\video\GL">
       <UniqueIdentifier>{bee7611b-4f3d-4db3-a278-3ccc3ff56d11}</UniqueIdentifier>
-    </Filter>
-    <Filter Include="Header Files\video\D3DX">
-      <UniqueIdentifier>{c043e95d-4a64-4581-aae7-2adc039c7cf1}</UniqueIdentifier>
     </Filter>
     <Filter Include="Header Files\video\GL">
       <UniqueIdentifier>{f2cf3e98-b0bc-4354-bd5f-5df91dccb9ab}</UniqueIdentifier>
@@ -48,20 +42,44 @@
     <Filter Include="Shaders">
       <UniqueIdentifier>{da780f43-b73e-441b-a1b3-a1a56adda946}</UniqueIdentifier>
     </Filter>
-    <Filter Include="Shaders\D3D11">
-      <UniqueIdentifier>{3b13b26b-42f4-4811-8eb4-58b6a06471e6}</UniqueIdentifier>
-    </Filter>
     <Filter Include="Shaders\GLSL">
       <UniqueIdentifier>{afb89638-cc69-44cd-840d-7cef05f91e0f}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Header Files\video\d3d12">
+      <UniqueIdentifier>{7a2f8e3d-6c4b-4f1a-9d2e-8f5a3b1c9e0d}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Source Files\video\d3d12">
+      <UniqueIdentifier>{8b3g9f4e-7d5c-5g2b-0e3f-9g6b4c2d0f1e}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Header Files\video\vulkan">
+      <UniqueIdentifier>{9c4h0g5f-8e6d-6h3c-1f4g-0h7c5d3e1g2f}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Source Files\video\vulkan">
+      <UniqueIdentifier>{0d5i1h6g-9f7e-7i4d-2g5h-1i8d6e4f2h3g}</UniqueIdentifier>
     </Filter>
     <Filter Include="Source Files\ext">
       <UniqueIdentifier>{fa54be3f-6764-487d-a20f-9adc6984e9b3}</UniqueIdentifier>
     </Filter>
-    <Filter Include="Source Files\utils\gltf">
+    <Filter Include="Source Files\video\d3d11">
+      <UniqueIdentifier>{4b25e9ac-1ed0-4f5f-a772-8acfcfc07838}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Source Files\gltf">
       <UniqueIdentifier>{a8f01eaf-2c4f-4e2a-9e5c-3d22c1e07f01}</UniqueIdentifier>
     </Filter>
-    <Filter Include="Header Files\utils\gltf">
+    <Filter Include="Header Files\video\d3d11">
+      <UniqueIdentifier>{c043e95d-4a64-4581-aae7-2adc039c7cf1}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Header Files\gltf">
       <UniqueIdentifier>{b3c4d6f0-7e1f-4f1e-9b3a-2a01a8e0f902}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Shaders\HLSL">
+      <UniqueIdentifier>{3b13b26b-42f4-4811-8eb4-58b6a06471e6}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Source Files\gui">
+      <UniqueIdentifier>{5dbd3979-b70b-404c-b907-e7692e535a55}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Header Files\gui">
+      <UniqueIdentifier>{807894bf-e95e-4fbe-aa5f-6e72e46165d3}</UniqueIdentifier>
     </Filter>
   </ItemGroup>
   <ItemGroup>
@@ -84,19 +102,19 @@
       <Filter>Header Files\utils</Filter>
     </ClInclude>
     <ClInclude Include="include\utils\gltf\GLTFTypes.h">
-      <Filter>Header Files\utils\gltf</Filter>
+      <Filter>Header Files\gltf</Filter>
     </ClInclude>
     <ClInclude Include="include\utils\gltf\GLTFLoader.h">
-      <Filter>Header Files\utils\gltf</Filter>
+      <Filter>Header Files\gltf</Filter>
     </ClInclude>
     <ClInclude Include="include\utils\gltf\GLTFAccessor.h">
-      <Filter>Header Files\utils\gltf</Filter>
+      <Filter>Header Files\gltf</Filter>
     </ClInclude>
     <ClInclude Include="include\utils\gltf\GLTFImage.h">
-      <Filter>Header Files\utils\gltf</Filter>
+      <Filter>Header Files\gltf</Filter>
     </ClInclude>
     <ClInclude Include="include\utils\gltf\GLTFMaterial.h">
-      <Filter>Header Files\utils\gltf</Filter>
+      <Filter>Header Files\gltf</Filter>
     </ClInclude>
     <ClInclude Include="include\scene\PrimitiveBase.h">
       <Filter>Header Files\scene</Filter>
@@ -128,16 +146,31 @@
     <ClInclude Include="include\utils\Picking.h">
       <Filter>Header Files\utils</Filter>
     </ClInclude>
-    <ClInclude Include="include\video\GLDriver.h">
+    <ClInclude Include="include\video\gl\GLDriver.h">
       <Filter>Header Files\video\GL</Filter>
     </ClInclude>
-    <ClInclude Include="include\video\GLRT.h">
+    <ClInclude Include="include\video\gl\GLDeviceContext.h">
       <Filter>Header Files\video\GL</Filter>
     </ClInclude>
-    <ClInclude Include="include\video\GLShader.h">
+    <ClInclude Include="include\video\gl\GLDevice.h">
       <Filter>Header Files\video\GL</Filter>
     </ClInclude>
-    <ClInclude Include="include\video\GLTexture.h">
+    <ClInclude Include="include\video\gl\GLVertexBuffer.h">
+      <Filter>Header Files\video\GL</Filter>
+    </ClInclude>
+    <ClInclude Include="include\video\gl\GLIndexBuffer.h">
+      <Filter>Header Files\video\GL</Filter>
+    </ClInclude>
+    <ClInclude Include="include\video\gl\GLConstantBuffer.h">
+      <Filter>Header Files\video\GL</Filter>
+    </ClInclude>
+    <ClInclude Include="include\video\gl\GLRT.h">
+      <Filter>Header Files\video\GL</Filter>
+    </ClInclude>
+    <ClInclude Include="include\video\gl\GLShader.h">
+      <Filter>Header Files\video\GL</Filter>
+    </ClInclude>
+    <ClInclude Include="include\video\gl\GLTexture.h">
       <Filter>Header Files\video\GL</Filter>
     </ClInclude>
     <ClInclude Include="include\utils\cil.h">
@@ -146,17 +179,71 @@
     <ClInclude Include="T8_descriptors.h">
       <Filter>Header Files\utils</Filter>
     </ClInclude>
-    <ClInclude Include="include\video\windows\D3DXDriver.h">
-      <Filter>Header Files\video\D3DX</Filter>
+    <ClInclude Include="include\video\d3d12\D3D12Driver.h">
+      <Filter>Header Files\video\d3d12</Filter>
     </ClInclude>
-    <ClInclude Include="include\video\windows\D3DXRT.h">
-      <Filter>Header Files\video\D3DX</Filter>
+    <ClInclude Include="include\video\d3d12\D3D12Heap.h">
+      <Filter>Header Files\video\d3d12</Filter>
     </ClInclude>
-    <ClInclude Include="include\video\windows\D3DXShader.h">
-      <Filter>Header Files\video\D3DX</Filter>
+    <ClInclude Include="include\video\d3d12\D3D12VertexBuffer.h">
+      <Filter>Header Files\video\d3d12</Filter>
     </ClInclude>
-    <ClInclude Include="include\video\windows\D3DXTexture.h">
-      <Filter>Header Files\video\D3DX</Filter>
+    <ClInclude Include="include\video\d3d12\D3D12IndexBuffer.h">
+      <Filter>Header Files\video\d3d12</Filter>
+    </ClInclude>
+    <ClInclude Include="include\video\d3d12\D3D12ConstantBuffer.h">
+      <Filter>Header Files\video\d3d12</Filter>
+    </ClInclude>
+    <ClInclude Include="include\video\d3d12\D3D12DeviceContext.h">
+      <Filter>Header Files\video\d3d12</Filter>
+    </ClInclude>
+    <ClInclude Include="include\video\d3d12\D3D12Device.h">
+      <Filter>Header Files\video\d3d12</Filter>
+    </ClInclude>
+    <ClInclude Include="include\video\d3d12\D3D12PipelineKey.h">
+      <Filter>Header Files\video\d3d12</Filter>
+    </ClInclude>
+    <ClInclude Include="include\video\d3d12\D3D12Shader.h">
+      <Filter>Header Files\video\d3d12</Filter>
+    </ClInclude>
+    <ClInclude Include="include\video\d3d12\D3D12RT.h">
+      <Filter>Header Files\video\d3d12</Filter>
+    </ClInclude>
+    <ClInclude Include="include\video\d3d12\D3D12Texture.h">
+      <Filter>Header Files\video\d3d12</Filter>
+    </ClInclude>
+    <ClInclude Include="include\video\vulkan\VulkanDriver.h">
+      <Filter>Header Files\video\vulkan</Filter>
+    </ClInclude>
+    <ClInclude Include="include\video\vulkan\VulkanVertexBuffer.h">
+      <Filter>Header Files\video\vulkan</Filter>
+    </ClInclude>
+    <ClInclude Include="include\video\vulkan\VulkanIndexBuffer.h">
+      <Filter>Header Files\video\vulkan</Filter>
+    </ClInclude>
+    <ClInclude Include="include\video\vulkan\VulkanConstantBuffer.h">
+      <Filter>Header Files\video\vulkan</Filter>
+    </ClInclude>
+    <ClInclude Include="include\video\vulkan\VulkanTexture.h">
+      <Filter>Header Files\video\vulkan</Filter>
+    </ClInclude>
+    <ClInclude Include="include\video\vulkan\VulkanRT.h">
+      <Filter>Header Files\video\vulkan</Filter>
+    </ClInclude>
+    <ClInclude Include="include\video\vulkan\VulkanShader.h">
+      <Filter>Header Files\video\vulkan</Filter>
+    </ClInclude>
+    <ClInclude Include="include\video\vulkan\VulkanDeviceContext.h">
+      <Filter>Header Files\video\vulkan</Filter>
+    </ClInclude>
+    <ClInclude Include="include\video\vulkan\VulkanDevice.h">
+      <Filter>Header Files\video\vulkan</Filter>
+    </ClInclude>
+    <ClInclude Include="include\video\vulkan\VulkanPipelineKey.h">
+      <Filter>Header Files\video\vulkan</Filter>
+    </ClInclude>
+    <ClInclude Include="include\video\vulkan\VulkanUtils.h">
+      <Filter>Header Files\video\vulkan</Filter>
     </ClInclude>
     <ClInclude Include="include\core\windows\Win32Framework.h">
       <Filter>Header Files\core</Filter>
@@ -185,7 +272,7 @@
     <ClInclude Include="include\scene\RenderQuad.h">
       <Filter>Header Files\scene</Filter>
     </ClInclude>
-    <ClInclude Include="include\video\GLSLParser.h">
+    <ClInclude Include="include\video\gl\GLSLParser.h">
       <Filter>Header Files\video\GL</Filter>
     </ClInclude>
     <ClInclude Include="include\video\ShaderBase.h">
@@ -193,6 +280,87 @@
     </ClInclude>
     <ClInclude Include="include\scene\RenderMesh.h">
       <Filter>Header Files\scene</Filter>
+    </ClInclude>
+    <ClInclude Include="pch.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="include\video\d3d11\D3D11ConstantBuffer.h">
+      <Filter>Header Files\video\d3d11</Filter>
+    </ClInclude>
+    <ClInclude Include="include\video\d3d11\D3D11Device.h">
+      <Filter>Header Files\video\d3d11</Filter>
+    </ClInclude>
+    <ClInclude Include="include\video\d3d11\D3D11DeviceContext.h">
+      <Filter>Header Files\video\d3d11</Filter>
+    </ClInclude>
+    <ClInclude Include="include\video\d3d11\D3D11Driver.h">
+      <Filter>Header Files\video\d3d11</Filter>
+    </ClInclude>
+    <ClInclude Include="include\video\d3d11\D3D11IndexBuffer.h">
+      <Filter>Header Files\video\d3d11</Filter>
+    </ClInclude>
+    <ClInclude Include="include\video\d3d11\D3D11RT.h">
+      <Filter>Header Files\video\d3d11</Filter>
+    </ClInclude>
+    <ClInclude Include="include\video\d3d11\D3D11Shader.h">
+      <Filter>Header Files\video\d3d11</Filter>
+    </ClInclude>
+    <ClInclude Include="include\video\d3d11\D3D11Texture.h">
+      <Filter>Header Files\video\d3d11</Filter>
+    </ClInclude>
+    <ClInclude Include="include\video\d3d11\D3D11VertexBuffer.h">
+      <Filter>Header Files\video\d3d11</Filter>
+    </ClInclude>
+    <ClInclude Include="include\core\DevLayer.h">
+      <Filter>Header Files\core</Filter>
+    </ClInclude>
+    <ClInclude Include="include\debug\FrameDumper.h">
+      <Filter>Header Files\utils</Filter>
+    </ClInclude>
+    <ClInclude Include="include\gui\GUIElement.h">
+      <Filter>Header Files\gui</Filter>
+    </ClInclude>
+    <ClInclude Include="include\utils\GUIAtlasGenerator.h">
+      <Filter>Header Files\gui</Filter>
+    </ClInclude>
+    <ClInclude Include="include\gui\T8_GUI.h">
+      <Filter>Header Files\gui</Filter>
+    </ClInclude>
+    <ClInclude Include="include\scene\RenderGraph.h">
+      <Filter>Header Files\scene</Filter>
+    </ClInclude>
+    <ClInclude Include="include\scene\RenderGraphDescriptor.h">
+      <Filter>Header Files\scene</Filter>
+    </ClInclude>
+    <ClInclude Include="include\scene\SceneDescriptor.h">
+      <Filter>Header Files\scene</Filter>
+    </ClInclude>
+    <ClInclude Include="include\scene\SceneSetup.h">
+      <Filter>Header Files\scene</Filter>
+    </ClInclude>
+    <ClInclude Include="include\gui\SliderBarData.h">
+      <Filter>Header Files\gui</Filter>
+    </ClInclude>
+    <ClInclude Include="include\utils\Log.h">
+      <Filter>Header Files\utils</Filter>
+    </ClInclude>
+    <ClInclude Include="include\gui\SliderKnobData.h">
+      <Filter>Header Files\gui</Filter>
+    </ClInclude>
+    <ClInclude Include="include\utils\SPIRVReflection.h">
+      <Filter>Header Files\utils</Filter>
+    </ClInclude>
+    <ClInclude Include="include\debug\T8_Profiler.h">
+      <Filter>Header Files\utils</Filter>
+    </ClInclude>
+    <ClInclude Include="include\utils\ThreadPool.h">
+      <Filter>Header Files\utils</Filter>
+    </ClInclude>
+    <ClInclude Include="include\scene\WireframeArrow.h">
+      <Filter>Header Files\gui</Filter>
+    </ClInclude>
+    <ClInclude Include="include\scene\WireframeSphere.h">
+      <Filter>Header Files\gui</Filter>
     </ClInclude>
   </ItemGroup>
   <ItemGroup>
@@ -232,16 +400,31 @@
     <ClCompile Include="src\video\BaseDriver.cpp">
       <Filter>Source Files\video</Filter>
     </ClCompile>
-    <ClCompile Include="src\video\GLDriver.cpp">
+    <ClCompile Include="src\video\gl\GLDriver.cpp">
       <Filter>Source Files\video\GL</Filter>
     </ClCompile>
-    <ClCompile Include="src\video\GLRT.cpp">
+    <ClCompile Include="src\video\gl\GLDeviceContext.cpp">
       <Filter>Source Files\video\GL</Filter>
     </ClCompile>
-    <ClCompile Include="src\video\GLShader.cpp">
+    <ClCompile Include="src\video\gl\GLDevice.cpp">
       <Filter>Source Files\video\GL</Filter>
     </ClCompile>
-    <ClCompile Include="src\video\GLTexture.cpp">
+    <ClCompile Include="src\video\gl\GLVertexBuffer.cpp">
+      <Filter>Source Files\video\GL</Filter>
+    </ClCompile>
+    <ClCompile Include="src\video\gl\GLIndexBuffer.cpp">
+      <Filter>Source Files\video\GL</Filter>
+    </ClCompile>
+    <ClCompile Include="src\video\gl\GLConstantBuffer.cpp">
+      <Filter>Source Files\video\GL</Filter>
+    </ClCompile>
+    <ClCompile Include="src\video\gl\GLRT.cpp">
+      <Filter>Source Files\video\GL</Filter>
+    </ClCompile>
+    <ClCompile Include="src\video\gl\GLShader.cpp">
+      <Filter>Source Files\video\GL</Filter>
+    </ClCompile>
+    <ClCompile Include="src\video\gl\GLTexture.cpp">
       <Filter>Source Files\video\GL</Filter>
     </ClCompile>
     <ClCompile Include="src\utils\cil.cpp">
@@ -250,17 +433,65 @@
     <ClCompile Include="src\core\windows\Win32Framework.cpp">
       <Filter>Source Files\core</Filter>
     </ClCompile>
-    <ClCompile Include="src\video\windows\D3DXDriver.cpp">
-      <Filter>Source Files\video\D3DX</Filter>
+    <ClCompile Include="src\video\d3d12\D3D12Driver.cpp">
+      <Filter>Source Files\video\d3d12</Filter>
     </ClCompile>
-    <ClCompile Include="src\video\windows\D3DXRT.cpp">
-      <Filter>Source Files\video\D3DX</Filter>
+    <ClCompile Include="src\video\d3d12\D3D12Heap.cpp">
+      <Filter>Source Files\video\d3d12</Filter>
     </ClCompile>
-    <ClCompile Include="src\video\windows\D3DXShader.cpp">
-      <Filter>Source Files\video\D3DX</Filter>
+    <ClCompile Include="src\video\d3d12\D3D12VertexBuffer.cpp">
+      <Filter>Source Files\video\d3d12</Filter>
     </ClCompile>
-    <ClCompile Include="src\video\windows\D3DXTexture.cpp">
-      <Filter>Source Files\video\D3DX</Filter>
+    <ClCompile Include="src\video\d3d12\D3D12IndexBuffer.cpp">
+      <Filter>Source Files\video\d3d12</Filter>
+    </ClCompile>
+    <ClCompile Include="src\video\d3d12\D3D12ConstantBuffer.cpp">
+      <Filter>Source Files\video\d3d12</Filter>
+    </ClCompile>
+    <ClCompile Include="src\video\d3d12\D3D12DeviceContext.cpp">
+      <Filter>Source Files\video\d3d12</Filter>
+    </ClCompile>
+    <ClCompile Include="src\video\d3d12\D3D12Device.cpp">
+      <Filter>Source Files\video\d3d12</Filter>
+    </ClCompile>
+    <ClCompile Include="src\video\d3d12\D3D12Shader.cpp">
+      <Filter>Source Files\video\d3d12</Filter>
+    </ClCompile>
+    <ClCompile Include="src\video\d3d12\D3D12RT.cpp">
+      <Filter>Source Files\video\d3d12</Filter>
+    </ClCompile>
+    <ClCompile Include="src\video\d3d12\D3D12Texture.cpp">
+      <Filter>Source Files\video\d3d12</Filter>
+    </ClCompile>
+    <ClCompile Include="src\video\vulkan\VulkanDriver.cpp">
+      <Filter>Source Files\video\vulkan</Filter>
+    </ClCompile>
+    <ClCompile Include="src\video\vulkan\VulkanVertexBuffer.cpp">
+      <Filter>Source Files\video\vulkan</Filter>
+    </ClCompile>
+    <ClCompile Include="src\video\vulkan\VulkanIndexBuffer.cpp">
+      <Filter>Source Files\video\vulkan</Filter>
+    </ClCompile>
+    <ClCompile Include="src\video\vulkan\VulkanConstantBuffer.cpp">
+      <Filter>Source Files\video\vulkan</Filter>
+    </ClCompile>
+    <ClCompile Include="src\video\vulkan\VulkanTexture.cpp">
+      <Filter>Source Files\video\vulkan</Filter>
+    </ClCompile>
+    <ClCompile Include="src\video\vulkan\VulkanRT.cpp">
+      <Filter>Source Files\video\vulkan</Filter>
+    </ClCompile>
+    <ClCompile Include="src\video\vulkan\VulkanShader.cpp">
+      <Filter>Source Files\video\vulkan</Filter>
+    </ClCompile>
+    <ClCompile Include="src\video\vulkan\VulkanDeviceContext.cpp">
+      <Filter>Source Files\video\vulkan</Filter>
+    </ClCompile>
+    <ClCompile Include="src\video\vulkan\VulkanDevice.cpp">
+      <Filter>Source Files\video\vulkan</Filter>
+    </ClCompile>
+    <ClCompile Include="src\video\vulkan\VulkanUtils.cpp">
+      <Filter>Source Files\video\vulkan</Filter>
     </ClCompile>
     <ClCompile Include="src\utils\ResourceManager.cpp">
       <Filter>Source Files\utils</Filter>
@@ -286,7 +517,7 @@
     <ClCompile Include="src\scene\RenderQuad.cpp">
       <Filter>Source Files\scene</Filter>
     </ClCompile>
-    <ClCompile Include="src\video\GLSLParser.cpp">
+    <ClCompile Include="src\video\gl\GLSLParser.cpp">
       <Filter>Source Files\video\GL</Filter>
     </ClCompile>
     <ClCompile Include="src\scene\RenderMesh.cpp">
@@ -299,104 +530,179 @@
       <Filter>Source Files\ext</Filter>
     </ClCompile>
     <ClCompile Include="src\utils\gltf\GLTFLoader.cpp">
-      <Filter>Source Files\utils\gltf</Filter>
+      <Filter>Source Files\gltf</Filter>
     </ClCompile>
     <ClCompile Include="src\utils\gltf\GLTFJson.cpp">
-      <Filter>Source Files\utils\gltf</Filter>
+      <Filter>Source Files\gltf</Filter>
     </ClCompile>
     <ClCompile Include="src\utils\gltf\GLTFAccessor.cpp">
-      <Filter>Source Files\utils\gltf</Filter>
+      <Filter>Source Files\gltf</Filter>
     </ClCompile>
     <ClCompile Include="src\utils\gltf\GLTFBase64.cpp">
-      <Filter>Source Files\utils\gltf</Filter>
+      <Filter>Source Files\gltf</Filter>
     </ClCompile>
     <ClCompile Include="src\utils\gltf\GLTFImage.cpp">
-      <Filter>Source Files\utils\gltf</Filter>
+      <Filter>Source Files\gltf</Filter>
     </ClCompile>
     <ClCompile Include="src\utils\gltf\GLTFMaterial.cpp">
-      <Filter>Source Files\utils\gltf</Filter>
+      <Filter>Source Files\gltf</Filter>
     </ClCompile>
     <ClCompile Include="src\utils\gltf\GLTFMesh.cpp">
-      <Filter>Source Files\utils\gltf</Filter>
+      <Filter>Source Files\gltf</Filter>
     </ClCompile>
     <ClCompile Include="src\utils\gltf\GLTFAnimation.cpp">
-      <Filter>Source Files\utils\gltf</Filter>
+      <Filter>Source Files\gltf</Filter>
+    </ClCompile>
+    <ClCompile Include="pch.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="src\video\d3d11\D3D11ConstantBuffer.cpp">
+      <Filter>Source Files\video\d3d11</Filter>
+    </ClCompile>
+    <ClCompile Include="src\video\d3d11\D3D11Device.cpp">
+      <Filter>Source Files\video\d3d11</Filter>
+    </ClCompile>
+    <ClCompile Include="src\video\d3d11\D3D11DeviceContext.cpp">
+      <Filter>Source Files\video\d3d11</Filter>
+    </ClCompile>
+    <ClCompile Include="src\video\d3d11\D3D11Driver.cpp">
+      <Filter>Source Files\video\d3d11</Filter>
+    </ClCompile>
+    <ClCompile Include="src\video\d3d11\D3D11IndexBuffer.cpp">
+      <Filter>Source Files\video\d3d11</Filter>
+    </ClCompile>
+    <ClCompile Include="src\video\d3d11\D3D11RT.cpp">
+      <Filter>Source Files\video\d3d11</Filter>
+    </ClCompile>
+    <ClCompile Include="src\video\d3d11\D3D11Shader.cpp">
+      <Filter>Source Files\video\d3d11</Filter>
+    </ClCompile>
+    <ClCompile Include="src\video\d3d11\D3D11Texture.cpp">
+      <Filter>Source Files\video\d3d11</Filter>
+    </ClCompile>
+    <ClCompile Include="src\video\d3d11\D3D11VertexBuffer.cpp">
+      <Filter>Source Files\video\d3d11</Filter>
+    </ClCompile>
+    <ClCompile Include="src\debug\FrameDumper.cpp">
+      <Filter>Source Files\utils</Filter>
+    </ClCompile>
+    <ClCompile Include="src\debug\FrameDumperIO.cpp">
+      <Filter>Source Files\utils</Filter>
+    </ClCompile>
+    <ClCompile Include="src\core\DevLayer.cpp">
+      <Filter>Source Files\core</Filter>
+    </ClCompile>
+    <ClCompile Include="src\utils\GUIAtlasGenerator.cpp">
+      <Filter>Source Files\gui</Filter>
+    </ClCompile>
+    <ClCompile Include="src\gui\GUIElement.cpp">
+      <Filter>Source Files\gui</Filter>
+    </ClCompile>
+    <ClCompile Include="src\gui\T8_GUI.cpp">
+      <Filter>Source Files\gui</Filter>
+    </ClCompile>
+    <ClCompile Include="src\scene\RenderGraph.cpp">
+      <Filter>Source Files\scene</Filter>
+    </ClCompile>
+    <ClCompile Include="src\scene\SceneDescriptor.cpp">
+      <Filter>Source Files\scene</Filter>
+    </ClCompile>
+    <ClCompile Include="src\scene\SceneSetup.cpp">
+      <Filter>Source Files\scene</Filter>
+    </ClCompile>
+    <ClCompile Include="src\utils\ThreadPool.cpp">
+      <Filter>Source Files\utils</Filter>
+    </ClCompile>
+    <ClCompile Include="src\debug\T8_Profiler.cpp">
+      <Filter>Source Files\utils</Filter>
+    </ClCompile>
+    <ClCompile Include="src\utils\SPIRVReflection.cpp">
+      <Filter>Source Files\utils</Filter>
+    </ClCompile>
+    <ClCompile Include="src\utils\Log.cpp">
+      <Filter>Source Files\utils</Filter>
+    </ClCompile>
+    <ClCompile Include="src\scene\WireframeArrow.cpp">
+      <Filter>Source Files\gui</Filter>
+    </ClCompile>
+    <ClCompile Include="src\scene\WireframeSphere.cpp">
+      <Filter>Source Files\gui</Filter>
     </ClCompile>
   </ItemGroup>
   <ItemGroup>
-    <None Include="..\bin\Shaders\FS.glsl">
+    <None Include="..\Assets\Shaders\FS.glsl">
       <Filter>Shaders\GLSL</Filter>
     </None>
-    <None Include="..\bin\Shaders\FS_Mesh.glsl">
+    <None Include="..\Assets\Shaders\FS_Mesh.glsl">
       <Filter>Shaders\GLSL</Filter>
     </None>
-    <None Include="..\bin\Shaders\FS_Quad.glsl">
+    <None Include="..\Assets\Shaders\FS_Quad.glsl">
       <Filter>Shaders\GLSL</Filter>
     </None>
-    <None Include="..\bin\Shaders\FS_Text.glsl">
+    <None Include="..\Assets\Shaders\FS_Text.glsl">
       <Filter>Shaders\GLSL</Filter>
     </None>
-    <None Include="..\bin\Shaders\FS_tri.glsl">
+    <None Include="..\Assets\Shaders\FS_tri.glsl">
       <Filter>Shaders\GLSL</Filter>
     </None>
-    <None Include="..\bin\Shaders\FS_W.glsl">
+    <None Include="..\Assets\Shaders\FS_W.glsl">
       <Filter>Shaders\GLSL</Filter>
     </None>
-    <None Include="..\bin\Shaders\VS.glsl">
+    <None Include="..\Assets\Shaders\VS.glsl">
       <Filter>Shaders\GLSL</Filter>
     </None>
-    <None Include="..\bin\Shaders\VS_Mesh.glsl">
+    <None Include="..\Assets\Shaders\VS_Mesh.glsl">
       <Filter>Shaders\GLSL</Filter>
     </None>
-    <None Include="..\bin\Shaders\VS_Quad.glsl">
+    <None Include="..\Assets\Shaders\VS_Quad.glsl">
       <Filter>Shaders\GLSL</Filter>
     </None>
-    <None Include="..\bin\Shaders\VS_Text.glsl">
+    <None Include="..\Assets\Shaders\VS_Text.glsl">
       <Filter>Shaders\GLSL</Filter>
     </None>
-    <None Include="..\bin\Shaders\VS_tri.glsl">
+    <None Include="..\Assets\Shaders\VS_tri.glsl">
       <Filter>Shaders\GLSL</Filter>
     </None>
-    <None Include="..\bin\Shaders\VS_W.glsl">
+    <None Include="..\Assets\Shaders\VS_W.glsl">
       <Filter>Shaders\GLSL</Filter>
     </None>
   </ItemGroup>
   <ItemGroup>
-    <FxCompile Include="..\bin\Shaders\FS.hlsl">
-      <Filter>Shaders\D3D11</Filter>
+    <FxCompile Include="..\Assets\Shaders\FS.hlsl">
+      <Filter>Shaders\HLSL</Filter>
     </FxCompile>
-    <FxCompile Include="..\bin\Shaders\FS_Mesh.hlsl">
-      <Filter>Shaders\D3D11</Filter>
+    <FxCompile Include="..\Assets\Shaders\FS_Mesh.hlsl">
+      <Filter>Shaders\HLSL</Filter>
     </FxCompile>
-    <FxCompile Include="..\bin\Shaders\FS_Quad.hlsl">
-      <Filter>Shaders\D3D11</Filter>
+    <FxCompile Include="..\Assets\Shaders\FS_Quad.hlsl">
+      <Filter>Shaders\HLSL</Filter>
     </FxCompile>
-    <FxCompile Include="..\bin\Shaders\FS_Text.hlsl">
-      <Filter>Shaders\D3D11</Filter>
+    <FxCompile Include="..\Assets\Shaders\FS_Text.hlsl">
+      <Filter>Shaders\HLSL</Filter>
     </FxCompile>
-    <FxCompile Include="..\bin\Shaders\FS_tri.hlsl">
-      <Filter>Shaders\D3D11</Filter>
+    <FxCompile Include="..\Assets\Shaders\FS_tri.hlsl">
+      <Filter>Shaders\HLSL</Filter>
     </FxCompile>
-    <FxCompile Include="..\bin\Shaders\FS_W.hlsl">
-      <Filter>Shaders\D3D11</Filter>
+    <FxCompile Include="..\Assets\Shaders\FS_W.hlsl">
+      <Filter>Shaders\HLSL</Filter>
     </FxCompile>
-    <FxCompile Include="..\bin\Shaders\VS.hlsl">
-      <Filter>Shaders\D3D11</Filter>
+    <FxCompile Include="..\Assets\Shaders\VS.hlsl">
+      <Filter>Shaders\HLSL</Filter>
     </FxCompile>
-    <FxCompile Include="..\bin\Shaders\VS_Mesh.hlsl">
-      <Filter>Shaders\D3D11</Filter>
+    <FxCompile Include="..\Assets\Shaders\VS_Mesh.hlsl">
+      <Filter>Shaders\HLSL</Filter>
     </FxCompile>
-    <FxCompile Include="..\bin\Shaders\VS_Quad.hlsl">
-      <Filter>Shaders\D3D11</Filter>
+    <FxCompile Include="..\Assets\Shaders\VS_Quad.hlsl">
+      <Filter>Shaders\HLSL</Filter>
     </FxCompile>
-    <FxCompile Include="..\bin\Shaders\VS_Text.hlsl">
-      <Filter>Shaders\D3D11</Filter>
+    <FxCompile Include="..\Assets\Shaders\VS_Text.hlsl">
+      <Filter>Shaders\HLSL</Filter>
     </FxCompile>
-    <FxCompile Include="..\bin\Shaders\VS_tri.hlsl">
-      <Filter>Shaders\D3D11</Filter>
+    <FxCompile Include="..\Assets\Shaders\VS_tri.hlsl">
+      <Filter>Shaders\HLSL</Filter>
     </FxCompile>
-    <FxCompile Include="..\bin\Shaders\VS_W.hlsl">
-      <Filter>Shaders\D3D11</Filter>
+    <FxCompile Include="..\Assets\Shaders\VS_W.hlsl">
+      <Filter>Shaders\HLSL</Filter>
     </FxCompile>
   </ItemGroup>
 </Project>

@@ -14,7 +14,7 @@
   "display": {
     "fullscreen": false,
     "scene": 0,
-    "model": "Models/RiggedSimple.glb",
+    "model": "Models/SimpleSkin.gltf",
     "width": 1920,
     "height": 1080
   },

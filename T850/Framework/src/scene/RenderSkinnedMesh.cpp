@@ -127,8 +127,8 @@ namespace t800 {
       return;
     }
 
-    // Update animation (using a fixed timestep for now; TODO: use real delta)
-    float deltaTime = 1.0f / 60.0f;
+    // Update animation using scene delta time
+    float deltaTime = pScProp ? pScProp->FrameDeltaSec : (1.0f / 60.0f);
     m_animController.Update(deltaTime);
 
     // Copy bone matrices into all skinned cbuffers

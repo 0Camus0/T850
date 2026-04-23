@@ -17,3 +17,6 @@ T850/Librerias/vcpkg/
 
 # Built launcher EXE (build artifact — rebuild with scripts/build_launcher.ps1)
 T850/T850Launcher.exe
+
+# glTF sample models (reference only, not part of the project)
+glTF-Sample-Models/

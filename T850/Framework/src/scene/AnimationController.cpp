@@ -253,10 +253,15 @@ void AnimationController::ComputeHierarchy() {
   // Actually the convention is: Dad is the parent index.
   // We iterate in order, assuming parents come before children (common for
   // glTF which stores joints in topological order).
+  //
+  // Root bones include the non-skeleton ancestor world transform
+  // (RootParentWorld) so that the combined matrix matches the IBM.
+  const XMATRIX44& rootWorld = m_pSkeletonAnim->RootParentWorld;
+
   for (int i = 0; i < n; i++) {
     if (i == 0 || bones[i].Dad == static_cast<unsigned short>(i)) {
-      // Root bone: combined = local
-      bones[i].Combined = bones[i].Bone;
+      // Root bone: combined = local * ancestorWorld
+      bones[i].Combined = bones[i].Bone * rootWorld;
     } else {
       // Child: combined = local * parent.combined (row-vector convention)
       unsigned short dad = bones[i].Dad;

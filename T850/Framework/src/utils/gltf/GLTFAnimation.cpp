@@ -141,6 +141,37 @@ void BuildSkinsAndAnimations(const Document& doc,
       mc->SkeletonAnimated.NumBones = numJoints;
       mc->SkeletonAnimated.Bones.resize(numJoints);
 
+      // Compute the world transform of all non-skeleton ancestors above
+      // the skeleton root. The IBM includes the FULL world transform
+      // (including nodes outside the joint list), so ComputeHierarchy
+      // must also account for these ancestor transforms.
+      XMATRIX44 skeletonRootWorld;
+      skeletonRootWorld.Identity();
+      {
+        int skelRootNode = skin.skeleton.value_or(skin.joints[0]);
+        // Walk up from skeleton root's parent to scene root
+        int cur = skelRootNode;
+        std::vector<int> ancestors;
+        while (nodeParent.count(cur)) {
+          int p = nodeParent[cur];
+          // Only include ancestors that are NOT joints
+          if (nodeToJoint.find(p) == nodeToJoint.end()) {
+            ancestors.push_back(p);
+          }
+          cur = p;
+        }
+        // Multiply ancestor matrices from root down
+        for (int ai = static_cast<int>(ancestors.size()) - 1; ai >= 0; ai--) {
+          skeletonRootWorld = NodeLocalMatrix(doc.nodes[ancestors[ai]]) * skeletonRootWorld;
+        }
+        T8_LOG_INFO("[glTF] Skeleton root world: diag=(%.3f,%.3f,%.3f) trans=(%.3f,%.3f,%.3f)",
+          skeletonRootWorld.m[0][0], skeletonRootWorld.m[1][1], skeletonRootWorld.m[2][2],
+          skeletonRootWorld.m[3][0], skeletonRootWorld.m[3][1], skeletonRootWorld.m[3][2]);
+      }
+
+      mc->Skeleton.RootParentWorld = skeletonRootWorld;
+      mc->SkeletonAnimated.RootParentWorld = skeletonRootWorld;
+
       for (int j = 0; j < numJoints; j++) {
         int nodeIdx = skin.joints[j];
         xF::xBone& bone = mc->Skeleton.Bones[j];

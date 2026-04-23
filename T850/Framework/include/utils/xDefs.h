@@ -313,9 +313,10 @@ namespace xF {
 	};
 
 	struct xSkeleton {
-		xSkeleton() :NumBones(0) {}
+		xSkeleton() :NumBones(0) { RootParentWorld.Identity(); }
 		unsigned int						NumBones;
 		std::vector<xBone>					Bones;
+		XMATRIX44							RootParentWorld; // world transform of non-skeleton ancestor nodes
 	};
 
 	struct xAnimationSingleKey {

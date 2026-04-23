@@ -15,6 +15,7 @@
 #include <utils/Log.h>
 #include <cmath>
 #include <algorithm>
+#include <cstdio>
 
 namespace t800 {
 
@@ -365,6 +366,72 @@ XMATRIX44 AnimationController::QuaternionToMatrix(const XQUATERNION& q) {
   m.m[2][0] = 2.0f*(xz-wy);        m.m[2][1] = 2.0f*(yz+wx);        m.m[2][2] = 1.0f - 2.0f*(x2+y2); m.m[2][3] = 0.0f;
   m.m[3][0] = 0.0f;                m.m[3][1] = 0.0f;                m.m[3][2] = 0.0f;                m.m[3][3] = 1.0f;
   return m;
+}
+
+// ── Debug matrix dump ───────────────────────────────────
+
+void AnimationController::DumpMatrices(const char* filename) const {
+  if (!m_initialized) return;
+  FILE* f = fopen(filename, "w");
+  if (!f) { T8_LOG_ERROR("[AnimCtrl] DumpMatrices: cannot open '%s'", filename); return; }
+
+  fprintf(f, "=== AnimationController Dump ===\n");
+  fprintf(f, "NumBones: %d  TicksPerSecond: %.0f  CurrentSet: %d/%d\n",
+          m_numBones, m_ticksPerSecond, m_currentSet,
+          m_pAnimInfo ? (int)m_pAnimInfo->Animations.size() : 0);
+
+  if (m_pSkeletonAnim) {
+    fprintf(f, "\n=== Skeleton (Bind Pose + Current) ===\n");
+    fprintf(f, "RootParentWorld diag=(%.4f,%.4f,%.4f) trans=(%.4f,%.4f,%.4f)\n",
+            m_pSkeletonAnim->RootParentWorld.m[0][0], m_pSkeletonAnim->RootParentWorld.m[1][1],
+            m_pSkeletonAnim->RootParentWorld.m[2][2],
+            m_pSkeletonAnim->RootParentWorld.m[3][0], m_pSkeletonAnim->RootParentWorld.m[3][1],
+            m_pSkeletonAnim->RootParentWorld.m[3][2]);
+
+    int n = m_numBones < (int)m_pSkeletonAnim->Bones.size()
+          ? m_numBones : (int)m_pSkeletonAnim->Bones.size();
+    for (int i = 0; i < n; i++) {
+      const auto& b = m_pSkeletonAnim->Bones[i];
+      fprintf(f, "\nBone[%d] '%s' Dad=%d isRoot=%s\n", i, b.Name.c_str(), (int)b.Dad,
+              (b.Dad == (unsigned short)i) ? "YES" : "no");
+      fprintf(f, "  Local (Bone):\n");
+      for (int r = 0; r < 4; r++)
+        fprintf(f, "    [%.6f, %.6f, %.6f, %.6f]\n", b.Bone.m[r][0], b.Bone.m[r][1], b.Bone.m[r][2], b.Bone.m[r][3]);
+      fprintf(f, "  Combined (World):\n");
+      for (int r = 0; r < 4; r++)
+        fprintf(f, "    [%.6f, %.6f, %.6f, %.6f]\n", b.Combined.m[r][0], b.Combined.m[r][1], b.Combined.m[r][2], b.Combined.m[r][3]);
+    }
+  }
+
+  if (m_pSkinWeights) {
+    fprintf(f, "\n=== Inverse Bind Matrices ===\n");
+    int n = m_numBones < (int)m_pSkinWeights->size()
+          ? m_numBones : (int)m_pSkinWeights->size();
+    for (int i = 0; i < n; i++) {
+      const auto& sw = (*m_pSkinWeights)[i];
+      fprintf(f, "\nIBM[%d] '%s':\n", i, sw.NodeName.c_str());
+      for (int r = 0; r < 4; r++)
+        fprintf(f, "    [%.6f, %.6f, %.6f, %.6f]\n", sw.MatrixOffset.m[r][0], sw.MatrixOffset.m[r][1], sw.MatrixOffset.m[r][2], sw.MatrixOffset.m[r][3]);
+    }
+  }
+
+  fprintf(f, "\n=== Final Bone Matrices (sent to GPU) ===\n");
+  for (int i = 0; i < m_numBones; i++) {
+    const auto& fm = m_finalBoneMatrices[i];
+    // Check if near identity
+    float diagSum = fm.m[0][0] + fm.m[1][1] + fm.m[2][2];
+    float offDiag = std::abs(fm.m[0][1]) + std::abs(fm.m[0][2]) + std::abs(fm.m[1][0])
+                  + std::abs(fm.m[1][2]) + std::abs(fm.m[2][0]) + std::abs(fm.m[2][1]);
+    bool nearIdentity = (std::abs(diagSum - 3.0f) < 0.01f && offDiag < 0.01f
+                        && std::abs(fm.m[3][0]) < 0.01f && std::abs(fm.m[3][1]) < 0.01f
+                        && std::abs(fm.m[3][2]) < 0.01f);
+    fprintf(f, "\nFinal[%d]%s:\n", i, nearIdentity ? " ~IDENTITY" : "");
+    for (int r = 0; r < 4; r++)
+      fprintf(f, "    [%.6f, %.6f, %.6f, %.6f]\n", fm.m[r][0], fm.m[r][1], fm.m[r][2], fm.m[r][3]);
+  }
+
+  fclose(f);
+  T8_LOG_INFO("[AnimCtrl] Dumped matrices to '%s'", filename);
 }
 
 } // namespace t800

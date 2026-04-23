@@ -968,6 +968,7 @@ namespace t800 {
 
     // Reset per-frame descriptor pool and pending state
     vkResetDescriptorPool(m_device, m_descriptorPools[m_currentFrame], 0);
+    m_descriptorSetCache.clear();
     m_cbRingOffset = 0;
     m_cbDirty = false;
     memset(m_pendingTextures, 0, sizeof(m_pendingTextures));
@@ -1570,59 +1571,80 @@ reopen:
   }
 
   void VulkanDriver::BindPendingDescriptors(VkCommandBuffer cmd, VulkanShader* shader) {
-    VkDescriptorSet ds = AllocateDescriptorSet(shader->m_descriptorSetLayout);
-    if (!ds) return;
+    // Compute a fingerprint from layout + texture bindings to reuse descriptor sets
+    // when the same textures are bound across multiple draws (e.g. same material, different passes).
+    uint64_t fingerprint = (uint64_t)(uintptr_t)shader->m_descriptorSetLayout;
+    for (int i = 0; i < 8; i++) {
+      if (m_pendingTextures[i].imageView) {
+        fingerprint ^= ((uint64_t)(uintptr_t)m_pendingTextures[i].imageView) * (0x9e3779b97f4a7c15ULL + i);
+      }
+    }
 
-    std::vector<VkWriteDescriptorSet> writes;
-    std::vector<VkDescriptorImageInfo> imageInfos;
-    writes.reserve(16);
-    imageInfos.reserve(8);
-
-    // UBO binding — offset=0 in descriptor, actual offset passed as dynamic offset
     uint32_t dynamicOffset = 0;
-    VkDescriptorBufferInfo cbBufInfo = {};
     if (shader->cbvBinding >= 0) {
-      cbBufInfo.buffer = m_pendingCB.buffer;
-      cbBufInfo.offset = 0;
-      cbBufInfo.range  = m_pendingCB.range;
-      dynamicOffset    = (uint32_t)m_pendingCB.offset;
-
-      VkWriteDescriptorSet w = { VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET };
-      w.dstSet = ds;
-      w.dstBinding = (uint32_t)shader->cbvBinding;
-      w.descriptorCount = 1;
-      w.descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC;
-      w.pBufferInfo = &cbBufInfo;
-      writes.push_back(w);
+      dynamicOffset = (uint32_t)m_pendingCB.offset;
     }
 
-    // Texture bindings (from reflected srv bindings)
-    for (int slot = 0; slot < 8; slot++) {
-      if (shader->srvBindings[slot] < 0) continue;
+    auto it = m_descriptorSetCache.find(fingerprint);
+    VkDescriptorSet ds;
 
-      VkDescriptorImageInfo imgInfo = {};
-      imgInfo.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
-      // Use cubemap dummy for slots that expect cubemap views
-      VkImageView defaultView = shader->srvIsCubemap[slot] ? m_dummyCubeImageView : m_dummyImageView;
-      imgInfo.imageView = m_pendingTextures[slot].imageView ? m_pendingTextures[slot].imageView : defaultView;
-      imgInfo.sampler   = m_pendingTextures[slot].sampler   ? m_pendingTextures[slot].sampler   : m_dummySampler;
+    if (it != m_descriptorSetCache.end()) {
+      ds = it->second;
+    } else {
+      ds = AllocateDescriptorSet(shader->m_descriptorSetLayout);
+      if (!ds) return;
 
-      imageInfos.push_back(imgInfo);
+      std::vector<VkWriteDescriptorSet> writes;
+      std::vector<VkDescriptorImageInfo> imageInfos;
+      writes.reserve(16);
+      imageInfos.reserve(8);
 
-      VkWriteDescriptorSet w = { VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET };
-      w.dstSet = ds;
-      w.dstBinding = (uint32_t)shader->srvBindings[slot];
-      w.descriptorCount = 1;
-      w.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-      w.pImageInfo = &imageInfos.back();
-      writes.push_back(w);
+      // UBO binding — offset=0 in descriptor, actual offset passed as dynamic offset
+      VkDescriptorBufferInfo cbBufInfo = {};
+      if (shader->cbvBinding >= 0) {
+        cbBufInfo.buffer = m_pendingCB.buffer;
+        cbBufInfo.offset = 0;
+        cbBufInfo.range  = m_pendingCB.range;
+
+        VkWriteDescriptorSet w = { VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET };
+        w.dstSet = ds;
+        w.dstBinding = (uint32_t)shader->cbvBinding;
+        w.descriptorCount = 1;
+        w.descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC;
+        w.pBufferInfo = &cbBufInfo;
+        writes.push_back(w);
+      }
+
+      // Texture bindings (from reflected srv bindings)
+      for (int slot = 0; slot < 8; slot++) {
+        if (shader->srvBindings[slot] < 0) continue;
+
+        VkDescriptorImageInfo imgInfo = {};
+        imgInfo.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+        // Use cubemap dummy for slots that expect cubemap views
+        VkImageView defaultView = shader->srvIsCubemap[slot] ? m_dummyCubeImageView : m_dummyImageView;
+        imgInfo.imageView = m_pendingTextures[slot].imageView ? m_pendingTextures[slot].imageView : defaultView;
+        imgInfo.sampler   = m_pendingTextures[slot].sampler   ? m_pendingTextures[slot].sampler   : m_dummySampler;
+
+        imageInfos.push_back(imgInfo);
+
+        VkWriteDescriptorSet w = { VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET };
+        w.dstSet = ds;
+        w.dstBinding = (uint32_t)shader->srvBindings[slot];
+        w.descriptorCount = 1;
+        w.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+        w.pImageInfo = &imageInfos.back();
+        writes.push_back(w);
+      }
+
+      if (!writes.empty()) {
+        vkUpdateDescriptorSets(m_device, (uint32_t)writes.size(), writes.data(), 0, nullptr);
+      }
+
+      m_descriptorSetCache[fingerprint] = ds;
     }
 
-    if (!writes.empty()) {
-      vkUpdateDescriptorSets(m_device, (uint32_t)writes.size(), writes.data(), 0, nullptr);
-    }
-
-    // Bind with dynamic offset for UBO
+    // Always rebind with current dynamic UBO offset
     uint32_t dynOffsetCount = (shader->cbvBinding >= 0) ? 1 : 0;
     vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS,
                             shader->m_pipelineLayout, 0, 1, &ds,

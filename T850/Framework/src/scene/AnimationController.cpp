@@ -349,14 +349,20 @@ void AnimationController::ComputeFinalMatrices() {
   if (!m_pSkeletonAnim) return;
 
   auto& bones = m_pSkeletonAnim->Bones;
-  int n = m_numBones < static_cast<int>(bones.size())
-        ? m_numBones : static_cast<int>(bones.size());
+  int n = m_numBones;
 
-  for (int i = 0; i < n; i++) {
-    // FinalBoneMatrix = FlipZ( OurIBM[i] * AnimCombined[i] )
-    // Using our own IBM (exact inverse of bind-pose combined) instead of
-    // the glTF file's IBM avoids accumulated numerical drift in long chains.
-    XMATRIX44 rhResult = m_invBindPose[i] * bones[i].Combined;
+  // Use glTF's inverseBindMatrices when available (matches reference viewer),
+  // fall back to our own computed IBM otherwise.
+  bool useGltfIBM = (m_pSkinWeights != nullptr &&
+                     !m_pSkinWeights->empty());
+
+  for (int i = 0; i < n && i < static_cast<int>(bones.size()); i++) {
+    XMATRIX44 rhResult;
+    if (useGltfIBM && i < static_cast<int>(m_pSkinWeights->size())) {
+      rhResult = (*m_pSkinWeights)[i].MatrixOffset * bones[i].Combined;
+    } else {
+      rhResult = m_invBindPose[i] * bones[i].Combined;
+    }
     m_finalBoneMatrices[i] = FlipMatrixZ(rhResult);
   }
   // Remaining slots stay identity

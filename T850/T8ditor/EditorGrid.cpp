@@ -76,8 +76,11 @@ bool EditorGrid::Create(int halfExtent, float spacing) {
 }
 
 void EditorGrid::Destroy() {
-  // Buffer ownership is held by the driver; reset our handles so subsequent
-  // Create() calls can rebuild without leaking references.
+  if (m_minorVB) m_minorVB->release();
+  if (m_minorIB) m_minorIB->release();
+  if (m_axesVB)  m_axesVB->release();
+  if (m_xAxisIB) m_xAxisIB->release();
+  if (m_zAxisIB) m_zAxisIB->release();
   m_minorVB = nullptr;
   m_minorIB = nullptr;
   m_axesVB  = nullptr;

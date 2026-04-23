@@ -35,6 +35,9 @@ public:
   void SetLooping(bool loop) { m_looping = loop; }
   bool IsLooping() const     { return m_looping; }
 
+  void SetUseSlerp(bool slerp) { m_useSlerp = slerp; }
+  bool GetUseSlerp() const     { return m_useSlerp; }
+
   void SetSpeed(float speed) { m_speed = speed; }
   float GetSpeed() const     { return m_speed; }
 
@@ -59,6 +62,8 @@ private:
 
   // Quaternion SLERP
   static XQUATERNION Slerp(const XQUATERNION& a, const XQUATERNION& b, float t);
+  // Quaternion NLERP (normalized LERP — faster, adequate for small angles)
+  static XQUATERNION Nlerp(const XQUATERNION& a, const XQUATERNION& b, float t);
   // Quaternion to rotation matrix (row-major)
   static XMATRIX44 QuaternionToMatrix(const XQUATERNION& q);
 
@@ -76,6 +81,7 @@ private:
   int   m_currentSet    = 0;
   int   m_numBones      = 0;
   bool  m_looping       = true;
+  bool  m_useSlerp     = true;
   bool  m_initialized   = false;
 };
 

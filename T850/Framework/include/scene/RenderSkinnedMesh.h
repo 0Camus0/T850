@@ -129,11 +129,17 @@ private:
   ShaderBase*          m_wireShader = nullptr;
 
   // Skeleton bone lines (CPU-updated each frame)
-  LineRenderer         m_lineRenderer;
+  // Uses WireframeSphere-style shader (VS_W + FS_W) which is known to
+  // work on all GL backends, bypassing the LineRenderer.
+  ShaderBase*          m_skelShader     = nullptr;
+  ConstantBuffer*      m_skelCB         = nullptr;
   VertexBuffer*        m_skelVB         = nullptr;
   IndexBuffer*         m_skelIB         = nullptr;
   unsigned             m_skelIndexCount = 0;
   std::vector<float>   m_skelPositions;   // xyzw per bone endpoint
+
+  // LineRenderer kept for depth-tested wireframe overlays
+  LineRenderer         m_lineRenderer;
 };
 
 } // namespace t800

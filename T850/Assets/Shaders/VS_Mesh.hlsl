@@ -24,15 +24,16 @@ cbuffer ConstantBuffer{
 
 #ifdef USE_SKINNING_TEXTURE
 Texture2D<float4> BoneTexture : register(t7);
-int4 BoneTexSize;  // .x = texture width (passed via CB or as a constant)
 
 float4x4 getBoneMatrix(int index) {
+	uint texW, texH;
+	BoneTexture.GetDimensions(texW, texH);
 	int pixelIndex = index * 4;
-	int texW = BoneTexSize.x;
-	float4 r0 = BoneTexture.Load(int3(pixelIndex     % texW, pixelIndex     / texW, 0));
-	float4 r1 = BoneTexture.Load(int3((pixelIndex+1) % texW, (pixelIndex+1) / texW, 0));
-	float4 r2 = BoneTexture.Load(int3((pixelIndex+2) % texW, (pixelIndex+2) / texW, 0));
-	float4 r3 = BoneTexture.Load(int3((pixelIndex+3) % texW, (pixelIndex+3) / texW, 0));
+	int tw = (int)texW;
+	float4 r0 = BoneTexture.Load(int3(pixelIndex     % tw, pixelIndex     / tw, 0));
+	float4 r1 = BoneTexture.Load(int3((pixelIndex+1) % tw, (pixelIndex+1) / tw, 0));
+	float4 r2 = BoneTexture.Load(int3((pixelIndex+2) % tw, (pixelIndex+2) / tw, 0));
+	float4 r3 = BoneTexture.Load(int3((pixelIndex+3) % tw, (pixelIndex+3) / tw, 0));
 	return float4x4(r0, r1, r2, r3);
 }
 #endif

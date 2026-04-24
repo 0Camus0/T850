@@ -16,6 +16,7 @@
 #include <utils/Log.h>
 #include <core/Core.h>
 #include <cstring>
+#include <cmath>
 
 extern t800::AppBase *pApp;
 
@@ -46,14 +47,27 @@ namespace t800 {
       return;
     }
 
-    // Use quaternion+translation skinning on all backends (smaller CB, fits GL limit)
-    uint32_t skinBit = ShaderKey::HAS_SKINNING_QT;
-    m_useQuatSkinning = true;
+    // Use texture-based bone matrix skinning
+    uint32_t skinBit = ShaderKey::HAS_SKINNING_TEX;
 
     for (auto& meshInfo : Info) {
       for (auto& subset : meshInfo.SubSets) {
         subset.key.bits |= skinBit;
       }
+    }
+
+    // Create bone texture (RGBA32F, each bone = 4 texels for 4 matrix rows)
+    {
+      int numBones = static_cast<int>(mc->SkeletonAnimated.Bones.size());
+      if (numBones > kMaxBones) numBones = kMaxBones;
+      int numTexels = numBones * 4; // 4 texels per bone
+      m_boneTexWidth = static_cast<int>(std::ceil(std::sqrt(static_cast<float>(numTexels))));
+      if (m_boneTexWidth < 1) m_boneTexWidth = 1;
+      m_boneTexData.resize(m_boneTexWidth * m_boneTexWidth * 4, 0.0f); // RGBA per texel
+      m_boneTexture = T8Device->CreateFloatTexture(m_boneTexWidth, m_boneTexWidth,
+                                                    m_boneTexData.data());
+      T8_LOG_INFO("[SkinnedMesh] Bone texture: %dx%d (%d bones, %d texels)",
+                  m_boneTexWidth, m_boneTexWidth, numBones, numTexels);
     }
 
     // Recompile shaders with skinning enabled
@@ -114,8 +128,7 @@ namespace t800 {
       m_wireShader = g_pBaseDriver->GetShader(wireKey);
     }
 
-    // Allocate constant buffers — size depends on skinning mode
-    std::size_t cbSize = m_useQuatSkinning ? sizeof(CBufferSkinnedQT) : sizeof(CBufferSkinned);
+    // Allocate constant buffers — base CBuffer only (bones go via texture now)
     m_skinnedCBuffers.resize(Info.size());
     m_skinnedQTBuffers.resize(Info.size());
     for (std::size_t i = 0; i < Info.size(); i++) {
@@ -123,17 +136,10 @@ namespace t800 {
         Info[i].CB->release();
       }
       BufferDesc bdesc;
-      bdesc.byteWidth = static_cast<int>(cbSize);
+      bdesc.byteWidth = sizeof(RenderMesh::CBuffer);
       bdesc.usage = T8_BUFFER_USAGE::DEFAULT;
       Info[i].CB = (t800::ConstantBuffer*)T8Device->CreateBuffer(
           T8_BUFFER_TYPE::CONSTANT, bdesc, nullptr);
-
-      // Initialize bone data
-      for (int b = 0; b < kMaxBones; b++) {
-        m_skinnedCBuffers[i].BoneMatrices[b].Identity();
-        m_skinnedQTBuffers[i].BoneQuats[b] = XVECTOR3(0.0f, 0.0f, 0.0f, 1.0f);
-        m_skinnedQTBuffers[i].BoneTrans[b] = XVECTOR3(0.0f, 0.0f, 0.0f, 0.0f);
-      }
     }
 
     // Initialize animation controller
@@ -406,33 +412,26 @@ namespace t800 {
       m_animController.Update(deltaTime);
     }
 
-    // Copy bone data into skinned cbuffers based on mode
+    // Upload bone matrices to texture (RGBA32F, 4 texels per bone = 4 rows)
     int numBones = m_animController.GetNumBones();
     int count = (numBones < kMaxBones) ? numBones : kMaxBones;
-
-    if (m_useQuatSkinning) {
-      const XQUATERNION* quats = m_animController.GetBoneQuats();
-      const XVECTOR3*    trans = m_animController.GetBoneTrans();
-      for (std::size_t i = 0; i < m_skinnedQTBuffers.size() && i < Info.size(); i++) {
-        memcpy(&m_skinnedQTBuffers[i].WVP, &Info[i].CnstBuffer.WVP,
-               sizeof(RenderMesh::CBuffer));
-        for (int b = 0; b < count; b++) {
-          m_skinnedQTBuffers[i].BoneQuats[b] = XVECTOR3(quats[b].x, quats[b].y, quats[b].z, quats[b].w);
-          m_skinnedQTBuffers[i].BoneTrans[b] = trans[b];
-        }
-      }
-    } else {
+    {
       const XMATRIX44* bones = m_animController.GetBoneMatrices();
-      for (std::size_t i = 0; i < m_skinnedCBuffers.size() && i < Info.size(); i++) {
-        memcpy(&m_skinnedCBuffers[i].WVP, &Info[i].CnstBuffer.WVP,
-               sizeof(RenderMesh::CBuffer));
-        for (int b = 0; b < count; b++) {
-          m_skinnedCBuffers[i].BoneMatrices[b] = bones[b];
-        }
+      for (int b = 0; b < count; b++) {
+        int texelBase = b * 4 * 4; // 4 texels × 4 floats per texel
+        // Store rows: row 0,1,2,3 as consecutive RGBA texels
+        memcpy(&m_boneTexData[texelBase],      &bones[b].m[0][0], 16);
+        memcpy(&m_boneTexData[texelBase + 4],  &bones[b].m[1][0], 16);
+        memcpy(&m_boneTexData[texelBase + 8],  &bones[b].m[2][0], 16);
+        memcpy(&m_boneTexData[texelBase + 12], &bones[b].m[3][0], 16);
+      }
+      if (m_boneTexture) {
+        m_boneTexture->UpdateFloatData(*T8DeviceContext, m_boneTexWidth, m_boneTexWidth,
+                                       m_boneTexData.data());
       }
     }
 
-    // Now do the actual draw, similar to RenderMesh::Draw but using skinned CB
+    // Now do the actual draw using base CBuffer + bone texture
     Camera *pActualCamera = pScProp->pCameras[0];
     XMATRIX44 VP = pActualCamera->VP;
 
@@ -449,45 +448,26 @@ namespace t800 {
         continue;
       }
 
-      // Update matrices in the skinned cbuffer (base portion is same layout for both modes)
+      // Fill base CBuffer (no bone data — that's in the texture)
+      RenderMesh::CBuffer baseCB;
       XMATRIX44 WVP = transform * VP;
       XMATRIX44 WorldView = transform * pActualCamera->View;
       XVECTOR3 infoCam = XVECTOR3(pActualCamera->NPlane, pActualCamera->FPlane, pActualCamera->Fov, 1.0f);
 
-      // Get pointer to the base CBuffer portion (same offset in both structs)
-      CBufferSkinned& cb = m_skinnedCBuffers[i];
-      CBufferSkinnedQT& cbQT = m_skinnedQTBuffers[i];
-      auto& base = m_useQuatSkinning ? (CBufferSkinned&)cbQT : cb;
-      // Note: CBufferSkinnedQT has same base fields layout as CBufferSkinned
-      // (same first 15 fields). We can safely cast the first portion.
-
-      if (m_useQuatSkinning) {
-        cbQT.WVP = WVP; cbQT.World = transform; cbQT.WorldView = WorldView;
-        if (pScProp) {
-          cbQT.Light0Pos = pScProp->Lights[0].Position;
-          cbQT.Light0Col = pScProp->Lights[0].Color;
-          cbQT.CameraPos = pActualCamera->Eye;
-          cbQT.CameraInfo = infoCam;
-          cbQT.Light0Dir = pScProp->Lights[0].Direction;
-        }
-        cbQT.ParallaxSettings = XVECTOR3(m_fParallaxLowSamples, m_fParallaxHighSamples, m_fParallaxHeight);
-        cbQT.ParallaxSettings.w = m_fParallaxEnabled;
-        cbQT.ParallaxShadowSettings = XVECTOR3(m_fParallaxShadowMinLayers, m_fParallaxShadowMaxLayers, m_fParallaxShadowSoftness);
-        cbQT.ParallaxShadowSettings.w = m_fParallaxShadowStrength;
-      } else {
-        cb.WVP = WVP; cb.World = transform; cb.WorldView = WorldView;
-        if (pScProp) {
-          cb.Light0Pos = pScProp->Lights[0].Position;
-          cb.Light0Col = pScProp->Lights[0].Color;
-          cb.CameraPos = pActualCamera->Eye;
-          cb.CameraInfo = infoCam;
-          cb.Light0Dir = pScProp->Lights[0].Direction;
-        }
-        cb.ParallaxSettings = XVECTOR3(m_fParallaxLowSamples, m_fParallaxHighSamples, m_fParallaxHeight);
-        cb.ParallaxSettings.w = m_fParallaxEnabled;
-        cb.ParallaxShadowSettings = XVECTOR3(m_fParallaxShadowMinLayers, m_fParallaxShadowMaxLayers, m_fParallaxShadowSoftness);
-        cb.ParallaxShadowSettings.w = m_fParallaxShadowStrength;
+      baseCB.WVP = WVP;
+      baseCB.World = transform;
+      baseCB.WorldView = WorldView;
+      if (pScProp) {
+        baseCB.Light0Pos = pScProp->Lights[0].Position;
+        baseCB.Light0Col = pScProp->Lights[0].Color;
+        baseCB.CameraPos = pActualCamera->Eye;
+        baseCB.CameraInfo = infoCam;
+        baseCB.Light0Dir = pScProp->Lights[0].Direction;
       }
+      baseCB.ParallaxSettings = XVECTOR3(m_fParallaxLowSamples, m_fParallaxHighSamples, m_fParallaxHeight);
+      baseCB.ParallaxSettings.w = m_fParallaxEnabled;
+      baseCB.ParallaxShadowSettings = XVECTOR3(m_fParallaxShadowMinLayers, m_fParallaxShadowMaxLayers, m_fParallaxShadowSoftness);
+      baseCB.ParallaxShadowSettings.w = m_fParallaxShadowStrength;
 
       unsigned int stride = it_MeshInfo->VertexSize;
       unsigned int offset = 0;
@@ -503,21 +483,12 @@ namespace t800 {
         if (!AABBInsideFrustum(sub_info->bounds, transform, frustumPlanes))
           continue;
 
-        if (m_useQuatSkinning) {
-          cbQT.AmbientColor = sub_info->AmbientColor;
-          cbQT.DiffuseColor = sub_info->DiffuseColor;
-          cbQT.SpecularColor = sub_info->SpecularColor;
-          cbQT.PBRParams = sub_info->PBRParams;
-          cbQT.Intensities = sub_info->Intensities;
-          cbQT.Intensities.w = (float)sub_info->MatID;
-        } else {
-          cb.AmbientColor = sub_info->AmbientColor;
-          cb.DiffuseColor = sub_info->DiffuseColor;
-          cb.SpecularColor = sub_info->SpecularColor;
-          cb.PBRParams = sub_info->PBRParams;
-          cb.Intensities = sub_info->Intensities;
-          cb.Intensities.w = (float)sub_info->MatID;
-        }
+        baseCB.AmbientColor = sub_info->AmbientColor;
+        baseCB.DiffuseColor = sub_info->DiffuseColor;
+        baseCB.SpecularColor = sub_info->SpecularColor;
+        baseCB.PBRParams = sub_info->PBRParams;
+        baseCB.Intensities = sub_info->Intensities;
+        baseCB.Intensities.w = (float)sub_info->MatID;
 
         sub_info->IB->Set(*T8DeviceContext, 0,
                           sub_info->IB32Bit ? T8_IB_FORMAR::R32
@@ -538,13 +509,12 @@ namespace t800 {
         if (!s) continue;
 
         s->Set(*T8DeviceContext);
-        // Upload the skinned CB (matrix or QT variant)
-        if (m_useQuatSkinning) {
-          it_MeshInfo->CB->UpdateFromBuffer(*T8DeviceContext, &cbQT.WVP[0]);
-        } else {
-          it_MeshInfo->CB->UpdateFromBuffer(*T8DeviceContext, &cb.WVP[0]);
-        }
+        it_MeshInfo->CB->UpdateFromBuffer(*T8DeviceContext, &baseCB.WVP[0]);
         it_MeshInfo->CB->Set(*T8DeviceContext);
+
+        // Bind bone texture to VS slot 7
+        if (m_boneTexture)
+          m_boneTexture->SetVS(*T8DeviceContext, 7, "u_BoneTex");
 
         if (s->key.has(ShaderKey::DIFFUSE_MAP) && sub_info->DiffuseTex)
           sub_info->DiffuseTex->Set(*T8DeviceContext, 0, "DiffuseTex");

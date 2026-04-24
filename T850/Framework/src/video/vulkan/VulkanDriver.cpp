@@ -980,6 +980,12 @@ namespace t800 {
     m_cbDirty = false;
     memset(m_pendingTextures, 0, sizeof(m_pendingTextures));
 
+    // Clean up deferred staging buffers from this frame slot (now safe — GPU done with it)
+    for (auto& db : m_deferredCleanup[m_currentFrame]) {
+      vmaDestroyBuffer(m_allocator, db.buffer, db.alloc);
+    }
+    m_deferredCleanup[m_currentFrame].clear();
+
     // Reserve a dummy CB region so draws without explicit CB still have valid descriptors
     m_pendingCB = {};
     m_pendingCB.buffer = m_cbRingBuffers[m_currentFrame];
@@ -997,6 +1003,33 @@ namespace t800 {
   }
 
   void VulkanDriver::EndFrame() {}
+
+  VkCommandBuffer VulkanDriver::GetTransientCommandBuffer() {
+    VkCommandBufferAllocateInfo allocInfo = { VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO };
+    allocInfo.commandPool = m_transientCommandPool;
+    allocInfo.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
+    allocInfo.commandBufferCount = 1;
+    VkCommandBuffer cmd;
+    vkAllocateCommandBuffers(m_device, &allocInfo, &cmd);
+    VkCommandBufferBeginInfo beginInfo = { VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO };
+    beginInfo.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
+    vkBeginCommandBuffer(cmd, &beginInfo);
+    return cmd;
+  }
+
+  void VulkanDriver::SubmitTransientCommandBuffer(VkCommandBuffer cmd) {
+    vkEndCommandBuffer(cmd);
+    VkSubmitInfo submitInfo = { VK_STRUCTURE_TYPE_SUBMIT_INFO };
+    submitInfo.commandBufferCount = 1;
+    submitInfo.pCommandBuffers = &cmd;
+    vkQueueSubmit(m_graphicsQueue, 1, &submitInfo, VK_NULL_HANDLE);
+    vkQueueWaitIdle(m_graphicsQueue);
+    vkFreeCommandBuffers(m_device, m_transientCommandPool, 1, &cmd);
+  }
+
+  void VulkanDriver::DeferCleanup(VkBuffer buffer, VmaAllocation alloc) {
+    m_deferredCleanup[m_currentFrame].push_back({ buffer, alloc });
+  }
 
   void VulkanDriver::BuildPipelineObjects() {
     T8_LOG_INFO("[Vulkan] BuildPipelineObjects");

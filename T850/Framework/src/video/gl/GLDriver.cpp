@@ -320,8 +320,8 @@ namespace t800 {
       glDisable(GL_DEPTH_TEST);
       break;
     case t800::BaseDriver::READ:
-     // glDepthMask(GL_FALSE);
-      glDisable(GL_DEPTH_TEST);
+      glDepthMask(GL_FALSE);
+      glEnable(GL_DEPTH_TEST);
       break;
     default:
       break;

@@ -424,6 +424,8 @@ void SC_SandBox::OnDraw() {
         skinned->DrawWireframe();
       }
       if (m_showSkeleton) {
+        pFramework->pVideoDriver->SetDepthStencilState(BaseDriver::NONE);
+        pFramework->pVideoDriver->SetBlendState(BaseDriver::BLEND_DEFAULT);
         skinned->DrawSkeleton();
       }
     }

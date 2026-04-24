@@ -63,7 +63,7 @@ public:
   }
 
 private:
-  void InterpolateKeys(float dt);
+  void InterpolateKeys(float tickTime);
   void ComputeHierarchy();
   void ComputeFinalMatrices();
   void ComputeBindPose();       // compute bind-pose combined + own IBM

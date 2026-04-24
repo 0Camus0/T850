@@ -13,6 +13,7 @@
 
 #include <video/gl/GLConstantBuffer.h>
 #include <video/gl/GLShader.h>
+#include <utils/Log.h>
 
 #ifdef T850_HEADLESS
 #include <GLES3/gl31.h>
@@ -61,6 +62,13 @@ namespace t800 {
     GLShader* sh = reinterpret_cast<GLShader*>(deviceContext.actualShaderSet);
 
     for (auto &it : sh->internalUniformsLocs) {
+      // Bounds check: skip if uniform byte position exceeds CB data size
+      int endPos = it.bufferBytePosition + it.size;
+      if (it.bufferBytePosition < 0 || endPos > (int)sysMemCpy.size()) {
+        T8_LOG_ERROR("[GL] CB::Set uniform '%s' bytePos=%d size=%d exceeds CB size %d — skipped",
+                     it.name.c_str(), it.bufferBytePosition, it.size, (int)sysMemCpy.size());
+        continue;
+      }
       switch (it.type)
       {
       case hyperspace::shader::datatype_::INT_:

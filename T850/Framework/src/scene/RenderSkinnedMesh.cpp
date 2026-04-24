@@ -325,9 +325,10 @@ namespace t800 {
     if (!pScProp || pScProp->pCameras.empty()) return;
     Camera* cam = pScProp->pCameras[0];
 
+    T8_LOG_TRACE("[DrawSkel] UpdatePositions count=%d", (int)m_skelPositions.size());
     UpdateSkeletonPositions();
 
-    // Update existing VB with current bone positions
+    T8_LOG_TRACE("[DrawSkel] UpdateFromBuffer size=%d", m_skelVB->descriptor.byteWidth);
     m_skelVB->UpdateFromBuffer(*T8DeviceContext, m_skelPositions.data());
 
     m_lineRenderer.SetDepthTestEnabled(false);
@@ -336,8 +337,10 @@ namespace t800 {
     identity.Identity();
     XVECTOR3 skelColor(1.0f, 0.0f, 1.0f, 1.0f);  // magenta
 
+    T8_LOG_TRACE("[DrawSkel] DrawLines idxCount=%d", m_skelIndexCount);
     m_lineRenderer.DrawLines(identity, cam->VP, skelColor,
                              m_skelVB, m_skelIB, m_skelIndexCount, 16, T8_IB_FORMAR::R16);
+    T8_LOG_TRACE("[DrawSkel] done");
   }
 
   // ── Main draw ──────────────────────────────────────────

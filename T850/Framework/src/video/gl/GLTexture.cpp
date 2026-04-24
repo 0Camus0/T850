@@ -207,6 +207,12 @@ namespace t800 {
       glActiveTexture(slot_active);
       glBindTexture(glTarget, id);
       glUniform1i(APITextureLoc, slot);
+    } else {
+      static bool sLogged = false;
+      if (!sLogged && name == "u_BoneTex") {
+        T8_LOG_ERROR("[GL] Bone texture uniform '%s' NOT FOUND in prog=%d", name.c_str(), deb);
+        sLogged = true;
+      }
     }
   }
 

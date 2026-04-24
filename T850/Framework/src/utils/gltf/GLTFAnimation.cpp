@@ -210,7 +210,6 @@ void BuildSkinsAndAnimations(const Document& doc,
             cur = p;  // keep walking up
           }
           // Multiply intermediate transforms from closest to farthest ancestor
-          // so that: Bone_local = nodeLocal * intermediate_1 * intermediate_2 ...
           for (int ii = 0; ii < static_cast<int>(intermediates.size()); ii++) {
             int ni = intermediates[ii];
             if (ni >= 0 && ni < static_cast<int>(doc.nodes.size()))
@@ -218,12 +217,14 @@ void BuildSkinsAndAnimations(const Document& doc,
           }
         }
 
+        // Store intermediate transform separately — applied in ComputeHierarchy.
+        // NOT baked into Bone because animation keyframes overwrite Bone.
+        bone.IntermediateTransform = intermediateTransform;
+        boneAnim.IntermediateTransform = intermediateTransform;
+
         // Local TRS matrix (bind pose) — kept in RH space.
-        // Bake intermediate non-joint node transforms into the joint's local
-        // matrix so ComputeHierarchy (which only knows about joints) produces
-        // correct world-space combined matrices.
         if (nodeIdx >= 0 && nodeIdx < static_cast<int>(doc.nodes.size())) {
-          bone.Bone = NodeLocalMatrix(doc.nodes[nodeIdx]) * intermediateTransform;
+          bone.Bone = NodeLocalMatrix(doc.nodes[nodeIdx]);
           boneAnim.Bone = bone.Bone;
         }
 

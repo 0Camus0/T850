@@ -378,16 +378,20 @@ void AnimationController::ComputeHierarchy() {
   const XMATRIX44& rootWorld = m_pSkeletonAnim->RootParentWorld;
 
   for (int i = 0; i < n; i++) {
+    // Apply intermediate non-joint transforms between this joint and its parent joint
+    // Combined = (Bone * Intermediate) * parent.Combined
+    XMATRIX44 localWithIntermediate = bones[i].Bone * bones[i].IntermediateTransform;
+
     if (i == 0 || bones[i].Dad == static_cast<unsigned short>(i)) {
       // Root bone: combined = local * ancestorWorld
-      bones[i].Combined = bones[i].Bone * rootWorld;
+      bones[i].Combined = localWithIntermediate * rootWorld;
     } else {
       // Child: combined = local * parent.combined (row-vector convention)
       unsigned short dad = bones[i].Dad;
       if (dad < n) {
-        bones[i].Combined = bones[i].Bone * bones[dad].Combined;
+        bones[i].Combined = localWithIntermediate * bones[dad].Combined;
       } else {
-        bones[i].Combined = bones[i].Bone;
+        bones[i].Combined = localWithIntermediate;
       }
     }
   }
@@ -426,14 +430,16 @@ void AnimationController::ComputeBindPose() {
 
   // Compute bind-pose combined (world) matrices from the ORIGINAL node TRS
   for (int i = 0; i < n; i++) {
+    XMATRIX44 localWithIntermediate = bindBones[i].Bone * bindBones[i].IntermediateTransform;
+
     if (i == 0 || bindBones[i].Dad == static_cast<unsigned short>(i)) {
-      bindBones[i].Combined = bindBones[i].Bone * rootWorld;
+      bindBones[i].Combined = localWithIntermediate * rootWorld;
     } else {
       unsigned short dad = bindBones[i].Dad;
       if (dad < n)
-        bindBones[i].Combined = bindBones[i].Bone * bindBones[dad].Combined;
+        bindBones[i].Combined = localWithIntermediate * bindBones[dad].Combined;
       else
-        bindBones[i].Combined = bindBones[i].Bone;
+        bindBones[i].Combined = localWithIntermediate;
     }
     // Compute our own IBM as the exact inverse of the bind-pose combined
     m_invBindPose[i] = InvertAffine(bindBones[i].Combined);

@@ -200,7 +200,9 @@ void SC_Tech::InitVars() {
   extern int g_dumpFrame, g_startScene;
   extern float g_dumpSeconds;
   extern std::string g_replaySnapshotPath;
+#ifdef T8_ENABLE_PROFILER
   extern bool g_profile;
+#endif
   FrameDumperConfig dumpCfg;
   dumpCfg.dumpEnabled     = g_dumpEnabled;
   dumpCfg.dumpByFrame     = g_dumpByFrame;
@@ -468,8 +470,12 @@ void SC_Tech::OnDraw() {
   Quads[7].Draw();
 
   // RT Dump via FrameDumper (skip when profiling — GPU queries conflict with dump's cmd buffer reset)
+#ifdef T8_ENABLE_PROFILER
   extern bool g_profile;
   if (m_dumper.ShouldDump(DtSecs) && !g_profile) {
+#else
+  if (m_dumper.ShouldDump(DtSecs)) {
+#endif
     std::vector<RTDumpEntry> rts = {
       {GBufferPass,     BaseDriver::COLOR0_ATTACHMENT, "GBuffer_Color0"},
       {GBufferPass,     BaseDriver::COLOR1_ATTACHMENT, "GBuffer_Normals"},
@@ -483,8 +489,12 @@ void SC_Tech::OnDraw() {
       {GodRaysCalcPass, BaseDriver::COLOR0_ATTACHMENT, "GodRays"},
     };
     m_dumper.DumpFrame(pFramework->pVideoDriver, Cam, LightCam, SceneProp, rts, DtSecs);
+#ifdef T8_ENABLE_PROFILER
     extern bool g_profile;
     if (m_dumper.ShouldExit() && !g_profile) exit(0);
+#else
+    if (m_dumper.ShouldExit()) exit(0);
+#endif
   }
 }
 

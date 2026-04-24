@@ -124,7 +124,12 @@ private:
   bool m_hasSkin = false;
   bool m_playing = true;
   bool m_useSlerp = true;
-  bool m_useQuatSkinning = false; // default to QT path (smaller CB, fewer ops)
+  bool m_useQuatSkinning = false;
+
+  // ── Bone texture (RGBA32F, updated per-frame) ──
+  Texture*             m_boneTexture    = nullptr;
+  int                  m_boneTexWidth   = 0;
+  std::vector<float>   m_boneTexData;       // RGBA32F pixel data
 
   // ── Wireframe state (GPU-skinned) ──
   struct WireGeo {

@@ -399,8 +399,8 @@ namespace t800 {
       sDumped = true;
     }
 
-    // Update animation using scene delta time
-    if (m_playing) {
+    // Update animation using scene delta time (skip in keyframe mode — StepKeyframe handles it)
+    if (m_playing && !m_animController.GetKeyframeMode()) {
       m_animController.SetUseSlerp(m_useSlerp);
       float deltaTime = pScProp ? pScProp->FrameDeltaSec : (1.0f / 60.0f);
       m_animController.Update(deltaTime);

@@ -289,6 +289,15 @@ void SC_SandBox::OnInput(InputManager* IManager) {
     m_showCullStats = !m_showCullStats;
   if (IManager->PressedOnceKey(T800K_F3))
     m_showAABBs = !m_showAABBs;
+
+  // Arrow keys: step keyframes when in keyframe mode
+  RenderSkinnedMesh* sk = Meshes[0].GetSkinnedMesh();
+  if (sk && sk->GetKeyframeMode()) {
+    if (IManager->PressedOnceKey(T800K_RIGHT))
+      sk->StepKeyframe(1);
+    if (IManager->PressedOnceKey(T800K_LEFT))
+      sk->StepKeyframe(-1);
+  }
 }
 
 void SC_SandBox::FitModelToView() {
@@ -545,6 +554,7 @@ void SC_SandBox::PopulateGUI(t800::GUIManager& gui) {
     {"gauss_kernel_sample_count", CHANGE_GAUSS_KERNEL_SAMPLE_COUNT},
     {"active_gauss_kernel",        CHANGE_ACTIVE_GAUSS_KERNEL},
     {"anim_select",                CHANGE_ANIM_SELECT},
+    {"anim_mode",                  CHANGE_ANIM_MODE},
   };
 
   for (auto& sd : m_guiSetup.descriptor.selectors) {
@@ -732,6 +742,16 @@ void SC_SandBox::SyncFromGUI(t800::GUIManager& gui) {
         // Switch to selected animation set
         while (sk->GetCurrentAnimSet() != sel->selectedIndex) {
           sk->NextAnimation();
+        }
+      }
+    } break;
+    case CHANGE_ANIM_MODE: {
+      RenderSkinnedMesh* sk = Meshes[0].GetSkinnedMesh();
+      if (sk) {
+        bool keyMode = (sel->selectedIndex == 1);
+        sk->SetKeyframeMode(keyMode);
+        if (keyMode) {
+          sk->StepKeyframe(0); // snap to current keyframe
         }
       }
     } break;

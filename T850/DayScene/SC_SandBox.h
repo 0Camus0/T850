@@ -49,6 +49,7 @@ class SC_SandBox : public t800::SceneBase
     // Animation controls (only active for skinned meshes)
     CHANGE_ANIM_SPEED,
     CHANGE_ANIM_SELECT,
+    CHANGE_ANIM_MODE,     // selector: "Interpolation" / "Keyframe"
     CHANGE_SHOW_WIREFRAME,
     CHANGE_SHOW_SKELETON,
     CHANGE_MAX_NUM_OPTIONS

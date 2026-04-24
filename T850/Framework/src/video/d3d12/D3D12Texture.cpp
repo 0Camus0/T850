@@ -357,6 +357,49 @@ namespace t800 {
     }
   }
 
+  void D3D12Texture::UpdateFloatData(const DeviceContext& deviceContext, int w, int h, const float* data) {
+    if (!pTexResource || !m_uploadBuffer || !data) return;
+    auto* cmdList = static_cast<const D3D12DeviceContext*>(&deviceContext)->GetCommandList();
+    auto* device = reinterpret_cast<ID3D12Device*>(T8Device->GetAPIObject());
+
+    // Get texture footprint for row pitch
+    D3D12_RESOURCE_DESC texDesc = pTexResource->GetDesc();
+    D3D12_PLACED_SUBRESOURCE_FOOTPRINT layout;
+    UINT numRows; UINT64 rowSize;
+    device->GetCopyableFootprints(&texDesc, 0, 1, 0, &layout, &numRows, &rowSize, nullptr);
+
+    // Copy data to upload buffer (respecting row pitch alignment)
+    void* mapped = nullptr;
+    m_uploadBuffer->Map(0, nullptr, &mapped);
+    for (UINT r = 0; r < numRows; r++) {
+      memcpy((uint8_t*)mapped + layout.Offset + r * layout.Footprint.RowPitch,
+             (const uint8_t*)data + r * w * 16, w * 16);
+    }
+    m_uploadBuffer->Unmap(0, nullptr);
+
+    // Barrier: SRV → COPY_DEST
+    D3D12_RESOURCE_BARRIER barrier = {};
+    barrier.Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
+    barrier.Transition.pResource = pTexResource.Get();
+    barrier.Transition.StateBefore = D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE;
+    barrier.Transition.StateAfter = D3D12_RESOURCE_STATE_COPY_DEST;
+    cmdList->ResourceBarrier(1, &barrier);
+
+    // Copy upload buffer to texture
+    D3D12_TEXTURE_COPY_LOCATION dst = {}, src = {};
+    dst.pResource = pTexResource.Get();
+    dst.Type = D3D12_TEXTURE_COPY_TYPE_SUBRESOURCE_INDEX;
+    src.pResource = m_uploadBuffer.Get();
+    src.Type = D3D12_TEXTURE_COPY_TYPE_PLACED_FOOTPRINT;
+    src.PlacedFootprint = layout;
+    cmdList->CopyTextureRegion(&dst, 0, 0, 0, &src, nullptr);
+
+    // Barrier: COPY_DEST → SRV
+    barrier.Transition.StateBefore = D3D12_RESOURCE_STATE_COPY_DEST;
+    barrier.Transition.StateAfter = D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE;
+    cmdList->ResourceBarrier(1, &barrier);
+  }
+
 } // namespace t800
 
 #endif // OS_WINDOWS

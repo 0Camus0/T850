@@ -11,6 +11,7 @@
 #include <video/vulkan/VulkanTexture.h>
 #include <video/vulkan/VulkanRT.h>
 #include <video/vulkan/VulkanShader.h>
+#include <video/vulkan/VulkanDriver.h>
 
 #if defined(OS_WINDOWS)
 
@@ -70,9 +71,101 @@ namespace t800 {
   }
 
   Texture* VulkanDevice::CreateFloatTexture(int w, int h, const float* data) {
-    // TODO: Phase 2 — Vulkan staging buffer + VkImage creation
-    T8_LOG_ERROR("[Vulkan] CreateFloatTexture not yet implemented");
-    return nullptr;
+    auto* driver = static_cast<VulkanDriver*>(g_pBaseDriver);
+    VkDevice device = driver->GetDevice();
+    VmaAllocator allocator = driver->GetAllocator();
+
+    VulkanTexture* tex = new VulkanTexture;
+    tex->m_format = VK_FORMAT_R32G32B32A32_SFLOAT;
+    tex->m_isFloatTex = true;
+    tex->x = w;
+    tex->y = h;
+
+    // Create VkImage
+    VkImageCreateInfo imgCI = { VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO };
+    imgCI.imageType = VK_IMAGE_TYPE_2D;
+    imgCI.format = tex->m_format;
+    imgCI.extent = { (uint32_t)w, (uint32_t)h, 1 };
+    imgCI.mipLevels = 1;
+    imgCI.arrayLayers = 1;
+    imgCI.samples = VK_SAMPLE_COUNT_1_BIT;
+    imgCI.tiling = VK_IMAGE_TILING_OPTIMAL;
+    imgCI.usage = VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT;
+    imgCI.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+
+    VmaAllocationCreateInfo allocCI = {};
+    allocCI.usage = VMA_MEMORY_USAGE_AUTO;
+    if (vmaCreateImage(allocator, &imgCI, &allocCI, &tex->m_image, &tex->m_allocation, nullptr) != VK_SUCCESS) {
+      T8_LOG_ERROR("[Vulkan] CreateFloatTexture: vmaCreateImage failed");
+      delete tex; return nullptr;
+    }
+
+    // Create image view
+    VkImageViewCreateInfo ivCI = { VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO };
+    ivCI.image = tex->m_image;
+    ivCI.viewType = VK_IMAGE_VIEW_TYPE_2D;
+    ivCI.format = tex->m_format;
+    ivCI.subresourceRange = { VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1 };
+    if (vkCreateImageView(device, &ivCI, nullptr, &tex->m_imageView) != VK_SUCCESS) {
+      T8_LOG_ERROR("[Vulkan] CreateFloatTexture: vkCreateImageView failed");
+      delete tex; return nullptr;
+    }
+
+    // Create sampler (NEAREST, no interpolation)
+    VkSamplerCreateInfo sampCI = { VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO };
+    sampCI.magFilter = VK_FILTER_NEAREST;
+    sampCI.minFilter = VK_FILTER_NEAREST;
+    sampCI.mipmapMode = VK_SAMPLER_MIPMAP_MODE_NEAREST;
+    sampCI.addressModeU = sampCI.addressModeV = sampCI.addressModeW = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
+    sampCI.maxLod = 0.0f;
+    if (vkCreateSampler(device, &sampCI, nullptr, &tex->m_sampler) != VK_SUCCESS) {
+      T8_LOG_ERROR("[Vulkan] CreateFloatTexture: vkCreateSampler failed");
+      delete tex; return nullptr;
+    }
+
+    // Upload initial data if provided
+    if (data) {
+      VkDeviceSize totalSize = (VkDeviceSize)w * h * 16;
+      VkBuffer stagingBuffer; VmaAllocation stagingAlloc;
+      VkBufferCreateInfo stagingInfo = { VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO };
+      stagingInfo.size = totalSize;
+      stagingInfo.usage = VK_BUFFER_USAGE_TRANSFER_SRC_BIT;
+      VmaAllocationCreateInfo stagingAllocCI = {};
+      stagingAllocCI.usage = VMA_MEMORY_USAGE_AUTO;
+      stagingAllocCI.flags = VMA_ALLOCATION_CREATE_HOST_ACCESS_SEQUENTIAL_WRITE_BIT | VMA_ALLOCATION_CREATE_MAPPED_BIT;
+      VmaAllocationInfo stagingAllocInfo;
+      vmaCreateBuffer(allocator, &stagingInfo, &stagingAllocCI, &stagingBuffer, &stagingAlloc, &stagingAllocInfo);
+      memcpy(stagingAllocInfo.pMappedData, data, totalSize);
+
+      VkCommandBuffer cmd = driver->GetTransientCommandBuffer();
+      VkImageMemoryBarrier barrier = { VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER };
+      barrier.image = tex->m_image;
+      barrier.subresourceRange = { VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1 };
+      barrier.oldLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+      barrier.newLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+      barrier.srcAccessMask = 0;
+      barrier.dstAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+      vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT,
+                           0, 0, nullptr, 0, nullptr, 1, &barrier);
+
+      VkBufferImageCopy region = {};
+      region.imageSubresource = { VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1 };
+      region.imageExtent = { (uint32_t)w, (uint32_t)h, 1 };
+      vkCmdCopyBufferToImage(cmd, stagingBuffer, tex->m_image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &region);
+
+      barrier.oldLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+      barrier.newLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+      barrier.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+      barrier.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
+      vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_VERTEX_SHADER_BIT,
+                           0, 0, nullptr, 0, nullptr, 1, &barrier);
+
+      driver->SubmitTransientCommandBuffer(cmd);
+      vmaDestroyBuffer(allocator, stagingBuffer, stagingAlloc);
+    }
+
+    T8_LOG_INFO("[Vulkan] CreateFloatTexture: %dx%d RGBA32F", w, h);
+    return tex;
   }
 
   BaseRT* VulkanDevice::CreateRT(int nrt, int cf, int df, int w, int h, bool genMips) {

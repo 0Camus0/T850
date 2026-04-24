@@ -78,6 +78,14 @@ namespace t800 {
     VkRenderPass       GetBackbufferRenderPass() const { return m_backbufferRenderPass; }
     VkCommandPool      GetTransientCommandPool() const { return m_transientCommandPool; }
 
+    // Transient command buffer helpers for one-shot GPU operations
+    VkCommandBuffer GetTransientCommandBuffer();
+    void SubmitTransientCommandBuffer(VkCommandBuffer cmd);
+    VkCommandBuffer GetCurrentCommandBuffer() const { return m_commandBuffers[m_currentFrame]; }
+
+    // Defer cleanup of staging resources until frame completes
+    void DeferCleanup(VkBuffer buffer, VmaAllocation alloc);
+
     DEPTH_STENCIL_STATES GetCurrentDepthState() const { return m_currentDepth; }
 
     // PSO cache — lazy creation
@@ -211,6 +219,10 @@ namespace t800 {
     // Descriptor set cache — keyed by (layout + texture fingerprint)
     // Cleared each frame when the descriptor pool is reset.
     std::unordered_map<uint64_t, VkDescriptorSet> m_descriptorSetCache;
+
+    // Deferred staging buffer cleanup (destroyed after frame completes)
+    struct DeferredBuffer { VkBuffer buffer; VmaAllocation alloc; };
+    std::vector<DeferredBuffer> m_deferredCleanup[kBackBufferCount];
 
     // Cached pipeline state for deferred pipeline lookup
     BLEND_STATES           m_currentBlend = BLEND_DEFAULT;

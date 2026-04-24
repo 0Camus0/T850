@@ -141,11 +141,7 @@ namespace t800 {
         {
           internalUniformsLocs.push_back(ie);
         }
-        // Only advance byte position for uniforms that exist in the linked program.
-        // Dead uniforms (loc==-1) must not shift subsequent byte positions,
-        // otherwise the CB data layout won't match the shader's expectations.
-        if (ie.loc != -1)
-          uniformPos += ie.size;
+        uniformPos += ie.size;
       }
     }
 

@@ -156,7 +156,43 @@ namespace t800 {
     // Build wireframe and skeleton debug buffers
     BuildWireframeBuffers();
     BuildSkeletonBuffers();
-    m_lineRenderer.Create();
+
+    // Compile skeleton line shader using the exact WireframeSphere approach
+    // (VS_W + FS_W, #version 130 with blanked precision qualifiers).
+    // This is known to work on all GL backends.
+    {
+      char* vsP = file2string(g_pBaseDriver->UsesGLSL() ? "Shaders/VS_W.glsl" : "Shaders/VS_W.hlsl");
+      char* fsP = file2string(g_pBaseDriver->UsesGLSL() ? "Shaders/FS_W.glsl" : "Shaders/FS_W.hlsl");
+      if (vsP && fsP) {
+        std::string vs(vsP), fs(fsP);
+        free(vsP); free(fsP);
+        if (g_pBaseDriver->UsesGLSL()) {
+          std::string defs;
+#if defined(USING_OPENGL)
+          defs += "#version 130\n\n";
+          defs += "#define lowp \n\n";
+          defs += "#define mediump \n\n";
+          defs += "#define highp \n\n";
+#elif defined(USING_OPENGL_ES30) || defined(USING_OPENGL_ES31)
+          defs += "#version 300 es\n\n";
+          defs += "#define ES_30\n\n";
+#endif
+          vs = defs + vs;
+          fs = defs + fs;
+        }
+        int sid = g_pBaseDriver->CreateShader(vs, fs);
+        m_skelShader = g_pBaseDriver->GetShaderIdx(sid);
+      } else {
+        if (vsP) free(vsP);
+        if (fsP) free(fsP);
+      }
+      if (m_skelShader) {
+        BufferDesc bd;
+        bd.byteWidth = sizeof(XMATRIX44);  // 64 bytes — just WVP, matching VS_W
+        bd.usage = T8_BUFFER_USAGE::DEFAULT;
+        m_skelCB = (ConstantBuffer*)T8Device->CreateBuffer(T8_BUFFER_TYPE::CONSTANT, bd);
+      }
+    }
   }
 
   // ── Wireframe buffer construction (per-geometry line-list IBs) ─
@@ -319,28 +355,28 @@ namespace t800 {
   }
 
   void RenderSkinnedMesh::DrawSkeleton() {
-    if (!m_hasSkin || !m_skelIB || !m_skelVB || m_skelIndexCount == 0 || !m_lineRenderer.IsReady())
+    if (!m_hasSkin || !m_skelIB || !m_skelVB || !m_skelShader || !m_skelCB
+        || m_skelIndexCount == 0)
       return;
 
     if (!pScProp || pScProp->pCameras.empty()) return;
     Camera* cam = pScProp->pCameras[0];
 
-    T8_LOG_TRACE("[DrawSkel] UpdatePositions count=%d", (int)m_skelPositions.size());
     UpdateSkeletonPositions();
-
-    T8_LOG_TRACE("[DrawSkel] UpdateFromBuffer size=%d", m_skelVB->descriptor.byteWidth);
     m_skelVB->UpdateFromBuffer(*T8DeviceContext, m_skelPositions.data());
 
-    m_lineRenderer.SetDepthTestEnabled(false);
+    // WVP = identity * VP (skeleton positions are already in world space)
+    XMATRIX44 wvp = cam->VP;
 
-    XMATRIX44 identity;
-    identity.Identity();
-    XVECTOR3 skelColor(1.0f, 0.0f, 1.0f, 1.0f);  // magenta
-
-    T8_LOG_TRACE("[DrawSkel] DrawLines idxCount=%d", m_skelIndexCount);
-    m_lineRenderer.DrawLines(identity, cam->VP, skelColor,
-                             m_skelVB, m_skelIB, m_skelIndexCount, 16, T8_IB_FORMAR::R16);
-    T8_LOG_TRACE("[DrawSkel] done");
+    // Draw using the exact WireframeSphere pattern (known to work on all APIs)
+    m_skelIB->Set(*T8DeviceContext, 0, T8_IB_FORMAR::R16);
+    m_skelVB->Set(*T8DeviceContext, 16, 0);
+    m_skelShader->Set(*T8DeviceContext);
+    m_skelCB->UpdateFromBuffer(*T8DeviceContext, &wvp[0]);
+    m_skelCB->Set(*T8DeviceContext);
+    T8DeviceContext->SetPrimitiveTopology(T8_TOPOLOGY::LINE_LIST);
+    T8DeviceContext->DrawIndexed(m_skelIndexCount, 0, 0);
+    T8DeviceContext->SetPrimitiveTopology(T8_TOPOLOGY::TRIANLE_LIST);
   }
 
   // ── Main draw ──────────────────────────────────────────

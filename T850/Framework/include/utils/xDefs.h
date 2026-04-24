@@ -302,9 +302,10 @@ namespace xF {
 	};
 
 	struct xBone {
-		xBone() :Dad(0), Touched(0) {}
+		xBone() :Dad(0), Touched(0) { IntermediateTransform.Identity(); }
 		XMATRIX44					Bone;
 		XMATRIX44					Combined;
+		XMATRIX44					IntermediateTransform; // product of non-joint nodes between this joint and parent joint
 		std::string					Name;
 		unsigned short				Dad;
 		unsigned short				Touched;

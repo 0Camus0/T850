@@ -319,25 +319,18 @@ namespace t800 {
     XVECTOR3 infoCam = XVECTOR3(cam->NPlane, cam->FPlane, cam->Fov, 1.0f);
     XVECTOR3 wireColor(0.0f, 1.0f, 0.0f, 1.0f);
 
+    // Base CBuffer (no bone data — bones come from texture)
+    RenderMesh::CBuffer wireCB;
+    wireCB.WVP = WVP;
+    wireCB.World = transform;
+    wireCB.WorldView = WorldView;
+    wireCB.CameraInfo = infoCam;
+    wireCB.DiffuseColor = wireColor;
+
     for (std::size_t i = 0; i < Info.size() && i < m_wireGeo.size(); i++) {
       if (!m_wireGeo[i].IB || m_wireGeo[i].indexCount == 0) continue;
 
       MeshInfo* mi = &Info[i];
-
-      if (m_useQuatSkinning) {
-        m_skinnedQTBuffers[i].WVP = WVP;
-        m_skinnedQTBuffers[i].World = transform;
-        m_skinnedQTBuffers[i].WorldView = WorldView;
-        m_skinnedQTBuffers[i].CameraInfo = infoCam;
-        m_skinnedQTBuffers[i].DiffuseColor = wireColor;
-      } else {
-        m_skinnedCBuffers[i].WVP = WVP;
-        m_skinnedCBuffers[i].World = transform;
-        m_skinnedCBuffers[i].WorldView = WorldView;
-        m_skinnedCBuffers[i].CameraInfo = infoCam;
-        m_skinnedCBuffers[i].DiffuseColor = wireColor;
-      }
-
       mi->VB->Set(*T8DeviceContext, mi->VertexSize, 0);
 
       auto ibFmt = m_wireGeo[i].use32Bit ? T8_IB_FORMAR::R32 : T8_IB_FORMAR::R16;
@@ -346,13 +339,12 @@ namespace t800 {
       T8DeviceContext->SetPrimitiveTopology(T8_TOPOLOGY::LINE_LIST);
 
       m_wireShader->Set(*T8DeviceContext);
-
-      if (m_useQuatSkinning) {
-        mi->CB->UpdateFromBuffer(*T8DeviceContext, &m_skinnedQTBuffers[i].WVP[0]);
-      } else {
-        mi->CB->UpdateFromBuffer(*T8DeviceContext, &m_skinnedCBuffers[i].WVP[0]);
-      }
+      mi->CB->UpdateFromBuffer(*T8DeviceContext, &wireCB.WVP[0]);
       mi->CB->Set(*T8DeviceContext);
+
+      // Bind bone texture to VS slot 7
+      if (m_boneTexture)
+        m_boneTexture->SetVS(*T8DeviceContext, 7, "u_BoneTex");
 
       T8DeviceContext->DrawIndexed(m_wireGeo[i].indexCount, 0, 0);
 

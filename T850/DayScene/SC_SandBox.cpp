@@ -437,9 +437,16 @@ void SC_SandBox::OnDraw() {
     RenderSkinnedMesh* skinned = dynamic_cast<RenderSkinnedMesh*>(Meshes[0].pBase);
     if (skinned && skinned->HasSkinData()) {
       if (m_showWireframe) {
-        pFramework->pVideoDriver->SetDepthStencilState(BaseDriver::DEPTH_DEFAULT);
+        // Bind GBuffer COLOR4 (linear depth) for shader-based depth comparison
+        int gbufHandle = GBufferPass;
+        if (gbufHandle >= 0 && gbufHandle < (int)pFramework->pVideoDriver->RTs.size()) {
+          auto* gbufRT = pFramework->pVideoDriver->RTs[gbufHandle];
+          if (gbufRT->vColorTextures.size() > 4)
+            skinned->SetWireframeDepthTex(gbufRT->vColorTextures[4]);
+        }
+        skinned->SetWireframeViewport(g_pBaseDriver->width, g_pBaseDriver->height);
+        pFramework->pVideoDriver->SetDepthStencilState(BaseDriver::NONE);
         skinned->DrawWireframe();
-        pFramework->pVideoDriver->SetDepthStencilState(BaseDriver::DEPTH_DEFAULT);
       }
       if (m_showSkeleton) {
         pFramework->pVideoDriver->SetDepthStencilState(BaseDriver::NONE);

@@ -45,7 +45,15 @@ uniform highp vec4 DiffuseColor;
 	varying highp vec4 WorldPos;
 #endif
 
+uniform highp sampler2D depthTex;
+
 void main(){
+	// Manual depth test against GBuffer's linear depth (COLOR4)
+	vec2 screenUV = gl_FragCoord.xy * vec2(1.0/CameraInfo.z, 1.0/CameraInfo.w);
+	float sceneDepth = texture(depthTex, screenUV).r;
+	float wireDepth = Pos.z / CameraInfo.y;
+	if (sceneDepth > 0.0001 && wireDepth > sceneDepth * 1.005)
+		discard;
 #ifdef ES_30
 	colorOut = DiffuseColor;
 #else

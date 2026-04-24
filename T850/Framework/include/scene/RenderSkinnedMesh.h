@@ -73,6 +73,10 @@ public:
   // Draw skeleton bones without depth testing (magenta)
   void DrawSkeleton();
 
+  // Set the GBuffer depth texture for wireframe depth-tested occlusion
+  void SetWireframeDepthTex(Texture* depthTex) { m_wireDepthTex = depthTex; }
+  void SetWireframeViewport(int w, int h) { m_wireViewW = w; m_wireViewH = h; }
+
 private:
   // Extended CBuffer with bone matrices appended (matrix skinning path)
   struct CBufferSkinned {
@@ -156,6 +160,11 @@ private:
 
   // LineRenderer kept for depth-tested wireframe overlays
   LineRenderer         m_lineRenderer;
+
+  // Wireframe depth occlusion (GBuffer depth texture)
+  Texture*             m_wireDepthTex   = nullptr;
+  int                  m_wireViewW      = 1280;
+  int                  m_wireViewH      = 720;
 };
 
 } // namespace t800

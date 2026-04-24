@@ -362,6 +362,14 @@ void SC_SandBox::OnDraw() {
                 avgFps, sFrameCount, DtSecs * 1000.0f);
   }
 
+  // Update animation and upload bone texture BEFORE render graph
+  // (Vulkan copy commands cannot run inside a render pass)
+  if (Meshes[0].pBase) {
+    RenderSkinnedMesh* skinned = dynamic_cast<RenderSkinnedMesh*>(Meshes[0].pBase);
+    if (skinned && skinned->HasSkinData())
+      skinned->UpdateAnimationAndBones();
+  }
+
   // Execute the render graph (all passes through HDR Composition)
   m_renderGraph.Execute(
     pFramework->pVideoDriver,

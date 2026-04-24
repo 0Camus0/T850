@@ -378,6 +378,41 @@ namespace t800 {
     T8DeviceContext->SetPrimitiveTopology(T8_TOPOLOGY::TRIANLE_LIST);
   }
 
+  // ── Animation update + bone texture upload (call BEFORE render passes) ──
+
+  void RenderSkinnedMesh::UpdateAnimationAndBones() {
+    if (!m_hasSkin || !m_boneTexture) return;
+
+    // Dump matrices on first frame for debugging
+    static bool sDumped = false;
+    if (!sDumped) {
+      m_animController.Update(0.0f);
+      m_animController.DumpMatrices("anim_debug_bindpose.txt");
+      sDumped = true;
+    }
+
+    // Update animation
+    if (m_playing && !m_animController.GetKeyframeMode()) {
+      m_animController.SetUseSlerp(m_useSlerp);
+      float deltaTime = pScProp ? pScProp->FrameDeltaSec : (1.0f / 60.0f);
+      m_animController.Update(deltaTime);
+    }
+
+    // Upload bone matrices to texture
+    int numBones = m_animController.GetNumBones();
+    int count = (numBones < kMaxBones) ? numBones : kMaxBones;
+    const XMATRIX44* bones = m_animController.GetBoneMatrices();
+    for (int b = 0; b < count; b++) {
+      int texelBase = b * 4 * 4;
+      memcpy(&m_boneTexData[texelBase],      &bones[b].m[0][0], 16);
+      memcpy(&m_boneTexData[texelBase + 4],  &bones[b].m[1][0], 16);
+      memcpy(&m_boneTexData[texelBase + 8],  &bones[b].m[2][0], 16);
+      memcpy(&m_boneTexData[texelBase + 12], &bones[b].m[3][0], 16);
+    }
+    m_boneTexture->UpdateFloatData(*T8DeviceContext, m_boneTexWidth, m_boneTexWidth,
+                                    m_boneTexData.data());
+  }
+
   // ── Main draw ──────────────────────────────────────────
 
   void RenderSkinnedMesh::Draw(float *t, float *vp) {
@@ -387,43 +422,8 @@ namespace t800 {
       return;
     }
 
-    // Dump matrices on first frame for debugging — compute bind-pose first
-    static bool sDumped = false;
-    if (!sDumped) {
-      // Compute hierarchy and finals at bind pose (no animation applied yet)
-      // This tells us if IBM * BindWorldTransform = Identity
-      m_animController.Update(0.0f);  // zero dt = compute hierarchy without advancing time
-      m_animController.DumpMatrices("anim_debug_bindpose.txt");
-      sDumped = true;
-    }
-
-    // Update animation using scene delta time (skip in keyframe mode — StepKeyframe handles it)
-    if (m_playing && !m_animController.GetKeyframeMode()) {
-      m_animController.SetUseSlerp(m_useSlerp);
-      float deltaTime = pScProp ? pScProp->FrameDeltaSec : (1.0f / 60.0f);
-      m_animController.Update(deltaTime);
-    }
-
-    // Upload bone matrices to texture (RGBA32F, 4 texels per bone = 4 rows)
-    int numBones = m_animController.GetNumBones();
-    int count = (numBones < kMaxBones) ? numBones : kMaxBones;
-    {
-      const XMATRIX44* bones = m_animController.GetBoneMatrices();
-      for (int b = 0; b < count; b++) {
-        int texelBase = b * 4 * 4; // 4 texels × 4 floats per texel
-        // Store rows: row 0,1,2,3 as consecutive RGBA texels
-        memcpy(&m_boneTexData[texelBase],      &bones[b].m[0][0], 16);
-        memcpy(&m_boneTexData[texelBase + 4],  &bones[b].m[1][0], 16);
-        memcpy(&m_boneTexData[texelBase + 8],  &bones[b].m[2][0], 16);
-        memcpy(&m_boneTexData[texelBase + 12], &bones[b].m[3][0], 16);
-      }
-      if (m_boneTexture) {
-        m_boneTexture->UpdateFloatData(*T8DeviceContext, m_boneTexWidth, m_boneTexWidth,
-                                       m_boneTexData.data());
-      }
-    }
-
     // Now do the actual draw using base CBuffer + bone texture
+    // (animation update + texture upload already done in UpdateAnimationAndBones)
     Camera *pActualCamera = pScProp->pCameras[0];
     XMATRIX44 VP = pActualCamera->VP;
 

@@ -1,5 +1,5 @@
 {
-  "api": "vulkan",
+  "api": "d3d11",
   "dump": {
     "frame": 750,
     "trigger": "frame",
@@ -29,5 +29,5 @@
     "d3d12Debug": false,
     "guiEdit": false
   },
-  "debugFrames": true
+  "debugFrames": false
 }

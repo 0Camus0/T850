@@ -36,7 +36,7 @@
 	#endif
 #endif
 
-#if defined(USE_SKINNING) || defined(USE_SKINNING_QT)
+#if defined(USE_SKINNING) || defined(USE_SKINNING_QT) || defined(USE_SKINNING_TEXTURE)
 	#ifdef ES_30
 		in highp vec4 Joints;
 		in highp vec4 Weights;
@@ -102,7 +102,20 @@ uniform highp vec4 Intensities;
 uniform highp vec4 ParallaxSettings;
 uniform highp vec4 ParallaxShadowSettings;
 uniform highp vec4 Light0Direction;
-#ifdef USE_SKINNING_QT
+#ifdef USE_SKINNING_TEXTURE
+uniform highp sampler2D u_BoneTex;
+mat4 getBoneMatrix(int index) {
+	int texSize = textureSize(u_BoneTex, 0).x;
+	int pixelIndex = index * 4;
+	mat4 result;
+	for (int i = 0; i < 4; ++i) {
+		int px = (pixelIndex + i) % texSize;
+		int py = (pixelIndex + i) / texSize;
+		result[i] = texelFetch(u_BoneTex, ivec2(px, py), 0);
+	}
+	return result;
+}
+#elif defined(USE_SKINNING_QT)
 // Quaternion+Translation: 2 vec4/bone — 256 bones = 512 vec4 (fits GL limit)
 uniform highp vec4 BoneQuats[256];
 uniform highp vec4 BoneTrans[256];
@@ -112,7 +125,26 @@ uniform highp mat4 BoneMatrices[128];
 #endif
 
 void main(){
-#ifdef USE_SKINNING_QT
+#ifdef USE_SKINNING_TEXTURE
+	ivec4 idx = ivec4(Joints);
+	// Texture stores rows → GLSL reads into columns (auto-transpose)
+	// so skinMatrix * Vertex gives correct row-vector result
+	mat4 skinMatrix = getBoneMatrix(idx.x) * Weights.x
+	                + getBoneMatrix(idx.y) * Weights.y
+	                + getBoneMatrix(idx.z) * Weights.z
+	                + getBoneMatrix(idx.w) * Weights.w;
+	vec4 skinnedPos = skinMatrix * Vertex;
+#ifdef USE_NORMALS
+	vec3 skinnedNormal = mat3(skinMatrix) * vec3(Normal);
+#endif
+#ifdef USE_TANGENTS
+	vec3 skinnedTangent = mat3(skinMatrix) * vec3(Tangent);
+#endif
+#ifdef USE_BINORMALS
+	vec3 skinnedBinormal = mat3(skinMatrix) * vec3(Binormal);
+#endif
+
+#elif defined(USE_SKINNING_QT)
 	ivec4 idx = ivec4(Joints);
 	vec4 q = BoneQuats[idx.x] * Weights.x
 	       + BoneQuats[idx.y] * Weights.y

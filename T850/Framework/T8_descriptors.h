@@ -89,6 +89,7 @@ struct ShaderKey {
   static constexpr uint32_t GLTF_TANGENT_SPACE = 1u << 27;
   static constexpr uint32_t HAS_SKINNING = 1u << 28;
   static constexpr uint32_t HAS_SKINNING_QT = 1u << 29; // quaternion+translation skinning
+  static constexpr uint32_t HAS_SKINNING_TEX = 1u << 30; // texture-based bone matrices
 
   // ── Pass type (6 bits) ──
   static constexpr uint32_t PASS_SHIFT = 20;

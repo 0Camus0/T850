@@ -183,24 +183,48 @@ void BuildSkinsAndAnimations(const Document& doc,
         if (nodeIdx >= 0 && nodeIdx < static_cast<int>(doc.nodes.size())) {
           bone.Name = doc.nodes[nodeIdx].name;
           boneAnim.Name = bone.Name;
-
-          // Local TRS matrix (bind pose) — kept in RH space.
-          // The Z-flip is applied once to the final bone matrix product
-          // in AnimationController::ComputeFinalMatrices().
-          bone.Bone = NodeLocalMatrix(doc.nodes[nodeIdx]);
-          boneAnim.Bone = bone.Bone;
         }
 
-        // Find parent joint
-        bone.Dad = static_cast<unsigned short>(j);  // self = root
+        // Find parent joint — walk up the node ancestry chain until we find
+        // a node that is in the joint list. This handles non-joint intermediate
+        // nodes between joints in the scene graph (the reference viewer
+        // naturally handles this because it traverses nodes, not joints).
+        // Also accumulate intermediate non-joint transforms so they're baked
+        // into this joint's local matrix.
+        bone.Dad = static_cast<unsigned short>(j);  // self = root by default
         boneAnim.Dad = bone.Dad;
-        auto parentIt = nodeParent.find(nodeIdx);
-        if (parentIt != nodeParent.end()) {
-          auto jointIt = nodeToJoint.find(parentIt->second);
-          if (jointIt != nodeToJoint.end()) {
-            bone.Dad = static_cast<unsigned short>(jointIt->second);
-            boneAnim.Dad = bone.Dad;
+        XMATRIX44 intermediateTransform;
+        intermediateTransform.Identity();
+        {
+          int cur = nodeIdx;
+          std::vector<int> intermediates;
+          while (nodeParent.count(cur)) {
+            int p = nodeParent[cur];
+            auto jointIt = nodeToJoint.find(p);
+            if (jointIt != nodeToJoint.end()) {
+              bone.Dad = static_cast<unsigned short>(jointIt->second);
+              boneAnim.Dad = bone.Dad;
+              break;
+            }
+            intermediates.push_back(p);
+            cur = p;  // keep walking up
           }
+          // Multiply intermediate transforms from closest to farthest ancestor
+          // so that: Bone_local = nodeLocal * intermediate_1 * intermediate_2 ...
+          for (int ii = 0; ii < static_cast<int>(intermediates.size()); ii++) {
+            int ni = intermediates[ii];
+            if (ni >= 0 && ni < static_cast<int>(doc.nodes.size()))
+              intermediateTransform = NodeLocalMatrix(doc.nodes[ni]) * intermediateTransform;
+          }
+        }
+
+        // Local TRS matrix (bind pose) — kept in RH space.
+        // Bake intermediate non-joint node transforms into the joint's local
+        // matrix so ComputeHierarchy (which only knows about joints) produces
+        // correct world-space combined matrices.
+        if (nodeIdx >= 0 && nodeIdx < static_cast<int>(doc.nodes.size())) {
+          bone.Bone = NodeLocalMatrix(doc.nodes[nodeIdx]) * intermediateTransform;
+          boneAnim.Bone = bone.Bone;
         }
 
         // Build Sons list

@@ -12,6 +12,7 @@
 #include <core/Core.h>
 #include <video/BaseDriver.h>
 #include <scene/RenderGraph.h>
+#include <scene/RenderSkinnedMesh.h>
 #include <utils/InputManager.h>
 #include <utils/Log.h>
 #include <utils/xMaths.h>
@@ -966,7 +967,19 @@ void EditorApp::OnDraw() {
       if (obj.primId < 0 || !obj.visible) continue;
       bool isSelected = (g_selectionType == 0 && i == g_selectedIdx) || g_multiSelect.count(i);
       bool showWire = m_panels.showWireframe || isSelected || obj.showWire;
-      if (showWire && obj.wireframe.IsLoaded() && m_lines.IsReady()) {
+      if (!showWire) continue;
+
+      // For skinned meshes, use GPU-skinned wireframe + skeleton (same as SandBox)
+      t800::RenderSkinnedMesh* skinned = nullptr;
+      if (obj.litInst.pBase)
+        skinned = dynamic_cast<t800::RenderSkinnedMesh*>(obj.litInst.pBase);
+
+      if (skinned && skinned->HasSkinData()) {
+        drv->SetDepthStencilState(t800::BaseDriver::NONE);
+        skinned->DrawWireframe();
+        skinned->DrawSkeleton();
+        drv->SetDepthStencilState(t800::BaseDriver::DEPTH_DEFAULT);
+      } else if (obj.wireframe.IsLoaded() && m_lines.IsReady()) {
         XVECTOR3 savedColor = obj.wireframe.WireColor;
         if (g_multiSelect.count(i) && g_multiSelect.size() > 1)
           obj.wireframe.WireColor = XVECTOR3(0.4f, 0.8f, 1.0f, 1.0f); // cyan for multi-select

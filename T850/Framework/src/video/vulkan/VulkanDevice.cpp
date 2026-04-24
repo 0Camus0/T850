@@ -69,6 +69,12 @@ namespace t800 {
     return tex;
   }
 
+  Texture* VulkanDevice::CreateFloatTexture(int w, int h, const float* data) {
+    // TODO: Phase 2 — Vulkan staging buffer + VkImage creation
+    T8_LOG_ERROR("[Vulkan] CreateFloatTexture not yet implemented");
+    return nullptr;
+  }
+
   BaseRT* VulkanDevice::CreateRT(int nrt, int cf, int df, int w, int h, bool genMips) {
     VulkanRT* rt = new VulkanRT;
     if (rt->LoadRT(nrt, cf, df, w, h, genMips)) return rt;

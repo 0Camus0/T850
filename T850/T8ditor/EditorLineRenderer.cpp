@@ -53,8 +53,11 @@ bool EditorLineRenderer::Create() {
   if (useGL) {
     std::string defines;
 #if defined(USING_OPENGL)
-    defines += "#version 330\n\n";
-    defines += "#define ES_30\n\n";
+    // Match WireframeSphere: #version 130 with precision blanked
+    defines += "#version 130\n\n";
+    defines += "#define lowp \n\n";
+    defines += "#define mediump \n\n";
+    defines += "#define highp \n\n";
 #elif defined(USING_OPENGL_ES30) || defined(USING_OPENGL_ES31)
     defines += "#version 300 es\n\n";
     defines += "#define ES_30\n\n";

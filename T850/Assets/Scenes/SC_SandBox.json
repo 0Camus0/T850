@@ -159,6 +159,12 @@
       "label": "Animation",
       "options": [ "Default" ],
       "default_index": 0
+    },
+    {
+      "name": "anim_mode",
+      "label": "Anim Mode",
+      "options": [ "Interpolation", "Keyframe" ],
+      "default_index": 0
     }
   ]
 }

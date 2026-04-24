@@ -41,6 +41,13 @@ public:
   void SetSpeed(float speed) { m_speed = speed; }
   float GetSpeed() const     { return m_speed; }
 
+  // Keyframe stepping mode: jump directly to a keyframe with no interpolation
+  void SetKeyframeMode(bool enabled) { m_keyframeMode = enabled; }
+  bool GetKeyframeMode() const { return m_keyframeMode; }
+  void StepKeyframe(int delta);   // +1 = next key, -1 = prev key
+  int  GetCurrentKeyframe() const { return m_currentKeyframe; }
+  int  GetTotalKeyframes() const;
+
   int  GetCurrentSet() const { return m_currentSet; }
   int  GetNumSets() const;
 
@@ -64,6 +71,7 @@ public:
 
 private:
   void InterpolateKeys(float tickTime);
+  void ApplyKeyframeSnap(float tickTime);  // snap to nearest key, no interpolation
   void ComputeHierarchy();
   void ComputeFinalMatrices();
   void ComputeBindPose();       // compute bind-pose combined + own IBM
@@ -95,8 +103,10 @@ private:
 
   int   m_currentSet    = 0;
   int   m_numBones      = 0;
+  int   m_currentKeyframe = 0;
   bool  m_looping       = true;
   bool  m_useSlerp     = true;
+  bool  m_keyframeMode  = false;
   bool  m_initialized   = false;
 };
 

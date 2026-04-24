@@ -56,6 +56,13 @@ public:
   void SetUseQuatSkinning(bool qt) { m_useQuatSkinning = qt; }
   bool GetUseQuatSkinning() const  { return m_useQuatSkinning; }
 
+  // Keyframe stepping mode
+  void SetKeyframeMode(bool enabled) { m_animController.SetKeyframeMode(enabled); }
+  bool GetKeyframeMode() const { return m_animController.GetKeyframeMode(); }
+  void StepKeyframe(int delta) { m_animController.StepKeyframe(delta); }
+  int  GetCurrentKeyframe() const { return m_animController.GetCurrentKeyframe(); }
+  int  GetTotalKeyframes() const { return m_animController.GetTotalKeyframes(); }
+
   // ── Debug wireframe / skeleton visualization ──
   // Draw mesh wireframe using GPU skinning pipeline (green, LINE_LIST)
   void DrawWireframe();
@@ -117,7 +124,7 @@ private:
   bool m_hasSkin = false;
   bool m_playing = true;
   bool m_useSlerp = true;
-  bool m_useQuatSkinning = true; // default to QT path (smaller CB, fewer ops)
+  bool m_useQuatSkinning = false; // default to QT path (smaller CB, fewer ops)
 
   // ── Wireframe state (GPU-skinned) ──
   struct WireGeo {

@@ -4,6 +4,16 @@ precision mediump float;
 
 uniform highp vec4 DiffuseColor;
 
+// Uniforms needed for depth comparison (must match VS_Mesh.glsl CBuffer layout)
+uniform highp mat4 WVP;
+uniform highp mat4 World;
+uniform highp mat4 WorldView;
+uniform highp vec4 LightPos;
+uniform highp vec4 LightColor;
+uniform highp vec4 CameraPosition;
+uniform highp vec4 CameraInfo;
+uniform highp vec4 AmbientColor;
+
 #ifdef USE_TEXCOORD0
 	#ifdef ES_30
 		in highp vec2 vecUVCoords;

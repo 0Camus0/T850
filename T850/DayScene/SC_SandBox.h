@@ -46,6 +46,11 @@ class SC_SandBox : public t800::SceneBase
     CHANGE_CUBEMAP,
     CHANGE_GAUSS_KERNEL_SAMPLE_COUNT,
     CHANGE_ACTIVE_GAUSS_KERNEL,
+    // Animation controls (only active for skinned meshes)
+    CHANGE_ANIM_SPEED,
+    CHANGE_ANIM_SELECT,
+    CHANGE_SHOW_WIREFRAME,
+    CHANGE_SHOW_SKELETON,
     CHANGE_MAX_NUM_OPTIONS
   };
 public:

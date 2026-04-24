@@ -316,7 +316,9 @@ namespace t800 {
     Camera* cam = pScProp->pCameras[0];
     XMATRIX44 WVP = transform * cam->VP;
     XMATRIX44 WorldView = transform * cam->View;
-    XVECTOR3 infoCam = XVECTOR3(cam->NPlane, cam->FPlane, cam->Fov, 1.0f);
+    // CameraInfo: .x=near, .y=far, .z=viewportW, .w=viewportH
+    XVECTOR3 infoCam = XVECTOR3(cam->NPlane, cam->FPlane,
+                                 (float)m_wireViewW, (float)m_wireViewH);
     XVECTOR3 wireColor(0.0f, 1.0f, 0.0f, 1.0f);
 
     // Base CBuffer (no bone data — bones come from texture)
@@ -345,6 +347,10 @@ namespace t800 {
       // Bind bone texture to VS slot 7
       if (m_boneTexture)
         m_boneTexture->SetVS(*T8DeviceContext, 7, "u_BoneTex");
+
+      // Bind GBuffer depth texture for manual depth comparison in FS
+      if (m_wireDepthTex)
+        m_wireDepthTex->Set(*T8DeviceContext, 0, "depthTex");
 
       T8DeviceContext->DrawIndexed(m_wireGeo[i].indexCount, 0, 0);
 

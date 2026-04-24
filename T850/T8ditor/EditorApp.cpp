@@ -983,7 +983,15 @@ void EditorApp::OnDraw() {
         skinned = dynamic_cast<t800::RenderSkinnedMesh*>(obj.litInst.pBase);
 
       if (skinned && skinned->HasSkinData()) {
-        drv->SetDepthStencilState(t800::BaseDriver::DEPTH_DEFAULT);
+        // Bind GBuffer depth for shader-based wireframe occlusion
+        int gbufHandle = g_renderGraph.GetRTHandle("GBuffer");
+        if (gbufHandle >= 0 && gbufHandle < (int)drv->RTs.size()) {
+          auto* gbufRT = drv->RTs[gbufHandle];
+          if (gbufRT->vColorTextures.size() > 4)
+            skinned->SetWireframeDepthTex(gbufRT->vColorTextures[4]);
+        }
+        skinned->SetWireframeViewport(m_lastW, m_lastH);
+        drv->SetDepthStencilState(t800::BaseDriver::NONE);
         skinned->DrawWireframe();
         drv->SetDepthStencilState(t800::BaseDriver::NONE);
         skinned->DrawSkeleton();

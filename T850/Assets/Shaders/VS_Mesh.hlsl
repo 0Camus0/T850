@@ -15,12 +15,27 @@ cbuffer ConstantBuffer{
 	float4   ParallaxShadowSettings;
 	float4   Light0Direction;
 #ifdef USE_SKINNING_QT
-	float4   BoneQuats[256];   // quaternion (x,y,z,w) per bone
-	float4   BoneTrans[256];   // translation (x,y,z,0) per bone
+	float4   BoneQuats[256];
+	float4   BoneTrans[256];
 #elif defined(USE_SKINNING)
 	float4x4 BoneMatrices[256];
 #endif
 }
+
+#ifdef USE_SKINNING_TEXTURE
+Texture2D<float4> BoneTexture : register(t7);
+int4 BoneTexSize;  // .x = texture width (passed via CB or as a constant)
+
+float4x4 getBoneMatrix(int index) {
+	int pixelIndex = index * 4;
+	int texW = BoneTexSize.x;
+	float4 r0 = BoneTexture.Load(int3(pixelIndex     % texW, pixelIndex     / texW, 0));
+	float4 r1 = BoneTexture.Load(int3((pixelIndex+1) % texW, (pixelIndex+1) / texW, 0));
+	float4 r2 = BoneTexture.Load(int3((pixelIndex+2) % texW, (pixelIndex+2) / texW, 0));
+	float4 r3 = BoneTexture.Load(int3((pixelIndex+3) % texW, (pixelIndex+3) / texW, 0));
+	return float4x4(r0, r1, r2, r3);
+}
+#endif
 
 struct VS_INPUT{
     float4 position : POSITION;
@@ -41,7 +56,7 @@ struct VS_INPUT{
     float2 texture0 : TEXCOORD;
 #endif
 
-#if defined(USE_SKINNING) || defined(USE_SKINNING_QT)
+#if defined(USE_SKINNING) || defined(USE_SKINNING_QT) || defined(USE_SKINNING_TEXTURE)
 	float4 joints   : BLENDINDICES;
 	float4 weights  : BLENDWEIGHT;
 #endif
@@ -74,7 +89,26 @@ struct VS_OUTPUT{
 VS_OUTPUT VS( VS_INPUT input ){
     VS_OUTPUT OUT;
 
-#ifdef USE_SKINNING_QT
+#ifdef USE_SKINNING_TEXTURE
+	// Texture-based skinning: read bone matrices from RGBA32F texture
+	int4 idx = int4(input.joints);
+	float4x4 skinMatrix = getBoneMatrix(idx.x) * input.weights.x
+	                     + getBoneMatrix(idx.y) * input.weights.y
+	                     + getBoneMatrix(idx.z) * input.weights.z
+	                     + getBoneMatrix(idx.w) * input.weights.w;
+	// Texture stores row-major → float4x4 rows are correct → row-vector multiply
+	input.position = mul(input.position, skinMatrix);
+#ifdef USE_NORMALS
+	input.normal.xyz = mul(input.normal.xyz, (float3x3)skinMatrix);
+#endif
+#ifdef USE_TANGENTS
+	input.tangent.xyz = mul(input.tangent.xyz, (float3x3)skinMatrix);
+#endif
+#ifdef USE_BINORMALS
+	input.binormal.xyz = mul(input.binormal.xyz, (float3x3)skinMatrix);
+#endif
+
+#elif defined(USE_SKINNING_QT)
 	// Quaternion+Translation skinning: 2 vec4/bone instead of 4x4 matrix
 	int4 idx = int4(input.joints);
 	// Blend quaternions (NLERP — normalize after weighted sum)

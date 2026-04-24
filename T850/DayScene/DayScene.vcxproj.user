@@ -11,11 +11,11 @@
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">
     <LocalDebuggerWorkingDirectory>$(SolutionDir)bin\$(Platform)\$(Configuration)\</LocalDebuggerWorkingDirectory>
     <DebuggerFlavor>WindowsLocalDebugger</DebuggerFlavor>
-    <LocalDebuggerCommandArguments>--api d3d11 --width 1920 --height 1080 --model ./Models/Dragon.glb</LocalDebuggerCommandArguments>
+    <LocalDebuggerCommandArguments>--api gl --width 1920 --height 1080 --model ./Models/Dragon.glb</LocalDebuggerCommandArguments>
   </PropertyGroup>
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
     <LocalDebuggerWorkingDirectory>$(SolutionDir)bin\$(Platform)\$(Configuration)\</LocalDebuggerWorkingDirectory>
     <DebuggerFlavor>WindowsLocalDebugger</DebuggerFlavor>
-    <LocalDebuggerCommandArguments>--api d3d11 --width 1920 --height 1080 --model ./Models/Dragon.glb</LocalDebuggerCommandArguments>
+    <LocalDebuggerCommandArguments>--api gl --width 1920 --height 1080 --model ./Models/Dragon.glb</LocalDebuggerCommandArguments>
   </PropertyGroup>
 </Project>

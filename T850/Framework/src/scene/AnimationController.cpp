@@ -104,7 +104,56 @@ void AnimationController::PrevAnimationSet() {
 }
 
 void AnimationController::ResetAnimationSet() {
+  m_currentKeyframe = 0;
   ResetLocals();
+}
+
+int AnimationController::GetTotalKeyframes() const {
+  if (!m_pAnimInfo || m_pAnimInfo->Animations.empty()) return 0;
+  const xF::xAnimationSet& aset = m_pAnimInfo->Animations[m_currentSet];
+  // Use the max number of rotation keyframes across all bones as the
+  // "total keyframes" count (rotation is the most common channel).
+  unsigned int maxKeys = 0;
+  for (const auto& bone : aset.BonesRef) {
+    if (bone.RotationKeys.size() > maxKeys)
+      maxKeys = static_cast<unsigned int>(bone.RotationKeys.size());
+    if (bone.PositionKeys.size() > maxKeys)
+      maxKeys = static_cast<unsigned int>(bone.PositionKeys.size());
+  }
+  return static_cast<int>(maxKeys);
+}
+
+void AnimationController::StepKeyframe(int delta) {
+  if (!m_pAnimInfo || m_pAnimInfo->Animations.empty()) return;
+  const xF::xAnimationSet& aset = m_pAnimInfo->Animations[m_currentSet];
+
+  int total = GetTotalKeyframes();
+  if (total <= 0) return;
+
+  m_currentKeyframe += delta;
+  if (m_currentKeyframe < 0) m_currentKeyframe = total - 1;
+  if (m_currentKeyframe >= total) m_currentKeyframe = 0;
+
+  // Find the tick time for this keyframe index from the first bone
+  // channel that has enough keys. All channels share the same time axis.
+  float tickTime = 0.0f;
+  for (const auto& bone : aset.BonesRef) {
+    if (m_currentKeyframe < static_cast<int>(bone.RotationKeys.size())) {
+      tickTime = static_cast<float>(bone.RotationKeys[m_currentKeyframe].t.i_atTime);
+      break;
+    }
+    if (m_currentKeyframe < static_cast<int>(bone.PositionKeys.size())) {
+      tickTime = static_cast<float>(bone.PositionKeys[m_currentKeyframe].t.i_atTime);
+      break;
+    }
+  }
+
+  m_localTime = tickTime / m_ticksPerSecond;
+
+  // Apply this keyframe (no interpolation — snap each bone to its nearest key)
+  ApplyKeyframeSnap(tickTime);
+  ComputeHierarchy();
+  ComputeFinalMatrices();
 }
 
 void AnimationController::ResetLocals() {
@@ -251,6 +300,58 @@ void AnimationController::InterpolateKeys(float tickTime) {
     bone.MatrixfromKeys = S * R * T;
 
     // Write to animated skeleton
+    if (bone.BoneID < static_cast<unsigned int>(m_numBones)) {
+      m_pSkeletonAnim->Bones[bone.BoneID].Bone = bone.MatrixfromKeys;
+    }
+  }
+}
+
+// ── Keyframe snap: set each bone to the nearest keyframe (no interpolation) ──
+
+void AnimationController::ApplyKeyframeSnap(float tickTime) {
+  xF::xAnimationSet* pAS = &m_pAnimInfo->Animations[m_currentSet];
+
+  for (auto& bone : pAS->BonesRef) {
+    auto& k = bone.ActualKey;
+
+    // Position: find nearest key <= tickTime
+    if (!bone.PositionKeys.empty()) {
+      unsigned int idx = 0;
+      for (unsigned int j = 0; j < static_cast<unsigned int>(bone.PositionKeys.size()); j++) {
+        if (static_cast<float>(bone.PositionKeys[j].t.i_atTime) <= tickTime) idx = j;
+        else break;
+      }
+      k.PositionKey.Position = bone.PositionKeys[idx].Position;
+    }
+
+    // Rotation: find nearest key <= tickTime
+    if (!bone.RotationKeys.empty()) {
+      unsigned int idx = 0;
+      for (unsigned int j = 0; j < static_cast<unsigned int>(bone.RotationKeys.size()); j++) {
+        if (static_cast<float>(bone.RotationKeys[j].t.i_atTime) <= tickTime) idx = j;
+        else break;
+      }
+      k.RotationKey.Rot = bone.RotationKeys[idx].Rot;
+    }
+
+    // Scale: find nearest key <= tickTime
+    if (!bone.ScaleKeys.empty()) {
+      unsigned int idx = 0;
+      for (unsigned int j = 0; j < static_cast<unsigned int>(bone.ScaleKeys.size()); j++) {
+        if (static_cast<float>(bone.ScaleKeys[j].t.i_atTime) <= tickTime) idx = j;
+        else break;
+      }
+      k.ScaleKey.Scale = bone.ScaleKeys[idx].Scale;
+    }
+
+    XMATRIX44 S, R, T;
+    XMatScaling(S, k.ScaleKey.Scale.x, k.ScaleKey.Scale.y, k.ScaleKey.Scale.z);
+    R = QuaternionToMatrix(k.RotationKey.Rot);
+    XMatTranslation(T, k.PositionKey.Position.x,
+                       k.PositionKey.Position.y,
+                       k.PositionKey.Position.z);
+    bone.MatrixfromKeys = S * R * T;
+
     if (bone.BoneID < static_cast<unsigned int>(m_numBones)) {
       m_pSkeletonAnim->Bones[bone.BoneID].Bone = bone.MatrixfromKeys;
     }

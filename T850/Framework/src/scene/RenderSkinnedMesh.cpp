@@ -422,6 +422,8 @@ namespace t800 {
   // ── Main draw ──────────────────────────────────────────
 
   void RenderSkinnedMesh::Draw(float *t, float *vp) {
+    if (t) transform = t;  // Accept world transform from PrimitiveInstance
+
     if (!m_hasSkin) {
       // Fall back to static rendering
       RenderMesh::Draw(t, vp);

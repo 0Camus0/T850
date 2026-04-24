@@ -104,6 +104,7 @@ int main(int arg,char ** args){
     }
     else if (a == "--debugFrames") {
       g_debugFrames = true;
+      g_dumpEnabled = true;  // enable frame dump infrastructure for spacebar
     }
     else if (a == "--replaySnapshot" && i + 1 < arg) {
       g_replaySnapshotPath = args[++i];

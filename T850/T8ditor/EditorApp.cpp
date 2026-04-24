@@ -890,6 +890,14 @@ void EditorApp::OnDraw() {
       meshArray.reserve(allMeshes.size());
       for (auto* p : allMeshes) meshArray.push_back(*p);
 
+      // Update animation + bone texture before render passes (Vulkan requirement)
+      for (auto& obj : g_objects) {
+        if (obj.primId >= 0 && obj.visible && obj.litInst.pBase) {
+          auto* sk = dynamic_cast<t800::RenderSkinnedMesh*>(obj.litInst.pBase);
+          if (sk && sk->HasSkinData()) sk->UpdateAnimationAndBones();
+        }
+      }
+
       ::Camera* mainCam = m_sceneProps.pCameras[0];
       T8_LOG_TRACE("[T8ditor] OnDraw: RenderGraph Execute (%d meshes)...", (int)meshArray.size());
       g_renderGraph.Execute(drv, m_sceneProps,

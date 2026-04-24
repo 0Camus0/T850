@@ -27,6 +27,10 @@ public:
   void Draw(float *t, float *vp) override;
   void Destroy() override;
 
+  // Call BEFORE the render graph — updates animation and uploads bone texture.
+  // Must happen outside any render pass (Vulkan copy commands require it).
+  void UpdateAnimationAndBones();
+
   // ── Animation playback API ──
   AnimationController& GetAnimController() { return m_animController; }
 

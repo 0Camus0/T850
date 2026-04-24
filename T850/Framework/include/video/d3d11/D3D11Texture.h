@@ -35,7 +35,9 @@ namespace t800 {
     void	LoadAPITextureCompressed(unsigned char* buffer);
     void	DestroyAPITexture();
     void  Set(const DeviceContext& deviceContext, unsigned int slot, std::string shaderTextureName) override;
+    void  SetVS(const DeviceContext& deviceContext, unsigned int slot, std::string name) override;
     void  SetSampler(const DeviceContext& deviceContext, unsigned int slot = 0) override;
+    void  UpdateFloatData(const DeviceContext& deviceContext, int w, int h, const float* data) override;
 
     ComPtr<ID3D11Texture2D>				Tex;
     ComPtr<ID3D11ShaderResourceView>    pSRVTex;

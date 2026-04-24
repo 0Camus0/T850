@@ -66,6 +66,12 @@ namespace t800 {
     return tex;
   }
 
+  Texture* D3D12Device::CreateFloatTexture(int w, int h, const float* data) {
+    // TODO: Phase 2 — D3D12 upload heap + SRV creation
+    T8_LOG_ERROR("[D3D12] CreateFloatTexture not yet implemented");
+    return nullptr;
+  }
+
   BaseRT* D3D12Device::CreateRT(int nrt, int cf, int df, int w, int h, bool genMips) {
     D3D12RT* rt = new D3D12RT;
     if (rt->LoadRT(nrt, cf, df, w, h, genMips)) return rt;

@@ -214,4 +214,11 @@ namespace t800 {
   {
   }
 
+  void GLTexture::UpdateFloatData(const DeviceContext& deviceContext, int w, int h, const float* data)
+  {
+    glBindTexture(GL_TEXTURE_2D, id);
+    glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, w, h, GL_RGBA, GL_FLOAT, data);
+    glBindTexture(GL_TEXTURE_2D, 0);
+  }
+
 }

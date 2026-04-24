@@ -487,38 +487,39 @@ void AnimationController::ComputeFinalMatrices() {
     // Extract quaternion+translation from the final matrix.
     // The 3x3 upper-left is a rotation (possibly with minor shear from blending).
     // Extract translation from row 3 (row-vector convention).
-    m_finalBoneTrans[i] = XVECTOR3(lh.m[3][0], lh.m[3][1], lh.m[3][2], 0.0f);
+    const XMATRIX44& fm = m_finalBoneMatrices[i];
+    m_finalBoneTrans[i] = XVECTOR3(fm.m[3][0], fm.m[3][1], fm.m[3][2], 0.0f);
 
     // Extract quaternion from 3x3 rotation using Shepperd's method.
-    float tr = lh.m[0][0] + lh.m[1][1] + lh.m[2][2];
+    float tr = fm.m[0][0] + fm.m[1][1] + fm.m[2][2];
     if (tr > 0.0f) {
       float s = std::sqrt(tr + 1.0f) * 2.0f;
       m_finalBoneQuats[i] = XQUATERNION(
-        (lh.m[1][2] - lh.m[2][1]) / s,
-        (lh.m[2][0] - lh.m[0][2]) / s,
-        (lh.m[0][1] - lh.m[1][0]) / s,
+        (fm.m[1][2] - fm.m[2][1]) / s,
+        (fm.m[2][0] - fm.m[0][2]) / s,
+        (fm.m[0][1] - fm.m[1][0]) / s,
         0.25f * s);
-    } else if (lh.m[0][0] > lh.m[1][1] && lh.m[0][0] > lh.m[2][2]) {
-      float s = std::sqrt(1.0f + lh.m[0][0] - lh.m[1][1] - lh.m[2][2]) * 2.0f;
+    } else if (fm.m[0][0] > fm.m[1][1] && fm.m[0][0] > fm.m[2][2]) {
+      float s = std::sqrt(1.0f + fm.m[0][0] - fm.m[1][1] - fm.m[2][2]) * 2.0f;
       m_finalBoneQuats[i] = XQUATERNION(
         0.25f * s,
-        (lh.m[0][1] + lh.m[1][0]) / s,
-        (lh.m[2][0] + lh.m[0][2]) / s,
-        (lh.m[1][2] - lh.m[2][1]) / s);
-    } else if (lh.m[1][1] > lh.m[2][2]) {
-      float s = std::sqrt(1.0f + lh.m[1][1] - lh.m[0][0] - lh.m[2][2]) * 2.0f;
+        (fm.m[0][1] + fm.m[1][0]) / s,
+        (fm.m[2][0] + fm.m[0][2]) / s,
+        (fm.m[1][2] - fm.m[2][1]) / s);
+    } else if (fm.m[1][1] > fm.m[2][2]) {
+      float s = std::sqrt(1.0f + fm.m[1][1] - fm.m[0][0] - fm.m[2][2]) * 2.0f;
       m_finalBoneQuats[i] = XQUATERNION(
-        (lh.m[0][1] + lh.m[1][0]) / s,
+        (fm.m[0][1] + fm.m[1][0]) / s,
         0.25f * s,
-        (lh.m[1][2] + lh.m[2][1]) / s,
-        (lh.m[2][0] - lh.m[0][2]) / s);
+        (fm.m[1][2] + fm.m[2][1]) / s,
+        (fm.m[2][0] - fm.m[0][2]) / s);
     } else {
-      float s = std::sqrt(1.0f + lh.m[2][2] - lh.m[0][0] - lh.m[1][1]) * 2.0f;
+      float s = std::sqrt(1.0f + fm.m[2][2] - fm.m[0][0] - fm.m[1][1]) * 2.0f;
       m_finalBoneQuats[i] = XQUATERNION(
-        (lh.m[2][0] + lh.m[0][2]) / s,
-        (lh.m[1][2] + lh.m[2][1]) / s,
+        (fm.m[2][0] + fm.m[0][2]) / s,
+        (fm.m[1][2] + fm.m[2][1]) / s,
         0.25f * s,
-        (lh.m[0][1] - lh.m[1][0]) / s);
+        (fm.m[0][1] - fm.m[1][0]) / s);
     }
   }
   // Remaining slots stay identity (quat=(0,0,0,1), trans=(0,0,0))

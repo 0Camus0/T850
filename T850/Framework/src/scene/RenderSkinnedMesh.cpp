@@ -371,10 +371,11 @@ namespace t800 {
     // Draw using the exact WireframeSphere pattern (known to work on all APIs)
     m_skelIB->Set(*T8DeviceContext, 0, T8_IB_FORMAR::R16);
     m_skelVB->Set(*T8DeviceContext, 16, 0);
+    // Topology BEFORE shader — Vulkan bakes topology into pipeline at Set() time
+    T8DeviceContext->SetPrimitiveTopology(T8_TOPOLOGY::LINE_LIST);
     m_skelShader->Set(*T8DeviceContext);
     m_skelCB->UpdateFromBuffer(*T8DeviceContext, &wvp[0]);
     m_skelCB->Set(*T8DeviceContext);
-    T8DeviceContext->SetPrimitiveTopology(T8_TOPOLOGY::LINE_LIST);
     T8DeviceContext->DrawIndexed(m_skelIndexCount, 0, 0);
     T8DeviceContext->SetPrimitiveTopology(T8_TOPOLOGY::TRIANLE_LIST);
   }

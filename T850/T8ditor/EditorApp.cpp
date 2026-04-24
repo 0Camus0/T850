@@ -983,7 +983,7 @@ void EditorApp::OnDraw() {
         skinned = dynamic_cast<t800::RenderSkinnedMesh*>(obj.litInst.pBase);
 
       if (skinned && skinned->HasSkinData()) {
-        drv->SetDepthStencilState(t800::BaseDriver::READ);
+        drv->SetDepthStencilState(t800::BaseDriver::DEPTH_DEFAULT);
         skinned->DrawWireframe();
         drv->SetDepthStencilState(t800::BaseDriver::NONE);
         skinned->DrawSkeleton();

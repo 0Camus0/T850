@@ -31,6 +31,7 @@ public:
     XMATRIX44 WVP;
     XVECTOR3  LineColor;    // .x .y .z .w
     XVECTOR3  DepthParams;  // .x=1/viewW, .y=1/viewH, .z=farPlane, .w=depthBias
+    XVECTOR3  _glPad[2];   // GL parser may offset uniforms past sizeof(base fields)
   };
 
   LineRenderer();

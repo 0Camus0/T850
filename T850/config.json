@@ -1,5 +1,5 @@
 {
-  "api": "gl",
+  "api": "vulkan",
   "dump": {
     "frame": 750,
     "trigger": "frame",
@@ -24,10 +24,10 @@
     "guiSnap": false,
     "logLevel": "error",
     "guiControlEdit": false,
-    "logToFile": true,
+    "logToFile": false,
     "guiControlTarget": "slider_knob",
     "d3d12Debug": false,
     "guiEdit": false
   },
-  "debugFrames": false
+  "debugFrames": true
 }

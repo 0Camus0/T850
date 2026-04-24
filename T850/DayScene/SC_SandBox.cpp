@@ -509,6 +509,7 @@ void SC_SandBox::PopulateGUI(t800::GUIManager& gui) {
     {"shadow_min",            CHANGE_SHADOW_MIN},
     {"env_factor",            CHANGE_ENV_FACTOR},
     {"ibl_factor",             CHANGE_IBL_FACTOR},
+    {"anim_speed",             CHANGE_ANIM_SPEED},
   };
 
   for (auto& sd : m_guiSetup.descriptor.sliders) {
@@ -523,6 +524,8 @@ void SC_SandBox::PopulateGUI(t800::GUIManager& gui) {
   static const CheckboxMapping cbMappings[] = {
     {"shadow_toggle",          CHANGE_PCF_TOOGLE},
     {"ssao_toggle",            CHANGLE_SSAO_TOOGLE},
+    {"show_wireframe",         CHANGE_SHOW_WIREFRAME},
+    {"show_skeleton",          CHANGE_SHOW_SKELETON},
   };
 
   for (auto& cd : m_guiSetup.descriptor.checkboxes) {
@@ -539,6 +542,7 @@ void SC_SandBox::PopulateGUI(t800::GUIManager& gui) {
     {"cubemap",             CHANGE_CUBEMAP},
     {"gauss_kernel_sample_count", CHANGE_GAUSS_KERNEL_SAMPLE_COUNT},
     {"active_gauss_kernel",        CHANGE_ACTIVE_GAUSS_KERNEL},
+    {"anim_select",                CHANGE_ANIM_SELECT},
   };
 
   for (auto& sd : m_guiSetup.descriptor.selectors) {
@@ -547,6 +551,37 @@ void SC_SandBox::PopulateGUI(t800::GUIManager& gui) {
       if (sd.name == m.name) { settingIdx = m.settingIndex; break; }
     }
     gui.AddSelector(sd, settingIdx);
+  }
+
+  // Populate animation selector with actual animation names from the loaded model
+  RenderSkinnedMesh* skinned = Meshes[0].GetSkinnedMesh();
+  if (skinned && skinned->HasSkinData()) {
+    for (auto& sp : gui.GetSelectorPairs()) {
+      if (sp.selector->settingIndex == CHANGE_ANIM_SELECT) {
+        sp.selector->options.clear();
+        int numSets = skinned->GetNumAnimSets();
+        for (int i = 0; i < numSets; i++) {
+          auto& ctrl = skinned->GetAnimController();
+          // Use animation set name if available
+          xF::xAnimationInfo* info = nullptr;
+          const xF::xSkeleton* skel = ctrl.GetAnimSkeleton();
+          // Get name from the mesh container's animation info
+          if (skinned->xFile && !skinned->xFile->XMeshDataBase.empty()) {
+            auto& anims = skinned->xFile->XMeshDataBase[0]->Animation.Animations;
+            if (i < (int)anims.size() && !anims[i].Name.empty()) {
+              sp.selector->options.push_back(anims[i].Name);
+            } else {
+              sp.selector->options.push_back("Anim " + std::to_string(i));
+            }
+          } else {
+            sp.selector->options.push_back("Anim " + std::to_string(i));
+          }
+        }
+        if (sp.selector->options.empty())
+          sp.selector->options.push_back("None");
+        break;
+      }
+    }
   }
 }
 
@@ -578,6 +613,10 @@ void SC_SandBox::SyncToGUI(t800::GUIManager& gui) {
     case CHANGE_SHADOW_MIN:      slider->SetValue(SceneProp.ShadowMin); break;
     case CHANGE_ENV_FACTOR:      slider->SetValue(SceneProp.EnvFactor); break;
     case CHANGE_IBL_FACTOR:      slider->SetValue(SceneProp.IBLFactor); break;
+    case CHANGE_ANIM_SPEED: {
+      RenderSkinnedMesh* sk = Meshes[0].GetSkinnedMesh();
+      if (sk) slider->SetValue(sk->GetAnimSpeed());
+    } break;
     }
   }
 
@@ -586,6 +625,8 @@ void SC_SandBox::SyncToGUI(t800::GUIManager& gui) {
     switch (cb->settingIndex) {
     case CHANGE_PCF_TOOGLE:   cb->checked = (SceneProp.ToogleShadow != 0); break;
     case CHANGLE_SSAO_TOOGLE: cb->checked = (SceneProp.ToogleSSAO != 0); break;
+    case CHANGE_SHOW_WIREFRAME: cb->checked = m_showWireframe; break;
+    case CHANGE_SHOW_SKELETON:  cb->checked = m_showSkeleton; break;
     }
   }
 
@@ -604,6 +645,10 @@ void SC_SandBox::SyncToGUI(t800::GUIManager& gui) {
     case CHANGE_ACTIVE_GAUSS_KERNEL:
       sel->selectedIndex = ChangeActiveGaussSelection;
       break;
+    case CHANGE_ANIM_SELECT: {
+      RenderSkinnedMesh* sk = Meshes[0].GetSkinnedMesh();
+      if (sk) sel->selectedIndex = sk->GetCurrentAnimSet();
+    } break;
     }
   }
 }
@@ -639,6 +684,10 @@ void SC_SandBox::SyncFromGUI(t800::GUIManager& gui) {
     case CHANGE_SHADOW_MIN:      SceneProp.ShadowMin = slider->value; break;
     case CHANGE_ENV_FACTOR:      SceneProp.EnvFactor = slider->value; break;
     case CHANGE_IBL_FACTOR:      SceneProp.IBLFactor = slider->value; break;
+    case CHANGE_ANIM_SPEED: {
+      RenderSkinnedMesh* sk = Meshes[0].GetSkinnedMesh();
+      if (sk) sk->SetAnimSpeed(slider->value);
+    } break;
     }
   }
 
@@ -648,6 +697,8 @@ void SC_SandBox::SyncFromGUI(t800::GUIManager& gui) {
     switch (cb->settingIndex) {
     case CHANGE_PCF_TOOGLE:   SceneProp.ToogleShadow = cb->checked ? 1 : 0; break;
     case CHANGLE_SSAO_TOOGLE: SceneProp.ToogleSSAO = cb->checked ? 1 : 0; break;
+    case CHANGE_SHOW_WIREFRAME: m_showWireframe = cb->checked; break;
+    case CHANGE_SHOW_SKELETON:  m_showSkeleton = cb->checked; break;
     }
   }
 
@@ -673,6 +724,15 @@ void SC_SandBox::SyncFromGUI(t800::GUIManager& gui) {
     case CHANGE_ACTIVE_GAUSS_KERNEL:
       ChangeActiveGaussSelection = sel->selectedIndex;
       break;
+    case CHANGE_ANIM_SELECT: {
+      RenderSkinnedMesh* sk = Meshes[0].GetSkinnedMesh();
+      if (sk && sel->selectedIndex != sk->GetCurrentAnimSet()) {
+        // Switch to selected animation set
+        while (sk->GetCurrentAnimSet() != sel->selectedIndex) {
+          sk->NextAnimation();
+        }
+      }
+    } break;
     }
   }
 }

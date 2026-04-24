@@ -107,119 +107,113 @@ void AnimationController::Update(float deltaTime) {
   if (m_pAnimInfo->Animations.empty()) return;
 
   float dt = deltaTime * m_speed;
-  InterpolateKeys(dt);
+  m_localTime += dt;
+
+  xF::xAnimationSet* pAS = &m_pAnimInfo->Animations[m_currentSet];
+  float maxTick = static_cast<float>(pAS->m_MaxTimeOnTicks);
+  if (maxTick <= 0.0f) maxTick = 1.0f;
+
+  float tickTime = m_ticksPerSecond * m_localTime;
+
+  // Wrap time for looping animations
+  if (m_looping && tickTime > maxTick) {
+    tickTime = std::fmod(tickTime, maxTick);
+    m_localTime = tickTime / m_ticksPerSecond;
+  } else if (!m_looping && tickTime > maxTick) {
+    tickTime = maxTick;
+  }
+
+  InterpolateKeys(tickTime);
   ComputeHierarchy();
   ComputeFinalMatrices();
 }
 
 // ── Keyframe interpolation ──────────────────────────────
 
-void AnimationController::InterpolateKeys(float dt) {
+void AnimationController::InterpolateKeys(float tickTime) {
   xF::xAnimationSet* pAS = &m_pAnimInfo->Animations[m_currentSet];
-
-  bool allFinished = true;
 
   for (auto& bone : pAS->BonesRef) {
     auto& k = bone.ActualKey;
-    k.LocaltimePos += dt;
-    k.LocaltimeRot += dt;
-    k.LocaltimeSc  += dt;
 
     // ── Position ──
     if (k.MaxIndexPos == 0) {
       k.PositionKey.Position = XVECTOR3(0.0f, 0.0f, 0.0f);
-      k.StatePos = xF::xAnimationSingleKey::FINISHED;
     } else if (k.MaxIndexPos == 1) {
       k.PositionKey.Position = bone.PositionKeys[0].Position;
-      k.StatePos = xF::xAnimationSingleKey::FINISHED;
     } else {
-      if (k.LocalIndexPos + 1 < k.MaxIndexPos) {
-        k.StatePos = xF::xAnimationSingleKey::RUNNING;
-        auto& cur  = bone.PositionKeys[k.LocalIndexPos];
-        auto& next = bone.PositionKeys[k.LocalIndexPos + 1];
-        float curTick  = static_cast<float>(cur.t.i_atTime);
-        float nextTick = static_cast<float>(next.t.i_atTime);
-        float elapsed  = m_ticksPerSecond * k.LocaltimePos;
-
-        if (elapsed >= nextTick) {
-          k.LocalIndexPos++;
-          k.PositionKey.Position = next.Position;
-        } else {
-          float span = nextTick - curTick;
-          float t = (span > 0.0f) ? (elapsed - curTick) / span : 0.0f;
-          t = (t < 0.0f) ? 0.0f : ((t > 1.0f) ? 1.0f : t);
-          k.PositionKey.Position.x = cur.Position.x + (next.Position.x - cur.Position.x) * t;
-          k.PositionKey.Position.y = cur.Position.y + (next.Position.y - cur.Position.y) * t;
-          k.PositionKey.Position.z = cur.Position.z + (next.Position.z - cur.Position.z) * t;
-        }
-      } else {
-        k.StatePos = xF::xAnimationSingleKey::FINISHED;
-        k.PositionKey.Position = bone.PositionKeys[k.MaxIndexPos - 1].Position;
+      // Find the two surrounding keyframes for tickTime
+      unsigned int idx = 0;
+      for (unsigned int j = 0; j + 1 < k.MaxIndexPos; j++) {
+        if (tickTime < static_cast<float>(bone.PositionKeys[j + 1].t.i_atTime)) { idx = j; break; }
+        idx = j;
       }
+      unsigned int nextIdx = idx + 1;
+      if (nextIdx >= k.MaxIndexPos) nextIdx = 0; // wrap for loop interpolation
+      float curTick  = static_cast<float>(bone.PositionKeys[idx].t.i_atTime);
+      float nextTick = (nextIdx > idx)
+        ? static_cast<float>(bone.PositionKeys[nextIdx].t.i_atTime)
+        : static_cast<float>(pAS->m_MaxTimeOnTicks); // wrap to end
+      float span = nextTick - curTick;
+      float t = (span > 0.0f) ? (tickTime - curTick) / span : 0.0f;
+      t = (t < 0.0f) ? 0.0f : ((t > 1.0f) ? 1.0f : t);
+      auto& cur  = bone.PositionKeys[idx];
+      auto& next = bone.PositionKeys[nextIdx];
+      k.PositionKey.Position.x = cur.Position.x + (next.Position.x - cur.Position.x) * t;
+      k.PositionKey.Position.y = cur.Position.y + (next.Position.y - cur.Position.y) * t;
+      k.PositionKey.Position.z = cur.Position.z + (next.Position.z - cur.Position.z) * t;
     }
 
     // ── Rotation (with SLERP) ──
     if (k.MaxIndexRot == 0) {
       k.RotationKey.Rot = XQUATERNION(0.0f, 0.0f, 0.0f, 1.0f);
-      k.StateRot = xF::xAnimationSingleKey::FINISHED;
     } else if (k.MaxIndexRot == 1) {
       k.RotationKey.Rot = bone.RotationKeys[0].Rot;
-      k.StateRot = xF::xAnimationSingleKey::FINISHED;
     } else {
-      if (k.LocalIndexRot + 1 < k.MaxIndexRot) {
-        k.StateRot = xF::xAnimationSingleKey::RUNNING;
-        auto& cur  = bone.RotationKeys[k.LocalIndexRot];
-        auto& next = bone.RotationKeys[k.LocalIndexRot + 1];
-        float curTick  = static_cast<float>(cur.t.i_atTime);
-        float nextTick = static_cast<float>(next.t.i_atTime);
-        float elapsed  = m_ticksPerSecond * k.LocaltimeRot;
-
-        if (elapsed >= nextTick) {
-          k.LocalIndexRot++;
-          k.RotationKey.Rot = next.Rot;
-        } else {
-          float span = nextTick - curTick;
-          float t = (span > 0.0f) ? (elapsed - curTick) / span : 0.0f;
-          t = (t < 0.0f) ? 0.0f : ((t > 1.0f) ? 1.0f : t);
-          k.RotationKey.Rot = m_useSlerp ? Slerp(cur.Rot, next.Rot, t) : Nlerp(cur.Rot, next.Rot, t);
-        }
-      } else {
-        k.StateRot = xF::xAnimationSingleKey::FINISHED;
-        k.RotationKey.Rot = bone.RotationKeys[k.MaxIndexRot - 1].Rot;
+      unsigned int idx = 0;
+      for (unsigned int j = 0; j + 1 < k.MaxIndexRot; j++) {
+        if (tickTime < static_cast<float>(bone.RotationKeys[j + 1].t.i_atTime)) { idx = j; break; }
+        idx = j;
       }
+      unsigned int nextIdx = idx + 1;
+      if (nextIdx >= k.MaxIndexRot) nextIdx = 0;
+      float curTick  = static_cast<float>(bone.RotationKeys[idx].t.i_atTime);
+      float nextTick = (nextIdx > idx)
+        ? static_cast<float>(bone.RotationKeys[nextIdx].t.i_atTime)
+        : static_cast<float>(pAS->m_MaxTimeOnTicks);
+      float span = nextTick - curTick;
+      float t = (span > 0.0f) ? (tickTime - curTick) / span : 0.0f;
+      t = (t < 0.0f) ? 0.0f : ((t > 1.0f) ? 1.0f : t);
+      k.RotationKey.Rot = m_useSlerp
+        ? Slerp(bone.RotationKeys[idx].Rot, bone.RotationKeys[nextIdx].Rot, t)
+        : Nlerp(bone.RotationKeys[idx].Rot, bone.RotationKeys[nextIdx].Rot, t);
     }
 
     // ── Scale ──
     if (k.MaxIndexSc == 0) {
       k.ScaleKey.Scale = XVECTOR3(1.0f, 1.0f, 1.0f);
-      k.StateSc = xF::xAnimationSingleKey::FINISHED;
     } else if (k.MaxIndexSc == 1) {
       k.ScaleKey.Scale = bone.ScaleKeys[0].Scale;
-      k.StateSc = xF::xAnimationSingleKey::FINISHED;
     } else {
-      if (k.LocalIndexSc + 1 < k.MaxIndexSc) {
-        k.StateSc = xF::xAnimationSingleKey::RUNNING;
-        auto& cur  = bone.ScaleKeys[k.LocalIndexSc];
-        auto& next = bone.ScaleKeys[k.LocalIndexSc + 1];
-        float curTick  = static_cast<float>(cur.t.i_atTime);
-        float nextTick = static_cast<float>(next.t.i_atTime);
-        float elapsed  = m_ticksPerSecond * k.LocaltimeSc;
-
-        if (elapsed >= nextTick) {
-          k.LocalIndexSc++;  // Fixed: was LocalIndexRot++ in legacy code
-          k.ScaleKey.Scale = next.Scale;
-        } else {
-          float span = nextTick - curTick;
-          float t = (span > 0.0f) ? (elapsed - curTick) / span : 0.0f;
-          t = (t < 0.0f) ? 0.0f : ((t > 1.0f) ? 1.0f : t);
-          k.ScaleKey.Scale.x = cur.Scale.x + (next.Scale.x - cur.Scale.x) * t;
-          k.ScaleKey.Scale.y = cur.Scale.y + (next.Scale.y - cur.Scale.y) * t;
-          k.ScaleKey.Scale.z = cur.Scale.z + (next.Scale.z - cur.Scale.z) * t;
-        }
-      } else {
-        k.StateSc = xF::xAnimationSingleKey::FINISHED;
-        k.ScaleKey.Scale = bone.ScaleKeys[k.MaxIndexSc - 1].Scale;
+      unsigned int idx = 0;
+      for (unsigned int j = 0; j + 1 < k.MaxIndexSc; j++) {
+        if (tickTime < static_cast<float>(bone.ScaleKeys[j + 1].t.i_atTime)) { idx = j; break; }
+        idx = j;
       }
+      unsigned int nextIdx = idx + 1;
+      if (nextIdx >= k.MaxIndexSc) nextIdx = 0;
+      float curTick  = static_cast<float>(bone.ScaleKeys[idx].t.i_atTime);
+      float nextTick = (nextIdx > idx)
+        ? static_cast<float>(bone.ScaleKeys[nextIdx].t.i_atTime)
+        : static_cast<float>(pAS->m_MaxTimeOnTicks);
+      float span = nextTick - curTick;
+      float t = (span > 0.0f) ? (tickTime - curTick) / span : 0.0f;
+      t = (t < 0.0f) ? 0.0f : ((t > 1.0f) ? 1.0f : t);
+      auto& cur  = bone.ScaleKeys[idx];
+      auto& next = bone.ScaleKeys[nextIdx];
+      k.ScaleKey.Scale.x = cur.Scale.x + (next.Scale.x - cur.Scale.x) * t;
+      k.ScaleKey.Scale.y = cur.Scale.y + (next.Scale.y - cur.Scale.y) * t;
+      k.ScaleKey.Scale.z = cur.Scale.z + (next.Scale.z - cur.Scale.z) * t;
     }
 
     // Build local transform from interpolated S * R * T (row-vector convention)
@@ -235,16 +229,6 @@ void AnimationController::InterpolateKeys(float dt) {
     if (bone.BoneID < static_cast<unsigned int>(m_numBones)) {
       m_pSkeletonAnim->Bones[bone.BoneID].Bone = bone.MatrixfromKeys;
     }
-
-    if (k.StatePos != xF::xAnimationSingleKey::FINISHED ||
-        k.StateRot != xF::xAnimationSingleKey::FINISHED ||
-        k.StateSc  != xF::xAnimationSingleKey::FINISHED) {
-      allFinished = false;
-    }
-  }
-
-  if (allFinished && m_looping) {
-    ResetLocals();
   }
 }
 

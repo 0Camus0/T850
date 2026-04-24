@@ -420,15 +420,11 @@ void SC_SandBox::OnDraw() {
     RenderSkinnedMesh* skinned = dynamic_cast<RenderSkinnedMesh*>(Meshes[0].pBase);
     if (skinned && skinned->HasSkinData()) {
       if (m_showWireframe) {
-        T8_LOG_INFO("[SC] DrawWireframe begin");
         pFramework->pVideoDriver->SetDepthStencilState(BaseDriver::NONE);
         skinned->DrawWireframe();
-        T8_LOG_INFO("[SC] DrawWireframe done");
       }
-      if (m_showSkeleton && !g_pBaseDriver->UsesGLSL()) {
-        T8_LOG_INFO("[SC] DrawSkeleton begin");
+      if (m_showSkeleton) {
         skinned->DrawSkeleton();
-        T8_LOG_INFO("[SC] DrawSkeleton done");
       }
     }
   }

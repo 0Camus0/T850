@@ -104,8 +104,8 @@ public:
   t800::WireframeSphere m_debugSphere;
   bool m_showCullStats = false;
   bool m_showAABBs = false;
-  bool m_showWireframe = false;
-  bool m_showSkeleton = false;
+  bool m_showWireframe = true;
+  bool m_showSkeleton = true;
 
   // Orbit camera state
   XVECTOR3 m_orbitTarget;    // center of the model (world space)

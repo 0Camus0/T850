@@ -25,6 +25,8 @@ class LineRenderer {
 public:
   // Constant buffer layout shared with VS_EditorLine.{hlsl,glsl}.
   // Field order is significant — the GL backend reflects uniforms positionally.
+  // The GL GLSL parser adds attribute byte sizes before uniform offsets,
+  // so the CB must include padding to match GL's reflected layout.
   struct CBuffer {
     XMATRIX44 WVP;
     XVECTOR3  LineColor;    // .x .y .z .w

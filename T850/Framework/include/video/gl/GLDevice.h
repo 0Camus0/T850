@@ -27,6 +27,7 @@ namespace t800 {
     Texture* CreateTexture(std::string path) override;
     Texture* CreateTextureFromMemory(const unsigned char *buff, int w, int h, int channels, std::string name) override;
     Texture* CreateCubeMap(const unsigned char * buff, int w, int h) override;
+    Texture* CreateFloatTexture(int w, int h, const float* data = nullptr) override;
     BaseRT* CreateRT(int nrt, int cf, int df, int w, int h, bool genMips = false) override;
   private:
   };

@@ -437,8 +437,9 @@ void SC_SandBox::OnDraw() {
     RenderSkinnedMesh* skinned = dynamic_cast<RenderSkinnedMesh*>(Meshes[0].pBase);
     if (skinned && skinned->HasSkinData()) {
       if (m_showWireframe) {
-        pFramework->pVideoDriver->SetDepthStencilState(BaseDriver::READ);
+        pFramework->pVideoDriver->SetDepthStencilState(BaseDriver::DEPTH_DEFAULT);
         skinned->DrawWireframe();
+        pFramework->pVideoDriver->SetDepthStencilState(BaseDriver::DEPTH_DEFAULT);
       }
       if (m_showSkeleton) {
         pFramework->pVideoDriver->SetDepthStencilState(BaseDriver::NONE);

@@ -168,6 +168,16 @@ namespace t800 {
       sLoggedOnce = true;
     }
 
+    // Disable all previously enabled vertex attributes to avoid stale bindings
+    // when switching between shaders with different attribute counts
+    static int sMaxAttribs = 0;
+    if (sMaxAttribs == 0) {
+      glGetIntegerv(GL_MAX_VERTEX_ATTRIBS, &sMaxAttribs);
+      if (sMaxAttribs > 16) sMaxAttribs = 16; // reasonable cap
+    }
+    for (int a = 0; a < sMaxAttribs; a++)
+      glDisableVertexAttribArray(a);
+
     for (auto& it : locs)
     {
       glEnableVertexAttribArray(it.loc);

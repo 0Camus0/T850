@@ -56,23 +56,17 @@ bool LineRenderer::Create() {
   free(vsSrc); free(fsDepthSrc); free(fsFlatSrc);
 
   if (useGL) {
+    std::string defines;
 #if defined(USING_OPENGL)
-    std::string defines;
-    defines += "#version 130\n\n";
-    defines += "#define lowp \n\n";
-    defines += "#define mediump \n\n";
-    defines += "#define highp \n\n";
-    vstr = defines + vstr;
-    fsDepthStr = defines + fsDepthStr;
-    fsFlatStr  = defines + fsFlatStr;
-#elif defined(USING_GL_COMMON)
-    std::string defines;
+    defines += "#version 330\n\n";
+    defines += "#define ES_30\n\n";
+#elif defined(USING_OPENGL_ES30) || defined(USING_OPENGL_ES31)
     defines += "#version 300 es\n\n";
     defines += "#define ES_30\n\n";
+#endif
     vstr = defines + vstr;
     fsDepthStr = defines + fsDepthStr;
     fsFlatStr  = defines + fsFlatStr;
-#endif
   }
 
   // Compile depth-tested shader variant

@@ -1357,6 +1357,11 @@ void EditorApp::OnDraw() {
         if (manipulated) {
           float translation[3], rotation[3], scale[3];
           ImGuizmo::DecomposeMatrixToComponents(&worldMat.m[0][0], translation, rotation, scale);
+          // Clamp scale to a small positive value to prevent degenerate matrices
+          const float kMinScale = 0.001f;
+          for (int s = 0; s < 3; s++)
+            if (scale[s] < kMinScale && scale[s] > -kMinScale)
+              scale[s] = (scale[s] >= 0) ? kMinScale : -kMinScale;
           sel->wireframe.Position() = XVECTOR3(translation[0], translation[1], translation[2]);
           sel->wireframe.EulerRadians() = XVECTOR3(
             rotation[0] * kDegToRad, rotation[1] * kDegToRad, rotation[2] * kDegToRad);

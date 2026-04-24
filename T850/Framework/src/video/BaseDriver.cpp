@@ -214,8 +214,9 @@ namespace t800 {
       if (key.has(ShaderKey::GLTF_TANGENT_SPACE)) Defines += "#define GLTF_TANGENT_SPACE\n\n";
 
       // Skinning
-      if (key.has(ShaderKey::HAS_SKINNING))     Defines += "#define USE_SKINNING\n\n";
-      if (key.has(ShaderKey::HAS_SKINNING_QT))  Defines += "#define USE_SKINNING_QT\n\n";
+      if (key.has(ShaderKey::HAS_SKINNING))      Defines += "#define USE_SKINNING\n\n";
+      if (key.has(ShaderKey::HAS_SKINNING_QT))   Defines += "#define USE_SKINNING_QT\n\n";
+      if (key.has(ShaderKey::HAS_SKINNING_TEX))  Defines += "#define USE_SKINNING_TEXTURE\n\n";
 
       // Special modes
       if (key.has(ShaderKey::NO_LIGHT))       Defines += "#define NO_LIGHT\n\n";

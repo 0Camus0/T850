@@ -173,6 +173,17 @@ namespace t800 {
       glEnableVertexAttribArray(it.loc);
       glVertexAttribPointer(it.loc, it.size, GL_FLOAT, GL_FALSE, stride, BUFFER_OFFSET(it.bufferBytePosition));
     }
+
+    // Disable vertex attribs not used by this shader to prevent stale
+    // attribs from a previous shader leaking state (e.g., mesh → line).
+    int maxLoc = 0;
+    for (auto& it : locs)
+      if (it.loc >= maxLoc) maxLoc = it.loc + 1;
+    // Track previous high-water mark across Set() calls
+    static int sPrevMaxAttrib = 0;
+    for (int a = maxLoc; a < sPrevMaxAttrib; a++)
+      glDisableVertexAttribArray(a);
+    if (maxLoc > sPrevMaxAttrib) sPrevMaxAttrib = maxLoc;
   }
   void GLShader::DestroyAPIShader()
   {

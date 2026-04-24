@@ -403,6 +403,24 @@ void BuildSkinsAndAnimations(const Document& doc,
       }
     }
 
+    // Compute animation duration from the maximum keyframe tick across all channels
+    long maxTick = 0;
+    for (auto& ab : animSet.BonesRef) {
+      if (!ab.PositionKeys.empty()) {
+        long t = static_cast<long>(ab.PositionKeys.back().t.i_atTime);
+        if (t > maxTick) maxTick = t;
+      }
+      if (!ab.RotationKeys.empty()) {
+        long t = static_cast<long>(ab.RotationKeys.back().t.i_atTime);
+        if (t > maxTick) maxTick = t;
+      }
+      if (!ab.ScaleKeys.empty()) {
+        long t = static_cast<long>(ab.ScaleKeys.back().t.i_atTime);
+        if (t > maxTick) maxTick = t;
+      }
+    }
+    animSet.m_MaxTimeOnTicks = maxTick;
+
     T8_LOG_INFO("[glTF] Animation '%s': %zu bone channels",
                 animSet.Name.c_str(), animSet.BonesRef.size());
   }

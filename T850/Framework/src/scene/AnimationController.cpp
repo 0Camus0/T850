@@ -54,6 +54,31 @@ void AnimationController::Init(xF::xAnimationInfo* animInfo,
   ResetLocals();
   m_initialized = true;
 
+  // Ensure every animation set has m_MaxTimeOnTicks computed
+  for (auto& aset : m_pAnimInfo->Animations) {
+    if (aset.m_MaxTimeOnTicks <= 0) {
+      long maxT = 0;
+      for (auto& bone : aset.BonesRef) {
+        for (auto& pk : bone.PositionKeys) {
+          long t = static_cast<long>(pk.t.i_atTime);
+          if (t > maxT) maxT = t;
+        }
+        for (auto& rk : bone.RotationKeys) {
+          long t = static_cast<long>(rk.t.i_atTime);
+          if (t > maxT) maxT = t;
+        }
+        for (auto& sk : bone.ScaleKeys) {
+          long t = static_cast<long>(sk.t.i_atTime);
+          if (t > maxT) maxT = t;
+        }
+      }
+      aset.m_MaxTimeOnTicks = maxT;
+    }
+    T8_LOG_INFO("[AnimCtrl] Anim '%s': duration=%ld ticks (%.2f sec)",
+                aset.Name.c_str(), aset.m_MaxTimeOnTicks,
+                aset.m_MaxTimeOnTicks / (double)m_ticksPerSecond);
+  }
+
   // Compute bind-pose combined matrices and our own IBM from them.
   // This guarantees IBM * BindCombined = Identity exactly, avoiding
   // accumulated numerical drift from glTF's pre-baked IBM values.

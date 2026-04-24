@@ -10,16 +10,6 @@
 #include <utils/Utils.h>
 #include <utils/Log.h>
 
-#if defined(USING_OPENGL)
-#include <GL/glew.h>
-#elif defined(USING_OPENGL_ES31)
-#include <GLES3/gl31.h>
-#elif defined(USING_OPENGL_ES30)
-#include <GLES3/gl3.h>
-#elif defined(USING_OPENGL_ES20)
-#include <GLES2/gl2.h>
-#endif
-
 #include <cstdlib>
 #include <string>
 
@@ -138,13 +128,6 @@ void LineRenderer::DrawLines(const XMATRIX44& world,
 
   ib->Set(*T8DeviceContext, 0, ibFormat);
   vb->Set(*T8DeviceContext, vertexStride, 0);
-
-  // GL: disable stale vertex attribs before switching to line shader
-  // (the line shader has fewer attribs than the mesh shader)
-  if (g_pBaseDriver->UsesGLSL()) {
-    for (int a = 0; a < 16; a++)
-      glDisableVertexAttribArray(a);
-  }
 
   // Set topology BEFORE shader (Vulkan bakes topology into the pipeline at Set time)
   T8DeviceContext->SetPrimitiveTopology(T8_TOPOLOGY::LINE_LIST);

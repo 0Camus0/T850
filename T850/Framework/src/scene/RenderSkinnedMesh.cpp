@@ -369,8 +369,8 @@ namespace t800 {
     UpdateSkeletonPositions();
     m_skelVB->UpdateFromBuffer(*T8DeviceContext, m_skelPositions.data());
 
-    // WVP = identity * VP (skeleton positions are already in world space)
-    XMATRIX44 wvp = cam->VP;
+    // WVP = mesh world transform * VP (skeleton positions are in model space)
+    XMATRIX44 wvp = transform * cam->VP;
 
     // Draw using the exact WireframeSphere pattern (known to work on all APIs)
     m_skelIB->Set(*T8DeviceContext, 0, T8_IB_FORMAR::R16);

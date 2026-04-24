@@ -228,11 +228,6 @@ void SC_SandBox::OnUpdate(float _DtSecs) {
 }
 
 void SC_SandBox::OnInput(InputManager* IManager) {
-  // Spacebar: request frame dump (--debugFrames mode)
-  if (IManager->PressedOnceKey(T800K_SPACE)) {
-    m_dumper.RequestDump();
-  }
-
   // Skip mouse-driven camera when replay snapshot is active
   if (m_dumper.IsReplayActive()) return;
 

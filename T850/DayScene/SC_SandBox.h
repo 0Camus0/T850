@@ -68,6 +68,7 @@ public:
   void PopulateGUI(t800::GUIManager& gui) override;
   void SyncToGUI(t800::GUIManager& gui) override;
   void SyncFromGUI(t800::GUIManager& gui) override;
+  void RequestDump() override { m_dumper.RequestDump(); }
 
   float DtSecs = 0.0f;
   t800::PrimitiveManager PrimitiveMgr;

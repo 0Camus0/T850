@@ -1,33 +1,33 @@
 {
-  "api": "d3d11",
-  "dump": {
-    "frame": 750,
-    "trigger": "frame",
-    "seconds": 5,
-    "enabled": false
+  "display": {
+    "scene": 0,
+    "model": "Models/DamagedHelmet.glb",
+    "width": 1920,
+    "fullscreen": false,
+    "height": 1080
   },
+  "configuration": "Release",
+  "keepRunning": false,
   "replaySnapshot": {
     "path": "D:\\Code\\Game\\T850\\T850\\bin\\x64\\Release\\dumps_vulkan_f1324_20260419_195612\\snapshot.json",
     "enabled": false
   },
-  "architecture": "x64",
-  "display": {
-    "fullscreen": false,
-    "scene": 0,
-    "model": "Models/Dragon.glb",
-    "width": 1920,
-    "height": 1080
-  },
-  "keepRunning": false,
-  "configuration": "Release",
+  "api": "vulkan",
+  "debugFrames": true,
   "devTools": {
-    "guiSnap": false,
-    "logLevel": "error",
     "guiControlEdit": false,
-    "logToFile": false,
+    "logLevel": "trace",
+    "guiEdit": false,
+    "guiSnap": false,
+    "logToFile": true,
     "guiControlTarget": "slider_knob",
-    "d3d12Debug": false,
-    "guiEdit": false
+    "d3d12Debug": false
   },
-  "debugFrames": false
+  "architecture": "x64",
+  "dump": {
+    "enabled": false,
+    "trigger": "frame",
+    "seconds": 5,
+    "frame": 750
+  }
 }

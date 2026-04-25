@@ -28,6 +28,7 @@ InputManager::InputManager() {
 	yDelta = 0;
 	mouseX = 0;
 	mouseY = 0;
+	scrollDelta = 0.0f;
 }
 
 bool InputManager::PressedOnceKey(int key) {

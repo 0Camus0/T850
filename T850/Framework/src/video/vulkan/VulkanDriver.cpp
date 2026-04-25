@@ -1517,7 +1517,7 @@ reopen:
     VmaAllocation stagingAlloc;
     VmaAllocationInfo stagingAllocInfo;
     vmaCreateBuffer(m_allocator, &stagingInfo, &stagingAllocCI, &stagingBuffer, &stagingAlloc, &stagingAllocInfo);
-    memcpy(stagingAllocInfo.pMappedData, data, dataSize);
+    memcpy(stagingAllocInfo.pMappedData, data, static_cast<size_t>(dataSize));
 
     // Record and submit copy command
     VkCommandBufferAllocateInfo cmdAlloc = { VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO };

@@ -116,7 +116,7 @@ namespace t800 {
         return;
       }
     }
-    memcpy(stagingAllocInfo.pMappedData, uploadBuf, totalSize);
+    memcpy(stagingAllocInfo.pMappedData, uploadBuf, static_cast<size_t>(totalSize));
 
     // 3. Record transient command buffer
     VkCommandBufferAllocateInfo cmdAlloc = { VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO };
@@ -303,7 +303,7 @@ namespace t800 {
         return;
       }
     }
-    memcpy(stagingAllocInfo.pMappedData, buffer, totalSize);
+    memcpy(stagingAllocInfo.pMappedData, buffer, static_cast<size_t>(totalSize));
 
     // Record copy
     VkCommandBuffer cmd;
@@ -456,7 +456,7 @@ namespace t800 {
     stagingAllocCI.flags = VMA_ALLOCATION_CREATE_HOST_ACCESS_SEQUENTIAL_WRITE_BIT | VMA_ALLOCATION_CREATE_MAPPED_BIT;
     VmaAllocationInfo stagingAllocInfo;
     vmaCreateBuffer(allocator, &stagingInfo, &stagingAllocCI, &stagingBuffer, &stagingAlloc, &stagingAllocInfo);
-    memcpy(stagingAllocInfo.pMappedData, data, totalSize);
+    memcpy(stagingAllocInfo.pMappedData, data, static_cast<size_t>(totalSize));
 
     // Record copy in current frame's command buffer
     VkCommandBuffer cmd = driver->GetCurrentCommandBuffer();

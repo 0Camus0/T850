@@ -54,8 +54,6 @@ namespace t800 {
 
 
 #include "SC_Day.h"
-#include "SC_Night.h"
-#include "SC_Tech.h"
 #include "SC_SandBox.h"
 void App::InitVars() {
   //t800::T8Technique tech("Techniques/test_technique.xml");
@@ -66,8 +64,6 @@ void App::InitVars() {
 
   m_scenes.push_back(new SC_SandBox());
   m_scenes.push_back(new SC_Day());
-  m_scenes.push_back(new SC_Night());
-  m_scenes.push_back(new SC_Tech());
   for (auto &it : m_scenes) {
     it->pFramework = pFramework;
     //it->InitVars();

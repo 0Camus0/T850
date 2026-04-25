@@ -1,6 +1,6 @@
 #pragma once
 #include <vector>
-#include "xMaths.h"
+#include <utils/xMaths.h>
 namespace t800 {
   struct SplinePoint : public XVECTOR3 {
   public:

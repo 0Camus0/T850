@@ -1,5 +1,5 @@
-#include "pch.h"
-#include "utils/GUIAtlasGenerator.h"
+#include <pch.h>
+#include <utils/GUIAtlasGenerator.h>
 #include <utils/Log.h>
 
 #include <algorithm>

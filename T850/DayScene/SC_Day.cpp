@@ -1,4 +1,4 @@
-#include "SC_Day.h"
+#include <SC_Day.h>
 #include <iostream>
 #include <cstdio>
 #include <cstdlib>

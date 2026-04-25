@@ -18,9 +18,9 @@
 #include <string>
 #include <vector>
 #include <unordered_map>
-#include "T8_descriptors.h"
-#include "utils/T8_Technique.h"
-#include "video/WindowHandle.h"
+#include <T8_descriptors.h>
+#include <utils/T8_Technique.h>
+#include <video/WindowHandle.h>
 
 
 namespace t800 {

@@ -1,45 +1,33 @@
-{
-  "architecture": "x64",
-  "configuration": "Release",
-  "api": "d3d11",
-  "display": {
-    "width": 1280,
-    "height": 720,
-    "fullscreen": false,
-    "scene": 0,
-    "model": "Models/DamagedHelmet.glb",
-    "title": "T800 Project"
-  },
-  "debugFrames": false,
-  "keepRunning": false,
-  "replaySnapshot": {
-    "enabled": false,
-    "path": ""
-  },
-  "dump": {
-    "enabled": false,
-    "trigger": "frame",
-    "frame": -1,
-    "seconds": -1.0
-  },
-  "devTools": {
-    "gui": false,
-    "guiScreenshot": false,
-    "guiScreenshotPath": "gui_screenshot.ppm",
-    "guiEdit": false,
-    "guiSnap": false,
-    "guiControlEdit": false,
-    "guiControlTarget": "slider_knob",
-    "logLevel": "verbose",
-    "logToFile": false,
-    "logFile": "",
-    "d3d12Debug": false,
-    "testGui": false,
-    "createAtlas": false,
-    "atlasMaxSprite": 256,
-    "profile": false,
-    "profileFrames": 300,
-    "dumpMatrices": false,
-    "dumpMatricesFrames": 0
-  }
+﻿{
+    "keepRunning":  false,
+    "api":  "d3d12",
+    "architecture":  "x64",
+    "display":  {
+                    "scene":  0,
+                    "width":  1920,
+                    "model":  "Models/Dragon.glb",
+                    "height":  1080,
+                    "fullscreen":  false
+                },
+    "replaySnapshot":  {
+                           "path":  "",
+                           "enabled":  false
+                       },
+    "configuration":  "Release",
+    "dump":  {
+                 "seconds":  -1,
+                 "trigger":  "frame",
+                 "frame":  -1,
+                 "enabled":  false
+             },
+    "debugFrames":  false,
+    "devTools":  {
+                     "guiControlEdit":  false,
+                     "d3d12Debug":  false,
+                     "guiControlTarget":  "slider_knob",
+                     "logLevel":  "error",
+                     "logToFile":  false,
+                     "guiEdit":  false,
+                     "guiSnap":  false
+                 }
 }

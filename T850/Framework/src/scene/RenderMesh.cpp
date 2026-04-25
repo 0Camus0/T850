@@ -1,4 +1,4 @@
-#include "pch.h"
+#include <pch.h>
 /*********************************************************
 * Copyright (C) 2017 Daniel Enriquez (camus_mm@hotmail.com)
 * All Rights Reserved
@@ -25,7 +25,7 @@
 #include <video/d3d11/D3D11Shader.h>
 #include <video/d3d11/D3D11Driver.h>
 #endif
-#include "core/Core.h"
+#include <core/Core.h>
 #include <utils/Log.h>
 
 #define CHANGE_TO_RH 0

@@ -54,6 +54,7 @@
     <ClInclude Include="include\scene\WireframeArrow.h" />
     <ClInclude Include="include\scene\T8_Quad.h" />
     <ClInclude Include="include\scene\T8_TextRenderer.h" />
+    <ClInclude Include="include\gui\GUIAtlas.h" />
     <ClInclude Include="include\gui\GUIElement.h" />
     <ClInclude Include="include\gui\T8_GUI.h" />
     <ClInclude Include="include\gui\SliderBarData.h" />
@@ -73,6 +74,7 @@
     <ClInclude Include="include\utils\xDefs.h" />
     <ClInclude Include="include\utils\xMaths.h" />
     <ClInclude Include="include\utils\GUIAtlasGenerator.h" />
+    <ClInclude Include="include\utils\T8ConfigRuntime.h" />
     <ClInclude Include="include\utils\SPIRVReflection.h" />
     <ClInclude Include="include\utils\gltf\GLTFTypes.h" />
     <ClInclude Include="include\utils\gltf\GLTFLoader.h" />
@@ -167,6 +169,7 @@
     <ClCompile Include="src\scene\WireframeArrow.cpp" />
     <ClCompile Include="src\scene\T8_Quad.cpp" />
     <ClCompile Include="src\scene\T8_TextRenderer.cpp" />
+    <ClCompile Include="src\gui\GUIAtlas.cpp" />
     <ClCompile Include="src\gui\GUIElement.cpp" />
     <ClCompile Include="src\gui\T8_GUI.cpp" />
     <ClCompile Include="src\utils\cil.cpp" />
@@ -182,6 +185,7 @@
     <ClCompile Include="src\utils\XDataBase.cpp" />
     <ClCompile Include="src\utils\XMaths.cpp" />
     <ClCompile Include="src\utils\GUIAtlasGenerator.cpp" />
+    <ClCompile Include="src\utils\T8ConfigRuntime.cpp" />
     <ClCompile Include="src\utils\SPIRVReflection.cpp" />
     <ClCompile Include="src\video\BaseDriver.cpp" />
     <ClCompile Include="src\video\gl\GLDriver.cpp" />

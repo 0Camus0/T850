@@ -162,6 +162,7 @@ function(t850_apply_app target)
 	target_include_directories(${target} PRIVATE
 		${T850_SOURCE_DIR}/Librerias/glaze/include
 		${T850_SOURCE_DIR}/Librerias/tinyxml2/include
+		${T850_SOURCE_DIR}/DayScene
 		${T850_SOURCE_DIR}/Framework
 		${T850_SOURCE_DIR}/Framework/include
 		${T850_SOURCE_DIR}/Librerias/SDL3/include

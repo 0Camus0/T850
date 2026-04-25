@@ -1,4 +1,4 @@
-#include "SC_SandBox.h"
+#include <SC_SandBox.h>
 #include <video/BaseDriver.h>
 #include <utils/Log.h>
 #include <scene/PrimitiveManager.h>

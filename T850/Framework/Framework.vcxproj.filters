@@ -329,6 +329,9 @@
     <ClInclude Include="include\debug\FrameDumper.h">
       <Filter>Header Files\utils</Filter>
     </ClInclude>
+    <ClInclude Include="include\gui\GUIAtlas.h">
+      <Filter>Header Files\gui</Filter>
+    </ClInclude>
     <ClInclude Include="include\gui\GUIElement.h">
       <Filter>Header Files\gui</Filter>
     </ClInclude>
@@ -360,6 +363,9 @@
       <Filter>Header Files\gui</Filter>
     </ClInclude>
     <ClInclude Include="include\utils\SPIRVReflection.h">
+      <Filter>Header Files\utils</Filter>
+    </ClInclude>
+    <ClInclude Include="include\utils\T8ConfigRuntime.h">
       <Filter>Header Files\utils</Filter>
     </ClInclude>
     <ClInclude Include="include\debug\T8_Profiler.h">
@@ -619,6 +625,9 @@
     <ClCompile Include="src\utils\GUIAtlasGenerator.cpp">
       <Filter>Source Files\gui</Filter>
     </ClCompile>
+    <ClCompile Include="src\gui\GUIAtlas.cpp">
+      <Filter>Source Files\gui</Filter>
+    </ClCompile>
     <ClCompile Include="src\gui\GUIElement.cpp">
       <Filter>Source Files\gui</Filter>
     </ClCompile>
@@ -641,6 +650,9 @@
       <Filter>Source Files\utils</Filter>
     </ClCompile>
     <ClCompile Include="src\utils\SPIRVReflection.cpp">
+      <Filter>Source Files\utils</Filter>
+    </ClCompile>
+    <ClCompile Include="src\utils\T8ConfigRuntime.cpp">
       <Filter>Source Files\utils</Filter>
     </ClCompile>
     <ClCompile Include="src\utils\Log.cpp">

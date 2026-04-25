@@ -28,6 +28,7 @@ set(FRAMEWORK_SOURCES
   src/scene/WireframeArrow.cpp
   src/scene/T8_Quad.cpp
   src/scene/T8_TextRenderer.cpp
+  src/gui/GUIAtlas.cpp
   src/gui/GUIElement.cpp
   src/gui/T8_GUI.cpp
   src/utils/cil.cpp
@@ -43,6 +44,7 @@ set(FRAMEWORK_SOURCES
   src/utils/XDataBase.cpp
   src/utils/XMaths.cpp
   src/utils/GUIAtlasGenerator.cpp
+  src/utils/T8ConfigRuntime.cpp
   src/utils/SPIRVReflection.cpp
   src/video/BaseDriver.cpp
   src/video/gl/GLDriver.cpp

@@ -25,7 +25,7 @@
 #include <video/d3d11/D3D11Texture.h>
 #endif
 
-#include "scene/T8_Quad.h"
+#include <scene/T8_Quad.h>
 namespace t800 {
   class RenderQuad : public PrimitiveBase {
   public:

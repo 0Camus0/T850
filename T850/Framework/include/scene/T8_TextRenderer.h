@@ -1,10 +1,10 @@
 #pragma once
 #include <stb_truetype.h>
 #include <string>
-#include "video/BaseDriver.h"
+#include <video/BaseDriver.h>
 #include <scene/PrimitiveManager.h>
 #include <scene/PrimitiveInstance.h>
-#include "scene/T8_Quad.h"
+#include <scene/T8_Quad.h>
 namespace t800 {
   class TextRenderer {
   public:

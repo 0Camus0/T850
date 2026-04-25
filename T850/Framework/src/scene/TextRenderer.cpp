@@ -1,5 +1,5 @@
 #include <pch.h>
-#include <scene/T8_TextRenderer.h>
+#include <scene/TextRenderer.h>
 #include <utils/Log.h>
 #define STB_TRUETYPE_IMPLEMENTATION
 #include <stb_truetype.h>
@@ -11,7 +11,7 @@
 #include <video/d3d11/D3D11Shader.h>
 #include <video/d3d11/D3D11Driver.h>
 #endif
-namespace t800 {
+namespace t850 {
   extern Device*            T8Device;
   extern DeviceContext*     T8DeviceContext;
   void TextRenderer::LoadFromFile(float fontSize, std::string path, float textureSize)
@@ -22,7 +22,7 @@ namespace t800 {
     unsigned char* ttf_buffer = new unsigned char [1 << 25];
     unsigned char* temp_bitmap = new unsigned char[m_textureSize * m_textureSize];
 
-    
+
     fread(ttf_buffer, 1, 1 << 20, fopen(path.c_str(), "rb"));
     stbtt_BakeFontBitmap(ttf_buffer, 0, fontSize, temp_bitmap, m_textureSize, m_textureSize, 32, 96, cdata);
 
@@ -56,7 +56,7 @@ namespace t800 {
 
     ftex = T8Device->CreateTextureFromMemory(temp_bitmap, m_textureSize, m_textureSize, 1, path);
     if (ftex) {
-      ftex->params = TEXT_BASIC_PARAMS::CLAMP_TO_EDGE;
+      ftex->params = TextBasicParams::CLAMP_TO_EDGE;
       ftex->SetTextureParams();
     }
     //Create Quad
@@ -91,7 +91,7 @@ namespace t800 {
 	vstr = Defines + vstr;
 	fstr = Defines + fstr;
 #endif
-      if (g_pBaseDriver->m_currentAPI == GRAPHICS_API::VULKAN) {
+      if (g_pBaseDriver->m_currentAPI == GraphicsApi::VULKAN) {
         std::string Defines;
         Defines += "#version 450\n\n";
         Defines += "#define ES_30\n\n";
@@ -104,17 +104,17 @@ namespace t800 {
     m_shader = g_pBaseDriver->GetShaderIdx(shaderID);
 
 
-    t800::BufferDesc bdesc;
+    t850::BufferDesc bdesc;
     bdesc.byteWidth = sizeof(XVECTOR3);
-    bdesc.usage = T8_BUFFER_USAGE::DEFAULT;
-    m_CB = (t800::ConstantBuffer*)T8Device->CreateBuffer(T8_BUFFER_TYPE::CONSTANT, bdesc);
+    bdesc.usage = BufferUsage::DEFAULT;
+    m_CB = (t850::ConstantBuffer*)T8Device->CreateBuffer(BufferType::CONSTANT, bdesc);
 
     // Pre-allocate batch VB/IB for text batching
     {
-      t800::BufferDesc vbDesc;
+      t850::BufferDesc vbDesc;
       vbDesc.byteWidth = sizeof(Quad::Vertex) * kMaxBatchChars * 4;
-      vbDesc.usage = T8_BUFFER_USAGE::DEFAULT;
-      m_batchVB = (t800::VertexBuffer*)T8Device->CreateBuffer(T8_BUFFER_TYPE::VERTEX, vbDesc);
+      vbDesc.usage = BufferUsage::DEFAULT;
+      m_batchVB = (t850::VertexBuffer*)T8Device->CreateBuffer(BufferType::VERTEX, vbDesc);
 
       // Build index buffer: 0,1,2, 0,2,3,  4,5,6, 4,6,7, ...
       unsigned short batchIndices[kMaxBatchChars * 6];
@@ -127,10 +127,10 @@ namespace t800 {
         batchIndices[i * 6 + 4] = base + 2;
         batchIndices[i * 6 + 5] = base + 0;
       }
-      t800::BufferDesc ibDesc;
+      t850::BufferDesc ibDesc;
       ibDesc.byteWidth = sizeof(unsigned short) * kMaxBatchChars * 6;
-      ibDesc.usage = T8_BUFFER_USAGE::DEFAULT;
-      m_batchIB = (t800::IndexBuffer*)T8Device->CreateBuffer(T8_BUFFER_TYPE::INDEX, ibDesc, batchIndices);
+      ibDesc.usage = BufferUsage::DEFAULT;
+      m_batchIB = (t850::IndexBuffer*)T8Device->CreateBuffer(BufferType::INDEX, ibDesc, batchIndices);
     }
 
     /*DEALLOCATE MEMORY*/
@@ -139,8 +139,8 @@ namespace t800 {
   }
   void TextRenderer::Draw(float x, float y,const XVECTOR3& color, std::string text)
   {
-    g_pBaseDriver->SetBlendState(BaseDriver::BLEND_STATES::ALPHA_BLEND);
-    g_pBaseDriver->SetDepthStencilState(BaseDriver::DEPTH_STENCIL_STATES::READ);
+    g_pBaseDriver->SetBlendState(BaseDriver::BlendStates::ALPHA_BLEND);
+    g_pBaseDriver->SetDepthStencilState(BaseDriver::DepthStencilStates::READ);
     x = (x + 1)*0.5f * m_textureSize;
     y = (y - 1)*0.5f * m_textureSize;
     //y = -m_textureSize - y;
@@ -148,7 +148,7 @@ namespace t800 {
     m_shader->Set(*T8DeviceContext);
     m_CB->UpdateFromBuffer(*T8DeviceContext, &color.x);
     m_CB->Set(*T8DeviceContext);
-    T8DeviceContext->SetPrimitiveTopology(T8_TOPOLOGY::TRIANLE_LIST);
+    T8DeviceContext->SetPrimitiveTopology(Topology::TRIANLE_LIST);
     ftex->Set(*T8DeviceContext, 0, "tex0");
     //ftex->SetSampler(*T8DeviceContext);
     float tempDiv = 1.0f / (float)m_textureSize;
@@ -190,8 +190,8 @@ namespace t800 {
       }
       pT++;
     }
-    g_pBaseDriver->SetBlendState(BaseDriver::BLEND_STATES::BLEND_DEFAULT);
-    g_pBaseDriver->SetDepthStencilState(BaseDriver::DEPTH_STENCIL_STATES::DEPTH_DEFAULT);
+    g_pBaseDriver->SetBlendState(BaseDriver::BlendStates::BLEND_DEFAULT);
+    g_pBaseDriver->SetDepthStencilState(BaseDriver::DepthStencilStates::DEPTH_DEFAULT);
   }
 
   float TextRenderer::MeasurePixel(const std::string& text, int screenW, int screenH) {
@@ -227,14 +227,14 @@ namespace t800 {
   float TextRenderer::DrawPixelScaled(float px, float py, float scaleX, float scaleY,
                                        int screenW, int screenH,
                                        const XVECTOR3& color, const std::string& text) {
-    g_pBaseDriver->SetBlendState(BaseDriver::BLEND_STATES::ALPHA_BLEND);
-    g_pBaseDriver->SetDepthStencilState(BaseDriver::DEPTH_STENCIL_STATES::READ);
+    g_pBaseDriver->SetBlendState(BaseDriver::BlendStates::ALPHA_BLEND);
+    g_pBaseDriver->SetDepthStencilState(BaseDriver::DepthStencilStates::READ);
 
     m_quad.Set();
     m_shader->Set(*T8DeviceContext);
     m_CB->UpdateFromBuffer(*T8DeviceContext, &color.x);
     m_CB->Set(*T8DeviceContext);
-    T8DeviceContext->SetPrimitiveTopology(T8_TOPOLOGY::TRIANLE_LIST);
+    T8DeviceContext->SetPrimitiveTopology(Topology::TRIANLE_LIST);
     ftex->Set(*T8DeviceContext, 0, "tex0");
 
     float sw = (float)screenW;
@@ -275,8 +275,8 @@ namespace t800 {
       pT++;
     }
 
-    g_pBaseDriver->SetBlendState(BaseDriver::BLEND_STATES::BLEND_DEFAULT);
-    g_pBaseDriver->SetDepthStencilState(BaseDriver::DEPTH_STENCIL_STATES::DEPTH_DEFAULT);
+    g_pBaseDriver->SetBlendState(BaseDriver::BlendStates::BLEND_DEFAULT);
+    g_pBaseDriver->SetDepthStencilState(BaseDriver::DepthStencilStates::DEPTH_DEFAULT);
 
     return MeasurePixel(text, screenW, screenH) * scaleX;
   }
@@ -284,23 +284,23 @@ namespace t800 {
   void TextRenderer::BeginBatch() {
     T8_LOG_TRACE("[TextRenderer] BeginBatch");
     m_batchActive = true;
-    g_pBaseDriver->SetBlendState(BaseDriver::BLEND_STATES::ALPHA_BLEND);
-    g_pBaseDriver->SetDepthStencilState(BaseDriver::DEPTH_STENCIL_STATES::NONE);
+    g_pBaseDriver->SetBlendState(BaseDriver::BlendStates::ALPHA_BLEND);
+    g_pBaseDriver->SetDepthStencilState(BaseDriver::DepthStencilStates::NONE);
 
     unsigned int stride = sizeof(Quad::Vertex);
     unsigned int offset = 0;
     m_batchVB->Set(*T8DeviceContext, stride, offset);
-    m_batchIB->Set(*T8DeviceContext, 0, T8_IB_FORMAR::R16);
+    m_batchIB->Set(*T8DeviceContext, 0, IndexBufferFormat::R16);
     m_shader->Set(*T8DeviceContext);
-    T8DeviceContext->SetPrimitiveTopology(T8_TOPOLOGY::TRIANLE_LIST);
+    T8DeviceContext->SetPrimitiveTopology(Topology::TRIANLE_LIST);
     ftex->Set(*T8DeviceContext, 0, "tex0");
   }
 
   void TextRenderer::EndBatch() {
     T8_LOG_TRACE("[TextRenderer] EndBatch");
     m_batchActive = false;
-    g_pBaseDriver->SetBlendState(BaseDriver::BLEND_STATES::BLEND_DEFAULT);
-    g_pBaseDriver->SetDepthStencilState(BaseDriver::DEPTH_STENCIL_STATES::DEPTH_DEFAULT);
+    g_pBaseDriver->SetBlendState(BaseDriver::BlendStates::BLEND_DEFAULT);
+    g_pBaseDriver->SetDepthStencilState(BaseDriver::DepthStencilStates::DEPTH_DEFAULT);
   }
 
   float TextRenderer::DrawPixelScaledBatched(float px, float py, float scaleX, float scaleY,

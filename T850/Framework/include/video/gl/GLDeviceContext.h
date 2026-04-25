@@ -15,14 +15,14 @@
 
 #include <video/BaseDriver.h>
 
-namespace t800 {
+namespace t850 {
   class GLDeviceContext : public DeviceContext {
   public:
     void* GetAPIObject() const override;
     void** GetAPIObjectReference() const override;
 
     void release() override;
-    void SetPrimitiveTopology(T8_TOPOLOGY::E topology) override;
+    void SetPrimitiveTopology(Topology::E topology) override;
     void DrawIndexed(unsigned vertexCount, unsigned startIndex, unsigned startVertex) override;
     int internalIBFormat;
     int internalTopology;

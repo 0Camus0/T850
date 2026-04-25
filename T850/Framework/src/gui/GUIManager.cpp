@@ -1,5 +1,5 @@
 #include <pch.h>
-#include <gui/T8_GUI.h>
+#include <gui/GUIManager.h>
 #include <utils/Log.h>
 
 #include <video/gl/GLShader.h>
@@ -29,7 +29,7 @@
 #include <cmath>
 #include <chrono>
 
-namespace t800 {
+namespace t850 {
 
 extern Device*        T8Device;
 extern DeviceContext* T8DeviceContext;
@@ -63,8 +63,8 @@ void GUIManager::Init(int screenW, int screenH) {
 
   BufferDesc bdesc;
   bdesc.byteWidth = sizeof(XVECTOR3);
-  bdesc.usage = T8_BUFFER_USAGE::DEFAULT;
-  m_CB = (ConstantBuffer*)T8Device->CreateBuffer(T8_BUFFER_TYPE::CONSTANT, bdesc);
+  bdesc.usage = BufferUsage::DEFAULT;
+  m_CB = (ConstantBuffer*)T8Device->CreateBuffer(BufferType::CONSTANT, bdesc);
 
   m_initialized = true;
   m_visible = false;
@@ -105,7 +105,7 @@ void GUIManager::InitShader() {
     vstr = Defines + vstr;
     fstr = Defines + fstr;
 #endif
-    if (g_pBaseDriver->m_currentAPI == GRAPHICS_API::VULKAN) {
+    if (g_pBaseDriver->m_currentAPI == GraphicsApi::VULKAN) {
       std::string Defines;
       Defines += "#version 450\n\n";
       Defines += "#define ES_30\n\n";
@@ -132,7 +132,7 @@ bool GUIManager::TryLoadAtlas() {
     T8_LOG_ERROR("[GUIManager] Atlas texture 'gui_atlas.png' failed to load");
     return false;
   }
-  m_atlasTexture->params = TEXT_BASIC_PARAMS::CLAMP_TO_EDGE | TEXT_BASIC_PARAMS::MIPMAPS;
+  m_atlasTexture->params = TextBasicParams::CLAMP_TO_EDGE | TextBasicParams::MIPMAPS;
   m_atlasTexture->SetTextureParams();
 
   for (const auto& e : entries) {
@@ -197,7 +197,7 @@ void GUIManager::InitTextures() {
     unsigned char white[4] = {255, 255, 255, 255};
     m_whiteTexture = T8Device->CreateTextureFromMemory(white, 1, 1, 4, "gui_white_1x1");
     if (m_whiteTexture) {
-      m_whiteTexture->params = TEXT_BASIC_PARAMS::CLAMP_TO_EDGE;
+      m_whiteTexture->params = TextBasicParams::CLAMP_TO_EDGE;
       m_whiteTexture->SetTextureParams();
     }
     // UI buttons are NOT in the atlas — load individually
@@ -205,7 +205,7 @@ void GUIManager::InitTextures() {
       std::string path = std::string("UI/") + name;
       Texture* t = T8Device->CreateTexture(path);
       if (!t) { T8_LOG_ERROR("[GUIManager] Failed to load UI texture '%s'", path.c_str()); return nullptr; }
-      t->params = TEXT_BASIC_PARAMS::CLAMP_TO_EDGE | TEXT_BASIC_PARAMS::MIPMAPS;
+      t->params = TextBasicParams::CLAMP_TO_EDGE | TextBasicParams::MIPMAPS;
       t->SetTextureParams();
       return t;
     };
@@ -244,7 +244,7 @@ void GUIManager::InitTextures() {
       return nullptr;
     }
     // High quality UI sampling: trilinear/aniso with mipmaps, clamped edges.
-    t->params = TEXT_BASIC_PARAMS::CLAMP_TO_EDGE | TEXT_BASIC_PARAMS::MIPMAPS;
+    t->params = TextBasicParams::CLAMP_TO_EDGE | TextBasicParams::MIPMAPS;
     t->SetTextureParams();
     return t;
   };
@@ -256,7 +256,7 @@ void GUIManager::InitTextures() {
     unsigned char white[4] = {255, 255, 255, 255};
     m_whiteTexture = T8Device->CreateTextureFromMemory(white, 1, 1, 4, "gui_white_1x1");
     if (m_whiteTexture) {
-      m_whiteTexture->params = TEXT_BASIC_PARAMS::CLAMP_TO_EDGE;
+      m_whiteTexture->params = TextBasicParams::CLAMP_TO_EDGE;
       m_whiteTexture->SetTextureParams();
     }
   }
@@ -284,7 +284,7 @@ void GUIManager::InitTextures() {
       T8_LOG_ERROR("[GUIManager] Failed to load UI texture '%s'", path.c_str());
       return nullptr;
     }
-    t->params = TEXT_BASIC_PARAMS::CLAMP_TO_EDGE | TEXT_BASIC_PARAMS::MIPMAPS;
+    t->params = TextBasicParams::CLAMP_TO_EDGE | TextBasicParams::MIPMAPS;
     t->SetTextureParams();
     return t;
   };
@@ -1006,15 +1006,15 @@ void GUIManager::Draw() {
     m_ctx.popupCancelSrcH = m_popupCancelTexture ? (float)m_popupCancelTexture->y : 40.0f;
   }
 
-  g_pBaseDriver->SetBlendState(BaseDriver::BLEND_STATES::ALPHA_BLEND);
-  g_pBaseDriver->SetDepthStencilState(BaseDriver::DEPTH_STENCIL_STATES::NONE);
-  g_pBaseDriver->SetCullFace(BaseDriver::FACE_CULLING::FRONT_AND_BACK);
+  g_pBaseDriver->SetBlendState(BaseDriver::BlendStates::ALPHA_BLEND);
+  g_pBaseDriver->SetDepthStencilState(BaseDriver::DepthStencilStates::NONE);
+  g_pBaseDriver->SetCullFace(BaseDriver::FaceCulling::FRONT_AND_BACK);
 
   if (m_controlEditMode) {
     DrawControlEditPreview();
     DrawControlEditOverlay();
-    g_pBaseDriver->SetBlendState(BaseDriver::BLEND_STATES::BLEND_DEFAULT);
-    g_pBaseDriver->SetDepthStencilState(BaseDriver::DEPTH_STENCIL_STATES::DEPTH_DEFAULT);
+    g_pBaseDriver->SetBlendState(BaseDriver::BlendStates::BLEND_DEFAULT);
+    g_pBaseDriver->SetDepthStencilState(BaseDriver::DepthStencilStates::DEPTH_DEFAULT);
     return;
   }
 
@@ -1026,7 +1026,7 @@ void GUIManager::Draw() {
   // Set GUI render state
   m_quad.Set();
   m_shader->Set(*T8DeviceContext);
-  T8DeviceContext->SetPrimitiveTopology(T8_TOPOLOGY::TRIANLE_LIST);
+  T8DeviceContext->SetPrimitiveTopology(Topology::TRIANLE_LIST);
 
   // ── Pass 1: all quads (slider bars/knobs, checkboxes, selector bars/buttons) ──
 
@@ -1088,11 +1088,11 @@ void GUIManager::Draw() {
 
   // Back button (visible when GUI is shown, not in edit modes)
   if (!m_editMode && !m_controlEditMode && !m_groupEditMode) {
-    g_pBaseDriver->SetBlendState(BaseDriver::BLEND_STATES::ALPHA_BLEND);
-    g_pBaseDriver->SetDepthStencilState(BaseDriver::DEPTH_STENCIL_STATES::NONE);
+    g_pBaseDriver->SetBlendState(BaseDriver::BlendStates::ALPHA_BLEND);
+    g_pBaseDriver->SetDepthStencilState(BaseDriver::DepthStencilStates::NONE);
     m_quad.Set();
     m_shader->Set(*T8DeviceContext);
-    T8DeviceContext->SetPrimitiveTopology(T8_TOPOLOGY::TRIANLE_LIST);
+    T8DeviceContext->SetPrimitiveTopology(Topology::TRIANLE_LIST);
     m_backButton.Draw(m_ctx);
   }
 
@@ -1111,8 +1111,8 @@ void GUIManager::Draw() {
     DrawPopup();
   }
 
-  g_pBaseDriver->SetBlendState(BaseDriver::BLEND_STATES::BLEND_DEFAULT);
-  g_pBaseDriver->SetDepthStencilState(BaseDriver::DEPTH_STENCIL_STATES::DEPTH_DEFAULT);
+  g_pBaseDriver->SetBlendState(BaseDriver::BlendStates::BLEND_DEFAULT);
+  g_pBaseDriver->SetDepthStencilState(BaseDriver::DepthStencilStates::DEPTH_DEFAULT);
 }
 
 void GUIManager::DrawFPSOnly() {
@@ -1131,30 +1131,30 @@ void GUIManager::DrawFPSOnly() {
   m_ctx.editMode   = false;
   m_ctx.snapToGrid = false;
 
-  g_pBaseDriver->SetBlendState(BaseDriver::BLEND_STATES::ALPHA_BLEND);
-  g_pBaseDriver->SetDepthStencilState(BaseDriver::DEPTH_STENCIL_STATES::NONE);
-  g_pBaseDriver->SetCullFace(BaseDriver::FACE_CULLING::FRONT_AND_BACK);
+  g_pBaseDriver->SetBlendState(BaseDriver::BlendStates::ALPHA_BLEND);
+  g_pBaseDriver->SetDepthStencilState(BaseDriver::DepthStencilStates::NONE);
+  g_pBaseDriver->SetCullFace(BaseDriver::FaceCulling::FRONT_AND_BACK);
 
   m_textRenderer.BeginBatch();
   m_fpsLabel->Draw(m_ctx);
   m_textRenderer.EndBatch();
 
   // GUI button (visible when GUI overlay is hidden)
-  g_pBaseDriver->SetBlendState(BaseDriver::BLEND_STATES::ALPHA_BLEND);
-  g_pBaseDriver->SetDepthStencilState(BaseDriver::DEPTH_STENCIL_STATES::NONE);
+  g_pBaseDriver->SetBlendState(BaseDriver::BlendStates::ALPHA_BLEND);
+  g_pBaseDriver->SetDepthStencilState(BaseDriver::DepthStencilStates::NONE);
   m_quad.Set();
   m_shader->Set(*T8DeviceContext);
-  T8DeviceContext->SetPrimitiveTopology(T8_TOPOLOGY::TRIANLE_LIST);
+  T8DeviceContext->SetPrimitiveTopology(Topology::TRIANLE_LIST);
   m_guiButton.Draw(m_ctx);
 
-  g_pBaseDriver->SetBlendState(BaseDriver::BLEND_STATES::BLEND_DEFAULT);
-  g_pBaseDriver->SetDepthStencilState(BaseDriver::DEPTH_STENCIL_STATES::DEPTH_DEFAULT);
+  g_pBaseDriver->SetBlendState(BaseDriver::BlendStates::BLEND_DEFAULT);
+  g_pBaseDriver->SetDepthStencilState(BaseDriver::DepthStencilStates::DEPTH_DEFAULT);
 }
 
 void GUIManager::DrawGrid() {
   m_quad.Set();
   m_shader->Set(*T8DeviceContext);
-  T8DeviceContext->SetPrimitiveTopology(T8_TOPOLOGY::TRIANLE_LIST);
+  T8DeviceContext->SetPrimitiveTopology(Topology::TRIANLE_LIST);
 
   XVECTOR3 gridColor(1.0f, 1.0f, 1.0f);
   float lineW = 1.0f;
@@ -1171,12 +1171,12 @@ void GUIManager::DrawGrid() {
 
 void GUIManager::DrawControlEditPreview() {
   // Ensure alpha blend is enabled so textures with transparent regions composite correctly.
-  g_pBaseDriver->SetBlendState(BaseDriver::BLEND_STATES::ALPHA_BLEND);
-  g_pBaseDriver->SetDepthStencilState(BaseDriver::DEPTH_STENCIL_STATES::NONE);
+  g_pBaseDriver->SetBlendState(BaseDriver::BlendStates::ALPHA_BLEND);
+  g_pBaseDriver->SetDepthStencilState(BaseDriver::DepthStencilStates::NONE);
 
   m_quad.Set();
   m_shader->Set(*T8DeviceContext);
-  T8DeviceContext->SetPrimitiveTopology(T8_TOPOLOGY::TRIANLE_LIST);
+  T8DeviceContext->SetPrimitiveTopology(Topology::TRIANLE_LIST);
 
   float screenW = m_ctx.screenW;
   float screenH = m_ctx.screenH;
@@ -1311,7 +1311,7 @@ void GUIManager::DrawEditOverlays() {
   // Ensure GUI shader is active for the solid-colour quads
   m_quad.Set();
   m_shader->Set(*T8DeviceContext);
-  T8DeviceContext->SetPrimitiveTopology(T8_TOPOLOGY::TRIANLE_LIST);
+  T8DeviceContext->SetPrimitiveTopology(Topology::TRIANLE_LIST);
 
   for (auto* e : m_elements) {
     e->DrawEditOverlay(m_ctx);
@@ -1789,7 +1789,7 @@ void GUIManager::DrawControlEditOverlay() {
 
   m_quad.Set();
   m_shader->Set(*T8DeviceContext);
-  T8DeviceContext->SetPrimitiveTopology(T8_TOPOLOGY::TRIANLE_LIST);
+  T8DeviceContext->SetPrimitiveTopology(Topology::TRIANLE_LIST);
   XVECTOR3 activeColor(1.0f, 0.6f, 0.1f);
   XVECTOR3 secondaryColor(0.2f, 0.8f, 1.0f);
 
@@ -2541,12 +2541,12 @@ void GUIManager::DrawPopup() {
   // The text batch pass that runs before us ends with BLEND_DEFAULT (no blending).
   // Transparent regions of the OK/Cancel PNGs would otherwise render as opaque,
   // which under GL hides the buttons completely.
-  g_pBaseDriver->SetBlendState(BaseDriver::BLEND_STATES::ALPHA_BLEND);
-  g_pBaseDriver->SetDepthStencilState(BaseDriver::DEPTH_STENCIL_STATES::NONE);
+  g_pBaseDriver->SetBlendState(BaseDriver::BlendStates::ALPHA_BLEND);
+  g_pBaseDriver->SetDepthStencilState(BaseDriver::DepthStencilStates::NONE);
 
   m_quad.Set();
   m_shader->Set(*T8DeviceContext);
-  T8DeviceContext->SetPrimitiveTopology(T8_TOPOLOGY::TRIANLE_LIST);
+  T8DeviceContext->SetPrimitiveTopology(Topology::TRIANLE_LIST);
 
   // No full-screen dim; popup is modal via input routing, not via visual overlay.
   float bgX, bgY, bgW, bgH, okX, okY, okW, okH, cancelX, cancelY, cancelW, cancelH;
@@ -2581,11 +2581,11 @@ void GUIManager::DrawPopup() {
     // defaults.  Restore the GUI shader + alpha blend before drawing the caret,
     // otherwise the caret quad renders through the text shader and produces a
     // white flash (especially visible when popup text is empty).
-    g_pBaseDriver->SetBlendState(BaseDriver::BLEND_STATES::ALPHA_BLEND);
-    g_pBaseDriver->SetDepthStencilState(BaseDriver::DEPTH_STENCIL_STATES::NONE);
+    g_pBaseDriver->SetBlendState(BaseDriver::BlendStates::ALPHA_BLEND);
+    g_pBaseDriver->SetDepthStencilState(BaseDriver::DepthStencilStates::NONE);
     m_quad.Set();
     m_shader->Set(*T8DeviceContext);
-    T8DeviceContext->SetPrimitiveTopology(T8_TOPOLOGY::TRIANLE_LIST);
+    T8DeviceContext->SetPrimitiveTopology(Topology::TRIANLE_LIST);
 
     // Caret
     if (m_popupBlink < 0.5f) {
@@ -2904,7 +2904,7 @@ void GUIManager::UpdateGroupEditMode(InputManager& input, float mx, float my, bo
 void GUIManager::DrawGroupEditHighlights() {
   m_quad.Set();
   m_shader->Set(*T8DeviceContext);
-  T8DeviceContext->SetPrimitiveTopology(T8_TOPOLOGY::TRIANLE_LIST);
+  T8DeviceContext->SetPrimitiveTopology(Topology::TRIANLE_LIST);
 
   for (auto* e : m_elements) {
     e->DrawGroupHighlight(m_ctx);
@@ -2915,4 +2915,4 @@ void GUIManager::DrawGroupSelector() {
   // Group selector is drawn as part of the main Draw pass (quads + text batch)
 }
 
-} // namespace t800
+} // namespace t850

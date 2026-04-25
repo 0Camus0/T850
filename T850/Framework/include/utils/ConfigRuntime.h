@@ -1,13 +1,13 @@
 #pragma once
 
-#include <T8_descriptors.h>
-#include <core/t8config.h>
+#include <Descriptors.h>
+#include <core/Config.h>
 
 #include <filesystem>
 #include <optional>
 #include <string>
 
-namespace t800::config {
+namespace t850::config {
 
 struct ReplaySnapshotJson {
   std::optional<bool> enabled;
@@ -94,15 +94,15 @@ struct RuntimeConfigJson {
 
 std::string StripQuotes(std::string value);
 int ParseLogLevel(const std::string& value, int fallback);
-GRAPHICS_API::E ParseGraphicsApi(const std::string& value, GRAPHICS_API::E fallback);
-const char* ApiTag(GRAPHICS_API::E api);
+GraphicsApi::E ParseGraphicsApi(const std::string& value, GraphicsApi::E fallback);
+const char* ApiTag(GraphicsApi::E api);
 
-void ApplyConfigJson(const RuntimeConfigJson& json, t8config& cfg);
-bool LoadRuntimeConfig(const std::filesystem::path& path, t8config& cfg);
+void ApplyConfigJson(const RuntimeConfigJson& json, Config& cfg);
+bool LoadRuntimeConfig(const std::filesystem::path& path, Config& cfg);
 std::optional<std::filesystem::path> FindConfigArgument(int argc, char** argv);
 bool HasHelpArgument(int argc, char** argv);
-void ApplyCommandLine(int argc, char** argv, t8config& cfg);
-void ConfigureApplicationDesc(const t8config& cfg, ApplicationDesc& desc);
+void ApplyCommandLine(int argc, char** argv, Config& cfg);
+void ConfigureApplicationDesc(const Config& cfg, ApplicationDesc& desc);
 void PrintHelp();
 
-} // namespace t800::config
+} // namespace t850::config

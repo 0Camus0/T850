@@ -12,7 +12,7 @@
 #include <cstdlib>
 #include <string>
 
-namespace t800 {
+namespace t850 {
   extern Device*        T8Device;
   extern DeviceContext* T8DeviceContext;
 }
@@ -27,14 +27,14 @@ EditorLineRenderer::~EditorLineRenderer() {
 
 bool EditorLineRenderer::Create() {
   if (m_shader && m_cb) return true;
-  if (!t800::g_pBaseDriver) {
+  if (!t850::g_pBaseDriver) {
     T8_LOG_ERROR("[T8ditor] EditorLineRenderer::Create called before driver init");
     return false;
   }
 
   // Load source. The Assets/Shaders dir is junctioned into the editor's
   // working directory by the same post-build step DayScene uses.
-  const bool useGL = (t800::g_pBaseDriver->m_currentAPI == t800::GRAPHICS_API::OPENGL);
+  const bool useGL = (t850::g_pBaseDriver->m_currentAPI == t850::GraphicsApi::OPENGL);
   char* vsSrc = file2string(useGL ? "Shaders/VS_EditorLine.glsl"
                                   : "Shaders/VS_EditorLine.hlsl");
   char* fsSrc = file2string(useGL ? "Shaders/FS_EditorLine.glsl"
@@ -66,17 +66,17 @@ bool EditorLineRenderer::Create() {
     fstr = defines + fstr;
   }
 
-  int shaderID = t800::g_pBaseDriver->CreateShader(vstr, fstr);
-  m_shader = t800::g_pBaseDriver->GetShaderIdx(shaderID);
+  int shaderID = t850::g_pBaseDriver->CreateShader(vstr, fstr);
+  m_shader = t850::g_pBaseDriver->GetShaderIdx(shaderID);
   if (!m_shader) {
     T8_LOG_ERROR("[T8ditor] EditorLineRenderer: shader compile failed");
     return false;
   }
 
-  t800::BufferDesc bd;
+  t850::BufferDesc bd;
   bd.byteWidth = sizeof(CBuffer);
-  bd.usage     = t800::T8_BUFFER_USAGE::DEFAULT;
-  m_cb = (t800::ConstantBuffer*)t800::T8Device->CreateBuffer(t800::T8_BUFFER_TYPE::CONSTANT, bd);
+  bd.usage     = t850::BufferUsage::DEFAULT;
+  m_cb = (t850::ConstantBuffer*)t850::T8Device->CreateBuffer(t850::BufferType::CONSTANT, bd);
   if (!m_cb) {
     T8_LOG_ERROR("[T8ditor] EditorLineRenderer: CB create failed");
     return false;
@@ -95,11 +95,11 @@ void EditorLineRenderer::Destroy() {
 void EditorLineRenderer::DrawLines(const XMATRIX44& world,
                                    const XMATRIX44& vp,
                                    const XVECTOR3&  rgba,
-                                   t800::VertexBuffer* vb,
-                                   t800::IndexBuffer*  ib,
+                                   t850::VertexBuffer* vb,
+                                   t850::IndexBuffer*  ib,
                                    unsigned indexCount,
                                    unsigned vertexStride,
-                                   t800::T8_IB_FORMAR::E ibFormat) {
+                                   t850::IndexBufferFormat::E ibFormat) {
   if (!m_shader || !m_cb || !vb || !ib || indexCount == 0) return;
 
   CBuffer cb;
@@ -111,54 +111,54 @@ void EditorLineRenderer::DrawLines(const XMATRIX44& world,
     m_farPlane,
     0.005f);  // proportional depth bias (wireDepth *= 1 - bias)
 
-  ib->Set(*t800::T8DeviceContext, 0, ibFormat);
-  vb->Set(*t800::T8DeviceContext, vertexStride, 0);
+  ib->Set(*t850::T8DeviceContext, 0, ibFormat);
+  vb->Set(*t850::T8DeviceContext, vertexStride, 0);
 
   // Set topology BEFORE shader (Vulkan bakes topology into the pipeline at Set time)
-  t800::T8DeviceContext->SetPrimitiveTopology(t800::T8_TOPOLOGY::LINE_LIST);
+  t850::T8DeviceContext->SetPrimitiveTopology(t850::Topology::LINE_LIST);
 
-  m_shader->Set(*t800::T8DeviceContext);
-  m_cb->UpdateFromBuffer(*t800::T8DeviceContext, &cb);
-  m_cb->Set(*t800::T8DeviceContext);
+  m_shader->Set(*t850::T8DeviceContext);
+  m_cb->UpdateFromBuffer(*t850::T8DeviceContext, &cb);
+  m_cb->Set(*t850::T8DeviceContext);
 
   // Bind depth texture AFTER shader is set (D3D12 needs active root signature)
   if (m_depthTex)
-    m_depthTex->Set(*t800::T8DeviceContext, 0, "depthTex");
+    m_depthTex->Set(*t850::T8DeviceContext, 0, "depthTex");
 
-  t800::T8DeviceContext->DrawIndexed(indexCount, 0, 0);
+  t850::T8DeviceContext->DrawIndexed(indexCount, 0, 0);
 
   // Reset topology back to triangle list for subsequent draws (meshes, ImGui, etc.)
-  t800::T8DeviceContext->SetPrimitiveTopology(t800::T8_TOPOLOGY::TRIANLE_LIST);
+  t850::T8DeviceContext->SetPrimitiveTopology(t850::Topology::TRIANLE_LIST);
 }
 
-t800::VertexBuffer* EditorLineRenderer::CreatePositionVB(const float* positionsXYZW,
+t850::VertexBuffer* EditorLineRenderer::CreatePositionVB(const float* positionsXYZW,
                                                          unsigned numVertices) {
-  if (!t800::T8Device || !positionsXYZW || numVertices == 0) return nullptr;
-  t800::BufferDesc bd;
+  if (!t850::T8Device || !positionsXYZW || numVertices == 0) return nullptr;
+  t850::BufferDesc bd;
   bd.byteWidth = static_cast<int>(sizeof(float) * 4 * numVertices);
-  bd.usage     = t800::T8_BUFFER_USAGE::DEFAULT;
-  return (t800::VertexBuffer*)t800::T8Device->CreateBuffer(
-      t800::T8_BUFFER_TYPE::VERTEX, bd, const_cast<float*>(positionsXYZW));
+  bd.usage     = t850::BufferUsage::DEFAULT;
+  return (t850::VertexBuffer*)t850::T8Device->CreateBuffer(
+      t850::BufferType::VERTEX, bd, const_cast<float*>(positionsXYZW));
 }
 
-t800::IndexBuffer* EditorLineRenderer::CreateIndexBuffer16(const unsigned short* indices,
+t850::IndexBuffer* EditorLineRenderer::CreateIndexBuffer16(const unsigned short* indices,
                                                            unsigned numIndices) {
-  if (!t800::T8Device || !indices || numIndices == 0) return nullptr;
-  t800::BufferDesc bd;
+  if (!t850::T8Device || !indices || numIndices == 0) return nullptr;
+  t850::BufferDesc bd;
   bd.byteWidth = static_cast<int>(sizeof(unsigned short) * numIndices);
-  bd.usage     = t800::T8_BUFFER_USAGE::DEFAULT;
-  return (t800::IndexBuffer*)t800::T8Device->CreateBuffer(
-      t800::T8_BUFFER_TYPE::INDEX, bd, const_cast<unsigned short*>(indices));
+  bd.usage     = t850::BufferUsage::DEFAULT;
+  return (t850::IndexBuffer*)t850::T8Device->CreateBuffer(
+      t850::BufferType::INDEX, bd, const_cast<unsigned short*>(indices));
 }
 
-t800::IndexBuffer* EditorLineRenderer::CreateIndexBuffer32(const unsigned int* indices,
+t850::IndexBuffer* EditorLineRenderer::CreateIndexBuffer32(const unsigned int* indices,
                                                            unsigned numIndices) {
-  if (!t800::T8Device || !indices || numIndices == 0) return nullptr;
-  t800::BufferDesc bd;
+  if (!t850::T8Device || !indices || numIndices == 0) return nullptr;
+  t850::BufferDesc bd;
   bd.byteWidth = static_cast<int>(sizeof(unsigned int) * numIndices);
-  bd.usage     = t800::T8_BUFFER_USAGE::DEFAULT;
-  return (t800::IndexBuffer*)t800::T8Device->CreateBuffer(
-      t800::T8_BUFFER_TYPE::INDEX, bd, const_cast<unsigned int*>(indices));
+  bd.usage     = t850::BufferUsage::DEFAULT;
+  return (t850::IndexBuffer*)t850::T8Device->CreateBuffer(
+      t850::BufferType::INDEX, bd, const_cast<unsigned int*>(indices));
 }
 
 } // namespace t8ditor

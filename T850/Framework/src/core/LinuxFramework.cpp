@@ -6,7 +6,7 @@
 #include <sys/time.h>
 extern int g_AvoidInput;
 extern std::vector<std::string> g_args;
-namespace t800 {
+namespace t850 {
 #ifdef USING_WAYLAND_NATIVE
 struct wl_compositor    *wlnd_compositor = 0;
 struct wl_shell         *wlnd_shell = 0;
@@ -53,7 +53,7 @@ void LinuxFramework::InitGlobalVars(){
 void LinuxFramework::OnCreateApplication(ApplicationDesc desc){
     aplicationDescriptor = desc;
     m_inited = true;
-#ifdef USING_WAYLAND_NATIVE 
+#ifdef USING_WAYLAND_NATIVE
     printf("Using Wayland Camus\n");
 #else
     printf("Using Wayland Freeglut\n");
@@ -89,7 +89,7 @@ void LinuxFramework::OnCreateApplication(ApplicationDesc desc){
 
     glutInitWindowSize(width,height);
     glutInitDisplayMode(GLUT_DOUBLE|GLUT_RGB|GLUT_DEPTH);
-    glutCreateWindow("T800");
+    glutCreateWindow("T850");
     glutDisplayFunc(IdleFunction);
     glutIdleFunc(IdleFunction);
     glutMouseFunc(MouseClickFunction);
@@ -254,7 +254,7 @@ void LinuxFramework::ProcessInput(){
 void LinuxFramework::ResetApplication(){
 
 }
-void LinuxFramework::ChangeAPI(GRAPHICS_API::E api){
+void LinuxFramework::ChangeAPI(GraphicsApi::E api){
 
 }
 

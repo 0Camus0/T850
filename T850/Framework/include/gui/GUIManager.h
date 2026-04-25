@@ -1,7 +1,7 @@
 #pragma once
 #include <video/BaseDriver.h>
-#include <scene/T8_Quad.h>
-#include <scene/T8_TextRenderer.h>
+#include <scene/Quad.h>
+#include <scene/TextRenderer.h>
 #include <scene/SceneDescriptor.h>
 #include <gui/GUIElement.h>
 #include <utils/InputManager.h>
@@ -9,7 +9,7 @@
 #include <vector>
 #include <memory>
 
-namespace t800 {
+namespace t850 {
 
   enum class GUIControlEditTarget {
     SliderKnob,
@@ -378,4 +378,4 @@ namespace t800 {
     GUIButton m_backButton;
   };
 
-} // namespace t800
+} // namespace t850

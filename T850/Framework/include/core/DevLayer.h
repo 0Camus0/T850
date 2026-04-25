@@ -2,10 +2,10 @@
 #define T800_DEVLAYER_H
 
 #include <core/Core.h>
-#include <gui/T8_GUI.h>
+#include <gui/GUIManager.h>
 #include <string>
 
-namespace t800 {
+namespace t850 {
 
   class DevLayer {
   public:
@@ -48,6 +48,6 @@ namespace t800 {
     bool m_paused = false;
   };
 
-} // namespace t800
+} // namespace t850
 
 #endif

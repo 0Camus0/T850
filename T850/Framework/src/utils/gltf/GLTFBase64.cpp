@@ -8,7 +8,7 @@
 #include <cstdint>
 #include <vector>
 
-namespace t800 {
+namespace t850 {
 namespace gltf {
 
 static int B64Val(char c) {
@@ -44,4 +44,4 @@ bool Base64Decode(const char* src, std::size_t len,
 }
 
 } // namespace gltf
-} // namespace t800
+} // namespace t850

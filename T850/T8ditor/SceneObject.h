@@ -16,8 +16,8 @@ namespace t8ditor {
 
 // Per-entity gizmo VB/IB cache to avoid per-frame GPU allocation
 struct GizmoCache {
-  t800::VertexBuffer* vb    = nullptr;
-  t800::IndexBuffer*  ib    = nullptr;
+  t850::VertexBuffer* vb    = nullptr;
+  t850::IndexBuffer*  ib    = nullptr;
   unsigned            count = 0;
   uint64_t            hash  = 0;  // dirty check key
 };
@@ -26,7 +26,7 @@ struct GizmoCache {
 
 struct SceneObject {
   EditorMesh            wireframe;
-  t800::PrimitiveInst   litInst;
+  t850::PrimitiveInst   litInst;
   int                   primId = -1;
   std::string           name;
   bool                  visible = true;
@@ -79,13 +79,13 @@ struct SceneGroup {
   bool            persistent = false;  // true = user clicked "Group", survives click-away
 
   // Compute combined AABB from all member objects
-  t800::AABB ComputeAABB(const std::vector<SceneObject>& objects) const {
-    t800::AABB combined;
+  t850::AABB ComputeAABB(const std::vector<SceneObject>& objects) const {
+    t850::AABB combined;
     bool first = true;
     for (int idx : members) {
       if (idx < 0 || idx >= (int)objects.size()) continue;
       if (!objects[idx].wireframe.IsLoaded()) continue;
-      t800::AABB wb = objects[idx].wireframe.WorldAABB();
+      t850::AABB wb = objects[idx].wireframe.WorldAABB();
       if (first) { combined = wb; first = false; }
       else {
         if (wb.vMin.x < combined.vMin.x) combined.vMin.x = wb.vMin.x;
@@ -101,7 +101,7 @@ struct SceneGroup {
 
   // Centroid of the combined AABB
   XVECTOR3 Centroid(const std::vector<SceneObject>& objects) const {
-    t800::AABB bb = ComputeAABB(objects);
+    t850::AABB bb = ComputeAABB(objects);
     return XVECTOR3(
       (bb.vMin.x + bb.vMax.x) * 0.5f,
       (bb.vMin.y + bb.vMax.y) * 0.5f,

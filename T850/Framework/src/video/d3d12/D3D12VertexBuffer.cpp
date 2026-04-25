@@ -13,7 +13,7 @@
 
 #include <utils/Log.h>
 
-namespace t800 {
+namespace t850 {
 
   extern Device*        T8Device;
   extern DeviceContext*  T8DeviceContext;
@@ -40,7 +40,7 @@ namespace t800 {
     bufDesc.SampleDesc.Count = 1;
     bufDesc.Layout = D3D12_TEXTURE_LAYOUT_ROW_MAJOR;
 
-    if (initialData && desc.usage == T8_BUFFER_USAGE::DEFAULT) {
+    if (initialData && desc.usage == BufferUsage::DEFAULT) {
       // Static buffer: create in GPU-local DEFAULT heap, upload via staging
       D3D12_HEAP_PROPERTIES defaultHeap = {}; defaultHeap.Type = D3D12_HEAP_TYPE_DEFAULT;
       HRESULT hr = dev->CreateCommittedResource(&defaultHeap, D3D12_HEAP_FLAG_NONE, &bufDesc,
@@ -150,6 +150,6 @@ namespace t800 {
     m_buffer.Reset(); sysMemCpy.clear(); delete this;
   }
 
-} // namespace t800
+} // namespace t850
 
 #endif // OS_WINDOWS

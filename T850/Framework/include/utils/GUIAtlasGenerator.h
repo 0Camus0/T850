@@ -22,7 +22,7 @@
 #include <vector>
 #include <cstdint>
 
-namespace t800 {
+namespace t850 {
 
   // UV region within the atlas (top-left origin, normalised to [0,1])
   struct AtlasRegion {
@@ -92,4 +92,4 @@ namespace t800 {
     int m_atlasH = 0;
   };
 
-} // namespace t800
+} // namespace t850

@@ -10,8 +10,8 @@
 #ifdef OS_WINDOWS
 
 #include <utils/Log.h>
-#include <debug/T8_Profiler.h>
-#include <core/t8config.h>
+#include <debug/Profiler.h>
+#include <core/Config.h>
 #include <iostream>
 #include <string>
 #include <cassert>
@@ -22,7 +22,7 @@
 #pragma comment(lib, "dxgi.lib")
 #pragma comment(lib, "d3dcompiler.lib")
 
-namespace t800 {
+namespace t850 {
 
   extern Device*        T8Device;
   extern DeviceContext*  T8DeviceContext;
@@ -128,8 +128,8 @@ namespace t800 {
     m_infoQueue->SetMessageCountLimit(4096);
 
     std::string debugLogPath;
-    if (!g_t8config.logFile.empty()) {
-      std::filesystem::path p(g_t8config.logFile);
+    if (!g_config.logFile.empty()) {
+      std::filesystem::path p(g_config.logFile);
       std::string stem = p.stem().string();
       std::string ext  = p.extension().string();
       debugLogPath = (p.parent_path() / (stem + "_d3d12debug" + ext)).string();
@@ -385,7 +385,7 @@ namespace t800 {
 
   void D3D12Driver::CreateDevice() {
     // Enable debug layer only when requested (--d3d12debug flag)
-    if (g_t8config.flags.d3d12Debug) {
+    if (g_config.flags.d3d12Debug) {
       ComPtr<ID3D12Debug> debugController;
       if (SUCCEEDED(D3D12GetDebugInterface(IID_PPV_ARGS(&debugController)))) {
         debugController->EnableDebugLayer();
@@ -569,7 +569,7 @@ namespace t800 {
     m_scissorRect = { 0, 0, (LONG)width, (LONG)height };
 
     // Start debug message polling thread only when debug layer is enabled
-    if (g_t8config.flags.d3d12Debug) {
+    if (g_config.flags.d3d12Debug) {
       StartDebugMessageThread();
     }
 
@@ -631,7 +631,7 @@ namespace t800 {
 
   void D3D12Driver::BeginFrame() {
     {
-      T8_PROFILE_CPU_SCOPE(t800::g_profiler, "D3D12_FenceWait");
+      T8_PROFILE_CPU_SCOPE(t850::g_profiler, "D3D12_FenceWait");
       // Wait for the specific backbuffer's fence to ensure its allocator is safe to reset
       const UINT64 lastFenceForThisBuffer = m_frameFenceValues[m_currentBackBuffer];
       if (m_fence->GetCompletedValue() < lastFenceForThisBuffer) {
@@ -641,7 +641,7 @@ namespace t800 {
     }
 
     {
-      T8_PROFILE_CPU_SCOPE(t800::g_profiler, "D3D12_CmdListReset");
+      T8_PROFILE_CPU_SCOPE(t850::g_profiler, "D3D12_CmdListReset");
       auto& cmdList = m_commandLists[m_currentBackBuffer];
       m_commandAllocators[m_currentBackBuffer]->Reset();
       cmdList->Reset(m_commandAllocators[m_currentBackBuffer].Get(), nullptr);
@@ -716,7 +716,7 @@ namespace t800 {
   void D3D12Driver::SwapBuffers() {
 
     {
-      T8_PROFILE_CPU_SCOPE(t800::g_profiler, "D3D12_CmdClose+Execute");
+      T8_PROFILE_CPU_SCOPE(t850::g_profiler, "D3D12_CmdClose+Execute");
       D3D12_RESOURCE_BARRIER b = {};
       b.Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
       b.Transition.pResource = m_backBuffers[m_currentBackBuffer].Get();
@@ -730,7 +730,7 @@ namespace t800 {
     }
 
     {
-      T8_PROFILE_CPU_SCOPE(t800::g_profiler, "D3D12_Present_Call");
+      T8_PROFILE_CPU_SCOPE(t850::g_profiler, "D3D12_Present_Call");
       UINT presentFlags = m_tearingSupported ? DXGI_PRESENT_ALLOW_TEARING : 0;
       m_swapChain->Present(0, presentFlags);
     }
@@ -748,17 +748,17 @@ namespace t800 {
     if (m_infoQueue) PollDebugMessages();
   }
 
-  void D3D12Driver::SetBlendState(BLEND_STATES state) {
+  void D3D12Driver::SetBlendState(BlendStates state) {
     T8_LOG_TRACE("[D3D12] SetBlendState(%d)", state);
     m_currentBlend = state;
   }
 
-  void D3D12Driver::SetDepthStencilState(DEPTH_STENCIL_STATES state) {
+  void D3D12Driver::SetDepthStencilState(DepthStencilStates state) {
     T8_LOG_TRACE("[D3D12] SetDepthStencilState(%d)", state);
     m_currentDepth = state;
   }
 
-  void D3D12Driver::SetCullFace(FACE_CULLING state) {
+  void D3D12Driver::SetCullFace(FaceCulling state) {
     T8_LOG_TRACE("[D3D12] SetCullFace(%d)", state);
     m_currentCull = state; m_FaceCulling = state;
   }
@@ -1049,6 +1049,6 @@ namespace t800 {
     return gpuH;
   }
 
-} // namespace t800
+} // namespace t850
 
 #endif // OS_WINDOWS

@@ -4,7 +4,7 @@
 
 #include <pch.h>
 
-#include <utils/T8ConfigRuntime.h>
+#include <utils/ConfigRuntime.h>
 
 #include <algorithm>
 #include <cctype>
@@ -21,7 +21,7 @@
 #pragma warning(pop)
 #endif
 
-namespace t800::config {
+namespace t850::config {
 
 namespace {
 
@@ -72,23 +72,23 @@ int ParseLogLevel(const std::string& value, int fallback) {
   return fallback;
 }
 
-GRAPHICS_API::E ParseGraphicsApi(const std::string& value, GRAPHICS_API::E fallback) {
+GraphicsApi::E ParseGraphicsApi(const std::string& value, GraphicsApi::E fallback) {
   std::string lowered = ToLower(value);
-  if (lowered == "gl" || lowered == "opengl") return GRAPHICS_API::OPENGL;
-  if (lowered == "d3d12" || lowered == "dx12") return GRAPHICS_API::D3D12;
-  if (lowered == "d3d11" || lowered == "dx11") return GRAPHICS_API::D3D11;
-  if (lowered == "vulkan" || lowered == "vk") return GRAPHICS_API::VULKAN;
+  if (lowered == "gl" || lowered == "opengl") return GraphicsApi::OPENGL;
+  if (lowered == "d3d12" || lowered == "dx12") return GraphicsApi::D3D12;
+  if (lowered == "d3d11" || lowered == "dx11") return GraphicsApi::D3D11;
+  if (lowered == "vulkan" || lowered == "vk") return GraphicsApi::VULKAN;
   return fallback;
 }
 
-const char* ApiTag(GRAPHICS_API::E api) {
-  return (api == GRAPHICS_API::OPENGL) ? "gl"
-       : (api == GRAPHICS_API::D3D12)  ? "d3d12"
-       : (api == GRAPHICS_API::VULKAN) ? "vulkan"
+const char* ApiTag(GraphicsApi::E api) {
+  return (api == GraphicsApi::OPENGL) ? "gl"
+       : (api == GraphicsApi::D3D12)  ? "d3d12"
+       : (api == GraphicsApi::VULKAN) ? "vulkan"
        : "d3d11";
 }
 
-void ApplyConfigJson(const RuntimeConfigJson& json, t8config& cfg) {
+void ApplyConfigJson(const RuntimeConfigJson& json, Config& cfg) {
   if (json.api) cfg.api = *json.api;
   if (json.width) cfg.width = *json.width;
   if (json.height) cfg.height = *json.height;
@@ -191,7 +191,7 @@ void ApplyConfigJson(const RuntimeConfigJson& json, t8config& cfg) {
   }
 }
 
-bool LoadRuntimeConfig(const std::filesystem::path& path, t8config& cfg) {
+bool LoadRuntimeConfig(const std::filesystem::path& path, Config& cfg) {
   std::string content;
   if (!ReadTextFile(path, content)) {
     std::cerr << "[config] Could not open '" << path.string() << "'; using defaults/CLI.\n";
@@ -228,7 +228,7 @@ bool HasHelpArgument(int argc, char** argv) {
   return false;
 }
 
-void ApplyCommandLine(int argc, char** argv, t8config& cfg) {
+void ApplyCommandLine(int argc, char** argv, Config& cfg) {
   for (int i = 1; i < argc; i++) {
     std::string arg = argv[i];
     if (arg == "--config" && i + 1 < argc) {
@@ -331,11 +331,11 @@ void ApplyCommandLine(int argc, char** argv, t8config& cfg) {
   }
 }
 
-void ConfigureApplicationDesc(const t8config& cfg, ApplicationDesc& desc) {
-  desc.api = ParseGraphicsApi(cfg.api, GRAPHICS_API::D3D11);
+void ConfigureApplicationDesc(const Config& cfg, ApplicationDesc& desc) {
+  desc.api = ParseGraphicsApi(cfg.api, GraphicsApi::D3D11);
   desc.height = cfg.height;
   desc.width = cfg.width;
-  desc.videoMode = cfg.flags.fullscreen ? T8_VIDEO_MODE::FULLSCREEN : T8_VIDEO_MODE::WINDOWED;
+  desc.videoMode = cfg.flags.fullscreen ? VideoMode::FULLSCREEN : VideoMode::WINDOWED;
   desc.title = cfg.title.c_str();
 }
 
@@ -382,4 +382,4 @@ void PrintHelp() {
     ;
 }
 
-} // namespace t800::config
+} // namespace t850::config

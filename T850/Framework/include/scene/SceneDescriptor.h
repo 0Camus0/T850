@@ -5,10 +5,10 @@
 #include <vector>
 #include <array>
 
-namespace t800 {
+namespace t850 {
 
   // JSON-serializable scene description structures.
-  // These mirror what SC_Day/SC_Night/SC_Tech currently hardcode,
+  // These mirror what DayScene/SC_Night/SC_Tech currently hardcode,
   // allowing scenes to be loaded from JSON files via glaze.
 
   struct CameraDesc {
@@ -146,6 +146,6 @@ namespace t800 {
   // Save a SceneDescriptor to a JSON file (for authoring/export).
   bool SaveSceneDescriptor(const std::string& path, const SceneDescriptor& desc);
 
-} // namespace t800
+} // namespace t850
 
 #endif

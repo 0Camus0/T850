@@ -3,7 +3,7 @@
 #include <video/BaseDriver.h>
 #include <utils/xMaths.h>
 
-namespace t800 {
+namespace t850 {
   class WireframeSphere {
   public:
     struct CBuffer {

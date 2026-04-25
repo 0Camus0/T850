@@ -6,9 +6,9 @@
 #include <scene/SceneDescriptor.h>
 #include <scene/SceneProp.h>
 #include <utils/Camera.h>
-#include <utils/T8_Spline.h>
+#include <utils/Spline.h>
 
-namespace t800 {
+namespace t850 {
 
   class SceneBase;  // forward
 
@@ -55,6 +55,6 @@ namespace t800 {
     std::string name;
   };
 
-} // namespace t800
+} // namespace t850
 
 #endif

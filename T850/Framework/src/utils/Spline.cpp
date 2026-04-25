@@ -1,7 +1,7 @@
 #include <pch.h>
-#include <utils/T8_Spline.h>
+#include <utils/Spline.h>
 #include <iostream>
-namespace t800 {
+namespace t850 {
   void Spline::Init()
   {
     ReCalculateSegmentsLength();
@@ -43,18 +43,18 @@ namespace t800 {
     	p3 = static_cast<int>((p2 + 1) % m_points.size());
     	p0 = p1 >= 1 ? p1 - 1 : static_cast<int>(m_points.size()) - 1;
     }
-    
+
     t = t - (int)t;
     if (t == 0) return m_points[p0];
     float tt = t * t;
     float ttt = tt * t;
-    
+
 
     float q1 = -ttt + 2.0f*tt - t;
     float q2 = 3.0f*ttt - 5.0f*tt + 2.0f;
     float q3 = -3.0f*ttt + 4.0f*tt + t;
     float q4 = ttt - tt;
-    
+
 
     ret.x = 0.5f * (m_points[p0].x * q1 + m_points[p1].x * q2 + m_points[p2].x * q3 + m_points[p3].x * q4);
     ret.y = 0.5f * (m_points[p0].y * q1 + m_points[p1].y * q2 + m_points[p2].y * q3 + m_points[p3].y * q4);
@@ -85,18 +85,18 @@ namespace t800 {
     	p3 = static_cast<int>((p2 + 1) % m_points.size());
     	p0 = p1 >= 1 ? p1 - 1 : static_cast<int>(m_points.size()) - 1;
     }
-    
+
     t = t - (int)t;
     if (t == 0) return m_points[p0];
 
     float tt = t * t;
     float ttt = tt * t;
-    
+
     float q1 = -3.0f * tt + 4.0f*t - 1;
     float q2 = 9.0f*tt - 10.0f*t;
     float q3 = -9.0f*tt + 8.0f*t + 1.0f;
     float q4 = 3.0f*tt - 2.0f*t;
-    
+
     ret.x = 0.5f * (m_points[p0].x * q1 + m_points[p1].x * q2 + m_points[p2].x * q3 + m_points[p3].x * q4);
     ret.y = 0.5f * (m_points[p0].y * q1 + m_points[p1].y * q2 + m_points[p2].y * q3 + m_points[p3].y * q4);
     ret.z = 0.5f * (m_points[p0].z * q1 + m_points[p1].z * q2 + m_points[p2].z * q3 + m_points[p3].z * q4);
@@ -106,15 +106,15 @@ namespace t800 {
   float Spline::GetSegmentLength(int node)
   {
     float fLength = 0.0f;
-    
+
     SplinePoint oldP, newP;
     oldP = GetPoint((float)node);
-    
+
     for (float t = 0; t < 1.0f; t += STEP_SIZE)
     {
     	newP = GetPoint((float)node + t);
-    	fLength += sqrtf((newP.x - oldP.x)*(newP.x - oldP.x) + 
-        (newP.y - oldP.y)*(newP.y - oldP.y) + 
+    	fLength += sqrtf((newP.x - oldP.x)*(newP.x - oldP.x) +
+        (newP.y - oldP.y)*(newP.y - oldP.y) +
         (newP.z - oldP.z)*(newP.z - oldP.z));
     	oldP = newP;
     }

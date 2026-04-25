@@ -9,7 +9,7 @@
 
 namespace xF { struct xMaterial; }
 
-namespace t800 {
+namespace t850 {
 namespace gltf {
 
 // Translate glTF material `materialIndex` (or -1 for the default
@@ -19,6 +19,6 @@ void ConvertMaterial(const Document& doc, int materialIndex,
                      xF::xMaterial& outMat);
 
 } // namespace gltf
-} // namespace t800
+} // namespace t850
 
 #endif // T800_GLTF_MATERIAL_H

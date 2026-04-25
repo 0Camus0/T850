@@ -5,18 +5,18 @@
 #include <scene/SplineWireframe.h>
 #include <scene/WireframeSphere.h>
 #include <scene/WireframeArrow.h>
-#include <utils/T8_Spline.h>
+#include <utils/Spline.h>
 #include <scene/SceneSetup.h>
 #include <scene/RenderGraph.h>
 #include <debug/FrameDumper.h>
 #include <scene/LensFlare.h>
-#include <scene/T8_TextRenderer.h>
-#include <gui/T8_GUI.h>
+#include <scene/TextRenderer.h>
+#include <gui/GUIManager.h>
 #include <Config.h>
 
 
 #include <core/Core.h>
-class SC_Day : public t800::SceneBase
+class DayScene : public t850::SceneBase
 {
   enum {
     DRAW_CUBE_SPINNING = 0,
@@ -41,7 +41,7 @@ class SC_Day : public t800::SceneBase
     CHANGE_ACTIVE_GAUSS_KERNEL,
     CHANGE_GAUSS_KERNEL_SAMPLE_COUNT,
     CHANGE_GAUSS_KERNEL_RADIUS,
-    CHANGE_GAUSS_KERNEL_DEVIATION,    
+    CHANGE_GAUSS_KERNEL_DEVIATION,
 	CHANGE_PCF_RADIUS,
     CHANGE_PCF_SAMPLES,
     CHANGE_SSAO_KERNEL_SIZE,
@@ -83,7 +83,7 @@ class SC_Day : public t800::SceneBase
     CHANGE_MAX_NUM_OPTIONS
   };
   public:
-  SC_Day() {}
+  DayScene() {}
   void OnUpdate(float _DtSecs);
   void OnDraw();
   void OnInput(InputManager* IManager);
@@ -98,9 +98,9 @@ class SC_Day : public t800::SceneBase
   void printCurrSelection();
 
   // GUI hooks (called by DevLayer)
-  void PopulateGUI(t800::GUIManager& gui) override;
-  void SyncToGUI(t800::GUIManager& gui) override;
-  void SyncFromGUI(t800::GUIManager& gui) override;
+  void PopulateGUI(t850::GUIManager& gui) override;
+  void SyncToGUI(t850::GUIManager& gui) override;
+  void SyncFromGUI(t850::GUIManager& gui) override;
 
   // Dump scene state to JSON
   void SaveSceneState() override;
@@ -110,17 +110,17 @@ class SC_Day : public t800::SceneBase
   int FindLightOption(int activeLights);
 
   float DtSecs;
-  t800::PrimitiveManager PrimitiveMgr;
-  t800::PrimitiveInst	Cubes[10];
-  t800::PrimitiveInst	Triangles[10];
-  t800::PrimitiveInst   Meshes[10];
-  t800::PrimitiveInst	QuadInst;
+  t850::PrimitiveManager PrimitiveMgr;
+  t850::PrimitiveInst	Cubes[10];
+  t850::PrimitiveInst	Triangles[10];
+  t850::PrimitiveInst   Meshes[10];
+  t850::PrimitiveInst	QuadInst;
 
-  t800::PrimitiveInst	Quads[10];
+  t850::PrimitiveInst	Quads[10];
 
-  t800::SceneSetup  m_sceneSetup;
-  t800::RenderGraph  m_renderGraph;
-  t800::FrameDumper  m_dumper;
+  t850::SceneSetup  m_sceneSetup;
+  t850::RenderGraph  m_renderGraph;
+  t850::FrameDumper  m_dumper;
 
   Camera			*ActiveCam;
 
@@ -154,7 +154,7 @@ class SC_Day : public t800::SceneBase
   int DOFPass;
   int CombineCoCPass;
   int Extra16FPass5x5;
-  //int				
+  //int
 
   int				EnvMapTexIndex;
   int       fireTextureIndx;
@@ -176,11 +176,11 @@ class SC_Day : public t800::SceneBase
   int       m_currentCubemapIndex = 0;
   std::string m_pendingCubemap; // deferred load for D3D12 safety
 
-  t800::SplineWireframe* splineWire;
-  t800::PrimitiveInst splineInst;
-  t800::WireframeSphere m_wireframeSphere;
-  t800::WireframeArrow m_wireframeArrow;
-  t800::LensFlare m_flare;
+  t850::SplineWireframe* splineWire;
+  t850::PrimitiveInst splineInst;
+  t850::WireframeSphere m_wireframeSphere;
+  t850::WireframeArrow m_wireframeArrow;
+  t850::LensFlare m_flare;
   XMATRIX44 m;
 };
 

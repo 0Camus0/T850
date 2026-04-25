@@ -44,7 +44,7 @@ enum SpvStorageClass_ {
   SpvStorageClassPushConstant    = 9,
 };
 
-namespace t800 {
+namespace t850 {
 
 bool SPIRVReflection::Parse(const uint32_t* code, size_t wordCount) {
   if (wordCount < 5) return false;
@@ -333,4 +333,4 @@ void SPIRVReflection::ShiftUBOBindings(uint32_t* code, size_t wordCount, uint32_
   }
 }
 
-} // namespace t800
+} // namespace t850

@@ -14,7 +14,7 @@
 #include <video/d3d11/D3D11Texture.h>
 #include <utils/Log.h>
 
-namespace t800 {
+namespace t850 {
   extern Device*            T8Device;
   extern DeviceContext*     T8DeviceContext;
 
@@ -26,11 +26,11 @@ namespace t800 {
     sdesc.Filter = D3D11_FILTER_ANISOTROPIC;
     sdesc.MaxAnisotropy = 16;
 
-    if (params & TEXT_BASIC_PARAMS::NEAREST_FILTER) {
+    if (params & TextBasicParams::NEAREST_FILTER) {
       sdesc.Filter = D3D11_FILTER_MIN_MAG_MIP_POINT;
       sdesc.MaxAnisotropy = 1;
     }
-    else if (params & TEXT_BASIC_PARAMS::LINEAR_FILTER) {
+    else if (params & TextBasicParams::LINEAR_FILTER) {
       sdesc.Filter = D3D11_FILTER_MIN_MAG_LINEAR_MIP_POINT;
       sdesc.MaxAnisotropy = 1;
     }
@@ -39,19 +39,19 @@ namespace t800 {
     sdesc.AddressV = D3D11_TEXTURE_ADDRESS_CLAMP;
     sdesc.AddressW = D3D11_TEXTURE_ADDRESS_CLAMP;
 
-    if (params & TEXT_BASIC_PARAMS::CLAMP_TO_EDGE) {
+    if (params & TextBasicParams::CLAMP_TO_EDGE) {
       sdesc.AddressU = D3D11_TEXTURE_ADDRESS_CLAMP;
       sdesc.AddressV = D3D11_TEXTURE_ADDRESS_CLAMP;
       sdesc.AddressW = D3D11_TEXTURE_ADDRESS_CLAMP;
     }
 
-    if (params & TEXT_BASIC_PARAMS::TILED) {
+    if (params & TextBasicParams::TILED) {
       sdesc.AddressU = D3D11_TEXTURE_ADDRESS_WRAP;
       sdesc.AddressV = D3D11_TEXTURE_ADDRESS_WRAP;
       sdesc.AddressW = D3D11_TEXTURE_ADDRESS_WRAP;
     }
 
-    if (params & TEXT_BASIC_PARAMS::CLAMP_TO_BORDER) {
+    if (params & TextBasicParams::CLAMP_TO_BORDER) {
       sdesc.AddressU = D3D11_TEXTURE_ADDRESS_BORDER;
       sdesc.AddressV = D3D11_TEXTURE_ADDRESS_BORDER;
       sdesc.AddressW = D3D11_TEXTURE_ADDRESS_BORDER;
@@ -64,7 +64,7 @@ namespace t800 {
     sdesc.BorderColor[2] = 0.0f;
     sdesc.BorderColor[3] = 0.0f;
     sdesc.MinLOD = 0.0f;
-    sdesc.MaxLOD = (params & (TEXT_BASIC_PARAMS::NEAREST_FILTER | TEXT_BASIC_PARAMS::LINEAR_FILTER)) ? 0.0f : D3D11_FLOAT32_MAX;
+    sdesc.MaxLOD = (params & (TextBasicParams::NEAREST_FILTER | TextBasicParams::LINEAR_FILTER)) ? 0.0f : D3D11_FLOAT32_MAX;
     sdesc.MipLODBias = 0.0f;
 
     device->CreateSamplerState(&sdesc, pSampler.GetAddressOf());
@@ -87,7 +87,7 @@ namespace t800 {
     else
       desc.ArraySize = 1;
 
-    if (this->props&TEXT_BASIC_FORMAT::CH_ALPHA)
+    if (this->props&TextBasicFormat::CH_ALPHA)
       desc.Format = DXGI_FORMAT_R8_UNORM;
     else if (cil_props & CIL_HALF_FLOAT)
       desc.Format = DXGI_FORMAT_R16G16B16A16_FLOAT;

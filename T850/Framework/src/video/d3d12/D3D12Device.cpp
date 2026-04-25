@@ -17,7 +17,7 @@
 
 #include <utils/Log.h>
 
-namespace t800 {
+namespace t850 {
 
   // ══════════════════════════════════════════════════════
   //  D3D12Device
@@ -27,13 +27,13 @@ namespace t800 {
   void** D3D12Device::GetAPIObjectReference() const { return nullptr; }
   void D3D12Device::release() { m_device.Reset(); }
 
-  Buffer* D3D12Device::CreateBuffer(T8_BUFFER_TYPE::E bufferType, BufferDesc desc, void* initialData) {
+  Buffer* D3D12Device::CreateBuffer(BufferType::E bufferType, BufferDesc desc, void* initialData) {
     T8_LOG_DEBUG("[D3D12] CreateBuffer type=%d size=%d", bufferType, desc.byteWidth);
     Buffer* buf = nullptr;
     switch (bufferType) {
-      case T8_BUFFER_TYPE::VERTEX:   buf = new D3D12VertexBuffer;   break;
-      case T8_BUFFER_TYPE::INDEX:    buf = new D3D12IndexBuffer;    break;
-      case T8_BUFFER_TYPE::CONSTANT: buf = new D3D12ConstantBuffer; break;
+      case BufferType::VERTEX:   buf = new D3D12VertexBuffer;   break;
+      case BufferType::INDEX:    buf = new D3D12IndexBuffer;    break;
+      case BufferType::CONSTANT: buf = new D3D12ConstantBuffer; break;
     }
     if (buf) buf->Create(*this, desc, initialData);
     return buf;
@@ -189,6 +189,6 @@ namespace t800 {
     return nullptr;
   }
 
-} // namespace t800
+} // namespace t850
 
 #endif // OS_WINDOWS

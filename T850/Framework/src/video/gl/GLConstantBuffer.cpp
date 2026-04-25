@@ -45,7 +45,7 @@
 #endif
 #endif
 
-namespace t800 {
+namespace t850 {
   void * GLConstantBuffer::GetAPIObject() const
   {
     return nullptr;

@@ -16,7 +16,7 @@
 
 #include <vector>
 
-namespace t800 {
+namespace t850 {
 
 class RenderSkinnedMesh : public RenderMesh {
 public:
@@ -167,6 +167,6 @@ private:
   int                  m_wireViewH      = 720;
 };
 
-} // namespace t800
+} // namespace t850
 
 #endif // T800_RENDER_SKINNED_MESH_H

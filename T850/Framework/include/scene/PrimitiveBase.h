@@ -20,7 +20,7 @@
 
 #include <vector>
 
-namespace t800 {
+namespace t850 {
 #ifndef BUFFER_OFFSET
 #define BUFFER_OFFSET(i) ((char *)NULL + (i))
 #endif

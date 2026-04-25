@@ -18,7 +18,7 @@
 #include <utils/xMaths.h>
 #include <cfloat>
 
-namespace t800 {
+namespace t850 {
 
 // ── Geometric primitives ─────────────────────────────
 
@@ -94,6 +94,6 @@ XVECTOR3 TransformPoint(const XVECTOR3& p, const XMATRIX44& m);
 // Transform a direction (w=0) by a 4×4 matrix (no translation, no divide).
 XVECTOR3 TransformDirection(const XVECTOR3& d, const XMATRIX44& m);
 
-} // namespace t800
+} // namespace t850
 
 #endif // T800_PICKING_H

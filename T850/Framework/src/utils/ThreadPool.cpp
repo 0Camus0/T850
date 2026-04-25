@@ -3,7 +3,7 @@
 #include <utils/Log.h>
 #include <memory>
 
-namespace t800 {
+namespace t850 {
 
 static std::unique_ptr<ThreadPool> s_globalPool;
 ThreadPool* g_threadPool = nullptr;
@@ -23,4 +23,4 @@ void ShutdownGlobalThreadPool() {
   T8_LOG_INFO("[Engine] Global ThreadPool destroyed");
 }
 
-} // namespace t800
+} // namespace t850

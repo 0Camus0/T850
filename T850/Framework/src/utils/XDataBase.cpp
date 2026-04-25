@@ -2960,7 +2960,7 @@ namespace xF {
 			Data.Values[i] = tmp_d;
 #endif
 		}
-		
+
 		#else
 		int current_index = index;
 		int token = 0, last_token = 0;
@@ -2993,7 +2993,7 @@ namespace xF {
 				current_index++;
 				if (pData[current_index] == ' ')
 					token = current_index;
-			}			
+			}
 			g_size = current_index - token;
 			memcpy(cNumVerts, &pData[token + 1], g_size);
 			cNumVerts[g_size - 1] = '\0';
@@ -3003,7 +3003,7 @@ namespace xF {
 			current_index++;
 			while (pData[current_index] != ';') {
 				current_index++;
-			}			
+			}
 			g_size = current_index - token;
 			memcpy(cNumVerts, &pData[token + 1], g_size);
 			cNumVerts[g_size - 1] = '\0';
@@ -3013,7 +3013,7 @@ namespace xF {
 			current_index++;
 			while (pData[current_index] != ';') {
 				current_index++;
-			}			
+			}
 			g_size = current_index - token;
 			memcpy(cNumVerts, &pData[token + 1], g_size);
 			cNumVerts[g_size - 1] = '\0';

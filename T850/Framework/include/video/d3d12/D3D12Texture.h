@@ -10,7 +10,7 @@
 #include <wrl/client.h>
 using Microsoft::WRL::ComPtr;
 
-namespace t800 {
+namespace t850 {
 
   class D3D12Texture : public Texture {
   public:
@@ -35,7 +35,7 @@ namespace t800 {
     bool hasSampler = false;
   };
 
-} // namespace t800
+} // namespace t850
 
 #endif // OS_WINDOWS
 #endif // T800_D3D12TEXTURE_H

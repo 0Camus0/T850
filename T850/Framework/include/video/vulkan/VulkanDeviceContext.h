@@ -15,7 +15,7 @@
 #define VK_USE_PLATFORM_WIN32_KHR
 #include <vulkan/vulkan.h>
 
-namespace t800 {
+namespace t850 {
 
   // Forward declaration
   class VulkanDriver;
@@ -28,7 +28,7 @@ namespace t800 {
     void* GetAPIObject() const override;
     void** GetAPIObjectReference() const override;
     void release() override;
-    void SetPrimitiveTopology(T8_TOPOLOGY::E topology) override;
+    void SetPrimitiveTopology(Topology::E topology) override;
     void DrawIndexed(unsigned vertexCount, unsigned startIndex, unsigned startVertex) override;
 
     VkCommandBuffer GetCommandBuffer() const { return m_commandBuffer; }
@@ -40,7 +40,7 @@ namespace t800 {
     VkPrimitiveTopology m_topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
   };
 
-} // namespace t800
+} // namespace t850
 
 #endif // OS_WINDOWS
 #endif // T800_VULKANDEVICECONTEXT_H

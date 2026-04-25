@@ -4,7 +4,7 @@
 #include <utils/xMaths.h>
 #include <scene/PrimitiveManager.h>
 #include <scene/PrimitiveInstance.h>
-namespace t800 {
+namespace t850 {
 class LensFlare {
 public:
   float m_sunSize;

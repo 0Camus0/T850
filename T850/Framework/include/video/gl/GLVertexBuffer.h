@@ -15,7 +15,7 @@
 
 #include <video/BaseDriver.h>
 
-namespace t800 {
+namespace t850 {
   class Device;
 
   class GLVertexBuffer : public VertexBuffer {

@@ -19,7 +19,7 @@
 #include <wrl.h>
 #include <wrl/client.h>
 
-namespace t800 {
+namespace t850 {
   class D3DXVertexBuffer : public VertexBuffer {
   public:
     void* GetAPIObject() const override;

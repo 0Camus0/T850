@@ -1,7 +1,7 @@
 #pragma once
 #include <vector>
 #include <utils/xMaths.h>
-namespace t800 {
+namespace t850 {
   struct SplinePoint : public XVECTOR3 {
   public:
     SplinePoint() : m_length(0), m_velocity(0), m_LookAtCenter(true) {}
@@ -21,7 +21,7 @@ namespace t800 {
     void Init();
     void ReCalculateSegmentsLength();
     explicit Spline(bool _looped = false) : m_looped(_looped), m_totalLength(0) {}
-    explicit Spline(std::vector<SplinePoint>& points, bool _looped = false) : 
+    explicit Spline(std::vector<SplinePoint>& points, bool _looped = false) :
       m_looped(_looped), m_points(points), m_totalLength(0) {}
     SplinePoint GetPoint(float t);
     XVECTOR3 GetGradient(float t);

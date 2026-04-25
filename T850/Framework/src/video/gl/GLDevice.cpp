@@ -20,7 +20,7 @@
 #include <video/gl/GLRT.h>
 #include <video/gl/GLShader.h>
 
-namespace t800 {
+namespace t850 {
   void * GLDevice::GetAPIObject() const
   {
     return nullptr;
@@ -33,18 +33,18 @@ namespace t800 {
   {
     delete this;
   }
-  Buffer * GLDevice::CreateBuffer(T8_BUFFER_TYPE::E bufferType, BufferDesc desc, void * initialData)
+  Buffer * GLDevice::CreateBuffer(BufferType::E bufferType, BufferDesc desc, void * initialData)
   {
     Buffer* retBuff;
     switch (bufferType)
     {
-    case T8_BUFFER_TYPE::VERTEX:
+    case BufferType::VERTEX:
       retBuff = new GLVertexBuffer;
       break;
-    case T8_BUFFER_TYPE::INDEX:
+    case BufferType::INDEX:
       retBuff = new GLIndexBuffer;
       break;
-    case T8_BUFFER_TYPE::CONSTANT:
+    case BufferType::CONSTANT:
       retBuff = new GLConstantBuffer;
       break;
     default:

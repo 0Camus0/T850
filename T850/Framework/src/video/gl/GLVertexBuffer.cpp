@@ -44,7 +44,7 @@
 #endif
 #endif
 
-namespace t800 {
+namespace t850 {
   void * GLVertexBuffer::GetAPIObject() const
   {
     return nullptr;
@@ -64,7 +64,7 @@ namespace t800 {
   void GLVertexBuffer::UpdateFromSystemCopy(const DeviceContext & deviceContext)
   {
     glBindBuffer(GL_ARRAY_BUFFER, APIID);
-    if (descriptor.usage == T8_BUFFER_USAGE::DINAMIC) {
+    if (descriptor.usage == BufferUsage::DINAMIC) {
       glBufferSubData(GL_ARRAY_BUFFER, 0, descriptor.byteWidth, &sysMemCpy[0]);
     } else {
       glBufferData(GL_ARRAY_BUFFER, descriptor.byteWidth, &sysMemCpy[0], GL_STATIC_DRAW);
@@ -90,7 +90,7 @@ namespace t800 {
       sysMemCpy.assign((char*)initialData, (char*)initialData + desc.byteWidth);
     }
     GLenum usage = GL_STATIC_DRAW;
-    if (desc.usage == T8_BUFFER_USAGE::DINAMIC) usage = GL_DYNAMIC_DRAW;
+    if (desc.usage == BufferUsage::DINAMIC) usage = GL_DYNAMIC_DRAW;
     glGenBuffers(1, &APIID);
     glBindBuffer(GL_ARRAY_BUFFER, APIID);
     glBufferData(GL_ARRAY_BUFFER, desc.byteWidth, initialData, usage);

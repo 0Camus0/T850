@@ -45,10 +45,10 @@ public:
   const XVECTOR3& LocalCenter() const { return m_localCenter; }
 
   // Local-space axis-aligned bounding box.
-  const t800::AABB& LocalAABB() const { return m_localAABB; }
+  const t850::AABB& LocalAABB() const { return m_localAABB; }
 
   // World-space AABB (local AABB transformed by current TRS).
-  t800::AABB WorldAABB() const { return m_localAABB.Transformed(BuildWorld()); }
+  t850::AABB WorldAABB() const { return m_localAABB.Transformed(BuildWorld()); }
 
   // Compose the world matrix from position/rotation/scale (TRS).
   XMATRIX44 BuildWorld() const;
@@ -61,8 +61,8 @@ public:
 private:
   std::string m_path;
 
-  t800::VertexBuffer* m_vb = nullptr;
-  t800::IndexBuffer*  m_ib = nullptr;
+  t850::VertexBuffer* m_vb = nullptr;
+  t850::IndexBuffer*  m_ib = nullptr;
   unsigned m_indexCount = 0;
   bool     m_use32BitIB = false;
 
@@ -70,7 +70,7 @@ private:
   XVECTOR3 m_euler       = XVECTOR3(0.0f, 0.0f, 0.0f); // radians, XYZ
   XVECTOR3 m_scale       = XVECTOR3(1.0f, 1.0f, 1.0f);
   XVECTOR3 m_localCenter = XVECTOR3(0.0f, 0.0f, 0.0f);
-  t800::AABB m_localAABB;
+  t850::AABB m_localAABB;
 };
 
 } // namespace t8ditor

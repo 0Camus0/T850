@@ -1,5 +1,5 @@
 #include <pch.h>
-#include <utils/T8_Technique.h>
+#include <utils/Technique.h>
 #include <iostream>
 #include <video/gl/GLDriver.h>
 #include <video/gl/GLShader.h>
@@ -7,8 +7,8 @@
 #include <video/d3d11/D3D11Shader.h>
 #include <video/d3d11/D3D11Driver.h>
 #endif
-namespace t800 {
-  void T8TechniqueInfo::ProcessDefine(tinyxml2::XMLElement * element)
+namespace t850 {
+  void TechniqueInfo::ProcessDefine(tinyxml2::XMLElement * element)
   {
     const char* name = element->Attribute("name");
     if (name == nullptr) {
@@ -27,10 +27,10 @@ namespace t800 {
       }
       m_actualDefines->push_back(def);
     }
-    
+
   }
 
-  void T8TechniqueInfo::ProcessProfile(tinyxml2::XMLElement * element)
+  void TechniqueInfo::ProcessProfile(tinyxml2::XMLElement * element)
   {
     auto child = element->FirstChildElement("define");
     if (child != nullptr) {
@@ -54,7 +54,7 @@ namespace t800 {
     }
   }
 
-  void T8TechniqueInfo::ProcessShader(tinyxml2::XMLElement * element)
+  void TechniqueInfo::ProcessShader(tinyxml2::XMLElement * element)
   {
     const char* path = element->Attribute("path");
     if (path == nullptr) {
@@ -79,14 +79,14 @@ namespace t800 {
   }
 
 
-  T8TechniqueInfo::T8TechniqueInfo()
+  TechniqueInfo::TechniqueInfo()
   {
   }
-  T8TechniqueInfo::T8TechniqueInfo(std::string path)
+  TechniqueInfo::TechniqueInfo(std::string path)
   {
     Parse(path);
   }
-  void T8TechniqueInfo::Parse(std::string path)
+  void TechniqueInfo::Parse(std::string path)
   {
     m_actualDefines = &m_globalDefines;
     m_xmlDoc.LoadFile(path.c_str());
@@ -124,17 +124,17 @@ namespace t800 {
     }
     else {
       do {
-        T8TechniqueProfileInfo t8Prof;
+        TechniqueProfileInfo t8Prof;
         t8Prof.m_name = profile->Attribute("name");
         std::string type = profile->Attribute("type");
         if (type == "GLSL")
-          t8Prof.m_type = T8_TECHNIQUE_PROFILE::GL;
+          t8Prof.m_type = TechniqueProfileType::GL;
         else if (type == "HLSL")
-          t8Prof.m_type = T8_TECHNIQUE_PROFILE::HLSL;
+          t8Prof.m_type = TechniqueProfileType::HLSL;
         else if (type == "GLSL_ES2")
-          t8Prof.m_type = T8_TECHNIQUE_PROFILE::GLES20;
+          t8Prof.m_type = TechniqueProfileType::GLES20;
         else if (type == "GLSL_ES3")
-          t8Prof.m_type = T8_TECHNIQUE_PROFILE::GLES30;
+          t8Prof.m_type = TechniqueProfileType::GLES30;
         else {
           std::cout << "error: profile type not specified" << std::endl;
           m_xmlDoc.Clear();
@@ -149,7 +149,7 @@ namespace t800 {
     m_xmlDoc.Clear();
   }
 
-  void T8TechniqueInfo::release()
+  void TechniqueInfo::release()
   {
     m_xmlDoc.Clear();
   }
@@ -157,10 +157,10 @@ namespace t800 {
 
 
   //TODO: Separate Parser and implementation on diferent cpp
-  void T8Technique::Load(std::string path)
+  void Technique::Load(std::string path)
   {
     m_currentProfile = nullptr;
-    m_profiles.resize(T8TechniqueInfo::T8_TECHNIQUE_PROFILE::COUNT);
+    m_profiles.resize(TechniqueInfo::TechniqueProfileType::COUNT);
     info.Parse(path);
     for (auto it : info.m_profiles) {
       m_profiles[it.m_type].m_loaded = false;
@@ -169,7 +169,7 @@ namespace t800 {
   }
 
 
-  void T8Technique::UseProfile(const Device& device, T8TechniqueInfo::T8_TECHNIQUE_PROFILE profile)
+  void Technique::UseProfile(const Device& device, TechniqueInfo::TechniqueProfileType profile)
   {
     if (!m_profiles[profile].m_loaded) {
       m_currentProfile->m_loaded = false;
@@ -177,29 +177,29 @@ namespace t800 {
       m_profiles[profile].LoadShaders(device);
     }
   }
-  void T8Technique::SetShaders(const DeviceContext & deviceContext)
+  void Technique::SetShaders(const DeviceContext & deviceContext)
   {
     m_currentProfile->SetShaders(deviceContext);
   }
-  void T8Technique::release()
+  void Technique::release()
   {
     info.release();
     m_currentProfile->release();
   }
-  void T8TechniqueProfile::LoadShaders(const Device& device)
+  void TechniqueProfile::LoadShaders(const Device& device)
   {
     shaderID = g_pBaseDriver->CreateShader(info->m_vsPath, info->m_fsPath);
     shaderSet = g_pBaseDriver->GetShaderIdx(shaderID);
   }
-  void T8TechniqueProfile::SetShaders(const DeviceContext & deviceContext)
+  void TechniqueProfile::SetShaders(const DeviceContext & deviceContext)
   {
     shaderSet->Set(deviceContext);
   }
-  void T8TechniqueProfile::release()
+  void TechniqueProfile::release()
   {
     g_pBaseDriver->DestroyShader(shaderID);
   }
-  T8Technique::T8Technique( std::string path)
+  Technique::Technique( std::string path)
   {
     Load(path);
   }

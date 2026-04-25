@@ -29,7 +29,7 @@
 #include <utils/ThreadPool.h>
 
 // Forward declaration (implemented in GLTFAnimation.cpp)
-namespace t800 { namespace gltf {
+namespace t850 { namespace gltf {
   void BuildSkinsAndAnimations(const Document& doc, xF::XDataBase& out);
 }}
 
@@ -40,7 +40,7 @@ namespace t800 { namespace gltf {
 #include <cstdint>
 #include <vector>
 
-namespace t800 {
+namespace t850 {
 namespace gltf {
 
 namespace {
@@ -928,4 +928,4 @@ bool ConvertToXDatabase(const Document& doc, xF::XDataBase& out,
 }
 
 } // namespace gltf
-} // namespace t800
+} // namespace t850

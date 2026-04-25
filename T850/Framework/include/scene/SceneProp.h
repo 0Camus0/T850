@@ -50,7 +50,7 @@ struct SSAOFilter {
 	float Radius;
 	float NoiseSize;
 	unsigned char  Noise[SSAO_NOISE_SIZE * SSAO_NOISE_SIZE * 4];
-	t800::Texture* NoiseTex;
+	t850::Texture* NoiseTex;
 	std::vector<XVECTOR3> vSSAOKernel;
 	void InitTexture();
 	void Destroy();

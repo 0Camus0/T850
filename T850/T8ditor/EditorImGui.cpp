@@ -8,7 +8,7 @@
 #include <video/BaseDriver.h>
 #include <core/Core.h>
 #include <utils/Log.h>
-#include <T8_descriptors.h>
+#include <Descriptors.h>
 
 // ImGui core
 #include <imgui.h>
@@ -37,7 +37,7 @@
 #include <ImGuizmo.h>
 
 // Framework globals
-namespace t800 {
+namespace t850 {
   extern Device*        T8Device;
   extern DeviceContext* T8DeviceContext;
 }
@@ -46,7 +46,7 @@ namespace t8ditor {
 
 // ── Module state ──────────────────────────────────────
 static bool                   s_inited    = false;
-static t800::GRAPHICS_API::E  s_api       = t800::GRAPHICS_API::D3D11;
+static t850::GraphicsApi::E  s_api       = t850::GraphicsApi::D3D11;
 static SDL_Window*            s_sdlWindow = nullptr;
 static float                  s_wheelAccum = 0.0f;
 
@@ -58,14 +58,14 @@ static ID3D12DescriptorHeap*  s_d3d12SrvHeap = nullptr;
 // ── Log capture ring buffer ───────────────────────────
 static const int              kMaxLogLines = 500;
 struct LogLine {
-  t800::Log::Level level;
+  t850::Log::Level level;
   std::string      text;
 };
 static std::vector<LogLine>   s_logLines;
 static std::mutex             s_logMutex;
 static bool                   s_logAutoScroll = true;
 
-static void EditorLogCallback(t800::Log::Level level, const char* msg) {
+static void EditorLogCallback(t850::Log::Level level, const char* msg) {
   std::lock_guard<std::mutex> lock(s_logMutex);
   if (s_logLines.size() >= (size_t)kMaxLogLines)
     s_logLines.erase(s_logLines.begin());
@@ -73,11 +73,11 @@ static void EditorLogCallback(t800::Log::Level level, const char* msg) {
 }
 
 void ImGuiLogCaptureStart() {
-  t800::Log::SetCallback(EditorLogCallback);
+  t850::Log::SetCallback(EditorLogCallback);
 }
 
 void ImGuiLogCaptureStop() {
-  t800::Log::SetCallback(nullptr);
+  t850::Log::SetCallback(nullptr);
   std::lock_guard<std::mutex> lock(s_logMutex);
   s_logLines.clear();
 }
@@ -91,12 +91,12 @@ static bool sdlEventWatcher(void* /*userdata*/, SDL_Event* event) {
 }
 
 // ── Init ──────────────────────────────────────────────
-bool ImGuiInit(t800::RootFramework* fw) {
+bool ImGuiInit(t850::RootFramework* fw) {
   if (s_inited) return true;
   if (!fw || !fw->pVideoDriver) return false;
 
 #ifdef OS_WINDOWS
-  auto* w32 = static_cast<t800::Win32Framework*>(fw);
+  auto* w32 = static_cast<t850::Win32Framework*>(fw);
   s_sdlWindow = w32->m_pWindow;
 #else
   s_sdlWindow = nullptr;
@@ -131,8 +131,8 @@ bool ImGuiInit(t800::RootFramework* fw) {
   // ── Platform backend ──
   bool platformOK = false;
 #ifdef OS_WINDOWS
-  if (s_api == t800::GRAPHICS_API::OPENGL)
-    platformOK = ImGui_ImplSDL3_InitForOpenGL(s_sdlWindow, nullptr);  else if (s_api == t800::GRAPHICS_API::VULKAN)
+  if (s_api == t850::GraphicsApi::OPENGL)
+    platformOK = ImGui_ImplSDL3_InitForOpenGL(s_sdlWindow, nullptr);  else if (s_api == t850::GraphicsApi::VULKAN)
     platformOK = ImGui_ImplSDL3_InitForVulkan(s_sdlWindow);  else
     platformOK = ImGui_ImplSDL3_InitForD3D(s_sdlWindow);
 #else
@@ -147,14 +147,14 @@ bool ImGuiInit(t800::RootFramework* fw) {
   bool rendererOK = false;
 
 #ifdef OS_WINDOWS
-  if (s_api == t800::GRAPHICS_API::D3D11) {
-    ID3D11Device*        device = reinterpret_cast<ID3D11Device*>(t800::T8Device->GetAPIObject());
-    ID3D11DeviceContext* ctx    = reinterpret_cast<ID3D11DeviceContext*>(t800::T8DeviceContext->GetAPIObject());
+  if (s_api == t850::GraphicsApi::D3D11) {
+    ID3D11Device*        device = reinterpret_cast<ID3D11Device*>(t850::T8Device->GetAPIObject());
+    ID3D11DeviceContext* ctx    = reinterpret_cast<ID3D11DeviceContext*>(t850::T8DeviceContext->GetAPIObject());
     rendererOK = ImGui_ImplDX11_Init(device, ctx);
   }
-  else if (s_api == t800::GRAPHICS_API::D3D12) {
-    auto* d3d12Drv = static_cast<t800::D3D12Driver*>(fw->pVideoDriver);
-    ID3D12Device* device = static_cast<t800::D3D12Device*>(t800::T8Device)->GetNativeDevice();
+  else if (s_api == t850::GraphicsApi::D3D12) {
+    auto* d3d12Drv = static_cast<t850::D3D12Driver*>(fw->pVideoDriver);
+    ID3D12Device* device = static_cast<t850::D3D12Device*>(t850::T8Device)->GetNativeDevice();
 
     D3D12_DESCRIPTOR_HEAP_DESC desc = {};
     desc.Type           = D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV;
@@ -169,7 +169,7 @@ bool ImGuiInit(t800::RootFramework* fw) {
     ImGui_ImplDX12_InitInfo initInfo = {};
     initInfo.Device           = device;
     initInfo.CommandQueue     = d3d12Drv->GetCmdQueue();
-    initInfo.NumFramesInFlight = t800::D3D12Driver::kBackBufferCount;
+    initInfo.NumFramesInFlight = t850::D3D12Driver::kBackBufferCount;
     initInfo.RTVFormat        = DXGI_FORMAT_R8G8B8A8_UNORM;
     initInfo.DSVFormat        = DXGI_FORMAT_D32_FLOAT;
     initInfo.SrvDescriptorHeap = s_d3d12SrvHeap;
@@ -179,12 +179,12 @@ bool ImGuiInit(t800::RootFramework* fw) {
   }
 #endif
 
-  if (s_api == t800::GRAPHICS_API::OPENGL) {
+  if (s_api == t850::GraphicsApi::OPENGL) {
     rendererOK = ImGui_ImplOpenGL3_Init("#version 300 es");
   }
 
-  if (s_api == t800::GRAPHICS_API::VULKAN) {
-    auto* vkDrv = static_cast<t800::VulkanDriver*>(fw->pVideoDriver);
+  if (s_api == t850::GraphicsApi::VULKAN) {
+    auto* vkDrv = static_cast<t850::VulkanDriver*>(fw->pVideoDriver);
     ImGui_ImplVulkan_InitInfo vkInit = {};
     vkInit.ApiVersion       = VK_API_VERSION_1_0;
     vkInit.Instance         = vkDrv->GetInstance();
@@ -193,8 +193,8 @@ bool ImGuiInit(t800::RootFramework* fw) {
     vkInit.QueueFamily      = vkDrv->GetGraphicsQueueFamily();
     vkInit.Queue            = vkDrv->GetGraphicsQueue();
     vkInit.DescriptorPoolSize = 64;
-    vkInit.MinImageCount    = t800::VulkanDriver::kBackBufferCount;
-    vkInit.ImageCount       = t800::VulkanDriver::kBackBufferCount;
+    vkInit.MinImageCount    = t850::VulkanDriver::kBackBufferCount;
+    vkInit.ImageCount       = t850::VulkanDriver::kBackBufferCount;
     vkInit.PipelineInfoMain.RenderPass = vkDrv->GetBackbufferRenderPass();
     rendererOK = ImGui_ImplVulkan_Init(&vkInit);
   }
@@ -216,10 +216,10 @@ void ImGuiShutdown() {
   if (!s_inited) return;
 
 #ifdef OS_WINDOWS
-  if (s_api == t800::GRAPHICS_API::D3D11) {
+  if (s_api == t850::GraphicsApi::D3D11) {
     ImGui_ImplDX11_Shutdown();
   }
-  else if (s_api == t800::GRAPHICS_API::D3D12) {
+  else if (s_api == t850::GraphicsApi::D3D12) {
     ImGui_ImplDX12_Shutdown();
     if (s_d3d12SrvHeap) {
       s_d3d12SrvHeap->Release();
@@ -227,10 +227,10 @@ void ImGuiShutdown() {
     }
   }
 #endif
-  if (s_api == t800::GRAPHICS_API::OPENGL) {
+  if (s_api == t850::GraphicsApi::OPENGL) {
     ImGui_ImplOpenGL3_Shutdown();
   }
-  if (s_api == t800::GRAPHICS_API::VULKAN) {
+  if (s_api == t850::GraphicsApi::VULKAN) {
     ImGui_ImplVulkan_Shutdown();
   }
 
@@ -246,14 +246,14 @@ void ImGuiNewFrame() {
   if (!s_inited) return;
 
 #ifdef OS_WINDOWS
-  if (s_api == t800::GRAPHICS_API::D3D11)
+  if (s_api == t850::GraphicsApi::D3D11)
     ImGui_ImplDX11_NewFrame();
-  else if (s_api == t800::GRAPHICS_API::D3D12)
+  else if (s_api == t850::GraphicsApi::D3D12)
     ImGui_ImplDX12_NewFrame();
 #endif
-  if (s_api == t800::GRAPHICS_API::OPENGL)
+  if (s_api == t850::GraphicsApi::OPENGL)
     ImGui_ImplOpenGL3_NewFrame();
-  if (s_api == t800::GRAPHICS_API::VULKAN)
+  if (s_api == t850::GraphicsApi::VULKAN)
     ImGui_ImplVulkan_NewFrame();
 
   ImGui_ImplSDL3_NewFrame();
@@ -271,27 +271,27 @@ void ImGuiRender() {
   ImDrawData* drawData = ImGui::GetDrawData();
 
 #ifdef OS_WINDOWS
-  if (s_api == t800::GRAPHICS_API::D3D11) {
+  if (s_api == t850::GraphicsApi::D3D11) {
     ImGui_ImplDX11_RenderDrawData(drawData);
   }
-  else if (s_api == t800::GRAPHICS_API::D3D12) {
-    auto* d3d12Drv = static_cast<t800::D3D12Driver*>(t800::g_pBaseDriver);
+  else if (s_api == t850::GraphicsApi::D3D12) {
+    auto* d3d12Drv = static_cast<t850::D3D12Driver*>(t850::g_pBaseDriver);
     ID3D12GraphicsCommandList* cmdList = d3d12Drv->GetCmdList();
     ID3D12DescriptorHeap* heaps[] = { s_d3d12SrvHeap };
     cmdList->SetDescriptorHeaps(1, heaps);
     ImGui_ImplDX12_RenderDrawData(drawData, cmdList);
   }
 #endif
-  if (s_api == t800::GRAPHICS_API::OPENGL) {
+  if (s_api == t850::GraphicsApi::OPENGL) {
     ImGui_ImplOpenGL3_RenderDrawData(drawData);
   }
-  if (s_api == t800::GRAPHICS_API::VULKAN) {
-    auto* vkDrv = static_cast<t800::VulkanDriver*>(t800::g_pBaseDriver);
+  if (s_api == t850::GraphicsApi::VULKAN) {
+    auto* vkDrv = static_cast<t850::VulkanDriver*>(t850::g_pBaseDriver);
     // Clear pending engine texture state so ImGui's own descriptors aren't polluted
     memset(vkDrv->m_pendingTextures, 0, sizeof(vkDrv->m_pendingTextures));
     // ImGui Vulkan backend requires an active render pass — ensure backbuffer pass is active
     vkDrv->EnsureBackbufferRenderPass();
-    VkCommandBuffer cmd = static_cast<t800::VulkanDeviceContext*>(t800::T8DeviceContext)->GetCommandBuffer();
+    VkCommandBuffer cmd = static_cast<t850::VulkanDeviceContext*>(t850::T8DeviceContext)->GetCommandBuffer();
     if (cmd && drawData) {
       ImGui_ImplVulkan_RenderDrawData(drawData, cmd);
     } else {
@@ -574,13 +574,13 @@ void ImGuiDrawInspectorPanel(XVECTOR3& pos, XVECTOR3& eulerDeg,
 }
 
 // ── Console panel ─────────────────────────────────────
-static ImVec4 LogLevelColor(t800::Log::Level lvl) {
+static ImVec4 LogLevelColor(t850::Log::Level lvl) {
   switch (lvl) {
-    case t800::Log::LVL_ERROR:   return ImVec4(1.0f, 0.3f, 0.3f, 1.0f);
-    case t800::Log::LVL_INFO:    return ImVec4(0.9f, 0.9f, 0.9f, 1.0f);
-    case t800::Log::LVL_DEBUG:   return ImVec4(0.4f, 0.9f, 0.4f, 1.0f);
-    case t800::Log::LVL_VERBOSE: return ImVec4(0.6f, 0.6f, 0.6f, 1.0f);
-    case t800::Log::LVL_TRACE:   return ImVec4(0.5f, 0.5f, 1.0f, 1.0f);
+    case t850::Log::LVL_ERROR:   return ImVec4(1.0f, 0.3f, 0.3f, 1.0f);
+    case t850::Log::LVL_INFO:    return ImVec4(0.9f, 0.9f, 0.9f, 1.0f);
+    case t850::Log::LVL_DEBUG:   return ImVec4(0.4f, 0.9f, 0.4f, 1.0f);
+    case t850::Log::LVL_VERBOSE: return ImVec4(0.6f, 0.6f, 0.6f, 1.0f);
+    case t850::Log::LVL_TRACE:   return ImVec4(0.5f, 0.5f, 1.0f, 1.0f);
     default:                     return ImVec4(1.0f, 1.0f, 1.0f, 1.0f);
   }
 }
@@ -646,15 +646,15 @@ int ImGuiDrawRTDebugPanel(int selectedRT) {
   }
   ImGui::Separator();
 
-  t800::BaseDriver* drv = t800::g_pBaseDriver;
+  t850::BaseDriver* drv = t850::g_pBaseDriver;
   if (!drv) { ImGui::End(); return selectedRT; }
 
   // Helper to get SRV for ImGui::Image (D3D11 only)
-  auto GetSRV = [&](t800::Texture* tex) -> ImTextureID {
+  auto GetSRV = [&](t850::Texture* tex) -> ImTextureID {
 #ifdef OS_WINDOWS
-    if (s_api == t800::GRAPHICS_API::D3D11 && tex) {
+    if (s_api == t850::GraphicsApi::D3D11 && tex) {
       // D3DXTexture has pSRVTex as a public ComPtr
-      auto* d3dTex = static_cast<t800::D3DXTexture*>(tex);
+      auto* d3dTex = static_cast<t850::D3DXTexture*>(tex);
       return (ImTextureID)d3dTex->pSRVTex.Get();
     }
 #endif
@@ -663,13 +663,13 @@ int ImGuiDrawRTDebugPanel(int selectedRT) {
 
   int globalIdx = 0;
   for (int rtIdx = 0; rtIdx < (int)drv->RTs.size(); ++rtIdx) {
-    t800::BaseRT* rt = drv->RTs[rtIdx];
+    t850::BaseRT* rt = drv->RTs[rtIdx];
     if (!rt) continue;
 
     ImGui::PushID(rtIdx);
 
     for (int ci = 0; ci < (int)rt->vColorTextures.size(); ++ci) {
-      t800::Texture* tex = rt->vColorTextures[ci];
+      t850::Texture* tex = rt->vColorTextures[ci];
       if (!tex) continue;
 
       char label[128];

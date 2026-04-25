@@ -4,7 +4,7 @@
 
 #include <string>
 
-namespace t800 {
+namespace t850 {
 namespace {
 
 struct GUIAtlasTextureDef {
@@ -59,4 +59,4 @@ bool GUIAtlas::RecreateDefault(int maxSpriteSize, int& width, int& height) {
   return true;
 }
 
-} // namespace t800
+} // namespace t850

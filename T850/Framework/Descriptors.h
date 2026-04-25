@@ -1,9 +1,9 @@
-#ifndef T800_DESCRIPTORS_H
-#define T800_DESCRIPTORS_H
+#ifndef DESCRIPTORS_H
+#define DESCRIPTORS_H
 #include <video/ShaderBase.h>
 #include <cstdint>
 
-namespace t800 {
+namespace t850 {
 
 // ── Pass type (mutually exclusive, 6 bits → 64 max) ──
 namespace PassType {
@@ -108,7 +108,7 @@ struct ShaderKey {
 struct ShaderKeyHash {
   size_t operator()(const ShaderKey& k) const { return std::hash<uint32_t>()(k.bits); }
 };
-namespace T8_BUFFER_USAGE{
+namespace BufferUsage{
   enum E {
     DEFAULT,
     DINAMIC,
@@ -116,14 +116,14 @@ namespace T8_BUFFER_USAGE{
   };
 }
 
-namespace T8_IB_FORMAR {
+namespace IndexBufferFormat {
   enum E {
     R16,
     R32
   };
 }
 
-namespace T8_TOPOLOGY {
+namespace Topology {
   enum E {
     POINT_LIST,
     LINE_LIST,
@@ -133,14 +133,14 @@ namespace T8_TOPOLOGY {
   };
 }
 
-namespace T8_SHADER_TYPE {
+namespace ShaderType {
   enum E {
     VERTEX,
     FRAGMENT
   };
 }
 
-namespace T8_BUFFER_TYPE {
+namespace BufferType {
   enum E {
     VERTEX,
     INDEX,
@@ -148,7 +148,7 @@ namespace T8_BUFFER_TYPE {
   };
 }
 
-namespace T8_CBUFFER_TYPE {
+namespace ConstantBufferType {
   enum E {
     FLOAT,
     VECTOR2,
@@ -158,7 +158,7 @@ namespace T8_CBUFFER_TYPE {
   };
 }
 
-namespace T8_FORMAT {
+namespace Format {
   enum E {
     FORMAT_UNKNOWN = 0,
     FORMAT_R32G32B32A32_TYPELESS = 1,
@@ -278,7 +278,7 @@ namespace T8_FORMAT {
     FORMAT_B4G4R4A4_UNORM = 115
   };
 }
-namespace GRAPHICS_API {
+namespace GraphicsApi {
   enum E {
     OPENGL,
     D3D11,
@@ -287,20 +287,20 @@ namespace GRAPHICS_API {
   };
 }
 
-namespace T8_VIDEO_MODE {
+namespace VideoMode {
   enum E {
     FULLSCREEN,
     WINDOWED
   };
 }
 
-enum TEXT_BASIC_FORMAT {
+enum TextBasicFormat {
   CH_ALPHA = 1,
   CH_RGB = 2,
   CH_RGBA = 4
 };
 
-enum TEXT_BASIC_PARAMS {
+enum TextBasicParams {
   TILED = 1,
   CLAMP_TO_EDGE = 2,
   MIPMAPS = 4,
@@ -312,21 +312,21 @@ enum TEXT_BASIC_PARAMS {
 
   struct BufferDesc {
     int byteWidth;
-    T8_BUFFER_USAGE::E usage;
+    BufferUsage::E usage;
   };
 
   struct ApplicationDesc {
-    GRAPHICS_API::E api;
-    T8_VIDEO_MODE::E videoMode;
+    GraphicsApi::E api;
+    VideoMode::E videoMode;
     unsigned int width;
     unsigned int height;
     std::string title;
     ApplicationDesc() {
-      api = GRAPHICS_API::D3D11;
+      api = GraphicsApi::D3D11;
       width = 1280;
       height = 720;
       title = "My New Project";
-      videoMode = T8_VIDEO_MODE::WINDOWED;
+      videoMode = VideoMode::WINDOWED;
     }
   };
 

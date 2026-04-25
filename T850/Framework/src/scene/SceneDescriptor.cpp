@@ -9,7 +9,7 @@
 #include <cstdio>
 #include <utils/Log.h>
 
-namespace t800 {
+namespace t850 {
 
 bool LoadSceneDescriptor(const std::string& path, SceneDescriptor& desc) {
   std::ifstream file(path);
@@ -53,4 +53,4 @@ bool SaveSceneDescriptor(const std::string& path, const SceneDescriptor& desc) {
   return true;
 }
 
-} // namespace t800
+} // namespace t850

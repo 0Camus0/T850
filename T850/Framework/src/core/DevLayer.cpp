@@ -3,7 +3,7 @@
 #include <cstdio>
 #include <utils/Log.h>
 
-namespace t800 {
+namespace t850 {
 
 DevLayer::DevLayer()
     : m_framework(nullptr)
@@ -199,4 +199,4 @@ void DevLayer::UnloadScene() {
   m_gui.ClearSliders();
 }
 
-} // namespace t800
+} // namespace t850

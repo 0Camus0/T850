@@ -13,7 +13,7 @@
 
 #include <video/d3d11/D3D11IndexBuffer.h>
 
-namespace t800 {
+namespace t850 {
   void * D3DXIndexBuffer::GetAPIObject() const
   {
     return (void*)APIBuffer.Get();
@@ -24,11 +24,11 @@ namespace t800 {
     return reinterpret_cast<void**>(const_cast<Microsoft::WRL::ComPtr<ID3D11Buffer>&>(APIBuffer).GetAddressOf());
   }
 
-  void D3DXIndexBuffer::Set(const DeviceContext & deviceContext, const unsigned offset, T8_IB_FORMAR::E format)
+  void D3DXIndexBuffer::Set(const DeviceContext & deviceContext, const unsigned offset, IndexBufferFormat::E format)
   {
     const_cast<DeviceContext*>(&deviceContext)->actualIndexBuffer = (IndexBuffer*)this;
     DXGI_FORMAT apiformat;
-    if (format == T8_IB_FORMAR::R16)
+    if (format == IndexBufferFormat::R16)
       apiformat = DXGI_FORMAT::DXGI_FORMAT_R16_UINT;
     else
       apiformat = DXGI_FORMAT::DXGI_FORMAT_R32_UINT;
@@ -40,13 +40,13 @@ namespace t800 {
     D3D11_USAGE usage;
     switch (desc.usage)
     {
-    case T8_BUFFER_USAGE::DEFAULT:
+    case BufferUsage::DEFAULT:
       usage = D3D11_USAGE_DEFAULT;
       break;
-    case T8_BUFFER_USAGE::DINAMIC:
+    case BufferUsage::DINAMIC:
       usage = D3D11_USAGE_DYNAMIC;
       break;
-    case T8_BUFFER_USAGE::STATIC:
+    case BufferUsage::STATIC:
       usage = D3D11_USAGE_IMMUTABLE;
       break;
     default:

@@ -25,8 +25,8 @@
 #include <video/d3d11/D3D11Texture.h>
 #endif
 
-#include <scene/T8_Quad.h>
-namespace t800 {
+#include <scene/Quad.h>
+namespace t850 {
   class RenderQuad : public PrimitiveBase {
   public:
     struct CBuffer {

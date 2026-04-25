@@ -12,7 +12,7 @@ using Microsoft::WRL::ComPtr;
 
 #include <vector>
 
-namespace t800 {
+namespace t850 {
 
   class D3D12RT : public BaseRT {
   public:
@@ -33,7 +33,7 @@ namespace t800 {
     D3D12_RESOURCE_STATES                     depthState = D3D12_RESOURCE_STATE_DEPTH_WRITE;
   };
 
-} // namespace t800
+} // namespace t850
 
 #endif // OS_WINDOWS
 #endif // T800_D3D12RT_H

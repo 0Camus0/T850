@@ -17,7 +17,7 @@
 
 #include <string>
 
-namespace t800 {
+namespace t850 {
 
   // Forward declaration
   class VulkanDriver;
@@ -31,7 +31,7 @@ namespace t800 {
     void** GetAPIObjectReference() const override;
     void release() override;
 
-    Buffer*     CreateBuffer(T8_BUFFER_TYPE::E bufferType, BufferDesc desc, void* initialData = nullptr) override;
+    Buffer*     CreateBuffer(BufferType::E bufferType, BufferDesc desc, void* initialData = nullptr) override;
     ShaderBase* CreateShader(std::string src_vs, std::string src_fs, ShaderKey key = ShaderKey(),
                              const std::string& vs_name = "", const std::string& fs_name = "") override;
     Texture*    CreateTexture(std::string path) override;
@@ -47,7 +47,7 @@ namespace t800 {
     VkDevice m_device = VK_NULL_HANDLE;
   };
 
-} // namespace t800
+} // namespace t850
 
 #endif // OS_WINDOWS
 #endif // T800_VULKANDEVICE_H

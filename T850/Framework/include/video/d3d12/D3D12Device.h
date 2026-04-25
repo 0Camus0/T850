@@ -17,7 +17,7 @@
 using Microsoft::WRL::ComPtr;
 #include <string>
 
-namespace t800 {
+namespace t850 {
 
   class D3D12Driver;
 
@@ -30,7 +30,7 @@ namespace t800 {
     void** GetAPIObjectReference() const override;
     void release() override;
 
-    Buffer*     CreateBuffer(T8_BUFFER_TYPE::E bufferType, BufferDesc desc, void* initialData = nullptr) override;
+    Buffer*     CreateBuffer(BufferType::E bufferType, BufferDesc desc, void* initialData = nullptr) override;
     ShaderBase* CreateShader(std::string src_vs, std::string src_fs, ShaderKey key = ShaderKey(),
                              const std::string& vs_name = "", const std::string& fs_name = "") override;
     Texture*    CreateTexture(std::string path) override;
@@ -46,7 +46,7 @@ namespace t800 {
     ComPtr<ID3D12Device> m_device;
   };
 
-} // namespace t800
+} // namespace t850
 
 #endif // OS_WINDOWS
 #endif // T800_D3D12DEVICE_H

@@ -18,12 +18,12 @@
 #include <string>
 #include <vector>
 #include <unordered_map>
-#include <T8_descriptors.h>
-#include <utils/T8_Technique.h>
+#include <Descriptors.h>
+#include <utils/Technique.h>
 #include <video/WindowHandle.h>
 
 
-namespace t800 {
+namespace t850 {
   class Buffer;
   class VertexBuffer;
   class IndexBuffer;
@@ -37,7 +37,7 @@ namespace t800 {
     virtual void** GetAPIObjectReference() const = 0;
 
     virtual void release() = 0;
-    virtual void SetPrimitiveTopology(T8_TOPOLOGY::E topology) = 0;
+    virtual void SetPrimitiveTopology(Topology::E topology) = 0;
     virtual void DrawIndexed(unsigned vertexCount, unsigned startIndex, unsigned startVertex) = 0;
 
     ConstantBuffer* actualConstantBuffer;
@@ -51,7 +51,7 @@ namespace t800 {
     virtual void** GetAPIObjectReference() const = 0;
 
     virtual void release() = 0;
-    virtual Buffer* CreateBuffer(T8_BUFFER_TYPE::E bufferType, BufferDesc desc, void* initialData = nullptr) = 0;
+    virtual Buffer* CreateBuffer(BufferType::E bufferType, BufferDesc desc, void* initialData = nullptr) = 0;
     virtual ShaderBase* CreateShader(std::string src_vs, std::string src_fs, ShaderKey key = ShaderKey(), const std::string& vs_name = "", const std::string& fs_name = "") = 0;
     virtual Texture* CreateTexture(std::string path) = 0;
     virtual Texture* CreateTextureFromMemory(const unsigned char *buff, int w, int h, int channels, std::string name) = 0;
@@ -82,7 +82,7 @@ namespace t800 {
   };
   class IndexBuffer : public Buffer {
   public:
-    virtual void Set(const DeviceContext& deviceContext, const unsigned offset, T8_IB_FORMAR::E format = T8_IB_FORMAR::R32) = 0;
+    virtual void Set(const DeviceContext& deviceContext, const unsigned offset, IndexBufferFormat::E format = IndexBufferFormat::R32) = 0;
   };
   class ConstantBuffer : public Buffer {
   public:
@@ -128,7 +128,7 @@ namespace t800 {
     // Update RGBA32F texture data in-place (for per-frame bone matrix upload).
     // Only valid for textures created via CreateFloatTexture.
     virtual void  UpdateFloatData(const DeviceContext& deviceContext, int w, int h, const float* data) {}
-    
+
 
     std::string filepath;
     char			optname[128];
@@ -169,7 +169,7 @@ namespace t800 {
       CUBE_F32,
       NOTHING
     };
-    
+
     bool			LoadRT(int nrt, int cf, int df, int w, int h, bool GenMips = false);
     // Per-attachment color formats (overrides single cf when non-empty)
     bool			LoadRT(int nrt, const std::vector<int>& perColorFormats, int df, int w, int h, bool GenMips = false);
@@ -197,7 +197,7 @@ namespace t800 {
     ShaderBase() {}
     bool CreateShader(std::string src_vs, std::string src_fs, ShaderKey key = ShaderKey(), const std::string& vs_name = "", const std::string& fs_name = "");
     virtual bool    CreateShaderAPI(std::string src_vs, std::string src_fs, const std::string& vs_name = "", const std::string& fs_name = "") = 0;
-    virtual void  Set(const t800::DeviceContext& deviceContext) = 0;
+    virtual void  Set(const t850::DeviceContext& deviceContext) = 0;
     virtual void DestroyAPIShader() = 0;
     void release();
 
@@ -217,7 +217,7 @@ namespace t800 {
       COLOR6_ATTACHMENT = 6,
       COLOR7_ATTACHMENT = 7,
     };
-    enum BLEND_STATES
+    enum BlendStates
     {
       BLEND_DEFAULT,
       BLEND_OPAQUE,
@@ -225,7 +225,7 @@ namespace t800 {
       ALPHA_BLEND,
       NON_PREMULTIPLIED
     };
-    enum RASTERIZER_STATES
+    enum RasterizerStates
     {
       RASTER_DEFAULT,
       CULL_NONE,
@@ -233,25 +233,25 @@ namespace t800 {
       CULL_COUNTERCLOCKWISE,
       WIREFRAME
     };
-    enum DEPTH_STENCIL_STATES
+    enum DepthStencilStates
     {
       DEPTH_DEFAULT,
       READ_WRITE,
       NONE,
       READ
     };
-	enum FACE_CULLING {
+	enum FaceCulling {
 		FRONT_FACES,
 		BACK_FACES,
 		FRONT_AND_BACK
 	};
-   
+
     BaseDriver() : CurrentRT(-1) , m_FaceCulling(FRONT_FACES) {  }
 
     // Returns true if this API uses GLSL shaders (OpenGL only; Vulkan uses HLSL→SPIR-V)
-    bool UsesGLSL() const { return m_currentAPI == GRAPHICS_API::OPENGL; }
+    bool UsesGLSL() const { return m_currentAPI == GraphicsApi::OPENGL; }
     // Returns true if GL-style V-flip is needed (OpenGL only; Vulkan uses top-left like D3D)
-    bool NeedsVFlip() const { return m_currentAPI == GRAPHICS_API::OPENGL; }
+    bool NeedsVFlip() const { return m_currentAPI == GraphicsApi::OPENGL; }
     virtual	void	 InitDriver() = 0;
     virtual void	 CreateSurfaces() = 0;
     virtual void	 DestroySurfaces() = 0;
@@ -276,12 +276,12 @@ namespace t800 {
     virtual void	 Clear() = 0;
     virtual void	 ClearWithColor(float r, float g, float b, float a) { Clear(); }
     virtual void	 SwapBuffers() = 0;
-    virtual void SetBlendState(BLEND_STATES state) = 0;
-    virtual void SetDepthStencilState(DEPTH_STENCIL_STATES state) = 0;
+    virtual void SetBlendState(BlendStates state) = 0;
+    virtual void SetDepthStencilState(DepthStencilStates state) = 0;
 
     virtual void SaveScreenshot(std::string path) = 0;
     virtual void SaveRTToFile(int rtID, int attachment, std::string path) {}
-	virtual void SetCullFace(FACE_CULLING state) = 0;
+	virtual void SetCullFace(FaceCulling state) = 0;
 
     // ── D3D12/Vulkan explicit API (no-ops for D3D11/GL) ──
     virtual void BuildPipelineObjects() {}
@@ -313,7 +313,7 @@ namespace t800 {
     ShaderBase*	GetShader(ShaderKey key);
     ShaderBase*	GetShaderIdx(int id);
     Texture* GetTexture(int id);
-    T8Technique* GetTechnique(int id);
+    Technique* GetTechnique(int id);
 
     void DestroyShaders();
     void DestroyShader(int id);
@@ -329,14 +329,14 @@ namespace t800 {
 
 
 
-    std::vector<T8Technique*> m_techniques;
+    std::vector<Technique*> m_techniques;
     std::vector<ShaderBase*>	m_shaders;
     std::unordered_map<uint32_t, ShaderBase*> m_shaderCache;
     std::vector<BaseRT*>		RTs;
     std::vector<Texture*>		Textures;
     int							CurrentRT;
-    GRAPHICS_API::E m_currentAPI;
-	FACE_CULLING	m_FaceCulling;
+    GraphicsApi::E m_currentAPI;
+	FaceCulling	m_FaceCulling;
     int	width, height;
   };
 

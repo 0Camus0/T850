@@ -17,7 +17,7 @@
 #include <algorithm>
 #include <cstdio>
 
-namespace t800 {
+namespace t850 {
 
 AnimationController::AnimationController() {
   for (int i = 0; i < kMaxBones; i++) {
@@ -654,4 +654,4 @@ void AnimationController::DumpMatrices(const char* filename) const {
   T8_LOG_INFO("[AnimCtrl] Dumped matrices to '%s'", filename);
 }
 
-} // namespace t800
+} // namespace t850

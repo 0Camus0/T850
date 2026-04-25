@@ -21,7 +21,7 @@
 #include <video/d3d11/D3D11Driver.h>
 #endif
 #include <utils/Log.h>
-namespace t800 {
+namespace t850 {
   extern Device*            T8Device;
   extern DeviceContext*     T8DeviceContext;
 
@@ -107,19 +107,19 @@ namespace t800 {
       if (gr) k.bits |= ShaderKey::GOD_RAYS;
       g_pBaseDriver->CreateShader(vstr, fstr, k, vsName, fsName);
     }
-    
-    
 
-    
+
+
+
 
     ShaderBase* s = g_pBaseDriver->GetShaderIdx(shaderID);
     T8_LOG_INFO("RenderQuad created: %zu shader variants compiled", g_pBaseDriver->m_shaderCache.size());
 
 
-    t800::BufferDesc bdesc;
+    t850::BufferDesc bdesc;
     bdesc.byteWidth = sizeof(CBuffer);
-    bdesc.usage = T8_BUFFER_USAGE::DEFAULT;
-    pd3dConstantBuffer = (t800::ConstantBuffer*)T8Device->CreateBuffer(T8_BUFFER_TYPE::CONSTANT, bdesc);
+    bdesc.usage = BufferUsage::DEFAULT;
+    pd3dConstantBuffer = (t850::ConstantBuffer*)T8Device->CreateBuffer(BufferType::CONSTANT, bdesc);
 
     /*D3D11_SAMPLER_DESC sdesc;
     sdesc.Filter = D3D11_FILTER_ANISOTROPIC;
@@ -335,7 +335,7 @@ namespace t800 {
     if (Textures[5])
       Textures[5]->SetSampler(*T8DeviceContext, 5);
 
-    T8DeviceContext->SetPrimitiveTopology(T8_TOPOLOGY::TRIANLE_LIST);
+    T8DeviceContext->SetPrimitiveTopology(Topology::TRIANLE_LIST);
     T8DeviceContext->DrawIndexed(6, 0, 0);
   }
 

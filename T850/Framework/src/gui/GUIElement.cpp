@@ -1,5 +1,5 @@
-#include "pch.h"
-#include "gui/GUIElement.h"
+#include <pch.h>
+#include <gui/GUIElement.h>
 #include <scene/T8_TextRenderer.h>
 #include <scene/T8_Quad.h>
 #include <video/BaseDriver.h>

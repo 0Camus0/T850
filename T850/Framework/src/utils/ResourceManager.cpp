@@ -1,5 +1,5 @@
-#include "pch.h"
-#include "utils/ResourceManager.h"
+#include <pch.h>
+#include <utils/ResourceManager.h>
 #include <iostream>
 #include <algorithm>
 #include <cctype>

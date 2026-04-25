@@ -1,6 +1,6 @@
-#include "pch.h"
-#include "scene/SplineWireframe.h"
-#include "utils/Utils.h"
+#include <pch.h>
+#include <scene/SplineWireframe.h>
+#include <utils/Utils.h>
 namespace t800 {
   extern Device*            T8Device;
   extern DeviceContext*     T8DeviceContext;

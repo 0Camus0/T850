@@ -1,8 +1,8 @@
-#include "pch.h"
-#include "utils/T8_Technique.h"
+#include <pch.h>
+#include <utils/T8_Technique.h>
 #include <iostream>
-#include "video/gl/GLDriver.h"
-#include "video/gl/GLShader.h"
+#include <video/gl/GLDriver.h>
+#include <video/gl/GLShader.h>
 #if defined(OS_WINDOWS)
 #include <video/d3d11/D3D11Shader.h>
 #include <video/d3d11/D3D11Driver.h>

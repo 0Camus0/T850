@@ -10,7 +10,7 @@
 * ** Enjoy, learn and share.
 *********************************************************/
 
-#include "Application.h"
+#include <Application.h>
 #include <video/BaseDriver.h>
 #include <utils/InputManager.h>
 #include <SDL3/SDL.h>
@@ -41,8 +41,8 @@ namespace t800 {
 
 
 
-#include "SC_Day.h"
-#include "SC_SandBox.h"
+#include <SC_Day.h>
+#include <SC_SandBox.h>
 void App::InitVars() {
   //t800::T8Technique tech("Techniques/test_technique.xml");
 	DtTimer.Init();

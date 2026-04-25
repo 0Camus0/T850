@@ -1,8 +1,8 @@
 #pragma once
 #include <vector>
-#include "PrimitiveBase.h"
-#include "utils/T8_Spline.h"
-#include "video/BaseDriver.h"
+#include <scene/PrimitiveBase.h>
+#include <utils/T8_Spline.h>
+#include <video/BaseDriver.h>
 namespace t800 {
   class SplineWireframe : public PrimitiveBase {
   public:

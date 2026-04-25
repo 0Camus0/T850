@@ -1,5 +1,5 @@
-#include "pch.h"
-#include "scene/LensFlare.h"
+#include <pch.h>
+#include <scene/LensFlare.h>
 
 namespace t800 {
   XVECTOR3 WorldToScreenPos(const XVECTOR3& worldPos, XMATRIX44 VP) {

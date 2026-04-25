@@ -1,4 +1,4 @@
-#include "pch.h"
+#include <pch.h>
 /*********************************************************
 * Copyright (C) 2017 Daniel Enriquez (camus_mm@hotmail.com)
 * All Rights Reserved
@@ -30,7 +30,7 @@
 #include <SDL3/SDL.h>
 #endif
 
-#include "video/gl/GLShader.h"
+#include <video/gl/GLShader.h>
 
 
 namespace t800 {

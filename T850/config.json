@@ -1,33 +1,45 @@
 {
-  "configuration": "Release",
-  "devTools": {
-    "logLevel": "error",
-    "logToFile": false,
-    "guiControlTarget": "slider_knob",
-    "guiControlEdit": false,
-    "guiEdit": false,
-    "guiSnap": false,
-    "d3d12Debug": false
-  },
-  "debugFrames": true,
-  "api": "vulkan",
   "architecture": "x64",
+  "configuration": "Release",
+  "api": "d3d11",
+  "display": {
+    "width": 1280,
+    "height": 720,
+    "fullscreen": false,
+    "scene": 0,
+    "model": "Models/DamagedHelmet.glb",
+    "title": "T800 Project"
+  },
+  "debugFrames": false,
+  "keepRunning": false,
   "replaySnapshot": {
     "enabled": false,
-    "path": "D:\\Code\\Game\\T850\\T850\\bin\\x64\\Release\\dumps_vulkan_f1324_20260419_195612\\snapshot.json"
+    "path": ""
   },
   "dump": {
-    "frame": 750,
     "enabled": false,
-    "seconds": 5,
-    "trigger": "frame"
+    "trigger": "frame",
+    "frame": -1,
+    "seconds": -1.0
   },
-  "keepRunning": false,
-  "display": {
-    "width": 1920,
-    "scene": 0,
-    "height": 1080,
-    "fullscreen": false,
-    "model": "Models/Dragon.glb"
+  "devTools": {
+    "gui": false,
+    "guiScreenshot": false,
+    "guiScreenshotPath": "gui_screenshot.ppm",
+    "guiEdit": false,
+    "guiSnap": false,
+    "guiControlEdit": false,
+    "guiControlTarget": "slider_knob",
+    "logLevel": "verbose",
+    "logToFile": false,
+    "logFile": "",
+    "d3d12Debug": false,
+    "testGui": false,
+    "createAtlas": false,
+    "atlasMaxSprite": 256,
+    "profile": false,
+    "profileFrames": 300,
+    "dumpMatrices": false,
+    "dumpMatricesFrames": 0
   }
 }

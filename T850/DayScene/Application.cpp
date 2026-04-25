@@ -17,6 +17,7 @@
 #include <utils/Log.h>
 #include <utils/Utils.h>
 #include <debug/T8_Profiler.h>
+#include <core/t8config.h>
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -32,19 +33,6 @@
 
 using namespace t800;
 extern std::vector<std::string> g_args;
-extern int g_startScene;
-extern bool g_guiOnStart;
-extern bool g_guiScreenshot;
-extern std::string g_guiScreenshotPath;
-extern bool g_guiEdit;
-extern bool g_guiSnap;
-extern bool g_guiControlEdit;
-extern std::string g_guiControlTarget;
-extern bool g_testGui;
-#ifdef T8_ENABLE_PROFILER
-extern bool g_profile;
-extern int  g_profileFrames;
-#endif
 
 namespace t800 {
   extern Device*       T8Device;
@@ -68,7 +56,7 @@ void App::InitVars() {
     it->pFramework = pFramework;
     //it->InitVars();
   }
-  int sceneIdx = (g_startScene >= 0 && g_startScene < (int)m_scenes.size()) ? g_startScene : 0;
+  int sceneIdx = (g_t8config.startScene >= 0 && g_t8config.startScene < (int)m_scenes.size()) ? g_t8config.startScene : 0;
   m_actualScene = m_scenes[sceneIdx];
   m_actualScene->InitVars();
 
@@ -102,7 +90,7 @@ void App::LoadScene(int id) {
 void App::LoadAssets()
 {
 #ifdef T8_ENABLE_PROFILER
-  if (g_profile && !t800::g_profiler) {
+  if (g_t8config.flags.profile && !t800::g_profiler) {
     t800::g_profiler = new t800::T8Profiler();
     t800::g_profiler->Init(pFramework->pVideoDriver);
   }
@@ -119,30 +107,30 @@ void App::CreateAssets() {
 
   // Build GUI before FadeFX so it's visible during fade frames
   m_devLayer.RebuildGUIForScene();
-  if (g_guiOnStart) {
+  if (g_t8config.flags.guiOnStart) {
     m_devLayer.GetGUI().SetVisible(true);
   }
-  if (g_guiEdit) {
+  if (g_t8config.flags.guiEdit) {
     m_devLayer.SetEditMode(true);
   }
-  if (g_guiControlEdit) {
+  if (g_t8config.flags.guiControlEdit) {
     m_devLayer.SetControlEditMode(true);
-    if (!m_devLayer.SetControlEditTargetByName(g_guiControlTarget)) {
-      T8_LOG_ERROR("[App] Unknown gui control target '%s' (expected slider_knob|selector_control|checkbox_mark)", g_guiControlTarget.c_str());
+    if (!m_devLayer.SetControlEditTargetByName(g_t8config.guiControlTarget)) {
+      T8_LOG_ERROR("[App] Unknown gui control target '%s' (expected slider_knob|selector_control|checkbox_mark)", g_t8config.guiControlTarget.c_str());
     }
   }
-  if (g_guiSnap) {
+  if (g_t8config.flags.guiSnap) {
     m_devLayer.SetSnapToGrid(true);
   }
 
   // Skip fade when doing an automated screenshot
-  if (!g_guiScreenshot) {
+  if (!g_t8config.flags.guiScreenshot) {
     FadeFX(0.5, false);
   }
 
   // Initialize profiler if requested (after driver is fully set up)
 #ifdef T8_ENABLE_PROFILER
-  if (g_profile && !t800::g_profiler) {
+  if (g_t8config.flags.profile && !t800::g_profiler) {
     t800::g_profiler = new t800::T8Profiler();
     t800::g_profiler->Init(pFramework->pVideoDriver);
   }
@@ -194,7 +182,7 @@ void App::OnDraw() {
   FirstFrame = false;
 
   // ── Minimal GUI test: draw scene FIRST, then overlay a red quad ──
-  if (g_testGui) {
+  if (g_t8config.flags.testGui) {
     static Quad testQuad;
     static ShaderBase* testShader = nullptr;
     static ConstantBuffer* testCB = nullptr;
@@ -279,9 +267,9 @@ void App::OnDraw() {
   }
 
   // --guiScreenshot: after a few frames (let scene stabilise), save backbuffer and exit
-  if (g_guiScreenshot && frameCount >= 3) {
-    pFramework->pVideoDriver->SaveScreenshot(g_guiScreenshotPath);
-    printf("[guiScreenshot] Saved to %s\n", g_guiScreenshotPath.c_str());
+  if (g_t8config.flags.guiScreenshot && frameCount >= 3) {
+    pFramework->pVideoDriver->SaveScreenshot(g_t8config.guiScreenshotPath);
+    printf("[guiScreenshot] Saved to %s\n", g_t8config.guiScreenshotPath.c_str());
     pFramework->pVideoDriver->SwapBuffers();
     exit(0);
   }
@@ -291,7 +279,7 @@ void App::OnDraw() {
   if (t800::g_profiler) {
     t800::g_profiler->EndFrame();
     static bool reported = false;
-    if (!reported && t800::g_profiler->GetFrameCount() >= g_profileFrames) {
+    if (!reported && t800::g_profiler->GetFrameCount() >= g_t8config.profileFrames) {
       reported = true;
       T8_LOG_INFO("[App] Profiler reached %d frames, printing report...",
                   t800::g_profiler->GetFrameCount());

@@ -6,6 +6,7 @@
 #include <scene/RenderMesh.h>
 #include <scene/RenderSkinnedMesh.h>
 #include <scene/SceneDescriptor.h>
+#include <core/t8config.h>
 #include <iostream>
 #include <fstream>
 #include <string>
@@ -90,20 +91,15 @@ void SC_SandBox::InitVars() {
   SceneProp.ToneMapWhiteLevel = 5.5f;
   SceneProp.LuminanceTau = 1.1f;
 
-  // Initialize frame dumper from command-line globals
-  extern bool g_dumpEnabled, g_dumpByFrame, g_debugFrames, g_keepRunning;
-  extern int g_dumpFrame, g_startScene;
-  extern float g_dumpSeconds;
-  extern std::string g_replaySnapshotPath;
   t800::FrameDumperConfig dumpCfg;
-  dumpCfg.dumpEnabled        = g_dumpEnabled;
-  dumpCfg.dumpByFrame        = g_dumpByFrame;
-  dumpCfg.dumpFrame          = g_dumpFrame;
-  dumpCfg.dumpSeconds        = g_dumpSeconds;
-  dumpCfg.debugFrames        = g_debugFrames;
-  dumpCfg.keepRunning        = g_keepRunning;
-  dumpCfg.replaySnapshotPath = g_replaySnapshotPath;
-  dumpCfg.sceneIndex         = g_startScene;
+  dumpCfg.dumpEnabled        = g_t8config.flags.dumpEnabled;
+  dumpCfg.dumpByFrame        = g_t8config.flags.dumpByFrame;
+  dumpCfg.dumpFrame          = g_t8config.dumpFrame;
+  dumpCfg.dumpSeconds        = g_t8config.dumpSeconds;
+  dumpCfg.debugFrames        = g_t8config.flags.debugFrames;
+  dumpCfg.keepRunning        = g_t8config.flags.keepRunning;
+  dumpCfg.replaySnapshotPath = g_t8config.replaySnapshotPath;
+  dumpCfg.sceneIndex         = g_t8config.startScene;
   m_dumper.Init(dumpCfg);
 }
 
@@ -132,14 +128,12 @@ void SC_SandBox::CreateAssets() {
 
   EnvMapTexIndex = g_pBaseDriver->CreateTexture(string("sky/Ennis.dds"));
 
-  extern std::string g_modelPath;
-
   // Load the glTF model
-  int index = PrimitiveMgr.CreateMesh(g_modelPath.c_str());
+  int index = PrimitiveMgr.CreateMesh(g_t8config.modelPath.c_str());
   if (index < 0) {
-    T8_LOG_ERROR("[SC_SandBox] Failed to load '%s'", g_modelPath.c_str());
+    T8_LOG_ERROR("[SC_SandBox] Failed to load '%s'", g_t8config.modelPath.c_str());
   } else {
-    T8_LOG_INFO("[SC_SandBox] Loaded model '%s', primitive index=%d", g_modelPath.c_str(), index);
+    T8_LOG_INFO("[SC_SandBox] Loaded model '%s', primitive index=%d", g_t8config.modelPath.c_str(), index);
     Meshes[0].CreateInstance(PrimitiveMgr.GetPrimitive(index), &VP);
     FitModelToView();
   }
@@ -231,9 +225,7 @@ void SC_SandBox::OnUpdate(float _DtSecs) {
   }
 
   // --dumpMatrices: log all camera matrices per frame, then exit
-  extern bool g_dumpMatrices;
-  extern int  g_dumpMatricesFrames;
-  if (g_dumpMatrices) {
+  if (g_t8config.flags.dumpMatrices) {
     static int s_matDumpFrame = 0;
     static std::ofstream s_matFile;
     if (s_matDumpFrame == 0) {
@@ -281,7 +273,7 @@ void SC_SandBox::OnUpdate(float _DtSecs) {
     s_matFile << "\n";
     s_matFile.flush();
     s_matDumpFrame++;
-    if (s_matDumpFrame >= g_dumpMatricesFrames) {
+    if (s_matDumpFrame >= g_t8config.dumpMatricesFrames) {
       s_matFile.close();
       T8_LOG_INFO("[dumpMatrices] Wrote %d frames to matrix_dump.csv", s_matDumpFrame);
       exit(0);

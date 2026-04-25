@@ -11,6 +11,7 @@
 
 #include <utils/Log.h>
 #include <debug/T8_Profiler.h>
+#include <core/t8config.h>
 #include <iostream>
 #include <string>
 #include <cassert>
@@ -20,10 +21,6 @@
 #pragma comment(lib, "d3d12.lib")
 #pragma comment(lib, "dxgi.lib")
 #pragma comment(lib, "d3dcompiler.lib")
-
-// Defined in App.cpp — runtime flag for D3D12 debug layer
-extern bool g_d3d12Debug;
-extern std::string g_logFile;
 
 namespace t800 {
 
@@ -131,8 +128,8 @@ namespace t800 {
     m_infoQueue->SetMessageCountLimit(4096);
 
     std::string debugLogPath;
-    if (!g_logFile.empty()) {
-      std::filesystem::path p(g_logFile);
+    if (!g_t8config.logFile.empty()) {
+      std::filesystem::path p(g_t8config.logFile);
       std::string stem = p.stem().string();
       std::string ext  = p.extension().string();
       debugLogPath = (p.parent_path() / (stem + "_d3d12debug" + ext)).string();
@@ -388,7 +385,7 @@ namespace t800 {
 
   void D3D12Driver::CreateDevice() {
     // Enable debug layer only when requested (--d3d12debug flag)
-    if (g_d3d12Debug) {
+    if (g_t8config.flags.d3d12Debug) {
       ComPtr<ID3D12Debug> debugController;
       if (SUCCEEDED(D3D12GetDebugInterface(IID_PPV_ARGS(&debugController)))) {
         debugController->EnableDebugLayer();
@@ -572,7 +569,7 @@ namespace t800 {
     m_scissorRect = { 0, 0, (LONG)width, (LONG)height };
 
     // Start debug message polling thread only when debug layer is enabled
-    if (g_d3d12Debug) {
+    if (g_t8config.flags.d3d12Debug) {
       StartDebugMessageThread();
     }
 

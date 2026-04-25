@@ -3,6 +3,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <utils/Log.h>
+#include <core/t8config.h>
 using namespace t800;
 using std::cout;
 using std::endl;
@@ -93,23 +94,15 @@ void SC_Day::InitVars() {
   m_activeCameraIndex = 0;
   RTIndex = -1;
 
-  // Initialize frame dumper from command-line globals
-  extern bool g_dumpEnabled, g_dumpByFrame, g_debugFrames, g_keepRunning;
-  extern int g_dumpFrame, g_startScene;
-  extern float g_dumpSeconds;
-  extern std::string g_replaySnapshotPath;
-#ifdef T8_ENABLE_PROFILER
-  extern bool g_profile;
-#endif
   FrameDumperConfig dumpCfg;
-  dumpCfg.dumpEnabled     = g_dumpEnabled;
-  dumpCfg.dumpByFrame     = g_dumpByFrame;
-  dumpCfg.dumpFrame       = g_dumpFrame;
-  dumpCfg.dumpSeconds     = g_dumpSeconds;
-  dumpCfg.debugFrames     = g_debugFrames;
-  dumpCfg.keepRunning     = g_keepRunning;
-  dumpCfg.replaySnapshotPath = g_replaySnapshotPath;
-  dumpCfg.sceneIndex      = g_startScene;
+  dumpCfg.dumpEnabled     = g_t8config.flags.dumpEnabled;
+  dumpCfg.dumpByFrame     = g_t8config.flags.dumpByFrame;
+  dumpCfg.dumpFrame       = g_t8config.dumpFrame;
+  dumpCfg.dumpSeconds     = g_t8config.dumpSeconds;
+  dumpCfg.debugFrames     = g_t8config.flags.debugFrames;
+  dumpCfg.keepRunning     = g_t8config.flags.keepRunning;
+  dumpCfg.replaySnapshotPath = g_t8config.replaySnapshotPath;
+  dumpCfg.sceneIndex      = g_t8config.startScene;
   m_dumper.Init(dumpCfg);
 }
 void SC_Day::CreateAssets() {
@@ -553,8 +546,7 @@ void SC_Day::OnDraw() {
 #else
   // RT Dump via FrameDumper (skip when profiling — GPU queries conflict with dump's cmd buffer reset)
 #ifdef T8_ENABLE_PROFILER
-  extern bool g_profile;
-  if (m_dumper.ShouldDump(DtSecs) && !g_profile) {
+  if (m_dumper.ShouldDump(DtSecs) && !g_t8config.flags.profile) {
 #else
   if (m_dumper.ShouldDump(DtSecs)) {
 #endif
@@ -577,8 +569,7 @@ void SC_Day::OnDraw() {
     };
     m_dumper.DumpFrame(pFramework->pVideoDriver, Cam, LightCam, SceneProp, rts, DtSecs);
 #ifdef T8_ENABLE_PROFILER
-    extern bool g_profile;
-    if (m_dumper.ShouldExit() && !g_profile) exit(0);
+    if (m_dumper.ShouldExit() && !g_t8config.flags.profile) exit(0);
 #else
     if (m_dumper.ShouldExit()) exit(0);
 #endif

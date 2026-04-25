@@ -22,6 +22,7 @@
 #endif
 
 #include <T8_descriptors.h>
+#include <core/t8config.h>
 #include <utils/Log.h>
 
 #include <string>
@@ -29,10 +30,6 @@
 #include <filesystem>
 
 #include "EditorApp.h"
-
-// Globals expected by Framework (D3D12Driver.cpp uses extern references).
-bool        g_d3d12Debug = false;
-std::string g_logFile;
 
 // Global expected by Framework (RenderMesh.cpp uses extern reference).
 t800::AppBase* pApp = nullptr;
@@ -73,6 +70,7 @@ int main(int argc, char** argv) {
     else if (a == "--height" && i + 1 < argc) desc.height = std::stoi(argv[++i]);
     else if (a == "--mesh"   && i + 1 < argc) meshPath = argv[++i];
     else if (a == "--logFile" && i + 1 < argc) logFile = argv[++i];
+    else if (a == "--d3d12debug") t800::g_t8config.flags.d3d12Debug = true;
     else if (a == "--logLevel" && i + 1 < argc) {
       std::string v = argv[++i];
       if      (v == "error"   || v == "0") logLevel = 0;
@@ -84,6 +82,7 @@ int main(int argc, char** argv) {
   }
 
   if (!logFile.empty()) {
+    t800::g_t8config.logFile = logFile;
     auto parent = std::filesystem::path(logFile).parent_path();
     if (!parent.empty())
       std::filesystem::create_directories(parent);

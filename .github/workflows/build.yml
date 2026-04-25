@@ -152,13 +152,9 @@ jobs:
             Copy-Item "T850/T850Launcher.exe" -Destination $staging
 
             # Copy assets
-            Copy-Item "$assets/Shaders"    -Destination "$staging/Shaders"    -Recurse
-            Copy-Item "$assets/Models"     -Destination "$staging/Models"     -Recurse
-            Copy-Item "$assets/Fonts"      -Destination "$staging/Fonts"      -Recurse
-            Copy-Item "$assets/Textures"   -Destination "$staging/Textures"   -Recurse
-            Copy-Item "$assets/Techniques" -Destination "$staging/Techniques" -Recurse
-            Copy-Item "$assets/Scenes"     -Destination "$staging/Scenes"     -Recurse
-            Copy-Item "$assets/Layouts"    -Destination "$staging/Layouts"    -Recurse
+            foreach ($assetDir in @("Shaders", "Models", "Fonts", "Textures", "Scenes", "Layouts")) {
+              Copy-Item "$assets/$assetDir" -Destination "$staging/$assetDir" -Recurse
+            }
 
             # Copy config
             if (Test-Path "T850/config.json") {

@@ -14,7 +14,7 @@
 #define VK_USE_PLATFORM_WIN32_KHR
 #include <vulkan/vulkan.h>
 
-namespace t800 {
+namespace t850 {
 
   // Forward declarations
   class VulkanDriver;
@@ -27,7 +27,7 @@ namespace t800 {
                              VkImageLayout oldLayout, VkImageLayout newLayout,
                              VkImageAspectFlags aspectMask);
 
-} // namespace t800
+} // namespace t850
 
 #endif // OS_WINDOWS
 #endif // T800_VULKANUTILS_H

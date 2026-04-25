@@ -39,7 +39,7 @@ using Microsoft::WRL::ComPtr;
 #include <video/d3d12/D3D12Texture.h>
 #include <video/d3d12/D3D12RT.h>
 
-namespace t800 {
+namespace t850 {
 
   // ══════════════════════════════════════════════════════
   //  D3D12 Driver — the main backend
@@ -48,7 +48,7 @@ namespace t800 {
   public:
     static const UINT kBackBufferCount = 3;  // triple-buffer for full CPU-GPU overlap
 
-    D3D12Driver() { m_currentAPI = GRAPHICS_API::D3D12; }
+    D3D12Driver() { m_currentAPI = GraphicsApi::D3D12; }
 
     // ── BaseDriver pure virtuals ──
     void InitDriver() override;
@@ -63,9 +63,9 @@ namespace t800 {
     void Clear() override;
     void ClearWithColor(float r, float g, float b, float a) override;
     void SwapBuffers() override;
-    void SetBlendState(BLEND_STATES state) override;
-    void SetDepthStencilState(DEPTH_STENCIL_STATES state) override;
-    void SetCullFace(FACE_CULLING state) override;
+    void SetBlendState(BlendStates state) override;
+    void SetDepthStencilState(DepthStencilStates state) override;
+    void SetCullFace(FaceCulling state) override;
     void PopRT() override;
     void SaveScreenshot(std::string path) override;
     void SaveRTToFile(int rtID, int attachment, std::string path) override;
@@ -96,7 +96,7 @@ namespace t800 {
     // Rebind back buffer without DSV (for GUI/overlay draws with depth disabled)
     void BindBackBufferNoDSV();
 
-    DEPTH_STENCIL_STATES GetCurrentDepthState() const { return m_currentDepth; }
+    DepthStencilStates GetCurrentDepthState() const { return m_currentDepth; }
 
     // Per-frame CB ring allocator: returns GPU VA of a 256-aligned region with data copied
     D3D12_GPU_VIRTUAL_ADDRESS AllocateCBData(const void* data, UINT dataSize);
@@ -170,9 +170,9 @@ namespace t800 {
     uint64_t m_dynamicDescriptorOffset = 0; // current offset within dynamic region
 
     // Cached pipeline state for deferred PSO lookup
-    BLEND_STATES           m_currentBlend = BLEND_DEFAULT;
-    DEPTH_STENCIL_STATES   m_currentDepth = DEPTH_DEFAULT;
-    FACE_CULLING           m_currentCull  = FRONT_FACES;
+    BlendStates           m_currentBlend = BLEND_DEFAULT;
+    DepthStencilStates   m_currentDepth = DEPTH_DEFAULT;
+    FaceCulling           m_currentCull  = FRONT_FACES;
     bool                   m_frameStarted = false;  // tracks whether BeginFrame was called this frame
 
     // Last-bound state for redundancy elimination
@@ -194,7 +194,7 @@ namespace t800 {
     std::mutex               m_debugLogMutex;
   };
 
-} // namespace t800
+} // namespace t850
 
 #endif // OS_WINDOWS
 #endif // T800_D3D12DRIVER_H

@@ -34,7 +34,7 @@
 #endif
 #endif
 
-namespace t800 {
+namespace t850 {
   class GLRT : public BaseRT {
   public:
 

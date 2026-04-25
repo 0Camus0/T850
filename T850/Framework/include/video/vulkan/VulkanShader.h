@@ -18,7 +18,7 @@
 #include <string>
 #include <vector>
 
-namespace t800 {
+namespace t850 {
 
   // ══════════════════════════════════════════════════════
   //  Vulkan Shader
@@ -46,7 +46,7 @@ namespace t800 {
     int maxBinding = 0;  // highest binding number in the layout
   };
 
-} // namespace t800
+} // namespace t850
 
 #endif // OS_WINDOWS
 #endif // T800_VULKANSHADER_H

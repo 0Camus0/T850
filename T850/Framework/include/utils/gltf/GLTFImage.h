@@ -10,7 +10,7 @@
 #include <vector>
 #include <utils/gltf/GLTFTypes.h>
 
-namespace t800 {
+namespace t850 {
 namespace gltf {
 
 // On success, `outName` is the texture name to store in the engine
@@ -31,6 +31,6 @@ void ResolveAllImages(const Document& doc,
                       std::vector<int>& outSlots);
 
 } // namespace gltf
-} // namespace t800
+} // namespace t850
 
 #endif // T800_GLTF_IMAGE_H

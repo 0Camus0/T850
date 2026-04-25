@@ -1,4 +1,4 @@
-#include "pch.h"
+#include <pch.h>
 /*********************************************************
 * Copyright (C) 2017 Daniel Enriquez (camus_mm@hotmail.com)
 * All Rights Reserved
@@ -19,7 +19,7 @@
 #include <scene/SplineWireframe.h>
 #include <utils/Log.h>
 
-namespace t800 {
+namespace t850 {
   PrimitiveBase*	PrimitiveManager::GetPrimitive(unsigned int index) const {
     if (index >= primitives.size())
       return 0;

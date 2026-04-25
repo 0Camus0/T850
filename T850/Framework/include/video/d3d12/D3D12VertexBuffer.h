@@ -16,7 +16,7 @@
 #include <wrl/client.h>
 using Microsoft::WRL::ComPtr;
 
-namespace t800 {
+namespace t850 {
 
   class D3D12Device;
 
@@ -39,7 +39,7 @@ namespace t800 {
     void* m_mappedData = nullptr;
   };
 
-} // namespace t800
+} // namespace t850
 
 #endif // OS_WINDOWS
 #endif // T800_D3D12VERTEXBUFFER_H

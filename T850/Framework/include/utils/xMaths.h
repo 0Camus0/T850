@@ -22,11 +22,11 @@
 #define ATOF_ANGEL 1
 #endif
 
-#ifndef ATOF_TOM_VAN 
+#ifndef ATOF_TOM_VAN
 #define ATOF_TOM_VAN  0
 #endif
 
-#ifndef ATOF_VS 
+#ifndef ATOF_VS
 #define ATOF_VS 0
 #endif
 
@@ -187,7 +187,7 @@ float CadenaAnumeroFlotantePersonalizada(char *c);
 		void XVecLength(float &, const XVECTOR3 &v);
 		void XVecCross(XVECTOR3 &, const XVECTOR3 &, const XVECTOR3 &);
 		void XVec3Normalize(XVECTOR3 &, const XVECTOR3 &);
-		
+
 
 
 		typedef unsigned int	std_uint;
@@ -246,7 +246,7 @@ float CadenaAnumeroFlotantePersonalizada(char *c);
 			XVECTOR3(const float *vf) :x(vf[0]), y(vf[1]), z(vf[2]) { w = 1.0f; }
 			XVECTOR3(const XVECTOR3& v) :x(v.x), y(v.y), z(v.z), w(1.0f) {}
 			XVECTOR3(const _XVECTOR3& v) :x(v.x), y(v.y), z(v.z), w(1.0f) {}
-			
+
 			template<typename T>
 			XVECTOR3(T &xp, T &yp, T &zp) :x((float)xp), y((float)yp), z((float)zp), w(1.0f) {  }
 			template<typename T>
@@ -474,7 +474,7 @@ float CadenaAnumeroFlotantePersonalizada(char *c);
 			};
 		};
 
-		
+
 
 
 #endif

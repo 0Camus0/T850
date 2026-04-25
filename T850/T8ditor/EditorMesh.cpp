@@ -33,9 +33,9 @@ bool EditorMesh::Load(const std::string& path) {
 
   if (ext == "glb" || ext == "gltf") {
     // glTF path: parse and convert to XDataBase (same as ResourceManager)
-    t800::gltf::Document doc;
-    if (!t800::gltf::LoadGLTF(path, doc) ||
-        !t800::gltf::ConvertToXDatabase(doc, xdb, path)) {
+    t850::gltf::Document doc;
+    if (!t850::gltf::LoadGLTF(path, doc) ||
+        !t850::gltf::ConvertToXDatabase(doc, xdb, path)) {
       T8_LOG_ERROR("[T8ditor] EditorMesh: failed to load glTF '%s'", path.c_str());
       return false;
     }
@@ -133,7 +133,7 @@ bool EditorMesh::Load(const std::string& path) {
                            (bbMin[1] + bbMax[1]) * 0.5f,
                            (bbMin[2] + bbMax[2]) * 0.5f);
 
-  m_localAABB = t800::AABB(
+  m_localAABB = t850::AABB(
     XVECTOR3(bbMin[0], bbMin[1], bbMin[2]),
     XVECTOR3(bbMax[0], bbMax[1], bbMax[2])
   );
@@ -168,7 +168,7 @@ XMATRIX44 EditorMesh::BuildWorld() const {
 void EditorMesh::Draw(EditorLineRenderer& lines, const XMATRIX44& vp) {
   if (!IsLoaded() || !lines.IsReady()) return;
   XMATRIX44 world = BuildWorld();
-  auto ibFmt = m_use32BitIB ? t800::T8_IB_FORMAR::R32 : t800::T8_IB_FORMAR::R16;
+  auto ibFmt = m_use32BitIB ? t850::IndexBufferFormat::R32 : t850::IndexBufferFormat::R16;
   lines.DrawLines(world, vp, WireColor, m_vb, m_ib, m_indexCount, /*stride=*/16, ibFmt);
 }
 

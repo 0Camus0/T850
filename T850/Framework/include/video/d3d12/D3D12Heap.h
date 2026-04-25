@@ -15,7 +15,7 @@
 #include <wrl/client.h>
 using Microsoft::WRL::ComPtr;
 
-namespace t800 {
+namespace t850 {
 
   // ══════════════════════════════════════════════════════
   //  D3D12 Descriptor Heap — linear allocator
@@ -54,7 +54,7 @@ namespace t800 {
     bool     m_shaderVisible  = false;
   };
 
-} // namespace t800
+} // namespace t850
 
 #endif // OS_WINDOWS
 #endif // T800_D3D12HEAP_H

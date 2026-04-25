@@ -43,7 +43,7 @@ public:
   void SetViewport(int width, int height) { m_viewW = width; m_viewH = height; }
 
   // Set the GBuffer COLOR4 depth texture for depth-tested wireframe. Pass nullptr to disable.
-  void SetDepthTexture(t800::Texture* depthTex) { m_depthTex = depthTex; }
+  void SetDepthTexture(t850::Texture* depthTex) { m_depthTex = depthTex; }
 
   // Set the camera far plane (used to compute linear depth matching GBuffer COLOR4)
   void SetFarPlane(float farPlane) { m_farPlane = farPlane; }
@@ -53,26 +53,26 @@ public:
   void DrawLines(const XMATRIX44& world,
                  const XMATRIX44& vp,
                  const XVECTOR3&  rgba,
-                 t800::VertexBuffer* vb,
-                 t800::IndexBuffer*  ib,
+                 t850::VertexBuffer* vb,
+                 t850::IndexBuffer*  ib,
                  unsigned indexCount,
                  unsigned vertexStride,
-                 t800::T8_IB_FORMAR::E ibFormat = t800::T8_IB_FORMAR::R16);
+                 t850::IndexBufferFormat::E ibFormat = t850::IndexBufferFormat::R16);
 
   // Helper for callers that want to build a VB of a list of float4 line
   // endpoints (xyzw, w=1). Returns nullptr on failure. Ownership transfers
   // to the caller (must Destroy/release).
-  static t800::VertexBuffer* CreatePositionVB(const float* positionsXYZW,
+  static t850::VertexBuffer* CreatePositionVB(const float* positionsXYZW,
                                               unsigned numVertices);
-  static t800::IndexBuffer*  CreateIndexBuffer16(const unsigned short* indices,
+  static t850::IndexBuffer*  CreateIndexBuffer16(const unsigned short* indices,
                                                  unsigned numIndices);
-  static t800::IndexBuffer*  CreateIndexBuffer32(const unsigned int* indices,
+  static t850::IndexBuffer*  CreateIndexBuffer32(const unsigned int* indices,
                                                  unsigned numIndices);
 
 private:
-  t800::ShaderBase*     m_shader   = nullptr;
-  t800::ConstantBuffer* m_cb       = nullptr;
-  t800::Texture*        m_depthTex = nullptr;
+  t850::ShaderBase*     m_shader   = nullptr;
+  t850::ConstantBuffer* m_cb       = nullptr;
+  t850::Texture*        m_depthTex = nullptr;
   int                   m_viewW    = 1280;
   int                   m_viewH    = 720;
   float                 m_farPlane = 1000.0f;

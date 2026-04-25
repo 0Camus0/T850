@@ -1,4 +1,4 @@
-#include "pch.h"
+#include <pch.h>
 /*********************************************************
 * Copyright (C) 2017 Daniel Enriquez (camus_mm@hotmail.com)
 * All Rights Reserved
@@ -18,7 +18,7 @@
 #include <fstream>
 #include <string.h>
 
-namespace t800 {
+namespace t850 {
   BaseDriver*	g_pBaseDriver = 0;
   Device*           T8Device;	// Device for create resources
   DeviceContext*    T8DeviceContext; // Context to set and manipulate the resources
@@ -59,11 +59,11 @@ namespace t800 {
     props = 0;
 
     if (cil_props&CIL_RGBA) {
-      props |= TEXT_BASIC_FORMAT::CH_RGBA;
+      props |= TextBasicFormat::CH_RGBA;
       m_channels = 4;
     }
     else {
-      props |= TEXT_BASIC_FORMAT::CH_RGB;
+      props |= TextBasicFormat::CH_RGB;
       m_channels = 3;
     }
 
@@ -97,13 +97,13 @@ namespace t800 {
     props = 0;
 
     if (channels == 4) {
-      props |= TEXT_BASIC_FORMAT::CH_RGBA;
+      props |= TextBasicFormat::CH_RGBA;
     }
     else if (channels == 3){
-      props |= TEXT_BASIC_FORMAT::CH_RGB;
+      props |= TextBasicFormat::CH_RGB;
     }
     else if (channels == 1) {
-      props |= TEXT_BASIC_FORMAT::CH_ALPHA;
+      props |= TextBasicFormat::CH_ALPHA;
     }
 
     LoadAPITexture(T8DeviceContext, const_cast<unsigned char*>(buff));
@@ -122,13 +122,13 @@ namespace t800 {
     props = 0;
 
     if (m_channels == 4) {
-      props |= TEXT_BASIC_FORMAT::CH_RGBA;
+      props |= TextBasicFormat::CH_RGBA;
     }
     else if (m_channels == 3) {
-      props |= TEXT_BASIC_FORMAT::CH_RGB;
+      props |= TextBasicFormat::CH_RGB;
     }
     else if (m_channels == 1) {
-      props |= TEXT_BASIC_FORMAT::CH_ALPHA;
+      props |= TextBasicFormat::CH_ALPHA;
     }
     LoadAPITexture(T8DeviceContext, const_cast<unsigned char*>(buff));
     return true;
@@ -177,12 +177,12 @@ namespace t800 {
 #endif
 
 #if defined(USING_OPENGL)
-      if (g_pBaseDriver->m_currentAPI == GRAPHICS_API::OPENGL) {
+      if (g_pBaseDriver->m_currentAPI == GraphicsApi::OPENGL) {
         Defines += "#version 330\n\n";
         Defines += "#define ES_30\n\n";
       }
 #elif defined(USING_OPENGL_ES30) || defined(USING_OPENGL_ES31)
-      if (g_pBaseDriver->m_currentAPI == GRAPHICS_API::OPENGL) {
+      if (g_pBaseDriver->m_currentAPI == GraphicsApi::OPENGL) {
         Defines += "#version 300 es\n\n";
         Defines += "#define ES_30\n\n";
       }
@@ -346,7 +346,7 @@ namespace t800 {
         return i;
       i++;
     }
-    m_techniques.push_back(std::move(new T8Technique(path)));
+    m_techniques.push_back(std::move(new Technique(path)));
 	return (int)m_techniques.size();
   }
   void BaseDriver::PushRT(int id)
@@ -358,7 +358,7 @@ namespace t800 {
     CurrentRT = id;
     RTs[id]->Set(*T8DeviceContext);
   }
-  T8Technique * BaseDriver::GetTechnique(int id)
+  Technique * BaseDriver::GetTechnique(int id)
   {
     if (id < (int)m_techniques.size())
       return m_techniques[id];

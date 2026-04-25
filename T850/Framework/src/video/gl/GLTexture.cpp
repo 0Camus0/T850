@@ -1,4 +1,4 @@
-#include "pch.h"
+#include <pch.h>
 /*********************************************************
 * Copyright (C) 2017 Daniel Enriquez (camus_mm@hotmail.com)
 * All Rights Reserved
@@ -30,10 +30,10 @@
 #include <SDL3/SDL.h>
 #endif
 
-#include "video/gl/GLShader.h"
+#include <video/gl/GLShader.h>
 
 
-namespace t800 {
+namespace t850 {
   GLTexture::GLTexture() : glTarget(GL_TEXTURE_2D)
   {
   }
@@ -52,22 +52,22 @@ namespace t800 {
     glFiltering = GL_LINEAR_MIPMAP_LINEAR;
     glWrap = GL_CLAMP_TO_EDGE;
 
-    //if(params & TEXT_BASIC_PARAMS::MIPMAPS)
+    //if(params & TextBasicParams::MIPMAPS)
     glFiltering = GL_LINEAR_MIPMAP_LINEAR; //GL_TEXTURE_MAX_ANISOTROPY_EXT
 
-    if (params & TEXT_BASIC_PARAMS::CLAMP_TO_EDGE)
+    if (params & TextBasicParams::CLAMP_TO_EDGE)
       glWrap = GL_CLAMP_TO_EDGE;
 
-    if (params & TEXT_BASIC_PARAMS::TILED)
+    if (params & TextBasicParams::TILED)
       glWrap = GL_REPEAT;
 
-    if (params & TEXT_BASIC_PARAMS::CLAMP_TO_BORDER) {
+    if (params & TextBasicParams::CLAMP_TO_BORDER) {
       glWrap = 0x812D; // GL_CLAMP_TO_BORDER
       float borderColor[] = { 0.0f, 0.0f, 0.0f, 0.0f };
       glTexParameterfv(glTarget, 0x1004, borderColor); // GL_TEXTURE_BORDER_COLOR
     }
 
-    if (params & TEXT_BASIC_PARAMS::NEAREST_FILTER) {
+    if (params & TextBasicParams::NEAREST_FILTER) {
       glFiltering = GL_NEAREST;
       glTexParameteri(glTarget, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
       glTexParameteri(glTarget, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
@@ -80,7 +80,7 @@ namespace t800 {
     glTexParameteri(glTarget, GL_TEXTURE_WRAP_S, glWrap);
     glTexParameteri(glTarget, GL_TEXTURE_WRAP_T, glWrap);
 
-    if (!(params & TEXT_BASIC_PARAMS::NEAREST_FILTER)) {
+    if (!(params & TextBasicParams::NEAREST_FILTER)) {
       int Max = 1;
       glGetIntegerv(GL_MAX_TEXTURE_MAX_ANISOTROPY_EXT, &Max);
       glTexParameteri(glTarget, GL_TEXTURE_MAX_ANISOTROPY_EXT, Max);
@@ -107,13 +107,13 @@ namespace t800 {
       glFormat = GL_RGBA;
       glInternalFormat = GL_RGBA16F;
       glChannel = GL_HALF_FLOAT;
-    } else if (this->props&TEXT_BASIC_FORMAT::CH_ALPHA) {
+    } else if (this->props&TextBasicFormat::CH_ALPHA) {
       glFormat = GL_ALPHA;
       glInternalFormat = GL_ALPHA;
-    } else if (this->props&TEXT_BASIC_FORMAT::CH_RGB) {
+    } else if (this->props&TextBasicFormat::CH_RGB) {
       glFormat = GL_RGB;
       glInternalFormat = GL_RGB;
-    } else if (this->props&TEXT_BASIC_FORMAT::CH_RGBA) {
+    } else if (this->props&TextBasicFormat::CH_RGBA) {
       glFormat = GL_RGBA;
       glInternalFormat = GL_RGBA;
     }

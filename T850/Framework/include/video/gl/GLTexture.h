@@ -16,7 +16,7 @@
 #include <Config.h>
 #include <video/BaseDriver.h>
 
-namespace t800 {
+namespace t850 {
   class GLTexture : public Texture {
   public:
     GLTexture();

@@ -24,7 +24,7 @@
 #include <string>
 #include <vector>
 
-namespace t800 {
+namespace t850 {
 namespace gltf {
 
 // ── Component / element type enumerants (per spec) ──
@@ -304,6 +304,6 @@ struct Document {
 };
 
 } // namespace gltf
-} // namespace t800
+} // namespace t850
 
 #endif // T800_GLTF_TYPES_H

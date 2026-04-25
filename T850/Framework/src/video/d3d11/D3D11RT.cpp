@@ -1,4 +1,4 @@
-#include "pch.h"
+#include <pch.h>
 /*********************************************************
 * Copyright (C) 2017 Daniel Enriquez (camus_mm@hotmail.com)
 * All Rights Reserved
@@ -14,7 +14,7 @@
 #include <video/d3d11/D3D11RT.h>
 #include <iostream>
 
-namespace t800 {
+namespace t850 {
   extern Device*            T8Device;
   extern DeviceContext*     T8DeviceContext;
 
@@ -138,7 +138,7 @@ namespace t800 {
       pTextureColor->x = w;
       pTextureColor->y = h;
       if (!GenMips || i > 0) {
-        pTextureColor->params = TEXT_BASIC_PARAMS::LINEAR_FILTER;
+        pTextureColor->params = TextBasicParams::LINEAR_FILTER;
       }
       pTextureColor->SetTextureParams();
       vColorTextures.push_back(pTextureColor);
@@ -221,7 +221,7 @@ namespace t800 {
     }
     pTextureDepth->x = w;
     pTextureDepth->y = h;
-    pTextureDepth->params |= TEXT_BASIC_PARAMS::CLAMP_TO_BORDER;
+    pTextureDepth->params |= TextBasicParams::CLAMP_TO_BORDER;
     pTextureDepth->SetTextureParams();
     pDepthTexture = ( pTextureDepth);
 

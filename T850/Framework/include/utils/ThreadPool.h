@@ -2,7 +2,7 @@
  * ThreadPool — lightweight fixed-size worker pool
  *
  * Usage:
- *   t800::ThreadPool pool;  // default: hardware_concurrency - 1 workers
+ *   t850::ThreadPool pool;  // default: hardware_concurrency - 1 workers
  *
  *   // Fire-and-forget or wait on result:
  *   auto future = pool.Submit([](){ return heavyWork(); });
@@ -36,7 +36,7 @@
 #include <cstdint>
 #include <algorithm>
 
-namespace t800 {
+namespace t850 {
 
 class ThreadPool {
 public:
@@ -179,7 +179,7 @@ private:
 
 // ── Global engine thread pool ──────────────────────────────────────
 // Created once at startup, lives for the process lifetime.
-// Any component can use t800::g_threadPool->Submit() or ParallelFor().
+// Any component can use t850::g_threadPool->Submit() or ParallelFor().
 extern ThreadPool* g_threadPool;
 
 // Call once at engine init (before any component uses g_threadPool).
@@ -187,6 +187,6 @@ void InitGlobalThreadPool();
 // Call once at engine shutdown.
 void ShutdownGlobalThreadPool();
 
-} // namespace t800
+} // namespace t850
 
 #endif // T800_THREADPOOL_H

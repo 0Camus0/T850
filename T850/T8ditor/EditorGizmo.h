@@ -57,25 +57,25 @@ private:
   // Translate-mode geometry: three arrows in local space (per-axis IB so
   // each axis takes a coloured draw). Vertices are unit-length along +X,
   // +Y, +Z (with arrowhead barbs); world matrix scales by Size.
-  t800::VertexBuffer* m_translateVB = nullptr;
-  t800::IndexBuffer*  m_translateIBx = nullptr;
-  t800::IndexBuffer*  m_translateIBy = nullptr;
-  t800::IndexBuffer*  m_translateIBz = nullptr;
+  t850::VertexBuffer* m_translateVB = nullptr;
+  t850::IndexBuffer*  m_translateIBx = nullptr;
+  t850::IndexBuffer*  m_translateIBy = nullptr;
+  t850::IndexBuffer*  m_translateIBz = nullptr;
   unsigned m_translateAxisIdxCount = 0;
 
   // Rotate-mode geometry: three axis-aligned circles, also one shared VB
   // with per-axis IBs.
-  t800::VertexBuffer* m_rotateVB = nullptr;
-  t800::IndexBuffer*  m_rotateIBx = nullptr;
-  t800::IndexBuffer*  m_rotateIBy = nullptr;
-  t800::IndexBuffer*  m_rotateIBz = nullptr;
+  t850::VertexBuffer* m_rotateVB = nullptr;
+  t850::IndexBuffer*  m_rotateIBx = nullptr;
+  t850::IndexBuffer*  m_rotateIBy = nullptr;
+  t850::IndexBuffer*  m_rotateIBz = nullptr;
   unsigned m_rotateAxisIdxCount = 0;
 
   // Scale-mode geometry: shaft + cube tip, per axis.
-  t800::VertexBuffer* m_scaleVB = nullptr;
-  t800::IndexBuffer*  m_scaleIBx = nullptr;
-  t800::IndexBuffer*  m_scaleIBy = nullptr;
-  t800::IndexBuffer*  m_scaleIBz = nullptr;
+  t850::VertexBuffer* m_scaleVB = nullptr;
+  t850::IndexBuffer*  m_scaleIBx = nullptr;
+  t850::IndexBuffer*  m_scaleIBy = nullptr;
+  t850::IndexBuffer*  m_scaleIBz = nullptr;
   unsigned m_scaleAxisIdxCount = 0;
 
   GizmoMode m_mode = GizmoMode::Translate;

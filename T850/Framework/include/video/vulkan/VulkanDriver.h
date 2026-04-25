@@ -31,7 +31,7 @@
 #include <string>
 #include <vector>
 
-namespace t800 {
+namespace t850 {
 
   // ══════════════════════════════════════════════════════
   //  Vulkan Driver — the main backend
@@ -40,7 +40,7 @@ namespace t800 {
   public:
     static const UINT kBackBufferCount = 3;  // triple-buffer for full CPU-GPU overlap
 
-    VulkanDriver() { m_currentAPI = GRAPHICS_API::VULKAN; }
+    VulkanDriver() { m_currentAPI = GraphicsApi::VULKAN; }
 
     // ── BaseDriver pure virtuals ──
     void InitDriver() override;
@@ -52,9 +52,9 @@ namespace t800 {
     void SetDimensions(int w, int h) override;
     void Clear() override;
     void SwapBuffers() override;
-    void SetBlendState(BLEND_STATES state) override;
-    void SetDepthStencilState(DEPTH_STENCIL_STATES state) override;
-    void SetCullFace(FACE_CULLING state) override;
+    void SetBlendState(BlendStates state) override;
+    void SetDepthStencilState(DepthStencilStates state) override;
+    void SetCullFace(FaceCulling state) override;
     void PopRT() override;
     void SaveScreenshot(std::string path) override;
     void SaveRTToFile(int rtID, int attachment, std::string path) override;
@@ -86,7 +86,7 @@ namespace t800 {
     // Defer cleanup of staging resources until frame completes
     void DeferCleanup(VkBuffer buffer, VmaAllocation alloc);
 
-    DEPTH_STENCIL_STATES GetCurrentDepthState() const { return m_currentDepth; }
+    DepthStencilStates GetCurrentDepthState() const { return m_currentDepth; }
 
     // PSO cache — lazy creation
     VkPipeline GetOrCreatePipeline(VulkanShader* shader, uint8_t numColorAttachments = 1,
@@ -225,9 +225,9 @@ namespace t800 {
     std::vector<DeferredBuffer> m_deferredCleanup[kBackBufferCount];
 
     // Cached pipeline state for deferred pipeline lookup
-    BLEND_STATES           m_currentBlend = BLEND_DEFAULT;
-    DEPTH_STENCIL_STATES   m_currentDepth = DEPTH_DEFAULT;
-    FACE_CULLING           m_currentCull  = FRONT_FACES;
+    BlendStates           m_currentBlend = BLEND_DEFAULT;
+    DepthStencilStates   m_currentDepth = DEPTH_DEFAULT;
+    FaceCulling           m_currentCull  = FRONT_FACES;
     bool                   m_frameStarted = false;
     bool                   m_screenshotConsumedSemaphore = false;
 
@@ -256,7 +256,7 @@ namespace t800 {
     VkDebugUtilsMessengerEXT m_debugMessenger = VK_NULL_HANDLE;
   };
 
-} // namespace t800
+} // namespace t850
 
 #endif // OS_WINDOWS
 #endif // T800_VULKANDRIVER_H

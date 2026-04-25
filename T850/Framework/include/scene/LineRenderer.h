@@ -16,10 +16,10 @@
 #define T800_LINE_RENDERER_H
 
 #include <video/BaseDriver.h>
-#include <T8_descriptors.h>
+#include <Descriptors.h>
 #include <utils/xMaths.h>
 
-namespace t800 {
+namespace t850 {
 
 class LineRenderer {
 public:
@@ -64,13 +64,13 @@ public:
                  IndexBuffer*  ib,
                  unsigned indexCount,
                  unsigned vertexStride,
-                 T8_IB_FORMAR::E ibFormat = T8_IB_FORMAR::R16);
+                 IndexBufferFormat::E ibFormat = IndexBufferFormat::R16);
 
   // Helper for callers that want to build a VB of float4 line endpoints (xyzw, w=1).
-  // Use T8_BUFFER_USAGE::DINAMIC for buffers updated every frame.
+  // Use BufferUsage::DINAMIC for buffers updated every frame.
   static VertexBuffer* CreatePositionVB(const float* positionsXYZW,
                                         unsigned numVertices,
-                                        T8_BUFFER_USAGE::E usage = T8_BUFFER_USAGE::DEFAULT);
+                                        BufferUsage::E usage = BufferUsage::DEFAULT);
   static IndexBuffer*  CreateIndexBuffer16(const unsigned short* indices,
                                            unsigned numIndices);
   static IndexBuffer*  CreateIndexBuffer32(const unsigned int* indices,
@@ -87,6 +87,6 @@ private:
   bool            m_depthTest   = true;
 };
 
-} // namespace t800
+} // namespace t850
 
 #endif // T800_LINE_RENDERER_H

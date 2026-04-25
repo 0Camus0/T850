@@ -1,4 +1,4 @@
-#include "pch.h"
+#include <pch.h>
 /*********************************************************
  * T850 Picking & Geometry — implementation.
  * See Framework/include/utils/Picking.h for API docs.
@@ -8,7 +8,7 @@
 #include <cmath>
 #include <algorithm>
 
-namespace t800 {
+namespace t850 {
 
 // ── AABB helpers ──────────────────────────────────────
 
@@ -203,4 +203,4 @@ bool RayIntersectsTriangle(const Ray& ray,
   return true;
 }
 
-} // namespace t800
+} // namespace t850

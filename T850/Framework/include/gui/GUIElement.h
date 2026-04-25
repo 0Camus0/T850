@@ -5,7 +5,7 @@
 #include <utils/xMaths.h>
 #include <utils/GUIAtlasGenerator.h>  // AtlasRegion
 
-namespace t800 {
+namespace t850 {
 
   class TextRenderer;
   struct Quad;
@@ -293,4 +293,4 @@ namespace t800 {
     bool  hover = false;
   };
 
-} // namespace t800
+} // namespace t850

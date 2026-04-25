@@ -1,7 +1,7 @@
-#include "pch.h"
-#include "scene/SplineWireframe.h"
-#include "utils/Utils.h"
-namespace t800 {
+#include <pch.h>
+#include <scene/SplineWireframe.h>
+#include <utils/Utils.h>
+namespace t850 {
   extern Device*            T8Device;
   extern DeviceContext*     T8DeviceContext;
 void SplineWireframe::Create()
@@ -37,7 +37,7 @@ void SplineWireframe::Create()
     vstr = Defines + vstr;
     fstr = Defines + fstr;
 #endif
-    if (g_pBaseDriver->m_currentAPI == GRAPHICS_API::VULKAN) {
+    if (g_pBaseDriver->m_currentAPI == GraphicsApi::VULKAN) {
       std::string Defines;
       Defines += "#version 450\n\n";
       Defines += "#define ES_30\n\n";
@@ -61,20 +61,20 @@ void SplineWireframe::Create()
     indices.push_back((unsigned short)i);
   }
 
-  t800::BufferDesc bdesc;
+  t850::BufferDesc bdesc;
   bdesc.byteWidth = sizeof(CBuffer);
-  bdesc.usage = T8_BUFFER_USAGE::DEFAULT;
-  CB = (t800::ConstantBuffer*)T8Device->CreateBuffer(T8_BUFFER_TYPE::CONSTANT, bdesc);
+  bdesc.usage = BufferUsage::DEFAULT;
+  CB = (t850::ConstantBuffer*)T8Device->CreateBuffer(BufferType::CONSTANT, bdesc);
 
   bdesc.byteWidth = static_cast<int>(sizeof(Vert) * vertices.size());
-  bdesc.usage = T8_BUFFER_USAGE::DEFAULT;
-  VB = (t800::VertexBuffer*)T8Device->CreateBuffer(T8_BUFFER_TYPE::VERTEX, bdesc, &vertices[0]);
+  bdesc.usage = BufferUsage::DEFAULT;
+  VB = (t850::VertexBuffer*)T8Device->CreateBuffer(BufferType::VERTEX, bdesc, &vertices[0]);
 
 
   bdesc.byteWidth = static_cast<int>(indices.size() * sizeof(unsigned short));
-  bdesc.usage = T8_BUFFER_USAGE::DEFAULT;
-  IB = (t800::IndexBuffer*)T8Device->CreateBuffer(T8_BUFFER_TYPE::INDEX, bdesc, &indices[0]);
-  
+  bdesc.usage = BufferUsage::DEFAULT;
+  IB = (t850::IndexBuffer*)T8Device->CreateBuffer(BufferType::INDEX, bdesc, &indices[0]);
+
 }
 void SplineWireframe::Transform(float * t)
 {
@@ -84,12 +84,12 @@ void SplineWireframe::Draw(float * t, float * vp)
 
   Camera *pActualCamera = pScProp->pCameras[0];
   constantBuff.WVP = pActualCamera->VP;
-  IB->Set(*T8DeviceContext, 0, T8_IB_FORMAR::R16);
+  IB->Set(*T8DeviceContext, 0, IndexBufferFormat::R16);
   VB->Set(*T8DeviceContext,sizeof(Vert),0);
   s->Set(*T8DeviceContext);
   CB->UpdateFromBuffer(*T8DeviceContext, &constantBuff.WVP[0]);
   CB->Set(*T8DeviceContext);
-  T8DeviceContext->SetPrimitiveTopology(T8_TOPOLOGY::LINE_STRIP);
+  T8DeviceContext->SetPrimitiveTopology(Topology::LINE_STRIP);
   T8DeviceContext->DrawIndexed(static_cast<unsigned>(vertices.size()), 0, 0);
 }
 void SplineWireframe::Destroy()

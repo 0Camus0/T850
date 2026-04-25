@@ -1,4 +1,4 @@
-#include "pch.h"
+#include <pch.h>
 /*********************************************************
 * Copyright (C) 2017 Daniel Enriquez (camus_mm@hotmail.com)
 * All Rights Reserved
@@ -19,7 +19,7 @@
 #include <video/d3d11/D3D11Texture.h>
 #include <video/d3d11/D3D11RT.h>
 
-namespace t800 {
+namespace t850 {
   void * D3DXDevice::GetAPIObject() const
   {
     return (void*)APIDevice.Get();
@@ -36,18 +36,18 @@ namespace t800 {
     APIDevice.Reset();
   }
 
-  Buffer * D3DXDevice::CreateBuffer(T8_BUFFER_TYPE::E bufferType, BufferDesc desc, void* initialData)
+  Buffer * D3DXDevice::CreateBuffer(BufferType::E bufferType, BufferDesc desc, void* initialData)
   {
     Buffer* retBuff;
     switch (bufferType)
     {
-    case T8_BUFFER_TYPE::VERTEX:
+    case BufferType::VERTEX:
       retBuff = new D3DXVertexBuffer;
       break;
-    case T8_BUFFER_TYPE::INDEX:
+    case BufferType::INDEX:
       retBuff = new D3DXIndexBuffer;
       break;
-    case T8_BUFFER_TYPE::CONSTANT:
+    case BufferType::CONSTANT:
       retBuff = new D3DXConstantBuffer;
       break;
     default:

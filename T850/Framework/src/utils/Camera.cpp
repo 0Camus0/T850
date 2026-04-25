@@ -1,4 +1,4 @@
-#include "pch.h"
+#include <pch.h>
 /*********************************************************
 * Copyright (C) 2017 Daniel Enriquez (camus_mm@hotmail.com)
 * All Rights Reserved
@@ -12,7 +12,7 @@
 *********************************************************/
 
 #include <utils/Camera.h>
-#include <utils/T8_Spline.h>
+#include <utils/Spline.h>
 const	XVECTOR3	Camera::LookConstCameraSpace = XVECTOR3(0.0f, 0.0f, 1.0f);
 const	XVECTOR3	Camera::RightConstCameraSpace = XVECTOR3(1.0f, 0.0f, 0.0f);
 const	XVECTOR3	Camera::UpConstCameraSpace = XVECTOR3(0.0f, 1.0f, 0.0f);
@@ -124,16 +124,16 @@ void	Camera::SetPlanes(float n, float f) {
 	CreatePojection();
 }
 
-void Camera::AttachAgent(const t800::SplineAgent & agent)
+void Camera::AttachAgent(const t850::SplineAgent & agent)
 {
   m_externalControl = true;
   m_agent = &agent;
 }
 
-t800::SplineAgent * Camera::DettachAgent()
+t850::SplineAgent * Camera::DettachAgent()
 {
   m_externalControl = false;
-  return const_cast<t800::SplineAgent*>(m_agent);
+  return const_cast<t850::SplineAgent*>(m_agent);
 }
 
 void	Camera::MoveYaw(float f) {
@@ -209,7 +209,7 @@ void	Camera::Update(float dt) {
       Velocity -= Velocity*Friction;
       Eye += currentvelocity;
     }
-  
+
   XVECTOR3 TEYE = -Eye;
 	XMatTranslation(T_,TEYE);
 	View = T_*View;

@@ -1,10 +1,10 @@
-#include "pch.h"
+#include <pch.h>
 #include <scene/SceneSetup.h>
 #include <core/Core.h>
 #include <cstdio>
 #include <utils/Log.h>
 
-namespace t800 {
+namespace t850 {
 
 bool SceneSetup::Load(const std::string& jsonPath) {
   if (!LoadSceneDescriptor(jsonPath, descriptor)) {
@@ -281,4 +281,4 @@ void SceneSetup::SaveState(SceneBase* scene, const std::string& jsonPath) {
   SaveSceneDescriptor(jsonPath, desc);
 }
 
-} // namespace t800
+} // namespace t850

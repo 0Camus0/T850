@@ -20,7 +20,7 @@
 #include <utils/ResourceManager.h>
 #include <scene/SceneProp.h>
 
-namespace t800 {
+namespace t850 {
   class GUIManager;   // forward
   class RootFramework;
   class AppBase {
@@ -90,7 +90,7 @@ namespace t800 {
     virtual void UpdateApplication() = 0;
     virtual void ProcessInput() = 0;
     virtual void ResetApplication() = 0;
-    virtual void ChangeAPI(GRAPHICS_API::E api) = 0;
+    virtual void ChangeAPI(GraphicsApi::E api) = 0;
 
     BaseDriver		*pVideoDriver;
     AppBase			*pBaseApp;

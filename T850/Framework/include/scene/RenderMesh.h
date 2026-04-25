@@ -51,7 +51,7 @@
 #include <vector>
 #include <memory>
 using namespace xF;
-namespace t800 {
+namespace t850 {
   class RenderMesh : public PrimitiveBase {
   public:
     RenderMesh() {
@@ -104,7 +104,7 @@ namespace t800 {
 		}
       ShaderKey		key;
 
-      t800::IndexBuffer*  	IB;
+      t850::IndexBuffer*  	IB;
       Texture*					DiffuseTex;
       Texture*					SpecularTex;
       Texture*					GlossfTex;
@@ -126,7 +126,7 @@ namespace t800 {
       int					ReflectId;
       int					ParalaxId;
       int					MetallicId;
-	  
+
 	  int					MatID;
 
       unsigned int		VertexStart;
@@ -145,9 +145,9 @@ namespace t800 {
       unsigned int			 VertexSize;
       unsigned int			 NumVertex;
 
-      t800::IndexBuffer*  	IB;
-      t800::VertexBuffer*  	VB;
-      t800::ConstantBuffer* CB;
+      t850::IndexBuffer*  	IB;
+      t850::VertexBuffer*  	VB;
+      t850::ConstantBuffer* CB;
       RenderMesh::CBuffer			CnstBuffer;
 
       std::vector<SubSetInfo>	SubSets;

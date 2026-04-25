@@ -21,7 +21,8 @@
     #include <core/windows/Win32Framework.h>
 #endif
 
-#include <T8_descriptors.h>
+#include <Descriptors.h>
+#include <core/Config.h>
 #include <utils/Log.h>
 
 #include <string>
@@ -30,27 +31,23 @@
 
 #include "EditorApp.h"
 
-// Globals expected by Framework (D3D12Driver.cpp uses extern references).
-bool        g_d3d12Debug = false;
-std::string g_logFile;
-
 // Global expected by Framework (RenderMesh.cpp uses extern reference).
-t800::AppBase* pApp = nullptr;
+t850::AppBase* pApp = nullptr;
 
 namespace t8ditor {
   // Defined in EditorApp.cpp.
   void SetStartupMeshPath(const std::string& p);
 }
 
-static t800::AppBase*       g_pApp       = nullptr;
-static t800::RootFramework* g_pFramework = nullptr;
+static t850::AppBase*       g_pApp       = nullptr;
+static t850::RootFramework* g_pFramework = nullptr;
 
 int main(int argc, char** argv) {
-  t800::ApplicationDesc desc;
-  desc.api       = t800::GRAPHICS_API::D3D12;
+  t850::ApplicationDesc desc;
+  desc.api       = t850::GraphicsApi::D3D12;
   desc.height    = 720;
   desc.width     = 1280;
-  desc.videoMode = t800::T8_VIDEO_MODE::WINDOWED;
+  desc.videoMode = t850::VideoMode::WINDOWED;
   desc.title     = "T8ditor";
 
   // Minimal CLI: --api {d3d12|d3d11|vulkan|gl}, --width N, --height N,
@@ -64,15 +61,16 @@ int main(int argc, char** argv) {
     std::string a = argv[i];
     if (a == "--api" && i + 1 < argc) {
       std::string v = argv[++i];
-      if      (v == "d3d12" || v == "D3D12" || v == "dx12")   desc.api = t800::GRAPHICS_API::D3D12;
-      else if (v == "d3d11" || v == "D3D11" || v == "dx11")   desc.api = t800::GRAPHICS_API::D3D11;
-      else if (v == "vulkan" || v == "Vulkan" || v == "vk")   desc.api = t800::GRAPHICS_API::VULKAN;
-      else if (v == "gl" || v == "GL" || v == "opengl")       desc.api = t800::GRAPHICS_API::OPENGL;
+      if      (v == "d3d12" || v == "D3D12" || v == "dx12")   desc.api = t850::GraphicsApi::D3D12;
+      else if (v == "d3d11" || v == "D3D11" || v == "dx11")   desc.api = t850::GraphicsApi::D3D11;
+      else if (v == "vulkan" || v == "Vulkan" || v == "vk")   desc.api = t850::GraphicsApi::VULKAN;
+      else if (v == "gl" || v == "GL" || v == "opengl")       desc.api = t850::GraphicsApi::OPENGL;
     }
     else if (a == "--width"  && i + 1 < argc) desc.width  = std::stoi(argv[++i]);
     else if (a == "--height" && i + 1 < argc) desc.height = std::stoi(argv[++i]);
     else if (a == "--mesh"   && i + 1 < argc) meshPath = argv[++i];
     else if (a == "--logFile" && i + 1 < argc) logFile = argv[++i];
+    else if (a == "--d3d12debug") t850::g_config.flags.d3d12Debug = true;
     else if (a == "--logLevel" && i + 1 < argc) {
       std::string v = argv[++i];
       if      (v == "error"   || v == "0") logLevel = 0;
@@ -84,24 +82,25 @@ int main(int argc, char** argv) {
   }
 
   if (!logFile.empty()) {
+    t850::g_config.logFile = logFile;
     auto parent = std::filesystem::path(logFile).parent_path();
     if (!parent.empty())
       std::filesystem::create_directories(parent);
   }
 
-  uint32_t logBackends = t800::Log::T8_LOG_BACKEND_CONSOLE;
+  uint32_t logBackends = t850::Log::T8_LOG_BACKEND_CONSOLE;
 #ifdef OS_WINDOWS
-  logBackends |= t800::Log::T8_LOG_BACKEND_DEBUG_OUTPUT;
+  logBackends |= t850::Log::T8_LOG_BACKEND_DEBUG_OUTPUT;
 #endif
   if (!logFile.empty())
-    logBackends |= t800::Log::T8_LOG_BACKEND_FILE;
+    logBackends |= t850::Log::T8_LOG_BACKEND_FILE;
 
-  t800::Log::Init(
-    static_cast<t800::Log::Level>(logLevel),
+  t850::Log::Init(
+    static_cast<t850::Log::Level>(logLevel),
     logBackends,
     logFile.empty() ? nullptr : logFile.c_str()
   );
-  t800::Log::SetSessionTag("t8ditor");
+  t850::Log::SetSessionTag("t8ditor");
 
   // Default to a sample model if the user didn't pick one — Models/SkyBox.X
   // ships with the repo and is loaded by DayScene, so it's known-good.
@@ -116,13 +115,13 @@ int main(int argc, char** argv) {
   pApp   = g_pApp;  // RenderMesh::Load() uses this global
 
 #ifdef OS_LINUX
-  g_pFramework = new t800::LinuxFramework(g_pApp);
+  g_pFramework = new t850::LinuxFramework(g_pApp);
   g_pFramework->InitGlobalVars();
   g_pFramework->OnCreateApplication(desc);
   // LinuxFramework drives its own loop in OnCreateApplication today, matching
   // DayScene's pattern.
 #elif defined(OS_WINDOWS)
-  g_pFramework = new t800::Win32Framework(g_pApp);
+  g_pFramework = new t850::Win32Framework(g_pApp);
   g_pFramework->InitGlobalVars();
   g_pFramework->OnCreateApplication(desc);
   g_pFramework->UpdateApplication();
@@ -132,6 +131,6 @@ int main(int argc, char** argv) {
   delete g_pFramework;
   delete g_pApp;
 
-  t800::Log::Shutdown();
+  t850::Log::Shutdown();
   return 0;
 }

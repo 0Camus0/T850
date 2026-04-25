@@ -1,4 +1,4 @@
-#include "pch.h"
+#include <pch.h>
 /*********************************************************
 * T850 Engine — D3D12 Backend
 * D3D12DeviceContext.cpp: Device context implementation
@@ -9,9 +9,9 @@
 #ifdef OS_WINDOWS
 
 #include <utils/Log.h>
-#include <debug/T8_Profiler.h>
+#include <debug/Profiler.h>
 
-namespace t800 {
+namespace t850 {
 
   // ══════════════════════════════════════════════════════
   //  D3D12DeviceContext
@@ -21,14 +21,14 @@ namespace t800 {
   void** D3D12DeviceContext::GetAPIObjectReference() const { return nullptr; }
   void D3D12DeviceContext::release() { m_commandList.Reset(); }
 
-  void D3D12DeviceContext::SetPrimitiveTopology(T8_TOPOLOGY::E topology) {
+  void D3D12DeviceContext::SetPrimitiveTopology(Topology::E topology) {
     D3D12_PRIMITIVE_TOPOLOGY t;
     switch (topology) {
-      case T8_TOPOLOGY::POINT_LIST:     t = D3D_PRIMITIVE_TOPOLOGY_POINTLIST;    break;
-      case T8_TOPOLOGY::LINE_LIST:      t = D3D_PRIMITIVE_TOPOLOGY_LINELIST;     break;
-      case T8_TOPOLOGY::LINE_STRIP:     t = D3D_PRIMITIVE_TOPOLOGY_LINESTRIP;    break;
-      case T8_TOPOLOGY::TRIANLE_LIST:   t = D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST; break;
-      case T8_TOPOLOGY::TRIANGLE_STRIP: t = D3D_PRIMITIVE_TOPOLOGY_TRIANGLESTRIP;break;
+      case Topology::POINT_LIST:     t = D3D_PRIMITIVE_TOPOLOGY_POINTLIST;    break;
+      case Topology::LINE_LIST:      t = D3D_PRIMITIVE_TOPOLOGY_LINELIST;     break;
+      case Topology::LINE_STRIP:     t = D3D_PRIMITIVE_TOPOLOGY_LINESTRIP;    break;
+      case Topology::TRIANLE_LIST:   t = D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST; break;
+      case Topology::TRIANGLE_STRIP: t = D3D_PRIMITIVE_TOPOLOGY_TRIANGLESTRIP;break;
       default: t = D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST; break;
     }
     m_commandList->IASetPrimitiveTopology(t);
@@ -38,10 +38,10 @@ namespace t800 {
     T8_LOG_TRACE("[D3D12] DrawIndexed(%u, %u, %u)", vertexCount, startIndex, startVertex);
     m_commandList->DrawIndexedInstanced(vertexCount, 1, startIndex, startVertex, 0);
 #ifdef T8_ENABLE_PROFILER
-    if (t800::g_profiler) t800::g_profiler->AddDrawCall(vertexCount);
+    if (t850::g_profiler) t850::g_profiler->AddDrawCall(vertexCount);
 #endif
   }
 
-} // namespace t800
+} // namespace t850
 
 #endif // OS_WINDOWS

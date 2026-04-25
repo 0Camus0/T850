@@ -1,4 +1,4 @@
-#include "pch.h"
+#include <pch.h>
 /*********************************************************
  * T850 Engine — Skinned Mesh Renderer
  *
@@ -18,9 +18,9 @@
 #include <cstring>
 #include <cmath>
 
-extern t800::AppBase *pApp;
+extern t850::AppBase *pApp;
 
-namespace t800 {
+namespace t850 {
   extern Device*        T8Device;
   extern DeviceContext*  T8DeviceContext;
 
@@ -137,9 +137,9 @@ namespace t800 {
       }
       BufferDesc bdesc;
       bdesc.byteWidth = sizeof(RenderMesh::CBuffer);
-      bdesc.usage = T8_BUFFER_USAGE::DEFAULT;
-      Info[i].CB = (t800::ConstantBuffer*)T8Device->CreateBuffer(
-          T8_BUFFER_TYPE::CONSTANT, bdesc, nullptr);
+      bdesc.usage = BufferUsage::DEFAULT;
+      Info[i].CB = (t850::ConstantBuffer*)T8Device->CreateBuffer(
+          BufferType::CONSTANT, bdesc, nullptr);
     }
 
     // Initialize animation controller
@@ -195,8 +195,8 @@ namespace t800 {
       if (m_skelShader) {
         BufferDesc bd;
         bd.byteWidth = sizeof(XMATRIX44);  // 64 bytes — just WVP, matching VS_W
-        bd.usage = T8_BUFFER_USAGE::DEFAULT;
-        m_skelCB = (ConstantBuffer*)T8Device->CreateBuffer(T8_BUFFER_TYPE::CONSTANT, bd);
+        bd.usage = BufferUsage::DEFAULT;
+        m_skelCB = (ConstantBuffer*)T8Device->CreateBuffer(BufferType::CONSTANT, bd);
       }
     }
   }
@@ -275,7 +275,7 @@ namespace t800 {
 
     // Pre-allocate skeleton VB (DYNAMIC — updated each frame)
     m_skelVB = LineRenderer::CreatePositionVB(m_skelPositions.data(), vertCount,
-                                              T8_BUFFER_USAGE::DINAMIC);
+                                              BufferUsage::DINAMIC);
   }
 
 
@@ -335,10 +335,10 @@ namespace t800 {
       MeshInfo* mi = &Info[i];
       mi->VB->Set(*T8DeviceContext, mi->VertexSize, 0);
 
-      auto ibFmt = m_wireGeo[i].use32Bit ? T8_IB_FORMAR::R32 : T8_IB_FORMAR::R16;
+      auto ibFmt = m_wireGeo[i].use32Bit ? IndexBufferFormat::R32 : IndexBufferFormat::R16;
       m_wireGeo[i].IB->Set(*T8DeviceContext, 0, ibFmt);
 
-      T8DeviceContext->SetPrimitiveTopology(T8_TOPOLOGY::LINE_LIST);
+      T8DeviceContext->SetPrimitiveTopology(Topology::LINE_LIST);
 
       m_wireShader->Set(*T8DeviceContext);
       mi->CB->UpdateFromBuffer(*T8DeviceContext, &wireCB.WVP[0]);
@@ -354,7 +354,7 @@ namespace t800 {
 
       T8DeviceContext->DrawIndexed(m_wireGeo[i].indexCount, 0, 0);
 
-      T8DeviceContext->SetPrimitiveTopology(T8_TOPOLOGY::TRIANLE_LIST);
+      T8DeviceContext->SetPrimitiveTopology(Topology::TRIANLE_LIST);
     }
   }
 
@@ -373,15 +373,15 @@ namespace t800 {
     XMATRIX44 wvp = transform * cam->VP;
 
     // Draw using the exact WireframeSphere pattern (known to work on all APIs)
-    m_skelIB->Set(*T8DeviceContext, 0, T8_IB_FORMAR::R16);
+    m_skelIB->Set(*T8DeviceContext, 0, IndexBufferFormat::R16);
     m_skelVB->Set(*T8DeviceContext, 16, 0);
     // Topology BEFORE shader — Vulkan bakes topology into pipeline at Set() time
-    T8DeviceContext->SetPrimitiveTopology(T8_TOPOLOGY::LINE_LIST);
+    T8DeviceContext->SetPrimitiveTopology(Topology::LINE_LIST);
     m_skelShader->Set(*T8DeviceContext);
     m_skelCB->UpdateFromBuffer(*T8DeviceContext, &wvp[0]);
     m_skelCB->Set(*T8DeviceContext);
     T8DeviceContext->DrawIndexed(m_skelIndexCount, 0, 0);
-    T8DeviceContext->SetPrimitiveTopology(T8_TOPOLOGY::TRIANLE_LIST);
+    T8DeviceContext->SetPrimitiveTopology(Topology::TRIANLE_LIST);
   }
 
   // ── Animation update + bone texture upload (call BEFORE render passes) ──
@@ -491,8 +491,8 @@ namespace t800 {
         baseCB.Intensities.w = (float)sub_info->MatID;
 
         sub_info->IB->Set(*T8DeviceContext, 0,
-                          sub_info->IB32Bit ? T8_IB_FORMAR::R32
-                                            : T8_IB_FORMAR::R16);
+                          sub_info->IB32Bit ? IndexBufferFormat::R32
+                                            : IndexBufferFormat::R16);
 
         ShaderKey finalKey(sub_info->key.bits);
         finalKey.setPass(gKey.getPass());
@@ -533,7 +533,7 @@ namespace t800 {
         if (s->key.has(ShaderKey::DIFFUSE_MAP) && sub_info->DiffuseTex)
           sub_info->DiffuseTex->SetSampler(*T8DeviceContext);
 
-        T8DeviceContext->SetPrimitiveTopology(T8_TOPOLOGY::TRIANLE_LIST);
+        T8DeviceContext->SetPrimitiveTopology(Topology::TRIANLE_LIST);
         T8DeviceContext->DrawIndexed(sub_info->NumVertex, 0, 0);
         m_drawnSubsets++;
       }
@@ -555,4 +555,4 @@ namespace t800 {
     m_skinnedCBuffers.clear();
   }
 
-} // namespace t800
+} // namespace t850

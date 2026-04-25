@@ -162,6 +162,7 @@ function(t850_apply_app target)
 	target_include_directories(${target} PRIVATE
 		${T850_SOURCE_DIR}/Librerias/glaze/include
 		${T850_SOURCE_DIR}/Librerias/tinyxml2/include
+		${T850_SOURCE_DIR}/DayScene
 		${T850_SOURCE_DIR}/Framework
 		${T850_SOURCE_DIR}/Framework/include
 		${T850_SOURCE_DIR}/Librerias/SDL3/include
@@ -207,6 +208,7 @@ function(t850_stage_runtime target)
 		COMMAND ${CMAKE_COMMAND} -E copy_if_different ${T850_VCPKG_DYNAMIC}/bin/libEGL.dll $<TARGET_FILE_DIR:${target}>
 		COMMAND ${CMAKE_COMMAND} -E copy_if_different ${T850_VCPKG_DYNAMIC}/bin/libGLESv2.dll $<TARGET_FILE_DIR:${target}>
 		COMMAND ${CMAKE_COMMAND} -E copy_if_different ${T850_VCPKG_DYNAMIC}/bin/zlib1.dll $<TARGET_FILE_DIR:${target}>
+		COMMAND ${CMAKE_COMMAND} -E copy_if_different ${T850_SOURCE_DIR}/config.json $<TARGET_FILE_DIR:${target}>
 		VERBATIM)
 
 	if(ARG_COPY_DRACO)

@@ -37,7 +37,7 @@ private:
 	std::string					buffer_vertex;
 	std::string					buffer_fragment;
 	hyperspace::shader::stage_  current_stage;
-	
+
 };
 
 

@@ -13,7 +13,7 @@
 
 #include <video/d3d11/D3D11ConstantBuffer.h>
 
-namespace t800 {
+namespace t850 {
   void * D3DXConstantBuffer::GetAPIObject() const
   {
     return (void*)APIBuffer.Get();
@@ -39,13 +39,13 @@ namespace t800 {
     D3D11_USAGE usage;
     switch (desc.usage)
     {
-    case T8_BUFFER_USAGE::DEFAULT:
+    case BufferUsage::DEFAULT:
       usage = D3D11_USAGE_DEFAULT;
       break;
-    case T8_BUFFER_USAGE::DINAMIC:
+    case BufferUsage::DINAMIC:
       usage = D3D11_USAGE_DYNAMIC;
       break;
-    case T8_BUFFER_USAGE::STATIC:
+    case BufferUsage::STATIC:
       usage = D3D11_USAGE_IMMUTABLE;
       break;
     default:

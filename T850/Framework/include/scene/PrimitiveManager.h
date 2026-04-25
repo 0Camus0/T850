@@ -19,7 +19,7 @@
 #include <utils/xMaths.h>
 #include <scene/PrimitiveBase.h>
 #include <scene/SceneProp.h>
-namespace t800 {
+namespace t850 {
   class Spline;
   class PrimitiveManager {
   private:

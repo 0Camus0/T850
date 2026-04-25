@@ -2,7 +2,7 @@
 #include <string>
 #include <vector>
 #include <utils/XDataBase.h>
-namespace t800 {
+namespace t850 {
   class ResourceManager {
   public:
     xF::XDataBase* Load(const std::string	& filename);

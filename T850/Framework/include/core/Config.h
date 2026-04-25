@@ -2,9 +2,9 @@
 
 #include <string>
 
-namespace t800 {
+namespace t850 {
 
-class t8config {
+class Config {
 public:
   struct BooleanFlags {
     bool dumpEnabled : 1 = false;
@@ -28,7 +28,7 @@ public:
   std::string api = "d3d11";
   int width = 1280;
   int height = 720;
-  std::string title = "T800 Project";
+  std::string title = "T850 Project";
 
   int dumpFrame = -1;
   float dumpSeconds = -1.0f;
@@ -47,6 +47,6 @@ public:
   std::string modelPath = "Models/DamagedHelmet.glb";
 };
 
-extern t8config g_t8config;
+extern Config g_config;
 
-} // namespace t800
+} // namespace t850

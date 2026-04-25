@@ -599,7 +599,7 @@ unsigned char*	cil_load(const char* filename, int *x, int *y, unsigned int *mipm
 	}
 #if CIL_CALL_STB
 	else if (props_ == CIL_FORWARD_TO_STB) {
-		props_ = CIL_LOADED_WITH_STB | CIL_RAW; 
+		props_ = CIL_LOADED_WITH_STB | CIL_RAW;
 		in_.close();
 		int channels;
 		unsigned char * buffer = stbi_load(filename, x, y, &channels, 4);

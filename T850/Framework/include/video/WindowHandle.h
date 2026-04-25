@@ -26,7 +26,7 @@
 // keep the Framework public headers portable to OS_LINUX. Backends cast to
 // HWND in their .cpp files.
 
-namespace t800 {
+namespace t850 {
 
   struct WindowHandle {
     enum Kind {

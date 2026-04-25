@@ -23,7 +23,7 @@ struct SDL_GLContextState;
 typedef struct SDL_GLContextState *SDL_GLContext;
 
 #include <memory>
-namespace t800 {
+namespace t850 {
   class Win32Framework : public RootFramework {
   public:
     Win32Framework(AppBase *pBaseApp) : RootFramework(pBaseApp), m_alive(true), m_pWindow(nullptr), m_glContext(nullptr) {
@@ -38,7 +38,7 @@ namespace t800 {
     void UpdateApplication();
     void ProcessInput();
     void ResetApplication();
-    void ChangeAPI(GRAPHICS_API::E api);
+    void ChangeAPI(GraphicsApi::E api);
     ~Win32Framework() {	}
 
     bool	m_alive;

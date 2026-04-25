@@ -37,13 +37,13 @@ public:
 
 private:
   // Two separate VB/IB pairs so we can colour them independently.
-  t800::VertexBuffer* m_minorVB = nullptr;
-  t800::IndexBuffer*  m_minorIB = nullptr;
+  t850::VertexBuffer* m_minorVB = nullptr;
+  t850::IndexBuffer*  m_minorIB = nullptr;
   unsigned m_minorIndexCount = 0;
 
-  t800::VertexBuffer* m_axesVB  = nullptr;
-  t800::IndexBuffer*  m_xAxisIB = nullptr;
-  t800::IndexBuffer*  m_zAxisIB = nullptr;
+  t850::VertexBuffer* m_axesVB  = nullptr;
+  t850::IndexBuffer*  m_xAxisIB = nullptr;
+  t850::IndexBuffer*  m_zAxisIB = nullptr;
 };
 
 } // namespace t8ditor

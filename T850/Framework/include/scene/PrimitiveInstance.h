@@ -19,16 +19,16 @@
 #include <video/BaseDriver.h>
 #include <utils/xMaths.h>
 
-namespace t800 {
+namespace t850 {
   class PrimitiveInst {
   public:
     void	CreateInstance(PrimitiveBase *pPrim, XMATRIX44 *pVP) {
-      gKey.bits = 0; 
+      gKey.bits = 0;
       for (int i = 0; i < 8; i++) {
         Textures[i] = 0;
       }
       EnvMap = 0;
-      
+
       pBase = pPrim;
       pViewProj = pVP;
       XMatIdentity(Position);

@@ -1,6 +1,6 @@
 #pragma once
 #include <video/BaseDriver.h>
-namespace t800 {
+namespace t850 {
   struct Quad {
     struct Vertex {
       float x, y,z,w, s, t;

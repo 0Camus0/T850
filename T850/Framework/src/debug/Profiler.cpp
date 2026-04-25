@@ -1,5 +1,5 @@
 #include <pch.h>
-#include <debug/T8_Profiler.h>
+#include <debug/Profiler.h>
 
 #ifdef T8_ENABLE_PROFILER
 
@@ -26,9 +26,9 @@ using Microsoft::WRL::ComPtr;
 #include <GLES3/gl3.h>
 #endif
 
-namespace t800 {
+namespace t850 {
 
-T8Profiler* g_profiler = nullptr;
+Profiler* g_profiler = nullptr;
 
 extern BaseDriver* g_pBaseDriver;
 extern Device*        T8Device;
@@ -101,7 +101,7 @@ struct GLProfileState {
 //  Init / Destroy
 // ═════════════════════════════════════════════════════════════
 
-void T8Profiler::Init(BaseDriver* driver, int maxScopes) {
+void Profiler::Init(BaseDriver* driver, int maxScopes) {
   m_driver = driver;
   m_maxScopes = maxScopes;
   m_frameQueries.resize(maxScopes);
@@ -114,16 +114,16 @@ void T8Profiler::Init(BaseDriver* driver, int maxScopes) {
 #endif
 
   // Detect API
-  if (driver->m_currentAPI == GRAPHICS_API::D3D12) {
+  if (driver->m_currentAPI == GraphicsApi::D3D12) {
     m_apiType = 1;
     InitGPU_D3D12();
-  } else if (driver->m_currentAPI == GRAPHICS_API::D3D11) {
+  } else if (driver->m_currentAPI == GraphicsApi::D3D11) {
     m_apiType = 2;
     InitGPU_D3D11();
-  } else if (driver->m_currentAPI == GRAPHICS_API::OPENGL) {
+  } else if (driver->m_currentAPI == GraphicsApi::OPENGL) {
     m_apiType = 3;
     InitGPU_GL();
-  } else if (driver->m_currentAPI == GRAPHICS_API::VULKAN) {
+  } else if (driver->m_currentAPI == GraphicsApi::VULKAN) {
     m_apiType = 4;
     InitGPU_Vulkan();
   }
@@ -132,11 +132,11 @@ void T8Profiler::Init(BaseDriver* driver, int maxScopes) {
   T8_LOG_INFO("[Profiler] Initialized (API=%d, maxScopes=%d)", m_apiType, maxScopes);
 }
 
-T8Profiler::~T8Profiler() {
+Profiler::~Profiler() {
   Destroy();
 }
 
-void T8Profiler::Destroy() {
+void Profiler::Destroy() {
   if (!m_initialized) return;
   DestroyGPU();
   m_initialized = false;
@@ -146,7 +146,7 @@ void T8Profiler::Destroy() {
 //  D3D12 GPU Backend
 // ═════════════════════════════════════════════════════════════
 
-void T8Profiler::InitGPU_D3D12() {
+void Profiler::InitGPU_D3D12() {
 #ifdef OS_WINDOWS
   auto* state = new D3D12ProfileState();
   state->maxQueries = m_maxScopes * 2;  // begin + end per scope
@@ -186,7 +186,7 @@ void T8Profiler::InitGPU_D3D12() {
 #endif
 }
 
-void T8Profiler::InitGPU_D3D11() {
+void Profiler::InitGPU_D3D11() {
 #ifdef OS_WINDOWS
   auto* state = new D3D11ProfileState();
   state->maxQueries = m_maxScopes;
@@ -212,7 +212,7 @@ void T8Profiler::InitGPU_D3D11() {
 #endif
 }
 
-void T8Profiler::InitGPU_GL() {
+void Profiler::InitGPU_GL() {
   auto* state = new GLProfileState();
   state->maxQueries = m_maxScopes;
 
@@ -229,7 +229,7 @@ void T8Profiler::InitGPU_GL() {
   m_gpuState = state;
 }
 
-void T8Profiler::InitGPU_Vulkan() {
+void Profiler::InitGPU_Vulkan() {
 #ifdef OS_WINDOWS
   auto* state = new VulkanProfileState();
   state->maxQueries = m_maxScopes * 2;  // begin + end per scope
@@ -299,7 +299,7 @@ void T8Profiler::InitGPU_Vulkan() {
 #endif
 }
 
-void T8Profiler::DestroyGPU() {
+void Profiler::DestroyGPU() {
 #ifdef OS_WINDOWS
   if (m_apiType == 1) delete static_cast<D3D12ProfileState*>(m_gpuState);
   if (m_apiType == 2) delete static_cast<D3D11ProfileState*>(m_gpuState);
@@ -329,7 +329,7 @@ void T8Profiler::DestroyGPU() {
 //  Frame Boundary
 // ═════════════════════════════════════════════════════════════
 
-void T8Profiler::BeginFrame() {
+void Profiler::BeginFrame() {
   if (!m_initialized) return;
 
   // Resolve GPU results from previous frame(s)
@@ -355,7 +355,7 @@ void T8Profiler::BeginFrame() {
   }
 }
 
-void T8Profiler::EndFrame() {
+void Profiler::EndFrame() {
   if (!m_initialized) return;
 
 #ifdef OS_WINDOWS
@@ -405,7 +405,7 @@ void T8Profiler::EndFrame() {
 //  Scope Begin / End
 // ═════════════════════════════════════════════════════════════
 
-int T8Profiler::FindOrCreateScope(const char* name) {
+int Profiler::FindOrCreateScope(const char* name) {
   for (int i = 0; i < (int)m_scopes.size(); i++) {
     if (m_scopes[i].name == name) return i;
   }
@@ -415,7 +415,7 @@ int T8Profiler::FindOrCreateScope(const char* name) {
   return (int)m_scopes.size() - 1;
 }
 
-void T8Profiler::BeginScope(const char* name) {
+void Profiler::BeginScope(const char* name) {
   if (!m_initialized) return;
   if (m_activeQueryCount >= m_maxScopes) return;
 
@@ -438,7 +438,7 @@ void T8Profiler::BeginScope(const char* name) {
   m_activeQueryCount++;
 }
 
-void T8Profiler::EndScope() {
+void Profiler::EndScope() {
   if (!m_initialized) return;
   if (m_activeQueryCount <= 0) return;
 
@@ -467,7 +467,7 @@ void T8Profiler::EndScope() {
 }
 
 // CPU-only scope (no GPU timestamp — safe to call outside command list recording)
-void T8Profiler::BeginCPUScope(const char* name) {
+void Profiler::BeginCPUScope(const char* name) {
   if (!m_initialized) return;
   if (m_activeQueryCount >= m_maxScopes) return;
 
@@ -486,7 +486,7 @@ void T8Profiler::BeginCPUScope(const char* name) {
   m_activeQueryCount++;
 }
 
-void T8Profiler::EndCPUScope() {
+void Profiler::EndCPUScope() {
   if (!m_initialized) return;
   if (m_activeQueryCount <= 0) return;
 
@@ -506,7 +506,7 @@ void T8Profiler::EndCPUScope() {
   }
 }
 
-void T8Profiler::AddDrawCall(int vertexCount) {
+void Profiler::AddDrawCall(int vertexCount) {
   if (!m_initialized || m_activeQueryCount <= 0) return;
   int queryIdx = m_activeQueryCount - 1;
   auto& fq = m_frameQueries[queryIdx];
@@ -516,7 +516,7 @@ void T8Profiler::AddDrawCall(int vertexCount) {
   }
 }
 
-void T8Profiler::FlushVulkanQueryReset(void* commandBuffer) {
+void Profiler::FlushVulkanQueryReset(void* commandBuffer) {
 #ifdef OS_WINDOWS
   if (m_apiType == 4 && m_gpuState) {
     auto* state = static_cast<VulkanProfileState*>(m_gpuState);
@@ -535,7 +535,7 @@ void T8Profiler::FlushVulkanQueryReset(void* commandBuffer) {
 //  GPU Scope Implementation
 // ═════════════════════════════════════════════════════════════
 
-void T8Profiler::BeginGPUScope(int queryIndex) {
+void Profiler::BeginGPUScope(int queryIndex) {
 #ifdef OS_WINDOWS
   if (m_apiType == 1) {
     auto* state = static_cast<D3D12ProfileState*>(m_gpuState);
@@ -569,7 +569,7 @@ void T8Profiler::BeginGPUScope(int queryIndex) {
 #endif
 }
 
-void T8Profiler::EndGPUScope(int queryIndex) {
+void Profiler::EndGPUScope(int queryIndex) {
 #ifdef OS_WINDOWS
   if (m_apiType == 1) {
     auto* state = static_cast<D3D12ProfileState*>(m_gpuState);
@@ -608,7 +608,7 @@ void T8Profiler::EndGPUScope(int queryIndex) {
 //  Resolve GPU Results
 // ═════════════════════════════════════════════════════════════
 
-void T8Profiler::ResolveGPUFrame() {
+void Profiler::ResolveGPUFrame() {
 #ifdef OS_WINDOWS
   if (m_apiType == 1 && m_gpuState) {
     auto* state = static_cast<D3D12ProfileState*>(m_gpuState);
@@ -728,7 +728,7 @@ void T8Profiler::ResolveGPUFrame() {
 //  Reporting
 // ═════════════════════════════════════════════════════════════
 
-void T8Profiler::Report(int topN) const {
+void Profiler::Report(int topN) const {
   T8_LOG_INFO("╔══════════════════════════════════════════════════════════════════════════════╗");
   T8_LOG_INFO("║  PROFILER REPORT  (%d frames)                                               ║", m_frameCount);
   T8_LOG_INFO("╠═══════════════════════════════╦═══════════╦═══════════╦═══════╦════════╦═════╣");
@@ -760,11 +760,11 @@ void T8Profiler::Report(int topN) const {
   T8_LOG_INFO("╚═══════════════════════════════╩═══════════╩═══════════╩═══════╩════════╩═════╝");
 }
 
-void T8Profiler::Reset() {
+void Profiler::Reset() {
   m_scopes.clear();
   m_frameCount = 0;
 }
 
-} // namespace t800
+} // namespace t850
 
 #endif // T8_ENABLE_PROFILER

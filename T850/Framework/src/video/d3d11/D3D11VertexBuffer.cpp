@@ -13,7 +13,7 @@
 
 #include <video/d3d11/D3D11VertexBuffer.h>
 
-namespace t800 {
+namespace t850 {
   void * D3DXVertexBuffer::GetAPIObject() const
   {
     return (void*)APIBuffer.Get();
@@ -36,13 +36,13 @@ namespace t800 {
     D3D11_USAGE usage;
     switch (desc.usage)
     {
-    case T8_BUFFER_USAGE::DEFAULT:
+    case BufferUsage::DEFAULT:
       usage = D3D11_USAGE_DEFAULT;
       break;
-    case T8_BUFFER_USAGE::DINAMIC:
+    case BufferUsage::DINAMIC:
       usage = D3D11_USAGE_DYNAMIC;
       break;
-    case T8_BUFFER_USAGE::STATIC:
+    case BufferUsage::STATIC:
       usage = D3D11_USAGE_IMMUTABLE;
       break;
     default:
@@ -71,7 +71,7 @@ namespace t800 {
   void D3DXVertexBuffer::UpdateFromSystemCopy(const DeviceContext& deviceContext)
   {
     ID3D11DeviceContext* ctx = reinterpret_cast<ID3D11DeviceContext*>(deviceContext.GetAPIObject());
-    if (descriptor.usage == T8_BUFFER_USAGE::DINAMIC) {
+    if (descriptor.usage == BufferUsage::DINAMIC) {
       D3D11_MAPPED_SUBRESOURCE mapped = {};
       HRESULT hr = ctx->Map(APIBuffer.Get(), 0, D3D11_MAP_WRITE_DISCARD, 0, &mapped);
       if (SUCCEEDED(hr)) {
@@ -87,7 +87,7 @@ namespace t800 {
     sysMemCpy.clear();
     sysMemCpy.assign((char*)buffer, (char*)buffer + descriptor.byteWidth);
     ID3D11DeviceContext* ctx = reinterpret_cast<ID3D11DeviceContext*>(deviceContext.GetAPIObject());
-    if (descriptor.usage == T8_BUFFER_USAGE::DINAMIC) {
+    if (descriptor.usage == BufferUsage::DINAMIC) {
       D3D11_MAPPED_SUBRESOURCE mapped = {};
       HRESULT hr = ctx->Map(APIBuffer.Get(), 0, D3D11_MAP_WRITE_DISCARD, 0, &mapped);
       if (SUCCEEDED(hr)) {

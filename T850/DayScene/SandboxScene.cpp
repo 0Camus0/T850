@@ -1,4 +1,4 @@
-#include <SC_SandBox.h>
+#include <SandboxScene.h>
 #include <video/BaseDriver.h>
 #include <utils/Log.h>
 #include <scene/PrimitiveManager.h>
@@ -6,16 +6,16 @@
 #include <scene/RenderMesh.h>
 #include <scene/RenderSkinnedMesh.h>
 #include <scene/SceneDescriptor.h>
-#include <core/t8config.h>
+#include <core/Config.h>
 #include <iostream>
 #include <fstream>
 #include <string>
 #include <cmath>
 
-using namespace t800;
+using namespace t850;
 using std::string;
 
-void SC_SandBox::InitVars() {
+void SandboxScene::InitVars() {
 
 
 
@@ -91,21 +91,21 @@ void SC_SandBox::InitVars() {
   SceneProp.ToneMapWhiteLevel = 5.5f;
   SceneProp.LuminanceTau = 1.1f;
 
-  t800::FrameDumperConfig dumpCfg;
-  dumpCfg.dumpEnabled        = g_t8config.flags.dumpEnabled;
-  dumpCfg.dumpByFrame        = g_t8config.flags.dumpByFrame;
-  dumpCfg.dumpFrame          = g_t8config.dumpFrame;
-  dumpCfg.dumpSeconds        = g_t8config.dumpSeconds;
-  dumpCfg.debugFrames        = g_t8config.flags.debugFrames;
-  dumpCfg.keepRunning        = g_t8config.flags.keepRunning;
-  dumpCfg.replaySnapshotPath = g_t8config.replaySnapshotPath;
-  dumpCfg.sceneIndex         = g_t8config.startScene;
+  t850::FrameDumperConfig dumpCfg;
+  dumpCfg.dumpEnabled        = g_config.flags.dumpEnabled;
+  dumpCfg.dumpByFrame        = g_config.flags.dumpByFrame;
+  dumpCfg.dumpFrame          = g_config.dumpFrame;
+  dumpCfg.dumpSeconds        = g_config.dumpSeconds;
+  dumpCfg.debugFrames        = g_config.flags.debugFrames;
+  dumpCfg.keepRunning        = g_config.flags.keepRunning;
+  dumpCfg.replaySnapshotPath = g_config.replaySnapshotPath;
+  dumpCfg.sceneIndex         = g_config.startScene;
   m_dumper.Init(dumpCfg);
 }
 
-void SC_SandBox::CreateAssets() {
-  if (!m_renderGraph.Load("Scenes/SC_SandBox_RenderGraph.json")) {
-    T8_LOG_ERROR("[SC_SandBox] Failed to load render graph");
+void SandboxScene::CreateAssets() {
+  if (!m_renderGraph.Load("Scenes/SandboxScene_RenderGraph.json")) {
+    T8_LOG_ERROR("[SandboxScene] Failed to load render graph");
     return;
   }
   m_renderGraph.CreateRenderTargets(pFramework->pVideoDriver, SceneProp);
@@ -129,11 +129,11 @@ void SC_SandBox::CreateAssets() {
   EnvMapTexIndex = g_pBaseDriver->CreateTexture(string("sky/Ennis.dds"));
 
   // Load the glTF model
-  int index = PrimitiveMgr.CreateMesh(g_t8config.modelPath.c_str());
+  int index = PrimitiveMgr.CreateMesh(g_config.modelPath.c_str());
   if (index < 0) {
-    T8_LOG_ERROR("[SC_SandBox] Failed to load '%s'", g_t8config.modelPath.c_str());
+    T8_LOG_ERROR("[SandboxScene] Failed to load '%s'", g_config.modelPath.c_str());
   } else {
-    T8_LOG_INFO("[SC_SandBox] Loaded model '%s', primitive index=%d", g_t8config.modelPath.c_str(), index);
+    T8_LOG_INFO("[SandboxScene] Loaded model '%s', primitive index=%d", g_config.modelPath.c_str(), index);
     Meshes[0].CreateInstance(PrimitiveMgr.GetPrimitive(index), &VP);
     FitModelToView();
   }
@@ -166,21 +166,21 @@ void SC_SandBox::CreateAssets() {
   m_debugSphere.Create(6, 12);
 }
 
-void SC_SandBox::OnLoadScene() {
+void SandboxScene::OnLoadScene() {
   InitVars();
   CreateAssets();
 }
 
-void SC_SandBox::OnDestoryScene() {
+void SandboxScene::OnDestoryScene() {
   DestroyAssets();
 }
 
-void SC_SandBox::DestroyAssets() {
+void SandboxScene::DestroyAssets() {
   PrimitiveMgr.DestroyPrimitives();
   pFramework->pVideoDriver->DestroyRTs();
 }
 
-void SC_SandBox::OnUpdate(float _DtSecs) {
+void SandboxScene::OnUpdate(float _DtSecs) {
   DtSecs = _DtSecs;
   SceneProp.FrameDeltaSec = DtSecs;
 
@@ -188,7 +188,7 @@ void SC_SandBox::OnUpdate(float _DtSecs) {
   // D3D12 texture upload submits a temp command list + fence wait, which
   // conflicts with the main command list if done mid-frame.
   if (!m_pendingCubemap.empty()) {
-    T8_LOG_INFO("[SC_SandBox] Loading cubemap '%s' (old slot=%d)",
+    T8_LOG_INFO("[SandboxScene] Loading cubemap '%s' (old slot=%d)",
                 m_pendingCubemap.c_str(), EnvMapTexIndex);
     // Flush GPU before destroying — D3D12 may still reference the old
     // texture from the previous frame's command list.
@@ -199,7 +199,7 @@ void SC_SandBox::OnUpdate(float _DtSecs) {
     }
     EnvMapTexIndex = g_pBaseDriver->CreateTexture(m_pendingCubemap);
     Texture* newTex = g_pBaseDriver->GetTexture(EnvMapTexIndex);
-    T8_LOG_INFO("[SC_SandBox] Cubemap loaded: slot=%d tex=%p (%dx%d)",
+    T8_LOG_INFO("[SandboxScene] Cubemap loaded: slot=%d tex=%p (%dx%d)",
                 EnvMapTexIndex, newTex, newTex ? newTex->x : 0, newTex ? newTex->y : 0);
     Quads[0].SetEnvironmentMap(newTex);
     if (Meshes[0].pBase) {
@@ -225,7 +225,7 @@ void SC_SandBox::OnUpdate(float _DtSecs) {
   }
 
   // --dumpMatrices: log all camera matrices per frame, then exit
-  if (g_t8config.flags.dumpMatrices) {
+  if (g_config.flags.dumpMatrices) {
     static int s_matDumpFrame = 0;
     static std::ofstream s_matFile;
     if (s_matDumpFrame == 0) {
@@ -273,7 +273,7 @@ void SC_SandBox::OnUpdate(float _DtSecs) {
     s_matFile << "\n";
     s_matFile.flush();
     s_matDumpFrame++;
-    if (s_matDumpFrame >= g_t8config.dumpMatricesFrames) {
+    if (s_matDumpFrame >= g_config.dumpMatricesFrames) {
       s_matFile.close();
       T8_LOG_INFO("[dumpMatrices] Wrote %d frames to matrix_dump.csv", s_matDumpFrame);
       exit(0);
@@ -281,7 +281,7 @@ void SC_SandBox::OnUpdate(float _DtSecs) {
   }
 }
 
-void SC_SandBox::OnInput(InputManager* IManager) {
+void SandboxScene::OnInput(InputManager* IManager) {
   // Skip mouse-driven camera when replay snapshot is active
   if (m_dumper.IsReplayActive()) return;
 
@@ -329,9 +329,9 @@ void SC_SandBox::OnInput(InputManager* IManager) {
 
   // API switching
   if (IManager->PressedOnceKey(T800K_1))
-    pFramework->ChangeAPI(GRAPHICS_API::D3D11);
+    pFramework->ChangeAPI(GraphicsApi::D3D11);
   if (IManager->PressedOnceKey(T800K_2))
-    pFramework->ChangeAPI(GRAPHICS_API::OPENGL);
+    pFramework->ChangeAPI(GraphicsApi::OPENGL);
 
   // Debug toggles
   if (IManager->PressedOnceKey(T800K_F2))
@@ -349,7 +349,7 @@ void SC_SandBox::OnInput(InputManager* IManager) {
   }
 }
 
-void SC_SandBox::FitModelToView() {
+void SandboxScene::FitModelToView() {
   if (!Meshes[0].pBase) return;
   RenderMesh* rm = static_cast<RenderMesh*>(Meshes[0].pBase);
 
@@ -384,11 +384,11 @@ void SC_SandBox::FitModelToView() {
   Cam.FPlane = m_modelRadius * 100.0f;
   Cam.CreatePojection();
 
-  T8_LOG_INFO("[SC_SandBox] Model center=(%.2f,%.2f,%.2f) radius=%.2f dist=%.2f",
+  T8_LOG_INFO("[SandboxScene] Model center=(%.2f,%.2f,%.2f) radius=%.2f dist=%.2f",
     m_orbitTarget.x, m_orbitTarget.y, m_orbitTarget.z, m_modelRadius, m_orbitDist);
 }
 
-void SC_SandBox::ComputeOrbitCamera() {
+void SandboxScene::ComputeOrbitCamera() {
   // Spherical coordinates around the target
   XVECTOR3 target = m_orbitTarget + m_panOffset;
   float cy = std::cos(m_orbitYaw),   sy = std::sin(m_orbitYaw);
@@ -403,7 +403,7 @@ void SC_SandBox::ComputeOrbitCamera() {
   Cam.SetLookAt(target);
 }
 
-void SC_SandBox::OnDraw() {
+void SandboxScene::OnDraw() {
   // FPS logging (every 120 frames)
   static int sFrameCount = 0;
   static float sAccumTime = 0.0f;
@@ -437,7 +437,7 @@ void SC_SandBox::OnDraw() {
 
   // RT Dump via FrameDumper
   if (m_dumper.ShouldDump(DtSecs)) {
-    std::vector<t800::RTDumpEntry> rts = {
+    std::vector<t850::RTDumpEntry> rts = {
       {GBufferPass,           BaseDriver::COLOR0_ATTACHMENT, "GBuffer_Albedo"},
       {GBufferPass,           BaseDriver::COLOR1_ATTACHMENT, "GBuffer_Normals"},
       {GBufferPass,           BaseDriver::COLOR2_ATTACHMENT, "GBuffer_PBR"},
@@ -557,10 +557,10 @@ void SC_SandBox::OnDraw() {
   }
 }
 
-void SC_SandBox::PopulateGUI(t800::GUIManager& gui) {
-  // Load SC_SandBox.json for GUI descriptors
+void SandboxScene::PopulateGUI(t850::GUIManager& gui) {
+  // Load SandboxScene.json for GUI descriptors
   if (m_guiSetup.descriptor.name.empty()) {
-    m_guiSetup.Load("Scenes/SC_SandBox.json");
+    m_guiSetup.Load("Scenes/SandboxScene.json");
   }
 
   struct SliderMapping { const char* name; int settingIndex; };
@@ -666,7 +666,7 @@ void SC_SandBox::PopulateGUI(t800::GUIManager& gui) {
   }
 }
 
-void SC_SandBox::SyncToGUI(t800::GUIManager& gui) {
+void SandboxScene::SyncToGUI(t850::GUIManager& gui) {
   for (auto& sp : gui.GetSliderPairs()) {
     auto* slider = sp.slider;
     switch (slider->settingIndex) {
@@ -734,7 +734,7 @@ void SC_SandBox::SyncToGUI(t800::GUIManager& gui) {
   }
 }
 
-void SC_SandBox::SyncFromGUI(t800::GUIManager& gui) {
+void SandboxScene::SyncFromGUI(t850::GUIManager& gui) {
   for (auto& sp : gui.GetSliderPairs()) {
     auto* slider = sp.slider;
     if (!slider->knobDragging && !slider->knobHover) continue;
@@ -794,7 +794,7 @@ void SC_SandBox::SyncFromGUI(t800::GUIManager& gui) {
       if (sel->selectedIndex != m_currentCubemapIndex) {
         m_currentCubemapIndex = sel->selectedIndex;
         m_pendingCubemap = "sky/" + sel->CurrentOption();
-        T8_LOG_INFO("[SC_SandBox] Cubemap change queued: '%s'", m_pendingCubemap.c_str());
+        T8_LOG_INFO("[SandboxScene] Cubemap change queued: '%s'", m_pendingCubemap.c_str());
       }
     } break;
     case CHANGE_GAUSS_KERNEL_SAMPLE_COUNT: {

@@ -24,7 +24,7 @@
 #include <wrl/client.h>
 using namespace Microsoft::WRL;
 
-namespace t800 {
+namespace t850 {
   class D3DXShader : public ShaderBase {
   public:
 

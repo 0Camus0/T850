@@ -20,7 +20,7 @@
 
 namespace xF { class XDataBase; }
 
-namespace t800 {
+namespace t850 {
 namespace gltf {
 
 // Parse a .gltf (JSON + external resources) or .glb (binary container)
@@ -49,6 +49,6 @@ bool ConvertToXDatabase(const Document& doc,
                         const std::string& sourcePath);
 
 } // namespace gltf
-} // namespace t800
+} // namespace t850
 
 #endif // T800_GLTF_LOADER_H

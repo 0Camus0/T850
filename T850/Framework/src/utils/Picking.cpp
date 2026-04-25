@@ -8,7 +8,7 @@
 #include <cmath>
 #include <algorithm>
 
-namespace t800 {
+namespace t850 {
 
 // ── AABB helpers ──────────────────────────────────────
 
@@ -203,4 +203,4 @@ bool RayIntersectsTriangle(const Ray& ray,
   return true;
 }
 
-} // namespace t800
+} // namespace t850

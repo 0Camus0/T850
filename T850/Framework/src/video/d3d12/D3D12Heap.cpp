@@ -10,7 +10,7 @@
 
 #include <utils/Log.h>
 
-namespace t800 {
+namespace t850 {
 
   // ══════════════════════════════════════════════════════
   //  D3D12Heap
@@ -68,6 +68,6 @@ namespace t800 {
     auto h = GetGPUStart(); h.ptr += static_cast<UINT64>(i) * static_cast<UINT64>(m_incrementSize); return h;
   }
 
-} // namespace t800
+} // namespace t850
 
 #endif // OS_WINDOWS

@@ -18,7 +18,7 @@
 
 #include <cstdint>
 
-namespace t800 {
+namespace t850 {
 
   // Forward declarations
   class VulkanDevice;
@@ -43,7 +43,7 @@ namespace t800 {
     uint32_t        m_alignedSize = 0;
   };
 
-} // namespace t800
+} // namespace t850
 
 #endif // OS_WINDOWS
 #endif // T800_VULKANCONSTANTBUFFER_H

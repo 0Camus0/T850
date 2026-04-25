@@ -5,7 +5,7 @@
 
 #include <utils/xMaths.h>
 
-namespace t800 {
+namespace t850 {
   class SplineAgent;
 }
 class Camera {
@@ -38,9 +38,9 @@ public:
 	void	SetRatio(float r);
 	void	SetPlanes(float n, float f);
 
-  const t800::SplineAgent* m_agent;
-  void AttachAgent(const t800::SplineAgent& agent);
-  t800::SplineAgent* DettachAgent();
+  const t850::SplineAgent* m_agent;
+  void AttachAgent(const t850::SplineAgent& agent);
+  t850::SplineAgent* DettachAgent();
 
 	float		Fov;
 	float		AspectRatio;

@@ -11,7 +11,7 @@
 #include <utils/Log.h>
 #include <algorithm>
 
-namespace t800 {
+namespace t850 {
 
   extern Device*        T8Device;
   extern DeviceContext*  T8DeviceContext;
@@ -302,6 +302,6 @@ namespace t800 {
     srvSlots.clear();
   }
 
-} // namespace t800
+} // namespace t850
 
 #endif // OS_WINDOWS

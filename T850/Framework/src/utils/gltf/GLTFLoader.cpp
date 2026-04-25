@@ -25,7 +25,7 @@
 #include <sstream>
 #include <vector>
 
-namespace t800 {
+namespace t850 {
 namespace gltf {
 
 namespace {
@@ -268,4 +268,4 @@ bool ValidateDocument(const Document& doc) {
 }
 
 } // namespace gltf
-} // namespace t800
+} // namespace t850

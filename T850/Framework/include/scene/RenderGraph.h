@@ -10,7 +10,7 @@
 
 class Camera;
 
-namespace t800 {
+namespace t850 {
 
   class BaseDriver;
   class Texture;
@@ -128,6 +128,6 @@ namespace t800 {
     );
   };
 
-} // namespace t800
+} // namespace t850
 
 #endif

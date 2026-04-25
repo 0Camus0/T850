@@ -18,7 +18,7 @@
 
 #include <string>
 
-namespace t800 {
+namespace t850 {
 
   // ══════════════════════════════════════════════════════
   //  Vulkan Texture
@@ -44,7 +44,7 @@ namespace t800 {
     bool            m_isFloatTex = false;  // true for CreateFloatTexture textures
   };
 
-} // namespace t800
+} // namespace t850
 
 #endif // OS_WINDOWS
 #endif // T800_VULKANTEXTURE_H

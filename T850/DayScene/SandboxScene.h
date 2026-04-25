@@ -8,12 +8,12 @@
 #include <scene/SceneSetup.h>
 #include <scene/RenderGraph.h>
 #include <scene/WireframeSphere.h>
-#include <scene/T8_TextRenderer.h>
+#include <scene/TextRenderer.h>
 #include <debug/FrameDumper.h>
-#include <gui/T8_GUI.h>
+#include <gui/GUIManager.h>
 #include <Config.h>
 
-class SC_SandBox : public t800::SceneBase
+class SandboxScene : public t850::SceneBase
 {
   enum {
     CHANGE_EXPOSURE = 0,
@@ -55,7 +55,7 @@ class SC_SandBox : public t800::SceneBase
     CHANGE_MAX_NUM_OPTIONS
   };
 public:
-  SC_SandBox() {}
+  SandboxScene() {}
   void OnUpdate(float _DtSecs);
   void OnDraw();
   void OnInput(InputManager* IManager);
@@ -65,19 +65,19 @@ public:
   void CreateAssets();
   void DestroyAssets();
 
-  void PopulateGUI(t800::GUIManager& gui) override;
-  void SyncToGUI(t800::GUIManager& gui) override;
-  void SyncFromGUI(t800::GUIManager& gui) override;
+  void PopulateGUI(t850::GUIManager& gui) override;
+  void SyncToGUI(t850::GUIManager& gui) override;
+  void SyncFromGUI(t850::GUIManager& gui) override;
   void RequestDump() override { m_dumper.RequestDump(); }
 
   float DtSecs = 0.0f;
-  t800::PrimitiveManager PrimitiveMgr;
-  t800::PrimitiveInst Meshes[10];
-  t800::PrimitiveInst Quads[10];
+  t850::PrimitiveManager PrimitiveMgr;
+  t850::PrimitiveInst Meshes[10];
+  t850::PrimitiveInst Quads[10];
 
-  t800::RenderGraph m_renderGraph;
-  t800::SceneSetup m_guiSetup; // loaded from SC_SandBox.json for GUI descriptors
-  t800::FrameDumper m_dumper;
+  t850::RenderGraph m_renderGraph;
+  t850::SceneSetup m_guiSetup; // loaded from SandboxScene.json for GUI descriptors
+  t850::FrameDumper m_dumper;
   int ChangeActiveGaussSelection = 1; // 0=Shadow, 1=Bloom, 2=DOF
   int m_debugRTSelection = 0;
 
@@ -107,8 +107,8 @@ public:
   int m_currentCubemapIndex = 0;
   std::string m_pendingCubemap; // deferred load — set in SyncFromGUI, applied in OnUpdate
 
-  t800::TextRenderer m_debugText;
-  t800::WireframeSphere m_debugSphere;
+  t850::TextRenderer m_debugText;
+  t850::WireframeSphere m_debugSphere;
   bool m_showCullStats = false;
   bool m_showAABBs = false;
   bool m_showWireframe = true;

@@ -9,7 +9,7 @@
 
 #if defined(OS_WINDOWS)
 
-namespace t800 {
+namespace t850 {
 
   VulkanDriver* GetVkDriver() {
     return static_cast<VulkanDriver*>(g_pBaseDriver);
@@ -134,6 +134,6 @@ namespace t800 {
                          0, nullptr, 0, nullptr, 1, &barrier);
   }
 
-} // namespace t800
+} // namespace t850
 
 #endif // OS_WINDOWS

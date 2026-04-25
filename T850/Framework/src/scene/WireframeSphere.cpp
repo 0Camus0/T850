@@ -3,7 +3,7 @@
 #include <utils/Utils.h>
 #include <cmath>
 
-namespace t800 {
+namespace t850 {
   extern Device* T8Device;
   extern DeviceContext* T8DeviceContext;
 
@@ -38,7 +38,7 @@ void WireframeSphere::Create(int rings, int segments) {
     vstr = Defines + vstr;
     fstr = Defines + fstr;
 #endif
-    if (g_pBaseDriver->m_currentAPI == GRAPHICS_API::VULKAN) {
+    if (g_pBaseDriver->m_currentAPI == GraphicsApi::VULKAN) {
       std::string Defines;
       Defines += "#version 450\n\n";
       Defines += "#define ES_30\n\n";
@@ -94,16 +94,16 @@ void WireframeSphere::Create(int rings, int segments) {
 
   BufferDesc bdesc;
   bdesc.byteWidth = sizeof(CBuffer);
-  bdesc.usage = T8_BUFFER_USAGE::DEFAULT;
-  CB = (ConstantBuffer*)T8Device->CreateBuffer(T8_BUFFER_TYPE::CONSTANT, bdesc);
+  bdesc.usage = BufferUsage::DEFAULT;
+  CB = (ConstantBuffer*)T8Device->CreateBuffer(BufferType::CONSTANT, bdesc);
 
   bdesc.byteWidth = static_cast<int>(sizeof(Vert) * vertices.size());
-  bdesc.usage = T8_BUFFER_USAGE::DEFAULT;
-  VB = (VertexBuffer*)T8Device->CreateBuffer(T8_BUFFER_TYPE::VERTEX, bdesc, &vertices[0]);
+  bdesc.usage = BufferUsage::DEFAULT;
+  VB = (VertexBuffer*)T8Device->CreateBuffer(BufferType::VERTEX, bdesc, &vertices[0]);
 
   bdesc.byteWidth = static_cast<int>(indices.size() * sizeof(unsigned short));
-  bdesc.usage = T8_BUFFER_USAGE::DEFAULT;
-  IB = (IndexBuffer*)T8Device->CreateBuffer(T8_BUFFER_TYPE::INDEX, bdesc, &indices[0]);
+  bdesc.usage = BufferUsage::DEFAULT;
+  IB = (IndexBuffer*)T8Device->CreateBuffer(BufferType::INDEX, bdesc, &indices[0]);
 }
 
 void WireframeSphere::Draw(const XMATRIX44& vp, const XVECTOR3& center, float radius) {
@@ -114,12 +114,12 @@ void WireframeSphere::Draw(const XMATRIX44& vp, const XVECTOR3& center, float ra
   world = scale * translate;
   constantBuff.WVP = world * vp;
 
-  IB->Set(*T8DeviceContext, 0, T8_IB_FORMAR::R16);
+  IB->Set(*T8DeviceContext, 0, IndexBufferFormat::R16);
   VB->Set(*T8DeviceContext, sizeof(Vert), 0);
   s->Set(*T8DeviceContext);
   CB->UpdateFromBuffer(*T8DeviceContext, &constantBuff.WVP[0]);
   CB->Set(*T8DeviceContext);
-  T8DeviceContext->SetPrimitiveTopology(T8_TOPOLOGY::LINE_LIST);
+  T8DeviceContext->SetPrimitiveTopology(Topology::LINE_LIST);
   T8DeviceContext->DrawIndexed(static_cast<unsigned>(indexCount), 0, 0);
 }
 

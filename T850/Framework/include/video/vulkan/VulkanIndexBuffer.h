@@ -16,7 +16,7 @@
 #include <vulkan/vulkan.h>
 #include <vma/vk_mem_alloc.h>
 
-namespace t800 {
+namespace t850 {
 
   // Forward declarations
   class VulkanDevice;
@@ -28,7 +28,7 @@ namespace t800 {
   public:
     void* GetAPIObject() const override;
     void** GetAPIObjectReference() const override;
-    void Set(const DeviceContext& deviceContext, const unsigned offset, T8_IB_FORMAR::E format = T8_IB_FORMAR::R32) override;
+    void Set(const DeviceContext& deviceContext, const unsigned offset, IndexBufferFormat::E format = IndexBufferFormat::R32) override;
     void UpdateFromSystemCopy(const DeviceContext& deviceContext) override;
     void UpdateFromBuffer(const DeviceContext& deviceContext, const void* buffer) override;
     void release() override;
@@ -40,7 +40,7 @@ namespace t800 {
     void*           m_mappedData = nullptr;
   };
 
-} // namespace t800
+} // namespace t850
 
 #endif // OS_WINDOWS
 #endif // T800_VULKANINDEXBUFFER_H

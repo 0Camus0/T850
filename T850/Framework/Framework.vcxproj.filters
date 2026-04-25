@@ -1,4 +1,4 @@
-﻿<?xml version="1.0" encoding="utf-8"?>
+<?xml version="1.0" encoding="utf-8"?>
 <Project ToolsVersion="4.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
   <ItemGroup>
     <Filter Include="Source Files">
@@ -176,7 +176,7 @@
     <ClInclude Include="include\utils\cil.h">
       <Filter>Header Files\utils</Filter>
     </ClInclude>
-    <ClInclude Include="T8_descriptors.h">
+    <ClInclude Include="Descriptors.h">
       <Filter>Header Files\utils</Filter>
     </ClInclude>
     <ClInclude Include="include\video\d3d12\D3D12Driver.h">
@@ -251,10 +251,10 @@
     <ClInclude Include="include\utils\ResourceManager.h">
       <Filter>Header Files\utils</Filter>
     </ClInclude>
-    <ClInclude Include="include\utils\T8_Technique.h">
+    <ClInclude Include="include\utils\Technique.h">
       <Filter>Header Files\utils</Filter>
     </ClInclude>
-    <ClInclude Include="include\utils\T8_Spline.h">
+    <ClInclude Include="include\utils\Spline.h">
       <Filter>Header Files\utils</Filter>
     </ClInclude>
     <ClInclude Include="include\scene\SplineWireframe.h">
@@ -263,10 +263,10 @@
     <ClInclude Include="include\scene\LensFlare.h">
       <Filter>Header Files\scene</Filter>
     </ClInclude>
-    <ClInclude Include="include\scene\T8_TextRenderer.h">
+    <ClInclude Include="include\scene\TextRenderer.h">
       <Filter>Header Files\scene</Filter>
     </ClInclude>
-    <ClInclude Include="include\scene\T8_Quad.h">
+    <ClInclude Include="include\scene\Quad.h">
       <Filter>Header Files\scene</Filter>
     </ClInclude>
     <ClInclude Include="include\scene\RenderQuad.h">
@@ -323,7 +323,7 @@
     <ClInclude Include="include\core\DevLayer.h">
       <Filter>Header Files\core</Filter>
     </ClInclude>
-    <ClInclude Include="include\core\t8config.h">
+    <ClInclude Include="include\core\Config.h">
       <Filter>Header Files\core</Filter>
     </ClInclude>
     <ClInclude Include="include\debug\FrameDumper.h">
@@ -338,7 +338,7 @@
     <ClInclude Include="include\utils\GUIAtlasGenerator.h">
       <Filter>Header Files\gui</Filter>
     </ClInclude>
-    <ClInclude Include="include\gui\T8_GUI.h">
+    <ClInclude Include="include\gui\GUIManager.h">
       <Filter>Header Files\gui</Filter>
     </ClInclude>
     <ClInclude Include="include\scene\RenderGraph.h">
@@ -365,10 +365,10 @@
     <ClInclude Include="include\utils\SPIRVReflection.h">
       <Filter>Header Files\utils</Filter>
     </ClInclude>
-    <ClInclude Include="include\utils\T8ConfigRuntime.h">
+    <ClInclude Include="include\utils\ConfigRuntime.h">
       <Filter>Header Files\utils</Filter>
     </ClInclude>
-    <ClInclude Include="include\debug\T8_Profiler.h">
+    <ClInclude Include="include\debug\Profiler.h">
       <Filter>Header Files\utils</Filter>
     </ClInclude>
     <ClInclude Include="include\utils\ThreadPool.h">
@@ -385,7 +385,7 @@
     <ClCompile Include="src\core\Core.cpp">
       <Filter>Source Files\core</Filter>
     </ClCompile>
-    <ClCompile Include="src\core\t8config.cpp">
+    <ClCompile Include="src\core\Config.cpp">
       <Filter>Source Files\core</Filter>
     </ClCompile>
     <ClCompile Include="src\scene\PrimitiveInstance.cpp">
@@ -517,10 +517,10 @@
     <ClCompile Include="src\utils\ResourceManager.cpp">
       <Filter>Source Files\utils</Filter>
     </ClCompile>
-    <ClCompile Include="src\utils\T8_Technique.cpp">
+    <ClCompile Include="src\utils\Technique.cpp">
       <Filter>Source Files\utils</Filter>
     </ClCompile>
-    <ClCompile Include="src\utils\T8_Spline.cpp">
+    <ClCompile Include="src\utils\Spline.cpp">
       <Filter>Source Files\utils</Filter>
     </ClCompile>
     <ClCompile Include="src\scene\SplineWireframe.cpp">
@@ -529,10 +529,10 @@
     <ClCompile Include="src\scene\LensFlare.cpp">
       <Filter>Source Files\scene</Filter>
     </ClCompile>
-    <ClCompile Include="src\scene\T8_TextRenderer.cpp">
+    <ClCompile Include="src\scene\TextRenderer.cpp">
       <Filter>Source Files\scene</Filter>
     </ClCompile>
-    <ClCompile Include="src\scene\T8_Quad.cpp">
+    <ClCompile Include="src\scene\Quad.cpp">
       <Filter>Source Files\scene</Filter>
     </ClCompile>
     <ClCompile Include="src\scene\RenderQuad.cpp">
@@ -631,7 +631,7 @@
     <ClCompile Include="src\gui\GUIElement.cpp">
       <Filter>Source Files\gui</Filter>
     </ClCompile>
-    <ClCompile Include="src\gui\T8_GUI.cpp">
+    <ClCompile Include="src\gui\GUIManager.cpp">
       <Filter>Source Files\gui</Filter>
     </ClCompile>
     <ClCompile Include="src\scene\RenderGraph.cpp">
@@ -646,13 +646,13 @@
     <ClCompile Include="src\utils\ThreadPool.cpp">
       <Filter>Source Files\utils</Filter>
     </ClCompile>
-    <ClCompile Include="src\debug\T8_Profiler.cpp">
+    <ClCompile Include="src\debug\Profiler.cpp">
       <Filter>Source Files\utils</Filter>
     </ClCompile>
     <ClCompile Include="src\utils\SPIRVReflection.cpp">
       <Filter>Source Files\utils</Filter>
     </ClCompile>
-    <ClCompile Include="src\utils\T8ConfigRuntime.cpp">
+    <ClCompile Include="src\utils\ConfigRuntime.cpp">
       <Filter>Source Files\utils</Filter>
     </ClCompile>
     <ClCompile Include="src\utils\Log.cpp">

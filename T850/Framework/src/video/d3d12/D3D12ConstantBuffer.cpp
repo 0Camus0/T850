@@ -14,7 +14,7 @@
 
 #include <utils/Log.h>
 
-namespace t800 {
+namespace t850 {
 
   extern Device*        T8Device;
   extern DeviceContext*  T8DeviceContext;
@@ -95,6 +95,6 @@ namespace t800 {
     m_buffer.Reset(); sysMemCpy.clear(); delete this;
   }
 
-} // namespace t800
+} // namespace t850
 
 #endif // OS_WINDOWS

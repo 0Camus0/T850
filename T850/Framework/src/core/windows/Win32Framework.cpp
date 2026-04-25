@@ -26,7 +26,7 @@
 #include <mmsystem.h>
 #include <utils/ThreadPool.h>
 #include <utils/Log.h>
-namespace t800 {
+namespace t850 {
   void Win32Framework::InitGlobalVars() {
 
 
@@ -161,11 +161,11 @@ namespace t800 {
 
   void Win32Framework::ResetApplication() {
   }
-  void Win32Framework::ChangeAPI(GRAPHICS_API::E api)
+  void Win32Framework::ChangeAPI(GraphicsApi::E api)
   {
 #ifndef OS_WINDOWS
-    if (api == GRAPHICS_API::D3D11) {
-      api = GRAPHICS_API::OPENGL;
+    if (api == GraphicsApi::D3D11) {
+      api = GraphicsApi::OPENGL;
     }
 #endif
     if (m_inited) {
@@ -186,22 +186,22 @@ namespace t800 {
     }
 
     std::string title = aplicationDescriptor.title;
-    if (api == GRAPHICS_API::OPENGL)
+    if (api == GraphicsApi::OPENGL)
       title += "   GL";
-    else if (api == GRAPHICS_API::D3D12)
+    else if (api == GraphicsApi::D3D12)
       title += "   D3D12";
-    else if (api == GRAPHICS_API::VULKAN)
+    else if (api == GraphicsApi::VULKAN)
       title += "   Vulkan";
     else
       title += "   D3D11";
 
     Uint64 flags = 0;
 
-	if (aplicationDescriptor.videoMode == t800::T8_VIDEO_MODE::FULLSCREEN) {
+	if (aplicationDescriptor.videoMode == t850::VideoMode::FULLSCREEN) {
 		flags |= SDL_WINDOW_FULLSCREEN;
 	}
 
-    if (api == GRAPHICS_API::OPENGL) {
+    if (api == GraphicsApi::OPENGL) {
 #if defined(USING_OPENGL)
       SDL_SetHint(SDL_HINT_OPENGL_ES_DRIVER, "0");
       flags |= SDL_WINDOW_OPENGL;
@@ -211,7 +211,7 @@ namespace t800 {
       T8_LOG_ERROR("USING_OPENGL not defined — GL context will NOT be created");
 #endif
     }
-    else if (api == GRAPHICS_API::VULKAN) {
+    else if (api == GraphicsApi::VULKAN) {
       flags |= SDL_WINDOW_VULKAN;
     }
 
@@ -263,7 +263,7 @@ namespace t800 {
       }
     }
 
-    if (api == GRAPHICS_API::OPENGL) {
+    if (api == GraphicsApi::OPENGL) {
 #if defined(USING_OPENGL)
       m_glContext = SDL_GL_CreateContext(m_pWindow);
       if (!m_glContext) {
@@ -276,11 +276,11 @@ namespace t800 {
 #endif
       pVideoDriver = new GLDriver;
     }
-    else if (api == GRAPHICS_API::D3D12) {
+    else if (api == GraphicsApi::D3D12) {
       pVideoDriver = new D3D12Driver;
       pVideoDriver->SetDimensions(aplicationDescriptor.width, aplicationDescriptor.height);
     }
-    else if (api == GRAPHICS_API::VULKAN) {
+    else if (api == GraphicsApi::VULKAN) {
       pVideoDriver = new VulkanDriver;
       pVideoDriver->SetDimensions(aplicationDescriptor.width, aplicationDescriptor.height);
     }

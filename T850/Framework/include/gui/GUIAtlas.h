@@ -1,10 +1,10 @@
 #pragma once
 
-namespace t800 {
+namespace t850 {
 
   class GUIAtlas {
   public:
     static bool RecreateDefault(int maxSpriteSize, int& width, int& height);
   };
 
-} // namespace t800
+} // namespace t850

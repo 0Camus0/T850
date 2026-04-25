@@ -5,7 +5,7 @@
 #include <scene/PrimitiveInstance.h>
 #include <utils/Camera.h>
 #include <video/BaseDriver.h>
-#include <T8_descriptors.h>
+#include <Descriptors.h>
 #include <utils/Log.h>
 
 #pragma warning(push)
@@ -13,14 +13,14 @@
 #include <glaze/glaze.hpp>
 #pragma warning(pop)
 
-#include <debug/T8_Profiler.h>
+#include <debug/Profiler.h>
 
 #include <fstream>
 #include <sstream>
 #include <cstdio>
 #include <unordered_map>
 
-namespace t800 {
+namespace t850 {
 
 // ---- JSON loading via glaze ----
 
@@ -349,7 +349,7 @@ int RenderGraph::GetRTHandle(const std::string& name) const {
 // ---- Print ----
 
 void RenderGraph::PrintGraph() const {
-  if (t800::Log::GetMaxLevel() < t800::Log::LVL_DEBUG) return;
+  if (t850::Log::GetMaxLevel() < t850::Log::LVL_DEBUG) return;
   printf("\n=== Render Graph ===\n");
   for (const auto& node : m_nodes) {
     printf("[%2d] %-30s -> RT: %-20s (handle %d)\n",
@@ -412,17 +412,17 @@ void RenderGraph::ExecutePass(
   int envMapTexIndex)
 {
   const auto& pass = *node.desc;
-  T8_PROFILE_SCOPE(t800::g_profiler, pass.name.c_str());
+  T8_PROFILE_SCOPE(t850::g_profiler, pass.name.c_str());
 
   // Pre-pass state changes
   int ds = ResolveDepthStencilState(pass.state.depth_stencil);
-  if (ds >= 0) driver->SetDepthStencilState(static_cast<BaseDriver::DEPTH_STENCIL_STATES>(ds));
+  if (ds >= 0) driver->SetDepthStencilState(static_cast<BaseDriver::DepthStencilStates>(ds));
 
   int cf = ResolveCullFace(pass.state.cull_face);
-  if (cf >= 0) driver->SetCullFace(static_cast<BaseDriver::FACE_CULLING>(cf));
+  if (cf >= 0) driver->SetCullFace(static_cast<BaseDriver::FaceCulling>(cf));
 
   int bs = ResolveBlendState(pass.state.blend);
-  if (bs >= 0) driver->SetBlendState(static_cast<BaseDriver::BLEND_STATES>(bs));
+  if (bs >= 0) driver->SetBlendState(static_cast<BaseDriver::BlendStates>(bs));
 
   // Camera selection
   if (pass.camera == "light" && lightCam) {
@@ -573,13 +573,13 @@ void RenderGraph::ExecutePass(
 
   // Post-pass state restoration
   int postDs = ResolveDepthStencilState(pass.post_state.depth_stencil);
-  if (postDs >= 0) driver->SetDepthStencilState(static_cast<BaseDriver::DEPTH_STENCIL_STATES>(postDs));
+  if (postDs >= 0) driver->SetDepthStencilState(static_cast<BaseDriver::DepthStencilStates>(postDs));
 
   int postCf = ResolveCullFace(pass.post_state.cull_face);
-  if (postCf >= 0) driver->SetCullFace(static_cast<BaseDriver::FACE_CULLING>(postCf));
+  if (postCf >= 0) driver->SetCullFace(static_cast<BaseDriver::FaceCulling>(postCf));
 
   int postBs = ResolveBlendState(pass.post_state.blend);
-  if (postBs >= 0) driver->SetBlendState(static_cast<BaseDriver::BLEND_STATES>(postBs));
+  if (postBs >= 0) driver->SetBlendState(static_cast<BaseDriver::BlendStates>(postBs));
 }
 
-} // namespace t800
+} // namespace t850

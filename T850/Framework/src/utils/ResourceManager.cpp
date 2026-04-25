@@ -7,7 +7,7 @@
 #include <utils/Log.h>
 #include <utils/gltf/GLTFLoader.h>
 
-namespace t800 {
+namespace t850 {
 
   // Lower-case ASCII extension after the last '.', empty if none.
   static std::string FileExtensionLower(const std::string& path) {

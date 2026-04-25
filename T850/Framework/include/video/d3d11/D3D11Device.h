@@ -20,14 +20,14 @@
 #include <wrl/client.h>
 #include <string>
 
-namespace t800 {
+namespace t850 {
   class D3DXDevice : public Device {
   public:
     void* GetAPIObject() const override;
     void** GetAPIObjectReference() const override;
 
     void release() override;
-    Buffer* CreateBuffer(T8_BUFFER_TYPE::E bufferType, BufferDesc desc, void* initialData = nullptr) override;
+    Buffer* CreateBuffer(BufferType::E bufferType, BufferDesc desc, void* initialData = nullptr) override;
     ShaderBase* CreateShader(std::string src_vs, std::string src_fs, ShaderKey key = ShaderKey(), const std::string& vs_name = "", const std::string& fs_name = "") override;
     Texture* CreateTexture(std::string path) override;
     Texture* CreateTextureFromMemory(const unsigned char *buff, int w, int h, int channels, std::string name) override;

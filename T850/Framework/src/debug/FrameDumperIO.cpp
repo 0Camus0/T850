@@ -11,7 +11,7 @@
 
 // ── Glaze-based JSON I/O for snapshot files ──
 
-namespace t800 {
+namespace t850 {
 
 // ── Legacy .txt format parser ──
 
@@ -98,4 +98,4 @@ bool SaveSnapshot(const std::string& path, const SnapshotJson& data) {
   return true;
 }
 
-} // namespace t800
+} // namespace t850

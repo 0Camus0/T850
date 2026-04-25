@@ -26,7 +26,7 @@
 #include <wrl/client.h>
 using namespace Microsoft::WRL;
 
-namespace t800 {
+namespace t850 {
   class D3DXRT : public BaseRT {
   public:
     bool			LoadAPIRT();

@@ -5,7 +5,7 @@
 #include <vector>
 #include <array>
 
-namespace t800 {
+namespace t850 {
 
   // ---- Render Target declaration ----
 
@@ -96,6 +96,6 @@ namespace t800 {
 
   bool LoadRenderGraphDescriptor(const std::string& path, RenderGraphDesc& desc);
 
-} // namespace t800
+} // namespace t850
 
 #endif

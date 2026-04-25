@@ -1,14 +1,14 @@
 #include <pch.h>
 #include <gui/GUIElement.h>
-#include <scene/T8_TextRenderer.h>
-#include <scene/T8_Quad.h>
+#include <scene/TextRenderer.h>
+#include <scene/Quad.h>
 #include <video/BaseDriver.h>
 #include <utils/Log.h>
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
 
-namespace t800 {
+namespace t850 {
 
 extern Device*        T8Device;
 extern DeviceContext* T8DeviceContext;
@@ -452,4 +452,4 @@ void GUIButton::UpdateInteraction(float mx, float my, bool mouseDown) {
   wasMouseDown = mouseDown;
 }
 
-} // namespace t800
+} // namespace t850

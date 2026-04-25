@@ -10,7 +10,7 @@
 
 #include <utils/Log.h>
 
-namespace t800 {
+namespace t850 {
 
   extern Device*        T8Device;
   extern DeviceContext*  T8DeviceContext;
@@ -28,7 +28,7 @@ namespace t800 {
 
     DXGI_FORMAT fmt = DXGI_FORMAT_R8G8B8A8_UNORM;
     int bytesPerPixel = 4;
-    if (this->props & TEXT_BASIC_FORMAT::CH_ALPHA) { fmt = DXGI_FORMAT_R8_UNORM; bytesPerPixel = 1; }
+    if (this->props & TextBasicFormat::CH_ALPHA) { fmt = DXGI_FORMAT_R8_UNORM; bytesPerPixel = 1; }
     if (cil_props & CIL_HALF_FLOAT) { fmt = DXGI_FORMAT_R16G16B16A16_FLOAT; bytesPerPixel = 8; }
 
     bool isCube = (cil_props & CIL_CUBE_MAP) != 0;
@@ -293,10 +293,10 @@ namespace t800 {
     sd.Filter = D3D12_FILTER_ANISOTROPIC;
     sd.MaxAnisotropy = 16;
 
-    if (params & TEXT_BASIC_PARAMS::NEAREST_FILTER) {
+    if (params & TextBasicParams::NEAREST_FILTER) {
       sd.Filter = D3D12_FILTER_MIN_MAG_MIP_POINT;
       sd.MaxAnisotropy = 1;
-    } else if (params & TEXT_BASIC_PARAMS::LINEAR_FILTER) {
+    } else if (params & TextBasicParams::LINEAR_FILTER) {
       sd.Filter = D3D12_FILTER_MIN_MAG_LINEAR_MIP_POINT;
       sd.MaxAnisotropy = 1;
     }
@@ -304,18 +304,18 @@ namespace t800 {
     // Address mode — default CLAMP
     sd.AddressU = sd.AddressV = sd.AddressW = D3D12_TEXTURE_ADDRESS_MODE_CLAMP;
 
-    if (params & TEXT_BASIC_PARAMS::TILED) {
+    if (params & TextBasicParams::TILED) {
       sd.AddressU = sd.AddressV = sd.AddressW = D3D12_TEXTURE_ADDRESS_MODE_WRAP;
     }
 
-    if (params & TEXT_BASIC_PARAMS::CLAMP_TO_BORDER) {
+    if (params & TextBasicParams::CLAMP_TO_BORDER) {
       sd.AddressU = sd.AddressV = sd.AddressW = D3D12_TEXTURE_ADDRESS_MODE_BORDER;
       sd.Filter = D3D12_FILTER_MIN_MAG_MIP_LINEAR;
       sd.MaxAnisotropy = 1;
     }
 
     sd.MinLOD = 0.0f;
-    sd.MaxLOD = (params & (TEXT_BASIC_PARAMS::NEAREST_FILTER | TEXT_BASIC_PARAMS::LINEAR_FILTER)) ? 0.0f : D3D12_FLOAT32_MAX;
+    sd.MaxLOD = (params & (TextBasicParams::NEAREST_FILTER | TextBasicParams::LINEAR_FILTER)) ? 0.0f : D3D12_FLOAT32_MAX;
     sd.MipLODBias = 0.0f;
     sd.ComparisonFunc = D3D12_COMPARISON_FUNC_NEVER;
 
@@ -400,6 +400,6 @@ namespace t800 {
     cmdList->ResourceBarrier(1, &barrier);
   }
 
-} // namespace t800
+} // namespace t850
 
 #endif // OS_WINDOWS

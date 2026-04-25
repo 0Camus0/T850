@@ -14,7 +14,7 @@
 #include <utils/Log.h>
 #include <cstring>
 
-namespace t800 {
+namespace t850 {
 
   extern Device*        T8Device;
   extern DeviceContext*  T8DeviceContext;
@@ -56,10 +56,10 @@ namespace t800 {
     T8_LOG_DEBUG("[Vulkan] IB created: %d bytes", desc.byteWidth);
   }
 
-  void VulkanIndexBuffer::Set(const DeviceContext& deviceContext, const unsigned offset, T8_IB_FORMAR::E format) {
+  void VulkanIndexBuffer::Set(const DeviceContext& deviceContext, const unsigned offset, IndexBufferFormat::E format) {
     const_cast<DeviceContext*>(&deviceContext)->actualIndexBuffer = (IndexBuffer*)this;
     VkCommandBuffer cmd = static_cast<const VulkanDeviceContext*>(&deviceContext)->GetCommandBuffer();
-    VkIndexType idxType = (format == T8_IB_FORMAR::R16) ? VK_INDEX_TYPE_UINT16 : VK_INDEX_TYPE_UINT32;
+    VkIndexType idxType = (format == IndexBufferFormat::R16) ? VK_INDEX_TYPE_UINT16 : VK_INDEX_TYPE_UINT32;
     vkCmdBindIndexBuffer(cmd, m_buffer, (VkDeviceSize)offset, idxType);
   }
 
@@ -85,6 +85,6 @@ namespace t800 {
     delete this;
   }
 
-} // namespace t800
+} // namespace t850
 
 #endif // OS_WINDOWS

@@ -27,7 +27,7 @@ extern "C" {
 #include <glaze/glaze.hpp>
 #pragma warning(pop)
 
-namespace t800 {
+namespace t850 {
 
 // ─── JSON schema for atlas metadata ──────────────────────
 struct AtlasEntryJson {
@@ -358,4 +358,4 @@ bool GUIAtlasGenerator::LoadMetadata(const std::string& jsonPath,
   return true;
 }
 
-} // namespace t800
+} // namespace t850

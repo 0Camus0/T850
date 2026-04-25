@@ -19,7 +19,7 @@
 
 #include <utils/Log.h>
 #include <utils/SPIRVReflection.h>
-#include <debug/T8_Profiler.h>
+#include <debug/Profiler.h>
 #include <iostream>
 #include <fstream>
 #include <string>
@@ -27,7 +27,7 @@
 #include <cstring>
 #include <algorithm>
 
-namespace t800 {
+namespace t850 {
 
   extern Device*        T8Device;
   extern DeviceContext*  T8DeviceContext;
@@ -929,7 +929,7 @@ namespace t800 {
 
   void VulkanDriver::BeginFrame() {
     {
-      T8_PROFILE_CPU_SCOPE(t800::g_profiler, "VK_FenceWait");
+      T8_PROFILE_CPU_SCOPE(t850::g_profiler, "VK_FenceWait");
       WaitForFence(m_currentFrame);
       vkResetFences(m_device, 1, &m_inFlightFences[m_currentFrame]);
     }
@@ -970,7 +970,7 @@ namespace t800 {
 
     // Flush profiler query pool reset (must happen before any render pass)
 #ifdef T8_ENABLE_PROFILER
-    if (t800::g_profiler) t800::g_profiler->FlushVulkanQueryReset(cmd);
+    if (t850::g_profiler) t850::g_profiler->FlushVulkanQueryReset(cmd);
 #endif
 
     // Reset per-frame descriptor pool and pending state
@@ -1150,17 +1150,17 @@ namespace t800 {
     m_frameStarted = false;
   }
 
-  void VulkanDriver::SetBlendState(BLEND_STATES state) {
+  void VulkanDriver::SetBlendState(BlendStates state) {
     T8_LOG_TRACE("[Vulkan] SetBlendState(%d)", state);
     m_currentBlend = state;
   }
 
-  void VulkanDriver::SetDepthStencilState(DEPTH_STENCIL_STATES state) {
+  void VulkanDriver::SetDepthStencilState(DepthStencilStates state) {
     T8_LOG_TRACE("[Vulkan] SetDepthStencilState(%d)", state);
     m_currentDepth = state;
   }
 
-  void VulkanDriver::SetCullFace(FACE_CULLING state) {
+  void VulkanDriver::SetCullFace(FaceCulling state) {
     T8_LOG_TRACE("[Vulkan] SetCullFace(%d)", state);
     m_currentCull = state;
     m_FaceCulling = state;
@@ -1852,7 +1852,7 @@ reopen:
     T8_LOG_INFO("[Vulkan] Dummy textures created (2D + Cube)");
   }
 
-} // namespace t800
+} // namespace t850
 
 #endif // OS_WINDOWS
 

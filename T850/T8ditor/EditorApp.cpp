@@ -19,7 +19,7 @@
 #include <utils/Picking.h>
 #include <debug/FrameDumper.h>
 
-#include <T8_descriptors.h>
+#include <Descriptors.h>
 
 #include <cmath>
 #include <filesystem>
@@ -34,7 +34,7 @@
 #include <core/windows/Win32Framework.h>
 #endif
 
-namespace t800 {
+namespace t850 {
   extern Device* T8Device;
 }
 
@@ -46,8 +46,8 @@ namespace {
   const float kDegToRad = xPI / 180.0f;
 
   // Persistent skybox (editor backdrop, separate from scene meshes).
-  t800::PrimitiveManager g_skyboxMgr;
-  t800::PrimitiveInst    g_skyboxInst;
+  t850::PrimitiveManager g_skyboxMgr;
+  t850::PrimitiveInst    g_skyboxInst;
   int                    g_skyboxPrimId = -1;
   bool                   g_skyboxReady  = false;
 
@@ -89,8 +89,8 @@ namespace {
   ::Camera g_viewCamera;
 
   // Deferred render graph
-  t800::RenderGraph   g_renderGraph;
-  t800::PrimitiveInst g_quads[8];
+  t850::RenderGraph   g_renderGraph;
+  t850::PrimitiveInst g_quads[8];
   bool                g_deferredReady = false;
   XMATRIX44           g_quadVP;  // persistent identity matrix for screen-space quads
 
@@ -98,7 +98,7 @@ namespace {
   int g_debugRT = -1;
 
   // Dummy 1x1 white texture for shadow slot
-  t800::Texture* g_dummyWhiteTex = nullptr;
+  t850::Texture* g_dummyWhiteTex = nullptr;
 
   // Dummy environment map (1x1 gray cube for skybox matID=0)
   int g_dummyEnvMapIdx = -1;
@@ -107,7 +107,7 @@ namespace {
   std::string g_pendingLoadPath;
 
   // Frame dumper for RT snapshot debugging (space key)
-  t800::FrameDumper g_dumper;
+  t850::FrameDumper g_dumper;
   bool              g_dumperInited = false;
 }
 
@@ -184,7 +184,7 @@ void EditorApp::CreateAssets() {
     g_renderGraph.CreateRenderTargets(pFramework->pVideoDriver, m_sceneProps);
     XMatIdentity(g_quadVP);
     for (int i = 0; i < 8; ++i) {
-      g_quads[i].CreateInstance(m_primMgr.GetPrimitive(t800::PrimitiveManager::QUAD), &g_quadVP);
+      g_quads[i].CreateInstance(m_primMgr.GetPrimitive(t850::PrimitiveManager::QUAD), &g_quadVP);
       g_quads[i].Update();
     }
     // Bind the G-buffer textures to quads[0] — the deferred lighting quad reads from these
@@ -201,12 +201,12 @@ void EditorApp::CreateAssets() {
     // Create a 1x1 white texture for shadow slot (deferred shader reads
     // shadow from tex5; without it, Shadow=0 and everything multiplies to black)
     unsigned char white[4] = { 255, 255, 255, 255 };
-    g_dummyWhiteTex = t800::T8Device->CreateTextureFromMemory(white, 1, 1, 4, "dummyWhite");
+    g_dummyWhiteTex = t850::T8Device->CreateTextureFromMemory(white, 1, 1, 4, "dummyWhite");
 
     // Load environment cubemap for skybox (matID=0 in deferred shader samples texEnv)
-    g_dummyEnvMapIdx = t800::g_pBaseDriver->CreateTexture("sky/CubeMap_SkyWater.dds");
+    g_dummyEnvMapIdx = t850::g_pBaseDriver->CreateTexture("sky/CubeMap_SkyWater.dds");
     if (g_dummyEnvMapIdx >= 0) {
-      g_quads[0].SetEnvironmentMap(t800::g_pBaseDriver->GetTexture(g_dummyEnvMapIdx));
+      g_quads[0].SetEnvironmentMap(t850::g_pBaseDriver->GetTexture(g_dummyEnvMapIdx));
       T8_LOG_INFO("[T8ditor] Environment cubemap loaded");
     }
 
@@ -217,7 +217,7 @@ void EditorApp::CreateAssets() {
 
   // Initialize frame dumper (space key to dump)
   {
-    t800::FrameDumperConfig cfg;
+    t850::FrameDumperConfig cfg;
     cfg.debugFrames = true;
     cfg.keepRunning = true;
     g_dumper.Init(cfg);
@@ -231,7 +231,7 @@ void EditorApp::CreateAssets() {
 
 #ifdef OS_WINDOWS
   {
-    auto* w32 = static_cast<t800::Win32Framework*>(pFramework);
+    auto* w32 = static_cast<t850::Win32Framework*>(pFramework);
     if (w32 && w32->m_pWindow)
       SDL_SetWindowResizable(w32->m_pWindow, true);
   }
@@ -318,7 +318,7 @@ void EditorApp::DestroyAssets() {
 
 void EditorApp::CheckResize() {
 #ifdef OS_WINDOWS
-  auto* w32 = static_cast<t800::Win32Framework*>(pFramework);
+  auto* w32 = static_cast<t850::Win32Framework*>(pFramework);
   if (!w32 || !w32->m_pWindow) return;
   int w = 0, h = 0;
   SDL_GetWindowSizeInPixels(w32->m_pWindow, &w, &h);
@@ -352,7 +352,7 @@ void EditorApp::CheckResize() {
         if (g_dummyWhiteTex)
           g_quads[0].SetTexture(g_dummyWhiteTex, 5);
         if (g_dummyEnvMapIdx >= 0)
-          g_quads[0].SetEnvironmentMap(t800::g_pBaseDriver->GetTexture(g_dummyEnvMapIdx));
+          g_quads[0].SetEnvironmentMap(t850::g_pBaseDriver->GetTexture(g_dummyEnvMapIdx));
         T8_LOG_INFO("[T8ditor] Render targets recreated at %dx%d", w, h);
       }
     }
@@ -392,7 +392,7 @@ void EditorApp::OnUpdate() {
       // Recreate deferred quads from fresh QUAD primitive
       if (g_deferredReady) {
         for (int i = 0; i < 8; ++i) {
-          g_quads[i].CreateInstance(m_primMgr.GetPrimitive(t800::PrimitiveManager::QUAD), &g_quadVP);
+          g_quads[i].CreateInstance(m_primMgr.GetPrimitive(t850::PrimitiveManager::QUAD), &g_quadVP);
           g_quads[i].Update();
         }
         if (!pFramework->pVideoDriver->RTs.empty()) {
@@ -405,7 +405,7 @@ void EditorApp::OnUpdate() {
         if (g_dummyWhiteTex)
           g_quads[0].SetTexture(g_dummyWhiteTex, 5);
         if (g_dummyEnvMapIdx >= 0)
-          g_quads[0].SetEnvironmentMap(t800::g_pBaseDriver->GetTexture(g_dummyEnvMapIdx));
+          g_quads[0].SetEnvironmentMap(t850::g_pBaseDriver->GetTexture(g_dummyEnvMapIdx));
         m_primMgr.SetSceneProps(&m_sceneProps);
       }
 
@@ -597,7 +597,7 @@ static ImVec2 WorldToScreen(const XVECTOR3& p, const XMATRIX44& vp, int w, int h
 }
 
 // Test if any part of a world AABB projects inside a screen rectangle.
-static bool AABBInScreenRect(const t800::AABB& box, const XMATRIX44& vp,
+static bool AABBInScreenRect(const t850::AABB& box, const XMATRIX44& vp,
                               int viewW, int viewH,
                               float rMinX, float rMinY, float rMaxX, float rMaxY) {
   float sMinX = 1e30f, sMinY = 1e30f, sMaxX = -1e30f, sMaxY = -1e30f;
@@ -656,7 +656,7 @@ void EditorApp::HandleMousePick() {
       for (int i = 0; i < (int)g_objects.size(); ++i) {
         if (!g_objects[i].wireframe.IsLoaded() || g_objects[i].frozen || !g_objects[i].visible)
           continue;
-        t800::AABB worldBox = g_objects[i].wireframe.WorldAABB();
+        t850::AABB worldBox = g_objects[i].wireframe.WorldAABB();
         if (AABBInScreenRect(worldBox, m_vp, m_lastW, m_lastH, rMinX, rMinY, rMaxX, rMaxY)) {
           g_multiSelect.insert(i);
         }
@@ -682,7 +682,7 @@ single_pick:
 
   XMATRIX44 invVP;
   m_vp.Inverse(&invVP);
-  t800::Ray ray = t800::ScreenPointToRay(
+  t850::Ray ray = t850::ScreenPointToRay(
     (float)IManager.mouseX, (float)IManager.mouseY,
     0, 0, m_lastW, m_lastH, invVP);
 
@@ -694,9 +694,9 @@ single_pick:
   // Test meshes
   for (int i = 0; i < (int)g_objects.size(); ++i) {
     if (!g_objects[i].wireframe.IsLoaded() || g_objects[i].frozen) continue;
-    t800::AABB worldBox = g_objects[i].wireframe.WorldAABB();
+    t850::AABB worldBox = g_objects[i].wireframe.WorldAABB();
     float t = 0.0f;
-    if (t800::RayIntersectsAABB(ray, worldBox, t) && t < bestT) {
+    if (t850::RayIntersectsAABB(ray, worldBox, t) && t < bestT) {
       bestT = t; bestIdx = i; bestType = 0;
     }
   }
@@ -705,11 +705,11 @@ single_pick:
   for (int i = 0; i < (int)g_cameras.size(); ++i) {
     if (g_cameras[i].frozen || !g_cameras[i].visible) continue;
     float hs = 2.0f;
-    t800::AABB box(
+    t850::AABB box(
       XVECTOR3(g_cameras[i].position.x - hs, g_cameras[i].position.y - hs, g_cameras[i].position.z - hs),
       XVECTOR3(g_cameras[i].position.x + hs, g_cameras[i].position.y + hs, g_cameras[i].position.z + hs));
     float t = 0.0f;
-    if (t800::RayIntersectsAABB(ray, box, t) && t < bestT) {
+    if (t850::RayIntersectsAABB(ray, box, t) && t < bestT) {
       bestT = t; bestIdx = i; bestType = 1;
     }
   }
@@ -718,11 +718,11 @@ single_pick:
   for (int i = 0; i < (int)g_lights.size(); ++i) {
     if (g_lights[i].frozen || !g_lights[i].visible) continue;
     float hs = (g_lights[i].type == EditorLightType::Omni) ? 2.5f : 2.0f;
-    t800::AABB box(
+    t850::AABB box(
       XVECTOR3(g_lights[i].position.x - hs, g_lights[i].position.y - hs, g_lights[i].position.z - hs),
       XVECTOR3(g_lights[i].position.x + hs, g_lights[i].position.y + hs, g_lights[i].position.z + hs));
     float t = 0.0f;
-    if (t800::RayIntersectsAABB(ray, box, t) && t < bestT) {
+    if (t850::RayIntersectsAABB(ray, box, t) && t < bestT) {
       bestT = t; bestIdx = i; bestType = 2;
     }
   }
@@ -767,7 +767,7 @@ single_pick:
 void EditorApp::OnDraw() {
   if (!pFramework || !pFramework->pVideoDriver) return;
 
-  t800::BaseDriver* drv = pFramework->pVideoDriver;
+  t850::BaseDriver* drv = pFramework->pVideoDriver;
   T8_LOG_TRACE("[T8ditor] OnDraw: BeginFrame...");
   drv->BeginFrame();
   T8_LOG_TRACE("[T8ditor] OnDraw: Clear...");
@@ -859,12 +859,12 @@ void EditorApp::OnDraw() {
 
     // Render meshes: deferred via render graph on D3D11/D3D12, forward on GL
     bool useDeferred = g_deferredReady
-                    && drv->m_currentAPI != t800::GRAPHICS_API::OPENGL;
+                    && drv->m_currentAPI != t850::GraphicsApi::OPENGL;
 
     if (useDeferred) {
       // Build mesh array: skybox first (index 0), then scene meshes
       // The render graph JSON controls which indices are drawn in each pass.
-      std::vector<t800::PrimitiveInst*> allMeshes;
+      std::vector<t850::PrimitiveInst*> allMeshes;
 
       // Skybox at index 0
       if (g_skyboxReady && m_panels.showSkybox) {
@@ -881,19 +881,19 @@ void EditorApp::OnDraw() {
       if (g_dummyWhiteTex)
         g_quads[0].SetTexture(g_dummyWhiteTex, 5);
       if (g_dummyEnvMapIdx >= 0)
-        g_quads[0].SetEnvironmentMap(t800::g_pBaseDriver->GetTexture(g_dummyEnvMapIdx));
+        g_quads[0].SetEnvironmentMap(t850::g_pBaseDriver->GetTexture(g_dummyEnvMapIdx));
 
       // Execute the render graph (GBuffer -> Deferred -> BackBuffer)
       // RenderGraph::Execute needs a contiguous PrimitiveInst array.
       // We copy the instances (shallow — pBase pointer stays valid).
-      std::vector<t800::PrimitiveInst> meshArray;
+      std::vector<t850::PrimitiveInst> meshArray;
       meshArray.reserve(allMeshes.size());
       for (auto* p : allMeshes) meshArray.push_back(*p);
 
       // Update animation + bone texture before render passes (Vulkan requirement)
       for (auto& obj : g_objects) {
         if (obj.primId >= 0 && obj.visible && obj.litInst.pBase) {
-          auto* sk = dynamic_cast<t800::RenderSkinnedMesh*>(obj.litInst.pBase);
+          auto* sk = dynamic_cast<t850::RenderSkinnedMesh*>(obj.litInst.pBase);
           if (sk && sk->HasSkinData()) sk->UpdateAnimationAndBones();
         }
       }
@@ -908,10 +908,10 @@ void EditorApp::OnDraw() {
 
       // RT debug override: if a specific RT is selected, draw it to backbuffer
       if (g_debugRT >= 0) {
-        drv->SetBlendState(t800::BaseDriver::BLEND_OPAQUE);
-        drv->SetDepthStencilState(t800::BaseDriver::NONE);
+        drv->SetBlendState(t850::BaseDriver::BLEND_OPAQUE);
+        drv->SetDepthStencilState(t850::BaseDriver::NONE);
         int gi = 0;
-        t800::Texture* debugTex = nullptr;
+        t850::Texture* debugTex = nullptr;
         for (int rtIdx = 0; rtIdx < (int)drv->RTs.size() && !debugTex; ++rtIdx) {
           auto* rt = drv->RTs[rtIdx];
           if (!rt) continue;
@@ -926,19 +926,19 @@ void EditorApp::OnDraw() {
         }
         if (debugTex) {
           g_quads[7].SetTexture(debugTex, 0);
-          t800::ShaderKey bk(0);
-          bk.setPass(t800::PassType::BACKBUFFER);
+          t850::ShaderKey bk(0);
+          bk.setPass(t850::PassType::BACKBUFFER);
           g_quads[7].SetGlobalKey(bk);
           g_quads[7].Draw();
         }
-        drv->SetDepthStencilState(t800::BaseDriver::DEPTH_DEFAULT);
+        drv->SetDepthStencilState(t850::BaseDriver::DEPTH_DEFAULT);
       }
     } else {
       // Forward rendering (GL, or deferred not ready)
       // Skybox forward
       if (g_skyboxReady && m_panels.showSkybox) {
-        t800::ShaderKey fwdKey(0);
-        fwdKey.setPass(t800::PassType::FORWARD);
+        t850::ShaderKey fwdKey(0);
+        fwdKey.setPass(t850::PassType::FORWARD);
         g_skyboxInst.SetGlobalKey(fwdKey);
         g_skyboxInst.Update();
         g_skyboxInst.Draw();
@@ -946,8 +946,8 @@ void EditorApp::OnDraw() {
       for (int i = 0; i < (int)g_objects.size(); ++i) {
         SceneObject& obj = g_objects[i];
         if (obj.primId < 0 || !obj.visible) continue;
-        t800::ShaderKey fwdKey(0);
-        fwdKey.setPass(t800::PassType::FORWARD);
+        t850::ShaderKey fwdKey(0);
+        fwdKey.setPass(t850::PassType::FORWARD);
         obj.litInst.SetGlobalKey(fwdKey);
         obj.litInst.Draw();
       }
@@ -978,9 +978,9 @@ void EditorApp::OnDraw() {
       if (!showWire) continue;
 
       // For skinned meshes, use GPU-skinned wireframe + skeleton (same as SandBox)
-      t800::RenderSkinnedMesh* skinned = nullptr;
+      t850::RenderSkinnedMesh* skinned = nullptr;
       if (obj.litInst.pBase)
-        skinned = dynamic_cast<t800::RenderSkinnedMesh*>(obj.litInst.pBase);
+        skinned = dynamic_cast<t850::RenderSkinnedMesh*>(obj.litInst.pBase);
 
       if (skinned && skinned->HasSkinData()) {
         // Bind GBuffer depth for shader-based wireframe occlusion
@@ -991,11 +991,11 @@ void EditorApp::OnDraw() {
             skinned->SetWireframeDepthTex(gbufRT->vColorTextures[4]);
         }
         skinned->SetWireframeViewport(m_lastW, m_lastH);
-        drv->SetDepthStencilState(t800::BaseDriver::NONE);
+        drv->SetDepthStencilState(t850::BaseDriver::NONE);
         skinned->DrawWireframe();
-        drv->SetDepthStencilState(t800::BaseDriver::NONE);
+        drv->SetDepthStencilState(t850::BaseDriver::NONE);
         skinned->DrawSkeleton();
-        drv->SetDepthStencilState(t800::BaseDriver::DEPTH_DEFAULT);
+        drv->SetDepthStencilState(t850::BaseDriver::DEPTH_DEFAULT);
       } else if (obj.wireframe.IsLoaded() && m_lines.IsReady()) {
         XVECTOR3 savedColor = obj.wireframe.WireColor;
         if (g_multiSelect.count(i) && g_multiSelect.size() > 1)
@@ -1004,9 +1004,9 @@ void EditorApp::OnDraw() {
           obj.wireframe.WireColor = XVECTOR3(1.0f, 1.0f, 1.0f, 1.0f);
         else
           obj.wireframe.WireColor = XVECTOR3(0.45f, 0.45f, 0.45f, 1.0f);
-        drv->SetDepthStencilState(t800::BaseDriver::READ);
+        drv->SetDepthStencilState(t850::BaseDriver::READ);
         obj.wireframe.Draw(m_lines, cam.VP);
-        drv->SetDepthStencilState(t800::BaseDriver::DEPTH_DEFAULT);
+        drv->SetDepthStencilState(t850::BaseDriver::DEPTH_DEFAULT);
         obj.wireframe.WireColor = savedColor;
       }
     }
@@ -1152,12 +1152,12 @@ void EditorApp::OnDraw() {
 
     // Group / multi-select bounding box (corner brackets)
     if (g_multiSelect.size() > 1) {
-      t800::AABB combined;
+      t850::AABB combined;
       bool first = true;
       for (int idx : g_multiSelect) {
         if (idx < 0 || idx >= (int)g_objects.size()) continue;
         if (!g_objects[idx].wireframe.IsLoaded() || !g_objects[idx].visible) continue;
-        t800::AABB wb = g_objects[idx].wireframe.WorldAABB();
+        t850::AABB wb = g_objects[idx].wireframe.WorldAABB();
         if (first) { combined = wb; first = false; }
         else {
           if (wb.vMin.x < combined.vMin.x) combined.vMin.x = wb.vMin.x;
@@ -1477,7 +1477,7 @@ void EditorApp::OnDraw() {
     // Menu actions
     if (menuAction.wantsExit) {
 #ifdef OS_WINDOWS
-      auto* w32fw = static_cast<t800::Win32Framework*>(pFramework);
+      auto* w32fw = static_cast<t850::Win32Framework*>(pFramework);
       w32fw->m_alive = false;
 #endif
     }
@@ -1792,17 +1792,17 @@ void EditorApp::OnDraw() {
   if (g_dumperInited && g_dumper.ShouldDump(m_dtSecs)) {
     int gbuf = g_renderGraph.GetRTHandle("GBuffer");
     int def  = g_renderGraph.GetRTHandle("Deferred");
-    std::vector<t800::RTDumpEntry> rts;
+    std::vector<t850::RTDumpEntry> rts;
     if (gbuf >= 0) {
-      rts.push_back({gbuf, t800::BaseDriver::COLOR0_ATTACHMENT, "GBuffer_Albedo"});
-      rts.push_back({gbuf, t800::BaseDriver::COLOR1_ATTACHMENT, "GBuffer_Normals"});
-      rts.push_back({gbuf, t800::BaseDriver::COLOR2_ATTACHMENT, "GBuffer_PBR"});
-      rts.push_back({gbuf, t800::BaseDriver::COLOR3_ATTACHMENT, "GBuffer_GeoNormals"});
-      rts.push_back({gbuf, t800::BaseDriver::COLOR4_ATTACHMENT, "GBuffer_Depth"});
-      rts.push_back({gbuf, t800::BaseDriver::DEPTH_ATTACHMENT,  "GBuffer_HWDepth"});
+      rts.push_back({gbuf, t850::BaseDriver::COLOR0_ATTACHMENT, "GBuffer_Albedo"});
+      rts.push_back({gbuf, t850::BaseDriver::COLOR1_ATTACHMENT, "GBuffer_Normals"});
+      rts.push_back({gbuf, t850::BaseDriver::COLOR2_ATTACHMENT, "GBuffer_PBR"});
+      rts.push_back({gbuf, t850::BaseDriver::COLOR3_ATTACHMENT, "GBuffer_GeoNormals"});
+      rts.push_back({gbuf, t850::BaseDriver::COLOR4_ATTACHMENT, "GBuffer_Depth"});
+      rts.push_back({gbuf, t850::BaseDriver::DEPTH_ATTACHMENT,  "GBuffer_HWDepth"});
     }
     if (def >= 0) {
-      rts.push_back({def, t800::BaseDriver::COLOR0_ATTACHMENT, "Deferred_Output"});
+      rts.push_back({def, t850::BaseDriver::COLOR0_ATTACHMENT, "Deferred_Output"});
     }
     ::Camera dummyLightCam;
     g_dumper.DumpFrame(drv, m_camera.GetCameraMutable(), dummyLightCam, m_sceneProps, rts, m_dtSecs);

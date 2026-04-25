@@ -6,7 +6,7 @@ set(FRAMEWORK_SOURCES
   ../Librerias/mikktspace/src/mikktspace.c
   src/core/Core.cpp
   src/core/DevLayer.cpp
-  src/core/t8config.cpp
+  src/core/Config.cpp
   src/core/windows/Win32Framework.cpp
   src/scene/LensFlare.cpp
   src/scene/RenderMesh.cpp
@@ -18,7 +18,7 @@ set(FRAMEWORK_SOURCES
   src/scene/RenderQuad.cpp
   src/debug/FrameDumper.cpp
   src/debug/FrameDumperIO.cpp
-  src/debug/T8_Profiler.cpp
+  src/debug/Profiler.cpp
   src/scene/RenderGraph.cpp
   src/scene/SceneDescriptor.cpp
   src/scene/SceneSetup.cpp
@@ -26,17 +26,17 @@ set(FRAMEWORK_SOURCES
   src/scene/SplineWireframe.cpp
   src/scene/WireframeSphere.cpp
   src/scene/WireframeArrow.cpp
-  src/scene/T8_Quad.cpp
-  src/scene/T8_TextRenderer.cpp
+  src/scene/Quad.cpp
+  src/scene/TextRenderer.cpp
   src/gui/GUIAtlas.cpp
   src/gui/GUIElement.cpp
-  src/gui/T8_GUI.cpp
+  src/gui/GUIManager.cpp
   src/utils/cil.cpp
   src/utils/Log.cpp
   src/utils/InputManager.cpp
   src/utils/ResourceManager.cpp
-  src/utils/T8_Spline.cpp
-  src/utils/T8_Technique.cpp
+  src/utils/Spline.cpp
+  src/utils/Technique.cpp
   src/utils/Timer.cpp
   src/utils/Utils.cpp
   src/utils/Camera.cpp
@@ -44,7 +44,7 @@ set(FRAMEWORK_SOURCES
   src/utils/XDataBase.cpp
   src/utils/XMaths.cpp
   src/utils/GUIAtlasGenerator.cpp
-  src/utils/T8ConfigRuntime.cpp
+  src/utils/ConfigRuntime.cpp
   src/utils/SPIRVReflection.cpp
   src/video/BaseDriver.cpp
   src/video/gl/GLDriver.cpp

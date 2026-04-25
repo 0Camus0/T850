@@ -16,7 +16,7 @@
 #include <wrl/client.h>
 using Microsoft::WRL::ComPtr;
 
-namespace t800 {
+namespace t850 {
 
   class D3D12Device;
 
@@ -41,7 +41,7 @@ namespace t800 {
     uint32_t m_alignedSize = 0;
   };
 
-} // namespace t800
+} // namespace t850
 
 #endif // OS_WINDOWS
 #endif // T800_D3D12CONSTANTBUFFER_H

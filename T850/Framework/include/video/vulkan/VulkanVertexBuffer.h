@@ -16,7 +16,7 @@
 #include <vulkan/vulkan.h>
 #include <vma/vk_mem_alloc.h>
 
-namespace t800 {
+namespace t850 {
 
   // Forward declarations
   class VulkanDevice;
@@ -44,7 +44,7 @@ namespace t800 {
     bool            m_usesRing = false;
   };
 
-} // namespace t800
+} // namespace t850
 
 #endif // OS_WINDOWS
 #endif // T800_VULKANVERTEXBUFFER_H

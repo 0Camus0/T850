@@ -14,7 +14,7 @@
 #include <utils/Log.h>
 #include <cstring>
 
-namespace t800 {
+namespace t850 {
 
   extern Device*        T8Device;
   extern DeviceContext*  T8DeviceContext;
@@ -105,6 +105,6 @@ namespace t800 {
     delete this;
   }
 
-} // namespace t800
+} // namespace t850
 
 #endif // OS_WINDOWS

@@ -127,7 +127,7 @@ void GLSL_Parser::Process(std::string &b) {
 
 	std::string::size_type pos = 0;
 	for (std::size_t i = 0; i < tokens.size(); i++)	{
-		
+
 		if ((pos = tokens[i].find("uniform")) != std::string::npos) {
 			ProcessToken(i, tokens);
 		}
@@ -164,7 +164,7 @@ void GLSL_Parser::ProcessToken(std::size_t &pos, std::vector<std::string> &v) {
   DetermineArrayNum(var_, v[token_pos]);
 	DetermineSemantic(var_, v[pos]);
 	DetermineType(var_, v[token_pos - 1]);
-	
+
 	switch (var_.sem){
 		case hyperspace::shader::semantic_::ATTRIBUTE: {
 			attributes.push_back(var_);

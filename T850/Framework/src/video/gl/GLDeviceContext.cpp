@@ -51,7 +51,7 @@
 #endif
 #endif
 
-namespace t800 {
+namespace t850 {
   void * GLDeviceContext::GetAPIObject() const
   {
     return nullptr;
@@ -64,23 +64,23 @@ namespace t800 {
   {
     delete this;
   }
-  void GLDeviceContext::SetPrimitiveTopology(T8_TOPOLOGY::E topology)
+  void GLDeviceContext::SetPrimitiveTopology(Topology::E topology)
   {
     switch (topology)
     {
-    case T8_TOPOLOGY::POINT_LIST:
+    case Topology::POINT_LIST:
       internalTopology = GL_POINTS;
       break;
-    case T8_TOPOLOGY::LINE_LIST:
+    case Topology::LINE_LIST:
       internalTopology = GL_LINES;
       break;
-    case T8_TOPOLOGY::LINE_STRIP:
+    case Topology::LINE_STRIP:
       internalTopology = GL_LINE_STRIP;
       break;
-    case T8_TOPOLOGY::TRIANLE_LIST:
+    case Topology::TRIANLE_LIST:
       internalTopology = GL_TRIANGLES;
       break;
-    case T8_TOPOLOGY::TRIANGLE_STRIP:
+    case Topology::TRIANGLE_STRIP:
       internalTopology = GL_TRIANGLE_STRIP;
       break;
     default:

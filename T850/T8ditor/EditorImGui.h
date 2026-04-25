@@ -19,7 +19,7 @@
 
 struct SDL_Window;
 
-namespace t800 {
+namespace t850 {
   class RootFramework;
   class BaseDriver;
 }
@@ -27,7 +27,7 @@ namespace t800 {
 namespace t8ditor {
 
   // ── Lifecycle (called from EditorApp) ──────────────
-  bool ImGuiInit(t800::RootFramework* fw);
+  bool ImGuiInit(t850::RootFramework* fw);
   void ImGuiShutdown();
   void ImGuiNewFrame();
   void ImGuiRender();          // calls ImGui::Render() + backend RenderDrawData

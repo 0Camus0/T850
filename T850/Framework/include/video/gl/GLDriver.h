@@ -73,11 +73,11 @@
 #include <video/gl/GLIndexBuffer.h>
 #include <video/gl/GLConstantBuffer.h>
 
-namespace t800 {
+namespace t850 {
 
   class GLDriver : public BaseDriver {
   public:
-    GLDriver() { m_currentAPI = GRAPHICS_API::OPENGL; }
+    GLDriver() { m_currentAPI = GraphicsApi::OPENGL; }
     void	InitDriver();
     void	CreateSurfaces();
     void	DestroySurfaces();
@@ -87,11 +87,11 @@ namespace t800 {
     void  SetWindowHandle(const WindowHandle& handle) override;
     void	SetDimensions(int, int);
     bool  ResizeSwapchain(int newW, int newH) override;
-    void SetBlendState(BLEND_STATES state) override;
-    void SetDepthStencilState(DEPTH_STENCIL_STATES state) override;
+    void SetBlendState(BlendStates state) override;
+    void SetDepthStencilState(DepthStencilStates state) override;
     void SaveScreenshot(std::string path) override;
     void SaveRTToFile(int rtID, int attachment, std::string path) override;
-	void SetCullFace(FACE_CULLING state) override;
+	void SetCullFace(FaceCulling state) override;
 
     void	PopRT();
 

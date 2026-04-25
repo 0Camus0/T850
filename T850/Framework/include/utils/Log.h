@@ -21,7 +21,7 @@
 
 #include <cstdint>
 
-namespace t800 {
+namespace t850 {
 namespace Log {
 
   enum Level : uint8_t {
@@ -60,14 +60,14 @@ namespace Log {
   void SetCallback(LogCallback cb);
 
 } // namespace Log
-} // namespace t800
+} // namespace t850
 
 // ── Macros ──
 
-#define T8_LOG_ERROR(fmt, ...)   do { if (t800::Log::GetMaxLevel() >= t800::Log::LVL_ERROR)   t800::Log::Write(t800::Log::LVL_ERROR,   __FILE__, __LINE__, fmt, ##__VA_ARGS__); } while(0)
-#define T8_LOG_INFO(fmt, ...)    do { if (t800::Log::GetMaxLevel() >= t800::Log::LVL_INFO)    t800::Log::Write(t800::Log::LVL_INFO,    __FILE__, __LINE__, fmt, ##__VA_ARGS__); } while(0)
-#define T8_LOG_DEBUG(fmt, ...)   do { if (t800::Log::GetMaxLevel() >= t800::Log::LVL_DEBUG)   t800::Log::Write(t800::Log::LVL_DEBUG,   __FILE__, __LINE__, fmt, ##__VA_ARGS__); } while(0)
-#define T8_LOG_VERBOSE(fmt, ...) do { if (t800::Log::GetMaxLevel() >= t800::Log::LVL_VERBOSE) t800::Log::Write(t800::Log::LVL_VERBOSE, __FILE__, __LINE__, fmt, ##__VA_ARGS__); } while(0)
-#define T8_LOG_TRACE(fmt, ...)   do { if (t800::Log::GetMaxLevel() >= t800::Log::LVL_TRACE)   t800::Log::Write(t800::Log::LVL_TRACE,   __FILE__, __LINE__, fmt, ##__VA_ARGS__); } while(0)
+#define T8_LOG_ERROR(fmt, ...)   do { if (t850::Log::GetMaxLevel() >= t850::Log::LVL_ERROR)   t850::Log::Write(t850::Log::LVL_ERROR,   __FILE__, __LINE__, fmt, ##__VA_ARGS__); } while(0)
+#define T8_LOG_INFO(fmt, ...)    do { if (t850::Log::GetMaxLevel() >= t850::Log::LVL_INFO)    t850::Log::Write(t850::Log::LVL_INFO,    __FILE__, __LINE__, fmt, ##__VA_ARGS__); } while(0)
+#define T8_LOG_DEBUG(fmt, ...)   do { if (t850::Log::GetMaxLevel() >= t850::Log::LVL_DEBUG)   t850::Log::Write(t850::Log::LVL_DEBUG,   __FILE__, __LINE__, fmt, ##__VA_ARGS__); } while(0)
+#define T8_LOG_VERBOSE(fmt, ...) do { if (t850::Log::GetMaxLevel() >= t850::Log::LVL_VERBOSE) t850::Log::Write(t850::Log::LVL_VERBOSE, __FILE__, __LINE__, fmt, ##__VA_ARGS__); } while(0)
+#define T8_LOG_TRACE(fmt, ...)   do { if (t850::Log::GetMaxLevel() >= t850::Log::LVL_TRACE)   t850::Log::Write(t850::Log::LVL_TRACE,   __FILE__, __LINE__, fmt, ##__VA_ARGS__); } while(0)
 
 #endif // T800_LOG_H

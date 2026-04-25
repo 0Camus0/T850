@@ -18,7 +18,7 @@
   #include <fstream>
 #endif
 
-namespace t800 {
+namespace t850 {
 namespace Log {
 
   static Level     s_maxLevel  = LVL_ERROR;
@@ -265,4 +265,4 @@ namespace Log {
   }
 
 } // namespace Log
-} // namespace t800
+} // namespace t850

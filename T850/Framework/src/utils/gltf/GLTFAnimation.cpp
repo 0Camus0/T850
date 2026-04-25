@@ -22,7 +22,7 @@
 #include <algorithm>
 #include <unordered_map>
 
-namespace t800 {
+namespace t850 {
 namespace gltf {
 
 static constexpr bool kFlipToLeftHanded = true;
@@ -454,4 +454,4 @@ void BuildSkinsAndAnimations(const Document& doc,
 }
 
 } // namespace gltf
-} // namespace t800
+} // namespace t850

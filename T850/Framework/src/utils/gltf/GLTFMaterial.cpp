@@ -34,7 +34,7 @@
 
 #include <string>
 
-namespace t800 {
+namespace t850 {
 namespace gltf {
 
 namespace {
@@ -214,4 +214,4 @@ void ConvertMaterial(const Document& doc, int materialIndex,
 }
 
 } // namespace gltf
-} // namespace t800
+} // namespace t850

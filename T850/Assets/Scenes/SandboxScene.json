@@ -1,5 +1,5 @@
 {
-  "name": "SC_SandBox",
+  "name": "SandboxScene",
   "cameras": [
     {
       "position": [0.0, 1.0, 10.0],

@@ -16,7 +16,7 @@
 #include <scene/PrimitiveManager.h>
 #include <scene/PrimitiveInstance.h>
 #include <scene/SceneProp.h>
-#include <scene/T8_TextRenderer.h>
+#include <scene/TextRenderer.h>
 
 #include <utils/xMaths.h>
 #include <utils/Camera.h>
@@ -24,7 +24,7 @@
 
 #include <vector>
 
-class App : public t800::AppBase {
+class App : public t850::AppBase {
 public:
 	App() : AppBase() {}
 	void InitVars();
@@ -53,12 +53,12 @@ public:
   bool			FirstFrame;
   std::string m_fpsString;
   XVECTOR3 m_fpsCol = XVECTOR3(0.2f, 0.8f, 0.2f);
-  t800::TextRenderer m_textRender;
-  std::vector<t800::SceneBase*> m_scenes;
-  t800::SceneBase* m_actualScene;
-  t800::DevLayer m_devLayer;
-  t800::PrimitiveInst	Quads[10];
-  t800::PrimitiveManager PrimitiveMgr;
+  t850::TextRenderer m_textRender;
+  std::vector<t850::SceneBase*> m_scenes;
+  t850::SceneBase* m_actualScene;
+  t850::DevLayer m_devLayer;
+  t850::PrimitiveInst	Quads[10];
+  t850::PrimitiveManager PrimitiveMgr;
   XMATRIX44 VP;
   SceneProps		SceneProp;
   Camera			Cam;

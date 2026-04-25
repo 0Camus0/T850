@@ -17,7 +17,7 @@
 
 #include <utils/Log.h>
 
-namespace t800 {
+namespace t850 {
 
   extern Device*        T8Device;
   extern DeviceContext*  T8DeviceContext;
@@ -30,13 +30,13 @@ namespace t800 {
   void** VulkanDevice::GetAPIObjectReference() const { return nullptr; }
   void VulkanDevice::release() { m_device = VK_NULL_HANDLE; }
 
-  Buffer* VulkanDevice::CreateBuffer(T8_BUFFER_TYPE::E bufferType, BufferDesc desc, void* initialData) {
+  Buffer* VulkanDevice::CreateBuffer(BufferType::E bufferType, BufferDesc desc, void* initialData) {
     T8_LOG_DEBUG("[Vulkan] CreateBuffer type=%d size=%d", bufferType, desc.byteWidth);
     Buffer* buf = nullptr;
     switch (bufferType) {
-      case T8_BUFFER_TYPE::VERTEX:   buf = new VulkanVertexBuffer;   break;
-      case T8_BUFFER_TYPE::INDEX:    buf = new VulkanIndexBuffer;    break;
-      case T8_BUFFER_TYPE::CONSTANT: buf = new VulkanConstantBuffer; break;
+      case BufferType::VERTEX:   buf = new VulkanVertexBuffer;   break;
+      case BufferType::INDEX:    buf = new VulkanIndexBuffer;    break;
+      case BufferType::CONSTANT: buf = new VulkanConstantBuffer; break;
     }
     if (buf) buf->Create(*this, desc, initialData);
     return buf;
@@ -175,6 +175,6 @@ namespace t800 {
     return nullptr;
   }
 
-} // namespace t800
+} // namespace t850
 
 #endif // OS_WINDOWS

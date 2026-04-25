@@ -10,11 +10,11 @@ class Camera;
 struct SceneProps;
 struct XVECTOR3;
 
-namespace t800 {
+namespace t850 {
   class BaseDriver;
 }
 
-namespace t800 {
+namespace t850 {
 
   // ── JSON-clean data structs (only std types, no engine deps) ──
 
@@ -174,4 +174,4 @@ namespace t800 {
                         int frame, const std::string& apiName, float dt);
   };
 
-} // namespace t800
+} // namespace t850

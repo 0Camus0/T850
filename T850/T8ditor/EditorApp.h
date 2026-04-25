@@ -48,7 +48,7 @@ namespace t8ditor {
   // Set by main.cpp before constructing the app.
   void SetStartupMeshPath(const std::string& p);
 
-  class EditorApp : public t800::AppBase {
+  class EditorApp : public t850::AppBase {
   public:
     EditorApp() : AppBase() {}
 
@@ -86,8 +86,8 @@ namespace t8ditor {
 
     // Lit/textured rendering via the Framework pipeline
     SceneProps            m_sceneProps;
-    t800::PrimitiveManager m_primMgr;
-    t800::PrimitiveInst   m_meshInst;
+    t850::PrimitiveManager m_primMgr;
+    t850::PrimitiveInst   m_meshInst;
     int                   m_meshPrimId = -1;  // -1 = no lit mesh loaded
     XMATRIX44             m_vp;               // VP matrix for the prim mgr
 

@@ -15,7 +15,7 @@ using Microsoft::WRL::ComPtr;
 #include <string>
 #include <vector>
 
-namespace t800 {
+namespace t850 {
 
   class D3D12Shader : public ShaderBase {
   public:
@@ -43,7 +43,7 @@ namespace t800 {
     std::vector<std::string> m_semanticNames;
   };
 
-} // namespace t800
+} // namespace t850
 
 #endif // OS_WINDOWS
 #endif // T800_D3D12SHADER_H

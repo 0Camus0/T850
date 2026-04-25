@@ -35,7 +35,7 @@
 #include <vector>
 #include <video/gl/GLSLParser.h>
 
-namespace t800 {
+namespace t850 {
   class GLShader : public ShaderBase {
   public:
 	  GLShader() {}

@@ -1,4 +1,4 @@
-#include "pch.h"
+#include <pch.h>
 /*********************************************************
 * Copyright (C) 2017 Daniel Enriquez (camus_mm@hotmail.com)
 * All Rights Reserved
@@ -45,7 +45,7 @@
 #elif defined(OS_LINUX)
 #include <GL/freeglut.h>
 #endif
-namespace t800 {
+namespace t850 {
   extern Device*            T8Device;
   extern DeviceContext*     T8DeviceContext;
 
@@ -68,41 +68,41 @@ namespace t800 {
   GLenum GLDriver::DrawBuffers[16];
 #endif
   void	GLDriver::InitDriver() {
-    T8Device = new t800::GLDevice;
-    T8DeviceContext = new t800::GLDeviceContext;
+    T8Device = new t850::GLDevice;
+    T8DeviceContext = new t850::GLDeviceContext;
 #ifdef T850_HEADLESS
     T8_LOG_INFO("USING HEADLESS CONTEXT");
     bool res;
     int32_t fd = open ("/dev/dri/renderD128", O_RDWR);
     assert (fd > 0);
- 
+
    struct gbm_device *gbm = gbm_create_device (fd);
    assert (gbm != NULL);
- 
+
    /* setup EGL from the GBM device */
    EGLDisplay egl_dpy = eglGetPlatformDisplay (EGL_PLATFORM_GBM_MESA, gbm, NULL);
    assert (egl_dpy != NULL);
- 
+
    res = eglInitialize (egl_dpy, NULL, NULL);
    assert (res);
- 
+
    const char *egl_extension_st = eglQueryString (egl_dpy, EGL_EXTENSIONS);
    assert (strstr (egl_extension_st, "EGL_KHR_create_context") != NULL);
    assert (strstr (egl_extension_st, "EGL_KHR_surfaceless_context") != NULL);
- 
+
    static const EGLint config_attribs[] = {
       EGL_RENDERABLE_TYPE, EGL_OPENGL_ES3_BIT_KHR,
       EGL_NONE
    };
    EGLConfig cfg;
    EGLint count;
- 
+
    res = eglChooseConfig (egl_dpy, config_attribs, &cfg, 1, &count);
    assert (res);
- 
+
    res = eglBindAPI (EGL_OPENGL_ES_API);
    assert (res);
- 
+
    static const EGLint attribs[] = {
       EGL_CONTEXT_CLIENT_VERSION, 3,
       EGL_NONE
@@ -112,7 +112,7 @@ namespace t800 {
                                            EGL_NO_CONTEXT,
                                            attribs);
    assert (core_ctx != EGL_NO_CONTEXT);
- 
+
    res = eglMakeCurrent (egl_dpy, EGL_NO_SURFACE, EGL_NO_SURFACE, core_ctx);
    assert (res);
 
@@ -277,27 +277,27 @@ namespace t800 {
     return true;
   }
 
-  void GLDriver::SetBlendState(BLEND_STATES state)
+  void GLDriver::SetBlendState(BlendStates state)
   {
     static const char* names[] = {"BLEND_DEFAULT","BLEND_OPAQUE","ADDITIVE","ALPHA_BLEND","NON_PREMULTIPLIED"};
     T8_LOG_TRACE("[GL] SetBlendState(%s)", (state >= 0 && state <= 4) ? names[state] : "?");
     switch (state)
     {
-    case t800::BaseDriver::BLEND_DEFAULT:
+    case t850::BaseDriver::BLEND_DEFAULT:
       glDisable(GL_BLEND);
       break;
-    case t800::BaseDriver::BLEND_OPAQUE:
+    case t850::BaseDriver::BLEND_OPAQUE:
       glDisable(GL_BLEND);
       break;
-    case t800::BaseDriver::ADDITIVE:
+    case t850::BaseDriver::ADDITIVE:
       glEnable(GL_BLEND);
       glBlendFunc(GL_SRC_ALPHA, GL_ONE);
       break;
-    case t800::BaseDriver::ALPHA_BLEND:
+    case t850::BaseDriver::ALPHA_BLEND:
       glEnable(GL_BLEND);
       glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
       break;
-    case t800::BaseDriver::NON_PREMULTIPLIED:
+    case t850::BaseDriver::NON_PREMULTIPLIED:
       glEnable(GL_BLEND);
       break;
     default:
@@ -305,25 +305,25 @@ namespace t800 {
     }
   }
 
-  void GLDriver::SetDepthStencilState(DEPTH_STENCIL_STATES state)
+  void GLDriver::SetDepthStencilState(DepthStencilStates state)
   {
     static const char* names[] = {"DEPTH_DEFAULT","READ_WRITE","NONE","READ"};
     T8_LOG_TRACE("[GL] SetDepthStencilState(%s)", (state >= 0 && state <= 3) ? names[state] : "?");
     switch (state)
     {
-    case t800::BaseDriver::DEPTH_DEFAULT:
+    case t850::BaseDriver::DEPTH_DEFAULT:
       glDepthMask(GL_TRUE);
       glEnable(GL_DEPTH_TEST);
       break;
-    case t800::BaseDriver::READ_WRITE:
+    case t850::BaseDriver::READ_WRITE:
       glDepthMask(GL_TRUE);
       glEnable(GL_DEPTH_TEST);
       break;
-    case t800::BaseDriver::NONE:
+    case t850::BaseDriver::NONE:
       glDepthMask(GL_FALSE);
       glDisable(GL_DEPTH_TEST);
       break;
-    case t800::BaseDriver::READ:
+    case t850::BaseDriver::READ:
      // glDepthMask(GL_FALSE);
       glDisable(GL_DEPTH_TEST);
       break;
@@ -463,19 +463,19 @@ namespace t800 {
     glBindFramebuffer(GL_FRAMEBUFFER, prevFBO);
     glViewport(prevViewport[0], prevViewport[1], prevViewport[2], prevViewport[3]);
   }
-  
-  void GLDriver::SetCullFace(FACE_CULLING state) {
+
+  void GLDriver::SetCullFace(FaceCulling state) {
 	  m_FaceCulling = state;
 	  switch (m_FaceCulling) {
-		  case t800::BaseDriver::FRONT_FACES:
+		  case t850::BaseDriver::FRONT_FACES:
 			  glEnable(GL_CULL_FACE);
 			  glCullFace(GL_FRONT);
 			  break;
-		  case t800::BaseDriver::BACK_FACES:
+		  case t850::BaseDriver::BACK_FACES:
 			  glEnable(GL_CULL_FACE);
 			  glCullFace(GL_BACK);
 			  break;
-		  case t800::BaseDriver::FRONT_AND_BACK:
+		  case t850::BaseDriver::FRONT_AND_BACK:
 			  glDisable(GL_CULL_FACE);
 			  glCullFace(GL_FRONT_AND_BACK);
 			  break;

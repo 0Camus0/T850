@@ -1,4 +1,4 @@
-#include "pch.h"
+#include <pch.h>
 /*********************************************************
 * Copyright (C) 2017 Daniel Enriquez (camus_mm@hotmail.com)
 * All Rights Reserved
@@ -21,7 +21,7 @@
 #include <video/d3d11/D3D11Driver.h>
 #endif
 
-namespace t800 {
+namespace t850 {
 	extern Device*            T8Device;
 	extern DeviceContext*     T8DeviceContext;
 }
@@ -108,11 +108,11 @@ void SSAOFilter::InitTexture() {
 			*pChar = (unsigned char)RandRange(0.0f,255.0f); pChar++;
 			*pChar = 0; pChar++;
 			*pChar = 255; pChar++;
-		
+
 	}
 	std::string dummy;
-	NoiseTex = t800::T8Device->CreateTextureFromMemory(Noise, SSAO_NOISE_SIZE, SSAO_NOISE_SIZE, 4, dummy);
-	NoiseTex->params |= t800::TEXT_BASIC_PARAMS::TILED | t800::TEXT_BASIC_PARAMS::NEAREST_FILTER;
+	NoiseTex = t850::T8Device->CreateTextureFromMemory(Noise, SSAO_NOISE_SIZE, SSAO_NOISE_SIZE, 4, dummy);
+	NoiseTex->params |= t850::TextBasicParams::TILED | t850::TextBasicParams::NEAREST_FILTER;
 	NoiseTex->SetTextureParams();
 	// Debug: dump raw noise bytes
 	printf("NOISE_RAW(%dx%d):", SSAO_NOISE_SIZE, SSAO_NOISE_SIZE);
@@ -129,7 +129,7 @@ void SSAOFilter::Update() {
 	vSSAOKernel.clear();
 	for (int i = 0; i < KernelSize; i++) {
 		XVECTOR3 vec = XVECTOR3(
-			RandRange(-1.0f, 1.0f), 
+			RandRange(-1.0f, 1.0f),
 			RandRange(-1.0f, 1.0f),
 			RandRange( 0.0f, 1.0f)
 		);
@@ -147,7 +147,7 @@ void SSAOFilter::Update() {
 	}
 }
 
-void	GaussFilter::Update(){	
+void	GaussFilter::Update(){
 	if ((kernelSize - 1) % 2 != 0)
 		kernelSize--;
 

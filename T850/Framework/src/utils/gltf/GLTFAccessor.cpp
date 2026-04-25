@@ -1,4 +1,4 @@
-#include "pch.h"
+#include <pch.h>
 /*********************************************************
  * glTF 2.0 — accessor / bufferView decoding.
  *
@@ -18,7 +18,7 @@
 #include <cstring>
 #include <cstdint>
 
-namespace t800 {
+namespace t850 {
 namespace gltf {
 
 namespace {
@@ -209,7 +209,7 @@ bool ReadAccessorIndices(const Document& doc, int accessorIndex,
 }
 
 } // namespace gltf
-} // namespace t800
+} // namespace t850
 
 // ── Draco mesh decompression ───────────────────────────────────────
 #include <draco/compression/decode.h>
@@ -219,7 +219,7 @@ bool ReadAccessorIndices(const Document& doc, int accessorIndex,
 // draco.lib is linked via DayScene.vcxproj AdditionalDependencies
 // (uses the dynamic import lib from $(T8VcpkgDynamic)\lib).
 
-namespace t800 {
+namespace t850 {
 namespace gltf {
 
 namespace {
@@ -319,4 +319,4 @@ bool DecodeDracoMesh(const Document& doc,
 }
 
 } // namespace gltf
-} // namespace t800
+} // namespace t850

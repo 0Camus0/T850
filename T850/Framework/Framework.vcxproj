@@ -31,6 +31,7 @@
     <ClInclude Include="Config.h" />
     <ClInclude Include="include\core\Core.h" />
     <ClInclude Include="include\core\DevLayer.h" />
+    <ClInclude Include="include\core\Config.h" />
     <ClInclude Include="include\core\windows\Win32Framework.h" />
     <ClInclude Include="include\scene\LensFlare.h" />
     <ClInclude Include="include\scene\RenderMesh.h" />
@@ -42,7 +43,7 @@
     <ClInclude Include="include\scene\PrimitiveManager.h" />
     <ClInclude Include="include\scene\RenderQuad.h" />
     <ClInclude Include="include\debug\FrameDumper.h" />
-    <ClInclude Include="include\debug\T8_Profiler.h" />
+    <ClInclude Include="include\debug\Profiler.h" />
     <ClInclude Include="include\scene\RenderGraph.h" />
     <ClInclude Include="include\scene\RenderGraphDescriptor.h" />
     <ClInclude Include="include\scene\SceneDescriptor.h" />
@@ -51,18 +52,19 @@
     <ClInclude Include="include\scene\SplineWireframe.h" />
     <ClInclude Include="include\scene\WireframeSphere.h" />
     <ClInclude Include="include\scene\WireframeArrow.h" />
-    <ClInclude Include="include\scene\T8_Quad.h" />
-    <ClInclude Include="include\scene\T8_TextRenderer.h" />
+    <ClInclude Include="include\scene\Quad.h" />
+    <ClInclude Include="include\scene\TextRenderer.h" />
+    <ClInclude Include="include\gui\GUIAtlas.h" />
     <ClInclude Include="include\gui\GUIElement.h" />
-    <ClInclude Include="include\gui\T8_GUI.h" />
+    <ClInclude Include="include\gui\GUIManager.h" />
     <ClInclude Include="include\gui\SliderBarData.h" />
     <ClInclude Include="include\gui\SliderKnobData.h" />
     <ClInclude Include="include\utils\cil.h" />
     <ClInclude Include="include\utils\Log.h" />
     <ClInclude Include="include\utils\InputManager.h" />
     <ClInclude Include="include\utils\ResourceManager.h" />
-    <ClInclude Include="include\utils\T8_Spline.h" />
-    <ClInclude Include="include\utils\T8_Technique.h" />
+    <ClInclude Include="include\utils\Spline.h" />
+    <ClInclude Include="include\utils\Technique.h" />
     <ClInclude Include="include\utils\Timer.h" />
     <ClInclude Include="include\utils\ThreadPool.h" />
     <ClInclude Include="include\utils\Utils.h" />
@@ -72,6 +74,7 @@
     <ClInclude Include="include\utils\xDefs.h" />
     <ClInclude Include="include\utils\xMaths.h" />
     <ClInclude Include="include\utils\GUIAtlasGenerator.h" />
+    <ClInclude Include="include\utils\ConfigRuntime.h" />
     <ClInclude Include="include\utils\SPIRVReflection.h" />
     <ClInclude Include="include\utils\gltf\GLTFTypes.h" />
     <ClInclude Include="include\utils\gltf\GLTFLoader.h" />
@@ -122,7 +125,7 @@
     <ClInclude Include="include\video\vulkan\VulkanDevice.h" />
     <ClInclude Include="include\video\vulkan\VulkanPipelineKey.h" />
     <ClInclude Include="include\video\vulkan\VulkanUtils.h" />
-    <ClInclude Include="T8_descriptors.h" />
+    <ClInclude Include="Descriptors.h" />
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="pch.cpp">
@@ -144,6 +147,7 @@
     </ClCompile>
     <ClCompile Include="src\core\Core.cpp" />
     <ClCompile Include="src\core\DevLayer.cpp" />
+    <ClCompile Include="src\core\Config.cpp" />
     <ClCompile Include="src\core\windows\Win32Framework.cpp" />
     <ClCompile Include="src\scene\LensFlare.cpp" />
     <ClCompile Include="src\scene\RenderMesh.cpp" />
@@ -155,7 +159,7 @@
     <ClCompile Include="src\scene\RenderQuad.cpp" />
     <ClCompile Include="src\debug\FrameDumper.cpp" />
     <ClCompile Include="src\debug\FrameDumperIO.cpp" />
-    <ClCompile Include="src\debug\T8_Profiler.cpp" />
+    <ClCompile Include="src\debug\Profiler.cpp" />
     <ClCompile Include="src\scene\RenderGraph.cpp" />
     <ClCompile Include="src\scene\SceneDescriptor.cpp" />
     <ClCompile Include="src\scene\SceneSetup.cpp" />
@@ -163,16 +167,17 @@
     <ClCompile Include="src\scene\SplineWireframe.cpp" />
     <ClCompile Include="src\scene\WireframeSphere.cpp" />
     <ClCompile Include="src\scene\WireframeArrow.cpp" />
-    <ClCompile Include="src\scene\T8_Quad.cpp" />
-    <ClCompile Include="src\scene\T8_TextRenderer.cpp" />
+    <ClCompile Include="src\scene\Quad.cpp" />
+    <ClCompile Include="src\scene\TextRenderer.cpp" />
+    <ClCompile Include="src\gui\GUIAtlas.cpp" />
     <ClCompile Include="src\gui\GUIElement.cpp" />
-    <ClCompile Include="src\gui\T8_GUI.cpp" />
+    <ClCompile Include="src\gui\GUIManager.cpp" />
     <ClCompile Include="src\utils\cil.cpp" />
     <ClCompile Include="src\utils\Log.cpp" />
     <ClCompile Include="src\utils\InputManager.cpp" />
     <ClCompile Include="src\utils\ResourceManager.cpp" />
-    <ClCompile Include="src\utils\T8_Spline.cpp" />
-    <ClCompile Include="src\utils\T8_Technique.cpp" />
+    <ClCompile Include="src\utils\Spline.cpp" />
+    <ClCompile Include="src\utils\Technique.cpp" />
     <ClCompile Include="src\utils\Timer.cpp" />
     <ClCompile Include="src\utils\Utils.cpp" />
     <ClCompile Include="src\utils\Camera.cpp" />
@@ -180,6 +185,7 @@
     <ClCompile Include="src\utils\XDataBase.cpp" />
     <ClCompile Include="src\utils\XMaths.cpp" />
     <ClCompile Include="src\utils\GUIAtlasGenerator.cpp" />
+    <ClCompile Include="src\utils\ConfigRuntime.cpp" />
     <ClCompile Include="src\utils\SPIRVReflection.cpp" />
     <ClCompile Include="src\video\BaseDriver.cpp" />
     <ClCompile Include="src\video\gl\GLDriver.cpp" />

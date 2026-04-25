@@ -1,4 +1,4 @@
-#include "pch.h"
+#include <pch.h>
 /*********************************************************
 * Copyright (C) 2017 Daniel Enriquez (camus_mm@hotmail.com)
 * All Rights Reserved
@@ -16,7 +16,7 @@
 #include <video/d3d11/D3D11Shader.h>
 #include <video/d3d11/D3D11Texture.h>
 
-#include <debug/T8_Profiler.h>
+#include <debug/Profiler.h>
 #include <iostream>
 #include <string>
 #include <fstream>
@@ -25,7 +25,7 @@
 
 
 
-namespace t800 {
+namespace t850 {
   // D3D11 Main Objects
   ComPtr<IDXGISwapChain>DXGISwapchain;// Responsible of the swap buffers
   ComPtr<ID3D11RenderTargetView>  D3D11RenderTargetView;  // View into the back buffer
@@ -37,8 +37,8 @@ namespace t800 {
 
 
   void D3DXDriver::InitDriver() {
-    T8Device = new t800::D3DXDevice;
-    T8DeviceContext = new t800::D3DXDeviceContext;
+    T8Device = new t850::D3DXDevice;
+    T8DeviceContext = new t850::D3DXDeviceContext;
 
     //Descriptor of the Back Buffer
     DXGI_MODE_DESC BackBufferDesc;
@@ -189,8 +189,8 @@ namespace t800 {
     /*RASTERIZER STATES*/
 
 
-    //SetBlendState(BLEND_STATES::BLEND_DEFAULT);
-    //SetDepthStencilState(DEPTH_STENCIL_STATES::DEPTH_DEFAULT);
+    //SetBlendState(BlendStates::BLEND_DEFAULT);
+    //SetDepthStencilState(DepthStencilStates::DEPTH_DEFAULT);
   }
 
   void D3DXDriver::CreateSurfaces() {
@@ -311,25 +311,25 @@ namespace t800 {
     return true;
   }
 
-  void D3DXDriver::SetBlendState(BLEND_STATES state)
+  void D3DXDriver::SetBlendState(BlendStates state)
   {
     static const char* names[] = {"BLEND_DEFAULT","BLEND_OPAQUE","ADDITIVE","ALPHA_BLEND","NON_PREMULTIPLIED"};
     T8_LOG_TRACE("[D3D11] SetBlendState(%s)", (state >= 0 && state <= 4) ? names[state] : "?");
     ID3D11DeviceContext* deviceContext = reinterpret_cast<ID3D11DeviceContext*>(T8DeviceContext->GetAPIObject());
     switch (state)
     {
-    case t800::BaseDriver::BLEND_DEFAULT:
+    case t850::BaseDriver::BLEND_DEFAULT:
       deviceContext->OMSetBlendState(m_BlendStateOpaque.Get(), 0, 0xffffffff);
       break;
-    case t800::BaseDriver::BLEND_STATES::BLEND_OPAQUE:
+    case t850::BaseDriver::BlendStates::BLEND_OPAQUE:
       break;
-    case t800::BaseDriver::ADDITIVE:
+    case t850::BaseDriver::ADDITIVE:
       deviceContext->OMSetBlendState(m_BlendStateAdditive.Get(), 0, 0xffffffff);
       break;
-    case t800::BaseDriver::ALPHA_BLEND:
+    case t850::BaseDriver::ALPHA_BLEND:
       deviceContext->OMSetBlendState(m_BlendStateAlphaBlend.Get(), 0, 0xffffffff);
       break;
-    case t800::BaseDriver::NON_PREMULTIPLIED:
+    case t850::BaseDriver::NON_PREMULTIPLIED:
       deviceContext->OMSetBlendState(m_BlendStateNonPremultiplied.Get(), 0, 0xffffffff);
       break;
     default:
@@ -337,23 +337,23 @@ namespace t800 {
     }
   }
 
-  void D3DXDriver::SetDepthStencilState(DEPTH_STENCIL_STATES state)
+  void D3DXDriver::SetDepthStencilState(DepthStencilStates state)
   {
     static const char* names[] = {"DEPTH_DEFAULT","READ_WRITE","NONE","READ"};
     T8_LOG_TRACE("[D3D11] SetDepthStencilState(%s)", (state >= 0 && state <= 3) ? names[state] : "?");
     ID3D11DeviceContext* deviceContext = reinterpret_cast<ID3D11DeviceContext*>(T8DeviceContext->GetAPIObject());
     switch (state)
     {
-    case t800::BaseDriver::DEPTH_DEFAULT:
+    case t850::BaseDriver::DEPTH_DEFAULT:
       deviceContext->OMSetDepthStencilState(m_depthStateReadWrite.Get(), 1);
       break;
-    case t800::BaseDriver::READ_WRITE:
+    case t850::BaseDriver::READ_WRITE:
       deviceContext->OMSetDepthStencilState(m_depthStateReadWrite.Get(), 1);
       break;
-    case t800::BaseDriver::NONE:
+    case t850::BaseDriver::NONE:
       deviceContext->OMSetDepthStencilState(m_depthStateNone.Get(), 1);
       break;
-    case t800::BaseDriver::READ:
+    case t850::BaseDriver::READ:
       deviceContext->OMSetDepthStencilState(m_depthStateRead.Get(), 1);
       break;
     default:
@@ -361,7 +361,7 @@ namespace t800 {
     }
   }
 
-  void D3DXDriver::SetCullFace(FACE_CULLING state) {
+  void D3DXDriver::SetCullFace(FaceCulling state) {
     ID3D11Device* device = reinterpret_cast<ID3D11Device*>(T8Device->GetAPIObject());
     ID3D11DeviceContext* deviceContext = reinterpret_cast<ID3D11DeviceContext*>(T8DeviceContext->GetAPIObject());
 
@@ -408,11 +408,11 @@ namespace t800 {
   }
 
   void D3DXDriver::SwapBuffers() {
-    T8_PROFILE_SCOPE(t800::g_profiler, "D3D11_Present");
+    T8_PROFILE_SCOPE(t850::g_profiler, "D3D11_Present");
     T8_LOG_TRACE("[D3DXDriver] SwapBuffers/Present");
 
     // Frame timing
-    static LARGE_INTEGER freq = {}; 
+    static LARGE_INTEGER freq = {};
     static LARGE_INTEGER lastSwap = {};
     static int frameNum = 0;
     if (freq.QuadPart == 0) { QueryPerformanceFrequency(&freq); QueryPerformanceCounter(&lastSwap); }

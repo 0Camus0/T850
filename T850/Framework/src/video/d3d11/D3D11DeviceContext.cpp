@@ -1,4 +1,4 @@
-#include "pch.h"
+#include <pch.h>
 /*********************************************************
 * Copyright (C) 2017 Daniel Enriquez (camus_mm@hotmail.com)
 * All Rights Reserved
@@ -13,7 +13,7 @@
 
 #include <video/d3d11/D3D11DeviceContext.h>
 
-namespace t800 {
+namespace t850 {
   void * D3DXDeviceContext::GetAPIObject() const
   {
     return (void*)APIContext.Get();
@@ -27,24 +27,24 @@ namespace t800 {
   {
     APIContext.Reset();
   }
-  void D3DXDeviceContext::SetPrimitiveTopology(T8_TOPOLOGY::E topology)
+  void D3DXDeviceContext::SetPrimitiveTopology(Topology::E topology)
   {
     D3D11_PRIMITIVE_TOPOLOGY apitopology;
     switch (topology)
     {
-    case T8_TOPOLOGY::POINT_LIST:
+    case Topology::POINT_LIST:
       apitopology = D3D11_PRIMITIVE_TOPOLOGY_POINTLIST;
       break;
-    case T8_TOPOLOGY::LINE_LIST:
+    case Topology::LINE_LIST:
       apitopology = D3D11_PRIMITIVE_TOPOLOGY_LINELIST;
       break;
-    case T8_TOPOLOGY::LINE_STRIP:
+    case Topology::LINE_STRIP:
       apitopology = D3D11_PRIMITIVE_TOPOLOGY_LINESTRIP;
       break;
-    case T8_TOPOLOGY::TRIANLE_LIST:
+    case Topology::TRIANLE_LIST:
       apitopology = D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST;
       break;
-    case T8_TOPOLOGY::TRIANGLE_STRIP:
+    case Topology::TRIANGLE_STRIP:
       apitopology = D3D11_PRIMITIVE_TOPOLOGY_TRIANGLESTRIP;
       break;
     default:

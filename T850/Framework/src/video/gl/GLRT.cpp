@@ -1,4 +1,4 @@
-#include "pch.h"
+#include <pch.h>
 /*********************************************************
 * Copyright (C) 2017 Daniel Enriquez (camus_mm@hotmail.com)
 * All Rights Reserved
@@ -19,7 +19,7 @@
 #if defined(OS_LINUX)
 #include <sys/time.h>
 #endif
-namespace t800 {
+namespace t850 {
   bool GLRT::LoadAPIRT() {
     GLint cfmt, dfmt, cinternal;
     GLint bysize = 0;

@@ -1,9 +1,9 @@
 #pragma once
 #include <vector>
-#include "PrimitiveBase.h"
-#include "utils/T8_Spline.h"
-#include "video/BaseDriver.h"
-namespace t800 {
+#include <scene/PrimitiveBase.h>
+#include <utils/Spline.h>
+#include <video/BaseDriver.h>
+namespace t850 {
   class SplineWireframe : public PrimitiveBase {
   public:
     struct CBuffer {

@@ -1,4 +1,4 @@
-#include "pch.h"
+#include <pch.h>
 /*********************************************************
 * Copyright (C) 2017 Daniel Enriquez (camus_mm@hotmail.com)
 * All Rights Reserved
@@ -44,7 +44,7 @@
 #endif
 #endif
 
-namespace t800 {
+namespace t850 {
   void * GLIndexBuffer::GetAPIObject() const
   {
     return nullptr;
@@ -55,14 +55,14 @@ namespace t800 {
     return nullptr;
   }
 
-  void GLIndexBuffer::Set(const DeviceContext & deviceContext, const unsigned offset, T8_IB_FORMAR::E format)
+  void GLIndexBuffer::Set(const DeviceContext & deviceContext, const unsigned offset, IndexBufferFormat::E format)
   {
     switch (format)
     {
-    case T8_IB_FORMAR::R16:
+    case IndexBufferFormat::R16:
       reinterpret_cast<GLDeviceContext*>(const_cast<DeviceContext*>(&deviceContext))->internalIBFormat = GL_UNSIGNED_SHORT;
       break;
-    case T8_IB_FORMAR::R32:
+    case IndexBufferFormat::R32:
       reinterpret_cast<GLDeviceContext*>(const_cast<DeviceContext*>(&deviceContext))->internalIBFormat = GL_UNSIGNED_INT;
       break;
     default:

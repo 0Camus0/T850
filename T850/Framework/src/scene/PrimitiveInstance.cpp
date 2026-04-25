@@ -1,4 +1,4 @@
-#include "pch.h"
+#include <pch.h>
 /*********************************************************
 * Copyright (C) 2017 Daniel Enriquez (camus_mm@hotmail.com)
 * All Rights Reserved
@@ -13,7 +13,7 @@
 
 #include <scene/PrimitiveInstance.h>
 #include <scene/RenderSkinnedMesh.h>
-namespace t800 {
+namespace t850 {
   void PrimitiveInst::TranslateAbsolute(float x, float y, float z) {
     XMatTranslation(Position, x, y, z);
   }

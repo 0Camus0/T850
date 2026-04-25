@@ -16,7 +16,7 @@
 #include <wrl/client.h>
 using Microsoft::WRL::ComPtr;
 
-namespace t800 {
+namespace t850 {
 
   class D3D12Driver;
 
@@ -28,7 +28,7 @@ namespace t800 {
     void* GetAPIObject() const override;
     void** GetAPIObjectReference() const override;
     void release() override;
-    void SetPrimitiveTopology(T8_TOPOLOGY::E topology) override;
+    void SetPrimitiveTopology(Topology::E topology) override;
     void DrawIndexed(unsigned vertexCount, unsigned startIndex, unsigned startVertex) override;
 
     ID3D12GraphicsCommandList* GetCommandList() const { return m_commandList.Get(); }
@@ -38,7 +38,7 @@ namespace t800 {
     ComPtr<ID3D12GraphicsCommandList> m_commandList;
   };
 
-} // namespace t800
+} // namespace t850
 
 #endif // OS_WINDOWS
 #endif // T800_D3D12DEVICECONTEXT_H

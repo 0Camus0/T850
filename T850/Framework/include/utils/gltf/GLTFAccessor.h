@@ -10,7 +10,7 @@
 #include <vector>
 #include <utils/gltf/GLTFTypes.h>
 
-namespace t800 {
+namespace t850 {
 namespace gltf {
 
 // Read any non-index accessor as floats (component-promoted). On
@@ -48,6 +48,6 @@ bool DecodeDracoMesh(const Document& doc,
                      DracoDecodeResult& result);
 
 } // namespace gltf
-} // namespace t800
+} // namespace t850
 
 #endif // T800_GLTF_ACCESSOR_H

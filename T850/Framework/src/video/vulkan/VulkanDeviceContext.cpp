@@ -1,4 +1,4 @@
-#include "pch.h"
+#include <pch.h>
 /*********************************************************
  * T850 Engine — Vulkan Backend
  * VulkanDeviceContext.cpp: DeviceContext implementation
@@ -12,9 +12,9 @@
 #if defined(OS_WINDOWS)
 
 #include <utils/Log.h>
-#include <debug/T8_Profiler.h>
+#include <debug/Profiler.h>
 
-namespace t800 {
+namespace t850 {
 
   extern Device*        T8Device;
   extern DeviceContext*  T8DeviceContext;
@@ -27,13 +27,13 @@ namespace t800 {
   void** VulkanDeviceContext::GetAPIObjectReference() const { return nullptr; }
   void VulkanDeviceContext::release() { m_commandBuffer = VK_NULL_HANDLE; }
 
-  void VulkanDeviceContext::SetPrimitiveTopology(T8_TOPOLOGY::E topology) {
+  void VulkanDeviceContext::SetPrimitiveTopology(Topology::E topology) {
     switch (topology) {
-      case T8_TOPOLOGY::LINE_LIST:      m_topology = VK_PRIMITIVE_TOPOLOGY_LINE_LIST;      break;
-      case T8_TOPOLOGY::LINE_STRIP:     m_topology = VK_PRIMITIVE_TOPOLOGY_LINE_STRIP;     break;
-      case T8_TOPOLOGY::POINT_LIST:     m_topology = VK_PRIMITIVE_TOPOLOGY_POINT_LIST;     break;
-      case T8_TOPOLOGY::TRIANGLE_STRIP: m_topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_STRIP; break;
-      case T8_TOPOLOGY::TRIANLE_LIST:
+      case Topology::LINE_LIST:      m_topology = VK_PRIMITIVE_TOPOLOGY_LINE_LIST;      break;
+      case Topology::LINE_STRIP:     m_topology = VK_PRIMITIVE_TOPOLOGY_LINE_STRIP;     break;
+      case Topology::POINT_LIST:     m_topology = VK_PRIMITIVE_TOPOLOGY_POINT_LIST;     break;
+      case Topology::TRIANGLE_STRIP: m_topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_STRIP; break;
+      case Topology::TRIANLE_LIST:
       default:                          m_topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;   break;
     }
   }
@@ -49,10 +49,10 @@ namespace t800 {
 
     vkCmdDrawIndexed(m_commandBuffer, vertexCount, 1, startIndex, (int32_t)startVertex, 0);
 #ifdef T8_ENABLE_PROFILER
-    if (t800::g_profiler) t800::g_profiler->AddDrawCall(vertexCount);
+    if (t850::g_profiler) t850::g_profiler->AddDrawCall(vertexCount);
 #endif
   }
 
-} // namespace t800
+} // namespace t850
 
 #endif // OS_WINDOWS

@@ -28,7 +28,7 @@
 #include <windows.h>
 #endif
 
-namespace t800 {
+namespace t850 {
 
   class BaseDriver;
 
@@ -46,10 +46,10 @@ namespace t800 {
   };
 
   // ── Profiler interface ──
-  class T8Profiler {
+  class Profiler {
   public:
-    T8Profiler() = default;
-    ~T8Profiler();
+    Profiler() = default;
+    ~Profiler();
 
     // Initialize the profiler for the current graphics API.
     // maxScopes: maximum number of named scopes per frame.
@@ -127,8 +127,8 @@ namespace t800 {
 
   // ── RAII scoped timer (GPU + CPU) ──
   struct ProfileScopeGuard {
-    T8Profiler* profiler;
-    ProfileScopeGuard(T8Profiler* p, const char* name) : profiler(p) {
+    Profiler* profiler;
+    ProfileScopeGuard(Profiler* p, const char* name) : profiler(p) {
       if (profiler) profiler->BeginScope(name);
     }
     ~ProfileScopeGuard() {
@@ -138,8 +138,8 @@ namespace t800 {
 
   // ── RAII CPU-only scoped timer (no GPU timestamp) ──
   struct CPUProfileScopeGuard {
-    T8Profiler* profiler;
-    CPUProfileScopeGuard(T8Profiler* p, const char* name) : profiler(p) {
+    Profiler* profiler;
+    CPUProfileScopeGuard(Profiler* p, const char* name) : profiler(p) {
       if (profiler) profiler->BeginCPUScope(name);
     }
     ~CPUProfileScopeGuard() {
@@ -148,22 +148,22 @@ namespace t800 {
   };
 
   // Global profiler instance (set by framework)
-  extern T8Profiler* g_profiler;
+  extern Profiler* g_profiler;
 
-} // namespace t800
+} // namespace t850
 
 // ── Active macros ──
 #define T8_PROFILE_SCOPE(profiler, name) \
-  t800::ProfileScopeGuard _t8prof##__LINE__((profiler), (name))
+  t850::ProfileScopeGuard _t8prof##__LINE__((profiler), (name))
 
 #define T8_PROFILE_CPU_SCOPE(profiler, name) \
-  t800::CPUProfileScopeGuard _t8cpuprof##__LINE__((profiler), (name))
+  t850::CPUProfileScopeGuard _t8cpuprof##__LINE__((profiler), (name))
 
 #else // T8_ENABLE_PROFILER not defined — everything compiles away
 
-namespace t800 {
-  class T8Profiler;
-  inline T8Profiler* g_profiler = nullptr;
+namespace t850 {
+  class Profiler;
+  inline Profiler* g_profiler = nullptr;
 }
 
 #define T8_PROFILE_SCOPE(profiler, name)     ((void)0)

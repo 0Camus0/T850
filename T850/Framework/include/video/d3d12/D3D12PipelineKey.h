@@ -15,7 +15,7 @@
 #include <cstdint>
 #include <functional>
 
-namespace t800 {
+namespace t850 {
 
   // ══════════════════════════════════════════════════════
   //  D3D12 Pipeline State cache key
@@ -48,7 +48,7 @@ namespace t800 {
     }
   };
 
-} // namespace t800
+} // namespace t850
 
 #endif // OS_WINDOWS
 #endif // T800_D3D12PIPELINEKEY_H

@@ -19,13 +19,13 @@
 #include <wrl.h>
 #include <wrl/client.h>
 
-namespace t800 {
+namespace t850 {
   class D3DXIndexBuffer : public IndexBuffer {
   public:
     void* GetAPIObject() const override;
     void** GetAPIObjectReference() const override;
 
-    void Set(const DeviceContext& deviceContext, const unsigned offset, T8_IB_FORMAR::E format = T8_IB_FORMAR::R32) override;
+    void Set(const DeviceContext& deviceContext, const unsigned offset, IndexBufferFormat::E format = IndexBufferFormat::R32) override;
     void UpdateFromSystemCopy(const DeviceContext& deviceContext) override;
     void UpdateFromBuffer(const DeviceContext& deviceContext, const void* buffer) override;
     void release() override;

@@ -1,7 +1,7 @@
-#include "pch.h"
-#include "scene/T8_Quad.h"
+#include <pch.h>
+#include <scene/Quad.h>
 #include <utils/Utils.h>
-namespace t800 {
+namespace t850 {
 
   extern Device*            T8Device;
   extern DeviceContext*     T8DeviceContext;
@@ -21,13 +21,13 @@ namespace t800 {
 
     BufferDesc bdesc;
     bdesc.byteWidth = sizeof(Vertex) * 4;
-    bdesc.usage = T8_BUFFER_USAGE::DEFAULT;
-    m_VB = (t800::VertexBuffer*)T8Device->CreateBuffer(T8_BUFFER_TYPE::VERTEX, bdesc, m_vertex);
+    bdesc.usage = BufferUsage::DEFAULT;
+    m_VB = (t850::VertexBuffer*)T8Device->CreateBuffer(BufferType::VERTEX, bdesc, m_vertex);
 
 
     bdesc.byteWidth = 6 * sizeof(unsigned short);
-    bdesc.usage = T8_BUFFER_USAGE::DEFAULT;
-    m_IB = (t800::IndexBuffer*)T8Device->CreateBuffer(T8_BUFFER_TYPE::INDEX, bdesc, m_index);
+    bdesc.usage = BufferUsage::DEFAULT;
+    m_IB = (t850::IndexBuffer*)T8Device->CreateBuffer(BufferType::INDEX, bdesc, m_index);
   }
 
   void Quad::Destroy()
@@ -41,6 +41,6 @@ namespace t800 {
     unsigned int offset = 0;
     unsigned int stride = sizeof(Vertex);
     m_VB->Set(*T8DeviceContext, stride, offset);
-    m_IB->Set(*T8DeviceContext, 0, T8_IB_FORMAR::R16);
+    m_IB->Set(*T8DeviceContext, 0, IndexBufferFormat::R16);
   }
 }

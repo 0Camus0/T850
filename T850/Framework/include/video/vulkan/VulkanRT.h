@@ -18,7 +18,7 @@
 
 #include <vector>
 
-namespace t800 {
+namespace t850 {
 
   // ══════════════════════════════════════════════════════
   //  Vulkan Render Target
@@ -50,7 +50,7 @@ namespace t800 {
     VkImageView     m_cubeFaceViews[6] = {};
   };
 
-} // namespace t800
+} // namespace t850
 
 #endif // OS_WINDOWS
 #endif // T800_VULKANRT_H

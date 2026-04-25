@@ -3,7 +3,7 @@
 static const struct Checker {
   unsigned int 	 width;
   unsigned int 	 height;
-  unsigned int 	 bytes_per_pixel; /* 2:RGB16, 3:RGB, 4:RGBA */ 
+  unsigned int 	 bytes_per_pixel; /* 2:RGB16, 3:RGB, 4:RGBA */
   unsigned char	 pixel_data[64 * 64 * 4 + 1];
 } g_chkr = {
   64, 64, 4,

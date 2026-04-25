@@ -1,9 +1,10 @@
-#include "SC_Day.h"
+#include <DayScene.h>
 #include <iostream>
 #include <cstdio>
 #include <cstdlib>
 #include <utils/Log.h>
-using namespace t800;
+#include <core/Config.h>
+using namespace t850;
 using std::cout;
 using std::endl;
 using std::string;
@@ -22,10 +23,10 @@ using std::string;
 #elif QUALITY_SELECTED == MEDIUMQ
 #define MEDIUM_QUALITY
 #elif QUALITY_SELECTED == LOWQ
-#define LOW_QUALITY 
+#define LOW_QUALITY
 #endif
 
-void SC_Day::InitVars() {
+void DayScene::InitVars() {
   Position = XVECTOR3(0.0f, 0.0f, 0.0f);
   Orientation = XVECTOR3(0.0f, 0.0f, 0.0f);
   Scaling = XVECTOR3(1.0f, 1.0f, 1.0f);
@@ -79,8 +80,8 @@ void SC_Day::InitVars() {
   SceneProp.DOF_Far_Samples_squared = 0.0f;
   SceneProp.AutoFocus = false;
 
-  if (!m_sceneSetup.Load("Scenes/SC_Day.json")) {
-    T8_LOG_ERROR("[SC_Day] Failed to load Scenes/SC_Day.json");
+  if (!m_sceneSetup.Load("Scenes/DayScene.json")) {
+    T8_LOG_ERROR("[DayScene] Failed to load Scenes/DayScene.json");
     return;
   }
   m_sceneSetup.Apply(SceneProp);
@@ -93,29 +94,21 @@ void SC_Day::InitVars() {
   m_activeCameraIndex = 0;
   RTIndex = -1;
 
-  // Initialize frame dumper from command-line globals
-  extern bool g_dumpEnabled, g_dumpByFrame, g_debugFrames, g_keepRunning;
-  extern int g_dumpFrame, g_startScene;
-  extern float g_dumpSeconds;
-  extern std::string g_replaySnapshotPath;
-#ifdef T8_ENABLE_PROFILER
-  extern bool g_profile;
-#endif
   FrameDumperConfig dumpCfg;
-  dumpCfg.dumpEnabled     = g_dumpEnabled;
-  dumpCfg.dumpByFrame     = g_dumpByFrame;
-  dumpCfg.dumpFrame       = g_dumpFrame;
-  dumpCfg.dumpSeconds     = g_dumpSeconds;
-  dumpCfg.debugFrames     = g_debugFrames;
-  dumpCfg.keepRunning     = g_keepRunning;
-  dumpCfg.replaySnapshotPath = g_replaySnapshotPath;
-  dumpCfg.sceneIndex      = g_startScene;
+  dumpCfg.dumpEnabled     = g_config.flags.dumpEnabled;
+  dumpCfg.dumpByFrame     = g_config.flags.dumpByFrame;
+  dumpCfg.dumpFrame       = g_config.dumpFrame;
+  dumpCfg.dumpSeconds     = g_config.dumpSeconds;
+  dumpCfg.debugFrames     = g_config.flags.debugFrames;
+  dumpCfg.keepRunning     = g_config.flags.keepRunning;
+  dumpCfg.replaySnapshotPath = g_config.replaySnapshotPath;
+  dumpCfg.sceneIndex      = g_config.startScene;
   m_dumper.Init(dumpCfg);
 }
-void SC_Day::CreateAssets() {
+void DayScene::CreateAssets() {
   //Create RT's via RenderGraph
-  if (!m_renderGraph.Load("Scenes/SC_Day_RenderGraph.json")) {
-    T8_LOG_ERROR("[SC_Day] Failed to load render graph");
+  if (!m_renderGraph.Load("Scenes/DayScene_RenderGraph.json")) {
+    T8_LOG_ERROR("[DayScene] Failed to load render graph");
     return;
   }
   m_renderGraph.CreateRenderTargets(pFramework->pVideoDriver, SceneProp);
@@ -182,8 +175,8 @@ void SC_Day::CreateAssets() {
   m_wireframeSphere.Create(8, 16);
   m_wireframeArrow.Create(24, 6);
 
-  t800::Spline& m_spline = m_sceneSetup.splines[0];
-  t800::SplineAgent& m_agent = m_sceneSetup.agents[0];
+  t850::Spline& m_spline = m_sceneSetup.splines[0];
+  t850::SplineAgent& m_agent = m_sceneSetup.agents[0];
   m_agent.m_actualPoint = m_spline.GetPoint(m_spline.GetNormalizedOffset(0));
   ActiveCam->AttachAgent(m_agent);
   ActiveCam->m_lookAtCenter = false;
@@ -251,16 +244,16 @@ void SC_Day::CreateAssets() {
   }
 }
 
-void SC_Day::OnLoadScene() {
+void DayScene::OnLoadScene() {
   InitVars();
   CreateAssets();
 }
 
-void SC_Day::OnDestoryScene() {
+void DayScene::OnDestoryScene() {
   DestroyAssets();
 }
 
-void SC_Day::DestroyAssets() {
+void DayScene::DestroyAssets() {
   SceneProp.SSAOKernel.Destroy();
   m_wireframeSphere.Destroy();
   m_wireframeArrow.Destroy();
@@ -271,10 +264,10 @@ void SC_Day::DestroyAssets() {
   //pFramework->pVideoDriver->DestroyTechniques();
 }
 
-void SC_Day::OnUpdate(float _DtSecs) {
+void DayScene::OnUpdate(float _DtSecs) {
   Camera& Cam = m_sceneSetup.cameras[0];
   Camera& LightCam = m_sceneSetup.lightCameras[0];
-  t800::SplineAgent& m_agent = m_sceneSetup.agents[0];
+  t850::SplineAgent& m_agent = m_sceneSetup.agents[0];
 
   static float totalTime = 0.0f;
   static int frameCounter = 0;
@@ -329,7 +322,7 @@ void SC_Day::OnUpdate(float _DtSecs) {
   }
 }
 
-void SC_Day::OnInput(InputManager* IManager) {
+void DayScene::OnInput(InputManager* IManager) {
   Camera& Cam = m_sceneSetup.cameras[0];
   Camera& LightCam = m_sceneSetup.lightCameras[0];
 
@@ -458,7 +451,7 @@ void SC_Day::OnInput(InputManager* IManager) {
     }
     else {
       // Re-attach to spline agent
-      t800::SplineAgent& agent = m_sceneSetup.agents[0];
+      t850::SplineAgent& agent = m_sceneSetup.agents[0];
       ActiveCam->AttachAgent(agent);
       ActiveCam->m_lookAtCenter = false;
       T8_LOG_INFO("[CAMERA] Switched to SPLINE camera");
@@ -502,17 +495,17 @@ void SC_Day::OnInput(InputManager* IManager) {
   }
 
   if (IManager->PressedOnceKey(T800K_1)) {
-    pFramework->ChangeAPI(GRAPHICS_API::D3D11);
+    pFramework->ChangeAPI(GraphicsApi::D3D11);
   }
 
   if (IManager->PressedOnceKey(T800K_2)) {
-    pFramework->ChangeAPI(GRAPHICS_API::OPENGL);
+    pFramework->ChangeAPI(GraphicsApi::OPENGL);
   }
   if (IManager->PressedOnceKey(T800K_3)) {
-    pFramework->ChangeAPI(GRAPHICS_API::D3D12);
+    pFramework->ChangeAPI(GraphicsApi::D3D12);
   }
   if (IManager->PressedOnceKey(T800K_4)) {
-    pFramework->ChangeAPI(GRAPHICS_API::VULKAN);
+    pFramework->ChangeAPI(GraphicsApi::VULKAN);
   }
   // Skip mouse-driven camera movement when replay snapshot is active
   if (!m_dumper.IsReplayActive()) {
@@ -523,7 +516,7 @@ void SC_Day::OnInput(InputManager* IManager) {
   }
 }
 
-void SC_Day::OnDraw() {
+void DayScene::OnDraw() {
   Camera& Cam = m_sceneSetup.cameras[0];
   Camera& LightCam = m_sceneSetup.lightCameras[0];
 
@@ -553,8 +546,7 @@ void SC_Day::OnDraw() {
 #else
   // RT Dump via FrameDumper (skip when profiling — GPU queries conflict with dump's cmd buffer reset)
 #ifdef T8_ENABLE_PROFILER
-  extern bool g_profile;
-  if (m_dumper.ShouldDump(DtSecs) && !g_profile) {
+  if (m_dumper.ShouldDump(DtSecs) && !g_config.flags.profile) {
 #else
   if (m_dumper.ShouldDump(DtSecs)) {
 #endif
@@ -577,8 +569,7 @@ void SC_Day::OnDraw() {
     };
     m_dumper.DumpFrame(pFramework->pVideoDriver, Cam, LightCam, SceneProp, rts, DtSecs);
 #ifdef T8_ENABLE_PROFILER
-    extern bool g_profile;
-    if (m_dumper.ShouldExit() && !g_profile) exit(0);
+    if (m_dumper.ShouldExit() && !g_config.flags.profile) exit(0);
 #else
     if (m_dumper.ShouldExit()) exit(0);
 #endif
@@ -643,7 +634,7 @@ void SC_Day::OnDraw() {
 #endif
 }
 
-void  SC_Day::ChangeSettingsOnPlus() {
+void  DayScene::ChangeSettingsOnPlus() {
   Camera& LightCam = m_sceneSetup.lightCameras[0];
   switch (SceneSettingSelection) {
   case CHANGE_EXPOSURE: {
@@ -825,7 +816,7 @@ void  SC_Day::ChangeSettingsOnPlus() {
   }
 }
 
-void  SC_Day::ChangeSettingsOnMinus() {
+void  DayScene::ChangeSettingsOnMinus() {
   Camera& LightCam = m_sceneSetup.lightCameras[0];
   switch (SceneSettingSelection) {
   case CHANGE_EXPOSURE: {
@@ -1018,7 +1009,7 @@ void  SC_Day::ChangeSettingsOnMinus() {
   }
 }
 
-void SC_Day::printCurrSelection() {
+void DayScene::printCurrSelection() {
   Camera& LightCam = m_sceneSetup.lightCameras[0];
   switch (SceneSettingSelection) {
   case CHANGE_EXPOSURE: {
@@ -1121,7 +1112,7 @@ void SC_Day::printCurrSelection() {
   }
 }
 
-int SC_Day::FindLightOption(int activeLights) {
+int DayScene::FindLightOption(int activeLights) {
   // Match against the selector options: "1","2","4","8","16","32","64","127"
   auto& selPairs = m_sceneSetup.descriptor.selectors;
   for (auto& sd : selPairs) {
@@ -1134,7 +1125,7 @@ int SC_Day::FindLightOption(int activeLights) {
   return 0;
 }
 
-void SC_Day::PopulateGUI(t800::GUIManager& gui) {
+void DayScene::PopulateGUI(t850::GUIManager& gui) {
   struct SliderMapping {
     const char* name;
     int settingIndex;
@@ -1241,7 +1232,7 @@ void SC_Day::PopulateGUI(t800::GUIManager& gui) {
   }
 }
 
-void SC_Day::SyncToGUI(t800::GUIManager& gui) {
+void DayScene::SyncToGUI(t850::GUIManager& gui) {
   for (auto& sp : gui.GetSliderPairs()) {
     auto* slider = sp.slider;
     switch (slider->settingIndex) {
@@ -1311,7 +1302,7 @@ void SC_Day::SyncToGUI(t800::GUIManager& gui) {
   }
 }
 
-void SC_Day::SyncFromGUI(t800::GUIManager& gui) {
+void DayScene::SyncFromGUI(t850::GUIManager& gui) {
   for (auto& sp : gui.GetSliderPairs()) {
     auto* slider = sp.slider;
     if (!slider->knobDragging && !slider->knobHover) continue;
@@ -1437,7 +1428,7 @@ void SC_Day::SyncFromGUI(t800::GUIManager& gui) {
       if (m_activeCameraIndex == 0) {
         // Spline
         ActiveCam = &Cam;
-        t800::SplineAgent& agent = m_sceneSetup.agents[0];
+        t850::SplineAgent& agent = m_sceneSetup.agents[0];
         ActiveCam->AttachAgent(agent);
         ActiveCam->m_lookAtCenter = false;
       } else if (m_activeCameraIndex == 1) {
@@ -1461,7 +1452,7 @@ void SC_Day::SyncFromGUI(t800::GUIManager& gui) {
   }
 }
 
-void SC_Day::SaveSceneState() {
+void DayScene::SaveSceneState() {
   // Sync cubemap path back to descriptor before saving
   auto& selDescs = m_sceneSetup.descriptor.selectors;
   for (auto& sd : selDescs) {
@@ -1489,5 +1480,5 @@ void SC_Day::SaveSceneState() {
     else if (cd.name == "dof_auto_focus")   cd.default_val = SceneProp.AutoFocus;
   }
 
-  m_sceneSetup.SaveState(this, "Scenes/SC_Day.json");
+  m_sceneSetup.SaveState(this, "Scenes/DayScene.json");
 }

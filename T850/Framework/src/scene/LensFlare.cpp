@@ -1,7 +1,7 @@
-#include "pch.h"
-#include "scene/LensFlare.h"
+#include <pch.h>
+#include <scene/LensFlare.h>
 
-namespace t800 {
+namespace t850 {
   XVECTOR3 WorldToScreenPos(const XVECTOR3& worldPos, XMATRIX44 VP) {
     XVECTOR3 ret;
     XVecTransform(ret, worldPos,VP);
@@ -66,8 +66,8 @@ namespace t800 {
     if (pos.z < 0.0f ) {
       return;
     }
-    g_pBaseDriver->SetDepthStencilState(BaseDriver::DEPTH_STENCIL_STATES::READ);
-    g_pBaseDriver->SetBlendState(BaseDriver::BLEND_STATES::ADDITIVE);
+    g_pBaseDriver->SetDepthStencilState(BaseDriver::DepthStencilStates::READ);
+    g_pBaseDriver->SetBlendState(BaseDriver::BlendStates::ADDITIVE);
     m_quads[0].TranslateAbsolute(pos.x, pos.y, 0);
     m_quads[0].Update();
     XVECTOR2 sunToCenter = CENTER_SCREEN - XVECTOR2(pos.x, pos.y);
@@ -85,15 +85,15 @@ namespace t800 {
        // m_quads[j].ScaleRelative(1.0/(0.8 + sunToCenter.Length()));
         m_quads[j].Update();
       }
-      
+
       for (int j = static_cast<int>(m_quads.size()) - 1; j > 0; j--) {
         m_quads[j].SetBrightness(brightness);
         m_quads[j].Draw();
       }
     }
     m_quads[0].Draw();
-    g_pBaseDriver->SetDepthStencilState(BaseDriver::DEPTH_STENCIL_STATES::READ_WRITE);
-    g_pBaseDriver->SetBlendState(BaseDriver::BLEND_STATES::BLEND_DEFAULT);
+    g_pBaseDriver->SetDepthStencilState(BaseDriver::DepthStencilStates::READ_WRITE);
+    g_pBaseDriver->SetBlendState(BaseDriver::BlendStates::BLEND_DEFAULT);
   }
   void LensFlare::Update()
   {

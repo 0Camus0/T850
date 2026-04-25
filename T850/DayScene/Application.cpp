@@ -10,13 +10,14 @@
 * ** Enjoy, learn and share.
 *********************************************************/
 
-#include "Application.h"
+#include <Application.h>
 #include <video/BaseDriver.h>
 #include <utils/InputManager.h>
 #include <SDL3/SDL.h>
 #include <utils/Log.h>
 #include <utils/Utils.h>
-#include <debug/T8_Profiler.h>
+#include <debug/Profiler.h>
+#include <core/Config.h>
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -30,45 +31,32 @@
 #include <string>
 #include <vector>
 
-using namespace t800;
+using namespace t850;
 extern std::vector<std::string> g_args;
-extern int g_startScene;
-extern bool g_guiOnStart;
-extern bool g_guiScreenshot;
-extern std::string g_guiScreenshotPath;
-extern bool g_guiEdit;
-extern bool g_guiSnap;
-extern bool g_guiControlEdit;
-extern std::string g_guiControlTarget;
-extern bool g_testGui;
-#ifdef T8_ENABLE_PROFILER
-extern bool g_profile;
-extern int  g_profileFrames;
-#endif
 
-namespace t800 {
+namespace t850 {
   extern Device*       T8Device;
   extern DeviceContext* T8DeviceContext;
 }
 
 
 
-#include "SC_Day.h"
-#include "SC_SandBox.h"
+#include <DayScene.h>
+#include <SandboxScene.h>
 void App::InitVars() {
-  //t800::T8Technique tech("Techniques/test_technique.xml");
+  //t850::Technique tech("Techniques/test_technique.xml");
 	DtTimer.Init();
 	DtTimer.Update();
 	srand((unsigned int)DtTimer.GetDTSecs());
   FirstFrame = true;
 
-  m_scenes.push_back(new SC_SandBox());
-  m_scenes.push_back(new SC_Day());
+  m_scenes.push_back(new SandboxScene());
+  m_scenes.push_back(new DayScene());
   for (auto &it : m_scenes) {
     it->pFramework = pFramework;
     //it->InitVars();
   }
-  int sceneIdx = (g_startScene >= 0 && g_startScene < (int)m_scenes.size()) ? g_startScene : 0;
+  int sceneIdx = (g_config.startScene >= 0 && g_config.startScene < (int)m_scenes.size()) ? g_config.startScene : 0;
   m_actualScene = m_scenes[sceneIdx];
   m_actualScene->InitVars();
 
@@ -102,9 +90,9 @@ void App::LoadScene(int id) {
 void App::LoadAssets()
 {
 #ifdef T8_ENABLE_PROFILER
-  if (g_profile && !t800::g_profiler) {
-    t800::g_profiler = new t800::T8Profiler();
-    t800::g_profiler->Init(pFramework->pVideoDriver);
+  if (g_config.flags.profile && !t850::g_profiler) {
+    t850::g_profiler = new t850::Profiler();
+    t850::g_profiler->Init(pFramework->pVideoDriver);
   }
 #endif
 }
@@ -119,45 +107,45 @@ void App::CreateAssets() {
 
   // Build GUI before FadeFX so it's visible during fade frames
   m_devLayer.RebuildGUIForScene();
-  if (g_guiOnStart) {
+  if (g_config.flags.guiOnStart) {
     m_devLayer.GetGUI().SetVisible(true);
   }
-  if (g_guiEdit) {
+  if (g_config.flags.guiEdit) {
     m_devLayer.SetEditMode(true);
   }
-  if (g_guiControlEdit) {
+  if (g_config.flags.guiControlEdit) {
     m_devLayer.SetControlEditMode(true);
-    if (!m_devLayer.SetControlEditTargetByName(g_guiControlTarget)) {
-      T8_LOG_ERROR("[App] Unknown gui control target '%s' (expected slider_knob|selector_control|checkbox_mark)", g_guiControlTarget.c_str());
+    if (!m_devLayer.SetControlEditTargetByName(g_config.guiControlTarget)) {
+      T8_LOG_ERROR("[App] Unknown gui control target '%s' (expected slider_knob|selector_control|checkbox_mark)", g_config.guiControlTarget.c_str());
     }
   }
-  if (g_guiSnap) {
+  if (g_config.flags.guiSnap) {
     m_devLayer.SetSnapToGrid(true);
   }
 
   // Skip fade when doing an automated screenshot
-  if (!g_guiScreenshot) {
+  if (!g_config.flags.guiScreenshot) {
     FadeFX(0.5, false);
   }
 
   // Initialize profiler if requested (after driver is fully set up)
 #ifdef T8_ENABLE_PROFILER
-  if (g_profile && !t800::g_profiler) {
-    t800::g_profiler = new t800::T8Profiler();
-    t800::g_profiler->Init(pFramework->pVideoDriver);
+  if (g_config.flags.profile && !t850::g_profiler) {
+    t850::g_profiler = new t850::Profiler();
+    t850::g_profiler->Init(pFramework->pVideoDriver);
   }
 #endif
 }
 
 void App::DestroyAssets() {
 #ifdef T8_ENABLE_PROFILER
-   if (t800::g_profiler) {
-     delete t800::g_profiler;
-     t800::g_profiler = nullptr;
+   if (t850::g_profiler) {
+     delete t850::g_profiler;
+     t850::g_profiler = nullptr;
    }
 #endif
    m_devLayer.Destroy();
-   m_textRender.Destroy(); 
+   m_textRender.Destroy();
    PrimitiveMgr.DestroyPrimitives();
    m_actualScene->DestroyAssets();
 }
@@ -170,7 +158,7 @@ void App::OnUpdate() {
   }
    static float timeAccum = 0;
    timeAccum += DtSecs;
-  
+
    if (timeAccum > 1.0) {
      m_fpsString = "FPS " + std::to_string((int)(1.0 / DtSecs));
      m_fpsCol = XVECTOR3(0.2, 0.8, 0.2);
@@ -179,14 +167,14 @@ void App::OnUpdate() {
    // Feed FPS text to GUI so it can be displayed as a movable element
    m_devLayer.GetGUI().SetFPSText(m_fpsString, m_fpsCol);
    m_devLayer.Update(DtSecs);
-   
+
    OnInput();
    OnDraw();
 }
 
 void App::OnDraw() {
 #ifdef T8_ENABLE_PROFILER
-  if (t800::g_profiler) t800::g_profiler->BeginFrame();
+  if (t850::g_profiler) t850::g_profiler->BeginFrame();
 #endif
   static int frameCount = 0;
   T8_LOG_TRACE("[Frame %d] === OnDraw BEGIN ===", frameCount);
@@ -194,7 +182,7 @@ void App::OnDraw() {
   FirstFrame = false;
 
   // ── Minimal GUI test: draw scene FIRST, then overlay a red quad ──
-  if (g_testGui) {
+  if (g_config.flags.testGui) {
     static Quad testQuad;
     static ShaderBase* testShader = nullptr;
     static ConstantBuffer* testCB = nullptr;
@@ -204,8 +192,8 @@ void App::OnDraw() {
     if (!testInited) {
       testQuad.Init();
       unsigned char white[4] = {255, 255, 255, 255};
-      testTex = t800::T8Device->CreateTextureFromMemory(white, 1, 1, 4, "testGui_white");
-      if (testTex) { testTex->params = TEXT_BASIC_PARAMS::CLAMP_TO_EDGE; testTex->SetTextureParams(); }
+      testTex = t850::T8Device->CreateTextureFromMemory(white, 1, 1, 4, "testGui_white");
+      if (testTex) { testTex->params = TextBasicParams::CLAMP_TO_EDGE; testTex->SetTextureParams(); }
       char* vs = file2string("Shaders/VS_GUI.hlsl");
       char* fs = file2string("Shaders/FS_GUI.hlsl");
       if (vs && fs) {
@@ -213,8 +201,8 @@ void App::OnDraw() {
         testShader = pFramework->pVideoDriver->GetShaderIdx(id);
         free(vs); free(fs);
       }
-      BufferDesc bd; bd.byteWidth = sizeof(XVECTOR3); bd.usage = T8_BUFFER_USAGE::DEFAULT;
-      testCB = (ConstantBuffer*)t800::T8Device->CreateBuffer(T8_BUFFER_TYPE::CONSTANT, bd);
+      BufferDesc bd; bd.byteWidth = sizeof(XVECTOR3); bd.usage = BufferUsage::DEFAULT;
+      testCB = (ConstantBuffer*)t850::T8Device->CreateBuffer(BufferType::CONSTANT, bd);
       testInited = true;
     }
 
@@ -228,21 +216,21 @@ void App::OnDraw() {
       pFramework->pVideoDriver->SetCullFace(BaseDriver::FRONT_AND_BACK);
 
       testQuad.Set();
-      testShader->Set(*t800::T8DeviceContext);
-      t800::T8DeviceContext->SetPrimitiveTopology(T8_TOPOLOGY::TRIANLE_LIST);
+      testShader->Set(*t850::T8DeviceContext);
+      t850::T8DeviceContext->SetPrimitiveTopology(Topology::TRIANLE_LIST);
 
       XVECTOR3 tint(1.0f, 0.0f, 0.0f);
-      testCB->UpdateFromBuffer(*t800::T8DeviceContext, &tint.x);
-      testCB->Set(*t800::T8DeviceContext);
+      testCB->UpdateFromBuffer(*t850::T8DeviceContext, &tint.x);
+      testCB->Set(*t850::T8DeviceContext);
       Quad::Vertex verts[4] = {
         {-0.5f,  0.5f, 0.0f, 1.0f,  0.0f, 0.0f},
         {-0.5f, -0.5f, 0.0f, 1.0f,  0.0f, 1.0f},
         { 0.5f, -0.5f, 0.0f, 1.0f,  1.0f, 1.0f},
         { 0.5f,  0.5f, 0.0f, 1.0f,  1.0f, 0.0f},
       };
-      testQuad.m_VB->UpdateFromBuffer(*t800::T8DeviceContext, verts);
-      testTex->Set(*t800::T8DeviceContext, 0, "tex0");
-      t800::T8DeviceContext->DrawIndexed(6, 0, 0);
+      testQuad.m_VB->UpdateFromBuffer(*t850::T8DeviceContext, verts);
+      testTex->Set(*t850::T8DeviceContext, 0, "tex0");
+      t850::T8DeviceContext->DrawIndexed(6, 0, 0);
 
       if (frameCount == 3) {
         pFramework->pVideoDriver->SaveScreenshot("testGui_result");
@@ -279,24 +267,24 @@ void App::OnDraw() {
   }
 
   // --guiScreenshot: after a few frames (let scene stabilise), save backbuffer and exit
-  if (g_guiScreenshot && frameCount >= 3) {
-    pFramework->pVideoDriver->SaveScreenshot(g_guiScreenshotPath);
-    printf("[guiScreenshot] Saved to %s\n", g_guiScreenshotPath.c_str());
+  if (g_config.flags.guiScreenshot && frameCount >= 3) {
+    pFramework->pVideoDriver->SaveScreenshot(g_config.guiScreenshotPath);
+    printf("[guiScreenshot] Saved to %s\n", g_config.guiScreenshotPath.c_str());
     pFramework->pVideoDriver->SwapBuffers();
     exit(0);
   }
   frameCount++;
 
 #ifdef T8_ENABLE_PROFILER
-  if (t800::g_profiler) {
-    t800::g_profiler->EndFrame();
+  if (t850::g_profiler) {
+    t850::g_profiler->EndFrame();
     static bool reported = false;
-    if (!reported && t800::g_profiler->GetFrameCount() >= g_profileFrames) {
+    if (!reported && t850::g_profiler->GetFrameCount() >= g_config.profileFrames) {
       reported = true;
       T8_LOG_INFO("[App] Profiler reached %d frames, printing report...",
-                  t800::g_profiler->GetFrameCount());
-      t800::g_profiler->Report();
-      t800::g_profiler->Reset();
+                  t850::g_profiler->GetFrameCount());
+      t850::g_profiler->Report();
+      t850::g_profiler->Reset();
       // Clean shutdown after profiling — use _exit to skip static destructors
       // which may reference already-freed driver/framework objects.
       pFramework->pVideoDriver->FlushGPUResources();

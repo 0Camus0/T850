@@ -1,4 +1,4 @@
-#include "pch.h"
+#include <pch.h>
 /*********************************************************
  * T850 Engine — Line Renderer. See header for overview.
  *********************************************************/
@@ -13,7 +13,7 @@
 #include <cstdlib>
 #include <string>
 
-namespace t800 {
+namespace t850 {
   extern Device*        T8Device;
   extern DeviceContext* T8DeviceContext;
 
@@ -30,7 +30,7 @@ bool LineRenderer::Create() {
     return false;
   }
 
-  const bool useGL = (g_pBaseDriver->m_currentAPI == GRAPHICS_API::OPENGL);
+  const bool useGL = (g_pBaseDriver->m_currentAPI == GraphicsApi::OPENGL);
 
   // Load vertex shader (shared by both variants)
   char* vsSrc = file2string(useGL ? "Shaders/VS_EditorLine.glsl"
@@ -91,8 +91,8 @@ bool LineRenderer::Create() {
 
   BufferDesc bd;
   bd.byteWidth = sizeof(CBuffer);
-  bd.usage     = T8_BUFFER_USAGE::DEFAULT;
-  m_cb = (ConstantBuffer*)T8Device->CreateBuffer(T8_BUFFER_TYPE::CONSTANT, bd);
+  bd.usage     = BufferUsage::DEFAULT;
+  m_cb = (ConstantBuffer*)T8Device->CreateBuffer(BufferType::CONSTANT, bd);
   if (!m_cb) {
     T8_LOG_ERROR("[LineRenderer] CB create failed");
     return false;
@@ -116,7 +116,7 @@ void LineRenderer::DrawLines(const XMATRIX44& world,
                              IndexBuffer*  ib,
                              unsigned indexCount,
                              unsigned vertexStride,
-                             T8_IB_FORMAR::E ibFormat) {
+                             IndexBufferFormat::E ibFormat) {
   if (!m_shaderDepth || !m_cb || !vb || !ib || indexCount == 0) return;
 
   ShaderBase* shader = m_depthTest ? m_shaderDepth : m_shaderFlat;
@@ -134,7 +134,7 @@ void LineRenderer::DrawLines(const XMATRIX44& world,
   vb->Set(*T8DeviceContext, vertexStride, 0);
 
   // Set topology BEFORE shader (Vulkan bakes topology into the pipeline at Set time)
-  T8DeviceContext->SetPrimitiveTopology(T8_TOPOLOGY::LINE_LIST);
+  T8DeviceContext->SetPrimitiveTopology(Topology::LINE_LIST);
 
   shader->Set(*T8DeviceContext);
   m_cb->UpdateFromBuffer(*T8DeviceContext, &cb);
@@ -147,18 +147,18 @@ void LineRenderer::DrawLines(const XMATRIX44& world,
   T8DeviceContext->DrawIndexed(indexCount, 0, 0);
 
   // Reset topology back to triangle list for subsequent draws
-  T8DeviceContext->SetPrimitiveTopology(T8_TOPOLOGY::TRIANLE_LIST);
+  T8DeviceContext->SetPrimitiveTopology(Topology::TRIANLE_LIST);
 }
 
 VertexBuffer* LineRenderer::CreatePositionVB(const float* positionsXYZW,
                                              unsigned numVertices,
-                                             T8_BUFFER_USAGE::E usage) {
+                                             BufferUsage::E usage) {
   if (!T8Device || !positionsXYZW || numVertices == 0) return nullptr;
   BufferDesc bd;
   bd.byteWidth = static_cast<int>(sizeof(float) * 4 * numVertices);
   bd.usage     = usage;
   return (VertexBuffer*)T8Device->CreateBuffer(
-      T8_BUFFER_TYPE::VERTEX, bd, const_cast<float*>(positionsXYZW));
+      BufferType::VERTEX, bd, const_cast<float*>(positionsXYZW));
 }
 
 IndexBuffer* LineRenderer::CreateIndexBuffer16(const unsigned short* indices,
@@ -166,9 +166,9 @@ IndexBuffer* LineRenderer::CreateIndexBuffer16(const unsigned short* indices,
   if (!T8Device || !indices || numIndices == 0) return nullptr;
   BufferDesc bd;
   bd.byteWidth = static_cast<int>(sizeof(unsigned short) * numIndices);
-  bd.usage     = T8_BUFFER_USAGE::DEFAULT;
+  bd.usage     = BufferUsage::DEFAULT;
   return (IndexBuffer*)T8Device->CreateBuffer(
-      T8_BUFFER_TYPE::INDEX, bd, const_cast<unsigned short*>(indices));
+      BufferType::INDEX, bd, const_cast<unsigned short*>(indices));
 }
 
 IndexBuffer* LineRenderer::CreateIndexBuffer32(const unsigned int* indices,
@@ -176,9 +176,9 @@ IndexBuffer* LineRenderer::CreateIndexBuffer32(const unsigned int* indices,
   if (!T8Device || !indices || numIndices == 0) return nullptr;
   BufferDesc bd;
   bd.byteWidth = static_cast<int>(sizeof(unsigned int) * numIndices);
-  bd.usage     = T8_BUFFER_USAGE::DEFAULT;
+  bd.usage     = BufferUsage::DEFAULT;
   return (IndexBuffer*)T8Device->CreateBuffer(
-      T8_BUFFER_TYPE::INDEX, bd, const_cast<unsigned int*>(indices));
+      BufferType::INDEX, bd, const_cast<unsigned int*>(indices));
 }
 
-} // namespace t800
+} // namespace t850

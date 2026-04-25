@@ -1,9 +1,9 @@
-#include "pch.h"
+#include <pch.h>
 #include <debug/FrameDumper.h>
 #include <utils/Camera.h>
 #include <scene/SceneProp.h>
 #include <video/BaseDriver.h>
-#include <T8_descriptors.h>
+#include <Descriptors.h>
 
 #include <iostream>
 #include <cstdio>
@@ -17,7 +17,7 @@
 #include <sys/stat.h>
 #endif
 
-namespace t800 {
+namespace t850 {
 
 // ── Mat4Json <-> XMATRIX44 conversion ──
 
@@ -232,9 +232,9 @@ void FrameDumper::DumpFrame(BaseDriver* driver,
                             const XVECTOR3* omniLightPos) {
   dumped_ = true;
 
-  std::string apiName = (driver->m_currentAPI == GRAPHICS_API::D3D12) ? "d3d12"
-                       : (driver->m_currentAPI == GRAPHICS_API::D3D11) ? "d3d11"
-                       : (driver->m_currentAPI == GRAPHICS_API::VULKAN) ? "vulkan"
+  std::string apiName = (driver->m_currentAPI == GraphicsApi::D3D12) ? "d3d12"
+                       : (driver->m_currentAPI == GraphicsApi::D3D11) ? "d3d11"
+                       : (driver->m_currentAPI == GraphicsApi::VULKAN) ? "vulkan"
                        : "gl";
   std::string dumpDir = BuildDumpDir(apiName);
 
@@ -391,4 +391,4 @@ void FrameDumper::WriteSnapshot(const std::string& path,
   SaveSnapshot(path, out);
 }
 
-} // namespace t800
+} // namespace t850

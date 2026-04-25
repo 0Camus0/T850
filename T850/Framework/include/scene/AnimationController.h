@@ -13,7 +13,7 @@
 #include <utils/xDefs.h>
 #include <utils/xMaths.h>
 
-namespace t800 {
+namespace t850 {
 
 static constexpr int kMaxBones = 256;
 
@@ -110,6 +110,6 @@ private:
   bool  m_initialized   = false;
 };
 
-} // namespace t800
+} // namespace t850
 
 #endif // T800_ANIMATION_CONTROLLER_H

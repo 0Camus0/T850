@@ -19,14 +19,14 @@
 #include <wrl.h>
 #include <wrl/client.h>
 
-namespace t800 {
+namespace t850 {
   class D3DXDeviceContext : public DeviceContext {
   public:
     void* GetAPIObject() const override;
     void** GetAPIObjectReference() const override;
 
     void release() override;
-    void SetPrimitiveTopology(T8_TOPOLOGY::E topology) override;
+    void SetPrimitiveTopology(Topology::E topology) override;
     void DrawIndexed(unsigned vertexCount, unsigned startIndex, unsigned startVertex) override;
   private:
     Microsoft::WRL::ComPtr<ID3D11DeviceContext> APIContext;

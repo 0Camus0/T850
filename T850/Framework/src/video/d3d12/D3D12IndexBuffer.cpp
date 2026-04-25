@@ -1,4 +1,4 @@
-#include "pch.h"
+#include <pch.h>
 /*********************************************************
 * T850 Engine — D3D12 Backend
 * D3D12IndexBuffer.cpp: Index buffer implementation
@@ -13,7 +13,7 @@
 
 #include <utils/Log.h>
 
-namespace t800 {
+namespace t850 {
 
   extern Device*        T8Device;
   extern DeviceContext*  T8DeviceContext;
@@ -40,7 +40,7 @@ namespace t800 {
     bufDesc.SampleDesc.Count = 1;
     bufDesc.Layout = D3D12_TEXTURE_LAYOUT_ROW_MAJOR;
 
-    if (initialData && desc.usage == T8_BUFFER_USAGE::DEFAULT) {
+    if (initialData && desc.usage == BufferUsage::DEFAULT) {
       // Static buffer: create in GPU-local DEFAULT heap, upload via staging
       D3D12_HEAP_PROPERTIES defaultHeap = {}; defaultHeap.Type = D3D12_HEAP_TYPE_DEFAULT;
       HRESULT hr = dev->CreateCommittedResource(&defaultHeap, D3D12_HEAP_FLAG_NONE, &bufDesc,
@@ -108,9 +108,9 @@ namespace t800 {
                  m_mappedData ? " (upload)" : " (default)");
   }
 
-  void D3D12IndexBuffer::Set(const DeviceContext& deviceContext, const unsigned offset, T8_IB_FORMAR::E format) {
+  void D3D12IndexBuffer::Set(const DeviceContext& deviceContext, const unsigned offset, IndexBufferFormat::E format) {
     const_cast<DeviceContext*>(&deviceContext)->actualIndexBuffer = (IndexBuffer*)this;
-    m_view.Format = (format == T8_IB_FORMAR::R16) ? DXGI_FORMAT_R16_UINT : DXGI_FORMAT_R32_UINT;
+    m_view.Format = (format == IndexBufferFormat::R16) ? DXGI_FORMAT_R16_UINT : DXGI_FORMAT_R32_UINT;
     auto* cmdList = static_cast<const D3D12DeviceContext*>(&deviceContext)->GetCommandList();
     cmdList->IASetIndexBuffer(&m_view);
   }
@@ -127,6 +127,6 @@ namespace t800 {
     m_buffer.Reset(); sysMemCpy.clear(); delete this;
   }
 
-} // namespace t800
+} // namespace t850
 
 #endif // OS_WINDOWS

@@ -1,4 +1,4 @@
-#include "pch.h"
+#include <pch.h>
 /*********************************************************
  * glTF 2.0 — image / texture resolution.
  *
@@ -34,12 +34,12 @@
 #include <utils/ThreadPool.h>
 #include <utils/Log.h>
 
-namespace t800 {
+namespace t850 {
 // T8Device is the per-API device singleton declared in BaseDriver.cpp.
 extern Device* T8Device;
-} // namespace t800
+} // namespace t850
 
-namespace t800 {
+namespace t850 {
 namespace gltf {
 
 namespace {
@@ -88,7 +88,7 @@ int RegisterEncoded(const unsigned char* bytes, std::size_t size,
     return -1;
   }
 
-  ::t800::Texture* t = ::t800::T8Device->CreateTextureFromMemory(px, w, h, 4, keyName);
+  ::t850::Texture* t = ::t850::T8Device->CreateTextureFromMemory(px, w, h, 4, keyName);
   stbi_image_free(px);
   if (!t) {
     T8_LOG_ERROR("[glTF] CreateTextureFromMemory failed for '%s'", keyName.c_str());
@@ -288,7 +288,7 @@ void ResolveAllImages(const Document& doc,
 
   // Phase 2: Parallel stbi decode (CPU-only, thread-safe)
   {
-    t800::ThreadPool pool;
+    t850::ThreadPool pool;
     T8_LOG_INFO("[glTF] Decoding %d images with %u threads", numImages, pool.NumWorkers());
 
     pool.ParallelFor(0, numImages, [&](int i) {
@@ -330,7 +330,7 @@ void ResolveAllImages(const Document& doc,
       continue;
     }
 
-    ::t800::Texture* t = ::t800::T8Device->CreateTextureFromMemory(
+    ::t850::Texture* t = ::t850::T8Device->CreateTextureFromMemory(
         r.pixels, r.w, r.h, 4, r.keyName);
     stbi_image_free(r.pixels);
 
@@ -358,4 +358,4 @@ void ResolveAllImages(const Document& doc,
 }
 
 } // namespace gltf
-} // namespace t800
+} // namespace t850

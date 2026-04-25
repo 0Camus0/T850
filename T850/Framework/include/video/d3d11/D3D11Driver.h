@@ -31,10 +31,10 @@
 using namespace Microsoft::WRL;
 
 
-namespace t800 {
+namespace t850 {
   class D3DXDriver : public BaseDriver {
   public:
-    D3DXDriver() { m_currentAPI = GRAPHICS_API::D3D11; }
+    D3DXDriver() { m_currentAPI = GraphicsApi::D3D11; }
     void	InitDriver();
     void	CreateSurfaces();
     void	DestroySurfaces();
@@ -43,9 +43,9 @@ namespace t800 {
     void	SetWindow(void *window);
     void  SetWindowHandle(const WindowHandle& handle) override;
     void	SetDimensions(int, int);
-    void SetBlendState(BLEND_STATES state) override;
-    void SetDepthStencilState(DEPTH_STENCIL_STATES state) override;
-	  void SetCullFace(FACE_CULLING state) override;
+    void SetBlendState(BlendStates state) override;
+    void SetDepthStencilState(DepthStencilStates state) override;
+	  void SetCullFace(FaceCulling state) override;
 
     void SaveScreenshot(std::string path) override;
     void SaveRTToFile(int rtID, int attachment, std::string path) override;

@@ -1,4 +1,4 @@
-﻿/*********************************************************
+/*********************************************************
 * Copyright (C) 2017 Daniel Enriquez (camus_mm@hotmail.com)
 * All Rights Reserved
 *
@@ -22,7 +22,7 @@
 #endif
 
 #ifndef FORCE_LOW_RES_TEXTURES
-#define FORCE_LOW_RES_TEXTURES 
+#define FORCE_LOW_RES_TEXTURES
 #endif
 
 #ifndef FORCED_FACTOR

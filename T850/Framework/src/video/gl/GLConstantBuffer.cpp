@@ -1,4 +1,4 @@
-#include "pch.h"
+#include <pch.h>
 /*********************************************************
 * Copyright (C) 2017 Daniel Enriquez (camus_mm@hotmail.com)
 * All Rights Reserved
@@ -45,7 +45,7 @@
 #endif
 #endif
 
-namespace t800 {
+namespace t850 {
   void * GLConstantBuffer::GetAPIObject() const
   {
     return nullptr;

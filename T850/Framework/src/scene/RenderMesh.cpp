@@ -1,4 +1,4 @@
-#include "pch.h"
+#include <pch.h>
 /*********************************************************
 * Copyright (C) 2017 Daniel Enriquez (camus_mm@hotmail.com)
 * All Rights Reserved
@@ -25,17 +25,17 @@
 #include <video/d3d11/D3D11Shader.h>
 #include <video/d3d11/D3D11Driver.h>
 #endif
-#include "core/Core.h"
+#include <core/Core.h>
 #include <utils/Log.h>
 
 #define CHANGE_TO_RH 0
 #define DEBUG_MODEL 0
-extern t800::AppBase		  *pApp;
-namespace t800 {
+extern t850::AppBase		  *pApp;
+namespace t850 {
   extern Device*            T8Device;
   extern DeviceContext*     T8DeviceContext;
 
-  
+
   void RenderMesh::Load(const char *filename)
   {
     xFile = pApp->resourceManager.Load(filename);
@@ -49,10 +49,10 @@ namespace t800 {
       xMeshGeometry *pActual = &xFile->XMeshDataBase[0]->Geometry[i];
       MeshInfo  *it_MeshInfo = &Info[i];
 
-      t800::BufferDesc bdesc;
+      t850::BufferDesc bdesc;
       bdesc.byteWidth = sizeof(RenderMesh::CBuffer);
-      bdesc.usage = T8_BUFFER_USAGE::DEFAULT;
-      it_MeshInfo->CB = (t800::ConstantBuffer*)T8Device->CreateBuffer(T8_BUFFER_TYPE::CONSTANT, bdesc);
+      bdesc.usage = BufferUsage::DEFAULT;
+      it_MeshInfo->CB = (t850::ConstantBuffer*)T8Device->CreateBuffer(BufferType::CONSTANT, bdesc);
 
       int NumMaterials = static_cast<int>(pActual->MaterialList.Materials.size());
       int NumFaceIndices = static_cast<int>(pActual->MaterialList.FaceIndices.size());
@@ -202,10 +202,10 @@ namespace t800 {
             }
           }
 
-          t800::BufferDesc bdesc;
+          t850::BufferDesc bdesc;
           bdesc.byteWidth = it_subsetinfo->NumTris * 3 * sizeof(unsigned short);
-          bdesc.usage = T8_BUFFER_USAGE::DEFAULT;
-          it_subsetinfo->IB = (t800::IndexBuffer*)T8Device->CreateBuffer(T8_BUFFER_TYPE::INDEX, bdesc, tmpIndexex);
+          bdesc.usage = BufferUsage::DEFAULT;
+          it_subsetinfo->IB = (t850::IndexBuffer*)T8Device->CreateBuffer(BufferType::INDEX, bdesc, tmpIndexex);
 
           // Compute per-subset AABB from referenced vertices
           it_subsetinfo->bounds.Reset();
@@ -241,10 +241,10 @@ namespace t800 {
             }
           }
 
-          t800::BufferDesc bdesc;
+          t850::BufferDesc bdesc;
           bdesc.byteWidth = it_subsetinfo->NumTris * 3 * sizeof(unsigned int);
-          bdesc.usage = T8_BUFFER_USAGE::DEFAULT;
-          it_subsetinfo->IB = (t800::IndexBuffer*)T8Device->CreateBuffer(T8_BUFFER_TYPE::INDEX, bdesc, tmpIndexex);
+          bdesc.usage = BufferUsage::DEFAULT;
+          it_subsetinfo->IB = (t850::IndexBuffer*)T8Device->CreateBuffer(BufferType::INDEX, bdesc, tmpIndexex);
 
           // Compute per-subset AABB from referenced vertices
           it_subsetinfo->bounds.Reset();
@@ -260,10 +260,10 @@ namespace t800 {
 
       it_MeshInfo->VertexSize = it->VertexSize;
 
-      t800::BufferDesc buffdesc;
+      t850::BufferDesc buffdesc;
       buffdesc.byteWidth = pActual->NumVertices*it->VertexSize;
-      buffdesc.usage = T8_BUFFER_USAGE::DEFAULT;
-      it_MeshInfo->VB = (t800::VertexBuffer*)T8Device->CreateBuffer(T8_BUFFER_TYPE::VERTEX, buffdesc, &it->pData[0]);
+      buffdesc.usage = BufferUsage::DEFAULT;
+      it_MeshInfo->VB = (t850::VertexBuffer*)T8Device->CreateBuffer(BufferType::VERTEX, buffdesc, &it->pData[0]);
 
       // Compute AABB from vertex positions (first 3 floats of each vertex)
       it_MeshInfo->bounds.Reset();
@@ -300,12 +300,12 @@ namespace t800 {
 
       if (!kUse32) {
         buffdesc.byteWidth = static_cast<int>(pActual->Triangles.size() * sizeof(unsigned short));
-        buffdesc.usage = T8_BUFFER_USAGE::DEFAULT;
-        it_MeshInfo->IB = (t800::IndexBuffer*)T8Device->CreateBuffer(T8_BUFFER_TYPE::INDEX, buffdesc, &pActual->Triangles[0]);
+        buffdesc.usage = BufferUsage::DEFAULT;
+        it_MeshInfo->IB = (t850::IndexBuffer*)T8Device->CreateBuffer(BufferType::INDEX, buffdesc, &pActual->Triangles[0]);
       } else {
         buffdesc.byteWidth = static_cast<int>(pActual->Triangles32.size() * sizeof(unsigned int));
-        buffdesc.usage = T8_BUFFER_USAGE::DEFAULT;
-        it_MeshInfo->IB = (t800::IndexBuffer*)T8Device->CreateBuffer(T8_BUFFER_TYPE::INDEX, buffdesc, &pActual->Triangles32[0]);
+        buffdesc.usage = BufferUsage::DEFAULT;
+        it_MeshInfo->IB = (t850::IndexBuffer*)T8Device->CreateBuffer(BufferType::INDEX, buffdesc, &pActual->Triangles32[0]);
       }
     }
 
@@ -367,7 +367,7 @@ namespace t800 {
         bool bUseFresnel = false;
 
         for (unsigned int k = 0; k < material->EffectInstance.pDefaults.size(); k++) {
-          xEffectDefault *mDef = &material->EffectInstance.pDefaults[k];		
+          xEffectDefault *mDef = &material->EffectInstance.pDefaults[k];
 
           if (mDef->Type == xF::xEFFECTENUM::STDX_STRINGS) {
             if (mDef->NameParam == "diffuseMap")
@@ -402,7 +402,7 @@ namespace t800 {
 			}
           }
         }
-		
+
 		if (bNoLight) {
 			stmp.MatID = 0;
 		}
@@ -461,12 +461,12 @@ namespace t800 {
       }
     }
 
-    unsigned int params = TEXT_BASIC_PARAMS::MIPMAPS;
+    unsigned int params = TextBasicParams::MIPMAPS;
 
     if (tiled)
-      params |= TEXT_BASIC_PARAMS::TILED;
+      params |= TextBasicParams::TILED;
     else
-      params |= TEXT_BASIC_PARAMS::CLAMP_TO_EDGE;
+      params |= TextBasicParams::CLAMP_TO_EDGE;
 
     (*tex)->params = params;
     (*tex)->SetTextureParams();
@@ -592,7 +592,7 @@ namespace t800 {
       it_MeshInfo->CnstBuffer.WorldView = WorldView;
       it_MeshInfo->CnstBuffer.Light0Pos = pScProp->Lights[0].Position;
       it_MeshInfo->CnstBuffer.Light0Col = pScProp->Lights[0].Color;
-      it_MeshInfo->CnstBuffer.CameraPos = pActualCamera->Eye;      
+      it_MeshInfo->CnstBuffer.CameraPos = pActualCamera->Eye;
       it_MeshInfo->CnstBuffer.CameraInfo = infoCam;
 	  it_MeshInfo->CnstBuffer.ParallaxSettings = XVECTOR3(m_fParallaxLowSamples, m_fParallaxHighSamples, m_fParallaxHeight);
 	  it_MeshInfo->CnstBuffer.ParallaxSettings.w = m_fParallaxEnabled;
@@ -636,8 +636,8 @@ namespace t800 {
 		it_MeshInfo->CnstBuffer.Intensities.w = (float)sub_info->MatID;
 
         sub_info->IB->Set(*T8DeviceContext, 0,
-                          sub_info->IB32Bit ? T8_IB_FORMAR::R32
-                                            : T8_IB_FORMAR::R16);
+                          sub_info->IB32Bit ? IndexBufferFormat::R32
+                                            : IndexBufferFormat::R16);
 
         // Build final shader key: material features + global pass + toggles
         ShaderKey finalKey(sub_info->key.bits);
@@ -658,7 +658,7 @@ namespace t800 {
           update = true;
 
         if (update) {
-          s->Set(*T8DeviceContext);  
+          s->Set(*T8DeviceContext);
 
           it_MeshInfo->CB->UpdateFromBuffer(*T8DeviceContext, &it_MeshInfo->CnstBuffer.WVP[0]);
           it_MeshInfo->CB->Set(*T8DeviceContext);
@@ -690,7 +690,7 @@ namespace t800 {
           sub_info->DiffuseTex->SetSampler(*T8DeviceContext);
         }
 
-        T8DeviceContext->SetPrimitiveTopology(T8_TOPOLOGY::TRIANLE_LIST);
+        T8DeviceContext->SetPrimitiveTopology(Topology::TRIANLE_LIST);
         T8DeviceContext->DrawIndexed(sub_info->NumVertex, 0, 0);
         m_drawnSubsets++;
         last = s;

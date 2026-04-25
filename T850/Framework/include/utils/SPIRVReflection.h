@@ -13,7 +13,7 @@
 #include <string>
 #include <cstdint>
 
-namespace t800 {
+namespace t850 {
 
   struct SPIRVBinding {
     std::string name;
@@ -47,4 +47,4 @@ namespace t800 {
     static void ShiftUBOBindings(uint32_t* code, size_t wordCount, uint32_t uboBindingShift);
   };
 
-} // namespace t800
+} // namespace t850

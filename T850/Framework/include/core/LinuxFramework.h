@@ -36,7 +36,7 @@
 #endif
 
 #include <memory>
-namespace t800 {
+namespace t850 {
 class LinuxFramework : public RootFramework {
 public:
 	LinuxFramework(AppBase *pBaseApp);
@@ -48,7 +48,7 @@ public:
 	void UpdateApplication();
 	void ProcessInput();
 	void ResetApplication();
-  void ChangeAPI(GRAPHICS_API::E api);
+  void ChangeAPI(GraphicsApi::E api);
 	~LinuxFramework() {	}
 
 #ifdef USING_FREEGLUT

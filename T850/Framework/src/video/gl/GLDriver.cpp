@@ -35,7 +35,11 @@
 #pragma comment(lib,"libEGL.lib")
 #pragma comment(lib,"libGLESv2.lib")
 #elif defined(USING_OPENGL)
+#ifdef _DEBUG
+#pragma comment(lib,"libglew32d.lib")
+#else
 #pragma comment(lib,"libglew32.lib")
+#endif
 #pragma comment(lib,"OpenGL32.Lib")
 #endif
 #elif defined(OS_LINUX)

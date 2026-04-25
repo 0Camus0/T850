@@ -1799,23 +1799,38 @@ reopen:
     VmaAllocation dummyCubeAlloc = VK_NULL_HANDLE;
     vmaCreateImage(m_allocator, &cubeCI, &allocCI, &dummyCubeImage, &dummyCubeAlloc, nullptr);
 
-    // Transition cube to SHADER_READ_ONLY
+    // Transition cube to SHADER_READ_ONLY (clear first to avoid UNDEFINED→read-only warning)
     {
       VkCommandBuffer cubeCmd;
       vkAllocateCommandBuffers(m_device, &cmdAlloc, &cubeCmd);
       vkBeginCommandBuffer(cubeCmd, &beginInfo);
+
       VkImageMemoryBarrier barrier = { VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER };
       barrier.oldLayout = VK_IMAGE_LAYOUT_UNDEFINED;
-      barrier.newLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+      barrier.newLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
       barrier.image = dummyCubeImage;
       barrier.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
       barrier.subresourceRange.levelCount = 1;
       barrier.subresourceRange.layerCount = 6;
       barrier.srcAccessMask = 0;
-      barrier.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
+      barrier.dstAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
       vkCmdPipelineBarrier(cubeCmd, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,
+                           VK_PIPELINE_STAGE_TRANSFER_BIT, 0,
+                           0, nullptr, 0, nullptr, 1, &barrier);
+
+      VkClearColorValue clearColor = {{ 0.0f, 0.0f, 0.0f, 1.0f }};
+      VkImageSubresourceRange clearRange = { VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 6 };
+      vkCmdClearColorImage(cubeCmd, dummyCubeImage,
+                           VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, &clearColor, 1, &clearRange);
+
+      barrier.oldLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+      barrier.newLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+      barrier.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+      barrier.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
+      vkCmdPipelineBarrier(cubeCmd, VK_PIPELINE_STAGE_TRANSFER_BIT,
                            VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT, 0,
                            0, nullptr, 0, nullptr, 1, &barrier);
+
       vkEndCommandBuffer(cubeCmd);
       VkSubmitInfo cubeSubmit = { VK_STRUCTURE_TYPE_SUBMIT_INFO };
       cubeSubmit.commandBufferCount = 1;

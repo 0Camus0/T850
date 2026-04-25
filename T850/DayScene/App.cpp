@@ -61,6 +61,8 @@ int    g_atlasMaxSprite = 256;      // --atlasMaxSprite: max sprite dimension in
 bool   g_profile = false;           // --profile: enable GPU+CPU profiling
 int    g_profileFrames = 300;       // --profileFrames: how many frames to profile
 #endif
+bool   g_dumpMatrices = false;        // --dumpMatrices N: dump camera matrices for N frames then exit
+int    g_dumpMatricesFrames = 0;      // number of frames to dump
 std::string g_modelPath = "Models/DamagedHelmet.glb"; // --model <path>: glTF model for Sandbox
 
 t800::AppBase		  *pApp = 0;
@@ -187,6 +189,10 @@ int main(int arg,char ** args){
 #endif
     else if (a == "--model" && i + 1 < arg) {
       g_modelPath = args[++i];
+    }
+    else if (a == "--dumpMatrices" && i + 1 < arg) {
+      g_dumpMatrices = true;
+      g_dumpMatricesFrames = std::stoi(args[++i]);
     }
     else if (a == "--validateGltf" && i + 1 < arg) {
       // Offline parser conformance harness (plan §8). Loads a .gltf or

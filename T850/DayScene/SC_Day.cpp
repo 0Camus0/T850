@@ -34,6 +34,51 @@ void SC_Day::InitVars() {
   CamSelection = NORMAL_CAM1;
   SceneSettingSelection = CHANGE_EXPOSURE;
 
+  // Default-initialize scene properties — JSON will overwrite them
+  VP.Identity();
+  SceneProp.ActiveCamera = 0;
+  SceneProp.ActiveLights = 2;
+  SceneProp.ActiveLightCamera = 0;
+  SceneProp.ActiveGaussKernel = 0;
+  SceneProp.AmbientColor = XVECTOR3(0, 0, 0);
+  SceneProp.ToogleShadow = 1;
+  SceneProp.ToogleSSAO = 1;
+  SceneProp.ToogleDOF = 0;
+  SceneProp.ToogleParallax = 0;
+  SceneProp.ToogleParallaxShadow = 0;
+  SceneProp.ToogleGodRays = 0;
+  SceneProp.DebugMode = 0;
+  SceneProp.ShadowBias = 0.0f;
+  SceneProp.ShadowMin = 0.0f;
+  SceneProp.EnvFactor = 0.0f;
+  SceneProp.IBLFactor = 0.0f;
+  SceneProp.GodRaysFactor = 0.0f;
+  SceneProp.ShadowMapResolution = 1024.0f;
+  SceneProp.GoodRaysResolution = 0.0f;
+  SceneProp.PCFScale = 1.7f;
+  SceneProp.PCFSamples = 1.0f;
+  SceneProp.ParallaxLowSamples = 0.0f;
+  SceneProp.ParallaxHighSamples = 0.0f;
+  SceneProp.ParallaxHeight = 0.0f;
+  SceneProp.ParallaxShadowMinLayers = 0.0f;
+  SceneProp.ParallaxShadowMaxLayers = 0.0f;
+  SceneProp.ParallaxShadowSoftness = 0.0f;
+  SceneProp.ParallaxShadowStrength = 0.0f;
+  SceneProp.LightVolumeSteps = 0.0f;
+  SceneProp.Exposure = 0.0f;
+  SceneProp.BloomFactor = 0.35f;
+  SceneProp.BloomThreshold = 0.0f;
+  SceneProp.ToneMapWhiteLevel = 5.5f;
+  SceneProp.LuminanceTau = 1.1f;
+  SceneProp.FrameDeltaSec = 0.0f;
+  SceneProp.Aperture = 0.0f;
+  SceneProp.FocalLength = 0.0f;
+  SceneProp.FocusDepth = 0.0f;
+  SceneProp.MaxCoc = 0.0f;
+  SceneProp.DOF_Near_Samples_squared = 0.0f;
+  SceneProp.DOF_Far_Samples_squared = 0.0f;
+  SceneProp.AutoFocus = false;
+
   if (!m_sceneSetup.Load("Scenes/SC_Day.json")) {
     T8_LOG_ERROR("[SC_Day] Failed to load Scenes/SC_Day.json");
     return;

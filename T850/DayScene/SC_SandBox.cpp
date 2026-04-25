@@ -7,6 +7,7 @@
 #include <scene/RenderSkinnedMesh.h>
 #include <scene/SceneDescriptor.h>
 #include <iostream>
+#include <fstream>
 #include <string>
 #include <cmath>
 
@@ -14,6 +15,9 @@ using namespace t800;
 using std::string;
 
 void SC_SandBox::InitVars() {
+
+
+
   // Free camera
   Cam.InitPerspective(XVECTOR3(0.0f, 1.0f, 10.0f), Deg2Rad(46.8f), 1280.0f / 720.0f, 0.1f, 5000.0f);
   Cam.Speed = 10.0f;
@@ -225,6 +229,64 @@ void SC_SandBox::OnUpdate(float _DtSecs) {
     SceneProp.Lights[0].Position = LightCam.Eye;
     SceneProp.Lights[0].Direction = LightCam.Look;
   }
+
+  // --dumpMatrices: log all camera matrices per frame, then exit
+  extern bool g_dumpMatrices;
+  extern int  g_dumpMatricesFrames;
+  if (g_dumpMatrices) {
+    static int s_matDumpFrame = 0;
+    static std::ofstream s_matFile;
+    if (s_matDumpFrame == 0) {
+      s_matFile.open("matrix_dump.csv", std::ios::out | std::ios::trunc);
+      s_matFile << "frame,";
+      s_matFile << "cam_eye_x,cam_eye_y,cam_eye_z,";
+      s_matFile << "cam_pitch,cam_roll,cam_yaw,";
+      for (int r = 0; r < 4; r++)
+        for (int c = 0; c < 4; c++)
+          s_matFile << "camView_" << r << c << ",";
+      for (int r = 0; r < 4; r++)
+        for (int c = 0; c < 4; c++)
+          s_matFile << "camProj_" << r << c << ",";
+      for (int r = 0; r < 4; r++)
+        for (int c = 0; c < 4; c++)
+          s_matFile << "camVP_" << r << c << ",";
+      for (int r = 0; r < 4; r++)
+        for (int c = 0; c < 4; c++)
+          s_matFile << "lightView_" << r << c << ",";
+      for (int r = 0; r < 4; r++)
+        for (int c = 0; c < 4; c++)
+          s_matFile << "lightProj_" << r << c << ",";
+      for (int r = 0; r < 4; r++)
+        for (int c = 0; c < 4; c++)
+          s_matFile << "lightVP_" << r << c << (r == 3 && c == 3 ? "" : ",");
+      s_matFile << "\n";
+    }
+    s_matFile << s_matDumpFrame << ",";
+    s_matFile << Cam.Eye.x << "," << Cam.Eye.y << "," << Cam.Eye.z << ",";
+    s_matFile << Cam.Pitch << "," << Cam.Roll << "," << Cam.Yaw << ",";
+    auto writeM = [&](const XMATRIX44& M) {
+      for (int r = 0; r < 4; r++)
+        for (int c = 0; c < 4; c++)
+          s_matFile << M.m[r][c] << ",";
+    };
+    writeM(Cam.View);
+    writeM(Cam.Projection);
+    writeM(Cam.VP);
+    writeM(LightCam.View);
+    writeM(LightCam.Projection);
+    auto& LVP = LightCam.VP;
+    for (int r = 0; r < 4; r++)
+      for (int c = 0; c < 4; c++)
+        s_matFile << LVP.m[r][c] << (r == 3 && c == 3 ? "" : ",");
+    s_matFile << "\n";
+    s_matFile.flush();
+    s_matDumpFrame++;
+    if (s_matDumpFrame >= g_dumpMatricesFrames) {
+      s_matFile.close();
+      T8_LOG_INFO("[dumpMatrices] Wrote %d frames to matrix_dump.csv", s_matDumpFrame);
+      exit(0);
+    }
+  }
 }
 
 void SC_SandBox::OnInput(InputManager* IManager) {
@@ -342,6 +404,10 @@ void SC_SandBox::ComputeOrbitCamera() {
 
   XVECTOR3 offset(sy * cp, sp, cy * cp);
   Cam.Eye = target + offset * m_orbitDist;
+  // Clear velocity — orbit camera manages Eye directly; any residual
+  // velocity from Input would be re-applied inside SetLookAt→Update,
+  // corrupting the position we just computed.
+  Cam.Velocity = XVECTOR3(0, 0, 0);
   Cam.SetLookAt(target);
 }
 

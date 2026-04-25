@@ -12,6 +12,7 @@
 #include <core/Core.h>
 #include <video/BaseDriver.h>
 #include <scene/RenderGraph.h>
+#include <scene/RenderSkinnedMesh.h>
 #include <utils/InputManager.h>
 #include <utils/Log.h>
 #include <utils/xMaths.h>
@@ -889,6 +890,14 @@ void EditorApp::OnDraw() {
       meshArray.reserve(allMeshes.size());
       for (auto* p : allMeshes) meshArray.push_back(*p);
 
+      // Update animation + bone texture before render passes (Vulkan requirement)
+      for (auto& obj : g_objects) {
+        if (obj.primId >= 0 && obj.visible && obj.litInst.pBase) {
+          auto* sk = dynamic_cast<t800::RenderSkinnedMesh*>(obj.litInst.pBase);
+          if (sk && sk->HasSkinData()) sk->UpdateAnimationAndBones();
+        }
+      }
+
       ::Camera* mainCam = m_sceneProps.pCameras[0];
       T8_LOG_TRACE("[T8ditor] OnDraw: RenderGraph Execute (%d meshes)...", (int)meshArray.size());
       g_renderGraph.Execute(drv, m_sceneProps,
@@ -966,7 +975,28 @@ void EditorApp::OnDraw() {
       if (obj.primId < 0 || !obj.visible) continue;
       bool isSelected = (g_selectionType == 0 && i == g_selectedIdx) || g_multiSelect.count(i);
       bool showWire = m_panels.showWireframe || isSelected || obj.showWire;
-      if (showWire && obj.wireframe.IsLoaded() && m_lines.IsReady()) {
+      if (!showWire) continue;
+
+      // For skinned meshes, use GPU-skinned wireframe + skeleton (same as SandBox)
+      t800::RenderSkinnedMesh* skinned = nullptr;
+      if (obj.litInst.pBase)
+        skinned = dynamic_cast<t800::RenderSkinnedMesh*>(obj.litInst.pBase);
+
+      if (skinned && skinned->HasSkinData()) {
+        // Bind GBuffer depth for shader-based wireframe occlusion
+        int gbufHandle = g_renderGraph.GetRTHandle("GBuffer");
+        if (gbufHandle >= 0 && gbufHandle < (int)drv->RTs.size()) {
+          auto* gbufRT = drv->RTs[gbufHandle];
+          if (gbufRT->vColorTextures.size() > 4)
+            skinned->SetWireframeDepthTex(gbufRT->vColorTextures[4]);
+        }
+        skinned->SetWireframeViewport(m_lastW, m_lastH);
+        drv->SetDepthStencilState(t800::BaseDriver::NONE);
+        skinned->DrawWireframe();
+        drv->SetDepthStencilState(t800::BaseDriver::NONE);
+        skinned->DrawSkeleton();
+        drv->SetDepthStencilState(t800::BaseDriver::DEPTH_DEFAULT);
+      } else if (obj.wireframe.IsLoaded() && m_lines.IsReady()) {
         XVECTOR3 savedColor = obj.wireframe.WireColor;
         if (g_multiSelect.count(i) && g_multiSelect.size() > 1)
           obj.wireframe.WireColor = XVECTOR3(0.4f, 0.8f, 1.0f, 1.0f); // cyan for multi-select
@@ -1327,6 +1357,11 @@ void EditorApp::OnDraw() {
         if (manipulated) {
           float translation[3], rotation[3], scale[3];
           ImGuizmo::DecomposeMatrixToComponents(&worldMat.m[0][0], translation, rotation, scale);
+          // Clamp scale to a small positive value to prevent degenerate matrices
+          const float kMinScale = 0.001f;
+          for (int s = 0; s < 3; s++)
+            if (scale[s] < kMinScale && scale[s] > -kMinScale)
+              scale[s] = (scale[s] >= 0) ? kMinScale : -kMinScale;
           sel->wireframe.Position() = XVECTOR3(translation[0], translation[1], translation[2]);
           sel->wireframe.EulerRadians() = XVECTOR3(
             rotation[0] * kDegToRad, rotation[1] * kDegToRad, rotation[2] * kDegToRad);

@@ -260,4 +260,16 @@ namespace t800 {
   {
     reinterpret_cast<ID3D11DeviceContext*>(deviceContext.GetAPIObject())->PSSetSamplers(slot, 1, pSampler.GetAddressOf());
   }
+
+  void D3DXTexture::SetVS(const DeviceContext& deviceContext, unsigned int slot, std::string name)
+  {
+    auto* ctx = reinterpret_cast<ID3D11DeviceContext*>(deviceContext.GetAPIObject());
+    ctx->VSSetShaderResources(slot, 1, pSRVTex.GetAddressOf());
+  }
+
+  void D3DXTexture::UpdateFloatData(const DeviceContext& deviceContext, int w, int h, const float* data)
+  {
+    auto* ctx = reinterpret_cast<ID3D11DeviceContext*>(deviceContext.GetAPIObject());
+    ctx->UpdateSubresource(Tex.Get(), 0, nullptr, data, w * 16, 0);
+  }
 }

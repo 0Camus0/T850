@@ -56,6 +56,9 @@ namespace t800 {
     virtual Texture* CreateTexture(std::string path) = 0;
     virtual Texture* CreateTextureFromMemory(const unsigned char *buff, int w, int h, int channels, std::string name) = 0;
     virtual Texture* CreateCubeMap(const unsigned char * buff, int w, int h) = 0;
+    // Create an RGBA32F texture for raw float data (e.g., bone matrices).
+    // No mips, NEAREST filtering. Can be updated per-frame via Texture::UpdateFloatData.
+    virtual Texture* CreateFloatTexture(int w, int h, const float* data = nullptr) = 0;
     virtual BaseRT* CreateRT(int nrt, int cf, int df, int w, int h, bool genMips = false) = 0;
   };
   /* BUFFERS */
@@ -117,6 +120,14 @@ namespace t800 {
     virtual void	GetFormatBpp(unsigned int &props, unsigned int &format, unsigned int &bpp) = 0;
     virtual void  Set(const DeviceContext& deviceContext, unsigned int slot, std::string shaderTextureName) = 0;
     virtual void  SetSampler(const DeviceContext& deviceContext, unsigned int slot = 0) = 0;
+    // Bind this texture to a vertex shader slot (for bone textures).
+    // Default implementation calls Set() — backends override to use VS binding.
+    virtual void  SetVS(const DeviceContext& deviceContext, unsigned int slot, std::string name) {
+      Set(deviceContext, slot, name);
+    }
+    // Update RGBA32F texture data in-place (for per-frame bone matrix upload).
+    // Only valid for textures created via CreateFloatTexture.
+    virtual void  UpdateFloatData(const DeviceContext& deviceContext, int w, int h, const float* data) {}
     
 
     std::string filepath;

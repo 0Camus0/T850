@@ -64,7 +64,11 @@ namespace t800 {
   void GLVertexBuffer::UpdateFromSystemCopy(const DeviceContext & deviceContext)
   {
     glBindBuffer(GL_ARRAY_BUFFER, APIID);
-    glBufferData(GL_ARRAY_BUFFER, descriptor.byteWidth, &sysMemCpy[0], GL_STATIC_DRAW);
+    if (descriptor.usage == T8_BUFFER_USAGE::DINAMIC) {
+      glBufferSubData(GL_ARRAY_BUFFER, 0, descriptor.byteWidth, &sysMemCpy[0]);
+    } else {
+      glBufferData(GL_ARRAY_BUFFER, descriptor.byteWidth, &sysMemCpy[0], GL_STATIC_DRAW);
+    }
   }
   void GLVertexBuffer::UpdateFromBuffer(const DeviceContext & deviceContext, const void * buffer)
   {
@@ -85,9 +89,11 @@ namespace t800 {
     if (initialData) {
       sysMemCpy.assign((char*)initialData, (char*)initialData + desc.byteWidth);
     }
+    GLenum usage = GL_STATIC_DRAW;
+    if (desc.usage == T8_BUFFER_USAGE::DINAMIC) usage = GL_DYNAMIC_DRAW;
     glGenBuffers(1, &APIID);
     glBindBuffer(GL_ARRAY_BUFFER, APIID);
-    glBufferData(GL_ARRAY_BUFFER, desc.byteWidth, initialData, GL_STATIC_DRAW);
+    glBufferData(GL_ARRAY_BUFFER, desc.byteWidth, initialData, usage);
     glBindBuffer(GL_ARRAY_BUFFER, 0);
   }
 }

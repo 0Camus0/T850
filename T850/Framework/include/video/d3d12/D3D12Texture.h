@@ -23,8 +23,10 @@ namespace t800 {
     void GetFormatBpp(unsigned int& props, unsigned int& format, unsigned int& bpp) override;
     void Set(const DeviceContext& deviceContext, unsigned int slot, std::string shaderTextureName) override;
     void SetSampler(const DeviceContext& deviceContext, unsigned int slot = 0) override;
+    void UpdateFloatData(const DeviceContext& deviceContext, int w, int h, const float* data) override;
 
     ComPtr<ID3D12Resource> pTexResource;
+    ComPtr<ID3D12Resource> m_uploadBuffer;  // persistent upload heap for per-frame updates
     D3D12_CPU_DESCRIPTOR_HANDLE srvCPU = {};
     D3D12_GPU_DESCRIPTOR_HANDLE srvGPU = {};
 

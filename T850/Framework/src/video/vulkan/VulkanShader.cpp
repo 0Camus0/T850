@@ -150,7 +150,7 @@ namespace t800 {
     for (auto& ub : vsRefl.uniformBuffers) {
       auto& b = bindingMap[ub.binding];
       b.binding = ub.binding;
-      b.descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+      b.descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC;
       b.descriptorCount = 1;
       b.stageFlags |= VK_SHADER_STAGE_VERTEX_BIT;
       cbvBinding = (int)ub.binding;
@@ -159,7 +159,7 @@ namespace t800 {
     for (auto& ub : fsRefl.uniformBuffers) {
       auto& b = bindingMap[ub.binding];
       b.binding = ub.binding;
-      b.descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+      b.descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC;
       b.descriptorCount = 1;
       b.stageFlags |= VK_SHADER_STAGE_FRAGMENT_BIT;
       if (cbvBinding < 0) cbvBinding = (int)ub.binding;
@@ -179,13 +179,17 @@ namespace t800 {
         srvIsCubemap[engineSlot] = si.isCubemap;
       }
     }
-    // VS sampled images (if any)
+    // VS sampled images (if any — e.g., bone texture)
     for (auto& si : vsRefl.sampledImages) {
       auto& b = bindingMap[si.binding];
       b.binding = si.binding;
       b.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
       b.descriptorCount = 1;
       b.stageFlags |= VK_SHADER_STAGE_VERTEX_BIT;
+      int engineSlot = (int)si.binding;
+      if (engineSlot >= 0 && engineSlot < 8) {
+        srvBindings[engineSlot] = (int)si.binding;
+      }
     }
 
     // Sort bindings and create layout

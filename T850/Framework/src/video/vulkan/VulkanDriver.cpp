@@ -408,8 +408,15 @@ namespace t800 {
 
     VkPresentModeKHR chosenMode = VK_PRESENT_MODE_FIFO_KHR;
     for (auto mode : presentModes) {
-      if (mode == VK_PRESENT_MODE_MAILBOX_KHR) { chosenMode = mode; break; }
+      if (mode == VK_PRESENT_MODE_IMMEDIATE_KHR) { chosenMode = mode; break; }
     }
+    // Fallback to MAILBOX if IMMEDIATE unavailable
+    if (chosenMode == VK_PRESENT_MODE_FIFO_KHR) {
+      for (auto mode : presentModes) {
+        if (mode == VK_PRESENT_MODE_MAILBOX_KHR) { chosenMode = mode; break; }
+      }
+    }
+    T8_LOG_INFO("[Vulkan] Present mode: %d (0=IMMEDIATE,1=MAILBOX,2=FIFO)", (int)chosenMode);
 
     m_swapChainExtent = { (uint32_t)width, (uint32_t)height };
     if (surfCaps.currentExtent.width != UINT32_MAX)
@@ -628,7 +635,7 @@ namespace t800 {
 
   void VulkanDriver::CreateDescriptorPool() {
     VkDescriptorPoolSize poolSizes[] = {
-      { VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1024 },
+      { VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC, 1024 },
       { VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 4096 },
     };
 
@@ -968,9 +975,16 @@ namespace t800 {
 
     // Reset per-frame descriptor pool and pending state
     vkResetDescriptorPool(m_device, m_descriptorPools[m_currentFrame], 0);
+    m_descriptorSetCache.clear();
     m_cbRingOffset = 0;
     m_cbDirty = false;
     memset(m_pendingTextures, 0, sizeof(m_pendingTextures));
+
+    // Clean up deferred staging buffers from this frame slot (now safe — GPU done with it)
+    for (auto& db : m_deferredCleanup[m_currentFrame]) {
+      vmaDestroyBuffer(m_allocator, db.buffer, db.alloc);
+    }
+    m_deferredCleanup[m_currentFrame].clear();
 
     // Reserve a dummy CB region so draws without explicit CB still have valid descriptors
     m_pendingCB = {};
@@ -989,6 +1003,33 @@ namespace t800 {
   }
 
   void VulkanDriver::EndFrame() {}
+
+  VkCommandBuffer VulkanDriver::GetTransientCommandBuffer() {
+    VkCommandBufferAllocateInfo allocInfo = { VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO };
+    allocInfo.commandPool = m_transientCommandPool;
+    allocInfo.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
+    allocInfo.commandBufferCount = 1;
+    VkCommandBuffer cmd;
+    vkAllocateCommandBuffers(m_device, &allocInfo, &cmd);
+    VkCommandBufferBeginInfo beginInfo = { VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO };
+    beginInfo.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
+    vkBeginCommandBuffer(cmd, &beginInfo);
+    return cmd;
+  }
+
+  void VulkanDriver::SubmitTransientCommandBuffer(VkCommandBuffer cmd) {
+    vkEndCommandBuffer(cmd);
+    VkSubmitInfo submitInfo = { VK_STRUCTURE_TYPE_SUBMIT_INFO };
+    submitInfo.commandBufferCount = 1;
+    submitInfo.pCommandBuffers = &cmd;
+    vkQueueSubmit(m_graphicsQueue, 1, &submitInfo, VK_NULL_HANDLE);
+    vkQueueWaitIdle(m_graphicsQueue);
+    vkFreeCommandBuffers(m_device, m_transientCommandPool, 1, &cmd);
+  }
+
+  void VulkanDriver::DeferCleanup(VkBuffer buffer, VmaAllocation alloc) {
+    m_deferredCleanup[m_currentFrame].push_back({ buffer, alloc });
+  }
 
   void VulkanDriver::BuildPipelineObjects() {
     T8_LOG_INFO("[Vulkan] BuildPipelineObjects");
@@ -1570,52 +1611,84 @@ reopen:
   }
 
   void VulkanDriver::BindPendingDescriptors(VkCommandBuffer cmd, VulkanShader* shader) {
-    VkDescriptorSet ds = AllocateDescriptorSet(shader->m_descriptorSetLayout);
-    if (!ds) return;
+    // Compute a fingerprint from layout + texture bindings to reuse descriptor sets
+    // when the same textures are bound across multiple draws (e.g. same material, different passes).
+    uint64_t fingerprint = (uint64_t)(uintptr_t)shader->m_descriptorSetLayout;
+    for (int i = 0; i < 8; i++) {
+      if (m_pendingTextures[i].imageView) {
+        fingerprint ^= ((uint64_t)(uintptr_t)m_pendingTextures[i].imageView) * (0x9e3779b97f4a7c15ULL + i);
+      }
+    }
 
-    std::vector<VkWriteDescriptorSet> writes;
-    std::vector<VkDescriptorImageInfo> imageInfos;
-    writes.reserve(16);
-    imageInfos.reserve(8);
-
-    // UBO binding
+    uint32_t dynamicOffset = 0;
     if (shader->cbvBinding >= 0) {
-      VkWriteDescriptorSet w = { VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET };
-      w.dstSet = ds;
-      w.dstBinding = (uint32_t)shader->cbvBinding;
-      w.descriptorCount = 1;
-      w.descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
-      w.pBufferInfo = &m_pendingCB;
-      writes.push_back(w);
+      dynamicOffset = (uint32_t)m_pendingCB.offset;
     }
 
-    // Texture bindings (from reflected srv bindings)
-    for (int slot = 0; slot < 8; slot++) {
-      if (shader->srvBindings[slot] < 0) continue;
+    auto it = m_descriptorSetCache.find(fingerprint);
+    VkDescriptorSet ds;
 
-      VkDescriptorImageInfo imgInfo = {};
-      imgInfo.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
-      // Use cubemap dummy for slots that expect cubemap views
-      VkImageView defaultView = shader->srvIsCubemap[slot] ? m_dummyCubeImageView : m_dummyImageView;
-      imgInfo.imageView = m_pendingTextures[slot].imageView ? m_pendingTextures[slot].imageView : defaultView;
-      imgInfo.sampler   = m_pendingTextures[slot].sampler   ? m_pendingTextures[slot].sampler   : m_dummySampler;
+    if (it != m_descriptorSetCache.end()) {
+      ds = it->second;
+    } else {
+      ds = AllocateDescriptorSet(shader->m_descriptorSetLayout);
+      if (!ds) return;
 
-      imageInfos.push_back(imgInfo);
+      std::vector<VkWriteDescriptorSet> writes;
+      std::vector<VkDescriptorImageInfo> imageInfos;
+      writes.reserve(16);
+      imageInfos.reserve(8);
 
-      VkWriteDescriptorSet w = { VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET };
-      w.dstSet = ds;
-      w.dstBinding = (uint32_t)shader->srvBindings[slot];
-      w.descriptorCount = 1;
-      w.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-      w.pImageInfo = &imageInfos.back();
-      writes.push_back(w);
+      // UBO binding — offset=0 in descriptor, actual offset passed as dynamic offset
+      VkDescriptorBufferInfo cbBufInfo = {};
+      if (shader->cbvBinding >= 0) {
+        cbBufInfo.buffer = m_pendingCB.buffer;
+        cbBufInfo.offset = 0;
+        cbBufInfo.range  = m_pendingCB.range;
+
+        VkWriteDescriptorSet w = { VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET };
+        w.dstSet = ds;
+        w.dstBinding = (uint32_t)shader->cbvBinding;
+        w.descriptorCount = 1;
+        w.descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC;
+        w.pBufferInfo = &cbBufInfo;
+        writes.push_back(w);
+      }
+
+      // Texture bindings (from reflected srv bindings)
+      for (int slot = 0; slot < 8; slot++) {
+        if (shader->srvBindings[slot] < 0) continue;
+
+        VkDescriptorImageInfo imgInfo = {};
+        imgInfo.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+        // Use cubemap dummy for slots that expect cubemap views
+        VkImageView defaultView = shader->srvIsCubemap[slot] ? m_dummyCubeImageView : m_dummyImageView;
+        imgInfo.imageView = m_pendingTextures[slot].imageView ? m_pendingTextures[slot].imageView : defaultView;
+        imgInfo.sampler   = m_pendingTextures[slot].sampler   ? m_pendingTextures[slot].sampler   : m_dummySampler;
+
+        imageInfos.push_back(imgInfo);
+
+        VkWriteDescriptorSet w = { VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET };
+        w.dstSet = ds;
+        w.dstBinding = (uint32_t)shader->srvBindings[slot];
+        w.descriptorCount = 1;
+        w.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+        w.pImageInfo = &imageInfos.back();
+        writes.push_back(w);
+      }
+
+      if (!writes.empty()) {
+        vkUpdateDescriptorSets(m_device, (uint32_t)writes.size(), writes.data(), 0, nullptr);
+      }
+
+      m_descriptorSetCache[fingerprint] = ds;
     }
 
-    if (!writes.empty()) {
-      vkUpdateDescriptorSets(m_device, (uint32_t)writes.size(), writes.data(), 0, nullptr);
-    }
+    // Always rebind with current dynamic UBO offset
+    uint32_t dynOffsetCount = (shader->cbvBinding >= 0) ? 1 : 0;
     vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS,
-                            shader->m_pipelineLayout, 0, 1, &ds, 0, nullptr);
+                            shader->m_pipelineLayout, 0, 1, &ds,
+                            dynOffsetCount, &dynamicOffset);
   }
 
   // ══════════════════════════════════════════════════════
@@ -1726,23 +1799,38 @@ reopen:
     VmaAllocation dummyCubeAlloc = VK_NULL_HANDLE;
     vmaCreateImage(m_allocator, &cubeCI, &allocCI, &dummyCubeImage, &dummyCubeAlloc, nullptr);
 
-    // Transition cube to SHADER_READ_ONLY
+    // Transition cube to SHADER_READ_ONLY (clear first to avoid UNDEFINED→read-only warning)
     {
       VkCommandBuffer cubeCmd;
       vkAllocateCommandBuffers(m_device, &cmdAlloc, &cubeCmd);
       vkBeginCommandBuffer(cubeCmd, &beginInfo);
+
       VkImageMemoryBarrier barrier = { VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER };
       barrier.oldLayout = VK_IMAGE_LAYOUT_UNDEFINED;
-      barrier.newLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+      barrier.newLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
       barrier.image = dummyCubeImage;
       barrier.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
       barrier.subresourceRange.levelCount = 1;
       barrier.subresourceRange.layerCount = 6;
       barrier.srcAccessMask = 0;
-      barrier.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
+      barrier.dstAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
       vkCmdPipelineBarrier(cubeCmd, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,
+                           VK_PIPELINE_STAGE_TRANSFER_BIT, 0,
+                           0, nullptr, 0, nullptr, 1, &barrier);
+
+      VkClearColorValue clearColor = {{ 0.0f, 0.0f, 0.0f, 1.0f }};
+      VkImageSubresourceRange clearRange = { VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 6 };
+      vkCmdClearColorImage(cubeCmd, dummyCubeImage,
+                           VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, &clearColor, 1, &clearRange);
+
+      barrier.oldLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+      barrier.newLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+      barrier.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+      barrier.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
+      vkCmdPipelineBarrier(cubeCmd, VK_PIPELINE_STAGE_TRANSFER_BIT,
                            VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT, 0,
                            0, nullptr, 0, nullptr, 1, &barrier);
+
       vkEndCommandBuffer(cubeCmd);
       VkSubmitInfo cubeSubmit = { VK_STRUCTURE_TYPE_SUBMIT_INFO };
       cubeSubmit.commandBufferCount = 1;

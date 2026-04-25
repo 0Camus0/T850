@@ -4,8 +4,10 @@
 #include <scene/PrimitiveManager.h>
 #include <scene/PrimitiveInstance.h>
 #include <scene/RenderMesh.h>
+#include <scene/RenderSkinnedMesh.h>
 #include <scene/SceneDescriptor.h>
 #include <iostream>
+#include <fstream>
 #include <string>
 #include <cmath>
 
@@ -13,6 +15,9 @@ using namespace t800;
 using std::string;
 
 void SC_SandBox::InitVars() {
+
+
+
   // Free camera
   Cam.InitPerspective(XVECTOR3(0.0f, 1.0f, 10.0f), Deg2Rad(46.8f), 1280.0f / 720.0f, 0.1f, 5000.0f);
   Cam.Speed = 10.0f;
@@ -224,14 +229,67 @@ void SC_SandBox::OnUpdate(float _DtSecs) {
     SceneProp.Lights[0].Position = LightCam.Eye;
     SceneProp.Lights[0].Direction = LightCam.Look;
   }
+
+  // --dumpMatrices: log all camera matrices per frame, then exit
+  extern bool g_dumpMatrices;
+  extern int  g_dumpMatricesFrames;
+  if (g_dumpMatrices) {
+    static int s_matDumpFrame = 0;
+    static std::ofstream s_matFile;
+    if (s_matDumpFrame == 0) {
+      s_matFile.open("matrix_dump.csv", std::ios::out | std::ios::trunc);
+      s_matFile << "frame,";
+      s_matFile << "cam_eye_x,cam_eye_y,cam_eye_z,";
+      s_matFile << "cam_pitch,cam_roll,cam_yaw,";
+      for (int r = 0; r < 4; r++)
+        for (int c = 0; c < 4; c++)
+          s_matFile << "camView_" << r << c << ",";
+      for (int r = 0; r < 4; r++)
+        for (int c = 0; c < 4; c++)
+          s_matFile << "camProj_" << r << c << ",";
+      for (int r = 0; r < 4; r++)
+        for (int c = 0; c < 4; c++)
+          s_matFile << "camVP_" << r << c << ",";
+      for (int r = 0; r < 4; r++)
+        for (int c = 0; c < 4; c++)
+          s_matFile << "lightView_" << r << c << ",";
+      for (int r = 0; r < 4; r++)
+        for (int c = 0; c < 4; c++)
+          s_matFile << "lightProj_" << r << c << ",";
+      for (int r = 0; r < 4; r++)
+        for (int c = 0; c < 4; c++)
+          s_matFile << "lightVP_" << r << c << (r == 3 && c == 3 ? "" : ",");
+      s_matFile << "\n";
+    }
+    s_matFile << s_matDumpFrame << ",";
+    s_matFile << Cam.Eye.x << "," << Cam.Eye.y << "," << Cam.Eye.z << ",";
+    s_matFile << Cam.Pitch << "," << Cam.Roll << "," << Cam.Yaw << ",";
+    auto writeM = [&](const XMATRIX44& M) {
+      for (int r = 0; r < 4; r++)
+        for (int c = 0; c < 4; c++)
+          s_matFile << M.m[r][c] << ",";
+    };
+    writeM(Cam.View);
+    writeM(Cam.Projection);
+    writeM(Cam.VP);
+    writeM(LightCam.View);
+    writeM(LightCam.Projection);
+    auto& LVP = LightCam.VP;
+    for (int r = 0; r < 4; r++)
+      for (int c = 0; c < 4; c++)
+        s_matFile << LVP.m[r][c] << (r == 3 && c == 3 ? "" : ",");
+    s_matFile << "\n";
+    s_matFile.flush();
+    s_matDumpFrame++;
+    if (s_matDumpFrame >= g_dumpMatricesFrames) {
+      s_matFile.close();
+      T8_LOG_INFO("[dumpMatrices] Wrote %d frames to matrix_dump.csv", s_matDumpFrame);
+      exit(0);
+    }
+  }
 }
 
 void SC_SandBox::OnInput(InputManager* IManager) {
-  // Spacebar: request frame dump (--debugFrames mode)
-  if (IManager->PressedOnceKey(T800K_SPACE)) {
-    m_dumper.RequestDump();
-  }
-
   // Skip mouse-driven camera when replay snapshot is active
   if (m_dumper.IsReplayActive()) return;
 
@@ -288,6 +346,15 @@ void SC_SandBox::OnInput(InputManager* IManager) {
     m_showCullStats = !m_showCullStats;
   if (IManager->PressedOnceKey(T800K_F3))
     m_showAABBs = !m_showAABBs;
+
+  // Arrow keys: step keyframes when in keyframe mode
+  RenderSkinnedMesh* sk = Meshes[0].GetSkinnedMesh();
+  if (sk && sk->GetKeyframeMode()) {
+    if (IManager->PressedOnceKey(T800K_RIGHT))
+      sk->StepKeyframe(1);
+    if (IManager->PressedOnceKey(T800K_LEFT))
+      sk->StepKeyframe(-1);
+  }
 }
 
 void SC_SandBox::FitModelToView() {
@@ -337,10 +404,33 @@ void SC_SandBox::ComputeOrbitCamera() {
 
   XVECTOR3 offset(sy * cp, sp, cy * cp);
   Cam.Eye = target + offset * m_orbitDist;
+  // Clear velocity — orbit camera manages Eye directly; any residual
+  // velocity from Input would be re-applied inside SetLookAt→Update,
+  // corrupting the position we just computed.
+  Cam.Velocity = XVECTOR3(0, 0, 0);
   Cam.SetLookAt(target);
 }
 
 void SC_SandBox::OnDraw() {
+  // FPS logging (every 120 frames)
+  static int sFrameCount = 0;
+  static float sAccumTime = 0.0f;
+  sAccumTime += DtSecs;
+  sFrameCount++;
+  if (sFrameCount % 120 == 0) {
+    float avgFps = (sAccumTime > 0.0f) ? (float)sFrameCount / sAccumTime : 0.0f;
+    T8_LOG_INFO("[FPS] %.1f fps (avg over %d frames, dt=%.3f ms)",
+                avgFps, sFrameCount, DtSecs * 1000.0f);
+  }
+
+  // Update animation and upload bone texture BEFORE render graph
+  // (Vulkan copy commands cannot run inside a render pass)
+  if (Meshes[0].pBase) {
+    RenderSkinnedMesh* skinned = dynamic_cast<RenderSkinnedMesh*>(Meshes[0].pBase);
+    if (skinned && skinned->HasSkinData())
+      skinned->UpdateAnimationAndBones();
+  }
+
   // Execute the render graph (all passes through HDR Composition)
   m_renderGraph.Execute(
     pFramework->pVideoDriver,
@@ -402,6 +492,30 @@ void SC_SandBox::OnDraw() {
   finalKey.bits |= ShaderKey::HAS_TEXCOORD0;
   Quads[7].SetGlobalKey(finalKey);
   Quads[7].Draw();
+
+  // Draw wireframe and skeleton overlays for skinned meshes (GPU-skinned)
+  if (Meshes[0].pBase) {
+    RenderSkinnedMesh* skinned = dynamic_cast<RenderSkinnedMesh*>(Meshes[0].pBase);
+    if (skinned && skinned->HasSkinData()) {
+      if (m_showWireframe) {
+        // Bind GBuffer COLOR4 (linear depth) for shader-based depth comparison
+        int gbufHandle = GBufferPass;
+        if (gbufHandle >= 0 && gbufHandle < (int)pFramework->pVideoDriver->RTs.size()) {
+          auto* gbufRT = pFramework->pVideoDriver->RTs[gbufHandle];
+          if (gbufRT->vColorTextures.size() > 4)
+            skinned->SetWireframeDepthTex(gbufRT->vColorTextures[4]);
+        }
+        skinned->SetWireframeViewport(g_pBaseDriver->width, g_pBaseDriver->height);
+        pFramework->pVideoDriver->SetDepthStencilState(BaseDriver::NONE);
+        skinned->DrawWireframe();
+      }
+      if (m_showSkeleton) {
+        pFramework->pVideoDriver->SetDepthStencilState(BaseDriver::NONE);
+        pFramework->pVideoDriver->SetBlendState(BaseDriver::BLEND_DEFAULT);
+        skinned->DrawSkeleton();
+      }
+    }
+  }
 
   // Debug: draw wireframe AABBs for visible meshes
   if (m_showAABBs && Meshes[0].pBase) {
@@ -483,6 +597,7 @@ void SC_SandBox::PopulateGUI(t800::GUIManager& gui) {
     {"shadow_min",            CHANGE_SHADOW_MIN},
     {"env_factor",            CHANGE_ENV_FACTOR},
     {"ibl_factor",             CHANGE_IBL_FACTOR},
+    {"anim_speed",             CHANGE_ANIM_SPEED},
   };
 
   for (auto& sd : m_guiSetup.descriptor.sliders) {
@@ -497,6 +612,8 @@ void SC_SandBox::PopulateGUI(t800::GUIManager& gui) {
   static const CheckboxMapping cbMappings[] = {
     {"shadow_toggle",          CHANGE_PCF_TOOGLE},
     {"ssao_toggle",            CHANGLE_SSAO_TOOGLE},
+    {"show_wireframe",         CHANGE_SHOW_WIREFRAME},
+    {"show_skeleton",          CHANGE_SHOW_SKELETON},
   };
 
   for (auto& cd : m_guiSetup.descriptor.checkboxes) {
@@ -513,6 +630,8 @@ void SC_SandBox::PopulateGUI(t800::GUIManager& gui) {
     {"cubemap",             CHANGE_CUBEMAP},
     {"gauss_kernel_sample_count", CHANGE_GAUSS_KERNEL_SAMPLE_COUNT},
     {"active_gauss_kernel",        CHANGE_ACTIVE_GAUSS_KERNEL},
+    {"anim_select",                CHANGE_ANIM_SELECT},
+    {"anim_mode",                  CHANGE_ANIM_MODE},
   };
 
   for (auto& sd : m_guiSetup.descriptor.selectors) {
@@ -521,6 +640,37 @@ void SC_SandBox::PopulateGUI(t800::GUIManager& gui) {
       if (sd.name == m.name) { settingIdx = m.settingIndex; break; }
     }
     gui.AddSelector(sd, settingIdx);
+  }
+
+  // Populate animation selector with actual animation names from the loaded model
+  RenderSkinnedMesh* skinned = Meshes[0].GetSkinnedMesh();
+  if (skinned && skinned->HasSkinData()) {
+    for (auto& sp : gui.GetSelectorPairs()) {
+      if (sp.selector->settingIndex == CHANGE_ANIM_SELECT) {
+        sp.selector->options.clear();
+        int numSets = skinned->GetNumAnimSets();
+        for (int i = 0; i < numSets; i++) {
+          auto& ctrl = skinned->GetAnimController();
+          // Use animation set name if available
+          xF::xAnimationInfo* info = nullptr;
+          const xF::xSkeleton* skel = ctrl.GetAnimSkeleton();
+          // Get name from the mesh container's animation info
+          if (skinned->xFile && !skinned->xFile->XMeshDataBase.empty()) {
+            auto& anims = skinned->xFile->XMeshDataBase[0]->Animation.Animations;
+            if (i < (int)anims.size() && !anims[i].Name.empty()) {
+              sp.selector->options.push_back(anims[i].Name);
+            } else {
+              sp.selector->options.push_back("Anim " + std::to_string(i));
+            }
+          } else {
+            sp.selector->options.push_back("Anim " + std::to_string(i));
+          }
+        }
+        if (sp.selector->options.empty())
+          sp.selector->options.push_back("None");
+        break;
+      }
+    }
   }
 }
 
@@ -552,6 +702,10 @@ void SC_SandBox::SyncToGUI(t800::GUIManager& gui) {
     case CHANGE_SHADOW_MIN:      slider->SetValue(SceneProp.ShadowMin); break;
     case CHANGE_ENV_FACTOR:      slider->SetValue(SceneProp.EnvFactor); break;
     case CHANGE_IBL_FACTOR:      slider->SetValue(SceneProp.IBLFactor); break;
+    case CHANGE_ANIM_SPEED: {
+      RenderSkinnedMesh* sk = Meshes[0].GetSkinnedMesh();
+      if (sk) slider->SetValue(sk->GetAnimSpeed());
+    } break;
     }
   }
 
@@ -560,6 +714,8 @@ void SC_SandBox::SyncToGUI(t800::GUIManager& gui) {
     switch (cb->settingIndex) {
     case CHANGE_PCF_TOOGLE:   cb->checked = (SceneProp.ToogleShadow != 0); break;
     case CHANGLE_SSAO_TOOGLE: cb->checked = (SceneProp.ToogleSSAO != 0); break;
+    case CHANGE_SHOW_WIREFRAME: cb->checked = m_showWireframe; break;
+    case CHANGE_SHOW_SKELETON:  cb->checked = m_showSkeleton; break;
     }
   }
 
@@ -578,6 +734,10 @@ void SC_SandBox::SyncToGUI(t800::GUIManager& gui) {
     case CHANGE_ACTIVE_GAUSS_KERNEL:
       sel->selectedIndex = ChangeActiveGaussSelection;
       break;
+    case CHANGE_ANIM_SELECT: {
+      RenderSkinnedMesh* sk = Meshes[0].GetSkinnedMesh();
+      if (sk) sel->selectedIndex = sk->GetCurrentAnimSet();
+    } break;
     }
   }
 }
@@ -613,6 +773,10 @@ void SC_SandBox::SyncFromGUI(t800::GUIManager& gui) {
     case CHANGE_SHADOW_MIN:      SceneProp.ShadowMin = slider->value; break;
     case CHANGE_ENV_FACTOR:      SceneProp.EnvFactor = slider->value; break;
     case CHANGE_IBL_FACTOR:      SceneProp.IBLFactor = slider->value; break;
+    case CHANGE_ANIM_SPEED: {
+      RenderSkinnedMesh* sk = Meshes[0].GetSkinnedMesh();
+      if (sk) sk->SetAnimSpeed(slider->value);
+    } break;
     }
   }
 
@@ -622,6 +786,8 @@ void SC_SandBox::SyncFromGUI(t800::GUIManager& gui) {
     switch (cb->settingIndex) {
     case CHANGE_PCF_TOOGLE:   SceneProp.ToogleShadow = cb->checked ? 1 : 0; break;
     case CHANGLE_SSAO_TOOGLE: SceneProp.ToogleSSAO = cb->checked ? 1 : 0; break;
+    case CHANGE_SHOW_WIREFRAME: m_showWireframe = cb->checked; break;
+    case CHANGE_SHOW_SKELETON:  m_showSkeleton = cb->checked; break;
     }
   }
 
@@ -647,6 +813,25 @@ void SC_SandBox::SyncFromGUI(t800::GUIManager& gui) {
     case CHANGE_ACTIVE_GAUSS_KERNEL:
       ChangeActiveGaussSelection = sel->selectedIndex;
       break;
+    case CHANGE_ANIM_SELECT: {
+      RenderSkinnedMesh* sk = Meshes[0].GetSkinnedMesh();
+      if (sk && sel->selectedIndex != sk->GetCurrentAnimSet()) {
+        // Switch to selected animation set
+        while (sk->GetCurrentAnimSet() != sel->selectedIndex) {
+          sk->NextAnimation();
+        }
+      }
+    } break;
+    case CHANGE_ANIM_MODE: {
+      RenderSkinnedMesh* sk = Meshes[0].GetSkinnedMesh();
+      if (sk) {
+        bool keyMode = (sel->selectedIndex == 1);
+        sk->SetKeyframeMode(keyMode);
+        if (keyMode) {
+          sk->StepKeyframe(0); // snap to current keyframe
+        }
+      }
+    } break;
     }
   }
 }

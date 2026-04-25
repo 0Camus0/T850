@@ -13,6 +13,7 @@
 
 #include <video/gl/GLDevice.h>
 #include <video/gl/GLVertexBuffer.h>
+#include <utils/Log.h>
 #include <video/gl/GLIndexBuffer.h>
 #include <video/gl/GLConstantBuffer.h>
 #include <video/gl/GLTexture.h>
@@ -82,6 +83,29 @@ namespace t800 {
     GLTexture* txture = new GLTexture;
     txture->CreateCubeMap(buff, w, h);
     return txture;
+  }
+
+  Texture * GLDevice::CreateFloatTexture(int w, int h, const float* data)
+  {
+    GLTexture* tex = new GLTexture;
+    glGenTextures(1, &tex->id);
+    glBindTexture(GL_TEXTURE_2D, tex->id);
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA32F, w, h, 0, GL_RGBA, GL_FLOAT, data);
+    GLenum err = glGetError();
+    if (err != GL_NO_ERROR) {
+      T8_LOG_ERROR("[GL] CreateFloatTexture FAILED: glTexImage2D error=0x%X (%dx%d)", err, w, h);
+      delete tex;
+      return nullptr;
+    }
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+    glBindTexture(GL_TEXTURE_2D, 0);
+    tex->x = w;
+    tex->y = h;
+    T8_LOG_INFO("[GL] CreateFloatTexture: id=%u %dx%d RGBA32F", tex->id, w, h);
+    return tex;
   }
 
   BaseRT * GLDevice::CreateRT(int nrt, int cf, int df, int w, int h, bool genMips)

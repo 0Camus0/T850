@@ -51,21 +51,19 @@ bool EditorLineRenderer::Create() {
   free(vsSrc); free(fsSrc);
 
   if (useGL) {
-#if defined(USING_OPENGL)
     std::string defines;
+#if defined(USING_OPENGL)
+    // Match WireframeSphere: #version 130 with precision blanked
     defines += "#version 130\n\n";
     defines += "#define lowp \n\n";
     defines += "#define mediump \n\n";
     defines += "#define highp \n\n";
-    vstr = defines + vstr;
-    fstr = defines + fstr;
-#elif defined(USING_GL_COMMON)
-    std::string defines;
+#elif defined(USING_OPENGL_ES30) || defined(USING_OPENGL_ES31)
     defines += "#version 300 es\n\n";
     defines += "#define ES_30\n\n";
+#endif
     vstr = defines + vstr;
     fstr = defines + fstr;
-#endif
   }
 
   int shaderID = t800::g_pBaseDriver->CreateShader(vstr, fstr);

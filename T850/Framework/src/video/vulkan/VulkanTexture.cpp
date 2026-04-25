@@ -439,6 +439,57 @@ namespace t800 {
     // In Vulkan, samplers are part of the descriptor set, bound during shader Set().
   }
 
+  void VulkanTexture::UpdateFloatData(const DeviceContext& deviceContext, int w, int h, const float* data) {
+    if (!m_image || !data || !m_isFloatTex) return;
+    auto* driver = static_cast<VulkanDriver*>(g_pBaseDriver);
+    VmaAllocator allocator = driver->GetAllocator();
+
+    VkDeviceSize totalSize = (VkDeviceSize)w * h * 16;
+
+    // Create staging buffer
+    VkBuffer stagingBuffer; VmaAllocation stagingAlloc;
+    VkBufferCreateInfo stagingInfo = { VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO };
+    stagingInfo.size = totalSize;
+    stagingInfo.usage = VK_BUFFER_USAGE_TRANSFER_SRC_BIT;
+    VmaAllocationCreateInfo stagingAllocCI = {};
+    stagingAllocCI.usage = VMA_MEMORY_USAGE_AUTO;
+    stagingAllocCI.flags = VMA_ALLOCATION_CREATE_HOST_ACCESS_SEQUENTIAL_WRITE_BIT | VMA_ALLOCATION_CREATE_MAPPED_BIT;
+    VmaAllocationInfo stagingAllocInfo;
+    vmaCreateBuffer(allocator, &stagingInfo, &stagingAllocCI, &stagingBuffer, &stagingAlloc, &stagingAllocInfo);
+    memcpy(stagingAllocInfo.pMappedData, data, totalSize);
+
+    // Record copy in current frame's command buffer
+    VkCommandBuffer cmd = driver->GetCurrentCommandBuffer();
+
+    // End any active render pass — copy commands are invalid inside a render pass
+    driver->EndRenderPassIfActive(cmd);
+
+    VkImageMemoryBarrier barrier = { VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER };
+    barrier.image = m_image;
+    barrier.subresourceRange = { VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1 };
+    barrier.oldLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+    barrier.newLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+    barrier.srcAccessMask = VK_ACCESS_SHADER_READ_BIT;
+    barrier.dstAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+    vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_VERTEX_SHADER_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT,
+                         0, 0, nullptr, 0, nullptr, 1, &barrier);
+
+    VkBufferImageCopy region = {};
+    region.imageSubresource = { VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1 };
+    region.imageExtent = { (uint32_t)w, (uint32_t)h, 1 };
+    vkCmdCopyBufferToImage(cmd, stagingBuffer, m_image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &region);
+
+    barrier.oldLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+    barrier.newLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+    barrier.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+    barrier.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
+    vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_VERTEX_SHADER_BIT,
+                         0, 0, nullptr, 0, nullptr, 1, &barrier);
+
+    // Defer staging buffer cleanup to after frame completes
+    driver->DeferCleanup(stagingBuffer, stagingAlloc);
+  }
+
   // ══════════════════════════════════════════════════════
   //  VulkanRT
   // ══════════════════════════════════════════════════════

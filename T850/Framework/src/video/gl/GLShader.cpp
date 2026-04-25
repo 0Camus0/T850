@@ -18,6 +18,20 @@ namespace t800 {
     glAttachShader(ShaderProg, fshader_id);
 
     glLinkProgram(ShaderProg);
+
+    // Check link status
+    GLint linkStatus = 0;
+    glGetProgramiv(ShaderProg, GL_LINK_STATUS, &linkStatus);
+    if (!linkStatus) {
+      GLint logLen = 0;
+      glGetProgramiv(ShaderProg, GL_INFO_LOG_LENGTH, &logLen);
+      std::string infoLog(logLen + 1, '\0');
+      glGetProgramInfoLog(ShaderProg, logLen, nullptr, &infoLog[0]);
+      T8_LOG_ERROR("[GL] Shader link FAILED [VS='%s' FS='%s']:\n%s",
+                   vs_name.c_str(), fs_name.c_str(), infoLog.c_str());
+      return false;
+    }
+
     glUseProgram(ShaderProg);
 
     m_parser.ParseFromMemory(src_vs, src_fs);
@@ -141,11 +155,35 @@ namespace t800 {
     int stride = reinterpret_cast<const GLDeviceContext*>(&deviceContext)->internalStride;
     glUseProgram(ShaderProg);
 
+    static bool sLoggedOnce = false;
+    if (!sLoggedOnce && key.has(t800::ShaderKey::HAS_SKINNING)) {
+      T8_LOG_INFO("[GL] Skinned shader attrs (stride=%d):", stride);
+      for (auto& it : locs) {
+        T8_LOG_INFO("[GL]   attr '%s' loc=%d size=%d bytePos=%d", it.name.c_str(), it.loc, it.size, it.bufferBytePosition);
+      }
+      T8_LOG_INFO("[GL] Skinned shader uniforms:");
+      for (auto& it : internalUniformsLocs) {
+        T8_LOG_INFO("[GL]   uniform '%s' loc=%d num=%d bytePos=%d", it.name.c_str(), it.loc, it.num, it.bufferBytePosition);
+      }
+      sLoggedOnce = true;
+    }
+
     for (auto& it : locs)
     {
       glEnableVertexAttribArray(it.loc);
       glVertexAttribPointer(it.loc, it.size, GL_FLOAT, GL_FALSE, stride, BUFFER_OFFSET(it.bufferBytePosition));
     }
+
+    // Disable vertex attribs not used by this shader to prevent stale
+    // attribs from a previous shader leaking state (e.g., mesh → line).
+    int maxLoc = 0;
+    for (auto& it : locs)
+      if (it.loc >= maxLoc) maxLoc = it.loc + 1;
+    // Track previous high-water mark across Set() calls
+    static int sPrevMaxAttrib = 0;
+    for (int a = maxLoc; a < sPrevMaxAttrib; a++)
+      glDisableVertexAttribArray(a);
+    if (maxLoc > sPrevMaxAttrib) sPrevMaxAttrib = maxLoc;
   }
   void GLShader::DestroyAPIShader()
   {

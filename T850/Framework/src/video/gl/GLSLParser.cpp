@@ -1,5 +1,6 @@
 #include "pch.h"
 #include <video/gl/GLSLParser.h>
+#include <utils/Log.h>
 
 #include <iostream>
 #include <string>
@@ -114,6 +115,15 @@ void GLSL_Parser::Process(std::string &b) {
 	std::string preprocessed = PreprocessIfdefs(b);
 	std::istringstream iss(preprocessed);
 	std::vector<std::string> tokens{ std::istream_iterator<std::string>{iss},std::istream_iterator<std::string>{} };
+
+	// Debug: log preprocessed tokens for shaders with 'in' keyword
+	static bool sLoggedOnce = false;
+	if (!sLoggedOnce && current_stage == hyperspace::shader::stage_::VERTEX_SHADER) {
+		for (std::size_t i = 0; i < tokens.size() && i < 30; i++) {
+			T8_LOG_TRACE("[GLSL_Parse] token[%zu]='%s'", i, tokens[i].c_str());
+		}
+		sLoggedOnce = true;
+	}
 
 	std::string::size_type pos = 0;
 	for (std::size_t i = 0; i < tokens.size(); i++)	{

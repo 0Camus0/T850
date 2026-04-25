@@ -461,6 +461,9 @@ namespace t800 {
     // Record copy in current frame's command buffer
     VkCommandBuffer cmd = driver->GetCurrentCommandBuffer();
 
+    // End any active render pass — copy commands are invalid inside a render pass
+    driver->EndRenderPassIfActive(cmd);
+
     VkImageMemoryBarrier barrier = { VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER };
     barrier.image = m_image;
     barrier.subresourceRange = { VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1 };

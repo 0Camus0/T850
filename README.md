@@ -7,9 +7,9 @@
 &nbsp;&nbsp;![APIs](https://img.shields.io/badge/APIs-D3D11%20%7C%20D3D12%20%7C%20Vulkan%20%7C%20OpenGL-green)
 &nbsp;&nbsp;![License](https://img.shields.io/badge/license-MIT-yellow)
 
-**A cross-platform 3D rendering engine with a deferred pipeline, PBR materials, four graphics backends, and a built-in scene editor.**
+**A cross-platform 3D rendering engine with a deferred pipeline, PBR materials, skeletal animation, four graphics backends, and a built-in scene editor.**
 
-<img src="screenshots/Sponza1.png" alt="T850 — Sponza Atrium" width="100%">
+<img src="T850/Resources/Screens/Sponza1.png" alt="T850 — Sponza Atrium" width="100%">
 <br><sub>Sponza atrium — deferred shading, HDR bloom, volumetric lighting, and SSAO</sub>
 
 </div>
@@ -18,37 +18,47 @@
 
 ## Overview
 
-T850 started as a learning project to understand how real-time rendering works under the hood — from raw vertex buffers to full deferred pipelines with post-processing. Over the years it has grown into a multi-API engine that runs the same scene on **D3D11, D3D12, OpenGL, and Vulkan**, loads **glTF 2.0** models with PBR materials, and includes a **built-in editor** for tweaking scenes in real time. It's not trying to be Unity or Unreal — it's a playground for graphics programming where every line of the rendering code is yours to read, break, and learn from.
+T850 started as a learning project to understand how real-time rendering works under the hood — from raw vertex buffers to full deferred pipelines with post-processing. Over the years it has grown into a multi-API engine that runs the same scene on **D3D11, D3D12, OpenGL, and Vulkan**, loads **glTF 2.0** models with PBR materials, skinning, skeletal animation, wireframe and bone visualization, and includes a **built-in editor** for arranging scenes in real time. It's not trying to be Unity or Unreal — it's a playground for graphics programming where every line of the rendering code is yours to read, break, and learn from.
 
 ## Screenshots
 
 <p align="center">
-  <img src="screenshots/Sponza2.png" alt="SSAO and shadow mapping in the Sponza atrium" width="100%">
+  <img src="T850/Resources/Screens/Sponza2.png" alt="SSAO and shadow mapping in the Sponza atrium" width="100%">
   <br><sub>SSAO, PCF shadow mapping, and deferred lighting in the Sponza atrium</sub>
 </p>
 
 <p align="center">
-  <img src="screenshots/PBR1.png" alt="PBR metallic-roughness rendering with IBL" width="48%" style="display:inline-block">
-  <img src="screenshots/PBR2.png" alt="PBR model with environment reflections" width="48%" style="display:inline-block">
+  <img src="T850/Resources/Screens/PBR1.png" alt="PBR metallic-roughness rendering with IBL" width="48%" style="display:inline-block">
+  <img src="T850/Resources/Screens/PBR2.png" alt="PBR model with environment reflections" width="48%" style="display:inline-block">
   <br><sub>PBR metallic-roughness workflow with image-based lighting — Sandbox scene with orbit camera and cubemap selector</sub>
+</p>
+
+<p align="center">
+  <img src="T850/Resources/Screens/Skinned.png" alt="Skinned glTF character with wireframe and bones" width="100%">
+  <br><sub>Skinned glTF loading with skeletal animation, wireframe display, and bone visualization in the framework</sub>
 </p>
 
 ### Scene Editor (T8ditor)
 
 <p align="center">
-  <img src="screenshots/Editor.png" alt="T8ditor — scene editor with ImGui and gizmos" width="100%">
+  <img src="T850/Resources/Screens/Editor.png" alt="T8ditor — scene editor with ImGui and gizmos" width="100%">
   <br><sub>Built-in scene editor with ImGui panels, transform gizmos, grid overlay, and real-time parameter tuning</sub>
 </p>
 
 <p align="center">
-  <img src="screenshots/Editor2.png" alt="T8ditor — multi-model scene with hierarchy and lights" width="100%">
+  <img src="T850/Resources/Screens/Editor2.png" alt="T8ditor — multi-model scene with hierarchy and lights" width="100%">
   <br><sub>Multi-model scene with translate gizmo, hierarchy panel, omni light gizmos, inspector, and RT debug overlay</sub>
 </p>
 
 <p align="center">
-  <img src="screenshots/Editor3.png" alt="T8ditor — G-Buffer normal visualization" width="48%" style="display:inline-block">
-  <img src="screenshots/Editor4.png" alt="T8ditor — environment reflections with wireframe" width="48%" style="display:inline-block">
+  <img src="T850/Resources/Screens/Editor3.png" alt="T8ditor — G-Buffer normal visualization" width="48%" style="display:inline-block">
+  <img src="T850/Resources/Screens/Editor4.png" alt="T8ditor — environment reflections with wireframe" width="48%" style="display:inline-block">
   <br><sub>Left: G-Buffer normals debug view &nbsp;|&nbsp; Right: cubemap environment reflections with wireframe overlay and deferred output</sub>
+</p>
+
+<p align="center">
+  <img src="T850/Resources/Screens/Editor5.png" alt="T8ditor — grouped animated glTF objects with skeleton visualization" width="100%">
+  <br><sub>Editor integration for animated glTF meshes, multi-selection, grouping, wireframe, and bone visualization</sub>
 </p>
 
 ## Launcher
@@ -56,13 +66,13 @@ T850 started as a learning project to understand how real-time rendering works u
 The release package includes a GUI launcher (`T850Launcher.exe`) for configuring and running scenes without the command line.
 
 <p align="center">
-  <img src="screenshots/Launcher1.png" alt="T850 Launcher — Day scene" width="48%" style="display:inline-block">
-  <img src="screenshots/Launcher2.png" alt="T850 Launcher — Sandbox scene" width="48%" style="display:inline-block">
+  <img src="T850/Resources/Screens/Launcher1.png" alt="T850 Launcher — Day scene" width="48%" style="display:inline-block">
+  <img src="T850/Resources/Screens/Launcher2.png" alt="T850 Launcher — Sandbox scene" width="48%" style="display:inline-block">
   <br><sub>Left: Day scene — Sponza with full deferred pipeline &nbsp;|&nbsp; Right: Sandbox mode with model dropdown</sub>
 </p>
 
 - **Graphics API** — Choose between D3D11, D3D12, Vulkan, or OpenGL
-- **Scene** — **Day** loads the Sponza atrium scene with directional sun, point lights, spline camera, and all post-processing effects. **Sandbox** opens the glTF model viewer with orbit camera and PBR rendering.
+- **Scene** — **Day** loads the Sponza atrium scene with directional sun, point lights, spline camera, and all post-processing effects. **Sandbox** opens the glTF model viewer with orbit camera, PBR rendering, skinning, and animation playback.
 - **Resolution** and **Fullscreen** — Set your preferred window size or go fullscreen
 - **Snapshot** — Dump all render targets to disk at a specific frame or time (useful for debugging and comparison across APIs)
 - **Logging** — Set verbosity level and optionally save logs to file
@@ -108,16 +118,21 @@ Built from scratch with no third-party glTF library:
 
 - **Formats**: `.gltf` (JSON + external bins) and `.glb` (binary container)
 - **Draco decompression** — `KHR_draco_mesh_compression` with parallel decode
+- **Skinning and animation** — Reads skins, joints, inverse bind matrices, animation channels, and per-frame bone transforms from animated glTF assets
 - **MikkTSpace tangents** — Generated at load time when tangents are missing
 - **Parallel image decode** — stb_image on a thread pool for fast texture loading
 - **PBR material extraction** — Base color, metallic-roughness, normal, occlusion, emissive maps
-- **Static meshes** — Full vertex attribute support (position, normal, tangent, texcoord, color)
+- **Mesh attributes** — Full static and skinned vertex support, including position, normal, tangent, texcoord, color, joint indices, and weights
+- **Debug visualization** — Wireframe overlays and bone drawing for inspecting animated meshes in the framework and editor
 
 ### Scene Editor (T8ditor)
 
 - ImGui-based editor with gizmos (translate, rotate, scale)
+- Multi-object selection and grouping for building scene hierarchies quickly
+- Animated glTF meshes can be imported, selected, grouped, transformed, and inspected alongside static meshes
 - Real-time parameter tuning via GUI sliders, checkboxes, and selectors
 - Grid overlay and line renderer for debugging
+- Wireframe and bone visualization for animated assets
 - G-Buffer and render target debug visualization
 - Scene serialization to `.t8scene` JSON format
 - Runs on D3D12 or Vulkan
@@ -171,6 +186,12 @@ There are two ways to bring DirectX `.X` models into the editor:
 2. **Command line** — Pass `--mesh <path>` when launching T8ditor to pre-load a model on startup.
 
 You can import multiple models into the same scene. Each one gets its own entry in the Hierarchy panel on the left.
+
+Animated glTF assets use the same scene workflow: skinned meshes can be loaded, transformed, grouped with other objects, and inspected with wireframe and bone visualization enabled.
+
+### Selection and Grouping
+
+The editor supports selecting multiple scene objects at once, including static meshes, animated glTF meshes, cameras, and lights. Selected objects can be transformed together or grouped into a parent entity so complex arrangements can be moved, organized, saved, and reloaded as a unit.
 
 ### Saving and Loading Scenes
 
@@ -291,7 +312,6 @@ Here's what a `.t8scene` file looks like:
 
 ```
 T850/
-├── screenshots/                # README screenshots
 ├── .github/workflows/          # CI pipeline (build.yml)
 ├── LaunchSolution.bat          # One-click dev setup
 ├── ARCHITECTURE.md             # Detailed architecture documentation
@@ -304,6 +324,7 @@ T850/
 │   │   ├── Shaders/            # GLSL + HLSL shader pairs
 │   │   ├── Techniques/         # XML shader technique definitions
 │   │   └── Textures/           # DDS cubemaps, PBR textures
+│   ├── Resources/Screens/      # README screenshots
 │   ├── DayScene/               # Application + scene implementations
 │   │   ├── App.cpp             # main(), CLI parsing, framework bootstrap
 │   │   ├── Application.cpp/h   # App lifecycle, fade, scene management

@@ -88,6 +88,40 @@ namespace t800 {
     return txture;
   }
 
+  Texture * D3DXDevice::CreateFloatTexture(int w, int h, const float* data)
+  {
+    D3DXTexture* tex = new D3DXTexture;
+    D3D11_TEXTURE2D_DESC desc = {};
+    desc.Width = w;
+    desc.Height = h;
+    desc.MipLevels = 1;
+    desc.ArraySize = 1;
+    desc.Format = DXGI_FORMAT_R32G32B32A32_FLOAT;
+    desc.SampleDesc.Count = 1;
+    desc.Usage = D3D11_USAGE_DEFAULT;
+    desc.BindFlags = D3D11_BIND_SHADER_RESOURCE;
+
+    D3D11_SUBRESOURCE_DATA initData = {};
+    initData.pSysMem = data;
+    initData.SysMemPitch = w * 16; // 4 floats * 4 bytes = 16 bytes per texel
+
+    HRESULT hr = reinterpret_cast<ID3D11Device*>(GetAPIObject())->CreateTexture2D(
+        &desc, data ? &initData : nullptr, tex->Tex.GetAddressOf());
+    if (FAILED(hr)) { delete tex; return nullptr; }
+
+    D3D11_SHADER_RESOURCE_VIEW_DESC srvDesc = {};
+    srvDesc.Format = desc.Format;
+    srvDesc.ViewDimension = D3D11_SRV_DIMENSION_TEXTURE2D;
+    srvDesc.Texture2D.MipLevels = 1;
+    hr = reinterpret_cast<ID3D11Device*>(GetAPIObject())->CreateShaderResourceView(
+        tex->Tex.Get(), &srvDesc, tex->pSRVTex.GetAddressOf());
+    if (FAILED(hr)) { delete tex; return nullptr; }
+
+    tex->x = w;
+    tex->y = h;
+    return tex;
+  }
+
   BaseRT * D3DXDevice::CreateRT(int nrt, int cf, int df, int w, int h, bool genMips)
   {
     BaseRT* rt = new D3DXRT;

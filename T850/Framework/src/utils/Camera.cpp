@@ -220,7 +220,11 @@ void	Camera::Update(float dt) {
 
 void	Camera::Reset() {
 	Eye = XVECTOR3(0.0f, 0.0f, 0.0f);
+	LastFrameEye = XVECTOR3(0.0f, 0.0f, 0.0f);
 	Velocity = XVECTOR3(0.0f, 0.0f, 0.0f);
+	Look = LookConstCameraSpace;
+	Right = RightConstCameraSpace;
+	Up = UpConstCameraSpace;
 	Fov = Deg2Rad(45.0f);
 	NPlane = 0.01f;
 	FPlane = 1000.0f;
@@ -237,4 +241,14 @@ void	Camera::Reset() {
 	Ortho = false;
 	Width = 1280.0f;
 	Height = 720.0f;
+	Position.Identity();
+	RotX.Identity();
+	RotY.Identity();
+	RotZ.Identity();
+	View.Identity();
+	Projection.Identity();
+	VP.Identity();
+	m_externalControl = false;
+	m_lookAtCenter = true;
+	m_agent = nullptr;
 }

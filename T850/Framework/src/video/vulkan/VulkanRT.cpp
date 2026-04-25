@@ -66,7 +66,7 @@ namespace t800 {
       imgCI.arrayLayers = 1;
       imgCI.samples = VK_SAMPLE_COUNT_1_BIT;
       imgCI.tiling = VK_IMAGE_TILING_OPTIMAL;
-      imgCI.usage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT;
+      imgCI.usage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT;
       imgCI.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
       imgCI.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
 
@@ -127,7 +127,7 @@ namespace t800 {
       depthImgCI.arrayLayers = 1;
       depthImgCI.samples = VK_SAMPLE_COUNT_1_BIT;
       depthImgCI.tiling = VK_IMAGE_TILING_OPTIMAL;
-      depthImgCI.usage = VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT;
+      depthImgCI.usage = VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT;
       depthImgCI.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
       depthImgCI.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
 
@@ -259,7 +259,8 @@ namespace t800 {
       return false;
     }
 
-    // Initialize color images to SHADER_READ_ONLY_OPTIMAL so they're valid when first sampled
+    // Initialize color images: clear to black then transition to SHADER_READ_ONLY_OPTIMAL
+    // so they contain valid data when first sampled (avoids UNDEFINED→read-only warning).
     {
       VkCommandBuffer initCmd;
       VkCommandBufferAllocateInfo cmdAlloc = { VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO };
@@ -270,17 +271,33 @@ namespace t800 {
       VkCommandBufferBeginInfo beginCI = { VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO };
       beginCI.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
       vkBeginCommandBuffer(initCmd, &beginCI);
+
+      VkClearColorValue clearColor = {{ 0.0f, 0.0f, 0.0f, 0.0f }};
+      VkImageSubresourceRange colorRange = { VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1 };
       for (int i = 0; i < number_RT; i++) {
         TransitionImageLayout(initCmd, vColorImages[i],
-          VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
+          VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+          VK_IMAGE_ASPECT_COLOR_BIT);
+        vkCmdClearColorImage(initCmd, vColorImages[i],
+          VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, &clearColor, 1, &colorRange);
+        TransitionImageLayout(initCmd, vColorImages[i],
+          VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
           VK_IMAGE_ASPECT_COLOR_BIT);
         vColorLayouts[i] = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
       }
       if (hasDepth && m_depthImage) {
+        VkClearDepthStencilValue clearDepth = { 1.0f, 0 };
+        VkImageSubresourceRange depthRange = { VK_IMAGE_ASPECT_DEPTH_BIT, 0, 1, 0, 1 };
         TransitionImageLayout(initCmd, m_depthImage,
-          VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
+          VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+          VK_IMAGE_ASPECT_DEPTH_BIT);
+        vkCmdClearDepthStencilImage(initCmd, m_depthImage,
+          VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, &clearDepth, 1, &depthRange);
+        TransitionImageLayout(initCmd, m_depthImage,
+          VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
           VK_IMAGE_ASPECT_DEPTH_BIT);
       }
+
       vkEndCommandBuffer(initCmd);
       VkSubmitInfo initSubmit = { VK_STRUCTURE_TYPE_SUBMIT_INFO };
       initSubmit.commandBufferCount = 1;

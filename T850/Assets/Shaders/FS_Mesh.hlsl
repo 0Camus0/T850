@@ -130,7 +130,11 @@ FS_OUT FS( VS_OUTPUT input )   {
 	normal.xyz   = normalize(input.hnormal).xyz;
 	float3 geoNormal = normal.xyz;
 
+#ifdef USE_TEXCOORD0
 	float2 parallaxCoords = input.texture0;
+#else
+	float2 parallaxCoords = float2(0.0, 0.0);
+#endif
 
 	#if defined(HEIGHT_MAP) || defined(NORMAL_MAP)
 		float3 tangent	 = normalize(input.htangent).xyz;

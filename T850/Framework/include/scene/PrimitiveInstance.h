@@ -88,6 +88,11 @@ namespace t800 {
 	void SetParallaxShadowEnabled(bool enabled) {
 		if (pBase) pBase->SetParallaxShadowEnabled(enabled);
 	}
+
+	// Animation control — delegates to RenderSkinnedMesh if present
+	class RenderSkinnedMesh* GetSkinnedMesh() const;
+	bool IsSkinnedMesh() const;
+
     Texture*				 Textures[8];
     Texture*			     EnvMap;
     ShaderKey gKey;

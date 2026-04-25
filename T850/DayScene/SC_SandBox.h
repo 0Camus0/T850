@@ -46,6 +46,12 @@ class SC_SandBox : public t800::SceneBase
     CHANGE_CUBEMAP,
     CHANGE_GAUSS_KERNEL_SAMPLE_COUNT,
     CHANGE_ACTIVE_GAUSS_KERNEL,
+    // Animation controls (only active for skinned meshes)
+    CHANGE_ANIM_SPEED,
+    CHANGE_ANIM_SELECT,
+    CHANGE_ANIM_MODE,     // selector: "Interpolation" / "Keyframe"
+    CHANGE_SHOW_WIREFRAME,
+    CHANGE_SHOW_SKELETON,
     CHANGE_MAX_NUM_OPTIONS
   };
 public:
@@ -62,6 +68,7 @@ public:
   void PopulateGUI(t800::GUIManager& gui) override;
   void SyncToGUI(t800::GUIManager& gui) override;
   void SyncFromGUI(t800::GUIManager& gui) override;
+  void RequestDump() override { m_dumper.RequestDump(); }
 
   float DtSecs = 0.0f;
   t800::PrimitiveManager PrimitiveMgr;
@@ -104,6 +111,8 @@ public:
   t800::WireframeSphere m_debugSphere;
   bool m_showCullStats = false;
   bool m_showAABBs = false;
+  bool m_showWireframe = true;
+  bool m_showSkeleton = true;
 
   // Orbit camera state
   XVECTOR3 m_orbitTarget;    // center of the model (world space)

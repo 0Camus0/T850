@@ -207,6 +207,7 @@ function(t850_stage_runtime target)
 		COMMAND ${CMAKE_COMMAND} -E copy_if_different ${T850_VCPKG_DYNAMIC}/bin/libEGL.dll $<TARGET_FILE_DIR:${target}>
 		COMMAND ${CMAKE_COMMAND} -E copy_if_different ${T850_VCPKG_DYNAMIC}/bin/libGLESv2.dll $<TARGET_FILE_DIR:${target}>
 		COMMAND ${CMAKE_COMMAND} -E copy_if_different ${T850_VCPKG_DYNAMIC}/bin/zlib1.dll $<TARGET_FILE_DIR:${target}>
+		COMMAND ${CMAKE_COMMAND} -E copy_if_different ${T850_SOURCE_DIR}/config.json $<TARGET_FILE_DIR:${target}>
 		VERBATIM)
 
 	if(ARG_COPY_DRACO)

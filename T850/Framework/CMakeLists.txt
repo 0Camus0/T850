@@ -6,6 +6,7 @@ set(FRAMEWORK_SOURCES
   ../Librerias/mikktspace/src/mikktspace.c
   src/core/Core.cpp
   src/core/DevLayer.cpp
+  src/core/t8config.cpp
   src/core/windows/Win32Framework.cpp
   src/scene/LensFlare.cpp
   src/scene/RenderMesh.cpp

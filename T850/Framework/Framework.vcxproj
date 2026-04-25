@@ -31,6 +31,7 @@
     <ClInclude Include="Config.h" />
     <ClInclude Include="include\core\Core.h" />
     <ClInclude Include="include\core\DevLayer.h" />
+    <ClInclude Include="include\core\t8config.h" />
     <ClInclude Include="include\core\windows\Win32Framework.h" />
     <ClInclude Include="include\scene\LensFlare.h" />
     <ClInclude Include="include\scene\RenderMesh.h" />
@@ -144,6 +145,7 @@
     </ClCompile>
     <ClCompile Include="src\core\Core.cpp" />
     <ClCompile Include="src\core\DevLayer.cpp" />
+    <ClCompile Include="src\core\t8config.cpp" />
     <ClCompile Include="src\core\windows\Win32Framework.cpp" />
     <ClCompile Include="src\scene\LensFlare.cpp" />
     <ClCompile Include="src\scene\RenderMesh.cpp" />

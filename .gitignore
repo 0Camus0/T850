@@ -1,5 +1,6 @@
 # ── Build outputs ──
 /T850/Lib/
+/T850/build/
 /T850/bin/x86/
 /T850/bin/x64/
 /T850/bin/arm64/

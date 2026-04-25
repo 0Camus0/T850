@@ -96,6 +96,10 @@ set(FRAMEWORK_SOURCES
 add_library(Framework STATIC ${FRAMEWORK_SOURCES})
 add_library(T800Framework ALIAS Framework)
 
+if(MSVC)
+  set_source_files_properties(../Librerias/tinyxml2/tinyxml2.cpp PROPERTIES COMPILE_OPTIONS /wd4267)
+endif()
+
 t850_apply_common(Framework)
 t850_apply_library_output(Framework)
 t850_apply_profiler_defines(Framework)

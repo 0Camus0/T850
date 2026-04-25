@@ -62,10 +62,10 @@ namespace t800 {
   }
 
   D3D12_CPU_DESCRIPTOR_HANDLE D3D12Heap::GetCPUAt(uint64_t i) const {
-    auto h = GetCPUStart(); h.ptr += i * m_incrementSize; return h;
+    auto h = GetCPUStart(); h.ptr += static_cast<SIZE_T>(i) * static_cast<SIZE_T>(m_incrementSize); return h;
   }
   D3D12_GPU_DESCRIPTOR_HANDLE D3D12Heap::GetGPUAt(uint64_t i) const {
-    auto h = GetGPUStart(); h.ptr += i * m_incrementSize; return h;
+    auto h = GetGPUStart(); h.ptr += static_cast<UINT64>(i) * static_cast<UINT64>(m_incrementSize); return h;
   }
 
 } // namespace t800

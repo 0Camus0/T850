@@ -101,6 +101,15 @@ function(t850_ensure_vcpkg)
 		glslang:${T850_VCPKG_STATIC_TRIPLET})
 
 	if(T850_BUILD_EDITOR)
+		set(T850_IMGUI_HEADER ${T850_VCPKG_STATIC}/include/imgui.h)
+		set(T850_IMGUI_VULKAN_HEADER ${T850_VCPKG_STATIC}/include/imgui_impl_vulkan.h)
+		if(EXISTS ${T850_IMGUI_HEADER} AND NOT EXISTS ${T850_IMGUI_VULKAN_HEADER})
+			message(STATUS "imgui is installed without vulkan-binding; removing it for feature reinstall")
+			t850_execute_process("vcpkg remove imgui"
+				COMMAND ${T850_VCPKG_EXE} remove imgui:${T850_VCPKG_STATIC_TRIPLET} --recurse
+				WORKING_DIRECTORY ${T850_VCPKG_SOURCE_DIR})
+		endif()
+
 		list(APPEND T850_VCPKG_PACKAGE_SPECS
 			"imgui[docking-experimental,dx11-binding,dx12-binding,vulkan-binding,opengl3-binding,sdl3-binding,win32-binding]:${T850_VCPKG_STATIC_TRIPLET}"
 			imguizmo:${T850_VCPKG_STATIC_TRIPLET})

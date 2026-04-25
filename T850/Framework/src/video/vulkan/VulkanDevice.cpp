@@ -135,7 +135,7 @@ namespace t800 {
       stagingAllocCI.flags = VMA_ALLOCATION_CREATE_HOST_ACCESS_SEQUENTIAL_WRITE_BIT | VMA_ALLOCATION_CREATE_MAPPED_BIT;
       VmaAllocationInfo stagingAllocInfo;
       vmaCreateBuffer(allocator, &stagingInfo, &stagingAllocCI, &stagingBuffer, &stagingAlloc, &stagingAllocInfo);
-      memcpy(stagingAllocInfo.pMappedData, data, totalSize);
+      memcpy(stagingAllocInfo.pMappedData, data, static_cast<size_t>(totalSize));
 
       VkCommandBuffer cmd = driver->GetTransientCommandBuffer();
       VkImageMemoryBarrier barrier = { VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER };

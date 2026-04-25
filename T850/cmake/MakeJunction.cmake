@@ -1,0 +1,18 @@
+if(NOT DEFINED LINK_PATH OR NOT DEFINED TARGET_PATH)
+  message(FATAL_ERROR "LINK_PATH and TARGET_PATH are required")
+endif()
+
+if(EXISTS "${LINK_PATH}")
+  return()
+endif()
+
+file(TO_NATIVE_PATH "${LINK_PATH}" NATIVE_LINK_PATH)
+file(TO_NATIVE_PATH "${TARGET_PATH}" NATIVE_TARGET_PATH)
+
+execute_process(
+  COMMAND cmd /C mklink /J "${NATIVE_LINK_PATH}" "${NATIVE_TARGET_PATH}"
+  RESULT_VARIABLE JUNCTION_RESULT)
+
+if(NOT JUNCTION_RESULT EQUAL 0)
+  message(FATAL_ERROR "Failed to create junction: ${LINK_PATH} -> ${TARGET_PATH}")
+endif()

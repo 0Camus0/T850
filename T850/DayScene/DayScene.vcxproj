@@ -377,15 +377,11 @@ copy /Y "$(T8VcpkgDynamic)\bin\draco.dll" "$(OutDir)"</Command>
     <ClCompile Include="Application.cpp" />
     <ClCompile Include="App.cpp" />
     <ClCompile Include="SC_Day.cpp" />
-    <ClCompile Include="SC_Night.cpp" />
-    <ClCompile Include="SC_Tech.cpp" />
     <ClCompile Include="SC_SandBox.cpp" />
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="Application.h" />
     <ClInclude Include="SC_Day.h" />
-    <ClInclude Include="SC_Night.h" />
-    <ClInclude Include="SC_Tech.h" />
     <ClInclude Include="SC_SandBox.h" />
   </ItemGroup>
   <ItemGroup>

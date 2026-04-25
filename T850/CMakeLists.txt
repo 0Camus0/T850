@@ -193,7 +193,7 @@ endfunction()
 function(t850_stage_runtime target)
 	cmake_parse_arguments(ARG "COPY_DRACO" "" "" ${ARGN})
 
-	foreach(asset Shaders Models Fonts Textures Techniques Scenes Layouts)
+	foreach(asset Shaders Models Fonts Textures Scenes Layouts)
 		add_custom_command(TARGET ${target} POST_BUILD
 			COMMAND ${CMAKE_COMMAND}
 				-DLINK_PATH=$<TARGET_FILE_DIR:${target}>/${asset}

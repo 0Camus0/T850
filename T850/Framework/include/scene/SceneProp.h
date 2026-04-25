@@ -101,36 +101,36 @@ SceneProps() : ActiveCamera(0) , ActiveLights(1), ActiveLightCamera(0), ActiveGa
 	float IBLFactor = 1.0f;
 	float GodRaysFactor = 1.0f;
 
-	float ShadowMapResolution;
-  float  GoodRaysResolution;
-	float PCFScale;
-	float PCFSamples;
+	float ShadowMapResolution = 1024.0f;
+  float GoodRaysResolution = 0.0f;
+	float PCFScale = 1.7f;
+	float PCFSamples = 1.0f;
 
-	float ParallaxLowSamples;
-	float ParallaxHighSamples;
-	float ParallaxHeight;
+	float ParallaxLowSamples = 0.0f;
+	float ParallaxHighSamples = 0.0f;
+	float ParallaxHeight = 0.0f;
 	float ParallaxShadowMinLayers = 8.0f;
 	float ParallaxShadowMaxLayers = 32.0f;
 	float ParallaxShadowSoftness = 0.5f;
 	float ParallaxShadowStrength = 1.0f;
 
-	float LightVolumeSteps;
+	float LightVolumeSteps = 0.0f;
 	// HDR
-	float	Exposure;
-	float	BloomFactor;
-	float	BloomThreshold;
-	float ToneMapWhiteLevel;
-	float LuminanceTau;
-	float FrameDeltaSec;
+	float	Exposure = 0.0f;
+	float	BloomFactor = 0.35f;
+	float	BloomThreshold = 2.0f;
+	float ToneMapWhiteLevel = 4.0f;
+	float LuminanceTau = 1.1f;
+	float FrameDeltaSec = 1.0f / 60.0f;
 
   //DOF
-  float Aperture;
-  float FocalLength;
-  float FocusDepth;
-  float MaxCoc;
-  float DOF_Near_Samples_squared;
-  float DOF_Far_Samples_squared;
-  bool AutoFocus;
+  float Aperture = 0.0f;
+  float FocalLength = 0.0f;
+  float FocusDepth = 0.0f;
+  float MaxCoc = 0.0f;
+  float DOF_Near_Samples_squared = 0.0f;
+  float DOF_Far_Samples_squared = 0.0f;
+  bool AutoFocus = false;
 };
 
 #endif

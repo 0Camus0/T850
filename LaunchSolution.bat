@@ -81,10 +81,19 @@ for %%p in (%PACKAGES_DYNAMIC%) do (
     "%VCPKG_EXE%" install %%p:x64-windows --no-print-usage 2>nul
 )
 :: Editor dependencies (x64 only)
+:: NOTE: vcpkg classic mode won't add features to an already-installed port.
+:: If imgui exists but is missing the vulkan-binding header, force a reinstall.
+set "IMGUI_VK_HEADER=%VCPKG_DIR%\installed\x64-windows-static\include\imgui_impl_vulkan.h"
+if exist "%VCPKG_DIR%\installed\x64-windows-static\include\imgui.h" (
+    if not exist "!IMGUI_VK_HEADER!" (
+        echo   imgui present but missing vulkan-binding -- removing for reinstall
+        "%VCPKG_EXE%" remove imgui:x64-windows-static --recurse 2>nul
+    )
+)
 echo   imgui:x64-windows-static (editor)
-"%VCPKG_EXE%" install "imgui[docking-experimental,dx11-binding,dx12-binding,vulkan-binding,opengl3-binding,sdl3-binding,win32-binding]:x64-windows-static" --no-print-usage 2>nul
+"%VCPKG_EXE%" install "imgui[docking-experimental,dx11-binding,dx12-binding,vulkan-binding,opengl3-binding,sdl3-binding,win32-binding]:x64-windows-static" --no-print-usage
 echo   imguizmo:x64-windows-static (editor)
-"%VCPKG_EXE%" install imguizmo:x64-windows-static --no-print-usage 2>nul
+"%VCPKG_EXE%" install imguizmo:x64-windows-static --no-print-usage
 
 :: ── x86 (optional) ──
 if %BUILD_X86%==1 (

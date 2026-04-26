@@ -123,6 +123,14 @@ endfunction()
 
 t850_ensure_vcpkg()
 
+if(EXISTS ${T850_VCPKG_DYNAMIC}/bin/zlib1.dll)
+	set(T850_ZLIB_RUNTIME_DLL ${T850_VCPKG_DYNAMIC}/bin/zlib1.dll)
+elseif(EXISTS ${T850_VCPKG_DYNAMIC}/bin/z.dll)
+	set(T850_ZLIB_RUNTIME_DLL ${T850_VCPKG_DYNAMIC}/bin/z.dll)
+else()
+	message(FATAL_ERROR "Could not find vcpkg zlib runtime DLL in ${T850_VCPKG_DYNAMIC}/bin")
+endif()
+
 function(t850_apply_common target)
 	set_target_properties(${target} PROPERTIES
 		CXX_STANDARD 23
@@ -207,7 +215,7 @@ function(t850_stage_runtime target)
 		COMMAND ${CMAKE_COMMAND} -E copy_if_different ${T850_SDL3_ROOT}/lib/${T850_ARCH}/SDL3.dll $<TARGET_FILE_DIR:${target}>
 		COMMAND ${CMAKE_COMMAND} -E copy_if_different ${T850_VCPKG_DYNAMIC}/bin/libEGL.dll $<TARGET_FILE_DIR:${target}>
 		COMMAND ${CMAKE_COMMAND} -E copy_if_different ${T850_VCPKG_DYNAMIC}/bin/libGLESv2.dll $<TARGET_FILE_DIR:${target}>
-		COMMAND ${CMAKE_COMMAND} -E copy_if_different ${T850_VCPKG_DYNAMIC}/bin/zlib1.dll $<TARGET_FILE_DIR:${target}>
+		COMMAND ${CMAKE_COMMAND} -E copy_if_different ${T850_ZLIB_RUNTIME_DLL} $<TARGET_FILE_DIR:${target}>
 		COMMAND ${CMAKE_COMMAND} -E copy_if_different ${T850_SOURCE_DIR}/config.json $<TARGET_FILE_DIR:${target}>
 		VERBATIM)
 

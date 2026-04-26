@@ -164,16 +164,16 @@
       <OutputFile>$(OutDir)$(TargetName)$(TargetExt)</OutputFile>
     </Link>
     <PostBuildEvent>
-      <Command>if not exist "$(OutDir)Shaders" mklink /J "$(OutDir)Shaders" "$(SolutionDir)Assets\Shaders"
-if not exist "$(OutDir)Models" mklink /J "$(OutDir)Models" "$(SolutionDir)Assets\Models"
-if not exist "$(OutDir)Fonts" mklink /J "$(OutDir)Fonts" "$(SolutionDir)Assets\Fonts"
-if not exist "$(OutDir)Textures" mklink /J "$(OutDir)Textures" "$(SolutionDir)Assets\Textures"
-if not exist "$(OutDir)Scenes" mklink /J "$(OutDir)Scenes" "$(SolutionDir)Assets\Scenes"
-if not exist "$(OutDir)Layouts" mklink /J "$(OutDir)Layouts" "$(SolutionDir)Assets\Layouts"
+      <Command>call "$(SolutionDir)scripts\EnsureJunction.cmd" "$(OutDir)Shaders" "$(SolutionDir)Assets\Shaders"
+call "$(SolutionDir)scripts\EnsureJunction.cmd" "$(OutDir)Models" "$(SolutionDir)Assets\Models"
+call "$(SolutionDir)scripts\EnsureJunction.cmd" "$(OutDir)Fonts" "$(SolutionDir)Assets\Fonts"
+call "$(SolutionDir)scripts\EnsureJunction.cmd" "$(OutDir)Textures" "$(SolutionDir)Assets\Textures"
+call "$(SolutionDir)scripts\EnsureJunction.cmd" "$(OutDir)Scenes" "$(SolutionDir)Assets\Scenes"
+call "$(SolutionDir)scripts\EnsureJunction.cmd" "$(OutDir)Layouts" "$(SolutionDir)Assets\Layouts"
 copy /Y "$(SolutionDir)Librerias\SDL3\lib\$(T8Arch)\SDL3.dll" "$(OutDir)"
 copy /Y "$(T8VcpkgDynamic)\bin\libEGL.dll" "$(OutDir)"
 copy /Y "$(T8VcpkgDynamic)\bin\libGLESv2.dll" "$(OutDir)"
-copy /Y "$(T8VcpkgDynamic)\bin\zlib1.dll" "$(OutDir)"
+call "$(SolutionDir)scripts\CopyFirstExisting.cmd" "$(OutDir)" "$(T8VcpkgDynamic)\bin\zlib1.dll" "$(T8VcpkgDynamic)\bin\z.dll"
 copy /Y "$(T8VcpkgDynamic)\bin\draco.dll" "$(OutDir)"
 copy /Y "$(SolutionDir)config.json" "$(OutDir)"</Command>
     </PostBuildEvent>
@@ -201,16 +201,16 @@ copy /Y "$(SolutionDir)config.json" "$(OutDir)"</Command>
       <OutputFile>$(OutDir)$(TargetName)$(TargetExt)</OutputFile>
     </Link>
     <PostBuildEvent>
-      <Command>if not exist "$(OutDir)Shaders" mklink /J "$(OutDir)Shaders" "$(SolutionDir)Assets\Shaders"
-if not exist "$(OutDir)Models" mklink /J "$(OutDir)Models" "$(SolutionDir)Assets\Models"
-if not exist "$(OutDir)Fonts" mklink /J "$(OutDir)Fonts" "$(SolutionDir)Assets\Fonts"
-if not exist "$(OutDir)Textures" mklink /J "$(OutDir)Textures" "$(SolutionDir)Assets\Textures"
-if not exist "$(OutDir)Scenes" mklink /J "$(OutDir)Scenes" "$(SolutionDir)Assets\Scenes"
-if not exist "$(OutDir)Layouts" mklink /J "$(OutDir)Layouts" "$(SolutionDir)Assets\Layouts"
+      <Command>call "$(SolutionDir)scripts\EnsureJunction.cmd" "$(OutDir)Shaders" "$(SolutionDir)Assets\Shaders"
+call "$(SolutionDir)scripts\EnsureJunction.cmd" "$(OutDir)Models" "$(SolutionDir)Assets\Models"
+call "$(SolutionDir)scripts\EnsureJunction.cmd" "$(OutDir)Fonts" "$(SolutionDir)Assets\Fonts"
+call "$(SolutionDir)scripts\EnsureJunction.cmd" "$(OutDir)Textures" "$(SolutionDir)Assets\Textures"
+call "$(SolutionDir)scripts\EnsureJunction.cmd" "$(OutDir)Scenes" "$(SolutionDir)Assets\Scenes"
+call "$(SolutionDir)scripts\EnsureJunction.cmd" "$(OutDir)Layouts" "$(SolutionDir)Assets\Layouts"
 copy /Y "$(SolutionDir)Librerias\SDL3\lib\$(T8Arch)\SDL3.dll" "$(OutDir)"
 copy /Y "$(T8VcpkgDynamic)\bin\libEGL.dll" "$(OutDir)"
 copy /Y "$(T8VcpkgDynamic)\bin\libGLESv2.dll" "$(OutDir)"
-copy /Y "$(T8VcpkgDynamic)\bin\zlib1.dll" "$(OutDir)"
+call "$(SolutionDir)scripts\CopyFirstExisting.cmd" "$(OutDir)" "$(T8VcpkgDynamic)\bin\zlib1.dll" "$(T8VcpkgDynamic)\bin\z.dll"
 copy /Y "$(T8VcpkgDynamic)\bin\draco.dll" "$(OutDir)"
 copy /Y "$(SolutionDir)config.json" "$(OutDir)"</Command>
     </PostBuildEvent>
@@ -238,16 +238,16 @@ copy /Y "$(SolutionDir)config.json" "$(OutDir)"</Command>
       <OutputFile>$(OutDir)$(TargetName)$(TargetExt)</OutputFile>
     </Link>
     <PostBuildEvent>
-      <Command>if not exist "$(OutDir)Shaders" mklink /J "$(OutDir)Shaders" "$(SolutionDir)Assets\Shaders"
-if not exist "$(OutDir)Models" mklink /J "$(OutDir)Models" "$(SolutionDir)Assets\Models"
-if not exist "$(OutDir)Fonts" mklink /J "$(OutDir)Fonts" "$(SolutionDir)Assets\Fonts"
-if not exist "$(OutDir)Textures" mklink /J "$(OutDir)Textures" "$(SolutionDir)Assets\Textures"
-if not exist "$(OutDir)Scenes" mklink /J "$(OutDir)Scenes" "$(SolutionDir)Assets\Scenes"
-if not exist "$(OutDir)Layouts" mklink /J "$(OutDir)Layouts" "$(SolutionDir)Assets\Layouts"
+      <Command>call "$(SolutionDir)scripts\EnsureJunction.cmd" "$(OutDir)Shaders" "$(SolutionDir)Assets\Shaders"
+call "$(SolutionDir)scripts\EnsureJunction.cmd" "$(OutDir)Models" "$(SolutionDir)Assets\Models"
+call "$(SolutionDir)scripts\EnsureJunction.cmd" "$(OutDir)Fonts" "$(SolutionDir)Assets\Fonts"
+call "$(SolutionDir)scripts\EnsureJunction.cmd" "$(OutDir)Textures" "$(SolutionDir)Assets\Textures"
+call "$(SolutionDir)scripts\EnsureJunction.cmd" "$(OutDir)Scenes" "$(SolutionDir)Assets\Scenes"
+call "$(SolutionDir)scripts\EnsureJunction.cmd" "$(OutDir)Layouts" "$(SolutionDir)Assets\Layouts"
 copy /Y "$(SolutionDir)Librerias\SDL3\lib\$(T8Arch)\SDL3.dll" "$(OutDir)"
 copy /Y "$(T8VcpkgDynamic)\bin\libEGL.dll" "$(OutDir)"
 copy /Y "$(T8VcpkgDynamic)\bin\libGLESv2.dll" "$(OutDir)"
-copy /Y "$(T8VcpkgDynamic)\bin\zlib1.dll" "$(OutDir)"
+call "$(SolutionDir)scripts\CopyFirstExisting.cmd" "$(OutDir)" "$(T8VcpkgDynamic)\bin\zlib1.dll" "$(T8VcpkgDynamic)\bin\z.dll"
 copy /Y "$(T8VcpkgDynamic)\bin\draco.dll" "$(OutDir)"
 copy /Y "$(SolutionDir)config.json" "$(OutDir)"</Command>
     </PostBuildEvent>
@@ -277,16 +277,16 @@ copy /Y "$(SolutionDir)config.json" "$(OutDir)"</Command>
       <LinkTimeCodeGeneration>UseLinkTimeCodeGeneration</LinkTimeCodeGeneration>
     </Link>
     <PostBuildEvent>
-      <Command>if not exist "$(OutDir)Shaders" mklink /J "$(OutDir)Shaders" "$(SolutionDir)Assets\Shaders"
-if not exist "$(OutDir)Models" mklink /J "$(OutDir)Models" "$(SolutionDir)Assets\Models"
-if not exist "$(OutDir)Fonts" mklink /J "$(OutDir)Fonts" "$(SolutionDir)Assets\Fonts"
-if not exist "$(OutDir)Textures" mklink /J "$(OutDir)Textures" "$(SolutionDir)Assets\Textures"
-if not exist "$(OutDir)Scenes" mklink /J "$(OutDir)Scenes" "$(SolutionDir)Assets\Scenes"
-if not exist "$(OutDir)Layouts" mklink /J "$(OutDir)Layouts" "$(SolutionDir)Assets\Layouts"
+      <Command>call "$(SolutionDir)scripts\EnsureJunction.cmd" "$(OutDir)Shaders" "$(SolutionDir)Assets\Shaders"
+call "$(SolutionDir)scripts\EnsureJunction.cmd" "$(OutDir)Models" "$(SolutionDir)Assets\Models"
+call "$(SolutionDir)scripts\EnsureJunction.cmd" "$(OutDir)Fonts" "$(SolutionDir)Assets\Fonts"
+call "$(SolutionDir)scripts\EnsureJunction.cmd" "$(OutDir)Textures" "$(SolutionDir)Assets\Textures"
+call "$(SolutionDir)scripts\EnsureJunction.cmd" "$(OutDir)Scenes" "$(SolutionDir)Assets\Scenes"
+call "$(SolutionDir)scripts\EnsureJunction.cmd" "$(OutDir)Layouts" "$(SolutionDir)Assets\Layouts"
 copy /Y "$(SolutionDir)Librerias\SDL3\lib\$(T8Arch)\SDL3.dll" "$(OutDir)"
 copy /Y "$(T8VcpkgDynamic)\bin\libEGL.dll" "$(OutDir)"
 copy /Y "$(T8VcpkgDynamic)\bin\libGLESv2.dll" "$(OutDir)"
-copy /Y "$(T8VcpkgDynamic)\bin\zlib1.dll" "$(OutDir)"
+call "$(SolutionDir)scripts\CopyFirstExisting.cmd" "$(OutDir)" "$(T8VcpkgDynamic)\bin\zlib1.dll" "$(T8VcpkgDynamic)\bin\z.dll"
 copy /Y "$(T8VcpkgDynamic)\bin\draco.dll" "$(OutDir)"
 copy /Y "$(SolutionDir)config.json" "$(OutDir)"</Command>
     </PostBuildEvent>
@@ -318,16 +318,16 @@ copy /Y "$(SolutionDir)config.json" "$(OutDir)"</Command>
       <LinkTimeCodeGeneration>UseLinkTimeCodeGeneration</LinkTimeCodeGeneration>
     </Link>
     <PostBuildEvent>
-      <Command>if not exist "$(OutDir)Shaders" mklink /J "$(OutDir)Shaders" "$(SolutionDir)Assets\Shaders"
-if not exist "$(OutDir)Models" mklink /J "$(OutDir)Models" "$(SolutionDir)Assets\Models"
-if not exist "$(OutDir)Fonts" mklink /J "$(OutDir)Fonts" "$(SolutionDir)Assets\Fonts"
-if not exist "$(OutDir)Textures" mklink /J "$(OutDir)Textures" "$(SolutionDir)Assets\Textures"
-if not exist "$(OutDir)Scenes" mklink /J "$(OutDir)Scenes" "$(SolutionDir)Assets\Scenes"
-if not exist "$(OutDir)Layouts" mklink /J "$(OutDir)Layouts" "$(SolutionDir)Assets\Layouts"
+      <Command>call "$(SolutionDir)scripts\EnsureJunction.cmd" "$(OutDir)Shaders" "$(SolutionDir)Assets\Shaders"
+call "$(SolutionDir)scripts\EnsureJunction.cmd" "$(OutDir)Models" "$(SolutionDir)Assets\Models"
+call "$(SolutionDir)scripts\EnsureJunction.cmd" "$(OutDir)Fonts" "$(SolutionDir)Assets\Fonts"
+call "$(SolutionDir)scripts\EnsureJunction.cmd" "$(OutDir)Textures" "$(SolutionDir)Assets\Textures"
+call "$(SolutionDir)scripts\EnsureJunction.cmd" "$(OutDir)Scenes" "$(SolutionDir)Assets\Scenes"
+call "$(SolutionDir)scripts\EnsureJunction.cmd" "$(OutDir)Layouts" "$(SolutionDir)Assets\Layouts"
 copy /Y "$(SolutionDir)Librerias\SDL3\lib\$(T8Arch)\SDL3.dll" "$(OutDir)"
 copy /Y "$(T8VcpkgDynamic)\bin\libEGL.dll" "$(OutDir)"
 copy /Y "$(T8VcpkgDynamic)\bin\libGLESv2.dll" "$(OutDir)"
-copy /Y "$(T8VcpkgDynamic)\bin\zlib1.dll" "$(OutDir)"
+call "$(SolutionDir)scripts\CopyFirstExisting.cmd" "$(OutDir)" "$(T8VcpkgDynamic)\bin\zlib1.dll" "$(T8VcpkgDynamic)\bin\z.dll"
 copy /Y "$(T8VcpkgDynamic)\bin\draco.dll" "$(OutDir)"
 copy /Y "$(SolutionDir)config.json" "$(OutDir)"</Command>
     </PostBuildEvent>
@@ -359,16 +359,16 @@ copy /Y "$(SolutionDir)config.json" "$(OutDir)"</Command>
       <LinkTimeCodeGeneration>UseLinkTimeCodeGeneration</LinkTimeCodeGeneration>
     </Link>
     <PostBuildEvent>
-      <Command>if not exist "$(OutDir)Shaders" mklink /J "$(OutDir)Shaders" "$(SolutionDir)Assets\Shaders"
-if not exist "$(OutDir)Models" mklink /J "$(OutDir)Models" "$(SolutionDir)Assets\Models"
-if not exist "$(OutDir)Fonts" mklink /J "$(OutDir)Fonts" "$(SolutionDir)Assets\Fonts"
-if not exist "$(OutDir)Textures" mklink /J "$(OutDir)Textures" "$(SolutionDir)Assets\Textures"
-if not exist "$(OutDir)Scenes" mklink /J "$(OutDir)Scenes" "$(SolutionDir)Assets\Scenes"
-if not exist "$(OutDir)Layouts" mklink /J "$(OutDir)Layouts" "$(SolutionDir)Assets\Layouts"
+      <Command>call "$(SolutionDir)scripts\EnsureJunction.cmd" "$(OutDir)Shaders" "$(SolutionDir)Assets\Shaders"
+call "$(SolutionDir)scripts\EnsureJunction.cmd" "$(OutDir)Models" "$(SolutionDir)Assets\Models"
+call "$(SolutionDir)scripts\EnsureJunction.cmd" "$(OutDir)Fonts" "$(SolutionDir)Assets\Fonts"
+call "$(SolutionDir)scripts\EnsureJunction.cmd" "$(OutDir)Textures" "$(SolutionDir)Assets\Textures"
+call "$(SolutionDir)scripts\EnsureJunction.cmd" "$(OutDir)Scenes" "$(SolutionDir)Assets\Scenes"
+call "$(SolutionDir)scripts\EnsureJunction.cmd" "$(OutDir)Layouts" "$(SolutionDir)Assets\Layouts"
 copy /Y "$(SolutionDir)Librerias\SDL3\lib\$(T8Arch)\SDL3.dll" "$(OutDir)"
 copy /Y "$(T8VcpkgDynamic)\bin\libEGL.dll" "$(OutDir)"
 copy /Y "$(T8VcpkgDynamic)\bin\libGLESv2.dll" "$(OutDir)"
-copy /Y "$(T8VcpkgDynamic)\bin\zlib1.dll" "$(OutDir)"
+call "$(SolutionDir)scripts\CopyFirstExisting.cmd" "$(OutDir)" "$(T8VcpkgDynamic)\bin\zlib1.dll" "$(T8VcpkgDynamic)\bin\z.dll"
 copy /Y "$(T8VcpkgDynamic)\bin\draco.dll" "$(OutDir)"
 copy /Y "$(SolutionDir)config.json" "$(OutDir)"</Command>
     </PostBuildEvent>

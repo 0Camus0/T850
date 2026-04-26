@@ -6,6 +6,10 @@ if(EXISTS "${LINK_PATH}")
   return()
 endif()
 
+# Ensure parent directory exists (Rebuild/Clean may have removed it)
+get_filename_component(LINK_PARENT "${LINK_PATH}" DIRECTORY)
+file(MAKE_DIRECTORY "${LINK_PARENT}")
+
 file(TO_NATIVE_PATH "${LINK_PATH}" NATIVE_LINK_PATH)
 file(TO_NATIVE_PATH "${TARGET_PATH}" NATIVE_TARGET_PATH)
 
@@ -14,5 +18,8 @@ execute_process(
   RESULT_VARIABLE JUNCTION_RESULT)
 
 if(NOT JUNCTION_RESULT EQUAL 0)
+  if(EXISTS "${LINK_PATH}")
+    return()
+  endif()
   message(FATAL_ERROR "Failed to create junction: ${LINK_PATH} -> ${TARGET_PATH}")
 endif()

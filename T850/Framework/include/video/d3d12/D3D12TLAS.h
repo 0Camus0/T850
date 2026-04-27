@@ -4,8 +4,8 @@
  * D3D12TLAS.h: Top-level acceleration structure (DXR)
  *********************************************************/
 
-#ifndef T800_D3D12TLAS_H
-#define T800_D3D12TLAS_H
+#ifndef T850_D3D12TLAS_H
+#define T850_D3D12TLAS_H
 
 #include <Config.h>
 #include <video/AccelStructure.h>
@@ -48,4 +48,4 @@ namespace t850 {
 } // namespace t850
 
 #endif // OS_WINDOWS
-#endif // T800_D3D12TLAS_H
+#endif // T850_D3D12TLAS_H

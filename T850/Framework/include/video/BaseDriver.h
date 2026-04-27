@@ -332,6 +332,11 @@ namespace t850 {
     // AccelStructure.h).  instanceCount is the number of entries.
     virtual void UpdateTLAS(const void* instanceData, uint32_t instanceCount) {}
 
+    // Returns the RT pipeline registered for the given pass type name
+    // ("rt_shadows", "rt_reflections", "rt_ao").  Returns nullptr if not found
+    // or if RT is not supported.
+    virtual RTPipeline* GetRTPipeline(const char* passType) { return nullptr; }
+
     // Returns the scene-level TLAS (null when RT is not supported).
     virtual TLAS* GetSceneTLAS() { return nullptr; }
 

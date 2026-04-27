@@ -1129,8 +1129,7 @@ namespace t850 {
     m_sceneTLAS->Build(static_cast<const RTInstanceDesc*>(instanceData), instanceCount);
   }
 
-  void D3D12Driver::DispatchRays(uint32_t w, uint32_t h, RTPipeline* pipeline) {
-    if (!SupportsRayTracing() || !pipeline) return;
+  void D3D12Driver::DispatchRays(uint32_t w, uint32_t h, RTPipeline* pipeline) {    if (!SupportsRayTracing() || !pipeline) return;
 
     auto* rtPipeline = static_cast<D3D12RTPipeline*>(pipeline);
     if (!rtPipeline->valid) return;
@@ -1169,6 +1168,14 @@ namespace t850 {
     cmd->ResourceBarrier(1, &barrier);
 
     T8_LOG_TRACE("[D3D12RT] DispatchRays %ux%u pipeline='%s'", w, h, rtPipeline->label.c_str());
+  }
+
+  RTPipeline* D3D12Driver::GetRTPipeline(const char* passType) {
+    if (!SupportsRayTracing()) return nullptr;
+    if (strcmp(passType, "rt_shadows")     == 0) return m_shadowRTPipeline.get();
+    if (strcmp(passType, "rt_reflections") == 0) return m_reflectionRTPipeline.get();
+    if (strcmp(passType, "rt_ao")          == 0) return m_aoRTPipeline.get();
+    return nullptr;
   }
 
 } // namespace t850

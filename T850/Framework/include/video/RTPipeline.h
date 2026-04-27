@@ -5,8 +5,8 @@
  *   shader binding table abstraction.
  *********************************************************/
 
-#ifndef T800_RTPIPELINE_H
-#define T800_RTPIPELINE_H
+#ifndef T850_RTPIPELINE_H
+#define T850_RTPIPELINE_H
 
 #include <Descriptors.h>
 #include <cstdint>
@@ -40,4 +40,4 @@ namespace t850 {
 
 } // namespace t850
 
-#endif // T800_RTPIPELINE_H
+#endif // T850_RTPIPELINE_H

@@ -4,8 +4,8 @@
  * VulkanBLAS.h: Bottom-level acceleration structure (VK_KHR_ray_tracing_pipeline)
  *********************************************************/
 
-#ifndef T800_VULKANBLAS_H
-#define T800_VULKANBLAS_H
+#ifndef T850_VULKANBLAS_H
+#define T850_VULKANBLAS_H
 
 #include <Config.h>
 #include <video/AccelStructure.h>
@@ -50,4 +50,4 @@ namespace t850 {
 } // namespace t850
 
 #endif // OS_WINDOWS
-#endif // T800_VULKANBLAS_H
+#endif // T850_VULKANBLAS_H

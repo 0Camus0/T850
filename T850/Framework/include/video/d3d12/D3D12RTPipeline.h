@@ -4,8 +4,8 @@
  * D3D12RTPipeline.h: DXR state object + shader binding table
  *********************************************************/
 
-#ifndef T800_D3D12RTPIPELINE_H
-#define T800_D3D12RTPIPELINE_H
+#ifndef T850_D3D12RTPIPELINE_H
+#define T850_D3D12RTPIPELINE_H
 
 #include <Config.h>
 #include <video/RTPipeline.h>
@@ -55,4 +55,4 @@ namespace t850 {
 } // namespace t850
 
 #endif // OS_WINDOWS
-#endif // T800_D3D12RTPIPELINE_H
+#endif // T850_D3D12RTPIPELINE_H

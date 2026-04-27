@@ -4,8 +4,8 @@
  * VulkanTLAS.h: Top-level acceleration structure (VK_KHR_acceleration_structure)
  *********************************************************/
 
-#ifndef T800_VULKANTLAS_H
-#define T800_VULKANTLAS_H
+#ifndef T850_VULKANTLAS_H
+#define T850_VULKANTLAS_H
 
 #include <Config.h>
 #include <video/AccelStructure.h>
@@ -54,4 +54,4 @@ namespace t850 {
 } // namespace t850
 
 #endif // OS_WINDOWS
-#endif // T800_VULKANTLAS_H
+#endif // T850_VULKANTLAS_H

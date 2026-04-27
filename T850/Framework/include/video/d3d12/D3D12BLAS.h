@@ -4,8 +4,8 @@
  * D3D12BLAS.h: Bottom-level acceleration structure (DXR)
  *********************************************************/
 
-#ifndef T800_D3D12BLAS_H
-#define T800_D3D12BLAS_H
+#ifndef T850_D3D12BLAS_H
+#define T850_D3D12BLAS_H
 
 #include <Config.h>
 #include <video/AccelStructure.h>
@@ -50,4 +50,4 @@ namespace t850 {
 } // namespace t850
 
 #endif // OS_WINDOWS
-#endif // T800_D3D12BLAS_H
+#endif // T850_D3D12BLAS_H

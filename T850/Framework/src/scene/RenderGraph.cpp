@@ -555,11 +555,12 @@ void RenderGraph::ExecutePass(
       else if (draw.type == "rt_shadows" || draw.type == "rt_reflections" || draw.type == "rt_ao") {
         // Ray tracing dispatch: skip if hardware doesn't support RT
         if (driver->SupportsRayTracing()) {
-          // Choose the pipeline registered for this pass type
-          // (the driver pre-creates shadow/reflection/ao pipelines during InitDriver)
-          // For now, we dispatch using whichever RT pipeline matches the draw type.
-          // A more general mechanism can be added later (pass pipeline name in JSON).
-          driver->DispatchRays((uint32_t)driver->width, (uint32_t)driver->height, nullptr);
+          // Retrieve the appropriate pipeline by pass type.
+          // The driver stores shadow/reflection/AO pipelines and selects via GetRTPipeline().
+          RTPipeline* rtPipeline = driver->GetRTPipeline(draw.type.c_str());
+          if (rtPipeline) {
+            driver->DispatchRays((uint32_t)driver->width, (uint32_t)driver->height, rtPipeline);
+          }
           T8_LOG_TRACE("[RenderGraph] RT dispatch: %s (%dx%d)", draw.type.c_str(), driver->width, driver->height);
         } else {
           T8_LOG_TRACE("[RenderGraph] RT pass '%s' skipped (not supported)", draw.type.c_str());

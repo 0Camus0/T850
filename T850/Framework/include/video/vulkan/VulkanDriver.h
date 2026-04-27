@@ -76,6 +76,7 @@ namespace t850 {
     void DispatchRays(uint32_t w, uint32_t h, RTPipeline* pipeline) override;
     void UpdateTLAS(const void* instanceData, uint32_t instanceCount) override;
     TLAS* GetSceneTLAS() override { return m_sceneTLAS.get(); }
+    RTPipeline* GetRTPipeline(const char* passType) override;
 
     // ── Accessors ──
     VkCommandBuffer    GetCmdBuffer() const { return m_commandBuffers[m_currentFrame]; }

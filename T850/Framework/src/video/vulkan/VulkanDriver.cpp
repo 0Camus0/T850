@@ -1998,7 +1998,14 @@ reopen:
     T8_LOG_TRACE("[VkRT] DispatchRays %ux%u pipeline='%s'", w, h, rtPipeline->label.c_str());
   }
 
+  RTPipeline* VulkanDriver::GetRTPipeline(const char* passType) {
+    if (!m_raytracingSupported) return nullptr;
+    if (strcmp(passType, "rt_shadows")     == 0) return m_shadowRTPipeline.get();
+    if (strcmp(passType, "rt_reflections") == 0) return m_reflectionRTPipeline.get();
+    if (strcmp(passType, "rt_ao")          == 0) return m_aoRTPipeline.get();
+    return nullptr;
+  }
+
 } // namespace t850
 
 #endif // OS_WINDOWS
-

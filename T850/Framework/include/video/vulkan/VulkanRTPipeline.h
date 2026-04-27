@@ -4,8 +4,8 @@
  * VulkanRTPipeline.h: Vulkan RT pipeline + SBT
  *********************************************************/
 
-#ifndef T800_VULKANRTPIPELINE_H
-#define T800_VULKANRTPIPELINE_H
+#ifndef T850_VULKANRTPIPELINE_H
+#define T850_VULKANRTPIPELINE_H
 
 #include <Config.h>
 #include <video/RTPipeline.h>
@@ -55,4 +55,4 @@ namespace t850 {
 } // namespace t850
 
 #endif // OS_WINDOWS
-#endif // T800_VULKANRTPIPELINE_H
+#endif // T850_VULKANRTPIPELINE_H

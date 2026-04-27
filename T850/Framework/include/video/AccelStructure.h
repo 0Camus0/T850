@@ -5,8 +5,8 @@
  *   abstractions (BLAS + TLAS) for DXR and Vulkan RT.
  *********************************************************/
 
-#ifndef T800_ACCELSTRUCTURE_H
-#define T800_ACCELSTRUCTURE_H
+#ifndef T850_ACCELSTRUCTURE_H
+#define T850_ACCELSTRUCTURE_H
 
 #include <cstdint>
 #include <utils/xMaths.h>
@@ -85,4 +85,4 @@ namespace t850 {
 
 } // namespace t850
 
-#endif // T800_ACCELSTRUCTURE_H
+#endif // T850_ACCELSTRUCTURE_H

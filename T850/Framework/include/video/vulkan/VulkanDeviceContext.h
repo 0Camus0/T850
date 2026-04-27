@@ -33,11 +33,14 @@ namespace t850 {
 
     VkCommandBuffer GetCommandBuffer() const { return m_commandBuffer; }
     VkPrimitiveTopology GetTopology() const { return m_topology; }
+    uint32_t GetVertexStride() const { return m_vertexStride; }
+    void SetVertexStride(uint32_t stride) { m_vertexStride = stride; }
 
   private:
     friend class VulkanDriver;
     VkCommandBuffer     m_commandBuffer = VK_NULL_HANDLE;
     VkPrimitiveTopology m_topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
+    uint32_t            m_vertexStride = 0;
   };
 
 } // namespace t850

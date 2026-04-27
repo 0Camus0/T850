@@ -44,7 +44,11 @@ namespace t850 {
     key.depth = (uint8_t)m_currentDepth;
     key.cull = (uint8_t)m_currentCull;
     key.numColorAttachments = numColorAttachments;
-    key.topology = (uint8_t)static_cast<VulkanDeviceContext*>(T8DeviceContext)->GetTopology();
+    auto* vkContext = static_cast<VulkanDeviceContext*>(T8DeviceContext);
+    key.topology = (uint8_t)vkContext->GetTopology();
+    if (!shader->m_vertexAttributes.empty()) {
+      key.vertexStride = vkContext->GetVertexStride() ? vkContext->GetVertexStride() : shader->m_vertexBinding.stride;
+    }
     key.colorFormat = colorFormat;
     key.depthFormat = depthFormat;
 
@@ -68,9 +72,11 @@ namespace t850 {
 
     // Vertex input (use shader's reflection data or empty for now)
     VkPipelineVertexInputStateCreateInfo vertexInput = { VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO };
+    VkVertexInputBindingDescription vertexBinding = shader->m_vertexBinding;
+    vertexBinding.stride = key.vertexStride;
     if (!shader->m_vertexAttributes.empty()) {
       vertexInput.vertexBindingDescriptionCount = 1;
-      vertexInput.pVertexBindingDescriptions = &shader->m_vertexBinding;
+      vertexInput.pVertexBindingDescriptions = &vertexBinding;
       vertexInput.vertexAttributeDescriptionCount = (uint32_t)shader->m_vertexAttributes.size();
       vertexInput.pVertexAttributeDescriptions = shader->m_vertexAttributes.data();
     }
@@ -201,8 +207,8 @@ namespace t850 {
       return VK_NULL_HANDLE;
     }
 
-    T8_LOG_DEBUG("[Vulkan] Pipeline created: shader=%p blend=%d depth=%d cull=%d topo=%d colors=%d renderPass=%p",
-                 shader, key.blend, key.depth, key.cull, key.topology, key.numColorAttachments, pipelineCI.renderPass);
+    T8_LOG_DEBUG("[Vulkan] Pipeline created: shader=%p blend=%d depth=%d cull=%d topo=%d stride=%u colors=%d renderPass=%p",
+           shader, key.blend, key.depth, key.cull, key.topology, key.vertexStride, key.numColorAttachments, pipelineCI.renderPass);
     m_pipelineCache[key] = pipeline;
     return pipeline;
   }
@@ -1000,6 +1006,7 @@ namespace t850 {
 
     // Reset topology to triangle list at the start of each frame
     static_cast<VulkanDeviceContext*>(T8DeviceContext)->m_topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
+    static_cast<VulkanDeviceContext*>(T8DeviceContext)->m_vertexStride = 0;
   }
 
   void VulkanDriver::EndFrame() {}

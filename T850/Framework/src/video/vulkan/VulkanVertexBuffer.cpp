@@ -58,7 +58,9 @@ namespace t850 {
 
   void VulkanVertexBuffer::Set(const DeviceContext& deviceContext, const unsigned stride, const unsigned offset) {
     const_cast<DeviceContext*>(&deviceContext)->actualVertexBuffer = (VertexBuffer*)this;
-    VkCommandBuffer cmd = static_cast<const VulkanDeviceContext*>(&deviceContext)->GetCommandBuffer();
+    auto* vkContext = static_cast<VulkanDeviceContext*>(const_cast<DeviceContext*>(&deviceContext));
+    vkContext->SetVertexStride(stride);
+    VkCommandBuffer cmd = vkContext->GetCommandBuffer();
     if (m_usesRing) {
       T8_LOG_TRACE("[Vulkan] VB::Set stride=%u ringOffset=%llu size=%u", stride, m_ringOffset, descriptor.byteWidth);
       VkDeviceSize off = m_ringOffset;

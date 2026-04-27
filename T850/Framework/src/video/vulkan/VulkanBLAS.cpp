@@ -77,9 +77,8 @@ namespace t850 {
       m_deviceAddress = rt.vkGetAccelerationStructureDeviceAddressKHR(device, &addrInfo);
     }
 
-    // Recreate scratch buffer if not yet allocated (or if size requirements have changed)
+    // Allocate scratch buffer on first use.
     if (!m_scratchBuffer) {
-      if (m_scratchBuffer) { vmaDestroyBuffer(allocator, m_scratchBuffer, m_scratchAlloc); m_scratchBuffer = VK_NULL_HANDLE; }
       VkBufferCreateInfo scratchCI = { VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO };
       scratchCI.size = sizeInfo.buildScratchSize;
       scratchCI.usage = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT;

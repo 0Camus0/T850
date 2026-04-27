@@ -110,7 +110,7 @@ namespace t850 {
     depthDesc.Flags = D3D12_RESOURCE_FLAG_ALLOW_DEPTH_STENCIL;
 
     D3D12_CLEAR_VALUE depthClear = {}; depthClear.Format = dsvFmt;
-    depthClear.DepthStencil.Depth = 1.0f;
+    depthClear.DepthStencil.Depth = 0.0f;
     D3D12_HEAP_PROPERTIES heapProps = {}; heapProps.Type = D3D12_HEAP_TYPE_DEFAULT;
 
     HRESULT hr = device->CreateCommittedResource(&heapProps, D3D12_HEAP_FLAG_NONE, &depthDesc,
@@ -226,7 +226,7 @@ namespace t850 {
     float black[4] = { 0, 0, 0, 0 };
     for (int i = 0; i < number_RT; i++)
       cmdList->ClearRenderTargetView(vRTVHandles[i], black, 0, nullptr);
-    cmdList->ClearDepthStencilView(depthDSV, D3D12_CLEAR_FLAG_DEPTH, 1.0f, 0, 0, nullptr);
+    cmdList->ClearDepthStencilView(depthDSV, D3D12_CLEAR_FLAG_DEPTH, 0.0f, 0, 0, nullptr);
   }
 
   void D3D12RT::ChangeCubeDepthTexture(int i) {

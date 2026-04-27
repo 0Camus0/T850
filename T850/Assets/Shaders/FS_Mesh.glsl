@@ -299,11 +299,7 @@ void main(){
 
 		colorOut_3	= vec4(geoNormal * 0.5 + 0.5, 0.0);
 
-		#ifdef NON_LINEAR_DEPTH
-			colorOut_4	= vec4(Pos.z / Pos.w, 0.0, 0.0, 0.0);
-		#else
-			colorOut_4	= vec4(Pos.z / CameraInfo.y, 0.0, 0.0, 0.0);
-		#endif
+		colorOut_4	= vec4(Pos.z / Pos.w, 0.0, 0.0, 0.0);
 	#else
 		gl_FragData[0].rgb  = color.rgb;
 		gl_FragData[0].a 	= 0.0;
@@ -318,29 +314,21 @@ void main(){
 		gl_FragData[2].a = Intensities.w / 255.0;
 
 		gl_FragData[3]	= vec4(geoNormal * 0.5 + 0.5, 0.0);
-		gl_FragData[4]	= vec4(Pos.z / CameraInfo.y, 0.0, 0.0, 0.0);
+		gl_FragData[4]	= vec4(Pos.z / Pos.w, 0.0, 0.0, 0.0);
 
-		#ifdef NON_LINEAR_DEPTH
-			gl_FragDepth	= Pos.z / Pos.w;
-		#else
-			gl_FragDepth = Pos.z / CameraInfo.y;
-		#endif
+		gl_FragDepth	= Pos.z / Pos.w;
 	#endif
 	
 }
 #elif defined(SHADOW_MAP_PASS)
 void main(){
-#ifdef NON_LINEAR_DEPTH
 	gl_FragDepth = Pos.z / Pos.w;
-#else
-	gl_FragDepth = Pos.z / CameraInfo.y;
-#endif
 }
 #elif defined(RADIAL_DEPTH_PASS)
 uniform highp mat4 WorldView; 
 void main(){
     highp vec4 ff  = WorldView*CameraPosition;
-	gl_FragDepth = length(vec3(Pos.xyz - ff.xyz)) / CameraInfo.y;
+	gl_FragDepth = 1.0 - clamp(length(vec3(Pos.xyz - ff.xyz)) / CameraInfo.y, 0.0, 1.0);
 }
 #else
 	#ifdef ES_30

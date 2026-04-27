@@ -1,33 +1,33 @@
-﻿{
-    "keepRunning":  false,
-    "api":  "d3d12",
-    "architecture":  "x64",
-    "display":  {
-                    "scene":  0,
-                    "width":  1920,
-                    "model":  "Models/DamagedHelmet.glb",
-                    "height":  1080,
-                    "fullscreen":  false
-                },
-    "replaySnapshot":  {
-                           "path":  "",
-                           "enabled":  false
-                       },
-    "configuration":  "Release",
-    "dump":  {
-                 "seconds":  -1,
-                 "trigger":  "frame",
-                 "frame":  -1,
-                 "enabled":  false
-             },
-    "debugFrames":  false,
-    "devTools":  {
-                     "guiControlEdit":  false,
-                     "d3d12Debug":  false,
-                     "guiControlTarget":  "slider_knob",
-                     "logLevel":  "error",
-                     "logToFile":  false,
-                     "guiEdit":  false,
-                     "guiSnap":  false
-                 }
+{
+  "debugFrames": false,
+  "architecture": "x64",
+  "api": "vulkan",
+  "devTools": {
+    "d3d12Debug": false,
+    "logLevel": "error",
+    "guiSnap": false,
+    "logToFile": false,
+    "guiControlTarget": "slider_knob",
+    "guiControlEdit": false,
+    "guiEdit": false
+  },
+  "keepRunning": false,
+  "display": {
+    "scene": 0,
+    "model": "Models/Dragon.glb",
+    "height": 1080,
+    "fullscreen": false,
+    "width": 1920
+  },
+  "configuration": "Release",
+  "replaySnapshot": {
+    "path": "",
+    "enabled": false
+  },
+  "dump": {
+    "seconds": -1,
+    "frame": -1,
+    "trigger": "frame",
+    "enabled": false
+  }
 }

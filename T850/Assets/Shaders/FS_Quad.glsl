@@ -24,15 +24,30 @@ highp float roundTo(highp float num,highp float decimals){
 	return round(num*shift) / shift;
 }
 
+highp vec4 ReconstructPosition(highp vec2 clipPos, highp float depth) {
+	highp vec4 position = WVPInverse * vec4(clipPos, depth, 1.0);
+	position.xyz /= position.w;
+	position.w = 1.0;
+	return position;
+}
+
+highp float LinearizeDepth(highp float depth) {
+	highp float znear = CameraInfo.x;
+	highp float zfar = CameraInfo.y;
+	return (znear * zfar) / (znear + depth * (zfar - znear));
+}
+
 #ifdef ES_30
 	precision mediump float;
 	in highp vec2 vecUVCoords;
 	in highp vec4 Pos;
 	in highp vec4 PosCorner;
+	in highp vec2 ClipPos;
 #else
 	varying highp vec2 vecUVCoords;
 	varying highp vec4 Pos;
 	varying highp vec4 PosCorner;
+	varying highp vec2 ClipPos;
 #endif
 
 #ifdef ES_30
@@ -153,13 +168,7 @@ void main(){
 	#endif
 
 		
-#ifdef NON_LINEAR_DEPTH
-		highp vec2 vcoord = coords *2.0 - 1.0;
-		highp vec4 position = WVPInverse*vec4(vcoord ,depth,1.0);
-		position.xyz /= position.w;  
-#else	
-		highp vec4 position = CameraPosition + PosCorner*depth;
-#endif
+	highp vec4 position = ReconstructPosition(ClipPos, depth);
 
 	highp vec3 EyeDir = normalize(CameraPosition-position).xyz;
 
@@ -345,7 +354,7 @@ highp vec4 FShadow = vec4(1.0,1.0,1.0,1.0);
 		for (highp int i = 0; i < samples; i += 1){
 			highp vec3 nfragToLight =  fragToLight +  sampleOffsetDirections[i] * diskRadius; 
 			depthSM = texture(tex1, nfragToLight ).r;
-			depthSM = depthSM * LightCameraInfo.y;
+			depthSM = (1.0 - depthSM) * LightCameraInfo.y;
 			if( depthPos - 0.055  > depthSM)
 				shadowVal += 1.0;
 			//shadowVal *= 0.75;
@@ -356,15 +365,10 @@ highp vec4 FShadow = vec4(1.0,1.0,1.0,1.0);
 		FShadow = shadowVal*vec4(1.0,1.0,1.0,1.0);//texture(tex1, fragToLight ).rrrr;
 	#else
 	highp vec4 LightPos = WVPLight*position;
-	#ifdef NON_LINEAR_DEPTH
-		LightPos.xyz /= LightPos.w;
-	#else
-		LightPos.xy /= LightPos.w;
-		LightPos.z /= LightCameraInfo.y;
-	#endif
+	LightPos.xyz /= LightPos.w;
 	highp vec2 SHTC = LightPos.xy*0.5 + 0.5;
 	
-	if(SHTC.x < 1.0 && SHTC.y < 1.0 && SHTC.x  > 0.0 && SHTC.y > 0.0 && LightPos.w > 0.0 && LightPos.z < 1.0 ){
+	if(SHTC.x < 1.0 && SHTC.y < 1.0 && SHTC.x  > 0.0 && SHTC.y > 0.0 && LightPos.w > 0.0 && LightPos.z > 0.0 && LightPos.z < 1.0 ){
 		#if ENABLE_PCF
 			highp float sum = 0.0;
 			highp float x, y;
@@ -379,10 +383,10 @@ highp vec4 FShadow = vec4(1.0,1.0,1.0,1.0);
 						Val_1 = 0.0;
 					} else {
 						#ifdef ES_30
-							highp vec3 Coords_Final = vec3(sampleUV, LightPos.z - toogles.w);
+							highp vec3 Coords_Final = vec3(sampleUV, LightPos.z + toogles.w);
 							Val_1 = texture(tex1, Coords_Final);
 						#else
-							highp vec4 Coords_Final = vec4(sampleUV, LightPos.z, LightPos.w);
+							highp vec4 Coords_Final = vec4(sampleUV, LightPos.z + toogles.w, LightPos.w);
 							Val_1 = shadow2DProj(tex1, Coords_Final).r;
 						#endif
 					}
@@ -417,7 +421,7 @@ highp vec4 FShadow = vec4(1.0,1.0,1.0,1.0);
 		
 			highp float depthPos = LightPos.z;
 
-			if( depthPos  > depthSM)
+			if( depthPos < depthSM)
 				FShadow = toogles.x*vec4(1.0,1.0,1.0,1.0);
 		#endif
 		
@@ -473,13 +477,7 @@ highp float GetOcclusion(highp float depth,highp vec2 uv, highp vec4 position, h
 			highp float sampleDepth = texture2D(tex0,offset.xy).r;
 	   #endif
 	    
-		#ifdef NON_LINEAR_DEPTH
-			highp vec4 new_position = WVPInverse*vec4( PosCorner.xy ,sampleDepth,1.0);
-			new_position.xyz /= new_position.w;
-			new_position.w = 1.0;
-		#else
-			highp vec4 new_position = CameraPosition + PosCorner*sampleDepth;
-		#endif
+		highp vec4 new_position = ReconstructPosition(ClipPos, sampleDepth);
 			
 	  highp vec4 new_positionV = WorldView * vec4(new_position.xyz, 1.0);
 
@@ -505,13 +503,7 @@ void main(){
 		highp float depth = texture2D(tex0,coords).r;
 	#endif
 	
-	#ifdef NON_LINEAR_DEPTH
-		highp vec4 position = WVPInverse*vec4( PosCorner.xy ,depth,1.0);
-		position.xyz /= position.w;
-		position.w = 1.0;
-	#else		
-		highp vec4 position = CameraPosition + PosCorner*depth;
-	#endif
+	highp vec4 position = ReconstructPosition(ClipPos, depth);
 
 	#ifdef ENABLE_SHADOWS
 		Fcolor = CalculateShadow(position);
@@ -794,13 +786,7 @@ void main(){
   highp vec2 uv = vecUVCoords.xy;
   uv.y = 1.0 - uv.y;
   highp float depth = texture(tex0, uv).r;
-	#ifdef NON_LINEAR_DEPTH
-		highp vec4 position = WVPInverse*vec4( PosCorner.xy ,depth,1.0);
-		position.xyz /= position.w;
-		position.w = 1.0;
-	#else		
-		highp vec4 position = CameraPosition + PosCorner*depth;
-	#endif
+	highp vec4 position = ReconstructPosition(ClipPos, depth);
 
 
   const int steps = 64;
@@ -866,13 +852,9 @@ void main() {
 	#else 
 	highp float z = texture2D( tex0, coords ).r;
 	#endif
-	bool near = (z < depthFocus);
-	highp float znear = CameraInfo.x;
-	highp float zfar = CameraInfo.y;
-    highp float multi = -zfar * znear;
-    highp float multi2 = (zfar - znear);
-	highp float objectdistance = multi  / (z * multi2 - zfar);
-    highp float FocusPlane =     multi  / (depthFocus * multi2 - zfar);
+	bool near = (z > depthFocus);
+	highp float objectdistance = LinearizeDepth(z);
+    highp float FocusPlane = LinearizeDepth(depthFocus);
 	highp float CoC = abs(aperture * (focalLength * (objectdistance - FocusPlane)) /
           (objectdistance * (FocusPlane - focalLength)));
 	if (near) {
@@ -1093,12 +1075,7 @@ void main(){
   highp vec2 uv = vecUVCoords.xy;
   uv.y = 1.0 - uv.y;
   highp float depth = texture(tex0, uv).r;
-#ifdef NON_LINEAR_DEPTH
- highp vec4 position = WVPInverse*vec4(PosCorner.xy ,depth,1.0);
- position.xyz /= position.w;
-#else		
- highp vec4 position = CameraPosition + PosCorner*depth;
-#endif
+ highp vec4 position = ReconstructPosition(ClipPos, depth);
  int steps = int(LightPositions[0].y);
  highp vec4 ray = vec4(position - CameraPosition);
  highp vec4 rayDir = normalize(ray);
@@ -1121,15 +1098,14 @@ highp vec4 sunDir;
 highp vec3 scattering;
 const highp vec3 lightColor = vec3(0.9803, 0.8392, 0.6470);
 for (int i = 0; i<steps; i++) {
-  LightPos = WVPLight* P;
-  LightPos.xy /= LightPos.w;
-  LightPos.z /= LightCameraInfo.y;
+	LightPos = WVPLight* P;
+	LightPos.xyz /= LightPos.w;
   SHTC = LightPos.xy*0.5 + 0.5;
 
-  highp vec3 Coords_Final = vec3(SHTC.xy, LightPos.z - 0.00005);
+	highp vec3 Coords_Final = vec3(SHTC.xy, LightPos.z + 0.00005);
   highp float Val_1 = texture(tex1, Coords_Final);
 
-  if (Val_1 > 0.0 && SHTC.x < 1.0 && SHTC.y < 1.0 && SHTC.x  > 0.0 && SHTC.y > 0.0 && LightPos.w > 0.0 && LightPos.z < 1.0) {
+	if (Val_1 > 0.0 && SHTC.x < 1.0 && SHTC.y < 1.0 && SHTC.x  > 0.0 && SHTC.y > 0.0 && LightPos.w > 0.0 && LightPos.z > 0.0 && LightPos.z < 1.0) {
     sunDir = normalize(P - LightCameraPosition);
     scattering = lightColor * ComputeScattering(dot(rayDir.rgb, sunDir.rgb));
     accumFog.rgb += scattering ;

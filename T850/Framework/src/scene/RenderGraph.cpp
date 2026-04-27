@@ -545,19 +545,19 @@ void RenderGraph::ExecutePass(
         }
       }
       else if (draw.type == "final_quad") {
-        quads[7].SetTexture(quads[0].Textures[0], 0);
-        // Re-bind: final quad gets its texture from the pass inputs
+        driver->SetDepthStencilState(BaseDriver::DepthStencilStates::NONE);
         for (const auto& input : pass.inputs) {
           auto resolved = ResolveTextureInput(input.source);
           if (!resolved.is_builtin && resolved.rt_handle >= 0) {
-            quads[7].SetTexture(driver->GetRTTexture(resolved.rt_handle, resolved.attachment), input.slot);
+            quads[0].SetTexture(driver->GetRTTexture(resolved.rt_handle, resolved.attachment), input.slot);
           }
         }
-        quads[7].SetGlobalKey(sig);
-        quads[7].Draw();
+        quads[0].SetGlobalKey(sig);
+        quads[0].Draw();
       }
       else {
         // fullscreen_quad (default)
+        driver->SetDepthStencilState(BaseDriver::DepthStencilStates::NONE);
         quads[0].SetGlobalKey(sig);
         quads[0].Draw();
       }

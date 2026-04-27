@@ -27,6 +27,7 @@ struct VS_OUTPUT{
     float2 texture0  : TEXCOORD;
 	float4 Pos		 : TEXCOORD1;
 	float4 PosCorner : TEXCOORD2;
+	float2 ClipPos   : TEXCOORD3;
 };
 
 VS_OUTPUT VS( VS_INPUT input ){
@@ -34,12 +35,9 @@ VS_OUTPUT VS( VS_INPUT input ){
     OUT.hposition = mul( WVP , input.position );
     OUT.texture0  = input.texture0;
 	OUT.Pos	  	  = OUT.hposition;
-#ifdef NON_LINEAR_DEPTH
-	OUT.PosCorner = float4(input.position.xy,1.0,1.0);
-#else
-    OUT.PosCorner = mul(WVPInverse, float4(input.position.xy,1.0,1.0));
+	OUT.ClipPos = input.position.xy;
+    OUT.PosCorner = mul(WVPInverse, float4(input.position.xy,0.0,1.0));
 	OUT.PosCorner.xyz /= OUT.PosCorner.w;
 	OUT.PosCorner = OUT.PosCorner - CameraPosition;
-#endif
 	return OUT;
 }

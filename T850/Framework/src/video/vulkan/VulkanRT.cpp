@@ -115,7 +115,7 @@ namespace t850 {
     if (hasDepth) {
       switch (depth_format) {
         case BaseRT::F32:  m_depthFormat = VK_FORMAT_D32_SFLOAT; break;
-        case BaseRT::FD16: m_depthFormat = VK_FORMAT_D16_UNORM;  break;
+        case BaseRT::FD16: m_depthFormat = VK_FORMAT_D32_SFLOAT; break;
         default:           m_depthFormat = VK_FORMAT_D32_SFLOAT; break;
       }
 
@@ -286,7 +286,7 @@ namespace t850 {
         vColorLayouts[i] = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
       }
       if (hasDepth && m_depthImage) {
-        VkClearDepthStencilValue clearDepth = { 1.0f, 0 };
+        VkClearDepthStencilValue clearDepth = { 0.0f, 0 };
         VkImageSubresourceRange depthRange = { VK_IMAGE_ASPECT_DEPTH_BIT, 0, 1, 0, 1 };
         TransitionImageLayout(initCmd, m_depthImage,
           VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
@@ -382,7 +382,7 @@ namespace t850 {
 
     if (hasDepth) {
       VkClearValue depthClear = {};
-      depthClear.depthStencil = { 1.0f, 0 };
+      depthClear.depthStencil = { 0.0f, 0 };
       clearValues.push_back(depthClear);
     }
 

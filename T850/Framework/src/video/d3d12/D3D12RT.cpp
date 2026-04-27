@@ -26,15 +26,20 @@ namespace t850 {
     ID3D12Device* device = GetNativeDevice();
     auto* driver = GetD3D12Driver();
 
+    // Detect UAV-only formats (for ray tracing output textures)
+    bool isUAV = (color_format == BaseRT::RGBA16F_UAV || color_format == BaseRT::R8_UAV);
+
     DXGI_FORMAT cfmt = DXGI_FORMAT_R8G8B8A8_UNORM;
     switch (color_format) {
-      case BaseRT::NOTHING: cfmt = DXGI_FORMAT_R8G8B8A8_UNORM; number_RT = 0; break;
-      case BaseRT::R8:      cfmt = DXGI_FORMAT_R8_UNORM; break;
-      case BaseRT::F16:     cfmt = DXGI_FORMAT_R16_FLOAT; break;
-      case BaseRT::F32:     cfmt = DXGI_FORMAT_R32_FLOAT; break;
-      case BaseRT::RGBA8:   cfmt = DXGI_FORMAT_R8G8B8A8_UNORM; break;
-      case BaseRT::RGBA16F: cfmt = DXGI_FORMAT_R16G16B16A16_FLOAT; break;
-      case BaseRT::RGBA32F: cfmt = DXGI_FORMAT_R32G32B32A32_FLOAT; break;
+      case BaseRT::NOTHING:    cfmt = DXGI_FORMAT_R8G8B8A8_UNORM; number_RT = 0; break;
+      case BaseRT::R8:         cfmt = DXGI_FORMAT_R8_UNORM; break;
+      case BaseRT::F16:        cfmt = DXGI_FORMAT_R16_FLOAT; break;
+      case BaseRT::F32:        cfmt = DXGI_FORMAT_R32_FLOAT; break;
+      case BaseRT::RGBA8:      cfmt = DXGI_FORMAT_R8G8B8A8_UNORM; break;
+      case BaseRT::RGBA16F:    cfmt = DXGI_FORMAT_R16G16B16A16_FLOAT; break;
+      case BaseRT::RGBA32F:    cfmt = DXGI_FORMAT_R32G32B32A32_FLOAT; break;
+      case BaseRT::RGBA16F_UAV:cfmt = DXGI_FORMAT_R16G16B16A16_FLOAT; break;
+      case BaseRT::R8_UAV:     cfmt = DXGI_FORMAT_R8_UNORM; break;
       default: break;
     }
 
@@ -65,23 +70,38 @@ namespace t850 {
       desc.Width = w; desc.Height = h; desc.DepthOrArraySize = 1;
       desc.MipLevels = 1; desc.Format = thisFmt;
       desc.SampleDesc.Count = 1;
-      desc.Flags = D3D12_RESOURCE_FLAG_ALLOW_RENDER_TARGET;
+      // UAV-only: add ALLOW_UNORDERED_ACCESS flag (skip RTV for RT output textures)
+      if (isUAV) {
+        desc.Flags = D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS;
+      } else {
+        desc.Flags = D3D12_RESOURCE_FLAG_ALLOW_RENDER_TARGET;
+      }
 
-      D3D12_CLEAR_VALUE clearVal = {}; clearVal.Format = thisFmt;
       D3D12_HEAP_PROPERTIES heapProps = {}; heapProps.Type = D3D12_HEAP_TYPE_DEFAULT;
 
       ComPtr<ID3D12Resource> colorRes;
-      HRESULT hr = device->CreateCommittedResource(&heapProps, D3D12_HEAP_FLAG_NONE, &desc,
-                                                    D3D12_RESOURCE_STATE_RENDER_TARGET, &clearVal,
-                                                    IID_PPV_ARGS(&colorRes));
+      HRESULT hr;
+      if (isUAV) {
+        // UAV textures start in UNORDERED_ACCESS state; no clear value
+        hr = device->CreateCommittedResource(&heapProps, D3D12_HEAP_FLAG_NONE, &desc,
+                                              D3D12_RESOURCE_STATE_UNORDERED_ACCESS, nullptr,
+                                              IID_PPV_ARGS(&colorRes));
+      } else {
+        D3D12_CLEAR_VALUE clearVal = {}; clearVal.Format = thisFmt;
+        hr = device->CreateCommittedResource(&heapProps, D3D12_HEAP_FLAG_NONE, &desc,
+                                              D3D12_RESOURCE_STATE_RENDER_TARGET, &clearVal,
+                                              IID_PPV_ARGS(&colorRes));
+      }
       if (FAILED(hr)) { T8_LOG_ERROR("[D3D12] RT color[%d] create failed hr=0x%08X", i, hr); return false; }
       vColorResources.push_back(colorRes);
-      vColorStates.push_back(D3D12_RESOURCE_STATE_RENDER_TARGET);
+      vColorStates.push_back(isUAV ? D3D12_RESOURCE_STATE_UNORDERED_ACCESS : D3D12_RESOURCE_STATE_RENDER_TARGET);
 
-      // RTV
-      D3D12_CPU_DESCRIPTOR_HANDLE rtv = driver->GetHeap(D3D12Heap::RTV).AllocateCPU();
-      device->CreateRenderTargetView(colorRes.Get(), nullptr, rtv);
-      vRTVHandles.push_back(rtv);
+      // RTV — only for non-UAV attachments
+      if (!isUAV) {
+        D3D12_CPU_DESCRIPTOR_HANDLE rtv = driver->GetHeap(D3D12Heap::RTV).AllocateCPU();
+        device->CreateRenderTargetView(colorRes.Get(), nullptr, rtv);
+        vRTVHandles.push_back(rtv);
+      }
 
       // SRV for reading as texture
       D3D12Texture* colorTex = new D3D12Texture;

@@ -189,6 +189,48 @@ namespace t850 {
     return nullptr;
   }
 
+  BLAS* D3D12Device::CreateBLAS(VertexBuffer* vb, IndexBuffer* ib,
+                                  uint32_t vertexCount, uint32_t indexCount,
+                                  uint32_t vertexStride) {
+    auto* driver = static_cast<D3D12Driver*>(g_pBaseDriver);
+    if (!driver->SupportsRayTracing()) return nullptr;
+
+    auto* d3dvb = static_cast<D3D12VertexBuffer*>(vb);
+    auto* d3dib = static_cast<D3D12IndexBuffer*>(ib);
+    if (!d3dvb || !d3dib) return nullptr;
+
+    auto* blas = new D3D12BLAS();
+    blas->vertexGPUVA  = static_cast<ID3D12Resource*>(d3dvb->GetAPIObject())->GetGPUVirtualAddress();
+    blas->indexGPUVA   = static_cast<ID3D12Resource*>(d3dib->GetAPIObject())->GetGPUVirtualAddress();
+    blas->vertexCount  = vertexCount;
+    blas->indexCount   = indexCount;
+    blas->vertexStride = vertexStride;
+    // Determine index format from the buffer's byte width vs count
+    blas->is32BitIndex = (indexCount > 0 && (indexCount * 4 == ib->descriptor.byteWidth));
+    return blas;
+  }
+
+  TLAS* D3D12Device::CreateTLAS(uint32_t maxInstances) {
+    auto* driver = static_cast<D3D12Driver*>(g_pBaseDriver);
+    if (!driver->SupportsRayTracing()) return nullptr;
+    return new D3D12TLAS(maxInstances);
+  }
+
+  RTPipeline* D3D12Device::CreateRTPipeline(const char* raygenSrc, const char* missSrc,
+                                              const char* closestHitSrc, ShaderKey key) {
+    auto* driver = static_cast<D3D12Driver*>(g_pBaseDriver);
+    if (!driver->SupportsRayTracing()) return nullptr;
+
+    auto* pipeline = new D3D12RTPipeline();
+    pipeline->key   = key;
+    pipeline->label = raygenSrc ? raygenSrc : "unknown";
+    if (!pipeline->Create(raygenSrc, missSrc, closestHitSrc)) {
+      delete pipeline;
+      return nullptr;
+    }
+    return pipeline;
+  }
+
 } // namespace t850
 
 #endif // OS_WINDOWS

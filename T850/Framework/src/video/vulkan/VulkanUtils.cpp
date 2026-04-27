@@ -134,6 +134,33 @@ namespace t850 {
                          0, nullptr, 0, nullptr, 1, &barrier);
   }
 
+  // ──────────────────────────────────────────────────────
+  //  VulkanRTFunctions
+  // ──────────────────────────────────────────────────────
+
+#define LOAD_RT_FN(name) \
+  name = reinterpret_cast<PFN_##name>(vkGetDeviceProcAddr(device, #name)); \
+  if (!name) { missing++; }
+
+  bool VulkanRTFunctions::Load(VkDevice device) {
+    int missing = 0;
+    LOAD_RT_FN(vkCreateAccelerationStructureKHR)
+    LOAD_RT_FN(vkDestroyAccelerationStructureKHR)
+    LOAD_RT_FN(vkGetAccelerationStructureBuildSizesKHR)
+    LOAD_RT_FN(vkCmdBuildAccelerationStructuresKHR)
+    LOAD_RT_FN(vkGetAccelerationStructureDeviceAddressKHR)
+    LOAD_RT_FN(vkCreateRayTracingPipelinesKHR)
+    LOAD_RT_FN(vkGetRayTracingShaderGroupHandlesKHR)
+    LOAD_RT_FN(vkCmdTraceRaysKHR)
+    return (missing == 0);
+  }
+
+  bool VulkanRTFunctions::IsValid() const {
+    return vkCreateAccelerationStructureKHR != nullptr
+        && vkCmdBuildAccelerationStructuresKHR != nullptr
+        && vkCmdTraceRaysKHR != nullptr;
+  }
+
 } // namespace t850
 
 #endif // OS_WINDOWS

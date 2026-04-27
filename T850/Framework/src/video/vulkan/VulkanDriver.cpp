@@ -337,20 +337,60 @@ namespace t850 {
     queueCI.queueCount = 1;
     queueCI.pQueuePriorities = &queuePriority;
 
-    const char* deviceExtensions[] = {
-      VK_KHR_SWAPCHAIN_EXTENSION_NAME,
-      VK_KHR_MAINTENANCE1_EXTENSION_NAME,  // negative viewport height for Y-flip
-    };
-
     VkPhysicalDeviceFeatures deviceFeatures = {};
     deviceFeatures.samplerAnisotropy = VK_TRUE;
+
+    // ── Check for RT extensions availability ──
+    uint32_t extCount = 0;
+    vkEnumerateDeviceExtensionProperties(m_physicalDevice, nullptr, &extCount, nullptr);
+    std::vector<VkExtensionProperties> availExts(extCount);
+    vkEnumerateDeviceExtensionProperties(m_physicalDevice, nullptr, &extCount, availExts.data());
+
+    auto hasExt = [&](const char* name) {
+      for (auto& e : availExts)
+        if (strcmp(e.extensionName, name) == 0) return true;
+      return false;
+    };
+
+    bool rtAvailable = hasExt("VK_KHR_acceleration_structure")
+                    && hasExt("VK_KHR_ray_tracing_pipeline")
+                    && hasExt("VK_KHR_deferred_host_operations")
+                    && hasExt("VK_KHR_buffer_device_address")
+                    && hasExt("VK_KHR_spirv_1_4")
+                    && hasExt("VK_KHR_shader_float_controls");
+    T8_LOG_INFO("[Vulkan] RT extensions available: %s", rtAvailable ? "YES" : "NO");
+
+    std::vector<const char*> enabledExts;
+    enabledExts.push_back(VK_KHR_SWAPCHAIN_EXTENSION_NAME);
+    enabledExts.push_back(VK_KHR_MAINTENANCE1_EXTENSION_NAME);
+    if (rtAvailable) {
+      enabledExts.push_back("VK_KHR_acceleration_structure");
+      enabledExts.push_back("VK_KHR_ray_tracing_pipeline");
+      enabledExts.push_back("VK_KHR_deferred_host_operations");
+      enabledExts.push_back("VK_KHR_buffer_device_address");
+      enabledExts.push_back("VK_KHR_spirv_1_4");
+      enabledExts.push_back("VK_KHR_shader_float_controls");
+    }
+
+    // Feature chains for RT (must be set before vkCreateDevice if RT is enabled)
+    VkPhysicalDeviceBufferDeviceAddressFeatures bufDevAddrFeatures = { VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_BUFFER_DEVICE_ADDRESS_FEATURES };
+    bufDevAddrFeatures.bufferDeviceAddress = VK_TRUE;
+    VkPhysicalDeviceAccelerationStructureFeaturesKHR asFeatures = { VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_ACCELERATION_STRUCTURE_FEATURES_KHR };
+    asFeatures.accelerationStructure = VK_TRUE;
+    asFeatures.pNext = &bufDevAddrFeatures;
+    VkPhysicalDeviceRayTracingPipelineFeaturesKHR rtFeatures = { VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_RAY_TRACING_PIPELINE_FEATURES_KHR };
+    rtFeatures.rayTracingPipeline = VK_TRUE;
+    rtFeatures.pNext = &asFeatures;
 
     VkDeviceCreateInfo deviceCI = { VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO };
     deviceCI.queueCreateInfoCount = 1;
     deviceCI.pQueueCreateInfos = &queueCI;
-    deviceCI.enabledExtensionCount = 2;
-    deviceCI.ppEnabledExtensionNames = deviceExtensions;
+    deviceCI.enabledExtensionCount = (uint32_t)enabledExts.size();
+    deviceCI.ppEnabledExtensionNames = enabledExts.data();
     deviceCI.pEnabledFeatures = &deviceFeatures;
+    if (rtAvailable) {
+      deviceCI.pNext = &rtFeatures;
+    }
 
     VkResult res = vkCreateDevice(m_physicalDevice, &deviceCI, nullptr, &m_device);
     if (res != VK_SUCCESS) {
@@ -358,6 +398,10 @@ namespace t850 {
       return;
     }
     static_cast<VulkanDevice*>(T8Device)->m_device = m_device;
+    m_raytracingSupported = rtAvailable;
+
+    // ── Optional: query and enable RT extensions ──
+    QueryRaytracingSupport();
 
     vkGetDeviceQueue(m_device, m_graphicsQueueFamily, 0, &m_graphicsQueue);
     m_presentQueue = m_graphicsQueue;
@@ -369,7 +413,11 @@ namespace t850 {
     allocCI.physicalDevice = m_physicalDevice;
     allocCI.device = m_device;
     allocCI.instance = m_instance;
-    allocCI.vulkanApiVersion = VK_API_VERSION_1_0;
+    allocCI.vulkanApiVersion = VK_API_VERSION_1_2;
+    // Enable buffer device address support when RT is available
+    if (m_raytracingSupported) {
+      allocCI.flags |= VMA_ALLOCATOR_CREATE_BUFFER_DEVICE_ADDRESS_BIT;
+    }
 
     VkResult res = vmaCreateAllocator(&allocCI, &m_allocator);
     if (res != VK_SUCCESS) {
@@ -752,6 +800,12 @@ namespace t850 {
 
     CreateDummyTexture();
 
+    // ── Ray Tracing setup (non-fatal if unsupported) ──
+    if (m_raytracingSupported) {
+      T8_LOG_INFO("[Vulkan] Ray tracing extensions enabled — initialising RT resources");
+      InitRTPipelines();
+    }
+
     T8_LOG_INFO("[Vulkan] Driver initialized (%dx%d)", width, height);
   }
 
@@ -829,6 +883,7 @@ namespace t850 {
 
   void VulkanDriver::DestroyDriver() {
     FlushGPUResources();
+    DestroyRTPipelines();
 
     DestroyShaders();
     DestroyRTs();
@@ -1850,6 +1905,97 @@ reopen:
     m_dummyCubeAllocation = dummyCubeAlloc;
 
     T8_LOG_INFO("[Vulkan] Dummy textures created (2D + Cube)");
+  }
+
+  // ══════════════════════════════════════════════════════
+  //  VulkanDriver — Ray Tracing
+  // ══════════════════════════════════════════════════════
+
+  void VulkanDriver::QueryRaytracingSupport() {
+    // m_raytracingSupported was already set in CreateDevice based on extension availability.
+    if (m_raytracingSupported) {
+      m_raytracingSupported = m_rtFuncs.Load(m_device);
+      if (m_raytracingSupported) {
+        T8_LOG_INFO("[Vulkan] RT function pointers loaded successfully");
+      } else {
+        T8_LOG_ERROR("[Vulkan] RT function pointer load failed — RT disabled");
+      }
+    }
+  }
+
+  void VulkanDriver::InitRTPipelines() {
+    if (!m_raytracingSupported) return;
+
+    m_sceneTLAS = std::make_unique<VulkanTLAS>(4096);
+
+    const char* shadowRayGen  = "Assets/Shaders/RT_ShadowRayGen.hlsl";
+    const char* shadowMiss    = "Assets/Shaders/RT_ShadowMiss.hlsl";
+    const char* shadowHit     = "Assets/Shaders/RT_ShadowAnyHit.hlsl";
+    const char* reflRayGen    = "Assets/Shaders/RT_ReflectionRayGen.hlsl";
+    const char* reflMiss      = "Assets/Shaders/RT_ReflectionMiss.hlsl";
+    const char* reflHit       = "Assets/Shaders/RT_ReflectionClosestHit.hlsl";
+    const char* aoRayGen      = "Assets/Shaders/RT_AORayGen.hlsl";
+    const char* aoMiss        = "Assets/Shaders/RT_AOMiss.hlsl";
+
+    m_shadowRTPipeline = std::make_unique<VulkanRTPipeline>();
+    if (!m_shadowRTPipeline->Create(shadowRayGen, shadowMiss, shadowHit)) {
+      T8_LOG_ERROR("[VkRT] Shadow RT pipeline failed"); m_shadowRTPipeline.reset();
+    }
+    m_reflectionRTPipeline = std::make_unique<VulkanRTPipeline>();
+    if (!m_reflectionRTPipeline->Create(reflRayGen, reflMiss, reflHit)) {
+      T8_LOG_ERROR("[VkRT] Reflection RT pipeline failed"); m_reflectionRTPipeline.reset();
+    }
+    m_aoRTPipeline = std::make_unique<VulkanRTPipeline>();
+    if (!m_aoRTPipeline->Create(aoRayGen, aoMiss, shadowHit)) {
+      T8_LOG_ERROR("[VkRT] AO RT pipeline failed"); m_aoRTPipeline.reset();
+    }
+  }
+
+  void VulkanDriver::DestroyRTPipelines() {
+    if (m_shadowRTPipeline)     { m_shadowRTPipeline->Destroy();     m_shadowRTPipeline.reset(); }
+    if (m_reflectionRTPipeline) { m_reflectionRTPipeline->Destroy(); m_reflectionRTPipeline.reset(); }
+    if (m_aoRTPipeline)         { m_aoRTPipeline->Destroy();         m_aoRTPipeline.reset(); }
+    if (m_sceneTLAS)            { m_sceneTLAS->Destroy();            m_sceneTLAS.reset(); }
+  }
+
+  void VulkanDriver::UpdateTLAS(const void* instanceData, uint32_t instanceCount) {
+    if (!m_raytracingSupported || !m_sceneTLAS) return;
+    m_sceneTLAS->Build(static_cast<const RTInstanceDesc*>(instanceData), instanceCount);
+  }
+
+  void VulkanDriver::DispatchRays(uint32_t w, uint32_t h, RTPipeline* pipeline) {
+    if (!m_raytracingSupported || !pipeline) return;
+
+    auto* rtPipeline = static_cast<VulkanRTPipeline*>(pipeline);
+    if (!rtPipeline->valid) return;
+
+    VkCommandBuffer cmd = GetCmdBuffer();
+
+    // RT cannot run inside a render pass — end it first
+    if (m_renderPassActive) {
+      vkCmdEndRenderPass(cmd);
+      m_renderPassActive = false;
+    }
+
+    vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_RAY_TRACING_KHR, rtPipeline->pipeline);
+
+    m_rtFuncs.vkCmdTraceRaysKHR(cmd,
+      &rtPipeline->raygenRegion,
+      &rtPipeline->missRegion,
+      &rtPipeline->hitGroupRegion,
+      &rtPipeline->callableRegion,
+      w, h, 1);
+
+    // Memory barrier: RT writes → shader reads
+    VkMemoryBarrier barrier = { VK_STRUCTURE_TYPE_MEMORY_BARRIER };
+    barrier.srcAccessMask = VK_ACCESS_SHADER_WRITE_BIT;
+    barrier.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
+    vkCmdPipelineBarrier(cmd,
+      VK_PIPELINE_STAGE_RAY_TRACING_SHADER_BIT_KHR,
+      VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
+      0, 1, &barrier, 0, nullptr, 0, nullptr);
+
+    T8_LOG_TRACE("[VkRT] DispatchRays %ux%u pipeline='%s'", w, h, rtPipeline->label.c_str());
   }
 
 } // namespace t850

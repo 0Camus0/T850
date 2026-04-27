@@ -27,15 +27,20 @@ namespace t850 {
     VkDevice device = driver->GetDevice();
     VmaAllocator allocator = driver->GetAllocator();
 
+    // Detect UAV-only formats (for ray tracing output textures)
+    bool isUAV = (color_format == BaseRT::RGBA16F_UAV || color_format == BaseRT::R8_UAV);
+
     // Helper to resolve BaseRT format enum to VkFormat
     auto resolveFormat = [](int fmt) -> VkFormat {
       switch (fmt) {
-        case BaseRT::RGBA8:    return VK_FORMAT_R8G8B8A8_UNORM;
-        case BaseRT::RGBA16F:  return VK_FORMAT_R16G16B16A16_SFLOAT;
-        case BaseRT::F16:      return VK_FORMAT_R16_SFLOAT;
-        case BaseRT::R8:       return VK_FORMAT_R8_UNORM;
-        case BaseRT::F32:      return VK_FORMAT_R32_SFLOAT;
-        default:               return VK_FORMAT_R8G8B8A8_UNORM;
+        case BaseRT::RGBA8:      return VK_FORMAT_R8G8B8A8_UNORM;
+        case BaseRT::RGBA16F:    return VK_FORMAT_R16G16B16A16_SFLOAT;
+        case BaseRT::F16:        return VK_FORMAT_R16_SFLOAT;
+        case BaseRT::R8:         return VK_FORMAT_R8_UNORM;
+        case BaseRT::F32:        return VK_FORMAT_R32_SFLOAT;
+        case BaseRT::RGBA16F_UAV:return VK_FORMAT_R16G16B16A16_SFLOAT;
+        case BaseRT::R8_UAV:     return VK_FORMAT_R8_UNORM;
+        default:                 return VK_FORMAT_R8G8B8A8_UNORM;
       }
     };
 
@@ -66,7 +71,9 @@ namespace t850 {
       imgCI.arrayLayers = 1;
       imgCI.samples = VK_SAMPLE_COUNT_1_BIT;
       imgCI.tiling = VK_IMAGE_TILING_OPTIMAL;
-      imgCI.usage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT;
+      imgCI.usage = isUAV
+                  ? (VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT)
+                  : (VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT);
       imgCI.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
       imgCI.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
 

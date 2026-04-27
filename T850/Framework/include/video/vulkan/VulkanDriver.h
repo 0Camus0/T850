@@ -22,6 +22,10 @@
 #include <video/vulkan/VulkanDevice.h>
 #include <video/vulkan/VulkanPipelineKey.h>
 #include <video/vulkan/VulkanUtils.h>
+// Ray tracing headers
+#include <video/vulkan/VulkanBLAS.h>
+#include <video/vulkan/VulkanTLAS.h>
+#include <video/vulkan/VulkanRTPipeline.h>
 
 #define VK_USE_PLATFORM_WIN32_KHR
 #include <vulkan/vulkan.h>
@@ -66,6 +70,12 @@ namespace t850 {
     void WaitForGPU() override;
     void FlushGPUResources() override;
     void BuildPipelineObjects() override;
+
+    // ── Ray Tracing overrides ──
+    bool SupportsRayTracing() const override { return m_raytracingSupported; }
+    void DispatchRays(uint32_t w, uint32_t h, RTPipeline* pipeline) override;
+    void UpdateTLAS(const void* instanceData, uint32_t instanceCount) override;
+    TLAS* GetSceneTLAS() override { return m_sceneTLAS.get(); }
 
     // ── Accessors ──
     VkCommandBuffer    GetCmdBuffer() const { return m_commandBuffers[m_currentFrame]; }
@@ -254,6 +264,17 @@ namespace t850 {
 
     // Debug
     VkDebugUtilsMessengerEXT m_debugMessenger = VK_NULL_HANDLE;
+
+    // ── Ray Tracing ──
+    bool                               m_raytracingSupported = false;
+    VulkanRTFunctions                  m_rtFuncs;
+    std::unique_ptr<VulkanTLAS>        m_sceneTLAS;
+    std::unique_ptr<VulkanRTPipeline>  m_shadowRTPipeline;
+    std::unique_ptr<VulkanRTPipeline>  m_reflectionRTPipeline;
+    std::unique_ptr<VulkanRTPipeline>  m_aoRTPipeline;
+    void QueryRaytracingSupport();
+    void InitRTPipelines();
+    void DestroyRTPipelines();
   };
 
 } // namespace t850

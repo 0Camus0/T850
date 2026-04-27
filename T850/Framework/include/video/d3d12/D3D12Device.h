@@ -39,11 +39,23 @@ namespace t850 {
     Texture*    CreateFloatTexture(int w, int h, const float* data = nullptr) override;
     BaseRT*     CreateRT(int nrt, int cf, int df, int w, int h, bool genMips = false) override;
 
-    ID3D12Device* GetNativeDevice() const { return m_device.Get(); }
+    // Ray tracing resource creation (requires ID3D12Device5 / DXR Tier 1.0+)
+    BLAS*        CreateBLAS(VertexBuffer* vb, IndexBuffer* ib,
+                             uint32_t vertexCount, uint32_t indexCount,
+                             uint32_t vertexStride) override;
+    TLAS*        CreateTLAS(uint32_t maxInstances) override;
+    RTPipeline*  CreateRTPipeline(const char* raygenSrc, const char* missSrc,
+                                   const char* closestHitSrc,
+                                   ShaderKey key = ShaderKey()) override;
+
+    // Returns the underlying ID3D12Device5 (null when RT tier < 1.0).
+    ID3D12Device5* GetNativeDevice() const { return m_device.Get(); }
 
   private:
     friend class D3D12Driver;
-    ComPtr<ID3D12Device> m_device;
+    // ID3D12Device5 is a strict superset of ID3D12Device — the cast to
+    // ID3D12Device* is implicit and preserves backward compatibility.
+    ComPtr<ID3D12Device5> m_device;
   };
 
 } // namespace t850

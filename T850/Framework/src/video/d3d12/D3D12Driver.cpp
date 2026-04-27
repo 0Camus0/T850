@@ -417,9 +417,14 @@ namespace t850 {
     for (UINT i = 0; m_dxgiFactory->EnumAdapters1(i, &adapter) != DXGI_ERROR_NOT_FOUND; i++) {
       DXGI_ADAPTER_DESC1 desc; adapter->GetDesc1(&desc);
       if (desc.Flags & DXGI_ADAPTER_FLAG_SOFTWARE) continue;
-      hr = D3D12CreateDevice(adapter.Get(), D3D_FEATURE_LEVEL_11_0,
-                              IID_PPV_ARGS(&static_cast<D3D12Device*>(T8Device)->m_device));
+      // Create base device then upgrade to ID3D12Device5 for DXR support.
+      ComPtr<ID3D12Device> baseDevice;
+      hr = D3D12CreateDevice(adapter.Get(), D3D_FEATURE_LEVEL_11_0, IID_PPV_ARGS(&baseDevice));
       if (SUCCEEDED(hr)) {
+        auto& devSlot = static_cast<D3D12Device*>(T8Device)->m_device;
+        if (FAILED(baseDevice.As(&devSlot))) {
+          T8_LOG_INFO("[D3D12] ID3D12Device5 unavailable — DXR disabled");
+        }
         char name[128]; wcstombs(name, desc.Description, 128);
         T8_LOG_INFO("[D3D12] Adapter: %s", name);
         T8_LOG_INFO("[D3D12] Device created (feature level 11_0)");
@@ -574,6 +579,17 @@ namespace t850 {
     }
 
     T8_LOG_INFO("[D3D12] Driver initialized (%dx%d)", width, height);
+
+    // ── Ray Tracing setup (non-fatal if unsupported) ──
+    QueryRaytracingSupport();
+    if (SupportsRayTracing()) {
+      T8_LOG_INFO("[D3D12] Ray tracing tier: %d — initialising RT resources",
+                  (int)m_raytracingTier);
+      m_sceneTLAS = std::make_unique<D3D12TLAS>(4096); // up to 4096 instances
+      InitRTPipelines();
+    } else {
+      T8_LOG_INFO("[D3D12] Ray tracing NOT supported on this adapter");
+    }
   }
 
   void D3D12Driver::CreateSurfaces() {}
@@ -583,6 +599,7 @@ namespace t850 {
   void D3D12Driver::DestroyDriver() {
     StopDebugMessageThread();
     WaitForGPU();
+    DestroyRTPipelines();
     DestroyShaders(); DestroyRTs(); DestroyTextures();
     m_psoCache.clear();
     for (UINT i = 0; i < kBackBufferCount; i++) {
@@ -1047,6 +1064,111 @@ namespace t850 {
     dev->CreateConstantBufferView(&cbvDesc, cpuH);
 
     return gpuH;
+  }
+
+  // ══════════════════════════════════════════════════════
+  //  D3D12Driver — Ray Tracing
+  // ══════════════════════════════════════════════════════
+
+  void D3D12Driver::QueryRaytracingSupport() {
+    ID3D12Device5* device = static_cast<D3D12Device*>(T8Device)->GetNativeDevice();
+    if (!device) { m_raytracingTier = D3D12_RAYTRACING_TIER_NOT_SUPPORTED; return; }
+
+    D3D12_FEATURE_DATA_D3D12_OPTIONS5 opts5 = {};
+    HRESULT hr = device->CheckFeatureSupport(D3D12_FEATURE_D3D12_OPTIONS5, &opts5, sizeof(opts5));
+    if (SUCCEEDED(hr)) {
+      m_raytracingTier = opts5.RaytracingTier;
+    } else {
+      m_raytracingTier = D3D12_RAYTRACING_TIER_NOT_SUPPORTED;
+    }
+    T8_LOG_INFO("[D3D12RT] Raytracing tier: %d", (int)m_raytracingTier);
+  }
+
+  void D3D12Driver::InitRTPipelines() {
+    // RT shader paths — relative to the executable working directory
+    const char* shadowRayGen   = "Assets/Shaders/RT_ShadowRayGen.hlsl";
+    const char* shadowMiss     = "Assets/Shaders/RT_ShadowMiss.hlsl";
+    const char* shadowHit      = "Assets/Shaders/RT_ShadowAnyHit.hlsl";
+
+    const char* reflRayGen     = "Assets/Shaders/RT_ReflectionRayGen.hlsl";
+    const char* reflMiss       = "Assets/Shaders/RT_ReflectionMiss.hlsl";
+    const char* reflHit        = "Assets/Shaders/RT_ReflectionClosestHit.hlsl";
+
+    const char* aoRayGen       = "Assets/Shaders/RT_AORayGen.hlsl";
+    const char* aoMiss         = "Assets/Shaders/RT_AOMiss.hlsl";
+    const char* aoHit          = "Assets/Shaders/RT_ShadowAnyHit.hlsl"; // reuse trivial hit
+
+    m_shadowRTPipeline = std::make_unique<D3D12RTPipeline>();
+    if (!m_shadowRTPipeline->Create(shadowRayGen, shadowMiss, shadowHit)) {
+      T8_LOG_ERROR("[D3D12RT] Failed to create shadow RT pipeline");
+      m_shadowRTPipeline.reset();
+    }
+
+    m_reflectionRTPipeline = std::make_unique<D3D12RTPipeline>();
+    if (!m_reflectionRTPipeline->Create(reflRayGen, reflMiss, reflHit)) {
+      T8_LOG_ERROR("[D3D12RT] Failed to create reflection RT pipeline");
+      m_reflectionRTPipeline.reset();
+    }
+
+    m_aoRTPipeline = std::make_unique<D3D12RTPipeline>();
+    if (!m_aoRTPipeline->Create(aoRayGen, aoMiss, aoHit)) {
+      T8_LOG_ERROR("[D3D12RT] Failed to create AO RT pipeline");
+      m_aoRTPipeline.reset();
+    }
+  }
+
+  void D3D12Driver::DestroyRTPipelines() {
+    if (m_shadowRTPipeline)     { m_shadowRTPipeline->Destroy();     m_shadowRTPipeline.reset(); }
+    if (m_reflectionRTPipeline) { m_reflectionRTPipeline->Destroy(); m_reflectionRTPipeline.reset(); }
+    if (m_aoRTPipeline)         { m_aoRTPipeline->Destroy();         m_aoRTPipeline.reset(); }
+    if (m_sceneTLAS)            { m_sceneTLAS->Destroy();            m_sceneTLAS.reset(); }
+  }
+
+  void D3D12Driver::UpdateTLAS(const void* instanceData, uint32_t instanceCount) {
+    if (!SupportsRayTracing() || !m_sceneTLAS) return;
+    m_sceneTLAS->Build(static_cast<const RTInstanceDesc*>(instanceData), instanceCount);
+  }
+
+  void D3D12Driver::DispatchRays(uint32_t w, uint32_t h, RTPipeline* pipeline) {
+    if (!SupportsRayTracing() || !pipeline) return;
+
+    auto* rtPipeline = static_cast<D3D12RTPipeline*>(pipeline);
+    if (!rtPipeline->valid) return;
+
+    auto* cmd = static_cast<ID3D12GraphicsCommandList4*>(
+                  m_commandLists[m_currentBackBuffer].Get());
+
+    cmd->SetComputeRootSignature(rtPipeline->globalRootSig.Get());
+    cmd->SetPipelineState1(rtPipeline->stateObject.Get());
+
+    // Bind TLAS SRV (root param 0) if available
+    if (m_sceneTLAS && m_sceneTLAS->GetSRVDescriptorIndex() > 0) {
+      auto& heap = m_heaps[D3D12Heap::CBV_SRV_UAV_VISIBLE];
+      cmd->SetComputeRootDescriptorTable(0, heap.GetGPUAt(m_sceneTLAS->GetSRVDescriptorIndex()));
+    }
+
+    D3D12_DISPATCH_RAYS_DESC rayDesc = {};
+    rayDesc.RayGenerationShaderRecord.StartAddress = rtPipeline->sbt.rayGenVA;
+    rayDesc.RayGenerationShaderRecord.SizeInBytes  = rtPipeline->sbt.stride;
+    rayDesc.MissShaderTable.StartAddress  = rtPipeline->sbt.missVA;
+    rayDesc.MissShaderTable.SizeInBytes   = rtPipeline->sbt.stride;
+    rayDesc.MissShaderTable.StrideInBytes = rtPipeline->sbt.stride;
+    rayDesc.HitGroupTable.StartAddress  = rtPipeline->sbt.hitGroupVA;
+    rayDesc.HitGroupTable.SizeInBytes   = rtPipeline->sbt.stride;
+    rayDesc.HitGroupTable.StrideInBytes = rtPipeline->sbt.stride;
+    rayDesc.Width  = w;
+    rayDesc.Height = h;
+    rayDesc.Depth  = 1;
+
+    cmd->DispatchRays(&rayDesc);
+
+    // UAV barrier: ensure ray tracing writes complete before reads
+    D3D12_RESOURCE_BARRIER barrier = {};
+    barrier.Type = D3D12_RESOURCE_BARRIER_TYPE_UAV;
+    barrier.UAV.pResource = nullptr; // all UAVs
+    cmd->ResourceBarrier(1, &barrier);
+
+    T8_LOG_TRACE("[D3D12RT] DispatchRays %ux%u pipeline='%s'", w, h, rtPipeline->label.c_str());
   }
 
 } // namespace t850

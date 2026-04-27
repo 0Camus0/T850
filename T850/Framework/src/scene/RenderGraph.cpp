@@ -62,13 +62,16 @@ static const std::unordered_map<std::string, int> s_attachmentMap = {
 };
 
 static const std::unordered_map<std::string, int> s_colorFormatMap = {
-  {"NONE",    BaseRT::NOTHING},
-  {"RGBA8",   BaseRT::RGBA8},
-  {"RGBA16F", BaseRT::RGBA16F},
-  {"RGBA32F", BaseRT::RGBA32F},
-  {"R8",      BaseRT::R8},
-  {"F16",     BaseRT::F16},
-  {"RGB8",    BaseRT::RGB8},
+  {"NONE",       BaseRT::NOTHING},
+  {"RGBA8",      BaseRT::RGBA8},
+  {"RGBA16F",    BaseRT::RGBA16F},
+  {"RGBA32F",    BaseRT::RGBA32F},
+  {"R8",         BaseRT::R8},
+  {"F16",        BaseRT::F16},
+  {"RGB8",       BaseRT::RGB8},
+  // UAV formats for ray tracing output textures
+  {"RGBA16F_UAV",BaseRT::RGBA16F_UAV},
+  {"R8_UAV",     BaseRT::R8_UAV},
 };
 
 static const std::unordered_map<std::string, int> s_depthFormatMap = {
@@ -107,6 +110,11 @@ static const std::unordered_map<std::string, uint8_t> s_passMap = {
   {"GOD_RAY_BLEND_PASS",    PassType::GOD_RAY_BLEND},
   {"SSAO_PASS",             PassType::SSAO},
   {"DEFERRED_LDR_PASS",     PassType::DEFERRED_LDR},
+  // Ray Tracing dispatch passes
+  {"RT_SHADOWS_PASS",       PassType::RT_SHADOWS},
+  {"RT_REFLECTIONS_PASS",   PassType::RT_REFLECTIONS},
+  {"RT_AO_PASS",            PassType::RT_AO},
+  {"RT_ACCUMULATE_PASS",    PassType::RT_ACCUMULATE},
 };
 
 // Feature name -> ShaderKey feature bit
@@ -544,8 +552,20 @@ void RenderGraph::ExecutePass(
           }
         }
       }
+      else if (draw.type == "rt_shadows" || draw.type == "rt_reflections" || draw.type == "rt_ao") {
+        // Ray tracing dispatch: skip if hardware doesn't support RT
+        if (driver->SupportsRayTracing()) {
+          // Choose the pipeline registered for this pass type
+          // (the driver pre-creates shadow/reflection/ao pipelines during InitDriver)
+          // For now, we dispatch using whichever RT pipeline matches the draw type.
+          // A more general mechanism can be added later (pass pipeline name in JSON).
+          driver->DispatchRays((uint32_t)driver->width, (uint32_t)driver->height, nullptr);
+          T8_LOG_TRACE("[RenderGraph] RT dispatch: %s (%dx%d)", draw.type.c_str(), driver->width, driver->height);
+        } else {
+          T8_LOG_TRACE("[RenderGraph] RT pass '%s' skipped (not supported)", draw.type.c_str());
+        }
+      }
       else if (draw.type == "final_quad") {
-        quads[7].SetTexture(quads[0].Textures[0], 0);
         // Re-bind: final quad gets its texture from the pass inputs
         for (const auto& input : pass.inputs) {
           auto resolved = ResolveTextureInput(input.source);

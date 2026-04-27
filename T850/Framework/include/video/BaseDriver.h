@@ -30,6 +30,10 @@ namespace t850 {
   class ConstantBuffer;
   class Texture;
   class BaseRT;
+  // Ray tracing abstractions (forward-declared; implementations in AccelStructure.h / RTPipeline.h)
+  class BLAS;
+  class TLAS;
+  class RTPipeline;
 
   class DeviceContext {
   public:
@@ -60,6 +64,18 @@ namespace t850 {
     // No mips, NEAREST filtering. Can be updated per-frame via Texture::UpdateFloatData.
     virtual Texture* CreateFloatTexture(int w, int h, const float* data = nullptr) = 0;
     virtual BaseRT* CreateRT(int nrt, int cf, int df, int w, int h, bool genMips = false) = 0;
+
+    // ── Ray Tracing resource creation (default = unsupported) ──
+    // Build a BLAS from an existing vertex/index buffer.
+    virtual BLAS* CreateBLAS(VertexBuffer* vb, IndexBuffer* ib,
+                              uint32_t vertexCount, uint32_t indexCount,
+                              uint32_t vertexStride) { return nullptr; }
+    // Allocate a TLAS that can hold up to maxInstances instances.
+    virtual TLAS* CreateTLAS(uint32_t maxInstances) { return nullptr; }
+    // Create a ray tracing pipeline from pre-compiled RT shader library source paths.
+    virtual RTPipeline* CreateRTPipeline(const char* raygenSrc, const char* missSrc,
+                                         const char* closestHitSrc,
+                                         ShaderKey key = ShaderKey()) { return nullptr; }
   };
   /* BUFFERS */
   class Buffer {
@@ -167,6 +183,9 @@ namespace t850 {
       BGRA8,
       BGRA32,
       CUBE_F32,
+      // UAV-capable formats (allow unordered access for ray tracing output)
+      RGBA16F_UAV,
+      R8_UAV,
       NOTHING
     };
 
@@ -296,6 +315,25 @@ namespace t850 {
     // pixel dimensions. Returns true on success. Implementations must flush
     // the GPU before releasing/recreating resources.
     virtual bool ResizeSwapchain(int newW, int newH) { return false; }
+
+    // ── Ray Tracing API (no-ops when RT is not supported) ──
+
+    // Returns true when the backend has built acceleration structures and the
+    // RT pipeline; false on hardware/driver that lacks ray tracing support.
+    virtual bool SupportsRayTracing() const { return false; }
+
+    // Dispatch a ray tracing pass using the given pipeline.
+    // w/h = dispatch dimensions (typically equal to the render resolution).
+    // pipeline must have been created via Device::CreateRTPipeline.
+    virtual void DispatchRays(uint32_t w, uint32_t h, RTPipeline* pipeline) {}
+
+    // Rebuild / refit the top-level acceleration structure for a set of
+    // instances.  data points to an array of InstanceDesc structs (defined in
+    // AccelStructure.h).  instanceCount is the number of entries.
+    virtual void UpdateTLAS(const void* instanceData, uint32_t instanceCount) {}
+
+    // Returns the scene-level TLAS (null when RT is not supported).
+    virtual TLAS* GetSceneTLAS() { return nullptr; }
 
     int 	 CreateTexture(std::string);
     int    CreateCubeMap(const unsigned char * buff, int w, int h);

@@ -39,6 +39,11 @@ namespace PassType {
     LIGHT_ADD,
     FADE,
     DEFERRED_LDR,
+    // ── Ray Tracing dispatch passes ──
+    RT_SHADOWS,
+    RT_REFLECTIONS,
+    RT_AO,
+    RT_ACCUMULATE,     // temporal accumulation / denoising
     COUNT
   };
 }
@@ -90,6 +95,8 @@ struct ShaderKey {
   static constexpr uint32_t HAS_SKINNING = 1u << 28;
   static constexpr uint32_t HAS_SKINNING_QT = 1u << 29; // quaternion+translation skinning
   static constexpr uint32_t HAS_SKINNING_TEX = 1u << 30; // texture-based bone matrices
+  // Bit 31: marks a DXR/RT shader library (routes through DXC lib_6_3 instead of FXC)
+  static constexpr uint32_t IS_RT_LIBRARY    = 1u << 31;
 
   // ── Pass type (6 bits) ──
   static constexpr uint32_t PASS_SHIFT = 20;

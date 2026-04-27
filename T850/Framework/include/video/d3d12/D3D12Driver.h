@@ -38,6 +38,10 @@ using Microsoft::WRL::ComPtr;
 #include <video/d3d12/D3D12Shader.h>
 #include <video/d3d12/D3D12Texture.h>
 #include <video/d3d12/D3D12RT.h>
+// Ray tracing headers
+#include <video/d3d12/D3D12BLAS.h>
+#include <video/d3d12/D3D12TLAS.h>
+#include <video/d3d12/D3D12RTPipeline.h>
 
 namespace t850 {
 
@@ -75,6 +79,12 @@ namespace t850 {
     void EndFrame() override;
     void WaitForGPU() override;
     void BuildPipelineObjects() override;
+
+    // ── Ray Tracing overrides ──
+    bool SupportsRayTracing() const override { return m_raytracingTier >= D3D12_RAYTRACING_TIER_1_0; }
+    void DispatchRays(uint32_t w, uint32_t h, RTPipeline* pipeline) override;
+    void UpdateTLAS(const void* instanceData, uint32_t instanceCount) override;
+    TLAS* GetSceneTLAS() override { return m_sceneTLAS.get(); }
 
     // ── Helpers for resource creation ──
     D3D12Heap& GetHeap(D3D12Heap::Type type) { return m_heaps[type]; }
@@ -192,6 +202,16 @@ namespace t850 {
     std::atomic<bool>        m_debugThreadRunning{false};
     std::ofstream            m_debugLogFile;
     std::mutex               m_debugLogMutex;
+
+    // ── Ray Tracing ──
+    D3D12_RAYTRACING_TIER                     m_raytracingTier = D3D12_RAYTRACING_TIER_NOT_SUPPORTED;
+    std::unique_ptr<D3D12TLAS>                m_sceneTLAS;
+    std::unique_ptr<D3D12RTPipeline>          m_shadowRTPipeline;
+    std::unique_ptr<D3D12RTPipeline>          m_reflectionRTPipeline;
+    std::unique_ptr<D3D12RTPipeline>          m_aoRTPipeline;
+    void QueryRaytracingSupport();
+    void InitRTPipelines();
+    void DestroyRTPipelines();
   };
 
 } // namespace t850

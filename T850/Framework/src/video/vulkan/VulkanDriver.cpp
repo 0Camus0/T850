@@ -109,12 +109,12 @@ namespace t850 {
       case DEPTH_DEFAULT: case READ_WRITE:
         depthStencil.depthTestEnable = VK_TRUE;
         depthStencil.depthWriteEnable = VK_TRUE;
-        depthStencil.depthCompareOp = VK_COMPARE_OP_LESS_OR_EQUAL;
+        depthStencil.depthCompareOp = VK_COMPARE_OP_GREATER_OR_EQUAL;
         break;
       case READ:
         depthStencil.depthTestEnable = VK_TRUE;
         depthStencil.depthWriteEnable = VK_FALSE;
-        depthStencil.depthCompareOp = VK_COMPARE_OP_LESS_OR_EQUAL;
+        depthStencil.depthCompareOp = VK_COMPARE_OP_GREATER_OR_EQUAL;
         break;
       case NONE:
         depthStencil.depthTestEnable = VK_FALSE;
@@ -1049,7 +1049,7 @@ namespace t850 {
 
       VkClearValue clearValues[2] = {};
       clearValues[0].color = { {0.9f, 0.9f, 0.9f, 1.0f} };
-      clearValues[1].depthStencil = { 1.0f, 0 };
+      clearValues[1].depthStencil = { 0.0f, 0 };
 
       VkRenderPassBeginInfo rpBegin = { VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO };
       rpBegin.renderPass = m_backbufferRenderPass;
@@ -1328,7 +1328,7 @@ namespace t850 {
     rpBegin.renderArea.extent = { (uint32_t)width, (uint32_t)height };
     VkClearValue clears[2] = {};
     clears[0].color = {{0.9f, 0.9f, 0.9f, 1.0f}};
-    clears[1].depthStencil = {1.0f, 0};
+    clears[1].depthStencil = {0.0f, 0};
     rpBegin.clearValueCount = 2;
     rpBegin.pClearValues = clears;
     vkCmdBeginRenderPass(m_commandBuffers[m_currentFrame], &rpBegin, VK_SUBPASS_CONTENTS_INLINE);

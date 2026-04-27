@@ -263,31 +263,18 @@ FS_OUT FS( VS_OUTPUT input )   {
 	
 	fout.color3 = float4(geoNormal * 0.5 + 0.5, 0.0);
 	
-#ifdef NON_LINEAR_DEPTH
 		fout.depth		= input.Pos.z / input.Pos.w;
 		fout.color4		= float4(input.Pos.z / input.Pos.w, 0, 0, 0);
-#else
-		fout.depth		= input.Pos.z / CameraInfo.y;
-		fout.color4		= float4(input.Pos.z / CameraInfo.y, 0, 0, 0);
-#endif
 	
 	return fout;	
 }
 #elif defined(SHADOW_MAP_PASS)
 float FS( VS_OUTPUT input ) : SV_Depth  {
-#ifdef NON_LINEAR_DEPTH
 	return input.Pos.z/input.Pos.w;
-#else
-	return input.Pos.z/CameraInfo.y;
-#endif
 }
 #elif defined(DEPTH_PRE_PASS)
 float4 FS(VS_OUTPUT input) : SV_Depth{
-#ifdef NON_LINEAR_DEPTH
   return input.Pos.z / input.Pos.w;
-#else
-  return input.Pos.z / CameraInfo.y;
-#endif
 }
 #else
 float4 FS( VS_OUTPUT input )  : SV_TARGET {

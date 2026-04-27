@@ -251,7 +251,7 @@ namespace t850 {
     if (isCubeDepth) {
       for (int face = 0; face < 6; face++) {
         deviceContext->OMSetRenderTargets(number_RT, &RTVA[0][0], D3D11CubeFaceDSVs[face].Get());
-        deviceContext->ClearDepthStencilView(D3D11CubeFaceDSVs[face].Get(), D3D11_CLEAR_DEPTH, 1.0f, 0);
+        deviceContext->ClearDepthStencilView(D3D11CubeFaceDSVs[face].Get(), D3D11_CLEAR_DEPTH, 0.0f, 0);
       }
       D3D11DepthStencilTargetView = D3D11CubeFaceDSVs[0];
     }
@@ -279,7 +279,7 @@ namespace t850 {
     }
 
     if (!isCubeDepth) {
-      deviceContext->ClearDepthStencilView(D3D11DepthStencilTargetView.Get(), D3D11_CLEAR_DEPTH, 1.0f, 0);
+      deviceContext->ClearDepthStencilView(D3D11DepthStencilTargetView.Get(), D3D11_CLEAR_DEPTH, 0.0f, 0);
     }
   }
   void D3DXRT::ChangeCubeDepthTexture(int i)

@@ -170,12 +170,6 @@ namespace t850 {
     std::string Defines;
     if (key.isValid()) {
 
-      bool LinearDepth = true;
-
-#if defined(USING_OPENGL_ES20)
-      LinearDepth = true; // Force for ES 2.0
-#endif
-
 #if defined(USING_OPENGL)
       if (g_pBaseDriver->m_currentAPI == GraphicsApi::OPENGL) {
         Defines += "#version 330\n\n";
@@ -262,9 +256,6 @@ namespace t850 {
       case PassType::DEFERRED_LDR:       Defines += "#define DEFERRED_LDR_PASS\n\n"; break;
       default: break;
       }
-
-      if (!LinearDepth)
-        Defines += "#define NON_LINEAR_DEPTH\n\n";
 
       src_vs = Defines + src_vs;
       src_fs = Defines + src_fs;

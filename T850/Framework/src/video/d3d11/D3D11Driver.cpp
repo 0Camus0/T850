@@ -90,7 +90,7 @@ namespace t850 {
     descDepth.Height = height;
     descDepth.MipLevels = 1;
     descDepth.ArraySize = 1;
-    descDepth.Format = DXGI_FORMAT_D24_UNORM_S8_UINT;// 24 bits for depth 8 bits for stencil
+    descDepth.Format = DXGI_FORMAT_D32_FLOAT;
     descDepth.SampleDesc.Count = 1;
     descDepth.SampleDesc.Quality = 0;
     descDepth.Usage = D3D11_USAGE_DEFAULT;
@@ -103,7 +103,7 @@ namespace t850 {
     D3D11_DEPTH_STENCIL_VIEW_DESC dsvd;
     ZeroMemory(&dsvd, sizeof(dsvd));
 
-    dsvd.Format = DXGI_FORMAT_D24_UNORM_S8_UINT;
+    dsvd.Format = DXGI_FORMAT_D32_FLOAT;
     dsvd.ViewDimension = D3D11_DSV_DIMENSION_TEXTURE2D;
 
     // Using the View we can operate with the depth buffer, note this view is created from the depth texture
@@ -172,7 +172,7 @@ namespace t850 {
 
     //ReadWrite
     CD3D11_DEPTH_STENCIL_DESC BlendDesc(def);
-    BlendDesc.DepthFunc = D3D11_COMPARISON_LESS_EQUAL;
+    BlendDesc.DepthFunc = D3D11_COMPARISON_GREATER_EQUAL;
     device->CreateDepthStencilState(&BlendDesc, m_depthStateReadWrite.ReleaseAndGetAddressOf());
     // DepthNone
     BlendDesc = CD3D11_DEPTH_STENCIL_DESC(def);
@@ -183,7 +183,7 @@ namespace t850 {
     // DepthRead
     BlendDesc = CD3D11_DEPTH_STENCIL_DESC(def);
     BlendDesc.DepthWriteMask = D3D11_DEPTH_WRITE_MASK_ZERO;
-    BlendDesc.DepthFunc = D3D11_COMPARISON_LESS_EQUAL;
+    BlendDesc.DepthFunc = D3D11_COMPARISON_GREATER_EQUAL;
     device->CreateDepthStencilState(&BlendDesc, m_depthStateRead.ReleaseAndGetAddressOf());
 
     /*RASTERIZER STATES*/
@@ -280,7 +280,7 @@ namespace t850 {
     depthDesc.Height           = (UINT)newH;
     depthDesc.MipLevels        = 1;
     depthDesc.ArraySize        = 1;
-    depthDesc.Format           = DXGI_FORMAT_D24_UNORM_S8_UINT;
+    depthDesc.Format           = DXGI_FORMAT_D32_FLOAT;
     depthDesc.SampleDesc.Count = 1;
     depthDesc.Usage            = D3D11_USAGE_DEFAULT;
     depthDesc.BindFlags        = D3D11_BIND_DEPTH_STENCIL;
@@ -288,7 +288,7 @@ namespace t850 {
     if (FAILED(hr)) return false;
 
     D3D11_DEPTH_STENCIL_VIEW_DESC dsvd = {};
-    dsvd.Format        = DXGI_FORMAT_D24_UNORM_S8_UINT;
+    dsvd.Format        = DXGI_FORMAT_D32_FLOAT;
     dsvd.ViewDimension = D3D11_DSV_DIMENSION_TEXTURE2D;
     hr = device->CreateDepthStencilView(D3D11DepthTex.Get(), &dsvd, &D3D11DepthStencilTargetView);
     if (FAILED(hr)) return false;
@@ -389,7 +389,7 @@ namespace t850 {
     ID3D11DeviceContext* deviceContext = reinterpret_cast<ID3D11DeviceContext*>(T8DeviceContext->GetAPIObject());
     float rgba[4] = { 0.227f, 0.227f, 0.227f, 1.0f };
     deviceContext->ClearRenderTargetView(D3D11RenderTargetView.Get(), rgba);
-    deviceContext->ClearDepthStencilView(D3D11DepthStencilTargetView.Get(), D3D11_CLEAR_DEPTH, 1.0f, 0);
+    deviceContext->ClearDepthStencilView(D3D11DepthStencilTargetView.Get(), D3D11_CLEAR_DEPTH, 0.0f, 0);
   }
 
   void D3DXDriver::ClearWithColor(float r, float g, float b, float a) {
@@ -400,10 +400,10 @@ namespace t850 {
       for (auto& rtv : rt->vD3D11RenderTargetView)
         deviceContext->ClearRenderTargetView(rtv.Get(), rgba);
       if (rt->D3D11DepthStencilTargetView)
-        deviceContext->ClearDepthStencilView(rt->D3D11DepthStencilTargetView.Get(), D3D11_CLEAR_DEPTH, 1.0f, 0);
+        deviceContext->ClearDepthStencilView(rt->D3D11DepthStencilTargetView.Get(), D3D11_CLEAR_DEPTH, 0.0f, 0);
     } else {
       deviceContext->ClearRenderTargetView(D3D11RenderTargetView.Get(), rgba);
-      deviceContext->ClearDepthStencilView(D3D11DepthStencilTargetView.Get(), D3D11_CLEAR_DEPTH, 1.0f, 0);
+      deviceContext->ClearDepthStencilView(D3D11DepthStencilTargetView.Get(), D3D11_CLEAR_DEPTH, 0.0f, 0);
     }
   }
 

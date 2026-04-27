@@ -219,11 +219,7 @@ void main(){
 		hbinormal	= vec4(normalize(RotWorld*skinnedBinormal),1.0);
 	#endif
 
-	#ifdef NON_LINEAR_DEPTH
 		Pos 	 = WVP*skinnedPos;
-	#else
-		Pos 	 = WorldView*skinnedPos;
-	#endif
 		WorldPos = World*skinnedPos;
 		
 	#ifdef USE_TEXCOORD0
@@ -231,10 +227,6 @@ void main(){
 		vecUVCoords.y = vecUVCoords.y;
 	#endif
 
-	#ifdef NON_LINEAR_DEPTH
 		gl_Position = Pos;
-	#else
-		gl_Position = WVP*skinnedPos;
-	#endif
 #endif
 }

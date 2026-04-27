@@ -204,8 +204,18 @@ namespace t850 {
     const unsigned char *version = glGetString(GL_SHADING_LANGUAGE_VERSION);
     T8_LOG_INFO("GLSL Ver: %s", version);
 
+#if defined(USING_OPENGL)
+    if (GLEW_VERSION_4_5 || GLEW_ARB_clip_control) {
+      glClipControl(GL_LOWER_LEFT, GL_ZERO_TO_ONE);
+    }
+    else {
+      T8_LOG_INFO("GL clip control unavailable; using default clip depth range");
+    }
+#endif
+
     glEnable(GL_DEPTH_TEST);
-    glClearDepthf(1.0f);
+    glClearDepthf(0.0f);
+    glDepthFunc(GL_GEQUAL);
     glEnable(GL_CULL_FACE);
     glCullFace(GL_FRONT);
 
@@ -314,18 +324,21 @@ namespace t850 {
     case t850::BaseDriver::DEPTH_DEFAULT:
       glDepthMask(GL_TRUE);
       glEnable(GL_DEPTH_TEST);
+      glDepthFunc(GL_GEQUAL);
       break;
     case t850::BaseDriver::READ_WRITE:
       glDepthMask(GL_TRUE);
       glEnable(GL_DEPTH_TEST);
+      glDepthFunc(GL_GEQUAL);
       break;
     case t850::BaseDriver::NONE:
       glDepthMask(GL_FALSE);
       glDisable(GL_DEPTH_TEST);
       break;
     case t850::BaseDriver::READ:
-     // glDepthMask(GL_FALSE);
-      glDisable(GL_DEPTH_TEST);
+      glDepthMask(GL_FALSE);
+      glEnable(GL_DEPTH_TEST);
+      glDepthFunc(GL_GEQUAL);
       break;
     default:
       break;
@@ -484,6 +497,7 @@ namespace t850 {
 
   void	GLDriver::Clear() {
     glClearColor(1.0, 1.0, 1.0, 0.0);
+    glClearDepthf(0.0f);
     glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT | GL_STENCIL_BUFFER_BIT);
 
   }

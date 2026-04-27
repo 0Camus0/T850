@@ -111,6 +111,18 @@ namespace t850 {
       srcStage = VK_PIPELINE_STAGE_TRANSFER_BIT;
       dstStage = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
     }
+    else if (oldLayout == VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL && newLayout == VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL) {
+      barrier.srcAccessMask = VK_ACCESS_SHADER_READ_BIT;
+      barrier.dstAccessMask = VK_ACCESS_TRANSFER_READ_BIT;
+      srcStage = VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT;
+      dstStage = VK_PIPELINE_STAGE_TRANSFER_BIT;
+    }
+    else if (oldLayout == VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL && newLayout == VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL) {
+      barrier.srcAccessMask = VK_ACCESS_TRANSFER_READ_BIT;
+      barrier.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
+      srcStage = VK_PIPELINE_STAGE_TRANSFER_BIT;
+      dstStage = VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT;
+    }
     else if (oldLayout == VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL && newLayout == VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL) {
       barrier.srcAccessMask = VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;
       barrier.dstAccessMask = VK_ACCESS_TRANSFER_READ_BIT;

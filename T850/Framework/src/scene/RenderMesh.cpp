@@ -78,7 +78,7 @@ namespace t850 {
 				  it_subsetinfo->DiffuseColor.x = mDef->CaseFloat[0];
 				  it_subsetinfo->DiffuseColor.y = mDef->CaseFloat[1];
 				  it_subsetinfo->DiffuseColor.z = mDef->CaseFloat[2];
-				  it_subsetinfo->DiffuseColor.w = 1.0f;
+          it_subsetinfo->DiffuseColor.w = mDef->CaseFloat.size() > 3 ? mDef->CaseFloat[3] : 1.0f;
 			  }
 
 			  if (mDef->NameParam == "specularColor") {
@@ -99,6 +99,25 @@ namespace t850 {
 			  if (mDef->NameParam == "pbrRoughness") {
 				  it_subsetinfo->PBRParams.y = mDef->CaseFloat[0];
 			  }
+
+        if (mDef->NameParam == "emissiveColor") {
+          it_subsetinfo->EmissiveColor.x = mDef->CaseFloat[0];
+          it_subsetinfo->EmissiveColor.y = mDef->CaseFloat[1];
+          it_subsetinfo->EmissiveColor.z = mDef->CaseFloat[2];
+          it_subsetinfo->EmissiveColor.w = 1.0f;
+        }
+
+        if (mDef->NameParam == "alphaCutoff") {
+          it_subsetinfo->AlphaCutoff = mDef->CaseFloat[0];
+        }
+
+        if (mDef->NameParam == "transmissionFactor") {
+          it_subsetinfo->TransmissionFactor = mDef->CaseFloat[0];
+        }
+
+        if (mDef->NameParam == "ior") {
+          it_subsetinfo->IOR = mDef->CaseFloat[0];
+        }
 
 			  if (mDef->NameParam == "speclevel") {
 				  // Legacy: ignored in PBR
@@ -165,6 +184,39 @@ namespace t850 {
               std::cout << "path[" << path << "]" << std::endl;
 #endif
               it_subsetinfo->MetallicId = LoadTex(path, material, &it_subsetinfo->MetallicTex);
+            }
+
+            if (mDef->NameParam == "emissiveMap") {
+              std::string path = RemovePath(mDef->CaseString);
+#if DEBUG_MODEL
+              std::cout << "path[" << path << "]" << std::endl;
+#endif
+              it_subsetinfo->EmissiveId = LoadTex(path, material, &it_subsetinfo->EmissiveTex);
+            }
+          }
+
+          if (mDef->Type == xF::xEFFECTENUM::STDX_DWORDS) {
+            if (mDef->NameParam == "alphaMode") {
+              it_subsetinfo->AlphaMode = mDef->CaseDWORD;
+            }
+            if (mDef->NameParam == "doubleSided") {
+              it_subsetinfo->DoubleSided = (mDef->CaseDWORD != 0);
+            }
+            if (mDef->NameParam == "transmission") {
+              if (mDef->CaseDWORD != 0 && it_subsetinfo->TransmissionFactor <= 0.0f)
+                it_subsetinfo->TransmissionFactor = 1.0f;
+            }
+            if (mDef->NameParam == "diffuseTexCoord") {
+              it_subsetinfo->DiffuseTexCoord = mDef->CaseDWORD;
+            }
+            if (mDef->NameParam == "normalTexCoord") {
+              it_subsetinfo->NormalTexCoord = mDef->CaseDWORD;
+            }
+            if (mDef->NameParam == "metallicTexCoord") {
+              it_subsetinfo->MetallicTexCoord = mDef->CaseDWORD;
+            }
+            if (mDef->NameParam == "emissiveTexCoord") {
+              it_subsetinfo->EmissiveTexCoord = mDef->CaseDWORD;
             }
           }
         }
@@ -382,6 +434,8 @@ namespace t850 {
               matKey.bits |= ShaderKey::HEIGHT_MAP;
             if (mDef->NameParam == "metallicMap")
               matKey.bits |= ShaderKey::METALLIC_MAP;
+            if (mDef->NameParam == "emissiveMap")
+              matKey.bits |= ShaderKey::EMISSIVE_MAP;
           }
 
           if (mDef->Type == xF::xEFFECTENUM::STDX_DWORDS) {
@@ -541,6 +595,34 @@ namespace t850 {
     return true;
   }
 
+  static bool IsForwardOnlySubset(const RenderMesh::SubSetInfo& subInfo) {
+    return subInfo.AlphaMode == 2 || subInfo.TransmissionFactor > 0.0f;
+  }
+
+  static bool ShouldDrawSubsetInPass(const RenderMesh::SubSetInfo& subInfo, uint8_t pass) {
+    const bool forwardOnly = IsForwardOnlySubset(subInfo);
+    if (pass == PassType::GBUFFER || pass == PassType::SHADOW_MAP || pass == PassType::RADIAL_DEPTH) {
+      return !forwardOnly;
+    }
+    if (pass == PassType::FORWARD) {
+      return forwardOnly;
+    }
+    return true;
+  }
+
+  static float SubsetDistanceSqToCamera(const RenderMesh::SubSetInfo& subInfo, const XMATRIX44& world, const XVECTOR3& eye) {
+    float lx = (subInfo.bounds.min.x + subInfo.bounds.max.x) * 0.5f;
+    float ly = (subInfo.bounds.min.y + subInfo.bounds.max.y) * 0.5f;
+    float lz = (subInfo.bounds.min.z + subInfo.bounds.max.z) * 0.5f;
+    float wx = lx*world.m11 + ly*world.m21 + lz*world.m31 + world.m41;
+    float wy = lx*world.m12 + ly*world.m22 + lz*world.m32 + world.m42;
+    float wz = lx*world.m13 + ly*world.m23 + lz*world.m33 + world.m43;
+    float dx = wx - eye.x;
+    float dy = wy - eye.y;
+    float dz = wz - eye.z;
+    return dx*dx + dy*dy + dz*dz;
+  }
+
   void RenderMesh::Draw(float *t, float *vp) {
     if (t)
       transform = t;
@@ -593,7 +675,34 @@ namespace t850 {
       it_MeshInfo->CnstBuffer.Light0Pos = pScProp->Lights[0].Position;
       it_MeshInfo->CnstBuffer.Light0Col = pScProp->Lights[0].Color;
       it_MeshInfo->CnstBuffer.CameraPos = pActualCamera->Eye;
+      unsigned int numLights = pScProp ? static_cast<unsigned int>(pScProp->ActiveLights) : 1u;
+      if (pScProp && numLights > pScProp->Lights.size())
+        numLights = static_cast<unsigned int>(pScProp->Lights.size());
+      if (numLights > 128u) numLights = 128u;
+      infoCam.w = static_cast<float>(numLights);
       it_MeshInfo->CnstBuffer.CameraInfo = infoCam;
+
+      for (int li = 0; li < 128; li++) {
+        it_MeshInfo->CnstBuffer.LightPositions[li] = XVECTOR3(0.0f, 0.0f, 0.0f, 0.0f);
+        it_MeshInfo->CnstBuffer.LightColors[li] = XVECTOR3(0.0f, 0.0f, 0.0f, 0.0f);
+      }
+      for (int ri = 0; ri < 32; ri++) {
+        it_MeshInfo->CnstBuffer.LightRadius[ri] = XVECTOR3(0.0f, 0.0f, 0.0f, 0.0f);
+      }
+      for (unsigned int li = 0; li < numLights; li++) {
+        Light& light = pScProp->Lights[li];
+        if (light.Type == LIGHT_DIRECTIONAL) {
+          it_MeshInfo->CnstBuffer.LightPositions[li] = XVECTOR3(light.Direction.x, light.Direction.y, light.Direction.z, 0.0f);
+        } else {
+          it_MeshInfo->CnstBuffer.LightPositions[li] = XVECTOR3(light.Position.x, light.Position.y, light.Position.z, 1.0f);
+        }
+        it_MeshInfo->CnstBuffer.LightColors[li] = XVECTOR3(light.Color.x, light.Color.y, light.Color.z, light.Intensity);
+        XVECTOR3& radiusPack = it_MeshInfo->CnstBuffer.LightRadius[li >> 2];
+        if ((li & 3u) == 0u) radiusPack.x = light.radius;
+        else if ((li & 3u) == 1u) radiusPack.y = light.radius;
+        else if ((li & 3u) == 2u) radiusPack.z = light.radius;
+        else radiusPack.w = light.radius;
+      }
 	  it_MeshInfo->CnstBuffer.ParallaxSettings = XVECTOR3(m_fParallaxLowSamples, m_fParallaxHighSamples, m_fParallaxHeight);
 	  it_MeshInfo->CnstBuffer.ParallaxSettings.w = m_fParallaxEnabled;
 	  it_MeshInfo->CnstBuffer.ParallaxShadowSettings = XVECTOR3(m_fParallaxShadowMinLayers, m_fParallaxShadowMaxLayers, m_fParallaxShadowSoftness);
@@ -614,6 +723,11 @@ namespace t850 {
       uint8_t currentPass = gKey.getPass();
       std::stable_sort(drawOrder.begin(), drawOrder.end(),
         [&](std::size_t a, std::size_t b) {
+          if (currentPass == PassType::FORWARD) {
+            float da = SubsetDistanceSqToCamera(it_MeshInfo->SubSets[a], transform, pActualCamera->Eye);
+            float db = SubsetDistanceSqToCamera(it_MeshInfo->SubSets[b], transform, pActualCamera->Eye);
+            return da > db;
+          }
           ShaderKey ka(it_MeshInfo->SubSets[a].key.bits); ka.setPass(currentPass);
           ShaderKey kb(it_MeshInfo->SubSets[b].key.bits); kb.setPass(currentPass);
           return ka.bits < kb.bits;
@@ -623,6 +737,9 @@ namespace t850 {
         std::size_t k = drawOrder[ki];
         bool update = false;
         SubSetInfo *sub_info = &it_MeshInfo->SubSets[k];
+
+        if (!ShouldDrawSubsetInPass(*sub_info, currentPass))
+          continue;
 
         // Per-subset frustum cull
         if (!AABBInsideFrustum(sub_info->bounds, transform, frustumPlanes))
@@ -634,6 +751,10 @@ namespace t850 {
 		it_MeshInfo->CnstBuffer.PBRParams = sub_info->PBRParams;
 		it_MeshInfo->CnstBuffer.Intensities = sub_info->Intensities;
 		it_MeshInfo->CnstBuffer.Intensities.w = (float)sub_info->MatID;
+        it_MeshInfo->CnstBuffer.EmissiveColor = sub_info->EmissiveColor;
+        it_MeshInfo->CnstBuffer.AlphaParams = XVECTOR3((float)sub_info->AlphaMode, sub_info->AlphaCutoff, sub_info->DoubleSided ? 1.0f : 0.0f, sub_info->TransmissionFactor);
+        it_MeshInfo->CnstBuffer.ForwardParams = XVECTOR3((float)g_pBaseDriver->width, (float)g_pBaseDriver->height, Textures[7] ? 1.0f : 0.0f, sub_info->IOR);
+        it_MeshInfo->CnstBuffer.TexCoordSets = XVECTOR3((float)sub_info->DiffuseTexCoord, (float)sub_info->NormalTexCoord, (float)sub_info->MetallicTexCoord, (float)sub_info->EmissiveTexCoord);
 
         sub_info->IB->Set(*T8DeviceContext, 0,
                           sub_info->IB32Bit ? IndexBufferFormat::R32
@@ -685,6 +806,12 @@ namespace t850 {
         }
         if (s->key.has(ShaderKey::METALLIC_MAP)) {
           sub_info->MetallicTex->Set(*T8DeviceContext, 6, "MetallicTex");
+        }
+        if (Textures[7]) {
+          Textures[7]->Set(*T8DeviceContext, 7, "SceneDepthTex");
+        }
+        if (s->key.has(ShaderKey::EMISSIVE_MAP) && sub_info->EmissiveTex) {
+          sub_info->EmissiveTex->Set(*T8DeviceContext, 8, "EmissiveTex");
         }
         if (s->key.has(ShaderKey::DIFFUSE_MAP)) {
           sub_info->DiffuseTex->SetSampler(*T8DeviceContext);

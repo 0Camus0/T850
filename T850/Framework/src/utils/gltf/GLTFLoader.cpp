@@ -200,6 +200,10 @@ bool LoadGLTF(const std::string& path, Document& out) {
   // Supported extensions are allowed through.
   static const std::vector<std::string> kSupportedExtensions = {
     "KHR_draco_mesh_compression",
+    "KHR_materials_emissive_strength",
+    "KHR_materials_ior",
+    "KHR_materials_transmission",
+    "KHR_materials_volume"
   };
   if (!out.extensionsRequired.empty()) {
     std::string unsupported;

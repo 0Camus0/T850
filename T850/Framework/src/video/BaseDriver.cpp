@@ -200,7 +200,7 @@ namespace t850 {
       if (key.has(ShaderKey::SPECULAR_MAP))   Defines += "#define SPECULAR_MAP\n\n";
       if (key.has(ShaderKey::GLOSS_MAP))      Defines += "#define GLOSS_MAP\n\n";
       if (key.has(ShaderKey::NORMAL_MAP))     Defines += "#define NORMAL_MAP\n\n";
-      if (key.has(ShaderKey::REFLECT_MAP))    Defines += "#define REFLECT_MAP\n\n";
+      if (key.has(ShaderKey::REFLECT_MAP))    Defines += "#define REFLECT_MAP\n#define EMISSIVE_MAP\n\n";
       if (key.has(ShaderKey::HEIGHT_MAP))     Defines += "#define HEIGHT_MAP\n\n";
       if (key.has(ShaderKey::METALLIC_MAP))   Defines += "#define METALLIC_MAP\n\n";
 

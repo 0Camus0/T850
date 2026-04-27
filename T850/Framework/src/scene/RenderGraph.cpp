@@ -516,6 +516,18 @@ void RenderGraph::ExecutePass(
       quads[0].SetEnvironmentMap(driver->GetTexture(envMapTexIndex));
     }
 
+    auto bindMeshPassResources = [&](PrimitiveInst& mesh) {
+      for (const auto& input : pass.inputs) {
+        auto resolved = ResolveTextureInput(input.source);
+        if (!resolved.is_builtin && resolved.rt_handle >= 0 && input.slot >= 0 && input.slot < 16) {
+          mesh.SetTexture(driver->GetRTTexture(resolved.rt_handle, resolved.attachment), input.slot);
+        }
+      }
+      if (pass.bind_environment_map && envMapTexIndex >= 0) {
+        mesh.SetEnvironmentMap(driver->GetTexture(envMapTexIndex));
+      }
+    };
+
     // Execute draw commands
     for (const auto& draw : pass.draws) {
       ShaderKey sig = ResolveSignature(draw.signature);
@@ -528,6 +540,7 @@ void RenderGraph::ExecutePass(
         if (draw.mesh_indices.empty()) {
           // Empty array = draw ALL meshes
           for (int mi = 0; mi < meshCount; ++mi) {
+            bindMeshPassResources(meshes[mi]);
             meshes[mi].SetGlobalKey(sig);
             meshes[mi].Draw();
             ShaderKey fwd(0); fwd.setPass(PassType::FORWARD);
@@ -536,6 +549,7 @@ void RenderGraph::ExecutePass(
         } else {
           for (int mi : draw.mesh_indices) {
             if (mi >= 0 && mi < meshCount) {
+              bindMeshPassResources(meshes[mi]);
               meshes[mi].SetGlobalKey(sig);
               meshes[mi].Draw();
               ShaderKey fwd(0); fwd.setPass(PassType::FORWARD);

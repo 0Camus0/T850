@@ -186,6 +186,31 @@ struct Material {
   std::string                          alphaMode = "OPAQUE";
   float                                alphaCutoff = 0.5f;
   bool                                 doubleSided = false;
+
+  struct Extensions {
+    struct KHRMaterialsTransmission {
+      float transmissionFactor = 0.0f;
+      std::optional<TextureInfo> transmissionTexture;
+    };
+    struct KHRMaterialsEmissiveStrength {
+      float emissiveStrength = 1.0f;
+    };
+    struct KHRMaterialsIOR {
+      float ior = 1.5f;
+    };
+    struct KHRMaterialsVolume {
+      float thicknessFactor = 0.0f;
+      std::optional<TextureInfo> thicknessTexture;
+      float attenuationDistance = 0.0f;
+      std::vector<float> attenuationColor;
+    };
+
+    std::optional<KHRMaterialsTransmission> KHR_materials_transmission;
+    std::optional<KHRMaterialsEmissiveStrength> KHR_materials_emissive_strength;
+    std::optional<KHRMaterialsIOR> KHR_materials_ior;
+    std::optional<KHRMaterialsVolume> KHR_materials_volume;
+  };
+  std::optional<Extensions> extensions;
 };
 
 // ── Mesh / Primitive ──

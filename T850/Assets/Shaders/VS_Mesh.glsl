@@ -36,6 +36,14 @@
 	#endif
 #endif
 
+#ifdef USE_TEXCOORD1
+	#ifdef ES_30
+		in highp vec2 UV1;
+	#else
+		attribute highp vec2 UV1;
+	#endif
+#endif
+
 #if defined(USE_SKINNING) || defined(USE_SKINNING_QT) || defined(USE_SKINNING_TEXTURE)
 	#ifdef ES_30
 		in highp vec4 Joints;
@@ -76,6 +84,14 @@
 		out highp vec2 vecUVCoords;
 	#else
 		varying highp vec2 vecUVCoords;
+	#endif
+#endif
+
+#ifdef USE_TEXCOORD1
+	#ifdef ES_30
+		out highp vec2 vecUVCoords1;
+	#else
+		varying highp vec2 vecUVCoords1;
 	#endif
 #endif
 
@@ -202,6 +218,16 @@ void main(){
 #endif
 #endif
 
+#ifdef USE_TEXCOORD0
+	vecUVCoords = UV;
+	vecUVCoords.y = vecUVCoords.y;
+#endif
+
+#ifdef USE_TEXCOORD1
+	vecUVCoords1 = UV1;
+	vecUVCoords1.y = vecUVCoords1.y;
+#endif
+
 #ifdef SHADOW_MAP_PASS
 		Pos = WVP*skinnedPos;
 		gl_Position = Pos;
@@ -222,11 +248,6 @@ void main(){
 		Pos 	 = WVP*skinnedPos;
 		WorldPos = World*skinnedPos;
 		
-	#ifdef USE_TEXCOORD0
-		vecUVCoords = UV;
-		vecUVCoords.y = vecUVCoords.y;
-	#endif
-
 		gl_Position = Pos;
 #endif
 }

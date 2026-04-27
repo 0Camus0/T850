@@ -461,8 +461,34 @@ namespace t850 {
         baseCB.Light0Pos = pScProp->Lights[0].Position;
         baseCB.Light0Col = pScProp->Lights[0].Color;
         baseCB.CameraPos = pActualCamera->Eye;
+        unsigned int numLights = static_cast<unsigned int>(pScProp->ActiveLights);
+        if (numLights > pScProp->Lights.size())
+          numLights = static_cast<unsigned int>(pScProp->Lights.size());
+        if (numLights > 128u) numLights = 128u;
+        infoCam.w = static_cast<float>(numLights);
         baseCB.CameraInfo = infoCam;
         baseCB.Light0Dir = pScProp->Lights[0].Direction;
+        for (int li = 0; li < 128; li++) {
+          baseCB.LightPositions[li] = XVECTOR3(0.0f, 0.0f, 0.0f, 0.0f);
+          baseCB.LightColors[li] = XVECTOR3(0.0f, 0.0f, 0.0f, 0.0f);
+        }
+        for (int ri = 0; ri < 32; ri++) {
+          baseCB.LightRadius[ri] = XVECTOR3(0.0f, 0.0f, 0.0f, 0.0f);
+        }
+        for (unsigned int li = 0; li < numLights; li++) {
+          Light& light = pScProp->Lights[li];
+          if (light.Type == LIGHT_DIRECTIONAL) {
+            baseCB.LightPositions[li] = XVECTOR3(light.Direction.x, light.Direction.y, light.Direction.z, 0.0f);
+          } else {
+            baseCB.LightPositions[li] = XVECTOR3(light.Position.x, light.Position.y, light.Position.z, 1.0f);
+          }
+          baseCB.LightColors[li] = XVECTOR3(light.Color.x, light.Color.y, light.Color.z, light.Intensity);
+          XVECTOR3& radiusPack = baseCB.LightRadius[li >> 2];
+          if ((li & 3u) == 0u) radiusPack.x = light.radius;
+          else if ((li & 3u) == 1u) radiusPack.y = light.radius;
+          else if ((li & 3u) == 2u) radiusPack.z = light.radius;
+          else radiusPack.w = light.radius;
+        }
       }
       baseCB.ParallaxSettings = XVECTOR3(m_fParallaxLowSamples, m_fParallaxHighSamples, m_fParallaxHeight);
       baseCB.ParallaxSettings.w = m_fParallaxEnabled;
@@ -480,6 +506,13 @@ namespace t850 {
         m_totalSubsets++;
         SubSetInfo *sub_info = &it_MeshInfo->SubSets[k];
 
+        bool forwardOnly = sub_info->AlphaMode == 2 || sub_info->TransmissionFactor > 0.0f;
+        uint8_t currentPass = gKey.getPass();
+        if ((currentPass == PassType::GBUFFER || currentPass == PassType::SHADOW_MAP || currentPass == PassType::RADIAL_DEPTH) && forwardOnly)
+          continue;
+        if (currentPass == PassType::FORWARD && !forwardOnly)
+          continue;
+
         if (!AABBInsideFrustum(sub_info->bounds, transform, frustumPlanes))
           continue;
 
@@ -489,6 +522,10 @@ namespace t850 {
         baseCB.PBRParams = sub_info->PBRParams;
         baseCB.Intensities = sub_info->Intensities;
         baseCB.Intensities.w = (float)sub_info->MatID;
+        baseCB.EmissiveColor = sub_info->EmissiveColor;
+        baseCB.AlphaParams = XVECTOR3((float)sub_info->AlphaMode, sub_info->AlphaCutoff, sub_info->DoubleSided ? 1.0f : 0.0f, sub_info->TransmissionFactor);
+        baseCB.ForwardParams = XVECTOR3((float)g_pBaseDriver->width, (float)g_pBaseDriver->height, Textures[7] ? 1.0f : 0.0f, sub_info->IOR);
+        baseCB.TexCoordSets = XVECTOR3((float)sub_info->DiffuseTexCoord, (float)sub_info->NormalTexCoord, (float)sub_info->MetallicTexCoord, (float)sub_info->EmissiveTexCoord);
 
         sub_info->IB->Set(*T8DeviceContext, 0,
                           sub_info->IB32Bit ? IndexBufferFormat::R32
@@ -530,6 +567,10 @@ namespace t850 {
           sub_info->ParalaxTex->Set(*T8DeviceContext, 5, "HeightTex");
         if (s->key.has(ShaderKey::METALLIC_MAP) && sub_info->MetallicTex)
           sub_info->MetallicTex->Set(*T8DeviceContext, 6, "MetallicTex");
+        if (Textures[7])
+          Textures[7]->Set(*T8DeviceContext, 7, "SceneDepthTex");
+        if (s->key.has(ShaderKey::EMISSIVE_MAP) && sub_info->EmissiveTex)
+          sub_info->EmissiveTex->Set(*T8DeviceContext, 8, "EmissiveTex");
         if (s->key.has(ShaderKey::DIFFUSE_MAP) && sub_info->DiffuseTex)
           sub_info->DiffuseTex->SetSampler(*T8DeviceContext);
 

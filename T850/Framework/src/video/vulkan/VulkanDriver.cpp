@@ -152,7 +152,7 @@ namespace t850 {
           att.dstColorBlendFactor = VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA;
           att.colorBlendOp = VK_BLEND_OP_ADD;
           att.srcAlphaBlendFactor = VK_BLEND_FACTOR_ONE;
-          att.dstAlphaBlendFactor = VK_BLEND_FACTOR_ZERO;
+          att.dstAlphaBlendFactor = VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA;
           att.alphaBlendOp = VK_BLEND_OP_ADD;
           break;
         case NON_PREMULTIPLIED:

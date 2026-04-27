@@ -79,7 +79,22 @@
       "bind_environment_map": true,
       "draws": [
         { "type": "fullscreen_quad", "signature": "DEFERRED_PASS" }
-      ]
+      ],
+      "pop": false
+    },
+    {
+      "name": "Forward Transparent",
+      "target": "Deferred",
+      "push": false,
+      "state": { "depth_stencil": "NONE", "cull_face": "FRONT_AND_BACK", "blend": "ALPHA_BLEND" },
+      "inputs": [
+        { "source": "GBuffer:COLOR4", "slot": 7 }
+      ],
+      "bind_environment_map": true,
+      "draws": [
+        { "type": "mesh", "mesh_indices": [0], "signature": "FORWARD_PASS" }
+      ],
+      "post_state": { "blend": "BLEND_DEFAULT", "cull_face": "FRONT_FACES" }
     },
     {
       "name": "Light Add",

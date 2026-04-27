@@ -86,62 +86,79 @@ namespace t850 {
     }
 
     int uniformPos = 0;
+    std::vector<t850::InputElement> reflectedUniforms;
     for (auto &it : m_parser.uniforms)
     {
-      bool process = true;
-      for (auto &other : internalUniformsLocs) {
+      int size = 0;
+      switch (it.type)
+      {
+      case hyperspace::shader::datatype_::INT_:
+        size = 4;
+        break;
+      case hyperspace::shader::datatype_::BOOLEAN_:
+        size = 4;
+        break;
+      case hyperspace::shader::datatype_::FLOAT_:
+        size = 4;
+        break;
+      case hyperspace::shader::datatype_::MAT2_:
+        size = 16;
+        break;
+      case hyperspace::shader::datatype_::MAT3_:
+        size = 36;
+        break;
+      case hyperspace::shader::datatype_::MAT4_:
+        size = 64;
+        break;
+      case hyperspace::shader::datatype_::VECTOR2_:
+        size = 8;
+        break;
+      case hyperspace::shader::datatype_::VECTOR3_:
+        size = 12;
+        break;
+      case hyperspace::shader::datatype_::VECTOR4_:
+        size = 16;
+        break;
+      default:
+        continue;
+        break;
+      }
+
+      t850::InputElement* reflected = nullptr;
+      for (auto &other : reflectedUniforms) {
         if (other.name == it.name) {
-          process = false;
-          continue;
+          reflected = &other;
+          break;
         }
       }
-      if (process) {
-        int size = 0;
+
+      if (!reflected) {
         t850::InputElement ie;
-        switch (it.type)
-        {
-        case hyperspace::shader::datatype_::INT_:
-          size = 4;
-          break;
-        case hyperspace::shader::datatype_::BOOLEAN_:
-          size = 4;
-          break;
-        case hyperspace::shader::datatype_::FLOAT_:
-          size = 4;
-          break;
-        case hyperspace::shader::datatype_::MAT2_:
-          size = 16;
-          break;
-        case hyperspace::shader::datatype_::MAT3_:
-          size = 36;
-          break;
-        case hyperspace::shader::datatype_::MAT4_:
-          size = 64;
-          break;
-        case hyperspace::shader::datatype_::VECTOR2_:
-          size = 8;
-          break;
-        case hyperspace::shader::datatype_::VECTOR3_:
-          size = 12;
-          break;
-        case hyperspace::shader::datatype_::VECTOR4_:
-          size = 16;
-          break;
-        default:
-          continue;
-          break;
-        }
         ie.num = it.numItems;
         ie.name = it.name;
-        ie.loc = glGetUniformLocation(ShaderProg, ie.name.c_str());
         ie.type = it.type;
         ie.bufferBytePosition = uniformPos;
         ie.size = size * ie.num;
-        if (ie.loc != -1)
-        {
+        ie.loc = -1;
+        reflectedUniforms.push_back(ie);
+        reflected = &reflectedUniforms.back();
+        uniformPos += ie.size;
+      }
+
+      int loc = glGetUniformLocation(ShaderProg, reflected->name.c_str());
+      if (loc != -1) {
+        bool active = false;
+        for (auto &other : internalUniformsLocs) {
+          if (other.name == reflected->name) {
+            active = true;
+            break;
+          }
+        }
+        if (!active) {
+          t850::InputElement ie = *reflected;
+          ie.loc = loc;
           internalUniformsLocs.push_back(ie);
         }
-        uniformPos += ie.size;
       }
     }
 

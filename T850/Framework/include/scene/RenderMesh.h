@@ -75,6 +75,13 @@ namespace t850 {
 	  XVECTOR3  ParallaxSettings;
 	  XVECTOR3  ParallaxShadowSettings;
 	  XVECTOR3  Light0Dir;
+    XVECTOR3  EmissiveColor;
+    XVECTOR3  AlphaParams;     // .x=mode 0/1/2 .y=cutoff .z=doubleSided .w=transmission
+    XVECTOR3  ForwardParams;   // .xy=screen size .z=scene depth bound .w=ior
+    XVECTOR3  TexCoordSets;    // .x=baseColor .y=normal .z=metallicRoughness .w=emissive
+    XVECTOR3  LightPositions[128];
+    XVECTOR3  LightColors[128];
+    XVECTOR3  LightRadius[32];
     };
 
     struct AABB {
@@ -97,8 +104,20 @@ namespace t850 {
 			SpecularColor = XVECTOR3(0.04f, 0.04f, 0.04f, 1.0f);
 			PBRParams = XVECTOR3(0.0f, 0.8f, 0.0f, 0.0f);  // metallic=0, roughness=0.8
 			Intensities = XVECTOR3(0.0f, 0.0f, 0.0f, 1.0f);
+      EmissiveColor = XVECTOR3(0.0f, 0.0f, 0.0f, 1.0f);
+      AlphaMode = 0;
+      AlphaCutoff = 0.5f;
+      DoubleSided = false;
+      TransmissionFactor = 0.0f;
+      IOR = 1.5f;
+      DiffuseTexCoord = 0;
+      NormalTexCoord = 0;
+      MetallicTexCoord = 0;
+      EmissiveTexCoord = 0;
 			MetallicTex = nullptr;
+      EmissiveTex = nullptr;
 			MetallicId = -1;
+      EmissiveId = -1;
 			bUseFresnel = false;
 			MatID = 0;
 		}
@@ -112,12 +131,14 @@ namespace t850 {
       Texture*					ReflectTex;
       Texture*					ParalaxTex;
       Texture*					MetallicTex;
+      Texture*					EmissiveTex;
 
 	  XVECTOR3		  AmbientColor;
 	  XVECTOR3	      DiffuseColor;
 	  XVECTOR3		  SpecularColor;
 	  XVECTOR3		  PBRParams;       // .x=metallic .y=roughness
 	  XVECTOR3        Intensities;
+      XVECTOR3        EmissiveColor;
 
       int					DiffuseId;
       int					SpecularId;
@@ -126,8 +147,18 @@ namespace t850 {
       int					ReflectId;
       int					ParalaxId;
       int					MetallicId;
+      int					EmissiveId;
 
 	  int					MatID;
+      unsigned int      AlphaMode;
+      float             AlphaCutoff;
+      bool              DoubleSided;
+      float             TransmissionFactor;
+      float             IOR;
+      unsigned int      DiffuseTexCoord;
+      unsigned int      NormalTexCoord;
+      unsigned int      MetallicTexCoord;
+      unsigned int      EmissiveTexCoord;
 
       unsigned int		VertexStart;
       unsigned int		NumVertex;

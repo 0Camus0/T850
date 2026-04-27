@@ -305,7 +305,7 @@ namespace t850 {
       break;
     case t850::BaseDriver::ALPHA_BLEND:
       glEnable(GL_BLEND);
-      glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+      glBlendFuncSeparate(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA, GL_ONE, GL_ONE_MINUS_SRC_ALPHA);
       break;
     case t850::BaseDriver::NON_PREMULTIPLIED:
       glEnable(GL_BLEND);

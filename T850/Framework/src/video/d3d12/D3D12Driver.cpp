@@ -281,7 +281,7 @@ namespace t850 {
           rt.BlendEnable = TRUE;
           rt.SrcBlend = D3D12_BLEND_SRC_ALPHA; rt.DestBlend = D3D12_BLEND_INV_SRC_ALPHA;
           rt.BlendOp = D3D12_BLEND_OP_ADD;
-          rt.SrcBlendAlpha = D3D12_BLEND_ONE; rt.DestBlendAlpha = D3D12_BLEND_ZERO;
+          rt.SrcBlendAlpha = D3D12_BLEND_ONE; rt.DestBlendAlpha = D3D12_BLEND_INV_SRC_ALPHA;
           rt.BlendOpAlpha = D3D12_BLEND_OP_ADD;
           break;
         case NON_PREMULTIPLIED:

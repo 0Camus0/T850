@@ -54,7 +54,11 @@ struct VS_INPUT{
 #endif
 
 #ifdef USE_TEXCOORD0
-    float2 texture0 : TEXCOORD;
+	float2 texture0 : TEXCOORD0;
+#endif
+
+#ifdef USE_TEXCOORD1
+	float2 texture1 : TEXCOORD1;
 #endif
 
 #if defined(USE_SKINNING) || defined(USE_SKINNING_QT) || defined(USE_SKINNING_TEXTURE)
@@ -79,7 +83,11 @@ struct VS_OUTPUT{
 #endif
 
 #ifdef USE_TEXCOORD0
-    float2 texture0  : TEXCOORD;
+	float2 texture0  : TEXCOORD0;
+#endif
+
+#ifdef USE_TEXCOORD1
+	float2 texture1  : TEXCOORD3;
 #endif
 
 	float4 Pos		: TEXCOORD1;
@@ -161,6 +169,14 @@ VS_OUTPUT VS( VS_INPUT input ){
 #endif
 #endif
 
+#ifdef USE_TEXCOORD0
+    OUT.texture0 = input.texture0;
+#endif
+
+#ifdef USE_TEXCOORD1
+	OUT.texture1 = input.texture1;
+#endif
+
 #ifdef SHADOW_MAP_PASS
 	OUT.hposition = mul( WVP , input.position );
 	OUT.Pos		  = OUT.hposition;
@@ -181,11 +197,6 @@ VS_OUTPUT VS( VS_INPUT input ){
 	OUT.hbinormal = float4(normalize( mul( RotWorld , input.binormal.xyz ) ) , 1.0);
 #endif
 	
-#ifdef USE_TEXCOORD0
-    OUT.texture0 = input.texture0;
-#endif
-
-
 	OUT.Pos = mul( WVP , input.position );
 
 	OUT.WorldPos = mul( World , input.position );

@@ -64,6 +64,13 @@ void AddDword(xF::xMaterial& mat, const std::string& key, uint32_t v) {
   mat.EffectInstance.pDefaults.push_back(d);
 }
 
+uint32_t SupportedTexCoord(const Material& mat, const char* propertyName, int texCoord) {
+  if (texCoord == 0 || texCoord == 1) return static_cast<uint32_t>(texCoord);
+  T8_LOG_ERROR("[glTF] material '%s': %s.texCoord=%d (only UV0/UV1 supported)",
+               mat.name.c_str(), propertyName, texCoord);
+  return 0;
+}
+
 // Resolve `textures[texIdx].source → images[imgIdx]` to a name string
 // that we put into the EffectDefault. Returns "" on failure.
 std::string ResolveTextureName(const Document& doc, int texIdx) {
@@ -116,7 +123,7 @@ void ConvertMaterial(const Document& doc, int materialIndex,
 
     if (pbr.baseColorFactor.size() >= 3) {
       const auto& c = pbr.baseColorFactor;
-      AddFloats(outMat, "diffuseColor", {c[0], c[1], c[2]});
+      AddFloats(outMat, "diffuseColor", {c[0], c[1], c[2], c.size() >= 4 ? c[3] : 1.0f});
       outMat.FaceColor.r = c[0];
       outMat.FaceColor.g = c[1];
       outMat.FaceColor.b = c[2];
@@ -128,10 +135,7 @@ void ConvertMaterial(const Document& doc, int materialIndex,
     if (pbr.baseColorTexture) {
       std::string n = ResolveTextureName(doc, pbr.baseColorTexture->index);
       if (!n.empty()) AddString(outMat, "diffuseMap", n);
-      if (pbr.baseColorTexture->texCoord != 0)
-        T8_LOG_ERROR("[glTF] material '%s': baseColorTexture.texCoord=%d "
-                     "(only UV0 supported, texture will use wrong UV set)",
-                     m.name.c_str(), pbr.baseColorTexture->texCoord);
+      AddDword(outMat, "diffuseTexCoord", SupportedTexCoord(m, "baseColorTexture", pbr.baseColorTexture->texCoord));
     }
 
     AddFloats(outMat, "pbrMetallic",  {pbr.metallicFactor});
@@ -140,10 +144,7 @@ void ConvertMaterial(const Document& doc, int materialIndex,
     if (pbr.metallicRoughnessTexture) {
       std::string n = ResolveTextureName(doc, pbr.metallicRoughnessTexture->index);
       if (!n.empty()) AddString(outMat, "metallicMap", n);
-      if (pbr.metallicRoughnessTexture->texCoord != 0)
-        T8_LOG_ERROR("[glTF] material '%s': metallicRoughnessTexture.texCoord=%d "
-                     "(only UV0 supported)", m.name.c_str(),
-                     pbr.metallicRoughnessTexture->texCoord);
+      AddDword(outMat, "metallicTexCoord", SupportedTexCoord(m, "metallicRoughnessTexture", pbr.metallicRoughnessTexture->texCoord));
     }
   } else {
     // No PBR block — fall back to defaults.
@@ -155,34 +156,44 @@ void ConvertMaterial(const Document& doc, int materialIndex,
   if (m.normalTexture) {
     std::string n = ResolveTextureName(doc, m.normalTexture->index);
     if (!n.empty()) AddString(outMat, "normalMap", n);
-    if (m.normalTexture->texCoord != 0)
-      T8_LOG_ERROR("[glTF] material '%s': normalTexture.texCoord=%d "
-                   "(only UV0 supported)", m.name.c_str(),
-                   m.normalTexture->texCoord);
+    AddDword(outMat, "normalTexCoord", SupportedTexCoord(m, "normalTexture", m.normalTexture->texCoord));
   }
   if (m.occlusionTexture) {
     std::string n = ResolveTextureName(doc, m.occlusionTexture->index);
     if (!n.empty()) AddString(outMat, "occlusionMap", n);
-    if (m.occlusionTexture->texCoord != 0)
-      T8_LOG_ERROR("[glTF] material '%s': occlusionTexture.texCoord=%d "
-                   "(only UV0 supported)", m.name.c_str(),
-                   m.occlusionTexture->texCoord);
+    AddDword(outMat, "occlusionTexCoord", SupportedTexCoord(m, "occlusionTexture", m.occlusionTexture->texCoord));
   }
   if (m.emissiveTexture) {
     std::string n = ResolveTextureName(doc, m.emissiveTexture->index);
     if (!n.empty()) AddString(outMat, "emissiveMap", n);
-    if (m.emissiveTexture->texCoord != 0)
-      T8_LOG_ERROR("[glTF] material '%s': emissiveTexture.texCoord=%d "
-                   "(only UV0 supported)", m.name.c_str(),
-                   m.emissiveTexture->texCoord);
+    AddDword(outMat, "emissiveTexCoord", SupportedTexCoord(m, "emissiveTexture", m.emissiveTexture->texCoord));
   }
+  float emissiveStrength = 1.0f;
+  if (m.extensions && m.extensions->KHR_materials_emissive_strength) {
+    emissiveStrength = m.extensions->KHR_materials_emissive_strength->emissiveStrength;
+  }
+
   if (m.emissiveFactor.size() >= 3) {
     const auto& e = m.emissiveFactor;
-    AddFloats(outMat, "emissiveColor", {e[0], e[1], e[2]});
-    outMat.Emissive.r = e[0];
-    outMat.Emissive.g = e[1];
-    outMat.Emissive.b = e[2];
+    AddFloats(outMat, "emissiveColor", {e[0] * emissiveStrength, e[1] * emissiveStrength, e[2] * emissiveStrength});
+    outMat.Emissive.r = e[0] * emissiveStrength;
+    outMat.Emissive.g = e[1] * emissiveStrength;
+    outMat.Emissive.b = e[2] * emissiveStrength;
     outMat.Emissive.a = 1.0f;
+  }
+
+  if (m.extensions && m.extensions->KHR_materials_transmission) {
+    const auto& t = *m.extensions->KHR_materials_transmission;
+    AddDword(outMat, "transmission", 1u);
+    AddFloats(outMat, "transmissionFactor", {t.transmissionFactor});
+    if (t.transmissionTexture) {
+      std::string n = ResolveTextureName(doc, t.transmissionTexture->index);
+      if (!n.empty()) AddString(outMat, "transmissionMap", n);
+      AddDword(outMat, "transmissionTexCoord", SupportedTexCoord(m, "transmissionTexture", t.transmissionTexture->texCoord));
+    }
+  }
+  if (m.extensions && m.extensions->KHR_materials_ior) {
+    AddFloats(outMat, "ior", {m.extensions->KHR_materials_ior->ior});
   }
 
   uint32_t alphaMode =

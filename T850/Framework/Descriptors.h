@@ -71,6 +71,7 @@ struct ShaderKey {
   static constexpr uint32_t REFLECT_MAP    = 1u << 9;
   static constexpr uint32_t HEIGHT_MAP     = 1u << 10;
   static constexpr uint32_t METALLIC_MAP   = 1u << 11;
+  static constexpr uint32_t EMISSIVE_MAP   = REFLECT_MAP;
 
   // ── Special modes ──
   static constexpr uint32_t NO_LIGHT       = 1u << 12;

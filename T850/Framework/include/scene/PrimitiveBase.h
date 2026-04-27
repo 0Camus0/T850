@@ -29,7 +29,7 @@ namespace t850 {
   public:
     PrimitiveBase() : pScProp(0) {
       gKey.bits = 0;
-      for (int i = 0; i < 8; i++) {
+        for (int i = 0; i < 16; i++) {
         Textures[i] = 0;
       }
       EnvMap = 0;
@@ -69,7 +69,7 @@ namespace t850 {
 		m_fParallaxShadowSoftness = softness;
 		m_fParallaxShadowStrength = strength;
 	}
-    Texture*				 Textures[8];
+    Texture*				 Textures[16];
     Texture*			     EnvMap;
     ShaderKey gKey;
     float m_brightness;

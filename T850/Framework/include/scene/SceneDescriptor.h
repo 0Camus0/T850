@@ -99,6 +99,9 @@ namespace t850 {
     float env_factor = 1.0f;
     float ibl_factor = 1.0f;
     float godrays_factor = 1.0f;
+    float material_emissive_intensity = 1.0f;
+    float material_transmission_multiplier = 1.0f;
+    float material_refraction_strength = 0.03f;
   };
 
   struct SliderDesc {

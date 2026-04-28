@@ -1621,7 +1621,7 @@ reopen:
     // Compute a fingerprint from layout + texture bindings to reuse descriptor sets
     // when the same textures are bound across multiple draws (e.g. same material, different passes).
     uint64_t fingerprint = (uint64_t)(uintptr_t)shader->m_descriptorSetLayout;
-    for (int i = 0; i < 8; i++) {
+    for (int i = 0; i < VulkanShader::kMaxTextureSlots; i++) {
       if (m_pendingTextures[i].imageView) {
         fingerprint ^= ((uint64_t)(uintptr_t)m_pendingTextures[i].imageView) * (0x9e3779b97f4a7c15ULL + i);
       }
@@ -1643,8 +1643,8 @@ reopen:
 
       std::vector<VkWriteDescriptorSet> writes;
       std::vector<VkDescriptorImageInfo> imageInfos;
-      writes.reserve(16);
-      imageInfos.reserve(8);
+      writes.reserve(1 + VulkanShader::kMaxTextureSlots);
+      imageInfos.reserve(VulkanShader::kMaxTextureSlots);
 
       // UBO binding — offset=0 in descriptor, actual offset passed as dynamic offset
       VkDescriptorBufferInfo cbBufInfo = {};
@@ -1663,7 +1663,7 @@ reopen:
       }
 
       // Texture bindings (from reflected srv bindings)
-      for (int slot = 0; slot < 8; slot++) {
+      for (int slot = 0; slot < VulkanShader::kMaxTextureSlots; slot++) {
         if (shader->srvBindings[slot] < 0) continue;
 
         VkDescriptorImageInfo imgInfo = {};

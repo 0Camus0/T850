@@ -179,6 +179,7 @@ namespace t850 {
     virtual void	DestroyAPIRT() = 0;
 
     virtual void Set(const DeviceContext& context) = 0;
+    virtual void SetLoad(const DeviceContext& context) { Set(context); }
     virtual void ChangeCubeDepthTexture(int i) = 0;
 
     int w;
@@ -306,6 +307,7 @@ namespace t850 {
     int    CreateTechnique(std::string path);
 
     void	 PushRT(int id);
+    void	 PushRTLoad(int id);
     virtual void	 PopRT() = 0;
 
 

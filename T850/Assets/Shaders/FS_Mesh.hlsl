@@ -18,6 +18,8 @@ cbuffer ConstantBuffer{
     float4   AlphaParams;
     float4   ForwardParams;
     float4   TexCoordSets;
+    float4   MaterialParams;
+    float4   MaterialParams2;
     float4   LightPositions[128];
     float4   LightColors[128];
     float4   LightRadius[32];
@@ -52,6 +54,8 @@ Texture2D SceneDepthTex : register(t7);
 #ifdef EMISSIVE_MAP
 Texture2D EmissiveTex : register(t8);
 #endif
+
+Texture2D SceneColorTex : register(t9);
 
 SamplerState SS;
 
@@ -163,6 +167,16 @@ float4 SampleBaseColor(float2 uv)
 #else
     return DiffuseColor;
 #endif
+}
+
+float3 SampleEmissive(VS_OUTPUT input, float2 uv)
+{
+    float3 emissive = EmissiveColor.rgb;
+#ifdef EMISSIVE_MAP
+    float2 emissiveUV = TexCoordSets.w > 0.5f ? GetTexCoord(input, TexCoordSets.w) : uv;
+    emissive *= EmissiveTex.Sample(SS, emissiveUV).rgb;
+#endif
+    return emissive * MaterialParams.w;
 }
 
 void ApplyAlphaMask(inout float4 color)
@@ -320,16 +334,17 @@ FS_OUT FS(VS_OUTPUT input)
 
     FS_OUT fout;
     fout.color0.rgb = color.rgb;
-    fout.color0.a = 0.0f;
+    fout.color0.a = saturate(SpecularColor.w);
     fout.color1.rgb = normal * 0.5f + 0.5f;
     fout.color1.a = roughness;
     fout.color2.r = metallic;
     fout.color2.g = selfShadow;
-    fout.color2.b = 0.0f;
+    fout.color2.b = saturate(MaterialParams.x);
     fout.color2.a = Intensities.w / 255.0f;
-    fout.color3 = float4(geoNormal * 0.5f + 0.5f, 0.0f);
+    float packedMaterial = saturate(MaterialParams.y) * 0.5f + (MaterialParams.z > 0.5f ? 0.5f : 0.0f);
+    fout.color3 = float4(geoNormal * 0.5f + 0.5f, packedMaterial);
     fout.depth = input.Pos.z / input.Pos.w;
-    fout.color4 = float4(input.Pos.z / input.Pos.w, 0.0f, 0.0f, 0.0f);
+    fout.color4 = float4(input.Pos.z / input.Pos.w, SampleEmissive(input, uv));
     return fout;
 }
 #elif defined(SHADOW_MAP_PASS)
@@ -357,18 +372,21 @@ float4 FS(VS_OUTPUT input) : SV_TARGET
     float selfShadow;
     float2 uv;
     BuildSurface(input, color, normal, geoNormal, metallic, roughness, selfShadow, uv);
+    float3 emissive = SampleEmissive(input, uv);
 
     if (ForwardParams.z > 0.5f && ForwardParams.x > 0.0f && ForwardParams.y > 0.0f) {
         float2 screenUV = input.hposition.xy / ForwardParams.xy;
         float sceneDepth = SceneDepthTex.Sample(SS, screenUV).r;
         float meshDepth = input.Pos.z / input.Pos.w;
-        if (sceneDepth > 0.0001f && meshDepth < sceneDepth - 0.00001f)
+        float depthBias = length(emissive) > 0.001f ? 0.001f : 0.0f;
+        if (sceneDepth > 0.0001f && meshDepth < sceneDepth - depthBias)
             discard;
     }
 
     float3 albedo = pow(max(color.rgb, float3(0.0f, 0.0f, 0.0f)), float3(2.2f, 2.2f, 2.2f));
     float3 eyeDir = normalize(CameraPosition.xyz - input.WorldPos.xyz);
-    float3 F0 = lerp(float3(0.04f, 0.04f, 0.04f), albedo, metallic);
+    float3 dielectricF0 = max(SpecularColor.rgb * SpecularColor.w, float3(0.0f, 0.0f, 0.0f));
+    float3 F0 = lerp(dielectricF0, albedo, metallic);
     float3 directLight = float3(0.0f, 0.0f, 0.0f);
     int numLights = (int)CameraInfo.w;
 
@@ -403,6 +421,7 @@ float4 FS(VS_OUTPUT input) : SV_TARGET
     }
 
     float3 finalColor = directLight * selfShadow;
+    float iblFactor = max(MaterialParams2.w, 0.0f);
     float3 reflectedVec = reflect(-eyeDir, normal);
     reflectedVec.x = -reflectedVec.x;
     reflectedVec.z = -reflectedVec.z;
@@ -410,25 +429,42 @@ float4 FS(VS_OUTPUT input) : SV_TARGET
     float3 kDiffuseEnv = (float3(1.0f, 1.0f, 1.0f) - kSpecular) * (1.0f - metallic);
     float3 envSpec = texEnv.SampleLevel(SS, reflectedVec, roughness * 4.0f).xyz;
     float envAtten = (1.0f - roughness) * (1.0f - roughness);
-    finalColor += envSpec * kSpecular * envAtten;
+    finalColor += envSpec * kSpecular * envAtten * iblFactor;
     float3 irradianceDir = normal;
     irradianceDir.x = -irradianceDir.x;
     irradianceDir.z = -irradianceDir.z;
     float3 irradiance = texEnv.SampleLevel(SS, irradianceDir, 6.0f).xyz;
-    finalColor += irradiance * albedo * kDiffuseEnv;
+    finalColor += irradiance * albedo * kDiffuseEnv * iblFactor;
     finalColor += albedo * Ambient.rgb * kDiffuseEnv;
 
-    float3 emissive = EmissiveColor.rgb;
-#ifdef EMISSIVE_MAP
-    float2 emissiveUV = TexCoordSets.w > 0.5f ? GetTexCoord(input, TexCoordSets.w) : uv;
-    emissive *= EmissiveTex.Sample(SS, emissiveUV).rgb;
-#endif
+    float clearcoatFactor = saturate(MaterialParams.x);
+    if (clearcoatFactor > 0.001f) {
+        float clearcoatRoughness = clamp(MaterialParams.y, 0.04f, 1.0f);
+        float3 clearcoatSpec = texEnv.SampleLevel(SS, reflectedVec, clearcoatRoughness * 4.0f).xyz;
+        float clearcoatAtten = (1.0f - clearcoatRoughness) * (1.0f - clearcoatRoughness);
+        float3 clearcoatF = FresnelCalc(saturate(dot(normal, eyeDir)), float3(0.04f, 0.04f, 0.04f));
+        float clearcoatWeight = saturate(clearcoatFactor * max(clearcoatF.x, max(clearcoatF.y, clearcoatF.z)));
+        finalColor = lerp(finalColor, clearcoatSpec * clearcoatAtten * iblFactor, clearcoatWeight);
+    }
+
+    if (MaterialParams.z > 0.5f) {
+        finalColor = albedo;
+    }
+
+    float transmission = saturate(AlphaParams.w * MaterialParams2.x);
+    if (MaterialParams2.z > 0.5f && transmission > 0.001f && MaterialParams2.y > 0.0f && ForwardParams.x > 0.0f && ForwardParams.y > 0.0f) {
+        float2 screenUV = input.hposition.xy / ForwardParams.xy;
+        float iorOffset = saturate(abs(ForwardParams.w - 1.0f));
+        float2 refractUV = saturate(screenUV + normal.xy * MaterialParams2.y * transmission * (0.5f + iorOffset));
+        float3 sceneColor = SceneColorTex.Sample(SS, refractUV).rgb;
+        finalColor = lerp(finalColor, sceneColor, transmission);
+    }
     finalColor += emissive;
 
     float alpha = color.a;
-    if (AlphaParams.w > 0.0f && alpha >= 0.999f)
-        alpha = saturate(1.0f - AlphaParams.w * 0.65f);
-    if (AlphaParams.x < 1.5f && AlphaParams.w <= 0.0f)
+    if (transmission > 0.0f && alpha >= 0.999f)
+        alpha = saturate(1.0f - transmission);
+    if (AlphaParams.x < 1.5f && transmission <= 0.0f)
         alpha = 1.0f;
     return float4(finalColor, alpha);
 }

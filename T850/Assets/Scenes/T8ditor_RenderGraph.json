@@ -1,7 +1,8 @@
 {
   "render_targets": [
     { "name": "GBuffer",  "color_count": 5, "color_formats": ["RGBA8", "RGBA16F", "RGBA8", "RGBA16F", "RGBA16F"], "depth_format": "F32",  "size": [0,0], "linear_filter": true },
-    { "name": "Deferred", "color_count": 1, "color_format": "RGBA8", "depth_format": "NONE", "size": [0,0], "linear_filter": true }
+    { "name": "Deferred", "color_count": 1, "color_format": "RGBA8", "depth_format": "NONE", "size": [0,0], "linear_filter": true },
+    { "name": "SceneColor", "color_count": 1, "color_format": "RGBA8", "depth_format": "NONE", "size": [0,0], "linear_filter": true }
   ],
   "passes": [
     {
@@ -35,12 +36,26 @@
       "pop": false
     },
     {
+      "name": "Opaque Scene Copy",
+      "target": "SceneColor",
+      "clear": true,
+      "clear_color": [0.227, 0.227, 0.227, 1.0],
+      "state": { "blend": "BLEND_OPAQUE", "depth_stencil": "NONE" },
+      "inputs": [
+        { "source": "Deferred:COLOR0", "slot": 0 }
+      ],
+      "draws": [
+        { "type": "fullscreen_quad", "signature": "FSQUAD_1_TEX" }
+      ]
+    },
+    {
       "name": "Forward Transparent",
       "target": "Deferred",
       "push": false,
       "state": { "depth_stencil": "NONE", "cull_face": "FRONT_AND_BACK", "blend": "ALPHA_BLEND" },
       "inputs": [
-        { "source": "GBuffer:COLOR4", "slot": 7 }
+        { "source": "GBuffer:COLOR4", "slot": 7 },
+        { "source": "SceneColor:COLOR0", "slot": 9 }
       ],
       "bind_environment_map": true,
       "draws": [

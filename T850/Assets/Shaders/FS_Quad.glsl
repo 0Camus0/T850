@@ -150,21 +150,27 @@ void main(){
 	#ifdef ES_30
 		highp vec4 Albedo  =  texture(tex0,coords, 0.0f);
 		highp vec4 PBRData = texture(tex2, coords);
+		highp vec4 DepthEmissive = texture(tex4, coords);
+		highp float specularFactor = max(Albedo.a, 0.0);
 
 		Albedo.xyz = pow(Albedo.xyz, ToLineal.xyz);
 
 		highp float metallic = PBRData.r;
-		highp vec3 F0 = mix(vec3(0.04, 0.04, 0.04), Albedo.xyz, metallic);
+		highp vec3 F0 = mix(vec3(0.04, 0.04, 0.04) * specularFactor, Albedo.xyz, metallic);
 
-		highp float depth = texture(tex4,coords).r;
+		highp float depth = DepthEmissive.r;
+		highp vec3 emissive = DepthEmissive.gba;
 	#else
 		highp vec4 Albedo  =  texture2D(tex0,coords);
 		highp vec4 PBRData = texture2D(tex2, coords);
+		highp vec4 DepthEmissive = texture2D(tex4, coords);
+		highp float specularFactor = max(Albedo.a, 0.0);
 
 		highp float metallic = PBRData.r;
-		highp vec3 F0 = mix(vec3(0.04, 0.04, 0.04), Albedo.xyz, metallic);
+		highp vec3 F0 = mix(vec3(0.04, 0.04, 0.04) * specularFactor, Albedo.xyz, metallic);
 
-		highp float depth = texture2D(tex4,coords).r;
+		highp float depth = DepthEmissive.r;
+		highp vec3 emissive = DepthEmissive.gba;
 	#endif
 
 		
@@ -207,11 +213,17 @@ void main(){
 		normal = normalize(normal);
 		
 		#ifdef ES_30
-			highp vec3 geoNormal = texture(tex3, coords).xyz * 2.0 - 1.0;
+			highp vec4 geoData = texture(tex3, coords);
 		#else
-			highp vec3 geoNormal = texture2D(tex3, coords).xyz * 2.0 - 1.0;
+			highp vec4 geoData = texture2D(tex3, coords);
 		#endif
+		highp vec3 geoNormal = geoData.xyz * 2.0 - 1.0;
 		geoNormal = normalize(geoNormal);
+		highp float packedMaterial = geoData.a;
+		bool unlitMaterial = packedMaterial >= 0.5;
+		highp float clearcoatRoughness = unlitMaterial ? (packedMaterial - 0.5) * 2.0 : packedMaterial * 2.0;
+		clearcoatRoughness = clamp(clearcoatRoughness, 0.04, 1.0);
+		highp float clearcoatFactor = clamp(PBRData.b, 0.0, 1.0);
 		
 		highp vec3 ReflectedVec = reflect(-EyeDir, normal.xyz);	
 		ReflectedVec.y = ReflectedVec.y;
@@ -309,6 +321,17 @@ void main(){
 
 			// Ambient minimum (toogles.y = ambient intensity)
 			Final.xyz += Albedo.xyz * toogles.y * kDiffuseEnv;
+			if (clearcoatFactor > 0.001) {
+				highp vec3 clearcoatSpec = texture( texEnv, ReflectedVec, clearcoatRoughness * 4.0).xyz;
+				highp float clearcoatAtten = (1.0 - clearcoatRoughness) * (1.0 - clearcoatRoughness);
+				highp vec3 clearcoatF = FresnelCalc(clamp(dot(normal, EyeDir), 0.0, 1.0), vec3(0.04));
+				highp float clearcoatWeight = clamp(clearcoatFactor * max(clearcoatF.x, max(clearcoatF.y, clearcoatF.z)), 0.0, 1.0);
+				Final.xyz = mix(Final.xyz, clearcoatSpec * clearcoatAtten * toogles.z, clearcoatWeight);
+			}
+			Final.xyz += emissive;
+			if (unlitMaterial) {
+				Final.xyz = Albedo.xyz + emissive;
+			}
 
 			//Final.xyz = vec3(rough, rough, rough);
 	}

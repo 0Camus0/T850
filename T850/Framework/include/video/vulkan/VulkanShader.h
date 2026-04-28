@@ -25,6 +25,8 @@ namespace t850 {
   // ══════════════════════════════════════════════════════
   class VulkanShader : public ShaderBase {
   public:
+    static constexpr int kMaxTextureSlots = 16;
+
     bool CreateShaderAPI(std::string src_vs, std::string src_fs,
                          const std::string& vs_name = "", const std::string& fs_name = "") override;
     void Set(const DeviceContext& deviceContext) override;
@@ -41,8 +43,8 @@ namespace t850 {
 
     // Descriptor binding indices (resolved from SPIR-V reflection)
     int cbvBinding = -1;
-    int srvBindings[8] = {-1,-1,-1,-1,-1,-1,-1,-1}; // slot → binding index
-    bool srvIsCubemap[8] = {};  // true if slot expects a cubemap view
+    int srvBindings[kMaxTextureSlots] = {-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1}; // slot -> binding index
+    bool srvIsCubemap[kMaxTextureSlots] = {};  // true if slot expects a cubemap view
     int maxBinding = 0;  // highest binding number in the layout
   };
 

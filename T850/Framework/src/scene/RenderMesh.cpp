@@ -85,7 +85,7 @@ namespace t850 {
 				  it_subsetinfo->SpecularColor.x = mDef->CaseFloat[0];
 				  it_subsetinfo->SpecularColor.y = mDef->CaseFloat[1];
 				  it_subsetinfo->SpecularColor.z = mDef->CaseFloat[2];
-				  it_subsetinfo->SpecularColor.w = 1.0f;
+          it_subsetinfo->SpecularColor.w = mDef->CaseFloat.size() > 3 ? mDef->CaseFloat[3] : 1.0f;
 			  }
 
 			  if (mDef->NameParam == "FresnelColor") {
@@ -117,6 +117,14 @@ namespace t850 {
 
         if (mDef->NameParam == "ior") {
           it_subsetinfo->IOR = mDef->CaseFloat[0];
+        }
+
+        if (mDef->NameParam == "clearcoatFactor") {
+          it_subsetinfo->ClearcoatFactor = mDef->CaseFloat[0];
+        }
+
+        if (mDef->NameParam == "clearcoatRoughness") {
+          it_subsetinfo->ClearcoatRoughness = mDef->CaseFloat[0];
         }
 
 			  if (mDef->NameParam == "speclevel") {
@@ -205,6 +213,9 @@ namespace t850 {
             if (mDef->NameParam == "transmission") {
               if (mDef->CaseDWORD != 0 && it_subsetinfo->TransmissionFactor <= 0.0f)
                 it_subsetinfo->TransmissionFactor = 1.0f;
+            }
+            if (mDef->NameParam == "unlit") {
+              it_subsetinfo->Unlit = (mDef->CaseDWORD != 0);
             }
             if (mDef->NameParam == "diffuseTexCoord") {
               it_subsetinfo->DiffuseTexCoord = mDef->CaseDWORD;
@@ -623,6 +634,34 @@ namespace t850 {
     return dx*dx + dy*dy + dz*dz;
   }
 
+  static int ForwardSubsetGroup(const RenderMesh::SubSetInfo& subInfo) {
+    return subInfo.TransmissionFactor > 0.0f ? 0 : 1;
+  }
+
+  static int GeometryForwardGroup(const RenderMesh::MeshInfo& meshInfo) {
+    int group = 2;
+    for (const auto& subInfo : meshInfo.SubSets) {
+      if (IsForwardOnlySubset(subInfo)) {
+        int subsetGroup = ForwardSubsetGroup(subInfo);
+        if (subsetGroup < group)
+          group = subsetGroup;
+      }
+    }
+    return group;
+  }
+
+  static float GeometryForwardDistanceSq(const RenderMesh::MeshInfo& meshInfo, const XMATRIX44& world, const XVECTOR3& eye) {
+    float distanceSq = -1.0f;
+    for (const auto& subInfo : meshInfo.SubSets) {
+      if (IsForwardOnlySubset(subInfo)) {
+        float subsetDistanceSq = SubsetDistanceSqToCamera(subInfo, world, eye);
+        if (subsetDistanceSq > distanceSq)
+          distanceSq = subsetDistanceSq;
+      }
+    }
+    return distanceSq;
+  }
+
   void RenderMesh::Draw(float *t, float *vp) {
     if (t)
       transform = t;
@@ -653,7 +692,24 @@ namespace t850 {
       }
     }
 
-    for (std::size_t i = 0; i < numGeometries; i++) {
+    uint8_t currentPass = gKey.getPass();
+    std::vector<std::size_t> geometryOrder(numGeometries);
+    for (std::size_t i = 0; i < numGeometries; i++) geometryOrder[i] = i;
+    if (currentPass == PassType::FORWARD) {
+      std::stable_sort(geometryOrder.begin(), geometryOrder.end(),
+        [&](std::size_t a, std::size_t b) {
+          int groupA = GeometryForwardGroup(Info[a]);
+          int groupB = GeometryForwardGroup(Info[b]);
+          if (groupA != groupB)
+            return groupA < groupB;
+          float da = GeometryForwardDistanceSq(Info[a], transform, pActualCamera->Eye);
+          float db = GeometryForwardDistanceSq(Info[b], transform, pActualCamera->Eye);
+          return da > db;
+        });
+    }
+
+    for (std::size_t oi = 0; oi < numGeometries; oi++) {
+      std::size_t i = geometryOrder[oi];
       MeshInfo  *it_MeshInfo = &Info[i];
       xMeshGeometry *pActual = &xFile->XMeshDataBase[0]->Geometry[i];
 
@@ -720,10 +776,13 @@ namespace t850 {
       std::size_t numSubsets = it_MeshInfo->SubSets.size();
       std::vector<std::size_t> drawOrder(numSubsets);
       for (std::size_t k = 0; k < numSubsets; k++) drawOrder[k] = k;
-      uint8_t currentPass = gKey.getPass();
       std::stable_sort(drawOrder.begin(), drawOrder.end(),
         [&](std::size_t a, std::size_t b) {
           if (currentPass == PassType::FORWARD) {
+            int groupA = ForwardSubsetGroup(it_MeshInfo->SubSets[a]);
+            int groupB = ForwardSubsetGroup(it_MeshInfo->SubSets[b]);
+            if (groupA != groupB)
+              return groupA < groupB;
             float da = SubsetDistanceSqToCamera(it_MeshInfo->SubSets[a], transform, pActualCamera->Eye);
             float db = SubsetDistanceSqToCamera(it_MeshInfo->SubSets[b], transform, pActualCamera->Eye);
             return da > db;
@@ -755,6 +814,12 @@ namespace t850 {
         it_MeshInfo->CnstBuffer.AlphaParams = XVECTOR3((float)sub_info->AlphaMode, sub_info->AlphaCutoff, sub_info->DoubleSided ? 1.0f : 0.0f, sub_info->TransmissionFactor);
         it_MeshInfo->CnstBuffer.ForwardParams = XVECTOR3((float)g_pBaseDriver->width, (float)g_pBaseDriver->height, Textures[7] ? 1.0f : 0.0f, sub_info->IOR);
         it_MeshInfo->CnstBuffer.TexCoordSets = XVECTOR3((float)sub_info->DiffuseTexCoord, (float)sub_info->NormalTexCoord, (float)sub_info->MetallicTexCoord, (float)sub_info->EmissiveTexCoord);
+        float emissiveMul = pScProp ? pScProp->MaterialEmissiveIntensity : 1.0f;
+        float transmissionMul = pScProp ? pScProp->MaterialTransmissionMultiplier : 1.0f;
+        float refractionStrength = pScProp ? pScProp->MaterialRefractionStrength : 0.03f;
+        float iblFactor = pScProp ? pScProp->IBLFactor : 1.0f;
+        it_MeshInfo->CnstBuffer.MaterialParams = XVECTOR3(sub_info->ClearcoatFactor, sub_info->ClearcoatRoughness, sub_info->Unlit ? 1.0f : 0.0f, emissiveMul);
+        it_MeshInfo->CnstBuffer.MaterialParams2 = XVECTOR3(transmissionMul, refractionStrength, Textures[9] ? 1.0f : 0.0f, iblFactor);
 
         sub_info->IB->Set(*T8DeviceContext, 0,
                           sub_info->IB32Bit ? IndexBufferFormat::R32
@@ -786,39 +851,57 @@ namespace t850 {
         }
         if (s->key.has(ShaderKey::DIFFUSE_MAP)) {
           sub_info->DiffuseTex->Set(*T8DeviceContext, 0, "DiffuseTex");
+          sub_info->DiffuseTex->SetSampler(*T8DeviceContext);
         }
         if (s->key.has(ShaderKey::SPECULAR_MAP)) {
           sub_info->SpecularTex->Set(*T8DeviceContext, 1, "SpecularTex");
+          sub_info->SpecularTex->SetSampler(*T8DeviceContext);
         }
 
         if (s->key.has(ShaderKey::GLOSS_MAP)) {
           sub_info->GlossfTex->Set(*T8DeviceContext, 2, "GlossTex");
+          sub_info->GlossfTex->SetSampler(*T8DeviceContext);
         }
 
         if (s->key.has(ShaderKey::NORMAL_MAP)) {
           sub_info->NormalTex->Set(*T8DeviceContext, 3, "NormalTex");
+          sub_info->NormalTex->SetSampler(*T8DeviceContext);
         }
         if (EnvMap) {
           EnvMap->Set(*T8DeviceContext, 4, "texEnv");
+          EnvMap->SetSampler(*T8DeviceContext);
         }
         if (s->key.has(ShaderKey::HEIGHT_MAP)) {
           sub_info->ParalaxTex->Set(*T8DeviceContext, 5, "HeightTex");
+          sub_info->ParalaxTex->SetSampler(*T8DeviceContext);
         }
         if (s->key.has(ShaderKey::METALLIC_MAP)) {
           sub_info->MetallicTex->Set(*T8DeviceContext, 6, "MetallicTex");
+          sub_info->MetallicTex->SetSampler(*T8DeviceContext);
         }
         if (Textures[7]) {
           Textures[7]->Set(*T8DeviceContext, 7, "SceneDepthTex");
+          Textures[7]->SetSampler(*T8DeviceContext);
         }
         if (s->key.has(ShaderKey::EMISSIVE_MAP) && sub_info->EmissiveTex) {
           sub_info->EmissiveTex->Set(*T8DeviceContext, 8, "EmissiveTex");
+          sub_info->EmissiveTex->SetSampler(*T8DeviceContext);
         }
-        if (s->key.has(ShaderKey::DIFFUSE_MAP)) {
-          sub_info->DiffuseTex->SetSampler(*T8DeviceContext);
+        if (Textures[9]) {
+          Textures[9]->Set(*T8DeviceContext, 9, "SceneColorTex");
+          Textures[9]->SetSampler(*T8DeviceContext);
         }
 
+        BaseDriver::FaceCulling prevCull = g_pBaseDriver->m_FaceCulling;
+        bool changedCull = sub_info->DoubleSided && prevCull != BaseDriver::FRONT_AND_BACK;
+        if (changedCull) {
+          g_pBaseDriver->SetCullFace(BaseDriver::FRONT_AND_BACK);
+        }
         T8DeviceContext->SetPrimitiveTopology(Topology::TRIANLE_LIST);
         T8DeviceContext->DrawIndexed(sub_info->NumVertex, 0, 0);
+        if (changedCull) {
+          g_pBaseDriver->SetCullFace(prevCull);
+        }
         m_drawnSubsets++;
         last = s;
       }

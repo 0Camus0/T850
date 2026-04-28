@@ -151,6 +151,9 @@ void SceneSetup::Apply(SceneProps& props) {
   props.EnvFactor  = s.env_factor;
   props.IBLFactor   = s.ibl_factor;
   props.GodRaysFactor = s.godrays_factor;
+  props.MaterialEmissiveIntensity = s.material_emissive_intensity;
+  props.MaterialTransmissionMultiplier = s.material_transmission_multiplier;
+  props.MaterialRefractionStrength = s.material_refraction_strength;
   props.ActiveGaussKernel = 0;
 }
 
@@ -277,6 +280,9 @@ void SceneSetup::SaveState(SceneBase* scene, const std::string& jsonPath) {
   s.env_factor  = props.EnvFactor;
   s.ibl_factor   = props.IBLFactor;
   s.godrays_factor = props.GodRaysFactor;
+  s.material_emissive_intensity = props.MaterialEmissiveIntensity;
+  s.material_transmission_multiplier = props.MaterialTransmissionMultiplier;
+  s.material_refraction_strength = props.MaterialRefractionStrength;
 
   SaveSceneDescriptor(jsonPath, desc);
 }

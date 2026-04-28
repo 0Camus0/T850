@@ -28,10 +28,17 @@ namespace t850 {
     bool LoadAPIRT() override;
     void DestroyAPIRT() override;
     void Set(const DeviceContext& context) override;
+    void SetLoad(const DeviceContext& context) override;
     void ChangeCubeDepthTexture(int i) override;
 
     VkRenderPass    m_renderPass = VK_NULL_HANDLE;
+    VkRenderPass    m_renderPassLoad = VK_NULL_HANDLE;
     VkFramebuffer   m_framebuffer = VK_NULL_HANDLE;
+
+  private:
+    void SetInternal(const DeviceContext& context, bool preserve);
+
+  public:
 
     // Color attachments
     std::vector<VkImage>        vColorImages;

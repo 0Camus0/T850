@@ -118,7 +118,37 @@ void ConvertMaterial(const Document& doc, int materialIndex,
   const Material& m = doc.materials[materialIndex];
   outMat.Name = m.name;
 
-  if (m.pbrMetallicRoughness) {
+  const auto* pbrSpecGloss =
+    (m.extensions && m.extensions->KHR_materials_pbrSpecularGlossiness)
+      ? &*m.extensions->KHR_materials_pbrSpecularGlossiness
+      : nullptr;
+
+  if (pbrSpecGloss) {
+    const auto& sg = *pbrSpecGloss;
+    if (sg.diffuseFactor.size() >= 3) {
+      const auto& c = sg.diffuseFactor;
+      AddFloats(outMat, "diffuseColor", {c[0], c[1], c[2], c.size() >= 4 ? c[3] : 1.0f});
+      outMat.FaceColor.r = c[0];
+      outMat.FaceColor.g = c[1];
+      outMat.FaceColor.b = c[2];
+      outMat.FaceColor.a = c.size() >= 4 ? c[3] : 1.0f;
+    } else {
+      AddFloats(outMat, "diffuseColor", {1.0f, 1.0f, 1.0f, 1.0f});
+    }
+
+    if (sg.diffuseTexture) {
+      std::string n = ResolveTextureName(doc, sg.diffuseTexture->index);
+      if (!n.empty()) AddString(outMat, "diffuseMap", n);
+      AddDword(outMat, "diffuseTexCoord", SupportedTexCoord(m, "pbrSpecularGlossiness.diffuseTexture", sg.diffuseTexture->texCoord));
+    }
+
+    AddFloats(outMat, "pbrMetallic", {0.0f});
+    AddFloats(outMat, "pbrRoughness", {1.0f - sg.glossinessFactor});
+    if (sg.specularFactor.size() >= 3) {
+      const auto& s = sg.specularFactor;
+      AddFloats(outMat, "specularColor", {s[0], s[1], s[2], 1.0f});
+    }
+  } else if (m.pbrMetallicRoughness) {
     const auto& pbr = *m.pbrMetallicRoughness;
 
     if (pbr.baseColorFactor.size() >= 3) {
@@ -192,8 +222,40 @@ void ConvertMaterial(const Document& doc, int materialIndex,
       AddDword(outMat, "transmissionTexCoord", SupportedTexCoord(m, "transmissionTexture", t.transmissionTexture->texCoord));
     }
   }
+  if (m.extensions && m.extensions->KHR_materials_diffuse_transmission) {
+    const auto& t = *m.extensions->KHR_materials_diffuse_transmission;
+    if (t.diffuseTransmissionFactor > 0.0f) {
+      AddDword(outMat, "transmission", 1u);
+      AddFloats(outMat, "transmissionFactor", {t.diffuseTransmissionFactor});
+    }
+  }
   if (m.extensions && m.extensions->KHR_materials_ior) {
     AddFloats(outMat, "ior", {m.extensions->KHR_materials_ior->ior});
+  }
+  if (m.extensions && m.extensions->KHR_materials_clearcoat) {
+    const auto& c = *m.extensions->KHR_materials_clearcoat;
+    AddFloats(outMat, "clearcoatFactor", {c.clearcoatFactor});
+    AddFloats(outMat, "clearcoatRoughness", {c.clearcoatRoughnessFactor});
+  }
+  if (m.extensions && m.extensions->KHR_materials_specular) {
+    const auto& s = *m.extensions->KHR_materials_specular;
+    float r = 1.0f, g = 1.0f, b = 1.0f;
+    if (s.specularColorFactor.size() >= 3) {
+      r = s.specularColorFactor[0];
+      g = s.specularColorFactor[1];
+      b = s.specularColorFactor[2];
+    }
+    AddFloats(outMat, "specularColor", {0.04f * r, 0.04f * g, 0.04f * b, s.specularFactor});
+  }
+  if (m.extensions && m.extensions->KHR_materials_unlit) {
+    AddDword(outMat, "unlit", 1u);
+  }
+  if (m.extensions && m.extensions->KHR_materials_sheen) {
+    const auto& s = *m.extensions->KHR_materials_sheen;
+    if (s.sheenColorFactor.size() >= 3) {
+      AddFloats(outMat, "sheenColor", {s.sheenColorFactor[0], s.sheenColorFactor[1], s.sheenColorFactor[2]});
+    }
+    AddFloats(outMat, "sheenRoughness", {s.sheenRoughnessFactor});
   }
 
   uint32_t alphaMode =

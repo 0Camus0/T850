@@ -30,6 +30,8 @@ uniform highp sampler2D SceneDepthTex;
 uniform mediump sampler2D EmissiveTex;
 #endif
 
+uniform highp sampler2D SceneColorTex;
+
 uniform mediump samplerCube texEnv;
 
 uniform highp vec4 LightPos;
@@ -48,6 +50,8 @@ uniform highp vec4 EmissiveColor;
 uniform highp vec4 AlphaParams;
 uniform highp vec4 ForwardParams;
 uniform highp vec4 TexCoordSets;
+uniform highp vec4 MaterialParams;
+uniform highp vec4 MaterialParams2;
 uniform highp vec4 LightPositions[128];
 uniform highp vec4 LightColors[128];
 uniform highp vec4 LightRadius[32];
@@ -205,6 +209,16 @@ highp vec4 SampleBaseColor(highp vec2 uv)
 #else
     return DiffuseColor;
 #endif
+}
+
+highp vec3 SampleEmissive(highp vec2 uv)
+{
+    highp vec3 emissive = EmissiveColor.rgb;
+#ifdef EMISSIVE_MAP
+    highp vec2 emissiveUV = TexCoordSets.w > 0.5 ? GetTexCoord(TexCoordSets.w) : uv;
+    emissive *= SampleTexture2D(EmissiveTex, emissiveUV).rgb;
+#endif
+    return emissive * MaterialParams.w;
 }
 
 void ApplyAlphaMask(inout highp vec4 color)
@@ -371,17 +385,19 @@ void main()
     BuildSurface(color, normal, geoNormal, metallic, roughness, selfShadow, uv);
     highp float outDepth = Pos.z / Pos.w;
 #ifdef ES_30
-    colorOut_0 = vec4(color.rgb, 0.0);
+    colorOut_0 = vec4(color.rgb, clamp(SpecularColor.w, 0.0, 1.0));
     colorOut_1 = vec4(normal * 0.5 + 0.5, roughness);
-    colorOut_2 = vec4(metallic, selfShadow, 0.0, Intensities.w / 255.0);
-    colorOut_3 = vec4(geoNormal * 0.5 + 0.5, 0.0);
-    colorOut_4 = vec4(outDepth, 0.0, 0.0, 0.0);
+    colorOut_2 = vec4(metallic, selfShadow, clamp(MaterialParams.x, 0.0, 1.0), Intensities.w / 255.0);
+    highp float packedMaterial = clamp(MaterialParams.y, 0.0, 1.0) * 0.5 + (MaterialParams.z > 0.5 ? 0.5 : 0.0);
+    colorOut_3 = vec4(geoNormal * 0.5 + 0.5, packedMaterial);
+    colorOut_4 = vec4(outDepth, SampleEmissive(uv));
 #else
-    gl_FragData[0] = vec4(color.rgb, 0.0);
+    gl_FragData[0] = vec4(color.rgb, clamp(SpecularColor.w, 0.0, 1.0));
     gl_FragData[1] = vec4(normal * 0.5 + 0.5, roughness);
-    gl_FragData[2] = vec4(metallic, selfShadow, 0.0, Intensities.w / 255.0);
-    gl_FragData[3] = vec4(geoNormal * 0.5 + 0.5, 0.0);
-    gl_FragData[4] = vec4(outDepth, 0.0, 0.0, 0.0);
+    gl_FragData[2] = vec4(metallic, selfShadow, clamp(MaterialParams.x, 0.0, 1.0), Intensities.w / 255.0);
+    highp float packedMaterial = clamp(MaterialParams.y, 0.0, 1.0) * 0.5 + (MaterialParams.z > 0.5 ? 0.5 : 0.0);
+    gl_FragData[3] = vec4(geoNormal * 0.5 + 0.5, packedMaterial);
+    gl_FragData[4] = vec4(outDepth, SampleEmissive(uv));
 #endif
     gl_FragDepth = outDepth;
 }
@@ -415,18 +431,21 @@ void main()
     highp float selfShadow;
     highp vec2 uv;
     BuildSurface(color, normal, geoNormal, metallic, roughness, selfShadow, uv);
+    highp vec3 emissive = SampleEmissive(uv);
 
     if (ForwardParams.z > 0.5 && ForwardParams.x > 0.0 && ForwardParams.y > 0.0) {
         highp vec2 screenUV = gl_FragCoord.xy / ForwardParams.xy;
         highp float sceneDepth = SampleTexture2D(SceneDepthTex, screenUV).r;
         highp float meshDepth = Pos.z / Pos.w;
-        if (sceneDepth > 0.0001 && meshDepth < sceneDepth - 0.00001)
+        highp float depthBias = length(emissive) > 0.001 ? 0.001 : 0.0;
+        if (sceneDepth > 0.0001 && meshDepth < sceneDepth - depthBias)
             discard;
     }
 
     highp vec3 albedo = pow(max(color.rgb, vec3(0.0)), vec3(2.2));
     highp vec3 eyeDir = normalize(CameraPosition.xyz - WorldPos.xyz);
-    highp vec3 F0 = mix(vec3(0.04), albedo, metallic);
+    highp vec3 dielectricF0 = max(SpecularColor.rgb * SpecularColor.w, vec3(0.0));
+    highp vec3 F0 = mix(dielectricF0, albedo, metallic);
     highp vec3 directLight = vec3(0.0);
     highp int numLights = int(CameraInfo.w);
 
@@ -462,6 +481,7 @@ void main()
     }
 
     highp vec3 finalColor = directLight * selfShadow;
+    highp float iblFactor = max(MaterialParams2.w, 0.0);
     highp vec3 reflectedVec = reflect(-eyeDir, normal);
     reflectedVec.x = -reflectedVec.x;
     reflectedVec.z = -reflectedVec.z;
@@ -469,25 +489,42 @@ void main()
     highp vec3 kDiffuseEnv = (vec3(1.0) - kSpecular) * (1.0 - metallic);
     highp vec3 envSpec = SampleCubeLod(texEnv, reflectedVec, roughness * 4.0);
     highp float envAtten = (1.0 - roughness) * (1.0 - roughness);
-    finalColor += envSpec * kSpecular * envAtten;
+    finalColor += envSpec * kSpecular * envAtten * iblFactor;
     highp vec3 irradianceDir = normal;
     irradianceDir.x = -irradianceDir.x;
     irradianceDir.z = -irradianceDir.z;
     highp vec3 irradiance = SampleCubeLod(texEnv, irradianceDir, 6.0);
-    finalColor += irradiance * albedo * kDiffuseEnv;
+    finalColor += irradiance * albedo * kDiffuseEnv * iblFactor;
     finalColor += albedo * AmbientColor.rgb * kDiffuseEnv;
 
-    highp vec3 emissive = EmissiveColor.rgb;
-#ifdef EMISSIVE_MAP
-    highp vec2 emissiveUV = TexCoordSets.w > 0.5 ? GetTexCoord(TexCoordSets.w) : uv;
-    emissive *= SampleTexture2D(EmissiveTex, emissiveUV).rgb;
-#endif
+    highp float clearcoatFactor = clamp(MaterialParams.x, 0.0, 1.0);
+    if (clearcoatFactor > 0.001) {
+        highp float clearcoatRoughness = clamp(MaterialParams.y, 0.04, 1.0);
+        highp vec3 clearcoatSpec = SampleCubeLod(texEnv, reflectedVec, clearcoatRoughness * 4.0);
+        highp float clearcoatAtten = (1.0 - clearcoatRoughness) * (1.0 - clearcoatRoughness);
+        highp vec3 clearcoatF = FresnelCalc(clamp(dot(normal, eyeDir), 0.0, 1.0), vec3(0.04));
+        highp float clearcoatWeight = clamp(clearcoatFactor * max(clearcoatF.x, max(clearcoatF.y, clearcoatF.z)), 0.0, 1.0);
+        finalColor = mix(finalColor, clearcoatSpec * clearcoatAtten * iblFactor, clearcoatWeight);
+    }
+
+    if (MaterialParams.z > 0.5) {
+        finalColor = albedo;
+    }
+
+    highp float transmission = clamp(AlphaParams.w * MaterialParams2.x, 0.0, 1.0);
+    if (MaterialParams2.z > 0.5 && transmission > 0.001 && MaterialParams2.y > 0.0 && ForwardParams.x > 0.0 && ForwardParams.y > 0.0) {
+        highp vec2 screenUV = gl_FragCoord.xy / ForwardParams.xy;
+        highp float iorOffset = clamp(abs(ForwardParams.w - 1.0), 0.0, 1.0);
+        highp vec2 refractUV = clamp(screenUV + normal.xy * MaterialParams2.y * transmission * (0.5 + iorOffset), vec2(0.0), vec2(1.0));
+        highp vec3 sceneColor = SampleTexture2D(SceneColorTex, refractUV).rgb;
+        finalColor = mix(finalColor, sceneColor, transmission);
+    }
     finalColor += emissive;
 
     highp float alpha = color.a;
-    if (AlphaParams.w > 0.0 && alpha >= 0.999)
-        alpha = clamp(1.0 - AlphaParams.w * 0.65, 0.0, 1.0);
-    if (AlphaParams.x < 1.5 && AlphaParams.w <= 0.0)
+    if (transmission > 0.0 && alpha >= 0.999)
+        alpha = clamp(1.0 - transmission, 0.0, 1.0);
+    if (AlphaParams.x < 1.5 && transmission <= 0.0)
         alpha = 1.0;
 #ifdef ES_30
     colorOut = vec4(finalColor, alpha);

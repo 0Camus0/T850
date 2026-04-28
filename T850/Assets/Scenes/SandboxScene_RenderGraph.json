@@ -83,12 +83,23 @@
       "pop": false
     },
     {
+      "name": "Opaque Scene Copy",
+      "target": "Extra16F",
+      "inputs": [
+        { "source": "Deferred:COLOR0", "slot": 0 }
+      ],
+      "draws": [
+        { "type": "fullscreen_quad", "signature": "FSQUAD_1_TEX" }
+      ]
+    },
+    {
       "name": "Forward Transparent",
       "target": "Deferred",
       "push": false,
       "state": { "depth_stencil": "NONE", "cull_face": "FRONT_AND_BACK", "blend": "ALPHA_BLEND" },
       "inputs": [
-        { "source": "GBuffer:COLOR4", "slot": 7 }
+        { "source": "GBuffer:COLOR4", "slot": 7 },
+        { "source": "Extra16F:COLOR0", "slot": 9 }
       ],
       "bind_environment_map": true,
       "draws": [

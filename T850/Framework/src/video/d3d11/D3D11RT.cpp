@@ -282,6 +282,35 @@ namespace t850 {
       deviceContext->ClearDepthStencilView(D3D11DepthStencilTargetView.Get(), D3D11_CLEAR_DEPTH, 0.0f, 0);
     }
   }
+
+  void D3DXRT::SetLoad(const DeviceContext& context)
+  {
+    ID3D11DeviceContext* deviceContext = reinterpret_cast<ID3D11DeviceContext*>(T8DeviceContext->GetAPIObject());
+    std::vector<ID3D11RenderTargetView**> RTVA;
+    for (int i = 0; i < number_RT; i++) {
+      RTVA.push_back(vD3D11RenderTargetView[i].GetAddressOf());
+    }
+
+    if (number_RT == 0)
+      RTVA.push_back(0);
+
+    if (isCubeDepth) {
+      D3D11DepthStencilTargetView = D3D11CubeFaceDSVs[0];
+    }
+
+    deviceContext->OMSetRenderTargets(number_RT, &RTVA[0][0], D3D11DepthStencilTargetView.Get());
+
+    D3D11_VIEWPORT viewport_RT;
+    viewport_RT.TopLeftX = 0;
+    viewport_RT.TopLeftY = 0;
+    viewport_RT.Width = static_cast<float>(w);
+    viewport_RT.Height = static_cast<float>(h);
+    viewport_RT.MinDepth = 0;
+    viewport_RT.MaxDepth = 1;
+
+    deviceContext->RSSetViewports(1, &viewport_RT);
+  }
+
   void D3DXRT::ChangeCubeDepthTexture(int i)
   {
     if (!isCubeDepth || i < 0 || i >= 6) return;

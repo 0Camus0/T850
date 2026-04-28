@@ -44,6 +44,99 @@ namespace t850 {
       if (values.size() >= 4)
         target = XVECTOR3(values[0], values[1], values[2], values[3]);
     }
+
+    const char* AlphaModeName(unsigned int mode) {
+      switch (mode) {
+      case 1: return "MASK";
+      case 2: return "BLEND";
+      default: return "OPAQUE";
+      }
+    }
+
+    void LogLoadedMeshDetails(const XDataBase* xFile, const std::vector<RenderMesh::MeshInfo>& meshInfos) {
+      if (!xFile || xFile->XMeshDataBase.empty())
+        return;
+
+      const xMeshContainer* meshContainer = xFile->XMeshDataBase[0];
+      const char* meshName = xFile->m_name.empty() ? "<unnamed>" : xFile->m_name.c_str();
+      unsigned long long totalTriangles = 0;
+      std::size_t totalMaterials = 0;
+      std::size_t totalSubsets = 0;
+
+      for (std::size_t i = 0; i < meshContainer->Geometry.size(); ++i) {
+        const xMeshGeometry& geometry = meshContainer->Geometry[i];
+        totalTriangles += static_cast<unsigned long long>(geometry.NumTriangles);
+        totalMaterials += geometry.MaterialList.Materials.size();
+        if (i < meshInfos.size())
+          totalSubsets += meshInfos[i].SubSets.size();
+      }
+
+      T8_LOG_INFO("[MeshInfo] Loaded mesh '%s': geometries=%zu materials=%zu subsets=%zu triangles=%llu",
+                  meshName, meshContainer->Geometry.size(), totalMaterials, totalSubsets, totalTriangles);
+
+      for (std::size_t i = 0; i < meshContainer->Geometry.size(); ++i) {
+        const xMeshGeometry& geometry = meshContainer->Geometry[i];
+        const xFinalGeometry* finalGeometry = i < xFile->MeshInfo.size() ? &xFile->MeshInfo[i] : nullptr;
+        const RenderMesh::MeshInfo* meshInfo = i < meshInfos.size() ? &meshInfos[i] : nullptr;
+        const char* geometryName = geometry.Name.empty() ? "<unnamed>" : geometry.Name.c_str();
+        std::size_t subsetCount = meshInfo ? meshInfo->SubSets.size() : 0;
+        std::size_t sourceSubsetCount = finalGeometry ? finalGeometry->Subsets.size() : 0;
+        std::size_t rowCount = std::max(geometry.MaterialList.Materials.size(), subsetCount);
+
+        T8_LOG_INFO("[MeshInfo]   Geometry[%zu] '%s': vertices=%u triangles=%u indices=%u vertexSize=%u attrs=0x%08X materials=%zu subsets=%zu sourceSubsets=%zu index=%s",
+                    i, geometryName, geometry.NumVertices, geometry.NumTriangles, geometry.NumIndices,
+                    geometry.VertexSize, geometry.VertexAttributes, geometry.MaterialList.Materials.size(),
+                    subsetCount, sourceSubsetCount, geometry.Indices32Bit ? "R32" : "R16");
+
+        for (std::size_t j = 0; j < rowCount; ++j) {
+          const xMaterial* material = j < geometry.MaterialList.Materials.size() ? &geometry.MaterialList.Materials[j] : nullptr;
+          const xSubsetInfo* sourceSubset = finalGeometry && j < finalGeometry->Subsets.size() ? &finalGeometry->Subsets[j] : nullptr;
+          const RenderMesh::SubSetInfo* subset = meshInfo && j < meshInfo->SubSets.size() ? &meshInfo->SubSets[j] : nullptr;
+          const char* materialName = material && !material->Name.empty() ? material->Name.c_str() : "<unnamed>";
+
+          T8_LOG_INFO("[MeshInfo]     Material[%zu] '%s': defaults=%zu subsetTris=%u subsetVertices=%u triStart=%u vertexStart=%u shaderKey=0x%08X matID=%d alpha=%s cutoff=%.3f doubleSided=%d unlit=%d fresnel=%d",
+                      j, materialName, material ? material->EffectInstance.pDefaults.size() : 0,
+                      subset ? subset->NumTris : (sourceSubset ? sourceSubset->NumTris : 0),
+                      subset ? subset->NumVertex : (sourceSubset ? sourceSubset->NumVertex : 0),
+                      subset ? subset->TriStart : (sourceSubset ? sourceSubset->TriStart : 0),
+                      subset ? subset->VertexStart : (sourceSubset ? sourceSubset->VertexStart : 0),
+                      subset ? subset->key.bits : 0u,
+                      subset ? subset->MatID : 0,
+                      subset ? AlphaModeName(subset->AlphaMode) : "UNKNOWN",
+                      subset ? subset->AlphaCutoff : 0.0f,
+                      subset ? (int)subset->DoubleSided : 0,
+                      subset ? (int)subset->Unlit : 0,
+                      subset ? (int)subset->bUseFresnel : 0);
+
+          if (subset) {
+            T8_LOG_INFO("[MeshInfo]       PBR: base=(%.3f, %.3f, %.3f, %.3f) spec=(%.3f, %.3f, %.3f, %.3f) metallic=%.3f roughness=%.3f emissive=(%.3f, %.3f, %.3f) transmission=%.3f ior=%.3f clearcoat=(%.3f, %.3f) sheen=(%.3f, %.3f, %.3f, %.3f)",
+                        subset->DiffuseColor.x, subset->DiffuseColor.y, subset->DiffuseColor.z, subset->DiffuseColor.w,
+                        subset->SpecularColor.x, subset->SpecularColor.y, subset->SpecularColor.z, subset->SpecularColor.w,
+                        subset->PBRParams.x, subset->PBRParams.y,
+                        subset->EmissiveColor.x, subset->EmissiveColor.y, subset->EmissiveColor.z,
+                        subset->TransmissionFactor, subset->IOR,
+                        subset->ClearcoatFactor, subset->ClearcoatRoughness,
+                        subset->SheenColor.x, subset->SheenColor.y, subset->SheenColor.z, subset->SheenRoughness);
+
+            T8_LOG_INFO("[MeshInfo]       KeyFlags: normals=%d tangents=%d binormals=%d uv0=%d uv1=%d baseColorMap=%d specularMap=%d roughnessMap=%d normalMap=%d heightMap=%d metallicMap=%d emissiveMap=%d clearcoatMap=%d gltfTangentSpace=%d",
+                        subset->key.has(ShaderKey::HAS_NORMALS) ? 1 : 0,
+                        subset->key.has(ShaderKey::HAS_TANGENTS) ? 1 : 0,
+                        subset->key.has(ShaderKey::HAS_BINORMALS) ? 1 : 0,
+                        subset->key.has(ShaderKey::HAS_TEXCOORD0) ? 1 : 0,
+                        subset->key.has(ShaderKey::HAS_TEXCOORD1) ? 1 : 0,
+                        subset->key.has(ShaderKey::DIFFUSE_MAP) ? 1 : 0,
+                        subset->key.has(ShaderKey::SPECULAR_MAP) ? 1 : 0,
+                        subset->key.has(ShaderKey::GLOSS_MAP) ? 1 : 0,
+                        subset->key.has(ShaderKey::NORMAL_MAP) ? 1 : 0,
+                        subset->key.has(ShaderKey::HEIGHT_MAP) ? 1 : 0,
+                        subset->key.has(ShaderKey::METALLIC_MAP) ? 1 : 0,
+                        subset->key.has(ShaderKey::EMISSIVE_MAP) ? 1 : 0,
+                        subset->key.has(ShaderKey::CLEARCOAT_MAP) ? 1 : 0,
+                        subset->key.has(ShaderKey::GLTF_TANGENT_SPACE) ? 1 : 0);
+          }
+        }
+      }
+    }
   }
 
 
@@ -460,6 +553,7 @@ namespace t850 {
       }
     }
 
+    LogLoadedMeshDetails(xFile, Info);
     XMatIdentity(transform);
   }
 

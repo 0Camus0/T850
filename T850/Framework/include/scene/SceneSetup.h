@@ -52,6 +52,12 @@ namespace t850 {
     // Asset paths from JSON (scenes use these in CreateAssets)
     std::vector<std::string> meshPaths;
     std::string environmentMap;
+    std::string environmentDiffuseIBL;
+    std::string environmentSpecularIBL;
+    std::string environmentBrdfLUT;
+    std::string environmentSheenIBL;
+    std::string environmentCharlieLUT;
+    std::string environmentSheenELUT;
     std::string name;
   };
 

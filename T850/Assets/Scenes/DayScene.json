@@ -398,6 +398,12 @@
       "Models/SponzaEsc.X"
    ],
    "environment_map": "sky/CubeMap_SkyWater.dds",
+   "environment_diffuse_ibl": "",
+   "environment_specular_ibl": "",
+   "environment_brdf_lut": "LUT/lut_ggx.png",
+   "environment_sheen_ibl": "",
+   "environment_charlie_lut": "LUT/lut_charlie.png",
+   "environment_sheen_e_lut": "LUT/lut_sheen_E.png",
    "quality": {
       "shadow_map_resolution": 2048,
       "god_rays_resolution": 0,

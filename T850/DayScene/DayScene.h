@@ -160,6 +160,13 @@ class DayScene : public t850::SceneBase
   //int
 
   int				EnvMapTexIndex;
+  int       DiffuseIBLTexIndex = -1;
+  int       SpecularIBLTexIndex = -1;
+  int       BrdfLUTTexIndex = -1;
+  int       SheenIBLTexIndex = -1;
+  int       CharlieLUTTexIndex = -1;
+  int       SheenELUTTexIndex = -1;
+  t850::EnvironmentMapSet EnvMaps;
   int       fireTextureIndx;
   int       noiseTexture;
 

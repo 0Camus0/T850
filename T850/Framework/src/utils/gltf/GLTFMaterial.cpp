@@ -32,6 +32,7 @@
 #include <utils/XDataBase.h>
 #include <utils/Log.h>
 
+#include <cmath>
 #include <string>
 
 namespace t850 {
@@ -69,6 +70,34 @@ uint32_t SupportedTexCoord(const Material& mat, const char* propertyName, int te
   T8_LOG_ERROR("[glTF] material '%s': %s.texCoord=%d (only UV0/UV1 supported)",
                mat.name.c_str(), propertyName, texCoord);
   return 0;
+}
+
+template <typename TextureInfoT>
+int EffectiveTexCoord(const TextureInfoT& textureInfo) {
+  if (textureInfo.extensions && textureInfo.extensions->KHR_texture_transform && textureInfo.extensions->KHR_texture_transform->texCoord)
+    return *textureInfo.extensions->KHR_texture_transform->texCoord;
+  return textureInfo.texCoord;
+}
+
+float Vec2ValueOrDefault(const std::vector<float>& values, std::size_t index, float fallback) {
+  return values.size() > index ? values[index] : fallback;
+}
+
+template <typename TextureInfoT>
+void AddUVTransform(xF::xMaterial& mat, const std::string& prefix, const TextureInfoT& textureInfo) {
+  if (!textureInfo.extensions || !textureInfo.extensions->KHR_texture_transform)
+    return;
+
+  const TextureTransform& transform = *textureInfo.extensions->KHR_texture_transform;
+  float offsetX = Vec2ValueOrDefault(transform.offset, 0, 0.0f);
+  float offsetY = Vec2ValueOrDefault(transform.offset, 1, 0.0f);
+  float scaleX = Vec2ValueOrDefault(transform.scale, 0, 1.0f);
+  float scaleY = Vec2ValueOrDefault(transform.scale, 1, 1.0f);
+  float sinRotation = std::sin(transform.rotation);
+  float cosRotation = std::cos(transform.rotation);
+
+  AddFloats(mat, prefix + "UVTransform0", {cosRotation * scaleX, -sinRotation * scaleY, offsetX, 0.0f});
+  AddFloats(mat, prefix + "UVTransform1", {sinRotation * scaleX, cosRotation * scaleY, offsetY, 0.0f});
 }
 
 // Resolve `textures[texIdx].source → images[imgIdx]` to a name string
@@ -139,7 +168,8 @@ void ConvertMaterial(const Document& doc, int materialIndex,
     if (sg.diffuseTexture) {
       std::string n = ResolveTextureName(doc, sg.diffuseTexture->index);
       if (!n.empty()) AddString(outMat, "diffuseMap", n);
-      AddDword(outMat, "diffuseTexCoord", SupportedTexCoord(m, "pbrSpecularGlossiness.diffuseTexture", sg.diffuseTexture->texCoord));
+      AddDword(outMat, "diffuseTexCoord", SupportedTexCoord(m, "pbrSpecularGlossiness.diffuseTexture", EffectiveTexCoord(*sg.diffuseTexture)));
+      AddUVTransform(outMat, "diffuse", *sg.diffuseTexture);
     }
 
     AddFloats(outMat, "pbrMetallic", {0.0f});
@@ -165,7 +195,8 @@ void ConvertMaterial(const Document& doc, int materialIndex,
     if (pbr.baseColorTexture) {
       std::string n = ResolveTextureName(doc, pbr.baseColorTexture->index);
       if (!n.empty()) AddString(outMat, "diffuseMap", n);
-      AddDword(outMat, "diffuseTexCoord", SupportedTexCoord(m, "baseColorTexture", pbr.baseColorTexture->texCoord));
+      AddDword(outMat, "diffuseTexCoord", SupportedTexCoord(m, "baseColorTexture", EffectiveTexCoord(*pbr.baseColorTexture)));
+      AddUVTransform(outMat, "diffuse", *pbr.baseColorTexture);
     }
 
     AddFloats(outMat, "pbrMetallic",  {pbr.metallicFactor});
@@ -174,7 +205,8 @@ void ConvertMaterial(const Document& doc, int materialIndex,
     if (pbr.metallicRoughnessTexture) {
       std::string n = ResolveTextureName(doc, pbr.metallicRoughnessTexture->index);
       if (!n.empty()) AddString(outMat, "metallicMap", n);
-      AddDword(outMat, "metallicTexCoord", SupportedTexCoord(m, "metallicRoughnessTexture", pbr.metallicRoughnessTexture->texCoord));
+      AddDword(outMat, "metallicTexCoord", SupportedTexCoord(m, "metallicRoughnessTexture", EffectiveTexCoord(*pbr.metallicRoughnessTexture)));
+      AddUVTransform(outMat, "metallic", *pbr.metallicRoughnessTexture);
     }
   } else {
     // No PBR block — fall back to defaults.
@@ -186,17 +218,19 @@ void ConvertMaterial(const Document& doc, int materialIndex,
   if (m.normalTexture) {
     std::string n = ResolveTextureName(doc, m.normalTexture->index);
     if (!n.empty()) AddString(outMat, "normalMap", n);
-    AddDword(outMat, "normalTexCoord", SupportedTexCoord(m, "normalTexture", m.normalTexture->texCoord));
+    AddDword(outMat, "normalTexCoord", SupportedTexCoord(m, "normalTexture", EffectiveTexCoord(*m.normalTexture)));
+    AddUVTransform(outMat, "normal", *m.normalTexture);
   }
   if (m.occlusionTexture) {
     std::string n = ResolveTextureName(doc, m.occlusionTexture->index);
     if (!n.empty()) AddString(outMat, "occlusionMap", n);
-    AddDword(outMat, "occlusionTexCoord", SupportedTexCoord(m, "occlusionTexture", m.occlusionTexture->texCoord));
+    AddDword(outMat, "occlusionTexCoord", SupportedTexCoord(m, "occlusionTexture", EffectiveTexCoord(*m.occlusionTexture)));
   }
   if (m.emissiveTexture) {
     std::string n = ResolveTextureName(doc, m.emissiveTexture->index);
     if (!n.empty()) AddString(outMat, "emissiveMap", n);
-    AddDword(outMat, "emissiveTexCoord", SupportedTexCoord(m, "emissiveTexture", m.emissiveTexture->texCoord));
+    AddDword(outMat, "emissiveTexCoord", SupportedTexCoord(m, "emissiveTexture", EffectiveTexCoord(*m.emissiveTexture)));
+    AddUVTransform(outMat, "emissive", *m.emissiveTexture);
   }
   float emissiveStrength = 1.0f;
   if (m.extensions && m.extensions->KHR_materials_emissive_strength) {
@@ -219,7 +253,7 @@ void ConvertMaterial(const Document& doc, int materialIndex,
     if (t.transmissionTexture) {
       std::string n = ResolveTextureName(doc, t.transmissionTexture->index);
       if (!n.empty()) AddString(outMat, "transmissionMap", n);
-      AddDword(outMat, "transmissionTexCoord", SupportedTexCoord(m, "transmissionTexture", t.transmissionTexture->texCoord));
+      AddDword(outMat, "transmissionTexCoord", SupportedTexCoord(m, "transmissionTexture", EffectiveTexCoord(*t.transmissionTexture)));
     }
   }
   if (m.extensions && m.extensions->KHR_materials_diffuse_transmission) {
@@ -236,6 +270,18 @@ void ConvertMaterial(const Document& doc, int materialIndex,
     const auto& c = *m.extensions->KHR_materials_clearcoat;
     AddFloats(outMat, "clearcoatFactor", {c.clearcoatFactor});
     AddFloats(outMat, "clearcoatRoughness", {c.clearcoatRoughnessFactor});
+    if (c.clearcoatTexture) {
+      std::string n = ResolveTextureName(doc, c.clearcoatTexture->index);
+      if (!n.empty()) AddString(outMat, "clearcoatMap", n);
+      AddDword(outMat, "clearcoatTexCoord", SupportedTexCoord(m, "clearcoatTexture", EffectiveTexCoord(*c.clearcoatTexture)));
+      AddUVTransform(outMat, "clearcoat", *c.clearcoatTexture);
+    }
+    if (c.clearcoatRoughnessTexture) {
+      std::string n = ResolveTextureName(doc, c.clearcoatRoughnessTexture->index);
+      if (!n.empty()) AddString(outMat, "clearcoatRoughnessMap", n);
+      AddDword(outMat, "clearcoatRoughnessTexCoord", SupportedTexCoord(m, "clearcoatRoughnessTexture", EffectiveTexCoord(*c.clearcoatRoughnessTexture)));
+      AddUVTransform(outMat, "clearcoatRoughness", *c.clearcoatRoughnessTexture);
+    }
   }
   if (m.extensions && m.extensions->KHR_materials_specular) {
     const auto& s = *m.extensions->KHR_materials_specular;
@@ -256,6 +302,18 @@ void ConvertMaterial(const Document& doc, int materialIndex,
       AddFloats(outMat, "sheenColor", {s.sheenColorFactor[0], s.sheenColorFactor[1], s.sheenColorFactor[2]});
     }
     AddFloats(outMat, "sheenRoughness", {s.sheenRoughnessFactor});
+    if (s.sheenColorTexture) {
+      std::string n = ResolveTextureName(doc, s.sheenColorTexture->index);
+      if (!n.empty()) AddString(outMat, "sheenColorMap", n);
+      AddDword(outMat, "sheenColorTexCoord", SupportedTexCoord(m, "sheenColorTexture", EffectiveTexCoord(*s.sheenColorTexture)));
+      AddUVTransform(outMat, "sheenColor", *s.sheenColorTexture);
+    }
+    if (s.sheenRoughnessTexture) {
+      std::string n = ResolveTextureName(doc, s.sheenRoughnessTexture->index);
+      if (!n.empty()) AddString(outMat, "sheenRoughnessMap", n);
+      AddDword(outMat, "sheenRoughnessTexCoord", SupportedTexCoord(m, "sheenRoughnessTexture", EffectiveTexCoord(*s.sheenRoughnessTexture)));
+      AddUVTransform(outMat, "sheenRoughness", *s.sheenRoughnessTexture);
+    }
   }
 
   uint32_t alphaMode =
@@ -283,6 +341,21 @@ void ConvertMaterial(const Document& doc, int materialIndex,
   if (m.normalTexture)    checkTex(m.normalTexture->index);
   if (m.occlusionTexture) checkTex(m.occlusionTexture->index);
   if (m.emissiveTexture)  checkTex(m.emissiveTexture->index);
+  if (m.extensions && m.extensions->KHR_materials_sheen) {
+    if (m.extensions->KHR_materials_sheen->sheenColorTexture)
+      checkTex(m.extensions->KHR_materials_sheen->sheenColorTexture->index);
+    if (m.extensions->KHR_materials_sheen->sheenRoughnessTexture)
+      checkTex(m.extensions->KHR_materials_sheen->sheenRoughnessTexture->index);
+  }
+  if (m.extensions && m.extensions->KHR_materials_clearcoat) {
+    const auto& c = *m.extensions->KHR_materials_clearcoat;
+    if (c.clearcoatTexture)
+      checkTex(c.clearcoatTexture->index);
+    if (c.clearcoatRoughnessTexture)
+      checkTex(c.clearcoatRoughnessTexture->index);
+    if (c.clearcoatNormalTexture)
+      checkTex(c.clearcoatNormalTexture->index);
+  }
   AddDword(outMat, "Tiled", tiled ? 1u : 0u);
 }
 

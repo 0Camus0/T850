@@ -96,6 +96,13 @@ public:
   GaussFilter NearDOFFilter;
 
   int EnvMapTexIndex = -1;
+  int DiffuseIBLTexIndex = -1;
+  int SpecularIBLTexIndex = -1;
+  int BrdfLUTTexIndex = -1;
+  int SheenIBLTexIndex = -1;
+  int CharlieLUTTexIndex = -1;
+  int SheenELUTTexIndex = -1;
+  t850::EnvironmentMapSet EnvMaps;
   int GBufferPass = -1;
   int DeferredPass = -1;
   int Extra16FPass = -1;

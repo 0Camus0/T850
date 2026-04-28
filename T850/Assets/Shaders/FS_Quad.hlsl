@@ -33,6 +33,17 @@ float roundTo(float num,float decimals){
 	return round(num*shift) / shift;
 }
 
+float LinearToSRGBChannel(float value)
+{
+	value = saturate(value);
+	return value <= 0.0031308f ? value * 12.92f : 1.055f * pow(value, 1.0f / 2.4f) - 0.055f;
+}
+
+float3 LinearToSRGB(float3 color)
+{
+	return float3(LinearToSRGBChannel(color.r), LinearToSRGBChannel(color.g), LinearToSRGBChannel(color.b));
+}
+
 float4 ReconstructPosition(float2 clipPos, float depth) {
 	float4 position = mul(WVPInverse, float4(clipPos, depth, 1.0));
 	position.xyz /= position.w;
@@ -70,6 +81,16 @@ float3 fresnelSchlickRoughness(float cosTheta, float3 F0, float roughness)
 	return F0 + (max(float3(1.0 - roughness, 1.0 - roughness, 1.0 - roughness), F0) - F0) * pow(1.0 - cosTheta, 5.0);
 }
 
+float3 IBLGGXFresnel(float NdotV, float roughness, float3 F0, float2 brdfSample)
+{
+	float3 kSpecular = fresnelSchlickRoughness(NdotV, F0, roughness);
+	float3 singleScatter = kSpecular * brdfSample.x + brdfSample.y;
+	float energyMiss = saturate(1.0f - brdfSample.x - brdfSample.y);
+	float3 averageFresnel = F0 + (1.0f - F0) / 21.0f;
+	float3 multiScatter = energyMiss * singleScatter * averageFresnel / max(float3(1.0f, 1.0f, 1.0f) - averageFresnel * energyMiss, float3(0.001f, 0.001f, 0.001f));
+	return max(singleScatter + multiScatter, float3(0.0f, 0.0f, 0.0f));
+}
+
 float GeometrySchlickGGX(float Ndot, float roughness)
 {
 	float r = (roughness + 1.0);
@@ -105,6 +126,57 @@ float3 CalculateDiffuse(float3 albedoColor, float3 normal, float3 light)
 {
 	return albedoColor * clamp(dot(normal, light), 0.0f, 1.0f);
 }
+
+float Max3(float3 value)
+{
+	return max(value.x, max(value.y, value.z));
+}
+
+float LambdaSheenNumericHelper(float x, float alphaG)
+{
+	float oneMinusAlphaSq = (1.0f - alphaG) * (1.0f - alphaG);
+	float a = lerp(21.5473f, 25.3245f, oneMinusAlphaSq);
+	float b = lerp(3.82987f, 3.32435f, oneMinusAlphaSq);
+	float c = lerp(0.19823f, 0.16801f, oneMinusAlphaSq);
+	float d = lerp(-1.97760f, -1.27393f, oneMinusAlphaSq);
+	float e = lerp(-4.32054f, -4.85967f, oneMinusAlphaSq);
+	return a / (1.0f + b * pow(x, c)) + d * x + e;
+}
+
+float LambdaSheen(float cosTheta, float alphaG)
+{
+	if (abs(cosTheta) < 0.5f)
+		return exp(LambdaSheenNumericHelper(cosTheta, alphaG));
+	return exp(2.0f * LambdaSheenNumericHelper(0.5f, alphaG) - LambdaSheenNumericHelper(1.0f - cosTheta, alphaG));
+}
+
+float VisibilitySheen(float NdotL, float NdotV, float sheenRoughness)
+{
+	sheenRoughness = max(sheenRoughness, 0.000001f);
+	float alphaG = sheenRoughness * sheenRoughness;
+	float denom = max((1.0f + LambdaSheen(NdotV, alphaG) + LambdaSheen(NdotL, alphaG)) * (4.0f * NdotV * NdotL), 0.000001f);
+	return clamp(1.0f / denom, 0.0f, 1.0f);
+}
+
+float DistributionCharlie(float sheenRoughness, float NdotH)
+{
+	sheenRoughness = max(sheenRoughness, 0.000001f);
+	float alphaG = sheenRoughness * sheenRoughness;
+	float invR = 1.0f / alphaG;
+	float cos2h = NdotH * NdotH;
+	float sin2h = max(1.0f - cos2h, 0.0f);
+	return (2.0f + invR) * pow(sin2h, invR * 0.5f) / (2.0f * 3.1415926f);
+}
+
+float3 BRDFSpecularSheen(float3 sheenColor, float sheenRoughness, float NdotL, float NdotV, float NdotH)
+{
+	return sheenColor * DistributionCharlie(sheenRoughness, NdotH) * VisibilitySheen(NdotL, NdotV, sheenRoughness);
+}
+
+float3 CalculateSheenRadiance(float3 sheenColor, float sheenRoughness, float3 lightColor, float intensity, float NdotL, float NdotV, float NdotH)
+{
+	return lightColor * intensity * NdotL * BRDFSpecularSheen(sheenColor, sheenRoughness, NdotL, NdotV, NdotH);
+}
 #endif
 
 #ifdef DEFERRED_PASS
@@ -115,6 +187,30 @@ Texture2D tex3 : register(t3);
 Texture2D tex4 : register(t4);
 Texture2D tex5 : register(t5);
 TextureCube texEnv : register(t6);
+TextureCube texIBLDiffuse : register(t10);
+TextureCube texIBLSpecular : register(t11);
+Texture2D texIBLBRDF : register(t12);
+TextureCube texIBLCharlie : register(t13);
+Texture2D texIBLCharlieLUT : register(t14);
+Texture2D texIBLSheenELUT : register(t15);
+Texture2D tex6 : register(t7);
+
+float AlbedoSheenScalingLUT(float NdotV, float sheenRoughness)
+{
+	return texIBLSheenELUT.SampleLevel(SS, float2(saturate(NdotV), saturate(sheenRoughness)), 0.0f).r;
+}
+
+float3 GetIBLRadianceCharlie(float3 normal, float3 viewDir, float sheenRoughness, float3 sheenColor, float iblMaxMip)
+{
+	float NdotV = max(dot(normal, viewDir), 0.0f);
+	float lod = sheenRoughness * iblMaxMip;
+	float3 reflectedVec = reflect(-viewDir, normal);
+	reflectedVec.x = -reflectedVec.x;
+	reflectedVec.z = -reflectedVec.z;
+	float brdf = texIBLCharlieLUT.SampleLevel(SS, float2(saturate(NdotV), saturate(sheenRoughness)), 0.0f).b;
+	float3 sheenLight = texIBLCharlie.SampleLevel(SS, reflectedVec, lod).rgb;
+	return sheenLight * sheenColor * brdf;
+}
 
 float4 FS( VS_OUTPUT input ) : SV_TARGET {
 	float4 Final = float4(0.0,0.0,0.0,1.0);
@@ -155,6 +251,11 @@ float4 FS( VS_OUTPUT input ) : SV_TARGET {
 		float3 normal = normalmap.xyz * 2.0 - 1.0;
 		normal = normalize(normal);
 		float rough = normalmap.a;
+		float4 SheenData = tex6.Sample(SS, input.texture0);
+		float3 sheenColor = saturate(SheenData.rgb);
+		float sheenRoughness = saturate(SheenData.a);
+		float sheenStrength = Max3(sheenColor);
+		bool hasSheenLUT = brightness.w > 0.5f;
 		float3 directLight = float3(0.0, 0.0, 0.0);
 
 		float4 geoData = tex3.Sample(SS, input.texture0);
@@ -187,7 +288,17 @@ float4 FS( VS_OUTPUT input ) : SV_TARGET {
 				float3 Kd = (float3(1.0f, 1.0f, 1.0f) - F) * (1.0f - metallic);
 
 				float geoHorizon = saturate(dot(geoNormal, LightDir));
-				directLight += (SpecularRes.xyz + Kd * Diffuse) * geoHorizon;
+				float NdotL = max(dot(normal, LightDir), 0.0f);
+				float NdotVLight = max(dot(normal, EyeDir), 0.0f);
+				float NdotH = max(dot(normal, Half), 0.0f);
+				float albedoSheenScaling = 1.0f;
+				float3 sheenLight = float3(0.0f, 0.0f, 0.0f);
+				if (hasSheenLUT && sheenStrength > 0.0f) {
+					albedoSheenScaling = min(1.0f - sheenStrength * AlbedoSheenScalingLUT(NdotVLight, sheenRoughness),
+					                         1.0f - sheenStrength * AlbedoSheenScalingLUT(NdotL, sheenRoughness));
+					sheenLight = CalculateSheenRadiance(sheenColor, sheenRoughness, LightColors[i].xyz, intensity, NdotL, NdotVLight, NdotH);
+				}
+				directLight += (sheenLight + (SpecularRes.xyz + Kd * Diffuse) * albedoSheenScaling) * geoHorizon;
 			} else {
 				// Point light
 				float Rad = LightRadius[i >> 2][i & 3];
@@ -213,7 +324,17 @@ float4 FS( VS_OUTPUT input ) : SV_TARGET {
 					attenuation = max(attenuation, 0.0);
 
 					float geoHorizon = saturate(dot(geoNormal, LightDir));
-					directLight += (SpecularRes.xyz * attenuation + attenuation * Kd * Diffuse) * geoHorizon;
+					float NdotL = max(dot(normal, LightDir), 0.0f);
+					float NdotVLight = max(dot(normal, EyeDir), 0.0f);
+					float NdotH = max(dot(normal, Half), 0.0f);
+					float albedoSheenScaling = 1.0f;
+					float3 sheenLight = float3(0.0f, 0.0f, 0.0f);
+					if (hasSheenLUT && sheenStrength > 0.0f) {
+						albedoSheenScaling = min(1.0f - sheenStrength * AlbedoSheenScalingLUT(NdotVLight, sheenRoughness),
+						                         1.0f - sheenStrength * AlbedoSheenScalingLUT(NdotL, sheenRoughness));
+						sheenLight = CalculateSheenRadiance(sheenColor, sheenRoughness, LightColors[i].xyz, intensity, NdotL, NdotVLight, NdotH) * attenuation;
+					}
+					directLight += (sheenLight + (SpecularRes.xyz * attenuation + attenuation * Kd * Diffuse) * albedoSheenScaling) * geoHorizon;
 				}
 			}
 		}
@@ -223,26 +344,38 @@ float4 FS( VS_OUTPUT input ) : SV_TARGET {
 		Final.xyz += directLight * Shadow * selfShadow;
 
 		// Indirect lighting (IBL + ambient) — NOT affected by shadow
-		float3 kSpecular = clamp(fresnelSchlickRoughness(max(dot(normal, EyeDir), 0.0f), F0, rough), 0.0, 1.0);
+		float iblMaxMip = max(toogles.w, 0.0f);
+		bool hasBrdfLUT = brightness.w > 0.5f;
+		float NdotV = max(dot(normal, EyeDir), 0.0f);
+		float3 kSpecular = clamp(fresnelSchlickRoughness(NdotV, F0, rough), 0.0, 1.0);
 		float3 kDiffuseEnv = (float3(1.0f, 1.0f, 1.0f) - kSpecular) * (1.0f - metallic);
 
 		// Specular IBL: env reflection (toogles.z = IBL factor)
-		float3 RefleCol = texEnv.SampleLevel(SS, ReflectedVec, rough * 4.0f).xyz;
+		float3 RefleCol = texIBLSpecular.SampleLevel(SS, ReflectedVec, rough * iblMaxMip).xyz;
 		float envAtten = (1.0f - rough) * (1.0f - rough);
-		Final.xyz += RefleCol * kSpecular.xyz * envAtten * toogles.z;
+		float2 brdfSample = hasBrdfLUT ? texIBLBRDF.SampleLevel(SS, float2(NdotV, rough), 0.0f).rg : float2(0.0f, 0.0f);
+		float3 specularIBL = hasBrdfLUT ? IBLGGXFresnel(NdotV, rough, F0, brdfSample) : kSpecular * envAtten;
+		float3 indirectLight = RefleCol * specularIBL * toogles.z;
 
 		// Diffuse IBL: approximate irradiance from env cubemap at high mip
 		float3 irradianceDir = normal;
 		irradianceDir.x = -irradianceDir.x;
 		irradianceDir.z = -irradianceDir.z;
-		float3 irradiance = texEnv.SampleLevel(SS, irradianceDir, 6.0f).xyz;
-		Final.xyz += irradiance * Albedo.xyz * kDiffuseEnv * toogles.z;
+		float diffuseMip = clamp(brightness.z, 0.0f, iblMaxMip);
+		float3 irradiance = texIBLDiffuse.SampleLevel(SS, irradianceDir, diffuseMip).xyz;
+		indirectLight += irradiance * Albedo.xyz * kDiffuseEnv * toogles.z;
 
 		// Ambient minimum (toogles.y = ambient intensity)
-		Final.xyz += Albedo.xyz * toogles.y * kDiffuseEnv;
+		indirectLight += Albedo.xyz * toogles.y * kDiffuseEnv;
+		if (hasSheenLUT && sheenStrength > 0.0f) {
+			float albedoSheenScaling = 1.0f - sheenStrength * AlbedoSheenScalingLUT(NdotV, sheenRoughness);
+			float3 sheenIBL = GetIBLRadianceCharlie(normal, EyeDir, sheenRoughness, sheenColor, iblMaxMip) * toogles.z;
+			indirectLight = sheenIBL + indirectLight * albedoSheenScaling;
+		}
+		Final.xyz += indirectLight;
 		if (clearcoatFactor > 0.001f) {
-			float3 clearcoatSpec = texEnv.SampleLevel(SS, ReflectedVec, clearcoatRoughness * 4.0f).xyz;
-			float clearcoatAtten = (1.0f - clearcoatRoughness) * (1.0f - clearcoatRoughness);
+			float3 clearcoatSpec = texIBLSpecular.SampleLevel(SS, ReflectedVec, clearcoatRoughness * iblMaxMip).xyz;
+			float clearcoatAtten = hasBrdfLUT ? 1.0f : (1.0f - clearcoatRoughness) * (1.0f - clearcoatRoughness);
 			float3 clearcoatF = FresnelCalc(saturate(dot(normal, EyeDir)), float3(0.04f, 0.04f, 0.04f));
 			float clearcoatWeight = saturate(clearcoatFactor * max(clearcoatF.x, max(clearcoatF.y, clearcoatF.z)));
 			Final.xyz = lerp(Final.xyz, clearcoatSpec * clearcoatAtten * toogles.z, clearcoatWeight);
@@ -264,6 +397,30 @@ Texture2D tex3 : register(t3); // Geometric normals
 Texture2D tex4 : register(t4); // Depth
 Texture2D tex5 : register(t5); // Shadow accumulation
 TextureCube texEnv : register(t6);
+TextureCube texIBLDiffuse : register(t10);
+TextureCube texIBLSpecular : register(t11);
+Texture2D texIBLBRDF : register(t12);
+TextureCube texIBLCharlie : register(t13);
+Texture2D texIBLCharlieLUT : register(t14);
+Texture2D texIBLSheenELUT : register(t15);
+Texture2D tex6 : register(t7);
+
+float AlbedoSheenScalingLUT(float NdotV, float sheenRoughness)
+{
+	return texIBLSheenELUT.SampleLevel(SS, float2(saturate(NdotV), saturate(sheenRoughness)), 0.0f).r;
+}
+
+float3 GetIBLRadianceCharlie(float3 normal, float3 viewDir, float sheenRoughness, float3 sheenColor, float iblMaxMip)
+{
+	float NdotV = max(dot(normal, viewDir), 0.0f);
+	float lod = sheenRoughness * iblMaxMip;
+	float3 reflectedVec = reflect(-viewDir, normal);
+	reflectedVec.x = -reflectedVec.x;
+	reflectedVec.z = -reflectedVec.z;
+	float brdf = texIBLCharlieLUT.SampleLevel(SS, float2(saturate(NdotV), saturate(sheenRoughness)), 0.0f).b;
+	float3 sheenLight = texIBLCharlie.SampleLevel(SS, reflectedVec, lod).rgb;
+	return sheenLight * sheenColor * brdf;
+}
 
 float4 FS(VS_OUTPUT input) : SV_TARGET {
 	float4 Final = float4(0, 0, 0, 1);
@@ -306,6 +463,11 @@ float4 FS(VS_OUTPUT input) : SV_TARGET {
 		clearcoatRoughness = clamp(clearcoatRoughness, 0.04f, 1.0f);
 		float clearcoatFactor = saturate(PBRData.b);
 		float rough = normalmap.a;
+		float4 SheenData = tex6.Sample(SS, input.texture0);
+		float3 sheenColor = saturate(SheenData.rgb);
+		float sheenRoughness = saturate(SheenData.a);
+		float sheenStrength = Max3(sheenColor);
+		bool hasSheenLUT = brightness.w > 0.5f;
 
 		int NumLights = (int)CameraInfo.w;
 		[loop] for (int i = 0; i < NumLights; i++) {
@@ -320,7 +482,17 @@ float4 FS(VS_OUTPUT input) : SV_TARGET {
 				float3 F = FresnelCalc(VdotH, F0);
 				float3 Kd = (float3(1, 1, 1) - F) * (1.0f - metallic);
 				float geoHorizon = saturate(dot(geoNormal, LightDir));
-				Final.xyz += (SpecularRes.xyz + Kd * Diffuse) * geoHorizon;
+				float NdotL = max(dot(normal, LightDir), 0.0f);
+				float NdotVLight = max(dot(normal, EyeDir), 0.0f);
+				float NdotH = max(dot(normal, Half), 0.0f);
+				float albedoSheenScaling = 1.0f;
+				float3 sheenLight = float3(0.0f, 0.0f, 0.0f);
+				if (hasSheenLUT && sheenStrength > 0.0f) {
+					albedoSheenScaling = min(1.0f - sheenStrength * AlbedoSheenScalingLUT(NdotVLight, sheenRoughness),
+					                         1.0f - sheenStrength * AlbedoSheenScalingLUT(NdotL, sheenRoughness));
+					sheenLight = CalculateSheenRadiance(sheenColor, sheenRoughness, LightColors[i].xyz, intensity, NdotL, NdotVLight, NdotH);
+				}
+				Final.xyz += (sheenLight + (SpecularRes.xyz + Kd * Diffuse) * albedoSheenScaling) * geoHorizon;
 			} else {
 				float Rad = LightRadius[i >> 2][i & 3];
 				float dist = distance(LightPositions[i], position);
@@ -337,7 +509,17 @@ float4 FS(VS_OUTPUT input) : SV_TARGET {
 					float attenuation = 1.0 / (denom * denom);
 					attenuation = max((attenuation - cutoff) / (1.0 - cutoff), 0.0);
 					float geoHorizon = saturate(dot(geoNormal, LightDir));
-					Final.xyz += (SpecularRes.xyz * attenuation + attenuation * Kd * Diffuse) * geoHorizon;
+					float NdotL = max(dot(normal, LightDir), 0.0f);
+					float NdotVLight = max(dot(normal, EyeDir), 0.0f);
+					float NdotH = max(dot(normal, Half), 0.0f);
+					float albedoSheenScaling = 1.0f;
+					float3 sheenLight = float3(0.0f, 0.0f, 0.0f);
+					if (hasSheenLUT && sheenStrength > 0.0f) {
+						albedoSheenScaling = min(1.0f - sheenStrength * AlbedoSheenScalingLUT(NdotVLight, sheenRoughness),
+						                         1.0f - sheenStrength * AlbedoSheenScalingLUT(NdotL, sheenRoughness));
+						sheenLight = CalculateSheenRadiance(sheenColor, sheenRoughness, LightColors[i].xyz, intensity, NdotL, NdotVLight, NdotH) * attenuation;
+					}
+					Final.xyz += (sheenLight + (SpecularRes.xyz * attenuation + attenuation * Kd * Diffuse) * albedoSheenScaling) * geoHorizon;
 				}
 			}
 		}
@@ -345,13 +527,24 @@ float4 FS(VS_OUTPUT input) : SV_TARGET {
 		// Reduced env reflections for LDR
 		float3 ReflectedVec = reflect(-EyeDir, normal.xyz);
 		ReflectedVec.x = -ReflectedVec.x; ReflectedVec.z = -ReflectedVec.z;
-		float3 kSpecular = clamp(fresnelSchlickRoughness(max(dot(normal, EyeDir), 0.0f), F0, rough), 0.0, 1.0);
-		float3 RefleCol = texEnv.SampleLevel(SS, ReflectedVec, rough * 4.0f).xyz;
+		float iblMaxMip = max(toogles.w, 0.0f);
+		bool hasBrdfLUT = brightness.w > 0.5f;
+		float NdotV = max(dot(normal, EyeDir), 0.0f);
+		float3 kSpecular = clamp(fresnelSchlickRoughness(NdotV, F0, rough), 0.0, 1.0);
+		float3 RefleCol = texIBLSpecular.SampleLevel(SS, ReflectedVec, rough * iblMaxMip).xyz;
 		float envAtten = (1.0f - rough) * (1.0f - rough);
-		Final.xyz += RefleCol * kSpecular.xyz * envAtten * toogles.z;
+		float2 brdfSample = hasBrdfLUT ? texIBLBRDF.SampleLevel(SS, float2(NdotV, rough), 0.0f).rg : float2(0.0f, 0.0f);
+		float3 specularIBL = hasBrdfLUT ? IBLGGXFresnel(NdotV, rough, F0, brdfSample) : kSpecular * envAtten;
+		float3 ldrIBL = RefleCol * specularIBL * toogles.z;
+		if (hasSheenLUT && sheenStrength > 0.0f) {
+			float albedoSheenScaling = 1.0f - sheenStrength * AlbedoSheenScalingLUT(NdotV, sheenRoughness);
+			float3 sheenIBL = GetIBLRadianceCharlie(normal, EyeDir, sheenRoughness, sheenColor, iblMaxMip) * toogles.z;
+			ldrIBL = sheenIBL + ldrIBL * albedoSheenScaling;
+		}
+		Final.xyz += ldrIBL;
 		if (clearcoatFactor > 0.001f) {
-			float3 clearcoatSpec = texEnv.SampleLevel(SS, ReflectedVec, clearcoatRoughness * 4.0f).xyz;
-			float clearcoatAtten = (1.0f - clearcoatRoughness) * (1.0f - clearcoatRoughness);
+			float3 clearcoatSpec = texIBLSpecular.SampleLevel(SS, ReflectedVec, clearcoatRoughness * iblMaxMip).xyz;
+			float clearcoatAtten = hasBrdfLUT ? 1.0f : (1.0f - clearcoatRoughness) * (1.0f - clearcoatRoughness);
 			float3 clearcoatF = FresnelCalc(saturate(dot(normal, EyeDir)), float3(0.04f, 0.04f, 0.04f));
 			float clearcoatWeight = saturate(clearcoatFactor * max(clearcoatF.x, max(clearcoatF.y, clearcoatF.z)));
 			Final.xyz = lerp(Final.xyz, clearcoatSpec * clearcoatAtten * toogles.z, clearcoatWeight);
@@ -683,7 +876,8 @@ return color;
 #elif defined(BACKBUFFER_PASS)
 Texture2D tex0 : register(t0);
 float4 FS(VS_OUTPUT input) : SV_TARGET{
-  return tex0.Sample(SS, input.texture0.xy);
+	float4 color = tex0.Sample(SS, input.texture0.xy);
+	return float4(LinearToSRGB(color.rgb), color.a);
 }
 
 #elif defined(GOD_RAY_CALCULATION_PASS)

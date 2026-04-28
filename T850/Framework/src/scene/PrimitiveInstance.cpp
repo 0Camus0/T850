@@ -78,7 +78,7 @@ namespace t850 {
       return;
     pBase->SetEnvironmentMap(EnvMap);
     pBase->SetGlobalKey(gKey);
-    for (int i = 0; i < 16; i++) {
+    for (int i = 0; i < MaxPrimitiveTextures; i++) {
       pBase->SetTexture(Textures[i], i);
     }
     pBase->SetBrightness(m_brightness);

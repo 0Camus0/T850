@@ -151,21 +151,35 @@ struct Texture {
 };
 
 // ── Material ──
+struct TextureTransform {
+  std::vector<float> offset;
+  float              rotation = 0.0f;
+  std::vector<float> scale;
+  std::optional<int> texCoord;
+};
+
+struct TextureInfoExtensions {
+  std::optional<TextureTransform> KHR_texture_transform;
+};
+
 struct TextureInfo {
-  int         index = -1;
-  int         texCoord = 0;
+  int                                  index = -1;
+  int                                  texCoord = 0;
+  std::optional<TextureInfoExtensions> extensions;
 };
 
 struct NormalTextureInfo {
-  int   index = -1;
-  int   texCoord = 0;
-  float scale = 1.0f;
+  int                                  index = -1;
+  int                                  texCoord = 0;
+  float                                scale = 1.0f;
+  std::optional<TextureInfoExtensions> extensions;
 };
 
 struct OcclusionTextureInfo {
-  int   index = -1;
-  int   texCoord = 0;
-  float strength = 1.0f;
+  int                                  index = -1;
+  int                                  texCoord = 0;
+  float                                strength = 1.0f;
+  std::optional<TextureInfoExtensions> extensions;
 };
 
 struct PBRMetallicRoughness {

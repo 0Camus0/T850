@@ -10,8 +10,9 @@
 
 #if defined(OS_WINDOWS)
 
-#include <glslang/Include/glslang_c_interface.h>
-#include <glslang/Public/resource_limits_c.h>
+#include <glslang/Public/ResourceLimits.h>
+#include <glslang/Public/ShaderLang.h>
+#include <glslang/SPIRV/GlslangToSpv.h>
 #include <utils/Log.h>
 #include <utils/SPIRVReflection.h>
 
@@ -39,73 +40,44 @@ namespace t850 {
     return mod;
   }
 
-  static bool CompileHLSLToSPIRV(const std::string& source, glslang_stage_t stage,
+  static bool CompileHLSLToSPIRV(const std::string& source, EShLanguage stage,
                                    std::vector<uint32_t>& spirv, const std::string& debugName) {
     if (!s_glslangInitialized) {
-      glslang_initialize_process();
+      glslang::InitializeProcess();
       s_glslangInitialized = true;
     }
 
     const char* src = source.c_str();
-    glslang_input_t input = {};
-    input.language = GLSLANG_SOURCE_HLSL;
-    input.stage = stage;
-    input.client = GLSLANG_CLIENT_VULKAN;
-    input.client_version = GLSLANG_TARGET_VULKAN_1_0;
-    input.target_language = GLSLANG_TARGET_SPV;
-    input.target_language_version = GLSLANG_TARGET_SPV_1_0;
-    input.code = src;
-    input.default_version = 100;
-    input.default_profile = GLSLANG_NO_PROFILE;
-    input.force_default_version_and_profile = false;
-    input.forward_compatible = false;
-    input.messages = (glslang_messages_t)(GLSLANG_MSG_DEFAULT_BIT | GLSLANG_MSG_SPV_RULES_BIT | GLSLANG_MSG_VULKAN_RULES_BIT);
-    input.resource = glslang_default_resource();
+    const char* entryPoint = (stage == EShLangVertex) ? "VS" : "FS";
+    EShMessages messages = (EShMessages)(EShMsgDefault | EShMsgSpvRules | EShMsgVulkanRules | EShMsgReadHlsl);
 
-    glslang_shader_t* shader = glslang_shader_create(&input);
-    glslang_shader_set_options(shader, GLSLANG_SHADER_AUTO_MAP_BINDINGS | GLSLANG_SHADER_AUTO_MAP_LOCATIONS);
-    // Set entry point for HLSL
-    const char* entryPoint = (stage == GLSLANG_STAGE_VERTEX) ? "VS" : "FS";
-    glslang_shader_set_entry_point(shader, entryPoint);
-    // Shift UBO binding up to avoid collision with textures at binding 0-7
-    glslang_shader_shift_binding(shader, GLSLANG_RESOURCE_TYPE_UBO, 16);
-    // Shift texture/sampler bindings by 1 so register(t0)→binding 1 (binding 0 = UBO)
-    glslang_shader_shift_binding(shader, GLSLANG_RESOURCE_TYPE_TEXTURE, 1);
-    glslang_shader_shift_binding(shader, GLSLANG_RESOURCE_TYPE_SAMPLER, 1);
-    if (!glslang_shader_preprocess(shader, &input)) {
-      T8_LOG_ERROR("[Vulkan] Shader preprocess failed (%s): %s", debugName.c_str(), glslang_shader_get_info_log(shader));
-      glslang_shader_delete(shader);
-      return false;
-    }
-    if (!glslang_shader_parse(shader, &input)) {
-      T8_LOG_ERROR("[Vulkan] Shader parse failed (%s): %s", debugName.c_str(), glslang_shader_get_info_log(shader));
-      glslang_shader_delete(shader);
+    glslang::TShader shader(stage);
+    shader.setStrings(&src, 1);
+    shader.setEntryPoint(entryPoint);
+    shader.setSourceEntryPoint(entryPoint);
+    shader.setEnvInput(glslang::EShSourceHlsl, stage, glslang::EShClientVulkan, 100);
+    shader.setEnvClient(glslang::EShClientVulkan, glslang::EShTargetVulkan_1_0);
+    shader.setEnvTarget(glslang::EShTargetSpv, glslang::EShTargetSpv_1_0);
+    shader.setAutoMapBindings(true);
+    shader.setAutoMapLocations(true);
+    shader.setTextureSamplerTransformMode(EShTexSampTransUpgradeTextureRemoveSampler);
+
+    if (!shader.parse(GetDefaultResources(), 100, false, messages)) {
+      T8_LOG_ERROR("[Vulkan] Shader parse failed (%s): %s", debugName.c_str(), shader.getInfoLog());
       return false;
     }
 
-    glslang_program_t* program = glslang_program_create();
-    glslang_program_add_shader(program, shader);
+    glslang::TProgram program;
+    program.addShader(&shader);
 
-    if (!glslang_program_link(program, GLSLANG_MSG_SPV_RULES_BIT | GLSLANG_MSG_VULKAN_RULES_BIT)) {
-      T8_LOG_ERROR("[Vulkan] Program link failed (%s): %s", debugName.c_str(), glslang_program_get_info_log(program));
-      glslang_program_delete(program);
-      glslang_shader_delete(shader);
+    if (!program.link(messages)) {
+      T8_LOG_ERROR("[Vulkan] Program link failed (%s): %s", debugName.c_str(), program.getInfoLog());
       return false;
     }
 
-    glslang_program_SPIRV_generate(program, stage);
-
-    size_t spirvSize = glslang_program_SPIRV_get_size(program);
-    spirv.resize(spirvSize);
-    glslang_program_SPIRV_get(program, spirv.data());
-
-    const char* spirvMessages = glslang_program_SPIRV_get_messages(program);
-    if (spirvMessages && spirvMessages[0]) {
-      T8_LOG_INFO("[Vulkan] SPIR-V messages (%s): %s", debugName.c_str(), spirvMessages);
-    }
-
-    glslang_program_delete(program);
-    glslang_shader_delete(shader);
+    std::vector<unsigned int> generated;
+    glslang::GlslangToSpv(*program.getIntermediate(stage), generated);
+    spirv.assign(generated.begin(), generated.end());
     return true;
   }
 
@@ -117,24 +89,26 @@ namespace t850 {
                                       const std::string& vs_name, const std::string& fs_name) {
     auto* driver = GetVkDriver();
     VkDevice device = driver->GetDevice();
+    std::fill(srvBindings, srvBindings + VulkanShader::kMaxTextureSlots, -1);
+    std::fill(srvIsCubemap, srvIsCubemap + VulkanShader::kMaxTextureSlots, false);
 
     // Compile vertex shader (HLSL → SPIR-V)
     std::vector<uint32_t> vsSPIRV;
-    if (!CompileHLSLToSPIRV(src_vs, GLSLANG_STAGE_VERTEX, vsSPIRV, vs_name.empty() ? "VS" : vs_name)) {
+    if (!CompileHLSLToSPIRV(src_vs, EShLangVertex, vsSPIRV, vs_name.empty() ? "VS" : vs_name)) {
       return false;
     }
     // Patch SPIR-V: shift UBO bindings to avoid collision with textures at binding 0+
-    SPIRVReflection::ShiftUBOBindings(vsSPIRV.data(), vsSPIRV.size(), 16);
+    SPIRVReflection::ShiftUBOBindings(vsSPIRV.data(), vsSPIRV.size(), VulkanShader::kMaxTextureSlots);
 
     m_vertModule = CreateShaderModule(device, vsSPIRV.data(), vsSPIRV.size() * sizeof(uint32_t));
     if (!m_vertModule) return false;
 
     // Compile fragment shader (HLSL → SPIR-V)
     std::vector<uint32_t> fsSPIRV;
-    if (!CompileHLSLToSPIRV(src_fs, GLSLANG_STAGE_FRAGMENT, fsSPIRV, fs_name.empty() ? "FS" : fs_name)) {
+    if (!CompileHLSLToSPIRV(src_fs, EShLangFragment, fsSPIRV, fs_name.empty() ? "FS" : fs_name)) {
       return false;
     }
-    SPIRVReflection::ShiftUBOBindings(fsSPIRV.data(), fsSPIRV.size(), 16);
+    SPIRVReflection::ShiftUBOBindings(fsSPIRV.data(), fsSPIRV.size(), VulkanShader::kMaxTextureSlots);
     m_fragModule = CreateShaderModule(device, fsSPIRV.data(), fsSPIRV.size() * sizeof(uint32_t));
     if (!m_fragModule) return false;
 
@@ -172,7 +146,6 @@ namespace t850 {
       b.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
       b.descriptorCount = 1;
       b.stageFlags |= VK_SHADER_STAGE_FRAGMENT_BIT;
-      // Texture binding N maps to engine slot N (register(tN) → binding N)
       int engineSlot = (int)si.binding;
       if (engineSlot >= 0 && engineSlot < VulkanShader::kMaxTextureSlots) {
         srvBindings[engineSlot] = (int)si.binding;

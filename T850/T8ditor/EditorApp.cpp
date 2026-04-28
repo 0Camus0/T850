@@ -899,11 +899,13 @@ void EditorApp::OnDraw() {
       }
 
       ::Camera* mainCam = m_sceneProps.pCameras[0];
+      t850::EnvironmentMapSet editorEnvMaps;
+      editorEnvMaps.SetFallback(g_dummyEnvMapIdx);
       T8_LOG_TRACE("[T8ditor] OnDraw: RenderGraph Execute (%d meshes)...", (int)meshArray.size());
       g_renderGraph.Execute(drv, m_sceneProps,
         meshArray.data(), (int)meshArray.size(),
         g_quads, mainCam, nullptr, nullptr,
-        g_dummyEnvMapIdx);
+        editorEnvMaps);
       T8_LOG_TRACE("[T8ditor] OnDraw: RenderGraph Execute done");
 
       // RT debug override: if a specific RT is selected, draw it to backbuffer

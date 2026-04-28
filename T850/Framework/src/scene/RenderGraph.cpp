@@ -391,12 +391,12 @@ void RenderGraph::Execute(
   ::Camera* mainCam,
   ::Camera* lightCam,
   ::Camera* omniCams,
-  int envMapTexIndex)
+      const EnvironmentMapSet& envMaps)
 {
   for (const auto& node : m_nodes) {
     if (m_disabledPasses.count(node.desc->name)) continue;
     ExecutePass(node, driver, props, meshes, meshCount, quads,
-                mainCam, lightCam, omniCams, envMapTexIndex);
+                mainCam, lightCam, omniCams, envMaps);
   }
 }
 
@@ -409,7 +409,7 @@ void RenderGraph::ExecutePass(
   ::Camera* mainCam,
   ::Camera* lightCam,
   ::Camera* omniCams,
-  int envMapTexIndex)
+  const EnvironmentMapSet& envMaps)
 {
   const auto& pass = *node.desc;
   T8_PROFILE_SCOPE(t850::g_profiler, pass.name.c_str());
@@ -513,20 +513,55 @@ void RenderGraph::ExecutePass(
       }
     }
 
-    // Bind environment map
-    if (pass.bind_environment_map && envMapTexIndex >= 0) {
-      quads[0].SetEnvironmentMap(driver->GetTexture(envMapTexIndex));
+    auto textureOrNull = [&](int textureIndex) -> Texture* {
+      return textureIndex >= 0 ? driver->GetTexture(textureIndex) : nullptr;
+    };
+
+    auto bindEnvironmentResources = [&](PrimitiveInst& primitive) {
+      Texture* sky = textureOrNull(envMaps.Sky);
+      Texture* diffuse = textureOrNull(envMaps.DiffuseIBL >= 0 ? envMaps.DiffuseIBL : envMaps.Sky);
+      Texture* specular = textureOrNull(envMaps.SpecularIBL >= 0 ? envMaps.SpecularIBL : envMaps.Sky);
+      Texture* brdfLut = textureOrNull(envMaps.BrdfLUT);
+      int charlieIndex = envMaps.CharlieIBL >= 0 ? envMaps.CharlieIBL : (envMaps.SpecularIBL >= 0 ? envMaps.SpecularIBL : envMaps.Sky);
+      Texture* charlie = textureOrNull(charlieIndex);
+      Texture* charlieLut = textureOrNull(envMaps.CharlieLUT);
+      Texture* sheenELut = textureOrNull(envMaps.SheenELUT);
+      primitive.SetEnvironmentMap(sky);
+      primitive.SetTexture(diffuse, EnvironmentTextureSlot::DiffuseIBL);
+      primitive.SetTexture(specular, EnvironmentTextureSlot::SpecularIBL);
+      primitive.SetTexture(brdfLut, EnvironmentTextureSlot::BrdfLUT);
+      primitive.SetTexture(charlie, EnvironmentTextureSlot::CharlieIBL);
+      primitive.SetTexture(charlieLut, EnvironmentTextureSlot::CharlieLUT);
+      primitive.SetTexture(sheenELut, EnvironmentTextureSlot::SheenELUT);
+    };
+
+    auto clearEnvironmentResources = [](PrimitiveInst& primitive) {
+      primitive.SetEnvironmentMap(nullptr);
+      primitive.SetTexture(nullptr, EnvironmentTextureSlot::DiffuseIBL);
+      primitive.SetTexture(nullptr, EnvironmentTextureSlot::SpecularIBL);
+      primitive.SetTexture(nullptr, EnvironmentTextureSlot::BrdfLUT);
+      primitive.SetTexture(nullptr, EnvironmentTextureSlot::CharlieIBL);
+      primitive.SetTexture(nullptr, EnvironmentTextureSlot::CharlieLUT);
+      primitive.SetTexture(nullptr, EnvironmentTextureSlot::SheenELUT);
+    };
+
+    if (pass.bind_environment_map) {
+      bindEnvironmentResources(quads[0]);
+    } else {
+      clearEnvironmentResources(quads[0]);
     }
 
     auto bindMeshPassResources = [&](PrimitiveInst& mesh) {
       for (const auto& input : pass.inputs) {
         auto resolved = ResolveTextureInput(input.source);
-        if (!resolved.is_builtin && resolved.rt_handle >= 0 && input.slot >= 0 && input.slot < 16) {
+        if (!resolved.is_builtin && resolved.rt_handle >= 0 && input.slot >= 0 && input.slot < MaxPrimitiveTextures) {
           mesh.SetTexture(driver->GetRTTexture(resolved.rt_handle, resolved.attachment), input.slot);
         }
       }
-      if (pass.bind_environment_map && envMapTexIndex >= 0) {
-        mesh.SetEnvironmentMap(driver->GetTexture(envMapTexIndex));
+      if (pass.bind_environment_map) {
+        bindEnvironmentResources(mesh);
+      } else {
+        clearEnvironmentResources(mesh);
       }
     };
 

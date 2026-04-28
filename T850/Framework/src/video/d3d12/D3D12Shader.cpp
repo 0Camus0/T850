@@ -92,7 +92,10 @@ namespace t850 {
 
       if (r.rangeType == D3D12_DESCRIPTOR_RANGE_TYPE_CBV && r.reg == 0) cbvSlot = i;
       if (r.rangeType == D3D12_DESCRIPTOR_RANGE_TYPE_SRV) srvSlots[r.reg] = i;
-      if (r.rangeType == D3D12_DESCRIPTOR_RANGE_TYPE_SAMPLER && r.reg == 0) samplerSlot = i;
+      if (r.rangeType == D3D12_DESCRIPTOR_RANGE_TYPE_SAMPLER) {
+        samplerSlots[r.reg] = i;
+        if (r.reg == 0) samplerSlot = i;
+      }
 
       T8_LOG_VERBOSE("[D3D12]   RootParam[%d] type=%d reg=%u name='%s'", i, r.rangeType, r.reg, r.name.c_str());
     }
@@ -290,8 +293,8 @@ namespace t850 {
     }
 
     // Bind default sampler if shader uses one
-    if (samplerSlot >= 0) {
-      cmdList->SetGraphicsRootDescriptorTable(samplerSlot, driver->GetDefaultSamplerGPU());
+    for (const auto& samplerBinding : samplerSlots) {
+      cmdList->SetGraphicsRootDescriptorTable(samplerBinding.second, driver->GetDefaultSamplerGPU());
     }
   }
 
@@ -299,7 +302,7 @@ namespace t850 {
     VS_blob.Reset(); FS_blob.Reset();
     pRootSignature.Reset();
     VertexDecl.clear(); m_semanticNames.clear();
-    srvSlots.clear();
+    srvSlots.clear(); samplerSlots.clear();
   }
 
 } // namespace t850

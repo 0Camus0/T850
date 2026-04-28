@@ -1,6 +1,6 @@
 {
   "render_targets": [
-    { "name": "GBuffer",  "color_count": 5, "color_formats": ["RGBA8", "RGBA16F", "RGBA8", "RGBA16F", "RGBA16F"], "depth_format": "F32",  "size": [0,0], "linear_filter": true },
+    { "name": "GBuffer",  "color_count": 6, "color_formats": ["RGBA8", "RGBA16F", "RGBA8", "RGBA16F", "RGBA16F", "RGBA16F"], "depth_format": "F32",  "size": [0,0], "linear_filter": true },
     { "name": "Deferred", "color_count": 1, "color_format": "RGBA8", "depth_format": "NONE", "size": [0,0], "linear_filter": true },
     { "name": "SceneColor", "color_count": 1, "color_format": "RGBA8", "depth_format": "NONE", "size": [0,0], "linear_filter": true }
   ],
@@ -28,11 +28,13 @@
         { "source": "GBuffer:COLOR1", "slot": 1 },
         { "source": "GBuffer:COLOR2", "slot": 2 },
         { "source": "GBuffer:COLOR3", "slot": 3 },
-        { "source": "GBuffer:COLOR4", "slot": 4 }
+        { "source": "GBuffer:COLOR4", "slot": 4 },
+        { "source": "GBuffer:COLOR5", "slot": 7 }
       ],
       "draws": [
         { "type": "fullscreen_quad", "signature": "DEFERRED_LDR_PASS" }
       ],
+      "bind_environment_map": true,
       "pop": false
     },
     {

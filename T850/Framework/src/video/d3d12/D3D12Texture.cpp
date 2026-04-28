@@ -18,6 +18,77 @@ namespace t850 {
   static D3D12Driver* GetD3D12Driver() { return static_cast<D3D12Driver*>(g_pBaseDriver); }
   static ID3D12Device* GetNativeDevice() { return static_cast<D3D12Device*>(T8Device)->GetNativeDevice(); }
 
+  namespace {
+    UINT CalculateFullMipCount(UINT width, UINT height) {
+      UINT levels = 1;
+      while (width > 1 || height > 1) {
+        width = width > 1 ? (width >> 1) : 1;
+        height = height > 1 ? (height >> 1) : 1;
+        ++levels;
+      }
+      return levels;
+    }
+
+    void GenerateMipChain8(const unsigned char* src, UINT width, UINT height, UINT faceCount,
+                           UINT bytesPerPixel, std::vector<unsigned char>& outData) {
+      const UINT mipCount = CalculateFullMipCount(width, height);
+      size_t totalBytes = 0;
+      for (UINT face = 0; face < faceCount; ++face) {
+        UINT mipWidth = width;
+        UINT mipHeight = height;
+        for (UINT mip = 0; mip < mipCount; ++mip) {
+          totalBytes += static_cast<size_t>(mipWidth) * mipHeight * bytesPerPixel;
+          mipWidth = mipWidth > 1 ? (mipWidth >> 1) : 1;
+          mipHeight = mipHeight > 1 ? (mipHeight >> 1) : 1;
+        }
+      }
+
+      outData.resize(totalBytes);
+      size_t dstOffset = 0;
+      const size_t baseFaceBytes = static_cast<size_t>(width) * height * bytesPerPixel;
+
+      for (UINT face = 0; face < faceCount; ++face) {
+        UINT prevWidth = width;
+        UINT prevHeight = height;
+        const unsigned char* prev = src + static_cast<size_t>(face) * baseFaceBytes;
+        size_t prevBytes = baseFaceBytes;
+
+        memcpy(outData.data() + dstOffset, prev, prevBytes);
+        size_t prevOffset = dstOffset;
+        dstOffset += prevBytes;
+
+        for (UINT mip = 1; mip < mipCount; ++mip) {
+          UINT mipWidth = prevWidth > 1 ? (prevWidth >> 1) : 1;
+          UINT mipHeight = prevHeight > 1 ? (prevHeight >> 1) : 1;
+          unsigned char* dst = outData.data() + dstOffset;
+          const unsigned char* srcMip = outData.data() + prevOffset;
+
+          for (UINT y = 0; y < mipHeight; ++y) {
+            for (UINT x = 0; x < mipWidth; ++x) {
+              UINT sx0 = x * 2;
+              UINT sy0 = y * 2;
+              UINT sx1 = (sx0 + 1 < prevWidth) ? sx0 + 1 : sx0;
+              UINT sy1 = (sy0 + 1 < prevHeight) ? sy0 + 1 : sy0;
+              for (UINT c = 0; c < bytesPerPixel; ++c) {
+                UINT accum = 0;
+                accum += srcMip[(static_cast<size_t>(sy0) * prevWidth + sx0) * bytesPerPixel + c];
+                accum += srcMip[(static_cast<size_t>(sy0) * prevWidth + sx1) * bytesPerPixel + c];
+                accum += srcMip[(static_cast<size_t>(sy1) * prevWidth + sx0) * bytesPerPixel + c];
+                accum += srcMip[(static_cast<size_t>(sy1) * prevWidth + sx1) * bytesPerPixel + c];
+                dst[(static_cast<size_t>(y) * mipWidth + x) * bytesPerPixel + c] = static_cast<unsigned char>((accum + 2) / 4);
+              }
+            }
+          }
+
+          prevOffset = dstOffset;
+          prevWidth = mipWidth;
+          prevHeight = mipHeight;
+          dstOffset += static_cast<size_t>(mipWidth) * mipHeight * bytesPerPixel;
+        }
+      }
+    }
+  }
+
   // ══════════════════════════════════════════════════════
   //  D3D12Texture — Uncompressed upload
   // ══════════════════════════════════════════════════════
@@ -33,6 +104,16 @@ namespace t850 {
 
     bool isCube = (cil_props & CIL_CUBE_MAP) != 0;
     UINT arraySize = isCube ? 6 : 1;
+    bool hasSourceMips = mipmaps > 1;
+    UINT mipCount = hasSourceMips ? mipmaps : 1;
+    std::vector<unsigned char> generatedMips;
+    if (!hasSourceMips && !(cil_props & CIL_HALF_FLOAT) && buffer) {
+      mipCount = CalculateFullMipCount(this->x, this->y);
+      if (mipCount > 1) {
+        GenerateMipChain8(buffer, this->x, this->y, arraySize, static_cast<UINT>(bytesPerPixel), generatedMips);
+        buffer = generatedMips.data();
+      }
+    }
 
     // Create texture resource
     D3D12_RESOURCE_DESC texDesc = {};
@@ -40,7 +121,7 @@ namespace t850 {
     texDesc.Width = this->x;
     texDesc.Height = this->y;
     texDesc.DepthOrArraySize = arraySize;
-    texDesc.MipLevels = 1;
+    texDesc.MipLevels = static_cast<UINT16>(mipCount);
     texDesc.Format = fmt;
     texDesc.SampleDesc.Count = 1;
     texDesc.Flags = D3D12_RESOURCE_FLAG_NONE;
@@ -56,9 +137,11 @@ namespace t850 {
 
     // Upload via staging buffer
     UINT64 uploadSize = 0;
-    D3D12_PLACED_SUBRESOURCE_FOOTPRINT footprints[6];
-    UINT numRows[6]; UINT64 rowSizes[6];
-    device->GetCopyableFootprints(&texDesc, 0, arraySize, 0, footprints, numRows, rowSizes, &uploadSize);
+    UINT totalSubresources = arraySize * mipCount;
+    std::vector<D3D12_PLACED_SUBRESOURCE_FOOTPRINT> footprints(totalSubresources);
+    std::vector<UINT> numRows(totalSubresources);
+    std::vector<UINT64> rowSizes(totalSubresources);
+    device->GetCopyableFootprints(&texDesc, 0, totalSubresources, 0, footprints.data(), numRows.data(), rowSizes.data(), &uploadSize);
 
     D3D12_RESOURCE_DESC uploadDesc = {};
     uploadDesc.Dimension = D3D12_RESOURCE_DIMENSION_BUFFER;
@@ -76,18 +159,23 @@ namespace t850 {
     // Map and copy
     void* mapped = nullptr;
     uploadBuf->Map(0, nullptr, &mapped);
-    UINT srcPitch = this->x * bytesPerPixel;
-    // For cubemaps the DDS buffer stores all mip levels per face
-    // consecutively. Use total size / 6 to correctly stride over
-    // each face's full mip chain (not just mip-0).
-    UINT faceStride = isCube ? (this->size / arraySize) : (this->x * this->y * bytesPerPixel);
+    size_t sourceOffset = 0;
     for (UINT face = 0; face < arraySize; face++) {
-      auto& fp = footprints[face];
-      unsigned char* src = buffer + face * faceStride;
-      unsigned char* dst = (unsigned char*)mapped + fp.Offset;
-      for (UINT row = 0; row < numRows[face]; row++) {
-        memcpy(dst + row * fp.Footprint.RowPitch, src + row * srcPitch,
-               (size_t)(srcPitch < fp.Footprint.RowPitch ? srcPitch : fp.Footprint.RowPitch));
+      UINT mipWidth = this->x;
+      UINT mipHeight = this->y;
+      for (UINT mip = 0; mip < mipCount; ++mip) {
+        UINT subresource = mip + face * mipCount;
+        UINT srcPitch = mipWidth * bytesPerPixel;
+        auto& fp = footprints[subresource];
+        unsigned char* src = buffer + sourceOffset;
+        unsigned char* dst = (unsigned char*)mapped + fp.Offset;
+        for (UINT row = 0; row < numRows[subresource]; row++) {
+          memcpy(dst + row * fp.Footprint.RowPitch, src + row * srcPitch,
+                 (size_t)(srcPitch < fp.Footprint.RowPitch ? srcPitch : fp.Footprint.RowPitch));
+        }
+        sourceOffset += static_cast<size_t>(srcPitch) * mipHeight;
+        mipWidth >>= 1; if (mipWidth < 1) mipWidth = 1;
+        mipHeight >>= 1; if (mipHeight < 1) mipHeight = 1;
       }
     }
     uploadBuf->Unmap(0, nullptr);
@@ -98,14 +186,14 @@ namespace t850 {
     device->CreateCommandAllocator(D3D12_COMMAND_LIST_TYPE_DIRECT, IID_PPV_ARGS(&tmpAlloc));
     device->CreateCommandList(0, D3D12_COMMAND_LIST_TYPE_DIRECT, tmpAlloc.Get(), nullptr, IID_PPV_ARGS(&tmpList));
 
-    for (UINT face = 0; face < arraySize; face++) {
+    for (UINT subresource = 0; subresource < totalSubresources; subresource++) {
       D3D12_TEXTURE_COPY_LOCATION dst = {}, src = {};
       dst.pResource = pTexResource.Get();
       dst.Type = D3D12_TEXTURE_COPY_TYPE_SUBRESOURCE_INDEX;
-      dst.SubresourceIndex = face;
+      dst.SubresourceIndex = subresource;
       src.pResource = uploadBuf.Get();
       src.Type = D3D12_TEXTURE_COPY_TYPE_PLACED_FOOTPRINT;
-      src.PlacedFootprint = footprints[face];
+      src.PlacedFootprint = footprints[subresource];
       tmpList->CopyTextureRegion(&dst, 0, 0, 0, &src, nullptr);
     }
 
@@ -139,10 +227,10 @@ namespace t850 {
     srvDesc.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
     if (isCube) {
       srvDesc.ViewDimension = D3D12_SRV_DIMENSION_TEXTURECUBE;
-      srvDesc.TextureCube.MipLevels = 1;
+      srvDesc.TextureCube.MipLevels = mipCount;
     } else {
       srvDesc.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE2D;
-      srvDesc.Texture2D.MipLevels = 1;
+      srvDesc.Texture2D.MipLevels = mipCount;
     }
 
     srvCPU = driver->GetHeap(D3D12Heap::CBV_SRV_UAV_VISIBLE).AllocateCPU();
@@ -152,10 +240,11 @@ namespace t850 {
     static int texId = 0;
     this->id = texId++;
 
-    T8_LOG_DEBUG("[D3D12] Texture created: '%s' -> slot %d (%ux%u, fmt=%d%s)",
-                 filepath.c_str(), this->id, this->x, this->y, fmt, isCube ? ", cube" : "");
+    this->mipmaps = mipCount;
+    T8_LOG_DEBUG("[D3D12] Texture created: '%s' -> slot %d (%ux%u, fmt=%d mips=%u%s)",
+                 filepath.c_str(), this->id, this->x, this->y, fmt, mipCount, isCube ? ", cube" : "");
     if (isCube) {
-      T8_LOG_INFO("[D3D12] Cubemap image created: %ux%u x6 faces, fmt=%d", this->x, this->y, (int)fmt);
+      T8_LOG_INFO("[D3D12] Cubemap image created: %ux%u x6 faces, fmt=%d mips=%u", this->x, this->y, (int)fmt, mipCount);
     }
     T8_LOG_INFO("[D3D12] LoadAPITexture OK (%ux%u ch=%u fmt=%d)", this->x, this->y, m_channels, (int)fmt);
   }
@@ -351,9 +440,11 @@ namespace t850 {
     if (!hasSampler) return;
     auto* cmdList = static_cast<const D3D12DeviceContext*>(&deviceContext)->GetCommandList();
     auto* shader = static_cast<D3D12Shader*>(deviceContext.actualShaderSet);
-    if (shader && shader->samplerSlot >= 0) {
+    if (shader) {
+      auto it = shader->samplerSlots.find(slot);
+      if (it == shader->samplerSlots.end()) return;
       T8_LOG_TRACE("[D3D12] Texture::SetSampler slot=%u file='%s'", slot, filepath.c_str());
-      cmdList->SetGraphicsRootDescriptorTable(shader->samplerSlot, samplerGPU);
+      cmdList->SetGraphicsRootDescriptorTable(it->second, samplerGPU);
     }
   }
 

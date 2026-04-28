@@ -2,6 +2,7 @@
 #include <iostream>
 #include <cstdio>
 #include <cstdlib>
+#include <scene/IBLResources.h>
 #include <utils/Log.h>
 #include <core/Config.h>
 using namespace t850;
@@ -53,6 +54,8 @@ void DayScene::InitVars() {
   SceneProp.ShadowMin = 0.0f;
   SceneProp.EnvFactor = 0.0f;
   SceneProp.IBLFactor = 0.0f;
+  SceneProp.IBLMipCount = 4.0f;
+  SceneProp.IBLBRDFLUTEnabled = 0.0f;
   SceneProp.GodRaysFactor = 0.0f;
   SceneProp.ShadowMapResolution = 1024.0f;
   SceneProp.GoodRaysResolution = 0.0f;
@@ -141,6 +144,19 @@ void DayScene::CreateAssets() {
   SceneProp.SSAOKernel.InitTexture();
 
   EnvMapTexIndex = g_pBaseDriver->CreateTexture(m_sceneSetup.environmentMap);
+  EnvMaps.SetFallback(EnvMapTexIndex);
+  LoadEnvironmentIBLResources(
+    g_pBaseDriver,
+    {m_sceneSetup.environmentDiffuseIBL, m_sceneSetup.environmentSpecularIBL, m_sceneSetup.environmentBrdfLUT,
+     m_sceneSetup.environmentSheenIBL, m_sceneSetup.environmentCharlieLUT, m_sceneSetup.environmentSheenELUT},
+    EnvMaps,
+    DiffuseIBLTexIndex,
+    SpecularIBLTexIndex,
+    BrdfLUTTexIndex,
+    SheenIBLTexIndex,
+    CharlieLUTTexIndex,
+    SheenELUTTexIndex);
+  UpdateSceneIBLSettings(SceneProp, g_pBaseDriver, EnvMaps);
 
   int index = PrimitiveMgr.CreateMesh("Models/SkyBox.X");
   Meshes[1].CreateInstance(PrimitiveMgr.GetPrimitive(index), &VP);
@@ -283,9 +299,44 @@ void DayScene::OnUpdate(float _DtSecs) {
     // Flush GPU before destroying — D3D12 may still reference the old
     // texture from the previous frame's command list.
     g_pBaseDriver->WaitForGPU();
-    g_pBaseDriver->DestroyTexture(EnvMapTexIndex);
-    EnvMapTexIndex = g_pBaseDriver->CreateTexture(m_pendingCubemap);
-    Quads[0].SetEnvironmentMap(g_pBaseDriver->GetTexture(EnvMapTexIndex));
+    int newEnvMapTexIndex = g_pBaseDriver->CreateTexture(m_pendingCubemap);
+    if (newEnvMapTexIndex >= 0) {
+      if (EnvMapTexIndex >= 0 && EnvMapTexIndex != newEnvMapTexIndex)
+        g_pBaseDriver->DestroyTexture(EnvMapTexIndex);
+      EnvMapTexIndex = newEnvMapTexIndex;
+      if (m_sceneSetup.environmentDiffuseIBL.empty() && DiffuseIBLTexIndex >= 0) {
+        g_pBaseDriver->DestroyTexture(DiffuseIBLTexIndex);
+        DiffuseIBLTexIndex = -1;
+      }
+      if (m_sceneSetup.environmentSpecularIBL.empty() && SpecularIBLTexIndex >= 0) {
+        g_pBaseDriver->DestroyTexture(SpecularIBLTexIndex);
+        SpecularIBLTexIndex = -1;
+      }
+      if (m_sceneSetup.environmentSheenIBL.empty() && SheenIBLTexIndex >= 0) {
+        g_pBaseDriver->DestroyTexture(SheenIBLTexIndex);
+        SheenIBLTexIndex = -1;
+      }
+      EnvMaps.SetFallback(EnvMapTexIndex);
+      LoadEnvironmentIBLResources(
+        g_pBaseDriver,
+        {m_sceneSetup.environmentDiffuseIBL, m_sceneSetup.environmentSpecularIBL, m_sceneSetup.environmentBrdfLUT,
+         m_sceneSetup.environmentSheenIBL, m_sceneSetup.environmentCharlieLUT, m_sceneSetup.environmentSheenELUT},
+        EnvMaps,
+        DiffuseIBLTexIndex,
+        SpecularIBLTexIndex,
+        BrdfLUTTexIndex,
+        SheenIBLTexIndex,
+        CharlieLUTTexIndex,
+        SheenELUTTexIndex);
+      EnvMaps.BrdfLUT = BrdfLUTTexIndex;
+      EnvMaps.CharlieIBL = SheenIBLTexIndex;
+      EnvMaps.CharlieLUT = CharlieLUTTexIndex;
+      EnvMaps.SheenELUT = SheenELUTTexIndex;
+      UpdateSceneIBLSettings(SceneProp, g_pBaseDriver, EnvMaps);
+      Quads[0].SetEnvironmentMap(g_pBaseDriver->GetTexture(EnvMapTexIndex));
+    } else {
+      T8_LOG_ERROR("[DayScene] Failed to load cubemap '%s'; keeping previous cubemap", m_pendingCubemap.c_str());
+    }
     m_pendingCubemap.clear();
   }
 
@@ -529,7 +580,7 @@ void DayScene::OnDraw() {
     &Cam,
     &LightCam,
     nullptr,
-    EnvMapTexIndex
+    EnvMaps
   );
 
 #ifdef T850_HEADLESS

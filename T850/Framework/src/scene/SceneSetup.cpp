@@ -15,6 +15,12 @@ bool SceneSetup::Load(const std::string& jsonPath) {
   name = descriptor.name;
   meshPaths = descriptor.meshes;
   environmentMap = descriptor.environment_map;
+  environmentDiffuseIBL = descriptor.environment_diffuse_ibl;
+  environmentSpecularIBL = descriptor.environment_specular_ibl;
+  environmentBrdfLUT = descriptor.environment_brdf_lut;
+  environmentSheenIBL = descriptor.environment_sheen_ibl;
+  environmentCharlieLUT = descriptor.environment_charlie_lut;
+  environmentSheenELUT = descriptor.environment_sheen_e_lut;
 
   // ── Build cameras ──
   cameras.resize(descriptor.cameras.size());

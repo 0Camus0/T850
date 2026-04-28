@@ -203,6 +203,7 @@ namespace t850 {
       if (key.has(ShaderKey::REFLECT_MAP))    Defines += "#define REFLECT_MAP\n#define EMISSIVE_MAP\n\n";
       if (key.has(ShaderKey::HEIGHT_MAP))     Defines += "#define HEIGHT_MAP\n\n";
       if (key.has(ShaderKey::METALLIC_MAP))   Defines += "#define METALLIC_MAP\n\n";
+      if (key.has(ShaderKey::CLEARCOAT_MAP))  Defines += "#define CLEARCOAT_MAP\n\n";
 
       // Material conventions
       if (key.has(ShaderKey::GLTF_TANGENT_SPACE)) Defines += "#define GLTF_TANGENT_SPACE\n\n";
@@ -441,6 +442,10 @@ namespace t850 {
       }
     }
     Texture *pTex = T8Device->CreateTexture(path);
+    if (!pTex) {
+      T8_LOG_ERROR("Texture creation failed: '%s'", path.c_str());
+      return -1;
+    }
     if (firstFreeSlot >= 0) {
       Textures[firstFreeSlot] = pTex;
       T8_LOG_DEBUG("Texture created: '%s' -> slot %d (%dx%d)", path.c_str(), firstFreeSlot, pTex->x, pTex->y);
@@ -454,6 +459,24 @@ namespace t850 {
   {
     Texture *pTex = T8Device->CreateCubeMap(buff,w,h);
     Textures.push_back(pTex);
+    return static_cast<int>(Textures.size() - 1);
+  }
+  int BaseDriver::CreateFloatTexture(int w, int h, const float* data)
+  {
+    Texture *pTex = T8Device->CreateFloatTexture(w, h, data);
+    if (!pTex)
+      return -1;
+    Textures.push_back(pTex);
+    T8_LOG_DEBUG("Float texture created -> slot %d (%dx%d)", (int)(Textures.size() - 1), w, h);
+    return static_cast<int>(Textures.size() - 1);
+  }
+  int BaseDriver::CreateFloatCubeMap(int size, int mipCount, const float* data)
+  {
+    Texture *pTex = T8Device->CreateFloatCubeMap(size, mipCount, data);
+    if (!pTex)
+      return -1;
+    Textures.push_back(pTex);
+    T8_LOG_DEBUG("Float cubemap created -> slot %d (%dx%d mips=%d)", (int)(Textures.size() - 1), size, size, mipCount);
     return static_cast<int>(Textures.size() - 1);
   }
   int BaseDriver::CreateShader(std::string src_vs, std::string src_fs, ShaderKey key, const std::string& vs_name, const std::string& fs_name)

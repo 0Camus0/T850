@@ -12,6 +12,7 @@
 *********************************************************/
 
 #include <scene/RenderQuad.h>
+#include <scene/RenderGraph.h>
 #include <utils/Utils.h>
 
 #include <video/gl/GLShader.h>
@@ -197,6 +198,9 @@ namespace t850 {
       CnstBuffer.CameraInfo = XVECTOR3(pActualCamera->NPlane, pActualCamera->FPlane, pActualCamera->Fov, float(numLights));
       CnstBuffer.toogles.x = pScProp->EnvFactor;
       CnstBuffer.toogles.z = pScProp->IBLFactor;
+      CnstBuffer.toogles.w = pScProp->IBLMipCount;
+      CnstBuffer.brightness.z = pScProp->IBLDiffuseMipLevel;
+      CnstBuffer.brightness.w = pScProp->IBLBRDFLUTEnabled;
       // Ambient intensity: average of AmbientColor components
       CnstBuffer.toogles.y = (pScProp->AmbientColor.x + pScProp->AmbientColor.y + pScProp->AmbientColor.z) / 3.0f;
 
@@ -306,34 +310,39 @@ namespace t850 {
 
     pd3dConstantBuffer->UpdateFromBuffer(*T8DeviceContext, &CnstBuffer);
     pd3dConstantBuffer->Set(*T8DeviceContext);
-    if (Textures[0])
-      Textures[0]->Set(*T8DeviceContext, 0, "tex0");
-    if (Textures[1])
-      Textures[1]->Set(*T8DeviceContext, 1, "tex1");
-    if (Textures[2])
-      Textures[2]->Set(*T8DeviceContext, 2, "tex2");
-    if (Textures[3])
-      Textures[3]->Set(*T8DeviceContext, 3, "tex3");
-    if (Textures[4])
-      Textures[4]->Set(*T8DeviceContext, 4, "tex4");
-    if (Textures[5])
-      Textures[5]->Set(*T8DeviceContext, 5, "tex5");
+    auto textureNameForSlot = [](int slot) -> const char* {
+      switch (slot) {
+      case 0: return "tex0";
+      case 1: return "tex1";
+      case 2: return "tex2";
+      case 3: return "tex3";
+      case 4: return "tex4";
+      case 5: return "tex5";
+      case 7: return "tex6";
+      case EnvironmentTextureSlot::DiffuseIBL: return "texIBLDiffuse";
+      case EnvironmentTextureSlot::SpecularIBL: return "texIBLSpecular";
+      case EnvironmentTextureSlot::BrdfLUT: return "texIBLBRDF";
+      case EnvironmentTextureSlot::CharlieIBL: return "texIBLCharlie";
+      case EnvironmentTextureSlot::CharlieLUT: return "texIBLCharlieLUT";
+      case EnvironmentTextureSlot::SheenELUT: return "texIBLSheenELUT";
+      default: return nullptr;
+      }
+    };
+
+    for (int slot = 0; slot < MaxPrimitiveTextures; ++slot) {
+      const char* textureName = textureNameForSlot(slot);
+      if (Textures[slot] && textureName)
+        Textures[slot]->Set(*T8DeviceContext, slot, textureName);
+    }
     if (EnvMap) {
       EnvMap->Set(*T8DeviceContext, 6, "texEnv");
+      EnvMap->SetSampler(*T8DeviceContext, 6);
     }
 
-    if (Textures[0])
-      Textures[0]->SetSampler(*T8DeviceContext, 0);
-    if (Textures[1])
-      Textures[1]->SetSampler(*T8DeviceContext, 1);
-    if (Textures[2])
-      Textures[2]->SetSampler(*T8DeviceContext, 2);
-    if (Textures[3])
-      Textures[3]->SetSampler(*T8DeviceContext, 3);
-    if (Textures[4])
-      Textures[4]->SetSampler(*T8DeviceContext, 4);
-    if (Textures[5])
-      Textures[5]->SetSampler(*T8DeviceContext, 5);
+    for (int slot = 0; slot < MaxPrimitiveTextures; ++slot) {
+      if (Textures[slot] && textureNameForSlot(slot) && slot != EnvironmentTextureSlot::BrdfLUT && slot != EnvironmentTextureSlot::CharlieLUT && slot != EnvironmentTextureSlot::SheenELUT)
+        Textures[slot]->SetSampler(*T8DeviceContext, slot);
+    }
 
     T8DeviceContext->SetPrimitiveTopology(Topology::TRIANLE_LIST);
     T8DeviceContext->DrawIndexed(6, 0, 0);

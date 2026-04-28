@@ -59,6 +59,9 @@ namespace t850 {
     // Create an RGBA32F texture for raw float data (e.g., bone matrices).
     // No mips, NEAREST filtering. Can be updated per-frame via Texture::UpdateFloatData.
     virtual Texture* CreateFloatTexture(int w, int h, const float* data = nullptr) = 0;
+    // Create an RGBA32F cubemap with explicit mip levels. Data is face-major:
+    // face 0 mip 0..N, face 1 mip 0..N, etc.; each texel is four floats.
+    virtual Texture* CreateFloatCubeMap(int size, int mipCount, const float* data = nullptr) = 0;
     virtual BaseRT* CreateRT(int nrt, int cf, int df, int w, int h, bool genMips = false) = 0;
   };
   /* BUFFERS */
@@ -300,6 +303,8 @@ namespace t850 {
 
     int 	 CreateTexture(std::string);
     int    CreateCubeMap(const unsigned char * buff, int w, int h);
+    int    CreateFloatTexture(int w, int h, const float* data = nullptr);
+    int    CreateFloatCubeMap(int size, int mipCount, const float* data = nullptr);
     int	   CreateShader(std::string src_vs, std::string src_fs, ShaderKey key = ShaderKey(), const std::string& vs_name = "", const std::string& fs_name = "");
     int 	 CreateRT(int nrt, int cf, int df, int w, int h, bool genMips = false);
     int    CreateRT(int nrt, const std::vector<int>& perColorFormats, int df, int w, int h, bool genMips = false);

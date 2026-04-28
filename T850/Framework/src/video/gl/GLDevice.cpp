@@ -108,6 +108,47 @@ namespace t850 {
     return tex;
   }
 
+  Texture * GLDevice::CreateFloatCubeMap(int size, int mipCount, const float* data)
+  {
+    if (size <= 0 || mipCount <= 0)
+      return nullptr;
+
+    GLTexture* tex = new GLTexture;
+    tex->glTarget = GL_TEXTURE_CUBE_MAP;
+    tex->x = size;
+    tex->y = size;
+    tex->mipmaps = mipCount;
+    tex->m_channels = 4;
+    tex->props = TextBasicFormat::CH_RGBA;
+    tex->cil_props = CIL_CUBE_MAP;
+    tex->params = TextBasicParams::CLAMP_TO_EDGE | TextBasicParams::MIPMAPS;
+
+    glGenTextures(1, &tex->id);
+    glBindTexture(GL_TEXTURE_CUBE_MAP, tex->id);
+
+    const float* pData = data;
+    for (int face = 0; face < 6; ++face) {
+      int mipSize = size;
+      for (int mip = 0; mip < mipCount; ++mip) {
+        glTexImage2D(GL_TEXTURE_CUBE_MAP_POSITIVE_X + face, mip, GL_RGBA32F, mipSize, mipSize, 0, GL_RGBA, GL_FLOAT, pData);
+        if (pData)
+          pData += mipSize * mipSize * 4;
+        mipSize >>= 1; if (mipSize < 1) mipSize = 1;
+      }
+    }
+
+    GLenum err = glGetError();
+    if (err != GL_NO_ERROR) {
+      T8_LOG_ERROR("[GL] CreateFloatCubeMap FAILED: glTexImage2D error=0x%X (%dx%d mips=%d)", err, size, size, mipCount);
+      delete tex;
+      return nullptr;
+    }
+
+    tex->SetTextureParams();
+    T8_LOG_INFO("[GL] CreateFloatCubeMap: id=%u %dx%d mips=%d RGBA32F", tex->id, size, size, mipCount);
+    return tex;
+  }
+
   BaseRT * GLDevice::CreateRT(int nrt, int cf, int df, int w, int h, bool genMips)
   {
     BaseRT* rt = new GLRT;

@@ -35,6 +35,7 @@ namespace t850 {
     int samplerSlot = -1;  // root param index for sampler s0
     // SRV slots: root param index for each texture register t0..tN
     std::unordered_map<int, int> srvSlots; // register -> root param index
+    std::unordered_map<int, int> samplerSlots; // register -> root param index
 
   private:
     bool BuildRootSignature(ID3D12Device* device, ID3D12ShaderReflection* vsReflect,

@@ -133,6 +133,10 @@ void ApplyConfigJson(const RuntimeConfigJson& json, Config& cfg) {
   if (json.profileFrames) cfg.profileFrames = *json.profileFrames;
   if (json.dumpMatrices) cfg.flags.dumpMatrices = *json.dumpMatrices;
   if (json.dumpMatricesFrames) cfg.dumpMatricesFrames = *json.dumpMatricesFrames;
+  if (json.orbitYaw) {
+    cfg.orbitYawOverride = true;
+    cfg.orbitYaw = *json.orbitYaw;
+  }
 
   if (json.display) {
     const DisplayJson& display = *json.display;
@@ -324,6 +328,10 @@ void ApplyCommandLine(int argc, char** argv, Config& cfg) {
     else if (arg == "--model" && i + 1 < argc) {
       cfg.modelPath = argv[++i];
     }
+    else if (arg == "--orbitYaw" && i + 1 < argc) {
+      cfg.orbitYawOverride = true;
+      cfg.orbitYaw = std::stof(argv[++i]);
+    }
     else if (arg == "--dumpMatrices" && i + 1 < argc) {
       cfg.flags.dumpMatrices = true;
       cfg.dumpMatricesFrames = std::stoi(argv[++i]);
@@ -353,6 +361,7 @@ void PrintHelp() {
     << "  --fullscreen                       Launch fullscreen\n"
     << "  --scene <index>                    Starting scene index\n"
     << "  --model <path>                     glTF model for Sandbox\n\n"
+    << "  --orbitYaw <radians>               Override Sandbox orbit yaw after model fit\n\n"
     << "Capture/debug:\n"
     << "  --dump-frame <frame>               Dump render targets at frame\n"
     << "  --dumpSnapshot-seconds <seconds>   Dump render targets after elapsed seconds\n"

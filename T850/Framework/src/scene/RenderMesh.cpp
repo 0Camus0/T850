@@ -17,6 +17,7 @@
 #include <algorithm>
 
 #include <scene/RenderMesh.h>
+#include <scene/RenderGraph.h>
 #include <utils/ThreadPool.h>
 #include <video/gl/GLShader.h>
 #include <video/gl/GLDriver.h>
@@ -34,6 +35,16 @@ extern t850::AppBase		  *pApp;
 namespace t850 {
   extern Device*            T8Device;
   extern DeviceContext*     T8DeviceContext;
+
+  static constexpr unsigned MaterialSamplerSlot = 0;
+  static constexpr unsigned ClampSamplerSlot = 1;
+
+  namespace {
+    void AssignEffectFloat4(XVECTOR3& target, const std::vector<float>& values) {
+      if (values.size() >= 4)
+        target = XVECTOR3(values[0], values[1], values[2], values[3]);
+    }
+  }
 
 
   void RenderMesh::Load(const char *filename)
@@ -67,6 +78,11 @@ namespace t850 {
           xEffectDefault *mDef = &material->EffectInstance.pDefaults[k];
 
 		  if (mDef->Type == xF::xEFFECTENUM::STDX_FLOATS) {
+        auto assignUVTransform = [&](const char* key, XVECTOR3& target) {
+          if (mDef->NameParam == key)
+            AssignEffectFloat4(target, mDef->CaseFloat);
+        };
+
 			  if (mDef->NameParam == "ambientcolor") {
 				  it_subsetinfo->AmbientColor.x = mDef->CaseFloat[0];
 				  it_subsetinfo->AmbientColor.y = mDef->CaseFloat[1];
@@ -126,6 +142,34 @@ namespace t850 {
         if (mDef->NameParam == "clearcoatRoughness") {
           it_subsetinfo->ClearcoatRoughness = mDef->CaseFloat[0];
         }
+
+        if (mDef->NameParam == "sheenColor") {
+          it_subsetinfo->SheenColor.x = mDef->CaseFloat[0];
+          it_subsetinfo->SheenColor.y = mDef->CaseFloat[1];
+          it_subsetinfo->SheenColor.z = mDef->CaseFloat[2];
+          it_subsetinfo->SheenColor.w = 0.0f;
+        }
+
+        if (mDef->NameParam == "sheenRoughness") {
+          it_subsetinfo->SheenRoughness = mDef->CaseFloat[0];
+        }
+
+        assignUVTransform("diffuseUVTransform0", it_subsetinfo->BaseColorUVTransform0);
+        assignUVTransform("diffuseUVTransform1", it_subsetinfo->BaseColorUVTransform1);
+        assignUVTransform("normalUVTransform0", it_subsetinfo->NormalUVTransform0);
+        assignUVTransform("normalUVTransform1", it_subsetinfo->NormalUVTransform1);
+        assignUVTransform("metallicUVTransform0", it_subsetinfo->MetallicUVTransform0);
+        assignUVTransform("metallicUVTransform1", it_subsetinfo->MetallicUVTransform1);
+        assignUVTransform("emissiveUVTransform0", it_subsetinfo->EmissiveUVTransform0);
+        assignUVTransform("emissiveUVTransform1", it_subsetinfo->EmissiveUVTransform1);
+        assignUVTransform("sheenColorUVTransform0", it_subsetinfo->SheenColorUVTransform0);
+        assignUVTransform("sheenColorUVTransform1", it_subsetinfo->SheenColorUVTransform1);
+        assignUVTransform("sheenRoughnessUVTransform0", it_subsetinfo->SheenRoughnessUVTransform0);
+        assignUVTransform("sheenRoughnessUVTransform1", it_subsetinfo->SheenRoughnessUVTransform1);
+        assignUVTransform("clearcoatUVTransform0", it_subsetinfo->ClearcoatUVTransform0);
+        assignUVTransform("clearcoatUVTransform1", it_subsetinfo->ClearcoatUVTransform1);
+        assignUVTransform("clearcoatRoughnessUVTransform0", it_subsetinfo->ClearcoatRoughnessUVTransform0);
+        assignUVTransform("clearcoatRoughnessUVTransform1", it_subsetinfo->ClearcoatRoughnessUVTransform1);
 
 			  if (mDef->NameParam == "speclevel") {
 				  // Legacy: ignored in PBR
@@ -201,6 +245,38 @@ namespace t850 {
 #endif
               it_subsetinfo->EmissiveId = LoadTex(path, material, &it_subsetinfo->EmissiveTex);
             }
+
+            if (mDef->NameParam == "sheenColorMap") {
+              std::string path = RemovePath(mDef->CaseString);
+#if DEBUG_MODEL
+              std::cout << "path[" << path << "]" << std::endl;
+#endif
+              it_subsetinfo->SheenColorId = LoadTex(path, material, &it_subsetinfo->SheenColorTex);
+            }
+
+            if (mDef->NameParam == "sheenRoughnessMap") {
+              std::string path = RemovePath(mDef->CaseString);
+#if DEBUG_MODEL
+              std::cout << "path[" << path << "]" << std::endl;
+#endif
+              it_subsetinfo->SheenRoughnessId = LoadTex(path, material, &it_subsetinfo->SheenRoughnessTex);
+            }
+
+            if (mDef->NameParam == "clearcoatMap") {
+              std::string path = RemovePath(mDef->CaseString);
+#if DEBUG_MODEL
+              std::cout << "path[" << path << "]" << std::endl;
+#endif
+              it_subsetinfo->ClearcoatId = LoadTex(path, material, &it_subsetinfo->ClearcoatTex);
+            }
+
+            if (mDef->NameParam == "clearcoatRoughnessMap") {
+              std::string path = RemovePath(mDef->CaseString);
+#if DEBUG_MODEL
+              std::cout << "path[" << path << "]" << std::endl;
+#endif
+              it_subsetinfo->ClearcoatRoughnessId = LoadTex(path, material, &it_subsetinfo->ClearcoatRoughnessTex);
+            }
           }
 
           if (mDef->Type == xF::xEFFECTENUM::STDX_DWORDS) {
@@ -228,6 +304,18 @@ namespace t850 {
             }
             if (mDef->NameParam == "emissiveTexCoord") {
               it_subsetinfo->EmissiveTexCoord = mDef->CaseDWORD;
+            }
+            if (mDef->NameParam == "sheenColorTexCoord") {
+              it_subsetinfo->SheenColorTexCoord = mDef->CaseDWORD;
+            }
+            if (mDef->NameParam == "sheenRoughnessTexCoord") {
+              it_subsetinfo->SheenRoughnessTexCoord = mDef->CaseDWORD;
+            }
+            if (mDef->NameParam == "clearcoatTexCoord") {
+              it_subsetinfo->ClearcoatTexCoord = mDef->CaseDWORD;
+            }
+            if (mDef->NameParam == "clearcoatRoughnessTexCoord") {
+              it_subsetinfo->ClearcoatRoughnessTexCoord = mDef->CaseDWORD;
             }
           }
         }
@@ -447,6 +535,8 @@ namespace t850 {
               matKey.bits |= ShaderKey::METALLIC_MAP;
             if (mDef->NameParam == "emissiveMap")
               matKey.bits |= ShaderKey::EMISSIVE_MAP;
+            if (mDef->NameParam == "clearcoatMap" || mDef->NameParam == "clearcoatRoughnessMap")
+              matKey.bits |= ShaderKey::CLEARCOAT_MAP;
           }
 
           if (mDef->Type == xF::xEFFECTENUM::STDX_DWORDS) {
@@ -638,6 +728,25 @@ namespace t850 {
     return subInfo.TransmissionFactor > 0.0f ? 0 : 1;
   }
 
+  static int NonForwardSubsetGroup(const RenderMesh::SubSetInfo& subInfo) {
+    return subInfo.AlphaMode == 1 ? 1 : 0;
+  }
+
+  static int GeometryNonForwardGroup(const RenderMesh::MeshInfo& meshInfo, uint8_t pass) {
+    bool hasDrawableSubset = false;
+    bool hasMaskedSubset = false;
+    for (const auto& subInfo : meshInfo.SubSets) {
+      if (!ShouldDrawSubsetInPass(subInfo, pass))
+        continue;
+      hasDrawableSubset = true;
+      if (NonForwardSubsetGroup(subInfo) == 1)
+        hasMaskedSubset = true;
+    }
+    if (!hasDrawableSubset)
+      return 2;
+    return hasMaskedSubset ? 1 : 0;
+  }
+
   static int GeometryForwardGroup(const RenderMesh::MeshInfo& meshInfo) {
     int group = 2;
     for (const auto& subInfo : meshInfo.SubSets) {
@@ -706,6 +815,11 @@ namespace t850 {
           float db = GeometryForwardDistanceSq(Info[b], transform, pActualCamera->Eye);
           return da > db;
         });
+      } else if (currentPass == PassType::GBUFFER || currentPass == PassType::SHADOW_MAP || currentPass == PassType::RADIAL_DEPTH) {
+        std::stable_sort(geometryOrder.begin(), geometryOrder.end(),
+          [&](std::size_t a, std::size_t b) {
+            return GeometryNonForwardGroup(Info[a], currentPass) < GeometryNonForwardGroup(Info[b], currentPass);
+          });
     }
 
     for (std::size_t oi = 0; oi < numGeometries; oi++) {
@@ -787,6 +901,12 @@ namespace t850 {
             float db = SubsetDistanceSqToCamera(it_MeshInfo->SubSets[b], transform, pActualCamera->Eye);
             return da > db;
           }
+          if (currentPass == PassType::GBUFFER || currentPass == PassType::SHADOW_MAP || currentPass == PassType::RADIAL_DEPTH) {
+            int groupA = NonForwardSubsetGroup(it_MeshInfo->SubSets[a]);
+            int groupB = NonForwardSubsetGroup(it_MeshInfo->SubSets[b]);
+            if (groupA != groupB)
+              return groupA < groupB;
+          }
           ShaderKey ka(it_MeshInfo->SubSets[a].key.bits); ka.setPass(currentPass);
           ShaderKey kb(it_MeshInfo->SubSets[b].key.bits); kb.setPass(currentPass);
           return ka.bits < kb.bits;
@@ -818,8 +938,31 @@ namespace t850 {
         float transmissionMul = pScProp ? pScProp->MaterialTransmissionMultiplier : 1.0f;
         float refractionStrength = pScProp ? pScProp->MaterialRefractionStrength : 0.03f;
         float iblFactor = pScProp ? pScProp->IBLFactor : 1.0f;
+        float iblMipCount = pScProp ? pScProp->IBLMipCount : 4.0f;
+        float iblDiffuseMipLevel = pScProp ? pScProp->IBLDiffuseMipLevel : 4.0f;
+        float iblBrdfLutEnabled = pScProp ? pScProp->IBLBRDFLUTEnabled : 0.0f;
         it_MeshInfo->CnstBuffer.MaterialParams = XVECTOR3(sub_info->ClearcoatFactor, sub_info->ClearcoatRoughness, sub_info->Unlit ? 1.0f : 0.0f, emissiveMul);
         it_MeshInfo->CnstBuffer.MaterialParams2 = XVECTOR3(transmissionMul, refractionStrength, Textures[9] ? 1.0f : 0.0f, iblFactor);
+        it_MeshInfo->CnstBuffer.MaterialParams3 = XVECTOR3(iblMipCount, iblBrdfLutEnabled, iblDiffuseMipLevel, 0.0f);
+        it_MeshInfo->CnstBuffer.MaterialParams4 = XVECTOR3(sub_info->SheenColor.x, sub_info->SheenColor.y, sub_info->SheenColor.z, sub_info->SheenRoughness);
+        it_MeshInfo->CnstBuffer.MaterialParams5 = XVECTOR3(sub_info->SheenColorTex ? 1.0f : 0.0f, sub_info->SheenRoughnessTex ? 1.0f : 0.0f, (float)sub_info->SheenColorTexCoord, (float)sub_info->SheenRoughnessTexCoord);
+        it_MeshInfo->CnstBuffer.MaterialParams6 = XVECTOR3(sub_info->ClearcoatTex ? 1.0f : 0.0f, sub_info->ClearcoatRoughnessTex ? 1.0f : 0.0f, (float)sub_info->ClearcoatTexCoord, (float)sub_info->ClearcoatRoughnessTexCoord);
+        it_MeshInfo->CnstBuffer.BaseColorUVTransform0 = sub_info->BaseColorUVTransform0;
+        it_MeshInfo->CnstBuffer.BaseColorUVTransform1 = sub_info->BaseColorUVTransform1;
+        it_MeshInfo->CnstBuffer.NormalUVTransform0 = sub_info->NormalUVTransform0;
+        it_MeshInfo->CnstBuffer.NormalUVTransform1 = sub_info->NormalUVTransform1;
+        it_MeshInfo->CnstBuffer.MetallicUVTransform0 = sub_info->MetallicUVTransform0;
+        it_MeshInfo->CnstBuffer.MetallicUVTransform1 = sub_info->MetallicUVTransform1;
+        it_MeshInfo->CnstBuffer.EmissiveUVTransform0 = sub_info->EmissiveUVTransform0;
+        it_MeshInfo->CnstBuffer.EmissiveUVTransform1 = sub_info->EmissiveUVTransform1;
+        it_MeshInfo->CnstBuffer.SheenColorUVTransform0 = sub_info->SheenColorUVTransform0;
+        it_MeshInfo->CnstBuffer.SheenColorUVTransform1 = sub_info->SheenColorUVTransform1;
+        it_MeshInfo->CnstBuffer.SheenRoughnessUVTransform0 = sub_info->SheenRoughnessUVTransform0;
+        it_MeshInfo->CnstBuffer.SheenRoughnessUVTransform1 = sub_info->SheenRoughnessUVTransform1;
+        it_MeshInfo->CnstBuffer.ClearcoatUVTransform0 = sub_info->ClearcoatUVTransform0;
+        it_MeshInfo->CnstBuffer.ClearcoatUVTransform1 = sub_info->ClearcoatUVTransform1;
+        it_MeshInfo->CnstBuffer.ClearcoatRoughnessUVTransform0 = sub_info->ClearcoatRoughnessUVTransform0;
+        it_MeshInfo->CnstBuffer.ClearcoatRoughnessUVTransform1 = sub_info->ClearcoatRoughnessUVTransform1;
 
         sub_info->IB->Set(*T8DeviceContext, 0,
                           sub_info->IB32Bit ? IndexBufferFormat::R32
@@ -843,6 +986,12 @@ namespace t850 {
      //   if (s != last)
           update = true;
 
+        BaseDriver::FaceCulling prevCull = g_pBaseDriver->m_FaceCulling;
+        bool changedCull = sub_info->DoubleSided && prevCull != BaseDriver::FRONT_AND_BACK;
+        if (changedCull) {
+          g_pBaseDriver->SetCullFace(BaseDriver::FRONT_AND_BACK);
+        }
+
         if (update) {
           s->Set(*T8DeviceContext);
 
@@ -851,52 +1000,91 @@ namespace t850 {
         }
         if (s->key.has(ShaderKey::DIFFUSE_MAP)) {
           sub_info->DiffuseTex->Set(*T8DeviceContext, 0, "DiffuseTex");
-          sub_info->DiffuseTex->SetSampler(*T8DeviceContext);
+          sub_info->DiffuseTex->SetSampler(*T8DeviceContext, MaterialSamplerSlot);
         }
         if (s->key.has(ShaderKey::SPECULAR_MAP)) {
           sub_info->SpecularTex->Set(*T8DeviceContext, 1, "SpecularTex");
-          sub_info->SpecularTex->SetSampler(*T8DeviceContext);
+          sub_info->SpecularTex->SetSampler(*T8DeviceContext, MaterialSamplerSlot);
         }
 
         if (s->key.has(ShaderKey::GLOSS_MAP)) {
           sub_info->GlossfTex->Set(*T8DeviceContext, 2, "GlossTex");
-          sub_info->GlossfTex->SetSampler(*T8DeviceContext);
+          sub_info->GlossfTex->SetSampler(*T8DeviceContext, MaterialSamplerSlot);
         }
 
         if (s->key.has(ShaderKey::NORMAL_MAP)) {
           sub_info->NormalTex->Set(*T8DeviceContext, 3, "NormalTex");
-          sub_info->NormalTex->SetSampler(*T8DeviceContext);
+          sub_info->NormalTex->SetSampler(*T8DeviceContext, MaterialSamplerSlot);
         }
         if (EnvMap) {
           EnvMap->Set(*T8DeviceContext, 4, "texEnv");
-          EnvMap->SetSampler(*T8DeviceContext);
+          EnvMap->SetSampler(*T8DeviceContext, ClampSamplerSlot);
         }
         if (s->key.has(ShaderKey::HEIGHT_MAP)) {
           sub_info->ParalaxTex->Set(*T8DeviceContext, 5, "HeightTex");
-          sub_info->ParalaxTex->SetSampler(*T8DeviceContext);
+          sub_info->ParalaxTex->SetSampler(*T8DeviceContext, MaterialSamplerSlot);
         }
         if (s->key.has(ShaderKey::METALLIC_MAP)) {
           sub_info->MetallicTex->Set(*T8DeviceContext, 6, "MetallicTex");
-          sub_info->MetallicTex->SetSampler(*T8DeviceContext);
+          sub_info->MetallicTex->SetSampler(*T8DeviceContext, MaterialSamplerSlot);
         }
         if (Textures[7]) {
           Textures[7]->Set(*T8DeviceContext, 7, "SceneDepthTex");
-          Textures[7]->SetSampler(*T8DeviceContext);
+          Textures[7]->SetSampler(*T8DeviceContext, ClampSamplerSlot);
         }
         if (s->key.has(ShaderKey::EMISSIVE_MAP) && sub_info->EmissiveTex) {
           sub_info->EmissiveTex->Set(*T8DeviceContext, 8, "EmissiveTex");
-          sub_info->EmissiveTex->SetSampler(*T8DeviceContext);
+          sub_info->EmissiveTex->SetSampler(*T8DeviceContext, MaterialSamplerSlot);
         }
         if (Textures[9]) {
           Textures[9]->Set(*T8DeviceContext, 9, "SceneColorTex");
-          Textures[9]->SetSampler(*T8DeviceContext);
+          Textures[9]->SetSampler(*T8DeviceContext, ClampSamplerSlot);
+        }
+        if (Textures[EnvironmentTextureSlot::DiffuseIBL]) {
+          Textures[EnvironmentTextureSlot::DiffuseIBL]->Set(*T8DeviceContext, EnvironmentTextureSlot::DiffuseIBL, "texIBLDiffuse");
+          Textures[EnvironmentTextureSlot::DiffuseIBL]->SetSampler(*T8DeviceContext, ClampSamplerSlot);
+        }
+        if (Textures[EnvironmentTextureSlot::SpecularIBL]) {
+          Textures[EnvironmentTextureSlot::SpecularIBL]->Set(*T8DeviceContext, EnvironmentTextureSlot::SpecularIBL, "texIBLSpecular");
+          Textures[EnvironmentTextureSlot::SpecularIBL]->SetSampler(*T8DeviceContext, ClampSamplerSlot);
+        }
+        if (Textures[EnvironmentTextureSlot::BrdfLUT]) {
+          Textures[EnvironmentTextureSlot::BrdfLUT]->Set(*T8DeviceContext, EnvironmentTextureSlot::BrdfLUT, "texIBLBRDF");
+          Textures[EnvironmentTextureSlot::BrdfLUT]->SetSampler(*T8DeviceContext, ClampSamplerSlot);
+        }
+        if (Textures[EnvironmentTextureSlot::CharlieIBL]) {
+          Textures[EnvironmentTextureSlot::CharlieIBL]->Set(*T8DeviceContext, EnvironmentTextureSlot::CharlieIBL, "texIBLCharlie");
+          Textures[EnvironmentTextureSlot::CharlieIBL]->SetSampler(*T8DeviceContext, ClampSamplerSlot);
+        }
+        if (Textures[EnvironmentTextureSlot::CharlieLUT]) {
+          Textures[EnvironmentTextureSlot::CharlieLUT]->Set(*T8DeviceContext, EnvironmentTextureSlot::CharlieLUT, "texIBLCharlieLUT");
+          Textures[EnvironmentTextureSlot::CharlieLUT]->SetSampler(*T8DeviceContext, ClampSamplerSlot);
+        }
+        if (Textures[EnvironmentTextureSlot::SheenELUT]) {
+          Textures[EnvironmentTextureSlot::SheenELUT]->Set(*T8DeviceContext, EnvironmentTextureSlot::SheenELUT, "texIBLSheenELUT");
+          Textures[EnvironmentTextureSlot::SheenELUT]->SetSampler(*T8DeviceContext, ClampSamplerSlot);
+        }
+        if (sub_info->SheenColorTex) {
+          sub_info->SheenColorTex->Set(*T8DeviceContext, MaterialTextureSlot::SheenColor, "SheenColorTex");
+          sub_info->SheenColorTex->SetSampler(*T8DeviceContext, MaterialSamplerSlot);
+        }
+        if (sub_info->SheenRoughnessTex) {
+          sub_info->SheenRoughnessTex->Set(*T8DeviceContext, MaterialTextureSlot::SheenRoughness, "SheenRoughnessTex");
+          sub_info->SheenRoughnessTex->SetSampler(*T8DeviceContext, MaterialSamplerSlot);
+        }
+        if (s->key.has(ShaderKey::CLEARCOAT_MAP)) {
+          Texture* clearcoatTex = sub_info->ClearcoatTex ? sub_info->ClearcoatTex : sub_info->ClearcoatRoughnessTex;
+          Texture* clearcoatRoughnessTex = sub_info->ClearcoatRoughnessTex ? sub_info->ClearcoatRoughnessTex : sub_info->ClearcoatTex;
+          if (clearcoatTex) {
+            clearcoatTex->Set(*T8DeviceContext, MaterialTextureSlot::Clearcoat, "ClearcoatTex");
+            clearcoatTex->SetSampler(*T8DeviceContext, MaterialSamplerSlot);
+          }
+          if (clearcoatRoughnessTex) {
+            clearcoatRoughnessTex->Set(*T8DeviceContext, MaterialTextureSlot::ClearcoatRoughness, "ClearcoatRoughnessTex");
+            clearcoatRoughnessTex->SetSampler(*T8DeviceContext, MaterialSamplerSlot);
+          }
         }
 
-        BaseDriver::FaceCulling prevCull = g_pBaseDriver->m_FaceCulling;
-        bool changedCull = sub_info->DoubleSided && prevCull != BaseDriver::FRONT_AND_BACK;
-        if (changedCull) {
-          g_pBaseDriver->SetCullFace(BaseDriver::FRONT_AND_BACK);
-        }
         T8DeviceContext->SetPrimitiveTopology(Topology::TRIANLE_LIST);
         T8DeviceContext->DrawIndexed(sub_info->NumVertex, 0, 0);
         if (changedCull) {

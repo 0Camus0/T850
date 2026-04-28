@@ -151,6 +151,8 @@ namespace t850 {
     //  BlendStatedesc.RenderTarget[0].DestBlendAlpha = D3D11_BLEND_INV_SRC_ALPHA;
     //device->CreateBlendState(&BlendStatedesc, &m_BlendStateAlphaBlend);
 
+    BlendStatedesc = CD3D11_BLEND_DESC(def);
+    BlendStatedesc.RenderTarget[0].BlendEnable = TRUE;
     BlendStatedesc.RenderTarget[0].SrcBlend = D3D11_BLEND_SRC_ALPHA;
     BlendStatedesc.RenderTarget[0].DestBlend = D3D11_BLEND_INV_SRC_ALPHA;
     BlendStatedesc.RenderTarget[0].BlendOp = D3D11_BLEND_OP_ADD;
@@ -322,6 +324,7 @@ namespace t850 {
       deviceContext->OMSetBlendState(m_BlendStateOpaque.Get(), 0, 0xffffffff);
       break;
     case t850::BaseDriver::BlendStates::BLEND_OPAQUE:
+      deviceContext->OMSetBlendState(m_BlendStateOpaque.Get(), 0, 0xffffffff);
       break;
     case t850::BaseDriver::ADDITIVE:
       deviceContext->OMSetBlendState(m_BlendStateAdditive.Get(), 0, 0xffffffff);
@@ -362,6 +365,8 @@ namespace t850 {
   }
 
   void D3DXDriver::SetCullFace(FaceCulling state) {
+    m_FaceCulling = state;
+
     ID3D11Device* device = reinterpret_cast<ID3D11Device*>(T8Device->GetAPIObject());
     ID3D11DeviceContext* deviceContext = reinterpret_cast<ID3D11DeviceContext*>(T8DeviceContext->GetAPIObject());
 

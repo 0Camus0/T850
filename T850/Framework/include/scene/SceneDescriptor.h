@@ -135,6 +135,12 @@ namespace t850 {
     std::vector<SplineDesc> splines;
     std::vector<std::string> meshes;  // model file paths
     std::string environment_map;
+    std::string environment_diffuse_ibl;
+    std::string environment_specular_ibl;
+    std::string environment_brdf_lut;
+    std::string environment_sheen_ibl;
+    std::string environment_charlie_lut;
+    std::string environment_sheen_e_lut;
     QualityDesc quality;
     SceneSettingsDesc settings;
     std::vector<SliderDesc> sliders;

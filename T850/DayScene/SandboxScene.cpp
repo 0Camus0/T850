@@ -6,6 +6,7 @@
 #include <scene/RenderMesh.h>
 #include <scene/RenderSkinnedMesh.h>
 #include <scene/SceneDescriptor.h>
+#include <scene/IBLResources.h>
 #include <core/Config.h>
 #include <iostream>
 #include <fstream>
@@ -90,6 +91,8 @@ void SandboxScene::InitVars() {
   SceneProp.BloomThreshold = 1.5f;
   SceneProp.ToneMapWhiteLevel = 5.5f;
   SceneProp.LuminanceTau = 1.1f;
+  SceneProp.IBLMipCount = 4.0f;
+  SceneProp.IBLBRDFLUTEnabled = 0.0f;
 
   t850::FrameDumperConfig dumpCfg;
   dumpCfg.dumpEnabled        = g_config.flags.dumpEnabled;
@@ -127,6 +130,22 @@ void SandboxScene::CreateAssets() {
   SceneProp.SSAOKernel.InitTexture();
 
   EnvMapTexIndex = g_pBaseDriver->CreateTexture(string("sky/Ennis.dds"));
+  EnvMaps.SetFallback(EnvMapTexIndex);
+  if (m_guiSetup.descriptor.name.empty()) {
+    m_guiSetup.Load("Scenes/SandboxScene.json");
+  }
+  LoadEnvironmentIBLResources(
+    g_pBaseDriver,
+    {m_guiSetup.environmentDiffuseIBL, m_guiSetup.environmentSpecularIBL, m_guiSetup.environmentBrdfLUT,
+     m_guiSetup.environmentSheenIBL, m_guiSetup.environmentCharlieLUT, m_guiSetup.environmentSheenELUT},
+    EnvMaps,
+    DiffuseIBLTexIndex,
+    SpecularIBLTexIndex,
+    BrdfLUTTexIndex,
+    SheenIBLTexIndex,
+    CharlieLUTTexIndex,
+    SheenELUTTexIndex);
+  UpdateSceneIBLSettings(SceneProp, g_pBaseDriver, EnvMaps);
 
   // Load the glTF model
   int index = PrimitiveMgr.CreateMesh(g_config.modelPath.c_str());
@@ -193,17 +212,49 @@ void SandboxScene::OnUpdate(float _DtSecs) {
     // Flush GPU before destroying — D3D12 may still reference the old
     // texture from the previous frame's command list.
     g_pBaseDriver->WaitForGPU();
-    if (EnvMapTexIndex >= 0) {
-      g_pBaseDriver->DestroyTexture(EnvMapTexIndex);
-      EnvMapTexIndex = -1;
-    }
-    EnvMapTexIndex = g_pBaseDriver->CreateTexture(m_pendingCubemap);
-    Texture* newTex = g_pBaseDriver->GetTexture(EnvMapTexIndex);
-    T8_LOG_INFO("[SandboxScene] Cubemap loaded: slot=%d tex=%p (%dx%d)",
-                EnvMapTexIndex, newTex, newTex ? newTex->x : 0, newTex ? newTex->y : 0);
-    Quads[0].SetEnvironmentMap(newTex);
-    if (Meshes[0].pBase) {
-      Meshes[0].SetEnvironmentMap(newTex);
+    int newEnvMapTexIndex = g_pBaseDriver->CreateTexture(m_pendingCubemap);
+    if (newEnvMapTexIndex >= 0) {
+      if (EnvMapTexIndex >= 0 && EnvMapTexIndex != newEnvMapTexIndex)
+        g_pBaseDriver->DestroyTexture(EnvMapTexIndex);
+      EnvMapTexIndex = newEnvMapTexIndex;
+      if (m_guiSetup.environmentDiffuseIBL.empty() && DiffuseIBLTexIndex >= 0) {
+        g_pBaseDriver->DestroyTexture(DiffuseIBLTexIndex);
+        DiffuseIBLTexIndex = -1;
+      }
+      if (m_guiSetup.environmentSpecularIBL.empty() && SpecularIBLTexIndex >= 0) {
+        g_pBaseDriver->DestroyTexture(SpecularIBLTexIndex);
+        SpecularIBLTexIndex = -1;
+      }
+      if (m_guiSetup.environmentSheenIBL.empty() && SheenIBLTexIndex >= 0) {
+        g_pBaseDriver->DestroyTexture(SheenIBLTexIndex);
+        SheenIBLTexIndex = -1;
+      }
+      EnvMaps.SetFallback(EnvMapTexIndex);
+      LoadEnvironmentIBLResources(
+        g_pBaseDriver,
+        {m_guiSetup.environmentDiffuseIBL, m_guiSetup.environmentSpecularIBL, m_guiSetup.environmentBrdfLUT,
+         m_guiSetup.environmentSheenIBL, m_guiSetup.environmentCharlieLUT, m_guiSetup.environmentSheenELUT},
+        EnvMaps,
+        DiffuseIBLTexIndex,
+        SpecularIBLTexIndex,
+        BrdfLUTTexIndex,
+        SheenIBLTexIndex,
+        CharlieLUTTexIndex,
+        SheenELUTTexIndex);
+      EnvMaps.BrdfLUT = BrdfLUTTexIndex;
+      EnvMaps.CharlieIBL = SheenIBLTexIndex;
+      EnvMaps.CharlieLUT = CharlieLUTTexIndex;
+      EnvMaps.SheenELUT = SheenELUTTexIndex;
+      UpdateSceneIBLSettings(SceneProp, g_pBaseDriver, EnvMaps);
+      Texture* newTex = g_pBaseDriver->GetTexture(EnvMapTexIndex);
+      T8_LOG_INFO("[SandboxScene] Cubemap loaded: slot=%d tex=%p (%dx%d)",
+                  EnvMapTexIndex, newTex, newTex ? newTex->x : 0, newTex ? newTex->y : 0);
+      Quads[0].SetEnvironmentMap(newTex);
+      if (Meshes[0].pBase) {
+        Meshes[0].SetEnvironmentMap(newTex);
+      }
+    } else {
+      T8_LOG_ERROR("[SandboxScene] Failed to load cubemap '%s'; keeping previous cubemap", m_pendingCubemap.c_str());
     }
     m_pendingCubemap.clear();
   }
@@ -376,7 +427,7 @@ void SandboxScene::FitModelToView() {
   // Place camera at a distance that fits the bounding sphere in the FOV
   float halfFov = Cam.Fov * 0.5f;
   m_orbitDist = m_modelRadius / std::tan(halfFov);
-  m_orbitYaw = 0.0f;
+  m_orbitYaw = g_config.orbitYawOverride ? g_config.orbitYaw : 0.0f;
   m_orbitPitch = 0.0f;
 
   // Adjust near/far planes to the model scale
@@ -432,7 +483,7 @@ void SandboxScene::OnDraw() {
     &Cam,
     &LightCam,
     nullptr,
-    EnvMapTexIndex
+    EnvMaps
   );
 
   // RT Dump via FrameDumper

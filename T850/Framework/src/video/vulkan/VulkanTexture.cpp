@@ -63,17 +63,15 @@ namespace t850 {
     VkDeviceSize imageSize = (VkDeviceSize)x * y * bytesPerPixel;
     bool isCube = (cil_props & CIL_CUBE_MAP) != 0;
     uint32_t layerCount = isCube ? 6 : 1;
-    // For cubemaps, the DDS buffer stores all mip levels per face. Use
-    // total size / 6 to correctly stride over each face's full mip chain.
-    VkDeviceSize faceStride = isCube ? (this->size / layerCount) : imageSize;
-    VkDeviceSize totalSize = isCube ? this->size : imageSize;
+    uint32_t mipCount = (mipmaps > 0) ? mipmaps : 1;
+    VkDeviceSize totalSize = (mipCount > 1 && this->size > 0) ? this->size : imageSize * layerCount;
 
     // 1. Create VkImage
     VkImageCreateInfo imgCI = { VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO };
     imgCI.imageType = VK_IMAGE_TYPE_2D;
     imgCI.format = m_format;
     imgCI.extent = { x, y, 1 };
-    imgCI.mipLevels = 1;
+    imgCI.mipLevels = mipCount;
     imgCI.arrayLayers = layerCount;
     imgCI.samples = VK_SAMPLE_COUNT_1_BIT;
     imgCI.tiling = VK_IMAGE_TILING_OPTIMAL;
@@ -141,7 +139,7 @@ namespace t850 {
       barrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
       barrier.image = m_image;
       barrier.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
-      barrier.subresourceRange.levelCount = 1;
+      barrier.subresourceRange.levelCount = mipCount;
       barrier.subresourceRange.layerCount = layerCount;
       barrier.srcAccessMask = 0;
       barrier.dstAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
@@ -150,19 +148,28 @@ namespace t850 {
     }
 
     // 3b. Copy staging buffer → image (one region per face/layer)
-    std::vector<VkBufferImageCopy> regions(layerCount);
+    std::vector<VkBufferImageCopy> regions(layerCount * mipCount);
+    VkDeviceSize sourceOffset = 0;
     for (uint32_t face = 0; face < layerCount; face++) {
-      regions[face] = {};
-      regions[face].bufferOffset = face * faceStride;
-      regions[face].imageSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
-      regions[face].imageSubresource.mipLevel = 0;
-      regions[face].imageSubresource.baseArrayLayer = face;
-      regions[face].imageSubresource.layerCount = 1;
-      regions[face].imageExtent = { x, y, 1 };
+      uint32_t mipWidth = x;
+      uint32_t mipHeight = y;
+      for (uint32_t mip = 0; mip < mipCount; ++mip) {
+        uint32_t regionIndex = face * mipCount + mip;
+        regions[regionIndex] = {};
+        regions[regionIndex].bufferOffset = sourceOffset;
+        regions[regionIndex].imageSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+        regions[regionIndex].imageSubresource.mipLevel = mip;
+        regions[regionIndex].imageSubresource.baseArrayLayer = face;
+        regions[regionIndex].imageSubresource.layerCount = 1;
+        regions[regionIndex].imageExtent = { mipWidth, mipHeight, 1 };
+        sourceOffset += VkDeviceSize(mipWidth) * VkDeviceSize(mipHeight) * VkDeviceSize(bytesPerPixel);
+        mipWidth >>= 1; if (mipWidth < 1) mipWidth = 1;
+        mipHeight >>= 1; if (mipHeight < 1) mipHeight = 1;
+      }
     }
     vkCmdCopyBufferToImage(cmd, stagingBuffer, m_image,
                            VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
-                           layerCount, regions.data());
+                           static_cast<uint32_t>(regions.size()), regions.data());
 
     // 3c. Transition TRANSFER_DST_OPTIMAL → SHADER_READ_ONLY_OPTIMAL (all layers)
     {
@@ -173,7 +180,7 @@ namespace t850 {
       barrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
       barrier.image = m_image;
       barrier.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
-      barrier.subresourceRange.levelCount = 1;
+      barrier.subresourceRange.levelCount = mipCount;
       barrier.subresourceRange.layerCount = layerCount;
       barrier.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
       barrier.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
@@ -209,7 +216,7 @@ namespace t850 {
     }
     ivCI.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
     ivCI.subresourceRange.baseMipLevel = 0;
-    ivCI.subresourceRange.levelCount = 1;
+    ivCI.subresourceRange.levelCount = mipCount;
     ivCI.subresourceRange.baseArrayLayer = 0;
     ivCI.subresourceRange.layerCount = layerCount;
 
@@ -220,9 +227,12 @@ namespace t850 {
     }
 
     // 7. Create VkSampler
+    this->mipmaps = mipCount;
+    if (mipCount > 1)
+      params |= MIPMAPS;
     SetTextureParams();
 
-    T8_LOG_INFO("[Vulkan] LoadAPITexture OK (%ux%u ch=%u fmt=%d)", x, y, m_channels, m_format);
+    T8_LOG_INFO("[Vulkan] LoadAPITexture OK (%ux%u ch=%u fmt=%d mips=%u cube=%d)", x, y, m_channels, m_format, mipCount, (int)isCube);
   }
 
   void VulkanTexture::LoadAPITextureCompressed(unsigned char* buffer) {

@@ -6,6 +6,7 @@
 #include <string>
 #include <sstream>
 #include <algorithm>
+#include <cctype>
 #include <iterator>
 #include <fstream>
 #include <set>
@@ -52,56 +53,174 @@ void GLSL_Parser::ParseFromMemory(std::string VSSrc_, std::string FSSrc_) {
   Process(buffer_fragment);
 }
 
-// Simple #ifdef/#ifndef/#else/#endif preprocessor so the parser only
-// sees declarations from active code blocks.  Handles #define at the
-// top of the source (from ShaderKey → Defines) and nested #ifdef.
+namespace {
+	struct PreprocessorFrame {
+		bool parentActive;
+		bool active;
+		bool branchTaken;
+	};
+
+	static std::string Trim(std::string value) {
+		std::size_t first = value.find_first_not_of(" \t\r\n");
+		if (first == std::string::npos)
+			return std::string();
+		std::size_t last = value.find_last_not_of(" \t\r\n");
+		return value.substr(first, last - first + 1);
+	}
+
+	class DefineExpressionParser {
+	public:
+		DefineExpressionParser(const std::string& expression, const std::set<std::string>& definedSymbols)
+			: m_expression(expression), m_definedSymbols(definedSymbols) {}
+
+		bool Parse() {
+			return ParseOr();
+		}
+
+	private:
+		void SkipWhitespace() {
+			while (m_pos < m_expression.size() && std::isspace(static_cast<unsigned char>(m_expression[m_pos])))
+				++m_pos;
+		}
+
+		bool Match(const char* token) {
+			SkipWhitespace();
+			std::size_t length = std::strlen(token);
+			if (m_expression.compare(m_pos, length, token) == 0) {
+				m_pos += length;
+				return true;
+			}
+			return false;
+		}
+
+		std::string ParseIdentifier() {
+			SkipWhitespace();
+			std::size_t start = m_pos;
+			while (m_pos < m_expression.size()) {
+				unsigned char ch = static_cast<unsigned char>(m_expression[m_pos]);
+				if (!std::isalnum(ch) && ch != '_')
+					break;
+				++m_pos;
+			}
+			return m_expression.substr(start, m_pos - start);
+		}
+
+		bool ParsePrimary() {
+			SkipWhitespace();
+			if (Match("(")) {
+				bool value = ParseOr();
+				Match(")");
+				return value;
+			}
+
+			std::string identifier = ParseIdentifier();
+			if (identifier.empty())
+				return false;
+
+			if (identifier == "defined") {
+				SkipWhitespace();
+				bool hasParen = Match("(");
+				std::string symbol = ParseIdentifier();
+				if (hasParen)
+					Match(")");
+				return m_definedSymbols.count(symbol) != 0;
+			}
+
+			if (identifier == "1" || identifier == "true")
+				return true;
+			if (identifier == "0" || identifier == "false")
+				return false;
+
+			return m_definedSymbols.count(identifier) != 0;
+		}
+
+		bool ParseUnary() {
+			if (Match("!"))
+				return !ParseUnary();
+			return ParsePrimary();
+		}
+
+		bool ParseAnd() {
+			bool value = ParseUnary();
+			while (Match("&&"))
+				value = ParseUnary() && value;
+			return value;
+		}
+
+		bool ParseOr() {
+			bool value = ParseAnd();
+			while (Match("||"))
+				value = ParseAnd() || value;
+			return value;
+		}
+
+		const std::string& m_expression;
+		const std::set<std::string>& m_definedSymbols;
+		std::size_t m_pos = 0;
+	};
+
+	static bool EvaluatePreprocessorExpression(const std::string& expression, const std::set<std::string>& definedSymbols) {
+		DefineExpressionParser parser(expression, definedSymbols);
+		return parser.Parse();
+	}
+}
+
+// Simple #if/#ifdef/#ifndef/#elif/#else/#endif preprocessor so the parser only
+// sees declarations from active code blocks. Handles the defined() expressions
+// emitted by ShaderKey defines and preserves line count for diagnostics.
 static std::string PreprocessIfdefs(const std::string& src) {
   std::istringstream iss(src);
   std::string line, result;
   std::set<std::string> defines;
-  // Stack: true = current block is active
-  std::vector<bool> stack;
-  stack.push_back(true); // top-level is always active
+	std::vector<PreprocessorFrame> stack;
+	stack.push_back({true, true, false});
 
   while (std::getline(iss, line)) {
-    // Trim leading whitespace for directive detection
-    std::size_t first = line.find_first_not_of(" \t");
-    if (first == std::string::npos) { result += '\n'; continue; }
-    std::string trimmed = line.substr(first);
+		std::string trimmed = Trim(line);
 
-    if (trimmed.rfind("#define ", 0) == 0 && stack.back()) {
-      std::string sym = trimmed.substr(8);
-      auto sp = sym.find_first_of(" \t\r\n");
+		if (trimmed.rfind("#define ", 0) == 0 && stack.back().active) {
+			std::string sym = Trim(trimmed.substr(8));
+			auto sp = sym.find_first_of(" \t");
       if (sp != std::string::npos) sym = sym.substr(0, sp);
       defines.insert(sym);
       result += '\n'; // don't emit the #define line
     } else if (trimmed.rfind("#ifdef ", 0) == 0) {
-      std::string sym = trimmed.substr(7);
-      auto sp = sym.find_first_of(" \t\r\n");
-      if (sp != std::string::npos) sym = sym.substr(0, sp);
-      stack.push_back(stack.back() && defines.count(sym));
+			std::string sym = Trim(trimmed.substr(7));
+			bool condition = defines.count(sym) != 0;
+			bool parentActive = stack.back().active;
+			stack.push_back({parentActive, parentActive && condition, condition});
       result += '\n';
     } else if (trimmed.rfind("#ifndef ", 0) == 0) {
-      std::string sym = trimmed.substr(8);
-      auto sp = sym.find_first_of(" \t\r\n");
-      if (sp != std::string::npos) sym = sym.substr(0, sp);
-      stack.push_back(stack.back() && !defines.count(sym));
+			std::string sym = Trim(trimmed.substr(8));
+			bool condition = defines.count(sym) == 0;
+			bool parentActive = stack.back().active;
+			stack.push_back({parentActive, parentActive && condition, condition});
+			result += '\n';
+		} else if (trimmed.rfind("#if ", 0) == 0) {
+			bool condition = EvaluatePreprocessorExpression(trimmed.substr(4), defines);
+			bool parentActive = stack.back().active;
+			stack.push_back({parentActive, parentActive && condition, condition});
+			result += '\n';
+		} else if (trimmed.rfind("#elif", 0) == 0) {
+			if (stack.size() > 1) {
+				PreprocessorFrame& frame = stack.back();
+				bool condition = !frame.branchTaken && EvaluatePreprocessorExpression(trimmed.substr(5), defines);
+				frame.active = frame.parentActive && condition;
+				frame.branchTaken = frame.branchTaken || condition;
+			}
       result += '\n';
     } else if (trimmed.rfind("#else", 0) == 0) {
       if (stack.size() > 1) {
-        bool parentActive = stack[stack.size()-2];
-        stack.back() = parentActive && !stack.back();
+				PreprocessorFrame& frame = stack.back();
+				frame.active = frame.parentActive && !frame.branchTaken;
+				frame.branchTaken = true;
       }
       result += '\n';
     } else if (trimmed.rfind("#endif", 0) == 0) {
       if (stack.size() > 1) stack.pop_back();
       result += '\n';
-    } else if (trimmed.rfind("#if ", 0) == 0 || trimmed.rfind("#elif", 0) == 0) {
-      // Can't evaluate arbitrary expressions — assume active if parent is
-      stack.push_back(stack.back());
-      result += '\n';
     } else {
-      if (stack.back())
+			if (stack.back().active)
         result += line + '\n';
       else
         result += '\n'; // keep line count stable

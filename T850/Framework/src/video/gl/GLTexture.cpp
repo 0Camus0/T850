@@ -77,6 +77,8 @@ namespace t850 {
       glTexParameteri(glTarget, GL_TEXTURE_MIN_FILTER, glFiltering);
       glTexParameteri(glTarget, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
     }
+    if (mipmaps > 1)
+      glTexParameteri(glTarget, GL_TEXTURE_MAX_LEVEL, mipmaps - 1);
     glTexParameteri(glTarget, GL_TEXTURE_WRAP_S, glWrap);
     glTexParameteri(glTarget, GL_TEXTURE_WRAP_T, glWrap);
 
@@ -126,20 +128,30 @@ namespace t850 {
     else
       glPixelStorei(GL_UNPACK_ALIGNMENT, 4);
 
-    if (cil_props & CIL_CUBE_MAP) {
-      int bufferSize = this->size / 6;
-      unsigned char *pHead = buffer;
-      for (int i = 0; i < 6; i++) {
-        glTexImage2D(GL_TEXTURE_CUBE_MAP_POSITIVE_X + i, 0, glInternalFormat, this->x, this->y, 0, glFormat, glChannel, (void*)(pHead));
-        if (buffer)
-          pHead += bufferSize;
+    int numFaces = (cil_props & CIL_CUBE_MAP) ? 6 : 1;
+    int mipCount = (mipmaps > 0) ? mipmaps : 1;
+    int bytesPerPixel = (cil_props & CIL_HALF_FLOAT) ? 8 : ((this->props & TextBasicFormat::CH_ALPHA) ? 1 : ((this->props & TextBasicFormat::CH_RGB) ? 3 : 4));
+    unsigned char* pHead = buffer;
+
+    for (int face = 0; face < numFaces; ++face) {
+      int mipWidth = this->x;
+      int mipHeight = this->y;
+      for (int mip = 0; mip < mipCount; ++mip) {
+        unsigned int target = (cil_props & CIL_CUBE_MAP) ? (GL_TEXTURE_CUBE_MAP_POSITIVE_X + face) : GL_TEXTURE_2D;
+        glTexImage2D(target, mip, glInternalFormat, mipWidth, mipHeight, 0, glFormat, glChannel, (void*)(pHead));
+        if (pHead)
+          pHead += mipWidth * mipHeight * bytesPerPixel;
+        mipWidth >>= 1; if (mipWidth < 1) mipWidth = 1;
+        mipHeight >>= 1; if (mipHeight < 1) mipHeight = 1;
       }
     }
-    else {
-      glTexImage2D(glTarget, 0, glInternalFormat, this->x, this->y, 0, glFormat, glChannel, (void*)(buffer));
-    }
 
-    glGenerateMipmap(glTarget);
+    if (mipCount <= 1)
+      glGenerateMipmap(glTarget);
+    else {
+      this->mipmaps = mipCount;
+      params |= TextBasicParams::MIPMAPS;
+    }
 
     SetTextureParams();
   }

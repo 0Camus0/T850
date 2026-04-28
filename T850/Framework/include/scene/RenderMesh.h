@@ -81,6 +81,26 @@ namespace t850 {
     XVECTOR3  TexCoordSets;    // .x=baseColor .y=normal .z=metallicRoughness .w=emissive
     XVECTOR3  MaterialParams;  // .x=clearcoat .y=clearcoat roughness .z=unlit .w=emissive multiplier
     XVECTOR3  MaterialParams2; // .x=transmission multiplier .y=refraction strength .z=scene color bound .w=IBL factor
+    XVECTOR3  MaterialParams3; // .x=IBL max mip .y=BRDF LUT enabled .z=diffuse IBL mip
+    XVECTOR3  MaterialParams4; // .rgb=sheen color .w=sheen roughness
+    XVECTOR3  MaterialParams5; // .x=sheen color map .y=sheen roughness map .z=color uv .w=roughness uv
+    XVECTOR3  MaterialParams6; // .x=clearcoat map .y=clearcoat roughness map .z=factor uv .w=roughness uv
+    XVECTOR3  BaseColorUVTransform0;
+    XVECTOR3  BaseColorUVTransform1;
+    XVECTOR3  NormalUVTransform0;
+    XVECTOR3  NormalUVTransform1;
+    XVECTOR3  MetallicUVTransform0;
+    XVECTOR3  MetallicUVTransform1;
+    XVECTOR3  EmissiveUVTransform0;
+    XVECTOR3  EmissiveUVTransform1;
+    XVECTOR3  SheenColorUVTransform0;
+    XVECTOR3  SheenColorUVTransform1;
+    XVECTOR3  SheenRoughnessUVTransform0;
+    XVECTOR3  SheenRoughnessUVTransform1;
+    XVECTOR3  ClearcoatUVTransform0;
+    XVECTOR3  ClearcoatUVTransform1;
+    XVECTOR3  ClearcoatRoughnessUVTransform0;
+    XVECTOR3  ClearcoatRoughnessUVTransform1;
     XVECTOR3  LightPositions[128];
     XVECTOR3  LightColors[128];
     XVECTOR3  LightRadius[32];
@@ -114,15 +134,45 @@ namespace t850 {
       IOR = 1.5f;
       ClearcoatFactor = 0.0f;
       ClearcoatRoughness = 0.0f;
+      SheenColor = XVECTOR3(0.0f, 0.0f, 0.0f, 0.0f);
+      SheenRoughness = 0.0f;
       Unlit = false;
       DiffuseTexCoord = 0;
       NormalTexCoord = 0;
       MetallicTexCoord = 0;
       EmissiveTexCoord = 0;
+      SheenColorTexCoord = 0;
+      SheenRoughnessTexCoord = 0;
+      ClearcoatTexCoord = 0;
+      ClearcoatRoughnessTexCoord = 0;
+      BaseColorUVTransform0 = XVECTOR3(1.0f, 0.0f, 0.0f, 0.0f);
+      BaseColorUVTransform1 = XVECTOR3(0.0f, 1.0f, 0.0f, 0.0f);
+      NormalUVTransform0 = XVECTOR3(1.0f, 0.0f, 0.0f, 0.0f);
+      NormalUVTransform1 = XVECTOR3(0.0f, 1.0f, 0.0f, 0.0f);
+      MetallicUVTransform0 = XVECTOR3(1.0f, 0.0f, 0.0f, 0.0f);
+      MetallicUVTransform1 = XVECTOR3(0.0f, 1.0f, 0.0f, 0.0f);
+      EmissiveUVTransform0 = XVECTOR3(1.0f, 0.0f, 0.0f, 0.0f);
+      EmissiveUVTransform1 = XVECTOR3(0.0f, 1.0f, 0.0f, 0.0f);
+      SheenColorUVTransform0 = XVECTOR3(1.0f, 0.0f, 0.0f, 0.0f);
+      SheenColorUVTransform1 = XVECTOR3(0.0f, 1.0f, 0.0f, 0.0f);
+      SheenRoughnessUVTransform0 = XVECTOR3(1.0f, 0.0f, 0.0f, 0.0f);
+      SheenRoughnessUVTransform1 = XVECTOR3(0.0f, 1.0f, 0.0f, 0.0f);
+      ClearcoatUVTransform0 = XVECTOR3(1.0f, 0.0f, 0.0f, 0.0f);
+      ClearcoatUVTransform1 = XVECTOR3(0.0f, 1.0f, 0.0f, 0.0f);
+      ClearcoatRoughnessUVTransform0 = XVECTOR3(1.0f, 0.0f, 0.0f, 0.0f);
+      ClearcoatRoughnessUVTransform1 = XVECTOR3(0.0f, 1.0f, 0.0f, 0.0f);
 			MetallicTex = nullptr;
       EmissiveTex = nullptr;
+			SheenColorTex = nullptr;
+      SheenRoughnessTex = nullptr;
+      ClearcoatTex = nullptr;
+      ClearcoatRoughnessTex = nullptr;
 			MetallicId = -1;
       EmissiveId = -1;
+			SheenColorId = -1;
+      SheenRoughnessId = -1;
+      ClearcoatId = -1;
+      ClearcoatRoughnessId = -1;
 			bUseFresnel = false;
 			MatID = 0;
 		}
@@ -137,6 +187,10 @@ namespace t850 {
       Texture*					ParalaxTex;
       Texture*					MetallicTex;
       Texture*					EmissiveTex;
+      Texture*					SheenColorTex;
+      Texture*					SheenRoughnessTex;
+      Texture*					ClearcoatTex;
+      Texture*					ClearcoatRoughnessTex;
 
 	  XVECTOR3		  AmbientColor;
 	  XVECTOR3	      DiffuseColor;
@@ -153,6 +207,10 @@ namespace t850 {
       int					ParalaxId;
       int					MetallicId;
       int					EmissiveId;
+      int					SheenColorId;
+      int					SheenRoughnessId;
+      int					ClearcoatId;
+      int					ClearcoatRoughnessId;
 
 	  int					MatID;
       unsigned int      AlphaMode;
@@ -162,11 +220,33 @@ namespace t850 {
       float             IOR;
       float             ClearcoatFactor;
       float             ClearcoatRoughness;
+      XVECTOR3          SheenColor;
+      float             SheenRoughness;
       bool              Unlit;
       unsigned int      DiffuseTexCoord;
       unsigned int      NormalTexCoord;
       unsigned int      MetallicTexCoord;
       unsigned int      EmissiveTexCoord;
+      unsigned int      SheenColorTexCoord;
+      unsigned int      SheenRoughnessTexCoord;
+      unsigned int      ClearcoatTexCoord;
+      unsigned int      ClearcoatRoughnessTexCoord;
+      XVECTOR3          BaseColorUVTransform0;
+      XVECTOR3          BaseColorUVTransform1;
+      XVECTOR3          NormalUVTransform0;
+      XVECTOR3          NormalUVTransform1;
+      XVECTOR3          MetallicUVTransform0;
+      XVECTOR3          MetallicUVTransform1;
+      XVECTOR3          EmissiveUVTransform0;
+      XVECTOR3          EmissiveUVTransform1;
+      XVECTOR3          SheenColorUVTransform0;
+      XVECTOR3          SheenColorUVTransform1;
+      XVECTOR3          SheenRoughnessUVTransform0;
+      XVECTOR3          SheenRoughnessUVTransform1;
+      XVECTOR3          ClearcoatUVTransform0;
+      XVECTOR3          ClearcoatUVTransform1;
+      XVECTOR3          ClearcoatRoughnessUVTransform0;
+      XVECTOR3          ClearcoatRoughnessUVTransform1;
 
       unsigned int		VertexStart;
       unsigned int		NumVertex;

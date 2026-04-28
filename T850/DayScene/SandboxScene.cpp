@@ -589,6 +589,9 @@ void SandboxScene::PopulateGUI(t850::GUIManager& gui) {
     {"shadow_min",            CHANGE_SHADOW_MIN},
     {"env_factor",            CHANGE_ENV_FACTOR},
     {"ibl_factor",             CHANGE_IBL_FACTOR},
+    {"material_emissive_intensity", CHANGE_MATERIAL_EMISSIVE_INTENSITY},
+    {"material_transmission_multiplier", CHANGE_MATERIAL_TRANSMISSION_MULTIPLIER},
+    {"material_refraction_strength", CHANGE_MATERIAL_REFRACTION_STRENGTH},
     {"anim_speed",             CHANGE_ANIM_SPEED},
   };
 
@@ -694,6 +697,9 @@ void SandboxScene::SyncToGUI(t850::GUIManager& gui) {
     case CHANGE_SHADOW_MIN:      slider->SetValue(SceneProp.ShadowMin); break;
     case CHANGE_ENV_FACTOR:      slider->SetValue(SceneProp.EnvFactor); break;
     case CHANGE_IBL_FACTOR:      slider->SetValue(SceneProp.IBLFactor); break;
+    case CHANGE_MATERIAL_EMISSIVE_INTENSITY: slider->SetValue(SceneProp.MaterialEmissiveIntensity); break;
+    case CHANGE_MATERIAL_TRANSMISSION_MULTIPLIER: slider->SetValue(SceneProp.MaterialTransmissionMultiplier); break;
+    case CHANGE_MATERIAL_REFRACTION_STRENGTH: slider->SetValue(SceneProp.MaterialRefractionStrength); break;
     case CHANGE_ANIM_SPEED: {
       RenderSkinnedMesh* sk = Meshes[0].GetSkinnedMesh();
       if (sk) slider->SetValue(sk->GetAnimSpeed());
@@ -765,6 +771,9 @@ void SandboxScene::SyncFromGUI(t850::GUIManager& gui) {
     case CHANGE_SHADOW_MIN:      SceneProp.ShadowMin = slider->value; break;
     case CHANGE_ENV_FACTOR:      SceneProp.EnvFactor = slider->value; break;
     case CHANGE_IBL_FACTOR:      SceneProp.IBLFactor = slider->value; break;
+    case CHANGE_MATERIAL_EMISSIVE_INTENSITY: SceneProp.MaterialEmissiveIntensity = slider->value; break;
+    case CHANGE_MATERIAL_TRANSMISSION_MULTIPLIER: SceneProp.MaterialTransmissionMultiplier = slider->value; break;
+    case CHANGE_MATERIAL_REFRACTION_STRENGTH: SceneProp.MaterialRefractionStrength = slider->value; break;
     case CHANGE_ANIM_SPEED: {
       RenderSkinnedMesh* sk = Meshes[0].GetSkinnedMesh();
       if (sk) sk->SetAnimSpeed(slider->value);

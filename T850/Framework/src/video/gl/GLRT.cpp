@@ -259,6 +259,7 @@ namespace t850 {
 #if defined(USING_OPENGL) || defined(USING_OPENGL_ES30) || defined(USING_OPENGL_ES31)
     if (number_RT != 0) {
       glDrawBuffers(number_RT, GLDriver::DrawBuffers);
+      glColorMask(GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE);
     }
     else {
       glColorMask(GL_FALSE, GL_FALSE, GL_FALSE, GL_FALSE);
@@ -268,6 +269,23 @@ namespace t850 {
 	glClearColor(0.0, 0.0, 0.0, 0.0);
 	glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT | GL_STENCIL_BUFFER_BIT);
   }
+
+  void GLRT::SetLoad(const DeviceContext&context)
+  {
+    glBindFramebuffer(GL_FRAMEBUFFER, vFrameBuffers[0]);
+
+#if defined(USING_OPENGL) || defined(USING_OPENGL_ES30) || defined(USING_OPENGL_ES31)
+    if (number_RT != 0) {
+      glDrawBuffers(number_RT, GLDriver::DrawBuffers);
+      glColorMask(GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE);
+    }
+    else {
+      glColorMask(GL_FALSE, GL_FALSE, GL_FALSE, GL_FALSE);
+    }
+#endif
+    glViewport(0, 0,w, h);
+  }
+
   void GLRT::ChangeCubeDepthTexture(int i)
   {
     glFramebufferTexture2D(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_TEXTURE_CUBE_MAP_POSITIVE_X + i, pDepthTexture->id, 0);

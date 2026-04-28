@@ -238,6 +238,21 @@ namespace t850 {
       return false;
     }
 
+    for (int i = 0; i < number_RT; i++) {
+      attachments[i].loadOp = VK_ATTACHMENT_LOAD_OP_LOAD;
+      attachments[i].initialLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+    }
+    if (hasDepth) {
+      attachments[number_RT].loadOp = VK_ATTACHMENT_LOAD_OP_LOAD;
+      attachments[number_RT].initialLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
+    }
+
+    res = vkCreateRenderPass(device, &rpCI, nullptr, &m_renderPassLoad);
+    if (res != VK_SUCCESS) {
+      T8_LOG_ERROR("[Vulkan] RT load render pass creation failed res=%d", res);
+      return false;
+    }
+
     // ── 4. VkFramebuffer ──
     std::vector<VkImageView> fbAttachments;
     for (int i = 0; i < number_RT; i++)
@@ -317,6 +332,7 @@ namespace t850 {
     VmaAllocator allocator = driver->GetAllocator();
 
     if (m_framebuffer) { vkDestroyFramebuffer(device, m_framebuffer, nullptr); m_framebuffer = VK_NULL_HANDLE; }
+    if (m_renderPassLoad) { vkDestroyRenderPass(device, m_renderPassLoad, nullptr); m_renderPassLoad = VK_NULL_HANDLE; }
     if (m_renderPass)  { vkDestroyRenderPass(device, m_renderPass, nullptr); m_renderPass = VK_NULL_HANDLE; }
 
     // Destroy sampler from color texture wrappers (image/view destroyed below separately)
@@ -357,6 +373,14 @@ namespace t850 {
   }
 
   void VulkanRT::Set(const DeviceContext& context) {
+    SetInternal(context, false);
+  }
+
+  void VulkanRT::SetLoad(const DeviceContext& context) {
+    SetInternal(context, true);
+  }
+
+  void VulkanRT::SetInternal(const DeviceContext& context, bool preserve) {
     auto* driver = GetVkDriver();
     VkCommandBuffer cmd = static_cast<const VulkanDeviceContext*>(&context)->GetCommandBuffer();
 
@@ -374,7 +398,7 @@ namespace t850 {
       vColorLayouts[i] = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
     }
 
-    // Begin the RT's own render pass with clear values
+    // Begin the RT's own render pass with clear/load values
     bool hasDepth = (depth_format != BaseRT::NOTHING);
     std::vector<VkClearValue> clearValues(number_RT);
     for (int i = 0; i < number_RT; i++)
@@ -387,15 +411,15 @@ namespace t850 {
     }
 
     VkRenderPassBeginInfo rpBegin = { VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO };
-    rpBegin.renderPass = m_renderPass;
+    rpBegin.renderPass = preserve ? m_renderPassLoad : m_renderPass;
     rpBegin.framebuffer = m_framebuffer;
     rpBegin.renderArea.offset = { 0, 0 };
     rpBegin.renderArea.extent = { (uint32_t)w, (uint32_t)h };
-    rpBegin.clearValueCount = (uint32_t)clearValues.size();
-    rpBegin.pClearValues = clearValues.data();
+    rpBegin.clearValueCount = preserve ? 0 : (uint32_t)clearValues.size();
+    rpBegin.pClearValues = preserve ? nullptr : clearValues.data();
 
     vkCmdBeginRenderPass(cmd, &rpBegin, VK_SUBPASS_CONTENTS_INLINE);
-    driver->SetActiveRenderPass(m_renderPass);
+    driver->SetActiveRenderPass(rpBegin.renderPass);
     driver->SetRenderPassActive(true);
 
     // Set viewport and scissor to RT dimensions (negative height for Y-flip)

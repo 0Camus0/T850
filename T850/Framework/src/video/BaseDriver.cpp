@@ -345,9 +345,25 @@ namespace t850 {
     if (id < 0 || id >= (int)RTs.size())
       return;
 
+    if (CurrentRT >= 0 && CurrentRT != id)
+      PopRT();
+
     T8_LOG_TRACE("[BaseDriver] PushRT(%d) colors=%d %dx%d", id, RTs[id]->number_RT, RTs[id]->w, RTs[id]->h);
     CurrentRT = id;
     RTs[id]->Set(*T8DeviceContext);
+  }
+
+  void BaseDriver::PushRTLoad(int id)
+  {
+    if (id < 0 || id >= (int)RTs.size())
+      return;
+
+    if (CurrentRT >= 0 && CurrentRT != id)
+      PopRT();
+
+    T8_LOG_TRACE("[BaseDriver] PushRTLoad(%d) colors=%d %dx%d", id, RTs[id]->number_RT, RTs[id]->w, RTs[id]->h);
+    CurrentRT = id;
+    RTs[id]->SetLoad(*T8DeviceContext);
   }
   Technique * BaseDriver::GetTechnique(int id)
   {

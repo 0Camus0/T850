@@ -174,7 +174,7 @@ namespace t850 {
       b.stageFlags |= VK_SHADER_STAGE_FRAGMENT_BIT;
       // Texture binding N maps to engine slot N (register(tN) → binding N)
       int engineSlot = (int)si.binding;
-      if (engineSlot >= 0 && engineSlot < 8) {
+      if (engineSlot >= 0 && engineSlot < VulkanShader::kMaxTextureSlots) {
         srvBindings[engineSlot] = (int)si.binding;
         srvIsCubemap[engineSlot] = si.isCubemap;
       }
@@ -187,7 +187,7 @@ namespace t850 {
       b.descriptorCount = 1;
       b.stageFlags |= VK_SHADER_STAGE_VERTEX_BIT;
       int engineSlot = (int)si.binding;
-      if (engineSlot >= 0 && engineSlot < 8) {
+      if (engineSlot >= 0 && engineSlot < VulkanShader::kMaxTextureSlots) {
         srvBindings[engineSlot] = (int)si.binding;
       }
     }
@@ -274,9 +274,11 @@ namespace t850 {
     for (auto& b : bindings)
       T8_LOG_INFO("[VK_REFL]   binding=%u type=%d stages=0x%X",
                   b.binding, b.descriptorType, b.stageFlags);
-    T8_LOG_INFO("[VK_REFL] srvBindings: [%d,%d,%d,%d,%d,%d,%d,%d]",
+    T8_LOG_INFO("[VK_REFL] srvBindings: [%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d]",
                 srvBindings[0], srvBindings[1], srvBindings[2], srvBindings[3],
-                srvBindings[4], srvBindings[5], srvBindings[6], srvBindings[7]);
+          srvBindings[4], srvBindings[5], srvBindings[6], srvBindings[7],
+          srvBindings[8], srvBindings[9], srvBindings[10], srvBindings[11],
+          srvBindings[12], srvBindings[13], srvBindings[14], srvBindings[15]);
 #endif
     return true;
   }

@@ -79,6 +79,8 @@ namespace t850 {
     XVECTOR3  AlphaParams;     // .x=mode 0/1/2 .y=cutoff .z=doubleSided .w=transmission
     XVECTOR3  ForwardParams;   // .xy=screen size .z=scene depth bound .w=ior
     XVECTOR3  TexCoordSets;    // .x=baseColor .y=normal .z=metallicRoughness .w=emissive
+    XVECTOR3  MaterialParams;  // .x=clearcoat .y=clearcoat roughness .z=unlit .w=emissive multiplier
+    XVECTOR3  MaterialParams2; // .x=transmission multiplier .y=refraction strength .z=scene color bound .w=IBL factor
     XVECTOR3  LightPositions[128];
     XVECTOR3  LightColors[128];
     XVECTOR3  LightRadius[32];
@@ -110,6 +112,9 @@ namespace t850 {
       DoubleSided = false;
       TransmissionFactor = 0.0f;
       IOR = 1.5f;
+      ClearcoatFactor = 0.0f;
+      ClearcoatRoughness = 0.0f;
+      Unlit = false;
       DiffuseTexCoord = 0;
       NormalTexCoord = 0;
       MetallicTexCoord = 0;
@@ -155,6 +160,9 @@ namespace t850 {
       bool              DoubleSided;
       float             TransmissionFactor;
       float             IOR;
+      float             ClearcoatFactor;
+      float             ClearcoatRoughness;
+      bool              Unlit;
       unsigned int      DiffuseTexCoord;
       unsigned int      NormalTexCoord;
       unsigned int      MetallicTexCoord;

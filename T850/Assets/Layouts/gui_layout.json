@@ -6,7 +6,7 @@
          "id": "label_fps",
          "x": 0,
          "y": 0,
-         "w": 0.214321,
+         "w": 0.22197531,
          "h": 0.043055557,
          "label": ""
       },
@@ -283,6 +283,54 @@
          "label": "IBL Factor"
       },
       {
+         "id": "label_material_emissive_intensity",
+         "x": 0.8723958,
+         "y": 0.3935185,
+         "w": 0.22814816,
+         "h": 0.015277778,
+         "label": ""
+      },
+      {
+         "id": "slider_material_emissive_intensity",
+         "x": 0.9114583,
+         "y": 0.41666666,
+         "w": 0.16018519,
+         "h": 0.031018518,
+         "label": "Emissive Intensity"
+      },
+      {
+         "id": "label_material_transmission_multiplier",
+         "x": 0.859375,
+         "y": 0.46296296,
+         "w": 0.23358026,
+         "h": 0.015277778,
+         "label": ""
+      },
+      {
+         "id": "slider_material_transmission_multiplier",
+         "x": 0.9114583,
+         "y": 0.4861111,
+         "w": 0.16203703,
+         "h": 0.030092593,
+         "label": "Transmission Boost"
+      },
+      {
+         "id": "label_material_refraction_strength",
+         "x": 0.8854167,
+         "y": 0.5092593,
+         "w": 0.24716051,
+         "h": 0.015277778,
+         "label": ""
+      },
+      {
+         "id": "slider_material_refraction_strength",
+         "x": 0.9114583,
+         "y": 0.5324074,
+         "w": 0.15925926,
+         "h": 0.030092593,
+         "label": "Refraction Strength"
+      },
+      {
          "id": "label_anim_speed",
          "x": 0.013020833,
          "y": 0.3935185,
@@ -470,7 +518,7 @@
                "id": "label_fps",
                "x": 0,
                "y": 0,
-               "w": 0.214321,
+               "w": 0.22197531,
                "h": 0.043055557,
                "label": ""
             },
@@ -745,6 +793,54 @@
                "w": 0.16666667,
                "h": 0.025462963,
                "label": "IBL Factor"
+            },
+            {
+               "id": "label_material_emissive_intensity",
+               "x": 0.8723958,
+               "y": 0.3935185,
+               "w": 0.22814816,
+               "h": 0.015277778,
+               "label": ""
+            },
+            {
+               "id": "slider_material_emissive_intensity",
+               "x": 0.9114583,
+               "y": 0.41666666,
+               "w": 0.16018519,
+               "h": 0.031018518,
+               "label": "Emissive Intensity"
+            },
+            {
+               "id": "label_material_transmission_multiplier",
+               "x": 0.859375,
+               "y": 0.46296296,
+               "w": 0.23358026,
+               "h": 0.015277778,
+               "label": ""
+            },
+            {
+               "id": "slider_material_transmission_multiplier",
+               "x": 0.9114583,
+               "y": 0.4861111,
+               "w": 0.16203703,
+               "h": 0.030092593,
+               "label": "Transmission Boost"
+            },
+            {
+               "id": "label_material_refraction_strength",
+               "x": 0.8854167,
+               "y": 0.5092593,
+               "w": 0.24716051,
+               "h": 0.015277778,
+               "label": ""
+            },
+            {
+               "id": "slider_material_refraction_strength",
+               "x": 0.9114583,
+               "y": 0.5324074,
+               "w": 0.15925926,
+               "h": 0.030092593,
+               "label": "Refraction Strength"
             },
             {
                "id": "label_anim_speed",
@@ -1690,6 +1786,98 @@
                "w": 0.36018518,
                "h": 0.020833334,
                "label": "Cubemap"
+            }
+         ]
+      },
+      {
+         "name": "Materials",
+         "element_ids": [
+            "slider_material_emissive_intensity",
+            "slider_material_transmission_multiplier",
+            "slider_material_refraction_strength",
+            "selector_debug_render_target",
+            "selector_active_camera"
+         ],
+         "elements": [
+            {
+               "id": "label_material_emissive_intensity",
+               "x": 0,
+               "y": 0.8101852,
+               "w": 0.25,
+               "h": 0.018055556,
+               "label": ""
+            },
+            {
+               "id": "slider_material_emissive_intensity",
+               "x": 0,
+               "y": 0.8333333,
+               "w": 0.26574075,
+               "h": 0.033796296,
+               "label": "Emissive Intensity"
+            },
+            {
+               "id": "label_material_transmission_multiplier",
+               "x": 0,
+               "y": 0.8564815,
+               "w": 0.25,
+               "h": 0.018055556,
+               "label": ""
+            },
+            {
+               "id": "slider_material_transmission_multiplier",
+               "x": 0,
+               "y": 0.8796296,
+               "w": 0.26574075,
+               "h": 0.033796296,
+               "label": "Transmission Boost"
+            },
+            {
+               "id": "label_material_refraction_strength",
+               "x": 0,
+               "y": 0.9027778,
+               "w": 0.25,
+               "h": 0.018055556,
+               "label": ""
+            },
+            {
+               "id": "slider_material_refraction_strength",
+               "x": 0,
+               "y": 0.9259259,
+               "w": 0.26574075,
+               "h": 0.033796296,
+               "label": "Refraction Strength"
+            },
+            {
+               "id": "label_debug_render_target",
+               "x": 0.7942708,
+               "y": 0,
+               "w": 0.11604938,
+               "h": 0.021759259,
+               "label": ""
+            },
+            {
+               "id": "selector_debug_render_target",
+               "x": 0.8854167,
+               "y": 0,
+               "w": 0.1675926,
+               "h": 0.021759259,
+               "label": "Debug RT"
+            },
+            {
+               "id": "label_active_camera",
+               "x": 0.7942708,
+               "y": 0.023148147,
+               "w": 0.09670782,
+               "h": 0.021759259,
+               "label": ""
+            },
+            {
+               "id": "selector_active_camera",
+               "x": 0.8854167,
+               "y": 0.023148147,
+               "w": 0.1675926,
+               "h": 0.021759259,
+               "label": "Camera"
             }
          ]
       },

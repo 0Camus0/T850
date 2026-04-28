@@ -129,7 +129,7 @@ namespace t850 {
       VkImageView imageView = VK_NULL_HANDLE;
       VkSampler   sampler   = VK_NULL_HANDLE;
     };
-    PendingTextureBinding m_pendingTextures[8] = {};
+    PendingTextureBinding m_pendingTextures[16] = {};
     VkDescriptorBufferInfo m_pendingCB = {};
     bool m_cbDirty = false;
 

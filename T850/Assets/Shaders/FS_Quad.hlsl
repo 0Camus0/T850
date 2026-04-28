@@ -122,13 +122,16 @@ float4 FS( VS_OUTPUT input ) : SV_TARGET {
 
 	float4 Albedo = tex0.Sample(SS, input.texture0);
 	float4 PBRData = tex2.Sample(SS, input.texture0);
+	float4 DepthEmissive = tex4.Sample(SS, input.texture0);
+	float specularFactor = max(Albedo.a, 0.0f);
 
 	Albedo.xyz = pow(Albedo.xyz, float3(2.2, 2.2, 2.2));
 
 	float metallic = PBRData.r;
-	float3 F0 = lerp(float3(0.04, 0.04, 0.04), Albedo.xyz, metallic);
+	float3 F0 = lerp(float3(0.04, 0.04, 0.04) * specularFactor, Albedo.xyz, metallic);
 
-	float depth = tex4.Sample(SS, input.texture0).r;
+	float depth = DepthEmissive.r;
+	float3 emissive = DepthEmissive.gba;
 
 	float4 position = ReconstructPosition(input.ClipPos, depth);
 	 
@@ -154,8 +157,14 @@ float4 FS( VS_OUTPUT input ) : SV_TARGET {
 		float rough = normalmap.a;
 		float3 directLight = float3(0.0, 0.0, 0.0);
 
-		float3 geoNormal = tex3.Sample(SS, input.texture0).xyz * 2.0 - 1.0;
+		float4 geoData = tex3.Sample(SS, input.texture0);
+		float3 geoNormal = geoData.xyz * 2.0 - 1.0;
 		geoNormal = normalize(geoNormal);
+		float packedMaterial = geoData.a;
+		bool unlitMaterial = packedMaterial >= 0.5f;
+		float clearcoatRoughness = unlitMaterial ? (packedMaterial - 0.5f) * 2.0f : packedMaterial * 2.0f;
+		clearcoatRoughness = clamp(clearcoatRoughness, 0.04f, 1.0f);
+		float clearcoatFactor = saturate(PBRData.b);
 
 		float3 ReflectedVec = reflect(-EyeDir, normal.xyz);
 		ReflectedVec.x = -ReflectedVec.x;
@@ -231,6 +240,17 @@ float4 FS( VS_OUTPUT input ) : SV_TARGET {
 
 		// Ambient minimum (toogles.y = ambient intensity)
 		Final.xyz += Albedo.xyz * toogles.y * kDiffuseEnv;
+		if (clearcoatFactor > 0.001f) {
+			float3 clearcoatSpec = texEnv.SampleLevel(SS, ReflectedVec, clearcoatRoughness * 4.0f).xyz;
+			float clearcoatAtten = (1.0f - clearcoatRoughness) * (1.0f - clearcoatRoughness);
+			float3 clearcoatF = FresnelCalc(saturate(dot(normal, EyeDir)), float3(0.04f, 0.04f, 0.04f));
+			float clearcoatWeight = saturate(clearcoatFactor * max(clearcoatF.x, max(clearcoatF.y, clearcoatF.z)));
+			Final.xyz = lerp(Final.xyz, clearcoatSpec * clearcoatAtten * toogles.z, clearcoatWeight);
+		}
+		Final.xyz += emissive;
+		if (unlitMaterial) {
+			Final.xyz = Albedo.xyz + emissive;
+		}
 	}
 
 	return Final;
@@ -251,9 +271,12 @@ float4 FS(VS_OUTPUT input) : SV_TARGET {
 
 	float4 Albedo = tex0.Sample(SS, input.texture0);
 	float4 PBRData = tex2.Sample(SS, input.texture0);
+	float4 DepthEmissive = tex4.Sample(SS, input.texture0);
+	float specularFactor = max(Albedo.a, 0.0f);
 	float metallic = PBRData.r;
-	float3 F0 = lerp(float3(0.04, 0.04, 0.04), Albedo.xyz, metallic);
-	float depth = tex4.Sample(SS, input.texture0).r;
+	float3 F0 = lerp(float3(0.04, 0.04, 0.04) * specularFactor, Albedo.xyz, metallic);
+	float depth = DepthEmissive.r;
+	float3 emissive = DepthEmissive.gba;
 
 	// No geometry drawn at this pixel — let clear color show through
 	if (depth <= 0.0001)
@@ -275,7 +298,13 @@ float4 FS(VS_OUTPUT input) : SV_TARGET {
 		float cutoff = 0.8;
 		float4 normalmap = tex1.Sample(SS, input.texture0);
 		float3 normal = normalize(normalmap.xyz * 2.0 - 1.0);
-		float3 geoNormal = normalize(tex3.Sample(SS, input.texture0).xyz * 2.0 - 1.0);
+		float4 geoData = tex3.Sample(SS, input.texture0);
+		float3 geoNormal = normalize(geoData.xyz * 2.0 - 1.0);
+		float packedMaterial = geoData.a;
+		bool unlitMaterial = packedMaterial >= 0.5f;
+		float clearcoatRoughness = unlitMaterial ? (packedMaterial - 0.5f) * 2.0f : packedMaterial * 2.0f;
+		clearcoatRoughness = clamp(clearcoatRoughness, 0.04f, 1.0f);
+		float clearcoatFactor = saturate(PBRData.b);
 		float rough = normalmap.a;
 
 		int NumLights = (int)CameraInfo.w;
@@ -320,9 +349,20 @@ float4 FS(VS_OUTPUT input) : SV_TARGET {
 		float3 RefleCol = texEnv.SampleLevel(SS, ReflectedVec, rough * 4.0f).xyz;
 		float envAtten = (1.0f - rough) * (1.0f - rough);
 		Final.xyz += RefleCol * kSpecular.xyz * envAtten * toogles.z;
+		if (clearcoatFactor > 0.001f) {
+			float3 clearcoatSpec = texEnv.SampleLevel(SS, ReflectedVec, clearcoatRoughness * 4.0f).xyz;
+			float clearcoatAtten = (1.0f - clearcoatRoughness) * (1.0f - clearcoatRoughness);
+			float3 clearcoatF = FresnelCalc(saturate(dot(normal, EyeDir)), float3(0.04f, 0.04f, 0.04f));
+			float clearcoatWeight = saturate(clearcoatFactor * max(clearcoatF.x, max(clearcoatF.y, clearcoatF.z)));
+			Final.xyz = lerp(Final.xyz, clearcoatSpec * clearcoatAtten * toogles.z, clearcoatWeight);
+		}
 
 		float selfShadow = PBRData.g;
 		Final.xyz *= Shadow * selfShadow;
+		Final.xyz += emissive;
+		if (unlitMaterial) {
+			Final.xyz = Albedo.xyz + emissive;
+		}
 	}
 
 	// Clamp to LDR — no tone mapping, just saturate

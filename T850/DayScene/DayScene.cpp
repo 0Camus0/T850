@@ -1162,6 +1162,9 @@ void DayScene::PopulateGUI(t850::GUIManager& gui) {
     {"shadow_min",              CHANGE_SHADOW_MIN},
     {"env_factor",              CHANGE_ENV_FACTOR},
     {"ibl_factor",               CHANGE_IBL_FACTOR},
+    {"material_emissive_intensity", CHANGE_MATERIAL_EMISSIVE_INTENSITY},
+    {"material_transmission_multiplier", CHANGE_MATERIAL_TRANSMISSION_MULTIPLIER},
+    {"material_refraction_strength", CHANGE_MATERIAL_REFRACTION_STRENGTH},
   };
 
   auto& sliderDescs = m_sceneSetup.descriptor.sliders;
@@ -1267,6 +1270,9 @@ void DayScene::SyncToGUI(t850::GUIManager& gui) {
     case CHANGE_SHADOW_MIN:         slider->SetValue(SceneProp.ShadowMin); break;
     case CHANGE_ENV_FACTOR:         slider->SetValue(SceneProp.EnvFactor); break;
     case CHANGE_IBL_FACTOR:         slider->SetValue(SceneProp.IBLFactor); break;
+    case CHANGE_MATERIAL_EMISSIVE_INTENSITY: slider->SetValue(SceneProp.MaterialEmissiveIntensity); break;
+    case CHANGE_MATERIAL_TRANSMISSION_MULTIPLIER: slider->SetValue(SceneProp.MaterialTransmissionMultiplier); break;
+    case CHANGE_MATERIAL_REFRACTION_STRENGTH: slider->SetValue(SceneProp.MaterialRefractionStrength); break;
     }
   }
   for (auto& cp : gui.GetCheckboxPairs()) {
@@ -1359,6 +1365,15 @@ void DayScene::SyncFromGUI(t850::GUIManager& gui) {
       break;
     case CHANGE_IBL_FACTOR:
       SceneProp.IBLFactor = slider->value;
+      break;
+    case CHANGE_MATERIAL_EMISSIVE_INTENSITY:
+      SceneProp.MaterialEmissiveIntensity = slider->value;
+      break;
+    case CHANGE_MATERIAL_TRANSMISSION_MULTIPLIER:
+      SceneProp.MaterialTransmissionMultiplier = slider->value;
+      break;
+    case CHANGE_MATERIAL_REFRACTION_STRENGTH:
+      SceneProp.MaterialRefractionStrength = slider->value;
       break;
     }
   }
@@ -1470,6 +1485,9 @@ void DayScene::SaveSceneState() {
     else if (sd.name == "env_factor")  sd.default_val = SceneProp.EnvFactor;
     else if (sd.name == "ibl_factor")   sd.default_val = SceneProp.IBLFactor;
     else if (sd.name == "godrays_factor") sd.default_val = SceneProp.GodRaysFactor;
+    else if (sd.name == "material_emissive_intensity") sd.default_val = SceneProp.MaterialEmissiveIntensity;
+    else if (sd.name == "material_transmission_multiplier") sd.default_val = SceneProp.MaterialTransmissionMultiplier;
+    else if (sd.name == "material_refraction_strength") sd.default_val = SceneProp.MaterialRefractionStrength;
   }
   for (auto& cd : m_sceneSetup.descriptor.checkboxes) {
     if (cd.name == "dof_toggle")       cd.default_val = (SceneProp.ToogleDOF != 0);

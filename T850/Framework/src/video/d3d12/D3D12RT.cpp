@@ -229,6 +229,46 @@ namespace t850 {
     cmdList->ClearDepthStencilView(depthDSV, D3D12_CLEAR_FLAG_DEPTH, 0.0f, 0, 0, nullptr);
   }
 
+  void D3D12RT::SetLoad(const DeviceContext& context) {
+    auto* cmdList = static_cast<const D3D12DeviceContext*>(&context)->GetCommandList();
+
+    T8_LOG_TRACE("[D3D12] RT::SetLoad %dx%d colors=%d depth=%s", w, h, number_RT, isCubeDepth ? "cube" : "2D");
+
+    for (int i = 0; i < number_RT; i++) {
+      if (vColorStates[i] != D3D12_RESOURCE_STATE_RENDER_TARGET) {
+        D3D12_RESOURCE_BARRIER b = {};
+        b.Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
+        b.Transition.pResource = vColorResources[i].Get();
+        b.Transition.StateBefore = vColorStates[i];
+        b.Transition.StateAfter = D3D12_RESOURCE_STATE_RENDER_TARGET;
+        b.Transition.Subresource = D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES;
+        cmdList->ResourceBarrier(1, &b);
+        vColorStates[i] = D3D12_RESOURCE_STATE_RENDER_TARGET;
+      }
+    }
+
+    if (depthResource && depthState != D3D12_RESOURCE_STATE_DEPTH_WRITE) {
+      D3D12_RESOURCE_BARRIER b = {};
+      b.Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
+      b.Transition.pResource = depthResource.Get();
+      b.Transition.StateBefore = depthState;
+      b.Transition.StateAfter = D3D12_RESOURCE_STATE_DEPTH_WRITE;
+      b.Transition.Subresource = D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES;
+      cmdList->ResourceBarrier(1, &b);
+      depthState = D3D12_RESOURCE_STATE_DEPTH_WRITE;
+    }
+
+    if (number_RT > 0)
+      cmdList->OMSetRenderTargets(number_RT, vRTVHandles.data(), FALSE, &depthDSV);
+    else
+      cmdList->OMSetRenderTargets(0, nullptr, FALSE, &depthDSV);
+
+    D3D12_VIEWPORT vp = { 0.f, 0.f, (float)w, (float)h, 0.f, 1.f };
+    D3D12_RECT sc = { 0, 0, (LONG)w, (LONG)h };
+    cmdList->RSSetViewports(1, &vp);
+    cmdList->RSSetScissorRects(1, &sc);
+  }
+
   void D3D12RT::ChangeCubeDepthTexture(int i) {
     if (!isCubeDepth || i < 0 || i >= 6) return;
     depthDSV = cubeFaceDSVs[i];

@@ -17,12 +17,71 @@
 #include <core/Core.h>
 #include <cstring>
 #include <cmath>
+#include <algorithm>
 
 extern t850::AppBase *pApp;
 
 namespace t850 {
   extern Device*        T8Device;
   extern DeviceContext*  T8DeviceContext;
+
+  namespace {
+    bool IsForwardOnlySubset(const RenderMesh::SubSetInfo& subInfo) {
+      return subInfo.AlphaMode == 2 || subInfo.TransmissionFactor > 0.0f;
+    }
+
+    bool ShouldDrawSubsetInPass(const RenderMesh::SubSetInfo& subInfo, uint8_t pass) {
+      const bool forwardOnly = IsForwardOnlySubset(subInfo);
+      if (pass == PassType::GBUFFER || pass == PassType::SHADOW_MAP || pass == PassType::RADIAL_DEPTH) {
+        return !forwardOnly;
+      }
+      if (pass == PassType::FORWARD) {
+        return forwardOnly;
+      }
+      return true;
+    }
+
+    float SubsetDistanceSqToCamera(const RenderMesh::SubSetInfo& subInfo, const XMATRIX44& world, const XVECTOR3& eye) {
+      float lx = (subInfo.bounds.min.x + subInfo.bounds.max.x) * 0.5f;
+      float ly = (subInfo.bounds.min.y + subInfo.bounds.max.y) * 0.5f;
+      float lz = (subInfo.bounds.min.z + subInfo.bounds.max.z) * 0.5f;
+      float wx = lx*world.m11 + ly*world.m21 + lz*world.m31 + world.m41;
+      float wy = lx*world.m12 + ly*world.m22 + lz*world.m32 + world.m42;
+      float wz = lx*world.m13 + ly*world.m23 + lz*world.m33 + world.m43;
+      float dx = wx - eye.x;
+      float dy = wy - eye.y;
+      float dz = wz - eye.z;
+      return dx*dx + dy*dy + dz*dz;
+    }
+
+    int ForwardSubsetGroup(const RenderMesh::SubSetInfo& subInfo) {
+      return subInfo.TransmissionFactor > 0.0f ? 0 : 1;
+    }
+
+    int GeometryForwardGroup(const RenderMesh::MeshInfo& meshInfo) {
+      int group = 2;
+      for (const auto& subInfo : meshInfo.SubSets) {
+        if (IsForwardOnlySubset(subInfo)) {
+          int subsetGroup = ForwardSubsetGroup(subInfo);
+          if (subsetGroup < group)
+            group = subsetGroup;
+        }
+      }
+      return group;
+    }
+
+    float GeometryForwardDistanceSq(const RenderMesh::MeshInfo& meshInfo, const XMATRIX44& world, const XVECTOR3& eye) {
+      float distanceSq = -1.0f;
+      for (const auto& subInfo : meshInfo.SubSets) {
+        if (IsForwardOnlySubset(subInfo)) {
+          float subsetDistanceSq = SubsetDistanceSqToCamera(subInfo, world, eye);
+          if (subsetDistanceSq > distanceSq)
+            distanceSq = subsetDistanceSq;
+        }
+      }
+      return distanceSq;
+    }
+  }
 
   void RenderSkinnedMesh::Create() {
     // Call base Create() to set up geometry, materials, shaders, VB/IB
@@ -440,7 +499,24 @@ namespace t850 {
     XVECTOR3 frustumPlanes[6];
     ExtractFrustumPlanes(VP, frustumPlanes);
 
-    for (std::size_t i = 0; i < Info.size(); i++) {
+    uint8_t currentPass = gKey.getPass();
+    std::vector<std::size_t> geometryOrder(Info.size());
+    for (std::size_t i = 0; i < Info.size(); i++) geometryOrder[i] = i;
+    if (currentPass == PassType::FORWARD) {
+      std::stable_sort(geometryOrder.begin(), geometryOrder.end(),
+        [&](std::size_t a, std::size_t b) {
+          int groupA = GeometryForwardGroup(Info[a]);
+          int groupB = GeometryForwardGroup(Info[b]);
+          if (groupA != groupB)
+            return groupA < groupB;
+          float da = GeometryForwardDistanceSq(Info[a], transform, pActualCamera->Eye);
+          float db = GeometryForwardDistanceSq(Info[b], transform, pActualCamera->Eye);
+          return da > db;
+        });
+    }
+
+    for (std::size_t oi = 0; oi < geometryOrder.size(); oi++) {
+      std::size_t i = geometryOrder[oi];
       MeshInfo *it_MeshInfo = &Info[i];
 
       if (!AABBInsideFrustum(it_MeshInfo->bounds, transform, frustumPlanes)) {
@@ -502,15 +578,30 @@ namespace t850 {
       it_MeshInfo->VB->Set(*T8DeviceContext, stride, offset);
 
       std::size_t numSubsets = it_MeshInfo->SubSets.size();
-      for (std::size_t k = 0; k < numSubsets; k++) {
+      std::vector<std::size_t> drawOrder(numSubsets);
+      for (std::size_t k = 0; k < numSubsets; k++) drawOrder[k] = k;
+      std::stable_sort(drawOrder.begin(), drawOrder.end(),
+        [&](std::size_t a, std::size_t b) {
+          if (currentPass == PassType::FORWARD) {
+            int groupA = ForwardSubsetGroup(it_MeshInfo->SubSets[a]);
+            int groupB = ForwardSubsetGroup(it_MeshInfo->SubSets[b]);
+            if (groupA != groupB)
+              return groupA < groupB;
+            float da = SubsetDistanceSqToCamera(it_MeshInfo->SubSets[a], transform, pActualCamera->Eye);
+            float db = SubsetDistanceSqToCamera(it_MeshInfo->SubSets[b], transform, pActualCamera->Eye);
+            return da > db;
+          }
+          ShaderKey ka(it_MeshInfo->SubSets[a].key.bits); ka.setPass(currentPass);
+          ShaderKey kb(it_MeshInfo->SubSets[b].key.bits); kb.setPass(currentPass);
+          return ka.bits < kb.bits;
+        });
+
+      for (std::size_t ki = 0; ki < numSubsets; ki++) {
+        std::size_t k = drawOrder[ki];
         m_totalSubsets++;
         SubSetInfo *sub_info = &it_MeshInfo->SubSets[k];
 
-        bool forwardOnly = sub_info->AlphaMode == 2 || sub_info->TransmissionFactor > 0.0f;
-        uint8_t currentPass = gKey.getPass();
-        if ((currentPass == PassType::GBUFFER || currentPass == PassType::SHADOW_MAP || currentPass == PassType::RADIAL_DEPTH) && forwardOnly)
-          continue;
-        if (currentPass == PassType::FORWARD && !forwardOnly)
+        if (!ShouldDrawSubsetInPass(*sub_info, currentPass))
           continue;
 
         if (!AABBInsideFrustum(sub_info->bounds, transform, frustumPlanes))
@@ -526,6 +617,12 @@ namespace t850 {
         baseCB.AlphaParams = XVECTOR3((float)sub_info->AlphaMode, sub_info->AlphaCutoff, sub_info->DoubleSided ? 1.0f : 0.0f, sub_info->TransmissionFactor);
         baseCB.ForwardParams = XVECTOR3((float)g_pBaseDriver->width, (float)g_pBaseDriver->height, Textures[7] ? 1.0f : 0.0f, sub_info->IOR);
         baseCB.TexCoordSets = XVECTOR3((float)sub_info->DiffuseTexCoord, (float)sub_info->NormalTexCoord, (float)sub_info->MetallicTexCoord, (float)sub_info->EmissiveTexCoord);
+        float emissiveMul = pScProp ? pScProp->MaterialEmissiveIntensity : 1.0f;
+        float transmissionMul = pScProp ? pScProp->MaterialTransmissionMultiplier : 1.0f;
+        float refractionStrength = pScProp ? pScProp->MaterialRefractionStrength : 0.03f;
+        float iblFactor = pScProp ? pScProp->IBLFactor : 1.0f;
+        baseCB.MaterialParams = XVECTOR3(sub_info->ClearcoatFactor, sub_info->ClearcoatRoughness, sub_info->Unlit ? 1.0f : 0.0f, emissiveMul);
+        baseCB.MaterialParams2 = XVECTOR3(transmissionMul, refractionStrength, Textures[9] ? 1.0f : 0.0f, iblFactor);
 
         sub_info->IB->Set(*T8DeviceContext, 0,
                           sub_info->IB32Bit ? IndexBufferFormat::R32
@@ -553,29 +650,57 @@ namespace t850 {
         if (m_boneTexture)
           m_boneTexture->SetVS(*T8DeviceContext, 7, "u_BoneTex");
 
-        if (s->key.has(ShaderKey::DIFFUSE_MAP) && sub_info->DiffuseTex)
+        if (s->key.has(ShaderKey::DIFFUSE_MAP) && sub_info->DiffuseTex) {
           sub_info->DiffuseTex->Set(*T8DeviceContext, 0, "DiffuseTex");
-        if (s->key.has(ShaderKey::SPECULAR_MAP) && sub_info->SpecularTex)
-          sub_info->SpecularTex->Set(*T8DeviceContext, 1, "SpecularTex");
-        if (s->key.has(ShaderKey::GLOSS_MAP) && sub_info->GlossfTex)
-          sub_info->GlossfTex->Set(*T8DeviceContext, 2, "GlossTex");
-        if (s->key.has(ShaderKey::NORMAL_MAP) && sub_info->NormalTex)
-          sub_info->NormalTex->Set(*T8DeviceContext, 3, "NormalTex");
-        if (EnvMap)
-          EnvMap->Set(*T8DeviceContext, 4, "texEnv");
-        if (s->key.has(ShaderKey::HEIGHT_MAP) && sub_info->ParalaxTex)
-          sub_info->ParalaxTex->Set(*T8DeviceContext, 5, "HeightTex");
-        if (s->key.has(ShaderKey::METALLIC_MAP) && sub_info->MetallicTex)
-          sub_info->MetallicTex->Set(*T8DeviceContext, 6, "MetallicTex");
-        if (Textures[7])
-          Textures[7]->Set(*T8DeviceContext, 7, "SceneDepthTex");
-        if (s->key.has(ShaderKey::EMISSIVE_MAP) && sub_info->EmissiveTex)
-          sub_info->EmissiveTex->Set(*T8DeviceContext, 8, "EmissiveTex");
-        if (s->key.has(ShaderKey::DIFFUSE_MAP) && sub_info->DiffuseTex)
           sub_info->DiffuseTex->SetSampler(*T8DeviceContext);
+        }
+        if (s->key.has(ShaderKey::SPECULAR_MAP) && sub_info->SpecularTex) {
+          sub_info->SpecularTex->Set(*T8DeviceContext, 1, "SpecularTex");
+          sub_info->SpecularTex->SetSampler(*T8DeviceContext);
+        }
+        if (s->key.has(ShaderKey::GLOSS_MAP) && sub_info->GlossfTex) {
+          sub_info->GlossfTex->Set(*T8DeviceContext, 2, "GlossTex");
+          sub_info->GlossfTex->SetSampler(*T8DeviceContext);
+        }
+        if (s->key.has(ShaderKey::NORMAL_MAP) && sub_info->NormalTex) {
+          sub_info->NormalTex->Set(*T8DeviceContext, 3, "NormalTex");
+          sub_info->NormalTex->SetSampler(*T8DeviceContext);
+        }
+        if (EnvMap) {
+          EnvMap->Set(*T8DeviceContext, 4, "texEnv");
+          EnvMap->SetSampler(*T8DeviceContext);
+        }
+        if (s->key.has(ShaderKey::HEIGHT_MAP) && sub_info->ParalaxTex) {
+          sub_info->ParalaxTex->Set(*T8DeviceContext, 5, "HeightTex");
+          sub_info->ParalaxTex->SetSampler(*T8DeviceContext);
+        }
+        if (s->key.has(ShaderKey::METALLIC_MAP) && sub_info->MetallicTex) {
+          sub_info->MetallicTex->Set(*T8DeviceContext, 6, "MetallicTex");
+          sub_info->MetallicTex->SetSampler(*T8DeviceContext);
+        }
+        if (Textures[7]) {
+          Textures[7]->Set(*T8DeviceContext, 7, "SceneDepthTex");
+          Textures[7]->SetSampler(*T8DeviceContext);
+        }
+        if (s->key.has(ShaderKey::EMISSIVE_MAP) && sub_info->EmissiveTex) {
+          sub_info->EmissiveTex->Set(*T8DeviceContext, 8, "EmissiveTex");
+          sub_info->EmissiveTex->SetSampler(*T8DeviceContext);
+        }
+        if (Textures[9]) {
+          Textures[9]->Set(*T8DeviceContext, 9, "SceneColorTex");
+          Textures[9]->SetSampler(*T8DeviceContext);
+        }
 
+        BaseDriver::FaceCulling prevCull = g_pBaseDriver->m_FaceCulling;
+        bool changedCull = sub_info->DoubleSided && prevCull != BaseDriver::FRONT_AND_BACK;
+        if (changedCull) {
+          g_pBaseDriver->SetCullFace(BaseDriver::FRONT_AND_BACK);
+        }
         T8DeviceContext->SetPrimitiveTopology(Topology::TRIANLE_LIST);
         T8DeviceContext->DrawIndexed(sub_info->NumVertex, 0, 0);
+        if (changedCull) {
+          g_pBaseDriver->SetCullFace(prevCull);
+        }
         m_drawnSubsets++;
       }
     }

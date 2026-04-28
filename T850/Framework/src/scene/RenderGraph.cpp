@@ -489,6 +489,8 @@ void RenderGraph::ExecutePass(
     // Push RT (if we have a target and push is enabled)
     if (node.rt_handle >= 0 && pass.push) {
       driver->PushRT(node.rt_handle);
+    } else if (node.rt_handle >= 0 && !pass.push && driver->CurrentRT != node.rt_handle) {
+      driver->PushRTLoad(node.rt_handle);
     }
 
     if (pass.clear) {

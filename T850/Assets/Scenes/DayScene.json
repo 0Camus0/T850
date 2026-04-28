@@ -438,7 +438,10 @@
       "shadow_min": 0,
       "env_factor": 8.1,
       "ibl_factor": 0.2,
-      "godrays_factor": 1.5
+      "godrays_factor": 1.5,
+      "material_emissive_intensity": 1,
+      "material_transmission_multiplier": 1,
+      "material_refraction_strength": 0.03
    },
    "sliders": [
       {
@@ -688,6 +691,30 @@
          "max_val": 5,
          "step": 0.05,
          "default_val": 0.2
+      },
+      {
+         "name": "material_emissive_intensity",
+         "label": "Emissive Intensity",
+         "min_val": 0,
+         "max_val": 100,
+         "step": 0.5,
+         "default_val": 1
+      },
+      {
+         "name": "material_transmission_multiplier",
+         "label": "Transmission Boost",
+         "min_val": 0,
+         "max_val": 100,
+         "step": 0.5,
+         "default_val": 1
+      },
+      {
+         "name": "material_refraction_strength",
+         "label": "Refraction Strength",
+         "min_val": 0,
+         "max_val": 0.2,
+         "step": 0.005,
+         "default_val": 0.03
       }
    ],
    "checkboxes": [

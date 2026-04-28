@@ -6,6 +6,7 @@
 
 #include <video/vulkan/VulkanTexture.h>
 #include <video/vulkan/VulkanDriver.h>
+#include <video/vulkan/VulkanShader.h>
 #include <video/vulkan/VulkanUtils.h>
 
 #if defined(OS_WINDOWS)
@@ -427,7 +428,7 @@ namespace t850 {
   }
 
   void VulkanTexture::Set(const DeviceContext& deviceContext, unsigned int slot, std::string shaderTextureName) {
-    if (slot >= 8) return;
+    if (slot >= VulkanShader::kMaxTextureSlots) return;
     auto* driver = GetVkDriver();
     driver->m_pendingTextures[slot].imageView = m_imageView;
     driver->m_pendingTextures[slot].sampler = m_sampler;

@@ -94,6 +94,12 @@ void SandboxScene::InitVars() {
   SceneProp.IBLMipCount = 4.0f;
   SceneProp.IBLBRDFLUTEnabled = 0.0f;
 
+  if (m_guiSetup.Load("Scenes/SandboxScene.json")) {
+    m_guiSetup.ApplyQualityAndSettings(SceneProp);
+  } else {
+    T8_LOG_ERROR("[SandboxScene] Failed to load Scenes/SandboxScene.json");
+  }
+
   t850::FrameDumperConfig dumpCfg;
   dumpCfg.dumpEnabled        = g_config.flags.dumpEnabled;
   dumpCfg.dumpByFrame        = g_config.flags.dumpByFrame;

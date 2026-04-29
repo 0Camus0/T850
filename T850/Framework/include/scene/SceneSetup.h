@@ -29,6 +29,9 @@ namespace t850 {
     // Wire built objects into a SceneProps instance.
     void Apply(SceneProps& props);
 
+    // Apply only quality and render settings from the descriptor.
+    void ApplyQualityAndSettings(SceneProps& props);
+
     // Write current runtime state back to descriptor and save to JSON.
     void SaveState(SceneBase* scene, const std::string& jsonPath);
 

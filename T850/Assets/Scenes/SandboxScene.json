@@ -101,7 +101,7 @@
     { "name": "gauss_kernel_deviation","label": "Gauss Sigma",      "min_val": 0.5,   "max_val": 10,  "step": 0.5, "default_val": 4.5 },
     { "name": "fov",                   "label": "FOV",               "min_val": 20,    "max_val": 120, "step": 1.0, "default_val": 46.8 },
     { "name": "light_intensity",       "label": "Light Intensity",   "min_val": 0.0,   "max_val": 20.0,"step": 0.1, "default_val": 5.0 },
-    { "name": "shadow_bias",           "label": "Shadow Bias",       "min_val": 0,     "max_val": 0.00005, "step": 1e-7, "default_val": 0.000005 },
+    { "name": "shadow_bias",           "label": "Shadow Bias",       "min_val": 0,     "max_val": 0.005, "step": 0.0001, "default_val": 0.001 },
     { "name": "shadow_min",            "label": "Shadow Intensity",  "min_val": 0,     "max_val": 1.0,  "step": 0.01, "default_val": 0.2 },
     { "name": "env_factor",            "label": "Env Factor",        "min_val": 0.0,   "max_val": 10.0, "step": 0.05, "default_val": 1.0 },
     { "name": "ibl_factor",             "label": "IBL Factor",        "min_val": 0.0,   "max_val": 5.0, "step": 0.05, "default_val": 1.0 },

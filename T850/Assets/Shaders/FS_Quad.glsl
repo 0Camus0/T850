@@ -18,6 +18,12 @@ uniform highp vec4   toogles;
 
 #define ENABLE_PCF 1
 
+const highp float DEPTH_CLEAR_EPSILON = 0.0001;
+
+bool IsSceneDepthValid(highp float depth) {
+	return depth > DEPTH_CLEAR_EPSILON;
+}
+
 
 highp float roundTo(highp float num,highp float decimals){
 	highp float shift = pow(10.0,decimals);
@@ -654,15 +660,20 @@ highp float GetOcclusion(highp float depth,highp vec2 uv, highp vec4 position, h
 	      		
 	   highp vec4 offset = Projection * vec4(Spheresample, 1.0);
 	   offset.xy /= offset.w;
+	   highp vec2 sampleClip = offset.xy;
 	   offset.xy = offset.xy * 0.5 + 0.5;
+	   if (offset.x < 0.0 || offset.x > 1.0 || offset.y < 0.0 || offset.y > 1.0)
+	      continue;
 	   
 	   #ifdef ES_30
 			highp float sampleDepth = texture(tex0,offset.xy).r;
 	   #else
 			highp float sampleDepth = texture2D(tex0,offset.xy).r;
 	   #endif
+	   if (!IsSceneDepthValid(sampleDepth))
+	      continue;
 	    
-		highp vec4 new_position = ReconstructPosition(ClipPos, sampleDepth);
+		highp vec4 new_position = ReconstructPosition(sampleClip, sampleDepth);
 			
 	  highp vec4 new_positionV = WorldView * vec4(new_position.xyz, 1.0);
 
@@ -687,6 +698,14 @@ void main(){
 	#else
 		highp float depth = texture2D(tex0,coords).r;
 	#endif
+	if (!IsSceneDepthValid(depth)) {
+	#ifdef ES_30
+		colorOut = Fcolor;
+	#else
+		gl_FragColor = Fcolor;
+	#endif
+		return;
+	}
 	
 	highp vec4 position = ReconstructPosition(ClipPos, depth);
 
@@ -971,6 +990,14 @@ void main(){
   highp vec2 uv = vecUVCoords.xy;
   uv.y = 1.0 - uv.y;
   highp float depth = texture(tex0, uv).r;
+	if (!IsSceneDepthValid(depth)) {
+	#ifdef ES_30
+		colorOut = vec4(0.0);
+	#else
+		gl_FragColor = vec4(0.0);
+	#endif
+		return;
+	}
 	highp vec4 position = ReconstructPosition(ClipPos, depth);
 
 
@@ -1022,7 +1049,22 @@ void main() {
 	coords.y = 1.0 - coords.y;
 	highp float aperture = LightPositions[0].x;
 	highp float focalLength = LightPositions[0].y;
-    highp float depthFocus;
+	#ifdef ES_30
+	highp float z = texture( tex0, coords ).r;
+	#else
+	highp float z = texture2D( tex0, coords ).r;
+	#endif
+	if (!IsSceneDepthValid(z)) {
+	#ifdef ES_30
+		colorOut = vec4(0.0);
+		colorOut_1 = vec4(0.0);
+	#else
+		gl_FragData[0] = vec4(0.0);
+		gl_FragData[1] = vec4(0.0);
+	#endif
+		return;
+	}
+	highp float depthFocus;
   #ifdef AUTO_FOCUS
   	#ifdef ES_30
     depthFocus = texture(tex0, vec2(0.5, 0.5)).r;// Auto Focus center
@@ -1032,16 +1074,23 @@ void main() {
   #else
     depthFocus = LightPositions[0].z;
   #endif
-	#ifdef ES_30
-	highp float z = texture( tex0, coords ).r;
-	#else 
-	highp float z = texture2D( tex0, coords ).r;
-	#endif
+	if (!IsSceneDepthValid(depthFocus))
+		depthFocus = z;
 	bool near = (z > depthFocus);
 	highp float objectdistance = LinearizeDepth(z);
     highp float FocusPlane = LinearizeDepth(depthFocus);
-	highp float CoC = abs(aperture * (focalLength * (objectdistance - FocusPlane)) /
-          (objectdistance * (FocusPlane - focalLength)));
+	highp float denominator = objectdistance * (FocusPlane - focalLength);
+	if (abs(denominator) <= 0.00001) {
+	#ifdef ES_30
+		colorOut = vec4(0.0);
+		colorOut_1 = vec4(0.0);
+	#else
+		gl_FragData[0] = vec4(0.0);
+		gl_FragData[1] = vec4(0.0);
+	#endif
+		return;
+	}
+	highp float CoC = abs(aperture * (focalLength * (objectdistance - FocusPlane)) / denominator);
 	if (near) {
 	#ifdef ES_30
 		colorOut.r = clamp(CoC, 0.0, LightPositions[0].w);
@@ -1098,6 +1147,14 @@ void main(){
   highp float dofblur = texture2D(tex1, coords).r;
   highp vec4 color =  texture2D(tex0, coords);
   #endif
+	if (dofblur <= DEPTH_CLEAR_EPSILON) {
+	#ifdef ES_30
+	colorOut = vec4(LinearToSRGB(color.rgb), color.a);
+	#else
+	gl_FragColor = vec4(LinearToSRGB(color.rgb), color.a);
+	#endif
+	return;
+	}
 
   highp vec2 Offset = vec2( 1.0/LightPositions[0].z,1.0/LightPositions[0].w);
   highp float Tot = 0.0;
@@ -1135,6 +1192,14 @@ highp vec4 color =  texture(tex0, coords);
 highp float dofblur = texture2D(tex1, coords).r;
 highp vec4 color =  texture2D(tex0, coords);
 #endif
+if (dofblur <= DEPTH_CLEAR_EPSILON) {
+#ifdef ES_30
+	colorOut = color;
+#else
+	gl_FragColor = color;
+#endif
+	return;
+}
 
 highp float Tot = 0.0;
 highp float Samples_squared = LightPositions[0].x;
@@ -1260,8 +1325,16 @@ void main(){
   highp vec2 uv = vecUVCoords.xy;
   uv.y = 1.0 - uv.y;
   highp float depth = texture(tex0, uv).r;
+ if (!IsSceneDepthValid(depth)) {
+	#ifdef ES_30
+		colorOut = vec4(0.0, 0.0, 0.0, 1.0);
+	#else
+		gl_FragColor = vec4(0.0, 0.0, 0.0, 1.0);
+	#endif
+	return;
+ }
  highp vec4 position = ReconstructPosition(ClipPos, depth);
- int steps = int(LightPositions[0].y);
+ int steps = max(int(LightPositions[0].y), 2);
  highp vec4 ray = vec4(position - CameraPosition);
  highp vec4 rayDir = normalize(ray);
  highp float rayLength = length(ray);
@@ -1282,18 +1355,20 @@ highp vec2 SHTC;
 highp vec4 sunDir;
 highp vec3 scattering;
 const highp vec3 lightColor = vec3(0.9803, 0.8392, 0.6470);
+highp float shadowBias = max(toogles.w, 0.0);
 for (int i = 0; i<steps; i++) {
 	LightPos = WVPLight* P;
 	LightPos.xyz /= LightPos.w;
   SHTC = LightPos.xy*0.5 + 0.5;
 
-	highp vec3 Coords_Final = vec3(SHTC.xy, LightPos.z + 0.00005);
-  highp float Val_1 = texture(tex1, Coords_Final);
-
-	if (Val_1 > 0.0 && SHTC.x < 1.0 && SHTC.y < 1.0 && SHTC.x  > 0.0 && SHTC.y > 0.0 && LightPos.w > 0.0 && LightPos.z > 0.0 && LightPos.z < 1.0) {
-    sunDir = normalize(P - LightCameraPosition);
-    scattering = lightColor * ComputeScattering(dot(rayDir.rgb, sunDir.rgb));
-    accumFog.rgb += scattering ;
+	if (SHTC.x < 1.0 && SHTC.y < 1.0 && SHTC.x  > 0.0 && SHTC.y > 0.0 && LightPos.w > 0.0 && LightPos.z > 0.0 && LightPos.z < 1.0) {
+		highp vec3 Coords_Final = vec3(SHTC.xy, LightPos.z + shadowBias);
+		highp float Val_1 = texture(tex1, Coords_Final);
+		if (Val_1 > 0.0) {
+			sunDir = normalize(P - LightCameraPosition);
+			scattering = lightColor * ComputeScattering(dot(rayDir.rgb, sunDir.rgb));
+			accumFog.rgb += scattering ;
+		}
   }
   P += step;
 }

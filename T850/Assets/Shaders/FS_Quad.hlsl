@@ -28,6 +28,12 @@ struct VS_OUTPUT{
 SamplerState SS  : register(s0);
 SamplerState SS1 : register(s1);
 
+static const float DEPTH_CLEAR_EPSILON = 0.0001f;
+
+bool IsSceneDepthValid(float depth) {
+	return depth > DEPTH_CLEAR_EPSILON;
+}
+
 float roundTo(float num,float decimals){
 	float shift = pow(10.0,decimals);
 	return round(num*shift) / shift;
@@ -614,7 +620,7 @@ float3 GetNormal(float2 coords) {
 	return normal;
 }
 
-float GetOcclusion(float depth, float2 uv, float4 position, float3 normal, float4 posCorner) {
+float GetOcclusion(float depth, float2 uv, float4 position, float3 normal) {
 	float Radius = LightPositions[0].y;
 	float2 Scale = float2(LightPositions[0].z / brightness.w, LightPositions[0].w / brightness.w);
 	float3 pVec = tex3.Sample(SS, Scale * uv).xyz * 2.0 - 1.0;
@@ -632,12 +638,17 @@ float GetOcclusion(float depth, float2 uv, float4 position, float3 normal, float
 
 		float4 offset = mul(Projection, float4(Spheresample, 1.0));
 		offset.xy /= offset.w;
-		offset.xy = offset.xy * 0.5 + 0.5;
-		offset.y = 1.0 - offset.y;
+		float2 sampleClip = offset.xy;
+		float2 sampleUV = sampleClip * 0.5 + 0.5;
+		sampleUV.y = 1.0 - sampleUV.y;
+		if (sampleUV.x < 0.0 || sampleUV.x > 1.0 || sampleUV.y < 0.0 || sampleUV.y > 1.0)
+			continue;
 
-		float sampleDepth = tex0.Sample(SS, offset.xy).r;
+		float sampleDepth = tex0.Sample(SS, sampleUV).r;
+		if (!IsSceneDepthValid(sampleDepth))
+			continue;
 
-		float4 new_position = ReconstructPosition(posCorner.xy, sampleDepth);
+		float4 new_position = ReconstructPosition(sampleClip, sampleDepth);
 
 		float4 new_positionV = mul(WorldView, float4(new_position.xyz, 1.0));
 
@@ -652,6 +663,8 @@ float GetOcclusion(float depth, float2 uv, float4 position, float3 normal, float
 float4 FS( VS_OUTPUT input ) : SV_TARGET {
 	float4 Fcolor = float4(1.0,1.0,1.0,1.0);
 	float depth = tex0.Sample( SS, input.texture0 );
+	if (!IsSceneDepthValid(depth))
+		return Fcolor;
 
 	float4 position = ReconstructPosition(input.ClipPos, depth);
 
@@ -661,7 +674,7 @@ float4 FS( VS_OUTPUT input ) : SV_TARGET {
 
 	#ifdef ENABLE_SSAO
 		float3 normal = GetNormal(input.texture0);
-		float Occlusion = GetOcclusion(depth, input.texture0.xy, position, normal, float4(input.ClipPos, 0.0, 0.0));
+		float Occlusion = GetOcclusion(depth, input.texture0.xy, position, normal);
 		Fcolor *= Occlusion;
 	#endif
 
@@ -797,20 +810,30 @@ Texture2D tex0 : register(t0);
 FS_OUT FS( VS_OUTPUT input ) : SV_TARGET {	
 	float aperture = LightPositions[0].x;
 	float focalLength = LightPositions[0].y;
-  float depthFocus;
+	FS_OUT OUT;
+	OUT.color0 = 0.0;
+	OUT.color1 = 0.0;
+
+	float z = tex0.Sample( SS, input.texture0.xy ).r;
+	if (!IsSceneDepthValid(z))
+		return OUT;
+
+	float depthFocus;
   #ifdef AUTO_FOCUS
     depthFocus = tex0.Sample(SS, float2(0.5, 0.5)).r;// Auto Focus center
   #else
     depthFocus = LightPositions[0].z;
   #endif
+	if (!IsSceneDepthValid(depthFocus))
+		depthFocus = z;
 
-	FS_OUT OUT;
-	float z = tex0.Sample( SS, input.texture0.xy ).r;
 	bool near = (z > depthFocus);
 	float objectdistance = LinearizeDepth(z);
   float FocusPlane = LinearizeDepth(depthFocus);
-	float CoC = abs(aperture * (focalLength * (objectdistance - FocusPlane)) /
-          (objectdistance * (FocusPlane - focalLength)));
+	float denominator = objectdistance * (FocusPlane - focalLength);
+	if (abs(denominator) <= 0.00001f)
+		return OUT;
+	float CoC = abs(aperture * (focalLength * (objectdistance - FocusPlane)) / denominator);
 	if (near) {
     OUT.color0 = clamp(CoC, 0, LightPositions[0].w);
     OUT.color1 = 0;
@@ -838,16 +861,20 @@ Texture2D tex1 : register(t1);
 float4 FS(VS_OUTPUT input) : SV_TARGET{
   float dofblur = tex1.Sample(SS, input.texture0).r;
   float4 color = tex0.Sample(SS, input.texture0);
-  float offsetX = 1 / 1280.0;
-  float offsetY = 1 / 720.0;
+	if (dofblur <= DEPTH_CLEAR_EPSILON)
+		return color;
+	float2 offset = float2(1.0 / LightPositions[0].z, 1.0 / LightPositions[0].w);
+	int samplesSquared = max((int)LightPositions[0].y, 0);
+	float total = 0.0;
 
-  for (int i = -3; i <= 3; i++) {
-    for (int j = -3; j <= 3; j++) {
-      float2 tcoord = input.texture0 + float2(i*offsetX, j*offsetY) * dofblur;
+	[loop] for (int i = -samplesSquared; i <= samplesSquared; i++) {
+		[loop] for (int j = -samplesSquared; j <= samplesSquared; j++) {
+			float2 tcoord = input.texture0 + float2(i, j) * offset * dofblur;
       color+= tex0.Sample(SS, tcoord);
+			total++;
     }
   }
-  color /= 49.0;
+	color /= max(total, 1.0);
   color.a = 1.0;
 
   return color;
@@ -858,16 +885,20 @@ Texture2D tex1 : register(t1);
 float4 FS(VS_OUTPUT input) : SV_TARGET{
 float dofblur = tex1.Sample(SS, input.texture0).r;
 float4 color = tex0.Sample(SS, input.texture0);
-float offsetX = 1 / 1280.0;
-float offsetY = 1 / 720.0;
+if (dofblur <= DEPTH_CLEAR_EPSILON)
+	return color;
+float2 offset = float2(1.0 / LightPositions[0].z, 1.0 / LightPositions[0].w);
+int samplesSquared = max((int)LightPositions[0].x, 0);
+float total = 0.0;
 
-for (int i = -1; i <= 1; i++) {
-  for (int j = -1; j <= 1; j++) {
-    float2 tcoord = input.texture0 + float2(i*offsetX, j*offsetY)*dofblur;
+	[loop] for (int i = -samplesSquared; i <= samplesSquared; i++) {
+	[loop] for (int j = -samplesSquared; j <= samplesSquared; j++) {
+		float2 tcoord = input.texture0 + float2(i, j) * offset * dofblur;
     color += tex0.Sample(SS, tcoord);
+		total++;
   }
 }
-color /= 9.0;
+color /= max(total, 1.0);
 color.a = 1.0;
 
 return color;
@@ -1127,6 +1158,8 @@ Ball(half3 x)
 Texture2D tex0 : register(t0);
 float4 FS(VS_OUTPUT input) : SV_TARGET{
   float depth = tex0.Sample(SS, input.texture0);
+	if (!IsSceneDepthValid(depth))
+		return float4(0.0, 0.0, 0.0, 0.0);
 	float4 position = ReconstructPosition(input.ClipPos, depth);
   const int steps = 64;
   half4 ray = (position- CameraPosition);
@@ -1182,8 +1215,10 @@ float4 FS(VS_OUTPUT input) : SV_TARGET{
   return float4(0,0,0,1);
   #else
   float depth = tex0.Sample(SS, input.texture0);
+if (!IsSceneDepthValid(depth))
+	return float4(0,0,0,1);
 float4 position = ReconstructPosition(input.ClipPos, depth);
-int steps = (int)LightPositions[0].y;
+int steps = max((int)LightPositions[0].y, 2);
 float4 ray = (position - CameraPosition);
 float4 rayDir = normalize(ray);
 float rayLength = length(ray);
@@ -1197,20 +1232,23 @@ float4 P = intersectionFar;
 float3 accumFog = 0.0f.xxx;
 
 const float3 lightColor = float3(0.9803, 0.8392, 0.6470);
+float shadowBias = max(toogles.w, 0.0f);
 [loop] for (int i = 0; i<steps; i++) {
   float4 LightPos = mul(WVPLight, P);
   LightPos.xy /= LightPos.w;
 	LightPos.z /= LightPos.w;
   float2 SHTC = LightPos.xy*0.5 + 0.5;
   SHTC.y = 1.0 - SHTC.y;
-  float depthValue = tex1.Sample(SS1, SHTC);
-	depthValue -= 0.00005;
 
-	if (LightPos.z > depthValue && SHTC.x < 1.0 && SHTC.y < 1.0 && SHTC.x > 0.0 && SHTC.y > 0.0 && LightPos.w > 0.0 && LightPos.z > 0.0 && LightPos.z < 1.0)
+	if (SHTC.x < 1.0 && SHTC.y < 1.0 && SHTC.x > 0.0 && SHTC.y > 0.0 && LightPos.w > 0.0 && LightPos.z > 0.0 && LightPos.z < 1.0)
   {
-    float4 sunDir = normalize(P - LightCameraPosition);
-    float3 scattering = lightColor * ComputeScattering(dot(rayDir.rgb, sunDir.rgb));
-    accumFog += scattering ;
+		float depthValue = tex1.Sample(SS1, SHTC);
+		depthValue -= shadowBias;
+		if (LightPos.z >= depthValue) {
+			float4 sunDir = normalize(P - LightCameraPosition);
+			float3 scattering = lightColor * ComputeScattering(dot(rayDir.rgb, sunDir.rgb));
+			accumFog += scattering ;
+		}
   }
   P += step;
 }

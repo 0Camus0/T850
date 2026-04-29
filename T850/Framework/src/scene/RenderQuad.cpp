@@ -303,6 +303,7 @@ namespace t850 {
 	  CnstBuffer.LightPositions[0].y = pScProp->LightVolumeSteps;
     CnstBuffer.toogles.x = pScProp->GodRaysFactor;
 	  CnstBuffer.toogles.z = (float)pScProp->DebugMode;
+    CnstBuffer.toogles.w = pScProp->ShadowBias;
 	}
 
     m_quad.Set();

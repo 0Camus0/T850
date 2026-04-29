@@ -1,7 +1,7 @@
 {
-  "debugFrames": true,
+  "debugFrames": false,
   "architecture": "x64",
-  "api": "vulkan",
+  "api": "d3d12",
   "devTools": {
     "d3d12Debug": false,
     "logLevel": "error",
@@ -13,8 +13,8 @@
   },
   "keepRunning": false,
   "display": {
-    "scene": 0,
-    "model": "Models/porsche_992_gt3_r__www.vecarz.com.glb",
+    "scene": 1,
+    "model": "Models/DamagedHelmet.glb",
     "height": 1080,
     "fullscreen": false,
     "width": 1920
@@ -22,12 +22,12 @@
   "configuration": "Release",
   "replaySnapshot": {
     "path": "D:\\Code\\Game\\T850\\T850\\bin\\x64\\Release\\dumps_d3d12_f2469_20260428_091219\\snapshot.json",
-    "enabled": true
+    "enabled": false
   },
   "dump": {
     "seconds": -1,
     "frame": -1,
     "trigger": "frame",
-    "enabled": true
+    "enabled": false
   }
 }

@@ -116,6 +116,10 @@ void SceneSetup::Apply(SceneProps& props) {
   for (auto& gf : gaussFilters)
     props.AddGaussKernel(&gf);
 
+  ApplyQualityAndSettings(props);
+}
+
+void SceneSetup::ApplyQualityAndSettings(SceneProps& props) {
   // Quality settings
   auto& q = descriptor.quality;
   props.ShadowMapResolution = q.shadow_map_resolution;

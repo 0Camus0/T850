@@ -197,11 +197,9 @@ namespace t850 {
   // ══════════════════════════════════════════════════════
 
   ID3D12PipelineState* D3D12Driver::GetOrCreatePSO(D3D12Shader* shader, uint8_t numRTVs,
-                                                     DXGI_FORMAT rtvFormat, DXGI_FORMAT dsvFormat) {
-    if (rtvFormat == DXGI_FORMAT_UNKNOWN) {
+                                                     const DXGI_FORMAT* rtvFormats, DXGI_FORMAT dsvFormat) {
+    if (numRTVs > 0 && rtvFormats && rtvFormats[0] == DXGI_FORMAT_UNKNOWN)
       numRTVs = 0;
-      rtvFormat = DXGI_FORMAT_UNKNOWN;
-    }
 
     // When depth is disabled, keep DSV format matching the bound depth buffer
     // (the depth test/write is disabled in the PSO's DepthStencilState already)
@@ -212,7 +210,9 @@ namespace t850 {
     key.depth = (uint8_t)m_currentDepth;
     key.cull = (uint8_t)m_currentCull;
     key.numRTVs = numRTVs;
-    key.rtvFormat = rtvFormat;
+    key.rtvFormats.fill(DXGI_FORMAT_UNKNOWN);
+    for (int i = 0; i < numRTVs && i < (int)key.rtvFormats.size(); ++i)
+      key.rtvFormats[i] = rtvFormats ? rtvFormats[i] : DXGI_FORMAT_R8G8B8A8_UNORM;
     key.dsvFormat = dsvFormat;
 
     auto it = m_psoCache.find(key);
@@ -232,7 +232,7 @@ namespace t850 {
     pso.SampleDesc.Count = 1;
     pso.PrimitiveTopologyType = D3D12_PRIMITIVE_TOPOLOGY_TYPE_TRIANGLE;
     pso.NumRenderTargets = numRTVs;
-    for (int i = 0; i < numRTVs; i++) pso.RTVFormats[i] = rtvFormat;
+    for (int i = 0; i < numRTVs; i++) pso.RTVFormats[i] = key.rtvFormats[i];
     pso.DSVFormat = dsvFormat;
 
     // Rasterizer
@@ -297,8 +297,8 @@ namespace t850 {
     ComPtr<ID3D12PipelineState> psoObj;
     HRESULT hr = device->CreateGraphicsPipelineState(&pso, IID_PPV_ARGS(&psoObj));
     if (FAILED(hr)) {
-      T8_LOG_ERROR("[D3D12] CreatePSO failed hr=0x%08X shader=%p blend=%d depth=%d cull=%d nRTV=%d fmt=%d",
-                   hr, shader, key.blend, key.depth, key.cull, key.numRTVs, key.rtvFormat);
+      T8_LOG_ERROR("[D3D12] CreatePSO failed hr=0x%08X shader=%p blend=%d depth=%d cull=%d nRTV=%d fmt0=%d",
+           hr, shader, key.blend, key.depth, key.cull, key.numRTVs, key.rtvFormats[0]);
       return nullptr;
     }
 

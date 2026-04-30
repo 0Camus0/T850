@@ -85,6 +85,9 @@ namespace t850 {
     XVECTOR3  MaterialParams4; // .rgb=sheen color .w=sheen roughness
     XVECTOR3  MaterialParams5; // .x=sheen color map .y=sheen roughness map .z=color uv .w=roughness uv
     XVECTOR3  MaterialParams6; // .x=clearcoat map .y=clearcoat roughness map .z=factor uv .w=roughness uv
+    XVECTOR3  MaterialParams7; // .x=occlusion map .y=occlusion strength .z=occlusion uv .w=transmission map
+    XVECTOR3  MaterialParams8; // .x=transmission uv .y=specular factor map .z=specular factor uv .w=specular color map
+    XVECTOR3  MaterialParams9; // .x=specular color uv
     XVECTOR3  BaseColorUVTransform0;
     XVECTOR3  BaseColorUVTransform1;
     XVECTOR3  NormalUVTransform0;
@@ -101,6 +104,14 @@ namespace t850 {
     XVECTOR3  ClearcoatUVTransform1;
     XVECTOR3  ClearcoatRoughnessUVTransform0;
     XVECTOR3  ClearcoatRoughnessUVTransform1;
+    XVECTOR3  OcclusionUVTransform0;
+    XVECTOR3  OcclusionUVTransform1;
+    XVECTOR3  SpecularFactorUVTransform0;
+    XVECTOR3  SpecularFactorUVTransform1;
+    XVECTOR3  SpecularColorUVTransform0;
+    XVECTOR3  SpecularColorUVTransform1;
+    XVECTOR3  TransmissionUVTransform0;
+    XVECTOR3  TransmissionUVTransform1;
     XVECTOR3  LightPositions[128];
     XVECTOR3  LightColors[128];
     XVECTOR3  LightRadius[32];
@@ -134,6 +145,7 @@ namespace t850 {
       IOR = 1.5f;
       ClearcoatFactor = 0.0f;
       ClearcoatRoughness = 0.0f;
+      OcclusionStrength = 1.0f;
       SheenColor = XVECTOR3(0.0f, 0.0f, 0.0f, 0.0f);
       SheenRoughness = 0.0f;
       Unlit = false;
@@ -145,6 +157,10 @@ namespace t850 {
       SheenRoughnessTexCoord = 0;
       ClearcoatTexCoord = 0;
       ClearcoatRoughnessTexCoord = 0;
+      OcclusionTexCoord = 0;
+      SpecularFactorTexCoord = 0;
+      SpecularColorTexCoord = 0;
+      TransmissionTexCoord = 0;
       BaseColorUVTransform0 = XVECTOR3(1.0f, 0.0f, 0.0f, 0.0f);
       BaseColorUVTransform1 = XVECTOR3(0.0f, 1.0f, 0.0f, 0.0f);
       NormalUVTransform0 = XVECTOR3(1.0f, 0.0f, 0.0f, 0.0f);
@@ -161,18 +177,34 @@ namespace t850 {
       ClearcoatUVTransform1 = XVECTOR3(0.0f, 1.0f, 0.0f, 0.0f);
       ClearcoatRoughnessUVTransform0 = XVECTOR3(1.0f, 0.0f, 0.0f, 0.0f);
       ClearcoatRoughnessUVTransform1 = XVECTOR3(0.0f, 1.0f, 0.0f, 0.0f);
+      OcclusionUVTransform0 = XVECTOR3(1.0f, 0.0f, 0.0f, 0.0f);
+      OcclusionUVTransform1 = XVECTOR3(0.0f, 1.0f, 0.0f, 0.0f);
+      SpecularFactorUVTransform0 = XVECTOR3(1.0f, 0.0f, 0.0f, 0.0f);
+      SpecularFactorUVTransform1 = XVECTOR3(0.0f, 1.0f, 0.0f, 0.0f);
+      SpecularColorUVTransform0 = XVECTOR3(1.0f, 0.0f, 0.0f, 0.0f);
+      SpecularColorUVTransform1 = XVECTOR3(0.0f, 1.0f, 0.0f, 0.0f);
+      TransmissionUVTransform0 = XVECTOR3(1.0f, 0.0f, 0.0f, 0.0f);
+      TransmissionUVTransform1 = XVECTOR3(0.0f, 1.0f, 0.0f, 0.0f);
 			MetallicTex = nullptr;
       EmissiveTex = nullptr;
 			SheenColorTex = nullptr;
       SheenRoughnessTex = nullptr;
       ClearcoatTex = nullptr;
       ClearcoatRoughnessTex = nullptr;
+      OcclusionTex = nullptr;
+      SpecularFactorTex = nullptr;
+      SpecularColorTex = nullptr;
+      TransmissionTex = nullptr;
 			MetallicId = -1;
       EmissiveId = -1;
 			SheenColorId = -1;
       SheenRoughnessId = -1;
       ClearcoatId = -1;
       ClearcoatRoughnessId = -1;
+      OcclusionId = -1;
+      SpecularFactorId = -1;
+      SpecularColorId = -1;
+      TransmissionId = -1;
 			bUseFresnel = false;
 			MatID = 0;
 		}
@@ -191,6 +223,10 @@ namespace t850 {
       Texture*					SheenRoughnessTex;
       Texture*					ClearcoatTex;
       Texture*					ClearcoatRoughnessTex;
+      Texture*					OcclusionTex;
+      Texture*					SpecularFactorTex;
+      Texture*					SpecularColorTex;
+      Texture*					TransmissionTex;
 
 	  XVECTOR3		  AmbientColor;
 	  XVECTOR3	      DiffuseColor;
@@ -211,6 +247,10 @@ namespace t850 {
       int					SheenRoughnessId;
       int					ClearcoatId;
       int					ClearcoatRoughnessId;
+      int					OcclusionId;
+      int					SpecularFactorId;
+      int					SpecularColorId;
+      int					TransmissionId;
 
 	  int					MatID;
       unsigned int      AlphaMode;
@@ -220,6 +260,7 @@ namespace t850 {
       float             IOR;
       float             ClearcoatFactor;
       float             ClearcoatRoughness;
+      float             OcclusionStrength;
       XVECTOR3          SheenColor;
       float             SheenRoughness;
       bool              Unlit;
@@ -231,6 +272,10 @@ namespace t850 {
       unsigned int      SheenRoughnessTexCoord;
       unsigned int      ClearcoatTexCoord;
       unsigned int      ClearcoatRoughnessTexCoord;
+      unsigned int      OcclusionTexCoord;
+      unsigned int      SpecularFactorTexCoord;
+      unsigned int      SpecularColorTexCoord;
+      unsigned int      TransmissionTexCoord;
       XVECTOR3          BaseColorUVTransform0;
       XVECTOR3          BaseColorUVTransform1;
       XVECTOR3          NormalUVTransform0;
@@ -247,6 +292,14 @@ namespace t850 {
       XVECTOR3          ClearcoatUVTransform1;
       XVECTOR3          ClearcoatRoughnessUVTransform0;
       XVECTOR3          ClearcoatRoughnessUVTransform1;
+      XVECTOR3          OcclusionUVTransform0;
+      XVECTOR3          OcclusionUVTransform1;
+      XVECTOR3          SpecularFactorUVTransform0;
+      XVECTOR3          SpecularFactorUVTransform1;
+      XVECTOR3          SpecularColorUVTransform0;
+      XVECTOR3          SpecularColorUVTransform1;
+      XVECTOR3          TransmissionUVTransform0;
+      XVECTOR3          TransmissionUVTransform1;
 
       unsigned int		VertexStart;
       unsigned int		NumVertex;

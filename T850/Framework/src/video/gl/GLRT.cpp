@@ -20,6 +20,54 @@
 #include <sys/time.h>
 #endif
 namespace t850 {
+  namespace {
+    void ResolveGLRTColorFormat(int format, GLint& internalFormat, GLint& dataFormat, GLint& dataType) {
+      switch (format) {
+      case BaseRT::R8:
+        internalFormat = GL_R8;
+        dataFormat = GL_RED;
+        dataType = GL_UNSIGNED_BYTE;
+        break;
+      case BaseRT::F16:
+        internalFormat = GL_R16F;
+        dataFormat = GL_RED;
+        dataType = GL_HALF_FLOAT;
+        break;
+      case BaseRT::F32:
+        internalFormat = GL_R32F;
+        dataFormat = GL_RED;
+        dataType = GL_FLOAT;
+        break;
+      case BaseRT::RGBA16F:
+#if (GL_DRIVER_SELECTED == OGLES20)
+        internalFormat = GL_RGB16F_EXT;
+#else
+        internalFormat = GL_RGBA16F;
+#endif
+        dataFormat = GL_RGBA;
+        dataType = GL_HALF_FLOAT;
+        break;
+      case BaseRT::RGBA32F:
+#if (GL_DRIVER_SELECTED == OGLES20)
+        internalFormat = GL_RGB32F_EXT;
+#else
+        internalFormat = GL_RGBA32F;
+#endif
+        dataFormat = GL_RGBA;
+        dataType = GL_FLOAT;
+        break;
+      case BaseRT::RGB8:
+      case BaseRT::RGBA8:
+      case BaseRT::NOTHING:
+      default:
+        internalFormat = GL_RGBA;
+        dataFormat = GL_RGBA;
+        dataType = GL_UNSIGNED_BYTE;
+        break;
+      }
+    }
+  }
+
   bool GLRT::LoadAPIRT() {
     GLint cfmt, dfmt, cinternal;
     GLint bysize = 0;
@@ -124,9 +172,15 @@ namespace t850 {
     }
     else {
       for (int i = 0; i < number_RT; i++) {
+        GLint attachmentFormat = cffmt;
+        GLint attachmentDataFormat = cinternal;
+        GLint attachmentType = cbysize;
+        if (!perColorFormats.empty() && i < (int)perColorFormats.size())
+          ResolveGLRTColorFormat(perColorFormats[i], attachmentFormat, attachmentDataFormat, attachmentType);
+
         glGenTextures(1, &ctex);
         glBindTexture(GL_TEXTURE_2D, ctex);
-        glTexImage2D(GL_TEXTURE_2D, 0, cffmt, w, h, 0, cinternal, cbysize, 0);
+        glTexImage2D(GL_TEXTURE_2D, 0, attachmentFormat, w, h, 0, attachmentDataFormat, attachmentType, 0);
         if (i == 0 && this->color_format != BaseRT::R8) {
           glGenerateMipmap(GL_TEXTURE_2D);
           glTexParameterf(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR_MIPMAP_LINEAR);
@@ -245,12 +299,22 @@ namespace t850 {
   }
 
   void GLRT::DestroyAPIRT() {
-    GLuint FBO = vFrameBuffers[0];
-    glDeleteFramebuffers(1, &FBO);
-    for (size_t i = 0; i < vColorTextures.size(); i++) {
-      vColorTextures[i]->release();
+    if (!vFrameBuffers.empty()) {
+      GLuint FBO = vFrameBuffers[0];
+      glDeleteFramebuffers(1, &FBO);
     }
-    pDepthTexture->release();
+    for (size_t i = 0; i < vColorTextures.size(); i++) {
+      if (vColorTextures[i])
+        vColorTextures[i]->release();
+    }
+    vColorTextures.clear();
+    vFrameBuffers.clear();
+    vGLColorTex.clear();
+    if (pDepthTexture) {
+      pDepthTexture->release();
+      pDepthTexture = nullptr;
+    }
+    DepthTexture = 0;
   }
   void GLRT::Set(const DeviceContext&context)
   {

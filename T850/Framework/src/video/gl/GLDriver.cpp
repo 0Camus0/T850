@@ -455,14 +455,18 @@ namespace t850 {
       int colorIndex = attachment;
       glReadBuffer(GL_COLOR_ATTACHMENT0 + colorIndex);
 
+      int attachmentFormat = rt->color_format;
+      if (!rt->perColorFormats.empty() && colorIndex >= 0 && colorIndex < (int)rt->perColorFormats.size())
+        attachmentFormat = rt->perColorFormats[colorIndex];
+
       GLenum readFormat = GL_RGBA;
       GLenum readType = GL_UNSIGNED_BYTE;
-      switch (rt->color_format) {
+      switch (attachmentFormat) {
         case BaseRT::R8:
           readFormat = GL_RED; readType = GL_UNSIGNED_BYTE; break;
         case BaseRT::F16:
         case BaseRT::F32:
-          readFormat = GL_RGBA; readType = GL_FLOAT; break;
+          readFormat = GL_RED; readType = GL_FLOAT; break;
         case BaseRT::RGBA16F:
         case BaseRT::RGBA32F:
           readFormat = GL_RGBA; readType = GL_FLOAT; break;
@@ -500,6 +504,12 @@ namespace t850 {
     glClearDepthf(0.0f);
     glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT | GL_STENCIL_BUFFER_BIT);
 
+  }
+
+  void	GLDriver::ClearWithColor(float r, float g, float b, float a) {
+    glClearColor(r, g, b, a);
+    glClearDepthf(0.0f);
+    glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT | GL_STENCIL_BUFFER_BIT);
   }
 
   void	GLDriver::SwapBuffers() {

@@ -194,8 +194,11 @@ void DayScene::CreateAssets() {
   t850::Spline& m_spline = m_sceneSetup.splines[0];
   t850::SplineAgent& m_agent = m_sceneSetup.agents[0];
   m_agent.m_actualPoint = m_spline.GetPoint(m_spline.GetNormalizedOffset(0));
-  ActiveCam->AttachAgent(m_agent);
-  ActiveCam->m_lookAtCenter = false;
+  const int attachedCamera = m_sceneSetup.descriptor.splines[0].attached_camera;
+  if (Camera* splineCamera = m_sceneSetup.GetCamera(attachedCamera)) {
+    splineCamera->AttachAgent(m_agent);
+    splineCamera->m_lookAtCenter = false;
+  }
 
   Quads[0].TranslateAbsolute(0.0f, 0.0f, 0.0f);
   Quads[0].Update();
@@ -606,7 +609,10 @@ void DayScene::OnDraw() {
       {GBufferPass,     BaseDriver::COLOR1_ATTACHMENT, "GBuffer_Normals"},
       {GBufferPass,     BaseDriver::COLOR2_ATTACHMENT, "GBuffer_Color2"},
       {GBufferPass,     BaseDriver::COLOR3_ATTACHMENT, "GBuffer_Color3"},
-      {GBufferPass,     BaseDriver::COLOR4_ATTACHMENT, "GBuffer_Depth"},
+      {GBufferPass,     BaseDriver::COLOR4_ATTACHMENT, "GBuffer_Emissive"},
+      {GBufferPass,     BaseDriver::COLOR5_ATTACHMENT, "GBuffer_Sheen"},
+      {GBufferPass,     BaseDriver::COLOR6_ATTACHMENT, "GBuffer_SpecularOcclusion"},
+      {GBufferPass,     BaseDriver::DEPTH_ATTACHMENT,  "GBuffer_Depth"},
       {DepthPass,       BaseDriver::DEPTH_ATTACHMENT,  "ShadowMap_Depth"},
       {ShadowAccumPass, BaseDriver::COLOR0_ATTACHMENT, "ShadowAccum"},
       {DeferredPass,    BaseDriver::COLOR0_ATTACHMENT, "Deferred"},
@@ -634,8 +640,8 @@ void DayScene::OnDraw() {
     case 1:  selected = GBufferPass;     attachment = BaseDriver::COLOR0_ATTACHMENT; break; // Albedo
     case 2:  selected = GBufferPass;     attachment = BaseDriver::COLOR1_ATTACHMENT; break; // Normals
     case 3:  selected = GBufferPass;     attachment = BaseDriver::COLOR2_ATTACHMENT; break; // Specular
-    case 4:  selected = GBufferPass;     attachment = BaseDriver::COLOR3_ATTACHMENT; break; // Emissive
-    case 5:  selected = GBufferPass;     attachment = BaseDriver::COLOR4_ATTACHMENT; break; // GBuf Depth
+    case 4:  selected = GBufferPass;     attachment = BaseDriver::COLOR3_ATTACHMENT; break; // Geo/material
+    case 5:  selected = GBufferPass;     attachment = BaseDriver::DEPTH_ATTACHMENT;  break; // GBuf Depth
     case 6:  selected = DepthPass;       attachment = BaseDriver::DEPTH_ATTACHMENT;  break; // Shadow Map
     case 7:  selected = ShadowAccumPass; attachment = BaseDriver::COLOR0_ATTACHMENT; break; // Shadow Accum
     case 8:  selected = DeferredPass;    attachment = BaseDriver::COLOR0_ATTACHMENT; break; // Deferred

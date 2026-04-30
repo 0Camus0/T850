@@ -32,7 +32,7 @@ bool SceneSetup::Load(const std::string& jsonPath) {
     else
       cameras[i].InitPerspective(pos, cd.fov, cd.aspect, cd.near_plane, cd.far_plane, cd.left_handed);
     cameras[i].Speed = cd.speed;
-    cameras[i].Eye = XVECTOR3(cd.eye[0], cd.eye[1], cd.eye[2]);
+    cameras[i].Eye = pos;
     cameras[i].Pitch = cd.pitch;
     cameras[i].Roll = cd.roll;
     cameras[i].Yaw = cd.yaw;
@@ -49,7 +49,7 @@ bool SceneSetup::Load(const std::string& jsonPath) {
     else
       lightCameras[i].InitPerspective(pos, lc.fov, lc.aspect, lc.near_plane, lc.far_plane, lc.left_handed);
     lightCameras[i].Speed = lc.speed;
-    lightCameras[i].Eye = XVECTOR3(lc.eye[0], lc.eye[1], lc.eye[2]);
+    lightCameras[i].Eye = pos;
     lightCameras[i].Pitch = lc.pitch;
     lightCameras[i].Roll = lc.roll;
     lightCameras[i].Yaw = lc.yaw;
@@ -196,6 +196,7 @@ void SceneSetup::SaveState(SceneBase* scene, const std::string& jsonPath) {
     Camera& cam = cameras[i];
     auto& cd = desc.cameras[i];
     cd.position = {cam.Eye.x, cam.Eye.y, cam.Eye.z};
+    cd.eye = cd.position;
     cd.pitch = cam.Pitch;
     cd.roll = cam.Roll;
     cd.yaw = cam.Yaw;
@@ -215,6 +216,7 @@ void SceneSetup::SaveState(SceneBase* scene, const std::string& jsonPath) {
     Camera& cam = lightCameras[i];
     auto& cd = desc.light_cameras[i];
     cd.position = {cam.Eye.x, cam.Eye.y, cam.Eye.z};
+    cd.eye = cd.position;
     cd.pitch = cam.Pitch;
     cd.roll = cam.Roll;
     cd.yaw = cam.Yaw;

@@ -150,7 +150,7 @@ namespace t850 {
     // Build final shader key: base features + global pass + toggles
     ShaderKey finalKey(sigBase.bits);
     finalKey.setPass(gKey.getPass());
-    constexpr uint32_t featureMask = (1u << ShaderKey::PASS_SHIFT) - 1;
+    constexpr uint64_t featureMask = (1ull << ShaderKey::PASS_SHIFT) - 1ull;
     finalKey.bits |= (gKey.bits & featureMask);
 
     uint8_t pass = finalKey.getPass();
@@ -301,6 +301,13 @@ namespace t850 {
 	}
 	else if (pass == PassType::LIGHT_RAY_MARCHING) {
 	  CnstBuffer.LightPositions[0].y = pScProp->LightVolumeSteps;
+      XVECTOR3 sunDir(0.0f, 1.0f, 0.0f, 0.0f);
+      if (pScProp->pLightCameras.size() > 0) {
+        int selected = pScProp->ActiveLightCamera;
+        sunDir = -pScProp->pLightCameras[selected]->Look;
+        sunDir.Normalize();
+      }
+      CnstBuffer.LightColors[0] = XVECTOR3(sunDir.x, sunDir.y, sunDir.z, 1.0f);
     CnstBuffer.toogles.x = pScProp->GodRaysFactor;
 	  CnstBuffer.toogles.z = (float)pScProp->DebugMode;
     CnstBuffer.toogles.w = pScProp->ShadowBias;
@@ -320,6 +327,8 @@ namespace t850 {
       case 4: return "tex4";
       case 5: return "tex5";
       case 7: return "tex6";
+      case 8: return "tex7";
+      case 9: return "tex8";
       case EnvironmentTextureSlot::DiffuseIBL: return "texIBLDiffuse";
       case EnvironmentTextureSlot::SpecularIBL: return "texIBLSpecular";
       case EnvironmentTextureSlot::BrdfLUT: return "texIBLBRDF";

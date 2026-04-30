@@ -1,6 +1,6 @@
 {
   "render_targets": [
-    { "name": "GBuffer",           "color_count": 6, "color_format": "RGBA16F", "depth_format": "F32",  "size": [0,0], "linear_filter": true },
+    { "name": "GBuffer",           "color_count": 7, "color_formats": ["RGBA8", "RGBA16F", "RGBA8", "RGBA8", "RGBA16F", "RGBA8", "RGBA8"], "depth_format": "F32",  "size": [0,0], "linear_filter": true },
     { "name": "Deferred",          "color_count": 1, "color_format": "RGBA16F", "depth_format": "NONE", "size": [0,0], "linear_filter": true },
     { "name": "Extra16F",          "color_count": 1, "color_format": "RGBA16F", "depth_format": "NONE", "size": [0,0], "linear_filter": true },
     { "name": "DepthPass",         "color_count": 0, "color_format": "NONE",    "depth_format": "F32",  "size": [0,0], "linear_filter": false, "size_ref": "$shadow_resolution" },
@@ -35,7 +35,7 @@
       "name": "Shadow Accumulation",
       "target": "ShadowAccum",
       "inputs": [
-        { "source": "GBuffer:COLOR4",  "slot": 0 },
+        { "source": "GBuffer:DEPTH",   "slot": 0 },
         { "source": "DepthPass:DEPTH", "slot": 1 },
         { "source": "GBuffer:COLOR3",  "slot": 2 },
         { "source": "@ssao_noise",     "slot": 3 }
@@ -73,9 +73,11 @@
         { "source": "GBuffer:COLOR1",     "slot": 1 },
         { "source": "GBuffer:COLOR2",     "slot": 2 },
         { "source": "GBuffer:COLOR3",     "slot": 3 },
-        { "source": "GBuffer:COLOR4",     "slot": 4 },
+        { "source": "GBuffer:DEPTH",      "slot": 4 },
         { "source": "ShadowAccum:COLOR0", "slot": 5 },
-        { "source": "GBuffer:COLOR5",     "slot": 7 }
+        { "source": "GBuffer:COLOR5",     "slot": 7 },
+        { "source": "GBuffer:COLOR6",     "slot": 8 },
+        { "source": "GBuffer:COLOR4",     "slot": 9 }
       ],
       "bind_environment_map": true,
       "draws": [
@@ -99,7 +101,7 @@
       "push": false,
       "state": { "depth_stencil": "NONE", "cull_face": "FRONT_AND_BACK", "blend": "ALPHA_BLEND" },
       "inputs": [
-        { "source": "GBuffer:COLOR4", "slot": 7 },
+        { "source": "GBuffer:DEPTH",  "slot": 7 },
         { "source": "Extra16F:COLOR0", "slot": 9 }
       ],
       "bind_environment_map": true,

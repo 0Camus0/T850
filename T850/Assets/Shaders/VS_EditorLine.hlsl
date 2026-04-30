@@ -1,5 +1,5 @@
 // Editor line vertex shader — depth-tested wireframe overlay.
-// Outputs screen UV and clip depth for comparison with GBuffer COLOR4.
+// Outputs screen UV and clip depth for comparison with GBuffer depth.
 cbuffer ConstantBuffer{
     float4x4 WVP;
     float4   LineColor;

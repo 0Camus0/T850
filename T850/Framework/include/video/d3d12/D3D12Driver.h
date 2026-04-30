@@ -87,7 +87,7 @@ namespace t850 {
 
     // PSO cache — lazy creation
     ID3D12PipelineState* GetOrCreatePSO(D3D12Shader* shader, uint8_t numRTVs = 1,
-                                         DXGI_FORMAT rtvFormat = DXGI_FORMAT_R8G8B8A8_UNORM,
+                                         const DXGI_FORMAT* rtvFormats = nullptr,
                                          DXGI_FORMAT dsvFormat = DXGI_FORMAT_D32_FLOAT);
 
     // Default sampler GPU handle

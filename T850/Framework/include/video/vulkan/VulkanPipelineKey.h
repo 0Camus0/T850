@@ -30,6 +30,7 @@ namespace t850 {
     uint8_t   numColorAttachments;
     uint8_t   topology;  // VkPrimitiveTopology truncated to 8-bit
     uint32_t  vertexStride;
+    uintptr_t renderPass;
     VkFormat  colorFormat;
     VkFormat  depthFormat;
     bool operator==(const VulkanPipelineKey& o) const {
@@ -38,6 +39,7 @@ namespace t850 {
              numColorAttachments == o.numColorAttachments &&
              topology == o.topology &&
              vertexStride == o.vertexStride &&
+             renderPass == o.renderPass &&
              colorFormat == o.colorFormat && depthFormat == o.depthFormat;
     }
   };
@@ -53,6 +55,7 @@ namespace t850 {
       h ^= std::hash<uint32_t>()(static_cast<uint32_t>(k.depthFormat)) << 6;
       h ^= std::hash<uint8_t>()(k.topology) << 7;
       h ^= std::hash<uint32_t>()(k.vertexStride) << 8;
+      h ^= std::hash<uintptr_t>()(k.renderPass) << 9;
       return h;
     }
   };

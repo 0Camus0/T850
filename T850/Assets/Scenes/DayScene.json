@@ -3,18 +3,18 @@
    "cameras": [
       {
          "position": [
-            -45.78652,
-            31.024137,
-            -0.6973086
+            0,
+            9.75,
+            -31
          ],
          "eye": [
             0,
             9.75,
             -31
          ],
-         "pitch": -0.23499528,
+         "pitch": 0.14,
          "roll": 0,
-         "yaw": 12.010115,
+         "yaw": 0.02,
          "speed": 10,
          "fov": 1.0471976,
          "aspect": 1.7778,
@@ -435,16 +435,16 @@
       "active_lights": 1,
       "shadow_enabled": true,
       "ssao_enabled": true,
-      "dof_enabled": true,
+      "dof_enabled": false,
       "parallax_enabled": true,
       "godrays_enabled": true,
       "auto_focus": true,
       "debug_mode": 0,
       "shadow_bias": 0.000005,
-      "shadow_min": 0,
-      "env_factor": 8.1,
+      "shadow_min": 0.0,
+      "env_factor": 1.6,
       "ibl_factor": 0.2,
-      "godrays_factor": 1.5,
+      "godrays_factor": 0.7,
       "material_emissive_intensity": 1,
       "material_transmission_multiplier": 1,
       "material_refraction_strength": 0.03

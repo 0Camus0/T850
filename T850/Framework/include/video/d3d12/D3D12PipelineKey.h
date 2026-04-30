@@ -14,6 +14,7 @@
 #include <dxgi1_4.h>
 #include <cstdint>
 #include <functional>
+#include <array>
 
 namespace t850 {
 
@@ -26,12 +27,12 @@ namespace t850 {
     uint8_t  depth;
     uint8_t  cull;
     uint8_t  numRTVs;
-    DXGI_FORMAT rtvFormat;
+    std::array<DXGI_FORMAT, 8> rtvFormats;
     DXGI_FORMAT dsvFormat;
     bool operator==(const D3D12PipelineKey& o) const {
       return shaderPtr == o.shaderPtr && blend == o.blend &&
              depth == o.depth && cull == o.cull && numRTVs == o.numRTVs &&
-             rtvFormat == o.rtvFormat && dsvFormat == o.dsvFormat;
+             rtvFormats == o.rtvFormats && dsvFormat == o.dsvFormat;
     }
   };
 
@@ -42,8 +43,9 @@ namespace t850 {
       h ^= std::hash<uint8_t>()(k.depth)    << 2;
       h ^= std::hash<uint8_t>()(k.cull)     << 3;
       h ^= std::hash<uint8_t>()(k.numRTVs)  << 4;
-      h ^= std::hash<uint32_t>()((uint32_t)k.rtvFormat) << 5;
-      h ^= std::hash<uint32_t>()((uint32_t)k.dsvFormat) << 6;
+      for (size_t i = 0; i < k.rtvFormats.size(); ++i)
+        h ^= std::hash<uint32_t>()((uint32_t)k.rtvFormats[i]) << (5 + i);
+      h ^= std::hash<uint32_t>()((uint32_t)k.dsvFormat) << 13;
       return h;
     }
   };

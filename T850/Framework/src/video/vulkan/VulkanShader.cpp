@@ -223,7 +223,7 @@ namespace t850 {
                 m_vertexAttributes.size(), vertexStride);
 
 #ifdef T8_DUMP_SHADER_REFLECTION
-    T8_LOG_INFO("[VK_REFL] === key=0x%08X VS='%s' FS='%s' ===", key.bits, vs_name.c_str(), fs_name.c_str());
+    T8_LOG_INFO("[VK_REFL] === key=0x%016llX VS='%s' FS='%s' ===", static_cast<unsigned long long>(key.bits), vs_name.c_str(), fs_name.c_str());
     T8_LOG_INFO("[VK_REFL] VS Inputs (%zu):", vsRefl.stageInputs.size());
     for (size_t idx = 0; idx < vsRefl.stageInputs.size(); idx++) {
       auto& inp = vsRefl.stageInputs[idx];

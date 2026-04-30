@@ -1,5 +1,5 @@
 // Editor line fragment shader — depth-tested wireframe overlay.
-// Samples GBuffer COLOR4 and discards fragments behind geometry.
+// Samples GBuffer depth and discards fragments behind geometry.
 // A small bias pushes wireframe slightly in front of the surface to avoid Z-fighting.
 cbuffer ConstantBuffer{
     float4x4 WVP;

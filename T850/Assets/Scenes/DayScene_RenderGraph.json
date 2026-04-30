@@ -1,6 +1,6 @@
 {
   "render_targets": [
-    { "name": "GBuffer",          "color_count": 6, "color_format": "RGBA16F", "depth_format": "F32",  "size": [0,0], "linear_filter": true },
+    { "name": "GBuffer",          "color_count": 7, "color_formats": ["RGBA8", "RGBA16F", "RGBA8", "RGBA8", "RGBA16F", "RGBA8", "RGBA8"], "depth_format": "F32",  "size": [0,0], "linear_filter": true },
     { "name": "Deferred",         "color_count": 1, "color_format": "RGBA16F", "depth_format": "NONE", "size": [0,0], "linear_filter": true },
     { "name": "Extra16F",         "color_count": 1, "color_format": "RGBA16F", "depth_format": "NONE", "size": [0,0], "linear_filter": true },
     { "name": "LuminanceMap",     "color_count": 1, "color_format": "F16",     "depth_format": "NONE", "size": [0,0], "linear_filter": true },
@@ -26,7 +26,7 @@
       "state": { "depth_stencil": "READ_WRITE", "cull_face": "BACK_FACES" },
       "camera": "light",
       "draws": [
-        { "type": "mesh", "mesh_indices": [0, 1], "signature": "SHADOW_MAP_PASS" }
+        { "type": "mesh", "mesh_indices": [0], "signature": "SHADOW_MAP_PASS" }
       ],
       "post_state": { "cull_face": "FRONT_FACES" }
     },
@@ -36,7 +36,7 @@
       "camera": "main",
       "clear": true,
       "draws": [
-        { "type": "mesh", "mesh_indices": [0, 1], "signature": "GBUFF_PASS" }
+        { "type": "mesh", "mesh_indices": [0], "signature": "GBUFF_PASS" }
       ],
       "post_state": { "depth_stencil": "READ" }
     },
@@ -45,7 +45,7 @@
       "target": "ShadowAccum",
       "clear": true,
       "inputs": [
-        { "source": "GBuffer:COLOR4",  "slot": 0 },
+        { "source": "GBuffer:DEPTH",   "slot": 0 },
         { "source": "DepthPass:DEPTH", "slot": 1 },
         { "source": "GBuffer:COLOR3",  "slot": 2 },
         { "source": "@ssao_noise",     "slot": 3 }
@@ -83,9 +83,11 @@
         { "source": "GBuffer:COLOR1",     "slot": 1 },
         { "source": "GBuffer:COLOR2",     "slot": 2 },
         { "source": "GBuffer:COLOR3",     "slot": 3 },
-        { "source": "GBuffer:COLOR4",     "slot": 4 },
+        { "source": "GBuffer:DEPTH",      "slot": 4 },
         { "source": "ShadowAccum:COLOR0", "slot": 5 },
-        { "source": "GBuffer:COLOR5",     "slot": 7 }
+        { "source": "GBuffer:COLOR5",     "slot": 7 },
+        { "source": "GBuffer:COLOR6",     "slot": 8 },
+        { "source": "GBuffer:COLOR4",     "slot": 9 }
       ],
       "bind_environment_map": true,
       "draws": [
@@ -109,12 +111,12 @@
       "push": false,
       "state": { "depth_stencil": "NONE", "cull_face": "FRONT_AND_BACK", "blend": "ALPHA_BLEND" },
       "inputs": [
-        { "source": "GBuffer:COLOR4", "slot": 7 },
+        { "source": "GBuffer:DEPTH",  "slot": 7 },
         { "source": "Extra16F:COLOR0", "slot": 9 }
       ],
       "bind_environment_map": true,
       "draws": [
-        { "type": "mesh", "mesh_indices": [0, 1], "signature": "FORWARD_PASS" }
+        { "type": "mesh", "mesh_indices": [0], "signature": "FORWARD_PASS" }
       ],
       "post_state": { "blend": "BLEND_DEFAULT", "cull_face": "FRONT_FACES" }
     },
@@ -122,7 +124,7 @@
       "name": "God Rays",
       "target": "GodRaysCalc",
       "inputs": [
-        { "source": "GBuffer:COLOR4",  "slot": 0 },
+        { "source": "GBuffer:DEPTH",   "slot": 0 },
         { "source": "DepthPass:DEPTH", "slot": 1 }
       ],
       "draws": [
@@ -229,7 +231,7 @@
       "target": "CoC",
       "gauss_kernel": 2,
       "inputs": [
-        { "source": "GBuffer:COLOR4", "slot": 0 }
+        { "source": "GBuffer:DEPTH", "slot": 0 }
       ],
       "draws": [
         { "type": "fullscreen_quad", "signature": "COC_PASS" }

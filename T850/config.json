@@ -1,33 +1,33 @@
 {
-  "debugFrames": false,
-  "architecture": "x64",
   "api": "d3d12",
-  "devTools": {
-    "d3d12Debug": false,
-    "logLevel": "error",
-    "guiSnap": false,
-    "logToFile": false,
-    "guiControlTarget": "slider_knob",
-    "guiControlEdit": false,
-    "guiEdit": false
-  },
   "keepRunning": false,
-  "display": {
-    "scene": 1,
-    "model": "Models/DamagedHelmet.glb",
-    "height": 1080,
-    "fullscreen": false,
-    "width": 1920
-  },
+  "debugFrames": false,
   "configuration": "Release",
-  "replaySnapshot": {
-    "path": "D:\\Code\\Game\\T850\\T850\\bin\\x64\\Release\\dumps_d3d12_f2469_20260428_091219\\snapshot.json",
-    "enabled": false
+  "architecture": "x64",
+  "display": {
+    "model": "Models/mercedes-amg_gt3__www.vecarz.com(1).glb",
+    "fullscreen": false,
+    "height": 1440,
+    "scene": 0,
+    "width": 2560
   },
   "dump": {
-    "seconds": -1,
+    "enabled": false,
     "frame": -1,
     "trigger": "frame",
+    "seconds": -1
+  },
+  "replaySnapshot": {
+    "path": "D:\\Code\\Game\\T850\\T850\\bin\\x64\\Release\\dumps_gl_f5265_20260430_101943\\snapshot.json",
     "enabled": false
+  },
+  "devTools": {
+    "logToFile": false,
+    "logLevel": "error",
+    "guiEdit": false,
+    "d3d12Debug": false,
+    "guiSnap": false,
+    "guiControlEdit": false,
+    "guiControlTarget": "slider_knob"
   }
 }

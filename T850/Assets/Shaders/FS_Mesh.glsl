@@ -2,7 +2,9 @@
 precision mediump float;
 #endif
 
+#ifdef DIFFUSE_MAP
 uniform mediump sampler2D DiffuseTex;
+#endif
 
 #ifdef SPECULAR_MAP
 uniform mediump sampler2D SpecularTex;
@@ -39,12 +41,37 @@ uniform mediump sampler2D texIBLBRDF;
 uniform mediump samplerCube texIBLCharlie;
 uniform mediump sampler2D texIBLCharlieLUT;
 uniform mediump sampler2D texIBLSheenELUT;
+
+#ifdef SHEEN_COLOR_MAP
 uniform mediump sampler2D SheenColorTex;
+#endif
+
+#ifdef SHEEN_ROUGHNESS_MAP
 uniform mediump sampler2D SheenRoughnessTex;
+#endif
 
 #ifdef CLEARCOAT_MAP
 uniform mediump sampler2D ClearcoatTex;
+#endif
+
+#ifdef CLEARCOAT_ROUGHNESS_MAP
 uniform mediump sampler2D ClearcoatRoughnessTex;
+#endif
+
+#ifdef OCCLUSION_MAP
+uniform mediump sampler2D OcclusionTex;
+#endif
+
+#ifdef SPECULAR_FACTOR_MAP
+uniform mediump sampler2D SpecularFactorTex;
+#endif
+
+#ifdef SPECULAR_COLOR_MAP
+uniform mediump sampler2D SpecularColorTex;
+#endif
+
+#ifdef TRANSMISSION_MAP
+uniform mediump sampler2D TransmissionTex;
 #endif
 
 uniform highp vec4 LightPos;
@@ -69,6 +96,9 @@ uniform highp vec4 MaterialParams3;
 uniform highp vec4 MaterialParams4;
 uniform highp vec4 MaterialParams5;
 uniform highp vec4 MaterialParams6;
+uniform highp vec4 MaterialParams7;
+uniform highp vec4 MaterialParams8;
+uniform highp vec4 MaterialParams9;
 uniform highp vec4 BaseColorUVTransform0;
 uniform highp vec4 BaseColorUVTransform1;
 uniform highp vec4 NormalUVTransform0;
@@ -85,9 +115,33 @@ uniform highp vec4 ClearcoatUVTransform0;
 uniform highp vec4 ClearcoatUVTransform1;
 uniform highp vec4 ClearcoatRoughnessUVTransform0;
 uniform highp vec4 ClearcoatRoughnessUVTransform1;
+uniform highp vec4 OcclusionUVTransform0;
+uniform highp vec4 OcclusionUVTransform1;
+uniform highp vec4 SpecularFactorUVTransform0;
+uniform highp vec4 SpecularFactorUVTransform1;
+uniform highp vec4 SpecularColorUVTransform0;
+uniform highp vec4 SpecularColorUVTransform1;
+uniform highp vec4 TransmissionUVTransform0;
+uniform highp vec4 TransmissionUVTransform1;
 uniform highp vec4 LightPositions[128];
 uniform highp vec4 LightColors[128];
 uniform highp vec4 LightRadius[32];
+
+highp vec2 SignNotZero(highp vec2 value)
+{
+    return vec2(value.x >= 0.0 ? 1.0 : -1.0,
+                value.y >= 0.0 ? 1.0 : -1.0);
+}
+
+highp vec2 EncodeOctahedralNormal(highp vec3 normal)
+{
+    normal = normalize(normal);
+    normal /= max(abs(normal.x) + abs(normal.y) + abs(normal.z), 0.000001);
+    if (normal.z < 0.0) {
+        normal.xy = (vec2(1.0) - abs(normal.yx)) * SignNotZero(normal.xy);
+    }
+    return normal.xy * 0.5 + 0.5;
+}
 
 #ifdef USE_TEXCOORD0
     #ifdef ES_30
@@ -320,6 +374,11 @@ highp vec3 LinearToStoredAlbedo(highp vec3 linearColor)
     return pow(clamp(linearColor, 0.0, 1.0), vec3(1.0 / 2.2));
 }
 
+highp vec3 StoredSRGBToLinear(highp vec3 storedColor)
+{
+    return pow(max(storedColor, vec3(0.0)), vec3(2.2));
+}
+
 highp vec4 SampleBaseColor(highp vec2 uv)
 {
 #if defined(DIFFUSE_MAP) && (defined(USE_TEXCOORD0) || defined(USE_TEXCOORD1))
@@ -369,12 +428,18 @@ highp float GetPackedLightRadius(highp int i)
 void BuildSurface(out highp vec4 color, out highp vec3 normal, out highp vec3 geoNormal,
                   out highp float metallic, out highp float roughness, out highp float selfShadow, out highp vec2 uv,
                   out highp vec3 sheenColor, out highp float sheenRoughness,
-                  out highp float clearcoatFactor, out highp float clearcoatRoughness)
+                  out highp float clearcoatFactor, out highp float clearcoatRoughness,
+                  out highp float occlusion, out highp vec3 dielectricF0, out highp float specularWeight,
+                  out highp float transmissionFactor)
 {
     color = vec4(0.5, 0.5, 0.5, 1.0);
     metallic = PBRParams.x;
     roughness = PBRParams.y;
     selfShadow = 1.0;
+    occlusion = 1.0;
+    dielectricF0 = max(SpecularColor.rgb, vec3(0.0));
+    specularWeight = max(SpecularColor.w, 0.0);
+    transmissionFactor = clamp(AlphaParams.w, 0.0, 1.0);
     sheenColor = clamp(MaterialParams4.rgb, 0.0, 1.0);
     sheenRoughness = clamp(MaterialParams4.w, 0.0, 1.0);
     clearcoatFactor = clamp(MaterialParams.x, 0.0, 1.0);
@@ -453,16 +518,54 @@ void BuildSurface(out highp vec4 color, out highp vec3 normal, out highp vec3 ge
     roughness = clamp(roughness, 0.04, 1.0);
     metallic = clamp(metallic, 0.0, 1.0);
 
+#ifdef SPECULAR_FACTOR_MAP
+    if (MaterialParams8.y > 0.5) {
+        highp vec2 specularFactorUV = MaterialParams8.z > 0.5 ? GetTexCoord(MaterialParams8.z) : uv;
+        specularFactorUV = ApplyUVTransform(specularFactorUV, SpecularFactorUVTransform0, SpecularFactorUVTransform1);
+        specularWeight *= SampleTexture2D(SpecularFactorTex, specularFactorUV).a;
+    }
+#endif
+#ifdef SPECULAR_COLOR_MAP
+    if (MaterialParams8.w > 0.5) {
+        highp vec2 specularColorUV = MaterialParams9.x > 0.5 ? GetTexCoord(MaterialParams9.x) : uv;
+        specularColorUV = ApplyUVTransform(specularColorUV, SpecularColorUVTransform0, SpecularColorUVTransform1);
+        dielectricF0 = min(dielectricF0 * StoredSRGBToLinear(SampleTexture2D(SpecularColorTex, specularColorUV).rgb), vec3(1.0));
+    }
+#endif
+    specularWeight = clamp(specularWeight, 0.0, 1.0);
+
+#ifdef OCCLUSION_MAP
+    if (MaterialParams7.x > 0.5) {
+        highp vec2 occlusionUV = MaterialParams7.z > 0.5 ? GetTexCoord(MaterialParams7.z) : uv;
+        occlusionUV = ApplyUVTransform(occlusionUV, OcclusionUVTransform0, OcclusionUVTransform1);
+        highp float ao = SampleTexture2D(OcclusionTex, occlusionUV).r;
+        occlusion = clamp(1.0 + MaterialParams7.y * (ao - 1.0), 0.0, 1.0);
+    }
+#endif
+
+#ifdef TRANSMISSION_MAP
+    if (MaterialParams7.w > 0.5) {
+        highp vec2 transmissionUV = MaterialParams8.x > 0.5 ? GetTexCoord(MaterialParams8.x) : uv;
+        transmissionUV = ApplyUVTransform(transmissionUV, TransmissionUVTransform0, TransmissionUVTransform1);
+        transmissionFactor *= SampleTexture2D(TransmissionTex, transmissionUV).r;
+    }
+#endif
+    transmissionFactor = clamp(transmissionFactor, 0.0, 1.0);
+
+#ifdef SHEEN_COLOR_MAP
     if (MaterialParams5.x > 0.5) {
         highp vec2 sheenColorUV = MaterialParams5.z > 0.5 ? GetTexCoord(MaterialParams5.z) : uv;
         sheenColorUV = ApplyUVTransform(sheenColorUV, SheenColorUVTransform0, SheenColorUVTransform1);
         sheenColor *= pow(max(SampleTexture2D(SheenColorTex, sheenColorUV).rgb, vec3(0.0)), vec3(2.2));
     }
+#endif
+#ifdef SHEEN_ROUGHNESS_MAP
     if (MaterialParams5.y > 0.5) {
         highp vec2 sheenRoughnessUV = MaterialParams5.w > 0.5 ? GetTexCoord(MaterialParams5.w) : uv;
         sheenRoughnessUV = ApplyUVTransform(sheenRoughnessUV, SheenRoughnessUVTransform0, SheenRoughnessUVTransform1);
         sheenRoughness *= SampleTexture2D(SheenRoughnessTex, sheenRoughnessUV).a;
     }
+#endif
     sheenColor = clamp(sheenColor, 0.0, 1.0);
     sheenRoughness = clamp(sheenRoughness, 0.0, 1.0);
 
@@ -472,14 +575,16 @@ void BuildSurface(out highp vec4 color, out highp vec3 normal, out highp vec3 ge
         clearcoatUV = ApplyUVTransform(clearcoatUV, ClearcoatUVTransform0, ClearcoatUVTransform1);
         clearcoatFactor *= SampleTexture2D(ClearcoatTex, clearcoatUV).r;
     }
+#endif
+#ifdef CLEARCOAT_ROUGHNESS_MAP
     if (MaterialParams6.y > 0.5) {
         highp vec2 clearcoatRoughnessUV = MaterialParams6.w > 0.5 ? GetTexCoord(MaterialParams6.w) : uv;
         clearcoatRoughnessUV = ApplyUVTransform(clearcoatRoughnessUV, ClearcoatRoughnessUVTransform0, ClearcoatRoughnessUVTransform1);
         clearcoatRoughness *= SampleTexture2D(ClearcoatRoughnessTex, clearcoatRoughnessUV).g;
     }
+#endif
     clearcoatFactor = clamp(clearcoatFactor, 0.0, 1.0);
     clearcoatRoughness = clamp(clearcoatRoughness, 0.0, 1.0);
-#endif
 
 #if defined(HEIGHT_MAP) && defined(ENABLE_PARALLAX) && defined(USE_TEXCOORD0)
     highp vec2 ssDxx = dFdx(vecUVCoords);
@@ -537,6 +642,7 @@ layout(location = 2) out highp vec4 colorOut_2;
 layout(location = 3) out highp vec4 colorOut_3;
 layout(location = 4) out highp vec4 colorOut_4;
 layout(location = 5) out highp vec4 colorOut_5;
+layout(location = 6) out highp vec4 colorOut_6;
 #endif
 void main()
 {
@@ -550,25 +656,31 @@ void main()
     highp float sheenRoughness;
     highp float clearcoatFactor;
     highp float clearcoatRoughness;
+    highp float occlusion;
+    highp vec3 dielectricF0;
+    highp float specularWeight;
+    highp float transmissionFactor;
     highp vec2 uv;
-    BuildSurface(color, normal, geoNormal, metallic, roughness, selfShadow, uv, sheenColor, sheenRoughness, clearcoatFactor, clearcoatRoughness);
+    BuildSurface(color, normal, geoNormal, metallic, roughness, selfShadow, uv, sheenColor, sheenRoughness, clearcoatFactor, clearcoatRoughness, occlusion, dielectricF0, specularWeight, transmissionFactor);
     highp float outDepth = Pos.z / Pos.w;
 #ifdef ES_30
-    colorOut_0 = vec4(color.rgb, clamp(SpecularColor.w, 0.0, 1.0));
+    colorOut_0 = vec4(color.rgb, specularWeight);
     colorOut_1 = vec4(normal * 0.5 + 0.5, roughness);
     colorOut_2 = vec4(metallic, selfShadow, clearcoatFactor, Intensities.w / 255.0);
     highp float packedMaterial = clearcoatRoughness * 0.5 + (MaterialParams.z > 0.5 ? 0.5 : 0.0);
-    colorOut_3 = vec4(geoNormal * 0.5 + 0.5, packedMaterial);
-    colorOut_4 = vec4(outDepth, SampleEmissive(uv));
+    colorOut_3 = vec4(EncodeOctahedralNormal(geoNormal), 0.0, packedMaterial);
+    colorOut_4 = vec4(SampleEmissive(uv), 0.0);
     colorOut_5 = vec4(sheenColor, sheenRoughness);
+    colorOut_6 = vec4(dielectricF0, occlusion);
 #else
-    gl_FragData[0] = vec4(color.rgb, clamp(SpecularColor.w, 0.0, 1.0));
+    gl_FragData[0] = vec4(color.rgb, specularWeight);
     gl_FragData[1] = vec4(normal * 0.5 + 0.5, roughness);
     gl_FragData[2] = vec4(metallic, selfShadow, clearcoatFactor, Intensities.w / 255.0);
     highp float packedMaterial = clearcoatRoughness * 0.5 + (MaterialParams.z > 0.5 ? 0.5 : 0.0);
-    gl_FragData[3] = vec4(geoNormal * 0.5 + 0.5, packedMaterial);
-    gl_FragData[4] = vec4(outDepth, SampleEmissive(uv));
+    gl_FragData[3] = vec4(EncodeOctahedralNormal(geoNormal), 0.0, packedMaterial);
+    gl_FragData[4] = vec4(SampleEmissive(uv), 0.0);
     gl_FragData[5] = vec4(sheenColor, sheenRoughness);
+    gl_FragData[6] = vec4(dielectricF0, occlusion);
 #endif
     gl_FragDepth = outDepth;
 }
@@ -604,8 +716,12 @@ void main()
     highp float sheenRoughness;
     highp float clearcoatFactor;
     highp float clearcoatRoughness;
+    highp float occlusion;
+    highp vec3 dielectricF0;
+    highp float specularWeight;
+    highp float transmissionFactor;
     highp vec2 uv;
-    BuildSurface(color, normal, geoNormal, metallic, roughness, selfShadow, uv, sheenColor, sheenRoughness, clearcoatFactor, clearcoatRoughness);
+    BuildSurface(color, normal, geoNormal, metallic, roughness, selfShadow, uv, sheenColor, sheenRoughness, clearcoatFactor, clearcoatRoughness, occlusion, dielectricF0, specularWeight, transmissionFactor);
     highp vec3 emissive = SampleEmissive(uv);
 
     if (ForwardParams.z > 0.5 && ForwardParams.x > 0.0 && ForwardParams.y > 0.0) {
@@ -619,8 +735,7 @@ void main()
 
     highp vec3 albedo = pow(max(color.rgb, vec3(0.0)), vec3(2.2));
     highp vec3 eyeDir = normalize(CameraPosition.xyz - WorldPos.xyz);
-    highp vec3 dielectricF0 = max(SpecularColor.rgb * SpecularColor.w, vec3(0.0));
-    highp vec3 F0 = mix(dielectricF0, albedo, metallic);
+    highp vec3 F0 = mix(dielectricF0 * specularWeight, albedo, metallic);
     highp vec3 directLight = vec3(0.0);
     highp float sheenStrength = Max3(sheenColor);
     bool hasSheenLUT = MaterialParams3.y > 0.5;
@@ -704,7 +819,7 @@ void main()
         highp vec3 sheenIBL = GetIBLRadianceCharlie(normal, eyeDir, sheenRoughness, sheenColor, iblMaxMip) * iblFactor;
         indirectLight = sheenIBL + indirectLight * albedoSheenScaling;
     }
-    finalColor += indirectLight;
+    finalColor += indirectLight * occlusion;
 
     if (clearcoatFactor > 0.001) {
         clearcoatRoughness = clamp(clearcoatRoughness, 0.04, 1.0);
@@ -719,7 +834,7 @@ void main()
         finalColor = albedo;
     }
 
-    highp float transmission = clamp(AlphaParams.w * MaterialParams2.x, 0.0, 1.0);
+    highp float transmission = clamp(transmissionFactor * MaterialParams2.x, 0.0, 1.0);
     if (MaterialParams2.z > 0.5 && transmission > 0.001 && MaterialParams2.y > 0.0 && ForwardParams.x > 0.0 && ForwardParams.y > 0.0) {
         highp vec2 screenUV = gl_FragCoord.xy / ForwardParams.xy;
         highp float iorOffset = clamp(abs(ForwardParams.w - 1.0), 0.0, 1.0);

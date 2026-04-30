@@ -43,10 +43,10 @@ namespace t850 {
     m_colorFormat = resolveFormat(color_format);
 
     // Per-attachment formats (mirrors D3D11/D3D12 behavior)
-    std::vector<VkFormat> colorFormats(number_RT, m_colorFormat);
+    m_colorFormats.assign(number_RT, m_colorFormat);
     if (!perColorFormats.empty()) {
       for (int i = 0; i < number_RT && i < (int)perColorFormats.size(); i++)
-        colorFormats[i] = resolveFormat(perColorFormats[i]);
+        m_colorFormats[i] = resolveFormat(perColorFormats[i]);
     }
 
     // ── 1. Color attachments ──
@@ -57,7 +57,7 @@ namespace t850 {
     vColorTextures.resize(number_RT);
 
     for (int i = 0; i < number_RT; i++) {
-      VkFormat attachmentFormat = colorFormats[i];
+      VkFormat attachmentFormat = m_colorFormats[i];
       VkImageCreateInfo imgCI = { VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO };
       imgCI.imageType = VK_IMAGE_TYPE_2D;
       imgCI.format = attachmentFormat;
@@ -175,7 +175,7 @@ namespace t850 {
 
     for (int i = 0; i < number_RT; i++) {
       VkAttachmentDescription colorAtt = {};
-      colorAtt.format = colorFormats[i];
+      colorAtt.format = m_colorFormats[i];
       colorAtt.samples = VK_SAMPLE_COUNT_1_BIT;
       colorAtt.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
       colorAtt.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
@@ -353,6 +353,7 @@ namespace t850 {
     vColorImages.clear();
     vColorAllocations.clear();
     vColorLayouts.clear();
+    m_colorFormats.clear();
 
     // Destroy depth texture wrapper sampler (image/view destroyed below)
     if (pDepthTexture) {

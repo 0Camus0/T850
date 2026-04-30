@@ -110,7 +110,7 @@ static const std::unordered_map<std::string, uint8_t> s_passMap = {
 };
 
 // Feature name -> ShaderKey feature bit
-static const std::unordered_map<std::string, uint32_t> s_featureMap = {
+static const std::unordered_map<std::string, uint64_t> s_featureMap = {
   {"USE_OMNIDIRECTIONAL_SHADOWS", ShaderKey::OMNI_SHADOWS},
 };
 

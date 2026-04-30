@@ -12,24 +12,23 @@ Goal: render glTF 2.0 materials close to Khronos Sample Renderer behavior, while
 
 ## Phase 1: Low-Risk Core Gaps
 
+Status: implemented in loader/runtime shaders with fixed texture slots 20-23 and GBuffer COLOR6 carrying dielectric F0 plus occlusion for deferred lighting. Dielectric F0 is derived from `KHR_materials_ior` before applying `KHR_materials_specular`. Needs visual sample validation against Khronos captures.
+
 1. Occlusion texture
-   - Loader already records `occlusionMap` and `occlusionTexCoord`; renderer does not consume it.
-   - Add texture pointer/id, texCoord, strength, and UV transform to subset state and CBuffer.
-   - Sample occlusion from the red channel.
-   - Apply to indirect diffuse/specular lighting only, not direct lighting.
+   - Loader records `occlusionMap`, texCoord, strength, and UV transform.
+   - Runtime samples occlusion from the red channel.
+   - Deferred and forward paths apply it to indirect lighting only.
    - Validate with Khronos `MaterialsOcclusion` samples.
 
 2. `KHR_materials_specular` textures
-   - Current path handles scalar/specular color factor only.
-   - Add `specularTexture` and `specularColorTexture` names, texCoord, transforms, and runtime map flags.
+   - Loader records `specularTexture` and `specularColorTexture` names, texCoord, transforms, and runtime map flags.
    - `specularTexture` modulates specular factor from its alpha channel.
-   - `specularColorTexture` is a color texture and must be decoded to linear before modulating `specularColorFactor`.
+   - `specularColorTexture` is decoded to linear before modulating dielectric F0.
    - Validate with Khronos `MaterialsSpecular` samples.
 
 3. Transmission texture
-   - Current path approximates scalar transmission/refraction only.
-   - Add `transmissionTexture` binding, texCoord, transform, and runtime flag.
-   - Sample transmission from the red channel and multiply by `transmissionFactor`.
+   - Loader records `transmissionTexture` binding, texCoord, transform, and runtime flag.
+   - Forward transmission samples from the red channel and multiplies by `transmissionFactor`.
    - Keep the existing screen-space approximation until volume/refraction is upgraded.
    - Validate with `MaterialsTransmission` samples.
 

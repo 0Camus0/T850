@@ -12,9 +12,9 @@
  *   pbrMetallicRoughness.roughnessFactor      → pbrRoughness (FLOATS)
  *   pbrMetallicRoughness.metallicRoughnessTex → metallicMap  (STRINGS)
  *   normalTexture                             → normalMap    (STRINGS)
- *   occlusionTexture                          → occlusionMap (STRINGS, future shader)
- *   emissiveTexture                           → emissiveMap  (STRINGS, future shader)
- *   emissiveFactor                            → emissiveColor(FLOATS, future shader)
+ *   occlusionTexture                          → occlusionMap (STRINGS)
+ *   emissiveTexture                           → emissiveMap  (STRINGS)
+ *   emissiveFactor                            → emissiveColor(FLOATS)
  *   alphaMode                                 → alphaMode    (DWORDS: 0 OPAQUE / 1 MASK / 2 BLEND)
  *   alphaCutoff                               → alphaCutoff  (FLOATS)
  *   doubleSided                               → doubleSided  (DWORDS)
@@ -130,6 +130,18 @@ bool IsTextureWrapped(const Document& doc, int texIdx) {
       || s.wrapT == WRAP_REPEAT || s.wrapT == WRAP_MIRRORED_REPEAT;
 }
 
+float DielectricF0FromIor(float ior) {
+  float safeIor = ior > 0.0f ? ior : 1.5f;
+  float f = (safeIor - 1.0f) / (safeIor + 1.0f);
+  return f * f;
+}
+
+float MaterialIor(const Material& mat) {
+  if (mat.extensions && mat.extensions->KHR_materials_ior)
+    return mat.extensions->KHR_materials_ior->ior;
+  return 1.5f;
+}
+
 } // namespace
 
 void ConvertMaterial(const Document& doc, int materialIndex,
@@ -225,6 +237,8 @@ void ConvertMaterial(const Document& doc, int materialIndex,
     std::string n = ResolveTextureName(doc, m.occlusionTexture->index);
     if (!n.empty()) AddString(outMat, "occlusionMap", n);
     AddDword(outMat, "occlusionTexCoord", SupportedTexCoord(m, "occlusionTexture", EffectiveTexCoord(*m.occlusionTexture)));
+    AddFloats(outMat, "occlusionStrength", {m.occlusionTexture->strength});
+    AddUVTransform(outMat, "occlusion", *m.occlusionTexture);
   }
   if (m.emissiveTexture) {
     std::string n = ResolveTextureName(doc, m.emissiveTexture->index);
@@ -254,6 +268,7 @@ void ConvertMaterial(const Document& doc, int materialIndex,
       std::string n = ResolveTextureName(doc, t.transmissionTexture->index);
       if (!n.empty()) AddString(outMat, "transmissionMap", n);
       AddDword(outMat, "transmissionTexCoord", SupportedTexCoord(m, "transmissionTexture", EffectiveTexCoord(*t.transmissionTexture)));
+      AddUVTransform(outMat, "transmission", *t.transmissionTexture);
     }
   }
   if (m.extensions && m.extensions->KHR_materials_diffuse_transmission) {
@@ -264,7 +279,12 @@ void ConvertMaterial(const Document& doc, int materialIndex,
     }
   }
   if (m.extensions && m.extensions->KHR_materials_ior) {
-    AddFloats(outMat, "ior", {m.extensions->KHR_materials_ior->ior});
+    float ior = MaterialIor(m);
+    AddFloats(outMat, "ior", {ior});
+    if (!pbrSpecGloss && !(m.extensions && m.extensions->KHR_materials_specular)) {
+      float dielectricF0 = DielectricF0FromIor(ior);
+      AddFloats(outMat, "specularColor", {dielectricF0, dielectricF0, dielectricF0, 1.0f});
+    }
   }
   if (m.extensions && m.extensions->KHR_materials_clearcoat) {
     const auto& c = *m.extensions->KHR_materials_clearcoat;
@@ -285,13 +305,26 @@ void ConvertMaterial(const Document& doc, int materialIndex,
   }
   if (m.extensions && m.extensions->KHR_materials_specular) {
     const auto& s = *m.extensions->KHR_materials_specular;
+    float dielectricF0 = DielectricF0FromIor(MaterialIor(m));
     float r = 1.0f, g = 1.0f, b = 1.0f;
     if (s.specularColorFactor.size() >= 3) {
       r = s.specularColorFactor[0];
       g = s.specularColorFactor[1];
       b = s.specularColorFactor[2];
     }
-    AddFloats(outMat, "specularColor", {0.04f * r, 0.04f * g, 0.04f * b, s.specularFactor});
+    AddFloats(outMat, "specularColor", {dielectricF0 * r, dielectricF0 * g, dielectricF0 * b, s.specularFactor});
+    if (s.specularTexture) {
+      std::string n = ResolveTextureName(doc, s.specularTexture->index);
+      if (!n.empty()) AddString(outMat, "specularFactorMap", n);
+      AddDword(outMat, "specularFactorTexCoord", SupportedTexCoord(m, "KHR_materials_specular.specularTexture", EffectiveTexCoord(*s.specularTexture)));
+      AddUVTransform(outMat, "specularFactor", *s.specularTexture);
+    }
+    if (s.specularColorTexture) {
+      std::string n = ResolveTextureName(doc, s.specularColorTexture->index);
+      if (!n.empty()) AddString(outMat, "specularColorMap", n);
+      AddDword(outMat, "specularColorTexCoord", SupportedTexCoord(m, "KHR_materials_specular.specularColorTexture", EffectiveTexCoord(*s.specularColorTexture)));
+      AddUVTransform(outMat, "specularColor", *s.specularColorTexture);
+    }
   }
   if (m.extensions && m.extensions->KHR_materials_unlit) {
     AddDword(outMat, "unlit", 1u);
@@ -355,6 +388,18 @@ void ConvertMaterial(const Document& doc, int materialIndex,
       checkTex(c.clearcoatRoughnessTexture->index);
     if (c.clearcoatNormalTexture)
       checkTex(c.clearcoatNormalTexture->index);
+  }
+  if (m.extensions && m.extensions->KHR_materials_specular) {
+    const auto& s = *m.extensions->KHR_materials_specular;
+    if (s.specularTexture)
+      checkTex(s.specularTexture->index);
+    if (s.specularColorTexture)
+      checkTex(s.specularColorTexture->index);
+  }
+  if (m.extensions && m.extensions->KHR_materials_transmission) {
+    const auto& t = *m.extensions->KHR_materials_transmission;
+    if (t.transmissionTexture)
+      checkTex(t.transmissionTexture->index);
   }
   AddDword(outMat, "Tiled", tiled ? 1u : 0u);
 }

@@ -338,7 +338,7 @@ namespace t850 {
 
     std::vector<Technique*> m_techniques;
     std::vector<ShaderBase*>	m_shaders;
-    std::unordered_map<uint32_t, ShaderBase*> m_shaderCache;
+    std::unordered_map<uint64_t, ShaderBase*> m_shaderCache;
     std::vector<BaseRT*>		RTs;
     std::vector<Texture*>		Textures;
     int							CurrentRT;

@@ -44,7 +44,7 @@ Texture2D depthTex : register(t0);
 SamplerState depthSampler : register(s0);
 
 float4 FS( VS_OUTPUT input ) : SV_TARGET {
-	// Manual depth test against GBuffer depth (COLOR4)
+	// Manual depth test against GBuffer depth
     float2 screenUV = input.hposition.xy * float2(1.0/CameraInfo.z, 1.0/CameraInfo.w);
     float sceneDepth = depthTex.Sample(depthSampler, screenUV).r;
 	float wireDepth = input.Pos.z / input.Pos.w;

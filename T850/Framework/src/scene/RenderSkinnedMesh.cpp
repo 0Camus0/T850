@@ -130,7 +130,7 @@ namespace t850 {
     }
 
     // Use texture-based bone matrix skinning
-    uint32_t skinBit = ShaderKey::HAS_SKINNING_TEX;
+    uint64_t skinBit = ShaderKey::HAS_SKINNING_TEX;
 
     for (auto& meshInfo : Info) {
       for (auto& subset : meshInfo.SubSets) {
@@ -204,7 +204,7 @@ namespace t850 {
       ShaderKey wireKey(0);
       wireKey.bits |= skinBit;
       if (!Info.empty() && !Info[0].SubSets.empty())
-        wireKey.bits |= (Info[0].SubSets[0].key.bits & 0x1F);
+        wireKey.bits |= (Info[0].SubSets[0].key.bits & 0x1Full);
       wireKey.setPass(32); // unused pass type — avoids collision with mesh shaders
       g_pBaseDriver->CreateShader(vsWStr, fsWStr, wireKey, vsWireName, fsWireName);
       m_wireShader = g_pBaseDriver->GetShader(wireKey);
@@ -664,6 +664,9 @@ namespace t850 {
         baseCB.MaterialParams4 = XVECTOR3(sub_info->SheenColor.x, sub_info->SheenColor.y, sub_info->SheenColor.z, sub_info->SheenRoughness);
         baseCB.MaterialParams5 = XVECTOR3(sub_info->SheenColorTex ? 1.0f : 0.0f, sub_info->SheenRoughnessTex ? 1.0f : 0.0f, (float)sub_info->SheenColorTexCoord, (float)sub_info->SheenRoughnessTexCoord);
         baseCB.MaterialParams6 = XVECTOR3(sub_info->ClearcoatTex ? 1.0f : 0.0f, sub_info->ClearcoatRoughnessTex ? 1.0f : 0.0f, (float)sub_info->ClearcoatTexCoord, (float)sub_info->ClearcoatRoughnessTexCoord);
+        baseCB.MaterialParams7 = XVECTOR3(sub_info->OcclusionTex ? 1.0f : 0.0f, sub_info->OcclusionStrength, (float)sub_info->OcclusionTexCoord, sub_info->TransmissionTex ? 1.0f : 0.0f);
+        baseCB.MaterialParams8 = XVECTOR3((float)sub_info->TransmissionTexCoord, sub_info->SpecularFactorTex ? 1.0f : 0.0f, (float)sub_info->SpecularFactorTexCoord, sub_info->SpecularColorTex ? 1.0f : 0.0f);
+        baseCB.MaterialParams9 = XVECTOR3((float)sub_info->SpecularColorTexCoord, 0.0f, 0.0f, 0.0f);
         baseCB.BaseColorUVTransform0 = sub_info->BaseColorUVTransform0;
         baseCB.BaseColorUVTransform1 = sub_info->BaseColorUVTransform1;
         baseCB.NormalUVTransform0 = sub_info->NormalUVTransform0;
@@ -680,6 +683,14 @@ namespace t850 {
         baseCB.ClearcoatUVTransform1 = sub_info->ClearcoatUVTransform1;
         baseCB.ClearcoatRoughnessUVTransform0 = sub_info->ClearcoatRoughnessUVTransform0;
         baseCB.ClearcoatRoughnessUVTransform1 = sub_info->ClearcoatRoughnessUVTransform1;
+        baseCB.OcclusionUVTransform0 = sub_info->OcclusionUVTransform0;
+        baseCB.OcclusionUVTransform1 = sub_info->OcclusionUVTransform1;
+        baseCB.SpecularFactorUVTransform0 = sub_info->SpecularFactorUVTransform0;
+        baseCB.SpecularFactorUVTransform1 = sub_info->SpecularFactorUVTransform1;
+        baseCB.SpecularColorUVTransform0 = sub_info->SpecularColorUVTransform0;
+        baseCB.SpecularColorUVTransform1 = sub_info->SpecularColorUVTransform1;
+        baseCB.TransmissionUVTransform0 = sub_info->TransmissionUVTransform0;
+        baseCB.TransmissionUVTransform1 = sub_info->TransmissionUVTransform1;
 
         sub_info->IB->Set(*T8DeviceContext, 0,
                           sub_info->IB32Bit ? IndexBufferFormat::R32
@@ -687,7 +698,7 @@ namespace t850 {
 
         ShaderKey finalKey(sub_info->key.bits);
         finalKey.setPass(gKey.getPass());
-        constexpr uint32_t featureMask = (1u << ShaderKey::PASS_SHIFT) - 1;
+        constexpr uint64_t featureMask = (1ull << ShaderKey::PASS_SHIFT) - 1ull;
         finalKey.bits |= (gKey.bits & featureMask);
         if (finalKey.has(ShaderKey::HEIGHT_MAP) && m_fParallaxEnabled > 0.5f) {
           uint8_t pass = finalKey.getPass();
@@ -777,25 +788,37 @@ namespace t850 {
           Textures[EnvironmentTextureSlot::SheenELUT]->Set(*T8DeviceContext, EnvironmentTextureSlot::SheenELUT, "texIBLSheenELUT");
           Textures[EnvironmentTextureSlot::SheenELUT]->SetSampler(*T8DeviceContext, ClampSamplerSlot);
         }
-        if (sub_info->SheenColorTex) {
+        if (s->key.has(ShaderKey::SHEEN_COLOR_MAP) && sub_info->SheenColorTex) {
           sub_info->SheenColorTex->Set(*T8DeviceContext, MaterialTextureSlot::SheenColor, "SheenColorTex");
           sub_info->SheenColorTex->SetSampler(*T8DeviceContext, MaterialSamplerSlot);
         }
-        if (sub_info->SheenRoughnessTex) {
+        if (s->key.has(ShaderKey::SHEEN_ROUGHNESS_MAP) && sub_info->SheenRoughnessTex) {
           sub_info->SheenRoughnessTex->Set(*T8DeviceContext, MaterialTextureSlot::SheenRoughness, "SheenRoughnessTex");
           sub_info->SheenRoughnessTex->SetSampler(*T8DeviceContext, MaterialSamplerSlot);
         }
-        if (s->key.has(ShaderKey::CLEARCOAT_MAP)) {
-          Texture* clearcoatTex = sub_info->ClearcoatTex ? sub_info->ClearcoatTex : sub_info->ClearcoatRoughnessTex;
-          Texture* clearcoatRoughnessTex = sub_info->ClearcoatRoughnessTex ? sub_info->ClearcoatRoughnessTex : sub_info->ClearcoatTex;
-          if (clearcoatTex) {
-            clearcoatTex->Set(*T8DeviceContext, MaterialTextureSlot::Clearcoat, "ClearcoatTex");
-            clearcoatTex->SetSampler(*T8DeviceContext, MaterialSamplerSlot);
-          }
-          if (clearcoatRoughnessTex) {
-            clearcoatRoughnessTex->Set(*T8DeviceContext, MaterialTextureSlot::ClearcoatRoughness, "ClearcoatRoughnessTex");
-            clearcoatRoughnessTex->SetSampler(*T8DeviceContext, MaterialSamplerSlot);
-          }
+        if (s->key.has(ShaderKey::CLEARCOAT_MAP) && sub_info->ClearcoatTex) {
+          sub_info->ClearcoatTex->Set(*T8DeviceContext, MaterialTextureSlot::Clearcoat, "ClearcoatTex");
+          sub_info->ClearcoatTex->SetSampler(*T8DeviceContext, MaterialSamplerSlot);
+        }
+        if (s->key.has(ShaderKey::CLEARCOAT_ROUGHNESS_MAP) && sub_info->ClearcoatRoughnessTex) {
+          sub_info->ClearcoatRoughnessTex->Set(*T8DeviceContext, MaterialTextureSlot::ClearcoatRoughness, "ClearcoatRoughnessTex");
+          sub_info->ClearcoatRoughnessTex->SetSampler(*T8DeviceContext, MaterialSamplerSlot);
+        }
+        if (s->key.has(ShaderKey::OCCLUSION_MAP) && sub_info->OcclusionTex) {
+          sub_info->OcclusionTex->Set(*T8DeviceContext, MaterialTextureSlot::Occlusion, "OcclusionTex");
+          sub_info->OcclusionTex->SetSampler(*T8DeviceContext, MaterialSamplerSlot);
+        }
+        if (s->key.has(ShaderKey::SPECULAR_FACTOR_MAP) && sub_info->SpecularFactorTex) {
+          sub_info->SpecularFactorTex->Set(*T8DeviceContext, MaterialTextureSlot::SpecularFactor, "SpecularFactorTex");
+          sub_info->SpecularFactorTex->SetSampler(*T8DeviceContext, MaterialSamplerSlot);
+        }
+        if (s->key.has(ShaderKey::SPECULAR_COLOR_MAP) && sub_info->SpecularColorTex) {
+          sub_info->SpecularColorTex->Set(*T8DeviceContext, MaterialTextureSlot::SpecularColor, "SpecularColorTex");
+          sub_info->SpecularColorTex->SetSampler(*T8DeviceContext, MaterialSamplerSlot);
+        }
+        if (s->key.has(ShaderKey::TRANSMISSION_MAP) && sub_info->TransmissionTex) {
+          sub_info->TransmissionTex->Set(*T8DeviceContext, MaterialTextureSlot::Transmission, "TransmissionTex");
+          sub_info->TransmissionTex->SetSampler(*T8DeviceContext, MaterialSamplerSlot);
         }
 
         T8DeviceContext->SetPrimitiveTopology(Topology::TRIANLE_LIST);

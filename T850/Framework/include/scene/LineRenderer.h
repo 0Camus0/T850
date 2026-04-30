@@ -50,10 +50,10 @@ public:
   // Set viewport dimensions for depth comparison (call once per frame or on resize)
   void SetViewport(int width, int height) { m_viewW = width; m_viewH = height; }
 
-  // Set the GBuffer COLOR4 depth texture for depth-tested wireframe.
+  // Set the GBuffer depth texture for depth-tested wireframe.
   void SetDepthTexture(Texture* depthTex) { m_depthTex = depthTex; }
 
-  // Set the camera far plane (used to compute linear depth matching GBuffer COLOR4)
+  // Set the camera far plane for depth-tested overlays.
   void SetFarPlane(float farPlane) { m_farPlane = farPlane; }
 
   // Issue one indexed line-list draw using the supplied VB/IB.

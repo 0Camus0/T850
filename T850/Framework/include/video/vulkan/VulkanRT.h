@@ -46,6 +46,7 @@ namespace t850 {
     std::vector<VkImageView>    vColorImageViews;
     std::vector<VkImageLayout>  vColorLayouts;
     VkFormat                    m_colorFormat = VK_FORMAT_R8G8B8A8_UNORM;
+    std::vector<VkFormat>       m_colorFormats;
 
     // Depth attachment
     VkImage         m_depthImage = VK_NULL_HANDLE;

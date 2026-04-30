@@ -51,6 +51,12 @@ namespace t850 {
     }
     key.colorFormat = colorFormat;
     key.depthFormat = depthFormat;
+    VkRenderPass renderPass = m_backbufferRenderPass;
+    if (CurrentRT >= 0 && CurrentRT < (int)RTs.size()) {
+      VulkanRT* rt = static_cast<VulkanRT*>(RTs[CurrentRT]);
+      renderPass = rt->m_renderPass;
+    }
+    key.renderPass = reinterpret_cast<uintptr_t>(renderPass);
 
     auto it = m_pipelineCache.find(key);
     if (it != m_pipelineCache.end()) {
@@ -191,12 +197,7 @@ namespace t850 {
     pipelineCI.layout = shader->m_pipelineLayout;
     // Use canonical backbuffer pass for pipeline creation when on backbuffer;
     // the LOAD variant is render-pass-compatible, so pipelines work with both.
-    if (CurrentRT >= 0 && CurrentRT < (int)RTs.size()) {
-      VulkanRT* rt = static_cast<VulkanRT*>(RTs[CurrentRT]);
-      pipelineCI.renderPass = rt->m_renderPass;
-    } else {
-      pipelineCI.renderPass = m_backbufferRenderPass;
-    }
+    pipelineCI.renderPass = renderPass;
     pipelineCI.subpass = 0;
 
     VkPipeline pipeline = VK_NULL_HANDLE;
@@ -1377,7 +1378,7 @@ namespace t850 {
       aspect = VK_IMAGE_ASPECT_DEPTH_BIT;
     } else if (attachment >= 0 && attachment < rt->number_RT) {
       srcImage = rt->vColorImages[attachment];
-      fmt = rt->m_colorFormat;
+      fmt = (attachment < (int)rt->m_colorFormats.size()) ? rt->m_colorFormats[attachment] : rt->m_colorFormat;
     } else {
       goto reopen;
     }

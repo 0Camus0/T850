@@ -122,7 +122,7 @@ namespace t850 {
 
   void D3DXShader::Set(const DeviceContext & deviceContext)
   {
-    T8_LOG_TRACE("[D3D11] Shader::Set key=0x%08X", key.bits);
+    T8_LOG_TRACE("[D3D11] Shader::Set key=0x%016llX", static_cast<unsigned long long>(key.bits));
     const_cast<DeviceContext*>(&deviceContext)->actualShaderSet = (ShaderBase*)this;
     reinterpret_cast<ID3D11DeviceContext*>(deviceContext.GetAPIObject())->VSSetShader(pVS.Get(), 0, 0);
     reinterpret_cast<ID3D11DeviceContext*>(deviceContext.GetAPIObject())->PSSetShader(pFS.Get(), 0, 0);

@@ -230,11 +230,23 @@ namespace t850 {
   }
 
   void D3DXRT::DestroyAPIRT() {
+    if (pDepthTexture) {
       pDepthTexture->release();
-
-    for (int i = 0; i < number_RT; i++) {
-      vColorTextures[i]->release();
+      pDepthTexture = nullptr;
     }
+
+    for (size_t i = 0; i < vColorTextures.size(); i++) {
+      if (vColorTextures[i])
+        vColorTextures[i]->release();
+    }
+    vColorTextures.clear();
+    vD3D11RenderTargetView.clear();
+    vD3D11ColorTex.clear();
+    D3D11DepthTex.Reset();
+    D3D11DepthStencilTargetView.Reset();
+    for (auto& dsv : D3D11CubeFaceDSVs)
+      dsv.Reset();
+    isCubeDepth = false;
   }
   void D3DXRT::Set(const DeviceContext& context)
   {

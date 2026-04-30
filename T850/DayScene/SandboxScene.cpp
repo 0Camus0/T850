@@ -499,7 +499,10 @@ void SandboxScene::OnDraw() {
       {GBufferPass,           BaseDriver::COLOR1_ATTACHMENT, "GBuffer_Normals"},
       {GBufferPass,           BaseDriver::COLOR2_ATTACHMENT, "GBuffer_PBR"},
       {GBufferPass,           BaseDriver::COLOR3_ATTACHMENT, "GBuffer_GeoNormal"},
-      {GBufferPass,           BaseDriver::COLOR4_ATTACHMENT, "GBuffer_Depth"},
+      {GBufferPass,           BaseDriver::COLOR4_ATTACHMENT, "GBuffer_Emissive"},
+      {GBufferPass,           BaseDriver::COLOR5_ATTACHMENT, "GBuffer_Sheen"},
+      {GBufferPass,           BaseDriver::COLOR6_ATTACHMENT, "GBuffer_SpecularOcclusion"},
+      {GBufferPass,           BaseDriver::DEPTH_ATTACHMENT,  "GBuffer_Depth"},
       {DepthPass,             BaseDriver::DEPTH_ATTACHMENT,  "ShadowMap_Depth"},
       {ShadowAccumPass,       BaseDriver::COLOR0_ATTACHMENT, "ShadowAccum"},
       {DeferredPass,          BaseDriver::COLOR0_ATTACHMENT, "Deferred"},
@@ -523,7 +526,7 @@ void SandboxScene::OnDraw() {
     case 2:  selected = GBufferPass;     attachment = BaseDriver::COLOR1_ATTACHMENT; break;
     case 3:  selected = GBufferPass;     attachment = BaseDriver::COLOR2_ATTACHMENT; break;
     case 4:  selected = GBufferPass;     attachment = BaseDriver::COLOR3_ATTACHMENT; break;
-    case 5:  selected = GBufferPass;     attachment = BaseDriver::COLOR4_ATTACHMENT; break;
+    case 5:  selected = GBufferPass;     attachment = BaseDriver::DEPTH_ATTACHMENT;  break;
     case 6:  selected = DepthPass;       attachment = BaseDriver::DEPTH_ATTACHMENT;  break;
     case 7:  selected = ShadowAccumPass; attachment = BaseDriver::COLOR0_ATTACHMENT; break;
     case 8:  selected = DeferredPass;    attachment = BaseDriver::COLOR0_ATTACHMENT; break;
@@ -547,12 +550,11 @@ void SandboxScene::OnDraw() {
     RenderSkinnedMesh* skinned = dynamic_cast<RenderSkinnedMesh*>(Meshes[0].pBase);
     if (skinned && skinned->HasSkinData()) {
       if (m_showWireframe) {
-        // Bind GBuffer COLOR4 (linear depth) for shader-based depth comparison
+        // Bind GBuffer depth for shader-based depth comparison
         int gbufHandle = GBufferPass;
         if (gbufHandle >= 0 && gbufHandle < (int)pFramework->pVideoDriver->RTs.size()) {
           auto* gbufRT = pFramework->pVideoDriver->RTs[gbufHandle];
-          if (gbufRT->vColorTextures.size() > 4)
-            skinned->SetWireframeDepthTex(gbufRT->vColorTextures[4]);
+          skinned->SetWireframeDepthTex(gbufRT->pDepthTexture);
         }
         skinned->SetWireframeViewport(g_pBaseDriver->width, g_pBaseDriver->height);
         pFramework->pVideoDriver->SetDepthStencilState(BaseDriver::NONE);

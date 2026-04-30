@@ -43,6 +43,7 @@ namespace t850 {
     DXGI_FORMAT srvDepthFmt = DXGI_FORMAT_R32_FLOAT;
     isCubeDepth = (depth_format == BaseRT::CUBE_F32);
     colorFormat = cfmt;  // cache for PSO lookup
+    vColorFormats.clear();
 
     // Color attachments
     for (int i = 0; i < number_RT; i++) {
@@ -59,6 +60,7 @@ namespace t850 {
           default: break;
         }
       }
+      vColorFormats.push_back(thisFmt);
 
       D3D12_RESOURCE_DESC desc = {};
       desc.Dimension = D3D12_RESOURCE_DIMENSION_TEXTURE2D;
@@ -171,6 +173,7 @@ namespace t850 {
     vColorTextures.clear();
     vColorResources.clear();
     vRTVHandles.clear();
+    vColorFormats.clear();
     depthResource.Reset();
   }
 

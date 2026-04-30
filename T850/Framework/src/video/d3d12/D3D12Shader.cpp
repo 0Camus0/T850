@@ -218,7 +218,7 @@ namespace t850 {
 
 #ifdef T8_DUMP_SHADER_REFLECTION
     // Dump D3D12 reflection as reference for validating SPIR-V reflection
-    T8_LOG_INFO("[D3D12_REFL] === key=0x%08X VS='%s' FS='%s' ===", key.bits, vs_name.c_str(), fs_name.c_str());
+    T8_LOG_INFO("[D3D12_REFL] === key=0x%016llX VS='%s' FS='%s' ===", static_cast<unsigned long long>(key.bits), vs_name.c_str(), fs_name.c_str());
     T8_LOG_INFO("[D3D12_REFL] VS Inputs (%u):", vsDesc.InputParameters);
     for (UINT i = 0; i < vsDesc.InputParameters; i++) {
       D3D12_SIGNATURE_PARAMETER_DESC pd; vsReflect->GetInputParameterDesc(i, &pd);
@@ -249,8 +249,8 @@ namespace t850 {
     }
 #endif
 
-    T8_LOG_INFO("[D3D12] Shader created: key=0x%08X stride=%d rootParams: cbv=%d sampler=%d srvs=%d",
-                key.bits, vertexStride, cbvSlot, samplerSlot, (int)srvSlots.size());
+    T8_LOG_INFO("[D3D12] Shader created: key=0x%016llX stride=%d rootParams: cbv=%d sampler=%d srvs=%d",
+          static_cast<unsigned long long>(key.bits), vertexStride, cbvSlot, samplerSlot, (int)srvSlots.size());
     return true;
   }
 
@@ -259,7 +259,7 @@ namespace t850 {
   // ══════════════════════════════════════════════════════
 
   void D3D12Shader::Set(const DeviceContext& deviceContext) {
-    T8_LOG_TRACE("[D3D12] Shader::Set key=0x%08X", key.bits);
+    T8_LOG_TRACE("[D3D12] Shader::Set key=0x%016llX", static_cast<unsigned long long>(key.bits));
     const_cast<DeviceContext*>(&deviceContext)->actualShaderSet = (ShaderBase*)this;
 
     auto* cmdList = static_cast<const D3D12DeviceContext*>(&deviceContext)->GetCommandList();
@@ -267,19 +267,21 @@ namespace t850 {
 
     // Determine current RT configuration for PSO
     uint8_t numRTVs = 1;
-    DXGI_FORMAT rtvFmt = DXGI_FORMAT_R8G8B8A8_UNORM;
+    DXGI_FORMAT rtvFormats[8] = {};
+    for (auto& fmt : rtvFormats) fmt = DXGI_FORMAT_UNKNOWN;
+    rtvFormats[0] = DXGI_FORMAT_R8G8B8A8_UNORM;
     DXGI_FORMAT dsvFmt = DXGI_FORMAT_D32_FLOAT;
 
     int curRT = driver->CurrentRT;
     if (curRT >= 0 && curRT < (int)driver->RTs.size()) {
       D3D12RT* rt = static_cast<D3D12RT*>(driver->RTs[curRT]);
       numRTVs = (uint8_t)(rt->number_RT > 0 ? rt->number_RT : 0);
-      rtvFmt = rt->colorFormat;  // cached format — no COM call
-      if (rt->number_RT == 0) rtvFmt = DXGI_FORMAT_UNKNOWN;
+      for (int i = 0; i < rt->number_RT && i < 8; ++i)
+        rtvFormats[i] = (i < (int)rt->vColorFormats.size()) ? rt->vColorFormats[i] : rt->colorFormat;
     }
 
     // Get or create PSO for current state
-    ID3D12PipelineState* pso = driver->GetOrCreatePSO(this, numRTVs, rtvFmt, dsvFmt);
+    ID3D12PipelineState* pso = driver->GetOrCreatePSO(this, numRTVs, rtvFormats, dsvFmt);
 
     // Skip redundant root signature and PSO binds
     ID3D12RootSignature* rootSig = pRootSignature.Get();

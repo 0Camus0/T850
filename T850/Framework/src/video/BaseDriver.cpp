@@ -204,6 +204,13 @@ namespace t850 {
       if (key.has(ShaderKey::HEIGHT_MAP))     Defines += "#define HEIGHT_MAP\n\n";
       if (key.has(ShaderKey::METALLIC_MAP))   Defines += "#define METALLIC_MAP\n\n";
       if (key.has(ShaderKey::CLEARCOAT_MAP))  Defines += "#define CLEARCOAT_MAP\n\n";
+      if (key.has(ShaderKey::SHEEN_COLOR_MAP)) Defines += "#define SHEEN_COLOR_MAP\n\n";
+      if (key.has(ShaderKey::SHEEN_ROUGHNESS_MAP)) Defines += "#define SHEEN_ROUGHNESS_MAP\n\n";
+      if (key.has(ShaderKey::CLEARCOAT_ROUGHNESS_MAP)) Defines += "#define CLEARCOAT_ROUGHNESS_MAP\n\n";
+      if (key.has(ShaderKey::OCCLUSION_MAP)) Defines += "#define OCCLUSION_MAP\n\n";
+      if (key.has(ShaderKey::SPECULAR_FACTOR_MAP)) Defines += "#define SPECULAR_FACTOR_MAP\n\n";
+      if (key.has(ShaderKey::SPECULAR_COLOR_MAP)) Defines += "#define SPECULAR_COLOR_MAP\n\n";
+      if (key.has(ShaderKey::TRANSMISSION_MAP)) Defines += "#define TRANSMISSION_MAP\n\n";
 
       // Material conventions
       if (key.has(ShaderKey::GLTF_TANGENT_SPACE)) Defines += "#define GLTF_TANGENT_SPACE\n\n";
@@ -263,7 +270,7 @@ namespace t850 {
     }
     this->key = key;
     if (!CreateShaderAPI(src_vs, src_fs, vs_name, fs_name)) {
-      T8_LOG_ERROR("Shader defines for failed key 0x%08X [VS='%s' FS='%s']:\n%s", key.bits, vs_name.c_str(), fs_name.c_str(), Defines.c_str());
+      T8_LOG_ERROR("Shader defines for failed key 0x%016llX [VS='%s' FS='%s']:\n%s", static_cast<unsigned long long>(key.bits), vs_name.c_str(), fs_name.c_str(), Defines.c_str());
       return false;
     }
     return true;
@@ -290,8 +297,8 @@ namespace t850 {
     auto it = m_shaderCache.find(key.bits);
     if (it != m_shaderCache.end())
       return it->second;
-    fprintf(stderr, "[ShaderKey] GetShader miss: key 0x%08X (pass=%d)\n", key.bits, key.getPass());
-    T8_LOG_ERROR("GetShader miss: key 0x%08X (pass=%d)", key.bits, key.getPass());
+    fprintf(stderr, "[ShaderKey] GetShader miss: key 0x%016llX (pass=%d)\n", static_cast<unsigned long long>(key.bits), key.getPass());
+    T8_LOG_ERROR("GetShader miss: key 0x%016llX (pass=%d)", static_cast<unsigned long long>(key.bits), key.getPass());
     return nullptr;
   }
   ShaderBase * BaseDriver::GetShaderIdx(int id)
@@ -497,11 +504,11 @@ namespace t850 {
       int idx = static_cast<int>(m_shaders.size() - 1);
       if (key.isValid()) {
         m_shaderCache[key.bits] = shader;
-        T8_LOG_DEBUG("Shader compiled: key=0x%08X pass=%d -> idx %d", key.bits, key.getPass(), idx);
+        T8_LOG_DEBUG("Shader compiled: key=0x%016llX pass=%d -> idx %d", static_cast<unsigned long long>(key.bits), key.getPass(), idx);
       }
       return idx;
     }
-    T8_LOG_ERROR("Shader compilation FAILED: key=0x%08X pass=%d", key.bits, key.getPass());
+    T8_LOG_ERROR("Shader compilation FAILED: key=0x%016llX pass=%d", static_cast<unsigned long long>(key.bits), key.getPass());
     return -1;
   }
   int BaseDriver::CreateRT(int nrt, int cf, int df, int w, int h, bool genMips)

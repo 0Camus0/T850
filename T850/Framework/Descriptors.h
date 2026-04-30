@@ -43,72 +43,82 @@ namespace PassType {
   };
 }
 
-// ── Structured shader key: 32 bits ──
+// ── Structured shader key: 64 bits ──
 //  Bits  0-4:  vertex attributes (5)
 //  Bits  5-11: texture maps (7)
 //  Bits 12-14: special modes (3)
 //  Bits 15-19: effect toggles (5)
 //  Bits 20-25: pass type (6-bit enum)
-//  Bits 26-31: reserved (6)
+//  Bits 26-31: extended toggles / legacy material maps (6)
+//  Bits 32-63: extended material maps / reserved (32)
 struct ShaderKey {
-  uint32_t bits;
+  uint64_t bits;
 
-  constexpr ShaderKey() : bits(0xFFFFFFFF) {}
-  constexpr explicit ShaderKey(uint32_t b) : bits(b) {}
+  constexpr ShaderKey() : bits(0xFFFFFFFFFFFFFFFFull) {}
+  constexpr explicit ShaderKey(uint64_t b) : bits(b) {}
 
   // ── Vertex attributes ──
-  static constexpr uint32_t HAS_NORMALS    = 1u << 0;
-  static constexpr uint32_t HAS_TANGENTS   = 1u << 1;
-  static constexpr uint32_t HAS_BINORMALS  = 1u << 2;
-  static constexpr uint32_t HAS_TEXCOORD0  = 1u << 3;
-  static constexpr uint32_t HAS_TEXCOORD1  = 1u << 4;
+  static constexpr uint64_t HAS_NORMALS    = 1ull << 0;
+  static constexpr uint64_t HAS_TANGENTS   = 1ull << 1;
+  static constexpr uint64_t HAS_BINORMALS  = 1ull << 2;
+  static constexpr uint64_t HAS_TEXCOORD0  = 1ull << 3;
+  static constexpr uint64_t HAS_TEXCOORD1  = 1ull << 4;
 
   // ── Texture maps ──
-  static constexpr uint32_t DIFFUSE_MAP    = 1u << 5;
-  static constexpr uint32_t SPECULAR_MAP   = 1u << 6;
-  static constexpr uint32_t GLOSS_MAP      = 1u << 7;
-  static constexpr uint32_t NORMAL_MAP     = 1u << 8;
-  static constexpr uint32_t REFLECT_MAP    = 1u << 9;
-  static constexpr uint32_t HEIGHT_MAP     = 1u << 10;
-  static constexpr uint32_t METALLIC_MAP   = 1u << 11;
-  static constexpr uint32_t EMISSIVE_MAP   = REFLECT_MAP;
+  static constexpr uint64_t DIFFUSE_MAP    = 1ull << 5;
+  static constexpr uint64_t SPECULAR_MAP   = 1ull << 6;
+  static constexpr uint64_t GLOSS_MAP      = 1ull << 7;
+  static constexpr uint64_t NORMAL_MAP     = 1ull << 8;
+  static constexpr uint64_t REFLECT_MAP    = 1ull << 9;
+  static constexpr uint64_t HEIGHT_MAP     = 1ull << 10;
+  static constexpr uint64_t METALLIC_MAP   = 1ull << 11;
+  static constexpr uint64_t EMISSIVE_MAP   = REFLECT_MAP;
 
   // ── Special modes ──
-  static constexpr uint32_t NO_LIGHT       = 1u << 12;
-  static constexpr uint32_t FRESNEL        = 1u << 13;
-  static constexpr uint32_t OMNI_SHADOWS   = 1u << 14;
+  static constexpr uint64_t NO_LIGHT       = 1ull << 12;
+  static constexpr uint64_t FRESNEL        = 1ull << 13;
+  static constexpr uint64_t OMNI_SHADOWS   = 1ull << 14;
 
   // ── Effect toggles (converted from runtime branches) ──
-  static constexpr uint32_t PARALLAX       = 1u << 15;
-  static constexpr uint32_t SHADOWS        = 1u << 16;
-  static constexpr uint32_t SSAO           = 1u << 17;
-  static constexpr uint32_t AUTO_FOCUS     = 1u << 18;
-  static constexpr uint32_t GOD_RAYS       = 1u << 19;
+  static constexpr uint64_t PARALLAX       = 1ull << 15;
+  static constexpr uint64_t SHADOWS        = 1ull << 16;
+  static constexpr uint64_t SSAO           = 1ull << 17;
+  static constexpr uint64_t AUTO_FOCUS     = 1ull << 18;
+  static constexpr uint64_t GOD_RAYS       = 1ull << 19;
 
   // ── Extended toggles (bits 26+) ──
-  static constexpr uint32_t PARALLAX_SHADOW = 1u << 26;
-  static constexpr uint32_t GLTF_TANGENT_SPACE = 1u << 27;
-  static constexpr uint32_t HAS_SKINNING = 1u << 28;
-  static constexpr uint32_t HAS_SKINNING_QT = 1u << 29; // quaternion+translation skinning
-  static constexpr uint32_t HAS_SKINNING_TEX = 1u << 30; // texture-based bone matrices
-  static constexpr uint32_t CLEARCOAT_MAP = 1u << 31;
+  static constexpr uint64_t PARALLAX_SHADOW = 1ull << 26;
+  static constexpr uint64_t GLTF_TANGENT_SPACE = 1ull << 27;
+  static constexpr uint64_t HAS_SKINNING = 1ull << 28;
+  static constexpr uint64_t HAS_SKINNING_QT = 1ull << 29; // quaternion+translation skinning
+  static constexpr uint64_t HAS_SKINNING_TEX = 1ull << 30; // texture-based bone matrices
+  static constexpr uint64_t CLEARCOAT_MAP = 1ull << 31;
+
+  // ── Extended material maps ──
+  static constexpr uint64_t SHEEN_COLOR_MAP = 1ull << 32;
+  static constexpr uint64_t SHEEN_ROUGHNESS_MAP = 1ull << 33;
+  static constexpr uint64_t CLEARCOAT_ROUGHNESS_MAP = 1ull << 34;
+  static constexpr uint64_t OCCLUSION_MAP = 1ull << 35;
+  static constexpr uint64_t SPECULAR_FACTOR_MAP = 1ull << 36;
+  static constexpr uint64_t SPECULAR_COLOR_MAP = 1ull << 37;
+  static constexpr uint64_t TRANSMISSION_MAP = 1ull << 38;
 
   // ── Pass type (6 bits) ──
-  static constexpr uint32_t PASS_SHIFT = 20;
-  static constexpr uint32_t PASS_MASK  = 0x3Fu << PASS_SHIFT;
+  static constexpr uint64_t PASS_SHIFT = 20;
+  static constexpr uint64_t PASS_MASK  = 0x3Full << PASS_SHIFT;
 
-  void    setPass(uint8_t p) { bits = (bits & ~PASS_MASK) | (uint32_t(p) << PASS_SHIFT); }
+  void    setPass(uint8_t p) { bits = (bits & ~PASS_MASK) | (uint64_t(p) << PASS_SHIFT); }
   uint8_t getPass() const    { return (bits >> PASS_SHIFT) & 0x3F; }
 
-  bool has(uint32_t flag) const { return (bits & flag) != 0; }
-  bool isValid() const { return bits != 0xFFFFFFFF; }
+  bool has(uint64_t flag) const { return (bits & flag) != 0; }
+  bool isValid() const { return bits != 0xFFFFFFFFFFFFFFFFull; }
 
   bool operator==(const ShaderKey& o) const { return bits == o.bits; }
   bool operator!=(const ShaderKey& o) const { return bits != o.bits; }
 };
 
 struct ShaderKeyHash {
-  size_t operator()(const ShaderKey& k) const { return std::hash<uint32_t>()(k.bits); }
+  size_t operator()(const ShaderKey& k) const { return std::hash<uint64_t>()(k.bits); }
 };
 namespace BufferUsage{
   enum E {

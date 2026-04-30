@@ -30,6 +30,10 @@ namespace t850 {
     constexpr int SheenRoughness = 17;
     constexpr int Clearcoat = 18;
     constexpr int ClearcoatRoughness = 19;
+    constexpr int Occlusion = 20;
+    constexpr int SpecularFactor = 21;
+    constexpr int SpecularColor = 22;
+    constexpr int Transmission = 23;
   }
 
   struct EnvironmentMapSet {

@@ -24,6 +24,9 @@ cbuffer ConstantBuffer{
     float4   MaterialParams4;
     float4   MaterialParams5;
     float4   MaterialParams6;
+    float4   MaterialParams7;
+    float4   MaterialParams8;
+    float4   MaterialParams9;
     float4   BaseColorUVTransform0;
     float4   BaseColorUVTransform1;
     float4   NormalUVTransform0;
@@ -40,12 +43,22 @@ cbuffer ConstantBuffer{
     float4   ClearcoatUVTransform1;
     float4   ClearcoatRoughnessUVTransform0;
     float4   ClearcoatRoughnessUVTransform1;
+    float4   OcclusionUVTransform0;
+    float4   OcclusionUVTransform1;
+    float4   SpecularFactorUVTransform0;
+    float4   SpecularFactorUVTransform1;
+    float4   SpecularColorUVTransform0;
+    float4   SpecularColorUVTransform1;
+    float4   TransmissionUVTransform0;
+    float4   TransmissionUVTransform1;
     float4   LightPositions[128];
     float4   LightColors[128];
     float4   LightRadius[32];
 }
 
+#ifdef DIFFUSE_MAP
 Texture2D TextureRGB : register(t0);
+#endif
 
 #ifdef SPECULAR_MAP
 Texture2D TextureSpecular : register(t1);
@@ -82,12 +95,37 @@ Texture2D texIBLBRDF : register(t12);
 TextureCube texIBLCharlie : register(t13);
 Texture2D texIBLCharlieLUT : register(t14);
 Texture2D texIBLSheenELUT : register(t15);
+
+#ifdef SHEEN_COLOR_MAP
 Texture2D SheenColorTex : register(t16);
+#endif
+
+#ifdef SHEEN_ROUGHNESS_MAP
 Texture2D SheenRoughnessTex : register(t17);
+#endif
 
 #ifdef CLEARCOAT_MAP
 Texture2D ClearcoatTex : register(t18);
+#endif
+
+#ifdef CLEARCOAT_ROUGHNESS_MAP
 Texture2D ClearcoatRoughnessTex : register(t19);
+#endif
+
+#ifdef OCCLUSION_MAP
+Texture2D OcclusionTex : register(t20);
+#endif
+
+#ifdef SPECULAR_FACTOR_MAP
+Texture2D SpecularFactorTex : register(t21);
+#endif
+
+#ifdef SPECULAR_COLOR_MAP
+Texture2D SpecularColorTex : register(t22);
+#endif
+
+#ifdef TRANSMISSION_MAP
+Texture2D TransmissionTex : register(t23);
 #endif
 
 SamplerState MaterialSS : register(s0);
@@ -118,6 +156,22 @@ float2 GetForwardScreenUV(VS_OUTPUT input)
 {
     float2 screenUV = input.hposition.xy / ForwardParams.xy;
     return screenUV;
+}
+
+float2 SignNotZero(float2 value)
+{
+    return float2(value.x >= 0.0f ? 1.0f : -1.0f,
+                  value.y >= 0.0f ? 1.0f : -1.0f);
+}
+
+float2 EncodeOctahedralNormal(float3 normal)
+{
+    normal = normalize(normal);
+    normal /= max(abs(normal.x) + abs(normal.y) + abs(normal.z), 0.000001f);
+    if (normal.z < 0.0f) {
+        normal.xy = (1.0f - abs(normal.yx)) * SignNotZero(normal.xy);
+    }
+    return normal.xy * 0.5f + 0.5f;
 }
 
 float3 NormalDistribution(float NdotH, float roughness)
@@ -284,6 +338,11 @@ float3 LinearToStoredAlbedo(float3 linearColor)
     return pow(saturate(linearColor), float3(1.0f / 2.2f, 1.0f / 2.2f, 1.0f / 2.2f));
 }
 
+float3 StoredSRGBToLinear(float3 storedColor)
+{
+    return pow(max(storedColor, float3(0.0f, 0.0f, 0.0f)), float3(2.2f, 2.2f, 2.2f));
+}
+
 float4 SampleBaseColor(float2 uv)
 {
 #if defined(DIFFUSE_MAP) && (defined(USE_TEXCOORD0) || defined(USE_TEXCOORD1))
@@ -332,12 +391,18 @@ float GetPackedLightRadius(int i)
 void BuildSurface(VS_OUTPUT input, out float4 color, out float3 normal, out float3 geoNormal,
                   out float metallic, out float roughness, out float selfShadow, out float2 uv,
                   out float3 sheenColor, out float sheenRoughness,
-                  out float clearcoatFactor, out float clearcoatRoughness)
+                  out float clearcoatFactor, out float clearcoatRoughness,
+                  out float occlusion, out float3 dielectricF0, out float specularWeight,
+                  out float transmissionFactor)
 {
     color = float4(0.5f, 0.5f, 0.5f, 1.0f);
     metallic = PBRParams.x;
     roughness = PBRParams.y;
     selfShadow = 1.0f;
+    occlusion = 1.0f;
+    dielectricF0 = max(SpecularColor.rgb, float3(0.0f, 0.0f, 0.0f));
+    specularWeight = max(SpecularColor.w, 0.0f);
+    transmissionFactor = saturate(AlphaParams.w);
     sheenColor = saturate(MaterialParams4.rgb);
     sheenRoughness = clamp(MaterialParams4.w, 0.0f, 1.0f);
     clearcoatFactor = saturate(MaterialParams.x);
@@ -413,16 +478,54 @@ void BuildSurface(VS_OUTPUT input, out float4 color, out float3 normal, out floa
     roughness = clamp(roughness, 0.04f, 1.0f);
     metallic = clamp(metallic, 0.0f, 1.0f);
 
+#ifdef SPECULAR_FACTOR_MAP
+    if (MaterialParams8.y > 0.5f) {
+        float2 specularFactorUV = MaterialParams8.z > 0.5f ? GetTexCoord(input, MaterialParams8.z) : uv;
+        specularFactorUV = ApplyUVTransform(specularFactorUV, SpecularFactorUVTransform0, SpecularFactorUVTransform1);
+        specularWeight *= SpecularFactorTex.Sample(MaterialSS, specularFactorUV).a;
+    }
+#endif
+#ifdef SPECULAR_COLOR_MAP
+    if (MaterialParams8.w > 0.5f) {
+        float2 specularColorUV = MaterialParams9.x > 0.5f ? GetTexCoord(input, MaterialParams9.x) : uv;
+        specularColorUV = ApplyUVTransform(specularColorUV, SpecularColorUVTransform0, SpecularColorUVTransform1);
+        dielectricF0 = min(dielectricF0 * StoredSRGBToLinear(SpecularColorTex.Sample(MaterialSS, specularColorUV).rgb), float3(1.0f, 1.0f, 1.0f));
+    }
+#endif
+    specularWeight = saturate(specularWeight);
+
+#ifdef OCCLUSION_MAP
+    if (MaterialParams7.x > 0.5f) {
+        float2 occlusionUV = MaterialParams7.z > 0.5f ? GetTexCoord(input, MaterialParams7.z) : uv;
+        occlusionUV = ApplyUVTransform(occlusionUV, OcclusionUVTransform0, OcclusionUVTransform1);
+        float ao = OcclusionTex.Sample(MaterialSS, occlusionUV).r;
+        occlusion = saturate(1.0f + MaterialParams7.y * (ao - 1.0f));
+    }
+#endif
+
+#ifdef TRANSMISSION_MAP
+    if (MaterialParams7.w > 0.5f) {
+        float2 transmissionUV = MaterialParams8.x > 0.5f ? GetTexCoord(input, MaterialParams8.x) : uv;
+        transmissionUV = ApplyUVTransform(transmissionUV, TransmissionUVTransform0, TransmissionUVTransform1);
+        transmissionFactor *= TransmissionTex.Sample(MaterialSS, transmissionUV).r;
+    }
+#endif
+    transmissionFactor = saturate(transmissionFactor);
+
+#ifdef SHEEN_COLOR_MAP
     if (MaterialParams5.x > 0.5f) {
         float2 sheenColorUV = MaterialParams5.z > 0.5f ? GetTexCoord(input, MaterialParams5.z) : uv;
         sheenColorUV = ApplyUVTransform(sheenColorUV, SheenColorUVTransform0, SheenColorUVTransform1);
         sheenColor *= pow(max(SheenColorTex.Sample(MaterialSS, sheenColorUV).rgb, float3(0.0f, 0.0f, 0.0f)), float3(2.2f, 2.2f, 2.2f));
     }
+#endif
+#ifdef SHEEN_ROUGHNESS_MAP
     if (MaterialParams5.y > 0.5f) {
         float2 sheenRoughnessUV = MaterialParams5.w > 0.5f ? GetTexCoord(input, MaterialParams5.w) : uv;
         sheenRoughnessUV = ApplyUVTransform(sheenRoughnessUV, SheenRoughnessUVTransform0, SheenRoughnessUVTransform1);
         sheenRoughness *= SheenRoughnessTex.Sample(MaterialSS, sheenRoughnessUV).a;
     }
+#endif
     sheenColor = saturate(sheenColor);
     sheenRoughness = clamp(sheenRoughness, 0.0f, 1.0f);
 
@@ -432,14 +535,16 @@ void BuildSurface(VS_OUTPUT input, out float4 color, out float3 normal, out floa
         clearcoatUV = ApplyUVTransform(clearcoatUV, ClearcoatUVTransform0, ClearcoatUVTransform1);
         clearcoatFactor *= ClearcoatTex.Sample(MaterialSS, clearcoatUV).r;
     }
+#endif
+#ifdef CLEARCOAT_ROUGHNESS_MAP
     if (MaterialParams6.y > 0.5f) {
         float2 clearcoatRoughnessUV = MaterialParams6.w > 0.5f ? GetTexCoord(input, MaterialParams6.w) : uv;
         clearcoatRoughnessUV = ApplyUVTransform(clearcoatRoughnessUV, ClearcoatRoughnessUVTransform0, ClearcoatRoughnessUVTransform1);
         clearcoatRoughness *= ClearcoatRoughnessTex.Sample(MaterialSS, clearcoatRoughnessUV).g;
     }
+#endif
     clearcoatFactor = saturate(clearcoatFactor);
     clearcoatRoughness = saturate(clearcoatRoughness);
-#endif
 
 #if defined(HEIGHT_MAP) && defined(ENABLE_PARALLAX) && defined(USE_TEXCOORD0)
     float2 ssDxx = ddx(input.texture0);
@@ -489,6 +594,7 @@ struct FS_OUT{
     float4 color3 : SV_TARGET3;
     float4 color4 : SV_TARGET4;
     float4 color5 : SV_TARGET5;
+    float4 color6 : SV_TARGET6;
     float  depth  : SV_Depth;
 };
 
@@ -504,12 +610,16 @@ FS_OUT FS(VS_OUTPUT input)
     float sheenRoughness;
     float clearcoatFactor;
     float clearcoatRoughness;
+    float occlusion;
+    float3 dielectricF0;
+    float specularWeight;
+    float transmissionFactor;
     float2 uv;
-    BuildSurface(input, color, normal, geoNormal, metallic, roughness, selfShadow, uv, sheenColor, sheenRoughness, clearcoatFactor, clearcoatRoughness);
+    BuildSurface(input, color, normal, geoNormal, metallic, roughness, selfShadow, uv, sheenColor, sheenRoughness, clearcoatFactor, clearcoatRoughness, occlusion, dielectricF0, specularWeight, transmissionFactor);
 
     FS_OUT fout;
     fout.color0.rgb = color.rgb;
-    fout.color0.a = saturate(SpecularColor.w);
+    fout.color0.a = specularWeight;
     fout.color1.rgb = normal * 0.5f + 0.5f;
     fout.color1.a = roughness;
     fout.color2.r = metallic;
@@ -517,10 +627,11 @@ FS_OUT FS(VS_OUTPUT input)
     fout.color2.b = clearcoatFactor;
     fout.color2.a = Intensities.w / 255.0f;
     float packedMaterial = clearcoatRoughness * 0.5f + (MaterialParams.z > 0.5f ? 0.5f : 0.0f);
-    fout.color3 = float4(geoNormal * 0.5f + 0.5f, packedMaterial);
+    fout.color3 = float4(EncodeOctahedralNormal(geoNormal), 0.0f, packedMaterial);
     fout.depth = input.Pos.z / input.Pos.w;
-    fout.color4 = float4(input.Pos.z / input.Pos.w, SampleEmissive(input, uv));
+    fout.color4 = float4(SampleEmissive(input, uv), 0.0f);
     fout.color5 = float4(sheenColor, sheenRoughness);
+    fout.color6 = float4(dielectricF0, occlusion);
     return fout;
 }
 #elif defined(SHADOW_MAP_PASS)
@@ -550,8 +661,12 @@ float4 FS(VS_OUTPUT input) : SV_TARGET
     float sheenRoughness;
     float clearcoatFactor;
     float clearcoatRoughness;
+    float occlusion;
+    float3 dielectricF0;
+    float specularWeight;
+    float transmissionFactor;
     float2 uv;
-    BuildSurface(input, color, normal, geoNormal, metallic, roughness, selfShadow, uv, sheenColor, sheenRoughness, clearcoatFactor, clearcoatRoughness);
+    BuildSurface(input, color, normal, geoNormal, metallic, roughness, selfShadow, uv, sheenColor, sheenRoughness, clearcoatFactor, clearcoatRoughness, occlusion, dielectricF0, specularWeight, transmissionFactor);
     float3 emissive = SampleEmissive(input, uv);
 
     if (ForwardParams.z > 0.5f && ForwardParams.x > 0.0f && ForwardParams.y > 0.0f) {
@@ -565,8 +680,7 @@ float4 FS(VS_OUTPUT input) : SV_TARGET
 
     float3 albedo = pow(max(color.rgb, float3(0.0f, 0.0f, 0.0f)), float3(2.2f, 2.2f, 2.2f));
     float3 eyeDir = normalize(CameraPosition.xyz - input.WorldPos.xyz);
-    float3 dielectricF0 = max(SpecularColor.rgb * SpecularColor.w, float3(0.0f, 0.0f, 0.0f));
-    float3 F0 = lerp(dielectricF0, albedo, metallic);
+    float3 F0 = lerp(dielectricF0 * specularWeight, albedo, metallic);
     float3 directLight = float3(0.0f, 0.0f, 0.0f);
     float sheenStrength = Max3(sheenColor);
     bool hasSheenLUT = MaterialParams3.y > 0.5f;
@@ -649,7 +763,7 @@ float4 FS(VS_OUTPUT input) : SV_TARGET
         float3 sheenIBL = GetIBLRadianceCharlie(normal, eyeDir, sheenRoughness, sheenColor, iblMaxMip) * iblFactor;
         indirectLight = sheenIBL + indirectLight * albedoSheenScaling;
     }
-    finalColor += indirectLight;
+    finalColor += indirectLight * occlusion;
 
     if (clearcoatFactor > 0.001f) {
         clearcoatRoughness = clamp(clearcoatRoughness, 0.04f, 1.0f);
@@ -664,7 +778,7 @@ float4 FS(VS_OUTPUT input) : SV_TARGET
         finalColor = albedo;
     }
 
-    float transmission = saturate(AlphaParams.w * MaterialParams2.x);
+    float transmission = saturate(transmissionFactor * MaterialParams2.x);
     if (MaterialParams2.z > 0.5f && transmission > 0.001f && MaterialParams2.y > 0.0f && ForwardParams.x > 0.0f && ForwardParams.y > 0.0f) {
         float2 screenUV = GetForwardScreenUV(input);
         float iorOffset = saturate(abs(ForwardParams.w - 1.0f));

@@ -7,6 +7,7 @@
     { "name": "ShadowAccum",       "color_count": 1, "color_format": "R8",      "depth_format": "NONE", "size": [0,0], "linear_filter": true },
     { "name": "ExtraHelper",       "color_count": 1, "color_format": "RGBA8",   "depth_format": "NONE", "size": [0,0], "linear_filter": true },
     { "name": "BloomAccum",        "color_count": 1, "color_format": "RGBA8",   "depth_format": "NONE", "size": [512,512], "linear_filter": true },
+    { "name": "BloomHelper",       "color_count": 1, "color_format": "RGBA8",   "depth_format": "NONE", "size": [512,512], "linear_filter": true },
     { "name": "LuminanceMap",      "color_count": 1, "color_format": "F16",     "depth_format": "NONE", "size": [0,0], "linear_filter": true },
     { "name": "AdaptedLumCurrent", "color_count": 1, "color_format": "F16",     "depth_format": "NONE", "size": [1,1], "linear_filter": false },
     { "name": "AdaptedLumPrev",    "color_count": 1, "color_format": "F16",     "depth_format": "NONE", "size": [1,1], "linear_filter": false }
@@ -58,6 +59,7 @@
     {
       "name": "Shadow Blur H",
       "target": "ShadowAccum",
+      "gauss_kernel": 0,
       "inputs": [
         { "source": "ExtraHelper:COLOR0", "slot": 0 }
       ],
@@ -164,7 +166,7 @@
     },
     {
       "name": "Bloom Blur H",
-      "target": "ExtraHelper",
+      "target": "BloomHelper",
       "gauss_kernel": 1,
       "inputs": [
         { "source": "BloomAccum:COLOR0", "slot": 0 }
@@ -176,8 +178,9 @@
     {
       "name": "Bloom Blur V",
       "target": "BloomAccum",
+      "gauss_kernel": 1,
       "inputs": [
-        { "source": "ExtraHelper:COLOR0", "slot": 0 }
+        { "source": "BloomHelper:COLOR0", "slot": 0 }
       ],
       "draws": [
         { "type": "fullscreen_quad", "signature": "VERTICAL_BLUR_PASS" }

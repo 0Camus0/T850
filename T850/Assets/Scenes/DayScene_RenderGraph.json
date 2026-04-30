@@ -68,6 +68,7 @@
     {
       "name": "Shadow Blur H",
       "target": "ShadowAccum",
+      "gauss_kernel": 0,
       "inputs": [
         { "source": "ExtraHelper:COLOR0", "slot": 0 }
       ],
@@ -145,6 +146,7 @@
     {
       "name": "God Rays Blur H",
       "target": "GodRaysCalc",
+      "gauss_kernel": 2,
       "inputs": [
         { "source": "GodRaysCalcExtra:COLOR0", "slot": 0 }
       ],
@@ -219,6 +221,7 @@
     {
       "name": "Bloom Blur V",
       "target": "BloomAccum",
+      "gauss_kernel": 1,
       "inputs": [
         { "source": "BloomHelper:COLOR0", "slot": 0 }
       ],

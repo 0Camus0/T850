@@ -263,7 +263,7 @@ def suggest_likely_cause(comparison: dict[str, Any]) -> list[str]:
     if lum_delta > 12.0:
         suggestions.append("Average luminance moved significantly; inspect exposure, light intensity, or HDR/tone-map changes.")
     channel_dominance_threshold = (min(rgb_delta) * CHANNEL_DOMINANCE_RATIO) + CHANNEL_DOMINANCE_EPSILON
-    if len(rgb_delta) == 3 and max(rgb_delta) > channel_dominance_threshold:
+    if max(rgb_delta) > channel_dominance_threshold:
         suggestions.append("One color channel dominates the diff; inspect channel swizzles or normal-map green-channel handling.")
 
     if not suggestions:
@@ -351,8 +351,8 @@ def generate_visual_report(
 
     report_path = os.path.join(output_dir, "snapshot_report.html")
     with open(report_path, "w", encoding="utf-8") as handle:
-        handle.write("<!doctype html><meta charset=\"utf-8\"><title>T850 Snapshot Report</title>")
-        handle.write(f"<style>{REPORT_CSS}</style>")
+        handle.write("<!doctype html><html><head><meta charset=\"utf-8\"><title>T850 Snapshot Report</title>")
+        handle.write(f"<style>{REPORT_CSS}</style></head><body>")
         handle.write("<h1>T850 Snapshot Report</h1>")
         handle.write(f"<p><b>Reference:</b> {escape(reference_dir)}<br><b>Candidate:</b> {escape(candidate_dir)}</p>")
         handle.write("<table><tr><th>Target</th><th>Status</th><th>Diff %</th><th>Max Delta</th><th>Avg Luma</th><th>Heatmap</th><th>Likely cause</th></tr>")
@@ -371,7 +371,7 @@ def generate_visual_report(
                 f"<td>{causes}</td>"
                 "</tr>"
             )
-        handle.write("</table>")
+        handle.write("</table></body></html>")
 
     return {"report": report_path, "heatmaps": heatmaps, "comparisons": comparisons}
 

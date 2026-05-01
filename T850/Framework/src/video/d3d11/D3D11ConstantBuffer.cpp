@@ -12,6 +12,7 @@
 *********************************************************/
 
 #include <video/d3d11/D3D11ConstantBuffer.h>
+#include <debug/RenderTrace.h>
 
 namespace t850 {
   void * D3DXConstantBuffer::GetAPIObject() const
@@ -31,6 +32,20 @@ namespace t850 {
     ID3D11Buffer* raw = APIBuffer.Get();
     context->VSSetConstantBuffers(0, 1, &raw);
     context->PSSetConstantBuffers(0, 1, &raw);
+#ifdef T850_RENDER_TRACE
+    if (T8_TRACE_ACTIVE() && !sysMemCpy.empty()) {
+      int bufId = g_renderTracer->EnsureBufferId(this, "cbuffer");
+      // D3D11 binds are synchronous (UpdateSubresource happened in
+      // UpdateFromBuffer; Set() just plumbs the buffer into slot 0). Emit
+      // update + bind request + commit at this site so the trace shape
+      // matches D3D12's same-site pattern.
+      g_renderTracer->EvUpdateCBuffer(bufId, sysMemCpy.data(),
+                                      (uint32_t)sysMemCpy.size(),
+                                      /*allocOffset=*/0);
+      g_renderTracer->EvBindCBufferRequest(bufId);
+      g_renderTracer->EvBindCBufferCommit(/*slot=*/0, bufId);
+    }
+#endif
   }
   void D3DXConstantBuffer::Create(const Device & device, BufferDesc desc, void * initialData)
   {

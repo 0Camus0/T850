@@ -13,6 +13,7 @@
 
 #include <video/d3d11/D3D11Texture.h>
 #include <utils/Log.h>
+#include <debug/RenderTrace.h>
 
 namespace t850 {
   extern Device*            T8Device;
@@ -286,6 +287,17 @@ namespace t850 {
   {
     T8_LOG_TRACE("[D3D11] Texture::Set slot=%u name='%s' file='%s'", slot, shaderTextureName.c_str(), filepath.c_str());
     reinterpret_cast<ID3D11DeviceContext*>(deviceContext.GetAPIObject())->PSSetShaderResources(slot, 1, pSRVTex.GetAddressOf());
+#ifdef T850_RENDER_TRACE
+    if (T8_TRACE_ACTIVE()) {
+      int texId = g_renderTracer->LookupTextureId(this);
+      // D3D11 binds are synchronous: emit Request + Commit at the same site
+      // so trace diffs align with the D3D12/Vulkan pattern. There's no
+      // separate view/sampler id concept in D3D11 (SRV + sampler state are
+      // bound together as part of the texture object) — pass -1 for both.
+      g_renderTracer->EvBindTextureRequest(slot, texId, shaderTextureName, "ps");
+      g_renderTracer->EvBindTextureCommit(slot, texId, /*viewId=*/-1, /*samplerId=*/-1, shaderTextureName, "ps");
+    }
+#endif
   }
 
   void D3DXTexture::SetSampler(const DeviceContext & deviceContext, unsigned int slot)

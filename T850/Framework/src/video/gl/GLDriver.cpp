@@ -24,6 +24,7 @@
 #include <iterator>
 #include <fstream>
 #include <utils/Log.h>
+#include <debug/RenderTrace.h>
 
 
 
@@ -313,6 +314,7 @@ namespace t850 {
     default:
       break;
     }
+    T8_TRACE(EvSetBlend((int)state));
   }
 
   void GLDriver::SetDepthStencilState(DepthStencilStates state)
@@ -343,6 +345,7 @@ namespace t850 {
     default:
       break;
     }
+    T8_TRACE(EvSetDepth((int)state));
   }
 
   static void WritePPM(const std::string& path, int w, int h, const std::vector<unsigned char>& rgbBuf) {
@@ -497,6 +500,7 @@ namespace t850 {
 			  glCullFace(GL_FRONT_AND_BACK);
 			  break;
 	  }
+    T8_TRACE(EvSetCull((int)state));
   }
 
   void	GLDriver::Clear() {
@@ -535,6 +539,7 @@ namespace t850 {
 
 
   void GLDriver::PopRT() {
+    T8_TRACE(EvPopRT());
     glBindFramebuffer(GL_FRAMEBUFFER, CurrentFBO);
     glViewport(0, 0, width, height);
     glColorMask(GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE);

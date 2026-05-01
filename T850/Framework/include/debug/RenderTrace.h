@@ -71,6 +71,20 @@ namespace t850 {
     int generation = 0;
   };
 
+  // Vertex input attribute as the shader actually consumes it. Captured at
+  // shader creation, shared across all backends. Format strings are backend
+  // native (e.g. "R32G32B32_FLOAT" / "VK_FORMAT_R32G32B32_SFLOAT" / "GL_FLOAT_VEC3")
+  // — the diff tool only cares that two traces report the same string for
+  // the same logical position.
+  struct TraceShaderAttr {
+    std::string semantic;          // "POSITION" / "in.var.NORMAL" / GL attrib name
+    std::string format;            // backend-native format string
+    int         location = -1;     // SPIR-V location / GL attrib loc / D3D semantic index
+    int         input_slot = 0;    // D3D input slot (always 0 in T850); 0 elsewhere
+    uint32_t    offset = 0;        // byte offset within the vertex
+    uint32_t    size_bytes = 0;    // bytes consumed by this attribute
+  };
+
   struct TraceShaderRec {
     int id = -1;
     uint64_t key_bits = 0;
@@ -79,6 +93,11 @@ namespace t850 {
     std::string vs_name;
     std::string fs_name;
     std::vector<std::string> defines;
+    // Vertex-input layout the shader expects. Populated by per-API CreateShader
+    // through RegisterShaderInputsForPtr (which stashes by ShaderBase* until
+    // the shader gets its tracer id).
+    uint32_t    vertex_stride = 0;
+    std::vector<TraceShaderAttr> input_attrs;
   };
 
   // Backend-specific PSO record. Holds the exact key used for the backend
@@ -156,6 +175,31 @@ namespace t850 {
     uint32_t size = 0;
     uint64_t update_version = 0;       // monotonically increasing per UpdateFromBuffer call
     uint64_t hash = 0;
+    // Bytes the GPU saw for this slice (hex, lowercase, no separator). Only
+    // populated when T850_TRACE_GEOMETRY is defined; empty otherwise so the
+    // schema stays the same across builds.
+    std::string data_hex;
+  };
+
+  // One immutable update slice for VB/IB. Buffer creation produces version 1;
+  // UpdateFromBuffer / UpdateFromSystemCopy each produce a new version. Each
+  // draw snapshot records the version that was the "latest" for the bound
+  // buffer at draw time, so consumers can correlate draws to exactly the
+  // bytes they saw even when dynamic buffers are updated mid-frame.
+  struct TraceBufferUpdate {
+    uint64_t version = 0;
+    uint32_t size = 0;
+    uint32_t offset = 0;        // ring-buffer offset for D3D12 dynamic VBs (0 for static)
+    uint64_t hash = 0;          // FNV-1a 64 of the payload
+    bool     truncated = false; // payload exceeded the per-buffer hex cap
+    std::string data_hex;       // lowercase hex; only populated when T850_TRACE_GEOMETRY is on
+  };
+
+  struct TraceBufferRec {
+    int id = -1;
+    std::string kind;           // "vb" | "ib" | "cb"
+    std::string name;
+    std::vector<TraceBufferUpdate> updates;
   };
 
   struct TraceDrawSnapshot {
@@ -172,6 +216,12 @@ namespace t850 {
     float viewport_x = 0, viewport_y = 0, viewport_w = 0, viewport_h = 0;
     int scissor_x = 0, scissor_y = 0, scissor_w = 0, scissor_h = 0;
     unsigned vertex_count = 0, start_index = 0, start_vertex = 0;
+    // Latest update version for the bound VB/IB at draw submission time.
+    // Cross-references TraceBufferRec.updates so consumers can locate the
+    // exact bytes that were resident when the draw was submitted, even if
+    // the same buffer is updated again later in the frame (dynamic buffers).
+    uint64_t vertex_buffer_version = 0;
+    uint64_t index_buffer_version = 0;
     std::string context_mesh;
     std::string context_material;
     std::string context_entity;
@@ -196,6 +246,9 @@ namespace t850 {
 
     std::vector<TraceEvent>          events;
     std::vector<TraceDrawSnapshot>   draws;
+    // Per-frame VB/IB content catalog. Cleared by ResetFrame; ids stay
+    // stable across frames (so cross-frame tooling can still correlate).
+    std::vector<TraceBufferRec>      buffers;
   };
 
   // ── RenderTracer (singleton accessed via g_renderTracer) ────────────────
@@ -218,6 +271,14 @@ namespace t850 {
     int RegisterRT(const BaseRT* rt, const char* name, int idHint);
     int RegisterShader(const ShaderBase* sh, uint64_t keyBits, const std::string& vsName, const std::string& fsName);
 
+    // Per-API backends call this from inside their CreateShader after the
+    // input-layout reflection has been built. The shader hasn't been given a
+    // tracer id yet (that happens later in BaseDriver::CreateShader), so the
+    // attrs are stashed by ShaderBase* and merged into the catalog entry at
+    // RegisterShader time. Calling with attrs.empty() is a no-op.
+    void RegisterShaderInputsForPtr(const ShaderBase* sh, uint32_t vertexStride,
+                                     std::vector<TraceShaderAttr> attrs);
+
     int RegisterSampler(const TraceSamplerRec& rec);
     int RegisterTextureView(const TraceTextureViewRec& rec);
     int RegisterPSO(TracePSORec rec);  // returns id; rec.id is overwritten
@@ -231,6 +292,18 @@ namespace t850 {
     // stable monotonic id; first call for a pointer assigns a new id, later
     // calls return the same id.
     int EnsureBufferId(const void* ptr, const char* kind);
+
+    // Records one VB/IB upload. For static buffers, called once from Create.
+    // For dynamic buffers, called every UpdateFromBuffer/UpdateFromSystemCopy
+    // so each in-frame revision has its own immutable version. Returns the
+    // assigned version (>= 1) so callers can stash it on the next bind site.
+    // Even when T850_TRACE_GEOMETRY is OFF the version + size + hash are
+    // recorded; only the hex payload is suppressed.
+    uint64_t RecordBufferUpdate(int bufferId, const void* data, uint32_t size,
+                                 const char* kind, const char* name);
+    // Latest recorded version for bufferId, or 0 if unknown. Used by draw
+    // snapshot to attribute the bound VB/IB to a specific update.
+    uint64_t LatestBufferVersion(int bufferId) const;
 
     // Draw-context push: scene code calls before issuing draws so each
     // draw_snapshot gets readable mesh/material/entity/pass strings.
@@ -320,14 +393,38 @@ namespace t850 {
 
     // Last upload state per cbuffer id (set at EvUpdateCBuffer time, read
     // at EvBindCBufferCommit time so the bind event references the actual
-    // bytes that were most recently uploaded for that buffer).
+    // bytes that were most recently uploaded for that buffer). When
+    // T850_TRACE_GEOMETRY is on, bytes are also stashed so the per-draw
+    // snapshot records the exact slice content the GPU saw — this insulates
+    // the snapshot from a subsequent update overwriting CBLast for the same
+    // buffer mid-frame.
     struct CBLast {
       uint32_t offset = 0;
       uint32_t size = 0;
       uint64_t version = 0;
       uint64_t hash = 0;
+      std::vector<uint8_t> bytes;
     };
     std::unordered_map<int, CBLast> m_cbLast;
+
+    // Stash for shader input layouts seen before the shader gets its
+    // tracer id. Keyed by ShaderBase*; consumed once at RegisterShader.
+    struct PendingInputs {
+      uint32_t vertex_stride = 0;
+      std::vector<TraceShaderAttr> attrs;
+    };
+    std::unordered_map<const ShaderBase*, PendingInputs> m_pendingInputs;
+
+    // VB/IB content store. Keyed by tracer buffer id (from EnsureBufferId).
+    // Each entry holds the kind+name+all updates seen this frame.
+    struct BufferStore {
+      std::string kind;
+      std::string name;
+      std::vector<TraceBufferUpdate> updates;
+    };
+    std::unordered_map<int, BufferStore> m_bufferStore;
+    std::unordered_map<int, uint64_t>    m_bufferLatestVersion;
+    uint64_t m_nextBufferVersion = 1;
 
     // Pending state (denormalized into next draw_snapshot).
     TraceDrawSnapshot m_pending;
@@ -355,6 +452,17 @@ namespace t850 {
 #define T8_TRACE_REGISTER_SHADER(sh, k, v, f) \
   (T8_TRACE_ACTIVE() ? ::t850::g_renderTracer->RegisterShader((sh), (k), (v), (f)) : -1)
 
+// True iff the geometry/uniform raw-payload capture is enabled. Implies
+// T8_TRACE_ACTIVE(); when this is true the tracer captures VB/IB bytes,
+// CB slice bytes, and shader input layouts. When false, the size/version/hash
+// metadata is still captured (so cross-API mismatches are still visible),
+// but raw payloads are suppressed to keep trace.json small.
+#ifdef T850_TRACE_GEOMETRY
+  #define T8_TRACE_GEOMETRY_ACTIVE() (T8_TRACE_ACTIVE())
+#else
+  #define T8_TRACE_GEOMETRY_ACTIVE() false
+#endif
+
 #else // T850_RENDER_TRACE not defined ───────────────────────────────────
 
 #define T8_TRACE_ACTIVE()                  false
@@ -362,6 +470,7 @@ namespace t850 {
 #define T8_TRACE_REGISTER_TEXTURE(t, kind) (-1)
 #define T8_TRACE_REGISTER_RT(rt, name, h)  (-1)
 #define T8_TRACE_REGISTER_SHADER(sh, k, v, f) (-1)
+#define T8_TRACE_GEOMETRY_ACTIVE()         false
 
 namespace t850 {
   // Forward-declared so other headers can write `::t850::RenderTracer*` without

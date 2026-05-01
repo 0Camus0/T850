@@ -13,6 +13,7 @@
 
 #include <video/gl/GLTexture.h>
 #include <utils/Log.h>
+#include <debug/RenderTrace.h>
 
 #if defined(USING_OPENGL_ES20)
 #include <GLES2/gl2.h>
@@ -226,6 +227,16 @@ namespace t850 {
         sLogged = true;
       }
     }
+#ifdef T850_RENDER_TRACE
+    if (T8_TRACE_ACTIVE()) {
+      int texId = g_renderTracer->LookupTextureId(this);
+      // GL binds are synchronous: emit Request + Commit at the same site
+      // so trace diffs align with the D3D12/Vulkan pattern. There's no
+      // separate view/sampler id concept in GL — pass -1 for both.
+      g_renderTracer->EvBindTextureRequest(slot, texId, name, "ps");
+      g_renderTracer->EvBindTextureCommit(slot, texId, /*viewId=*/-1, /*samplerId=*/-1, name, "ps");
+    }
+#endif
   }
 
   void GLTexture::SetSampler(const DeviceContext & deviceContext, unsigned int slot)

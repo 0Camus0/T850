@@ -16,6 +16,14 @@ from typing import Any, Callable
 
 
 MCP_PROTOCOL_VERSION = "2024-11-05"
+BT709_LUMA = (0.2126, 0.7152, 0.0722)
+CHANNEL_DOMINANCE_RATIO = 2.0
+CHANNEL_DOMINANCE_EPSILON = 1.0
+REPORT_CSS = """
+body { font-family: sans-serif; }
+table { border-collapse: collapse; }
+td, th { border: 1px solid #ccc; padding: 4px 8px; }
+"""
 
 
 @dataclass
@@ -153,8 +161,8 @@ def compare_frame(reference_dir: str, candidate_dir: str, target: str, tolerance
         for index, delta in enumerate(deltas):
             channel_delta[index] += delta
             total_channel_delta += delta
-        lum0 = (0.2126 * r0) + (0.7152 * g0) + (0.0722 * b0)
-        lum1 = (0.2126 * r1) + (0.7152 * g1) + (0.0722 * b1)
+        lum0 = (BT709_LUMA[0] * r0) + (BT709_LUMA[1] * g0) + (BT709_LUMA[2] * b0)
+        lum1 = (BT709_LUMA[0] * r1) + (BT709_LUMA[1] * g1) + (BT709_LUMA[2] * b1)
         luminance_delta += abs(lum0 - lum1)
 
     total_channels = total_pixels * 3
@@ -254,7 +262,8 @@ def suggest_likely_cause(comparison: dict[str, Any]) -> list[str]:
         suggestions.append("Sparse high-amplitude differences; likely edge rasterization, depth precision, or missing draw calls.")
     if lum_delta > 12.0:
         suggestions.append("Average luminance moved significantly; inspect exposure, light intensity, or HDR/tone-map changes.")
-    if len(rgb_delta) == 3 and max(rgb_delta) > (min(rgb_delta) * 2.0 + 1.0):
+    channel_dominance_threshold = (min(rgb_delta) * CHANNEL_DOMINANCE_RATIO) + CHANNEL_DOMINANCE_EPSILON
+    if len(rgb_delta) == 3 and max(rgb_delta) > channel_dominance_threshold:
         suggestions.append("One color channel dominates the diff; inspect channel swizzles or normal-map green-channel handling.")
 
     if not suggestions:
@@ -343,7 +352,7 @@ def generate_visual_report(
     report_path = os.path.join(output_dir, "snapshot_report.html")
     with open(report_path, "w", encoding="utf-8") as handle:
         handle.write("<!doctype html><meta charset=\"utf-8\"><title>T850 Snapshot Report</title>")
-        handle.write("<style>body{font-family:sans-serif}table{border-collapse:collapse}td,th{border:1px solid #ccc;padding:4px 8px}</style>")
+        handle.write(f"<style>{REPORT_CSS}</style>")
         handle.write("<h1>T850 Snapshot Report</h1>")
         handle.write(f"<p><b>Reference:</b> {escape(reference_dir)}<br><b>Candidate:</b> {escape(candidate_dir)}</p>")
         handle.write("<table><tr><th>Target</th><th>Status</th><th>Diff %</th><th>Max Delta</th><th>Avg Luma</th><th>Heatmap</th><th>Likely cause</th></tr>")

@@ -17,6 +17,7 @@
 #include <utils/Log.h>
 #include <utils/Utils.h>
 #include <debug/Profiler.h>
+#include <debug/RenderTrace.h>
 #include <core/Config.h>
 
 #include <stdio.h>
@@ -95,9 +96,27 @@ void App::LoadAssets()
     t850::g_profiler->Init(pFramework->pVideoDriver);
   }
 #endif
+#ifdef T850_RENDER_TRACE
+  if (!t850::g_renderTracer) {
+    t850::g_renderTracer = new t850::RenderTracer();
+    t850::g_renderTracer->Init(pFramework->pVideoDriver);
+  }
+#endif
 }
 
 void App::CreateAssets() {
+#ifdef T8_ENABLE_PROFILER
+  if (g_config.flags.profile && !t850::g_profiler) {
+    t850::g_profiler = new t850::Profiler();
+    t850::g_profiler->Init(pFramework->pVideoDriver);
+  }
+#endif
+#ifdef T850_RENDER_TRACE
+  if (!t850::g_renderTracer) {
+    t850::g_renderTracer = new t850::RenderTracer();
+    t850::g_renderTracer->Init(pFramework->pVideoDriver);
+  }
+#endif
   m_actualScene->CreateAssets();
   m_textRender.LoadFromFile(36,"Fonts/Martius-LV9L4.ttf",512.0f);
   PrimitiveMgr.Init();
@@ -144,6 +163,13 @@ void App::DestroyAssets() {
      t850::g_profiler = nullptr;
    }
 #endif
+#ifdef T850_RENDER_TRACE
+   if (t850::g_renderTracer) {
+     t850::g_renderTracer->Destroy();
+     delete t850::g_renderTracer;
+     t850::g_renderTracer = nullptr;
+   }
+#endif
    m_devLayer.Destroy();
    m_textRender.Destroy();
    PrimitiveMgr.DestroyPrimitives();
@@ -177,6 +203,9 @@ void App::OnDraw() {
   if (t850::g_profiler) t850::g_profiler->BeginFrame();
 #endif
   static int frameCount = 0;
+#ifdef T850_RENDER_TRACE
+  if (t850::g_renderTracer) t850::g_renderTracer->ResetFrame(frameCount);
+#endif
   T8_LOG_TRACE("[Frame %d] === OnDraw BEGIN ===", frameCount);
   pFramework->pVideoDriver->Clear();
   FirstFrame = false;

@@ -12,6 +12,7 @@
 #if defined(OS_WINDOWS)
 
 #include <utils/Log.h>
+#include <debug/RenderTrace.h>
 #include <cstring>
 
 namespace t850 {
@@ -70,6 +71,12 @@ namespace t850 {
       VkDeviceSize off = offset;
       vkCmdBindVertexBuffers(cmd, 0, 1, &m_buffer, &off);
     }
+#ifdef T850_RENDER_TRACE
+    if (T8_TRACE_ACTIVE()) {
+      int bufId = g_renderTracer->EnsureBufferId(this, "vb");
+      g_renderTracer->EvBindVertexBufferRequest(bufId, stride, offset);
+    }
+#endif
   }
 
   void VulkanVertexBuffer::UpdateFromSystemCopy(const DeviceContext& deviceContext) {

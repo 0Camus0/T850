@@ -128,9 +128,15 @@ namespace t850 {
     struct PendingTextureBinding {
       VkImageView imageView = VK_NULL_HANDLE;
       VkSampler   sampler   = VK_NULL_HANDLE;
+      // Tracer-only: cached texture id + display name resolved at request time
+      // so BindPendingDescriptors can emit a commit event correlating slot ->
+      // texture id without a costly reverse lookup.
+      int         tracerTexId = -1;
+      const char* tracerName  = nullptr;
     };
     PendingTextureBinding m_pendingTextures[VulkanShader::kMaxTextureSlots] = {};
     VkDescriptorBufferInfo m_pendingCB = {};
+    int  m_pendingCBId = -1;        // tracer-only: id of the cbuffer object backing m_pendingCB
     bool m_cbDirty = false;
 
     // Allocate vertex data from the per-frame ring buffer (for dynamic VBs like GUI quads)

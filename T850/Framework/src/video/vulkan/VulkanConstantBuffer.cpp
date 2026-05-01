@@ -12,6 +12,7 @@
 #if defined(OS_WINDOWS)
 
 #include <utils/Log.h>
+#include <debug/RenderTrace.h>
 #include <cstring>
 
 namespace t850 {
@@ -70,6 +71,18 @@ namespace t850 {
       driver->m_pendingCB = driver->AllocateCBData(sysMemCpy.data(), (uint32_t)sysMemCpy.size());
       driver->m_cbDirty = true;
       T8_LOG_TRACE("[Vulkan] CB::Set offset=%llu dataSize=%u", driver->m_pendingCB.offset, (uint32_t)sysMemCpy.size());
+#ifdef T850_RENDER_TRACE
+      if (T8_TRACE_ACTIVE()) {
+        int bufId = g_renderTracer->EnsureBufferId(this, "cbuffer");
+        driver->m_pendingCBId = bufId;
+        // Record the upload of these bytes into the new ring slice (this is
+        // what BindPendingDescriptors will reference at draw time).
+        g_renderTracer->EvUpdateCBuffer(bufId, sysMemCpy.data(),
+                                        (uint32_t)sysMemCpy.size(),
+                                        (uint32_t)driver->m_pendingCB.offset);
+        g_renderTracer->EvBindCBufferRequest(bufId);
+      }
+#endif
     }
   }
 

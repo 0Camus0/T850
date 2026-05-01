@@ -267,8 +267,9 @@ def suggest_likely_cause(comparison: dict[str, Any]) -> list[str]:
         suggestions.append("Sparse high-amplitude differences; likely edge rasterization, depth precision, or missing draw calls.")
     if lum_delta > 12.0:
         suggestions.append("Average luminance moved significantly; inspect exposure, light intensity, or HDR/tone-map changes.")
+    max_rgb_delta = max(rgb_delta)
     channel_dominance_threshold = (min(rgb_delta) * CHANNEL_DOMINANCE_RATIO) + CHANNEL_DOMINANCE_EPSILON
-    if max(rgb_delta) > channel_dominance_threshold:
+    if max_rgb_delta > CHANNEL_DOMINANCE_EPSILON and max_rgb_delta > channel_dominance_threshold:
         suggestions.append("One color channel dominates the diff; inspect channel swizzles or normal-map green-channel handling.")
 
     if not suggestions:
@@ -574,7 +575,7 @@ def main() -> int:
     elif args.command == "compare-snapshots":
         result = compare_snapshots(args.reference_dir, args.candidate_dir, args.tolerance)
     elif args.command == "analyze-artifacts":
-        result = analyze_artifacts(args.reference_dir, args.candidate_dir, args.target, args.tolerance)
+        result = analyze_artifacts(args.reference_dir, args.candidate_dir, target=args.target, tolerance=args.tolerance)
     elif args.command == "generate-report":
         result = generate_visual_report(args.reference_dir, args.candidate_dir, args.output_dir, args.target, args.tolerance)
     else:

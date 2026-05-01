@@ -8,7 +8,10 @@ apply tolerances, and generate HTML reports with PPM heatmaps.
 
 import argparse
 import json
+import os
 import sys
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from t850_snapshot_mcp import compare_snapshots, generate_visual_report
 

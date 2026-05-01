@@ -13,6 +13,7 @@
 #ifdef OS_WINDOWS
 
 #include <utils/Log.h>
+#include <debug/RenderTrace.h>
 
 namespace t850 {
 
@@ -80,6 +81,19 @@ namespace t850 {
       cmdList->SetGraphicsRootConstantBufferView(shader->cbvSlot, gpuAddr);
       T8_LOG_TRACE("[D3D12] CB::Set cbvSlot=%d gpuVA=0x%llX dataSize=%d",
                    shader->cbvSlot, gpuAddr, (int)sysMemCpy.size());
+#ifdef T850_RENDER_TRACE
+      if (T8_TRACE_ACTIVE()) {
+        int bufId = g_renderTracer->EnsureBufferId(this, "cbuffer");
+        // Record the upload (offset = ring address low bits as a surrogate),
+        // then both Request and Commit at the same site (D3D12 binds are
+        // synchronous — the inline root CBV is committed immediately).
+        g_renderTracer->EvUpdateCBuffer(bufId, sysMemCpy.data(),
+                                        (uint32_t)sysMemCpy.size(),
+                                        (uint32_t)(gpuAddr & 0xFFFFFFFFu));
+        g_renderTracer->EvBindCBufferRequest(bufId);
+        g_renderTracer->EvBindCBufferCommit(shader->cbvSlot, bufId);
+      }
+#endif
     }
   }
 

@@ -13,6 +13,7 @@
 #include <video/BaseDriver.h>
 #include <utils/cil.h>
 #include <utils/Log.h>
+#include <debug/RenderTrace.h>
 #include <iostream>
 #include <string>
 #include <fstream>
@@ -361,6 +362,12 @@ namespace t850 {
     T8_LOG_TRACE("[BaseDriver] PushRT(%d) colors=%d %dx%d", id, RTs[id]->number_RT, RTs[id]->w, RTs[id]->h);
     CurrentRT = id;
     RTs[id]->Set(*T8DeviceContext);
+#ifdef T850_RENDER_TRACE
+    if (T8_TRACE_ACTIVE()) {
+      int rid = g_renderTracer->RegisterRT(RTs[id], nullptr, id);
+      g_renderTracer->EvPushRT(rid, false);
+    }
+#endif
   }
 
   void BaseDriver::PushRTLoad(int id)
@@ -374,6 +381,12 @@ namespace t850 {
     T8_LOG_TRACE("[BaseDriver] PushRTLoad(%d) colors=%d %dx%d", id, RTs[id]->number_RT, RTs[id]->w, RTs[id]->h);
     CurrentRT = id;
     RTs[id]->SetLoad(*T8DeviceContext);
+#ifdef T850_RENDER_TRACE
+    if (T8_TRACE_ACTIVE()) {
+      int rid = g_renderTracer->RegisterRT(RTs[id], nullptr, id);
+      g_renderTracer->EvPushRT(rid, true);
+    }
+#endif
   }
   Technique * BaseDriver::GetTechnique(int id)
   {
@@ -455,19 +468,24 @@ namespace t850 {
       T8_LOG_ERROR("Texture creation failed: '%s'", path.c_str());
       return -1;
     }
+    int retIdx;
     if (firstFreeSlot >= 0) {
       Textures[firstFreeSlot] = pTex;
       T8_LOG_DEBUG("Texture created: '%s' -> slot %d (%dx%d)", path.c_str(), firstFreeSlot, pTex->x, pTex->y);
-      return firstFreeSlot;
+      retIdx = firstFreeSlot;
+    } else {
+      Textures.push_back(pTex);
+      T8_LOG_DEBUG("Texture created: '%s' -> slot %d (%dx%d)", path.c_str(), (int)(Textures.size()-1), pTex->x, pTex->y);
+      retIdx = static_cast<int>(Textures.size() - 1);
     }
-    Textures.push_back(pTex);
-    T8_LOG_DEBUG("Texture created: '%s' -> slot %d (%dx%d)", path.c_str(), (int)(Textures.size()-1), pTex->x, pTex->y);
-    return static_cast<int>(Textures.size() - 1);
+    T8_TRACE_REGISTER_TEXTURE(pTex, "tex2d");
+    return retIdx;
   }
   int BaseDriver::CreateCubeMap(const unsigned char * buff, int w, int h)
   {
     Texture *pTex = T8Device->CreateCubeMap(buff,w,h);
     Textures.push_back(pTex);
+    T8_TRACE_REGISTER_TEXTURE(pTex, "cubemap");
     return static_cast<int>(Textures.size() - 1);
   }
   int BaseDriver::CreateFloatTexture(int w, int h, const float* data)
@@ -477,6 +495,7 @@ namespace t850 {
       return -1;
     Textures.push_back(pTex);
     T8_LOG_DEBUG("Float texture created -> slot %d (%dx%d)", (int)(Textures.size() - 1), w, h);
+    T8_TRACE_REGISTER_TEXTURE(pTex, "float2d");
     return static_cast<int>(Textures.size() - 1);
   }
   int BaseDriver::CreateFloatCubeMap(int size, int mipCount, const float* data)
@@ -486,6 +505,7 @@ namespace t850 {
       return -1;
     Textures.push_back(pTex);
     T8_LOG_DEBUG("Float cubemap created -> slot %d (%dx%d mips=%d)", (int)(Textures.size() - 1), size, size, mipCount);
+    T8_TRACE_REGISTER_TEXTURE(pTex, "floatcube");
     return static_cast<int>(Textures.size() - 1);
   }
   int BaseDriver::CreateShader(std::string src_vs, std::string src_fs, ShaderKey key, const std::string& vs_name, const std::string& fs_name)
@@ -508,6 +528,7 @@ namespace t850 {
         m_shaderCache[key.bits] = shader;
         T8_LOG_DEBUG("Shader compiled: key=0x%016llX pass=%d -> idx %d", static_cast<unsigned long long>(key.bits), key.getPass(), idx);
       }
+      T8_TRACE_REGISTER_SHADER(shader, key.bits, vs_name, fs_name);
       return idx;
     }
     T8_LOG_ERROR("Shader compilation FAILED: key=0x%016llX pass=%d", static_cast<unsigned long long>(key.bits), key.getPass());
@@ -524,6 +545,7 @@ namespace t850 {
     if (pRT!= nullptr) {
       RTs.push_back(pRT);
       T8_LOG_DEBUG("RenderTarget created: handle %d (%dx%d, %d color attachments)", (int)(RTs.size()-1), w, h, nrt);
+      T8_TRACE_REGISTER_RT(pRT, nullptr, (int)(RTs.size() - 1));
       return static_cast<int>(RTs.size() - 1);
     }
     return -1;
@@ -540,6 +562,7 @@ namespace t850 {
       pRT->LoadRT(nrt, perColorFormats, df, w, h, genMips);
       RTs.push_back(pRT);
       T8_LOG_DEBUG("RenderTarget created (per-format): handle %d (%dx%d, %d colors)", (int)(RTs.size()-1), w, h, nrt);
+      T8_TRACE_REGISTER_RT(pRT, nullptr, (int)(RTs.size() - 1));
       return static_cast<int>(RTs.size() - 1);
     }
     return -1;

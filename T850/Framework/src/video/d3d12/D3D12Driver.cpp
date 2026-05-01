@@ -11,6 +11,7 @@
 
 #include <utils/Log.h>
 #include <debug/Profiler.h>
+#include <debug/RenderTrace.h>
 #include <core/Config.h>
 #include <iostream>
 #include <string>
@@ -305,6 +306,25 @@ namespace t850 {
     T8_LOG_DEBUG("[D3D12] PSO created: shader=%p blend=%d depth=%d cull=%d nRTV=%d",
                  shader, key.blend, key.depth, key.cull, key.numRTVs);
     m_psoCache[key] = psoObj;
+#ifdef T850_RENDER_TRACE
+    if (T8_TRACE_ACTIVE()) {
+      TracePSORec rec;
+      rec.backend                 = "d3d12";
+      rec.shader_id               = g_renderTracer->LookupShaderId(shader);
+      rec.shader_key_bits         = shader ? shader->key.bits : 0;
+      rec.blend                   = key.blend;
+      rec.depth                   = key.depth;
+      rec.cull                    = key.cull;
+      rec.topology                = (int)D3D12_PRIMITIVE_TOPOLOGY_TYPE_TRIANGLE;
+      rec.num_color_attachments   = key.numRTVs;
+      for (int i = 0; i < key.numRTVs && i < (int)key.rtvFormats.size(); ++i)
+        rec.color_formats.push_back((uint32_t)key.rtvFormats[i]);
+      rec.depth_format            = (uint32_t)key.dsvFormat;
+      rec.vertex_stride           = 0;
+      rec.render_pass             = 0;
+      g_renderTracer->EvCreatePSO(rec);
+    }
+#endif
     return psoObj.Get();
   }
 
@@ -751,19 +771,23 @@ namespace t850 {
   void D3D12Driver::SetBlendState(BlendStates state) {
     T8_LOG_TRACE("[D3D12] SetBlendState(%d)", state);
     m_currentBlend = state;
+    T8_TRACE(EvSetBlend((int)state));
   }
 
   void D3D12Driver::SetDepthStencilState(DepthStencilStates state) {
     T8_LOG_TRACE("[D3D12] SetDepthStencilState(%d)", state);
     m_currentDepth = state;
+    T8_TRACE(EvSetDepth((int)state));
   }
 
   void D3D12Driver::SetCullFace(FaceCulling state) {
     T8_LOG_TRACE("[D3D12] SetCullFace(%d)", state);
     m_currentCull = state; m_FaceCulling = state;
+    T8_TRACE(EvSetCull((int)state));
   }
 
   void D3D12Driver::PopRT() {
+    T8_TRACE(EvPopRT());
     T8_LOG_TRACE("[D3D12] PopRT (CurrentRT=%d)", CurrentRT);
     if (CurrentRT >= 0 && CurrentRT < (int)RTs.size()) {
       D3D12RT* rt = static_cast<D3D12RT*>(RTs[CurrentRT]);

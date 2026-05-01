@@ -9,6 +9,7 @@
 #ifdef OS_WINDOWS
 
 #include <utils/Log.h>
+#include <debug/RenderTrace.h>
 #include <algorithm>
 
 namespace t850 {
@@ -298,6 +299,13 @@ namespace t850 {
     for (const auto& samplerBinding : samplerSlots) {
       cmdList->SetGraphicsRootDescriptorTable(samplerBinding.second, driver->GetDefaultSamplerGPU());
     }
+#ifdef T850_RENDER_TRACE
+    if (T8_TRACE_ACTIVE()) {
+      int shId = g_renderTracer->LookupShaderId(this);
+      g_renderTracer->EvBindShader(shId, key.bits);
+      g_renderTracer->EvBindPSO((int)(uintptr_t)pso);
+    }
+#endif
   }
 
   void D3D12Shader::DestroyAPIShader() {

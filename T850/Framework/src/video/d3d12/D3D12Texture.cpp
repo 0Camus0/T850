@@ -9,6 +9,7 @@
 #ifdef OS_WINDOWS
 
 #include <utils/Log.h>
+#include <debug/RenderTrace.h>
 
 namespace t850 {
 
@@ -434,6 +435,21 @@ namespace t850 {
     if (it != shader->srvSlots.end()) {
       cmdList->SetGraphicsRootDescriptorTable(it->second, srvGPU);
     }
+#ifdef T850_RENDER_TRACE
+    if (T8_TRACE_ACTIVE()) {
+      int texId = g_renderTracer->LookupTextureId(this);
+      // D3D12 binds are synchronous: emit both Request (engine intent) and
+      // Commit (what the API actually got) at the same site so trace diffs
+      // line up with Vulkan's split request/commit pair.
+      g_renderTracer->EvBindTextureRequest(slot, texId, shaderTextureName, "ps");
+      // Use the SRV GPU descriptor handle low 32 bits as a viewId surrogate
+      // (stable per-process, unique per srvGPU range) — same diff strategy
+      // as Vulkan's view pointer surrogate.
+      int viewId    = (int)(srvGPU.ptr & 0xFFFFFFFFu);
+      int samplerId = (int)(samplerGPU.ptr & 0xFFFFFFFFu);
+      g_renderTracer->EvBindTextureCommit(slot, texId, viewId, samplerId, shaderTextureName, "ps");
+    }
+#endif
   }
 
   void D3D12Texture::SetSampler(const DeviceContext& deviceContext, unsigned int slot) {

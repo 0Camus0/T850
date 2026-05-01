@@ -12,6 +12,7 @@
 #if defined(OS_WINDOWS)
 
 #include <utils/Log.h>
+#include <debug/RenderTrace.h>
 #include <algorithm>
 #include <cstring>
 #include <vector>
@@ -442,6 +443,15 @@ namespace t850 {
     auto* driver = GetVkDriver();
     driver->m_pendingTextures[slot].imageView = m_imageView;
     driver->m_pendingTextures[slot].sampler = m_sampler;
+#ifdef T850_RENDER_TRACE
+    if (T8_TRACE_ACTIVE()) {
+      driver->m_pendingTextures[slot].tracerTexId = g_renderTracer->LookupTextureId(this);
+      m_shaderTextureName = shaderTextureName;
+      driver->m_pendingTextures[slot].tracerName  = m_shaderTextureName.c_str();
+      g_renderTracer->EvBindTextureRequest(slot, driver->m_pendingTextures[slot].tracerTexId,
+                                           shaderTextureName, "ps");
+    }
+#endif
     T8_LOG_DEBUG("[Vulkan] Texture::Set slot=%u view=%p sampler=%p name=%s",
                 slot, (void*)m_imageView, (void*)m_sampler, shaderTextureName.c_str());
   }

@@ -1,5 +1,6 @@
 #include <pch.h>
 #include <debug/FrameDumper.h>
+#include <debug/RenderTrace.h>
 #include <utils/Camera.h>
 #include <scene/SceneProp.h>
 #include <video/BaseDriver.h>
@@ -256,6 +257,14 @@ void FrameDumper::DumpFrame(BaseDriver* driver,
   LogCameraState(cam, lightCam, props, dumpFrameCounter_, apiName, dt);
   WriteSnapshot(dumpDir + "/snapshot.json", cam, lightCam, props,
                 dumpFrameCounter_, apiName, dt, omniCams, omniLightPos);
+
+#ifdef T850_RENDER_TRACE
+  // Render trace: write trace.json next to RT_Dump_*.ppm and snapshot.json so
+  // a side-by-side comparison of D3D12 vs Vulkan can use the same dumpDir.
+  if (t850::g_renderTracer) {
+    t850::g_renderTracer->Save(dumpDir);
+  }
+#endif
 
   T8_LOG_INFO("RT dump complete -> %s/ (%zu files)", dumpDir.c_str(), rts.size() + 1);
 

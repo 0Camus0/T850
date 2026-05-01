@@ -12,6 +12,7 @@
 #ifdef OS_WINDOWS
 
 #include <utils/Log.h>
+#include <debug/RenderTrace.h>
 
 namespace t850 {
 
@@ -113,6 +114,12 @@ namespace t850 {
     m_view.Format = (format == IndexBufferFormat::R16) ? DXGI_FORMAT_R16_UINT : DXGI_FORMAT_R32_UINT;
     auto* cmdList = static_cast<const D3D12DeviceContext*>(&deviceContext)->GetCommandList();
     cmdList->IASetIndexBuffer(&m_view);
+#ifdef T850_RENDER_TRACE
+    if (T8_TRACE_ACTIVE()) {
+      int bufId = g_renderTracer->EnsureBufferId(this, "ib");
+      g_renderTracer->EvBindIndexBufferRequest(bufId, (int)format, offset);
+    }
+#endif
   }
 
   void D3D12IndexBuffer::UpdateFromSystemCopy(const DeviceContext&) {

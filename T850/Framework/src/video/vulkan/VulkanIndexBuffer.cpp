@@ -12,6 +12,7 @@
 #if defined(OS_WINDOWS)
 
 #include <utils/Log.h>
+#include <debug/RenderTrace.h>
 #include <cstring>
 
 namespace t850 {
@@ -61,6 +62,12 @@ namespace t850 {
     VkCommandBuffer cmd = static_cast<const VulkanDeviceContext*>(&deviceContext)->GetCommandBuffer();
     VkIndexType idxType = (format == IndexBufferFormat::R16) ? VK_INDEX_TYPE_UINT16 : VK_INDEX_TYPE_UINT32;
     vkCmdBindIndexBuffer(cmd, m_buffer, (VkDeviceSize)offset, idxType);
+#ifdef T850_RENDER_TRACE
+    if (T8_TRACE_ACTIVE()) {
+      int bufId = g_renderTracer->EnsureBufferId(this, "ib");
+      g_renderTracer->EvBindIndexBufferRequest(bufId, (int)format, offset);
+    }
+#endif
   }
 
   void VulkanIndexBuffer::UpdateFromSystemCopy(const DeviceContext& deviceContext) {

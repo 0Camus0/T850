@@ -15,6 +15,7 @@
 #include <glslang/SPIRV/GlslangToSpv.h>
 #include <utils/Log.h>
 #include <utils/SPIRVReflection.h>
+#include <debug/RenderTrace.h>
 
 namespace t850 {
 
@@ -277,6 +278,15 @@ namespace t850 {
 
     VkCommandBuffer cmd = static_cast<const VulkanDeviceContext*>(&deviceContext)->GetCommandBuffer();
     vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline);
+#ifdef T850_RENDER_TRACE
+    if (T8_TRACE_ACTIVE()) {
+      int shId = g_renderTracer->LookupShaderId(this);
+      g_renderTracer->EvBindShader(shId, key.bits);
+      // Surface the pipeline pointer so two API traces can be diffed for
+      // pipeline equality at the same draw position.
+      g_renderTracer->EvBindPSO((int)(uintptr_t)pipeline);
+    }
+#endif
   }
 
   void VulkanShader::DestroyAPIShader() {

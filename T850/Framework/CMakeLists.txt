@@ -16,9 +16,15 @@ set(FRAMEWORK_SOURCES
   src/scene/PrimitiveInstance.cpp
   src/scene/PrimitiveManager.cpp
   src/scene/RenderQuad.cpp
+  src/scene/MeshAssetCache.cpp
+  src/scene/MaterialAssetCache.cpp
+  src/scene/MeshPool.cpp
+  src/scene/RenderQueue.cpp
+  src/scene/IBLResources.cpp
   src/debug/FrameDumper.cpp
   src/debug/FrameDumperIO.cpp
   src/debug/Profiler.cpp
+  src/debug/RenderTrace.cpp
   src/scene/RenderGraph.cpp
   src/scene/SceneDescriptor.cpp
   src/scene/SceneSetup.cpp

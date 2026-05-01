@@ -13,6 +13,7 @@
 
 #include <utils/Log.h>
 #include <debug/Profiler.h>
+#include <debug/RenderTrace.h>
 
 namespace t850 {
 
@@ -36,6 +37,7 @@ namespace t850 {
       case Topology::TRIANLE_LIST:
       default:                          m_topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;   break;
     }
+    T8_TRACE(EvSetTopology((int)topology));
   }
 
   void VulkanDeviceContext::DrawIndexed(unsigned vertexCount, unsigned startIndex, unsigned startVertex) {
@@ -51,6 +53,7 @@ namespace t850 {
 #ifdef T8_ENABLE_PROFILER
     if (t850::g_profiler) t850::g_profiler->AddDrawCall(vertexCount);
 #endif
+    T8_TRACE(EvDrawIndexed(vertexCount, startIndex, startVertex));
   }
 
 } // namespace t850

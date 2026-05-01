@@ -20,6 +20,7 @@
 #include <utils/Log.h>
 #include <utils/SPIRVReflection.h>
 #include <debug/Profiler.h>
+#include <debug/RenderTrace.h>
 #include <iostream>
 #include <fstream>
 #include <string>
@@ -211,6 +212,24 @@ namespace t850 {
     T8_LOG_DEBUG("[Vulkan] Pipeline created: shader=%p blend=%d depth=%d cull=%d topo=%d stride=%u colors=%d renderPass=%p",
            shader, key.blend, key.depth, key.cull, key.topology, key.vertexStride, key.numColorAttachments, pipelineCI.renderPass);
     m_pipelineCache[key] = pipeline;
+#ifdef T850_RENDER_TRACE
+    if (T8_TRACE_ACTIVE()) {
+      TracePSORec rec;
+      rec.backend                 = "vulkan";
+      rec.shader_id               = g_renderTracer->LookupShaderId(shader);
+      rec.shader_key_bits         = shader ? shader->key.bits : 0;
+      rec.blend                   = key.blend;
+      rec.depth                   = key.depth;
+      rec.cull                    = key.cull;
+      rec.topology                = key.topology;
+      rec.num_color_attachments   = key.numColorAttachments;
+      rec.color_formats.push_back((uint32_t)key.colorFormat);
+      rec.depth_format            = (uint32_t)key.depthFormat;
+      rec.vertex_stride           = key.vertexStride;
+      rec.render_pass             = (uint64_t)key.renderPass;
+      g_renderTracer->EvCreatePSO(rec);
+    }
+#endif
     return pipeline;
   }
 
@@ -1161,21 +1180,25 @@ namespace t850 {
   void VulkanDriver::SetBlendState(BlendStates state) {
     T8_LOG_TRACE("[Vulkan] SetBlendState(%d)", state);
     m_currentBlend = state;
+    T8_TRACE(EvSetBlend((int)state));
   }
 
   void VulkanDriver::SetDepthStencilState(DepthStencilStates state) {
     T8_LOG_TRACE("[Vulkan] SetDepthStencilState(%d)", state);
     m_currentDepth = state;
+    T8_TRACE(EvSetDepth((int)state));
   }
 
   void VulkanDriver::SetCullFace(FaceCulling state) {
     T8_LOG_TRACE("[Vulkan] SetCullFace(%d)", state);
     m_currentCull = state;
     m_FaceCulling = state;
+    T8_TRACE(EvSetCull((int)state));
   }
 
   void VulkanDriver::PopRT() {
     T8_LOG_TRACE("[Vulkan] PopRT (CurrentRT=%d)", CurrentRT);
+    T8_TRACE(EvPopRT());
 
     if (CurrentRT >= 0 && CurrentRT < (int)RTs.size() && RTs[CurrentRT]) {
       VulkanRT* rt = static_cast<VulkanRT*>(RTs[CurrentRT]);
@@ -1697,6 +1720,33 @@ reopen:
     vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS,
                             shader->m_pipelineLayout, 0, 1, &ds,
                             dynOffsetCount, &dynamicOffset);
+#ifdef T850_RENDER_TRACE
+    if (T8_TRACE_ACTIVE()) {
+      // Emit one commit event per slot the shader actually consumes — this
+      // reflects what the GPU will see (including dummy-image fallbacks for
+      // unbound slots, which is exactly the kind of mismatch we need to
+      // catch when comparing two API traces).
+      for (int slot = 0; slot < VulkanShader::kMaxTextureSlots; slot++) {
+        if (shader->srvBindings[slot] < 0) continue;
+        bool hasUserBind = (m_pendingTextures[slot].imageView != VK_NULL_HANDLE);
+        int  texId       = hasUserBind ? m_pendingTextures[slot].tracerTexId : -1;
+        const char* nm   = hasUserBind && m_pendingTextures[slot].tracerName
+                            ? m_pendingTextures[slot].tracerName : "<dummy>";
+        // viewId/samplerId reuse the imageView/sampler raw pointers cast to int —
+        // not stable resource ids but unique enough to flag mismatches between
+        // two API traces (different VkImageView pointers => different views).
+        int viewId    = (int)(uintptr_t)m_pendingTextures[slot].imageView;
+        int samplerId = (int)(uintptr_t)m_pendingTextures[slot].sampler;
+        g_renderTracer->EvBindTextureCommit(slot, texId, viewId, samplerId, nm ? nm : "", "ps");
+      }
+      // Commit the cbuffer with its slot=cbvBinding, the current update_version
+      // (looked up internally by the tracer), and the dynamic offset that was
+      // actually used.
+      if (shader->cbvBinding >= 0 && m_pendingCBId >= 0) {
+        g_renderTracer->EvBindCBufferCommit(shader->cbvBinding, m_pendingCBId);
+      }
+    }
+#endif
   }
 
   // ══════════════════════════════════════════════════════

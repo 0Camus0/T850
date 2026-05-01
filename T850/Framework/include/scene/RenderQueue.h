@@ -129,6 +129,67 @@ namespace t850 {
   private:
     std::vector<DrawItem> m_items;
   };
+  // Process-wide draw-pass state tracker. Reset by the caller at the
+  // start of a multi-entity mesh pass; persists across multiple
+  // RenderMesh::Draw / RenderSkinnedMesh::Draw calls inside the pass
+  // so redundant texture / IB / shader binds dedupe across entities.
+  //
+  // D3D12 invariants honored:
+  //   - Shader::Set must run every draw (PSO is keyed by current
+  //     blend/depth/cull which can change per subset). The driver
+  //     does its own m_lastPSO dedup so calling is cheap. We track
+  //     `lastShaderBound` only to invalidate the texture cache.
+  //   - D3D12Texture::Set looks up slot→rootParam via a per-shader
+  //     map. Texture cache is only valid within one shader; we clear
+  //     it on shader change.
+  //
+  // Behaviour fallback: if Reset() is never called, the tracker
+  // behaves exactly as draw-scope tracking (every Draw resets it via
+  // OpenScope() at the top, closes via CloseScope() at the bottom).
+  // RenderGraph wraps a multi-mesh pass with Begin()/End() to keep
+  // the tracker live across the calls, lifting the dedup horizon.
+  class MeshDrawStateTracker {
+  public:
+    static constexpr int kMaxTrackedSlots = 32;
+
+    static MeshDrawStateTracker& Get();
+
+    // Begin/End bracket a "pass scope" — the state survives across
+    // RenderMesh::Draw calls inside it. Without an explicit Begin,
+    // each RenderMesh::Draw uses its own private scope (legacy).
+    void Begin();
+    void End();
+    bool InScope() const { return m_passActive; }
+
+    // Reset all tracked binds. Called by Begin() and by RenderMesh's
+    // private OpenScope() when no pass scope is active.
+    void Reset();
+
+    // Track a shader change; on transition, invalidate the texture
+    // cache because rootParam mappings differ per shader on D3D12.
+    void OnShaderChanged(ShaderBase* s);
+
+    // Texture-bind dedup. Returns true if the caller should perform
+    // the actual SRV bind (state changed); always sets the lastTex
+    // entry. Call SetSampler unconditionally afterwards (cheap and
+    // safe).
+    bool ShouldBindTexture(int slot, Texture* t);
+
+    // EnvMap dedup (separate slot tracking with its own lastEnv).
+    bool ShouldBindEnvMap(Texture* env);
+
+    // IB-bind dedup.
+    bool ShouldBindIB(IndexBuffer* ib, IndexBufferFormat::E fmt);
+
+  private:
+    bool                 m_passActive   = false;
+    ShaderBase*          m_lastShader   = nullptr;
+    Texture*             m_lastTex[kMaxTrackedSlots] = { nullptr };
+    Texture*             m_lastEnv      = nullptr;
+    IndexBuffer*         m_lastIB       = nullptr;
+    IndexBufferFormat::E m_lastIBFmt    = IndexBufferFormat::R16;
+    bool                 m_lastIBFmtSet = false;
+  };
 }
 
 #endif // T850_RENDER_QUEUE_H

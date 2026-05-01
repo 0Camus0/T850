@@ -12,6 +12,7 @@
 *********************************************************/
 
 #include <video/BaseDriver.h>
+#include <scene/RenderQueue.h>   // MeshDrawStateTracker
 #include <iostream>
 #include <cmath>
 #include <algorithm>
@@ -1222,32 +1223,22 @@ namespace t850 {
 
     uint8_t currentPass = gKey.getPass();
 
-    // Phase C step 2: state tracking. Across the whole Draw() call,
-    // remember which texture/SRV is currently bound to each slot and
-    // skip the bind when it would write the same value. The Porsche
-    // (151 subsets) was binding the 9 IBL/scene textures + EnvMap
-    // inside every per-subset iteration today — that's ~1500
-    // redundant API calls per frame collapsing to ~10 with this
-    // tracker. Material textures collapse when consecutive subsets
-    // share a material; IB pool / shader collapses when consecutive
-    // subsets share them. Byte-identical: a skipped bind is one that
-    // writes the same value already there.
-    constexpr int kMaxTrackedSlots = 32;
-    Texture*                  lastTex[kMaxTrackedSlots] = { nullptr };
-    Texture*                  lastEnv = nullptr;
-    ShaderBase*               lastShaderBound = nullptr;
-    IndexBuffer*              lastIBBound     = nullptr;
-    IndexBufferFormat::E      lastIBFmt       = IndexBufferFormat::R16;
-    bool                      lastIBFmtSet    = false;
+    // Phase C step 3: state tracker is process-wide (singleton) so
+    // it can persist across multiple RenderMesh::Draw calls inside
+    // a pass scope opened by RenderGraph (cross-entity dedup of IBL
+    // textures, EnvMap, IB pool, etc.). Without an outer Begin(), we
+    // open a private scope here so the tracker resets per-Draw and
+    // behaves identically to step 2.
+    MeshDrawStateTracker& tracker = MeshDrawStateTracker::Get();
+    const bool ownsScope = !tracker.InScope();
+    if (ownsScope) tracker.Begin();
     auto bindTextureOnce = [&](Texture* t, int slot, const char* name, int samplerSlot) {
-      if (!t || slot < 0 || slot >= kMaxTrackedSlots) return;
-      if (lastTex[slot] != t) {
+      if (!t || slot < 0 || slot >= MeshDrawStateTracker::kMaxTrackedSlots) return;
+      if (tracker.ShouldBindTexture(slot, t)) {
         t->Set(*T8DeviceContext, slot, name);
-        lastTex[slot] = t;
       }
-      // Sampler is determined by slot (Material vs Clamp); set whenever
-      // texture changes since the texture's slot association may need
-      // refreshing on some backends.
+      // Sampler set every time (cheap); the per-shader sampler slot
+      // map is consulted inside SetSampler.
       t->SetSampler(*T8DeviceContext, samplerSlot);
     };
 
@@ -1459,14 +1450,9 @@ namespace t850 {
           }
         }
         IndexBufferFormat::E ibFmt = sub_info->IB32Bit ? IndexBufferFormat::R32 : IndexBufferFormat::R16;
-        // Phase C step 2: skip the IB bind when we already have this
-        // exact IB+format bound (the Porsche shares one 16-bit pool
-        // across all 151 subsets).
-        if (lastIBBound != ibToBind || !lastIBFmtSet || lastIBFmt != ibFmt) {
+        // Phase C step 3: IB-bind dedup via process-wide tracker.
+        if (tracker.ShouldBindIB(ibToBind, ibFmt)) {
           ibToBind->Set(*T8DeviceContext, 0, ibFmt);
-          lastIBBound = ibToBind;
-          lastIBFmt   = ibFmt;
-          lastIBFmtSet = true;
         }
 
         // Build final shader key: material features + global pass + toggles
@@ -1495,29 +1481,13 @@ namespace t850 {
         }
 
         if (update) {
-          // Phase C step 2: shader bind cannot be skipped on
-          // PSO-based backends (D3D12). The PSO is keyed by
-          // (shader + current blend/depth/cull + RT formats), and
-          // SetCullFace() between subsets (for doubleSided materials)
-          // changes the cull state — Shader::Set re-derives the PSO
-          // from the current state, so it must run every subset even
-          // when the ShaderBase* instance is unchanged. The driver
-          // itself already deduplicates redundant PSO binds via
-          // m_lastPSO so this is cheap.
+          // D3D12 invariant: PSO is keyed by (shader, blend, depth,
+          // cull, RT formats) and re-derived at Set time. Always call
+          // s->Set; the driver dedupes via m_lastPSO. Tracker only
+          // notes the shader change to invalidate texture cache
+          // (per-shader rootParam map).
           s->Set(*T8DeviceContext);
-
-          // ── Texture-cache invalidation ────────────────────────
-          // D3D12Texture::Set reads `shader->srvSlots` to map a SRV
-          // slot to a root parameter index — that mapping is
-          // PER-SHADER. When the shader changes, the root parameter
-          // for slot N can differ, so the texture cache must be
-          // dropped or we'd silently re-use a binding intended for a
-          // different root param.
-          if (s != lastShaderBound) {
-            for (int i = 0; i < kMaxTrackedSlots; ++i) lastTex[i] = nullptr;
-            lastEnv = nullptr;
-            lastShaderBound = s;
-          }
+          tracker.OnShaderChanged(s);
 
           it_MeshInfo->CB->UpdateFromBuffer(*T8DeviceContext, &it_MeshInfo->CnstBuffer.WVP[0]);
           it_MeshInfo->CB->Set(*T8DeviceContext);
@@ -1547,12 +1517,11 @@ namespace t850 {
           bindTextureOnce(t, 3, "NormalTex", MaterialSamplerSlot);
         }
         if (EnvMap) {
-          // Slot 4 is shared by EnvMap; track separately to allow
-          // EnvMap pointer change between RenderMesh instances.
-          if (lastEnv != EnvMap) {
+          // EnvMap goes to slot 4 with its own dedicated tracker (so
+          // it's not confused with material-driven slot 4 textures
+          // from a different shader path).
+          if (tracker.ShouldBindEnvMap(EnvMap)) {
             EnvMap->Set(*T8DeviceContext, 4, "texEnv");
-            lastTex[4] = EnvMap;
-            lastEnv = EnvMap;
           }
           EnvMap->SetSampler(*T8DeviceContext, ClampSamplerSlot);
         }
@@ -1627,6 +1596,7 @@ namespace t850 {
         last = s;
       }
     }
+    if (ownsScope) tracker.End();
   }
 
   void RenderMesh::Destroy() {

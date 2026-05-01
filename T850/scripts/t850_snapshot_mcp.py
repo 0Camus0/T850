@@ -17,6 +17,8 @@ from typing import Any, Callable
 
 MCP_PROTOCOL_VERSION = "2024-11-05"
 BT709_LUMA = (0.2126, 0.7152, 0.0722)
+# Treat one RGB channel as suspicious only when it is at least twice the least
+# changed channel, with a small epsilon so near-zero noise does not dominate.
 CHANNEL_DOMINANCE_RATIO = 2.0
 CHANNEL_DOMINANCE_EPSILON = 1.0
 REPORT_CSS = """
@@ -59,9 +61,12 @@ def read_ppm(path: str) -> PpmImage:
         magic = _read_ppm_token(handle)
         if magic != b"P6":
             raise ValueError(f"{path}: expected binary PPM P6, got {magic!r}")
-        width = int(_read_ppm_token(handle))
-        height = int(_read_ppm_token(handle))
-        max_value = int(_read_ppm_token(handle))
+        try:
+            width = int(_read_ppm_token(handle))
+            height = int(_read_ppm_token(handle))
+            max_value = int(_read_ppm_token(handle))
+        except ValueError as exc:
+            raise ValueError(f"{path}: failed to parse PPM width, height, or max value") from exc
         if max_value <= 0 or max_value > 255:
             raise ValueError(f"{path}: unsupported PPM max value {max_value}")
         data = handle.read()
@@ -572,6 +577,8 @@ def main() -> int:
         result = analyze_artifacts(args.reference_dir, args.candidate_dir, args.target, args.tolerance)
     elif args.command == "generate-report":
         result = generate_visual_report(args.reference_dir, args.candidate_dir, args.output_dir, args.target, args.tolerance)
+    else:
+        raise RuntimeError(f"Unhandled command: {args.command}")
     print(json.dumps(result, indent=2))
     return 0
 

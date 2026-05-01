@@ -426,6 +426,8 @@ Once the host launches the server, it exposes these tools:
 CLI fallback for CI or non-MCP agents:
 
 ```bash
+python T850/scripts/compare_dumps.py path/to/reference path/to/candidate
+python T850/scripts/compare_dumps.py path/to/reference path/to/candidate --report out/snapshot-report
 python T850/scripts/t850_snapshot_mcp.py compare-snapshots path/to/reference path/to/candidate
 python T850/scripts/t850_snapshot_mcp.py generate-report path/to/reference path/to/candidate out/snapshot-report
 ```

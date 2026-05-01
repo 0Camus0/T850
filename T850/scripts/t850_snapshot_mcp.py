@@ -572,8 +572,6 @@ def main() -> int:
         result = analyze_artifacts(args.reference_dir, args.candidate_dir, args.target, args.tolerance)
     elif args.command == "generate-report":
         result = generate_visual_report(args.reference_dir, args.candidate_dir, args.output_dir, args.target, args.tolerance)
-    else:
-        parser.error(f"Unknown command: {args.command}")
     print(json.dumps(result, indent=2))
     return 0
 

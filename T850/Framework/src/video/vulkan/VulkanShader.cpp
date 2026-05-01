@@ -218,6 +218,35 @@ namespace t850 {
     m_vertexBinding.stride = vertexStride;
     m_vertexBinding.inputRate = VK_VERTEX_INPUT_RATE_VERTEX;
 
+#ifdef T850_RENDER_TRACE
+    if (T8_TRACE_ACTIVE()) {
+      // Register the input layout the shader actually expects, indexed by
+      // SPIR-V location and named after the source HLSL semantic where
+      // available. The shader hasn't been registered yet (BaseDriver does
+      // that after T8Device->CreateShader returns).
+      std::vector<TraceShaderAttr> attrs;
+      attrs.reserve(m_vertexAttributes.size());
+      const size_t reflCount = vsRefl.stageInputs.size();
+      for (size_t i = 0; i < m_vertexAttributes.size(); ++i) {
+        const auto& va = m_vertexAttributes[i];
+        TraceShaderAttr a;
+        a.location   = (int)va.location;
+        a.input_slot = (int)va.binding;
+        a.offset     = va.offset;
+        if (i < reflCount) a.semantic = vsRefl.stageInputs[i].name;
+        switch (va.format) {
+          case VK_FORMAT_R32_SFLOAT:           a.format = "VK_FORMAT_R32_SFLOAT";           a.size_bytes = 4;  break;
+          case VK_FORMAT_R32G32_SFLOAT:        a.format = "VK_FORMAT_R32G32_SFLOAT";        a.size_bytes = 8;  break;
+          case VK_FORMAT_R32G32B32_SFLOAT:     a.format = "VK_FORMAT_R32G32B32_SFLOAT";     a.size_bytes = 12; break;
+          case VK_FORMAT_R32G32B32A32_SFLOAT:  a.format = "VK_FORMAT_R32G32B32A32_SFLOAT";  a.size_bytes = 16; break;
+          default:                             a.format = "VK_FORMAT_" + std::to_string((int)va.format); break;
+        }
+        attrs.push_back(std::move(a));
+      }
+      g_renderTracer->RegisterShaderInputsForPtr(this, vertexStride, std::move(attrs));
+    }
+#endif
+
     T8_LOG_INFO("[Vulkan] Shader '%s'/'%s': %zu bindings (cbv=%d), %zu inputs (stride=%d)",
                 vs_name.c_str(), fs_name.c_str(),
                 bindings.size(), cbvBinding,

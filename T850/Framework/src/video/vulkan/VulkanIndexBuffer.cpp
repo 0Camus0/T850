@@ -55,6 +55,12 @@ namespace t850 {
       if (m_mappedData) memcpy(m_mappedData, initialData, desc.byteWidth);
     }
     T8_LOG_DEBUG("[Vulkan] IB created: %d bytes", desc.byteWidth);
+#ifdef T850_RENDER_TRACE
+    if (T8_TRACE_ACTIVE() && initialData) {
+      int bufId = g_renderTracer->EnsureBufferId(this, "ib");
+      g_renderTracer->RecordBufferUpdate(bufId, initialData, desc.byteWidth, "ib", "");
+    }
+#endif
   }
 
   void VulkanIndexBuffer::Set(const DeviceContext& deviceContext, const unsigned offset, IndexBufferFormat::E format) {
@@ -73,11 +79,23 @@ namespace t850 {
   void VulkanIndexBuffer::UpdateFromSystemCopy(const DeviceContext& deviceContext) {
     if (m_mappedData && !sysMemCpy.empty())
       memcpy(m_mappedData, sysMemCpy.data(), sysMemCpy.size());
+#ifdef T850_RENDER_TRACE
+    if (T8_TRACE_ACTIVE() && !sysMemCpy.empty()) {
+      int bufId = g_renderTracer->EnsureBufferId(this, "ib");
+      g_renderTracer->RecordBufferUpdate(bufId, sysMemCpy.data(), (uint32_t)sysMemCpy.size(), "ib", "");
+    }
+#endif
   }
 
   void VulkanIndexBuffer::UpdateFromBuffer(const DeviceContext& deviceContext, const void* buffer) {
     sysMemCpy.assign((char*)buffer, (char*)buffer + descriptor.byteWidth);
     if (m_mappedData) memcpy(m_mappedData, buffer, descriptor.byteWidth);
+#ifdef T850_RENDER_TRACE
+    if (T8_TRACE_ACTIVE()) {
+      int bufId = g_renderTracer->EnsureBufferId(this, "ib");
+      g_renderTracer->RecordBufferUpdate(bufId, buffer, descriptor.byteWidth, "ib", "");
+    }
+#endif
   }
 
   void VulkanIndexBuffer::release() {

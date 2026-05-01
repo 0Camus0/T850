@@ -55,6 +55,12 @@ namespace t850 {
       if (m_mappedData) memcpy(m_mappedData, initialData, desc.byteWidth);
     }
     T8_LOG_DEBUG("[Vulkan] VB created: %d bytes", desc.byteWidth);
+#ifdef T850_RENDER_TRACE
+    if (T8_TRACE_ACTIVE() && initialData) {
+      int bufId = g_renderTracer->EnsureBufferId(this, "vb");
+      g_renderTracer->RecordBufferUpdate(bufId, initialData, desc.byteWidth, "vb", "");
+    }
+#endif
   }
 
   void VulkanVertexBuffer::Set(const DeviceContext& deviceContext, const unsigned stride, const unsigned offset) {
@@ -82,6 +88,12 @@ namespace t850 {
   void VulkanVertexBuffer::UpdateFromSystemCopy(const DeviceContext& deviceContext) {
     if (m_mappedData && !sysMemCpy.empty())
       memcpy(m_mappedData, sysMemCpy.data(), sysMemCpy.size());
+#ifdef T850_RENDER_TRACE
+    if (T8_TRACE_ACTIVE() && !sysMemCpy.empty()) {
+      int bufId = g_renderTracer->EnsureBufferId(this, "vb");
+      g_renderTracer->RecordBufferUpdate(bufId, sysMemCpy.data(), (uint32_t)sysMemCpy.size(), "vb", "");
+    }
+#endif
   }
 
   void VulkanVertexBuffer::UpdateFromBuffer(const DeviceContext& deviceContext, const void* buffer) {
@@ -100,6 +112,12 @@ namespace t850 {
       if (m_mappedData) memcpy(m_mappedData, buffer, descriptor.byteWidth);
       m_usesRing = false;
     }
+#ifdef T850_RENDER_TRACE
+    if (T8_TRACE_ACTIVE()) {
+      int bufId = g_renderTracer->EnsureBufferId(this, "vb");
+      g_renderTracer->RecordBufferUpdate(bufId, buffer, descriptor.byteWidth, "vb", "");
+    }
+#endif
   }
 
   void VulkanVertexBuffer::release() {

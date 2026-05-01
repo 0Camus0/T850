@@ -3,6 +3,7 @@
 #include <utils/Utils.h>
 #include <utils/Log.h>
 #include <video/gl/GLDriver.h>
+#include <debug/RenderTrace.h>
 
 
 namespace t850 {
@@ -84,6 +85,28 @@ namespace t850 {
       }
       vertexDeclPos += size;
     }
+
+#ifdef T850_RENDER_TRACE
+    if (T8_TRACE_ACTIVE()) {
+      // Stash the input layout for the tracer keyed by ShaderBase*; the
+      // shader hasn't been registered yet (BaseDriver::CreateShader does
+      // that after T8Device->CreateShader returns), so we can't use a
+      // shader id here. Mirrors the D3D12/Vulkan path.
+      std::vector<TraceShaderAttr> attrs;
+      attrs.reserve(locs.size());
+      for (const auto& it : locs) {
+        TraceShaderAttr a;
+        a.semantic   = it.name;
+        a.location   = it.loc;
+        a.input_slot = 0;
+        a.offset     = (uint32_t)it.bufferBytePosition;
+        a.size_bytes = (uint32_t)(it.size * 4);
+        a.format     = "GL_FLOAT_VEC" + std::to_string(it.size);
+        attrs.push_back(std::move(a));
+      }
+      g_renderTracer->RegisterShaderInputsForPtr(this, (uint32_t)vertexDeclPos, std::move(attrs));
+    }
+#endif
 
     int uniformPos = 0;
     std::vector<t850::InputElement> reflectedUniforms;
@@ -201,6 +224,13 @@ namespace t850 {
     for (int a = maxLoc; a < sPrevMaxAttrib; a++)
       glDisableVertexAttribArray(a);
     if (maxLoc > sPrevMaxAttrib) sPrevMaxAttrib = maxLoc;
+#ifdef T850_RENDER_TRACE
+    if (T8_TRACE_ACTIVE()) {
+      int shId = g_renderTracer->LookupShaderId(this);
+      g_renderTracer->EvBindShader(shId, key.bits);
+      // No PSO concept in GL — intentionally no EvBindPSO.
+    }
+#endif
   }
   void GLShader::DestroyAPIShader()
   {

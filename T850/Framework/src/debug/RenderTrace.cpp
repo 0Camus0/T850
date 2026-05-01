@@ -16,6 +16,7 @@
 #include <chrono>
 #include <ctime>
 #include <cstdio>
+#include <algorithm>
 
 namespace t850 {
 
@@ -47,12 +48,22 @@ struct glz::meta<t850::TraceRTRec> {
 };
 
 template <>
+struct glz::meta<t850::TraceShaderAttr> {
+  using T = t850::TraceShaderAttr;
+  static constexpr auto value = object(
+    "semantic", &T::semantic, "format", &T::format,
+    "location", &T::location, "input_slot", &T::input_slot,
+    "offset", &T::offset, "size_bytes", &T::size_bytes);
+};
+
+template <>
 struct glz::meta<t850::TraceShaderRec> {
   using T = t850::TraceShaderRec;
   static constexpr auto value = object(
     "id", &T::id, "key_bits", &T::key_bits, "key_hex", &T::key_hex,
     "pass", &T::pass, "vs_name", &T::vs_name, "fs_name", &T::fs_name,
-    "defines", &T::defines);
+    "defines", &T::defines,
+    "vertex_stride", &T::vertex_stride, "input_attrs", &T::input_attrs);
 };
 
 template <>
@@ -113,7 +124,24 @@ struct glz::meta<t850::TraceCBufferBind> {
   static constexpr auto value = object(
     "slot", &T::slot, "buffer_id", &T::buffer_id,
     "offset", &T::offset, "size", &T::size,
-    "update_version", &T::update_version, "hash", &T::hash);
+    "update_version", &T::update_version, "hash", &T::hash,
+    "data_hex", &T::data_hex);
+};
+
+template <>
+struct glz::meta<t850::TraceBufferUpdate> {
+  using T = t850::TraceBufferUpdate;
+  static constexpr auto value = object(
+    "version", &T::version, "size", &T::size, "offset", &T::offset,
+    "hash", &T::hash, "truncated", &T::truncated, "data_hex", &T::data_hex);
+};
+
+template <>
+struct glz::meta<t850::TraceBufferRec> {
+  using T = t850::TraceBufferRec;
+  static constexpr auto value = object(
+    "id", &T::id, "kind", &T::kind, "name", &T::name,
+    "updates", &T::updates);
 };
 
 template <>
@@ -130,6 +158,8 @@ struct glz::meta<t850::TraceDrawSnapshot> {
     "scissor_x", &T::scissor_x, "scissor_y", &T::scissor_y,
     "scissor_w", &T::scissor_w, "scissor_h", &T::scissor_h,
     "vertex_count", &T::vertex_count, "start_index", &T::start_index, "start_vertex", &T::start_vertex,
+    "vertex_buffer_version", &T::vertex_buffer_version,
+    "index_buffer_version", &T::index_buffer_version,
     "context_mesh", &T::context_mesh, "context_material", &T::context_material,
     "context_entity", &T::context_entity, "context_pass", &T::context_pass,
     "textures", &T::textures, "cbuffers", &T::cbuffers);
@@ -142,7 +172,7 @@ struct glz::meta<t850::TraceFrame> {
     "frame", &T::frame, "scene", &T::scene, "api", &T::api, "timestamp", &T::timestamp,
     "textures", &T::textures, "texture_views", &T::texture_views, "samplers", &T::samplers,
     "rts", &T::rts, "shaders", &T::shaders, "psos", &T::psos,
-    "events", &T::events, "draws", &T::draws);
+    "events", &T::events, "draws", &T::draws, "buffers", &T::buffers);
 };
 
 namespace t850 {
@@ -168,15 +198,29 @@ namespace t850 {
     m_texMap.clear();
     m_rtMap.clear();
     m_shMap.clear();
+    m_pendingInputs.clear();
+    m_bufferStore.clear();
+    m_bufferLatestVersion.clear();
+    m_cbLast.clear();
+    m_bufMap.clear();
+    m_nextBufferVersion = 1;
+    m_nextBufferId = 0;
   }
 
   void RenderTracer::ResetFrame(int frameIndex) {
     std::lock_guard<std::mutex> lk(m_mtx);
     if (!m_active) return;
-    // Clear per-frame events and draw snapshots, but preserve the resource
-    // catalog: ids must stay stable across frames.
+    // Clear per-frame events / draw snapshots / buffer payloads. Keep the
+    // resource catalog (textures/RTs/shaders/PSOs/samplers/views) and the
+    // buffer-id map (m_bufMap) so cross-frame ids stay stable. Clear the
+    // CB last-update stash and buffer payload store too — each frame should
+    // only show updates that happened that frame.
     m_frame.events.clear();
     m_frame.draws.clear();
+    m_frame.buffers.clear();
+    m_cbLast.clear();
+    m_bufferStore.clear();
+    m_bufferLatestVersion.clear();
     m_frame.frame = frameIndex;
     m_nextSeq = 0;
     m_pending = TraceDrawSnapshot{};
@@ -209,6 +253,21 @@ namespace t850 {
                   lt.tm_year + 1900, lt.tm_mon + 1, lt.tm_mday,
                   lt.tm_hour, lt.tm_min, lt.tm_sec);
     m_frame.timestamp = tsBuf;
+
+    // Materialize the per-buffer payload store into the catalog before
+    // serializing. Stable id order makes cross-trace diffs deterministic.
+    m_frame.buffers.clear();
+    m_frame.buffers.reserve(m_bufferStore.size());
+    for (auto& kv : m_bufferStore) {
+      TraceBufferRec rec;
+      rec.id   = kv.first;
+      rec.kind = kv.second.kind;
+      rec.name = kv.second.name;
+      rec.updates = kv.second.updates;
+      m_frame.buffers.push_back(std::move(rec));
+    }
+    std::sort(m_frame.buffers.begin(), m_frame.buffers.end(),
+              [](const TraceBufferRec& a, const TraceBufferRec& b) { return a.id < b.id; });
 
     auto result = glz::write<glz::opts{.prettify = true}>(m_frame);
     if (!result) {
@@ -251,6 +310,39 @@ namespace t850 {
     }
     return out;
   }
+
+  // FNV-1a 64-bit hash. Stable across runs/APIs/architectures so two traces
+  // can be diffed by hash even when the raw payloads are gigabytes.
+  static uint64_t FNV1a64(const void* data, std::size_t size) {
+    uint64_t h = 0xcbf29ce484222325ull;
+    const uint8_t* p = static_cast<const uint8_t*>(data);
+    for (std::size_t i = 0; i < size; ++i) {
+      h ^= p[i];
+      h *= 0x100000001b3ull;
+    }
+    return h;
+  }
+
+  // Lowercase, no-separator hex encoder. Returns "" if data is null.
+  // Caller is responsible for any size cap; we don't truncate here.
+  static std::string HexEncode(const void* data, std::size_t size) {
+    if (!data || size == 0) return std::string();
+    static constexpr char kHex[] = "0123456789abcdef";
+    std::string out;
+    out.resize(size * 2);
+    const uint8_t* p = static_cast<const uint8_t*>(data);
+    for (std::size_t i = 0; i < size; ++i) {
+      out[i * 2 + 0] = kHex[(p[i] >> 4) & 0xF];
+      out[i * 2 + 1] = kHex[p[i] & 0xF];
+    }
+    return out;
+  }
+
+  // Per-buffer raw payload cap to keep trace.json from blowing up on huge
+  // skinned meshes (some go several MB). Cap is enforced in raw bytes; the
+  // hex string is 2x. Buffers exceeding this get the prefix recorded with
+  // truncated=true so the JSON is still well-formed and diffable.
+  static constexpr std::size_t kMaxBufferRawBytes = 1 << 20; // 1 MiB raw / 2 MiB hex
 
   int RenderTracer::RegisterTexture(const Texture* tex, const char* kind) {
     if (!tex) return -1;
@@ -363,9 +455,38 @@ namespace t850 {
     checkFlag(ShaderKey::TRANSMISSION_MAP, "TRANSMISSION_MAP");
     checkFlag(ShaderKey::HAS_TEXCOORD2, "HAS_TEXCOORD2");
     checkFlag(ShaderKey::HAS_TEXCOORD3, "HAS_TEXCOORD3");
+    // Merge any input-layout info that the per-API CreateShader stashed by
+    // pointer before BaseDriver got a chance to assign this shader an id.
+    auto pi = m_pendingInputs.find(sh);
+    if (pi != m_pendingInputs.end()) {
+      rec.vertex_stride = pi->second.vertex_stride;
+      rec.input_attrs   = std::move(pi->second.attrs);
+      m_pendingInputs.erase(pi);
+    }
     m_frame.shaders.push_back(std::move(rec));
     m_shMap[sh] = (int)m_frame.shaders.size() - 1;
     return m_shMap[sh];
+  }
+
+  void RenderTracer::RegisterShaderInputsForPtr(const ShaderBase* sh,
+                                                uint32_t vertexStride,
+                                                std::vector<TraceShaderAttr> attrs) {
+    if (!sh) return;
+    std::lock_guard<std::mutex> lk(m_mtx);
+    if (!m_active) return;
+    // If the shader already has a tracer id (unlikely, but possible if the
+    // backend is re-entered), merge directly into the existing rec.
+    auto sit = m_shMap.find(sh);
+    if (sit != m_shMap.end()) {
+      auto& rec = m_frame.shaders[sit->second];
+      rec.vertex_stride = vertexStride;
+      rec.input_attrs   = std::move(attrs);
+      return;
+    }
+    PendingInputs pi;
+    pi.vertex_stride = vertexStride;
+    pi.attrs         = std::move(attrs);
+    m_pendingInputs[sh] = std::move(pi);
   }
 
   int RenderTracer::RegisterSampler(const TraceSamplerRec& rec) {
@@ -419,6 +540,50 @@ namespace t850 {
     int id = m_nextBufferId++;
     m_bufMap[ptr] = id;
     return id;
+  }
+
+  uint64_t RenderTracer::RecordBufferUpdate(int bufferId, const void* data, uint32_t size,
+                                            const char* kind, const char* name) {
+    if (bufferId < 0 || size == 0) return 0;
+    std::lock_guard<std::mutex> lk(m_mtx);
+    if (!m_active) return 0;
+    uint64_t version = m_nextBufferVersion++;
+    auto& store = m_bufferStore[bufferId];
+    if (store.kind.empty() && kind) store.kind = kind;
+    if (store.name.empty() && name) store.name = name;
+    TraceBufferUpdate upd;
+    upd.version = version;
+    upd.size    = size;
+    upd.offset  = 0;
+    upd.hash    = data ? FNV1a64(data, size) : 0;
+#ifdef T850_TRACE_GEOMETRY
+    if (data) {
+      // Cap the encoded payload at the per-buffer raw cap so trace.json
+      // stays usable even with multi-MB vertex pools.
+      const std::size_t take = (size > kMaxBufferRawBytes) ? kMaxBufferRawBytes : (std::size_t)size;
+      upd.truncated = (take < (std::size_t)size);
+      upd.data_hex  = HexEncode(data, take);
+    }
+#else
+    (void)data;
+#endif
+    store.updates.push_back(std::move(upd));
+    m_bufferLatestVersion[bufferId] = version;
+    TraceEvent ev{0, "buffer_update"};
+    ev.i0 = bufferId;
+    ev.u0 = ((uint64_t)0 /*offset*/) | ((uint64_t)size << 32);
+    ev.u1 = version;
+    ev.s0 = FormatHex64(store.updates.back().hash);
+    ev.s1 = store.kind;
+    AppendEvent(std::move(ev));
+    return version;
+  }
+
+  uint64_t RenderTracer::LatestBufferVersion(int bufferId) const {
+    if (bufferId < 0) return 0;
+    std::lock_guard<std::mutex> lk(m_mtx);
+    auto it = m_bufferLatestVersion.find(bufferId);
+    return it != m_bufferLatestVersion.end() ? it->second : 0;
   }
 
   // ── Context stack ────────────────────────────────────────────────────
@@ -598,8 +763,17 @@ namespace t850 {
     b.slot = slot; b.buffer_id = bufferId;
     b.offset = last.offset; b.size = last.size;
     b.update_version = last.version; b.hash = last.hash;
+#ifdef T850_TRACE_GEOMETRY
+    // Snapshot the bytes the GPU saw for this slot at this draw. We copy
+    // here (rather than referencing m_cbLast.bytes) so a subsequent
+    // EvUpdateCBuffer for the same buffer doesn't retroactively mutate
+    // earlier draw snapshots.
+    if (!last.bytes.empty()) {
+      b.data_hex = HexEncode(last.bytes.data(), last.bytes.size());
+    }
+#endif
     for (auto bit = m_pending.cbuffers.begin(); bit != m_pending.cbuffers.end(); ++bit) {
-      if (bit->slot == slot) { *bit = b; return; }
+      if (bit->slot == slot) { *bit = std::move(b); return; }
     }
     m_pending.cbuffers.push_back(std::move(b));
   }
@@ -614,21 +788,20 @@ namespace t850 {
   uint64_t RenderTracer::EvUpdateCBuffer(int bufferId, const void* bytes, uint32_t size, uint32_t allocOffset) {
     std::lock_guard<std::mutex> lk(m_mtx);
     if (!m_active) return 0;
-    // FNV-1a 64-bit hash on the byte payload — stable across runs/APIs so a
-    // diff tool can flag content divergence at the same draw_seq.
-    uint64_t h = 0xcbf29ce484222325ull;
-    const uint8_t* p = static_cast<const uint8_t*>(bytes);
-    for (uint32_t i = 0; i < size; ++i) {
-      h ^= p[i];
-      h *= 0x100000001b3ull;
-    }
+    uint64_t h = FNV1a64(bytes, size);
     uint64_t version = m_nextCBVersion++;
     CBLast last;
     last.offset  = allocOffset;
     last.size    = size;
     last.version = version;
     last.hash    = h;
-    m_cbLast[bufferId] = last;
+#ifdef T850_TRACE_GEOMETRY
+    if (bytes && size > 0) {
+      last.bytes.assign(static_cast<const uint8_t*>(bytes),
+                        static_cast<const uint8_t*>(bytes) + size);
+    }
+#endif
+    m_cbLast[bufferId] = std::move(last);
     TraceEvent ev{0, "update_cbuffer"};
     ev.i0 = bufferId;
     ev.u0 = ((uint64_t)allocOffset) | ((uint64_t)size << 32);
@@ -680,6 +853,16 @@ namespace t850 {
     snap.vertex_count = vertexCount;
     snap.start_index  = startIndex;
     snap.start_vertex = startVertex;
+    // Attribute the bound VB/IB to a specific update version so a consumer
+    // can find the exact bytes resident at draw submission time.
+    if (snap.vertex_buffer_id >= 0) {
+      auto vit = m_bufferLatestVersion.find(snap.vertex_buffer_id);
+      if (vit != m_bufferLatestVersion.end()) snap.vertex_buffer_version = vit->second;
+    }
+    if (snap.index_buffer_id >= 0) {
+      auto iit = m_bufferLatestVersion.find(snap.index_buffer_id);
+      if (iit != m_bufferLatestVersion.end()) snap.index_buffer_version = iit->second;
+    }
     if (!m_ctxStack.empty()) {
       const auto& c = m_ctxStack.back();
       snap.context_mesh     = c.mesh;

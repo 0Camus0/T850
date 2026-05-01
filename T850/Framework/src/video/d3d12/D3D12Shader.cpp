@@ -210,6 +210,43 @@ namespace t850 {
     vertexStride = offset;
     T8_LOG_VERBOSE("[D3D12] Input layout: %d elements, stride=%d", (int)VertexDecl.size(), vertexStride);
 
+#ifdef T850_RENDER_TRACE
+    if (T8_TRACE_ACTIVE()) {
+      // Stash the input layout for the tracer keyed by ShaderBase*; the
+      // shader hasn't been registered yet (BaseDriver::CreateShader does
+      // that after T8Device->CreateShader returns), so we can't use a
+      // shader id here.
+      std::vector<TraceShaderAttr> attrs;
+      attrs.reserve(VertexDecl.size());
+      for (size_t i = 0; i < VertexDecl.size(); ++i) {
+        const auto& ie = VertexDecl[i];
+        TraceShaderAttr a;
+        a.semantic   = std::string(ie.SemanticName ? ie.SemanticName : "")
+                     + (ie.SemanticIndex > 0 ? std::to_string(ie.SemanticIndex) : std::string());
+        a.location   = (int)ie.SemanticIndex;
+        a.input_slot = (int)ie.InputSlot;
+        a.offset     = ie.AlignedByteOffset;
+        switch (ie.Format) {
+          case DXGI_FORMAT_R32_FLOAT:           a.format = "R32_FLOAT";          a.size_bytes = 4;  break;
+          case DXGI_FORMAT_R32G32_FLOAT:        a.format = "R32G32_FLOAT";       a.size_bytes = 8;  break;
+          case DXGI_FORMAT_R32G32B32_FLOAT:     a.format = "R32G32B32_FLOAT";    a.size_bytes = 12; break;
+          case DXGI_FORMAT_R32G32B32A32_FLOAT:  a.format = "R32G32B32A32_FLOAT"; a.size_bytes = 16; break;
+          case DXGI_FORMAT_R32_UINT:            a.format = "R32_UINT";           a.size_bytes = 4;  break;
+          case DXGI_FORMAT_R32G32_UINT:         a.format = "R32G32_UINT";        a.size_bytes = 8;  break;
+          case DXGI_FORMAT_R32G32B32_UINT:      a.format = "R32G32B32_UINT";     a.size_bytes = 12; break;
+          case DXGI_FORMAT_R32G32B32A32_UINT:   a.format = "R32G32B32A32_UINT";  a.size_bytes = 16; break;
+          case DXGI_FORMAT_R32_SINT:            a.format = "R32_SINT";           a.size_bytes = 4;  break;
+          case DXGI_FORMAT_R32G32_SINT:         a.format = "R32G32_SINT";        a.size_bytes = 8;  break;
+          case DXGI_FORMAT_R32G32B32_SINT:      a.format = "R32G32B32_SINT";     a.size_bytes = 12; break;
+          case DXGI_FORMAT_R32G32B32A32_SINT:   a.format = "R32G32B32A32_SINT";  a.size_bytes = 16; break;
+          default:                              a.format = "DXGI_FORMAT_" + std::to_string((int)ie.Format); break;
+        }
+        attrs.push_back(std::move(a));
+      }
+      g_renderTracer->RegisterShaderInputsForPtr(this, vertexStride, std::move(attrs));
+    }
+#endif
+
     // Reflect FS
     ComPtr<ID3D12ShaderReflection> fsReflect;
     D3DReflect(FS_blob->GetBufferPointer(), FS_blob->GetBufferSize(), IID_PPV_ARGS(&fsReflect));

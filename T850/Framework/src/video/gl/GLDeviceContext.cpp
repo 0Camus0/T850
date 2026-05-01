@@ -12,6 +12,7 @@
 *********************************************************/
 
 #include <video/gl/GLDeviceContext.h>
+#include <debug/RenderTrace.h>
 
 #ifdef OS_WINDOWS
 #if defined(USING_OPENGL_ES20)
@@ -87,6 +88,7 @@ namespace t850 {
       internalTopology = GL_TRIANGLES;
       break;
     }
+    T8_TRACE(EvSetTopology((int)topology));
   }
   void GLDeviceContext::DrawIndexed(unsigned vertexCount, unsigned startIndex, unsigned startVertex)
   {
@@ -106,5 +108,6 @@ namespace t850 {
                                reinterpret_cast<void*>(byteOffset),
                                static_cast<GLint>(startVertex));
     }
+    T8_TRACE(EvDrawIndexed(vertexCount, startIndex, startVertex));
   }
 }

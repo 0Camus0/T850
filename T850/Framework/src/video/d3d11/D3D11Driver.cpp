@@ -17,6 +17,7 @@
 #include <video/d3d11/D3D11Texture.h>
 
 #include <debug/Profiler.h>
+#include <debug/RenderTrace.h>
 #include <iostream>
 #include <string>
 #include <fstream>
@@ -338,6 +339,7 @@ namespace t850 {
     default:
       break;
     }
+    T8_TRACE(EvSetBlend((int)state));
   }
 
   void D3DXDriver::SetDepthStencilState(DepthStencilStates state)
@@ -362,6 +364,7 @@ namespace t850 {
     default:
       break;
     }
+    T8_TRACE(EvSetDepth((int)state));
   }
 
   void D3DXDriver::SetCullFace(FaceCulling state) {
@@ -388,6 +391,7 @@ namespace t850 {
       deviceContext->RSSetState(rs);
       rs->Release();
     }
+    T8_TRACE(EvSetCull((int)state));
   }
 
   void D3DXDriver::Clear() {
@@ -434,6 +438,7 @@ namespace t850 {
   }
 
   void D3DXDriver::PopRT() {
+    T8_TRACE(EvPopRT());
     ID3D11DeviceContext* deviceContext = reinterpret_cast<ID3D11DeviceContext*>(T8DeviceContext->GetAPIObject());
     deviceContext->OMSetRenderTargets(1, D3D11RenderTargetView.GetAddressOf(), D3D11DepthStencilTargetView.Get());
 

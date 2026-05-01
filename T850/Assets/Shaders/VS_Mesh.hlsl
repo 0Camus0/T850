@@ -61,6 +61,14 @@ struct VS_INPUT{
 	float2 texture1 : TEXCOORD1;
 #endif
 
+#ifdef USE_TEXCOORD2
+	float2 texture2 : TEXCOORD2;
+#endif
+
+#ifdef USE_TEXCOORD3
+	float2 texture3 : TEXCOORD3;
+#endif
+
 #if defined(USE_SKINNING) || defined(USE_SKINNING_QT) || defined(USE_SKINNING_TEXTURE)
 	float4 joints   : BLENDINDICES;
 	float4 weights  : BLENDWEIGHT;
@@ -88,6 +96,14 @@ struct VS_OUTPUT{
 
 #ifdef USE_TEXCOORD1
 	float2 texture1  : TEXCOORD3;
+#endif
+
+#ifdef USE_TEXCOORD2
+	float2 texture2  : TEXCOORD4;
+#endif
+
+#ifdef USE_TEXCOORD3
+	float2 texture3  : TEXCOORD5;
 #endif
 
 	float4 Pos		: TEXCOORD1;
@@ -175,6 +191,14 @@ VS_OUTPUT VS( VS_INPUT input ){
 
 #ifdef USE_TEXCOORD1
 	OUT.texture1 = input.texture1;
+#endif
+
+#ifdef USE_TEXCOORD2
+	OUT.texture2 = input.texture2;
+#endif
+
+#ifdef USE_TEXCOORD3
+	OUT.texture3 = input.texture3;
 #endif
 
 #ifdef SHADOW_MAP_PASS

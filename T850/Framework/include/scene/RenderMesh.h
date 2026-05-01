@@ -45,6 +45,9 @@
 #include <utils/xMaths.h>
 #include <utils/XDataBase.h>
 #include <scene/PrimitiveBase.h>
+#include <scene/MeshAsset.h>
+#include <scene/MeshAssetCache.h>
+#include <scene/MaterialAsset.h>
 
 
 
@@ -87,7 +90,7 @@ namespace t850 {
     XVECTOR3  MaterialParams6; // .x=clearcoat map .y=clearcoat roughness map .z=factor uv .w=roughness uv
     XVECTOR3  MaterialParams7; // .x=occlusion map .y=occlusion strength .z=occlusion uv .w=transmission map
     XVECTOR3  MaterialParams8; // .x=transmission uv .y=specular factor map .z=specular factor uv .w=specular color map
-    XVECTOR3  MaterialParams9; // .x=specular color uv
+    XVECTOR3  MaterialParams9; // .x=specular color uv .y=normal scale
     XVECTOR3  BaseColorUVTransform0;
     XVECTOR3  BaseColorUVTransform1;
     XVECTOR3  NormalUVTransform0;
@@ -131,6 +134,24 @@ namespace t850 {
     };
 
     struct SubSetInfo {
+        // ── Phase B note ────────────────────────────────────────────
+        //
+        // The material-related fields below (texture pointers,
+        // colors, factors, UV transforms, texCoord set selectors,
+        // alphaMode/cutoff/doubleSided, etc.) are scratch storage
+        // populated by the Create() pDefaults parse loop and copied
+        // into a MaterialAsset prototype to acquire `matAsset` from
+        // MaterialAssetCache. After Create() returns, the **draw
+        // path reads exclusively via `matAsset->params` / `matAsset->
+        // textures[]`**. These per-subset fields are kept as legacy
+        // duplicates so the parse loop remains compact (~300 lines)
+        // and unbreaks; rewriting the parse to populate the proto
+        // directly is a deferred cleanup with no functional gain.
+        //
+        // Per-instance fields (key, MatID, NumTris/NumVertex/IB32Bit,
+        // bounds, vbPoolAlloc/ibPoolAlloc, matAsset) are not in
+        // MaterialAsset and remain authoritative here.
+        // ────────────────────────────────────────────────────────────
 		SubSetInfo() {
 			AmbientColor = XVECTOR3(0.0f, 0.0f, 0.0f, 1.0f);
 			DiffuseColor = XVECTOR3(0.5f, 0.5f, 0.5f, 1.0f);
@@ -146,6 +167,7 @@ namespace t850 {
       ClearcoatFactor = 0.0f;
       ClearcoatRoughness = 0.0f;
       OcclusionStrength = 1.0f;
+      NormalScale = 1.0f;
       SheenColor = XVECTOR3(0.0f, 0.0f, 0.0f, 0.0f);
       SheenRoughness = 0.0f;
       Unlit = false;
@@ -276,6 +298,7 @@ namespace t850 {
       unsigned int      SpecularFactorTexCoord;
       unsigned int      SpecularColorTexCoord;
       unsigned int      TransmissionTexCoord;
+      float             NormalScale;
       XVECTOR3          BaseColorUVTransform0;
       XVECTOR3          BaseColorUVTransform1;
       XVECTOR3          NormalUVTransform0;
@@ -311,6 +334,18 @@ namespace t850 {
 	  bool				IB32Bit = false;   // selects R16/R32 in Set()
 
       AABB bounds;  // per-subset bounding box for fine-grained culling
+
+      // Phase A.5 step 2: shared IB suballocation. Points into a
+      // MeshAssetCache::IndexPool. Used by Draw() to skip per-subset
+      // IB binds and to compute startIndex offsets.
+      PoolAlloc ibPoolAlloc;
+
+      // Phase B step 1: deduplicated material asset for this subset.
+      // Borrowed pointer; lifetime managed by MaterialAssetCache via
+      // RenderMesh::Destroy. Today the legacy material fields above
+      // remain populated and drive the draw path; step 2 retires
+      // them.
+      MaterialAsset* matAsset = nullptr;
     };
 
     struct MeshInfo {
@@ -325,6 +360,11 @@ namespace t850 {
       std::vector<SubSetInfo>	SubSets;
 
       AABB bounds;
+
+      // Phase A.5 step 2: shared VB suballocation. Points into a
+      // MeshAssetCache::VertexPool. Used by Draw() instead of binding
+      // the per-asset MeshInfo::VB.
+      PoolAlloc vbPoolAlloc;
     };
 
     void Load(const char *);
@@ -350,6 +390,12 @@ namespace t850 {
     XMATRIX44	transform;
     XDataBase*	xFile;
     std::vector<MeshInfo> Info;
+
+    // Phase A: shared geometry asset (path-deduplicated through
+    // MeshAssetCache). Borrowed pointer — cache owns the asset and its
+    // lifetime. Populated in Create(); released in Destroy().
+    MeshAsset*  m_asset = nullptr;
+    std::string m_sourcePath;
   };
 }
 

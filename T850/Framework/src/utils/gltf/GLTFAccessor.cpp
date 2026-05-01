@@ -307,6 +307,8 @@ bool DecodeDracoMesh(const Document& doc,
   ExtractDracoAttribute(*mesh, attrs.TANGENT,    4, result.tangents);
   ExtractDracoAttribute(*mesh, attrs.TEXCOORD_0, 2, result.texcoord0);
   ExtractDracoAttribute(*mesh, attrs.TEXCOORD_1, 2, result.texcoord1);
+  ExtractDracoAttribute(*mesh, attrs.TEXCOORD_2, 2, result.texcoord2);
+  ExtractDracoAttribute(*mesh, attrs.TEXCOORD_3, 2, result.texcoord3);
   ExtractDracoAttribute(*mesh, attrs.COLOR_0,    4, result.colors);
 
   T8_LOG_DEBUG("[glTF] Draco decoded: %zu verts, %d faces",

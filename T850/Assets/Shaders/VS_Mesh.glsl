@@ -44,6 +44,22 @@
 	#endif
 #endif
 
+#ifdef USE_TEXCOORD2
+	#ifdef ES_30
+		in highp vec2 UV2;
+	#else
+		attribute highp vec2 UV2;
+	#endif
+#endif
+
+#ifdef USE_TEXCOORD3
+	#ifdef ES_30
+		in highp vec2 UV3;
+	#else
+		attribute highp vec2 UV3;
+	#endif
+#endif
+
 #if defined(USE_SKINNING) || defined(USE_SKINNING_QT) || defined(USE_SKINNING_TEXTURE)
 	#ifdef ES_30
 		in highp vec4 Joints;
@@ -92,6 +108,22 @@
 		out highp vec2 vecUVCoords1;
 	#else
 		varying highp vec2 vecUVCoords1;
+	#endif
+#endif
+
+#ifdef USE_TEXCOORD2
+	#ifdef ES_30
+		out highp vec2 vecUVCoords2;
+	#else
+		varying highp vec2 vecUVCoords2;
+	#endif
+#endif
+
+#ifdef USE_TEXCOORD3
+	#ifdef ES_30
+		out highp vec2 vecUVCoords3;
+	#else
+		varying highp vec2 vecUVCoords3;
 	#endif
 #endif
 
@@ -226,6 +258,14 @@ void main(){
 #ifdef USE_TEXCOORD1
 	vecUVCoords1 = UV1;
 	vecUVCoords1.y = vecUVCoords1.y;
+#endif
+
+#ifdef USE_TEXCOORD2
+	vecUVCoords2 = UV2;
+#endif
+
+#ifdef USE_TEXCOORD3
+	vecUVCoords3 = UV3;
 #endif
 
 #ifdef SHADOW_MAP_PASS

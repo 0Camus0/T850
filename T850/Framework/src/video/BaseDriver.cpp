@@ -192,6 +192,8 @@ namespace t850 {
       if (key.has(ShaderKey::HAS_NORMALS))    Defines += "#define USE_NORMALS\n\n";
       if (key.has(ShaderKey::HAS_TEXCOORD0))  Defines += "#define USE_TEXCOORD0\n\n";
       if (key.has(ShaderKey::HAS_TEXCOORD1))  Defines += "#define USE_TEXCOORD1\n\n";
+      if (key.has(ShaderKey::HAS_TEXCOORD2))  Defines += "#define USE_TEXCOORD2\n\n";
+      if (key.has(ShaderKey::HAS_TEXCOORD3))  Defines += "#define USE_TEXCOORD3\n\n";
       if (key.has(ShaderKey::HAS_TANGENTS))   Defines += "#define USE_TANGENTS\n\n";
       if (key.has(ShaderKey::HAS_BINORMALS))  Defines += "#define USE_BINORMALS\n\n";
 

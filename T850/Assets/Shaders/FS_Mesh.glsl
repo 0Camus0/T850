@@ -159,6 +159,22 @@ highp vec2 EncodeOctahedralNormal(highp vec3 normal)
     #endif
 #endif
 
+#ifdef USE_TEXCOORD2
+    #ifdef ES_30
+        in highp vec2 vecUVCoords2;
+    #else
+        varying highp vec2 vecUVCoords2;
+    #endif
+#endif
+
+#ifdef USE_TEXCOORD3
+    #ifdef ES_30
+        in highp vec2 vecUVCoords3;
+    #else
+        varying highp vec2 vecUVCoords3;
+    #endif
+#endif
+
 #ifdef USE_NORMALS
     #ifdef ES_30
         in highp vec4 hnormal;
@@ -343,6 +359,10 @@ highp vec2 GetUV0()
     return vecUVCoords;
 #elif defined(USE_TEXCOORD1)
     return vecUVCoords1;
+#elif defined(USE_TEXCOORD2)
+    return vecUVCoords2;
+#elif defined(USE_TEXCOORD3)
+    return vecUVCoords3;
 #else
     return vec2(0.0, 0.0);
 #endif
@@ -359,9 +379,40 @@ highp vec2 GetUV1()
 #endif
 }
 
+highp vec2 GetUV2()
+{
+#ifdef USE_TEXCOORD2
+    return vecUVCoords2;
+#elif defined(USE_TEXCOORD0)
+    return vecUVCoords;
+#else
+    return vec2(0.0, 0.0);
+#endif
+}
+
+highp vec2 GetUV3()
+{
+#ifdef USE_TEXCOORD3
+    return vecUVCoords3;
+#elif defined(USE_TEXCOORD0)
+    return vecUVCoords;
+#else
+    return vec2(0.0, 0.0);
+#endif
+}
+
 highp vec2 GetTexCoord(highp float texCoordSet)
 {
-    return texCoordSet > 0.5 ? GetUV1() : GetUV0();
+    highp int s = int(texCoordSet + 0.5);
+    if (s == 1) return GetUV1();
+    if (s == 2) return GetUV2();
+    if (s == 3) return GetUV3();
+    return GetUV0();
+}
+
+bool MapShareBaseSet(highp float mapSet)
+{
+    return abs(mapSet - TexCoordSets.x) < 0.5;
 }
 
 highp vec2 ApplyUVTransform(highp vec2 uv, highp vec4 row0, highp vec4 row1)
@@ -381,7 +432,7 @@ highp vec3 StoredSRGBToLinear(highp vec3 storedColor)
 
 highp vec4 SampleBaseColor(highp vec2 uv)
 {
-#if defined(DIFFUSE_MAP) && (defined(USE_TEXCOORD0) || defined(USE_TEXCOORD1))
+#if defined(DIFFUSE_MAP) && (defined(USE_TEXCOORD0) || defined(USE_TEXCOORD1) || defined(USE_TEXCOORD2) || defined(USE_TEXCOORD3))
     highp vec4 color = SampleTexture2D(DiffuseTex, ApplyUVTransform(uv, BaseColorUVTransform0, BaseColorUVTransform1));
     #ifdef GLTF_TANGENT_SPACE
     color.rgb *= LinearToStoredAlbedo(DiffuseColor.rgb);
@@ -401,7 +452,7 @@ highp vec3 SampleEmissive(highp vec2 uv)
 {
     highp vec3 emissive = EmissiveColor.rgb;
 #ifdef EMISSIVE_MAP
-    highp vec2 emissiveUV = TexCoordSets.w > 0.5 ? GetTexCoord(TexCoordSets.w) : uv;
+    highp vec2 emissiveUV = MapShareBaseSet(TexCoordSets.w) ? uv : GetTexCoord(TexCoordSets.w);
     emissiveUV = ApplyUVTransform(emissiveUV, EmissiveUVTransform0, EmissiveUVTransform1);
     emissive *= SampleTexture2D(EmissiveTex, emissiveUV).rgb;
 #endif
@@ -494,10 +545,13 @@ void BuildSurface(out highp vec4 color, out highp vec3 normal, out highp vec3 ge
     ApplyAlphaMask(color);
 
 #ifdef NORMAL_MAP
-    highp vec2 normalUV = TexCoordSets.y > 0.5 ? GetTexCoord(TexCoordSets.y) : uv;
+    highp vec2 normalUV = MapShareBaseSet(TexCoordSets.y) ? uv : GetTexCoord(TexCoordSets.y);
     normalUV = ApplyUVTransform(normalUV, NormalUVTransform0, NormalUVTransform1);
     highp vec3 normalTex = SampleTexture2D(NormalTex, normalUV).xyz;
     normalTex = normalTex * vec3(2.0, 2.0, 2.0) - vec3(1.0, 1.0, 1.0);
+    // glTF normalTexture.scale (default 1.0) — stored in MaterialParams9.y.
+    highp float normalScale = MaterialParams9.y;
+    normalTex.xy *= normalScale;
     normalTex = normalize(normalTex);
     #ifndef GLTF_TANGENT_SPACE
     normalTex.g = -normalTex.g;
@@ -507,7 +561,7 @@ void BuildSurface(out highp vec4 color, out highp vec3 normal, out highp vec3 ge
 #endif
 
 #ifdef METALLIC_MAP
-    highp vec2 metallicUV = TexCoordSets.z > 0.5 ? GetTexCoord(TexCoordSets.z) : uv;
+    highp vec2 metallicUV = MapShareBaseSet(TexCoordSets.z) ? uv : GetTexCoord(TexCoordSets.z);
     metallicUV = ApplyUVTransform(metallicUV, MetallicUVTransform0, MetallicUVTransform1);
     highp vec4 mrSample = SampleTexture2D(MetallicTex, metallicUV);
     metallic = PBRParams.x * mrSample.b;
@@ -520,14 +574,14 @@ void BuildSurface(out highp vec4 color, out highp vec3 normal, out highp vec3 ge
 
 #ifdef SPECULAR_FACTOR_MAP
     if (MaterialParams8.y > 0.5) {
-        highp vec2 specularFactorUV = MaterialParams8.z > 0.5 ? GetTexCoord(MaterialParams8.z) : uv;
+        highp vec2 specularFactorUV = MapShareBaseSet(MaterialParams8.z) ? uv : GetTexCoord(MaterialParams8.z);
         specularFactorUV = ApplyUVTransform(specularFactorUV, SpecularFactorUVTransform0, SpecularFactorUVTransform1);
         specularWeight *= SampleTexture2D(SpecularFactorTex, specularFactorUV).a;
     }
 #endif
 #ifdef SPECULAR_COLOR_MAP
     if (MaterialParams8.w > 0.5) {
-        highp vec2 specularColorUV = MaterialParams9.x > 0.5 ? GetTexCoord(MaterialParams9.x) : uv;
+        highp vec2 specularColorUV = MapShareBaseSet(MaterialParams9.x) ? uv : GetTexCoord(MaterialParams9.x);
         specularColorUV = ApplyUVTransform(specularColorUV, SpecularColorUVTransform0, SpecularColorUVTransform1);
         dielectricF0 = min(dielectricF0 * StoredSRGBToLinear(SampleTexture2D(SpecularColorTex, specularColorUV).rgb), vec3(1.0));
     }
@@ -536,7 +590,7 @@ void BuildSurface(out highp vec4 color, out highp vec3 normal, out highp vec3 ge
 
 #ifdef OCCLUSION_MAP
     if (MaterialParams7.x > 0.5) {
-        highp vec2 occlusionUV = MaterialParams7.z > 0.5 ? GetTexCoord(MaterialParams7.z) : uv;
+        highp vec2 occlusionUV = MapShareBaseSet(MaterialParams7.z) ? uv : GetTexCoord(MaterialParams7.z);
         occlusionUV = ApplyUVTransform(occlusionUV, OcclusionUVTransform0, OcclusionUVTransform1);
         highp float ao = SampleTexture2D(OcclusionTex, occlusionUV).r;
         occlusion = clamp(1.0 + MaterialParams7.y * (ao - 1.0), 0.0, 1.0);
@@ -545,7 +599,7 @@ void BuildSurface(out highp vec4 color, out highp vec3 normal, out highp vec3 ge
 
 #ifdef TRANSMISSION_MAP
     if (MaterialParams7.w > 0.5) {
-        highp vec2 transmissionUV = MaterialParams8.x > 0.5 ? GetTexCoord(MaterialParams8.x) : uv;
+        highp vec2 transmissionUV = MapShareBaseSet(MaterialParams8.x) ? uv : GetTexCoord(MaterialParams8.x);
         transmissionUV = ApplyUVTransform(transmissionUV, TransmissionUVTransform0, TransmissionUVTransform1);
         transmissionFactor *= SampleTexture2D(TransmissionTex, transmissionUV).r;
     }
@@ -554,14 +608,14 @@ void BuildSurface(out highp vec4 color, out highp vec3 normal, out highp vec3 ge
 
 #ifdef SHEEN_COLOR_MAP
     if (MaterialParams5.x > 0.5) {
-        highp vec2 sheenColorUV = MaterialParams5.z > 0.5 ? GetTexCoord(MaterialParams5.z) : uv;
+        highp vec2 sheenColorUV = MapShareBaseSet(MaterialParams5.z) ? uv : GetTexCoord(MaterialParams5.z);
         sheenColorUV = ApplyUVTransform(sheenColorUV, SheenColorUVTransform0, SheenColorUVTransform1);
         sheenColor *= pow(max(SampleTexture2D(SheenColorTex, sheenColorUV).rgb, vec3(0.0)), vec3(2.2));
     }
 #endif
 #ifdef SHEEN_ROUGHNESS_MAP
     if (MaterialParams5.y > 0.5) {
-        highp vec2 sheenRoughnessUV = MaterialParams5.w > 0.5 ? GetTexCoord(MaterialParams5.w) : uv;
+        highp vec2 sheenRoughnessUV = MapShareBaseSet(MaterialParams5.w) ? uv : GetTexCoord(MaterialParams5.w);
         sheenRoughnessUV = ApplyUVTransform(sheenRoughnessUV, SheenRoughnessUVTransform0, SheenRoughnessUVTransform1);
         sheenRoughness *= SampleTexture2D(SheenRoughnessTex, sheenRoughnessUV).a;
     }
@@ -571,14 +625,14 @@ void BuildSurface(out highp vec4 color, out highp vec3 normal, out highp vec3 ge
 
 #ifdef CLEARCOAT_MAP
     if (MaterialParams6.x > 0.5) {
-        highp vec2 clearcoatUV = MaterialParams6.z > 0.5 ? GetTexCoord(MaterialParams6.z) : uv;
+        highp vec2 clearcoatUV = MapShareBaseSet(MaterialParams6.z) ? uv : GetTexCoord(MaterialParams6.z);
         clearcoatUV = ApplyUVTransform(clearcoatUV, ClearcoatUVTransform0, ClearcoatUVTransform1);
         clearcoatFactor *= SampleTexture2D(ClearcoatTex, clearcoatUV).r;
     }
 #endif
 #ifdef CLEARCOAT_ROUGHNESS_MAP
     if (MaterialParams6.y > 0.5) {
-        highp vec2 clearcoatRoughnessUV = MaterialParams6.w > 0.5 ? GetTexCoord(MaterialParams6.w) : uv;
+        highp vec2 clearcoatRoughnessUV = MapShareBaseSet(MaterialParams6.w) ? uv : GetTexCoord(MaterialParams6.w);
         clearcoatRoughnessUV = ApplyUVTransform(clearcoatRoughnessUV, ClearcoatRoughnessUVTransform0, ClearcoatRoughnessUVTransform1);
         clearcoatRoughness *= SampleTexture2D(ClearcoatRoughnessTex, clearcoatRoughnessUV).g;
     }

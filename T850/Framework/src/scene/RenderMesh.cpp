@@ -118,12 +118,14 @@ namespace t850 {
                         subset->ClearcoatFactor, subset->ClearcoatRoughness,
                         subset->SheenColor.x, subset->SheenColor.y, subset->SheenColor.z, subset->SheenRoughness);
 
-            T8_LOG_INFO("[MeshInfo]       KeyFlags: normals=%d tangents=%d binormals=%d uv0=%d uv1=%d baseColorMap=%d specularMap=%d roughnessMap=%d normalMap=%d heightMap=%d metallicMap=%d emissiveMap=%d clearcoatMap=%d clearcoatRoughnessMap=%d sheenColorMap=%d sheenRoughnessMap=%d occlusionMap=%d specularFactorMap=%d specularColorMap=%d transmissionMap=%d gltfTangentSpace=%d",
+            T8_LOG_INFO("[MeshInfo]       KeyFlags: normals=%d tangents=%d binormals=%d uv0=%d uv1=%d uv2=%d uv3=%d baseColorMap=%d specularMap=%d roughnessMap=%d normalMap=%d heightMap=%d metallicMap=%d emissiveMap=%d clearcoatMap=%d clearcoatRoughnessMap=%d sheenColorMap=%d sheenRoughnessMap=%d occlusionMap=%d specularFactorMap=%d specularColorMap=%d transmissionMap=%d gltfTangentSpace=%d",
                         subset->key.has(ShaderKey::HAS_NORMALS) ? 1 : 0,
                         subset->key.has(ShaderKey::HAS_TANGENTS) ? 1 : 0,
                         subset->key.has(ShaderKey::HAS_BINORMALS) ? 1 : 0,
                         subset->key.has(ShaderKey::HAS_TEXCOORD0) ? 1 : 0,
                         subset->key.has(ShaderKey::HAS_TEXCOORD1) ? 1 : 0,
+                        subset->key.has(ShaderKey::HAS_TEXCOORD2) ? 1 : 0,
+                        subset->key.has(ShaderKey::HAS_TEXCOORD3) ? 1 : 0,
                         subset->key.has(ShaderKey::DIFFUSE_MAP) ? 1 : 0,
                         subset->key.has(ShaderKey::SPECULAR_MAP) ? 1 : 0,
                         subset->key.has(ShaderKey::GLOSS_MAP) ? 1 : 0,
@@ -150,15 +152,55 @@ namespace t850 {
   void RenderMesh::Load(const char *filename)
   {
     xFile = pApp->resourceManager.Load(filename);
+
+    // Phase A: register this mesh with the shared asset cache. We keep
+    // a borrowed pointer — population happens at the end of Create()
+    // once GPU buffers exist; release happens in Destroy().
+    m_sourcePath = filename ? filename : "";
+    bool created = false;
+    m_asset = MeshAssetCache::Get().Acquire(m_sourcePath, &created);
+    T8_LOG_INFO("[MeshAssetCache] %s '%s' (refs=%u, total assets=%zu)",
+                created ? "MISS — first acquisition" : "HIT  — reused",
+                m_sourcePath.c_str(),
+                m_asset ? m_asset->refCount : 0u,
+                MeshAssetCache::Get().Size());
   }
 
   void RenderMesh::Create() {
     GatherInfo();
     T8_LOG_INFO("Mesh Create: %zu geometries, building GPU buffers", xFile->MeshInfo.size());
+
+    // Phase A step 3: detect whether the cached asset already owns its
+    // GPU resources (second+ acquisition of the same source path). If
+    // yes, skip every CreateBuffer(VERTEX/INDEX) call below and alias
+    // MeshInfo::VB/IB and SubSetInfo::IB to the cached pointers; the
+    // CB stays per-instance because it carries per-frame transform.
+    // Phase A.5 step 1: shadow per-geometry VB and per-subset IB
+    // suballocations into the cache's pools. These are populated only
+    // on FIRST acquisition of an asset (refCount==1, geometries empty
+    // before this Create). Step 1 keeps the legacy GPU buffers and
+    // does NOT use these in Draw — purely diagnostic for now.
+    // Phase A.5 step 3: VB and per-subset IBs are now owned by the
+    // shared pools (MeshAssetCache::m_vertexPools / m_indexPools).
+    // The legacy MeshInfo::VB / SubSetInfo::IB / MeshInfo::IB pointers
+    // remain as defensive nullable fallbacks but are no longer
+    // created here; the draw path picks pool buffers via the
+    // *PoolAlloc fields and never dereferences the legacy pointers
+    // unless the alloc is invalid (which shouldn't happen in normal
+    // load).
+    const bool populatePools = (m_asset && m_asset->submeshes.empty());
+    struct VBAllocSide { uint32_t poolId = UINT32_MAX; uint32_t offsetVerts = 0; uint32_t count = 0; };
+    struct IBAllocSide { uint32_t poolId = UINT32_MAX; uint32_t offsetIdx   = 0; uint32_t count = 0; };
+    std::vector<VBAllocSide>             poolVBAllocs(xFile->MeshInfo.size());
+    std::vector<std::vector<IBAllocSide>> poolIBAllocs(xFile->MeshInfo.size());
+
     for (std::size_t i = 0; i < xFile->MeshInfo.size(); i++) {
       xFinalGeometry *it = &xFile->MeshInfo[i];
       xMeshGeometry *pActual = &xFile->XMeshDataBase[0]->Geometry[i];
       MeshInfo  *it_MeshInfo = &Info[i];
+      if (populatePools) {
+        poolIBAllocs[i].resize(it_MeshInfo->SubSets.size());
+      }
 
       t850::BufferDesc bdesc;
       bdesc.byteWidth = sizeof(RenderMesh::CBuffer);
@@ -245,6 +287,10 @@ namespace t850 {
 
         if (mDef->NameParam == "occlusionStrength") {
           it_subsetinfo->OcclusionStrength = mDef->CaseFloat[0];
+        }
+
+        if (mDef->NameParam == "normalScale") {
+          it_subsetinfo->NormalScale = mDef->CaseFloat[0];
         }
 
         if (mDef->NameParam == "sheenColor") {
@@ -476,6 +522,89 @@ namespace t850 {
           }
         }
 
+        // Phase B step 1: build a MaterialAsset prototype from the
+        // now-populated it_subsetinfo and acquire it from the dedup
+        // cache. The cache stores a copy; SubSetInfo keeps a borrowed
+        // pointer so the future Phase B step 2 draw path can read
+        // texture/param data via the cached asset instead of the
+        // bloated SubSetInfo. Note: this runs in Create() (not
+        // GatherInfo) because GatherInfo populates `stmp` with mostly
+        // defaults; only the post-pDefaults `it_subsetinfo` carries
+        // the real material data.
+        {
+          MaterialAsset proto;
+          std::memset(&proto.params, 0, sizeof(MaterialParams));
+          proto.name = std::string(material->Name.empty() ? std::string() : std::string(material->Name.c_str()));
+          // featureKey = full ShaderKey minus vertex attribs and pass.
+          // it_subsetinfo->key was set in GatherInfo to matKey for this subset.
+          proto.featureKey.bits = it_subsetinfo->key.bits & ~(ShaderKey::VERTEX_ATTRIB_MASK | ShaderKey::PASS_MASK);
+          proto.textures[(int)MatTexSlot::BaseColor]          = it_subsetinfo->DiffuseTex;          proto.textureIds[(int)MatTexSlot::BaseColor]          = it_subsetinfo->DiffuseId;
+          proto.textures[(int)MatTexSlot::Specular]           = it_subsetinfo->SpecularTex;         proto.textureIds[(int)MatTexSlot::Specular]           = it_subsetinfo->SpecularId;
+          proto.textures[(int)MatTexSlot::Gloss]              = it_subsetinfo->GlossfTex;           proto.textureIds[(int)MatTexSlot::Gloss]              = it_subsetinfo->GlossfId;
+          proto.textures[(int)MatTexSlot::Normal]             = it_subsetinfo->NormalTex;           proto.textureIds[(int)MatTexSlot::Normal]             = it_subsetinfo->NormalId;
+          proto.textures[(int)MatTexSlot::Reflect]            = it_subsetinfo->ReflectTex;          proto.textureIds[(int)MatTexSlot::Reflect]            = it_subsetinfo->ReflectId;
+          proto.textures[(int)MatTexSlot::Parallax]           = it_subsetinfo->ParalaxTex;          proto.textureIds[(int)MatTexSlot::Parallax]           = it_subsetinfo->ParalaxId;
+          proto.textures[(int)MatTexSlot::Metallic]           = it_subsetinfo->MetallicTex;         proto.textureIds[(int)MatTexSlot::Metallic]           = it_subsetinfo->MetallicId;
+          proto.textures[(int)MatTexSlot::Emissive]           = it_subsetinfo->EmissiveTex;         proto.textureIds[(int)MatTexSlot::Emissive]           = it_subsetinfo->EmissiveId;
+          proto.textures[(int)MatTexSlot::SheenColor]         = it_subsetinfo->SheenColorTex;       proto.textureIds[(int)MatTexSlot::SheenColor]         = it_subsetinfo->SheenColorId;
+          proto.textures[(int)MatTexSlot::SheenRoughness]     = it_subsetinfo->SheenRoughnessTex;   proto.textureIds[(int)MatTexSlot::SheenRoughness]     = it_subsetinfo->SheenRoughnessId;
+          proto.textures[(int)MatTexSlot::Clearcoat]          = it_subsetinfo->ClearcoatTex;        proto.textureIds[(int)MatTexSlot::Clearcoat]          = it_subsetinfo->ClearcoatId;
+          proto.textures[(int)MatTexSlot::ClearcoatRoughness] = it_subsetinfo->ClearcoatRoughnessTex;proto.textureIds[(int)MatTexSlot::ClearcoatRoughness] = it_subsetinfo->ClearcoatRoughnessId;
+          proto.textures[(int)MatTexSlot::Occlusion]          = it_subsetinfo->OcclusionTex;        proto.textureIds[(int)MatTexSlot::Occlusion]          = it_subsetinfo->OcclusionId;
+          proto.textures[(int)MatTexSlot::SpecularFactor]     = it_subsetinfo->SpecularFactorTex;   proto.textureIds[(int)MatTexSlot::SpecularFactor]     = it_subsetinfo->SpecularFactorId;
+          proto.textures[(int)MatTexSlot::SpecularColor]      = it_subsetinfo->SpecularColorTex;    proto.textureIds[(int)MatTexSlot::SpecularColor]      = it_subsetinfo->SpecularColorId;
+          proto.textures[(int)MatTexSlot::Transmission]       = it_subsetinfo->TransmissionTex;     proto.textureIds[(int)MatTexSlot::Transmission]       = it_subsetinfo->TransmissionId;
+          auto copy4 = [](float dst[4], const XVECTOR3& src) { dst[0]=src.x; dst[1]=src.y; dst[2]=src.z; dst[3]=src.w; };
+          MaterialParams& p = proto.params;
+          copy4(p.ambientColor,   it_subsetinfo->AmbientColor);
+          copy4(p.diffuseColor,   it_subsetinfo->DiffuseColor);
+          copy4(p.specularColor,  it_subsetinfo->SpecularColor);
+          copy4(p.pbrParams,      it_subsetinfo->PBRParams);
+          copy4(p.intensities,    it_subsetinfo->Intensities);
+          copy4(p.emissiveColor,  it_subsetinfo->EmissiveColor);
+          copy4(p.sheenColor,     it_subsetinfo->SheenColor);
+          p.sheenRoughness     = it_subsetinfo->SheenRoughness;
+          p.clearcoatFactor    = it_subsetinfo->ClearcoatFactor;
+          p.clearcoatRoughness = it_subsetinfo->ClearcoatRoughness;
+          p.transmissionFactor = it_subsetinfo->TransmissionFactor;
+          p.ior                = it_subsetinfo->IOR;
+          p.occlusionStrength  = it_subsetinfo->OcclusionStrength;
+          p.normalScale        = it_subsetinfo->NormalScale;
+          p.alphaCutoff        = it_subsetinfo->AlphaCutoff;
+          copy4(p.baseColorUV0,      it_subsetinfo->BaseColorUVTransform0);     copy4(p.baseColorUV1,      it_subsetinfo->BaseColorUVTransform1);
+          copy4(p.normalUV0,         it_subsetinfo->NormalUVTransform0);        copy4(p.normalUV1,         it_subsetinfo->NormalUVTransform1);
+          copy4(p.metallicUV0,       it_subsetinfo->MetallicUVTransform0);      copy4(p.metallicUV1,       it_subsetinfo->MetallicUVTransform1);
+          copy4(p.emissiveUV0,       it_subsetinfo->EmissiveUVTransform0);      copy4(p.emissiveUV1,       it_subsetinfo->EmissiveUVTransform1);
+          copy4(p.sheenColorUV0,     it_subsetinfo->SheenColorUVTransform0);    copy4(p.sheenColorUV1,     it_subsetinfo->SheenColorUVTransform1);
+          copy4(p.sheenRoughUV0,     it_subsetinfo->SheenRoughnessUVTransform0);copy4(p.sheenRoughUV1,     it_subsetinfo->SheenRoughnessUVTransform1);
+          copy4(p.clearcoatUV0,      it_subsetinfo->ClearcoatUVTransform0);     copy4(p.clearcoatUV1,      it_subsetinfo->ClearcoatUVTransform1);
+          copy4(p.clearcoatRoughUV0, it_subsetinfo->ClearcoatRoughnessUVTransform0); copy4(p.clearcoatRoughUV1, it_subsetinfo->ClearcoatRoughnessUVTransform1);
+          copy4(p.occlusionUV0,      it_subsetinfo->OcclusionUVTransform0);     copy4(p.occlusionUV1,      it_subsetinfo->OcclusionUVTransform1);
+          copy4(p.specFactorUV0,     it_subsetinfo->SpecularFactorUVTransform0);copy4(p.specFactorUV1,     it_subsetinfo->SpecularFactorUVTransform1);
+          copy4(p.specColorUV0,      it_subsetinfo->SpecularColorUVTransform0); copy4(p.specColorUV1,      it_subsetinfo->SpecularColorUVTransform1);
+          copy4(p.transmissionUV0,   it_subsetinfo->TransmissionUVTransform0);  copy4(p.transmissionUV1,   it_subsetinfo->TransmissionUVTransform1);
+          p.diffuseTexCoord    = (uint8_t)it_subsetinfo->DiffuseTexCoord;
+          p.normalTexCoord     = (uint8_t)it_subsetinfo->NormalTexCoord;
+          p.metallicTexCoord   = (uint8_t)it_subsetinfo->MetallicTexCoord;
+          p.emissiveTexCoord   = (uint8_t)it_subsetinfo->EmissiveTexCoord;
+          p.sheenColorTexCoord = (uint8_t)it_subsetinfo->SheenColorTexCoord;
+          p.sheenRoughTexCoord = (uint8_t)it_subsetinfo->SheenRoughnessTexCoord;
+          p.clearcoatTexCoord  = (uint8_t)it_subsetinfo->ClearcoatTexCoord;
+          p.clearcoatRoughTexCoord = (uint8_t)it_subsetinfo->ClearcoatRoughnessTexCoord;
+          p.occlusionTexCoord  = (uint8_t)it_subsetinfo->OcclusionTexCoord;
+          p.specFactorTexCoord = (uint8_t)it_subsetinfo->SpecularFactorTexCoord;
+          p.specColorTexCoord  = (uint8_t)it_subsetinfo->SpecularColorTexCoord;
+          p.transmissionTexCoord = (uint8_t)it_subsetinfo->TransmissionTexCoord;
+          p.alphaMode          = (uint8_t)it_subsetinfo->AlphaMode;
+          p.doubleSided        = it_subsetinfo->DoubleSided ? 1u : 0u;
+          p.unlit              = it_subsetinfo->Unlit ? 1u : 0u;
+          p.bUseFresnel        = it_subsetinfo->bUseFresnel ? 1u : 0u;
+
+          // Release any prior asset (in case Create is called twice).
+          if (it_subsetinfo->matAsset) MaterialAssetCache::Get().Release(it_subsetinfo->matAsset);
+          it_subsetinfo->matAsset = MaterialAssetCache::Get().Acquire(proto);
+        }
+
         it_subsetinfo->NumTris = subinfo->NumTris;
         it_subsetinfo->NumVertex = subinfo->NumVertex;
         it_subsetinfo->IB32Bit = kUse32;
@@ -509,10 +638,15 @@ namespace t850 {
             }
           }
 
-          t850::BufferDesc bdesc;
-          bdesc.byteWidth = it_subsetinfo->NumTris * 3 * sizeof(unsigned short);
-          bdesc.usage = BufferUsage::DEFAULT;
-          it_subsetinfo->IB = (t850::IndexBuffer*)T8Device->CreateBuffer(BufferType::INDEX, bdesc, tmpIndexex);
+          // Phase A.5 step 3: only suballocate into pool. Legacy
+          // per-subset IB is no longer created.
+          it_subsetinfo->IB = nullptr;
+          if (populatePools) {
+            uint32_t poolId = UINT32_MAX;
+            IndexPool* ipool = MeshAssetCache::Get().GetOrCreateIndexPool(/*ib32Bit=*/false, &poolId);
+            uint32_t off = ipool->Suballocate(tmpIndexex, it_subsetinfo->NumTris * 3u);
+            poolIBAllocs[i][j] = { poolId, off, it_subsetinfo->NumTris * 3u };
+          }
 
           // Compute per-subset AABB from referenced vertices
           it_subsetinfo->bounds.Reset();
@@ -548,10 +682,14 @@ namespace t850 {
             }
           }
 
-          t850::BufferDesc bdesc;
-          bdesc.byteWidth = it_subsetinfo->NumTris * 3 * sizeof(unsigned int);
-          bdesc.usage = BufferUsage::DEFAULT;
-          it_subsetinfo->IB = (t850::IndexBuffer*)T8Device->CreateBuffer(BufferType::INDEX, bdesc, tmpIndexex);
+          // Phase A.5 step 3: only suballocate into pool.
+          it_subsetinfo->IB = nullptr;
+          if (populatePools) {
+            uint32_t poolId = UINT32_MAX;
+            IndexPool* ipool = MeshAssetCache::Get().GetOrCreateIndexPool(/*ib32Bit=*/true, &poolId);
+            uint32_t off = ipool->Suballocate(tmpIndexex, it_subsetinfo->NumTris * 3u);
+            poolIBAllocs[i][j] = { poolId, off, it_subsetinfo->NumTris * 3u };
+          }
 
           // Compute per-subset AABB from referenced vertices
           it_subsetinfo->bounds.Reset();
@@ -567,10 +705,18 @@ namespace t850 {
 
       it_MeshInfo->VertexSize = it->VertexSize;
 
-      t850::BufferDesc buffdesc;
-      buffdesc.byteWidth = pActual->NumVertices*it->VertexSize;
-      buffdesc.usage = BufferUsage::DEFAULT;
-      it_MeshInfo->VB = (t850::VertexBuffer*)T8Device->CreateBuffer(BufferType::VERTEX, buffdesc, &it->pData[0]);
+      // Phase A.5 step 3: VB lives in the shared pool only.
+      it_MeshInfo->VB = nullptr;
+      if (populatePools) {
+        uint64_t formatHash = 0;
+        if (!it_MeshInfo->SubSets.empty()) {
+          formatHash = it_MeshInfo->SubSets[0].key.bits & ShaderKey::VERTEX_ATTRIB_MASK;
+        }
+        uint32_t poolId = UINT32_MAX;
+        VertexPool* vpool = MeshAssetCache::Get().GetOrCreateVertexPool(formatHash, it->VertexSize, &poolId);
+        uint32_t off = vpool->Suballocate(&it->pData[0], pActual->NumVertices * it->VertexSize);
+        poolVBAllocs[i] = { poolId, off, pActual->NumVertices };
+      }
 
       // Compute AABB from vertex positions (first 3 floats of each vertex)
       it_MeshInfo->bounds.Reset();
@@ -583,7 +729,7 @@ namespace t850 {
       }
 
       T8_LOG_DEBUG("  Geometry %zu: VB=%u bytes (stride=%u, %d verts), IB=%zu tris%s",
-                   i, buffdesc.byteWidth, it->VertexSize, pActual->NumVertices,
+                   i, pActual->NumVertices * it->VertexSize, it->VertexSize, pActual->NumVertices,
                    (kUse32 ? pActual->Triangles32.size() : pActual->Triangles.size())/3,
                    kUse32 ? " [32-bit]" : "");
 
@@ -605,19 +751,99 @@ namespace t850 {
       }
 #endif
 
-      if (!kUse32) {
-        buffdesc.byteWidth = static_cast<int>(pActual->Triangles.size() * sizeof(unsigned short));
-        buffdesc.usage = BufferUsage::DEFAULT;
-        it_MeshInfo->IB = (t850::IndexBuffer*)T8Device->CreateBuffer(BufferType::INDEX, buffdesc, &pActual->Triangles[0]);
-      } else {
-        buffdesc.byteWidth = static_cast<int>(pActual->Triangles32.size() * sizeof(unsigned int));
-        buffdesc.usage = BufferUsage::DEFAULT;
-        it_MeshInfo->IB = (t850::IndexBuffer*)T8Device->CreateBuffer(BufferType::INDEX, buffdesc, &pActual->Triangles32[0]);
-      }
+      // Phase A.5 step 3: per-mesh IB (legacy MeshInfo::IB) was used
+      // by an older draw path that bound a whole-geometry IB; the
+      // current pool path uses per-subset IB allocations exclusively.
+      it_MeshInfo->IB = nullptr;
     }
 
     LogLoadedMeshDetails(xFile, Info);
     XMatIdentity(transform);
+
+    // Phase A: populate the shared MeshAsset on first acquisition.
+    // VB/IB are still owned by RenderMesh in this phase; only the
+    // CPU-side description (submesh ranges, AABBs, vertex layout) is
+    // mirrored into the asset so that subsequent acquisitions of the
+    // same source path observe a fully-formed entry.
+    if (m_asset && m_asset->submeshes.empty()) {
+      m_asset->vertexAttribMask = 0;
+      m_asset->vertexStride     = 0;
+      m_asset->vertexCount      = 0;
+      m_asset->indexCount       = 0;
+      m_asset->rootAABB         = t850::AABB{};
+
+      std::size_t totalVerts = 0;
+      std::size_t totalIdx   = 0;
+      for (std::size_t i = 0; i < Info.size(); ++i) {
+        const MeshInfo& mi = Info[i];
+        if (mi.VertexSize > m_asset->vertexStride) m_asset->vertexStride = mi.VertexSize;
+        totalVerts += mi.NumVertex;
+        for (std::size_t j = 0; j < mi.SubSets.size(); ++j) {
+          const SubSetInfo& s = mi.SubSets[j];
+          Submesh sub;
+          sub.vertexStart   = s.VertexStart;
+          sub.vertexCount   = s.NumVertex;
+          sub.indexStart    = s.TriStart * 3u;
+          sub.triangleCount = s.NumTris;
+          sub.materialSlot  = static_cast<uint32_t>(m_asset->submeshes.size());
+          sub.ib32Bit       = s.IB32Bit;
+          sub.localAABB.vMin = XVECTOR3(s.bounds.min.x, s.bounds.min.y, s.bounds.min.z, 0.0f);
+          sub.localAABB.vMax = XVECTOR3(s.bounds.max.x, s.bounds.max.y, s.bounds.max.z, 0.0f);
+          sub.vertexAttribKey.bits = s.key.bits & ShaderKey::VERTEX_ATTRIB_MASK;
+          m_asset->vertexAttribMask |= sub.vertexAttribKey.bits;
+          totalIdx += static_cast<std::size_t>(s.NumTris) * 3u;
+          // Phase A.5 pool allocations captured during the loop above.
+          if (i < poolVBAllocs.size() && poolVBAllocs[i].poolId != UINT32_MAX) {
+            sub.vbAlloc.poolId      = poolVBAllocs[i].poolId;
+            sub.vbAlloc.offsetElems = poolVBAllocs[i].offsetVerts;
+            sub.vbAlloc.count       = poolVBAllocs[i].count;
+            sub.vbPoolId            = static_cast<uint16_t>(poolVBAllocs[i].poolId);
+          }
+          if (i < poolIBAllocs.size() && j < poolIBAllocs[i].size() && poolIBAllocs[i][j].poolId != UINT32_MAX) {
+            sub.ibAlloc.poolId      = poolIBAllocs[i][j].poolId;
+            sub.ibAlloc.offsetElems = poolIBAllocs[i][j].offsetIdx;
+            sub.ibAlloc.count       = poolIBAllocs[i][j].count;
+            sub.ibPoolId            = static_cast<uint16_t>(poolIBAllocs[i][j].poolId);
+          }
+          m_asset->submeshes.push_back(sub);
+        }
+        m_asset->rootAABB.ExpandToInclude(mi.bounds.min.x, mi.bounds.min.y, mi.bounds.min.z);
+        m_asset->rootAABB.ExpandToInclude(mi.bounds.max.x, mi.bounds.max.y, mi.bounds.max.z);
+      }
+      m_asset->vertexCount = static_cast<uint32_t>(totalVerts);
+      m_asset->indexCount  = static_cast<uint32_t>(totalIdx);
+
+      T8_LOG_INFO("[MeshAssetCache] Populated '%s': %zu submesh(es), %u verts, %u indices, stride=%u, attribMask=0x%016llX",
+                  m_asset->sourcePath.c_str(),
+                  m_asset->submeshes.size(),
+                  m_asset->vertexCount, m_asset->indexCount, m_asset->vertexStride,
+                  static_cast<unsigned long long>(m_asset->vertexAttribMask));
+      MeshAssetCache::Get().DumpToLog();
+      MaterialAssetCache::Get().DumpToLog();
+    } else if (m_asset) {
+      T8_LOG_INFO("[MeshAssetCache] Reusing populated '%s' (%zu submesh(es), refs=%u)",
+                  m_asset->sourcePath.c_str(), m_asset->submeshes.size(), m_asset->refCount);
+    }
+
+    // Phase A.5 step 2: copy pool offsets from the (now populated)
+    // MeshAsset into per-instance MeshInfo / SubSetInfo so the draw
+    // path can reach them in O(1). This runs for EVERY instance,
+    // including reuseGPU acquisitions (which never entered the
+    // populate-pools branch above).
+    if (m_asset && !m_asset->submeshes.empty()) {
+      std::size_t flatIdx = 0;
+      for (std::size_t i = 0; i < Info.size(); ++i) {
+        MeshInfo& mi = Info[i];
+        // VB alloc is the same across all subsets of one geometry
+        // (subsets share their parent geometry's VB).
+        if (flatIdx < m_asset->submeshes.size()) {
+          mi.vbPoolAlloc = m_asset->submeshes[flatIdx].vbAlloc;
+        }
+        for (std::size_t j = 0; j < mi.SubSets.size() && flatIdx < m_asset->submeshes.size(); ++j, ++flatIdx) {
+          mi.SubSets[j].ibPoolAlloc = m_asset->submeshes[flatIdx].ibAlloc;
+        }
+      }
+    }
   }
 
   void RenderMesh::GatherInfo() {
@@ -658,6 +884,10 @@ namespace t850 {
         baseKey.bits |= ShaderKey::HAS_TEXCOORD0;
       if (pActual->VertexAttributes&xMeshGeometry::HAS_TEXCOORD1)
         baseKey.bits |= ShaderKey::HAS_TEXCOORD1;
+      if (pActual->VertexAttributes&xMeshGeometry::HAS_TEXCOORD2)
+        baseKey.bits |= ShaderKey::HAS_TEXCOORD2;
+      if (pActual->VertexAttributes&xMeshGeometry::HAS_TEXCOORD3)
+        baseKey.bits |= ShaderKey::HAS_TEXCOORD3;
       if (pActual->VertexAttributes&xMeshGeometry::HAS_TANGENT)
         baseKey.bits |= ShaderKey::HAS_TANGENTS;
       if (pActual->VertexAttributes&xMeshGeometry::HAS_BINORMAL)
@@ -741,6 +971,11 @@ namespace t850 {
 
 		stmp.bUseFresnel = bUseFresnel;
         stmp.key = matKey;
+
+        // Phase B step 1: MaterialAsset prototype is built later in
+        // RenderMesh::Create (after pDefaults populates it_subsetinfo
+        // with real material data). Here `stmp` is mostly defaults so
+        // it would dedup down to a handful of buckets.
 
         T8_LOG_VERBOSE("  Material %d: key=0x%016llX noLight=%d fresnel=%d matID=%d",
                  j, static_cast<unsigned long long>(matKey.bits), (int)bNoLight, (int)bUseFresnel, stmp.MatID);
@@ -868,6 +1103,13 @@ namespace t850 {
   }
 
   static bool IsForwardOnlySubset(const RenderMesh::SubSetInfo& subInfo) {
+    // Phase B: read material classification via the shared
+    // MaterialAsset; SubSetInfo.AlphaMode/TransmissionFactor are
+    // legacy duplicates kept around for ABI stability.
+    if (const MaterialAsset* mat = subInfo.matAsset) {
+      const MaterialParams& mp = mat->params;
+      return mp.alphaMode == 2 || mp.transmissionFactor > 0.0f;
+    }
     return subInfo.AlphaMode == 2 || subInfo.TransmissionFactor > 0.0f;
   }
 
@@ -896,10 +1138,16 @@ namespace t850 {
   }
 
   static int ForwardSubsetGroup(const RenderMesh::SubSetInfo& subInfo) {
+    if (const MaterialAsset* mat = subInfo.matAsset) {
+      return mat->params.transmissionFactor > 0.0f ? 0 : 1;
+    }
     return subInfo.TransmissionFactor > 0.0f ? 0 : 1;
   }
 
   static int NonForwardSubsetGroup(const RenderMesh::SubSetInfo& subInfo) {
+    if (const MaterialAsset* mat = subInfo.matAsset) {
+      return mat->params.alphaMode == 1 ? 1 : 0;
+    }
     return subInfo.AlphaMode == 1 ? 1 : 0;
   }
 
@@ -973,6 +1221,36 @@ namespace t850 {
     }
 
     uint8_t currentPass = gKey.getPass();
+
+    // Phase C step 2: state tracking. Across the whole Draw() call,
+    // remember which texture/SRV is currently bound to each slot and
+    // skip the bind when it would write the same value. The Porsche
+    // (151 subsets) was binding the 9 IBL/scene textures + EnvMap
+    // inside every per-subset iteration today — that's ~1500
+    // redundant API calls per frame collapsing to ~10 with this
+    // tracker. Material textures collapse when consecutive subsets
+    // share a material; IB pool / shader collapses when consecutive
+    // subsets share them. Byte-identical: a skipped bind is one that
+    // writes the same value already there.
+    constexpr int kMaxTrackedSlots = 32;
+    Texture*                  lastTex[kMaxTrackedSlots] = { nullptr };
+    Texture*                  lastEnv = nullptr;
+    ShaderBase*               lastShaderBound = nullptr;
+    IndexBuffer*              lastIBBound     = nullptr;
+    IndexBufferFormat::E      lastIBFmt       = IndexBufferFormat::R16;
+    bool                      lastIBFmtSet    = false;
+    auto bindTextureOnce = [&](Texture* t, int slot, const char* name, int samplerSlot) {
+      if (!t || slot < 0 || slot >= kMaxTrackedSlots) return;
+      if (lastTex[slot] != t) {
+        t->Set(*T8DeviceContext, slot, name);
+        lastTex[slot] = t;
+      }
+      // Sampler is determined by slot (Material vs Clamp); set whenever
+      // texture changes since the texture's slot association may need
+      // refreshing on some backends.
+      t->SetSampler(*T8DeviceContext, samplerSlot);
+    };
+
     std::vector<std::size_t> geometryOrder(numGeometries);
     for (std::size_t i = 0; i < numGeometries; i++) geometryOrder[i] = i;
     if (currentPass == PassType::FORWARD) {
@@ -1055,7 +1333,19 @@ namespace t850 {
 
       ShaderBase *s = 0;
       ShaderBase *last = (ShaderBase*)32;
-      it_MeshInfo->VB->Set(*T8DeviceContext, stride, offset);
+
+      // Phase A.5 step 2: bind shared VB pool if available, otherwise
+      // fall back to the per-asset VB. The pool's GPU buffer is built
+      // lazily on first GetGPUBuffer() call.
+      VertexBuffer* vbToBind = it_MeshInfo->VB;
+      if (it_MeshInfo->vbPoolAlloc.IsValid()) {
+        if (VertexPool* vpool = MeshAssetCache::Get().GetVertexPool(it_MeshInfo->vbPoolAlloc.poolId)) {
+          if (VertexBuffer* gpu = vpool->GetGPUBuffer()) {
+            vbToBind = gpu;
+          }
+        }
+      }
+      vbToBind->Set(*T8DeviceContext, stride, offset);
 
       // Build sorted draw order by shader key to minimize PSO switches
       std::size_t numSubsets = it_MeshInfo->SubSets.size();
@@ -1095,16 +1385,32 @@ namespace t850 {
         if (!AABBInsideFrustum(sub_info->bounds, transform, frustumPlanes))
           continue;
 
-		it_MeshInfo->CnstBuffer.AmbientColor = sub_info->AmbientColor;
-		it_MeshInfo->CnstBuffer.DiffuseColor = sub_info->DiffuseColor;
-		it_MeshInfo->CnstBuffer.SpecularColor = sub_info->SpecularColor;
-		it_MeshInfo->CnstBuffer.PBRParams = sub_info->PBRParams;
-		it_MeshInfo->CnstBuffer.Intensities = sub_info->Intensities;
-		it_MeshInfo->CnstBuffer.Intensities.w = (float)sub_info->MatID;
-        it_MeshInfo->CnstBuffer.EmissiveColor = sub_info->EmissiveColor;
-        it_MeshInfo->CnstBuffer.AlphaParams = XVECTOR3((float)sub_info->AlphaMode, sub_info->AlphaCutoff, sub_info->DoubleSided ? 1.0f : 0.0f, sub_info->TransmissionFactor);
-        it_MeshInfo->CnstBuffer.ForwardParams = XVECTOR3((float)g_pBaseDriver->width, (float)g_pBaseDriver->height, Textures[7] ? 1.0f : 0.0f, sub_info->IOR);
-        it_MeshInfo->CnstBuffer.TexCoordSets = XVECTOR3((float)sub_info->DiffuseTexCoord, (float)sub_info->NormalTexCoord, (float)sub_info->MetallicTexCoord, (float)sub_info->EmissiveTexCoord);
+        // Phase B step 2: read material data via the deduplicated
+        // MaterialAsset. SubSetInfo material fields are still
+        // populated for now (step 3 retires them) but are no longer
+        // the source of truth for rendering. Per-instance fields like
+        // MatID stay on SubSetInfo.
+        const MaterialAsset* mat = sub_info->matAsset;
+        const MaterialParams* mp = mat ? &mat->params : nullptr;
+        if (mp) {
+          FillCBufferFromMaterial(it_MeshInfo->CnstBuffer, *mp);
+          // Per-instance MatID overrides the alpha slot used by
+          // FillCBufferFromMaterial (it filled .w with intensities[3]
+          // but the engine reuses Intensities.w for MatID).
+          it_MeshInfo->CnstBuffer.Intensities.w = (float)sub_info->MatID;
+        } else {
+          // Defensive fallback (shouldn't happen if Create() ran).
+          it_MeshInfo->CnstBuffer.AmbientColor = sub_info->AmbientColor;
+          it_MeshInfo->CnstBuffer.DiffuseColor = sub_info->DiffuseColor;
+          it_MeshInfo->CnstBuffer.SpecularColor = sub_info->SpecularColor;
+          it_MeshInfo->CnstBuffer.PBRParams = sub_info->PBRParams;
+          it_MeshInfo->CnstBuffer.Intensities = sub_info->Intensities;
+          it_MeshInfo->CnstBuffer.Intensities.w = (float)sub_info->MatID;
+          it_MeshInfo->CnstBuffer.EmissiveColor = sub_info->EmissiveColor;
+          it_MeshInfo->CnstBuffer.AlphaParams = XVECTOR3((float)sub_info->AlphaMode, sub_info->AlphaCutoff, sub_info->DoubleSided ? 1.0f : 0.0f, sub_info->TransmissionFactor);
+          it_MeshInfo->CnstBuffer.TexCoordSets = XVECTOR3((float)sub_info->DiffuseTexCoord, (float)sub_info->NormalTexCoord, (float)sub_info->MetallicTexCoord, (float)sub_info->EmissiveTexCoord);
+        }
+        it_MeshInfo->CnstBuffer.ForwardParams = XVECTOR3((float)g_pBaseDriver->width, (float)g_pBaseDriver->height, Textures[7] ? 1.0f : 0.0f, mp ? mp->ior : sub_info->IOR);
         float emissiveMul = pScProp ? pScProp->MaterialEmissiveIntensity : 1.0f;
         float transmissionMul = pScProp ? pScProp->MaterialTransmissionMultiplier : 1.0f;
         float refractionStrength = pScProp ? pScProp->MaterialRefractionStrength : 0.03f;
@@ -1112,43 +1418,56 @@ namespace t850 {
         float iblMipCount = pScProp ? pScProp->IBLMipCount : 4.0f;
         float iblDiffuseMipLevel = pScProp ? pScProp->IBLDiffuseMipLevel : 4.0f;
         float iblBrdfLutEnabled = pScProp ? pScProp->IBLBRDFLUTEnabled : 0.0f;
-        it_MeshInfo->CnstBuffer.MaterialParams = XVECTOR3(sub_info->ClearcoatFactor, sub_info->ClearcoatRoughness, sub_info->Unlit ? 1.0f : 0.0f, emissiveMul);
+        if (mp) {
+          // Material-driven slots: clearcoat factors + unlit flag (.x..z),
+          // plus per-frame multipliers in the .w slots.
+          it_MeshInfo->CnstBuffer.MaterialParams  = XVECTOR3(mp->clearcoatFactor, mp->clearcoatRoughness, mp->unlit ? 1.0f : 0.0f, emissiveMul);
+          it_MeshInfo->CnstBuffer.MaterialParams5 = XVECTOR3(mat->textures[(int)MatTexSlot::SheenColor]     ? 1.0f : 0.0f,
+                                                              mat->textures[(int)MatTexSlot::SheenRoughness] ? 1.0f : 0.0f,
+                                                              static_cast<float>(mp->sheenColorTexCoord),
+                                                              static_cast<float>(mp->sheenRoughTexCoord));
+          it_MeshInfo->CnstBuffer.MaterialParams6 = XVECTOR3(mat->textures[(int)MatTexSlot::Clearcoat]          ? 1.0f : 0.0f,
+                                                              mat->textures[(int)MatTexSlot::ClearcoatRoughness] ? 1.0f : 0.0f,
+                                                              static_cast<float>(mp->clearcoatTexCoord),
+                                                              static_cast<float>(mp->clearcoatRoughTexCoord));
+          it_MeshInfo->CnstBuffer.MaterialParams7 = XVECTOR3(mat->textures[(int)MatTexSlot::Occlusion] ? 1.0f : 0.0f,
+                                                              mp->occlusionStrength,
+                                                              static_cast<float>(mp->occlusionTexCoord),
+                                                              mat->textures[(int)MatTexSlot::Transmission] ? 1.0f : 0.0f);
+          it_MeshInfo->CnstBuffer.MaterialParams8 = XVECTOR3(static_cast<float>(mp->transmissionTexCoord),
+                                                              mat->textures[(int)MatTexSlot::SpecularFactor] ? 1.0f : 0.0f,
+                                                              static_cast<float>(mp->specFactorTexCoord),
+                                                              mat->textures[(int)MatTexSlot::SpecularColor]  ? 1.0f : 0.0f);
+        } else {
+          it_MeshInfo->CnstBuffer.MaterialParams  = XVECTOR3(sub_info->ClearcoatFactor, sub_info->ClearcoatRoughness, sub_info->Unlit ? 1.0f : 0.0f, emissiveMul);
+          it_MeshInfo->CnstBuffer.MaterialParams5 = XVECTOR3(sub_info->SheenColorTex ? 1.0f : 0.0f, sub_info->SheenRoughnessTex ? 1.0f : 0.0f, (float)sub_info->SheenColorTexCoord, (float)sub_info->SheenRoughnessTexCoord);
+          it_MeshInfo->CnstBuffer.MaterialParams6 = XVECTOR3(sub_info->ClearcoatTex ? 1.0f : 0.0f, sub_info->ClearcoatRoughnessTex ? 1.0f : 0.0f, (float)sub_info->ClearcoatTexCoord, (float)sub_info->ClearcoatRoughnessTexCoord);
+          it_MeshInfo->CnstBuffer.MaterialParams7 = XVECTOR3(sub_info->OcclusionTex ? 1.0f : 0.0f, sub_info->OcclusionStrength, (float)sub_info->OcclusionTexCoord, sub_info->TransmissionTex ? 1.0f : 0.0f);
+          it_MeshInfo->CnstBuffer.MaterialParams8 = XVECTOR3((float)sub_info->TransmissionTexCoord, sub_info->SpecularFactorTex ? 1.0f : 0.0f, (float)sub_info->SpecularFactorTexCoord, sub_info->SpecularColorTex ? 1.0f : 0.0f);
+        }
         it_MeshInfo->CnstBuffer.MaterialParams2 = XVECTOR3(transmissionMul, refractionStrength, Textures[9] ? 1.0f : 0.0f, iblFactor);
         it_MeshInfo->CnstBuffer.MaterialParams3 = XVECTOR3(iblMipCount, iblBrdfLutEnabled, iblDiffuseMipLevel, 0.0f);
-        it_MeshInfo->CnstBuffer.MaterialParams4 = XVECTOR3(sub_info->SheenColor.x, sub_info->SheenColor.y, sub_info->SheenColor.z, sub_info->SheenRoughness);
-        it_MeshInfo->CnstBuffer.MaterialParams5 = XVECTOR3(sub_info->SheenColorTex ? 1.0f : 0.0f, sub_info->SheenRoughnessTex ? 1.0f : 0.0f, (float)sub_info->SheenColorTexCoord, (float)sub_info->SheenRoughnessTexCoord);
-        it_MeshInfo->CnstBuffer.MaterialParams6 = XVECTOR3(sub_info->ClearcoatTex ? 1.0f : 0.0f, sub_info->ClearcoatRoughnessTex ? 1.0f : 0.0f, (float)sub_info->ClearcoatTexCoord, (float)sub_info->ClearcoatRoughnessTexCoord);
-        it_MeshInfo->CnstBuffer.MaterialParams7 = XVECTOR3(sub_info->OcclusionTex ? 1.0f : 0.0f, sub_info->OcclusionStrength, (float)sub_info->OcclusionTexCoord, sub_info->TransmissionTex ? 1.0f : 0.0f);
-        it_MeshInfo->CnstBuffer.MaterialParams8 = XVECTOR3((float)sub_info->TransmissionTexCoord, sub_info->SpecularFactorTex ? 1.0f : 0.0f, (float)sub_info->SpecularFactorTexCoord, sub_info->SpecularColorTex ? 1.0f : 0.0f);
-        it_MeshInfo->CnstBuffer.MaterialParams9 = XVECTOR3((float)sub_info->SpecularColorTexCoord, 0.0f, 0.0f, 0.0f);
-        it_MeshInfo->CnstBuffer.BaseColorUVTransform0 = sub_info->BaseColorUVTransform0;
-        it_MeshInfo->CnstBuffer.BaseColorUVTransform1 = sub_info->BaseColorUVTransform1;
-        it_MeshInfo->CnstBuffer.NormalUVTransform0 = sub_info->NormalUVTransform0;
-        it_MeshInfo->CnstBuffer.NormalUVTransform1 = sub_info->NormalUVTransform1;
-        it_MeshInfo->CnstBuffer.MetallicUVTransform0 = sub_info->MetallicUVTransform0;
-        it_MeshInfo->CnstBuffer.MetallicUVTransform1 = sub_info->MetallicUVTransform1;
-        it_MeshInfo->CnstBuffer.EmissiveUVTransform0 = sub_info->EmissiveUVTransform0;
-        it_MeshInfo->CnstBuffer.EmissiveUVTransform1 = sub_info->EmissiveUVTransform1;
-        it_MeshInfo->CnstBuffer.SheenColorUVTransform0 = sub_info->SheenColorUVTransform0;
-        it_MeshInfo->CnstBuffer.SheenColorUVTransform1 = sub_info->SheenColorUVTransform1;
-        it_MeshInfo->CnstBuffer.SheenRoughnessUVTransform0 = sub_info->SheenRoughnessUVTransform0;
-        it_MeshInfo->CnstBuffer.SheenRoughnessUVTransform1 = sub_info->SheenRoughnessUVTransform1;
-        it_MeshInfo->CnstBuffer.ClearcoatUVTransform0 = sub_info->ClearcoatUVTransform0;
-        it_MeshInfo->CnstBuffer.ClearcoatUVTransform1 = sub_info->ClearcoatUVTransform1;
-        it_MeshInfo->CnstBuffer.ClearcoatRoughnessUVTransform0 = sub_info->ClearcoatRoughnessUVTransform0;
-        it_MeshInfo->CnstBuffer.ClearcoatRoughnessUVTransform1 = sub_info->ClearcoatRoughnessUVTransform1;
-        it_MeshInfo->CnstBuffer.OcclusionUVTransform0 = sub_info->OcclusionUVTransform0;
-        it_MeshInfo->CnstBuffer.OcclusionUVTransform1 = sub_info->OcclusionUVTransform1;
-        it_MeshInfo->CnstBuffer.SpecularFactorUVTransform0 = sub_info->SpecularFactorUVTransform0;
-        it_MeshInfo->CnstBuffer.SpecularFactorUVTransform1 = sub_info->SpecularFactorUVTransform1;
-        it_MeshInfo->CnstBuffer.SpecularColorUVTransform0 = sub_info->SpecularColorUVTransform0;
-        it_MeshInfo->CnstBuffer.SpecularColorUVTransform1 = sub_info->SpecularColorUVTransform1;
-        it_MeshInfo->CnstBuffer.TransmissionUVTransform0 = sub_info->TransmissionUVTransform0;
-        it_MeshInfo->CnstBuffer.TransmissionUVTransform1 = sub_info->TransmissionUVTransform1;
 
-        sub_info->IB->Set(*T8DeviceContext, 0,
-                          sub_info->IB32Bit ? IndexBufferFormat::R32
-                                            : IndexBufferFormat::R16);
+        // Phase A.5 step 2: bind shared IB pool if available, otherwise
+        // fall back to the per-subset IB.
+        IndexBuffer* ibToBind = sub_info->IB;
+        if (sub_info->ibPoolAlloc.IsValid()) {
+          if (IndexPool* ipool = MeshAssetCache::Get().GetIndexPool(sub_info->ibPoolAlloc.poolId)) {
+            if (IndexBuffer* gpu = ipool->GetGPUBuffer()) {
+              ibToBind = gpu;
+            }
+          }
+        }
+        IndexBufferFormat::E ibFmt = sub_info->IB32Bit ? IndexBufferFormat::R32 : IndexBufferFormat::R16;
+        // Phase C step 2: skip the IB bind when we already have this
+        // exact IB+format bound (the Porsche shares one 16-bit pool
+        // across all 151 subsets).
+        if (lastIBBound != ibToBind || !lastIBFmtSet || lastIBFmt != ibFmt) {
+          ibToBind->Set(*T8DeviceContext, 0, ibFmt);
+          lastIBBound = ibToBind;
+          lastIBFmt   = ibFmt;
+          lastIBFmtSet = true;
+        }
 
         // Build final shader key: material features + global pass + toggles
         ShaderKey finalKey(sub_info->key.bits);
@@ -1169,118 +1488,138 @@ namespace t850 {
           update = true;
 
         BaseDriver::FaceCulling prevCull = g_pBaseDriver->m_FaceCulling;
-        bool changedCull = sub_info->DoubleSided && prevCull != BaseDriver::FRONT_AND_BACK;
+        const bool subsetDoubleSided = mp ? (mp->doubleSided != 0) : sub_info->DoubleSided;
+        bool changedCull = subsetDoubleSided && prevCull != BaseDriver::FRONT_AND_BACK;
         if (changedCull) {
           g_pBaseDriver->SetCullFace(BaseDriver::FRONT_AND_BACK);
         }
 
         if (update) {
+          // Phase C step 2: shader bind cannot be skipped on
+          // PSO-based backends (D3D12). The PSO is keyed by
+          // (shader + current blend/depth/cull + RT formats), and
+          // SetCullFace() between subsets (for doubleSided materials)
+          // changes the cull state — Shader::Set re-derives the PSO
+          // from the current state, so it must run every subset even
+          // when the ShaderBase* instance is unchanged. The driver
+          // itself already deduplicates redundant PSO binds via
+          // m_lastPSO so this is cheap.
           s->Set(*T8DeviceContext);
+
+          // ── Texture-cache invalidation ────────────────────────
+          // D3D12Texture::Set reads `shader->srvSlots` to map a SRV
+          // slot to a root parameter index — that mapping is
+          // PER-SHADER. When the shader changes, the root parameter
+          // for slot N can differ, so the texture cache must be
+          // dropped or we'd silently re-use a binding intended for a
+          // different root param.
+          if (s != lastShaderBound) {
+            for (int i = 0; i < kMaxTrackedSlots; ++i) lastTex[i] = nullptr;
+            lastEnv = nullptr;
+            lastShaderBound = s;
+          }
 
           it_MeshInfo->CB->UpdateFromBuffer(*T8DeviceContext, &it_MeshInfo->CnstBuffer.WVP[0]);
           it_MeshInfo->CB->Set(*T8DeviceContext);
         }
+        // Phase B step 2 + C step 2: bind material textures via the
+        // deduplicated MaterialAsset, with state-tracked dedup so that
+        // consecutive subsets sharing a material skip the rebind.
+        auto matTex = [&](MatTexSlot slot) -> Texture* {
+          return mat ? mat->textures[(int)slot] : nullptr;
+        };
         if (s->key.has(ShaderKey::DIFFUSE_MAP)) {
-          sub_info->DiffuseTex->Set(*T8DeviceContext, 0, "DiffuseTex");
-          sub_info->DiffuseTex->SetSampler(*T8DeviceContext, MaterialSamplerSlot);
+          Texture* t = matTex(MatTexSlot::BaseColor); if (!t) t = sub_info->DiffuseTex;
+          bindTextureOnce(t, 0, "DiffuseTex", MaterialSamplerSlot);
         }
         if (s->key.has(ShaderKey::SPECULAR_MAP)) {
-          sub_info->SpecularTex->Set(*T8DeviceContext, 1, "SpecularTex");
-          sub_info->SpecularTex->SetSampler(*T8DeviceContext, MaterialSamplerSlot);
+          Texture* t = matTex(MatTexSlot::Specular); if (!t) t = sub_info->SpecularTex;
+          bindTextureOnce(t, 1, "SpecularTex", MaterialSamplerSlot);
         }
 
         if (s->key.has(ShaderKey::GLOSS_MAP)) {
-          sub_info->GlossfTex->Set(*T8DeviceContext, 2, "GlossTex");
-          sub_info->GlossfTex->SetSampler(*T8DeviceContext, MaterialSamplerSlot);
+          Texture* t = matTex(MatTexSlot::Gloss); if (!t) t = sub_info->GlossfTex;
+          bindTextureOnce(t, 2, "GlossTex", MaterialSamplerSlot);
         }
 
         if (s->key.has(ShaderKey::NORMAL_MAP)) {
-          sub_info->NormalTex->Set(*T8DeviceContext, 3, "NormalTex");
-          sub_info->NormalTex->SetSampler(*T8DeviceContext, MaterialSamplerSlot);
+          Texture* t = matTex(MatTexSlot::Normal); if (!t) t = sub_info->NormalTex;
+          bindTextureOnce(t, 3, "NormalTex", MaterialSamplerSlot);
         }
         if (EnvMap) {
-          EnvMap->Set(*T8DeviceContext, 4, "texEnv");
+          // Slot 4 is shared by EnvMap; track separately to allow
+          // EnvMap pointer change between RenderMesh instances.
+          if (lastEnv != EnvMap) {
+            EnvMap->Set(*T8DeviceContext, 4, "texEnv");
+            lastTex[4] = EnvMap;
+            lastEnv = EnvMap;
+          }
           EnvMap->SetSampler(*T8DeviceContext, ClampSamplerSlot);
         }
         if (s->key.has(ShaderKey::HEIGHT_MAP)) {
-          sub_info->ParalaxTex->Set(*T8DeviceContext, 5, "HeightTex");
-          sub_info->ParalaxTex->SetSampler(*T8DeviceContext, MaterialSamplerSlot);
+          Texture* t = matTex(MatTexSlot::Parallax); if (!t) t = sub_info->ParalaxTex;
+          bindTextureOnce(t, 5, "HeightTex", MaterialSamplerSlot);
         }
         if (s->key.has(ShaderKey::METALLIC_MAP)) {
-          sub_info->MetallicTex->Set(*T8DeviceContext, 6, "MetallicTex");
-          sub_info->MetallicTex->SetSampler(*T8DeviceContext, MaterialSamplerSlot);
+          Texture* t = matTex(MatTexSlot::Metallic); if (!t) t = sub_info->MetallicTex;
+          bindTextureOnce(t, 6, "MetallicTex", MaterialSamplerSlot);
         }
-        if (Textures[7]) {
-          Textures[7]->Set(*T8DeviceContext, 7, "SceneDepthTex");
-          Textures[7]->SetSampler(*T8DeviceContext, ClampSamplerSlot);
+        bindTextureOnce(Textures[7], 7, "SceneDepthTex", ClampSamplerSlot);
+        if (s->key.has(ShaderKey::EMISSIVE_MAP)) {
+          Texture* t = matTex(MatTexSlot::Emissive); if (!t) t = sub_info->EmissiveTex;
+          bindTextureOnce(t, 8, "EmissiveTex", MaterialSamplerSlot);
         }
-        if (s->key.has(ShaderKey::EMISSIVE_MAP) && sub_info->EmissiveTex) {
-          sub_info->EmissiveTex->Set(*T8DeviceContext, 8, "EmissiveTex");
-          sub_info->EmissiveTex->SetSampler(*T8DeviceContext, MaterialSamplerSlot);
+        bindTextureOnce(Textures[9], 9, "SceneColorTex", ClampSamplerSlot);
+        bindTextureOnce(Textures[EnvironmentTextureSlot::DiffuseIBL],  EnvironmentTextureSlot::DiffuseIBL,  "texIBLDiffuse",   ClampSamplerSlot);
+        bindTextureOnce(Textures[EnvironmentTextureSlot::SpecularIBL], EnvironmentTextureSlot::SpecularIBL, "texIBLSpecular",  ClampSamplerSlot);
+        bindTextureOnce(Textures[EnvironmentTextureSlot::BrdfLUT],     EnvironmentTextureSlot::BrdfLUT,     "texIBLBRDF",      ClampSamplerSlot);
+        bindTextureOnce(Textures[EnvironmentTextureSlot::CharlieIBL],  EnvironmentTextureSlot::CharlieIBL,  "texIBLCharlie",   ClampSamplerSlot);
+        bindTextureOnce(Textures[EnvironmentTextureSlot::CharlieLUT],  EnvironmentTextureSlot::CharlieLUT,  "texIBLCharlieLUT",ClampSamplerSlot);
+        bindTextureOnce(Textures[EnvironmentTextureSlot::SheenELUT],   EnvironmentTextureSlot::SheenELUT,   "texIBLSheenELUT", ClampSamplerSlot);
+        if (s->key.has(ShaderKey::SHEEN_COLOR_MAP)) {
+          Texture* t = matTex(MatTexSlot::SheenColor); if (!t) t = sub_info->SheenColorTex;
+          bindTextureOnce(t, MaterialTextureSlot::SheenColor, "SheenColorTex", MaterialSamplerSlot);
         }
-        if (Textures[9]) {
-          Textures[9]->Set(*T8DeviceContext, 9, "SceneColorTex");
-          Textures[9]->SetSampler(*T8DeviceContext, ClampSamplerSlot);
+        if (s->key.has(ShaderKey::SHEEN_ROUGHNESS_MAP)) {
+          Texture* t = matTex(MatTexSlot::SheenRoughness); if (!t) t = sub_info->SheenRoughnessTex;
+          bindTextureOnce(t, MaterialTextureSlot::SheenRoughness, "SheenRoughnessTex", MaterialSamplerSlot);
         }
-        if (Textures[EnvironmentTextureSlot::DiffuseIBL]) {
-          Textures[EnvironmentTextureSlot::DiffuseIBL]->Set(*T8DeviceContext, EnvironmentTextureSlot::DiffuseIBL, "texIBLDiffuse");
-          Textures[EnvironmentTextureSlot::DiffuseIBL]->SetSampler(*T8DeviceContext, ClampSamplerSlot);
+        if (s->key.has(ShaderKey::CLEARCOAT_MAP)) {
+          Texture* t = matTex(MatTexSlot::Clearcoat); if (!t) t = sub_info->ClearcoatTex;
+          bindTextureOnce(t, MaterialTextureSlot::Clearcoat, "ClearcoatTex", MaterialSamplerSlot);
         }
-        if (Textures[EnvironmentTextureSlot::SpecularIBL]) {
-          Textures[EnvironmentTextureSlot::SpecularIBL]->Set(*T8DeviceContext, EnvironmentTextureSlot::SpecularIBL, "texIBLSpecular");
-          Textures[EnvironmentTextureSlot::SpecularIBL]->SetSampler(*T8DeviceContext, ClampSamplerSlot);
+        if (s->key.has(ShaderKey::CLEARCOAT_ROUGHNESS_MAP)) {
+          Texture* t = matTex(MatTexSlot::ClearcoatRoughness); if (!t) t = sub_info->ClearcoatRoughnessTex;
+          bindTextureOnce(t, MaterialTextureSlot::ClearcoatRoughness, "ClearcoatRoughnessTex", MaterialSamplerSlot);
         }
-        if (Textures[EnvironmentTextureSlot::BrdfLUT]) {
-          Textures[EnvironmentTextureSlot::BrdfLUT]->Set(*T8DeviceContext, EnvironmentTextureSlot::BrdfLUT, "texIBLBRDF");
-          Textures[EnvironmentTextureSlot::BrdfLUT]->SetSampler(*T8DeviceContext, ClampSamplerSlot);
+        if (s->key.has(ShaderKey::OCCLUSION_MAP)) {
+          Texture* t = matTex(MatTexSlot::Occlusion); if (!t) t = sub_info->OcclusionTex;
+          bindTextureOnce(t, MaterialTextureSlot::Occlusion, "OcclusionTex", MaterialSamplerSlot);
         }
-        if (Textures[EnvironmentTextureSlot::CharlieIBL]) {
-          Textures[EnvironmentTextureSlot::CharlieIBL]->Set(*T8DeviceContext, EnvironmentTextureSlot::CharlieIBL, "texIBLCharlie");
-          Textures[EnvironmentTextureSlot::CharlieIBL]->SetSampler(*T8DeviceContext, ClampSamplerSlot);
+        if (s->key.has(ShaderKey::SPECULAR_FACTOR_MAP)) {
+          Texture* t = matTex(MatTexSlot::SpecularFactor); if (!t) t = sub_info->SpecularFactorTex;
+          bindTextureOnce(t, MaterialTextureSlot::SpecularFactor, "SpecularFactorTex", MaterialSamplerSlot);
         }
-        if (Textures[EnvironmentTextureSlot::CharlieLUT]) {
-          Textures[EnvironmentTextureSlot::CharlieLUT]->Set(*T8DeviceContext, EnvironmentTextureSlot::CharlieLUT, "texIBLCharlieLUT");
-          Textures[EnvironmentTextureSlot::CharlieLUT]->SetSampler(*T8DeviceContext, ClampSamplerSlot);
+        if (s->key.has(ShaderKey::SPECULAR_COLOR_MAP)) {
+          Texture* t = matTex(MatTexSlot::SpecularColor); if (!t) t = sub_info->SpecularColorTex;
+          bindTextureOnce(t, MaterialTextureSlot::SpecularColor, "SpecularColorTex", MaterialSamplerSlot);
         }
-        if (Textures[EnvironmentTextureSlot::SheenELUT]) {
-          Textures[EnvironmentTextureSlot::SheenELUT]->Set(*T8DeviceContext, EnvironmentTextureSlot::SheenELUT, "texIBLSheenELUT");
-          Textures[EnvironmentTextureSlot::SheenELUT]->SetSampler(*T8DeviceContext, ClampSamplerSlot);
-        }
-        if (s->key.has(ShaderKey::SHEEN_COLOR_MAP) && sub_info->SheenColorTex) {
-          sub_info->SheenColorTex->Set(*T8DeviceContext, MaterialTextureSlot::SheenColor, "SheenColorTex");
-          sub_info->SheenColorTex->SetSampler(*T8DeviceContext, MaterialSamplerSlot);
-        }
-        if (s->key.has(ShaderKey::SHEEN_ROUGHNESS_MAP) && sub_info->SheenRoughnessTex) {
-          sub_info->SheenRoughnessTex->Set(*T8DeviceContext, MaterialTextureSlot::SheenRoughness, "SheenRoughnessTex");
-          sub_info->SheenRoughnessTex->SetSampler(*T8DeviceContext, MaterialSamplerSlot);
-        }
-        if (s->key.has(ShaderKey::CLEARCOAT_MAP) && sub_info->ClearcoatTex) {
-          sub_info->ClearcoatTex->Set(*T8DeviceContext, MaterialTextureSlot::Clearcoat, "ClearcoatTex");
-          sub_info->ClearcoatTex->SetSampler(*T8DeviceContext, MaterialSamplerSlot);
-        }
-        if (s->key.has(ShaderKey::CLEARCOAT_ROUGHNESS_MAP) && sub_info->ClearcoatRoughnessTex) {
-          sub_info->ClearcoatRoughnessTex->Set(*T8DeviceContext, MaterialTextureSlot::ClearcoatRoughness, "ClearcoatRoughnessTex");
-          sub_info->ClearcoatRoughnessTex->SetSampler(*T8DeviceContext, MaterialSamplerSlot);
-        }
-        if (s->key.has(ShaderKey::OCCLUSION_MAP) && sub_info->OcclusionTex) {
-          sub_info->OcclusionTex->Set(*T8DeviceContext, MaterialTextureSlot::Occlusion, "OcclusionTex");
-          sub_info->OcclusionTex->SetSampler(*T8DeviceContext, MaterialSamplerSlot);
-        }
-        if (s->key.has(ShaderKey::SPECULAR_FACTOR_MAP) && sub_info->SpecularFactorTex) {
-          sub_info->SpecularFactorTex->Set(*T8DeviceContext, MaterialTextureSlot::SpecularFactor, "SpecularFactorTex");
-          sub_info->SpecularFactorTex->SetSampler(*T8DeviceContext, MaterialSamplerSlot);
-        }
-        if (s->key.has(ShaderKey::SPECULAR_COLOR_MAP) && sub_info->SpecularColorTex) {
-          sub_info->SpecularColorTex->Set(*T8DeviceContext, MaterialTextureSlot::SpecularColor, "SpecularColorTex");
-          sub_info->SpecularColorTex->SetSampler(*T8DeviceContext, MaterialSamplerSlot);
-        }
-        if (s->key.has(ShaderKey::TRANSMISSION_MAP) && sub_info->TransmissionTex) {
-          sub_info->TransmissionTex->Set(*T8DeviceContext, MaterialTextureSlot::Transmission, "TransmissionTex");
-          sub_info->TransmissionTex->SetSampler(*T8DeviceContext, MaterialSamplerSlot);
+        if (s->key.has(ShaderKey::TRANSMISSION_MAP)) {
+          Texture* t = matTex(MatTexSlot::Transmission); if (!t) t = sub_info->TransmissionTex;
+          bindTextureOnce(t, MaterialTextureSlot::Transmission, "TransmissionTex", MaterialSamplerSlot);
         }
 
         T8DeviceContext->SetPrimitiveTopology(Topology::TRIANLE_LIST);
-        T8DeviceContext->DrawIndexed(sub_info->NumVertex, 0, 0);
+        // Phase A.5 step 2: when using shared pools the index/vertex
+        // offsets steer the draw to this submesh's allocation. Falls
+        // back to (count, 0, 0) on the legacy per-subset IB path.
+        if (sub_info->ibPoolAlloc.IsValid() && it_MeshInfo->vbPoolAlloc.IsValid()) {
+          T8DeviceContext->DrawIndexed(sub_info->ibPoolAlloc.count,
+                                       sub_info->ibPoolAlloc.offsetElems,
+                                       it_MeshInfo->vbPoolAlloc.offsetElems);
+        } else {
+          T8DeviceContext->DrawIndexed(sub_info->NumVertex, 0, 0);
+        }
         if (changedCull) {
           g_pBaseDriver->SetCullFace(prevCull);
         }
@@ -1291,14 +1630,27 @@ namespace t850 {
   }
 
   void RenderMesh::Destroy() {
-    //release resources
+    // Phase A.5 step 3 + B step 1: VB/IB are owned by MeshAssetCache
+    // pools. Material data is shared via MaterialAssetCache. Only the
+    // per-instance CB is released here; assets are dereferenced
+    // through their respective caches.
     for (auto &mIt : Info) {
+      if (mIt.CB) mIt.CB->release();
+      mIt.CB = nullptr;
       for (auto &sIt : mIt.SubSets) {
-        sIt.IB->release();
+        sIt.IB = nullptr;
+        if (sIt.matAsset) {
+          MaterialAssetCache::Get().Release(sIt.matAsset);
+          sIt.matAsset = nullptr;
+        }
       }
-      mIt.CB->release();
-      mIt.IB->release();
-      mIt.VB->release();
+      mIt.IB = nullptr;
+      mIt.VB = nullptr;
+    }
+
+    if (m_asset) {
+      MeshAssetCache::Get().Release(m_asset);
+      m_asset = nullptr;
     }
   }
 }

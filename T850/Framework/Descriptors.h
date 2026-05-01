@@ -103,6 +103,17 @@ struct ShaderKey {
   static constexpr uint64_t SPECULAR_COLOR_MAP = 1ull << 37;
   static constexpr uint64_t TRANSMISSION_MAP = 1ull << 38;
 
+  // ── Extra UV channels (UV0/UV1 are bits 3/4) ──
+  static constexpr uint64_t HAS_TEXCOORD2 = 1ull << 39;
+  static constexpr uint64_t HAS_TEXCOORD3 = 1ull << 40;
+
+  // Mask of every bit that affects vertex layout / IA reflection.
+  // Used by passes that re-derive a key from a base subset key (e.g.
+  // skinned wireframe) to preserve VB attribute presence.
+  static constexpr uint64_t VERTEX_ATTRIB_MASK =
+      HAS_NORMALS | HAS_TANGENTS | HAS_BINORMALS |
+      HAS_TEXCOORD0 | HAS_TEXCOORD1 | HAS_TEXCOORD2 | HAS_TEXCOORD3;
+
   // ── Pass type (6 bits) ──
   static constexpr uint64_t PASS_SHIFT = 20;
   static constexpr uint64_t PASS_MASK  = 0x3Full << PASS_SHIFT;

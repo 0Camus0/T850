@@ -26,3 +26,5 @@
 /T850/Librerias/vcpkg/installed/vcpkg/
 **/ANGLE.lib
 *.pdb
+__pycache__/
+*.py[cod]

@@ -387,6 +387,51 @@ T850/
 --debugFrames                     Spacebar pauses, dumps RTs, and exits
 ```
 
+### Snapshot MCP Server
+
+`T850/scripts/t850_snapshot_mcp.py` can run either as a normal CLI tool or as a
+stdio MCP server for agents that support the Model Context Protocol. The MCP
+host must register the server explicitly; a running agent can execute the script
+from a shell, but it will not automatically discover the script and turn it into
+MCP tools after the session has started.
+
+Example MCP client configuration:
+
+```json
+{
+  "mcpServers": {
+    "t850-snapshot": {
+      "command": "python",
+      "args": [
+        "/home/runner/work/T850/T850/T850/scripts/t850_snapshot_mcp.py",
+        "serve"
+      ],
+      "cwd": "/home/runner/work/T850/T850"
+    }
+  }
+}
+```
+
+Once the host launches the server, it exposes these tools:
+
+- `list_snapshot_targets` — list `.ppm` render-target dumps and optional
+  `snapshot.json` metadata from one snapshot directory.
+- `compare_frame` — compare one render target between two dump directories.
+- `compare_snapshots` — compare every matching `.ppm` target.
+- `analyze_artifacts` — return heuristic findings and likely causes for changed
+  targets.
+- `generate_visual_report` — write an HTML report plus PPM diff heatmaps.
+- `suggest_likely_cause` — explain likely causes from a comparison result.
+
+CLI fallback for CI or non-MCP agents:
+
+```bash
+python T850/scripts/compare_dumps.py path/to/reference path/to/candidate
+python T850/scripts/compare_dumps.py path/to/reference path/to/candidate --report out/snapshot-report
+python T850/scripts/t850_snapshot_mcp.py compare-snapshots path/to/reference path/to/candidate
+python T850/scripts/t850_snapshot_mcp.py generate-report path/to/reference path/to/candidate out/snapshot-report
+```
+
 ### Linux (CMake)
 
 ```bash

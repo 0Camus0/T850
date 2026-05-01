@@ -3,6 +3,7 @@
 #include <scene/RenderGraphDescriptor.h>
 #include <scene/SceneProp.h>
 #include <scene/PrimitiveInstance.h>
+#include <scene/RenderQueue.h>     // MeshDrawStateTracker
 #include <utils/Camera.h>
 #include <video/BaseDriver.h>
 #include <Descriptors.h>
@@ -458,6 +459,10 @@ void RenderGraph::ExecutePass(
       }
       driver->RTs[node.rt_handle]->ChangeCubeDepthTexture(face);
 
+      // Phase C step 3: open a pass-scoped state tracker so the
+      // per-RenderMesh state (IBL textures, EnvMap, IB pool, shader)
+      // dedupes across the multiple mesh draws in this pass.
+      MeshDrawStateTracker::Get().Begin();
       for (const auto& draw : pass.draws) {
         ShaderKey sig = ResolveSignature(draw.signature);
         for (const auto& extraSig : draw.extra_signatures) {
@@ -474,6 +479,7 @@ void RenderGraph::ExecutePass(
           }
         }
       }
+      MeshDrawStateTracker::Get().End();
     }
 
     driver->PopRT();
@@ -566,6 +572,15 @@ void RenderGraph::ExecutePass(
     };
 
     // Execute draw commands
+    // Phase C step 3: bracket the multi-mesh draw section with a
+    // pass-scoped state tracker.
+    bool meshTrackerOpened = false;
+    auto openMeshTracker = [&]() {
+      if (!meshTrackerOpened) {
+        MeshDrawStateTracker::Get().Begin();
+        meshTrackerOpened = true;
+      }
+    };
     for (const auto& draw : pass.draws) {
       ShaderKey sig = ResolveSignature(draw.signature);
       for (const auto& extraSig : draw.extra_signatures) {
@@ -574,6 +589,7 @@ void RenderGraph::ExecutePass(
       }
 
       if (draw.type == "mesh") {
+        openMeshTracker();
         if (draw.mesh_indices.empty()) {
           // Empty array = draw ALL meshes
           for (int mi = 0; mi < meshCount; ++mi) {
@@ -596,6 +612,10 @@ void RenderGraph::ExecutePass(
         }
       }
       else if (draw.type == "final_quad") {
+        // Quad draws have a different binding model — close the
+        // mesh tracker scope before non-mesh work to avoid
+        // contaminating its assumptions.
+        if (meshTrackerOpened) { MeshDrawStateTracker::Get().End(); meshTrackerOpened = false; }
         driver->SetDepthStencilState(BaseDriver::DepthStencilStates::NONE);
         for (const auto& input : pass.inputs) {
           auto resolved = ResolveTextureInput(input.source);
@@ -613,6 +633,7 @@ void RenderGraph::ExecutePass(
         quads[0].Draw();
       }
     }
+    if (meshTrackerOpened) { MeshDrawStateTracker::Get().End(); meshTrackerOpened = false; }
 
     // Pop RT
     bool didPush = (node.rt_handle >= 0 && pass.push);

@@ -16,7 +16,7 @@ from t850_snapshot_mcp import compare_snapshots, generate_visual_report
 def print_table(result):
     hdr = (
         f"{'RT Name':35s} {'TotalPx':>10s} {'DiffPx':>10s} {'Diff%':>8s} "
-        f"{'Max':>5s} {'AvgDiff':>8s} {'AvgLuma':>8s}"
+        f"{'Max':>5s} {'AvgDiff':>8s} {'AvgLum':>8s}"
     )
     print(hdr)
     print("-" * len(hdr))

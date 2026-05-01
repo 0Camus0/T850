@@ -66,8 +66,8 @@ void AddDword(xF::xMaterial& mat, const std::string& key, uint32_t v) {
 }
 
 uint32_t SupportedTexCoord(const Material& mat, const char* propertyName, int texCoord) {
-  if (texCoord == 0 || texCoord == 1) return static_cast<uint32_t>(texCoord);
-  T8_LOG_ERROR("[glTF] material '%s': %s.texCoord=%d (only UV0/UV1 supported)",
+  if (texCoord >= 0 && texCoord <= 3) return static_cast<uint32_t>(texCoord);
+  T8_LOG_ERROR("[glTF] material '%s': %s.texCoord=%d (only UV0..UV3 supported)",
                mat.name.c_str(), propertyName, texCoord);
   return 0;
 }
@@ -231,6 +231,7 @@ void ConvertMaterial(const Document& doc, int materialIndex,
     std::string n = ResolveTextureName(doc, m.normalTexture->index);
     if (!n.empty()) AddString(outMat, "normalMap", n);
     AddDword(outMat, "normalTexCoord", SupportedTexCoord(m, "normalTexture", EffectiveTexCoord(*m.normalTexture)));
+    AddFloats(outMat, "normalScale", {m.normalTexture->scale});
     AddUVTransform(outMat, "normal", *m.normalTexture);
   }
   if (m.occlusionTexture) {

@@ -204,7 +204,7 @@ namespace t850 {
       ShaderKey wireKey(0);
       wireKey.bits |= skinBit;
       if (!Info.empty() && !Info[0].SubSets.empty())
-        wireKey.bits |= (Info[0].SubSets[0].key.bits & 0x1Full);
+        wireKey.bits |= (Info[0].SubSets[0].key.bits & ShaderKey::VERTEX_ATTRIB_MASK);
       wireKey.setPass(32); // unused pass type — avoids collision with mesh shaders
       g_pBaseDriver->CreateShader(vsWStr, fsWStr, wireKey, vsWireName, fsWireName);
       m_wireShader = g_pBaseDriver->GetShader(wireKey);
@@ -603,7 +603,19 @@ namespace t850 {
       unsigned int offset = 0;
 
       ShaderBase *s = nullptr;
-      it_MeshInfo->VB->Set(*T8DeviceContext, stride, offset);
+
+      // Phase A.5 step 3: bind shared VB pool. Falls back to legacy
+      // per-asset VB if the asset wasn't pool-populated (shouldn't
+      // happen post step 1 but kept defensive).
+      VertexBuffer* vbToBind = it_MeshInfo->VB;
+      if (it_MeshInfo->vbPoolAlloc.IsValid()) {
+        if (VertexPool* vpool = MeshAssetCache::Get().GetVertexPool(it_MeshInfo->vbPoolAlloc.poolId)) {
+          if (VertexBuffer* gpu = vpool->GetGPUBuffer()) {
+            vbToBind = gpu;
+          }
+        }
+      }
+      vbToBind->Set(*T8DeviceContext, stride, offset);
 
       std::size_t numSubsets = it_MeshInfo->SubSets.size();
       std::vector<std::size_t> drawOrder(numSubsets);
@@ -641,16 +653,25 @@ namespace t850 {
         if (!AABBInsideFrustum(sub_info->bounds, transform, frustumPlanes))
           continue;
 
-        baseCB.AmbientColor = sub_info->AmbientColor;
-        baseCB.DiffuseColor = sub_info->DiffuseColor;
-        baseCB.SpecularColor = sub_info->SpecularColor;
-        baseCB.PBRParams = sub_info->PBRParams;
-        baseCB.Intensities = sub_info->Intensities;
-        baseCB.Intensities.w = (float)sub_info->MatID;
-        baseCB.EmissiveColor = sub_info->EmissiveColor;
-        baseCB.AlphaParams = XVECTOR3((float)sub_info->AlphaMode, sub_info->AlphaCutoff, sub_info->DoubleSided ? 1.0f : 0.0f, sub_info->TransmissionFactor);
-        baseCB.ForwardParams = XVECTOR3((float)g_pBaseDriver->width, (float)g_pBaseDriver->height, Textures[7] ? 1.0f : 0.0f, sub_info->IOR);
-        baseCB.TexCoordSets = XVECTOR3((float)sub_info->DiffuseTexCoord, (float)sub_info->NormalTexCoord, (float)sub_info->MetallicTexCoord, (float)sub_info->EmissiveTexCoord);
+        // Phase B step 2: read material data via the deduplicated
+        // MaterialAsset. Mirrors RenderMesh::Draw.
+        const MaterialAsset* mat = sub_info->matAsset;
+        const MaterialParams* mp = mat ? &mat->params : nullptr;
+        if (mp) {
+          FillCBufferFromMaterial(baseCB, *mp);
+          baseCB.Intensities.w = (float)sub_info->MatID;
+        } else {
+          baseCB.AmbientColor = sub_info->AmbientColor;
+          baseCB.DiffuseColor = sub_info->DiffuseColor;
+          baseCB.SpecularColor = sub_info->SpecularColor;
+          baseCB.PBRParams = sub_info->PBRParams;
+          baseCB.Intensities = sub_info->Intensities;
+          baseCB.Intensities.w = (float)sub_info->MatID;
+          baseCB.EmissiveColor = sub_info->EmissiveColor;
+          baseCB.AlphaParams = XVECTOR3((float)sub_info->AlphaMode, sub_info->AlphaCutoff, sub_info->DoubleSided ? 1.0f : 0.0f, sub_info->TransmissionFactor);
+          baseCB.TexCoordSets = XVECTOR3((float)sub_info->DiffuseTexCoord, (float)sub_info->NormalTexCoord, (float)sub_info->MetallicTexCoord, (float)sub_info->EmissiveTexCoord);
+        }
+        baseCB.ForwardParams = XVECTOR3((float)g_pBaseDriver->width, (float)g_pBaseDriver->height, Textures[7] ? 1.0f : 0.0f, mp ? mp->ior : sub_info->IOR);
         float emissiveMul = pScProp ? pScProp->MaterialEmissiveIntensity : 1.0f;
         float transmissionMul = pScProp ? pScProp->MaterialTransmissionMultiplier : 1.0f;
         float refractionStrength = pScProp ? pScProp->MaterialRefractionStrength : 0.03f;
@@ -658,43 +679,46 @@ namespace t850 {
         float iblMipCount = pScProp ? pScProp->IBLMipCount : 4.0f;
         float iblDiffuseMipLevel = pScProp ? pScProp->IBLDiffuseMipLevel : 4.0f;
         float iblBrdfLutEnabled = pScProp ? pScProp->IBLBRDFLUTEnabled : 0.0f;
-        baseCB.MaterialParams = XVECTOR3(sub_info->ClearcoatFactor, sub_info->ClearcoatRoughness, sub_info->Unlit ? 1.0f : 0.0f, emissiveMul);
+        if (mp) {
+          baseCB.MaterialParams  = XVECTOR3(mp->clearcoatFactor, mp->clearcoatRoughness, mp->unlit ? 1.0f : 0.0f, emissiveMul);
+          baseCB.MaterialParams5 = XVECTOR3(mat->textures[(int)MatTexSlot::SheenColor]     ? 1.0f : 0.0f,
+                                             mat->textures[(int)MatTexSlot::SheenRoughness] ? 1.0f : 0.0f,
+                                             static_cast<float>(mp->sheenColorTexCoord),
+                                             static_cast<float>(mp->sheenRoughTexCoord));
+          baseCB.MaterialParams6 = XVECTOR3(mat->textures[(int)MatTexSlot::Clearcoat]          ? 1.0f : 0.0f,
+                                             mat->textures[(int)MatTexSlot::ClearcoatRoughness] ? 1.0f : 0.0f,
+                                             static_cast<float>(mp->clearcoatTexCoord),
+                                             static_cast<float>(mp->clearcoatRoughTexCoord));
+          baseCB.MaterialParams7 = XVECTOR3(mat->textures[(int)MatTexSlot::Occlusion] ? 1.0f : 0.0f,
+                                             mp->occlusionStrength,
+                                             static_cast<float>(mp->occlusionTexCoord),
+                                             mat->textures[(int)MatTexSlot::Transmission] ? 1.0f : 0.0f);
+          baseCB.MaterialParams8 = XVECTOR3(static_cast<float>(mp->transmissionTexCoord),
+                                             mat->textures[(int)MatTexSlot::SpecularFactor] ? 1.0f : 0.0f,
+                                             static_cast<float>(mp->specFactorTexCoord),
+                                             mat->textures[(int)MatTexSlot::SpecularColor]  ? 1.0f : 0.0f);
+        } else {
+          baseCB.MaterialParams = XVECTOR3(sub_info->ClearcoatFactor, sub_info->ClearcoatRoughness, sub_info->Unlit ? 1.0f : 0.0f, emissiveMul);
+          baseCB.MaterialParams5 = XVECTOR3(sub_info->SheenColorTex ? 1.0f : 0.0f, sub_info->SheenRoughnessTex ? 1.0f : 0.0f, (float)sub_info->SheenColorTexCoord, (float)sub_info->SheenRoughnessTexCoord);
+          baseCB.MaterialParams6 = XVECTOR3(sub_info->ClearcoatTex ? 1.0f : 0.0f, sub_info->ClearcoatRoughnessTex ? 1.0f : 0.0f, (float)sub_info->ClearcoatTexCoord, (float)sub_info->ClearcoatRoughnessTexCoord);
+          baseCB.MaterialParams7 = XVECTOR3(sub_info->OcclusionTex ? 1.0f : 0.0f, sub_info->OcclusionStrength, (float)sub_info->OcclusionTexCoord, sub_info->TransmissionTex ? 1.0f : 0.0f);
+          baseCB.MaterialParams8 = XVECTOR3((float)sub_info->TransmissionTexCoord, sub_info->SpecularFactorTex ? 1.0f : 0.0f, (float)sub_info->SpecularFactorTexCoord, sub_info->SpecularColorTex ? 1.0f : 0.0f);
+        }
         baseCB.MaterialParams2 = XVECTOR3(transmissionMul, refractionStrength, Textures[9] ? 1.0f : 0.0f, iblFactor);
         baseCB.MaterialParams3 = XVECTOR3(iblMipCount, iblBrdfLutEnabled, iblDiffuseMipLevel, 0.0f);
-        baseCB.MaterialParams4 = XVECTOR3(sub_info->SheenColor.x, sub_info->SheenColor.y, sub_info->SheenColor.z, sub_info->SheenRoughness);
-        baseCB.MaterialParams5 = XVECTOR3(sub_info->SheenColorTex ? 1.0f : 0.0f, sub_info->SheenRoughnessTex ? 1.0f : 0.0f, (float)sub_info->SheenColorTexCoord, (float)sub_info->SheenRoughnessTexCoord);
-        baseCB.MaterialParams6 = XVECTOR3(sub_info->ClearcoatTex ? 1.0f : 0.0f, sub_info->ClearcoatRoughnessTex ? 1.0f : 0.0f, (float)sub_info->ClearcoatTexCoord, (float)sub_info->ClearcoatRoughnessTexCoord);
-        baseCB.MaterialParams7 = XVECTOR3(sub_info->OcclusionTex ? 1.0f : 0.0f, sub_info->OcclusionStrength, (float)sub_info->OcclusionTexCoord, sub_info->TransmissionTex ? 1.0f : 0.0f);
-        baseCB.MaterialParams8 = XVECTOR3((float)sub_info->TransmissionTexCoord, sub_info->SpecularFactorTex ? 1.0f : 0.0f, (float)sub_info->SpecularFactorTexCoord, sub_info->SpecularColorTex ? 1.0f : 0.0f);
-        baseCB.MaterialParams9 = XVECTOR3((float)sub_info->SpecularColorTexCoord, 0.0f, 0.0f, 0.0f);
-        baseCB.BaseColorUVTransform0 = sub_info->BaseColorUVTransform0;
-        baseCB.BaseColorUVTransform1 = sub_info->BaseColorUVTransform1;
-        baseCB.NormalUVTransform0 = sub_info->NormalUVTransform0;
-        baseCB.NormalUVTransform1 = sub_info->NormalUVTransform1;
-        baseCB.MetallicUVTransform0 = sub_info->MetallicUVTransform0;
-        baseCB.MetallicUVTransform1 = sub_info->MetallicUVTransform1;
-        baseCB.EmissiveUVTransform0 = sub_info->EmissiveUVTransform0;
-        baseCB.EmissiveUVTransform1 = sub_info->EmissiveUVTransform1;
-        baseCB.SheenColorUVTransform0 = sub_info->SheenColorUVTransform0;
-        baseCB.SheenColorUVTransform1 = sub_info->SheenColorUVTransform1;
-        baseCB.SheenRoughnessUVTransform0 = sub_info->SheenRoughnessUVTransform0;
-        baseCB.SheenRoughnessUVTransform1 = sub_info->SheenRoughnessUVTransform1;
-        baseCB.ClearcoatUVTransform0 = sub_info->ClearcoatUVTransform0;
-        baseCB.ClearcoatUVTransform1 = sub_info->ClearcoatUVTransform1;
-        baseCB.ClearcoatRoughnessUVTransform0 = sub_info->ClearcoatRoughnessUVTransform0;
-        baseCB.ClearcoatRoughnessUVTransform1 = sub_info->ClearcoatRoughnessUVTransform1;
-        baseCB.OcclusionUVTransform0 = sub_info->OcclusionUVTransform0;
-        baseCB.OcclusionUVTransform1 = sub_info->OcclusionUVTransform1;
-        baseCB.SpecularFactorUVTransform0 = sub_info->SpecularFactorUVTransform0;
-        baseCB.SpecularFactorUVTransform1 = sub_info->SpecularFactorUVTransform1;
-        baseCB.SpecularColorUVTransform0 = sub_info->SpecularColorUVTransform0;
-        baseCB.SpecularColorUVTransform1 = sub_info->SpecularColorUVTransform1;
-        baseCB.TransmissionUVTransform0 = sub_info->TransmissionUVTransform0;
-        baseCB.TransmissionUVTransform1 = sub_info->TransmissionUVTransform1;
 
-        sub_info->IB->Set(*T8DeviceContext, 0,
-                          sub_info->IB32Bit ? IndexBufferFormat::R32
-                                            : IndexBufferFormat::R16);
+        // Phase A.5 step 3: bind shared IB pool.
+        IndexBuffer* ibToBind = sub_info->IB;
+        if (sub_info->ibPoolAlloc.IsValid()) {
+          if (IndexPool* ipool = MeshAssetCache::Get().GetIndexPool(sub_info->ibPoolAlloc.poolId)) {
+            if (IndexBuffer* gpu = ipool->GetGPUBuffer()) {
+              ibToBind = gpu;
+            }
+          }
+        }
+        ibToBind->Set(*T8DeviceContext, 0,
+                      sub_info->IB32Bit ? IndexBufferFormat::R32
+                                        : IndexBufferFormat::R16);
 
         ShaderKey finalKey(sub_info->key.bits);
         finalKey.setPass(gKey.getPass());
@@ -822,7 +846,15 @@ namespace t850 {
         }
 
         T8DeviceContext->SetPrimitiveTopology(Topology::TRIANLE_LIST);
-        T8DeviceContext->DrawIndexed(sub_info->NumVertex, 0, 0);
+        // Phase A.5 step 3: pool offsets steer the draw to this
+        // submesh's allocation.
+        if (sub_info->ibPoolAlloc.IsValid() && it_MeshInfo->vbPoolAlloc.IsValid()) {
+          T8DeviceContext->DrawIndexed(sub_info->ibPoolAlloc.count,
+                                       sub_info->ibPoolAlloc.offsetElems,
+                                       it_MeshInfo->vbPoolAlloc.offsetElems);
+        } else {
+          T8DeviceContext->DrawIndexed(sub_info->NumVertex, 0, 0);
+        }
         if (changedCull) {
           g_pBaseDriver->SetCullFace(prevCull);
         }

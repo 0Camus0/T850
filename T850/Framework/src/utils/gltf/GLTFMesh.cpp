@@ -352,14 +352,15 @@ bool BuildGeometry(const Document& doc,
     || (prim.extensions.has_value()
         && prim.extensions->KHR_draco_mesh_compression.has_value());
 
-  std::vector<float> pos, nrm, tan, uv0, uv1, col, joints, weights;
+  std::vector<float> pos, nrm, tan, uv0, uv1, uv2, uv3, col, joints, weights;
   int posElem = 0, nrmElem = 0, tanElem = 0;
-  int uv0Elem = 0, uv1Elem = 0, colElem = 0;
+  int uv0Elem = 0, uv1Elem = 0, uv2Elem = 0, uv3Elem = 0, colElem = 0;
   int jointsElem = 0, weightsElem = 0;
   std::size_t N = 0;
 
   bool hasNormal  = false, hasTangent = false;
   bool hasUV0     = false, hasUV1     = false;
+  bool hasUV2     = false, hasUV3     = false;
   bool hasColor   = false;
   bool hasJoints  = false, hasWeights = false;
 
@@ -392,6 +393,12 @@ bool BuildGeometry(const Document& doc,
     }
     if (!dr->texcoord1.empty()) {
       uv1 = std::move(dr->texcoord1); uv1Elem = 2; hasUV1 = true;
+    }
+    if (!dr->texcoord2.empty()) {
+      uv2 = std::move(dr->texcoord2); uv2Elem = 2; hasUV2 = true;
+    }
+    if (!dr->texcoord3.empty()) {
+      uv3 = std::move(dr->texcoord3); uv3Elem = 2; hasUV3 = true;
     }
     if (!dr->colors.empty()) {
       col = std::move(dr->colors);
@@ -432,6 +439,16 @@ bool BuildGeometry(const Document& doc,
         && ReadAccessorFloats(doc, prim.attributes.TEXCOORD_1, uv1, &uv1Elem)
         && uv1Elem == 2 && uv1.size() == N * 2) {
       hasUV1 = true;
+    }
+    if (prim.attributes.TEXCOORD_2 >= 0
+        && ReadAccessorFloats(doc, prim.attributes.TEXCOORD_2, uv2, &uv2Elem)
+        && uv2Elem == 2 && uv2.size() == N * 2) {
+      hasUV2 = true;
+    }
+    if (prim.attributes.TEXCOORD_3 >= 0
+        && ReadAccessorFloats(doc, prim.attributes.TEXCOORD_3, uv3, &uv3Elem)
+        && uv3Elem == 2 && uv3.size() == N * 2) {
+      hasUV3 = true;
     }
     if (prim.attributes.COLOR_0 >= 0
         && ReadAccessorFloats(doc, prim.attributes.COLOR_0, col, &colElem)
@@ -499,7 +516,7 @@ bool BuildGeometry(const Document& doc,
 
   // ── Set engine attribute mask and per-vertex containers. ──
   geom.NumVertices = static_cast<xF::xDWORD>(N);
-  geom.NumChannelsTexCoords = (hasUV1 ? 2 : (hasUV0 ? 1 : 0));
+  geom.NumChannelsTexCoords = (hasUV3 ? 4 : (hasUV2 ? 3 : (hasUV1 ? 2 : (hasUV0 ? 1 : 0))));
   geom.VertexAttributes = xF::xMeshGeometry::HAS_POSITION;
   if (hasNormal)  geom.VertexAttributes |= xF::xMeshGeometry::HAS_NORMAL;
   if (hasTangent) geom.VertexAttributes |= xF::xMeshGeometry::HAS_TANGENT;
@@ -508,6 +525,8 @@ bool BuildGeometry(const Document& doc,
   if (hasBinormal) geom.VertexAttributes |= xF::xMeshGeometry::HAS_BINORMAL;
   if (hasUV0)     geom.VertexAttributes |= xF::xMeshGeometry::HAS_TEXCOORD0;
   if (hasUV1)     geom.VertexAttributes |= xF::xMeshGeometry::HAS_TEXCOORD1;
+  if (hasUV2)     geom.VertexAttributes |= xF::xMeshGeometry::HAS_TEXCOORD2;
+  if (hasUV3)     geom.VertexAttributes |= xF::xMeshGeometry::HAS_TEXCOORD3;
   if (hasColor)   geom.VertexAttributes |= xF::xMeshGeometry::HAS_VERTEXCOLOR;
   bool hasSkin = hasJoints && hasWeights;
   if (hasSkin) {
@@ -521,6 +540,8 @@ bool BuildGeometry(const Document& doc,
   if (hasBinormal) geom.Binormals.resize(N);
   if (hasUV0)     geom.TexCoordinates[0].resize(N);
   if (hasUV1)     geom.TexCoordinates[1].resize(N);
+  if (hasUV2)     geom.TexCoordinates[2].resize(N);
+  if (hasUV3)     geom.TexCoordinates[3].resize(N);
   if (hasColor)   geom.VertexColors.resize(N);
   if (hasSkin) {
     geom.SkinWeights.resize(N);
@@ -573,6 +594,14 @@ bool BuildGeometry(const Document& doc,
     if (hasUV1) {
       geom.TexCoordinates[1][i].x = uv1[i*2+0];
       geom.TexCoordinates[1][i].y = uv1[i*2+1];
+    }
+    if (hasUV2) {
+      geom.TexCoordinates[2][i].x = uv2[i*2+0];
+      geom.TexCoordinates[2][i].y = uv2[i*2+1];
+    }
+    if (hasUV3) {
+      geom.TexCoordinates[3][i].x = uv3[i*2+0];
+      geom.TexCoordinates[3][i].y = uv3[i*2+1];
     }
     if (hasColor) {
       geom.VertexColors[i] = XVECTOR3(

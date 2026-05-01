@@ -36,6 +36,11 @@
     <ClInclude Include="include\scene\LensFlare.h" />
     <ClInclude Include="include\scene\RenderMesh.h" />
     <ClInclude Include="include\scene\RenderSkinnedMesh.h" />
+    <ClInclude Include="include\scene\MeshAsset.h" />
+    <ClInclude Include="include\scene\MeshAssetCache.h" />
+    <ClInclude Include="include\scene\MeshPool.h" />
+    <ClInclude Include="include\scene\MaterialAsset.h" />
+    <ClInclude Include="include\scene\RenderQueue.h" />
     <ClInclude Include="include\scene\LineRenderer.h" />
     <ClInclude Include="include\scene\AnimationController.h" />
     <ClInclude Include="include\scene\PrimitiveBase.h" />
@@ -153,6 +158,10 @@
     <ClCompile Include="src\scene\LensFlare.cpp" />
     <ClCompile Include="src\scene\RenderMesh.cpp" />
     <ClCompile Include="src\scene\RenderSkinnedMesh.cpp" />
+    <ClCompile Include="src\scene\MeshAssetCache.cpp" />
+    <ClCompile Include="src\scene\MeshPool.cpp" />
+    <ClCompile Include="src\scene\MaterialAssetCache.cpp" />
+    <ClCompile Include="src\scene\RenderQueue.cpp" />
     <ClCompile Include="src\scene\LineRenderer.cpp" />
     <ClCompile Include="src\scene\AnimationController.cpp" />
     <ClCompile Include="src\scene\PrimitiveInstance.cpp" />

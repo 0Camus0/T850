@@ -297,6 +297,8 @@ struct PrimitiveAttributes {
   int TANGENT    = -1;
   int TEXCOORD_0 = -1;
   int TEXCOORD_1 = -1;
+  int TEXCOORD_2 = -1;
+  int TEXCOORD_3 = -1;
   int COLOR_0    = -1;
   int JOINTS_0   = -1;
   int WEIGHTS_0  = -1;

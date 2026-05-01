@@ -148,6 +148,12 @@ struct VS_OUTPUT{
 #ifdef USE_TEXCOORD1
     float2 texture1  : TEXCOORD3;
 #endif
+#ifdef USE_TEXCOORD2
+    float2 texture2  : TEXCOORD4;
+#endif
+#ifdef USE_TEXCOORD3
+    float2 texture3  : TEXCOORD5;
+#endif
     float4 Pos       : TEXCOORD1;
     float4 WorldPos  : TEXCOORD2;
 };
@@ -307,6 +313,10 @@ float2 GetUV0(VS_OUTPUT input)
     return input.texture0;
 #elif defined(USE_TEXCOORD1)
     return input.texture1;
+#elif defined(USE_TEXCOORD2)
+    return input.texture2;
+#elif defined(USE_TEXCOORD3)
+    return input.texture3;
 #else
     return float2(0.0f, 0.0f);
 #endif
@@ -323,9 +333,43 @@ float2 GetUV1(VS_OUTPUT input)
 #endif
 }
 
+float2 GetUV2(VS_OUTPUT input)
+{
+#ifdef USE_TEXCOORD2
+    return input.texture2;
+#elif defined(USE_TEXCOORD0)
+    return input.texture0;
+#else
+    return float2(0.0f, 0.0f);
+#endif
+}
+
+float2 GetUV3(VS_OUTPUT input)
+{
+#ifdef USE_TEXCOORD3
+    return input.texture3;
+#elif defined(USE_TEXCOORD0)
+    return input.texture0;
+#else
+    return float2(0.0f, 0.0f);
+#endif
+}
+
 float2 GetTexCoord(VS_OUTPUT input, float texCoordSet)
 {
-    return texCoordSet > 0.5f ? GetUV1(input) : GetUV0(input);
+    int s = int(texCoordSet + 0.5f);
+    if (s == 1) return GetUV1(input);
+    if (s == 2) return GetUV2(input);
+    if (s == 3) return GetUV3(input);
+    return GetUV0(input);
+}
+
+// Returns true if the per-map UV set matches the base-color UV set, in
+// which case parallax-perturbed `uv` should be reused instead of the
+// raw vertex UV.
+bool MapShareBaseSet(float mapSet)
+{
+    return abs(mapSet - TexCoordSets.x) < 0.5f;
 }
 
 float2 ApplyUVTransform(float2 uv, float4 row0, float4 row1)
@@ -345,7 +389,7 @@ float3 StoredSRGBToLinear(float3 storedColor)
 
 float4 SampleBaseColor(float2 uv)
 {
-#if defined(DIFFUSE_MAP) && (defined(USE_TEXCOORD0) || defined(USE_TEXCOORD1))
+#if defined(DIFFUSE_MAP) && (defined(USE_TEXCOORD0) || defined(USE_TEXCOORD1) || defined(USE_TEXCOORD2) || defined(USE_TEXCOORD3))
     float4 color = TextureRGB.Sample(MaterialSS, ApplyUVTransform(uv, BaseColorUVTransform0, BaseColorUVTransform1));
     #ifdef GLTF_TANGENT_SPACE
     color.rgb *= LinearToStoredAlbedo(DiffuseColor.rgb);
@@ -365,7 +409,7 @@ float3 SampleEmissive(VS_OUTPUT input, float2 uv)
 {
     float3 emissive = EmissiveColor.rgb;
 #ifdef EMISSIVE_MAP
-    float2 emissiveUV = TexCoordSets.w > 0.5f ? GetTexCoord(input, TexCoordSets.w) : uv;
+    float2 emissiveUV = MapShareBaseSet(TexCoordSets.w) ? uv : GetTexCoord(input, TexCoordSets.w);
     emissiveUV = ApplyUVTransform(emissiveUV, EmissiveUVTransform0, EmissiveUVTransform1);
     emissive *= EmissiveTex.Sample(MaterialSS, emissiveUV).rgb;
 #endif
@@ -454,10 +498,14 @@ void BuildSurface(VS_OUTPUT input, out float4 color, out float3 normal, out floa
     ApplyAlphaMask(color);
 
 #ifdef NORMAL_MAP
-    float2 normalUV = TexCoordSets.y > 0.5f ? GetTexCoord(input, TexCoordSets.y) : uv;
+    float2 normalUV = MapShareBaseSet(TexCoordSets.y) ? uv : GetTexCoord(input, TexCoordSets.y);
     normalUV = ApplyUVTransform(normalUV, NormalUVTransform0, NormalUVTransform1);
     float3 normalTex = TextureNormal.Sample(MaterialSS, normalUV).xyz;
     normalTex = normalTex * float3(2.0f, 2.0f, 2.0f) - float3(1.0f, 1.0f, 1.0f);
+    // glTF normalTexture.scale (default 1.0) — stored in MaterialParams9.y.
+    // Spec: scale applies to .xy only, .z is reconstructed/normalized after.
+    float normalScale = MaterialParams9.y;
+    normalTex.xy *= normalScale;
     normalTex = normalize(normalTex);
     #ifndef GLTF_TANGENT_SPACE
     normalTex.g = -normalTex.g;
@@ -467,7 +515,7 @@ void BuildSurface(VS_OUTPUT input, out float4 color, out float3 normal, out floa
 #endif
 
 #ifdef METALLIC_MAP
-    float2 metallicUV = TexCoordSets.z > 0.5f ? GetTexCoord(input, TexCoordSets.z) : uv;
+    float2 metallicUV = MapShareBaseSet(TexCoordSets.z) ? uv : GetTexCoord(input, TexCoordSets.z);
     metallicUV = ApplyUVTransform(metallicUV, MetallicUVTransform0, MetallicUVTransform1);
     float4 mrSample = TextureMetallic.Sample(MaterialSS, metallicUV);
     metallic = PBRParams.x * mrSample.b;
@@ -480,14 +528,14 @@ void BuildSurface(VS_OUTPUT input, out float4 color, out float3 normal, out floa
 
 #ifdef SPECULAR_FACTOR_MAP
     if (MaterialParams8.y > 0.5f) {
-        float2 specularFactorUV = MaterialParams8.z > 0.5f ? GetTexCoord(input, MaterialParams8.z) : uv;
+        float2 specularFactorUV = MapShareBaseSet(MaterialParams8.z) ? uv : GetTexCoord(input, MaterialParams8.z);
         specularFactorUV = ApplyUVTransform(specularFactorUV, SpecularFactorUVTransform0, SpecularFactorUVTransform1);
         specularWeight *= SpecularFactorTex.Sample(MaterialSS, specularFactorUV).a;
     }
 #endif
 #ifdef SPECULAR_COLOR_MAP
     if (MaterialParams8.w > 0.5f) {
-        float2 specularColorUV = MaterialParams9.x > 0.5f ? GetTexCoord(input, MaterialParams9.x) : uv;
+        float2 specularColorUV = MapShareBaseSet(MaterialParams9.x) ? uv : GetTexCoord(input, MaterialParams9.x);
         specularColorUV = ApplyUVTransform(specularColorUV, SpecularColorUVTransform0, SpecularColorUVTransform1);
         dielectricF0 = min(dielectricF0 * StoredSRGBToLinear(SpecularColorTex.Sample(MaterialSS, specularColorUV).rgb), float3(1.0f, 1.0f, 1.0f));
     }
@@ -496,7 +544,7 @@ void BuildSurface(VS_OUTPUT input, out float4 color, out float3 normal, out floa
 
 #ifdef OCCLUSION_MAP
     if (MaterialParams7.x > 0.5f) {
-        float2 occlusionUV = MaterialParams7.z > 0.5f ? GetTexCoord(input, MaterialParams7.z) : uv;
+        float2 occlusionUV = MapShareBaseSet(MaterialParams7.z) ? uv : GetTexCoord(input, MaterialParams7.z);
         occlusionUV = ApplyUVTransform(occlusionUV, OcclusionUVTransform0, OcclusionUVTransform1);
         float ao = OcclusionTex.Sample(MaterialSS, occlusionUV).r;
         occlusion = saturate(1.0f + MaterialParams7.y * (ao - 1.0f));
@@ -505,7 +553,7 @@ void BuildSurface(VS_OUTPUT input, out float4 color, out float3 normal, out floa
 
 #ifdef TRANSMISSION_MAP
     if (MaterialParams7.w > 0.5f) {
-        float2 transmissionUV = MaterialParams8.x > 0.5f ? GetTexCoord(input, MaterialParams8.x) : uv;
+        float2 transmissionUV = MapShareBaseSet(MaterialParams8.x) ? uv : GetTexCoord(input, MaterialParams8.x);
         transmissionUV = ApplyUVTransform(transmissionUV, TransmissionUVTransform0, TransmissionUVTransform1);
         transmissionFactor *= TransmissionTex.Sample(MaterialSS, transmissionUV).r;
     }
@@ -514,14 +562,14 @@ void BuildSurface(VS_OUTPUT input, out float4 color, out float3 normal, out floa
 
 #ifdef SHEEN_COLOR_MAP
     if (MaterialParams5.x > 0.5f) {
-        float2 sheenColorUV = MaterialParams5.z > 0.5f ? GetTexCoord(input, MaterialParams5.z) : uv;
+        float2 sheenColorUV = MapShareBaseSet(MaterialParams5.z) ? uv : GetTexCoord(input, MaterialParams5.z);
         sheenColorUV = ApplyUVTransform(sheenColorUV, SheenColorUVTransform0, SheenColorUVTransform1);
         sheenColor *= pow(max(SheenColorTex.Sample(MaterialSS, sheenColorUV).rgb, float3(0.0f, 0.0f, 0.0f)), float3(2.2f, 2.2f, 2.2f));
     }
 #endif
 #ifdef SHEEN_ROUGHNESS_MAP
     if (MaterialParams5.y > 0.5f) {
-        float2 sheenRoughnessUV = MaterialParams5.w > 0.5f ? GetTexCoord(input, MaterialParams5.w) : uv;
+        float2 sheenRoughnessUV = MapShareBaseSet(MaterialParams5.w) ? uv : GetTexCoord(input, MaterialParams5.w);
         sheenRoughnessUV = ApplyUVTransform(sheenRoughnessUV, SheenRoughnessUVTransform0, SheenRoughnessUVTransform1);
         sheenRoughness *= SheenRoughnessTex.Sample(MaterialSS, sheenRoughnessUV).a;
     }
@@ -531,14 +579,14 @@ void BuildSurface(VS_OUTPUT input, out float4 color, out float3 normal, out floa
 
 #ifdef CLEARCOAT_MAP
     if (MaterialParams6.x > 0.5f) {
-        float2 clearcoatUV = MaterialParams6.z > 0.5f ? GetTexCoord(input, MaterialParams6.z) : uv;
+        float2 clearcoatUV = MapShareBaseSet(MaterialParams6.z) ? uv : GetTexCoord(input, MaterialParams6.z);
         clearcoatUV = ApplyUVTransform(clearcoatUV, ClearcoatUVTransform0, ClearcoatUVTransform1);
         clearcoatFactor *= ClearcoatTex.Sample(MaterialSS, clearcoatUV).r;
     }
 #endif
 #ifdef CLEARCOAT_ROUGHNESS_MAP
     if (MaterialParams6.y > 0.5f) {
-        float2 clearcoatRoughnessUV = MaterialParams6.w > 0.5f ? GetTexCoord(input, MaterialParams6.w) : uv;
+        float2 clearcoatRoughnessUV = MapShareBaseSet(MaterialParams6.w) ? uv : GetTexCoord(input, MaterialParams6.w);
         clearcoatRoughnessUV = ApplyUVTransform(clearcoatRoughnessUV, ClearcoatRoughnessUVTransform0, ClearcoatRoughnessUVTransform1);
         clearcoatRoughness *= ClearcoatRoughnessTex.Sample(MaterialSS, clearcoatRoughnessUV).g;
     }

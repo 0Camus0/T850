@@ -1482,6 +1482,15 @@ namespace t850 {
       // Convert to RGB PPM
       const uint8_t* pixels = (const uint8_t*)stagingInfo.pMappedData;
       std::vector<uint8_t> rgb(w * h * 3);
+      // IEEE 754 binary16 → float (matches D3D11/D3D12 PPM dump path so cross-API
+      // diffs reflect actual shader output, not dump-format mismatch).
+      auto h2f = [](uint16_t h) -> float {
+        uint32_t sign = (h >> 15) & 1; uint32_t exp = (h >> 10) & 0x1F; uint32_t mant = h & 0x3FF;
+        if (exp == 0) return sign ? -0.0f : 0.0f;
+        if (exp == 31) return sign ? -1e30f : 1e30f;
+        float f = ((float)mant / 1024.0f + 1.0f) * ldexpf(1.0f, (int)exp - 15);
+        return sign ? -f : f;
+      };
       for (uint32_t i = 0; i < w * h; i++) {
         if (bpp == 4 && !isFloat32) {
           rgb[i*3+0] = pixels[i*4+0];
@@ -1490,13 +1499,6 @@ namespace t850 {
         } else if (isFloat16 && bpp == 8) {
           // RGBA16F → uint8 via IEEE 754 half-float decode
           const uint16_t* fp = (const uint16_t*)(pixels + i * 8);
-          auto h2f = [](uint16_t h) -> float {
-            uint32_t sign = (h >> 15) & 1; uint32_t exp = (h >> 10) & 0x1F; uint32_t mant = h & 0x3FF;
-            if (exp == 0) return sign ? -0.0f : 0.0f;
-            if (exp == 31) return sign ? -1e30f : 1e30f;
-            float f = ((float)mant / 1024.0f + 1.0f) * ldexpf(1.0f, (int)exp - 15);
-            return sign ? -f : f;
-          };
           for (int c = 0; c < 3; c++) {
             float v = h2f(fp[c]);
             v = v < 0 ? 0 : (v > 1 ? 1 : v);
@@ -1510,8 +1512,14 @@ namespace t850 {
           uint8_t b = (uint8_t)(v * 255.0f);
           rgb[i*3+0] = rgb[i*3+1] = rgb[i*3+2] = b;
         } else if (isFloat16 && bpp == 2) {
+          // R16_SFLOAT → uint8 via IEEE 754 half-float decode (NOT uint16 normalized).
+          // The previous (float)(*fp)/65535.0f path treated half-float bytes as a
+          // normalized integer, which silently misinterpreted negative half-floats
+          // (e.g. log(luminance) < 0) as ~0.5+ on the PPM, producing a fake "Vulkan
+          // LuminanceMap is 10x brighter than D3D12" signal during cross-API diffs.
           const uint16_t* fp = (const uint16_t*)(pixels + i * 2);
-          float v = (float)(*fp) / 65535.0f;
+          float v = h2f(*fp);
+          v = v < 0 ? 0 : (v > 1 ? 1 : v);
           uint8_t b = (uint8_t)(v * 255.0f);
           rgb[i*3+0] = rgb[i*3+1] = rgb[i*3+2] = b;
         }

@@ -367,6 +367,7 @@ namespace t850 {
       int rid = g_renderTracer->RegisterRT(RTs[id], nullptr, id);
       g_renderTracer->EvPushRT(rid, false);
     }
+    RefreshTracePendingRenderState();
 #endif
   }
 
@@ -386,6 +387,7 @@ namespace t850 {
       int rid = g_renderTracer->RegisterRT(RTs[id], nullptr, id);
       g_renderTracer->EvPushRT(rid, true);
     }
+    RefreshTracePendingRenderState();
 #endif
   }
   Technique * BaseDriver::GetTechnique(int id)

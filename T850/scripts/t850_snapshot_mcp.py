@@ -886,6 +886,127 @@ def compare_samplers(reference_dir: str, candidate_dir: str) -> dict[str, Any]:
     }
 
 
+def _draw_label(draw: dict[str, Any], idx: int) -> str:
+    pieces = [f"#{idx}"]
+    for k in ("context_pass", "context_mesh", "context_material", "context_entity"):
+        v = draw.get(k)
+        if v:
+            pieces.append(f"{k.replace('context_', '')}={v}")
+    return " ".join(pieces)
+
+
+def _flatten_render_state(rs: dict[str, Any] | None) -> dict[str, Any]:
+    """Turn TraceRenderState into a flat key->value map for diffing.
+    Per-attachment blend fields are emitted as 'blend[i].field'."""
+    if not rs:
+        return {}
+    out: dict[str, Any] = {}
+    for k, v in rs.items():
+        if k == "blend_attachments":
+            for i, att in enumerate(v or []):
+                if isinstance(att, dict):
+                    for ak, av in att.items():
+                        out[f"blend[{i}].{ak}"] = av
+            continue
+        if k == "blend_constant":
+            out[k] = tuple(v) if isinstance(v, list) else v
+            continue
+        out[k] = v
+    return out
+
+
+def compare_render_states(
+    reference_dir: str,
+    candidate_dir: str,
+    max_results: int = 50,
+    only_fields: list[str] | None = None,
+    ignore_fields: list[str] | None = None,
+) -> dict[str, Any]:
+    """Cross-API per-draw render-state comparison.
+
+    Walks aligned `draws[*].render_state` between two trace.json files (one per
+    backend) and reports field-by-field divergence. The trace captures the
+    *literal* state programmed into each backend (D3D12 PSO desc, Vulkan
+    pipeline rasterizer/depth/blend, GL glEnable/glDepthFunc/glCullFace,
+    D3D11 *State objects), so cross-API differences here are real divergences
+    in what the GPU is told.
+
+    Common expected divergences (already documented in the trace):
+      * D3D12+D3D11+Vulkan use front_face='cw' + cull_mode='front' for the
+        engine's BACK_FACES enum; GL uses front_face='ccw' + cull_mode='back'
+        for the same engine state. Same visible result, different API state.
+      * GL has only one global blend func; the trace replicates it across all
+        bound color attachments so multi-RT diffs stay aligned.
+
+    Args:
+      reference_dir, candidate_dir: dump directories containing trace.json
+      max_results: limit on number of differing draws reported
+      only_fields: if set, only diff these field names (e.g. ["depth_compare", "depth_write_enable"])
+      ignore_fields: if set, skip these fields entirely
+
+    Returns:
+      per-draw diff entries with the divergent field names + values, plus
+      a tally of how often each field disagreed across the whole frame.
+    """
+    ref = _load_trace(reference_dir)
+    cand = _load_trace(candidate_dir)
+    ref_draws, cand_draws, common = _draws_aligned(ref, cand)
+
+    only_set = set(only_fields) if only_fields else None
+    ignore_set = set(ignore_fields) if ignore_fields else set()
+
+    differing_draws: list[dict[str, Any]] = []
+    field_diff_counts: dict[str, int] = {}
+    matched_count = 0
+
+    for i in range(common):
+        rd, cd = ref_draws[i], cand_draws[i]
+        ra = _flatten_render_state(rd.get("render_state"))
+        ca = _flatten_render_state(cd.get("render_state"))
+        keys = set(ra) | set(ca)
+        diffs: list[dict[str, Any]] = []
+        for k in sorted(keys):
+            if only_set is not None and k not in only_set:
+                continue
+            # Suppress the raw blend_enum/depth_enum/cull_enum hint fields
+            # by default unless explicitly requested -- they are derived from
+            # higher-level engine state and are equal on D3D12/D3D11/Vulkan/GL.
+            if k in ignore_set:
+                continue
+            rv, cv = ra.get(k), ca.get(k)
+            if rv != cv:
+                diffs.append({"field": k, "ref": rv, "cand": cv})
+                field_diff_counts[k] = field_diff_counts.get(k, 0) + 1
+        if not diffs:
+            matched_count += 1
+            continue
+        if len(differing_draws) < max_results:
+            differing_draws.append({
+                "draw_index": i,
+                "label": _draw_label(rd, i),
+                "ref_label": _draw_label(rd, i),
+                "cand_label": _draw_label(cd, i),
+                "diffs": diffs,
+            })
+
+    summary = sorted(
+        ({"field": k, "draws_with_diff": v} for k, v in field_diff_counts.items()),
+        key=lambda r: (-r["draws_with_diff"], r["field"]),
+    )
+
+    return {
+        "reference_dir": reference_dir,
+        "candidate_dir": candidate_dir,
+        "ref_api": ref.get("api"),
+        "cand_api": cand.get("api"),
+        "draws_compared": common,
+        "matching_draws": matched_count,
+        "differing_draws_count": common - matched_count,
+        "differing_draws": differing_draws,
+        "field_diff_summary": summary,
+    }
+
+
 def _hex_to_floats(hex_str: str) -> list[float]:
     """Decode tracer hex payload (lowercase, no separators) to float32 list.
     Trailing odd bytes are dropped."""
@@ -1123,6 +1244,21 @@ def _tool_schemas() -> list[dict[str, Any]]:
             },
         },
         {
+            "name": "compare_render_states",
+            "description": "Cross-API per-draw render-state diff (depth/stencil/cull/front-face/polygon-mode/blend per attachment). Reads draws[*].render_state from two trace.json files (one per backend). Useful for finding cases where Vulkan and D3D12 program different depth_compare, blend_factor, or cull_mode for the same engine state. Optional only_fields/ignore_fields filters.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "reference_dir": {"type": "string"},
+                    "candidate_dir": {"type": "string"},
+                    "max_results": {"type": "integer"},
+                    "only_fields": {"type": "array", "items": {"type": "string"}},
+                    "ignore_fields": {"type": "array", "items": {"type": "string"}},
+                },
+                "required": ["reference_dir", "candidate_dir"],
+            },
+        },
+        {
             "name": "diff_draws",
             "description": "Per-draw aligned diff of two trace.json files. Returns up to max_results draws whose normalized state differs.",
             "inputSchema": {
@@ -1192,6 +1328,7 @@ TOOLS: dict[str, Callable[..., Any]] = {
     "summarize_trace": summarize_trace,
     "compare_traces": compare_traces,
     "compare_samplers": compare_samplers,
+    "compare_render_states": compare_render_states,
     "diff_draws": diff_draws,
     "find_first_diverging_draw": find_first_diverging_draw,
     "dump_cbuffer_hex": dump_cbuffer_hex,

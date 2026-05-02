@@ -105,8 +105,48 @@ struct glz::meta<t850::TraceEvent> {
     "seq", &T::seq, "type", &T::type,
     "i0", &T::i0, "i1", &T::i1, "i2", &T::i2, "i3", &T::i3, "i4", &T::i4, "i5", &T::i5,
     "u0", &T::u0, "u1", &T::u1,
-    "f0", &T::f0, "f1", &T::f1, "f2", &T::f2, "f3", &T::f3,
+    "f0", &T::f0, "f1", &T::f1, "f2", &T::f2, "f3", &T::f3, "f4", &T::f4, "f5", &T::f5,
     "s0", &T::s0, "s1", &T::s1);
+};
+
+template <>
+struct glz::meta<t850::TraceBlendAttachment> {
+  using T = t850::TraceBlendAttachment;
+  static constexpr auto value = object(
+    "blend_enable", &T::blend_enable,
+    "color_src", &T::color_src, "color_dst", &T::color_dst, "color_op", &T::color_op,
+    "alpha_src", &T::alpha_src, "alpha_dst", &T::alpha_dst, "alpha_op", &T::alpha_op,
+    "write_mask", &T::write_mask);
+};
+
+template <>
+struct glz::meta<t850::TraceRenderState> {
+  using T = t850::TraceRenderState;
+  static constexpr auto value = object(
+    "depth_test_enable",  &T::depth_test_enable,
+    "depth_write_enable", &T::depth_write_enable,
+    "depth_compare",      &T::depth_compare,
+    "stencil_enable",     &T::stencil_enable,
+    "stencil_read_mask",  &T::stencil_read_mask,
+    "stencil_write_mask", &T::stencil_write_mask,
+    "stencil_compare",    &T::stencil_compare,
+    "stencil_pass_op",    &T::stencil_pass_op,
+    "stencil_fail_op",    &T::stencil_fail_op,
+    "stencil_zfail_op",   &T::stencil_zfail_op,
+    "cull_mode",          &T::cull_mode,
+    "front_face",         &T::front_face,
+    "polygon_mode",       &T::polygon_mode,
+    "depth_bias",         &T::depth_bias,
+    "depth_slope_bias",   &T::depth_slope_bias,
+    "depth_bias_clamp",   &T::depth_bias_clamp,
+    "depth_clip_enable",  &T::depth_clip_enable,
+    "depth_clamp_enable", &T::depth_clamp_enable,
+    "blend_attachments",  &T::blend_attachments,
+    "blend_constant",     &T::blend_constant,
+    "blend_scope",        &T::blend_scope,
+    "blend_enum",         &T::blend_enum,
+    "depth_enum",         &T::depth_enum,
+    "cull_enum",          &T::cull_enum);
 };
 
 template <>
@@ -162,7 +202,8 @@ struct glz::meta<t850::TraceDrawSnapshot> {
     "index_buffer_version", &T::index_buffer_version,
     "context_mesh", &T::context_mesh, "context_material", &T::context_material,
     "context_entity", &T::context_entity, "context_pass", &T::context_pass,
-    "textures", &T::textures, "cbuffers", &T::cbuffers);
+    "textures", &T::textures, "cbuffers", &T::cbuffers,
+    "render_state", &T::render_state);
 };
 
 template <>
@@ -208,22 +249,34 @@ namespace t850 {
   }
 
   void RenderTracer::ResetFrame(int frameIndex) {
-    std::lock_guard<std::mutex> lk(m_mtx);
-    if (!m_active) return;
-    // Clear per-frame events / draw snapshots / buffer payloads. Keep the
-    // resource catalog (textures/RTs/shaders/PSOs/samplers/views) and the
-    // buffer-id map (m_bufMap) so cross-frame ids stay stable. Clear the
-    // CB last-update stash and buffer payload store too — each frame should
-    // only show updates that happened that frame.
-    m_frame.events.clear();
-    m_frame.draws.clear();
-    m_frame.buffers.clear();
-    m_cbLast.clear();
-    m_bufferStore.clear();
-    m_bufferLatestVersion.clear();
-    m_frame.frame = frameIndex;
-    m_nextSeq = 0;
-    m_pending = TraceDrawSnapshot{};
+    BaseDriver* drv;
+    {
+      std::lock_guard<std::mutex> lk(m_mtx);
+      if (!m_active) return;
+      // Clear per-frame events / draw snapshots / buffer payloads. Keep the
+      // resource catalog (textures/RTs/shaders/PSOs/samplers/views) and the
+      // buffer-id map (m_bufMap) so cross-frame ids stay stable. Clear the
+      // CB last-update stash and buffer payload store too — each frame should
+      // only show updates that happened that frame.
+      m_frame.events.clear();
+      m_frame.draws.clear();
+      m_frame.buffers.clear();
+      m_cbLast.clear();
+      m_bufferStore.clear();
+      m_bufferLatestVersion.clear();
+      m_frame.frame = frameIndex;
+      m_nextSeq = 0;
+      m_pending = TraceDrawSnapshot{};
+      drv = m_driver;
+    }
+    // Seed `render_state` with the per-API decoded defaults so the first
+    // draw of the frame doesn't snapshot an empty struct if the scene
+    // happens to draw before its first SetBlendState/SetDepthStencilState/
+    // SetCullFace call (e.g. Clear-only frames, debug overlays, primitive
+    // instances that inherit prior state). The Recompute* hook reads the
+    // tracer's enum ints (default 0 = BLEND_DEFAULT/DEPTH_DEFAULT/FRONT_FACES)
+    // and produces a faithful default render_state for that backend.
+    if (drv) drv->RefreshTracePendingRenderState();
   }
 
   // ── Save: write trace.json next to RT_Dump_*.ppm + snapshot.json ──────
@@ -604,6 +657,201 @@ namespace t850 {
     return rec;
   }
 
+  // ─── Render-state signature builders ─────────────────────────────────
+  //
+  // Each Make* mirrors the *exact* depth/raster/blend state that backend
+  // programs in its PSO/pipeline/glState code given the engine enum
+  // tuple. All strings are lower_snake canonical so cross-API JSON diffs
+  // are mechanical.
+  //
+  // Engine enum constants reproduced inline as int literals (so this TU
+  // doesn't pull BaseDriver.h into the header dependency graph). Order
+  // and values match BaseDriver.h:
+  //   BlendStates:       0=BLEND_DEFAULT, 1=BLEND_OPAQUE, 2=ADDITIVE,
+  //                      3=ALPHA_BLEND,   4=NON_PREMULTIPLIED
+  //   DepthStencilStates: 0=DEPTH_DEFAULT, 1=READ_WRITE, 2=NONE, 3=READ
+  //   FaceCulling:        0=FRONT_FACES, 1=BACK_FACES, 2=FRONT_AND_BACK
+  // ─────────────────────────────────────────────────────────────────────
+
+  namespace {
+    // D3D12 / D3D11 / Vulkan all share the same blend table semantics
+    // (see D3D12Driver.cpp ~263, D3D11Driver.cpp blend equivalents,
+    // VulkanDriver.cpp ~143). Only the per-attachment fan-out differs
+    // between APIs (handled by callers). GL has its own table.
+    void FillBlendD3DVulkan(int blendEnum, TraceBlendAttachment& att) {
+      att.write_mask = "rgba";
+      switch (blendEnum) {
+        case 0: case 1: // BLEND_DEFAULT / BLEND_OPAQUE
+          att.blend_enable = false;
+          att.color_src = "one"; att.color_dst = "zero"; att.color_op = "add";
+          att.alpha_src = "one"; att.alpha_dst = "zero"; att.alpha_op = "add";
+          break;
+        case 2: // ADDITIVE
+          att.blend_enable = true;
+          att.color_src = "src_alpha"; att.color_dst = "one"; att.color_op = "add";
+          att.alpha_src = "src_alpha"; att.alpha_dst = "one"; att.alpha_op = "add";
+          break;
+        case 3: // ALPHA_BLEND
+          att.blend_enable = true;
+          att.color_src = "src_alpha"; att.color_dst = "one_minus_src_alpha"; att.color_op = "add";
+          att.alpha_src = "one";       att.alpha_dst = "one_minus_src_alpha"; att.alpha_op = "add";
+          break;
+        case 4: // NON_PREMULTIPLIED
+          att.blend_enable = true;
+          att.color_src = "src_alpha"; att.color_dst = "one_minus_src_alpha"; att.color_op = "add";
+          att.alpha_src = "src_alpha"; att.alpha_dst = "one_minus_src_alpha"; att.alpha_op = "add";
+          break;
+        default:
+          att.blend_enable = false;
+          att.color_src = "one"; att.color_dst = "zero"; att.color_op = "add";
+          att.alpha_src = "one"; att.alpha_dst = "zero"; att.alpha_op = "add";
+          break;
+      }
+    }
+
+    void FillDepthD3DVulkan(int depthEnum, TraceRenderState& rs, bool reversedZ) {
+      // T850 uses reversed-Z on D3D12/D3D11/Vulkan — depth test op is
+      // GREATER_OR_EQUAL when test is enabled. GL uses GEQUAL too via
+      // glDepthFunc(GL_GEQUAL).
+      const char* gequal = reversedZ ? "greater_equal" : "less_equal";
+      switch (depthEnum) {
+        case 0: case 1: // DEPTH_DEFAULT / READ_WRITE
+          rs.depth_test_enable  = true;
+          rs.depth_write_enable = true;
+          rs.depth_compare      = gequal;
+          break;
+        case 3: // READ
+          rs.depth_test_enable  = true;
+          rs.depth_write_enable = false;
+          rs.depth_compare      = gequal;
+          break;
+        case 2: // NONE
+          rs.depth_test_enable  = false;
+          rs.depth_write_enable = false;
+          rs.depth_compare      = "always";
+          break;
+        default:
+          rs.depth_test_enable  = true;
+          rs.depth_write_enable = true;
+          rs.depth_compare      = gequal;
+          break;
+      }
+    }
+
+    // Each backend translates FaceCulling differently — see comments
+    // in the per-backend Make* below.
+    void FillCullD3D11(int cullEnum, TraceRenderState& rs) {
+      // D3D11 RasterizerDesc default: FrontCounterClockwise=FALSE → CW
+      // is the front winding. FaceCulling::FRONT_FACES → CULL_BACK
+      // (cull the back, render fronts). Same semantics as D3D12.
+      switch (cullEnum) {
+        case 0: rs.cull_mode = "back";  rs.front_face = "cw"; break; // FRONT_FACES
+        case 1: rs.cull_mode = "front"; rs.front_face = "cw"; break; // BACK_FACES
+        case 2: rs.cull_mode = "none";  rs.front_face = "cw"; break; // FRONT_AND_BACK
+        default: rs.cull_mode = "back"; rs.front_face = "cw"; break;
+      }
+    }
+
+    void FillCullGL(int cullEnum, TraceRenderState& rs) {
+      // GL has no glFrontFace anywhere → default CCW front winding.
+      // FaceCulling::FRONT_FACES → glCullFace(GL_FRONT) (cull the FRONT,
+      // render backs). This is the *opposite* mapping vs D3D/Vulkan;
+      // combined with GL's CCW front winding it produces the same
+      // visible result, but the API-level state is genuinely different.
+      switch (cullEnum) {
+        case 0: rs.cull_mode = "front"; rs.front_face = "ccw"; break; // FRONT_FACES
+        case 1: rs.cull_mode = "back";  rs.front_face = "ccw"; break; // BACK_FACES
+        case 2: rs.cull_mode = "none";  rs.front_face = "ccw"; break; // FRONT_AND_BACK (glDisable(CULL_FACE))
+        default: rs.cull_mode = "back"; rs.front_face = "ccw"; break;
+      }
+    }
+  } // namespace
+
+  TraceRenderState RenderTracer::MakeRenderStateD3D12(int blendEnum, int depthEnum, int cullEnum, int numColorAttachments) {
+    // Mirrors D3D12Driver.cpp PSO build (~lines 240-290).
+    TraceRenderState rs;
+    rs.blend_enum = blendEnum; rs.depth_enum = depthEnum; rs.cull_enum = cullEnum;
+
+    FillDepthD3DVulkan(depthEnum, rs, /*reversedZ=*/true);
+    rs.stencil_enable = false;
+
+    // D3D12 PSO defaults: FrontCounterClockwise=FALSE → CW. Engine
+    // FRONT_FACES → CULL_BACK (cull back, render fronts).
+    switch (cullEnum) {
+      case 0: rs.cull_mode = "back";  rs.front_face = "cw"; break;
+      case 1: rs.cull_mode = "front"; rs.front_face = "cw"; break;
+      case 2: rs.cull_mode = "none";  rs.front_face = "cw"; break;
+      default: rs.cull_mode = "back"; rs.front_face = "cw"; break;
+    }
+    rs.polygon_mode = "fill";
+    rs.depth_clip_enable = true;
+    rs.depth_clamp_enable = false;
+
+    if (numColorAttachments < 1) numColorAttachments = 1;
+    rs.blend_attachments.resize((size_t)numColorAttachments);
+    for (auto& att : rs.blend_attachments) FillBlendD3DVulkan(blendEnum, att);
+    return rs;
+  }
+
+  TraceRenderState RenderTracer::MakeRenderStateD3D11(int blendEnum, int depthEnum, int cullEnum, int numColorAttachments) {
+    // Mirrors D3D11Driver.cpp blend / depth / raster state objects.
+    TraceRenderState rs;
+    rs.blend_enum = blendEnum; rs.depth_enum = depthEnum; rs.cull_enum = cullEnum;
+    FillDepthD3DVulkan(depthEnum, rs, /*reversedZ=*/true);
+    FillCullD3D11(cullEnum, rs);
+    rs.polygon_mode = "fill";
+    rs.depth_clip_enable = true;
+
+    if (numColorAttachments < 1) numColorAttachments = 1;
+    rs.blend_attachments.resize((size_t)numColorAttachments);
+    for (auto& att : rs.blend_attachments) FillBlendD3DVulkan(blendEnum, att);
+    return rs;
+  }
+
+  TraceRenderState RenderTracer::MakeRenderStateGL(int blendEnum, int depthEnum, int cullEnum, int numColorAttachments) {
+    // Mirrors GLDriver.cpp SetBlendState / SetDepthStencilState / SetCullFace.
+    TraceRenderState rs;
+    rs.blend_enum = blendEnum; rs.depth_enum = depthEnum; rs.cull_enum = cullEnum;
+    FillDepthD3DVulkan(depthEnum, rs, /*reversedZ=*/true);
+    FillCullGL(cullEnum, rs);
+    rs.polygon_mode = "fill";
+    rs.depth_clip_enable = true;
+
+    // GL has only one global blend state (engine doesn't use glBlendFunci).
+    // Replicate it across all currently-bound color attachments so per-API
+    // diffs stay aligned when comparing with D3D12/Vulkan multi-RT passes.
+    int n = numColorAttachments < 1 ? 1 : numColorAttachments;
+    rs.blend_attachments.resize(n);
+    for (auto& ba : rs.blend_attachments) FillBlendD3DVulkan(blendEnum, ba);
+    rs.blend_scope = "global_replicated";
+    return rs;
+  }
+
+  TraceRenderState RenderTracer::MakeRenderStateVulkan(int blendEnum, int depthEnum, int cullEnum, int numColorAttachments) {
+    // Mirrors VulkanDriver.cpp PSO build (~lines 100-180).
+    TraceRenderState rs;
+    rs.blend_enum = blendEnum; rs.depth_enum = depthEnum; rs.cull_enum = cullEnum;
+    FillDepthD3DVulkan(depthEnum, rs, /*reversedZ=*/true);
+
+    // Vulkan PSO: rasterizer.frontFace = VK_FRONT_FACE_CLOCKWISE always
+    // (negative viewport height inverts winding so this still matches
+    // D3D's CW front face).
+    switch (cullEnum) {
+      case 0: rs.cull_mode = "back";  rs.front_face = "cw"; break; // FRONT_FACES
+      case 1: rs.cull_mode = "front"; rs.front_face = "cw"; break; // BACK_FACES
+      case 2: rs.cull_mode = "none";  rs.front_face = "cw"; break; // FRONT_AND_BACK
+      default: rs.cull_mode = "back"; rs.front_face = "cw"; break;
+    }
+    rs.polygon_mode = "fill";
+    rs.depth_clip_enable = true;
+    rs.depth_clamp_enable = false;
+
+    if (numColorAttachments < 1) numColorAttachments = 1;
+    rs.blend_attachments.resize((size_t)numColorAttachments);
+    for (auto& att : rs.blend_attachments) FillBlendD3DVulkan(blendEnum, att);
+    return rs;
+  }
+
   int RenderTracer::RegisterTextureView(const TraceTextureViewRec& rec) {
     std::lock_guard<std::mutex> lk(m_mtx);
     if (!m_active) return -1;
@@ -790,6 +1038,18 @@ namespace t850 {
     std::lock_guard<std::mutex> lk(m_mtx);
     TraceEvent ev{0, "clear_color"};
     ev.f0 = r; ev.f1 = g; ev.f2 = b; ev.f3 = a;
+    AppendEvent(std::move(ev));
+  }
+  void RenderTracer::EvClearRT(int rtId, uint32_t flags,
+                               float r, float g, float b, float a,
+                               float depth, int stencil) {
+    std::lock_guard<std::mutex> lk(m_mtx);
+    TraceEvent ev{0, "clear_rt"};
+    ev.i0 = rtId;
+    ev.i1 = (int)flags;     // bit 0=color, bit 1=depth, bit 2=stencil
+    ev.i2 = stencil;
+    ev.f0 = r; ev.f1 = g; ev.f2 = b; ev.f3 = a;
+    ev.f4 = depth;
     AppendEvent(std::move(ev));
   }
 
@@ -993,6 +1253,23 @@ namespace t850 {
   void RenderTracer::SetPendingBlend(int state)                      { std::lock_guard<std::mutex> lk(m_mtx); m_pending.blend = state; }
   void RenderTracer::SetPendingDepth(int state)                      { std::lock_guard<std::mutex> lk(m_mtx); m_pending.depth = state; }
   void RenderTracer::SetPendingCull(int state)                       { std::lock_guard<std::mutex> lk(m_mtx); m_pending.cull = state; }
+  void RenderTracer::SetPendingRenderState(const TraceRenderState& s) { std::lock_guard<std::mutex> lk(m_mtx); m_pending.render_state = s; }
+  void RenderTracer::RecomputePendingRenderStateD3D12(int numColorAttachments) {
+    std::lock_guard<std::mutex> lk(m_mtx);
+    m_pending.render_state = MakeRenderStateD3D12(m_pending.blend, m_pending.depth, m_pending.cull, numColorAttachments);
+  }
+  void RenderTracer::RecomputePendingRenderStateD3D11(int numColorAttachments) {
+    std::lock_guard<std::mutex> lk(m_mtx);
+    m_pending.render_state = MakeRenderStateD3D11(m_pending.blend, m_pending.depth, m_pending.cull, numColorAttachments);
+  }
+  void RenderTracer::RecomputePendingRenderStateGL(int numColorAttachments) {
+    std::lock_guard<std::mutex> lk(m_mtx);
+    m_pending.render_state = MakeRenderStateGL(m_pending.blend, m_pending.depth, m_pending.cull, numColorAttachments);
+  }
+  void RenderTracer::RecomputePendingRenderStateVulkan(int numColorAttachments) {
+    std::lock_guard<std::mutex> lk(m_mtx);
+    m_pending.render_state = MakeRenderStateVulkan(m_pending.blend, m_pending.depth, m_pending.cull, numColorAttachments);
+  }
   void RenderTracer::SetPendingViewport(float x, float y, float w, float h) {
     std::lock_guard<std::mutex> lk(m_mtx);
     m_pending.viewport_x = x; m_pending.viewport_y = y;

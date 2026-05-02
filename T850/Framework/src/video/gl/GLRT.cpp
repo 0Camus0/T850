@@ -15,6 +15,7 @@
 #include <video/gl/GLTexture.h>
 #include <video/gl/GLDriver.h>
 #include <utils/Utils.h>
+#include <debug/RenderTrace.h>
 
 #if defined(OS_LINUX)
 #include <sys/time.h>
@@ -337,6 +338,13 @@ namespace t850 {
     glViewport(0, 0,w, h);
 	glClearColor(0.0, 0.0, 0.0, 0.0);
 	glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT | GL_STENCIL_BUFFER_BIT);
+#ifdef T850_RENDER_TRACE
+    if (T8_TRACE_ACTIVE()) {
+      int rtId = g_renderTracer->LookupRTId(this);
+      uint32_t flags = (number_RT > 0 ? 1u : 0u) | 2u | 4u;
+      g_renderTracer->EvClearRT(rtId, flags, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0);
+    }
+#endif
   }
 
   void GLRT::SetLoad(const DeviceContext&context)

@@ -287,6 +287,13 @@ namespace t850 {
     virtual void SaveRTToFile(int rtID, int attachment, std::string path) {}
 	virtual void SetCullFace(FaceCulling state) = 0;
 
+    // Trace-only hook: each backend overrides to refresh the cached
+    // RenderTracer pending render-state with the appropriate per-API
+    // decoder (D3D12/D3D11/GL/Vulkan). Called from base PushRT/PushRTLoad
+    // after the RT switch so per-attachment blend sizing stays correct.
+    // Default no-op; safe when T850_RENDER_TRACE is undefined.
+    virtual void RefreshTracePendingRenderState() {}
+
     // ── D3D12/Vulkan explicit API (no-ops for D3D11/GL) ──
     virtual void BuildPipelineObjects() {}
     virtual void BeginFrame() {}

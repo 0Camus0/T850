@@ -12,6 +12,7 @@
 *********************************************************/
 
 #include <video/d3d11/D3D11RT.h>
+#include <debug/RenderTrace.h>
 #include <iostream>
 
 namespace t850 {
@@ -293,6 +294,13 @@ namespace t850 {
     if (!isCubeDepth) {
       deviceContext->ClearDepthStencilView(D3D11DepthStencilTargetView.Get(), D3D11_CLEAR_DEPTH, 0.0f, 0);
     }
+#ifdef T850_RENDER_TRACE
+    if (T8_TRACE_ACTIVE()) {
+      int rtId = g_renderTracer->LookupRTId(this);
+      uint32_t flags = (number_RT > 0 ? 1u : 0u) | 2u;
+      g_renderTracer->EvClearRT(rtId, flags, rgba[0], rgba[1], rgba[2], rgba[3], 0.0f, 0);
+    }
+#endif
   }
 
   void D3DXRT::SetLoad(const DeviceContext& context)

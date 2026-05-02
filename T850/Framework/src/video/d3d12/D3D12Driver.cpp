@@ -709,6 +709,9 @@ namespace t850 {
         m_commandLists[m_currentBackBuffer]->ClearRenderTargetView(rtv, cc, 0, nullptr);
       if (rt->depthResource)
         m_commandLists[m_currentBackBuffer]->ClearDepthStencilView(rt->depthDSV, D3D12_CLEAR_FLAG_DEPTH, 0.0f, 0, 0, nullptr);
+      T8_TRACE(EvClearRT(CurrentRT,
+                         (rt->number_RT > 0 ? 1u : 0u) | (rt->depthResource ? 2u : 0u),
+                         cc[0], cc[1], cc[2], cc[3], 0.0f, 0));
     } else {
       m_commandLists[m_currentBackBuffer]->OMSetRenderTargets(1, &m_backBufferRTVs[m_currentBackBuffer], FALSE, &m_depthDSV);
       m_commandLists[m_currentBackBuffer]->RSSetViewports(1, &m_viewport);
@@ -716,6 +719,7 @@ namespace t850 {
       const float cc[4] = { 0.227f, 0.227f, 0.227f, 1.0f };
       m_commandLists[m_currentBackBuffer]->ClearRenderTargetView(m_backBufferRTVs[m_currentBackBuffer], cc, 0, nullptr);
       m_commandLists[m_currentBackBuffer]->ClearDepthStencilView(m_depthDSV, D3D12_CLEAR_FLAG_DEPTH, 0.0f, 0, 0, nullptr);
+      T8_TRACE(EvClearRT(-1, 1u | 2u, cc[0], cc[1], cc[2], cc[3], 0.0f, 0));
     }
   }
 
@@ -727,9 +731,13 @@ namespace t850 {
         m_commandLists[m_currentBackBuffer]->ClearRenderTargetView(rtv, cc, 0, nullptr);
       if (rt->depthResource)
         m_commandLists[m_currentBackBuffer]->ClearDepthStencilView(rt->depthDSV, D3D12_CLEAR_FLAG_DEPTH, 0.0f, 0, 0, nullptr);
+      T8_TRACE(EvClearRT(CurrentRT,
+                         (rt->number_RT > 0 ? 1u : 0u) | (rt->depthResource ? 2u : 0u),
+                         cc[0], cc[1], cc[2], cc[3], 0.0f, 0));
     } else {
       m_commandLists[m_currentBackBuffer]->ClearRenderTargetView(m_backBufferRTVs[m_currentBackBuffer], cc, 0, nullptr);
       m_commandLists[m_currentBackBuffer]->ClearDepthStencilView(m_depthDSV, D3D12_CLEAR_FLAG_DEPTH, 0.0f, 0, 0, nullptr);
+      T8_TRACE(EvClearRT(-1, 1u | 2u, cc[0], cc[1], cc[2], cc[3], 0.0f, 0));
     }
   }
 
@@ -772,19 +780,38 @@ namespace t850 {
     T8_LOG_TRACE("[D3D12] SetBlendState(%d)", state);
     m_currentBlend = state;
     T8_TRACE(EvSetBlend((int)state));
+#ifdef T850_RENDER_TRACE
+    RefreshTracePendingRenderState();
+#endif
   }
 
   void D3D12Driver::SetDepthStencilState(DepthStencilStates state) {
     T8_LOG_TRACE("[D3D12] SetDepthStencilState(%d)", state);
     m_currentDepth = state;
     T8_TRACE(EvSetDepth((int)state));
+#ifdef T850_RENDER_TRACE
+    RefreshTracePendingRenderState();
+#endif
   }
 
   void D3D12Driver::SetCullFace(FaceCulling state) {
     T8_LOG_TRACE("[D3D12] SetCullFace(%d)", state);
     m_currentCull = state; m_FaceCulling = state;
     T8_TRACE(EvSetCull((int)state));
+#ifdef T850_RENDER_TRACE
+    RefreshTracePendingRenderState();
+#endif
   }
+
+#ifdef T850_RENDER_TRACE
+  void D3D12Driver::RefreshTracePendingRenderState() {
+    if (!T8_TRACE_ACTIVE()) return;
+    int numAtt = 1;
+    if (CurrentRT >= 0 && CurrentRT < (int)RTs.size() && RTs[CurrentRT])
+      numAtt = RTs[CurrentRT]->number_RT > 0 ? RTs[CurrentRT]->number_RT : 1;
+    g_renderTracer->RecomputePendingRenderStateD3D12(numAtt);
+  }
+#endif
 
   void D3D12Driver::PopRT() {
     T8_TRACE(EvPopRT());
@@ -818,6 +845,9 @@ namespace t850 {
     m_commandLists[m_currentBackBuffer]->RSSetViewports(1, &m_viewport);
     m_commandLists[m_currentBackBuffer]->RSSetScissorRects(1, &m_scissorRect);
     CurrentRT = -1;
+#ifdef T850_RENDER_TRACE
+    RefreshTracePendingRenderState();
+#endif
   }
 
   // ══════════════════════════════════════════════════════

@@ -340,6 +340,9 @@ namespace t850 {
       break;
     }
     T8_TRACE(EvSetBlend((int)state));
+#ifdef T850_RENDER_TRACE
+    RefreshTracePendingRenderState();
+#endif
   }
 
   void D3DXDriver::SetDepthStencilState(DepthStencilStates state)
@@ -365,6 +368,9 @@ namespace t850 {
       break;
     }
     T8_TRACE(EvSetDepth((int)state));
+#ifdef T850_RENDER_TRACE
+    RefreshTracePendingRenderState();
+#endif
   }
 
   void D3DXDriver::SetCullFace(FaceCulling state) {
@@ -392,13 +398,27 @@ namespace t850 {
       rs->Release();
     }
     T8_TRACE(EvSetCull((int)state));
+#ifdef T850_RENDER_TRACE
+    RefreshTracePendingRenderState();
+#endif
   }
+
+#ifdef T850_RENDER_TRACE
+  void D3DXDriver::RefreshTracePendingRenderState() {
+    if (!T8_TRACE_ACTIVE()) return;
+    int numAtt = 1;
+    if (CurrentRT >= 0 && CurrentRT < (int)RTs.size() && RTs[CurrentRT])
+      numAtt = RTs[CurrentRT]->number_RT > 0 ? RTs[CurrentRT]->number_RT : 1;
+    g_renderTracer->RecomputePendingRenderStateD3D11(numAtt);
+  }
+#endif
 
   void D3DXDriver::Clear() {
     ID3D11DeviceContext* deviceContext = reinterpret_cast<ID3D11DeviceContext*>(T8DeviceContext->GetAPIObject());
     float rgba[4] = { 0.227f, 0.227f, 0.227f, 1.0f };
     deviceContext->ClearRenderTargetView(D3D11RenderTargetView.Get(), rgba);
     deviceContext->ClearDepthStencilView(D3D11DepthStencilTargetView.Get(), D3D11_CLEAR_DEPTH, 0.0f, 0);
+    T8_TRACE(EvClearRT(-1, 1u | 2u, rgba[0], rgba[1], rgba[2], rgba[3], 0.0f, 0));
   }
 
   void D3DXDriver::ClearWithColor(float r, float g, float b, float a) {
@@ -410,9 +430,13 @@ namespace t850 {
         deviceContext->ClearRenderTargetView(rtv.Get(), rgba);
       if (rt->D3D11DepthStencilTargetView)
         deviceContext->ClearDepthStencilView(rt->D3D11DepthStencilTargetView.Get(), D3D11_CLEAR_DEPTH, 0.0f, 0);
+      T8_TRACE(EvClearRT(CurrentRT,
+                         (rt->number_RT > 0 ? 1u : 0u) | (rt->D3D11DepthStencilTargetView ? 2u : 0u),
+                         rgba[0], rgba[1], rgba[2], rgba[3], 0.0f, 0));
     } else {
       deviceContext->ClearRenderTargetView(D3D11RenderTargetView.Get(), rgba);
       deviceContext->ClearDepthStencilView(D3D11DepthStencilTargetView.Get(), D3D11_CLEAR_DEPTH, 0.0f, 0);
+      T8_TRACE(EvClearRT(-1, 1u | 2u, rgba[0], rgba[1], rgba[2], rgba[3], 0.0f, 0));
     }
   }
 
@@ -454,6 +478,9 @@ namespace t850 {
     }
 
     CurrentRT = -1;
+#ifdef T850_RENDER_TRACE
+    RefreshTracePendingRenderState();
+#endif
   }
 
   static void SaveD3D11TextureToPPM(ID3D11Texture2D* srcTex, std::string path) {

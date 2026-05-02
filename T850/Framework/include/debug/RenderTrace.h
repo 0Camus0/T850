@@ -139,6 +139,68 @@ namespace t850 {
     std::string view_format;
   };
 
+  // Per-color-attachment blend record. Backends that don't support
+  // independent blend per RT report a single-element vector that mirrors
+  // what the GPU sees on every attachment.
+  struct TraceBlendAttachment {
+    bool blend_enable = false;
+    std::string color_src;        // "one","zero","src_alpha","one_minus_src_alpha", ...
+    std::string color_dst;
+    std::string color_op;         // "add","subtract","reverse_subtract","min","max"
+    std::string alpha_src;
+    std::string alpha_dst;
+    std::string alpha_op;
+    std::string write_mask;       // "rgba","rgb","r","" (none), ...
+  };
+
+  // Decoded, GPU-truthful render state for a single draw. Every field is
+  // populated by the per-backend MakeRenderState{D3D12,D3D11,GL,Vulkan}
+  // builder, which mirrors *exactly* what that backend programs in its
+  // PSO / pipeline / glState code. This means equivalent engine enums on
+  // different APIs may legitimately produce different decoded state (e.g.
+  // blend factor strings, depth compare ops, front-face winding) — which
+  // is exactly the sort of cross-API divergence we want surfaced in diff
+  // tooling. Strings are lower-case canonical names so JSON diffs are
+  // mechanical.
+  struct TraceRenderState {
+    // Depth/stencil
+    bool depth_test_enable = false;
+    bool depth_write_enable = false;
+    std::string depth_compare;          // "never","less","equal","less_equal","greater","not_equal","greater_equal","always"
+    bool stencil_enable = false;
+    int  stencil_read_mask  = 0xFF;
+    int  stencil_write_mask = 0xFF;
+    std::string stencil_compare = "always";
+    std::string stencil_pass_op  = "keep";
+    std::string stencil_fail_op  = "keep";
+    std::string stencil_zfail_op = "keep";
+
+    // Rasterizer
+    std::string cull_mode = "none";      // "none" | "front" | "back" | "front_and_back"
+    std::string front_face = "cw";       // "cw" | "ccw"
+    std::string polygon_mode = "fill";   // "fill" | "line" | "point"
+    float depth_bias = 0.0f;
+    float depth_slope_bias = 0.0f;
+    float depth_bias_clamp = 0.0f;
+    bool  depth_clip_enable  = true;
+    bool  depth_clamp_enable = false;
+
+    // Color blend (one entry per color attachment; for backends without
+    // independent blend, a single element representing every attachment).
+    std::vector<TraceBlendAttachment> blend_attachments;
+    std::array<float, 4> blend_constant = { 0, 0, 0, 0 };
+    // "independent" (D3D12/D3D11/Vulkan: per-attachment blend can differ) vs
+    // "global_replicated" (GL: single global blend func; replicated across
+    // all attachments for diffing).
+    std::string blend_scope = "independent";
+
+    // Source engine enums kept for cross-reference with the existing
+    // top-level snapshot fields.
+    int blend_enum = 0;
+    int depth_enum = 0;
+    int cull_enum  = 0;
+  };
+
   // ── Event records ───────────────────────────────────────────────────────
 
   // Per-event base. Use a discriminated map of fields kept as JSON-friendly
@@ -152,7 +214,7 @@ namespace t850 {
     // mechanical diffability).
     int     i0 = -1, i1 = -1, i2 = -1, i3 = -1, i4 = -1, i5 = -1;
     uint64_t u0 = 0, u1 = 0;
-    float   f0 = 0, f1 = 0, f2 = 0, f3 = 0;
+    float   f0 = 0, f1 = 0, f2 = 0, f3 = 0, f4 = 0, f5 = 0;
     std::string s0;                    // primary name / pass / context
     std::string s1;                    // secondary string (e.g. shader binding name)
   };
@@ -228,6 +290,11 @@ namespace t850 {
     std::string context_pass;
     std::vector<TraceTextureBind> textures;
     std::vector<TraceCBufferBind> cbuffers;
+    // Decoded, GPU-truthful render state at the moment of submission.
+    // Populated by the active backend through SetPendingRenderState.
+    // Independent of the engine `blend`/`depth`/`cull` enum ints above —
+    // those stay for cross-reference, this is the actual API state.
+    TraceRenderState render_state;
   };
 
   // Top-level frame trace.
@@ -295,6 +362,19 @@ namespace t850 {
     static TraceSamplerRec MakeSamplerSigGL   (unsigned int params);
     static TraceSamplerRec MakeSamplerSigVulkan(unsigned int params, float maxAnisotropy = 1.0f);
 
+    // Backend-specific render-state signature builders. Each one mirrors
+    // the *actual* depth / rasterizer / blend state that backend programs
+    // for the given engine enum tuple. Equivalent enums on different APIs
+    // may legitimately produce different decoded state — which is exactly
+    // the sort of cross-API divergence we want surfaced in diff tooling.
+    // numColorAttachments is honored by backends with independent per-RT
+    // blend (D3D12, Vulkan, D3D11). GL only has one global blend state so
+    // it returns a single attachment regardless.
+    static TraceRenderState MakeRenderStateD3D12 (int blendEnum, int depthEnum, int cullEnum, int numColorAttachments = 1);
+    static TraceRenderState MakeRenderStateD3D11 (int blendEnum, int depthEnum, int cullEnum, int numColorAttachments = 1);
+    static TraceRenderState MakeRenderStateGL    (int blendEnum, int depthEnum, int cullEnum, int numColorAttachments = 1);
+    static TraceRenderState MakeRenderStateVulkan(int blendEnum, int depthEnum, int cullEnum, int numColorAttachments = 1);
+
     int LookupTextureId(const Texture* tex) const;
     int LookupRTId(const BaseRT* rt) const;
     int LookupShaderId(const ShaderBase* sh) const;
@@ -335,6 +415,14 @@ namespace t850 {
     void EvSetTopology(int topology);
     void EvClear();
     void EvClearColor(float r, float g, float b, float a);
+    // Rich clear event with full per-aspect values. Backends should call
+    // this from Clear/ClearWithColor/RT switching paths so traces show
+    // exactly what the GPU was told to clear (color RGBA, depth float,
+    // stencil int) on which RT. flags is a bitfield: 1=color, 2=depth,
+    // 4=stencil. Pass rtId=-1 for the default backbuffer.
+    void EvClearRT(int rtId, uint32_t flags,
+                   float r, float g, float b, float a,
+                   float depth, int stencil);
 
     // ── Bind requests (engine-side) ───────────────────────────────────────
     void EvBindShader(int shaderId, uint64_t keyBits);
@@ -371,6 +459,18 @@ namespace t850 {
     void SetPendingBlend(int state);
     void SetPendingDepth(int state);
     void SetPendingCull(int state);
+    // Called by backends from SetBlendState/SetDepthStencilState/SetCullFace
+    // (and any other path that programs render state) with the decoded
+    // GPU-truthful state. The next draw snapshot embeds this verbatim.
+    void SetPendingRenderState(const TraceRenderState& state);
+    // Convenience: backends call after each SetBlend/SetDepth/SetCull (and
+    // after PushRT when the color attachment count changes) to refresh
+    // m_pending.render_state from the currently-cached blend/depth/cull
+    // enums using the appropriate per-backend MakeRenderState* builder.
+    void RecomputePendingRenderStateD3D12 (int numColorAttachments);
+    void RecomputePendingRenderStateD3D11 (int numColorAttachments);
+    void RecomputePendingRenderStateGL    (int numColorAttachments = 1);
+    void RecomputePendingRenderStateVulkan(int numColorAttachments);
     void SetPendingViewport(float x, float y, float w, float h);
     void SetPendingScissor(int x, int y, int w, int h);
     void SetPendingTextureBind(const TraceTextureBind& bind);

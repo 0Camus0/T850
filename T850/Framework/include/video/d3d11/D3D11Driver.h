@@ -51,6 +51,9 @@ namespace t850 {
     void SaveRTToFile(int rtID, int attachment, std::string path) override;
 
     bool ResizeSwapchain(int newW, int newH) override;
+#ifdef T850_RENDER_TRACE
+    void RefreshTracePendingRenderState() override;
+#endif
 
     void	 PopRT();
 

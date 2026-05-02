@@ -628,31 +628,13 @@ namespace t850 {
   }
 
   TraceSamplerRec RenderTracer::MakeSamplerSigVulkan(unsigned int params, float maxAnisotropy) {
-    // Mirrors VulkanTexture::SetTextureParams (VkSamplerCreateInfo). Default
-    // filter LINEAR + mipmapMode LINEAR; anisotropy disabled (1.0); maxLod
-    // is VK_LOD_CLAMP_NONE only when MIPMAPS bit is set, else 0.0 (so the
-    // GPU samples ONLY mip 0 if MIPMAPS isn't set on the texture's params).
-    TraceSamplerRec rec;
-    rec.lod_bias = 0.0f;
-    rec.compare  = "";
-    rec.border_color = {0,0,0,0};
-    if (params & TextBasicParams::NEAREST_FILTER) {
-      rec.filter     = "nearest";
-      rec.anisotropy = 1.0f;
-    } else if (params & TextBasicParams::MIPMAPS) {
-      rec.filter     = "linear_mip_linear";
-      rec.anisotropy = maxAnisotropy;
-    } else {
-      // No MIPMAPS bit: maxLod=0 means only mip 0 is sampled. Encode as a
-      // distinct filter string so cross-API diff surfaces it.
-      rec.filter     = "linear_mip0_only";
-      rec.anisotropy = maxAnisotropy;
-    }
-    {
-      const char* addr = "repeat";
-      if (params & TextBasicParams::CLAMP_TO_EDGE)        addr = "clamp_to_edge";
-      else if (params & TextBasicParams::CLAMP_TO_BORDER) addr = "clamp_to_border";
-      rec.address_u = rec.address_v = rec.address_w = addr;
+    // Mirrors VulkanTexture::SetTextureParams, which intentionally tracks
+    // D3D11/D3D12 sampler semantics: default clamp + 16x anisotropy, explicit
+    // point/linear modes disable anisotropy and clamp to mip 0.
+    TraceSamplerRec rec = MakeSamplerSigD3D12(params);
+    rec.anisotropy = std::min(rec.anisotropy, maxAnisotropy);
+    if (rec.filter == "anisotropic" && rec.anisotropy <= 1.0f) {
+      rec.filter = "linear_mip_linear";
     }
     return rec;
   }

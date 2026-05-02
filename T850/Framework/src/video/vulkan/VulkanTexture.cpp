@@ -400,15 +400,32 @@ namespace t850 {
       m_sampler = VK_NULL_HANDLE;
     }
 
-    VkSamplerAddressMode addressMode = VK_SAMPLER_ADDRESS_MODE_REPEAT;
-    if (params & CLAMP_TO_EDGE)
-      addressMode = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
-    else if (params & CLAMP_TO_BORDER)
+    VkSamplerAddressMode addressMode = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
+    if (params & TILED)
+      addressMode = VK_SAMPLER_ADDRESS_MODE_REPEAT;
+    if (params & CLAMP_TO_BORDER)
       addressMode = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_BORDER;
 
     VkFilter filter = VK_FILTER_LINEAR;
     if (params & NEAREST_FILTER)
       filter = VK_FILTER_NEAREST;
+
+    VkSamplerMipmapMode mipmapMode = VK_SAMPLER_MIPMAP_MODE_LINEAR;
+    if (params & NEAREST_FILTER)
+      mipmapMode = VK_SAMPLER_MIPMAP_MODE_NEAREST;
+    else if (params & LINEAR_FILTER)
+      mipmapMode = VK_SAMPLER_MIPMAP_MODE_NEAREST;
+
+    VkPhysicalDeviceFeatures features = {};
+    vkGetPhysicalDeviceFeatures(driver->GetPhysicalDevice(), &features);
+    VkPhysicalDeviceProperties props = {};
+    vkGetPhysicalDeviceProperties(driver->GetPhysicalDevice(), &props);
+    m_samplerMaxAnisotropy = std::min(16.0f, props.limits.maxSamplerAnisotropy);
+    bool useAnisotropy = features.samplerAnisotropy &&
+                         !(params & NEAREST_FILTER) &&
+                         !(params & LINEAR_FILTER) &&
+                         !(params & CLAMP_TO_BORDER) &&
+                         m_samplerMaxAnisotropy > 1.0f;
 
     VkSamplerCreateInfo samplerCI = { VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO };
     samplerCI.magFilter = filter;
@@ -416,15 +433,15 @@ namespace t850 {
     samplerCI.addressModeU = addressMode;
     samplerCI.addressModeV = addressMode;
     samplerCI.addressModeW = addressMode;
-    samplerCI.anisotropyEnable = VK_FALSE;
-    samplerCI.maxAnisotropy = 1.0f;
-    samplerCI.borderColor = VK_BORDER_COLOR_FLOAT_OPAQUE_BLACK;
+    samplerCI.anisotropyEnable = useAnisotropy ? VK_TRUE : VK_FALSE;
+    samplerCI.maxAnisotropy = useAnisotropy ? m_samplerMaxAnisotropy : 1.0f;
+    samplerCI.borderColor = VK_BORDER_COLOR_FLOAT_TRANSPARENT_BLACK;
     samplerCI.unnormalizedCoordinates = VK_FALSE;
     samplerCI.compareEnable = VK_FALSE;
-    samplerCI.mipmapMode = VK_SAMPLER_MIPMAP_MODE_LINEAR;
+    samplerCI.mipmapMode = mipmapMode;
     samplerCI.mipLodBias = 0.0f;
     samplerCI.minLod = 0.0f;
-    samplerCI.maxLod = (params & MIPMAPS) ? VK_LOD_CLAMP_NONE : 0.0f;
+    samplerCI.maxLod = (params & (NEAREST_FILTER | LINEAR_FILTER)) ? 0.0f : VK_LOD_CLAMP_NONE;
 
     VkResult res = vkCreateSampler(device, &samplerCI, nullptr, &m_sampler);
     if (res != VK_SUCCESS) {
@@ -453,7 +470,7 @@ namespace t850 {
       // around line 388-432). All 4 backends use this helper, so equivalent
       // samplers across APIs hash to the same id.
       driver->m_pendingTextures[slot].tracerSamplerId =
-        g_renderTracer->RegisterSampler(RenderTracer::MakeSamplerSigVulkan(params));
+        g_renderTracer->RegisterSampler(RenderTracer::MakeSamplerSigVulkan(params, m_samplerMaxAnisotropy));
       g_renderTracer->EvBindTextureRequest(slot, driver->m_pendingTextures[slot].tracerTexId,
                                            shaderTextureName, "ps");
     }

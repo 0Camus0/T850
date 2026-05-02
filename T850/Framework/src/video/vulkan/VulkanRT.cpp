@@ -182,7 +182,7 @@ namespace t850 {
       colorAtt.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
       colorAtt.stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
       colorAtt.stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
-      colorAtt.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+      colorAtt.initialLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
       colorAtt.finalLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
       attachments.push_back(colorAtt);
 
@@ -201,7 +201,7 @@ namespace t850 {
       depthAtt.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
       depthAtt.stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
       depthAtt.stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
-      depthAtt.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+      depthAtt.initialLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
       depthAtt.finalLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
       attachments.push_back(depthAtt);
 
@@ -312,6 +312,7 @@ namespace t850 {
         TransitionImageLayout(initCmd, m_depthImage,
           VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
           VK_IMAGE_ASPECT_DEPTH_BIT);
+        m_depthLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
       }
 
       vkEndCommandBuffer(initCmd);
@@ -389,19 +390,30 @@ namespace t850 {
     // End any active render pass before starting the RT pass
     driver->EndRenderPassIfActive(cmd);
 
-    // Transition color images to COLOR_ATTACHMENT if needed
+    // Transition attachments to renderable layouts if needed. Color layouts were
+    // already tracked; depth must be tracked too because the same depth images
+    // are sampled by later passes (ShadowAccum/GodRays) and then rendered again
+    // on the next frame.
     for (int i = 0; i < number_RT; i++) {
-      if (vColorLayouts[i] == VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL) {
+      if (vColorLayouts[i] != VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL) {
         TransitionImageLayout(cmd, vColorImages[i],
-                              VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
+                              vColorLayouts[i],
                               VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
                               VK_IMAGE_ASPECT_COLOR_BIT);
       }
       vColorLayouts[i] = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
     }
 
-    // Begin the RT's own render pass with clear/load values
     bool hasDepth = (depth_format != BaseRT::NOTHING);
+    if (hasDepth && m_depthImage && m_depthLayout != VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL) {
+      TransitionImageLayout(cmd, m_depthImage,
+                            m_depthLayout,
+                            VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL,
+                            VK_IMAGE_ASPECT_DEPTH_BIT);
+      m_depthLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
+    }
+
+    // Begin the RT's own render pass with clear/load values
     std::vector<VkClearValue> clearValues(number_RT);
     for (int i = 0; i < number_RT; i++)
       clearValues[i].color = { {0.0f, 0.0f, 0.0f, 0.0f} };

@@ -814,6 +814,78 @@ def find_first_diverging_draw(reference_dir: str, candidate_dir: str,
     }
 
 
+def compare_samplers(reference_dir: str, candidate_dir: str) -> dict[str, Any]:
+    """Cross-API sampler signature comparison. Each backend builds its own
+    TraceSamplerRec mirroring its actual descriptor (D3D12_SAMPLER_DESC vs
+    GL TexParameter calls vs VkSamplerCreateInfo), so equivalent textures
+    on different APIs may legitimately produce different sampler signatures.
+    This tool surfaces those differences and, for each draw, lists which
+    bound texture/slot pairs sample with different filters between APIs.
+
+    Returns:
+      - per-API sampler catalog
+      - a per-draw report of (slot, shader_name, ref_filter, cand_filter)
+        rows where the same logical bind uses different sampling on each API
+    """
+    ref = _load_trace(reference_dir)
+    cand = _load_trace(candidate_dir)
+    ref_samplers = {int(s["id"]): s for s in ref.get("samplers", [])}
+    cand_samplers = {int(s["id"]): s for s in cand.get("samplers", [])}
+    ref_draws, cand_draws, common = _draws_aligned(ref, cand)
+
+    def _sig(s: dict) -> tuple:
+        return (
+            str(s.get("filter", "")),
+            str(s.get("address_u", "")),
+            float(s.get("anisotropy", 1.0)),
+            str(s.get("compare", "")),
+        )
+
+    diff_rows: list[dict[str, Any]] = []
+    seen_keys: set[tuple] = set()
+    for i in range(common):
+        rd, cd = ref_draws[i], cand_draws[i]
+        # Index ref/cand binds by shader_name (logical slot identity).
+        rmap = {str(b.get("shader_name", "")): b for b in rd.get("textures", [])}
+        cmap = {str(b.get("shader_name", "")): b for b in cd.get("textures", [])}
+        for nm in sorted(set(rmap) | set(cmap)):
+            rb = rmap.get(nm) or {}
+            cb = cmap.get(nm) or {}
+            rsamp = ref_samplers.get(int(rb.get("sampler_id", -1)), {})
+            csamp = cand_samplers.get(int(cb.get("sampler_id", -1)), {})
+            r_sig = _sig(rsamp) if rsamp else ()
+            c_sig = _sig(csamp) if csamp else ()
+            if r_sig != c_sig and (r_sig or c_sig):
+                key = (nm, r_sig, c_sig)
+                if key in seen_keys:
+                    continue
+                seen_keys.add(key)
+                diff_rows.append({
+                    "first_draw_index": i,
+                    "shader_name": nm,
+                    "ref_filter": rsamp.get("filter"),
+                    "ref_aniso": rsamp.get("anisotropy"),
+                    "ref_address": rsamp.get("address_u"),
+                    "cand_filter": csamp.get("filter"),
+                    "cand_aniso": csamp.get("anisotropy"),
+                    "cand_address": csamp.get("address_u"),
+                })
+
+    return {
+        "reference_dir": reference_dir,
+        "candidate_dir": candidate_dir,
+        "ref_api": ref.get("api"),
+        "cand_api": cand.get("api"),
+        "ref_sampler_count": len(ref_samplers),
+        "cand_sampler_count": len(cand_samplers),
+        "ref_samplers": list(ref_samplers.values()),
+        "cand_samplers": list(cand_samplers.values()),
+        "draws_compared": common,
+        "logical_bind_diffs": diff_rows,
+        "logical_bind_diff_count": len(diff_rows),
+    }
+
+
 def _hex_to_floats(hex_str: str) -> list[float]:
     """Decode tracer hex payload (lowercase, no separators) to float32 list.
     Trailing odd bytes are dropped."""
@@ -1039,6 +1111,18 @@ def _tool_schemas() -> list[dict[str, Any]]:
             },
         },
         {
+            "name": "compare_samplers",
+            "description": "Cross-API sampler signature comparison. Each backend builds its own TraceSamplerRec mirroring its actual descriptor; equivalent textures may legitimately differ in filter/aniso/wrap. Surfaces every (slot, shader_name) where the same logical bind uses different sampling on each API.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "reference_dir": {"type": "string"},
+                    "candidate_dir": {"type": "string"},
+                },
+                "required": ["reference_dir", "candidate_dir"],
+            },
+        },
+        {
             "name": "diff_draws",
             "description": "Per-draw aligned diff of two trace.json files. Returns up to max_results draws whose normalized state differs.",
             "inputSchema": {
@@ -1107,6 +1191,7 @@ TOOLS: dict[str, Callable[..., Any]] = {
     "suggest_likely_cause": suggest_likely_cause,
     "summarize_trace": summarize_trace,
     "compare_traces": compare_traces,
+    "compare_samplers": compare_samplers,
     "diff_draws": diff_draws,
     "find_first_diverging_draw": find_first_diverging_draw,
     "dump_cbuffer_hex": dump_cbuffer_hex,
@@ -1210,6 +1295,10 @@ def main() -> int:
     compare_traces_parser.add_argument("reference_dir")
     compare_traces_parser.add_argument("candidate_dir")
 
+    compare_samplers_parser = subparsers.add_parser("compare-samplers", help="Cross-API sampler signature diff (per-backend actual descriptors).")
+    compare_samplers_parser.add_argument("reference_dir")
+    compare_samplers_parser.add_argument("candidate_dir")
+
     diff_draws_parser = subparsers.add_parser("diff-draws", help="Per-draw aligned diff of two trace.json files.")
     diff_draws_parser.add_argument("reference_dir")
     diff_draws_parser.add_argument("candidate_dir")
@@ -1253,6 +1342,8 @@ def main() -> int:
         result = summarize_trace(args.directory)
     elif args.command == "compare-traces":
         result = compare_traces(args.reference_dir, args.candidate_dir)
+    elif args.command == "compare-samplers":
+        result = compare_samplers(args.reference_dir, args.candidate_dir)
     elif args.command == "diff-draws":
         result = diff_draws(args.reference_dir, args.candidate_dir, args.max_results, args.include_matching)
     elif args.command == "first-diverging-draw":

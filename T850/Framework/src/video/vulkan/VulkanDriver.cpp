@@ -1732,11 +1732,16 @@ reopen:
         int  texId       = hasUserBind ? m_pendingTextures[slot].tracerTexId : -1;
         const char* nm   = hasUserBind && m_pendingTextures[slot].tracerName
                             ? m_pendingTextures[slot].tracerName : "<dummy>";
-        // viewId/samplerId reuse the imageView/sampler raw pointers cast to int —
-        // not stable resource ids but unique enough to flag mismatches between
-        // two API traces (different VkImageView pointers => different views).
+        // viewId reuses the imageView raw pointer cast to int — not a stable
+        // resource id but unique enough to flag mismatches between two API
+        // traces (different VkImageView pointers => different views).
         int viewId    = (int)(uintptr_t)m_pendingTextures[slot].imageView;
-        int samplerId = (int)(uintptr_t)m_pendingTextures[slot].sampler;
+        // samplerId now points to a logical signature so cross-API trace
+        // diffs surface real mismatches; falls back to the VkSampler raw
+        // pointer for unbound/dummy slots.
+        int samplerId = hasUserBind && m_pendingTextures[slot].tracerSamplerId >= 0
+                          ? m_pendingTextures[slot].tracerSamplerId
+                          : (int)(uintptr_t)m_pendingTextures[slot].sampler;
         g_renderTracer->EvBindTextureCommit(slot, texId, viewId, samplerId, nm ? nm : "", "ps");
       }
       // Commit the cbuffer with its slot=cbvBinding, the current update_version

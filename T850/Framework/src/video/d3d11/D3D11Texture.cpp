@@ -290,12 +290,14 @@ namespace t850 {
 #ifdef T850_RENDER_TRACE
     if (T8_TRACE_ACTIVE()) {
       int texId = g_renderTracer->LookupTextureId(this);
-      // D3D11 binds are synchronous: emit Request + Commit at the same site
-      // so trace diffs align with the D3D12/Vulkan pattern. There's no
-      // separate view/sampler id concept in D3D11 (SRV + sampler state are
-      // bound together as part of the texture object) — pass -1 for both.
+      // D3D11 binds are synchronous and the per-texture sampler is created
+      // from the same TextBasicParams bits as the other backends — register
+      // a logical sampler signature so cross-API trace diffs surface real
+      // mismatches rather than backend-specific descriptor handles.
+      int sampId = g_renderTracer->RegisterSampler(
+        RenderTracer::MakeSamplerSigD3D11(params));
       g_renderTracer->EvBindTextureRequest(slot, texId, shaderTextureName, "ps");
-      g_renderTracer->EvBindTextureCommit(slot, texId, /*viewId=*/-1, /*samplerId=*/-1, shaderTextureName, "ps");
+      g_renderTracer->EvBindTextureCommit(slot, texId, /*viewId=*/-1, sampId, shaderTextureName, "ps");
     }
 #endif
   }

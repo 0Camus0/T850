@@ -63,7 +63,11 @@ namespace t850 {
       T8_LOG_INFO("Detected skinned/animated mesh, using RenderSkinnedMesh");
       RenderSkinnedMesh* skinned = new RenderSkinnedMesh();
       skinned->xFile = probe->xFile;
+      skinned->m_asset = probe->m_asset;
+      skinned->m_sourcePath = probe->m_sourcePath;
       probe->xFile = nullptr;  // transfer ownership
+      probe->m_asset = nullptr;
+      probe->m_sourcePath.clear();
       delete probe;
       skinned->Create();
       primitive = skinned;

@@ -207,6 +207,12 @@ namespace t850 {
       bdesc.byteWidth = sizeof(RenderMesh::CBuffer);
       bdesc.usage = BufferUsage::DEFAULT;
       it_MeshInfo->CB = (t850::ConstantBuffer*)T8Device->CreateBuffer(BufferType::CONSTANT, bdesc);
+      bdesc.byteWidth = sizeof(RenderMesh::MeshFrameCBuffer);
+      it_MeshInfo->FrameCBGPU = (t850::ConstantBuffer*)T8Device->CreateBuffer(BufferType::CONSTANT, bdesc);
+      bdesc.byteWidth = sizeof(RenderMesh::MeshInstanceCBuffer);
+      it_MeshInfo->InstanceCBGPU = (t850::ConstantBuffer*)T8Device->CreateBuffer(BufferType::CONSTANT, bdesc);
+      bdesc.byteWidth = sizeof(RenderMesh::MeshMaterialCBuffer);
+      it_MeshInfo->MaterialCBGPU = (t850::ConstantBuffer*)T8Device->CreateBuffer(BufferType::CONSTANT, bdesc);
 
       int NumMaterials = static_cast<int>(pActual->MaterialList.Materials.size());
       int NumFaceIndices = static_cast<int>(pActual->MaterialList.FaceIndices.size());
@@ -705,6 +711,7 @@ namespace t850 {
       }
 
       it_MeshInfo->VertexSize = it->VertexSize;
+      it_MeshInfo->NumVertex = pActual->NumVertices;
 
       // Phase A.5 step 3: VB lives in the shared pool only.
       it_MeshInfo->VB = nullptr;
@@ -1191,6 +1198,112 @@ namespace t850 {
     return distanceSq;
   }
 
+  static void ApplyMeshInstanceCB(RenderMesh::CBuffer& dst, const RenderMesh::MeshInstanceCBuffer& src) {
+    dst.WVP = src.WVP;
+    dst.World = src.World;
+    dst.WorldView = src.WorldView;
+  }
+
+  static void ApplyMeshFrameCB(RenderMesh::CBuffer& dst, const RenderMesh::MeshFrameCBuffer& src) {
+    dst.Light0Pos = src.Light0Pos;
+    dst.Light0Col = src.Light0Col;
+    dst.CameraPos = src.CameraPos;
+    dst.CameraInfo = src.CameraInfo;
+    dst.ParallaxSettings = src.ParallaxSettings;
+    dst.ParallaxShadowSettings = src.ParallaxShadowSettings;
+    dst.Light0Dir = src.Light0Dir;
+    for (int li = 0; li < 128; li++) {
+      dst.LightPositions[li] = src.LightPositions[li];
+      dst.LightColors[li] = src.LightColors[li];
+    }
+    for (int ri = 0; ri < 32; ri++) {
+      dst.LightRadius[ri] = src.LightRadius[ri];
+    }
+  }
+
+  static void ApplyMeshMaterialCB(RenderMesh::CBuffer& dst, const RenderMesh::MeshMaterialCBuffer& src) {
+    dst.AmbientColor = src.AmbientColor;
+    dst.DiffuseColor = src.DiffuseColor;
+    dst.SpecularColor = src.SpecularColor;
+    dst.PBRParams = src.PBRParams;
+    dst.Intensities = src.Intensities;
+    dst.EmissiveColor = src.EmissiveColor;
+    dst.AlphaParams = src.AlphaParams;
+    dst.ForwardParams = src.ForwardParams;
+    dst.TexCoordSets = src.TexCoordSets;
+    dst.MaterialParams = src.MaterialParams;
+    dst.MaterialParams2 = src.MaterialParams2;
+    dst.MaterialParams3 = src.MaterialParams3;
+    dst.MaterialParams4 = src.MaterialParams4;
+    dst.MaterialParams5 = src.MaterialParams5;
+    dst.MaterialParams6 = src.MaterialParams6;
+    dst.MaterialParams7 = src.MaterialParams7;
+    dst.MaterialParams8 = src.MaterialParams8;
+    dst.MaterialParams9 = src.MaterialParams9;
+    dst.BaseColorUVTransform0 = src.BaseColorUVTransform0;
+    dst.BaseColorUVTransform1 = src.BaseColorUVTransform1;
+    dst.NormalUVTransform0 = src.NormalUVTransform0;
+    dst.NormalUVTransform1 = src.NormalUVTransform1;
+    dst.MetallicUVTransform0 = src.MetallicUVTransform0;
+    dst.MetallicUVTransform1 = src.MetallicUVTransform1;
+    dst.EmissiveUVTransform0 = src.EmissiveUVTransform0;
+    dst.EmissiveUVTransform1 = src.EmissiveUVTransform1;
+    dst.SheenColorUVTransform0 = src.SheenColorUVTransform0;
+    dst.SheenColorUVTransform1 = src.SheenColorUVTransform1;
+    dst.SheenRoughnessUVTransform0 = src.SheenRoughnessUVTransform0;
+    dst.SheenRoughnessUVTransform1 = src.SheenRoughnessUVTransform1;
+    dst.ClearcoatUVTransform0 = src.ClearcoatUVTransform0;
+    dst.ClearcoatUVTransform1 = src.ClearcoatUVTransform1;
+    dst.ClearcoatRoughnessUVTransform0 = src.ClearcoatRoughnessUVTransform0;
+    dst.ClearcoatRoughnessUVTransform1 = src.ClearcoatRoughnessUVTransform1;
+    dst.OcclusionUVTransform0 = src.OcclusionUVTransform0;
+    dst.OcclusionUVTransform1 = src.OcclusionUVTransform1;
+    dst.SpecularFactorUVTransform0 = src.SpecularFactorUVTransform0;
+    dst.SpecularFactorUVTransform1 = src.SpecularFactorUVTransform1;
+    dst.SpecularColorUVTransform0 = src.SpecularColorUVTransform0;
+    dst.SpecularColorUVTransform1 = src.SpecularColorUVTransform1;
+    dst.TransmissionUVTransform0 = src.TransmissionUVTransform0;
+    dst.TransmissionUVTransform1 = src.TransmissionUVTransform1;
+  }
+
+  static void FillMaterialCBFromSubset(RenderMesh::MeshMaterialCBuffer& cb, const RenderMesh::SubSetInfo& subInfo) {
+    cb.AmbientColor = subInfo.AmbientColor;
+    cb.DiffuseColor = subInfo.DiffuseColor;
+    cb.SpecularColor = subInfo.SpecularColor;
+    cb.PBRParams = subInfo.PBRParams;
+    cb.Intensities = subInfo.Intensities;
+    cb.Intensities.w = (float)subInfo.MatID;
+    cb.EmissiveColor = subInfo.EmissiveColor;
+    cb.AlphaParams = XVECTOR3((float)subInfo.AlphaMode, subInfo.AlphaCutoff, subInfo.DoubleSided ? 1.0f : 0.0f, subInfo.TransmissionFactor);
+    cb.TexCoordSets = XVECTOR3((float)subInfo.DiffuseTexCoord, (float)subInfo.NormalTexCoord, (float)subInfo.MetallicTexCoord, (float)subInfo.EmissiveTexCoord);
+    cb.MaterialParams4 = XVECTOR3(subInfo.SheenColor.x, subInfo.SheenColor.y, subInfo.SheenColor.z, subInfo.SheenRoughness);
+    cb.MaterialParams9 = XVECTOR3((float)subInfo.SpecularColorTexCoord, subInfo.NormalScale, 0.0f, 0.0f);
+    cb.BaseColorUVTransform0 = subInfo.BaseColorUVTransform0;
+    cb.BaseColorUVTransform1 = subInfo.BaseColorUVTransform1;
+    cb.NormalUVTransform0 = subInfo.NormalUVTransform0;
+    cb.NormalUVTransform1 = subInfo.NormalUVTransform1;
+    cb.MetallicUVTransform0 = subInfo.MetallicUVTransform0;
+    cb.MetallicUVTransform1 = subInfo.MetallicUVTransform1;
+    cb.EmissiveUVTransform0 = subInfo.EmissiveUVTransform0;
+    cb.EmissiveUVTransform1 = subInfo.EmissiveUVTransform1;
+    cb.SheenColorUVTransform0 = subInfo.SheenColorUVTransform0;
+    cb.SheenColorUVTransform1 = subInfo.SheenColorUVTransform1;
+    cb.SheenRoughnessUVTransform0 = subInfo.SheenRoughnessUVTransform0;
+    cb.SheenRoughnessUVTransform1 = subInfo.SheenRoughnessUVTransform1;
+    cb.ClearcoatUVTransform0 = subInfo.ClearcoatUVTransform0;
+    cb.ClearcoatUVTransform1 = subInfo.ClearcoatUVTransform1;
+    cb.ClearcoatRoughnessUVTransform0 = subInfo.ClearcoatRoughnessUVTransform0;
+    cb.ClearcoatRoughnessUVTransform1 = subInfo.ClearcoatRoughnessUVTransform1;
+    cb.OcclusionUVTransform0 = subInfo.OcclusionUVTransform0;
+    cb.OcclusionUVTransform1 = subInfo.OcclusionUVTransform1;
+    cb.SpecularFactorUVTransform0 = subInfo.SpecularFactorUVTransform0;
+    cb.SpecularFactorUVTransform1 = subInfo.SpecularFactorUVTransform1;
+    cb.SpecularColorUVTransform0 = subInfo.SpecularColorUVTransform0;
+    cb.SpecularColorUVTransform1 = subInfo.SpecularColorUVTransform1;
+    cb.TransmissionUVTransform0 = subInfo.TransmissionUVTransform0;
+    cb.TransmissionUVTransform1 = subInfo.TransmissionUVTransform1;
+  }
+
   void RenderMesh::Draw(float *t, float *vp) {
     if (t)
       transform = t;
@@ -1279,45 +1392,51 @@ namespace t850 {
       XMATRIX44 WorldView = transform*pActualCamera->View;
       XVECTOR3 infoCam = XVECTOR3(pActualCamera->NPlane, pActualCamera->FPlane, pActualCamera->Fov, 1.0f);
 
-      it_MeshInfo->CnstBuffer.WVP = WVP;
-      it_MeshInfo->CnstBuffer.World = transform;
-      it_MeshInfo->CnstBuffer.WorldView = WorldView;
-      it_MeshInfo->CnstBuffer.Light0Pos = pScProp->Lights[0].Position;
-      it_MeshInfo->CnstBuffer.Light0Col = pScProp->Lights[0].Color;
-      it_MeshInfo->CnstBuffer.CameraPos = pActualCamera->Eye;
+      RenderMesh::MeshInstanceCBuffer& instanceCB = it_MeshInfo->InstanceCB;
+      instanceCB.WVP = WVP;
+      instanceCB.World = transform;
+      instanceCB.WorldView = WorldView;
+
+      RenderMesh::MeshFrameCBuffer& frameCB = it_MeshInfo->FrameCB;
+      frameCB.Light0Pos = pScProp->Lights[0].Position;
+      frameCB.Light0Col = pScProp->Lights[0].Color;
+      frameCB.CameraPos = pActualCamera->Eye;
       unsigned int numLights = pScProp ? static_cast<unsigned int>(pScProp->ActiveLights) : 1u;
       if (pScProp && numLights > pScProp->Lights.size())
         numLights = static_cast<unsigned int>(pScProp->Lights.size());
       if (numLights > 128u) numLights = 128u;
       infoCam.w = static_cast<float>(numLights);
-      it_MeshInfo->CnstBuffer.CameraInfo = infoCam;
+      frameCB.CameraInfo = infoCam;
 
       for (int li = 0; li < 128; li++) {
-        it_MeshInfo->CnstBuffer.LightPositions[li] = XVECTOR3(0.0f, 0.0f, 0.0f, 0.0f);
-        it_MeshInfo->CnstBuffer.LightColors[li] = XVECTOR3(0.0f, 0.0f, 0.0f, 0.0f);
+        frameCB.LightPositions[li] = XVECTOR3(0.0f, 0.0f, 0.0f, 0.0f);
+        frameCB.LightColors[li] = XVECTOR3(0.0f, 0.0f, 0.0f, 0.0f);
       }
       for (int ri = 0; ri < 32; ri++) {
-        it_MeshInfo->CnstBuffer.LightRadius[ri] = XVECTOR3(0.0f, 0.0f, 0.0f, 0.0f);
+        frameCB.LightRadius[ri] = XVECTOR3(0.0f, 0.0f, 0.0f, 0.0f);
       }
       for (unsigned int li = 0; li < numLights; li++) {
         Light& light = pScProp->Lights[li];
         if (light.Type == LIGHT_DIRECTIONAL) {
-          it_MeshInfo->CnstBuffer.LightPositions[li] = XVECTOR3(light.Direction.x, light.Direction.y, light.Direction.z, 0.0f);
+          frameCB.LightPositions[li] = XVECTOR3(light.Direction.x, light.Direction.y, light.Direction.z, 0.0f);
         } else {
-          it_MeshInfo->CnstBuffer.LightPositions[li] = XVECTOR3(light.Position.x, light.Position.y, light.Position.z, 1.0f);
+          frameCB.LightPositions[li] = XVECTOR3(light.Position.x, light.Position.y, light.Position.z, 1.0f);
         }
-        it_MeshInfo->CnstBuffer.LightColors[li] = XVECTOR3(light.Color.x, light.Color.y, light.Color.z, light.Intensity);
-        XVECTOR3& radiusPack = it_MeshInfo->CnstBuffer.LightRadius[li >> 2];
+        frameCB.LightColors[li] = XVECTOR3(light.Color.x, light.Color.y, light.Color.z, light.Intensity);
+        XVECTOR3& radiusPack = frameCB.LightRadius[li >> 2];
         if ((li & 3u) == 0u) radiusPack.x = light.radius;
         else if ((li & 3u) == 1u) radiusPack.y = light.radius;
         else if ((li & 3u) == 2u) radiusPack.z = light.radius;
         else radiusPack.w = light.radius;
       }
-	  it_MeshInfo->CnstBuffer.ParallaxSettings = XVECTOR3(m_fParallaxLowSamples, m_fParallaxHighSamples, m_fParallaxHeight);
-	  it_MeshInfo->CnstBuffer.ParallaxSettings.w = m_fParallaxEnabled;
-	  it_MeshInfo->CnstBuffer.ParallaxShadowSettings = XVECTOR3(m_fParallaxShadowMinLayers, m_fParallaxShadowMaxLayers, m_fParallaxShadowSoftness);
-	  it_MeshInfo->CnstBuffer.ParallaxShadowSettings.w = m_fParallaxShadowStrength;
-	  it_MeshInfo->CnstBuffer.Light0Dir = pScProp->Lights[0].Direction;
+      frameCB.ParallaxSettings = XVECTOR3(m_fParallaxLowSamples, m_fParallaxHighSamples, m_fParallaxHeight);
+      frameCB.ParallaxSettings.w = m_fParallaxEnabled;
+      frameCB.ParallaxShadowSettings = XVECTOR3(m_fParallaxShadowMinLayers, m_fParallaxShadowMaxLayers, m_fParallaxShadowSoftness);
+      frameCB.ParallaxShadowSettings.w = m_fParallaxShadowStrength;
+      frameCB.Light0Dir = pScProp->Lights[0].Direction;
+
+      ApplyMeshInstanceCB(it_MeshInfo->CnstBuffer, instanceCB);
+      ApplyMeshFrameCB(it_MeshInfo->CnstBuffer, frameCB);
 
       unsigned int stride = it_MeshInfo->VertexSize;
       unsigned int offset = 0;
@@ -1383,25 +1502,18 @@ namespace t850 {
         // MatID stay on SubSetInfo.
         const MaterialAsset* mat = sub_info->matAsset;
         const MaterialParams* mp = mat ? &mat->params : nullptr;
+        RenderMesh::MeshMaterialCBuffer& materialCB = sub_info->MaterialCB;
         if (mp) {
-          FillCBufferFromMaterial(it_MeshInfo->CnstBuffer, *mp);
+          FillCBufferFromMaterial(materialCB, *mp);
           // Per-instance MatID overrides the alpha slot used by
           // FillCBufferFromMaterial (it filled .w with intensities[3]
           // but the engine reuses Intensities.w for MatID).
-          it_MeshInfo->CnstBuffer.Intensities.w = (float)sub_info->MatID;
+          materialCB.Intensities.w = (float)sub_info->MatID;
         } else {
           // Defensive fallback (shouldn't happen if Create() ran).
-          it_MeshInfo->CnstBuffer.AmbientColor = sub_info->AmbientColor;
-          it_MeshInfo->CnstBuffer.DiffuseColor = sub_info->DiffuseColor;
-          it_MeshInfo->CnstBuffer.SpecularColor = sub_info->SpecularColor;
-          it_MeshInfo->CnstBuffer.PBRParams = sub_info->PBRParams;
-          it_MeshInfo->CnstBuffer.Intensities = sub_info->Intensities;
-          it_MeshInfo->CnstBuffer.Intensities.w = (float)sub_info->MatID;
-          it_MeshInfo->CnstBuffer.EmissiveColor = sub_info->EmissiveColor;
-          it_MeshInfo->CnstBuffer.AlphaParams = XVECTOR3((float)sub_info->AlphaMode, sub_info->AlphaCutoff, sub_info->DoubleSided ? 1.0f : 0.0f, sub_info->TransmissionFactor);
-          it_MeshInfo->CnstBuffer.TexCoordSets = XVECTOR3((float)sub_info->DiffuseTexCoord, (float)sub_info->NormalTexCoord, (float)sub_info->MetallicTexCoord, (float)sub_info->EmissiveTexCoord);
+          FillMaterialCBFromSubset(materialCB, *sub_info);
         }
-        it_MeshInfo->CnstBuffer.ForwardParams = XVECTOR3((float)g_pBaseDriver->width, (float)g_pBaseDriver->height, Textures[7] ? 1.0f : 0.0f, mp ? mp->ior : sub_info->IOR);
+        materialCB.ForwardParams = XVECTOR3((float)g_pBaseDriver->width, (float)g_pBaseDriver->height, Textures[7] ? 1.0f : 0.0f, mp ? mp->ior : sub_info->IOR);
         float emissiveMul = pScProp ? pScProp->MaterialEmissiveIntensity : 1.0f;
         float transmissionMul = pScProp ? pScProp->MaterialTransmissionMultiplier : 1.0f;
         float refractionStrength = pScProp ? pScProp->MaterialRefractionStrength : 0.03f;
@@ -1412,32 +1524,33 @@ namespace t850 {
         if (mp) {
           // Material-driven slots: clearcoat factors + unlit flag (.x..z),
           // plus per-frame multipliers in the .w slots.
-          it_MeshInfo->CnstBuffer.MaterialParams  = XVECTOR3(mp->clearcoatFactor, mp->clearcoatRoughness, mp->unlit ? 1.0f : 0.0f, emissiveMul);
-          it_MeshInfo->CnstBuffer.MaterialParams5 = XVECTOR3(mat->textures[(int)MatTexSlot::SheenColor]     ? 1.0f : 0.0f,
+          materialCB.MaterialParams  = XVECTOR3(mp->clearcoatFactor, mp->clearcoatRoughness, mp->unlit ? 1.0f : 0.0f, emissiveMul);
+          materialCB.MaterialParams5 = XVECTOR3(mat->textures[(int)MatTexSlot::SheenColor]     ? 1.0f : 0.0f,
                                                               mat->textures[(int)MatTexSlot::SheenRoughness] ? 1.0f : 0.0f,
                                                               static_cast<float>(mp->sheenColorTexCoord),
                                                               static_cast<float>(mp->sheenRoughTexCoord));
-          it_MeshInfo->CnstBuffer.MaterialParams6 = XVECTOR3(mat->textures[(int)MatTexSlot::Clearcoat]          ? 1.0f : 0.0f,
+          materialCB.MaterialParams6 = XVECTOR3(mat->textures[(int)MatTexSlot::Clearcoat]          ? 1.0f : 0.0f,
                                                               mat->textures[(int)MatTexSlot::ClearcoatRoughness] ? 1.0f : 0.0f,
                                                               static_cast<float>(mp->clearcoatTexCoord),
                                                               static_cast<float>(mp->clearcoatRoughTexCoord));
-          it_MeshInfo->CnstBuffer.MaterialParams7 = XVECTOR3(mat->textures[(int)MatTexSlot::Occlusion] ? 1.0f : 0.0f,
+          materialCB.MaterialParams7 = XVECTOR3(mat->textures[(int)MatTexSlot::Occlusion] ? 1.0f : 0.0f,
                                                               mp->occlusionStrength,
                                                               static_cast<float>(mp->occlusionTexCoord),
                                                               mat->textures[(int)MatTexSlot::Transmission] ? 1.0f : 0.0f);
-          it_MeshInfo->CnstBuffer.MaterialParams8 = XVECTOR3(static_cast<float>(mp->transmissionTexCoord),
+          materialCB.MaterialParams8 = XVECTOR3(static_cast<float>(mp->transmissionTexCoord),
                                                               mat->textures[(int)MatTexSlot::SpecularFactor] ? 1.0f : 0.0f,
                                                               static_cast<float>(mp->specFactorTexCoord),
                                                               mat->textures[(int)MatTexSlot::SpecularColor]  ? 1.0f : 0.0f);
         } else {
-          it_MeshInfo->CnstBuffer.MaterialParams  = XVECTOR3(sub_info->ClearcoatFactor, sub_info->ClearcoatRoughness, sub_info->Unlit ? 1.0f : 0.0f, emissiveMul);
-          it_MeshInfo->CnstBuffer.MaterialParams5 = XVECTOR3(sub_info->SheenColorTex ? 1.0f : 0.0f, sub_info->SheenRoughnessTex ? 1.0f : 0.0f, (float)sub_info->SheenColorTexCoord, (float)sub_info->SheenRoughnessTexCoord);
-          it_MeshInfo->CnstBuffer.MaterialParams6 = XVECTOR3(sub_info->ClearcoatTex ? 1.0f : 0.0f, sub_info->ClearcoatRoughnessTex ? 1.0f : 0.0f, (float)sub_info->ClearcoatTexCoord, (float)sub_info->ClearcoatRoughnessTexCoord);
-          it_MeshInfo->CnstBuffer.MaterialParams7 = XVECTOR3(sub_info->OcclusionTex ? 1.0f : 0.0f, sub_info->OcclusionStrength, (float)sub_info->OcclusionTexCoord, sub_info->TransmissionTex ? 1.0f : 0.0f);
-          it_MeshInfo->CnstBuffer.MaterialParams8 = XVECTOR3((float)sub_info->TransmissionTexCoord, sub_info->SpecularFactorTex ? 1.0f : 0.0f, (float)sub_info->SpecularFactorTexCoord, sub_info->SpecularColorTex ? 1.0f : 0.0f);
+          materialCB.MaterialParams  = XVECTOR3(sub_info->ClearcoatFactor, sub_info->ClearcoatRoughness, sub_info->Unlit ? 1.0f : 0.0f, emissiveMul);
+          materialCB.MaterialParams5 = XVECTOR3(sub_info->SheenColorTex ? 1.0f : 0.0f, sub_info->SheenRoughnessTex ? 1.0f : 0.0f, (float)sub_info->SheenColorTexCoord, (float)sub_info->SheenRoughnessTexCoord);
+          materialCB.MaterialParams6 = XVECTOR3(sub_info->ClearcoatTex ? 1.0f : 0.0f, sub_info->ClearcoatRoughnessTex ? 1.0f : 0.0f, (float)sub_info->ClearcoatTexCoord, (float)sub_info->ClearcoatRoughnessTexCoord);
+          materialCB.MaterialParams7 = XVECTOR3(sub_info->OcclusionTex ? 1.0f : 0.0f, sub_info->OcclusionStrength, (float)sub_info->OcclusionTexCoord, sub_info->TransmissionTex ? 1.0f : 0.0f);
+          materialCB.MaterialParams8 = XVECTOR3((float)sub_info->TransmissionTexCoord, sub_info->SpecularFactorTex ? 1.0f : 0.0f, (float)sub_info->SpecularFactorTexCoord, sub_info->SpecularColorTex ? 1.0f : 0.0f);
         }
-        it_MeshInfo->CnstBuffer.MaterialParams2 = XVECTOR3(transmissionMul, refractionStrength, Textures[9] ? 1.0f : 0.0f, iblFactor);
-        it_MeshInfo->CnstBuffer.MaterialParams3 = XVECTOR3(iblMipCount, iblBrdfLutEnabled, iblDiffuseMipLevel, 0.0f);
+        materialCB.MaterialParams2 = XVECTOR3(transmissionMul, refractionStrength, Textures[9] ? 1.0f : 0.0f, iblFactor);
+        materialCB.MaterialParams3 = XVECTOR3(iblMipCount, iblBrdfLutEnabled, iblDiffuseMipLevel, 0.0f);
+        ApplyMeshMaterialCB(it_MeshInfo->CnstBuffer, materialCB);
 
         // Phase A.5 step 2: bind shared IB pool if available, otherwise
         // fall back to the per-subset IB.
@@ -1489,8 +1602,17 @@ namespace t850 {
           s->Set(*T8DeviceContext);
           tracker.OnShaderChanged(s);
 
-          it_MeshInfo->CB->UpdateFromBuffer(*T8DeviceContext, &it_MeshInfo->CnstBuffer.WVP[0]);
-          it_MeshInfo->CB->Set(*T8DeviceContext);
+          if (g_pBaseDriver->m_currentAPI == GraphicsApi::OPENGL) {
+            it_MeshInfo->CB->UpdateFromBuffer(*T8DeviceContext, &it_MeshInfo->CnstBuffer.WVP[0]);
+            it_MeshInfo->CB->Set(*T8DeviceContext);
+          } else {
+            it_MeshInfo->FrameCBGPU->UpdateFromBuffer(*T8DeviceContext, &it_MeshInfo->FrameCB);
+            it_MeshInfo->InstanceCBGPU->UpdateFromBuffer(*T8DeviceContext, &it_MeshInfo->InstanceCB);
+            it_MeshInfo->MaterialCBGPU->UpdateFromBuffer(*T8DeviceContext, &sub_info->MaterialCB);
+            it_MeshInfo->FrameCBGPU->Set(*T8DeviceContext, 0);
+            it_MeshInfo->InstanceCBGPU->Set(*T8DeviceContext, 1);
+            it_MeshInfo->MaterialCBGPU->Set(*T8DeviceContext, 2);
+          }
         }
         // Phase B step 2 + C step 2: bind material textures via the
         // deduplicated MaterialAsset, with state-tracked dedup so that
@@ -1602,11 +1724,17 @@ namespace t850 {
   void RenderMesh::Destroy() {
     // Phase A.5 step 3 + B step 1: VB/IB are owned by MeshAssetCache
     // pools. Material data is shared via MaterialAssetCache. Only the
-    // per-instance CB is released here; assets are dereferenced
+    // mesh CBs are released here; assets are dereferenced
     // through their respective caches.
     for (auto &mIt : Info) {
       if (mIt.CB) mIt.CB->release();
       mIt.CB = nullptr;
+      if (mIt.FrameCBGPU) mIt.FrameCBGPU->release();
+      mIt.FrameCBGPU = nullptr;
+      if (mIt.InstanceCBGPU) mIt.InstanceCBGPU->release();
+      mIt.InstanceCBGPU = nullptr;
+      if (mIt.MaterialCBGPU) mIt.MaterialCBGPU->release();
+      mIt.MaterialCBGPU = nullptr;
       for (auto &sIt : mIt.SubSets) {
         sIt.IB = nullptr;
         if (sIt.matAsset) {

@@ -22,6 +22,7 @@
 #include <utils/gltf/GLTFAccessor.h>
 #include <utils/gltf/GLTFMaterial.h>
 #include <utils/gltf/GLTFImage.h>
+#include <utils/gltf/GLTFSkinMap.h>
 #include <utils/gltf/GLTFTypes.h>
 #include <utils/XDataBase.h>
 #include <utils/xMaths.h>
@@ -344,8 +345,11 @@ bool BuildGeometry(const Document& doc,
                    const XMATRIX44& worldMatrix,
                    xF::xMeshGeometry& geom,
                    DracoDecodeResult* preDecoded = nullptr,
-                   bool isSkinned = false) {
+                   bool isSkinned = false,
+                   int skinIdx = -1,
+                   const std::vector<int>* skinJointRemap = nullptr) {
   geom = xF::xMeshGeometry{};
+  geom.SkinIndex = skinIdx;
 
   // Check for Draco compression — use pre-decoded data if available
   bool useDraco = preDecoded != nullptr
@@ -608,8 +612,18 @@ bool BuildGeometry(const Document& doc,
           col[i*colElem+0], col[i*colElem+1], col[i*colElem+2]);
     }
     if (hasSkin) {
-      geom.SkinIndices[i] = XVECTOR3(joints[i*4+0], joints[i*4+1],
-                                      joints[i*4+2], joints[i*4+3]);
+      auto remapJoint = [&](float jointValue) -> float {
+        int localJoint = static_cast<int>(jointValue + 0.5f);
+        if (skinJointRemap
+            && localJoint >= 0
+            && localJoint < static_cast<int>(skinJointRemap->size())
+            && (*skinJointRemap)[localJoint] >= 0) {
+          return static_cast<float>((*skinJointRemap)[localJoint]);
+        }
+        return jointValue;
+      };
+      geom.SkinIndices[i] = XVECTOR3(remapJoint(joints[i*4+0]), remapJoint(joints[i*4+1]),
+                                      remapJoint(joints[i*4+2]), remapJoint(joints[i*4+3]));
       geom.SkinWeights[i] = XVECTOR3(weights[i*4+0], weights[i*4+1],
                                       weights[i*4+2], weights[i*4+3]);
     }
@@ -817,6 +831,11 @@ bool ConvertToXDatabase(const Document& doc, xF::XDataBase& out,
   std::vector<MeshInstance> instances;
   XMATRIX44 ident = Identity();
   for (int r : rootNodes) GatherNodes(doc, r, ident, instances);
+  SkinJointMap skinRemap = BuildSkinJointMap(doc);
+  if (doc.skins.size() > 1) {
+    T8_LOG_INFO("[glTF] Multi-skin asset: %zu skins remapped to %zu global joints",
+                doc.skins.size(), skinRemap.jointNodes.size());
+  }
 
   if (instances.empty()) {
     T8_LOG_ERROR("[glTF] '%s' has no mesh instances in the scene graph",
@@ -858,6 +877,7 @@ bool ConvertToXDatabase(const Document& doc, xF::XDataBase& out,
     bool hasDraco = false;
     bool decodeOk = false;
     bool isSkinned = false;
+    int skinIdx = -1;
   };
 
   std::vector<PrimJob> jobs;
@@ -874,6 +894,7 @@ bool ConvertToXDatabase(const Document& doc, xF::XDataBase& out,
       j.hasDraco = j.prim->extensions.has_value()
         && j.prim->extensions->KHR_draco_mesh_compression.has_value();
       j.isSkinned = instances[ii].isSkinned;
+      j.skinIdx = instances[ii].skinIdx;
       jobs.push_back(std::move(j));
     }
   }
@@ -906,6 +927,10 @@ bool ConvertToXDatabase(const Document& doc, xF::XDataBase& out,
     const XMATRIX44& world = instances[job.instanceIdx].world;
     const Mesh& m = doc.meshes[meshIdx];
     const Primitive& prim = *job.prim;
+    const std::vector<int>* skinJointRemap = nullptr;
+    if (job.skinIdx >= 0 && job.skinIdx < static_cast<int>(skinRemap.localToGlobal.size())) {
+      skinJointRemap = &skinRemap.localToGlobal[job.skinIdx];
+    }
 
     // If Draco was needed but failed, skip
     if (job.hasDraco && !job.decodeOk) {
@@ -920,9 +945,11 @@ bool ConvertToXDatabase(const Document& doc, xF::XDataBase& out,
     // Pass pre-decoded Draco data if available
     bool ok;
     if (job.hasDraco) {
-      ok = BuildGeometry(doc, prim, world, geom, &job.dracoResult, job.isSkinned);
+      ok = BuildGeometry(doc, prim, world, geom, &job.dracoResult, job.isSkinned,
+                         job.skinIdx, skinJointRemap);
     } else {
-      ok = BuildGeometry(doc, prim, world, geom, nullptr, job.isSkinned);
+      ok = BuildGeometry(doc, prim, world, geom, nullptr, job.isSkinned,
+                         job.skinIdx, skinJointRemap);
     }
 
     if (!ok) {

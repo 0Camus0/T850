@@ -311,6 +311,15 @@ namespace t850 {
   {
     auto* ctx = reinterpret_cast<ID3D11DeviceContext*>(deviceContext.GetAPIObject());
     ctx->VSSetShaderResources(slot, 1, pSRVTex.GetAddressOf());
+#ifdef T850_RENDER_TRACE
+    if (T8_TRACE_ACTIVE()) {
+      int texId = g_renderTracer->LookupTextureId(this);
+      int sampId = g_renderTracer->RegisterSampler(
+        RenderTracer::MakeSamplerSigD3D11(params));
+      g_renderTracer->EvBindTextureRequest(slot, texId, name, "vs");
+      g_renderTracer->EvBindTextureCommit(slot, texId, /*viewId=*/-1, sampId, name, "vs");
+    }
+#endif
   }
 
   void D3DXTexture::UpdateFloatData(const DeviceContext& deviceContext, int w, int h, const float* data)

@@ -67,7 +67,10 @@ namespace t850 {
   Texture * GLDevice::CreateTexture(std::string path)
   {
     GLTexture* txture = new GLTexture;
-    txture->LoadTexture(path.c_str());
+    if (!txture->LoadTexture(path.c_str())) {
+      delete txture;
+      return nullptr;
+    }
     return txture;
   }
 

@@ -1,18 +1,20 @@
-cbuffer ConstantBuffer{
+cbuffer QuadFrameCB : register(b0) {
     float4x4 WVP;
 	float4x4 World;  
 	float4x4 WorldView;
 	float4x4 WVPInverse;
 	float4x4 WVPLight;
 	float4x4 Projection;
-	float4	 LightPositions[128];
-	float4	 LightColors[128];
-  float4	 LightRadius[32];
 	float4   CameraPosition;
 	float4 	 CameraInfo;
 	float4	 LightCameraPosition;
 	float4 	 LightCameraInfo;
+}
 
+cbuffer QuadPassCB : register(b1) {
+	float4	 LightPositions[128];
+	float4	 LightColors[128];
+  float4	 LightRadius[32];
 	float4   brightness;
 	float4   toogles;
 }

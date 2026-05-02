@@ -4,7 +4,9 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdint>
+#include <fstream>
 #include <limits>
+#include <string>
 #include <vector>
 #include <video/BaseDriver.h>
 #include <utils/cil.h>
@@ -36,6 +38,27 @@ namespace {
   constexpr int GeneratedLambertianSamples = 128;
   constexpr int GeneratedGGXSamples = 128;
   constexpr int GeneratedCharlieSamples = 128;
+
+  bool IsUnsupportedHighBitDepthPng(const std::string& relativeTexturePath) {
+    const std::string fullPath = "Textures/" + relativeTexturePath;
+    std::ifstream file(fullPath, std::ios::binary);
+    if (!file.good())
+      return false;
+
+    unsigned char header[25] = {};
+    file.read(reinterpret_cast<char*>(header), sizeof(header));
+    if (file.gcount() < static_cast<std::streamsize>(sizeof(header)))
+      return false;
+
+    static const unsigned char pngSig[8] = {0x89, 'P', 'N', 'G', 0x0D, 0x0A, 0x1A, 0x0A};
+    if (std::memcmp(header, pngSig, sizeof(pngSig)) != 0)
+      return false;
+    if (header[12] != 'I' || header[13] != 'H' || header[14] != 'D' || header[15] != 'R')
+      return false;
+
+    const unsigned char bitDepth = header[24];
+    return bitDepth > 8;
+  }
 
   float Saturate(float value) {
     return std::max(0.0f, std::min(1.0f, value));
@@ -536,6 +559,45 @@ namespace {
     return Saturate(1.0f / std::max(4.0f * (ndotL + ndotV - ndotL * ndotV), 0.000001f));
   }
 
+  float LerpScalar(float lhs, float rhs, float t) {
+    return lhs + (rhs - lhs) * t;
+  }
+
+  float LambdaSheenNumericHelper(float x, float alphaG) {
+    float oneMinusAlphaSq = (1.0f - alphaG) * (1.0f - alphaG);
+    float a = LerpScalar(21.5473f, 25.3245f, oneMinusAlphaSq);
+    float b = LerpScalar(3.82987f, 3.32435f, oneMinusAlphaSq);
+    float c = LerpScalar(0.19823f, 0.16801f, oneMinusAlphaSq);
+    float d = LerpScalar(-1.97760f, -1.27393f, oneMinusAlphaSq);
+    float e = LerpScalar(-4.32054f, -4.85967f, oneMinusAlphaSq);
+    return a / (1.0f + b * std::pow(std::max(x, 0.0f), c)) + d * x + e;
+  }
+
+  float LambdaSheen(float cosTheta, float alphaG) {
+    cosTheta = Saturate(cosTheta);
+    if (std::fabs(cosTheta) < 0.5f)
+      return std::exp(LambdaSheenNumericHelper(cosTheta, alphaG));
+    return std::exp(2.0f * LambdaSheenNumericHelper(0.5f, alphaG)
+                    - LambdaSheenNumericHelper(1.0f - cosTheta, alphaG));
+  }
+
+  float VisibilitySheen(float ndotL, float ndotV, float sheenRoughness) {
+    sheenRoughness = std::max(sheenRoughness, 0.000001f);
+    float alphaG = sheenRoughness * sheenRoughness;
+    float denom = std::max((1.0f + LambdaSheen(ndotV, alphaG) + LambdaSheen(ndotL, alphaG))
+                           * (4.0f * ndotV * ndotL), 0.000001f);
+    return Saturate(1.0f / denom);
+  }
+
+  float DistributionCharlieRoughness(float sheenRoughness, float ndotH) {
+    sheenRoughness = std::max(sheenRoughness, 0.000001f);
+    float alphaG = sheenRoughness * sheenRoughness;
+    float invR = 1.0f / alphaG;
+    float cos2h = ndotH * ndotH;
+    float sin2h = std::max(1.0f - cos2h, 0.0f);
+    return (2.0f + invR) * std::pow(sin2h, invR * 0.5f) / (2.0f * PI);
+  }
+
   void GenerateGGXBrdfLUT(std::vector<float>& data, int resolution, int sampleCount) {
     data.assign(size_t(resolution) * size_t(resolution) * 4u, 0.0f);
     for (int y = 0; y < resolution; ++y) {
@@ -606,6 +668,39 @@ namespace {
     }
   }
 
+  void GenerateSheenELUT(std::vector<float>& data, int resolution, int sampleCount) {
+    data.assign(size_t(resolution) * size_t(resolution) * 4u, 0.0f);
+    for (int y = 0; y < resolution; ++y) {
+      float sheenRoughness = (float(y) + 0.5f) / float(resolution);
+      for (int x = 0; x < resolution; ++x) {
+        float ndotV = (float(x) + 0.5f) / float(resolution);
+        Vec3 view = {std::sqrt(std::max(1.0f - ndotV * ndotV, 0.0f)), 0.0f, ndotV};
+
+        float e = 0.0f;
+        for (int i = 0; i < sampleCount; ++i) {
+          float xiX = float(i) / float(sampleCount);
+          float xiY = RadicalInverseVdC(uint32_t(i));
+          ImportanceSample sample = ImportanceSampleLambertian(xiX, xiY);
+          Vec3 light = sample.direction;
+          float ndotL = Saturate(light.z);
+          if (ndotL > 0.0f) {
+            Vec3 halfVector = Normalize(Add(view, light));
+            float ndotH = Saturate(halfVector.z);
+            float brdf = DistributionCharlieRoughness(sheenRoughness, ndotH)
+                       * VisibilitySheen(ndotL, ndotV, sheenRoughness);
+            e += brdf * ndotL / std::max(sample.pdf, 0.000001f);
+          }
+        }
+
+        size_t offset = (size_t(y) * size_t(resolution) + size_t(x)) * 4u;
+        data[offset + 0] = Saturate(e / float(sampleCount));
+        data[offset + 1] = 0.0f;
+        data[offset + 2] = 0.0f;
+        data[offset + 3] = 1.0f;
+      }
+    }
+  }
+
 }
 
 int CreateGGXBrdfLUTTexture(BaseDriver* driver, int resolution, int sampleCount) {
@@ -661,6 +756,18 @@ int CreateCharlieLUTTexture(BaseDriver* driver, int resolution = 256, int sample
   int textureIndex = driver->CreateFloatTexture(resolution, resolution, lutData.data());
   if (textureIndex >= 0)
     T8_LOG_INFO("[IBL] Generated Charlie LUT: slot=%d %dx%d samples=%d", textureIndex, resolution, resolution, sampleCount);
+  return textureIndex;
+}
+
+int CreateSheenELUTTexture(BaseDriver* driver, int resolution = 256, int sampleCount = 128) {
+  if (!driver || resolution <= 0 || sampleCount <= 0)
+    return -1;
+
+  std::vector<float> lutData;
+  GenerateSheenELUT(lutData, resolution, sampleCount);
+  int textureIndex = driver->CreateFloatTexture(resolution, resolution, lutData.data());
+  if (textureIndex >= 0)
+    T8_LOG_INFO("[IBL] Generated sheen E LUT: slot=%d %dx%d samples=%d", textureIndex, resolution, resolution, sampleCount);
   return textureIndex;
 }
 
@@ -745,7 +852,15 @@ void LoadEnvironmentIBLResources(
   }
 
   if (!paths.sheenELUT.empty()) {
-    loadTextureOnce(sheenELUTTextureIndex, paths.sheenELUT, "explicit sheen E LUT");
+    if (IsUnsupportedHighBitDepthPng(paths.sheenELUT)) {
+      T8_LOG_INFO("[IBL] Skipping explicit sheen E LUT '%s': high-bit-depth PNG is unsupported by the legacy texture loader",
+                  paths.sheenELUT.c_str());
+    } else {
+      loadTextureOnce(sheenELUTTextureIndex, paths.sheenELUT, "explicit sheen E LUT");
+    }
+  }
+  if (sheenELUTTextureIndex < 0) {
+    sheenELUTTextureIndex = CreateSheenELUTTexture(driver);
   }
 
   if (brdfTextureIndex >= 0)

@@ -33,6 +33,7 @@ namespace t850 {
     void SetTextureParams() override;
     void GetFormatBpp(unsigned int& props, unsigned int& format, unsigned int& bpp) override;
     void Set(const DeviceContext& deviceContext, unsigned int slot, std::string shaderTextureName) override;
+    void SetVS(const DeviceContext& deviceContext, unsigned int slot, std::string shaderTextureName) override;
     void SetSampler(const DeviceContext& deviceContext, unsigned int slot = 0) override;
     void UpdateFloatData(const DeviceContext& deviceContext, int w, int h, const float* data) override;
 

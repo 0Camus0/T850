@@ -120,6 +120,70 @@ namespace t850 {
     XVECTOR3  LightRadius[32];
     };
 
+    struct MeshInstanceCBuffer {
+      XMATRIX44 WVP;
+      XMATRIX44 World;
+      XMATRIX44 WorldView;
+    };
+
+    struct MeshFrameCBuffer {
+      XVECTOR3  Light0Pos;
+      XVECTOR3  Light0Col;
+      XVECTOR3  CameraPos;
+      XVECTOR3  CameraInfo;
+      XVECTOR3  ParallaxSettings;
+      XVECTOR3  ParallaxShadowSettings;
+      XVECTOR3  Light0Dir;
+      XVECTOR3  LightPositions[128];
+      XVECTOR3  LightColors[128];
+      XVECTOR3  LightRadius[32];
+    };
+
+    struct MeshMaterialCBuffer {
+      XVECTOR3  AmbientColor;
+      XVECTOR3  DiffuseColor;
+      XVECTOR3  SpecularColor;
+      XVECTOR3  PBRParams;
+      XVECTOR3  Intensities;
+      XVECTOR3  EmissiveColor;
+      XVECTOR3  AlphaParams;
+      XVECTOR3  ForwardParams;
+      XVECTOR3  TexCoordSets;
+      XVECTOR3  MaterialParams;
+      XVECTOR3  MaterialParams2;
+      XVECTOR3  MaterialParams3;
+      XVECTOR3  MaterialParams4;
+      XVECTOR3  MaterialParams5;
+      XVECTOR3  MaterialParams6;
+      XVECTOR3  MaterialParams7;
+      XVECTOR3  MaterialParams8;
+      XVECTOR3  MaterialParams9;
+      XVECTOR3  BaseColorUVTransform0;
+      XVECTOR3  BaseColorUVTransform1;
+      XVECTOR3  NormalUVTransform0;
+      XVECTOR3  NormalUVTransform1;
+      XVECTOR3  MetallicUVTransform0;
+      XVECTOR3  MetallicUVTransform1;
+      XVECTOR3  EmissiveUVTransform0;
+      XVECTOR3  EmissiveUVTransform1;
+      XVECTOR3  SheenColorUVTransform0;
+      XVECTOR3  SheenColorUVTransform1;
+      XVECTOR3  SheenRoughnessUVTransform0;
+      XVECTOR3  SheenRoughnessUVTransform1;
+      XVECTOR3  ClearcoatUVTransform0;
+      XVECTOR3  ClearcoatUVTransform1;
+      XVECTOR3  ClearcoatRoughnessUVTransform0;
+      XVECTOR3  ClearcoatRoughnessUVTransform1;
+      XVECTOR3  OcclusionUVTransform0;
+      XVECTOR3  OcclusionUVTransform1;
+      XVECTOR3  SpecularFactorUVTransform0;
+      XVECTOR3  SpecularFactorUVTransform1;
+      XVECTOR3  SpecularColorUVTransform0;
+      XVECTOR3  SpecularColorUVTransform1;
+      XVECTOR3  TransmissionUVTransform0;
+      XVECTOR3  TransmissionUVTransform1;
+    };
+
     struct AABB {
       XVECTOR3 min;
       XVECTOR3 max;
@@ -346,16 +410,23 @@ namespace t850 {
       // remain populated and drive the draw path; step 2 retires
       // them.
       MaterialAsset* matAsset = nullptr;
+
+      MeshMaterialCBuffer MaterialCB;
     };
 
     struct MeshInfo {
       unsigned int			 VertexSize;
       unsigned int			 NumVertex;
 
-      t850::IndexBuffer*  	IB;
-      t850::VertexBuffer*  	VB;
-      t850::ConstantBuffer* CB;
+      t850::IndexBuffer*  	IB = nullptr;
+      t850::VertexBuffer*  	VB = nullptr;
+      t850::ConstantBuffer* CB = nullptr;
+      t850::ConstantBuffer* FrameCBGPU = nullptr;
+      t850::ConstantBuffer* InstanceCBGPU = nullptr;
+      t850::ConstantBuffer* MaterialCBGPU = nullptr;
       RenderMesh::CBuffer			CnstBuffer;
+      MeshInstanceCBuffer   InstanceCB;
+      MeshFrameCBuffer      FrameCB;
 
       std::vector<SubSetInfo>	SubSets;
 

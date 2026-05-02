@@ -90,6 +90,8 @@ namespace t850 {
                                       const std::string& vs_name, const std::string& fs_name) {
     auto* driver = GetVkDriver();
     VkDevice device = driver->GetDevice();
+    cbvBinding = -1;
+    std::fill(cbvBindings, cbvBindings + VulkanShader::kMaxCBufferSlots, -1);
     std::fill(srvBindings, srvBindings + VulkanShader::kMaxTextureSlots, -1);
     std::fill(srvIsCubemap, srvIsCubemap + VulkanShader::kMaxTextureSlots, false);
 
@@ -121,6 +123,15 @@ namespace t850 {
     // Build descriptor set layout from reflected bindings
     std::unordered_map<uint32_t, VkDescriptorSetLayoutBinding> bindingMap;
 
+    auto recordCBVBinding = [&](uint32_t binding) {
+      int logicalSlot = (int)binding;
+      if (logicalSlot >= VulkanShader::kMaxTextureSlots) logicalSlot -= VulkanShader::kMaxTextureSlots;
+      if (logicalSlot >= 0 && logicalSlot < VulkanShader::kMaxCBufferSlots) {
+        cbvBindings[logicalSlot] = (int)binding;
+      }
+      if (logicalSlot == 0 || cbvBinding < 0) cbvBinding = (int)binding;
+    };
+
     // VS uniform buffers
     for (auto& ub : vsRefl.uniformBuffers) {
       auto& b = bindingMap[ub.binding];
@@ -128,7 +139,7 @@ namespace t850 {
       b.descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC;
       b.descriptorCount = 1;
       b.stageFlags |= VK_SHADER_STAGE_VERTEX_BIT;
-      cbvBinding = (int)ub.binding;
+      recordCBVBinding(ub.binding);
     }
     // FS uniform buffers
     for (auto& ub : fsRefl.uniformBuffers) {
@@ -137,7 +148,7 @@ namespace t850 {
       b.descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC;
       b.descriptorCount = 1;
       b.stageFlags |= VK_SHADER_STAGE_FRAGMENT_BIT;
-      if (cbvBinding < 0) cbvBinding = (int)ub.binding;
+      recordCBVBinding(ub.binding);
     }
     // FS sampled images (textures) — derive engine slot from binding (undo +1 texture shift)
     for (int idx = 0; idx < (int)fsRefl.sampledImages.size(); idx++) {

@@ -89,7 +89,7 @@ namespace t850 {
   };
   class ConstantBuffer : public Buffer {
   public:
-    virtual void Set(const DeviceContext& deviceContext) = 0;
+    virtual void Set(const DeviceContext& deviceContext, unsigned int slot = 0) = 0;
   };
 
 

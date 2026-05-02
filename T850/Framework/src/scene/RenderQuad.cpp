@@ -22,9 +22,33 @@
 #include <video/d3d11/D3D11Driver.h>
 #endif
 #include <utils/Log.h>
+#include <cstring>
 namespace t850 {
   extern Device*            T8Device;
   extern DeviceContext*     T8DeviceContext;
+
+  namespace {
+    void ExtractFrameCB(RenderQuad::FrameCBuffer& dst, const RenderQuad::CBuffer& src) {
+      dst.WVP = src.WVP;
+      dst.World = src.World;
+      dst.WorldView = src.WorldView;
+      dst.WVPInverse = src.WVPInverse;
+      dst.WVPLight = src.WVPLight;
+      dst.Projection = src.Projection;
+      dst.CameraPos = src.CameraPos;
+      dst.CameraInfo = src.CameraInfo;
+      dst.LightCameraPos = src.LightCameraPos;
+      dst.LightCameraInfo = src.LightCameraInfo;
+    }
+
+    void ExtractPassCB(RenderQuad::PassCBuffer& dst, const RenderQuad::CBuffer& src) {
+      std::memcpy(dst.LightPositions, src.LightPositions, sizeof(dst.LightPositions));
+      std::memcpy(dst.LightColors, src.LightColors, sizeof(dst.LightColors));
+      std::memcpy(dst.LightRadius, src.LightRadius, sizeof(dst.LightRadius));
+      dst.brightness = src.brightness;
+      dst.toogles = src.toogles;
+    }
+  }
 
   void RenderQuad::Create() {
     m_quad.Init();
@@ -121,6 +145,10 @@ namespace t850 {
     bdesc.byteWidth = sizeof(CBuffer);
     bdesc.usage = BufferUsage::DEFAULT;
     pd3dConstantBuffer = (t850::ConstantBuffer*)T8Device->CreateBuffer(BufferType::CONSTANT, bdesc);
+    bdesc.byteWidth = sizeof(FrameCBuffer);
+    FrameCBGPU = (t850::ConstantBuffer*)T8Device->CreateBuffer(BufferType::CONSTANT, bdesc);
+    bdesc.byteWidth = sizeof(PassCBuffer);
+    PassCBGPU = (t850::ConstantBuffer*)T8Device->CreateBuffer(BufferType::CONSTANT, bdesc);
 
     /*D3D11_SAMPLER_DESC sdesc;
     sdesc.Filter = D3D11_FILTER_ANISOTROPIC;
@@ -316,8 +344,17 @@ namespace t850 {
     m_quad.Set();
     s->Set(*T8DeviceContext);
 
-    pd3dConstantBuffer->UpdateFromBuffer(*T8DeviceContext, &CnstBuffer);
-    pd3dConstantBuffer->Set(*T8DeviceContext);
+    if (g_pBaseDriver->UsesGLSL()) {
+      pd3dConstantBuffer->UpdateFromBuffer(*T8DeviceContext, &CnstBuffer);
+      pd3dConstantBuffer->Set(*T8DeviceContext);
+    } else {
+      ExtractFrameCB(FrameCB, CnstBuffer);
+      ExtractPassCB(PassCB, CnstBuffer);
+      FrameCBGPU->UpdateFromBuffer(*T8DeviceContext, &FrameCB);
+      PassCBGPU->UpdateFromBuffer(*T8DeviceContext, &PassCB);
+      FrameCBGPU->Set(*T8DeviceContext, 0);
+      PassCBGPU->Set(*T8DeviceContext, 1);
+    }
     auto textureNameForSlot = [](int slot) -> const char* {
       switch (slot) {
       case 0: return "tex0";
@@ -360,7 +397,9 @@ namespace t850 {
 
   void RenderQuad::Destroy() {
     m_quad.Destroy();
-    pd3dConstantBuffer->release();
+    if (pd3dConstantBuffer) { pd3dConstantBuffer->release(); pd3dConstantBuffer = nullptr; }
+    if (FrameCBGPU) { FrameCBGPU->release(); FrameCBGPU = nullptr; }
+    if (PassCBGPU) { PassCBGPU->release(); PassCBGPU = nullptr; }
   }
 }
 

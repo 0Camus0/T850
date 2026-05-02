@@ -1,4 +1,5 @@
-cbuffer ConstantBuffer{
+#if defined(USE_SKINNING) || defined(USE_SKINNING_QT)
+cbuffer ConstantBuffer : register(b0) {
     float4x4 WVP;
     float4x4 World;
     float4x4 WorldView;
@@ -55,6 +56,65 @@ cbuffer ConstantBuffer{
     float4   LightColors[128];
     float4   LightRadius[32];
 }
+#else
+cbuffer MeshFrameCB : register(b0) {
+    float4   LightPos;
+    float4   LightColor;
+    float4   CameraPosition;
+    float4   CameraInfo;
+    float4   ParallaxSettings;
+    float4   ParallaxShadowSettings;
+    float4   Light0Direction;
+    float4   LightPositions[128];
+    float4   LightColors[128];
+    float4   LightRadius[32];
+}
+
+cbuffer MeshMaterialCB : register(b2) {
+    float4   Ambient;
+    float4   DiffuseColor;
+    float4   SpecularColor;
+    float4   PBRParams;
+    float4   Intensities;
+    float4   EmissiveColor;
+    float4   AlphaParams;
+    float4   ForwardParams;
+    float4   TexCoordSets;
+    float4   MaterialParams;
+    float4   MaterialParams2;
+    float4   MaterialParams3;
+    float4   MaterialParams4;
+    float4   MaterialParams5;
+    float4   MaterialParams6;
+    float4   MaterialParams7;
+    float4   MaterialParams8;
+    float4   MaterialParams9;
+    float4   BaseColorUVTransform0;
+    float4   BaseColorUVTransform1;
+    float4   NormalUVTransform0;
+    float4   NormalUVTransform1;
+    float4   MetallicUVTransform0;
+    float4   MetallicUVTransform1;
+    float4   EmissiveUVTransform0;
+    float4   EmissiveUVTransform1;
+    float4   SheenColorUVTransform0;
+    float4   SheenColorUVTransform1;
+    float4   SheenRoughnessUVTransform0;
+    float4   SheenRoughnessUVTransform1;
+    float4   ClearcoatUVTransform0;
+    float4   ClearcoatUVTransform1;
+    float4   ClearcoatRoughnessUVTransform0;
+    float4   ClearcoatRoughnessUVTransform1;
+    float4   OcclusionUVTransform0;
+    float4   OcclusionUVTransform1;
+    float4   SpecularFactorUVTransform0;
+    float4   SpecularFactorUVTransform1;
+    float4   SpecularColorUVTransform0;
+    float4   SpecularColorUVTransform1;
+    float4   TransmissionUVTransform0;
+    float4   TransmissionUVTransform1;
+}
+#endif
 
 #ifdef DIFFUSE_MAP
 Texture2D TextureRGB : register(t0);

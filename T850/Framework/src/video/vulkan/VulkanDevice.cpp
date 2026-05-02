@@ -55,7 +55,10 @@ namespace t850 {
 
   Texture* VulkanDevice::CreateTexture(std::string path) {
     VulkanTexture* tex = new VulkanTexture;
-    tex->LoadTexture(path.c_str());
+    if (!tex->LoadTexture(path.c_str())) {
+      delete tex;
+      return nullptr;
+    }
     return tex;
   }
 

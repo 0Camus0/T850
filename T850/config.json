@@ -1,33 +1,33 @@
 {
-  "api": "d3d12",
   "keepRunning": false,
-  "debugFrames": false,
-  "configuration": "Release",
-  "architecture": "x64",
-  "display": {
-    "model": "Models/porsche_992_gt3_r__www.vecarz.com.glb",
-    "fullscreen": false,
-    "height": 1440,
-    "scene": 0,
-    "width": 2560
+  "devTools": {
+    "logLevel": "error",
+    "guiControlTarget": "slider_knob",
+    "d3d12Debug": false,
+    "logToFile": false,
+    "guiEdit": false,
+    "guiSnap": false,
+    "guiControlEdit": false
   },
-  "dump": {
-    "enabled": false,
-    "frame": -1,
-    "trigger": "frame",
-    "seconds": -1
-  },
+  "api": "vulkan",
   "replaySnapshot": {
-    "path": "D:\\Code\\Game\\T850\\T850\\bin\\x64\\Release\\dumps_gl_f5265_20260430_101943\\snapshot.json",
+    "path": "D:\\Code\\Game\\T850\\T850\\bin\\x64\\Release\\dumps_vulkan_f6174_20260501_213253\\snapshot.json",
     "enabled": false
   },
-  "devTools": {
-    "logToFile": false,
-    "logLevel": "error",
-    "guiEdit": false,
-    "d3d12Debug": false,
-    "guiSnap": false,
-    "guiControlEdit": false,
-    "guiControlTarget": "slider_knob"
-  }
+  "debugFrames": false,
+  "display": {
+    "model": "Models/rewind_cyborg.glb",
+    "fullscreen": false,
+    "width": 2560,
+    "height": 1440,
+    "scene": 0
+  },
+  "architecture": "x64",
+  "dump": {
+    "seconds": -1,
+    "trigger": "frame",
+    "frame": -1,
+    "enabled": false
+  },
+  "configuration": "Release"
 }

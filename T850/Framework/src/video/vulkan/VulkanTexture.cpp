@@ -465,6 +465,7 @@ namespace t850 {
       driver->m_pendingTextures[slot].tracerTexId = g_renderTracer->LookupTextureId(this);
       m_shaderTextureName = shaderTextureName;
       driver->m_pendingTextures[slot].tracerName  = m_shaderTextureName.c_str();
+      driver->m_pendingTextures[slot].tracerStage = "ps";
       // Build a logical sampler signature from the same TextBasicParams bits
       // used to construct m_sampler (see VulkanTexture sampler creation
       // around line 388-432). All 4 backends use this helper, so equivalent
@@ -476,6 +477,27 @@ namespace t850 {
     }
 #endif
     T8_LOG_DEBUG("[Vulkan] Texture::Set slot=%u view=%p sampler=%p name=%s",
+                slot, (void*)m_imageView, (void*)m_sampler, shaderTextureName.c_str());
+  }
+
+  void VulkanTexture::SetVS(const DeviceContext& deviceContext, unsigned int slot, std::string shaderTextureName) {
+    if (slot >= VulkanShader::kMaxTextureSlots) return;
+    auto* driver = GetVkDriver();
+    driver->m_pendingTextures[slot].imageView = m_imageView;
+    driver->m_pendingTextures[slot].sampler = m_sampler;
+#ifdef T850_RENDER_TRACE
+    if (T8_TRACE_ACTIVE()) {
+      driver->m_pendingTextures[slot].tracerTexId = g_renderTracer->LookupTextureId(this);
+      m_shaderTextureName = shaderTextureName;
+      driver->m_pendingTextures[slot].tracerName  = m_shaderTextureName.c_str();
+      driver->m_pendingTextures[slot].tracerStage = "vs";
+      driver->m_pendingTextures[slot].tracerSamplerId =
+        g_renderTracer->RegisterSampler(RenderTracer::MakeSamplerSigVulkan(params, m_samplerMaxAnisotropy));
+      g_renderTracer->EvBindTextureRequest(slot, driver->m_pendingTextures[slot].tracerTexId,
+                                           shaderTextureName, "vs");
+    }
+#endif
+    T8_LOG_DEBUG("[Vulkan] Texture::SetVS slot=%u view=%p sampler=%p name=%s",
                 slot, (void*)m_imageView, (void*)m_sampler, shaderTextureName.c_str());
   }
 

@@ -542,6 +542,7 @@ namespace xF {
 		// loader, which always emits 16-bit indices, is unaffected.
 		std::vector<xDWORD>		 Triangles32;
 		bool					 Indices32Bit = false;
+		int						 SkinIndex = -1; // glTF skin index that owns JOINTS_0 for this geometry
 		xSkinInfo				 Info;
 		xMaterialList			 MaterialList;
 

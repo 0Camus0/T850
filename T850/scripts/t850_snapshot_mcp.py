@@ -9,6 +9,7 @@ initialize, tools/list, and tools/call.
 import argparse
 import json
 import os
+import struct
 import sys
 from dataclasses import dataclass
 from html import escape
@@ -382,6 +383,560 @@ def generate_visual_report(
     return {"report": report_path, "heatmaps": heatmaps, "comparisons": comparisons}
 
 
+# ─────────────────────────────────────────────────────────────────────────────
+# Render trace analysis (T850_RENDER_TRACE / T850_TRACE_GEOMETRY)
+#
+# trace.json schema (RenderTrace.h): a per-frame structured dump of the API
+# state. Each tool below treats one snapshot directory as authoritative and
+# the other as the candidate, mirroring the PPM compare contract above.
+# ─────────────────────────────────────────────────────────────────────────────
+
+TRACE_FILENAME = "trace.json"
+
+
+def _load_trace(directory: str) -> dict[str, Any]:
+    path = os.path.join(directory, TRACE_FILENAME)
+    if not os.path.isfile(path):
+        raise ValueError(f"No trace.json in {directory} (build with T850_RENDER_TRACE=ON)")
+    with open(path, "r", encoding="utf-8") as handle:
+        return json.load(handle)
+
+
+def _trace_event_histogram(trace: dict[str, Any]) -> dict[str, int]:
+    counts: dict[str, int] = {}
+    for ev in trace.get("events", []):
+        t = str(ev.get("type", ""))
+        counts[t] = counts.get(t, 0) + 1
+    return dict(sorted(counts.items(), key=lambda kv: (-kv[1], kv[0])))
+
+
+def _trace_shader_index(trace: dict[str, Any]) -> dict[int, dict[str, Any]]:
+    return {int(s["id"]): s for s in trace.get("shaders", []) if "id" in s}
+
+
+def _trace_buffer_index(trace: dict[str, Any]) -> dict[int, dict[str, Any]]:
+    return {int(b["id"]): b for b in trace.get("buffers", []) if "id" in b}
+
+
+def _trace_texture_index(trace: dict[str, Any]) -> dict[int, dict[str, Any]]:
+    return {int(t["id"]): t for t in trace.get("textures", []) if "id" in t}
+
+
+def _shader_label(shader: dict[str, Any] | None) -> str:
+    if not shader:
+        return "?"
+    vs = str(shader.get("vs_name", ""))
+    fs = str(shader.get("fs_name", ""))
+    if vs and fs and vs != fs:
+        return f"{vs}|{fs}"
+    return vs or fs or f"shader#{shader.get('id')}"
+
+
+def summarize_trace(directory: str) -> dict[str, Any]:
+    """Top-level summary of one trace.json: counts, draws-by-shader, events."""
+    trace = _load_trace(directory)
+    draws = trace.get("draws", [])
+    shaders = _trace_shader_index(trace)
+    by_shader: dict[int, int] = {}
+    for d in draws:
+        sid = int(d.get("shader_id", -1))
+        by_shader[sid] = by_shader.get(sid, 0) + 1
+    draws_by_shader = sorted(
+        ({"shader_id": sid, "count": cnt, "label": _shader_label(shaders.get(sid))}
+         for sid, cnt in by_shader.items()),
+        key=lambda x: (-x["count"], x["shader_id"]),
+    )
+    return {
+        "directory": directory,
+        "api": trace.get("api"),
+        "frame": trace.get("frame"),
+        "scene": trace.get("scene"),
+        "timestamp": trace.get("timestamp"),
+        "counts": {
+            "textures": len(trace.get("textures", [])),
+            "rts": len(trace.get("rts", [])),
+            "shaders": len(trace.get("shaders", [])),
+            "psos": len(trace.get("psos", [])),
+            "buffers": len(trace.get("buffers", [])),
+            "draws": len(draws),
+            "events": len(trace.get("events", [])),
+        },
+        "draws_by_shader": draws_by_shader,
+        "event_histogram": _trace_event_histogram(trace),
+    }
+
+
+def _draws_aligned(ref_trace: dict[str, Any], cand_trace: dict[str, Any]) -> tuple[list[dict[str, Any]], list[dict[str, Any]], int]:
+    """Return (ref_draws, cand_draws, common_count). Alignment is positional —
+    the engine drives identical draw orders across APIs because the snapshot
+    is replayed deterministically from the same scene state."""
+    ref = list(ref_trace.get("draws", []))
+    cand = list(cand_trace.get("draws", []))
+    return ref, cand, min(len(ref), len(cand))
+
+
+def _shader_signature(trace: dict[str, Any]) -> dict[int, tuple]:
+    """Map shader_id -> (pass, key_bits) so cross-API ids can be compared
+    by logical identity instead of registration order."""
+    out: dict[int, tuple] = {}
+    for s in trace.get("shaders", []):
+        sid = int(s.get("id", -1))
+        if sid >= 0:
+            out[sid] = (s.get("pass"), s.get("key_hex"))
+    return out
+
+
+def _texture_signature(trace: dict[str, Any]) -> dict[int, tuple]:
+    """Map texture_id -> (name, width, height) for cross-API logical identity."""
+    out: dict[int, tuple] = {}
+    for t in trace.get("textures", []):
+        tid = int(t.get("id", -1))
+        if tid >= 0:
+            out[tid] = (t.get("name"), t.get("width"), t.get("height"))
+    return out
+
+
+def _all_cb_hashes(trace: dict[str, Any]) -> set:
+    """Collect every cbuffer hash bound across the entire trace. A draw that
+    binds a CB whose hash appears in this set is using GPU-equivalent content
+    even if the API rebound it at a different point in the frame."""
+    out: set = set()
+    for d in trace.get("draws", []):
+        for c in d.get("cbuffers", []):
+            h = c.get("hash")
+            if h is not None:
+                out.add(h)
+    return out
+
+
+def _cbs_present_in(draw: dict[str, Any], hashes: set) -> bool:
+    """True iff every CB hash bound on this draw appears somewhere in `hashes`.
+    Used to ask: 'did the ref API ever produce this content?' — which screens
+    out cross-API binding-model noise (D3D12 root rebinds vs D3D11/Vulkan/GL
+    slot reuse) from real divergences."""
+    for c in draw.get("cbuffers", []):
+        h = c.get("hash")
+        if h is not None and h not in hashes:
+            return False
+    return True
+
+
+def _normalized_tex_bindings(draw: dict[str, Any], tex_sig: dict[int, tuple]) -> frozenset:
+    """Slot-agnostic set of (shader_name, stage, texture_signature) — captures
+    'what shader-side variable saw which logical texture' across APIs.
+    Ignores Vulkan's <dummy> placeholders (texture_id=-1) which exist only
+    to satisfy descriptor-set fill requirements and never affect rendering."""
+    return frozenset(
+        (
+            t.get("shader_name") or "",
+            t.get("stage") or "",
+            tex_sig.get(int(t.get("texture_id", -1)), ("?", 0, 0)),
+        )
+        for t in draw.get("textures", [])
+        if int(t.get("texture_id", -1)) >= 0
+    )
+
+
+def _normalized_shader_label(label: str | None) -> str | None:
+    """Strip language-specific filename extensions so HLSL and GLSL versions
+    of the same logical shader pair compare equal. e.g.
+    'VS_Mesh.hlsl|FS_Mesh.hlsl' and 'VS_Mesh.glsl|FS_Mesh.glsl' both
+    normalize to 'VS_Mesh|FS_Mesh'."""
+    if not label:
+        return label
+    parts = label.split("|")
+    out = []
+    for p in parts:
+        for ext in (".hlsl", ".glsl", ".vert", ".frag", ".vsh", ".fsh"):
+            if p.endswith(ext):
+                p = p[: -len(ext)]
+                break
+        out.append(p)
+    return "|".join(out)
+
+
+def _summarize_buffer_diff(ref_buf: dict[str, Any] | None, cand_buf: dict[str, Any] | None) -> dict[str, Any]:
+    if not ref_buf and not cand_buf:
+        return {"present_in_ref": False, "present_in_cand": False}
+    if not ref_buf:
+        return {"present_in_ref": False, "present_in_cand": True}
+    if not cand_buf:
+        return {"present_in_ref": True, "present_in_cand": False}
+    ref_updates = ref_buf.get("updates", [])
+    cand_updates = cand_buf.get("updates", [])
+    return {
+        "kind": ref_buf.get("kind") or cand_buf.get("kind"),
+        "ref_updates": len(ref_updates),
+        "cand_updates": len(cand_updates),
+        "ref_first_hash": ref_updates[0].get("hash") if ref_updates else None,
+        "cand_first_hash": cand_updates[0].get("hash") if cand_updates else None,
+        "ref_first_size": ref_updates[0].get("size") if ref_updates else None,
+        "cand_first_size": cand_updates[0].get("size") if cand_updates else None,
+        "first_hash_match": (
+            ref_updates and cand_updates
+            and ref_updates[0].get("hash") == cand_updates[0].get("hash")
+        ),
+    }
+
+
+def compare_traces(reference_dir: str, candidate_dir: str) -> dict[str, Any]:
+    """Structural comparison of two trace.json files. Reports counts, buffer
+    hash matches, and a high-level per-draw divergence count without dumping
+    every byte. Cross-API safe: shader_id and CB slots are normalized."""
+    ref = _load_trace(reference_dir)
+    cand = _load_trace(candidate_dir)
+    ref_draws, cand_draws, common = _draws_aligned(ref, cand)
+    ref_shaders = _shader_signature(ref)
+    cand_shaders = _shader_signature(cand)
+    ref_tex = _texture_signature(ref)
+    cand_tex = _texture_signature(cand)
+
+    diverging = 0
+    diverging_by_kind: dict[str, int] = {}
+    ref_all_hashes = _all_cb_hashes(ref)
+    cand_all_hashes = _all_cb_hashes(cand)
+    for i in range(common):
+        rd, cd = ref_draws[i], cand_draws[i]
+        kinds: list[str] = []
+        rsig = ref_shaders.get(int(rd.get("shader_id", -1)), ("?", "?"))
+        csig = cand_shaders.get(int(cd.get("shader_id", -1)), ("?", "?"))
+        if rsig != csig:
+            kinds.append("shader_logical")
+        if int(rd.get("vertex_buffer_id", -1)) != int(cd.get("vertex_buffer_id", -1)):
+            kinds.append("vb_id")
+        if int(rd.get("index_buffer_id", -1)) != int(cd.get("index_buffer_id", -1)):
+            kinds.append("ib_id")
+        if int(rd.get("blend", -1)) != int(cd.get("blend", -1)):
+            kinds.append("blend")
+        if int(rd.get("depth", -1)) != int(cd.get("depth", -1)):
+            kinds.append("depth")
+        if int(rd.get("cull", -1)) != int(cd.get("cull", -1)):
+            kinds.append("cull")
+        # CB content: cumulative-set check. A CB hash bound on cand that never
+        # appears anywhere in ref is a real divergence; otherwise the difference
+        # is just per-API binding-model noise (D3D12 rebinds every draw via the
+        # root signature; D3D11/Vulkan/GL keep state across draws).
+        if not _cbs_present_in(cd, ref_all_hashes):
+            kinds.append("cbuffer_content_unknown_to_ref")
+        if not _cbs_present_in(rd, cand_all_hashes):
+            kinds.append("cbuffer_content_unknown_to_cand")
+        # Slot-agnostic texture compare: match by (shader_name, stage, tex sig).
+        if _normalized_tex_bindings(rd, ref_tex) != _normalized_tex_bindings(cd, cand_tex):
+            kinds.append("textures_logical")
+        if int(rd.get("vertex_count", 0)) != int(cd.get("vertex_count", 0)):
+            kinds.append("vertex_count")
+        if int(rd.get("rt_id", -1)) != int(cd.get("rt_id", -1)):
+            kinds.append("rt_id")
+        if kinds:
+            diverging += 1
+            for k in kinds:
+                diverging_by_kind[k] = diverging_by_kind.get(k, 0) + 1
+
+    # Aggregate buffer hash matches (first update only — covers static pools).
+    ref_buffers = _trace_buffer_index(ref)
+    cand_buffers = _trace_buffer_index(cand)
+    common_buffer_ids = sorted(set(ref_buffers) & set(cand_buffers))
+    buffer_summary = []
+    for bid in common_buffer_ids:
+        diff = _summarize_buffer_diff(ref_buffers.get(bid), cand_buffers.get(bid))
+        buffer_summary.append({"buffer_id": bid, **diff})
+
+    return {
+        "reference_dir": reference_dir,
+        "candidate_dir": candidate_dir,
+        "ref_api": ref.get("api"),
+        "cand_api": cand.get("api"),
+        "draws_ref": len(ref_draws),
+        "draws_cand": len(cand_draws),
+        "draws_common": common,
+        "draws_diverging": diverging,
+        "diverging_by_kind": dict(sorted(diverging_by_kind.items(), key=lambda kv: (-kv[1], kv[0]))),
+        "buffers": buffer_summary,
+    }
+
+
+def _draw_state_dict(trace: dict[str, Any], draw: dict[str, Any], tex_sig: dict[int, tuple] | None = None) -> dict[str, Any]:
+    """Build a normalized state view of one draw, hiding raw hex but keeping
+    the addresses and hashes that matter for cross-API equivalence.
+    Cross-API safe: shader_id is replaced by (pass, key); textures are sorted
+    by (shader_name, stage); cbuffers are sorted by (size, hash) and the slot
+    field is preserved as 'slot_in_api' for forensic visibility but ignored
+    in equality (different APIs assign different binding slots/root indices)."""
+    shaders = _trace_shader_index(trace)
+    sid = int(draw.get("shader_id", -1))
+    sh = shaders.get(sid, {})
+    if tex_sig is None:
+        tex_sig = _texture_signature(trace)
+    sorted_tex = sorted(
+        (t for t in draw.get("textures", []) if int(t.get("texture_id", -1)) >= 0),
+        key=lambda t: (t.get("shader_name") or "", t.get("stage") or "", int(t.get("texture_id", -1))),
+    )
+    sorted_cbs = sorted(
+        draw.get("cbuffers", []),
+        key=lambda c: (int(c.get("size") or 0), c.get("hash") or 0),
+    )
+    return {
+        "shader_pass": sh.get("pass"),
+        "shader_key": sh.get("key_hex"),
+        "shader_label": _normalized_shader_label(_shader_label(sh)),
+        "rt_id": draw.get("rt_id"),
+        "vertex_buffer_id": draw.get("vertex_buffer_id"),
+        "vertex_buffer_version": draw.get("vertex_buffer_version"),
+        "vb_stride": draw.get("vb_stride"),
+        "index_buffer_id": draw.get("index_buffer_id"),
+        "index_buffer_version": draw.get("index_buffer_version"),
+        "ib_format": draw.get("ib_format"),
+        "topology": draw.get("topology"),
+        "blend": draw.get("blend"),
+        "depth": draw.get("depth"),
+        "cull": draw.get("cull"),
+        "vertex_count": draw.get("vertex_count"),
+        "start_index": draw.get("start_index"),
+        "start_vertex": draw.get("start_vertex"),
+        "context": {
+            "mesh": draw.get("context_mesh"),
+            "material": draw.get("context_material"),
+            "entity": draw.get("context_entity"),
+            "pass": draw.get("context_pass"),
+        },
+        "textures": [
+            {
+                "shader_name": t.get("shader_name"),
+                "stage": t.get("stage"),
+                "tex_sig": list(tex_sig.get(int(t.get("texture_id", -1)), ("?", 0, 0))),
+            }
+            for t in sorted_tex
+        ],
+        "cbuffers": [
+            {
+                "size": c.get("size"),
+                "hash": c.get("hash"),
+                "has_hex": bool(c.get("data_hex")),
+            }
+            for c in sorted_cbs
+        ],
+    }
+
+
+def _diff_dicts(ref: dict[str, Any], cand: dict[str, Any], path: str = "") -> list[dict[str, Any]]:
+    diffs: list[dict[str, Any]] = []
+    for key in sorted(set(ref) | set(cand)):
+        rv = ref.get(key)
+        cv = cand.get(key)
+        full = f"{path}.{key}" if path else key
+        if isinstance(rv, dict) and isinstance(cv, dict):
+            diffs.extend(_diff_dicts(rv, cv, full))
+        elif isinstance(rv, list) and isinstance(cv, list):
+            if len(rv) != len(cv):
+                diffs.append({"path": full, "ref": f"<list len={len(rv)}>", "cand": f"<list len={len(cv)}>"})
+            else:
+                for i, (a, b) in enumerate(zip(rv, cv)):
+                    if isinstance(a, dict) and isinstance(b, dict):
+                        diffs.extend(_diff_dicts(a, b, f"{full}[{i}]"))
+                    elif a != b:
+                        diffs.append({"path": f"{full}[{i}]", "ref": a, "cand": b})
+        elif rv != cv:
+            diffs.append({"path": full, "ref": rv, "cand": cv})
+    return diffs
+
+
+def diff_draws(reference_dir: str, candidate_dir: str, max_results: int = 10,
+               include_matching: bool = False) -> dict[str, Any]:
+    """For each aligned draw, return a flat list of (path, ref, cand) tuples
+    showing exactly which fields disagree. Use max_results to cap the noise
+    when many draws diverge in similar ways."""
+    ref = _load_trace(reference_dir)
+    cand = _load_trace(candidate_dir)
+    ref_draws, cand_draws, common = _draws_aligned(ref, cand)
+    ref_tex = _texture_signature(ref)
+    cand_tex = _texture_signature(cand)
+    out: list[dict[str, Any]] = []
+    for i in range(common):
+        rd = _draw_state_dict(ref, ref_draws[i], ref_tex)
+        cd = _draw_state_dict(cand, cand_draws[i], cand_tex)
+        diffs = _diff_dicts(rd, cd)
+        if diffs or include_matching:
+            out.append({
+                "draw_index": i,
+                "ref_seq": ref_draws[i].get("seq"),
+                "cand_seq": cand_draws[i].get("seq"),
+                "shader": rd.get("shader_label"),
+                "context": rd.get("context"),
+                "diffs": diffs,
+            })
+            if len(out) >= max_results:
+                break
+    return {
+        "reference_dir": reference_dir,
+        "candidate_dir": candidate_dir,
+        "ref_api": ref.get("api"),
+        "cand_api": cand.get("api"),
+        "draws_compared": common,
+        "results": out,
+        "truncated": len(out) >= max_results,
+    }
+
+
+def find_first_diverging_draw(reference_dir: str, candidate_dir: str,
+                              start_at: int = 0) -> dict[str, Any]:
+    """Walk aligned draws and return the first one whose normalized state
+    differs. Use start_at to skip past known-good early draws and isolate
+    the next regression."""
+    ref = _load_trace(reference_dir)
+    cand = _load_trace(candidate_dir)
+    ref_draws, cand_draws, common = _draws_aligned(ref, cand)
+    ref_tex = _texture_signature(ref)
+    cand_tex = _texture_signature(cand)
+    for i in range(start_at, common):
+        rd = _draw_state_dict(ref, ref_draws[i], ref_tex)
+        cd = _draw_state_dict(cand, cand_draws[i], cand_tex)
+        diffs = _diff_dicts(rd, cd)
+        if diffs:
+            return {
+                "reference_dir": reference_dir,
+                "candidate_dir": candidate_dir,
+                "draws_scanned": i + 1,
+                "found": True,
+                "draw_index": i,
+                "shader": rd.get("shader_label"),
+                "ref_seq": ref_draws[i].get("seq"),
+                "cand_seq": cand_draws[i].get("seq"),
+                "context": rd.get("context"),
+                "diffs": diffs,
+                "ref_state": rd,
+                "cand_state": cd,
+            }
+    return {
+        "reference_dir": reference_dir,
+        "candidate_dir": candidate_dir,
+        "draws_scanned": common,
+        "found": False,
+    }
+
+
+def _hex_to_floats(hex_str: str) -> list[float]:
+    """Decode tracer hex payload (lowercase, no separators) to float32 list.
+    Trailing odd bytes are dropped."""
+    raw = bytes.fromhex(hex_str)
+    n = len(raw) // 4
+    if n == 0:
+        return []
+    return list(struct.unpack(f"<{n}f", raw[:n * 4]))
+
+
+def dump_cbuffer_hex(directory: str, draw_index: int, slot: int | None = None,
+                     as_floats: bool = True) -> dict[str, Any]:
+    """Decode the cbuffer slice the GPU saw for a specific draw. Requires
+    T850_TRACE_GEOMETRY=ON at build time so data_hex is populated."""
+    trace = _load_trace(directory)
+    draws = trace.get("draws", [])
+    if not (0 <= draw_index < len(draws)):
+        raise ValueError(f"draw_index {draw_index} out of range [0,{len(draws)})")
+    cbs = draws[draw_index].get("cbuffers", [])
+    selected = [c for c in cbs if slot is None or int(c.get("slot", -1)) == slot]
+    out = []
+    for c in selected:
+        hex_str = str(c.get("data_hex") or "")
+        entry = {
+            "slot": c.get("slot"),
+            "buffer_id": c.get("buffer_id"),
+            "size": c.get("size"),
+            "version": c.get("update_version"),
+            "hash": c.get("hash"),
+            "has_hex": bool(hex_str),
+            "byte_length": len(hex_str) // 2,
+        }
+        if hex_str:
+            if as_floats:
+                entry["floats"] = _hex_to_floats(hex_str)
+            else:
+                entry["hex"] = hex_str
+        out.append(entry)
+    return {
+        "directory": directory,
+        "draw_index": draw_index,
+        "shader_id": draws[draw_index].get("shader_id"),
+        "cbuffers": out,
+    }
+
+
+def diff_cbuffer_floats(reference_dir: str, candidate_dir: str, draw_index: int,
+                        slot: int | None = None, max_diffs: int = 32,
+                        epsilon: float = 1e-5) -> dict[str, Any]:
+    """Float-level diff of a single draw's cbuffer slices between APIs.
+    Each entry is (index, ref, cand, abs_delta) sorted by absolute delta
+    descending so the largest divergences surface first.
+
+    CBs are paired by SIZE (not slot) so that cross-API binding-model
+    differences (D3D12 root signatures vs D3D11 slot reuse vs Vulkan
+    descriptor sets) don't show up as false positives. Within a single
+    draw, two CBs of different sizes are unambiguous; CBs of the same
+    size are paired in sorted-hash order."""
+    ref_dump = dump_cbuffer_hex(reference_dir, draw_index, slot, as_floats=True)
+    cand_dump = dump_cbuffer_hex(candidate_dir, draw_index, slot, as_floats=True)
+
+    # Pair CBs by exact hash first (true content equivalence), then by
+    # size+order for any leftovers. This collapses cross-API binding-model
+    # noise: D3D12's mandatory per-draw root rebinds vs D3D11/Vulkan's slot
+    # reuse only show up where the content actually differs.
+    ref_cbs = list(ref_dump["cbuffers"])
+    cand_cbs = list(cand_dump["cbuffers"])
+    pairs: list[tuple[dict | None, dict | None]] = []
+    cand_used = [False] * len(cand_cbs)
+    for rc in ref_cbs:
+        rh = rc.get("hash")
+        match_idx = None
+        for j, cc in enumerate(cand_cbs):
+            if not cand_used[j] and cc.get("hash") == rh and rh is not None:
+                match_idx = j
+                break
+        if match_idx is not None:
+            cand_used[match_idx] = True
+            pairs.append((rc, cand_cbs[match_idx]))
+        else:
+            pairs.append((rc, None))
+    for j, cc in enumerate(cand_cbs):
+        if not cand_used[j]:
+            pairs.append((None, cc))
+
+    out_slots = []
+    for i, (rc_or_none, cc_or_none) in enumerate(pairs):
+        rc = rc_or_none or {}
+        cc = cc_or_none or {}
+        rfloats = rc.get("floats") or []
+        cfloats = cc.get("floats") or []
+        deltas = []
+        n = min(len(rfloats), len(cfloats))
+        for j in range(n):
+            d = abs(rfloats[j] - cfloats[j])
+            if d > epsilon:
+                deltas.append({"index": j, "ref": rfloats[j], "cand": cfloats[j], "abs_delta": d})
+        deltas.sort(key=lambda x: -x["abs_delta"])
+        out_slots.append({
+            "pair_index": i,
+            "size": rc.get("size") or cc.get("size"),
+            "ref_slot": rc.get("slot"),
+            "cand_slot": cc.get("slot"),
+            "slot": rc.get("slot") if rc_or_none else cc.get("slot"),
+            "ref_hash": rc.get("hash"),
+            "cand_hash": cc.get("hash"),
+            "ref_floats": len(rfloats),
+            "cand_floats": len(cfloats),
+            "diff_count": len(deltas),
+            "hash_match": rc.get("hash") == cc.get("hash") and rc.get("hash") is not None,
+            "ref_present": rc_or_none is not None,
+            "cand_present": cc_or_none is not None,
+            "top_diffs": deltas[:max_diffs],
+        })
+    return {
+        "reference_dir": reference_dir,
+        "candidate_dir": candidate_dir,
+        "draw_index": draw_index,
+        "epsilon": epsilon,
+        "slots": out_slots,
+    }
+
+
 def _json_text(value: Any) -> dict[str, Any]:
     return {"content": [{"type": "text", "text": json.dumps(value, indent=2)}]}
 
@@ -462,6 +1017,84 @@ def _tool_schemas() -> list[dict[str, Any]]:
                 "required": ["comparison"],
             },
         },
+        {
+            "name": "summarize_trace",
+            "description": "Summarize one trace.json (T850_RENDER_TRACE): counts, draws-by-shader, event histogram.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {"directory": {"type": "string"}},
+                "required": ["directory"],
+            },
+        },
+        {
+            "name": "compare_traces",
+            "description": "Structural comparison of two trace.json files: counts, buffer hashes, per-draw divergence histogram.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "reference_dir": {"type": "string"},
+                    "candidate_dir": {"type": "string"},
+                },
+                "required": ["reference_dir", "candidate_dir"],
+            },
+        },
+        {
+            "name": "diff_draws",
+            "description": "Per-draw aligned diff of two trace.json files. Returns up to max_results draws whose normalized state differs.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "reference_dir": {"type": "string"},
+                    "candidate_dir": {"type": "string"},
+                    "max_results": {"type": "integer"},
+                    "include_matching": {"type": "boolean"},
+                },
+                "required": ["reference_dir", "candidate_dir"],
+            },
+        },
+        {
+            "name": "find_first_diverging_draw",
+            "description": "Walk aligned draws and return the first divergent one. Use start_at to skip past known-good prefix and isolate the next regression.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "reference_dir": {"type": "string"},
+                    "candidate_dir": {"type": "string"},
+                    "start_at": {"type": "integer"},
+                },
+                "required": ["reference_dir", "candidate_dir"],
+            },
+        },
+        {
+            "name": "dump_cbuffer_hex",
+            "description": "Decode the cbuffer slice the GPU saw at a specific draw (requires T850_TRACE_GEOMETRY=ON). Returns float32 view by default.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "directory": {"type": "string"},
+                    "draw_index": {"type": "integer"},
+                    "slot": {"type": "integer"},
+                    "as_floats": {"type": "boolean"},
+                },
+                "required": ["directory", "draw_index"],
+            },
+        },
+        {
+            "name": "diff_cbuffer_floats",
+            "description": "Float-level cross-API diff of one draw's cbuffer slices. Sorted by absolute delta descending; epsilon filters noise.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "reference_dir": {"type": "string"},
+                    "candidate_dir": {"type": "string"},
+                    "draw_index": {"type": "integer"},
+                    "slot": {"type": "integer"},
+                    "max_diffs": {"type": "integer"},
+                    "epsilon": {"type": "number"},
+                },
+                "required": ["reference_dir", "candidate_dir", "draw_index"],
+            },
+        },
     ]
 
 
@@ -472,6 +1105,12 @@ TOOLS: dict[str, Callable[..., Any]] = {
     "analyze_artifacts": analyze_artifacts,
     "generate_visual_report": generate_visual_report,
     "suggest_likely_cause": suggest_likely_cause,
+    "summarize_trace": summarize_trace,
+    "compare_traces": compare_traces,
+    "diff_draws": diff_draws,
+    "find_first_diverging_draw": find_first_diverging_draw,
+    "dump_cbuffer_hex": dump_cbuffer_hex,
+    "diff_cbuffer_floats": diff_cbuffer_floats,
 }
 
 
@@ -564,6 +1203,38 @@ def main() -> int:
     report_parser.add_argument("--target")
     report_parser.add_argument("--tolerance", type=int, default=0)
 
+    summarize_parser = subparsers.add_parser("summarize-trace", help="Summarize one trace.json.")
+    summarize_parser.add_argument("directory")
+
+    compare_traces_parser = subparsers.add_parser("compare-traces", help="Structural comparison of two trace.json files.")
+    compare_traces_parser.add_argument("reference_dir")
+    compare_traces_parser.add_argument("candidate_dir")
+
+    diff_draws_parser = subparsers.add_parser("diff-draws", help="Per-draw aligned diff of two trace.json files.")
+    diff_draws_parser.add_argument("reference_dir")
+    diff_draws_parser.add_argument("candidate_dir")
+    diff_draws_parser.add_argument("--max-results", type=int, default=10)
+    diff_draws_parser.add_argument("--include-matching", action="store_true")
+
+    first_diverging_parser = subparsers.add_parser("first-diverging-draw", help="Find first divergent draw between two traces.")
+    first_diverging_parser.add_argument("reference_dir")
+    first_diverging_parser.add_argument("candidate_dir")
+    first_diverging_parser.add_argument("--start-at", type=int, default=0)
+
+    dump_cb_parser = subparsers.add_parser("dump-cbuffer", help="Decode cbuffer slice for a specific draw.")
+    dump_cb_parser.add_argument("directory")
+    dump_cb_parser.add_argument("draw_index", type=int)
+    dump_cb_parser.add_argument("--slot", type=int)
+    dump_cb_parser.add_argument("--hex", action="store_true", help="Emit raw hex instead of float32 view.")
+
+    diff_cb_parser = subparsers.add_parser("diff-cbuffer", help="Float-level diff of one draw's cbuffer slices.")
+    diff_cb_parser.add_argument("reference_dir")
+    diff_cb_parser.add_argument("candidate_dir")
+    diff_cb_parser.add_argument("draw_index", type=int)
+    diff_cb_parser.add_argument("--slot", type=int)
+    diff_cb_parser.add_argument("--max-diffs", type=int, default=32)
+    diff_cb_parser.add_argument("--epsilon", type=float, default=1e-5)
+
     args = parser.parse_args()
     if args.command == "serve":
         serve_stdio()
@@ -578,6 +1249,19 @@ def main() -> int:
         result = analyze_artifacts(args.reference_dir, args.candidate_dir, target=args.target, tolerance=args.tolerance)
     elif args.command == "generate-report":
         result = generate_visual_report(args.reference_dir, args.candidate_dir, args.output_dir, args.target, args.tolerance)
+    elif args.command == "summarize-trace":
+        result = summarize_trace(args.directory)
+    elif args.command == "compare-traces":
+        result = compare_traces(args.reference_dir, args.candidate_dir)
+    elif args.command == "diff-draws":
+        result = diff_draws(args.reference_dir, args.candidate_dir, args.max_results, args.include_matching)
+    elif args.command == "first-diverging-draw":
+        result = find_first_diverging_draw(args.reference_dir, args.candidate_dir, args.start_at)
+    elif args.command == "dump-cbuffer":
+        result = dump_cbuffer_hex(args.directory, args.draw_index, args.slot, as_floats=not args.hex)
+    elif args.command == "diff-cbuffer":
+        result = diff_cbuffer_floats(args.reference_dir, args.candidate_dir, args.draw_index,
+                                     args.slot, args.max_diffs, args.epsilon)
     else:
         raise RuntimeError(f"Unhandled command: {args.command}")
     print(json.dumps(result, indent=2))

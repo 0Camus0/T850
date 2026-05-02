@@ -1092,6 +1092,7 @@ namespace t850 {
 
       vkCmdSetViewport(cmd, 0, 1, &m_viewport);
       vkCmdSetScissor(cmd, 0, 1, &m_scissorRect);
+      T8_TRACE(EvClearRT(-1, 1u | 2u, 0.9f, 0.9f, 0.9f, 1.0f, 0.0f, 0));
     }
   }
 
@@ -1181,12 +1182,18 @@ namespace t850 {
     T8_LOG_TRACE("[Vulkan] SetBlendState(%d)", state);
     m_currentBlend = state;
     T8_TRACE(EvSetBlend((int)state));
+#ifdef T850_RENDER_TRACE
+    RefreshTracePendingRenderState();
+#endif
   }
 
   void VulkanDriver::SetDepthStencilState(DepthStencilStates state) {
     T8_LOG_TRACE("[Vulkan] SetDepthStencilState(%d)", state);
     m_currentDepth = state;
     T8_TRACE(EvSetDepth((int)state));
+#ifdef T850_RENDER_TRACE
+    RefreshTracePendingRenderState();
+#endif
   }
 
   void VulkanDriver::SetCullFace(FaceCulling state) {
@@ -1194,7 +1201,20 @@ namespace t850 {
     m_currentCull = state;
     m_FaceCulling = state;
     T8_TRACE(EvSetCull((int)state));
+#ifdef T850_RENDER_TRACE
+    RefreshTracePendingRenderState();
+#endif
   }
+
+#ifdef T850_RENDER_TRACE
+  void VulkanDriver::RefreshTracePendingRenderState() {
+    if (!T8_TRACE_ACTIVE()) return;
+    int numAtt = 1;
+    if (CurrentRT >= 0 && CurrentRT < (int)RTs.size() && RTs[CurrentRT])
+      numAtt = RTs[CurrentRT]->number_RT > 0 ? RTs[CurrentRT]->number_RT : 1;
+    g_renderTracer->RecomputePendingRenderStateVulkan(numAtt);
+  }
+#endif
 
   void VulkanDriver::PopRT() {
     T8_LOG_TRACE("[Vulkan] PopRT (CurrentRT=%d)", CurrentRT);
@@ -1245,6 +1265,9 @@ namespace t850 {
     }
 
     CurrentRT = -1;
+#ifdef T850_RENDER_TRACE
+    RefreshTracePendingRenderState();
+#endif
   }
 
   void VulkanDriver::SaveScreenshot(std::string path) {

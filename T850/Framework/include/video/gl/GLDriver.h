@@ -92,6 +92,9 @@ namespace t850 {
     void SaveScreenshot(std::string path) override;
     void SaveRTToFile(int rtID, int attachment, std::string path) override;
 	void SetCullFace(FaceCulling state) override;
+#ifdef T850_RENDER_TRACE
+    void RefreshTracePendingRenderState() override;
+#endif
 
     void	PopRT();
 

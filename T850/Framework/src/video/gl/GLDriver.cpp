@@ -310,11 +310,15 @@ namespace t850 {
       break;
     case t850::BaseDriver::NON_PREMULTIPLIED:
       glEnable(GL_BLEND);
+      glBlendFuncSeparate(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA, GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
       break;
     default:
       break;
     }
     T8_TRACE(EvSetBlend((int)state));
+#ifdef T850_RENDER_TRACE
+    RefreshTracePendingRenderState();
+#endif
   }
 
   void GLDriver::SetDepthStencilState(DepthStencilStates state)
@@ -346,6 +350,9 @@ namespace t850 {
       break;
     }
     T8_TRACE(EvSetDepth((int)state));
+#ifdef T850_RENDER_TRACE
+    RefreshTracePendingRenderState();
+#endif
   }
 
   static void WritePPM(const std::string& path, int w, int h, const std::vector<unsigned char>& rgbBuf) {
@@ -501,19 +508,49 @@ namespace t850 {
 			  break;
 	  }
     T8_TRACE(EvSetCull((int)state));
+#ifdef T850_RENDER_TRACE
+    RefreshTracePendingRenderState();
+#endif
   }
+
+#ifdef T850_RENDER_TRACE
+  void GLDriver::RefreshTracePendingRenderState() {
+    if (!T8_TRACE_ACTIVE()) return;
+    int numAtt = 1;
+    if (CurrentRT >= 0 && CurrentRT < (int)RTs.size() && RTs[CurrentRT]) {
+      int n = RTs[CurrentRT]->number_RT;
+      if (n > 0) numAtt = n;
+    }
+    g_renderTracer->RecomputePendingRenderStateGL(numAtt);
+  }
+#endif
 
   void	GLDriver::Clear() {
     glClearColor(1.0, 1.0, 1.0, 0.0);
     glClearDepthf(0.0f);
     glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT | GL_STENCIL_BUFFER_BIT);
-
+#ifdef T850_RENDER_TRACE
+    if (T8_TRACE_ACTIVE()) {
+      int rtId = -1;
+      if (CurrentRT >= 0 && CurrentRT < (int)RTs.size() && RTs[CurrentRT])
+        rtId = g_renderTracer->LookupRTId(RTs[CurrentRT]);
+      g_renderTracer->EvClearRT(rtId, 1u | 2u | 4u, 1.0f, 1.0f, 1.0f, 0.0f, 0.0f, 0);
+    }
+#endif
   }
 
   void	GLDriver::ClearWithColor(float r, float g, float b, float a) {
     glClearColor(r, g, b, a);
     glClearDepthf(0.0f);
     glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT | GL_STENCIL_BUFFER_BIT);
+#ifdef T850_RENDER_TRACE
+    if (T8_TRACE_ACTIVE()) {
+      int rtId = -1;
+      if (CurrentRT >= 0 && CurrentRT < (int)RTs.size() && RTs[CurrentRT])
+        rtId = g_renderTracer->LookupRTId(RTs[CurrentRT]);
+      g_renderTracer->EvClearRT(rtId, 1u | 2u | 4u, r, g, b, a, 0.0f, 0);
+    }
+#endif
   }
 
   void	GLDriver::SwapBuffers() {
@@ -552,6 +589,9 @@ namespace t850 {
     }
 
     CurrentRT = -1;
+#ifdef T850_RENDER_TRACE
+    RefreshTracePendingRenderState();
+#endif
   }
 
 

@@ -12,6 +12,7 @@
 #if defined(OS_WINDOWS)
 
 #include <utils/Log.h>
+#include <debug/RenderTrace.h>
 
 namespace t850 {
 
@@ -422,6 +423,17 @@ namespace t850 {
     vkCmdBeginRenderPass(cmd, &rpBegin, VK_SUBPASS_CONTENTS_INLINE);
     driver->SetActiveRenderPass(rpBegin.renderPass);
     driver->SetRenderPassActive(true);
+
+#ifdef T850_RENDER_TRACE
+    if (!preserve && T8_TRACE_ACTIVE()) {
+      // Vulkan RT clears happen implicitly via vkCmdBeginRenderPass with
+      // LOAD_OP_CLEAR. Mirror those clear values into the trace as a
+      // proper EvClearRT event so cross-API diffs see what was cleared.
+      int rtId = g_renderTracer->LookupRTId(this);
+      uint32_t flags = (number_RT > 0 ? 1u : 0u) | (hasDepth ? 2u : 0u);
+      g_renderTracer->EvClearRT(rtId, flags, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0);
+    }
+#endif
 
     // Set viewport and scissor to RT dimensions (negative height for Y-flip)
     VkViewport viewport = {};

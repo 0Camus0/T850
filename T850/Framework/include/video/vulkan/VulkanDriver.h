@@ -59,6 +59,9 @@ namespace t850 {
     void SaveScreenshot(std::string path) override;
     void SaveRTToFile(int rtID, int attachment, std::string path) override;
     bool ResizeSwapchain(int newW, int newH) override;
+#ifdef T850_RENDER_TRACE
+    void RefreshTracePendingRenderState() override;
+#endif
 
     // ── Vulkan-specific overrides ──
     void BeginFrame() override;

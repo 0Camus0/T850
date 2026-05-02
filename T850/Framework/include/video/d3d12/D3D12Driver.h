@@ -69,6 +69,9 @@ namespace t850 {
     void PopRT() override;
     void SaveScreenshot(std::string path) override;
     void SaveRTToFile(int rtID, int attachment, std::string path) override;
+#ifdef T850_RENDER_TRACE
+    void RefreshTracePendingRenderState() override;
+#endif
 
     // ── D3D12-specific overrides ──
     void BeginFrame() override;

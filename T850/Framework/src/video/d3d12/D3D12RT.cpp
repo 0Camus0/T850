@@ -9,6 +9,7 @@
 #ifdef OS_WINDOWS
 
 #include <utils/Log.h>
+#include <debug/RenderTrace.h>
 
 namespace t850 {
 
@@ -230,6 +231,13 @@ namespace t850 {
     for (int i = 0; i < number_RT; i++)
       cmdList->ClearRenderTargetView(vRTVHandles[i], black, 0, nullptr);
     cmdList->ClearDepthStencilView(depthDSV, D3D12_CLEAR_FLAG_DEPTH, 0.0f, 0, 0, nullptr);
+#ifdef T850_RENDER_TRACE
+    if (T8_TRACE_ACTIVE()) {
+      int rtId = g_renderTracer->LookupRTId(this);
+      uint32_t flags = (number_RT > 0 ? 1u : 0u) | (depthResource ? 2u : 0u);
+      g_renderTracer->EvClearRT(rtId, flags, black[0], black[1], black[2], black[3], 0.0f, 0);
+    }
+#endif
   }
 
   void D3D12RT::SetLoad(const DeviceContext& context) {

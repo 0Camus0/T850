@@ -136,13 +136,17 @@ namespace t850 {
       // texture id without a costly reverse lookup.
       int         tracerTexId = -1;
       const char* tracerName  = nullptr;
+      const char* tracerStage = nullptr;
       // Tracer-only: logical sampler signature id (built from TextBasicParams
       // by VulkanTexture::Set so cross-API trace diffs are meaningful).
       int         tracerSamplerId = -1;
     };
     PendingTextureBinding m_pendingTextures[VulkanShader::kMaxTextureSlots] = {};
-    VkDescriptorBufferInfo m_pendingCB = {};
-    int  m_pendingCBId = -1;        // tracer-only: id of the cbuffer object backing m_pendingCB
+    struct PendingConstantBufferBinding {
+      VkDescriptorBufferInfo bufferInfo = {};
+      int tracerId = -1;
+    };
+    PendingConstantBufferBinding m_pendingCBs[VulkanShader::kMaxCBufferSlots] = {};
     bool m_cbDirty = false;
 
     // Allocate vertex data from the per-frame ring buffer (for dynamic VBs like GUI quads)

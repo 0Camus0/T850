@@ -12,6 +12,7 @@
 *********************************************************/
 
 #include <video/d3d11/D3D11ConstantBuffer.h>
+#include <video/d3d11/D3D11Shader.h>
 #include <debug/RenderTrace.h>
 
 namespace t850 {
@@ -25,25 +26,29 @@ namespace t850 {
     return reinterpret_cast<void**>(const_cast<Microsoft::WRL::ComPtr<ID3D11Buffer>&>(APIBuffer).GetAddressOf());
   }
 
-  void D3DXConstantBuffer::Set(const DeviceContext & deviceContext)
+  void D3DXConstantBuffer::Set(const DeviceContext & deviceContext, unsigned int slot)
   {
     const_cast<DeviceContext*>(&deviceContext)->actualConstantBuffer = (ConstantBuffer*)this;
+    D3DXShader* shader = reinterpret_cast<D3DXShader*>(deviceContext.actualShaderSet);
+    if (shader && shader->cbvSlots.find((int)slot) == shader->cbvSlots.end()) {
+      return;
+    }
     ID3D11DeviceContext* context = reinterpret_cast<ID3D11DeviceContext*>(deviceContext.GetAPIObject());
     ID3D11Buffer* raw = APIBuffer.Get();
-    context->VSSetConstantBuffers(0, 1, &raw);
-    context->PSSetConstantBuffers(0, 1, &raw);
+    context->VSSetConstantBuffers(slot, 1, &raw);
+    context->PSSetConstantBuffers(slot, 1, &raw);
 #ifdef T850_RENDER_TRACE
     if (T8_TRACE_ACTIVE() && !sysMemCpy.empty()) {
       int bufId = g_renderTracer->EnsureBufferId(this, "cbuffer");
       // D3D11 binds are synchronous (UpdateSubresource happened in
-      // UpdateFromBuffer; Set() just plumbs the buffer into slot 0). Emit
+      // UpdateFromBuffer; Set() just plumbs the buffer into the requested slot). Emit
       // update + bind request + commit at this site so the trace shape
       // matches D3D12's same-site pattern.
       g_renderTracer->EvUpdateCBuffer(bufId, sysMemCpy.data(),
                                       (uint32_t)sysMemCpy.size(),
                                       /*allocOffset=*/0);
       g_renderTracer->EvBindCBufferRequest(bufId);
-      g_renderTracer->EvBindCBufferCommit(/*slot=*/0, bufId);
+      g_renderTracer->EvBindCBufferCommit((int)slot, bufId);
     }
 #endif
   }

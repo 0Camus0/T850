@@ -22,6 +22,7 @@
 
 #include <wrl.h>
 #include <wrl/client.h>
+#include <unordered_set>
 using namespace Microsoft::WRL;
 
 namespace t850 {
@@ -37,6 +38,7 @@ namespace t850 {
     ComPtr<ID3DBlob>            FS_blob;
     ComPtr<ID3D11InputLayout>   Layout;
     std::vector<D3D11_INPUT_ELEMENT_DESC>	VertexDecl;
+    std::unordered_set<int> cbvSlots;
   };
 }
 

@@ -210,6 +210,8 @@ namespace t850 {
     key.blend = (uint8_t)m_currentBlend;
     key.depth = (uint8_t)m_currentDepth;
     key.cull = (uint8_t)m_currentCull;
+    auto* d3dContext = static_cast<D3D12DeviceContext*>(T8DeviceContext);
+    key.topology = (uint8_t)(d3dContext ? d3dContext->GetTopologyType() : D3D12_PRIMITIVE_TOPOLOGY_TYPE_TRIANGLE);
     key.numRTVs = numRTVs;
     key.rtvFormats.fill(DXGI_FORMAT_UNKNOWN);
     for (int i = 0; i < numRTVs && i < (int)key.rtvFormats.size(); ++i)
@@ -231,7 +233,7 @@ namespace t850 {
     pso.PS.BytecodeLength = shader->FS_blob->GetBufferSize();
     pso.SampleMask = UINT_MAX;
     pso.SampleDesc.Count = 1;
-    pso.PrimitiveTopologyType = D3D12_PRIMITIVE_TOPOLOGY_TYPE_TRIANGLE;
+    pso.PrimitiveTopologyType = (D3D12_PRIMITIVE_TOPOLOGY_TYPE)key.topology;
     pso.NumRenderTargets = numRTVs;
     for (int i = 0; i < numRTVs; i++) pso.RTVFormats[i] = key.rtvFormats[i];
     pso.DSVFormat = dsvFormat;
@@ -315,7 +317,7 @@ namespace t850 {
       rec.blend                   = key.blend;
       rec.depth                   = key.depth;
       rec.cull                    = key.cull;
-      rec.topology                = (int)D3D12_PRIMITIVE_TOPOLOGY_TYPE_TRIANGLE;
+      rec.topology                = key.topology;
       rec.num_color_attachments   = key.numRTVs;
       for (int i = 0; i < key.numRTVs && i < (int)key.rtvFormats.size(); ++i)
         rec.color_formats.push_back((uint32_t)key.rtvFormats[i]);
@@ -677,6 +679,7 @@ namespace t850 {
     m_dynamicDescriptorOffset = 0;
     m_lastPSO = nullptr;
     m_lastRootSig = nullptr;
+    static_cast<D3D12DeviceContext*>(T8DeviceContext)->m_topologyType = D3D12_PRIMITIVE_TOPOLOGY_TYPE_TRIANGLE;
   }
 
   void D3D12Driver::EndFrame() {}

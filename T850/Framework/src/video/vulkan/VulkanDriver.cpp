@@ -27,6 +27,7 @@
 #include <cassert>
 #include <cstring>
 #include <algorithm>
+#include <utility>
 
 namespace t850 {
 
@@ -1012,11 +1013,16 @@ namespace t850 {
     }
     m_deferredCleanup[m_currentFrame].clear();
 
-    // Reserve a dummy CB region so draws without explicit CB still have valid descriptors
-    m_pendingCB = {};
-    m_pendingCB.buffer = m_cbRingBuffers[m_currentFrame];
-    m_pendingCB.offset = 0;
-    m_pendingCB.range  = 256;
+    // Reserve a dummy CB region so draws without explicit CB still have valid descriptors.
+    // Every logical CB slot starts at this dummy slice; ConstantBuffer::Set(slot)
+    // overwrites only the slot it owns.
+    for (auto& cb : m_pendingCBs) {
+      cb = {};
+      cb.bufferInfo.buffer = m_cbRingBuffers[m_currentFrame];
+      cb.bufferInfo.offset = 0;
+      cb.bufferInfo.range  = 256;
+      cb.tracerId = -1;
+    }
     m_cbRingOffset = 256;
 
     m_lastPipeline = VK_NULL_HANDLE;
@@ -1693,6 +1699,22 @@ reopen:
   }
 
   void VulkanDriver::BindPendingDescriptors(VkCommandBuffer cmd, VulkanShader* shader) {
+    std::vector<std::pair<int, int>> cbSlots; // descriptor binding -> logical slot
+    cbSlots.reserve(VulkanShader::kMaxCBufferSlots);
+    for (int slot = 0; slot < VulkanShader::kMaxCBufferSlots; slot++) {
+      int binding = shader->cbvBindings[slot];
+      if (binding >= 0) cbSlots.emplace_back(binding, slot);
+    }
+    std::sort(cbSlots.begin(), cbSlots.end(),
+              [](const auto& a, const auto& b) { return a.first < b.first; });
+
+    std::vector<uint32_t> dynamicOffsets;
+    dynamicOffsets.reserve(cbSlots.size());
+    for (const auto& cb : cbSlots) {
+      const int slot = cb.second;
+      dynamicOffsets.push_back((uint32_t)m_pendingCBs[slot].bufferInfo.offset);
+    }
+
     // Compute a fingerprint from layout + texture bindings (image view AND sampler)
     // to reuse descriptor sets when the same textures+samplers are bound across
     // multiple draws (e.g. same material, different passes).
@@ -1711,10 +1733,12 @@ reopen:
         fingerprint ^= ((uint64_t)(uintptr_t)m_pendingTextures[i].sampler)   * (0xc6a4a7935bd1e995ULL + i);
       }
     }
-
-    uint32_t dynamicOffset = 0;
-    if (shader->cbvBinding >= 0) {
-      dynamicOffset = (uint32_t)m_pendingCB.offset;
+    for (const auto& cb : cbSlots) {
+      const int binding = cb.first;
+      const int slot = cb.second;
+      const VkDescriptorBufferInfo& info = m_pendingCBs[slot].bufferInfo;
+      fingerprint ^= ((uint64_t)(uintptr_t)info.buffer) * (0x94d049bb133111ebULL + binding);
+      fingerprint ^= ((uint64_t)info.range)             * (0xbf58476d1ce4e5b9ULL + binding);
     }
 
     auto it = m_descriptorSetCache.find(fingerprint);
@@ -1728,22 +1752,25 @@ reopen:
 
       std::vector<VkWriteDescriptorSet> writes;
       std::vector<VkDescriptorImageInfo> imageInfos;
-      writes.reserve(1 + VulkanShader::kMaxTextureSlots);
+      std::vector<VkDescriptorBufferInfo> bufferInfos;
+      writes.reserve(cbSlots.size() + VulkanShader::kMaxTextureSlots);
       imageInfos.reserve(VulkanShader::kMaxTextureSlots);
+      bufferInfos.reserve(cbSlots.size());
 
-      // UBO binding — offset=0 in descriptor, actual offset passed as dynamic offset
-      VkDescriptorBufferInfo cbBufInfo = {};
-      if (shader->cbvBinding >= 0) {
-        cbBufInfo.buffer = m_pendingCB.buffer;
+      // UBO bindings — offset=0 in descriptor, actual offsets passed as dynamic offsets
+      for (const auto& cb : cbSlots) {
+        const int binding = cb.first;
+        const int slot = cb.second;
+        VkDescriptorBufferInfo cbBufInfo = m_pendingCBs[slot].bufferInfo;
         cbBufInfo.offset = 0;
-        cbBufInfo.range  = m_pendingCB.range;
+        bufferInfos.push_back(cbBufInfo);
 
         VkWriteDescriptorSet w = { VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET };
         w.dstSet = ds;
-        w.dstBinding = (uint32_t)shader->cbvBinding;
+        w.dstBinding = (uint32_t)binding;
         w.descriptorCount = 1;
         w.descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC;
-        w.pBufferInfo = &cbBufInfo;
+        w.pBufferInfo = &bufferInfos.back();
         writes.push_back(w);
       }
 
@@ -1777,10 +1804,10 @@ reopen:
     }
 
     // Always rebind with current dynamic UBO offset
-    uint32_t dynOffsetCount = (shader->cbvBinding >= 0) ? 1 : 0;
+    uint32_t dynOffsetCount = (uint32_t)dynamicOffsets.size();
     vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS,
                             shader->m_pipelineLayout, 0, 1, &ds,
-                            dynOffsetCount, &dynamicOffset);
+                            dynOffsetCount, dynamicOffsets.empty() ? nullptr : dynamicOffsets.data());
 #ifdef T850_RENDER_TRACE
     if (T8_TRACE_ACTIVE()) {
       // Emit one commit event per slot the shader actually consumes — this
@@ -1793,6 +1820,8 @@ reopen:
         int  texId       = hasUserBind ? m_pendingTextures[slot].tracerTexId : -1;
         const char* nm   = hasUserBind && m_pendingTextures[slot].tracerName
                             ? m_pendingTextures[slot].tracerName : "<dummy>";
+        const char* stage = hasUserBind && m_pendingTextures[slot].tracerStage
+                            ? m_pendingTextures[slot].tracerStage : "ps";
         // viewId reuses the imageView raw pointer cast to int — not a stable
         // resource id but unique enough to flag mismatches between two API
         // traces (different VkImageView pointers => different views).
@@ -1803,13 +1832,14 @@ reopen:
         int samplerId = hasUserBind && m_pendingTextures[slot].tracerSamplerId >= 0
                           ? m_pendingTextures[slot].tracerSamplerId
                           : (int)(uintptr_t)m_pendingTextures[slot].sampler;
-        g_renderTracer->EvBindTextureCommit(slot, texId, viewId, samplerId, nm ? nm : "", "ps");
+        g_renderTracer->EvBindTextureCommit(slot, texId, viewId, samplerId, nm ? nm : "", stage);
       }
-      // Commit the cbuffer with its slot=cbvBinding, the current update_version
-      // (looked up internally by the tracer), and the dynamic offset that was
-      // actually used.
-      if (shader->cbvBinding >= 0 && m_pendingCBId >= 0) {
-        g_renderTracer->EvBindCBufferCommit(shader->cbvBinding, m_pendingCBId);
+      // Commit each logical cbuffer slot the shader actually consumes.
+      for (const auto& cb : cbSlots) {
+        const int slot = cb.second;
+        if (m_pendingCBs[slot].tracerId >= 0) {
+          g_renderTracer->EvBindCBufferCommit(slot, m_pendingCBs[slot].tracerId);
+        }
       }
     }
 #endif

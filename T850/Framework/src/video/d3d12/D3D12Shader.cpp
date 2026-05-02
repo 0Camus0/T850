@@ -91,7 +91,10 @@ namespace t850 {
         params[i].ShaderVisibility = D3D12_SHADER_VISIBILITY_ALL;
       }
 
-      if (r.rangeType == D3D12_DESCRIPTOR_RANGE_TYPE_CBV && r.reg == 0) cbvSlot = i;
+      if (r.rangeType == D3D12_DESCRIPTOR_RANGE_TYPE_CBV) {
+        cbvSlots[(int)r.reg] = i;
+        if (r.reg == 0) cbvSlot = i;
+      }
       if (r.rangeType == D3D12_DESCRIPTOR_RANGE_TYPE_SRV) srvSlots[r.reg] = i;
       if (r.rangeType == D3D12_DESCRIPTOR_RANGE_TYPE_SAMPLER) {
         samplerSlots[r.reg] = i;
@@ -121,8 +124,8 @@ namespace t850 {
       return false;
     }
 
-    T8_LOG_DEBUG("[D3D12] Root signature created: cbvSlot=%d samplerSlot=%d srvSlots=%d",
-                 cbvSlot, samplerSlot, (int)srvSlots.size());
+    T8_LOG_DEBUG("[D3D12] Root signature created: cbvSlots=%d samplerSlot=%d srvSlots=%d",
+                 (int)cbvSlots.size(), samplerSlot, (int)srvSlots.size());
     return true;
   }
 
@@ -133,6 +136,11 @@ namespace t850 {
   bool D3D12Shader::CreateShaderAPI(std::string src_vs, std::string src_fs,
                                      const std::string& vs_name, const std::string& fs_name) {
     ID3D12Device* device = GetNativeDevice();
+    cbvSlot = -1;
+    samplerSlot = -1;
+    cbvSlots.clear();
+    srvSlots.clear();
+    samplerSlots.clear();
 
     // Compile VS
     {

@@ -1,6 +1,7 @@
-cbuffer ConstantBuffer{
+#if defined(USE_SKINNING) || defined(USE_SKINNING_QT)
+cbuffer ConstantBuffer : register(b0) {
     float4x4 WVP;
-	float4x4 World;  
+	float4x4 World;
 	float4x4 WorldView;
 	float4	 LightPos;
 	float4 	 LightColor;
@@ -21,9 +22,16 @@ cbuffer ConstantBuffer{
 	float4x4 BoneMatrices[256];
 #endif
 }
+#else
+cbuffer MeshInstanceCB : register(b1) {
+    float4x4 WVP;
+	float4x4 World;
+	float4x4 WorldView;
+}
+#endif
 
 #ifdef USE_SKINNING_TEXTURE
-Texture2D<float4> BoneTexture : register(t7);
+Texture2D<float4> BoneTexture : register(t24);
 
 float4x4 getBoneMatrix(int index) {
 	uint texW, texH;

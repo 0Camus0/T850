@@ -57,7 +57,7 @@ namespace t850 {
     return nullptr;
   }
 
-  void GLConstantBuffer::Set(const DeviceContext & deviceContext)
+  void GLConstantBuffer::Set(const DeviceContext & deviceContext, unsigned int slot)
   {
     const_cast<DeviceContext*>(&deviceContext)->actualConstantBuffer = (ConstantBuffer*)this;
     GLShader* sh = reinterpret_cast<GLShader*>(deviceContext.actualShaderSet);
@@ -108,13 +108,13 @@ namespace t850 {
       int bufId = g_renderTracer->EnsureBufferId(this, "cbuffer");
       // GL has no real CB object; uniforms were just plumbed via glUniform*.
       // Record the same update + bind request + commit triple as D3D11 so
-      // the trace shape is identical across backends. Slot 0 stands in for
-      // "the engine's single CB" since GL uses loose uniforms, not a UBO.
+      // the trace shape is identical across backends. The slot is logical:
+      // GL still uses loose uniforms rather than UBOs.
       g_renderTracer->EvUpdateCBuffer(bufId, sysMemCpy.data(),
                                       (uint32_t)sysMemCpy.size(),
                                       /*allocOffset=*/0);
       g_renderTracer->EvBindCBufferRequest(bufId);
-      g_renderTracer->EvBindCBufferCommit(/*slot=*/0, bufId);
+      g_renderTracer->EvBindCBufferCommit((int)slot, bufId);
     }
 #endif
   }

@@ -12,6 +12,8 @@ namespace t850 {
     ID3D11Device* device = reinterpret_cast<ID3D11Device*>(T8Device->GetAPIObject());
     ID3D11DeviceContext* deviceContext = reinterpret_cast<ID3D11DeviceContext*>(T8DeviceContext->GetAPIObject());
     HRESULT hr = S_OK;
+    cbvSlots.clear();
+    VertexDecl.clear();
     {
       VS_blob = nullptr;
       ComPtr<ID3DBlob> errorBlob = nullptr;
@@ -56,6 +58,24 @@ namespace t850 {
         return false;
       }
     }
+    auto collectCBVSlots = [&](ID3DBlob* blob) {
+      ID3D11ShaderReflection* resourceReflect = nullptr;
+      if (D3DReflect(blob->GetBufferPointer(), blob->GetBufferSize(), IID_ID3D11ShaderReflection, (void**)&resourceReflect) != S_OK || !resourceReflect)
+        return;
+      D3D11_SHADER_DESC shaderDesc = {};
+      resourceReflect->GetDesc(&shaderDesc);
+      for (UINT i = 0; i < shaderDesc.BoundResources; i++) {
+        D3D11_SHADER_INPUT_BIND_DESC bindDesc = {};
+        resourceReflect->GetResourceBindingDesc(i, &bindDesc);
+        if (bindDesc.Type == D3D_SIT_CBUFFER) {
+          cbvSlots.insert((int)bindDesc.BindPoint);
+        }
+      }
+      resourceReflect->Release();
+    };
+    collectCBVSlots(VS_blob.Get());
+    collectCBVSlots(FS_blob.Get());
+
     ID3D11ShaderReflection* reflect;
 
     hr = D3DReflect(VS_blob->GetBufferPointer(), VS_blob->GetBufferSize(), IID_ID3D11ShaderReflection, (void**)&reflect);

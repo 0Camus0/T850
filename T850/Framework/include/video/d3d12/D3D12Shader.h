@@ -33,6 +33,7 @@ namespace t850 {
     // Root parameter slot indices (resolved during reflection)
     int cbvSlot = -1;      // root param index for constant buffer b0
     int samplerSlot = -1;  // root param index for sampler s0
+    std::unordered_map<int, int> cbvSlots; // register -> root param index
     // SRV slots: root param index for each texture register t0..tN
     std::unordered_map<int, int> srvSlots; // register -> root param index
     std::unordered_map<int, int> samplerSlots; // register -> root param index

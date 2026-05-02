@@ -242,6 +242,29 @@ namespace t850 {
 #endif
   }
 
+  void GLTexture::SetVS(const DeviceContext & deviceContext, unsigned int slot, std::string name)
+  {
+    T8_LOG_TRACE("[GL] Texture::SetVS slot=%u name='%s' file='%s'", slot, name.c_str(), filepath.c_str());
+    m_shaderTextureName = name;
+    int slot_active = GL_TEXTURE0 + slot;
+    int prog = reinterpret_cast<GLShader*>(deviceContext.actualShaderSet)->ShaderProg;
+    APITextureLoc = glGetUniformLocation(prog, m_shaderTextureName.c_str());
+    if (APITextureLoc != -1) {
+      glActiveTexture(slot_active);
+      glBindTexture(glTarget, id);
+      glUniform1i(APITextureLoc, slot);
+    }
+#ifdef T850_RENDER_TRACE
+    if (T8_TRACE_ACTIVE()) {
+      int texId = g_renderTracer->LookupTextureId(this);
+      int sampId = g_renderTracer->RegisterSampler(
+        RenderTracer::MakeSamplerSigGL(params));
+      g_renderTracer->EvBindTextureRequest(slot, texId, name, "vs");
+      g_renderTracer->EvBindTextureCommit(slot, texId, /*viewId=*/-1, sampId, name, "vs");
+    }
+#endif
+  }
+
   void GLTexture::SetSampler(const DeviceContext & deviceContext, unsigned int slot)
   {
   }

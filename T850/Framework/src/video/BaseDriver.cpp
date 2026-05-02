@@ -50,8 +50,10 @@ namespace t850 {
       buffer = cil_load((filepath.c_str()), &x, &y, &mipmaps, &cil_props, &size);
     }
 
-    if (!buffer)
+    if (!buffer) {
+      T8_LOG_ERROR("Texture '%s' failed to load (unsupported or corrupt image)", filepath.c_str());
       return false;
+    }
 
     bounded = 1;
     this->x = x;

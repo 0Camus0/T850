@@ -71,7 +71,10 @@ namespace t850 {
   Texture * D3DXDevice::CreateTexture(std::string path)
   {
     D3DXTexture* txture = new D3DXTexture;
-    txture->LoadTexture(path.c_str());
+    if (!txture->LoadTexture(path.c_str())) {
+      delete txture;
+      return nullptr;
+    }
     return txture;
   }
 

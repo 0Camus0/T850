@@ -457,6 +457,28 @@ namespace t850 {
 #endif
   }
 
+  void D3D12Texture::SetVS(const DeviceContext& deviceContext, unsigned int slot, std::string shaderTextureName) {
+    T8_LOG_TRACE("[D3D12] Texture::SetVS slot=%u name='%s' file='%s' srvGPU=0x%llX", slot, shaderTextureName.c_str(), filepath.c_str(), srvGPU.ptr);
+    auto* cmdList = static_cast<const D3D12DeviceContext*>(&deviceContext)->GetCommandList();
+    auto* shader = static_cast<D3D12Shader*>(deviceContext.actualShaderSet);
+    if (!shader) return;
+
+    auto it = shader->srvSlots.find(slot);
+    if (it != shader->srvSlots.end()) {
+      cmdList->SetGraphicsRootDescriptorTable(it->second, srvGPU);
+    }
+#ifdef T850_RENDER_TRACE
+    if (T8_TRACE_ACTIVE()) {
+      int texId = g_renderTracer->LookupTextureId(this);
+      g_renderTracer->EvBindTextureRequest(slot, texId, shaderTextureName, "vs");
+      int viewId    = (int)(srvGPU.ptr & 0xFFFFFFFFu);
+      int samplerId = g_renderTracer->RegisterSampler(
+        RenderTracer::MakeSamplerSigD3D12(params));
+      g_renderTracer->EvBindTextureCommit(slot, texId, viewId, samplerId, shaderTextureName, "vs");
+    }
+#endif
+  }
+
   void D3D12Texture::SetSampler(const DeviceContext& deviceContext, unsigned int slot) {
     if (!hasSampler) return;
     auto* cmdList = static_cast<const D3D12DeviceContext*>(&deviceContext)->GetCommandList();
@@ -489,11 +511,14 @@ namespace t850 {
     }
     m_uploadBuffer->Unmap(0, nullptr);
 
+    const D3D12_RESOURCE_STATES shaderReadState =
+        D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE | D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE;
+
     // Barrier: SRV → COPY_DEST
     D3D12_RESOURCE_BARRIER barrier = {};
     barrier.Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
     barrier.Transition.pResource = pTexResource.Get();
-    barrier.Transition.StateBefore = D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE;
+    barrier.Transition.StateBefore = shaderReadState;
     barrier.Transition.StateAfter = D3D12_RESOURCE_STATE_COPY_DEST;
     cmdList->ResourceBarrier(1, &barrier);
 
@@ -508,7 +533,7 @@ namespace t850 {
 
     // Barrier: COPY_DEST → SRV
     barrier.Transition.StateBefore = D3D12_RESOURCE_STATE_COPY_DEST;
-    barrier.Transition.StateAfter = D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE;
+    barrier.Transition.StateAfter = shaderReadState;
     cmdList->ResourceBarrier(1, &barrier);
   }
 

@@ -28,6 +28,7 @@ namespace t850 {
 
   static constexpr unsigned MaterialSamplerSlot = 0;
   static constexpr unsigned ClampSamplerSlot = 1;
+  static constexpr unsigned BoneTextureSlot = 24;
 
   namespace {
     bool IsForwardOnlySubset(const RenderMesh::SubSetInfo& subInfo) {
@@ -103,6 +104,74 @@ namespace t850 {
         }
       }
       return distanceSq;
+    }
+
+    void ExtractMeshInstanceCB(RenderMesh::MeshInstanceCBuffer& dst, const RenderMesh::CBuffer& src) {
+      dst.WVP = src.WVP;
+      dst.World = src.World;
+      dst.WorldView = src.WorldView;
+    }
+
+    void ExtractMeshFrameCB(RenderMesh::MeshFrameCBuffer& dst, const RenderMesh::CBuffer& src) {
+      dst.Light0Pos = src.Light0Pos;
+      dst.Light0Col = src.Light0Col;
+      dst.CameraPos = src.CameraPos;
+      dst.CameraInfo = src.CameraInfo;
+      dst.ParallaxSettings = src.ParallaxSettings;
+      dst.ParallaxShadowSettings = src.ParallaxShadowSettings;
+      dst.Light0Dir = src.Light0Dir;
+      for (int li = 0; li < 128; li++) {
+        dst.LightPositions[li] = src.LightPositions[li];
+        dst.LightColors[li] = src.LightColors[li];
+      }
+      for (int ri = 0; ri < 32; ri++) {
+        dst.LightRadius[ri] = src.LightRadius[ri];
+      }
+    }
+
+    void ExtractMeshMaterialCB(RenderMesh::MeshMaterialCBuffer& dst, const RenderMesh::CBuffer& src) {
+      dst.AmbientColor = src.AmbientColor;
+      dst.DiffuseColor = src.DiffuseColor;
+      dst.SpecularColor = src.SpecularColor;
+      dst.PBRParams = src.PBRParams;
+      dst.Intensities = src.Intensities;
+      dst.EmissiveColor = src.EmissiveColor;
+      dst.AlphaParams = src.AlphaParams;
+      dst.ForwardParams = src.ForwardParams;
+      dst.TexCoordSets = src.TexCoordSets;
+      dst.MaterialParams = src.MaterialParams;
+      dst.MaterialParams2 = src.MaterialParams2;
+      dst.MaterialParams3 = src.MaterialParams3;
+      dst.MaterialParams4 = src.MaterialParams4;
+      dst.MaterialParams5 = src.MaterialParams5;
+      dst.MaterialParams6 = src.MaterialParams6;
+      dst.MaterialParams7 = src.MaterialParams7;
+      dst.MaterialParams8 = src.MaterialParams8;
+      dst.MaterialParams9 = src.MaterialParams9;
+      dst.BaseColorUVTransform0 = src.BaseColorUVTransform0;
+      dst.BaseColorUVTransform1 = src.BaseColorUVTransform1;
+      dst.NormalUVTransform0 = src.NormalUVTransform0;
+      dst.NormalUVTransform1 = src.NormalUVTransform1;
+      dst.MetallicUVTransform0 = src.MetallicUVTransform0;
+      dst.MetallicUVTransform1 = src.MetallicUVTransform1;
+      dst.EmissiveUVTransform0 = src.EmissiveUVTransform0;
+      dst.EmissiveUVTransform1 = src.EmissiveUVTransform1;
+      dst.SheenColorUVTransform0 = src.SheenColorUVTransform0;
+      dst.SheenColorUVTransform1 = src.SheenColorUVTransform1;
+      dst.SheenRoughnessUVTransform0 = src.SheenRoughnessUVTransform0;
+      dst.SheenRoughnessUVTransform1 = src.SheenRoughnessUVTransform1;
+      dst.ClearcoatUVTransform0 = src.ClearcoatUVTransform0;
+      dst.ClearcoatUVTransform1 = src.ClearcoatUVTransform1;
+      dst.ClearcoatRoughnessUVTransform0 = src.ClearcoatRoughnessUVTransform0;
+      dst.ClearcoatRoughnessUVTransform1 = src.ClearcoatRoughnessUVTransform1;
+      dst.OcclusionUVTransform0 = src.OcclusionUVTransform0;
+      dst.OcclusionUVTransform1 = src.OcclusionUVTransform1;
+      dst.SpecularFactorUVTransform0 = src.SpecularFactorUVTransform0;
+      dst.SpecularFactorUVTransform1 = src.SpecularFactorUVTransform1;
+      dst.SpecularColorUVTransform0 = src.SpecularColorUVTransform0;
+      dst.SpecularColorUVTransform1 = src.SpecularColorUVTransform1;
+      dst.TransmissionUVTransform0 = src.TransmissionUVTransform0;
+      dst.TransmissionUVTransform1 = src.TransmissionUVTransform1;
     }
   }
 
@@ -410,12 +479,28 @@ namespace t850 {
     wireCB.WorldView = WorldView;
     wireCB.CameraInfo = infoCam;
     wireCB.DiffuseColor = wireColor;
+    RenderMesh::MeshInstanceCBuffer wireInstanceCB;
+    ExtractMeshInstanceCB(wireInstanceCB, wireCB);
 
     for (std::size_t i = 0; i < Info.size() && i < m_wireGeo.size(); i++) {
       if (!m_wireGeo[i].IB || m_wireGeo[i].indexCount == 0) continue;
 
       MeshInfo* mi = &Info[i];
-      mi->VB->Set(*T8DeviceContext, mi->VertexSize, 0);
+      VertexBuffer* vbToBind = mi->VB;
+      unsigned int baseVertex = 0;
+      if (mi->vbPoolAlloc.IsValid()) {
+        if (VertexPool* vpool = MeshAssetCache::Get().GetVertexPool(mi->vbPoolAlloc.poolId)) {
+          if (VertexBuffer* gpu = vpool->GetGPUBuffer()) {
+            vbToBind = gpu;
+            baseVertex = mi->vbPoolAlloc.offsetElems;
+          }
+        }
+      }
+      if (!vbToBind) {
+        T8_LOG_ERROR("[SkinnedMesh] Wireframe skipped geometry %zu: no vertex buffer", i);
+        continue;
+      }
+      vbToBind->Set(*T8DeviceContext, mi->VertexSize, 0);
 
       auto ibFmt = m_wireGeo[i].use32Bit ? IndexBufferFormat::R32 : IndexBufferFormat::R16;
       m_wireGeo[i].IB->Set(*T8DeviceContext, 0, ibFmt);
@@ -424,17 +509,21 @@ namespace t850 {
 
       m_wireShader->Set(*T8DeviceContext);
       mi->CB->UpdateFromBuffer(*T8DeviceContext, &wireCB.WVP[0]);
-      mi->CB->Set(*T8DeviceContext);
+      mi->CB->Set(*T8DeviceContext, 0);
+      if (!g_pBaseDriver->UsesGLSL()) {
+        mi->InstanceCBGPU->UpdateFromBuffer(*T8DeviceContext, &wireInstanceCB);
+        mi->InstanceCBGPU->Set(*T8DeviceContext, 1);
+      }
 
-      // Bind bone texture to VS slot 7
+      // Bind bone texture to a slot that cannot alias mesh pixel textures.
       if (m_boneTexture)
-        m_boneTexture->SetVS(*T8DeviceContext, 7, "u_BoneTex");
+        m_boneTexture->SetVS(*T8DeviceContext, BoneTextureSlot, "u_BoneTex");
 
       // Bind GBuffer depth texture for manual depth comparison in FS
       if (m_wireDepthTex)
         m_wireDepthTex->Set(*T8DeviceContext, 0, "depthTex");
 
-      T8DeviceContext->DrawIndexed(m_wireGeo[i].indexCount, 0, 0);
+      T8DeviceContext->DrawIndexed(m_wireGeo[i].indexCount, 0, baseVertex);
 
       T8DeviceContext->SetPrimitiveTopology(Topology::TRIANLE_LIST);
     }
@@ -598,6 +687,8 @@ namespace t850 {
       baseCB.ParallaxSettings.w = m_fParallaxEnabled;
       baseCB.ParallaxShadowSettings = XVECTOR3(m_fParallaxShadowMinLayers, m_fParallaxShadowMaxLayers, m_fParallaxShadowSoftness);
       baseCB.ParallaxShadowSettings.w = m_fParallaxShadowStrength;
+      ExtractMeshInstanceCB(it_MeshInfo->InstanceCB, baseCB);
+      ExtractMeshFrameCB(it_MeshInfo->FrameCB, baseCB);
 
       unsigned int stride = it_MeshInfo->VertexSize;
       unsigned int offset = 0;
@@ -706,6 +797,7 @@ namespace t850 {
         }
         baseCB.MaterialParams2 = XVECTOR3(transmissionMul, refractionStrength, Textures[9] ? 1.0f : 0.0f, iblFactor);
         baseCB.MaterialParams3 = XVECTOR3(iblMipCount, iblBrdfLutEnabled, iblDiffuseMipLevel, 0.0f);
+        ExtractMeshMaterialCB(sub_info->MaterialCB, baseCB);
 
         // Phase A.5 step 3: bind shared IB pool.
         IndexBuffer* ibToBind = sub_info->IB;
@@ -741,12 +833,21 @@ namespace t850 {
         }
 
         s->Set(*T8DeviceContext);
-        it_MeshInfo->CB->UpdateFromBuffer(*T8DeviceContext, &baseCB.WVP[0]);
-        it_MeshInfo->CB->Set(*T8DeviceContext);
+        if (g_pBaseDriver->UsesGLSL()) {
+          it_MeshInfo->CB->UpdateFromBuffer(*T8DeviceContext, &baseCB.WVP[0]);
+          it_MeshInfo->CB->Set(*T8DeviceContext);
+        } else {
+          it_MeshInfo->FrameCBGPU->UpdateFromBuffer(*T8DeviceContext, &it_MeshInfo->FrameCB);
+          it_MeshInfo->InstanceCBGPU->UpdateFromBuffer(*T8DeviceContext, &it_MeshInfo->InstanceCB);
+          it_MeshInfo->MaterialCBGPU->UpdateFromBuffer(*T8DeviceContext, &sub_info->MaterialCB);
+          it_MeshInfo->FrameCBGPU->Set(*T8DeviceContext, 0);
+          it_MeshInfo->InstanceCBGPU->Set(*T8DeviceContext, 1);
+          it_MeshInfo->MaterialCBGPU->Set(*T8DeviceContext, 2);
+        }
 
-        // Bind bone texture to VS slot 7
+        // Bind bone texture to a slot that cannot alias mesh pixel textures.
         if (m_boneTexture)
-          m_boneTexture->SetVS(*T8DeviceContext, 7, "u_BoneTex");
+          m_boneTexture->SetVS(*T8DeviceContext, BoneTextureSlot, "u_BoneTex");
 
         if (s->key.has(ShaderKey::DIFFUSE_MAP) && sub_info->DiffuseTex) {
           sub_info->DiffuseTex->Set(*T8DeviceContext, 0, "DiffuseTex");

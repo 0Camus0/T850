@@ -52,7 +52,10 @@ namespace t850 {
 
   Texture* D3D12Device::CreateTexture(std::string path) {
     D3D12Texture* tex = new D3D12Texture;
-    tex->LoadTexture(path.c_str());
+    if (!tex->LoadTexture(path.c_str())) {
+      delete tex;
+      return nullptr;
+    }
     return tex;
   }
 
@@ -85,9 +88,12 @@ namespace t850 {
     texDesc.Layout = D3D12_TEXTURE_LAYOUT_UNKNOWN;
     texDesc.Flags = D3D12_RESOURCE_FLAG_NONE;
 
+    const D3D12_RESOURCE_STATES shaderReadState =
+        D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE | D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE;
+
     D3D12_HEAP_PROPERTIES defaultHeap = { D3D12_HEAP_TYPE_DEFAULT };
     HRESULT hr = device->CreateCommittedResource(&defaultHeap, D3D12_HEAP_FLAG_NONE,
-        &texDesc, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE, nullptr,
+        &texDesc, shaderReadState, nullptr,
         IID_PPV_ARGS(tex->pTexResource.GetAddressOf()));
     if (FAILED(hr)) { T8_LOG_ERROR("[D3D12] CreateFloatTexture failed (resource)"); delete tex; return nullptr; }
 
@@ -144,7 +150,7 @@ namespace t850 {
       D3D12_RESOURCE_BARRIER barrier = {};
       barrier.Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
       barrier.Transition.pResource = tex->pTexResource.Get();
-      barrier.Transition.StateBefore = D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE;
+      barrier.Transition.StateBefore = shaderReadState;
       barrier.Transition.StateAfter = D3D12_RESOURCE_STATE_COPY_DEST;
       cmd->ResourceBarrier(1, &barrier);
 
@@ -170,7 +176,7 @@ namespace t850 {
 
       // Barrier: COPY_DEST → SRV
       barrier.Transition.StateBefore = D3D12_RESOURCE_STATE_COPY_DEST;
-      barrier.Transition.StateAfter = D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE;
+      barrier.Transition.StateAfter = shaderReadState;
       cmd->ResourceBarrier(1, &barrier);
 
       cmd->Close();

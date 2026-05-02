@@ -227,6 +227,7 @@ namespace t850 {
     VmaAllocation   m_cbRingAllocations[kBackBufferCount] = {};
     void*           m_cbRingMapped[kBackBufferCount] = {};
     uint32_t        m_cbRingOffset = 0;
+    uint32_t        m_cbRingPeakUsage = 0; // high-water mark across all frames so far
 
     // Descriptor set cache — keyed by (layout + texture fingerprint)
     // Cleared each frame when the descriptor pool is reset.

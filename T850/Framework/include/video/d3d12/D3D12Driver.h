@@ -167,6 +167,7 @@ namespace t850 {
     ComPtr<ID3D12Resource> m_cbRingBuffers[kBackBufferCount];
     void*                  m_cbRingMapped[kBackBufferCount] = {};
     UINT                   m_cbRingOffset = 0;  // current offset within active ring buffer
+    UINT                   m_cbRingPeakUsage = 0; // high-water mark across all frames so far
 
     // Per-frame dynamic descriptor region (within CBV_SRV_UAV_VISIBLE heap)
     uint64_t m_dynamicDescriptorBase = 512;  // safe initial offset (permanent descs < 512)

@@ -1613,8 +1613,22 @@ reopen:
   VkDescriptorBufferInfo VulkanDriver::AllocateCBData(const void* data, uint32_t dataSize) {
     uint32_t alignedSize = (dataSize + 255) & ~255u;
     if (m_cbRingOffset + alignedSize > kCBRingBufferSize) {
-      T8_LOG_ERROR("[Vulkan] CB ring buffer overflow! offset=%u + size=%u > %u", m_cbRingOffset, alignedSize, kCBRingBufferSize);
-      m_cbRingOffset = 0;
+      // Wrapping mid-frame would overwrite UBO data still being read by earlier
+      // draws in the same command buffer (descriptor sets point at fixed offsets
+      // via dynamic offset). The result looks like flicker / z-fighting because
+      // shaders read partially-stale matrices. Crash loud so we can grow the
+      // ring rather than corrupt rendering silently.
+      T8_LOG_ERROR("[Vulkan] CB ring buffer overflow! offset=%u + size=%u > %u (peak so far=%u)",
+                   m_cbRingOffset, alignedSize, kCBRingBufferSize, m_cbRingPeakUsage);
+      assert(false && "Vulkan CB ring buffer overflow — increase kCBRingBufferSize");
+      // Fail-stop in release builds: return a dummy descriptor pointing into the
+      // reserved 0..256 dummy region. The draw will be visually wrong but we
+      // won't trash earlier draws in the same frame.
+      VkDescriptorBufferInfo info = {};
+      info.buffer = m_cbRingBuffers[m_currentFrame];
+      info.offset = 0;
+      info.range  = (alignedSize <= 256) ? alignedSize : 256;
+      return info;
     }
 
     uint32_t bufIdx = m_currentFrame;
@@ -1627,6 +1641,7 @@ reopen:
     info.range = alignedSize;
 
     m_cbRingOffset += alignedSize;
+    if (m_cbRingOffset > m_cbRingPeakUsage) m_cbRingPeakUsage = m_cbRingOffset;
     return info;
   }
 
@@ -1634,6 +1649,9 @@ reopen:
     // Must align to 256 so subsequent UBO allocations from the same ring stay aligned
     uint32_t aligned = (size + 255) & ~255u;
     if (m_cbRingOffset + aligned > kCBRingBufferSize) {
+      T8_LOG_ERROR("[Vulkan] CB ring buffer overflow in VB path! offset=%u + size=%u > %u (peak so far=%u)",
+                   m_cbRingOffset, aligned, kCBRingBufferSize, m_cbRingPeakUsage);
+      assert(false && "Vulkan CB ring buffer overflow (VB path) — increase kCBRingBufferSize");
       return { VK_NULL_HANDLE, 0, false };
     }
     uint32_t bufIdx = m_currentFrame;
@@ -1644,6 +1662,7 @@ reopen:
     alloc.offset = m_cbRingOffset;
     alloc.valid = true;
     m_cbRingOffset += aligned;
+    if (m_cbRingOffset > m_cbRingPeakUsage) m_cbRingPeakUsage = m_cbRingOffset;
     return alloc;
   }
 
@@ -1673,12 +1692,22 @@ reopen:
   }
 
   void VulkanDriver::BindPendingDescriptors(VkCommandBuffer cmd, VulkanShader* shader) {
-    // Compute a fingerprint from layout + texture bindings to reuse descriptor sets
-    // when the same textures are bound across multiple draws (e.g. same material, different passes).
+    // Compute a fingerprint from layout + texture bindings (image view AND sampler)
+    // to reuse descriptor sets when the same textures+samplers are bound across
+    // multiple draws (e.g. same material, different passes).
+    //
+    // IMPORTANT: sampler must be part of the fingerprint. The descriptor type is
+    // VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, so two draws that bind the same
+    // imageView with different samplers MUST get different descriptor sets.
+    // Without sampler in the key, the second draw would silently reuse the first
+    // draw's descriptor (with the wrong sampler) — visible as e.g. shadow-edge
+    // flicker when the same depth texture is sampled with different filter modes
+    // across passes.
     uint64_t fingerprint = (uint64_t)(uintptr_t)shader->m_descriptorSetLayout;
     for (int i = 0; i < VulkanShader::kMaxTextureSlots; i++) {
       if (m_pendingTextures[i].imageView) {
         fingerprint ^= ((uint64_t)(uintptr_t)m_pendingTextures[i].imageView) * (0x9e3779b97f4a7c15ULL + i);
+        fingerprint ^= ((uint64_t)(uintptr_t)m_pendingTextures[i].sampler)   * (0xc6a4a7935bd1e995ULL + i);
       }
     }
 

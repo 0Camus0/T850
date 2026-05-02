@@ -1048,8 +1048,14 @@ namespace t850 {
   D3D12_GPU_VIRTUAL_ADDRESS D3D12Driver::AllocateCBData(const void* data, UINT dataSize) {
     UINT alignedSize = (dataSize + 255) & ~255;
     if (m_cbRingOffset + alignedSize > kCBRingBufferSize) {
-      T8_LOG_ERROR("[D3D12] CB ring buffer overflow! offset=%u + size=%u > %u", m_cbRingOffset, alignedSize, kCBRingBufferSize);
-      m_cbRingOffset = 0;
+      // Wrapping mid-frame would overwrite CB data still being read by earlier
+      // draws in the same command list. Crash loud rather than corrupt rendering.
+      T8_LOG_ERROR("[D3D12] CB ring buffer overflow! offset=%u + size=%u > %u (peak so far=%u)",
+                   m_cbRingOffset, alignedSize, kCBRingBufferSize, m_cbRingPeakUsage);
+      assert(false && "D3D12 CB ring buffer overflow — increase kCBRingBufferSize");
+      // Fail-safe: return the start of the ring (guaranteed in-bounds, but the
+      // current draw will be wrong; better than corrupting prior draws).
+      return m_cbRingBuffers[m_currentBackBuffer]->GetGPUVirtualAddress();
     }
 
     UINT bufIdx = m_currentBackBuffer;
@@ -1058,6 +1064,7 @@ namespace t850 {
 
     D3D12_GPU_VIRTUAL_ADDRESS gpuAddr = m_cbRingBuffers[bufIdx]->GetGPUVirtualAddress() + m_cbRingOffset;
     m_cbRingOffset += alignedSize;
+    if (m_cbRingOffset > m_cbRingPeakUsage) m_cbRingPeakUsage = m_cbRingOffset;
     return gpuAddr;
   }
 
@@ -1065,8 +1072,10 @@ namespace t850 {
     // Use 256-byte alignment to stay compatible with CBV allocations from the same ring buffer
     UINT alignedSize = (dataSize + 255) & ~255;
     if (m_cbRingOffset + alignedSize > kCBRingBufferSize) {
-      T8_LOG_ERROR("[D3D12] Ring buffer overflow! offset=%u + size=%u > %u", m_cbRingOffset, alignedSize, kCBRingBufferSize);
-      m_cbRingOffset = 0;
+      T8_LOG_ERROR("[D3D12] Ring buffer overflow! offset=%u + size=%u > %u (peak so far=%u)",
+                   m_cbRingOffset, alignedSize, kCBRingBufferSize, m_cbRingPeakUsage);
+      assert(false && "D3D12 ring buffer overflow — increase kCBRingBufferSize");
+      return m_cbRingBuffers[m_currentBackBuffer]->GetGPUVirtualAddress();
     }
 
     UINT bufIdx = m_currentBackBuffer;
@@ -1075,6 +1084,7 @@ namespace t850 {
 
     D3D12_GPU_VIRTUAL_ADDRESS gpuAddr = m_cbRingBuffers[bufIdx]->GetGPUVirtualAddress() + m_cbRingOffset;
     m_cbRingOffset += alignedSize;
+    if (m_cbRingOffset > m_cbRingPeakUsage) m_cbRingPeakUsage = m_cbRingOffset;
     return gpuAddr;
   }
 

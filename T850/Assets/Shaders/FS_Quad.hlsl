@@ -1230,7 +1230,7 @@ float4 FS(VS_OUTPUT input) : SV_TARGET{
   return float4(0,0,0,1);
   #else
 	float2 uv = input.texture0;
-	float depth = tex0.Sample(SS, uv);
+	float depth = tex0.SampleLevel(SS, uv, 0.0f);
 if (!IsSceneDepthValid(depth))
 	return float4(0,0,0,1);
 float2 clipPos = input.ClipPos;
@@ -1238,20 +1238,19 @@ float4 position = ReconstructPosition(clipPos, depth);
 int steps = max((int)LightPositions[0].y, 2);
 float4 ray = (position - CameraPosition);
 float4 rayDir = normalize(ray);
-float rayLength = length(ray);
 
 float4 intersectionNear = CameraPosition;
 float4 intersectionFar = position;
 
-//March
-float4 step = (intersectionNear - intersectionFar) / (float)(steps - 1);
-float4 P = intersectionFar;
 float3 accumFog = 0.0f.xxx;
 
 const float3 lightColor = float3(0.9803, 0.8392, 0.6470);
 const float3 sunLightDir = normalize(LightColors[0].xyz);
 float shadowBias = max(toogles.w, 0.0f);
+// Avoid backend-dependent drift from accumulating P += step over many samples.
 [loop] for (int i = 0; i<steps; i++) {
+	float rayT = (float)i / (float)(steps - 1);
+	float4 P = lerp(intersectionFar, intersectionNear, rayT);
 	float4 LightPos = mul(WVPLight, P);
 	LightPos.xyz /= LightPos.w;
   float2 SHTC = LightPos.xy*0.5 + 0.5;
@@ -1259,7 +1258,7 @@ float shadowBias = max(toogles.w, 0.0f);
 
 	if (SHTC.x < 1.0 && SHTC.y < 1.0 && SHTC.x > 0.0 && SHTC.y > 0.0 && LightPos.z > 0.0 && LightPos.z < 1.0)
   {
-		float Val_1 = tex1.Sample(SS1, SHTC);
+		float Val_1 = tex1.SampleLevel(SS1, SHTC, 0.0f);
 		Val_1 -= shadowBias;
 		bool accum = (LightPos.z >= Val_1);
 		if (accum) {
@@ -1267,7 +1266,6 @@ float shadowBias = max(toogles.w, 0.0f);
 			accumFog += scattering ;
 		}
   }
-  P += step;
 }
 accumFog /= (float)steps;
 accumFog = pow(accumFog, float3(0.4545, 0.4545, 0.4545));

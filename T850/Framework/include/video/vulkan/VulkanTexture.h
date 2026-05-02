@@ -41,6 +41,7 @@ namespace t850 {
     VkImageView     m_imageView = VK_NULL_HANDLE;
     VkSampler       m_sampler = VK_NULL_HANDLE;
     VkFormat        m_format = VK_FORMAT_R8G8B8A8_UNORM;
+    float           m_samplerMaxAnisotropy = 1.0f;
     bool            m_isFloatTex = false;  // true for CreateFloatTexture textures
   };
 

@@ -53,6 +53,7 @@ namespace t850 {
     VmaAllocation   m_depthAllocation = VK_NULL_HANDLE;
     VkImageView     m_depthImageView = VK_NULL_HANDLE;
     VkFormat        m_depthFormat = VK_FORMAT_D32_SFLOAT;
+    VkImageLayout   m_depthLayout = VK_IMAGE_LAYOUT_UNDEFINED;
 
     bool            m_isCubeDepth = false;
     VkImageView     m_cubeFaceViews[6] = {};

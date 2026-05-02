@@ -255,7 +255,12 @@ namespace t850 {
       glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
       glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, 0x812D); // GL_CLAMP_TO_BORDER
       glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, 0x812D); // GL_CLAMP_TO_BORDER
-      float borderColor[] = { 0.0f, 0.0f, 0.0f, 0.0f };
+      // Reverse-Z convention: depth=1.0 is at the light (near), depth=0.0 is far.
+      // Border samples must read as "in shadow" (no occluder seen from light) so PCF taps
+      // outside the shadow map don't bleed light. With GL_GEQUAL, comparison is
+      // (LightPos.z + bias) >= textureValue. Using border=1.0 makes that test fail for
+      // any in-frustum sample (LightPos.z < 1.0), preventing shadow-edge light bleed.
+      float borderColor[] = { 1.0f, 1.0f, 1.0f, 1.0f };
       glTexParameterfv(GL_TEXTURE_2D, 0x1004, borderColor); // GL_TEXTURE_BORDER_COLOR
 
       if (number_RT == 0) {

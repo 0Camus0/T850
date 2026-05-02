@@ -1259,21 +1259,8 @@ float shadowBias = max(toogles.w, 0.0f);
 
 	if (SHTC.x < 1.0 && SHTC.y < 1.0 && SHTC.x > 0.0 && SHTC.y > 0.0 && LightPos.z > 0.0 && LightPos.z < 1.0)
   {
-		float Val_1;
-		#if defined(VULKAN) || defined(__VULKAN__) || defined(SPIRV)
-		uint smW, smH;
-		tex1.GetDimensions(smW, smH);
-		int2 pix = int2(SHTC * float2(smW, smH));
-		pix = clamp(pix, int2(0, 0), int2((int)smW - 1, (int)smH - 1));
-		Val_1 = tex1.Load(int3(pix, 0)).r;
-		#else
-		Val_1 = tex1.Sample(SS1, SHTC);
-		#endif
-		float bias = shadowBias;
-		#if defined(VULKAN) || defined(__VULKAN__) || defined(SPIRV)
-		bias = 0.0f;
-		#endif
-		Val_1 -= bias;
+		float Val_1 = tex1.Sample(SS1, SHTC);
+		Val_1 -= shadowBias;
 		bool accum = (LightPos.z >= Val_1);
 		if (accum) {
 			float3 scattering = lightColor * ComputeScattering(dot(rayDir.rgb, sunLightDir));
@@ -1284,9 +1271,6 @@ float shadowBias = max(toogles.w, 0.0f);
 }
 accumFog /= (float)steps;
 accumFog = pow(accumFog, float3(0.4545, 0.4545, 0.4545));
-#if defined(VULKAN) || defined(__VULKAN__) || defined(SPIRV)
-accumFog = pow(accumFog, float3(0.7, 0.7, 0.7));
-#endif
 accumFog *= toogles.x;
 return float4(accumFog,1);
   #endif

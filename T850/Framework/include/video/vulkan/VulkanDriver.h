@@ -133,6 +133,9 @@ namespace t850 {
       // texture id without a costly reverse lookup.
       int         tracerTexId = -1;
       const char* tracerName  = nullptr;
+      // Tracer-only: logical sampler signature id (built from TextBasicParams
+      // by VulkanTexture::Set so cross-API trace diffs are meaningful).
+      int         tracerSamplerId = -1;
     };
     PendingTextureBinding m_pendingTextures[VulkanShader::kMaxTextureSlots] = {};
     VkDescriptorBufferInfo m_pendingCB = {};

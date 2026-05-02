@@ -492,10 +492,116 @@ namespace t850 {
   int RenderTracer::RegisterSampler(const TraceSamplerRec& rec) {
     std::lock_guard<std::mutex> lk(m_mtx);
     if (!m_active) return -1;
+    // Dedupe by full signature so the same logical sampler bound on N draws
+    // collapses to one record. Cross-API safe: backends build the same
+    // canonical strings ("linear" / "clamp" / etc.) so equivalent samplers
+    // hash to the same id.
+    for (const auto& s : m_frame.samplers) {
+      if (s.filter == rec.filter
+          && s.address_u == rec.address_u
+          && s.address_v == rec.address_v
+          && s.address_w == rec.address_w
+          && s.anisotropy == rec.anisotropy
+          && s.lod_bias == rec.lod_bias
+          && s.compare == rec.compare
+          && s.border_color == rec.border_color) {
+        return s.id;
+      }
+    }
     TraceSamplerRec copy = rec;
     copy.id = m_nextSamplerId++;
     m_frame.samplers.push_back(std::move(copy));
     return m_frame.samplers.back().id;
+  }
+
+  TraceSamplerRec RenderTracer::MakeSamplerSigD3D12(unsigned int params) {
+    // Mirrors D3D12Texture::SetTextureParams (D3D12_SAMPLER_DESC creation).
+    // Default: ANISOTROPIC + 16x; CLAMP address; MaxLOD = MAX (all mips).
+    TraceSamplerRec rec;
+    rec.filter      = "anisotropic";
+    rec.anisotropy  = 16.0f;
+    rec.address_u = rec.address_v = rec.address_w = "clamp_to_edge";
+    rec.lod_bias = 0.0f;
+    rec.compare  = "never";
+    rec.border_color = {0,0,0,0};
+    if (params & TextBasicParams::NEAREST_FILTER) {
+      rec.filter = "min_mag_mip_point";
+      rec.anisotropy = 1.0f;
+    } else if (params & TextBasicParams::LINEAR_FILTER) {
+      rec.filter = "min_mag_linear_mip_point";
+      rec.anisotropy = 1.0f;
+    }
+    if (params & TextBasicParams::TILED) {
+      rec.address_u = rec.address_v = rec.address_w = "wrap";
+    }
+    if (params & TextBasicParams::CLAMP_TO_BORDER) {
+      rec.address_u = rec.address_v = rec.address_w = "border";
+      rec.filter = "min_mag_mip_linear";
+      rec.anisotropy = 1.0f;
+    }
+    return rec;
+  }
+
+  TraceSamplerRec RenderTracer::MakeSamplerSigD3D11(unsigned int params) {
+    // Mirrors D3DXTexture::SetTextureParams. Identical semantics to D3D12.
+    return MakeSamplerSigD3D12(params);
+  }
+
+  TraceSamplerRec RenderTracer::MakeSamplerSigGL(unsigned int params) {
+    // Mirrors GLTexture::SetTextureParams. Default min/mag filters are
+    // GL_LINEAR_MIPMAP_LINEAR / GL_LINEAR with anisotropy = MAX (16+ on
+    // most drivers). NEAREST_FILTER overrides to GL_NEAREST + aniso=1.
+    // Wrap mode always honored from CLAMP_TO_EDGE / TILED / CLAMP_TO_BORDER.
+    TraceSamplerRec rec;
+    rec.lod_bias = 0.0f;
+    rec.compare  = "";
+    rec.border_color = {0,0,0,0};
+    if (params & TextBasicParams::NEAREST_FILTER) {
+      rec.filter     = "nearest";
+      rec.anisotropy = 1.0f;
+    } else {
+      // GL hardcodes LINEAR_MIPMAP_LINEAR + max anisotropy regardless of
+      // the MIPMAPS bit (see SetTextureParams). The actual reported value
+      // mirrors that runtime behavior so traces don't lie.
+      rec.filter     = "linear_mip_linear_aniso_max";
+      rec.anisotropy = 16.0f;
+    }
+    const char* wrap = "clamp_to_edge";
+    if (params & TextBasicParams::CLAMP_TO_BORDER) wrap = "clamp_to_border";
+    else if (params & TextBasicParams::TILED)      wrap = "repeat";
+    else if (params & TextBasicParams::CLAMP_TO_EDGE) wrap = "clamp_to_edge";
+    rec.address_u = rec.address_v = rec.address_w = wrap;
+    return rec;
+  }
+
+  TraceSamplerRec RenderTracer::MakeSamplerSigVulkan(unsigned int params, float maxAnisotropy) {
+    // Mirrors VulkanTexture::SetTextureParams (VkSamplerCreateInfo). Default
+    // filter LINEAR + mipmapMode LINEAR; anisotropy disabled (1.0); maxLod
+    // is VK_LOD_CLAMP_NONE only when MIPMAPS bit is set, else 0.0 (so the
+    // GPU samples ONLY mip 0 if MIPMAPS isn't set on the texture's params).
+    TraceSamplerRec rec;
+    rec.lod_bias = 0.0f;
+    rec.compare  = "";
+    rec.border_color = {0,0,0,0};
+    if (params & TextBasicParams::NEAREST_FILTER) {
+      rec.filter     = "nearest";
+      rec.anisotropy = 1.0f;
+    } else if (params & TextBasicParams::MIPMAPS) {
+      rec.filter     = "linear_mip_linear";
+      rec.anisotropy = maxAnisotropy;
+    } else {
+      // No MIPMAPS bit: maxLod=0 means only mip 0 is sampled. Encode as a
+      // distinct filter string so cross-API diff surfaces it.
+      rec.filter     = "linear_mip0_only";
+      rec.anisotropy = maxAnisotropy;
+    }
+    {
+      const char* addr = "repeat";
+      if (params & TextBasicParams::CLAMP_TO_EDGE)        addr = "clamp_to_edge";
+      else if (params & TextBasicParams::CLAMP_TO_BORDER) addr = "clamp_to_border";
+      rec.address_u = rec.address_v = rec.address_w = addr;
+    }
+    return rec;
   }
 
   int RenderTracer::RegisterTextureView(const TraceTextureViewRec& rec) {

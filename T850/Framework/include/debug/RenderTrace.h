@@ -283,6 +283,18 @@ namespace t850 {
     int RegisterTextureView(const TraceTextureViewRec& rec);
     int RegisterPSO(TracePSORec rec);  // returns id; rec.id is overwritten
 
+    // Backend-specific sampler signature builders. Each one mirrors the
+    // *actual* sampler descriptor that backend creates (D3D12_SAMPLER_DESC,
+    // D3D11_SAMPLER_DESC, glTexParameter calls, VkSamplerCreateInfo). This
+    // means equivalent params on different APIs may legitimately produce
+    // different sampler signatures (e.g. D3D12 defaults to anisotropic-16
+    // while Vulkan defaults to linear-no-aniso) — which is exactly the kind
+    // of cross-API divergence we want surfaced in trace diffs.
+    static TraceSamplerRec MakeSamplerSigD3D12(unsigned int params);
+    static TraceSamplerRec MakeSamplerSigD3D11(unsigned int params);
+    static TraceSamplerRec MakeSamplerSigGL   (unsigned int params);
+    static TraceSamplerRec MakeSamplerSigVulkan(unsigned int params, float maxAnisotropy = 1.0f);
+
     int LookupTextureId(const Texture* tex) const;
     int LookupRTId(const BaseRT* rt) const;
     int LookupShaderId(const ShaderBase* sh) const;

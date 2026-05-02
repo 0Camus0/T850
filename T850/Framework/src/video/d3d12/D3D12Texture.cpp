@@ -446,7 +446,12 @@ namespace t850 {
       // (stable per-process, unique per srvGPU range) — same diff strategy
       // as Vulkan's view pointer surrogate.
       int viewId    = (int)(srvGPU.ptr & 0xFFFFFFFFu);
-      int samplerId = (int)(samplerGPU.ptr & 0xFFFFFFFFu);
+      // Replace the descriptor-handle pointer surrogate with a logical
+      // sampler signature so D3D12's id matches GL/D3D11/Vulkan when the
+      // sampler params are equivalent. (The handle was unique-per-process
+      // and never registered, making cross-API diff useless.)
+      int samplerId = g_renderTracer->RegisterSampler(
+        RenderTracer::MakeSamplerSigD3D12(params));
       g_renderTracer->EvBindTextureCommit(slot, texId, viewId, samplerId, shaderTextureName, "ps");
     }
 #endif

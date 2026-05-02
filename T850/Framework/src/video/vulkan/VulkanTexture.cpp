@@ -448,6 +448,12 @@ namespace t850 {
       driver->m_pendingTextures[slot].tracerTexId = g_renderTracer->LookupTextureId(this);
       m_shaderTextureName = shaderTextureName;
       driver->m_pendingTextures[slot].tracerName  = m_shaderTextureName.c_str();
+      // Build a logical sampler signature from the same TextBasicParams bits
+      // used to construct m_sampler (see VulkanTexture sampler creation
+      // around line 388-432). All 4 backends use this helper, so equivalent
+      // samplers across APIs hash to the same id.
+      driver->m_pendingTextures[slot].tracerSamplerId =
+        g_renderTracer->RegisterSampler(RenderTracer::MakeSamplerSigVulkan(params));
       g_renderTracer->EvBindTextureRequest(slot, driver->m_pendingTextures[slot].tracerTexId,
                                            shaderTextureName, "ps");
     }

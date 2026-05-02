@@ -280,6 +280,31 @@ namespace t850 {
       DepthTexture = dtex;
     }
 
+    // Zero-initialize all attachments so cross-API behavior is deterministic.
+    // glTexImage2D(..., NULL) leaves content undefined per OpenGL spec; some
+    // drivers fill with zero, others don't, which causes RTs that get sampled
+    // before they're first written (e.g. AdaptedLumPrev on frame 0 of the
+    // tone-mapping ping-pong) to feed garbage into the pipeline and diverge
+    // from D3D11/D3D12 (which zero-init by spec/driver) and Vulkan (which
+    // explicitly clears at creation in VulkanRT::LoadAPIRT).
+    if (number_RT > 0 || this->depth_format != BaseRT::NOTHING) {
+      glBindFramebuffer(GL_FRAMEBUFFER, vFrameBuffers[0]);
+#if defined(USING_OPENGL) || defined(USING_OPENGL_ES30) || defined(USING_OPENGL_ES31)
+      if (number_RT > 0) {
+        glDrawBuffers(number_RT, GLDriver::DrawBuffers);
+      }
+#endif
+      glColorMask(GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE);
+      glClearColor(0.0f, 0.0f, 0.0f, 0.0f);
+      // Reverse-Z: cleared depth = 0.0 matches the engine's depth convention.
+      glClearDepthf(0.0f);
+      GLbitfield clearMask = 0;
+      if (number_RT > 0) clearMask |= GL_COLOR_BUFFER_BIT;
+      if (this->depth_format != BaseRT::NOTHING) clearMask |= GL_DEPTH_BUFFER_BIT | GL_STENCIL_BUFFER_BIT;
+      if (clearMask) glClear(clearMask);
+      glBindFramebuffer(GL_FRAMEBUFFER, 0);
+    }
+
 #if defined(OS_LINUX)
     timeval actual;
     gettimeofday(&actual, 0);

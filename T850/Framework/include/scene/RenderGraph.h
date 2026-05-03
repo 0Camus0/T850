@@ -16,6 +16,46 @@ namespace t850 {
   class Texture;
   class PrimitiveInst;
 
+  namespace EnvironmentTextureSlot {
+    constexpr int DiffuseIBL = 10;
+    constexpr int SpecularIBL = 11;
+    constexpr int BrdfLUT = 12;
+    constexpr int CharlieIBL = 13;
+    constexpr int CharlieLUT = 14;
+    constexpr int SheenELUT = 15;
+  }
+
+  namespace MaterialTextureSlot {
+    constexpr int SheenColor = 16;
+    constexpr int SheenRoughness = 17;
+    constexpr int Clearcoat = 18;
+    constexpr int ClearcoatRoughness = 19;
+    constexpr int Occlusion = 20;
+    constexpr int SpecularFactor = 21;
+    constexpr int SpecularColor = 22;
+    constexpr int Transmission = 23;
+  }
+
+  struct EnvironmentMapSet {
+    int Sky = -1;
+    int DiffuseIBL = -1;
+    int SpecularIBL = -1;
+    int BrdfLUT = -1;
+    int CharlieIBL = -1;
+    int CharlieLUT = -1;
+    int SheenELUT = -1;
+
+    void SetFallback(int textureIndex) {
+      Sky = textureIndex;
+      DiffuseIBL = textureIndex;
+      SpecularIBL = textureIndex;
+      BrdfLUT = -1;
+      CharlieIBL = textureIndex;
+      CharlieLUT = -1;
+      SheenELUT = -1;
+    }
+  };
+
   // Resolved edge: a texture dependency between two passes.
   struct GraphEdge {
     int from_pass;     // index of the producing pass (-1 for built-in textures)
@@ -62,7 +102,7 @@ namespace t850 {
       ::Camera* mainCam,
       ::Camera* lightCam,
       ::Camera* omniCams,
-      int envMapTexIndex
+      const EnvironmentMapSet& envMaps
     );
 
     // ---- Graph inspection (for future GUI) ----
@@ -124,7 +164,7 @@ namespace t850 {
       ::Camera* mainCam,
       ::Camera* lightCam,
       ::Camera* omniCams,
-      int envMapTexIndex
+      const EnvironmentMapSet& envMaps
     );
   };
 

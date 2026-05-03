@@ -25,11 +25,13 @@ namespace t850 {
 #define BUFFER_OFFSET(i) ((char *)NULL + (i))
 #endif
 
+  constexpr int MaxPrimitiveTextures = 24;
+
   class PrimitiveBase {
   public:
     PrimitiveBase() : pScProp(0) {
       gKey.bits = 0;
-      for (int i = 0; i < 8; i++) {
+        for (int i = 0; i < MaxPrimitiveTextures; i++) {
         Textures[i] = 0;
       }
       EnvMap = 0;
@@ -69,7 +71,7 @@ namespace t850 {
 		m_fParallaxShadowSoftness = softness;
 		m_fParallaxShadowStrength = strength;
 	}
-    Texture*				 Textures[8];
+    Texture*				 Textures[MaxPrimitiveTextures];
     Texture*			     EnvMap;
     ShaderKey gKey;
     float m_brightness;

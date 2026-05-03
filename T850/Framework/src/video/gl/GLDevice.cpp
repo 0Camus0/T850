@@ -67,7 +67,10 @@ namespace t850 {
   Texture * GLDevice::CreateTexture(std::string path)
   {
     GLTexture* txture = new GLTexture;
-    txture->LoadTexture(path.c_str());
+    if (!txture->LoadTexture(path.c_str())) {
+      delete txture;
+      return nullptr;
+    }
     return txture;
   }
 
@@ -104,7 +107,52 @@ namespace t850 {
     glBindTexture(GL_TEXTURE_2D, 0);
     tex->x = w;
     tex->y = h;
+    tex->mipmaps = 1;
+    tex->m_channels = 4;
+    tex->props = TextBasicFormat::CH_RGBA;
+    tex->params = TextBasicParams::CLAMP_TO_EDGE | TextBasicParams::NEAREST_FILTER;
     T8_LOG_INFO("[GL] CreateFloatTexture: id=%u %dx%d RGBA32F", tex->id, w, h);
+    return tex;
+  }
+
+  Texture * GLDevice::CreateFloatCubeMap(int size, int mipCount, const float* data)
+  {
+    if (size <= 0 || mipCount <= 0)
+      return nullptr;
+
+    GLTexture* tex = new GLTexture;
+    tex->glTarget = GL_TEXTURE_CUBE_MAP;
+    tex->x = size;
+    tex->y = size;
+    tex->mipmaps = mipCount;
+    tex->m_channels = 4;
+    tex->props = TextBasicFormat::CH_RGBA;
+    tex->cil_props = CIL_CUBE_MAP;
+    tex->params = TextBasicParams::CLAMP_TO_EDGE | TextBasicParams::MIPMAPS;
+
+    glGenTextures(1, &tex->id);
+    glBindTexture(GL_TEXTURE_CUBE_MAP, tex->id);
+
+    const float* pData = data;
+    for (int face = 0; face < 6; ++face) {
+      int mipSize = size;
+      for (int mip = 0; mip < mipCount; ++mip) {
+        glTexImage2D(GL_TEXTURE_CUBE_MAP_POSITIVE_X + face, mip, GL_RGBA32F, mipSize, mipSize, 0, GL_RGBA, GL_FLOAT, pData);
+        if (pData)
+          pData += mipSize * mipSize * 4;
+        mipSize >>= 1; if (mipSize < 1) mipSize = 1;
+      }
+    }
+
+    GLenum err = glGetError();
+    if (err != GL_NO_ERROR) {
+      T8_LOG_ERROR("[GL] CreateFloatCubeMap FAILED: glTexImage2D error=0x%X (%dx%d mips=%d)", err, size, size, mipCount);
+      delete tex;
+      return nullptr;
+    }
+
+    tex->SetTextureParams();
+    T8_LOG_INFO("[GL] CreateFloatCubeMap: id=%u %dx%d mips=%d RGBA32F", tex->id, size, size, mipCount);
     return tex;
   }
 

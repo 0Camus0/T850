@@ -12,6 +12,7 @@
 #if defined(OS_WINDOWS)
 
 #include <utils/Log.h>
+#include <debug/RenderTrace.h>
 
 namespace t850 {
 
@@ -43,10 +44,10 @@ namespace t850 {
     m_colorFormat = resolveFormat(color_format);
 
     // Per-attachment formats (mirrors D3D11/D3D12 behavior)
-    std::vector<VkFormat> colorFormats(number_RT, m_colorFormat);
+    m_colorFormats.assign(number_RT, m_colorFormat);
     if (!perColorFormats.empty()) {
       for (int i = 0; i < number_RT && i < (int)perColorFormats.size(); i++)
-        colorFormats[i] = resolveFormat(perColorFormats[i]);
+        m_colorFormats[i] = resolveFormat(perColorFormats[i]);
     }
 
     // ── 1. Color attachments ──
@@ -57,7 +58,7 @@ namespace t850 {
     vColorTextures.resize(number_RT);
 
     for (int i = 0; i < number_RT; i++) {
-      VkFormat attachmentFormat = colorFormats[i];
+      VkFormat attachmentFormat = m_colorFormats[i];
       VkImageCreateInfo imgCI = { VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO };
       imgCI.imageType = VK_IMAGE_TYPE_2D;
       imgCI.format = attachmentFormat;
@@ -115,7 +116,7 @@ namespace t850 {
     if (hasDepth) {
       switch (depth_format) {
         case BaseRT::F32:  m_depthFormat = VK_FORMAT_D32_SFLOAT; break;
-        case BaseRT::FD16: m_depthFormat = VK_FORMAT_D16_UNORM;  break;
+        case BaseRT::FD16: m_depthFormat = VK_FORMAT_D32_SFLOAT; break;
         default:           m_depthFormat = VK_FORMAT_D32_SFLOAT; break;
       }
 
@@ -164,7 +165,7 @@ namespace t850 {
       depthTex->x = (unsigned int)w;
       depthTex->y = (unsigned int)h;
       depthTex->m_channels = 1;
-      depthTex->params = CLAMP_TO_EDGE;
+      depthTex->params = CLAMP_TO_BORDER;
       depthTex->SetTextureParams();
       pDepthTexture = depthTex;
     }
@@ -175,13 +176,13 @@ namespace t850 {
 
     for (int i = 0; i < number_RT; i++) {
       VkAttachmentDescription colorAtt = {};
-      colorAtt.format = colorFormats[i];
+      colorAtt.format = m_colorFormats[i];
       colorAtt.samples = VK_SAMPLE_COUNT_1_BIT;
       colorAtt.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
       colorAtt.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
       colorAtt.stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
       colorAtt.stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
-      colorAtt.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+      colorAtt.initialLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
       colorAtt.finalLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
       attachments.push_back(colorAtt);
 
@@ -200,7 +201,7 @@ namespace t850 {
       depthAtt.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
       depthAtt.stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
       depthAtt.stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
-      depthAtt.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+      depthAtt.initialLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
       depthAtt.finalLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
       attachments.push_back(depthAtt);
 
@@ -235,6 +236,21 @@ namespace t850 {
     VkResult res = vkCreateRenderPass(device, &rpCI, nullptr, &m_renderPass);
     if (res != VK_SUCCESS) {
       T8_LOG_ERROR("[Vulkan] RT render pass creation failed res=%d", res);
+      return false;
+    }
+
+    for (int i = 0; i < number_RT; i++) {
+      attachments[i].loadOp = VK_ATTACHMENT_LOAD_OP_LOAD;
+      attachments[i].initialLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+    }
+    if (hasDepth) {
+      attachments[number_RT].loadOp = VK_ATTACHMENT_LOAD_OP_LOAD;
+      attachments[number_RT].initialLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
+    }
+
+    res = vkCreateRenderPass(device, &rpCI, nullptr, &m_renderPassLoad);
+    if (res != VK_SUCCESS) {
+      T8_LOG_ERROR("[Vulkan] RT load render pass creation failed res=%d", res);
       return false;
     }
 
@@ -286,7 +302,7 @@ namespace t850 {
         vColorLayouts[i] = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
       }
       if (hasDepth && m_depthImage) {
-        VkClearDepthStencilValue clearDepth = { 1.0f, 0 };
+        VkClearDepthStencilValue clearDepth = { 0.0f, 0 };
         VkImageSubresourceRange depthRange = { VK_IMAGE_ASPECT_DEPTH_BIT, 0, 1, 0, 1 };
         TransitionImageLayout(initCmd, m_depthImage,
           VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
@@ -296,6 +312,7 @@ namespace t850 {
         TransitionImageLayout(initCmd, m_depthImage,
           VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
           VK_IMAGE_ASPECT_DEPTH_BIT);
+        m_depthLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
       }
 
       vkEndCommandBuffer(initCmd);
@@ -317,6 +334,7 @@ namespace t850 {
     VmaAllocator allocator = driver->GetAllocator();
 
     if (m_framebuffer) { vkDestroyFramebuffer(device, m_framebuffer, nullptr); m_framebuffer = VK_NULL_HANDLE; }
+    if (m_renderPassLoad) { vkDestroyRenderPass(device, m_renderPassLoad, nullptr); m_renderPassLoad = VK_NULL_HANDLE; }
     if (m_renderPass)  { vkDestroyRenderPass(device, m_renderPass, nullptr); m_renderPass = VK_NULL_HANDLE; }
 
     // Destroy sampler from color texture wrappers (image/view destroyed below separately)
@@ -337,6 +355,7 @@ namespace t850 {
     vColorImages.clear();
     vColorAllocations.clear();
     vColorLayouts.clear();
+    m_colorFormats.clear();
 
     // Destroy depth texture wrapper sampler (image/view destroyed below)
     if (pDepthTexture) {
@@ -357,46 +376,76 @@ namespace t850 {
   }
 
   void VulkanRT::Set(const DeviceContext& context) {
+    SetInternal(context, false);
+  }
+
+  void VulkanRT::SetLoad(const DeviceContext& context) {
+    SetInternal(context, true);
+  }
+
+  void VulkanRT::SetInternal(const DeviceContext& context, bool preserve) {
     auto* driver = GetVkDriver();
     VkCommandBuffer cmd = static_cast<const VulkanDeviceContext*>(&context)->GetCommandBuffer();
 
     // End any active render pass before starting the RT pass
     driver->EndRenderPassIfActive(cmd);
 
-    // Transition color images to COLOR_ATTACHMENT if needed
+    // Transition attachments to renderable layouts if needed. Color layouts were
+    // already tracked; depth must be tracked too because the same depth images
+    // are sampled by later passes (ShadowAccum/GodRays) and then rendered again
+    // on the next frame.
     for (int i = 0; i < number_RT; i++) {
-      if (vColorLayouts[i] == VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL) {
+      if (vColorLayouts[i] != VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL) {
         TransitionImageLayout(cmd, vColorImages[i],
-                              VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
+                              vColorLayouts[i],
                               VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
                               VK_IMAGE_ASPECT_COLOR_BIT);
       }
       vColorLayouts[i] = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
     }
 
-    // Begin the RT's own render pass with clear values
     bool hasDepth = (depth_format != BaseRT::NOTHING);
+    if (hasDepth && m_depthImage && m_depthLayout != VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL) {
+      TransitionImageLayout(cmd, m_depthImage,
+                            m_depthLayout,
+                            VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL,
+                            VK_IMAGE_ASPECT_DEPTH_BIT);
+      m_depthLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
+    }
+
+    // Begin the RT's own render pass with clear/load values
     std::vector<VkClearValue> clearValues(number_RT);
     for (int i = 0; i < number_RT; i++)
       clearValues[i].color = { {0.0f, 0.0f, 0.0f, 0.0f} };
 
     if (hasDepth) {
       VkClearValue depthClear = {};
-      depthClear.depthStencil = { 1.0f, 0 };
+      depthClear.depthStencil = { 0.0f, 0 };
       clearValues.push_back(depthClear);
     }
 
     VkRenderPassBeginInfo rpBegin = { VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO };
-    rpBegin.renderPass = m_renderPass;
+    rpBegin.renderPass = preserve ? m_renderPassLoad : m_renderPass;
     rpBegin.framebuffer = m_framebuffer;
     rpBegin.renderArea.offset = { 0, 0 };
     rpBegin.renderArea.extent = { (uint32_t)w, (uint32_t)h };
-    rpBegin.clearValueCount = (uint32_t)clearValues.size();
-    rpBegin.pClearValues = clearValues.data();
+    rpBegin.clearValueCount = preserve ? 0 : (uint32_t)clearValues.size();
+    rpBegin.pClearValues = preserve ? nullptr : clearValues.data();
 
     vkCmdBeginRenderPass(cmd, &rpBegin, VK_SUBPASS_CONTENTS_INLINE);
-    driver->SetActiveRenderPass(m_renderPass);
+    driver->SetActiveRenderPass(rpBegin.renderPass);
     driver->SetRenderPassActive(true);
+
+#ifdef T850_RENDER_TRACE
+    if (!preserve && T8_TRACE_ACTIVE()) {
+      // Vulkan RT clears happen implicitly via vkCmdBeginRenderPass with
+      // LOAD_OP_CLEAR. Mirror those clear values into the trace as a
+      // proper EvClearRT event so cross-API diffs see what was cleared.
+      int rtId = g_renderTracer->LookupRTId(this);
+      uint32_t flags = (number_RT > 0 ? 1u : 0u) | (hasDepth ? 2u : 0u);
+      g_renderTracer->EvClearRT(rtId, flags, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0);
+    }
+#endif
 
     // Set viewport and scissor to RT dimensions (negative height for Y-flip)
     VkViewport viewport = {};

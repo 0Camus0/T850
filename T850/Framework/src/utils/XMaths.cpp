@@ -301,9 +301,9 @@ std::vector<sample_> UpdateKernel(float sigma, float kernelSize, float Samplecou
 
 	 mpout.m[0][0] = x;
 	 mpout.m[1][1] = y;
-	 mpout.m[2][2] = FarPlane / (FarPlane - NearPlane);
+	 mpout.m[2][2] = NearPlane / (NearPlane - FarPlane);
 	 mpout.m[2][3] = 1.0f;
-	 mpout.m[3][2] = -(NearPlane*FarPlane) / (FarPlane - NearPlane);
+	 mpout.m[3][2] = (NearPlane*FarPlane) / (FarPlane - NearPlane);
 	 mpout.m[3][3] = 0.0f;
 
 }
@@ -318,25 +318,25 @@ std::vector<sample_> UpdateKernel(float sigma, float kernelSize, float Samplecou
 
 	 mpout.m[0][0] = x;
 	 mpout.m[1][1] = y;
-	 mpout.m[2][2] = FarPlane / (NearPlane-FarPlane);
+	 mpout.m[2][2] = NearPlane / (FarPlane - NearPlane);
 	 mpout.m[2][3] = -1.0f;
-	 mpout.m[3][2] = (NearPlane*FarPlane) / (NearPlane-FarPlane);
+	 mpout.m[3][2] = (NearPlane*FarPlane) / (FarPlane - NearPlane);
 	 mpout.m[3][3] = 0.0f;
 }
 
  void XMatOrthoLH(XMATRIX44 &m, const float &w, const float &h, const float &zn, const float &zf) {
 	m.m[0][0] = 2.0f / w;
 	m.m[1][1] = 2.0f / h;
-	m.m[2][2] = 1.0f / (zf - zn);
-	m.m[3][2] = -zn / (zf - zn);
+	m.m[2][2] = -1.0f / (zf - zn);
+	m.m[3][2] = zf / (zf - zn);
 	m.m[3][3] = 1.0f;
 }
 
  void XMatOrthoRH(XMATRIX44 &m, const float &w, const float &h, const float &zn, const float &zf) {
 	m.m[0][0] = 2.0f / w;
 	m.m[1][1] = 2.0f / h;
-	m.m[2][2] = 1.0f / (zn - zf);
-	m.m[3][2] = zn / (zn - zf);
+	m.m[2][2] = 1.0f / (zf - zn);
+	m.m[3][2] = zf / (zf - zn);
 	m.m[3][3] = 1.0f;
 }
 

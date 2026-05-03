@@ -24,7 +24,7 @@ namespace t850 {
   public:
     void	CreateInstance(PrimitiveBase *pPrim, XMATRIX44 *pVP) {
       gKey.bits = 0;
-      for (int i = 0; i < 8; i++) {
+        for (int i = 0; i < MaxPrimitiveTextures; i++) {
         Textures[i] = 0;
       }
       EnvMap = 0;
@@ -93,7 +93,7 @@ namespace t850 {
 	class RenderSkinnedMesh* GetSkinnedMesh() const;
 	bool IsSkinnedMesh() const;
 
-    Texture*				 Textures[8];
+    Texture*				 Textures[MaxPrimitiveTextures];
     Texture*			     EnvMap;
     ShaderKey gKey;
     float m_brightness;

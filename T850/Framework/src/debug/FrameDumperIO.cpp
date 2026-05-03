@@ -40,6 +40,7 @@ static bool ParseLegacyTxt(const std::string& content, SnapshotJson& data) {
   // No matrices, lights, or scene props in legacy format
   data.matrices = std::nullopt;
   data.omni = std::nullopt;
+  data.skinned = std::nullopt;
   data.lights.clear();
 
   printf("[FrameDumper] Loaded legacy .txt format\n");
@@ -72,10 +73,11 @@ bool LoadSnapshot(const std::string& path, SnapshotJson& data) {
     return false;
   }
 
-  printf("[FrameDumper] Loaded '%s': scene=%d, %zu lights, matrices=%s, omni=%s\n",
+  printf("[FrameDumper] Loaded '%s': scene=%d, %zu lights, matrices=%s, omni=%s, skinned=%s\n",
          path.c_str(), data.scene, data.lights.size(),
          data.matrices.has_value() ? "yes" : "no",
-         data.omni.has_value() ? "yes" : "no");
+         data.omni.has_value() ? "yes" : "no",
+         data.skinned.has_value() ? "yes" : "no");
   return true;
 }
 

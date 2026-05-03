@@ -12,6 +12,7 @@
 #if defined(OS_WINDOWS)
 
 #include <utils/Log.h>
+#include <debug/RenderTrace.h>
 #include <cstring>
 
 namespace t850 {
@@ -63,13 +64,26 @@ namespace t850 {
     T8_LOG_DEBUG("[Vulkan] CB created: %d bytes (aligned=%u)", desc.byteWidth, m_alignedSize);
   }
 
-  void VulkanConstantBuffer::Set(const DeviceContext& deviceContext) {
+  void VulkanConstantBuffer::Set(const DeviceContext& deviceContext, unsigned int slot) {
     const_cast<DeviceContext*>(&deviceContext)->actualConstantBuffer = (ConstantBuffer*)this;
     auto* driver = GetVkDriver();
-    if (!sysMemCpy.empty()) {
-      driver->m_pendingCB = driver->AllocateCBData(sysMemCpy.data(), (uint32_t)sysMemCpy.size());
+    if (!sysMemCpy.empty() && slot < VulkanShader::kMaxCBufferSlots) {
+      auto alloc = driver->AllocateCBData(sysMemCpy.data(), (uint32_t)sysMemCpy.size());
+      driver->m_pendingCBs[slot].bufferInfo = alloc;
       driver->m_cbDirty = true;
-      T8_LOG_TRACE("[Vulkan] CB::Set offset=%llu dataSize=%u", driver->m_pendingCB.offset, (uint32_t)sysMemCpy.size());
+      T8_LOG_TRACE("[Vulkan] CB::Set slot=%u offset=%llu dataSize=%u", slot, alloc.offset, (uint32_t)sysMemCpy.size());
+#ifdef T850_RENDER_TRACE
+      if (T8_TRACE_ACTIVE()) {
+        int bufId = g_renderTracer->EnsureBufferId(this, "cbuffer");
+        driver->m_pendingCBs[slot].tracerId = bufId;
+        // Record the upload of these bytes into the new ring slice (this is
+        // what BindPendingDescriptors will reference at draw time).
+        g_renderTracer->EvUpdateCBuffer(bufId, sysMemCpy.data(),
+                                        (uint32_t)sysMemCpy.size(),
+                                        (uint32_t)alloc.offset);
+        g_renderTracer->EvBindCBufferRequest(bufId);
+      }
+#endif
     }
   }
 

@@ -18,6 +18,7 @@
 #include <utils/gltf/GLTFLoader.h>
 #include <utils/gltf/GLTFAccessor.h>
 #include <utils/Log.h>
+#include <utils/ThreadPool.h>
 
 #include <cstdint>
 #include <cstring>
@@ -78,29 +79,64 @@ bool ResolveBuffers(Document& doc,
   doc._bufferData.resize(doc.buffers.size());
   const std::string dir = DirOf(sourcePath);
 
+  struct BufferResult {
+    bool ok = false;
+    std::string error;
+  };
+  std::vector<BufferResult> results(doc.buffers.size());
+
   for (std::size_t i = 0; i < doc.buffers.size(); ++i) {
     const Buffer& b = doc.buffers[i];
-    auto& dst = doc._bufferData[i];
-
     if (!b.uri) {
       // GLB-embedded: only buffer 0 can have no URI, and only for .glb.
       if (i != 0 || glbBin.empty()) {
-        T8_LOG_ERROR("[glTF] buffer %zu has no uri and no GLB bin available", i);
-        return false;
+        results[i].error = "has no uri and no GLB bin available";
+        continue;
       }
-      dst = std::move(glbBin);
-    } else if (b.uri->compare(0, 5, "data:") == 0) {
+      doc._bufferData[i] = std::move(glbBin);
+      results[i].ok = true;
+    }
+  }
+
+  auto resolveBufferBytes = [&](int i) {
+    const Buffer& b = doc.buffers[static_cast<std::size_t>(i)];
+    if (!b.uri)
+      return;
+
+    auto& dst = doc._bufferData[static_cast<std::size_t>(i)];
+    auto& result = results[static_cast<std::size_t>(i)];
+    if (b.uri->compare(0, 5, "data:") == 0) {
       if (!DecodeDataUri(*b.uri, dst)) {
-        T8_LOG_ERROR("[glTF] buffer %zu: failed to decode data URI", i);
-        return false;
+        result.error = "failed to decode data URI";
+        return;
       }
     } else {
       // External file relative to the .gltf.
       std::string p = dir + *b.uri;
       if (!ReadFileBytes(p, dst)) {
-        T8_LOG_ERROR("[glTF] buffer %zu: cannot open '%s'", i, p.c_str());
-        return false;
+        result.error = "cannot open '" + p + "'";
+        return;
       }
+    }
+    result.ok = true;
+  };
+
+  if (g_threadPool && doc.buffers.size() > 1) {
+    T8_LOG_INFO("[glTF] Reading %zu buffers with %u global worker threads",
+                doc.buffers.size(), g_threadPool->NumWorkers());
+    g_threadPool->ParallelFor(0, static_cast<int>(doc.buffers.size()), resolveBufferBytes);
+  } else {
+    for (int i = 0; i < static_cast<int>(doc.buffers.size()); ++i) {
+      resolveBufferBytes(i);
+    }
+  }
+
+  for (std::size_t i = 0; i < doc.buffers.size(); ++i) {
+    const Buffer& b = doc.buffers[i];
+    const auto& dst = doc._bufferData[i];
+    if (!results[i].ok) {
+      T8_LOG_ERROR("[glTF] buffer %zu: %s", i, results[i].error.c_str());
+      return false;
     }
 
     if (dst.size() < b.byteLength) {
@@ -200,6 +236,21 @@ bool LoadGLTF(const std::string& path, Document& out) {
   // Supported extensions are allowed through.
   static const std::vector<std::string> kSupportedExtensions = {
     "KHR_draco_mesh_compression",
+    "KHR_materials_anisotropy",
+    "KHR_materials_clearcoat",
+    "KHR_materials_diffuse_transmission",
+    "KHR_materials_dispersion",
+    "KHR_materials_emissive_strength",
+    "KHR_materials_ior",
+    "KHR_materials_iridescence",
+    "KHR_materials_pbrSpecularGlossiness",
+    "KHR_materials_sheen",
+    "KHR_materials_specular",
+    "KHR_materials_transmission",
+    "KHR_materials_unlit",
+    "KHR_materials_volume",
+    "KHR_materials_volume_scatter",
+    "KHR_texture_transform"
   };
   if (!out.extensionsRequired.empty()) {
     std::string unsupported;

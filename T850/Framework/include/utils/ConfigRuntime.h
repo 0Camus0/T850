@@ -85,6 +85,7 @@ struct RuntimeConfigJson {
   std::optional<int> profileFrames;
   std::optional<bool> dumpMatrices;
   std::optional<int> dumpMatricesFrames;
+  std::optional<float> orbitYaw;
 
   std::optional<DisplayJson> display;
   std::optional<ReplaySnapshotJson> replaySnapshot;

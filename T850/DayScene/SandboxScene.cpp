@@ -6,14 +6,107 @@
 #include <scene/RenderMesh.h>
 #include <scene/RenderSkinnedMesh.h>
 #include <scene/SceneDescriptor.h>
+#include <scene/IBLResources.h>
 #include <core/Config.h>
 #include <iostream>
 #include <fstream>
 #include <string>
 #include <cmath>
+#include <vector>
 
 using namespace t850;
 using std::string;
+
+namespace {
+  t850::Mat4Json MatrixToSnapshotJson(const XMATRIX44& mat) {
+    t850::Mat4Json j;
+    for (int r = 0; r < 4; r++)
+      for (int c = 0; c < 4; c++)
+        j[r][c] = mat.m[r][c];
+    return j;
+  }
+
+  XMATRIX44 MatrixFromSnapshotJson(const t850::Mat4Json& j) {
+    XMATRIX44 mat;
+    for (int r = 0; r < 4; r++)
+      for (int c = 0; c < 4; c++)
+        mat.m[r][c] = j[r][c];
+    return mat;
+  }
+
+  t850::SnapshotSkinnedJson CaptureSkinnedSnapshot(RenderSkinnedMesh* skinned,
+                                                   bool wireframeVisible,
+                                                   bool skeletonVisible) {
+    t850::SnapshotSkinnedJson snap;
+    if (!skinned || !skinned->HasSkinData()) return snap;
+
+    snap.has_skin = true;
+    snap.playing = skinned->IsPlaying();
+    snap.looping = skinned->IsLooping();
+    snap.use_slerp = skinned->GetUseSlerp();
+    snap.use_quat_skinning = skinned->GetUseQuatSkinning();
+    snap.keyframe_mode = skinned->GetKeyframeMode();
+    snap.wireframe_visible = wireframeVisible;
+    snap.skeleton_visible = skeletonVisible;
+    snap.animation_speed = skinned->GetAnimSpeed();
+    snap.local_time = skinned->GetAnimLocalTime();
+    snap.tick_time = skinned->GetAnimTickTime();
+    snap.ticks_per_second = skinned->GetAnimTicksPerSecond();
+    snap.current_anim_set = skinned->GetCurrentAnimSet();
+    snap.num_anim_sets = skinned->GetNumAnimSets();
+    snap.current_keyframe = skinned->GetCurrentKeyframe();
+    snap.total_keyframes = skinned->GetTotalKeyframes();
+    snap.num_bones = skinned->GetNumBones();
+    snap.bone_texture_width = skinned->GetBoneTextureWidth();
+    snap.bone_texture_rgba32f = skinned->GetBoneTextureData();
+
+    std::vector<XMATRIX44> bones;
+    skinned->ExportBoneMatrices(bones);
+    snap.bone_matrices.reserve(bones.size());
+    for (const XMATRIX44& bone : bones) {
+      snap.bone_matrices.push_back(MatrixToSnapshotJson(bone));
+    }
+    return snap;
+  }
+
+  void ApplySkinnedSnapshot(RenderSkinnedMesh* skinned,
+                            const t850::SnapshotSkinnedJson& snap,
+                            bool& wireframeVisible,
+                            bool& skeletonVisible) {
+    if (!skinned || !skinned->HasSkinData() || !snap.has_skin) return;
+
+    skinned->SetAnimSpeed(snap.animation_speed);
+    skinned->SetLooping(snap.looping);
+    skinned->SetUseSlerp(snap.use_slerp);
+    skinned->SetUseQuatSkinning(snap.use_quat_skinning);
+    skinned->SetKeyframeMode(snap.keyframe_mode);
+    if (snap.playing) skinned->PlayAnimation();
+    else skinned->PauseAnimation();
+
+    int targetSet = snap.current_anim_set;
+    int numSets = skinned->GetNumAnimSets();
+    if (numSets > 0 && targetSet >= 0 && targetSet < numSets) {
+      int guard = 0;
+      while (skinned->GetCurrentAnimSet() != targetSet && guard++ < numSets) {
+        skinned->NextAnimation();
+      }
+    }
+
+    std::vector<XMATRIX44> bones;
+    bones.reserve(snap.bone_matrices.size());
+    for (const auto& bone : snap.bone_matrices) {
+      bones.push_back(MatrixFromSnapshotJson(bone));
+    }
+    if (!bones.empty()) {
+      skinned->ApplySnapshotBoneMatrices(bones);
+    } else {
+      skinned->ClearSnapshotBoneMatrices();
+    }
+
+    wireframeVisible = snap.wireframe_visible;
+    skeletonVisible = snap.skeleton_visible;
+  }
+}
 
 void SandboxScene::InitVars() {
 
@@ -90,6 +183,14 @@ void SandboxScene::InitVars() {
   SceneProp.BloomThreshold = 1.5f;
   SceneProp.ToneMapWhiteLevel = 5.5f;
   SceneProp.LuminanceTau = 1.1f;
+  SceneProp.IBLMipCount = 4.0f;
+  SceneProp.IBLBRDFLUTEnabled = 0.0f;
+
+  if (m_guiSetup.Load("Scenes/SandboxScene.json")) {
+    m_guiSetup.ApplyQualityAndSettings(SceneProp);
+  } else {
+    T8_LOG_ERROR("[SandboxScene] Failed to load Scenes/SandboxScene.json");
+  }
 
   t850::FrameDumperConfig dumpCfg;
   dumpCfg.dumpEnabled        = g_config.flags.dumpEnabled;
@@ -127,6 +228,22 @@ void SandboxScene::CreateAssets() {
   SceneProp.SSAOKernel.InitTexture();
 
   EnvMapTexIndex = g_pBaseDriver->CreateTexture(string("sky/Ennis.dds"));
+  EnvMaps.SetFallback(EnvMapTexIndex);
+  if (m_guiSetup.descriptor.name.empty()) {
+    m_guiSetup.Load("Scenes/SandboxScene.json");
+  }
+  LoadEnvironmentIBLResources(
+    g_pBaseDriver,
+    {m_guiSetup.environmentDiffuseIBL, m_guiSetup.environmentSpecularIBL, m_guiSetup.environmentBrdfLUT,
+     m_guiSetup.environmentSheenIBL, m_guiSetup.environmentCharlieLUT, m_guiSetup.environmentSheenELUT},
+    EnvMaps,
+    DiffuseIBLTexIndex,
+    SpecularIBLTexIndex,
+    BrdfLUTTexIndex,
+    SheenIBLTexIndex,
+    CharlieLUTTexIndex,
+    SheenELUTTexIndex);
+  UpdateSceneIBLSettings(SceneProp, g_pBaseDriver, EnvMaps);
 
   // Load the glTF model
   int index = PrimitiveMgr.CreateMesh(g_config.modelPath.c_str());
@@ -193,17 +310,49 @@ void SandboxScene::OnUpdate(float _DtSecs) {
     // Flush GPU before destroying — D3D12 may still reference the old
     // texture from the previous frame's command list.
     g_pBaseDriver->WaitForGPU();
-    if (EnvMapTexIndex >= 0) {
-      g_pBaseDriver->DestroyTexture(EnvMapTexIndex);
-      EnvMapTexIndex = -1;
-    }
-    EnvMapTexIndex = g_pBaseDriver->CreateTexture(m_pendingCubemap);
-    Texture* newTex = g_pBaseDriver->GetTexture(EnvMapTexIndex);
-    T8_LOG_INFO("[SandboxScene] Cubemap loaded: slot=%d tex=%p (%dx%d)",
-                EnvMapTexIndex, newTex, newTex ? newTex->x : 0, newTex ? newTex->y : 0);
-    Quads[0].SetEnvironmentMap(newTex);
-    if (Meshes[0].pBase) {
-      Meshes[0].SetEnvironmentMap(newTex);
+    int newEnvMapTexIndex = g_pBaseDriver->CreateTexture(m_pendingCubemap);
+    if (newEnvMapTexIndex >= 0) {
+      if (EnvMapTexIndex >= 0 && EnvMapTexIndex != newEnvMapTexIndex)
+        g_pBaseDriver->DestroyTexture(EnvMapTexIndex);
+      EnvMapTexIndex = newEnvMapTexIndex;
+      if (m_guiSetup.environmentDiffuseIBL.empty() && DiffuseIBLTexIndex >= 0) {
+        g_pBaseDriver->DestroyTexture(DiffuseIBLTexIndex);
+        DiffuseIBLTexIndex = -1;
+      }
+      if (m_guiSetup.environmentSpecularIBL.empty() && SpecularIBLTexIndex >= 0) {
+        g_pBaseDriver->DestroyTexture(SpecularIBLTexIndex);
+        SpecularIBLTexIndex = -1;
+      }
+      if (m_guiSetup.environmentSheenIBL.empty() && SheenIBLTexIndex >= 0) {
+        g_pBaseDriver->DestroyTexture(SheenIBLTexIndex);
+        SheenIBLTexIndex = -1;
+      }
+      EnvMaps.SetFallback(EnvMapTexIndex);
+      LoadEnvironmentIBLResources(
+        g_pBaseDriver,
+        {m_guiSetup.environmentDiffuseIBL, m_guiSetup.environmentSpecularIBL, m_guiSetup.environmentBrdfLUT,
+         m_guiSetup.environmentSheenIBL, m_guiSetup.environmentCharlieLUT, m_guiSetup.environmentSheenELUT},
+        EnvMaps,
+        DiffuseIBLTexIndex,
+        SpecularIBLTexIndex,
+        BrdfLUTTexIndex,
+        SheenIBLTexIndex,
+        CharlieLUTTexIndex,
+        SheenELUTTexIndex);
+      EnvMaps.BrdfLUT = BrdfLUTTexIndex;
+      EnvMaps.CharlieIBL = SheenIBLTexIndex;
+      EnvMaps.CharlieLUT = CharlieLUTTexIndex;
+      EnvMaps.SheenELUT = SheenELUTTexIndex;
+      UpdateSceneIBLSettings(SceneProp, g_pBaseDriver, EnvMaps);
+      Texture* newTex = g_pBaseDriver->GetTexture(EnvMapTexIndex);
+      T8_LOG_INFO("[SandboxScene] Cubemap loaded: slot=%d tex=%p (%dx%d)",
+                  EnvMapTexIndex, newTex, newTex ? newTex->x : 0, newTex ? newTex->y : 0);
+      Quads[0].SetEnvironmentMap(newTex);
+      if (Meshes[0].pBase) {
+        Meshes[0].SetEnvironmentMap(newTex);
+      }
+    } else {
+      T8_LOG_ERROR("[SandboxScene] Failed to load cubemap '%s'; keeping previous cubemap", m_pendingCubemap.c_str());
     }
     m_pendingCubemap.clear();
   }
@@ -212,6 +361,12 @@ void SandboxScene::OnUpdate(float _DtSecs) {
   if (m_dumper.HasPendingReplay()) {
     if (m_dumper.LoadReplaySnapshot()) {
       m_dumper.ApplySnapshot(Cam, LightCam, SceneProp);
+      if (const t850::SnapshotSkinnedJson* skinnedSnap = m_dumper.GetReplaySkinnedState()) {
+        if (Meshes[0].pBase) {
+          RenderSkinnedMesh* skinned = dynamic_cast<RenderSkinnedMesh*>(Meshes[0].pBase);
+          ApplySkinnedSnapshot(skinned, *skinnedSnap, m_showWireframe, m_showSkeleton);
+        }
+      }
       VP = Cam.VP;
     }
   }
@@ -376,7 +531,7 @@ void SandboxScene::FitModelToView() {
   // Place camera at a distance that fits the bounding sphere in the FOV
   float halfFov = Cam.Fov * 0.5f;
   m_orbitDist = m_modelRadius / std::tan(halfFov);
-  m_orbitYaw = 0.0f;
+  m_orbitYaw = g_config.orbitYawOverride ? g_config.orbitYaw : 0.0f;
   m_orbitPitch = 0.0f;
 
   // Adjust near/far planes to the model scale
@@ -432,17 +587,29 @@ void SandboxScene::OnDraw() {
     &Cam,
     &LightCam,
     nullptr,
-    EnvMapTexIndex
+    EnvMaps
   );
 
   // RT Dump via FrameDumper
   if (m_dumper.ShouldDump(DtSecs)) {
+    t850::SnapshotSkinnedJson skinnedSnapshot;
+    const t850::SnapshotSkinnedJson* skinnedSnapshotPtr = nullptr;
+    if (Meshes[0].pBase) {
+      RenderSkinnedMesh* skinned = dynamic_cast<RenderSkinnedMesh*>(Meshes[0].pBase);
+      skinnedSnapshot = CaptureSkinnedSnapshot(skinned, m_showWireframe, m_showSkeleton);
+      if (skinnedSnapshot.has_skin)
+        skinnedSnapshotPtr = &skinnedSnapshot;
+    }
+
     std::vector<t850::RTDumpEntry> rts = {
       {GBufferPass,           BaseDriver::COLOR0_ATTACHMENT, "GBuffer_Albedo"},
       {GBufferPass,           BaseDriver::COLOR1_ATTACHMENT, "GBuffer_Normals"},
       {GBufferPass,           BaseDriver::COLOR2_ATTACHMENT, "GBuffer_PBR"},
       {GBufferPass,           BaseDriver::COLOR3_ATTACHMENT, "GBuffer_GeoNormal"},
-      {GBufferPass,           BaseDriver::COLOR4_ATTACHMENT, "GBuffer_Depth"},
+      {GBufferPass,           BaseDriver::COLOR4_ATTACHMENT, "GBuffer_Emissive"},
+      {GBufferPass,           BaseDriver::COLOR5_ATTACHMENT, "GBuffer_Sheen"},
+      {GBufferPass,           BaseDriver::COLOR6_ATTACHMENT, "GBuffer_SpecularOcclusion"},
+      {GBufferPass,           BaseDriver::DEPTH_ATTACHMENT,  "GBuffer_Depth"},
       {DepthPass,             BaseDriver::DEPTH_ATTACHMENT,  "ShadowMap_Depth"},
       {ShadowAccumPass,       BaseDriver::COLOR0_ATTACHMENT, "ShadowAccum"},
       {DeferredPass,          BaseDriver::COLOR0_ATTACHMENT, "Deferred"},
@@ -452,7 +619,8 @@ void SandboxScene::OnDraw() {
       {LuminanceMapPass,      BaseDriver::COLOR0_ATTACHMENT, "LuminanceMap"},
       {AdaptedLumCurrentPass, BaseDriver::COLOR0_ATTACHMENT, "AdaptedLumCurrent"},
     };
-    m_dumper.DumpFrame(pFramework->pVideoDriver, Cam, LightCam, SceneProp, rts, DtSecs);
+    m_dumper.DumpFrame(pFramework->pVideoDriver, Cam, LightCam, SceneProp, rts, DtSecs,
+                       nullptr, nullptr, skinnedSnapshotPtr);
     if (m_dumper.ShouldExit()) exit(0);
   }
 
@@ -466,7 +634,7 @@ void SandboxScene::OnDraw() {
     case 2:  selected = GBufferPass;     attachment = BaseDriver::COLOR1_ATTACHMENT; break;
     case 3:  selected = GBufferPass;     attachment = BaseDriver::COLOR2_ATTACHMENT; break;
     case 4:  selected = GBufferPass;     attachment = BaseDriver::COLOR3_ATTACHMENT; break;
-    case 5:  selected = GBufferPass;     attachment = BaseDriver::COLOR4_ATTACHMENT; break;
+    case 5:  selected = GBufferPass;     attachment = BaseDriver::DEPTH_ATTACHMENT;  break;
     case 6:  selected = DepthPass;       attachment = BaseDriver::DEPTH_ATTACHMENT;  break;
     case 7:  selected = ShadowAccumPass; attachment = BaseDriver::COLOR0_ATTACHMENT; break;
     case 8:  selected = DeferredPass;    attachment = BaseDriver::COLOR0_ATTACHMENT; break;
@@ -490,12 +658,11 @@ void SandboxScene::OnDraw() {
     RenderSkinnedMesh* skinned = dynamic_cast<RenderSkinnedMesh*>(Meshes[0].pBase);
     if (skinned && skinned->HasSkinData()) {
       if (m_showWireframe) {
-        // Bind GBuffer COLOR4 (linear depth) for shader-based depth comparison
+        // Bind GBuffer depth for shader-based depth comparison
         int gbufHandle = GBufferPass;
         if (gbufHandle >= 0 && gbufHandle < (int)pFramework->pVideoDriver->RTs.size()) {
           auto* gbufRT = pFramework->pVideoDriver->RTs[gbufHandle];
-          if (gbufRT->vColorTextures.size() > 4)
-            skinned->SetWireframeDepthTex(gbufRT->vColorTextures[4]);
+          skinned->SetWireframeDepthTex(gbufRT->pDepthTexture);
         }
         skinned->SetWireframeViewport(g_pBaseDriver->width, g_pBaseDriver->height);
         pFramework->pVideoDriver->SetDepthStencilState(BaseDriver::NONE);
@@ -589,6 +756,9 @@ void SandboxScene::PopulateGUI(t850::GUIManager& gui) {
     {"shadow_min",            CHANGE_SHADOW_MIN},
     {"env_factor",            CHANGE_ENV_FACTOR},
     {"ibl_factor",             CHANGE_IBL_FACTOR},
+    {"material_emissive_intensity", CHANGE_MATERIAL_EMISSIVE_INTENSITY},
+    {"material_transmission_multiplier", CHANGE_MATERIAL_TRANSMISSION_MULTIPLIER},
+    {"material_refraction_strength", CHANGE_MATERIAL_REFRACTION_STRENGTH},
     {"anim_speed",             CHANGE_ANIM_SPEED},
   };
 
@@ -694,6 +864,9 @@ void SandboxScene::SyncToGUI(t850::GUIManager& gui) {
     case CHANGE_SHADOW_MIN:      slider->SetValue(SceneProp.ShadowMin); break;
     case CHANGE_ENV_FACTOR:      slider->SetValue(SceneProp.EnvFactor); break;
     case CHANGE_IBL_FACTOR:      slider->SetValue(SceneProp.IBLFactor); break;
+    case CHANGE_MATERIAL_EMISSIVE_INTENSITY: slider->SetValue(SceneProp.MaterialEmissiveIntensity); break;
+    case CHANGE_MATERIAL_TRANSMISSION_MULTIPLIER: slider->SetValue(SceneProp.MaterialTransmissionMultiplier); break;
+    case CHANGE_MATERIAL_REFRACTION_STRENGTH: slider->SetValue(SceneProp.MaterialRefractionStrength); break;
     case CHANGE_ANIM_SPEED: {
       RenderSkinnedMesh* sk = Meshes[0].GetSkinnedMesh();
       if (sk) slider->SetValue(sk->GetAnimSpeed());
@@ -765,6 +938,9 @@ void SandboxScene::SyncFromGUI(t850::GUIManager& gui) {
     case CHANGE_SHADOW_MIN:      SceneProp.ShadowMin = slider->value; break;
     case CHANGE_ENV_FACTOR:      SceneProp.EnvFactor = slider->value; break;
     case CHANGE_IBL_FACTOR:      SceneProp.IBLFactor = slider->value; break;
+    case CHANGE_MATERIAL_EMISSIVE_INTENSITY: SceneProp.MaterialEmissiveIntensity = slider->value; break;
+    case CHANGE_MATERIAL_TRANSMISSION_MULTIPLIER: SceneProp.MaterialTransmissionMultiplier = slider->value; break;
+    case CHANGE_MATERIAL_REFRACTION_STRENGTH: SceneProp.MaterialRefractionStrength = slider->value; break;
     case CHANGE_ANIM_SPEED: {
       RenderSkinnedMesh* sk = Meshes[0].GetSkinnedMesh();
       if (sk) sk->SetAnimSpeed(slider->value);

@@ -13,6 +13,7 @@
 #include <video/BaseDriver.h>
 #include <utils/cil.h>
 #include <utils/Log.h>
+#include <debug/RenderTrace.h>
 #include <iostream>
 #include <string>
 #include <fstream>
@@ -49,8 +50,10 @@ namespace t850 {
       buffer = cil_load((filepath.c_str()), &x, &y, &mipmaps, &cil_props, &size);
     }
 
-    if (!buffer)
+    if (!buffer) {
+      T8_LOG_ERROR("Texture '%s' failed to load (unsupported or corrupt image)", filepath.c_str());
       return false;
+    }
 
     bounded = 1;
     this->x = x;
@@ -170,12 +173,6 @@ namespace t850 {
     std::string Defines;
     if (key.isValid()) {
 
-      bool LinearDepth = true;
-
-#if defined(USING_OPENGL_ES20)
-      LinearDepth = true; // Force for ES 2.0
-#endif
-
 #if defined(USING_OPENGL)
       if (g_pBaseDriver->m_currentAPI == GraphicsApi::OPENGL) {
         Defines += "#version 330\n\n";
@@ -198,6 +195,8 @@ namespace t850 {
       if (key.has(ShaderKey::HAS_NORMALS))    Defines += "#define USE_NORMALS\n\n";
       if (key.has(ShaderKey::HAS_TEXCOORD0))  Defines += "#define USE_TEXCOORD0\n\n";
       if (key.has(ShaderKey::HAS_TEXCOORD1))  Defines += "#define USE_TEXCOORD1\n\n";
+      if (key.has(ShaderKey::HAS_TEXCOORD2))  Defines += "#define USE_TEXCOORD2\n\n";
+      if (key.has(ShaderKey::HAS_TEXCOORD3))  Defines += "#define USE_TEXCOORD3\n\n";
       if (key.has(ShaderKey::HAS_TANGENTS))   Defines += "#define USE_TANGENTS\n\n";
       if (key.has(ShaderKey::HAS_BINORMALS))  Defines += "#define USE_BINORMALS\n\n";
 
@@ -206,9 +205,17 @@ namespace t850 {
       if (key.has(ShaderKey::SPECULAR_MAP))   Defines += "#define SPECULAR_MAP\n\n";
       if (key.has(ShaderKey::GLOSS_MAP))      Defines += "#define GLOSS_MAP\n\n";
       if (key.has(ShaderKey::NORMAL_MAP))     Defines += "#define NORMAL_MAP\n\n";
-      if (key.has(ShaderKey::REFLECT_MAP))    Defines += "#define REFLECT_MAP\n\n";
+      if (key.has(ShaderKey::REFLECT_MAP))    Defines += "#define REFLECT_MAP\n#define EMISSIVE_MAP\n\n";
       if (key.has(ShaderKey::HEIGHT_MAP))     Defines += "#define HEIGHT_MAP\n\n";
       if (key.has(ShaderKey::METALLIC_MAP))   Defines += "#define METALLIC_MAP\n\n";
+      if (key.has(ShaderKey::CLEARCOAT_MAP))  Defines += "#define CLEARCOAT_MAP\n\n";
+      if (key.has(ShaderKey::SHEEN_COLOR_MAP)) Defines += "#define SHEEN_COLOR_MAP\n\n";
+      if (key.has(ShaderKey::SHEEN_ROUGHNESS_MAP)) Defines += "#define SHEEN_ROUGHNESS_MAP\n\n";
+      if (key.has(ShaderKey::CLEARCOAT_ROUGHNESS_MAP)) Defines += "#define CLEARCOAT_ROUGHNESS_MAP\n\n";
+      if (key.has(ShaderKey::OCCLUSION_MAP)) Defines += "#define OCCLUSION_MAP\n\n";
+      if (key.has(ShaderKey::SPECULAR_FACTOR_MAP)) Defines += "#define SPECULAR_FACTOR_MAP\n\n";
+      if (key.has(ShaderKey::SPECULAR_COLOR_MAP)) Defines += "#define SPECULAR_COLOR_MAP\n\n";
+      if (key.has(ShaderKey::TRANSMISSION_MAP)) Defines += "#define TRANSMISSION_MAP\n\n";
 
       // Material conventions
       if (key.has(ShaderKey::GLTF_TANGENT_SPACE)) Defines += "#define GLTF_TANGENT_SPACE\n\n";
@@ -263,15 +270,12 @@ namespace t850 {
       default: break;
       }
 
-      if (!LinearDepth)
-        Defines += "#define NON_LINEAR_DEPTH\n\n";
-
       src_vs = Defines + src_vs;
       src_fs = Defines + src_fs;
     }
     this->key = key;
     if (!CreateShaderAPI(src_vs, src_fs, vs_name, fs_name)) {
-      T8_LOG_ERROR("Shader defines for failed key 0x%08X [VS='%s' FS='%s']:\n%s", key.bits, vs_name.c_str(), fs_name.c_str(), Defines.c_str());
+      T8_LOG_ERROR("Shader defines for failed key 0x%016llX [VS='%s' FS='%s']:\n%s", static_cast<unsigned long long>(key.bits), vs_name.c_str(), fs_name.c_str(), Defines.c_str());
       return false;
     }
     return true;
@@ -298,8 +302,8 @@ namespace t850 {
     auto it = m_shaderCache.find(key.bits);
     if (it != m_shaderCache.end())
       return it->second;
-    fprintf(stderr, "[ShaderKey] GetShader miss: key 0x%08X (pass=%d)\n", key.bits, key.getPass());
-    T8_LOG_ERROR("GetShader miss: key 0x%08X (pass=%d)", key.bits, key.getPass());
+    fprintf(stderr, "[ShaderKey] GetShader miss: key 0x%016llX (pass=%d)\n", static_cast<unsigned long long>(key.bits), key.getPass());
+    T8_LOG_ERROR("GetShader miss: key 0x%016llX (pass=%d)", static_cast<unsigned long long>(key.bits), key.getPass());
     return nullptr;
   }
   ShaderBase * BaseDriver::GetShaderIdx(int id)
@@ -354,9 +358,39 @@ namespace t850 {
     if (id < 0 || id >= (int)RTs.size())
       return;
 
+    if (CurrentRT >= 0 && CurrentRT != id)
+      PopRT();
+
     T8_LOG_TRACE("[BaseDriver] PushRT(%d) colors=%d %dx%d", id, RTs[id]->number_RT, RTs[id]->w, RTs[id]->h);
     CurrentRT = id;
     RTs[id]->Set(*T8DeviceContext);
+#ifdef T850_RENDER_TRACE
+    if (T8_TRACE_ACTIVE()) {
+      int rid = g_renderTracer->RegisterRT(RTs[id], nullptr, id);
+      g_renderTracer->EvPushRT(rid, false);
+    }
+    RefreshTracePendingRenderState();
+#endif
+  }
+
+  void BaseDriver::PushRTLoad(int id)
+  {
+    if (id < 0 || id >= (int)RTs.size())
+      return;
+
+    if (CurrentRT >= 0 && CurrentRT != id)
+      PopRT();
+
+    T8_LOG_TRACE("[BaseDriver] PushRTLoad(%d) colors=%d %dx%d", id, RTs[id]->number_RT, RTs[id]->w, RTs[id]->h);
+    CurrentRT = id;
+    RTs[id]->SetLoad(*T8DeviceContext);
+#ifdef T850_RENDER_TRACE
+    if (T8_TRACE_ACTIVE()) {
+      int rid = g_renderTracer->RegisterRT(RTs[id], nullptr, id);
+      g_renderTracer->EvPushRT(rid, true);
+    }
+    RefreshTracePendingRenderState();
+#endif
   }
   Technique * BaseDriver::GetTechnique(int id)
   {
@@ -434,19 +468,48 @@ namespace t850 {
       }
     }
     Texture *pTex = T8Device->CreateTexture(path);
+    if (!pTex) {
+      T8_LOG_ERROR("Texture creation failed: '%s'", path.c_str());
+      return -1;
+    }
+    int retIdx;
     if (firstFreeSlot >= 0) {
       Textures[firstFreeSlot] = pTex;
       T8_LOG_DEBUG("Texture created: '%s' -> slot %d (%dx%d)", path.c_str(), firstFreeSlot, pTex->x, pTex->y);
-      return firstFreeSlot;
+      retIdx = firstFreeSlot;
+    } else {
+      Textures.push_back(pTex);
+      T8_LOG_DEBUG("Texture created: '%s' -> slot %d (%dx%d)", path.c_str(), (int)(Textures.size()-1), pTex->x, pTex->y);
+      retIdx = static_cast<int>(Textures.size() - 1);
     }
-    Textures.push_back(pTex);
-    T8_LOG_DEBUG("Texture created: '%s' -> slot %d (%dx%d)", path.c_str(), (int)(Textures.size()-1), pTex->x, pTex->y);
-    return static_cast<int>(Textures.size() - 1);
+    T8_TRACE_REGISTER_TEXTURE(pTex, "tex2d");
+    return retIdx;
   }
   int BaseDriver::CreateCubeMap(const unsigned char * buff, int w, int h)
   {
     Texture *pTex = T8Device->CreateCubeMap(buff,w,h);
     Textures.push_back(pTex);
+    T8_TRACE_REGISTER_TEXTURE(pTex, "cubemap");
+    return static_cast<int>(Textures.size() - 1);
+  }
+  int BaseDriver::CreateFloatTexture(int w, int h, const float* data)
+  {
+    Texture *pTex = T8Device->CreateFloatTexture(w, h, data);
+    if (!pTex)
+      return -1;
+    Textures.push_back(pTex);
+    T8_LOG_DEBUG("Float texture created -> slot %d (%dx%d)", (int)(Textures.size() - 1), w, h);
+    T8_TRACE_REGISTER_TEXTURE(pTex, "float2d");
+    return static_cast<int>(Textures.size() - 1);
+  }
+  int BaseDriver::CreateFloatCubeMap(int size, int mipCount, const float* data)
+  {
+    Texture *pTex = T8Device->CreateFloatCubeMap(size, mipCount, data);
+    if (!pTex)
+      return -1;
+    Textures.push_back(pTex);
+    T8_LOG_DEBUG("Float cubemap created -> slot %d (%dx%d mips=%d)", (int)(Textures.size() - 1), size, size, mipCount);
+    T8_TRACE_REGISTER_TEXTURE(pTex, "floatcube");
     return static_cast<int>(Textures.size() - 1);
   }
   int BaseDriver::CreateShader(std::string src_vs, std::string src_fs, ShaderKey key, const std::string& vs_name, const std::string& fs_name)
@@ -467,11 +530,12 @@ namespace t850 {
       int idx = static_cast<int>(m_shaders.size() - 1);
       if (key.isValid()) {
         m_shaderCache[key.bits] = shader;
-        T8_LOG_DEBUG("Shader compiled: key=0x%08X pass=%d -> idx %d", key.bits, key.getPass(), idx);
+        T8_LOG_DEBUG("Shader compiled: key=0x%016llX pass=%d -> idx %d", static_cast<unsigned long long>(key.bits), key.getPass(), idx);
       }
+      T8_TRACE_REGISTER_SHADER(shader, key.bits, vs_name, fs_name);
       return idx;
     }
-    T8_LOG_ERROR("Shader compilation FAILED: key=0x%08X pass=%d", key.bits, key.getPass());
+    T8_LOG_ERROR("Shader compilation FAILED: key=0x%016llX pass=%d", static_cast<unsigned long long>(key.bits), key.getPass());
     return -1;
   }
   int BaseDriver::CreateRT(int nrt, int cf, int df, int w, int h, bool genMips)
@@ -485,6 +549,7 @@ namespace t850 {
     if (pRT!= nullptr) {
       RTs.push_back(pRT);
       T8_LOG_DEBUG("RenderTarget created: handle %d (%dx%d, %d color attachments)", (int)(RTs.size()-1), w, h, nrt);
+      T8_TRACE_REGISTER_RT(pRT, nullptr, (int)(RTs.size() - 1));
       return static_cast<int>(RTs.size() - 1);
     }
     return -1;
@@ -501,6 +566,7 @@ namespace t850 {
       pRT->LoadRT(nrt, perColorFormats, df, w, h, genMips);
       RTs.push_back(pRT);
       T8_LOG_DEBUG("RenderTarget created (per-format): handle %d (%dx%d, %d colors)", (int)(RTs.size()-1), w, h, nrt);
+      T8_TRACE_REGISTER_RT(pRT, nullptr, (int)(RTs.size() - 1));
       return static_cast<int>(RTs.size() - 1);
     }
     return -1;

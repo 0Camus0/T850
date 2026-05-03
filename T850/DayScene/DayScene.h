@@ -74,6 +74,9 @@ class DayScene : public t850::SceneBase
     CHANGE_SHADOW_MIN,
     CHANGE_ENV_FACTOR,
     CHANGE_IBL_FACTOR,
+    CHANGE_MATERIAL_EMISSIVE_INTENSITY,
+    CHANGE_MATERIAL_TRANSMISSION_MULTIPLIER,
+    CHANGE_MATERIAL_REFRACTION_STRENGTH,
     CHANGE_CUBEMAP,
     CHANGE_PARALLAX_SHADOW_MIN_LAYERS,
     CHANGE_PARALLAX_SHADOW_MAX_LAYERS,
@@ -157,6 +160,13 @@ class DayScene : public t850::SceneBase
   //int
 
   int				EnvMapTexIndex;
+  int       DiffuseIBLTexIndex = -1;
+  int       SpecularIBLTexIndex = -1;
+  int       BrdfLUTTexIndex = -1;
+  int       SheenIBLTexIndex = -1;
+  int       CharlieLUTTexIndex = -1;
+  int       SheenELUTTexIndex = -1;
+  t850::EnvironmentMapSet EnvMaps;
   int       fireTextureIndx;
   int       noiseTexture;
 
@@ -180,6 +190,8 @@ class DayScene : public t850::SceneBase
   t850::PrimitiveInst splineInst;
   t850::WireframeSphere m_wireframeSphere;
   t850::WireframeArrow m_wireframeArrow;
+  t850::TextRenderer m_debugText;
+  bool m_showCullStats = false;
   t850::LensFlare m_flare;
   XMATRIX44 m;
 };

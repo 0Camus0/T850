@@ -12,6 +12,7 @@
 *********************************************************/
 
 #include <video/d3d11/D3D11RT.h>
+#include <debug/RenderTrace.h>
 #include <iostream>
 
 namespace t850 {
@@ -230,11 +231,23 @@ namespace t850 {
   }
 
   void D3DXRT::DestroyAPIRT() {
+    if (pDepthTexture) {
       pDepthTexture->release();
-
-    for (int i = 0; i < number_RT; i++) {
-      vColorTextures[i]->release();
+      pDepthTexture = nullptr;
     }
+
+    for (size_t i = 0; i < vColorTextures.size(); i++) {
+      if (vColorTextures[i])
+        vColorTextures[i]->release();
+    }
+    vColorTextures.clear();
+    vD3D11RenderTargetView.clear();
+    vD3D11ColorTex.clear();
+    D3D11DepthTex.Reset();
+    D3D11DepthStencilTargetView.Reset();
+    for (auto& dsv : D3D11CubeFaceDSVs)
+      dsv.Reset();
+    isCubeDepth = false;
   }
   void D3DXRT::Set(const DeviceContext& context)
   {
@@ -251,7 +264,7 @@ namespace t850 {
     if (isCubeDepth) {
       for (int face = 0; face < 6; face++) {
         deviceContext->OMSetRenderTargets(number_RT, &RTVA[0][0], D3D11CubeFaceDSVs[face].Get());
-        deviceContext->ClearDepthStencilView(D3D11CubeFaceDSVs[face].Get(), D3D11_CLEAR_DEPTH, 1.0f, 0);
+        deviceContext->ClearDepthStencilView(D3D11CubeFaceDSVs[face].Get(), D3D11_CLEAR_DEPTH, 0.0f, 0);
       }
       D3D11DepthStencilTargetView = D3D11CubeFaceDSVs[0];
     }
@@ -279,9 +292,45 @@ namespace t850 {
     }
 
     if (!isCubeDepth) {
-      deviceContext->ClearDepthStencilView(D3D11DepthStencilTargetView.Get(), D3D11_CLEAR_DEPTH, 1.0f, 0);
+      deviceContext->ClearDepthStencilView(D3D11DepthStencilTargetView.Get(), D3D11_CLEAR_DEPTH, 0.0f, 0);
     }
+#ifdef T850_RENDER_TRACE
+    if (T8_TRACE_ACTIVE()) {
+      int rtId = g_renderTracer->LookupRTId(this);
+      uint32_t flags = (number_RT > 0 ? 1u : 0u) | 2u;
+      g_renderTracer->EvClearRT(rtId, flags, rgba[0], rgba[1], rgba[2], rgba[3], 0.0f, 0);
+    }
+#endif
   }
+
+  void D3DXRT::SetLoad(const DeviceContext& context)
+  {
+    ID3D11DeviceContext* deviceContext = reinterpret_cast<ID3D11DeviceContext*>(T8DeviceContext->GetAPIObject());
+    std::vector<ID3D11RenderTargetView**> RTVA;
+    for (int i = 0; i < number_RT; i++) {
+      RTVA.push_back(vD3D11RenderTargetView[i].GetAddressOf());
+    }
+
+    if (number_RT == 0)
+      RTVA.push_back(0);
+
+    if (isCubeDepth) {
+      D3D11DepthStencilTargetView = D3D11CubeFaceDSVs[0];
+    }
+
+    deviceContext->OMSetRenderTargets(number_RT, &RTVA[0][0], D3D11DepthStencilTargetView.Get());
+
+    D3D11_VIEWPORT viewport_RT;
+    viewport_RT.TopLeftX = 0;
+    viewport_RT.TopLeftY = 0;
+    viewport_RT.Width = static_cast<float>(w);
+    viewport_RT.Height = static_cast<float>(h);
+    viewport_RT.MinDepth = 0;
+    viewport_RT.MaxDepth = 1;
+
+    deviceContext->RSSetViewports(1, &viewport_RT);
+  }
+
   void D3DXRT::ChangeCubeDepthTexture(int i)
   {
     if (!isCubeDepth || i < 0 || i >= 6) return;

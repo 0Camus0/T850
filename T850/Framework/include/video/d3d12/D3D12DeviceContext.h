@@ -32,10 +32,12 @@ namespace t850 {
     void DrawIndexed(unsigned vertexCount, unsigned startIndex, unsigned startVertex) override;
 
     ID3D12GraphicsCommandList* GetCommandList() const { return m_commandList.Get(); }
+    D3D12_PRIMITIVE_TOPOLOGY_TYPE GetTopologyType() const { return m_topologyType; }
 
   private:
     friend class D3D12Driver;
     ComPtr<ID3D12GraphicsCommandList> m_commandList;
+    D3D12_PRIMITIVE_TOPOLOGY_TYPE m_topologyType = D3D12_PRIMITIVE_TOPOLOGY_TYPE_TRIANGLE;
   };
 
 } // namespace t850

@@ -12,6 +12,7 @@
 #ifdef OS_WINDOWS
 
 #include <utils/Log.h>
+#include <debug/RenderTrace.h>
 
 namespace t850 {
 
@@ -108,6 +109,12 @@ namespace t850 {
     m_view.StrideInBytes = 0;
     T8_LOG_DEBUG("[D3D12] VB created: %d bytes%s", desc.byteWidth,
                  m_mappedData ? " (upload)" : " (default)");
+#ifdef T850_RENDER_TRACE
+    if (T8_TRACE_ACTIVE() && initialData) {
+      int bufId = g_renderTracer->EnsureBufferId(this, "vb");
+      g_renderTracer->RecordBufferUpdate(bufId, initialData, desc.byteWidth, "vb", "");
+    }
+#endif
   }
 
   void D3D12VertexBuffer::Set(const DeviceContext& deviceContext, const unsigned stride, const unsigned offset) {
@@ -116,6 +123,12 @@ namespace t850 {
     m_view.StrideInBytes = stride;
     auto* cmdList = static_cast<const D3D12DeviceContext*>(&deviceContext)->GetCommandList();
     cmdList->IASetVertexBuffers(0, 1, &m_view);
+#ifdef T850_RENDER_TRACE
+    if (T8_TRACE_ACTIVE()) {
+      int bufId = g_renderTracer->EnsureBufferId(this, "vb");
+      g_renderTracer->EvBindVertexBufferRequest(bufId, stride, offset);
+    }
+#endif
   }
 
   void D3D12VertexBuffer::UpdateFromSystemCopy(const DeviceContext& deviceContext) {
@@ -130,6 +143,12 @@ namespace t850 {
       // Rebind so the next DrawIndexed picks up the new address
       auto* cmdList = static_cast<const D3D12DeviceContext*>(&deviceContext)->GetCommandList();
       cmdList->IASetVertexBuffers(0, 1, &m_view);
+#ifdef T850_RENDER_TRACE
+      if (T8_TRACE_ACTIVE()) {
+        int bufId = g_renderTracer->EnsureBufferId(this, "vb");
+        g_renderTracer->RecordBufferUpdate(bufId, sysMemCpy.data(), size, "vb", "");
+      }
+#endif
     }
   }
   void D3D12VertexBuffer::UpdateFromBuffer(const DeviceContext& deviceContext, const void* buffer) {
@@ -144,6 +163,12 @@ namespace t850 {
     // Rebind so the next DrawIndexed picks up the new address
     auto* cmdList = static_cast<const D3D12DeviceContext*>(&deviceContext)->GetCommandList();
     cmdList->IASetVertexBuffers(0, 1, &m_view);
+#ifdef T850_RENDER_TRACE
+    if (T8_TRACE_ACTIVE()) {
+      int bufId = g_renderTracer->EnsureBufferId(this, "vb");
+      g_renderTracer->RecordBufferUpdate(bufId, buffer, size, "vb", "");
+    }
+#endif
   }
   void D3D12VertexBuffer::release() {
     if (m_mappedData) { m_buffer->Unmap(0, nullptr); m_mappedData = nullptr; }

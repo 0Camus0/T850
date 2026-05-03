@@ -19,6 +19,7 @@ namespace t850 {
     bool LoadAPIRT() override;
     void DestroyAPIRT() override;
     void Set(const DeviceContext& context) override;
+    void SetLoad(const DeviceContext& context) override;
     void ChangeCubeDepthTexture(int i) override;
 
     std::vector<ComPtr<ID3D12Resource>>       vColorResources;
@@ -26,6 +27,7 @@ namespace t850 {
     ComPtr<ID3D12Resource>                    depthResource;
     D3D12_CPU_DESCRIPTOR_HANDLE               depthDSV = {};
     DXGI_FORMAT                               colorFormat = DXGI_FORMAT_R8G8B8A8_UNORM;
+    std::vector<DXGI_FORMAT>                  vColorFormats;
     bool isCubeDepth = false;
     D3D12_CPU_DESCRIPTOR_HANDLE               cubeFaceDSVs[6] = {};
     // Track resource states for barriers

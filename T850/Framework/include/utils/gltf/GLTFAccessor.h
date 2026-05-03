@@ -37,6 +37,8 @@ struct DracoDecodeResult {
   std::vector<float>    tangents;    // N*4 or empty
   std::vector<float>    texcoord0;   // N*2 or empty
   std::vector<float>    texcoord1;   // N*2 or empty
+  std::vector<float>    texcoord2;   // N*2 or empty
+  std::vector<float>    texcoord3;   // N*2 or empty
   std::vector<float>    colors;      // N*3 or N*4 or empty
   std::vector<uint32_t> indices;
   uint32_t              maxIndex = 0;

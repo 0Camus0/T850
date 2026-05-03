@@ -12,6 +12,7 @@
 *********************************************************/
 
 #include <video/d3d11/D3D11VertexBuffer.h>
+#include <debug/RenderTrace.h>
 
 namespace t850 {
   void * D3DXVertexBuffer::GetAPIObject() const
@@ -29,6 +30,12 @@ namespace t850 {
     const_cast<DeviceContext*>(&deviceContext)->actualVertexBuffer = (VertexBuffer*)this;
     ID3D11Buffer* raw = APIBuffer.Get();
     reinterpret_cast<ID3D11DeviceContext*>(deviceContext.GetAPIObject())->IASetVertexBuffers(0, 1, &raw, &stride, &offset);
+#ifdef T850_RENDER_TRACE
+    if (T8_TRACE_ACTIVE()) {
+      int bufId = g_renderTracer->EnsureBufferId(this, "vb");
+      g_renderTracer->EvBindVertexBufferRequest(bufId, stride, offset);
+    }
+#endif
   }
   void D3DXVertexBuffer::Create(const Device & device, BufferDesc desc, void * initialData)
   {
@@ -67,6 +74,12 @@ namespace t850 {
       reinterpret_cast<ID3D11Device*>(device.GetAPIObject())->CreateBuffer(&apiDesc, 0, APIBuffer.ReleaseAndGetAddressOf());
     }
 
+#ifdef T850_RENDER_TRACE
+    if (T8_TRACE_ACTIVE() && initialData) {
+      int bufId = g_renderTracer->EnsureBufferId(this, "vb");
+      g_renderTracer->RecordBufferUpdate(bufId, initialData, desc.byteWidth, "vb", "");
+    }
+#endif
   }
   void D3DXVertexBuffer::UpdateFromSystemCopy(const DeviceContext& deviceContext)
   {
@@ -81,6 +94,12 @@ namespace t850 {
     } else {
       ctx->UpdateSubresource(APIBuffer.Get(), 0, 0, &sysMemCpy[0], 0, 0);
     }
+#ifdef T850_RENDER_TRACE
+    if (T8_TRACE_ACTIVE() && !sysMemCpy.empty()) {
+      int bufId = g_renderTracer->EnsureBufferId(this, "vb");
+      g_renderTracer->RecordBufferUpdate(bufId, sysMemCpy.data(), (uint32_t)sysMemCpy.size(), "vb", "");
+    }
+#endif
   }
   void D3DXVertexBuffer::UpdateFromBuffer(const DeviceContext& deviceContext, const void * buffer)
   {
@@ -97,6 +116,12 @@ namespace t850 {
     } else {
       ctx->UpdateSubresource(APIBuffer.Get(), 0, 0, buffer, 0, 0);
     }
+#ifdef T850_RENDER_TRACE
+    if (T8_TRACE_ACTIVE()) {
+      int bufId = g_renderTracer->EnsureBufferId(this, "vb");
+      g_renderTracer->RecordBufferUpdate(bufId, buffer, descriptor.byteWidth, "vb", "");
+    }
+#endif
   }
   void D3DXVertexBuffer::release()
   {

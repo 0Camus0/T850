@@ -92,10 +92,14 @@ namespace t850 {
     void SaveScreenshot(std::string path) override;
     void SaveRTToFile(int rtID, int attachment, std::string path) override;
 	void SetCullFace(FaceCulling state) override;
+#ifdef T850_RENDER_TRACE
+    void RefreshTracePendingRenderState() override;
+#endif
 
     void	PopRT();
 
     void	Clear();
+    void	ClearWithColor(float r, float g, float b, float a) override;
     void	SwapBuffers();
     bool	CheckExtension(std::string s);
 #if defined(USING_OPENGL_ES20) || defined(USING_OPENGL_ES30) || defined(USING_OPENGL_ES31)

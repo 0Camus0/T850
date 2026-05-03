@@ -423,6 +423,30 @@ Once the host launches the server, it exposes these tools:
 - `generate_visual_report` — write an HTML report plus PPM diff heatmaps.
 - `suggest_likely_cause` — explain likely causes from a comparison result.
 
+When the engine is built with `-DT850_RENDER_TRACE=ON`
+(and optionally `-DT850_TRACE_GEOMETRY=ON` for cbuffer hex), every
+`FrameDumper::DumpFrame` also writes `trace.json` next to the PPMs. The
+following tools analyze that file. They are designed to be cross-API safe:
+they ignore per-API binding-model differences (e.g. D3D12 root rebinds vs
+D3D11/Vulkan/GL slot reuse, Vulkan `<dummy>` descriptor-set fillers, HLSL
+vs GLSL filename suffixes) so the only divergences they report are real:
+
+- `summarize_trace` — counts, top shaders, and high-level sanity per trace.
+- `compare_traces` — structural comparison: per-draw cumulative-state
+  divergence by kind (`shader_logical`, `cbuffer_content_unknown_to_*`,
+  `textures_logical`, `vb_id`, `ib_id`, `blend`, `depth`, `cull`,
+  `vertex_count`, `rt_id`).
+- `diff_draws` — per-draw flat list of differing fields (path, ref, cand);
+  good for finding what kind of state diverges across many draws.
+- `find_first_diverging_draw` — the first aligned draw with any positional
+  state difference, with full ref/cand context. Use `start_at` to skip
+  past a known-good range and find the next regression.
+- `dump_cbuffer_hex` — decode a single draw's cbuffer slices to float32
+  (or raw hex with `--hex`); requires `T850_TRACE_GEOMETRY=ON`.
+- `diff_cbuffer_floats` — float-level diff of one draw's cbuffers between
+  APIs, paired hash-first then size-fallback so D3D12's mandatory root
+  rebinds never look like content divergence vs D3D11's slot reuse.
+
 CLI fallback for CI or non-MCP agents:
 
 ```bash
@@ -430,7 +454,35 @@ python T850/scripts/compare_dumps.py path/to/reference path/to/candidate
 python T850/scripts/compare_dumps.py path/to/reference path/to/candidate --report out/snapshot-report
 python T850/scripts/t850_snapshot_mcp.py compare-snapshots path/to/reference path/to/candidate
 python T850/scripts/t850_snapshot_mcp.py generate-report path/to/reference path/to/candidate out/snapshot-report
+
+# Trace tools (engine built with T850_RENDER_TRACE=ON)
+python T850/scripts/t850_snapshot_mcp.py summarize-trace path/to/dump_dir
+python T850/scripts/t850_snapshot_mcp.py compare-traces path/to/reference path/to/candidate
+python T850/scripts/t850_snapshot_mcp.py diff-draws path/to/reference path/to/candidate --max-results 5
+python T850/scripts/t850_snapshot_mcp.py first-diverging-draw path/to/reference path/to/candidate
+python T850/scripts/t850_snapshot_mcp.py dump-cbuffer path/to/dump_dir <draw_index> [--slot N] [--hex]
+python T850/scripts/t850_snapshot_mcp.py diff-cbuffer path/to/reference path/to/candidate <draw_index> [--epsilon 1e-5]
 ```
+
+#### Cross-API divergence playbook
+
+When a backend renders incorrectly compared to a known-good reference (e.g.
+D3D12 looks correct, Vulkan does not), a typical workflow is:
+
+1. Build with `-DT850_RENDER_TRACE=ON -DT850_TRACE_GEOMETRY=ON` and
+   capture a snapshot in each backend that replays the same `snapshot.json`.
+   Each capture writes both the PPM render-target dumps and `trace.json`.
+2. Run `compare-snapshots` to confirm where the visual divergence lives
+   (which render targets differ and by how much).
+3. Run `compare-traces` to see whether the divergence is in tracked GPU
+   state (shaders, buffers, render states, texture/cbuffer content) or
+   below tracer level (sampler state, RT format, shader source).
+4. If tracked state diverges: run `first-diverging-draw` to isolate the
+   exact draw, then `diff-cbuffer` on that draw to find the offending
+   floats. If `compare-traces` reports zero divergences but the visual
+   diff is large, the bug is below the tracer floor — look at sampler
+   creation, render-target formats, GLSL/HLSL/SPIR-V shader sources, and
+   coordinate-system conventions (Y flip, NDC depth range).
 
 ### Linux (CMake)
 

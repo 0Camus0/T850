@@ -9,6 +9,7 @@
 #ifdef OS_WINDOWS
 
 #include <utils/Log.h>
+#include <debug/RenderTrace.h>
 
 namespace t850 {
 
@@ -43,6 +44,7 @@ namespace t850 {
     DXGI_FORMAT srvDepthFmt = DXGI_FORMAT_R32_FLOAT;
     isCubeDepth = (depth_format == BaseRT::CUBE_F32);
     colorFormat = cfmt;  // cache for PSO lookup
+    vColorFormats.clear();
 
     // Color attachments
     for (int i = 0; i < number_RT; i++) {
@@ -59,6 +61,7 @@ namespace t850 {
           default: break;
         }
       }
+      vColorFormats.push_back(thisFmt);
 
       D3D12_RESOURCE_DESC desc = {};
       desc.Dimension = D3D12_RESOURCE_DIMENSION_TEXTURE2D;
@@ -87,6 +90,9 @@ namespace t850 {
       D3D12Texture* colorTex = new D3D12Texture;
       colorTex->pTexResource = colorRes;
       colorTex->x = w; colorTex->y = h;
+      colorTex->mipmaps = 1;
+      colorTex->m_channels = 4;
+      colorTex->params = TextBasicParams::CLAMP_TO_EDGE;
       D3D12_SHADER_RESOURCE_VIEW_DESC srvDesc = {};
       srvDesc.Format = thisFmt;
       srvDesc.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE2D;
@@ -95,6 +101,7 @@ namespace t850 {
       colorTex->srvCPU = driver->GetHeap(D3D12Heap::CBV_SRV_UAV_VISIBLE).AllocateCPU();
       colorTex->srvGPU = driver->GetHeap(D3D12Heap::CBV_SRV_UAV_VISIBLE).AllocateGPU();
       device->CreateShaderResourceView(colorRes.Get(), &srvDesc, colorTex->srvCPU);
+      colorTex->SetTextureParams();
       vColorTextures.push_back(colorTex);
 
       T8_LOG_DEBUG("[D3D12] RT color[%d] created: %dx%d fmt=%d", i, w, h, thisFmt);
@@ -110,7 +117,7 @@ namespace t850 {
     depthDesc.Flags = D3D12_RESOURCE_FLAG_ALLOW_DEPTH_STENCIL;
 
     D3D12_CLEAR_VALUE depthClear = {}; depthClear.Format = dsvFmt;
-    depthClear.DepthStencil.Depth = 1.0f;
+    depthClear.DepthStencil.Depth = 0.0f;
     D3D12_HEAP_PROPERTIES heapProps = {}; heapProps.Type = D3D12_HEAP_TYPE_DEFAULT;
 
     HRESULT hr = device->CreateCommittedResource(&heapProps, D3D12_HEAP_FLAG_NONE, &depthDesc,
@@ -142,6 +149,9 @@ namespace t850 {
     D3D12Texture* depthTex = new D3D12Texture;
     depthTex->pTexResource = depthResource;
     depthTex->x = w; depthTex->y = h;
+    depthTex->mipmaps = 1;
+    depthTex->m_channels = 1;
+    depthTex->params = TextBasicParams::CLAMP_TO_BORDER;
     D3D12_SHADER_RESOURCE_VIEW_DESC depthSrvDesc = {};
     depthSrvDesc.Format = srvDepthFmt;
     depthSrvDesc.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
@@ -155,6 +165,7 @@ namespace t850 {
     depthTex->srvCPU = driver->GetHeap(D3D12Heap::CBV_SRV_UAV_VISIBLE).AllocateCPU();
     depthTex->srvGPU = driver->GetHeap(D3D12Heap::CBV_SRV_UAV_VISIBLE).AllocateGPU();
     device->CreateShaderResourceView(depthResource.Get(), &depthSrvDesc, depthTex->srvCPU);
+    depthTex->SetTextureParams();
     pDepthTexture = depthTex;
 
     T8_LOG_INFO("[D3D12] RT created: %dx%d, %d colors (fmt=%d), depth (cube=%d)", w, h, number_RT, cfmt, isCubeDepth);
@@ -171,6 +182,7 @@ namespace t850 {
     vColorTextures.clear();
     vColorResources.clear();
     vRTVHandles.clear();
+    vColorFormats.clear();
     depthResource.Reset();
   }
 
@@ -226,7 +238,54 @@ namespace t850 {
     float black[4] = { 0, 0, 0, 0 };
     for (int i = 0; i < number_RT; i++)
       cmdList->ClearRenderTargetView(vRTVHandles[i], black, 0, nullptr);
-    cmdList->ClearDepthStencilView(depthDSV, D3D12_CLEAR_FLAG_DEPTH, 1.0f, 0, 0, nullptr);
+    cmdList->ClearDepthStencilView(depthDSV, D3D12_CLEAR_FLAG_DEPTH, 0.0f, 0, 0, nullptr);
+#ifdef T850_RENDER_TRACE
+    if (T8_TRACE_ACTIVE()) {
+      int rtId = g_renderTracer->LookupRTId(this);
+      uint32_t flags = (number_RT > 0 ? 1u : 0u) | (depthResource ? 2u : 0u);
+      g_renderTracer->EvClearRT(rtId, flags, black[0], black[1], black[2], black[3], 0.0f, 0);
+    }
+#endif
+  }
+
+  void D3D12RT::SetLoad(const DeviceContext& context) {
+    auto* cmdList = static_cast<const D3D12DeviceContext*>(&context)->GetCommandList();
+
+    T8_LOG_TRACE("[D3D12] RT::SetLoad %dx%d colors=%d depth=%s", w, h, number_RT, isCubeDepth ? "cube" : "2D");
+
+    for (int i = 0; i < number_RT; i++) {
+      if (vColorStates[i] != D3D12_RESOURCE_STATE_RENDER_TARGET) {
+        D3D12_RESOURCE_BARRIER b = {};
+        b.Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
+        b.Transition.pResource = vColorResources[i].Get();
+        b.Transition.StateBefore = vColorStates[i];
+        b.Transition.StateAfter = D3D12_RESOURCE_STATE_RENDER_TARGET;
+        b.Transition.Subresource = D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES;
+        cmdList->ResourceBarrier(1, &b);
+        vColorStates[i] = D3D12_RESOURCE_STATE_RENDER_TARGET;
+      }
+    }
+
+    if (depthResource && depthState != D3D12_RESOURCE_STATE_DEPTH_WRITE) {
+      D3D12_RESOURCE_BARRIER b = {};
+      b.Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
+      b.Transition.pResource = depthResource.Get();
+      b.Transition.StateBefore = depthState;
+      b.Transition.StateAfter = D3D12_RESOURCE_STATE_DEPTH_WRITE;
+      b.Transition.Subresource = D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES;
+      cmdList->ResourceBarrier(1, &b);
+      depthState = D3D12_RESOURCE_STATE_DEPTH_WRITE;
+    }
+
+    if (number_RT > 0)
+      cmdList->OMSetRenderTargets(number_RT, vRTVHandles.data(), FALSE, &depthDSV);
+    else
+      cmdList->OMSetRenderTargets(0, nullptr, FALSE, &depthDSV);
+
+    D3D12_VIEWPORT vp = { 0.f, 0.f, (float)w, (float)h, 0.f, 1.f };
+    D3D12_RECT sc = { 0, 0, (LONG)w, (LONG)h };
+    cmdList->RSSetViewports(1, &vp);
+    cmdList->RSSetScissorRects(1, &sc);
   }
 
   void D3D12RT::ChangeCubeDepthTexture(int i) {

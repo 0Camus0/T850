@@ -69,6 +69,9 @@ namespace t850 {
     void PopRT() override;
     void SaveScreenshot(std::string path) override;
     void SaveRTToFile(int rtID, int attachment, std::string path) override;
+#ifdef T850_RENDER_TRACE
+    void RefreshTracePendingRenderState() override;
+#endif
 
     // ── D3D12-specific overrides ──
     void BeginFrame() override;
@@ -87,7 +90,7 @@ namespace t850 {
 
     // PSO cache — lazy creation
     ID3D12PipelineState* GetOrCreatePSO(D3D12Shader* shader, uint8_t numRTVs = 1,
-                                         DXGI_FORMAT rtvFormat = DXGI_FORMAT_R8G8B8A8_UNORM,
+                                         const DXGI_FORMAT* rtvFormats = nullptr,
                                          DXGI_FORMAT dsvFormat = DXGI_FORMAT_D32_FLOAT);
 
     // Default sampler GPU handle
@@ -160,10 +163,11 @@ namespace t850 {
     D3D12_RECT     m_scissorRect = {};
 
     // Per-frame constant buffer ring allocator
-    static const UINT kCBRingBufferSize = 4 * 1024 * 1024; // 4 MB per frame
+    static const UINT kCBRingBufferSize = 16 * 1024 * 1024; // 16 MB per frame
     ComPtr<ID3D12Resource> m_cbRingBuffers[kBackBufferCount];
     void*                  m_cbRingMapped[kBackBufferCount] = {};
     UINT                   m_cbRingOffset = 0;  // current offset within active ring buffer
+    UINT                   m_cbRingPeakUsage = 0; // high-water mark across all frames so far
 
     // Per-frame dynamic descriptor region (within CBV_SRV_UAV_VISIBLE heap)
     uint64_t m_dynamicDescriptorBase = 512;  // safe initial offset (permanent descs < 512)

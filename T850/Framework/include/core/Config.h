@@ -45,6 +45,8 @@ public:
   int profileFrames = 300;
   int dumpMatricesFrames = 0;
   std::string modelPath = "Models/DamagedHelmet.glb";
+  bool orbitYawOverride = false;
+  float orbitYaw = 0.0f;
 };
 
 extern Config g_config;

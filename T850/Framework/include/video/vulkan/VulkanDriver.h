@@ -59,6 +59,9 @@ namespace t850 {
     void SaveScreenshot(std::string path) override;
     void SaveRTToFile(int rtID, int attachment, std::string path) override;
     bool ResizeSwapchain(int newW, int newH) override;
+#ifdef T850_RENDER_TRACE
+    void RefreshTracePendingRenderState() override;
+#endif
 
     // ── Vulkan-specific overrides ──
     void BeginFrame() override;
@@ -128,9 +131,22 @@ namespace t850 {
     struct PendingTextureBinding {
       VkImageView imageView = VK_NULL_HANDLE;
       VkSampler   sampler   = VK_NULL_HANDLE;
+      // Tracer-only: cached texture id + display name resolved at request time
+      // so BindPendingDescriptors can emit a commit event correlating slot ->
+      // texture id without a costly reverse lookup.
+      int         tracerTexId = -1;
+      char        tracerName[64] = {};
+      char        tracerStage[4] = {};
+      // Tracer-only: logical sampler signature id (built from TextBasicParams
+      // by VulkanTexture::Set so cross-API trace diffs are meaningful).
+      int         tracerSamplerId = -1;
     };
-    PendingTextureBinding m_pendingTextures[8] = {};
-    VkDescriptorBufferInfo m_pendingCB = {};
+    PendingTextureBinding m_pendingTextures[VulkanShader::kMaxTextureSlots] = {};
+    struct PendingConstantBufferBinding {
+      VkDescriptorBufferInfo bufferInfo = {};
+      int tracerId = -1;
+    };
+    PendingConstantBufferBinding m_pendingCBs[VulkanShader::kMaxCBufferSlots] = {};
     bool m_cbDirty = false;
 
     // Allocate vertex data from the per-frame ring buffer (for dynamic VBs like GUI quads)
@@ -210,11 +226,12 @@ namespace t850 {
     VkRect2D        m_scissorRect = {};
 
     // Per-frame constant buffer ring allocator
-    static const uint32_t kCBRingBufferSize = 4 * 1024 * 1024; // 4 MB per frame
+    static const uint32_t kCBRingBufferSize = 16 * 1024 * 1024; // 16 MB per frame
     VkBuffer        m_cbRingBuffers[kBackBufferCount] = {};
     VmaAllocation   m_cbRingAllocations[kBackBufferCount] = {};
     void*           m_cbRingMapped[kBackBufferCount] = {};
     uint32_t        m_cbRingOffset = 0;
+    uint32_t        m_cbRingPeakUsage = 0; // high-water mark across all frames so far
 
     // Descriptor set cache — keyed by (layout + texture fingerprint)
     // Cleared each frame when the descriptor pool is reset.

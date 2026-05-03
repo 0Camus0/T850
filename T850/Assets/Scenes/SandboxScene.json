@@ -46,6 +46,12 @@
     { "kernel_size": 23, "radius": 3.0, "sigma": 6.0 }
   ],
   "environment_map": "sky/Pisa.dds",
+  "environment_diffuse_ibl": "",
+  "environment_specular_ibl": "",
+  "environment_brdf_lut": "LUT/lut_ggx.png",
+  "environment_sheen_ibl": "",
+  "environment_charlie_lut": "LUT/lut_charlie.png",
+  "environment_sheen_e_lut": "LUT/lut_sheen_E.png",
   "quality": {
     "shadow_map_resolution": 1024.0,
     "pcf_scale": 1.7,
@@ -76,7 +82,10 @@
     "env_factor": 0.3,
     "ibl_factor": 1.0,
     "shadow_bias": 0.001,
-    "shadow_min": 0.2
+    "shadow_min": 0.2,
+    "material_emissive_intensity": 1.0,
+    "material_transmission_multiplier": 1.0,
+    "material_refraction_strength": 0.03
   },
   "sliders": [
     { "name": "exposure",              "label": "Exposure",          "min_val": -10,   "max_val": 10,  "step": 0.1, "default_val": 1.0 },
@@ -92,10 +101,13 @@
     { "name": "gauss_kernel_deviation","label": "Gauss Sigma",      "min_val": 0.5,   "max_val": 10,  "step": 0.5, "default_val": 4.5 },
     { "name": "fov",                   "label": "FOV",               "min_val": 20,    "max_val": 120, "step": 1.0, "default_val": 46.8 },
     { "name": "light_intensity",       "label": "Light Intensity",   "min_val": 0.0,   "max_val": 20.0,"step": 0.1, "default_val": 5.0 },
-    { "name": "shadow_bias",           "label": "Shadow Bias",       "min_val": 0,     "max_val": 0.00005, "step": 1e-7, "default_val": 0.000005 },
+    { "name": "shadow_bias",           "label": "Shadow Bias",       "min_val": 0,     "max_val": 0.005, "step": 0.0001, "default_val": 0.001 },
     { "name": "shadow_min",            "label": "Shadow Intensity",  "min_val": 0,     "max_val": 1.0,  "step": 0.01, "default_val": 0.2 },
     { "name": "env_factor",            "label": "Env Factor",        "min_val": 0.0,   "max_val": 10.0, "step": 0.05, "default_val": 1.0 },
     { "name": "ibl_factor",             "label": "IBL Factor",        "min_val": 0.0,   "max_val": 5.0, "step": 0.05, "default_val": 1.0 },
+    { "name": "material_emissive_intensity", "label": "Emissive Intensity", "min_val": 0.0, "max_val": 100.0, "step": 0.5, "default_val": 1.0 },
+    { "name": "material_transmission_multiplier", "label": "Transmission Boost", "min_val": 0.0, "max_val": 100.0, "step": 0.5, "default_val": 1.0 },
+    { "name": "material_refraction_strength", "label": "Refraction Strength", "min_val": 0.0, "max_val": 0.2, "step": 0.005, "default_val": 0.03 },
     { "name": "anim_speed",            "label": "Anim Speed",        "min_val": 0.0,   "max_val": 2.0, "step": 0.1,  "default_val": 1.0 }
   ],
   "checkboxes": [

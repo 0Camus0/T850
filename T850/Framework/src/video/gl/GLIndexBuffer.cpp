@@ -13,6 +13,7 @@
 
 #include <video/gl/GLIndexBuffer.h>
 #include <video/gl/GLDeviceContext.h>
+#include <debug/RenderTrace.h>
 
 #ifdef T850_HEADLESS
 #include <GLES3/gl31.h>
@@ -70,17 +71,32 @@ namespace t850 {
     }
     const_cast<DeviceContext*>(&deviceContext)->actualIndexBuffer = (IndexBuffer*)this;
     glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, APIID);
+#ifdef T850_RENDER_TRACE
+    if (T8_TRACE_ACTIVE()) {
+      int bufId = g_renderTracer->EnsureBufferId(this, "ib");
+      g_renderTracer->EvBindIndexBufferRequest(bufId, (int)format, offset);
+    }
+#endif
   }
   void GLIndexBuffer::UpdateFromSystemCopy(const DeviceContext & deviceContext)
   {
     glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, APIID);
     glBufferData(GL_ELEMENT_ARRAY_BUFFER, descriptor.byteWidth, &sysMemCpy[0], GL_STATIC_DRAW);
+#ifdef T850_RENDER_TRACE
+    if (T8_TRACE_ACTIVE() && !sysMemCpy.empty()) {
+      int bufId = g_renderTracer->EnsureBufferId(this, "ib");
+      g_renderTracer->RecordBufferUpdate(bufId, sysMemCpy.data(), (uint32_t)sysMemCpy.size(), "ib", "");
+    }
+#endif
   }
   void GLIndexBuffer::UpdateFromBuffer(const DeviceContext & deviceContext, const void * buffer)
   {
     sysMemCpy.clear();
     sysMemCpy.assign((char*)buffer, (char*)buffer + descriptor.byteWidth);
     UpdateFromSystemCopy(deviceContext);
+    // RecordBufferUpdate is intentionally only emitted by UpdateFromSystemCopy
+    // — it is the leaf path that all updates flow through. Adding another
+    // record here would double-version the same upload.
   }
   void GLIndexBuffer::release()
   {
@@ -99,5 +115,11 @@ namespace t850 {
     glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, APIID);
     glBufferData(GL_ELEMENT_ARRAY_BUFFER, desc.byteWidth, initialData, GL_STATIC_DRAW);
     glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, 0);
+#ifdef T850_RENDER_TRACE
+    if (T8_TRACE_ACTIVE() && initialData) {
+      int bufId = g_renderTracer->EnsureBufferId(this, "ib");
+      g_renderTracer->RecordBufferUpdate(bufId, initialData, desc.byteWidth, "ib", "");
+    }
+#endif
   }
 }

@@ -32,6 +32,7 @@ namespace t850 {
     bool			LoadAPIRT();
     void			DestroyAPIRT();
     void Set(const DeviceContext& context) override;
+    void SetLoad(const DeviceContext& context) override;
     void ChangeCubeDepthTexture(int i) override;
     std::vector<ComPtr<ID3D11RenderTargetView>>		vD3D11RenderTargetView;
     std::vector<ComPtr<ID3D11Texture2D>>			vD3D11ColorTex;

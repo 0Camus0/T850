@@ -1,6 +1,7 @@
 #include <pch.h>
 #include <video/d3d11/D3D11Shader.h>
 #include <utils/Log.h>
+#include <debug/RenderTrace.h>
 
 
 namespace t850 {
@@ -11,6 +12,8 @@ namespace t850 {
     ID3D11Device* device = reinterpret_cast<ID3D11Device*>(T8Device->GetAPIObject());
     ID3D11DeviceContext* deviceContext = reinterpret_cast<ID3D11DeviceContext*>(T8DeviceContext->GetAPIObject());
     HRESULT hr = S_OK;
+    cbvSlots.clear();
+    VertexDecl.clear();
     {
       VS_blob = nullptr;
       ComPtr<ID3DBlob> errorBlob = nullptr;
@@ -55,6 +58,24 @@ namespace t850 {
         return false;
       }
     }
+    auto collectCBVSlots = [&](ID3DBlob* blob) {
+      ID3D11ShaderReflection* resourceReflect = nullptr;
+      if (D3DReflect(blob->GetBufferPointer(), blob->GetBufferSize(), IID_ID3D11ShaderReflection, (void**)&resourceReflect) != S_OK || !resourceReflect)
+        return;
+      D3D11_SHADER_DESC shaderDesc = {};
+      resourceReflect->GetDesc(&shaderDesc);
+      for (UINT i = 0; i < shaderDesc.BoundResources; i++) {
+        D3D11_SHADER_INPUT_BIND_DESC bindDesc = {};
+        resourceReflect->GetResourceBindingDesc(i, &bindDesc);
+        if (bindDesc.Type == D3D_SIT_CBUFFER) {
+          cbvSlots.insert((int)bindDesc.BindPoint);
+        }
+      }
+      resourceReflect->Release();
+    };
+    collectCBVSlots(VS_blob.Get());
+    collectCBVSlots(FS_blob.Get());
+
     ID3D11ShaderReflection* reflect;
 
     hr = D3DReflect(VS_blob->GetBufferPointer(), VS_blob->GetBufferSize(), IID_ID3D11ShaderReflection, (void**)&reflect);
@@ -117,16 +138,60 @@ namespace t850 {
 
     reflect->Release();
 
+#ifdef T850_RENDER_TRACE
+    if (T8_TRACE_ACTIVE()) {
+      // Stash the input layout for the tracer keyed by ShaderBase*; the
+      // shader hasn't been registered yet (BaseDriver::CreateShader does
+      // that after T8Device->CreateShader returns), so we can't use a
+      // shader id here. Mirrors the D3D12 path.
+      std::vector<TraceShaderAttr> attrs;
+      attrs.reserve(VertexDecl.size());
+      for (size_t i = 0; i < VertexDecl.size(); ++i) {
+        const auto& ie = VertexDecl[i];
+        TraceShaderAttr a;
+        a.semantic   = std::string(ie.SemanticName ? ie.SemanticName : "")
+                     + (ie.SemanticIndex > 0 ? std::to_string(ie.SemanticIndex) : std::string());
+        a.location   = (int)ie.SemanticIndex;
+        a.input_slot = (int)ie.InputSlot;
+        a.offset     = ie.AlignedByteOffset;
+        switch (ie.Format) {
+          case DXGI_FORMAT_R32_FLOAT:           a.format = "R32_FLOAT";          a.size_bytes = 4;  break;
+          case DXGI_FORMAT_R32G32_FLOAT:        a.format = "R32G32_FLOAT";       a.size_bytes = 8;  break;
+          case DXGI_FORMAT_R32G32B32_FLOAT:     a.format = "R32G32B32_FLOAT";    a.size_bytes = 12; break;
+          case DXGI_FORMAT_R32G32B32A32_FLOAT:  a.format = "R32G32B32A32_FLOAT"; a.size_bytes = 16; break;
+          case DXGI_FORMAT_R32_UINT:            a.format = "R32_UINT";           a.size_bytes = 4;  break;
+          case DXGI_FORMAT_R32G32_UINT:         a.format = "R32G32_UINT";        a.size_bytes = 8;  break;
+          case DXGI_FORMAT_R32G32B32_UINT:      a.format = "R32G32B32_UINT";     a.size_bytes = 12; break;
+          case DXGI_FORMAT_R32G32B32A32_UINT:   a.format = "R32G32B32A32_UINT";  a.size_bytes = 16; break;
+          case DXGI_FORMAT_R32_SINT:            a.format = "R32_SINT";           a.size_bytes = 4;  break;
+          case DXGI_FORMAT_R32G32_SINT:         a.format = "R32G32_SINT";        a.size_bytes = 8;  break;
+          case DXGI_FORMAT_R32G32B32_SINT:      a.format = "R32G32B32_SINT";     a.size_bytes = 12; break;
+          case DXGI_FORMAT_R32G32B32A32_SINT:   a.format = "R32G32B32A32_SINT";  a.size_bytes = 16; break;
+          default:                              a.format = "DXGI_FORMAT_" + std::to_string((int)ie.Format); break;
+        }
+        attrs.push_back(std::move(a));
+      }
+      g_renderTracer->RegisterShaderInputsForPtr(this, (uint32_t)offset, std::move(attrs));
+    }
+#endif
+
     return true;
   }
 
   void D3DXShader::Set(const DeviceContext & deviceContext)
   {
-    T8_LOG_TRACE("[D3D11] Shader::Set key=0x%08X", key.bits);
+    T8_LOG_TRACE("[D3D11] Shader::Set key=0x%016llX", static_cast<unsigned long long>(key.bits));
     const_cast<DeviceContext*>(&deviceContext)->actualShaderSet = (ShaderBase*)this;
     reinterpret_cast<ID3D11DeviceContext*>(deviceContext.GetAPIObject())->VSSetShader(pVS.Get(), 0, 0);
     reinterpret_cast<ID3D11DeviceContext*>(deviceContext.GetAPIObject())->PSSetShader(pFS.Get(), 0, 0);
     reinterpret_cast<ID3D11DeviceContext*>(deviceContext.GetAPIObject())->IASetInputLayout(Layout.Get());
+#ifdef T850_RENDER_TRACE
+    if (T8_TRACE_ACTIVE()) {
+      int shId = g_renderTracer->LookupShaderId(this);
+      g_renderTracer->EvBindShader(shId, key.bits);
+      // No PSO concept in D3D11 — intentionally no EvBindPSO.
+    }
+#endif
   }
   void D3DXShader::DestroyAPIShader()
   {

@@ -1,12 +1,13 @@
 {
   "render_targets": [
-    { "name": "GBuffer",           "color_count": 5, "color_format": "RGBA16F", "depth_format": "F32",  "size": [0,0], "linear_filter": true },
+    { "name": "GBuffer",           "color_count": 7, "color_formats": ["RGBA8", "RGBA16F", "RGBA8", "RGBA8", "RGBA16F", "RGBA8", "RGBA8"], "depth_format": "F32",  "size": [0,0], "linear_filter": true },
     { "name": "Deferred",          "color_count": 1, "color_format": "RGBA16F", "depth_format": "NONE", "size": [0,0], "linear_filter": true },
     { "name": "Extra16F",          "color_count": 1, "color_format": "RGBA16F", "depth_format": "NONE", "size": [0,0], "linear_filter": true },
     { "name": "DepthPass",         "color_count": 0, "color_format": "NONE",    "depth_format": "F32",  "size": [0,0], "linear_filter": false, "size_ref": "$shadow_resolution" },
     { "name": "ShadowAccum",       "color_count": 1, "color_format": "R8",      "depth_format": "NONE", "size": [0,0], "linear_filter": true },
     { "name": "ExtraHelper",       "color_count": 1, "color_format": "RGBA8",   "depth_format": "NONE", "size": [0,0], "linear_filter": true },
     { "name": "BloomAccum",        "color_count": 1, "color_format": "RGBA8",   "depth_format": "NONE", "size": [512,512], "linear_filter": true },
+    { "name": "BloomHelper",       "color_count": 1, "color_format": "RGBA8",   "depth_format": "NONE", "size": [512,512], "linear_filter": true },
     { "name": "LuminanceMap",      "color_count": 1, "color_format": "F16",     "depth_format": "NONE", "size": [0,0], "linear_filter": true },
     { "name": "AdaptedLumCurrent", "color_count": 1, "color_format": "F16",     "depth_format": "NONE", "size": [1,1], "linear_filter": false },
     { "name": "AdaptedLumPrev",    "color_count": 1, "color_format": "F16",     "depth_format": "NONE", "size": [1,1], "linear_filter": false }
@@ -35,7 +36,7 @@
       "name": "Shadow Accumulation",
       "target": "ShadowAccum",
       "inputs": [
-        { "source": "GBuffer:COLOR4",  "slot": 0 },
+        { "source": "GBuffer:DEPTH",   "slot": 0 },
         { "source": "DepthPass:DEPTH", "slot": 1 },
         { "source": "GBuffer:COLOR3",  "slot": 2 },
         { "source": "@ssao_noise",     "slot": 3 }
@@ -58,6 +59,7 @@
     {
       "name": "Shadow Blur H",
       "target": "ShadowAccum",
+      "gauss_kernel": 0,
       "inputs": [
         { "source": "ExtraHelper:COLOR0", "slot": 0 }
       ],
@@ -73,13 +75,42 @@
         { "source": "GBuffer:COLOR1",     "slot": 1 },
         { "source": "GBuffer:COLOR2",     "slot": 2 },
         { "source": "GBuffer:COLOR3",     "slot": 3 },
-        { "source": "GBuffer:COLOR4",     "slot": 4 },
-        { "source": "ShadowAccum:COLOR0", "slot": 5 }
+        { "source": "GBuffer:DEPTH",      "slot": 4 },
+        { "source": "ShadowAccum:COLOR0", "slot": 5 },
+        { "source": "GBuffer:COLOR5",     "slot": 7 },
+        { "source": "GBuffer:COLOR6",     "slot": 8 },
+        { "source": "GBuffer:COLOR4",     "slot": 9 }
       ],
       "bind_environment_map": true,
       "draws": [
         { "type": "fullscreen_quad", "signature": "DEFERRED_PASS" }
+      ],
+      "pop": false
+    },
+    {
+      "name": "Opaque Scene Copy",
+      "target": "Extra16F",
+      "inputs": [
+        { "source": "Deferred:COLOR0", "slot": 0 }
+      ],
+      "draws": [
+        { "type": "fullscreen_quad", "signature": "FSQUAD_1_TEX" }
       ]
+    },
+    {
+      "name": "Forward Transparent",
+      "target": "Deferred",
+      "push": false,
+      "state": { "depth_stencil": "NONE", "cull_face": "FRONT_AND_BACK", "blend": "ALPHA_BLEND" },
+      "inputs": [
+        { "source": "GBuffer:DEPTH",  "slot": 7 },
+        { "source": "Extra16F:COLOR0", "slot": 9 }
+      ],
+      "bind_environment_map": true,
+      "draws": [
+        { "type": "mesh", "mesh_indices": [0], "signature": "FORWARD_PASS" }
+      ],
+      "post_state": { "blend": "BLEND_DEFAULT", "cull_face": "FRONT_FACES" }
     },
     {
       "name": "Light Add",
@@ -135,7 +166,7 @@
     },
     {
       "name": "Bloom Blur H",
-      "target": "ExtraHelper",
+      "target": "BloomHelper",
       "gauss_kernel": 1,
       "inputs": [
         { "source": "BloomAccum:COLOR0", "slot": 0 }
@@ -147,8 +178,9 @@
     {
       "name": "Bloom Blur V",
       "target": "BloomAccum",
+      "gauss_kernel": 1,
       "inputs": [
-        { "source": "ExtraHelper:COLOR0", "slot": 0 }
+        { "source": "BloomHelper:COLOR0", "slot": 0 }
       ],
       "draws": [
         { "type": "fullscreen_quad", "signature": "VERTICAL_BLUR_PASS" }

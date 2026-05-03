@@ -13,6 +13,7 @@
 
 #include <video/gl/GLVertexBuffer.h>
 #include <video/gl/GLDeviceContext.h>
+#include <debug/RenderTrace.h>
 
 #ifdef T850_HEADLESS
 #include <GLES3/gl31.h>
@@ -60,6 +61,12 @@ namespace t850 {
     const_cast<DeviceContext*>(&deviceContext)->actualVertexBuffer = (VertexBuffer*)this;
     reinterpret_cast<GLDeviceContext*>(const_cast<DeviceContext*>(&deviceContext))->internalStride = stride;
     glBindBuffer(GL_ARRAY_BUFFER, APIID);
+#ifdef T850_RENDER_TRACE
+    if (T8_TRACE_ACTIVE()) {
+      int bufId = g_renderTracer->EnsureBufferId(this, "vb");
+      g_renderTracer->EvBindVertexBufferRequest(bufId, stride, offset);
+    }
+#endif
   }
   void GLVertexBuffer::UpdateFromSystemCopy(const DeviceContext & deviceContext)
   {
@@ -69,12 +76,21 @@ namespace t850 {
     } else {
       glBufferData(GL_ARRAY_BUFFER, descriptor.byteWidth, &sysMemCpy[0], GL_STATIC_DRAW);
     }
+#ifdef T850_RENDER_TRACE
+    if (T8_TRACE_ACTIVE() && !sysMemCpy.empty()) {
+      int bufId = g_renderTracer->EnsureBufferId(this, "vb");
+      g_renderTracer->RecordBufferUpdate(bufId, sysMemCpy.data(), (uint32_t)sysMemCpy.size(), "vb", "");
+    }
+#endif
   }
   void GLVertexBuffer::UpdateFromBuffer(const DeviceContext & deviceContext, const void * buffer)
   {
     sysMemCpy.clear();
     sysMemCpy.assign((char*)buffer, (char*)buffer + descriptor.byteWidth);
     UpdateFromSystemCopy(deviceContext);
+    // RecordBufferUpdate is intentionally only emitted by UpdateFromSystemCopy
+    // — it is the leaf path that all updates flow through. Adding another
+    // record here would double-version the same upload.
   }
   void GLVertexBuffer::release()
   {
@@ -95,5 +111,11 @@ namespace t850 {
     glBindBuffer(GL_ARRAY_BUFFER, APIID);
     glBufferData(GL_ARRAY_BUFFER, desc.byteWidth, initialData, usage);
     glBindBuffer(GL_ARRAY_BUFFER, 0);
+#ifdef T850_RENDER_TRACE
+    if (T8_TRACE_ACTIVE() && initialData) {
+      int bufId = g_renderTracer->EnsureBufferId(this, "vb");
+      g_renderTracer->RecordBufferUpdate(bufId, initialData, desc.byteWidth, "vb", "");
+    }
+#endif
   }
 }

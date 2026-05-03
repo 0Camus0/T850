@@ -24,6 +24,7 @@
 #include <iterator>
 #include <fstream>
 #include <utils/Log.h>
+#include <debug/RenderTrace.h>
 
 
 
@@ -204,8 +205,18 @@ namespace t850 {
     const unsigned char *version = glGetString(GL_SHADING_LANGUAGE_VERSION);
     T8_LOG_INFO("GLSL Ver: %s", version);
 
+#if defined(USING_OPENGL)
+    if (GLEW_VERSION_4_5 || GLEW_ARB_clip_control) {
+      glClipControl(GL_LOWER_LEFT, GL_ZERO_TO_ONE);
+    }
+    else {
+      T8_LOG_INFO("GL clip control unavailable; using default clip depth range");
+    }
+#endif
+
     glEnable(GL_DEPTH_TEST);
-    glClearDepthf(1.0f);
+    glClearDepthf(0.0f);
+    glDepthFunc(GL_GEQUAL);
     glEnable(GL_CULL_FACE);
     glCullFace(GL_FRONT);
 
@@ -295,14 +306,19 @@ namespace t850 {
       break;
     case t850::BaseDriver::ALPHA_BLEND:
       glEnable(GL_BLEND);
-      glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+      glBlendFuncSeparate(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA, GL_ONE, GL_ONE_MINUS_SRC_ALPHA);
       break;
     case t850::BaseDriver::NON_PREMULTIPLIED:
       glEnable(GL_BLEND);
+      glBlendFuncSeparate(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA, GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
       break;
     default:
       break;
     }
+    T8_TRACE(EvSetBlend((int)state));
+#ifdef T850_RENDER_TRACE
+    RefreshTracePendingRenderState();
+#endif
   }
 
   void GLDriver::SetDepthStencilState(DepthStencilStates state)
@@ -314,22 +330,29 @@ namespace t850 {
     case t850::BaseDriver::DEPTH_DEFAULT:
       glDepthMask(GL_TRUE);
       glEnable(GL_DEPTH_TEST);
+      glDepthFunc(GL_GEQUAL);
       break;
     case t850::BaseDriver::READ_WRITE:
       glDepthMask(GL_TRUE);
       glEnable(GL_DEPTH_TEST);
+      glDepthFunc(GL_GEQUAL);
       break;
     case t850::BaseDriver::NONE:
       glDepthMask(GL_FALSE);
       glDisable(GL_DEPTH_TEST);
       break;
     case t850::BaseDriver::READ:
-     // glDepthMask(GL_FALSE);
-      glDisable(GL_DEPTH_TEST);
+      glDepthMask(GL_FALSE);
+      glEnable(GL_DEPTH_TEST);
+      glDepthFunc(GL_GEQUAL);
       break;
     default:
       break;
     }
+    T8_TRACE(EvSetDepth((int)state));
+#ifdef T850_RENDER_TRACE
+    RefreshTracePendingRenderState();
+#endif
   }
 
   static void WritePPM(const std::string& path, int w, int h, const std::vector<unsigned char>& rgbBuf) {
@@ -442,14 +465,18 @@ namespace t850 {
       int colorIndex = attachment;
       glReadBuffer(GL_COLOR_ATTACHMENT0 + colorIndex);
 
+      int attachmentFormat = rt->color_format;
+      if (!rt->perColorFormats.empty() && colorIndex >= 0 && colorIndex < (int)rt->perColorFormats.size())
+        attachmentFormat = rt->perColorFormats[colorIndex];
+
       GLenum readFormat = GL_RGBA;
       GLenum readType = GL_UNSIGNED_BYTE;
-      switch (rt->color_format) {
+      switch (attachmentFormat) {
         case BaseRT::R8:
           readFormat = GL_RED; readType = GL_UNSIGNED_BYTE; break;
         case BaseRT::F16:
         case BaseRT::F32:
-          readFormat = GL_RGBA; readType = GL_FLOAT; break;
+          readFormat = GL_RED; readType = GL_FLOAT; break;
         case BaseRT::RGBA16F:
         case BaseRT::RGBA32F:
           readFormat = GL_RGBA; readType = GL_FLOAT; break;
@@ -480,12 +507,50 @@ namespace t850 {
 			  glCullFace(GL_FRONT_AND_BACK);
 			  break;
 	  }
+    T8_TRACE(EvSetCull((int)state));
+#ifdef T850_RENDER_TRACE
+    RefreshTracePendingRenderState();
+#endif
   }
+
+#ifdef T850_RENDER_TRACE
+  void GLDriver::RefreshTracePendingRenderState() {
+    if (!T8_TRACE_ACTIVE()) return;
+    int numAtt = 1;
+    if (CurrentRT >= 0 && CurrentRT < (int)RTs.size() && RTs[CurrentRT]) {
+      int n = RTs[CurrentRT]->number_RT;
+      if (n > 0) numAtt = n;
+    }
+    g_renderTracer->RecomputePendingRenderStateGL(numAtt);
+  }
+#endif
 
   void	GLDriver::Clear() {
     glClearColor(1.0, 1.0, 1.0, 0.0);
+    glClearDepthf(0.0f);
     glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT | GL_STENCIL_BUFFER_BIT);
+#ifdef T850_RENDER_TRACE
+    if (T8_TRACE_ACTIVE()) {
+      int rtId = -1;
+      if (CurrentRT >= 0 && CurrentRT < (int)RTs.size() && RTs[CurrentRT])
+        rtId = g_renderTracer->LookupRTId(RTs[CurrentRT]);
+      g_renderTracer->EvClearRT(rtId, 1u | 2u | 4u, 1.0f, 1.0f, 1.0f, 0.0f, 0.0f, 0);
+    }
+#endif
+  }
 
+  void	GLDriver::ClearWithColor(float r, float g, float b, float a) {
+    glClearColor(r, g, b, a);
+    glClearDepthf(0.0f);
+    glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT | GL_STENCIL_BUFFER_BIT);
+#ifdef T850_RENDER_TRACE
+    if (T8_TRACE_ACTIVE()) {
+      int rtId = -1;
+      if (CurrentRT >= 0 && CurrentRT < (int)RTs.size() && RTs[CurrentRT])
+        rtId = g_renderTracer->LookupRTId(RTs[CurrentRT]);
+      g_renderTracer->EvClearRT(rtId, 1u | 2u | 4u, r, g, b, a, 0.0f, 0);
+    }
+#endif
   }
 
   void	GLDriver::SwapBuffers() {
@@ -511,6 +576,7 @@ namespace t850 {
 
 
   void GLDriver::PopRT() {
+    T8_TRACE(EvPopRT());
     glBindFramebuffer(GL_FRAMEBUFFER, CurrentFBO);
     glViewport(0, 0, width, height);
     glColorMask(GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE);
@@ -523,6 +589,9 @@ namespace t850 {
     }
 
     CurrentRT = -1;
+#ifdef T850_RENDER_TRACE
+    RefreshTracePendingRenderState();
+#endif
   }
 
 

@@ -40,6 +40,25 @@ namespace t850 {
   extern DeviceContext* T8DeviceContext;
 }
 
+#ifdef T850_RENDER_TRACE
+namespace {
+  t850::BaseDriver* s_traceDriver = nullptr;
+
+  void EnsureRenderTracer(t850::BaseDriver* driver) {
+    if (!driver) return;
+    if (!t850::g_renderTracer) {
+      t850::g_renderTracer = new t850::RenderTracer();
+      s_traceDriver = nullptr;
+    }
+    if (s_traceDriver != driver) {
+      t850::g_renderTracer->Init(driver);
+      s_traceDriver = driver;
+      T8_LOG_INFO("[RenderTracer] initialized for active driver");
+    }
+  }
+}
+#endif
+
 
 
 #include <DayScene.h>
@@ -97,10 +116,7 @@ void App::LoadAssets()
   }
 #endif
 #ifdef T850_RENDER_TRACE
-  if (!t850::g_renderTracer) {
-    t850::g_renderTracer = new t850::RenderTracer();
-    t850::g_renderTracer->Init(pFramework->pVideoDriver);
-  }
+  EnsureRenderTracer(pFramework->pVideoDriver);
 #endif
 }
 
@@ -112,10 +128,7 @@ void App::CreateAssets() {
   }
 #endif
 #ifdef T850_RENDER_TRACE
-  if (!t850::g_renderTracer) {
-    t850::g_renderTracer = new t850::RenderTracer();
-    t850::g_renderTracer->Init(pFramework->pVideoDriver);
-  }
+  EnsureRenderTracer(pFramework->pVideoDriver);
 #endif
   m_actualScene->CreateAssets();
   m_textRender.LoadFromFile(36,"Fonts/Martius-LV9L4.ttf",512.0f);
@@ -168,6 +181,7 @@ void App::DestroyAssets() {
      t850::g_renderTracer->Destroy();
      delete t850::g_renderTracer;
      t850::g_renderTracer = nullptr;
+     s_traceDriver = nullptr;
    }
 #endif
    m_devLayer.Destroy();
@@ -204,6 +218,7 @@ void App::OnDraw() {
 #endif
   static int frameCount = 0;
 #ifdef T850_RENDER_TRACE
+  EnsureRenderTracer(pFramework->pVideoDriver);
   if (t850::g_renderTracer) t850::g_renderTracer->ResetFrame(frameCount);
 #endif
   T8_LOG_TRACE("[Frame %d] === OnDraw BEGIN ===", frameCount);

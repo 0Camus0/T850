@@ -38,7 +38,7 @@ namespace t850 {
   extern DeviceContext*     T8DeviceContext;
 
   static constexpr unsigned MaterialSamplerSlot = 0;
-  static constexpr unsigned ClampSamplerSlot = 1;
+  static constexpr unsigned EnvSamplerSlot = 4;
 
   namespace {
     void AssignEffectFloat4(XVECTOR3& target, const std::vector<float>& values) {
@@ -1626,17 +1626,17 @@ namespace t850 {
         }
         if (s->key.has(ShaderKey::SPECULAR_MAP)) {
           Texture* t = matTex(MatTexSlot::Specular); if (!t) t = sub_info->SpecularTex;
-          bindTextureOnce(t, 1, "SpecularTex", MaterialSamplerSlot);
+          bindTextureOnce(t, 1, "SpecularTex", 1);
         }
 
         if (s->key.has(ShaderKey::GLOSS_MAP)) {
           Texture* t = matTex(MatTexSlot::Gloss); if (!t) t = sub_info->GlossfTex;
-          bindTextureOnce(t, 2, "GlossTex", MaterialSamplerSlot);
+          bindTextureOnce(t, 2, "GlossTex", 2);
         }
 
         if (s->key.has(ShaderKey::NORMAL_MAP)) {
           Texture* t = matTex(MatTexSlot::Normal); if (!t) t = sub_info->NormalTex;
-          bindTextureOnce(t, 3, "NormalTex", MaterialSamplerSlot);
+          bindTextureOnce(t, 3, "NormalTex", 3);
         }
         if (EnvMap) {
           // EnvMap goes to slot 4 with its own dedicated tracker (so
@@ -1645,28 +1645,28 @@ namespace t850 {
           if (tracker.ShouldBindEnvMap(EnvMap)) {
             EnvMap->Set(*T8DeviceContext, 4, "texEnv");
           }
-          EnvMap->SetSampler(*T8DeviceContext, ClampSamplerSlot);
+          EnvMap->SetSampler(*T8DeviceContext, EnvSamplerSlot);
         }
         if (s->key.has(ShaderKey::HEIGHT_MAP)) {
           Texture* t = matTex(MatTexSlot::Parallax); if (!t) t = sub_info->ParalaxTex;
-          bindTextureOnce(t, 5, "HeightTex", MaterialSamplerSlot);
+          bindTextureOnce(t, 5, "HeightTex", 5);
         }
         if (s->key.has(ShaderKey::METALLIC_MAP)) {
           Texture* t = matTex(MatTexSlot::Metallic); if (!t) t = sub_info->MetallicTex;
-          bindTextureOnce(t, 6, "MetallicTex", MaterialSamplerSlot);
+          bindTextureOnce(t, 6, "MetallicTex", 6);
         }
-        bindTextureOnce(Textures[7], 7, "SceneDepthTex", ClampSamplerSlot);
+        bindTextureOnce(Textures[7], 7, "SceneDepthTex", 7);
         if (s->key.has(ShaderKey::EMISSIVE_MAP)) {
           Texture* t = matTex(MatTexSlot::Emissive); if (!t) t = sub_info->EmissiveTex;
-          bindTextureOnce(t, 8, "EmissiveTex", MaterialSamplerSlot);
+          bindTextureOnce(t, 8, "EmissiveTex", 8);
         }
-        bindTextureOnce(Textures[9], 9, "SceneColorTex", ClampSamplerSlot);
-        bindTextureOnce(Textures[EnvironmentTextureSlot::DiffuseIBL],  EnvironmentTextureSlot::DiffuseIBL,  "texIBLDiffuse",   ClampSamplerSlot);
-        bindTextureOnce(Textures[EnvironmentTextureSlot::SpecularIBL], EnvironmentTextureSlot::SpecularIBL, "texIBLSpecular",  ClampSamplerSlot);
-        bindTextureOnce(Textures[EnvironmentTextureSlot::BrdfLUT],     EnvironmentTextureSlot::BrdfLUT,     "texIBLBRDF",      ClampSamplerSlot);
-        bindTextureOnce(Textures[EnvironmentTextureSlot::CharlieIBL],  EnvironmentTextureSlot::CharlieIBL,  "texIBLCharlie",   ClampSamplerSlot);
-        bindTextureOnce(Textures[EnvironmentTextureSlot::CharlieLUT],  EnvironmentTextureSlot::CharlieLUT,  "texIBLCharlieLUT",ClampSamplerSlot);
-        bindTextureOnce(Textures[EnvironmentTextureSlot::SheenELUT],   EnvironmentTextureSlot::SheenELUT,   "texIBLSheenELUT", ClampSamplerSlot);
+        bindTextureOnce(Textures[9], 9, "SceneColorTex", 9);
+        bindTextureOnce(Textures[EnvironmentTextureSlot::DiffuseIBL],  EnvironmentTextureSlot::DiffuseIBL,  "texIBLDiffuse",   EnvironmentTextureSlot::DiffuseIBL);
+        bindTextureOnce(Textures[EnvironmentTextureSlot::SpecularIBL], EnvironmentTextureSlot::SpecularIBL, "texIBLSpecular",  EnvironmentTextureSlot::SpecularIBL);
+        bindTextureOnce(Textures[EnvironmentTextureSlot::BrdfLUT],     EnvironmentTextureSlot::BrdfLUT,     "texIBLBRDF",      EnvironmentTextureSlot::BrdfLUT);
+        bindTextureOnce(Textures[EnvironmentTextureSlot::CharlieIBL],  EnvironmentTextureSlot::CharlieIBL,  "texIBLCharlie",   EnvironmentTextureSlot::CharlieIBL);
+        bindTextureOnce(Textures[EnvironmentTextureSlot::CharlieLUT],  EnvironmentTextureSlot::CharlieLUT,  "texIBLCharlieLUT",EnvironmentTextureSlot::CharlieLUT);
+        bindTextureOnce(Textures[EnvironmentTextureSlot::SheenELUT],   EnvironmentTextureSlot::SheenELUT,   "texIBLSheenELUT", EnvironmentTextureSlot::SheenELUT);
         if (s->key.has(ShaderKey::SHEEN_COLOR_MAP)) {
           Texture* t = matTex(MatTexSlot::SheenColor); if (!t) t = sub_info->SheenColorTex;
           bindTextureOnce(t, MaterialTextureSlot::SheenColor, "SheenColorTex", MaterialSamplerSlot);

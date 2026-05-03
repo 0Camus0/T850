@@ -96,14 +96,18 @@ namespace t850 {
   class Texture {
   public:
     Texture() :
+      filepath(),
+      optname{},
       size(0),
       props(0),
       params(0),
+      cil_props(0),
       x(0),
       y(0),
       id(0),
       bounded(0),
-      mipmaps(0)
+      mipmaps(0),
+      m_channels(0)
     {
 
     }

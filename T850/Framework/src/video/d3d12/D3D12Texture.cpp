@@ -383,6 +383,11 @@ namespace t850 {
     sd.Filter = D3D12_FILTER_ANISOTROPIC;
     sd.MaxAnisotropy = 16;
 
+    if ((cil_props & CIL_CUBE_MAP) && !(params & (TextBasicParams::NEAREST_FILTER | TextBasicParams::LINEAR_FILTER | TextBasicParams::CLAMP_TO_BORDER))) {
+      sd.Filter = D3D12_FILTER_MIN_MAG_MIP_LINEAR;
+      sd.MaxAnisotropy = 1;
+    }
+
     if (params & TextBasicParams::NEAREST_FILTER) {
       sd.Filter = D3D12_FILTER_MIN_MAG_MIP_POINT;
       sd.MaxAnisotropy = 1;
@@ -402,6 +407,10 @@ namespace t850 {
       sd.AddressU = sd.AddressV = sd.AddressW = D3D12_TEXTURE_ADDRESS_MODE_BORDER;
       sd.Filter = D3D12_FILTER_MIN_MAG_MIP_LINEAR;
       sd.MaxAnisotropy = 1;
+      sd.BorderColor[0] = 1.0f;
+      sd.BorderColor[1] = 1.0f;
+      sd.BorderColor[2] = 1.0f;
+      sd.BorderColor[3] = 1.0f;
     }
 
     sd.MinLOD = 0.0f;
@@ -451,7 +460,7 @@ namespace t850 {
       // sampler params are equivalent. (The handle was unique-per-process
       // and never registered, making cross-API diff useless.)
       int samplerId = g_renderTracer->RegisterSampler(
-        RenderTracer::MakeSamplerSigD3D12(params));
+        RenderTracer::MakeSamplerSigD3D12(params, (cil_props & CIL_CUBE_MAP) != 0));
       g_renderTracer->EvBindTextureCommit(slot, texId, viewId, samplerId, shaderTextureName, "ps");
     }
 #endif
@@ -473,7 +482,7 @@ namespace t850 {
       g_renderTracer->EvBindTextureRequest(slot, texId, shaderTextureName, "vs");
       int viewId    = (int)(srvGPU.ptr & 0xFFFFFFFFu);
       int samplerId = g_renderTracer->RegisterSampler(
-        RenderTracer::MakeSamplerSigD3D12(params));
+        RenderTracer::MakeSamplerSigD3D12(params, (cil_props & CIL_CUBE_MAP) != 0));
       g_renderTracer->EvBindTextureCommit(slot, texId, viewId, samplerId, shaderTextureName, "vs");
     }
 #endif

@@ -54,6 +54,9 @@ public:
   int  GetCurrentAnimSet() const { return m_animController.GetCurrentSet(); }
   int  GetNumAnimSets() const    { return m_animController.GetNumSets(); }
   int  GetNumBones() const       { return m_animController.GetNumBones(); }
+  float GetAnimLocalTime() const { return m_animController.GetLocalTime(); }
+  float GetAnimTickTime() const { return m_animController.GetCurrentTickTime(); }
+  float GetAnimTicksPerSecond() const { return m_animController.GetTicksPerSecond(); }
 
   bool HasSkinData() const { return m_hasSkin; }
 
@@ -72,6 +75,14 @@ public:
   void DrawWireframe();
   // Draw skeleton bones without depth testing (magenta)
   void DrawSkeleton();
+
+  // Exact pose snapshot/replay support.
+  void ExportBoneMatrices(std::vector<XMATRIX44>& out) const;
+  const std::vector<float>& GetBoneTextureData() const { return m_boneTexData; }
+  int GetBoneTextureWidth() const { return m_boneTexWidth; }
+  void ApplySnapshotBoneMatrices(const std::vector<XMATRIX44>& matrices);
+  void ClearSnapshotBoneMatrices();
+  bool HasSnapshotBoneMatrices() const { return m_snapshotPoseActive; }
 
   // Set the GBuffer depth texture for wireframe depth-tested occlusion
   void SetWireframeDepthTex(Texture* depthTex) { m_wireDepthTex = depthTex; }
@@ -138,6 +149,8 @@ private:
   Texture*             m_boneTexture    = nullptr;
   int                  m_boneTexWidth   = 0;
   std::vector<float>   m_boneTexData;       // RGBA32F pixel data
+  bool                 m_snapshotPoseActive = false;
+  std::vector<XMATRIX44> m_snapshotBoneMatrices;
 
   // ── Wireframe state (GPU-skinned) ──
   struct WireGeo {

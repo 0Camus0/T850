@@ -3,6 +3,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <scene/IBLResources.h>
+#include <scene/RenderMesh.h>
 #include <utils/Log.h>
 #include <core/Config.h>
 using namespace t850;
@@ -190,6 +191,7 @@ void DayScene::CreateAssets() {
 
   m_wireframeSphere.Create(8, 16);
   m_wireframeArrow.Create(24, 6);
+  m_debugText.LoadFromFile(24, "Fonts/Martius-LV9L4.ttf", 512.0f);
 
   t850::Spline& m_spline = m_sceneSetup.splines[0];
   t850::SplineAgent& m_agent = m_sceneSetup.agents[0];
@@ -548,6 +550,10 @@ void DayScene::OnInput(InputManager* IManager) {
     m_dumper.RequestDump();
   }
 
+  if (IManager->PressedOnceKey(T800K_F2)) {
+    m_showCullStats = !m_showCullStats;
+  }
+
   if (IManager->PressedOnceKey(T800K_1)) {
     pFramework->ChangeAPI(GraphicsApi::D3D11);
   }
@@ -686,6 +692,29 @@ void DayScene::OnDraw() {
         m_wireframeSphere.Draw(VP, light.Position, light.radius);
       }
     }
+  }
+
+  if (m_showCullStats && Meshes[0].pBase) {
+    RenderMesh* rm = static_cast<RenderMesh*>(Meshes[0].pBase);
+    int w = g_pBaseDriver->width;
+    int h = g_pBaseDriver->height;
+
+    pFramework->pVideoDriver->SetBlendState(BaseDriver::ALPHA_BLEND);
+    pFramework->pVideoDriver->SetDepthStencilState(BaseDriver::NONE);
+
+    char buf[256];
+    snprintf(buf, sizeof(buf), "Sponza meshes: %d/%zu  Culled: %d  Subsets drawn: %d/%d",
+             (int)rm->Info.size() - rm->m_culledMeshes, rm->Info.size(),
+             rm->m_culledMeshes, rm->m_drawnSubsets, rm->m_totalSubsets);
+    XVECTOR3 yellow(1.0f, 1.0f, 0.2f);
+    m_debugText.DrawPixel(10.0f, 40.0f, w, h, yellow, buf);
+
+    snprintf(buf, sizeof(buf), "F2: cull stats");
+    XVECTOR3 gray(0.7f, 0.7f, 0.7f);
+    m_debugText.DrawPixel(10.0f, 65.0f, w, h, gray, buf);
+
+    pFramework->pVideoDriver->SetBlendState(BaseDriver::BLEND_DEFAULT);
+    pFramework->pVideoDriver->SetDepthStencilState(BaseDriver::DEPTH_DEFAULT);
   }
 
 #endif

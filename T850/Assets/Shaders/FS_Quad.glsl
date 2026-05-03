@@ -102,27 +102,45 @@ uniform mediump sampler2D texIBLSheenELUT;
 highp vec2 SampleBRDFLUT(highp vec2 uv)
 {
 #ifdef ES_30
-	return texture(texIBLBRDF, uv).rg;
+	return textureLod(texIBLBRDF, uv, 0.0).rg;
 #else
-	return texture2D(texIBLBRDF, uv).rg;
+	return texture2DLod(texIBLBRDF, uv, 0.0).rg;
 #endif
 }
 
 highp float SampleSheenELUT(highp vec2 uv)
 {
 #ifdef ES_30
-	return texture(texIBLSheenELUT, uv).r;
+	return textureLod(texIBLSheenELUT, uv, 0.0).r;
 #else
-	return texture2D(texIBLSheenELUT, uv).r;
+	return texture2DLod(texIBLSheenELUT, uv, 0.0).r;
 #endif
 }
 
 highp float SampleCharlieLUT(highp vec2 uv)
 {
 #ifdef ES_30
-	return texture(texIBLCharlieLUT, uv).b;
+	return textureLod(texIBLCharlieLUT, uv, 0.0).b;
 #else
-	return texture2D(texIBLCharlieLUT, uv).b;
+	return texture2DLod(texIBLCharlieLUT, uv, 0.0).b;
+#endif
+}
+
+highp vec3 SampleCubeLod(mediump samplerCube tex, highp vec3 dir, highp float lod)
+{
+#ifdef ES_30
+	return textureLod(tex, dir, lod).xyz;
+#else
+	return textureCubeLod(tex, dir, lod).xyz;
+#endif
+}
+
+highp vec4 SampleTexture2DLod(mediump sampler2D tex, highp vec2 uv, highp float lod)
+{
+#ifdef ES_30
+	return textureLod(tex, uv, lod);
+#else
+	return texture2DLod(tex, uv, lod);
 #endif
 }
 
@@ -275,24 +293,24 @@ highp vec3 GetIBLRadianceCharlie(highp vec3 normal, highp vec3 viewDir, highp fl
 	reflectedVec.x = -reflectedVec.x;
 	reflectedVec.z = -reflectedVec.z;
 	highp float brdf = SampleCharlieLUT(vec2(clamp(NdotV, 0.0, 1.0), clamp(sheenRoughness, 0.0, 1.0)));
-	highp vec3 sheenLight = texture(texIBLCharlie, reflectedVec, lod).xyz;
+	highp vec3 sheenLight = SampleCubeLod(texIBLCharlie, reflectedVec, lod);
 	return sheenLight * sheenColor * brdf;
 }
 
 void main(){
-	lowp vec2 coords = vecUVCoords;
+	highp vec2 coords = vecUVCoords;
 	coords.y = 1.0 - coords.y;
 
-	lowp vec4 Final  =  vec4(0.0,0.0,0.0,1.0);
-	lowp float Shadow = 1.0;
+	highp vec4 Final  =  vec4(0.0,0.0,0.0,1.0);
+	highp float Shadow = 1.0;
 
 	highp vec4 ToLineal = vec4(2.2f, 2.2f, 2.2f, 2.2f);
 	highp vec4 TosRGB = vec4(1.0f/2.2f, 1.0f/2.2f, 1.0f/2.2f, 1.0f/2.2f);
 
 	#ifdef ES_30
-		highp vec4 Albedo  =  texture(tex0,coords, 0.0f);
-		highp vec4 PBRData = texture(tex2, coords);
-		highp vec4 SpecularOcclusionData = texture(tex7, coords);
+		highp vec4 Albedo  =  SampleTexture2DLod(tex0, coords, 0.0);
+		highp vec4 PBRData = SampleTexture2DLod(tex2, coords, 0.0);
+		highp vec4 SpecularOcclusionData = SampleTexture2DLod(tex7, coords, 0.0);
 		highp float specularFactor = max(Albedo.a, 0.0);
 
 		Albedo.xyz = pow(Albedo.xyz, ToLineal.xyz);
@@ -302,8 +320,8 @@ void main(){
 		highp float occlusion = clamp(SpecularOcclusionData.a, 0.0, 1.0);
 		highp vec3 F0 = mix(dielectricF0 * specularFactor, Albedo.xyz, metallic);
 
-		highp float depth = texture(tex4, coords).r;
-		highp vec3 emissive = texture(tex8, coords).rgb;
+		highp float depth = SampleTexture2DLod(tex4, coords, 0.0).r;
+		highp vec3 emissive = SampleTexture2DLod(tex8, coords, 0.0).rgb;
 	#else
 		highp vec4 Albedo  =  texture2D(tex0,coords);
 		highp vec4 PBRData = texture2D(tex2, coords);
@@ -324,7 +342,7 @@ void main(){
 		
 	highp vec4 position = ReconstructPosition(ClipPos, depth);
 
-	highp vec3 EyeDir = normalize(CameraPosition-position).xyz;
+	highp vec3 EyeDir = normalize(CameraPosition.xyz - position.xyz);
 
 	int MatId = int(PBRData.a * 255.0 + 0.5);
 	
@@ -343,7 +361,7 @@ void main(){
 	}else if(MatId > 0){
 
 #ifdef ES_30
-		Shadow = texture(tex5, coords).r;
+		Shadow = SampleTexture2DLod(tex5, coords, 0.0).r;
 #else
 		Shadow = texture2D(tex5, coords).r;
 #endif
@@ -352,8 +370,8 @@ void main(){
 
 
 		#ifdef ES_30
-			highp vec4 normalmap = texture(tex1,coords);
-			highp vec4 SheenData = texture(tex6, coords);
+			highp vec4 normalmap = SampleTexture2DLod(tex1, coords, 0.0);
+			highp vec4 SheenData = SampleTexture2DLod(tex6, coords, 0.0);
 		#else
 			highp vec4 normalmap = texture2D(tex1,coords);
 			highp vec4 SheenData = texture2D(tex6, coords);
@@ -367,7 +385,7 @@ void main(){
 		bool hasSheenLUT = brightness.w > 0.5;
 		
 		#ifdef ES_30
-			highp vec4 geoData = texture(tex3, coords);
+			highp vec4 geoData = SampleTexture2DLod(tex3, coords, 0.0);
 		#else
 			highp vec4 geoData = texture2D(tex3, coords);
 		#endif
@@ -435,11 +453,11 @@ void main(){
 				} else {
 					// Point light
 					highp float Rad = LightRadius[i >> 2][i & 3];
-					highp float dist = distance(LightPositions[i],position);
+					highp float dist = distance(LightPositions[i].xyz, position.xyz);
 
 					if(dist < (Rad*2.0))
 					{
-						highp vec3 LightDir = normalize(LightPositions[i]-position).xyz;
+						highp vec3 LightDir = normalize(LightPositions[i].xyz - position.xyz);
 						highp vec3 Half = normalize(EyeDir + LightDir);
 
 						highp vec3 Diffuse = CalculateDiffuse(Albedo.xyz, normal, LightDir)*LightColors[i].xyz*intensity;
@@ -484,7 +502,7 @@ void main(){
 			highp vec3 kDiffuseEnv = (vec3(1.0) - kSpecular) * (1.0 - metallic);
 
 			// Specular IBL: env reflection
-			highp vec3 RefleCol2 = texture( texIBLSpecular, ReflectedVec , rough * iblMaxMip).xyz;
+			highp vec3 RefleCol2 = SampleCubeLod(texIBLSpecular, ReflectedVec, rough * iblMaxMip);
 			highp float envAtten = (1.0 - rough) * (1.0 - rough);
 			highp vec2 brdfSample = hasBrdfLUT ? SampleBRDFLUT(vec2(NdotV, rough)) : vec2(0.0);
 			highp vec3 specularIBL = hasBrdfLUT ? IBLGGXFresnel(NdotV, rough, F0, brdfSample) : kSpecular * envAtten;
@@ -495,7 +513,7 @@ void main(){
 			irradianceDir.x = -irradianceDir.x;
 			irradianceDir.z = -irradianceDir.z;
 			highp float diffuseMip = clamp(brightness.z, 0.0, iblMaxMip);
-			highp vec3 irradiance = texture( texIBLDiffuse, irradianceDir, diffuseMip).xyz;
+			highp vec3 irradiance = SampleCubeLod(texIBLDiffuse, irradianceDir, diffuseMip);
 			indirectLight += irradiance * Albedo.xyz * kDiffuseEnv * toogles.z;
 
 			// PBR: avoid adding a constant ambient floor term; rely on IBL + AO.
@@ -506,7 +524,7 @@ void main(){
 			}
 			Final.xyz += indirectLight * occlusion;
 			if (clearcoatFactor > 0.001) {
-				highp vec3 clearcoatSpec = texture( texIBLSpecular, ReflectedVec, clearcoatRoughness * iblMaxMip).xyz;
+				highp vec3 clearcoatSpec = SampleCubeLod(texIBLSpecular, ReflectedVec, clearcoatRoughness * iblMaxMip);
 				highp float clearcoatAtten = hasBrdfLUT ? 1.0 : (1.0 - clearcoatRoughness) * (1.0 - clearcoatRoughness);
 				highp vec3 clearcoatF = FresnelCalc(clamp(dot(normal, EyeDir), 0.0, 1.0), vec3(0.04));
 				highp float clearcoatWeight = clamp(clearcoatFactor * max(clearcoatF.x, max(clearcoatF.y, clearcoatF.z)), 0.0, 1.0);

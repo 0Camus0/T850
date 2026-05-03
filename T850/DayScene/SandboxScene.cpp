@@ -12,9 +12,101 @@
 #include <fstream>
 #include <string>
 #include <cmath>
+#include <vector>
 
 using namespace t850;
 using std::string;
+
+namespace {
+  t850::Mat4Json MatrixToSnapshotJson(const XMATRIX44& mat) {
+    t850::Mat4Json j;
+    for (int r = 0; r < 4; r++)
+      for (int c = 0; c < 4; c++)
+        j[r][c] = mat.m[r][c];
+    return j;
+  }
+
+  XMATRIX44 MatrixFromSnapshotJson(const t850::Mat4Json& j) {
+    XMATRIX44 mat;
+    for (int r = 0; r < 4; r++)
+      for (int c = 0; c < 4; c++)
+        mat.m[r][c] = j[r][c];
+    return mat;
+  }
+
+  t850::SnapshotSkinnedJson CaptureSkinnedSnapshot(RenderSkinnedMesh* skinned,
+                                                   bool wireframeVisible,
+                                                   bool skeletonVisible) {
+    t850::SnapshotSkinnedJson snap;
+    if (!skinned || !skinned->HasSkinData()) return snap;
+
+    snap.has_skin = true;
+    snap.playing = skinned->IsPlaying();
+    snap.looping = skinned->IsLooping();
+    snap.use_slerp = skinned->GetUseSlerp();
+    snap.use_quat_skinning = skinned->GetUseQuatSkinning();
+    snap.keyframe_mode = skinned->GetKeyframeMode();
+    snap.wireframe_visible = wireframeVisible;
+    snap.skeleton_visible = skeletonVisible;
+    snap.animation_speed = skinned->GetAnimSpeed();
+    snap.local_time = skinned->GetAnimLocalTime();
+    snap.tick_time = skinned->GetAnimTickTime();
+    snap.ticks_per_second = skinned->GetAnimTicksPerSecond();
+    snap.current_anim_set = skinned->GetCurrentAnimSet();
+    snap.num_anim_sets = skinned->GetNumAnimSets();
+    snap.current_keyframe = skinned->GetCurrentKeyframe();
+    snap.total_keyframes = skinned->GetTotalKeyframes();
+    snap.num_bones = skinned->GetNumBones();
+    snap.bone_texture_width = skinned->GetBoneTextureWidth();
+    snap.bone_texture_rgba32f = skinned->GetBoneTextureData();
+
+    std::vector<XMATRIX44> bones;
+    skinned->ExportBoneMatrices(bones);
+    snap.bone_matrices.reserve(bones.size());
+    for (const XMATRIX44& bone : bones) {
+      snap.bone_matrices.push_back(MatrixToSnapshotJson(bone));
+    }
+    return snap;
+  }
+
+  void ApplySkinnedSnapshot(RenderSkinnedMesh* skinned,
+                            const t850::SnapshotSkinnedJson& snap,
+                            bool& wireframeVisible,
+                            bool& skeletonVisible) {
+    if (!skinned || !skinned->HasSkinData() || !snap.has_skin) return;
+
+    skinned->SetAnimSpeed(snap.animation_speed);
+    skinned->SetLooping(snap.looping);
+    skinned->SetUseSlerp(snap.use_slerp);
+    skinned->SetUseQuatSkinning(snap.use_quat_skinning);
+    skinned->SetKeyframeMode(snap.keyframe_mode);
+    if (snap.playing) skinned->PlayAnimation();
+    else skinned->PauseAnimation();
+
+    int targetSet = snap.current_anim_set;
+    int numSets = skinned->GetNumAnimSets();
+    if (numSets > 0 && targetSet >= 0 && targetSet < numSets) {
+      int guard = 0;
+      while (skinned->GetCurrentAnimSet() != targetSet && guard++ < numSets) {
+        skinned->NextAnimation();
+      }
+    }
+
+    std::vector<XMATRIX44> bones;
+    bones.reserve(snap.bone_matrices.size());
+    for (const auto& bone : snap.bone_matrices) {
+      bones.push_back(MatrixFromSnapshotJson(bone));
+    }
+    if (!bones.empty()) {
+      skinned->ApplySnapshotBoneMatrices(bones);
+    } else {
+      skinned->ClearSnapshotBoneMatrices();
+    }
+
+    wireframeVisible = snap.wireframe_visible;
+    skeletonVisible = snap.skeleton_visible;
+  }
+}
 
 void SandboxScene::InitVars() {
 
@@ -269,6 +361,12 @@ void SandboxScene::OnUpdate(float _DtSecs) {
   if (m_dumper.HasPendingReplay()) {
     if (m_dumper.LoadReplaySnapshot()) {
       m_dumper.ApplySnapshot(Cam, LightCam, SceneProp);
+      if (const t850::SnapshotSkinnedJson* skinnedSnap = m_dumper.GetReplaySkinnedState()) {
+        if (Meshes[0].pBase) {
+          RenderSkinnedMesh* skinned = dynamic_cast<RenderSkinnedMesh*>(Meshes[0].pBase);
+          ApplySkinnedSnapshot(skinned, *skinnedSnap, m_showWireframe, m_showSkeleton);
+        }
+      }
       VP = Cam.VP;
     }
   }
@@ -494,6 +592,15 @@ void SandboxScene::OnDraw() {
 
   // RT Dump via FrameDumper
   if (m_dumper.ShouldDump(DtSecs)) {
+    t850::SnapshotSkinnedJson skinnedSnapshot;
+    const t850::SnapshotSkinnedJson* skinnedSnapshotPtr = nullptr;
+    if (Meshes[0].pBase) {
+      RenderSkinnedMesh* skinned = dynamic_cast<RenderSkinnedMesh*>(Meshes[0].pBase);
+      skinnedSnapshot = CaptureSkinnedSnapshot(skinned, m_showWireframe, m_showSkeleton);
+      if (skinnedSnapshot.has_skin)
+        skinnedSnapshotPtr = &skinnedSnapshot;
+    }
+
     std::vector<t850::RTDumpEntry> rts = {
       {GBufferPass,           BaseDriver::COLOR0_ATTACHMENT, "GBuffer_Albedo"},
       {GBufferPass,           BaseDriver::COLOR1_ATTACHMENT, "GBuffer_Normals"},
@@ -512,7 +619,8 @@ void SandboxScene::OnDraw() {
       {LuminanceMapPass,      BaseDriver::COLOR0_ATTACHMENT, "LuminanceMap"},
       {AdaptedLumCurrentPass, BaseDriver::COLOR0_ATTACHMENT, "AdaptedLumCurrent"},
     };
-    m_dumper.DumpFrame(pFramework->pVideoDriver, Cam, LightCam, SceneProp, rts, DtSecs);
+    m_dumper.DumpFrame(pFramework->pVideoDriver, Cam, LightCam, SceneProp, rts, DtSecs,
+                       nullptr, nullptr, skinnedSnapshotPtr);
     if (m_dumper.ShouldExit()) exit(0);
   }
 

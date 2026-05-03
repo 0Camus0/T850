@@ -216,12 +216,32 @@ highp vec4 SampleTexture2D(mediump sampler2D tex, highp vec2 uv)
 #endif
 }
 
+highp vec4 SampleTexture2DLod(mediump sampler2D tex, highp vec2 uv, highp float lod)
+{
+#ifdef ES_30
+    return textureLod(tex, uv, lod);
+#else
+    return texture2DLod(tex, uv, lod);
+#endif
+}
+
 highp vec3 SampleCubeLod(mediump samplerCube tex, highp vec3 dir, highp float lod)
 {
 #ifdef ES_30
-    return texture(tex, dir, lod).xyz;
+    return textureLod(tex, dir, lod).xyz;
 #else
-    return textureCube(tex, dir).xyz;
+    return textureCubeLod(tex, dir, lod).xyz;
+#endif
+}
+
+highp float LoadForwardSceneDepth()
+{
+#ifdef ES_30
+    highp ivec2 pixel = clamp(ivec2(gl_FragCoord.xy), ivec2(0), ivec2(ForwardParams.xy) - ivec2(1));
+    return texelFetch(SceneDepthTex, pixel, 0).r;
+#else
+    highp vec2 screenUV = gl_FragCoord.xy / ForwardParams.xy;
+    return texture2D(SceneDepthTex, screenUV).r;
 #endif
 }
 
@@ -333,7 +353,7 @@ highp vec3 BRDFSpecularSheen(highp vec3 sheenColor, highp float sheenRoughness, 
 
 highp float AlbedoSheenScalingLUT(highp float NdotV, highp float sheenRoughness)
 {
-    return SampleTexture2D(texIBLSheenELUT, vec2(clamp(NdotV, 0.0, 1.0), clamp(sheenRoughness, 0.0, 1.0))).r;
+    return SampleTexture2DLod(texIBLSheenELUT, vec2(clamp(NdotV, 0.0, 1.0), clamp(sheenRoughness, 0.0, 1.0)), 0.0).r;
 }
 
 highp vec3 CalculateSheenRadiance(highp vec3 sheenColor, highp float sheenRoughness, highp vec3 lightColor, highp float intensity, highp float NdotL, highp float NdotV, highp float NdotH)
@@ -348,7 +368,7 @@ highp vec3 GetIBLRadianceCharlie(highp vec3 normal, highp vec3 viewDir, highp fl
     highp vec3 reflectedVec = reflect(-viewDir, normal);
     reflectedVec.x = -reflectedVec.x;
     reflectedVec.z = -reflectedVec.z;
-    highp float brdf = SampleTexture2D(texIBLCharlieLUT, vec2(clamp(NdotV, 0.0, 1.0), clamp(sheenRoughness, 0.0, 1.0))).b;
+    highp float brdf = SampleTexture2DLod(texIBLCharlieLUT, vec2(clamp(NdotV, 0.0, 1.0), clamp(sheenRoughness, 0.0, 1.0)), 0.0).b;
     highp vec3 sheenLight = SampleCubeLod(texIBLCharlie, reflectedVec, lod);
     return sheenLight * sheenColor * brdf;
 }
@@ -779,8 +799,7 @@ void main()
     highp vec3 emissive = SampleEmissive(uv);
 
     if (ForwardParams.z > 0.5 && ForwardParams.x > 0.0 && ForwardParams.y > 0.0) {
-        highp vec2 screenUV = gl_FragCoord.xy / ForwardParams.xy;
-        highp float sceneDepth = SampleTexture2D(SceneDepthTex, screenUV).r;
+        highp float sceneDepth = LoadForwardSceneDepth();
         highp float meshDepth = Pos.z / Pos.w;
         const highp float depthEpsilon = 0.000001;
         if (sceneDepth > 0.0001 && meshDepth < sceneDepth - depthEpsilon)
@@ -858,7 +877,7 @@ void main()
     highp vec3 kDiffuseEnv = (vec3(1.0) - kSpecular) * (1.0 - metallic);
     highp vec3 envSpec = SampleCubeLod(texIBLSpecular, reflectedVec, roughness * iblMaxMip);
     highp float envAtten = (1.0 - roughness) * (1.0 - roughness);
-    highp vec2 brdfSample = hasBrdfLUT ? SampleTexture2D(texIBLBRDF, vec2(NdotV, roughness)).rg : vec2(0.0);
+    highp vec2 brdfSample = hasBrdfLUT ? SampleTexture2DLod(texIBLBRDF, vec2(NdotV, roughness), 0.0).rg : vec2(0.0);
     highp vec3 specularIBL = hasBrdfLUT ? IBLGGXFresnel(NdotV, roughness, F0, brdfSample) : kSpecular * envAtten;
     highp vec3 indirectLight = envSpec * specularIBL * iblFactor;
     highp vec3 irradianceDir = normal;

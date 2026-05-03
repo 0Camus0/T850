@@ -125,18 +125,13 @@ namespace t850 {
     tex->srvGPU = driver->GetHeap(D3D12Heap::CBV_SRV_UAV_VISIBLE).AllocateGPU();
     device->CreateShaderResourceView(tex->pTexResource.Get(), &srvDesc, tex->srvCPU);
 
-    // Create sampler (NEAREST, no interpolation)
-    D3D12_SAMPLER_DESC sampDesc = {};
-    sampDesc.Filter = D3D12_FILTER_MIN_MAG_MIP_POINT;
-    sampDesc.AddressU = sampDesc.AddressV = sampDesc.AddressW = D3D12_TEXTURE_ADDRESS_MODE_CLAMP;
-    sampDesc.MaxLOD = 0;
-    auto sampCPU = driver->GetHeap(D3D12Heap::SAMPLER).AllocateCPU();
-    tex->samplerGPU = driver->GetHeap(D3D12Heap::SAMPLER).AllocateGPU();
-    device->CreateSampler(&sampDesc, sampCPU);
-    tex->hasSampler = true;
-
     tex->x = w;
     tex->y = h;
+    tex->mipmaps = 1;
+    tex->m_channels = 4;
+    tex->props = TextBasicFormat::CH_RGBA;
+    tex->params = TextBasicParams::CLAMP_TO_EDGE | TextBasicParams::NEAREST_FILTER;
+    tex->SetTextureParams();
 
     // Upload initial data if provided
     if (data) {

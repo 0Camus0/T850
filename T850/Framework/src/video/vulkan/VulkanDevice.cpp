@@ -84,6 +84,10 @@ namespace t850 {
     tex->m_isFloatTex = true;
     tex->x = w;
     tex->y = h;
+    tex->mipmaps = 1;
+    tex->m_channels = 4;
+    tex->props = TextBasicFormat::CH_RGBA;
+    tex->params = TextBasicParams::CLAMP_TO_EDGE | TextBasicParams::NEAREST_FILTER;
 
     // Create VkImage
     VkImageCreateInfo imgCI = { VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO };
@@ -122,6 +126,7 @@ namespace t850 {
     sampCI.mipmapMode = VK_SAMPLER_MIPMAP_MODE_NEAREST;
     sampCI.addressModeU = sampCI.addressModeV = sampCI.addressModeW = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
     sampCI.maxLod = 0.0f;
+    tex->m_samplerMaxAnisotropy = 1.0f;
     if (vkCreateSampler(device, &sampCI, nullptr, &tex->m_sampler) != VK_SUCCESS) {
       T8_LOG_ERROR("[Vulkan] CreateFloatTexture: vkCreateSampler failed");
       delete tex; return nullptr;

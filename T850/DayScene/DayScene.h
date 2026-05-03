@@ -190,6 +190,8 @@ class DayScene : public t850::SceneBase
   t850::PrimitiveInst splineInst;
   t850::WireframeSphere m_wireframeSphere;
   t850::WireframeArrow m_wireframeArrow;
+  t850::TextRenderer m_debugText;
+  bool m_showCullStats = false;
   t850::LensFlare m_flare;
   XMATRIX44 m;
 };

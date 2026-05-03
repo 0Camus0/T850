@@ -387,7 +387,7 @@ namespace t850 {
     }
 
     for (int slot = 0; slot < MaxPrimitiveTextures; ++slot) {
-      if (Textures[slot] && textureNameForSlot(slot) && slot != EnvironmentTextureSlot::BrdfLUT && slot != EnvironmentTextureSlot::CharlieLUT && slot != EnvironmentTextureSlot::SheenELUT)
+      if (Textures[slot] && textureNameForSlot(slot))
         Textures[slot]->SetSampler(*T8DeviceContext, slot);
     }
 

@@ -14,6 +14,7 @@
 #include <utils/Log.h>
 #include <debug/RenderTrace.h>
 #include <algorithm>
+#include <cstdio>
 #include <cstring>
 #include <vector>
 
@@ -25,6 +26,79 @@ namespace t850 {
   // ══════════════════════════════════════════════════════
   //  VulkanTexture
   // ══════════════════════════════════════════════════════
+
+  namespace {
+    uint32_t CalculateFullMipCount(uint32_t width, uint32_t height) {
+      uint32_t levels = 1;
+      while (width > 1 || height > 1) {
+        width = width > 1 ? (width >> 1) : 1;
+        height = height > 1 ? (height >> 1) : 1;
+        ++levels;
+      }
+      return levels;
+    }
+
+    void GenerateMipChain8(const unsigned char* src, uint32_t width, uint32_t height,
+                           uint32_t faceCount, uint32_t bytesPerPixel,
+                           std::vector<unsigned char>& outData) {
+      const uint32_t mipCount = CalculateFullMipCount(width, height);
+      size_t totalBytes = 0;
+      for (uint32_t face = 0; face < faceCount; ++face) {
+        uint32_t mipWidth = width;
+        uint32_t mipHeight = height;
+        for (uint32_t mip = 0; mip < mipCount; ++mip) {
+          totalBytes += static_cast<size_t>(mipWidth) * mipHeight * bytesPerPixel;
+          mipWidth = mipWidth > 1 ? (mipWidth >> 1) : 1;
+          mipHeight = mipHeight > 1 ? (mipHeight >> 1) : 1;
+        }
+      }
+
+      outData.resize(totalBytes);
+      size_t dstOffset = 0;
+      const size_t baseFaceBytes = static_cast<size_t>(width) * height * bytesPerPixel;
+
+      for (uint32_t face = 0; face < faceCount; ++face) {
+        uint32_t prevWidth = width;
+        uint32_t prevHeight = height;
+        const unsigned char* prev = src + static_cast<size_t>(face) * baseFaceBytes;
+        size_t prevBytes = baseFaceBytes;
+
+        memcpy(outData.data() + dstOffset, prev, prevBytes);
+        size_t prevOffset = dstOffset;
+        dstOffset += prevBytes;
+
+        for (uint32_t mip = 1; mip < mipCount; ++mip) {
+          uint32_t mipWidth = prevWidth > 1 ? (prevWidth >> 1) : 1;
+          uint32_t mipHeight = prevHeight > 1 ? (prevHeight >> 1) : 1;
+          unsigned char* dst = outData.data() + dstOffset;
+          const unsigned char* srcMip = outData.data() + prevOffset;
+
+          for (uint32_t y = 0; y < mipHeight; ++y) {
+            for (uint32_t x = 0; x < mipWidth; ++x) {
+              uint32_t sx0 = x * 2;
+              uint32_t sy0 = y * 2;
+              uint32_t sx1 = (sx0 + 1 < prevWidth) ? sx0 + 1 : sx0;
+              uint32_t sy1 = (sy0 + 1 < prevHeight) ? sy0 + 1 : sy0;
+              for (uint32_t c = 0; c < bytesPerPixel; ++c) {
+                uint32_t accum = 0;
+                accum += srcMip[(static_cast<size_t>(sy0) * prevWidth + sx0) * bytesPerPixel + c];
+                accum += srcMip[(static_cast<size_t>(sy0) * prevWidth + sx1) * bytesPerPixel + c];
+                accum += srcMip[(static_cast<size_t>(sy1) * prevWidth + sx0) * bytesPerPixel + c];
+                accum += srcMip[(static_cast<size_t>(sy1) * prevWidth + sx1) * bytesPerPixel + c];
+                dst[(static_cast<size_t>(y) * mipWidth + x) * bytesPerPixel + c] =
+                  static_cast<unsigned char>((accum + 2) / 4);
+              }
+            }
+          }
+
+          prevOffset = dstOffset;
+          prevWidth = mipWidth;
+          prevHeight = mipHeight;
+          dstOffset += static_cast<size_t>(mipWidth) * mipHeight * bytesPerPixel;
+        }
+      }
+    }
+  }
 
   void VulkanTexture::LoadAPITexture(DeviceContext* context, unsigned char* buffer) {
     auto* driver = GetVkDriver();
@@ -61,11 +135,23 @@ namespace t850 {
       }
     }
 
-    VkDeviceSize imageSize = (VkDeviceSize)x * y * bytesPerPixel;
     bool isCube = (cil_props & CIL_CUBE_MAP) != 0;
     uint32_t layerCount = isCube ? 6 : 1;
-    uint32_t mipCount = (mipmaps > 0) ? mipmaps : 1;
-    VkDeviceSize totalSize = (mipCount > 1 && this->size > 0) ? this->size : imageSize * layerCount;
+    bool hasSourceMips = mipmaps > 1;
+    uint32_t mipCount = hasSourceMips ? mipmaps : 1;
+    std::vector<unsigned char> generatedMips;
+    if (!hasSourceMips && !isHalfFloat && uploadBuf) {
+      mipCount = CalculateFullMipCount(this->x, this->y);
+      if (mipCount > 1) {
+        GenerateMipChain8(uploadBuf, this->x, this->y, layerCount,
+                          static_cast<uint32_t>(bytesPerPixel), generatedMips);
+        uploadBuf = generatedMips.data();
+      }
+    }
+    VkDeviceSize imageSize = (VkDeviceSize)x * y * bytesPerPixel;
+    VkDeviceSize totalSize = !generatedMips.empty()
+      ? static_cast<VkDeviceSize>(generatedMips.size())
+      : ((mipCount > 1 && this->size > 0) ? this->size : imageSize * layerCount);
 
     // 1. Create VkImage
     VkImageCreateInfo imgCI = { VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO };
@@ -422,6 +508,7 @@ namespace t850 {
     vkGetPhysicalDeviceProperties(driver->GetPhysicalDevice(), &props);
     m_samplerMaxAnisotropy = std::min(16.0f, props.limits.maxSamplerAnisotropy);
     bool useAnisotropy = features.samplerAnisotropy &&
+                         !(cil_props & CIL_CUBE_MAP) &&
                          !(params & NEAREST_FILTER) &&
                          !(params & LINEAR_FILTER) &&
                          !(params & CLAMP_TO_BORDER) &&
@@ -435,7 +522,8 @@ namespace t850 {
     samplerCI.addressModeW = addressMode;
     samplerCI.anisotropyEnable = useAnisotropy ? VK_TRUE : VK_FALSE;
     samplerCI.maxAnisotropy = useAnisotropy ? m_samplerMaxAnisotropy : 1.0f;
-    samplerCI.borderColor = VK_BORDER_COLOR_FLOAT_TRANSPARENT_BLACK;
+    samplerCI.borderColor = (params & CLAMP_TO_BORDER) ? VK_BORDER_COLOR_FLOAT_OPAQUE_WHITE
+                                                       : VK_BORDER_COLOR_FLOAT_TRANSPARENT_BLACK;
     samplerCI.unnormalizedCoordinates = VK_FALSE;
     samplerCI.compareEnable = VK_FALSE;
     samplerCI.mipmapMode = mipmapMode;
@@ -462,17 +550,18 @@ namespace t850 {
     driver->m_pendingTextures[slot].sampler = m_sampler;
 #ifdef T850_RENDER_TRACE
     if (T8_TRACE_ACTIVE()) {
-      driver->m_pendingTextures[slot].tracerTexId = g_renderTracer->LookupTextureId(this);
+      auto& pending = driver->m_pendingTextures[slot];
+      pending.tracerTexId = g_renderTracer->LookupTextureId(this);
       m_shaderTextureName = shaderTextureName;
-      driver->m_pendingTextures[slot].tracerName  = m_shaderTextureName.c_str();
-      driver->m_pendingTextures[slot].tracerStage = "ps";
+      std::snprintf(pending.tracerName, sizeof(pending.tracerName), "%s", m_shaderTextureName.c_str());
+      std::snprintf(pending.tracerStage, sizeof(pending.tracerStage), "%s", "ps");
       // Build a logical sampler signature from the same TextBasicParams bits
       // used to construct m_sampler (see VulkanTexture sampler creation
       // around line 388-432). All 4 backends use this helper, so equivalent
       // samplers across APIs hash to the same id.
-      driver->m_pendingTextures[slot].tracerSamplerId =
-        g_renderTracer->RegisterSampler(RenderTracer::MakeSamplerSigVulkan(params, m_samplerMaxAnisotropy));
-      g_renderTracer->EvBindTextureRequest(slot, driver->m_pendingTextures[slot].tracerTexId,
+      pending.tracerSamplerId =
+        g_renderTracer->RegisterSampler(RenderTracer::MakeSamplerSigVulkan(params, m_samplerMaxAnisotropy, (cil_props & CIL_CUBE_MAP) != 0));
+      g_renderTracer->EvBindTextureRequest(slot, pending.tracerTexId,
                                            shaderTextureName, "ps");
     }
 #endif
@@ -487,13 +576,14 @@ namespace t850 {
     driver->m_pendingTextures[slot].sampler = m_sampler;
 #ifdef T850_RENDER_TRACE
     if (T8_TRACE_ACTIVE()) {
-      driver->m_pendingTextures[slot].tracerTexId = g_renderTracer->LookupTextureId(this);
+      auto& pending = driver->m_pendingTextures[slot];
+      pending.tracerTexId = g_renderTracer->LookupTextureId(this);
       m_shaderTextureName = shaderTextureName;
-      driver->m_pendingTextures[slot].tracerName  = m_shaderTextureName.c_str();
-      driver->m_pendingTextures[slot].tracerStage = "vs";
-      driver->m_pendingTextures[slot].tracerSamplerId =
-        g_renderTracer->RegisterSampler(RenderTracer::MakeSamplerSigVulkan(params, m_samplerMaxAnisotropy));
-      g_renderTracer->EvBindTextureRequest(slot, driver->m_pendingTextures[slot].tracerTexId,
+      std::snprintf(pending.tracerName, sizeof(pending.tracerName), "%s", m_shaderTextureName.c_str());
+      std::snprintf(pending.tracerStage, sizeof(pending.tracerStage), "%s", "vs");
+      pending.tracerSamplerId =
+        g_renderTracer->RegisterSampler(RenderTracer::MakeSamplerSigVulkan(params, m_samplerMaxAnisotropy, (cil_props & CIL_CUBE_MAP) != 0));
+      g_renderTracer->EvBindTextureRequest(slot, pending.tracerTexId,
                                            shaderTextureName, "vs");
     }
 #endif

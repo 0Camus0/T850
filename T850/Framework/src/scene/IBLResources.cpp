@@ -2,11 +2,17 @@
 #include <scene/IBLResources.h>
 
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <cstdint>
+#include <cstring>
+#include <filesystem>
 #include <fstream>
+#include <iomanip>
 #include <limits>
+#include <sstream>
 #include <string>
+#include <system_error>
 #include <vector>
 #include <video/BaseDriver.h>
 #include <utils/cil.h>
@@ -33,11 +39,23 @@ namespace {
 
   constexpr float PI = 3.14159265358979323846f;
   constexpr int GeneratedDiffuseSize = 32;
-  constexpr int GeneratedSpecularSize = 64;
+  constexpr int GeneratedSpecularSize = 128;
   constexpr int GeneratedLowestMipLevel = 4;
   constexpr int GeneratedLambertianSamples = 128;
   constexpr int GeneratedGGXSamples = 128;
   constexpr int GeneratedCharlieSamples = 128;
+  constexpr uint32_t IBLCacheVersion = 1;
+
+  enum class IBLCacheKind : uint32_t {
+    DiffuseCube = 1,
+    SpecularCube = 2,
+    CharlieCube = 3,
+    GGXBrdfLUT = 4,
+    CharlieLUT = 5,
+    SheenELUT = 6
+  };
+
+  constexpr std::array<char, 8> IBLCacheMagic = {'T', '8', 'I', 'B', 'L', 'F', '3', '2'};
 
   bool IsUnsupportedHighBitDepthPng(const std::string& relativeTexturePath) {
     const std::string fullPath = "Textures/" + relativeTexturePath;
@@ -131,6 +149,306 @@ namespace {
       total += size_t(mipSize) * size_t(mipSize) * 6u * 4u;
     }
     return total;
+  }
+
+  size_t TotalFloatImageTexelCount(int width, int height) {
+    return size_t(width) * size_t(height) * 4u;
+  }
+
+  uint64_t FNV1a64(const void* data, size_t size, uint64_t seed = 0xcbf29ce484222325ull) {
+    const uint8_t* bytes = static_cast<const uint8_t*>(data);
+    uint64_t hash = seed;
+    for (size_t i = 0; i < size; ++i) {
+      hash ^= uint64_t(bytes[i]);
+      hash *= 0x100000001b3ull;
+    }
+    return hash;
+  }
+
+  template <typename T>
+  uint64_t HashValue(uint64_t seed, const T& value) {
+    return FNV1a64(&value, sizeof(T), seed);
+  }
+
+  uint64_t HashString(uint64_t seed, const std::string& value) {
+    return FNV1a64(value.data(), value.size(), seed);
+  }
+
+  const char* CacheKindName(IBLCacheKind kind) {
+    switch (kind) {
+    case IBLCacheKind::DiffuseCube: return "diffuse_cube";
+    case IBLCacheKind::SpecularCube: return "ggx_specular_cube";
+    case IBLCacheKind::CharlieCube: return "charlie_sheen_cube";
+    case IBLCacheKind::GGXBrdfLUT: return "ggx_brdf_lut";
+    case IBLCacheKind::CharlieLUT: return "charlie_lut";
+    case IBLCacheKind::SheenELUT: return "sheen_e_lut";
+    default: return "unknown";
+    }
+  }
+
+  std::filesystem::path IBLCacheRoot() {
+    return std::filesystem::path("Textures") / "GeneratedIBLCache";
+  }
+
+  uint64_t BuildIBLCacheKey(
+    IBLCacheKind kind,
+    const std::string& sourcePath,
+    int width,
+    int height,
+    int faceCount,
+    int mipCount,
+    int sampleCount) {
+    uint64_t hash = 0xcbf29ce484222325ull;
+    const uint32_t kindValue = static_cast<uint32_t>(kind);
+    hash = HashValue(hash, IBLCacheVersion);
+    hash = HashValue(hash, kindValue);
+    hash = HashValue(hash, width);
+    hash = HashValue(hash, height);
+    hash = HashValue(hash, faceCount);
+    hash = HashValue(hash, mipCount);
+    hash = HashValue(hash, sampleCount);
+    hash = HashValue(hash, GeneratedDiffuseSize);
+    hash = HashValue(hash, GeneratedSpecularSize);
+    hash = HashValue(hash, GeneratedLowestMipLevel);
+    hash = HashValue(hash, GeneratedLambertianSamples);
+    hash = HashValue(hash, GeneratedGGXSamples);
+    hash = HashValue(hash, GeneratedCharlieSamples);
+
+    if (!sourcePath.empty()) {
+      std::error_code ec;
+      std::filesystem::path path(sourcePath);
+      std::filesystem::path canonical = std::filesystem::weakly_canonical(path, ec);
+      const std::string normalized = ec ? path.generic_string() : canonical.generic_string();
+      hash = HashString(hash, normalized);
+
+      ec.clear();
+      uint64_t fileSize = 0;
+      if (std::filesystem::exists(path, ec)) {
+        ec.clear();
+        const auto measuredSize = std::filesystem::file_size(path, ec);
+        if (!ec)
+          fileSize = static_cast<uint64_t>(measuredSize);
+      }
+      hash = HashValue(hash, fileSize);
+
+      ec.clear();
+      const auto writeTime = std::filesystem::last_write_time(path, ec);
+      const int64_t writeTicks = ec ? 0ll : static_cast<int64_t>(writeTime.time_since_epoch().count());
+      hash = HashValue(hash, writeTicks);
+    }
+
+    return hash;
+  }
+
+  std::filesystem::path IBLCachePath(
+    IBLCacheKind kind,
+    const std::string& sourcePath,
+    int width,
+    int height,
+    int faceCount,
+    int mipCount,
+    int sampleCount) {
+    const uint64_t key = BuildIBLCacheKey(kind, sourcePath, width, height, faceCount, mipCount, sampleCount);
+    std::ostringstream name;
+    name << CacheKindName(kind) << "_v" << IBLCacheVersion << "_"
+         << std::hex << std::setw(16) << std::setfill('0') << key << ".t8ibl";
+    return IBLCacheRoot() / name.str();
+  }
+
+  template <typename T>
+  bool ReadPod(std::ifstream& file, T& value) {
+    file.read(reinterpret_cast<char*>(&value), sizeof(T));
+    return file.good();
+  }
+
+  template <typename T>
+  void WritePod(std::ofstream& file, const T& value) {
+    file.write(reinterpret_cast<const char*>(&value), sizeof(T));
+  }
+
+  bool LoadFloatCache(
+    const std::filesystem::path& path,
+    IBLCacheKind expectedKind,
+    int expectedWidth,
+    int expectedHeight,
+    int expectedFaceCount,
+    int expectedMipCount,
+    int expectedSampleCount,
+    std::vector<float>& outData) {
+    std::error_code existsError;
+    if (!std::filesystem::exists(path, existsError))
+      return false;
+
+    std::ifstream file(path, std::ios::binary);
+    if (!file.is_open()) {
+      T8_LOG_INFO("[IBL] Cache exists but cannot be opened: '%s'", path.string().c_str());
+      return false;
+    }
+
+    std::array<char, 8> magic = {};
+    file.read(magic.data(), magic.size());
+
+    uint32_t version = 0;
+    uint32_t kind = 0;
+    int width = 0;
+    int height = 0;
+    int faceCount = 0;
+    int mipCount = 0;
+    int channels = 0;
+    int sampleCount = 0;
+    uint64_t dataBytes = 0;
+    const bool headerOk =
+      file.good()
+      && magic == IBLCacheMagic
+      && ReadPod(file, version)
+      && ReadPod(file, kind)
+      && ReadPod(file, width)
+      && ReadPod(file, height)
+      && ReadPod(file, faceCount)
+      && ReadPod(file, mipCount)
+      && ReadPod(file, channels)
+      && ReadPod(file, sampleCount)
+      && ReadPod(file, dataBytes);
+
+    const size_t expectedFloats = expectedFaceCount == 6
+      ? TotalFloatCubeTexelCount(expectedWidth, expectedMipCount)
+      : TotalFloatImageTexelCount(expectedWidth, expectedHeight);
+    const uint64_t expectedBytes = uint64_t(expectedFloats) * uint64_t(sizeof(float));
+
+    if (!headerOk
+        || version != IBLCacheVersion
+        || kind != static_cast<uint32_t>(expectedKind)
+        || width != expectedWidth
+        || height != expectedHeight
+        || faceCount != expectedFaceCount
+        || mipCount != expectedMipCount
+        || channels != 4
+        || sampleCount != expectedSampleCount
+        || dataBytes != expectedBytes) {
+      T8_LOG_INFO("[IBL] Ignoring stale generated cache '%s'", path.string().c_str());
+      return false;
+    }
+
+    outData.resize(expectedFloats);
+    file.read(reinterpret_cast<char*>(outData.data()), static_cast<std::streamsize>(dataBytes));
+    if (!file.good()) {
+      outData.clear();
+      T8_LOG_INFO("[IBL] Ignoring truncated generated cache '%s'", path.string().c_str());
+      return false;
+    }
+
+    return true;
+  }
+
+  bool SaveFloatCache(
+    const std::filesystem::path& path,
+    IBLCacheKind kind,
+    int width,
+    int height,
+    int faceCount,
+    int mipCount,
+    int sampleCount,
+    const std::vector<float>& data) {
+    const size_t expectedFloats = faceCount == 6
+      ? TotalFloatCubeTexelCount(width, mipCount)
+      : TotalFloatImageTexelCount(width, height);
+    if (data.size() != expectedFloats)
+      return false;
+
+    std::error_code ec;
+    std::filesystem::create_directories(path.parent_path(), ec);
+    if (ec) {
+      T8_LOG_INFO("[IBL] Cannot create generated cache dir '%s': %s",
+                  path.parent_path().string().c_str(), ec.message().c_str());
+      return false;
+    }
+
+    std::filesystem::path tmpPath = path;
+    tmpPath += ".tmp";
+
+    std::ofstream file(tmpPath, std::ios::binary | std::ios::trunc);
+    if (!file.is_open()) {
+      T8_LOG_INFO("[IBL] Cannot write generated cache '%s'", tmpPath.string().c_str());
+      return false;
+    }
+
+    const uint32_t version = IBLCacheVersion;
+    const uint32_t kindValue = static_cast<uint32_t>(kind);
+    const int channels = 4;
+    const uint64_t dataBytes = uint64_t(data.size()) * uint64_t(sizeof(float));
+
+    file.write(IBLCacheMagic.data(), IBLCacheMagic.size());
+    WritePod(file, version);
+    WritePod(file, kindValue);
+    WritePod(file, width);
+    WritePod(file, height);
+    WritePod(file, faceCount);
+    WritePod(file, mipCount);
+    WritePod(file, channels);
+    WritePod(file, sampleCount);
+    WritePod(file, dataBytes);
+    file.write(reinterpret_cast<const char*>(data.data()), static_cast<std::streamsize>(dataBytes));
+    file.close();
+
+    if (!file.good()) {
+      T8_LOG_INFO("[IBL] Failed while writing generated cache '%s'", tmpPath.string().c_str());
+      std::filesystem::remove(tmpPath, ec);
+      return false;
+    }
+
+    std::filesystem::remove(path, ec);
+    ec.clear();
+    std::filesystem::rename(tmpPath, path, ec);
+    if (ec) {
+      T8_LOG_INFO("[IBL] Cannot finalize generated cache '%s': %s", path.string().c_str(), ec.message().c_str());
+      std::filesystem::remove(tmpPath, ec);
+      return false;
+    }
+
+    T8_LOG_INFO("[IBL] Cached generated %s data: '%s'", CacheKindName(kind), path.string().c_str());
+    return true;
+  }
+
+  bool LoadCachedFloatCube(
+    IBLCacheKind kind,
+    const std::string& sourcePath,
+    int size,
+    int mipCount,
+    int sampleCount,
+    std::vector<float>& outData) {
+    const auto path = IBLCachePath(kind, sourcePath, size, size, 6, mipCount, sampleCount);
+    return LoadFloatCache(path, kind, size, size, 6, mipCount, sampleCount, outData);
+  }
+
+  void SaveCachedFloatCube(
+    IBLCacheKind kind,
+    const std::string& sourcePath,
+    int size,
+    int mipCount,
+    int sampleCount,
+    const std::vector<float>& data) {
+    const auto path = IBLCachePath(kind, sourcePath, size, size, 6, mipCount, sampleCount);
+    SaveFloatCache(path, kind, size, size, 6, mipCount, sampleCount, data);
+  }
+
+  bool LoadCachedFloatImage(
+    IBLCacheKind kind,
+    int width,
+    int height,
+    int sampleCount,
+    std::vector<float>& outData) {
+    const auto path = IBLCachePath(kind, std::string(), width, height, 1, 1, sampleCount);
+    return LoadFloatCache(path, kind, width, height, 1, 1, sampleCount, outData);
+  }
+
+  void SaveCachedFloatImage(
+    IBLCacheKind kind,
+    int width,
+    int height,
+    int sampleCount,
+    const std::vector<float>& data) {
+    const auto path = IBLCachePath(kind, std::string(), width, height, 1, 1, sampleCount);
+    SaveFloatCache(path, kind, width, height, 1, 1, sampleCount, data);
   }
 
   void BuildMipOffsets(SourceCubemap& cubemap) {
@@ -708,16 +1026,37 @@ int CreateGGXBrdfLUTTexture(BaseDriver* driver, int resolution, int sampleCount)
     return -1;
 
   std::vector<float> lutData;
-  GenerateGGXBrdfLUT(lutData, resolution, sampleCount);
+  bool fromCache = LoadCachedFloatImage(IBLCacheKind::GGXBrdfLUT, resolution, resolution, sampleCount, lutData);
+  if (!fromCache) {
+    GenerateGGXBrdfLUT(lutData, resolution, sampleCount);
+    SaveCachedFloatImage(IBLCacheKind::GGXBrdfLUT, resolution, resolution, sampleCount, lutData);
+  }
   int textureIndex = driver->CreateFloatTexture(resolution, resolution, lutData.data());
   if (textureIndex >= 0)
-    T8_LOG_INFO("[IBL] Generated GGX BRDF LUT: slot=%d %dx%d samples=%d", textureIndex, resolution, resolution, sampleCount);
+    T8_LOG_INFO("[IBL] %s GGX BRDF LUT: slot=%d %dx%d samples=%d",
+                fromCache ? "Loaded cached" : "Generated", textureIndex, resolution, resolution, sampleCount);
   return textureIndex;
 }
 
-int CreateGeneratedDiffuseIBLTexture(BaseDriver* driver, const SourceCubemap& source) {
+int CreateCachedGeneratedDiffuseIBLTexture(BaseDriver* driver, const std::string& sourcePath) {
+  if (!driver || sourcePath.empty())
+    return -1;
+
+  std::vector<float> cubemapData;
+  if (!LoadCachedFloatCube(IBLCacheKind::DiffuseCube, sourcePath, GeneratedDiffuseSize, 1, GeneratedLambertianSamples, cubemapData))
+    return -1;
+
+  int textureIndex = driver->CreateFloatCubeMap(GeneratedDiffuseSize, 1, cubemapData.data());
+  if (textureIndex >= 0)
+    T8_LOG_INFO("[IBL] Loaded cached Lambertian diffuse cubemap: slot=%d %dx%d samples=%d", textureIndex, GeneratedDiffuseSize, GeneratedDiffuseSize, GeneratedLambertianSamples);
+  return textureIndex;
+}
+
+int CreateGeneratedDiffuseIBLTexture(BaseDriver* driver, const SourceCubemap& source, const std::string& sourcePath) {
   std::vector<float> cubemapData;
   GenerateFilteredDiffuseCubemap(source, GeneratedDiffuseSize, GeneratedLambertianSamples, cubemapData);
+  if (!sourcePath.empty())
+    SaveCachedFloatCube(IBLCacheKind::DiffuseCube, sourcePath, GeneratedDiffuseSize, 1, GeneratedLambertianSamples, cubemapData);
   int textureIndex = driver->CreateFloatCubeMap(GeneratedDiffuseSize, 1, cubemapData.data());
   if (textureIndex >= 0) {
     T8_LOG_INFO("[IBL] Generated Lambertian diffuse cubemap: slot=%d %dx%d samples=%d", textureIndex, GeneratedDiffuseSize, GeneratedDiffuseSize, GeneratedLambertianSamples);
@@ -725,10 +1064,27 @@ int CreateGeneratedDiffuseIBLTexture(BaseDriver* driver, const SourceCubemap& so
   return textureIndex;
 }
 
-int CreateGeneratedSpecularIBLTexture(BaseDriver* driver, const SourceCubemap& source) {
+int CreateCachedGeneratedSpecularIBLTexture(BaseDriver* driver, const std::string& sourcePath) {
+  if (!driver || sourcePath.empty())
+    return -1;
+
+  int mipCount = GeneratedSpecularMipCount(GeneratedSpecularSize);
+  std::vector<float> cubemapData;
+  if (!LoadCachedFloatCube(IBLCacheKind::SpecularCube, sourcePath, GeneratedSpecularSize, mipCount, GeneratedGGXSamples, cubemapData))
+    return -1;
+
+  int textureIndex = driver->CreateFloatCubeMap(GeneratedSpecularSize, mipCount, cubemapData.data());
+  if (textureIndex >= 0)
+    T8_LOG_INFO("[IBL] Loaded cached GGX specular cubemap: slot=%d %dx%d mips=%d samples=%d", textureIndex, GeneratedSpecularSize, GeneratedSpecularSize, mipCount, GeneratedGGXSamples);
+  return textureIndex;
+}
+
+int CreateGeneratedSpecularIBLTexture(BaseDriver* driver, const SourceCubemap& source, const std::string& sourcePath) {
   int mipCount = GeneratedSpecularMipCount(GeneratedSpecularSize);
   std::vector<float> cubemapData;
   GenerateFilteredSpecularCubemap(source, GeneratedSpecularSize, mipCount, GeneratedGGXSamples, cubemapData);
+  if (!sourcePath.empty())
+    SaveCachedFloatCube(IBLCacheKind::SpecularCube, sourcePath, GeneratedSpecularSize, mipCount, GeneratedGGXSamples, cubemapData);
   int textureIndex = driver->CreateFloatCubeMap(GeneratedSpecularSize, mipCount, cubemapData.data());
   if (textureIndex >= 0) {
     T8_LOG_INFO("[IBL] Generated GGX specular cubemap: slot=%d %dx%d mips=%d samples=%d", textureIndex, GeneratedSpecularSize, GeneratedSpecularSize, mipCount, GeneratedGGXSamples);
@@ -736,10 +1092,27 @@ int CreateGeneratedSpecularIBLTexture(BaseDriver* driver, const SourceCubemap& s
   return textureIndex;
 }
 
-int CreateGeneratedCharlieIBLTexture(BaseDriver* driver, const SourceCubemap& source) {
+int CreateCachedGeneratedCharlieIBLTexture(BaseDriver* driver, const std::string& sourcePath) {
+  if (!driver || sourcePath.empty())
+    return -1;
+
+  int mipCount = GeneratedSpecularMipCount(GeneratedSpecularSize);
+  std::vector<float> cubemapData;
+  if (!LoadCachedFloatCube(IBLCacheKind::CharlieCube, sourcePath, GeneratedSpecularSize, mipCount, GeneratedCharlieSamples, cubemapData))
+    return -1;
+
+  int textureIndex = driver->CreateFloatCubeMap(GeneratedSpecularSize, mipCount, cubemapData.data());
+  if (textureIndex >= 0)
+    T8_LOG_INFO("[IBL] Loaded cached Charlie sheen cubemap: slot=%d %dx%d mips=%d samples=%d", textureIndex, GeneratedSpecularSize, GeneratedSpecularSize, mipCount, GeneratedCharlieSamples);
+  return textureIndex;
+}
+
+int CreateGeneratedCharlieIBLTexture(BaseDriver* driver, const SourceCubemap& source, const std::string& sourcePath) {
   int mipCount = GeneratedSpecularMipCount(GeneratedSpecularSize);
   std::vector<float> cubemapData;
   GenerateFilteredCharlieCubemap(source, GeneratedSpecularSize, mipCount, GeneratedCharlieSamples, cubemapData);
+  if (!sourcePath.empty())
+    SaveCachedFloatCube(IBLCacheKind::CharlieCube, sourcePath, GeneratedSpecularSize, mipCount, GeneratedCharlieSamples, cubemapData);
   int textureIndex = driver->CreateFloatCubeMap(GeneratedSpecularSize, mipCount, cubemapData.data());
   if (textureIndex >= 0) {
     T8_LOG_INFO("[IBL] Generated Charlie sheen cubemap: slot=%d %dx%d mips=%d samples=%d", textureIndex, GeneratedSpecularSize, GeneratedSpecularSize, mipCount, GeneratedCharlieSamples);
@@ -752,10 +1125,15 @@ int CreateCharlieLUTTexture(BaseDriver* driver, int resolution = 256, int sample
     return -1;
 
   std::vector<float> lutData;
-  GenerateCharlieLUT(lutData, resolution, sampleCount);
+  bool fromCache = LoadCachedFloatImage(IBLCacheKind::CharlieLUT, resolution, resolution, sampleCount, lutData);
+  if (!fromCache) {
+    GenerateCharlieLUT(lutData, resolution, sampleCount);
+    SaveCachedFloatImage(IBLCacheKind::CharlieLUT, resolution, resolution, sampleCount, lutData);
+  }
   int textureIndex = driver->CreateFloatTexture(resolution, resolution, lutData.data());
   if (textureIndex >= 0)
-    T8_LOG_INFO("[IBL] Generated Charlie LUT: slot=%d %dx%d samples=%d", textureIndex, resolution, resolution, sampleCount);
+    T8_LOG_INFO("[IBL] %s Charlie LUT: slot=%d %dx%d samples=%d",
+                fromCache ? "Loaded cached" : "Generated", textureIndex, resolution, resolution, sampleCount);
   return textureIndex;
 }
 
@@ -764,10 +1142,15 @@ int CreateSheenELUTTexture(BaseDriver* driver, int resolution = 256, int sampleC
     return -1;
 
   std::vector<float> lutData;
-  GenerateSheenELUT(lutData, resolution, sampleCount);
+  bool fromCache = LoadCachedFloatImage(IBLCacheKind::SheenELUT, resolution, resolution, sampleCount, lutData);
+  if (!fromCache) {
+    GenerateSheenELUT(lutData, resolution, sampleCount);
+    SaveCachedFloatImage(IBLCacheKind::SheenELUT, resolution, resolution, sampleCount, lutData);
+  }
   int textureIndex = driver->CreateFloatTexture(resolution, resolution, lutData.data());
   if (textureIndex >= 0)
-    T8_LOG_INFO("[IBL] Generated sheen E LUT: slot=%d %dx%d samples=%d", textureIndex, resolution, resolution, sampleCount);
+    T8_LOG_INFO("[IBL] %s sheen E LUT: slot=%d %dx%d samples=%d",
+                fromCache ? "Loaded cached" : "Generated", textureIndex, resolution, resolution, sampleCount);
   return textureIndex;
 }
 
@@ -816,21 +1199,43 @@ void LoadEnvironmentIBLResources(
       envMaps.CharlieIBL = sheenTextureIndex;
   }
 
+  std::string skyTexturePath;
+  if (driver && envMaps.Sky >= 0) {
+    if (Texture* skyTexture = driver->GetTexture(envMaps.Sky))
+      skyTexturePath = skyTexture->filepath;
+  }
+
+  if (diffuseTextureIndex < 0) {
+    diffuseTextureIndex = CreateCachedGeneratedDiffuseIBLTexture(driver, skyTexturePath);
+    if (diffuseTextureIndex >= 0)
+      envMaps.DiffuseIBL = diffuseTextureIndex;
+  }
+  if (specularTextureIndex < 0) {
+    specularTextureIndex = CreateCachedGeneratedSpecularIBLTexture(driver, skyTexturePath);
+    if (specularTextureIndex >= 0)
+      envMaps.SpecularIBL = specularTextureIndex;
+  }
+  if (sheenTextureIndex < 0) {
+    sheenTextureIndex = CreateCachedGeneratedCharlieIBLTexture(driver, skyTexturePath);
+    if (sheenTextureIndex >= 0)
+      envMaps.CharlieIBL = sheenTextureIndex;
+  }
+
   if (diffuseTextureIndex < 0 || specularTextureIndex < 0 || sheenTextureIndex < 0) {
     SourceCubemap source;
     if (LoadSourceCubemap(driver, envMaps.Sky, source)) {
       if (diffuseTextureIndex < 0) {
-        diffuseTextureIndex = CreateGeneratedDiffuseIBLTexture(driver, source);
+        diffuseTextureIndex = CreateGeneratedDiffuseIBLTexture(driver, source, skyTexturePath);
         if (diffuseTextureIndex >= 0)
           envMaps.DiffuseIBL = diffuseTextureIndex;
       }
       if (specularTextureIndex < 0) {
-        specularTextureIndex = CreateGeneratedSpecularIBLTexture(driver, source);
+        specularTextureIndex = CreateGeneratedSpecularIBLTexture(driver, source, skyTexturePath);
         if (specularTextureIndex >= 0)
           envMaps.SpecularIBL = specularTextureIndex;
       }
       if (sheenTextureIndex < 0) {
-        sheenTextureIndex = CreateGeneratedCharlieIBLTexture(driver, source);
+        sheenTextureIndex = CreateGeneratedCharlieIBLTexture(driver, source, skyTexturePath);
         if (sheenTextureIndex >= 0)
           envMaps.CharlieIBL = sheenTextureIndex;
       }

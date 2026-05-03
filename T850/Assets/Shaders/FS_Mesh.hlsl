@@ -189,7 +189,21 @@ Texture2D TransmissionTex : register(t23);
 #endif
 
 SamplerState MaterialSS : register(s0);
-SamplerState ClampSS : register(s1);
+SamplerState SpecularSS : register(s1);
+SamplerState GlossSS : register(s2);
+SamplerState NormalSS : register(s3);
+SamplerState EnvSS : register(s4);
+SamplerState HeightSS : register(s5);
+SamplerState MetallicSS : register(s6);
+SamplerState SceneDepthSS : register(s7);
+SamplerState EmissiveSS : register(s8);
+SamplerState SceneColorSS : register(s9);
+SamplerState IBLDiffuseSS : register(s10);
+SamplerState IBLSpecularSS : register(s11);
+SamplerState IBLBRDFSS : register(s12);
+SamplerState IBLCharlieSS : register(s13);
+SamplerState IBLCharlieLUTSS : register(s14);
+SamplerState IBLSheenELUTSS : register(s15);
 
 struct VS_OUTPUT{
     float4 hposition : SV_POSITION;
@@ -222,6 +236,14 @@ float2 GetForwardScreenUV(VS_OUTPUT input)
 {
     float2 screenUV = input.hposition.xy / ForwardParams.xy;
     return screenUV;
+}
+
+float LoadForwardSceneDepth(VS_OUTPUT input)
+{
+    int2 pixel = int2(input.hposition.xy);
+    int2 maxPixel = int2((int)ForwardParams.x - 1, (int)ForwardParams.y - 1);
+    pixel = min(max(pixel, int2(0, 0)), maxPixel);
+    return SceneDepthTex.Load(int3(pixel, 0)).r;
 }
 
 float2 SignNotZero(float2 value)
@@ -347,7 +369,7 @@ float3 BRDFSpecularSheen(float3 sheenColor, float sheenRoughness, float NdotL, f
 
 float AlbedoSheenScalingLUT(float NdotV, float sheenRoughness)
 {
-    return texIBLSheenELUT.SampleLevel(ClampSS, float2(saturate(NdotV), saturate(sheenRoughness)), 0.0f).r;
+    return texIBLSheenELUT.SampleLevel(IBLSheenELUTSS, float2(saturate(NdotV), saturate(sheenRoughness)), 0.0f).r;
 }
 
 float3 CalculateSheenRadiance(float3 sheenColor, float sheenRoughness, float3 lightColor, float intensity, float NdotL, float NdotV, float NdotH)
@@ -362,8 +384,8 @@ float3 GetIBLRadianceCharlie(float3 normal, float3 viewDir, float sheenRoughness
     float3 reflectedVec = reflect(-viewDir, normal);
     reflectedVec.x = -reflectedVec.x;
     reflectedVec.z = -reflectedVec.z;
-    float brdf = texIBLCharlieLUT.SampleLevel(ClampSS, float2(saturate(NdotV), saturate(sheenRoughness)), 0.0f).b;
-    float3 sheenLight = texIBLCharlie.SampleLevel(ClampSS, reflectedVec, lod).rgb;
+    float brdf = texIBLCharlieLUT.SampleLevel(IBLCharlieLUTSS, float2(saturate(NdotV), saturate(sheenRoughness)), 0.0f).b;
+    float3 sheenLight = texIBLCharlie.SampleLevel(IBLCharlieSS, reflectedVec, lod).rgb;
     return sheenLight * sheenColor * brdf;
 }
 
@@ -471,7 +493,7 @@ float3 SampleEmissive(VS_OUTPUT input, float2 uv)
 #ifdef EMISSIVE_MAP
     float2 emissiveUV = MapShareBaseSet(TexCoordSets.w) ? uv : GetTexCoord(input, TexCoordSets.w);
     emissiveUV = ApplyUVTransform(emissiveUV, EmissiveUVTransform0, EmissiveUVTransform1);
-    emissive *= EmissiveTex.Sample(MaterialSS, emissiveUV).rgb;
+    emissive *= EmissiveTex.Sample(EmissiveSS, emissiveUV).rgb;
 #endif
     return emissive * MaterialParams.w;
 }
@@ -539,11 +561,11 @@ void BuildSurface(VS_OUTPUT input, out float4 color, out float3 normal, out floa
     float2 deltaTexCoords = P * layerDepth;
     deltaTexCoords.y = -deltaTexCoords.y;
 
-    float currentDepthMapValue = TextureHeight.SampleGrad(MaterialSS, uv, ddx(uv), ddy(uv)).r;
+    float currentDepthMapValue = TextureHeight.SampleGrad(HeightSS, uv, ddx(uv), ddy(uv)).r;
     float currentRayZ = 1.0f - layerDepth;
     float prevRayZ = 1.0f - layerDepth;
     [loop] while (currentRayZ > currentDepthMapValue) {
-        currentDepthMapValue = TextureHeight.SampleGrad(MaterialSS, uv, ddx(input.texture0), ddy(input.texture0)).r;
+        currentDepthMapValue = TextureHeight.SampleGrad(HeightSS, uv, ddx(input.texture0), ddy(input.texture0)).r;
         prevDepthMapValue = currentDepthMapValue;
         uv += deltaTexCoords;
         prevRayZ = currentRayZ;
@@ -560,7 +582,7 @@ void BuildSurface(VS_OUTPUT input, out float4 color, out float3 normal, out floa
 #ifdef NORMAL_MAP
     float2 normalUV = MapShareBaseSet(TexCoordSets.y) ? uv : GetTexCoord(input, TexCoordSets.y);
     normalUV = ApplyUVTransform(normalUV, NormalUVTransform0, NormalUVTransform1);
-    float3 normalTex = TextureNormal.Sample(MaterialSS, normalUV).xyz;
+    float3 normalTex = TextureNormal.Sample(NormalSS, normalUV).xyz;
     normalTex = normalTex * float3(2.0f, 2.0f, 2.0f) - float3(1.0f, 1.0f, 1.0f);
     // glTF normalTexture.scale (default 1.0) — stored in MaterialParams9.y.
     // Spec: scale applies to .xy only, .z is reconstructed/normalized after.
@@ -577,11 +599,11 @@ void BuildSurface(VS_OUTPUT input, out float4 color, out float3 normal, out floa
 #ifdef METALLIC_MAP
     float2 metallicUV = MapShareBaseSet(TexCoordSets.z) ? uv : GetTexCoord(input, TexCoordSets.z);
     metallicUV = ApplyUVTransform(metallicUV, MetallicUVTransform0, MetallicUVTransform1);
-    float4 mrSample = TextureMetallic.Sample(MaterialSS, metallicUV);
+    float4 mrSample = TextureMetallic.Sample(MetallicSS, metallicUV);
     metallic = PBRParams.x * mrSample.b;
     roughness = PBRParams.y * mrSample.g;
 #elif defined(GLOSS_MAP)
-    roughness = TextureGloss.Sample(MaterialSS, uv).r;
+    roughness = TextureGloss.Sample(GlossSS, uv).r;
 #endif
     roughness = clamp(roughness, 0.04f, 1.0f);
     metallic = clamp(metallic, 0.0f, 1.0f);
@@ -657,7 +679,7 @@ void BuildSurface(VS_OUTPUT input, out float4 color, out float3 normal, out floa
 #if defined(HEIGHT_MAP) && defined(ENABLE_PARALLAX) && defined(USE_TEXCOORD0)
     float2 ssDxx = ddx(input.texture0);
     float2 ssDyy = ddy(input.texture0);
-    float ssStartZ = TextureHeight.SampleGrad(MaterialSS, uv, ssDxx, ssDyy).r;
+    float ssStartZ = TextureHeight.SampleGrad(HeightSS, uv, ssDxx, ssDyy).r;
     float shadowStrength = ParallaxShadowSettings.w;
     if (shadowStrength > 0.001f) {
         float lightDirLen = length(Light0Direction.xyz);
@@ -676,7 +698,7 @@ void BuildSurface(VS_OUTPUT input, out float4 color, out float3 normal, out floa
                     currentRayZ += layerStep;
                     currentUV += deltaUV;
                     if (currentRayZ >= 1.0f) break;
-                    float h = TextureHeight.SampleGrad(MaterialSS, currentUV, ssDxx, ssDyy).r;
+                    float h = TextureHeight.SampleGrad(HeightSS, currentUV, ssDxx, ssDyy).r;
                     if (h > currentRayZ) {
                         float penumbra = float(si + 1) / numLayers;
                         selfShadow = min(selfShadow, lerp(0.0f, penumbra, ParallaxShadowSettings.z));
@@ -778,8 +800,7 @@ float4 FS(VS_OUTPUT input) : SV_TARGET
     float3 emissive = SampleEmissive(input, uv);
 
     if (ForwardParams.z > 0.5f && ForwardParams.x > 0.0f && ForwardParams.y > 0.0f) {
-        float2 screenUV = GetForwardScreenUV(input);
-        float sceneDepth = SceneDepthTex.Sample(ClampSS, screenUV).r;
+        float sceneDepth = LoadForwardSceneDepth(input);
         float meshDepth = input.Pos.z / input.Pos.w;
         const float depthEpsilon = 0.000001f;
         if (sceneDepth > 0.0001f && meshDepth < sceneDepth - depthEpsilon)
@@ -854,16 +875,14 @@ float4 FS(VS_OUTPUT input) : SV_TARGET
     float NdotV = max(dot(normal, eyeDir), 0.0f);
     float3 kSpecular = clamp(fresnelSchlickRoughness(NdotV, F0, roughness), 0.0f, 1.0f);
     float3 kDiffuseEnv = (float3(1.0f, 1.0f, 1.0f) - kSpecular) * (1.0f - metallic);
-    float3 envSpec = texIBLSpecular.SampleLevel(ClampSS, reflectedVec, roughness * iblMaxMip).xyz;
+    float3 envSpec = texIBLSpecular.SampleLevel(IBLSpecularSS, reflectedVec, roughness * iblMaxMip).xyz;
     float envAtten = (1.0f - roughness) * (1.0f - roughness);
-    float2 brdfSample = hasBrdfLUT ? texIBLBRDF.SampleLevel(ClampSS, float2(NdotV, roughness), 0.0f).rg : float2(0.0f, 0.0f);
+    float2 brdfSample = hasBrdfLUT ? texIBLBRDF.SampleLevel(IBLBRDFSS, float2(NdotV, roughness), 0.0f).rg : float2(0.0f, 0.0f);
     float3 specularIBL = hasBrdfLUT ? IBLGGXFresnel(NdotV, roughness, F0, brdfSample) : kSpecular * envAtten;
     float3 indirectLight = envSpec * specularIBL * iblFactor;
-    float3 irradianceDir = normal;
-    irradianceDir.x = -irradianceDir.x;
-    irradianceDir.z = -irradianceDir.z;
+    float3 irradianceDir = float3(-normal.x, normal.y, -normal.z);
     float diffuseMip = clamp(MaterialParams3.z, 0.0f, iblMaxMip);
-    float3 irradiance = texIBLDiffuse.SampleLevel(ClampSS, irradianceDir, diffuseMip).xyz;
+    float3 irradiance = texIBLDiffuse.SampleLevel(IBLDiffuseSS, irradianceDir, diffuseMip).xyz;
     indirectLight += irradiance * albedo * kDiffuseEnv * iblFactor;
     indirectLight += albedo * Ambient.rgb * kDiffuseEnv;
     if (hasSheenLUT && sheenStrength > 0.0f) {
@@ -875,7 +894,7 @@ float4 FS(VS_OUTPUT input) : SV_TARGET
 
     if (clearcoatFactor > 0.001f) {
         clearcoatRoughness = clamp(clearcoatRoughness, 0.04f, 1.0f);
-        float3 clearcoatSpec = texIBLSpecular.SampleLevel(ClampSS, reflectedVec, clearcoatRoughness * iblMaxMip).xyz;
+        float3 clearcoatSpec = texIBLSpecular.SampleLevel(IBLSpecularSS, reflectedVec, clearcoatRoughness * iblMaxMip).xyz;
         float clearcoatAtten = hasBrdfLUT ? 1.0f : (1.0f - clearcoatRoughness) * (1.0f - clearcoatRoughness);
         float3 clearcoatF = FresnelCalc(saturate(dot(normal, eyeDir)), float3(0.04f, 0.04f, 0.04f));
         float clearcoatWeight = saturate(clearcoatFactor * max(clearcoatF.x, max(clearcoatF.y, clearcoatF.z)));
@@ -891,7 +910,7 @@ float4 FS(VS_OUTPUT input) : SV_TARGET
         float2 screenUV = GetForwardScreenUV(input);
         float iorOffset = saturate(abs(ForwardParams.w - 1.0f));
         float2 refractUV = saturate(screenUV + normal.xy * MaterialParams2.y * transmission * (0.5f + iorOffset));
-        float3 sceneColor = SceneColorTex.Sample(ClampSS, refractUV).rgb;
+        float3 sceneColor = SceneColorTex.Sample(SceneColorSS, refractUV).rgb;
         finalColor = lerp(finalColor, sceneColor, transmission);
     }
     finalColor += emissive;

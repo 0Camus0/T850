@@ -1818,9 +1818,9 @@ reopen:
         if (shader->srvBindings[slot] < 0) continue;
         bool hasUserBind = (m_pendingTextures[slot].imageView != VK_NULL_HANDLE);
         int  texId       = hasUserBind ? m_pendingTextures[slot].tracerTexId : -1;
-        const char* nm   = hasUserBind && m_pendingTextures[slot].tracerName
+        const char* nm   = hasUserBind && m_pendingTextures[slot].tracerName[0]
                             ? m_pendingTextures[slot].tracerName : "<dummy>";
-        const char* stage = hasUserBind && m_pendingTextures[slot].tracerStage
+        const char* stage = hasUserBind && m_pendingTextures[slot].tracerStage[0]
                             ? m_pendingTextures[slot].tracerStage : "ps";
         // viewId reuses the imageView raw pointer cast to int — not a stable
         // resource id but unique enough to flag mismatches between two API

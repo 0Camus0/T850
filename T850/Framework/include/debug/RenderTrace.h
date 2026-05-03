@@ -123,6 +123,8 @@ namespace t850 {
     std::string filter;      // "linear" | "anisotropic" | "nearest" | ...
     std::string address_u, address_v, address_w;
     float anisotropy = 1.0f;
+    float min_lod = 0.0f;
+    float max_lod = 0.0f;
     float lod_bias = 0.0f;
     std::string compare;
     std::array<float, 4> border_color = { 0, 0, 0, 0 };
@@ -357,10 +359,10 @@ namespace t850 {
     // different sampler signatures (e.g. D3D12 defaults to anisotropic-16
     // while Vulkan defaults to linear-no-aniso) — which is exactly the kind
     // of cross-API divergence we want surfaced in trace diffs.
-    static TraceSamplerRec MakeSamplerSigD3D12(unsigned int params);
-    static TraceSamplerRec MakeSamplerSigD3D11(unsigned int params);
-    static TraceSamplerRec MakeSamplerSigGL   (unsigned int params);
-    static TraceSamplerRec MakeSamplerSigVulkan(unsigned int params, float maxAnisotropy = 1.0f);
+    static TraceSamplerRec MakeSamplerSigD3D12(unsigned int params, bool cubeMap = false);
+    static TraceSamplerRec MakeSamplerSigD3D11(unsigned int params, bool cubeMap = false);
+    static TraceSamplerRec MakeSamplerSigGL   (unsigned int params, unsigned int mipmaps = 0, bool cubeMap = false);
+    static TraceSamplerRec MakeSamplerSigVulkan(unsigned int params, float maxAnisotropy = 1.0f, bool cubeMap = false);
 
     // Backend-specific render-state signature builders. Each one mirrors
     // the *actual* depth / rasterizer / blend state that backend programs

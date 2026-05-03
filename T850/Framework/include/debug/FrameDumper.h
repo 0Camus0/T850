@@ -72,6 +72,29 @@ namespace t850 {
     std::vector<SnapshotCamJson> omni_cameras;  // 6 face cameras
   };
 
+  struct SnapshotSkinnedJson {
+    bool has_skin = false;
+    bool playing = false;
+    bool looping = true;
+    bool use_slerp = true;
+    bool use_quat_skinning = false;
+    bool keyframe_mode = false;
+    bool wireframe_visible = false;
+    bool skeleton_visible = false;
+    float animation_speed = 1.0f;
+    float local_time = 0.0f;
+    float tick_time = 0.0f;
+    float ticks_per_second = 0.0f;
+    int current_anim_set = 0;
+    int num_anim_sets = 0;
+    int current_keyframe = 0;
+    int total_keyframes = 0;
+    int num_bones = 0;
+    int bone_texture_width = 0;
+    std::vector<Mat4Json> bone_matrices;
+    std::vector<float> bone_texture_rgba32f;
+  };
+
   // The complete snapshot file
   struct SnapshotJson {
     int frame = 0;
@@ -84,6 +107,7 @@ namespace t850 {
     SnapshotScenePropsJson scene_props;
     std::optional<SnapshotMatricesJson> matrices;
     std::optional<SnapshotOmniJson> omni;  // Night scene only
+    std::optional<SnapshotSkinnedJson> skinned;
   };
 
   // JSON I/O (glaze-based, implemented in FrameDumperIO.cpp)
@@ -139,11 +163,13 @@ namespace t850 {
                    const std::vector<RTDumpEntry>& rts,
                    float dt,
                    Camera* omniCams = nullptr,
-                   const XVECTOR3* omniLightPos = nullptr);
+                   const XVECTOR3* omniLightPos = nullptr,
+                   const SnapshotSkinnedJson* skinned = nullptr);
     bool ShouldExit() const;
 
     // ── Query ──
     bool SkipCameraUpdates() const;
+    const SnapshotSkinnedJson* GetReplaySkinnedState() const;
 
   private:
     FrameDumperConfig config_;
@@ -168,7 +194,8 @@ namespace t850 {
                        Camera& cam, Camera& lightCam,
                        const SceneProps& props,
                        int frame, const std::string& apiName, float dt,
-                       Camera* omniCams, const XVECTOR3* omniLightPos);
+                       Camera* omniCams, const XVECTOR3* omniLightPos,
+                       const SnapshotSkinnedJson* skinned);
     void LogCameraState(Camera& cam, Camera& lightCam,
                         const SceneProps& props,
                         int frame, const std::string& apiName, float dt);

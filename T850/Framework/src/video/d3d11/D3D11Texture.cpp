@@ -27,6 +27,11 @@ namespace t850 {
     sdesc.Filter = D3D11_FILTER_ANISOTROPIC;
     sdesc.MaxAnisotropy = 16;
 
+    if ((cil_props & CIL_CUBE_MAP) && !(params & (TextBasicParams::NEAREST_FILTER | TextBasicParams::LINEAR_FILTER | TextBasicParams::CLAMP_TO_BORDER))) {
+      sdesc.Filter = D3D11_FILTER_MIN_MAG_MIP_LINEAR;
+      sdesc.MaxAnisotropy = 1;
+    }
+
     if (params & TextBasicParams::NEAREST_FILTER) {
       sdesc.Filter = D3D11_FILTER_MIN_MAG_MIP_POINT;
       sdesc.MaxAnisotropy = 1;
@@ -60,10 +65,11 @@ namespace t850 {
       sdesc.MaxAnisotropy = 1;
     }
 
-    sdesc.BorderColor[0] = 0.0f;
-    sdesc.BorderColor[1] = 0.0f;
-    sdesc.BorderColor[2] = 0.0f;
-    sdesc.BorderColor[3] = 0.0f;
+    const float border = (params & TextBasicParams::CLAMP_TO_BORDER) ? 1.0f : 0.0f;
+    sdesc.BorderColor[0] = border;
+    sdesc.BorderColor[1] = border;
+    sdesc.BorderColor[2] = border;
+    sdesc.BorderColor[3] = border;
     sdesc.MinLOD = 0.0f;
     sdesc.MaxLOD = (params & (TextBasicParams::NEAREST_FILTER | TextBasicParams::LINEAR_FILTER)) ? 0.0f : D3D11_FLOAT32_MAX;
     sdesc.MipLODBias = 0.0f;
@@ -295,7 +301,7 @@ namespace t850 {
       // a logical sampler signature so cross-API trace diffs surface real
       // mismatches rather than backend-specific descriptor handles.
       int sampId = g_renderTracer->RegisterSampler(
-        RenderTracer::MakeSamplerSigD3D11(params));
+        RenderTracer::MakeSamplerSigD3D11(params, (cil_props & CIL_CUBE_MAP) != 0));
       g_renderTracer->EvBindTextureRequest(slot, texId, shaderTextureName, "ps");
       g_renderTracer->EvBindTextureCommit(slot, texId, /*viewId=*/-1, sampId, shaderTextureName, "ps");
     }
@@ -315,7 +321,7 @@ namespace t850 {
     if (T8_TRACE_ACTIVE()) {
       int texId = g_renderTracer->LookupTextureId(this);
       int sampId = g_renderTracer->RegisterSampler(
-        RenderTracer::MakeSamplerSigD3D11(params));
+        RenderTracer::MakeSamplerSigD3D11(params, (cil_props & CIL_CUBE_MAP) != 0));
       g_renderTracer->EvBindTextureRequest(slot, texId, name, "vs");
       g_renderTracer->EvBindTextureCommit(slot, texId, /*viewId=*/-1, sampId, name, "vs");
     }

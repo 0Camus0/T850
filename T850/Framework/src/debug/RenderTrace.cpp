@@ -84,7 +84,8 @@ struct glz::meta<t850::TraceSamplerRec> {
   static constexpr auto value = object(
     "id", &T::id, "filter", &T::filter,
     "address_u", &T::address_u, "address_v", &T::address_v, "address_w", &T::address_w,
-    "anisotropy", &T::anisotropy, "lod_bias", &T::lod_bias,
+    "anisotropy", &T::anisotropy, "min_lod", &T::min_lod, "max_lod", &T::max_lod,
+    "lod_bias", &T::lod_bias,
     "compare", &T::compare, "border_color", &T::border_color);
 };
 
@@ -553,9 +554,11 @@ namespace t850 {
       if (s.filter == rec.filter
           && s.address_u == rec.address_u
           && s.address_v == rec.address_v
-          && s.address_w == rec.address_w
-          && s.anisotropy == rec.anisotropy
-          && s.lod_bias == rec.lod_bias
+           && s.address_w == rec.address_w
+           && s.anisotropy == rec.anisotropy
+           && s.min_lod == rec.min_lod
+           && s.max_lod == rec.max_lod
+           && s.lod_bias == rec.lod_bias
           && s.compare == rec.compare
           && s.border_color == rec.border_color) {
         return s.id;
@@ -567,16 +570,22 @@ namespace t850 {
     return m_frame.samplers.back().id;
   }
 
-  TraceSamplerRec RenderTracer::MakeSamplerSigD3D12(unsigned int params) {
+  TraceSamplerRec RenderTracer::MakeSamplerSigD3D12(unsigned int params, bool cubeMap) {
     // Mirrors D3D12Texture::SetTextureParams (D3D12_SAMPLER_DESC creation).
     // Default: ANISOTROPIC + 16x; CLAMP address; MaxLOD = MAX (all mips).
     TraceSamplerRec rec;
     rec.filter      = "anisotropic";
     rec.anisotropy  = 16.0f;
     rec.address_u = rec.address_v = rec.address_w = "clamp_to_edge";
+    rec.min_lod = 0.0f;
+    rec.max_lod = 3.4028234663852886e38f;
     rec.lod_bias = 0.0f;
     rec.compare  = "never";
     rec.border_color = {0,0,0,0};
+    if (cubeMap && !(params & (TextBasicParams::NEAREST_FILTER | TextBasicParams::LINEAR_FILTER | TextBasicParams::CLAMP_TO_BORDER))) {
+      rec.filter = "min_mag_mip_linear";
+      rec.anisotropy = 1.0f;
+    }
     if (params & TextBasicParams::NEAREST_FILTER) {
       rec.filter = "min_mag_mip_point";
       rec.anisotropy = 1.0f;
@@ -591,47 +600,55 @@ namespace t850 {
       rec.address_u = rec.address_v = rec.address_w = "border";
       rec.filter = "min_mag_mip_linear";
       rec.anisotropy = 1.0f;
+      rec.border_color = {1,1,1,1};
     }
+    if (params & (TextBasicParams::NEAREST_FILTER | TextBasicParams::LINEAR_FILTER))
+      rec.max_lod = 0.0f;
     return rec;
   }
 
-  TraceSamplerRec RenderTracer::MakeSamplerSigD3D11(unsigned int params) {
+  TraceSamplerRec RenderTracer::MakeSamplerSigD3D11(unsigned int params, bool cubeMap) {
     // Mirrors D3DXTexture::SetTextureParams. Identical semantics to D3D12.
-    return MakeSamplerSigD3D12(params);
+    return MakeSamplerSigD3D12(params, cubeMap);
   }
 
-  TraceSamplerRec RenderTracer::MakeSamplerSigGL(unsigned int params) {
-    // Mirrors GLTexture::SetTextureParams. Default min/mag filters are
+  TraceSamplerRec RenderTracer::MakeSamplerSigGL(unsigned int params, unsigned int mipmaps, bool cubeMap) {
+    // Mirrors GLTexture::SetTextureParams. Mipmapped textures use
     // GL_LINEAR_MIPMAP_LINEAR / GL_LINEAR with anisotropy = MAX (16+ on
-    // most drivers). NEAREST_FILTER overrides to GL_NEAREST + aniso=1.
+    // most drivers). Single-level textures clamp MAX_LEVEL to 0 and use
+    // GL_LINEAR / GL_LINEAR so they remain complete. NEAREST_FILTER
+    // overrides to GL_NEAREST + aniso=1.
     // Wrap mode always honored from CLAMP_TO_EDGE / TILED / CLAMP_TO_BORDER.
     TraceSamplerRec rec;
     rec.lod_bias = 0.0f;
+    rec.min_lod = 0.0f;
+    rec.max_lod = mipmaps > 1 ? float(mipmaps - 1) : 0.0f;
     rec.compare  = "";
     rec.border_color = {0,0,0,0};
     if (params & TextBasicParams::NEAREST_FILTER) {
       rec.filter     = "nearest";
       rec.anisotropy = 1.0f;
     } else {
-      // GL hardcodes LINEAR_MIPMAP_LINEAR + max anisotropy regardless of
-      // the MIPMAPS bit (see SetTextureParams). The actual reported value
-      // mirrors that runtime behavior so traces don't lie.
-      rec.filter     = "linear_mip_linear_aniso_max";
-      rec.anisotropy = 16.0f;
+      rec.filter     = mipmaps > 1 ? "linear_mip_linear" : "linear";
+      rec.anisotropy = cubeMap ? 1.0f : 16.0f;
+      if (!cubeMap)
+        rec.filter = mipmaps > 1 ? "linear_mip_linear_aniso_max" : "linear_aniso_max";
     }
     const char* wrap = "clamp_to_edge";
     if (params & TextBasicParams::CLAMP_TO_BORDER) wrap = "clamp_to_border";
     else if (params & TextBasicParams::TILED)      wrap = "repeat";
     else if (params & TextBasicParams::CLAMP_TO_EDGE) wrap = "clamp_to_edge";
     rec.address_u = rec.address_v = rec.address_w = wrap;
+    if (params & TextBasicParams::CLAMP_TO_BORDER)
+      rec.border_color = {1,1,1,1};
     return rec;
   }
 
-  TraceSamplerRec RenderTracer::MakeSamplerSigVulkan(unsigned int params, float maxAnisotropy) {
+  TraceSamplerRec RenderTracer::MakeSamplerSigVulkan(unsigned int params, float maxAnisotropy, bool cubeMap) {
     // Mirrors VulkanTexture::SetTextureParams, which intentionally tracks
     // D3D11/D3D12 sampler semantics: default clamp + 16x anisotropy, explicit
     // point/linear modes disable anisotropy and clamp to mip 0.
-    TraceSamplerRec rec = MakeSamplerSigD3D12(params);
+    TraceSamplerRec rec = MakeSamplerSigD3D12(params, cubeMap);
     rec.anisotropy = std::min(rec.anisotropy, maxAnisotropy);
     if (rec.filter == "anisotropic" && rec.anisotropy <= 1.0f) {
       rec.filter = "linear_mip_linear";

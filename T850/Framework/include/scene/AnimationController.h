@@ -40,6 +40,9 @@ public:
 
   void SetSpeed(float speed) { m_speed = speed; }
   float GetSpeed() const     { return m_speed; }
+  float GetLocalTime() const { return m_localTime; }
+  float GetTicksPerSecond() const { return m_ticksPerSecond; }
+  float GetCurrentTickTime() const { return m_localTime * m_ticksPerSecond; }
 
   // Keyframe stepping mode: jump directly to a keyframe with no interpolation
   void SetKeyframeMode(bool enabled) { m_keyframeMode = enabled; }

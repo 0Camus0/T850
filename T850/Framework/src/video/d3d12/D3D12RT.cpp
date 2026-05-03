@@ -90,6 +90,9 @@ namespace t850 {
       D3D12Texture* colorTex = new D3D12Texture;
       colorTex->pTexResource = colorRes;
       colorTex->x = w; colorTex->y = h;
+      colorTex->mipmaps = 1;
+      colorTex->m_channels = 4;
+      colorTex->params = TextBasicParams::CLAMP_TO_EDGE;
       D3D12_SHADER_RESOURCE_VIEW_DESC srvDesc = {};
       srvDesc.Format = thisFmt;
       srvDesc.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE2D;
@@ -98,6 +101,7 @@ namespace t850 {
       colorTex->srvCPU = driver->GetHeap(D3D12Heap::CBV_SRV_UAV_VISIBLE).AllocateCPU();
       colorTex->srvGPU = driver->GetHeap(D3D12Heap::CBV_SRV_UAV_VISIBLE).AllocateGPU();
       device->CreateShaderResourceView(colorRes.Get(), &srvDesc, colorTex->srvCPU);
+      colorTex->SetTextureParams();
       vColorTextures.push_back(colorTex);
 
       T8_LOG_DEBUG("[D3D12] RT color[%d] created: %dx%d fmt=%d", i, w, h, thisFmt);
@@ -145,6 +149,9 @@ namespace t850 {
     D3D12Texture* depthTex = new D3D12Texture;
     depthTex->pTexResource = depthResource;
     depthTex->x = w; depthTex->y = h;
+    depthTex->mipmaps = 1;
+    depthTex->m_channels = 1;
+    depthTex->params = TextBasicParams::CLAMP_TO_BORDER;
     D3D12_SHADER_RESOURCE_VIEW_DESC depthSrvDesc = {};
     depthSrvDesc.Format = srvDepthFmt;
     depthSrvDesc.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
@@ -158,6 +165,7 @@ namespace t850 {
     depthTex->srvCPU = driver->GetHeap(D3D12Heap::CBV_SRV_UAV_VISIBLE).AllocateCPU();
     depthTex->srvGPU = driver->GetHeap(D3D12Heap::CBV_SRV_UAV_VISIBLE).AllocateGPU();
     device->CreateShaderResourceView(depthResource.Get(), &depthSrvDesc, depthTex->srvCPU);
+    depthTex->SetTextureParams();
     pDepthTexture = depthTex;
 
     T8_LOG_INFO("[D3D12] RT created: %dx%d, %d colors (fmt=%d), depth (cube=%d)", w, h, number_RT, cfmt, isCubeDepth);

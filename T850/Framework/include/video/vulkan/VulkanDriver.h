@@ -135,8 +135,8 @@ namespace t850 {
       // so BindPendingDescriptors can emit a commit event correlating slot ->
       // texture id without a costly reverse lookup.
       int         tracerTexId = -1;
-      const char* tracerName  = nullptr;
-      const char* tracerStage = nullptr;
+      char        tracerName[64] = {};
+      char        tracerStage[4] = {};
       // Tracer-only: logical sampler signature id (built from TextBasicParams
       // by VulkanTexture::Set so cross-API trace diffs are meaningful).
       int         tracerSamplerId = -1;
@@ -226,7 +226,7 @@ namespace t850 {
     VkRect2D        m_scissorRect = {};
 
     // Per-frame constant buffer ring allocator
-    static const uint32_t kCBRingBufferSize = 4 * 1024 * 1024; // 4 MB per frame
+    static const uint32_t kCBRingBufferSize = 16 * 1024 * 1024; // 16 MB per frame
     VkBuffer        m_cbRingBuffers[kBackBufferCount] = {};
     VmaAllocation   m_cbRingAllocations[kBackBufferCount] = {};
     void*           m_cbRingMapped[kBackBufferCount] = {};

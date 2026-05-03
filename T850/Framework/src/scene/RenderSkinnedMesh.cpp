@@ -27,7 +27,7 @@ namespace t850 {
   extern DeviceContext*  T8DeviceContext;
 
   static constexpr unsigned MaterialSamplerSlot = 0;
-  static constexpr unsigned ClampSamplerSlot = 1;
+  static constexpr unsigned EnvSamplerSlot = 4;
   static constexpr unsigned BoneTextureSlot = 24;
 
   namespace {
@@ -562,23 +562,27 @@ namespace t850 {
 
     // Dump matrices on first frame for debugging
     static bool sDumped = false;
-    if (!sDumped) {
+    if (!sDumped && !m_snapshotPoseActive) {
       m_animController.Update(0.0f);
       m_animController.DumpMatrices("anim_debug_bindpose.txt");
       sDumped = true;
     }
 
     // Update animation
-    if (m_playing && !m_animController.GetKeyframeMode()) {
+    if (!m_snapshotPoseActive && m_playing && !m_animController.GetKeyframeMode()) {
       m_animController.SetUseSlerp(m_useSlerp);
       float deltaTime = pScProp ? pScProp->FrameDeltaSec : (1.0f / 60.0f);
       m_animController.Update(deltaTime);
     }
 
     // Upload bone matrices to texture
-    int numBones = m_animController.GetNumBones();
+    int numBones = m_snapshotPoseActive
+      ? static_cast<int>(m_snapshotBoneMatrices.size())
+      : m_animController.GetNumBones();
     int count = (numBones < kMaxBones) ? numBones : kMaxBones;
-    const XMATRIX44* bones = m_animController.GetBoneMatrices();
+    const XMATRIX44* bones = m_snapshotPoseActive
+      ? m_snapshotBoneMatrices.data()
+      : m_animController.GetBoneMatrices();
     for (int b = 0; b < count; b++) {
       int texelBase = b * 4 * 4;
       memcpy(&m_boneTexData[texelBase],      &bones[b].m[0][0], 16);
@@ -588,6 +592,34 @@ namespace t850 {
     }
     m_boneTexture->UpdateFloatData(*T8DeviceContext, m_boneTexWidth, m_boneTexWidth,
                                     m_boneTexData.data());
+  }
+
+  void RenderSkinnedMesh::ExportBoneMatrices(std::vector<XMATRIX44>& out) const {
+    out.clear();
+    if (!m_hasSkin) return;
+    int numBones = m_snapshotPoseActive
+      ? static_cast<int>(m_snapshotBoneMatrices.size())
+      : m_animController.GetNumBones();
+    int count = (numBones < kMaxBones) ? numBones : kMaxBones;
+    if (count <= 0) return;
+    if (m_snapshotPoseActive) {
+      out.assign(m_snapshotBoneMatrices.begin(), m_snapshotBoneMatrices.begin() + count);
+      return;
+    }
+    const XMATRIX44* bones = m_animController.GetBoneMatrices();
+    out.assign(bones, bones + count);
+  }
+
+  void RenderSkinnedMesh::ApplySnapshotBoneMatrices(const std::vector<XMATRIX44>& matrices) {
+    m_snapshotBoneMatrices = matrices;
+    if (static_cast<int>(m_snapshotBoneMatrices.size()) > kMaxBones)
+      m_snapshotBoneMatrices.resize(kMaxBones);
+    m_snapshotPoseActive = !m_snapshotBoneMatrices.empty();
+  }
+
+  void RenderSkinnedMesh::ClearSnapshotBoneMatrices() {
+    m_snapshotPoseActive = false;
+    m_snapshotBoneMatrices.clear();
   }
 
   // ── Main draw ──────────────────────────────────────────
@@ -607,9 +639,6 @@ namespace t850 {
     XMATRIX44 VP = pActualCamera->VP;
 
     m_totalSubsets = m_drawnSubsets = m_culledMeshes = 0;
-
-    XVECTOR3 frustumPlanes[6];
-    ExtractFrustumPlanes(VP, frustumPlanes);
 
     uint8_t currentPass = gKey.getPass();
     std::vector<std::size_t> geometryOrder(Info.size());
@@ -635,11 +664,6 @@ namespace t850 {
     for (std::size_t oi = 0; oi < geometryOrder.size(); oi++) {
       std::size_t i = geometryOrder[oi];
       MeshInfo *it_MeshInfo = &Info[i];
-
-      if (!AABBInsideFrustum(it_MeshInfo->bounds, transform, frustumPlanes)) {
-        m_culledMeshes++;
-        continue;
-      }
 
       // Fill base CBuffer (no bone data — that's in the texture)
       RenderMesh::CBuffer baseCB;
@@ -741,8 +765,8 @@ namespace t850 {
         if (!ShouldDrawSubsetInPass(*sub_info, currentPass))
           continue;
 
-        if (!AABBInsideFrustum(sub_info->bounds, transform, frustumPlanes))
-          continue;
+        // Bind-pose CPU AABBs are not conservative for GPU-skinned vertices.
+        // Draw all skinned subsets until we have animation-aware bounds.
 
         // Phase B step 2: read material data via the deduplicated
         // MaterialAsset. Mirrors RenderMesh::Draw.
@@ -855,63 +879,63 @@ namespace t850 {
         }
         if (s->key.has(ShaderKey::SPECULAR_MAP) && sub_info->SpecularTex) {
           sub_info->SpecularTex->Set(*T8DeviceContext, 1, "SpecularTex");
-          sub_info->SpecularTex->SetSampler(*T8DeviceContext, MaterialSamplerSlot);
+          sub_info->SpecularTex->SetSampler(*T8DeviceContext, 1);
         }
         if (s->key.has(ShaderKey::GLOSS_MAP) && sub_info->GlossfTex) {
           sub_info->GlossfTex->Set(*T8DeviceContext, 2, "GlossTex");
-          sub_info->GlossfTex->SetSampler(*T8DeviceContext, MaterialSamplerSlot);
+          sub_info->GlossfTex->SetSampler(*T8DeviceContext, 2);
         }
         if (s->key.has(ShaderKey::NORMAL_MAP) && sub_info->NormalTex) {
           sub_info->NormalTex->Set(*T8DeviceContext, 3, "NormalTex");
-          sub_info->NormalTex->SetSampler(*T8DeviceContext, MaterialSamplerSlot);
+          sub_info->NormalTex->SetSampler(*T8DeviceContext, 3);
         }
         if (EnvMap) {
           EnvMap->Set(*T8DeviceContext, 4, "texEnv");
-          EnvMap->SetSampler(*T8DeviceContext, ClampSamplerSlot);
+          EnvMap->SetSampler(*T8DeviceContext, EnvSamplerSlot);
         }
         if (s->key.has(ShaderKey::HEIGHT_MAP) && sub_info->ParalaxTex) {
           sub_info->ParalaxTex->Set(*T8DeviceContext, 5, "HeightTex");
-          sub_info->ParalaxTex->SetSampler(*T8DeviceContext, MaterialSamplerSlot);
+          sub_info->ParalaxTex->SetSampler(*T8DeviceContext, 5);
         }
         if (s->key.has(ShaderKey::METALLIC_MAP) && sub_info->MetallicTex) {
           sub_info->MetallicTex->Set(*T8DeviceContext, 6, "MetallicTex");
-          sub_info->MetallicTex->SetSampler(*T8DeviceContext, MaterialSamplerSlot);
+          sub_info->MetallicTex->SetSampler(*T8DeviceContext, 6);
         }
         if (Textures[7]) {
           Textures[7]->Set(*T8DeviceContext, 7, "SceneDepthTex");
-          Textures[7]->SetSampler(*T8DeviceContext, ClampSamplerSlot);
+          Textures[7]->SetSampler(*T8DeviceContext, 7);
         }
         if (s->key.has(ShaderKey::EMISSIVE_MAP) && sub_info->EmissiveTex) {
           sub_info->EmissiveTex->Set(*T8DeviceContext, 8, "EmissiveTex");
-          sub_info->EmissiveTex->SetSampler(*T8DeviceContext, MaterialSamplerSlot);
+          sub_info->EmissiveTex->SetSampler(*T8DeviceContext, 8);
         }
         if (Textures[9]) {
           Textures[9]->Set(*T8DeviceContext, 9, "SceneColorTex");
-          Textures[9]->SetSampler(*T8DeviceContext, ClampSamplerSlot);
+          Textures[9]->SetSampler(*T8DeviceContext, 9);
         }
         if (Textures[EnvironmentTextureSlot::DiffuseIBL]) {
           Textures[EnvironmentTextureSlot::DiffuseIBL]->Set(*T8DeviceContext, EnvironmentTextureSlot::DiffuseIBL, "texIBLDiffuse");
-          Textures[EnvironmentTextureSlot::DiffuseIBL]->SetSampler(*T8DeviceContext, ClampSamplerSlot);
+          Textures[EnvironmentTextureSlot::DiffuseIBL]->SetSampler(*T8DeviceContext, EnvironmentTextureSlot::DiffuseIBL);
         }
         if (Textures[EnvironmentTextureSlot::SpecularIBL]) {
           Textures[EnvironmentTextureSlot::SpecularIBL]->Set(*T8DeviceContext, EnvironmentTextureSlot::SpecularIBL, "texIBLSpecular");
-          Textures[EnvironmentTextureSlot::SpecularIBL]->SetSampler(*T8DeviceContext, ClampSamplerSlot);
+          Textures[EnvironmentTextureSlot::SpecularIBL]->SetSampler(*T8DeviceContext, EnvironmentTextureSlot::SpecularIBL);
         }
         if (Textures[EnvironmentTextureSlot::BrdfLUT]) {
           Textures[EnvironmentTextureSlot::BrdfLUT]->Set(*T8DeviceContext, EnvironmentTextureSlot::BrdfLUT, "texIBLBRDF");
-          Textures[EnvironmentTextureSlot::BrdfLUT]->SetSampler(*T8DeviceContext, ClampSamplerSlot);
+          Textures[EnvironmentTextureSlot::BrdfLUT]->SetSampler(*T8DeviceContext, EnvironmentTextureSlot::BrdfLUT);
         }
         if (Textures[EnvironmentTextureSlot::CharlieIBL]) {
           Textures[EnvironmentTextureSlot::CharlieIBL]->Set(*T8DeviceContext, EnvironmentTextureSlot::CharlieIBL, "texIBLCharlie");
-          Textures[EnvironmentTextureSlot::CharlieIBL]->SetSampler(*T8DeviceContext, ClampSamplerSlot);
+          Textures[EnvironmentTextureSlot::CharlieIBL]->SetSampler(*T8DeviceContext, EnvironmentTextureSlot::CharlieIBL);
         }
         if (Textures[EnvironmentTextureSlot::CharlieLUT]) {
           Textures[EnvironmentTextureSlot::CharlieLUT]->Set(*T8DeviceContext, EnvironmentTextureSlot::CharlieLUT, "texIBLCharlieLUT");
-          Textures[EnvironmentTextureSlot::CharlieLUT]->SetSampler(*T8DeviceContext, ClampSamplerSlot);
+          Textures[EnvironmentTextureSlot::CharlieLUT]->SetSampler(*T8DeviceContext, EnvironmentTextureSlot::CharlieLUT);
         }
         if (Textures[EnvironmentTextureSlot::SheenELUT]) {
           Textures[EnvironmentTextureSlot::SheenELUT]->Set(*T8DeviceContext, EnvironmentTextureSlot::SheenELUT, "texIBLSheenELUT");
-          Textures[EnvironmentTextureSlot::SheenELUT]->SetSampler(*T8DeviceContext, ClampSamplerSlot);
+          Textures[EnvironmentTextureSlot::SheenELUT]->SetSampler(*T8DeviceContext, EnvironmentTextureSlot::SheenELUT);
         }
         if (s->key.has(ShaderKey::SHEEN_COLOR_MAP) && sub_info->SheenColorTex) {
           sub_info->SheenColorTex->Set(*T8DeviceContext, MaterialTextureSlot::SheenColor, "SheenColorTex");

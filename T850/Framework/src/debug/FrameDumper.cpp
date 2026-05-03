@@ -194,6 +194,11 @@ bool FrameDumper::SkipCameraUpdates() const {
   return false;
 }
 
+const SnapshotSkinnedJson* FrameDumper::GetReplaySkinnedState() const {
+  if (!hasReplayData_ || !replayData_.skinned.has_value()) return nullptr;
+  return &*replayData_.skinned;
+}
+
 // ── Dump control ──
 
 void FrameDumper::RequestDump() {
@@ -230,7 +235,8 @@ void FrameDumper::DumpFrame(BaseDriver* driver,
                             const std::vector<RTDumpEntry>& rts,
                             float dt,
                             Camera* omniCams,
-                            const XVECTOR3* omniLightPos) {
+                            const XVECTOR3* omniLightPos,
+                            const SnapshotSkinnedJson* skinned) {
   dumped_ = true;
 
   std::string apiName = (driver->m_currentAPI == GraphicsApi::D3D12) ? "d3d12"
@@ -256,7 +262,7 @@ void FrameDumper::DumpFrame(BaseDriver* driver,
   // Log + write snapshot.json
   LogCameraState(cam, lightCam, props, dumpFrameCounter_, apiName, dt);
   WriteSnapshot(dumpDir + "/snapshot.json", cam, lightCam, props,
-                dumpFrameCounter_, apiName, dt, omniCams, omniLightPos);
+                dumpFrameCounter_, apiName, dt, omniCams, omniLightPos, skinned);
 
 #ifdef T850_RENDER_TRACE
   // Render trace: write trace.json next to RT_Dump_*.ppm and snapshot.json so
@@ -334,9 +340,10 @@ void FrameDumper::LogCameraState(Camera& cam, Camera& lightCam,
 
 void FrameDumper::WriteSnapshot(const std::string& path,
                                 Camera& cam, Camera& lightCam,
-                                const SceneProps& props,
-                                int frame, const std::string& apiName, float dt,
-                                Camera* omniCams, const XVECTOR3* omniLightPos) {
+                                 const SceneProps& props,
+                                 int frame, const std::string& apiName, float dt,
+                                 Camera* omniCams, const XVECTOR3* omniLightPos,
+                                 const SnapshotSkinnedJson* skinned) {
   SnapshotJson out;
   out.frame = frame;
   out.scene = config_.sceneIndex;
@@ -395,6 +402,10 @@ void FrameDumper::WriteSnapshot(const std::string& path,
       omni.omni_cameras.push_back(CamToJson(omniCams[i]));
     }
     out.omni = omni;
+  }
+
+  if (skinned && skinned->has_skin) {
+    out.skinned = *skinned;
   }
 
   SaveSnapshot(path, out);

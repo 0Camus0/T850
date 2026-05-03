@@ -123,6 +123,11 @@ namespace t850 {
 
     tex->x = w;
     tex->y = h;
+    tex->mipmaps = 1;
+    tex->m_channels = 4;
+    tex->props = TextBasicFormat::CH_RGBA;
+    tex->params = TextBasicParams::CLAMP_TO_EDGE | TextBasicParams::NEAREST_FILTER;
+    tex->SetTextureParams();
     return tex;
   }
 

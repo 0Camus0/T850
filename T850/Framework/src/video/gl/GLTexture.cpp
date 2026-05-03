@@ -35,6 +35,18 @@
 
 
 namespace t850 {
+  namespace {
+    unsigned int CalculateFullMipCount(unsigned int width, unsigned int height) {
+      unsigned int levels = 1;
+      while (width > 1 || height > 1) {
+        width = width > 1 ? (width >> 1) : 1;
+        height = height > 1 ? (height >> 1) : 1;
+        ++levels;
+      }
+      return levels;
+    }
+  }
+
   GLTexture::GLTexture() : glTarget(GL_TEXTURE_2D)
   {
   }
@@ -64,26 +76,31 @@ namespace t850 {
 
     if (params & TextBasicParams::CLAMP_TO_BORDER) {
       glWrap = 0x812D; // GL_CLAMP_TO_BORDER
-      float borderColor[] = { 0.0f, 0.0f, 0.0f, 0.0f };
+      float borderColor[] = { 1.0f, 1.0f, 1.0f, 1.0f };
       glTexParameterfv(glTarget, 0x1004, borderColor); // GL_TEXTURE_BORDER_COLOR
     }
+
+    const bool hasMipChain = mipmaps > 1;
+
+    glTexParameteri(glTarget, GL_TEXTURE_BASE_LEVEL, 0);
+    glTexParameteri(glTarget, GL_TEXTURE_MAX_LEVEL, hasMipChain ? static_cast<GLint>(mipmaps - 1) : 0);
 
     if (params & TextBasicParams::NEAREST_FILTER) {
       glFiltering = GL_NEAREST;
       glTexParameteri(glTarget, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
       glTexParameteri(glTarget, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
-      glTexParameteri(glTarget, GL_TEXTURE_BASE_LEVEL, 0);
-      glTexParameteri(glTarget, GL_TEXTURE_MAX_LEVEL, 0);
     } else {
+      if (!hasMipChain)
+        glFiltering = GL_LINEAR;
       glTexParameteri(glTarget, GL_TEXTURE_MIN_FILTER, glFiltering);
       glTexParameteri(glTarget, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
     }
-    if (mipmaps > 1)
-      glTexParameteri(glTarget, GL_TEXTURE_MAX_LEVEL, mipmaps - 1);
     glTexParameteri(glTarget, GL_TEXTURE_WRAP_S, glWrap);
     glTexParameteri(glTarget, GL_TEXTURE_WRAP_T, glWrap);
+    if (glTarget == GL_TEXTURE_CUBE_MAP)
+      glTexParameteri(glTarget, GL_TEXTURE_WRAP_R, glWrap);
 
-    if (!(params & TextBasicParams::NEAREST_FILTER)) {
+    if (!(params & TextBasicParams::NEAREST_FILTER) && !(cil_props & CIL_CUBE_MAP)) {
       int Max = 1;
       glGetIntegerv(GL_MAX_TEXTURE_MAX_ANISOTROPY_EXT, &Max);
       glTexParameteri(glTarget, GL_TEXTURE_MAX_ANISOTROPY_EXT, Max);
@@ -147,9 +164,11 @@ namespace t850 {
       }
     }
 
-    if (mipCount <= 1)
+    if (mipCount <= 1) {
       glGenerateMipmap(glTarget);
-    else {
+      this->mipmaps = CalculateFullMipCount(this->x, this->y);
+      params |= TextBasicParams::MIPMAPS;
+    } else {
       this->mipmaps = mipCount;
       params |= TextBasicParams::MIPMAPS;
     }
@@ -235,7 +254,7 @@ namespace t850 {
       // build the signature the same way, so equivalent samplers hash to
       // the same id and cross-API trace diffs surface mismatches cleanly.
       int sampId = g_renderTracer->RegisterSampler(
-        RenderTracer::MakeSamplerSigGL(params));
+        RenderTracer::MakeSamplerSigGL(params, mipmaps, (cil_props & CIL_CUBE_MAP) != 0));
       g_renderTracer->EvBindTextureRequest(slot, texId, name, "ps");
       g_renderTracer->EvBindTextureCommit(slot, texId, /*viewId=*/-1, sampId, name, "ps");
     }
@@ -258,7 +277,7 @@ namespace t850 {
     if (T8_TRACE_ACTIVE()) {
       int texId = g_renderTracer->LookupTextureId(this);
       int sampId = g_renderTracer->RegisterSampler(
-        RenderTracer::MakeSamplerSigGL(params));
+        RenderTracer::MakeSamplerSigGL(params, mipmaps, (cil_props & CIL_CUBE_MAP) != 0));
       g_renderTracer->EvBindTextureRequest(slot, texId, name, "vs");
       g_renderTracer->EvBindTextureCommit(slot, texId, /*viewId=*/-1, sampId, name, "vs");
     }

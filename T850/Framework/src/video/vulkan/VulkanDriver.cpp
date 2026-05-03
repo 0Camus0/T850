@@ -58,7 +58,7 @@ namespace t850 {
       VulkanRT* rt = static_cast<VulkanRT*>(RTs[CurrentRT]);
       renderPass = rt->m_renderPass;
     }
-    key.renderPass = reinterpret_cast<uintptr_t>(renderPass);
+    key.renderPass = VulkanRenderPassKey(renderPass);
 
     auto it = m_pipelineCache.find(key);
     if (it != m_pipelineCache.end()) {
@@ -210,8 +210,8 @@ namespace t850 {
       return VK_NULL_HANDLE;
     }
 
-    T8_LOG_DEBUG("[Vulkan] Pipeline created: shader=%p blend=%d depth=%d cull=%d topo=%d stride=%u colors=%d renderPass=%p",
-           shader, key.blend, key.depth, key.cull, key.topology, key.vertexStride, key.numColorAttachments, pipelineCI.renderPass);
+    T8_LOG_DEBUG("[Vulkan] Pipeline created: shader=%p blend=%d depth=%d cull=%d topo=%d stride=%u colors=%d renderPass=0x%llx",
+           shader, key.blend, key.depth, key.cull, key.topology, key.vertexStride, key.numColorAttachments, key.renderPass);
     m_pipelineCache[key] = pipeline;
 #ifdef T850_RENDER_TRACE
     if (T8_TRACE_ACTIVE()) {
@@ -227,7 +227,7 @@ namespace t850 {
       rec.color_formats.push_back((uint32_t)key.colorFormat);
       rec.depth_format            = (uint32_t)key.depthFormat;
       rec.vertex_stride           = key.vertexStride;
-      rec.render_pass             = (uint64_t)key.renderPass;
+      rec.render_pass             = key.renderPass;
       g_renderTracer->EvCreatePSO(rec);
     }
 #endif

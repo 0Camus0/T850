@@ -22,6 +22,14 @@ namespace t850 {
   // ══════════════════════════════════════════════════════
   //  Vulkan Pipeline cache key
   // ══════════════════════════════════════════════════════
+  inline uint64_t VulkanRenderPassKey(VkRenderPass renderPass) {
+#if defined(VK_USE_64_BIT_PTR_DEFINES) && (VK_USE_64_BIT_PTR_DEFINES == 1)
+    return static_cast<uint64_t>(reinterpret_cast<uintptr_t>(renderPass));
+#else
+    return static_cast<uint64_t>(renderPass);
+#endif
+  }
+
   struct VulkanPipelineKey {
     uintptr_t shaderPtr;
     uint8_t   blend;
@@ -30,7 +38,7 @@ namespace t850 {
     uint8_t   numColorAttachments;
     uint8_t   topology;  // VkPrimitiveTopology truncated to 8-bit
     uint32_t  vertexStride;
-    uintptr_t renderPass;
+    uint64_t  renderPass;
     VkFormat  colorFormat;
     VkFormat  depthFormat;
     bool operator==(const VulkanPipelineKey& o) const {
@@ -55,7 +63,7 @@ namespace t850 {
       h ^= std::hash<uint32_t>()(static_cast<uint32_t>(k.depthFormat)) << 6;
       h ^= std::hash<uint8_t>()(k.topology) << 7;
       h ^= std::hash<uint32_t>()(k.vertexStride) << 8;
-      h ^= std::hash<uintptr_t>()(k.renderPass) << 9;
+      h ^= std::hash<uint64_t>()(k.renderPass) << 9;
       return h;
     }
   };

@@ -99,7 +99,13 @@ SceneProps() : ActiveCamera(0) , ActiveLights(1), ActiveLightCamera(0), ActiveGa
 	float ShadowMin = 0.25f;
 	float EnvFactor = 1.0f;
 	float IBLFactor = 1.0f;
+	float IBLMipCount = 4.0f;
+	float IBLDiffuseMipLevel = 4.0f;
+	float IBLBRDFLUTEnabled = 0.0f;
 	float GodRaysFactor = 1.0f;
+	float MaterialEmissiveIntensity = 1.0f;
+	float MaterialTransmissionMultiplier = 1.0f;
+	float MaterialRefractionStrength = 0.03f;
 
 	float ShadowMapResolution = 1024.0f;
   float GoodRaysResolution = 0.0f;

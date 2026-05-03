@@ -16,6 +16,7 @@
 #include <utils/gltf/GLTFLoader.h>
 #include <utils/gltf/GLTFTypes.h>
 #include <utils/gltf/GLTFAccessor.h>
+#include <utils/gltf/GLTFSkinMap.h>
 #include <utils/XDataBase.h>
 #include <utils/Log.h>
 #include <cmath>
@@ -112,20 +113,18 @@ void BuildSkinsAndAnimations(const Document& doc,
   //  SKINS → xSkeleton + xSkinWeights
   // ═══════════════════════════════════════════════════════
 
+  SkinJointMap jointMap = BuildSkinJointMap(doc);
+
   if (!doc.skins.empty()) {
-    const Skin& skin = doc.skins[0];  // v1: single skin per asset
-    int numJoints = static_cast<int>(skin.joints.size());
+    const Skin& firstSkin = doc.skins[0];
+    int numJoints = static_cast<int>(jointMap.jointNodes.size());
 
     if (numJoints == 0) {
       T8_LOG_ERROR("[glTF] Skin has no joints");
     } else {
-      T8_LOG_INFO("[glTF] Building skeleton: %d joints", numJoints);
-
-      // Build node→joint index mapping
-      std::unordered_map<int, int> nodeToJoint;
-      for (int j = 0; j < numJoints; j++) {
-        nodeToJoint[skin.joints[j]] = j;
-      }
+      T8_LOG_INFO("[glTF] Building skeleton: %d joints from %zu skin(s)",
+                  numJoints, doc.skins.size());
+      const auto& nodeToJoint = jointMap.nodeToJoint;
 
       // Build parent map from scene graph
       std::unordered_map<int, int> nodeParent;
@@ -149,8 +148,8 @@ void BuildSkinsAndAnimations(const Document& doc,
       // must also account for these ancestor transforms.
       XMATRIX44 skeletonRootWorld;
       skeletonRootWorld.Identity();
-      {
-        int skelRootNode = skin.skeleton.value_or(skin.joints[0]);
+      if (doc.skins.size() == 1 && !firstSkin.joints.empty()) {
+        int skelRootNode = firstSkin.skeleton.value_or(firstSkin.joints[0]);
         // Walk up from skeleton root's parent to scene root
         int cur = skelRootNode;
         std::vector<int> ancestors;
@@ -169,13 +168,15 @@ void BuildSkinsAndAnimations(const Document& doc,
         T8_LOG_INFO("[glTF] Skeleton root world: diag=(%.3f,%.3f,%.3f) trans=(%.3f,%.3f,%.3f)",
           skeletonRootWorld.m[0][0], skeletonRootWorld.m[1][1], skeletonRootWorld.m[2][2],
           skeletonRootWorld.m[3][0], skeletonRootWorld.m[3][1], skeletonRootWorld.m[3][2]);
+      } else {
+        T8_LOG_INFO("[glTF] Multi-skin skeleton uses per-joint ancestor transforms");
       }
 
       mc->Skeleton.RootParentWorld = skeletonRootWorld;
       mc->SkeletonAnimated.RootParentWorld = skeletonRootWorld;
 
       for (int j = 0; j < numJoints; j++) {
-        int nodeIdx = skin.joints[j];
+        int nodeIdx = jointMap.jointNodes[j];
         xF::xBone& bone = mc->Skeleton.Bones[j];
         xF::xBone& boneAnim = mc->SkeletonAnimated.Bones[j];
 
@@ -240,14 +241,33 @@ void BuildSkinsAndAnimations(const Document& doc,
         }
       }
 
-      // Read inverse bind matrices
-      std::vector<float> ibmData;
-      int ibmElem = 0;
-      bool hasIBM = skin.inverseBindMatrices.has_value()
-                    && ReadAccessorFloats(doc, *skin.inverseBindMatrices, ibmData, &ibmElem)
-                    && ibmElem == 16;
+      // Read inverse bind matrices from every skin and store them in global
+      // joint order. Duplicate joint nodes across skins are expected to share
+      // identical IBMs; keep the first valid copy.
+      std::vector<XMATRIX44> inverseBindMatrices(numJoints);
+      std::vector<bool> hasInverseBind(numJoints, false);
+      for (int j = 0; j < numJoints; ++j) inverseBindMatrices[j].Identity();
+      for (int si = 0; si < static_cast<int>(doc.skins.size()); ++si) {
+        const Skin& skin = doc.skins[si];
+        std::vector<float> ibmData;
+        int ibmElem = 0;
+        bool hasIBM = skin.inverseBindMatrices.has_value()
+                      && ReadAccessorFloats(doc, *skin.inverseBindMatrices, ibmData, &ibmElem)
+                      && ibmElem == 16;
+        if (!hasIBM) continue;
+        for (int li = 0; li < static_cast<int>(skin.joints.size()); ++li) {
+          if (li >= static_cast<int>(jointMap.localToGlobal[si].size())) continue;
+          int globalJoint = jointMap.localToGlobal[si][li];
+          if (globalJoint < 0 || globalJoint >= numJoints || hasInverseBind[globalJoint]) continue;
+          if (static_cast<int>(ibmData.size()) >= (li + 1) * 16) {
+            inverseBindMatrices[globalJoint] = ColMajorToRowMajor(&ibmData[li * 16]);
+            hasInverseBind[globalJoint] = true;
+          }
+        }
+      }
 
-      // Build xSkinInfo on the first geometry with skin data
+      // Build xSkinInfo on every skinned geometry. Vertex JOINTS_0 values were
+      // already remapped from local skin indices to this global joint order.
       for (auto& geom : mc->Geometry) {
         if (!(geom.VertexAttributes & xF::xMeshGeometry::HAS_SKINWEIGHTS0))
           continue;
@@ -262,8 +282,8 @@ void BuildSkinsAndAnimations(const Document& doc,
 
           // Inverse bind matrix — kept in RH row-vector space.
           // The Z-flip is applied once to the final bone matrix product.
-          if (hasIBM && static_cast<int>(ibmData.size()) >= (j + 1) * 16) {
-            sw.MatrixOffset = ColMajorToRowMajor(&ibmData[j * 16]);
+          if (hasInverseBind[j]) {
+            sw.MatrixOffset = inverseBindMatrices[j];
           } else {
             sw.MatrixOffset.Identity();
           }
@@ -274,7 +294,6 @@ void BuildSkinsAndAnimations(const Document& doc,
 
         T8_LOG_INFO("[glTF] Skin weights applied to geometry '%s': %d bones",
                     geom.Name.c_str(), numJoints);
-        break;  // v1: apply skin to first matching geometry
       }
     }
   }
@@ -292,13 +311,8 @@ void BuildSkinsAndAnimations(const Document& doc,
   mc->Animation.TicksPerSecond = static_cast<unsigned int>(kTicksPerSecond);
   mc->Animation.Animations.resize(doc.animations.size());
 
-  // Build node→joint mapping (reuse if skins exist)
-  std::unordered_map<int, int> nodeToJoint;
-  if (!doc.skins.empty()) {
-    for (int j = 0; j < static_cast<int>(doc.skins[0].joints.size()); j++) {
-      nodeToJoint[doc.skins[0].joints[j]] = j;
-    }
-  }
+  // Build node→joint mapping (reuse the global skin order when skins exist).
+  const auto& nodeToJoint = jointMap.nodeToJoint;
 
   for (std::size_t ai = 0; ai < doc.animations.size(); ai++) {
     const Animation& anim = doc.animations[ai];
@@ -317,9 +331,11 @@ void BuildSkinsAndAnimations(const Document& doc,
       auto it = nodeToJoint.find(nodeIdx);
       if (it != nodeToJoint.end()) {
         boneIdx = it->second;
-      } else {
-        // If no skin, use node index directly as bone index
+      } else if (doc.skins.empty()) {
+        // If no skin, use node index directly as bone index.
         boneIdx = nodeIdx;
+      } else {
+        continue;
       }
 
       // Ensure this bone has a BonesRef entry
@@ -382,8 +398,8 @@ void BuildSkinsAndAnimations(const Document& doc,
     // Synthesize default keys for bones missing channels
     for (auto& ab : animSet.BonesRef) {
       int nodeIdx = -1;
-      if (!doc.skins.empty() && ab.BoneID < doc.skins[0].joints.size()) {
-        nodeIdx = doc.skins[0].joints[ab.BoneID];
+      if (!doc.skins.empty() && ab.BoneID < jointMap.jointNodes.size()) {
+        nodeIdx = jointMap.jointNodes[ab.BoneID];
       }
 
       if (ab.PositionKeys.empty()) {

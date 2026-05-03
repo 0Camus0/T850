@@ -344,6 +344,9 @@
     <ClInclude Include="include\scene\RenderGraph.h">
       <Filter>Header Files\scene</Filter>
     </ClInclude>
+    <ClInclude Include="include\scene\IBLResources.h">
+      <Filter>Header Files\scene</Filter>
+    </ClInclude>
     <ClInclude Include="include\scene\RenderGraphDescriptor.h">
       <Filter>Header Files\scene</Filter>
     </ClInclude>
@@ -369,6 +372,9 @@
       <Filter>Header Files\utils</Filter>
     </ClInclude>
     <ClInclude Include="include\debug\Profiler.h">
+      <Filter>Header Files\utils</Filter>
+    </ClInclude>
+    <ClInclude Include="include\debug\RenderTrace.h">
       <Filter>Header Files\utils</Filter>
     </ClInclude>
     <ClInclude Include="include\utils\ThreadPool.h">
@@ -538,6 +544,9 @@
     <ClCompile Include="src\scene\RenderQuad.cpp">
       <Filter>Source Files\scene</Filter>
     </ClCompile>
+    <ClCompile Include="src\scene\IBLResources.cpp">
+      <Filter>Source Files\scene</Filter>
+    </ClCompile>
     <ClCompile Include="src\video\gl\GLSLParser.cpp">
       <Filter>Source Files\video\GL</Filter>
     </ClCompile>
@@ -647,6 +656,9 @@
       <Filter>Source Files\utils</Filter>
     </ClCompile>
     <ClCompile Include="src\debug\Profiler.cpp">
+      <Filter>Source Files\utils</Filter>
+    </ClCompile>
+    <ClCompile Include="src\debug\RenderTrace.cpp">
       <Filter>Source Files\utils</Filter>
     </ClCompile>
     <ClCompile Include="src\utils\SPIRVReflection.cpp">

@@ -18,10 +18,50 @@ uniform highp vec4   toogles;
 
 #define ENABLE_PCF 1
 
+const highp float DEPTH_CLEAR_EPSILON = 0.0001;
+
+bool IsSceneDepthValid(highp float depth) {
+	return depth > DEPTH_CLEAR_EPSILON;
+}
+
 
 highp float roundTo(highp float num,highp float decimals){
 	highp float shift = pow(10.0,decimals);
 	return round(num*shift) / shift;
+}
+
+highp float LinearToSRGBChannel(highp float value)
+{
+	value = clamp(value, 0.0, 1.0);
+	return value <= 0.0031308 ? value * 12.92 : 1.055 * pow(value, 1.0 / 2.4) - 0.055;
+}
+
+highp vec3 LinearToSRGB(highp vec3 color)
+{
+	return vec3(LinearToSRGBChannel(color.r), LinearToSRGBChannel(color.g), LinearToSRGBChannel(color.b));
+}
+
+highp vec4 ReconstructPosition(highp vec2 clipPos, highp float depth) {
+	highp vec4 position = WVPInverse * vec4(clipPos, depth, 1.0);
+	position.xyz /= position.w;
+	position.w = 1.0;
+	return position;
+}
+
+highp float LinearizeDepth(highp float depth) {
+	highp float znear = CameraInfo.x;
+	highp float zfar = CameraInfo.y;
+	return (znear * zfar) / (znear + depth * (zfar - znear));
+}
+
+highp vec3 DecodeOctahedralNormal(highp vec2 encoded)
+{
+	highp vec2 f = encoded * 2.0 - vec2(1.0);
+	highp vec3 normal = vec3(f.x, f.y, 1.0 - abs(f.x) - abs(f.y));
+	highp float t = max(-normal.z, 0.0);
+	normal.x += normal.x >= 0.0 ? -t : t;
+	normal.y += normal.y >= 0.0 ? -t : t;
+	return normalize(normal);
 }
 
 #ifdef ES_30
@@ -29,24 +69,80 @@ highp float roundTo(highp float num,highp float decimals){
 	in highp vec2 vecUVCoords;
 	in highp vec4 Pos;
 	in highp vec4 PosCorner;
+	in highp vec2 ClipPos;
 #else
 	varying highp vec2 vecUVCoords;
 	varying highp vec4 Pos;
 	varying highp vec4 PosCorner;
+	varying highp vec2 ClipPos;
 #endif
 
 #ifdef ES_30
 	layout(location = 0) out highp vec4 colorOut;
 #endif
 
-#ifdef DEFERRED_PASS
+#if defined(DEFERRED_PASS) || defined(DEFERRED_LDR_PASS)
 uniform mediump sampler2D tex0;
 uniform mediump sampler2D tex1;
 uniform mediump sampler2D tex2;
 uniform mediump sampler2D tex3;
 uniform mediump sampler2D tex4;
 uniform mediump sampler2D tex5;
+uniform mediump sampler2D tex6;
+uniform mediump sampler2D tex7;
+uniform mediump sampler2D tex8;
 uniform mediump samplerCube texEnv;
+uniform mediump samplerCube texIBLDiffuse;
+uniform mediump samplerCube texIBLSpecular;
+uniform mediump sampler2D texIBLBRDF;
+uniform mediump samplerCube texIBLCharlie;
+uniform mediump sampler2D texIBLCharlieLUT;
+uniform mediump sampler2D texIBLSheenELUT;
+
+highp vec2 SampleBRDFLUT(highp vec2 uv)
+{
+#ifdef ES_30
+	return textureLod(texIBLBRDF, uv, 0.0).rg;
+#else
+	return texture2DLod(texIBLBRDF, uv, 0.0).rg;
+#endif
+}
+
+highp float SampleSheenELUT(highp vec2 uv)
+{
+#ifdef ES_30
+	return textureLod(texIBLSheenELUT, uv, 0.0).r;
+#else
+	return texture2DLod(texIBLSheenELUT, uv, 0.0).r;
+#endif
+}
+
+highp float SampleCharlieLUT(highp vec2 uv)
+{
+#ifdef ES_30
+	return textureLod(texIBLCharlieLUT, uv, 0.0).b;
+#else
+	return texture2DLod(texIBLCharlieLUT, uv, 0.0).b;
+#endif
+}
+
+highp vec3 SampleCubeLod(mediump samplerCube tex, highp vec3 dir, highp float lod)
+{
+#ifdef ES_30
+	return textureLod(tex, dir, lod).xyz;
+#else
+	return textureCubeLod(tex, dir, lod).xyz;
+#endif
+}
+
+highp vec4 SampleTexture2DLod(mediump sampler2D tex, highp vec2 uv, highp float lod)
+{
+#ifdef ES_30
+	return textureLod(tex, uv, lod);
+#else
+	return texture2DLod(tex, uv, lod);
+#endif
+}
 
 highp vec3 NormalDistribution(highp float NdotH, highp float roughness)
 {
@@ -75,6 +171,16 @@ highp vec3 fresnelSchlickRoughness(highp float cosTheta, highp vec3 F0, highp fl
 {
     return F0 + (max(vec3(1.0 - roughness), F0) - F0) * pow(1.0 - cosTheta, 5.0);
 }   
+
+highp vec3 IBLGGXFresnel(highp float NdotV, highp float roughness, highp vec3 F0, highp vec2 brdfSample)
+{
+	highp vec3 kSpecular = fresnelSchlickRoughness(NdotV, F0, roughness);
+	highp vec3 singleScatter = kSpecular * brdfSample.x + brdfSample.y;
+	highp float energyMiss = clamp(1.0 - brdfSample.x - brdfSample.y, 0.0, 1.0);
+	highp vec3 averageFresnel = F0 + (vec3(1.0) - F0) / 21.0;
+	highp vec3 multiScatter = energyMiss * singleScatter * averageFresnel / max(vec3(1.0) - averageFresnel * energyMiss, vec3(0.001));
+	return max(singleScatter + multiScatter, vec3(0.0));
+}
 
 
 highp float GeometrySchlickGGX(highp float Ndot, highp float roughness)
@@ -122,46 +228,121 @@ highp vec3 CalculateDiffuse(highp vec3 albedoColor, highp vec3 normal, highp vec
 	return albedoColor*clamp(dot(normal, light), 0.0f, 1.0f);
 }
 
+highp float Max3(highp vec3 value)
+{
+	return max(value.x, max(value.y, value.z));
+}
+
+highp float LambdaSheenNumericHelper(highp float x, highp float alphaG)
+{
+	highp float oneMinusAlphaSq = (1.0 - alphaG) * (1.0 - alphaG);
+	highp float a = mix(21.5473, 25.3245, oneMinusAlphaSq);
+	highp float b = mix(3.82987, 3.32435, oneMinusAlphaSq);
+	highp float c = mix(0.19823, 0.16801, oneMinusAlphaSq);
+	highp float d = mix(-1.97760, -1.27393, oneMinusAlphaSq);
+	highp float e = mix(-4.32054, -4.85967, oneMinusAlphaSq);
+	return a / (1.0 + b * pow(x, c)) + d * x + e;
+}
+
+highp float LambdaSheen(highp float cosTheta, highp float alphaG)
+{
+	if (abs(cosTheta) < 0.5) {
+		return exp(LambdaSheenNumericHelper(cosTheta, alphaG));
+	}
+	return exp(2.0 * LambdaSheenNumericHelper(0.5, alphaG) - LambdaSheenNumericHelper(1.0 - cosTheta, alphaG));
+}
+
+highp float VisibilitySheen(highp float NdotL, highp float NdotV, highp float sheenRoughness)
+{
+	sheenRoughness = max(sheenRoughness, 0.000001);
+	highp float alphaG = sheenRoughness * sheenRoughness;
+	highp float denom = max((1.0 + LambdaSheen(NdotV, alphaG) + LambdaSheen(NdotL, alphaG)) * (4.0 * NdotV * NdotL), 0.000001);
+	return clamp(1.0 / denom, 0.0, 1.0);
+}
+
+highp float DistributionCharlie(highp float sheenRoughness, highp float NdotH)
+{
+	sheenRoughness = max(sheenRoughness, 0.000001);
+	highp float alphaG = sheenRoughness * sheenRoughness;
+	highp float invR = 1.0 / alphaG;
+	highp float cos2h = NdotH * NdotH;
+	highp float sin2h = max(1.0 - cos2h, 0.0);
+	return (2.0 + invR) * pow(sin2h, invR * 0.5) / (2.0 * 3.1415926);
+}
+
+highp vec3 BRDFSpecularSheen(highp vec3 sheenColor, highp float sheenRoughness, highp float NdotL, highp float NdotV, highp float NdotH)
+{
+	return sheenColor * DistributionCharlie(sheenRoughness, NdotH) * VisibilitySheen(NdotL, NdotV, sheenRoughness);
+}
+
+highp float AlbedoSheenScalingLUT(highp float NdotV, highp float sheenRoughness)
+{
+	return SampleSheenELUT(vec2(clamp(NdotV, 0.0, 1.0), clamp(sheenRoughness, 0.0, 1.0)));
+}
+
+highp vec3 CalculateSheenRadiance(highp vec3 sheenColor, highp float sheenRoughness, highp vec3 lightColor, highp float intensity, highp float NdotL, highp float NdotV, highp float NdotH)
+{
+	return lightColor * intensity * NdotL * BRDFSpecularSheen(sheenColor, sheenRoughness, NdotL, NdotV, NdotH);
+}
+
+highp vec3 GetIBLRadianceCharlie(highp vec3 normal, highp vec3 viewDir, highp float sheenRoughness, highp vec3 sheenColor, highp float iblMaxMip)
+{
+	highp float NdotV = max(dot(normal, viewDir), 0.0);
+	highp float lod = sheenRoughness * iblMaxMip;
+	highp vec3 reflectedVec = reflect(-viewDir, normal);
+	reflectedVec.x = -reflectedVec.x;
+	reflectedVec.z = -reflectedVec.z;
+	highp float brdf = SampleCharlieLUT(vec2(clamp(NdotV, 0.0, 1.0), clamp(sheenRoughness, 0.0, 1.0)));
+	highp vec3 sheenLight = SampleCubeLod(texIBLCharlie, reflectedVec, lod);
+	return sheenLight * sheenColor * brdf;
+}
+
 void main(){
-	lowp vec2 coords = vecUVCoords;
+	highp vec2 coords = vecUVCoords;
 	coords.y = 1.0 - coords.y;
 
-	lowp vec4 Final  =  vec4(0.0,0.0,0.0,1.0);
-	lowp float Shadow = 1.0;
+	highp vec4 Final  =  vec4(0.0,0.0,0.0,1.0);
+	highp float Shadow = 1.0;
 
 	highp vec4 ToLineal = vec4(2.2f, 2.2f, 2.2f, 2.2f);
 	highp vec4 TosRGB = vec4(1.0f/2.2f, 1.0f/2.2f, 1.0f/2.2f, 1.0f/2.2f);
 
 	#ifdef ES_30
-		highp vec4 Albedo  =  texture(tex0,coords, 0.0f);
-		highp vec4 PBRData = texture(tex2, coords);
+		highp vec4 Albedo  =  SampleTexture2DLod(tex0, coords, 0.0);
+		highp vec4 PBRData = SampleTexture2DLod(tex2, coords, 0.0);
+		highp vec4 SpecularOcclusionData = SampleTexture2DLod(tex7, coords, 0.0);
+		highp float specularFactor = max(Albedo.a, 0.0);
 
 		Albedo.xyz = pow(Albedo.xyz, ToLineal.xyz);
 
 		highp float metallic = PBRData.r;
-		highp vec3 F0 = mix(vec3(0.04, 0.04, 0.04), Albedo.xyz, metallic);
+		highp vec3 dielectricF0 = max(SpecularOcclusionData.rgb, vec3(0.0));
+		highp float occlusion = clamp(SpecularOcclusionData.a, 0.0, 1.0);
+		highp vec3 F0 = mix(dielectricF0 * specularFactor, Albedo.xyz, metallic);
 
-		highp float depth = texture(tex4,coords).r;
+		highp float depth = SampleTexture2DLod(tex4, coords, 0.0).r;
+		highp vec3 emissive = SampleTexture2DLod(tex8, coords, 0.0).rgb;
 	#else
 		highp vec4 Albedo  =  texture2D(tex0,coords);
 		highp vec4 PBRData = texture2D(tex2, coords);
+		highp vec4 SpecularOcclusionData = texture2D(tex7, coords);
+		highp float specularFactor = max(Albedo.a, 0.0);
+
+		Albedo.xyz = pow(Albedo.xyz, ToLineal.xyz);
 
 		highp float metallic = PBRData.r;
-		highp vec3 F0 = mix(vec3(0.04, 0.04, 0.04), Albedo.xyz, metallic);
+		highp vec3 dielectricF0 = max(SpecularOcclusionData.rgb, vec3(0.0));
+		highp float occlusion = clamp(SpecularOcclusionData.a, 0.0, 1.0);
+		highp vec3 F0 = mix(dielectricF0 * specularFactor, Albedo.xyz, metallic);
 
-		highp float depth = texture2D(tex4,coords).r;
+		highp float depth = texture2D(tex4, coords).r;
+		highp vec3 emissive = texture2D(tex8, coords).rgb;
 	#endif
 
 		
-#ifdef NON_LINEAR_DEPTH
-		highp vec2 vcoord = coords *2.0 - 1.0;
-		highp vec4 position = WVPInverse*vec4(vcoord ,depth,1.0);
-		position.xyz /= position.w;  
-#else	
-		highp vec4 position = CameraPosition + PosCorner*depth;
-#endif
+	highp vec4 position = ReconstructPosition(ClipPos, depth);
 
-	highp vec3 EyeDir = normalize(CameraPosition-position).xyz;
+	highp vec3 EyeDir = normalize(CameraPosition.xyz - position.xyz);
 
 	int MatId = int(PBRData.a * 255.0 + 0.5);
 	
@@ -180,7 +361,7 @@ void main(){
 	}else if(MatId > 0){
 
 #ifdef ES_30
-		Shadow = texture(tex5, coords).r;
+		Shadow = SampleTexture2DLod(tex5, coords, 0.0).r;
 #else
 		Shadow = texture2D(tex5, coords).r;
 #endif
@@ -189,20 +370,31 @@ void main(){
 
 
 		#ifdef ES_30
-			highp vec4 normalmap = texture(tex1,coords);
+			highp vec4 normalmap = SampleTexture2DLod(tex1, coords, 0.0);
+			highp vec4 SheenData = SampleTexture2DLod(tex6, coords, 0.0);
 		#else
 			highp vec4 normalmap = texture2D(tex1,coords);
+			highp vec4 SheenData = texture2D(tex6, coords);
 		#endif	
 		
 		highp vec3 normal = normalmap.xyz*2.0 - 1.0;
 		normal = normalize(normal);
+		highp vec3 sheenColor = clamp(SheenData.rgb, 0.0, 1.0);
+		highp float sheenRoughness = clamp(SheenData.a, 0.0, 1.0);
+		highp float sheenStrength = Max3(sheenColor);
+		bool hasSheenLUT = brightness.w > 0.5;
 		
 		#ifdef ES_30
-			highp vec3 geoNormal = texture(tex3, coords).xyz * 2.0 - 1.0;
+			highp vec4 geoData = SampleTexture2DLod(tex3, coords, 0.0);
 		#else
-			highp vec3 geoNormal = texture2D(tex3, coords).xyz * 2.0 - 1.0;
+			highp vec4 geoData = texture2D(tex3, coords);
 		#endif
-		geoNormal = normalize(geoNormal);
+		highp vec3 geoNormal = DecodeOctahedralNormal(geoData.xy);
+		highp float packedMaterial = geoData.a;
+		bool unlitMaterial = packedMaterial >= 0.5;
+		highp float clearcoatRoughness = unlitMaterial ? (packedMaterial - 0.5) * 2.0 : packedMaterial * 2.0;
+		clearcoatRoughness = clamp(clearcoatRoughness, 0.04, 1.0);
+		highp float clearcoatFactor = clamp(PBRData.b, 0.0, 1.0);
 		
 		highp vec3 ReflectedVec = reflect(-EyeDir, normal.xyz);	
 		ReflectedVec.y = ReflectedVec.y;
@@ -247,15 +439,25 @@ void main(){
 					highp vec3 Kd = (vec3(1.0f, 1.0f, 1.0f) - F) * (1.0f - metallic);
 
 					highp float geoHorizon = clamp(dot(geoNormal, LightDir), 0.0, 1.0);
-					directLight += (SpecularRes.xyz + Kd*Diffuse) * geoHorizon;
+					highp float NdotL = max(dot(normal, LightDir), 0.0);
+					highp float NdotVLight = max(dot(normal, EyeDir), 0.0);
+					highp float NdotH = max(dot(normal, Half), 0.0);
+					highp float albedoSheenScaling = 1.0;
+					highp vec3 sheenLight = vec3(0.0);
+					if (hasSheenLUT && sheenStrength > 0.0) {
+						albedoSheenScaling = min(1.0 - sheenStrength * AlbedoSheenScalingLUT(NdotVLight, sheenRoughness),
+						                         1.0 - sheenStrength * AlbedoSheenScalingLUT(NdotL, sheenRoughness));
+						sheenLight = CalculateSheenRadiance(sheenColor, sheenRoughness, LightColors[i].xyz, intensity, NdotL, NdotVLight, NdotH);
+					}
+					directLight += (sheenLight + (SpecularRes.xyz + Kd*Diffuse) * albedoSheenScaling) * geoHorizon;
 				} else {
 					// Point light
 					highp float Rad = LightRadius[i >> 2][i & 3];
-					highp float dist = distance(LightPositions[i],position);
+					highp float dist = distance(LightPositions[i].xyz, position.xyz);
 
 					if(dist < (Rad*2.0))
 					{
-						highp vec3 LightDir = normalize(LightPositions[i]-position).xyz;
+						highp vec3 LightDir = normalize(LightPositions[i].xyz - position.xyz);
 						highp vec3 Half = normalize(EyeDir + LightDir);
 
 						highp vec3 Diffuse = CalculateDiffuse(Albedo.xyz, normal, LightDir)*LightColors[i].xyz*intensity;
@@ -273,7 +475,17 @@ void main(){
 						attenuation = max(attenuation, 0.0);
 
 						highp float geoHorizon = clamp(dot(geoNormal, LightDir), 0.0, 1.0);
-						directLight += (SpecularRes.xyz*attenuation + attenuation*Kd*Diffuse) * geoHorizon;
+						highp float NdotL = max(dot(normal, LightDir), 0.0);
+						highp float NdotVLight = max(dot(normal, EyeDir), 0.0);
+						highp float NdotH = max(dot(normal, Half), 0.0);
+						highp float albedoSheenScaling = 1.0;
+						highp vec3 sheenLight = vec3(0.0);
+						if (hasSheenLUT && sheenStrength > 0.0) {
+							albedoSheenScaling = min(1.0 - sheenStrength * AlbedoSheenScalingLUT(NdotVLight, sheenRoughness),
+							                         1.0 - sheenStrength * AlbedoSheenScalingLUT(NdotL, sheenRoughness));
+							sheenLight = CalculateSheenRadiance(sheenColor, sheenRoughness, LightColors[i].xyz, intensity, NdotL, NdotVLight, NdotH) * attenuation;
+						}
+						directLight += (sheenLight + (SpecularRes.xyz*attenuation + attenuation*Kd*Diffuse) * albedoSheenScaling) * geoHorizon;
 					}
 				}
 			}
@@ -283,23 +495,45 @@ void main(){
 		Final.xyz += directLight * Shadow * selfShadow;
 
 		// Indirect lighting (IBL + ambient) — NOT affected by shadow
-			highp vec3 kSpecular = clamp( fresnelSchlickRoughness(max(dot(normal, EyeDir), 0.0f), F0, rough) , 0.0 , 1.0 );
+			highp float iblMaxMip = max(toogles.w, 0.0);
+			bool hasBrdfLUT = brightness.w > 0.5;
+			highp float NdotV = max(dot(normal, EyeDir), 0.0);
+			highp vec3 kSpecular = clamp( fresnelSchlickRoughness(NdotV, F0, rough) , 0.0 , 1.0 );
 			highp vec3 kDiffuseEnv = (vec3(1.0) - kSpecular) * (1.0 - metallic);
 
 			// Specular IBL: env reflection
-	 		highp vec3 RefleCol2 = texture( texEnv, ReflectedVec , rough*4.0f).xyz;
+			highp vec3 RefleCol2 = SampleCubeLod(texIBLSpecular, ReflectedVec, rough * iblMaxMip);
 			highp float envAtten = (1.0 - rough) * (1.0 - rough);
-	 		Final.xyz += RefleCol2*kSpecular.xyz*envAtten * toogles.z;
+			highp vec2 brdfSample = hasBrdfLUT ? SampleBRDFLUT(vec2(NdotV, rough)) : vec2(0.0);
+			highp vec3 specularIBL = hasBrdfLUT ? IBLGGXFresnel(NdotV, rough, F0, brdfSample) : kSpecular * envAtten;
+			highp vec3 indirectLight = RefleCol2 * specularIBL * toogles.z;
 
 			// Diffuse IBL: approximate irradiance from env cubemap at high mip
 			highp vec3 irradianceDir = normal;
 			irradianceDir.x = -irradianceDir.x;
 			irradianceDir.z = -irradianceDir.z;
-			highp vec3 irradiance = texture( texEnv, irradianceDir, 6.0).xyz;
-			Final.xyz += irradiance * Albedo.xyz * kDiffuseEnv * toogles.z;
+			highp float diffuseMip = clamp(brightness.z, 0.0, iblMaxMip);
+			highp vec3 irradiance = SampleCubeLod(texIBLDiffuse, irradianceDir, diffuseMip);
+			indirectLight += irradiance * Albedo.xyz * kDiffuseEnv * toogles.z;
 
-			// Ambient minimum (toogles.y = ambient intensity)
-			Final.xyz += Albedo.xyz * toogles.y * kDiffuseEnv;
+			// PBR: avoid adding a constant ambient floor term; rely on IBL + AO.
+			if (hasSheenLUT && sheenStrength > 0.0) {
+				highp float albedoSheenScaling = 1.0 - sheenStrength * AlbedoSheenScalingLUT(NdotV, sheenRoughness);
+				highp vec3 sheenIBL = GetIBLRadianceCharlie(normal, EyeDir, sheenRoughness, sheenColor, iblMaxMip) * toogles.z;
+				indirectLight = sheenIBL + indirectLight * albedoSheenScaling;
+			}
+			Final.xyz += indirectLight * occlusion;
+			if (clearcoatFactor > 0.001) {
+				highp vec3 clearcoatSpec = SampleCubeLod(texIBLSpecular, ReflectedVec, clearcoatRoughness * iblMaxMip);
+				highp float clearcoatAtten = hasBrdfLUT ? 1.0 : (1.0 - clearcoatRoughness) * (1.0 - clearcoatRoughness);
+				highp vec3 clearcoatF = FresnelCalc(clamp(dot(normal, EyeDir), 0.0, 1.0), vec3(0.04));
+				highp float clearcoatWeight = clamp(clearcoatFactor * max(clearcoatF.x, max(clearcoatF.y, clearcoatF.z)), 0.0, 1.0);
+				Final.xyz = mix(Final.xyz, clearcoatSpec * clearcoatAtten * toogles.z, clearcoatWeight);
+			}
+			Final.xyz += emissive;
+			if (unlitMaterial) {
+				Final.xyz = Albedo.xyz + emissive;
+			}
 
 			//Final.xyz = vec3(rough, rough, rough);
 	}
@@ -316,7 +550,7 @@ uniform highp sampler2D tex0;
 #if defined OMNIDIRECTIONAL_SH
 uniform mediump samplerCube tex1;
 #else
-uniform mediump sampler2DShadow  tex1;
+uniform mediump sampler2D tex1;
 #endif
 uniform mediump sampler2D tex2; // Normals (geometric)
 uniform mediump sampler2D tex3; // Noise
@@ -345,32 +579,24 @@ highp vec4 FShadow = vec4(1.0,1.0,1.0,1.0);
 		for (highp int i = 0; i < samples; i += 1){
 			highp vec3 nfragToLight =  fragToLight +  sampleOffsetDirections[i] * diskRadius; 
 			depthSM = texture(tex1, nfragToLight ).r;
-			depthSM = depthSM * LightCameraInfo.y;
+			depthSM = (1.0 - depthSM) * LightCameraInfo.y;
 			if( depthPos - 0.055  > depthSM)
 				shadowVal += 1.0;
-			//shadowVal *= 0.75;
-			//shadowVal += 0.25;
 		}
 		shadowVal /= float(samples);
 		shadowVal = 1.0 - shadowVal * (1.0 - toogles.x);
 		FShadow = shadowVal*vec4(1.0,1.0,1.0,1.0);//texture(tex1, fragToLight ).rrrr;
 	#else
 	highp vec4 LightPos = WVPLight*position;
-	#ifdef NON_LINEAR_DEPTH
-		LightPos.xyz /= LightPos.w;
-	#else
-		LightPos.xy /= LightPos.w;
-		LightPos.z /= LightCameraInfo.y;
-	#endif
+	LightPos.xyz /= LightPos.w;
 	highp vec2 SHTC = LightPos.xy*0.5 + 0.5;
 	
-	if(SHTC.x < 1.0 && SHTC.y < 1.0 && SHTC.x  > 0.0 && SHTC.y > 0.0 && LightPos.w > 0.0 && LightPos.z < 1.0 ){
+	if(SHTC.x < 1.0 && SHTC.y < 1.0 && SHTC.x  > 0.0 && SHTC.y > 0.0 && LightPos.w > 0.0 && LightPos.z > 0.0 && LightPos.z < 1.0 ){
 		#if ENABLE_PCF
 			highp float sum = 0.0;
 			highp float x, y;
 			highp float Total = 0.0;
 			highp float Origin = brightness.x;			
-			highp float depthPos = LightPos.z;
 			for (y = -Origin; y <= Origin; y += 1.0){
 				for (x = -Origin; x <= Origin; x += 1.0){
 					highp float Val_1;
@@ -379,14 +605,13 @@ highp vec4 FShadow = vec4(1.0,1.0,1.0,1.0);
 						Val_1 = 0.0;
 					} else {
 						#ifdef ES_30
-							highp vec3 Coords_Final = vec3(sampleUV, LightPos.z - toogles.w);
-							Val_1 = texture(tex1, Coords_Final);
+							highp float depthSM = texture(tex1, sampleUV).r;
 						#else
-							highp vec4 Coords_Final = vec4(sampleUV, LightPos.z, LightPos.w);
-							Val_1 = shadow2DProj(tex1, Coords_Final).r;
+							highp float depthSM = texture2D(tex1, sampleUV).r;
 						#endif
+						depthSM -= toogles.w;
+						Val_1 = (LightPos.z < depthSM) ? 0.0 : 1.0;
 					}
-					Val_1 *= 0.75;
 					Val_1 = Val_1 * (1.0 - toogles.x) + toogles.x;
 					sum += Val_1;
 					Total++;
@@ -396,13 +621,6 @@ highp vec4 FShadow = vec4(1.0,1.0,1.0,1.0);
 			highp float shadowCoeff = sum / Total;
 			FShadow = shadowCoeff*vec4(1.0,1.0,1.0,1.0);
 			
-		/*
-			highp vec3 Coords_Final = vec3(SHTC.xy, LightPos.z);
-			highp float Val_1 = texture(tex1, Coords_Final,0.001);
-			Val_1 *= 0.75;
-			Val_1 += 0.25;
-			FShadow = Val_1*vec4(1.0, 1.0, 1.0, 1.0);
-			*/
 		#else	
 			highp float depthSM;
 			#ifdef ES_30
@@ -417,7 +635,7 @@ highp vec4 FShadow = vec4(1.0,1.0,1.0,1.0);
 		
 			highp float depthPos = LightPos.z;
 
-			if( depthPos  > depthSM)
+			if( depthPos < depthSM)
 				FShadow = toogles.x*vec4(1.0,1.0,1.0,1.0);
 		#endif
 		
@@ -435,10 +653,7 @@ highp vec3 GetNormal(highp vec2 coords){
 		highp vec4 normalmap = texture2D(tex2,coords);
 	#endif	
 		
-	highp vec3 normal = normalmap.xyz*2.0 - 1.0;
-	normal = normalize(normal);
-
-	return normal;
+	return DecodeOctahedralNormal(normalmap.xy);
 }
 
 highp float GetOcclusion(highp float depth,highp vec2 uv, highp vec4 position, highp vec3 normal){
@@ -465,21 +680,20 @@ highp float GetOcclusion(highp float depth,highp vec2 uv, highp vec4 position, h
 	      		
 	   highp vec4 offset = Projection * vec4(Spheresample, 1.0);
 	   offset.xy /= offset.w;
+	   highp vec2 sampleClip = offset.xy;
 	   offset.xy = offset.xy * 0.5 + 0.5;
+	   if (offset.x < 0.0 || offset.x > 1.0 || offset.y < 0.0 || offset.y > 1.0)
+	      continue;
 	   
 	   #ifdef ES_30
 			highp float sampleDepth = texture(tex0,offset.xy).r;
 	   #else
 			highp float sampleDepth = texture2D(tex0,offset.xy).r;
 	   #endif
+	   if (!IsSceneDepthValid(sampleDepth))
+	      continue;
 	    
-		#ifdef NON_LINEAR_DEPTH
-			highp vec4 new_position = WVPInverse*vec4( PosCorner.xy ,sampleDepth,1.0);
-			new_position.xyz /= new_position.w;
-			new_position.w = 1.0;
-		#else
-			highp vec4 new_position = CameraPosition + PosCorner*sampleDepth;
-		#endif
+		highp vec4 new_position = ReconstructPosition(sampleClip, sampleDepth);
 			
 	  highp vec4 new_positionV = WorldView * vec4(new_position.xyz, 1.0);
 
@@ -504,14 +718,16 @@ void main(){
 	#else
 		highp float depth = texture2D(tex0,coords).r;
 	#endif
-	
-	#ifdef NON_LINEAR_DEPTH
-		highp vec4 position = WVPInverse*vec4( PosCorner.xy ,depth,1.0);
-		position.xyz /= position.w;
-		position.w = 1.0;
-	#else		
-		highp vec4 position = CameraPosition + PosCorner*depth;
+	if (!IsSceneDepthValid(depth)) {
+	#ifdef ES_30
+		colorOut = Fcolor;
+	#else
+		gl_FragColor = Fcolor;
 	#endif
+		return;
+	}
+	
+	highp vec4 position = ReconstructPosition(ClipPos, depth);
 
 	#ifdef ENABLE_SHADOWS
 		Fcolor = CalculateShadow(position);
@@ -794,13 +1010,15 @@ void main(){
   highp vec2 uv = vecUVCoords.xy;
   uv.y = 1.0 - uv.y;
   highp float depth = texture(tex0, uv).r;
-	#ifdef NON_LINEAR_DEPTH
-		highp vec4 position = WVPInverse*vec4( PosCorner.xy ,depth,1.0);
-		position.xyz /= position.w;
-		position.w = 1.0;
-	#else		
-		highp vec4 position = CameraPosition + PosCorner*depth;
+	if (!IsSceneDepthValid(depth)) {
+	#ifdef ES_30
+		colorOut = vec4(0.0);
+	#else
+		gl_FragColor = vec4(0.0);
 	#endif
+		return;
+	}
+	highp vec4 position = ReconstructPosition(ClipPos, depth);
 
 
   const int steps = 64;
@@ -851,7 +1069,22 @@ void main() {
 	coords.y = 1.0 - coords.y;
 	highp float aperture = LightPositions[0].x;
 	highp float focalLength = LightPositions[0].y;
-    highp float depthFocus;
+	#ifdef ES_30
+	highp float z = texture( tex0, coords ).r;
+	#else
+	highp float z = texture2D( tex0, coords ).r;
+	#endif
+	if (!IsSceneDepthValid(z)) {
+	#ifdef ES_30
+		colorOut = vec4(0.0);
+		colorOut_1 = vec4(0.0);
+	#else
+		gl_FragData[0] = vec4(0.0);
+		gl_FragData[1] = vec4(0.0);
+	#endif
+		return;
+	}
+	highp float depthFocus;
   #ifdef AUTO_FOCUS
   	#ifdef ES_30
     depthFocus = texture(tex0, vec2(0.5, 0.5)).r;// Auto Focus center
@@ -861,20 +1094,23 @@ void main() {
   #else
     depthFocus = LightPositions[0].z;
   #endif
+	if (!IsSceneDepthValid(depthFocus))
+		depthFocus = z;
+	bool near = (z > depthFocus);
+	highp float objectdistance = LinearizeDepth(z);
+    highp float FocusPlane = LinearizeDepth(depthFocus);
+	highp float denominator = objectdistance * (FocusPlane - focalLength);
+	if (abs(denominator) <= 0.00001) {
 	#ifdef ES_30
-	highp float z = texture( tex0, coords ).r;
-	#else 
-	highp float z = texture2D( tex0, coords ).r;
+		colorOut = vec4(0.0);
+		colorOut_1 = vec4(0.0);
+	#else
+		gl_FragData[0] = vec4(0.0);
+		gl_FragData[1] = vec4(0.0);
 	#endif
-	bool near = (z < depthFocus);
-	highp float znear = CameraInfo.x;
-	highp float zfar = CameraInfo.y;
-    highp float multi = -zfar * znear;
-    highp float multi2 = (zfar - znear);
-	highp float objectdistance = multi  / (z * multi2 - zfar);
-    highp float FocusPlane =     multi  / (depthFocus * multi2 - zfar);
-	highp float CoC = abs(aperture * (focalLength * (objectdistance - FocusPlane)) /
-          (objectdistance * (FocusPlane - focalLength)));
+		return;
+	}
+	highp float CoC = abs(aperture * (focalLength * (objectdistance - FocusPlane)) / denominator);
 	if (near) {
 	#ifdef ES_30
 		colorOut.r = clamp(CoC, 0.0, LightPositions[0].w);
@@ -931,6 +1167,14 @@ void main(){
   highp float dofblur = texture2D(tex1, coords).r;
   highp vec4 color =  texture2D(tex0, coords);
   #endif
+	if (dofblur <= DEPTH_CLEAR_EPSILON) {
+	#ifdef ES_30
+	colorOut = color;
+	#else
+	gl_FragColor = color;
+	#endif
+	return;
+	}
 
   highp vec2 Offset = vec2( 1.0/LightPositions[0].z,1.0/LightPositions[0].w);
   highp float Tot = 0.0;
@@ -968,6 +1212,14 @@ highp vec4 color =  texture(tex0, coords);
 highp float dofblur = texture2D(tex1, coords).r;
 highp vec4 color =  texture2D(tex0, coords);
 #endif
+if (dofblur <= DEPTH_CLEAR_EPSILON) {
+#ifdef ES_30
+	colorOut = color;
+#else
+	gl_FragColor = color;
+#endif
+	return;
+}
 
 highp float Tot = 0.0;
 highp float Samples_squared = LightPositions[0].x;
@@ -999,9 +1251,9 @@ void main() {
   coords.y = 1.0 - coords.y;
   highp vec4 color = texture(tex0, coords.xy);
 #ifdef ES_30
-	colorOut = color;
+	colorOut = vec4(LinearToSRGB(color.rgb), color.a);
 #else
-	gl_FragColor = color;
+	gl_FragColor = vec4(LinearToSRGB(color.rgb), color.a);
 #endif
 }
 
@@ -1093,13 +1345,16 @@ void main(){
   highp vec2 uv = vecUVCoords.xy;
   uv.y = 1.0 - uv.y;
   highp float depth = texture(tex0, uv).r;
-#ifdef NON_LINEAR_DEPTH
- highp vec4 position = WVPInverse*vec4(PosCorner.xy ,depth,1.0);
- position.xyz /= position.w;
-#else		
- highp vec4 position = CameraPosition + PosCorner*depth;
-#endif
- int steps = int(LightPositions[0].y);
+ if (!IsSceneDepthValid(depth)) {
+	#ifdef ES_30
+		colorOut = vec4(0.0, 0.0, 0.0, 1.0);
+	#else
+		gl_FragColor = vec4(0.0, 0.0, 0.0, 1.0);
+	#endif
+	return;
+ }
+ highp vec4 position = ReconstructPosition(ClipPos, depth);
+ int steps = max(int(LightPositions[0].y), 2);
  highp vec4 ray = vec4(position - CameraPosition);
  highp vec4 rayDir = normalize(ray);
  highp float rayLength = length(ray);
@@ -1117,22 +1372,24 @@ void main(){
 
 highp vec4 LightPos;
 highp vec2 SHTC;
-highp vec4 sunDir;
+highp vec3 sunDir;
 highp vec3 scattering;
 const highp vec3 lightColor = vec3(0.9803, 0.8392, 0.6470);
+highp vec3 sunLightDir = normalize(LightColors[0].xyz);
+highp float shadowBias = max(toogles.w, 0.0);
 for (int i = 0; i<steps; i++) {
-  LightPos = WVPLight* P;
-  LightPos.xy /= LightPos.w;
-  LightPos.z /= LightCameraInfo.y;
+	LightPos = WVPLight* P;
+	LightPos.xyz /= LightPos.w;
   SHTC = LightPos.xy*0.5 + 0.5;
 
-  highp vec3 Coords_Final = vec3(SHTC.xy, LightPos.z - 0.00005);
-  highp float Val_1 = texture(tex1, Coords_Final);
-
-  if (Val_1 > 0.0 && SHTC.x < 1.0 && SHTC.y < 1.0 && SHTC.x  > 0.0 && SHTC.y > 0.0 && LightPos.w > 0.0 && LightPos.z < 1.0) {
-    sunDir = normalize(P - LightCameraPosition);
-    scattering = lightColor * ComputeScattering(dot(rayDir.rgb, sunDir.rgb));
-    accumFog.rgb += scattering ;
+	if (SHTC.x < 1.0 && SHTC.y < 1.0 && SHTC.x  > 0.0 && SHTC.y > 0.0 && LightPos.z > 0.0 && LightPos.z < 1.0) {
+		highp vec3 Coords_Final = vec3(SHTC.xy, LightPos.z + shadowBias);
+		highp float Val_1 = texture(tex1, Coords_Final);
+		if (Val_1 > 0.0) {
+			sunDir = sunLightDir;
+			scattering = lightColor * ComputeScattering(dot(rayDir.rgb, sunDir));
+			accumFog.rgb += scattering ;
+		}
   }
   P += step;
 }
@@ -1191,9 +1448,9 @@ void main(){
 	lowp vec2 coords = vecUVCoords;
 	coords.y = 1.0 - coords.y;
 	#ifdef ES_30
-		colorOut = texture(tex0,coords) * brightness.x;
+		colorOut = texture(tex0,coords);
 	#else
-		gl_FragColor = texture2D(tex0,coords) * brightness.x;
+		gl_FragColor = texture2D(tex0,coords);
 	#endif
 }
 #elif defined(FSQUAD_2_TEX)
@@ -1206,7 +1463,7 @@ void main(){
 	#ifdef ES_30
 		colorOut = texture(tex0,coords) + texture(tex1,coords);
 	#else
-		gl_FragColor =/* texture2D(tex0,coords) + */ texture2D(tex1,coords);
+		gl_FragColor = texture2D(tex0,coords) + texture2D(tex1,coords);
 	#endif
 }
 #elif defined(FSQUAD_3_TEX)

@@ -12,6 +12,7 @@
 #ifdef OS_WINDOWS
 
 #include <utils/Log.h>
+#include <debug/RenderTrace.h>
 
 namespace t850 {
 
@@ -106,6 +107,12 @@ namespace t850 {
     m_view.Format = DXGI_FORMAT_R32_UINT;
     T8_LOG_DEBUG("[D3D12] IB created: %d bytes%s", desc.byteWidth,
                  m_mappedData ? " (upload)" : " (default)");
+#ifdef T850_RENDER_TRACE
+    if (T8_TRACE_ACTIVE() && initialData) {
+      int bufId = g_renderTracer->EnsureBufferId(this, "ib");
+      g_renderTracer->RecordBufferUpdate(bufId, initialData, desc.byteWidth, "ib", "");
+    }
+#endif
   }
 
   void D3D12IndexBuffer::Set(const DeviceContext& deviceContext, const unsigned offset, IndexBufferFormat::E format) {
@@ -113,14 +120,32 @@ namespace t850 {
     m_view.Format = (format == IndexBufferFormat::R16) ? DXGI_FORMAT_R16_UINT : DXGI_FORMAT_R32_UINT;
     auto* cmdList = static_cast<const D3D12DeviceContext*>(&deviceContext)->GetCommandList();
     cmdList->IASetIndexBuffer(&m_view);
+#ifdef T850_RENDER_TRACE
+    if (T8_TRACE_ACTIVE()) {
+      int bufId = g_renderTracer->EnsureBufferId(this, "ib");
+      g_renderTracer->EvBindIndexBufferRequest(bufId, (int)format, offset);
+    }
+#endif
   }
 
   void D3D12IndexBuffer::UpdateFromSystemCopy(const DeviceContext&) {
     if (m_mappedData && !sysMemCpy.empty()) memcpy(m_mappedData, sysMemCpy.data(), sysMemCpy.size());
+#ifdef T850_RENDER_TRACE
+    if (T8_TRACE_ACTIVE() && !sysMemCpy.empty()) {
+      int bufId = g_renderTracer->EnsureBufferId(this, "ib");
+      g_renderTracer->RecordBufferUpdate(bufId, sysMemCpy.data(), (uint32_t)sysMemCpy.size(), "ib", "");
+    }
+#endif
   }
   void D3D12IndexBuffer::UpdateFromBuffer(const DeviceContext&, const void* buffer) {
     sysMemCpy.assign((char*)buffer, (char*)buffer + descriptor.byteWidth);
     if (m_mappedData) memcpy(m_mappedData, buffer, descriptor.byteWidth);
+#ifdef T850_RENDER_TRACE
+    if (T8_TRACE_ACTIVE()) {
+      int bufId = g_renderTracer->EnsureBufferId(this, "ib");
+      g_renderTracer->RecordBufferUpdate(bufId, buffer, descriptor.byteWidth, "ib", "");
+    }
+#endif
   }
   void D3D12IndexBuffer::release() {
     if (m_mappedData) { m_buffer->Unmap(0, nullptr); m_mappedData = nullptr; }

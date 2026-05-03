@@ -20,12 +20,14 @@
 #include <utils/Log.h>
 #include <utils/SPIRVReflection.h>
 #include <debug/Profiler.h>
+#include <debug/RenderTrace.h>
 #include <iostream>
 #include <fstream>
 #include <string>
 #include <cassert>
 #include <cstring>
 #include <algorithm>
+#include <utility>
 
 namespace t850 {
 
@@ -44,9 +46,19 @@ namespace t850 {
     key.depth = (uint8_t)m_currentDepth;
     key.cull = (uint8_t)m_currentCull;
     key.numColorAttachments = numColorAttachments;
-    key.topology = (uint8_t)static_cast<VulkanDeviceContext*>(T8DeviceContext)->GetTopology();
+    auto* vkContext = static_cast<VulkanDeviceContext*>(T8DeviceContext);
+    key.topology = (uint8_t)vkContext->GetTopology();
+    if (!shader->m_vertexAttributes.empty()) {
+      key.vertexStride = vkContext->GetVertexStride() ? vkContext->GetVertexStride() : shader->m_vertexBinding.stride;
+    }
     key.colorFormat = colorFormat;
     key.depthFormat = depthFormat;
+    VkRenderPass renderPass = m_backbufferRenderPass;
+    if (CurrentRT >= 0 && CurrentRT < (int)RTs.size()) {
+      VulkanRT* rt = static_cast<VulkanRT*>(RTs[CurrentRT]);
+      renderPass = rt->m_renderPass;
+    }
+    key.renderPass = VulkanRenderPassKey(renderPass);
 
     auto it = m_pipelineCache.find(key);
     if (it != m_pipelineCache.end()) {
@@ -68,9 +80,11 @@ namespace t850 {
 
     // Vertex input (use shader's reflection data or empty for now)
     VkPipelineVertexInputStateCreateInfo vertexInput = { VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO };
+    VkVertexInputBindingDescription vertexBinding = shader->m_vertexBinding;
+    vertexBinding.stride = key.vertexStride;
     if (!shader->m_vertexAttributes.empty()) {
       vertexInput.vertexBindingDescriptionCount = 1;
-      vertexInput.pVertexBindingDescriptions = &shader->m_vertexBinding;
+      vertexInput.pVertexBindingDescriptions = &vertexBinding;
       vertexInput.vertexAttributeDescriptionCount = (uint32_t)shader->m_vertexAttributes.size();
       vertexInput.pVertexAttributeDescriptions = shader->m_vertexAttributes.data();
     }
@@ -109,12 +123,12 @@ namespace t850 {
       case DEPTH_DEFAULT: case READ_WRITE:
         depthStencil.depthTestEnable = VK_TRUE;
         depthStencil.depthWriteEnable = VK_TRUE;
-        depthStencil.depthCompareOp = VK_COMPARE_OP_LESS_OR_EQUAL;
+        depthStencil.depthCompareOp = VK_COMPARE_OP_GREATER_OR_EQUAL;
         break;
       case READ:
         depthStencil.depthTestEnable = VK_TRUE;
         depthStencil.depthWriteEnable = VK_FALSE;
-        depthStencil.depthCompareOp = VK_COMPARE_OP_LESS_OR_EQUAL;
+        depthStencil.depthCompareOp = VK_COMPARE_OP_GREATER_OR_EQUAL;
         break;
       case NONE:
         depthStencil.depthTestEnable = VK_FALSE;
@@ -146,7 +160,7 @@ namespace t850 {
           att.dstColorBlendFactor = VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA;
           att.colorBlendOp = VK_BLEND_OP_ADD;
           att.srcAlphaBlendFactor = VK_BLEND_FACTOR_ONE;
-          att.dstAlphaBlendFactor = VK_BLEND_FACTOR_ZERO;
+          att.dstAlphaBlendFactor = VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA;
           att.alphaBlendOp = VK_BLEND_OP_ADD;
           break;
         case NON_PREMULTIPLIED:
@@ -185,12 +199,7 @@ namespace t850 {
     pipelineCI.layout = shader->m_pipelineLayout;
     // Use canonical backbuffer pass for pipeline creation when on backbuffer;
     // the LOAD variant is render-pass-compatible, so pipelines work with both.
-    if (CurrentRT >= 0 && CurrentRT < (int)RTs.size()) {
-      VulkanRT* rt = static_cast<VulkanRT*>(RTs[CurrentRT]);
-      pipelineCI.renderPass = rt->m_renderPass;
-    } else {
-      pipelineCI.renderPass = m_backbufferRenderPass;
-    }
+    pipelineCI.renderPass = renderPass;
     pipelineCI.subpass = 0;
 
     VkPipeline pipeline = VK_NULL_HANDLE;
@@ -201,9 +210,27 @@ namespace t850 {
       return VK_NULL_HANDLE;
     }
 
-    T8_LOG_DEBUG("[Vulkan] Pipeline created: shader=%p blend=%d depth=%d cull=%d topo=%d colors=%d renderPass=%p",
-                 shader, key.blend, key.depth, key.cull, key.topology, key.numColorAttachments, pipelineCI.renderPass);
+    T8_LOG_DEBUG("[Vulkan] Pipeline created: shader=%p blend=%d depth=%d cull=%d topo=%d stride=%u colors=%d renderPass=0x%llx",
+           shader, key.blend, key.depth, key.cull, key.topology, key.vertexStride, key.numColorAttachments, key.renderPass);
     m_pipelineCache[key] = pipeline;
+#ifdef T850_RENDER_TRACE
+    if (T8_TRACE_ACTIVE()) {
+      TracePSORec rec;
+      rec.backend                 = "vulkan";
+      rec.shader_id               = g_renderTracer->LookupShaderId(shader);
+      rec.shader_key_bits         = shader ? shader->key.bits : 0;
+      rec.blend                   = key.blend;
+      rec.depth                   = key.depth;
+      rec.cull                    = key.cull;
+      rec.topology                = key.topology;
+      rec.num_color_attachments   = key.numColorAttachments;
+      rec.color_formats.push_back((uint32_t)key.colorFormat);
+      rec.depth_format            = (uint32_t)key.depthFormat;
+      rec.vertex_stride           = key.vertexStride;
+      rec.render_pass             = key.renderPass;
+      g_renderTracer->EvCreatePSO(rec);
+    }
+#endif
     return pipeline;
   }
 
@@ -343,7 +370,7 @@ namespace t850 {
     };
 
     VkPhysicalDeviceFeatures deviceFeatures = {};
-    deviceFeatures.samplerAnisotropy = VK_TRUE;
+    deviceFeatures.samplerAnisotropy = supportedFeatures.samplerAnisotropy ? VK_TRUE : VK_FALSE;
 
     VkDeviceCreateInfo deviceCI = { VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO };
     deviceCI.queueCreateInfoCount = 1;
@@ -986,11 +1013,16 @@ namespace t850 {
     }
     m_deferredCleanup[m_currentFrame].clear();
 
-    // Reserve a dummy CB region so draws without explicit CB still have valid descriptors
-    m_pendingCB = {};
-    m_pendingCB.buffer = m_cbRingBuffers[m_currentFrame];
-    m_pendingCB.offset = 0;
-    m_pendingCB.range  = 256;
+    // Reserve a dummy CB region so draws without explicit CB still have valid descriptors.
+    // Every logical CB slot starts at this dummy slice; ConstantBuffer::Set(slot)
+    // overwrites only the slot it owns.
+    for (auto& cb : m_pendingCBs) {
+      cb = {};
+      cb.bufferInfo.buffer = m_cbRingBuffers[m_currentFrame];
+      cb.bufferInfo.offset = 0;
+      cb.bufferInfo.range  = 256;
+      cb.tracerId = -1;
+    }
     m_cbRingOffset = 256;
 
     m_lastPipeline = VK_NULL_HANDLE;
@@ -1000,6 +1032,7 @@ namespace t850 {
 
     // Reset topology to triangle list at the start of each frame
     static_cast<VulkanDeviceContext*>(T8DeviceContext)->m_topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
+    static_cast<VulkanDeviceContext*>(T8DeviceContext)->m_vertexStride = 0;
   }
 
   void VulkanDriver::EndFrame() {}
@@ -1049,7 +1082,7 @@ namespace t850 {
 
       VkClearValue clearValues[2] = {};
       clearValues[0].color = { {0.9f, 0.9f, 0.9f, 1.0f} };
-      clearValues[1].depthStencil = { 1.0f, 0 };
+      clearValues[1].depthStencil = { 0.0f, 0 };
 
       VkRenderPassBeginInfo rpBegin = { VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO };
       rpBegin.renderPass = m_backbufferRenderPass;
@@ -1065,6 +1098,7 @@ namespace t850 {
 
       vkCmdSetViewport(cmd, 0, 1, &m_viewport);
       vkCmdSetScissor(cmd, 0, 1, &m_scissorRect);
+      T8_TRACE(EvClearRT(-1, 1u | 2u, 0.9f, 0.9f, 0.9f, 1.0f, 0.0f, 0));
     }
   }
 
@@ -1153,21 +1187,44 @@ namespace t850 {
   void VulkanDriver::SetBlendState(BlendStates state) {
     T8_LOG_TRACE("[Vulkan] SetBlendState(%d)", state);
     m_currentBlend = state;
+    T8_TRACE(EvSetBlend((int)state));
+#ifdef T850_RENDER_TRACE
+    RefreshTracePendingRenderState();
+#endif
   }
 
   void VulkanDriver::SetDepthStencilState(DepthStencilStates state) {
     T8_LOG_TRACE("[Vulkan] SetDepthStencilState(%d)", state);
     m_currentDepth = state;
+    T8_TRACE(EvSetDepth((int)state));
+#ifdef T850_RENDER_TRACE
+    RefreshTracePendingRenderState();
+#endif
   }
 
   void VulkanDriver::SetCullFace(FaceCulling state) {
     T8_LOG_TRACE("[Vulkan] SetCullFace(%d)", state);
     m_currentCull = state;
     m_FaceCulling = state;
+    T8_TRACE(EvSetCull((int)state));
+#ifdef T850_RENDER_TRACE
+    RefreshTracePendingRenderState();
+#endif
   }
+
+#ifdef T850_RENDER_TRACE
+  void VulkanDriver::RefreshTracePendingRenderState() {
+    if (!T8_TRACE_ACTIVE()) return;
+    int numAtt = 1;
+    if (CurrentRT >= 0 && CurrentRT < (int)RTs.size() && RTs[CurrentRT])
+      numAtt = RTs[CurrentRT]->number_RT > 0 ? RTs[CurrentRT]->number_RT : 1;
+    g_renderTracer->RecomputePendingRenderStateVulkan(numAtt);
+  }
+#endif
 
   void VulkanDriver::PopRT() {
     T8_LOG_TRACE("[Vulkan] PopRT (CurrentRT=%d)", CurrentRT);
+    T8_TRACE(EvPopRT());
 
     if (CurrentRT >= 0 && CurrentRT < (int)RTs.size() && RTs[CurrentRT]) {
       VulkanRT* rt = static_cast<VulkanRT*>(RTs[CurrentRT]);
@@ -1195,6 +1252,7 @@ namespace t850 {
                               VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL,
                               VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
                               VK_IMAGE_ASPECT_DEPTH_BIT);
+        rt->m_depthLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
       }
 
       // 4. Restore the backbuffer render pass (LOAD variant to preserve content)
@@ -1214,6 +1272,9 @@ namespace t850 {
     }
 
     CurrentRT = -1;
+#ifdef T850_RENDER_TRACE
+    RefreshTracePendingRenderState();
+#endif
   }
 
   void VulkanDriver::SaveScreenshot(std::string path) {
@@ -1328,7 +1389,7 @@ namespace t850 {
     rpBegin.renderArea.extent = { (uint32_t)width, (uint32_t)height };
     VkClearValue clears[2] = {};
     clears[0].color = {{0.9f, 0.9f, 0.9f, 1.0f}};
-    clears[1].depthStencil = {1.0f, 0};
+    clears[1].depthStencil = {0.0f, 0};
     rpBegin.clearValueCount = 2;
     rpBegin.pClearValues = clears;
     vkCmdBeginRenderPass(m_commandBuffers[m_currentFrame], &rpBegin, VK_SUBPASS_CONTENTS_INLINE);
@@ -1370,7 +1431,7 @@ namespace t850 {
       aspect = VK_IMAGE_ASPECT_DEPTH_BIT;
     } else if (attachment >= 0 && attachment < rt->number_RT) {
       srcImage = rt->vColorImages[attachment];
-      fmt = rt->m_colorFormat;
+      fmt = (attachment < (int)rt->m_colorFormats.size()) ? rt->m_colorFormats[attachment] : rt->m_colorFormat;
     } else {
       goto reopen;
     }
@@ -1428,6 +1489,15 @@ namespace t850 {
       // Convert to RGB PPM
       const uint8_t* pixels = (const uint8_t*)stagingInfo.pMappedData;
       std::vector<uint8_t> rgb(w * h * 3);
+      // IEEE 754 binary16 → float (matches D3D11/D3D12 PPM dump path so cross-API
+      // diffs reflect actual shader output, not dump-format mismatch).
+      auto h2f = [](uint16_t h) -> float {
+        uint32_t sign = (h >> 15) & 1; uint32_t exp = (h >> 10) & 0x1F; uint32_t mant = h & 0x3FF;
+        if (exp == 0) return sign ? -0.0f : 0.0f;
+        if (exp == 31) return sign ? -1e30f : 1e30f;
+        float f = ((float)mant / 1024.0f + 1.0f) * ldexpf(1.0f, (int)exp - 15);
+        return sign ? -f : f;
+      };
       for (uint32_t i = 0; i < w * h; i++) {
         if (bpp == 4 && !isFloat32) {
           rgb[i*3+0] = pixels[i*4+0];
@@ -1436,13 +1506,6 @@ namespace t850 {
         } else if (isFloat16 && bpp == 8) {
           // RGBA16F → uint8 via IEEE 754 half-float decode
           const uint16_t* fp = (const uint16_t*)(pixels + i * 8);
-          auto h2f = [](uint16_t h) -> float {
-            uint32_t sign = (h >> 15) & 1; uint32_t exp = (h >> 10) & 0x1F; uint32_t mant = h & 0x3FF;
-            if (exp == 0) return sign ? -0.0f : 0.0f;
-            if (exp == 31) return sign ? -1e30f : 1e30f;
-            float f = ((float)mant / 1024.0f + 1.0f) * ldexpf(1.0f, (int)exp - 15);
-            return sign ? -f : f;
-          };
           for (int c = 0; c < 3; c++) {
             float v = h2f(fp[c]);
             v = v < 0 ? 0 : (v > 1 ? 1 : v);
@@ -1456,8 +1519,14 @@ namespace t850 {
           uint8_t b = (uint8_t)(v * 255.0f);
           rgb[i*3+0] = rgb[i*3+1] = rgb[i*3+2] = b;
         } else if (isFloat16 && bpp == 2) {
+          // R16_SFLOAT → uint8 via IEEE 754 half-float decode (NOT uint16 normalized).
+          // The previous (float)(*fp)/65535.0f path treated half-float bytes as a
+          // normalized integer, which silently misinterpreted negative half-floats
+          // (e.g. log(luminance) < 0) as ~0.5+ on the PPM, producing a fake "Vulkan
+          // LuminanceMap is 10x brighter than D3D12" signal during cross-API diffs.
           const uint16_t* fp = (const uint16_t*)(pixels + i * 2);
-          float v = (float)(*fp) / 65535.0f;
+          float v = h2f(*fp);
+          v = v < 0 ? 0 : (v > 1 ? 1 : v);
           uint8_t b = (uint8_t)(v * 255.0f);
           rgb[i*3+0] = rgb[i*3+1] = rgb[i*3+2] = b;
         }
@@ -1551,8 +1620,22 @@ reopen:
   VkDescriptorBufferInfo VulkanDriver::AllocateCBData(const void* data, uint32_t dataSize) {
     uint32_t alignedSize = (dataSize + 255) & ~255u;
     if (m_cbRingOffset + alignedSize > kCBRingBufferSize) {
-      T8_LOG_ERROR("[Vulkan] CB ring buffer overflow! offset=%u + size=%u > %u", m_cbRingOffset, alignedSize, kCBRingBufferSize);
-      m_cbRingOffset = 0;
+      // Wrapping mid-frame would overwrite UBO data still being read by earlier
+      // draws in the same command buffer (descriptor sets point at fixed offsets
+      // via dynamic offset). The result looks like flicker / z-fighting because
+      // shaders read partially-stale matrices. Crash loud so we can grow the
+      // ring rather than corrupt rendering silently.
+      T8_LOG_ERROR("[Vulkan] CB ring buffer overflow! offset=%u + size=%u > %u (peak so far=%u)",
+                   m_cbRingOffset, alignedSize, kCBRingBufferSize, m_cbRingPeakUsage);
+      assert(false && "Vulkan CB ring buffer overflow — increase kCBRingBufferSize");
+      // Fail-stop in release builds: return a dummy descriptor pointing into the
+      // reserved 0..256 dummy region. The draw will be visually wrong but we
+      // won't trash earlier draws in the same frame.
+      VkDescriptorBufferInfo info = {};
+      info.buffer = m_cbRingBuffers[m_currentFrame];
+      info.offset = 0;
+      info.range  = (alignedSize <= 256) ? alignedSize : 256;
+      return info;
     }
 
     uint32_t bufIdx = m_currentFrame;
@@ -1565,6 +1648,7 @@ reopen:
     info.range = alignedSize;
 
     m_cbRingOffset += alignedSize;
+    if (m_cbRingOffset > m_cbRingPeakUsage) m_cbRingPeakUsage = m_cbRingOffset;
     return info;
   }
 
@@ -1572,6 +1656,9 @@ reopen:
     // Must align to 256 so subsequent UBO allocations from the same ring stay aligned
     uint32_t aligned = (size + 255) & ~255u;
     if (m_cbRingOffset + aligned > kCBRingBufferSize) {
+      T8_LOG_ERROR("[Vulkan] CB ring buffer overflow in VB path! offset=%u + size=%u > %u (peak so far=%u)",
+                   m_cbRingOffset, aligned, kCBRingBufferSize, m_cbRingPeakUsage);
+      assert(false && "Vulkan CB ring buffer overflow (VB path) — increase kCBRingBufferSize");
       return { VK_NULL_HANDLE, 0, false };
     }
     uint32_t bufIdx = m_currentFrame;
@@ -1582,6 +1669,7 @@ reopen:
     alloc.offset = m_cbRingOffset;
     alloc.valid = true;
     m_cbRingOffset += aligned;
+    if (m_cbRingOffset > m_cbRingPeakUsage) m_cbRingPeakUsage = m_cbRingOffset;
     return alloc;
   }
 
@@ -1611,18 +1699,46 @@ reopen:
   }
 
   void VulkanDriver::BindPendingDescriptors(VkCommandBuffer cmd, VulkanShader* shader) {
-    // Compute a fingerprint from layout + texture bindings to reuse descriptor sets
-    // when the same textures are bound across multiple draws (e.g. same material, different passes).
-    uint64_t fingerprint = (uint64_t)(uintptr_t)shader->m_descriptorSetLayout;
-    for (int i = 0; i < 8; i++) {
-      if (m_pendingTextures[i].imageView) {
-        fingerprint ^= ((uint64_t)(uintptr_t)m_pendingTextures[i].imageView) * (0x9e3779b97f4a7c15ULL + i);
-      }
+    std::vector<std::pair<int, int>> cbSlots; // descriptor binding -> logical slot
+    cbSlots.reserve(VulkanShader::kMaxCBufferSlots);
+    for (int slot = 0; slot < VulkanShader::kMaxCBufferSlots; slot++) {
+      int binding = shader->cbvBindings[slot];
+      if (binding >= 0) cbSlots.emplace_back(binding, slot);
+    }
+    std::sort(cbSlots.begin(), cbSlots.end(),
+              [](const auto& a, const auto& b) { return a.first < b.first; });
+
+    std::vector<uint32_t> dynamicOffsets;
+    dynamicOffsets.reserve(cbSlots.size());
+    for (const auto& cb : cbSlots) {
+      const int slot = cb.second;
+      dynamicOffsets.push_back((uint32_t)m_pendingCBs[slot].bufferInfo.offset);
     }
 
-    uint32_t dynamicOffset = 0;
-    if (shader->cbvBinding >= 0) {
-      dynamicOffset = (uint32_t)m_pendingCB.offset;
+    // Compute a fingerprint from layout + texture bindings (image view AND sampler)
+    // to reuse descriptor sets when the same textures+samplers are bound across
+    // multiple draws (e.g. same material, different passes).
+    //
+    // IMPORTANT: sampler must be part of the fingerprint. The descriptor type is
+    // VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, so two draws that bind the same
+    // imageView with different samplers MUST get different descriptor sets.
+    // Without sampler in the key, the second draw would silently reuse the first
+    // draw's descriptor (with the wrong sampler) — visible as e.g. shadow-edge
+    // flicker when the same depth texture is sampled with different filter modes
+    // across passes.
+    uint64_t fingerprint = (uint64_t)(uintptr_t)shader->m_descriptorSetLayout;
+    for (int i = 0; i < VulkanShader::kMaxTextureSlots; i++) {
+      if (m_pendingTextures[i].imageView) {
+        fingerprint ^= ((uint64_t)(uintptr_t)m_pendingTextures[i].imageView) * (0x9e3779b97f4a7c15ULL + i);
+        fingerprint ^= ((uint64_t)(uintptr_t)m_pendingTextures[i].sampler)   * (0xc6a4a7935bd1e995ULL + i);
+      }
+    }
+    for (const auto& cb : cbSlots) {
+      const int binding = cb.first;
+      const int slot = cb.second;
+      const VkDescriptorBufferInfo& info = m_pendingCBs[slot].bufferInfo;
+      fingerprint ^= ((uint64_t)(uintptr_t)info.buffer) * (0x94d049bb133111ebULL + binding);
+      fingerprint ^= ((uint64_t)info.range)             * (0xbf58476d1ce4e5b9ULL + binding);
     }
 
     auto it = m_descriptorSetCache.find(fingerprint);
@@ -1636,27 +1752,30 @@ reopen:
 
       std::vector<VkWriteDescriptorSet> writes;
       std::vector<VkDescriptorImageInfo> imageInfos;
-      writes.reserve(16);
-      imageInfos.reserve(8);
+      std::vector<VkDescriptorBufferInfo> bufferInfos;
+      writes.reserve(cbSlots.size() + VulkanShader::kMaxTextureSlots);
+      imageInfos.reserve(VulkanShader::kMaxTextureSlots);
+      bufferInfos.reserve(cbSlots.size());
 
-      // UBO binding — offset=0 in descriptor, actual offset passed as dynamic offset
-      VkDescriptorBufferInfo cbBufInfo = {};
-      if (shader->cbvBinding >= 0) {
-        cbBufInfo.buffer = m_pendingCB.buffer;
+      // UBO bindings — offset=0 in descriptor, actual offsets passed as dynamic offsets
+      for (const auto& cb : cbSlots) {
+        const int binding = cb.first;
+        const int slot = cb.second;
+        VkDescriptorBufferInfo cbBufInfo = m_pendingCBs[slot].bufferInfo;
         cbBufInfo.offset = 0;
-        cbBufInfo.range  = m_pendingCB.range;
+        bufferInfos.push_back(cbBufInfo);
 
         VkWriteDescriptorSet w = { VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET };
         w.dstSet = ds;
-        w.dstBinding = (uint32_t)shader->cbvBinding;
+        w.dstBinding = (uint32_t)binding;
         w.descriptorCount = 1;
         w.descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC;
-        w.pBufferInfo = &cbBufInfo;
+        w.pBufferInfo = &bufferInfos.back();
         writes.push_back(w);
       }
 
       // Texture bindings (from reflected srv bindings)
-      for (int slot = 0; slot < 8; slot++) {
+      for (int slot = 0; slot < VulkanShader::kMaxTextureSlots; slot++) {
         if (shader->srvBindings[slot] < 0) continue;
 
         VkDescriptorImageInfo imgInfo = {};
@@ -1685,10 +1804,45 @@ reopen:
     }
 
     // Always rebind with current dynamic UBO offset
-    uint32_t dynOffsetCount = (shader->cbvBinding >= 0) ? 1 : 0;
+    uint32_t dynOffsetCount = (uint32_t)dynamicOffsets.size();
     vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS,
                             shader->m_pipelineLayout, 0, 1, &ds,
-                            dynOffsetCount, &dynamicOffset);
+                            dynOffsetCount, dynamicOffsets.empty() ? nullptr : dynamicOffsets.data());
+#ifdef T850_RENDER_TRACE
+    if (T8_TRACE_ACTIVE()) {
+      // Emit one commit event per slot the shader actually consumes — this
+      // reflects what the GPU will see (including dummy-image fallbacks for
+      // unbound slots, which is exactly the kind of mismatch we need to
+      // catch when comparing two API traces).
+      for (int slot = 0; slot < VulkanShader::kMaxTextureSlots; slot++) {
+        if (shader->srvBindings[slot] < 0) continue;
+        bool hasUserBind = (m_pendingTextures[slot].imageView != VK_NULL_HANDLE);
+        int  texId       = hasUserBind ? m_pendingTextures[slot].tracerTexId : -1;
+        const char* nm   = hasUserBind && m_pendingTextures[slot].tracerName[0]
+                            ? m_pendingTextures[slot].tracerName : "<dummy>";
+        const char* stage = hasUserBind && m_pendingTextures[slot].tracerStage[0]
+                            ? m_pendingTextures[slot].tracerStage : "ps";
+        // viewId reuses the imageView raw pointer cast to int — not a stable
+        // resource id but unique enough to flag mismatches between two API
+        // traces (different VkImageView pointers => different views).
+        int viewId    = (int)(uintptr_t)m_pendingTextures[slot].imageView;
+        // samplerId now points to a logical signature so cross-API trace
+        // diffs surface real mismatches; falls back to the VkSampler raw
+        // pointer for unbound/dummy slots.
+        int samplerId = hasUserBind && m_pendingTextures[slot].tracerSamplerId >= 0
+                          ? m_pendingTextures[slot].tracerSamplerId
+                          : (int)(uintptr_t)m_pendingTextures[slot].sampler;
+        g_renderTracer->EvBindTextureCommit(slot, texId, viewId, samplerId, nm ? nm : "", stage);
+      }
+      // Commit each logical cbuffer slot the shader actually consumes.
+      for (const auto& cb : cbSlots) {
+        const int slot = cb.second;
+        if (m_pendingCBs[slot].tracerId >= 0) {
+          g_renderTracer->EvBindCBufferCommit(slot, m_pendingCBs[slot].tracerId);
+        }
+      }
+    }
+#endif
   }
 
   // ══════════════════════════════════════════════════════

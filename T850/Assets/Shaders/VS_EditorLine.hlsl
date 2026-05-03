@@ -1,5 +1,5 @@
 // Editor line vertex shader — depth-tested wireframe overlay.
-// Outputs screen UV and linear depth for comparison with GBuffer COLOR4.
+// Outputs screen UV and clip depth for comparison with GBuffer depth.
 cbuffer ConstantBuffer{
     float4x4 WVP;
     float4   LineColor;
@@ -12,14 +12,12 @@ struct VS_INPUT{
 
 struct VS_OUTPUT{
     float4 hposition  : SV_POSITION;
-    float  linearDepth : TEXCOORD0;
+    float  clipDepth : TEXCOORD0;
 };
 
 VS_OUTPUT VS( VS_INPUT input ){
     VS_OUTPUT OUT;
     OUT.hposition = mul(WVP, input.position);
-    // Linear depth matching GBuffer COLOR4: clipZ / farPlane
-    // (FS_Mesh.hlsl stores input.Pos.z / CameraInfo.y in COLOR4)
-    OUT.linearDepth = OUT.hposition.z / DepthParams.z;
+    OUT.clipDepth = OUT.hposition.z / OUT.hposition.w;
     return OUT;
 }

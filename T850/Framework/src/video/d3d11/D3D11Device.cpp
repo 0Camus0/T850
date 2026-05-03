@@ -18,6 +18,7 @@
 #include <video/d3d11/D3D11Shader.h>
 #include <video/d3d11/D3D11Texture.h>
 #include <video/d3d11/D3D11RT.h>
+#include <vector>
 
 namespace t850 {
   void * D3DXDevice::GetAPIObject() const
@@ -70,7 +71,10 @@ namespace t850 {
   Texture * D3DXDevice::CreateTexture(std::string path)
   {
     D3DXTexture* txture = new D3DXTexture;
-    txture->LoadTexture(path.c_str());
+    if (!txture->LoadTexture(path.c_str())) {
+      delete txture;
+      return nullptr;
+    }
     return txture;
   }
 
@@ -119,6 +123,69 @@ namespace t850 {
 
     tex->x = w;
     tex->y = h;
+    tex->mipmaps = 1;
+    tex->m_channels = 4;
+    tex->props = TextBasicFormat::CH_RGBA;
+    tex->params = TextBasicParams::CLAMP_TO_EDGE | TextBasicParams::NEAREST_FILTER;
+    tex->SetTextureParams();
+    return tex;
+  }
+
+  Texture * D3DXDevice::CreateFloatCubeMap(int size, int mipCount, const float* data)
+  {
+    if (size <= 0 || mipCount <= 0)
+      return nullptr;
+
+    D3DXTexture* tex = new D3DXTexture;
+    D3D11_TEXTURE2D_DESC desc = {};
+    desc.Width = size;
+    desc.Height = size;
+    desc.MipLevels = mipCount;
+    desc.ArraySize = 6;
+    desc.Format = DXGI_FORMAT_R32G32B32A32_FLOAT;
+    desc.SampleDesc.Count = 1;
+    desc.Usage = D3D11_USAGE_DEFAULT;
+    desc.BindFlags = D3D11_BIND_SHADER_RESOURCE;
+    desc.MiscFlags = D3D11_RESOURCE_MISC_TEXTURECUBE;
+
+    std::vector<D3D11_SUBRESOURCE_DATA> initData;
+    if (data) {
+      initData.resize(6 * mipCount);
+      const float* pData = data;
+      for (int face = 0; face < 6; ++face) {
+        int mipSize = size;
+        for (int mip = 0; mip < mipCount; ++mip) {
+          int subresource = D3D11CalcSubresource(mip, face, mipCount);
+          initData[subresource].pSysMem = pData;
+          initData[subresource].SysMemPitch = mipSize * 16;
+          initData[subresource].SysMemSlicePitch = 0;
+          pData += mipSize * mipSize * 4;
+          mipSize >>= 1; if (mipSize < 1) mipSize = 1;
+        }
+      }
+    }
+
+    HRESULT hr = reinterpret_cast<ID3D11Device*>(GetAPIObject())->CreateTexture2D(
+        &desc, data ? initData.data() : nullptr, tex->Tex.GetAddressOf());
+    if (FAILED(hr)) { delete tex; return nullptr; }
+
+    D3D11_SHADER_RESOURCE_VIEW_DESC srvDesc = {};
+    srvDesc.Format = desc.Format;
+    srvDesc.ViewDimension = D3D11_SRV_DIMENSION_TEXTURECUBE;
+    srvDesc.TextureCube.MostDetailedMip = 0;
+    srvDesc.TextureCube.MipLevels = mipCount;
+    hr = reinterpret_cast<ID3D11Device*>(GetAPIObject())->CreateShaderResourceView(
+        tex->Tex.Get(), &srvDesc, tex->pSRVTex.GetAddressOf());
+    if (FAILED(hr)) { delete tex; return nullptr; }
+
+    tex->x = size;
+    tex->y = size;
+    tex->mipmaps = mipCount;
+    tex->m_channels = 4;
+    tex->props = TextBasicFormat::CH_RGBA;
+    tex->cil_props = CIL_CUBE_MAP;
+    tex->params = TextBasicParams::CLAMP_TO_EDGE | TextBasicParams::MIPMAPS;
+    tex->SetTextureParams();
     return tex;
   }
 

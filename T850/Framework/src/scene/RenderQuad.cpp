@@ -12,6 +12,7 @@
 *********************************************************/
 
 #include <scene/RenderQuad.h>
+#include <scene/RenderGraph.h>
 #include <utils/Utils.h>
 
 #include <video/gl/GLShader.h>
@@ -21,9 +22,33 @@
 #include <video/d3d11/D3D11Driver.h>
 #endif
 #include <utils/Log.h>
+#include <cstring>
 namespace t850 {
   extern Device*            T8Device;
   extern DeviceContext*     T8DeviceContext;
+
+  namespace {
+    void ExtractFrameCB(RenderQuad::FrameCBuffer& dst, const RenderQuad::CBuffer& src) {
+      dst.WVP = src.WVP;
+      dst.World = src.World;
+      dst.WorldView = src.WorldView;
+      dst.WVPInverse = src.WVPInverse;
+      dst.WVPLight = src.WVPLight;
+      dst.Projection = src.Projection;
+      dst.CameraPos = src.CameraPos;
+      dst.CameraInfo = src.CameraInfo;
+      dst.LightCameraPos = src.LightCameraPos;
+      dst.LightCameraInfo = src.LightCameraInfo;
+    }
+
+    void ExtractPassCB(RenderQuad::PassCBuffer& dst, const RenderQuad::CBuffer& src) {
+      std::memcpy(dst.LightPositions, src.LightPositions, sizeof(dst.LightPositions));
+      std::memcpy(dst.LightColors, src.LightColors, sizeof(dst.LightColors));
+      std::memcpy(dst.LightRadius, src.LightRadius, sizeof(dst.LightRadius));
+      dst.brightness = src.brightness;
+      dst.toogles = src.toogles;
+    }
+  }
 
   void RenderQuad::Create() {
     m_quad.Init();
@@ -120,6 +145,10 @@ namespace t850 {
     bdesc.byteWidth = sizeof(CBuffer);
     bdesc.usage = BufferUsage::DEFAULT;
     pd3dConstantBuffer = (t850::ConstantBuffer*)T8Device->CreateBuffer(BufferType::CONSTANT, bdesc);
+    bdesc.byteWidth = sizeof(FrameCBuffer);
+    FrameCBGPU = (t850::ConstantBuffer*)T8Device->CreateBuffer(BufferType::CONSTANT, bdesc);
+    bdesc.byteWidth = sizeof(PassCBuffer);
+    PassCBGPU = (t850::ConstantBuffer*)T8Device->CreateBuffer(BufferType::CONSTANT, bdesc);
 
     /*D3D11_SAMPLER_DESC sdesc;
     sdesc.Filter = D3D11_FILTER_ANISOTROPIC;
@@ -149,7 +178,7 @@ namespace t850 {
     // Build final shader key: base features + global pass + toggles
     ShaderKey finalKey(sigBase.bits);
     finalKey.setPass(gKey.getPass());
-    constexpr uint32_t featureMask = (1u << ShaderKey::PASS_SHIFT) - 1;
+    constexpr uint64_t featureMask = (1ull << ShaderKey::PASS_SHIFT) - 1ull;
     finalKey.bits |= (gKey.bits & featureMask);
 
     uint8_t pass = finalKey.getPass();
@@ -197,6 +226,9 @@ namespace t850 {
       CnstBuffer.CameraInfo = XVECTOR3(pActualCamera->NPlane, pActualCamera->FPlane, pActualCamera->Fov, float(numLights));
       CnstBuffer.toogles.x = pScProp->EnvFactor;
       CnstBuffer.toogles.z = pScProp->IBLFactor;
+      CnstBuffer.toogles.w = pScProp->IBLMipCount;
+      CnstBuffer.brightness.z = pScProp->IBLDiffuseMipLevel;
+      CnstBuffer.brightness.w = pScProp->IBLBRDFLUTEnabled;
       // Ambient intensity: average of AmbientColor components
       CnstBuffer.toogles.y = (pScProp->AmbientColor.x + pScProp->AmbientColor.y + pScProp->AmbientColor.z) / 3.0f;
 
@@ -297,43 +329,67 @@ namespace t850 {
 	}
 	else if (pass == PassType::LIGHT_RAY_MARCHING) {
 	  CnstBuffer.LightPositions[0].y = pScProp->LightVolumeSteps;
+      XVECTOR3 sunDir(0.0f, 1.0f, 0.0f, 0.0f);
+      if (pScProp->pLightCameras.size() > 0) {
+        int selected = pScProp->ActiveLightCamera;
+        sunDir = -pScProp->pLightCameras[selected]->Look;
+        sunDir.Normalize();
+      }
+      CnstBuffer.LightColors[0] = XVECTOR3(sunDir.x, sunDir.y, sunDir.z, 1.0f);
     CnstBuffer.toogles.x = pScProp->GodRaysFactor;
 	  CnstBuffer.toogles.z = (float)pScProp->DebugMode;
+    CnstBuffer.toogles.w = pScProp->ShadowBias;
 	}
 
     m_quad.Set();
     s->Set(*T8DeviceContext);
 
-    pd3dConstantBuffer->UpdateFromBuffer(*T8DeviceContext, &CnstBuffer);
-    pd3dConstantBuffer->Set(*T8DeviceContext);
-    if (Textures[0])
-      Textures[0]->Set(*T8DeviceContext, 0, "tex0");
-    if (Textures[1])
-      Textures[1]->Set(*T8DeviceContext, 1, "tex1");
-    if (Textures[2])
-      Textures[2]->Set(*T8DeviceContext, 2, "tex2");
-    if (Textures[3])
-      Textures[3]->Set(*T8DeviceContext, 3, "tex3");
-    if (Textures[4])
-      Textures[4]->Set(*T8DeviceContext, 4, "tex4");
-    if (Textures[5])
-      Textures[5]->Set(*T8DeviceContext, 5, "tex5");
+    if (g_pBaseDriver->UsesGLSL()) {
+      pd3dConstantBuffer->UpdateFromBuffer(*T8DeviceContext, &CnstBuffer);
+      pd3dConstantBuffer->Set(*T8DeviceContext);
+    } else {
+      ExtractFrameCB(FrameCB, CnstBuffer);
+      ExtractPassCB(PassCB, CnstBuffer);
+      FrameCBGPU->UpdateFromBuffer(*T8DeviceContext, &FrameCB);
+      PassCBGPU->UpdateFromBuffer(*T8DeviceContext, &PassCB);
+      FrameCBGPU->Set(*T8DeviceContext, 0);
+      PassCBGPU->Set(*T8DeviceContext, 1);
+    }
+    auto textureNameForSlot = [](int slot) -> const char* {
+      switch (slot) {
+      case 0: return "tex0";
+      case 1: return "tex1";
+      case 2: return "tex2";
+      case 3: return "tex3";
+      case 4: return "tex4";
+      case 5: return "tex5";
+      case 7: return "tex6";
+      case 8: return "tex7";
+      case 9: return "tex8";
+      case EnvironmentTextureSlot::DiffuseIBL: return "texIBLDiffuse";
+      case EnvironmentTextureSlot::SpecularIBL: return "texIBLSpecular";
+      case EnvironmentTextureSlot::BrdfLUT: return "texIBLBRDF";
+      case EnvironmentTextureSlot::CharlieIBL: return "texIBLCharlie";
+      case EnvironmentTextureSlot::CharlieLUT: return "texIBLCharlieLUT";
+      case EnvironmentTextureSlot::SheenELUT: return "texIBLSheenELUT";
+      default: return nullptr;
+      }
+    };
+
+    for (int slot = 0; slot < MaxPrimitiveTextures; ++slot) {
+      const char* textureName = textureNameForSlot(slot);
+      if (Textures[slot] && textureName)
+        Textures[slot]->Set(*T8DeviceContext, slot, textureName);
+    }
     if (EnvMap) {
       EnvMap->Set(*T8DeviceContext, 6, "texEnv");
+      EnvMap->SetSampler(*T8DeviceContext, 6);
     }
 
-    if (Textures[0])
-      Textures[0]->SetSampler(*T8DeviceContext, 0);
-    if (Textures[1])
-      Textures[1]->SetSampler(*T8DeviceContext, 1);
-    if (Textures[2])
-      Textures[2]->SetSampler(*T8DeviceContext, 2);
-    if (Textures[3])
-      Textures[3]->SetSampler(*T8DeviceContext, 3);
-    if (Textures[4])
-      Textures[4]->SetSampler(*T8DeviceContext, 4);
-    if (Textures[5])
-      Textures[5]->SetSampler(*T8DeviceContext, 5);
+    for (int slot = 0; slot < MaxPrimitiveTextures; ++slot) {
+      if (Textures[slot] && textureNameForSlot(slot))
+        Textures[slot]->SetSampler(*T8DeviceContext, slot);
+    }
 
     T8DeviceContext->SetPrimitiveTopology(Topology::TRIANLE_LIST);
     T8DeviceContext->DrawIndexed(6, 0, 0);
@@ -341,7 +397,9 @@ namespace t850 {
 
   void RenderQuad::Destroy() {
     m_quad.Destroy();
-    pd3dConstantBuffer->release();
+    if (pd3dConstantBuffer) { pd3dConstantBuffer->release(); pd3dConstantBuffer = nullptr; }
+    if (FrameCBGPU) { FrameCBGPU->release(); FrameCBGPU = nullptr; }
+    if (PassCBGPU) { PassCBGPU->release(); PassCBGPU = nullptr; }
   }
 }
 

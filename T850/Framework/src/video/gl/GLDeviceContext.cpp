@@ -12,6 +12,7 @@
 *********************************************************/
 
 #include <video/gl/GLDeviceContext.h>
+#include <debug/RenderTrace.h>
 
 #ifdef OS_WINDOWS
 #if defined(USING_OPENGL_ES20)
@@ -87,9 +88,26 @@ namespace t850 {
       internalTopology = GL_TRIANGLES;
       break;
     }
+    T8_TRACE(EvSetTopology((int)topology));
   }
   void GLDeviceContext::DrawIndexed(unsigned vertexCount, unsigned startIndex, unsigned startVertex)
   {
-    glDrawElements(internalTopology, vertexCount, internalIBFormat, 0);
+    // Convert startIndex (in elements) to a byte offset into the bound
+    // IB, picking the size from the format set by IndexBuffer::Set().
+    const unsigned indexStride = (internalIBFormat == GL_UNSIGNED_INT) ? 4u : 2u;
+    const GLsizeiptr byteOffset = static_cast<GLsizeiptr>(startIndex) * indexStride;
+    if (startVertex == 0u) {
+      glDrawElements(internalTopology, vertexCount, internalIBFormat,
+                     reinterpret_cast<const void*>(byteOffset));
+    } else {
+      // glDrawElementsBaseVertex is core in GL 3.2 / GLES 3.2. T850's
+      // GL build path requires at least GL 3.3 for the ES_30 shader
+      // dialect, so this is safe on desktop GL. ES2/ES3 callers must
+      // pre-add the base vertex into their indices when sharing pools.
+      glDrawElementsBaseVertex(internalTopology, vertexCount, internalIBFormat,
+                               reinterpret_cast<void*>(byteOffset),
+                               static_cast<GLint>(startVertex));
+    }
+    T8_TRACE(EvDrawIndexed(vertexCount, startIndex, startVertex));
   }
 }

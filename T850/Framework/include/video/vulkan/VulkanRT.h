@@ -28,10 +28,17 @@ namespace t850 {
     bool LoadAPIRT() override;
     void DestroyAPIRT() override;
     void Set(const DeviceContext& context) override;
+    void SetLoad(const DeviceContext& context) override;
     void ChangeCubeDepthTexture(int i) override;
 
     VkRenderPass    m_renderPass = VK_NULL_HANDLE;
+    VkRenderPass    m_renderPassLoad = VK_NULL_HANDLE;
     VkFramebuffer   m_framebuffer = VK_NULL_HANDLE;
+
+  private:
+    void SetInternal(const DeviceContext& context, bool preserve);
+
+  public:
 
     // Color attachments
     std::vector<VkImage>        vColorImages;
@@ -39,12 +46,14 @@ namespace t850 {
     std::vector<VkImageView>    vColorImageViews;
     std::vector<VkImageLayout>  vColorLayouts;
     VkFormat                    m_colorFormat = VK_FORMAT_R8G8B8A8_UNORM;
+    std::vector<VkFormat>       m_colorFormats;
 
     // Depth attachment
     VkImage         m_depthImage = VK_NULL_HANDLE;
     VmaAllocation   m_depthAllocation = VK_NULL_HANDLE;
     VkImageView     m_depthImageView = VK_NULL_HANDLE;
     VkFormat        m_depthFormat = VK_FORMAT_D32_SFLOAT;
+    VkImageLayout   m_depthLayout = VK_IMAGE_LAYOUT_UNDEFINED;
 
     bool            m_isCubeDepth = false;
     VkImageView     m_cubeFaceViews[6] = {};

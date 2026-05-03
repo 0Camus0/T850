@@ -6,12 +6,15 @@
 
 #include <video/vulkan/VulkanTexture.h>
 #include <video/vulkan/VulkanDriver.h>
+#include <video/vulkan/VulkanShader.h>
 #include <video/vulkan/VulkanUtils.h>
 
 #if defined(OS_WINDOWS)
 
 #include <utils/Log.h>
+#include <debug/RenderTrace.h>
 #include <algorithm>
+#include <cstdio>
 #include <cstring>
 #include <vector>
 
@@ -23,6 +26,79 @@ namespace t850 {
   // ══════════════════════════════════════════════════════
   //  VulkanTexture
   // ══════════════════════════════════════════════════════
+
+  namespace {
+    uint32_t CalculateFullMipCount(uint32_t width, uint32_t height) {
+      uint32_t levels = 1;
+      while (width > 1 || height > 1) {
+        width = width > 1 ? (width >> 1) : 1;
+        height = height > 1 ? (height >> 1) : 1;
+        ++levels;
+      }
+      return levels;
+    }
+
+    void GenerateMipChain8(const unsigned char* src, uint32_t width, uint32_t height,
+                           uint32_t faceCount, uint32_t bytesPerPixel,
+                           std::vector<unsigned char>& outData) {
+      const uint32_t mipCount = CalculateFullMipCount(width, height);
+      size_t totalBytes = 0;
+      for (uint32_t face = 0; face < faceCount; ++face) {
+        uint32_t mipWidth = width;
+        uint32_t mipHeight = height;
+        for (uint32_t mip = 0; mip < mipCount; ++mip) {
+          totalBytes += static_cast<size_t>(mipWidth) * mipHeight * bytesPerPixel;
+          mipWidth = mipWidth > 1 ? (mipWidth >> 1) : 1;
+          mipHeight = mipHeight > 1 ? (mipHeight >> 1) : 1;
+        }
+      }
+
+      outData.resize(totalBytes);
+      size_t dstOffset = 0;
+      const size_t baseFaceBytes = static_cast<size_t>(width) * height * bytesPerPixel;
+
+      for (uint32_t face = 0; face < faceCount; ++face) {
+        uint32_t prevWidth = width;
+        uint32_t prevHeight = height;
+        const unsigned char* prev = src + static_cast<size_t>(face) * baseFaceBytes;
+        size_t prevBytes = baseFaceBytes;
+
+        memcpy(outData.data() + dstOffset, prev, prevBytes);
+        size_t prevOffset = dstOffset;
+        dstOffset += prevBytes;
+
+        for (uint32_t mip = 1; mip < mipCount; ++mip) {
+          uint32_t mipWidth = prevWidth > 1 ? (prevWidth >> 1) : 1;
+          uint32_t mipHeight = prevHeight > 1 ? (prevHeight >> 1) : 1;
+          unsigned char* dst = outData.data() + dstOffset;
+          const unsigned char* srcMip = outData.data() + prevOffset;
+
+          for (uint32_t y = 0; y < mipHeight; ++y) {
+            for (uint32_t x = 0; x < mipWidth; ++x) {
+              uint32_t sx0 = x * 2;
+              uint32_t sy0 = y * 2;
+              uint32_t sx1 = (sx0 + 1 < prevWidth) ? sx0 + 1 : sx0;
+              uint32_t sy1 = (sy0 + 1 < prevHeight) ? sy0 + 1 : sy0;
+              for (uint32_t c = 0; c < bytesPerPixel; ++c) {
+                uint32_t accum = 0;
+                accum += srcMip[(static_cast<size_t>(sy0) * prevWidth + sx0) * bytesPerPixel + c];
+                accum += srcMip[(static_cast<size_t>(sy0) * prevWidth + sx1) * bytesPerPixel + c];
+                accum += srcMip[(static_cast<size_t>(sy1) * prevWidth + sx0) * bytesPerPixel + c];
+                accum += srcMip[(static_cast<size_t>(sy1) * prevWidth + sx1) * bytesPerPixel + c];
+                dst[(static_cast<size_t>(y) * mipWidth + x) * bytesPerPixel + c] =
+                  static_cast<unsigned char>((accum + 2) / 4);
+              }
+            }
+          }
+
+          prevOffset = dstOffset;
+          prevWidth = mipWidth;
+          prevHeight = mipHeight;
+          dstOffset += static_cast<size_t>(mipWidth) * mipHeight * bytesPerPixel;
+        }
+      }
+    }
+  }
 
   void VulkanTexture::LoadAPITexture(DeviceContext* context, unsigned char* buffer) {
     auto* driver = GetVkDriver();
@@ -59,20 +135,30 @@ namespace t850 {
       }
     }
 
-    VkDeviceSize imageSize = (VkDeviceSize)x * y * bytesPerPixel;
     bool isCube = (cil_props & CIL_CUBE_MAP) != 0;
     uint32_t layerCount = isCube ? 6 : 1;
-    // For cubemaps, the DDS buffer stores all mip levels per face. Use
-    // total size / 6 to correctly stride over each face's full mip chain.
-    VkDeviceSize faceStride = isCube ? (this->size / layerCount) : imageSize;
-    VkDeviceSize totalSize = isCube ? this->size : imageSize;
+    bool hasSourceMips = mipmaps > 1;
+    uint32_t mipCount = hasSourceMips ? mipmaps : 1;
+    std::vector<unsigned char> generatedMips;
+    if (!hasSourceMips && !isHalfFloat && uploadBuf) {
+      mipCount = CalculateFullMipCount(this->x, this->y);
+      if (mipCount > 1) {
+        GenerateMipChain8(uploadBuf, this->x, this->y, layerCount,
+                          static_cast<uint32_t>(bytesPerPixel), generatedMips);
+        uploadBuf = generatedMips.data();
+      }
+    }
+    VkDeviceSize imageSize = (VkDeviceSize)x * y * bytesPerPixel;
+    VkDeviceSize totalSize = !generatedMips.empty()
+      ? static_cast<VkDeviceSize>(generatedMips.size())
+      : ((mipCount > 1 && this->size > 0) ? this->size : imageSize * layerCount);
 
     // 1. Create VkImage
     VkImageCreateInfo imgCI = { VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO };
     imgCI.imageType = VK_IMAGE_TYPE_2D;
     imgCI.format = m_format;
     imgCI.extent = { x, y, 1 };
-    imgCI.mipLevels = 1;
+    imgCI.mipLevels = mipCount;
     imgCI.arrayLayers = layerCount;
     imgCI.samples = VK_SAMPLE_COUNT_1_BIT;
     imgCI.tiling = VK_IMAGE_TILING_OPTIMAL;
@@ -140,7 +226,7 @@ namespace t850 {
       barrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
       barrier.image = m_image;
       barrier.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
-      barrier.subresourceRange.levelCount = 1;
+      barrier.subresourceRange.levelCount = mipCount;
       barrier.subresourceRange.layerCount = layerCount;
       barrier.srcAccessMask = 0;
       barrier.dstAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
@@ -149,19 +235,28 @@ namespace t850 {
     }
 
     // 3b. Copy staging buffer → image (one region per face/layer)
-    std::vector<VkBufferImageCopy> regions(layerCount);
+    std::vector<VkBufferImageCopy> regions(layerCount * mipCount);
+    VkDeviceSize sourceOffset = 0;
     for (uint32_t face = 0; face < layerCount; face++) {
-      regions[face] = {};
-      regions[face].bufferOffset = face * faceStride;
-      regions[face].imageSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
-      regions[face].imageSubresource.mipLevel = 0;
-      regions[face].imageSubresource.baseArrayLayer = face;
-      regions[face].imageSubresource.layerCount = 1;
-      regions[face].imageExtent = { x, y, 1 };
+      uint32_t mipWidth = x;
+      uint32_t mipHeight = y;
+      for (uint32_t mip = 0; mip < mipCount; ++mip) {
+        uint32_t regionIndex = face * mipCount + mip;
+        regions[regionIndex] = {};
+        regions[regionIndex].bufferOffset = sourceOffset;
+        regions[regionIndex].imageSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+        regions[regionIndex].imageSubresource.mipLevel = mip;
+        regions[regionIndex].imageSubresource.baseArrayLayer = face;
+        regions[regionIndex].imageSubresource.layerCount = 1;
+        regions[regionIndex].imageExtent = { mipWidth, mipHeight, 1 };
+        sourceOffset += VkDeviceSize(mipWidth) * VkDeviceSize(mipHeight) * VkDeviceSize(bytesPerPixel);
+        mipWidth >>= 1; if (mipWidth < 1) mipWidth = 1;
+        mipHeight >>= 1; if (mipHeight < 1) mipHeight = 1;
+      }
     }
     vkCmdCopyBufferToImage(cmd, stagingBuffer, m_image,
                            VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
-                           layerCount, regions.data());
+                           static_cast<uint32_t>(regions.size()), regions.data());
 
     // 3c. Transition TRANSFER_DST_OPTIMAL → SHADER_READ_ONLY_OPTIMAL (all layers)
     {
@@ -172,7 +267,7 @@ namespace t850 {
       barrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
       barrier.image = m_image;
       barrier.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
-      barrier.subresourceRange.levelCount = 1;
+      barrier.subresourceRange.levelCount = mipCount;
       barrier.subresourceRange.layerCount = layerCount;
       barrier.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
       barrier.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
@@ -208,7 +303,7 @@ namespace t850 {
     }
     ivCI.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
     ivCI.subresourceRange.baseMipLevel = 0;
-    ivCI.subresourceRange.levelCount = 1;
+    ivCI.subresourceRange.levelCount = mipCount;
     ivCI.subresourceRange.baseArrayLayer = 0;
     ivCI.subresourceRange.layerCount = layerCount;
 
@@ -219,9 +314,12 @@ namespace t850 {
     }
 
     // 7. Create VkSampler
+    this->mipmaps = mipCount;
+    if (mipCount > 1)
+      params |= MIPMAPS;
     SetTextureParams();
 
-    T8_LOG_INFO("[Vulkan] LoadAPITexture OK (%ux%u ch=%u fmt=%d)", x, y, m_channels, m_format);
+    T8_LOG_INFO("[Vulkan] LoadAPITexture OK (%ux%u ch=%u fmt=%d mips=%u cube=%d)", x, y, m_channels, m_format, mipCount, (int)isCube);
   }
 
   void VulkanTexture::LoadAPITextureCompressed(unsigned char* buffer) {
@@ -388,15 +486,33 @@ namespace t850 {
       m_sampler = VK_NULL_HANDLE;
     }
 
-    VkSamplerAddressMode addressMode = VK_SAMPLER_ADDRESS_MODE_REPEAT;
-    if (params & CLAMP_TO_EDGE)
-      addressMode = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
-    else if (params & CLAMP_TO_BORDER)
+    VkSamplerAddressMode addressMode = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
+    if (params & TILED)
+      addressMode = VK_SAMPLER_ADDRESS_MODE_REPEAT;
+    if (params & CLAMP_TO_BORDER)
       addressMode = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_BORDER;
 
     VkFilter filter = VK_FILTER_LINEAR;
     if (params & NEAREST_FILTER)
       filter = VK_FILTER_NEAREST;
+
+    VkSamplerMipmapMode mipmapMode = VK_SAMPLER_MIPMAP_MODE_LINEAR;
+    if (params & NEAREST_FILTER)
+      mipmapMode = VK_SAMPLER_MIPMAP_MODE_NEAREST;
+    else if (params & LINEAR_FILTER)
+      mipmapMode = VK_SAMPLER_MIPMAP_MODE_NEAREST;
+
+    VkPhysicalDeviceFeatures features = {};
+    vkGetPhysicalDeviceFeatures(driver->GetPhysicalDevice(), &features);
+    VkPhysicalDeviceProperties props = {};
+    vkGetPhysicalDeviceProperties(driver->GetPhysicalDevice(), &props);
+    m_samplerMaxAnisotropy = std::min(16.0f, props.limits.maxSamplerAnisotropy);
+    bool useAnisotropy = features.samplerAnisotropy &&
+                         !(cil_props & CIL_CUBE_MAP) &&
+                         !(params & NEAREST_FILTER) &&
+                         !(params & LINEAR_FILTER) &&
+                         !(params & CLAMP_TO_BORDER) &&
+                         m_samplerMaxAnisotropy > 1.0f;
 
     VkSamplerCreateInfo samplerCI = { VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO };
     samplerCI.magFilter = filter;
@@ -404,15 +520,16 @@ namespace t850 {
     samplerCI.addressModeU = addressMode;
     samplerCI.addressModeV = addressMode;
     samplerCI.addressModeW = addressMode;
-    samplerCI.anisotropyEnable = VK_FALSE;
-    samplerCI.maxAnisotropy = 1.0f;
-    samplerCI.borderColor = VK_BORDER_COLOR_FLOAT_OPAQUE_BLACK;
+    samplerCI.anisotropyEnable = useAnisotropy ? VK_TRUE : VK_FALSE;
+    samplerCI.maxAnisotropy = useAnisotropy ? m_samplerMaxAnisotropy : 1.0f;
+    samplerCI.borderColor = (params & CLAMP_TO_BORDER) ? VK_BORDER_COLOR_FLOAT_OPAQUE_WHITE
+                                                       : VK_BORDER_COLOR_FLOAT_TRANSPARENT_BLACK;
     samplerCI.unnormalizedCoordinates = VK_FALSE;
     samplerCI.compareEnable = VK_FALSE;
-    samplerCI.mipmapMode = VK_SAMPLER_MIPMAP_MODE_LINEAR;
+    samplerCI.mipmapMode = mipmapMode;
     samplerCI.mipLodBias = 0.0f;
     samplerCI.minLod = 0.0f;
-    samplerCI.maxLod = (params & MIPMAPS) ? VK_LOD_CLAMP_NONE : 0.0f;
+    samplerCI.maxLod = (params & (NEAREST_FILTER | LINEAR_FILTER)) ? 0.0f : VK_LOD_CLAMP_NONE;
 
     VkResult res = vkCreateSampler(device, &samplerCI, nullptr, &m_sampler);
     if (res != VK_SUCCESS) {
@@ -427,11 +544,50 @@ namespace t850 {
   }
 
   void VulkanTexture::Set(const DeviceContext& deviceContext, unsigned int slot, std::string shaderTextureName) {
-    if (slot >= 8) return;
+    if (slot >= VulkanShader::kMaxTextureSlots) return;
     auto* driver = GetVkDriver();
     driver->m_pendingTextures[slot].imageView = m_imageView;
     driver->m_pendingTextures[slot].sampler = m_sampler;
+#ifdef T850_RENDER_TRACE
+    if (T8_TRACE_ACTIVE()) {
+      auto& pending = driver->m_pendingTextures[slot];
+      pending.tracerTexId = g_renderTracer->LookupTextureId(this);
+      m_shaderTextureName = shaderTextureName;
+      std::snprintf(pending.tracerName, sizeof(pending.tracerName), "%s", m_shaderTextureName.c_str());
+      std::snprintf(pending.tracerStage, sizeof(pending.tracerStage), "%s", "ps");
+      // Build a logical sampler signature from the same TextBasicParams bits
+      // used to construct m_sampler (see VulkanTexture sampler creation
+      // around line 388-432). All 4 backends use this helper, so equivalent
+      // samplers across APIs hash to the same id.
+      pending.tracerSamplerId =
+        g_renderTracer->RegisterSampler(RenderTracer::MakeSamplerSigVulkan(params, m_samplerMaxAnisotropy, (cil_props & CIL_CUBE_MAP) != 0));
+      g_renderTracer->EvBindTextureRequest(slot, pending.tracerTexId,
+                                           shaderTextureName, "ps");
+    }
+#endif
     T8_LOG_DEBUG("[Vulkan] Texture::Set slot=%u view=%p sampler=%p name=%s",
+                slot, (void*)m_imageView, (void*)m_sampler, shaderTextureName.c_str());
+  }
+
+  void VulkanTexture::SetVS(const DeviceContext& deviceContext, unsigned int slot, std::string shaderTextureName) {
+    if (slot >= VulkanShader::kMaxTextureSlots) return;
+    auto* driver = GetVkDriver();
+    driver->m_pendingTextures[slot].imageView = m_imageView;
+    driver->m_pendingTextures[slot].sampler = m_sampler;
+#ifdef T850_RENDER_TRACE
+    if (T8_TRACE_ACTIVE()) {
+      auto& pending = driver->m_pendingTextures[slot];
+      pending.tracerTexId = g_renderTracer->LookupTextureId(this);
+      m_shaderTextureName = shaderTextureName;
+      std::snprintf(pending.tracerName, sizeof(pending.tracerName), "%s", m_shaderTextureName.c_str());
+      std::snprintf(pending.tracerStage, sizeof(pending.tracerStage), "%s", "vs");
+      pending.tracerSamplerId =
+        g_renderTracer->RegisterSampler(RenderTracer::MakeSamplerSigVulkan(params, m_samplerMaxAnisotropy, (cil_props & CIL_CUBE_MAP) != 0));
+      g_renderTracer->EvBindTextureRequest(slot, pending.tracerTexId,
+                                           shaderTextureName, "vs");
+    }
+#endif
+    T8_LOG_DEBUG("[Vulkan] Texture::SetVS slot=%u view=%p sampler=%p name=%s",
                 slot, (void*)m_imageView, (void*)m_sampler, shaderTextureName.c_str());
   }
 

@@ -1,33 +1,33 @@
-﻿{
-    "keepRunning":  false,
-    "api":  "d3d12",
-    "architecture":  "x64",
-    "display":  {
-                    "scene":  0,
-                    "width":  1920,
-                    "model":  "Models/DamagedHelmet.glb",
-                    "height":  1080,
-                    "fullscreen":  false
-                },
-    "replaySnapshot":  {
-                           "path":  "",
-                           "enabled":  false
-                       },
-    "configuration":  "Release",
-    "dump":  {
-                 "seconds":  -1,
-                 "trigger":  "frame",
-                 "frame":  -1,
-                 "enabled":  false
-             },
-    "debugFrames":  false,
-    "devTools":  {
-                     "guiControlEdit":  false,
-                     "d3d12Debug":  false,
-                     "guiControlTarget":  "slider_knob",
-                     "logLevel":  "error",
-                     "logToFile":  false,
-                     "guiEdit":  false,
-                     "guiSnap":  false
-                 }
+{
+  "keepRunning": false,
+  "devTools": {
+    "logLevel": "error",
+    "guiControlTarget": "slider_knob",
+    "d3d12Debug": false,
+    "logToFile": false,
+    "guiEdit": false,
+    "guiSnap": false,
+    "guiControlEdit": false
+  },
+  "api": "vulkan",
+  "replaySnapshot": {
+    "path": "D:\\Code\\Game\\T850\\T850\\bin\\x64\\Release\\dumps_vulkan_f6174_20260501_213253\\snapshot.json",
+    "enabled": false
+  },
+  "debugFrames": false,
+  "display": {
+    "model": "Models/rewind_cyborg.glb",
+    "fullscreen": false,
+    "width": 2560,
+    "height": 1440,
+    "scene": 0
+  },
+  "architecture": "x64",
+  "dump": {
+    "seconds": -1,
+    "trigger": "frame",
+    "frame": -1,
+    "enabled": false
+  },
+  "configuration": "Release"
 }

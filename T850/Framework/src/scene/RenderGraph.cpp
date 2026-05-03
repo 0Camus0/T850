@@ -3,6 +3,7 @@
 #include <scene/RenderGraphDescriptor.h>
 #include <scene/SceneProp.h>
 #include <scene/PrimitiveInstance.h>
+#include <scene/RenderQueue.h>     // MeshDrawStateTracker
 #include <utils/Camera.h>
 #include <video/BaseDriver.h>
 #include <Descriptors.h>
@@ -110,7 +111,7 @@ static const std::unordered_map<std::string, uint8_t> s_passMap = {
 };
 
 // Feature name -> ShaderKey feature bit
-static const std::unordered_map<std::string, uint32_t> s_featureMap = {
+static const std::unordered_map<std::string, uint64_t> s_featureMap = {
   {"USE_OMNIDIRECTIONAL_SHADOWS", ShaderKey::OMNI_SHADOWS},
 };
 
@@ -391,12 +392,12 @@ void RenderGraph::Execute(
   ::Camera* mainCam,
   ::Camera* lightCam,
   ::Camera* omniCams,
-  int envMapTexIndex)
+      const EnvironmentMapSet& envMaps)
 {
   for (const auto& node : m_nodes) {
     if (m_disabledPasses.count(node.desc->name)) continue;
     ExecutePass(node, driver, props, meshes, meshCount, quads,
-                mainCam, lightCam, omniCams, envMapTexIndex);
+                mainCam, lightCam, omniCams, envMaps);
   }
 }
 
@@ -409,7 +410,7 @@ void RenderGraph::ExecutePass(
   ::Camera* mainCam,
   ::Camera* lightCam,
   ::Camera* omniCams,
-  int envMapTexIndex)
+  const EnvironmentMapSet& envMaps)
 {
   const auto& pass = *node.desc;
   T8_PROFILE_SCOPE(t850::g_profiler, pass.name.c_str());
@@ -458,6 +459,10 @@ void RenderGraph::ExecutePass(
       }
       driver->RTs[node.rt_handle]->ChangeCubeDepthTexture(face);
 
+      // Phase C step 3: open a pass-scoped state tracker so the
+      // per-RenderMesh state (IBL textures, EnvMap, IB pool, shader)
+      // dedupes across the multiple mesh draws in this pass.
+      MeshDrawStateTracker::Get().Begin();
       for (const auto& draw : pass.draws) {
         ShaderKey sig = ResolveSignature(draw.signature);
         for (const auto& extraSig : draw.extra_signatures) {
@@ -474,6 +479,7 @@ void RenderGraph::ExecutePass(
           }
         }
       }
+      MeshDrawStateTracker::Get().End();
     }
 
     driver->PopRT();
@@ -489,6 +495,8 @@ void RenderGraph::ExecutePass(
     // Push RT (if we have a target and push is enabled)
     if (node.rt_handle >= 0 && pass.push) {
       driver->PushRT(node.rt_handle);
+    } else if (node.rt_handle >= 0 && !pass.push && driver->CurrentRT != node.rt_handle) {
+      driver->PushRTLoad(node.rt_handle);
     }
 
     if (pass.clear) {
@@ -511,12 +519,68 @@ void RenderGraph::ExecutePass(
       }
     }
 
-    // Bind environment map
-    if (pass.bind_environment_map && envMapTexIndex >= 0) {
-      quads[0].SetEnvironmentMap(driver->GetTexture(envMapTexIndex));
+    auto textureOrNull = [&](int textureIndex) -> Texture* {
+      return textureIndex >= 0 ? driver->GetTexture(textureIndex) : nullptr;
+    };
+
+    auto bindEnvironmentResources = [&](PrimitiveInst& primitive) {
+      Texture* sky = textureOrNull(envMaps.Sky);
+      Texture* diffuse = textureOrNull(envMaps.DiffuseIBL >= 0 ? envMaps.DiffuseIBL : envMaps.Sky);
+      Texture* specular = textureOrNull(envMaps.SpecularIBL >= 0 ? envMaps.SpecularIBL : envMaps.Sky);
+      Texture* brdfLut = textureOrNull(envMaps.BrdfLUT);
+      int charlieIndex = envMaps.CharlieIBL >= 0 ? envMaps.CharlieIBL : (envMaps.SpecularIBL >= 0 ? envMaps.SpecularIBL : envMaps.Sky);
+      Texture* charlie = textureOrNull(charlieIndex);
+      Texture* charlieLut = textureOrNull(envMaps.CharlieLUT);
+      Texture* sheenELut = textureOrNull(envMaps.SheenELUT);
+      primitive.SetEnvironmentMap(sky);
+      primitive.SetTexture(diffuse, EnvironmentTextureSlot::DiffuseIBL);
+      primitive.SetTexture(specular, EnvironmentTextureSlot::SpecularIBL);
+      primitive.SetTexture(brdfLut, EnvironmentTextureSlot::BrdfLUT);
+      primitive.SetTexture(charlie, EnvironmentTextureSlot::CharlieIBL);
+      primitive.SetTexture(charlieLut, EnvironmentTextureSlot::CharlieLUT);
+      primitive.SetTexture(sheenELut, EnvironmentTextureSlot::SheenELUT);
+    };
+
+    auto clearEnvironmentResources = [](PrimitiveInst& primitive) {
+      primitive.SetEnvironmentMap(nullptr);
+      primitive.SetTexture(nullptr, EnvironmentTextureSlot::DiffuseIBL);
+      primitive.SetTexture(nullptr, EnvironmentTextureSlot::SpecularIBL);
+      primitive.SetTexture(nullptr, EnvironmentTextureSlot::BrdfLUT);
+      primitive.SetTexture(nullptr, EnvironmentTextureSlot::CharlieIBL);
+      primitive.SetTexture(nullptr, EnvironmentTextureSlot::CharlieLUT);
+      primitive.SetTexture(nullptr, EnvironmentTextureSlot::SheenELUT);
+    };
+
+    if (pass.bind_environment_map) {
+      bindEnvironmentResources(quads[0]);
+    } else {
+      clearEnvironmentResources(quads[0]);
     }
 
+    auto bindMeshPassResources = [&](PrimitiveInst& mesh) {
+      for (const auto& input : pass.inputs) {
+        auto resolved = ResolveTextureInput(input.source);
+        if (!resolved.is_builtin && resolved.rt_handle >= 0 && input.slot >= 0 && input.slot < MaxPrimitiveTextures) {
+          mesh.SetTexture(driver->GetRTTexture(resolved.rt_handle, resolved.attachment), input.slot);
+        }
+      }
+      if (pass.bind_environment_map) {
+        bindEnvironmentResources(mesh);
+      } else {
+        clearEnvironmentResources(mesh);
+      }
+    };
+
     // Execute draw commands
+    // Phase C step 3: bracket the multi-mesh draw section with a
+    // pass-scoped state tracker.
+    bool meshTrackerOpened = false;
+    auto openMeshTracker = [&]() {
+      if (!meshTrackerOpened) {
+        MeshDrawStateTracker::Get().Begin();
+        meshTrackerOpened = true;
+      }
+    };
     for (const auto& draw : pass.draws) {
       ShaderKey sig = ResolveSignature(draw.signature);
       for (const auto& extraSig : draw.extra_signatures) {
@@ -525,9 +589,11 @@ void RenderGraph::ExecutePass(
       }
 
       if (draw.type == "mesh") {
+        openMeshTracker();
         if (draw.mesh_indices.empty()) {
           // Empty array = draw ALL meshes
           for (int mi = 0; mi < meshCount; ++mi) {
+            bindMeshPassResources(meshes[mi]);
             meshes[mi].SetGlobalKey(sig);
             meshes[mi].Draw();
             ShaderKey fwd(0); fwd.setPass(PassType::FORWARD);
@@ -536,6 +602,7 @@ void RenderGraph::ExecutePass(
         } else {
           for (int mi : draw.mesh_indices) {
             if (mi >= 0 && mi < meshCount) {
+              bindMeshPassResources(meshes[mi]);
               meshes[mi].SetGlobalKey(sig);
               meshes[mi].Draw();
               ShaderKey fwd(0); fwd.setPass(PassType::FORWARD);
@@ -545,23 +612,28 @@ void RenderGraph::ExecutePass(
         }
       }
       else if (draw.type == "final_quad") {
-        quads[7].SetTexture(quads[0].Textures[0], 0);
-        // Re-bind: final quad gets its texture from the pass inputs
+        // Quad draws have a different binding model — close the
+        // mesh tracker scope before non-mesh work to avoid
+        // contaminating its assumptions.
+        if (meshTrackerOpened) { MeshDrawStateTracker::Get().End(); meshTrackerOpened = false; }
+        driver->SetDepthStencilState(BaseDriver::DepthStencilStates::NONE);
         for (const auto& input : pass.inputs) {
           auto resolved = ResolveTextureInput(input.source);
           if (!resolved.is_builtin && resolved.rt_handle >= 0) {
-            quads[7].SetTexture(driver->GetRTTexture(resolved.rt_handle, resolved.attachment), input.slot);
+            quads[0].SetTexture(driver->GetRTTexture(resolved.rt_handle, resolved.attachment), input.slot);
           }
         }
-        quads[7].SetGlobalKey(sig);
-        quads[7].Draw();
+        quads[0].SetGlobalKey(sig);
+        quads[0].Draw();
       }
       else {
         // fullscreen_quad (default)
+        driver->SetDepthStencilState(BaseDriver::DepthStencilStates::NONE);
         quads[0].SetGlobalKey(sig);
         quads[0].Draw();
       }
     }
+    if (meshTrackerOpened) { MeshDrawStateTracker::Get().End(); meshTrackerOpened = false; }
 
     // Pop RT
     bool didPush = (node.rt_handle >= 0 && pass.push);

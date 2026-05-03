@@ -13,6 +13,7 @@
 #ifdef OS_WINDOWS
 
 #include <utils/Log.h>
+#include <debug/RenderTrace.h>
 
 namespace t850 {
 
@@ -68,18 +69,36 @@ namespace t850 {
     T8_LOG_DEBUG("[D3D12] CB created: %d bytes (aligned=%d)", desc.byteWidth, m_alignedSize);
   }
 
-  void D3D12ConstantBuffer::Set(const DeviceContext& deviceContext) {
+  void D3D12ConstantBuffer::Set(const DeviceContext& deviceContext, unsigned int slot) {
     const_cast<DeviceContext*>(&deviceContext)->actualConstantBuffer = (ConstantBuffer*)this;
     auto* cmdList = static_cast<const D3D12DeviceContext*>(&deviceContext)->GetCommandList();
     auto* shader = static_cast<D3D12Shader*>(deviceContext.actualShaderSet);
-    if (shader && shader->cbvSlot >= 0 && !sysMemCpy.empty()) {
+    int rootParam = -1;
+    if (shader) {
+      auto it = shader->cbvSlots.find((int)slot);
+      if (it != shader->cbvSlots.end()) rootParam = it->second;
+    }
+    if (shader && rootParam >= 0 && !sysMemCpy.empty()) {
       auto* driver = GetD3D12Driver();
       // Allocate ring buffer space for this draw's CB data
       D3D12_GPU_VIRTUAL_ADDRESS gpuAddr = driver->AllocateCBData(sysMemCpy.data(), (UINT)sysMemCpy.size());
       // Bind inline root CBV — no descriptor table / CreateConstantBufferView needed
-      cmdList->SetGraphicsRootConstantBufferView(shader->cbvSlot, gpuAddr);
-      T8_LOG_TRACE("[D3D12] CB::Set cbvSlot=%d gpuVA=0x%llX dataSize=%d",
-                   shader->cbvSlot, gpuAddr, (int)sysMemCpy.size());
+      cmdList->SetGraphicsRootConstantBufferView(rootParam, gpuAddr);
+      T8_LOG_TRACE("[D3D12] CB::Set slot=%u rootParam=%d gpuVA=0x%llX dataSize=%d",
+                   slot, rootParam, gpuAddr, (int)sysMemCpy.size());
+#ifdef T850_RENDER_TRACE
+      if (T8_TRACE_ACTIVE()) {
+        int bufId = g_renderTracer->EnsureBufferId(this, "cbuffer");
+        // Record the upload (offset = ring address low bits as a surrogate),
+        // then both Request and Commit at the same site (D3D12 binds are
+        // synchronous — the inline root CBV is committed immediately).
+        g_renderTracer->EvUpdateCBuffer(bufId, sysMemCpy.data(),
+                                        (uint32_t)sysMemCpy.size(),
+                                        (uint32_t)(gpuAddr & 0xFFFFFFFFu));
+        g_renderTracer->EvBindCBufferRequest(bufId);
+        g_renderTracer->EvBindCBufferCommit((int)slot, bufId);
+      }
+#endif
     }
   }
 

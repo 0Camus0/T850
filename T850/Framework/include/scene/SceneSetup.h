@@ -29,6 +29,9 @@ namespace t850 {
     // Wire built objects into a SceneProps instance.
     void Apply(SceneProps& props);
 
+    // Apply only quality and render settings from the descriptor.
+    void ApplyQualityAndSettings(SceneProps& props);
+
     // Write current runtime state back to descriptor and save to JSON.
     void SaveState(SceneBase* scene, const std::string& jsonPath);
 
@@ -52,6 +55,12 @@ namespace t850 {
     // Asset paths from JSON (scenes use these in CreateAssets)
     std::vector<std::string> meshPaths;
     std::string environmentMap;
+    std::string environmentDiffuseIBL;
+    std::string environmentSpecularIBL;
+    std::string environmentBrdfLUT;
+    std::string environmentSheenIBL;
+    std::string environmentCharlieLUT;
+    std::string environmentSheenELUT;
     std::string name;
   };
 

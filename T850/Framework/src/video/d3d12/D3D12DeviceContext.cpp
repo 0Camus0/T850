@@ -10,6 +10,7 @@
 
 #include <utils/Log.h>
 #include <debug/Profiler.h>
+#include <debug/RenderTrace.h>
 
 namespace t850 {
 
@@ -31,7 +32,22 @@ namespace t850 {
       case Topology::TRIANGLE_STRIP: t = D3D_PRIMITIVE_TOPOLOGY_TRIANGLESTRIP;break;
       default: t = D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST; break;
     }
+    switch (topology) {
+      case Topology::POINT_LIST:
+        m_topologyType = D3D12_PRIMITIVE_TOPOLOGY_TYPE_POINT;
+        break;
+      case Topology::LINE_LIST:
+      case Topology::LINE_STRIP:
+        m_topologyType = D3D12_PRIMITIVE_TOPOLOGY_TYPE_LINE;
+        break;
+      case Topology::TRIANLE_LIST:
+      case Topology::TRIANGLE_STRIP:
+      default:
+        m_topologyType = D3D12_PRIMITIVE_TOPOLOGY_TYPE_TRIANGLE;
+        break;
+    }
     m_commandList->IASetPrimitiveTopology(t);
+    T8_TRACE(EvSetTopology((int)topology));
   }
 
   void D3D12DeviceContext::DrawIndexed(unsigned vertexCount, unsigned startIndex, unsigned startVertex) {
@@ -40,6 +56,7 @@ namespace t850 {
 #ifdef T8_ENABLE_PROFILER
     if (t850::g_profiler) t850::g_profiler->AddDrawCall(vertexCount);
 #endif
+    T8_TRACE(EvDrawIndexed(vertexCount, startIndex, startVertex));
   }
 
 } // namespace t850

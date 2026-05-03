@@ -33,6 +33,7 @@ namespace t850 {
     void SetTextureParams() override;
     void GetFormatBpp(unsigned int& props, unsigned int& format, unsigned int& bpp) override;
     void Set(const DeviceContext& deviceContext, unsigned int slot, std::string shaderTextureName) override;
+    void SetVS(const DeviceContext& deviceContext, unsigned int slot, std::string shaderTextureName) override;
     void SetSampler(const DeviceContext& deviceContext, unsigned int slot = 0) override;
     void UpdateFloatData(const DeviceContext& deviceContext, int w, int h, const float* data) override;
 
@@ -41,6 +42,7 @@ namespace t850 {
     VkImageView     m_imageView = VK_NULL_HANDLE;
     VkSampler       m_sampler = VK_NULL_HANDLE;
     VkFormat        m_format = VK_FORMAT_R8G8B8A8_UNORM;
+    float           m_samplerMaxAnisotropy = 1.0f;
     bool            m_isFloatTex = false;  // true for CreateFloatTexture textures
   };
 

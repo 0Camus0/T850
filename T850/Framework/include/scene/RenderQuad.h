@@ -50,6 +50,27 @@ namespace t850 {
       }
     };
 
+    struct FrameCBuffer {
+      XMATRIX44 WVP;
+      XMATRIX44 World;
+      XMATRIX44 WorldView;
+      XMATRIX44 WVPInverse;
+      XMATRIX44 WVPLight;
+      XMATRIX44 Projection;
+      XVECTOR3  CameraPos;
+      XVECTOR3  CameraInfo;
+      XVECTOR3  LightCameraPos;
+      XVECTOR3  LightCameraInfo;
+    };
+
+    struct PassCBuffer {
+      XVECTOR3  LightPositions[128];
+      XVECTOR3  LightColors[128];
+      float     LightRadius[128];
+      XVECTOR3  brightness;
+      XVECTOR3  toogles;
+    };
+
     RenderQuad() {
     }
     void Load(const char *) {};
@@ -59,10 +80,14 @@ namespace t850 {
     void Destroy();
 
     ShaderKey	sigBase;
-    ConstantBuffer* pd3dConstantBuffer;
+    ConstantBuffer* pd3dConstantBuffer = nullptr;
+    ConstantBuffer* FrameCBGPU = nullptr;
+    ConstantBuffer* PassCBGPU = nullptr;
     //ID3D11SamplerState*  pSampler;
     Quad m_quad;
     CBuffer			CnstBuffer;
+    FrameCBuffer FrameCB;
+    PassCBuffer PassCB;
     XMATRIX44		transform;
 
   };

@@ -190,8 +190,10 @@ void EditorApp::CreateAssets() {
     // Bind the G-buffer textures to quads[0] — the deferred lighting quad reads from these
     if (!pFramework->pVideoDriver->RTs.empty()) {
       auto* gbufferRT = pFramework->pVideoDriver->RTs[0];
-      for (int j = 0; j < (int)gbufferRT->vColorTextures.size() && j < 5; ++j)
+      for (int j = 0; j < (int)gbufferRT->vColorTextures.size() && j < 4; ++j)
         g_quads[0].SetTexture(gbufferRT->vColorTextures[j], j);
+      if (gbufferRT->vColorTextures.size() > 4)
+        g_quads[0].SetTexture(gbufferRT->vColorTextures[4], 9);
       if (gbufferRT->pDepthTexture)
         g_quads[0].SetTexture(gbufferRT->pDepthTexture, 4);
     }
@@ -344,8 +346,10 @@ void EditorApp::CheckResize() {
         // Rebind G-buffer textures to quads
         if (!pFramework->pVideoDriver->RTs.empty()) {
           auto* gbufferRT = pFramework->pVideoDriver->RTs[0];
-          for (int j = 0; j < (int)gbufferRT->vColorTextures.size() && j < 5; ++j)
+          for (int j = 0; j < (int)gbufferRT->vColorTextures.size() && j < 4; ++j)
             g_quads[0].SetTexture(gbufferRT->vColorTextures[j], j);
+          if (gbufferRT->vColorTextures.size() > 4)
+            g_quads[0].SetTexture(gbufferRT->vColorTextures[4], 9);
           if (gbufferRT->pDepthTexture)
             g_quads[0].SetTexture(gbufferRT->pDepthTexture, 4);
         }
@@ -397,8 +401,10 @@ void EditorApp::OnUpdate() {
         }
         if (!pFramework->pVideoDriver->RTs.empty()) {
           auto* gbufferRT = pFramework->pVideoDriver->RTs[0];
-          for (int j = 0; j < (int)gbufferRT->vColorTextures.size() && j < 5; ++j)
+          for (int j = 0; j < (int)gbufferRT->vColorTextures.size() && j < 4; ++j)
             g_quads[0].SetTexture(gbufferRT->vColorTextures[j], j);
+          if (gbufferRT->vColorTextures.size() > 4)
+            g_quads[0].SetTexture(gbufferRT->vColorTextures[4], 9);
           if (gbufferRT->pDepthTexture)
             g_quads[0].SetTexture(gbufferRT->pDepthTexture, 4);
         }
@@ -899,11 +905,13 @@ void EditorApp::OnDraw() {
       }
 
       ::Camera* mainCam = m_sceneProps.pCameras[0];
+      t850::EnvironmentMapSet editorEnvMaps;
+      editorEnvMaps.SetFallback(g_dummyEnvMapIdx);
       T8_LOG_TRACE("[T8ditor] OnDraw: RenderGraph Execute (%d meshes)...", (int)meshArray.size());
       g_renderGraph.Execute(drv, m_sceneProps,
         meshArray.data(), (int)meshArray.size(),
         g_quads, mainCam, nullptr, nullptr,
-        g_dummyEnvMapIdx);
+        editorEnvMaps);
       T8_LOG_TRACE("[T8ditor] OnDraw: RenderGraph Execute done");
 
       // RT debug override: if a specific RT is selected, draw it to backbuffer
@@ -954,15 +962,12 @@ void EditorApp::OnDraw() {
     }
 
     // Wireframe overlays (drawn after deferred resolve, on backbuffer)
-    // Bind GBuffer COLOR4 (linear depth) for depth-tested wireframe
+    // Bind GBuffer depth for depth-tested wireframe
     if (useDeferred) {
       int gbufHandle = g_renderGraph.GetRTHandle("GBuffer");
       if (gbufHandle >= 0 && gbufHandle < (int)drv->RTs.size()) {
         auto* gbufRT = drv->RTs[gbufHandle];
-        // COLOR4 is the linear depth attachment (viewZ / farPlane)
-        if (gbufRT->vColorTextures.size() > 4) {
-          m_lines.SetDepthTexture(gbufRT->vColorTextures[4]);
-        }
+        m_lines.SetDepthTexture(gbufRT->pDepthTexture);
       }
       m_lines.SetViewport(m_lastW, m_lastH);
       m_lines.SetFarPlane(cam.FPlane);
@@ -987,8 +992,7 @@ void EditorApp::OnDraw() {
         int gbufHandle = g_renderGraph.GetRTHandle("GBuffer");
         if (gbufHandle >= 0 && gbufHandle < (int)drv->RTs.size()) {
           auto* gbufRT = drv->RTs[gbufHandle];
-          if (gbufRT->vColorTextures.size() > 4)
-            skinned->SetWireframeDepthTex(gbufRT->vColorTextures[4]);
+          skinned->SetWireframeDepthTex(gbufRT->pDepthTexture);
         }
         skinned->SetWireframeViewport(m_lastW, m_lastH);
         drv->SetDepthStencilState(t850::BaseDriver::NONE);
@@ -1798,8 +1802,10 @@ void EditorApp::OnDraw() {
       rts.push_back({gbuf, t850::BaseDriver::COLOR1_ATTACHMENT, "GBuffer_Normals"});
       rts.push_back({gbuf, t850::BaseDriver::COLOR2_ATTACHMENT, "GBuffer_PBR"});
       rts.push_back({gbuf, t850::BaseDriver::COLOR3_ATTACHMENT, "GBuffer_GeoNormals"});
-      rts.push_back({gbuf, t850::BaseDriver::COLOR4_ATTACHMENT, "GBuffer_Depth"});
-      rts.push_back({gbuf, t850::BaseDriver::DEPTH_ATTACHMENT,  "GBuffer_HWDepth"});
+      rts.push_back({gbuf, t850::BaseDriver::COLOR4_ATTACHMENT, "GBuffer_Emissive"});
+      rts.push_back({gbuf, t850::BaseDriver::COLOR5_ATTACHMENT, "GBuffer_Sheen"});
+      rts.push_back({gbuf, t850::BaseDriver::COLOR6_ATTACHMENT, "GBuffer_SpecularOcclusion"});
+      rts.push_back({gbuf, t850::BaseDriver::DEPTH_ATTACHMENT,  "GBuffer_Depth"});
     }
     if (def >= 0) {
       rts.push_back({def, t850::BaseDriver::COLOR0_ATTACHMENT, "Deferred_Output"});

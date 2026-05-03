@@ -1,6 +1,7 @@
-cbuffer ConstantBuffer{
+#if defined(USE_SKINNING) || defined(USE_SKINNING_QT)
+cbuffer ConstantBuffer : register(b0) {
     float4x4 WVP;
-	float4x4 World;  
+	float4x4 World;
 	float4x4 WorldView;
 	float4	 LightPos;
 	float4 	 LightColor;
@@ -21,9 +22,16 @@ cbuffer ConstantBuffer{
 	float4x4 BoneMatrices[256];
 #endif
 }
+#else
+cbuffer MeshInstanceCB : register(b1) {
+    float4x4 WVP;
+	float4x4 World;
+	float4x4 WorldView;
+}
+#endif
 
 #ifdef USE_SKINNING_TEXTURE
-Texture2D<float4> BoneTexture : register(t7);
+Texture2D<float4> BoneTexture : register(t24);
 
 float4x4 getBoneMatrix(int index) {
 	uint texW, texH;
@@ -54,7 +62,19 @@ struct VS_INPUT{
 #endif
 
 #ifdef USE_TEXCOORD0
-    float2 texture0 : TEXCOORD;
+	float2 texture0 : TEXCOORD0;
+#endif
+
+#ifdef USE_TEXCOORD1
+	float2 texture1 : TEXCOORD1;
+#endif
+
+#ifdef USE_TEXCOORD2
+	float2 texture2 : TEXCOORD2;
+#endif
+
+#ifdef USE_TEXCOORD3
+	float2 texture3 : TEXCOORD3;
 #endif
 
 #if defined(USE_SKINNING) || defined(USE_SKINNING_QT) || defined(USE_SKINNING_TEXTURE)
@@ -79,7 +99,19 @@ struct VS_OUTPUT{
 #endif
 
 #ifdef USE_TEXCOORD0
-    float2 texture0  : TEXCOORD;
+	float2 texture0  : TEXCOORD0;
+#endif
+
+#ifdef USE_TEXCOORD1
+	float2 texture1  : TEXCOORD3;
+#endif
+
+#ifdef USE_TEXCOORD2
+	float2 texture2  : TEXCOORD4;
+#endif
+
+#ifdef USE_TEXCOORD3
+	float2 texture3  : TEXCOORD5;
 #endif
 
 	float4 Pos		: TEXCOORD1;
@@ -161,6 +193,22 @@ VS_OUTPUT VS( VS_INPUT input ){
 #endif
 #endif
 
+#ifdef USE_TEXCOORD0
+    OUT.texture0 = input.texture0;
+#endif
+
+#ifdef USE_TEXCOORD1
+	OUT.texture1 = input.texture1;
+#endif
+
+#ifdef USE_TEXCOORD2
+	OUT.texture2 = input.texture2;
+#endif
+
+#ifdef USE_TEXCOORD3
+	OUT.texture3 = input.texture3;
+#endif
+
 #ifdef SHADOW_MAP_PASS
 	OUT.hposition = mul( WVP , input.position );
 	OUT.Pos		  = OUT.hposition;
@@ -181,11 +229,6 @@ VS_OUTPUT VS( VS_INPUT input ){
 	OUT.hbinormal = float4(normalize( mul( RotWorld , input.binormal.xyz ) ) , 1.0);
 #endif
 	
-#ifdef USE_TEXCOORD0
-    OUT.texture0 = input.texture0;
-#endif
-
-
 	OUT.Pos = mul( WVP , input.position );
 
 	OUT.WorldPos = mul( World , input.position );

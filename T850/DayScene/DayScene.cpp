@@ -2,6 +2,8 @@
 #include <iostream>
 #include <cstdio>
 #include <cstdlib>
+#include <scene/IBLResources.h>
+#include <scene/RenderMesh.h>
 #include <utils/Log.h>
 #include <core/Config.h>
 using namespace t850;
@@ -53,6 +55,8 @@ void DayScene::InitVars() {
   SceneProp.ShadowMin = 0.0f;
   SceneProp.EnvFactor = 0.0f;
   SceneProp.IBLFactor = 0.0f;
+  SceneProp.IBLMipCount = 4.0f;
+  SceneProp.IBLBRDFLUTEnabled = 0.0f;
   SceneProp.GodRaysFactor = 0.0f;
   SceneProp.ShadowMapResolution = 1024.0f;
   SceneProp.GoodRaysResolution = 0.0f;
@@ -141,6 +145,19 @@ void DayScene::CreateAssets() {
   SceneProp.SSAOKernel.InitTexture();
 
   EnvMapTexIndex = g_pBaseDriver->CreateTexture(m_sceneSetup.environmentMap);
+  EnvMaps.SetFallback(EnvMapTexIndex);
+  LoadEnvironmentIBLResources(
+    g_pBaseDriver,
+    {m_sceneSetup.environmentDiffuseIBL, m_sceneSetup.environmentSpecularIBL, m_sceneSetup.environmentBrdfLUT,
+     m_sceneSetup.environmentSheenIBL, m_sceneSetup.environmentCharlieLUT, m_sceneSetup.environmentSheenELUT},
+    EnvMaps,
+    DiffuseIBLTexIndex,
+    SpecularIBLTexIndex,
+    BrdfLUTTexIndex,
+    SheenIBLTexIndex,
+    CharlieLUTTexIndex,
+    SheenELUTTexIndex);
+  UpdateSceneIBLSettings(SceneProp, g_pBaseDriver, EnvMaps);
 
   int index = PrimitiveMgr.CreateMesh("Models/SkyBox.X");
   Meshes[1].CreateInstance(PrimitiveMgr.GetPrimitive(index), &VP);
@@ -174,12 +191,16 @@ void DayScene::CreateAssets() {
 
   m_wireframeSphere.Create(8, 16);
   m_wireframeArrow.Create(24, 6);
+  m_debugText.LoadFromFile(24, "Fonts/Martius-LV9L4.ttf", 512.0f);
 
   t850::Spline& m_spline = m_sceneSetup.splines[0];
   t850::SplineAgent& m_agent = m_sceneSetup.agents[0];
   m_agent.m_actualPoint = m_spline.GetPoint(m_spline.GetNormalizedOffset(0));
-  ActiveCam->AttachAgent(m_agent);
-  ActiveCam->m_lookAtCenter = false;
+  const int attachedCamera = m_sceneSetup.descriptor.splines[0].attached_camera;
+  if (Camera* splineCamera = m_sceneSetup.GetCamera(attachedCamera)) {
+    splineCamera->AttachAgent(m_agent);
+    splineCamera->m_lookAtCenter = false;
+  }
 
   Quads[0].TranslateAbsolute(0.0f, 0.0f, 0.0f);
   Quads[0].Update();
@@ -283,9 +304,44 @@ void DayScene::OnUpdate(float _DtSecs) {
     // Flush GPU before destroying — D3D12 may still reference the old
     // texture from the previous frame's command list.
     g_pBaseDriver->WaitForGPU();
-    g_pBaseDriver->DestroyTexture(EnvMapTexIndex);
-    EnvMapTexIndex = g_pBaseDriver->CreateTexture(m_pendingCubemap);
-    Quads[0].SetEnvironmentMap(g_pBaseDriver->GetTexture(EnvMapTexIndex));
+    int newEnvMapTexIndex = g_pBaseDriver->CreateTexture(m_pendingCubemap);
+    if (newEnvMapTexIndex >= 0) {
+      if (EnvMapTexIndex >= 0 && EnvMapTexIndex != newEnvMapTexIndex)
+        g_pBaseDriver->DestroyTexture(EnvMapTexIndex);
+      EnvMapTexIndex = newEnvMapTexIndex;
+      if (m_sceneSetup.environmentDiffuseIBL.empty() && DiffuseIBLTexIndex >= 0) {
+        g_pBaseDriver->DestroyTexture(DiffuseIBLTexIndex);
+        DiffuseIBLTexIndex = -1;
+      }
+      if (m_sceneSetup.environmentSpecularIBL.empty() && SpecularIBLTexIndex >= 0) {
+        g_pBaseDriver->DestroyTexture(SpecularIBLTexIndex);
+        SpecularIBLTexIndex = -1;
+      }
+      if (m_sceneSetup.environmentSheenIBL.empty() && SheenIBLTexIndex >= 0) {
+        g_pBaseDriver->DestroyTexture(SheenIBLTexIndex);
+        SheenIBLTexIndex = -1;
+      }
+      EnvMaps.SetFallback(EnvMapTexIndex);
+      LoadEnvironmentIBLResources(
+        g_pBaseDriver,
+        {m_sceneSetup.environmentDiffuseIBL, m_sceneSetup.environmentSpecularIBL, m_sceneSetup.environmentBrdfLUT,
+         m_sceneSetup.environmentSheenIBL, m_sceneSetup.environmentCharlieLUT, m_sceneSetup.environmentSheenELUT},
+        EnvMaps,
+        DiffuseIBLTexIndex,
+        SpecularIBLTexIndex,
+        BrdfLUTTexIndex,
+        SheenIBLTexIndex,
+        CharlieLUTTexIndex,
+        SheenELUTTexIndex);
+      EnvMaps.BrdfLUT = BrdfLUTTexIndex;
+      EnvMaps.CharlieIBL = SheenIBLTexIndex;
+      EnvMaps.CharlieLUT = CharlieLUTTexIndex;
+      EnvMaps.SheenELUT = SheenELUTTexIndex;
+      UpdateSceneIBLSettings(SceneProp, g_pBaseDriver, EnvMaps);
+      Quads[0].SetEnvironmentMap(g_pBaseDriver->GetTexture(EnvMapTexIndex));
+    } else {
+      T8_LOG_ERROR("[DayScene] Failed to load cubemap '%s'; keeping previous cubemap", m_pendingCubemap.c_str());
+    }
     m_pendingCubemap.clear();
   }
 
@@ -494,6 +550,10 @@ void DayScene::OnInput(InputManager* IManager) {
     m_dumper.RequestDump();
   }
 
+  if (IManager->PressedOnceKey(T800K_F2)) {
+    m_showCullStats = !m_showCullStats;
+  }
+
   if (IManager->PressedOnceKey(T800K_1)) {
     pFramework->ChangeAPI(GraphicsApi::D3D11);
   }
@@ -529,7 +589,7 @@ void DayScene::OnDraw() {
     &Cam,
     &LightCam,
     nullptr,
-    EnvMapTexIndex
+    EnvMaps
   );
 
 #ifdef T850_HEADLESS
@@ -555,7 +615,10 @@ void DayScene::OnDraw() {
       {GBufferPass,     BaseDriver::COLOR1_ATTACHMENT, "GBuffer_Normals"},
       {GBufferPass,     BaseDriver::COLOR2_ATTACHMENT, "GBuffer_Color2"},
       {GBufferPass,     BaseDriver::COLOR3_ATTACHMENT, "GBuffer_Color3"},
-      {GBufferPass,     BaseDriver::COLOR4_ATTACHMENT, "GBuffer_Depth"},
+      {GBufferPass,     BaseDriver::COLOR4_ATTACHMENT, "GBuffer_Emissive"},
+      {GBufferPass,     BaseDriver::COLOR5_ATTACHMENT, "GBuffer_Sheen"},
+      {GBufferPass,     BaseDriver::COLOR6_ATTACHMENT, "GBuffer_SpecularOcclusion"},
+      {GBufferPass,     BaseDriver::DEPTH_ATTACHMENT,  "GBuffer_Depth"},
       {DepthPass,       BaseDriver::DEPTH_ATTACHMENT,  "ShadowMap_Depth"},
       {ShadowAccumPass, BaseDriver::COLOR0_ATTACHMENT, "ShadowAccum"},
       {DeferredPass,    BaseDriver::COLOR0_ATTACHMENT, "Deferred"},
@@ -583,8 +646,8 @@ void DayScene::OnDraw() {
     case 1:  selected = GBufferPass;     attachment = BaseDriver::COLOR0_ATTACHMENT; break; // Albedo
     case 2:  selected = GBufferPass;     attachment = BaseDriver::COLOR1_ATTACHMENT; break; // Normals
     case 3:  selected = GBufferPass;     attachment = BaseDriver::COLOR2_ATTACHMENT; break; // Specular
-    case 4:  selected = GBufferPass;     attachment = BaseDriver::COLOR3_ATTACHMENT; break; // Emissive
-    case 5:  selected = GBufferPass;     attachment = BaseDriver::COLOR4_ATTACHMENT; break; // GBuf Depth
+    case 4:  selected = GBufferPass;     attachment = BaseDriver::COLOR3_ATTACHMENT; break; // Geo/material
+    case 5:  selected = GBufferPass;     attachment = BaseDriver::DEPTH_ATTACHMENT;  break; // GBuf Depth
     case 6:  selected = DepthPass;       attachment = BaseDriver::DEPTH_ATTACHMENT;  break; // Shadow Map
     case 7:  selected = ShadowAccumPass; attachment = BaseDriver::COLOR0_ATTACHMENT; break; // Shadow Accum
     case 8:  selected = DeferredPass;    attachment = BaseDriver::COLOR0_ATTACHMENT; break; // Deferred
@@ -629,6 +692,29 @@ void DayScene::OnDraw() {
         m_wireframeSphere.Draw(VP, light.Position, light.radius);
       }
     }
+  }
+
+  if (m_showCullStats && Meshes[0].pBase) {
+    RenderMesh* rm = static_cast<RenderMesh*>(Meshes[0].pBase);
+    int w = g_pBaseDriver->width;
+    int h = g_pBaseDriver->height;
+
+    pFramework->pVideoDriver->SetBlendState(BaseDriver::ALPHA_BLEND);
+    pFramework->pVideoDriver->SetDepthStencilState(BaseDriver::NONE);
+
+    char buf[256];
+    snprintf(buf, sizeof(buf), "Sponza meshes: %d/%zu  Culled: %d  Subsets drawn: %d/%d",
+             (int)rm->Info.size() - rm->m_culledMeshes, rm->Info.size(),
+             rm->m_culledMeshes, rm->m_drawnSubsets, rm->m_totalSubsets);
+    XVECTOR3 yellow(1.0f, 1.0f, 0.2f);
+    m_debugText.DrawPixel(10.0f, 40.0f, w, h, yellow, buf);
+
+    snprintf(buf, sizeof(buf), "F2: cull stats");
+    XVECTOR3 gray(0.7f, 0.7f, 0.7f);
+    m_debugText.DrawPixel(10.0f, 65.0f, w, h, gray, buf);
+
+    pFramework->pVideoDriver->SetBlendState(BaseDriver::BLEND_DEFAULT);
+    pFramework->pVideoDriver->SetDepthStencilState(BaseDriver::DEPTH_DEFAULT);
   }
 
 #endif
@@ -1162,6 +1248,9 @@ void DayScene::PopulateGUI(t850::GUIManager& gui) {
     {"shadow_min",              CHANGE_SHADOW_MIN},
     {"env_factor",              CHANGE_ENV_FACTOR},
     {"ibl_factor",               CHANGE_IBL_FACTOR},
+    {"material_emissive_intensity", CHANGE_MATERIAL_EMISSIVE_INTENSITY},
+    {"material_transmission_multiplier", CHANGE_MATERIAL_TRANSMISSION_MULTIPLIER},
+    {"material_refraction_strength", CHANGE_MATERIAL_REFRACTION_STRENGTH},
   };
 
   auto& sliderDescs = m_sceneSetup.descriptor.sliders;
@@ -1267,6 +1356,9 @@ void DayScene::SyncToGUI(t850::GUIManager& gui) {
     case CHANGE_SHADOW_MIN:         slider->SetValue(SceneProp.ShadowMin); break;
     case CHANGE_ENV_FACTOR:         slider->SetValue(SceneProp.EnvFactor); break;
     case CHANGE_IBL_FACTOR:         slider->SetValue(SceneProp.IBLFactor); break;
+    case CHANGE_MATERIAL_EMISSIVE_INTENSITY: slider->SetValue(SceneProp.MaterialEmissiveIntensity); break;
+    case CHANGE_MATERIAL_TRANSMISSION_MULTIPLIER: slider->SetValue(SceneProp.MaterialTransmissionMultiplier); break;
+    case CHANGE_MATERIAL_REFRACTION_STRENGTH: slider->SetValue(SceneProp.MaterialRefractionStrength); break;
     }
   }
   for (auto& cp : gui.GetCheckboxPairs()) {
@@ -1359,6 +1451,15 @@ void DayScene::SyncFromGUI(t850::GUIManager& gui) {
       break;
     case CHANGE_IBL_FACTOR:
       SceneProp.IBLFactor = slider->value;
+      break;
+    case CHANGE_MATERIAL_EMISSIVE_INTENSITY:
+      SceneProp.MaterialEmissiveIntensity = slider->value;
+      break;
+    case CHANGE_MATERIAL_TRANSMISSION_MULTIPLIER:
+      SceneProp.MaterialTransmissionMultiplier = slider->value;
+      break;
+    case CHANGE_MATERIAL_REFRACTION_STRENGTH:
+      SceneProp.MaterialRefractionStrength = slider->value;
       break;
     }
   }
@@ -1470,6 +1571,9 @@ void DayScene::SaveSceneState() {
     else if (sd.name == "env_factor")  sd.default_val = SceneProp.EnvFactor;
     else if (sd.name == "ibl_factor")   sd.default_val = SceneProp.IBLFactor;
     else if (sd.name == "godrays_factor") sd.default_val = SceneProp.GodRaysFactor;
+    else if (sd.name == "material_emissive_intensity") sd.default_val = SceneProp.MaterialEmissiveIntensity;
+    else if (sd.name == "material_transmission_multiplier") sd.default_val = SceneProp.MaterialTransmissionMultiplier;
+    else if (sd.name == "material_refraction_strength") sd.default_val = SceneProp.MaterialRefractionStrength;
   }
   for (auto& cd : m_sceneSetup.descriptor.checkboxes) {
     if (cd.name == "dof_toggle")       cd.default_val = (SceneProp.ToogleDOF != 0);

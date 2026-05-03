@@ -10,10 +10,12 @@
 	out highp vec2 vecUVCoords;
 	out highp vec4 Pos;
 	out highp vec4 PosCorner;
+	out highp vec2 ClipPos;
 #else
 	varying highp vec2 vecUVCoords;
 	varying highp vec4 Pos;
 	varying highp vec4 PosCorner;
+	varying highp vec2 ClipPos;
 #endif
 
 uniform highp mat4 WVP;
@@ -35,12 +37,9 @@ uniform highp vec4   toogles;
 void main(){
 	vecUVCoords = UV;	
 	Pos = WVP*Vertex;
-#ifdef NON_LINEAR_DEPTH
-	PosCorner = vec4(Vertex.xy,1.0,1.0);
-#else
-	PosCorner = WVPInverse*vec4(Vertex.xy,1.0,1.0);
+	ClipPos = Vertex.xy;
+	PosCorner = WVPInverse*vec4(Vertex.xy,0.0,1.0);
 	PosCorner.xyz /= PosCorner.w;
 	PosCorner = PosCorner - CameraPosition;
-#endif
 	gl_Position = Pos;
 }

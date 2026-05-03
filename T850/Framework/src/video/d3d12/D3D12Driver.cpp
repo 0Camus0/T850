@@ -11,6 +11,7 @@
 
 #include <utils/Log.h>
 #include <debug/Profiler.h>
+#include <debug/RenderTrace.h>
 #include <core/Config.h>
 #include <iostream>
 #include <string>
@@ -197,11 +198,9 @@ namespace t850 {
   // ══════════════════════════════════════════════════════
 
   ID3D12PipelineState* D3D12Driver::GetOrCreatePSO(D3D12Shader* shader, uint8_t numRTVs,
-                                                     DXGI_FORMAT rtvFormat, DXGI_FORMAT dsvFormat) {
-    if (rtvFormat == DXGI_FORMAT_UNKNOWN) {
+                                                     const DXGI_FORMAT* rtvFormats, DXGI_FORMAT dsvFormat) {
+    if (numRTVs > 0 && rtvFormats && rtvFormats[0] == DXGI_FORMAT_UNKNOWN)
       numRTVs = 0;
-      rtvFormat = DXGI_FORMAT_UNKNOWN;
-    }
 
     // When depth is disabled, keep DSV format matching the bound depth buffer
     // (the depth test/write is disabled in the PSO's DepthStencilState already)
@@ -211,8 +210,12 @@ namespace t850 {
     key.blend = (uint8_t)m_currentBlend;
     key.depth = (uint8_t)m_currentDepth;
     key.cull = (uint8_t)m_currentCull;
+    auto* d3dContext = static_cast<D3D12DeviceContext*>(T8DeviceContext);
+    key.topology = (uint8_t)(d3dContext ? d3dContext->GetTopologyType() : D3D12_PRIMITIVE_TOPOLOGY_TYPE_TRIANGLE);
     key.numRTVs = numRTVs;
-    key.rtvFormat = rtvFormat;
+    key.rtvFormats.fill(DXGI_FORMAT_UNKNOWN);
+    for (int i = 0; i < numRTVs && i < (int)key.rtvFormats.size(); ++i)
+      key.rtvFormats[i] = rtvFormats ? rtvFormats[i] : DXGI_FORMAT_R8G8B8A8_UNORM;
     key.dsvFormat = dsvFormat;
 
     auto it = m_psoCache.find(key);
@@ -230,9 +233,9 @@ namespace t850 {
     pso.PS.BytecodeLength = shader->FS_blob->GetBufferSize();
     pso.SampleMask = UINT_MAX;
     pso.SampleDesc.Count = 1;
-    pso.PrimitiveTopologyType = D3D12_PRIMITIVE_TOPOLOGY_TYPE_TRIANGLE;
+    pso.PrimitiveTopologyType = (D3D12_PRIMITIVE_TOPOLOGY_TYPE)key.topology;
     pso.NumRenderTargets = numRTVs;
-    for (int i = 0; i < numRTVs; i++) pso.RTVFormats[i] = rtvFormat;
+    for (int i = 0; i < numRTVs; i++) pso.RTVFormats[i] = key.rtvFormats[i];
     pso.DSVFormat = dsvFormat;
 
     // Rasterizer
@@ -250,12 +253,12 @@ namespace t850 {
       case DEPTH_DEFAULT: case READ_WRITE:
         pso.DepthStencilState.DepthEnable = TRUE;
         pso.DepthStencilState.DepthWriteMask = D3D12_DEPTH_WRITE_MASK_ALL;
-        pso.DepthStencilState.DepthFunc = D3D12_COMPARISON_FUNC_LESS_EQUAL;
+        pso.DepthStencilState.DepthFunc = D3D12_COMPARISON_FUNC_GREATER_EQUAL;
         break;
       case READ:
         pso.DepthStencilState.DepthEnable = TRUE;
         pso.DepthStencilState.DepthWriteMask = D3D12_DEPTH_WRITE_MASK_ZERO;
-        pso.DepthStencilState.DepthFunc = D3D12_COMPARISON_FUNC_LESS_EQUAL;
+        pso.DepthStencilState.DepthFunc = D3D12_COMPARISON_FUNC_GREATER_EQUAL;
         break;
       case NONE:
         pso.DepthStencilState.DepthEnable = FALSE;
@@ -281,7 +284,7 @@ namespace t850 {
           rt.BlendEnable = TRUE;
           rt.SrcBlend = D3D12_BLEND_SRC_ALPHA; rt.DestBlend = D3D12_BLEND_INV_SRC_ALPHA;
           rt.BlendOp = D3D12_BLEND_OP_ADD;
-          rt.SrcBlendAlpha = D3D12_BLEND_ONE; rt.DestBlendAlpha = D3D12_BLEND_ZERO;
+          rt.SrcBlendAlpha = D3D12_BLEND_ONE; rt.DestBlendAlpha = D3D12_BLEND_INV_SRC_ALPHA;
           rt.BlendOpAlpha = D3D12_BLEND_OP_ADD;
           break;
         case NON_PREMULTIPLIED:
@@ -297,14 +300,33 @@ namespace t850 {
     ComPtr<ID3D12PipelineState> psoObj;
     HRESULT hr = device->CreateGraphicsPipelineState(&pso, IID_PPV_ARGS(&psoObj));
     if (FAILED(hr)) {
-      T8_LOG_ERROR("[D3D12] CreatePSO failed hr=0x%08X shader=%p blend=%d depth=%d cull=%d nRTV=%d fmt=%d",
-                   hr, shader, key.blend, key.depth, key.cull, key.numRTVs, key.rtvFormat);
+      T8_LOG_ERROR("[D3D12] CreatePSO failed hr=0x%08X shader=%p blend=%d depth=%d cull=%d nRTV=%d fmt0=%d",
+           hr, shader, key.blend, key.depth, key.cull, key.numRTVs, key.rtvFormats[0]);
       return nullptr;
     }
 
     T8_LOG_DEBUG("[D3D12] PSO created: shader=%p blend=%d depth=%d cull=%d nRTV=%d",
                  shader, key.blend, key.depth, key.cull, key.numRTVs);
     m_psoCache[key] = psoObj;
+#ifdef T850_RENDER_TRACE
+    if (T8_TRACE_ACTIVE()) {
+      TracePSORec rec;
+      rec.backend                 = "d3d12";
+      rec.shader_id               = g_renderTracer->LookupShaderId(shader);
+      rec.shader_key_bits         = shader ? shader->key.bits : 0;
+      rec.blend                   = key.blend;
+      rec.depth                   = key.depth;
+      rec.cull                    = key.cull;
+      rec.topology                = key.topology;
+      rec.num_color_attachments   = key.numRTVs;
+      for (int i = 0; i < key.numRTVs && i < (int)key.rtvFormats.size(); ++i)
+        rec.color_formats.push_back((uint32_t)key.rtvFormats[i]);
+      rec.depth_format            = (uint32_t)key.dsvFormat;
+      rec.vertex_stride           = 0;
+      rec.render_pass             = 0;
+      g_renderTracer->EvCreatePSO(rec);
+    }
+#endif
     return psoObj.Get();
   }
 
@@ -361,7 +383,7 @@ namespace t850 {
     dd.DepthOrArraySize = 1; dd.MipLevels = 1;
     dd.Format = DXGI_FORMAT_D32_FLOAT; dd.SampleDesc.Count = 1;
     dd.Flags = D3D12_RESOURCE_FLAG_ALLOW_DEPTH_STENCIL;
-    D3D12_CLEAR_VALUE cv = {}; cv.Format = DXGI_FORMAT_D32_FLOAT; cv.DepthStencil.Depth = 1.0f;
+    D3D12_CLEAR_VALUE cv = {}; cv.Format = DXGI_FORMAT_D32_FLOAT; cv.DepthStencil.Depth = 0.0f;
     D3D12_HEAP_PROPERTIES hp = {}; hp.Type = D3D12_HEAP_TYPE_DEFAULT;
     hr = device->CreateCommittedResource(&hp, D3D12_HEAP_FLAG_NONE, &dd,
                                           D3D12_RESOURCE_STATE_DEPTH_WRITE, &cv,
@@ -505,7 +527,7 @@ namespace t850 {
     dd.Width = width; dd.Height = height; dd.DepthOrArraySize = 1; dd.MipLevels = 1;
     dd.Format = DXGI_FORMAT_D32_FLOAT; dd.SampleDesc.Count = 1;
     dd.Flags = D3D12_RESOURCE_FLAG_ALLOW_DEPTH_STENCIL;
-    D3D12_CLEAR_VALUE cv = {}; cv.Format = DXGI_FORMAT_D32_FLOAT; cv.DepthStencil.Depth = 1.0f;
+    D3D12_CLEAR_VALUE cv = {}; cv.Format = DXGI_FORMAT_D32_FLOAT; cv.DepthStencil.Depth = 0.0f;
     D3D12_HEAP_PROPERTIES hp = {}; hp.Type = D3D12_HEAP_TYPE_DEFAULT;
     HRESULT hr = device->CreateCommittedResource(&hp, D3D12_HEAP_FLAG_NONE, &dd, D3D12_RESOURCE_STATE_DEPTH_WRITE, &cv, IID_PPV_ARGS(&m_depthBuffer));
     if (FAILED(hr)) { T8_LOG_ERROR("[D3D12] Depth buffer creation failed hr=0x%08X", hr); return; }
@@ -657,6 +679,7 @@ namespace t850 {
     m_dynamicDescriptorOffset = 0;
     m_lastPSO = nullptr;
     m_lastRootSig = nullptr;
+    static_cast<D3D12DeviceContext*>(T8DeviceContext)->m_topologyType = D3D12_PRIMITIVE_TOPOLOGY_TYPE_TRIANGLE;
   }
 
   void D3D12Driver::EndFrame() {}
@@ -688,14 +711,18 @@ namespace t850 {
       for (auto& rtv : rt->vRTVHandles)
         m_commandLists[m_currentBackBuffer]->ClearRenderTargetView(rtv, cc, 0, nullptr);
       if (rt->depthResource)
-        m_commandLists[m_currentBackBuffer]->ClearDepthStencilView(rt->depthDSV, D3D12_CLEAR_FLAG_DEPTH, 1.0f, 0, 0, nullptr);
+        m_commandLists[m_currentBackBuffer]->ClearDepthStencilView(rt->depthDSV, D3D12_CLEAR_FLAG_DEPTH, 0.0f, 0, 0, nullptr);
+      T8_TRACE(EvClearRT(CurrentRT,
+                         (rt->number_RT > 0 ? 1u : 0u) | (rt->depthResource ? 2u : 0u),
+                         cc[0], cc[1], cc[2], cc[3], 0.0f, 0));
     } else {
       m_commandLists[m_currentBackBuffer]->OMSetRenderTargets(1, &m_backBufferRTVs[m_currentBackBuffer], FALSE, &m_depthDSV);
       m_commandLists[m_currentBackBuffer]->RSSetViewports(1, &m_viewport);
       m_commandLists[m_currentBackBuffer]->RSSetScissorRects(1, &m_scissorRect);
       const float cc[4] = { 0.227f, 0.227f, 0.227f, 1.0f };
       m_commandLists[m_currentBackBuffer]->ClearRenderTargetView(m_backBufferRTVs[m_currentBackBuffer], cc, 0, nullptr);
-      m_commandLists[m_currentBackBuffer]->ClearDepthStencilView(m_depthDSV, D3D12_CLEAR_FLAG_DEPTH, 1.0f, 0, 0, nullptr);
+      m_commandLists[m_currentBackBuffer]->ClearDepthStencilView(m_depthDSV, D3D12_CLEAR_FLAG_DEPTH, 0.0f, 0, 0, nullptr);
+      T8_TRACE(EvClearRT(-1, 1u | 2u, cc[0], cc[1], cc[2], cc[3], 0.0f, 0));
     }
   }
 
@@ -706,10 +733,14 @@ namespace t850 {
       for (auto& rtv : rt->vRTVHandles)
         m_commandLists[m_currentBackBuffer]->ClearRenderTargetView(rtv, cc, 0, nullptr);
       if (rt->depthResource)
-        m_commandLists[m_currentBackBuffer]->ClearDepthStencilView(rt->depthDSV, D3D12_CLEAR_FLAG_DEPTH, 1.0f, 0, 0, nullptr);
+        m_commandLists[m_currentBackBuffer]->ClearDepthStencilView(rt->depthDSV, D3D12_CLEAR_FLAG_DEPTH, 0.0f, 0, 0, nullptr);
+      T8_TRACE(EvClearRT(CurrentRT,
+                         (rt->number_RT > 0 ? 1u : 0u) | (rt->depthResource ? 2u : 0u),
+                         cc[0], cc[1], cc[2], cc[3], 0.0f, 0));
     } else {
       m_commandLists[m_currentBackBuffer]->ClearRenderTargetView(m_backBufferRTVs[m_currentBackBuffer], cc, 0, nullptr);
-      m_commandLists[m_currentBackBuffer]->ClearDepthStencilView(m_depthDSV, D3D12_CLEAR_FLAG_DEPTH, 1.0f, 0, 0, nullptr);
+      m_commandLists[m_currentBackBuffer]->ClearDepthStencilView(m_depthDSV, D3D12_CLEAR_FLAG_DEPTH, 0.0f, 0, 0, nullptr);
+      T8_TRACE(EvClearRT(-1, 1u | 2u, cc[0], cc[1], cc[2], cc[3], 0.0f, 0));
     }
   }
 
@@ -751,19 +782,42 @@ namespace t850 {
   void D3D12Driver::SetBlendState(BlendStates state) {
     T8_LOG_TRACE("[D3D12] SetBlendState(%d)", state);
     m_currentBlend = state;
+    T8_TRACE(EvSetBlend((int)state));
+#ifdef T850_RENDER_TRACE
+    RefreshTracePendingRenderState();
+#endif
   }
 
   void D3D12Driver::SetDepthStencilState(DepthStencilStates state) {
     T8_LOG_TRACE("[D3D12] SetDepthStencilState(%d)", state);
     m_currentDepth = state;
+    T8_TRACE(EvSetDepth((int)state));
+#ifdef T850_RENDER_TRACE
+    RefreshTracePendingRenderState();
+#endif
   }
 
   void D3D12Driver::SetCullFace(FaceCulling state) {
     T8_LOG_TRACE("[D3D12] SetCullFace(%d)", state);
     m_currentCull = state; m_FaceCulling = state;
+    T8_TRACE(EvSetCull((int)state));
+#ifdef T850_RENDER_TRACE
+    RefreshTracePendingRenderState();
+#endif
   }
 
+#ifdef T850_RENDER_TRACE
+  void D3D12Driver::RefreshTracePendingRenderState() {
+    if (!T8_TRACE_ACTIVE()) return;
+    int numAtt = 1;
+    if (CurrentRT >= 0 && CurrentRT < (int)RTs.size() && RTs[CurrentRT])
+      numAtt = RTs[CurrentRT]->number_RT > 0 ? RTs[CurrentRT]->number_RT : 1;
+    g_renderTracer->RecomputePendingRenderStateD3D12(numAtt);
+  }
+#endif
+
   void D3D12Driver::PopRT() {
+    T8_TRACE(EvPopRT());
     T8_LOG_TRACE("[D3D12] PopRT (CurrentRT=%d)", CurrentRT);
     if (CurrentRT >= 0 && CurrentRT < (int)RTs.size()) {
       D3D12RT* rt = static_cast<D3D12RT*>(RTs[CurrentRT]);
@@ -794,6 +848,9 @@ namespace t850 {
     m_commandLists[m_currentBackBuffer]->RSSetViewports(1, &m_viewport);
     m_commandLists[m_currentBackBuffer]->RSSetScissorRects(1, &m_scissorRect);
     CurrentRT = -1;
+#ifdef T850_RENDER_TRACE
+    RefreshTracePendingRenderState();
+#endif
   }
 
   // ══════════════════════════════════════════════════════
@@ -994,8 +1051,14 @@ namespace t850 {
   D3D12_GPU_VIRTUAL_ADDRESS D3D12Driver::AllocateCBData(const void* data, UINT dataSize) {
     UINT alignedSize = (dataSize + 255) & ~255;
     if (m_cbRingOffset + alignedSize > kCBRingBufferSize) {
-      T8_LOG_ERROR("[D3D12] CB ring buffer overflow! offset=%u + size=%u > %u", m_cbRingOffset, alignedSize, kCBRingBufferSize);
-      m_cbRingOffset = 0;
+      // Wrapping mid-frame would overwrite CB data still being read by earlier
+      // draws in the same command list. Crash loud rather than corrupt rendering.
+      T8_LOG_ERROR("[D3D12] CB ring buffer overflow! offset=%u + size=%u > %u (peak so far=%u)",
+                   m_cbRingOffset, alignedSize, kCBRingBufferSize, m_cbRingPeakUsage);
+      assert(false && "D3D12 CB ring buffer overflow — increase kCBRingBufferSize");
+      // Fail-safe: return the start of the ring (guaranteed in-bounds, but the
+      // current draw will be wrong; better than corrupting prior draws).
+      return m_cbRingBuffers[m_currentBackBuffer]->GetGPUVirtualAddress();
     }
 
     UINT bufIdx = m_currentBackBuffer;
@@ -1004,6 +1067,7 @@ namespace t850 {
 
     D3D12_GPU_VIRTUAL_ADDRESS gpuAddr = m_cbRingBuffers[bufIdx]->GetGPUVirtualAddress() + m_cbRingOffset;
     m_cbRingOffset += alignedSize;
+    if (m_cbRingOffset > m_cbRingPeakUsage) m_cbRingPeakUsage = m_cbRingOffset;
     return gpuAddr;
   }
 
@@ -1011,8 +1075,10 @@ namespace t850 {
     // Use 256-byte alignment to stay compatible with CBV allocations from the same ring buffer
     UINT alignedSize = (dataSize + 255) & ~255;
     if (m_cbRingOffset + alignedSize > kCBRingBufferSize) {
-      T8_LOG_ERROR("[D3D12] Ring buffer overflow! offset=%u + size=%u > %u", m_cbRingOffset, alignedSize, kCBRingBufferSize);
-      m_cbRingOffset = 0;
+      T8_LOG_ERROR("[D3D12] Ring buffer overflow! offset=%u + size=%u > %u (peak so far=%u)",
+                   m_cbRingOffset, alignedSize, kCBRingBufferSize, m_cbRingPeakUsage);
+      assert(false && "D3D12 ring buffer overflow — increase kCBRingBufferSize");
+      return m_cbRingBuffers[m_currentBackBuffer]->GetGPUVirtualAddress();
     }
 
     UINT bufIdx = m_currentBackBuffer;
@@ -1021,6 +1087,7 @@ namespace t850 {
 
     D3D12_GPU_VIRTUAL_ADDRESS gpuAddr = m_cbRingBuffers[bufIdx]->GetGPUVirtualAddress() + m_cbRingOffset;
     m_cbRingOffset += alignedSize;
+    if (m_cbRingOffset > m_cbRingPeakUsage) m_cbRingPeakUsage = m_cbRingOffset;
     return gpuAddr;
   }
 

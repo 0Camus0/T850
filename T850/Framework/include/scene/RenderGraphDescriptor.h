@@ -23,7 +23,7 @@ namespace t850 {
   // ---- Texture input (edge in the graph) ----
 
   struct TextureInput {
-    std::string source;   // "GBuffer:COLOR4", "DepthPass:DEPTH", "@ssao_noise", "@environment_map"
+    std::string source;   // "GBuffer:DEPTH", "GBuffer:COLOR4", "@ssao_noise", "@environment_map"
     int slot = 0;
   };
 

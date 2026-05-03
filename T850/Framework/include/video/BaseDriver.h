@@ -59,6 +59,9 @@ namespace t850 {
     // Create an RGBA32F texture for raw float data (e.g., bone matrices).
     // No mips, NEAREST filtering. Can be updated per-frame via Texture::UpdateFloatData.
     virtual Texture* CreateFloatTexture(int w, int h, const float* data = nullptr) = 0;
+    // Create an RGBA32F cubemap with explicit mip levels. Data is face-major:
+    // face 0 mip 0..N, face 1 mip 0..N, etc.; each texel is four floats.
+    virtual Texture* CreateFloatCubeMap(int size, int mipCount, const float* data = nullptr) = 0;
     virtual BaseRT* CreateRT(int nrt, int cf, int df, int w, int h, bool genMips = false) = 0;
   };
   /* BUFFERS */
@@ -86,21 +89,25 @@ namespace t850 {
   };
   class ConstantBuffer : public Buffer {
   public:
-    virtual void Set(const DeviceContext& deviceContext) = 0;
+    virtual void Set(const DeviceContext& deviceContext, unsigned int slot = 0) = 0;
   };
 
 
   class Texture {
   public:
     Texture() :
+      filepath(),
+      optname{},
       size(0),
       props(0),
       params(0),
+      cil_props(0),
       x(0),
       y(0),
       id(0),
       bounded(0),
-      mipmaps(0)
+      mipmaps(0),
+      m_channels(0)
     {
 
     }
@@ -179,6 +186,7 @@ namespace t850 {
     virtual void	DestroyAPIRT() = 0;
 
     virtual void Set(const DeviceContext& context) = 0;
+    virtual void SetLoad(const DeviceContext& context) { Set(context); }
     virtual void ChangeCubeDepthTexture(int i) = 0;
 
     int w;
@@ -283,6 +291,13 @@ namespace t850 {
     virtual void SaveRTToFile(int rtID, int attachment, std::string path) {}
 	virtual void SetCullFace(FaceCulling state) = 0;
 
+    // Trace-only hook: each backend overrides to refresh the cached
+    // RenderTracer pending render-state with the appropriate per-API
+    // decoder (D3D12/D3D11/GL/Vulkan). Called from base PushRT/PushRTLoad
+    // after the RT switch so per-attachment blend sizing stays correct.
+    // Default no-op; safe when T850_RENDER_TRACE is undefined.
+    virtual void RefreshTracePendingRenderState() {}
+
     // ── D3D12/Vulkan explicit API (no-ops for D3D11/GL) ──
     virtual void BuildPipelineObjects() {}
     virtual void BeginFrame() {}
@@ -299,6 +314,8 @@ namespace t850 {
 
     int 	 CreateTexture(std::string);
     int    CreateCubeMap(const unsigned char * buff, int w, int h);
+    int    CreateFloatTexture(int w, int h, const float* data = nullptr);
+    int    CreateFloatCubeMap(int size, int mipCount, const float* data = nullptr);
     int	   CreateShader(std::string src_vs, std::string src_fs, ShaderKey key = ShaderKey(), const std::string& vs_name = "", const std::string& fs_name = "");
     int 	 CreateRT(int nrt, int cf, int df, int w, int h, bool genMips = false);
     int    CreateRT(int nrt, const std::vector<int>& perColorFormats, int df, int w, int h, bool genMips = false);
@@ -306,6 +323,7 @@ namespace t850 {
     int    CreateTechnique(std::string path);
 
     void	 PushRT(int id);
+    void	 PushRTLoad(int id);
     virtual void	 PopRT() = 0;
 
 
@@ -331,7 +349,7 @@ namespace t850 {
 
     std::vector<Technique*> m_techniques;
     std::vector<ShaderBase*>	m_shaders;
-    std::unordered_map<uint32_t, ShaderBase*> m_shaderCache;
+    std::unordered_map<uint64_t, ShaderBase*> m_shaderCache;
     std::vector<BaseRT*>		RTs;
     std::vector<Texture*>		Textures;
     int							CurrentRT;

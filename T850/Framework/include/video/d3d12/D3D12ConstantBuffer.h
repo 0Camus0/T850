@@ -27,7 +27,7 @@ namespace t850 {
   public:
     void* GetAPIObject() const override;
     void** GetAPIObjectReference() const override;
-    void Set(const DeviceContext& deviceContext) override;
+    void Set(const DeviceContext& deviceContext, unsigned int slot = 0) override;
     void UpdateFromSystemCopy(const DeviceContext& deviceContext) override;
     void UpdateFromBuffer(const DeviceContext& deviceContext, const void* buffer) override;
     void release() override;

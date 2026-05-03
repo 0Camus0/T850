@@ -12,6 +12,7 @@
 *********************************************************/
 
 #include <video/d3d11/D3D11IndexBuffer.h>
+#include <debug/RenderTrace.h>
 
 namespace t850 {
   void * D3DXIndexBuffer::GetAPIObject() const
@@ -33,6 +34,12 @@ namespace t850 {
     else
       apiformat = DXGI_FORMAT::DXGI_FORMAT_R32_UINT;
     reinterpret_cast<ID3D11DeviceContext*>(deviceContext.GetAPIObject())->IASetIndexBuffer(APIBuffer.Get(), apiformat, offset);
+#ifdef T850_RENDER_TRACE
+    if (T8_TRACE_ACTIVE()) {
+      int bufId = g_renderTracer->EnsureBufferId(this, "ib");
+      g_renderTracer->EvBindIndexBufferRequest(bufId, (int)format, offset);
+    }
+#endif
   }
   void D3DXIndexBuffer::Create(const Device & device, BufferDesc desc, void * initialData)
   {
@@ -68,16 +75,34 @@ namespace t850 {
     {
       reinterpret_cast<ID3D11Device*>(device.GetAPIObject())->CreateBuffer(&apiDesc, 0, APIBuffer.ReleaseAndGetAddressOf());
     }
+#ifdef T850_RENDER_TRACE
+    if (T8_TRACE_ACTIVE() && initialData) {
+      int bufId = g_renderTracer->EnsureBufferId(this, "ib");
+      g_renderTracer->RecordBufferUpdate(bufId, initialData, desc.byteWidth, "ib", "");
+    }
+#endif
   }
   void D3DXIndexBuffer::UpdateFromSystemCopy(const DeviceContext& deviceContext)
   {
     reinterpret_cast<ID3D11DeviceContext*>(deviceContext.GetAPIObject())->UpdateSubresource(APIBuffer.Get(), 0, 0, &sysMemCpy[0], 0, 0);
+#ifdef T850_RENDER_TRACE
+    if (T8_TRACE_ACTIVE() && !sysMemCpy.empty()) {
+      int bufId = g_renderTracer->EnsureBufferId(this, "ib");
+      g_renderTracer->RecordBufferUpdate(bufId, sysMemCpy.data(), (uint32_t)sysMemCpy.size(), "ib", "");
+    }
+#endif
   }
   void D3DXIndexBuffer::UpdateFromBuffer(const DeviceContext& deviceContext, const void * buffer)
   {
     sysMemCpy.clear();
     sysMemCpy.assign((char*)buffer, (char*)buffer + descriptor.byteWidth);
     reinterpret_cast<ID3D11DeviceContext*>(deviceContext.GetAPIObject())->UpdateSubresource(APIBuffer.Get(), 0, 0, buffer, 0, 0);
+#ifdef T850_RENDER_TRACE
+    if (T8_TRACE_ACTIVE()) {
+      int bufId = g_renderTracer->EnsureBufferId(this, "ib");
+      g_renderTracer->RecordBufferUpdate(bufId, buffer, descriptor.byteWidth, "ib", "");
+    }
+#endif
   }
   void D3DXIndexBuffer::release()
   {

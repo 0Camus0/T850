@@ -15,11 +15,60 @@
 #include <video/gl/GLTexture.h>
 #include <video/gl/GLDriver.h>
 #include <utils/Utils.h>
+#include <debug/RenderTrace.h>
 
 #if defined(OS_LINUX)
 #include <sys/time.h>
 #endif
 namespace t850 {
+  namespace {
+    void ResolveGLRTColorFormat(int format, GLint& internalFormat, GLint& dataFormat, GLint& dataType) {
+      switch (format) {
+      case BaseRT::R8:
+        internalFormat = GL_R8;
+        dataFormat = GL_RED;
+        dataType = GL_UNSIGNED_BYTE;
+        break;
+      case BaseRT::F16:
+        internalFormat = GL_R16F;
+        dataFormat = GL_RED;
+        dataType = GL_HALF_FLOAT;
+        break;
+      case BaseRT::F32:
+        internalFormat = GL_R32F;
+        dataFormat = GL_RED;
+        dataType = GL_FLOAT;
+        break;
+      case BaseRT::RGBA16F:
+#if (GL_DRIVER_SELECTED == OGLES20)
+        internalFormat = GL_RGB16F_EXT;
+#else
+        internalFormat = GL_RGBA16F;
+#endif
+        dataFormat = GL_RGBA;
+        dataType = GL_HALF_FLOAT;
+        break;
+      case BaseRT::RGBA32F:
+#if (GL_DRIVER_SELECTED == OGLES20)
+        internalFormat = GL_RGB32F_EXT;
+#else
+        internalFormat = GL_RGBA32F;
+#endif
+        dataFormat = GL_RGBA;
+        dataType = GL_FLOAT;
+        break;
+      case BaseRT::RGB8:
+      case BaseRT::RGBA8:
+      case BaseRT::NOTHING:
+      default:
+        internalFormat = GL_RGBA;
+        dataFormat = GL_RGBA;
+        dataType = GL_UNSIGNED_BYTE;
+        break;
+      }
+    }
+  }
+
   bool GLRT::LoadAPIRT() {
     GLint cfmt, dfmt, cinternal;
     GLint bysize = 0;
@@ -124,9 +173,15 @@ namespace t850 {
     }
     else {
       for (int i = 0; i < number_RT; i++) {
+        GLint attachmentFormat = cffmt;
+        GLint attachmentDataFormat = cinternal;
+        GLint attachmentType = cbysize;
+        if (!perColorFormats.empty() && i < (int)perColorFormats.size())
+          ResolveGLRTColorFormat(perColorFormats[i], attachmentFormat, attachmentDataFormat, attachmentType);
+
         glGenTextures(1, &ctex);
         glBindTexture(GL_TEXTURE_2D, ctex);
-        glTexImage2D(GL_TEXTURE_2D, 0, cffmt, w, h, 0, cinternal, cbysize, 0);
+        glTexImage2D(GL_TEXTURE_2D, 0, attachmentFormat, w, h, 0, attachmentDataFormat, attachmentType, 0);
         if (i == 0 && this->color_format != BaseRT::R8) {
           glGenerateMipmap(GL_TEXTURE_2D);
           glTexParameterf(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR_MIPMAP_LINEAR);
@@ -201,12 +256,17 @@ namespace t850 {
       glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
       glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, 0x812D); // GL_CLAMP_TO_BORDER
       glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, 0x812D); // GL_CLAMP_TO_BORDER
-      float borderColor[] = { 0.0f, 0.0f, 0.0f, 0.0f };
+      // Reverse-Z convention: depth=1.0 is at the light (near), depth=0.0 is far.
+      // Border samples must read as "in shadow" (no occluder seen from light) so PCF taps
+      // outside the shadow map don't bleed light. With GL_GEQUAL, comparison is
+      // (LightPos.z + bias) >= textureValue. Using border=1.0 makes that test fail for
+      // any in-frustum sample (LightPos.z < 1.0), preventing shadow-edge light bleed.
+      float borderColor[] = { 1.0f, 1.0f, 1.0f, 1.0f };
       glTexParameterfv(GL_TEXTURE_2D, 0x1004, borderColor); // GL_TEXTURE_BORDER_COLOR
 
       if (number_RT == 0) {
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_COMPARE_MODE, GL_COMPARE_REF_TO_TEXTURE);
-        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_COMPARE_FUNC, GL_LEQUAL);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_COMPARE_FUNC, GL_GEQUAL);
       } else {
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_COMPARE_MODE, GL_NONE);
       }
@@ -218,6 +278,31 @@ namespace t850 {
       pTextureDepth->id = dtex;
       this->pDepthTexture = (pTextureDepth);
       DepthTexture = dtex;
+    }
+
+    // Zero-initialize all attachments so cross-API behavior is deterministic.
+    // glTexImage2D(..., NULL) leaves content undefined per OpenGL spec; some
+    // drivers fill with zero, others don't, which causes RTs that get sampled
+    // before they're first written (e.g. AdaptedLumPrev on frame 0 of the
+    // tone-mapping ping-pong) to feed garbage into the pipeline and diverge
+    // from D3D11/D3D12 (which zero-init by spec/driver) and Vulkan (which
+    // explicitly clears at creation in VulkanRT::LoadAPIRT).
+    if (number_RT > 0 || this->depth_format != BaseRT::NOTHING) {
+      glBindFramebuffer(GL_FRAMEBUFFER, vFrameBuffers[0]);
+#if defined(USING_OPENGL) || defined(USING_OPENGL_ES30) || defined(USING_OPENGL_ES31)
+      if (number_RT > 0) {
+        glDrawBuffers(number_RT, GLDriver::DrawBuffers);
+      }
+#endif
+      glColorMask(GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE);
+      glClearColor(0.0f, 0.0f, 0.0f, 0.0f);
+      // Reverse-Z: cleared depth = 0.0 matches the engine's depth convention.
+      glClearDepthf(0.0f);
+      GLbitfield clearMask = 0;
+      if (number_RT > 0) clearMask |= GL_COLOR_BUFFER_BIT;
+      if (this->depth_format != BaseRT::NOTHING) clearMask |= GL_DEPTH_BUFFER_BIT | GL_STENCIL_BUFFER_BIT;
+      if (clearMask) glClear(clearMask);
+      glBindFramebuffer(GL_FRAMEBUFFER, 0);
     }
 
 #if defined(OS_LINUX)
@@ -245,12 +330,22 @@ namespace t850 {
   }
 
   void GLRT::DestroyAPIRT() {
-    GLuint FBO = vFrameBuffers[0];
-    glDeleteFramebuffers(1, &FBO);
-    for (size_t i = 0; i < vColorTextures.size(); i++) {
-      vColorTextures[i]->release();
+    if (!vFrameBuffers.empty()) {
+      GLuint FBO = vFrameBuffers[0];
+      glDeleteFramebuffers(1, &FBO);
     }
-    pDepthTexture->release();
+    for (size_t i = 0; i < vColorTextures.size(); i++) {
+      if (vColorTextures[i])
+        vColorTextures[i]->release();
+    }
+    vColorTextures.clear();
+    vFrameBuffers.clear();
+    vGLColorTex.clear();
+    if (pDepthTexture) {
+      pDepthTexture->release();
+      pDepthTexture = nullptr;
+    }
+    DepthTexture = 0;
   }
   void GLRT::Set(const DeviceContext&context)
   {
@@ -259,6 +354,7 @@ namespace t850 {
 #if defined(USING_OPENGL) || defined(USING_OPENGL_ES30) || defined(USING_OPENGL_ES31)
     if (number_RT != 0) {
       glDrawBuffers(number_RT, GLDriver::DrawBuffers);
+      glColorMask(GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE);
     }
     else {
       glColorMask(GL_FALSE, GL_FALSE, GL_FALSE, GL_FALSE);
@@ -267,7 +363,31 @@ namespace t850 {
     glViewport(0, 0,w, h);
 	glClearColor(0.0, 0.0, 0.0, 0.0);
 	glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT | GL_STENCIL_BUFFER_BIT);
+#ifdef T850_RENDER_TRACE
+    if (T8_TRACE_ACTIVE()) {
+      int rtId = g_renderTracer->LookupRTId(this);
+      uint32_t flags = (number_RT > 0 ? 1u : 0u) | 2u | 4u;
+      g_renderTracer->EvClearRT(rtId, flags, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0);
+    }
+#endif
   }
+
+  void GLRT::SetLoad(const DeviceContext&context)
+  {
+    glBindFramebuffer(GL_FRAMEBUFFER, vFrameBuffers[0]);
+
+#if defined(USING_OPENGL) || defined(USING_OPENGL_ES30) || defined(USING_OPENGL_ES31)
+    if (number_RT != 0) {
+      glDrawBuffers(number_RT, GLDriver::DrawBuffers);
+      glColorMask(GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE);
+    }
+    else {
+      glColorMask(GL_FALSE, GL_FALSE, GL_FALSE, GL_FALSE);
+    }
+#endif
+    glViewport(0, 0,w, h);
+  }
+
   void GLRT::ChangeCubeDepthTexture(int i)
   {
     glFramebufferTexture2D(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_TEXTURE_CUBE_MAP_POSITIVE_X + i, pDepthTexture->id, 0);

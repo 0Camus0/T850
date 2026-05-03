@@ -9,6 +9,7 @@
 #ifdef OS_WINDOWS
 
 #include <utils/Log.h>
+#include <debug/RenderTrace.h>
 #include <algorithm>
 
 namespace t850 {
@@ -90,9 +91,15 @@ namespace t850 {
         params[i].ShaderVisibility = D3D12_SHADER_VISIBILITY_ALL;
       }
 
-      if (r.rangeType == D3D12_DESCRIPTOR_RANGE_TYPE_CBV && r.reg == 0) cbvSlot = i;
+      if (r.rangeType == D3D12_DESCRIPTOR_RANGE_TYPE_CBV) {
+        cbvSlots[(int)r.reg] = i;
+        if (r.reg == 0) cbvSlot = i;
+      }
       if (r.rangeType == D3D12_DESCRIPTOR_RANGE_TYPE_SRV) srvSlots[r.reg] = i;
-      if (r.rangeType == D3D12_DESCRIPTOR_RANGE_TYPE_SAMPLER && r.reg == 0) samplerSlot = i;
+      if (r.rangeType == D3D12_DESCRIPTOR_RANGE_TYPE_SAMPLER) {
+        samplerSlots[r.reg] = i;
+        if (r.reg == 0) samplerSlot = i;
+      }
 
       T8_LOG_VERBOSE("[D3D12]   RootParam[%d] type=%d reg=%u name='%s'", i, r.rangeType, r.reg, r.name.c_str());
     }
@@ -117,8 +124,8 @@ namespace t850 {
       return false;
     }
 
-    T8_LOG_DEBUG("[D3D12] Root signature created: cbvSlot=%d samplerSlot=%d srvSlots=%d",
-                 cbvSlot, samplerSlot, (int)srvSlots.size());
+    T8_LOG_DEBUG("[D3D12] Root signature created: cbvSlots=%d samplerSlot=%d srvSlots=%d",
+                 (int)cbvSlots.size(), samplerSlot, (int)srvSlots.size());
     return true;
   }
 
@@ -129,6 +136,11 @@ namespace t850 {
   bool D3D12Shader::CreateShaderAPI(std::string src_vs, std::string src_fs,
                                      const std::string& vs_name, const std::string& fs_name) {
     ID3D12Device* device = GetNativeDevice();
+    cbvSlot = -1;
+    samplerSlot = -1;
+    cbvSlots.clear();
+    srvSlots.clear();
+    samplerSlots.clear();
 
     // Compile VS
     {
@@ -206,6 +218,43 @@ namespace t850 {
     vertexStride = offset;
     T8_LOG_VERBOSE("[D3D12] Input layout: %d elements, stride=%d", (int)VertexDecl.size(), vertexStride);
 
+#ifdef T850_RENDER_TRACE
+    if (T8_TRACE_ACTIVE()) {
+      // Stash the input layout for the tracer keyed by ShaderBase*; the
+      // shader hasn't been registered yet (BaseDriver::CreateShader does
+      // that after T8Device->CreateShader returns), so we can't use a
+      // shader id here.
+      std::vector<TraceShaderAttr> attrs;
+      attrs.reserve(VertexDecl.size());
+      for (size_t i = 0; i < VertexDecl.size(); ++i) {
+        const auto& ie = VertexDecl[i];
+        TraceShaderAttr a;
+        a.semantic   = std::string(ie.SemanticName ? ie.SemanticName : "")
+                     + (ie.SemanticIndex > 0 ? std::to_string(ie.SemanticIndex) : std::string());
+        a.location   = (int)ie.SemanticIndex;
+        a.input_slot = (int)ie.InputSlot;
+        a.offset     = ie.AlignedByteOffset;
+        switch (ie.Format) {
+          case DXGI_FORMAT_R32_FLOAT:           a.format = "R32_FLOAT";          a.size_bytes = 4;  break;
+          case DXGI_FORMAT_R32G32_FLOAT:        a.format = "R32G32_FLOAT";       a.size_bytes = 8;  break;
+          case DXGI_FORMAT_R32G32B32_FLOAT:     a.format = "R32G32B32_FLOAT";    a.size_bytes = 12; break;
+          case DXGI_FORMAT_R32G32B32A32_FLOAT:  a.format = "R32G32B32A32_FLOAT"; a.size_bytes = 16; break;
+          case DXGI_FORMAT_R32_UINT:            a.format = "R32_UINT";           a.size_bytes = 4;  break;
+          case DXGI_FORMAT_R32G32_UINT:         a.format = "R32G32_UINT";        a.size_bytes = 8;  break;
+          case DXGI_FORMAT_R32G32B32_UINT:      a.format = "R32G32B32_UINT";     a.size_bytes = 12; break;
+          case DXGI_FORMAT_R32G32B32A32_UINT:   a.format = "R32G32B32A32_UINT";  a.size_bytes = 16; break;
+          case DXGI_FORMAT_R32_SINT:            a.format = "R32_SINT";           a.size_bytes = 4;  break;
+          case DXGI_FORMAT_R32G32_SINT:         a.format = "R32G32_SINT";        a.size_bytes = 8;  break;
+          case DXGI_FORMAT_R32G32B32_SINT:      a.format = "R32G32B32_SINT";     a.size_bytes = 12; break;
+          case DXGI_FORMAT_R32G32B32A32_SINT:   a.format = "R32G32B32A32_SINT";  a.size_bytes = 16; break;
+          default:                              a.format = "DXGI_FORMAT_" + std::to_string((int)ie.Format); break;
+        }
+        attrs.push_back(std::move(a));
+      }
+      g_renderTracer->RegisterShaderInputsForPtr(this, vertexStride, std::move(attrs));
+    }
+#endif
+
     // Reflect FS
     ComPtr<ID3D12ShaderReflection> fsReflect;
     D3DReflect(FS_blob->GetBufferPointer(), FS_blob->GetBufferSize(), IID_PPV_ARGS(&fsReflect));
@@ -215,7 +264,7 @@ namespace t850 {
 
 #ifdef T8_DUMP_SHADER_REFLECTION
     // Dump D3D12 reflection as reference for validating SPIR-V reflection
-    T8_LOG_INFO("[D3D12_REFL] === key=0x%08X VS='%s' FS='%s' ===", key.bits, vs_name.c_str(), fs_name.c_str());
+    T8_LOG_INFO("[D3D12_REFL] === key=0x%016llX VS='%s' FS='%s' ===", static_cast<unsigned long long>(key.bits), vs_name.c_str(), fs_name.c_str());
     T8_LOG_INFO("[D3D12_REFL] VS Inputs (%u):", vsDesc.InputParameters);
     for (UINT i = 0; i < vsDesc.InputParameters; i++) {
       D3D12_SIGNATURE_PARAMETER_DESC pd; vsReflect->GetInputParameterDesc(i, &pd);
@@ -246,8 +295,8 @@ namespace t850 {
     }
 #endif
 
-    T8_LOG_INFO("[D3D12] Shader created: key=0x%08X stride=%d rootParams: cbv=%d sampler=%d srvs=%d",
-                key.bits, vertexStride, cbvSlot, samplerSlot, (int)srvSlots.size());
+    T8_LOG_INFO("[D3D12] Shader created: key=0x%016llX stride=%d rootParams: cbv=%d sampler=%d srvs=%d",
+          static_cast<unsigned long long>(key.bits), vertexStride, cbvSlot, samplerSlot, (int)srvSlots.size());
     return true;
   }
 
@@ -256,7 +305,7 @@ namespace t850 {
   // ══════════════════════════════════════════════════════
 
   void D3D12Shader::Set(const DeviceContext& deviceContext) {
-    T8_LOG_TRACE("[D3D12] Shader::Set key=0x%08X", key.bits);
+    T8_LOG_TRACE("[D3D12] Shader::Set key=0x%016llX", static_cast<unsigned long long>(key.bits));
     const_cast<DeviceContext*>(&deviceContext)->actualShaderSet = (ShaderBase*)this;
 
     auto* cmdList = static_cast<const D3D12DeviceContext*>(&deviceContext)->GetCommandList();
@@ -264,19 +313,21 @@ namespace t850 {
 
     // Determine current RT configuration for PSO
     uint8_t numRTVs = 1;
-    DXGI_FORMAT rtvFmt = DXGI_FORMAT_R8G8B8A8_UNORM;
+    DXGI_FORMAT rtvFormats[8] = {};
+    for (auto& fmt : rtvFormats) fmt = DXGI_FORMAT_UNKNOWN;
+    rtvFormats[0] = DXGI_FORMAT_R8G8B8A8_UNORM;
     DXGI_FORMAT dsvFmt = DXGI_FORMAT_D32_FLOAT;
 
     int curRT = driver->CurrentRT;
     if (curRT >= 0 && curRT < (int)driver->RTs.size()) {
       D3D12RT* rt = static_cast<D3D12RT*>(driver->RTs[curRT]);
       numRTVs = (uint8_t)(rt->number_RT > 0 ? rt->number_RT : 0);
-      rtvFmt = rt->colorFormat;  // cached format — no COM call
-      if (rt->number_RT == 0) rtvFmt = DXGI_FORMAT_UNKNOWN;
+      for (int i = 0; i < rt->number_RT && i < 8; ++i)
+        rtvFormats[i] = (i < (int)rt->vColorFormats.size()) ? rt->vColorFormats[i] : rt->colorFormat;
     }
 
     // Get or create PSO for current state
-    ID3D12PipelineState* pso = driver->GetOrCreatePSO(this, numRTVs, rtvFmt, dsvFmt);
+    ID3D12PipelineState* pso = driver->GetOrCreatePSO(this, numRTVs, rtvFormats, dsvFmt);
 
     // Skip redundant root signature and PSO binds
     ID3D12RootSignature* rootSig = pRootSignature.Get();
@@ -290,16 +341,23 @@ namespace t850 {
     }
 
     // Bind default sampler if shader uses one
-    if (samplerSlot >= 0) {
-      cmdList->SetGraphicsRootDescriptorTable(samplerSlot, driver->GetDefaultSamplerGPU());
+    for (const auto& samplerBinding : samplerSlots) {
+      cmdList->SetGraphicsRootDescriptorTable(samplerBinding.second, driver->GetDefaultSamplerGPU());
     }
+#ifdef T850_RENDER_TRACE
+    if (T8_TRACE_ACTIVE()) {
+      int shId = g_renderTracer->LookupShaderId(this);
+      g_renderTracer->EvBindShader(shId, key.bits);
+      g_renderTracer->EvBindPSO((int)(uintptr_t)pso);
+    }
+#endif
   }
 
   void D3D12Shader::DestroyAPIShader() {
     VS_blob.Reset(); FS_blob.Reset();
     pRootSignature.Reset();
     VertexDecl.clear(); m_semanticNames.clear();
-    srvSlots.clear();
+    srvSlots.clear(); samplerSlots.clear();
   }
 
 } // namespace t850

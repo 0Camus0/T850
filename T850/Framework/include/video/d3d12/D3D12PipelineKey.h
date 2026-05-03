@@ -14,6 +14,7 @@
 #include <dxgi1_4.h>
 #include <cstdint>
 #include <functional>
+#include <array>
 
 namespace t850 {
 
@@ -25,13 +26,15 @@ namespace t850 {
     uint8_t  blend;
     uint8_t  depth;
     uint8_t  cull;
+    uint8_t  topology;
     uint8_t  numRTVs;
-    DXGI_FORMAT rtvFormat;
+    std::array<DXGI_FORMAT, 8> rtvFormats;
     DXGI_FORMAT dsvFormat;
     bool operator==(const D3D12PipelineKey& o) const {
       return shaderPtr == o.shaderPtr && blend == o.blend &&
-             depth == o.depth && cull == o.cull && numRTVs == o.numRTVs &&
-             rtvFormat == o.rtvFormat && dsvFormat == o.dsvFormat;
+             depth == o.depth && cull == o.cull && topology == o.topology &&
+             numRTVs == o.numRTVs &&
+             rtvFormats == o.rtvFormats && dsvFormat == o.dsvFormat;
     }
   };
 
@@ -41,9 +44,11 @@ namespace t850 {
       h ^= std::hash<uint8_t>()(k.blend)    << 1;
       h ^= std::hash<uint8_t>()(k.depth)    << 2;
       h ^= std::hash<uint8_t>()(k.cull)     << 3;
-      h ^= std::hash<uint8_t>()(k.numRTVs)  << 4;
-      h ^= std::hash<uint32_t>()((uint32_t)k.rtvFormat) << 5;
-      h ^= std::hash<uint32_t>()((uint32_t)k.dsvFormat) << 6;
+      h ^= std::hash<uint8_t>()(k.topology) << 4;
+      h ^= std::hash<uint8_t>()(k.numRTVs)  << 5;
+      for (size_t i = 0; i < k.rtvFormats.size(); ++i)
+        h ^= std::hash<uint32_t>()((uint32_t)k.rtvFormats[i]) << (6 + i);
+      h ^= std::hash<uint32_t>()((uint32_t)k.dsvFormat) << 14;
       return h;
     }
   };

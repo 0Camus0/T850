@@ -1,18 +1,20 @@
-cbuffer ConstantBuffer{
+cbuffer QuadFrameCB : register(b0) {
     float4x4 WVP;
 	float4x4 World;  
 	float4x4 WorldView;
 	float4x4 WVPInverse;
 	float4x4 WVPLight;
 	float4x4 Projection;
-	float4	 LightPositions[128];
-	float4	 LightColors[128];
-  float4	 LightRadius[32];
 	float4   CameraPosition;
 	float4 	 CameraInfo;
 	float4	 LightCameraPosition;
 	float4 	 LightCameraInfo;
+}
 
+cbuffer QuadPassCB : register(b1) {
+	float4	 LightPositions[128];
+	float4	 LightColors[128];
+  float4	 LightRadius[32];
 	float4   brightness;
 	float4   toogles;
 }
@@ -27,6 +29,7 @@ struct VS_OUTPUT{
     float2 texture0  : TEXCOORD;
 	float4 Pos		 : TEXCOORD1;
 	float4 PosCorner : TEXCOORD2;
+	float2 ClipPos   : TEXCOORD3;
 };
 
 VS_OUTPUT VS( VS_INPUT input ){
@@ -34,12 +37,9 @@ VS_OUTPUT VS( VS_INPUT input ){
     OUT.hposition = mul( WVP , input.position );
     OUT.texture0  = input.texture0;
 	OUT.Pos	  	  = OUT.hposition;
-#ifdef NON_LINEAR_DEPTH
-	OUT.PosCorner = float4(input.position.xy,1.0,1.0);
-#else
-    OUT.PosCorner = mul(WVPInverse, float4(input.position.xy,1.0,1.0));
+	OUT.ClipPos = input.position.xy;
+    OUT.PosCorner = mul(WVPInverse, float4(input.position.xy,0.0,1.0));
 	OUT.PosCorner.xyz /= OUT.PosCorner.w;
 	OUT.PosCorner = OUT.PosCorner - CameraPosition;
-#endif
 	return OUT;
 }

@@ -22,6 +22,7 @@
 #include <utils/gltf/GLTFAccessor.h>
 #include <utils/gltf/GLTFTypes.h>
 #include <video/BaseDriver.h>
+#include <debug/RenderTrace.h>
 #include <utils/Log.h>
 
 #define STBIR_INCLUDE_STB_IMAGE_RESIZE_H // skip bundled resize impl (defined in cil.cpp)
@@ -95,16 +96,20 @@ int RegisterEncoded(const unsigned char* bytes, std::size_t size,
     return -1;
   }
   t->filepath = filepath;
+  std::strncpy(t->optname, keyName.c_str(), sizeof(t->optname) - 1);
+  t->optname[sizeof(t->optname) - 1] = '\0';
 
   auto* drv = g_pBaseDriver;
   // Reuse a free slot if present.
   for (std::size_t i = 0; i < drv->Textures.size(); ++i) {
     if (drv->Textures[i] == nullptr) {
       drv->Textures[i] = t;
+      T8_TRACE_REGISTER_TEXTURE(t, "tex2d");
       return static_cast<int>(i);
     }
   }
   drv->Textures.push_back(t);
+  T8_TRACE_REGISTER_TEXTURE(t, "tex2d");
   return static_cast<int>(drv->Textures.size() - 1);
 }
 
@@ -224,20 +229,23 @@ void ResolveAllImages(const Document& doc,
   outSlots.resize(numImages, -1);
   if (numImages == 0) return;
 
-  // Per-image CPU decode result
+  // Per-image CPU decode result. GPU upload still happens serially after
+  // all disk/base64/bufferView reads and stb decodes complete.
   struct DecodeResult {
     std::string keyName;
     std::vector<unsigned char> rawBytes; // encoded bytes for stbi
     unsigned char* pixels = nullptr;     // decoded RGBA (needs stbi_image_free)
     int w = 0, h = 0;
-    bool external = false; // true = file URI, use existing path
     bool ok = false;
   };
   std::vector<DecodeResult> results(numImages);
+  std::string sourceDir;
+  {
+    auto s = doc._sourcePath.find_last_of("/\\");
+    if (s != std::string::npos) sourceDir = doc._sourcePath.substr(0, s + 1);
+  }
 
-  // Phase 1: Gather encoded bytes (disk I/O + base64 decode) — serial
-  // because disk I/O from multiple threads on the same file isn't faster
-  for (int i = 0; i < numImages; i++) {
+  auto gatherImageBytes = [&](int i) {
     const Image& img = doc.images[i];
     DecodeResult& r = results[i];
 
@@ -248,11 +256,29 @@ void ResolveAllImages(const Document& doc,
     if (baseKey.find('.') == std::string::npos) baseKey += ".png";
 
     if (img.uri && img.uri->compare(0, 5, "data:") != 0) {
-      // External file — just record the URI, let serial path handle it
+      // External file relative to the glTF. Read the encoded payload now;
+      // it will be decoded in the CPU-only phase and uploaded serially.
+      const std::string fullPath = sourceDir + *img.uri;
+      std::ifstream f(fullPath, std::ios::binary | std::ios::ate);
+      if (!f.is_open()) {
+        T8_LOG_ERROR("[glTF] image %d: cannot open '%s'", i, fullPath.c_str());
+        return;
+      }
+      std::streamsize sz = f.tellg();
+      if (sz <= 0) {
+        T8_LOG_ERROR("[glTF] image %d: empty file '%s'", i, fullPath.c_str());
+        return;
+      }
+      f.seekg(0, std::ios::beg);
+      r.rawBytes.resize(static_cast<std::size_t>(sz));
+      if (!f.read(reinterpret_cast<char*>(r.rawBytes.data()), sz)) {
+        r.rawBytes.clear();
+        T8_LOG_ERROR("[glTF] image %d: short read on '%s'", i, fullPath.c_str());
+        return;
+      }
       r.keyName = *img.uri;
-      r.external = true;
       r.ok = true;
-      continue;
+      return;
     }
 
     if (img.uri && img.uri->compare(0, 5, "data:") == 0) {
@@ -265,7 +291,7 @@ void ResolveAllImages(const Document& doc,
         r.rawBytes = std::move(decoded);
         r.ok = true;
       }
-      continue;
+      return;
     }
 
     if (img.bufferView) {
@@ -284,16 +310,22 @@ void ResolveAllImages(const Document& doc,
         }
       }
     }
+  };
+
+  // Phase 1: Gather encoded bytes (disk I/O + base64 decode + bufferView copy).
+  if (g_threadPool && numImages > 1) {
+    T8_LOG_INFO("[glTF] Reading %d images with %u global worker threads", numImages, g_threadPool->NumWorkers());
+    g_threadPool->ParallelFor(0, numImages, gatherImageBytes);
+  } else {
+    for (int i = 0; i < numImages; i++) {
+      gatherImageBytes(i);
+    }
   }
 
   // Phase 2: Parallel stbi decode (CPU-only, thread-safe)
-  {
-    t850::ThreadPool pool;
-    T8_LOG_INFO("[glTF] Decoding %d images with %u threads", numImages, pool.NumWorkers());
-
-    pool.ParallelFor(0, numImages, [&](int i) {
+  auto decodeImage = [&](int i) {
       DecodeResult& r = results[i];
-      if (!r.ok || r.external || r.rawBytes.empty()) return;
+      if (!r.ok || r.rawBytes.empty()) return;
 
       int ch = 0;
       r.pixels = stbi_load_from_memory(r.rawBytes.data(),
@@ -305,19 +337,20 @@ void ResolveAllImages(const Document& doc,
       // Free raw bytes now that we have decoded pixels
       r.rawBytes.clear();
       r.rawBytes.shrink_to_fit();
-    });
+  };
+  if (g_threadPool && numImages > 1) {
+    T8_LOG_INFO("[glTF] Decoding %d images with %u global worker threads", numImages, g_threadPool->NumWorkers());
+    g_threadPool->ParallelFor(0, numImages, decodeImage);
+  } else {
+    for (int i = 0; i < numImages; i++) {
+      decodeImage(i);
+    }
   }
 
   // Phase 3: Serial GPU upload + driver cache insertion
   for (int i = 0; i < numImages; i++) {
     DecodeResult& r = results[i];
     if (!r.ok) continue;
-
-    if (r.external) {
-      // External file — use existing single-image path
-      ResolveImage(doc, i, outNames[i], outSlots[i]);
-      continue;
-    }
 
     if (!r.pixels) continue;
 
@@ -336,6 +369,8 @@ void ResolveAllImages(const Document& doc,
 
     if (!t) continue;
     t->filepath = filepath;
+    std::strncpy(t->optname, r.keyName.c_str(), sizeof(t->optname) - 1);
+    t->optname[sizeof(t->optname) - 1] = '\0';
 
     auto* drv = g_pBaseDriver;
     bool reused = false;
@@ -351,6 +386,7 @@ void ResolveAllImages(const Document& doc,
       drv->Textures.push_back(t);
       outSlots[i] = static_cast<int>(drv->Textures.size() - 1);
     }
+    T8_TRACE_REGISTER_TEXTURE(t, "tex2d");
     outNames[i] = r.keyName;
   }
 

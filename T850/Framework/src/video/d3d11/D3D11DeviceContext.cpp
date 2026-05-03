@@ -12,6 +12,7 @@
 *********************************************************/
 
 #include <video/d3d11/D3D11DeviceContext.h>
+#include <debug/RenderTrace.h>
 
 namespace t850 {
   void * D3DXDeviceContext::GetAPIObject() const
@@ -51,10 +52,12 @@ namespace t850 {
       break;
     }
     APIContext->IASetPrimitiveTopology(apitopology);
+    T8_TRACE(EvSetTopology((int)topology));
   }
 
   void D3DXDeviceContext::DrawIndexed(unsigned vertexCount, unsigned startIndex, unsigned startVertex)
   {
     APIContext->DrawIndexed(vertexCount, startIndex, startVertex);
+    T8_TRACE(EvDrawIndexed(vertexCount, startIndex, startVertex));
   }
 }

@@ -151,21 +151,35 @@ struct Texture {
 };
 
 // ── Material ──
+struct TextureTransform {
+  std::vector<float> offset;
+  float              rotation = 0.0f;
+  std::vector<float> scale;
+  std::optional<int> texCoord;
+};
+
+struct TextureInfoExtensions {
+  std::optional<TextureTransform> KHR_texture_transform;
+};
+
 struct TextureInfo {
-  int         index = -1;
-  int         texCoord = 0;
+  int                                  index = -1;
+  int                                  texCoord = 0;
+  std::optional<TextureInfoExtensions> extensions;
 };
 
 struct NormalTextureInfo {
-  int   index = -1;
-  int   texCoord = 0;
-  float scale = 1.0f;
+  int                                  index = -1;
+  int                                  texCoord = 0;
+  float                                scale = 1.0f;
+  std::optional<TextureInfoExtensions> extensions;
 };
 
 struct OcclusionTextureInfo {
-  int   index = -1;
-  int   texCoord = 0;
-  float strength = 1.0f;
+  int                                  index = -1;
+  int                                  texCoord = 0;
+  float                                strength = 1.0f;
+  std::optional<TextureInfoExtensions> extensions;
 };
 
 struct PBRMetallicRoughness {
@@ -186,6 +200,92 @@ struct Material {
   std::string                          alphaMode = "OPAQUE";
   float                                alphaCutoff = 0.5f;
   bool                                 doubleSided = false;
+
+  struct Extensions {
+    struct KHRMaterialsTransmission {
+      float transmissionFactor = 0.0f;
+      std::optional<TextureInfo> transmissionTexture;
+    };
+    struct KHRMaterialsEmissiveStrength {
+      float emissiveStrength = 1.0f;
+    };
+    struct KHRMaterialsIOR {
+      float ior = 1.5f;
+    };
+    struct KHRMaterialsVolume {
+      float thicknessFactor = 0.0f;
+      std::optional<TextureInfo> thicknessTexture;
+      float attenuationDistance = 0.0f;
+      std::vector<float> attenuationColor;
+    };
+    struct KHRMaterialsClearcoat {
+      float clearcoatFactor = 0.0f;
+      std::optional<TextureInfo> clearcoatTexture;
+      float clearcoatRoughnessFactor = 0.0f;
+      std::optional<TextureInfo> clearcoatRoughnessTexture;
+      std::optional<NormalTextureInfo> clearcoatNormalTexture;
+    };
+    struct KHRMaterialsSpecular {
+      float specularFactor = 1.0f;
+      std::vector<float> specularColorFactor;
+      std::optional<TextureInfo> specularTexture;
+      std::optional<TextureInfo> specularColorTexture;
+    };
+    struct KHRMaterialsSheen {
+      std::vector<float> sheenColorFactor;
+      std::optional<TextureInfo> sheenColorTexture;
+      float sheenRoughnessFactor = 0.0f;
+      std::optional<TextureInfo> sheenRoughnessTexture;
+    };
+    struct KHRMaterialsDiffuseTransmission {
+      float diffuseTransmissionFactor = 0.0f;
+      std::vector<float> diffuseTransmissionColorFactor;
+      std::optional<TextureInfo> diffuseTransmissionTexture;
+      std::optional<TextureInfo> diffuseTransmissionColorTexture;
+    };
+    struct KHRMaterialsDispersion { float dispersion = 0.0f; };
+    struct KHRMaterialsIridescence {
+      float iridescenceFactor = 0.0f;
+      float iridescenceIor = 1.3f;
+      float iridescenceThicknessMinimum = 100.0f;
+      float iridescenceThicknessMaximum = 400.0f;
+      std::optional<TextureInfo> iridescenceTexture;
+      std::optional<TextureInfo> iridescenceThicknessTexture;
+    };
+    struct KHRMaterialsAnisotropy {
+      float anisotropyStrength = 0.0f;
+      float anisotropyRotation = 0.0f;
+      std::optional<TextureInfo> anisotropyTexture;
+    };
+    struct KHRMaterialsVolumeScatter {
+      std::vector<float> multiscatterColor;
+      float scatterAnisotropy = 0.0f;
+    };
+    struct KHRMaterialsUnlit {};
+    struct KHRMaterialsPBRSpecularGlossiness {
+      std::vector<float> diffuseFactor;
+      std::optional<TextureInfo> diffuseTexture;
+      std::vector<float> specularFactor;
+      float glossinessFactor = 1.0f;
+      std::optional<TextureInfo> specularGlossinessTexture;
+    };
+
+    std::optional<KHRMaterialsTransmission> KHR_materials_transmission;
+    std::optional<KHRMaterialsEmissiveStrength> KHR_materials_emissive_strength;
+    std::optional<KHRMaterialsIOR> KHR_materials_ior;
+    std::optional<KHRMaterialsVolume> KHR_materials_volume;
+    std::optional<KHRMaterialsClearcoat> KHR_materials_clearcoat;
+    std::optional<KHRMaterialsSpecular> KHR_materials_specular;
+    std::optional<KHRMaterialsSheen> KHR_materials_sheen;
+    std::optional<KHRMaterialsDiffuseTransmission> KHR_materials_diffuse_transmission;
+    std::optional<KHRMaterialsDispersion> KHR_materials_dispersion;
+    std::optional<KHRMaterialsIridescence> KHR_materials_iridescence;
+    std::optional<KHRMaterialsAnisotropy> KHR_materials_anisotropy;
+    std::optional<KHRMaterialsVolumeScatter> KHR_materials_volume_scatter;
+    std::optional<KHRMaterialsUnlit> KHR_materials_unlit;
+    std::optional<KHRMaterialsPBRSpecularGlossiness> KHR_materials_pbrSpecularGlossiness;
+  };
+  std::optional<Extensions> extensions;
 };
 
 // ── Mesh / Primitive ──
@@ -197,6 +297,8 @@ struct PrimitiveAttributes {
   int TANGENT    = -1;
   int TEXCOORD_0 = -1;
   int TEXCOORD_1 = -1;
+  int TEXCOORD_2 = -1;
+  int TEXCOORD_3 = -1;
   int COLOR_0    = -1;
   int JOINTS_0   = -1;
   int WEIGHTS_0  = -1;

@@ -6,6 +6,12 @@ namespace t850 {
 
 class Config {
 public:
+  enum class GLOffscreenFlushMode {
+    Frame,
+    Wait,
+    None
+  };
+
   struct BooleanFlags {
     bool dumpEnabled : 1 = false;
     bool dumpByFrame : 1 = false;
@@ -23,6 +29,10 @@ public:
     bool createAtlas : 1 = false;
     bool profile : 1 = false;
     bool dumpMatrices : 1 = false;
+    bool benchmark : 1 = false;
+    bool cullDisabled : 1 = false;
+    bool offscreen : 1 = false;
+    bool offscreenDebug : 1 = false;
   } flags;
 
   std::string api = "d3d11";
@@ -44,6 +54,8 @@ public:
   int atlasMaxSprite = 256;
   int profileFrames = 300;
   int dumpMatricesFrames = 0;
+  GLOffscreenFlushMode glOffscreenFlushMode = GLOffscreenFlushMode::Frame;
+  std::string benchmarkOutputPath;
   std::string modelPath = "Models/DamagedHelmet.glb";
   bool orbitYawOverride = false;
   float orbitYaw = 0.0f;

@@ -961,29 +961,31 @@ namespace t850 {
       vkResetFences(m_device, 1, &m_inFlightFences[m_currentFrame]);
     }
 
-    VkResult res = vkAcquireNextImageKHR(m_device, m_swapChain, UINT64_MAX,
-                                          m_imageAvailableSemaphores[m_currentFrame],
-                                          VK_NULL_HANDLE, &m_imageIndex);
-    if (res == VK_ERROR_OUT_OF_DATE_KHR || res == VK_ERROR_SURFACE_LOST_KHR) {
-      T8_LOG_INFO("[Vulkan] Swap chain out of date (res=%d), recreating...", res);
-      ResizeSwapchain(width, height);
-      // After recreation, fences are re-signaled by WaitForGPU inside ResizeSwapchain.
-      // Reset the fence for the current frame before re-acquiring.
-      WaitForFence(m_currentFrame);
-      vkResetFences(m_device, 1, &m_inFlightFences[m_currentFrame]);
-      // Re-acquire after recreation
-      res = vkAcquireNextImageKHR(m_device, m_swapChain, UINT64_MAX,
-                                  m_imageAvailableSemaphores[m_currentFrame],
-                                  VK_NULL_HANDLE, &m_imageIndex);
-      if (res != VK_SUCCESS && res != VK_SUBOPTIMAL_KHR) {
-        T8_LOG_ERROR("[Vulkan] vkAcquireNextImageKHR failed after recreation res=%d", res);
+    if (!IsOffscreenEnabled()) {
+      VkResult res = vkAcquireNextImageKHR(m_device, m_swapChain, UINT64_MAX,
+                                            m_imageAvailableSemaphores[m_currentFrame],
+                                            VK_NULL_HANDLE, &m_imageIndex);
+      if (res == VK_ERROR_OUT_OF_DATE_KHR || res == VK_ERROR_SURFACE_LOST_KHR) {
+        T8_LOG_INFO("[Vulkan] Swap chain out of date (res=%d), recreating...", res);
+        ResizeSwapchain(width, height);
+        // After recreation, fences are re-signaled by WaitForGPU inside ResizeSwapchain.
+        // Reset the fence for the current frame before re-acquiring.
+        WaitForFence(m_currentFrame);
+        vkResetFences(m_device, 1, &m_inFlightFences[m_currentFrame]);
+        // Re-acquire after recreation
+        res = vkAcquireNextImageKHR(m_device, m_swapChain, UINT64_MAX,
+                                    m_imageAvailableSemaphores[m_currentFrame],
+                                    VK_NULL_HANDLE, &m_imageIndex);
+        if (res != VK_SUCCESS && res != VK_SUBOPTIMAL_KHR) {
+          T8_LOG_ERROR("[Vulkan] vkAcquireNextImageKHR failed after recreation res=%d", res);
+          m_frameStarted = false;
+          return;
+        }
+      } else if (res != VK_SUCCESS && res != VK_SUBOPTIMAL_KHR) {
+        T8_LOG_ERROR("[Vulkan] vkAcquireNextImageKHR failed res=%d", res);
         m_frameStarted = false;
         return;
       }
-    } else if (res != VK_SUCCESS && res != VK_SUBOPTIMAL_KHR) {
-      T8_LOG_ERROR("[Vulkan] vkAcquireNextImageKHR failed res=%d", res);
-      m_frameStarted = false;
-      return;
     }
 
     VkCommandBuffer cmd = m_commandBuffers[m_currentFrame];
@@ -1074,6 +1076,9 @@ namespace t850 {
       m_frameStarted = true;
     }
 
+    if ((CurrentRT < 0 || IsCurrentOffscreenTarget()) && BindOffscreenTarget(true))
+      return;
+
     if (CurrentRT < 0) {
       VkCommandBuffer cmd = m_commandBuffers[m_currentFrame];
 
@@ -1121,6 +1126,36 @@ namespace t850 {
   void VulkanDriver::SwapBuffers() {
     T8_LOG_TRACE("[Vulkan] SwapBuffers");
     VkCommandBuffer cmd = m_commandBuffers[m_currentFrame];
+
+    if (IsOffscreenEnabled()) {
+      if (m_renderPassActive) {
+        vkCmdEndRenderPass(cmd);
+        m_renderPassActive = false;
+      }
+
+      VkResult endRes = vkEndCommandBuffer(cmd);
+      if (endRes != VK_SUCCESS) {
+        T8_LOG_ERROR("[Vulkan] vkEndCommandBuffer failed res=%d", endRes);
+      }
+
+      VkSubmitInfo submitInfo = { VK_STRUCTURE_TYPE_SUBMIT_INFO };
+      submitInfo.commandBufferCount = 1;
+      submitInfo.pCommandBuffers = &cmd;
+
+      VkResult submitRes = vkQueueSubmit(m_graphicsQueue, 1, &submitInfo, m_inFlightFences[m_currentFrame]);
+      if (submitRes != VK_SUCCESS) {
+        T8_LOG_ERROR("[Vulkan] offscreen vkQueueSubmit failed res=%d", submitRes);
+        if (submitRes == VK_ERROR_DEVICE_LOST) {
+          T8_LOG_ERROR("[Vulkan] Device lost! Waiting for idle...");
+          vkDeviceWaitIdle(m_device);
+        }
+      }
+
+      m_frameStarted = false;
+      CompleteOffscreenFrame();
+      m_currentFrame = (m_currentFrame + 1) % kBackBufferCount;
+      return;
+    }
 
     // End the render pass if one is active
     if (m_renderPassActive) {
@@ -1253,6 +1288,14 @@ namespace t850 {
                               VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
                               VK_IMAGE_ASPECT_DEPTH_BIT);
         rt->m_depthLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+      }
+
+      if (IsOffscreenEnabled()) {
+        CurrentRT = -1;
+#ifdef T850_RENDER_TRACE
+        RefreshTracePendingRenderState();
+#endif
+        return;
       }
 
       // 4. Restore the backbuffer render pass (LOAD variant to preserve content)
@@ -1402,20 +1445,25 @@ namespace t850 {
     VulkanRT* rt = static_cast<VulkanRT*>(RTs[rtID]);
 
     VkCommandBuffer cmd = m_commandBuffers[m_currentFrame];
+    const bool frameOpen = m_frameStarted;
 
-    // End any active render pass before readback
-    if (m_renderPassActive) {
-      vkCmdEndRenderPass(cmd);
-      m_renderPassActive = false;
+    if (frameOpen) {
+      // End any active render pass before readback.
+      if (m_renderPassActive) {
+        vkCmdEndRenderPass(cmd);
+        m_renderPassActive = false;
+      }
+
+      // Flush command buffer.
+      vkEndCommandBuffer(cmd);
+      VkSubmitInfo submitInfo = { VK_STRUCTURE_TYPE_SUBMIT_INFO };
+      submitInfo.commandBufferCount = 1;
+      submitInfo.pCommandBuffers = &cmd;
+      vkQueueSubmit(m_graphicsQueue, 1, &submitInfo, VK_NULL_HANDLE);
+      vkQueueWaitIdle(m_graphicsQueue);
+    } else {
+      vkQueueWaitIdle(m_graphicsQueue);
     }
-
-    // Flush command buffer
-    vkEndCommandBuffer(cmd);
-    VkSubmitInfo submitInfo = { VK_STRUCTURE_TYPE_SUBMIT_INFO };
-    submitInfo.commandBufferCount = 1;
-    submitInfo.pCommandBuffers = &cmd;
-    vkQueueSubmit(m_graphicsQueue, 1, &submitInfo, VK_NULL_HANDLE);
-    vkQueueWaitIdle(m_graphicsQueue);
 
     VkImage srcImage = VK_NULL_HANDLE;
     VkImageLayout srcLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
@@ -1428,10 +1476,12 @@ namespace t850 {
       if (!rt->m_depthImage) goto reopen;
       srcImage = rt->m_depthImage;
       fmt = rt->m_depthFormat;
+      srcLayout = rt->m_depthLayout;
       aspect = VK_IMAGE_ASPECT_DEPTH_BIT;
     } else if (attachment >= 0 && attachment < rt->number_RT) {
       srcImage = rt->vColorImages[attachment];
       fmt = (attachment < (int)rt->m_colorFormats.size()) ? rt->m_colorFormats[attachment] : rt->m_colorFormat;
+      srcLayout = (attachment < (int)rt->vColorLayouts.size()) ? rt->vColorLayouts[attachment] : VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
     } else {
       goto reopen;
     }
@@ -1548,11 +1598,19 @@ namespace t850 {
     }
 
 reopen:
+    if (!frameOpen)
+      return;
+
     // Reopen command buffer
     vkResetCommandBuffer(m_commandBuffers[m_currentFrame], 0);
     VkCommandBufferBeginInfo beginInfo = { VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO };
     beginInfo.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
     vkBeginCommandBuffer(m_commandBuffers[m_currentFrame], &beginInfo);
+
+    if (IsOffscreenEnabled()) {
+      BindOffscreenTarget(false);
+      return;
+    }
 
     // Restart backbuffer render pass (LOAD to preserve)
     VkRenderPassBeginInfo rpBegin = { VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO };

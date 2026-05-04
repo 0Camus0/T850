@@ -72,6 +72,14 @@ int ParseLogLevel(const std::string& value, int fallback) {
   return fallback;
 }
 
+Config::GLOffscreenFlushMode ParseGLOffscreenFlushMode(const std::string& value, Config::GLOffscreenFlushMode fallback) {
+  std::string lowered = ToLower(value);
+  if (lowered == "frame" || lowered == "current" || lowered == "0") return Config::GLOffscreenFlushMode::Frame;
+  if (lowered == "wait" || lowered == "reuse" || lowered == "1") return Config::GLOffscreenFlushMode::Wait;
+  if (lowered == "none" || lowered == "off" || lowered == "2") return Config::GLOffscreenFlushMode::None;
+  return fallback;
+}
+
 GraphicsApi::E ParseGraphicsApi(const std::string& value, GraphicsApi::E fallback) {
   std::string lowered = ToLower(value);
   if (lowered == "gl" || lowered == "opengl") return GraphicsApi::OPENGL;
@@ -133,6 +141,12 @@ void ApplyConfigJson(const RuntimeConfigJson& json, Config& cfg) {
   if (json.profileFrames) cfg.profileFrames = *json.profileFrames;
   if (json.dumpMatrices) cfg.flags.dumpMatrices = *json.dumpMatrices;
   if (json.dumpMatricesFrames) cfg.dumpMatricesFrames = *json.dumpMatricesFrames;
+  if (json.benchmark) cfg.flags.benchmark = *json.benchmark;
+  if (json.cullDisabled) cfg.flags.cullDisabled = *json.cullDisabled;
+  if (json.benchmarkOutputPath) cfg.benchmarkOutputPath = *json.benchmarkOutputPath;
+  if (json.offscreen) cfg.flags.offscreen = *json.offscreen;
+  if (json.offscreenDebug) cfg.flags.offscreenDebug = *json.offscreenDebug;
+  if (json.glOffscreenFlushMode) cfg.glOffscreenFlushMode = ParseGLOffscreenFlushMode(*json.glOffscreenFlushMode, cfg.glOffscreenFlushMode);
   if (json.orbitYaw) {
     cfg.orbitYawOverride = true;
     cfg.orbitYaw = *json.orbitYaw;
@@ -192,6 +206,12 @@ void ApplyConfigJson(const RuntimeConfigJson& json, Config& cfg) {
     if (devTools.profileFrames) cfg.profileFrames = *devTools.profileFrames;
     if (devTools.dumpMatrices) cfg.flags.dumpMatrices = *devTools.dumpMatrices;
     if (devTools.dumpMatricesFrames) cfg.dumpMatricesFrames = *devTools.dumpMatricesFrames;
+    if (devTools.benchmark) cfg.flags.benchmark = *devTools.benchmark;
+    if (devTools.cullDisabled) cfg.flags.cullDisabled = *devTools.cullDisabled;
+    if (devTools.benchmarkOutputPath) cfg.benchmarkOutputPath = *devTools.benchmarkOutputPath;
+    if (devTools.offscreen) cfg.flags.offscreen = *devTools.offscreen;
+    if (devTools.offscreenDebug) cfg.flags.offscreenDebug = *devTools.offscreenDebug;
+    if (devTools.glOffscreenFlushMode) cfg.glOffscreenFlushMode = ParseGLOffscreenFlushMode(*devTools.glOffscreenFlushMode, cfg.glOffscreenFlushMode);
   }
 }
 
@@ -336,6 +356,25 @@ void ApplyCommandLine(int argc, char** argv, Config& cfg) {
       cfg.flags.dumpMatrices = true;
       cfg.dumpMatricesFrames = std::stoi(argv[++i]);
     }
+    else if (arg == "--benchmark") {
+      cfg.flags.benchmark = true;
+    }
+    else if (arg == "--benchmarkOutput" && i + 1 < argc) {
+      cfg.flags.benchmark = true;
+      cfg.benchmarkOutputPath = argv[++i];
+    }
+    else if (arg == "--cullDisabled") {
+      cfg.flags.cullDisabled = true;
+    }
+    else if (arg == "--offscreen") {
+      cfg.flags.offscreen = true;
+    }
+    else if (arg == "--offscreenDebug") {
+      cfg.flags.offscreenDebug = true;
+    }
+    else if (arg == "--glOffscreenFlushMode" && i + 1 < argc) {
+      cfg.glOffscreenFlushMode = ParseGLOffscreenFlushMode(argv[++i], cfg.glOffscreenFlushMode);
+    }
   }
 }
 
@@ -369,6 +408,12 @@ void PrintHelp() {
     << "  --replaySnapshot <path>            Replay a snapshot JSON\n"
     << "  --keepRunning                      Keep running after dump\n"
     << "  --dumpMatrices <frames>            Write matrix_dump.csv for N frames\n"
+    << "  --benchmark                        Run DayScene tour, write benchmark JSON, then exit\n"
+    << "  --benchmarkOutput <path>            Benchmark JSON output path\n"
+    << "  --cullDisabled                      Disable frustum culling at startup\n"
+    << "  --offscreen                         Render the default target to rotating offscreen RTs instead of presenting\n"
+    << "  --offscreenDebug                    With --offscreen, dump the offscreen color RT roughly once per second\n"
+    << "  --glOffscreenFlushMode <frame|wait|none>  GL offscreen submission pacing mode\n"
     << "  --validateGltf <path>              Validate and summarize glTF/GLB, then exit\n\n"
     << "GUI/tools:\n"
     << "  --gui                              Show GUI on startup\n"

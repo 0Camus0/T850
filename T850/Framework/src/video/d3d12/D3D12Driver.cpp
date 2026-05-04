@@ -696,6 +696,9 @@ namespace t850 {
       BeginFrame();
       m_frameStarted = true;
 
+      if ((CurrentRT < 0 || IsCurrentOffscreenTarget()) && BindOffscreenTarget(true))
+        return;
+
       D3D12_RESOURCE_BARRIER b = {};
       b.Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
       b.Transition.pResource = m_backBuffers[m_currentBackBuffer].Get();
@@ -704,6 +707,9 @@ namespace t850 {
       b.Transition.Subresource = D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES;
       m_commandLists[m_currentBackBuffer]->ResourceBarrier(1, &b);
     }
+
+    if ((CurrentRT < 0 || IsCurrentOffscreenTarget()) && BindOffscreenTarget(true))
+      return;
 
     if (CurrentRT >= 0 && CurrentRT < (int)RTs.size()) {
       const float cc[4] = { 0.0f, 0.0f, 0.0f, 0.0f };
@@ -745,6 +751,26 @@ namespace t850 {
   }
 
   void D3D12Driver::SwapBuffers() {
+
+    if (IsOffscreenEnabled()) {
+      {
+        T8_PROFILE_CPU_SCOPE(t850::g_profiler, "D3D12_OffscreenCmdClose+Execute");
+        m_commandLists[m_currentBackBuffer]->Close();
+        ID3D12CommandList* lists[] = { m_commandLists[m_currentBackBuffer].Get() };
+        m_commandQueue->ExecuteCommandLists(1, lists);
+      }
+
+      const UINT64 fenceVal = m_nextFenceValue++;
+      m_commandQueue->Signal(m_fence.Get(), fenceVal);
+      m_frameFenceValues[m_currentBackBuffer] = fenceVal;
+
+      m_frameStarted = false;
+      CompleteOffscreenFrame();
+      m_currentBackBuffer = (m_currentBackBuffer + 1) % kBackBufferCount;
+
+      if (m_infoQueue) PollDebugMessages();
+      return;
+    }
 
     {
       T8_PROFILE_CPU_SCOPE(t850::g_profiler, "D3D12_CmdClose+Execute");
@@ -844,6 +870,10 @@ namespace t850 {
         rt->depthState = D3D12_RESOURCE_STATE_DEPTH_READ | D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE;
       }
     }
+
+    if (BindOffscreenTarget(false))
+      return;
+
     m_commandLists[m_currentBackBuffer]->OMSetRenderTargets(1, &m_backBufferRTVs[m_currentBackBuffer], FALSE, &m_depthDSV);
     m_commandLists[m_currentBackBuffer]->RSSetViewports(1, &m_viewport);
     m_commandLists[m_currentBackBuffer]->RSSetScissorRects(1, &m_scissorRect);

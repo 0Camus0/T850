@@ -404,6 +404,8 @@ namespace t850 {
       // IB binds and to compute startIndex offsets.
       PoolAlloc ibPoolAlloc;
 
+      uint32_t meshAssetSubmeshIndex = UINT32_MAX;
+
       // Phase B step 1: deduplicated material asset for this subset.
       // Borrowed pointer; lifetime managed by MaterialAssetCache via
       // RenderMesh::Destroy. Today the legacy material fields above
@@ -447,14 +449,38 @@ namespace t850 {
     void GatherInfo();
     int  LoadTex(std::string p, xF::xMaterial *mat, Texture** tex);
 
+    enum class FrustumResult {
+      Outside = 0,
+      Intersecting = 1,
+      Inside = 2
+    };
+
     // Frustum culling: extract 6 planes from row-vector VP matrix
     static void ExtractFrustumPlanes(const XMATRIX44& vp, XVECTOR3 planes[6]);
+    static FrustumResult ClassifyAABBFrustum(const AABB& box, const XMATRIX44& world, const XVECTOR3 planes[6]);
     static bool AABBInsideFrustum(const AABB& box, const XMATRIX44& world, const XVECTOR3 planes[6]);
 
-    // Culling stats (per frame)
-    mutable int m_totalSubsets = 0;
-    mutable int m_drawnSubsets = 0;
+    // Culling stats (per draw pass)
+    mutable int m_totalMeshes = 0;
+    mutable int m_visibleMeshes = 0;
     mutable int m_culledMeshes = 0;
+    mutable int m_totalSubsets = 0;
+    mutable int m_visibleSubsets = 0;
+    mutable int m_culledSubsets = 0;
+    mutable int m_drawnSubsets = 0;
+    mutable int m_totalClusters = 0;
+    mutable int m_visibleClusters = 0;
+    mutable int m_culledClusters = 0;
+    mutable int m_drawnClusters = 0;
+    mutable unsigned long long m_totalIndices = 0;
+    mutable unsigned long long m_drawnIndices = 0;
+    mutable unsigned long long m_culledIndices = 0;
+    mutable unsigned long long m_cullingMeshTests = 0;
+    mutable unsigned long long m_cullingSubsetTests = 0;
+    mutable unsigned long long m_cullingClusterTests = 0;
+    mutable unsigned long long m_drawCalls = 0;
+    mutable unsigned long long m_renderStateChanges = 0;
+    mutable double m_cullingCpuMs = 0.0;
 
     Texture*	d3dxEnvMap;
 
@@ -467,6 +493,10 @@ namespace t850 {
     // lifetime. Populated in Create(); released in Destroy().
     MeshAsset*  m_asset = nullptr;
     std::string m_sourcePath;
+
+    std::vector<uint8_t> m_visibilityScratch;
+    std::vector<std::size_t> m_geometryOrderScratch;
+    std::vector<std::size_t> m_drawOrderScratch;
   };
 }
 

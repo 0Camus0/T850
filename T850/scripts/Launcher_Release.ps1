@@ -184,6 +184,8 @@ $xaml = @"
                         <CheckBox Name="chkFullscreen" Content="Fullscreen" Margin="0,0,0,8"/>
                     </StackPanel>
                 </Grid>
+                <CheckBox Name="chkCullDisabled" Content="Disable culling" Margin="0,0,0,6"/>
+                <CheckBox Name="chkBenchmark" Content="Benchmark mode" Margin="0,0,0,6" Visibility="Collapsed"/>
                 <StackPanel Name="pnlModelSelect" Margin="0,6,0,0">
                     <TextBlock Text="Model (Sandbox)" Style="{StaticResource LabelStyle}"/>
                     <ComboBox Name="cmbModel"/>
@@ -345,6 +347,8 @@ $txtSeconds     = $window.FindName("txtSeconds")
 $txtFrame       = $window.FindName("txtFrame")
 $cmbScene       = $window.FindName("cmbScene")
 $chkFullscreen  = $window.FindName("chkFullscreen")
+$chkCullDisabled = $window.FindName("chkCullDisabled")
+$chkBenchmark   = $window.FindName("chkBenchmark")
 $cmbModel       = $window.FindName("cmbModel")
 $pnlModelSelect = $window.FindName("pnlModelSelect")
 $txtWidth       = $window.FindName("txtWidth")
@@ -408,6 +412,17 @@ function Load-Config {
         if ($cfg.PSObject.Properties['debugFrames']) {
             $chkDebugFrames.IsChecked = [bool]$cfg.debugFrames
         }
+        # Runtime flags
+        if ($cfg.PSObject.Properties['benchmark']) {
+            $chkBenchmark.IsChecked = [bool]$cfg.benchmark
+        } elseif ($cfg.devTools -and $cfg.devTools.PSObject.Properties['benchmark']) {
+            $chkBenchmark.IsChecked = [bool]$cfg.devTools.benchmark
+        }
+        if ($cfg.PSObject.Properties['cullDisabled']) {
+            $chkCullDisabled.IsChecked = [bool]$cfg.cullDisabled
+        } elseif ($cfg.devTools -and $cfg.devTools.PSObject.Properties['cullDisabled']) {
+            $chkCullDisabled.IsChecked = [bool]$cfg.devTools.cullDisabled
+        }
         # Keep Running
         if ($cfg.PSObject.Properties['keepRunning']) {
             $chkKeepRunning.IsChecked = [bool]$cfg.keepRunning
@@ -455,16 +470,19 @@ function Load-Config {
 }
 
 function Save-Config {
+    $sceneTag = ($cmbScene.SelectedItem).Tag.ToString()
     $cfg = @{
         api           = ($cmbApi.SelectedItem).Tag.ToString()
         display = @{
             width      = [int]$txtWidth.Text
             height     = [int]$txtHeight.Text
             fullscreen = [bool]$chkFullscreen.IsChecked
-            scene      = [int]($cmbScene.SelectedItem).Tag.ToString()
+            scene      = [int]$sceneTag
             model      = if ($cmbModel.SelectedItem) { ($cmbModel.SelectedItem).Tag.ToString() } else { "Models/DamagedHelmet.glb" }
         }
         debugFrames = [bool]$chkDebugFrames.IsChecked
+        benchmark = ($sceneTag -eq "1" -and [bool]$chkBenchmark.IsChecked)
+        cullDisabled = [bool]$chkCullDisabled.IsChecked
         keepRunning = [bool]$chkKeepRunning.IsChecked
         replaySnapshot = @{
             enabled = [bool]$chkReplaySnapshot.IsChecked
@@ -515,6 +533,14 @@ function Get-LaunchCommand {
     $sceneTag = ($cmbScene.SelectedItem).Tag.ToString()
     if ($sceneTag -ne "0") {
         $argList += @("--scene", $sceneTag)
+    }
+
+    if ($sceneTag -eq "1" -and $chkBenchmark.IsChecked) {
+        $argList += "--benchmark"
+    }
+
+    if ($chkCullDisabled.IsChecked) {
+        $argList += "--cullDisabled"
     }
 
     # Model path (for Sandbox scene)
@@ -607,6 +633,14 @@ function Update-Preview {
     }
 }
 
+function Update-SceneOptionVisibility {
+    if (-not $cmbScene.SelectedItem) { return }
+    $sceneTag = ($cmbScene.SelectedItem).Tag.ToString()
+    $pnlModelSelect.Visibility = if ($sceneTag -eq "0") { "Visible" } else { "Collapsed" }
+    $chkBenchmark.Visibility = if ($sceneTag -eq "1") { "Visible" } else { "Collapsed" }
+    if ($sceneTag -ne "1") { $chkBenchmark.IsChecked = $false }
+}
+
 # ── Events ──
 
 $chkDump.Add_Checked({
@@ -658,12 +692,15 @@ $cmbModel.Add_SelectionChanged({ Update-Preview })
 
 $cmbApi.Add_SelectionChanged({ Update-Preview })
 $cmbScene.Add_SelectionChanged({
-    # Show model selector only for Sandbox scene
-    $pnlModelSelect.Visibility = if (($cmbScene.SelectedItem).Tag.ToString() -eq "0") { "Visible" } else { "Collapsed" }
+    Update-SceneOptionVisibility
     Update-Preview
 })
 $chkFullscreen.Add_Checked({ Update-Preview })
 $chkFullscreen.Add_Unchecked({ Update-Preview })
+$chkCullDisabled.Add_Checked({ Update-Preview })
+$chkCullDisabled.Add_Unchecked({ Update-Preview })
+$chkBenchmark.Add_Checked({ Update-Preview })
+$chkBenchmark.Add_Unchecked({ Update-Preview })
 $cmbLogLevel.Add_SelectionChanged({ Update-Preview })
 $chkLogToFile.Add_Checked({ Update-Preview })
 $chkLogToFile.Add_Unchecked({ Update-Preview })
@@ -747,6 +784,7 @@ function Populate-ModelList {
 
 Populate-ModelList
 Load-Config
+Update-SceneOptionVisibility
 Update-Preview
 
 $window.ShowDialog() | Out-Null

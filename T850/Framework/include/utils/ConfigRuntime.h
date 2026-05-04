@@ -50,6 +50,12 @@ struct DevToolsJson {
   std::optional<int> profileFrames;
   std::optional<bool> dumpMatrices;
   std::optional<int> dumpMatricesFrames;
+  std::optional<bool> benchmark;
+  std::optional<bool> cullDisabled;
+  std::optional<std::string> benchmarkOutputPath;
+  std::optional<bool> offscreen;
+  std::optional<bool> offscreenDebug;
+  std::optional<std::string> glOffscreenFlushMode;
 };
 
 struct RuntimeConfigJson {
@@ -85,6 +91,12 @@ struct RuntimeConfigJson {
   std::optional<int> profileFrames;
   std::optional<bool> dumpMatrices;
   std::optional<int> dumpMatricesFrames;
+  std::optional<bool> benchmark;
+  std::optional<bool> cullDisabled;
+  std::optional<std::string> benchmarkOutputPath;
+  std::optional<bool> offscreen;
+  std::optional<bool> offscreenDebug;
+  std::optional<std::string> glOffscreenFlushMode;
   std::optional<float> orbitYaw;
 
   std::optional<DisplayJson> display;
@@ -95,6 +107,7 @@ struct RuntimeConfigJson {
 
 std::string StripQuotes(std::string value);
 int ParseLogLevel(const std::string& value, int fallback);
+Config::GLOffscreenFlushMode ParseGLOffscreenFlushMode(const std::string& value, Config::GLOffscreenFlushMode fallback);
 GraphicsApi::E ParseGraphicsApi(const std::string& value, GraphicsApi::E fallback);
 const char* ApiTag(GraphicsApi::E api);
 

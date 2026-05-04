@@ -116,6 +116,7 @@ class DayScene : public t850::SceneBase
   int FindLightOption(int activeLights);
   void ApplyActiveCameraSelection(int selection);
   void SetSpectatorCameraEnabled(bool enabled);
+  void SetSpectatorDebugEnabled(bool enabled);
   void RecordBenchmarkFrame(float dtSecs);
   void WriteBenchmarkResults(float durationSecs) const;
   std::string BuildBenchmarkOutputPath() const;

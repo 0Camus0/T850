@@ -565,6 +565,15 @@ void DayScene::SetSpectatorCameraEnabled(bool enabled) {
   }
 }
 
+void DayScene::SetSpectatorDebugEnabled(bool enabled) {
+  SetSpectatorCameraEnabled(enabled);
+  if (!m_spectatorCameraEnabled) {
+    ApplyActiveCameraSelection(m_activeCameraIndex);
+  }
+  m_showCullStats = m_spectatorCameraEnabled;
+  SceneProp.ShowCullingDebug = m_showCullStats;
+}
+
 void DayScene::DestroyAssets() {
   SceneProp.SSAOKernel.Destroy();
   m_wireframeSphere.Destroy();
@@ -837,7 +846,7 @@ void DayScene::OnInput(InputManager* IManager) {
   }
 
   if (IManager->PressedOnceKey(T800K_F2)) {
-    m_showCullStats = !m_showCullStats;
+    m_showCullStats = m_spectatorCameraEnabled ? true : !m_showCullStats;
     SceneProp.ShowCullingDebug = m_showCullStats;
   }
 
@@ -861,7 +870,7 @@ void DayScene::OnInput(InputManager* IManager) {
   }
 
   if (IManager->PressedOnceKey(T800K_5)) {
-    SetSpectatorCameraEnabled(!m_spectatorCameraEnabled);
+    SetSpectatorDebugEnabled(!m_spectatorCameraEnabled);
     T8_LOG_INFO("[CAMERA] Spectator camera %s", m_spectatorCameraEnabled ? "enabled" : "disabled");
   }
 
@@ -1920,6 +1929,14 @@ void DayScene::DrawDevGui(t850::DevGuiContext& gui) {
   }
 
   if (gui.BeginSection("Culling")) {
+    t850::CheckboxDesc spectatorDesc;
+    spectatorDesc.name = "spectator_camera";
+    spectatorDesc.label = "Spectator camera (5)";
+    bool spectatorEnabled = m_spectatorCameraEnabled;
+    if (gui.Checkbox(spectatorDesc, spectatorEnabled)) {
+      SetSpectatorDebugEnabled(spectatorEnabled);
+    }
+
     t850::CheckboxDesc cullingDesc;
     cullingDesc.name = "frustum_culling";
     cullingDesc.label = "Frustum culling";
@@ -1931,10 +1948,10 @@ void DayScene::DrawDevGui(t850::DevGuiContext& gui) {
     t850::CheckboxDesc statsDesc;
     statsDesc.name = "show_culling_debug";
     statsDesc.label = "Culling stats and frustum";
-    bool showCulling = m_showCullStats;
+    bool showCulling = m_spectatorCameraEnabled ? true : m_showCullStats;
     if (gui.Checkbox(statsDesc, showCulling)) {
-      m_showCullStats = showCulling;
-      SceneProp.ShowCullingDebug = showCulling;
+      m_showCullStats = m_spectatorCameraEnabled ? true : showCulling;
+      SceneProp.ShowCullingDebug = m_showCullStats;
     }
   }
 }

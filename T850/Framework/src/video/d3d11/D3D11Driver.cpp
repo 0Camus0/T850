@@ -414,6 +414,9 @@ namespace t850 {
 #endif
 
   void D3DXDriver::Clear() {
+    if ((CurrentRT < 0 || IsCurrentOffscreenTarget()) && BindOffscreenTarget(true))
+      return;
+
     ID3D11DeviceContext* deviceContext = reinterpret_cast<ID3D11DeviceContext*>(T8DeviceContext->GetAPIObject());
     float rgba[4] = { 0.227f, 0.227f, 0.227f, 1.0f };
     deviceContext->ClearRenderTargetView(D3D11RenderTargetView.Get(), rgba);
@@ -444,6 +447,13 @@ namespace t850 {
     T8_PROFILE_SCOPE(t850::g_profiler, "D3D11_Present");
     T8_LOG_TRACE("[D3DXDriver] SwapBuffers/Present");
 
+    if (IsOffscreenEnabled()) {
+      ID3D11DeviceContext* deviceContext = reinterpret_cast<ID3D11DeviceContext*>(T8DeviceContext->GetAPIObject());
+      deviceContext->Flush();
+      CompleteOffscreenFrame();
+      return;
+    }
+
     // Frame timing
     static LARGE_INTEGER freq = {};
     static LARGE_INTEGER lastSwap = {};
@@ -464,18 +474,20 @@ namespace t850 {
   void D3DXDriver::PopRT() {
     T8_TRACE(EvPopRT());
     ID3D11DeviceContext* deviceContext = reinterpret_cast<ID3D11DeviceContext*>(T8DeviceContext->GetAPIObject());
-    deviceContext->OMSetRenderTargets(1, D3D11RenderTargetView.GetAddressOf(), D3D11DepthStencilTargetView.Get());
+    const int poppedRT = CurrentRT;
 
-
-    deviceContext->RSSetViewports(1, &viewport);
-
-    if (CurrentRT >= 0) {
-      if (RTs[CurrentRT]->GenMips) {
-        D3DXTexture* pTex = dynamic_cast<D3DXTexture*>(RTs[CurrentRT]->vColorTextures[0]);
+    if (poppedRT >= 0) {
+      if (RTs[poppedRT]->GenMips) {
+        D3DXTexture* pTex = dynamic_cast<D3DXTexture*>(RTs[poppedRT]->vColorTextures[0]);
         deviceContext->GenerateMips(pTex->pSRVTex.Get());
       }
-
     }
+
+    if (BindOffscreenTarget(false))
+      return;
+
+    deviceContext->OMSetRenderTargets(1, D3D11RenderTargetView.GetAddressOf(), D3D11DepthStencilTargetView.Get());
+    deviceContext->RSSetViewports(1, &viewport);
 
     CurrentRT = -1;
 #ifdef T850_RENDER_TRACE

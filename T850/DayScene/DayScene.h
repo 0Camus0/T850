@@ -16,6 +16,8 @@
 
 
 #include <core/Core.h>
+#include <string>
+#include <vector>
 class DayScene : public t850::SceneBase
 {
   enum {
@@ -111,6 +113,24 @@ class DayScene : public t850::SceneBase
 
   // Helper: find selector index for a light count value
   int FindLightOption(int activeLights);
+  void ApplyActiveCameraSelection(int selection);
+  void SetSpectatorCameraEnabled(bool enabled);
+  void RecordBenchmarkFrame(float dtSecs);
+  void WriteBenchmarkResults(float durationSecs) const;
+  std::string BuildBenchmarkOutputPath() const;
+
+  struct BenchmarkCullingTotals {
+    unsigned long long samples = 0;
+    unsigned long long meshTests = 0;
+    unsigned long long subsetTests = 0;
+    unsigned long long clusterTests = 0;
+    unsigned long long drawCalls = 0;
+    unsigned long long renderStateChanges = 0;
+    unsigned long long totalIndices = 0;
+    unsigned long long drawnIndices = 0;
+    unsigned long long culledIndices = 0;
+    double cullingCpuMs = 0.0;
+  };
 
   float DtSecs;
   t850::PrimitiveManager PrimitiveMgr;
@@ -173,6 +193,7 @@ class DayScene : public t850::SceneBase
   enum {
     NORMAL_CAM1 = 0,
     LIGHT_CAM1,
+    SPECTATOR_CAM1,
     MAX_CAMS
   };
   int				CamSelection;
@@ -181,6 +202,7 @@ class DayScene : public t850::SceneBase
   int       m_debugRTSelection = 0;
   bool      m_showSpline = false;
   bool      m_showLights = false;
+  bool      m_spectatorCameraEnabled = false;
   int       m_activeCameraIndex = 0;
   std::vector<std::string> m_cubemapNames;
   int       m_currentCubemapIndex = 0;
@@ -192,6 +214,9 @@ class DayScene : public t850::SceneBase
   t850::WireframeArrow m_wireframeArrow;
   t850::TextRenderer m_debugText;
   bool m_showCullStats = false;
+  float m_tourTimeSec = 0.0f;
+  std::vector<double> m_benchmarkFrameTimesMs;
+  BenchmarkCullingTotals m_benchmarkCullingTotals;
   t850::LensFlare m_flare;
   XMATRIX44 m;
 };

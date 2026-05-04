@@ -74,6 +74,9 @@ SceneProps() : ActiveCamera(0) , ActiveLights(1), ActiveLightCamera(0), ActiveGa
 
 	std::vector<Light>	   Lights;
 	std::vector<Camera*> pCameras;
+	Camera* pCullingCamera = nullptr;
+	bool FrustumCullingEnabled = true;
+	bool ShowCullingDebug = false;
 
 	std::vector<Camera*> pLightCameras;
 

@@ -399,6 +399,9 @@ void RenderGraph::Execute(
     ExecutePass(node, driver, props, meshes, meshCount, quads,
                 mainCam, lightCam, omniCams, envMaps);
   }
+  if (mainCam && !props.pCameras.empty()) {
+    props.pCameras[0] = mainCam;
+  }
 }
 
 void RenderGraph::ExecutePass(
@@ -497,6 +500,8 @@ void RenderGraph::ExecutePass(
       driver->PushRT(node.rt_handle);
     } else if (node.rt_handle >= 0 && !pass.push && driver->CurrentRT != node.rt_handle) {
       driver->PushRTLoad(node.rt_handle);
+    } else if (node.rt_handle < 0 && driver->IsOffscreenEnabled() && !driver->IsCurrentOffscreenTarget()) {
+      driver->BindOffscreenTarget(false);
     }
 
     if (pass.clear) {

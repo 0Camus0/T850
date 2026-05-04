@@ -36,9 +36,11 @@ namespace t850 {
   class SplineAgent {
   private:
     float realLoc;
+    bool m_finishedJourneyThisUpdate;
   public:
     SplineAgent() {
       realLoc = 0;
+      m_finishedJourneyThisUpdate = false;
       m_acceleration = 0;
       m_velocity = 0;
       m_moving = false;
@@ -46,6 +48,8 @@ namespace t850 {
     }
     void Update(float delta);
     void SetOffset(float);
+    bool FinishedJourneyThisUpdate() const { return m_finishedJourneyThisUpdate; }
+    float GetOffset() const { return realLoc; }
     Spline* m_pSpline;
     SplinePoint m_actualPoint;
     XVECTOR3 m_actualGradient;

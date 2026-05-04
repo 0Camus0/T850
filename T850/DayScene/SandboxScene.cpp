@@ -191,6 +191,7 @@ void SandboxScene::InitVars() {
   } else {
     T8_LOG_ERROR("[SandboxScene] Failed to load Scenes/SandboxScene.json");
   }
+  SceneProp.FrustumCullingEnabled = !g_config.flags.cullDisabled;
 
   t850::FrameDumperConfig dumpCfg;
   dumpCfg.dumpEnabled        = g_config.flags.dumpEnabled;
@@ -489,8 +490,14 @@ void SandboxScene::OnInput(InputManager* IManager) {
     pFramework->ChangeAPI(GraphicsApi::OPENGL);
 
   // Debug toggles
-  if (IManager->PressedOnceKey(T800K_F2))
+  if (IManager->PressedOnceKey(T800K_F2)) {
     m_showCullStats = !m_showCullStats;
+    SceneProp.ShowCullingDebug = m_showCullStats;
+  }
+  if (IManager->PressedOnceKey(T800K_KP6) || IManager->PressedOnceKey(T800K_6)) {
+    SceneProp.FrustumCullingEnabled = !SceneProp.FrustumCullingEnabled;
+    T8_LOG_INFO("[CULLING] Frustum culling %s", SceneProp.FrustumCullingEnabled ? "enabled" : "disabled");
+  }
   if (IManager->PressedOnceKey(T800K_F3))
     m_showAABBs = !m_showAABBs;
 
@@ -559,6 +566,7 @@ void SandboxScene::ComputeOrbitCamera() {
 }
 
 void SandboxScene::OnDraw() {
+  SceneProp.ShowCullingDebug = m_showCullStats;
   // FPS logging (every 120 frames)
   static int sFrameCount = 0;
   static float sAccumTime = 0.0f;
@@ -709,15 +717,35 @@ void SandboxScene::OnDraw() {
     pFramework->pVideoDriver->SetDepthStencilState(BaseDriver::NONE);
 
     char buf[256];
-    snprintf(buf, sizeof(buf), "Meshes: %d/%zu  Culled: %d  Subsets drawn: %d/%d",
-             (int)rm->Info.size() - rm->m_culledMeshes, rm->Info.size(),
-             rm->m_culledMeshes, rm->m_drawnSubsets, rm->m_totalSubsets);
     XVECTOR3 yellow(1.0f, 1.0f, 0.2f);
-    m_debugText.DrawPixel(10.0f, 40.0f, w, h, yellow, buf);
-
-    snprintf(buf, sizeof(buf), "F2: stats  F3: AABBs  K: cam pos");
     XVECTOR3 gray(0.7f, 0.7f, 0.7f);
-    m_debugText.DrawPixel(10.0f, 65.0f, w, h, gray, buf);
+    const float statScale = 0.56f;
+    const float lineHeight = 34.0f * statScale * ((float)h / 720.0f);
+    const float bottomMargin = 26.0f * ((float)h / 720.0f);
+    float y = (float)h - bottomMargin - lineHeight * 4.0f;
+    auto drawCenteredStat = [&](const XVECTOR3& color, const char* text) {
+      float textW = m_debugText.MeasurePixel(text, w, h) * statScale;
+      float x = ((float)w - textW) * 0.5f;
+      m_debugText.DrawPixelScaled(x, y, statScale, statScale, w, h, color, text);
+      y += lineHeight;
+    };
+
+    snprintf(buf, sizeof(buf), "Meshes: %d/%d  culled %d",
+            rm->m_visibleMeshes, rm->m_totalMeshes, rm->m_culledMeshes);
+    drawCenteredStat(yellow, buf);
+
+    snprintf(buf, sizeof(buf), "Subsets: %d/%d  culled %d  drawn %d",
+            rm->m_visibleSubsets, rm->m_totalSubsets, rm->m_culledSubsets, rm->m_drawnSubsets);
+    drawCenteredStat(yellow, buf);
+
+    snprintf(buf, sizeof(buf), "Clusters: %d/%d  culled %d  drawn %d",
+            rm->m_visibleClusters, rm->m_totalClusters, rm->m_culledClusters, rm->m_drawnClusters);
+    drawCenteredStat(yellow, buf);
+
+        snprintf(buf, sizeof(buf), "GBuffer indices: %llu/%llu  6/KP6: culling %s  F2: stats  F3: AABBs  K: cam pos",
+          rm->m_drawnIndices, rm->m_totalIndices,
+          SceneProp.FrustumCullingEnabled ? "ON" : "OFF");
+    drawCenteredStat(gray, buf);
 
     pFramework->pVideoDriver->SetBlendState(BaseDriver::BLEND_DEFAULT);
     pFramework->pVideoDriver->SetDepthStencilState(BaseDriver::DEPTH_DEFAULT);

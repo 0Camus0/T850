@@ -24,6 +24,30 @@
          "far_plane": 12000,
          "ortho": false,
          "left_handed": true
+      },
+      {
+         "position": [
+            0,
+            35,
+            -90
+         ],
+         "eye": [
+            0,
+            35,
+            -90
+         ],
+         "pitch": 0.24,
+         "roll": 0,
+         "yaw": 0.02,
+         "speed": 15,
+         "fov": 1.0471976,
+         "aspect": 1.7778,
+         "width": 1280,
+         "height": 720,
+         "near_plane": 2,
+         "far_plane": 12000,
+         "ortho": false,
+         "left_handed": true
       }
    ],
    "light_cameras": [
@@ -435,7 +459,7 @@
       "active_lights": 1,
       "shadow_enabled": true,
       "ssao_enabled": true,
-      "dof_enabled": false,
+      "dof_enabled": true,
       "parallax_enabled": true,
       "godrays_enabled": true,
       "auto_focus": true,
@@ -844,8 +868,7 @@
          "label": "Camera",
          "options": [
             "Spline",
-            "Free",
-            "Light"
+            "Free"
          ],
          "default_index": 0
       },

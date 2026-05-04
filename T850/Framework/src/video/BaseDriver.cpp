@@ -14,10 +14,17 @@
 #include <utils/cil.h>
 #include <utils/Log.h>
 #include <debug/RenderTrace.h>
+#include <core/Config.h>
+#include <algorithm>
+#include <ctime>
 #include <iostream>
 #include <string>
 #include <fstream>
 #include <string.h>
+#include <chrono>
+#include <filesystem>
+#include <iomanip>
+#include <sstream>
 
 namespace t850 {
   BaseDriver*	g_pBaseDriver = 0;
@@ -337,6 +344,8 @@ namespace t850 {
   {
     for (unsigned int i = 0; i < RTs.size(); i++) {
       BaseRT *pRT = RTs[i];
+      if (!pRT)
+        continue;
       pRT->release();
       pRT = nullptr;
     }
@@ -358,6 +367,9 @@ namespace t850 {
     if (id < 0 || id >= (int)RTs.size())
       return;
 
+    if (IsCurrentOffscreenTarget() && CurrentRT != id)
+      CurrentRT = -1;
+
     if (CurrentRT >= 0 && CurrentRT != id)
       PopRT();
 
@@ -377,6 +389,9 @@ namespace t850 {
   {
     if (id < 0 || id >= (int)RTs.size())
       return;
+
+    if (IsCurrentOffscreenTarget() && CurrentRT != id)
+      CurrentRT = -1;
 
     if (CurrentRT >= 0 && CurrentRT != id)
       PopRT();
@@ -581,5 +596,152 @@ namespace t850 {
     BaseRT	*pRT = T8Device->CreateRT(nrt, cf, df, w, h, genMips);
     pRT->number_RT = nrt;
     RTs[RTID] = pRT;
+  }
+
+  bool BaseDriver::IsOffscreenEnabled() const {
+    return g_config.flags.offscreen;
+  }
+
+  bool BaseDriver::IsOffscreenDebugEnabled() const {
+    return g_config.flags.offscreen && g_config.flags.offscreenDebug;
+  }
+
+  bool BaseDriver::EnsureOffscreenTargets() {
+    if (!IsOffscreenEnabled())
+      return false;
+
+    const int targetWidth = width > 0 ? width : g_config.width;
+    const int targetHeight = height > 0 ? height : g_config.height;
+    if (!m_offscreenRTs.empty() && m_offscreenWidth == targetWidth && m_offscreenHeight == targetHeight)
+      return true;
+
+    DestroyOffscreenTargets();
+    m_offscreenWidth = targetWidth;
+    m_offscreenHeight = targetHeight;
+    m_offscreenFrameIndex = 0;
+    m_offscreenFrameCounter = 0;
+    m_offscreenDebugDir.clear();
+    m_offscreenDebugTimerStarted = false;
+
+    static constexpr int kOffscreenBufferCount = 3;
+    for (int i = 0; i < kOffscreenBufferCount; ++i) {
+      int rt = CreateRT(1, BaseRT::RGBA8, BaseRT::F32, targetWidth, targetHeight, false);
+      if (rt < 0) {
+        T8_LOG_ERROR("[Offscreen] Failed to create offscreen RT %d (%dx%d)", i, targetWidth, targetHeight);
+        DestroyOffscreenTargets();
+        return false;
+      }
+      m_offscreenRTs.push_back(rt);
+    }
+
+    T8_LOG_INFO("[Offscreen] Created %zu offscreen RTs (%dx%d)", m_offscreenRTs.size(), targetWidth, targetHeight);
+    return true;
+  }
+
+  void BaseDriver::DestroyOffscreenTargets() {
+    for (int rt : m_offscreenRTs) {
+      DestroyRT(rt);
+    }
+    m_offscreenRTs.clear();
+    m_offscreenWidth = 0;
+    m_offscreenHeight = 0;
+    m_offscreenFrameIndex = 0;
+  }
+
+  int BaseDriver::GetActiveOffscreenRT() const {
+    if (m_offscreenRTs.empty())
+      return -1;
+    int index = m_offscreenFrameIndex % static_cast<int>(m_offscreenRTs.size());
+    return m_offscreenRTs[index];
+  }
+
+  bool BaseDriver::IsCurrentOffscreenTarget() const {
+    if (CurrentRT < 0 || m_offscreenRTs.empty())
+      return false;
+    return std::find(m_offscreenRTs.begin(), m_offscreenRTs.end(), CurrentRT) != m_offscreenRTs.end();
+  }
+
+  bool BaseDriver::BindOffscreenTarget(bool clear) {
+    if (!EnsureOffscreenTargets())
+      return false;
+
+    const int rt = GetActiveOffscreenRT();
+    if (rt < 0 || rt >= static_cast<int>(RTs.size()) || !RTs[rt])
+      return false;
+
+    CurrentRT = rt;
+    if (clear)
+      RTs[rt]->Set(*T8DeviceContext);
+    else
+      RTs[rt]->SetLoad(*T8DeviceContext);
+
+#ifdef T850_RENDER_TRACE
+    if (T8_TRACE_ACTIVE()) {
+      int rid = g_renderTracer->RegisterRT(RTs[rt], nullptr, rt);
+      g_renderTracer->EvPushRT(rid, !clear);
+    }
+    RefreshTracePendingRenderState();
+#endif
+    return true;
+  }
+
+  void BaseDriver::CompleteOffscreenFrame() {
+    if (!IsOffscreenEnabled() || m_offscreenRTs.empty())
+      return;
+
+    const int completedRT = GetActiveOffscreenRT();
+    ++m_offscreenFrameCounter;
+
+    if (IsOffscreenDebugEnabled() && completedRT >= 0) {
+      const auto now = std::chrono::steady_clock::now();
+      if (!m_offscreenDebugTimerStarted) {
+        m_lastOffscreenDebugDump = now;
+        m_offscreenDebugTimerStarted = true;
+      } else if (now - m_lastOffscreenDebugDump >= std::chrono::seconds(1)) {
+        SaveRTToFile(completedRT, BaseDriver::COLOR0_ATTACHMENT, BuildOffscreenDebugPath(m_offscreenFrameCounter));
+        m_lastOffscreenDebugDump = now;
+      }
+    }
+
+    if (!m_offscreenRTs.empty())
+      m_offscreenFrameIndex = (m_offscreenFrameIndex + 1) % static_cast<int>(m_offscreenRTs.size());
+  }
+
+  const char* BaseDriver::OffscreenApiTag() const {
+    return (m_currentAPI == GraphicsApi::OPENGL) ? "gl"
+         : (m_currentAPI == GraphicsApi::D3D12)  ? "d3d12"
+         : (m_currentAPI == GraphicsApi::VULKAN) ? "vulkan"
+         : "d3d11";
+  }
+
+  std::string BaseDriver::BuildOffscreenDebugDirectory() {
+    if (!m_offscreenDebugDir.empty())
+      return m_offscreenDebugDir;
+
+    auto now = std::chrono::system_clock::now();
+    std::time_t nowTime = std::chrono::system_clock::to_time_t(now);
+    std::tm localTime{};
+#ifdef OS_WINDOWS
+    localtime_s(&localTime, &nowTime);
+#else
+    localtime_r(&nowTime, &localTime);
+#endif
+
+    std::ostringstream out;
+    out << "dumps_" << OffscreenApiTag()
+        << "_offscreen_f" << m_offscreenFrameCounter << "_"
+        << std::put_time(&localTime, "%Y%m%d_%H%M%S");
+    m_offscreenDebugDir = out.str();
+    std::filesystem::create_directories(m_offscreenDebugDir);
+    T8_LOG_INFO("[Offscreen] Debug dumps -> %s/", m_offscreenDebugDir.c_str());
+    return m_offscreenDebugDir;
+  }
+
+  std::string BaseDriver::BuildOffscreenDebugPath(unsigned long long frameNumber) {
+    std::ostringstream file;
+    file << BuildOffscreenDebugDirectory()
+         << "/RT_Dump_Offscreen_f"
+         << std::setw(6) << std::setfill('0') << frameNumber;
+    return file.str();
   }
 }

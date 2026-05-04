@@ -8,6 +8,11 @@ namespace t850 {
   extern DeviceContext* T8DeviceContext;
 
 void WireframeSphere::Create(int rings, int segments) {
+  Destroy();
+  vertices.clear();
+  indices.clear();
+  indexCount = 0;
+
   char* vsSourceP;
   char* fsSourceP;
   if (g_pBaseDriver->UsesGLSL()) {
@@ -107,6 +112,9 @@ void WireframeSphere::Create(int rings, int segments) {
 }
 
 void WireframeSphere::Draw(const XMATRIX44& vp, const XVECTOR3& center, float radius) {
+  if (!s || !IB || !VB || !CB || !T8DeviceContext)
+    return;
+
   XMATRIX44 scale, translate, world;
   XVECTOR3 pos = center;
   XMatScaling(scale, radius, radius, radius);
@@ -116,17 +124,22 @@ void WireframeSphere::Draw(const XMATRIX44& vp, const XVECTOR3& center, float ra
 
   IB->Set(*T8DeviceContext, 0, IndexBufferFormat::R16);
   VB->Set(*T8DeviceContext, sizeof(Vert), 0);
+  T8DeviceContext->SetPrimitiveTopology(Topology::LINE_LIST);
   s->Set(*T8DeviceContext);
   CB->UpdateFromBuffer(*T8DeviceContext, &constantBuff.WVP[0]);
   CB->Set(*T8DeviceContext);
-  T8DeviceContext->SetPrimitiveTopology(Topology::LINE_LIST);
   T8DeviceContext->DrawIndexed(static_cast<unsigned>(indexCount), 0, 0);
+  T8DeviceContext->SetPrimitiveTopology(Topology::TRIANLE_LIST);
 }
 
 void WireframeSphere::Destroy() {
   if (VB) { VB->release(); VB = nullptr; }
   if (IB) { IB->release(); IB = nullptr; }
   if (CB) { CB->release(); CB = nullptr; }
+  s = nullptr;
+  vertices.clear();
+  indices.clear();
+  indexCount = 0;
 }
 
 }

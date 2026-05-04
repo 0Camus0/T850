@@ -18,6 +18,7 @@
 #include <string>
 #include <vector>
 #include <unordered_map>
+#include <chrono>
 #include <Descriptors.h>
 #include <utils/Technique.h>
 #include <video/WindowHandle.h>
@@ -326,6 +327,15 @@ namespace t850 {
     void	 PushRTLoad(int id);
     virtual void	 PopRT() = 0;
 
+    bool IsOffscreenEnabled() const;
+    bool IsOffscreenDebugEnabled() const;
+    bool EnsureOffscreenTargets();
+    void DestroyOffscreenTargets();
+    bool BindOffscreenTarget(bool clear);
+    int GetActiveOffscreenRT() const;
+    bool IsCurrentOffscreenTarget() const;
+    void CompleteOffscreenFrame();
+
 
     Texture* GetRTTexture(int id, int index);
     ShaderBase*	GetShader(ShaderKey key);
@@ -356,6 +366,20 @@ namespace t850 {
     GraphicsApi::E m_currentAPI;
 	FaceCulling	m_FaceCulling;
     int	width, height;
+
+  private:
+    std::string BuildOffscreenDebugDirectory();
+    std::string BuildOffscreenDebugPath(unsigned long long frameNumber);
+    const char* OffscreenApiTag() const;
+
+    std::vector<int> m_offscreenRTs;
+    int m_offscreenWidth = 0;
+    int m_offscreenHeight = 0;
+    int m_offscreenFrameIndex = 0;
+    unsigned long long m_offscreenFrameCounter = 0;
+    std::string m_offscreenDebugDir;
+    bool m_offscreenDebugTimerStarted = false;
+    std::chrono::steady_clock::time_point m_lastOffscreenDebugDump;
   };
 
 

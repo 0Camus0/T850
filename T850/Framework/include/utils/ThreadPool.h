@@ -114,7 +114,7 @@ public:
     std::atomic<int> nextIndex(begin);
     int chunkSize = (std::max)(1, total / (numWorkers * 8)); // ~8 chunks per worker
 
-    std::atomic<int> remaining(numWorkers);
+    int remaining = numWorkers;
     std::mutex doneMutex;
     std::condition_variable doneCv;
 
@@ -127,9 +127,12 @@ public:
           func(i);
         }
       }
-      if (remaining.fetch_sub(1) == 1) {
+      {
         std::lock_guard<std::mutex> lock(doneMutex);
-        doneCv.notify_one();
+        --remaining;
+        if (remaining == 0) {
+          doneCv.notify_one();
+        }
       }
     };
 
@@ -144,7 +147,7 @@ public:
     // Wait for all workers to finish
     {
       std::unique_lock<std::mutex> lock(doneMutex);
-      doneCv.wait(lock, [&]() { return remaining.load() == 0; });
+      doneCv.wait(lock, [&]() { return remaining == 0; });
     }
   }
 

@@ -5,6 +5,7 @@
 #include "EditorImGui.h"
 
 #include <Config.h>
+#include <imgui/ImGuiSystem.h>
 #include <video/BaseDriver.h>
 #include <core/Core.h>
 #include <utils/Log.h>
@@ -13,22 +14,9 @@
 // ImGui core
 #include <imgui.h>
 
-// Platform backend — SDL3
-#include <SDL3/SDL.h>
-#include <imgui_impl_sdl3.h>
-
-// Renderer backends (compile-time: all are available; runtime: one is used)
 #ifdef OS_WINDOWS
-#  include <imgui_impl_dx11.h>
-#  include <imgui_impl_dx12.h>
-#  include <d3d11.h>
-#  include <video/d3d12/D3D12Driver.h>
 #  include <video/d3d11/D3D11Texture.h>
-#  include <core/windows/Win32Framework.h>
 #endif
-#include <imgui_impl_opengl3.h>
-#include <imgui_impl_vulkan.h>
-#include <video/vulkan/VulkanDriver.h>
 
 #include <cmath>
 #include <mutex>
@@ -36,24 +24,12 @@
 
 #include <ImGuizmo.h>
 
-// Framework globals
-namespace t850 {
-  extern Device*        T8Device;
-  extern DeviceContext* T8DeviceContext;
-}
-
 namespace t8ditor {
 
 // ── Module state ──────────────────────────────────────
-static bool                   s_inited    = false;
-static t850::GraphicsApi::E  s_api       = t850::GraphicsApi::D3D11;
-static SDL_Window*            s_sdlWindow = nullptr;
-static float                  s_wheelAccum = 0.0f;
-
-#ifdef OS_WINDOWS
-// D3D12: we create a small SRV heap dedicated to ImGui
-static ID3D12DescriptorHeap*  s_d3d12SrvHeap = nullptr;
-#endif
+static t850::ImGuiSystem      s_imguiSystem;
+static bool                   s_inited = false;
+static t850::GraphicsApi::E   s_api = t850::GraphicsApi::D3D11;
 
 // ── Log capture ring buffer ───────────────────────────
 static const int              kMaxLogLines = 500;
@@ -82,222 +58,32 @@ void ImGuiLogCaptureStop() {
   s_logLines.clear();
 }
 
-// ── SDL3 event watcher ────────────────────────────────
-static bool sdlEventWatcher(void* /*userdata*/, SDL_Event* event) {
-  ImGui_ImplSDL3_ProcessEvent(event);
-  if (event->type == SDL_EVENT_MOUSE_WHEEL)
-    s_wheelAccum += event->wheel.y;
-  return true;
-}
-
 // ── Init ──────────────────────────────────────────────
 bool ImGuiInit(t850::RootFramework* fw) {
   if (s_inited) return true;
   if (!fw || !fw->pVideoDriver) return false;
-
-#ifdef OS_WINDOWS
-  auto* w32 = static_cast<t850::Win32Framework*>(fw);
-  s_sdlWindow = w32->m_pWindow;
-#else
-  s_sdlWindow = nullptr;
-#endif
-
-  if (!s_sdlWindow) {
-    T8_LOG_ERROR("[T8ditor] ImGuiInit: no SDL window");
-    return false;
-  }
-
   s_api = fw->pVideoDriver->m_currentAPI;
-
-  // ── ImGui context ──
-  IMGUI_CHECKVERSION();
-  ImGui::CreateContext();
-
-  ImGuiIO& io = ImGui::GetIO();
-  io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;
-  io.ConfigFlags |= ImGuiConfigFlags_DockingEnable;
-
-  // Save/load layout to imgui_layout.ini in the working directory
-  io.IniFilename = "imgui_layout.ini";
-
-  // Dark theme
-  ImGui::StyleColorsDark();
-  ImGuiStyle& style = ImGui::GetStyle();
-  style.WindowRounding   = 4.0f;
-  style.FrameRounding    = 2.0f;
-  style.GrabRounding     = 2.0f;
-  style.ScrollbarRounding = 3.0f;
-
-  // ── Platform backend ──
-  bool platformOK = false;
-#ifdef OS_WINDOWS
-  if (s_api == t850::GraphicsApi::OPENGL)
-    platformOK = ImGui_ImplSDL3_InitForOpenGL(s_sdlWindow, nullptr);  else if (s_api == t850::GraphicsApi::VULKAN)
-    platformOK = ImGui_ImplSDL3_InitForVulkan(s_sdlWindow);  else
-    platformOK = ImGui_ImplSDL3_InitForD3D(s_sdlWindow);
-#else
-  platformOK = ImGui_ImplSDL3_InitForOpenGL(s_sdlWindow, nullptr);
-#endif
-  if (!platformOK) {
-    T8_LOG_ERROR("[T8ditor] ImGui SDL3 platform init failed");
-    return false;
-  }
-
-  // ── Renderer backend ──
-  bool rendererOK = false;
-
-#ifdef OS_WINDOWS
-  if (s_api == t850::GraphicsApi::D3D11) {
-    ID3D11Device*        device = reinterpret_cast<ID3D11Device*>(t850::T8Device->GetAPIObject());
-    ID3D11DeviceContext* ctx    = reinterpret_cast<ID3D11DeviceContext*>(t850::T8DeviceContext->GetAPIObject());
-    rendererOK = ImGui_ImplDX11_Init(device, ctx);
-  }
-  else if (s_api == t850::GraphicsApi::D3D12) {
-    auto* d3d12Drv = static_cast<t850::D3D12Driver*>(fw->pVideoDriver);
-    ID3D12Device* device = static_cast<t850::D3D12Device*>(t850::T8Device)->GetNativeDevice();
-
-    D3D12_DESCRIPTOR_HEAP_DESC desc = {};
-    desc.Type           = D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV;
-    desc.NumDescriptors = 64;
-    desc.Flags          = D3D12_DESCRIPTOR_HEAP_FLAG_SHADER_VISIBLE;
-    HRESULT hr = device->CreateDescriptorHeap(&desc, IID_PPV_ARGS(&s_d3d12SrvHeap));
-    if (FAILED(hr)) {
-      T8_LOG_ERROR("[T8ditor] Failed to create D3D12 SRV heap for ImGui");
-      return false;
-    }
-
-    ImGui_ImplDX12_InitInfo initInfo = {};
-    initInfo.Device           = device;
-    initInfo.CommandQueue     = d3d12Drv->GetCmdQueue();
-    initInfo.NumFramesInFlight = t850::D3D12Driver::kBackBufferCount;
-    initInfo.RTVFormat        = DXGI_FORMAT_R8G8B8A8_UNORM;
-    initInfo.DSVFormat        = DXGI_FORMAT_D32_FLOAT;
-    initInfo.SrvDescriptorHeap = s_d3d12SrvHeap;
-    initInfo.LegacySingleSrvCpuDescriptor = s_d3d12SrvHeap->GetCPUDescriptorHandleForHeapStart();
-    initInfo.LegacySingleSrvGpuDescriptor = s_d3d12SrvHeap->GetGPUDescriptorHandleForHeapStart();
-    rendererOK = ImGui_ImplDX12_Init(&initInfo);
-  }
-#endif
-
-  if (s_api == t850::GraphicsApi::OPENGL) {
-    rendererOK = ImGui_ImplOpenGL3_Init("#version 300 es");
-  }
-
-  if (s_api == t850::GraphicsApi::VULKAN) {
-    auto* vkDrv = static_cast<t850::VulkanDriver*>(fw->pVideoDriver);
-    ImGui_ImplVulkan_InitInfo vkInit = {};
-    vkInit.ApiVersion       = VK_API_VERSION_1_0;
-    vkInit.Instance         = vkDrv->GetInstance();
-    vkInit.PhysicalDevice   = vkDrv->GetPhysicalDevice();
-    vkInit.Device           = vkDrv->GetDevice();
-    vkInit.QueueFamily      = vkDrv->GetGraphicsQueueFamily();
-    vkInit.Queue            = vkDrv->GetGraphicsQueue();
-    vkInit.DescriptorPoolSize = 64;
-    vkInit.MinImageCount    = t850::VulkanDriver::kBackBufferCount;
-    vkInit.ImageCount       = t850::VulkanDriver::kBackBufferCount;
-    vkInit.PipelineInfoMain.RenderPass = vkDrv->GetBackbufferRenderPass();
-    rendererOK = ImGui_ImplVulkan_Init(&vkInit);
-  }
-
-  if (!rendererOK) {
-    T8_LOG_ERROR("[T8ditor] ImGui renderer backend init failed (api=%d)", (int)s_api);
-    return false;
-  }
-
-  SDL_AddEventWatch(sdlEventWatcher, nullptr);
-
-  s_inited = true;
-  T8_LOG_INFO("[T8ditor] ImGui initialised (api=%d)", (int)s_api);
-  return true;
+  s_inited = s_imguiSystem.Init(fw, "imgui_layout.ini", true);
+  return s_inited;
 }
 
 // ── Shutdown ──────────────────────────────────────────
 void ImGuiShutdown() {
   if (!s_inited) return;
-
-#ifdef OS_WINDOWS
-  if (s_api == t850::GraphicsApi::D3D11) {
-    ImGui_ImplDX11_Shutdown();
-  }
-  else if (s_api == t850::GraphicsApi::D3D12) {
-    ImGui_ImplDX12_Shutdown();
-    if (s_d3d12SrvHeap) {
-      s_d3d12SrvHeap->Release();
-      s_d3d12SrvHeap = nullptr;
-    }
-  }
-#endif
-  if (s_api == t850::GraphicsApi::OPENGL) {
-    ImGui_ImplOpenGL3_Shutdown();
-  }
-  if (s_api == t850::GraphicsApi::VULKAN) {
-    ImGui_ImplVulkan_Shutdown();
-  }
-
-  ImGui_ImplSDL3_Shutdown();
-  SDL_RemoveEventWatch(sdlEventWatcher, nullptr);
-  ImGui::DestroyContext();
+  s_imguiSystem.Shutdown();
   s_inited = false;
-  T8_LOG_INFO("[T8ditor] ImGui shut down");
 }
 
 // ── NewFrame ──────────────────────────────────────────
 void ImGuiNewFrame() {
   if (!s_inited) return;
-
-#ifdef OS_WINDOWS
-  if (s_api == t850::GraphicsApi::D3D11)
-    ImGui_ImplDX11_NewFrame();
-  else if (s_api == t850::GraphicsApi::D3D12)
-    ImGui_ImplDX12_NewFrame();
-#endif
-  if (s_api == t850::GraphicsApi::OPENGL)
-    ImGui_ImplOpenGL3_NewFrame();
-  if (s_api == t850::GraphicsApi::VULKAN)
-    ImGui_ImplVulkan_NewFrame();
-
-  ImGui_ImplSDL3_NewFrame();
-  ImGui::NewFrame();
-
-  // Create a dockspace over the entire viewport so panels can dock to edges
-  ImGui::DockSpaceOverViewport(0, ImGui::GetMainViewport(), ImGuiDockNodeFlags_PassthruCentralNode);
+  s_imguiSystem.NewFrame(true);
 }
 
 // ── Render ────────────────────────────────────────────
 void ImGuiRender() {
   if (!s_inited) return;
-
-  ImGui::Render();
-  ImDrawData* drawData = ImGui::GetDrawData();
-
-#ifdef OS_WINDOWS
-  if (s_api == t850::GraphicsApi::D3D11) {
-    ImGui_ImplDX11_RenderDrawData(drawData);
-  }
-  else if (s_api == t850::GraphicsApi::D3D12) {
-    auto* d3d12Drv = static_cast<t850::D3D12Driver*>(t850::g_pBaseDriver);
-    ID3D12GraphicsCommandList* cmdList = d3d12Drv->GetCmdList();
-    ID3D12DescriptorHeap* heaps[] = { s_d3d12SrvHeap };
-    cmdList->SetDescriptorHeaps(1, heaps);
-    ImGui_ImplDX12_RenderDrawData(drawData, cmdList);
-  }
-#endif
-  if (s_api == t850::GraphicsApi::OPENGL) {
-    ImGui_ImplOpenGL3_RenderDrawData(drawData);
-  }
-  if (s_api == t850::GraphicsApi::VULKAN) {
-    auto* vkDrv = static_cast<t850::VulkanDriver*>(t850::g_pBaseDriver);
-    // Clear pending engine texture state so ImGui's own descriptors aren't polluted
-    memset(vkDrv->m_pendingTextures, 0, sizeof(vkDrv->m_pendingTextures));
-    // ImGui Vulkan backend requires an active render pass — ensure backbuffer pass is active
-    vkDrv->EnsureBackbufferRenderPass();
-    VkCommandBuffer cmd = static_cast<t850::VulkanDeviceContext*>(t850::T8DeviceContext)->GetCommandBuffer();
-    if (cmd && drawData) {
-      ImGui_ImplVulkan_RenderDrawData(drawData, cmd);
-    } else {
-      T8_LOG_ERROR("[T8ditor] ImGuiRender: null cmd=%p drawData=%p", (void*)cmd, (void*)drawData);
-    }
-  }
+  s_imguiSystem.Render();
 }
 
 // ── Menu bar ──────────────────────────────────────────
@@ -742,9 +528,7 @@ bool ImGuizmoManipulate(const float* view, const float* proj,
 
 // ── Mouse wheel ───────────────────────────────────────
 float ImGuiConsumeWheelDelta() {
-  float d = s_wheelAccum;
-  s_wheelAccum = 0.0f;
-  return d;
+  return s_imguiSystem.ConsumeWheelDelta();
 }
 
 // ── File dialog (Win32) ───────────────────────────────

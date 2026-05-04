@@ -71,6 +71,7 @@ public:
   void PopulateGUI(t850::GUIManager& gui) override;
   void SyncToGUI(t850::GUIManager& gui) override;
   void SyncFromGUI(t850::GUIManager& gui) override;
+  void DrawDevGui(t850::DevGuiContext& gui) override;
   void RequestDump() override { m_dumper.RequestDump(); }
 
   float DtSecs = 0.0f;
@@ -121,8 +122,8 @@ public:
   t850::WireframeSphere m_debugSphere;
   bool m_showCullStats = false;
   bool m_showAABBs = false;
-  bool m_showWireframe = true;
-  bool m_showSkeleton = true;
+  bool m_showWireframe = false;
+  bool m_showSkeleton = false;
 
   // Orbit camera state
   XVECTOR3 m_orbitTarget;    // center of the model (world space)

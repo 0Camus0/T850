@@ -31,6 +31,10 @@ namespace t850 {
     GUIManager& GetGUI() { return m_gui; }
     const GUIManager& GetGUI() const { return m_gui; }
     void RebuildGUIForScene();
+    void SetLegacyGuiEnabled(bool enabled);
+    bool IsLegacyGuiEnabled() const { return m_legacyGuiEnabled; }
+    bool IsLegacyPopupActive() const;
+    void SetSceneInputBlocked(bool blocked) { m_blockSceneInput = blocked; }
 
     void SetEditMode(bool e);
     void SetSnapToGrid(bool s);
@@ -59,6 +63,8 @@ namespace t850 {
     SceneBase* m_activeScene;
     GUIManager m_gui;
     bool m_guiInited;
+    bool m_legacyGuiEnabled = true;
+    bool m_blockSceneInput = false;
     bool m_paused = false;
     BaseDriver* m_cullingDebugDriver = nullptr;
     ShaderBase* m_cullingDebugShader = nullptr;

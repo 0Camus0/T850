@@ -4,10 +4,6 @@
 // Uses stb_image for loading source PNGs, stb_image_write for
 // saving the atlas, and glaze for JSON metadata output.
 //
-// Usage (CLI):
-//   DayScene.exe --createAtlas   # generate atlas from source textures
-//   DayScene.exe --updateAtlas   # same (alias)
-//
 // Usage (code):
 //   GUIAtlasGenerator gen;
 //   gen.AddImage("SliderBar", "path/to/SliderBar.png");

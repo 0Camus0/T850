@@ -115,28 +115,10 @@ void ApplyConfigJson(const RuntimeConfigJson& json, Config& cfg) {
   if (json.dumpFrame) cfg.dumpFrame = *json.dumpFrame;
   if (json.dumpSeconds) cfg.dumpSeconds = *json.dumpSeconds;
   if (json.gui) cfg.flags.guiOnStart = *json.gui;
-  if (json.guiScreenshot) {
-    cfg.flags.guiScreenshot = *json.guiScreenshot;
-    if (*json.guiScreenshot) cfg.flags.guiOnStart = true;
-  }
-  if (json.guiScreenshotPath) cfg.guiScreenshotPath = *json.guiScreenshotPath;
-  if (json.guiEdit) {
-    cfg.flags.guiEdit = *json.guiEdit;
-    if (*json.guiEdit) cfg.flags.guiOnStart = true;
-  }
-  if (json.guiSnap) cfg.flags.guiSnap = *json.guiSnap;
-  if (json.guiControlEdit) {
-    cfg.flags.guiControlEdit = *json.guiControlEdit;
-    if (*json.guiControlEdit) cfg.flags.guiOnStart = true;
-  }
-  if (json.guiControlTarget) cfg.guiControlTarget = *json.guiControlTarget;
   if (json.logLevel) cfg.logLevel = ParseLogLevel(*json.logLevel, cfg.logLevel);
   if (json.logLevelValue) cfg.logLevel = *json.logLevelValue;
   if (json.logFile) cfg.logFile = *json.logFile;
   if (json.d3d12Debug) cfg.flags.d3d12Debug = *json.d3d12Debug;
-  if (json.testGui) cfg.flags.testGui = *json.testGui;
-  if (json.createAtlas) cfg.flags.createAtlas = *json.createAtlas;
-  if (json.atlasMaxSprite) cfg.atlasMaxSprite = *json.atlasMaxSprite;
   if (json.profile) cfg.flags.profile = *json.profile;
   if (json.profileFrames) cfg.profileFrames = *json.profileFrames;
   if (json.dumpMatrices) cfg.flags.dumpMatrices = *json.dumpMatrices;
@@ -179,29 +161,11 @@ void ApplyConfigJson(const RuntimeConfigJson& json, Config& cfg) {
   if (json.devTools) {
     const DevToolsJson& devTools = *json.devTools;
     if (devTools.gui) cfg.flags.guiOnStart = *devTools.gui;
-    if (devTools.guiScreenshot) {
-      cfg.flags.guiScreenshot = *devTools.guiScreenshot;
-      if (*devTools.guiScreenshot) cfg.flags.guiOnStart = true;
-    }
-    if (devTools.guiScreenshotPath) cfg.guiScreenshotPath = *devTools.guiScreenshotPath;
-    if (devTools.guiEdit) {
-      cfg.flags.guiEdit = *devTools.guiEdit;
-      if (*devTools.guiEdit) cfg.flags.guiOnStart = true;
-    }
-    if (devTools.guiSnap) cfg.flags.guiSnap = *devTools.guiSnap;
-    if (devTools.guiControlEdit) {
-      cfg.flags.guiControlEdit = *devTools.guiControlEdit;
-      if (*devTools.guiControlEdit) cfg.flags.guiOnStart = true;
-    }
-    if (devTools.guiControlTarget) cfg.guiControlTarget = *devTools.guiControlTarget;
     if (devTools.logLevel) cfg.logLevel = ParseLogLevel(*devTools.logLevel, cfg.logLevel);
     if (devTools.logLevelValue) cfg.logLevel = *devTools.logLevelValue;
     if (devTools.logFile) cfg.logFile = *devTools.logFile;
     if (devTools.logToFile && *devTools.logToFile && cfg.logFile.empty()) cfg.logFile = "logs/T850.log";
     if (devTools.d3d12Debug) cfg.flags.d3d12Debug = *devTools.d3d12Debug;
-    if (devTools.testGui) cfg.flags.testGui = *devTools.testGui;
-    if (devTools.createAtlas) cfg.flags.createAtlas = *devTools.createAtlas;
-    if (devTools.atlasMaxSprite) cfg.atlasMaxSprite = *devTools.atlasMaxSprite;
     if (devTools.profile) cfg.flags.profile = *devTools.profile;
     if (devTools.profileFrames) cfg.profileFrames = *devTools.profileFrames;
     if (devTools.dumpMatrices) cfg.flags.dumpMatrices = *devTools.dumpMatrices;
@@ -296,29 +260,6 @@ void ApplyCommandLine(int argc, char** argv, Config& cfg) {
     else if (arg == "--gui") {
       cfg.flags.guiOnStart = true;
     }
-    else if (arg == "--guiScreenshot" && i + 1 < argc) {
-      cfg.flags.guiScreenshot = true;
-      cfg.flags.guiOnStart = true;
-      cfg.guiScreenshotPath = argv[++i];
-    }
-    else if (arg == "--guiScreenshot") {
-      cfg.flags.guiScreenshot = true;
-      cfg.flags.guiOnStart = true;
-    }
-    else if (arg == "--guiEdit") {
-      cfg.flags.guiEdit = true;
-      cfg.flags.guiOnStart = true;
-    }
-    else if (arg == "--guiSnap") {
-      cfg.flags.guiSnap = true;
-    }
-    else if (arg == "--guiControlEdit") {
-      cfg.flags.guiControlEdit = true;
-      cfg.flags.guiOnStart = true;
-    }
-    else if (arg == "--guiControlTarget" && i + 1 < argc) {
-      cfg.guiControlTarget = argv[++i];
-    }
     else if (arg == "--logLevel" && i + 1 < argc) {
       cfg.logLevel = ParseLogLevel(argv[++i], cfg.logLevel);
     }
@@ -327,15 +268,6 @@ void ApplyCommandLine(int argc, char** argv, Config& cfg) {
     }
     else if (arg == "--d3d12debug") {
       cfg.flags.d3d12Debug = true;
-    }
-    else if (arg == "--testGui") {
-      cfg.flags.testGui = true;
-    }
-    else if (arg == "--createAtlas" || arg == "--updateAtlas") {
-      cfg.flags.createAtlas = true;
-    }
-    else if (arg == "--atlasMaxSprite" && i + 1 < argc) {
-      cfg.atlasMaxSprite = std::stoi(argv[++i]);
     }
 #ifdef T8_ENABLE_PROFILER
     else if (arg == "--profile") {
@@ -417,14 +349,7 @@ void PrintHelp() {
     << "  --validateGltf <path>              Validate and summarize glTF/GLB, then exit\n\n"
     << "GUI/tools:\n"
     << "  --gui                              Show GUI on startup\n"
-    << "  --guiScreenshot [path]             Save GUI screenshot and exit\n"
-    << "  --guiEdit                          Enable GUI edit mode\n"
-    << "  --guiSnap                          Snap GUI edits to grid\n"
-    << "  --guiControlEdit                   Enable GUI control internals edit mode\n"
-    << "  --guiControlTarget <name>          slider_knob|selector_control|checkbox_mark\n"
-    << "  --testGui                          Run minimal GUI rendering test\n"
-    << "  --createAtlas, --updateAtlas       Generate GUI texture atlas and exit\n"
-    << "  --atlasMaxSprite <pixels>          Max sprite dimension in atlas\n\n"
+    << "\n"
     << "Logging/profiling:\n"
     << "  --logLevel <error|info|debug|verbose|trace|0..4>\n"
     << "  --logFile <path>                   Write log to file\n"

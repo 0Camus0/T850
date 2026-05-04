@@ -15,6 +15,7 @@
 #include <utils/Log.h>
 #include <core/Config.h>
 #include <utils/ConfigRuntime.h>
+#include <imgui/DevGuiContext.h>
 using namespace t850;
 using std::cout;
 using std::endl;
@@ -1638,6 +1639,303 @@ void DayScene::PopulateGUI(t850::GUIManager& gui) {
       }
     }
     gui.AddSelector(sd, settingIdx);
+  }
+}
+
+void DayScene::DrawDevGui(t850::DevGuiContext& gui) {
+  struct Mapping { const char* name; int settingIndex; };
+
+  static const Mapping sliderMappings[] = {
+    {"exposure", CHANGE_EXPOSURE},
+    {"bloom_factor", CHANGE_BLOOM_FACTOR},
+    {"bloom_threshold", CHANGE_BLOOM_THRESHOLD},
+    {"tm_white_level", CHANGE_TM_WHITE_LEVEL},
+    {"tm_adapt_tau", CHANGE_TM_ADAPT_TAU},
+    {"pcf_radius", CHANGE_PCF_RADIUS},
+    {"pcf_samples", CHANGE_PCF_SAMPLES},
+    {"ssao_kernel_size", CHANGE_SSAO_KERNEL_SIZE},
+    {"ssao_radius", CHANGE_SSAO_RADIUS},
+    {"dof_aperture", CHANGE_DOF_APERTURE},
+    {"dof_focal_length", CHANGE_DOF_FOCAL_LENGHT},
+    {"dof_max_coc", CHANGE_DOF_MAX_COC},
+    {"dof_far_samples", CHANGE_DOF_FAR_SAMPLE},
+    {"dof_near_samples", CHANGE_DOF_NEAR_SAMPLE},
+    {"parallax_low_samples", CHANGE_PARALLAX_LOW_SAMPLES},
+    {"parallax_high_samples", CHANGE_PARALLAX_HIGH_SAMPLES},
+    {"parallax_height", CHANGE_PARALLAX_HEIGHT},
+    {"parallax_shadow_min_layers", CHANGE_PARALLAX_SHADOW_MIN_LAYERS},
+    {"parallax_shadow_max_layers", CHANGE_PARALLAX_SHADOW_MAX_LAYERS},
+    {"parallax_shadow_softness", CHANGE_PARALLAX_SHADOW_SOFTNESS},
+    {"parallax_shadow_strength", CHANGE_PARALLAX_SHADOW_STRENGTH},
+    {"light_volume_steps", CHANGE_LIGHT_VOLUME_STEPS},
+    {"godrays_factor", CHANGE_GODRAYS_FACTOR},
+    {"gauss_kernel_radius", CHANGE_GAUSS_KERNEL_RADIUS},
+    {"gauss_kernel_deviation", CHANGE_GAUSS_KERNEL_DEVIATION},
+    {"fov", CHANGE_FOV},
+    {"light_intensity", CHANGE_LIGHT_INTENSITY},
+    {"shadow_bias", CHANGE_SHADOW_BIAS},
+    {"shadow_min", CHANGE_SHADOW_MIN},
+    {"env_factor", CHANGE_ENV_FACTOR},
+    {"ibl_factor", CHANGE_IBL_FACTOR},
+    {"material_emissive_intensity", CHANGE_MATERIAL_EMISSIVE_INTENSITY},
+    {"material_transmission_multiplier", CHANGE_MATERIAL_TRANSMISSION_MULTIPLIER},
+    {"material_refraction_strength", CHANGE_MATERIAL_REFRACTION_STRENGTH},
+  };
+
+  static const Mapping checkboxMappings[] = {
+    {"shadow_toggle", CHANGE_PCF_TOOGLE},
+    {"ssao_toggle", CHANGLE_SSAO_TOOGLE},
+    {"dof_auto_focus", CHANGE_DOF_AUTO_FOCUS},
+    {"show_spline", CHANGE_SHOW_SPLINE},
+    {"show_lights", CHANGE_SHOW_LIGHTS},
+    {"dof_toggle", CHANGE_DOF_TOGGLE},
+    {"parallax_toggle", CHANGE_PARALLAX_TOGGLE},
+    {"parallax_shadow_toggle", CHANGE_PARALLAX_SHADOW_TOGGLE},
+    {"godrays_toggle", CHANGE_GODRAYS_TOGGLE},
+  };
+
+  static const Mapping selectorMappings[] = {
+    {"num_lights", CHANGE_NUM_LIGHTS},
+    {"active_gauss_kernel", CHANGE_ACTIVE_GAUSS_KERNEL},
+    {"gauss_kernel_sample_count", CHANGE_GAUSS_KERNEL_SAMPLE_COUNT},
+    {"debug_render_target", CHANGE_DEBUG_RT},
+    {"active_camera", CHANGE_ACTIVE_CAMERA},
+    {"cubemap", CHANGE_CUBEMAP},
+  };
+
+  auto findSetting = [](const std::string& name, const Mapping* mappings, int count) {
+    for (int i = 0; i < count; ++i) {
+      if (name == mappings[i].name) return mappings[i].settingIndex;
+    }
+    return -1;
+  };
+
+  auto activeKernel = [&]() -> GaussFilter* {
+    if (ChangeActiveGaussSelection < 0 || ChangeActiveGaussSelection >= (int)SceneProp.pGaussKernels.size()) return nullptr;
+    return SceneProp.pGaussKernels[ChangeActiveGaussSelection];
+  };
+
+  auto getSliderValue = [&](int settingIndex, float& value) -> bool {
+    GaussFilter* kernel = activeKernel();
+    switch (settingIndex) {
+    case CHANGE_EXPOSURE: value = SceneProp.Exposure; return true;
+    case CHANGE_BLOOM_FACTOR: value = SceneProp.BloomFactor; return true;
+    case CHANGE_BLOOM_THRESHOLD: value = SceneProp.BloomThreshold; return true;
+    case CHANGE_TM_WHITE_LEVEL: value = SceneProp.ToneMapWhiteLevel; return true;
+    case CHANGE_TM_ADAPT_TAU: value = SceneProp.LuminanceTau; return true;
+    case CHANGE_PCF_RADIUS: value = SceneProp.PCFScale; return true;
+    case CHANGE_PCF_SAMPLES: value = SceneProp.PCFSamples; return true;
+    case CHANGE_SSAO_KERNEL_SIZE: value = (float)SceneProp.SSAOKernel.KernelSize; return true;
+    case CHANGE_SSAO_RADIUS: value = SceneProp.SSAOKernel.Radius; return true;
+    case CHANGE_DOF_APERTURE: value = SceneProp.Aperture; return true;
+    case CHANGE_DOF_FOCAL_LENGHT: value = SceneProp.FocalLength; return true;
+    case CHANGE_DOF_MAX_COC: value = SceneProp.MaxCoc; return true;
+    case CHANGE_DOF_FAR_SAMPLE: value = SceneProp.DOF_Far_Samples_squared; return true;
+    case CHANGE_DOF_NEAR_SAMPLE: value = SceneProp.DOF_Near_Samples_squared; return true;
+    case CHANGE_PARALLAX_LOW_SAMPLES: value = SceneProp.ParallaxLowSamples; return true;
+    case CHANGE_PARALLAX_HIGH_SAMPLES: value = SceneProp.ParallaxHighSamples; return true;
+    case CHANGE_PARALLAX_HEIGHT: value = SceneProp.ParallaxHeight; return true;
+    case CHANGE_PARALLAX_SHADOW_MIN_LAYERS: value = SceneProp.ParallaxShadowMinLayers; return true;
+    case CHANGE_PARALLAX_SHADOW_MAX_LAYERS: value = SceneProp.ParallaxShadowMaxLayers; return true;
+    case CHANGE_PARALLAX_SHADOW_SOFTNESS: value = SceneProp.ParallaxShadowSoftness; return true;
+    case CHANGE_PARALLAX_SHADOW_STRENGTH: value = SceneProp.ParallaxShadowStrength; return true;
+    case CHANGE_LIGHT_VOLUME_STEPS: value = SceneProp.LightVolumeSteps; return true;
+    case CHANGE_GODRAYS_FACTOR: value = SceneProp.GodRaysFactor; return true;
+    case CHANGE_GAUSS_KERNEL_RADIUS: if (!kernel) return false; value = kernel->radius; return true;
+    case CHANGE_GAUSS_KERNEL_DEVIATION: if (!kernel) return false; value = kernel->sigma; return true;
+    case CHANGE_FOV: if (!ActiveCam) return false; value = Rad2Deg(ActiveCam->Fov); return true;
+    case CHANGE_LIGHT_INTENSITY: if (SceneProp.Lights.empty()) return false; value = SceneProp.Lights[0].Intensity; return true;
+    case CHANGE_SHADOW_BIAS: value = SceneProp.ShadowBias; return true;
+    case CHANGE_SHADOW_MIN: value = SceneProp.ShadowMin; return true;
+    case CHANGE_ENV_FACTOR: value = SceneProp.EnvFactor; return true;
+    case CHANGE_IBL_FACTOR: value = SceneProp.IBLFactor; return true;
+    case CHANGE_MATERIAL_EMISSIVE_INTENSITY: value = SceneProp.MaterialEmissiveIntensity; return true;
+    case CHANGE_MATERIAL_TRANSMISSION_MULTIPLIER: value = SceneProp.MaterialTransmissionMultiplier; return true;
+    case CHANGE_MATERIAL_REFRACTION_STRENGTH: value = SceneProp.MaterialRefractionStrength; return true;
+    }
+    return false;
+  };
+
+  auto setSliderValue = [&](int settingIndex, float value) {
+    GaussFilter* kernel = activeKernel();
+    switch (settingIndex) {
+    case CHANGE_EXPOSURE: SceneProp.Exposure = value; break;
+    case CHANGE_BLOOM_FACTOR: SceneProp.BloomFactor = value; break;
+    case CHANGE_BLOOM_THRESHOLD: SceneProp.BloomThreshold = value; break;
+    case CHANGE_TM_WHITE_LEVEL: SceneProp.ToneMapWhiteLevel = value; break;
+    case CHANGE_TM_ADAPT_TAU: SceneProp.LuminanceTau = value; break;
+    case CHANGE_PCF_RADIUS: SceneProp.PCFScale = value; break;
+    case CHANGE_PCF_SAMPLES: SceneProp.PCFSamples = value; break;
+    case CHANGE_SSAO_KERNEL_SIZE: SceneProp.SSAOKernel.KernelSize = (int)value; SceneProp.SSAOKernel.Update(); break;
+    case CHANGE_SSAO_RADIUS: SceneProp.SSAOKernel.Radius = value; break;
+    case CHANGE_DOF_APERTURE: SceneProp.Aperture = value; break;
+    case CHANGE_DOF_FOCAL_LENGHT: SceneProp.FocalLength = value; break;
+    case CHANGE_DOF_MAX_COC: SceneProp.MaxCoc = value; break;
+    case CHANGE_DOF_FAR_SAMPLE: SceneProp.DOF_Far_Samples_squared = value; break;
+    case CHANGE_DOF_NEAR_SAMPLE: SceneProp.DOF_Near_Samples_squared = value; break;
+    case CHANGE_PARALLAX_LOW_SAMPLES: SceneProp.ParallaxLowSamples = value; break;
+    case CHANGE_PARALLAX_HIGH_SAMPLES: SceneProp.ParallaxHighSamples = value; break;
+    case CHANGE_PARALLAX_HEIGHT: SceneProp.ParallaxHeight = value; break;
+    case CHANGE_PARALLAX_SHADOW_MIN_LAYERS: SceneProp.ParallaxShadowMinLayers = value; break;
+    case CHANGE_PARALLAX_SHADOW_MAX_LAYERS: SceneProp.ParallaxShadowMaxLayers = value; break;
+    case CHANGE_PARALLAX_SHADOW_SOFTNESS: SceneProp.ParallaxShadowSoftness = value; break;
+    case CHANGE_PARALLAX_SHADOW_STRENGTH: SceneProp.ParallaxShadowStrength = value; break;
+    case CHANGE_LIGHT_VOLUME_STEPS: SceneProp.LightVolumeSteps = value; break;
+    case CHANGE_GODRAYS_FACTOR: SceneProp.GodRaysFactor = value; break;
+    case CHANGE_GAUSS_KERNEL_RADIUS: if (kernel) { kernel->radius = value; kernel->Update(); } break;
+    case CHANGE_GAUSS_KERNEL_DEVIATION: if (kernel) { kernel->sigma = value; kernel->Update(); } break;
+    case CHANGE_FOV:
+      if (ActiveCam) {
+        ActiveCam->SetFov(Deg2Rad(value));
+        ActiveCam->VP = ActiveCam->View * ActiveCam->Projection;
+        VP = ActiveCam->VP;
+      }
+      break;
+    case CHANGE_LIGHT_INTENSITY: if (!SceneProp.Lights.empty()) SceneProp.Lights[0].Intensity = value; break;
+    case CHANGE_SHADOW_BIAS: SceneProp.ShadowBias = value; break;
+    case CHANGE_SHADOW_MIN: SceneProp.ShadowMin = value; break;
+    case CHANGE_ENV_FACTOR: SceneProp.EnvFactor = value; break;
+    case CHANGE_IBL_FACTOR: SceneProp.IBLFactor = value; break;
+    case CHANGE_MATERIAL_EMISSIVE_INTENSITY: SceneProp.MaterialEmissiveIntensity = value; break;
+    case CHANGE_MATERIAL_TRANSMISSION_MULTIPLIER: SceneProp.MaterialTransmissionMultiplier = value; break;
+    case CHANGE_MATERIAL_REFRACTION_STRENGTH: SceneProp.MaterialRefractionStrength = value; break;
+    }
+  };
+
+  auto getCheckboxValue = [&](int settingIndex, bool& value) -> bool {
+    switch (settingIndex) {
+    case CHANGE_PCF_TOOGLE: value = (SceneProp.ToogleShadow != 0); return true;
+    case CHANGLE_SSAO_TOOGLE: value = (SceneProp.ToogleSSAO != 0); return true;
+    case CHANGE_DOF_AUTO_FOCUS: value = SceneProp.AutoFocus; return true;
+    case CHANGE_SHOW_SPLINE: value = m_showSpline; return true;
+    case CHANGE_SHOW_LIGHTS: value = m_showLights; return true;
+    case CHANGE_DOF_TOGGLE: value = (SceneProp.ToogleDOF != 0); return true;
+    case CHANGE_PARALLAX_TOGGLE: value = (SceneProp.ToogleParallax != 0); return true;
+    case CHANGE_PARALLAX_SHADOW_TOGGLE: value = (SceneProp.ToogleParallaxShadow != 0); return true;
+    case CHANGE_GODRAYS_TOGGLE: value = (SceneProp.ToogleGodRays != 0); return true;
+    }
+    return false;
+  };
+
+  auto setCheckboxValue = [&](int settingIndex, bool value) {
+    switch (settingIndex) {
+    case CHANGE_PCF_TOOGLE: SceneProp.ToogleShadow = value ? 1 : 0; break;
+    case CHANGLE_SSAO_TOOGLE: SceneProp.ToogleSSAO = value ? 1 : 0; break;
+    case CHANGE_DOF_AUTO_FOCUS: SceneProp.AutoFocus = value; break;
+    case CHANGE_SHOW_SPLINE: m_showSpline = value; break;
+    case CHANGE_SHOW_LIGHTS: m_showLights = value; break;
+    case CHANGE_DOF_TOGGLE:
+      SceneProp.ToogleDOF = value ? 1 : 0;
+      m_renderGraph.SetPassEnabled("CoC", value);
+      m_renderGraph.SetPassEnabled("Combine CoC", value);
+      m_renderGraph.SetPassEnabled("DOF", value);
+      m_renderGraph.SetPassEnabled("DOF 2", value);
+      break;
+    case CHANGE_PARALLAX_TOGGLE:
+      SceneProp.ToogleParallax = value ? 1 : 0;
+      Meshes[0].SetParallaxEnabled(value);
+      break;
+    case CHANGE_PARALLAX_SHADOW_TOGGLE:
+      SceneProp.ToogleParallaxShadow = value ? 1 : 0;
+      SceneProp.ParallaxShadowStrength = value ? 1.0f : 0.0f;
+      break;
+    case CHANGE_GODRAYS_TOGGLE: SceneProp.ToogleGodRays = value ? 1 : 0; break;
+    }
+  };
+
+  auto getSelectorIndex = [&](const t850::SelectorDesc& desc, int settingIndex, int& selectedIndex) -> bool {
+    switch (settingIndex) {
+    case CHANGE_NUM_LIGHTS: selectedIndex = FindLightOption(SceneProp.ActiveLights); return true;
+    case CHANGE_ACTIVE_GAUSS_KERNEL: selectedIndex = ChangeActiveGaussSelection; return true;
+    case CHANGE_GAUSS_KERNEL_SAMPLE_COUNT: {
+      GaussFilter* kernel = activeKernel();
+      if (!kernel) return false;
+      for (int i = 0; i < (int)desc.options.size(); ++i) {
+        if (std::atoi(desc.options[i].c_str()) == kernel->kernelSize) { selectedIndex = i; return true; }
+      }
+      selectedIndex = desc.default_index;
+      return true;
+    }
+    case CHANGE_DEBUG_RT: selectedIndex = m_debugRTSelection; return true;
+    case CHANGE_ACTIVE_CAMERA: selectedIndex = m_activeCameraIndex; return true;
+    case CHANGE_CUBEMAP: selectedIndex = m_currentCubemapIndex; return true;
+    }
+    return false;
+  };
+
+  auto setSelectorIndex = [&](const t850::SelectorDesc& desc, int settingIndex, int selectedIndex) {
+    if (selectedIndex < 0 || selectedIndex >= (int)desc.options.size()) return;
+    switch (settingIndex) {
+    case CHANGE_NUM_LIGHTS: SceneProp.ActiveLights = std::atoi(desc.options[selectedIndex].c_str()); break;
+    case CHANGE_ACTIVE_GAUSS_KERNEL: ChangeActiveGaussSelection = selectedIndex; break;
+    case CHANGE_GAUSS_KERNEL_SAMPLE_COUNT: {
+      GaussFilter* kernel = activeKernel();
+      if (kernel) { kernel->kernelSize = std::atoi(desc.options[selectedIndex].c_str()); kernel->Update(); }
+    } break;
+    case CHANGE_DEBUG_RT: m_debugRTSelection = selectedIndex; break;
+    case CHANGE_ACTIVE_CAMERA: ApplyActiveCameraSelection(selectedIndex); break;
+    case CHANGE_CUBEMAP:
+      if (selectedIndex != m_currentCubemapIndex) {
+        m_currentCubemapIndex = selectedIndex;
+        m_pendingCubemap = "sky/" + desc.options[selectedIndex];
+      }
+      break;
+    }
+  };
+
+  if (gui.BeginSection("Controls")) {
+    for (const auto& desc : m_sceneSetup.descriptor.sliders) {
+      int settingIndex = findSetting(desc.name, sliderMappings, (int)(sizeof(sliderMappings) / sizeof(sliderMappings[0])));
+      if (settingIndex < 0) continue;
+      float value = 0.0f;
+      if (getSliderValue(settingIndex, value) && gui.Slider(desc, value)) {
+        setSliderValue(settingIndex, value);
+      }
+    }
+    Meshes[0].SetParallaxSettings(SceneProp.ParallaxLowSamples, SceneProp.ParallaxHighSamples, SceneProp.ParallaxHeight);
+    Meshes[0].SetParallaxShadowSettings(SceneProp.ParallaxShadowMinLayers, SceneProp.ParallaxShadowMaxLayers,
+                                         SceneProp.ParallaxShadowSoftness, SceneProp.ParallaxShadowStrength);
+  }
+
+  if (gui.BeginSection("Toggles")) {
+    for (const auto& desc : m_sceneSetup.descriptor.checkboxes) {
+      int settingIndex = findSetting(desc.name, checkboxMappings, (int)(sizeof(checkboxMappings) / sizeof(checkboxMappings[0])));
+      if (settingIndex < 0) continue;
+      bool value = false;
+      if (getCheckboxValue(settingIndex, value) && gui.Checkbox(desc, value)) {
+        setCheckboxValue(settingIndex, value);
+      }
+    }
+  }
+
+  if (gui.BeginSection("Selectors")) {
+    for (const auto& desc : m_sceneSetup.descriptor.selectors) {
+      int settingIndex = findSetting(desc.name, selectorMappings, (int)(sizeof(selectorMappings) / sizeof(selectorMappings[0])));
+      if (settingIndex < 0) continue;
+      int selectedIndex = 0;
+      if (getSelectorIndex(desc, settingIndex, selectedIndex) && gui.Combo(desc, selectedIndex)) {
+        setSelectorIndex(desc, settingIndex, selectedIndex);
+      }
+    }
+  }
+
+  if (gui.BeginSection("Culling")) {
+    t850::CheckboxDesc cullingDesc;
+    cullingDesc.name = "frustum_culling";
+    cullingDesc.label = "Frustum culling";
+    bool cullingEnabled = SceneProp.FrustumCullingEnabled;
+    if (gui.Checkbox(cullingDesc, cullingEnabled)) {
+      SceneProp.FrustumCullingEnabled = cullingEnabled;
+    }
+
+    t850::CheckboxDesc statsDesc;
+    statsDesc.name = "show_culling_debug";
+    statsDesc.label = "Culling stats and frustum";
+    bool showCulling = m_showCullStats;
+    if (gui.Checkbox(statsDesc, showCulling)) {
+      m_showCullStats = showCulling;
+      SceneProp.ShowCullingDebug = showCulling;
+    }
   }
 }
 

@@ -16,6 +16,7 @@ t850_apply_app(T8ditor)
 t850_stage_runtime(T8ditor)
 
 target_link_libraries(T8ditor PRIVATE
+	FrameworkImGui
 	$<$<CONFIG:Debug>:imguid>
 	$<$<NOT:$<CONFIG:Debug>>:imgui>
 	imguizmo)

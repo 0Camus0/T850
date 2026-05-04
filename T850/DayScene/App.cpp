@@ -32,7 +32,6 @@
 #include <core/Config.h>
 #include <utils/Log.h>
 #include <utils/ConfigRuntime.h>
-#include <gui/GUIAtlas.h>
 #include <debug/Profiler.h>
 #include <utils/gltf/GLTFLoader.h>
 #include <utils/gltf/GLTFAccessor.h>
@@ -154,19 +153,6 @@ int main(int arg,char ** args){
   );
   t850::Log::SetSessionTag(apiTag);
 
-  // --createAtlas / --updateAtlas: generate atlas and exit (no window needed)
-  if (t850::g_config.flags.createAtlas) {
-    int atlasWidth = 0;
-    int atlasHeight = 0;
-    if (t850::GUIAtlas::RecreateDefault(t850::g_config.atlasMaxSprite, atlasWidth, atlasHeight)) {
-      printf("[createAtlas] Atlas generated successfully (%dx%d)\n",
-             atlasWidth, atlasHeight);
-    } else {
-      fprintf(stderr, "[createAtlas] Atlas generation failed\n");
-    }
-    t850::Log::Shutdown();
-    return 0;
-  }
 	pApp = new App;
 #ifdef OS_LINUX
     pFrameWork = new t850::LinuxFramework((t850::AppBase*)pApp);

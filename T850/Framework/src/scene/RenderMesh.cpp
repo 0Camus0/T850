@@ -964,6 +964,148 @@ namespace t850 {
         }
       }
     }
+
+    CreateWireframeShader();
+    BuildWireframeBuffers();
+  }
+
+  void RenderMesh::CreateWireframeShader() {
+    if (Info.empty() || !g_pBaseDriver) return;
+
+    char *vsWireP = nullptr, *fsWireP = nullptr;
+    std::string vsWireName, fsWireName;
+    if (g_pBaseDriver->UsesGLSL()) {
+      vsWireP = file2string("Shaders/VS_Mesh.glsl");
+      fsWireP = file2string("Shaders/FS_WireMesh.glsl");
+      vsWireName = "VS_Mesh.glsl";
+      fsWireName = "FS_WireMesh.glsl";
+    } else {
+      vsWireP = file2string("Shaders/VS_Mesh.hlsl");
+      fsWireP = file2string("Shaders/FS_WireMesh.hlsl");
+      vsWireName = "VS_Mesh.hlsl";
+      fsWireName = "FS_WireMesh.hlsl";
+    }
+    if (!vsWireP || !fsWireP) {
+      if (vsWireP) free(vsWireP);
+      if (fsWireP) free(fsWireP);
+      return;
+    }
+
+    std::string vsWStr(vsWireP), fsWStr(fsWireP);
+    free(vsWireP);
+    free(fsWireP);
+
+    ShaderKey wireKey(0);
+    if (!Info.empty() && !Info[0].SubSets.empty())
+      wireKey.bits |= (Info[0].SubSets[0].key.bits & ShaderKey::VERTEX_ATTRIB_MASK);
+    wireKey.setPass(32);
+    g_pBaseDriver->CreateShader(vsWStr, fsWStr, wireKey, vsWireName, fsWireName);
+    m_wireShader = g_pBaseDriver->GetShader(wireKey);
+  }
+
+  void RenderMesh::BuildWireframeBuffers() {
+    if (!xFile || xFile->XMeshDataBase.empty()) return;
+    xF::xMeshContainer* mc = xFile->XMeshDataBase[0];
+
+    m_wireGeo.resize(mc->Geometry.size());
+
+    for (std::size_t gi = 0; gi < mc->Geometry.size(); gi++) {
+      auto& geom = mc->Geometry[gi];
+      std::vector<unsigned int> lineIdx;
+
+      if (geom.Indices32Bit && !geom.Triangles32.empty()) {
+        const auto& tris = geom.Triangles32;
+        for (std::size_t t = 0; t + 2 < tris.size(); t += 3) {
+          unsigned int a = tris[t + 0], b = tris[t + 1], c = tris[t + 2];
+          lineIdx.push_back(a); lineIdx.push_back(b);
+          lineIdx.push_back(b); lineIdx.push_back(c);
+          lineIdx.push_back(c); lineIdx.push_back(a);
+        }
+      } else {
+        const auto& tris = geom.Triangles;
+        for (std::size_t t = 0; t + 2 < tris.size(); t += 3) {
+          unsigned int a = tris[t + 0], b = tris[t + 1], c = tris[t + 2];
+          lineIdx.push_back(a); lineIdx.push_back(b);
+          lineIdx.push_back(b); lineIdx.push_back(c);
+          lineIdx.push_back(c); lineIdx.push_back(a);
+        }
+      }
+
+      if (lineIdx.empty()) continue;
+
+      unsigned maxVert = (unsigned)geom.Positions.size();
+      if (maxVert <= 65535) {
+        std::vector<unsigned short> idx16(lineIdx.size());
+        for (std::size_t j = 0; j < lineIdx.size(); j++)
+          idx16[j] = (unsigned short)lineIdx[j];
+        m_wireGeo[gi].IB = LineRenderer::CreateIndexBuffer16(idx16.data(), (unsigned)idx16.size());
+        m_wireGeo[gi].use32Bit = false;
+      } else {
+        m_wireGeo[gi].IB = LineRenderer::CreateIndexBuffer32(lineIdx.data(), (unsigned)lineIdx.size());
+        m_wireGeo[gi].use32Bit = true;
+      }
+      m_wireGeo[gi].indexCount = (unsigned)lineIdx.size();
+    }
+  }
+
+  void RenderMesh::DrawWireframe() {
+    if (!m_wireShader || m_wireGeo.empty()) return;
+    if (!pScProp || pScProp->pCameras.empty()) return;
+
+    Camera* cam = pScProp->pCameras[0];
+    XMATRIX44 WVP = transform * cam->VP;
+    XMATRIX44 WorldView = transform * cam->View;
+    XVECTOR3 infoCam = XVECTOR3(cam->NPlane, cam->FPlane, (float)m_wireViewW, (float)m_wireViewH);
+    XVECTOR3 wireColor(0.0f, 1.0f, 0.0f, 1.0f);
+
+    RenderMesh::CBuffer wireCB;
+    wireCB.WVP = WVP;
+    wireCB.World = transform;
+    wireCB.WorldView = WorldView;
+    wireCB.CameraInfo = infoCam;
+    wireCB.DiffuseColor = wireColor;
+    RenderMesh::MeshInstanceCBuffer wireInstanceCB;
+    wireInstanceCB.WVP = wireCB.WVP;
+    wireInstanceCB.World = wireCB.World;
+    wireInstanceCB.WorldView = wireCB.WorldView;
+
+    for (std::size_t i = 0; i < Info.size() && i < m_wireGeo.size(); i++) {
+      if (!m_wireGeo[i].IB || m_wireGeo[i].indexCount == 0) continue;
+
+      MeshInfo* mi = &Info[i];
+      VertexBuffer* vbToBind = mi->VB;
+      unsigned int baseVertex = 0;
+      if (mi->vbPoolAlloc.IsValid()) {
+        if (VertexPool* vpool = MeshAssetCache::Get().GetVertexPool(mi->vbPoolAlloc.poolId)) {
+          if (VertexBuffer* gpu = vpool->GetGPUBuffer()) {
+            vbToBind = gpu;
+            baseVertex = mi->vbPoolAlloc.offsetElems;
+          }
+        }
+      }
+      if (!vbToBind) {
+        T8_LOG_ERROR("[RenderMesh] Wireframe skipped geometry %zu: no vertex buffer", i);
+        continue;
+      }
+
+      vbToBind->Set(*T8DeviceContext, mi->VertexSize, 0);
+      auto ibFmt = m_wireGeo[i].use32Bit ? IndexBufferFormat::R32 : IndexBufferFormat::R16;
+      m_wireGeo[i].IB->Set(*T8DeviceContext, 0, ibFmt);
+
+      T8DeviceContext->SetPrimitiveTopology(Topology::LINE_LIST);
+      m_wireShader->Set(*T8DeviceContext);
+      mi->CB->UpdateFromBuffer(*T8DeviceContext, &wireCB.WVP[0]);
+      mi->CB->Set(*T8DeviceContext, 0);
+      if (!g_pBaseDriver->UsesGLSL()) {
+        mi->InstanceCBGPU->UpdateFromBuffer(*T8DeviceContext, &wireInstanceCB);
+        mi->InstanceCBGPU->Set(*T8DeviceContext, 1);
+      }
+      if (m_wireDepthTex)
+        m_wireDepthTex->Set(*T8DeviceContext, 0, "depthTex");
+
+      T8DeviceContext->DrawIndexed(m_wireGeo[i].indexCount, 0, baseVertex);
+      T8DeviceContext->SetPrimitiveTopology(Topology::TRIANLE_LIST);
+    }
   }
 
   void RenderMesh::GatherInfo() {
@@ -2036,6 +2178,13 @@ namespace t850 {
       MeshAssetCache::Get().Release(m_asset);
       m_asset = nullptr;
     }
+
+    for (auto& wg : m_wireGeo) {
+      if (wg.IB) { wg.IB->release(); wg.IB = nullptr; }
+    }
+    m_wireGeo.clear();
+    m_wireShader = nullptr;
+    m_wireDepthTex = nullptr;
   }
 }
 

@@ -24,41 +24,6 @@ if (-not (Test-Path $slnPath)) {
     exit 1
 }
 
-# Locate MSBuild
-$msbuildPaths = @(
-    "${env:ProgramFiles(x86)}\Microsoft Visual Studio\2022\BuildTools\MSBuild\Current\Bin\MSBuild.exe",
-    "${env:ProgramFiles}\Microsoft Visual Studio\2022\Community\MSBuild\Current\Bin\MSBuild.exe",
-    "${env:ProgramFiles}\Microsoft Visual Studio\2022\Professional\MSBuild\Current\Bin\MSBuild.exe",
-    "${env:ProgramFiles}\Microsoft Visual Studio\2022\Enterprise\MSBuild\Current\Bin\MSBuild.exe",
-    "${env:ProgramFiles(x86)}\Microsoft Visual Studio\2019\BuildTools\MSBuild\Current\Bin\MSBuild.exe",
-    "${env:ProgramFiles(x86)}\Microsoft Visual Studio\2019\Community\MSBuild\Current\Bin\MSBuild.exe"
-)
-
-$msbuild = $null
-foreach ($p in $msbuildPaths) {
-    if (Test-Path $p) {
-        $msbuild = $p
-        break
-    }
-}
-
-if (-not $msbuild) {
-    # Try vswhere as fallback
-    $vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
-    if (Test-Path $vswhere) {
-        $vsPath = & $vswhere -latest -products * -requires Microsoft.Component.MSBuild -property installationPath 2>$null
-        if ($vsPath) {
-            $candidate = Join-Path $vsPath "MSBuild\Current\Bin\MSBuild.exe"
-            if (Test-Path $candidate) { $msbuild = $candidate }
-        }
-    }
-}
-
-if (-not $msbuild) {
-    Write-Host "ERROR: MSBuild not found. Install Visual Studio Build Tools." -ForegroundColor Red
-    exit 1
-}
-
 # Normalize config casing
 $Config = $Config.Substring(0,1).ToUpper() + $Config.Substring(1).ToLower()
 
@@ -67,6 +32,78 @@ $msbuildPlatform = switch ($Platform.ToLower()) {
     "x86"   { "x86" }
     "x64"   { "x64" }
     "arm64" { "ARM64" }
+}
+
+function Test-MSBuildSupportsPlatform {
+    param(
+        [Parameter(Mandatory = $true)] [string]$MSBuildPath,
+        [Parameter(Mandatory = $true)] [string]$TargetPlatform
+    )
+
+    if (-not (Test-Path $MSBuildPath)) { return $false }
+    if ($TargetPlatform -ne "ARM64") { return $true }
+
+    $installRoot = Split-Path -Parent (Split-Path -Parent (Split-Path -Parent (Split-Path -Parent $MSBuildPath)))
+    $vcRoot = Join-Path $installRoot "VC\Tools\MSVC"
+    if (-not (Test-Path $vcRoot)) { return $false }
+
+    $arm64Compiler = Get-ChildItem -Path $vcRoot -Recurse -Filter cl.exe -ErrorAction SilentlyContinue |
+        Where-Object { $_.FullName -match '\\bin\\Hostx64\\arm64\\cl\.exe$' } |
+        Select-Object -First 1
+    return [bool]$arm64Compiler
+}
+
+function Find-MSBuildForPlatform {
+    param([Parameter(Mandatory = $true)] [string]$TargetPlatform)
+
+    $progX86 = [System.Environment]::GetFolderPath("ProgramFilesX86")
+    $progFiles = [System.Environment]::GetFolderPath("ProgramFiles")
+
+    $preferred = if ($TargetPlatform -eq "ARM64") {
+        @(
+            (Join-Path $progFiles "Microsoft Visual Studio\2022\Community\MSBuild\Current\Bin\MSBuild.exe"),
+            (Join-Path $progFiles "Microsoft Visual Studio\2022\Professional\MSBuild\Current\Bin\MSBuild.exe"),
+            (Join-Path $progFiles "Microsoft Visual Studio\2022\Enterprise\MSBuild\Current\Bin\MSBuild.exe"),
+            (Join-Path $progX86  "Microsoft Visual Studio\2022\BuildTools\MSBuild\Current\Bin\MSBuild.exe")
+        )
+    } else {
+        @(
+            (Join-Path $progX86  "Microsoft Visual Studio\2022\BuildTools\MSBuild\Current\Bin\MSBuild.exe"),
+            (Join-Path $progFiles "Microsoft Visual Studio\2022\Community\MSBuild\Current\Bin\MSBuild.exe"),
+            (Join-Path $progFiles "Microsoft Visual Studio\2022\Professional\MSBuild\Current\Bin\MSBuild.exe"),
+            (Join-Path $progFiles "Microsoft Visual Studio\2022\Enterprise\MSBuild\Current\Bin\MSBuild.exe")
+        )
+    }
+
+    $candidates = $preferred + @(
+        (Join-Path $progX86 "Microsoft Visual Studio\2019\BuildTools\MSBuild\Current\Bin\MSBuild.exe"),
+        (Join-Path $progX86 "Microsoft Visual Studio\2019\Community\MSBuild\Current\Bin\MSBuild.exe")
+    )
+
+    foreach ($candidate in $candidates) {
+        if (Test-MSBuildSupportsPlatform -MSBuildPath $candidate -TargetPlatform $TargetPlatform) {
+            return $candidate
+        }
+    }
+
+    $vswhere = Join-Path $progX86 "Microsoft Visual Studio\Installer\vswhere.exe"
+    if (Test-Path $vswhere) {
+        $vsPaths = & $vswhere -all -products * -requires Microsoft.Component.MSBuild -property installationPath 2>$null
+        foreach ($vsPath in $vsPaths) {
+            $candidate = Join-Path $vsPath "MSBuild\Current\Bin\MSBuild.exe"
+            if (Test-MSBuildSupportsPlatform -MSBuildPath $candidate -TargetPlatform $TargetPlatform) {
+                return $candidate
+            }
+        }
+    }
+
+    return $null
+}
+
+$msbuild = Find-MSBuildForPlatform -TargetPlatform $msbuildPlatform
+if (-not $msbuild) {
+    Write-Host "ERROR: MSBuild not found for platform $msbuildPlatform. Install the matching Visual Studio v143 build tools." -ForegroundColor Red
+    exit 1
 }
 
 Write-Host "========================================" -ForegroundColor Cyan

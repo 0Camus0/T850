@@ -45,11 +45,7 @@ set(T850_VCPKG_STATIC ${T850_VCPKG_ROOT}/${T850_VCPKG_STATIC_TRIPLET})
 set(T850_VCPKG_DYNAMIC ${T850_VCPKG_ROOT}/${T850_VCPKG_TRIPLET})
 set(T850_SDL3_ROOT ${T850_SOURCE_DIR}/Librerias/SDL3)
 
-if(T850_ARCH STREQUAL "x64")
-	set(T850_BUILD_EDITOR_DEFAULT ON)
-else()
-	set(T850_BUILD_EDITOR_DEFAULT OFF)
-endif()
+set(T850_BUILD_EDITOR_DEFAULT ON)
 option(T850_BUILD_EDITOR "Build T8ditor" ${T850_BUILD_EDITOR_DEFAULT})
 option(T850_AUTO_INSTALL_VCPKG_DEPS "Install T850 vcpkg dependencies during CMake configure" ON)
 option(T850_BOOTSTRAP_VCPKG "Clone/bootstrap vcpkg when T850_AUTO_INSTALL_VCPKG_DEPS is enabled" ON)
@@ -107,18 +103,46 @@ function(t850_ensure_vcpkg)
 		vulkan-memory-allocator:${T850_VCPKG_STATIC_TRIPLET}
 		glslang:${T850_VCPKG_STATIC_TRIPLET})
 
-	if(T850_BUILD_EDITOR)
-		set(T850_IMGUI_HEADER ${T850_VCPKG_STATIC}/include/imgui.h)
-		set(T850_IMGUI_VULKAN_HEADER ${T850_VCPKG_STATIC}/include/imgui_impl_vulkan.h)
-		if(EXISTS ${T850_IMGUI_HEADER} AND NOT EXISTS ${T850_IMGUI_VULKAN_HEADER})
-			message(STATUS "imgui is installed without vulkan-binding; removing it for feature reinstall")
-			t850_execute_process("vcpkg remove imgui"
-				COMMAND ${T850_VCPKG_EXE} remove imgui:${T850_VCPKG_STATIC_TRIPLET} --recurse
-				WORKING_DIRECTORY ${T850_VCPKG_SOURCE_DIR})
-		endif()
+	set(T850_IMGUI_HEADER ${T850_VCPKG_STATIC}/include/imgui.h)
+	set(T850_IMGUI_DX11_HEADER ${T850_VCPKG_STATIC}/include/imgui_impl_dx11.h)
+	set(T850_IMGUI_DX12_HEADER ${T850_VCPKG_STATIC}/include/imgui_impl_dx12.h)
+	set(T850_IMGUI_OPENGL3_HEADER ${T850_VCPKG_STATIC}/include/imgui_impl_opengl3.h)
+	set(T850_IMGUI_SDL3_HEADER ${T850_VCPKG_STATIC}/include/imgui_impl_sdl3.h)
+	set(T850_IMGUI_VULKAN_HEADER ${T850_VCPKG_STATIC}/include/imgui_impl_vulkan.h)
+	set(T850_IMGUI_NEEDS_REINSTALL OFF)
+	if(EXISTS ${T850_IMGUI_HEADER})
+		foreach(T850_IMGUI_REQUIRED_HEADER
+			${T850_IMGUI_DX11_HEADER}
+			${T850_IMGUI_OPENGL3_HEADER}
+			${T850_IMGUI_SDL3_HEADER}
+			${T850_IMGUI_VULKAN_HEADER})
+			if(NOT EXISTS ${T850_IMGUI_REQUIRED_HEADER})
+				set(T850_IMGUI_NEEDS_REINSTALL ON)
+			endif()
+		endforeach()
 
+		if(NOT T850_ARCH STREQUAL "x86" AND NOT EXISTS ${T850_IMGUI_DX12_HEADER})
+			set(T850_IMGUI_NEEDS_REINSTALL ON)
+		endif()
+	endif()
+
+	if(EXISTS ${T850_IMGUI_HEADER} AND T850_IMGUI_NEEDS_REINSTALL)
+		message(STATUS "imgui is installed without required backend features; removing it for feature reinstall")
+		t850_execute_process("vcpkg remove imgui"
+			COMMAND ${T850_VCPKG_EXE} remove imgui:${T850_VCPKG_STATIC_TRIPLET} --recurse
+			WORKING_DIRECTORY ${T850_VCPKG_SOURCE_DIR})
+	endif()
+
+	set(T850_IMGUI_FEATURES "docking-experimental,dx11-binding,vulkan-binding,opengl3-binding,sdl3-binding,win32-binding")
+	if(NOT T850_ARCH STREQUAL "x86")
+		set(T850_IMGUI_FEATURES "docking-experimental,dx11-binding,dx12-binding,vulkan-binding,opengl3-binding,sdl3-binding,win32-binding")
+	endif()
+
+	list(APPEND T850_VCPKG_PACKAGE_SPECS
+		"imgui[${T850_IMGUI_FEATURES}]:${T850_VCPKG_STATIC_TRIPLET}")
+
+	if(T850_BUILD_EDITOR)
 		list(APPEND T850_VCPKG_PACKAGE_SPECS
-			"imgui[docking-experimental,dx11-binding,dx12-binding,vulkan-binding,opengl3-binding,sdl3-binding,win32-binding]:${T850_VCPKG_STATIC_TRIPLET}"
 			imguizmo:${T850_VCPKG_STATIC_TRIPLET})
 	endif()
 
@@ -249,6 +273,7 @@ function(t850_apply_profiler_defines target)
 endfunction()
 
 add_subdirectory(Framework)
+add_subdirectory(FrameworkImGui)
 add_subdirectory(DayScene)
 
 if(T850_BUILD_EDITOR)

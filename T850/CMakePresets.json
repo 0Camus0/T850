@@ -18,7 +18,7 @@
       "architecture": "Win32",
       "binaryDir": "${sourceDir}/build/cmake-vs-win32",
       "cacheVariables": {
-        "T850_BUILD_EDITOR": "OFF"
+        "T850_BUILD_EDITOR": "ON"
       }
     },
     {
@@ -29,7 +29,7 @@
       "binaryDir": "${sourceDir}/build/cmake-vs-arm64",
       "cacheVariables": {
         "CMAKE_GENERATOR_INSTANCE": "C:/Program Files/Microsoft Visual Studio/2022/Community",
-        "T850_BUILD_EDITOR": "OFF"
+        "T850_BUILD_EDITOR": "ON"
       }
     }
   ],

@@ -225,6 +225,8 @@ SceneBase* DevLayer::GetActiveScene() const {
 }
 
 void DevLayer::RebuildGUIForScene() {
+  if (!m_legacyGuiEnabled) return;
+
   // Initialise the GUI system once (textures, shader, font).
   if (!m_guiInited && g_pBaseDriver) {
     m_gui.Init(g_pBaseDriver->width, g_pBaseDriver->height);
@@ -251,13 +253,25 @@ void DevLayer::SetSnapToGrid(bool s) { m_gui.SetSnapToGrid(s); }
 void DevLayer::SetControlEditMode(bool e) { m_gui.SetControlEditMode(e); }
 bool DevLayer::SetControlEditTargetByName(const std::string& targetName) { return m_gui.SetControlEditTargetByName(targetName); }
 
+void DevLayer::SetLegacyGuiEnabled(bool enabled) {
+  m_legacyGuiEnabled = enabled;
+  if (!m_legacyGuiEnabled && m_guiInited) {
+    m_gui.Destroy();
+    m_guiInited = false;
+  }
+}
+
+bool DevLayer::IsLegacyPopupActive() const {
+  return m_legacyGuiEnabled && m_gui.IsPopupActive();
+}
+
 void DevLayer::Update(float dt) {
   if (m_activeScene) {
     if (!m_paused) {
       m_activeScene->OnUpdate(dt);
     }
     // Push changed slider values into scene props each frame (even when paused)
-    if (m_gui.IsVisible()) {
+    if (m_legacyGuiEnabled && m_gui.IsVisible()) {
       m_activeScene->SyncFromGUI(m_gui);
       m_activeScene->SyncToGUI(m_gui);
     }
@@ -271,91 +285,97 @@ void DevLayer::Draw() {
     DrawCullingDebug(m_activeScene->SceneProp);
   }
   // GUI draws on top of the scene
-  T8_LOG_TRACE("[DevLayer] GUI Draw (visible=%d)", (int)m_gui.IsVisible());
-  m_gui.Draw();
+  if (m_legacyGuiEnabled) {
+    T8_LOG_TRACE("[DevLayer] GUI Draw (visible=%d)", (int)m_gui.IsVisible());
+    m_gui.Draw();
+  }
 }
 
 void DevLayer::ProcessInput(InputManager* input) {
   // Let the GUI (including a modal popup) consume input first.
-  if (m_guiInited) {
+  if (m_legacyGuiEnabled && m_guiInited) {
     m_gui.UpdateButtons(*input);
     m_gui.Update(*input, g_pBaseDriver->width, g_pBaseDriver->height);
   }
   // When a line-edit popup is active, all other keyboard/mouse handling is suppressed.
-  if (m_gui.IsPopupActive()) {
+  if (m_legacyGuiEnabled && m_gui.IsPopupActive()) {
     return;
   }
-  // Toggle GUI with G key
-  if (input->PressedOnceKey(T800K_g)) {
-    m_gui.ToggleVisible();
-  }
-  // F1: toggle group edit mode
-  if (input->PressedOnceKey(T800K_F1) && m_gui.IsVisible()) {
-    if (m_gui.IsGroupEditMode()) {
+  if (m_legacyGuiEnabled) {
+    // Toggle GUI with G key
+    if (input->PressedOnceKey(T800K_g)) {
+      m_gui.ToggleVisible();
+    }
+    // F1: toggle group edit mode
+    if (input->PressedOnceKey(T800K_F1) && m_gui.IsVisible()) {
+      if (m_gui.IsGroupEditMode()) {
+        m_gui.ExitGroupEditMode();
+      } else {
+        m_gui.EnterGroupEditMode();
+      }
+    }
+    // F2 in group edit mode: delete all custom groups
+    if (m_gui.IsGroupEditMode() && input->PressedOnceKey(T800K_F2)) {
+      m_gui.DeleteAllCustomGroups();
       m_gui.ExitGroupEditMode();
-    } else {
-      m_gui.EnterGroupEditMode();
     }
-  }
-  // F2 in group edit mode: delete all custom groups
-  if (m_gui.IsGroupEditMode() && input->PressedOnceKey(T800K_F2)) {
-    m_gui.DeleteAllCustomGroups();
-    m_gui.ExitGroupEditMode();
-  }
-  // Enter in group edit mode: open group name popup
-  if (m_gui.IsGroupEditMode() && input->PressedOnceKey(T800K_RETURN)) {
-    m_gui.OpenGroupNamePopup();
-  }
-  // Tab: save layout when in edit mode or when user has made label edits via the popup in
-  // the regular flow, otherwise dump scene state.
-  if (input->PressedOnceKey(T800K_TAB)) {
+    // Enter in group edit mode: open group name popup
+    if (m_gui.IsGroupEditMode() && input->PressedOnceKey(T800K_RETURN)) {
+      m_gui.OpenGroupNamePopup();
+    }
+    // Tab: save layout when in edit mode or when user has made label edits via the popup in
+    // the regular flow, otherwise dump scene state.
+    if (input->PressedOnceKey(T800K_TAB)) {
+      if (m_gui.IsControlEditMode()) {
+        m_gui.HandleControlEditTab(kControlLayoutPath);
+      } else if (m_gui.IsEditMode()) {
+        m_gui.SaveLayout(kLayoutPath);
+      } else if (m_gui.IsVisible() && m_gui.IsLayoutDirty()) {
+        m_gui.SaveLayout(kLayoutPath);
+      } else if (m_activeScene) {
+        m_activeScene->SaveSceneState();
+      }
+    }
+    // +/- controls:
+    // - regular edit mode: grid size
+    // - control edit mode: preview visual scale only (not saved)
     if (m_gui.IsControlEditMode()) {
-      m_gui.HandleControlEditTab(kControlLayoutPath);
+      if (input->PressedOnceKey(T800K_PLUS) || input->PressedOnceKey(T800K_KP_PLUS)) {
+        m_gui.AdjustControlPreviewScale(0.05f);
+        input->KeyStates[0][T800K_PLUS]    = false;
+        input->KeyStates[0][T800K_KP_PLUS] = false;
+      }
+      if (input->PressedOnceKey(T800K_MINUS) || input->PressedOnceKey(T800K_KP_MINUS)) {
+        m_gui.AdjustControlPreviewScale(-0.05f);
+        input->KeyStates[0][T800K_MINUS]    = false;
+        input->KeyStates[0][T800K_KP_MINUS] = false;
+      }
     } else if (m_gui.IsEditMode()) {
-      m_gui.SaveLayout(kLayoutPath);
-    } else if (m_gui.IsVisible() && m_gui.IsLayoutDirty()) {
-      m_gui.SaveLayout(kLayoutPath);
-    } else if (m_activeScene) {
-      m_activeScene->SaveSceneState();
+      if (input->PressedOnceKey(T800K_PLUS) || input->PressedOnceKey(T800K_KP_PLUS)) {
+        m_gui.GrowGrid(5.0f);
+        input->KeyStates[0][T800K_PLUS]    = false;
+        input->KeyStates[0][T800K_KP_PLUS] = false;
+      }
+      if (input->PressedOnceKey(T800K_MINUS) || input->PressedOnceKey(T800K_KP_MINUS)) {
+        m_gui.GrowGrid(-5.0f);
+        input->KeyStates[0][T800K_MINUS]    = false;
+        input->KeyStates[0][T800K_KP_MINUS] = false;
+      }
+      // Enter: apply last-edited element's scale to all elements of the same kind
+      if (input->PressedOnceKey(T800K_RETURN)) {
+        m_gui.ApplyUniformScale();
+      }
+      // Left/Right arrows: switch group while in edit mode
+      if (input->PressedOnceKey(T800K_LEFT)) {
+        m_gui.SwitchToPrevGroup();
+      }
+      if (input->PressedOnceKey(T800K_RIGHT)) {
+        m_gui.SwitchToNextGroup();
+      }
     }
-  }
-  // +/- controls:
-  // - regular edit mode: grid size
-  // - control edit mode: preview visual scale only (not saved)
-  if (m_gui.IsControlEditMode()) {
-    if (input->PressedOnceKey(T800K_PLUS) || input->PressedOnceKey(T800K_KP_PLUS)) {
-      m_gui.AdjustControlPreviewScale(0.05f);
-      input->KeyStates[0][T800K_PLUS]    = false;
-      input->KeyStates[0][T800K_KP_PLUS] = false;
+  } else if (input->PressedOnceKey(T800K_TAB) && m_activeScene) {
+    m_activeScene->SaveSceneState();
     }
-    if (input->PressedOnceKey(T800K_MINUS) || input->PressedOnceKey(T800K_KP_MINUS)) {
-      m_gui.AdjustControlPreviewScale(-0.05f);
-      input->KeyStates[0][T800K_MINUS]    = false;
-      input->KeyStates[0][T800K_KP_MINUS] = false;
-    }
-  } else if (m_gui.IsEditMode()) {
-    if (input->PressedOnceKey(T800K_PLUS) || input->PressedOnceKey(T800K_KP_PLUS)) {
-      m_gui.GrowGrid(5.0f);
-      input->KeyStates[0][T800K_PLUS]    = false;
-      input->KeyStates[0][T800K_KP_PLUS] = false;
-    }
-    if (input->PressedOnceKey(T800K_MINUS) || input->PressedOnceKey(T800K_KP_MINUS)) {
-      m_gui.GrowGrid(-5.0f);
-      input->KeyStates[0][T800K_MINUS]    = false;
-      input->KeyStates[0][T800K_KP_MINUS] = false;
-    }
-    // Enter: apply last-edited element's scale to all elements of the same kind
-    if (input->PressedOnceKey(T800K_RETURN)) {
-      m_gui.ApplyUniformScale();
-    }
-    // Left/Right arrows: switch group while in edit mode
-    if (input->PressedOnceKey(T800K_LEFT)) {
-      m_gui.SwitchToPrevGroup();
-    }
-    if (input->PressedOnceKey(T800K_RIGHT)) {
-      m_gui.SwitchToNextGroup();
-    }
-  }
 
   // Pause toggle
   if (input->PressedOnceKey(T800K_p)) {
@@ -369,7 +389,7 @@ void DevLayer::ProcessInput(InputManager* input) {
   }
 
   // Forward input to the active scene (skip when paused so mouse/keys don't move cameras)
-  if (m_activeScene && !m_paused) {
+  if (m_activeScene && !m_paused && !m_blockSceneInput) {
     m_activeScene->OnInput(input);
   }
   // GUI update already ran at the top of ProcessInput (so popups can pre-empt input).

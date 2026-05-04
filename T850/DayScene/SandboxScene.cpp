@@ -8,6 +8,7 @@
 #include <scene/SceneDescriptor.h>
 #include <scene/IBLResources.h>
 #include <core/Config.h>
+#include <imgui/DevGuiContext.h>
 #include <iostream>
 #include <fstream>
 #include <string>
@@ -177,6 +178,8 @@ void SandboxScene::InitVars() {
 
   SceneProp.ToogleShadow = true;
   SceneProp.ToogleSSAO = true;
+  m_showWireframe = false;
+  m_showSkeleton = false;
 
   SceneProp.Exposure = 1.0f;
   SceneProp.BloomFactor = 0.35f;
@@ -661,7 +664,7 @@ void SandboxScene::OnDraw() {
   Quads[7].SetGlobalKey(finalKey);
   Quads[7].Draw();
 
-  // Draw wireframe and skeleton overlays for skinned meshes (GPU-skinned)
+  // Draw wireframe and skeleton overlays.
   if (Meshes[0].pBase) {
     RenderSkinnedMesh* skinned = dynamic_cast<RenderSkinnedMesh*>(Meshes[0].pBase);
     if (skinned && skinned->HasSkinData()) {
@@ -681,6 +684,16 @@ void SandboxScene::OnDraw() {
         pFramework->pVideoDriver->SetBlendState(BaseDriver::BLEND_DEFAULT);
         skinned->DrawSkeleton();
       }
+    } else if (m_showWireframe) {
+      RenderMesh* mesh = static_cast<RenderMesh*>(Meshes[0].pBase);
+      int gbufHandle = GBufferPass;
+      if (gbufHandle >= 0 && gbufHandle < (int)pFramework->pVideoDriver->RTs.size()) {
+        auto* gbufRT = pFramework->pVideoDriver->RTs[gbufHandle];
+        mesh->SetWireframeDepthTex(gbufRT->pDepthTexture);
+      }
+      mesh->SetWireframeViewport(g_pBaseDriver->width, g_pBaseDriver->height);
+      pFramework->pVideoDriver->SetDepthStencilState(BaseDriver::NONE);
+      mesh->DrawWireframe();
     }
   }
 
@@ -864,6 +877,304 @@ void SandboxScene::PopulateGUI(t850::GUIManager& gui) {
   }
 }
 
+void SandboxScene::DrawDevGui(t850::DevGuiContext& gui) {
+  if (m_guiSetup.descriptor.name.empty()) {
+    m_guiSetup.Load("Scenes/SandboxScene.json");
+  }
+
+  struct Mapping { const char* name; int settingIndex; };
+
+  static const Mapping sliderMappings[] = {
+    {"exposure", CHANGE_EXPOSURE},
+    {"bloom_factor", CHANGE_BLOOM_FACTOR},
+    {"bloom_threshold", CHANGE_BLOOM_THRESHOLD},
+    {"tm_white_level", CHANGE_TM_WHITE_LEVEL},
+    {"tm_adapt_tau", CHANGE_TM_ADAPT_TAU},
+    {"pcf_radius", CHANGE_PCF_RADIUS},
+    {"pcf_samples", CHANGE_PCF_SAMPLES},
+    {"ssao_kernel_size", CHANGE_SSAO_KERNEL_SIZE},
+    {"ssao_radius", CHANGE_SSAO_RADIUS},
+    {"dof_aperture", CHANGE_DOF_APERTURE},
+    {"dof_focal_length", CHANGE_DOF_FOCAL_LENGHT},
+    {"dof_max_coc", CHANGE_DOF_MAX_COC},
+    {"dof_far_samples", CHANGE_DOF_FAR_SAMPLE},
+    {"dof_near_samples", CHANGE_DOF_NEAR_SAMPLE},
+    {"light_volume_steps", CHANGE_LIGHT_VOLUME_STEPS},
+    {"godrays_factor", CHANGE_GODRAYS_FACTOR},
+    {"gauss_kernel_radius", CHANGE_GAUSS_KERNEL_RADIUS},
+    {"gauss_kernel_deviation", CHANGE_GAUSS_KERNEL_DEVIATION},
+    {"fov", CHANGE_FOV},
+    {"light_intensity", CHANGE_LIGHT_INTENSITY},
+    {"shadow_bias", CHANGE_SHADOW_BIAS},
+    {"shadow_min", CHANGE_SHADOW_MIN},
+    {"env_factor", CHANGE_ENV_FACTOR},
+    {"ibl_factor", CHANGE_IBL_FACTOR},
+    {"material_emissive_intensity", CHANGE_MATERIAL_EMISSIVE_INTENSITY},
+    {"material_transmission_multiplier", CHANGE_MATERIAL_TRANSMISSION_MULTIPLIER},
+    {"material_refraction_strength", CHANGE_MATERIAL_REFRACTION_STRENGTH},
+    {"anim_speed", CHANGE_ANIM_SPEED},
+  };
+
+  static const Mapping checkboxMappings[] = {
+    {"shadow_toggle", CHANGE_PCF_TOOGLE},
+    {"ssao_toggle", CHANGLE_SSAO_TOOGLE},
+    {"show_wireframe", CHANGE_SHOW_WIREFRAME},
+    {"show_skeleton", CHANGE_SHOW_SKELETON},
+  };
+
+  static const Mapping selectorMappings[] = {
+    {"debug_render_target", CHANGE_DEBUG_RT},
+    {"cubemap", CHANGE_CUBEMAP},
+    {"gauss_kernel_sample_count", CHANGE_GAUSS_KERNEL_SAMPLE_COUNT},
+    {"active_gauss_kernel", CHANGE_ACTIVE_GAUSS_KERNEL},
+    {"anim_select", CHANGE_ANIM_SELECT},
+    {"anim_mode", CHANGE_ANIM_MODE},
+  };
+
+  auto findSetting = [](const std::string& name, const Mapping* mappings, int count) {
+    for (int i = 0; i < count; ++i) {
+      if (name == mappings[i].name) return mappings[i].settingIndex;
+    }
+    return -1;
+  };
+
+  auto activeKernel = [&]() -> GaussFilter* {
+    if (ChangeActiveGaussSelection < 0 || ChangeActiveGaussSelection >= (int)SceneProp.pGaussKernels.size()) return nullptr;
+    return SceneProp.pGaussKernels[ChangeActiveGaussSelection];
+  };
+
+  auto skinnedMesh = [&]() -> RenderSkinnedMesh* {
+    return Meshes[0].GetSkinnedMesh();
+  };
+
+  auto buildAnimationOptions = [&]() {
+    std::vector<std::string> options;
+    RenderSkinnedMesh* skinned = skinnedMesh();
+    if (skinned && skinned->HasSkinData()) {
+      int numSets = skinned->GetNumAnimSets();
+      for (int i = 0; i < numSets; ++i) {
+        if (skinned->xFile && !skinned->xFile->XMeshDataBase.empty()) {
+          auto& anims = skinned->xFile->XMeshDataBase[0]->Animation.Animations;
+          if (i < (int)anims.size() && !anims[i].Name.empty()) {
+            options.push_back(anims[i].Name);
+            continue;
+          }
+        }
+        options.push_back("Anim " + std::to_string(i));
+      }
+    }
+    if (options.empty()) options.push_back("None");
+    return options;
+  };
+
+  auto getSliderValue = [&](int settingIndex, float& value) -> bool {
+    GaussFilter* kernel = activeKernel();
+    switch (settingIndex) {
+    case CHANGE_EXPOSURE: value = SceneProp.Exposure; return true;
+    case CHANGE_BLOOM_FACTOR: value = SceneProp.BloomFactor; return true;
+    case CHANGE_BLOOM_THRESHOLD: value = SceneProp.BloomThreshold; return true;
+    case CHANGE_TM_WHITE_LEVEL: value = SceneProp.ToneMapWhiteLevel; return true;
+    case CHANGE_TM_ADAPT_TAU: value = SceneProp.LuminanceTau; return true;
+    case CHANGE_PCF_RADIUS: value = SceneProp.PCFScale; return true;
+    case CHANGE_PCF_SAMPLES: value = SceneProp.PCFSamples; return true;
+    case CHANGE_SSAO_KERNEL_SIZE: value = (float)SceneProp.SSAOKernel.KernelSize; return true;
+    case CHANGE_SSAO_RADIUS: value = SceneProp.SSAOKernel.Radius; return true;
+    case CHANGE_DOF_APERTURE: value = SceneProp.Aperture; return true;
+    case CHANGE_DOF_FOCAL_LENGHT: value = SceneProp.FocalLength; return true;
+    case CHANGE_DOF_MAX_COC: value = SceneProp.MaxCoc; return true;
+    case CHANGE_DOF_FAR_SAMPLE: value = SceneProp.DOF_Far_Samples_squared; return true;
+    case CHANGE_DOF_NEAR_SAMPLE: value = SceneProp.DOF_Near_Samples_squared; return true;
+    case CHANGE_LIGHT_VOLUME_STEPS: value = SceneProp.LightVolumeSteps; return true;
+    case CHANGE_GODRAYS_FACTOR: value = SceneProp.GodRaysFactor; return true;
+    case CHANGE_GAUSS_KERNEL_RADIUS: if (!kernel) return false; value = kernel->radius; return true;
+    case CHANGE_GAUSS_KERNEL_DEVIATION: if (!kernel) return false; value = kernel->sigma; return true;
+    case CHANGE_FOV: if (!ActiveCam) return false; value = Rad2Deg(ActiveCam->Fov); return true;
+    case CHANGE_LIGHT_INTENSITY: if (SceneProp.Lights.empty()) return false; value = SceneProp.Lights[0].Intensity; return true;
+    case CHANGE_SHADOW_BIAS: value = SceneProp.ShadowBias; return true;
+    case CHANGE_SHADOW_MIN: value = SceneProp.ShadowMin; return true;
+    case CHANGE_ENV_FACTOR: value = SceneProp.EnvFactor; return true;
+    case CHANGE_IBL_FACTOR: value = SceneProp.IBLFactor; return true;
+    case CHANGE_MATERIAL_EMISSIVE_INTENSITY: value = SceneProp.MaterialEmissiveIntensity; return true;
+    case CHANGE_MATERIAL_TRANSMISSION_MULTIPLIER: value = SceneProp.MaterialTransmissionMultiplier; return true;
+    case CHANGE_MATERIAL_REFRACTION_STRENGTH: value = SceneProp.MaterialRefractionStrength; return true;
+    case CHANGE_ANIM_SPEED: if (RenderSkinnedMesh* sk = skinnedMesh()) { value = sk->GetAnimSpeed(); return true; } return false;
+    }
+    return false;
+  };
+
+  auto setSliderValue = [&](int settingIndex, float value) {
+    GaussFilter* kernel = activeKernel();
+    switch (settingIndex) {
+    case CHANGE_EXPOSURE: SceneProp.Exposure = value; break;
+    case CHANGE_BLOOM_FACTOR: SceneProp.BloomFactor = value; break;
+    case CHANGE_BLOOM_THRESHOLD: SceneProp.BloomThreshold = value; break;
+    case CHANGE_TM_WHITE_LEVEL: SceneProp.ToneMapWhiteLevel = value; break;
+    case CHANGE_TM_ADAPT_TAU: SceneProp.LuminanceTau = value; break;
+    case CHANGE_PCF_RADIUS: SceneProp.PCFScale = value; break;
+    case CHANGE_PCF_SAMPLES: SceneProp.PCFSamples = value; break;
+    case CHANGE_SSAO_KERNEL_SIZE: SceneProp.SSAOKernel.KernelSize = (int)value; SceneProp.SSAOKernel.Update(); break;
+    case CHANGE_SSAO_RADIUS: SceneProp.SSAOKernel.Radius = value; break;
+    case CHANGE_DOF_APERTURE: SceneProp.Aperture = value; break;
+    case CHANGE_DOF_FOCAL_LENGHT: SceneProp.FocalLength = value; break;
+    case CHANGE_DOF_MAX_COC: SceneProp.MaxCoc = value; break;
+    case CHANGE_DOF_FAR_SAMPLE: SceneProp.DOF_Far_Samples_squared = value; break;
+    case CHANGE_DOF_NEAR_SAMPLE: SceneProp.DOF_Near_Samples_squared = value; break;
+    case CHANGE_LIGHT_VOLUME_STEPS: SceneProp.LightVolumeSteps = value; break;
+    case CHANGE_GODRAYS_FACTOR: SceneProp.GodRaysFactor = value; break;
+    case CHANGE_GAUSS_KERNEL_RADIUS: if (kernel) { kernel->radius = value; kernel->Update(); } break;
+    case CHANGE_GAUSS_KERNEL_DEVIATION: if (kernel) { kernel->sigma = value; kernel->Update(); } break;
+    case CHANGE_FOV:
+      if (ActiveCam) {
+        ActiveCam->SetFov(Deg2Rad(value));
+        ActiveCam->VP = ActiveCam->View * ActiveCam->Projection;
+        VP = ActiveCam->VP;
+      }
+      break;
+    case CHANGE_LIGHT_INTENSITY: if (!SceneProp.Lights.empty()) SceneProp.Lights[0].Intensity = value; break;
+    case CHANGE_SHADOW_BIAS: SceneProp.ShadowBias = value; break;
+    case CHANGE_SHADOW_MIN: SceneProp.ShadowMin = value; break;
+    case CHANGE_ENV_FACTOR: SceneProp.EnvFactor = value; break;
+    case CHANGE_IBL_FACTOR: SceneProp.IBLFactor = value; break;
+    case CHANGE_MATERIAL_EMISSIVE_INTENSITY: SceneProp.MaterialEmissiveIntensity = value; break;
+    case CHANGE_MATERIAL_TRANSMISSION_MULTIPLIER: SceneProp.MaterialTransmissionMultiplier = value; break;
+    case CHANGE_MATERIAL_REFRACTION_STRENGTH: SceneProp.MaterialRefractionStrength = value; break;
+    case CHANGE_ANIM_SPEED: if (RenderSkinnedMesh* sk = skinnedMesh()) sk->SetAnimSpeed(value); break;
+    }
+  };
+
+  auto getCheckboxValue = [&](int settingIndex, bool& value) -> bool {
+    switch (settingIndex) {
+    case CHANGE_PCF_TOOGLE: value = (SceneProp.ToogleShadow != 0); return true;
+    case CHANGLE_SSAO_TOOGLE: value = (SceneProp.ToogleSSAO != 0); return true;
+    case CHANGE_SHOW_WIREFRAME: value = m_showWireframe; return true;
+    case CHANGE_SHOW_SKELETON: value = (skinnedMesh() != nullptr) && m_showSkeleton; return true;
+    }
+    return false;
+  };
+
+  auto setCheckboxValue = [&](int settingIndex, bool value) {
+    switch (settingIndex) {
+    case CHANGE_PCF_TOOGLE: SceneProp.ToogleShadow = value ? 1 : 0; break;
+    case CHANGLE_SSAO_TOOGLE: SceneProp.ToogleSSAO = value ? 1 : 0; break;
+    case CHANGE_SHOW_WIREFRAME: m_showWireframe = value; break;
+    case CHANGE_SHOW_SKELETON: m_showSkeleton = value && (skinnedMesh() != nullptr); break;
+    }
+  };
+
+  auto getSelectorIndex = [&](const t850::SelectorDesc& desc, int settingIndex, int& selectedIndex) -> bool {
+    switch (settingIndex) {
+    case CHANGE_DEBUG_RT: selectedIndex = m_debugRTSelection; return true;
+    case CHANGE_CUBEMAP: selectedIndex = m_currentCubemapIndex; return true;
+    case CHANGE_GAUSS_KERNEL_SAMPLE_COUNT: {
+      GaussFilter* kernel = activeKernel();
+      if (!kernel) return false;
+      for (int i = 0; i < (int)desc.options.size(); ++i) {
+        if (std::atoi(desc.options[i].c_str()) == kernel->kernelSize) { selectedIndex = i; return true; }
+      }
+      selectedIndex = desc.default_index;
+      return true;
+    }
+    case CHANGE_ACTIVE_GAUSS_KERNEL: selectedIndex = ChangeActiveGaussSelection; return true;
+    case CHANGE_ANIM_SELECT: if (RenderSkinnedMesh* sk = skinnedMesh()) { selectedIndex = sk->GetCurrentAnimSet(); return true; } selectedIndex = 0; return true;
+    case CHANGE_ANIM_MODE: if (RenderSkinnedMesh* sk = skinnedMesh()) { selectedIndex = sk->GetKeyframeMode() ? 1 : 0; return true; } selectedIndex = 0; return true;
+    }
+    return false;
+  };
+
+  auto setSelectorIndex = [&](const t850::SelectorDesc& desc, const std::vector<std::string>* options, int settingIndex, int selectedIndex) {
+    const std::vector<std::string>& sourceOptions = options ? *options : desc.options;
+    if (selectedIndex < 0 || selectedIndex >= (int)sourceOptions.size()) return;
+    switch (settingIndex) {
+    case CHANGE_DEBUG_RT: m_debugRTSelection = selectedIndex; break;
+    case CHANGE_CUBEMAP:
+      if (selectedIndex != m_currentCubemapIndex) {
+        m_currentCubemapIndex = selectedIndex;
+        m_pendingCubemap = "sky/" + sourceOptions[selectedIndex];
+        T8_LOG_INFO("[SandboxScene] Cubemap change queued: '%s'", m_pendingCubemap.c_str());
+      }
+      break;
+    case CHANGE_GAUSS_KERNEL_SAMPLE_COUNT: {
+      GaussFilter* kernel = activeKernel();
+      if (kernel) { kernel->kernelSize = std::atoi(sourceOptions[selectedIndex].c_str()); kernel->Update(); }
+    } break;
+    case CHANGE_ACTIVE_GAUSS_KERNEL: ChangeActiveGaussSelection = selectedIndex; break;
+    case CHANGE_ANIM_SELECT:
+      if (RenderSkinnedMesh* sk = skinnedMesh()) {
+        int guard = sk->GetNumAnimSets() + 1;
+        while (sk->GetCurrentAnimSet() != selectedIndex && guard-- > 0) {
+          sk->NextAnimation();
+        }
+      }
+      break;
+    case CHANGE_ANIM_MODE:
+      if (RenderSkinnedMesh* sk = skinnedMesh()) {
+        bool keyMode = (selectedIndex == 1);
+        sk->SetKeyframeMode(keyMode);
+        if (keyMode) sk->StepKeyframe(0);
+      }
+      break;
+    }
+  };
+
+  if (gui.BeginSection("Controls")) {
+    for (const auto& desc : m_guiSetup.descriptor.sliders) {
+      int settingIndex = findSetting(desc.name, sliderMappings, (int)(sizeof(sliderMappings) / sizeof(sliderMappings[0])));
+      if (settingIndex < 0) continue;
+      float value = 0.0f;
+      if (getSliderValue(settingIndex, value) && gui.Slider(desc, value)) {
+        setSliderValue(settingIndex, value);
+      }
+    }
+  }
+
+  if (gui.BeginSection("Toggles")) {
+    for (const auto& desc : m_guiSetup.descriptor.checkboxes) {
+      int settingIndex = findSetting(desc.name, checkboxMappings, (int)(sizeof(checkboxMappings) / sizeof(checkboxMappings[0])));
+      if (settingIndex < 0) continue;
+      bool value = false;
+      if (getCheckboxValue(settingIndex, value) && gui.Checkbox(desc, value)) {
+        setCheckboxValue(settingIndex, value);
+      }
+    }
+  }
+
+  if (gui.BeginSection("Selectors")) {
+    std::vector<std::string> animOptions;
+    for (const auto& desc : m_guiSetup.descriptor.selectors) {
+      int settingIndex = findSetting(desc.name, selectorMappings, (int)(sizeof(selectorMappings) / sizeof(selectorMappings[0])));
+      if (settingIndex < 0) continue;
+      const std::vector<std::string>* overrideOptions = nullptr;
+      if (settingIndex == CHANGE_ANIM_SELECT) {
+        animOptions = buildAnimationOptions();
+        overrideOptions = &animOptions;
+      }
+      int selectedIndex = 0;
+      if (getSelectorIndex(desc, settingIndex, selectedIndex) && gui.Combo(desc, selectedIndex, overrideOptions)) {
+        setSelectorIndex(desc, overrideOptions, settingIndex, selectedIndex);
+      }
+    }
+  }
+
+  if (gui.BeginSection("Culling")) {
+    t850::CheckboxDesc cullingDesc;
+    cullingDesc.name = "frustum_culling";
+    cullingDesc.label = "Frustum culling";
+    bool cullingEnabled = SceneProp.FrustumCullingEnabled;
+    if (gui.Checkbox(cullingDesc, cullingEnabled)) {
+      SceneProp.FrustumCullingEnabled = cullingEnabled;
+    }
+
+    t850::CheckboxDesc statsDesc;
+    statsDesc.name = "show_culling_debug";
+    statsDesc.label = "Culling stats and frustum";
+    bool showCulling = m_showCullStats;
+    if (gui.Checkbox(statsDesc, showCulling)) {
+      m_showCullStats = showCulling;
+      SceneProp.ShowCullingDebug = showCulling;
+    }
+  }
+}
+
 void SandboxScene::SyncToGUI(t850::GUIManager& gui) {
   for (auto& sp : gui.GetSliderPairs()) {
     auto* slider = sp.slider;
@@ -908,7 +1219,7 @@ void SandboxScene::SyncToGUI(t850::GUIManager& gui) {
     case CHANGE_PCF_TOOGLE:   cb->checked = (SceneProp.ToogleShadow != 0); break;
     case CHANGLE_SSAO_TOOGLE: cb->checked = (SceneProp.ToogleSSAO != 0); break;
     case CHANGE_SHOW_WIREFRAME: cb->checked = m_showWireframe; break;
-    case CHANGE_SHOW_SKELETON:  cb->checked = m_showSkeleton; break;
+    case CHANGE_SHOW_SKELETON:  cb->checked = (Meshes[0].GetSkinnedMesh() != nullptr) && m_showSkeleton; break;
     }
   }
 
@@ -983,7 +1294,7 @@ void SandboxScene::SyncFromGUI(t850::GUIManager& gui) {
     case CHANGE_PCF_TOOGLE:   SceneProp.ToogleShadow = cb->checked ? 1 : 0; break;
     case CHANGLE_SSAO_TOOGLE: SceneProp.ToogleSSAO = cb->checked ? 1 : 0; break;
     case CHANGE_SHOW_WIREFRAME: m_showWireframe = cb->checked; break;
-    case CHANGE_SHOW_SKELETON:  m_showSkeleton = cb->checked; break;
+    case CHANGE_SHOW_SKELETON:  m_showSkeleton = cb->checked && (Meshes[0].GetSkinnedMesh() != nullptr); break;
     }
   }
 

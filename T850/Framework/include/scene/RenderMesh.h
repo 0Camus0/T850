@@ -48,6 +48,7 @@
 #include <scene/MeshAsset.h>
 #include <scene/MeshAssetCache.h>
 #include <scene/MaterialAsset.h>
+#include <scene/LineRenderer.h>
 
 
 
@@ -445,6 +446,9 @@ namespace t850 {
     void Transform(float *t);
     void Draw(float *t, float *vp);
     void Destroy();
+    void DrawWireframe();
+    void SetWireframeDepthTex(Texture* depthTex) { m_wireDepthTex = depthTex; }
+    void SetWireframeViewport(int w, int h) { m_wireViewW = w; m_wireViewH = h; }
 
     void GatherInfo();
     int  LoadTex(std::string p, xF::xMaterial *mat, Texture** tex);
@@ -497,6 +501,21 @@ namespace t850 {
     std::vector<uint8_t> m_visibilityScratch;
     std::vector<std::size_t> m_geometryOrderScratch;
     std::vector<std::size_t> m_drawOrderScratch;
+
+  private:
+    struct WireGeo {
+      IndexBuffer* IB = nullptr;
+      unsigned indexCount = 0;
+      bool use32Bit = false;
+    };
+    void BuildWireframeBuffers();
+    void CreateWireframeShader();
+
+    std::vector<WireGeo> m_wireGeo;
+    ShaderBase* m_wireShader = nullptr;
+    Texture* m_wireDepthTex = nullptr;
+    int m_wireViewW = 1280;
+    int m_wireViewH = 720;
   };
 }
 

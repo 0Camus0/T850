@@ -22,6 +22,7 @@
 
 namespace t850 {
   class GUIManager;   // forward
+  class DevGuiContext; // forward
   class RootFramework;
   class AppBase {
   public:
@@ -69,6 +70,7 @@ namespace t850 {
     virtual void PopulateGUI(GUIManager& /*gui*/) {}
     virtual void SyncToGUI(GUIManager& /*gui*/)   {}   // scene props → sliders
     virtual void SyncFromGUI(GUIManager& /*gui*/) {}   // sliders → scene props
+    virtual void DrawDevGui(DevGuiContext& /*gui*/) {}
 
     // Dump current scene state back to its JSON file
     virtual void SaveSceneState() {}

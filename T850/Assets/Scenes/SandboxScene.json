@@ -113,8 +113,8 @@
   "checkboxes": [
     { "name": "shadow_toggle", "label": "Shadows", "default_checked": true },
     { "name": "ssao_toggle",   "label": "SSAO",    "default_checked": true },
-    { "name": "show_wireframe", "label": "Wireframe", "default_checked": true },
-    { "name": "show_skeleton",  "label": "Skeleton",  "default_checked": true }
+    { "name": "show_wireframe", "label": "Wireframe", "default_checked": false },
+    { "name": "show_skeleton",  "label": "Skeleton",  "default_checked": false }
   ],
   "selectors": [
     {

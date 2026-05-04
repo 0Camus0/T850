@@ -106,6 +106,7 @@ class DayScene : public t850::SceneBase
   void PopulateGUI(t850::GUIManager& gui) override;
   void SyncToGUI(t850::GUIManager& gui) override;
   void SyncFromGUI(t850::GUIManager& gui) override;
+  void DrawDevGui(t850::DevGuiContext& gui) override;
 
   // Dump scene state to JSON
   void SaveSceneState() override;

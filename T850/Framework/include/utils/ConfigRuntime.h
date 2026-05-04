@@ -32,20 +32,11 @@ struct DisplayJson {
 
 struct DevToolsJson {
   std::optional<bool> gui;
-  std::optional<bool> guiScreenshot;
-  std::optional<std::string> guiScreenshotPath;
-  std::optional<bool> guiEdit;
-  std::optional<bool> guiSnap;
-  std::optional<bool> guiControlEdit;
-  std::optional<std::string> guiControlTarget;
   std::optional<std::string> logLevel;
   std::optional<int> logLevelValue;
   std::optional<bool> logToFile;
   std::optional<std::string> logFile;
   std::optional<bool> d3d12Debug;
-  std::optional<bool> testGui;
-  std::optional<bool> createAtlas;
-  std::optional<int> atlasMaxSprite;
   std::optional<bool> profile;
   std::optional<int> profileFrames;
   std::optional<bool> dumpMatrices;
@@ -74,19 +65,10 @@ struct RuntimeConfigJson {
   std::optional<int> dumpFrame;
   std::optional<float> dumpSeconds;
   std::optional<bool> gui;
-  std::optional<bool> guiScreenshot;
-  std::optional<std::string> guiScreenshotPath;
-  std::optional<bool> guiEdit;
-  std::optional<bool> guiSnap;
-  std::optional<bool> guiControlEdit;
-  std::optional<std::string> guiControlTarget;
   std::optional<std::string> logLevel;
   std::optional<int> logLevelValue;
   std::optional<std::string> logFile;
   std::optional<bool> d3d12Debug;
-  std::optional<bool> testGui;
-  std::optional<bool> createAtlas;
-  std::optional<int> atlasMaxSprite;
   std::optional<bool> profile;
   std::optional<int> profileFrames;
   std::optional<bool> dumpMatrices;

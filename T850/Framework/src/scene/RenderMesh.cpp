@@ -16,6 +16,7 @@
 #include <iostream>
 #include <cmath>
 #include <algorithm>
+#include <chrono>
 
 #include <scene/RenderMesh.h>
 #include <scene/RenderGraph.h>
@@ -27,6 +28,7 @@
 #include <video/d3d11/D3D11Shader.h>
 #include <video/d3d11/D3D11Driver.h>
 #endif
+#include <core/Config.h>
 #include <core/Core.h>
 #include <utils/Log.h>
 
@@ -52,6 +54,68 @@ namespace t850 {
       case 2: return "BLEND";
       default: return "OPAQUE";
       }
+    }
+
+    constexpr uint32_t kMinTrianglesForClustering = 256;
+    constexpr uint32_t kTargetTrianglesPerCluster = 128;
+
+    bool CanSplitSubsetIntoClusters(const RenderMesh::SubSetInfo& subInfo) {
+      return subInfo.AlphaMode == 0 && subInfo.TransmissionFactor <= 0.0f;
+    }
+
+    template <typename IndexT>
+    void BuildContiguousClustersForSubset(const IndexT* indices,
+                                          uint32_t indexCount,
+                                          const float* vertexData,
+                                          uint32_t vertexStrideBytes,
+                                          bool splitIntoChunks,
+                                          uint32_t submeshIndex,
+                                          std::vector<SubmeshCluster>& clusters) {
+      if (!indices || indexCount == 0 || !vertexData || vertexStrideBytes < sizeof(float) * 3u)
+        return;
+
+      const uint32_t triangleCount = indexCount / 3u;
+      if (triangleCount == 0)
+        return;
+
+      const uint32_t vertexStrideFloats = vertexStrideBytes / sizeof(float);
+      const uint32_t targetTriangles = (splitIntoChunks && triangleCount > kMinTrianglesForClustering)
+        ? kTargetTrianglesPerCluster
+        : triangleCount;
+
+      for (uint32_t firstTriangle = 0; firstTriangle < triangleCount; firstTriangle += targetTriangles) {
+        const uint32_t chunkTriangles = (std::min)(targetTriangles, triangleCount - firstTriangle);
+        SubmeshCluster cluster;
+        cluster.submeshIndex = submeshIndex;
+        cluster.indexOffset = firstTriangle * 3u;
+        cluster.indexCount = chunkTriangles * 3u;
+
+        for (uint32_t localIndex = 0; localIndex < cluster.indexCount; ++localIndex) {
+          const uint32_t vertexIndex = static_cast<uint32_t>(indices[cluster.indexOffset + localIndex]);
+          const float* vertex = vertexData + vertexIndex * vertexStrideFloats;
+          cluster.localAABB.ExpandToInclude(vertex[0], vertex[1], vertex[2]);
+        }
+
+        if (cluster.localAABB.IsValid())
+          clusters.push_back(cluster);
+      }
+    }
+
+    const Submesh* FindSubmeshForSubset(const MeshAsset* asset, const RenderMesh::SubSetInfo& subInfo) {
+      if (!asset || subInfo.meshAssetSubmeshIndex == UINT32_MAX)
+        return nullptr;
+      if (subInfo.meshAssetSubmeshIndex >= asset->submeshes.size())
+        return nullptr;
+      return &asset->submeshes[subInfo.meshAssetSubmeshIndex];
+    }
+
+    uint32_t ClusterCountForSubset(const MeshAsset* asset, const RenderMesh::SubSetInfo& subInfo) {
+      const Submesh* submesh = FindSubmeshForSubset(asset, subInfo);
+      return submesh ? submesh->clusterCount : 0u;
+    }
+
+    uint32_t DrawIndexCountForSubset(const RenderMesh::SubSetInfo& subInfo) {
+      return subInfo.ibPoolAlloc.IsValid() ? subInfo.ibPoolAlloc.count : subInfo.NumVertex;
     }
 
     void LogLoadedMeshDetails(const XDataBase* xFile, const std::vector<RenderMesh::MeshInfo>& meshInfos) {
@@ -194,6 +258,8 @@ namespace t850 {
     struct IBAllocSide { uint32_t poolId = UINT32_MAX; uint32_t offsetIdx   = 0; uint32_t count = 0; };
     std::vector<VBAllocSide>             poolVBAllocs(xFile->MeshInfo.size());
     std::vector<std::vector<IBAllocSide>> poolIBAllocs(xFile->MeshInfo.size());
+    std::vector<std::vector<std::vector<SubmeshCluster>>> clusterBuildData(xFile->MeshInfo.size());
+    uint32_t nextMeshAssetSubmeshIndex = 0;
 
     for (std::size_t i = 0; i < xFile->MeshInfo.size(); i++) {
       xFinalGeometry *it = &xFile->MeshInfo[i];
@@ -201,6 +267,7 @@ namespace t850 {
       MeshInfo  *it_MeshInfo = &Info[i];
       if (populatePools) {
         poolIBAllocs[i].resize(it_MeshInfo->SubSets.size());
+        clusterBuildData[i].resize(it_MeshInfo->SubSets.size());
       }
 
       t850::BufferDesc bdesc;
@@ -615,6 +682,8 @@ namespace t850 {
         it_subsetinfo->NumTris = subinfo->NumTris;
         it_subsetinfo->NumVertex = subinfo->NumVertex;
         it_subsetinfo->IB32Bit = kUse32;
+        const uint32_t meshAssetSubmeshIndex = nextMeshAssetSubmeshIndex++;
+        const bool splitIntoClusters = CanSplitSubsetIntoClusters(*it_subsetinfo);
         // Allocate temp index storage matching the source width. Both
         // branches build the same {first vertex of each face} order,
         // mirroring the legacy 16-bit path. For glTF >65 535-vertex
@@ -663,6 +732,16 @@ namespace t850 {
             it_subsetinfo->bounds.Expand(it->pData[idx*stride16], it->pData[idx*stride16+1], it->pData[idx*stride16+2]);
           }
 
+          if (populatePools) {
+            BuildContiguousClustersForSubset(tmpIndexex,
+                                             static_cast<uint32_t>(counter),
+                                             &it->pData[0],
+                                             it->VertexSize,
+                                             splitIntoClusters,
+                                             meshAssetSubmeshIndex,
+                                             clusterBuildData[i][j]);
+          }
+
           delete[] tmpIndexex;
         } else {
           unsigned int *tmpIndexex = new unsigned int[it_subsetinfo->NumVertex];
@@ -704,6 +783,16 @@ namespace t850 {
           for (int vi = 0; vi < counter; vi++) {
             unsigned int idx = tmpIndexex[vi];
             it_subsetinfo->bounds.Expand(it->pData[idx*stride32], it->pData[idx*stride32+1], it->pData[idx*stride32+2]);
+          }
+
+          if (populatePools) {
+            BuildContiguousClustersForSubset(tmpIndexex,
+                                             static_cast<uint32_t>(counter),
+                                             &it->pData[0],
+                                             it->VertexSize,
+                                             splitIntoClusters,
+                                             meshAssetSubmeshIndex,
+                                             clusterBuildData[i][j]);
           }
 
           delete[] tmpIndexex;
@@ -779,6 +868,7 @@ namespace t850 {
       m_asset->vertexCount      = 0;
       m_asset->indexCount       = 0;
       m_asset->rootAABB         = t850::AABB{};
+      m_asset->clusters.clear();
 
       std::size_t totalVerts = 0;
       std::size_t totalIdx   = 0;
@@ -788,12 +878,13 @@ namespace t850 {
         totalVerts += mi.NumVertex;
         for (std::size_t j = 0; j < mi.SubSets.size(); ++j) {
           const SubSetInfo& s = mi.SubSets[j];
+          const uint32_t submeshIndex = static_cast<uint32_t>(m_asset->submeshes.size());
           Submesh sub;
           sub.vertexStart   = s.VertexStart;
           sub.vertexCount   = s.NumVertex;
           sub.indexStart    = s.TriStart * 3u;
           sub.triangleCount = s.NumTris;
-          sub.materialSlot  = static_cast<uint32_t>(m_asset->submeshes.size());
+          sub.materialSlot  = submeshIndex;
           sub.ib32Bit       = s.IB32Bit;
           sub.localAABB.vMin = XVECTOR3(s.bounds.min.x, s.bounds.min.y, s.bounds.min.z, 0.0f);
           sub.localAABB.vMax = XVECTOR3(s.bounds.max.x, s.bounds.max.y, s.bounds.max.z, 0.0f);
@@ -813,6 +904,25 @@ namespace t850 {
             sub.ibAlloc.count       = poolIBAllocs[i][j].count;
             sub.ibPoolId            = static_cast<uint16_t>(poolIBAllocs[i][j].poolId);
           }
+          sub.firstCluster = static_cast<uint32_t>(m_asset->clusters.size());
+          if (i < clusterBuildData.size() && j < clusterBuildData[i].size()) {
+            for (SubmeshCluster cluster : clusterBuildData[i][j]) {
+              cluster.submeshIndex = submeshIndex;
+              m_asset->clusters.push_back(cluster);
+            }
+          }
+          if (m_asset->clusters.size() == sub.firstCluster) {
+            const uint32_t indexCount = sub.ibAlloc.IsValid() ? sub.ibAlloc.count : s.NumTris * 3u;
+            if (indexCount > 0) {
+              SubmeshCluster cluster;
+              cluster.submeshIndex = submeshIndex;
+              cluster.indexOffset = 0;
+              cluster.indexCount = indexCount;
+              cluster.localAABB = sub.localAABB;
+              m_asset->clusters.push_back(cluster);
+            }
+          }
+          sub.clusterCount = static_cast<uint32_t>(m_asset->clusters.size()) - sub.firstCluster;
           m_asset->submeshes.push_back(sub);
         }
         m_asset->rootAABB.ExpandToInclude(mi.bounds.min.x, mi.bounds.min.y, mi.bounds.min.z);
@@ -821,9 +931,10 @@ namespace t850 {
       m_asset->vertexCount = static_cast<uint32_t>(totalVerts);
       m_asset->indexCount  = static_cast<uint32_t>(totalIdx);
 
-      T8_LOG_INFO("[MeshAssetCache] Populated '%s': %zu submesh(es), %u verts, %u indices, stride=%u, attribMask=0x%016llX",
+      T8_LOG_INFO("[MeshAssetCache] Populated '%s': %zu submesh(es), %zu cluster(s), %u verts, %u indices, stride=%u, attribMask=0x%016llX",
                   m_asset->sourcePath.c_str(),
                   m_asset->submeshes.size(),
+                  m_asset->clusters.size(),
                   m_asset->vertexCount, m_asset->indexCount, m_asset->vertexStride,
                   static_cast<unsigned long long>(m_asset->vertexAttribMask));
       MeshAssetCache::Get().DumpToLog();
@@ -848,9 +959,113 @@ namespace t850 {
           mi.vbPoolAlloc = m_asset->submeshes[flatIdx].vbAlloc;
         }
         for (std::size_t j = 0; j < mi.SubSets.size() && flatIdx < m_asset->submeshes.size(); ++j, ++flatIdx) {
+          mi.SubSets[j].meshAssetSubmeshIndex = static_cast<uint32_t>(flatIdx);
           mi.SubSets[j].ibPoolAlloc = m_asset->submeshes[flatIdx].ibAlloc;
         }
       }
+    }
+
+    CreateWireframeShader();
+    BuildWireframeBuffers();
+  }
+
+  void RenderMesh::CreateWireframeShader() {
+    if (!g_pBaseDriver) return;
+    m_lineRenderer.Create();
+  }
+
+  void RenderMesh::BuildWireframeBuffers() {
+    if (!xFile || xFile->XMeshDataBase.empty()) return;
+    xF::xMeshContainer* mc = xFile->XMeshDataBase[0];
+
+    m_wireGeo.resize(mc->Geometry.size());
+
+    for (std::size_t gi = 0; gi < mc->Geometry.size(); gi++) {
+      auto& geom = mc->Geometry[gi];
+      std::vector<unsigned int> lineIdx;
+      auto includeMaterial = [&](int materialIndex) {
+        if (gi >= Info.size() || materialIndex < 0 || materialIndex >= (int)Info[gi].SubSets.size())
+          return true;
+        const SubSetInfo& subset = Info[gi].SubSets[materialIndex];
+        if (const MaterialAsset* mat = subset.matAsset) {
+          const MaterialParams& params = mat->params;
+          return params.alphaMode != 2 && params.transmissionFactor <= 0.0f;
+        }
+        return subset.AlphaMode != 2 && subset.TransmissionFactor <= 0.0f;
+      };
+
+      auto pushTriangleLines = [&](unsigned int a, unsigned int b, unsigned int c) {
+        lineIdx.push_back(a); lineIdx.push_back(b);
+        lineIdx.push_back(b); lineIdx.push_back(c);
+        lineIdx.push_back(c); lineIdx.push_back(a);
+      };
+
+      if (geom.Indices32Bit && !geom.Triangles32.empty()) {
+        const auto& tris = geom.Triangles32;
+        for (std::size_t t = 0, face = 0; t + 2 < tris.size(); t += 3, ++face) {
+          int materialIndex = (face < geom.MaterialList.FaceIndices.size()) ? geom.MaterialList.FaceIndices[face] : 0;
+          if (!includeMaterial(materialIndex)) continue;
+          pushTriangleLines(tris[t + 0], tris[t + 1], tris[t + 2]);
+        }
+      } else {
+        const auto& tris = geom.Triangles;
+        for (std::size_t t = 0, face = 0; t + 2 < tris.size(); t += 3, ++face) {
+          int materialIndex = (face < geom.MaterialList.FaceIndices.size()) ? geom.MaterialList.FaceIndices[face] : 0;
+          if (!includeMaterial(materialIndex)) continue;
+          pushTriangleLines(tris[t + 0], tris[t + 1], tris[t + 2]);
+        }
+      }
+
+      if (lineIdx.empty()) continue;
+
+      unsigned maxVert = (unsigned)geom.Positions.size();
+      if (maxVert <= 65535) {
+        std::vector<unsigned short> idx16(lineIdx.size());
+        for (std::size_t j = 0; j < lineIdx.size(); j++)
+          idx16[j] = (unsigned short)lineIdx[j];
+        m_wireGeo[gi].IB = LineRenderer::CreateIndexBuffer16(idx16.data(), (unsigned)idx16.size());
+        m_wireGeo[gi].use32Bit = false;
+      } else {
+        m_wireGeo[gi].IB = LineRenderer::CreateIndexBuffer32(lineIdx.data(), (unsigned)lineIdx.size());
+        m_wireGeo[gi].use32Bit = true;
+      }
+      m_wireGeo[gi].indexCount = (unsigned)lineIdx.size();
+    }
+  }
+
+  void RenderMesh::DrawWireframe() {
+    if (!m_lineRenderer.IsReady() || m_wireGeo.empty()) return;
+    if (!pScProp || pScProp->pCameras.empty()) return;
+
+    Camera* cam = pScProp->pCameras[0];
+    XVECTOR3 wireColor(0.0f, 1.0f, 0.0f, 1.0f);
+    m_lineRenderer.SetDepthTestEnabled(m_wireDepthTex != nullptr);
+    m_lineRenderer.SetDepthTexture(m_wireDepthTex);
+    m_lineRenderer.SetViewport(m_wireViewW, m_wireViewH);
+    m_lineRenderer.SetFarPlane(cam->FPlane);
+
+    for (std::size_t i = 0; i < Info.size() && i < m_wireGeo.size(); i++) {
+      if (!m_wireGeo[i].IB || m_wireGeo[i].indexCount == 0) continue;
+
+      MeshInfo* mi = &Info[i];
+      VertexBuffer* vbToBind = mi->VB;
+      unsigned int baseVertex = 0;
+      if (mi->vbPoolAlloc.IsValid()) {
+        if (VertexPool* vpool = MeshAssetCache::Get().GetVertexPool(mi->vbPoolAlloc.poolId)) {
+          if (VertexBuffer* gpu = vpool->GetGPUBuffer()) {
+            vbToBind = gpu;
+            baseVertex = mi->vbPoolAlloc.offsetElems;
+          }
+        }
+      }
+      if (!vbToBind) {
+        T8_LOG_ERROR("[RenderMesh] Wireframe skipped geometry %zu: no vertex buffer", i);
+        continue;
+      }
+
+      auto ibFmt = m_wireGeo[i].use32Bit ? IndexBufferFormat::R32 : IndexBufferFormat::R16;
+      m_lineRenderer.DrawLines(transform, cam->VP, wireColor, vbToBind, m_wireGeo[i].IB,
+                               m_wireGeo[i].indexCount, mi->VertexSize, ibFmt, baseVertex);
     }
   }
 
@@ -1082,32 +1297,53 @@ namespace t850 {
     }
   }
 
+  static RenderMesh::FrustumResult ClassifyAABBFrustumBounds(float minX, float minY, float minZ,
+                                                             float maxX, float maxY, float maxZ,
+                                                             const XMATRIX44& world,
+                                                             const XVECTOR3 planes[6]) {
+    const float cx = (minX + maxX) * 0.5f;
+    const float cy = (minY + maxY) * 0.5f;
+    const float cz = (minZ + maxZ) * 0.5f;
+    const float ex = (maxX - minX) * 0.5f;
+    const float ey = (maxY - minY) * 0.5f;
+    const float ez = (maxZ - minZ) * 0.5f;
+
+    const float wcx = cx*world.m11 + cy*world.m21 + cz*world.m31 + world.m41;
+    const float wcy = cx*world.m12 + cy*world.m22 + cz*world.m32 + world.m42;
+    const float wcz = cx*world.m13 + cy*world.m23 + cz*world.m33 + world.m43;
+
+    const float wex = std::fabs(world.m11)*ex + std::fabs(world.m21)*ey + std::fabs(world.m31)*ez;
+    const float wey = std::fabs(world.m12)*ex + std::fabs(world.m22)*ey + std::fabs(world.m32)*ez;
+    const float wez = std::fabs(world.m13)*ex + std::fabs(world.m23)*ey + std::fabs(world.m33)*ez;
+
+    bool intersects = false;
+    for (int p = 0; p < 6; p++) {
+      const float dist = planes[p].x*wcx + planes[p].y*wcy + planes[p].z*wcz + planes[p].w;
+      const float radius = std::fabs(planes[p].x)*wex + std::fabs(planes[p].y)*wey + std::fabs(planes[p].z)*wez;
+      if (dist + radius < 0.0f)
+        return RenderMesh::FrustumResult::Outside;
+      if (dist - radius < 0.0f)
+        intersects = true;
+    }
+    return intersects ? RenderMesh::FrustumResult::Intersecting : RenderMesh::FrustumResult::Inside;
+  }
+
+  static RenderMesh::FrustumResult ClassifyCanonicalAABBFrustum(const t850::AABB& box, const XMATRIX44& world, const XVECTOR3 planes[6]) {
+    return ClassifyAABBFrustumBounds(box.vMin.x, box.vMin.y, box.vMin.z,
+                                     box.vMax.x, box.vMax.y, box.vMax.z,
+                                     world, planes);
+  }
+
   // Test AABB (in local space) transformed by world matrix against frustum planes.
+  RenderMesh::FrustumResult RenderMesh::ClassifyAABBFrustum(const AABB& box, const XMATRIX44& world, const XVECTOR3 planes[6]) {
+    return ClassifyAABBFrustumBounds(box.min.x, box.min.y, box.min.z,
+                                     box.max.x, box.max.y, box.max.z,
+                                     world, planes);
+  }
+
   // Returns true if AABB is at least partially inside the frustum.
   bool RenderMesh::AABBInsideFrustum(const AABB& box, const XMATRIX44& world, const XVECTOR3 planes[6]) {
-    // Transform the 8 AABB corners to world space
-    float corners[8][3];
-    float bmin[3] = { box.min.x, box.min.y, box.min.z };
-    float bmax[3] = { box.max.x, box.max.y, box.max.z };
-    for (int c = 0; c < 8; c++) {
-      float lx = (c & 1) ? bmax[0] : bmin[0];
-      float ly = (c & 2) ? bmax[1] : bmin[1];
-      float lz = (c & 4) ? bmax[2] : bmin[2];
-      // Row-vector: [lx,ly,lz,1] * world
-      corners[c][0] = lx*world.m11 + ly*world.m21 + lz*world.m31 + world.m41;
-      corners[c][1] = lx*world.m12 + ly*world.m22 + lz*world.m32 + world.m42;
-      corners[c][2] = lx*world.m13 + ly*world.m23 + lz*world.m33 + world.m43;
-    }
-    // For each plane, check if all 8 corners are outside
-    for (int p = 0; p < 6; p++) {
-      int outside = 0;
-      for (int c = 0; c < 8; c++) {
-        float dist = planes[p].x*corners[c][0] + planes[p].y*corners[c][1] + planes[p].z*corners[c][2] + planes[p].w;
-        if (dist < 0.0f) outside++;
-      }
-      if (outside == 8) return false; // all corners outside this plane
-    }
-    return true;
+    return ClassifyAABBFrustum(box, world, planes) != FrustumResult::Outside;
   }
 
   static bool IsForwardOnlySubset(const RenderMesh::SubSetInfo& subInfo) {
@@ -1308,33 +1544,85 @@ namespace t850 {
     if (t)
       transform = t;
 
-    Camera *pActualCamera = pScProp->pCameras[0];
+    uint8_t currentPass = gKey.getPass();
+    Camera* pRenderCamera = pScProp && !pScProp->pCameras.empty() ? pScProp->pCameras[0] : nullptr;
+    if (!pRenderCamera)
+      return;
+    Camera* pCullCamera = pRenderCamera;
+    if ((currentPass == PassType::GBUFFER || currentPass == PassType::FORWARD) && pScProp->pCullingCamera)
+      pCullCamera = pScProp->pCullingCamera;
+    const bool frustumCullingEnabled = !pScProp || pScProp->FrustumCullingEnabled;
 
     // Extract frustum planes once per draw call
     XVECTOR3 frustumPlanes[6];
-    ExtractFrustumPlanes(pActualCamera->VP, frustumPlanes);
+    ExtractFrustumPlanes(pCullCamera->VP, frustumPlanes);
 
     std::size_t numGeometries = xFile->MeshInfo.size();
-    m_totalSubsets = 0;
-    m_drawnSubsets = 0;
-    m_culledMeshes = 0;
-
-    // Build visibility mask — parallel for large meshes, serial for small
-    std::vector<uint8_t> visible(numGeometries, 0);
-    static constexpr int kParallelCullThreshold = 256;
-
-    if (static_cast<int>(numGeometries) >= kParallelCullThreshold && g_threadPool) {
-      XMATRIX44 worldCopy = transform;
-      g_threadPool->ParallelFor(0, static_cast<int>(numGeometries), [&](int i) {
-        visible[i] = AABBInsideFrustum(Info[i].bounds, worldCopy, frustumPlanes) ? 1 : 0;
-      });
-    } else {
-      for (std::size_t i = 0; i < numGeometries; i++) {
-        visible[i] = AABBInsideFrustum(Info[i].bounds, transform, frustumPlanes) ? 1 : 0;
-      }
+    const bool trackCullStats = currentPass == PassType::GBUFFER;
+    const bool timeCullStats = trackCullStats && g_config.flags.benchmark;
+    using CullingClock = std::chrono::steady_clock;
+    long long cullingCpuNs = 0;
+    if (trackCullStats) {
+      m_totalMeshes = static_cast<int>(numGeometries);
+      m_visibleMeshes = 0;
+      m_culledMeshes = 0;
+      m_totalSubsets = 0;
+      m_visibleSubsets = 0;
+      m_culledSubsets = 0;
+      m_drawnSubsets = 0;
+      m_totalClusters = 0;
+      m_visibleClusters = 0;
+      m_culledClusters = 0;
+      m_drawnClusters = 0;
+      m_totalIndices = 0;
+      m_drawnIndices = 0;
+      m_culledIndices = 0;
+      m_cullingMeshTests = 0;
+      m_cullingSubsetTests = 0;
+      m_cullingClusterTests = 0;
+      m_drawCalls = 0;
+      m_renderStateChanges = 0;
+      m_cullingCpuMs = 0.0;
     }
 
-    uint8_t currentPass = gKey.getPass();
+    auto timeCullWork = [&](auto&& work) {
+      if (!timeCullStats)
+        return work();
+      const auto start = CullingClock::now();
+      auto result = work();
+      cullingCpuNs += std::chrono::duration_cast<std::chrono::nanoseconds>(CullingClock::now() - start).count();
+      return result;
+    };
+
+    // Build visibility mask — parallel for large meshes, serial for small
+    std::vector<uint8_t>& visible = m_visibilityScratch;
+    visible.resize(numGeometries);
+    constexpr uint8_t frustumOutside = static_cast<uint8_t>(FrustumResult::Outside);
+    constexpr uint8_t frustumInside = static_cast<uint8_t>(FrustumResult::Inside);
+    static constexpr int kParallelCullThreshold = 256;
+
+    if (!frustumCullingEnabled) {
+      std::fill(visible.begin(), visible.end(), frustumInside);
+    } else if (static_cast<int>(numGeometries) >= kParallelCullThreshold && g_threadPool) {
+      XMATRIX44 worldCopy = transform;
+      if (trackCullStats)
+        m_cullingMeshTests += static_cast<unsigned long long>(numGeometries);
+      timeCullWork([&]() -> bool {
+        g_threadPool->ParallelFor(0, static_cast<int>(numGeometries), [&](int i) {
+          visible[i] = static_cast<uint8_t>(ClassifyAABBFrustum(Info[i].bounds, worldCopy, frustumPlanes));
+        });
+        return true;
+      });
+    } else {
+      if (trackCullStats)
+        m_cullingMeshTests += static_cast<unsigned long long>(numGeometries);
+      timeCullWork([&]() -> bool {
+        for (std::size_t i = 0; i < numGeometries; i++) {
+          visible[i] = static_cast<uint8_t>(ClassifyAABBFrustum(Info[i].bounds, transform, frustumPlanes));
+        }
+        return true;
+      });
+    }
 
     // Phase C step 3: state tracker is process-wide (singleton) so
     // it can persist across multiple RenderMesh::Draw calls inside
@@ -1348,6 +1636,7 @@ namespace t850 {
     auto bindTextureOnce = [&](Texture* t, int slot, const char* name, int samplerSlot) {
       if (!t || slot < 0 || slot >= MeshDrawStateTracker::kMaxTrackedSlots) return;
       if (tracker.ShouldBindTexture(slot, t)) {
+        if (trackCullStats) m_renderStateChanges++;
         t->Set(*T8DeviceContext, slot, name);
       }
       // Sampler set every time (cheap); the per-shader sampler slot
@@ -1355,7 +1644,8 @@ namespace t850 {
       t->SetSampler(*T8DeviceContext, samplerSlot);
     };
 
-    std::vector<std::size_t> geometryOrder(numGeometries);
+    std::vector<std::size_t>& geometryOrder = m_geometryOrderScratch;
+    geometryOrder.resize(numGeometries);
     for (std::size_t i = 0; i < numGeometries; i++) geometryOrder[i] = i;
     if (currentPass == PassType::FORWARD) {
       std::stable_sort(geometryOrder.begin(), geometryOrder.end(),
@@ -1364,8 +1654,8 @@ namespace t850 {
           int groupB = GeometryForwardGroup(Info[b]);
           if (groupA != groupB)
             return groupA < groupB;
-          float da = GeometryForwardDistanceSq(Info[a], transform, pActualCamera->Eye);
-          float db = GeometryForwardDistanceSq(Info[b], transform, pActualCamera->Eye);
+          float da = GeometryForwardDistanceSq(Info[a], transform, pRenderCamera->Eye);
+          float db = GeometryForwardDistanceSq(Info[b], transform, pRenderCamera->Eye);
           return da > db;
         });
       } else if (currentPass == PassType::GBUFFER || currentPass == PassType::SHADOW_MAP || currentPass == PassType::RADIAL_DEPTH) {
@@ -1380,17 +1670,40 @@ namespace t850 {
       MeshInfo  *it_MeshInfo = &Info[i];
       xMeshGeometry *pActual = &xFile->XMeshDataBase[0]->Geometry[i];
 
-      m_totalSubsets += static_cast<int>(it_MeshInfo->SubSets.size());
-
-      if (!visible[i]) {
-        m_culledMeshes++;
-        continue;
+      int drawableSubsetCount = 0;
+      int drawableClusterCount = 0;
+      unsigned long long drawableIndexCount = 0;
+      for (const SubSetInfo& subInfo : it_MeshInfo->SubSets) {
+        if (!ShouldDrawSubsetInPass(subInfo, currentPass))
+          continue;
+        drawableSubsetCount++;
+        if (trackCullStats) {
+          drawableClusterCount += static_cast<int>(ClusterCountForSubset(m_asset, subInfo));
+          drawableIndexCount += DrawIndexCountForSubset(subInfo);
+        }
+      }
+      if (trackCullStats) {
+        m_totalSubsets += drawableSubsetCount;
+        m_totalClusters += drawableClusterCount;
+        m_totalIndices += drawableIndexCount;
       }
 
-      XMATRIX44 VP = pActualCamera->VP;
+      const uint8_t meshFrustumResult = visible[i];
+      if (meshFrustumResult == frustumOutside) {
+        if (trackCullStats) {
+          m_culledMeshes++;
+          m_culledSubsets += drawableSubsetCount;
+          m_culledClusters += drawableClusterCount;
+        }
+        continue;
+      }
+      if (trackCullStats)
+        m_visibleMeshes++;
+
+      XMATRIX44 VP = pRenderCamera->VP;
       XMATRIX44 WVP = transform*VP;
-      XMATRIX44 WorldView = transform*pActualCamera->View;
-      XVECTOR3 infoCam = XVECTOR3(pActualCamera->NPlane, pActualCamera->FPlane, pActualCamera->Fov, 1.0f);
+      XMATRIX44 WorldView = transform*pRenderCamera->View;
+      XVECTOR3 infoCam = XVECTOR3(pRenderCamera->NPlane, pRenderCamera->FPlane, pRenderCamera->Fov, 1.0f);
 
       RenderMesh::MeshInstanceCBuffer& instanceCB = it_MeshInfo->InstanceCB;
       instanceCB.WVP = WVP;
@@ -1400,7 +1713,7 @@ namespace t850 {
       RenderMesh::MeshFrameCBuffer& frameCB = it_MeshInfo->FrameCB;
       frameCB.Light0Pos = pScProp->Lights[0].Position;
       frameCB.Light0Col = pScProp->Lights[0].Color;
-      frameCB.CameraPos = pActualCamera->Eye;
+      frameCB.CameraPos = pRenderCamera->Eye;
       unsigned int numLights = pScProp ? static_cast<unsigned int>(pScProp->ActiveLights) : 1u;
       if (pScProp && numLights > pScProp->Lights.size())
         numLights = static_cast<unsigned int>(pScProp->Lights.size());
@@ -1459,7 +1772,8 @@ namespace t850 {
 
       // Build sorted draw order by shader key to minimize PSO switches
       std::size_t numSubsets = it_MeshInfo->SubSets.size();
-      std::vector<std::size_t> drawOrder(numSubsets);
+      std::vector<std::size_t>& drawOrder = m_drawOrderScratch;
+      drawOrder.resize(numSubsets);
       for (std::size_t k = 0; k < numSubsets; k++) drawOrder[k] = k;
       std::stable_sort(drawOrder.begin(), drawOrder.end(),
         [&](std::size_t a, std::size_t b) {
@@ -1468,8 +1782,8 @@ namespace t850 {
             int groupB = ForwardSubsetGroup(it_MeshInfo->SubSets[b]);
             if (groupA != groupB)
               return groupA < groupB;
-            float da = SubsetDistanceSqToCamera(it_MeshInfo->SubSets[a], transform, pActualCamera->Eye);
-            float db = SubsetDistanceSqToCamera(it_MeshInfo->SubSets[b], transform, pActualCamera->Eye);
+            float da = SubsetDistanceSqToCamera(it_MeshInfo->SubSets[a], transform, pRenderCamera->Eye);
+            float db = SubsetDistanceSqToCamera(it_MeshInfo->SubSets[b], transform, pRenderCamera->Eye);
             return da > db;
           }
           if (currentPass == PassType::GBUFFER || currentPass == PassType::SHADOW_MAP || currentPass == PassType::RADIAL_DEPTH) {
@@ -1492,8 +1806,23 @@ namespace t850 {
           continue;
 
         // Per-subset frustum cull
-        if (!AABBInsideFrustum(sub_info->bounds, transform, frustumPlanes))
+        uint8_t subsetFrustumResult = frustumInside;
+        if (frustumCullingEnabled && meshFrustumResult != frustumInside) {
+          if (trackCullStats)
+            m_cullingSubsetTests++;
+          subsetFrustumResult = timeCullWork([&]() -> uint8_t {
+            return static_cast<uint8_t>(ClassifyAABBFrustum(sub_info->bounds, transform, frustumPlanes));
+          });
+        }
+        if (subsetFrustumResult == frustumOutside) {
+          if (trackCullStats) {
+            m_culledSubsets++;
+            m_culledClusters += static_cast<int>(ClusterCountForSubset(m_asset, *sub_info));
+          }
           continue;
+        }
+        if (trackCullStats)
+          m_visibleSubsets++;
 
         // Phase B step 2: read material data via the deduplicated
         // MaterialAsset. SubSetInfo material fields are still
@@ -1565,6 +1894,7 @@ namespace t850 {
         IndexBufferFormat::E ibFmt = sub_info->IB32Bit ? IndexBufferFormat::R32 : IndexBufferFormat::R16;
         // Phase C step 3: IB-bind dedup via process-wide tracker.
         if (tracker.ShouldBindIB(ibToBind, ibFmt)) {
+          if (trackCullStats) m_renderStateChanges++;
           ibToBind->Set(*T8DeviceContext, 0, ibFmt);
         }
 
@@ -1590,6 +1920,7 @@ namespace t850 {
         const bool subsetDoubleSided = mp ? (mp->doubleSided != 0) : sub_info->DoubleSided;
         bool changedCull = subsetDoubleSided && prevCull != BaseDriver::FRONT_AND_BACK;
         if (changedCull) {
+          if (trackCullStats) m_renderStateChanges++;
           g_pBaseDriver->SetCullFace(BaseDriver::FRONT_AND_BACK);
         }
 
@@ -1599,6 +1930,7 @@ namespace t850 {
           // s->Set; the driver dedupes via m_lastPSO. Tracker only
           // notes the shader change to invalidate texture cache
           // (per-shader rootParam map).
+          if (trackCullStats) m_renderStateChanges++;
           s->Set(*T8DeviceContext);
           tracker.OnShaderChanged(s);
 
@@ -1643,6 +1975,7 @@ namespace t850 {
           // it's not confused with material-driven slot 4 textures
           // from a different shader path).
           if (tracker.ShouldBindEnvMap(EnvMap)) {
+            if (trackCullStats) m_renderStateChanges++;
             EnvMap->Set(*T8DeviceContext, 4, "texEnv");
           }
           EnvMap->SetSampler(*T8DeviceContext, EnvSamplerSlot);
@@ -1700,25 +2033,81 @@ namespace t850 {
           bindTextureOnce(t, MaterialTextureSlot::Transmission, "TransmissionTex", MaterialSamplerSlot);
         }
 
+        if (trackCullStats) m_renderStateChanges++;
         T8DeviceContext->SetPrimitiveTopology(Topology::TRIANLE_LIST);
         // Phase A.5 step 2: when using shared pools the index/vertex
         // offsets steer the draw to this submesh's allocation. Falls
         // back to (count, 0, 0) on the legacy per-subset IB path.
-        if (sub_info->ibPoolAlloc.IsValid() && it_MeshInfo->vbPoolAlloc.IsValid()) {
+        bool drewSubset = false;
+        const Submesh* submesh = FindSubmeshForSubset(m_asset, *sub_info);
+        const bool useClusterPath = currentPass == PassType::GBUFFER &&
+                                    submesh && submesh->clusterCount > 0 &&
+                                    sub_info->ibPoolAlloc.IsValid() &&
+                                    it_MeshInfo->vbPoolAlloc.IsValid();
+        if (useClusterPath) {
+          const bool clusterParentFullyInside = subsetFrustumResult == frustumInside;
+          for (uint32_t clusterOffset = 0; clusterOffset < submesh->clusterCount; ++clusterOffset) {
+            const uint32_t clusterIndex = submesh->firstCluster + clusterOffset;
+            if (!m_asset || clusterIndex >= m_asset->clusters.size())
+              continue;
+            const SubmeshCluster& cluster = m_asset->clusters[clusterIndex];
+            bool clusterInsideFrustum = true;
+            if (!frustumCullingEnabled || clusterParentFullyInside) {
+              clusterInsideFrustum = true;
+            } else {
+              if (trackCullStats)
+                m_cullingClusterTests++;
+              clusterInsideFrustum = timeCullWork([&]() -> bool {
+                return ClassifyCanonicalAABBFrustum(cluster.localAABB, transform, frustumPlanes) != FrustumResult::Outside;
+              });
+            }
+            if (!clusterInsideFrustum) {
+              if (trackCullStats)
+                m_culledClusters++;
+              continue;
+            }
+            T8DeviceContext->DrawIndexed(cluster.indexCount,
+                                         sub_info->ibPoolAlloc.offsetElems + cluster.indexOffset,
+                                         it_MeshInfo->vbPoolAlloc.offsetElems);
+            if (trackCullStats) {
+              m_drawCalls++;
+              m_visibleClusters++;
+              m_drawnClusters++;
+              m_drawnIndices += cluster.indexCount;
+            }
+            drewSubset = true;
+          }
+        } else if (sub_info->ibPoolAlloc.IsValid() && it_MeshInfo->vbPoolAlloc.IsValid()) {
           T8DeviceContext->DrawIndexed(sub_info->ibPoolAlloc.count,
                                        sub_info->ibPoolAlloc.offsetElems,
                                        it_MeshInfo->vbPoolAlloc.offsetElems);
+          if (trackCullStats) {
+            m_drawCalls++;
+            m_drawnIndices += sub_info->ibPoolAlloc.count;
+          }
+          drewSubset = true;
         } else {
           T8DeviceContext->DrawIndexed(sub_info->NumVertex, 0, 0);
+          if (trackCullStats) {
+            m_drawCalls++;
+            m_drawnIndices += sub_info->NumVertex;
+          }
+          drewSubset = true;
         }
         if (changedCull) {
+          if (trackCullStats) m_renderStateChanges++;
           g_pBaseDriver->SetCullFace(prevCull);
         }
-        m_drawnSubsets++;
+        if (trackCullStats && drewSubset)
+          m_drawnSubsets++;
         last = s;
       }
     }
     if (ownsScope) tracker.End();
+    if (trackCullStats) {
+      m_culledIndices = m_totalIndices > m_drawnIndices ? (m_totalIndices - m_drawnIndices) : 0;
+      m_cullingCpuMs = static_cast<double>(cullingCpuNs) / 1000000.0;
+    }
   }
 
   void RenderMesh::Destroy() {
@@ -1750,6 +2139,14 @@ namespace t850 {
       MeshAssetCache::Get().Release(m_asset);
       m_asset = nullptr;
     }
+
+    for (auto& wg : m_wireGeo) {
+      if (wg.IB) { wg.IB->release(); wg.IB = nullptr; }
+    }
+    m_wireGeo.clear();
+    m_wireShader = nullptr;
+    m_lineRenderer.Destroy();
+    m_wireDepthTex = nullptr;
   }
 }
 

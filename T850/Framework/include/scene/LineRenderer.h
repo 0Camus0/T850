@@ -64,7 +64,8 @@ public:
                  IndexBuffer*  ib,
                  unsigned indexCount,
                  unsigned vertexStride,
-                 IndexBufferFormat::E ibFormat = IndexBufferFormat::R16);
+                 IndexBufferFormat::E ibFormat = IndexBufferFormat::R16,
+                 unsigned startVertex = 0);
 
   // Helper for callers that want to build a VB of float4 line endpoints (xyzw, w=1).
   // Use BufferUsage::DINAMIC for buffers updated every frame.

@@ -240,11 +240,16 @@ namespace t850 {
 
     // Rasterizer
     pso.RasterizerState.FillMode = D3D12_FILL_MODE_SOLID;
-    switch (m_currentCull) {
-      case FRONT_FACES:     pso.RasterizerState.CullMode = D3D12_CULL_MODE_BACK;  break;
-      case BACK_FACES:      pso.RasterizerState.CullMode = D3D12_CULL_MODE_FRONT; break;
-      case FRONT_AND_BACK:  pso.RasterizerState.CullMode = D3D12_CULL_MODE_NONE;  break;
-      default:              pso.RasterizerState.CullMode = D3D12_CULL_MODE_BACK;  break;
+    if (pso.PrimitiveTopologyType == D3D12_PRIMITIVE_TOPOLOGY_TYPE_LINE ||
+        pso.PrimitiveTopologyType == D3D12_PRIMITIVE_TOPOLOGY_TYPE_POINT) {
+      pso.RasterizerState.CullMode = D3D12_CULL_MODE_NONE;
+    } else {
+      switch (m_currentCull) {
+        case FRONT_FACES:     pso.RasterizerState.CullMode = D3D12_CULL_MODE_BACK;  break;
+        case BACK_FACES:      pso.RasterizerState.CullMode = D3D12_CULL_MODE_FRONT; break;
+        case FRONT_AND_BACK:  pso.RasterizerState.CullMode = D3D12_CULL_MODE_NONE;  break;
+        default:              pso.RasterizerState.CullMode = D3D12_CULL_MODE_BACK;  break;
+      }
     }
     pso.RasterizerState.DepthClipEnable = TRUE;
 
@@ -300,13 +305,13 @@ namespace t850 {
     ComPtr<ID3D12PipelineState> psoObj;
     HRESULT hr = device->CreateGraphicsPipelineState(&pso, IID_PPV_ARGS(&psoObj));
     if (FAILED(hr)) {
-      T8_LOG_ERROR("[D3D12] CreatePSO failed hr=0x%08X shader=%p blend=%d depth=%d cull=%d nRTV=%d fmt0=%d",
-           hr, shader, key.blend, key.depth, key.cull, key.numRTVs, key.rtvFormats[0]);
+       T8_LOG_ERROR("[D3D12] CreatePSO failed hr=0x%08X shader=%p blend=%d depth=%d cull=%d topology=%d nRTV=%d fmt0=%d",
+         hr, shader, key.blend, key.depth, key.cull, key.topology, key.numRTVs, key.rtvFormats[0]);
       return nullptr;
     }
 
-    T8_LOG_DEBUG("[D3D12] PSO created: shader=%p blend=%d depth=%d cull=%d nRTV=%d",
-                 shader, key.blend, key.depth, key.cull, key.numRTVs);
+        T8_LOG_DEBUG("[D3D12] PSO created: shader=%p blend=%d depth=%d cull=%d topology=%d nRTV=%d",
+            shader, key.blend, key.depth, key.cull, key.topology, key.numRTVs);
     m_psoCache[key] = psoObj;
 #ifdef T850_RENDER_TRACE
     if (T8_TRACE_ACTIVE()) {
@@ -696,6 +701,9 @@ namespace t850 {
       BeginFrame();
       m_frameStarted = true;
 
+      if ((CurrentRT < 0 || IsCurrentOffscreenTarget()) && BindOffscreenTarget(true))
+        return;
+
       D3D12_RESOURCE_BARRIER b = {};
       b.Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
       b.Transition.pResource = m_backBuffers[m_currentBackBuffer].Get();
@@ -704,6 +712,9 @@ namespace t850 {
       b.Transition.Subresource = D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES;
       m_commandLists[m_currentBackBuffer]->ResourceBarrier(1, &b);
     }
+
+    if ((CurrentRT < 0 || IsCurrentOffscreenTarget()) && BindOffscreenTarget(true))
+      return;
 
     if (CurrentRT >= 0 && CurrentRT < (int)RTs.size()) {
       const float cc[4] = { 0.0f, 0.0f, 0.0f, 0.0f };
@@ -745,6 +756,26 @@ namespace t850 {
   }
 
   void D3D12Driver::SwapBuffers() {
+
+    if (IsOffscreenEnabled()) {
+      {
+        T8_PROFILE_CPU_SCOPE(t850::g_profiler, "D3D12_OffscreenCmdClose+Execute");
+        m_commandLists[m_currentBackBuffer]->Close();
+        ID3D12CommandList* lists[] = { m_commandLists[m_currentBackBuffer].Get() };
+        m_commandQueue->ExecuteCommandLists(1, lists);
+      }
+
+      const UINT64 fenceVal = m_nextFenceValue++;
+      m_commandQueue->Signal(m_fence.Get(), fenceVal);
+      m_frameFenceValues[m_currentBackBuffer] = fenceVal;
+
+      m_frameStarted = false;
+      CompleteOffscreenFrame();
+      m_currentBackBuffer = (m_currentBackBuffer + 1) % kBackBufferCount;
+
+      if (m_infoQueue) PollDebugMessages();
+      return;
+    }
 
     {
       T8_PROFILE_CPU_SCOPE(t850::g_profiler, "D3D12_CmdClose+Execute");
@@ -844,6 +875,10 @@ namespace t850 {
         rt->depthState = D3D12_RESOURCE_STATE_DEPTH_READ | D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE;
       }
     }
+
+    if (BindOffscreenTarget(false))
+      return;
+
     m_commandLists[m_currentBackBuffer]->OMSetRenderTargets(1, &m_backBufferRTVs[m_currentBackBuffer], FALSE, &m_depthDSV);
     m_commandLists[m_currentBackBuffer]->RSSetViewports(1, &m_viewport);
     m_commandLists[m_currentBackBuffer]->RSSetScissorRects(1, &m_scissorRect);

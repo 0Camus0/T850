@@ -17,6 +17,7 @@
 #include <video/gl/GLShader.h>
 #include <video/gl/GLDevice.h>
 #include <video/gl/GLDeviceContext.h>
+#include <core/Config.h>
 #include <iostream>
 #include <string>
 #include <sstream>
@@ -68,6 +69,31 @@ namespace t850 {
 #if defined(USING_OPENGL) || defined(USING_OPENGL_ES30) || defined(USING_OPENGL_ES31)
   GLenum GLDriver::DrawBuffers[16];
 #endif
+
+#if defined(T850_HEADLESS) || defined(USING_OPENGL) || defined(USING_OPENGL_ES30) || defined(USING_OPENGL_ES31)
+  namespace {
+    bool GLFenceSyncSupported() {
+#if defined(USING_OPENGL)
+      return GLEW_VERSION_3_2 || GLEW_ARB_sync;
+#else
+      return true;
+#endif
+    }
+
+    bool GLShouldFenceOffscreenTarget() {
+      return g_config.glOffscreenFlushMode != Config::GLOffscreenFlushMode::None;
+    }
+
+    bool GLShouldFlushOffscreenFrame() {
+      return g_config.glOffscreenFlushMode == Config::GLOffscreenFlushMode::Frame;
+    }
+
+    GLbitfield GLFenceWaitFlags() {
+      return g_config.glOffscreenFlushMode == Config::GLOffscreenFlushMode::None ? 0 : GL_SYNC_FLUSH_COMMANDS_BIT;
+    }
+  }
+#endif
+
   void	GLDriver::InitDriver() {
     T8Device = new t850::GLDevice;
     T8DeviceContext = new t850::GLDeviceContext;
@@ -241,7 +267,64 @@ namespace t850 {
 
   }
 
+#if defined(T850_HEADLESS) || defined(USING_OPENGL) || defined(USING_OPENGL_ES30) || defined(USING_OPENGL_ES31)
+  void GLDriver::FenceOffscreenTarget(int rt) {
+    if (rt < 0)
+      return;
+
+    if (!GLShouldFenceOffscreenTarget())
+      return;
+
+    if (!GLFenceSyncSupported())
+      return;
+
+    auto existing = m_offscreenFences.find(rt);
+    if (existing != m_offscreenFences.end()) {
+      if (existing->second)
+        glDeleteSync(existing->second);
+      m_offscreenFences.erase(existing);
+    }
+
+    GLsync sync = glFenceSync(GL_SYNC_GPU_COMMANDS_COMPLETE, 0);
+    if (!sync) {
+      T8_LOG_ERROR("[GL][Offscreen] glFenceSync failed");
+      return;
+    }
+    m_offscreenFences[rt] = sync;
+  }
+
+  void GLDriver::WaitForOffscreenTargetFence(int rt) {
+    auto it = m_offscreenFences.find(rt);
+    if (it == m_offscreenFences.end())
+      return;
+
+    GLsync sync = it->second;
+    if (sync) {
+      GLenum result = GL_TIMEOUT_EXPIRED;
+      GLbitfield waitFlags = GLFenceWaitFlags();
+      while (result == GL_TIMEOUT_EXPIRED) {
+        result = glClientWaitSync(sync, waitFlags, 1000ull * 1000ull * 1000ull);
+      }
+      if (result == GL_WAIT_FAILED)
+        T8_LOG_ERROR("[GL][Offscreen] glClientWaitSync failed for RT %d", rt);
+      glDeleteSync(sync);
+    }
+    m_offscreenFences.erase(it);
+  }
+
+  void GLDriver::DestroyOffscreenFences() {
+    for (auto& entry : m_offscreenFences) {
+      if (entry.second)
+        glDeleteSync(entry.second);
+    }
+    m_offscreenFences.clear();
+  }
+#endif
+
   void	GLDriver::DestroyDriver() {
+#if defined(T850_HEADLESS) || defined(USING_OPENGL) || defined(USING_OPENGL_ES30) || defined(USING_OPENGL_ES31)
+    DestroyOffscreenFences();
+#endif
     DestroyShaders();
     DestroyRTs();
     DestroyTextures();
@@ -281,6 +364,9 @@ namespace t850 {
 
   bool GLDriver::ResizeSwapchain(int newW, int newH) {
     if (newW <= 0 || newH <= 0) return false;
+#if defined(T850_HEADLESS) || defined(USING_OPENGL) || defined(USING_OPENGL_ES30) || defined(USING_OPENGL_ES31)
+    DestroyOffscreenFences();
+#endif
     width  = newW;
     height = newH;
     glViewport(0, 0, newW, newH);
@@ -526,6 +612,15 @@ namespace t850 {
 #endif
 
   void	GLDriver::Clear() {
+    if (CurrentRT < 0 || IsCurrentOffscreenTarget()) {
+#if defined(T850_HEADLESS) || defined(USING_OPENGL) || defined(USING_OPENGL_ES30) || defined(USING_OPENGL_ES31)
+      if (IsOffscreenEnabled())
+        WaitForOffscreenTargetFence(GetActiveOffscreenRT());
+#endif
+      if (BindOffscreenTarget(true))
+        return;
+    }
+
     glClearColor(1.0, 1.0, 1.0, 0.0);
     glClearDepthf(0.0f);
     glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT | GL_STENCIL_BUFFER_BIT);
@@ -555,6 +650,15 @@ namespace t850 {
 
   void	GLDriver::SwapBuffers() {
     T8_LOG_TRACE("[GLDriver] SwapBuffers");
+    if (IsOffscreenEnabled()) {
+#if defined(T850_HEADLESS) || defined(USING_OPENGL) || defined(USING_OPENGL_ES30) || defined(USING_OPENGL_ES31)
+      FenceOffscreenTarget(GetActiveOffscreenRT());
+#endif
+  if (GLShouldFlushOffscreenFrame())
+    glFlush();
+      CompleteOffscreenFrame();
+      return;
+    }
 #ifdef OS_WINDOWS
 #if defined(USING_OPENGL_ES20) || defined(USING_OPENGL_ES30) || defined(USING_OPENGL_ES31)
     eglSwapBuffers(eglDisplay, eglSurface);
@@ -577,16 +681,21 @@ namespace t850 {
 
   void GLDriver::PopRT() {
     T8_TRACE(EvPopRT());
-    glBindFramebuffer(GL_FRAMEBUFFER, CurrentFBO);
-    glViewport(0, 0, width, height);
-    glColorMask(GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE);
+    const int poppedRT = CurrentRT;
 
-    if (CurrentRT >= 0) {
-      if (RTs[CurrentRT]->GenMips) {
-        glBindTexture(GL_TEXTURE_2D, RTs[CurrentRT]->vColorTextures[0]->id);
+    if (poppedRT >= 0) {
+      if (RTs[poppedRT]->GenMips) {
+        glBindTexture(GL_TEXTURE_2D, RTs[poppedRT]->vColorTextures[0]->id);
         glGenerateMipmap(GL_TEXTURE_2D);
       }
     }
+
+    if (BindOffscreenTarget(false))
+      return;
+
+    glBindFramebuffer(GL_FRAMEBUFFER, CurrentFBO);
+    glViewport(0, 0, width, height);
+    glColorMask(GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE);
 
     CurrentRT = -1;
 #ifdef T850_RENDER_TRACE

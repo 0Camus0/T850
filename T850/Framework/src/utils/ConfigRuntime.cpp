@@ -72,6 +72,14 @@ int ParseLogLevel(const std::string& value, int fallback) {
   return fallback;
 }
 
+Config::GLOffscreenFlushMode ParseGLOffscreenFlushMode(const std::string& value, Config::GLOffscreenFlushMode fallback) {
+  std::string lowered = ToLower(value);
+  if (lowered == "frame" || lowered == "current" || lowered == "0") return Config::GLOffscreenFlushMode::Frame;
+  if (lowered == "wait" || lowered == "reuse" || lowered == "1") return Config::GLOffscreenFlushMode::Wait;
+  if (lowered == "none" || lowered == "off" || lowered == "2") return Config::GLOffscreenFlushMode::None;
+  return fallback;
+}
+
 GraphicsApi::E ParseGraphicsApi(const std::string& value, GraphicsApi::E fallback) {
   std::string lowered = ToLower(value);
   if (lowered == "gl" || lowered == "opengl") return GraphicsApi::OPENGL;
@@ -107,32 +115,20 @@ void ApplyConfigJson(const RuntimeConfigJson& json, Config& cfg) {
   if (json.dumpFrame) cfg.dumpFrame = *json.dumpFrame;
   if (json.dumpSeconds) cfg.dumpSeconds = *json.dumpSeconds;
   if (json.gui) cfg.flags.guiOnStart = *json.gui;
-  if (json.guiScreenshot) {
-    cfg.flags.guiScreenshot = *json.guiScreenshot;
-    if (*json.guiScreenshot) cfg.flags.guiOnStart = true;
-  }
-  if (json.guiScreenshotPath) cfg.guiScreenshotPath = *json.guiScreenshotPath;
-  if (json.guiEdit) {
-    cfg.flags.guiEdit = *json.guiEdit;
-    if (*json.guiEdit) cfg.flags.guiOnStart = true;
-  }
-  if (json.guiSnap) cfg.flags.guiSnap = *json.guiSnap;
-  if (json.guiControlEdit) {
-    cfg.flags.guiControlEdit = *json.guiControlEdit;
-    if (*json.guiControlEdit) cfg.flags.guiOnStart = true;
-  }
-  if (json.guiControlTarget) cfg.guiControlTarget = *json.guiControlTarget;
   if (json.logLevel) cfg.logLevel = ParseLogLevel(*json.logLevel, cfg.logLevel);
   if (json.logLevelValue) cfg.logLevel = *json.logLevelValue;
   if (json.logFile) cfg.logFile = *json.logFile;
   if (json.d3d12Debug) cfg.flags.d3d12Debug = *json.d3d12Debug;
-  if (json.testGui) cfg.flags.testGui = *json.testGui;
-  if (json.createAtlas) cfg.flags.createAtlas = *json.createAtlas;
-  if (json.atlasMaxSprite) cfg.atlasMaxSprite = *json.atlasMaxSprite;
   if (json.profile) cfg.flags.profile = *json.profile;
   if (json.profileFrames) cfg.profileFrames = *json.profileFrames;
   if (json.dumpMatrices) cfg.flags.dumpMatrices = *json.dumpMatrices;
   if (json.dumpMatricesFrames) cfg.dumpMatricesFrames = *json.dumpMatricesFrames;
+  if (json.benchmark) cfg.flags.benchmark = *json.benchmark;
+  if (json.cullDisabled) cfg.flags.cullDisabled = *json.cullDisabled;
+  if (json.benchmarkOutputPath) cfg.benchmarkOutputPath = *json.benchmarkOutputPath;
+  if (json.offscreen) cfg.flags.offscreen = *json.offscreen;
+  if (json.offscreenDebug) cfg.flags.offscreenDebug = *json.offscreenDebug;
+  if (json.glOffscreenFlushMode) cfg.glOffscreenFlushMode = ParseGLOffscreenFlushMode(*json.glOffscreenFlushMode, cfg.glOffscreenFlushMode);
   if (json.orbitYaw) {
     cfg.orbitYawOverride = true;
     cfg.orbitYaw = *json.orbitYaw;
@@ -165,33 +161,21 @@ void ApplyConfigJson(const RuntimeConfigJson& json, Config& cfg) {
   if (json.devTools) {
     const DevToolsJson& devTools = *json.devTools;
     if (devTools.gui) cfg.flags.guiOnStart = *devTools.gui;
-    if (devTools.guiScreenshot) {
-      cfg.flags.guiScreenshot = *devTools.guiScreenshot;
-      if (*devTools.guiScreenshot) cfg.flags.guiOnStart = true;
-    }
-    if (devTools.guiScreenshotPath) cfg.guiScreenshotPath = *devTools.guiScreenshotPath;
-    if (devTools.guiEdit) {
-      cfg.flags.guiEdit = *devTools.guiEdit;
-      if (*devTools.guiEdit) cfg.flags.guiOnStart = true;
-    }
-    if (devTools.guiSnap) cfg.flags.guiSnap = *devTools.guiSnap;
-    if (devTools.guiControlEdit) {
-      cfg.flags.guiControlEdit = *devTools.guiControlEdit;
-      if (*devTools.guiControlEdit) cfg.flags.guiOnStart = true;
-    }
-    if (devTools.guiControlTarget) cfg.guiControlTarget = *devTools.guiControlTarget;
     if (devTools.logLevel) cfg.logLevel = ParseLogLevel(*devTools.logLevel, cfg.logLevel);
     if (devTools.logLevelValue) cfg.logLevel = *devTools.logLevelValue;
     if (devTools.logFile) cfg.logFile = *devTools.logFile;
     if (devTools.logToFile && *devTools.logToFile && cfg.logFile.empty()) cfg.logFile = "logs/T850.log";
     if (devTools.d3d12Debug) cfg.flags.d3d12Debug = *devTools.d3d12Debug;
-    if (devTools.testGui) cfg.flags.testGui = *devTools.testGui;
-    if (devTools.createAtlas) cfg.flags.createAtlas = *devTools.createAtlas;
-    if (devTools.atlasMaxSprite) cfg.atlasMaxSprite = *devTools.atlasMaxSprite;
     if (devTools.profile) cfg.flags.profile = *devTools.profile;
     if (devTools.profileFrames) cfg.profileFrames = *devTools.profileFrames;
     if (devTools.dumpMatrices) cfg.flags.dumpMatrices = *devTools.dumpMatrices;
     if (devTools.dumpMatricesFrames) cfg.dumpMatricesFrames = *devTools.dumpMatricesFrames;
+    if (devTools.benchmark) cfg.flags.benchmark = *devTools.benchmark;
+    if (devTools.cullDisabled) cfg.flags.cullDisabled = *devTools.cullDisabled;
+    if (devTools.benchmarkOutputPath) cfg.benchmarkOutputPath = *devTools.benchmarkOutputPath;
+    if (devTools.offscreen) cfg.flags.offscreen = *devTools.offscreen;
+    if (devTools.offscreenDebug) cfg.flags.offscreenDebug = *devTools.offscreenDebug;
+    if (devTools.glOffscreenFlushMode) cfg.glOffscreenFlushMode = ParseGLOffscreenFlushMode(*devTools.glOffscreenFlushMode, cfg.glOffscreenFlushMode);
   }
 }
 
@@ -276,29 +260,6 @@ void ApplyCommandLine(int argc, char** argv, Config& cfg) {
     else if (arg == "--gui") {
       cfg.flags.guiOnStart = true;
     }
-    else if (arg == "--guiScreenshot" && i + 1 < argc) {
-      cfg.flags.guiScreenshot = true;
-      cfg.flags.guiOnStart = true;
-      cfg.guiScreenshotPath = argv[++i];
-    }
-    else if (arg == "--guiScreenshot") {
-      cfg.flags.guiScreenshot = true;
-      cfg.flags.guiOnStart = true;
-    }
-    else if (arg == "--guiEdit") {
-      cfg.flags.guiEdit = true;
-      cfg.flags.guiOnStart = true;
-    }
-    else if (arg == "--guiSnap") {
-      cfg.flags.guiSnap = true;
-    }
-    else if (arg == "--guiControlEdit") {
-      cfg.flags.guiControlEdit = true;
-      cfg.flags.guiOnStart = true;
-    }
-    else if (arg == "--guiControlTarget" && i + 1 < argc) {
-      cfg.guiControlTarget = argv[++i];
-    }
     else if (arg == "--logLevel" && i + 1 < argc) {
       cfg.logLevel = ParseLogLevel(argv[++i], cfg.logLevel);
     }
@@ -307,15 +268,6 @@ void ApplyCommandLine(int argc, char** argv, Config& cfg) {
     }
     else if (arg == "--d3d12debug") {
       cfg.flags.d3d12Debug = true;
-    }
-    else if (arg == "--testGui") {
-      cfg.flags.testGui = true;
-    }
-    else if (arg == "--createAtlas" || arg == "--updateAtlas") {
-      cfg.flags.createAtlas = true;
-    }
-    else if (arg == "--atlasMaxSprite" && i + 1 < argc) {
-      cfg.atlasMaxSprite = std::stoi(argv[++i]);
     }
 #ifdef T8_ENABLE_PROFILER
     else if (arg == "--profile") {
@@ -335,6 +287,25 @@ void ApplyCommandLine(int argc, char** argv, Config& cfg) {
     else if (arg == "--dumpMatrices" && i + 1 < argc) {
       cfg.flags.dumpMatrices = true;
       cfg.dumpMatricesFrames = std::stoi(argv[++i]);
+    }
+    else if (arg == "--benchmark") {
+      cfg.flags.benchmark = true;
+    }
+    else if (arg == "--benchmarkOutput" && i + 1 < argc) {
+      cfg.flags.benchmark = true;
+      cfg.benchmarkOutputPath = argv[++i];
+    }
+    else if (arg == "--cullDisabled") {
+      cfg.flags.cullDisabled = true;
+    }
+    else if (arg == "--offscreen") {
+      cfg.flags.offscreen = true;
+    }
+    else if (arg == "--offscreenDebug") {
+      cfg.flags.offscreenDebug = true;
+    }
+    else if (arg == "--glOffscreenFlushMode" && i + 1 < argc) {
+      cfg.glOffscreenFlushMode = ParseGLOffscreenFlushMode(argv[++i], cfg.glOffscreenFlushMode);
     }
   }
 }
@@ -369,17 +340,16 @@ void PrintHelp() {
     << "  --replaySnapshot <path>            Replay a snapshot JSON\n"
     << "  --keepRunning                      Keep running after dump\n"
     << "  --dumpMatrices <frames>            Write matrix_dump.csv for N frames\n"
+    << "  --benchmark                        Run DayScene tour, write benchmark JSON, then exit\n"
+    << "  --benchmarkOutput <path>            Benchmark JSON output path\n"
+    << "  --cullDisabled                      Disable frustum culling at startup\n"
+    << "  --offscreen                         Render the default target to rotating offscreen RTs instead of presenting\n"
+    << "  --offscreenDebug                    With --offscreen, dump the offscreen color RT roughly once per second\n"
+    << "  --glOffscreenFlushMode <frame|wait|none>  GL offscreen submission pacing mode\n"
     << "  --validateGltf <path>              Validate and summarize glTF/GLB, then exit\n\n"
     << "GUI/tools:\n"
     << "  --gui                              Show GUI on startup\n"
-    << "  --guiScreenshot [path]             Save GUI screenshot and exit\n"
-    << "  --guiEdit                          Enable GUI edit mode\n"
-    << "  --guiSnap                          Snap GUI edits to grid\n"
-    << "  --guiControlEdit                   Enable GUI control internals edit mode\n"
-    << "  --guiControlTarget <name>          slider_knob|selector_control|checkbox_mark\n"
-    << "  --testGui                          Run minimal GUI rendering test\n"
-    << "  --createAtlas, --updateAtlas       Generate GUI texture atlas and exit\n"
-    << "  --atlasMaxSprite <pixels>          Max sprite dimension in atlas\n\n"
+    << "\n"
     << "Logging/profiling:\n"
     << "  --logLevel <error|info|debug|verbose|trace|0..4>\n"
     << "  --logFile <path>                   Write log to file\n"

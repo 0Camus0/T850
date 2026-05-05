@@ -4,6 +4,7 @@
 #include <string>
 #include <vector>
 #include <array>
+#include <optional>
 
 namespace t850 {
 
@@ -126,6 +127,57 @@ namespace t850 {
     int default_index = 0;
   };
 
+  struct FloatOverrideDesc {
+    std::string name;
+    float value = 0.0f;
+    bool operator==(const FloatOverrideDesc&) const = default;
+  };
+
+  struct BoolOverrideDesc {
+    std::string name;
+    bool value = false;
+    bool operator==(const BoolOverrideDesc&) const = default;
+  };
+
+  struct IntOverrideDesc {
+    std::string name;
+    int value = 0;
+    bool operator==(const IntOverrideDesc&) const = default;
+  };
+
+  struct SandboxOrbitCameraDesc {
+    std::array<float, 3> target = {0, 0, 0};
+    std::array<float, 3> pan_offset = {0, 0, 0};
+    std::array<float, 3> eye = {0, 0, 0};
+    float yaw = 0.0f;
+    float pitch = 0.0f;
+    float distance = 5.0f;
+    bool operator==(const SandboxOrbitCameraDesc&) const = default;
+  };
+
+  struct SandboxLightOverrideDesc {
+    int index = 0;
+    std::optional<std::array<float, 3>> position;
+    std::optional<std::array<float, 3>> direction;
+    std::optional<std::array<float, 3>> color;
+    std::optional<float> diameter;
+    std::optional<float> intensity;
+    std::optional<bool> attach_to_camera;
+    bool operator==(const SandboxLightOverrideDesc&) const = default;
+  };
+
+  struct SandboxProfileDesc {
+    std::string model;
+    std::vector<FloatOverrideDesc> sliders;
+    std::vector<BoolOverrideDesc> checkboxes;
+    std::vector<IntOverrideDesc> selectors;
+    std::vector<SandboxLightOverrideDesc> lights;
+    std::optional<SandboxOrbitCameraDesc> orbit_camera;
+    std::optional<bool> frustum_culling;
+    std::optional<bool> show_culling_debug;
+    std::optional<int> current_keyframe;
+  };
+
   struct SceneDescriptor {
     std::string name;
     std::vector<CameraDesc> cameras;
@@ -146,6 +198,7 @@ namespace t850 {
     std::vector<SliderDesc> sliders;
     std::vector<CheckboxDesc> checkboxes;
     std::vector<SelectorDesc> selectors;
+    std::vector<SandboxProfileDesc> profiles;
   };
 
   // Load a SceneDescriptor from a JSON file.

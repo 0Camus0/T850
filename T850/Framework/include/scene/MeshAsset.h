@@ -38,6 +38,13 @@ namespace t850 {
     bool IsValid() const { return poolId != UINT32_MAX && count > 0; }
   };
 
+  struct SubmeshCluster {
+    uint32_t submeshIndex = 0;
+    uint32_t indexOffset  = 0;  // relative to Submesh::ibAlloc.offsetElems
+    uint32_t indexCount   = 0;
+    AABB     localAABB;
+  };
+
   // One drawable index range within a MeshAsset. Mirrors the geometry
   // portion of RenderMesh::SubSetInfo (vertexStart/numVertex/triStart/
   // numTris/IB32Bit/bounds + the vertex-attrib bits of the ShaderKey).
@@ -52,6 +59,8 @@ namespace t850 {
     bool     ib32Bit       = false;
     AABB     localAABB;
     ShaderKey vertexAttribKey;    // only HAS_NORMALS/TANGENTS/BINORMALS/TEXCOORDn bits set
+    uint32_t firstCluster    = 0;
+    uint32_t clusterCount    = 0;
 
     // Phase A.5: shared VB/IB pool offsets. In step 1 these are
     // populated alongside the legacy per-asset GPU buffers but not
@@ -80,6 +89,7 @@ namespace t850 {
     uint32_t                indexCount        = 0;
     AABB                    rootAABB;                // union of submesh AABBs
     std::vector<Submesh>    submeshes;               // flattened across all geometries
+    std::vector<SubmeshCluster> clusters;             // contiguous index ranges inside submeshes
     uint32_t                refCount          = 0;   // managed by MeshAssetCache
   };
 }

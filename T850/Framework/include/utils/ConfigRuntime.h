@@ -32,24 +32,21 @@ struct DisplayJson {
 
 struct DevToolsJson {
   std::optional<bool> gui;
-  std::optional<bool> guiScreenshot;
-  std::optional<std::string> guiScreenshotPath;
-  std::optional<bool> guiEdit;
-  std::optional<bool> guiSnap;
-  std::optional<bool> guiControlEdit;
-  std::optional<std::string> guiControlTarget;
   std::optional<std::string> logLevel;
   std::optional<int> logLevelValue;
   std::optional<bool> logToFile;
   std::optional<std::string> logFile;
   std::optional<bool> d3d12Debug;
-  std::optional<bool> testGui;
-  std::optional<bool> createAtlas;
-  std::optional<int> atlasMaxSprite;
   std::optional<bool> profile;
   std::optional<int> profileFrames;
   std::optional<bool> dumpMatrices;
   std::optional<int> dumpMatricesFrames;
+  std::optional<bool> benchmark;
+  std::optional<bool> cullDisabled;
+  std::optional<std::string> benchmarkOutputPath;
+  std::optional<bool> offscreen;
+  std::optional<bool> offscreenDebug;
+  std::optional<std::string> glOffscreenFlushMode;
 };
 
 struct RuntimeConfigJson {
@@ -68,23 +65,20 @@ struct RuntimeConfigJson {
   std::optional<int> dumpFrame;
   std::optional<float> dumpSeconds;
   std::optional<bool> gui;
-  std::optional<bool> guiScreenshot;
-  std::optional<std::string> guiScreenshotPath;
-  std::optional<bool> guiEdit;
-  std::optional<bool> guiSnap;
-  std::optional<bool> guiControlEdit;
-  std::optional<std::string> guiControlTarget;
   std::optional<std::string> logLevel;
   std::optional<int> logLevelValue;
   std::optional<std::string> logFile;
   std::optional<bool> d3d12Debug;
-  std::optional<bool> testGui;
-  std::optional<bool> createAtlas;
-  std::optional<int> atlasMaxSprite;
   std::optional<bool> profile;
   std::optional<int> profileFrames;
   std::optional<bool> dumpMatrices;
   std::optional<int> dumpMatricesFrames;
+  std::optional<bool> benchmark;
+  std::optional<bool> cullDisabled;
+  std::optional<std::string> benchmarkOutputPath;
+  std::optional<bool> offscreen;
+  std::optional<bool> offscreenDebug;
+  std::optional<std::string> glOffscreenFlushMode;
   std::optional<float> orbitYaw;
 
   std::optional<DisplayJson> display;
@@ -95,6 +89,7 @@ struct RuntimeConfigJson {
 
 std::string StripQuotes(std::string value);
 int ParseLogLevel(const std::string& value, int fallback);
+Config::GLOffscreenFlushMode ParseGLOffscreenFlushMode(const std::string& value, Config::GLOffscreenFlushMode fallback);
 GraphicsApi::E ParseGraphicsApi(const std::string& value, GraphicsApi::E fallback);
 const char* ApiTag(GraphicsApi::E api);
 

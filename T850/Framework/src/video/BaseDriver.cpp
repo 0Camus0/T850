@@ -86,7 +86,7 @@ namespace t850 {
       LoadAPITexture(T8DeviceContext, buffer);
     }
     if (found) {
-      cil_free_buffer(buffer);
+      cil_free_buffer(buffer, cil_props);
     }
 
     return true;

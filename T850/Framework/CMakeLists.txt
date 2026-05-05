@@ -52,6 +52,7 @@ set(FRAMEWORK_SOURCES
   src/utils/GUIAtlasGenerator.cpp
   src/utils/ConfigRuntime.cpp
   src/utils/SPIRVReflection.cpp
+  src/utils/ShaderDiskCache.cpp
   src/video/BaseDriver.cpp
   src/video/gl/GLDriver.cpp
   src/video/gl/GLDeviceContext.cpp

@@ -64,6 +64,7 @@
 #endif
 #endif
 
+#include <unordered_map>
 #include <vector>
 
 // Include all GL component headers
@@ -117,6 +118,14 @@ namespace t850 {
     void*               m_sdlWindow = nullptr;
     std::vector<std::string>	ExtensionsTok;
     std::string					Extensions;
+
+    private:
+#if defined(T850_HEADLESS) || defined(USING_OPENGL) || defined(USING_OPENGL_ES30) || defined(USING_OPENGL_ES31)
+        void FenceOffscreenTarget(int rt);
+        void WaitForOffscreenTargetFence(int rt);
+        void DestroyOffscreenFences();
+        std::unordered_map<int, GLsync> m_offscreenFences;
+#endif
 
   };
 }

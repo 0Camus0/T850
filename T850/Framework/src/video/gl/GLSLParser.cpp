@@ -229,9 +229,55 @@ static std::string PreprocessIfdefs(const std::string& src) {
   return result;
 }
 
+static std::string StripComments(const std::string& src) {
+	std::string result;
+	result.reserve(src.size());
+
+	bool inLineComment = false;
+	bool inBlockComment = false;
+
+	for (std::size_t i = 0; i < src.size(); ++i) {
+		char ch = src[i];
+		char next = (i + 1 < src.size()) ? src[i + 1] : '\0';
+
+		if (inLineComment) {
+			if (ch == '\n') {
+				inLineComment = false;
+				result += ch;
+			}
+			continue;
+		}
+
+		if (inBlockComment) {
+			if (ch == '\n') result += ch;
+			if (ch == '*' && next == '/') {
+				inBlockComment = false;
+				++i;
+			}
+			continue;
+		}
+
+		if (ch == '/' && next == '/') {
+			inLineComment = true;
+			++i;
+			continue;
+		}
+
+		if (ch == '/' && next == '*') {
+			inBlockComment = true;
+			++i;
+			continue;
+		}
+
+		result += ch;
+	}
+
+	return result;
+}
+
 void GLSL_Parser::Process(std::string &b) {
 
-	std::string preprocessed = PreprocessIfdefs(b);
+	std::string preprocessed = StripComments(PreprocessIfdefs(b));
 	std::istringstream iss(preprocessed);
 	std::vector<std::string> tokens{ std::istream_iterator<std::string>{iss},std::istream_iterator<std::string>{} };
 

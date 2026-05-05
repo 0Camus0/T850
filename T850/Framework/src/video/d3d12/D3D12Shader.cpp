@@ -311,6 +311,12 @@ namespace t850 {
     auto* cmdList = static_cast<const D3D12DeviceContext*>(&deviceContext)->GetCommandList();
     auto* driver = GetD3D12Driver();
 
+    ID3D12DescriptorHeap* heaps[] = {
+      driver->m_heaps[D3D12Heap::CBV_SRV_UAV_VISIBLE].GetHeap(),
+      driver->m_heaps[D3D12Heap::SAMPLER].GetHeap()
+    };
+    cmdList->SetDescriptorHeaps(2, heaps);
+
     // Determine current RT configuration for PSO
     uint8_t numRTVs = 1;
     DXGI_FORMAT rtvFormats[8] = {};

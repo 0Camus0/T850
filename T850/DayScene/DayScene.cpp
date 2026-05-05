@@ -1,15 +1,65 @@
 #include <DayScene.h>
+#include <algorithm>
+#include <chrono>
+#include <cmath>
 #include <iostream>
 #include <cstdio>
 #include <cstdlib>
+#include <filesystem>
+#include <fstream>
+#include <iomanip>
+#include <numeric>
+#include <sstream>
 #include <scene/IBLResources.h>
 #include <scene/RenderMesh.h>
 #include <utils/Log.h>
 #include <core/Config.h>
+#include <utils/ConfigRuntime.h>
+#include <imgui/DevGuiContext.h>
 using namespace t850;
 using std::cout;
 using std::endl;
 using std::string;
+
+namespace {
+std::string JsonEscape(const std::string& value) {
+  std::ostringstream out;
+  for (char c : value) {
+    switch (c) {
+    case '\\': out << "\\\\"; break;
+    case '"': out << "\\\""; break;
+    case '\n': out << "\\n"; break;
+    case '\r': out << "\\r"; break;
+    case '\t': out << "\\t"; break;
+    default: out << c; break;
+    }
+  }
+  return out.str();
+}
+
+double Percentile(const std::vector<double>& sortedValues, double percentile) {
+  if (sortedValues.empty()) return 0.0;
+  const double position = (percentile / 100.0) * static_cast<double>(sortedValues.size() - 1);
+  const size_t lower = static_cast<size_t>(std::floor(position));
+  const size_t upper = static_cast<size_t>(std::ceil(position));
+  const double t = position - static_cast<double>(lower);
+  return sortedValues[lower] * (1.0 - t) + sortedValues[upper] * t;
+}
+
+std::string TimestampForFilename() {
+  auto now = std::chrono::system_clock::now();
+  std::time_t nowTime = std::chrono::system_clock::to_time_t(now);
+  std::tm localTime{};
+#if defined(_WIN32)
+  localtime_s(&localTime, &nowTime);
+#else
+  localtime_r(&nowTime, &localTime);
+#endif
+  std::ostringstream out;
+  out << std::put_time(&localTime, "%Y%m%d_%H%M%S");
+  return out.str();
+}
+}
 
 #define NUM_LIGHTS 1
 #define RADI 170.0f
@@ -88,14 +138,48 @@ void DayScene::InitVars() {
     T8_LOG_ERROR("[DayScene] Failed to load Scenes/DayScene.json");
     return;
   }
+
+  if (m_sceneSetup.cameras.size() < 2 && !m_sceneSetup.cameras.empty()) {
+    Camera& mainCam = m_sceneSetup.cameras[0];
+    Camera spectator;
+    XVECTOR3 spectatorPos(mainCam.Eye.x, mainCam.Eye.y + 20.0f, mainCam.Eye.z - 60.0f, 1.0f);
+    if (mainCam.Ortho)
+      spectator.InitOrtho(spectatorPos, mainCam.Width, mainCam.Height, mainCam.NPlane, mainCam.FPlane, mainCam.LeftHanded);
+    else
+      spectator.InitPerspective(spectatorPos, mainCam.Fov, mainCam.AspectRatio, mainCam.NPlane, mainCam.FPlane, mainCam.LeftHanded);
+    spectator.Speed = mainCam.Speed;
+    spectator.Pitch = mainCam.Pitch;
+    spectator.Roll = mainCam.Roll;
+    spectator.Yaw = mainCam.Yaw;
+    spectator.Update(0.0f);
+    m_sceneSetup.cameras.push_back(spectator);
+  }
+
+  for (auto& selector : m_sceneSetup.descriptor.selectors) {
+    if (selector.name == "active_camera") {
+      selector.options = {"Spline", "Free"};
+      selector.default_index = 0;
+      break;
+    }
+  }
+
   m_sceneSetup.Apply(SceneProp);
 
   ActiveCam = m_sceneSetup.GetCamera(0);
+  SceneProp.pCullingCamera = ActiveCam;
+  SceneProp.FrustumCullingEnabled = !g_config.flags.cullDisabled;
   ChangeActiveGaussSelection = SHADOW_KERNEL;
   m_debugRTSelection = 0;
   m_showSpline = false;
   m_showLights = false;
+  m_spectatorCameraEnabled = false;
   m_activeCameraIndex = 0;
+  m_tourTimeSec = 0.0f;
+  m_benchmarkFrameTimesMs.clear();
+  m_benchmarkCullingTotals = BenchmarkCullingTotals{};
+  if (g_config.flags.benchmark) {
+    m_benchmarkFrameTimesMs.reserve(12000);
+  }
   RTIndex = -1;
 
   FrameDumperConfig dumpCfg;
@@ -201,6 +285,7 @@ void DayScene::CreateAssets() {
     splineCamera->AttachAgent(m_agent);
     splineCamera->m_lookAtCenter = false;
   }
+  ApplyActiveCameraSelection(m_activeCameraIndex);
 
   Quads[0].TranslateAbsolute(0.0f, 0.0f, 0.0f);
   Quads[0].Update();
@@ -274,6 +359,221 @@ void DayScene::OnDestoryScene() {
   DestroyAssets();
 }
 
+void DayScene::RecordBenchmarkFrame(float dtSecs) {
+  if (!g_config.flags.benchmark)
+    return;
+  m_benchmarkFrameTimesMs.push_back(static_cast<double>(dtSecs) * 1000.0);
+  if (Meshes[0].pBase) {
+    RenderMesh* rm = static_cast<RenderMesh*>(Meshes[0].pBase);
+    m_benchmarkCullingTotals.samples++;
+    m_benchmarkCullingTotals.meshTests += rm->m_cullingMeshTests;
+    m_benchmarkCullingTotals.subsetTests += rm->m_cullingSubsetTests;
+    m_benchmarkCullingTotals.clusterTests += rm->m_cullingClusterTests;
+    m_benchmarkCullingTotals.drawCalls += rm->m_drawCalls;
+    m_benchmarkCullingTotals.renderStateChanges += rm->m_renderStateChanges;
+    m_benchmarkCullingTotals.totalIndices += rm->m_totalIndices;
+    m_benchmarkCullingTotals.drawnIndices += rm->m_drawnIndices;
+    m_benchmarkCullingTotals.culledIndices += rm->m_culledIndices;
+    m_benchmarkCullingTotals.cullingCpuMs += rm->m_cullingCpuMs;
+  }
+}
+
+std::string DayScene::BuildBenchmarkOutputPath() const {
+  if (!g_config.benchmarkOutputPath.empty())
+    return g_config.benchmarkOutputPath;
+
+  const char* apiTag = g_pBaseDriver
+    ? t850::config::ApiTag(g_pBaseDriver->m_currentAPI)
+    : t850::config::ApiTag(t850::config::ParseGraphicsApi(g_config.api, GraphicsApi::D3D11));
+  const int benchmarkWidth = (g_pBaseDriver && g_pBaseDriver->width > 0) ? g_pBaseDriver->width : g_config.width;
+  const int benchmarkHeight = (g_pBaseDriver && g_pBaseDriver->height > 0) ? g_pBaseDriver->height : g_config.height;
+
+  std::ostringstream out;
+  out << "benchmark_stats_dayscene_" << apiTag << "_"
+      << benchmarkWidth << "x" << benchmarkHeight << "_culling_"
+      << (SceneProp.FrustumCullingEnabled ? "on" : "off") << "_"
+      << TimestampForFilename() << ".json";
+  return out.str();
+}
+
+void DayScene::WriteBenchmarkResults(float durationSecs) const {
+  std::vector<double> sorted = m_benchmarkFrameTimesMs;
+  std::sort(sorted.begin(), sorted.end());
+
+  const size_t frameCount = m_benchmarkFrameTimesMs.size();
+  const double totalMs = std::accumulate(m_benchmarkFrameTimesMs.begin(), m_benchmarkFrameTimesMs.end(), 0.0);
+  const double averageMs = frameCount > 0 ? totalMs / static_cast<double>(frameCount) : 0.0;
+  double variance = 0.0;
+  for (double frameMs : m_benchmarkFrameTimesMs) {
+    const double diff = frameMs - averageMs;
+    variance += diff * diff;
+  }
+  const double stdDevMs = frameCount > 0 ? std::sqrt(variance / static_cast<double>(frameCount)) : 0.0;
+
+  const std::string outputPath = BuildBenchmarkOutputPath();
+  std::filesystem::path path(outputPath);
+  if (!path.parent_path().empty()) {
+    std::filesystem::create_directories(path.parent_path());
+  }
+
+  std::ofstream file(path, std::ios::out | std::ios::trunc);
+  if (!file.is_open()) {
+    T8_LOG_ERROR("[Benchmark] Failed to open '%s'", outputPath.c_str());
+    return;
+  }
+
+  const char* apiTag = g_pBaseDriver
+    ? t850::config::ApiTag(g_pBaseDriver->m_currentAPI)
+    : t850::config::ApiTag(t850::config::ParseGraphicsApi(g_config.api, GraphicsApi::D3D11));
+  const int benchmarkWidth = (g_pBaseDriver && g_pBaseDriver->width > 0) ? g_pBaseDriver->width : g_config.width;
+  const int benchmarkHeight = (g_pBaseDriver && g_pBaseDriver->height > 0) ? g_pBaseDriver->height : g_config.height;
+
+  file << std::fixed << std::setprecision(4);
+  file << "{\n";
+  file << "  \"scene\": \"DayScene\",\n";
+  file << "  \"api\": \"" << JsonEscape(apiTag) << "\",\n";
+  file << "  \"resolution\": { \"width\": " << benchmarkWidth << ", \"height\": " << benchmarkHeight << " },\n";
+  file << "  \"cullingEnabled\": " << (SceneProp.FrustumCullingEnabled ? "true" : "false") << ",\n";
+  file << "  \"finishReason\": \"spline_journey_complete\",\n";
+  file << "  \"splineLength\": " << (m_sceneSetup.splines.empty() ? 0.0f : m_sceneSetup.splines[0].m_totalLength) << ",\n";
+  file << "  \"measuredDurationSeconds\": " << durationSecs << ",\n";
+  file << "  \"frameCount\": " << frameCount << ",\n";
+  file << "  \"statsMs\": {\n";
+  file << "    \"average\": " << averageMs << ",\n";
+  file << "    \"median\": " << Percentile(sorted, 50.0) << ",\n";
+  file << "    \"min\": " << (sorted.empty() ? 0.0 : sorted.front()) << ",\n";
+  file << "    \"max\": " << (sorted.empty() ? 0.0 : sorted.back()) << ",\n";
+  file << "    \"stdDev\": " << stdDevMs << ",\n";
+  file << "    \"p01\": " << Percentile(sorted, 1.0) << ",\n";
+  file << "    \"p05\": " << Percentile(sorted, 5.0) << ",\n";
+  file << "    \"p10\": " << Percentile(sorted, 10.0) << ",\n";
+  file << "    \"p25\": " << Percentile(sorted, 25.0) << ",\n";
+  file << "    \"p50\": " << Percentile(sorted, 50.0) << ",\n";
+  file << "    \"p75\": " << Percentile(sorted, 75.0) << ",\n";
+  file << "    \"p90\": " << Percentile(sorted, 90.0) << ",\n";
+  file << "    \"p95\": " << Percentile(sorted, 95.0) << ",\n";
+  file << "    \"p99\": " << Percentile(sorted, 99.0) << "\n";
+  file << "  },\n";
+  const RenderMesh* benchmarkMesh = Meshes[0].pBase ? static_cast<const RenderMesh*>(Meshes[0].pBase) : nullptr;
+  const unsigned long long cullSamples = m_benchmarkCullingTotals.samples;
+  auto avgCounter = [&](unsigned long long value) -> double {
+    return cullSamples > 0 ? static_cast<double>(value) / static_cast<double>(cullSamples) : 0.0;
+  };
+  auto latestCounter = [&](unsigned long long RenderMesh::*field) -> unsigned long long {
+    return benchmarkMesh ? benchmarkMesh->*field : 0ull;
+  };
+  file << "  \"cullingStats\": {\n";
+  file << "    \"samples\": " << cullSamples << ",\n";
+  file << "    \"latest\": {\n";
+  file << "      \"meshTests\": " << latestCounter(&RenderMesh::m_cullingMeshTests) << ",\n";
+  file << "      \"subsetTests\": " << latestCounter(&RenderMesh::m_cullingSubsetTests) << ",\n";
+  file << "      \"clusterTests\": " << latestCounter(&RenderMesh::m_cullingClusterTests) << ",\n";
+  file << "      \"drawCalls\": " << latestCounter(&RenderMesh::m_drawCalls) << ",\n";
+  file << "      \"renderStateChanges\": " << latestCounter(&RenderMesh::m_renderStateChanges) << ",\n";
+  file << "      \"totalIndices\": " << latestCounter(&RenderMesh::m_totalIndices) << ",\n";
+  file << "      \"drawnIndices\": " << latestCounter(&RenderMesh::m_drawnIndices) << ",\n";
+  file << "      \"culledIndices\": " << latestCounter(&RenderMesh::m_culledIndices) << ",\n";
+  file << "      \"cullingCpuMs\": " << (benchmarkMesh ? benchmarkMesh->m_cullingCpuMs : 0.0) << "\n";
+  file << "    },\n";
+  file << "    \"averagePerFrame\": {\n";
+  file << "      \"meshTests\": " << avgCounter(m_benchmarkCullingTotals.meshTests) << ",\n";
+  file << "      \"subsetTests\": " << avgCounter(m_benchmarkCullingTotals.subsetTests) << ",\n";
+  file << "      \"clusterTests\": " << avgCounter(m_benchmarkCullingTotals.clusterTests) << ",\n";
+  file << "      \"drawCalls\": " << avgCounter(m_benchmarkCullingTotals.drawCalls) << ",\n";
+  file << "      \"renderStateChanges\": " << avgCounter(m_benchmarkCullingTotals.renderStateChanges) << ",\n";
+  file << "      \"totalIndices\": " << avgCounter(m_benchmarkCullingTotals.totalIndices) << ",\n";
+  file << "      \"drawnIndices\": " << avgCounter(m_benchmarkCullingTotals.drawnIndices) << ",\n";
+  file << "      \"culledIndices\": " << avgCounter(m_benchmarkCullingTotals.culledIndices) << ",\n";
+  file << "      \"cullingCpuMs\": " << (cullSamples > 0 ? m_benchmarkCullingTotals.cullingCpuMs / static_cast<double>(cullSamples) : 0.0) << "\n";
+  file << "    },\n";
+  file << "    \"totals\": {\n";
+  file << "      \"meshTests\": " << m_benchmarkCullingTotals.meshTests << ",\n";
+  file << "      \"subsetTests\": " << m_benchmarkCullingTotals.subsetTests << ",\n";
+  file << "      \"clusterTests\": " << m_benchmarkCullingTotals.clusterTests << ",\n";
+  file << "      \"drawCalls\": " << m_benchmarkCullingTotals.drawCalls << ",\n";
+  file << "      \"renderStateChanges\": " << m_benchmarkCullingTotals.renderStateChanges << ",\n";
+  file << "      \"totalIndices\": " << m_benchmarkCullingTotals.totalIndices << ",\n";
+  file << "      \"drawnIndices\": " << m_benchmarkCullingTotals.drawnIndices << ",\n";
+  file << "      \"culledIndices\": " << m_benchmarkCullingTotals.culledIndices << ",\n";
+  file << "      \"cullingCpuMs\": " << m_benchmarkCullingTotals.cullingCpuMs << "\n";
+  file << "    }\n";
+  file << "  },\n";
+  file << "  \"frameTimesMs\": [";
+  for (size_t i = 0; i < m_benchmarkFrameTimesMs.size(); ++i) {
+    if (i > 0) file << ", ";
+    file << m_benchmarkFrameTimesMs[i];
+  }
+  file << "]\n";
+  file << "}\n";
+  T8_LOG_INFO("[Benchmark] Wrote %zu frame samples to '%s'", frameCount, outputPath.c_str());
+}
+
+void DayScene::ApplyActiveCameraSelection(int selection) {
+  Camera* mainCam = m_sceneSetup.GetCamera(0);
+  Camera* spectatorCam = m_sceneSetup.GetCamera(1);
+  if (!mainCam)
+    return;
+
+  const int maxSelection = 1;
+  if (selection < 0)
+    selection = 0;
+  if (selection > maxSelection)
+    selection = maxSelection;
+
+  m_activeCameraIndex = selection;
+  if (m_activeCameraIndex == 0) {
+    if (t850::SplineAgent* agent = m_sceneSetup.GetAgent(0)) {
+      mainCam->AttachAgent(*agent);
+      mainCam->m_lookAtCenter = false;
+    }
+  } else if (m_activeCameraIndex == 1) {
+    mainCam->DettachAgent();
+    mainCam->m_externalControl = false;
+  }
+
+  ActiveCam = m_spectatorCameraEnabled && spectatorCam ? spectatorCam : mainCam;
+  SceneProp.pCullingCamera = mainCam;
+  if (!SceneProp.pCameras.empty())
+    SceneProp.pCameras[0] = ActiveCam;
+  mainCam->Update(0.0f);
+  if (ActiveCam) {
+    ActiveCam->Update(0.0f);
+    VP = ActiveCam->VP;
+  }
+}
+
+void DayScene::SetSpectatorCameraEnabled(bool enabled) {
+  Camera* mainCam = m_sceneSetup.GetCamera(0);
+  Camera* spectatorCam = m_sceneSetup.GetCamera(1);
+  if (!mainCam)
+    return;
+
+  m_spectatorCameraEnabled = enabled && spectatorCam;
+  ActiveCam = m_spectatorCameraEnabled ? spectatorCam : mainCam;
+
+  if (spectatorCam) {
+    spectatorCam->DettachAgent();
+    spectatorCam->m_externalControl = false;
+  }
+
+  SceneProp.pCullingCamera = mainCam;
+  if (!SceneProp.pCameras.empty())
+    SceneProp.pCameras[0] = ActiveCam;
+  if (ActiveCam) {
+    ActiveCam->Update(0.0f);
+    VP = ActiveCam->VP;
+  }
+}
+
+void DayScene::SetSpectatorDebugEnabled(bool enabled) {
+  SetSpectatorCameraEnabled(enabled);
+  if (!m_spectatorCameraEnabled) {
+    ApplyActiveCameraSelection(m_activeCameraIndex);
+  }
+  m_showCullStats = m_spectatorCameraEnabled;
+  SceneProp.ShowCullingDebug = m_showCullStats;
+}
+
 void DayScene::DestroyAssets() {
   SceneProp.SSAOKernel.Destroy();
   m_wireframeSphere.Destroy();
@@ -288,16 +588,16 @@ void DayScene::DestroyAssets() {
 void DayScene::OnUpdate(float _DtSecs) {
   Camera& Cam = m_sceneSetup.cameras[0];
   Camera& LightCam = m_sceneSetup.lightCameras[0];
+  Camera* lightCamPtr = SceneProp.pLightCameras.empty() ? &LightCam : SceneProp.pLightCameras[0];
   t850::SplineAgent& m_agent = m_sceneSetup.agents[0];
+  bool splineJourneyFinished = false;
 
-  static float totalTime = 0.0f;
-  static int frameCounter = 0;
   // Only advance scene timer when spline camera is driving the tour
-  if (ActiveCam->m_externalControl)
-    totalTime += _DtSecs;
-  frameCounter++;
+  if (Cam.m_externalControl)
+    m_tourTimeSec += _DtSecs;
   DtSecs = _DtSecs;
   SceneProp.FrameDeltaSec = DtSecs;
+  RecordBenchmarkFrame(DtSecs);
 
   // Apply deferred cubemap change BEFORE rendering begins.
   if (!m_pendingCubemap.empty()) {
@@ -351,7 +651,7 @@ void DayScene::OnUpdate(float _DtSecs) {
   if (m_dumper.HasPendingReplay()) {
     if (m_dumper.LoadReplaySnapshot()) {
       m_dumper.ApplySnapshot(Cam, LightCam, SceneProp);
-      VP = ActiveCam->VP;
+      VP = ActiveCam ? ActiveCam->VP : Cam.VP;
     }
   }
   m_dumper.UpdateReplayState();
@@ -359,17 +659,26 @@ void DayScene::OnUpdate(float _DtSecs) {
   // Normal camera/light updates (skipped when feed is active or dump pending)
   if (!m_dumper.SkipCameraUpdates()) {
     m_agent.Update(DtSecs);
-    ActiveCam->Update(DtSecs);
-    VP = ActiveCam->VP;
-    SceneProp.pLightCameras[0]->Yaw -= 0.008f *DtSecs;
-    SceneProp.pLightCameras[0]->Update(DtSecs);
+    splineJourneyFinished = Cam.m_externalControl && m_agent.FinishedJourneyThisUpdate();
+    Cam.Update(DtSecs);
+    if (ActiveCam && ActiveCam != &Cam && ActiveCam != lightCamPtr)
+      ActiveCam->Update(DtSecs);
+    lightCamPtr->Yaw -= 0.008f *DtSecs;
+    lightCamPtr->Update(DtSecs);
+    VP = ActiveCam ? ActiveCam->VP : Cam.VP;
+    SceneProp.pCullingCamera = &Cam;
     // Capture light position AFTER auto-rotation so shadow matches lighting
     SceneProp.Lights[0].Position = LightCam.Eye;
     SceneProp.Lights[0].Direction = LightCam.Look;
   }
 
-  if (totalTime > 150.0f) {
-    totalTime = 0.0;
+  if (splineJourneyFinished) {
+    const float finishedDurationSec = m_tourTimeSec;
+    m_tourTimeSec = 0.0f;
+    if (g_config.flags.benchmark) {
+      WriteBenchmarkResults(finishedDurationSec);
+      exit(0);
+    }
 #ifdef T850_HEADLESS
     exit(0);
 #else
@@ -380,7 +689,6 @@ void DayScene::OnUpdate(float _DtSecs) {
 
 void DayScene::OnInput(InputManager* IManager) {
   Camera& Cam = m_sceneSetup.cameras[0];
-  Camera& LightCam = m_sceneSetup.lightCameras[0];
 
   bool changed = false;
   const float speedFactor = 10.0f;
@@ -446,11 +754,6 @@ void DayScene::OnInput(InputManager* IManager) {
     changed = true;
   }
 
-  if (IManager->PressedKey(T800K_KP6)) {
-    Orientation.x += 60.0f*speedFactor*DtSecs;
-    changed = true;
-  }
-
   if (IManager->PressedKey(T800K_KP2)) {
     Orientation.y -= 60.0f*speedFactor*DtSecs;
     changed = true;
@@ -488,28 +791,20 @@ void DayScene::OnInput(InputManager* IManager) {
 
 
   if (IManager->PressedOnceKey(T800K_c)) {
-    if (ActiveCam == (&Cam)) {
-      ActiveCam = &LightCam;
-    }
-    else {
-      ActiveCam = &Cam;
-    }
-    SceneProp.pCameras[0] = ActiveCam;
+    int nextCamera = m_activeCameraIndex + 1;
+    if (nextCamera > 1)
+      nextCamera = 0;
+    ApplyActiveCameraSelection(nextCamera);
   }
 
   // Toggle spline-guided / free camera
   if (IManager->PressedOnceKey(T800K_t)) {
-    if (ActiveCam->m_externalControl) {
-      // Detach from spline: keep current position and orientation
-      ActiveCam->DettachAgent();
-      ActiveCam->m_externalControl = false;
+    if (Cam.m_externalControl) {
+      ApplyActiveCameraSelection(1);
       T8_LOG_INFO("[CAMERA] Switched to FREE camera");
     }
     else {
-      // Re-attach to spline agent
-      t850::SplineAgent& agent = m_sceneSetup.agents[0];
-      ActiveCam->AttachAgent(agent);
-      ActiveCam->m_lookAtCenter = false;
+      ApplyActiveCameraSelection(0);
       T8_LOG_INFO("[CAMERA] Switched to SPLINE camera");
     }
   }
@@ -551,7 +846,13 @@ void DayScene::OnInput(InputManager* IManager) {
   }
 
   if (IManager->PressedOnceKey(T800K_F2)) {
-    m_showCullStats = !m_showCullStats;
+    m_showCullStats = m_spectatorCameraEnabled ? true : !m_showCullStats;
+    SceneProp.ShowCullingDebug = m_showCullStats;
+  }
+
+  if (IManager->PressedOnceKey(T800K_KP6) || IManager->PressedOnceKey(T800K_6)) {
+    SceneProp.FrustumCullingEnabled = !SceneProp.FrustumCullingEnabled;
+    T8_LOG_INFO("[CULLING] Frustum culling %s", SceneProp.FrustumCullingEnabled ? "enabled" : "disabled");
   }
 
   if (IManager->PressedOnceKey(T800K_1)) {
@@ -567,6 +868,12 @@ void DayScene::OnInput(InputManager* IManager) {
   if (IManager->PressedOnceKey(T800K_4)) {
     pFramework->ChangeAPI(GraphicsApi::VULKAN);
   }
+
+  if (IManager->PressedOnceKey(T800K_5)) {
+    SetSpectatorDebugEnabled(!m_spectatorCameraEnabled);
+    T8_LOG_INFO("[CAMERA] Spectator camera %s", m_spectatorCameraEnabled ? "enabled" : "disabled");
+  }
+
   // Skip mouse-driven camera movement when replay snapshot is active
   if (!m_dumper.IsReplayActive()) {
     float yaw = 0.005f*static_cast<float>(IManager->xDelta);
@@ -577,8 +884,11 @@ void DayScene::OnInput(InputManager* IManager) {
 }
 
 void DayScene::OnDraw() {
+  SceneProp.ShowCullingDebug = m_showCullStats;
   Camera& Cam = m_sceneSetup.cameras[0];
   Camera& LightCam = m_sceneSetup.lightCameras[0];
+  Camera* viewCam = ActiveCam ? ActiveCam : &Cam;
+  SceneProp.pCullingCamera = &Cam;
 
   // Execute the render graph (all passes up to and including HDR Composition)
   m_renderGraph.Execute(
@@ -586,7 +896,7 @@ void DayScene::OnDraw() {
     SceneProp,
     Meshes, 2,
     Quads,
-    &Cam,
+    viewCam,
     &LightCam,
     nullptr,
     EnvMaps
@@ -703,15 +1013,35 @@ void DayScene::OnDraw() {
     pFramework->pVideoDriver->SetDepthStencilState(BaseDriver::NONE);
 
     char buf[256];
-    snprintf(buf, sizeof(buf), "Sponza meshes: %d/%zu  Culled: %d  Subsets drawn: %d/%d",
-             (int)rm->Info.size() - rm->m_culledMeshes, rm->Info.size(),
-             rm->m_culledMeshes, rm->m_drawnSubsets, rm->m_totalSubsets);
     XVECTOR3 yellow(1.0f, 1.0f, 0.2f);
-    m_debugText.DrawPixel(10.0f, 40.0f, w, h, yellow, buf);
-
-    snprintf(buf, sizeof(buf), "F2: cull stats");
     XVECTOR3 gray(0.7f, 0.7f, 0.7f);
-    m_debugText.DrawPixel(10.0f, 65.0f, w, h, gray, buf);
+    const float statScale = 0.56f;
+    const float lineHeight = 34.0f * statScale * ((float)h / 720.0f);
+    const float bottomMargin = 26.0f * ((float)h / 720.0f);
+    float y = (float)h - bottomMargin - lineHeight * 4.0f;
+    auto drawCenteredStat = [&](const XVECTOR3& color, const char* text) {
+      float textW = m_debugText.MeasurePixel(text, w, h) * statScale;
+      float x = ((float)w - textW) * 0.5f;
+      m_debugText.DrawPixelScaled(x, y, statScale, statScale, w, h, color, text);
+      y += lineHeight;
+    };
+
+    snprintf(buf, sizeof(buf), "Sponza meshes: %d/%d  culled %d",
+            rm->m_visibleMeshes, rm->m_totalMeshes, rm->m_culledMeshes);
+    drawCenteredStat(yellow, buf);
+
+    snprintf(buf, sizeof(buf), "Sponza subsets: %d/%d  culled %d  drawn %d",
+            rm->m_visibleSubsets, rm->m_totalSubsets, rm->m_culledSubsets, rm->m_drawnSubsets);
+    drawCenteredStat(yellow, buf);
+
+    snprintf(buf, sizeof(buf), "Sponza clusters: %d/%d  culled %d  drawn %d",
+            rm->m_visibleClusters, rm->m_totalClusters, rm->m_culledClusters, rm->m_drawnClusters);
+    drawCenteredStat(yellow, buf);
+
+        snprintf(buf, sizeof(buf), "GBuffer indices: %llu/%llu  6/KP6: culling %s  F2: cull stats",
+          rm->m_drawnIndices, rm->m_totalIndices,
+          SceneProp.FrustumCullingEnabled ? "ON" : "OFF");
+    drawCenteredStat(gray, buf);
 
     pFramework->pVideoDriver->SetBlendState(BaseDriver::BLEND_DEFAULT);
     pFramework->pVideoDriver->SetDepthStencilState(BaseDriver::DEPTH_DEFAULT);
@@ -1321,6 +1651,311 @@ void DayScene::PopulateGUI(t850::GUIManager& gui) {
   }
 }
 
+void DayScene::DrawDevGui(t850::DevGuiContext& gui) {
+  struct Mapping { const char* name; int settingIndex; };
+
+  static const Mapping sliderMappings[] = {
+    {"exposure", CHANGE_EXPOSURE},
+    {"bloom_factor", CHANGE_BLOOM_FACTOR},
+    {"bloom_threshold", CHANGE_BLOOM_THRESHOLD},
+    {"tm_white_level", CHANGE_TM_WHITE_LEVEL},
+    {"tm_adapt_tau", CHANGE_TM_ADAPT_TAU},
+    {"pcf_radius", CHANGE_PCF_RADIUS},
+    {"pcf_samples", CHANGE_PCF_SAMPLES},
+    {"ssao_kernel_size", CHANGE_SSAO_KERNEL_SIZE},
+    {"ssao_radius", CHANGE_SSAO_RADIUS},
+    {"dof_aperture", CHANGE_DOF_APERTURE},
+    {"dof_focal_length", CHANGE_DOF_FOCAL_LENGHT},
+    {"dof_max_coc", CHANGE_DOF_MAX_COC},
+    {"dof_far_samples", CHANGE_DOF_FAR_SAMPLE},
+    {"dof_near_samples", CHANGE_DOF_NEAR_SAMPLE},
+    {"parallax_low_samples", CHANGE_PARALLAX_LOW_SAMPLES},
+    {"parallax_high_samples", CHANGE_PARALLAX_HIGH_SAMPLES},
+    {"parallax_height", CHANGE_PARALLAX_HEIGHT},
+    {"parallax_shadow_min_layers", CHANGE_PARALLAX_SHADOW_MIN_LAYERS},
+    {"parallax_shadow_max_layers", CHANGE_PARALLAX_SHADOW_MAX_LAYERS},
+    {"parallax_shadow_softness", CHANGE_PARALLAX_SHADOW_SOFTNESS},
+    {"parallax_shadow_strength", CHANGE_PARALLAX_SHADOW_STRENGTH},
+    {"light_volume_steps", CHANGE_LIGHT_VOLUME_STEPS},
+    {"godrays_factor", CHANGE_GODRAYS_FACTOR},
+    {"gauss_kernel_radius", CHANGE_GAUSS_KERNEL_RADIUS},
+    {"gauss_kernel_deviation", CHANGE_GAUSS_KERNEL_DEVIATION},
+    {"fov", CHANGE_FOV},
+    {"light_intensity", CHANGE_LIGHT_INTENSITY},
+    {"shadow_bias", CHANGE_SHADOW_BIAS},
+    {"shadow_min", CHANGE_SHADOW_MIN},
+    {"env_factor", CHANGE_ENV_FACTOR},
+    {"ibl_factor", CHANGE_IBL_FACTOR},
+    {"material_emissive_intensity", CHANGE_MATERIAL_EMISSIVE_INTENSITY},
+    {"material_transmission_multiplier", CHANGE_MATERIAL_TRANSMISSION_MULTIPLIER},
+    {"material_refraction_strength", CHANGE_MATERIAL_REFRACTION_STRENGTH},
+  };
+
+  static const Mapping checkboxMappings[] = {
+    {"shadow_toggle", CHANGE_PCF_TOOGLE},
+    {"ssao_toggle", CHANGLE_SSAO_TOOGLE},
+    {"dof_auto_focus", CHANGE_DOF_AUTO_FOCUS},
+    {"show_spline", CHANGE_SHOW_SPLINE},
+    {"show_lights", CHANGE_SHOW_LIGHTS},
+    {"dof_toggle", CHANGE_DOF_TOGGLE},
+    {"parallax_toggle", CHANGE_PARALLAX_TOGGLE},
+    {"parallax_shadow_toggle", CHANGE_PARALLAX_SHADOW_TOGGLE},
+    {"godrays_toggle", CHANGE_GODRAYS_TOGGLE},
+  };
+
+  static const Mapping selectorMappings[] = {
+    {"num_lights", CHANGE_NUM_LIGHTS},
+    {"active_gauss_kernel", CHANGE_ACTIVE_GAUSS_KERNEL},
+    {"gauss_kernel_sample_count", CHANGE_GAUSS_KERNEL_SAMPLE_COUNT},
+    {"debug_render_target", CHANGE_DEBUG_RT},
+    {"active_camera", CHANGE_ACTIVE_CAMERA},
+    {"cubemap", CHANGE_CUBEMAP},
+  };
+
+  auto findSetting = [](const std::string& name, const Mapping* mappings, int count) {
+    for (int i = 0; i < count; ++i) {
+      if (name == mappings[i].name) return mappings[i].settingIndex;
+    }
+    return -1;
+  };
+
+  auto activeKernel = [&]() -> GaussFilter* {
+    if (ChangeActiveGaussSelection < 0 || ChangeActiveGaussSelection >= (int)SceneProp.pGaussKernels.size()) return nullptr;
+    return SceneProp.pGaussKernels[ChangeActiveGaussSelection];
+  };
+
+  auto getSliderValue = [&](int settingIndex, float& value) -> bool {
+    GaussFilter* kernel = activeKernel();
+    switch (settingIndex) {
+    case CHANGE_EXPOSURE: value = SceneProp.Exposure; return true;
+    case CHANGE_BLOOM_FACTOR: value = SceneProp.BloomFactor; return true;
+    case CHANGE_BLOOM_THRESHOLD: value = SceneProp.BloomThreshold; return true;
+    case CHANGE_TM_WHITE_LEVEL: value = SceneProp.ToneMapWhiteLevel; return true;
+    case CHANGE_TM_ADAPT_TAU: value = SceneProp.LuminanceTau; return true;
+    case CHANGE_PCF_RADIUS: value = SceneProp.PCFScale; return true;
+    case CHANGE_PCF_SAMPLES: value = SceneProp.PCFSamples; return true;
+    case CHANGE_SSAO_KERNEL_SIZE: value = (float)SceneProp.SSAOKernel.KernelSize; return true;
+    case CHANGE_SSAO_RADIUS: value = SceneProp.SSAOKernel.Radius; return true;
+    case CHANGE_DOF_APERTURE: value = SceneProp.Aperture; return true;
+    case CHANGE_DOF_FOCAL_LENGHT: value = SceneProp.FocalLength; return true;
+    case CHANGE_DOF_MAX_COC: value = SceneProp.MaxCoc; return true;
+    case CHANGE_DOF_FAR_SAMPLE: value = SceneProp.DOF_Far_Samples_squared; return true;
+    case CHANGE_DOF_NEAR_SAMPLE: value = SceneProp.DOF_Near_Samples_squared; return true;
+    case CHANGE_PARALLAX_LOW_SAMPLES: value = SceneProp.ParallaxLowSamples; return true;
+    case CHANGE_PARALLAX_HIGH_SAMPLES: value = SceneProp.ParallaxHighSamples; return true;
+    case CHANGE_PARALLAX_HEIGHT: value = SceneProp.ParallaxHeight; return true;
+    case CHANGE_PARALLAX_SHADOW_MIN_LAYERS: value = SceneProp.ParallaxShadowMinLayers; return true;
+    case CHANGE_PARALLAX_SHADOW_MAX_LAYERS: value = SceneProp.ParallaxShadowMaxLayers; return true;
+    case CHANGE_PARALLAX_SHADOW_SOFTNESS: value = SceneProp.ParallaxShadowSoftness; return true;
+    case CHANGE_PARALLAX_SHADOW_STRENGTH: value = SceneProp.ParallaxShadowStrength; return true;
+    case CHANGE_LIGHT_VOLUME_STEPS: value = SceneProp.LightVolumeSteps; return true;
+    case CHANGE_GODRAYS_FACTOR: value = SceneProp.GodRaysFactor; return true;
+    case CHANGE_GAUSS_KERNEL_RADIUS: if (!kernel) return false; value = kernel->radius; return true;
+    case CHANGE_GAUSS_KERNEL_DEVIATION: if (!kernel) return false; value = kernel->sigma; return true;
+    case CHANGE_FOV: if (!ActiveCam) return false; value = Rad2Deg(ActiveCam->Fov); return true;
+    case CHANGE_LIGHT_INTENSITY: if (SceneProp.Lights.empty()) return false; value = SceneProp.Lights[0].Intensity; return true;
+    case CHANGE_SHADOW_BIAS: value = SceneProp.ShadowBias; return true;
+    case CHANGE_SHADOW_MIN: value = SceneProp.ShadowMin; return true;
+    case CHANGE_ENV_FACTOR: value = SceneProp.EnvFactor; return true;
+    case CHANGE_IBL_FACTOR: value = SceneProp.IBLFactor; return true;
+    case CHANGE_MATERIAL_EMISSIVE_INTENSITY: value = SceneProp.MaterialEmissiveIntensity; return true;
+    case CHANGE_MATERIAL_TRANSMISSION_MULTIPLIER: value = SceneProp.MaterialTransmissionMultiplier; return true;
+    case CHANGE_MATERIAL_REFRACTION_STRENGTH: value = SceneProp.MaterialRefractionStrength; return true;
+    }
+    return false;
+  };
+
+  auto setSliderValue = [&](int settingIndex, float value) {
+    GaussFilter* kernel = activeKernel();
+    switch (settingIndex) {
+    case CHANGE_EXPOSURE: SceneProp.Exposure = value; break;
+    case CHANGE_BLOOM_FACTOR: SceneProp.BloomFactor = value; break;
+    case CHANGE_BLOOM_THRESHOLD: SceneProp.BloomThreshold = value; break;
+    case CHANGE_TM_WHITE_LEVEL: SceneProp.ToneMapWhiteLevel = value; break;
+    case CHANGE_TM_ADAPT_TAU: SceneProp.LuminanceTau = value; break;
+    case CHANGE_PCF_RADIUS: SceneProp.PCFScale = value; break;
+    case CHANGE_PCF_SAMPLES: SceneProp.PCFSamples = value; break;
+    case CHANGE_SSAO_KERNEL_SIZE: SceneProp.SSAOKernel.KernelSize = (int)value; SceneProp.SSAOKernel.Update(); break;
+    case CHANGE_SSAO_RADIUS: SceneProp.SSAOKernel.Radius = value; break;
+    case CHANGE_DOF_APERTURE: SceneProp.Aperture = value; break;
+    case CHANGE_DOF_FOCAL_LENGHT: SceneProp.FocalLength = value; break;
+    case CHANGE_DOF_MAX_COC: SceneProp.MaxCoc = value; break;
+    case CHANGE_DOF_FAR_SAMPLE: SceneProp.DOF_Far_Samples_squared = value; break;
+    case CHANGE_DOF_NEAR_SAMPLE: SceneProp.DOF_Near_Samples_squared = value; break;
+    case CHANGE_PARALLAX_LOW_SAMPLES: SceneProp.ParallaxLowSamples = value; break;
+    case CHANGE_PARALLAX_HIGH_SAMPLES: SceneProp.ParallaxHighSamples = value; break;
+    case CHANGE_PARALLAX_HEIGHT: SceneProp.ParallaxHeight = value; break;
+    case CHANGE_PARALLAX_SHADOW_MIN_LAYERS: SceneProp.ParallaxShadowMinLayers = value; break;
+    case CHANGE_PARALLAX_SHADOW_MAX_LAYERS: SceneProp.ParallaxShadowMaxLayers = value; break;
+    case CHANGE_PARALLAX_SHADOW_SOFTNESS: SceneProp.ParallaxShadowSoftness = value; break;
+    case CHANGE_PARALLAX_SHADOW_STRENGTH: SceneProp.ParallaxShadowStrength = value; break;
+    case CHANGE_LIGHT_VOLUME_STEPS: SceneProp.LightVolumeSteps = value; break;
+    case CHANGE_GODRAYS_FACTOR: SceneProp.GodRaysFactor = value; break;
+    case CHANGE_GAUSS_KERNEL_RADIUS: if (kernel) { kernel->radius = value; kernel->Update(); } break;
+    case CHANGE_GAUSS_KERNEL_DEVIATION: if (kernel) { kernel->sigma = value; kernel->Update(); } break;
+    case CHANGE_FOV:
+      if (ActiveCam) {
+        ActiveCam->SetFov(Deg2Rad(value));
+        ActiveCam->VP = ActiveCam->View * ActiveCam->Projection;
+        VP = ActiveCam->VP;
+      }
+      break;
+    case CHANGE_LIGHT_INTENSITY: if (!SceneProp.Lights.empty()) SceneProp.Lights[0].Intensity = value; break;
+    case CHANGE_SHADOW_BIAS: SceneProp.ShadowBias = value; break;
+    case CHANGE_SHADOW_MIN: SceneProp.ShadowMin = value; break;
+    case CHANGE_ENV_FACTOR: SceneProp.EnvFactor = value; break;
+    case CHANGE_IBL_FACTOR: SceneProp.IBLFactor = value; break;
+    case CHANGE_MATERIAL_EMISSIVE_INTENSITY: SceneProp.MaterialEmissiveIntensity = value; break;
+    case CHANGE_MATERIAL_TRANSMISSION_MULTIPLIER: SceneProp.MaterialTransmissionMultiplier = value; break;
+    case CHANGE_MATERIAL_REFRACTION_STRENGTH: SceneProp.MaterialRefractionStrength = value; break;
+    }
+  };
+
+  auto getCheckboxValue = [&](int settingIndex, bool& value) -> bool {
+    switch (settingIndex) {
+    case CHANGE_PCF_TOOGLE: value = (SceneProp.ToogleShadow != 0); return true;
+    case CHANGLE_SSAO_TOOGLE: value = (SceneProp.ToogleSSAO != 0); return true;
+    case CHANGE_DOF_AUTO_FOCUS: value = SceneProp.AutoFocus; return true;
+    case CHANGE_SHOW_SPLINE: value = m_showSpline; return true;
+    case CHANGE_SHOW_LIGHTS: value = m_showLights; return true;
+    case CHANGE_DOF_TOGGLE: value = (SceneProp.ToogleDOF != 0); return true;
+    case CHANGE_PARALLAX_TOGGLE: value = (SceneProp.ToogleParallax != 0); return true;
+    case CHANGE_PARALLAX_SHADOW_TOGGLE: value = (SceneProp.ToogleParallaxShadow != 0); return true;
+    case CHANGE_GODRAYS_TOGGLE: value = (SceneProp.ToogleGodRays != 0); return true;
+    }
+    return false;
+  };
+
+  auto setCheckboxValue = [&](int settingIndex, bool value) {
+    switch (settingIndex) {
+    case CHANGE_PCF_TOOGLE: SceneProp.ToogleShadow = value ? 1 : 0; break;
+    case CHANGLE_SSAO_TOOGLE: SceneProp.ToogleSSAO = value ? 1 : 0; break;
+    case CHANGE_DOF_AUTO_FOCUS: SceneProp.AutoFocus = value; break;
+    case CHANGE_SHOW_SPLINE: m_showSpline = value; break;
+    case CHANGE_SHOW_LIGHTS: m_showLights = value; break;
+    case CHANGE_DOF_TOGGLE:
+      SceneProp.ToogleDOF = value ? 1 : 0;
+      m_renderGraph.SetPassEnabled("CoC", value);
+      m_renderGraph.SetPassEnabled("Combine CoC", value);
+      m_renderGraph.SetPassEnabled("DOF", value);
+      m_renderGraph.SetPassEnabled("DOF 2", value);
+      break;
+    case CHANGE_PARALLAX_TOGGLE:
+      SceneProp.ToogleParallax = value ? 1 : 0;
+      Meshes[0].SetParallaxEnabled(value);
+      break;
+    case CHANGE_PARALLAX_SHADOW_TOGGLE:
+      SceneProp.ToogleParallaxShadow = value ? 1 : 0;
+      SceneProp.ParallaxShadowStrength = value ? 1.0f : 0.0f;
+      break;
+    case CHANGE_GODRAYS_TOGGLE: SceneProp.ToogleGodRays = value ? 1 : 0; break;
+    }
+  };
+
+  auto getSelectorIndex = [&](const t850::SelectorDesc& desc, int settingIndex, int& selectedIndex) -> bool {
+    switch (settingIndex) {
+    case CHANGE_NUM_LIGHTS: selectedIndex = FindLightOption(SceneProp.ActiveLights); return true;
+    case CHANGE_ACTIVE_GAUSS_KERNEL: selectedIndex = ChangeActiveGaussSelection; return true;
+    case CHANGE_GAUSS_KERNEL_SAMPLE_COUNT: {
+      GaussFilter* kernel = activeKernel();
+      if (!kernel) return false;
+      for (int i = 0; i < (int)desc.options.size(); ++i) {
+        if (std::atoi(desc.options[i].c_str()) == kernel->kernelSize) { selectedIndex = i; return true; }
+      }
+      selectedIndex = desc.default_index;
+      return true;
+    }
+    case CHANGE_DEBUG_RT: selectedIndex = m_debugRTSelection; return true;
+    case CHANGE_ACTIVE_CAMERA: selectedIndex = m_activeCameraIndex; return true;
+    case CHANGE_CUBEMAP: selectedIndex = m_currentCubemapIndex; return true;
+    }
+    return false;
+  };
+
+  auto setSelectorIndex = [&](const t850::SelectorDesc& desc, int settingIndex, int selectedIndex) {
+    if (selectedIndex < 0 || selectedIndex >= (int)desc.options.size()) return;
+    switch (settingIndex) {
+    case CHANGE_NUM_LIGHTS: SceneProp.ActiveLights = std::atoi(desc.options[selectedIndex].c_str()); break;
+    case CHANGE_ACTIVE_GAUSS_KERNEL: ChangeActiveGaussSelection = selectedIndex; break;
+    case CHANGE_GAUSS_KERNEL_SAMPLE_COUNT: {
+      GaussFilter* kernel = activeKernel();
+      if (kernel) { kernel->kernelSize = std::atoi(desc.options[selectedIndex].c_str()); kernel->Update(); }
+    } break;
+    case CHANGE_DEBUG_RT: m_debugRTSelection = selectedIndex; break;
+    case CHANGE_ACTIVE_CAMERA: ApplyActiveCameraSelection(selectedIndex); break;
+    case CHANGE_CUBEMAP:
+      if (selectedIndex != m_currentCubemapIndex) {
+        m_currentCubemapIndex = selectedIndex;
+        m_pendingCubemap = "sky/" + desc.options[selectedIndex];
+      }
+      break;
+    }
+  };
+
+  if (gui.BeginSection("Controls")) {
+    for (const auto& desc : m_sceneSetup.descriptor.sliders) {
+      int settingIndex = findSetting(desc.name, sliderMappings, (int)(sizeof(sliderMappings) / sizeof(sliderMappings[0])));
+      if (settingIndex < 0) continue;
+      float value = 0.0f;
+      if (getSliderValue(settingIndex, value) && gui.Slider(desc, value)) {
+        setSliderValue(settingIndex, value);
+      }
+    }
+    Meshes[0].SetParallaxSettings(SceneProp.ParallaxLowSamples, SceneProp.ParallaxHighSamples, SceneProp.ParallaxHeight);
+    Meshes[0].SetParallaxShadowSettings(SceneProp.ParallaxShadowMinLayers, SceneProp.ParallaxShadowMaxLayers,
+                                         SceneProp.ParallaxShadowSoftness, SceneProp.ParallaxShadowStrength);
+  }
+
+  if (gui.BeginSection("Toggles")) {
+    for (const auto& desc : m_sceneSetup.descriptor.checkboxes) {
+      int settingIndex = findSetting(desc.name, checkboxMappings, (int)(sizeof(checkboxMappings) / sizeof(checkboxMappings[0])));
+      if (settingIndex < 0) continue;
+      bool value = false;
+      if (getCheckboxValue(settingIndex, value) && gui.Checkbox(desc, value)) {
+        setCheckboxValue(settingIndex, value);
+      }
+    }
+  }
+
+  if (gui.BeginSection("Selectors")) {
+    for (const auto& desc : m_sceneSetup.descriptor.selectors) {
+      int settingIndex = findSetting(desc.name, selectorMappings, (int)(sizeof(selectorMappings) / sizeof(selectorMappings[0])));
+      if (settingIndex < 0) continue;
+      int selectedIndex = 0;
+      if (getSelectorIndex(desc, settingIndex, selectedIndex) && gui.Combo(desc, selectedIndex)) {
+        setSelectorIndex(desc, settingIndex, selectedIndex);
+      }
+    }
+  }
+
+  if (gui.BeginSection("Culling")) {
+    t850::CheckboxDesc spectatorDesc;
+    spectatorDesc.name = "spectator_camera";
+    spectatorDesc.label = "Spectator camera (5)";
+    bool spectatorEnabled = m_spectatorCameraEnabled;
+    if (gui.Checkbox(spectatorDesc, spectatorEnabled)) {
+      SetSpectatorDebugEnabled(spectatorEnabled);
+    }
+
+    t850::CheckboxDesc cullingDesc;
+    cullingDesc.name = "frustum_culling";
+    cullingDesc.label = "Frustum culling";
+    bool cullingEnabled = SceneProp.FrustumCullingEnabled;
+    if (gui.Checkbox(cullingDesc, cullingEnabled)) {
+      SceneProp.FrustumCullingEnabled = cullingEnabled;
+    }
+
+    t850::CheckboxDesc statsDesc;
+    statsDesc.name = "show_culling_debug";
+    statsDesc.label = "Culling stats and frustum";
+    bool showCulling = m_spectatorCameraEnabled ? true : m_showCullStats;
+    if (gui.Checkbox(statsDesc, showCulling)) {
+      m_showCullStats = m_spectatorCameraEnabled ? true : showCulling;
+      SceneProp.ShowCullingDebug = m_showCullStats;
+    }
+  }
+}
+
 void DayScene::SyncToGUI(t850::GUIManager& gui) {
   for (auto& sp : gui.GetSliderPairs()) {
     auto* slider = sp.slider;
@@ -1523,25 +2158,7 @@ void DayScene::SyncFromGUI(t850::GUIManager& gui) {
       m_debugRTSelection = sel->selectedIndex;
       break;
     case CHANGE_ACTIVE_CAMERA: {
-      m_activeCameraIndex = sel->selectedIndex;
-      Camera& LightCam = m_sceneSetup.lightCameras[0];
-      Camera& Cam = m_sceneSetup.cameras[0];
-      if (m_activeCameraIndex == 0) {
-        // Spline
-        ActiveCam = &Cam;
-        t850::SplineAgent& agent = m_sceneSetup.agents[0];
-        ActiveCam->AttachAgent(agent);
-        ActiveCam->m_lookAtCenter = false;
-      } else if (m_activeCameraIndex == 1) {
-        // Free
-        ActiveCam = &Cam;
-        ActiveCam->DettachAgent();
-        ActiveCam->m_externalControl = false;
-      } else {
-        // Light
-        ActiveCam = &LightCam;
-      }
-      SceneProp.pCameras[0] = ActiveCam;
+      ApplyActiveCameraSelection(sel->selectedIndex);
     } break;
     case CHANGE_CUBEMAP: {
       if (sel->selectedIndex != m_currentCubemapIndex) {

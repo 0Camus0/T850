@@ -133,9 +133,15 @@ namespace t850 {
   }
   void SplineAgent::Update(float delta)
   {
+    m_finishedJourneyThisUpdate = false;
+    if (!m_pSpline || m_pSpline->m_totalLength <= 0.0f)
+      return;
+
     realLoc += delta * m_velocity *2.4f;
-    while (realLoc > m_pSpline->m_totalLength)
+    while (realLoc >= m_pSpline->m_totalLength) {
       realLoc -= m_pSpline->m_totalLength;
+      m_finishedJourneyThisUpdate = true;
+    }
     while (realLoc < 0.0f)
       realLoc += m_pSpline->m_totalLength;
     m_actualPoint = m_pSpline->GetPoint(m_pSpline->GetNormalizedOffset(realLoc));

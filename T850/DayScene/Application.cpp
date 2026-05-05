@@ -12,6 +12,7 @@
 
 #include <Application.h>
 #include <video/BaseDriver.h>
+#include <video/gl/GLTexture.h>
 #include <utils/InputManager.h>
 #include <SDL3/SDL.h>
 #include <utils/Log.h>
@@ -19,7 +20,18 @@
 #include <debug/Profiler.h>
 #include <debug/RenderTrace.h>
 #include <core/Config.h>
+#include <imgui/DevGuiContext.h>
+#include <imgui_impl_vulkan.h>
 
+#ifdef OS_WINDOWS
+#  include <video/d3d11/D3D11Texture.h>
+#  include <video/d3d12/D3D12Driver.h>
+#  include <video/d3d12/D3D12Texture.h>
+#  include <video/vulkan/VulkanTexture.h>
+#endif
+
+#include <algorithm>
+#include <cstdint>
 #include <stdio.h>
 #include <stdlib.h>
 #include <time.h>
@@ -37,7 +49,355 @@ extern std::vector<std::string> g_args;
 
 namespace t850 {
   extern Device*       T8Device;
-  extern DeviceContext* T8DeviceContext;
+}
+
+namespace {
+  struct DebugRTEntry {
+    std::string key;
+    std::string label;
+    t850::BaseDriver* driver = nullptr;
+    t850::Texture* texture = nullptr;
+    ImTextureID image = (ImTextureID)nullptr;
+    bool flipV = false;
+    bool opaqueBlend = false;
+  };
+
+#ifdef OS_WINDOWS
+  bool IsSingleChannelFormat(DXGI_FORMAT format) {
+    switch (format) {
+    case DXGI_FORMAT_R8_UNORM:
+    case DXGI_FORMAT_R16_FLOAT:
+    case DXGI_FORMAT_R32_FLOAT:
+      return true;
+    default:
+      return false;
+    }
+  }
+
+  UINT D3D12OpaquePreviewMapping(DXGI_FORMAT format) {
+    int green = IsSingleChannelFormat(format) ? D3D12_SHADER_COMPONENT_MAPPING_FROM_MEMORY_COMPONENT_0
+                                              : D3D12_SHADER_COMPONENT_MAPPING_FROM_MEMORY_COMPONENT_1;
+    int blue = IsSingleChannelFormat(format) ? D3D12_SHADER_COMPONENT_MAPPING_FROM_MEMORY_COMPONENT_0
+                                             : D3D12_SHADER_COMPONENT_MAPPING_FROM_MEMORY_COMPONENT_2;
+    return D3D12_ENCODE_SHADER_4_COMPONENT_MAPPING(
+      D3D12_SHADER_COMPONENT_MAPPING_FROM_MEMORY_COMPONENT_0,
+      green,
+      blue,
+      D3D12_SHADER_COMPONENT_MAPPING_FORCE_VALUE_1);
+  }
+#endif
+
+  ImTextureID GetDebugTextureID(t850::BaseDriver* driver, t850::Texture* texture,
+                                std::unordered_map<void*, uintptr_t>& textureDescriptors,
+                                std::unordered_map<void*, uintptr_t>& opaqueTextureDescriptors) {
+    if (!driver || !texture) return (ImTextureID)nullptr;
+
+#ifdef OS_WINDOWS
+    if (driver->m_currentAPI == t850::GraphicsApi::D3D11) {
+      auto* d3dTexture = static_cast<t850::D3DXTexture*>(texture);
+      return (ImTextureID)d3dTexture->pSRVTex.Get();
+    }
+    if (driver->m_currentAPI == t850::GraphicsApi::D3D12) {
+      auto* d3dTexture = static_cast<t850::D3D12Texture*>(texture);
+      if (!d3dTexture->pTexResource) return (ImTextureID)nullptr;
+
+      auto found = opaqueTextureDescriptors.find(texture);
+      if (found != opaqueTextureDescriptors.end()) {
+        return (ImTextureID)found->second;
+      }
+
+      auto* d3d12Driver = static_cast<t850::D3D12Driver*>(driver);
+      auto& srvHeap = d3d12Driver->GetHeap(t850::D3D12Heap::CBV_SRV_UAV_VISIBLE);
+      D3D12_CPU_DESCRIPTOR_HANDLE srvCPU = srvHeap.AllocateCPU();
+      D3D12_GPU_DESCRIPTOR_HANDLE srvGPU = srvHeap.AllocateGPU();
+
+      D3D12_RESOURCE_DESC resourceDesc = d3dTexture->pTexResource->GetDesc();
+      DXGI_FORMAT srvFormat = resourceDesc.Format;
+      if (resourceDesc.Flags & D3D12_RESOURCE_FLAG_ALLOW_DEPTH_STENCIL) {
+        if (resourceDesc.Format == DXGI_FORMAT_R32_TYPELESS) srvFormat = DXGI_FORMAT_R32_FLOAT;
+        if (resourceDesc.Format == DXGI_FORMAT_R16_TYPELESS) srvFormat = DXGI_FORMAT_R16_FLOAT;
+      }
+
+      D3D12_SHADER_RESOURCE_VIEW_DESC srvDesc = {};
+      srvDesc.Format = srvFormat;
+      srvDesc.Shader4ComponentMapping = D3D12OpaquePreviewMapping(srvFormat);
+      if (resourceDesc.DepthOrArraySize == 6 && (resourceDesc.Flags & D3D12_RESOURCE_FLAG_ALLOW_DEPTH_STENCIL)) {
+        srvDesc.ViewDimension = D3D12_SRV_DIMENSION_TEXTURECUBE;
+        srvDesc.TextureCube.MipLevels = 1;
+      } else {
+        srvDesc.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE2D;
+        srvDesc.Texture2D.MipLevels = 1;
+      }
+
+      Microsoft::WRL::ComPtr<ID3D12Device> device;
+      if (FAILED(d3dTexture->pTexResource->GetDevice(IID_PPV_ARGS(device.GetAddressOf())))) {
+        return (ImTextureID)d3dTexture->srvGPU.ptr;
+      }
+
+      device->CreateShaderResourceView(d3dTexture->pTexResource.Get(), &srvDesc, srvCPU);
+      opaqueTextureDescriptors[texture] = srvGPU.ptr;
+      return (ImTextureID)srvGPU.ptr;
+    }
+#endif
+
+    if (driver->m_currentAPI == t850::GraphicsApi::OPENGL) {
+      return (ImTextureID)(intptr_t)texture->id;
+    }
+
+#ifdef OS_WINDOWS
+    if (driver->m_currentAPI == t850::GraphicsApi::VULKAN) {
+      auto* vkTexture = static_cast<t850::VulkanTexture*>(texture);
+      if (!vkTexture->m_sampler || !vkTexture->m_imageView) return (ImTextureID)nullptr;
+
+      auto found = textureDescriptors.find(texture);
+      if (found != textureDescriptors.end()) {
+        return (ImTextureID)found->second;
+      }
+
+      VkDescriptorSet descriptor = ImGui_ImplVulkan_AddTexture(
+        vkTexture->m_sampler,
+        vkTexture->m_imageView,
+        VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+      textureDescriptors[texture] = (uintptr_t)descriptor;
+      return (ImTextureID)descriptor;
+    }
+#endif
+
+    return (ImTextureID)nullptr;
+  }
+
+  float TextureAspect(t850::Texture* texture) {
+    if (!texture || texture->x == 0 || texture->y == 0) return 16.0f / 9.0f;
+    float aspect = (float)texture->x / (float)texture->y;
+    return (std::max)(0.25f, (std::min)(aspect, 4.0f));
+  }
+
+  ImVec2 FitImageSize(t850::Texture* texture, ImVec2 available, float maxHeight) {
+    float aspect = TextureAspect(texture);
+    ImVec2 size((std::max)(1.0f, available.x), (std::max)(1.0f, available.x / aspect));
+    if (maxHeight > 0.0f && size.y > maxHeight) {
+      size.y = maxHeight;
+      size.x = size.y * aspect;
+    }
+    if (size.x > available.x) {
+      size.x = available.x;
+      size.y = size.x / aspect;
+    }
+    return size;
+  }
+
+  std::vector<DebugRTEntry> BuildDebugRTEntries(t850::BaseDriver* driver,
+                                                std::unordered_map<void*, uintptr_t>& textureDescriptors,
+                                                std::unordered_map<void*, uintptr_t>& opaqueTextureDescriptors) {
+    std::vector<DebugRTEntry> entries;
+    if (!driver) return entries;
+
+    for (int rtIndex = 0; rtIndex < (int)driver->RTs.size(); ++rtIndex) {
+      t850::BaseRT* rt = driver->RTs[rtIndex];
+      if (!rt) continue;
+
+      for (int colorIndex = 0; colorIndex < (int)rt->vColorTextures.size(); ++colorIndex) {
+        t850::Texture* texture = rt->vColorTextures[colorIndex];
+        if (!texture) continue;
+
+        char key[64];
+        char label[160];
+        snprintf(key, sizeof(key), "rt%d_color%d", rtIndex, colorIndex);
+        snprintf(label, sizeof(label), "RT %d Color %d  %ux%u", rtIndex, colorIndex, texture->x, texture->y);
+        ImTextureID image = GetDebugTextureID(driver, texture, textureDescriptors, opaqueTextureDescriptors);
+        bool opaqueBlend = driver->m_currentAPI == t850::GraphicsApi::D3D11;
+        entries.push_back({ key, label, driver, texture, image, driver->NeedsVFlip(), opaqueBlend });
+      }
+
+      if (rt->pDepthTexture) {
+        t850::Texture* texture = rt->pDepthTexture;
+        char key[64];
+        char label[160];
+        snprintf(key, sizeof(key), "rt%d_depth", rtIndex);
+        snprintf(label, sizeof(label), "RT %d Depth  %ux%u", rtIndex, texture->x, texture->y);
+        ImTextureID image = GetDebugTextureID(driver, texture, textureDescriptors, opaqueTextureDescriptors);
+        bool opaqueBlend = driver->m_currentAPI == t850::GraphicsApi::D3D11;
+        entries.push_back({ key, label, driver, texture, image, driver->NeedsVFlip(), opaqueBlend });
+      }
+    }
+
+    return entries;
+  }
+
+  void PruneDebugTextureDescriptors(t850::BaseDriver* driver,
+                                    const std::vector<DebugRTEntry>& entries,
+                                    std::unordered_map<void*, uintptr_t>& textureDescriptors,
+                                    std::unordered_map<void*, uintptr_t>& opaqueTextureDescriptors) {
+    if (!driver) return;
+
+    std::unordered_set<void*> liveTextures;
+    for (const DebugRTEntry& entry : entries) {
+      liveTextures.insert(entry.texture);
+    }
+
+    if (driver->m_currentAPI == t850::GraphicsApi::VULKAN) {
+      for (auto it = textureDescriptors.begin(); it != textureDescriptors.end();) {
+        if (liveTextures.find(it->first) == liveTextures.end()) {
+#ifdef OS_WINDOWS
+          ImGui_ImplVulkan_RemoveTexture((VkDescriptorSet)it->second);
+#endif
+          it = textureDescriptors.erase(it);
+        } else {
+          ++it;
+        }
+      }
+    }
+
+    if (driver->m_currentAPI == t850::GraphicsApi::D3D12) {
+      for (auto it = opaqueTextureDescriptors.begin(); it != opaqueTextureDescriptors.end();) {
+        if (liveTextures.find(it->first) == liveTextures.end()) {
+          it = opaqueTextureDescriptors.erase(it);
+        } else {
+          ++it;
+        }
+      }
+    }
+  }
+
+  void ReleaseDebugTextureDescriptors(std::unordered_map<void*, uintptr_t>& textureDescriptors,
+                                      std::unordered_map<void*, uintptr_t>& opaqueTextureDescriptors) {
+#ifdef OS_WINDOWS
+    for (auto& entry : textureDescriptors) {
+      ImGui_ImplVulkan_RemoveTexture((VkDescriptorSet)entry.second);
+    }
+#endif
+    textureDescriptors.clear();
+    opaqueTextureDescriptors.clear();
+  }
+
+  void BeginOpaquePreviewCallback(const ImDrawList*, const ImDrawCmd* command) {
+    auto* driver = static_cast<t850::BaseDriver*>(command->UserCallbackData);
+    if (driver) driver->SetBlendState(t850::BaseDriver::BLEND_DEFAULT);
+  }
+
+  void DrawDebugImage(const DebugRTEntry& entry, ImVec2 min, ImVec2 max, ImVec2 uv0, ImVec2 uv1) {
+    ImDrawList* drawList = ImGui::GetWindowDrawList();
+    if (entry.opaqueBlend) {
+      drawList->AddCallback(BeginOpaquePreviewCallback, entry.driver);
+    }
+    drawList->AddImage(entry.image, min, max, uv0, uv1);
+    if (entry.opaqueBlend) {
+      drawList->AddCallback(ImDrawCallback_ResetRenderState, nullptr);
+    }
+  }
+
+  bool DrawDebugTextureTile(const DebugRTEntry& entry, ImVec2 size) {
+    ImGui::PushID(entry.key.c_str());
+    ImGui::BeginGroup();
+
+    bool clicked = ImGui::InvisibleButton("preview", size);
+    ImVec2 min = ImGui::GetItemRectMin();
+    ImVec2 max = ImGui::GetItemRectMax();
+    ImDrawList* drawList = ImGui::GetWindowDrawList();
+    ImU32 bg = ImGui::GetColorU32(ImGuiCol_FrameBg);
+    ImU32 border = ImGui::GetColorU32(ImGui::IsItemHovered() ? ImGuiCol_ButtonHovered : ImGuiCol_Border);
+    drawList->AddRectFilled(min, max, bg, 3.0f);
+    if (entry.image) {
+      ImVec2 uv0(0.0f, entry.flipV ? 1.0f : 0.0f);
+      ImVec2 uv1(1.0f, entry.flipV ? 0.0f : 1.0f);
+      DrawDebugImage(entry, min, max, uv0, uv1);
+    } else {
+      const char* text = "Preview unavailable";
+      ImVec2 textSize = ImGui::CalcTextSize(text);
+      ImVec2 pos(min.x + (size.x - textSize.x) * 0.5f, min.y + (size.y - textSize.y) * 0.5f);
+      drawList->AddText(pos, ImGui::GetColorU32(ImGuiCol_TextDisabled), text);
+    }
+    drawList->AddRect(min, max, border, 3.0f);
+
+    ImGui::PushTextWrapPos(ImGui::GetCursorPosX() + size.x);
+    ImGui::TextUnformatted(entry.label.c_str());
+    ImGui::PopTextWrapPos();
+
+    ImGui::EndGroup();
+    ImGui::PopID();
+    return clicked;
+  }
+
+  void DrawDebugRenderTargetPanel(const std::vector<DebugRTEntry>& entries,
+                                  std::unordered_set<std::string>& openTargets,
+                                  bool* panelOpen) {
+    if (!panelOpen || !*panelOpen) return;
+
+    ImGui::SetNextWindowSize(ImVec2(520.0f, 520.0f), ImGuiCond_FirstUseEver);
+    if (!ImGui::Begin("DEBUG", panelOpen)) {
+      ImGui::End();
+      return;
+    }
+
+    if (entries.empty()) {
+      ImGui::TextDisabled("No render targets are currently registered.");
+      ImGui::End();
+      return;
+    }
+
+    float contentWidth = (std::max)(1.0f, ImGui::GetContentRegionAvail().x);
+    float spacing = ImGui::GetStyle().ItemSpacing.x;
+    const float minTileWidth = 150.0f;
+    int columns = (std::max)(1, (int)((contentWidth + spacing) / (minTileWidth + spacing)));
+    float tileWidth = (contentWidth - spacing * (float)(columns - 1)) / (float)columns;
+    tileWidth = (std::max)(96.0f, tileWidth);
+    ImVec2 tileSize(tileWidth, tileWidth * 0.56f);
+
+    for (int index = 0; index < (int)entries.size(); ++index) {
+      const DebugRTEntry& entry = entries[index];
+      if (DrawDebugTextureTile(entry, tileSize)) {
+        openTargets.insert(entry.key);
+      }
+      if ((index + 1) % columns != 0) {
+        ImGui::SameLine();
+      }
+    }
+
+    ImGui::End();
+  }
+
+  void DrawDebugPreviewWindows(const std::vector<DebugRTEntry>& entries,
+                               std::unordered_set<std::string>& openTargets) {
+    std::vector<std::string> closeKeys;
+    std::unordered_set<std::string> liveKeys;
+
+    for (const DebugRTEntry& entry : entries) {
+      liveKeys.insert(entry.key);
+      if (openTargets.find(entry.key) == openTargets.end()) continue;
+
+      bool open = true;
+      std::string title = "DEBUG - " + entry.label + "###" + entry.key;
+      ImGui::SetNextWindowSize(ImVec2(760.0f, 480.0f), ImGuiCond_FirstUseEver);
+      if (ImGui::Begin(title.c_str(), &open)) {
+        ImGui::TextUnformatted(entry.label.c_str());
+        ImGui::Separator();
+        ImVec2 available = ImGui::GetContentRegionAvail();
+        if (entry.image) {
+          ImVec2 imageSize = FitImageSize(entry.texture, available, available.y);
+          ImVec2 uv0(0.0f, entry.flipV ? 1.0f : 0.0f);
+          ImVec2 uv1(1.0f, entry.flipV ? 0.0f : 1.0f);
+          ImGui::InvisibleButton("preview", imageSize);
+          DrawDebugImage(entry, ImGui::GetItemRectMin(), ImGui::GetItemRectMax(), uv0, uv1);
+        } else {
+          ImGui::TextDisabled("Live preview is not available for the current graphics backend.");
+        }
+      }
+      ImGui::End();
+
+      if (!open) {
+        closeKeys.push_back(entry.key);
+      }
+    }
+
+    for (const std::string& key : openTargets) {
+      if (liveKeys.find(key) == liveKeys.end()) {
+        closeKeys.push_back(key);
+      }
+    }
+    for (const std::string& key : closeKeys) {
+      openTargets.erase(key);
+    }
+  }
 }
 
 #ifdef T850_RENDER_TRACE
@@ -77,10 +437,14 @@ void App::InitVars() {
     //it->InitVars();
   }
   int sceneIdx = (g_config.startScene >= 0 && g_config.startScene < (int)m_scenes.size()) ? g_config.startScene : 0;
+  if (g_config.flags.benchmark && m_scenes.size() > 1) {
+    sceneIdx = 1;
+  }
   m_actualScene = m_scenes[sceneIdx];
   m_actualScene->InitVars();
 
   m_devLayer.Init(pFramework);
+  m_devLayer.SetLegacyGuiEnabled(false);
   m_devLayer.SetActiveScene(m_actualScene);
 
   Cam.InitPerspective(XVECTOR3(0.0f, 1.0f, 10.0f), Deg2Rad(46.8f), 1280.0f / 720.0f, 2.0f, 12000.0f);
@@ -137,28 +501,15 @@ void App::CreateAssets() {
   PrimitiveMgr.SetSceneProps(&SceneProp);
   Quads[0].CreateInstance(PrimitiveMgr.GetPrimitive(PrimitiveManager::QUAD), &VP);
 
-  // Build GUI before FadeFX so it's visible during fade frames
-  m_devLayer.RebuildGUIForScene();
-  if (g_config.flags.guiOnStart) {
-    m_devLayer.GetGUI().SetVisible(true);
-  }
-  if (g_config.flags.guiEdit) {
-    m_devLayer.SetEditMode(true);
-  }
-  if (g_config.flags.guiControlEdit) {
-    m_devLayer.SetControlEditMode(true);
-    if (!m_devLayer.SetControlEditTargetByName(g_config.guiControlTarget)) {
-      T8_LOG_ERROR("[App] Unknown gui control target '%s' (expected slider_knob|selector_control|checkbox_mark)", g_config.guiControlTarget.c_str());
+  m_imguiVisible = g_config.flags.guiOnStart;
+  if (!g_config.flags.benchmark) {
+    m_imguiReady = m_imgui.Init(pFramework, "imgui_runtime_layout.ini", true);
+    if (!m_imguiReady) {
+      T8_LOG_ERROR("[App] Runtime ImGui init failed");
     }
   }
-  if (g_config.flags.guiSnap) {
-    m_devLayer.SetSnapToGrid(true);
-  }
 
-  // Skip fade when doing an automated screenshot
-  if (!g_config.flags.guiScreenshot) {
-    FadeFX(0.5, false);
-  }
+  FadeFX(0.5, false);
 
   // Initialize profiler if requested (after driver is fully set up)
 #ifdef T8_ENABLE_PROFILER
@@ -185,6 +536,11 @@ void App::DestroyAssets() {
    }
 #endif
    m_devLayer.Destroy();
+   if (m_imguiReady) {
+     ReleaseDebugTextureDescriptors(m_debugTextureDescriptors, m_debugOpaqueTextureDescriptors);
+     m_imgui.Shutdown();
+     m_imguiReady = false;
+   }
    m_textRender.Destroy();
    PrimitiveMgr.DestroyPrimitives();
    m_actualScene->DestroyAssets();
@@ -193,9 +549,9 @@ void App::DestroyAssets() {
 void App::OnUpdate() {
    DtTimer.Update();
    DtSecs = DtTimer.GetDTSecs();
-  if (FirstFrame) {
-    DtSecs = 1.0f / 60.0f;
-  }
+   if (FirstFrame) {
+     DtSecs = 1.0f / 60.0f;
+   }
    static float timeAccum = 0;
    timeAccum += DtSecs;
 
@@ -204,7 +560,7 @@ void App::OnUpdate() {
      m_fpsCol = XVECTOR3(0.2, 0.8, 0.2);
      timeAccum = 0;
    }
-   // Feed FPS text to GUI so it can be displayed as a movable element
+
    m_devLayer.GetGUI().SetFPSText(m_fpsString, m_fpsCol);
    m_devLayer.Update(DtSecs);
 
@@ -225,75 +581,7 @@ void App::OnDraw() {
   pFramework->pVideoDriver->Clear();
   FirstFrame = false;
 
-  // ── Minimal GUI test: draw scene FIRST, then overlay a red quad ──
-  if (g_config.flags.testGui) {
-    static Quad testQuad;
-    static ShaderBase* testShader = nullptr;
-    static ConstantBuffer* testCB = nullptr;
-    static Texture* testTex = nullptr;
-    static bool testInited = false;
-
-    if (!testInited) {
-      testQuad.Init();
-      unsigned char white[4] = {255, 255, 255, 255};
-      testTex = t850::T8Device->CreateTextureFromMemory(white, 1, 1, 4, "testGui_white");
-      if (testTex) { testTex->params = TextBasicParams::CLAMP_TO_EDGE; testTex->SetTextureParams(); }
-      char* vs = file2string("Shaders/VS_GUI.hlsl");
-      char* fs = file2string("Shaders/FS_GUI.hlsl");
-      if (vs && fs) {
-        int id = pFramework->pVideoDriver->CreateShader(std::string(vs), std::string(fs));
-        testShader = pFramework->pVideoDriver->GetShaderIdx(id);
-        free(vs); free(fs);
-      }
-      BufferDesc bd; bd.byteWidth = sizeof(XVECTOR3); bd.usage = BufferUsage::DEFAULT;
-      testCB = (ConstantBuffer*)t850::T8Device->CreateBuffer(BufferType::CONSTANT, bd);
-      testInited = true;
-    }
-
-    // Draw the full scene first (this is what breaks GUI)
-    m_devLayer.Draw();
-
-    if (testShader && testCB && testTex && frameCount >= 2) {
-      // Now try to draw a red quad ON TOP of the scene
-      pFramework->pVideoDriver->SetBlendState(BaseDriver::ALPHA_BLEND);
-      pFramework->pVideoDriver->SetDepthStencilState(BaseDriver::NONE);
-      pFramework->pVideoDriver->SetCullFace(BaseDriver::FRONT_AND_BACK);
-
-      testQuad.Set();
-      testShader->Set(*t850::T8DeviceContext);
-      t850::T8DeviceContext->SetPrimitiveTopology(Topology::TRIANLE_LIST);
-
-      XVECTOR3 tint(1.0f, 0.0f, 0.0f);
-      testCB->UpdateFromBuffer(*t850::T8DeviceContext, &tint.x);
-      testCB->Set(*t850::T8DeviceContext);
-      Quad::Vertex verts[4] = {
-        {-0.5f,  0.5f, 0.0f, 1.0f,  0.0f, 0.0f},
-        {-0.5f, -0.5f, 0.0f, 1.0f,  0.0f, 1.0f},
-        { 0.5f, -0.5f, 0.0f, 1.0f,  1.0f, 1.0f},
-        { 0.5f,  0.5f, 0.0f, 1.0f,  1.0f, 0.0f},
-      };
-      testQuad.m_VB->UpdateFromBuffer(*t850::T8DeviceContext, verts);
-      testTex->Set(*t850::T8DeviceContext, 0, "tex0");
-      t850::T8DeviceContext->DrawIndexed(6, 0, 0);
-
-      if (frameCount == 3) {
-        pFramework->pVideoDriver->SaveScreenshot("testGui_result");
-        pFramework->pVideoDriver->SwapBuffers();
-        exit(0);
-      }
-    }
-
-    frameCount++;
-    if (frameCount > 1) pFramework->pVideoDriver->SwapBuffers();
-    return;
-  }
-
   m_devLayer.Draw();
-  // Draw FPS label using layout position when GUI overlay is not visible
-  if (!m_devLayer.GetGUI().IsVisible()) {
-    T8_LOG_TRACE("[Frame %d] DrawFPSOnly (GUI hidden)", frameCount);
-    m_devLayer.GetGUI().DrawFPSOnly();
-  }
   if (fading) {
     T8_LOG_TRACE("[Frame %d] Fade quad draw", frameCount);
     pFramework->pVideoDriver->SetBlendState(BaseDriver::ALPHA_BLEND);
@@ -310,13 +598,8 @@ void App::OnDraw() {
     pFramework->pVideoDriver->SetDepthStencilState(BaseDriver::DEPTH_DEFAULT);
   }
 
-  // --guiScreenshot: after a few frames (let scene stabilise), save backbuffer and exit
-  if (g_config.flags.guiScreenshot && frameCount >= 3) {
-    pFramework->pVideoDriver->SaveScreenshot(g_config.guiScreenshotPath);
-    printf("[guiScreenshot] Saved to %s\n", g_config.guiScreenshotPath.c_str());
-    pFramework->pVideoDriver->SwapBuffers();
-    exit(0);
-  }
+  DrawRuntimeGui();
+
   frameCount++;
 
 #ifdef T8_ENABLE_PROFILER
@@ -353,6 +636,10 @@ void App::OnDraw() {
 void App::OnInput() {
 	if (FirstFrame)
 		return;
+  if (m_imguiReady && IManager.PressedOnceKey(T800K_g)) {
+    m_imguiVisible = !m_imguiVisible;
+  }
+  m_devLayer.SetSceneInputBlocked(m_imguiVisible && m_imgui.WantsKeyboard());
   m_devLayer.ProcessInput(&IManager);
 }
 
@@ -369,5 +656,36 @@ void App::OnReset() {
 }
 
 bool App::IsModalActive() const {
-  return m_devLayer.GetGUI().IsPopupActive();
+  return m_devLayer.IsLegacyPopupActive() || (m_imguiVisible && m_imgui.WantsKeyboard());
+}
+
+void App::DrawRuntimeGui() {
+  if (!m_imguiReady) return;
+
+  m_imgui.NewFrame(m_imguiVisible);
+
+  t850::DevGuiContext gui;
+  gui.DrawFrameStatsOverlay(m_fpsString.c_str());
+
+  if (m_imguiVisible) {
+    ImGui::SetNextWindowSize(ImVec2(420.0f, 680.0f), ImGuiCond_FirstUseEver);
+    if (gui.BeginPanel("Scene Controls", &m_imguiVisible)) {
+      if (m_actualScene) {
+        m_actualScene->DrawDevGui(gui);
+      }
+      ImGui::Separator();
+      ImGui::Checkbox("DEBUG Render Targets", &m_debugPanelVisible);
+    }
+    gui.EndPanel();
+
+    if (m_debugPanelVisible || !m_debugOpenTargets.empty()) {
+      t850::BaseDriver* driver = pFramework ? pFramework->pVideoDriver : nullptr;
+      std::vector<DebugRTEntry> debugRTs = BuildDebugRTEntries(driver, m_debugTextureDescriptors, m_debugOpaqueTextureDescriptors);
+      PruneDebugTextureDescriptors(driver, debugRTs, m_debugTextureDescriptors, m_debugOpaqueTextureDescriptors);
+      DrawDebugRenderTargetPanel(debugRTs, m_debugOpenTargets, &m_debugPanelVisible);
+      DrawDebugPreviewWindows(debugRTs, m_debugOpenTargets);
+    }
+  }
+
+  m_imgui.Render();
 }

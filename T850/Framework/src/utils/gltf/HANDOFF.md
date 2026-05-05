@@ -346,17 +346,12 @@ vertex of each primitive). This is the cheapest smoke test that
 exercises everything from JSON → accessor decode → mesh assembly,
 **without** needing a device, window, or shader.
 
-### 6.3 GUI screenshot regression
+### 6.3 Backend smoke test
 
-```powershell
-.\bin\x64\Release\DayScene.exe --api d3d11 --guiScreenshot out\frame
-```
-
-The app appends `.ppm` to the path. Combine with
-`--api gl|d3d11|d3d12|vulkan` to cover backends. **Always** verify all
-four backends after touching `RenderMesh::{Create,Draw}` because the
-IB-format selection happens once but is consumed by every backend
-binding code path.
+Run DayScene with `--api gl|d3d11|d3d12|vulkan` to cover backends.
+**Always** verify all four backends after touching
+`RenderMesh::{Create,Draw}` because the IB-format selection happens
+once but is consumed by every backend binding code path.
 
 ### 6.4 Quick Linux compile-only check (used during this PR)
 

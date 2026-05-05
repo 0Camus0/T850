@@ -270,6 +270,8 @@ $xaml = @"
                         <CheckBox Name="chkFullscreen" Content="Fullscreen" Margin="0,0,0,8"/>
                     </StackPanel>
                 </Grid>
+                <CheckBox Name="chkCullDisabled" Content="Disable culling" Margin="0,0,0,6"/>
+                <CheckBox Name="chkBenchmark" Content="Benchmark mode" Margin="0,0,0,6" Visibility="Collapsed"/>
                 <StackPanel Name="pnlModelSelect" Margin="0,6,0,0">
                     <TextBlock Text="Model (Sandbox)" Style="{StaticResource LabelStyle}"/>
                     <ComboBox Name="cmbModel"/>
@@ -310,18 +312,6 @@ $xaml = @"
                 </StackPanel>
                 <CheckBox Name="chkLogToFile" Content="Save log to file" Margin="0,0,0,6"/>
                 <CheckBox Name="chkD3D12Debug" Content="D3D12 Debug Layer (validates API usage)" Margin="0,0,0,6"/>
-                <CheckBox Name="chkGuiEdit" Content="GUI Edit Mode (move/scale elements)" Margin="0,0,0,6"/>
-                <CheckBox Name="chkGuiControlEdit" Content="GUI Control Edit Mode (knob/buttons/check)" Margin="0,0,0,6"/>
-                <StackPanel Name="pnlGuiControlTarget" Margin="20,0,0,6" IsEnabled="False">
-                    <TextBlock Text="Control Target" Style="{StaticResource LabelStyle}"/>
-                    <ComboBox Name="cmbGuiControlTarget">
-                        <ComboBoxItem Content="Slider Knob" Tag="slider_knob" IsSelected="True"/>
-                        <ComboBoxItem Content="Selector Control (Both Buttons)" Tag="selector_control"/>
-                        <ComboBoxItem Content="Checkbox Check Mark" Tag="checkbox_mark"/>
-                        <ComboBoxItem Content="Line-Edit Popup (Background + OK + Cancel + Text)" Tag="linedit_popup"/>
-                    </ComboBox>
-                </StackPanel>
-                <CheckBox Name="chkGuiSnap" Content="Snap to Grid (auto-align)" Margin="0,0,0,6"/>
             </StackPanel>
         </Border>
 
@@ -429,6 +419,8 @@ $txtSeconds     = $window.FindName("txtSeconds")
 $txtFrame       = $window.FindName("txtFrame")
 $cmbScene       = $window.FindName("cmbScene")
 $chkFullscreen  = $window.FindName("chkFullscreen")
+$chkCullDisabled = $window.FindName("chkCullDisabled")
+$chkBenchmark   = $window.FindName("chkBenchmark")
 $cmbModel       = $window.FindName("cmbModel")
 $pnlModelSelect = $window.FindName("pnlModelSelect")
 $txtWidth       = $window.FindName("txtWidth")
@@ -442,11 +434,6 @@ $btnBuild       = $window.FindName("btnBuild")
 $btnRebuild     = $window.FindName("btnRebuild")
 $btnRun         = $window.FindName("btnRun")
 $btnEditor      = $window.FindName("btnEditor")
-$chkGuiEdit     = $window.FindName("chkGuiEdit")
-$chkGuiControlEdit = $window.FindName("chkGuiControlEdit")
-$pnlGuiControlTarget = $window.FindName("pnlGuiControlTarget")
-$cmbGuiControlTarget = $window.FindName("cmbGuiControlTarget")
-$chkGuiSnap     = $window.FindName("chkGuiSnap")
 $cmbLogLevel    = $window.FindName("cmbLogLevel")
 $chkLogToFile   = $window.FindName("chkLogToFile")
 $chkD3D12Debug  = $window.FindName("chkD3D12Debug")
@@ -515,6 +502,17 @@ function Load-Config {
         if ($cfg.PSObject.Properties['debugFrames']) {
             $chkDebugFrames.IsChecked = [bool]$cfg.debugFrames
         }
+        # Runtime flags
+        if ($cfg.PSObject.Properties['benchmark']) {
+            $chkBenchmark.IsChecked = [bool]$cfg.benchmark
+        } elseif ($cfg.devTools -and $cfg.devTools.PSObject.Properties['benchmark']) {
+            $chkBenchmark.IsChecked = [bool]$cfg.devTools.benchmark
+        }
+        if ($cfg.PSObject.Properties['cullDisabled']) {
+            $chkCullDisabled.IsChecked = [bool]$cfg.cullDisabled
+        } elseif ($cfg.devTools -and $cfg.devTools.PSObject.Properties['cullDisabled']) {
+            $chkCullDisabled.IsChecked = [bool]$cfg.devTools.cullDisabled
+        }
         # Keep Running
         if ($cfg.PSObject.Properties['keepRunning']) {
             $chkKeepRunning.IsChecked = [bool]$cfg.keepRunning
@@ -539,26 +537,6 @@ function Load-Config {
         }
         # Dev Tools
         if ($cfg.devTools) {
-            if ($cfg.devTools.PSObject.Properties['guiEdit']) {
-                $chkGuiEdit.IsChecked = [bool]$cfg.devTools.guiEdit
-            }
-            if ($cfg.devTools.PSObject.Properties['guiControlEdit']) {
-                $chkGuiControlEdit.IsChecked = [bool]$cfg.devTools.guiControlEdit
-            }
-            if ($cfg.devTools.PSObject.Properties['guiControlTarget']) {
-                $targetTag = $cfg.devTools.guiControlTarget
-                if ($targetTag -ieq 'selector_left' -or $targetTag -ieq 'selector_right') {
-                    $targetTag = 'selector_control'
-                }
-                foreach ($item in $cmbGuiControlTarget.Items) {
-                    if ($item.Tag -ieq $targetTag) {
-                        $cmbGuiControlTarget.SelectedItem = $item; break
-                    }
-                }
-            }
-            if ($cfg.devTools.PSObject.Properties['guiSnap']) {
-                $chkGuiSnap.IsChecked = [bool]$cfg.devTools.guiSnap
-            }
             if ($cfg.devTools.PSObject.Properties['logLevel']) {
                 foreach ($item in $cmbLogLevel.Items) {
                     if ($item.Tag -ieq $cfg.devTools.logLevel) {
@@ -579,6 +557,7 @@ function Load-Config {
 }
 
 function Save-Config {
+    $sceneTag = ($cmbScene.SelectedItem).Tag.ToString()
     $cfg = @{
         architecture  = ($cmbArch.SelectedItem).Content.ToString().ToLower()
         configuration = ($cmbConfig.SelectedItem).Content.ToString()
@@ -587,10 +566,12 @@ function Save-Config {
             width      = [int]$txtWidth.Text
             height     = [int]$txtHeight.Text
             fullscreen = [bool]$chkFullscreen.IsChecked
-            scene      = [int]($cmbScene.SelectedItem).Tag.ToString()
+            scene      = [int]$sceneTag
             model      = if ($cmbModel.SelectedItem) { ($cmbModel.SelectedItem).Tag.ToString() } else { "Models/DamagedHelmet.glb" }
         }
         debugFrames = [bool]$chkDebugFrames.IsChecked
+        benchmark = ($sceneTag -eq "1" -and [bool]$chkBenchmark.IsChecked)
+        cullDisabled = [bool]$chkCullDisabled.IsChecked
         keepRunning = [bool]$chkKeepRunning.IsChecked
         replaySnapshot = @{
             enabled = [bool]$chkReplaySnapshot.IsChecked
@@ -603,10 +584,6 @@ function Save-Config {
             frame   = [int]$txtFrame.Text
         }
         devTools = @{
-            guiEdit   = [bool]$chkGuiEdit.IsChecked
-            guiControlEdit = [bool]$chkGuiControlEdit.IsChecked
-            guiControlTarget = ($cmbGuiControlTarget.SelectedItem).Tag.ToString()
-            guiSnap   = [bool]$chkGuiSnap.IsChecked
             logLevel  = ($cmbLogLevel.SelectedItem).Tag.ToString()
             logToFile = [bool]$chkLogToFile.IsChecked
             d3d12Debug = [bool]$chkD3D12Debug.IsChecked
@@ -642,27 +619,61 @@ function Patch-GLDriverConfig {
     return "Could not find GL_DRIVER_SELECTED in Config.h"
 }
 
+function Test-MSBuildSupportsPlatform {
+    param(
+        [Parameter(Mandatory = $true)] [string]$MSBuildPath,
+        [Parameter(Mandatory = $true)] [string]$TargetPlatform
+    )
+
+    if (-not (Test-Path $MSBuildPath)) { return $false }
+    if ($TargetPlatform -ne "ARM64") { return $true }
+
+    $installRoot = Split-Path -Parent (Split-Path -Parent (Split-Path -Parent (Split-Path -Parent $MSBuildPath)))
+    $vcRoot = Join-Path $installRoot "VC\Tools\MSVC"
+    if (-not (Test-Path $vcRoot)) { return $false }
+
+    $arm64Compiler = Get-ChildItem -Path $vcRoot -Recurse -Filter cl.exe -ErrorAction SilentlyContinue |
+        Where-Object { $_.FullName -match '\\bin\\Hostx64\\arm64\\cl\.exe$' } |
+        Select-Object -First 1
+    return [bool]$arm64Compiler
+}
+
 function Find-MSBuild {
+    param([string]$TargetPlatform = "x64")
+
     $progX86 = [System.Environment]::GetFolderPath("ProgramFilesX86")
     $progFiles = [System.Environment]::GetFolderPath("ProgramFiles")
-    $candidates = @(
-        (Join-Path $progX86  "Microsoft Visual Studio\2022\BuildTools\MSBuild\Current\Bin\MSBuild.exe"),
-        (Join-Path $progFiles "Microsoft Visual Studio\2022\Community\MSBuild\Current\Bin\MSBuild.exe"),
-        (Join-Path $progFiles "Microsoft Visual Studio\2022\Professional\MSBuild\Current\Bin\MSBuild.exe"),
-        (Join-Path $progFiles "Microsoft Visual Studio\2022\Enterprise\MSBuild\Current\Bin\MSBuild.exe"),
+
+    $preferred = if ($TargetPlatform -eq "ARM64") {
+        @(
+            (Join-Path $progFiles "Microsoft Visual Studio\2022\Community\MSBuild\Current\Bin\MSBuild.exe"),
+            (Join-Path $progFiles "Microsoft Visual Studio\2022\Professional\MSBuild\Current\Bin\MSBuild.exe"),
+            (Join-Path $progFiles "Microsoft Visual Studio\2022\Enterprise\MSBuild\Current\Bin\MSBuild.exe"),
+            (Join-Path $progX86  "Microsoft Visual Studio\2022\BuildTools\MSBuild\Current\Bin\MSBuild.exe")
+        )
+    } else {
+        @(
+            (Join-Path $progX86  "Microsoft Visual Studio\2022\BuildTools\MSBuild\Current\Bin\MSBuild.exe"),
+            (Join-Path $progFiles "Microsoft Visual Studio\2022\Community\MSBuild\Current\Bin\MSBuild.exe"),
+            (Join-Path $progFiles "Microsoft Visual Studio\2022\Professional\MSBuild\Current\Bin\MSBuild.exe"),
+            (Join-Path $progFiles "Microsoft Visual Studio\2022\Enterprise\MSBuild\Current\Bin\MSBuild.exe")
+        )
+    }
+
+    $candidates = $preferred + @(
         (Join-Path $progX86  "Microsoft Visual Studio\2019\BuildTools\MSBuild\Current\Bin\MSBuild.exe"),
         (Join-Path $progX86  "Microsoft Visual Studio\2019\Community\MSBuild\Current\Bin\MSBuild.exe")
     )
     foreach ($c in $candidates) {
-        if (Test-Path $c) { return $c }
+        if (Test-MSBuildSupportsPlatform -MSBuildPath $c -TargetPlatform $TargetPlatform) { return $c }
     }
     # Fallback: vswhere
     $vswhere = Join-Path $progX86 "Microsoft Visual Studio\Installer\vswhere.exe"
     if (Test-Path $vswhere) {
-        $vsPath = & $vswhere -latest -products * -requires Microsoft.Component.MSBuild -property installationPath 2>$null
-        if ($vsPath) {
+        $vsPaths = & $vswhere -all -products * -requires Microsoft.Component.MSBuild -property installationPath 2>$null
+        foreach ($vsPath in $vsPaths) {
             $candidate = Join-Path $vsPath "MSBuild\Current\Bin\MSBuild.exe"
-            if (Test-Path $candidate) { return $candidate }
+            if (Test-MSBuildSupportsPlatform -MSBuildPath $candidate -TargetPlatform $TargetPlatform) { return $candidate }
         }
     }
     return $null
@@ -709,6 +720,14 @@ function Get-LaunchCommand {
         $argList += @("--scene", $sceneTag)
     }
 
+    if ($sceneTag -eq "1" -and $chkBenchmark.IsChecked) {
+        $argList += "--benchmark"
+    }
+
+    if ($chkCullDisabled.IsChecked) {
+        $argList += "--cullDisabled"
+    }
+
     # Model path (for Sandbox scene)
     if ($cmbModel.SelectedItem) {
         $argList += @("--model", ($cmbModel.SelectedItem).Tag.ToString())
@@ -722,17 +741,6 @@ function Get-LaunchCommand {
     $h = $txtHeight.Text
     if ($w -and $h) {
         $argList += @("--width", $w, "--height", $h)
-    }
-
-    if ($chkGuiEdit.IsChecked) {
-        $argList += "--guiEdit"
-    }
-    if ($chkGuiControlEdit.IsChecked) {
-        $argList += "--guiControlEdit"
-        $argList += @("--guiControlTarget", ($cmbGuiControlTarget.SelectedItem).Tag.ToString())
-    }
-    if ($chkGuiSnap.IsChecked) {
-        $argList += "--guiSnap"
     }
 
     $logTag = ($cmbLogLevel.SelectedItem).Tag.ToString()
@@ -847,9 +855,12 @@ function Update-Preview {
     }
 }
 
-function Update-GuiControlEditUI {
-    $enabled = [bool]$chkGuiControlEdit.IsChecked
-    $pnlGuiControlTarget.IsEnabled = $enabled
+function Update-SceneOptionVisibility {
+    if (-not $cmbScene.SelectedItem) { return }
+    $sceneTag = ($cmbScene.SelectedItem).Tag.ToString()
+    $pnlModelSelect.Visibility = if ($sceneTag -eq "0") { "Visible" } else { "Collapsed" }
+    $chkBenchmark.Visibility = if ($sceneTag -eq "1") { "Visible" } else { "Collapsed" }
+    if ($sceneTag -ne "1") { $chkBenchmark.IsChecked = $false }
 }
 
 # ── Events ──
@@ -905,30 +916,15 @@ $cmbArch.Add_SelectionChanged({ Populate-ModelList; Update-Preview })
 $cmbConfig.Add_SelectionChanged({ Populate-ModelList; Update-Preview })
 $cmbApi.Add_SelectionChanged({ Update-Preview })
 $cmbScene.Add_SelectionChanged({
-    # Show model selector only for Sandbox scene
-    $pnlModelSelect.Visibility = if (($cmbScene.SelectedItem).Tag.ToString() -eq "0") { "Visible" } else { "Collapsed" }
+    Update-SceneOptionVisibility
     Update-Preview
 })
 $chkFullscreen.Add_Checked({ Update-Preview })
 $chkFullscreen.Add_Unchecked({ Update-Preview })
-$chkGuiEdit.Add_Checked({
-    if ($chkGuiControlEdit.IsChecked) { $chkGuiControlEdit.IsChecked = $false }
-    Update-GuiControlEditUI
-    Update-Preview
-})
-$chkGuiEdit.Add_Unchecked({ Update-Preview })
-$chkGuiControlEdit.Add_Checked({
-    if ($chkGuiEdit.IsChecked) { $chkGuiEdit.IsChecked = $false }
-    Update-GuiControlEditUI
-    Update-Preview
-})
-$chkGuiControlEdit.Add_Unchecked({
-    Update-GuiControlEditUI
-    Update-Preview
-})
-$cmbGuiControlTarget.Add_SelectionChanged({ Update-Preview })
-$chkGuiSnap.Add_Checked({ Update-Preview })
-$chkGuiSnap.Add_Unchecked({ Update-Preview })
+$chkCullDisabled.Add_Checked({ Update-Preview })
+$chkCullDisabled.Add_Unchecked({ Update-Preview })
+$chkBenchmark.Add_Checked({ Update-Preview })
+$chkBenchmark.Add_Unchecked({ Update-Preview })
 $chkLogToFile.Add_Checked({ Update-Preview })
 $chkLogToFile.Add_Unchecked({ Update-Preview })
 $cmbLogLevel.Add_SelectionChanged({ Update-Preview })
@@ -984,7 +980,7 @@ function Invoke-Build {
     }
 
     # Find MSBuild
-    $msbuild = Find-MSBuild
+    $msbuild = Find-MSBuild -TargetPlatform $platform
     if (-not $msbuild) {
         $txtBuildOutput.Text = "ERROR: MSBuild not found. Install Visual Studio Build Tools."
         $txtStatus.Text = "Build failed - MSBuild not found"
@@ -1169,7 +1165,7 @@ function Populate-ModelList {
 
 Populate-ModelList
 Load-Config
-Update-GuiControlEditUI
+Update-SceneOptionVisibility
 Update-Preview
 
 $window.ShowDialog() | Out-Null

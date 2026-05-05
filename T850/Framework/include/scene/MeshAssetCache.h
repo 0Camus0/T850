@@ -26,6 +26,22 @@
 #include <vector>
 
 namespace t850 {
+  struct MeshPreprocessCacheSettings {
+    uint32_t minTrianglesForClustering = 0;
+    uint32_t targetTrianglesPerCluster = 0;
+    uint32_t flags = 0;
+  };
+
+  struct MeshPreprocessCacheData {
+    uint64_t vertexAttribMask = 0;
+    uint32_t vertexStride = 0;
+    uint32_t vertexCount = 0;
+    uint32_t indexCount = 0;
+    AABB rootAABB;
+    std::vector<Submesh> submeshes;
+    std::vector<SubmeshCluster> clusters;
+  };
+
   class MeshAssetCache {
   public:
     static MeshAssetCache& Get();
@@ -57,6 +73,13 @@ namespace t850 {
     // Diagnostics.
     std::size_t Size() const;
     void DumpToLog() const;
+
+    bool LoadPreprocessCache(const std::string& sourcePath,
+                             const MeshPreprocessCacheSettings& settings,
+                             MeshPreprocessCacheData& outData) const;
+    bool SavePreprocessCache(const std::string& sourcePath,
+                             const MeshPreprocessCacheSettings& settings,
+                             const MeshAsset& asset) const;
 
     // Test/teardown only — destroy all assets unconditionally.
     void Clear();

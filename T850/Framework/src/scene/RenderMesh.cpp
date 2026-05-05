@@ -118,6 +118,72 @@ namespace t850 {
       return subInfo.ibPoolAlloc.IsValid() ? subInfo.ibPoolAlloc.count : subInfo.NumVertex;
     }
 
+    void ApplyCachedBounds(RenderMesh::SubSetInfo& subInfo, const AABB& bounds) {
+      subInfo.bounds.min = XVECTOR3(bounds.vMin.x, bounds.vMin.y, bounds.vMin.z, 0.0f);
+      subInfo.bounds.max = XVECTOR3(bounds.vMax.x, bounds.vMax.y, bounds.vMax.z, 0.0f);
+    }
+
+    void ExpandMeshBounds(RenderMesh::MeshInfo& meshInfo, const AABB& bounds) {
+      meshInfo.bounds.Expand(bounds.vMin.x, bounds.vMin.y, bounds.vMin.z);
+      meshInfo.bounds.Expand(bounds.vMax.x, bounds.vMax.y, bounds.vMax.z);
+    }
+
+    bool ValidatePreprocessCacheTopology(const XDataBase* xFile,
+                                         const std::vector<RenderMesh::MeshInfo>& meshInfos,
+                                         const MeshPreprocessCacheData& cache) {
+      if (!xFile || xFile->XMeshDataBase.empty() || cache.submeshes.empty())
+        return false;
+
+      const xMeshContainer* meshContainer = xFile->XMeshDataBase[0];
+      std::size_t flatSubmesh = 0;
+      std::size_t totalVerts = 0;
+      std::size_t totalIndices = 0;
+      uint32_t maxVertexStride = 0;
+      uint64_t vertexAttribMask = 0;
+
+      if (meshInfos.size() != xFile->MeshInfo.size() || meshContainer->Geometry.size() < xFile->MeshInfo.size())
+        return false;
+
+      for (std::size_t i = 0; i < xFile->MeshInfo.size(); ++i) {
+        const xFinalGeometry& finalGeometry = xFile->MeshInfo[i];
+        const xMeshGeometry& sourceGeometry = meshContainer->Geometry[i];
+        const RenderMesh::MeshInfo& meshInfo = meshInfos[i];
+        if (meshInfo.SubSets.size() != finalGeometry.Subsets.size())
+          return false;
+
+        totalVerts += sourceGeometry.NumVertices;
+        totalIndices += static_cast<std::size_t>(sourceGeometry.NumTriangles) * 3u;
+        if (finalGeometry.VertexSize > maxVertexStride)
+          maxVertexStride = finalGeometry.VertexSize;
+
+        for (std::size_t j = 0; j < meshInfo.SubSets.size(); ++j, ++flatSubmesh) {
+          if (flatSubmesh >= cache.submeshes.size())
+            return false;
+
+          const xSubsetInfo& sourceSubset = finalGeometry.Subsets[j];
+          const RenderMesh::SubSetInfo& renderSubset = meshInfo.SubSets[j];
+          const Submesh& cachedSubmesh = cache.submeshes[flatSubmesh];
+          const uint64_t cachedAttribs = cachedSubmesh.vertexAttribKey.bits & ShaderKey::VERTEX_ATTRIB_MASK;
+          const uint64_t renderAttribs = renderSubset.key.bits & ShaderKey::VERTEX_ATTRIB_MASK;
+
+          if (cachedSubmesh.vertexCount != sourceSubset.NumVertex
+              || cachedSubmesh.triangleCount != sourceSubset.NumTris
+              || cachedSubmesh.ib32Bit != sourceGeometry.Indices32Bit
+              || cachedAttribs != renderAttribs) {
+            return false;
+          }
+
+          vertexAttribMask |= renderAttribs;
+        }
+      }
+
+      return flatSubmesh == cache.submeshes.size()
+        && cache.vertexCount == static_cast<uint32_t>(totalVerts)
+        && cache.indexCount == static_cast<uint32_t>(totalIndices)
+        && cache.vertexStride == maxVertexStride
+        && cache.vertexAttribMask == vertexAttribMask;
+    }
+
     void LogLoadedMeshDetails(const XDataBase* xFile, const std::vector<RenderMesh::MeshInfo>& meshInfos) {
       if (!xFile || xFile->XMeshDataBase.empty())
         return;
@@ -254,6 +320,23 @@ namespace t850 {
     // unless the alloc is invalid (which shouldn't happen in normal
     // load).
     const bool populatePools = (m_asset && m_asset->submeshes.empty());
+    const MeshPreprocessCacheSettings preprocessCacheSettings = {
+      kMinTrianglesForClustering,
+      kTargetTrianglesPerCluster,
+      CHANGE_TO_RH ? 1u : 0u
+    };
+    MeshPreprocessCacheData preprocessCache;
+    bool usePreprocessCache = false;
+    if (populatePools) {
+      usePreprocessCache = MeshAssetCache::Get().LoadPreprocessCache(m_sourcePath, preprocessCacheSettings, preprocessCache);
+      if (usePreprocessCache && !ValidatePreprocessCacheTopology(xFile, Info, preprocessCache)) {
+        T8_LOG_INFO("[MeshAssetCache] Ignoring mesh preprocess cache for '%s': topology changed",
+                    m_sourcePath.c_str());
+        preprocessCache = MeshPreprocessCacheData{};
+        usePreprocessCache = false;
+      }
+    }
+
     struct VBAllocSide { uint32_t poolId = UINT32_MAX; uint32_t offsetVerts = 0; uint32_t count = 0; };
     struct IBAllocSide { uint32_t poolId = UINT32_MAX; uint32_t offsetIdx   = 0; uint32_t count = 0; };
     std::vector<VBAllocSide>             poolVBAllocs(xFile->MeshInfo.size());
@@ -284,6 +367,7 @@ namespace t850 {
       int NumMaterials = static_cast<int>(pActual->MaterialList.Materials.size());
       int NumFaceIndices = static_cast<int>(pActual->MaterialList.FaceIndices.size());
       const bool kUse32 = pActual->Indices32Bit;
+      const uint32_t geometryFirstSubmeshIndex = nextMeshAssetSubmeshIndex;
 
       for (int j = 0; j < NumMaterials; j++) {
         xSubsetInfo *subinfo = &it->Subsets[j];
@@ -684,6 +768,9 @@ namespace t850 {
         it_subsetinfo->IB32Bit = kUse32;
         const uint32_t meshAssetSubmeshIndex = nextMeshAssetSubmeshIndex++;
         const bool splitIntoClusters = CanSplitSubsetIntoClusters(*it_subsetinfo);
+        const Submesh* cachedSubmesh = (usePreprocessCache && meshAssetSubmeshIndex < preprocessCache.submeshes.size())
+          ? &preprocessCache.submeshes[meshAssetSubmeshIndex]
+          : nullptr;
         // Allocate temp index storage matching the source width. Both
         // branches build the same {first vertex of each face} order,
         // mirroring the legacy 16-bit path. For glTF >65 535-vertex
@@ -724,15 +811,18 @@ namespace t850 {
             poolIBAllocs[i][j] = { poolId, off, it_subsetinfo->NumTris * 3u };
           }
 
-          // Compute per-subset AABB from referenced vertices
-          it_subsetinfo->bounds.Reset();
-          unsigned int stride16 = it->VertexSize / sizeof(float);
-          for (int vi = 0; vi < counter; vi++) {
-            unsigned int idx = tmpIndexex[vi];
-            it_subsetinfo->bounds.Expand(it->pData[idx*stride16], it->pData[idx*stride16+1], it->pData[idx*stride16+2]);
+          if (cachedSubmesh) {
+            ApplyCachedBounds(*it_subsetinfo, cachedSubmesh->localAABB);
+          } else {
+            it_subsetinfo->bounds.Reset();
+            unsigned int stride16 = it->VertexSize / sizeof(float);
+            for (int vi = 0; vi < counter; vi++) {
+              unsigned int idx = tmpIndexex[vi];
+              it_subsetinfo->bounds.Expand(it->pData[idx*stride16], it->pData[idx*stride16+1], it->pData[idx*stride16+2]);
+            }
           }
 
-          if (populatePools) {
+          if (populatePools && !usePreprocessCache) {
             BuildContiguousClustersForSubset(tmpIndexex,
                                              static_cast<uint32_t>(counter),
                                              &it->pData[0],
@@ -777,15 +867,18 @@ namespace t850 {
             poolIBAllocs[i][j] = { poolId, off, it_subsetinfo->NumTris * 3u };
           }
 
-          // Compute per-subset AABB from referenced vertices
-          it_subsetinfo->bounds.Reset();
-          unsigned int stride32 = it->VertexSize / sizeof(float);
-          for (int vi = 0; vi < counter; vi++) {
-            unsigned int idx = tmpIndexex[vi];
-            it_subsetinfo->bounds.Expand(it->pData[idx*stride32], it->pData[idx*stride32+1], it->pData[idx*stride32+2]);
+          if (cachedSubmesh) {
+            ApplyCachedBounds(*it_subsetinfo, cachedSubmesh->localAABB);
+          } else {
+            it_subsetinfo->bounds.Reset();
+            unsigned int stride32 = it->VertexSize / sizeof(float);
+            for (int vi = 0; vi < counter; vi++) {
+              unsigned int idx = tmpIndexex[vi];
+              it_subsetinfo->bounds.Expand(it->pData[idx*stride32], it->pData[idx*stride32+1], it->pData[idx*stride32+2]);
+            }
           }
 
-          if (populatePools) {
+          if (populatePools && !usePreprocessCache) {
             BuildContiguousClustersForSubset(tmpIndexex,
                                              static_cast<uint32_t>(counter),
                                              &it->pData[0],
@@ -815,14 +908,20 @@ namespace t850 {
         poolVBAllocs[i] = { poolId, off, pActual->NumVertices };
       }
 
-      // Compute AABB from vertex positions (first 3 floats of each vertex)
       it_MeshInfo->bounds.Reset();
-      unsigned int stride = it->VertexSize / sizeof(float);
-      for (unsigned int v = 0; v < pActual->NumVertices; v++) {
-        float px = it->pData[v * stride + 0];
-        float py = it->pData[v * stride + 1];
-        float pz = it->pData[v * stride + 2];
-        it_MeshInfo->bounds.Expand(px, py, pz);
+      if (usePreprocessCache) {
+        for (uint32_t submeshIndex = geometryFirstSubmeshIndex; submeshIndex < nextMeshAssetSubmeshIndex; ++submeshIndex) {
+          if (submeshIndex < preprocessCache.submeshes.size())
+            ExpandMeshBounds(*it_MeshInfo, preprocessCache.submeshes[submeshIndex].localAABB);
+        }
+      } else {
+        unsigned int stride = it->VertexSize / sizeof(float);
+        for (unsigned int v = 0; v < pActual->NumVertices; v++) {
+          float px = it->pData[v * stride + 0];
+          float py = it->pData[v * stride + 1];
+          float pz = it->pData[v * stride + 2];
+          it_MeshInfo->bounds.Expand(px, py, pz);
+        }
       }
 
       T8_LOG_DEBUG("  Geometry %zu: VB=%u bytes (stride=%u, %d verts), IB=%zu tris%s",
@@ -868,7 +967,10 @@ namespace t850 {
       m_asset->vertexCount      = 0;
       m_asset->indexCount       = 0;
       m_asset->rootAABB         = t850::AABB{};
-      m_asset->clusters.clear();
+      if (usePreprocessCache)
+        m_asset->clusters = preprocessCache.clusters;
+      else
+        m_asset->clusters.clear();
 
       std::size_t totalVerts = 0;
       std::size_t totalIdx   = 0;
@@ -880,15 +982,19 @@ namespace t850 {
           const SubSetInfo& s = mi.SubSets[j];
           const uint32_t submeshIndex = static_cast<uint32_t>(m_asset->submeshes.size());
           Submesh sub;
-          sub.vertexStart   = s.VertexStart;
-          sub.vertexCount   = s.NumVertex;
-          sub.indexStart    = s.TriStart * 3u;
-          sub.triangleCount = s.NumTris;
-          sub.materialSlot  = submeshIndex;
-          sub.ib32Bit       = s.IB32Bit;
-          sub.localAABB.vMin = XVECTOR3(s.bounds.min.x, s.bounds.min.y, s.bounds.min.z, 0.0f);
-          sub.localAABB.vMax = XVECTOR3(s.bounds.max.x, s.bounds.max.y, s.bounds.max.z, 0.0f);
-          sub.vertexAttribKey.bits = s.key.bits & ShaderKey::VERTEX_ATTRIB_MASK;
+          if (usePreprocessCache && submeshIndex < preprocessCache.submeshes.size()) {
+            sub = preprocessCache.submeshes[submeshIndex];
+          } else {
+            sub.vertexStart   = s.VertexStart;
+            sub.vertexCount   = s.NumVertex;
+            sub.indexStart    = s.TriStart * 3u;
+            sub.triangleCount = s.NumTris;
+            sub.materialSlot  = submeshIndex;
+            sub.ib32Bit       = s.IB32Bit;
+            sub.localAABB.vMin = XVECTOR3(s.bounds.min.x, s.bounds.min.y, s.bounds.min.z, 0.0f);
+            sub.localAABB.vMax = XVECTOR3(s.bounds.max.x, s.bounds.max.y, s.bounds.max.z, 0.0f);
+            sub.vertexAttribKey.bits = s.key.bits & ShaderKey::VERTEX_ATTRIB_MASK;
+          }
           m_asset->vertexAttribMask |= sub.vertexAttribKey.bits;
           totalIdx += static_cast<std::size_t>(s.NumTris) * 3u;
           // Phase A.5 pool allocations captured during the loop above.
@@ -904,25 +1010,27 @@ namespace t850 {
             sub.ibAlloc.count       = poolIBAllocs[i][j].count;
             sub.ibPoolId            = static_cast<uint16_t>(poolIBAllocs[i][j].poolId);
           }
-          sub.firstCluster = static_cast<uint32_t>(m_asset->clusters.size());
-          if (i < clusterBuildData.size() && j < clusterBuildData[i].size()) {
-            for (SubmeshCluster cluster : clusterBuildData[i][j]) {
-              cluster.submeshIndex = submeshIndex;
-              m_asset->clusters.push_back(cluster);
+          if (!usePreprocessCache) {
+            sub.firstCluster = static_cast<uint32_t>(m_asset->clusters.size());
+            if (i < clusterBuildData.size() && j < clusterBuildData[i].size()) {
+              for (SubmeshCluster cluster : clusterBuildData[i][j]) {
+                cluster.submeshIndex = submeshIndex;
+                m_asset->clusters.push_back(cluster);
+              }
             }
-          }
-          if (m_asset->clusters.size() == sub.firstCluster) {
-            const uint32_t indexCount = sub.ibAlloc.IsValid() ? sub.ibAlloc.count : s.NumTris * 3u;
-            if (indexCount > 0) {
-              SubmeshCluster cluster;
-              cluster.submeshIndex = submeshIndex;
-              cluster.indexOffset = 0;
-              cluster.indexCount = indexCount;
-              cluster.localAABB = sub.localAABB;
-              m_asset->clusters.push_back(cluster);
+            if (m_asset->clusters.size() == sub.firstCluster) {
+              const uint32_t indexCount = sub.ibAlloc.IsValid() ? sub.ibAlloc.count : s.NumTris * 3u;
+              if (indexCount > 0) {
+                SubmeshCluster cluster;
+                cluster.submeshIndex = submeshIndex;
+                cluster.indexOffset = 0;
+                cluster.indexCount = indexCount;
+                cluster.localAABB = sub.localAABB;
+                m_asset->clusters.push_back(cluster);
+              }
             }
+            sub.clusterCount = static_cast<uint32_t>(m_asset->clusters.size()) - sub.firstCluster;
           }
-          sub.clusterCount = static_cast<uint32_t>(m_asset->clusters.size()) - sub.firstCluster;
           m_asset->submeshes.push_back(sub);
         }
         m_asset->rootAABB.ExpandToInclude(mi.bounds.min.x, mi.bounds.min.y, mi.bounds.min.z);
@@ -939,6 +1047,8 @@ namespace t850 {
                   static_cast<unsigned long long>(m_asset->vertexAttribMask));
       MeshAssetCache::Get().DumpToLog();
       MaterialAssetCache::Get().DumpToLog();
+      if (!usePreprocessCache)
+        MeshAssetCache::Get().SavePreprocessCache(m_sourcePath, preprocessCacheSettings, *m_asset);
     } else if (m_asset) {
       T8_LOG_INFO("[MeshAssetCache] Reusing populated '%s' (%zu submesh(es), refs=%u)",
                   m_asset->sourcePath.c_str(), m_asset->submeshes.size(), m_asset->refCount);

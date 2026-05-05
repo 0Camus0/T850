@@ -1,31 +1,31 @@
 {
+  "api": "gl",
   "cullDisabled": false,
-  "keepRunning": false,
-  "debugFrames": false,
-  "architecture": "x64",
+  "display": {
+    "fullscreen": false,
+    "model": "Models/porsche_992_gt3_r__www.vecarz.com.glb",
+    "scene": 0,
+    "width": 2560,
+    "height": 1440
+  },
   "benchmark": false,
   "devTools": {
+    "logLevel": "info",
     "d3d12Debug": false,
-    "logLevel": "error",
     "logToFile": false
   },
-  "api": "vulkan",
   "configuration": "Release",
-  "display": {
-    "height": 1440,
-    "model": "Models/4_20_2026.glb",
-    "width": 2560,
-    "fullscreen": false,
-    "scene": 0
-  },
-  "dump": {
-    "trigger": "frame",
-    "frame": -1,
-    "enabled": false,
-    "seconds": -1
-  },
   "replaySnapshot": {
-    "path": "D:\\Code\\Game\\T850\\T850\\bin\\x64\\Release\\dumps_d3d12_f3253_20260502_165718\\snapshot.json",
-    "enabled": false
+    "enabled": false,
+    "path": "D:\\Code\\Game\\T850\\T850\\bin\\x64\\Release\\dumps_d3d12_f3253_20260502_165718\\snapshot.json"
+  },
+  "keepRunning": false,
+  "architecture": "x64",
+  "debugFrames": false,
+  "dump": {
+    "seconds": -1,
+    "enabled": false,
+    "trigger": "frame",
+    "frame": -1
   }
 }

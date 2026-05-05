@@ -5,7 +5,6 @@
 #include <array>
 #include <cmath>
 #include <cstdint>
-#include <cstring>
 #include <filesystem>
 #include <fstream>
 #include <iomanip>
@@ -56,27 +55,6 @@ namespace {
   };
 
   constexpr std::array<char, 8> IBLCacheMagic = {'T', '8', 'I', 'B', 'L', 'F', '3', '2'};
-
-  bool IsUnsupportedHighBitDepthPng(const std::string& relativeTexturePath) {
-    const std::string fullPath = "Textures/" + relativeTexturePath;
-    std::ifstream file(fullPath, std::ios::binary);
-    if (!file.good())
-      return false;
-
-    unsigned char header[25] = {};
-    file.read(reinterpret_cast<char*>(header), sizeof(header));
-    if (file.gcount() < static_cast<std::streamsize>(sizeof(header)))
-      return false;
-
-    static const unsigned char pngSig[8] = {0x89, 'P', 'N', 'G', 0x0D, 0x0A, 0x1A, 0x0A};
-    if (std::memcmp(header, pngSig, sizeof(pngSig)) != 0)
-      return false;
-    if (header[12] != 'I' || header[13] != 'H' || header[14] != 'D' || header[15] != 'R')
-      return false;
-
-    const unsigned char bitDepth = header[24];
-    return bitDepth > 8;
-  }
 
   float Saturate(float value) {
     return std::max(0.0f, std::min(1.0f, value));
@@ -1257,12 +1235,7 @@ void LoadEnvironmentIBLResources(
   }
 
   if (!paths.sheenELUT.empty()) {
-    if (IsUnsupportedHighBitDepthPng(paths.sheenELUT)) {
-      T8_LOG_INFO("[IBL] Skipping explicit sheen E LUT '%s': high-bit-depth PNG is unsupported by the legacy texture loader",
-                  paths.sheenELUT.c_str());
-    } else {
-      loadTextureOnce(sheenELUTTextureIndex, paths.sheenELUT, "explicit sheen E LUT");
-    }
+    loadTextureOnce(sheenELUTTextureIndex, paths.sheenELUT, "explicit sheen E LUT");
   }
   if (sheenELUTTextureIndex < 0) {
     sheenELUTTextureIndex = CreateSheenELUTTexture(driver);

@@ -59,6 +59,13 @@ bool DevGuiContext::Combo(const SelectorDesc& desc, int& selectedIndex, const st
   return changed;
 }
 
+bool DevGuiContext::Button(const char* label, bool enabled) {
+  if (!enabled) ImGui::BeginDisabled();
+  bool clicked = ImGui::Button(label);
+  if (!enabled) ImGui::EndDisabled();
+  return enabled && clicked;
+}
+
 void DevGuiContext::DrawFrameStatsOverlay(const char* text) {
   ImGuiViewport* viewport = ImGui::GetMainViewport();
   const ImVec2 pos(viewport->WorkPos.x + 10.0f, viewport->WorkPos.y + 10.0f);

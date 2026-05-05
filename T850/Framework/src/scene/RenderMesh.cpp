@@ -970,37 +970,8 @@ namespace t850 {
   }
 
   void RenderMesh::CreateWireframeShader() {
-    if (Info.empty() || !g_pBaseDriver) return;
-
-    char *vsWireP = nullptr, *fsWireP = nullptr;
-    std::string vsWireName, fsWireName;
-    if (g_pBaseDriver->UsesGLSL()) {
-      vsWireP = file2string("Shaders/VS_Mesh.glsl");
-      fsWireP = file2string("Shaders/FS_WireMesh.glsl");
-      vsWireName = "VS_Mesh.glsl";
-      fsWireName = "FS_WireMesh.glsl";
-    } else {
-      vsWireP = file2string("Shaders/VS_Mesh.hlsl");
-      fsWireP = file2string("Shaders/FS_WireMesh.hlsl");
-      vsWireName = "VS_Mesh.hlsl";
-      fsWireName = "FS_WireMesh.hlsl";
-    }
-    if (!vsWireP || !fsWireP) {
-      if (vsWireP) free(vsWireP);
-      if (fsWireP) free(fsWireP);
-      return;
-    }
-
-    std::string vsWStr(vsWireP), fsWStr(fsWireP);
-    free(vsWireP);
-    free(fsWireP);
-
-    ShaderKey wireKey(0);
-    if (!Info.empty() && !Info[0].SubSets.empty())
-      wireKey.bits |= (Info[0].SubSets[0].key.bits & ShaderKey::VERTEX_ATTRIB_MASK);
-    wireKey.setPass(32);
-    g_pBaseDriver->CreateShader(vsWStr, fsWStr, wireKey, vsWireName, fsWireName);
-    m_wireShader = g_pBaseDriver->GetShader(wireKey);
+    if (!g_pBaseDriver) return;
+    m_lineRenderer.Create();
   }
 
   void RenderMesh::BuildWireframeBuffers() {
@@ -1012,22 +983,36 @@ namespace t850 {
     for (std::size_t gi = 0; gi < mc->Geometry.size(); gi++) {
       auto& geom = mc->Geometry[gi];
       std::vector<unsigned int> lineIdx;
+      auto includeMaterial = [&](int materialIndex) {
+        if (gi >= Info.size() || materialIndex < 0 || materialIndex >= (int)Info[gi].SubSets.size())
+          return true;
+        const SubSetInfo& subset = Info[gi].SubSets[materialIndex];
+        if (const MaterialAsset* mat = subset.matAsset) {
+          const MaterialParams& params = mat->params;
+          return params.alphaMode != 2 && params.transmissionFactor <= 0.0f;
+        }
+        return subset.AlphaMode != 2 && subset.TransmissionFactor <= 0.0f;
+      };
+
+      auto pushTriangleLines = [&](unsigned int a, unsigned int b, unsigned int c) {
+        lineIdx.push_back(a); lineIdx.push_back(b);
+        lineIdx.push_back(b); lineIdx.push_back(c);
+        lineIdx.push_back(c); lineIdx.push_back(a);
+      };
 
       if (geom.Indices32Bit && !geom.Triangles32.empty()) {
         const auto& tris = geom.Triangles32;
-        for (std::size_t t = 0; t + 2 < tris.size(); t += 3) {
-          unsigned int a = tris[t + 0], b = tris[t + 1], c = tris[t + 2];
-          lineIdx.push_back(a); lineIdx.push_back(b);
-          lineIdx.push_back(b); lineIdx.push_back(c);
-          lineIdx.push_back(c); lineIdx.push_back(a);
+        for (std::size_t t = 0, face = 0; t + 2 < tris.size(); t += 3, ++face) {
+          int materialIndex = (face < geom.MaterialList.FaceIndices.size()) ? geom.MaterialList.FaceIndices[face] : 0;
+          if (!includeMaterial(materialIndex)) continue;
+          pushTriangleLines(tris[t + 0], tris[t + 1], tris[t + 2]);
         }
       } else {
         const auto& tris = geom.Triangles;
-        for (std::size_t t = 0; t + 2 < tris.size(); t += 3) {
-          unsigned int a = tris[t + 0], b = tris[t + 1], c = tris[t + 2];
-          lineIdx.push_back(a); lineIdx.push_back(b);
-          lineIdx.push_back(b); lineIdx.push_back(c);
-          lineIdx.push_back(c); lineIdx.push_back(a);
+        for (std::size_t t = 0, face = 0; t + 2 < tris.size(); t += 3, ++face) {
+          int materialIndex = (face < geom.MaterialList.FaceIndices.size()) ? geom.MaterialList.FaceIndices[face] : 0;
+          if (!includeMaterial(materialIndex)) continue;
+          pushTriangleLines(tris[t + 0], tris[t + 1], tris[t + 2]);
         }
       }
 
@@ -1049,25 +1034,15 @@ namespace t850 {
   }
 
   void RenderMesh::DrawWireframe() {
-    if (!m_wireShader || m_wireGeo.empty()) return;
+    if (!m_lineRenderer.IsReady() || m_wireGeo.empty()) return;
     if (!pScProp || pScProp->pCameras.empty()) return;
 
     Camera* cam = pScProp->pCameras[0];
-    XMATRIX44 WVP = transform * cam->VP;
-    XMATRIX44 WorldView = transform * cam->View;
-    XVECTOR3 infoCam = XVECTOR3(cam->NPlane, cam->FPlane, (float)m_wireViewW, (float)m_wireViewH);
     XVECTOR3 wireColor(0.0f, 1.0f, 0.0f, 1.0f);
-
-    RenderMesh::CBuffer wireCB;
-    wireCB.WVP = WVP;
-    wireCB.World = transform;
-    wireCB.WorldView = WorldView;
-    wireCB.CameraInfo = infoCam;
-    wireCB.DiffuseColor = wireColor;
-    RenderMesh::MeshInstanceCBuffer wireInstanceCB;
-    wireInstanceCB.WVP = wireCB.WVP;
-    wireInstanceCB.World = wireCB.World;
-    wireInstanceCB.WorldView = wireCB.WorldView;
+    m_lineRenderer.SetDepthTestEnabled(m_wireDepthTex != nullptr);
+    m_lineRenderer.SetDepthTexture(m_wireDepthTex);
+    m_lineRenderer.SetViewport(m_wireViewW, m_wireViewH);
+    m_lineRenderer.SetFarPlane(cam->FPlane);
 
     for (std::size_t i = 0; i < Info.size() && i < m_wireGeo.size(); i++) {
       if (!m_wireGeo[i].IB || m_wireGeo[i].indexCount == 0) continue;
@@ -1088,23 +1063,9 @@ namespace t850 {
         continue;
       }
 
-      vbToBind->Set(*T8DeviceContext, mi->VertexSize, 0);
       auto ibFmt = m_wireGeo[i].use32Bit ? IndexBufferFormat::R32 : IndexBufferFormat::R16;
-      m_wireGeo[i].IB->Set(*T8DeviceContext, 0, ibFmt);
-
-      T8DeviceContext->SetPrimitiveTopology(Topology::LINE_LIST);
-      m_wireShader->Set(*T8DeviceContext);
-      mi->CB->UpdateFromBuffer(*T8DeviceContext, &wireCB.WVP[0]);
-      mi->CB->Set(*T8DeviceContext, 0);
-      if (!g_pBaseDriver->UsesGLSL()) {
-        mi->InstanceCBGPU->UpdateFromBuffer(*T8DeviceContext, &wireInstanceCB);
-        mi->InstanceCBGPU->Set(*T8DeviceContext, 1);
-      }
-      if (m_wireDepthTex)
-        m_wireDepthTex->Set(*T8DeviceContext, 0, "depthTex");
-
-      T8DeviceContext->DrawIndexed(m_wireGeo[i].indexCount, 0, baseVertex);
-      T8DeviceContext->SetPrimitiveTopology(Topology::TRIANLE_LIST);
+      m_lineRenderer.DrawLines(transform, cam->VP, wireColor, vbToBind, m_wireGeo[i].IB,
+                               m_wireGeo[i].indexCount, mi->VertexSize, ibFmt, baseVertex);
     }
   }
 
@@ -2184,6 +2145,7 @@ namespace t850 {
     }
     m_wireGeo.clear();
     m_wireShader = nullptr;
+    m_lineRenderer.Destroy();
     m_wireDepthTex = nullptr;
   }
 }

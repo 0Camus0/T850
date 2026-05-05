@@ -21,6 +21,7 @@ namespace t850 {
     bool Slider(const SliderDesc& desc, float& value);
     bool Checkbox(const CheckboxDesc& desc, bool& value);
     bool Combo(const SelectorDesc& desc, int& selectedIndex, const std::vector<std::string>* overrideOptions = nullptr);
+    bool Button(const char* label, bool enabled = true);
 
     void DrawFrameStatsOverlay(const char* text);
   };

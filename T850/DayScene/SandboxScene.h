@@ -8,10 +8,14 @@
 #include <scene/SceneSetup.h>
 #include <scene/RenderGraph.h>
 #include <scene/WireframeSphere.h>
+#include <scene/LineRenderer.h>
 #include <scene/TextRenderer.h>
 #include <debug/FrameDumper.h>
 #include <gui/GUIManager.h>
 #include <Config.h>
+
+#include <string>
+#include <vector>
 
 class SandboxScene : public t850::SceneBase
 {
@@ -120,10 +124,22 @@ public:
 
   t850::TextRenderer m_debugText;
   t850::WireframeSphere m_debugSphere;
+  t850::LineRenderer m_lightArrowRenderer;
+  t850::VertexBuffer* m_lightArrowVB = nullptr;
+  t850::IndexBuffer* m_lightArrowIB = nullptr;
+  unsigned m_lightArrowIndexCount = 0;
   bool m_showCullStats = false;
   bool m_showAABBs = false;
   bool m_showWireframe = false;
   bool m_showSkeleton = false;
+  bool m_drawLightDirection = false;
+  bool m_profileReady = false;
+  bool m_profileDirty = false;
+  int m_selectedLightIndex = 0;
+  std::vector<bool> m_lightAttachToCamera;
+  std::string m_profileModelKey;
+  t850::SandboxProfileDesc m_profileBaselineState;
+  t850::SandboxProfileDesc m_profileSavedState;
 
   // Orbit camera state
   XVECTOR3 m_orbitTarget;    // center of the model (world space)
@@ -135,4 +151,15 @@ public:
 
   void ComputeOrbitCamera();
   void FitModelToView();
+  void EnsureLightRuntimeState();
+  void UpdateAttachedLights();
+  void SyncLightCameraFromDirectionalLight();
+  bool AdjustSelectedDirectionalLightFromMouse(float dx, float dy);
+  void DrawSelectedDirectionalLightArrow();
+  void LoadSandboxProfile();
+  void SaveSandboxProfile();
+  void CaptureSandboxProfileState(t850::SandboxProfileDesc& state);
+  void ApplySandboxProfileState(const t850::SandboxProfileDesc& state);
+  t850::SandboxProfileDesc BuildSparseSandboxProfile(const t850::SandboxProfileDesc& current) const;
+  bool SandboxProfileStatesEqual(const t850::SandboxProfileDesc& a, const t850::SandboxProfileDesc& b) const;
 };

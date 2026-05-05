@@ -116,7 +116,8 @@ void LineRenderer::DrawLines(const XMATRIX44& world,
                              IndexBuffer*  ib,
                              unsigned indexCount,
                              unsigned vertexStride,
-                             IndexBufferFormat::E ibFormat) {
+                             IndexBufferFormat::E ibFormat,
+                             unsigned startVertex) {
   if (!m_shaderDepth || !m_cb || !vb || !ib || indexCount == 0) return;
 
   ShaderBase* shader = m_depthTest ? m_shaderDepth : m_shaderFlat;
@@ -144,7 +145,7 @@ void LineRenderer::DrawLines(const XMATRIX44& world,
   if (m_depthTest && m_depthTex)
     m_depthTex->Set(*T8DeviceContext, 0, "depthTex");
 
-  T8DeviceContext->DrawIndexed(indexCount, 0, 0);
+  T8DeviceContext->DrawIndexed(indexCount, 0, startVertex);
 
   // Reset topology back to triangle list for subsequent draws
   T8DeviceContext->SetPrimitiveTopology(Topology::TRIANLE_LIST);

@@ -240,11 +240,16 @@ namespace t850 {
 
     // Rasterizer
     pso.RasterizerState.FillMode = D3D12_FILL_MODE_SOLID;
-    switch (m_currentCull) {
-      case FRONT_FACES:     pso.RasterizerState.CullMode = D3D12_CULL_MODE_BACK;  break;
-      case BACK_FACES:      pso.RasterizerState.CullMode = D3D12_CULL_MODE_FRONT; break;
-      case FRONT_AND_BACK:  pso.RasterizerState.CullMode = D3D12_CULL_MODE_NONE;  break;
-      default:              pso.RasterizerState.CullMode = D3D12_CULL_MODE_BACK;  break;
+    if (pso.PrimitiveTopologyType == D3D12_PRIMITIVE_TOPOLOGY_TYPE_LINE ||
+        pso.PrimitiveTopologyType == D3D12_PRIMITIVE_TOPOLOGY_TYPE_POINT) {
+      pso.RasterizerState.CullMode = D3D12_CULL_MODE_NONE;
+    } else {
+      switch (m_currentCull) {
+        case FRONT_FACES:     pso.RasterizerState.CullMode = D3D12_CULL_MODE_BACK;  break;
+        case BACK_FACES:      pso.RasterizerState.CullMode = D3D12_CULL_MODE_FRONT; break;
+        case FRONT_AND_BACK:  pso.RasterizerState.CullMode = D3D12_CULL_MODE_NONE;  break;
+        default:              pso.RasterizerState.CullMode = D3D12_CULL_MODE_BACK;  break;
+      }
     }
     pso.RasterizerState.DepthClipEnable = TRUE;
 
@@ -300,13 +305,13 @@ namespace t850 {
     ComPtr<ID3D12PipelineState> psoObj;
     HRESULT hr = device->CreateGraphicsPipelineState(&pso, IID_PPV_ARGS(&psoObj));
     if (FAILED(hr)) {
-      T8_LOG_ERROR("[D3D12] CreatePSO failed hr=0x%08X shader=%p blend=%d depth=%d cull=%d nRTV=%d fmt0=%d",
-           hr, shader, key.blend, key.depth, key.cull, key.numRTVs, key.rtvFormats[0]);
+       T8_LOG_ERROR("[D3D12] CreatePSO failed hr=0x%08X shader=%p blend=%d depth=%d cull=%d topology=%d nRTV=%d fmt0=%d",
+         hr, shader, key.blend, key.depth, key.cull, key.topology, key.numRTVs, key.rtvFormats[0]);
       return nullptr;
     }
 
-    T8_LOG_DEBUG("[D3D12] PSO created: shader=%p blend=%d depth=%d cull=%d nRTV=%d",
-                 shader, key.blend, key.depth, key.cull, key.numRTVs);
+        T8_LOG_DEBUG("[D3D12] PSO created: shader=%p blend=%d depth=%d cull=%d topology=%d nRTV=%d",
+            shader, key.blend, key.depth, key.cull, key.topology, key.numRTVs);
     m_psoCache[key] = psoObj;
 #ifdef T850_RENDER_TRACE
     if (T8_TRACE_ACTIVE()) {

@@ -14,9 +14,15 @@
 #include <string>
 #include <cmath>
 #include <vector>
+#include <algorithm>
+#include <cctype>
 
 using namespace t850;
 using std::string;
+
+namespace t850 {
+  extern DeviceContext* T8DeviceContext;
+}
 
 namespace {
   t850::Mat4Json MatrixToSnapshotJson(const XMATRIX44& mat) {
@@ -107,6 +113,63 @@ namespace {
     wireframeVisible = snap.wireframe_visible;
     skeletonVisible = snap.skeleton_visible;
   }
+
+  bool NearlyEqual(float lhs, float rhs, float epsilon = 0.0001f) {
+    return std::fabs(lhs - rhs) <= epsilon;
+  }
+
+  bool VecNearlyEqual(const std::array<float, 3>& lhs, const std::array<float, 3>& rhs) {
+    return NearlyEqual(lhs[0], rhs[0]) && NearlyEqual(lhs[1], rhs[1]) && NearlyEqual(lhs[2], rhs[2]);
+  }
+
+  std::string SandboxProfileModelKey(const std::string& path) {
+    std::string key = path;
+    size_t slash = key.find_last_of("/\\");
+    if (slash != std::string::npos)
+      key = key.substr(slash + 1);
+    std::transform(key.begin(), key.end(), key.begin(), [](unsigned char ch) {
+      return (char)std::tolower(ch);
+    });
+    return key;
+  }
+
+  const t850::FloatOverrideDesc* FindFloatOverride(const std::vector<t850::FloatOverrideDesc>& values, const std::string& name) {
+    for (const auto& value : values)
+      if (value.name == name) return &value;
+    return nullptr;
+  }
+
+  const t850::BoolOverrideDesc* FindBoolOverride(const std::vector<t850::BoolOverrideDesc>& values, const std::string& name) {
+    for (const auto& value : values)
+      if (value.name == name) return &value;
+    return nullptr;
+  }
+
+  const t850::IntOverrideDesc* FindIntOverride(const std::vector<t850::IntOverrideDesc>& values, const std::string& name) {
+    for (const auto& value : values)
+      if (value.name == name) return &value;
+    return nullptr;
+  }
+
+  const t850::SandboxLightOverrideDesc* FindLightOverride(const std::vector<t850::SandboxLightOverrideDesc>& values, int index) {
+    for (const auto& value : values)
+      if (value.index == index) return &value;
+    return nullptr;
+  }
+
+  std::array<float, 3> ToArray(const XVECTOR3& value) {
+    return {value.x, value.y, value.z};
+  }
+
+  XVECTOR3 FromArray(const std::array<float, 3>& value) {
+    return XVECTOR3(value[0], value[1], value[2]);
+  }
+
+  const t850::SelectorDesc* FindSelectorDesc(const std::vector<t850::SelectorDesc>& selectors, const std::string& name) {
+    for (const auto& selector : selectors)
+      if (selector.name == name) return &selector;
+    return nullptr;
+  }
 }
 
 void SandboxScene::InitVars() {
@@ -148,6 +211,11 @@ void SandboxScene::InitVars() {
   SceneProp.AddLight(XVECTOR3(10.0f, 10.0f, -10.0f), XVECTOR3(1.0, 0.9, 0.8), 100.0f, 1.0f, LIGHT_POINT, true);
   SceneProp.ActiveLights = 2;
   SceneProp.AmbientColor = XVECTOR3(0.3f, 0.3f, 0.3f);
+  EnsureLightRuntimeState();
+  if (!SceneProp.Lights.empty() && SceneProp.Lights[0].Type == LIGHT_DIRECTIONAL) {
+    SceneProp.Lights[0].Position = LightCam.Eye;
+    SceneProp.Lights[0].Direction = LightCam.Look;
+  }
 
   ShadowFilter.kernelSize = 4;
   ShadowFilter.radius = 1.f;
@@ -180,6 +248,7 @@ void SandboxScene::InitVars() {
   SceneProp.ToogleSSAO = true;
   m_showWireframe = false;
   m_showSkeleton = false;
+  m_drawLightDirection = false;
 
   SceneProp.Exposure = 1.0f;
   SceneProp.BloomFactor = 0.35f;
@@ -257,6 +326,7 @@ void SandboxScene::CreateAssets() {
     T8_LOG_INFO("[SandboxScene] Loaded model '%s', primitive index=%d", g_config.modelPath.c_str(), index);
     Meshes[0].CreateInstance(PrimitiveMgr.GetPrimitive(index), &VP);
     FitModelToView();
+    LoadSandboxProfile();
   }
 
   // No SkyBox mesh needed — cleared GBuffer pixels (MatId=0) sample
@@ -285,6 +355,12 @@ void SandboxScene::CreateAssets() {
   // Debug visualization
   m_debugText.LoadFromFile(24, "Fonts/Martius-LV9L4.ttf", 512.0f);
   m_debugSphere.Create(6, 12);
+  m_lightArrowRenderer.Create();
+  float arrowVerts[10 * 4] = {};
+  unsigned short arrowIndices[10] = {0, 1, 2, 3, 4, 5, 6, 7, 8, 9};
+  m_lightArrowVB = t850::LineRenderer::CreatePositionVB(arrowVerts, 10, BufferUsage::DINAMIC);
+  m_lightArrowIB = t850::LineRenderer::CreateIndexBuffer16(arrowIndices, 10);
+  m_lightArrowIndexCount = 10;
 }
 
 void SandboxScene::OnLoadScene() {
@@ -297,6 +373,12 @@ void SandboxScene::OnDestoryScene() {
 }
 
 void SandboxScene::DestroyAssets() {
+  if (m_lightArrowVB) m_lightArrowVB->release();
+  if (m_lightArrowIB) m_lightArrowIB->release();
+  m_lightArrowVB = nullptr;
+  m_lightArrowIB = nullptr;
+  m_lightArrowIndexCount = 0;
+  m_lightArrowRenderer.Destroy();
   PrimitiveMgr.DestroyPrimitives();
   pFramework->pVideoDriver->DestroyRTs();
 }
@@ -379,8 +461,8 @@ void SandboxScene::OnUpdate(float _DtSecs) {
   if (!m_dumper.SkipCameraUpdates()) {
     ComputeOrbitCamera();
     VP = Cam.VP;
-    SceneProp.Lights[0].Position = LightCam.Eye;
-    SceneProp.Lights[0].Direction = LightCam.Look;
+    UpdateAttachedLights();
+    SyncLightCameraFromDirectionalLight();
   }
 
   // --dumpMatrices: log all camera matrices per frame, then exit
@@ -446,6 +528,11 @@ void SandboxScene::OnInput(InputManager* IManager) {
 
   float dx = static_cast<float>(IManager->xDelta);
   float dy = static_cast<float>(IManager->yDelta);
+
+  const bool imguiWantsMouse = ImGui::GetCurrentContext() && ImGui::GetIO().WantCaptureMouse;
+  if (!imguiWantsMouse && IManager->PressedKey(T800K_LCTRL) && IManager->PressedMouseButton(0)) {
+    if (AdjustSelectedDirectionalLightFromMouse(dx, dy)) return;
+  }
 
   // Left click + drag: orbit rotate
   if (IManager->PressedMouseButton(0)) {
@@ -566,6 +653,464 @@ void SandboxScene::ComputeOrbitCamera() {
   // corrupting the position we just computed.
   Cam.Velocity = XVECTOR3(0, 0, 0);
   Cam.SetLookAt(target);
+}
+
+void SandboxScene::EnsureLightRuntimeState() {
+  if (m_lightAttachToCamera.size() < SceneProp.Lights.size())
+    m_lightAttachToCamera.resize(SceneProp.Lights.size(), false);
+  else if (m_lightAttachToCamera.size() > SceneProp.Lights.size())
+    m_lightAttachToCamera.resize(SceneProp.Lights.size());
+
+  if (SceneProp.Lights.empty()) m_selectedLightIndex = 0;
+  else if (m_selectedLightIndex < 0 || m_selectedLightIndex >= (int)SceneProp.Lights.size()) m_selectedLightIndex = 0;
+  SceneProp.ActiveLights = (std::max)(0, (std::min)(SceneProp.ActiveLights, (int)SceneProp.Lights.size()));
+}
+
+void SandboxScene::UpdateAttachedLights() {
+  EnsureLightRuntimeState();
+  Camera* attachCamera = ActiveCam ? ActiveCam : &Cam;
+  for (int i = 0; i < (int)SceneProp.Lights.size(); ++i) {
+    if (SceneProp.Lights[i].Type == LIGHT_POINT && m_lightAttachToCamera[i]) {
+      SceneProp.Lights[i].Position = attachCamera->Eye;
+    }
+  }
+}
+
+void SandboxScene::SyncLightCameraFromDirectionalLight() {
+  for (const Light& light : SceneProp.Lights) {
+    if (light.Type != LIGHT_DIRECTIONAL) continue;
+    XVECTOR3 direction = light.Direction;
+    if (direction.Length() <= 0.0001f) return;
+    direction.Normalize();
+    LightCam.SetLookAt(LightCam.Eye + direction);
+    return;
+  }
+}
+
+bool SandboxScene::AdjustSelectedDirectionalLightFromMouse(float dx, float dy) {
+  EnsureLightRuntimeState();
+  if (SceneProp.Lights.empty()) return false;
+  Light& light = SceneProp.Lights[m_selectedLightIndex];
+  if (light.Type != LIGHT_DIRECTIONAL) return false;
+  if (std::fabs(dx) < 0.001f && std::fabs(dy) < 0.001f) return true;
+
+  XVECTOR3 direction = light.Direction;
+  if (direction.Length() <= 0.0001f) direction = XVECTOR3(0.0f, -1.0f, 0.0f);
+  direction.Normalize();
+
+  const float sensitivity = 0.005f;
+  direction += Cam.Right * (dx * sensitivity);
+  direction += Cam.Up * (-dy * sensitivity);
+  if (direction.Length() <= 0.0001f) return true;
+  direction.Normalize();
+  light.Direction = direction;
+  SyncLightCameraFromDirectionalLight();
+  return true;
+}
+
+void SandboxScene::DrawSelectedDirectionalLightArrow() {
+  EnsureLightRuntimeState();
+  if (!m_drawLightDirection) return;
+  if (SceneProp.Lights.empty() || !m_lightArrowRenderer.IsReady() || !m_lightArrowVB || !m_lightArrowIB) return;
+
+  const Light& light = SceneProp.Lights[m_selectedLightIndex];
+  if (light.Type != LIGHT_DIRECTIONAL) return;
+
+  XVECTOR3 direction = light.Direction;
+  if (direction.Length() <= 0.0001f) return;
+  direction.Normalize();
+
+  XVECTOR3 origin = m_orbitTarget + m_panOffset;
+  float arrowLength = (std::max)(1.0f, m_modelRadius * 0.45f);
+  float headLength = arrowLength * 0.22f;
+  float headWidth = arrowLength * 0.08f;
+  XVECTOR3 tip = origin + direction * arrowLength;
+
+  XVECTOR3 side;
+  XVecCross(side, Cam.Up, direction);
+  if (side.Length() <= 0.0001f) XVecCross(side, XVECTOR3(0.0f, 1.0f, 0.0f), direction);
+  if (side.Length() <= 0.0001f) XVecCross(side, XVECTOR3(1.0f, 0.0f, 0.0f), direction);
+  side.Normalize();
+
+  XVECTOR3 up;
+  XVecCross(up, direction, side);
+  up.Normalize();
+
+  XVECTOR3 headBase = tip - direction * headLength;
+  XVECTOR3 points[10] = {
+    origin, tip,
+    tip, headBase + side * headWidth,
+    tip, headBase - side * headWidth,
+    tip, headBase + up * headWidth,
+    tip, headBase - up * headWidth,
+  };
+
+  float verts[10 * 4];
+  for (int i = 0; i < 10; ++i) {
+    verts[i * 4 + 0] = points[i].x;
+    verts[i * 4 + 1] = points[i].y;
+    verts[i * 4 + 2] = points[i].z;
+    verts[i * 4 + 3] = 1.0f;
+  }
+
+  m_lightArrowVB->UpdateFromBuffer(*t850::T8DeviceContext, verts);
+  XMATRIX44 identity;
+  identity.Identity();
+  m_lightArrowRenderer.SetDepthTestEnabled(false);
+  pFramework->pVideoDriver->SetDepthStencilState(BaseDriver::NONE);
+  pFramework->pVideoDriver->SetBlendState(BaseDriver::BLEND_DEFAULT);
+  m_lightArrowRenderer.DrawLines(identity, Cam.VP, XVECTOR3(1.0f, 0.82f, 0.25f, 1.0f),
+                                 m_lightArrowVB, m_lightArrowIB, m_lightArrowIndexCount, 16,
+                                 IndexBufferFormat::R16);
+}
+
+void SandboxScene::CaptureSandboxProfileState(t850::SandboxProfileDesc& state) {
+  state = t850::SandboxProfileDesc{};
+  state.model = m_profileModelKey.empty() ? SandboxProfileModelKey(g_config.modelPath) : m_profileModelKey;
+
+  auto addFloat = [&](const char* name, float value) {
+    state.sliders.push_back({name, value});
+  };
+  auto addBool = [&](const char* name, bool value) {
+    state.checkboxes.push_back({name, value});
+  };
+  auto addInt = [&](const char* name, int value) {
+    state.selectors.push_back({name, value});
+  };
+
+  addFloat("exposure", SceneProp.Exposure);
+  addFloat("bloom_factor", SceneProp.BloomFactor);
+  addFloat("bloom_threshold", SceneProp.BloomThreshold);
+  addFloat("tm_white_level", SceneProp.ToneMapWhiteLevel);
+  addFloat("tm_adapt_tau", SceneProp.LuminanceTau);
+  addFloat("pcf_radius", SceneProp.PCFScale);
+  addFloat("pcf_samples", SceneProp.PCFSamples);
+  addFloat("ssao_kernel_size", (float)SceneProp.SSAOKernel.KernelSize);
+  addFloat("ssao_radius", SceneProp.SSAOKernel.Radius);
+  addFloat("dof_aperture", SceneProp.Aperture);
+  addFloat("dof_focal_length", SceneProp.FocalLength);
+  addFloat("dof_max_coc", SceneProp.MaxCoc);
+  addFloat("dof_far_samples", SceneProp.DOF_Far_Samples_squared);
+  addFloat("dof_near_samples", SceneProp.DOF_Near_Samples_squared);
+  addFloat("light_volume_steps", SceneProp.LightVolumeSteps);
+  addFloat("godrays_factor", SceneProp.GodRaysFactor);
+  addFloat("fov", ActiveCam ? Rad2Deg(ActiveCam->Fov) : Rad2Deg(Cam.Fov));
+  addFloat("shadow_bias", SceneProp.ShadowBias);
+  addFloat("shadow_min", SceneProp.ShadowMin);
+  addFloat("env_factor", SceneProp.EnvFactor);
+  addFloat("ibl_factor", SceneProp.IBLFactor);
+  addFloat("material_emissive_intensity", SceneProp.MaterialEmissiveIntensity);
+  addFloat("material_transmission_multiplier", SceneProp.MaterialTransmissionMultiplier);
+  addFloat("material_refraction_strength", SceneProp.MaterialRefractionStrength);
+
+  for (int kernelIndex = 0; kernelIndex < (int)SceneProp.pGaussKernels.size(); ++kernelIndex) {
+    GaussFilter* kernel = SceneProp.pGaussKernels[kernelIndex];
+    if (!kernel) continue;
+    std::string prefix = "gauss_" + std::to_string(kernelIndex) + "_";
+    addFloat((prefix + "radius").c_str(), kernel->radius);
+    addFloat((prefix + "sigma").c_str(), kernel->sigma);
+    addInt((prefix + "kernel_size").c_str(), kernel->kernelSize);
+  }
+
+  if (RenderSkinnedMesh* skinned = Meshes[0].GetSkinnedMesh()) {
+    addFloat("anim_speed", skinned->GetAnimSpeed());
+    addInt("anim_select", skinned->GetCurrentAnimSet());
+    addInt("anim_mode", skinned->GetKeyframeMode() ? 1 : 0);
+    if (skinned->GetKeyframeMode())
+      state.current_keyframe = skinned->GetCurrentKeyframe();
+  } else {
+    addFloat("anim_speed", 1.0f);
+    addInt("anim_select", 0);
+    addInt("anim_mode", 0);
+  }
+
+  addBool("shadow_toggle", SceneProp.ToogleShadow != 0);
+  addBool("ssao_toggle", SceneProp.ToogleSSAO != 0);
+  addBool("show_wireframe", m_showWireframe);
+  addBool("show_skeleton", Meshes[0].GetSkinnedMesh() != nullptr && m_showSkeleton);
+  addBool("draw_direction", m_drawLightDirection);
+
+  addInt("debug_render_target", m_debugRTSelection);
+  addInt("cubemap", m_currentCubemapIndex);
+  addInt("gauss_kernel_sample_count", 0);
+  addInt("active_gauss_kernel", ChangeActiveGaussSelection);
+  addInt("active_light", m_selectedLightIndex);
+
+  EnsureLightRuntimeState();
+  for (int lightIndex = 0; lightIndex < (int)SceneProp.Lights.size(); ++lightIndex) {
+    const Light& light = SceneProp.Lights[lightIndex];
+    t850::SandboxLightOverrideDesc lightState;
+    lightState.index = lightIndex;
+    lightState.position = ToArray(light.Position);
+    lightState.direction = ToArray(light.Direction);
+    lightState.color = ToArray(light.Color);
+    lightState.diameter = light.radius * 2.0f;
+    lightState.intensity = light.Intensity;
+    lightState.attach_to_camera = light.Type == LIGHT_POINT && m_lightAttachToCamera[lightIndex];
+    state.lights.push_back(lightState);
+  }
+
+  state.frustum_culling = SceneProp.FrustumCullingEnabled;
+  state.show_culling_debug = m_showCullStats;
+
+  t850::SandboxOrbitCameraDesc orbit;
+  orbit.target = {m_orbitTarget.x, m_orbitTarget.y, m_orbitTarget.z};
+  orbit.pan_offset = {m_panOffset.x, m_panOffset.y, m_panOffset.z};
+  orbit.eye = {Cam.Eye.x, Cam.Eye.y, Cam.Eye.z};
+  orbit.yaw = m_orbitYaw;
+  orbit.pitch = m_orbitPitch;
+  orbit.distance = m_orbitDist;
+  state.orbit_camera = orbit;
+}
+
+void SandboxScene::ApplySandboxProfileState(const t850::SandboxProfileDesc& state) {
+  for (const auto& value : state.sliders) {
+    if (value.name == "exposure") SceneProp.Exposure = value.value;
+    else if (value.name == "bloom_factor") SceneProp.BloomFactor = value.value;
+    else if (value.name == "bloom_threshold") SceneProp.BloomThreshold = value.value;
+    else if (value.name == "tm_white_level") SceneProp.ToneMapWhiteLevel = value.value;
+    else if (value.name == "tm_adapt_tau") SceneProp.LuminanceTau = value.value;
+    else if (value.name == "pcf_radius") SceneProp.PCFScale = value.value;
+    else if (value.name == "pcf_samples") SceneProp.PCFSamples = value.value;
+    else if (value.name == "ssao_kernel_size") { SceneProp.SSAOKernel.KernelSize = (int)value.value; SceneProp.SSAOKernel.Update(); }
+    else if (value.name == "ssao_radius") SceneProp.SSAOKernel.Radius = value.value;
+    else if (value.name == "dof_aperture") SceneProp.Aperture = value.value;
+    else if (value.name == "dof_focal_length") SceneProp.FocalLength = value.value;
+    else if (value.name == "dof_max_coc") SceneProp.MaxCoc = value.value;
+    else if (value.name == "dof_far_samples") SceneProp.DOF_Far_Samples_squared = value.value;
+    else if (value.name == "dof_near_samples") SceneProp.DOF_Near_Samples_squared = value.value;
+    else if (value.name == "light_volume_steps") SceneProp.LightVolumeSteps = value.value;
+    else if (value.name == "godrays_factor") SceneProp.GodRaysFactor = value.value;
+    else if (value.name == "fov" && ActiveCam) { ActiveCam->SetFov(Deg2Rad(value.value)); VP = ActiveCam->VP; }
+    else if (value.name == "light_intensity" && !SceneProp.Lights.empty()) SceneProp.Lights[0].Intensity = value.value;
+    else if (value.name == "shadow_bias") SceneProp.ShadowBias = value.value;
+    else if (value.name == "shadow_min") SceneProp.ShadowMin = value.value;
+    else if (value.name == "env_factor") SceneProp.EnvFactor = value.value;
+    else if (value.name == "ibl_factor") SceneProp.IBLFactor = value.value;
+    else if (value.name == "material_emissive_intensity") SceneProp.MaterialEmissiveIntensity = value.value;
+    else if (value.name == "material_transmission_multiplier") SceneProp.MaterialTransmissionMultiplier = value.value;
+    else if (value.name == "material_refraction_strength") SceneProp.MaterialRefractionStrength = value.value;
+    else if (value.name == "anim_speed") { if (RenderSkinnedMesh* skinned = Meshes[0].GetSkinnedMesh()) skinned->SetAnimSpeed(value.value); }
+
+    for (int kernelIndex = 0; kernelIndex < (int)SceneProp.pGaussKernels.size(); ++kernelIndex) {
+      GaussFilter* kernel = SceneProp.pGaussKernels[kernelIndex];
+      if (!kernel) continue;
+      std::string prefix = "gauss_" + std::to_string(kernelIndex) + "_";
+      if (value.name == prefix + "radius") { kernel->radius = value.value; kernel->Update(); }
+      else if (value.name == prefix + "sigma") { kernel->sigma = value.value; kernel->Update(); }
+    }
+  }
+
+  for (const auto& value : state.checkboxes) {
+    if (value.name == "shadow_toggle") SceneProp.ToogleShadow = value.value ? 1 : 0;
+    else if (value.name == "ssao_toggle") SceneProp.ToogleSSAO = value.value ? 1 : 0;
+    else if (value.name == "show_wireframe") m_showWireframe = value.value;
+    else if (value.name == "show_skeleton") m_showSkeleton = value.value && (Meshes[0].GetSkinnedMesh() != nullptr);
+    else if (value.name == "draw_direction") m_drawLightDirection = value.value;
+  }
+
+  for (const auto& value : state.selectors) {
+    if (value.name == "debug_render_target") m_debugRTSelection = value.value;
+    else if (value.name == "active_light") m_selectedLightIndex = value.value;
+    else if (value.name == "cubemap") {
+      const t850::SelectorDesc* cubemapDesc = FindSelectorDesc(m_guiSetup.descriptor.selectors, "cubemap");
+      if (cubemapDesc && value.value >= 0 && value.value < (int)cubemapDesc->options.size()) {
+        m_currentCubemapIndex = value.value;
+        m_pendingCubemap = "sky/" + cubemapDesc->options[value.value];
+      }
+    }
+    else if (value.name == "active_gauss_kernel") ChangeActiveGaussSelection = value.value;
+    else if (value.name == "anim_select") {
+      if (RenderSkinnedMesh* skinned = Meshes[0].GetSkinnedMesh()) {
+        int guard = skinned->GetNumAnimSets() + 1;
+        while (skinned->GetCurrentAnimSet() != value.value && guard-- > 0) skinned->NextAnimation();
+      }
+    }
+    else if (value.name == "anim_mode") {
+      if (RenderSkinnedMesh* skinned = Meshes[0].GetSkinnedMesh()) {
+        bool keyframeMode = (value.value == 1);
+        skinned->SetKeyframeMode(keyframeMode);
+        if (keyframeMode) skinned->StepKeyframe(0);
+      }
+    }
+
+    for (int kernelIndex = 0; kernelIndex < (int)SceneProp.pGaussKernels.size(); ++kernelIndex) {
+      GaussFilter* kernel = SceneProp.pGaussKernels[kernelIndex];
+      if (!kernel) continue;
+      std::string name = "gauss_" + std::to_string(kernelIndex) + "_kernel_size";
+      if (value.name == name) { kernel->kernelSize = value.value; kernel->Update(); }
+    }
+  }
+
+  EnsureLightRuntimeState();
+  for (const auto& lightState : state.lights) {
+    if (lightState.index < 0 || lightState.index >= (int)SceneProp.Lights.size()) continue;
+    Light& light = SceneProp.Lights[lightState.index];
+    if (lightState.position.has_value()) light.Position = FromArray(*lightState.position);
+    if (lightState.direction.has_value()) {
+      XVECTOR3 direction = FromArray(*lightState.direction);
+      if (direction.Length() > 0.0001f) {
+        direction.Normalize();
+        light.Direction = direction;
+      }
+    }
+    if (lightState.color.has_value()) light.Color = FromArray(*lightState.color);
+    if (lightState.diameter.has_value()) light.radius = (std::max)(0.001f, *lightState.diameter * 0.5f);
+    if (lightState.intensity.has_value()) light.Intensity = *lightState.intensity;
+    if (lightState.attach_to_camera.has_value() && light.Type == LIGHT_POINT)
+      m_lightAttachToCamera[lightState.index] = *lightState.attach_to_camera;
+  }
+  UpdateAttachedLights();
+  SyncLightCameraFromDirectionalLight();
+
+  if (state.frustum_culling.has_value()) SceneProp.FrustumCullingEnabled = *state.frustum_culling;
+  if (state.show_culling_debug.has_value()) {
+    m_showCullStats = *state.show_culling_debug;
+    SceneProp.ShowCullingDebug = m_showCullStats;
+  }
+  if (state.orbit_camera.has_value()) {
+    const auto& orbit = *state.orbit_camera;
+    m_orbitTarget = XVECTOR3(orbit.target[0], orbit.target[1], orbit.target[2]);
+    m_panOffset = XVECTOR3(orbit.pan_offset[0], orbit.pan_offset[1], orbit.pan_offset[2]);
+    m_orbitYaw = orbit.yaw;
+    m_orbitPitch = orbit.pitch;
+    m_orbitDist = orbit.distance;
+    Cam.Eye = XVECTOR3(orbit.eye[0], orbit.eye[1], orbit.eye[2]);
+    ComputeOrbitCamera();
+    VP = Cam.VP;
+    UpdateAttachedLights();
+  }
+  if (state.current_keyframe.has_value()) {
+    if (RenderSkinnedMesh* skinned = Meshes[0].GetSkinnedMesh()) {
+      int targetKeyframe = *state.current_keyframe;
+      int guard = skinned->GetTotalKeyframes() + 1;
+      while (skinned->GetCurrentKeyframe() != targetKeyframe && guard-- > 0) {
+        int direction = targetKeyframe > skinned->GetCurrentKeyframe() ? 1 : -1;
+        skinned->StepKeyframe(direction);
+      }
+    }
+  }
+}
+
+t850::SandboxProfileDesc SandboxScene::BuildSparseSandboxProfile(const t850::SandboxProfileDesc& current) const {
+  t850::SandboxProfileDesc sparse;
+  sparse.model = current.model;
+  for (const auto& value : current.sliders) {
+    const auto* baseline = FindFloatOverride(m_profileBaselineState.sliders, value.name);
+    if (!baseline || !NearlyEqual(value.value, baseline->value)) sparse.sliders.push_back(value);
+  }
+  for (const auto& value : current.checkboxes) {
+    const auto* baseline = FindBoolOverride(m_profileBaselineState.checkboxes, value.name);
+    if (!baseline || value.value != baseline->value) sparse.checkboxes.push_back(value);
+  }
+  for (const auto& value : current.selectors) {
+    const auto* baseline = FindIntOverride(m_profileBaselineState.selectors, value.name);
+    if (!baseline || value.value != baseline->value) sparse.selectors.push_back(value);
+  }
+  for (const auto& value : current.lights) {
+    t850::SandboxLightOverrideDesc lightSparse;
+    lightSparse.index = value.index;
+    const auto* baseline = FindLightOverride(m_profileBaselineState.lights, value.index);
+    if (!baseline) {
+      lightSparse = value;
+    } else {
+      if (value.position.has_value() && (!baseline->position.has_value() || !VecNearlyEqual(*value.position, *baseline->position)))
+        lightSparse.position = value.position;
+      if (value.direction.has_value() && (!baseline->direction.has_value() || !VecNearlyEqual(*value.direction, *baseline->direction)))
+        lightSparse.direction = value.direction;
+      if (value.color.has_value() && (!baseline->color.has_value() || !VecNearlyEqual(*value.color, *baseline->color)))
+        lightSparse.color = value.color;
+      if (value.diameter.has_value() && (!baseline->diameter.has_value() || !NearlyEqual(*value.diameter, *baseline->diameter)))
+        lightSparse.diameter = value.diameter;
+      if (value.intensity.has_value() && (!baseline->intensity.has_value() || !NearlyEqual(*value.intensity, *baseline->intensity)))
+        lightSparse.intensity = value.intensity;
+      if (value.attach_to_camera.has_value() && (!baseline->attach_to_camera.has_value() || *value.attach_to_camera != *baseline->attach_to_camera))
+        lightSparse.attach_to_camera = value.attach_to_camera;
+      if (value.attach_to_camera.has_value() && *value.attach_to_camera) {
+        lightSparse.position.reset();
+      }
+    }
+    if (lightSparse.position.has_value() || lightSparse.direction.has_value() || lightSparse.color.has_value() ||
+        lightSparse.diameter.has_value() || lightSparse.intensity.has_value() || lightSparse.attach_to_camera.has_value()) {
+      sparse.lights.push_back(lightSparse);
+    }
+  }
+  if (current.frustum_culling != m_profileBaselineState.frustum_culling) sparse.frustum_culling = current.frustum_culling;
+  if (current.show_culling_debug != m_profileBaselineState.show_culling_debug) sparse.show_culling_debug = current.show_culling_debug;
+  if (current.current_keyframe != m_profileBaselineState.current_keyframe) sparse.current_keyframe = current.current_keyframe;
+  if (current.orbit_camera.has_value() && m_profileBaselineState.orbit_camera.has_value()) {
+    const auto& currentOrbit = *current.orbit_camera;
+    const auto& baselineOrbit = *m_profileBaselineState.orbit_camera;
+    if (!VecNearlyEqual(currentOrbit.target, baselineOrbit.target) ||
+        !VecNearlyEqual(currentOrbit.pan_offset, baselineOrbit.pan_offset) ||
+        !VecNearlyEqual(currentOrbit.eye, baselineOrbit.eye) ||
+        !NearlyEqual(currentOrbit.yaw, baselineOrbit.yaw) ||
+        !NearlyEqual(currentOrbit.pitch, baselineOrbit.pitch) ||
+        !NearlyEqual(currentOrbit.distance, baselineOrbit.distance)) {
+      sparse.orbit_camera = currentOrbit;
+    }
+  } else if (current.orbit_camera != m_profileBaselineState.orbit_camera) {
+    sparse.orbit_camera = current.orbit_camera;
+  }
+  return sparse;
+}
+
+bool SandboxScene::SandboxProfileStatesEqual(const t850::SandboxProfileDesc& lhs, const t850::SandboxProfileDesc& rhs) const {
+  return BuildSparseSandboxProfile(lhs).sliders == BuildSparseSandboxProfile(rhs).sliders &&
+         BuildSparseSandboxProfile(lhs).checkboxes == BuildSparseSandboxProfile(rhs).checkboxes &&
+         BuildSparseSandboxProfile(lhs).selectors == BuildSparseSandboxProfile(rhs).selectors &&
+         BuildSparseSandboxProfile(lhs).lights == BuildSparseSandboxProfile(rhs).lights &&
+         BuildSparseSandboxProfile(lhs).orbit_camera == BuildSparseSandboxProfile(rhs).orbit_camera &&
+         BuildSparseSandboxProfile(lhs).frustum_culling == BuildSparseSandboxProfile(rhs).frustum_culling &&
+         BuildSparseSandboxProfile(lhs).show_culling_debug == BuildSparseSandboxProfile(rhs).show_culling_debug &&
+         BuildSparseSandboxProfile(lhs).current_keyframe == BuildSparseSandboxProfile(rhs).current_keyframe;
+}
+
+void SandboxScene::LoadSandboxProfile() {
+  m_profileModelKey = SandboxProfileModelKey(g_config.modelPath);
+  CaptureSandboxProfileState(m_profileBaselineState);
+  m_profileSavedState = m_profileBaselineState;
+  m_profileReady = true;
+  m_profileDirty = false;
+
+  for (const auto& profile : m_guiSetup.descriptor.profiles) {
+    if (SandboxProfileModelKey(profile.model) != m_profileModelKey) continue;
+    ApplySandboxProfileState(profile);
+    CaptureSandboxProfileState(m_profileSavedState);
+    T8_LOG_INFO("[SandboxScene] Applied profile for model '%s'", m_profileModelKey.c_str());
+    return;
+  }
+  T8_LOG_INFO("[SandboxScene] No profile for model '%s'; using defaults", m_profileModelKey.c_str());
+}
+
+void SandboxScene::SaveSandboxProfile() {
+  if (!m_profileReady) return;
+
+  t850::SandboxProfileDesc current;
+  CaptureSandboxProfileState(current);
+  t850::SandboxProfileDesc sparse = BuildSparseSandboxProfile(current);
+
+  auto& profiles = m_guiSetup.descriptor.profiles;
+  auto existing = std::find_if(profiles.begin(), profiles.end(), [&](const t850::SandboxProfileDesc& profile) {
+    return SandboxProfileModelKey(profile.model) == m_profileModelKey;
+  });
+
+  bool hasOverrides = !sparse.sliders.empty() || !sparse.checkboxes.empty() || !sparse.selectors.empty() ||
+                      !sparse.lights.empty() ||
+                      sparse.orbit_camera.has_value() || sparse.frustum_culling.has_value() ||
+                      sparse.show_culling_debug.has_value() || sparse.current_keyframe.has_value();
+  if (hasOverrides) {
+    if (existing == profiles.end()) profiles.push_back(sparse);
+    else *existing = sparse;
+  } else if (existing != profiles.end()) {
+    profiles.erase(existing);
+  }
+
+  if (t850::SaveSceneDescriptor("Scenes/SandboxScene.json", m_guiSetup.descriptor)) {
+    m_profileSavedState = current;
+    m_profileDirty = false;
+    T8_LOG_INFO("[SandboxScene] Saved profile for model '%s'", m_profileModelKey.c_str());
+  }
 }
 
 void SandboxScene::OnDraw() {
@@ -697,6 +1242,8 @@ void SandboxScene::OnDraw() {
     }
   }
 
+  DrawSelectedDirectionalLightArrow();
+
   // Debug: draw wireframe AABBs for visible meshes
   if (m_showAABBs && Meshes[0].pBase) {
     RenderMesh* rm = static_cast<RenderMesh*>(Meshes[0].pBase);
@@ -792,7 +1339,6 @@ void SandboxScene::PopulateGUI(t850::GUIManager& gui) {
     {"gauss_kernel_radius",   CHANGE_GAUSS_KERNEL_RADIUS},
     {"gauss_kernel_deviation", CHANGE_GAUSS_KERNEL_DEVIATION},
     {"fov",                   CHANGE_FOV},
-    {"light_intensity",       CHANGE_LIGHT_INTENSITY},
     {"shadow_bias",           CHANGE_SHADOW_BIAS},
     {"shadow_min",            CHANGE_SHADOW_MIN},
     {"env_factor",            CHANGE_ENV_FACTOR},
@@ -904,7 +1450,6 @@ void SandboxScene::DrawDevGui(t850::DevGuiContext& gui) {
     {"gauss_kernel_radius", CHANGE_GAUSS_KERNEL_RADIUS},
     {"gauss_kernel_deviation", CHANGE_GAUSS_KERNEL_DEVIATION},
     {"fov", CHANGE_FOV},
-    {"light_intensity", CHANGE_LIGHT_INTENSITY},
     {"shadow_bias", CHANGE_SHADOW_BIAS},
     {"shadow_min", CHANGE_SHADOW_MIN},
     {"env_factor", CHANGE_ENV_FACTOR},
@@ -1151,6 +1696,127 @@ void SandboxScene::DrawDevGui(t850::DevGuiContext& gui) {
       int selectedIndex = 0;
       if (getSelectorIndex(desc, settingIndex, selectedIndex) && gui.Combo(desc, selectedIndex, overrideOptions)) {
         setSelectorIndex(desc, overrideOptions, settingIndex, selectedIndex);
+      }
+    }
+  }
+
+  if (gui.BeginSection("Lights")) {
+    EnsureLightRuntimeState();
+    if (SceneProp.Lights.empty()) {
+      gui.Text("No lights");
+    } else {
+      std::vector<std::string> lightOptions;
+      lightOptions.reserve(SceneProp.Lights.size());
+      for (int i = 0; i < (int)SceneProp.Lights.size(); ++i) {
+        const char* typeName = SceneProp.Lights[i].Type == LIGHT_DIRECTIONAL ? "Directional" : "Point";
+        lightOptions.push_back(std::string(typeName) + " " + std::to_string(i + 1));
+      }
+
+      t850::SelectorDesc lightSelector;
+      lightSelector.name = "active_light";
+      lightSelector.label = "Light";
+      int selectedLight = m_selectedLightIndex;
+      if (gui.Combo(lightSelector, selectedLight, &lightOptions)) {
+        m_selectedLightIndex = selectedLight;
+      }
+      EnsureLightRuntimeState();
+
+      Light& light = SceneProp.Lights[m_selectedLightIndex];
+      ImGui::PushID(m_selectedLightIndex);
+
+      float color[3] = {light.Color.x, light.Color.y, light.Color.z};
+      if (ImGui::ColorEdit3("Color", color, ImGuiColorEditFlags_DisplayRGB | ImGuiColorEditFlags_PickerHueBar)) {
+        light.Color = XVECTOR3(color[0], color[1], color[2]);
+      }
+
+      const struct { const char* name; float rgb[3]; } palette[] = {
+        {"White", {1.0f, 1.0f, 1.0f}},
+        {"Warm", {1.0f, 0.84f, 0.58f}},
+        {"Cool", {0.62f, 0.74f, 1.0f}},
+        {"Amber", {1.0f, 0.52f, 0.18f}},
+        {"Red", {1.0f, 0.18f, 0.15f}},
+        {"Green", {0.3f, 1.0f, 0.42f}},
+        {"Blue", {0.2f, 0.45f, 1.0f}}
+      };
+      const int paletteCount = (int)(sizeof(palette) / sizeof(palette[0]));
+      for (int paletteIndex = 0; paletteIndex < paletteCount; ++paletteIndex) {
+        if (paletteIndex > 0) ImGui::SameLine();
+        ImGui::PushID(paletteIndex);
+        ImVec4 swatch(palette[paletteIndex].rgb[0], palette[paletteIndex].rgb[1], palette[paletteIndex].rgb[2], 1.0f);
+        if (ImGui::ColorButton(palette[paletteIndex].name, swatch, ImGuiColorEditFlags_NoTooltip, ImVec2(20.0f, 20.0f))) {
+          light.Color = XVECTOR3(palette[paletteIndex].rgb[0], palette[paletteIndex].rgb[1], palette[paletteIndex].rgb[2]);
+        }
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", palette[paletteIndex].name);
+        ImGui::PopID();
+      }
+
+      t850::SliderDesc intensityDesc;
+      intensityDesc.name = "light_intensity";
+      intensityDesc.label = "Intensity";
+      intensityDesc.min_val = 0.0f;
+      intensityDesc.max_val = 50.0f;
+      intensityDesc.step = 0.1f;
+      intensityDesc.default_val = light.Intensity;
+      float intensity = light.Intensity;
+      if (gui.Slider(intensityDesc, intensity)) light.Intensity = intensity;
+
+      if (light.Type == LIGHT_DIRECTIONAL) {
+        t850::CheckboxDesc drawDirectionDesc;
+        drawDirectionDesc.name = "draw_direction";
+        drawDirectionDesc.label = "Draw direction";
+        bool drawDirection = m_drawLightDirection;
+        if (gui.Checkbox(drawDirectionDesc, drawDirection)) m_drawLightDirection = drawDirection;
+
+        float direction[3] = {light.Direction.x, light.Direction.y, light.Direction.z};
+        if (ImGui::DragFloat3("Direction", direction, 0.01f, -1.0f, 1.0f, "%.3f")) {
+          XVECTOR3 newDirection(direction[0], direction[1], direction[2]);
+          if (newDirection.Length() > 0.0001f) {
+            newDirection.Normalize();
+            light.Direction = newDirection;
+            SyncLightCameraFromDirectionalLight();
+          }
+        }
+      } else {
+        t850::CheckboxDesc attachDesc;
+        attachDesc.name = "attach_to_camera";
+        attachDesc.label = "Attach to camera";
+        bool attachToCamera = m_lightAttachToCamera[m_selectedLightIndex];
+        if (gui.Checkbox(attachDesc, attachToCamera)) {
+          m_lightAttachToCamera[m_selectedLightIndex] = attachToCamera;
+          UpdateAttachedLights();
+        }
+
+        float position[3] = {light.Position.x, light.Position.y, light.Position.z};
+        if (attachToCamera) ImGui::BeginDisabled();
+        if (ImGui::DragFloat3("Position", position, 0.05f, 0.0f, 0.0f, "%.3f")) {
+          light.Position = XVECTOR3(position[0], position[1], position[2]);
+        }
+        if (attachToCamera) ImGui::EndDisabled();
+
+        t850::SliderDesc diameterDesc;
+        diameterDesc.name = "light_diameter";
+        diameterDesc.label = "Diameter";
+        diameterDesc.min_val = 0.01f;
+        diameterDesc.max_val = 2000.0f;
+        diameterDesc.step = 0.1f;
+        diameterDesc.default_val = light.radius * 2.0f;
+        float diameter = light.radius * 2.0f;
+        if (gui.Slider(diameterDesc, diameter)) light.radius = (std::max)(0.001f, diameter * 0.5f);
+      }
+
+      ImGui::PopID();
+    }
+  }
+
+  if (m_profileReady) {
+    t850::SandboxProfileDesc currentProfileState;
+    CaptureSandboxProfileState(currentProfileState);
+    m_profileDirty = !SandboxProfileStatesEqual(currentProfileState, m_profileSavedState);
+    if (gui.BeginSection("Profile")) {
+      std::string profileText = "Model profile: " + (m_profileModelKey.empty() ? std::string("none") : m_profileModelKey);
+      gui.Text(profileText.c_str());
+      if (gui.Button("Save Profile", m_profileDirty)) {
+        SaveSandboxProfile();
       }
     }
   }

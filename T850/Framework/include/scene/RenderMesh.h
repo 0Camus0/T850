@@ -513,6 +513,7 @@ namespace t850 {
 
     std::vector<WireGeo> m_wireGeo;
     ShaderBase* m_wireShader = nullptr;
+    LineRenderer m_lineRenderer;
     Texture* m_wireDepthTex = nullptr;
     int m_wireViewW = 1280;
     int m_wireViewH = 720;

@@ -305,6 +305,9 @@ namespace t850 {
     virtual void EndFrame() {}
     virtual void WaitForGPU() {}
     virtual void FlushGPUResources() { WaitForGPU(); }  // flush GPU + release cmd buffer/descriptor references
+    virtual void BeginResourceUploadBatch() {}
+    virtual void EndResourceUploadBatch() {}
+    virtual bool IsResourceUploadBatchActive() const { return false; }
     virtual void SetViewport(float x, float y, float w, float h) {}
     virtual void SetScissorRect(int x, int y, int w, int h) {}
 

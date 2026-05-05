@@ -181,46 +181,8 @@ namespace t850 {
     }
     uploadBuf->Unmap(0, nullptr);
 
-    // Copy via temp command list
-    ComPtr<ID3D12CommandAllocator> tmpAlloc;
-    ComPtr<ID3D12GraphicsCommandList> tmpList;
-    device->CreateCommandAllocator(D3D12_COMMAND_LIST_TYPE_DIRECT, IID_PPV_ARGS(&tmpAlloc));
-    device->CreateCommandList(0, D3D12_COMMAND_LIST_TYPE_DIRECT, tmpAlloc.Get(), nullptr, IID_PPV_ARGS(&tmpList));
-
-    for (UINT subresource = 0; subresource < totalSubresources; subresource++) {
-      D3D12_TEXTURE_COPY_LOCATION dst = {}, src = {};
-      dst.pResource = pTexResource.Get();
-      dst.Type = D3D12_TEXTURE_COPY_TYPE_SUBRESOURCE_INDEX;
-      dst.SubresourceIndex = subresource;
-      src.pResource = uploadBuf.Get();
-      src.Type = D3D12_TEXTURE_COPY_TYPE_PLACED_FOOTPRINT;
-      src.PlacedFootprint = footprints[subresource];
-      tmpList->CopyTextureRegion(&dst, 0, 0, 0, &src, nullptr);
-    }
-
-    // Barrier: COPY_DEST -> PIXEL_SHADER_RESOURCE
-    D3D12_RESOURCE_BARRIER barrier = {};
-    barrier.Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
-    barrier.Transition.pResource = pTexResource.Get();
-    barrier.Transition.StateBefore = D3D12_RESOURCE_STATE_COPY_DEST;
-    barrier.Transition.StateAfter = D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE;
-    barrier.Transition.Subresource = D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES;
-    tmpList->ResourceBarrier(1, &barrier);
-
-    tmpList->Close();
-    ID3D12CommandList* lists[] = { tmpList.Get() };
-    driver->GetCmdQueue()->ExecuteCommandLists(1, lists);
-
-    // Fence wait for upload
-    ComPtr<ID3D12Fence> tmpFence;
-    device->CreateFence(0, D3D12_FENCE_FLAG_NONE, IID_PPV_ARGS(&tmpFence));
-    HANDLE evt = CreateEvent(nullptr, FALSE, FALSE, nullptr);
-    driver->GetCmdQueue()->Signal(tmpFence.Get(), 1);
-    if (tmpFence->GetCompletedValue() < 1) {
-      tmpFence->SetEventOnCompletion(1, evt);
-      WaitForSingleObject(evt, INFINITE);
-    }
-    CloseHandle(evt);
+    driver->UploadTextureSubresources(pTexResource.Get(), uploadBuf.Get(), footprints.data(), totalSubresources,
+                                      D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
 
     // Create SRV
     D3D12_SHADER_RESOURCE_VIEW_DESC srvDesc = {};
@@ -322,35 +284,8 @@ namespace t850 {
     }
     uploadBuf->Unmap(0, nullptr);
 
-    // Copy + transition
-    ComPtr<ID3D12CommandAllocator> tmpAlloc;
-    ComPtr<ID3D12GraphicsCommandList> tmpList;
-    device->CreateCommandAllocator(D3D12_COMMAND_LIST_TYPE_DIRECT, IID_PPV_ARGS(&tmpAlloc));
-    device->CreateCommandList(0, D3D12_COMMAND_LIST_TYPE_DIRECT, tmpAlloc.Get(), nullptr, IID_PPV_ARGS(&tmpList));
-
-    for (UINT sub = 0; sub < totalSubs; sub++) {
-      D3D12_TEXTURE_COPY_LOCATION dst = {}, src = {};
-      dst.pResource = pTexResource.Get(); dst.Type = D3D12_TEXTURE_COPY_TYPE_SUBRESOURCE_INDEX; dst.SubresourceIndex = sub;
-      src.pResource = uploadBuf.Get(); src.Type = D3D12_TEXTURE_COPY_TYPE_PLACED_FOOTPRINT; src.PlacedFootprint = footprints[sub];
-      tmpList->CopyTextureRegion(&dst, 0, 0, 0, &src, nullptr);
-    }
-    D3D12_RESOURCE_BARRIER barrier = {};
-    barrier.Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
-    barrier.Transition.pResource = pTexResource.Get();
-    barrier.Transition.StateBefore = D3D12_RESOURCE_STATE_COPY_DEST;
-    barrier.Transition.StateAfter = D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE;
-    barrier.Transition.Subresource = D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES;
-    tmpList->ResourceBarrier(1, &barrier);
-    tmpList->Close();
-
-    ID3D12CommandList* lists[] = { tmpList.Get() };
-    driver->GetCmdQueue()->ExecuteCommandLists(1, lists);
-    ComPtr<ID3D12Fence> tmpFence;
-    device->CreateFence(0, D3D12_FENCE_FLAG_NONE, IID_PPV_ARGS(&tmpFence));
-    HANDLE evt = CreateEvent(nullptr, FALSE, FALSE, nullptr);
-    driver->GetCmdQueue()->Signal(tmpFence.Get(), 1);
-    if (tmpFence->GetCompletedValue() < 1) { tmpFence->SetEventOnCompletion(1, evt); WaitForSingleObject(evt, INFINITE); }
-    CloseHandle(evt);
+    driver->UploadTextureSubresources(pTexResource.Get(), uploadBuf.Get(), footprints.data(), totalSubs,
+                                      D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
 
     // SRV
     D3D12_SHADER_RESOURCE_VIEW_DESC srvDesc = {};

@@ -447,6 +447,8 @@ namespace t850 {
     void Draw(float *t, float *vp);
     void Destroy();
     void DrawWireframe();
+    bool EnsureCullingMetadata();
+    bool HasCullingMetadata() const { return m_cullingMetadataReady; }
     void SetWireframeDepthTex(Texture* depthTex) { m_wireDepthTex = depthTex; }
     void SetWireframeViewport(int w, int h) { m_wireViewW = w; m_wireViewH = h; }
 
@@ -497,6 +499,7 @@ namespace t850 {
     // lifetime. Populated in Create(); released in Destroy().
     MeshAsset*  m_asset = nullptr;
     std::string m_sourcePath;
+    bool        m_cullingMetadataReady = false;
 
     std::vector<uint8_t> m_visibilityScratch;
     std::vector<std::size_t> m_geometryOrderScratch;
@@ -510,6 +513,8 @@ namespace t850 {
     };
     void BuildWireframeBuffers();
     void CreateWireframeShader();
+    bool ApplyCullingPreprocessCache(const MeshPreprocessCacheData& cache);
+    bool BuildCullingMetadata();
 
     std::vector<WireGeo> m_wireGeo;
     ShaderBase* m_wireShader = nullptr;

@@ -68,6 +68,9 @@ namespace t850 {
     void EndFrame() override;
     void WaitForGPU() override;
     void FlushGPUResources() override;
+    void BeginResourceUploadBatch() override;
+    void EndResourceUploadBatch() override;
+    bool IsResourceUploadBatchActive() const override { return m_uploadBatchDepth > 0; }
     void BuildPipelineObjects() override;
 
     // ── Accessors ──
@@ -85,6 +88,8 @@ namespace t850 {
     VkCommandBuffer GetTransientCommandBuffer();
     void SubmitTransientCommandBuffer(VkCommandBuffer cmd);
     VkCommandBuffer GetCurrentCommandBuffer() const { return m_commandBuffers[m_currentFrame]; }
+    VkCommandBuffer GetResourceUploadCommandBuffer();
+    void KeepResourceUploadBuffer(VkBuffer buffer, VmaAllocation alloc);
 
     // Defer cleanup of staging resources until frame completes
     void DeferCleanup(VkBuffer buffer, VmaAllocation alloc);
@@ -240,6 +245,11 @@ namespace t850 {
     // Deferred staging buffer cleanup (destroyed after frame completes)
     struct DeferredBuffer { VkBuffer buffer; VmaAllocation alloc; };
     std::vector<DeferredBuffer> m_deferredCleanup[kBackBufferCount];
+
+    int m_uploadBatchDepth = 0;
+    VkCommandBuffer m_uploadBatchCmd = VK_NULL_HANDLE;
+    std::vector<DeferredBuffer> m_uploadBatchBuffers;
+    uint32_t m_uploadBatchCommandCount = 0;
 
     // Cached pipeline state for deferred pipeline lookup
     BlendStates           m_currentBlend = BLEND_DEFAULT;

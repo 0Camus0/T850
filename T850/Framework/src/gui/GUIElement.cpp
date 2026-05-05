@@ -272,7 +272,7 @@ void GUICheckbox::Draw(GUIDrawContext& ctx) {
   if (!visible) return;
 
   // Draw box texture (always)
-  XVECTOR3 tint(1.0f, 1.0f, 1.0f);
+  XVECTOR3 tint = enabled ? XVECTOR3(1.0f, 1.0f, 1.0f) : XVECTOR3(0.45f, 0.45f, 0.45f);
   if (ctx.checkBoxTex)
     ctx.DrawTexturedQuad(x, y, h, h, ctx.checkBoxTex, tint, ctx.checkBoxRegion);
 
@@ -290,6 +290,10 @@ void GUICheckbox::Draw(GUIDrawContext& ctx) {
 
 void GUICheckbox::UpdateInteraction(float mx, float my, bool mouseDown) {
   justToggled = false;
+  if (!enabled) {
+    wasMouseDown = false;
+    return;
+  }
   // Toggle on click (press-then-release inside the box area)
   bool over = (mx >= x && mx <= x + h && my >= y && my <= y + h);
   if (!mouseDown && wasMouseDown && over) {

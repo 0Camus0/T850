@@ -1069,7 +1069,198 @@ namespace t850 {
     }
   }
 
-  void D3D12Driver::UploadBufferData(ID3D12Resource*, const void*, size_t, D3D12_RESOURCE_STATES) {}
+  void D3D12Driver::BeginResourceUploadBatch() {
+    ++m_uploadBatchDepth;
+  }
+
+  void D3D12Driver::EndResourceUploadBatch() {
+    if (m_uploadBatchDepth <= 0)
+      return;
+    --m_uploadBatchDepth;
+    if (m_uploadBatchDepth == 0)
+      FlushResourceUploadBatch();
+  }
+
+  ID3D12GraphicsCommandList* D3D12Driver::GetResourceUploadCommandList() {
+    if (m_uploadBatchList)
+      return m_uploadBatchList.Get();
+
+    ID3D12Device* device = static_cast<D3D12Device*>(T8Device)->GetNativeDevice();
+    HRESULT hr = device->CreateCommandAllocator(D3D12_COMMAND_LIST_TYPE_DIRECT, IID_PPV_ARGS(&m_uploadBatchAllocator));
+    if (FAILED(hr)) {
+      T8_LOG_ERROR("[D3D12] Upload batch allocator creation failed hr=0x%08X", hr);
+      return nullptr;
+    }
+    hr = device->CreateCommandList(0, D3D12_COMMAND_LIST_TYPE_DIRECT, m_uploadBatchAllocator.Get(), nullptr,
+                                   IID_PPV_ARGS(&m_uploadBatchList));
+    if (FAILED(hr)) {
+      T8_LOG_ERROR("[D3D12] Upload batch command list creation failed hr=0x%08X", hr);
+      m_uploadBatchAllocator.Reset();
+      return nullptr;
+    }
+    return m_uploadBatchList.Get();
+  }
+
+  void D3D12Driver::WaitForQueuedUploadWork() {
+    const UINT64 fenceToSignal = m_nextFenceValue++;
+    m_commandQueue->Signal(m_fence.Get(), fenceToSignal);
+    if (m_fence->GetCompletedValue() < fenceToSignal) {
+      m_fence->SetEventOnCompletion(fenceToSignal, m_fenceEvent);
+      WaitForSingleObject(m_fenceEvent, INFINITE);
+    }
+  }
+
+  void D3D12Driver::FlushResourceUploadBatch() {
+    if (!m_uploadBatchList) {
+      m_uploadBatchKeepAlive.clear();
+      m_uploadBatchCommandCount = 0;
+      return;
+    }
+
+    m_uploadBatchList->Close();
+    ID3D12CommandList* lists[] = { m_uploadBatchList.Get() };
+    m_commandQueue->ExecuteCommandLists(1, lists);
+    WaitForQueuedUploadWork();
+
+    T8_LOG_INFO("[D3D12] Resource upload batch flushed: %u copy operation(s)", m_uploadBatchCommandCount);
+    m_uploadBatchKeepAlive.clear();
+    m_uploadBatchList.Reset();
+    m_uploadBatchAllocator.Reset();
+    m_uploadBatchCommandCount = 0;
+  }
+
+  void D3D12Driver::RecordUploadBufferData(ID3D12GraphicsCommandList* cmdList,
+                                           ID3D12Resource* dest,
+                                           ID3D12Resource* upload,
+                                           size_t dataSize,
+                                           D3D12_RESOURCE_STATES afterState) {
+    cmdList->CopyBufferRegion(dest, 0, upload, 0, dataSize);
+    D3D12_RESOURCE_BARRIER barrier = {};
+    barrier.Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
+    barrier.Transition.pResource = dest;
+    barrier.Transition.StateBefore = D3D12_RESOURCE_STATE_COPY_DEST;
+    barrier.Transition.StateAfter = afterState;
+    barrier.Transition.Subresource = D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES;
+    cmdList->ResourceBarrier(1, &barrier);
+    ++m_uploadBatchCommandCount;
+  }
+
+  void D3D12Driver::RecordTextureSubresourceUpload(ID3D12GraphicsCommandList* cmdList,
+                                                   ID3D12Resource* dest,
+                                                   ID3D12Resource* upload,
+                                                   const D3D12_PLACED_SUBRESOURCE_FOOTPRINT* footprints,
+                                                   UINT subresourceCount,
+                                                   D3D12_RESOURCE_STATES afterState) {
+    for (UINT subresource = 0; subresource < subresourceCount; ++subresource) {
+      D3D12_TEXTURE_COPY_LOCATION dst = {};
+      dst.pResource = dest;
+      dst.Type = D3D12_TEXTURE_COPY_TYPE_SUBRESOURCE_INDEX;
+      dst.SubresourceIndex = subresource;
+
+      D3D12_TEXTURE_COPY_LOCATION src = {};
+      src.pResource = upload;
+      src.Type = D3D12_TEXTURE_COPY_TYPE_PLACED_FOOTPRINT;
+      src.PlacedFootprint = footprints[subresource];
+      cmdList->CopyTextureRegion(&dst, 0, 0, 0, &src, nullptr);
+    }
+
+    D3D12_RESOURCE_BARRIER barrier = {};
+    barrier.Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
+    barrier.Transition.pResource = dest;
+    barrier.Transition.StateBefore = D3D12_RESOURCE_STATE_COPY_DEST;
+    barrier.Transition.StateAfter = afterState;
+    barrier.Transition.Subresource = D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES;
+    cmdList->ResourceBarrier(1, &barrier);
+    ++m_uploadBatchCommandCount;
+  }
+
+  void D3D12Driver::UploadBufferData(ID3D12Resource* dest, const void* data, size_t dataSize,
+                                     D3D12_RESOURCE_STATES afterState) {
+    if (!dest || !data || dataSize == 0)
+      return;
+
+    ID3D12Device* device = static_cast<D3D12Device*>(T8Device)->GetNativeDevice();
+    D3D12_RESOURCE_DESC uploadDesc = {};
+    uploadDesc.Dimension = D3D12_RESOURCE_DIMENSION_BUFFER;
+    uploadDesc.Width = dataSize;
+    uploadDesc.Height = 1;
+    uploadDesc.DepthOrArraySize = 1;
+    uploadDesc.MipLevels = 1;
+    uploadDesc.SampleDesc.Count = 1;
+    uploadDesc.Layout = D3D12_TEXTURE_LAYOUT_ROW_MAJOR;
+
+    D3D12_HEAP_PROPERTIES uploadHeap = {};
+    uploadHeap.Type = D3D12_HEAP_TYPE_UPLOAD;
+    ComPtr<ID3D12Resource> upload;
+    HRESULT hr = device->CreateCommittedResource(&uploadHeap, D3D12_HEAP_FLAG_NONE, &uploadDesc,
+                                                  D3D12_RESOURCE_STATE_GENERIC_READ, nullptr,
+                                                  IID_PPV_ARGS(&upload));
+    if (FAILED(hr) || !upload) {
+      T8_LOG_ERROR("[D3D12] Upload buffer creation failed hr=0x%08X", hr);
+      return;
+    }
+
+    void* mapped = nullptr;
+    hr = upload->Map(0, nullptr, &mapped);
+    if (FAILED(hr) || !mapped) {
+      T8_LOG_ERROR("[D3D12] Upload buffer map failed hr=0x%08X", hr);
+      return;
+    }
+    memcpy(mapped, data, dataSize);
+    upload->Unmap(0, nullptr);
+
+    if (IsResourceUploadBatchActive()) {
+      if (auto* cmdList = GetResourceUploadCommandList()) {
+        RecordUploadBufferData(cmdList, dest, upload.Get(), dataSize, afterState);
+        m_uploadBatchKeepAlive.push_back(upload);
+      }
+      return;
+    }
+
+    ComPtr<ID3D12CommandAllocator> tmpAlloc;
+    ComPtr<ID3D12GraphicsCommandList> tmpList;
+    hr = device->CreateCommandAllocator(D3D12_COMMAND_LIST_TYPE_DIRECT, IID_PPV_ARGS(&tmpAlloc));
+    if (FAILED(hr)) return;
+    hr = device->CreateCommandList(0, D3D12_COMMAND_LIST_TYPE_DIRECT, tmpAlloc.Get(), nullptr, IID_PPV_ARGS(&tmpList));
+    if (FAILED(hr)) return;
+    RecordUploadBufferData(tmpList.Get(), dest, upload.Get(), dataSize, afterState);
+    tmpList->Close();
+    ID3D12CommandList* lists[] = { tmpList.Get() };
+    m_commandQueue->ExecuteCommandLists(1, lists);
+    WaitForQueuedUploadWork();
+    m_uploadBatchCommandCount = 0;
+  }
+
+  void D3D12Driver::UploadTextureSubresources(ID3D12Resource* dest,
+                                              ID3D12Resource* upload,
+                                              const D3D12_PLACED_SUBRESOURCE_FOOTPRINT* footprints,
+                                              UINT subresourceCount,
+                                              D3D12_RESOURCE_STATES afterState) {
+    if (!dest || !upload || !footprints || subresourceCount == 0)
+      return;
+
+    if (IsResourceUploadBatchActive()) {
+      if (auto* cmdList = GetResourceUploadCommandList()) {
+        RecordTextureSubresourceUpload(cmdList, dest, upload, footprints, subresourceCount, afterState);
+        m_uploadBatchKeepAlive.push_back(upload);
+      }
+      return;
+    }
+
+    ID3D12Device* device = static_cast<D3D12Device*>(T8Device)->GetNativeDevice();
+    ComPtr<ID3D12CommandAllocator> tmpAlloc;
+    ComPtr<ID3D12GraphicsCommandList> tmpList;
+    HRESULT hr = device->CreateCommandAllocator(D3D12_COMMAND_LIST_TYPE_DIRECT, IID_PPV_ARGS(&tmpAlloc));
+    if (FAILED(hr)) return;
+    hr = device->CreateCommandList(0, D3D12_COMMAND_LIST_TYPE_DIRECT, tmpAlloc.Get(), nullptr, IID_PPV_ARGS(&tmpList));
+    if (FAILED(hr)) return;
+    RecordTextureSubresourceUpload(tmpList.Get(), dest, upload, footprints, subresourceCount, afterState);
+    tmpList->Close();
+    ID3D12CommandList* lists[] = { tmpList.Get() };
+    m_commandQueue->ExecuteCommandLists(1, lists);
+    WaitForQueuedUploadWork();
+    m_uploadBatchCommandCount = 0;
+  }
 
   void D3D12Driver::BindBackBufferNoDSV() {
     T8_LOG_TRACE("[D3D12] BindBackBufferNoDSV: bb=%u viewport=%.0fx%.0f", m_currentBackBuffer, m_viewport.Width, m_viewport.Height);

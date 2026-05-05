@@ -1096,6 +1096,71 @@ namespace t850 {
     vkFreeCommandBuffers(m_device, m_transientCommandPool, 1, &cmd);
   }
 
+  void VulkanDriver::BeginResourceUploadBatch() {
+    ++m_uploadBatchDepth;
+  }
+
+  void VulkanDriver::EndResourceUploadBatch() {
+    if (m_uploadBatchDepth <= 0)
+      return;
+    --m_uploadBatchDepth;
+    if (m_uploadBatchDepth > 0)
+      return;
+
+    if (m_uploadBatchCmd) {
+      vkEndCommandBuffer(m_uploadBatchCmd);
+
+      VkFence fence = VK_NULL_HANDLE;
+      VkFenceCreateInfo fenceInfo = { VK_STRUCTURE_TYPE_FENCE_CREATE_INFO };
+      vkCreateFence(m_device, &fenceInfo, nullptr, &fence);
+
+      VkSubmitInfo submitInfo = { VK_STRUCTURE_TYPE_SUBMIT_INFO };
+      submitInfo.commandBufferCount = 1;
+      submitInfo.pCommandBuffers = &m_uploadBatchCmd;
+      vkQueueSubmit(m_graphicsQueue, 1, &submitInfo, fence);
+      vkWaitForFences(m_device, 1, &fence, VK_TRUE, UINT64_MAX);
+      vkDestroyFence(m_device, fence, nullptr);
+      vkFreeCommandBuffers(m_device, m_transientCommandPool, 1, &m_uploadBatchCmd);
+      T8_LOG_INFO("[Vulkan] Resource upload batch flushed: %u copy operation(s)", m_uploadBatchCommandCount);
+      m_uploadBatchCmd = VK_NULL_HANDLE;
+    }
+
+    for (auto& buffer : m_uploadBatchBuffers)
+      vmaDestroyBuffer(m_allocator, buffer.buffer, buffer.alloc);
+    m_uploadBatchBuffers.clear();
+    m_uploadBatchCommandCount = 0;
+  }
+
+  VkCommandBuffer VulkanDriver::GetResourceUploadCommandBuffer() {
+    if (m_uploadBatchCmd)
+      return m_uploadBatchCmd;
+
+    VkCommandBufferAllocateInfo allocInfo = { VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO };
+    allocInfo.commandPool = m_transientCommandPool;
+    allocInfo.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
+    allocInfo.commandBufferCount = 1;
+    if (vkAllocateCommandBuffers(m_device, &allocInfo, &m_uploadBatchCmd) != VK_SUCCESS) {
+      m_uploadBatchCmd = VK_NULL_HANDLE;
+      return VK_NULL_HANDLE;
+    }
+
+    VkCommandBufferBeginInfo beginInfo = { VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO };
+    beginInfo.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
+    if (vkBeginCommandBuffer(m_uploadBatchCmd, &beginInfo) != VK_SUCCESS) {
+      vkFreeCommandBuffers(m_device, m_transientCommandPool, 1, &m_uploadBatchCmd);
+      m_uploadBatchCmd = VK_NULL_HANDLE;
+      return VK_NULL_HANDLE;
+    }
+    return m_uploadBatchCmd;
+  }
+
+  void VulkanDriver::KeepResourceUploadBuffer(VkBuffer buffer, VmaAllocation alloc) {
+    if (!buffer || !alloc)
+      return;
+    m_uploadBatchBuffers.push_back({ buffer, alloc });
+    ++m_uploadBatchCommandCount;
+  }
+
   void VulkanDriver::DeferCleanup(VkBuffer buffer, VmaAllocation alloc) {
     m_deferredCleanup[m_currentFrame].push_back({ buffer, alloc });
   }

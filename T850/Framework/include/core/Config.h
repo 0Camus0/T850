@@ -12,6 +12,12 @@ public:
     None
   };
 
+  enum class CullingLoadMode {
+    FullOnLoad,
+    Lazy,
+    Disabled
+  };
+
   struct BooleanFlags {
     bool dumpEnabled : 1 = false;
     bool dumpByFrame : 1 = false;
@@ -45,6 +51,7 @@ public:
   int profileFrames = 300;
   int dumpMatricesFrames = 0;
   GLOffscreenFlushMode glOffscreenFlushMode = GLOffscreenFlushMode::Frame;
+  CullingLoadMode cullingLoadMode = CullingLoadMode::FullOnLoad;
   std::string benchmarkOutputPath;
   std::string modelPath = "Models/DamagedHelmet.glb";
   bool orbitYawOverride = false;

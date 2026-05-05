@@ -10,14 +10,16 @@
  *
  *   // Data-parallel loop (blocks until done):
  *   pool.ParallelFor(0, N, [&](int i){ process(i); });
+ *   pool.ParallelForHeavy(0, N, [&](int i){ processExpensiveJob(i); });
  *
  *   // Wait for all submitted tasks:
  *   pool.WaitAll();
  *
  * Thread safety:
- *   - Submit() and ParallelFor() are safe to call from any thread.
- *   - ParallelFor() and WaitAll() must NOT be called from a worker
- *     thread (will deadlock on a fixed-size pool).
+ *   - Submit(), ParallelFor(), and ParallelForHeavy() are safe to call
+ *     from any non-worker thread.
+ *   - ParallelFor(), ParallelForHeavy(), and WaitAll() must NOT be
+ *     called from a worker thread (will deadlock on a fixed-size pool).
  *
  * The pool is destroyed (joined) when it goes out of scope.
  *********************************************************/
@@ -35,6 +37,7 @@
 #include <atomic>
 #include <cstdint>
 #include <algorithm>
+#include <utility>
 
 namespace t850 {
 
@@ -100,21 +103,36 @@ public:
   // Uses dynamic chunking for load balancing.
   template<typename Func>
   void ParallelFor(int begin, int end, Func&& func) {
+    ParallelForImpl(begin, end, std::forward<Func>(func), false);
+  }
+
+  // Data-parallel loop for few-but-expensive jobs. Unlike ParallelFor(),
+  // this still fans out when the range has fewer items than workers.
+  template<typename Func>
+  void ParallelForHeavy(int begin, int end, Func&& func) {
+    ParallelForImpl(begin, end, std::forward<Func>(func), true);
+  }
+
+private:
+  template<typename Func>
+  void ParallelForImpl(int begin, int end, Func&& func, bool forceParallel) {
     if (begin >= end) return;
     int total = end - begin;
     int numWorkers = static_cast<int>(m_workers.size());
 
     // For very small ranges, just run inline
-    if (total <= numWorkers || numWorkers == 0) {
+    if ((!forceParallel && total <= numWorkers) || numWorkers == 0) {
       for (int i = begin; i < end; i++) func(i);
       return;
     }
 
+    int numTasks = forceParallel ? (std::min)(numWorkers, total) : numWorkers;
+
     // Dynamic chunking via shared atomic index
     std::atomic<int> nextIndex(begin);
-    int chunkSize = (std::max)(1, total / (numWorkers * 8)); // ~8 chunks per worker
+    int chunkSize = (std::max)(1, total / (numTasks * 8)); // ~8 chunks per worker
 
-    int remaining = numWorkers;
+    int remaining = numTasks;
     std::mutex doneMutex;
     std::condition_variable doneCv;
 
@@ -136,8 +154,8 @@ public:
       }
     };
 
-    // Submit N-1 tasks to workers, run one chunk on calling thread
-    for (int w = 0; w < numWorkers; w++) {
+    // Submit tasks to workers and wait for them to drain the shared range.
+    for (int w = 0; w < numTasks; w++) {
       std::lock_guard<std::mutex> lock(m_mutex);
       m_tasks.emplace(worker);
       m_inFlight++;
@@ -151,7 +169,6 @@ public:
     }
   }
 
-private:
   void WorkerLoop() {
     for (;;) {
       std::function<void()> task;
@@ -182,7 +199,7 @@ private:
 
 // ── Global engine thread pool ──────────────────────────────────────
 // Created once at startup, lives for the process lifetime.
-// Any component can use t850::g_threadPool->Submit() or ParallelFor().
+// Any component can use t850::g_threadPool->Submit(), ParallelFor(), or ParallelForHeavy().
 extern ThreadPool* g_threadPool;
 
 // Call once at engine init (before any component uses g_threadPool).

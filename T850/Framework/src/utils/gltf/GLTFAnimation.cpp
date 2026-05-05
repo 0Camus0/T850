@@ -19,6 +19,7 @@
 #include <utils/gltf/GLTFSkinMap.h>
 #include <utils/XDataBase.h>
 #include <utils/Log.h>
+#include <utils/ThreadPool.h>
 #include <cmath>
 #include <algorithm>
 #include <unordered_map>
@@ -314,7 +315,10 @@ void BuildSkinsAndAnimations(const Document& doc,
   // Build node→joint mapping (reuse the global skin order when skins exist).
   const auto& nodeToJoint = jointMap.nodeToJoint;
 
-  for (std::size_t ai = 0; ai < doc.animations.size(); ai++) {
+  std::vector<std::size_t> animationBoneCounts(doc.animations.size(), 0);
+
+  auto convertAnimation = [&](int animationIndex) {
+    const std::size_t ai = static_cast<std::size_t>(animationIndex);
     const Animation& anim = doc.animations[ai];
     xF::xAnimationSet& animSet = mc->Animation.Animations[ai];
     animSet.Name = anim.name.empty() ? ("Animation_" + std::to_string(ai)) : anim.name;
@@ -462,8 +466,23 @@ void BuildSkinsAndAnimations(const Document& doc,
     }
     animSet.m_MaxTimeOnTicks = maxTick;
 
+    animationBoneCounts[ai] = animSet.BonesRef.size();
+  };
+
+  if (g_threadPool && doc.animations.size() > 1) {
+    T8_LOG_INFO("[glTF] Converting %zu animations with %u global worker threads",
+                doc.animations.size(), g_threadPool->NumWorkers());
+    g_threadPool->ParallelForHeavy(0, static_cast<int>(doc.animations.size()), convertAnimation);
+  } else {
+    for (int ai = 0; ai < static_cast<int>(doc.animations.size()); ++ai) {
+      convertAnimation(ai);
+    }
+  }
+
+  for (std::size_t ai = 0; ai < doc.animations.size(); ++ai) {
+    const xF::xAnimationSet& animSet = mc->Animation.Animations[ai];
     T8_LOG_INFO("[glTF] Animation '%s': %zu bone channels",
-                animSet.Name.c_str(), animSet.BonesRef.size());
+                animSet.Name.c_str(), animationBoneCounts[ai]);
   }
 
   T8_LOG_INFO("[glTF] Converted %zu animations", doc.animations.size());

@@ -348,6 +348,8 @@ void ResolveAllImages(const Document& doc,
   }
 
   // Phase 3: Serial GPU upload + driver cache insertion
+  if (g_pBaseDriver)
+    g_pBaseDriver->BeginResourceUploadBatch();
   for (int i = 0; i < numImages; i++) {
     DecodeResult& r = results[i];
     if (!r.ok) continue;
@@ -389,6 +391,8 @@ void ResolveAllImages(const Document& doc,
     T8_TRACE_REGISTER_TEXTURE(t, "tex2d");
     outNames[i] = r.keyName;
   }
+  if (g_pBaseDriver)
+    g_pBaseDriver->EndResourceUploadBatch();
 
   T8_LOG_INFO("[glTF] Image resolution complete: %d images", numImages);
 }

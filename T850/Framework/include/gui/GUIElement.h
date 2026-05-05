@@ -220,6 +220,7 @@ namespace t850 {
     std::string name;           // matches CheckboxDesc::name
     std::string label;
     bool  checked      = false;
+    bool  enabled      = true;
     int   settingIndex = -1;
 
     // Interaction state

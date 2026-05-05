@@ -43,6 +43,7 @@ struct DevToolsJson {
   std::optional<int> dumpMatricesFrames;
   std::optional<bool> benchmark;
   std::optional<bool> cullDisabled;
+  std::optional<std::string> cullingMode;
   std::optional<std::string> benchmarkOutputPath;
   std::optional<bool> offscreen;
   std::optional<bool> offscreenDebug;
@@ -75,6 +76,7 @@ struct RuntimeConfigJson {
   std::optional<int> dumpMatricesFrames;
   std::optional<bool> benchmark;
   std::optional<bool> cullDisabled;
+  std::optional<std::string> cullingMode;
   std::optional<std::string> benchmarkOutputPath;
   std::optional<bool> offscreen;
   std::optional<bool> offscreenDebug;
@@ -90,8 +92,10 @@ struct RuntimeConfigJson {
 std::string StripQuotes(std::string value);
 int ParseLogLevel(const std::string& value, int fallback);
 Config::GLOffscreenFlushMode ParseGLOffscreenFlushMode(const std::string& value, Config::GLOffscreenFlushMode fallback);
+Config::CullingLoadMode ParseCullingLoadMode(const std::string& value, Config::CullingLoadMode fallback);
 GraphicsApi::E ParseGraphicsApi(const std::string& value, GraphicsApi::E fallback);
 const char* ApiTag(GraphicsApi::E api);
+const char* CullingLoadModeTag(Config::CullingLoadMode mode);
 
 void ApplyConfigJson(const RuntimeConfigJson& json, Config& cfg);
 bool LoadRuntimeConfig(const std::filesystem::path& path, Config& cfg);

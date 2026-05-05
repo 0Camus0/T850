@@ -419,6 +419,7 @@ void GUIManager::AddCheckbox(const CheckboxDesc& desc, int settingIndex) {
   cb->name         = desc.name;
   cb->label        = desc.label;
   cb->checked      = desc.default_val;
+  cb->enabled      = desc.enabled;
   cb->settingIndex = settingIndex;
 
   m_elements.push_back(lbl);

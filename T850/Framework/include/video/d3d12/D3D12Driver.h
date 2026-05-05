@@ -77,6 +77,9 @@ namespace t850 {
     void BeginFrame() override;
     void EndFrame() override;
     void WaitForGPU() override;
+    void BeginResourceUploadBatch() override;
+    void EndResourceUploadBatch() override;
+    bool IsResourceUploadBatchActive() const override { return m_uploadBatchDepth > 0; }
     void BuildPipelineObjects() override;
 
     // ── Helpers for resource creation ──
@@ -87,6 +90,11 @@ namespace t850 {
     // Upload helper: copies data to GPU using a temp command list
     void UploadBufferData(ID3D12Resource* dest, const void* data, size_t dataSize,
                           D3D12_RESOURCE_STATES afterState);
+    void UploadTextureSubresources(ID3D12Resource* dest,
+                     ID3D12Resource* upload,
+                     const D3D12_PLACED_SUBRESOURCE_FOOTPRINT* footprints,
+                     UINT subresourceCount,
+                     D3D12_RESOURCE_STATES afterState);
 
     // PSO cache — lazy creation
     ID3D12PipelineState* GetOrCreatePSO(D3D12Shader* shader, uint8_t numRTVs = 1,
@@ -120,6 +128,20 @@ namespace t850 {
     void CreateHeaps();
     void CreateDefaultSampler();
     void WaitForFence();
+    ID3D12GraphicsCommandList* GetResourceUploadCommandList();
+    void FlushResourceUploadBatch();
+    void WaitForQueuedUploadWork();
+    void RecordUploadBufferData(ID3D12GraphicsCommandList* cmdList,
+                  ID3D12Resource* dest,
+                  ID3D12Resource* upload,
+                  size_t dataSize,
+                  D3D12_RESOURCE_STATES afterState);
+    void RecordTextureSubresourceUpload(ID3D12GraphicsCommandList* cmdList,
+                      ID3D12Resource* dest,
+                      ID3D12Resource* upload,
+                      const D3D12_PLACED_SUBRESOURCE_FOOTPRINT* footprints,
+                      UINT subresourceCount,
+                      D3D12_RESOURCE_STATES afterState);
 
     HWND m_hwnd = nullptr;
 
@@ -182,6 +204,12 @@ namespace t850 {
     // Last-bound state for redundancy elimination
     ID3D12PipelineState*   m_lastPSO = nullptr;
     ID3D12RootSignature*   m_lastRootSig = nullptr;
+
+    int m_uploadBatchDepth = 0;
+    ComPtr<ID3D12CommandAllocator>    m_uploadBatchAllocator;
+    ComPtr<ID3D12GraphicsCommandList> m_uploadBatchList;
+    std::vector<ComPtr<ID3D12Resource>> m_uploadBatchKeepAlive;
+    UINT m_uploadBatchCommandCount = 0;
 
     // PSO cache: lazy-created per (shader × blend × depth × cull × RT config)
     std::unordered_map<D3D12PipelineKey, ComPtr<ID3D12PipelineState>, D3D12PipelineKeyHash> m_psoCache;

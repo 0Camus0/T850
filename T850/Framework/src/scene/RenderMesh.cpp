@@ -128,6 +128,53 @@ namespace t850 {
       meshInfo.bounds.Expand(bounds.vMax.x, bounds.vMax.y, bounds.vMax.z);
     }
 
+    RenderMesh::AABB ComputeGeometryBounds(const xFinalGeometry& geometry, const xMeshGeometry& sourceGeometry) {
+      RenderMesh::AABB bounds;
+      bounds.Reset();
+      const unsigned int stride = geometry.VertexSize / sizeof(float);
+      if (stride < 3 || !geometry.pData)
+        return bounds;
+      for (unsigned int v = 0; v < sourceGeometry.NumVertices; ++v) {
+        const float px = geometry.pData[v * stride + 0];
+        const float py = geometry.pData[v * stride + 1];
+        const float pz = geometry.pData[v * stride + 2];
+        bounds.Expand(px, py, pz);
+      }
+      return bounds;
+    }
+
+    void ExpandMeshBounds(RenderMesh::MeshInfo& meshInfo, const RenderMesh::AABB& bounds) {
+      meshInfo.bounds.Expand(bounds.min.x, bounds.min.y, bounds.min.z);
+      meshInfo.bounds.Expand(bounds.max.x, bounds.max.y, bounds.max.z);
+    }
+
+    void ApplyCachedCullingMetadata(std::vector<RenderMesh::MeshInfo>& meshInfos,
+                                    MeshAsset* asset,
+                                    const MeshPreprocessCacheData& cache) {
+      if (!asset)
+        return;
+      asset->clusters = cache.clusters;
+      asset->rootAABB = cache.rootAABB;
+
+      std::size_t flatSubmesh = 0;
+      for (std::size_t i = 0; i < meshInfos.size(); ++i) {
+        RenderMesh::MeshInfo& meshInfo = meshInfos[i];
+        meshInfo.bounds.Reset();
+        for (std::size_t j = 0; j < meshInfo.SubSets.size(); ++j, ++flatSubmesh) {
+          if (flatSubmesh >= cache.submeshes.size() || flatSubmesh >= asset->submeshes.size())
+            return;
+          const Submesh& cachedSubmesh = cache.submeshes[flatSubmesh];
+          Submesh& assetSubmesh = asset->submeshes[flatSubmesh];
+          assetSubmesh.localAABB = cachedSubmesh.localAABB;
+          assetSubmesh.firstCluster = cachedSubmesh.firstCluster;
+          assetSubmesh.clusterCount = cachedSubmesh.clusterCount;
+          ApplyCachedBounds(meshInfo.SubSets[j], cachedSubmesh.localAABB);
+          ExpandMeshBounds(meshInfo, cachedSubmesh.localAABB);
+        }
+      }
+      asset->cullingMetadataReady = true;
+    }
+
     bool ValidatePreprocessCacheTopology(const XDataBase* xFile,
                                          const std::vector<RenderMesh::MeshInfo>& meshInfos,
                                          const MeshPreprocessCacheData& cache) {
@@ -325,9 +372,10 @@ namespace t850 {
       kTargetTrianglesPerCluster,
       CHANGE_TO_RH ? 1u : 0u
     };
+    const bool buildCullingMetadataOnLoad = g_config.cullingLoadMode == Config::CullingLoadMode::FullOnLoad;
     MeshPreprocessCacheData preprocessCache;
     bool usePreprocessCache = false;
-    if (populatePools) {
+    if (populatePools && buildCullingMetadataOnLoad) {
       usePreprocessCache = MeshAssetCache::Get().LoadPreprocessCache(m_sourcePath, preprocessCacheSettings, preprocessCache);
       if (usePreprocessCache && !ValidatePreprocessCacheTopology(xFile, Info, preprocessCache)) {
         T8_LOG_INFO("[MeshAssetCache] Ignoring mesh preprocess cache for '%s': topology changed",
@@ -348,6 +396,7 @@ namespace t850 {
       xFinalGeometry *it = &xFile->MeshInfo[i];
       xMeshGeometry *pActual = &xFile->XMeshDataBase[0]->Geometry[i];
       MeshInfo  *it_MeshInfo = &Info[i];
+      const RenderMesh::AABB geometryBounds = ComputeGeometryBounds(*it, *pActual);
       if (populatePools) {
         poolIBAllocs[i].resize(it_MeshInfo->SubSets.size());
         clusterBuildData[i].resize(it_MeshInfo->SubSets.size());
@@ -813,16 +862,18 @@ namespace t850 {
 
           if (cachedSubmesh) {
             ApplyCachedBounds(*it_subsetinfo, cachedSubmesh->localAABB);
-          } else {
+          } else if (buildCullingMetadataOnLoad) {
             it_subsetinfo->bounds.Reset();
             unsigned int stride16 = it->VertexSize / sizeof(float);
             for (int vi = 0; vi < counter; vi++) {
               unsigned int idx = tmpIndexex[vi];
               it_subsetinfo->bounds.Expand(it->pData[idx*stride16], it->pData[idx*stride16+1], it->pData[idx*stride16+2]);
             }
+          } else {
+            it_subsetinfo->bounds = geometryBounds;
           }
 
-          if (populatePools && !usePreprocessCache) {
+          if (populatePools && buildCullingMetadataOnLoad && !usePreprocessCache) {
             BuildContiguousClustersForSubset(tmpIndexex,
                                              static_cast<uint32_t>(counter),
                                              &it->pData[0],
@@ -869,16 +920,18 @@ namespace t850 {
 
           if (cachedSubmesh) {
             ApplyCachedBounds(*it_subsetinfo, cachedSubmesh->localAABB);
-          } else {
+          } else if (buildCullingMetadataOnLoad) {
             it_subsetinfo->bounds.Reset();
             unsigned int stride32 = it->VertexSize / sizeof(float);
             for (int vi = 0; vi < counter; vi++) {
               unsigned int idx = tmpIndexex[vi];
               it_subsetinfo->bounds.Expand(it->pData[idx*stride32], it->pData[idx*stride32+1], it->pData[idx*stride32+2]);
             }
+          } else {
+            it_subsetinfo->bounds = geometryBounds;
           }
 
-          if (populatePools && !usePreprocessCache) {
+          if (populatePools && buildCullingMetadataOnLoad && !usePreprocessCache) {
             BuildContiguousClustersForSubset(tmpIndexex,
                                              static_cast<uint32_t>(counter),
                                              &it->pData[0],
@@ -915,13 +968,7 @@ namespace t850 {
             ExpandMeshBounds(*it_MeshInfo, preprocessCache.submeshes[submeshIndex].localAABB);
         }
       } else {
-        unsigned int stride = it->VertexSize / sizeof(float);
-        for (unsigned int v = 0; v < pActual->NumVertices; v++) {
-          float px = it->pData[v * stride + 0];
-          float py = it->pData[v * stride + 1];
-          float pz = it->pData[v * stride + 2];
-          it_MeshInfo->bounds.Expand(px, py, pz);
-        }
+        it_MeshInfo->bounds = geometryBounds;
       }
 
       T8_LOG_DEBUG("  Geometry %zu: VB=%u bytes (stride=%u, %d verts), IB=%zu tris%s",
@@ -1010,7 +1057,7 @@ namespace t850 {
             sub.ibAlloc.count       = poolIBAllocs[i][j].count;
             sub.ibPoolId            = static_cast<uint16_t>(poolIBAllocs[i][j].poolId);
           }
-          if (!usePreprocessCache) {
+          if (!usePreprocessCache && buildCullingMetadataOnLoad) {
             sub.firstCluster = static_cast<uint32_t>(m_asset->clusters.size());
             if (i < clusterBuildData.size() && j < clusterBuildData[i].size()) {
               for (SubmeshCluster cluster : clusterBuildData[i][j]) {
@@ -1030,6 +1077,9 @@ namespace t850 {
               }
             }
             sub.clusterCount = static_cast<uint32_t>(m_asset->clusters.size()) - sub.firstCluster;
+          } else if (!usePreprocessCache) {
+            sub.firstCluster = 0;
+            sub.clusterCount = 0;
           }
           m_asset->submeshes.push_back(sub);
         }
@@ -1047,12 +1097,29 @@ namespace t850 {
                   static_cast<unsigned long long>(m_asset->vertexAttribMask));
       MeshAssetCache::Get().DumpToLog();
       MaterialAssetCache::Get().DumpToLog();
-      if (!usePreprocessCache)
+      m_asset->cullingMetadataReady = buildCullingMetadataOnLoad || usePreprocessCache;
+      if (buildCullingMetadataOnLoad && !usePreprocessCache)
         MeshAssetCache::Get().SavePreprocessCache(m_sourcePath, preprocessCacheSettings, *m_asset);
     } else if (m_asset) {
       T8_LOG_INFO("[MeshAssetCache] Reusing populated '%s' (%zu submesh(es), refs=%u)",
                   m_asset->sourcePath.c_str(), m_asset->submeshes.size(), m_asset->refCount);
     }
+
+    if (populatePools && m_asset && g_pBaseDriver && g_pBaseDriver->m_currentAPI == GraphicsApi::D3D12) {
+      g_pBaseDriver->BeginResourceUploadBatch();
+      for (const Submesh& submesh : m_asset->submeshes) {
+        if (submesh.vbAlloc.IsValid()) {
+          if (VertexPool* vpool = MeshAssetCache::Get().GetVertexPool(submesh.vbAlloc.poolId))
+            vpool->EnsureUploaded();
+        }
+        if (submesh.ibAlloc.IsValid()) {
+          if (IndexPool* ipool = MeshAssetCache::Get().GetIndexPool(submesh.ibAlloc.poolId))
+            ipool->EnsureUploaded();
+        }
+      }
+      g_pBaseDriver->EndResourceUploadBatch();
+    }
+    m_cullingMetadataReady = m_asset ? m_asset->cullingMetadataReady : false;
 
     // Phase A.5 step 2: copy pool offsets from the (now populated)
     // MeshAsset into per-instance MeshInfo / SubSetInfo so the draw
@@ -1077,6 +1144,168 @@ namespace t850 {
 
     CreateWireframeShader();
     BuildWireframeBuffers();
+  }
+
+  bool RenderMesh::ApplyCullingPreprocessCache(const MeshPreprocessCacheData& cache) {
+    if (!m_asset || cache.submeshes.empty())
+      return false;
+    ApplyCachedCullingMetadata(Info, m_asset, cache);
+    m_cullingMetadataReady = m_asset->cullingMetadataReady;
+    return m_cullingMetadataReady;
+  }
+
+  bool RenderMesh::BuildCullingMetadata() {
+    if (!xFile || xFile->XMeshDataBase.empty() || !m_asset || m_asset->submeshes.empty())
+      return false;
+
+    std::vector<SubmeshCluster> rebuiltClusters;
+    t850::AABB rebuiltRoot;
+    rebuiltRoot = t850::AABB{};
+
+    std::size_t flatSubmesh = 0;
+    for (std::size_t i = 0; i < xFile->MeshInfo.size() && i < Info.size(); ++i) {
+      xFinalGeometry* finalGeometry = &xFile->MeshInfo[i];
+      xMeshGeometry* sourceGeometry = &xFile->XMeshDataBase[0]->Geometry[i];
+      MeshInfo& meshInfo = Info[i];
+      meshInfo.bounds.Reset();
+
+      for (std::size_t j = 0; j < meshInfo.SubSets.size(); ++j, ++flatSubmesh) {
+        if (flatSubmesh >= m_asset->submeshes.size())
+          return false;
+
+        SubSetInfo& subset = meshInfo.SubSets[j];
+        Submesh& submesh = m_asset->submeshes[flatSubmesh];
+        subset.bounds.Reset();
+        submesh.firstCluster = static_cast<uint32_t>(rebuiltClusters.size());
+
+        const bool splitIntoClusters = CanSplitSubsetIntoClusters(subset);
+        const int numFaceIndices = sourceGeometry->NumTriangles;
+        if (!sourceGeometry->Indices32Bit) {
+          std::vector<unsigned short> indices;
+          indices.reserve(subset.NumVertex);
+          for (int k = 0; k < numFaceIndices; ++k) {
+            if (sourceGeometry->MaterialList.FaceIndices[k] != static_cast<int>(j))
+              continue;
+            const unsigned int index = k * 3u;
+#if CHANGE_TO_RH
+            indices.push_back(sourceGeometry->Triangles[index + 2]);
+            indices.push_back(sourceGeometry->Triangles[index + 1]);
+            indices.push_back(sourceGeometry->Triangles[index + 0]);
+#else
+            indices.push_back(sourceGeometry->Triangles[index + 0]);
+            indices.push_back(sourceGeometry->Triangles[index + 1]);
+            indices.push_back(sourceGeometry->Triangles[index + 2]);
+#endif
+          }
+
+          const unsigned int stride = finalGeometry->VertexSize / sizeof(float);
+          for (unsigned short vertexIndex : indices) {
+            subset.bounds.Expand(finalGeometry->pData[vertexIndex * stride + 0],
+                                 finalGeometry->pData[vertexIndex * stride + 1],
+                                 finalGeometry->pData[vertexIndex * stride + 2]);
+          }
+
+          BuildContiguousClustersForSubset(indices.data(),
+                                           static_cast<uint32_t>(indices.size()),
+                                           finalGeometry->pData,
+                                           finalGeometry->VertexSize,
+                                           splitIntoClusters,
+                                           static_cast<uint32_t>(flatSubmesh),
+                                           rebuiltClusters);
+        } else {
+          std::vector<unsigned int> indices;
+          indices.reserve(subset.NumVertex);
+          for (int k = 0; k < numFaceIndices; ++k) {
+            if (sourceGeometry->MaterialList.FaceIndices[k] != static_cast<int>(j))
+              continue;
+            const unsigned int index = k * 3u;
+#if CHANGE_TO_RH
+            indices.push_back(sourceGeometry->Triangles32[index + 2]);
+            indices.push_back(sourceGeometry->Triangles32[index + 1]);
+            indices.push_back(sourceGeometry->Triangles32[index + 0]);
+#else
+            indices.push_back(sourceGeometry->Triangles32[index + 0]);
+            indices.push_back(sourceGeometry->Triangles32[index + 1]);
+            indices.push_back(sourceGeometry->Triangles32[index + 2]);
+#endif
+          }
+
+          const unsigned int stride = finalGeometry->VertexSize / sizeof(float);
+          for (unsigned int vertexIndex : indices) {
+            subset.bounds.Expand(finalGeometry->pData[vertexIndex * stride + 0],
+                                 finalGeometry->pData[vertexIndex * stride + 1],
+                                 finalGeometry->pData[vertexIndex * stride + 2]);
+          }
+
+          BuildContiguousClustersForSubset(indices.data(),
+                                           static_cast<uint32_t>(indices.size()),
+                                           finalGeometry->pData,
+                                           finalGeometry->VertexSize,
+                                           splitIntoClusters,
+                                           static_cast<uint32_t>(flatSubmesh),
+                                           rebuiltClusters);
+        }
+
+        if (rebuiltClusters.size() == submesh.firstCluster) {
+          const uint32_t indexCount = submesh.ibAlloc.IsValid() ? submesh.ibAlloc.count : subset.NumTris * 3u;
+          if (indexCount > 0) {
+            SubmeshCluster cluster;
+            cluster.submeshIndex = static_cast<uint32_t>(flatSubmesh);
+            cluster.indexOffset = 0;
+            cluster.indexCount = indexCount;
+            cluster.localAABB.vMin = XVECTOR3(subset.bounds.min.x, subset.bounds.min.y, subset.bounds.min.z, 0.0f);
+            cluster.localAABB.vMax = XVECTOR3(subset.bounds.max.x, subset.bounds.max.y, subset.bounds.max.z, 0.0f);
+            rebuiltClusters.push_back(cluster);
+          }
+        }
+
+        submesh.localAABB.vMin = XVECTOR3(subset.bounds.min.x, subset.bounds.min.y, subset.bounds.min.z, 0.0f);
+        submesh.localAABB.vMax = XVECTOR3(subset.bounds.max.x, subset.bounds.max.y, subset.bounds.max.z, 0.0f);
+        submesh.clusterCount = static_cast<uint32_t>(rebuiltClusters.size()) - submesh.firstCluster;
+        ExpandMeshBounds(meshInfo, submesh.localAABB);
+      }
+
+      rebuiltRoot.ExpandToInclude(meshInfo.bounds.min.x, meshInfo.bounds.min.y, meshInfo.bounds.min.z);
+      rebuiltRoot.ExpandToInclude(meshInfo.bounds.max.x, meshInfo.bounds.max.y, meshInfo.bounds.max.z);
+    }
+
+    m_asset->clusters = std::move(rebuiltClusters);
+    m_asset->rootAABB = rebuiltRoot;
+    m_asset->cullingMetadataReady = true;
+    m_cullingMetadataReady = true;
+    return true;
+  }
+
+  bool RenderMesh::EnsureCullingMetadata() {
+    if (g_config.cullingLoadMode == Config::CullingLoadMode::Disabled)
+      return false;
+    if (m_cullingMetadataReady)
+      return true;
+    if (!m_asset)
+      return false;
+
+    const MeshPreprocessCacheSettings preprocessCacheSettings = {
+      kMinTrianglesForClustering,
+      kTargetTrianglesPerCluster,
+      CHANGE_TO_RH ? 1u : 0u
+    };
+
+    MeshPreprocessCacheData preprocessCache;
+    if (MeshAssetCache::Get().LoadPreprocessCache(m_sourcePath, preprocessCacheSettings, preprocessCache)) {
+      if (ValidatePreprocessCacheTopology(xFile, Info, preprocessCache) && ApplyCullingPreprocessCache(preprocessCache)) {
+        T8_LOG_INFO("[CULLING] Loaded culling metadata for '%s' on demand", m_sourcePath.c_str());
+        return true;
+      }
+      T8_LOG_INFO("[CULLING] Ignoring on-demand culling cache for '%s': topology changed", m_sourcePath.c_str());
+    }
+
+    if (!BuildCullingMetadata())
+      return false;
+
+    MeshAssetCache::Get().SavePreprocessCache(m_sourcePath, preprocessCacheSettings, *m_asset);
+    T8_LOG_INFO("[CULLING] Built culling metadata for '%s' on demand (%zu cluster(s))",
+                m_sourcePath.c_str(), m_asset->clusters.size());
+    return true;
   }
 
   void RenderMesh::CreateWireframeShader() {
@@ -2150,7 +2379,9 @@ namespace t850 {
         // back to (count, 0, 0) on the legacy per-subset IB path.
         bool drewSubset = false;
         const Submesh* submesh = FindSubmeshForSubset(m_asset, *sub_info);
-        const bool useClusterPath = currentPass == PassType::GBUFFER &&
+        const bool useClusterPath = frustumCullingEnabled &&
+                  m_cullingMetadataReady &&
+                  currentPass == PassType::GBUFFER &&
                                     submesh && submesh->clusterCount > 0 &&
                                     sub_info->ibPoolAlloc.IsValid() &&
                                     it_MeshInfo->vbPoolAlloc.IsValid();
@@ -2257,6 +2488,7 @@ namespace t850 {
     m_wireShader = nullptr;
     m_lineRenderer.Destroy();
     m_wireDepthTex = nullptr;
+    m_cullingMetadataReady = false;
   }
 }
 

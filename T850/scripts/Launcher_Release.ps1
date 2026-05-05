@@ -184,7 +184,14 @@ $xaml = @"
                         <CheckBox Name="chkFullscreen" Content="Fullscreen" Margin="0,0,0,8"/>
                     </StackPanel>
                 </Grid>
-                <CheckBox Name="chkCullDisabled" Content="Disable culling" Margin="0,0,0,6"/>
+                <StackPanel Margin="0,0,0,8">
+                    <TextBlock Text="Culling" Style="{StaticResource LabelStyle}"/>
+                    <StackPanel Orientation="Horizontal">
+                        <RadioButton Name="rbCullingFull" Content="Enabled (Full on Load)" GroupName="CullingMode" IsChecked="True"/>
+                        <RadioButton Name="rbCullingLazy" Content="Lazy" GroupName="CullingMode"/>
+                        <RadioButton Name="rbCullingDisabled" Content="Disabled" GroupName="CullingMode"/>
+                    </StackPanel>
+                </StackPanel>
                 <CheckBox Name="chkBenchmark" Content="Benchmark mode" Margin="0,0,0,6" Visibility="Collapsed"/>
                 <StackPanel Name="pnlModelSelect" Margin="0,6,0,0">
                     <TextBlock Text="Model (Sandbox)" Style="{StaticResource LabelStyle}"/>
@@ -347,7 +354,9 @@ $txtSeconds     = $window.FindName("txtSeconds")
 $txtFrame       = $window.FindName("txtFrame")
 $cmbScene       = $window.FindName("cmbScene")
 $chkFullscreen  = $window.FindName("chkFullscreen")
-$chkCullDisabled = $window.FindName("chkCullDisabled")
+$rbCullingFull     = $window.FindName("rbCullingFull")
+$rbCullingLazy     = $window.FindName("rbCullingLazy")
+$rbCullingDisabled = $window.FindName("rbCullingDisabled")
 $chkBenchmark   = $window.FindName("chkBenchmark")
 $cmbModel       = $window.FindName("cmbModel")
 $pnlModelSelect = $window.FindName("pnlModelSelect")
@@ -374,6 +383,31 @@ if ((Split-Path -Leaf $rootDir) -eq "scripts") {
 $configPath = Join-Path $rootDir "config.json"
 
 # ── Config load/save ──
+
+function Normalize-CullingMode {
+    param([string]$mode)
+    $lower = if ($mode) { $mode.ToLowerInvariant() } else { "full" }
+    switch ($lower) {
+        { $_ -in @("full", "enabled", "enable", "fullonload", "on", "1") } { return "full" }
+        { $_ -in @("lazy", "deferred", "2") } { return "lazy" }
+        { $_ -in @("disabled", "disable", "off", "none", "0") } { return "disabled" }
+        default { return "full" }
+    }
+}
+
+function Get-CullingMode {
+    if ($rbCullingDisabled.IsChecked) { return "disabled" }
+    if ($rbCullingLazy.IsChecked) { return "lazy" }
+    return "full"
+}
+
+function Set-CullingMode {
+    param([string]$mode)
+    $normalized = Normalize-CullingMode $mode
+    $rbCullingFull.IsChecked = ($normalized -eq "full")
+    $rbCullingLazy.IsChecked = ($normalized -eq "lazy")
+    $rbCullingDisabled.IsChecked = ($normalized -eq "disabled")
+}
 
 function Load-Config {
     if (-not (Test-Path $configPath)) { return }
@@ -418,10 +452,14 @@ function Load-Config {
         } elseif ($cfg.devTools -and $cfg.devTools.PSObject.Properties['benchmark']) {
             $chkBenchmark.IsChecked = [bool]$cfg.devTools.benchmark
         }
-        if ($cfg.PSObject.Properties['cullDisabled']) {
-            $chkCullDisabled.IsChecked = [bool]$cfg.cullDisabled
-        } elseif ($cfg.devTools -and $cfg.devTools.PSObject.Properties['cullDisabled']) {
-            $chkCullDisabled.IsChecked = [bool]$cfg.devTools.cullDisabled
+        if ($cfg.PSObject.Properties['cullingMode']) {
+            Set-CullingMode $cfg.cullingMode
+        } elseif ($cfg.PSObject.Properties['cullDisabled'] -and [bool]$cfg.cullDisabled) {
+            Set-CullingMode "disabled"
+        } elseif ($cfg.devTools -and $cfg.devTools.PSObject.Properties['cullingMode']) {
+            Set-CullingMode $cfg.devTools.cullingMode
+        } elseif ($cfg.devTools -and $cfg.devTools.PSObject.Properties['cullDisabled'] -and [bool]$cfg.devTools.cullDisabled) {
+            Set-CullingMode "disabled"
         }
         # Keep Running
         if ($cfg.PSObject.Properties['keepRunning']) {
@@ -471,6 +509,7 @@ function Load-Config {
 
 function Save-Config {
     $sceneTag = ($cmbScene.SelectedItem).Tag.ToString()
+    $cullingMode = Get-CullingMode
     $cfg = @{
         api           = ($cmbApi.SelectedItem).Tag.ToString()
         display = @{
@@ -482,7 +521,8 @@ function Save-Config {
         }
         debugFrames = [bool]$chkDebugFrames.IsChecked
         benchmark = ($sceneTag -eq "1" -and [bool]$chkBenchmark.IsChecked)
-        cullDisabled = [bool]$chkCullDisabled.IsChecked
+        cullingMode = $cullingMode
+        cullDisabled = ($cullingMode -eq "disabled")
         keepRunning = [bool]$chkKeepRunning.IsChecked
         replaySnapshot = @{
             enabled = [bool]$chkReplaySnapshot.IsChecked
@@ -539,9 +579,7 @@ function Get-LaunchCommand {
         $argList += "--benchmark"
     }
 
-    if ($chkCullDisabled.IsChecked) {
-        $argList += "--cullDisabled"
-    }
+    $argList += @("--culling", (Get-CullingMode))
 
     # Model path (for Sandbox scene)
     if ($cmbModel.SelectedItem) {
@@ -697,8 +735,9 @@ $cmbScene.Add_SelectionChanged({
 })
 $chkFullscreen.Add_Checked({ Update-Preview })
 $chkFullscreen.Add_Unchecked({ Update-Preview })
-$chkCullDisabled.Add_Checked({ Update-Preview })
-$chkCullDisabled.Add_Unchecked({ Update-Preview })
+$rbCullingFull.Add_Checked({ Update-Preview })
+$rbCullingLazy.Add_Checked({ Update-Preview })
+$rbCullingDisabled.Add_Checked({ Update-Preview })
 $chkBenchmark.Add_Checked({ Update-Preview })
 $chkBenchmark.Add_Unchecked({ Update-Preview })
 $cmbLogLevel.Add_SelectionChanged({ Update-Preview })

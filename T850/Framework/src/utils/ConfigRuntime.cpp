@@ -80,6 +80,18 @@ Config::GLOffscreenFlushMode ParseGLOffscreenFlushMode(const std::string& value,
   return fallback;
 }
 
+Config::CullingLoadMode ParseCullingLoadMode(const std::string& value, Config::CullingLoadMode fallback) {
+  std::string lowered = ToLower(value);
+  if (lowered == "enabled" || lowered == "enable" || lowered == "full" || lowered == "fullonload" || lowered == "on" || lowered == "1") {
+    return Config::CullingLoadMode::FullOnLoad;
+  }
+  if (lowered == "lazy" || lowered == "deferred" || lowered == "2") return Config::CullingLoadMode::Lazy;
+  if (lowered == "disabled" || lowered == "disable" || lowered == "off" || lowered == "none" || lowered == "0") {
+    return Config::CullingLoadMode::Disabled;
+  }
+  return fallback;
+}
+
 GraphicsApi::E ParseGraphicsApi(const std::string& value, GraphicsApi::E fallback) {
   std::string lowered = ToLower(value);
   if (lowered == "gl" || lowered == "opengl") return GraphicsApi::OPENGL;
@@ -94,6 +106,12 @@ const char* ApiTag(GraphicsApi::E api) {
        : (api == GraphicsApi::D3D12)  ? "d3d12"
        : (api == GraphicsApi::VULKAN) ? "vulkan"
        : "d3d11";
+}
+
+const char* CullingLoadModeTag(Config::CullingLoadMode mode) {
+  return mode == Config::CullingLoadMode::FullOnLoad ? "full"
+       : mode == Config::CullingLoadMode::Lazy       ? "lazy"
+       : "disabled";
 }
 
 void ApplyConfigJson(const RuntimeConfigJson& json, Config& cfg) {
@@ -124,7 +142,9 @@ void ApplyConfigJson(const RuntimeConfigJson& json, Config& cfg) {
   if (json.dumpMatrices) cfg.flags.dumpMatrices = *json.dumpMatrices;
   if (json.dumpMatricesFrames) cfg.dumpMatricesFrames = *json.dumpMatricesFrames;
   if (json.benchmark) cfg.flags.benchmark = *json.benchmark;
-  if (json.cullDisabled) cfg.flags.cullDisabled = *json.cullDisabled;
+  if (json.cullDisabled && *json.cullDisabled) cfg.cullingLoadMode = Config::CullingLoadMode::Disabled;
+  if (json.cullingMode) cfg.cullingLoadMode = ParseCullingLoadMode(*json.cullingMode, cfg.cullingLoadMode);
+  cfg.flags.cullDisabled = cfg.cullingLoadMode == Config::CullingLoadMode::Disabled;
   if (json.benchmarkOutputPath) cfg.benchmarkOutputPath = *json.benchmarkOutputPath;
   if (json.offscreen) cfg.flags.offscreen = *json.offscreen;
   if (json.offscreenDebug) cfg.flags.offscreenDebug = *json.offscreenDebug;
@@ -171,7 +191,9 @@ void ApplyConfigJson(const RuntimeConfigJson& json, Config& cfg) {
     if (devTools.dumpMatrices) cfg.flags.dumpMatrices = *devTools.dumpMatrices;
     if (devTools.dumpMatricesFrames) cfg.dumpMatricesFrames = *devTools.dumpMatricesFrames;
     if (devTools.benchmark) cfg.flags.benchmark = *devTools.benchmark;
-    if (devTools.cullDisabled) cfg.flags.cullDisabled = *devTools.cullDisabled;
+    if (devTools.cullDisabled && *devTools.cullDisabled) cfg.cullingLoadMode = Config::CullingLoadMode::Disabled;
+    if (devTools.cullingMode) cfg.cullingLoadMode = ParseCullingLoadMode(*devTools.cullingMode, cfg.cullingLoadMode);
+    cfg.flags.cullDisabled = cfg.cullingLoadMode == Config::CullingLoadMode::Disabled;
     if (devTools.benchmarkOutputPath) cfg.benchmarkOutputPath = *devTools.benchmarkOutputPath;
     if (devTools.offscreen) cfg.flags.offscreen = *devTools.offscreen;
     if (devTools.offscreenDebug) cfg.flags.offscreenDebug = *devTools.offscreenDebug;
@@ -296,7 +318,12 @@ void ApplyCommandLine(int argc, char** argv, Config& cfg) {
       cfg.benchmarkOutputPath = argv[++i];
     }
     else if (arg == "--cullDisabled") {
+      cfg.cullingLoadMode = Config::CullingLoadMode::Disabled;
       cfg.flags.cullDisabled = true;
+    }
+    else if ((arg == "--culling" || arg == "--cullingMode") && i + 1 < argc) {
+      cfg.cullingLoadMode = ParseCullingLoadMode(argv[++i], cfg.cullingLoadMode);
+      cfg.flags.cullDisabled = cfg.cullingLoadMode == Config::CullingLoadMode::Disabled;
     }
     else if (arg == "--offscreen") {
       cfg.flags.offscreen = true;
@@ -342,7 +369,8 @@ void PrintHelp() {
     << "  --dumpMatrices <frames>            Write matrix_dump.csv for N frames\n"
     << "  --benchmark                        Run DayScene tour, write benchmark JSON, then exit\n"
     << "  --benchmarkOutput <path>            Benchmark JSON output path\n"
-    << "  --cullDisabled                      Disable frustum culling at startup\n"
+    << "  --culling <full|lazy|disabled>      Culling metadata load policy\n"
+    << "  --cullDisabled                      Legacy alias for --culling disabled\n"
     << "  --offscreen                         Render the default target to rotating offscreen RTs instead of presenting\n"
     << "  --offscreenDebug                    With --offscreen, dump the offscreen color RT roughly once per second\n"
     << "  --glOffscreenFlushMode <frame|wait|none>  GL offscreen submission pacing mode\n"

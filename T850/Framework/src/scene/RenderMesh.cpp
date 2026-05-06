@@ -158,6 +158,48 @@ namespace t850 {
       return false;
     }
 
+    uint64_t HashPreprocessValue(uint64_t hash, uint64_t value) {
+      for (int i = 0; i < 8; ++i) {
+        hash ^= static_cast<uint8_t>((value >> (i * 8)) & 0xFFu);
+        hash *= 0x100000001b3ull;
+      }
+      return hash;
+    }
+
+    uint64_t BuildPreprocessTopologyHash(const XDataBase* xFile,
+                                         const std::vector<RenderMesh::MeshInfo>& meshInfos,
+                                         uint64_t vertexAttribMask,
+                                         uint32_t vertexStride,
+                                         uint32_t vertexCount,
+                                         uint32_t indexCount) {
+      uint64_t hash = 0xcbf29ce484222325ull;
+      hash = HashPreprocessValue(hash, vertexAttribMask);
+      hash = HashPreprocessValue(hash, vertexStride);
+      hash = HashPreprocessValue(hash, vertexCount);
+      hash = HashPreprocessValue(hash, indexCount);
+
+      const xMeshContainer* meshContainer = xFile->XMeshDataBase[0];
+      std::size_t submeshCount = 0;
+      for (const RenderMesh::MeshInfo& meshInfo : meshInfos)
+        submeshCount += meshInfo.SubSets.size();
+      hash = HashPreprocessValue(hash, static_cast<uint64_t>(submeshCount));
+
+      for (std::size_t i = 0; i < xFile->MeshInfo.size() && i < meshInfos.size(); ++i) {
+        const xMeshGeometry& sourceGeometry = meshContainer->Geometry[i];
+        const xFinalGeometry& finalGeometry = xFile->MeshInfo[i];
+        const RenderMesh::MeshInfo& meshInfo = meshInfos[i];
+        for (std::size_t j = 0; j < meshInfo.SubSets.size() && j < finalGeometry.Subsets.size(); ++j) {
+          const xSubsetInfo& sourceSubset = finalGeometry.Subsets[j];
+          const RenderMesh::SubSetInfo& renderSubset = meshInfo.SubSets[j];
+          hash = HashPreprocessValue(hash, sourceSubset.NumVertex);
+          hash = HashPreprocessValue(hash, sourceSubset.NumTris);
+          hash = HashPreprocessValue(hash, sourceGeometry.Indices32Bit ? 1u : 0u);
+          hash = HashPreprocessValue(hash, renderSubset.key.bits & ShaderKey::VERTEX_ATTRIB_MASK);
+        }
+      }
+      return hash;
+    }
+
     void ApplyCachedCullingMetadata(std::vector<RenderMesh::MeshInfo>& meshInfos,
                                     MeshAsset* asset,
                                     const MeshPreprocessCacheData& cache) {
@@ -234,11 +276,28 @@ namespace t850 {
         }
       }
 
-      return flatSubmesh == cache.submeshes.size()
+      const bool topologyMatches = flatSubmesh == cache.submeshes.size()
         && cache.vertexCount == static_cast<uint32_t>(totalVerts)
         && cache.indexCount == static_cast<uint32_t>(totalIndices)
         && cache.vertexStride == maxVertexStride
         && cache.vertexAttribMask == vertexAttribMask;
+      if (!topologyMatches)
+        return false;
+
+      const uint64_t currentTopologyHash = BuildPreprocessTopologyHash(xFile,
+                                                                       meshInfos,
+                                                                       vertexAttribMask,
+                                                                       maxVertexStride,
+                                                                       static_cast<uint32_t>(totalVerts),
+                                                                       static_cast<uint32_t>(totalIndices));
+      if (cache.topologyHash != 0 && cache.topologyHash != currentTopologyHash) {
+        T8_LOG_INFO("[MeshAssetCache] Mesh preprocess cache topology hash mismatch for '%s' (cache=0x%016llX current=0x%016llX)",
+                    xFile->m_name.c_str(),
+                    static_cast<unsigned long long>(cache.topologyHash),
+                    static_cast<unsigned long long>(currentTopologyHash));
+        return false;
+      }
+      return true;
     }
 
     void LogLoadedMeshDetails(const XDataBase* xFile, const std::vector<RenderMesh::MeshInfo>& meshInfos) {

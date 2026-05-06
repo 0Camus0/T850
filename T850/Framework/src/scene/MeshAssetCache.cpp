@@ -16,8 +16,8 @@ namespace t850 {
 
   namespace {
     constexpr std::array<char, 8> kMeshPreprocessCacheMagic = { 'T', '8', 'M', 'C', 'A', 'C', 'H', 'E' };
-    constexpr uint32_t kMeshPreprocessCacheVersion = 1;
-    constexpr uint32_t kMeshPreprocessCacheHeaderSize = 100;
+    constexpr uint32_t kMeshPreprocessCacheVersion = 2;
+    constexpr uint32_t kMeshPreprocessCacheHeaderSize = 108;
     constexpr uint32_t kMaxCachedSubmeshes = 1000000;
     constexpr uint32_t kMaxCachedClusters = 10000000;
 
@@ -46,6 +46,34 @@ namespace t850 {
         hash *= 0x100000001b3ull;
       }
       return hash;
+    }
+
+    uint64_t BuildPreprocessTopologyHash(uint64_t vertexAttribMask,
+                                         uint32_t vertexStride,
+                                         uint32_t vertexCount,
+                                         uint32_t indexCount,
+                                         const std::vector<Submesh>& submeshes) {
+      uint64_t hash = 0xcbf29ce484222325ull;
+      hash = HashValue(hash, vertexAttribMask);
+      hash = HashValue(hash, vertexStride);
+      hash = HashValue(hash, vertexCount);
+      hash = HashValue(hash, indexCount);
+      hash = HashValue(hash, static_cast<uint64_t>(submeshes.size()));
+      for (const Submesh& submesh : submeshes) {
+        hash = HashValue(hash, submesh.vertexCount);
+        hash = HashValue(hash, submesh.triangleCount);
+        hash = HashValue(hash, submesh.ib32Bit ? 1u : 0u);
+        hash = HashValue(hash, submesh.vertexAttribKey.bits & ShaderKey::VERTEX_ATTRIB_MASK);
+      }
+      return hash;
+    }
+
+    uint64_t BuildPreprocessTopologyHash(const MeshAsset& asset) {
+      return BuildPreprocessTopologyHash(asset.vertexAttribMask,
+                                         asset.vertexStride,
+                                         asset.vertexCount,
+                                         asset.indexCount,
+                                         asset.submeshes);
     }
 
     bool SourceSignature(const std::string& sourcePath, uint64_t& outSize, int64_t& outWriteTicks) {
@@ -342,6 +370,7 @@ namespace t850 {
         && ReadPod(file, cachedFlags)
         && ReadPod(file, reserved)
         && ReadPod(file, outData.vertexAttribMask)
+        && ReadPod(file, outData.topologyHash)
         && ReadPod(file, outData.vertexStride)
         && ReadPod(file, outData.vertexCount)
         && ReadPod(file, outData.indexCount)
@@ -435,6 +464,7 @@ namespace t850 {
       const uint32_t reserved = 0;
       const uint32_t submeshCount = static_cast<uint32_t>(asset.submeshes.size());
       const uint32_t clusterCount = static_cast<uint32_t>(asset.clusters.size());
+      const uint64_t topologyHash = BuildPreprocessTopologyHash(asset);
 
       file.write(kMeshPreprocessCacheMagic.data(), kMeshPreprocessCacheMagic.size());
       WritePod(file, version);
@@ -446,6 +476,7 @@ namespace t850 {
       WritePod(file, settings.flags);
       WritePod(file, reserved);
       WritePod(file, asset.vertexAttribMask);
+      WritePod(file, topologyHash);
       WritePod(file, asset.vertexStride);
       WritePod(file, asset.vertexCount);
       WritePod(file, asset.indexCount);

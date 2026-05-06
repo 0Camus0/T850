@@ -34,6 +34,7 @@ namespace t850 {
 
   struct MeshPreprocessCacheData {
     uint64_t vertexAttribMask = 0;
+    uint64_t topologyHash = 0;
     uint32_t vertexStride = 0;
     uint32_t vertexCount = 0;
     uint32_t indexCount = 0;

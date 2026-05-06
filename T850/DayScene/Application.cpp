@@ -20,6 +20,7 @@
 #include <debug/Profiler.h>
 #include <debug/RenderTrace.h>
 #include <core/Config.h>
+#include <core/EngineContext.h>
 #include <imgui/DevGuiContext.h>
 #include <imgui_impl_vulkan.h>
 
@@ -432,8 +433,10 @@ void App::InitVars() {
 
   m_scenes.emplace_back(std::make_unique<SandboxScene>());
   m_scenes.emplace_back(std::make_unique<DayScene>());
+  t850::EngineContext& engineContext = t850::GetEngineContext();
   for (auto &it : m_scenes) {
     it->pFramework = pFramework;
+    it->SetEngineContext(&engineContext);
     //it->InitVars();
   }
   int sceneIdx = (g_config.startScene >= 0 && g_config.startScene < (int)m_scenes.size()) ? g_config.startScene : 0;
@@ -470,6 +473,7 @@ void App::LoadScene(int id) {
   }
 
   m_actualScene = m_scenes[id].get();
+  m_actualScene->SetEngineContext(&t850::GetEngineContext());
   m_actualScene->OnLoadScene();
   m_devLayer.SetActiveScene(m_actualScene);
   m_devLayer.RebuildGUIForScene();

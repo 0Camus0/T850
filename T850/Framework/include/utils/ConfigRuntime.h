@@ -99,6 +99,7 @@ const char* CullingLoadModeTag(Config::CullingLoadMode mode);
 
 void ApplyConfigJson(const RuntimeConfigJson& json, Config& cfg);
 bool LoadRuntimeConfig(const std::filesystem::path& path, Config& cfg);
+bool ValidateConfig(Config& cfg);
 std::optional<std::filesystem::path> FindConfigArgument(int argc, char** argv);
 bool HasHelpArgument(int argc, char** argv);
 void ApplyCommandLine(int argc, char** argv, Config& cfg);

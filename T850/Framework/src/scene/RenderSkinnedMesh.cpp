@@ -13,6 +13,7 @@
 
 #include <video/BaseDriver.h>
 #include <scene/RenderGraph.h>
+#include <scene/RenderQueue.h>
 #include <scene/RenderSkinnedMesh.h>
 #include <utils/Log.h>
 #include <core/Core.h>
@@ -641,6 +642,10 @@ namespace t850 {
     m_totalSubsets = m_drawnSubsets = m_culledMeshes = 0;
 
     uint8_t currentPass = gKey.getPass();
+    MeshDrawStateTracker& tracker = MeshDrawStateTracker::Get();
+    const bool ownsScope = !tracker.InScope();
+    if (ownsScope) tracker.Begin();
+
     std::vector<std::size_t> geometryOrder(Info.size());
     for (std::size_t i = 0; i < Info.size(); i++) geometryOrder[i] = i;
     if (currentPass == PassType::FORWARD) {
@@ -865,16 +870,20 @@ namespace t850 {
         }
 
         s->Set(*T8DeviceContext);
+        tracker.OnShaderChanged(s);
         if (g_pBaseDriver->UsesGLSL()) {
-          it_MeshInfo->CB->UpdateFromBuffer(*T8DeviceContext, &baseCB.WVP[0]);
-          it_MeshInfo->CB->Set(*T8DeviceContext);
+          tracker.UpdateAndBindConstantBuffer(*T8DeviceContext, it_MeshInfo->CB, 0,
+                                              &baseCB, sizeof(RenderMesh::CBuffer));
         } else {
-          it_MeshInfo->FrameCBGPU->UpdateFromBuffer(*T8DeviceContext, &it_MeshInfo->FrameCB);
-          it_MeshInfo->InstanceCBGPU->UpdateFromBuffer(*T8DeviceContext, &it_MeshInfo->InstanceCB);
-          it_MeshInfo->MaterialCBGPU->UpdateFromBuffer(*T8DeviceContext, &sub_info->MaterialCB);
-          it_MeshInfo->FrameCBGPU->Set(*T8DeviceContext, 0);
-          it_MeshInfo->InstanceCBGPU->Set(*T8DeviceContext, 1);
-          it_MeshInfo->MaterialCBGPU->Set(*T8DeviceContext, 2);
+          tracker.UpdateAndBindConstantBuffer(*T8DeviceContext, it_MeshInfo->FrameCBGPU, 0,
+                                              &it_MeshInfo->FrameCB,
+                                              sizeof(RenderMesh::MeshFrameCBuffer));
+          tracker.UpdateAndBindConstantBuffer(*T8DeviceContext, it_MeshInfo->InstanceCBGPU, 1,
+                                              &it_MeshInfo->InstanceCB,
+                                              sizeof(RenderMesh::MeshInstanceCBuffer));
+          tracker.UpdateAndBindConstantBuffer(*T8DeviceContext, it_MeshInfo->MaterialCBGPU, 2,
+                                              &sub_info->MaterialCB,
+                                              sizeof(RenderMesh::MeshMaterialCBuffer));
         }
 
         // Bind bone texture to a slot that cannot alias mesh pixel textures.
@@ -994,6 +1003,8 @@ namespace t850 {
         m_drawnSubsets++;
       }
     }
+
+    if (ownsScope) tracker.End();
   }
 
   void RenderSkinnedMesh::Destroy() {

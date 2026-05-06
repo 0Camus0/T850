@@ -39,8 +39,9 @@ tasks.register('compileT850AndroidShaders') {
     outputs.dir(shaderOutputDir)
     doLast {
         def vulkanSdk = System.getenv('VULKAN_SDK')
-        def exe = org.gradle.internal.os.OperatingSystem.current().isWindows() ? 'glslangValidator.exe' : 'glslangValidator'
-        def validator = vulkanSdk ? new File(new File(vulkanSdk, org.gradle.internal.os.OperatingSystem.current().isWindows() ? 'Bin' : 'bin'), exe).absolutePath : exe
+        def isWindowsHost = System.getProperty('os.name').toLowerCase().contains('windows')
+        def exe = isWindowsHost ? 'glslangValidator.exe' : 'glslangValidator'
+        def validator = vulkanSdk ? new File(new File(vulkanSdk, isWindowsHost ? 'Bin' : 'bin'), exe).absolutePath : exe
         shaderOutputDir.mkdirs()
         fileTree(shaderSourceDir).matching { include '**/*.hlsl' }.each { shader ->
             def name = shader.name

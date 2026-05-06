@@ -989,18 +989,30 @@ namespace t850 {
   }
 
   void RenderSkinnedMesh::Destroy() {
+    if (m_boneTexture) { m_boneTexture->release(); m_boneTexture = nullptr; }
+    m_boneTexData.clear();
+    m_boneTexWidth = 0;
+    m_snapshotBoneMatrices.clear();
+    m_snapshotPoseActive = false;
+
     m_lineRenderer.Destroy();
     for (auto& wg : m_wireGeo) {
       if (wg.IB) { wg.IB->release(); wg.IB = nullptr; }
     }
     m_wireGeo.clear();
     m_wireShader = nullptr;
+    if (m_skelCB) { m_skelCB->release(); m_skelCB = nullptr; }
     if (m_skelVB) { m_skelVB->release(); m_skelVB = nullptr; }
     if (m_skelIB) { m_skelIB->release(); m_skelIB = nullptr; }
+    m_skelShader = nullptr;
+    m_skelIndexCount = 0;
     m_skelPositions.clear();
+    m_wireDepthTex = nullptr;
 
     RenderMesh::Destroy();
     m_skinnedCBuffers.clear();
+    m_skinnedQTBuffers.clear();
+    m_hasSkin = false;
   }
 
 } // namespace t850

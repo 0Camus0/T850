@@ -19,7 +19,9 @@
 #include <utils/ShaderDiskCache.h>
 #include <utils/SPIRVReflection.h>
 #include <debug/RenderTrace.h>
+#ifdef OS_ANDROID
 #include <utils/AndroidAssets.h>
+#endif
 
 namespace t850 {
 

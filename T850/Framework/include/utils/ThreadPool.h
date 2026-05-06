@@ -19,7 +19,8 @@
  *   - Submit(), ParallelFor(), and ParallelForHeavy() are safe to call
  *     from any non-worker thread.
  *   - ParallelFor(), ParallelForHeavy(), and WaitAll() must NOT be
- *     called from a worker thread (will deadlock on a fixed-size pool).
+ *     called from a worker thread. The pool detects this contract
+ *     violation and avoids queueing nested blocking work.
  *
  * The pool is destroyed (joined) when it goes out of scope.
  *********************************************************/
@@ -72,6 +73,7 @@ public:
   ThreadPool& operator=(const ThreadPool&) = delete;
 
   unsigned int NumWorkers() const { return static_cast<unsigned int>(m_workers.size()); }
+  bool IsWorkerThread() const;
 
   // Submit a callable, returns a future for the result.
   template<typename F, typename... Args>
@@ -92,6 +94,7 @@ public:
 
   // Block until all submitted tasks have finished executing.
   void WaitAll() {
+    if (!CanBlockFromCurrentThread("WaitAll")) return;
     std::unique_lock<std::mutex> lock(m_mutex);
     m_cvDone.wait(lock, [this]() {
       return m_tasks.empty() && m_inFlight == 0;
@@ -117,6 +120,11 @@ private:
   template<typename Func>
   void ParallelForImpl(int begin, int end, Func&& func, bool forceParallel) {
     if (begin >= end) return;
+    if (!CanBlockFromCurrentThread(forceParallel ? "ParallelForHeavy" : "ParallelFor")) {
+      for (int i = begin; i < end; i++) func(i);
+      return;
+    }
+
     int total = end - begin;
     int numWorkers = static_cast<int>(m_workers.size());
 
@@ -170,12 +178,18 @@ private:
   }
 
   void WorkerLoop() {
+    ThreadPool* previousPool = s_currentWorkerPool;
+    s_currentWorkerPool = this;
+
     for (;;) {
       std::function<void()> task;
       {
         std::unique_lock<std::mutex> lock(m_mutex);
         m_cv.wait(lock, [this]() { return m_stop || !m_tasks.empty(); });
-        if (m_stop && m_tasks.empty()) return;
+        if (m_stop && m_tasks.empty()) {
+          s_currentWorkerPool = previousPool;
+          return;
+        }
         task = std::move(m_tasks.front());
         m_tasks.pop();
       }
@@ -188,6 +202,8 @@ private:
     }
   }
 
+  bool CanBlockFromCurrentThread(const char* operation) const;
+
   std::vector<std::thread> m_workers;
   std::queue<std::function<void()>> m_tasks;
   std::mutex m_mutex;
@@ -195,6 +211,8 @@ private:
   std::condition_variable m_cvDone;  // wakes WaitAll()
   bool m_stop;
   int m_inFlight;                    // queued + running tasks
+
+  static thread_local ThreadPool* s_currentWorkerPool;
 };
 
 // ── Global engine thread pool ──────────────────────────────────────

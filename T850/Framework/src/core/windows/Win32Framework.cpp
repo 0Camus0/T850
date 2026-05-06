@@ -12,6 +12,7 @@
 *********************************************************/
 
 #include <core/windows/Win32Framework.h>
+#include <core/EngineContext.h>
 
 #include <video/gl/GLDriver.h>
 #if defined(OS_WINDOWS)
@@ -47,7 +48,10 @@ namespace t850 {
     pBaseApp->DestroyAssets();
     pVideoDriver->DestroyDriver();
     delete pVideoDriver;
+    pVideoDriver = nullptr;
+    g_pBaseDriver = nullptr;
     ShutdownGlobalThreadPool();
+    ClearEngineContext();
     if (m_glContext) {
       SDL_GL_DestroyContext(m_glContext);
       m_glContext = nullptr;
@@ -173,6 +177,9 @@ namespace t850 {
       pBaseApp->DestroyAssets();
       pVideoDriver->DestroyDriver();
       delete pVideoDriver;
+      pVideoDriver = nullptr;
+      g_pBaseDriver = nullptr;
+      ClearEngineContext();
     }
 
     // Destroy previous SDL window/context if changing API
@@ -292,6 +299,7 @@ namespace t850 {
     g_pBaseDriver = pVideoDriver;
     pVideoDriver->SetWindow(m_pWindow);
     pVideoDriver->InitDriver();
+    RefreshEngineContextFromGlobals();
     pBaseApp->CreateAssets();
     // For D3D12: record where permanent descriptors end so per-frame dynamic CBVs start after them
     pVideoDriver->BuildPipelineObjects();

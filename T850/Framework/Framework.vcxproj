@@ -31,6 +31,7 @@
     <ClInclude Include="Config.h" />
     <ClInclude Include="include\core\Core.h" />
     <ClInclude Include="include\core\DevLayer.h" />
+    <ClInclude Include="include\core\EngineContext.h" />
     <ClInclude Include="include\core\Config.h" />
     <ClInclude Include="include\core\windows\Win32Framework.h" />
     <ClInclude Include="include\scene\LensFlare.h" />
@@ -155,6 +156,7 @@
     <ClCompile Include="src\core\Core.cpp" />
     <ClCompile Include="src\core\DevLayer.cpp" />
     <ClCompile Include="src\core\Config.cpp" />
+    <ClCompile Include="src\core\EngineContext.cpp" />
     <ClCompile Include="src\core\windows\Win32Framework.cpp" />
     <ClCompile Include="src\scene\LensFlare.cpp" />
     <ClCompile Include="src\scene\RenderMesh.cpp" />

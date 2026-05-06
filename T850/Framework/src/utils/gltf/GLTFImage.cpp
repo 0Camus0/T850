@@ -61,6 +61,7 @@ std::string Stem(const std::string& p) {
 // Look up an existing texture by filepath; returns its slot or -1.
 int FindTextureSlot(const std::string& filepath) {
   auto* drv = g_pBaseDriver;
+  if (!drv) return -1;
   for (std::size_t i = 0; i < drv->Textures.size(); ++i) {
     auto* t = drv->Textures[i];
     if (t && t->filepath == filepath) return static_cast<int>(i);
@@ -75,6 +76,7 @@ int FindTextureSlot(const std::string& filepath) {
 // matches the cached filepath.
 int RegisterEncoded(const unsigned char* bytes, std::size_t size,
                     const std::string& keyName) {
+  if (!g_pBaseDriver || !::t850::T8Device) return -1;
   std::string filepath = "Textures/" + keyName;
   int existing = FindTextureSlot(filepath);
   if (existing >= 0) return existing;
@@ -113,6 +115,46 @@ int RegisterEncoded(const unsigned char* bytes, std::size_t size,
   return static_cast<int>(drv->Textures.size() - 1);
 }
 
+int RegisterPlaceholder(const std::string& keyName, const char* reason) {
+  if (!g_pBaseDriver || !::t850::T8Device || keyName.empty()) return -1;
+
+  std::string filepath = "Textures/" + keyName;
+  int existing = FindTextureSlot(filepath);
+  if (existing >= 0) return existing;
+
+  const unsigned char pixel[4] = { 255, 0, 255, 255 };
+  ::t850::Texture* t = ::t850::T8Device->CreateTextureFromMemory(pixel, 1, 1, 4, keyName);
+  if (!t) return -1;
+  t->filepath = filepath;
+  std::strncpy(t->optname, keyName.c_str(), sizeof(t->optname) - 1);
+  t->optname[sizeof(t->optname) - 1] = '\0';
+
+  auto* drv = g_pBaseDriver;
+  for (std::size_t i = 0; i < drv->Textures.size(); ++i) {
+    if (drv->Textures[i] == nullptr) {
+      drv->Textures[i] = t;
+      T8_TRACE_REGISTER_TEXTURE(t, "tex2d");
+      T8_LOG_INFO("[glTF] image fallback '%s': %s", keyName.c_str(), reason ? reason : "decode failed");
+      return static_cast<int>(i);
+    }
+  }
+  drv->Textures.push_back(t);
+  T8_TRACE_REGISTER_TEXTURE(t, "tex2d");
+  T8_LOG_INFO("[glTF] image fallback '%s': %s", keyName.c_str(), reason ? reason : "decode failed");
+  return static_cast<int>(drv->Textures.size() - 1);
+}
+
+bool ResolvePlaceholder(const std::string& keyName,
+                        const char* reason,
+                        std::string& outName,
+                        int& outSlot) {
+  int slot = RegisterPlaceholder(keyName, reason);
+  if (slot < 0) return false;
+  outName = keyName;
+  outSlot = slot;
+  return true;
+}
+
 } // namespace
 
 bool ResolveImage(const Document& doc, int imageIndex,
@@ -144,24 +186,24 @@ bool ResolveImage(const Document& doc, int imageIndex,
     std::ifstream f(fullPath, std::ios::binary | std::ios::ate);
     if (!f.is_open()) {
       T8_LOG_ERROR("[glTF] image %d: cannot open '%s'", imageIndex, fullPath.c_str());
-      return false;
+      return ResolvePlaceholder(*img.uri, "external image missing", outName, outSlot);
     }
     std::streamsize sz = f.tellg();
     if (sz <= 0) {
       T8_LOG_ERROR("[glTF] image %d: empty file '%s'", imageIndex, fullPath.c_str());
-      return false;
+      return ResolvePlaceholder(*img.uri, "external image empty", outName, outSlot);
     }
     f.seekg(0, std::ios::beg);
     std::vector<unsigned char> bytes(static_cast<std::size_t>(sz));
     if (!f.read(reinterpret_cast<char*>(bytes.data()), sz)) {
       T8_LOG_ERROR("[glTF] image %d: short read on '%s'", imageIndex, fullPath.c_str());
-      return false;
+      return ResolvePlaceholder(*img.uri, "external image short read", outName, outSlot);
     }
     // Cache key: keep the original URI so multiple primitives that
     // share the same texture hit the same driver slot.
     std::string keyName = *img.uri;
     int slot = RegisterEncoded(bytes.data(), bytes.size(), keyName);
-    if (slot < 0) return false;
+    if (slot < 0) return ResolvePlaceholder(keyName, "external image decode failed", outName, outSlot);
     outName = keyName;
     outSlot = slot;
     return true;
@@ -178,14 +220,16 @@ bool ResolveImage(const Document& doc, int imageIndex,
   // Source A: data URI.
   if (img.uri && img.uri->compare(0, 5, "data:") == 0) {
     std::vector<unsigned char> decoded;
-    if (!Base64Decode(img.uri->c_str() + img.uri->find(',') + 1,
-                      img.uri->size() - img.uri->find(',') - 1,
+    const std::size_t comma = img.uri->find(',');
+    if (comma == std::string::npos
+        || !Base64Decode(img.uri->c_str() + comma + 1,
+                      img.uri->size() - comma - 1,
                       decoded)) {
       T8_LOG_ERROR("[glTF] image %d: bad data URI", imageIndex);
-      return false;
+      return ResolvePlaceholder(baseKey, "bad image data URI", outName, outSlot);
     }
     int slot = RegisterEncoded(decoded.data(), decoded.size(), baseKey);
-    if (slot < 0) return false;
+    if (slot < 0) return ResolvePlaceholder(baseKey, "data URI image decode failed", outName, outSlot);
     outName = baseKey;
     outSlot = slot;
     return true;
@@ -196,28 +240,28 @@ bool ResolveImage(const Document& doc, int imageIndex,
     int bvIdx = *img.bufferView;
     if (bvIdx < 0 || bvIdx >= static_cast<int>(doc.bufferViews.size())) {
       T8_LOG_ERROR("[glTF] image %d: bufferView %d OOR", imageIndex, bvIdx);
-      return false;
+      return ResolvePlaceholder(baseKey, "image bufferView OOR", outName, outSlot);
     }
     const BufferView& bv = doc.bufferViews[bvIdx];
     if (bv.buffer < 0 || bv.buffer >= static_cast<int>(doc._bufferData.size())) {
       T8_LOG_ERROR("[glTF] image %d: buffer %d OOR", imageIndex, bv.buffer);
-      return false;
+      return ResolvePlaceholder(baseKey, "image buffer OOR", outName, outSlot);
     }
     const auto& buf = doc._bufferData[bv.buffer];
     if (bv.byteOffset + bv.byteLength > buf.size()) {
       T8_LOG_ERROR("[glTF] image %d: bufferView OOR", imageIndex);
-      return false;
+      return ResolvePlaceholder(baseKey, "image bufferView range OOR", outName, outSlot);
     }
     int slot = RegisterEncoded(buf.data() + bv.byteOffset,
                                bv.byteLength, baseKey);
-    if (slot < 0) return false;
+    if (slot < 0) return ResolvePlaceholder(baseKey, "bufferView image decode failed", outName, outSlot);
     outName = baseKey;
     outSlot = slot;
     return true;
   }
 
   T8_LOG_ERROR("[glTF] image %d has neither uri nor bufferView", imageIndex);
-  return false;
+  return ResolvePlaceholder(baseKey, "image has neither uri nor bufferView", outName, outSlot);
 }
 
 // ── Batch-parallel image resolution ────────────────────────────────
@@ -237,6 +281,7 @@ void ResolveAllImages(const Document& doc,
     unsigned char* pixels = nullptr;     // decoded RGBA (needs stbi_image_free)
     int w = 0, h = 0;
     bool ok = false;
+    std::string error;
   };
   std::vector<DecodeResult> results(numImages);
   std::string sourceDir;
@@ -262,11 +307,15 @@ void ResolveAllImages(const Document& doc,
       std::ifstream f(fullPath, std::ios::binary | std::ios::ate);
       if (!f.is_open()) {
         T8_LOG_ERROR("[glTF] image %d: cannot open '%s'", i, fullPath.c_str());
+        r.keyName = *img.uri;
+        r.error = "external image missing";
         return;
       }
       std::streamsize sz = f.tellg();
       if (sz <= 0) {
         T8_LOG_ERROR("[glTF] image %d: empty file '%s'", i, fullPath.c_str());
+        r.keyName = *img.uri;
+        r.error = "external image empty";
         return;
       }
       f.seekg(0, std::ios::beg);
@@ -274,6 +323,8 @@ void ResolveAllImages(const Document& doc,
       if (!f.read(reinterpret_cast<char*>(r.rawBytes.data()), sz)) {
         r.rawBytes.clear();
         T8_LOG_ERROR("[glTF] image %d: short read on '%s'", i, fullPath.c_str());
+        r.keyName = *img.uri;
+        r.error = "external image short read";
         return;
       }
       r.keyName = *img.uri;
@@ -284,12 +335,17 @@ void ResolveAllImages(const Document& doc,
     if (img.uri && img.uri->compare(0, 5, "data:") == 0) {
       // Data URI — base64 decode
       std::vector<unsigned char> decoded;
-      if (Base64Decode(img.uri->c_str() + img.uri->find(',') + 1,
-                        img.uri->size() - img.uri->find(',') - 1,
+      const std::size_t comma = img.uri->find(',');
+      if (comma != std::string::npos
+          && Base64Decode(img.uri->c_str() + comma + 1,
+                        img.uri->size() - comma - 1,
                         decoded)) {
         r.keyName = baseKey;
         r.rawBytes = std::move(decoded);
         r.ok = true;
+      } else {
+        r.keyName = baseKey;
+        r.error = "bad image data URI";
       }
       return;
     }
@@ -306,10 +362,17 @@ void ResolveAllImages(const Document& doc,
             r.rawBytes.assign(buf.data() + bv.byteOffset,
                               buf.data() + bv.byteOffset + bv.byteLength);
             r.ok = true;
+            return;
           }
         }
       }
+      r.keyName = baseKey;
+      r.error = "image bufferView range invalid";
+      return;
     }
+
+    r.keyName = baseKey;
+    r.error = "image has neither uri nor bufferView";
   };
 
   // Phase 1: Gather encoded bytes (disk I/O + base64 decode + bufferView copy).
@@ -333,6 +396,7 @@ void ResolveAllImages(const Document& doc,
                                         &r.w, &r.h, &ch, 4);
       if (!r.pixels) {
         r.ok = false;
+        r.error = stbi_failure_reason() ? stbi_failure_reason() : "stbi decode failed";
       }
       // Free raw bytes now that we have decoded pixels
       r.rawBytes.clear();
@@ -352,9 +416,23 @@ void ResolveAllImages(const Document& doc,
     g_pBaseDriver->BeginResourceUploadBatch();
   for (int i = 0; i < numImages; i++) {
     DecodeResult& r = results[i];
-    if (!r.ok) continue;
+    if (!r.ok) {
+      int slot = RegisterPlaceholder(r.keyName, r.error.c_str());
+      if (slot >= 0) {
+        outNames[i] = r.keyName;
+        outSlots[i] = slot;
+      }
+      continue;
+    }
 
-    if (!r.pixels) continue;
+    if (!r.pixels) {
+      int slot = RegisterPlaceholder(r.keyName, "image decode produced no pixels");
+      if (slot >= 0) {
+        outNames[i] = r.keyName;
+        outSlots[i] = slot;
+      }
+      continue;
+    }
 
     std::string filepath = "Textures/" + r.keyName;
     int existing = FindTextureSlot(filepath);

@@ -34,6 +34,7 @@ namespace {
 constexpr uint32_t GLB_MAGIC      = 0x46546C67; // "glTF"
 constexpr uint32_t GLB_CHUNK_JSON = 0x4E4F534A; // "JSON"
 constexpr uint32_t GLB_CHUNK_BIN  = 0x004E4942; // "BIN\0"
+constexpr std::size_t kParallelBufferByteThreshold = 4ull * 1024ull * 1024ull;
 
 bool ReadFileBytes(const std::string& path, std::vector<unsigned char>& out) {
   std::ifstream f(path, std::ios::binary | std::ios::ate);
@@ -84,6 +85,8 @@ bool ResolveBuffers(Document& doc,
     std::string error;
   };
   std::vector<BufferResult> results(doc.buffers.size());
+  std::size_t uriBufferCount = 0;
+  std::size_t uriBufferBytes = 0;
 
   for (std::size_t i = 0; i < doc.buffers.size(); ++i) {
     const Buffer& b = doc.buffers[i];
@@ -95,6 +98,9 @@ bool ResolveBuffers(Document& doc,
       }
       doc._bufferData[i] = std::move(glbBin);
       results[i].ok = true;
+    } else {
+      ++uriBufferCount;
+      uriBufferBytes += b.byteLength;
     }
   }
 
@@ -121,11 +127,19 @@ bool ResolveBuffers(Document& doc,
     result.ok = true;
   };
 
-  if (g_threadPool && doc.buffers.size() > 1) {
-    T8_LOG_INFO("[glTF] Reading %zu buffers with %u global worker threads",
-                doc.buffers.size(), g_threadPool->NumWorkers());
+  const bool useParallelBufferLoad = g_threadPool
+    && g_threadPool->NumWorkers() > 1
+    && uriBufferCount > 1
+    && uriBufferBytes >= kParallelBufferByteThreshold;
+  if (useParallelBufferLoad) {
+    T8_LOG_INFO("[glTF] Reading %zu URI buffers (%zu declared bytes) with %u global worker threads",
+                uriBufferCount, uriBufferBytes, g_threadPool->NumWorkers());
     g_threadPool->ParallelFor(0, static_cast<int>(doc.buffers.size()), resolveBufferBytes);
   } else {
+    if (uriBufferCount > 1) {
+      T8_LOG_INFO("[glTF] Reading %zu URI buffers serially (%zu declared bytes)",
+                  uriBufferCount, uriBufferBytes);
+    }
     for (int i = 0; i < static_cast<int>(doc.buffers.size()); ++i) {
       resolveBufferBytes(i);
     }

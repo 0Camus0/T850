@@ -35,3 +35,8 @@
 *.pdb
 __pycache__/
 *.py[cod]
+
+# Android/Gradle local state
+T850/android/.gradle/
+T850/android/app/build/
+T850/android/build/

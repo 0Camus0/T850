@@ -70,6 +70,10 @@ namespace t850 {
     VertexPool* GetVertexPool(uint32_t poolId);
     IndexPool*  GetIndexPool(uint32_t poolId);
 
+    // Upload every dirty mesh pool explicitly after asset population.
+    // Returns the number of pools that were dirty at the start of the pass.
+    std::size_t UploadDirtyPools();
+
     // Diagnostics.
     std::size_t Size() const;
     void DumpToLog() const;

@@ -730,6 +730,10 @@ namespace t850 {
           }
         }
       }
+      if (!vbToBind) {
+        T8_LOG_ERROR("[SkinnedMesh] Skipped geometry %zu: no uploaded vertex buffer", i);
+        continue;
+      }
       vbToBind->Set(*T8DeviceContext, stride, offset);
 
       std::size_t numSubsets = it_MeshInfo->SubSets.size();
@@ -831,6 +835,10 @@ namespace t850 {
               ibToBind = gpu;
             }
           }
+        }
+        if (!ibToBind) {
+          T8_LOG_ERROR("[SkinnedMesh] Skipped subset %zu: no uploaded index buffer", k);
+          continue;
         }
         ibToBind->Set(*T8DeviceContext, 0,
                       sub_info->IB32Bit ? IndexBufferFormat::R32

@@ -20,6 +20,8 @@ namespace t850 {
     m_cpuStaging.resize(baseBytes + byteCount);
     if (data && byteCount) std::memcpy(m_cpuStaging.data() + baseBytes, data, byteCount);
     m_dirty = true;
+    m_dirtyAccessLogged = false;
+    ++m_stagingVersion;
     return baseBytes / m_vertexStride;
   }
 
@@ -31,6 +33,8 @@ namespace t850 {
     }
     if (m_cpuStaging.empty()) {
       m_dirty = false;
+      m_dirtyAccessLogged = false;
+      m_uploadedVersion = m_stagingVersion;
       return;
     }
     BufferDesc desc;
@@ -38,10 +42,22 @@ namespace t850 {
     desc.usage = BufferUsage::DEFAULT;
     m_gpuVB = (VertexBuffer*)T8Device->CreateBuffer(BufferType::VERTEX, desc, m_cpuStaging.data());
     m_dirty = false;
+    m_dirtyAccessLogged = false;
+    m_uploadedVersion = m_stagingVersion;
   }
 
   VertexBuffer* VertexPool::GetGPUBuffer() {
-    EnsureUploaded();
+    if (m_dirty) {
+      if (!m_dirtyAccessLogged) {
+        T8_LOG_ERROR("[MeshPool] VertexPool format=0x%016llX stride=%u accessed before UploadDirtyPools (stagingVersion=%llu uploadedVersion=%llu)",
+                     static_cast<unsigned long long>(m_formatHash),
+                     m_vertexStride,
+                     static_cast<unsigned long long>(m_stagingVersion),
+                     static_cast<unsigned long long>(m_uploadedVersion));
+        m_dirtyAccessLogged = true;
+      }
+      return nullptr;
+    }
     return m_gpuVB;
   }
 
@@ -59,6 +75,8 @@ namespace t850 {
     m_cpuStaging.resize(baseBytes + indexCount * stride);
     if (data && indexCount) std::memcpy(m_cpuStaging.data() + baseBytes, data, indexCount * stride);
     m_dirty = true;
+    m_dirtyAccessLogged = false;
+    ++m_stagingVersion;
     return baseBytes / stride;
   }
 
@@ -70,6 +88,8 @@ namespace t850 {
     }
     if (m_cpuStaging.empty()) {
       m_dirty = false;
+      m_dirtyAccessLogged = false;
+      m_uploadedVersion = m_stagingVersion;
       return;
     }
     BufferDesc desc;
@@ -77,10 +97,21 @@ namespace t850 {
     desc.usage = BufferUsage::DEFAULT;
     m_gpuIB = (IndexBuffer*)T8Device->CreateBuffer(BufferType::INDEX, desc, m_cpuStaging.data());
     m_dirty = false;
+    m_dirtyAccessLogged = false;
+    m_uploadedVersion = m_stagingVersion;
   }
 
   IndexBuffer* IndexPool::GetGPUBuffer() {
-    EnsureUploaded();
+    if (m_dirty) {
+      if (!m_dirtyAccessLogged) {
+        T8_LOG_ERROR("[MeshPool] IndexPool %s accessed before UploadDirtyPools (stagingVersion=%llu uploadedVersion=%llu)",
+                     m_ib32Bit ? "32-bit" : "16-bit",
+                     static_cast<unsigned long long>(m_stagingVersion),
+                     static_cast<unsigned long long>(m_uploadedVersion));
+        m_dirtyAccessLogged = true;
+      }
+      return nullptr;
+    }
     return m_gpuIB;
   }
 

@@ -9,7 +9,7 @@
 
 #include <Config.h>
 
-#if defined(OS_WINDOWS)
+#if defined(OS_WINDOWS) || defined(OS_ANDROID)
 
 // Include all per-class headers
 #include <video/vulkan/VulkanVertexBuffer.h>
@@ -23,7 +23,11 @@
 #include <video/vulkan/VulkanPipelineKey.h>
 #include <video/vulkan/VulkanUtils.h>
 
+#if defined(OS_WINDOWS)
 #define VK_USE_PLATFORM_WIN32_KHR
+#elif defined(OS_ANDROID)
+#define VK_USE_PLATFORM_ANDROID_KHR
+#endif
 #include <vulkan/vulkan.h>
 #include <vma/vk_mem_alloc.h>
 
@@ -175,7 +179,7 @@ namespace t850 {
     void CreateAllocator();
     void WaitForFence(uint32_t frameIndex);
 
-    HWND m_hwnd = nullptr;
+    void* m_nativeWindow = nullptr;
 
     // Core Vulkan objects
     VkInstance          m_instance = VK_NULL_HANDLE;

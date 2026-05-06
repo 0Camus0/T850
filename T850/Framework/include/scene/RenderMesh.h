@@ -30,7 +30,7 @@
 #include <video/gl/GLTexture.h>
 #endif
 
-#if defined(OS_WINDOWS)
+#if defined(OS_WINDOWS) || defined(OS_ANDROID)
 #include <video/d3d11/D3D11Texture.h>
 #include <D3Dcompiler.h>
 #endif

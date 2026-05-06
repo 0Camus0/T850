@@ -5,6 +5,7 @@
 #include <pch.h>
 
 #include <utils/ConfigRuntime.h>
+#include <utils/AndroidAssets.h>
 
 #include <algorithm>
 #include <cerrno>
@@ -37,6 +38,9 @@ std::string ToLower(std::string value) {
 }
 
 bool ReadTextFile(const std::filesystem::path& path, std::string& content) {
+#ifdef OS_ANDROID
+  if (ReadAndroidAssetText(path.string(), content)) return true;
+#endif
   std::ifstream file(path, std::ios::in | std::ios::binary);
   if (!file.is_open()) return false;
   std::ostringstream buffer;

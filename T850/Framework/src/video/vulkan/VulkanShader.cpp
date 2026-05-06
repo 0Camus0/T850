@@ -8,15 +8,18 @@
 #include <video/vulkan/VulkanDriver.h>
 #include <video/vulkan/VulkanUtils.h>
 
-#if defined(OS_WINDOWS)
+#if defined(OS_WINDOWS) || defined(OS_ANDROID)
 
+#if defined(OS_WINDOWS)
 #include <glslang/Public/ResourceLimits.h>
 #include <glslang/Public/ShaderLang.h>
 #include <glslang/SPIRV/GlslangToSpv.h>
+#endif
 #include <utils/Log.h>
 #include <utils/ShaderDiskCache.h>
 #include <utils/SPIRVReflection.h>
 #include <debug/RenderTrace.h>
+#include <utils/AndroidAssets.h>
 
 namespace t850 {
 
@@ -27,7 +30,9 @@ namespace t850 {
   //  Helpers (file-local)
   // ══════════════════════════════════════════════════════
 
+#if defined(OS_WINDOWS)
   static bool s_glslangInitialized = false;
+#endif
 
   static VkShaderModule CreateShaderModule(VkDevice device, const uint32_t* code, size_t codeSize) {
     VkShaderModuleCreateInfo ci = { VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO };
@@ -42,6 +47,7 @@ namespace t850 {
     return mod;
   }
 
+#if defined(OS_WINDOWS)
   static std::string GetVulkanShaderCacheDriverSignature(VkPhysicalDevice physicalDevice) {
     std::ostringstream sig;
     sig << "vulkan;shaderCompiler=glslang-hlsl-spv1.0;pipelineCache=1";
@@ -108,6 +114,34 @@ namespace t850 {
     spirv.assign(generated.begin(), generated.end());
     return true;
   }
+#else
+  static bool LoadPrecompiledSPIRV(const std::string& shaderName, std::vector<uint32_t>& spirv) {
+    if (shaderName.empty()) return false;
+    std::vector<std::string> candidates = {
+      shaderName + ".spv",
+      std::string("Shaders/spirv/") + shaderName + ".spv"
+    };
+    for (const std::string& path : candidates) {
+#ifdef OS_ANDROID
+      std::vector<unsigned char> bytes;
+      if (ReadAndroidAssetBytes(path, bytes) && (bytes.size() % 4) == 0) {
+        spirv.resize(bytes.size() / sizeof(uint32_t));
+        std::memcpy(spirv.data(), bytes.data(), bytes.size());
+        return true;
+      }
+#endif
+      std::ifstream file(path, std::ios::binary | std::ios::ate);
+      if (!file.is_open()) continue;
+      std::streamsize size = file.tellg();
+      if (size <= 0 || (size % 4) != 0) continue;
+      file.seekg(0, std::ios::beg);
+      spirv.resize(static_cast<size_t>(size) / sizeof(uint32_t));
+      if (file.read(reinterpret_cast<char*>(spirv.data()), size)) return true;
+    }
+    T8_LOG_ERROR("[Vulkan] Missing precompiled SPIR-V for %s", shaderName.c_str());
+    return false;
+  }
+#endif
 
   // ══════════════════════════════════════════════════════
   //  VulkanShader
@@ -117,15 +151,21 @@ namespace t850 {
                                       const std::string& vs_name, const std::string& fs_name) {
     auto* driver = GetVkDriver();
     VkDevice device = driver->GetDevice();
+#if defined(OS_WINDOWS)
     const std::string driverSignature = GetVulkanShaderCacheDriverSignature(driver->GetPhysicalDevice());
     const ShaderDiskCacheKey cacheKey = ShaderDiskCache::MakeKey("vulkan", driverSignature, key.bits, vs_name, fs_name, src_vs, src_fs);
+#endif
     cbvBinding = -1;
     std::fill(cbvBindings, cbvBindings + VulkanShader::kMaxCBufferSlots, -1);
     std::fill(srvBindings, srvBindings + VulkanShader::kMaxTextureSlots, -1);
     std::fill(srvIsCubemap, srvIsCubemap + VulkanShader::kMaxTextureSlots, false);
 
-    // Compile vertex shader (HLSL → SPIR-V)
     std::vector<uint32_t> vsSPIRV;
+#if defined(OS_ANDROID)
+    if (!LoadPrecompiledSPIRV(vs_name, vsSPIRV)) {
+      return false;
+    }
+#else
     if (LoadSpirvArtifact(cacheKey, "vs.spv", vsSPIRV)) {
       T8_LOG_DEBUG("[ShaderCache][Vulkan] VS SPIR-V hit %s", cacheKey.sha1.c_str());
     }
@@ -138,12 +178,17 @@ namespace t850 {
       ShaderDiskCache::StoreArtifact(cacheKey, "vs.spv", vsSPIRV.data(), vsSPIRV.size() * sizeof(uint32_t));
       ShaderDiskCache::WriteManifest(cacheKey, driverSignature);
     }
+#endif
 
     m_vertModule = CreateShaderModule(device, vsSPIRV.data(), vsSPIRV.size() * sizeof(uint32_t));
     if (!m_vertModule) return false;
 
-    // Compile fragment shader (HLSL → SPIR-V)
     std::vector<uint32_t> fsSPIRV;
+#if defined(OS_ANDROID)
+    if (!LoadPrecompiledSPIRV(fs_name, fsSPIRV)) {
+      return false;
+    }
+#else
     if (LoadSpirvArtifact(cacheKey, "fs.spv", fsSPIRV)) {
       T8_LOG_DEBUG("[ShaderCache][Vulkan] FS SPIR-V hit %s", cacheKey.sha1.c_str());
     }
@@ -155,6 +200,7 @@ namespace t850 {
       ShaderDiskCache::StoreArtifact(cacheKey, "fs.spv", fsSPIRV.data(), fsSPIRV.size() * sizeof(uint32_t));
       ShaderDiskCache::WriteManifest(cacheKey, driverSignature);
     }
+#endif
     m_fragModule = CreateShaderModule(device, fsSPIRV.data(), fsSPIRV.size() * sizeof(uint32_t));
     if (!m_fragModule) return false;
 

@@ -19,6 +19,7 @@
 #include <utils/gltf/GLTFAccessor.h>
 #include <utils/Log.h>
 #include <utils/ThreadPool.h>
+#include <utils/AndroidAssets.h>
 
 #include <cstdint>
 #include <cstring>
@@ -37,6 +38,9 @@ constexpr uint32_t GLB_CHUNK_BIN  = 0x004E4942; // "BIN\0"
 constexpr std::size_t kParallelBufferByteThreshold = 4ull * 1024ull * 1024ull;
 
 bool ReadFileBytes(const std::string& path, std::vector<unsigned char>& out) {
+#ifdef OS_ANDROID
+  if (ReadAndroidAssetBytes(path, out)) return true;
+#endif
   std::ifstream f(path, std::ios::binary | std::ios::ate);
   if (!f.is_open()) return false;
   std::streamsize sz = f.tellg();

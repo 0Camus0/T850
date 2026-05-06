@@ -1,0 +1,57 @@
+plugins { id 'com.android.application' }
+
+android {
+    namespace 'com.t850.engine'
+    compileSdk 35
+
+    defaultConfig {
+        applicationId 'com.t850.engine'
+        minSdk 26
+        targetSdk 35
+        versionCode 1
+        versionName '0.1-android-vulkan'
+        ndk { abiFilters 'arm64-v8a' }
+        externalNativeBuild {
+            cmake {
+                arguments '-DANDROID_STL=c++_static', '-DT850_ANDROID_NATIVE_ACTIVITY=ON'
+                cppFlags '-std=c++23 -fexceptions -frtti'
+            }
+        }
+    }
+
+    externalNativeBuild {
+        cmake { path '../../CMakeLists.txt' }
+    }
+
+    sourceSets {
+        main {
+            assets.srcDirs = ['../../Assets', 'src/main/assets']
+        }
+    }
+}
+
+
+def shaderSourceDir = file('../../Assets/Shaders')
+def shaderOutputDir = file('src/main/assets/Shaders/spirv')
+
+tasks.register('compileT850AndroidShaders') {
+    inputs.dir(shaderSourceDir)
+    outputs.dir(shaderOutputDir)
+    doLast {
+        def vulkanSdk = System.getenv('VULKAN_SDK')
+        def validator = vulkanSdk ? new File(vulkanSdk, 'Bin/glslangValidator.exe').absolutePath : 'glslangValidator'
+        shaderOutputDir.mkdirs()
+        fileTree(shaderSourceDir).matching { include '**/*.hlsl' }.each { shader ->
+            def name = shader.name
+            def stage = name.startsWith('VS_') ? 'vert' : (name.startsWith('FS_') ? 'frag' : null)
+            def entry = name.startsWith('VS_') ? 'VS' : (name.startsWith('FS_') ? 'FS' : null)
+            if (stage == null) return
+            exec {
+                commandLine validator, '-D', '-V', '-S', stage, '-e', entry,
+                    shader.absolutePath, '-o', new File(shaderOutputDir, name + '.spv').absolutePath
+            }
+        }
+    }
+}
+
+preBuild.dependsOn('compileT850AndroidShaders')

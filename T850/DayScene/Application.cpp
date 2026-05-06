@@ -12,17 +12,24 @@
 
 #include <Application.h>
 #include <video/BaseDriver.h>
+#ifndef OS_ANDROID
 #include <video/gl/GLTexture.h>
+#endif
 #include <utils/InputManager.h>
+#ifndef OS_ANDROID
 #include <SDL3/SDL.h>
+#endif
 #include <utils/Log.h>
 #include <utils/Utils.h>
 #include <debug/Profiler.h>
 #include <debug/RenderTrace.h>
 #include <core/Config.h>
 #include <core/EngineContext.h>
+#ifndef OS_ANDROID
 #include <imgui/DevGuiContext.h>
+
 #include <imgui_impl_vulkan.h>
+#endif
 
 #ifdef OS_WINDOWS
 #  include <video/d3d11/D3D11Texture.h>
@@ -52,6 +59,7 @@ namespace t850 {
   extern Device*       T8Device;
 }
 
+#ifndef OS_ANDROID
 namespace {
   struct DebugRTEntry {
     std::string key;
@@ -400,6 +408,7 @@ namespace {
     }
   }
 }
+#endif // !OS_ANDROID
 
 #ifdef T850_RENDER_TRACE
 namespace {
@@ -446,9 +455,11 @@ void App::InitVars() {
   m_actualScene = m_scenes[sceneIdx].get();
   m_actualScene->InitVars();
 
+#ifndef OS_ANDROID
   m_devLayer.Init(pFramework);
   m_devLayer.SetLegacyGuiEnabled(false);
   m_devLayer.SetActiveScene(m_actualScene);
+#endif
 
   Cam.InitPerspective(XVECTOR3(0.0f, 1.0f, 10.0f), Deg2Rad(46.8f), 1280.0f / 720.0f, 2.0f, 12000.0f);
   Cam.Speed = 10.0f;
@@ -475,8 +486,10 @@ void App::LoadScene(int id) {
   m_actualScene = m_scenes[id].get();
   m_actualScene->SetEngineContext(&t850::GetEngineContext());
   m_actualScene->OnLoadScene();
+#ifndef OS_ANDROID
   m_devLayer.SetActiveScene(m_actualScene);
   m_devLayer.RebuildGUIForScene();
+#endif
   FadeFX(0.5,false);
 }
 
@@ -515,6 +528,7 @@ void App::CreateAssets() {
   PrimitiveMgr.SetSceneProps(&SceneProp);
   Quads[0].CreateInstance(PrimitiveMgr.GetPrimitive(PrimitiveManager::QUAD), &VP);
 
+#ifndef OS_ANDROID
   m_imguiVisible = g_config.flags.guiOnStart;
   if (!g_config.flags.benchmark) {
     m_imguiReady = m_imgui.Init(pFramework, "imgui_runtime_layout.ini", true);
@@ -522,6 +536,7 @@ void App::CreateAssets() {
       T8_LOG_ERROR("[App] Runtime ImGui init failed");
     }
   }
+#endif
 
   FadeFX(0.5, false);
 
@@ -549,12 +564,14 @@ void App::DestroyAssets() {
      s_traceDriver = nullptr;
    }
 #endif
+#ifndef OS_ANDROID
    m_devLayer.Destroy();
    if (m_imguiReady) {
      ReleaseDebugTextureDescriptors(m_debugTextureDescriptors, m_debugOpaqueTextureDescriptors);
      m_imgui.Shutdown();
      m_imguiReady = false;
    }
+#endif
    m_textRender.Destroy();
    PrimitiveMgr.DestroyPrimitives();
    if (m_actualScene) {
@@ -577,8 +594,10 @@ void App::OnUpdate() {
      timeAccum = 0;
    }
 
+#ifndef OS_ANDROID
    m_devLayer.GetGUI().SetFPSText(m_fpsString, m_fpsCol);
    m_devLayer.Update(DtSecs);
+#endif
 
    OnInput();
    OnDraw();
@@ -597,7 +616,9 @@ void App::OnDraw() {
   pFramework->pVideoDriver->Clear();
   FirstFrame = false;
 
+#ifndef OS_ANDROID
   m_devLayer.Draw();
+#endif
   if (fading) {
     T8_LOG_TRACE("[Frame %d] Fade quad draw", frameCount);
     pFramework->pVideoDriver->SetBlendState(BaseDriver::ALPHA_BLEND);
@@ -614,7 +635,9 @@ void App::OnDraw() {
     pFramework->pVideoDriver->SetDepthStencilState(BaseDriver::DEPTH_DEFAULT);
   }
 
+#ifndef OS_ANDROID
   DrawRuntimeGui();
+#endif
 
   frameCount++;
 
@@ -652,11 +675,13 @@ void App::OnDraw() {
 void App::OnInput() {
 	if (FirstFrame)
 		return;
+#ifndef OS_ANDROID
   if (m_imguiReady && IManager.PressedOnceKey(T800K_g)) {
     m_imguiVisible = !m_imguiVisible;
   }
   m_devLayer.SetSceneInputBlocked(m_imguiVisible && m_imgui.WantsKeyboard());
   m_devLayer.ProcessInput(&IManager);
+#endif
 }
 
 void App::OnPause() {
@@ -672,9 +697,14 @@ void App::OnReset() {
 }
 
 bool App::IsModalActive() const {
+#ifdef OS_ANDROID
+  return false;
+#else
   return m_devLayer.IsLegacyPopupActive() || (m_imguiVisible && m_imgui.WantsKeyboard());
+#endif
 }
 
+#ifndef OS_ANDROID
 void App::DrawRuntimeGui() {
   if (!m_imguiReady) return;
 
@@ -705,3 +735,4 @@ void App::DrawRuntimeGui() {
 
   m_imgui.Render();
 }
+#endif // !OS_ANDROID

@@ -110,7 +110,7 @@ set "ANDROID_NDK_HOME=%ANDROID_SDK%\ndk\%NDK_VERSION%"
 set "VMA_INCLUDE=%ROOT%T850\Librerias\VulkanMemoryAllocator\include\vma"
 if not exist "%VMA_INCLUDE%\vk_mem_alloc.h" (
     echo [T850] Downloading Vulkan Memory Allocator header...
-    mkdir "%VMA_INCLUDE%" 2^>nul
+    mkdir "%VMA_INCLUDE%" 2>nul
     powershell -NoProfile -ExecutionPolicy Bypass -Command ^
       "$ErrorActionPreference='Stop'; Invoke-WebRequest -Uri 'https://raw.githubusercontent.com/GPUOpen-LibrariesAndSDKs/VulkanMemoryAllocator/v3.1.0/include/vk_mem_alloc.h' -OutFile '%VMA_INCLUDE%\vk_mem_alloc.h'"
     if errorlevel 1 (

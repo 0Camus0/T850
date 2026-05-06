@@ -129,7 +129,7 @@ namespace t850 {
         std::memcpy(spirv.data(), bytes.data(), bytes.size());
         return true;
       }
-#endif
+#else
       std::ifstream file(path, std::ios::binary | std::ios::ate);
       if (!file.is_open()) continue;
       std::streamsize size = file.tellg();
@@ -137,6 +137,7 @@ namespace t850 {
       file.seekg(0, std::ios::beg);
       spirv.resize(static_cast<size_t>(size) / sizeof(uint32_t));
       if (file.read(reinterpret_cast<char*>(spirv.data()), size)) return true;
+#endif
     }
     T8_LOG_ERROR("[Vulkan] Missing precompiled SPIR-V for %s", shaderName.c_str());
     return false;

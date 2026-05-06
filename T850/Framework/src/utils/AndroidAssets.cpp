@@ -34,12 +34,13 @@ bool ReadAndroidAssetBytes(const std::string& path, std::vector<unsigned char>& 
   const off_t length = AAsset_getLength(asset);
   out.resize(static_cast<size_t>(length));
   const int read = AAsset_read(asset, out.data(), static_cast<size_t>(length));
-  AAsset_close(asset);
-  if (read < 0 || read != length) {
+  const bool ok = read >= 0 && read == length;
+  if (!ok) {
     T8_LOG_ERROR("[AndroidAssets] Failed to read asset '%s'", assetPath.c_str());
     out.clear();
-    return false;
   }
+  AAsset_close(asset);
+  if (!ok) return false;
   return true;
 }
 

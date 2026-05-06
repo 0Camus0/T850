@@ -453,7 +453,7 @@ namespace t850 {
     void SetWireframeViewport(int w, int h) { m_wireViewW = w; m_wireViewH = h; }
 
     void GatherInfo();
-    int  LoadTex(std::string p, xF::xMaterial *mat, Texture** tex);
+    int  LoadTex(const std::string& p, Texture** tex, bool tiled);
 
     enum class FrustumResult {
       Outside = 0,

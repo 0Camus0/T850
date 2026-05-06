@@ -148,6 +148,16 @@ namespace t850 {
       meshInfo.bounds.Expand(bounds.max.x, bounds.max.y, bounds.max.z);
     }
 
+    bool IsMaterialTiled(const xMaterial* material) {
+      if (!material)
+        return false;
+      for (const xEffectDefault& effectDefault : material->EffectInstance.pDefaults) {
+        if (effectDefault.Type == xF::xEFFECTENUM::STDX_DWORDS && effectDefault.NameParam == "Tiled")
+          return effectDefault.CaseDWORD == 1;
+      }
+      return false;
+    }
+
     void ApplyCachedCullingMetadata(std::vector<RenderMesh::MeshInfo>& meshInfos,
                                     MeshAsset* asset,
                                     const MeshPreprocessCacheData& cache) {
@@ -417,11 +427,14 @@ namespace t850 {
       int NumFaceIndices = static_cast<int>(pActual->MaterialList.FaceIndices.size());
       const bool kUse32 = pActual->Indices32Bit;
       const uint32_t geometryFirstSubmeshIndex = nextMeshAssetSubmeshIndex;
+      std::vector<unsigned short> indexScratch16;
+      std::vector<unsigned int> indexScratch32;
 
       for (int j = 0; j < NumMaterials; j++) {
         xSubsetInfo *subinfo = &it->Subsets[j];
         xMaterial *material = &pActual->MaterialList.Materials[j];
         SubSetInfo *it_subsetinfo = &it_MeshInfo->SubSets[j];
+        const bool materialTiled = IsMaterialTiled(material);
 
         for (unsigned int k = 0; k < material->EffectInstance.pDefaults.size(); k++) {
           xEffectDefault *mDef = &material->EffectInstance.pDefaults[k];
@@ -553,127 +566,32 @@ namespace t850 {
 #if DEBUG_MODEL
             std::cout << "[" << mDef->NameParam << "]" << std::endl;
 #endif
-            if (mDef->NameParam == "diffuseMap") {
+            auto loadTexture = [&](const char* key, int& id, Texture** tex) -> bool {
+              if (mDef->NameParam != key)
+                return false;
               std::string path = RemovePath(mDef->CaseString);
 #if DEBUG_MODEL
               std::cout << "path[" << path << "]" << std::endl;
 #endif
+              id = LoadTex(path, tex, materialTiled);
+              return true;
+            };
 
-              it_subsetinfo->DiffuseId = LoadTex(path, material, &it_subsetinfo->DiffuseTex);
-
-            }
-
-            if (mDef->NameParam == "specularMap") {
-              std::string path = RemovePath(mDef->CaseString);
-#if DEBUG_MODEL
-              std::cout << "path[" << path << "]" << std::endl;
-#endif
-              it_subsetinfo->SpecularId = LoadTex(path, material, &it_subsetinfo->SpecularTex);
-            }
-
-            if (mDef->NameParam == "glossMap") {
-              std::string path = RemovePath(mDef->CaseString);
-#if DEBUG_MODEL
-              std::cout << "path[" << path << "]" << std::endl;
-#endif
-              it_subsetinfo->GlossfId = LoadTex(path, material, &it_subsetinfo->GlossfTex);
-            }
-
-            if (mDef->NameParam == "normalMap") {
-              std::string path = RemovePath(mDef->CaseString);
-#if DEBUG_MODEL
-              std::cout << "path[" << path << "]" << std::endl;
-#endif
-              it_subsetinfo->NormalId = LoadTex(path, material, &it_subsetinfo->NormalTex);;
-            }
-
-            if (mDef->NameParam == "heightMap") {
-              std::string path = RemovePath(mDef->CaseString);
-#if DEBUG_MODEL
-              std::cout << "path[" << path << "]" << std::endl;
-#endif
-              it_subsetinfo->ParalaxId = LoadTex(path, material, &it_subsetinfo->ParalaxTex);;
-            }
-
-            if (mDef->NameParam == "metallicMap") {
-              std::string path = RemovePath(mDef->CaseString);
-#if DEBUG_MODEL
-              std::cout << "path[" << path << "]" << std::endl;
-#endif
-              it_subsetinfo->MetallicId = LoadTex(path, material, &it_subsetinfo->MetallicTex);
-            }
-
-            if (mDef->NameParam == "emissiveMap") {
-              std::string path = RemovePath(mDef->CaseString);
-#if DEBUG_MODEL
-              std::cout << "path[" << path << "]" << std::endl;
-#endif
-              it_subsetinfo->EmissiveId = LoadTex(path, material, &it_subsetinfo->EmissiveTex);
-            }
-
-            if (mDef->NameParam == "sheenColorMap") {
-              std::string path = RemovePath(mDef->CaseString);
-#if DEBUG_MODEL
-              std::cout << "path[" << path << "]" << std::endl;
-#endif
-              it_subsetinfo->SheenColorId = LoadTex(path, material, &it_subsetinfo->SheenColorTex);
-            }
-
-            if (mDef->NameParam == "sheenRoughnessMap") {
-              std::string path = RemovePath(mDef->CaseString);
-#if DEBUG_MODEL
-              std::cout << "path[" << path << "]" << std::endl;
-#endif
-              it_subsetinfo->SheenRoughnessId = LoadTex(path, material, &it_subsetinfo->SheenRoughnessTex);
-            }
-
-            if (mDef->NameParam == "clearcoatMap") {
-              std::string path = RemovePath(mDef->CaseString);
-#if DEBUG_MODEL
-              std::cout << "path[" << path << "]" << std::endl;
-#endif
-              it_subsetinfo->ClearcoatId = LoadTex(path, material, &it_subsetinfo->ClearcoatTex);
-            }
-
-            if (mDef->NameParam == "clearcoatRoughnessMap") {
-              std::string path = RemovePath(mDef->CaseString);
-#if DEBUG_MODEL
-              std::cout << "path[" << path << "]" << std::endl;
-#endif
-              it_subsetinfo->ClearcoatRoughnessId = LoadTex(path, material, &it_subsetinfo->ClearcoatRoughnessTex);
-            }
-
-            if (mDef->NameParam == "occlusionMap") {
-              std::string path = RemovePath(mDef->CaseString);
-#if DEBUG_MODEL
-              std::cout << "path[" << path << "]" << std::endl;
-#endif
-              it_subsetinfo->OcclusionId = LoadTex(path, material, &it_subsetinfo->OcclusionTex);
-            }
-
-            if (mDef->NameParam == "specularFactorMap") {
-              std::string path = RemovePath(mDef->CaseString);
-#if DEBUG_MODEL
-              std::cout << "path[" << path << "]" << std::endl;
-#endif
-              it_subsetinfo->SpecularFactorId = LoadTex(path, material, &it_subsetinfo->SpecularFactorTex);
-            }
-
-            if (mDef->NameParam == "specularColorMap") {
-              std::string path = RemovePath(mDef->CaseString);
-#if DEBUG_MODEL
-              std::cout << "path[" << path << "]" << std::endl;
-#endif
-              it_subsetinfo->SpecularColorId = LoadTex(path, material, &it_subsetinfo->SpecularColorTex);
-            }
-
-            if (mDef->NameParam == "transmissionMap") {
-              std::string path = RemovePath(mDef->CaseString);
-#if DEBUG_MODEL
-              std::cout << "path[" << path << "]" << std::endl;
-#endif
-              it_subsetinfo->TransmissionId = LoadTex(path, material, &it_subsetinfo->TransmissionTex);
-            }
+            loadTexture("diffuseMap", it_subsetinfo->DiffuseId, &it_subsetinfo->DiffuseTex)
+              || loadTexture("specularMap", it_subsetinfo->SpecularId, &it_subsetinfo->SpecularTex)
+              || loadTexture("glossMap", it_subsetinfo->GlossfId, &it_subsetinfo->GlossfTex)
+              || loadTexture("normalMap", it_subsetinfo->NormalId, &it_subsetinfo->NormalTex)
+              || loadTexture("heightMap", it_subsetinfo->ParalaxId, &it_subsetinfo->ParalaxTex)
+              || loadTexture("metallicMap", it_subsetinfo->MetallicId, &it_subsetinfo->MetallicTex)
+              || loadTexture("emissiveMap", it_subsetinfo->EmissiveId, &it_subsetinfo->EmissiveTex)
+              || loadTexture("sheenColorMap", it_subsetinfo->SheenColorId, &it_subsetinfo->SheenColorTex)
+              || loadTexture("sheenRoughnessMap", it_subsetinfo->SheenRoughnessId, &it_subsetinfo->SheenRoughnessTex)
+              || loadTexture("clearcoatMap", it_subsetinfo->ClearcoatId, &it_subsetinfo->ClearcoatTex)
+              || loadTexture("clearcoatRoughnessMap", it_subsetinfo->ClearcoatRoughnessId, &it_subsetinfo->ClearcoatRoughnessTex)
+              || loadTexture("occlusionMap", it_subsetinfo->OcclusionId, &it_subsetinfo->OcclusionTex)
+              || loadTexture("specularFactorMap", it_subsetinfo->SpecularFactorId, &it_subsetinfo->SpecularFactorTex)
+              || loadTexture("specularColorMap", it_subsetinfo->SpecularColorId, &it_subsetinfo->SpecularColorTex)
+              || loadTexture("transmissionMap", it_subsetinfo->TransmissionId, &it_subsetinfo->TransmissionTex);
           }
 
           if (mDef->Type == xF::xEFFECTENUM::STDX_DWORDS) {
@@ -826,7 +744,8 @@ namespace t850 {
         // primitives the loader sets `Indices32Bit` and populates
         // `Triangles32`; the legacy `.x` loader keeps the 16-bit path.
         if (!kUse32) {
-          unsigned short *tmpIndexex = new unsigned short[it_subsetinfo->NumVertex];
+          indexScratch16.resize(static_cast<std::size_t>(it_subsetinfo->NumTris) * 3u);
+          unsigned short *tmpIndexex = indexScratch16.data();
           int counter = 0;
           bool first = false;
           for (int k = 0; k < NumFaceIndices; k++) {
@@ -883,9 +802,9 @@ namespace t850 {
                                              clusterBuildData[i][j]);
           }
 
-          delete[] tmpIndexex;
         } else {
-          unsigned int *tmpIndexex = new unsigned int[it_subsetinfo->NumVertex];
+          indexScratch32.resize(static_cast<std::size_t>(it_subsetinfo->NumTris) * 3u);
+          unsigned int *tmpIndexex = indexScratch32.data();
           int counter = 0;
           bool first = false;
           for (int k = 0; k < NumFaceIndices; k++) {
@@ -940,8 +859,6 @@ namespace t850 {
                                              meshAssetSubmeshIndex,
                                              clusterBuildData[i][j]);
           }
-
-          delete[] tmpIndexex;
         }
       }
 
@@ -1556,21 +1473,9 @@ namespace t850 {
     }
   }
 
-  int	 RenderMesh::LoadTex(std::string p, xF::xMaterial *mat, Texture** tex) {
+  int	 RenderMesh::LoadTex(const std::string& p, Texture** tex, bool tiled) {
     int id = g_pBaseDriver->CreateTexture(p);
     *tex = g_pBaseDriver->GetTexture(id);
-    bool tiled = false;
-    for (unsigned int m = 0; m < mat->EffectInstance.pDefaults.size(); m++) {
-      xEffectDefault *mDef_2 = &mat->EffectInstance.pDefaults[m];
-      if (mDef_2->Type == xF::xEFFECTENUM::STDX_DWORDS) {
-        if (mDef_2->NameParam == "Tiled") {
-          if (mDef_2->CaseDWORD == 1) {
-            tiled = true;
-          }
-          break;
-        }
-      }
-    }
 
     unsigned int params = TextBasicParams::MIPMAPS;
 

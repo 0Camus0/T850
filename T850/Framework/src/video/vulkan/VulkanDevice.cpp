@@ -14,7 +14,7 @@
 #include <video/vulkan/VulkanDriver.h>
 #include <vector>
 
-#if defined(OS_WINDOWS)
+#if defined(OS_WINDOWS) || defined(OS_ANDROID)
 
 #include <utils/Log.h>
 

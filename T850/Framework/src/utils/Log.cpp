@@ -12,6 +12,10 @@
   #define WIN32_LEAN_AND_MEAN
   #include <windows.h>
   #include <psapi.h>
+#elif defined(OS_ANDROID)
+  #include <android/log.h>
+  #include <unistd.h>
+  #include <pthread.h>
 #else
   #include <unistd.h>
   #include <pthread.h>
@@ -80,7 +84,9 @@ namespace Log {
   }
 
   static size_t GetProcessRAM_MB() {
-#ifdef OS_WINDOWS
+#ifdef OS_ANDROID
+    return 0;
+#elif defined(OS_WINDOWS)
     PROCESS_MEMORY_COUNTERS pmc;
     if (GetProcessMemoryInfo(GetCurrentProcess(), &pmc, sizeof(pmc)))
       return pmc.WorkingSetSize / (1024 * 1024);
@@ -244,6 +250,13 @@ namespace Log {
       if (s_backends & T8_LOG_BACKEND_DEBUG_OUTPUT) {
         OutputDebugStringA(fullLine);
         OutputDebugStringA("\n");
+      }
+#elif defined(OS_ANDROID)
+      {
+        int androidPrio = (level == LVL_ERROR) ? ANDROID_LOG_ERROR
+                        : (level == LVL_INFO) ? ANDROID_LOG_INFO
+                        : ANDROID_LOG_DEBUG;
+        __android_log_write(androidPrio, "T850", fullLine);
       }
 #endif
 

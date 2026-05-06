@@ -21,7 +21,7 @@
 
 
 #include <video/gl/GLTexture.h>
-#if defined(OS_WINDOWS)
+#if defined(OS_WINDOWS) || defined(OS_ANDROID)
 #include <video/d3d11/D3D11Texture.h>
 #endif
 

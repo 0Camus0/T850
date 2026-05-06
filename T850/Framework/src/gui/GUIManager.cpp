@@ -4,7 +4,7 @@
 
 #include <video/gl/GLShader.h>
 #include <video/gl/GLDriver.h>
-#if defined(OS_WINDOWS)
+#if defined(OS_WINDOWS) || defined(OS_ANDROID)
 #include <video/d3d11/D3D11Shader.h>
 #include <video/d3d11/D3D11Driver.h>
 #endif

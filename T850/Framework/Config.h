@@ -13,7 +13,11 @@
 #ifndef T800_CONFIG_H
 #define T800_CONFIG_H
 
-#ifdef __linux__
+#if defined(__ANDROID__)
+#ifndef OS_ANDROID
+#define OS_ANDROID
+#endif
+#elif defined(__linux__)
 #ifndef OS_LINUX
 #define OS_LINUX
 #endif
@@ -71,6 +75,16 @@
 #define USING_OPENGL_ES31
 #endif
 
+#if defined(OS_ANDROID)
+#undef USING_D3D11
+#undef USING_OPENGL
+#undef USING_OPENGL_ES20
+#undef USING_OPENGL_ES30
+#undef USING_OPENGL_ES31
+#undef USING_GL_COMMON
+#define USING_VULKAN_ONLY
+#endif
+
 #if defined(USING_OPENGL_ES20) || defined(USING_OPENGL_ES30)  || defined(USING_OPENGL_ES31) || defined(USING_OPENGL)
 	#define USING_GL_COMMON
 #endif
@@ -96,6 +110,12 @@
 #ifdef OS_WINDOWS
 #undef USING_FREEGLUT
 #define USING_SDL
+#endif
+
+#ifdef OS_ANDROID
+#undef USING_FREEGLUT
+#undef USING_WAYLAND_NATIVE
+#undef USING_SDL
 #endif
 
 //#define USE_HEADLESS 1

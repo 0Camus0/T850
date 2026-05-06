@@ -7,15 +7,21 @@
 
 #include <video/vulkan/VulkanDriver.h>
 
-#if defined(OS_WINDOWS)
+#if defined(OS_WINDOWS) || defined(OS_ANDROID)
 
 #define VMA_IMPLEMENTATION
 #include <vma/vk_mem_alloc.h>
 
+#if defined(OS_WINDOWS)
 #include <glslang/Include/glslang_c_interface.h>
 #include <glslang/Public/resource_limits_c.h>
+#endif
 
+#if defined(OS_WINDOWS)
 #include <SDL3/SDL_vulkan.h>
+#elif defined(OS_ANDROID)
+#include <android/native_window.h>
+#endif
 
 #include <utils/Log.h>
 #include <utils/ShaderDiskCache.h>
@@ -257,10 +263,12 @@ namespace t850 {
   // ══════════════════════════════════════════════════════
 
   void VulkanDriver::SetWindow(void* window) {
-    m_hwnd = (HWND)window;
-    if (!m_hwnd) m_hwnd = GetActiveWindow();
+    m_nativeWindow = window;
+#if defined(OS_WINDOWS)
+    if (!m_nativeWindow) m_nativeWindow = GetActiveWindow();
+#endif
     // Surface creation is deferred to InitDriver where the VkInstance is available.
-    // The window pointer is stored for use there.
+    // The native window pointer is stored for use there.
   }
 
   void VulkanDriver::SetDimensions(int w, int h) { width = w; height = h; }
@@ -273,13 +281,17 @@ namespace t850 {
     appInfo.engineVersion = VK_MAKE_VERSION(1, 0, 0);
     appInfo.apiVersion = VK_API_VERSION_1_0;
 
+    std::vector<const char*> extensions;
+#if defined(OS_WINDOWS)
     // Get SDL-required extensions
     uint32_t sdlExtCount = 0;
     const char* const* sdlExts = SDL_Vulkan_GetInstanceExtensions(&sdlExtCount);
-
-    std::vector<const char*> extensions;
     for (uint32_t i = 0; i < sdlExtCount; i++)
       extensions.push_back(sdlExts[i]);
+#elif defined(OS_ANDROID)
+    extensions.push_back(VK_KHR_SURFACE_EXTENSION_NAME);
+    extensions.push_back(VK_KHR_ANDROID_SURFACE_EXTENSION_NAME);
+#endif
 
 #ifdef T8_VULKAN_VALIDATION
     // Check if validation layer is available
@@ -736,14 +748,25 @@ namespace t850 {
     }
 #endif
 
-    // Create surface via SDL — m_hwnd holds the SDL_Window* passed through SetWindow()
-    if (m_hwnd && m_instance) {
-      SDL_Window* sdlWin = (SDL_Window*)m_hwnd;
+    // Create platform surface.
+    if (m_nativeWindow && m_instance) {
+#if defined(OS_WINDOWS)
+      SDL_Window* sdlWin = (SDL_Window*)m_nativeWindow;
       if (!SDL_Vulkan_CreateSurface(sdlWin, m_instance, nullptr, &m_surface)) {
         T8_LOG_ERROR("[Vulkan] SDL_Vulkan_CreateSurface failed: %s", SDL_GetError());
       } else {
         T8_LOG_INFO("[Vulkan] Surface created via SDL");
       }
+#elif defined(OS_ANDROID)
+      VkAndroidSurfaceCreateInfoKHR surfaceCI = { VK_STRUCTURE_TYPE_ANDROID_SURFACE_CREATE_INFO_KHR };
+      surfaceCI.window = static_cast<ANativeWindow*>(m_nativeWindow);
+      VkResult surfaceResult = vkCreateAndroidSurfaceKHR(m_instance, &surfaceCI, nullptr, &m_surface);
+      if (surfaceResult != VK_SUCCESS) {
+        T8_LOG_ERROR("[Vulkan] vkCreateAndroidSurfaceKHR failed res=%d", surfaceResult);
+      } else {
+        T8_LOG_INFO("[Vulkan] Surface created from ANativeWindow");
+      }
+#endif
     }
 
     CreateDevice();

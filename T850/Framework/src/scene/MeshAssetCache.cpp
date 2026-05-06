@@ -533,6 +533,34 @@ namespace t850 {
     return m_indexPools[poolId].get();
   }
 
+  std::size_t MeshAssetCache::UploadDirtyPools() {
+    std::vector<VertexPool*> dirtyVertexPools;
+    std::vector<IndexPool*> dirtyIndexPools;
+    {
+      std::lock_guard<std::mutex> lk(m_mutex);
+      dirtyVertexPools.reserve(m_vertexPools.size());
+      for (auto& pool : m_vertexPools) {
+        if (pool && pool->IsDirty()) dirtyVertexPools.push_back(pool.get());
+      }
+      dirtyIndexPools.reserve(m_indexPools.size());
+      for (auto& pool : m_indexPools) {
+        if (pool && pool->IsDirty()) dirtyIndexPools.push_back(pool.get());
+      }
+    }
+
+    const std::size_t dirtyCount = dirtyVertexPools.size() + dirtyIndexPools.size();
+    if (dirtyCount == 0) return 0;
+
+    if (g_pBaseDriver) g_pBaseDriver->BeginResourceUploadBatch();
+    for (VertexPool* pool : dirtyVertexPools) pool->EnsureUploaded();
+    for (IndexPool* pool : dirtyIndexPools) pool->EnsureUploaded();
+    if (g_pBaseDriver) g_pBaseDriver->EndResourceUploadBatch();
+
+    T8_LOG_INFO("[MeshAssetCache] Uploaded %zu dirty mesh pool(s) (%zu vertex, %zu index)",
+                dirtyCount, dirtyVertexPools.size(), dirtyIndexPools.size());
+    return dirtyCount;
+  }
+
   void MeshAssetCache::Clear() {
     std::lock_guard<std::mutex> lk(m_mutex);
     for (auto& kv : m_assets) {

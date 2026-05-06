@@ -1105,20 +1105,8 @@ namespace t850 {
                   m_asset->sourcePath.c_str(), m_asset->submeshes.size(), m_asset->refCount);
     }
 
-    if (populatePools && m_asset && g_pBaseDriver && g_pBaseDriver->m_currentAPI == GraphicsApi::D3D12) {
-      g_pBaseDriver->BeginResourceUploadBatch();
-      for (const Submesh& submesh : m_asset->submeshes) {
-        if (submesh.vbAlloc.IsValid()) {
-          if (VertexPool* vpool = MeshAssetCache::Get().GetVertexPool(submesh.vbAlloc.poolId))
-            vpool->EnsureUploaded();
-        }
-        if (submesh.ibAlloc.IsValid()) {
-          if (IndexPool* ipool = MeshAssetCache::Get().GetIndexPool(submesh.ibAlloc.poolId))
-            ipool->EnsureUploaded();
-        }
-      }
-      g_pBaseDriver->EndResourceUploadBatch();
-    }
+    if (populatePools && m_asset)
+      MeshAssetCache::Get().UploadDirtyPools();
     m_cullingMetadataReady = m_asset ? m_asset->cullingMetadataReady : false;
 
     // Phase A.5 step 2: copy pool offsets from the (now populated)
@@ -2097,8 +2085,8 @@ namespace t850 {
       ShaderBase *last = (ShaderBase*)32;
 
       // Phase A.5 step 2: bind shared VB pool if available, otherwise
-      // fall back to the per-asset VB. The pool's GPU buffer is built
-      // lazily on first GetGPUBuffer() call.
+      // fall back to the per-asset VB. Pool uploads are explicit at
+      // the end of mesh creation; GetGPUBuffer() is a pure accessor.
       VertexBuffer* vbToBind = it_MeshInfo->VB;
       if (it_MeshInfo->vbPoolAlloc.IsValid()) {
         if (VertexPool* vpool = MeshAssetCache::Get().GetVertexPool(it_MeshInfo->vbPoolAlloc.poolId)) {
@@ -2106,6 +2094,10 @@ namespace t850 {
             vbToBind = gpu;
           }
         }
+      }
+      if (!vbToBind) {
+        T8_LOG_ERROR("[RenderMesh] Skipped geometry %zu: no uploaded vertex buffer", i);
+        continue;
       }
       vbToBind->Set(*T8DeviceContext, stride, offset);
 
@@ -2229,6 +2221,10 @@ namespace t850 {
               ibToBind = gpu;
             }
           }
+        }
+        if (!ibToBind) {
+          T8_LOG_ERROR("[RenderMesh] Skipped subset %zu: no uploaded index buffer", k);
+          continue;
         }
         IndexBufferFormat::E ibFmt = sub_info->IB32Bit ? IndexBufferFormat::R32 : IndexBufferFormat::R16;
         // Phase C step 3: IB-bind dedup via process-wide tracker.

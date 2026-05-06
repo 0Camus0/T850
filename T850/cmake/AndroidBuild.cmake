@@ -9,6 +9,10 @@ if(NOT ANDROID_ABI STREQUAL "arm64-v8a")
   message(FATAL_ERROR "T850 Android currently supports arm64-v8a only. Requested: ${ANDROID_ABI}")
 endif()
 
+if(NOT CMAKE_ANDROID_NDK AND DEFINED ANDROID_NDK)
+  set(CMAKE_ANDROID_NDK ${ANDROID_NDK})
+endif()
+
 add_library(native_app_glue STATIC
   ${CMAKE_ANDROID_NDK}/sources/android/native_app_glue/android_native_app_glue.c)
 target_include_directories(native_app_glue PUBLIC

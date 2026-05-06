@@ -323,6 +323,9 @@
     <ClInclude Include="include\core\DevLayer.h">
       <Filter>Header Files\core</Filter>
     </ClInclude>
+    <ClInclude Include="include\core\EngineContext.h">
+      <Filter>Header Files\core</Filter>
+    </ClInclude>
     <ClInclude Include="include\core\Config.h">
       <Filter>Header Files\core</Filter>
     </ClInclude>
@@ -395,6 +398,9 @@
       <Filter>Source Files\core</Filter>
     </ClCompile>
     <ClCompile Include="src\core\Config.cpp">
+      <Filter>Source Files\core</Filter>
+    </ClCompile>
+    <ClCompile Include="src\core\EngineContext.cpp">
       <Filter>Source Files\core</Filter>
     </ClCompile>
     <ClCompile Include="src\scene\PrimitiveInstance.cpp">

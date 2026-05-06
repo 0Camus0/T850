@@ -7,6 +7,7 @@ set(FRAMEWORK_SOURCES
   src/core/Core.cpp
   src/core/DevLayer.cpp
   src/core/Config.cpp
+  src/core/EngineContext.cpp
   src/core/windows/Win32Framework.cpp
   src/scene/LensFlare.cpp
   src/scene/RenderMesh.cpp

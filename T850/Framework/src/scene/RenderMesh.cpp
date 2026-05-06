@@ -2234,15 +2234,23 @@ namespace t850 {
           tracker.OnShaderChanged(s);
 
           if (g_pBaseDriver->m_currentAPI == GraphicsApi::OPENGL) {
-            it_MeshInfo->CB->UpdateFromBuffer(*T8DeviceContext, &it_MeshInfo->CnstBuffer.WVP[0]);
-            it_MeshInfo->CB->Set(*T8DeviceContext);
+            if (tracker.UpdateAndBindConstantBuffer(*T8DeviceContext, it_MeshInfo->CB, 0,
+                                                    &it_MeshInfo->CnstBuffer,
+                                                    sizeof(RenderMesh::CBuffer)) && trackCullStats)
+              m_renderStateChanges++;
           } else {
-            it_MeshInfo->FrameCBGPU->UpdateFromBuffer(*T8DeviceContext, &it_MeshInfo->FrameCB);
-            it_MeshInfo->InstanceCBGPU->UpdateFromBuffer(*T8DeviceContext, &it_MeshInfo->InstanceCB);
-            it_MeshInfo->MaterialCBGPU->UpdateFromBuffer(*T8DeviceContext, &sub_info->MaterialCB);
-            it_MeshInfo->FrameCBGPU->Set(*T8DeviceContext, 0);
-            it_MeshInfo->InstanceCBGPU->Set(*T8DeviceContext, 1);
-            it_MeshInfo->MaterialCBGPU->Set(*T8DeviceContext, 2);
+            if (tracker.UpdateAndBindConstantBuffer(*T8DeviceContext, it_MeshInfo->FrameCBGPU, 0,
+                                                    &it_MeshInfo->FrameCB,
+                                                    sizeof(RenderMesh::MeshFrameCBuffer)) && trackCullStats)
+              m_renderStateChanges++;
+            if (tracker.UpdateAndBindConstantBuffer(*T8DeviceContext, it_MeshInfo->InstanceCBGPU, 1,
+                                                    &it_MeshInfo->InstanceCB,
+                                                    sizeof(RenderMesh::MeshInstanceCBuffer)) && trackCullStats)
+              m_renderStateChanges++;
+            if (tracker.UpdateAndBindConstantBuffer(*T8DeviceContext, it_MeshInfo->MaterialCBGPU, 2,
+                                                    &sub_info->MaterialCB,
+                                                    sizeof(RenderMesh::MeshMaterialCBuffer)) && trackCullStats)
+              m_renderStateChanges++;
           }
         }
         // Phase B step 2 + C step 2: bind material textures via the

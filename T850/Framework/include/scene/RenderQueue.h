@@ -34,12 +34,14 @@
 #include <scene/MaterialAsset.h>
 
 #include <cstdint>
+#include <cstddef>
 #include <vector>
 
 namespace t850 {
   class VertexBuffer;
   class IndexBuffer;
   class ConstantBuffer;
+  class DeviceContext;
   class Texture;
   class ShaderBase;
 
@@ -181,6 +183,15 @@ namespace t850 {
     // IB-bind dedup.
     bool ShouldBindIB(IndexBuffer* ib, IndexBufferFormat::E fmt);
 
+    // Constant-buffer update/bind dedup. This compares the pending
+    // contents against the buffer's last uploaded system copy, updates
+    // only when bytes differ, and still forces a bind after shader changes.
+    bool UpdateAndBindConstantBuffer(const DeviceContext& deviceContext,
+                                     ConstantBuffer* cb,
+                                     unsigned int slot,
+                                     const void* data,
+                                     std::size_t byteSize);
+
   private:
     bool                 m_passActive   = false;
     ShaderBase*          m_lastShader   = nullptr;
@@ -189,6 +200,7 @@ namespace t850 {
     IndexBuffer*         m_lastIB       = nullptr;
     IndexBufferFormat::E m_lastIBFmt    = IndexBufferFormat::R16;
     bool                 m_lastIBFmtSet = false;
+    ConstantBuffer*      m_lastCB[kMaxTrackedSlots] = { nullptr };
   };
 }
 

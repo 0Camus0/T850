@@ -117,7 +117,7 @@ namespace t850 {
     return true;
   }
 #else
-  static bool LoadPrecompiledSPIRV(const std::string& shaderName, std::vector<uint32_t>& spirv) {
+  static bool ReadPrecompiledSPIRV(const std::string& shaderName, std::vector<uint32_t>& spirv) {
     if (shaderName.empty()) return false;
     std::vector<std::string> candidates = {
       shaderName + ".spv",
@@ -165,7 +165,7 @@ namespace t850 {
 
     std::vector<uint32_t> vsSPIRV;
 #if defined(OS_ANDROID)
-    if (!LoadPrecompiledSPIRV(vs_name, vsSPIRV)) {
+    if (!ReadPrecompiledSPIRV(vs_name, vsSPIRV)) {
       return false;
     }
 #else
@@ -188,7 +188,7 @@ namespace t850 {
 
     std::vector<uint32_t> fsSPIRV;
 #if defined(OS_ANDROID)
-    if (!LoadPrecompiledSPIRV(fs_name, fsSPIRV)) {
+    if (!ReadPrecompiledSPIRV(fs_name, fsSPIRV)) {
       return false;
     }
 #else

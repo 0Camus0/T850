@@ -49,10 +49,13 @@ namespace t850 {
     void ResetTransientInput();
     void ClearTouchState();
     void ClearReturnToNativePreference();
+    void RequestCloseApplication();
 
     android_app* m_app = nullptr;
     ANativeWindow* m_window = nullptr;
     bool m_alive = true;
+    bool m_closing = false;
+    bool m_closeRequested = false;
     bool m_paused = false;
     bool m_hasRuntime = false;
     bool m_surfaceActive = false;

@@ -248,6 +248,7 @@ ResourceLocator::ResourceLocator() {
   if (ec) {
     m_basePath.clear();
   }
+  m_cachePath = m_basePath;
 }
 
 std::string ResourceLocator::NormalizePath(std::string path) {
@@ -277,6 +278,14 @@ const std::filesystem::path& ResourceLocator::GetBasePath() const {
   return m_basePath;
 }
 
+void ResourceLocator::SetCachePath(const std::filesystem::path& cachePath) {
+  m_cachePath = cachePath;
+}
+
+const std::filesystem::path& ResourceLocator::GetCachePath() const {
+  return m_cachePath;
+}
+
 std::filesystem::path ResourceLocator::ResolveFilePath(const std::string& path) const {
   const std::string normalized = NormalizePath(path);
   for (const auto& candidate : DiskCandidates(m_basePath, path, normalized)) {
@@ -285,6 +294,19 @@ std::filesystem::path ResourceLocator::ResolveFilePath(const std::string& path) 
     }
   }
   return std::filesystem::path(path);
+}
+
+std::filesystem::path ResourceLocator::ResolveCachePath(const std::string& path) const {
+  std::filesystem::path cachePath(path);
+  if (cachePath.is_absolute()) {
+    return cachePath;
+  }
+
+  const std::string normalized = NormalizePath(path);
+  if (m_cachePath.empty()) {
+    return std::filesystem::path(normalized);
+  }
+  return m_cachePath / std::filesystem::path(normalized);
 }
 
 bool ResourceLocator::Exists(const std::string& path) const {

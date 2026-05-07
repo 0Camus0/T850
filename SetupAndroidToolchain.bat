@@ -8,6 +8,7 @@ setlocal enabledelayedexpansion
 ::   SetupAndroidToolchain.bat --sdk C:\Android\Sdk
 ::   SetupAndroidToolchain.bat --skip-winget
 ::   SetupAndroidToolchain.bat --with-emulator
+::   SetupAndroidToolchain.bat --android-abis arm64-v8a,x86_64
 
 set "ROOT=%~dp0"
 set "ANDROID_SDK=%LOCALAPPDATA%\Android\Sdk"
@@ -21,12 +22,15 @@ set "GRADLE_VERSION=8.10.2"
 set "SKIP_WINGET=0"
 set "WITH_EMULATOR=0"
 set "EMULATOR_IMAGE=system-images;android-35;google_apis;x86_64"
+set "ANDROID_ABIS=arm64-v8a"
 
 :parse_args
 if "%~1"=="" goto done_args
 if /i "%~1"=="--sdk" goto arg_sdk
 if /i "%~1"=="--skip-winget" goto arg_skip_winget
 if /i "%~1"=="--with-emulator" goto arg_with_emulator
+if /i "%~1"=="--android-abis" goto arg_android_abis
+if /i "%~1"=="--abis" goto arg_android_abis
 goto usage
 
 :arg_sdk
@@ -46,13 +50,33 @@ set "WITH_EMULATOR=1"
 shift
 goto parse_args
 
+:arg_android_abis
+shift
+if "%~1"=="" goto usage
+set "ANDROID_ABIS=%~1"
+shift
+goto parse_args
+
 :done_args
+
+if "%WITH_EMULATOR%"=="1" (
+    echo,%ANDROID_ABIS%| findstr /I /C:"x86_64" >nul || set "ANDROID_ABIS=%ANDROID_ABIS%,x86_64"
+)
+set "ANDROID_ABIS=%ANDROID_ABIS: =%"
+for %%a in ("%ANDROID_ABIS:,=" "%") do (
+    if /I not "%%~a"=="arm64-v8a" if /I not "%%~a"=="x86_64" (
+        echo [ERROR] Unsupported Android ABI: %%~a
+        echo [ERROR] Supported ABIs: arm64-v8a,x86_64
+        exit /b 1
+    )
+)
 
 echo.
 echo ========================================
 echo  T850 - Android Toolchain Setup
 echo ========================================
 echo SDK root: %ANDROID_SDK%
+echo Android ABIs: %ANDROID_ABIS%
 echo.
 
 where powershell >nul 2>nul || (
@@ -201,9 +225,15 @@ if not exist "%VCPKG_EXE%" (
     )
 )
 echo [T850] Installing Android vcpkg dependencies...
-set "VCPKG_PACKAGES=draco:arm64-android glslang:arm64-android"
-if "%WITH_EMULATOR%"=="1" set "VCPKG_PACKAGES=%VCPKG_PACKAGES% draco:x64-android glslang:x64-android"
-call "%VCPKG_EXE%" install %VCPKG_PACKAGES% --no-print-usage
+set "VCPKG_PACKAGES="
+echo,%ANDROID_ABIS%| findstr /I /C:"arm64-v8a" >nul && set "VCPKG_PACKAGES=!VCPKG_PACKAGES! draco:arm64-android glslang:arm64-android"
+echo,%ANDROID_ABIS%| findstr /I /C:"x86_64" >nul && set "VCPKG_PACKAGES=!VCPKG_PACKAGES! draco:x64-android glslang:x64-android"
+if not defined VCPKG_PACKAGES (
+    echo [ERROR] Unsupported Android ABI list: %ANDROID_ABIS%
+    echo [ERROR] Supported ABIs: arm64-v8a,x86_64
+    exit /b 1
+)
+call "%VCPKG_EXE%" install !VCPKG_PACKAGES! --no-print-usage
 if errorlevel 1 (
     echo [ERROR] Failed to install Android vcpkg dependencies.
     exit /b 1
@@ -237,9 +267,10 @@ echo   BuildAndroidDebug.bat
 echo   BuildAndroidRelease.bat
 echo Add --clean for a full rebuild, or --install --launch for local device testing.
 echo Add --emulator to BuildAndroid.bat after running this setup with --with-emulator.
+echo Add --android-abis arm64-v8a,x86_64 to install dependencies for multiple Android APK targets.
 echo.
 exit /b 0
 
 :usage
-echo Usage: SetupAndroidToolchain.bat [--sdk C:\Android\Sdk] [--skip-winget] [--with-emulator]
+echo Usage: SetupAndroidToolchain.bat [--sdk C:\Android\Sdk] [--skip-winget] [--with-emulator] [--android-abis arm64-v8a,x86_64]
 exit /b 1

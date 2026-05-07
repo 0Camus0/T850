@@ -8,6 +8,7 @@
 #include <utils/ConfigRuntime.h>
 #include <utils/Log.h>
 #include <utils/AndroidAssets.h>
+#include <utils/ResourceLocator.h>
 
 #include <android_native_app_glue.h>
 #include <jni.h>
@@ -245,6 +246,8 @@ void android_main(android_app* state) {
       : state->activity->internalDataPath;
     if (dataPath) {
       mkdir(dataPath, 0775);
+      t850::ResourceLocator::Instance().SetBasePath(dataPath);
+      t850::ResourceLocator::Instance().SetCachePath(dataPath);
       if (chdir(dataPath) == 0) {
         T8_LOG_INFO("[Android] Working directory: %s", dataPath);
       }

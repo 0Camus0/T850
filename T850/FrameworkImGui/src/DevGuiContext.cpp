@@ -35,7 +35,10 @@ bool DevGuiContext::Slider(const SliderDesc& desc, float& value) {
 
 bool DevGuiContext::Checkbox(const CheckboxDesc& desc, bool& value) {
   const char* label = desc.label.empty() ? desc.name.c_str() : desc.label.c_str();
-  return ImGui::Checkbox(label, &value);
+  if (!desc.enabled) ImGui::BeginDisabled();
+  bool changed = ImGui::Checkbox(label, &value);
+  if (!desc.enabled) ImGui::EndDisabled();
+  return desc.enabled && changed;
 }
 
 bool DevGuiContext::Combo(const SelectorDesc& desc, int& selectedIndex, const std::vector<std::string>* overrideOptions) {

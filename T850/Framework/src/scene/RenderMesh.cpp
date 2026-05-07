@@ -13,8 +13,8 @@
 
 #include <video/BaseDriver.h>
 #include <scene/RenderQueue.h>   // MeshDrawStateTracker
-#include <iostream>
 #include <cmath>
+#include <cfloat>
 #include <algorithm>
 #include <chrono>
 
@@ -30,17 +30,19 @@
 #endif
 #include <core/Config.h>
 #include <core/Core.h>
+#include <core/EngineContext.h>
 #include <utils/Log.h>
 
 #define CHANGE_TO_RH 0
 #define DEBUG_MODEL 0
 extern t850::AppBase		  *pApp;
 namespace t850 {
-  extern Device*            T8Device;
-  extern DeviceContext*     T8DeviceContext;
-
   static constexpr unsigned MaterialSamplerSlot = 0;
   static constexpr unsigned EnvSamplerSlot = 4;
+
+  const EngineContext& RenderMesh::Context() const {
+    return pEngineContext ? *pEngineContext : t850::GetEngineContext();
+  }
 
   namespace {
     void AssignEffectFloat4(XVECTOR3& target, const std::vector<float>& values) {
@@ -116,6 +118,188 @@ namespace t850 {
 
     uint32_t DrawIndexCountForSubset(const RenderMesh::SubSetInfo& subInfo) {
       return subInfo.ibPoolAlloc.IsValid() ? subInfo.ibPoolAlloc.count : subInfo.NumVertex;
+    }
+
+    void ApplyCachedBounds(RenderMesh::SubSetInfo& subInfo, const AABB& bounds) {
+      subInfo.bounds.min = XVECTOR3(bounds.vMin.x, bounds.vMin.y, bounds.vMin.z, 0.0f);
+      subInfo.bounds.max = XVECTOR3(bounds.vMax.x, bounds.vMax.y, bounds.vMax.z, 0.0f);
+    }
+
+    void ExpandMeshBounds(RenderMesh::MeshInfo& meshInfo, const AABB& bounds) {
+      meshInfo.bounds.Expand(bounds.vMin.x, bounds.vMin.y, bounds.vMin.z);
+      meshInfo.bounds.Expand(bounds.vMax.x, bounds.vMax.y, bounds.vMax.z);
+    }
+
+    RenderMesh::AABB ComputeGeometryBounds(const xFinalGeometry& geometry, const xMeshGeometry& sourceGeometry) {
+      RenderMesh::AABB bounds;
+      bounds.Reset();
+      const unsigned int stride = geometry.VertexSize / sizeof(float);
+      if (stride < 3 || !geometry.pData)
+        return bounds;
+      for (unsigned int v = 0; v < sourceGeometry.NumVertices; ++v) {
+        const float px = geometry.pData[v * stride + 0];
+        const float py = geometry.pData[v * stride + 1];
+        const float pz = geometry.pData[v * stride + 2];
+        bounds.Expand(px, py, pz);
+      }
+      return bounds;
+    }
+
+    void ExpandMeshBounds(RenderMesh::MeshInfo& meshInfo, const RenderMesh::AABB& bounds) {
+      meshInfo.bounds.Expand(bounds.min.x, bounds.min.y, bounds.min.z);
+      meshInfo.bounds.Expand(bounds.max.x, bounds.max.y, bounds.max.z);
+    }
+
+    bool IsMaterialTiled(const xMaterial* material) {
+      if (!material)
+        return false;
+      for (const xEffectDefault& effectDefault : material->EffectInstance.pDefaults) {
+        if (effectDefault.Type == xF::xEFFECTENUM::STDX_DWORDS && effectDefault.NameParam == "Tiled")
+          return effectDefault.CaseDWORD == 1;
+      }
+      return false;
+    }
+
+    uint64_t HashPreprocessValue(uint64_t hash, uint64_t value) {
+      for (int i = 0; i < 8; ++i) {
+        hash ^= static_cast<uint8_t>((value >> (i * 8)) & 0xFFu);
+        hash *= 0x100000001b3ull;
+      }
+      return hash;
+    }
+
+    uint64_t BuildPreprocessTopologyHash(const XDataBase* xFile,
+                                         const std::vector<RenderMesh::MeshInfo>& meshInfos,
+                                         uint64_t vertexAttribMask,
+                                         uint32_t vertexStride,
+                                         uint32_t vertexCount,
+                                         uint32_t indexCount) {
+      uint64_t hash = 0xcbf29ce484222325ull;
+      hash = HashPreprocessValue(hash, vertexAttribMask);
+      hash = HashPreprocessValue(hash, vertexStride);
+      hash = HashPreprocessValue(hash, vertexCount);
+      hash = HashPreprocessValue(hash, indexCount);
+
+      const xMeshContainer* meshContainer = xFile->XMeshDataBase[0];
+      std::size_t submeshCount = 0;
+      for (const RenderMesh::MeshInfo& meshInfo : meshInfos)
+        submeshCount += meshInfo.SubSets.size();
+      hash = HashPreprocessValue(hash, static_cast<uint64_t>(submeshCount));
+
+      for (std::size_t i = 0; i < xFile->MeshInfo.size() && i < meshInfos.size(); ++i) {
+        const xMeshGeometry& sourceGeometry = meshContainer->Geometry[i];
+        const xFinalGeometry& finalGeometry = xFile->MeshInfo[i];
+        const RenderMesh::MeshInfo& meshInfo = meshInfos[i];
+        for (std::size_t j = 0; j < meshInfo.SubSets.size() && j < finalGeometry.Subsets.size(); ++j) {
+          const xSubsetInfo& sourceSubset = finalGeometry.Subsets[j];
+          const RenderMesh::SubSetInfo& renderSubset = meshInfo.SubSets[j];
+          hash = HashPreprocessValue(hash, sourceSubset.NumVertex);
+          hash = HashPreprocessValue(hash, sourceSubset.NumTris);
+          hash = HashPreprocessValue(hash, sourceGeometry.Indices32Bit ? 1u : 0u);
+          hash = HashPreprocessValue(hash, renderSubset.key.bits & ShaderKey::VERTEX_ATTRIB_MASK);
+        }
+      }
+      return hash;
+    }
+
+    void ApplyCachedCullingMetadata(std::vector<RenderMesh::MeshInfo>& meshInfos,
+                                    MeshAsset* asset,
+                                    const MeshPreprocessCacheData& cache) {
+      if (!asset)
+        return;
+      asset->clusters = cache.clusters;
+      asset->rootAABB = cache.rootAABB;
+
+      std::size_t flatSubmesh = 0;
+      for (std::size_t i = 0; i < meshInfos.size(); ++i) {
+        RenderMesh::MeshInfo& meshInfo = meshInfos[i];
+        meshInfo.bounds.Reset();
+        for (std::size_t j = 0; j < meshInfo.SubSets.size(); ++j, ++flatSubmesh) {
+          if (flatSubmesh >= cache.submeshes.size() || flatSubmesh >= asset->submeshes.size())
+            return;
+          const Submesh& cachedSubmesh = cache.submeshes[flatSubmesh];
+          Submesh& assetSubmesh = asset->submeshes[flatSubmesh];
+          assetSubmesh.localAABB = cachedSubmesh.localAABB;
+          assetSubmesh.firstCluster = cachedSubmesh.firstCluster;
+          assetSubmesh.clusterCount = cachedSubmesh.clusterCount;
+          ApplyCachedBounds(meshInfo.SubSets[j], cachedSubmesh.localAABB);
+          ExpandMeshBounds(meshInfo, cachedSubmesh.localAABB);
+        }
+      }
+      asset->cullingMetadataReady = true;
+    }
+
+    bool ValidatePreprocessCacheTopology(const XDataBase* xFile,
+                                         const std::vector<RenderMesh::MeshInfo>& meshInfos,
+                                         const MeshPreprocessCacheData& cache) {
+      if (!xFile || xFile->XMeshDataBase.empty() || cache.submeshes.empty())
+        return false;
+
+      const xMeshContainer* meshContainer = xFile->XMeshDataBase[0];
+      std::size_t flatSubmesh = 0;
+      std::size_t totalVerts = 0;
+      std::size_t totalIndices = 0;
+      uint32_t maxVertexStride = 0;
+      uint64_t vertexAttribMask = 0;
+
+      if (meshInfos.size() != xFile->MeshInfo.size() || meshContainer->Geometry.size() < xFile->MeshInfo.size())
+        return false;
+
+      for (std::size_t i = 0; i < xFile->MeshInfo.size(); ++i) {
+        const xFinalGeometry& finalGeometry = xFile->MeshInfo[i];
+        const xMeshGeometry& sourceGeometry = meshContainer->Geometry[i];
+        const RenderMesh::MeshInfo& meshInfo = meshInfos[i];
+        if (meshInfo.SubSets.size() != finalGeometry.Subsets.size())
+          return false;
+
+        totalVerts += sourceGeometry.NumVertices;
+        totalIndices += static_cast<std::size_t>(sourceGeometry.NumTriangles) * 3u;
+        if (finalGeometry.VertexSize > maxVertexStride)
+          maxVertexStride = finalGeometry.VertexSize;
+
+        for (std::size_t j = 0; j < meshInfo.SubSets.size(); ++j, ++flatSubmesh) {
+          if (flatSubmesh >= cache.submeshes.size())
+            return false;
+
+          const xSubsetInfo& sourceSubset = finalGeometry.Subsets[j];
+          const RenderMesh::SubSetInfo& renderSubset = meshInfo.SubSets[j];
+          const Submesh& cachedSubmesh = cache.submeshes[flatSubmesh];
+          const uint64_t cachedAttribs = cachedSubmesh.vertexAttribKey.bits & ShaderKey::VERTEX_ATTRIB_MASK;
+          const uint64_t renderAttribs = renderSubset.key.bits & ShaderKey::VERTEX_ATTRIB_MASK;
+
+          if (cachedSubmesh.vertexCount != sourceSubset.NumVertex
+              || cachedSubmesh.triangleCount != sourceSubset.NumTris
+              || cachedSubmesh.ib32Bit != sourceGeometry.Indices32Bit
+              || cachedAttribs != renderAttribs) {
+            return false;
+          }
+
+          vertexAttribMask |= renderAttribs;
+        }
+      }
+
+      const bool topologyMatches = flatSubmesh == cache.submeshes.size()
+        && cache.vertexCount == static_cast<uint32_t>(totalVerts)
+        && cache.indexCount == static_cast<uint32_t>(totalIndices)
+        && cache.vertexStride == maxVertexStride
+        && cache.vertexAttribMask == vertexAttribMask;
+      if (!topologyMatches)
+        return false;
+
+      const uint64_t currentTopologyHash = BuildPreprocessTopologyHash(xFile,
+                                                                       meshInfos,
+                                                                       vertexAttribMask,
+                                                                       maxVertexStride,
+                                                                       static_cast<uint32_t>(totalVerts),
+                                                                       static_cast<uint32_t>(totalIndices));
+      if (cache.topologyHash != 0 && cache.topologyHash != currentTopologyHash) {
+        T8_LOG_INFO("[MeshAssetCache] Mesh preprocess cache topology hash mismatch for '%s' (cache=0x%016llX current=0x%016llX)",
+                    xFile->m_name.c_str(),
+                    static_cast<unsigned long long>(cache.topologyHash),
+                    static_cast<unsigned long long>(currentTopologyHash));
+        return false;
+      }
+      return true;
     }
 
     void LogLoadedMeshDetails(const XDataBase* xFile, const std::vector<RenderMesh::MeshInfo>& meshInfos) {
@@ -222,6 +406,12 @@ namespace t850 {
     // a borrowed pointer — population happens at the end of Create()
     // once GPU buffers exist; release happens in Destroy().
     m_sourcePath = filename ? filename : "";
+    if (!xFile) {
+      m_asset = nullptr;
+      T8_LOG_ERROR("[RenderMesh] Load failed for '%s'", m_sourcePath.c_str());
+      return;
+    }
+
     bool created = false;
     m_asset = MeshAssetCache::Get().Acquire(m_sourcePath, &created);
     T8_LOG_INFO("[MeshAssetCache] %s '%s' (refs=%u, total assets=%zu)",
@@ -232,7 +422,23 @@ namespace t850 {
   }
 
   void RenderMesh::Create() {
+    const EngineContext& context = Context();
+    Device* device = context.device;
+    const Config* config = context.config;
+    if (!device) {
+      T8_LOG_ERROR("[RenderMesh] Create skipped for '%s': no device in engine context", m_sourcePath.c_str());
+      return;
+    }
+    if (!xFile || xFile->MeshInfo.empty() || xFile->XMeshDataBase.empty() || !xFile->XMeshDataBase[0]) {
+      T8_LOG_ERROR("[RenderMesh] Create skipped for '%s': mesh data is not loaded", m_sourcePath.c_str());
+      return;
+    }
+
     GatherInfo();
+    if (Info.empty()) {
+      T8_LOG_ERROR("[RenderMesh] Create skipped for '%s': no drawable geometry was gathered", m_sourcePath.c_str());
+      return;
+    }
     T8_LOG_INFO("Mesh Create: %zu geometries, building GPU buffers", xFile->MeshInfo.size());
 
     // Phase A step 3: detect whether the cached asset already owns its
@@ -254,6 +460,24 @@ namespace t850 {
     // unless the alloc is invalid (which shouldn't happen in normal
     // load).
     const bool populatePools = (m_asset && m_asset->submeshes.empty());
+    const MeshPreprocessCacheSettings preprocessCacheSettings = {
+      kMinTrianglesForClustering,
+      kTargetTrianglesPerCluster,
+      CHANGE_TO_RH ? 1u : 0u
+    };
+    const bool buildCullingMetadataOnLoad = config && config->cullingLoadMode == Config::CullingLoadMode::FullOnLoad;
+    MeshPreprocessCacheData preprocessCache;
+    bool usePreprocessCache = false;
+    if (populatePools && buildCullingMetadataOnLoad) {
+      usePreprocessCache = MeshAssetCache::Get().LoadPreprocessCache(m_sourcePath, preprocessCacheSettings, preprocessCache);
+      if (usePreprocessCache && !ValidatePreprocessCacheTopology(xFile, Info, preprocessCache)) {
+        T8_LOG_INFO("[MeshAssetCache] Ignoring mesh preprocess cache for '%s': topology changed",
+                    m_sourcePath.c_str());
+        preprocessCache = MeshPreprocessCacheData{};
+        usePreprocessCache = false;
+      }
+    }
+
     struct VBAllocSide { uint32_t poolId = UINT32_MAX; uint32_t offsetVerts = 0; uint32_t count = 0; };
     struct IBAllocSide { uint32_t poolId = UINT32_MAX; uint32_t offsetIdx   = 0; uint32_t count = 0; };
     std::vector<VBAllocSide>             poolVBAllocs(xFile->MeshInfo.size());
@@ -265,6 +489,7 @@ namespace t850 {
       xFinalGeometry *it = &xFile->MeshInfo[i];
       xMeshGeometry *pActual = &xFile->XMeshDataBase[0]->Geometry[i];
       MeshInfo  *it_MeshInfo = &Info[i];
+      const RenderMesh::AABB geometryBounds = ComputeGeometryBounds(*it, *pActual);
       if (populatePools) {
         poolIBAllocs[i].resize(it_MeshInfo->SubSets.size());
         clusterBuildData[i].resize(it_MeshInfo->SubSets.size());
@@ -273,22 +498,26 @@ namespace t850 {
       t850::BufferDesc bdesc;
       bdesc.byteWidth = sizeof(RenderMesh::CBuffer);
       bdesc.usage = BufferUsage::DEFAULT;
-      it_MeshInfo->CB = (t850::ConstantBuffer*)T8Device->CreateBuffer(BufferType::CONSTANT, bdesc);
+      it_MeshInfo->CB = (t850::ConstantBuffer*)device->CreateBuffer(BufferType::CONSTANT, bdesc);
       bdesc.byteWidth = sizeof(RenderMesh::MeshFrameCBuffer);
-      it_MeshInfo->FrameCBGPU = (t850::ConstantBuffer*)T8Device->CreateBuffer(BufferType::CONSTANT, bdesc);
+      it_MeshInfo->FrameCBGPU = (t850::ConstantBuffer*)device->CreateBuffer(BufferType::CONSTANT, bdesc);
       bdesc.byteWidth = sizeof(RenderMesh::MeshInstanceCBuffer);
-      it_MeshInfo->InstanceCBGPU = (t850::ConstantBuffer*)T8Device->CreateBuffer(BufferType::CONSTANT, bdesc);
+      it_MeshInfo->InstanceCBGPU = (t850::ConstantBuffer*)device->CreateBuffer(BufferType::CONSTANT, bdesc);
       bdesc.byteWidth = sizeof(RenderMesh::MeshMaterialCBuffer);
-      it_MeshInfo->MaterialCBGPU = (t850::ConstantBuffer*)T8Device->CreateBuffer(BufferType::CONSTANT, bdesc);
+      it_MeshInfo->MaterialCBGPU = (t850::ConstantBuffer*)device->CreateBuffer(BufferType::CONSTANT, bdesc);
 
       int NumMaterials = static_cast<int>(pActual->MaterialList.Materials.size());
       int NumFaceIndices = static_cast<int>(pActual->MaterialList.FaceIndices.size());
       const bool kUse32 = pActual->Indices32Bit;
+      const uint32_t geometryFirstSubmeshIndex = nextMeshAssetSubmeshIndex;
+      std::vector<unsigned short> indexScratch16;
+      std::vector<unsigned int> indexScratch32;
 
       for (int j = 0; j < NumMaterials; j++) {
         xSubsetInfo *subinfo = &it->Subsets[j];
         xMaterial *material = &pActual->MaterialList.Materials[j];
         SubSetInfo *it_subsetinfo = &it_MeshInfo->SubSets[j];
+        const bool materialTiled = IsMaterialTiled(material);
 
         for (unsigned int k = 0; k < material->EffectInstance.pDefaults.size(); k++) {
           xEffectDefault *mDef = &material->EffectInstance.pDefaults[k];
@@ -418,129 +647,34 @@ namespace t850 {
 
           if (mDef->Type == xF::xEFFECTENUM::STDX_STRINGS) {
 #if DEBUG_MODEL
-            std::cout << "[" << mDef->NameParam << "]" << std::endl;
+            T8_LOG_DEBUG("[%s]", mDef->NameParam.c_str());
 #endif
-            if (mDef->NameParam == "diffuseMap") {
+            auto loadTexture = [&](const char* key, int& id, Texture** tex) -> bool {
+              if (mDef->NameParam != key)
+                return false;
               std::string path = RemovePath(mDef->CaseString);
 #if DEBUG_MODEL
-              std::cout << "path[" << path << "]" << std::endl;
+              T8_LOG_DEBUG("path[%s]", path.c_str());
 #endif
+              id = LoadTex(path, tex, materialTiled);
+              return true;
+            };
 
-              it_subsetinfo->DiffuseId = LoadTex(path, material, &it_subsetinfo->DiffuseTex);
-
-            }
-
-            if (mDef->NameParam == "specularMap") {
-              std::string path = RemovePath(mDef->CaseString);
-#if DEBUG_MODEL
-              std::cout << "path[" << path << "]" << std::endl;
-#endif
-              it_subsetinfo->SpecularId = LoadTex(path, material, &it_subsetinfo->SpecularTex);
-            }
-
-            if (mDef->NameParam == "glossMap") {
-              std::string path = RemovePath(mDef->CaseString);
-#if DEBUG_MODEL
-              std::cout << "path[" << path << "]" << std::endl;
-#endif
-              it_subsetinfo->GlossfId = LoadTex(path, material, &it_subsetinfo->GlossfTex);
-            }
-
-            if (mDef->NameParam == "normalMap") {
-              std::string path = RemovePath(mDef->CaseString);
-#if DEBUG_MODEL
-              std::cout << "path[" << path << "]" << std::endl;
-#endif
-              it_subsetinfo->NormalId = LoadTex(path, material, &it_subsetinfo->NormalTex);;
-            }
-
-            if (mDef->NameParam == "heightMap") {
-              std::string path = RemovePath(mDef->CaseString);
-#if DEBUG_MODEL
-              std::cout << "path[" << path << "]" << std::endl;
-#endif
-              it_subsetinfo->ParalaxId = LoadTex(path, material, &it_subsetinfo->ParalaxTex);;
-            }
-
-            if (mDef->NameParam == "metallicMap") {
-              std::string path = RemovePath(mDef->CaseString);
-#if DEBUG_MODEL
-              std::cout << "path[" << path << "]" << std::endl;
-#endif
-              it_subsetinfo->MetallicId = LoadTex(path, material, &it_subsetinfo->MetallicTex);
-            }
-
-            if (mDef->NameParam == "emissiveMap") {
-              std::string path = RemovePath(mDef->CaseString);
-#if DEBUG_MODEL
-              std::cout << "path[" << path << "]" << std::endl;
-#endif
-              it_subsetinfo->EmissiveId = LoadTex(path, material, &it_subsetinfo->EmissiveTex);
-            }
-
-            if (mDef->NameParam == "sheenColorMap") {
-              std::string path = RemovePath(mDef->CaseString);
-#if DEBUG_MODEL
-              std::cout << "path[" << path << "]" << std::endl;
-#endif
-              it_subsetinfo->SheenColorId = LoadTex(path, material, &it_subsetinfo->SheenColorTex);
-            }
-
-            if (mDef->NameParam == "sheenRoughnessMap") {
-              std::string path = RemovePath(mDef->CaseString);
-#if DEBUG_MODEL
-              std::cout << "path[" << path << "]" << std::endl;
-#endif
-              it_subsetinfo->SheenRoughnessId = LoadTex(path, material, &it_subsetinfo->SheenRoughnessTex);
-            }
-
-            if (mDef->NameParam == "clearcoatMap") {
-              std::string path = RemovePath(mDef->CaseString);
-#if DEBUG_MODEL
-              std::cout << "path[" << path << "]" << std::endl;
-#endif
-              it_subsetinfo->ClearcoatId = LoadTex(path, material, &it_subsetinfo->ClearcoatTex);
-            }
-
-            if (mDef->NameParam == "clearcoatRoughnessMap") {
-              std::string path = RemovePath(mDef->CaseString);
-#if DEBUG_MODEL
-              std::cout << "path[" << path << "]" << std::endl;
-#endif
-              it_subsetinfo->ClearcoatRoughnessId = LoadTex(path, material, &it_subsetinfo->ClearcoatRoughnessTex);
-            }
-
-            if (mDef->NameParam == "occlusionMap") {
-              std::string path = RemovePath(mDef->CaseString);
-#if DEBUG_MODEL
-              std::cout << "path[" << path << "]" << std::endl;
-#endif
-              it_subsetinfo->OcclusionId = LoadTex(path, material, &it_subsetinfo->OcclusionTex);
-            }
-
-            if (mDef->NameParam == "specularFactorMap") {
-              std::string path = RemovePath(mDef->CaseString);
-#if DEBUG_MODEL
-              std::cout << "path[" << path << "]" << std::endl;
-#endif
-              it_subsetinfo->SpecularFactorId = LoadTex(path, material, &it_subsetinfo->SpecularFactorTex);
-            }
-
-            if (mDef->NameParam == "specularColorMap") {
-              std::string path = RemovePath(mDef->CaseString);
-#if DEBUG_MODEL
-              std::cout << "path[" << path << "]" << std::endl;
-#endif
-              it_subsetinfo->SpecularColorId = LoadTex(path, material, &it_subsetinfo->SpecularColorTex);
-            }
-
-            if (mDef->NameParam == "transmissionMap") {
-              std::string path = RemovePath(mDef->CaseString);
-#if DEBUG_MODEL
-              std::cout << "path[" << path << "]" << std::endl;
-#endif
-              it_subsetinfo->TransmissionId = LoadTex(path, material, &it_subsetinfo->TransmissionTex);
-            }
+            loadTexture("diffuseMap", it_subsetinfo->DiffuseId, &it_subsetinfo->DiffuseTex)
+              || loadTexture("specularMap", it_subsetinfo->SpecularId, &it_subsetinfo->SpecularTex)
+              || loadTexture("glossMap", it_subsetinfo->GlossfId, &it_subsetinfo->GlossfTex)
+              || loadTexture("normalMap", it_subsetinfo->NormalId, &it_subsetinfo->NormalTex)
+              || loadTexture("heightMap", it_subsetinfo->ParalaxId, &it_subsetinfo->ParalaxTex)
+              || loadTexture("metallicMap", it_subsetinfo->MetallicId, &it_subsetinfo->MetallicTex)
+              || loadTexture("emissiveMap", it_subsetinfo->EmissiveId, &it_subsetinfo->EmissiveTex)
+              || loadTexture("sheenColorMap", it_subsetinfo->SheenColorId, &it_subsetinfo->SheenColorTex)
+              || loadTexture("sheenRoughnessMap", it_subsetinfo->SheenRoughnessId, &it_subsetinfo->SheenRoughnessTex)
+              || loadTexture("clearcoatMap", it_subsetinfo->ClearcoatId, &it_subsetinfo->ClearcoatTex)
+              || loadTexture("clearcoatRoughnessMap", it_subsetinfo->ClearcoatRoughnessId, &it_subsetinfo->ClearcoatRoughnessTex)
+              || loadTexture("occlusionMap", it_subsetinfo->OcclusionId, &it_subsetinfo->OcclusionTex)
+              || loadTexture("specularFactorMap", it_subsetinfo->SpecularFactorId, &it_subsetinfo->SpecularFactorTex)
+              || loadTexture("specularColorMap", it_subsetinfo->SpecularColorId, &it_subsetinfo->SpecularColorTex)
+              || loadTexture("transmissionMap", it_subsetinfo->TransmissionId, &it_subsetinfo->TransmissionTex);
           }
 
           if (mDef->Type == xF::xEFFECTENUM::STDX_DWORDS) {
@@ -684,13 +818,17 @@ namespace t850 {
         it_subsetinfo->IB32Bit = kUse32;
         const uint32_t meshAssetSubmeshIndex = nextMeshAssetSubmeshIndex++;
         const bool splitIntoClusters = CanSplitSubsetIntoClusters(*it_subsetinfo);
+        const Submesh* cachedSubmesh = (usePreprocessCache && meshAssetSubmeshIndex < preprocessCache.submeshes.size())
+          ? &preprocessCache.submeshes[meshAssetSubmeshIndex]
+          : nullptr;
         // Allocate temp index storage matching the source width. Both
         // branches build the same {first vertex of each face} order,
         // mirroring the legacy 16-bit path. For glTF >65 535-vertex
         // primitives the loader sets `Indices32Bit` and populates
         // `Triangles32`; the legacy `.x` loader keeps the 16-bit path.
         if (!kUse32) {
-          unsigned short *tmpIndexex = new unsigned short[it_subsetinfo->NumVertex];
+          indexScratch16.resize(static_cast<std::size_t>(it_subsetinfo->NumTris) * 3u);
+          unsigned short *tmpIndexex = indexScratch16.data();
           int counter = 0;
           bool first = false;
           for (int k = 0; k < NumFaceIndices; k++) {
@@ -724,15 +862,20 @@ namespace t850 {
             poolIBAllocs[i][j] = { poolId, off, it_subsetinfo->NumTris * 3u };
           }
 
-          // Compute per-subset AABB from referenced vertices
-          it_subsetinfo->bounds.Reset();
-          unsigned int stride16 = it->VertexSize / sizeof(float);
-          for (int vi = 0; vi < counter; vi++) {
-            unsigned int idx = tmpIndexex[vi];
-            it_subsetinfo->bounds.Expand(it->pData[idx*stride16], it->pData[idx*stride16+1], it->pData[idx*stride16+2]);
+          if (cachedSubmesh) {
+            ApplyCachedBounds(*it_subsetinfo, cachedSubmesh->localAABB);
+          } else if (buildCullingMetadataOnLoad) {
+            it_subsetinfo->bounds.Reset();
+            unsigned int stride16 = it->VertexSize / sizeof(float);
+            for (int vi = 0; vi < counter; vi++) {
+              unsigned int idx = tmpIndexex[vi];
+              it_subsetinfo->bounds.Expand(it->pData[idx*stride16], it->pData[idx*stride16+1], it->pData[idx*stride16+2]);
+            }
+          } else {
+            it_subsetinfo->bounds = geometryBounds;
           }
 
-          if (populatePools) {
+          if (populatePools && buildCullingMetadataOnLoad && !usePreprocessCache) {
             BuildContiguousClustersForSubset(tmpIndexex,
                                              static_cast<uint32_t>(counter),
                                              &it->pData[0],
@@ -742,9 +885,9 @@ namespace t850 {
                                              clusterBuildData[i][j]);
           }
 
-          delete[] tmpIndexex;
         } else {
-          unsigned int *tmpIndexex = new unsigned int[it_subsetinfo->NumVertex];
+          indexScratch32.resize(static_cast<std::size_t>(it_subsetinfo->NumTris) * 3u);
+          unsigned int *tmpIndexex = indexScratch32.data();
           int counter = 0;
           bool first = false;
           for (int k = 0; k < NumFaceIndices; k++) {
@@ -777,15 +920,20 @@ namespace t850 {
             poolIBAllocs[i][j] = { poolId, off, it_subsetinfo->NumTris * 3u };
           }
 
-          // Compute per-subset AABB from referenced vertices
-          it_subsetinfo->bounds.Reset();
-          unsigned int stride32 = it->VertexSize / sizeof(float);
-          for (int vi = 0; vi < counter; vi++) {
-            unsigned int idx = tmpIndexex[vi];
-            it_subsetinfo->bounds.Expand(it->pData[idx*stride32], it->pData[idx*stride32+1], it->pData[idx*stride32+2]);
+          if (cachedSubmesh) {
+            ApplyCachedBounds(*it_subsetinfo, cachedSubmesh->localAABB);
+          } else if (buildCullingMetadataOnLoad) {
+            it_subsetinfo->bounds.Reset();
+            unsigned int stride32 = it->VertexSize / sizeof(float);
+            for (int vi = 0; vi < counter; vi++) {
+              unsigned int idx = tmpIndexex[vi];
+              it_subsetinfo->bounds.Expand(it->pData[idx*stride32], it->pData[idx*stride32+1], it->pData[idx*stride32+2]);
+            }
+          } else {
+            it_subsetinfo->bounds = geometryBounds;
           }
 
-          if (populatePools) {
+          if (populatePools && buildCullingMetadataOnLoad && !usePreprocessCache) {
             BuildContiguousClustersForSubset(tmpIndexex,
                                              static_cast<uint32_t>(counter),
                                              &it->pData[0],
@@ -794,8 +942,6 @@ namespace t850 {
                                              meshAssetSubmeshIndex,
                                              clusterBuildData[i][j]);
           }
-
-          delete[] tmpIndexex;
         }
       }
 
@@ -815,14 +961,14 @@ namespace t850 {
         poolVBAllocs[i] = { poolId, off, pActual->NumVertices };
       }
 
-      // Compute AABB from vertex positions (first 3 floats of each vertex)
       it_MeshInfo->bounds.Reset();
-      unsigned int stride = it->VertexSize / sizeof(float);
-      for (unsigned int v = 0; v < pActual->NumVertices; v++) {
-        float px = it->pData[v * stride + 0];
-        float py = it->pData[v * stride + 1];
-        float pz = it->pData[v * stride + 2];
-        it_MeshInfo->bounds.Expand(px, py, pz);
+      if (usePreprocessCache) {
+        for (uint32_t submeshIndex = geometryFirstSubmeshIndex; submeshIndex < nextMeshAssetSubmeshIndex; ++submeshIndex) {
+          if (submeshIndex < preprocessCache.submeshes.size())
+            ExpandMeshBounds(*it_MeshInfo, preprocessCache.submeshes[submeshIndex].localAABB);
+        }
+      } else {
+        it_MeshInfo->bounds = geometryBounds;
       }
 
       T8_LOG_DEBUG("  Geometry %zu: VB=%u bytes (stride=%u, %d verts), IB=%zu tris%s",
@@ -868,7 +1014,10 @@ namespace t850 {
       m_asset->vertexCount      = 0;
       m_asset->indexCount       = 0;
       m_asset->rootAABB         = t850::AABB{};
-      m_asset->clusters.clear();
+      if (usePreprocessCache)
+        m_asset->clusters = preprocessCache.clusters;
+      else
+        m_asset->clusters.clear();
 
       std::size_t totalVerts = 0;
       std::size_t totalIdx   = 0;
@@ -880,15 +1029,19 @@ namespace t850 {
           const SubSetInfo& s = mi.SubSets[j];
           const uint32_t submeshIndex = static_cast<uint32_t>(m_asset->submeshes.size());
           Submesh sub;
-          sub.vertexStart   = s.VertexStart;
-          sub.vertexCount   = s.NumVertex;
-          sub.indexStart    = s.TriStart * 3u;
-          sub.triangleCount = s.NumTris;
-          sub.materialSlot  = submeshIndex;
-          sub.ib32Bit       = s.IB32Bit;
-          sub.localAABB.vMin = XVECTOR3(s.bounds.min.x, s.bounds.min.y, s.bounds.min.z, 0.0f);
-          sub.localAABB.vMax = XVECTOR3(s.bounds.max.x, s.bounds.max.y, s.bounds.max.z, 0.0f);
-          sub.vertexAttribKey.bits = s.key.bits & ShaderKey::VERTEX_ATTRIB_MASK;
+          if (usePreprocessCache && submeshIndex < preprocessCache.submeshes.size()) {
+            sub = preprocessCache.submeshes[submeshIndex];
+          } else {
+            sub.vertexStart   = s.VertexStart;
+            sub.vertexCount   = s.NumVertex;
+            sub.indexStart    = s.TriStart * 3u;
+            sub.triangleCount = s.NumTris;
+            sub.materialSlot  = submeshIndex;
+            sub.ib32Bit       = s.IB32Bit;
+            sub.localAABB.vMin = XVECTOR3(s.bounds.min.x, s.bounds.min.y, s.bounds.min.z, 0.0f);
+            sub.localAABB.vMax = XVECTOR3(s.bounds.max.x, s.bounds.max.y, s.bounds.max.z, 0.0f);
+            sub.vertexAttribKey.bits = s.key.bits & ShaderKey::VERTEX_ATTRIB_MASK;
+          }
           m_asset->vertexAttribMask |= sub.vertexAttribKey.bits;
           totalIdx += static_cast<std::size_t>(s.NumTris) * 3u;
           // Phase A.5 pool allocations captured during the loop above.
@@ -904,25 +1057,30 @@ namespace t850 {
             sub.ibAlloc.count       = poolIBAllocs[i][j].count;
             sub.ibPoolId            = static_cast<uint16_t>(poolIBAllocs[i][j].poolId);
           }
-          sub.firstCluster = static_cast<uint32_t>(m_asset->clusters.size());
-          if (i < clusterBuildData.size() && j < clusterBuildData[i].size()) {
-            for (SubmeshCluster cluster : clusterBuildData[i][j]) {
-              cluster.submeshIndex = submeshIndex;
-              m_asset->clusters.push_back(cluster);
+          if (!usePreprocessCache && buildCullingMetadataOnLoad) {
+            sub.firstCluster = static_cast<uint32_t>(m_asset->clusters.size());
+            if (i < clusterBuildData.size() && j < clusterBuildData[i].size()) {
+              for (SubmeshCluster cluster : clusterBuildData[i][j]) {
+                cluster.submeshIndex = submeshIndex;
+                m_asset->clusters.push_back(cluster);
+              }
             }
-          }
-          if (m_asset->clusters.size() == sub.firstCluster) {
-            const uint32_t indexCount = sub.ibAlloc.IsValid() ? sub.ibAlloc.count : s.NumTris * 3u;
-            if (indexCount > 0) {
-              SubmeshCluster cluster;
-              cluster.submeshIndex = submeshIndex;
-              cluster.indexOffset = 0;
-              cluster.indexCount = indexCount;
-              cluster.localAABB = sub.localAABB;
-              m_asset->clusters.push_back(cluster);
+            if (m_asset->clusters.size() == sub.firstCluster) {
+              const uint32_t indexCount = sub.ibAlloc.IsValid() ? sub.ibAlloc.count : s.NumTris * 3u;
+              if (indexCount > 0) {
+                SubmeshCluster cluster;
+                cluster.submeshIndex = submeshIndex;
+                cluster.indexOffset = 0;
+                cluster.indexCount = indexCount;
+                cluster.localAABB = sub.localAABB;
+                m_asset->clusters.push_back(cluster);
+              }
             }
+            sub.clusterCount = static_cast<uint32_t>(m_asset->clusters.size()) - sub.firstCluster;
+          } else if (!usePreprocessCache) {
+            sub.firstCluster = 0;
+            sub.clusterCount = 0;
           }
-          sub.clusterCount = static_cast<uint32_t>(m_asset->clusters.size()) - sub.firstCluster;
           m_asset->submeshes.push_back(sub);
         }
         m_asset->rootAABB.ExpandToInclude(mi.bounds.min.x, mi.bounds.min.y, mi.bounds.min.z);
@@ -939,10 +1097,17 @@ namespace t850 {
                   static_cast<unsigned long long>(m_asset->vertexAttribMask));
       MeshAssetCache::Get().DumpToLog();
       MaterialAssetCache::Get().DumpToLog();
+      m_asset->cullingMetadataReady = buildCullingMetadataOnLoad || usePreprocessCache;
+      if (buildCullingMetadataOnLoad && !usePreprocessCache)
+        MeshAssetCache::Get().SavePreprocessCache(m_sourcePath, preprocessCacheSettings, *m_asset);
     } else if (m_asset) {
       T8_LOG_INFO("[MeshAssetCache] Reusing populated '%s' (%zu submesh(es), refs=%u)",
                   m_asset->sourcePath.c_str(), m_asset->submeshes.size(), m_asset->refCount);
     }
+
+    if (populatePools && m_asset)
+      MeshAssetCache::Get().UploadDirtyPools();
+    m_cullingMetadataReady = m_asset ? m_asset->cullingMetadataReady : false;
 
     // Phase A.5 step 2: copy pool offsets from the (now populated)
     // MeshAsset into per-instance MeshInfo / SubSetInfo so the draw
@@ -969,8 +1134,171 @@ namespace t850 {
     BuildWireframeBuffers();
   }
 
+  bool RenderMesh::ApplyCullingPreprocessCache(const MeshPreprocessCacheData& cache) {
+    if (!m_asset || cache.submeshes.empty())
+      return false;
+    ApplyCachedCullingMetadata(Info, m_asset, cache);
+    m_cullingMetadataReady = m_asset->cullingMetadataReady;
+    return m_cullingMetadataReady;
+  }
+
+  bool RenderMesh::BuildCullingMetadata() {
+    if (!xFile || xFile->XMeshDataBase.empty() || !m_asset || m_asset->submeshes.empty())
+      return false;
+
+    std::vector<SubmeshCluster> rebuiltClusters;
+    t850::AABB rebuiltRoot;
+    rebuiltRoot = t850::AABB{};
+
+    std::size_t flatSubmesh = 0;
+    for (std::size_t i = 0; i < xFile->MeshInfo.size() && i < Info.size(); ++i) {
+      xFinalGeometry* finalGeometry = &xFile->MeshInfo[i];
+      xMeshGeometry* sourceGeometry = &xFile->XMeshDataBase[0]->Geometry[i];
+      MeshInfo& meshInfo = Info[i];
+      meshInfo.bounds.Reset();
+
+      for (std::size_t j = 0; j < meshInfo.SubSets.size(); ++j, ++flatSubmesh) {
+        if (flatSubmesh >= m_asset->submeshes.size())
+          return false;
+
+        SubSetInfo& subset = meshInfo.SubSets[j];
+        Submesh& submesh = m_asset->submeshes[flatSubmesh];
+        subset.bounds.Reset();
+        submesh.firstCluster = static_cast<uint32_t>(rebuiltClusters.size());
+
+        const bool splitIntoClusters = CanSplitSubsetIntoClusters(subset);
+        const int numFaceIndices = sourceGeometry->NumTriangles;
+        if (!sourceGeometry->Indices32Bit) {
+          std::vector<unsigned short> indices;
+          indices.reserve(subset.NumVertex);
+          for (int k = 0; k < numFaceIndices; ++k) {
+            if (sourceGeometry->MaterialList.FaceIndices[k] != static_cast<int>(j))
+              continue;
+            const unsigned int index = k * 3u;
+#if CHANGE_TO_RH
+            indices.push_back(sourceGeometry->Triangles[index + 2]);
+            indices.push_back(sourceGeometry->Triangles[index + 1]);
+            indices.push_back(sourceGeometry->Triangles[index + 0]);
+#else
+            indices.push_back(sourceGeometry->Triangles[index + 0]);
+            indices.push_back(sourceGeometry->Triangles[index + 1]);
+            indices.push_back(sourceGeometry->Triangles[index + 2]);
+#endif
+          }
+
+          const unsigned int stride = finalGeometry->VertexSize / sizeof(float);
+          for (unsigned short vertexIndex : indices) {
+            subset.bounds.Expand(finalGeometry->pData[vertexIndex * stride + 0],
+                                 finalGeometry->pData[vertexIndex * stride + 1],
+                                 finalGeometry->pData[vertexIndex * stride + 2]);
+          }
+
+          BuildContiguousClustersForSubset(indices.data(),
+                                           static_cast<uint32_t>(indices.size()),
+                                           finalGeometry->pData,
+                                           finalGeometry->VertexSize,
+                                           splitIntoClusters,
+                                           static_cast<uint32_t>(flatSubmesh),
+                                           rebuiltClusters);
+        } else {
+          std::vector<unsigned int> indices;
+          indices.reserve(subset.NumVertex);
+          for (int k = 0; k < numFaceIndices; ++k) {
+            if (sourceGeometry->MaterialList.FaceIndices[k] != static_cast<int>(j))
+              continue;
+            const unsigned int index = k * 3u;
+#if CHANGE_TO_RH
+            indices.push_back(sourceGeometry->Triangles32[index + 2]);
+            indices.push_back(sourceGeometry->Triangles32[index + 1]);
+            indices.push_back(sourceGeometry->Triangles32[index + 0]);
+#else
+            indices.push_back(sourceGeometry->Triangles32[index + 0]);
+            indices.push_back(sourceGeometry->Triangles32[index + 1]);
+            indices.push_back(sourceGeometry->Triangles32[index + 2]);
+#endif
+          }
+
+          const unsigned int stride = finalGeometry->VertexSize / sizeof(float);
+          for (unsigned int vertexIndex : indices) {
+            subset.bounds.Expand(finalGeometry->pData[vertexIndex * stride + 0],
+                                 finalGeometry->pData[vertexIndex * stride + 1],
+                                 finalGeometry->pData[vertexIndex * stride + 2]);
+          }
+
+          BuildContiguousClustersForSubset(indices.data(),
+                                           static_cast<uint32_t>(indices.size()),
+                                           finalGeometry->pData,
+                                           finalGeometry->VertexSize,
+                                           splitIntoClusters,
+                                           static_cast<uint32_t>(flatSubmesh),
+                                           rebuiltClusters);
+        }
+
+        if (rebuiltClusters.size() == submesh.firstCluster) {
+          const uint32_t indexCount = submesh.ibAlloc.IsValid() ? submesh.ibAlloc.count : subset.NumTris * 3u;
+          if (indexCount > 0) {
+            SubmeshCluster cluster;
+            cluster.submeshIndex = static_cast<uint32_t>(flatSubmesh);
+            cluster.indexOffset = 0;
+            cluster.indexCount = indexCount;
+            cluster.localAABB.vMin = XVECTOR3(subset.bounds.min.x, subset.bounds.min.y, subset.bounds.min.z, 0.0f);
+            cluster.localAABB.vMax = XVECTOR3(subset.bounds.max.x, subset.bounds.max.y, subset.bounds.max.z, 0.0f);
+            rebuiltClusters.push_back(cluster);
+          }
+        }
+
+        submesh.localAABB.vMin = XVECTOR3(subset.bounds.min.x, subset.bounds.min.y, subset.bounds.min.z, 0.0f);
+        submesh.localAABB.vMax = XVECTOR3(subset.bounds.max.x, subset.bounds.max.y, subset.bounds.max.z, 0.0f);
+        submesh.clusterCount = static_cast<uint32_t>(rebuiltClusters.size()) - submesh.firstCluster;
+        ExpandMeshBounds(meshInfo, submesh.localAABB);
+      }
+
+      rebuiltRoot.ExpandToInclude(meshInfo.bounds.min.x, meshInfo.bounds.min.y, meshInfo.bounds.min.z);
+      rebuiltRoot.ExpandToInclude(meshInfo.bounds.max.x, meshInfo.bounds.max.y, meshInfo.bounds.max.z);
+    }
+
+    m_asset->clusters = std::move(rebuiltClusters);
+    m_asset->rootAABB = rebuiltRoot;
+    m_asset->cullingMetadataReady = true;
+    m_cullingMetadataReady = true;
+    return true;
+  }
+
+  bool RenderMesh::EnsureCullingMetadata() {
+    const Config* config = Context().config;
+    if (config && config->cullingLoadMode == Config::CullingLoadMode::Disabled)
+      return false;
+    if (m_cullingMetadataReady)
+      return true;
+    if (!m_asset)
+      return false;
+
+    const MeshPreprocessCacheSettings preprocessCacheSettings = {
+      kMinTrianglesForClustering,
+      kTargetTrianglesPerCluster,
+      CHANGE_TO_RH ? 1u : 0u
+    };
+
+    MeshPreprocessCacheData preprocessCache;
+    if (MeshAssetCache::Get().LoadPreprocessCache(m_sourcePath, preprocessCacheSettings, preprocessCache)) {
+      if (ValidatePreprocessCacheTopology(xFile, Info, preprocessCache) && ApplyCullingPreprocessCache(preprocessCache)) {
+        T8_LOG_INFO("[CULLING] Loaded culling metadata for '%s' on demand", m_sourcePath.c_str());
+        return true;
+      }
+      T8_LOG_INFO("[CULLING] Ignoring on-demand culling cache for '%s': topology changed", m_sourcePath.c_str());
+    }
+
+    if (!BuildCullingMetadata())
+      return false;
+
+    MeshAssetCache::Get().SavePreprocessCache(m_sourcePath, preprocessCacheSettings, *m_asset);
+    T8_LOG_INFO("[CULLING] Built culling metadata for '%s' on demand (%zu cluster(s))",
+                m_sourcePath.c_str(), m_asset->clusters.size());
+    return true;
+  }
+
   void RenderMesh::CreateWireframeShader() {
-    if (!g_pBaseDriver) return;
+    if (!Context().driver) return;
     m_lineRenderer.Create();
   }
 
@@ -1070,11 +1398,21 @@ namespace t850 {
   }
 
   void RenderMesh::GatherInfo() {
+    BaseDriver* driver = Context().driver;
+    if (!driver) {
+      T8_LOG_ERROR("[RenderMesh] GatherInfo skipped for '%s': no driver in engine context", m_sourcePath.c_str());
+      return;
+    }
 
-    char *vsSourceP;
-    char *fsSourceP;
+    if (!xFile || xFile->MeshInfo.empty() || xFile->XMeshDataBase.empty() || !xFile->XMeshDataBase[0]) {
+      T8_LOG_ERROR("[RenderMesh] GatherInfo skipped for '%s': mesh data is not loaded", m_sourcePath.c_str());
+      return;
+    }
+
+    char *vsSourceP = nullptr;
+    char *fsSourceP = nullptr;
     std::string vsName, fsName;
-    if (g_pBaseDriver->UsesGLSL()) {
+    if (driver->UsesGLSL()) {
       vsSourceP = file2string("Shaders/VS_Mesh.glsl");
       fsSourceP = file2string("Shaders/FS_Mesh.glsl");
       vsName = "VS_Mesh.glsl";
@@ -1087,8 +1425,16 @@ namespace t850 {
       fsName = "FS_Mesh.hlsl";
     }
 
-    std::string vstr = std::string(vsSourceP);
-    std::string fstr = std::string(fsSourceP);
+    if (!vsSourceP || !fsSourceP) {
+      T8_LOG_ERROR("[RenderMesh] GatherInfo skipped for '%s': failed loading shader source(s) %s, %s",
+                   m_sourcePath.c_str(), vsName.c_str(), fsName.c_str());
+      free(vsSourceP);
+      free(fsSourceP);
+      return;
+    }
+
+    std::string vstr(vsSourceP);
+    std::string fstr(fsSourceP);
 
     free(vsSourceP);
     free(fsSourceP);
@@ -1205,7 +1551,7 @@ namespace t850 {
 
         // Pre-compile pass variants
         bool hasHeight = matKey.has(ShaderKey::HEIGHT_MAP);
-        g_pBaseDriver->CreateShader(vstr, fstr, matKey, vsName, fsName);
+        driver->CreateShader(vstr, fstr, matKey, vsName, fsName);
 
         static const uint8_t passes[] = {
           PassType::FORWARD, PassType::GBUFFER,
@@ -1214,11 +1560,11 @@ namespace t850 {
         for (uint8_t pass : passes) {
           ShaderKey k(matKey.bits);
           k.setPass(pass);
-          g_pBaseDriver->CreateShader(vstr, fstr, k, vsName, fsName);
+          driver->CreateShader(vstr, fstr, k, vsName, fsName);
           if (hasHeight && (pass == PassType::GBUFFER || pass == PassType::FORWARD)) {
             ShaderKey kp(k.bits);
             kp.bits |= ShaderKey::PARALLAX;
-            g_pBaseDriver->CreateShader(vstr, fstr, kp, vsName, fsName);
+            driver->CreateShader(vstr, fstr, kp, vsName, fsName);
           }
         }
 
@@ -1229,21 +1575,16 @@ namespace t850 {
     }
   }
 
-  int	 RenderMesh::LoadTex(std::string p, xF::xMaterial *mat, Texture** tex) {
-    int id = g_pBaseDriver->CreateTexture(p);
-    *tex = g_pBaseDriver->GetTexture(id);
-    bool tiled = false;
-    for (unsigned int m = 0; m < mat->EffectInstance.pDefaults.size(); m++) {
-      xEffectDefault *mDef_2 = &mat->EffectInstance.pDefaults[m];
-      if (mDef_2->Type == xF::xEFFECTENUM::STDX_DWORDS) {
-        if (mDef_2->NameParam == "Tiled") {
-          if (mDef_2->CaseDWORD == 1) {
-            tiled = true;
-          }
-          break;
-        }
-      }
+  int	 RenderMesh::LoadTex(const std::string& p, Texture** tex, bool tiled) {
+    BaseDriver* driver = Context().driver;
+    if (!driver) {
+      T8_LOG_ERROR("Texture [%s] not loaded: no driver in engine context", p.c_str());
+      *tex = nullptr;
+      return -1;
     }
+
+    int id = driver->CreateTexture(p);
+    *tex = driver->GetTexture(id);
 
     unsigned int params = TextBasicParams::MIPMAPS;
 
@@ -1257,11 +1598,11 @@ namespace t850 {
 
     if (id != -1) {
 #if DEBUG_MODEL
-      std::cout << "Texture Loaded index " << id << std::endl;
+      T8_LOG_DEBUG("Texture loaded index %d", id);
 #endif
     }
     else {
-      std::cout << "Texture [" << p << "] not Found" << std::endl;
+      T8_LOG_ERROR("Texture [%s] not found", p.c_str());
     }
 
     return id;
@@ -1368,7 +1709,7 @@ namespace t850 {
     return true;
   }
 
-  static float SubsetDistanceSqToCamera(const RenderMesh::SubSetInfo& subInfo, const XMATRIX44& world, const XVECTOR3& eye) {
+  static float SubsetViewDepth(const RenderMesh::SubSetInfo& subInfo, const XMATRIX44& world, const XVECTOR3& eye, const XVECTOR3& look) {
     float lx = (subInfo.bounds.min.x + subInfo.bounds.max.x) * 0.5f;
     float ly = (subInfo.bounds.min.y + subInfo.bounds.max.y) * 0.5f;
     float lz = (subInfo.bounds.min.z + subInfo.bounds.max.z) * 0.5f;
@@ -1378,7 +1719,7 @@ namespace t850 {
     float dx = wx - eye.x;
     float dy = wy - eye.y;
     float dz = wz - eye.z;
-    return dx*dx + dy*dy + dz*dz;
+    return dx*look.x + dy*look.y + dz*look.z;
   }
 
   static int ForwardSubsetGroup(const RenderMesh::SubSetInfo& subInfo) {
@@ -1422,16 +1763,16 @@ namespace t850 {
     return group;
   }
 
-  static float GeometryForwardDistanceSq(const RenderMesh::MeshInfo& meshInfo, const XMATRIX44& world, const XVECTOR3& eye) {
-    float distanceSq = -1.0f;
+  static float GeometryForwardDepth(const RenderMesh::MeshInfo& meshInfo, const XMATRIX44& world, const XVECTOR3& eye, const XVECTOR3& look) {
+    float depth = -FLT_MAX;
     for (const auto& subInfo : meshInfo.SubSets) {
       if (IsForwardOnlySubset(subInfo)) {
-        float subsetDistanceSq = SubsetDistanceSqToCamera(subInfo, world, eye);
-        if (subsetDistanceSq > distanceSq)
-          distanceSq = subsetDistanceSq;
+        float subsetDepth = SubsetViewDepth(subInfo, world, eye, look);
+        if (subsetDepth > depth)
+          depth = subsetDepth;
       }
     }
-    return distanceSq;
+    return depth;
   }
 
   static void ApplyMeshInstanceCB(RenderMesh::CBuffer& dst, const RenderMesh::MeshInstanceCBuffer& src) {
@@ -1544,6 +1885,14 @@ namespace t850 {
     if (t)
       transform = t;
 
+    const EngineContext& context = Context();
+    BaseDriver* driver = context.driver;
+    DeviceContext* deviceContext = context.deviceContext;
+    ThreadPool* threadPool = context.threadPool;
+    const Config* config = context.config;
+    if (!driver || !deviceContext)
+      return;
+
     uint8_t currentPass = gKey.getPass();
     Camera* pRenderCamera = pScProp && !pScProp->pCameras.empty() ? pScProp->pCameras[0] : nullptr;
     if (!pRenderCamera)
@@ -1559,7 +1908,7 @@ namespace t850 {
 
     std::size_t numGeometries = xFile->MeshInfo.size();
     const bool trackCullStats = currentPass == PassType::GBUFFER;
-    const bool timeCullStats = trackCullStats && g_config.flags.benchmark;
+    const bool timeCullStats = trackCullStats && config && config->flags.benchmark;
     using CullingClock = std::chrono::steady_clock;
     long long cullingCpuNs = 0;
     if (trackCullStats) {
@@ -1603,12 +1952,12 @@ namespace t850 {
 
     if (!frustumCullingEnabled) {
       std::fill(visible.begin(), visible.end(), frustumInside);
-    } else if (static_cast<int>(numGeometries) >= kParallelCullThreshold && g_threadPool) {
+    } else if (static_cast<int>(numGeometries) >= kParallelCullThreshold && threadPool) {
       XMATRIX44 worldCopy = transform;
       if (trackCullStats)
         m_cullingMeshTests += static_cast<unsigned long long>(numGeometries);
       timeCullWork([&]() -> bool {
-        g_threadPool->ParallelFor(0, static_cast<int>(numGeometries), [&](int i) {
+        threadPool->ParallelFor(0, static_cast<int>(numGeometries), [&](int i) {
           visible[i] = static_cast<uint8_t>(ClassifyAABBFrustum(Info[i].bounds, worldCopy, frustumPlanes));
         });
         return true;
@@ -1637,11 +1986,11 @@ namespace t850 {
       if (!t || slot < 0 || slot >= MeshDrawStateTracker::kMaxTrackedSlots) return;
       if (tracker.ShouldBindTexture(slot, t)) {
         if (trackCullStats) m_renderStateChanges++;
-        t->Set(*T8DeviceContext, slot, name);
+        t->Set(*deviceContext, slot, name);
       }
       // Sampler set every time (cheap); the per-shader sampler slot
       // map is consulted inside SetSampler.
-      t->SetSampler(*T8DeviceContext, samplerSlot);
+      t->SetSampler(*deviceContext, samplerSlot);
     };
 
     std::vector<std::size_t>& geometryOrder = m_geometryOrderScratch;
@@ -1654,8 +2003,8 @@ namespace t850 {
           int groupB = GeometryForwardGroup(Info[b]);
           if (groupA != groupB)
             return groupA < groupB;
-          float da = GeometryForwardDistanceSq(Info[a], transform, pRenderCamera->Eye);
-          float db = GeometryForwardDistanceSq(Info[b], transform, pRenderCamera->Eye);
+          float da = GeometryForwardDepth(Info[a], transform, pRenderCamera->Eye, pRenderCamera->Look);
+          float db = GeometryForwardDepth(Info[b], transform, pRenderCamera->Eye, pRenderCamera->Look);
           return da > db;
         });
       } else if (currentPass == PassType::GBUFFER || currentPass == PassType::SHADOW_MAP || currentPass == PassType::RADIAL_DEPTH) {
@@ -1758,8 +2107,8 @@ namespace t850 {
       ShaderBase *last = (ShaderBase*)32;
 
       // Phase A.5 step 2: bind shared VB pool if available, otherwise
-      // fall back to the per-asset VB. The pool's GPU buffer is built
-      // lazily on first GetGPUBuffer() call.
+      // fall back to the per-asset VB. Pool uploads are explicit at
+      // the end of mesh creation; GetGPUBuffer() is a pure accessor.
       VertexBuffer* vbToBind = it_MeshInfo->VB;
       if (it_MeshInfo->vbPoolAlloc.IsValid()) {
         if (VertexPool* vpool = MeshAssetCache::Get().GetVertexPool(it_MeshInfo->vbPoolAlloc.poolId)) {
@@ -1768,7 +2117,11 @@ namespace t850 {
           }
         }
       }
-      vbToBind->Set(*T8DeviceContext, stride, offset);
+      if (!vbToBind) {
+        T8_LOG_ERROR("[RenderMesh] Skipped geometry %zu: no uploaded vertex buffer", i);
+        continue;
+      }
+      vbToBind->Set(*deviceContext, stride, offset);
 
       // Build sorted draw order by shader key to minimize PSO switches
       std::size_t numSubsets = it_MeshInfo->SubSets.size();
@@ -1782,8 +2135,8 @@ namespace t850 {
             int groupB = ForwardSubsetGroup(it_MeshInfo->SubSets[b]);
             if (groupA != groupB)
               return groupA < groupB;
-            float da = SubsetDistanceSqToCamera(it_MeshInfo->SubSets[a], transform, pRenderCamera->Eye);
-            float db = SubsetDistanceSqToCamera(it_MeshInfo->SubSets[b], transform, pRenderCamera->Eye);
+            float da = SubsetViewDepth(it_MeshInfo->SubSets[a], transform, pRenderCamera->Eye, pRenderCamera->Look);
+            float db = SubsetViewDepth(it_MeshInfo->SubSets[b], transform, pRenderCamera->Eye, pRenderCamera->Look);
             return da > db;
           }
           if (currentPass == PassType::GBUFFER || currentPass == PassType::SHADOW_MAP || currentPass == PassType::RADIAL_DEPTH) {
@@ -1842,7 +2195,7 @@ namespace t850 {
           // Defensive fallback (shouldn't happen if Create() ran).
           FillMaterialCBFromSubset(materialCB, *sub_info);
         }
-        materialCB.ForwardParams = XVECTOR3((float)g_pBaseDriver->width, (float)g_pBaseDriver->height, Textures[7] ? 1.0f : 0.0f, mp ? mp->ior : sub_info->IOR);
+        materialCB.ForwardParams = XVECTOR3((float)driver->width, (float)driver->height, Textures[7] ? 1.0f : 0.0f, mp ? mp->ior : sub_info->IOR);
         float emissiveMul = pScProp ? pScProp->MaterialEmissiveIntensity : 1.0f;
         float transmissionMul = pScProp ? pScProp->MaterialTransmissionMultiplier : 1.0f;
         float refractionStrength = pScProp ? pScProp->MaterialRefractionStrength : 0.03f;
@@ -1891,11 +2244,15 @@ namespace t850 {
             }
           }
         }
+        if (!ibToBind) {
+          T8_LOG_ERROR("[RenderMesh] Skipped subset %zu: no uploaded index buffer", k);
+          continue;
+        }
         IndexBufferFormat::E ibFmt = sub_info->IB32Bit ? IndexBufferFormat::R32 : IndexBufferFormat::R16;
         // Phase C step 3: IB-bind dedup via process-wide tracker.
         if (tracker.ShouldBindIB(ibToBind, ibFmt)) {
           if (trackCullStats) m_renderStateChanges++;
-          ibToBind->Set(*T8DeviceContext, 0, ibFmt);
+          ibToBind->Set(*deviceContext, 0, ibFmt);
         }
 
         // Build final shader key: material features + global pass + toggles
@@ -1910,18 +2267,18 @@ namespace t850 {
           }
         }
 
-        s = g_pBaseDriver->GetShader(finalKey);
+        s = driver->GetShader(finalKey);
         if (!s) continue;
 
      //   if (s != last)
           update = true;
 
-        BaseDriver::FaceCulling prevCull = g_pBaseDriver->m_FaceCulling;
+        BaseDriver::FaceCulling prevCull = driver->m_FaceCulling;
         const bool subsetDoubleSided = mp ? (mp->doubleSided != 0) : sub_info->DoubleSided;
         bool changedCull = subsetDoubleSided && prevCull != BaseDriver::FRONT_AND_BACK;
         if (changedCull) {
           if (trackCullStats) m_renderStateChanges++;
-          g_pBaseDriver->SetCullFace(BaseDriver::FRONT_AND_BACK);
+          driver->SetCullFace(BaseDriver::FRONT_AND_BACK);
         }
 
         if (update) {
@@ -1931,19 +2288,27 @@ namespace t850 {
           // notes the shader change to invalidate texture cache
           // (per-shader rootParam map).
           if (trackCullStats) m_renderStateChanges++;
-          s->Set(*T8DeviceContext);
+          s->Set(*deviceContext);
           tracker.OnShaderChanged(s);
 
-          if (g_pBaseDriver->m_currentAPI == GraphicsApi::OPENGL) {
-            it_MeshInfo->CB->UpdateFromBuffer(*T8DeviceContext, &it_MeshInfo->CnstBuffer.WVP[0]);
-            it_MeshInfo->CB->Set(*T8DeviceContext);
+          if (driver->m_currentAPI == GraphicsApi::OPENGL) {
+            if (tracker.UpdateAndBindConstantBuffer(*deviceContext, it_MeshInfo->CB, 0,
+                                                    &it_MeshInfo->CnstBuffer,
+                                                    sizeof(RenderMesh::CBuffer)) && trackCullStats)
+              m_renderStateChanges++;
           } else {
-            it_MeshInfo->FrameCBGPU->UpdateFromBuffer(*T8DeviceContext, &it_MeshInfo->FrameCB);
-            it_MeshInfo->InstanceCBGPU->UpdateFromBuffer(*T8DeviceContext, &it_MeshInfo->InstanceCB);
-            it_MeshInfo->MaterialCBGPU->UpdateFromBuffer(*T8DeviceContext, &sub_info->MaterialCB);
-            it_MeshInfo->FrameCBGPU->Set(*T8DeviceContext, 0);
-            it_MeshInfo->InstanceCBGPU->Set(*T8DeviceContext, 1);
-            it_MeshInfo->MaterialCBGPU->Set(*T8DeviceContext, 2);
+            if (tracker.UpdateAndBindConstantBuffer(*deviceContext, it_MeshInfo->FrameCBGPU, 0,
+                                                    &it_MeshInfo->FrameCB,
+                                                    sizeof(RenderMesh::MeshFrameCBuffer)) && trackCullStats)
+              m_renderStateChanges++;
+            if (tracker.UpdateAndBindConstantBuffer(*deviceContext, it_MeshInfo->InstanceCBGPU, 1,
+                                                    &it_MeshInfo->InstanceCB,
+                                                    sizeof(RenderMesh::MeshInstanceCBuffer)) && trackCullStats)
+              m_renderStateChanges++;
+            if (tracker.UpdateAndBindConstantBuffer(*deviceContext, it_MeshInfo->MaterialCBGPU, 2,
+                                                    &sub_info->MaterialCB,
+                                                    sizeof(RenderMesh::MeshMaterialCBuffer)) && trackCullStats)
+              m_renderStateChanges++;
           }
         }
         // Phase B step 2 + C step 2: bind material textures via the
@@ -1976,9 +2341,9 @@ namespace t850 {
           // from a different shader path).
           if (tracker.ShouldBindEnvMap(EnvMap)) {
             if (trackCullStats) m_renderStateChanges++;
-            EnvMap->Set(*T8DeviceContext, 4, "texEnv");
+            EnvMap->Set(*deviceContext, 4, "texEnv");
           }
-          EnvMap->SetSampler(*T8DeviceContext, EnvSamplerSlot);
+          EnvMap->SetSampler(*deviceContext, EnvSamplerSlot);
         }
         if (s->key.has(ShaderKey::HEIGHT_MAP)) {
           Texture* t = matTex(MatTexSlot::Parallax); if (!t) t = sub_info->ParalaxTex;
@@ -2034,13 +2399,15 @@ namespace t850 {
         }
 
         if (trackCullStats) m_renderStateChanges++;
-        T8DeviceContext->SetPrimitiveTopology(Topology::TRIANLE_LIST);
+        deviceContext->SetPrimitiveTopology(Topology::TRIANLE_LIST);
         // Phase A.5 step 2: when using shared pools the index/vertex
         // offsets steer the draw to this submesh's allocation. Falls
         // back to (count, 0, 0) on the legacy per-subset IB path.
         bool drewSubset = false;
         const Submesh* submesh = FindSubmeshForSubset(m_asset, *sub_info);
-        const bool useClusterPath = currentPass == PassType::GBUFFER &&
+        const bool useClusterPath = frustumCullingEnabled &&
+                  m_cullingMetadataReady &&
+                  currentPass == PassType::GBUFFER &&
                                     submesh && submesh->clusterCount > 0 &&
                                     sub_info->ibPoolAlloc.IsValid() &&
                                     it_MeshInfo->vbPoolAlloc.IsValid();
@@ -2066,7 +2433,7 @@ namespace t850 {
                 m_culledClusters++;
               continue;
             }
-            T8DeviceContext->DrawIndexed(cluster.indexCount,
+            deviceContext->DrawIndexed(cluster.indexCount,
                                          sub_info->ibPoolAlloc.offsetElems + cluster.indexOffset,
                                          it_MeshInfo->vbPoolAlloc.offsetElems);
             if (trackCullStats) {
@@ -2078,7 +2445,7 @@ namespace t850 {
             drewSubset = true;
           }
         } else if (sub_info->ibPoolAlloc.IsValid() && it_MeshInfo->vbPoolAlloc.IsValid()) {
-          T8DeviceContext->DrawIndexed(sub_info->ibPoolAlloc.count,
+          deviceContext->DrawIndexed(sub_info->ibPoolAlloc.count,
                                        sub_info->ibPoolAlloc.offsetElems,
                                        it_MeshInfo->vbPoolAlloc.offsetElems);
           if (trackCullStats) {
@@ -2087,7 +2454,7 @@ namespace t850 {
           }
           drewSubset = true;
         } else {
-          T8DeviceContext->DrawIndexed(sub_info->NumVertex, 0, 0);
+          deviceContext->DrawIndexed(sub_info->NumVertex, 0, 0);
           if (trackCullStats) {
             m_drawCalls++;
             m_drawnIndices += sub_info->NumVertex;
@@ -2096,7 +2463,7 @@ namespace t850 {
         }
         if (changedCull) {
           if (trackCullStats) m_renderStateChanges++;
-          g_pBaseDriver->SetCullFace(prevCull);
+          driver->SetCullFace(prevCull);
         }
         if (trackCullStats && drewSubset)
           m_drawnSubsets++;
@@ -2147,6 +2514,7 @@ namespace t850 {
     m_wireShader = nullptr;
     m_lineRenderer.Destroy();
     m_wireDepthTex = nullptr;
+    m_cullingMetadataReady = false;
   }
 }
 

@@ -26,6 +26,23 @@
 #include <vector>
 
 namespace t850 {
+  struct MeshPreprocessCacheSettings {
+    uint32_t minTrianglesForClustering = 0;
+    uint32_t targetTrianglesPerCluster = 0;
+    uint32_t flags = 0;
+  };
+
+  struct MeshPreprocessCacheData {
+    uint64_t vertexAttribMask = 0;
+    uint64_t topologyHash = 0;
+    uint32_t vertexStride = 0;
+    uint32_t vertexCount = 0;
+    uint32_t indexCount = 0;
+    AABB rootAABB;
+    std::vector<Submesh> submeshes;
+    std::vector<SubmeshCluster> clusters;
+  };
+
   class MeshAssetCache {
   public:
     static MeshAssetCache& Get();
@@ -54,9 +71,20 @@ namespace t850 {
     VertexPool* GetVertexPool(uint32_t poolId);
     IndexPool*  GetIndexPool(uint32_t poolId);
 
+    // Upload every dirty mesh pool explicitly after asset population.
+    // Returns the number of pools that were dirty at the start of the pass.
+    std::size_t UploadDirtyPools();
+
     // Diagnostics.
     std::size_t Size() const;
     void DumpToLog() const;
+
+    bool LoadPreprocessCache(const std::string& sourcePath,
+                             const MeshPreprocessCacheSettings& settings,
+                             MeshPreprocessCacheData& outData) const;
+    bool SavePreprocessCache(const std::string& sourcePath,
+                             const MeshPreprocessCacheSettings& settings,
+                             const MeshAsset& asset) const;
 
     // Test/teardown only — destroy all assets unconditionally.
     void Clear();

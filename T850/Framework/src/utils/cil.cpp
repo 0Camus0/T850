@@ -5,12 +5,159 @@
 #include <stb_image.h>
 #include <utils/Log.h>
 
+#include <cstdint>
+#include <cstring>
+#include <filesystem>
+#include <vector>
+
+#if defined(OS_WINDOWS)
+#include <Windows.h>
+#include <wincodec.h>
+#include <wrl/client.h>
+#pragma comment(lib, "ole32.lib")
+#pragma comment(lib, "windowscodecs.lib")
+#endif
+
 using std::ifstream;
 using std::cout;
 using std::endl;
 using std::max;
 using std::streampos;
 using std::ios;
+
+namespace {
+uint16_t Float32ToFloat16(float value) {
+	uint32_t bits = 0;
+	std::memcpy(&bits, &value, sizeof(bits));
+
+	const uint32_t sign = (bits >> 16) & 0x8000u;
+	int32_t exponent = static_cast<int32_t>((bits >> 23) & 0xffu) - 127 + 15;
+	uint32_t mantissa = bits & 0x7fffffu;
+
+	if (exponent <= 0) {
+		if (exponent < -10)
+			return static_cast<uint16_t>(sign);
+		mantissa = (mantissa | 0x800000u) >> (1 - exponent);
+		return static_cast<uint16_t>(sign | ((mantissa + 0x1000u) >> 13));
+	}
+
+	if (exponent >= 31)
+		return static_cast<uint16_t>(sign | 0x7c00u);
+
+	mantissa += 0x1000u;
+	if (mantissa & 0x800000u) {
+		mantissa = 0;
+		++exponent;
+		if (exponent >= 31)
+			return static_cast<uint16_t>(sign | 0x7c00u);
+	}
+
+	return static_cast<uint16_t>(sign | (static_cast<uint32_t>(exponent) << 10) | (mantissa >> 13));
+}
+
+bool Is16BitPngFile(const char* filename) {
+	std::ifstream file(filename, std::ios::binary);
+	if (!file.good())
+		return false;
+
+	unsigned char header[25] = {};
+	file.read(reinterpret_cast<char*>(header), sizeof(header));
+	if (file.gcount() < static_cast<std::streamsize>(sizeof(header)))
+		return false;
+
+	static const unsigned char pngSig[8] = { 0x89, 'P', 'N', 'G', 0x0D, 0x0A, 0x1A, 0x0A };
+	if (std::memcmp(header, pngSig, sizeof(pngSig)) != 0)
+		return false;
+	if (header[12] != 'I' || header[13] != 'H' || header[14] != 'D' || header[15] != 'R')
+		return false;
+
+	return header[24] > 8;
+}
+
+#if defined(OS_WINDOWS)
+bool Load16BitPngAsRGBA16F(const char* filename, int* x, int* y, int* channels, unsigned int* buffersize, unsigned char** outBuffer) {
+	*outBuffer = nullptr;
+
+	HRESULT coInit = CoInitializeEx(nullptr, COINIT_MULTITHREADED);
+	const bool shouldUninitialize = SUCCEEDED(coInit);
+	if (FAILED(coInit) && coInit != RPC_E_CHANGED_MODE)
+		return false;
+
+	Microsoft::WRL::ComPtr<IWICImagingFactory> factory;
+	HRESULT hr = CoCreateInstance(CLSID_WICImagingFactory, nullptr, CLSCTX_INPROC_SERVER,
+																IID_PPV_ARGS(factory.GetAddressOf()));
+	if (FAILED(hr)) {
+		if (shouldUninitialize) CoUninitialize();
+		return false;
+	}
+
+	const std::wstring widePath = std::filesystem::path(filename).wstring();
+	Microsoft::WRL::ComPtr<IWICBitmapDecoder> decoder;
+	hr = factory->CreateDecoderFromFilename(widePath.c_str(), nullptr, GENERIC_READ,
+																					WICDecodeMetadataCacheOnDemand, decoder.GetAddressOf());
+	if (FAILED(hr)) {
+		if (shouldUninitialize) CoUninitialize();
+		return false;
+	}
+
+	Microsoft::WRL::ComPtr<IWICBitmapFrameDecode> frame;
+	hr = decoder->GetFrame(0, frame.GetAddressOf());
+	if (FAILED(hr)) {
+		if (shouldUninitialize) CoUninitialize();
+		return false;
+	}
+
+	UINT width = 0;
+	UINT height = 0;
+	hr = frame->GetSize(&width, &height);
+	if (FAILED(hr) || width == 0 || height == 0) {
+		if (shouldUninitialize) CoUninitialize();
+		return false;
+	}
+
+	Microsoft::WRL::ComPtr<IWICFormatConverter> converter;
+	hr = factory->CreateFormatConverter(converter.GetAddressOf());
+	if (FAILED(hr)) {
+		if (shouldUninitialize) CoUninitialize();
+		return false;
+	}
+
+	hr = converter->Initialize(frame.Get(), GUID_WICPixelFormat64bppRGBA,
+														 WICBitmapDitherTypeNone, nullptr, 0.0,
+														 WICBitmapPaletteTypeCustom);
+	if (FAILED(hr)) {
+		if (shouldUninitialize) CoUninitialize();
+		return false;
+	}
+
+	const size_t pixelCount = static_cast<size_t>(width) * static_cast<size_t>(height) * 4u;
+	std::vector<uint16_t> rgba64(pixelCount);
+	const UINT stride = width * 4u * sizeof(uint16_t);
+	const UINT byteCount = static_cast<UINT>(rgba64.size() * sizeof(uint16_t));
+	hr = converter->CopyPixels(nullptr, stride, byteCount, reinterpret_cast<BYTE*>(rgba64.data()));
+	if (FAILED(hr)) {
+		if (shouldUninitialize) CoUninitialize();
+		return false;
+	}
+
+	uint16_t* halfData = new uint16_t[pixelCount];
+	for (size_t i = 0; i < pixelCount; ++i) {
+		const float normalized = static_cast<float>(rgba64[i]) * (1.0f / 65535.0f);
+		halfData[i] = Float32ToFloat16(normalized);
+	}
+
+	*x = static_cast<int>(width);
+	*y = static_cast<int>(height);
+	*channels = 4;
+	*buffersize = static_cast<unsigned int>(pixelCount * sizeof(uint16_t));
+	*outBuffer = reinterpret_cast<unsigned char*>(halfData);
+
+	if (shouldUninitialize)
+		CoUninitialize();
+	return true;
+}
+#endif
+}
 
 void checkformat(std::ifstream &in_, unsigned int &prop) {
 	std::streampos begPos = in_.tellg();
@@ -599,9 +746,26 @@ unsigned char*	cil_load(const char* filename, int *x, int *y, unsigned int *mipm
 	}
 #if CIL_CALL_STB
 	else if (props_ == CIL_FORWARD_TO_STB) {
-		props_ = CIL_LOADED_WITH_STB | CIL_RAW;
 		in_.close();
 		int channels;
+		if (Is16BitPngFile(filename)) {
+#if defined(OS_WINDOWS)
+			unsigned char* halfData = nullptr;
+			if (Load16BitPngAsRGBA16F(filename, x, y, &channels, &buffer_size_, &halfData)) {
+			props_ = CIL_RAW | CIL_RGBA | CIL_HALF_FLOAT;
+			*mipmaps = 1;
+			*buffersize = buffer_size_;
+			*props = props_;
+			T8_LOG_INFO("CIL loaded 16-bit image as RGBA16F: '%s' (%dx%d, decodedChannels=%d)", filename, *x, *y, channels);
+			return halfData;
+			}
+#endif
+			T8_LOG_ERROR("CIL failed to load 16-bit PNG '%s'", filename);
+			*props = CIL_NOT_SUPPORTED_FILE;
+			return 0;
+		}
+
+		props_ = CIL_LOADED_WITH_STB | CIL_RAW;
 		unsigned char * buffer = stbi_load(filename, x, y, &channels, 4);
 		props_ |= CIL_RGBA;            // stbi_load always returns 4 channels (forced above)
 		*mipmaps = 1;

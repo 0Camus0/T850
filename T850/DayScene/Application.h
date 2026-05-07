@@ -24,6 +24,7 @@
 #include <utils/Timer.h>
 
 #include <string>
+#include <memory>
 #include <unordered_map>
 #include <unordered_set>
 #include <vector>
@@ -59,8 +60,8 @@ public:
   std::string m_fpsString;
   XVECTOR3 m_fpsCol = XVECTOR3(0.2f, 0.8f, 0.2f);
   t850::TextRenderer m_textRender;
-  std::vector<t850::SceneBase*> m_scenes;
-  t850::SceneBase* m_actualScene;
+  std::vector<std::unique_ptr<t850::SceneBase>> m_scenes;
+  t850::SceneBase* m_actualScene = nullptr;
   t850::DevLayer m_devLayer;
   t850::ImGuiSystem m_imgui;
   bool m_imguiReady = false;

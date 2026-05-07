@@ -62,15 +62,26 @@ namespace t850 {
     //Create Quad
     m_quad.Init();
     /*SHADERS*/
-    char *vsSourceP;
-    char *fsSourceP;
+    char *vsSourceP = nullptr;
+    char *fsSourceP = nullptr;
+    const char* vsName = nullptr;
+    const char* fsName = nullptr;
     if (g_pBaseDriver->UsesGLSL()) {
-      vsSourceP = file2string("Shaders/VS_Text.glsl");
-      fsSourceP = file2string("Shaders/FS_Text.glsl");
+      vsName = "Shaders/VS_Text.glsl";
+      fsName = "Shaders/FS_Text.glsl";
     }
     else {
-      vsSourceP = file2string("Shaders/VS_Text.hlsl");
-      fsSourceP = file2string("Shaders/FS_Text.hlsl");
+      vsName = "Shaders/VS_Text.hlsl";
+      fsName = "Shaders/FS_Text.hlsl";
+    }
+    vsSourceP = file2string(vsName);
+    fsSourceP = file2string(fsName);
+
+    if (!vsSourceP || !fsSourceP) {
+      T8_LOG_ERROR("[TextRenderer] LoadFromFile skipped: failed loading shader source(s) %s, %s", vsName, fsName);
+      free(vsSourceP);
+      free(fsSourceP);
+      return;
     }
     std::string vstr = std::string(vsSourceP);
     std::string fstr = std::string(fsSourceP);
@@ -99,6 +110,9 @@ namespace t850 {
         fstr = Defines + fstr;
       }
     }
+
+    free(vsSourceP);
+    free(fsSourceP);
 
     int shaderID = g_pBaseDriver->CreateShader(vstr, fstr);
     m_shader = g_pBaseDriver->GetShaderIdx(shaderID);

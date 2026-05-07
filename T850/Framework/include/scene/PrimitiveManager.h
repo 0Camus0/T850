@@ -20,10 +20,12 @@
 #include <scene/PrimitiveBase.h>
 #include <scene/SceneProp.h>
 namespace t850 {
+  struct EngineContext;
   class Spline;
   class PrimitiveManager {
   private:
     int  CreateQuad();
+    EngineContext* m_engineContext = nullptr;
   public:
     enum PRIMITIVES {
       QUAD = 0,
@@ -37,6 +39,7 @@ namespace t850 {
     int	 CreateMesh(const char *fname);
     int  CreateSpline(Spline& spline);
 
+    void SetEngineContext(EngineContext* context);
     void SetSceneProps(SceneProps *p);
     void Init();
 

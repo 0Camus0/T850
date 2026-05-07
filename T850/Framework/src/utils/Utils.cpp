@@ -12,9 +12,14 @@
 *********************************************************/
 
 #include <utils/Utils.h>
+#include <utils/Log.h>
+
+#include <cerrno>
+#include <cstdio>
+#include <cstdlib>
+#include <cstring>
+#include <limits>
 #include <string>
-#include <stdio.h>
-#include <stdlib.h>
 
 #ifdef USING_GL_COMMON
 void CheckGLError(){
@@ -99,21 +104,60 @@ unsigned int createShader(unsigned int type, char* pSource) {
 #endif
 
 char *file2string(const char *path) {
-	FILE *fd;
-	long len;
-	size_t r;
-	char *str;
-	if (!(fd = fopen(path, "r"))) {
-		fprintf(stderr, "Can't open file '%s'\n", path);
-		return NULL;
+	if (!path || !*path) {
+		T8_LOG_ERROR("Can't open shader/source file: empty path");
+		return nullptr;
 	}
-	fseek(fd, 0, SEEK_END);
-	len = ftell(fd);
-	fseek(fd, 0, SEEK_SET);
-	str = (char*)malloc( 1 + len * sizeof(char));
-	r = fread(str, sizeof(char), len, fd);
-	str[r] = '\0';
-	fclose(fd);
+
+	FILE* fd = std::fopen(path, "rb");
+	if (!fd) {
+		T8_LOG_ERROR("Can't open file '%s': %s", path, std::strerror(errno));
+		return nullptr;
+	}
+
+	if (std::fseek(fd, 0, SEEK_END) != 0) {
+		T8_LOG_ERROR("Can't seek file '%s'", path);
+		std::fclose(fd);
+		return nullptr;
+	}
+
+	const long end = std::ftell(fd);
+	if (end < 0) {
+		T8_LOG_ERROR("Can't determine file size for '%s'", path);
+		std::fclose(fd);
+		return nullptr;
+	}
+
+	if (static_cast<unsigned long>(end) >= (std::numeric_limits<size_t>::max)()) {
+		T8_LOG_ERROR("File '%s' is too large to load", path);
+		std::fclose(fd);
+		return nullptr;
+	}
+
+	if (std::fseek(fd, 0, SEEK_SET) != 0) {
+		T8_LOG_ERROR("Can't rewind file '%s'", path);
+		std::fclose(fd);
+		return nullptr;
+	}
+
+	const size_t len = static_cast<size_t>(end);
+	char* str = static_cast<char*>(std::malloc(len + 1));
+	if (!str) {
+		T8_LOG_ERROR("Out of memory loading file '%s' (%zu bytes)", path, len);
+		std::fclose(fd);
+		return nullptr;
+	}
+
+	const size_t read = std::fread(str, 1, len, fd);
+	if (read != len && std::ferror(fd)) {
+		T8_LOG_ERROR("Failed reading file '%s'", path);
+		std::free(str);
+		std::fclose(fd);
+		return nullptr;
+	}
+
+	str[read] = '\0';
+	std::fclose(fd);
 	return str;
 }
 

@@ -190,10 +190,10 @@ mutex-protected, dedupes by lower-cased path. Refcount management:
 GPU memory lifecycle:
 
 - **Per-format `VertexPool`** holds one big GPU `VertexBuffer` + a CPU
-  staging vector. Suballocate appends staging bytes; `EnsureUploaded`
-  rebuilds the GPU buffer when staging changed. Created on demand by
-  the first asset whose `(vertexAttribMask, stride)` produces a new
-  key.
+  staging vector. Suballocate appends staging bytes; the explicit
+  `MeshAssetCache::UploadDirtyPools()` pass rebuilds dirty GPU buffers
+  before draw. Created on demand by the first asset whose
+  `(vertexAttribMask, stride)` produces a new key.
 - **`IndexPool`** identical but at most two instances (16-bit and
   32-bit), keyed by IB width.
 - Pool buffers outlive any individual asset and are torn down only at
@@ -204,10 +204,10 @@ Lifecycle today:
 - `RenderMesh::Load(filename)` calls `Acquire`, logs HIT/MISS.
 - `RenderMesh::Create()` populates the asset on first acquisition
   (stride, submeshes) AND suballocates each geometry's VB + each
-  subset's IB into the appropriate pool. Subsequent acquisitions skip
-  the suballocate (asset already populated) and just copy the pool
-  offsets from `m_asset->submeshes` into per-instance `MeshInfo` /
-  `SubSetInfo`.
+  subset's IB into the appropriate pool, then uploads all dirty pools
+  once before draw. Subsequent acquisitions skip the suballocate (asset
+  already populated) and just copy the pool offsets from
+  `m_asset->submeshes` into per-instance `MeshInfo` / `SubSetInfo`.
 - `RenderMesh::Draw()` and `RenderSkinnedMesh::Draw()` bind the pool's
   `VertexBuffer`/`IndexBuffer` and pass per-submesh
   `vbAlloc.offsetElems` / `ibAlloc.offsetElems` /
@@ -607,7 +607,7 @@ bits. Drop if profiling shows no benefit.
 |---|---|
 | `Framework/include/scene/MeshAsset.h` | Submesh + MeshAsset + PoolAlloc |
 | `Framework/include/scene/MeshPool.h` | VertexPool + IndexPool (Tier 1) |
-| `Framework/src/scene/MeshPool.cpp` | Pool impl, lazy GPU upload |
+| `Framework/src/scene/MeshPool.cpp` | Pool impl and pure GPU buffer accessors |
 | `Framework/include/scene/MeshAssetCache.h` | Singleton cache API + pool registry |
 | `Framework/src/scene/MeshAssetCache.cpp` | Cache impl + GPU resource cleanup |
 | `Framework/include/scene/RenderMesh.h` | Legacy entity+asset fusion (transitional) |

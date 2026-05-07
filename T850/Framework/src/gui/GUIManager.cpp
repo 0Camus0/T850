@@ -76,14 +76,25 @@ void GUIManager::Init(int screenW, int screenH) {
 }
 
 void GUIManager::InitShader() {
-  char* vsSourceP;
-  char* fsSourceP;
+  char* vsSourceP = nullptr;
+  char* fsSourceP = nullptr;
+  const char* vsName = nullptr;
+  const char* fsName = nullptr;
   if (g_pBaseDriver->UsesGLSL()) {
-    vsSourceP = file2string("Shaders/VS_GUI.glsl");
-    fsSourceP = file2string("Shaders/FS_GUI.glsl");
+    vsName = "Shaders/VS_GUI.glsl";
+    fsName = "Shaders/FS_GUI.glsl";
   } else {
-    vsSourceP = file2string("Shaders/VS_GUI.hlsl");
-    fsSourceP = file2string("Shaders/FS_GUI.hlsl");
+    vsName = "Shaders/VS_GUI.hlsl";
+    fsName = "Shaders/FS_GUI.hlsl";
+  }
+  vsSourceP = file2string(vsName);
+  fsSourceP = file2string(fsName);
+
+  if (!vsSourceP || !fsSourceP) {
+    T8_LOG_ERROR("[GUIManager] InitShader skipped: failed loading shader source(s) %s, %s", vsName, fsName);
+    free(vsSourceP);
+    free(fsSourceP);
+    return;
   }
 
   std::string vstr(vsSourceP);
@@ -419,6 +430,7 @@ void GUIManager::AddCheckbox(const CheckboxDesc& desc, int settingIndex) {
   cb->name         = desc.name;
   cb->label        = desc.label;
   cb->checked      = desc.default_val;
+  cb->enabled      = desc.enabled;
   cb->settingIndex = settingIndex;
 
   m_elements.push_back(lbl);

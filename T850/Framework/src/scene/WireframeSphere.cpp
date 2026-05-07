@@ -1,5 +1,6 @@
 #include <pch.h>
 #include <scene/WireframeSphere.h>
+#include <utils/Log.h>
 #include <utils/Utils.h>
 #include <cmath>
 
@@ -13,15 +14,26 @@ void WireframeSphere::Create(int rings, int segments) {
   indices.clear();
   indexCount = 0;
 
-  char* vsSourceP;
-  char* fsSourceP;
+  char* vsSourceP = nullptr;
+  char* fsSourceP = nullptr;
+  const char* vsName = nullptr;
+  const char* fsName = nullptr;
   if (g_pBaseDriver->UsesGLSL()) {
-    vsSourceP = file2string("Shaders/VS_W.glsl");
-    fsSourceP = file2string("Shaders/FS_W.glsl");
+    vsName = "Shaders/VS_W.glsl";
+    fsName = "Shaders/FS_W.glsl";
   }
   else {
-    vsSourceP = file2string("Shaders/VS_W.hlsl");
-    fsSourceP = file2string("Shaders/FS_W.hlsl");
+    vsName = "Shaders/VS_W.hlsl";
+    fsName = "Shaders/FS_W.hlsl";
+  }
+  vsSourceP = file2string(vsName);
+  fsSourceP = file2string(fsName);
+
+  if (!vsSourceP || !fsSourceP) {
+    T8_LOG_ERROR("[WireframeSphere] Create skipped: failed loading shader source(s) %s, %s", vsName, fsName);
+    free(vsSourceP);
+    free(fsSourceP);
+    return;
   }
 
   std::string vstr = std::string(vsSourceP);

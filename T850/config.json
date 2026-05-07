@@ -1,31 +1,32 @@
 {
+  "api": "d3d12",
   "cullDisabled": false,
-  "keepRunning": false,
   "debugFrames": false,
-  "architecture": "x64",
-  "benchmark": false,
-  "devTools": {
-    "d3d12Debug": false,
-    "logLevel": "error",
-    "logToFile": false
-  },
-  "api": "vulkan",
-  "configuration": "Release",
   "display": {
-    "height": 1440,
-    "model": "Models/4_20_2026.glb",
-    "width": 2560,
     "fullscreen": false,
-    "scene": 0
+    "model": "Models/rewind_cyborg.glb",
+    "scene": 1,
+    "height": 1440,
+    "width": 2560
   },
+  "devTools": {
+    "logToFile": false,
+    "d3d12Debug": false,
+    "logLevel": "error"
+  },
+  "configuration": "Release",
   "dump": {
     "trigger": "frame",
-    "frame": -1,
     "enabled": false,
+    "frame": -1,
     "seconds": -1
   },
+  "keepRunning": false,
+  "cullingMode": "full",
   "replaySnapshot": {
-    "path": "D:\\Code\\Game\\T850\\T850\\bin\\x64\\Release\\dumps_d3d12_f3253_20260502_165718\\snapshot.json",
+    "path": "D:\\Code\\Game\\T850\\T850\\bin\\x64\\Release\\dumps_vulkan_f863_20260507_090650\\snapshot.json",
     "enabled": false
-  }
+  },
+  "architecture": "x64",
+  "benchmark": false
 }

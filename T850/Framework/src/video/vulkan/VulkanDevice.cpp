@@ -64,7 +64,7 @@ namespace t850 {
 
   Texture* VulkanDevice::CreateTextureFromMemory(const unsigned char* buff, int w, int h, int channels, std::string name) {
     VulkanTexture* tex = new VulkanTexture;
-    tex->LoadFromMemory(buff, w, h, channels);
+    tex->LoadFromMemory(buff, w, h, channels, name.c_str());
     return tex;
   }
 

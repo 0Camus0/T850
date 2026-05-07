@@ -20,6 +20,7 @@
 #include <debug/Profiler.h>
 #include <debug/RenderTrace.h>
 #include <core/Config.h>
+#include <core/EngineContext.h>
 #include <imgui/DevGuiContext.h>
 #include <imgui_impl_vulkan.h>
 
@@ -430,17 +431,19 @@ void App::InitVars() {
 	srand((unsigned int)DtTimer.GetDTSecs());
   FirstFrame = true;
 
-  m_scenes.push_back(new SandboxScene());
-  m_scenes.push_back(new DayScene());
+  m_scenes.emplace_back(std::make_unique<SandboxScene>());
+  m_scenes.emplace_back(std::make_unique<DayScene>());
+  t850::EngineContext& engineContext = t850::GetEngineContext();
   for (auto &it : m_scenes) {
     it->pFramework = pFramework;
+    it->SetEngineContext(&engineContext);
     //it->InitVars();
   }
   int sceneIdx = (g_config.startScene >= 0 && g_config.startScene < (int)m_scenes.size()) ? g_config.startScene : 0;
   if (g_config.flags.benchmark && m_scenes.size() > 1) {
     sceneIdx = 1;
   }
-  m_actualScene = m_scenes[sceneIdx];
+  m_actualScene = m_scenes[sceneIdx].get();
   m_actualScene->InitVars();
 
   m_devLayer.Init(pFramework);
@@ -459,12 +462,18 @@ void App::InitVars() {
 }
 
 void App::LoadScene(int id) {
+  if (id < 0 || id >= static_cast<int>(m_scenes.size())) {
+    T8_LOG_ERROR("[App] Ignoring invalid scene id %d (available scenes=%zu)", id, m_scenes.size());
+    return;
+  }
+
   if (m_actualScene != nullptr) {
     FadeFX(0.5, true);
     m_actualScene->OnDestoryScene();
   }
 
-  m_actualScene = m_scenes[id];
+  m_actualScene = m_scenes[id].get();
+  m_actualScene->SetEngineContext(&t850::GetEngineContext());
   m_actualScene->OnLoadScene();
   m_devLayer.SetActiveScene(m_actualScene);
   m_devLayer.RebuildGUIForScene();
@@ -494,8 +503,13 @@ void App::CreateAssets() {
 #ifdef T850_RENDER_TRACE
   EnsureRenderTracer(pFramework->pVideoDriver);
 #endif
+  if (!m_actualScene) {
+    T8_LOG_ERROR("[App] CreateAssets skipped: active scene is null");
+    return;
+  }
   m_actualScene->CreateAssets();
   m_textRender.LoadFromFile(36,"Fonts/Martius-LV9L4.ttf",512.0f);
+  PrimitiveMgr.SetEngineContext(&t850::GetEngineContext());
   PrimitiveMgr.Init();
   PrimitiveMgr.SetVP(&VP);
   PrimitiveMgr.SetSceneProps(&SceneProp);
@@ -543,7 +557,9 @@ void App::DestroyAssets() {
    }
    m_textRender.Destroy();
    PrimitiveMgr.DestroyPrimitives();
-   m_actualScene->DestroyAssets();
+   if (m_actualScene) {
+     m_actualScene->DestroyAssets();
+   }
 }
 
 void App::OnUpdate() {

@@ -59,6 +59,7 @@ int main(int arg,char ** args){
   }
 
   t850::config::ApplyCommandLine(arg, args, t850::g_config);
+  t850::config::ValidateConfig(t850::g_config);
 
   t850::ApplicationDesc desc;
   t850::config::ConfigureApplicationDesc(t850::g_config, desc);

@@ -81,7 +81,7 @@ namespace t850 {
   Texture * D3DXDevice::CreateTextureFromMemory(const unsigned char * buff, int w, int h, int channels, std::string name)
   {
     D3DXTexture* txture = new D3DXTexture;
-    txture->LoadFromMemory(buff,w,h,channels);
+    txture->LoadFromMemory(buff,w,h,channels,name.c_str());
     return txture;
   }
 

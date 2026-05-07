@@ -244,7 +244,8 @@ namespace t850 {
     glClearDepthf(0.0f);
     glDepthFunc(GL_GEQUAL);
     glEnable(GL_CULL_FACE);
-    glCullFace(GL_FRONT);
+    glFrontFace(GL_CW);
+    glCullFace(GL_BACK);
 
     glGetIntegerv(GL_FRAMEBUFFER_BINDING, &CurrentFBO);
 
@@ -578,21 +579,21 @@ namespace t850 {
   }
 
   void GLDriver::SetCullFace(FaceCulling state) {
-	  m_FaceCulling = state;
-	  switch (m_FaceCulling) {
-		  case t850::BaseDriver::FRONT_FACES:
-			  glEnable(GL_CULL_FACE);
-			  glCullFace(GL_FRONT);
-			  break;
-		  case t850::BaseDriver::BACK_FACES:
-			  glEnable(GL_CULL_FACE);
-			  glCullFace(GL_BACK);
-			  break;
-		  case t850::BaseDriver::FRONT_AND_BACK:
-			  glDisable(GL_CULL_FACE);
-			  glCullFace(GL_FRONT_AND_BACK);
-			  break;
-	  }
+    m_FaceCulling = state;
+    switch (m_FaceCulling) {
+      case t850::BaseDriver::FRONT_FACES:
+        glEnable(GL_CULL_FACE);
+        glCullFace(GL_BACK);
+        break;
+      case t850::BaseDriver::BACK_FACES:
+        glEnable(GL_CULL_FACE);
+        glCullFace(GL_FRONT);
+        break;
+      case t850::BaseDriver::FRONT_AND_BACK:
+        glDisable(GL_CULL_FACE);
+        glCullFace(GL_FRONT_AND_BACK);
+        break;
+    }
     T8_TRACE(EvSetCull((int)state));
 #ifdef T850_RENDER_TRACE
     RefreshTracePendingRenderState();
@@ -623,7 +624,11 @@ namespace t850 {
 
     glClearColor(1.0, 1.0, 1.0, 0.0);
     glClearDepthf(0.0f);
+    GLboolean previousDepthMask = GL_TRUE;
+    glGetBooleanv(GL_DEPTH_WRITEMASK, &previousDepthMask);
+    glDepthMask(GL_TRUE);
     glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT | GL_STENCIL_BUFFER_BIT);
+    glDepthMask(previousDepthMask);
 #ifdef T850_RENDER_TRACE
     if (T8_TRACE_ACTIVE()) {
       int rtId = -1;
@@ -637,7 +642,11 @@ namespace t850 {
   void	GLDriver::ClearWithColor(float r, float g, float b, float a) {
     glClearColor(r, g, b, a);
     glClearDepthf(0.0f);
+    GLboolean previousDepthMask = GL_TRUE;
+    glGetBooleanv(GL_DEPTH_WRITEMASK, &previousDepthMask);
+    glDepthMask(GL_TRUE);
     glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT | GL_STENCIL_BUFFER_BIT);
+    glDepthMask(previousDepthMask);
 #ifdef T850_RENDER_TRACE
     if (T8_TRACE_ACTIVE()) {
       int rtId = -1;

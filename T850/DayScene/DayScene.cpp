@@ -167,7 +167,8 @@ void DayScene::InitVars() {
 
   ActiveCam = m_sceneSetup.GetCamera(0);
   SceneProp.pCullingCamera = ActiveCam;
-  SceneProp.FrustumCullingEnabled = !g_config.flags.cullDisabled;
+  SceneProp.FrustumCullingToggleAllowed = g_config.cullingLoadMode != t850::Config::CullingLoadMode::Disabled;
+  SceneProp.FrustumCullingEnabled = g_config.cullingLoadMode == t850::Config::CullingLoadMode::FullOnLoad;
   ChangeActiveGaussSelection = SHADOW_KERNEL;
   m_debugRTSelection = 0;
   m_showSpline = false;
@@ -222,6 +223,7 @@ void DayScene::CreateAssets() {
   CoCHelperPass2   = m_renderGraph.GetRTHandle("CoCHelper2");
 
   //
+  PrimitiveMgr.SetEngineContext(pEngineContext);
   PrimitiveMgr.Init();
   PrimitiveMgr.SetVP(&VP);
   m_flare.Init(PrimitiveMgr);
@@ -846,13 +848,25 @@ void DayScene::OnInput(InputManager* IManager) {
   }
 
   if (IManager->PressedOnceKey(T800K_F2)) {
-    m_showCullStats = m_spectatorCameraEnabled ? true : !m_showCullStats;
+    if (!SceneProp.FrustumCullingToggleAllowed) {
+      m_showCullStats = false;
+    } else {
+      m_showCullStats = m_spectatorCameraEnabled ? true : !m_showCullStats;
+    }
     SceneProp.ShowCullingDebug = m_showCullStats;
   }
 
   if (IManager->PressedOnceKey(T800K_KP6) || IManager->PressedOnceKey(T800K_6)) {
-    SceneProp.FrustumCullingEnabled = !SceneProp.FrustumCullingEnabled;
-    T8_LOG_INFO("[CULLING] Frustum culling %s", SceneProp.FrustumCullingEnabled ? "enabled" : "disabled");
+    if (SceneProp.FrustumCullingToggleAllowed) {
+      const bool requested = !SceneProp.FrustumCullingEnabled;
+      if (!requested || !Meshes[0].pBase || static_cast<RenderMesh*>(Meshes[0].pBase)->EnsureCullingMetadata()) {
+        SceneProp.FrustumCullingEnabled = requested;
+      }
+      T8_LOG_INFO("[CULLING] Frustum culling %s", SceneProp.FrustumCullingEnabled ? "enabled" : "disabled");
+    } else {
+      SceneProp.FrustumCullingEnabled = false;
+      T8_LOG_INFO("[CULLING] Frustum culling locked off by startup policy");
+    }
   }
 
   if (IManager->PressedOnceKey(T800K_1)) {
@@ -870,8 +884,13 @@ void DayScene::OnInput(InputManager* IManager) {
   }
 
   if (IManager->PressedOnceKey(T800K_5)) {
-    SetSpectatorDebugEnabled(!m_spectatorCameraEnabled);
-    T8_LOG_INFO("[CAMERA] Spectator camera %s", m_spectatorCameraEnabled ? "enabled" : "disabled");
+    if (SceneProp.FrustumCullingToggleAllowed) {
+      SetSpectatorDebugEnabled(!m_spectatorCameraEnabled);
+      T8_LOG_INFO("[CAMERA] Spectator camera %s", m_spectatorCameraEnabled ? "enabled" : "disabled");
+    } else {
+      SetSpectatorDebugEnabled(false);
+      T8_LOG_INFO("[CAMERA] Spectator camera locked off by culling startup policy");
+    }
   }
 
   // Skip mouse-driven camera movement when replay snapshot is active
@@ -1932,6 +1951,7 @@ void DayScene::DrawDevGui(t850::DevGuiContext& gui) {
     t850::CheckboxDesc spectatorDesc;
     spectatorDesc.name = "spectator_camera";
     spectatorDesc.label = "Spectator camera (5)";
+    spectatorDesc.enabled = SceneProp.FrustumCullingToggleAllowed;
     bool spectatorEnabled = m_spectatorCameraEnabled;
     if (gui.Checkbox(spectatorDesc, spectatorEnabled)) {
       SetSpectatorDebugEnabled(spectatorEnabled);
@@ -1940,14 +1960,18 @@ void DayScene::DrawDevGui(t850::DevGuiContext& gui) {
     t850::CheckboxDesc cullingDesc;
     cullingDesc.name = "frustum_culling";
     cullingDesc.label = "Frustum culling";
+    cullingDesc.enabled = SceneProp.FrustumCullingToggleAllowed;
     bool cullingEnabled = SceneProp.FrustumCullingEnabled;
     if (gui.Checkbox(cullingDesc, cullingEnabled)) {
-      SceneProp.FrustumCullingEnabled = cullingEnabled;
+      if (!cullingEnabled || !Meshes[0].pBase || static_cast<RenderMesh*>(Meshes[0].pBase)->EnsureCullingMetadata()) {
+        SceneProp.FrustumCullingEnabled = cullingEnabled;
+      }
     }
 
     t850::CheckboxDesc statsDesc;
     statsDesc.name = "show_culling_debug";
     statsDesc.label = "Culling stats and frustum";
+    statsDesc.enabled = SceneProp.FrustumCullingToggleAllowed;
     bool showCulling = m_spectatorCameraEnabled ? true : m_showCullStats;
     if (gui.Checkbox(statsDesc, showCulling)) {
       m_showCullStats = m_spectatorCameraEnabled ? true : showCulling;

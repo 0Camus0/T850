@@ -18,6 +18,10 @@
 # ── Local texture backups ──
 /T850/Assets/Textures/sky/_backup_mips_*/
 
+# ── Generated asset caches ──
+**/.t8cache/
+/T850/Assets/Shaders/.t8shadercache/
+
 # ── vcpkg build-time artifacts (huge, reproducible) ──
 /T850/Librerias/vcpkg/buildtrees/
 /T850/Librerias/vcpkg/packages/

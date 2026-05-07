@@ -1,7 +1,7 @@
 {
   "render_targets": [
     { "name": "GBuffer",  "color_count": 7, "color_formats": ["RGBA8", "RGBA16F", "RGBA8", "RGBA8", "RGBA16F", "RGBA8", "RGBA8"], "depth_format": "F32",  "size": [0,0], "linear_filter": true },
-    { "name": "Deferred", "color_count": 1, "color_format": "RGBA8", "depth_format": "NONE", "size": [0,0], "linear_filter": true },
+    { "name": "Deferred", "color_count": 1, "color_format": "RGBA8", "depth_format": "F32",  "size": [0,0], "linear_filter": true },
     { "name": "SceneColor", "color_count": 1, "color_format": "RGBA8", "depth_format": "NONE", "size": [0,0], "linear_filter": true }
   ],
   "passes": [
@@ -56,7 +56,7 @@
       "name": "Forward Transparent",
       "target": "Deferred",
       "push": false,
-      "state": { "depth_stencil": "NONE", "cull_face": "FRONT_AND_BACK", "blend": "ALPHA_BLEND" },
+      "state": { "depth_stencil": "READ_WRITE", "cull_face": "FRONT_AND_BACK", "blend": "ALPHA_BLEND" },
       "inputs": [
         { "source": "GBuffer:DEPTH", "slot": 7 },
         { "source": "SceneColor:COLOR0", "slot": 9 }

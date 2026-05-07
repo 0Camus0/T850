@@ -14,6 +14,7 @@
 #include <glslang/Public/ShaderLang.h>
 #include <glslang/SPIRV/GlslangToSpv.h>
 #include <utils/Log.h>
+#include <utils/ShaderDiskCache.h>
 #include <utils/SPIRVReflection.h>
 #include <debug/RenderTrace.h>
 
@@ -39,6 +40,32 @@ namespace t850 {
       return VK_NULL_HANDLE;
     }
     return mod;
+  }
+
+  static std::string GetVulkanShaderCacheDriverSignature(VkPhysicalDevice physicalDevice) {
+    std::ostringstream sig;
+    sig << "vulkan;shaderCompiler=glslang-hlsl-spv1.0;pipelineCache=1";
+    if (!physicalDevice)
+      return sig.str();
+
+    VkPhysicalDeviceProperties props = {};
+    vkGetPhysicalDeviceProperties(physicalDevice, &props);
+    sig << ";deviceName=" << props.deviceName
+        << ";vendor=" << props.vendorID
+        << ";device=" << props.deviceID
+        << ";driver=" << props.driverVersion
+        << ";api=" << props.apiVersion;
+    return sig.str();
+  }
+
+  static bool LoadSpirvArtifact(const ShaderDiskCacheKey& key, const std::string& artifactName,
+                                std::vector<uint32_t>& spirv) {
+    std::vector<uint8_t> bytes;
+    if (!ShaderDiskCache::LoadArtifact(key, artifactName, bytes) || bytes.empty() || (bytes.size() % sizeof(uint32_t)) != 0)
+      return false;
+    spirv.resize(bytes.size() / sizeof(uint32_t));
+    std::memcpy(spirv.data(), bytes.data(), bytes.size());
+    return true;
   }
 
   static bool CompileHLSLToSPIRV(const std::string& source, EShLanguage stage,
@@ -90,6 +117,8 @@ namespace t850 {
                                       const std::string& vs_name, const std::string& fs_name) {
     auto* driver = GetVkDriver();
     VkDevice device = driver->GetDevice();
+    const std::string driverSignature = GetVulkanShaderCacheDriverSignature(driver->GetPhysicalDevice());
+    const ShaderDiskCacheKey cacheKey = ShaderDiskCache::MakeKey("vulkan", driverSignature, key.bits, vs_name, fs_name, src_vs, src_fs);
     cbvBinding = -1;
     std::fill(cbvBindings, cbvBindings + VulkanShader::kMaxCBufferSlots, -1);
     std::fill(srvBindings, srvBindings + VulkanShader::kMaxTextureSlots, -1);
@@ -97,21 +126,35 @@ namespace t850 {
 
     // Compile vertex shader (HLSL → SPIR-V)
     std::vector<uint32_t> vsSPIRV;
-    if (!CompileHLSLToSPIRV(src_vs, EShLangVertex, vsSPIRV, vs_name.empty() ? "VS" : vs_name)) {
-      return false;
+    if (LoadSpirvArtifact(cacheKey, "vs.spv", vsSPIRV)) {
+      T8_LOG_DEBUG("[ShaderCache][Vulkan] VS SPIR-V hit %s", cacheKey.sha1.c_str());
     }
-    // Patch SPIR-V: shift UBO bindings to avoid collision with textures at binding 0+
-    SPIRVReflection::ShiftUBOBindings(vsSPIRV.data(), vsSPIRV.size(), VulkanShader::kMaxTextureSlots);
+    else {
+      if (!CompileHLSLToSPIRV(src_vs, EShLangVertex, vsSPIRV, vs_name.empty() ? "VS" : vs_name)) {
+        return false;
+      }
+      // Patch SPIR-V: shift UBO bindings to avoid collision with textures at binding 0+
+      SPIRVReflection::ShiftUBOBindings(vsSPIRV.data(), vsSPIRV.size(), VulkanShader::kMaxTextureSlots);
+      ShaderDiskCache::StoreArtifact(cacheKey, "vs.spv", vsSPIRV.data(), vsSPIRV.size() * sizeof(uint32_t));
+      ShaderDiskCache::WriteManifest(cacheKey, driverSignature);
+    }
 
     m_vertModule = CreateShaderModule(device, vsSPIRV.data(), vsSPIRV.size() * sizeof(uint32_t));
     if (!m_vertModule) return false;
 
     // Compile fragment shader (HLSL → SPIR-V)
     std::vector<uint32_t> fsSPIRV;
-    if (!CompileHLSLToSPIRV(src_fs, EShLangFragment, fsSPIRV, fs_name.empty() ? "FS" : fs_name)) {
-      return false;
+    if (LoadSpirvArtifact(cacheKey, "fs.spv", fsSPIRV)) {
+      T8_LOG_DEBUG("[ShaderCache][Vulkan] FS SPIR-V hit %s", cacheKey.sha1.c_str());
     }
-    SPIRVReflection::ShiftUBOBindings(fsSPIRV.data(), fsSPIRV.size(), VulkanShader::kMaxTextureSlots);
+    else {
+      if (!CompileHLSLToSPIRV(src_fs, EShLangFragment, fsSPIRV, fs_name.empty() ? "FS" : fs_name)) {
+        return false;
+      }
+      SPIRVReflection::ShiftUBOBindings(fsSPIRV.data(), fsSPIRV.size(), VulkanShader::kMaxTextureSlots);
+      ShaderDiskCache::StoreArtifact(cacheKey, "fs.spv", fsSPIRV.data(), fsSPIRV.size() * sizeof(uint32_t));
+      ShaderDiskCache::WriteManifest(cacheKey, driverSignature);
+    }
     m_fragModule = CreateShaderModule(device, fsSPIRV.data(), fsSPIRV.size() * sizeof(uint32_t));
     if (!m_fragModule) return false;
 

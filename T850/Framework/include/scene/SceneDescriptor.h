@@ -118,6 +118,7 @@ namespace t850 {
     std::string name;
     std::string label;
     bool default_val = false;
+    bool enabled = true;
   };
 
   struct SelectorDesc {

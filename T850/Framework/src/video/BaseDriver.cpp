@@ -25,6 +25,13 @@
 #include <filesystem>
 #include <iomanip>
 #include <sstream>
+#include <atomic>
+#include <cctype>
+#include <cstdint>
+
+#ifndef T850_DUMP_TEXTURE_UPLOADS
+#define T850_DUMP_TEXTURE_UPLOADS 0
+#endif
 
 namespace t850 {
   BaseDriver*	g_pBaseDriver = 0;
@@ -32,6 +39,231 @@ namespace t850 {
   DeviceContext*    T8DeviceContext; // Context to set and manipulate the resources
 
 #include <utils/Checker.h>
+
+#if T850_DUMP_TEXTURE_UPLOADS
+  namespace {
+    constexpr uint32_t DDS_MAGIC = 0x20534444u;
+    constexpr uint32_t DDSD_CAPS = 0x00000001u;
+    constexpr uint32_t DDSD_HEIGHT = 0x00000002u;
+    constexpr uint32_t DDSD_WIDTH = 0x00000004u;
+    constexpr uint32_t DDSD_PITCH = 0x00000008u;
+    constexpr uint32_t DDSD_PIXELFORMAT = 0x00001000u;
+    constexpr uint32_t DDSD_MIPMAPCOUNT = 0x00020000u;
+    constexpr uint32_t DDSD_LINEARSIZE = 0x00080000u;
+    constexpr uint32_t DDPF_ALPHAPIXELS = 0x00000001u;
+    constexpr uint32_t DDPF_FOURCC = 0x00000004u;
+    constexpr uint32_t DDPF_RGB = 0x00000040u;
+    constexpr uint32_t DDPF_LUMINANCE = 0x00020000u;
+    constexpr uint32_t DDSCAPS_COMPLEX = 0x00000008u;
+    constexpr uint32_t DDSCAPS_TEXTURE = 0x00001000u;
+    constexpr uint32_t DDSCAPS_MIPMAP = 0x00400000u;
+    constexpr uint32_t DDSCAPS2_CUBEMAP = 0x00000200u;
+    constexpr uint32_t DDSCAPS2_CUBEMAP_POSITIVEX = 0x00000400u;
+    constexpr uint32_t DDSCAPS2_CUBEMAP_NEGATIVEX = 0x00000800u;
+    constexpr uint32_t DDSCAPS2_CUBEMAP_POSITIVEY = 0x00001000u;
+    constexpr uint32_t DDSCAPS2_CUBEMAP_NEGATIVEY = 0x00002000u;
+    constexpr uint32_t DDSCAPS2_CUBEMAP_POSITIVEZ = 0x00004000u;
+    constexpr uint32_t DDSCAPS2_CUBEMAP_NEGATIVEZ = 0x00008000u;
+    constexpr uint32_t DDS_RESOURCE_DIMENSION_TEXTURE2D = 3u;
+    constexpr uint32_t DXGI_FORMAT_R16G16B16A16_FLOAT = 10u;
+
+    std::atomic_uint g_textureUploadDumpCounter{0};
+
+    uint32_t FourCC(char a, char b, char c, char d) {
+      return static_cast<uint32_t>(static_cast<unsigned char>(a)) |
+             (static_cast<uint32_t>(static_cast<unsigned char>(b)) << 8) |
+             (static_cast<uint32_t>(static_cast<unsigned char>(c)) << 16) |
+             (static_cast<uint32_t>(static_cast<unsigned char>(d)) << 24);
+    }
+
+    void WriteU32(std::ofstream& out, uint32_t value) {
+      out.write(reinterpret_cast<const char*>(&value), sizeof(value));
+    }
+
+    std::string DumpSanitize(std::string value) {
+      if (value.empty()) value = "texture";
+      for (char& ch : value) {
+        const unsigned char c = static_cast<unsigned char>(ch);
+        if (!std::isalnum(c) && ch != '-' && ch != '_' && ch != '.') ch = '_';
+      }
+      constexpr std::size_t maxLen = 96;
+      if (value.size() > maxLen) value = value.substr(value.size() - maxLen);
+      return value;
+    }
+
+    uint32_t DumpMipCount(const Texture& tex) {
+      return tex.mipmaps > 0 ? tex.mipmaps : 1;
+    }
+
+    uint32_t DumpFaceCount(const Texture& tex) {
+      return (tex.cil_props & CIL_CUBE_MAP) ? 6u : 1u;
+    }
+
+    uint32_t DumpBytesPerPixel(const Texture& tex) {
+      if (tex.cil_props & CIL_HALF_FLOAT) return 8u;
+      if (tex.props & TextBasicFormat::CH_ALPHA) return 1u;
+      if (tex.props & TextBasicFormat::CH_RGB) return 3u;
+      return 4u;
+    }
+
+    uint32_t DumpCompressedBlockSize(const Texture& tex) {
+      return (tex.cil_props & CIL_DXT3) || (tex.cil_props & CIL_DXT5) ? 16u : 8u;
+    }
+
+    uint32_t DumpCompressedFourCC(const Texture& tex) {
+      if (tex.cil_props & CIL_DXT3) return FourCC('D', 'X', 'T', '3');
+      if (tex.cil_props & CIL_DXT5) return FourCC('D', 'X', 'T', '5');
+      return FourCC('D', 'X', 'T', '1');
+    }
+
+    std::size_t DumpComputedPayloadSize(const Texture& tex, bool compressed) {
+      const uint32_t faces = DumpFaceCount(tex);
+      const uint32_t mips = DumpMipCount(tex);
+      std::size_t bytes = 0;
+      for (uint32_t face = 0; face < faces; ++face) {
+        uint32_t width = std::max(1u, tex.x);
+        uint32_t height = std::max(1u, tex.y);
+        for (uint32_t mip = 0; mip < mips; ++mip) {
+          if (compressed) {
+            const uint32_t blockSize = DumpCompressedBlockSize(tex);
+            const uint32_t blocksX = std::max(1u, (width + 3u) / 4u);
+            const uint32_t blocksY = std::max(1u, (height + 3u) / 4u);
+            bytes += static_cast<std::size_t>(blocksX) * blocksY * blockSize;
+          } else {
+            bytes += static_cast<std::size_t>(width) * height * DumpBytesPerPixel(tex);
+          }
+          width = std::max(1u, width >> 1);
+          height = std::max(1u, height >> 1);
+        }
+      }
+      return bytes;
+    }
+
+    bool DumpWriteDDS(const std::filesystem::path& path, const Texture& tex, const unsigned char* data, std::size_t dataSize, bool compressed) {
+      std::ofstream out(path, std::ios::binary);
+      if (!out.is_open()) return false;
+
+      const uint32_t width = std::max(1u, tex.x);
+      const uint32_t height = std::max(1u, tex.y);
+      const uint32_t mips = DumpMipCount(tex);
+      const uint32_t faces = DumpFaceCount(tex);
+      const bool cube = faces == 6;
+      const bool dx10 = !compressed && (tex.cil_props & CIL_HALF_FLOAT);
+      const uint32_t bpp = DumpBytesPerPixel(tex);
+      const uint32_t pitchOrLinear = compressed
+        ? std::max(1u, (width + 3u) / 4u) * DumpCompressedBlockSize(tex)
+        : width * bpp;
+
+      WriteU32(out, DDS_MAGIC);
+      WriteU32(out, 124u);
+      WriteU32(out, DDSD_CAPS | DDSD_HEIGHT | DDSD_WIDTH | DDSD_PIXELFORMAT |
+                    (mips > 1 ? DDSD_MIPMAPCOUNT : 0u) |
+                    (compressed ? DDSD_LINEARSIZE : DDSD_PITCH));
+      WriteU32(out, height);
+      WriteU32(out, width);
+      WriteU32(out, pitchOrLinear);
+      WriteU32(out, 0u);
+      WriteU32(out, mips);
+      for (int i = 0; i < 11; ++i) WriteU32(out, 0u);
+
+      WriteU32(out, 32u);
+      if (compressed || dx10) {
+        WriteU32(out, DDPF_FOURCC);
+        WriteU32(out, dx10 ? FourCC('D', 'X', '1', '0') : DumpCompressedFourCC(tex));
+        WriteU32(out, 0u); WriteU32(out, 0u); WriteU32(out, 0u); WriteU32(out, 0u); WriteU32(out, 0u);
+      } else if (tex.props & TextBasicFormat::CH_ALPHA) {
+        WriteU32(out, DDPF_LUMINANCE);
+        WriteU32(out, 0u);
+        WriteU32(out, 8u);
+        WriteU32(out, 0x000000ffu);
+        WriteU32(out, 0u);
+        WriteU32(out, 0u);
+        WriteU32(out, 0u);
+      } else if (tex.props & TextBasicFormat::CH_RGB) {
+        WriteU32(out, DDPF_RGB);
+        WriteU32(out, 0u);
+        WriteU32(out, 24u);
+        WriteU32(out, 0x000000ffu);
+        WriteU32(out, 0x0000ff00u);
+        WriteU32(out, 0x00ff0000u);
+        WriteU32(out, 0u);
+      } else {
+        WriteU32(out, DDPF_RGB | DDPF_ALPHAPIXELS);
+        WriteU32(out, 0u);
+        WriteU32(out, 32u);
+        WriteU32(out, 0x000000ffu);
+        WriteU32(out, 0x0000ff00u);
+        WriteU32(out, 0x00ff0000u);
+        WriteU32(out, 0xff000000u);
+      }
+
+      WriteU32(out, DDSCAPS_TEXTURE | (mips > 1 ? (DDSCAPS_COMPLEX | DDSCAPS_MIPMAP) : 0u) | (cube ? DDSCAPS_COMPLEX : 0u));
+      WriteU32(out, cube ? (DDSCAPS2_CUBEMAP | DDSCAPS2_CUBEMAP_POSITIVEX | DDSCAPS2_CUBEMAP_NEGATIVEX |
+                            DDSCAPS2_CUBEMAP_POSITIVEY | DDSCAPS2_CUBEMAP_NEGATIVEY |
+                            DDSCAPS2_CUBEMAP_POSITIVEZ | DDSCAPS2_CUBEMAP_NEGATIVEZ) : 0u);
+      WriteU32(out, 0u);
+      WriteU32(out, 0u);
+      WriteU32(out, 0u);
+
+      if (dx10) {
+        WriteU32(out, DXGI_FORMAT_R16G16B16A16_FLOAT);
+        WriteU32(out, DDS_RESOURCE_DIMENSION_TEXTURE2D);
+        WriteU32(out, 0u);
+        WriteU32(out, faces);
+        WriteU32(out, 0u);
+      }
+
+      out.write(reinterpret_cast<const char*>(data), static_cast<std::streamsize>(dataSize));
+      return out.good();
+    }
+
+    void DumpTextureUpload(const Texture& tex, const unsigned char* data, bool compressed, const char* source) {
+      if (!data || tex.x == 0 || tex.y == 0) return;
+
+      std::size_t payloadSize = tex.size > 0 ? tex.size : DumpComputedPayloadSize(tex, compressed);
+      if (payloadSize == 0) return;
+
+      std::filesystem::path dir = "texture_upload_dumps";
+      std::error_code ec;
+      std::filesystem::create_directories(dir, ec);
+      if (ec) {
+        T8_LOG_ERROR("[TextureDump] Failed to create '%s': %s", dir.string().c_str(), ec.message().c_str());
+        return;
+      }
+
+      std::string label = !tex.filepath.empty() ? tex.filepath : tex.optname;
+      if (label.empty()) label = source ? source : "texture";
+      const unsigned index = g_textureUploadDumpCounter.fetch_add(1, std::memory_order_relaxed);
+      std::ostringstream stem;
+      stem << std::setw(5) << std::setfill('0') << index << "_"
+           << DumpSanitize(label) << "_" << tex.x << "x" << tex.y
+           << "_ch" << tex.m_channels << "_m" << DumpMipCount(tex)
+           << ((tex.cil_props & CIL_CUBE_MAP) ? "_cube" : "")
+           << (compressed ? "_compressed" : "");
+
+      const std::filesystem::path ddsPath = dir / (stem.str() + ".dds");
+      const std::filesystem::path metaPath = dir / (stem.str() + ".txt");
+      if (DumpWriteDDS(ddsPath, tex, data, payloadSize, compressed)) {
+        std::ofstream meta(metaPath);
+        if (meta.is_open()) {
+          meta << "source=" << (source ? source : "") << "\n";
+          meta << "label=" << label << "\n";
+          meta << "width=" << tex.x << "\n";
+          meta << "height=" << tex.y << "\n";
+          meta << "channels=" << tex.m_channels << "\n";
+          meta << "mipmaps=" << DumpMipCount(tex) << "\n";
+          meta << "payload_bytes=" << payloadSize << "\n";
+          meta << "props=0x" << std::hex << tex.props << "\n";
+          meta << "params=0x" << std::hex << tex.params << "\n";
+          meta << "cil_props=0x" << std::hex << tex.cil_props << "\n";
+        }
+        T8_LOG_INFO("[TextureDump] Wrote %s", ddsPath.string().c_str());
+      } else {
+        T8_LOG_ERROR("[TextureDump] Failed to write %s", ddsPath.string().c_str());
+      }
+    }
+  }
+#endif
 
   bool		Texture::LoadTexture(const char *fn) {
     bool found = false;
@@ -80,19 +312,23 @@ namespace t850 {
     memcpy(&optname[0], fn, strlen(fn));
     optname[strlen(fn)] = '\0';
 
+  #if T850_DUMP_TEXTURE_UPLOADS
+    DumpTextureUpload(*this, buffer, (cil_props & CIL_COMPRESSED) != 0, "LoadTexture");
+  #endif
+
     if (cil_props & CIL_COMPRESSED) {
       LoadAPITextureCompressed(buffer);
     } else {
       LoadAPITexture(T8DeviceContext, buffer);
     }
     if (found) {
-      cil_free_buffer(buffer);
+      cil_free_buffer(buffer, cil_props);
     }
 
     return true;
   }
 
-  bool Texture::LoadFromMemory(const unsigned char * buff, int w, int h, int channels)
+  bool Texture::LoadFromMemory(const unsigned char * buff, int w, int h, int channels, const char* debugName)
   {
     m_channels = channels;
     cil_props = 0;
@@ -115,6 +351,15 @@ namespace t850 {
     else if (channels == 1) {
       props |= TextBasicFormat::CH_ALPHA;
     }
+
+    if (debugName && debugName[0]) {
+      std::strncpy(optname, debugName, sizeof(optname) - 1);
+      optname[sizeof(optname) - 1] = '\0';
+    }
+
+#if T850_DUMP_TEXTURE_UPLOADS
+    DumpTextureUpload(*this, buff, false, "LoadFromMemory");
+#endif
 
     LoadAPITexture(T8DeviceContext, const_cast<unsigned char*>(buff));
 
@@ -140,6 +385,9 @@ namespace t850 {
     else if (m_channels == 1) {
       props |= TextBasicFormat::CH_ALPHA;
     }
+#if T850_DUMP_TEXTURE_UPLOADS
+    DumpTextureUpload(*this, buff, false, "CreateCubeMap");
+#endif
     LoadAPITexture(T8DeviceContext, const_cast<unsigned char*>(buff));
     return true;
   }

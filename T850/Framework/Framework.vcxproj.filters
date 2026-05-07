@@ -323,6 +323,9 @@
     <ClInclude Include="include\core\DevLayer.h">
       <Filter>Header Files\core</Filter>
     </ClInclude>
+    <ClInclude Include="include\core\EngineContext.h">
+      <Filter>Header Files\core</Filter>
+    </ClInclude>
     <ClInclude Include="include\core\Config.h">
       <Filter>Header Files\core</Filter>
     </ClInclude>
@@ -368,6 +371,9 @@
     <ClInclude Include="include\utils\SPIRVReflection.h">
       <Filter>Header Files\utils</Filter>
     </ClInclude>
+    <ClInclude Include="include\utils\ShaderDiskCache.h">
+      <Filter>Header Files\utils</Filter>
+    </ClInclude>
     <ClInclude Include="include\utils\ConfigRuntime.h">
       <Filter>Header Files\utils</Filter>
     </ClInclude>
@@ -392,6 +398,9 @@
       <Filter>Source Files\core</Filter>
     </ClCompile>
     <ClCompile Include="src\core\Config.cpp">
+      <Filter>Source Files\core</Filter>
+    </ClCompile>
+    <ClCompile Include="src\core\EngineContext.cpp">
       <Filter>Source Files\core</Filter>
     </ClCompile>
     <ClCompile Include="src\scene\PrimitiveInstance.cpp">
@@ -662,6 +671,9 @@
       <Filter>Source Files\utils</Filter>
     </ClCompile>
     <ClCompile Include="src\utils\SPIRVReflection.cpp">
+      <Filter>Source Files\utils</Filter>
+    </ClCompile>
+    <ClCompile Include="src\utils\ShaderDiskCache.cpp">
       <Filter>Source Files\utils</Filter>
     </ClCompile>
     <ClCompile Include="src\utils\ConfigRuntime.cpp">

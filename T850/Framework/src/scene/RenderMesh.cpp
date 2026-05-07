@@ -21,10 +21,12 @@
 #include <scene/RenderMesh.h>
 #include <scene/RenderGraph.h>
 #include <utils/ThreadPool.h>
+#ifndef OS_ANDROID
 #include <video/gl/GLShader.h>
 #include <video/gl/GLDriver.h>
+#endif
 
-#if defined(OS_WINDOWS) || defined(OS_ANDROID)
+#if defined(OS_WINDOWS)
 #include <video/d3d11/D3D11Shader.h>
 #include <video/d3d11/D3D11Driver.h>
 #endif
@@ -958,7 +960,7 @@ namespace t850 {
         uint32_t poolId = UINT32_MAX;
         VertexPool* vpool = MeshAssetCache::Get().GetOrCreateVertexPool(formatHash, it->VertexSize, &poolId);
         uint32_t off = vpool->Suballocate(&it->pData[0], pActual->NumVertices * it->VertexSize);
-        poolVBAllocs[i] = { poolId, off, pActual->NumVertices };
+        poolVBAllocs[i] = { poolId, off, static_cast<uint32_t>(pActual->NumVertices) };
       }
 
       it_MeshInfo->bounds.Reset();

@@ -2,14 +2,17 @@
 #include <gui/GUIManager.h>
 #include <utils/Log.h>
 
+#ifndef OS_ANDROID
 #include <video/gl/GLShader.h>
 #include <video/gl/GLDriver.h>
-#if defined(OS_WINDOWS) || defined(OS_ANDROID)
+#endif
+#if defined(OS_WINDOWS)
 #include <video/d3d11/D3D11Shader.h>
 #include <video/d3d11/D3D11Driver.h>
 #endif
 #include <utils/Utils.h>
 #include <utils/GUIAtlasGenerator.h>
+#include <utils/ResourceLocator.h>
 
 #ifdef max
 #undef max
@@ -2081,14 +2084,11 @@ bool GUIManager::SaveLayout(const std::string& path) {
 }
 
 bool GUIManager::LoadLayout(const std::string& path) {
-  std::ifstream file(path);
-  if (!file.is_open()) {
+  std::string json;
+  if (!ResourceLocator::Instance().ReadText(path, json)) {
     T8_LOG_INFO("[GUIManager] No layout file '%s' -- using defaults", path.c_str());
     return false;
   }
-  std::stringstream ss;
-  ss << file.rdbuf();
-  std::string json = ss.str();
 
   GUILayoutFile lf;
   auto ec = glz::read<glz::opts{.error_on_unknown_keys = false}>(lf, json);
@@ -2243,15 +2243,12 @@ bool GUIManager::SaveControlLayout(const std::string& path) {
 }
 
 bool GUIManager::LoadControlLayout(const std::string& path) {
-  std::ifstream file(path);
-  if (!file.is_open()) {
+  std::string json;
+  if (!ResourceLocator::Instance().ReadText(path, json)) {
     T8_LOG_INFO("[GUIManager] No control layout file '%s' -- using defaults", path.c_str());
     ApplyControlLayoutToElements();
     return false;
   }
-  std::stringstream ss;
-  ss << file.rdbuf();
-  std::string json = ss.str();
 
   GUIControlLayoutFile f;
   auto ec = glz::read<glz::opts{.error_on_unknown_keys = false}>(f, json);

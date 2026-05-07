@@ -17,7 +17,7 @@
 
 #ifdef OS_WINDOWS
 #include <windows.h>
-#elif defined(OS_LINUX)
+#elif defined(OS_LINUX) || defined(OS_ANDROID)
 #include <sys/time.h>
 #endif
 
@@ -30,7 +30,7 @@ public:
 
 	#ifdef OS_WINDOWS
 	LARGE_INTEGER	StartTime;
-	#elif defined(OS_LINUX)
+	#elif defined(OS_LINUX) || defined(OS_ANDROID)
 	timeval	        StartTime;
 	#endif
 	double			Frequency;

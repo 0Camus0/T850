@@ -70,6 +70,7 @@
     <ClInclude Include="include\utils\Log.h" />
     <ClInclude Include="include\utils\InputManager.h" />
     <ClInclude Include="include\utils\ResourceManager.h" />
+    <ClInclude Include="include\utils\ResourceLocator.h" />
     <ClInclude Include="include\utils\Spline.h" />
     <ClInclude Include="include\utils\Technique.h" />
     <ClInclude Include="include\utils\Timer.h" />
@@ -82,6 +83,7 @@
     <ClInclude Include="include\utils\xMaths.h" />
     <ClInclude Include="include\utils\GUIAtlasGenerator.h" />
     <ClInclude Include="include\utils\ConfigRuntime.h" />
+    <ClInclude Include="include\utils\ShaderPermutationDump.h" />
     <ClInclude Include="include\utils\SPIRVReflection.h" />
     <ClInclude Include="include\utils\ShaderDiskCache.h" />
     <ClInclude Include="include\utils\gltf\GLTFTypes.h" />
@@ -191,6 +193,7 @@
     <ClCompile Include="src\utils\Log.cpp" />
     <ClCompile Include="src\utils\InputManager.cpp" />
     <ClCompile Include="src\utils\ResourceManager.cpp" />
+    <ClCompile Include="src\utils\ResourceLocator.cpp" />
     <ClCompile Include="src\utils\Spline.cpp" />
     <ClCompile Include="src\utils\Technique.cpp" />
     <ClCompile Include="src\utils\Timer.cpp" />
@@ -201,6 +204,7 @@
     <ClCompile Include="src\utils\XMaths.cpp" />
     <ClCompile Include="src\utils\GUIAtlasGenerator.cpp" />
     <ClCompile Include="src\utils\ConfigRuntime.cpp" />
+    <ClCompile Include="src\utils\ShaderPermutationDump.cpp" />
     <ClCompile Include="src\utils\SPIRVReflection.cpp" />
     <ClCompile Include="src\utils\ShaderDiskCache.cpp" />
     <ClCompile Include="src\video\BaseDriver.cpp" />

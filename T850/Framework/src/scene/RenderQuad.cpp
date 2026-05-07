@@ -15,9 +15,11 @@
 #include <scene/RenderGraph.h>
 #include <utils/Utils.h>
 
+#ifndef OS_ANDROID
 #include <video/gl/GLShader.h>
 #include <video/gl/GLDriver.h>
-#if defined(OS_WINDOWS) || defined(OS_ANDROID)
+#endif
+#if defined(OS_WINDOWS)
 #include <video/d3d11/D3D11Shader.h>
 #include <video/d3d11/D3D11Driver.h>
 #endif
@@ -341,7 +343,11 @@ namespace t850 {
     CnstBuffer.toogles.w = pScProp->ShadowBias;
 	}
 
+    const BaseDriver::FaceCulling previousCull = g_pBaseDriver->m_FaceCulling;
+    g_pBaseDriver->SetCullFace(BaseDriver::FRONT_AND_BACK);
+
     m_quad.Set();
+    T8DeviceContext->SetPrimitiveTopology(Topology::TRIANLE_LIST);
     s->Set(*T8DeviceContext);
 
     if (g_pBaseDriver->UsesGLSL()) {
@@ -391,8 +397,8 @@ namespace t850 {
         Textures[slot]->SetSampler(*T8DeviceContext, slot);
     }
 
-    T8DeviceContext->SetPrimitiveTopology(Topology::TRIANLE_LIST);
     T8DeviceContext->DrawIndexed(6, 0, 0);
+    g_pBaseDriver->SetCullFace(previousCull);
   }
 
   void RenderQuad::Destroy() {

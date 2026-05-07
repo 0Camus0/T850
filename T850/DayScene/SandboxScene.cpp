@@ -8,7 +8,12 @@
 #include <scene/SceneDescriptor.h>
 #include <scene/IBLResources.h>
 #include <core/Config.h>
+#ifdef OS_ANDROID
+#include <video/vulkan/VulkanDriver.h>
+#endif
+#ifndef OS_ANDROID
 #include <imgui/DevGuiContext.h>
+#endif
 #include <iostream>
 #include <fstream>
 #include <string>
@@ -375,6 +380,7 @@ void SandboxScene::OnDestoryScene() {
 }
 
 void SandboxScene::DestroyAssets() {
+  m_debugText.Destroy();
   if (m_lightArrowVB) m_lightArrowVB->release();
   if (m_lightArrowIB) m_lightArrowIB->release();
   m_lightArrowVB = nullptr;
@@ -531,7 +537,10 @@ void SandboxScene::OnInput(InputManager* IManager) {
   float dx = static_cast<float>(IManager->xDelta);
   float dy = static_cast<float>(IManager->yDelta);
 
-  const bool imguiWantsMouse = ImGui::GetCurrentContext() && ImGui::GetIO().WantCaptureMouse;
+  bool imguiWantsMouse = false;
+#ifndef OS_ANDROID
+  imguiWantsMouse = ImGui::GetCurrentContext() && ImGui::GetIO().WantCaptureMouse;
+#endif
   if (!imguiWantsMouse && IManager->PressedKey(T800K_LCTRL) && IManager->PressedMouseButton(0)) {
     if (AdjustSelectedDirectionalLightFromMouse(dx, dy)) return;
   }
@@ -1218,12 +1227,19 @@ void SandboxScene::OnDraw() {
     }
   }
 
-  Quads[7].SetTexture(pFramework->pVideoDriver->GetRTTexture(selected, attachment), 0);
+  pFramework->pVideoDriver->SetBlendState(BaseDriver::BLEND_DEFAULT);
+  pFramework->pVideoDriver->SetDepthStencilState(BaseDriver::NONE);
+  Quads[0].SetTexture(pFramework->pVideoDriver->GetRTTexture(selected, attachment), 0);
   ShaderKey finalKey(0);
   finalKey.setPass(PassType::FSQUAD_1_TEX);
   finalKey.bits |= ShaderKey::HAS_TEXCOORD0;
-  Quads[7].SetGlobalKey(finalKey);
-  Quads[7].Draw();
+  Quads[0].SetGlobalKey(finalKey);
+  Quads[0].Draw();
+#ifdef OS_ANDROID
+  if (auto* vkDriver = static_cast<VulkanDriver*>(pFramework->pVideoDriver)) {
+    vkDriver->SetLatePresentSource(selected, attachment);
+  }
+#endif
 
   // Draw wireframe and skeleton overlays.
   if (Meshes[0].pBase) {
@@ -1439,6 +1455,7 @@ void SandboxScene::PopulateGUI(t850::GUIManager& gui) {
   }
 }
 
+#ifndef OS_ANDROID
 void SandboxScene::DrawDevGui(t850::DevGuiContext& gui) {
   if (m_guiSetup.descriptor.name.empty()) {
     m_guiSetup.Load("Scenes/SandboxScene.json");
@@ -1860,6 +1877,9 @@ void SandboxScene::DrawDevGui(t850::DevGuiContext& gui) {
     }
   }
 }
+#else
+void SandboxScene::DrawDevGui(t850::DevGuiContext&) {}
+#endif
 
 void SandboxScene::SyncToGUI(t850::GUIManager& gui) {
   for (auto& sp : gui.GetSliderPairs()) {

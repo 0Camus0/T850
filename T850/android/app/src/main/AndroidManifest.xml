@@ -4,19 +4,24 @@
 
     <application
         android:allowBackup="false"
-        android:hasCode="false"
         android:label="T850 Vulkan"
-        android:theme="@style/T850Theme">
+        android:theme="@style/T850LauncherTheme">
         <activity
-            android:name="android.app.NativeActivity"
-            android:configChanges="keyboard|keyboardHidden|orientation|screenSize|screenLayout|smallestScreenSize|uiMode"
-            android:exported="true"
-            android:screenOrientation="landscape">
-            <meta-data android:name="android.app.lib_name" android:value="T850Android" />
+            android:name=".LauncherActivity"
+            android:alwaysRetainTaskState="true"
+            android:exported="true">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
+        </activity>
+        <activity
+            android:name="android.app.NativeActivity"
+            android:configChanges="keyboard|keyboardHidden|orientation|screenSize|screenLayout|smallestScreenSize|uiMode"
+            android:exported="false"
+            android:screenOrientation="landscape"
+            android:theme="@style/T850NativeTheme">
+            <meta-data android:name="android.app.lib_name" android:value="T850Android" />
         </activity>
     </application>
 </manifest>

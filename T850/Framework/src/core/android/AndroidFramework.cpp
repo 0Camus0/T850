@@ -14,8 +14,61 @@
 #include <android/input.h>
 #include <android/keycodes.h>
 #include <android_native_app_glue.h>
+#include <jni.h>
+
+#include <cmath>
 
 namespace t850 {
+
+  namespace {
+    constexpr float kPinchScrollPixelsPerStep = 120.0f;
+    constexpr const char* kLauncherPrefsName = "t850_launcher";
+    constexpr const char* kReturnToNativeKey = "returnToNative";
+
+    struct ScopedJniEnv {
+      JavaVM* vm = nullptr;
+      JNIEnv* env = nullptr;
+      bool attached = false;
+
+      explicit ScopedJniEnv(ANativeActivity* activity) {
+        if (!activity || !activity->vm) return;
+        vm = activity->vm;
+        if (vm->GetEnv(reinterpret_cast<void**>(&env), JNI_VERSION_1_6) == JNI_OK) return;
+        if (vm->AttachCurrentThread(&env, nullptr) == JNI_OK) {
+          attached = true;
+        } else {
+          env = nullptr;
+        }
+      }
+
+      ~ScopedJniEnv() {
+        if (attached && vm) vm->DetachCurrentThread();
+      }
+    };
+
+    float GetPointerDistance(AInputEvent* event, size_t firstIndex, size_t secondIndex) {
+      const float firstX = AMotionEvent_getX(event, firstIndex);
+      const float firstY = AMotionEvent_getY(event, firstIndex);
+      const float secondX = AMotionEvent_getX(event, secondIndex);
+      const float secondY = AMotionEvent_getY(event, secondIndex);
+      const float dx = firstX - secondX;
+      const float dy = firstY - secondY;
+      return std::sqrt((dx * dx) + (dy * dy));
+    }
+
+    void SetMousePositionFromPointer(InputManager& input, AInputEvent* event, size_t pointerIndex) {
+      input.mouseX = static_cast<int>(AMotionEvent_getX(event, pointerIndex));
+      input.mouseY = static_cast<int>(AMotionEvent_getY(event, pointerIndex));
+    }
+
+    void SetMousePositionFromTwoPointers(InputManager& input, AInputEvent* event,
+                                         size_t firstIndex, size_t secondIndex) {
+      const float x = (AMotionEvent_getX(event, firstIndex) + AMotionEvent_getX(event, secondIndex)) * 0.5f;
+      const float y = (AMotionEvent_getY(event, firstIndex) + AMotionEvent_getY(event, secondIndex)) * 0.5f;
+      input.mouseX = static_cast<int>(x);
+      input.mouseY = static_cast<int>(y);
+    }
+  }
 
   AndroidFramework::AndroidFramework(AppBase* appBase, android_app* app)
     : RootFramework(appBase), m_app(app) {
@@ -41,6 +94,7 @@ namespace t850 {
 
   void AndroidFramework::OnInterruptApplication() {
     m_paused = true;
+    ClearTouchState();
     if (pBaseApp) pBaseApp->OnPause();
   }
 
@@ -53,7 +107,7 @@ namespace t850 {
     while (m_alive) {
       int events = 0;
       android_poll_source* source = nullptr;
-      while (ALooper_pollOnce((m_paused || !m_hasRuntime) ? -1 : 0, nullptr, &events,
+      while (ALooper_pollOnce((m_paused || !m_hasRuntime || !m_surfaceActive) ? -1 : 0, nullptr, &events,
                               reinterpret_cast<void**>(&source)) >= 0) {
         if (source) source->process(m_app, source);
         if (m_app && m_app->destroyRequested) {
@@ -63,16 +117,15 @@ namespace t850 {
       }
 
       if (!m_alive) break;
-      if (!m_paused && m_hasRuntime && pBaseApp) {
+      if (!m_paused && m_hasRuntime && m_surfaceActive && pBaseApp) {
         ProcessInput();
         pBaseApp->OnUpdate();
+        ResetTransientInput();
       }
     }
   }
 
   void AndroidFramework::ProcessInput() {
-    if (!pBaseApp) return;
-    pBaseApp->IManager.scrollDelta = 0.0f;
   }
 
   void AndroidFramework::ResetApplication() {}
@@ -88,11 +141,17 @@ namespace t850 {
   void AndroidFramework::OnNativeWindowCreated(ANativeWindow* window) {
     m_window = window;
     UpdateWindowSize();
-    if (m_inited) CreateVulkanRuntime();
+    if (!m_inited) return;
+    if (m_hasRuntime) {
+      ResumeVulkanWindow();
+    } else {
+      CreateVulkanRuntime();
+    }
   }
 
   void AndroidFramework::OnNativeWindowDestroyed() {
-    DestroyVulkanRuntime();
+    ClearTouchState();
+    SuspendVulkanWindow();
     m_window = nullptr;
   }
 
@@ -115,7 +174,7 @@ namespace t850 {
       case APP_CMD_WINDOW_RESIZED:
       case APP_CMD_CONFIG_CHANGED:
         UpdateWindowSize();
-        if (pVideoDriver && m_hasRuntime) {
+        if (pVideoDriver && m_hasRuntime && m_surfaceActive) {
           pVideoDriver->ResizeSwapchain(aplicationDescriptor.width, aplicationDescriptor.height);
         }
         break;
@@ -127,23 +186,119 @@ namespace t850 {
   int32_t AndroidFramework::OnInputEvent(AInputEvent* event) {
     if (!pBaseApp || !event) return 0;
     if (AInputEvent_getType(event) == AINPUT_EVENT_TYPE_MOTION) {
-      const int32_t action = AMotionEvent_getAction(event) & AMOTION_EVENT_ACTION_MASK;
-      const float x = AMotionEvent_getX(event, 0);
-      const float y = AMotionEvent_getY(event, 0);
-      pBaseApp->IManager.mouseX = static_cast<int>(x);
-      pBaseApp->IManager.mouseY = static_cast<int>(y);
-      pBaseApp->IManager.xDelta = static_cast<int>(x - m_lastTouchX);
-      pBaseApp->IManager.yDelta = static_cast<int>(y - m_lastTouchY);
-      m_lastTouchX = x;
-      m_lastTouchY = y;
+      const int32_t rawAction = AMotionEvent_getAction(event);
+      const int32_t action = rawAction & AMOTION_EVENT_ACTION_MASK;
+      const int32_t actionPointerIndex =
+        (rawAction & AMOTION_EVENT_ACTION_POINTER_INDEX_MASK) >> AMOTION_EVENT_ACTION_POINTER_INDEX_SHIFT;
+      const size_t pointerCount = AMotionEvent_getPointerCount(event);
+      if (pointerCount == 0) return 0;
+
+      InputManager& input = pBaseApp->IManager;
 
       if (action == AMOTION_EVENT_ACTION_DOWN) {
+        SetMousePositionFromPointer(input, event, 0);
+        m_lastTouchX = AMotionEvent_getX(event, 0);
+        m_lastTouchY = AMotionEvent_getY(event, 0);
         m_touchActive = true;
-        pBaseApp->IManager.MouseButtonStates[0][0] = true;
-      } else if (action == AMOTION_EVENT_ACTION_UP || action == AMOTION_EVENT_ACTION_CANCEL) {
+        m_pinchActive = false;
+        m_lastPinchDistance = 0.0f;
+        input.xDelta = 0;
+        input.yDelta = 0;
+        input.MouseButtonStates[0][0] = true;
+        return 1;
+      }
+
+      if (action == AMOTION_EVENT_ACTION_UP || action == AMOTION_EVENT_ACTION_CANCEL) {
+        ClearTouchState();
+        return 1;
+      }
+
+      if (action == AMOTION_EVENT_ACTION_POINTER_DOWN && pointerCount >= 2) {
+        SetMousePositionFromTwoPointers(input, event, 0, 1);
+        m_lastPinchDistance = GetPointerDistance(event, 0, 1);
+        m_pinchActive = true;
         m_touchActive = false;
-        pBaseApp->IManager.MouseButtonStates[0][0] = false;
-        pBaseApp->IManager.MouseButtonStates[1][0] = false;
+        input.xDelta = 0;
+        input.yDelta = 0;
+        input.MouseButtonStates[0][0] = false;
+        input.MouseButtonStates[1][0] = false;
+        return 1;
+      }
+
+      if (action == AMOTION_EVENT_ACTION_POINTER_UP) {
+        const size_t remainingCount = pointerCount - 1;
+        if (remainingCount == 0) {
+          ClearTouchState();
+          return 1;
+        }
+
+        size_t firstRemaining = pointerCount;
+        size_t secondRemaining = pointerCount;
+        for (size_t pointerIndex = 0; pointerIndex < pointerCount; ++pointerIndex) {
+          if (static_cast<int32_t>(pointerIndex) == actionPointerIndex) continue;
+          if (firstRemaining == pointerCount) {
+            firstRemaining = pointerIndex;
+          } else {
+            secondRemaining = pointerIndex;
+            break;
+          }
+        }
+
+        input.xDelta = 0;
+        input.yDelta = 0;
+        if (remainingCount >= 2 && secondRemaining < pointerCount) {
+          SetMousePositionFromTwoPointers(input, event, firstRemaining, secondRemaining);
+          m_lastPinchDistance = GetPointerDistance(event, firstRemaining, secondRemaining);
+          m_pinchActive = true;
+          m_touchActive = false;
+          input.MouseButtonStates[0][0] = false;
+          input.MouseButtonStates[1][0] = false;
+        } else if (firstRemaining < pointerCount) {
+          SetMousePositionFromPointer(input, event, firstRemaining);
+          m_lastTouchX = AMotionEvent_getX(event, firstRemaining);
+          m_lastTouchY = AMotionEvent_getY(event, firstRemaining);
+          m_touchActive = true;
+          m_pinchActive = false;
+          m_lastPinchDistance = 0.0f;
+          input.MouseButtonStates[0][0] = true;
+        }
+        return 1;
+      }
+
+      if (action == AMOTION_EVENT_ACTION_MOVE) {
+        if (pointerCount >= 2) {
+          SetMousePositionFromTwoPointers(input, event, 0, 1);
+          const float pinchDistance = GetPointerDistance(event, 0, 1);
+          if (m_pinchActive) {
+            input.scrollDelta += (pinchDistance - m_lastPinchDistance) / kPinchScrollPixelsPerStep;
+          }
+          m_lastPinchDistance = pinchDistance;
+          m_pinchActive = true;
+          m_touchActive = false;
+          input.xDelta = 0;
+          input.yDelta = 0;
+          input.MouseButtonStates[0][0] = false;
+          input.MouseButtonStates[1][0] = false;
+          return 1;
+        }
+
+        const float x = AMotionEvent_getX(event, 0);
+        const float y = AMotionEvent_getY(event, 0);
+        SetMousePositionFromPointer(input, event, 0);
+        if (m_touchActive && !m_pinchActive) {
+          input.xDelta += static_cast<int>(std::lround(x - m_lastTouchX));
+          input.yDelta += static_cast<int>(std::lround(y - m_lastTouchY));
+        } else {
+          input.xDelta = 0;
+          input.yDelta = 0;
+        }
+        m_lastTouchX = x;
+        m_lastTouchY = y;
+        m_touchActive = true;
+        m_pinchActive = false;
+        m_lastPinchDistance = 0.0f;
+        input.MouseButtonStates[0][0] = true;
+        return 1;
       }
       return 1;
     }
@@ -157,7 +312,10 @@ namespace t850 {
         } else if (action == AKEY_EVENT_ACTION_UP) {
           pBaseApp->IManager.KeyStates[0][T800K_ESCAPE] = false;
           pBaseApp->IManager.KeyStates[1][T800K_ESCAPE] = false;
-          if (!pBaseApp->IsModalActive()) m_alive = false;
+          if (!pBaseApp->IsModalActive()) {
+            ClearReturnToNativePreference();
+            m_alive = false;
+          }
         }
         return 1;
       }
@@ -167,6 +325,10 @@ namespace t850 {
 
   void AndroidFramework::CreateVulkanRuntime() {
     if (!m_window) return;
+    if (m_hasRuntime) {
+      ResumeVulkanWindow();
+      return;
+    }
     DestroyVulkanRuntime();
     UpdateWindowSize();
 
@@ -178,6 +340,7 @@ namespace t850 {
     pBaseApp->CreateAssets();
     pVideoDriver->BuildPipelineObjects();
     m_hasRuntime = true;
+    m_surfaceActive = true;
     T8_LOG_INFO("[AndroidFramework] Vulkan runtime created (%dx%d)",
                 aplicationDescriptor.width, aplicationDescriptor.height);
   }
@@ -191,6 +354,29 @@ namespace t850 {
     pVideoDriver = nullptr;
     g_pBaseDriver = nullptr;
     m_hasRuntime = false;
+    m_surfaceActive = false;
+  }
+
+  void AndroidFramework::SuspendVulkanWindow() {
+    if (!m_surfaceActive || !pVideoDriver) return;
+    static_cast<VulkanDriver*>(pVideoDriver)->SuspendWindowSurface();
+    m_surfaceActive = false;
+  }
+
+  void AndroidFramework::ResumeVulkanWindow() {
+    if (!m_hasRuntime || !pVideoDriver || !m_window) return;
+    UpdateWindowSize();
+    pVideoDriver->SetDimensions(aplicationDescriptor.width, aplicationDescriptor.height);
+    pVideoDriver->SetWindowHandle(WindowHandle::FromAndroidNativeWindow(m_window));
+    if (static_cast<VulkanDriver*>(pVideoDriver)->ResumeWindowSurface(
+          m_window, aplicationDescriptor.width, aplicationDescriptor.height)) {
+      pVideoDriver->BuildPipelineObjects();
+      m_surfaceActive = true;
+      T8_LOG_INFO("[AndroidFramework] Vulkan window resumed (%dx%d)",
+                  aplicationDescriptor.width, aplicationDescriptor.height);
+    } else {
+      T8_LOG_ERROR("[AndroidFramework] Failed to resume Vulkan window surface");
+    }
   }
 
   void AndroidFramework::UpdateWindowSize() {
@@ -199,6 +385,110 @@ namespace t850 {
     int32_t h = ANativeWindow_getHeight(m_window);
     if (w > 0) aplicationDescriptor.width = w;
     if (h > 0) aplicationDescriptor.height = h;
+  }
+
+  void AndroidFramework::ResetTransientInput() {
+    if (!pBaseApp) return;
+    pBaseApp->IManager.xDelta = 0;
+    pBaseApp->IManager.yDelta = 0;
+    pBaseApp->IManager.scrollDelta = 0.0f;
+  }
+
+  void AndroidFramework::ClearTouchState() {
+    m_touchActive = false;
+    m_pinchActive = false;
+    m_lastPinchDistance = 0.0f;
+    if (!pBaseApp) return;
+    pBaseApp->IManager.xDelta = 0;
+    pBaseApp->IManager.yDelta = 0;
+    pBaseApp->IManager.MouseButtonStates[0][0] = false;
+    pBaseApp->IManager.MouseButtonStates[1][0] = false;
+  }
+
+  void AndroidFramework::ClearReturnToNativePreference() {
+    if (!m_app || !m_app->activity || !m_app->activity->clazz) return;
+
+    ScopedJniEnv jni(m_app->activity);
+    JNIEnv* env = jni.env;
+    if (!env) return;
+
+    jobject activity = m_app->activity->clazz;
+    jclass activityClass = env->GetObjectClass(activity);
+    if (!activityClass) return;
+
+    jmethodID getSharedPreferences = env->GetMethodID(
+      activityClass, "getSharedPreferences",
+      "(Ljava/lang/String;I)Landroid/content/SharedPreferences;");
+    env->DeleteLocalRef(activityClass);
+    if (!getSharedPreferences || env->ExceptionCheck()) {
+      env->ExceptionClear();
+      return;
+    }
+
+    jstring prefsName = env->NewStringUTF(kLauncherPrefsName);
+    if (!prefsName) return;
+    jobject prefs = env->CallObjectMethod(activity, getSharedPreferences, prefsName, 0);
+    env->DeleteLocalRef(prefsName);
+    if (!prefs || env->ExceptionCheck()) {
+      env->ExceptionClear();
+      return;
+    }
+
+    jclass prefsClass = env->GetObjectClass(prefs);
+    if (!prefsClass) {
+      env->DeleteLocalRef(prefs);
+      return;
+    }
+    jmethodID edit = env->GetMethodID(prefsClass, "edit", "()Landroid/content/SharedPreferences$Editor;");
+    env->DeleteLocalRef(prefsClass);
+    if (!edit || env->ExceptionCheck()) {
+      env->ExceptionClear();
+      env->DeleteLocalRef(prefs);
+      return;
+    }
+
+    jobject editor = env->CallObjectMethod(prefs, edit);
+    env->DeleteLocalRef(prefs);
+    if (!editor || env->ExceptionCheck()) {
+      env->ExceptionClear();
+      return;
+    }
+
+    jclass editorClass = env->GetObjectClass(editor);
+    if (!editorClass) {
+      env->DeleteLocalRef(editor);
+      return;
+    }
+    jmethodID putBoolean = env->GetMethodID(
+      editorClass, "putBoolean", "(Ljava/lang/String;Z)Landroid/content/SharedPreferences$Editor;");
+    jmethodID apply = env->GetMethodID(editorClass, "apply", "()V");
+    env->DeleteLocalRef(editorClass);
+    if (!putBoolean || !apply || env->ExceptionCheck()) {
+      env->ExceptionClear();
+      env->DeleteLocalRef(editor);
+      return;
+    }
+
+    jstring key = env->NewStringUTF(kReturnToNativeKey);
+    if (!key) {
+      env->DeleteLocalRef(editor);
+      return;
+    }
+    jobject updatedEditor = env->CallObjectMethod(editor, putBoolean, key, JNI_FALSE);
+    env->DeleteLocalRef(key);
+    if (env->ExceptionCheck()) {
+      env->ExceptionClear();
+      env->DeleteLocalRef(editor);
+      return;
+    }
+
+    jobject editorToApply = updatedEditor ? updatedEditor : editor;
+    env->CallVoidMethod(editorToApply, apply);
+    if (env->ExceptionCheck()) {
+      env->ExceptionClear();
+    }
+    if (updatedEditor) env->DeleteLocalRef(updatedEditor);
+    env->DeleteLocalRef(editor);
   }
 
 } // namespace t850

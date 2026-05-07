@@ -25,6 +25,8 @@
 #include <debug/RenderTrace.h>
 #include <core/Config.h>
 #include <core/EngineContext.h>
+#include <scene/MeshAssetCache.h>
+#include <scene/MaterialAsset.h>
 #ifndef OS_ANDROID
 #include <imgui/DevGuiContext.h>
 
@@ -538,7 +540,9 @@ void App::CreateAssets() {
   }
 #endif
 
-  FadeFX(0.5, false);
+  if (!g_config.flags.dumpShaderPermutations) {
+    FadeFX(0.5, false);
+  }
 
   // Initialize profiler if requested (after driver is fully set up)
 #ifdef T8_ENABLE_PROFILER
@@ -577,6 +581,8 @@ void App::DestroyAssets() {
    if (m_actualScene) {
      m_actualScene->DestroyAssets();
    }
+   t850::MeshAssetCache::Get().Clear();
+   t850::MaterialAssetCache::Get().Clear();
 }
 
 void App::OnUpdate() {
@@ -597,6 +603,8 @@ void App::OnUpdate() {
 #ifndef OS_ANDROID
    m_devLayer.GetGUI().SetFPSText(m_fpsString, m_fpsCol);
    m_devLayer.Update(DtSecs);
+#else
+   if (m_actualScene) m_actualScene->OnUpdate(DtSecs);
 #endif
 
    OnInput();
@@ -618,6 +626,8 @@ void App::OnDraw() {
 
 #ifndef OS_ANDROID
   m_devLayer.Draw();
+#else
+  if (m_actualScene) m_actualScene->OnDraw();
 #endif
   if (fading) {
     T8_LOG_TRACE("[Frame %d] Fade quad draw", frameCount);
@@ -681,6 +691,8 @@ void App::OnInput() {
   }
   m_devLayer.SetSceneInputBlocked(m_imguiVisible && m_imgui.WantsKeyboard());
   m_devLayer.ProcessInput(&IManager);
+#else
+  if (m_actualScene) m_actualScene->OnInput(&IManager);
 #endif
 }
 

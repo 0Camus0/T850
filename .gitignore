@@ -38,5 +38,10 @@ __pycache__/
 
 # Android/Gradle local state
 T850/android/.gradle/
+T850/android/app/.cxx/
 T850/android/app/build/
 T850/android/build/
+T850/android/java_pid*.hprof
+
+# Downloaded by SetupAndroidToolchain.bat
+T850/Librerias/VulkanMemoryAllocator/

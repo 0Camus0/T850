@@ -33,6 +33,7 @@ public:
     bool cullDisabled : 1 = false;
     bool offscreen : 1 = false;
     bool offscreenDebug : 1 = false;
+    bool dumpShaderPermutations : 1 = false;
   } flags;
 
   std::string api = "d3d11";
@@ -54,6 +55,7 @@ public:
   CullingLoadMode cullingLoadMode = CullingLoadMode::FullOnLoad;
   std::string benchmarkOutputPath;
   std::string modelPath = "Models/DamagedHelmet.glb";
+  std::string shaderPermutationOutputPath = "shader_permutations.json";
   bool orbitYawOverride = false;
   float orbitYaw = 0.0f;
 };

@@ -61,7 +61,7 @@ namespace t850 {
 
   Texture* D3D12Device::CreateTextureFromMemory(const unsigned char* buff, int w, int h, int channels, std::string name) {
     D3D12Texture* tex = new D3D12Texture;
-    tex->LoadFromMemory(buff, w, h, channels);
+    tex->LoadFromMemory(buff, w, h, channels, name.c_str());
     return tex;
   }
 

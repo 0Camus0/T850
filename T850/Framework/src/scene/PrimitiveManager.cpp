@@ -17,6 +17,7 @@
 #include <scene/RenderSkinnedMesh.h>
 #include <scene/RenderQuad.h>
 #include <scene/SplineWireframe.h>
+#include <core/EngineContext.h>
 #include <utils/Log.h>
 
 namespace t850 {
@@ -38,12 +39,18 @@ namespace t850 {
   int	 PrimitiveManager::CreateMesh(const char *fname) {
     // Probe: load to check if the model has skin/animation data
     RenderMesh* probe = new RenderMesh();
+    probe->SetEngineContext(m_engineContext);
     probe->Load(fname);
     T8_LOG_INFO("Loading mesh: '%s'", fname);
+    if (!probe->xFile) {
+      T8_LOG_ERROR("Mesh '%s' failed to load; primitive creation aborted", fname);
+      delete probe;
+      return -1;
+    }
 
     // Check for skin data in any geometry
     bool hasSkin = false;
-    if (probe->xFile && !probe->xFile->XMeshDataBase.empty()) {
+    if (probe->xFile && !probe->xFile->XMeshDataBase.empty() && probe->xFile->XMeshDataBase[0]) {
       xF::xMeshContainer* mc = probe->xFile->XMeshDataBase[0];
       for (auto& geom : mc->Geometry) {
         if ((geom.VertexAttributes & xF::xMeshGeometry::HAS_SKINWEIGHTS0) &&
@@ -62,6 +69,7 @@ namespace t850 {
     if (hasSkin) {
       T8_LOG_INFO("Detected skinned/animated mesh, using RenderSkinnedMesh");
       RenderSkinnedMesh* skinned = new RenderSkinnedMesh();
+      skinned->SetEngineContext(m_engineContext);
       skinned->xFile = probe->xFile;
       skinned->m_asset = probe->m_asset;
       skinned->m_sourcePath = probe->m_sourcePath;
@@ -73,6 +81,11 @@ namespace t850 {
       primitive = skinned;
     } else {
       probe->Create();
+      if (probe->Info.empty()) {
+        T8_LOG_ERROR("Mesh '%s' has no drawable geometry; primitive creation aborted", fname);
+        delete probe;
+        return -1;
+      }
       primitive = probe;
     }
 
@@ -83,6 +96,7 @@ namespace t850 {
 
   int PrimitiveManager::CreateQuad() {
     PrimitiveBase *primitive = new RenderQuad();
+    primitive->SetEngineContext(m_engineContext);
     primitive->Create();
     primitives.push_back(primitive);
     return (int)(primitives.size() - 1);
@@ -91,6 +105,7 @@ namespace t850 {
   int PrimitiveManager::CreateSpline(Spline& spline)
   {
     SplineWireframe *primitive = new SplineWireframe();
+    primitive->SetEngineContext(m_engineContext);
     primitive->m_spline = &spline;
     primitive->Create();
     primitives.push_back(primitive);
@@ -103,11 +118,20 @@ namespace t850 {
     }
   }
 
+  void PrimitiveManager::SetEngineContext(EngineContext* context) {
+    m_engineContext = context;
+    for (PrimitiveBase* primitive : primitives) {
+      if (primitive)
+        primitive->SetEngineContext(context);
+    }
+  }
+
   void PrimitiveManager::Init()
   {
     if (!primitives.empty()) return; // already initialised
     primitives.resize(COUNT);
     primitives[QUAD] = new RenderQuad();
+    primitives[QUAD]->SetEngineContext(m_engineContext);
     primitives[QUAD]->Create();
   }
 

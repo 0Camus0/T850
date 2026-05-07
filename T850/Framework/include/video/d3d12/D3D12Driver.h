@@ -103,6 +103,7 @@ namespace t850 {
 
     // Default sampler GPU handle
     D3D12_GPU_DESCRIPTOR_HANDLE GetDefaultSamplerGPU() const { return m_defaultSamplerGPU; }
+    D3D12_GPU_DESCRIPTOR_HANDLE GetOrCreateSampler(const D3D12_SAMPLER_DESC& desc);
 
     // Rebind back buffer without DSV (for GUI/overlay draws with depth disabled)
     void BindBackBufferNoDSV();
@@ -179,6 +180,7 @@ namespace t850 {
     // Default sampler
     D3D12_CPU_DESCRIPTOR_HANDLE m_defaultSamplerCPU = {};
     D3D12_GPU_DESCRIPTOR_HANDLE m_defaultSamplerGPU = {};
+    std::unordered_map<uint64_t, D3D12_GPU_DESCRIPTOR_HANDLE> m_samplerCache;
 
     // Viewport / scissor
     D3D12_VIEWPORT m_viewport = {};

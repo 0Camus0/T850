@@ -116,7 +116,7 @@ namespace t850 {
     virtual ~Texture() {}
 
     bool			LoadTexture(const char *fn);
-    bool			LoadFromMemory(const unsigned char *buff, int w, int h, int channels);
+    bool			LoadFromMemory(const unsigned char *buff, int w, int h, int channels, const char* debugName = nullptr);
     bool      CreateCubeMap(const unsigned char *buff, int w, int h);
     void			release();
 

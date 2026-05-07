@@ -61,6 +61,7 @@ namespace t850 {
     RenderMesh() {
       d3dxEnvMap = 0;
       EnvMap = 0;
+      xFile = nullptr;
     }
 
     struct CBuffer {
@@ -515,6 +516,7 @@ namespace t850 {
     void CreateWireframeShader();
     bool ApplyCullingPreprocessCache(const MeshPreprocessCacheData& cache);
     bool BuildCullingMetadata();
+    const EngineContext& Context() const;
 
     std::vector<WireGeo> m_wireGeo;
     ShaderBase* m_wireShader = nullptr;

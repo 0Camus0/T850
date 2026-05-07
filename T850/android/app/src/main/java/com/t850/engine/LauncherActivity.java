@@ -141,6 +141,17 @@ public final class LauncherActivity extends Activity {
         }
     }
 
+    @Override
+    public void onBackPressed() {
+        resumeNativeInCurrentProcess = false;
+        getSharedPreferences(PREFS_NAME, MODE_PRIVATE)
+                .edit()
+                .putBoolean(PREF_RETURN_TO_NATIVE, false)
+                .remove(PREF_CONSUMED_AUTO_RUN)
+                .apply();
+        finishAndRemoveTask();
+    }
+
     private void buildUi() {
         ScrollView scroll = new ScrollView(this);
         scroll.setFillViewport(true);
@@ -316,7 +327,7 @@ public final class LauncherActivity extends Activity {
 
         NativeLaunchOptions options = new NativeLaunchOptions();
         options.scene = scene.value;
-        options.model = scene.value == 0 ? model.path : null;
+        options.model = model.path;
         options.logLevel = logLevel.value;
         options.returnToNative = true;
         launchNativeScene(options);
@@ -331,10 +342,17 @@ public final class LauncherActivity extends Activity {
             resumeNativeInCurrentProcess = false;
             return;
         }
+        if (!resumeNativeInCurrentProcess) {
+            prefs.edit()
+                    .putBoolean(PREF_RETURN_TO_NATIVE, false)
+                    .remove(PREF_CONSUMED_AUTO_RUN)
+                    .apply();
+            return;
+        }
         launchingNative = false;
 
         int scene = prefs.getInt(PREF_SCENE, 0);
-        String model = scene == 0 ? prefs.getString(PREF_MODEL, "Models/DamagedHelmet.glb") : null;
+        String model = prefs.getString(PREF_MODEL, "Models/DamagedHelmet.glb");
         int logLevel = prefs.getInt(PREF_LOG_LEVEL, 2);
         NativeLaunchOptions options = new NativeLaunchOptions();
         options.scene = scene;
@@ -354,11 +372,13 @@ public final class LauncherActivity extends Activity {
         if (autoRunKey.equals(prefs.getString(PREF_CONSUMED_AUTO_RUN, null))) {
             intent.removeExtra(EXTRA_AUTO_RUN);
             setIntent(intent);
+            boolean shouldReturnToNative = prefs.getBoolean(PREF_RETURN_TO_NATIVE, false);
             prefs.edit()
                     .remove(PREF_CONSUMED_AUTO_RUN)
-                    .putBoolean(PREF_RETURN_TO_NATIVE, false)
                     .commit();
-            resumeNativeInCurrentProcess = false;
+            if (shouldReturnToNative && resumeNativeInCurrentProcess) {
+                resumeNativeSceneIfNeeded();
+            }
             return;
         }
         intent.removeExtra(EXTRA_AUTO_RUN);
@@ -370,8 +390,8 @@ public final class LauncherActivity extends Activity {
             options.scene = 0;
         }
         String fallbackModel = prefs.getString(PREF_MODEL, "Models/DamagedHelmet.glb");
-        options.model = options.scene == 0 ? intent.getStringExtra(EXTRA_MODEL) : null;
-        if (options.scene == 0 && (options.model == null || options.model.isEmpty())) {
+        options.model = intent.getStringExtra(EXTRA_MODEL);
+        if (options.model == null || options.model.isEmpty()) {
             options.model = fallbackModel;
         }
         options.logLevel = intent.getIntExtra(EXTRA_LOG_LEVEL, prefs.getInt(PREF_LOG_LEVEL, 2));
@@ -386,15 +406,13 @@ public final class LauncherActivity extends Activity {
         options.returnToNative = intent.getBooleanExtra(EXTRA_RETURN_TO_NATIVE, false);
 
         selectOption(sceneSpinner, scenes, options.scene);
-        if (options.scene == 0) {
-            selectModel(options.model);
-        }
+        selectModel(options.model);
         selectOption(logSpinner, logLevels, options.logLevel);
         updateModelControls();
 
         prefs.edit()
                 .putInt(PREF_SCENE, options.scene)
-                .putString(PREF_MODEL, options.scene == 0 ? options.model : fallbackModel)
+                .putString(PREF_MODEL, options.model)
                 .putInt(PREF_LOG_LEVEL, options.logLevel)
                 .putBoolean(PREF_RETURN_TO_NATIVE, options.returnToNative)
                 .putString(PREF_CONSUMED_AUTO_RUN, autoRunKey)

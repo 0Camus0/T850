@@ -51,6 +51,7 @@ set(T850_ANDROID_FRAMEWORK_SOURCES
   ${T850_SOURCE_DIR}/Framework/pch.cpp
   ${T850_SOURCE_DIR}/Framework/src/core/Config.cpp
   ${T850_SOURCE_DIR}/Framework/src/core/Core.cpp
+  ${T850_SOURCE_DIR}/Framework/src/core/EngineContext.cpp
   ${T850_SOURCE_DIR}/Framework/src/core/android/AndroidFramework.cpp
   ${T850_SOURCE_DIR}/Framework/src/utils/AndroidAssets.cpp
   ${T850_SOURCE_DIR}/Framework/src/utils/Log.cpp
@@ -64,6 +65,7 @@ set(T850_ANDROID_FRAMEWORK_SOURCES
   ${T850_SOURCE_DIR}/Framework/src/utils/XMaths.cpp
   ${T850_SOURCE_DIR}/Framework/src/utils/Technique.cpp
   ${T850_SOURCE_DIR}/Framework/src/utils/ConfigRuntime.cpp
+  ${T850_SOURCE_DIR}/Framework/src/utils/ShaderDiskCache.cpp
   ${T850_SOURCE_DIR}/Framework/src/utils/ShaderPermutationDump.cpp
   ${T850_SOURCE_DIR}/Framework/src/utils/SPIRVReflection.cpp
   ${T850_SOURCE_DIR}/Framework/src/utils/ThreadPool.cpp

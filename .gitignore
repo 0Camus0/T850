@@ -21,6 +21,7 @@
 # ── Generated asset caches ──
 **/.t8cache/
 /T850/Assets/Shaders/.t8shadercache/
+/T850/Assets/Textures/GeneratedIBLCache/
 
 # ── vcpkg build-time artifacts (huge, reproducible) ──
 /T850/Librerias/vcpkg/buildtrees/

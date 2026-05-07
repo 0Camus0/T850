@@ -4,12 +4,15 @@
 
     <application
         android:allowBackup="false"
+        android:icon="@mipmap/ic_launcher"
+        android:roundIcon="@mipmap/ic_launcher"
         android:label="T850 Vulkan"
         android:theme="@style/T850LauncherTheme">
         <activity
             android:name=".LauncherActivity"
             android:alwaysRetainTaskState="true"
-            android:exported="true">
+            android:exported="true"
+            android:screenOrientation="landscape">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />

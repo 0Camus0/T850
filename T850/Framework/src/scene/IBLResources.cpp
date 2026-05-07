@@ -187,7 +187,7 @@ namespace {
   }
 
   std::filesystem::path IBLCacheRoot() {
-    return std::filesystem::path("Textures") / "GeneratedIBLCache";
+    return ResourceLocator::Instance().ResolveCachePath((std::filesystem::path("Textures") / "GeneratedIBLCache").string());
   }
 
   uint64_t BuildIBLCacheKey(
@@ -215,32 +215,31 @@ namespace {
     hash = HashValue(hash, GeneratedCharlieSamples);
 
     if (!sourcePath.empty()) {
-      std::error_code ec;
-      std::filesystem::path path(sourcePath);
-      std::filesystem::path canonical = std::filesystem::weakly_canonical(path, ec);
-      const std::string normalized = ec ? path.generic_string() : canonical.generic_string();
-      hash = HashString(hash, normalized);
+      std::vector<unsigned char> sourceBytes;
+      if (ResourceLocator::Instance().ReadBinary(sourcePath, sourceBytes)) {
+        const uint64_t sourceSize = static_cast<uint64_t>(sourceBytes.size());
+        hash = HashValue(hash, sourceSize);
+        hash = FNV1a64(sourceBytes.data(), sourceBytes.size(), hash);
+      } else {
+        const std::string normalized = ResourceLocator::NormalizePath(sourcePath);
+        hash = HashString(hash, normalized);
 
-      ec.clear();
-      uint64_t fileSize = 0;
-      if (std::filesystem::exists(path, ec)) {
-        ec.clear();
-        const auto measuredSize = std::filesystem::file_size(path, ec);
-        if (!ec)
-          fileSize = static_cast<uint64_t>(measuredSize);
-      }
-      if (fileSize == 0) {
-        std::vector<unsigned char> sourceBytes;
-        if (ResourceLocator::Instance().ReadBinary(sourcePath, sourceBytes)) {
-          fileSize = static_cast<uint64_t>(sourceBytes.size());
+        std::error_code ec;
+        const std::filesystem::path path = ResourceLocator::Instance().ResolveFilePath(sourcePath);
+        uint64_t fileSize = 0;
+        if (std::filesystem::exists(path, ec)) {
+          ec.clear();
+          const auto measuredSize = std::filesystem::file_size(path, ec);
+          if (!ec)
+            fileSize = static_cast<uint64_t>(measuredSize);
         }
-      }
-      hash = HashValue(hash, fileSize);
+        hash = HashValue(hash, fileSize);
 
-      ec.clear();
-      const auto writeTime = std::filesystem::last_write_time(path, ec);
-      const int64_t writeTicks = ec ? 0ll : static_cast<int64_t>(writeTime.time_since_epoch().count());
-      hash = HashValue(hash, writeTicks);
+        ec.clear();
+        const auto writeTime = std::filesystem::last_write_time(path, ec);
+        const int64_t writeTicks = ec ? 0ll : static_cast<int64_t>(writeTime.time_since_epoch().count());
+        hash = HashValue(hash, writeTicks);
+      }
     }
 
     return hash;
@@ -1186,11 +1185,7 @@ void LoadEnvironmentIBLResources(
   if (!driver)
     return;
 
-#if defined(OS_ANDROID)
-  constexpr bool allowRuntimeGeneratedIBL = false;
-#else
   constexpr bool allowRuntimeGeneratedIBL = true;
-#endif
 
   auto loadTextureOnce = [&](int& textureIndex, const std::string& path, const char* label) {
     if (textureIndex >= 0) {

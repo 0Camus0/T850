@@ -5,6 +5,7 @@
 #ifdef OS_ANDROID
 
 #include <core/android/AndroidFramework.h>
+#include <core/EngineContext.h>
 #include <video/vulkan/VulkanDriver.h>
 #include <utils/Log.h>
 #include <utils/ThreadPool.h>
@@ -87,6 +88,7 @@ namespace t850 {
   }
 
   void AndroidFramework::OnDestroyApplication() {
+    ClearReturnToNativePreference();
     DestroyVulkanRuntime();
     ShutdownGlobalThreadPool();
     m_inited = false;
@@ -107,9 +109,14 @@ namespace t850 {
     while (m_alive) {
       int events = 0;
       android_poll_source* source = nullptr;
-      while (ALooper_pollOnce((m_paused || !m_hasRuntime || !m_surfaceActive) ? -1 : 0, nullptr, &events,
+      while (ALooper_pollOnce((m_closing || m_paused || !m_hasRuntime || !m_surfaceActive) ? -1 : 0, nullptr, &events,
                               reinterpret_cast<void**>(&source)) >= 0) {
         if (source) source->process(m_app, source);
+        if (m_closeRequested) {
+          m_closeRequested = false;
+          RequestCloseApplication();
+          break;
+        }
         if (m_app && m_app->destroyRequested) {
           m_alive = false;
           break;
@@ -117,7 +124,7 @@ namespace t850 {
       }
 
       if (!m_alive) break;
-      if (!m_paused && m_hasRuntime && m_surfaceActive && pBaseApp) {
+      if (!m_closing && !m_paused && m_hasRuntime && m_surfaceActive && pBaseApp) {
         ProcessInput();
         pBaseApp->OnUpdate();
         ResetTransientInput();
@@ -313,8 +320,7 @@ namespace t850 {
           pBaseApp->IManager.KeyStates[0][T800K_ESCAPE] = false;
           pBaseApp->IManager.KeyStates[1][T800K_ESCAPE] = false;
           if (!pBaseApp->IsModalActive()) {
-            ClearReturnToNativePreference();
-            m_alive = false;
+            m_closeRequested = true;
           }
         }
         return 1;
@@ -337,6 +343,7 @@ namespace t850 {
     pVideoDriver->SetDimensions(aplicationDescriptor.width, aplicationDescriptor.height);
     pVideoDriver->SetWindowHandle(WindowHandle::FromAndroidNativeWindow(m_window));
     pVideoDriver->InitDriver();
+    RefreshEngineContextFromGlobals();
     pBaseApp->CreateAssets();
     pVideoDriver->BuildPipelineObjects();
     m_hasRuntime = true;
@@ -353,6 +360,7 @@ namespace t850 {
     delete pVideoDriver;
     pVideoDriver = nullptr;
     g_pBaseDriver = nullptr;
+    ClearEngineContext();
     m_hasRuntime = false;
     m_surfaceActive = false;
   }
@@ -403,6 +411,18 @@ namespace t850 {
     pBaseApp->IManager.yDelta = 0;
     pBaseApp->IManager.MouseButtonStates[0][0] = false;
     pBaseApp->IManager.MouseButtonStates[1][0] = false;
+  }
+
+  void AndroidFramework::RequestCloseApplication() {
+    if (m_closing) return;
+    m_closing = true;
+    ClearTouchState();
+    ClearReturnToNativePreference();
+    m_paused = true;
+    if (m_app && m_app->activity) {
+      T8_LOG_INFO("[AndroidFramework] Back pressed; finishing NativeActivity");
+      ANativeActivity_finish(m_app->activity);
+    }
   }
 
   void AndroidFramework::ClearReturnToNativePreference() {

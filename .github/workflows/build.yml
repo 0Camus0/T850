@@ -110,8 +110,135 @@ jobs:
             T850/bin/${{ steps.arch.outputs.name }}/${{ matrix.configuration }}/T8ditor.exe
             T850/bin/${{ steps.arch.outputs.name }}/${{ matrix.configuration }}/*.dll
 
+  android:
+    runs-on: windows-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - abi: arm64-v8a
+            artifact_suffix: arm64-v8a
+            vcpkg_triplet: arm64-android
+          - abi: x86_64
+            artifact_suffix: x86_64
+            vcpkg_triplet: x64-android
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          lfs: true
+
+      - name: Setup Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Clone vcpkg
+        shell: pwsh
+        run: |
+          git clone https://github.com/microsoft/vcpkg.git T850/Librerias/vcpkg
+
+      - name: Cache Android vcpkg packages
+        uses: actions/cache@v4
+        with:
+          path: |
+            T850/Librerias/vcpkg/installed
+            T850/Librerias/vcpkg/downloads
+          key: android-vcpkg-${{ matrix.vcpkg_triplet }}-${{ hashFiles('SetupAndroidToolchain.bat', 'T850/cmake/AndroidBuild.cmake', 'T850/android/app/build.gradle') }}
+          restore-keys: |
+            android-vcpkg-${{ matrix.vcpkg_triplet }}-
+
+      - name: Setup Vulkan SDK
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $vulkanRoot = 'C:\VulkanSDK'
+          $sdk = $null
+          if (Test-Path $vulkanRoot) {
+            $sdk = Get-ChildItem $vulkanRoot -Directory | Sort-Object Name -Descending | Select-Object -First 1
+          }
+          if (-not $sdk) {
+            winget install --id KhronosGroup.VulkanSDK -e --accept-package-agreements --accept-source-agreements --disable-interactivity
+            if (Test-Path $vulkanRoot) {
+              $sdk = Get-ChildItem $vulkanRoot -Directory | Sort-Object Name -Descending | Select-Object -First 1
+            }
+          }
+          if (-not $sdk) {
+            throw 'Vulkan SDK install did not produce a C:\VulkanSDK directory.'
+          }
+          "VULKAN_SDK=$($sdk.FullName)" >> $env:GITHUB_ENV
+          "$($sdk.FullName)\Bin" >> $env:GITHUB_PATH
+
+      - name: Setup Android toolchain
+        shell: cmd
+        run: SetupAndroidToolchain.bat --skip-winget --android-abis ${{ matrix.abi }}
+
+      - name: Build Android Release APK
+        shell: cmd
+        run: BuildAndroid.bat Release --abi ${{ matrix.abi }}
+
+      - name: Stage Android APK
+        shell: pwsh
+        env:
+          ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $abi = '${{ matrix.artifact_suffix }}'
+          $unsigned = 'T850\android\app\build\outputs\apk\release\app-release-unsigned.apk'
+          if (-not (Test-Path $unsigned)) {
+            throw "Build output not found: $unsigned"
+          }
+
+          $stage = 'artifacts\android'
+          New-Item -ItemType Directory -Path $stage -Force | Out-Null
+          Copy-Item $unsigned -Destination (Join-Path $stage "T850-Android-$abi-release-unsigned.apk") -Force
+
+          if ([string]::IsNullOrWhiteSpace($env:ANDROID_KEYSTORE_BASE64)) {
+            Write-Host 'ANDROID_KEYSTORE_BASE64 was not provided; uploading unsigned Release APK only.'
+            exit 0
+          }
+          if ([string]::IsNullOrWhiteSpace($env:ANDROID_KEYSTORE_PASSWORD)) {
+            throw 'ANDROID_KEYSTORE_PASSWORD is required when ANDROID_KEYSTORE_BASE64 is provided.'
+          }
+          if ([string]::IsNullOrWhiteSpace($env:ANDROID_KEY_ALIAS)) {
+            throw 'ANDROID_KEY_ALIAS is required when ANDROID_KEYSTORE_BASE64 is provided.'
+          }
+
+          $sdk = Join-Path $env:LOCALAPPDATA 'Android\Sdk'
+          $buildTools = Get-ChildItem (Join-Path $sdk 'build-tools') -Directory | Sort-Object Name -Descending | Select-Object -First 1
+          if (-not $buildTools) {
+            throw "Android build-tools were not found under $sdk."
+          }
+          $zipalign = Join-Path $buildTools.FullName 'zipalign.exe'
+          $apksigner = Join-Path $buildTools.FullName 'apksigner.bat'
+          $keystore = Join-Path $env:RUNNER_TEMP 'android-release.keystore'
+          [IO.File]::WriteAllBytes($keystore, [Convert]::FromBase64String($env:ANDROID_KEYSTORE_BASE64))
+
+          $aligned = Join-Path $env:RUNNER_TEMP "T850-Android-$abi-release-aligned.apk"
+          $signed = Join-Path $stage "T850-Android-$abi-release-signed.apk"
+          & $zipalign -p -f 4 $unsigned $aligned
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+          $keyPassword = $env:ANDROID_KEY_PASSWORD
+          if ([string]::IsNullOrWhiteSpace($keyPassword)) {
+            $keyPassword = $env:ANDROID_KEYSTORE_PASSWORD
+          }
+          & $apksigner sign --ks $keystore --ks-pass "pass:$env:ANDROID_KEYSTORE_PASSWORD" --ks-key-alias $env:ANDROID_KEY_ALIAS --key-pass "pass:$keyPassword" --out $signed $aligned
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Upload Android APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: T850-Android-${{ matrix.artifact_suffix }}-Release
+          path: artifacts/android/*.apk
+
   release:
-    needs: build
+    needs: [build, android]
     if: startsWith(github.ref, 'refs/tags/v')
     runs-on: windows-latest
     permissions:
@@ -139,8 +266,10 @@ jobs:
       - name: Package releases
         shell: pwsh
         run: |
+          $releaseDir = "release-assets"
+          New-Item -ItemType Directory -Path $releaseDir -Force | Out-Null
           $assets = "T850/Assets"
-          foreach ($dir in Get-ChildItem -Path artifacts -Directory) {
+          foreach ($dir in Get-ChildItem -Path artifacts -Directory | Where-Object { $_.Name -notlike "T850-Android-*" }) {
             $name = $dir.Name
             $staging = "staging/$name"
             New-Item -ItemType Directory -Path $staging -Force | Out-Null
@@ -162,11 +291,15 @@ jobs:
             }
 
             # Create zip
-            Compress-Archive -Path "$staging/*" -DestinationPath "$name.zip"
+            Compress-Archive -Path "$staging/*" -DestinationPath "$releaseDir/$name.zip"
+          }
+
+          foreach ($apk in Get-ChildItem -Path artifacts -Recurse -Filter "*.apk") {
+            Copy-Item $apk.FullName -Destination (Join-Path $releaseDir $apk.Name) -Force
           }
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
-          files: "*.zip"
+          files: "release-assets/*"
           generate_release_notes: true

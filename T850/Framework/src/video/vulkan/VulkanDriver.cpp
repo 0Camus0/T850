@@ -53,6 +53,12 @@ namespace t850 {
           << ";api=" << props.apiVersion;
       return sig.str();
     }
+
+    VkSurfaceTransformFlagBitsKHR ChooseSwapchainPreTransform(const VkSurfaceCapabilitiesKHR& caps) {
+      if (caps.supportedTransforms & VK_SURFACE_TRANSFORM_IDENTITY_BIT_KHR)
+        return VK_SURFACE_TRANSFORM_IDENTITY_BIT_KHR;
+      return caps.currentTransform;
+    }
   }
 
   extern Device*        T8Device;
@@ -552,8 +558,8 @@ namespace t850 {
     CreateDepthBuffer();
     CreateFramebuffers();
 
-    m_viewport = { 0.f, (float)height, (float)width, -(float)height, 0.f, 1.f };
-    m_scissorRect = { {0, 0}, {(uint32_t)width, (uint32_t)height} };
+    m_viewport = { 0.f, (float)m_swapChainExtent.height, (float)m_swapChainExtent.width, -(float)m_swapChainExtent.height, 0.f, 1.f };
+    m_scissorRect = { {0, 0}, m_swapChainExtent };
     m_currentFrame = 0;
     m_frameStarted = false;
     m_renderPassActive = false;
@@ -637,7 +643,8 @@ namespace t850 {
       T8_LOG_INFO("[Vulkan] Swapchain does not report TRANSFER_DST support; late-present copy disabled");
     }
     scCI.imageSharingMode = VK_SHARING_MODE_EXCLUSIVE;
-    scCI.preTransform = surfCaps.currentTransform;
+    const VkSurfaceTransformFlagBitsKHR preTransform = ChooseSwapchainPreTransform(surfCaps);
+    scCI.preTransform = preTransform;
     scCI.compositeAlpha = VK_COMPOSITE_ALPHA_OPAQUE_BIT_KHR;
     scCI.presentMode = chosenMode;
     scCI.clipped = VK_TRUE;
@@ -647,8 +654,8 @@ namespace t850 {
       T8_LOG_ERROR("[Vulkan] vkCreateSwapchainKHR failed res=%d", res);
       return;
     }
-    T8_LOG_INFO("[Vulkan] Swap chain created (%ux%u, %u images, mode=%d)",
-                m_swapChainExtent.width, m_swapChainExtent.height, imageCount, chosenMode);
+    T8_LOG_INFO("[Vulkan] Swap chain created (%ux%u, %u images, mode=%d, preTransform=0x%x)",
+                m_swapChainExtent.width, m_swapChainExtent.height, imageCount, chosenMode, preTransform);
   }
 
   void VulkanDriver::CreateBackBufferViews() {
@@ -946,8 +953,8 @@ namespace t850 {
     }
 
     // Negative height flips Y to match D3D/GL NDC (requires VK_KHR_maintenance1)
-    m_viewport = { 0.f, (float)height, (float)width, -(float)height, 0.f, 1.f };
-    m_scissorRect = { {0, 0}, {(uint32_t)width, (uint32_t)height} };
+    m_viewport = { 0.f, (float)m_swapChainExtent.height, (float)m_swapChainExtent.width, -(float)m_swapChainExtent.height, 0.f, 1.f };
+    m_scissorRect = { {0, 0}, m_swapChainExtent };
 
     CreateDummyTexture();
 
@@ -995,8 +1002,8 @@ namespace t850 {
     CreateFramebuffers();
 
     // Update viewport
-    m_viewport = { 0.f, (float)height, (float)width, -(float)height, 0.f, 1.f };
-    m_scissorRect = { {0, 0}, {(uint32_t)width, (uint32_t)height} };
+    m_viewport = { 0.f, (float)m_swapChainExtent.height, (float)m_swapChainExtent.width, -(float)m_swapChainExtent.height, 0.f, 1.f };
+    m_scissorRect = { {0, 0}, m_swapChainExtent };
 
     // Invalidate pipeline cache entries that reference the old backbuffer render pass
     // (render passes themselves are NOT recreated — same formats, same attachments)

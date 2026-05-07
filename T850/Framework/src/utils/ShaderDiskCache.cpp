@@ -1,6 +1,7 @@
 #include <pch.h>
 #include <utils/ShaderDiskCache.h>
 #include <utils/Log.h>
+#include <utils/ResourceLocator.h>
 
 #include <iomanip>
 #include <mutex>
@@ -147,7 +148,7 @@ namespace {
   }
 
   std::filesystem::path RootDirectory() {
-    return std::filesystem::path(kRootPath);
+    return ResourceLocator::Instance().ResolveCachePath(kRootPath);
   }
 
   std::filesystem::path ApiDirectory(const std::string& api) {

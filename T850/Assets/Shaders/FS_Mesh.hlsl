@@ -532,7 +532,7 @@ float GetPackedLightRadius(int i)
     return c == 0 ? pack.x : (c == 1 ? pack.y : (c == 2 ? pack.z : pack.w));
 }
 
-void BuildSurface(VS_OUTPUT input, out float4 color, out float3 normal, out float3 geoNormal,
+void BuildSurface(VS_OUTPUT input, bool isFrontFace, out float4 color, out float3 normal, out float3 geoNormal,
                   out float metallic, out float roughness, out float selfShadow, out float2 uv,
                   out float3 sheenColor, out float sheenRoughness,
                   out float clearcoatFactor, out float clearcoatRoughness,
@@ -559,10 +559,19 @@ void BuildSurface(VS_OUTPUT input, out float4 color, out float3 normal, out floa
     normal = float3(0.0f, 0.0f, 1.0f);
 #endif
     geoNormal = normal;
+    bool flipBackFace = AlphaParams.z > 0.5f && !isFrontFace;
+    if (flipBackFace) {
+        normal = -normal;
+        geoNormal = -geoNormal;
+    }
 
 #if defined(HEIGHT_MAP) || defined(NORMAL_MAP)
     float3 tangent = normalize(input.htangent.xyz);
     float3 binormal = normalize(input.hbinormal.xyz);
+    if (flipBackFace) {
+        tangent = -tangent;
+        binormal = -binormal;
+    }
     float3x3 TBN = float3x3(tangent, binormal, normal);
 #endif
 
@@ -746,7 +755,7 @@ struct FS_OUT{
     float  depth  : SV_Depth;
 };
 
-FS_OUT FS(VS_OUTPUT input)
+FS_OUT FS(VS_OUTPUT input, bool isFrontFace : SV_IsFrontFace)
 {
     float4 color;
     float3 normal;
@@ -763,7 +772,7 @@ FS_OUT FS(VS_OUTPUT input)
     float specularWeight;
     float transmissionFactor;
     float2 uv;
-    BuildSurface(input, color, normal, geoNormal, metallic, roughness, selfShadow, uv, sheenColor, sheenRoughness, clearcoatFactor, clearcoatRoughness, occlusion, dielectricF0, specularWeight, transmissionFactor);
+    BuildSurface(input, isFrontFace, color, normal, geoNormal, metallic, roughness, selfShadow, uv, sheenColor, sheenRoughness, clearcoatFactor, clearcoatRoughness, occlusion, dielectricF0, specularWeight, transmissionFactor);
 
     FS_OUT fout;
     fout.color0.rgb = color.rgb;
@@ -797,7 +806,7 @@ float FS(VS_OUTPUT input) : SV_Depth
     return input.Pos.z / input.Pos.w;
 }
 #else
-float4 FS(VS_OUTPUT input) : SV_TARGET
+float4 FS(VS_OUTPUT input, bool isFrontFace : SV_IsFrontFace) : SV_TARGET
 {
     float4 color;
     float3 normal;
@@ -814,7 +823,7 @@ float4 FS(VS_OUTPUT input) : SV_TARGET
     float specularWeight;
     float transmissionFactor;
     float2 uv;
-    BuildSurface(input, color, normal, geoNormal, metallic, roughness, selfShadow, uv, sheenColor, sheenRoughness, clearcoatFactor, clearcoatRoughness, occlusion, dielectricF0, specularWeight, transmissionFactor);
+    BuildSurface(input, isFrontFace, color, normal, geoNormal, metallic, roughness, selfShadow, uv, sheenColor, sheenRoughness, clearcoatFactor, clearcoatRoughness, occlusion, dielectricF0, specularWeight, transmissionFactor);
     float3 emissive = SampleEmissive(input, uv);
 
     if (ForwardParams.z > 0.5f && ForwardParams.x > 0.0f && ForwardParams.y > 0.0f) {

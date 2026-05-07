@@ -13,8 +13,8 @@
 
 #include <video/BaseDriver.h>
 #include <scene/RenderQueue.h>   // MeshDrawStateTracker
-#include <iostream>
 #include <cmath>
+#include <cfloat>
 #include <algorithm>
 #include <chrono>
 
@@ -1659,7 +1659,7 @@ namespace t850 {
     return true;
   }
 
-  static float SubsetDistanceSqToCamera(const RenderMesh::SubSetInfo& subInfo, const XMATRIX44& world, const XVECTOR3& eye) {
+  static float SubsetViewDepth(const RenderMesh::SubSetInfo& subInfo, const XMATRIX44& world, const XVECTOR3& eye, const XVECTOR3& look) {
     float lx = (subInfo.bounds.min.x + subInfo.bounds.max.x) * 0.5f;
     float ly = (subInfo.bounds.min.y + subInfo.bounds.max.y) * 0.5f;
     float lz = (subInfo.bounds.min.z + subInfo.bounds.max.z) * 0.5f;
@@ -1669,7 +1669,7 @@ namespace t850 {
     float dx = wx - eye.x;
     float dy = wy - eye.y;
     float dz = wz - eye.z;
-    return dx*dx + dy*dy + dz*dz;
+    return dx*look.x + dy*look.y + dz*look.z;
   }
 
   static int ForwardSubsetGroup(const RenderMesh::SubSetInfo& subInfo) {
@@ -1713,16 +1713,16 @@ namespace t850 {
     return group;
   }
 
-  static float GeometryForwardDistanceSq(const RenderMesh::MeshInfo& meshInfo, const XMATRIX44& world, const XVECTOR3& eye) {
-    float distanceSq = -1.0f;
+  static float GeometryForwardDepth(const RenderMesh::MeshInfo& meshInfo, const XMATRIX44& world, const XVECTOR3& eye, const XVECTOR3& look) {
+    float depth = -FLT_MAX;
     for (const auto& subInfo : meshInfo.SubSets) {
       if (IsForwardOnlySubset(subInfo)) {
-        float subsetDistanceSq = SubsetDistanceSqToCamera(subInfo, world, eye);
-        if (subsetDistanceSq > distanceSq)
-          distanceSq = subsetDistanceSq;
+        float subsetDepth = SubsetViewDepth(subInfo, world, eye, look);
+        if (subsetDepth > depth)
+          depth = subsetDepth;
       }
     }
-    return distanceSq;
+    return depth;
   }
 
   static void ApplyMeshInstanceCB(RenderMesh::CBuffer& dst, const RenderMesh::MeshInstanceCBuffer& src) {
@@ -1945,8 +1945,8 @@ namespace t850 {
           int groupB = GeometryForwardGroup(Info[b]);
           if (groupA != groupB)
             return groupA < groupB;
-          float da = GeometryForwardDistanceSq(Info[a], transform, pRenderCamera->Eye);
-          float db = GeometryForwardDistanceSq(Info[b], transform, pRenderCamera->Eye);
+          float da = GeometryForwardDepth(Info[a], transform, pRenderCamera->Eye, pRenderCamera->Look);
+          float db = GeometryForwardDepth(Info[b], transform, pRenderCamera->Eye, pRenderCamera->Look);
           return da > db;
         });
       } else if (currentPass == PassType::GBUFFER || currentPass == PassType::SHADOW_MAP || currentPass == PassType::RADIAL_DEPTH) {
@@ -2077,8 +2077,8 @@ namespace t850 {
             int groupB = ForwardSubsetGroup(it_MeshInfo->SubSets[b]);
             if (groupA != groupB)
               return groupA < groupB;
-            float da = SubsetDistanceSqToCamera(it_MeshInfo->SubSets[a], transform, pRenderCamera->Eye);
-            float db = SubsetDistanceSqToCamera(it_MeshInfo->SubSets[b], transform, pRenderCamera->Eye);
+            float da = SubsetViewDepth(it_MeshInfo->SubSets[a], transform, pRenderCamera->Eye, pRenderCamera->Look);
+            float db = SubsetViewDepth(it_MeshInfo->SubSets[b], transform, pRenderCamera->Eye, pRenderCamera->Look);
             return da > db;
           }
           if (currentPass == PassType::GBUFFER || currentPass == PassType::SHADOW_MAP || currentPass == PassType::RADIAL_DEPTH) {

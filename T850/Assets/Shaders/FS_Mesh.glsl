@@ -514,7 +514,7 @@ highp float GetPackedLightRadius(highp int i)
     return c == 0 ? pack.x : (c == 1 ? pack.y : (c == 2 ? pack.z : pack.w));
 }
 
-void BuildSurface(out highp vec4 color, out highp vec3 normal, out highp vec3 geoNormal,
+void BuildSurface(bool isFrontFace, out highp vec4 color, out highp vec3 normal, out highp vec3 geoNormal,
                   out highp float metallic, out highp float roughness, out highp float selfShadow, out highp vec2 uv,
                   out highp vec3 sheenColor, out highp float sheenRoughness,
                   out highp float clearcoatFactor, out highp float clearcoatRoughness,
@@ -541,10 +541,19 @@ void BuildSurface(out highp vec4 color, out highp vec3 normal, out highp vec3 ge
     normal = vec3(0.0, 0.0, 1.0);
 #endif
     geoNormal = normal;
+    bool flipBackFace = AlphaParams.z > 0.5 && !isFrontFace;
+    if (flipBackFace) {
+        normal = -normal;
+        geoNormal = -geoNormal;
+    }
 
 #if defined(HEIGHT_MAP) || defined(NORMAL_MAP)
     highp vec3 tangent = normalize(htangent.xyz);
     highp vec3 binormal = normalize(hbinormal.xyz);
+    if (flipBackFace) {
+        tangent = -tangent;
+        binormal = -binormal;
+    }
     highp mat3 TBN = mat3(tangent, binormal, normal);
 #endif
 
@@ -753,7 +762,7 @@ void main()
     highp float specularWeight;
     highp float transmissionFactor;
     highp vec2 uv;
-    BuildSurface(color, normal, geoNormal, metallic, roughness, selfShadow, uv, sheenColor, sheenRoughness, clearcoatFactor, clearcoatRoughness, occlusion, dielectricF0, specularWeight, transmissionFactor);
+    BuildSurface(gl_FrontFacing, color, normal, geoNormal, metallic, roughness, selfShadow, uv, sheenColor, sheenRoughness, clearcoatFactor, clearcoatRoughness, occlusion, dielectricF0, specularWeight, transmissionFactor);
     highp float outDepth = Pos.z / Pos.w;
 #ifdef ES_30
     colorOut_0 = vec4(color.rgb, specularWeight);
@@ -813,7 +822,7 @@ void main()
     highp float specularWeight;
     highp float transmissionFactor;
     highp vec2 uv;
-    BuildSurface(color, normal, geoNormal, metallic, roughness, selfShadow, uv, sheenColor, sheenRoughness, clearcoatFactor, clearcoatRoughness, occlusion, dielectricF0, specularWeight, transmissionFactor);
+    BuildSurface(gl_FrontFacing, color, normal, geoNormal, metallic, roughness, selfShadow, uv, sheenColor, sheenRoughness, clearcoatFactor, clearcoatRoughness, occlusion, dielectricF0, specularWeight, transmissionFactor);
     highp vec3 emissive = SampleEmissive(uv);
 
     if (ForwardParams.z > 0.5 && ForwardParams.x > 0.0 && ForwardParams.y > 0.0) {

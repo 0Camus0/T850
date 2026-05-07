@@ -10,14 +10,17 @@
  *
  *   // Data-parallel loop (blocks until done):
  *   pool.ParallelFor(0, N, [&](int i){ process(i); });
+ *   pool.ParallelForHeavy(0, N, [&](int i){ processExpensiveJob(i); });
  *
  *   // Wait for all submitted tasks:
  *   pool.WaitAll();
  *
  * Thread safety:
- *   - Submit() and ParallelFor() are safe to call from any thread.
- *   - ParallelFor() and WaitAll() must NOT be called from a worker
- *     thread (will deadlock on a fixed-size pool).
+ *   - Submit(), ParallelFor(), and ParallelForHeavy() are safe to call
+ *     from any non-worker thread.
+ *   - ParallelFor(), ParallelForHeavy(), and WaitAll() must NOT be
+ *     called from a worker thread. The pool detects this contract
+ *     violation and avoids queueing nested blocking work.
  *
  * The pool is destroyed (joined) when it goes out of scope.
  *********************************************************/
@@ -35,6 +38,7 @@
 #include <atomic>
 #include <cstdint>
 #include <algorithm>
+#include <utility>
 
 namespace t850 {
 
@@ -69,6 +73,7 @@ public:
   ThreadPool& operator=(const ThreadPool&) = delete;
 
   unsigned int NumWorkers() const { return static_cast<unsigned int>(m_workers.size()); }
+  bool IsWorkerThread() const;
 
   // Submit a callable, returns a future for the result.
   template<typename F, typename... Args>
@@ -89,6 +94,7 @@ public:
 
   // Block until all submitted tasks have finished executing.
   void WaitAll() {
+    if (!CanBlockFromCurrentThread("WaitAll")) return;
     std::unique_lock<std::mutex> lock(m_mutex);
     m_cvDone.wait(lock, [this]() {
       return m_tasks.empty() && m_inFlight == 0;
@@ -100,21 +106,41 @@ public:
   // Uses dynamic chunking for load balancing.
   template<typename Func>
   void ParallelFor(int begin, int end, Func&& func) {
-    if (begin >= end) return;
-    int total = end - begin;
-    int numWorkers = static_cast<int>(m_workers.size());
+    ParallelForImpl(begin, end, std::forward<Func>(func), false);
+  }
 
-    // For very small ranges, just run inline
-    if (total <= numWorkers || numWorkers == 0) {
+  // Data-parallel loop for few-but-expensive jobs. Unlike ParallelFor(),
+  // this still fans out when the range has fewer items than workers.
+  template<typename Func>
+  void ParallelForHeavy(int begin, int end, Func&& func) {
+    ParallelForImpl(begin, end, std::forward<Func>(func), true);
+  }
+
+private:
+  template<typename Func>
+  void ParallelForImpl(int begin, int end, Func&& func, bool forceParallel) {
+    if (begin >= end) return;
+    if (!CanBlockFromCurrentThread(forceParallel ? "ParallelForHeavy" : "ParallelFor")) {
       for (int i = begin; i < end; i++) func(i);
       return;
     }
 
+    int total = end - begin;
+    int numWorkers = static_cast<int>(m_workers.size());
+
+    // For very small ranges, just run inline
+    if ((!forceParallel && total <= numWorkers) || numWorkers == 0) {
+      for (int i = begin; i < end; i++) func(i);
+      return;
+    }
+
+    int numTasks = forceParallel ? (std::min)(numWorkers, total) : numWorkers;
+
     // Dynamic chunking via shared atomic index
     std::atomic<int> nextIndex(begin);
-    int chunkSize = (std::max)(1, total / (numWorkers * 8)); // ~8 chunks per worker
+    int chunkSize = (std::max)(1, total / (numTasks * 8)); // ~8 chunks per worker
 
-    int remaining = numWorkers;
+    int remaining = numTasks;
     std::mutex doneMutex;
     std::condition_variable doneCv;
 
@@ -136,8 +162,8 @@ public:
       }
     };
 
-    // Submit N-1 tasks to workers, run one chunk on calling thread
-    for (int w = 0; w < numWorkers; w++) {
+    // Submit tasks to workers and wait for them to drain the shared range.
+    for (int w = 0; w < numTasks; w++) {
       std::lock_guard<std::mutex> lock(m_mutex);
       m_tasks.emplace(worker);
       m_inFlight++;
@@ -151,14 +177,19 @@ public:
     }
   }
 
-private:
   void WorkerLoop() {
+    ThreadPool* previousPool = s_currentWorkerPool;
+    s_currentWorkerPool = this;
+
     for (;;) {
       std::function<void()> task;
       {
         std::unique_lock<std::mutex> lock(m_mutex);
         m_cv.wait(lock, [this]() { return m_stop || !m_tasks.empty(); });
-        if (m_stop && m_tasks.empty()) return;
+        if (m_stop && m_tasks.empty()) {
+          s_currentWorkerPool = previousPool;
+          return;
+        }
         task = std::move(m_tasks.front());
         m_tasks.pop();
       }
@@ -171,6 +202,8 @@ private:
     }
   }
 
+  bool CanBlockFromCurrentThread(const char* operation) const;
+
   std::vector<std::thread> m_workers;
   std::queue<std::function<void()>> m_tasks;
   std::mutex m_mutex;
@@ -178,11 +211,13 @@ private:
   std::condition_variable m_cvDone;  // wakes WaitAll()
   bool m_stop;
   int m_inFlight;                    // queued + running tasks
+
+  static thread_local ThreadPool* s_currentWorkerPool;
 };
 
 // ── Global engine thread pool ──────────────────────────────────────
 // Created once at startup, lives for the process lifetime.
-// Any component can use t850::g_threadPool->Submit() or ParallelFor().
+// Any component can use t850::g_threadPool->Submit(), ParallelFor(), or ParallelForHeavy().
 extern ThreadPool* g_threadPool;
 
 // Call once at engine init (before any component uses g_threadPool).

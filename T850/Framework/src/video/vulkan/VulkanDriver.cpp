@@ -18,6 +18,7 @@
 #include <SDL3/SDL_vulkan.h>
 
 #include <utils/Log.h>
+#include <utils/ShaderDiskCache.h>
 #include <utils/SPIRVReflection.h>
 #include <debug/Profiler.h>
 #include <debug/RenderTrace.h>
@@ -30,6 +31,23 @@
 #include <utility>
 
 namespace t850 {
+
+  namespace {
+    std::string GetVulkanDriverCacheSignature(VkPhysicalDevice physicalDevice) {
+      std::ostringstream sig;
+      sig << "vulkan;shaderCompiler=glslang-hlsl-spv1.0;pipelineCache=1";
+      if (!physicalDevice)
+        return sig.str();
+      VkPhysicalDeviceProperties props = {};
+      vkGetPhysicalDeviceProperties(physicalDevice, &props);
+      sig << ";deviceName=" << props.deviceName
+          << ";vendor=" << props.vendorID
+          << ";device=" << props.deviceID
+          << ";driver=" << props.driverVersion
+          << ";api=" << props.apiVersion;
+      return sig.str();
+    }
+  }
 
   extern Device*        T8Device;
   extern DeviceContext*  T8DeviceContext;
@@ -749,7 +767,13 @@ namespace t850 {
     CreateDescriptorPool();
 
     // Pipeline cache
+    const std::string driverSignature = GetVulkanDriverCacheSignature(m_physicalDevice);
+    ShaderDiskCache::EnsureApiMetadata("vulkan", driverSignature);
+    std::vector<uint8_t> pipelineCacheBytes;
+    ShaderDiskCache::LoadApiArtifact("vulkan", "pipeline_cache.bin", pipelineCacheBytes);
     VkPipelineCacheCreateInfo pcCI = { VK_STRUCTURE_TYPE_PIPELINE_CACHE_CREATE_INFO };
+    pcCI.initialDataSize = pipelineCacheBytes.size();
+    pcCI.pInitialData = pipelineCacheBytes.empty() ? nullptr : pipelineCacheBytes.data();
     vkCreatePipelineCache(m_device, &pcCI, nullptr, &m_vkPipelineCache);
 
     // Per-frame CB ring buffers
@@ -866,7 +890,17 @@ namespace t850 {
       vkDestroyPipeline(m_device, pair.second, nullptr);
     m_pipelineCache.clear();
 
-    if (m_vkPipelineCache) { vkDestroyPipelineCache(m_device, m_vkPipelineCache, nullptr); m_vkPipelineCache = VK_NULL_HANDLE; }
+    if (m_vkPipelineCache) {
+      size_t cacheSize = 0;
+      if (vkGetPipelineCacheData(m_device, m_vkPipelineCache, &cacheSize, nullptr) == VK_SUCCESS && cacheSize > 0) {
+        std::vector<uint8_t> cacheData(cacheSize);
+        if (vkGetPipelineCacheData(m_device, m_vkPipelineCache, &cacheSize, cacheData.data()) == VK_SUCCESS) {
+          ShaderDiskCache::StoreApiArtifact("vulkan", "pipeline_cache.bin", cacheData.data(), cacheSize);
+        }
+      }
+      vkDestroyPipelineCache(m_device, m_vkPipelineCache, nullptr);
+      m_vkPipelineCache = VK_NULL_HANDLE;
+    }
 
     // Destroy dummy texture
     if (m_dummySampler)   { vkDestroySampler(m_device, m_dummySampler, nullptr); m_dummySampler = VK_NULL_HANDLE; }
@@ -1060,6 +1094,71 @@ namespace t850 {
     vkQueueSubmit(m_graphicsQueue, 1, &submitInfo, VK_NULL_HANDLE);
     vkQueueWaitIdle(m_graphicsQueue);
     vkFreeCommandBuffers(m_device, m_transientCommandPool, 1, &cmd);
+  }
+
+  void VulkanDriver::BeginResourceUploadBatch() {
+    ++m_uploadBatchDepth;
+  }
+
+  void VulkanDriver::EndResourceUploadBatch() {
+    if (m_uploadBatchDepth <= 0)
+      return;
+    --m_uploadBatchDepth;
+    if (m_uploadBatchDepth > 0)
+      return;
+
+    if (m_uploadBatchCmd) {
+      vkEndCommandBuffer(m_uploadBatchCmd);
+
+      VkFence fence = VK_NULL_HANDLE;
+      VkFenceCreateInfo fenceInfo = { VK_STRUCTURE_TYPE_FENCE_CREATE_INFO };
+      vkCreateFence(m_device, &fenceInfo, nullptr, &fence);
+
+      VkSubmitInfo submitInfo = { VK_STRUCTURE_TYPE_SUBMIT_INFO };
+      submitInfo.commandBufferCount = 1;
+      submitInfo.pCommandBuffers = &m_uploadBatchCmd;
+      vkQueueSubmit(m_graphicsQueue, 1, &submitInfo, fence);
+      vkWaitForFences(m_device, 1, &fence, VK_TRUE, UINT64_MAX);
+      vkDestroyFence(m_device, fence, nullptr);
+      vkFreeCommandBuffers(m_device, m_transientCommandPool, 1, &m_uploadBatchCmd);
+      T8_LOG_INFO("[Vulkan] Resource upload batch flushed: %u copy operation(s)", m_uploadBatchCommandCount);
+      m_uploadBatchCmd = VK_NULL_HANDLE;
+    }
+
+    for (auto& buffer : m_uploadBatchBuffers)
+      vmaDestroyBuffer(m_allocator, buffer.buffer, buffer.alloc);
+    m_uploadBatchBuffers.clear();
+    m_uploadBatchCommandCount = 0;
+  }
+
+  VkCommandBuffer VulkanDriver::GetResourceUploadCommandBuffer() {
+    if (m_uploadBatchCmd)
+      return m_uploadBatchCmd;
+
+    VkCommandBufferAllocateInfo allocInfo = { VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO };
+    allocInfo.commandPool = m_transientCommandPool;
+    allocInfo.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
+    allocInfo.commandBufferCount = 1;
+    if (vkAllocateCommandBuffers(m_device, &allocInfo, &m_uploadBatchCmd) != VK_SUCCESS) {
+      m_uploadBatchCmd = VK_NULL_HANDLE;
+      return VK_NULL_HANDLE;
+    }
+
+    VkCommandBufferBeginInfo beginInfo = { VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO };
+    beginInfo.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
+    if (vkBeginCommandBuffer(m_uploadBatchCmd, &beginInfo) != VK_SUCCESS) {
+      vkFreeCommandBuffers(m_device, m_transientCommandPool, 1, &m_uploadBatchCmd);
+      m_uploadBatchCmd = VK_NULL_HANDLE;
+      return VK_NULL_HANDLE;
+    }
+    return m_uploadBatchCmd;
+  }
+
+  void VulkanDriver::KeepResourceUploadBuffer(VkBuffer buffer, VmaAllocation alloc) {
+    if (!buffer || !alloc)
+      return;
+    m_uploadBatchBuffers.push_back({ buffer, alloc });
+    ++m_uploadBatchCommandCount;
   }
 
   void VulkanDriver::DeferCleanup(VkBuffer buffer, VmaAllocation alloc) {

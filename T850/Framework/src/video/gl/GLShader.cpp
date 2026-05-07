@@ -2,35 +2,127 @@
 #include <video/gl/GLShader.h>
 #include <utils/Utils.h>
 #include <utils/Log.h>
+#include <utils/ShaderDiskCache.h>
 #include <video/gl/GLDriver.h>
 #include <debug/RenderTrace.h>
 
 
 namespace t850 {
 #define BUFFER_OFFSET(i) ((char *)NULL + (i))
+
+  namespace {
+    std::string SafeGLString(GLenum name) {
+      const GLubyte* value = glGetString(name);
+      return value ? reinterpret_cast<const char*>(value) : "";
+    }
+
+    bool GLProgramBinarySupported() {
+      GLint count = 0;
+      glGetIntegerv(GL_NUM_PROGRAM_BINARY_FORMATS, &count);
+      return count > 0;
+    }
+
+    std::string GetOpenGLShaderCacheDriverSignature() {
+      std::ostringstream sig;
+      sig << "opengl;vendor=" << SafeGLString(GL_VENDOR)
+          << ";renderer=" << SafeGLString(GL_RENDERER)
+          << ";version=" << SafeGLString(GL_VERSION)
+          << ";glsl=" << SafeGLString(GL_SHADING_LANGUAGE_VERSION);
+
+      GLint count = 0;
+      glGetIntegerv(GL_NUM_PROGRAM_BINARY_FORMATS, &count);
+      sig << ";binaryFormats=" << count;
+      if (count > 0) {
+        std::vector<GLint> formats(static_cast<size_t>(count));
+        glGetIntegerv(GL_PROGRAM_BINARY_FORMATS, formats.data());
+        for (GLint format : formats)
+          sig << ":" << format;
+      }
+      return sig.str();
+    }
+
+    bool TryLoadProgramBinary(const ShaderDiskCacheKey& cacheKey, GLuint& program) {
+      std::vector<uint8_t> bytes;
+      if (!ShaderDiskCache::LoadArtifact(cacheKey, "program.glbin", bytes) || bytes.size() <= sizeof(GLenum))
+        return false;
+
+      GLenum format = 0;
+      std::memcpy(&format, bytes.data(), sizeof(GLenum));
+      GLuint candidate = glCreateProgram();
+      glProgramBinary(candidate, format, bytes.data() + sizeof(GLenum), static_cast<GLsizei>(bytes.size() - sizeof(GLenum)));
+
+      GLint linkStatus = 0;
+      glGetProgramiv(candidate, GL_LINK_STATUS, &linkStatus);
+      if (!linkStatus) {
+        glDeleteProgram(candidate);
+        return false;
+      }
+
+      program = candidate;
+      return true;
+    }
+
+    void StoreProgramBinary(const ShaderDiskCacheKey& cacheKey, GLuint program) {
+      if (!GLProgramBinarySupported())
+        return;
+
+      GLint binaryLength = 0;
+      glGetProgramiv(program, GL_PROGRAM_BINARY_LENGTH, &binaryLength);
+      if (binaryLength <= 0)
+        return;
+
+      std::vector<uint8_t> bytes(sizeof(GLenum) + static_cast<size_t>(binaryLength));
+      GLenum format = 0;
+      GLsizei written = 0;
+      glGetProgramBinary(program, binaryLength, &written, &format, bytes.data() + sizeof(GLenum));
+      if (written <= 0)
+        return;
+      std::memcpy(bytes.data(), &format, sizeof(GLenum));
+      bytes.resize(sizeof(GLenum) + static_cast<size_t>(written));
+      ShaderDiskCache::StoreArtifact(cacheKey, "program.glbin", bytes.data(), bytes.size());
+    }
+  }
+
   bool GLShader::CreateShaderAPI(std::string src_vs, std::string src_fs, const std::string& vs_name, const std::string& fs_name) {
 
-    ShaderProg = glCreateProgram();
+    vshader_id = 0;
+    fshader_id = 0;
+    const std::string driverSignature = GetOpenGLShaderCacheDriverSignature();
+    const ShaderDiskCacheKey cacheKey = ShaderDiskCache::MakeKey("opengl", driverSignature, key.bits, vs_name, fs_name, src_vs, src_fs);
 
-    vshader_id = createShader(GL_VERTEX_SHADER, (char*)src_vs.c_str());
-    fshader_id = createShader(GL_FRAGMENT_SHADER, (char*)src_fs.c_str());
+    const bool binarySupported = GLProgramBinarySupported();
+    if (binarySupported && TryLoadProgramBinary(cacheKey, ShaderProg)) {
+      T8_LOG_DEBUG("[ShaderCache][GL] Program binary hit %s", cacheKey.sha1.c_str());
+    }
+    else {
 
-    glAttachShader(ShaderProg, vshader_id);
-    glAttachShader(ShaderProg, fshader_id);
+      ShaderProg = glCreateProgram();
+      if (binarySupported)
+        glProgramParameteri(ShaderProg, GL_PROGRAM_BINARY_RETRIEVABLE_HINT, GL_TRUE);
 
-    glLinkProgram(ShaderProg);
+      vshader_id = createShader(GL_VERTEX_SHADER, (char*)src_vs.c_str());
+      fshader_id = createShader(GL_FRAGMENT_SHADER, (char*)src_fs.c_str());
 
-    // Check link status
-    GLint linkStatus = 0;
-    glGetProgramiv(ShaderProg, GL_LINK_STATUS, &linkStatus);
-    if (!linkStatus) {
-      GLint logLen = 0;
-      glGetProgramiv(ShaderProg, GL_INFO_LOG_LENGTH, &logLen);
-      std::string infoLog(logLen + 1, '\0');
-      glGetProgramInfoLog(ShaderProg, logLen, nullptr, &infoLog[0]);
-      T8_LOG_ERROR("[GL] Shader link FAILED [VS='%s' FS='%s']:\n%s",
-                   vs_name.c_str(), fs_name.c_str(), infoLog.c_str());
-      return false;
+      glAttachShader(ShaderProg, vshader_id);
+      glAttachShader(ShaderProg, fshader_id);
+
+      glLinkProgram(ShaderProg);
+
+      // Check link status
+      GLint linkStatus = 0;
+      glGetProgramiv(ShaderProg, GL_LINK_STATUS, &linkStatus);
+      if (!linkStatus) {
+        GLint logLen = 0;
+        glGetProgramiv(ShaderProg, GL_INFO_LOG_LENGTH, &logLen);
+        std::string infoLog(logLen + 1, '\0');
+        glGetProgramInfoLog(ShaderProg, logLen, nullptr, &infoLog[0]);
+        T8_LOG_ERROR("[GL] Shader link FAILED [VS='%s' FS='%s']:\n%s",
+                     vs_name.c_str(), fs_name.c_str(), infoLog.c_str());
+        return false;
+      }
+
+      StoreProgramBinary(cacheKey, ShaderProg);
+      ShaderDiskCache::WriteManifest(cacheKey, driverSignature);
     }
 
     glUseProgram(ShaderProg);
@@ -234,8 +326,8 @@ namespace t850 {
   }
   void GLShader::DestroyAPIShader()
   {
-    glDeleteShader(vshader_id);
-    glDeleteShader(fshader_id);
-    glDeleteProgram(ShaderProg);
+    if (vshader_id) glDeleteShader(vshader_id);
+    if (fshader_id) glDeleteShader(fshader_id);
+    if (ShaderProg) glDeleteProgram(ShaderProg);
   }
 }

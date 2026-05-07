@@ -90,6 +90,7 @@ namespace t850 {
     AABB                    rootAABB;                // union of submesh AABBs
     std::vector<Submesh>    submeshes;               // flattened across all geometries
     std::vector<SubmeshCluster> clusters;             // contiguous index ranges inside submeshes
+    bool                    cullingMetadataReady = false;
     uint32_t                refCount          = 0;   // managed by MeshAssetCache
   };
 }

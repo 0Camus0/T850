@@ -301,7 +301,15 @@ namespace t850 {
       GLbitfield clearMask = 0;
       if (number_RT > 0) clearMask |= GL_COLOR_BUFFER_BIT;
       if (this->depth_format != BaseRT::NOTHING) clearMask |= GL_DEPTH_BUFFER_BIT | GL_STENCIL_BUFFER_BIT;
+      GLboolean previousDepthMask = GL_TRUE;
+      if (clearMask & (GL_DEPTH_BUFFER_BIT | GL_STENCIL_BUFFER_BIT)) {
+        glGetBooleanv(GL_DEPTH_WRITEMASK, &previousDepthMask);
+        glDepthMask(GL_TRUE);
+      }
       if (clearMask) glClear(clearMask);
+      if (clearMask & (GL_DEPTH_BUFFER_BIT | GL_STENCIL_BUFFER_BIT)) {
+        glDepthMask(previousDepthMask);
+      }
       glBindFramebuffer(GL_FRAMEBUFFER, 0);
     }
 
@@ -361,8 +369,12 @@ namespace t850 {
     }
 #endif
     glViewport(0, 0,w, h);
-	glClearColor(0.0, 0.0, 0.0, 0.0);
-	glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT | GL_STENCIL_BUFFER_BIT);
+    glClearColor(0.0, 0.0, 0.0, 0.0);
+    GLboolean previousDepthMask = GL_TRUE;
+    glGetBooleanv(GL_DEPTH_WRITEMASK, &previousDepthMask);
+    glDepthMask(GL_TRUE);
+    glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT | GL_STENCIL_BUFFER_BIT);
+    glDepthMask(previousDepthMask);
 #ifdef T850_RENDER_TRACE
     if (T8_TRACE_ACTIVE()) {
       int rtId = g_renderTracer->LookupRTId(this);

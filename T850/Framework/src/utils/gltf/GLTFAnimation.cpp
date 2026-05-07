@@ -19,6 +19,7 @@
 #include <utils/gltf/GLTFSkinMap.h>
 #include <utils/XDataBase.h>
 #include <utils/Log.h>
+#include <utils/ThreadPool.h>
 #include <cmath>
 #include <algorithm>
 #include <unordered_map>
@@ -102,6 +103,17 @@ static XMATRIX44 FlipMatrixZ(const XMATRIX44& m) {
   }
   result.m[2][2] = m.m[2][2]; // double-negated → restore
   return result;
+}
+
+static bool IsValidAccessorIndex(const Document& doc, int accessorIndex, const char* label) {
+  if (accessorIndex >= 0 && accessorIndex < static_cast<int>(doc.accessors.size()))
+    return true;
+  T8_LOG_ERROR("[glTF] animation %s accessor index %d OOR", label, accessorIndex);
+  return false;
+}
+
+static int AnimationOutputRecordsPerKey(const AnimationSampler& sampler) {
+  return sampler.interpolation == "CUBICSPLINE" ? 3 : 1;
 }
 
 void BuildSkinsAndAnimations(const Document& doc,
@@ -314,7 +326,10 @@ void BuildSkinsAndAnimations(const Document& doc,
   // Build node→joint mapping (reuse the global skin order when skins exist).
   const auto& nodeToJoint = jointMap.nodeToJoint;
 
-  for (std::size_t ai = 0; ai < doc.animations.size(); ai++) {
+  std::vector<std::size_t> animationBoneCounts(doc.animations.size(), 0);
+
+  auto convertAnimation = [&](int animationIndex) {
+    const std::size_t ai = static_cast<std::size_t>(animationIndex);
     const Animation& anim = doc.animations[ai];
     xF::xAnimationSet& animSet = mc->Animation.Animations[ai];
     animSet.Name = anim.name.empty() ? ("Animation_" + std::to_string(ai)) : anim.name;
@@ -325,6 +340,19 @@ void BuildSkinsAndAnimations(const Document& doc,
     for (const auto& channel : anim.channels) {
       if (!channel.target.node.has_value()) continue;
       int nodeIdx = *channel.target.node;
+      if (nodeIdx < 0 || nodeIdx >= static_cast<int>(doc.nodes.size())) {
+        T8_LOG_ERROR("[glTF] animation '%s': target node %d OOR", animSet.Name.c_str(), nodeIdx);
+        continue;
+      }
+
+      const bool supportedPath = channel.target.path == "translation"
+        || channel.target.path == "rotation"
+        || channel.target.path == "scale";
+      if (!supportedPath) {
+        T8_LOG_INFO("[glTF] animation '%s': skipping unsupported channel path '%s'",
+                    animSet.Name.c_str(), channel.target.path.c_str());
+        continue;
+      }
 
       // Map node to bone index
       int boneIdx = -1;
@@ -337,6 +365,7 @@ void BuildSkinsAndAnimations(const Document& doc,
       } else {
         continue;
       }
+      if (boneIdx < 0) continue;
 
       // Ensure this bone has a BonesRef entry
       if (boneIndexToRef.find(boneIdx) == boneIndexToRef.end()) {
@@ -353,14 +382,20 @@ void BuildSkinsAndAnimations(const Document& doc,
       xF::xAnimationBone& ab = animSet.BonesRef[refIdx];
 
       // Read sampler data
-      if (channel.sampler < 0 || channel.sampler >= static_cast<int>(anim.samplers.size()))
+      if (channel.sampler < 0 || channel.sampler >= static_cast<int>(anim.samplers.size())) {
+        T8_LOG_ERROR("[glTF] animation '%s': sampler index %d OOR", animSet.Name.c_str(), channel.sampler);
         continue;
+      }
       const AnimationSampler& sampler = anim.samplers[channel.sampler];
+      if (!IsValidAccessorIndex(doc, sampler.input, "input")
+          || !IsValidAccessorIndex(doc, sampler.output, "output")) {
+        continue;
+      }
 
       // Read timestamps
       std::vector<float> times;
       int timesElem = 0;
-      if (!ReadAccessorFloats(doc, sampler.input, times, &timesElem) || timesElem != 1)
+      if (!ReadAccessorFloats(doc, sampler.input, times, &timesElem) || timesElem != 1 || times.empty())
         continue;
 
       // Read output values
@@ -369,28 +404,48 @@ void BuildSkinsAndAnimations(const Document& doc,
       if (!ReadAccessorFloats(doc, sampler.output, values, &valElem))
         continue;
 
-      int numKeys = static_cast<int>(times.size());
+      const int recordsPerKey = AnimationOutputRecordsPerKey(sampler);
+      const std::size_t outputRecordCount = valElem > 0 ? values.size() / static_cast<std::size_t>(valElem) : 0;
+      const std::size_t outputKeyCount = recordsPerKey > 0 ? outputRecordCount / static_cast<std::size_t>(recordsPerKey) : 0;
+      int numKeys = static_cast<int>((std::min)(times.size(), outputKeyCount));
+      if (numKeys <= 0) {
+        T8_LOG_ERROR("[glTF] animation '%s': channel '%s' has no usable keys",
+                     animSet.Name.c_str(), channel.target.path.c_str());
+        continue;
+      }
+      if (times.size() != outputKeyCount) {
+        T8_LOG_INFO("[glTF] animation '%s': channel '%s' key count mismatch (input=%zu output=%zu, interpolation=%s); clamping to %d",
+                    animSet.Name.c_str(), channel.target.path.c_str(),
+                    times.size(), outputKeyCount, sampler.interpolation.c_str(), numKeys);
+      }
+      auto valueOffset = [&](int keyIndex) {
+        return static_cast<std::size_t>(keyIndex * recordsPerKey + (recordsPerKey == 3 ? 1 : 0))
+          * static_cast<std::size_t>(valElem);
+      };
 
       if (channel.target.path == "translation" && valElem == 3) {
         ab.PositionKeys.resize(numKeys);
         for (int k = 0; k < numKeys; k++) {
+          const std::size_t base = valueOffset(k);
           ab.PositionKeys[k].t.i_atTime = static_cast<unsigned int>(times[k] * kTicksPerSecond);
-          ab.PositionKeys[k].Position = XVECTOR3(values[k*3+0], values[k*3+1], values[k*3+2]);
+          ab.PositionKeys[k].Position = XVECTOR3(values[base + 0], values[base + 1], values[base + 2]);
         }
       }
       else if (channel.target.path == "rotation" && valElem == 4) {
         ab.RotationKeys.resize(numKeys);
         for (int k = 0; k < numKeys; k++) {
+          const std::size_t base = valueOffset(k);
           ab.RotationKeys[k].t.i_atTime = static_cast<unsigned int>(times[k] * kTicksPerSecond);
           // glTF quaternion: (x, y, z, w) — kept in RH space
-          ab.RotationKeys[k].Rot = XQUATERNION(values[k*4+0], values[k*4+1], values[k*4+2], values[k*4+3]);
+          ab.RotationKeys[k].Rot = XQUATERNION(values[base + 0], values[base + 1], values[base + 2], values[base + 3]);
         }
       }
       else if (channel.target.path == "scale" && valElem == 3) {
         ab.ScaleKeys.resize(numKeys);
         for (int k = 0; k < numKeys; k++) {
+          const std::size_t base = valueOffset(k);
           ab.ScaleKeys[k].t.i_atTime = static_cast<unsigned int>(times[k] * kTicksPerSecond);
-          ab.ScaleKeys[k].Scale = XVECTOR3(values[k*3+0], values[k*3+1], values[k*3+2]);
+          ab.ScaleKeys[k].Scale = XVECTOR3(values[base + 0], values[base + 1], values[base + 2]);
         }
       }
     }
@@ -400,6 +455,8 @@ void BuildSkinsAndAnimations(const Document& doc,
       int nodeIdx = -1;
       if (!doc.skins.empty() && ab.BoneID < jointMap.jointNodes.size()) {
         nodeIdx = jointMap.jointNodes[ab.BoneID];
+      } else if (doc.skins.empty() && ab.BoneID < doc.nodes.size()) {
+        nodeIdx = static_cast<int>(ab.BoneID);
       }
 
       if (ab.PositionKeys.empty()) {
@@ -462,8 +519,23 @@ void BuildSkinsAndAnimations(const Document& doc,
     }
     animSet.m_MaxTimeOnTicks = maxTick;
 
+    animationBoneCounts[ai] = animSet.BonesRef.size();
+  };
+
+  if (g_threadPool && doc.animations.size() > 1) {
+    T8_LOG_INFO("[glTF] Converting %zu animations with %u global worker threads",
+                doc.animations.size(), g_threadPool->NumWorkers());
+    g_threadPool->ParallelForHeavy(0, static_cast<int>(doc.animations.size()), convertAnimation);
+  } else {
+    for (int ai = 0; ai < static_cast<int>(doc.animations.size()); ++ai) {
+      convertAnimation(ai);
+    }
+  }
+
+  for (std::size_t ai = 0; ai < doc.animations.size(); ++ai) {
+    const xF::xAnimationSet& animSet = mc->Animation.Animations[ai];
     T8_LOG_INFO("[glTF] Animation '%s': %zu bone channels",
-                animSet.Name.c_str(), animSet.BonesRef.size());
+                animSet.Name.c_str(), animationBoneCounts[ai]);
   }
 
   T8_LOG_INFO("[glTF] Converted %zu animations", doc.animations.size());

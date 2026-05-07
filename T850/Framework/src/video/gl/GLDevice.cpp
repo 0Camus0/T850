@@ -77,7 +77,7 @@ namespace t850 {
   Texture * GLDevice::CreateTextureFromMemory(const unsigned char * buff, int w, int h, int channels, std::string name)
   {
     GLTexture* txture = new GLTexture;
-    txture->LoadFromMemory(buff, w, h, channels);
+    txture->LoadFromMemory(buff, w, h, channels, name.c_str());
     return txture;
   }
 

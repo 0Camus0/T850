@@ -205,17 +205,27 @@ namespace t850 {
     memcpy(stagingAllocInfo.pMappedData, uploadBuf, static_cast<size_t>(totalSize));
 
     // 3. Record transient command buffer
-    VkCommandBufferAllocateInfo cmdAlloc = { VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO };
-    cmdAlloc.commandPool = driver->GetTransientCommandPool();
-    cmdAlloc.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
-    cmdAlloc.commandBufferCount = 1;
+    const bool useUploadBatch = driver->IsResourceUploadBatchActive();
+    VkCommandBuffer cmd = VK_NULL_HANDLE;
+    if (useUploadBatch) {
+      cmd = driver->GetResourceUploadCommandBuffer();
+    } else {
+      VkCommandBufferAllocateInfo cmdAlloc = { VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO };
+      cmdAlloc.commandPool = driver->GetTransientCommandPool();
+      cmdAlloc.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
+      cmdAlloc.commandBufferCount = 1;
+      vkAllocateCommandBuffers(device, &cmdAlloc, &cmd);
 
-    VkCommandBuffer cmd;
-    vkAllocateCommandBuffers(device, &cmdAlloc, &cmd);
-
-    VkCommandBufferBeginInfo beginInfo = { VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO };
-    beginInfo.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
-    vkBeginCommandBuffer(cmd, &beginInfo);
+      VkCommandBufferBeginInfo beginInfo = { VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO };
+      beginInfo.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
+      vkBeginCommandBuffer(cmd, &beginInfo);
+    }
+    if (cmd == VK_NULL_HANDLE) {
+      vmaDestroyBuffer(allocator, stagingBuffer, stagingAlloc);
+      vmaDestroyImage(allocator, m_image, m_allocation);
+      m_image = VK_NULL_HANDLE; m_allocation = nullptr;
+      return;
+    }
 
     // 3a. Transition UNDEFINED → TRANSFER_DST_OPTIMAL (all layers)
     {
@@ -275,19 +285,23 @@ namespace t850 {
                            VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT, 0, 0, nullptr, 0, nullptr, 1, &barrier);
     }
 
-    vkEndCommandBuffer(cmd);
+    if (useUploadBatch) {
+      driver->KeepResourceUploadBuffer(stagingBuffer, stagingAlloc);
+    } else {
+      vkEndCommandBuffer(cmd);
 
-    // 4. Submit and wait
-    VkSubmitInfo submitInfo = { VK_STRUCTURE_TYPE_SUBMIT_INFO };
-    submitInfo.commandBufferCount = 1;
-    submitInfo.pCommandBuffers = &cmd;
-    vkQueueSubmit(driver->GetGraphicsQueue(), 1, &submitInfo, VK_NULL_HANDLE);
-    vkQueueWaitIdle(driver->GetGraphicsQueue());
+      // 4. Submit and wait
+      VkSubmitInfo submitInfo = { VK_STRUCTURE_TYPE_SUBMIT_INFO };
+      submitInfo.commandBufferCount = 1;
+      submitInfo.pCommandBuffers = &cmd;
+      vkQueueSubmit(driver->GetGraphicsQueue(), 1, &submitInfo, VK_NULL_HANDLE);
+      vkQueueWaitIdle(driver->GetGraphicsQueue());
 
-    vkFreeCommandBuffers(device, driver->GetTransientCommandPool(), 1, &cmd);
+      vkFreeCommandBuffers(device, driver->GetTransientCommandPool(), 1, &cmd);
 
-    // 5. Free staging buffer
-    vmaDestroyBuffer(allocator, stagingBuffer, stagingAlloc);
+      // 5. Free staging buffer
+      vmaDestroyBuffer(allocator, stagingBuffer, stagingAlloc);
+    }
 
     // 6. Create VkImageView
     VkImageViewCreateInfo ivCI = { VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO };
@@ -404,15 +418,26 @@ namespace t850 {
     memcpy(stagingAllocInfo.pMappedData, buffer, static_cast<size_t>(totalSize));
 
     // Record copy
-    VkCommandBuffer cmd;
-    VkCommandBufferAllocateInfo cmdAlloc = { VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO };
-    cmdAlloc.commandPool = driver->GetTransientCommandPool();
-    cmdAlloc.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
-    cmdAlloc.commandBufferCount = 1;
-    vkAllocateCommandBuffers(device, &cmdAlloc, &cmd);
-    VkCommandBufferBeginInfo beginInfo = { VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO };
-    beginInfo.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
-    vkBeginCommandBuffer(cmd, &beginInfo);
+    const bool useUploadBatch = driver->IsResourceUploadBatchActive();
+    VkCommandBuffer cmd = VK_NULL_HANDLE;
+    if (useUploadBatch) {
+      cmd = driver->GetResourceUploadCommandBuffer();
+    } else {
+      VkCommandBufferAllocateInfo cmdAlloc = { VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO };
+      cmdAlloc.commandPool = driver->GetTransientCommandPool();
+      cmdAlloc.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
+      cmdAlloc.commandBufferCount = 1;
+      vkAllocateCommandBuffers(device, &cmdAlloc, &cmd);
+      VkCommandBufferBeginInfo beginInfo = { VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO };
+      beginInfo.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
+      vkBeginCommandBuffer(cmd, &beginInfo);
+    }
+    if (cmd == VK_NULL_HANDLE) {
+      vmaDestroyBuffer(allocator, stagingBuffer, stagingAlloc);
+      vmaDestroyImage(allocator, m_image, m_allocation);
+      m_image = VK_NULL_HANDLE; m_allocation = nullptr;
+      return;
+    }
 
     // Transition all subresources to TRANSFER_DST
     VkImageMemoryBarrier barrier = { VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER };
@@ -437,14 +462,18 @@ namespace t850 {
     vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
                          0, 0, nullptr, 0, nullptr, 1, &barrier);
 
-    vkEndCommandBuffer(cmd);
-    VkSubmitInfo submitInfo = { VK_STRUCTURE_TYPE_SUBMIT_INFO };
-    submitInfo.commandBufferCount = 1;
-    submitInfo.pCommandBuffers = &cmd;
-    vkQueueSubmit(driver->GetGraphicsQueue(), 1, &submitInfo, VK_NULL_HANDLE);
-    vkQueueWaitIdle(driver->GetGraphicsQueue());
-    vkFreeCommandBuffers(device, driver->GetTransientCommandPool(), 1, &cmd);
-    vmaDestroyBuffer(allocator, stagingBuffer, stagingAlloc);
+    if (useUploadBatch) {
+      driver->KeepResourceUploadBuffer(stagingBuffer, stagingAlloc);
+    } else {
+      vkEndCommandBuffer(cmd);
+      VkSubmitInfo submitInfo = { VK_STRUCTURE_TYPE_SUBMIT_INFO };
+      submitInfo.commandBufferCount = 1;
+      submitInfo.pCommandBuffers = &cmd;
+      vkQueueSubmit(driver->GetGraphicsQueue(), 1, &submitInfo, VK_NULL_HANDLE);
+      vkQueueWaitIdle(driver->GetGraphicsQueue());
+      vkFreeCommandBuffers(device, driver->GetTransientCommandPool(), 1, &cmd);
+      vmaDestroyBuffer(allocator, stagingBuffer, stagingAlloc);
+    }
 
     // Image view
     VkImageViewCreateInfo ivCI = { VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO };

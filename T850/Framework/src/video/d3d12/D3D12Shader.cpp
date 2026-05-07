@@ -9,6 +9,7 @@
 #ifdef OS_WINDOWS
 
 #include <utils/Log.h>
+#include <utils/ShaderDiskCache.h>
 #include <debug/RenderTrace.h>
 #include <algorithm>
 
@@ -19,6 +20,63 @@ namespace t850 {
 
   static D3D12Driver* GetD3D12Driver() { return static_cast<D3D12Driver*>(g_pBaseDriver); }
   static ID3D12Device* GetNativeDevice() { return static_cast<D3D12Device*>(T8Device)->GetNativeDevice(); }
+
+  namespace {
+    std::string WideToUtf8(const wchar_t* text) {
+      if (!text)
+        return {};
+      char buffer[256] = {};
+      std::wcstombs(buffer, text, sizeof(buffer) - 1);
+      return buffer;
+    }
+
+    bool SameLuid(const LUID& a, const LUID& b) {
+      return a.HighPart == b.HighPart && a.LowPart == b.LowPart;
+    }
+
+    std::string GetD3D12ShaderCacheDriverSignature(ID3D12Device* device) {
+      std::ostringstream sig;
+      sig << "d3d12;compiler=vs_5_0/ps_5_0";
+      if (!device)
+        return sig.str();
+
+      const LUID deviceLuid = device->GetAdapterLuid();
+      ComPtr<IDXGIFactory4> factory;
+      if (SUCCEEDED(CreateDXGIFactory1(IID_PPV_ARGS(&factory)))) {
+        ComPtr<IDXGIAdapter1> adapter;
+        for (UINT index = 0; factory->EnumAdapters1(index, &adapter) != DXGI_ERROR_NOT_FOUND; ++index) {
+          DXGI_ADAPTER_DESC1 desc = {};
+          if (SUCCEEDED(adapter->GetDesc1(&desc)) && SameLuid(desc.AdapterLuid, deviceLuid)) {
+            LARGE_INTEGER driverVersion = {};
+            const HRESULT versionHr = adapter->CheckInterfaceSupport(__uuidof(IDXGIDevice), &driverVersion);
+            sig << ";adapter=" << WideToUtf8(desc.Description)
+                << ";vendor=" << desc.VendorId
+                << ";device=" << desc.DeviceId
+                << ";subsys=" << desc.SubSysId
+                << ";revision=" << desc.Revision;
+            if (SUCCEEDED(versionHr) && (driverVersion.HighPart != 0 || driverVersion.LowPart != 0))
+              sig << ";driver=" << driverVersion.HighPart << "." << driverVersion.LowPart;
+            else
+              sig << ";driver=unknown";
+            break;
+          }
+          adapter.Reset();
+        }
+      }
+      return sig.str();
+    }
+
+    bool CreateBlobFromBytes(const std::vector<uint8_t>& bytes, ComPtr<ID3DBlob>& blob) {
+      if (bytes.empty())
+        return false;
+      ComPtr<ID3DBlob> created;
+      if (FAILED(D3DCreateBlob(bytes.size(), &created)))
+        return false;
+      std::memcpy(created->GetBufferPointer(), bytes.data(), bytes.size());
+      blob = created;
+      return true;
+    }
+  }
 
   // ══════════════════════════════════════════════════════
   //  D3D12Shader — Root Signature
@@ -141,29 +199,47 @@ namespace t850 {
     cbvSlots.clear();
     srvSlots.clear();
     samplerSlots.clear();
+    const std::string driverSignature = GetD3D12ShaderCacheDriverSignature(device);
+    const ShaderDiskCacheKey cacheKey = ShaderDiskCache::MakeKey("d3d12", driverSignature, key.bits, vs_name, fs_name, src_vs, src_fs);
 
     // Compile VS
     {
-      ComPtr<ID3DBlob> errBlob;
-      HRESULT hr = D3DCompile(src_vs.c_str(), src_vs.size(),
-                               vs_name.empty() ? nullptr : vs_name.c_str(),
-                               nullptr, nullptr, "VS", "vs_5_0", 0, 0, &VS_blob, &errBlob);
-      if (FAILED(hr)) {
-        T8_LOG_ERROR("[D3D12] VS compile error: %s", errBlob ? (char*)errBlob->GetBufferPointer() : "unknown");
-        return false;
+      std::vector<uint8_t> cachedVS;
+      if (ShaderDiskCache::LoadArtifact(cacheKey, "vs.dxbc", cachedVS) && CreateBlobFromBytes(cachedVS, VS_blob)) {
+        T8_LOG_DEBUG("[ShaderCache][D3D12] VS hit %s", cacheKey.sha1.c_str());
+      }
+      else {
+        ComPtr<ID3DBlob> errBlob;
+        HRESULT hr = D3DCompile(src_vs.c_str(), src_vs.size(),
+                                 vs_name.empty() ? nullptr : vs_name.c_str(),
+                                 nullptr, nullptr, "VS", "vs_5_0", 0, 0, &VS_blob, &errBlob);
+        if (FAILED(hr)) {
+          T8_LOG_ERROR("[D3D12] VS compile error: %s", errBlob ? (char*)errBlob->GetBufferPointer() : "unknown");
+          return false;
+        }
+        ShaderDiskCache::StoreArtifact(cacheKey, "vs.dxbc", VS_blob->GetBufferPointer(), VS_blob->GetBufferSize());
+        ShaderDiskCache::WriteManifest(cacheKey, driverSignature);
       }
       T8_LOG_VERBOSE("[D3D12] VS compiled: %u bytes [%s]", (unsigned)VS_blob->GetBufferSize(), vs_name.c_str());
     }
 
     // Compile FS
     {
-      ComPtr<ID3DBlob> errBlob;
-      HRESULT hr = D3DCompile(src_fs.c_str(), src_fs.size(),
-                               fs_name.empty() ? nullptr : fs_name.c_str(),
-                               nullptr, nullptr, "FS", "ps_5_0", 0, 0, &FS_blob, &errBlob);
-      if (FAILED(hr)) {
-        T8_LOG_ERROR("[D3D12] FS compile error: %s", errBlob ? (char*)errBlob->GetBufferPointer() : "unknown");
-        return false;
+      std::vector<uint8_t> cachedFS;
+      if (ShaderDiskCache::LoadArtifact(cacheKey, "fs.dxbc", cachedFS) && CreateBlobFromBytes(cachedFS, FS_blob)) {
+        T8_LOG_DEBUG("[ShaderCache][D3D12] FS hit %s", cacheKey.sha1.c_str());
+      }
+      else {
+        ComPtr<ID3DBlob> errBlob;
+        HRESULT hr = D3DCompile(src_fs.c_str(), src_fs.size(),
+                                 fs_name.empty() ? nullptr : fs_name.c_str(),
+                                 nullptr, nullptr, "FS", "ps_5_0", 0, 0, &FS_blob, &errBlob);
+        if (FAILED(hr)) {
+          T8_LOG_ERROR("[D3D12] FS compile error: %s", errBlob ? (char*)errBlob->GetBufferPointer() : "unknown");
+          return false;
+        }
+        ShaderDiskCache::StoreArtifact(cacheKey, "fs.dxbc", FS_blob->GetBufferPointer(), FS_blob->GetBufferSize());
+        ShaderDiskCache::WriteManifest(cacheKey, driverSignature);
       }
       T8_LOG_VERBOSE("[D3D12] FS compiled: %u bytes [%s]", (unsigned)FS_blob->GetBufferSize(), fs_name.c_str());
     }

@@ -263,7 +263,8 @@ void SandboxScene::InitVars() {
   } else {
     T8_LOG_ERROR("[SandboxScene] Failed to load Scenes/SandboxScene.json");
   }
-  SceneProp.FrustumCullingEnabled = !g_config.flags.cullDisabled;
+  SceneProp.FrustumCullingToggleAllowed = g_config.cullingLoadMode != t850::Config::CullingLoadMode::Disabled;
+  SceneProp.FrustumCullingEnabled = g_config.cullingLoadMode == t850::Config::CullingLoadMode::FullOnLoad;
 
   t850::FrameDumperConfig dumpCfg;
   dumpCfg.dumpEnabled        = g_config.flags.dumpEnabled;
@@ -295,6 +296,7 @@ void SandboxScene::CreateAssets() {
   AdaptedLumCurrentPass = m_renderGraph.GetRTHandle("AdaptedLumCurrent");
   AdaptedLumPrevPass    = m_renderGraph.GetRTHandle("AdaptedLumPrev");
 
+  PrimitiveMgr.SetEngineContext(pEngineContext);
   PrimitiveMgr.Init();
   PrimitiveMgr.SetVP(&VP);
 
@@ -585,8 +587,16 @@ void SandboxScene::OnInput(InputManager* IManager) {
     SceneProp.ShowCullingDebug = m_showCullStats;
   }
   if (IManager->PressedOnceKey(T800K_KP6) || IManager->PressedOnceKey(T800K_6)) {
-    SceneProp.FrustumCullingEnabled = !SceneProp.FrustumCullingEnabled;
-    T8_LOG_INFO("[CULLING] Frustum culling %s", SceneProp.FrustumCullingEnabled ? "enabled" : "disabled");
+    if (SceneProp.FrustumCullingToggleAllowed) {
+      const bool requested = !SceneProp.FrustumCullingEnabled;
+      if (!requested || !Meshes[0].pBase || static_cast<RenderMesh*>(Meshes[0].pBase)->EnsureCullingMetadata()) {
+        SceneProp.FrustumCullingEnabled = requested;
+      }
+      T8_LOG_INFO("[CULLING] Frustum culling %s", SceneProp.FrustumCullingEnabled ? "enabled" : "disabled");
+    } else {
+      SceneProp.FrustumCullingEnabled = false;
+      T8_LOG_INFO("[CULLING] Frustum culling locked off by startup policy");
+    }
   }
   if (IManager->PressedOnceKey(T800K_F3))
     m_showAABBs = !m_showAABBs;
@@ -963,7 +973,13 @@ void SandboxScene::ApplySandboxProfileState(const t850::SandboxProfileDesc& stat
   UpdateAttachedLights();
   SyncLightCameraFromDirectionalLight();
 
-  if (state.frustum_culling.has_value()) SceneProp.FrustumCullingEnabled = *state.frustum_culling;
+  if (state.frustum_culling.has_value()) {
+    if (!SceneProp.FrustumCullingToggleAllowed) {
+      SceneProp.FrustumCullingEnabled = false;
+    } else if (g_config.cullingLoadMode == t850::Config::CullingLoadMode::FullOnLoad || !*state.frustum_culling) {
+      SceneProp.FrustumCullingEnabled = *state.frustum_culling;
+    }
+  }
   if (state.show_culling_debug.has_value()) {
     m_showCullStats = *state.show_culling_debug;
     SceneProp.ShowCullingDebug = m_showCullStats;
@@ -1825,14 +1841,18 @@ void SandboxScene::DrawDevGui(t850::DevGuiContext& gui) {
     t850::CheckboxDesc cullingDesc;
     cullingDesc.name = "frustum_culling";
     cullingDesc.label = "Frustum culling";
+    cullingDesc.enabled = SceneProp.FrustumCullingToggleAllowed;
     bool cullingEnabled = SceneProp.FrustumCullingEnabled;
     if (gui.Checkbox(cullingDesc, cullingEnabled)) {
-      SceneProp.FrustumCullingEnabled = cullingEnabled;
+      if (!cullingEnabled || !Meshes[0].pBase || static_cast<RenderMesh*>(Meshes[0].pBase)->EnsureCullingMetadata()) {
+        SceneProp.FrustumCullingEnabled = cullingEnabled;
+      }
     }
 
     t850::CheckboxDesc statsDesc;
     statsDesc.name = "show_culling_debug";
     statsDesc.label = "Culling stats and frustum";
+    statsDesc.enabled = SceneProp.FrustumCullingToggleAllowed;
     bool showCulling = m_showCullStats;
     if (gui.Checkbox(statsDesc, showCulling)) {
       m_showCullStats = showCulling;

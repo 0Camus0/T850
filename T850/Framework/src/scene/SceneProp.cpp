@@ -14,6 +14,10 @@
 
 #include <scene/SceneProp.h>
 
+#include <cstdio>
+
+#include <utils/Log.h>
+
 #include <video/gl/GLShader.h>
 #include <video/gl/GLDriver.h>
 #if defined(OS_WINDOWS)
@@ -114,11 +118,14 @@ void SSAOFilter::InitTexture() {
 	NoiseTex = t850::T8Device->CreateTextureFromMemory(Noise, SSAO_NOISE_SIZE, SSAO_NOISE_SIZE, 4, dummy);
 	NoiseTex->params |= t850::TextBasicParams::TILED | t850::TextBasicParams::NEAREST_FILTER;
 	NoiseTex->SetTextureParams();
-	// Debug: dump raw noise bytes
-	printf("NOISE_RAW(%dx%d):", SSAO_NOISE_SIZE, SSAO_NOISE_SIZE);
-	for (int i = 0; i < SSAO_NOISE_SIZE*SSAO_NOISE_SIZE; i++)
-		printf(" %02X%02X", Noise[i*4], Noise[i*4+1]);
-	printf("\n"); fflush(stdout);
+	std::string noiseRaw;
+	noiseRaw.reserve(SSAO_NOISE_SIZE * SSAO_NOISE_SIZE * 5);
+	char sample[8] = {};
+	for (int i = 0; i < SSAO_NOISE_SIZE * SSAO_NOISE_SIZE; i++) {
+		std::snprintf(sample, sizeof(sample), " %02X%02X", Noise[i * 4], Noise[i * 4 + 1]);
+		noiseRaw += sample;
+	}
+	T8_LOG_INFO("NOISE_RAW(%dx%d):%s", SSAO_NOISE_SIZE, SSAO_NOISE_SIZE, noiseRaw.c_str());
 }
 
 void SSAOFilter::Destroy() {

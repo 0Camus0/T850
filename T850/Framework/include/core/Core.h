@@ -23,6 +23,7 @@
 namespace t850 {
   class GUIManager;   // forward
   class DevGuiContext; // forward
+  struct EngineContext;
   class RootFramework;
   class AppBase {
   public:
@@ -55,7 +56,7 @@ namespace t850 {
   };
   class SceneBase {
   public:
-    SceneBase()  {}
+    SceneBase() : pFramework(nullptr), pEngineContext(nullptr) {}
     virtual ~SceneBase(){}
     virtual void OnUpdate(float _DtSecs) = 0;
     virtual void OnDraw() = 0;
@@ -78,8 +79,12 @@ namespace t850 {
     // Request a frame dump (spacebar snapshot)
     virtual void RequestDump() {}
 
+    void SetEngineContext(EngineContext* context) { pEngineContext = context; }
+    EngineContext* GetEngineContext() const { return pEngineContext; }
+
     SceneProps		SceneProp;
     RootFramework	*pFramework;
+    EngineContext* pEngineContext;
   };
   class RootFramework {
   public:

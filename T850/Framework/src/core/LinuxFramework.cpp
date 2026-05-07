@@ -1,5 +1,6 @@
 #include <pch.h>
 #include <video/gl/GLDriver.h>
+#include <core/EngineContext.h>
 #include <core/LinuxFramework.h>
 #include <stdio.h>
 
@@ -203,6 +204,7 @@ void LinuxFramework::OnCreateApplication(ApplicationDesc desc){
 
 	pVideoDriver->SetWindow(0);
 	pVideoDriver->InitDriver();
+    RefreshEngineContextFromGlobals();
 
 	timeval start;
     gettimeofday(&start,0);

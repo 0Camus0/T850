@@ -49,43 +49,8 @@ namespace t850 {
                                                  IID_PPV_ARGS(&m_buffer));
       if (FAILED(hr)) { T8_LOG_ERROR("[D3D12] IB create failed hr=0x%08X", hr); return; }
 
-      D3D12_HEAP_PROPERTIES uploadHeap = {}; uploadHeap.Type = D3D12_HEAP_TYPE_UPLOAD;
-      ComPtr<ID3D12Resource> staging;
-      hr = dev->CreateCommittedResource(&uploadHeap, D3D12_HEAP_FLAG_NONE, &bufDesc,
-                                    D3D12_RESOURCE_STATE_GENERIC_READ, nullptr,
-                                    IID_PPV_ARGS(&staging));
-      if (FAILED(hr) || !staging) { T8_LOG_ERROR("[D3D12] IB staging create failed hr=0x%08X", hr); return; }
-      void* mapped = nullptr;
-      hr = staging->Map(0, nullptr, &mapped);
-      if (FAILED(hr) || !mapped) { T8_LOG_ERROR("[D3D12] IB staging map failed hr=0x%08X", hr); return; }
-      memcpy(mapped, initialData, desc.byteWidth);
-      staging->Unmap(0, nullptr);
-
-      ComPtr<ID3D12CommandAllocator> tmpAlloc;
-      ComPtr<ID3D12GraphicsCommandList> tmpList;
-      dev->CreateCommandAllocator(D3D12_COMMAND_LIST_TYPE_DIRECT, IID_PPV_ARGS(&tmpAlloc));
-      dev->CreateCommandList(0, D3D12_COMMAND_LIST_TYPE_DIRECT, tmpAlloc.Get(), nullptr, IID_PPV_ARGS(&tmpList));
-      tmpList->CopyResource(m_buffer.Get(), staging.Get());
-      D3D12_RESOURCE_BARRIER barrier = {};
-      barrier.Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
-      barrier.Transition.pResource = m_buffer.Get();
-      barrier.Transition.StateBefore = D3D12_RESOURCE_STATE_COPY_DEST;
-      barrier.Transition.StateAfter = D3D12_RESOURCE_STATE_INDEX_BUFFER;
-      barrier.Transition.Subresource = D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES;
-      tmpList->ResourceBarrier(1, &barrier);
-      tmpList->Close();
-      ID3D12CommandList* lists[] = { tmpList.Get() };
-      driver->GetCmdQueue()->ExecuteCommandLists(1, lists);
-
-      ComPtr<ID3D12Fence> tmpFence;
-      dev->CreateFence(0, D3D12_FENCE_FLAG_NONE, IID_PPV_ARGS(&tmpFence));
-      HANDLE evt = CreateEvent(nullptr, FALSE, FALSE, nullptr);
-      driver->GetCmdQueue()->Signal(tmpFence.Get(), 1);
-      if (tmpFence->GetCompletedValue() < 1) {
-        tmpFence->SetEventOnCompletion(1, evt);
-        WaitForSingleObject(evt, INFINITE);
-      }
-      CloseHandle(evt);
+      driver->UploadBufferData(m_buffer.Get(), initialData, desc.byteWidth,
+                               D3D12_RESOURCE_STATE_INDEX_BUFFER);
 
       sysMemCpy.assign((char*)initialData, (char*)initialData + desc.byteWidth);
       m_mappedData = nullptr;

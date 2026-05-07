@@ -333,22 +333,26 @@
       {
          "name": "shadow_toggle",
          "label": "Shadows",
-         "default_val": true
+         "default_val": true,
+         "enabled": true
       },
       {
          "name": "ssao_toggle",
          "label": "SSAO",
-         "default_val": true
+         "default_val": true,
+         "enabled": true
       },
       {
          "name": "show_wireframe",
          "label": "Wireframe",
-         "default_val": false
+         "default_val": false,
+         "enabled": true
       },
       {
          "name": "show_skeleton",
          "label": "Skeleton",
-         "default_val": false
+         "default_val": false,
+         "enabled": true
       }
    ],
    "selectors": [
@@ -437,10 +441,6 @@
          "model": "porsche_992_gt3_r__www.vecarz.com.glb",
          "sliders": [
             {
-               "name": "exposure",
-               "value": 1.995
-            },
-            {
                "name": "bloom_factor",
                "value": 0.299
             },
@@ -451,10 +451,6 @@
             {
                "name": "ibl_factor",
                "value": 0.774
-            },
-            {
-               "name": "material_emissive_intensity",
-               "value": 6.43
             },
             {
                "name": "material_refraction_strength",
@@ -483,15 +479,21 @@
             {
                "name": "cubemap",
                "value": 4
-            },
-            {
-               "name": "active_light",
-               "value": 1
             }
          ],
          "lights": [
             {
+               "index": 0,
+               "intensity": 1
+            },
+            {
                "index": 1,
+               "color": [
+                  1,
+                  1,
+                  1
+               ],
+               "intensity": 0,
                "attach_to_camera": true
             }
          ],
@@ -502,18 +504,18 @@
                -4.656613E-9
             ],
             "pan_offset": [
-               -0.0037949504,
-               -0.003116197,
-               -0.0023965652
+               -0.0019408631,
+               -0.0035376549,
+               -0.003322452
             ],
             "eye": [
-               0.019329462,
-               0.014433533,
-               -0.04496971
+               0.014260901,
+               0.012377117,
+               -0.03932722
             ],
-            "yaw": 2.6450303,
-            "pitch": 0.22500005,
-            "distance": 0.049673248
+            "yaw": 2.720048,
+            "pitch": 0.23500054,
+            "distance": 0.040574305
          }
       },
       {
@@ -670,7 +672,7 @@
          "sliders": [
             {
                "name": "exposure",
-               "value": 1.584
+               "value": 1.946
             },
             {
                "name": "bloom_factor",
@@ -682,7 +684,7 @@
             },
             {
                "name": "material_emissive_intensity",
-               "value": 1.905
+               "value": 2.715
             },
             {
                "name": "gauss_1_radius",
@@ -703,6 +705,14 @@
             {
                "name": "gauss_1_kernel_size",
                "value": 27
+            },
+            {
+               "name": "cubemap",
+               "value": 4
+            },
+            {
+               "name": "active_light",
+               "value": 1
             }
          ],
          "lights": [
@@ -719,11 +729,11 @@
                "index": 1,
                "color": [
                   1,
-                  1,
-                  1
+                  0.84,
+                  0.58
                ],
-               "diameter": 390.045,
-               "intensity": 0,
+               "diameter": 607.239,
+               "intensity": 17.194,
                "attach_to_camera": true
             }
          ],
@@ -734,18 +744,18 @@
                0.18715498
             ],
             "pan_offset": [
-               0,
-               0,
-               0
+               -0.20491426,
+               -0.046456374,
+               0.08985985
             ],
             "eye": [
-               1.7870042,
-               0.40779617,
-               -2.8560092
+               1.8944349,
+               0.017960288,
+               -3.4667025
             ],
-            "yaw": 2.6100178,
-            "pitch": 0.11500013,
-            "distance": 3.5537863
+            "yaw": 2.6300173,
+            "pitch": 0.015000144,
+            "distance": 4.293863
          }
       },
       {
@@ -907,10 +917,6 @@
             {
                "name": "gauss_1_sigma",
                "value": 1
-            },
-            {
-               "name": "anim_speed",
-               "value": 0.195
             }
          ],
          "checkboxes": [
@@ -962,18 +968,18 @@
                663.9069
             ],
             "pan_offset": [
-               -784.90173,
-               3431.7285,
-               -644.1423
+               -1061.5809,
+               4839.8833,
+               -143.30313
             ],
             "eye": [
-               7882.722,
-               3079.6904,
-               -1682.8207
+               2467.7554,
+               5519.987,
+               -4189.1846
             ],
-            "yaw": 1.7649992,
-            "pitch": -0.039999925,
-            "distance": 8829.461
+            "yaw": 2.5000072,
+            "pitch": 0.114999965,
+            "distance": 5917.8896
          }
       },
       {
@@ -994,10 +1000,6 @@
             {
                "name": "env_factor",
                "value": 0.39
-            },
-            {
-               "name": "material_emissive_intensity",
-               "value": 72.493
             },
             {
                "name": "gauss_1_radius",
@@ -1045,6 +1047,7 @@
                   1
                ],
                "diameter": 500,
+               "intensity": 0,
                "attach_to_camera": true
             }
          ],
@@ -1055,18 +1058,18 @@
                0.00012173131
             ],
             "pan_offset": [
-               0.0043063895,
-               -0.007411911,
-               -0.0066923117
+               0.0023302848,
+               -0.00095167075,
+               -0.0072872946
             ],
             "eye": [
-               -0.017230267,
-               0.0101355305,
-               -0.055910397
+               -0.020037748,
+               0.0126551725,
+               -0.052133057
             ],
-            "yaw": -2.7300248,
-            "pitch": 0.16834444,
-            "distance": 0.054607306
+            "yaw": -2.6800058,
+            "pitch": 0.10334438,
+            "distance": 0.05049294
          }
       },
       {
@@ -1229,6 +1232,282 @@
             "yaw": 3.2300122,
             "pitch": 0.10999999,
             "distance": 12277.965
+         }
+      },
+      {
+         "model": "doomslayer_cine_all_animations_no-damage_double-sided-opaque.glb",
+         "sliders": [
+            {
+               "name": "exposure",
+               "value": 1.814
+            },
+            {
+               "name": "bloom_factor",
+               "value": 0.721
+            },
+            {
+               "name": "ssao_radius",
+               "value": 3
+            },
+            {
+               "name": "env_factor",
+               "value": 0.752
+            },
+            {
+               "name": "gauss_1_radius",
+               "value": 3.5
+            },
+            {
+               "name": "gauss_1_sigma",
+               "value": 1
+            }
+         ],
+         "checkboxes": [
+            {
+               "name": "shadow_toggle",
+               "value": false
+            },
+            {
+               "name": "ssao_toggle",
+               "value": false
+            }
+         ],
+         "selectors": [
+            {
+               "name": "gauss_1_kernel_size",
+               "value": 27
+            },
+            {
+               "name": "anim_select",
+               "value": 80
+            },
+            {
+               "name": "cubemap",
+               "value": 1
+            }
+         ],
+         "lights": [
+            {
+               "index": 0,
+               "direction": [
+                  0.24106516,
+                  0.07309007,
+                  0.9677528
+               ],
+               "intensity": 4.846
+            }
+         ],
+         "orbit_camera": {
+            "target": [
+               8.635834,
+               0.07846069,
+               493.62683
+            ],
+            "pan_offset": [
+               1120.7275,
+               1828.4458,
+               880.579
+            ],
+            "eye": [
+               6306.4526,
+               5295.698,
+               -6415.198
+            ],
+            "yaw": 2.5549998,
+            "pitch": 0.35499993,
+            "distance": 9974.887
+         }
+      },
+      {
+         "model": "doomslayer_cine_base_all_animations_no-damage_double-sided-opaque.glb",
+         "sliders": [
+            {
+               "name": "exposure",
+               "value": 3.352
+            },
+            {
+               "name": "gauss_1_radius",
+               "value": 3.5
+            },
+            {
+               "name": "gauss_1_sigma",
+               "value": 1
+            }
+         ],
+         "checkboxes": [
+            {
+               "name": "shadow_toggle",
+               "value": false
+            }
+         ],
+         "selectors": [
+            {
+               "name": "gauss_1_kernel_size",
+               "value": 27
+            },
+            {
+               "name": "cubemap",
+               "value": 1
+            }
+         ],
+         "lights": [
+            {
+               "index": 0,
+               "direction": [
+                  0.06670926,
+                  0.058362577,
+                  0.99606407
+               ]
+            }
+         ],
+         "orbit_camera": {
+            "target": [
+               8.635834,
+               0.07846069,
+               493.62683
+            ],
+            "pan_offset": [
+               -488.1628,
+               2289.081,
+               826.7017
+            ],
+            "eye": [
+               3813.4004,
+               2809.7473,
+               -5427.6147
+            ],
+            "yaw": 2.574992,
+            "pitch": 0.06500011,
+            "distance": 8014.673
+         }
+      },
+      {
+         "model": "jaguar_xj13_1959__www.vecarz.com.glb",
+         "sliders": [
+            {
+               "name": "gauss_1_sigma",
+               "value": 1
+            }
+         ],
+         "checkboxes": [
+            {
+               "name": "shadow_toggle",
+               "value": false
+            }
+         ],
+         "selectors": [
+            {
+               "name": "gauss_1_kernel_size",
+               "value": 27
+            },
+            {
+               "name": "cubemap",
+               "value": 4
+            }
+         ],
+         "lights": [
+            {
+               "index": 0,
+               "direction": [
+                  -0.008689016,
+                  -0.9999242,
+                  -0.008728233
+               ],
+               "intensity": 1
+            },
+            {
+               "index": 1,
+               "color": [
+                  1,
+                  1,
+                  1
+               ],
+               "diameter": 1267.869,
+               "intensity": 0
+            }
+         ],
+         "orbit_camera": {
+            "target": [
+               0.041424274,
+               2.571905,
+               0.37520266
+            ],
+            "pan_offset": [
+               0.7846451,
+               0.20618081,
+               1.6312195
+            ],
+            "eye": [
+               -12.512976,
+               9.062738,
+               23.52125
+            ],
+            "yaw": -0.55499077,
+            "pitch": 0.2433442,
+            "distance": 26.082846
+         }
+      },
+      {
+         "model": "mclaren_p1__www.vecarz.com.glb",
+         "sliders": [
+            {
+               "name": "exposure",
+               "value": 2.81
+            },
+            {
+               "name": "material_emissive_intensity",
+               "value": 0.095
+            }
+         ],
+         "checkboxes": [
+            {
+               "name": "shadow_toggle",
+               "value": false
+            }
+         ],
+         "selectors": [
+            {
+               "name": "gauss_1_kernel_size",
+               "value": 27
+            },
+            {
+               "name": "cubemap",
+               "value": 4
+            },
+            {
+               "name": "active_light",
+               "value": 1
+            }
+         ],
+         "lights": [
+            {
+               "index": 0,
+               "intensity": 1
+            },
+            {
+               "index": 1,
+               "intensity": 0
+            }
+         ],
+         "orbit_camera": {
+            "target": [
+               -5.9604645E-8,
+               0.26260284,
+               0.001106143
+            ],
+            "pan_offset": [
+               -0.1486734,
+               -0.02968598,
+               0.092318326
+            ],
+            "eye": [
+               1.2614387,
+               0.8846371,
+               -1.6270186
+            ],
+            "yaw": 2.4550014,
+            "pitch": 0.28499997,
+            "distance": 2.3179905
          }
       }
    ]

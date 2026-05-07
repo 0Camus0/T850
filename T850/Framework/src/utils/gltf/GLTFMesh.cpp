@@ -871,6 +871,7 @@ bool ConvertToXDatabase(const Document& doc, xF::XDataBase& out,
   // any Draco-compressed primitives in parallel before the serial loop.
   struct PrimJob {
     int instanceIdx;
+    int meshIdx;
     std::size_t primIdx;
     const Primitive* prim;
     DracoDecodeResult dracoResult;
@@ -889,6 +890,7 @@ bool ConvertToXDatabase(const Document& doc, xF::XDataBase& out,
     for (std::size_t pi = 0; pi < m.primitives.size(); ++pi) {
       PrimJob j;
       j.instanceIdx = ii;
+      j.meshIdx = meshIdx;
       j.primIdx = pi;
       j.prim = &m.primitives[pi];
       j.hasDraco = j.prim->extensions.has_value()
@@ -905,7 +907,7 @@ bool ConvertToXDatabase(const Document& doc, xF::XDataBase& out,
   if (dracoCount > 0 && g_threadPool) {
     T8_LOG_INFO("[glTF] Decoding %d Draco meshes with %u threads",
                 dracoCount, g_threadPool->NumWorkers());
-    g_threadPool->ParallelFor(0, static_cast<int>(jobs.size()), [&](int i) {
+    g_threadPool->ParallelForHeavy(0, static_cast<int>(jobs.size()), [&](int i) {
       PrimJob& j = jobs[i];
       if (!j.hasDraco) return;
       const auto& dracoExt = *j.prim->extensions->KHR_draco_mesh_compression;
@@ -921,11 +923,21 @@ bool ConvertToXDatabase(const Document& doc, xF::XDataBase& out,
     }
   }
 
-  // ── Serial geometry build ──────────────────────────────────────
-  for (auto& job : jobs) {
-    int meshIdx = instances[job.instanceIdx].meshIdx;
+  // ── Parallel geometry build + serial commit ────────────────────
+  struct PrimBuildResult {
+    xF::xMeshGeometry geom;
+    xF::xFinalGeometry finalGeom;
+    bool ok = false;
+    bool skippedDraco = false;
+  };
+
+  std::vector<PrimBuildResult> buildResults(jobs.size());
+
+  auto buildPrimitive = [&](int i) {
+    PrimJob& job = jobs[i];
+    PrimBuildResult& result = buildResults[i];
+    int meshIdx = job.meshIdx;
     const XMATRIX44& world = instances[job.instanceIdx].world;
-    const Mesh& m = doc.meshes[meshIdx];
     const Primitive& prim = *job.prim;
     const std::vector<int>* skinJointRemap = nullptr;
     if (job.skinIdx >= 0 && job.skinIdx < static_cast<int>(skinRemap.localToGlobal.size())) {
@@ -934,42 +946,62 @@ bool ConvertToXDatabase(const Document& doc, xF::XDataBase& out,
 
     // If Draco was needed but failed, skip
     if (job.hasDraco && !job.decodeOk) {
-      T8_LOG_ERROR("[glTF] '%s' mesh %d primitive %zu: Draco decode failed — skipped",
-                   sourcePath.c_str(), meshIdx, job.primIdx);
-      continue;
+      result.skippedDraco = true;
+      return;
     }
-
-    mc->Geometry.emplace_back();
-    xF::xMeshGeometry& geom = mc->Geometry.back();
 
     // Pass pre-decoded Draco data if available
     bool ok;
     if (job.hasDraco) {
-      ok = BuildGeometry(doc, prim, world, geom, &job.dracoResult, job.isSkinned,
+      ok = BuildGeometry(doc, prim, world, result.geom, &job.dracoResult, job.isSkinned,
                          job.skinIdx, skinJointRemap);
     } else {
-      ok = BuildGeometry(doc, prim, world, geom, nullptr, job.isSkinned,
+      ok = BuildGeometry(doc, prim, world, result.geom, nullptr, job.isSkinned,
                          job.skinIdx, skinJointRemap);
     }
 
     if (!ok) {
-      T8_LOG_ERROR("[glTF] '%s' mesh %d primitive %zu: build failed — skipped",
+      return;
+    }
+    const Mesh& m = doc.meshes[meshIdx];
+    if (!m.name.empty()) result.geom.Name = m.name;
+
+    BuildFinalGeometry(result.geom, result.finalGeom);
+    BuildSubsets(result.geom, result.finalGeom);
+    result.geom.VertexSize = result.finalGeom.VertexSize;
+    result.ok = true;
+  };
+
+  if (g_threadPool && jobs.size() > 1) {
+    T8_LOG_INFO("[glTF] Building %zu primitives with %u global worker threads",
+                jobs.size(), g_threadPool->NumWorkers());
+    g_threadPool->ParallelForHeavy(0, static_cast<int>(jobs.size()), buildPrimitive);
+  } else {
+    for (int i = 0; i < static_cast<int>(jobs.size()); ++i) {
+      buildPrimitive(i);
+    }
+  }
+
+  for (std::size_t i = 0; i < jobs.size(); ++i) {
+    PrimJob& job = jobs[i];
+    PrimBuildResult& result = buildResults[i];
+    int meshIdx = job.meshIdx;
+    if (result.skippedDraco) {
+      T8_LOG_ERROR("[glTF] '%s' mesh %d primitive %zu: Draco decode failed — skipped",
                    sourcePath.c_str(), meshIdx, job.primIdx);
-      mc->Geometry.pop_back();
       continue;
     }
-    if (!m.name.empty()) geom.Name = m.name;
+    if (!result.ok) {
+      T8_LOG_ERROR("[glTF] '%s' mesh %d primitive %zu: build failed — skipped",
+                   sourcePath.c_str(), meshIdx, job.primIdx);
+      continue;
+    }
 
-    // Material: glTF allows -1 (no material) — handled by ConvertMaterial.
-    ConvertMaterial(doc, prim.material.value_or(-1),
-                    geom.MaterialList.Materials[0]);
+    ConvertMaterial(doc, job.prim->material.value_or(-1),
+                    result.geom.MaterialList.Materials[0]);
 
-    // Build the corresponding interleaved xFinalGeometry.
-    out.MeshInfo.emplace_back();
-    xF::xFinalGeometry& fg = out.MeshInfo.back();
-    BuildFinalGeometry(geom, fg);
-    BuildSubsets(geom, fg);
-    geom.VertexSize = fg.VertexSize;
+    mc->Geometry.push_back(std::move(result.geom));
+    out.MeshInfo.push_back(std::move(result.finalGeom));
   }
 
   T8_LOG_INFO("[glTF] '%s' converted: %zu geometries / %zu mesh instances",

@@ -24,6 +24,7 @@
 #include <video/BaseDriver.h>
 #include <debug/RenderTrace.h>
 #include <utils/Log.h>
+#include <utils/ResourceLocator.h>
 
 #define STBIR_INCLUDE_STB_IMAGE_RESIZE_H // skip bundled resize impl (defined in cil.cpp)
 #include <stb_image.h>
@@ -183,21 +184,14 @@ bool ResolveImage(const Document& doc, int imageIndex,
       if (s != std::string::npos) dir = doc._sourcePath.substr(0, s + 1);
     }
     std::string fullPath = dir + *img.uri;
-    std::ifstream f(fullPath, std::ios::binary | std::ios::ate);
-    if (!f.is_open()) {
+    std::vector<unsigned char> bytes;
+    if (!ResourceLocator::Instance().ReadBinary(fullPath, bytes)) {
       T8_LOG_ERROR("[glTF] image %d: cannot open '%s'", imageIndex, fullPath.c_str());
       return ResolvePlaceholder(*img.uri, "external image missing", outName, outSlot);
     }
-    std::streamsize sz = f.tellg();
-    if (sz <= 0) {
+    if (bytes.empty()) {
       T8_LOG_ERROR("[glTF] image %d: empty file '%s'", imageIndex, fullPath.c_str());
       return ResolvePlaceholder(*img.uri, "external image empty", outName, outSlot);
-    }
-    f.seekg(0, std::ios::beg);
-    std::vector<unsigned char> bytes(static_cast<std::size_t>(sz));
-    if (!f.read(reinterpret_cast<char*>(bytes.data()), sz)) {
-      T8_LOG_ERROR("[glTF] image %d: short read on '%s'", imageIndex, fullPath.c_str());
-      return ResolvePlaceholder(*img.uri, "external image short read", outName, outSlot);
     }
     // Cache key: keep the original URI so multiple primitives that
     // share the same texture hit the same driver slot.
@@ -304,27 +298,16 @@ void ResolveAllImages(const Document& doc,
       // External file relative to the glTF. Read the encoded payload now;
       // it will be decoded in the CPU-only phase and uploaded serially.
       const std::string fullPath = sourceDir + *img.uri;
-      std::ifstream f(fullPath, std::ios::binary | std::ios::ate);
-      if (!f.is_open()) {
+      if (!ResourceLocator::Instance().ReadBinary(fullPath, r.rawBytes)) {
         T8_LOG_ERROR("[glTF] image %d: cannot open '%s'", i, fullPath.c_str());
         r.keyName = *img.uri;
         r.error = "external image missing";
         return;
       }
-      std::streamsize sz = f.tellg();
-      if (sz <= 0) {
+      if (r.rawBytes.empty()) {
         T8_LOG_ERROR("[glTF] image %d: empty file '%s'", i, fullPath.c_str());
         r.keyName = *img.uri;
         r.error = "external image empty";
-        return;
-      }
-      f.seekg(0, std::ios::beg);
-      r.rawBytes.resize(static_cast<std::size_t>(sz));
-      if (!f.read(reinterpret_cast<char*>(r.rawBytes.data()), sz)) {
-        r.rawBytes.clear();
-        T8_LOG_ERROR("[glTF] image %d: short read on '%s'", i, fullPath.c_str());
-        r.keyName = *img.uri;
-        r.error = "external image short read";
         return;
       }
       r.keyName = *img.uri;

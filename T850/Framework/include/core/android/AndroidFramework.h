@@ -43,16 +43,24 @@ namespace t850 {
   private:
     void CreateVulkanRuntime();
     void DestroyVulkanRuntime();
+    void SuspendVulkanWindow();
+    void ResumeVulkanWindow();
     void UpdateWindowSize();
+    void ResetTransientInput();
+    void ClearTouchState();
+    void ClearReturnToNativePreference();
 
     android_app* m_app = nullptr;
     ANativeWindow* m_window = nullptr;
     bool m_alive = true;
     bool m_paused = false;
     bool m_hasRuntime = false;
+    bool m_surfaceActive = false;
     float m_lastTouchX = 0.0f;
     float m_lastTouchY = 0.0f;
     bool m_touchActive = false;
+    float m_lastPinchDistance = 0.0f;
+    bool m_pinchActive = false;
   };
 
 } // namespace t850

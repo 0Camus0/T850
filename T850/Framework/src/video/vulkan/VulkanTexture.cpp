@@ -14,6 +14,7 @@
 #include <utils/Log.h>
 #include <debug/RenderTrace.h>
 #include <algorithm>
+#include <cstdint>
 #include <cstdio>
 #include <cstring>
 #include <vector>
@@ -97,6 +98,154 @@ namespace t850 {
           dstOffset += static_cast<size_t>(mipWidth) * mipHeight * bytesPerPixel;
         }
       }
+    }
+
+    void Decode565(uint16_t value, unsigned char* rgba) {
+      const uint32_t r = (value >> 11) & 31;
+      const uint32_t g = (value >> 5) & 63;
+      const uint32_t b = value & 31;
+      rgba[0] = static_cast<unsigned char>((r * 255 + 15) / 31);
+      rgba[1] = static_cast<unsigned char>((g * 255 + 31) / 63);
+      rgba[2] = static_cast<unsigned char>((b * 255 + 15) / 31);
+      rgba[3] = 255;
+    }
+
+    void DecodeDXTColorBlock(const unsigned char* block, unsigned char colors[4][4]) {
+      const uint16_t c0 = static_cast<uint16_t>(block[0] | (block[1] << 8));
+      const uint16_t c1 = static_cast<uint16_t>(block[2] | (block[3] << 8));
+      Decode565(c0, colors[0]);
+      Decode565(c1, colors[1]);
+
+      if (c0 > c1) {
+        for (int c = 0; c < 3; ++c) {
+          colors[2][c] = static_cast<unsigned char>((2 * colors[0][c] + colors[1][c] + 1) / 3);
+          colors[3][c] = static_cast<unsigned char>((colors[0][c] + 2 * colors[1][c] + 1) / 3);
+        }
+        colors[2][3] = 255;
+        colors[3][3] = 255;
+      } else {
+        for (int c = 0; c < 3; ++c) {
+          colors[2][c] = static_cast<unsigned char>((colors[0][c] + colors[1][c] + 1) / 2);
+          colors[3][c] = 0;
+        }
+        colors[2][3] = 255;
+        colors[3][3] = 0;
+      }
+    }
+
+    void DecodeDXT5AlphaBlock(const unsigned char* block, unsigned char alpha[16]) {
+      unsigned char palette[8] = {};
+      palette[0] = block[0];
+      palette[1] = block[1];
+      if (palette[0] > palette[1]) {
+        palette[2] = static_cast<unsigned char>((6 * palette[0] + 1 * palette[1] + 3) / 7);
+        palette[3] = static_cast<unsigned char>((5 * palette[0] + 2 * palette[1] + 3) / 7);
+        palette[4] = static_cast<unsigned char>((4 * palette[0] + 3 * palette[1] + 3) / 7);
+        palette[5] = static_cast<unsigned char>((3 * palette[0] + 4 * palette[1] + 3) / 7);
+        palette[6] = static_cast<unsigned char>((2 * palette[0] + 5 * palette[1] + 3) / 7);
+        palette[7] = static_cast<unsigned char>((1 * palette[0] + 6 * palette[1] + 3) / 7);
+      } else {
+        palette[2] = static_cast<unsigned char>((4 * palette[0] + 1 * palette[1] + 2) / 5);
+        palette[3] = static_cast<unsigned char>((3 * palette[0] + 2 * palette[1] + 2) / 5);
+        palette[4] = static_cast<unsigned char>((2 * palette[0] + 3 * palette[1] + 2) / 5);
+        palette[5] = static_cast<unsigned char>((1 * palette[0] + 4 * palette[1] + 2) / 5);
+        palette[6] = 0;
+        palette[7] = 255;
+      }
+
+      uint64_t bits = 0;
+      for (int i = 0; i < 6; ++i) {
+        bits |= static_cast<uint64_t>(block[2 + i]) << (8 * i);
+      }
+      for (int i = 0; i < 16; ++i) {
+        alpha[i] = palette[(bits >> (3 * i)) & 0x7];
+      }
+    }
+
+    bool DecompressDXTToRGBA(const unsigned char* src, uint32_t width, uint32_t height,
+                             uint32_t mipCount, uint32_t faceCount, unsigned int cilProps,
+                             std::vector<unsigned char>& outData) {
+      if (!src || mipCount == 0 || faceCount == 0) return false;
+
+      const bool isDXT1 = (cilProps & CIL_DXT1) != 0;
+      const bool isDXT3 = (cilProps & CIL_DXT3) != 0;
+      const bool isDXT5 = (cilProps & CIL_DXT5) != 0;
+      const uint32_t blockSize = isDXT1 ? 8u : 16u;
+      if (!isDXT1 && !isDXT3 && !isDXT5) return false;
+
+      size_t totalBytes = 0;
+      for (uint32_t face = 0; face < faceCount; ++face) {
+        uint32_t mipWidth = width;
+        uint32_t mipHeight = height;
+        for (uint32_t mip = 0; mip < mipCount; ++mip) {
+          totalBytes += static_cast<size_t>(mipWidth) * mipHeight * 4;
+          mipWidth = mipWidth > 1 ? (mipWidth >> 1) : 1;
+          mipHeight = mipHeight > 1 ? (mipHeight >> 1) : 1;
+        }
+      }
+      outData.assign(totalBytes, 0);
+
+      size_t srcOffset = 0;
+      size_t dstOffset = 0;
+      for (uint32_t face = 0; face < faceCount; ++face) {
+        uint32_t mipWidth = width;
+        uint32_t mipHeight = height;
+        for (uint32_t mip = 0; mip < mipCount; ++mip) {
+          const uint32_t blocksX = std::max(1u, (mipWidth + 3u) / 4u);
+          const uint32_t blocksY = std::max(1u, (mipHeight + 3u) / 4u);
+          unsigned char* dstMip = outData.data() + dstOffset;
+
+          for (uint32_t by = 0; by < blocksY; ++by) {
+            for (uint32_t bx = 0; bx < blocksX; ++bx) {
+              const unsigned char* block = src + srcOffset + static_cast<size_t>(by * blocksX + bx) * blockSize;
+              unsigned char alpha[16];
+              std::fill(std::begin(alpha), std::end(alpha), 255);
+
+              const unsigned char* colorBlock = block;
+              if (isDXT3) {
+                for (int i = 0; i < 16; ++i) {
+                  const unsigned char packed = block[i / 2];
+                  const unsigned char nibble = (i & 1) ? (packed >> 4) : (packed & 0xF);
+                  alpha[i] = static_cast<unsigned char>((nibble << 4) | nibble);
+                }
+                colorBlock = block + 8;
+              } else if (isDXT5) {
+                DecodeDXT5AlphaBlock(block, alpha);
+                colorBlock = block + 8;
+              }
+
+              unsigned char colors[4][4] = {};
+              DecodeDXTColorBlock(colorBlock, colors);
+              const uint32_t code = colorBlock[4] |
+                (static_cast<uint32_t>(colorBlock[5]) << 8) |
+                (static_cast<uint32_t>(colorBlock[6]) << 16) |
+                (static_cast<uint32_t>(colorBlock[7]) << 24);
+
+              for (uint32_t py = 0; py < 4; ++py) {
+                const uint32_t y = by * 4 + py;
+                if (y >= mipHeight) continue;
+                for (uint32_t px = 0; px < 4; ++px) {
+                  const uint32_t x = bx * 4 + px;
+                  if (x >= mipWidth) continue;
+                  const uint32_t pixel = py * 4 + px;
+                  const uint32_t colorIndex = (code >> (2 * pixel)) & 0x3;
+                  unsigned char* dst = dstMip + (static_cast<size_t>(y) * mipWidth + x) * 4;
+                  dst[0] = colors[colorIndex][0];
+                  dst[1] = colors[colorIndex][1];
+                  dst[2] = colors[colorIndex][2];
+                  dst[3] = isDXT1 ? colors[colorIndex][3] : alpha[pixel];
+                }
+              }
+            }
+          }
+
+          srcOffset += static_cast<size_t>(blocksX) * blocksY * blockSize;
+          dstOffset += static_cast<size_t>(mipWidth) * mipHeight * 4;
+          mipWidth = mipWidth > 1 ? (mipWidth >> 1) : 1;
+          mipHeight = mipHeight > 1 ? (mipHeight >> 1) : 1;
+        }
+      }
+      return true;
     }
   }
 
@@ -350,6 +499,29 @@ namespace t850 {
     bool isCube = (cil_props & CIL_CUBE_MAP) != 0;
     uint32_t numFaces = isCube ? 6 : 1;
     uint32_t mipCount = (mipmaps > 0) ? mipmaps : 1;
+    VkPhysicalDeviceFeatures features = {};
+    vkGetPhysicalDeviceFeatures(driver->GetPhysicalDevice(), &features);
+    VkFormatProperties formatProps = {};
+    vkGetPhysicalDeviceFormatProperties(driver->GetPhysicalDevice(), fmt, &formatProps);
+    const bool supportsCompressed = features.textureCompressionBC == VK_TRUE &&
+      (formatProps.optimalTilingFeatures & VK_FORMAT_FEATURE_SAMPLED_IMAGE_BIT) != 0;
+    if (!supportsCompressed) {
+      std::vector<unsigned char> decompressed;
+      if (DecompressDXTToRGBA(buffer, x, y, mipCount, numFaces, cil_props, decompressed)) {
+        T8_LOG_INFO("[Vulkan] BC/DXT format %d unsupported; decompressed %ux%u mips=%u faces=%u to RGBA8",
+                    fmt, x, y, mipCount, numFaces);
+        const unsigned int cubeFlag = cil_props & CIL_CUBE_MAP;
+        cil_props = cubeFlag | CIL_RGBA | CIL_RAW;
+        props = TextBasicFormat::CH_RGBA;
+        m_channels = 4;
+        size = static_cast<unsigned int>(decompressed.size());
+        LoadAPITexture(T8DeviceContext, decompressed.data());
+        return;
+      }
+      T8_LOG_ERROR("[Vulkan] BC/DXT format %d unsupported and CPU decompression failed (%ux%u)",
+                   fmt, x, y);
+      return;
+    }
 
     VkImageCreateInfo imgCI = { VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO };
     imgCI.imageType = VK_IMAGE_TYPE_2D;
@@ -374,7 +546,6 @@ namespace t850 {
     // Compute total upload size and build copy regions
     std::vector<VkBufferImageCopy> regions;
     VkDeviceSize totalSize = 0;
-    unsigned char* pData = buffer;
     for (uint32_t face = 0; face < numFaces; face++) {
       uint32_t w = this->x, h = this->y;
       for (uint32_t mip = 0; mip < mipCount; mip++) {
@@ -594,7 +765,7 @@ namespace t850 {
                                            shaderTextureName, "ps");
     }
 #endif
-    T8_LOG_DEBUG("[Vulkan] Texture::Set slot=%u view=%p sampler=%p name=%s",
+    T8_LOG_TRACE("[Vulkan] Texture::Set slot=%u view=%p sampler=%p name=%s",
                 slot, (void*)m_imageView, (void*)m_sampler, shaderTextureName.c_str());
   }
 
@@ -616,7 +787,7 @@ namespace t850 {
                                            shaderTextureName, "vs");
     }
 #endif
-    T8_LOG_DEBUG("[Vulkan] Texture::SetVS slot=%u view=%p sampler=%p name=%s",
+    T8_LOG_TRACE("[Vulkan] Texture::SetVS slot=%u view=%p sampler=%p name=%s",
                 slot, (void*)m_imageView, (void*)m_sampler, shaderTextureName.c_str());
   }
 

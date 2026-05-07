@@ -1,19 +1,62 @@
 plugins { id 'com.android.application' }
 
+def shaderSourceDir = file('../../Assets/Shaders')
+def generatedAssetDir = layout.buildDirectory.dir('generated/t850Assets').get().asFile
+def shaderOutputDir = new File(generatedAssetDir, 'Shaders/spirv')
+def isWindowsHost = System.getProperty('os.name').toLowerCase().contains('windows')
+def shaderCompilerName = isWindowsHost ? 'glslangValidator.exe' : 'glslangValidator'
+def t850AndroidAbis = (findProperty('t850AndroidAbis') ?: 'arm64-v8a')
+    .toString()
+    .split(',')
+    .collect { it.trim() }
+    .findAll { !it.isEmpty() }
+def t850VulkanValidation = (findProperty('t850VulkanValidation') ?: 'false').toString().toBoolean()
+
+if (t850AndroidAbis.isEmpty()) {
+    throw new GradleException('At least one Android ABI must be specified in t850AndroidAbis.')
+}
+
+def findExecutableOnPath = { String executableName ->
+    def pathValue = System.getenv('PATH')
+    if (!pathValue) return null
+    pathValue.split(java.util.regex.Pattern.quote(File.pathSeparator))
+        .collect { new File(it, executableName) }
+        .find { it.isFile() }
+}
+
+def resolveGlslangValidator = {
+    def candidates = []
+    def vulkanSdk = System.getenv('VULKAN_SDK')
+    if (vulkanSdk) {
+        candidates << new File(new File(vulkanSdk, isWindowsHost ? 'Bin' : 'bin'), shaderCompilerName)
+    }
+    def pathMatch = findExecutableOnPath(shaderCompilerName)
+    if (pathMatch) candidates << pathMatch
+
+    def validator = candidates.find { it.isFile() }
+    if (validator) return validator.absolutePath
+
+    throw new GradleException(
+        'glslangValidator is required for T850 Android offline shader compilation. ' +
+        'Run SetupAndroidToolchain.bat without --skip-winget, or install the Vulkan SDK and set VULKAN_SDK/PATH.')
+}
+
 android {
     namespace 'com.t850.engine'
     compileSdk 35
 
     defaultConfig {
         applicationId 'com.t850.engine'
-        minSdk 26
+        minSdk 28
         targetSdk 35
         versionCode 1
         versionName '0.1-android-vulkan'
-        ndk { abiFilters 'arm64-v8a' }
+        ndk { abiFilters(*t850AndroidAbis) }
         externalNativeBuild {
             cmake {
-                arguments '-DANDROID_STL=c++_static', '-DT850_ANDROID_NATIVE_ACTIVITY=ON'
+                arguments '-DANDROID_STL=c++_static', '-DANDROID_PLATFORM=android-28',
+                    '-DT850_ANDROID_NATIVE_ACTIVITY=ON',
+                    "-DT850_VULKAN_VALIDATION=${t850VulkanValidation ? 'ON' : 'OFF'}"
                 cppFlags '-std=c++23 -fexceptions -frtti'
             }
         }
@@ -25,23 +68,21 @@ android {
 
     sourceSets {
         main {
-            assets.srcDirs = ['../../Assets', 'src/main/assets']
+            assets.srcDirs = ['../../Assets', 'src/main/assets', generatedAssetDir]
         }
+    }
+
+    androidResources {
+        noCompress += ['bin', 'dds', 'glb', 'gltf', 'hdr', 'ktx', 'ktx2', 'spv', 'tga', 'x']
     }
 }
 
-
-def shaderSourceDir = file('../../Assets/Shaders')
-def shaderOutputDir = file('src/main/assets/Shaders/spirv')
 
 tasks.register('compileT850AndroidShaders') {
     inputs.dir(shaderSourceDir)
     outputs.dir(shaderOutputDir)
     doLast {
-        def vulkanSdk = System.getenv('VULKAN_SDK')
-        def isWindowsHost = System.getProperty('os.name').toLowerCase().contains('windows')
-        def exe = isWindowsHost ? 'glslangValidator.exe' : 'glslangValidator'
-        def validator = vulkanSdk ? new File(new File(vulkanSdk, isWindowsHost ? 'Bin' : 'bin'), exe).absolutePath : exe
+        def validator = resolveGlslangValidator()
         shaderOutputDir.mkdirs()
         fileTree(shaderSourceDir).matching { include '**/*.hlsl' }.each { shader ->
             def name = shader.name

@@ -1,5 +1,15 @@
 <resources>
-    <style name="T850Theme" parent="android:style/Theme.Material.NoActionBar.Fullscreen">
+    <style name="T850LauncherTheme" parent="android:style/Theme.Material.NoActionBar">
+        <item name="android:fontFamily">sans</item>
+        <item name="android:windowNoTitle">true</item>
+        <item name="android:windowActionBar">false</item>
+        <item name="android:colorAccent">#6C63FF</item>
+        <item name="android:navigationBarColor">#111827</item>
+        <item name="android:statusBarColor">#111827</item>
+        <item name="android:windowLightStatusBar">false</item>
+    </style>
+
+    <style name="T850NativeTheme" parent="android:style/Theme.Material.NoActionBar.Fullscreen">
         <item name="android:windowNoTitle">true</item>
         <item name="android:windowFullscreen">true</item>
         <item name="android:windowActionBar">false</item>

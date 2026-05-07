@@ -4,9 +4,38 @@ set(CMAKE_CXX_STANDARD 23)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 set(T850_SOURCE_DIR ${CMAKE_CURRENT_LIST_DIR}/..)
+option(T850_VULKAN_VALIDATION "Enable Vulkan validation layers and debug-utils output" OFF)
 
-if(NOT ANDROID_ABI STREQUAL "arm64-v8a")
-  message(FATAL_ERROR "T850 Android currently supports arm64-v8a only. Requested: ${ANDROID_ABI}")
+if(ANDROID_ABI STREQUAL "arm64-v8a")
+  set(T850_ANDROID_VCPKG_TRIPLET arm64-android)
+elseif(ANDROID_ABI STREQUAL "x86_64")
+  set(T850_ANDROID_VCPKG_TRIPLET x64-android)
+else()
+  message(FATAL_ERROR "T850 Android supports arm64-v8a device builds and x86_64 emulator builds. Requested: ${ANDROID_ABI}")
+endif()
+
+set(T850_ANDROID_VCPKG_ROOT ${T850_SOURCE_DIR}/Librerias/vcpkg/installed/${T850_ANDROID_VCPKG_TRIPLET})
+set(T850_ANDROID_DRACO_LIB ${T850_ANDROID_VCPKG_ROOT}/lib/libdraco.a)
+list(APPEND CMAKE_PREFIX_PATH ${T850_ANDROID_VCPKG_ROOT})
+set(glslang_DIR ${T850_ANDROID_VCPKG_ROOT}/share/glslang)
+find_package(glslang CONFIG REQUIRED)
+message(STATUS "T850 Android ABI: ${ANDROID_ABI} (${T850_ANDROID_VCPKG_TRIPLET})")
+
+set(T850_ANDROID_API_LEVEL 0)
+if(DEFINED ANDROID_PLATFORM AND ANDROID_PLATFORM MATCHES "^android-([0-9]+)$")
+  set(T850_ANDROID_API_LEVEL ${CMAKE_MATCH_1})
+elseif(DEFINED ANDROID_PLATFORM AND ANDROID_PLATFORM MATCHES "^([0-9]+)$")
+  set(T850_ANDROID_API_LEVEL ${CMAKE_MATCH_1})
+elseif(DEFINED CMAKE_SYSTEM_VERSION AND CMAKE_SYSTEM_VERSION MATCHES "^([0-9]+)$")
+  set(T850_ANDROID_API_LEVEL ${CMAKE_MATCH_1})
+endif()
+
+if(T850_ANDROID_API_LEVEL LESS 28)
+  message(FATAL_ERROR "T850 Android requires API 28 or newer to match the Android vcpkg dependency triplets. Requested API: ${T850_ANDROID_API_LEVEL}")
+endif()
+
+if(NOT EXISTS "${T850_ANDROID_DRACO_LIB}")
+  message(FATAL_ERROR "Android Draco library not found at ${T850_ANDROID_DRACO_LIB}. Run SetupAndroidToolchain.bat to install draco:${T850_ANDROID_VCPKG_TRIPLET}.")
 endif()
 
 if(NOT CMAKE_ANDROID_NDK AND DEFINED ANDROID_NDK)
@@ -27,6 +56,7 @@ set(T850_ANDROID_FRAMEWORK_SOURCES
   ${T850_SOURCE_DIR}/Framework/src/utils/Log.cpp
   ${T850_SOURCE_DIR}/Framework/src/utils/InputManager.cpp
   ${T850_SOURCE_DIR}/Framework/src/utils/ResourceManager.cpp
+  ${T850_SOURCE_DIR}/Framework/src/utils/ResourceLocator.cpp
   ${T850_SOURCE_DIR}/Framework/src/utils/Timer.cpp
   ${T850_SOURCE_DIR}/Framework/src/utils/Utils.cpp
   ${T850_SOURCE_DIR}/Framework/src/utils/Camera.cpp
@@ -34,8 +64,12 @@ set(T850_ANDROID_FRAMEWORK_SOURCES
   ${T850_SOURCE_DIR}/Framework/src/utils/XMaths.cpp
   ${T850_SOURCE_DIR}/Framework/src/utils/Technique.cpp
   ${T850_SOURCE_DIR}/Framework/src/utils/ConfigRuntime.cpp
+  ${T850_SOURCE_DIR}/Framework/src/utils/ShaderPermutationDump.cpp
   ${T850_SOURCE_DIR}/Framework/src/utils/SPIRVReflection.cpp
   ${T850_SOURCE_DIR}/Framework/src/utils/ThreadPool.cpp
+  ${T850_SOURCE_DIR}/Framework/src/utils/Spline.cpp
+  ${T850_SOURCE_DIR}/Framework/src/utils/Picking.cpp
+  ${T850_SOURCE_DIR}/Framework/src/utils/GUIAtlasGenerator.cpp
   ${T850_SOURCE_DIR}/Framework/src/utils/cil.cpp
   ${T850_SOURCE_DIR}/Framework/src/utils/gltf/GLTFLoader.cpp
   ${T850_SOURCE_DIR}/Framework/src/utils/gltf/GLTFJson.cpp
@@ -59,6 +93,9 @@ set(T850_ANDROID_FRAMEWORK_SOURCES
   ${T850_SOURCE_DIR}/Framework/src/scene/AnimationController.cpp
   ${T850_SOURCE_DIR}/Framework/src/scene/PrimitiveInstance.cpp
   ${T850_SOURCE_DIR}/Framework/src/scene/PrimitiveManager.cpp
+  ${T850_SOURCE_DIR}/Framework/src/scene/SplineWireframe.cpp
+  ${T850_SOURCE_DIR}/Framework/src/scene/WireframeSphere.cpp
+  ${T850_SOURCE_DIR}/Framework/src/scene/WireframeArrow.cpp
   ${T850_SOURCE_DIR}/Framework/src/scene/RenderQuad.cpp
   ${T850_SOURCE_DIR}/Framework/src/scene/RenderMesh.cpp
   ${T850_SOURCE_DIR}/Framework/src/scene/RenderSkinnedMesh.cpp
@@ -74,6 +111,9 @@ set(T850_ANDROID_FRAMEWORK_SOURCES
   ${T850_SOURCE_DIR}/Framework/src/scene/SceneProp.cpp
   ${T850_SOURCE_DIR}/Framework/src/scene/TextRenderer.cpp
   ${T850_SOURCE_DIR}/Framework/src/scene/Quad.cpp
+  ${T850_SOURCE_DIR}/Framework/src/scene/LensFlare.cpp
+  ${T850_SOURCE_DIR}/Framework/src/debug/FrameDumper.cpp
+  ${T850_SOURCE_DIR}/Framework/src/debug/FrameDumperIO.cpp
   ${T850_SOURCE_DIR}/Framework/src/gui/GUIAtlas.cpp
   ${T850_SOURCE_DIR}/Framework/src/gui/GUIElement.cpp
   ${T850_SOURCE_DIR}/Framework/src/gui/GUIManager.cpp
@@ -87,7 +127,15 @@ add_library(T850Android SHARED
   ${T850_SOURCE_DIR}/DayScene/SandboxScene.cpp
   ${T850_ANDROID_FRAMEWORK_SOURCES})
 
-target_compile_definitions(T850Android PRIVATE OS_ANDROID T850_ANDROID_NATIVE_ACTIVITY)
+target_compile_definitions(T850Android PRIVATE
+  OS_ANDROID
+  T850_ANDROID_NATIVE_ACTIVITY
+  T850_ENABLE_DRACO=1
+  VMA_STATIC_VULKAN_FUNCTIONS=0
+  VMA_DYNAMIC_VULKAN_FUNCTIONS=1)
+if(T850_VULKAN_VALIDATION)
+  target_compile_definitions(T850Android PRIVATE T8_VULKAN_VALIDATION)
+endif()
 target_compile_options(T850Android PRIVATE -Wall -Wextra -Wno-unused-parameter -Wno-missing-field-initializers)
 target_precompile_headers(T850Android PRIVATE $<$<COMPILE_LANGUAGE:CXX>:${T850_SOURCE_DIR}/Framework/pch.h>)
 target_include_directories(T850Android PRIVATE
@@ -98,8 +146,17 @@ target_include_directories(T850Android PRIVATE
   ${T850_SOURCE_DIR}/Librerias/tinyxml2/include
   ${T850_SOURCE_DIR}/Librerias/stb/include
   ${T850_SOURCE_DIR}/Librerias/mikktspace/include
+  ${T850_ANDROID_VCPKG_ROOT}/include
   ${T850_SOURCE_DIR}/Librerias/VulkanMemoryAllocator/include
   ${T850_SOURCE_DIR}/GLSLParser/Include
   ${CMAKE_ANDROID_NDK}/sources/android/native_app_glue)
 
-target_link_libraries(T850Android PRIVATE android log vulkan native_app_glue)
+target_link_libraries(T850Android PRIVATE
+  android
+  log
+  vulkan
+  native_app_glue
+  "${T850_ANDROID_DRACO_LIB}"
+  glslang::glslang
+  glslang::glslang-default-resource-limits
+  glslang::SPIRV)

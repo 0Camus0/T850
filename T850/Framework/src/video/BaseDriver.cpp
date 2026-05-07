@@ -13,6 +13,8 @@
 #include <video/BaseDriver.h>
 #include <utils/cil.h>
 #include <utils/Log.h>
+#include <utils/ShaderPermutationDump.h>
+#include <utils/ResourceLocator.h>
 #include <debug/RenderTrace.h>
 #include <core/Config.h>
 #include <algorithm>
@@ -269,9 +271,7 @@ namespace t850 {
     bool found = false;
     std::string path = "Textures/";
     filepath = path + std::string(fn);
-    std::ifstream inf(filepath.c_str());
-    found = inf.good();
-    inf.close();
+    found = ResourceLocator::Instance().Exists(filepath);
 
     int x = 0, y = 0;
     unsigned char *buffer = 0;
@@ -533,6 +533,7 @@ namespace t850 {
       T8_LOG_ERROR("Shader defines for failed key 0x%016llX [VS='%s' FS='%s']:\n%s", static_cast<unsigned long long>(key.bits), vs_name.c_str(), fs_name.c_str(), Defines.c_str());
       return false;
     }
+    ShaderPermutationDump::Record(key, vs_name, fs_name, Defines);
     return true;
   }
   void ShaderBase::release()

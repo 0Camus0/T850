@@ -15,7 +15,9 @@
 #include <utils/Log.h>
 #include <core/Config.h>
 #include <utils/ConfigRuntime.h>
+#ifndef OS_ANDROID
 #include <imgui/DevGuiContext.h>
+#endif
 using namespace t850;
 using std::cout;
 using std::endl;
@@ -578,6 +580,7 @@ void DayScene::SetSpectatorDebugEnabled(bool enabled) {
 
 void DayScene::DestroyAssets() {
   SceneProp.SSAOKernel.Destroy();
+  m_debugText.Destroy();
   m_wireframeSphere.Destroy();
   m_wireframeArrow.Destroy();
   PrimitiveMgr.DestroyPrimitives();
@@ -1670,6 +1673,7 @@ void DayScene::PopulateGUI(t850::GUIManager& gui) {
   }
 }
 
+#ifndef OS_ANDROID
 void DayScene::DrawDevGui(t850::DevGuiContext& gui) {
   struct Mapping { const char* name; int settingIndex; };
 
@@ -1979,6 +1983,9 @@ void DayScene::DrawDevGui(t850::DevGuiContext& gui) {
     }
   }
 }
+#else
+void DayScene::DrawDevGui(t850::DevGuiContext&) {}
+#endif
 
 void DayScene::SyncToGUI(t850::GUIManager& gui) {
   for (auto& sp : gui.GetSliderPairs()) {

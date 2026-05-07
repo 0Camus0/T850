@@ -136,6 +136,19 @@ namespace Log {
   }
 #endif
 
+#ifdef OS_ANDROID
+  static int AndroidLogPriority(Level lvl) {
+    switch (lvl) {
+      case LVL_ERROR:   return ANDROID_LOG_ERROR;
+      case LVL_INFO:    return ANDROID_LOG_INFO;
+      case LVL_DEBUG:   return ANDROID_LOG_DEBUG;
+      case LVL_VERBOSE: return ANDROID_LOG_VERBOSE;
+      case LVL_TRACE:   return ANDROID_LOG_VERBOSE;
+      default:          return ANDROID_LOG_DEBUG;
+    }
+  }
+#endif
+
   // ── public API ──
 
   void Init(Level maxLevel, uint32_t backends, const char* logFilePath) {
@@ -252,11 +265,8 @@ namespace Log {
         OutputDebugStringA("\n");
       }
 #elif defined(OS_ANDROID)
-      {
-        int androidPrio = (level == LVL_ERROR) ? ANDROID_LOG_ERROR
-                        : (level == LVL_INFO) ? ANDROID_LOG_INFO
-                        : ANDROID_LOG_DEBUG;
-        __android_log_write(androidPrio, "T850", fullLine);
+      if (s_backends & T8_LOG_BACKEND_ANDROID_LOGCAT) {
+        __android_log_write(AndroidLogPriority(level), "T850", fullLine);
       }
 #endif
 

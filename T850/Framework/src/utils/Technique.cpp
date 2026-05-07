@@ -1,9 +1,12 @@
 #include <pch.h>
 #include <utils/Technique.h>
 #include <iostream>
+#include <video/BaseDriver.h>
+#ifndef OS_ANDROID
 #include <video/gl/GLDriver.h>
 #include <video/gl/GLShader.h>
-#if defined(OS_WINDOWS) || defined(OS_ANDROID)
+#endif
+#if defined(OS_WINDOWS)
 #include <video/d3d11/D3D11Shader.h>
 #include <video/d3d11/D3D11Driver.h>
 #endif

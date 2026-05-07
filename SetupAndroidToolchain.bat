@@ -1,40 +1,56 @@
 @echo off
 setlocal enabledelayedexpansion
 
-:: T850 Engine — Android Toolchain Setup for Windows
+:: T850 Engine - Android Toolchain Setup for Windows
 :: Installs the Android command-line toolchain used by the NativeActivity Vulkan backend.
 :: Usage:
 ::   SetupAndroidToolchain.bat
 ::   SetupAndroidToolchain.bat --sdk C:\Android\Sdk
 ::   SetupAndroidToolchain.bat --skip-winget
+::   SetupAndroidToolchain.bat --with-emulator
 
 set "ROOT=%~dp0"
 set "ANDROID_SDK=%LOCALAPPDATA%\Android\Sdk"
-set "CMDLINE_VERSION=11076708"
+set "CMDLINE_VERSION=14742923"
 set "ANDROID_PLATFORM=android-35"
+set "ANDROID_MIN_PLATFORM=android-28"
 set "BUILD_TOOLS=35.0.0"
 set "NDK_VERSION=27.2.12479018"
 set "CMAKE_VERSION=3.22.1"
+set "GRADLE_VERSION=8.10.2"
 set "SKIP_WINGET=0"
+set "WITH_EMULATOR=0"
+set "EMULATOR_IMAGE=system-images;android-35;google_apis;x86_64"
 
 :parse_args
 if "%~1"=="" goto done_args
-if /i "%~1"=="--sdk" (
-    shift
-    if "%~1"=="" goto usage
-    set "ANDROID_SDK=%~1"
-) else if /i "%~1"=="--skip-winget" (
-    set "SKIP_WINGET=1"
-) else (
-    goto usage
-)
+if /i "%~1"=="--sdk" goto arg_sdk
+if /i "%~1"=="--skip-winget" goto arg_skip_winget
+if /i "%~1"=="--with-emulator" goto arg_with_emulator
+goto usage
+
+:arg_sdk
+shift
+if "%~1"=="" goto usage
+set "ANDROID_SDK=%~1"
 shift
 goto parse_args
+
+:arg_skip_winget
+set "SKIP_WINGET=1"
+shift
+goto parse_args
+
+:arg_with_emulator
+set "WITH_EMULATOR=1"
+shift
+goto parse_args
+
 :done_args
 
 echo.
 echo ========================================
-echo  T850 — Android Toolchain Setup
+echo  T850 - Android Toolchain Setup
 echo ========================================
 echo SDK root: %ANDROID_SDK%
 echo.
@@ -67,10 +83,49 @@ if not defined JAVA_HOME (
         if exist "%%~fj\bin\java.exe" set "JAVA_HOME=%%~fj"
     )
 )
-if not defined JAVA_HOME (
-    echo [WARN] JAVA_HOME is not set. Set it to a JDK 17+ install before building.
-) else (
+if defined JAVA_HOME (
     set "PATH=%JAVA_HOME%\bin;%PATH%"
+)
+where java >nul 2>nul || (
+    echo [ERROR] JDK 17+ is required for Android sdkmanager.
+    echo [ERROR] Install JDK 17+ or rerun without --skip-winget to let winget install it.
+    exit /b 1
+)
+if not defined JAVA_HOME (
+    echo [WARN] JAVA_HOME is not set. sdkmanager will use java.exe from PATH, but set JAVA_HOME before building.
+)
+
+if not defined VULKAN_SDK (
+    for /f "delims=" %%v in ('powershell -NoProfile -ExecutionPolicy Bypass -Command "$root='C:\VulkanSDK'; if(Test-Path $root){ Get-ChildItem $root -Directory | Sort-Object Name -Descending | Select-Object -First 1 -ExpandProperty FullName }"') do (
+        set "VULKAN_SDK=%%v"
+    )
+)
+if defined VULKAN_SDK (
+    set "PATH=%VULKAN_SDK%\Bin;%PATH%"
+)
+where glslangValidator.exe >nul 2>nul || (
+    echo [ERROR] glslangValidator.exe is required for Android offline shader compilation.
+    echo [ERROR] Install the Vulkan SDK or rerun without --skip-winget to let winget install it.
+    exit /b 1
+)
+
+set "GRADLE_ROOT=%ANDROID_SDK%\gradle"
+set "GRADLE_HOME=%GRADLE_ROOT%\gradle-%GRADLE_VERSION%"
+set "GRADLE_EXE=%GRADLE_HOME%\bin\gradle.bat"
+if not exist "%GRADLE_EXE%" (
+    echo [T850] Downloading Gradle %GRADLE_VERSION%...
+    mkdir "%GRADLE_ROOT%" 2>nul
+    powershell -NoProfile -ExecutionPolicy Bypass -Command ^
+      "$ErrorActionPreference='Stop'; $zip='%TEMP%\gradle-%GRADLE_VERSION%-bin.zip'; Invoke-WebRequest -Uri 'https://services.gradle.org/distributions/gradle-%GRADLE_VERSION%-bin.zip' -OutFile $zip; if(Test-Path '%GRADLE_HOME%'){Remove-Item '%GRADLE_HOME%' -Recurse -Force}; Expand-Archive $zip -DestinationPath '%GRADLE_ROOT%' -Force"
+    if errorlevel 1 (
+        echo [ERROR] Failed to download Gradle.
+        exit /b 1
+    )
+)
+set "PATH=%GRADLE_HOME%\bin;%PATH%"
+where gradle >nul 2>nul || (
+    echo [ERROR] Gradle was not found on PATH after setup.
+    exit /b 1
 )
 
 set "ANDROID_HOME=%ANDROID_SDK%"
@@ -90,13 +145,14 @@ if not exist "%SDKMANAGER%" (
 )
 
 echo [T850] Accepting Android SDK licenses...
-powershell -NoProfile -ExecutionPolicy Bypass -Command "1..20 | ForEach-Object { 'y' }" | "%SDKMANAGER%" --sdk_root="%ANDROID_SDK%" --licenses
+powershell -NoProfile -ExecutionPolicy Bypass -Command "1..20 | ForEach-Object { 'y' }" | call "%SDKMANAGER%" --sdk_root="%ANDROID_SDK%" --licenses
 if errorlevel 1 echo [WARN] License acceptance reported a non-zero exit code. Re-run this script if installs fail.
 
 echo [T850] Installing Android SDK packages...
-"%SDKMANAGER%" --sdk_root="%ANDROID_SDK%" ^
+call "%SDKMANAGER%" --sdk_root="%ANDROID_SDK%" ^
     "platform-tools" ^
     "platforms;%ANDROID_PLATFORM%" ^
+    "platforms;%ANDROID_MIN_PLATFORM%" ^
     "build-tools;%BUILD_TOOLS%" ^
     "ndk;%NDK_VERSION%" ^
     "cmake;%CMAKE_VERSION%"
@@ -105,7 +161,19 @@ if errorlevel 1 (
     exit /b 1
 )
 
+if "%WITH_EMULATOR%"=="1" (
+    echo [T850] Installing Android emulator packages...
+    call "%SDKMANAGER%" --sdk_root="%ANDROID_SDK%" ^
+        "emulator" ^
+        "%EMULATOR_IMAGE%"
+    if errorlevel 1 (
+        echo [ERROR] Android emulator package installation failed.
+        exit /b 1
+    )
+)
+
 set "ANDROID_NDK_HOME=%ANDROID_SDK%\ndk\%NDK_VERSION%"
+set "ANDROID_NDK_ROOT=%ANDROID_NDK_HOME%"
 
 set "VMA_INCLUDE=%ROOT%T850\Librerias\VulkanMemoryAllocator\include\vma"
 if not exist "%VMA_INCLUDE%\vk_mem_alloc.h" (
@@ -119,25 +187,59 @@ if not exist "%VMA_INCLUDE%\vk_mem_alloc.h" (
     )
 )
 
+set "VCPKG_ROOT=%ROOT%T850\Librerias\vcpkg"
+set "VCPKG_EXE=%VCPKG_ROOT%\vcpkg.exe"
+if not exist "%VCPKG_EXE%" (
+    if exist "%VCPKG_ROOT%\bootstrap-vcpkg.bat" (
+        echo [T850] Bootstrapping vcpkg...
+        pushd "%VCPKG_ROOT%"
+        call bootstrap-vcpkg.bat -disableMetrics
+        popd
+    ) else (
+        echo [ERROR] vcpkg was not found at "%VCPKG_ROOT%".
+        exit /b 1
+    )
+)
+echo [T850] Installing Android vcpkg dependencies...
+set "VCPKG_PACKAGES=draco:arm64-android glslang:arm64-android"
+if "%WITH_EMULATOR%"=="1" set "VCPKG_PACKAGES=%VCPKG_PACKAGES% draco:x64-android glslang:x64-android"
+call "%VCPKG_EXE%" install %VCPKG_PACKAGES% --no-print-usage
+if errorlevel 1 (
+    echo [ERROR] Failed to install Android vcpkg dependencies.
+    exit /b 1
+)
+
 echo.
 echo [T850] Android setup complete.
 echo.
 echo Add these environment variables permanently if they are not already set:
 echo   setx JAVA_HOME "%JAVA_HOME%"
+echo   setx GRADLE_HOME "%GRADLE_HOME%"
 echo   setx ANDROID_HOME "%ANDROID_HOME%"
 echo   setx ANDROID_SDK_ROOT "%ANDROID_SDK_ROOT%"
 echo   setx ANDROID_NDK_HOME "%ANDROID_NDK_HOME%"
+echo   setx ANDROID_NDK_ROOT "%ANDROID_NDK_ROOT%"
+if defined VULKAN_SDK echo   setx VULKAN_SDK "%VULKAN_SDK%"
 echo.
 echo Current session values:
 echo   JAVA_HOME=%JAVA_HOME%
+echo   GRADLE_HOME=%GRADLE_HOME%
 echo   ANDROID_HOME=%ANDROID_HOME%
 echo   ANDROID_SDK_ROOT=%ANDROID_SDK_ROOT%
 echo   ANDROID_NDK_HOME=%ANDROID_NDK_HOME%
+echo   ANDROID_NDK_ROOT=%ANDROID_NDK_ROOT%
+if defined VULKAN_SDK echo   VULKAN_SDK=%VULKAN_SDK%
 echo.
-echo Build Android package from: %ROOT%T850\android
+echo Build Android package with:
+echo   BuildAndroid.bat Debug
+echo   BuildAndroid.bat Release
+echo   BuildAndroidDebug.bat
+echo   BuildAndroidRelease.bat
+echo Add --clean for a full rebuild, or --install --launch for local device testing.
+echo Add --emulator to BuildAndroid.bat after running this setup with --with-emulator.
 echo.
 exit /b 0
 
 :usage
-echo Usage: SetupAndroidToolchain.bat [--sdk C:\Android\Sdk] [--skip-winget]
+echo Usage: SetupAndroidToolchain.bat [--sdk C:\Android\Sdk] [--skip-winget] [--with-emulator]
 exit /b 1

@@ -46,6 +46,7 @@ namespace t850 {
   struct SnapshotScenePropsJson {
     float exposure = 0.3f;
     float bloom_factor = 0.35f;
+    std::optional<float> bloom_threshold;
     float tone_map_white_level = 4.0f;
     float luminance_tau = 1.1f;
     float shadow_map_resolution = 2048.0f;
@@ -64,6 +65,27 @@ namespace t850 {
     int toggle_shadow = 1;
     int toggle_ssao = 1;
     int debug_mode = 0;
+    std::optional<std::array<float, 3>> ambient_color;
+    std::optional<int> toggle_dof;
+    std::optional<int> toggle_parallax;
+    std::optional<int> toggle_parallax_shadow;
+    std::optional<int> toggle_godrays;
+    std::optional<bool> auto_focus;
+    std::optional<float> shadow_bias;
+    std::optional<float> shadow_min;
+    std::optional<float> env_factor;
+    std::optional<float> ibl_factor;
+    std::optional<float> ibl_mip_count;
+    std::optional<float> ibl_diffuse_mip_level;
+    std::optional<float> ibl_brdf_lut_enabled;
+    std::optional<float> godrays_factor;
+    std::optional<float> material_emissive_intensity;
+    std::optional<float> material_transmission_multiplier;
+    std::optional<float> material_refraction_strength;
+    std::optional<float> parallax_shadow_min_layers;
+    std::optional<float> parallax_shadow_max_layers;
+    std::optional<float> parallax_shadow_softness;
+    std::optional<float> parallax_shadow_strength;
   };
 
   // Night scene extra state: omni light cameras + omni position

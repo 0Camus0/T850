@@ -8,6 +8,7 @@
 #include <video/BaseDriver.h>
 #include <Descriptors.h>
 #include <utils/Log.h>
+#include <utils/ResourceLocator.h>
 
 #pragma warning(push)
 #pragma warning(disable: 4267 4244)
@@ -26,15 +27,11 @@ namespace t850 {
 // ---- JSON loading via glaze ----
 
 bool LoadRenderGraphDescriptor(const std::string& path, RenderGraphDesc& desc) {
-  std::ifstream file(path);
-  if (!file.is_open()) {
+  std::string json;
+  if (!ResourceLocator::Instance().ReadText(path, json)) {
     T8_LOG_ERROR("[RenderGraph] Cannot open '%s'", path.c_str());
     return false;
   }
-
-  std::stringstream ss;
-  ss << file.rdbuf();
-  std::string json = ss.str();
 
   auto ec = glz::read<glz::opts{.error_on_unknown_keys = false}>(desc, json);
   if (ec) {

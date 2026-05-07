@@ -8,19 +8,16 @@
 #include <sstream>
 #include <cstdio>
 #include <utils/Log.h>
+#include <utils/ResourceLocator.h>
 
 namespace t850 {
 
 bool LoadSceneDescriptor(const std::string& path, SceneDescriptor& desc) {
-  std::ifstream file(path);
-  if (!file.is_open()) {
+  std::string json;
+  if (!ResourceLocator::Instance().ReadText(path, json)) {
     T8_LOG_ERROR("[SceneDescriptor] Cannot open '%s'", path.c_str());
     return false;
   }
-
-  std::stringstream ss;
-  ss << file.rdbuf();
-  std::string json = ss.str();
 
   auto ec = glz::read<glz::opts{.error_on_unknown_keys = false}>(desc, json);
   if (ec) {

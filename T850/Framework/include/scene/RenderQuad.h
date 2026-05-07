@@ -20,8 +20,10 @@
 #include <scene/PrimitiveBase.h>
 
 
+#ifndef OS_ANDROID
 #include <video/gl/GLTexture.h>
-#if defined(OS_WINDOWS) || defined(OS_ANDROID)
+#endif
+#if defined(OS_WINDOWS)
 #include <video/d3d11/D3D11Texture.h>
 #endif
 

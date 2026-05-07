@@ -21,6 +21,8 @@
 #include <vector>
 
 namespace t850 {
+  struct EngineContext;
+
 #ifndef BUFFER_OFFSET
 #define BUFFER_OFFSET(i) ((char *)NULL + (i))
 #endif
@@ -29,7 +31,7 @@ namespace t850 {
 
   class PrimitiveBase {
   public:
-    PrimitiveBase() : pScProp(0) {
+    PrimitiveBase() : pScProp(0), pEngineContext(nullptr) {
       gKey.bits = 0;
         for (int i = 0; i < MaxPrimitiveTextures; i++) {
         Textures[i] = 0;
@@ -45,6 +47,8 @@ namespace t850 {
     friend class PrimitiveInst;
 
     void SetSceneProps(SceneProps *p) { pScProp = p; }
+    void SetEngineContext(EngineContext* context) { pEngineContext = context; }
+    EngineContext* GetEngineContext() const { return pEngineContext; }
     SceneProps				*pScProp;
   protected:
     void SetGlobalKey(ShaderKey k) { gKey = k; }
@@ -88,6 +92,7 @@ namespace t850 {
 	void SetParallaxShadowEnabled(bool enabled) {
 		m_fParallaxShadowEnabled = enabled ? 1.0f : 0.0f;
 	}
+    EngineContext* pEngineContext;
   };
 }
 

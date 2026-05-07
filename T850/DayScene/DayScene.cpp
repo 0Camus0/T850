@@ -223,6 +223,7 @@ void DayScene::CreateAssets() {
   CoCHelperPass2   = m_renderGraph.GetRTHandle("CoCHelper2");
 
   //
+  PrimitiveMgr.SetEngineContext(pEngineContext);
   PrimitiveMgr.Init();
   PrimitiveMgr.SetVP(&VP);
   m_flare.Init(PrimitiveMgr);

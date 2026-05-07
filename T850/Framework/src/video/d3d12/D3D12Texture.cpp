@@ -309,7 +309,6 @@ namespace t850 {
   void D3D12Texture::DestroyAPITexture() { pTexResource.Reset(); }
 
   void D3D12Texture::SetTextureParams() {
-    ID3D12Device* device = GetNativeDevice();
     auto* driver = GetD3D12Driver();
 
     D3D12_SAMPLER_DESC sd = {};
@@ -353,11 +352,8 @@ namespace t850 {
     sd.MipLODBias = 0.0f;
     sd.ComparisonFunc = D3D12_COMPARISON_FUNC_NEVER;
 
-    // Allocate sampler in the sampler heap
-    D3D12_CPU_DESCRIPTOR_HANDLE cpuH = driver->GetHeap(D3D12Heap::SAMPLER).AllocateCPU();
-    samplerGPU = driver->GetHeap(D3D12Heap::SAMPLER).AllocateGPU();
-    device->CreateSampler(&sd, cpuH);
-    hasSampler = true;
+    samplerGPU = driver->GetOrCreateSampler(sd);
+    hasSampler = samplerGPU.ptr != 0;
 
     T8_LOG_DEBUG("[D3D12] Sampler created for '%s': filter=%d addr=%d",
                  filepath.c_str(), sd.Filter, sd.AddressU);

@@ -30,17 +30,19 @@
 #endif
 #include <core/Config.h>
 #include <core/Core.h>
+#include <core/EngineContext.h>
 #include <utils/Log.h>
 
 #define CHANGE_TO_RH 0
 #define DEBUG_MODEL 0
 extern t850::AppBase		  *pApp;
 namespace t850 {
-  extern Device*            T8Device;
-  extern DeviceContext*     T8DeviceContext;
-
   static constexpr unsigned MaterialSamplerSlot = 0;
   static constexpr unsigned EnvSamplerSlot = 4;
+
+  const EngineContext& RenderMesh::Context() const {
+    return pEngineContext ? *pEngineContext : t850::GetEngineContext();
+  }
 
   namespace {
     void AssignEffectFloat4(XVECTOR3& target, const std::vector<float>& values) {
@@ -404,6 +406,12 @@ namespace t850 {
     // a borrowed pointer — population happens at the end of Create()
     // once GPU buffers exist; release happens in Destroy().
     m_sourcePath = filename ? filename : "";
+    if (!xFile) {
+      m_asset = nullptr;
+      T8_LOG_ERROR("[RenderMesh] Load failed for '%s'", m_sourcePath.c_str());
+      return;
+    }
+
     bool created = false;
     m_asset = MeshAssetCache::Get().Acquire(m_sourcePath, &created);
     T8_LOG_INFO("[MeshAssetCache] %s '%s' (refs=%u, total assets=%zu)",
@@ -414,7 +422,23 @@ namespace t850 {
   }
 
   void RenderMesh::Create() {
+    const EngineContext& context = Context();
+    Device* device = context.device;
+    const Config* config = context.config;
+    if (!device) {
+      T8_LOG_ERROR("[RenderMesh] Create skipped for '%s': no device in engine context", m_sourcePath.c_str());
+      return;
+    }
+    if (!xFile || xFile->MeshInfo.empty() || xFile->XMeshDataBase.empty() || !xFile->XMeshDataBase[0]) {
+      T8_LOG_ERROR("[RenderMesh] Create skipped for '%s': mesh data is not loaded", m_sourcePath.c_str());
+      return;
+    }
+
     GatherInfo();
+    if (Info.empty()) {
+      T8_LOG_ERROR("[RenderMesh] Create skipped for '%s': no drawable geometry was gathered", m_sourcePath.c_str());
+      return;
+    }
     T8_LOG_INFO("Mesh Create: %zu geometries, building GPU buffers", xFile->MeshInfo.size());
 
     // Phase A step 3: detect whether the cached asset already owns its
@@ -441,7 +465,7 @@ namespace t850 {
       kTargetTrianglesPerCluster,
       CHANGE_TO_RH ? 1u : 0u
     };
-    const bool buildCullingMetadataOnLoad = g_config.cullingLoadMode == Config::CullingLoadMode::FullOnLoad;
+    const bool buildCullingMetadataOnLoad = config && config->cullingLoadMode == Config::CullingLoadMode::FullOnLoad;
     MeshPreprocessCacheData preprocessCache;
     bool usePreprocessCache = false;
     if (populatePools && buildCullingMetadataOnLoad) {
@@ -474,13 +498,13 @@ namespace t850 {
       t850::BufferDesc bdesc;
       bdesc.byteWidth = sizeof(RenderMesh::CBuffer);
       bdesc.usage = BufferUsage::DEFAULT;
-      it_MeshInfo->CB = (t850::ConstantBuffer*)T8Device->CreateBuffer(BufferType::CONSTANT, bdesc);
+      it_MeshInfo->CB = (t850::ConstantBuffer*)device->CreateBuffer(BufferType::CONSTANT, bdesc);
       bdesc.byteWidth = sizeof(RenderMesh::MeshFrameCBuffer);
-      it_MeshInfo->FrameCBGPU = (t850::ConstantBuffer*)T8Device->CreateBuffer(BufferType::CONSTANT, bdesc);
+      it_MeshInfo->FrameCBGPU = (t850::ConstantBuffer*)device->CreateBuffer(BufferType::CONSTANT, bdesc);
       bdesc.byteWidth = sizeof(RenderMesh::MeshInstanceCBuffer);
-      it_MeshInfo->InstanceCBGPU = (t850::ConstantBuffer*)T8Device->CreateBuffer(BufferType::CONSTANT, bdesc);
+      it_MeshInfo->InstanceCBGPU = (t850::ConstantBuffer*)device->CreateBuffer(BufferType::CONSTANT, bdesc);
       bdesc.byteWidth = sizeof(RenderMesh::MeshMaterialCBuffer);
-      it_MeshInfo->MaterialCBGPU = (t850::ConstantBuffer*)T8Device->CreateBuffer(BufferType::CONSTANT, bdesc);
+      it_MeshInfo->MaterialCBGPU = (t850::ConstantBuffer*)device->CreateBuffer(BufferType::CONSTANT, bdesc);
 
       int NumMaterials = static_cast<int>(pActual->MaterialList.Materials.size());
       int NumFaceIndices = static_cast<int>(pActual->MaterialList.FaceIndices.size());
@@ -623,14 +647,14 @@ namespace t850 {
 
           if (mDef->Type == xF::xEFFECTENUM::STDX_STRINGS) {
 #if DEBUG_MODEL
-            std::cout << "[" << mDef->NameParam << "]" << std::endl;
+            T8_LOG_DEBUG("[%s]", mDef->NameParam.c_str());
 #endif
             auto loadTexture = [&](const char* key, int& id, Texture** tex) -> bool {
               if (mDef->NameParam != key)
                 return false;
               std::string path = RemovePath(mDef->CaseString);
 #if DEBUG_MODEL
-              std::cout << "path[" << path << "]" << std::endl;
+              T8_LOG_DEBUG("path[%s]", path.c_str());
 #endif
               id = LoadTex(path, tex, materialTiled);
               return true;
@@ -1241,7 +1265,8 @@ namespace t850 {
   }
 
   bool RenderMesh::EnsureCullingMetadata() {
-    if (g_config.cullingLoadMode == Config::CullingLoadMode::Disabled)
+    const Config* config = Context().config;
+    if (config && config->cullingLoadMode == Config::CullingLoadMode::Disabled)
       return false;
     if (m_cullingMetadataReady)
       return true;
@@ -1273,7 +1298,7 @@ namespace t850 {
   }
 
   void RenderMesh::CreateWireframeShader() {
-    if (!g_pBaseDriver) return;
+    if (!Context().driver) return;
     m_lineRenderer.Create();
   }
 
@@ -1373,11 +1398,21 @@ namespace t850 {
   }
 
   void RenderMesh::GatherInfo() {
+    BaseDriver* driver = Context().driver;
+    if (!driver) {
+      T8_LOG_ERROR("[RenderMesh] GatherInfo skipped for '%s': no driver in engine context", m_sourcePath.c_str());
+      return;
+    }
 
-    char *vsSourceP;
-    char *fsSourceP;
+    if (!xFile || xFile->MeshInfo.empty() || xFile->XMeshDataBase.empty() || !xFile->XMeshDataBase[0]) {
+      T8_LOG_ERROR("[RenderMesh] GatherInfo skipped for '%s': mesh data is not loaded", m_sourcePath.c_str());
+      return;
+    }
+
+    char *vsSourceP = nullptr;
+    char *fsSourceP = nullptr;
     std::string vsName, fsName;
-    if (g_pBaseDriver->UsesGLSL()) {
+    if (driver->UsesGLSL()) {
       vsSourceP = file2string("Shaders/VS_Mesh.glsl");
       fsSourceP = file2string("Shaders/FS_Mesh.glsl");
       vsName = "VS_Mesh.glsl";
@@ -1390,8 +1425,16 @@ namespace t850 {
       fsName = "FS_Mesh.hlsl";
     }
 
-    std::string vstr = std::string(vsSourceP);
-    std::string fstr = std::string(fsSourceP);
+    if (!vsSourceP || !fsSourceP) {
+      T8_LOG_ERROR("[RenderMesh] GatherInfo skipped for '%s': failed loading shader source(s) %s, %s",
+                   m_sourcePath.c_str(), vsName.c_str(), fsName.c_str());
+      free(vsSourceP);
+      free(fsSourceP);
+      return;
+    }
+
+    std::string vstr(vsSourceP);
+    std::string fstr(fsSourceP);
 
     free(vsSourceP);
     free(fsSourceP);
@@ -1508,7 +1551,7 @@ namespace t850 {
 
         // Pre-compile pass variants
         bool hasHeight = matKey.has(ShaderKey::HEIGHT_MAP);
-        g_pBaseDriver->CreateShader(vstr, fstr, matKey, vsName, fsName);
+        driver->CreateShader(vstr, fstr, matKey, vsName, fsName);
 
         static const uint8_t passes[] = {
           PassType::FORWARD, PassType::GBUFFER,
@@ -1517,11 +1560,11 @@ namespace t850 {
         for (uint8_t pass : passes) {
           ShaderKey k(matKey.bits);
           k.setPass(pass);
-          g_pBaseDriver->CreateShader(vstr, fstr, k, vsName, fsName);
+          driver->CreateShader(vstr, fstr, k, vsName, fsName);
           if (hasHeight && (pass == PassType::GBUFFER || pass == PassType::FORWARD)) {
             ShaderKey kp(k.bits);
             kp.bits |= ShaderKey::PARALLAX;
-            g_pBaseDriver->CreateShader(vstr, fstr, kp, vsName, fsName);
+            driver->CreateShader(vstr, fstr, kp, vsName, fsName);
           }
         }
 
@@ -1533,8 +1576,15 @@ namespace t850 {
   }
 
   int	 RenderMesh::LoadTex(const std::string& p, Texture** tex, bool tiled) {
-    int id = g_pBaseDriver->CreateTexture(p);
-    *tex = g_pBaseDriver->GetTexture(id);
+    BaseDriver* driver = Context().driver;
+    if (!driver) {
+      T8_LOG_ERROR("Texture [%s] not loaded: no driver in engine context", p.c_str());
+      *tex = nullptr;
+      return -1;
+    }
+
+    int id = driver->CreateTexture(p);
+    *tex = driver->GetTexture(id);
 
     unsigned int params = TextBasicParams::MIPMAPS;
 
@@ -1548,11 +1598,11 @@ namespace t850 {
 
     if (id != -1) {
 #if DEBUG_MODEL
-      std::cout << "Texture Loaded index " << id << std::endl;
+      T8_LOG_DEBUG("Texture loaded index %d", id);
 #endif
     }
     else {
-      std::cout << "Texture [" << p << "] not Found" << std::endl;
+      T8_LOG_ERROR("Texture [%s] not found", p.c_str());
     }
 
     return id;
@@ -1835,6 +1885,14 @@ namespace t850 {
     if (t)
       transform = t;
 
+    const EngineContext& context = Context();
+    BaseDriver* driver = context.driver;
+    DeviceContext* deviceContext = context.deviceContext;
+    ThreadPool* threadPool = context.threadPool;
+    const Config* config = context.config;
+    if (!driver || !deviceContext)
+      return;
+
     uint8_t currentPass = gKey.getPass();
     Camera* pRenderCamera = pScProp && !pScProp->pCameras.empty() ? pScProp->pCameras[0] : nullptr;
     if (!pRenderCamera)
@@ -1850,7 +1908,7 @@ namespace t850 {
 
     std::size_t numGeometries = xFile->MeshInfo.size();
     const bool trackCullStats = currentPass == PassType::GBUFFER;
-    const bool timeCullStats = trackCullStats && g_config.flags.benchmark;
+    const bool timeCullStats = trackCullStats && config && config->flags.benchmark;
     using CullingClock = std::chrono::steady_clock;
     long long cullingCpuNs = 0;
     if (trackCullStats) {
@@ -1894,12 +1952,12 @@ namespace t850 {
 
     if (!frustumCullingEnabled) {
       std::fill(visible.begin(), visible.end(), frustumInside);
-    } else if (static_cast<int>(numGeometries) >= kParallelCullThreshold && g_threadPool) {
+    } else if (static_cast<int>(numGeometries) >= kParallelCullThreshold && threadPool) {
       XMATRIX44 worldCopy = transform;
       if (trackCullStats)
         m_cullingMeshTests += static_cast<unsigned long long>(numGeometries);
       timeCullWork([&]() -> bool {
-        g_threadPool->ParallelFor(0, static_cast<int>(numGeometries), [&](int i) {
+        threadPool->ParallelFor(0, static_cast<int>(numGeometries), [&](int i) {
           visible[i] = static_cast<uint8_t>(ClassifyAABBFrustum(Info[i].bounds, worldCopy, frustumPlanes));
         });
         return true;
@@ -1928,11 +1986,11 @@ namespace t850 {
       if (!t || slot < 0 || slot >= MeshDrawStateTracker::kMaxTrackedSlots) return;
       if (tracker.ShouldBindTexture(slot, t)) {
         if (trackCullStats) m_renderStateChanges++;
-        t->Set(*T8DeviceContext, slot, name);
+        t->Set(*deviceContext, slot, name);
       }
       // Sampler set every time (cheap); the per-shader sampler slot
       // map is consulted inside SetSampler.
-      t->SetSampler(*T8DeviceContext, samplerSlot);
+      t->SetSampler(*deviceContext, samplerSlot);
     };
 
     std::vector<std::size_t>& geometryOrder = m_geometryOrderScratch;
@@ -2063,7 +2121,7 @@ namespace t850 {
         T8_LOG_ERROR("[RenderMesh] Skipped geometry %zu: no uploaded vertex buffer", i);
         continue;
       }
-      vbToBind->Set(*T8DeviceContext, stride, offset);
+      vbToBind->Set(*deviceContext, stride, offset);
 
       // Build sorted draw order by shader key to minimize PSO switches
       std::size_t numSubsets = it_MeshInfo->SubSets.size();
@@ -2137,7 +2195,7 @@ namespace t850 {
           // Defensive fallback (shouldn't happen if Create() ran).
           FillMaterialCBFromSubset(materialCB, *sub_info);
         }
-        materialCB.ForwardParams = XVECTOR3((float)g_pBaseDriver->width, (float)g_pBaseDriver->height, Textures[7] ? 1.0f : 0.0f, mp ? mp->ior : sub_info->IOR);
+        materialCB.ForwardParams = XVECTOR3((float)driver->width, (float)driver->height, Textures[7] ? 1.0f : 0.0f, mp ? mp->ior : sub_info->IOR);
         float emissiveMul = pScProp ? pScProp->MaterialEmissiveIntensity : 1.0f;
         float transmissionMul = pScProp ? pScProp->MaterialTransmissionMultiplier : 1.0f;
         float refractionStrength = pScProp ? pScProp->MaterialRefractionStrength : 0.03f;
@@ -2194,7 +2252,7 @@ namespace t850 {
         // Phase C step 3: IB-bind dedup via process-wide tracker.
         if (tracker.ShouldBindIB(ibToBind, ibFmt)) {
           if (trackCullStats) m_renderStateChanges++;
-          ibToBind->Set(*T8DeviceContext, 0, ibFmt);
+          ibToBind->Set(*deviceContext, 0, ibFmt);
         }
 
         // Build final shader key: material features + global pass + toggles
@@ -2209,18 +2267,18 @@ namespace t850 {
           }
         }
 
-        s = g_pBaseDriver->GetShader(finalKey);
+        s = driver->GetShader(finalKey);
         if (!s) continue;
 
      //   if (s != last)
           update = true;
 
-        BaseDriver::FaceCulling prevCull = g_pBaseDriver->m_FaceCulling;
+        BaseDriver::FaceCulling prevCull = driver->m_FaceCulling;
         const bool subsetDoubleSided = mp ? (mp->doubleSided != 0) : sub_info->DoubleSided;
         bool changedCull = subsetDoubleSided && prevCull != BaseDriver::FRONT_AND_BACK;
         if (changedCull) {
           if (trackCullStats) m_renderStateChanges++;
-          g_pBaseDriver->SetCullFace(BaseDriver::FRONT_AND_BACK);
+          driver->SetCullFace(BaseDriver::FRONT_AND_BACK);
         }
 
         if (update) {
@@ -2230,24 +2288,24 @@ namespace t850 {
           // notes the shader change to invalidate texture cache
           // (per-shader rootParam map).
           if (trackCullStats) m_renderStateChanges++;
-          s->Set(*T8DeviceContext);
+          s->Set(*deviceContext);
           tracker.OnShaderChanged(s);
 
-          if (g_pBaseDriver->m_currentAPI == GraphicsApi::OPENGL) {
-            if (tracker.UpdateAndBindConstantBuffer(*T8DeviceContext, it_MeshInfo->CB, 0,
+          if (driver->m_currentAPI == GraphicsApi::OPENGL) {
+            if (tracker.UpdateAndBindConstantBuffer(*deviceContext, it_MeshInfo->CB, 0,
                                                     &it_MeshInfo->CnstBuffer,
                                                     sizeof(RenderMesh::CBuffer)) && trackCullStats)
               m_renderStateChanges++;
           } else {
-            if (tracker.UpdateAndBindConstantBuffer(*T8DeviceContext, it_MeshInfo->FrameCBGPU, 0,
+            if (tracker.UpdateAndBindConstantBuffer(*deviceContext, it_MeshInfo->FrameCBGPU, 0,
                                                     &it_MeshInfo->FrameCB,
                                                     sizeof(RenderMesh::MeshFrameCBuffer)) && trackCullStats)
               m_renderStateChanges++;
-            if (tracker.UpdateAndBindConstantBuffer(*T8DeviceContext, it_MeshInfo->InstanceCBGPU, 1,
+            if (tracker.UpdateAndBindConstantBuffer(*deviceContext, it_MeshInfo->InstanceCBGPU, 1,
                                                     &it_MeshInfo->InstanceCB,
                                                     sizeof(RenderMesh::MeshInstanceCBuffer)) && trackCullStats)
               m_renderStateChanges++;
-            if (tracker.UpdateAndBindConstantBuffer(*T8DeviceContext, it_MeshInfo->MaterialCBGPU, 2,
+            if (tracker.UpdateAndBindConstantBuffer(*deviceContext, it_MeshInfo->MaterialCBGPU, 2,
                                                     &sub_info->MaterialCB,
                                                     sizeof(RenderMesh::MeshMaterialCBuffer)) && trackCullStats)
               m_renderStateChanges++;
@@ -2283,9 +2341,9 @@ namespace t850 {
           // from a different shader path).
           if (tracker.ShouldBindEnvMap(EnvMap)) {
             if (trackCullStats) m_renderStateChanges++;
-            EnvMap->Set(*T8DeviceContext, 4, "texEnv");
+            EnvMap->Set(*deviceContext, 4, "texEnv");
           }
-          EnvMap->SetSampler(*T8DeviceContext, EnvSamplerSlot);
+          EnvMap->SetSampler(*deviceContext, EnvSamplerSlot);
         }
         if (s->key.has(ShaderKey::HEIGHT_MAP)) {
           Texture* t = matTex(MatTexSlot::Parallax); if (!t) t = sub_info->ParalaxTex;
@@ -2341,7 +2399,7 @@ namespace t850 {
         }
 
         if (trackCullStats) m_renderStateChanges++;
-        T8DeviceContext->SetPrimitiveTopology(Topology::TRIANLE_LIST);
+        deviceContext->SetPrimitiveTopology(Topology::TRIANLE_LIST);
         // Phase A.5 step 2: when using shared pools the index/vertex
         // offsets steer the draw to this submesh's allocation. Falls
         // back to (count, 0, 0) on the legacy per-subset IB path.
@@ -2375,7 +2433,7 @@ namespace t850 {
                 m_culledClusters++;
               continue;
             }
-            T8DeviceContext->DrawIndexed(cluster.indexCount,
+            deviceContext->DrawIndexed(cluster.indexCount,
                                          sub_info->ibPoolAlloc.offsetElems + cluster.indexOffset,
                                          it_MeshInfo->vbPoolAlloc.offsetElems);
             if (trackCullStats) {
@@ -2387,7 +2445,7 @@ namespace t850 {
             drewSubset = true;
           }
         } else if (sub_info->ibPoolAlloc.IsValid() && it_MeshInfo->vbPoolAlloc.IsValid()) {
-          T8DeviceContext->DrawIndexed(sub_info->ibPoolAlloc.count,
+          deviceContext->DrawIndexed(sub_info->ibPoolAlloc.count,
                                        sub_info->ibPoolAlloc.offsetElems,
                                        it_MeshInfo->vbPoolAlloc.offsetElems);
           if (trackCullStats) {
@@ -2396,7 +2454,7 @@ namespace t850 {
           }
           drewSubset = true;
         } else {
-          T8DeviceContext->DrawIndexed(sub_info->NumVertex, 0, 0);
+          deviceContext->DrawIndexed(sub_info->NumVertex, 0, 0);
           if (trackCullStats) {
             m_drawCalls++;
             m_drawnIndices += sub_info->NumVertex;
@@ -2405,7 +2463,7 @@ namespace t850 {
         }
         if (changedCull) {
           if (trackCullStats) m_renderStateChanges++;
-          g_pBaseDriver->SetCullFace(prevCull);
+          driver->SetCullFace(prevCull);
         }
         if (trackCullStats && drewSubset)
           m_drawnSubsets++;

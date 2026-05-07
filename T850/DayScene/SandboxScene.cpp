@@ -296,6 +296,7 @@ void SandboxScene::CreateAssets() {
   AdaptedLumCurrentPass = m_renderGraph.GetRTHandle("AdaptedLumCurrent");
   AdaptedLumPrevPass    = m_renderGraph.GetRTHandle("AdaptedLumPrev");
 
+  PrimitiveMgr.SetEngineContext(pEngineContext);
   PrimitiveMgr.Init();
   PrimitiveMgr.SetVP(&VP);
 

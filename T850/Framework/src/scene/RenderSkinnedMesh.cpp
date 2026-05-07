@@ -224,7 +224,7 @@ namespace t850 {
 
     // Recompile shaders with skinning enabled
     {
-      char *vsSourceP, *fsSourceP;
+      char *vsSourceP = nullptr, *fsSourceP = nullptr;
       std::string vsName, fsName;
       if (g_pBaseDriver->UsesGLSL()) {
         vsSourceP = file2string("Shaders/VS_Mesh.glsl");
@@ -235,6 +235,14 @@ namespace t850 {
         fsSourceP = file2string("Shaders/FS_Mesh.hlsl");
         vsName = "VS_Mesh.hlsl"; fsName = "FS_Mesh.hlsl";
       }
+      if (!vsSourceP || !fsSourceP) {
+        T8_LOG_ERROR("[SkinnedMesh] Create skipped: failed loading shader source(s) %s, %s",
+                     vsName.c_str(), fsName.c_str());
+        free(vsSourceP);
+        free(fsSourceP);
+        return;
+      }
+
       std::string vstr(vsSourceP), fstr(fsSourceP);
       free(vsSourceP); free(fsSourceP);
 
@@ -257,7 +265,7 @@ namespace t850 {
 
     // Compile wireframe shader (VS_Mesh + FS_WireMesh with skinning)
     {
-      char *vsWireP, *fsWireP;
+      char *vsWireP = nullptr, *fsWireP = nullptr;
       std::string vsWireName, fsWireName;
       if (g_pBaseDriver->UsesGLSL()) {
         vsWireP = file2string("Shaders/VS_Mesh.glsl");
@@ -268,16 +276,23 @@ namespace t850 {
         fsWireP = file2string("Shaders/FS_WireMesh.hlsl");
         vsWireName = "VS_Mesh.hlsl"; fsWireName = "FS_WireMesh.hlsl";
       }
-      std::string vsWStr(vsWireP), fsWStr(fsWireP);
-      free(vsWireP); free(fsWireP);
+      if (!vsWireP || !fsWireP) {
+        T8_LOG_ERROR("[SkinnedMesh] Wireframe shader skipped: failed loading shader source(s) %s, %s",
+                     vsWireName.c_str(), fsWireName.c_str());
+        free(vsWireP);
+        free(fsWireP);
+      } else {
+        std::string vsWStr(vsWireP), fsWStr(fsWireP);
+        free(vsWireP); free(fsWireP);
 
-      ShaderKey wireKey(0);
-      wireKey.bits |= skinBit;
-      if (!Info.empty() && !Info[0].SubSets.empty())
-        wireKey.bits |= (Info[0].SubSets[0].key.bits & ShaderKey::VERTEX_ATTRIB_MASK);
-      wireKey.setPass(32); // unused pass type — avoids collision with mesh shaders
-      g_pBaseDriver->CreateShader(vsWStr, fsWStr, wireKey, vsWireName, fsWireName);
-      m_wireShader = g_pBaseDriver->GetShader(wireKey);
+        ShaderKey wireKey(0);
+        wireKey.bits |= skinBit;
+        if (!Info.empty() && !Info[0].SubSets.empty())
+          wireKey.bits |= (Info[0].SubSets[0].key.bits & ShaderKey::VERTEX_ATTRIB_MASK);
+        wireKey.setPass(32); // unused pass type — avoids collision with mesh shaders
+        g_pBaseDriver->CreateShader(vsWStr, fsWStr, wireKey, vsWireName, fsWireName);
+        m_wireShader = g_pBaseDriver->GetShader(wireKey);
+      }
     }
 
     // Allocate constant buffers — base CBuffer only (bones go via texture now)

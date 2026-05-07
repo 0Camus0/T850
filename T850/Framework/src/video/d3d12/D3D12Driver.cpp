@@ -18,6 +18,7 @@
 #include <cassert>
 #include <chrono>
 #include <filesystem>
+#include <cstring>
 
 #pragma comment(lib, "d3d12.lib")
 #pragma comment(lib, "dxgi.lib")
@@ -33,6 +34,36 @@ namespace t850 {
   // ══════════════════════════════════════════════════════
   static D3D12Driver* GetD3D12Driver() { return static_cast<D3D12Driver*>(g_pBaseDriver); }
   static ID3D12Device* GetNativeDevice() { return static_cast<D3D12Device*>(T8Device)->GetNativeDevice(); }
+
+  namespace {
+    uint32_t FloatBits(float value) {
+      uint32_t bits = 0;
+      std::memcpy(&bits, &value, sizeof(bits));
+      return bits;
+    }
+
+    void HashCombine(uint64_t& hash, uint64_t value) {
+      hash ^= value + 0x9e3779b97f4a7c15ull + (hash << 6) + (hash >> 2);
+    }
+
+    uint64_t HashSamplerDesc(const D3D12_SAMPLER_DESC& desc) {
+      uint64_t hash = 1469598103934665603ull;
+      HashCombine(hash, static_cast<uint64_t>(desc.Filter));
+      HashCombine(hash, static_cast<uint64_t>(desc.AddressU));
+      HashCombine(hash, static_cast<uint64_t>(desc.AddressV));
+      HashCombine(hash, static_cast<uint64_t>(desc.AddressW));
+      HashCombine(hash, FloatBits(desc.MipLODBias));
+      HashCombine(hash, desc.MaxAnisotropy);
+      HashCombine(hash, static_cast<uint64_t>(desc.ComparisonFunc));
+      HashCombine(hash, FloatBits(desc.BorderColor[0]));
+      HashCombine(hash, FloatBits(desc.BorderColor[1]));
+      HashCombine(hash, FloatBits(desc.BorderColor[2]));
+      HashCombine(hash, FloatBits(desc.BorderColor[3]));
+      HashCombine(hash, FloatBits(desc.MinLOD));
+      HashCombine(hash, FloatBits(desc.MaxLOD));
+      return hash;
+    }
+  }
 
 
   // ══════════════════════════════════════════════════════
@@ -510,7 +541,7 @@ namespace t850 {
     ID3D12Device* device = static_cast<D3D12Device*>(T8Device)->GetNativeDevice();
     m_heaps[D3D12Heap::CBV_SRV_UAV_VISIBLE].Create(device, D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV, 65536, true);
     m_heaps[D3D12Heap::CBV_SRV_UAV_NOT_VISIBLE].Create(device, D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV, 512, false);
-    m_heaps[D3D12Heap::SAMPLER].Create(device, D3D12_DESCRIPTOR_HEAP_TYPE_SAMPLER, 256, true);
+    m_heaps[D3D12Heap::SAMPLER].Create(device, D3D12_DESCRIPTOR_HEAP_TYPE_SAMPLER, 2048, true);
     m_heaps[D3D12Heap::RTV].Create(device, D3D12_DESCRIPTOR_HEAP_TYPE_RTV, 128, false);
     m_heaps[D3D12Heap::DSV].Create(device, D3D12_DESCRIPTOR_HEAP_TYPE_DSV, 64, false);
     T8_LOG_INFO("[D3D12] Descriptor heaps created (%d)", D3D12Heap::MAX);
@@ -543,16 +574,43 @@ namespace t850 {
   }
 
   void D3D12Driver::CreateDefaultSampler() {
-    ID3D12Device* device = static_cast<D3D12Device*>(T8Device)->GetNativeDevice();
     D3D12_SAMPLER_DESC sd = {};
     sd.Filter = D3D12_FILTER_ANISOTROPIC;
     sd.AddressU = sd.AddressV = sd.AddressW = D3D12_TEXTURE_ADDRESS_MODE_CLAMP;
     sd.MaxAnisotropy = 16; sd.MaxLOD = D3D12_FLOAT32_MAX;
     sd.ComparisonFunc = D3D12_COMPARISON_FUNC_NEVER;
-    m_defaultSamplerCPU = m_heaps[D3D12Heap::SAMPLER].AllocateCPU();
-    m_defaultSamplerGPU = m_heaps[D3D12Heap::SAMPLER].AllocateGPU();
-    device->CreateSampler(&sd, m_defaultSamplerCPU);
-    T8_LOG_INFO("[D3D12] Default sampler created (aniso x16)");
+    m_defaultSamplerGPU = GetOrCreateSampler(sd);
+    T8_LOG_INFO("[D3D12] Default sampler created (aniso x16) gpu=0x%llX", m_defaultSamplerGPU.ptr);
+  }
+
+  D3D12_GPU_DESCRIPTOR_HANDLE D3D12Driver::GetOrCreateSampler(const D3D12_SAMPLER_DESC& desc) {
+    const uint64_t key = HashSamplerDesc(desc);
+    auto it = m_samplerCache.find(key);
+    if (it != m_samplerCache.end())
+      return it->second;
+
+    ID3D12Device* device = static_cast<D3D12Device*>(T8Device)->GetNativeDevice();
+    D3D12_CPU_DESCRIPTOR_HANDLE cpu = m_heaps[D3D12Heap::SAMPLER].AllocateCPU();
+    if (cpu.ptr == 0) {
+      T8_LOG_ERROR("[D3D12] Sampler allocation failed; using default sampler gpu=0x%llX", m_defaultSamplerGPU.ptr);
+      return m_defaultSamplerGPU;
+    }
+
+    D3D12_GPU_DESCRIPTOR_HANDLE gpu = m_heaps[D3D12Heap::SAMPLER].AllocateGPU();
+    if (gpu.ptr == 0) {
+      T8_LOG_ERROR("[D3D12] Sampler GPU handle allocation failed; using default sampler");
+      return m_defaultSamplerGPU;
+    }
+
+    device->CreateSampler(&desc, cpu);
+    m_samplerCache[key] = gpu;
+    if (m_defaultSamplerCPU.ptr == 0) {
+      m_defaultSamplerCPU = cpu;
+    }
+    T8_LOG_DEBUG("[D3D12] Sampler cached key=0x%016llX gpu=0x%llX count=%llu",
+                 static_cast<unsigned long long>(key), gpu.ptr,
+                 static_cast<unsigned long long>(m_heaps[D3D12Heap::SAMPLER].GetCurrentIndex()));
+    return gpu;
   }
 
   void D3D12Driver::InitDriver() {

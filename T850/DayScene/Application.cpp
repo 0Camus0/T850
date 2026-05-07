@@ -509,6 +509,7 @@ void App::CreateAssets() {
   }
   m_actualScene->CreateAssets();
   m_textRender.LoadFromFile(36,"Fonts/Martius-LV9L4.ttf",512.0f);
+  PrimitiveMgr.SetEngineContext(&t850::GetEngineContext());
   PrimitiveMgr.Init();
   PrimitiveMgr.SetVP(&VP);
   PrimitiveMgr.SetSceneProps(&SceneProp);

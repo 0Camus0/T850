@@ -112,8 +112,6 @@ jobs:
 
   android:
     runs-on: windows-latest
-    env:
-      T850_ANDROID_SDK: ${{ runner.temp }}\AndroidSdk
     strategy:
       fail-fast: false
       matrix:
@@ -175,11 +173,11 @@ jobs:
 
       - name: Setup Android toolchain
         shell: cmd
-        run: SetupAndroidToolchain.bat --sdk "%T850_ANDROID_SDK%" --skip-winget --android-abis ${{ matrix.abi }}
+        run: SetupAndroidToolchain.bat --sdk "%RUNNER_TEMP%\AndroidSdk" --skip-winget --android-abis ${{ matrix.abi }}
 
       - name: Build Android Release APK
         shell: cmd
-        run: BuildAndroid.bat Release --sdk "%T850_ANDROID_SDK%" --abi ${{ matrix.abi }}
+        run: BuildAndroid.bat Release --sdk "%RUNNER_TEMP%\AndroidSdk" --abi ${{ matrix.abi }}
 
       - name: Stage Android APK
         shell: pwsh
@@ -211,7 +209,7 @@ jobs:
             throw 'ANDROID_KEY_ALIAS is required when ANDROID_KEYSTORE_BASE64 is provided.'
           }
 
-          $sdk = $env:T850_ANDROID_SDK
+          $sdk = Join-Path $env:RUNNER_TEMP 'AndroidSdk'
           $buildTools = Get-ChildItem (Join-Path $sdk 'build-tools') -Directory | Sort-Object Name -Descending | Select-Object -First 1
           if (-not $buildTools) {
             throw "Android build-tools were not found under $sdk."

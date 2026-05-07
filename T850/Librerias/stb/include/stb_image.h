@@ -4010,6 +4010,7 @@ static int stbi__create_png_image_raw(stbi__png *a, stbi_uc *raw, stbi__uint32 r
       if (depth < 8) {
          STBI_ASSERT(img_width_bytes <= x);
          cur += x*out_n - img_width_bytes; // store output to the rightmost img_len bytes, so we can decode in place
+         prior += x*out_n - img_width_bytes;
          filter_bytes = 1;
          width = img_width_bytes;
       }

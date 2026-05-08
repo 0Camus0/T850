@@ -7,6 +7,10 @@ struct SDL_Window;
 #ifdef OS_WINDOWS
 struct ID3D12DescriptorHeap;
 #endif
+#ifdef OS_ANDROID
+struct AInputEvent;
+struct ANativeWindow;
+#endif
 
 namespace t850 {
 
@@ -22,12 +26,17 @@ namespace t850 {
 
     void NewFrame(bool createDockspace);
     void Render();
+    void BuildDrawData();
+    void RenderDrawData();
 
     bool IsReady() const { return m_inited; }
     bool WantsKeyboard() const;
     bool WantsMouse() const;
     float ConsumeWheelDelta();
     void AddWheelDelta(float delta) { m_wheelAccum += delta; }
+#ifdef OS_ANDROID
+    bool HandleAndroidInputEvent(AInputEvent* event);
+#endif
 
   private:
     bool m_inited = false;
@@ -38,6 +47,9 @@ namespace t850 {
 
 #ifdef OS_WINDOWS
     ID3D12DescriptorHeap* m_d3d12SrvHeap = nullptr;
+#endif
+#ifdef OS_ANDROID
+    ANativeWindow* m_androidWindow = nullptr;
 #endif
   };
 

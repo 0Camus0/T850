@@ -192,6 +192,7 @@ namespace t850 {
 
   int32_t AndroidFramework::OnInputEvent(AInputEvent* event) {
     if (!pBaseApp || !event) return 0;
+    const bool appHandled = pBaseApp->HandleAndroidInputEvent(event);
     if (AInputEvent_getType(event) == AINPUT_EVENT_TYPE_MOTION) {
       const int32_t rawAction = AMotionEvent_getAction(event);
       const int32_t action = rawAction & AMOTION_EVENT_ACTION_MASK;
@@ -314,6 +315,7 @@ namespace t850 {
       const int32_t key = AKeyEvent_getKeyCode(event);
       const int32_t action = AKeyEvent_getAction(event);
       if (key == AKEYCODE_BACK) {
+        if (appHandled) return 1;
         if (action == AKEY_EVENT_ACTION_DOWN) {
           pBaseApp->IManager.KeyStates[0][T800K_ESCAPE] = true;
         } else if (action == AKEY_EVENT_ACTION_UP) {

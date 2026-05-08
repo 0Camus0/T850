@@ -11,9 +11,7 @@
 #ifdef OS_ANDROID
 #include <video/vulkan/VulkanDriver.h>
 #endif
-#ifndef OS_ANDROID
 #include <imgui/DevGuiContext.h>
-#endif
 #include <iostream>
 #include <fstream>
 #include <string>
@@ -1241,8 +1239,8 @@ void SandboxScene::OnDraw() {
   }
 #endif
 
-  // Draw wireframe and skeleton overlays.
-  if (Meshes[0].pBase) {
+  auto drawMeshDebugOverlays = [this]() {
+    if (!Meshes[0].pBase) return;
     RenderSkinnedMesh* skinned = dynamic_cast<RenderSkinnedMesh*>(Meshes[0].pBase);
     if (skinned && skinned->HasSkinData()) {
       if (m_showWireframe) {
@@ -1272,7 +1270,17 @@ void SandboxScene::OnDraw() {
       pFramework->pVideoDriver->SetDepthStencilState(BaseDriver::NONE);
       mesh->DrawWireframe();
     }
+  };
+
+#ifdef OS_ANDROID
+  if (m_showWireframe || m_showSkeleton) {
+    if (auto* vkDriver = static_cast<VulkanDriver*>(pFramework->pVideoDriver)) {
+      vkDriver->SetPrePresentOverlayCallback(drawMeshDebugOverlays);
+    }
   }
+#else
+  drawMeshDebugOverlays();
+#endif
 
   DrawSelectedDirectionalLightArrow();
 
@@ -1455,7 +1463,6 @@ void SandboxScene::PopulateGUI(t850::GUIManager& gui) {
   }
 }
 
-#ifndef OS_ANDROID
 void SandboxScene::DrawDevGui(t850::DevGuiContext& gui) {
   if (m_guiSetup.descriptor.name.empty()) {
     m_guiSetup.Load("Scenes/SandboxScene.json");
@@ -1877,9 +1884,6 @@ void SandboxScene::DrawDevGui(t850::DevGuiContext& gui) {
     }
   }
 }
-#else
-void SandboxScene::DrawDevGui(t850::DevGuiContext&) {}
-#endif
 
 void SandboxScene::SyncToGUI(t850::GUIManager& gui) {
   for (auto& sp : gui.GetSliderPairs()) {

@@ -39,6 +39,7 @@ namespace t850 {
     int32_t OnInputEvent(AInputEvent* event);
 
     bool IsAlive() const { return m_alive; }
+    ANativeWindow* GetNativeWindow() const { return m_window; }
 
   private:
     void CreateVulkanRuntime();

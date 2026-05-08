@@ -32,6 +32,7 @@
 #include <core/Config.h>
 #include <utils/Log.h>
 #include <utils/ConfigRuntime.h>
+#include <utils/ShaderPermutationDump.h>
 #include <debug/Profiler.h>
 #include <utils/gltf/GLTFLoader.h>
 #include <utils/gltf/GLTFAccessor.h>
@@ -153,6 +154,9 @@ int main(int arg,char ** args){
     t850::g_config.logFile.empty() ? nullptr : t850::g_config.logFile.c_str()
   );
   t850::Log::SetSessionTag(apiTag);
+  if (t850::g_config.flags.dumpShaderPermutations) {
+    t850::ShaderPermutationDump::Begin(t850::g_config.shaderPermutationOutputPath);
+  }
 
 	pApp = new App;
 #ifdef OS_LINUX
@@ -163,7 +167,11 @@ int main(int arg,char ** args){
 	pFrameWork = new t850::Win32Framework((t850::AppBase*)pApp);
 	pFrameWork->InitGlobalVars();
 	pFrameWork->OnCreateApplication(desc);
-	pFrameWork->UpdateApplication();
+  if (t850::g_config.flags.dumpShaderPermutations) {
+    t850::ShaderPermutationDump::Flush();
+  } else {
+	  pFrameWork->UpdateApplication();
+  }
 	pFrameWork->OnDestroyApplication();
 #endif
 

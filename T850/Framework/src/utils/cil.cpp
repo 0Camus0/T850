@@ -1,5 +1,6 @@
 #include <pch.h>
 #include <utils/cil.h>
+#include <utils/ResourceLocator.h>
 
 #define STB_IMAGE_IMPLEMENTATION
 #include <stb_image.h>
@@ -8,6 +9,7 @@
 #include <cstdint>
 #include <cstring>
 #include <filesystem>
+#include <sstream>
 #include <vector>
 
 #if defined(OS_WINDOWS)
@@ -159,7 +161,7 @@ bool Load16BitPngAsRGBA16F(const char* filename, int* x, int* y, int* channels, 
 #endif
 }
 
-void checkformat(std::ifstream &in_, unsigned int &prop) {
+void checkformat(std::istream &in_, unsigned int &prop) {
 	std::streampos begPos = in_.tellg();
 
 	in_.seekg(begPos);
@@ -333,7 +335,7 @@ void pvr_set_channel_type(uint32_t& c_type, unsigned int &prop) {
 	}
 }
 
-unsigned char*	load_pvr(ifstream &in_, int &x, int &y, unsigned int &mipmaps, unsigned int &prop, unsigned int &buffersize) {
+unsigned char*	load_pvr(std::istream &in_, int &x, int &y, unsigned int &mipmaps, unsigned int &prop, unsigned int &buffersize) {
 	pvr_v3_header header;
 	in_.seekg(0);
 	in_.read((char*)&header, sizeof(pvr_v3_header));
@@ -491,7 +493,7 @@ void ktx_set_pix_format(unsigned int &format, unsigned int &prop) {
 	}
 }
 
-unsigned char*	load_ktx(ifstream &in_, int &x, int &y, unsigned int &mipmaps, unsigned int &prop, unsigned int &buffersize) {
+unsigned char*	load_ktx(std::istream &in_, int &x, int &y, unsigned int &mipmaps, unsigned int &prop, unsigned int &buffersize) {
 	ktx_header	header;
 	in_.seekg(0);
 	in_.read((char*)&header, sizeof(ktx_header));
@@ -589,7 +591,7 @@ void dds_set_pix_format(unsigned int &format, unsigned int &bppinfo, unsigned in
 	}
 }
 
-unsigned char*	load_dds(ifstream &in_, int &x, int &y, unsigned int &mipmaps, unsigned int &prop, unsigned int &buffersize) {
+unsigned char*	load_dds(std::istream &in_, int &x, int &y, unsigned int &mipmaps, unsigned int &prop, unsigned int &buffersize) {
 	char ddstr[4];
 	DDS_HEADER header;
 	in_.seekg(0, std::ios::end);
@@ -601,7 +603,6 @@ unsigned char*	load_dds(ifstream &in_, int &x, int &y, unsigned int &mipmaps, un
 	FileSize -= sizeof(DDS_HEADER);
 
 	if (header.dwSize != 124) {
-		in_.close();
 		prop = CIL_DDS_MALFORMED;
 		return 0;
 	}
@@ -672,7 +673,6 @@ unsigned char*	load_dds(ifstream &in_, int &x, int &y, unsigned int &mipmaps, un
 	FileSize -= finalSize;
 
 	if (FileSize != 0) {
-		in_.close();
 		exit(666);
 	}
 
@@ -700,13 +700,18 @@ void cil_free_buffer(unsigned char *pbuff, unsigned int prop) {
 
 unsigned char*	cil_load(const char* filename, int *x, int *y, unsigned int *mipmaps, unsigned int *props, unsigned int *buffersize, unsigned int ForceResizeFactor) {
 
-	ifstream in_(filename, ios::binary | ios::in);
-
-	if (!in_.good()) {
-		in_.close();
+	std::vector<unsigned char> bytes;
+	if (!t850::ResourceLocator::Instance().ReadBinary(filename, bytes)) {
 		*props = CIL_NOT_FOUND;
 		return 0;
 	}
+
+	if (bytes.empty()) {
+		*props = CIL_NOT_FOUND;
+		return 0;
+	}
+	std::string streamData(reinterpret_cast<const char*>(bytes.data()), bytes.size());
+	std::istringstream in_(streamData, std::ios::in | std::ios::binary);
 
 	int x_ = 0, y_ = 0;
 	unsigned int props_ = 0;
@@ -721,7 +726,6 @@ unsigned char*	cil_load(const char* filename, int *x, int *y, unsigned int *mipm
 		*y = y_;
 		*buffersize = buffer_size_;
 		*mipmaps = mipmaps_;
-		in_.close();
 		return buffer;
 	}
 	else if (props_&CIL_KTX) {
@@ -731,7 +735,6 @@ unsigned char*	cil_load(const char* filename, int *x, int *y, unsigned int *mipm
 		*y = y_;
 		*buffersize = buffer_size_;
 		*mipmaps = mipmaps_;
-		in_.close();
 		return buffer;
 	}
 	else if (props_&CIL_DDS) {
@@ -741,23 +744,21 @@ unsigned char*	cil_load(const char* filename, int *x, int *y, unsigned int *mipm
 		*y = y_;
 		*buffersize = buffer_size_;
 		*mipmaps = mipmaps_;
-		in_.close();
 		return buffer;
 	}
 #if CIL_CALL_STB
 	else if (props_ == CIL_FORWARD_TO_STB) {
-		in_.close();
 		int channels;
 		if (Is16BitPngFile(filename)) {
 #if defined(OS_WINDOWS)
 			unsigned char* halfData = nullptr;
 			if (Load16BitPngAsRGBA16F(filename, x, y, &channels, &buffer_size_, &halfData)) {
-			props_ = CIL_RAW | CIL_RGBA | CIL_HALF_FLOAT;
-			*mipmaps = 1;
-			*buffersize = buffer_size_;
-			*props = props_;
-			T8_LOG_INFO("CIL loaded 16-bit image as RGBA16F: '%s' (%dx%d, decodedChannels=%d)", filename, *x, *y, channels);
-			return halfData;
+				props_ = CIL_RAW | CIL_RGBA | CIL_HALF_FLOAT;
+				*mipmaps = 1;
+				*buffersize = buffer_size_;
+				*props = props_;
+				T8_LOG_INFO("CIL loaded 16-bit image as RGBA16F: '%s' (%dx%d, decodedChannels=%d)", filename, *x, *y, channels);
+				return halfData;
 			}
 #endif
 			T8_LOG_ERROR("CIL failed to load 16-bit PNG '%s'", filename);
@@ -766,7 +767,7 @@ unsigned char*	cil_load(const char* filename, int *x, int *y, unsigned int *mipm
 		}
 
 		props_ = CIL_LOADED_WITH_STB | CIL_RAW;
-		unsigned char * buffer = stbi_load(filename, x, y, &channels, 4);
+		unsigned char * buffer = stbi_load_from_memory(bytes.data(), static_cast<int>(bytes.size()), x, y, &channels, 4);
 		props_ |= CIL_RGBA;            // stbi_load always returns 4 channels (forced above)
 		*mipmaps = 1;
 		*buffersize = (*x)*(*y) * 4;   // buffer is always 4 bytes/pixel
@@ -796,7 +797,6 @@ unsigned char*	cil_load(const char* filename, int *x, int *y, unsigned int *mipm
 	}
 #else
 	else if (props_ == CIL_NOT_SUPPORTED_FILE) {
-		in_.close();
 		return 0;
 	}
 #endif

@@ -14,6 +14,7 @@
 
 #include <utils/XDataBase.h>
 #include <utils/Log.h>
+#include <utils/ResourceLocator.h>
 
 using std::ifstream;
 using std::ios;
@@ -150,22 +151,20 @@ namespace xF {
 		std::string Path = "";
 		Path += FileName;
 
-		ifstream	inFile(Path.c_str(), ios::binary | ios::in);
-		if (!inFile.good()) {
-			inFile.close();
+		std::vector<unsigned char> bytes;
+		if (!t850::ResourceLocator::Instance().ReadBinary(Path, bytes)) {
 			return false;
 		}
 
-		inFile.seekg(0, std::ios::end);
-		unsigned int Size = static_cast<unsigned int>(inFile.tellg());
-		inFile.seekg(0, std::ios::beg);
+		unsigned int Size = static_cast<unsigned int>(bytes.size());
 
 
 		pData = new char[Size + 1];
 		pData[Size] = '\0';
 
-		inFile.read(pData, Size);
-		inFile.close();
+		if (Size > 0) {
+			memcpy(pData, bytes.data(), Size);
+		}
 
 #if USE_STRING_STREAM
 		m_ActualStream.clear();

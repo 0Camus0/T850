@@ -8,6 +8,9 @@
 #include <scene/SceneDescriptor.h>
 #include <scene/IBLResources.h>
 #include <core/Config.h>
+#ifdef OS_ANDROID
+#include <video/vulkan/VulkanDriver.h>
+#endif
 #include <imgui/DevGuiContext.h>
 #include <iostream>
 #include <fstream>
@@ -375,6 +378,7 @@ void SandboxScene::OnDestoryScene() {
 }
 
 void SandboxScene::DestroyAssets() {
+  m_debugText.Destroy();
   if (m_lightArrowVB) m_lightArrowVB->release();
   if (m_lightArrowIB) m_lightArrowIB->release();
   m_lightArrowVB = nullptr;
@@ -531,7 +535,10 @@ void SandboxScene::OnInput(InputManager* IManager) {
   float dx = static_cast<float>(IManager->xDelta);
   float dy = static_cast<float>(IManager->yDelta);
 
-  const bool imguiWantsMouse = ImGui::GetCurrentContext() && ImGui::GetIO().WantCaptureMouse;
+  bool imguiWantsMouse = false;
+#ifndef OS_ANDROID
+  imguiWantsMouse = ImGui::GetCurrentContext() && ImGui::GetIO().WantCaptureMouse;
+#endif
   if (!imguiWantsMouse && IManager->PressedKey(T800K_LCTRL) && IManager->PressedMouseButton(0)) {
     if (AdjustSelectedDirectionalLightFromMouse(dx, dy)) return;
   }
@@ -1218,15 +1225,22 @@ void SandboxScene::OnDraw() {
     }
   }
 
-  Quads[7].SetTexture(pFramework->pVideoDriver->GetRTTexture(selected, attachment), 0);
+  pFramework->pVideoDriver->SetBlendState(BaseDriver::BLEND_DEFAULT);
+  pFramework->pVideoDriver->SetDepthStencilState(BaseDriver::NONE);
+  Quads[0].SetTexture(pFramework->pVideoDriver->GetRTTexture(selected, attachment), 0);
   ShaderKey finalKey(0);
   finalKey.setPass(PassType::FSQUAD_1_TEX);
   finalKey.bits |= ShaderKey::HAS_TEXCOORD0;
-  Quads[7].SetGlobalKey(finalKey);
-  Quads[7].Draw();
+  Quads[0].SetGlobalKey(finalKey);
+  Quads[0].Draw();
+#ifdef OS_ANDROID
+  if (auto* vkDriver = static_cast<VulkanDriver*>(pFramework->pVideoDriver)) {
+    vkDriver->SetLatePresentSource(selected, attachment);
+  }
+#endif
 
-  // Draw wireframe and skeleton overlays.
-  if (Meshes[0].pBase) {
+  auto drawMeshDebugOverlays = [this]() {
+    if (!Meshes[0].pBase) return;
     RenderSkinnedMesh* skinned = dynamic_cast<RenderSkinnedMesh*>(Meshes[0].pBase);
     if (skinned && skinned->HasSkinData()) {
       if (m_showWireframe) {
@@ -1256,7 +1270,17 @@ void SandboxScene::OnDraw() {
       pFramework->pVideoDriver->SetDepthStencilState(BaseDriver::NONE);
       mesh->DrawWireframe();
     }
+  };
+
+#ifdef OS_ANDROID
+  if (m_showWireframe || m_showSkeleton) {
+    if (auto* vkDriver = static_cast<VulkanDriver*>(pFramework->pVideoDriver)) {
+      vkDriver->SetPrePresentOverlayCallback(drawMeshDebugOverlays);
+    }
   }
+#else
+  drawMeshDebugOverlays();
+#endif
 
   DrawSelectedDirectionalLightArrow();
 

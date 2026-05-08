@@ -22,8 +22,11 @@ void Timer::Init() {
 	StartTime.QuadPart = 0;
 	Dt = 0.0;
 	QueryPerformanceCounter(&StartTime);
-#elif defined(OS_LINUX)
+#elif defined(OS_LINUX) || defined(OS_ANDROID)
     gettimeofday(&StartTime,0);
+    Frequency = 0.0;
+    Dt = 0.0;
+    DtSecs = 0.0;
 #endif
 }
 
@@ -34,7 +37,7 @@ void Timer::Update() {
 	Dt = double(end.QuadPart - StartTime.QuadPart) / Frequency;
 	QueryPerformanceCounter(&StartTime);
 	DtSecs = (Dt / 1000000.0);
-#elif defined(OS_LINUX)
+#elif defined(OS_LINUX) || defined(OS_ANDROID)
     timeval actual;
     gettimeofday(&actual,0);
     DtSecs = double( (actual.tv_sec - StartTime.tv_sec) + (actual.tv_usec - StartTime.tv_usec)/1000000.0);

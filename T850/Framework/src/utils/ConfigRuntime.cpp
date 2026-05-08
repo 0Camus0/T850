@@ -5,6 +5,7 @@
 #include <pch.h>
 
 #include <utils/ConfigRuntime.h>
+#include <utils/ResourceLocator.h>
 
 #include <algorithm>
 #include <cerrno>
@@ -37,12 +38,7 @@ std::string ToLower(std::string value) {
 }
 
 bool ReadTextFile(const std::filesystem::path& path, std::string& content) {
-  std::ifstream file(path, std::ios::in | std::ios::binary);
-  if (!file.is_open()) return false;
-  std::ostringstream buffer;
-  buffer << file.rdbuf();
-  content = buffer.str();
-  return true;
+  return ResourceLocator::Instance().ReadText(path.string(), content);
 }
 
 std::filesystem::path ResolveConfigPath(const std::string& value, const char* executablePath) {
@@ -214,6 +210,8 @@ void ApplyConfigJson(const RuntimeConfigJson& json, Config& cfg) {
   if (json.offscreen) cfg.flags.offscreen = *json.offscreen;
   if (json.offscreenDebug) cfg.flags.offscreenDebug = *json.offscreenDebug;
   if (json.glOffscreenFlushMode) cfg.glOffscreenFlushMode = ParseGLOffscreenFlushMode(*json.glOffscreenFlushMode, cfg.glOffscreenFlushMode);
+  if (json.dumpShaderPermutations) cfg.flags.dumpShaderPermutations = *json.dumpShaderPermutations;
+  if (json.shaderPermutationOutput) cfg.shaderPermutationOutputPath = StripQuotes(*json.shaderPermutationOutput);
   if (json.orbitYaw) {
     cfg.orbitYawOverride = true;
     cfg.orbitYaw = *json.orbitYaw;
@@ -263,6 +261,8 @@ void ApplyConfigJson(const RuntimeConfigJson& json, Config& cfg) {
     if (devTools.offscreen) cfg.flags.offscreen = *devTools.offscreen;
     if (devTools.offscreenDebug) cfg.flags.offscreenDebug = *devTools.offscreenDebug;
     if (devTools.glOffscreenFlushMode) cfg.glOffscreenFlushMode = ParseGLOffscreenFlushMode(*devTools.glOffscreenFlushMode, cfg.glOffscreenFlushMode);
+    if (devTools.dumpShaderPermutations) cfg.flags.dumpShaderPermutations = *devTools.dumpShaderPermutations;
+    if (devTools.shaderPermutationOutput) cfg.shaderPermutationOutputPath = StripQuotes(*devTools.shaderPermutationOutput);
   }
 }
 
@@ -525,6 +525,12 @@ void ApplyCommandLine(int argc, char** argv, Config& cfg) {
     else if (arg == "--glOffscreenFlushMode" && i + 1 < argc) {
       cfg.glOffscreenFlushMode = ParseGLOffscreenFlushMode(argv[++i], cfg.glOffscreenFlushMode);
     }
+    else if (arg == "-dumpShaderPermutations" || arg == "--dumpShaderPermutations") {
+      cfg.flags.dumpShaderPermutations = true;
+    }
+    else if ((arg == "-shaderPermutationOutput" || arg == "--shaderPermutationOutput") && i + 1 < argc) {
+      cfg.shaderPermutationOutputPath = StripQuotes(argv[++i]);
+    }
   }
 }
 
@@ -566,6 +572,9 @@ void PrintHelp() {
     << "  --offscreen                         Render the default target to rotating offscreen RTs instead of presenting\n"
     << "  --offscreenDebug                    With --offscreen, dump the offscreen color RT roughly once per second\n"
     << "  --glOffscreenFlushMode <frame|wait|none>  GL offscreen submission pacing mode\n"
+    << "  -dumpShaderPermutations, --dumpShaderPermutations\n"
+    << "                                      Write requested ShaderKey permutations, then exit after startup\n"
+    << "  --shaderPermutationOutput <path>   JSON dictionary path for --dumpShaderPermutations\n"
     << "  --validateGltf <path>              Validate and summarize glTF/GLB, then exit\n\n"
     << "GUI/tools:\n"
     << "  --gui                              Show GUI on startup\n"

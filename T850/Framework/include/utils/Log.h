@@ -15,6 +15,7 @@
  *    T8_LOG_BACKEND_CONSOLE       - stdout with ANSI colors
  *    T8_LOG_BACKEND_DEBUG_OUTPUT  - OutputDebugStringA (Windows)
  *    T8_LOG_BACKEND_FILE          - append to log file
+ *    T8_LOG_BACKEND_ANDROID_LOGCAT - Android logcat
  *
  *  Each log line includes: [timestamp] [PID:TID] [RAM MB] [LEVEL] message
  */
@@ -36,6 +37,7 @@ namespace Log {
     T8_LOG_BACKEND_CONSOLE      = 1u << 0,
     T8_LOG_BACKEND_DEBUG_OUTPUT = 1u << 1,
     T8_LOG_BACKEND_FILE         = 1u << 2,
+    T8_LOG_BACKEND_ANDROID_LOGCAT = 1u << 3,
   };
 
   // Call once at startup. backends = OR'd Backend flags, logFilePath only for FILE backend.

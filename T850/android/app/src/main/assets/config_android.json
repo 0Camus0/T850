@@ -1,0 +1,14 @@
+{
+  "api": "vulkan",
+  "scene": 0,
+  "devTools": {
+    "gui": false,
+    "logLevel": "debug",
+    "profile": false
+  },
+  "display": {
+    "width": 1280,
+    "height": 720,
+    "fullscreen": true
+  }
+}

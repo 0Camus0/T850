@@ -8,13 +8,16 @@
 #include <video/vulkan/VulkanDriver.h>
 #include <video/vulkan/VulkanUtils.h>
 
-#if defined(OS_WINDOWS)
+#if defined(OS_WINDOWS) || defined(OS_ANDROID)
 
+#if defined(OS_WINDOWS) || defined(OS_ANDROID)
 #include <glslang/Public/ResourceLimits.h>
 #include <glslang/Public/ShaderLang.h>
 #include <glslang/SPIRV/GlslangToSpv.h>
+#endif
 #include <utils/Log.h>
 #include <utils/ShaderDiskCache.h>
+#include <utils/ResourceLocator.h>
 #include <utils/SPIRVReflection.h>
 #include <debug/RenderTrace.h>
 
@@ -27,7 +30,9 @@ namespace t850 {
   //  Helpers (file-local)
   // ══════════════════════════════════════════════════════
 
+#if defined(OS_WINDOWS) || defined(OS_ANDROID)
   static bool s_glslangInitialized = false;
+#endif
 
   static VkShaderModule CreateShaderModule(VkDevice device, const uint32_t* code, size_t codeSize) {
     VkShaderModuleCreateInfo ci = { VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO };
@@ -42,6 +47,7 @@ namespace t850 {
     return mod;
   }
 
+#if defined(OS_WINDOWS)
   static std::string GetVulkanShaderCacheDriverSignature(VkPhysicalDevice physicalDevice) {
     std::ostringstream sig;
     sig << "vulkan;shaderCompiler=glslang-hlsl-spv1.0;pipelineCache=1";
@@ -67,9 +73,11 @@ namespace t850 {
     std::memcpy(spirv.data(), bytes.data(), bytes.size());
     return true;
   }
+#endif
 
+#if defined(OS_WINDOWS) || defined(OS_ANDROID)
   static bool CompileHLSLToSPIRV(const std::string& source, EShLanguage stage,
-                                   std::vector<uint32_t>& spirv, const std::string& debugName) {
+                                    std::vector<uint32_t>& spirv, const std::string& debugName) {
     if (!s_glslangInitialized) {
       glslang::InitializeProcess();
       s_glslangInitialized = true;
@@ -108,6 +116,39 @@ namespace t850 {
     spirv.assign(generated.begin(), generated.end());
     return true;
   }
+  static std::string ShaderKeySuffix(ShaderKey key) {
+    char suffix[32];
+    snprintf(suffix, sizeof(suffix), ".%016llX", static_cast<unsigned long long>(key.bits));
+    return suffix;
+  }
+
+  static bool ReadPrecompiledSPIRV(const std::string& shaderName, ShaderKey key, std::vector<uint32_t>& spirv) {
+    if (shaderName.empty()) return false;
+    std::vector<std::string> candidates;
+    if (key.isValid()) {
+      candidates.push_back(std::string("Shaders/spirv/") + shaderName + ShaderKeySuffix(key) + ".spv");
+      candidates.push_back(shaderName + ShaderKeySuffix(key) + ".spv");
+    } else {
+      candidates.push_back(shaderName + ".spv");
+      candidates.push_back(std::string("Shaders/spirv/") + shaderName + ".spv");
+    }
+    for (const std::string& path : candidates) {
+      std::vector<unsigned char> bytes;
+      if (ResourceLocator::Instance().ReadBinary(path, bytes) && (bytes.size() % 4) == 0) {
+        spirv.resize(bytes.size() / sizeof(uint32_t));
+        std::memcpy(spirv.data(), bytes.data(), bytes.size());
+        return true;
+      }
+    }
+    if (key.isValid()) {
+      T8_LOG_DEBUG("[Vulkan] Missing precompiled SPIR-V for %s key=0x%016llX; runtime compile will be attempted",
+                   shaderName.c_str(), static_cast<unsigned long long>(key.bits));
+    } else {
+      T8_LOG_ERROR("[Vulkan] Missing precompiled SPIR-V for %s", shaderName.c_str());
+    }
+    return false;
+  }
+#endif
 
   // ══════════════════════════════════════════════════════
   //  VulkanShader
@@ -117,15 +158,24 @@ namespace t850 {
                                       const std::string& vs_name, const std::string& fs_name) {
     auto* driver = GetVkDriver();
     VkDevice device = driver->GetDevice();
+#if defined(OS_WINDOWS)
     const std::string driverSignature = GetVulkanShaderCacheDriverSignature(driver->GetPhysicalDevice());
     const ShaderDiskCacheKey cacheKey = ShaderDiskCache::MakeKey("vulkan", driverSignature, key.bits, vs_name, fs_name, src_vs, src_fs);
+#endif
     cbvBinding = -1;
     std::fill(cbvBindings, cbvBindings + VulkanShader::kMaxCBufferSlots, -1);
     std::fill(srvBindings, srvBindings + VulkanShader::kMaxTextureSlots, -1);
     std::fill(srvIsCubemap, srvIsCubemap + VulkanShader::kMaxTextureSlots, false);
 
-    // Compile vertex shader (HLSL → SPIR-V)
     std::vector<uint32_t> vsSPIRV;
+#if defined(OS_ANDROID)
+    if (!ReadPrecompiledSPIRV(vs_name, key, vsSPIRV)) {
+      if (!CompileHLSLToSPIRV(src_vs, EShLangVertex, vsSPIRV, vs_name.empty() ? "VS" : vs_name)) {
+        return false;
+      }
+    }
+    SPIRVReflection::ShiftUBOBindings(vsSPIRV.data(), vsSPIRV.size(), VulkanShader::kMaxTextureSlots);
+#else
     if (LoadSpirvArtifact(cacheKey, "vs.spv", vsSPIRV)) {
       T8_LOG_DEBUG("[ShaderCache][Vulkan] VS SPIR-V hit %s", cacheKey.sha1.c_str());
     }
@@ -138,12 +188,20 @@ namespace t850 {
       ShaderDiskCache::StoreArtifact(cacheKey, "vs.spv", vsSPIRV.data(), vsSPIRV.size() * sizeof(uint32_t));
       ShaderDiskCache::WriteManifest(cacheKey, driverSignature);
     }
+#endif
 
     m_vertModule = CreateShaderModule(device, vsSPIRV.data(), vsSPIRV.size() * sizeof(uint32_t));
     if (!m_vertModule) return false;
 
-    // Compile fragment shader (HLSL → SPIR-V)
     std::vector<uint32_t> fsSPIRV;
+#if defined(OS_ANDROID)
+    if (!ReadPrecompiledSPIRV(fs_name, key, fsSPIRV)) {
+      if (!CompileHLSLToSPIRV(src_fs, EShLangFragment, fsSPIRV, fs_name.empty() ? "FS" : fs_name)) {
+        return false;
+      }
+    }
+    SPIRVReflection::ShiftUBOBindings(fsSPIRV.data(), fsSPIRV.size(), VulkanShader::kMaxTextureSlots);
+#else
     if (LoadSpirvArtifact(cacheKey, "fs.spv", fsSPIRV)) {
       T8_LOG_DEBUG("[ShaderCache][Vulkan] FS SPIR-V hit %s", cacheKey.sha1.c_str());
     }
@@ -155,6 +213,7 @@ namespace t850 {
       ShaderDiskCache::StoreArtifact(cacheKey, "fs.spv", fsSPIRV.data(), fsSPIRV.size() * sizeof(uint32_t));
       ShaderDiskCache::WriteManifest(cacheKey, driverSignature);
     }
+#endif
     m_fragModule = CreateShaderModule(device, fsSPIRV.data(), fsSPIRV.size() * sizeof(uint32_t));
     if (!m_fragModule) return false;
 
@@ -343,6 +402,8 @@ namespace t850 {
   void VulkanShader::Set(const DeviceContext& deviceContext) {
     const_cast<DeviceContext*>(&deviceContext)->actualShaderSet = this;
     auto* driver = GetVkDriver();
+    if (driver->CurrentRT < 0 && !driver->IsOffscreenEnabled())
+      driver->EnsureBackbufferRenderPass();
 
     // Determine current render target format for pipeline creation
     uint8_t numColorAttachments = 1;

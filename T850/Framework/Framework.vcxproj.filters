@@ -251,6 +251,9 @@
     <ClInclude Include="include\utils\ResourceManager.h">
       <Filter>Header Files\utils</Filter>
     </ClInclude>
+    <ClInclude Include="include\utils\ResourceLocator.h">
+      <Filter>Header Files\utils</Filter>
+    </ClInclude>
     <ClInclude Include="include\utils\Technique.h">
       <Filter>Header Files\utils</Filter>
     </ClInclude>
@@ -375,6 +378,9 @@
       <Filter>Header Files\utils</Filter>
     </ClInclude>
     <ClInclude Include="include\utils\ConfigRuntime.h">
+      <Filter>Header Files\utils</Filter>
+    </ClInclude>
+    <ClInclude Include="include\utils\ShaderPermutationDump.h">
       <Filter>Header Files\utils</Filter>
     </ClInclude>
     <ClInclude Include="include\debug\Profiler.h">
@@ -532,6 +538,9 @@
     <ClCompile Include="src\utils\ResourceManager.cpp">
       <Filter>Source Files\utils</Filter>
     </ClCompile>
+    <ClCompile Include="src\utils\ResourceLocator.cpp">
+      <Filter>Source Files\utils</Filter>
+    </ClCompile>
     <ClCompile Include="src\utils\Technique.cpp">
       <Filter>Source Files\utils</Filter>
     </ClCompile>
@@ -677,6 +686,9 @@
       <Filter>Source Files\utils</Filter>
     </ClCompile>
     <ClCompile Include="src\utils\ConfigRuntime.cpp">
+      <Filter>Source Files\utils</Filter>
+    </ClCompile>
+    <ClCompile Include="src\utils\ShaderPermutationDump.cpp">
       <Filter>Source Files\utils</Filter>
     </ClCompile>
     <ClCompile Include="src\utils\Log.cpp">

@@ -18,8 +18,10 @@
 
 #include <utils/Log.h>
 
+#ifndef OS_ANDROID
 #include <video/gl/GLShader.h>
 #include <video/gl/GLDriver.h>
+#endif
 #if defined(OS_WINDOWS)
 #include <video/d3d11/D3D11Shader.h>
 #include <video/d3d11/D3D11Driver.h>

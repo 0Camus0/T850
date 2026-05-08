@@ -9,7 +9,7 @@
 #include <video/vulkan/VulkanShader.h>
 #include <video/vulkan/VulkanUtils.h>
 
-#if defined(OS_WINDOWS)
+#if defined(OS_WINDOWS) || defined(OS_ANDROID)
 
 #include <utils/Log.h>
 #include <debug/Profiler.h>
@@ -45,6 +45,9 @@ namespace t850 {
     T8_LOG_TRACE("[Vulkan] DrawIndexed(%u, %u, %u)", vertexCount, startIndex, startVertex);
 
     auto* driver = GetVkDriver();
+    if (driver->CurrentRT < 0 && !driver->IsOffscreenEnabled())
+      driver->EnsureBackbufferRenderPass();
+
     VulkanShader* shader = static_cast<VulkanShader*>(actualShaderSet);
     if (shader && shader->m_descriptorSetLayout)
       driver->BindPendingDescriptors(m_commandBuffer, shader);

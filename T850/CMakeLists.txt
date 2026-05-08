@@ -11,6 +11,11 @@ set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
 
 option(HEADLESS "HEADLESS" OFF)
 
+if(ANDROID)
+	include(${CMAKE_CURRENT_SOURCE_DIR}/cmake/AndroidBuild.cmake)
+	return()
+endif()
+
 if(NOT WIN32)
 	message(FATAL_ERROR "The CMake build now mirrors the Visual Studio solution and requires Windows/MSVC. Use the older HEADLESS/Linux build files from history if you need that path.")
 endif()

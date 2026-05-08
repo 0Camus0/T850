@@ -7,15 +7,21 @@
 
 #include <video/vulkan/VulkanDriver.h>
 
-#if defined(OS_WINDOWS)
+#if defined(OS_WINDOWS) || defined(OS_ANDROID)
 
 #define VMA_IMPLEMENTATION
 #include <vma/vk_mem_alloc.h>
 
+#if defined(OS_WINDOWS)
 #include <glslang/Include/glslang_c_interface.h>
 #include <glslang/Public/resource_limits_c.h>
+#endif
 
+#if defined(OS_WINDOWS)
 #include <SDL3/SDL_vulkan.h>
+#elif defined(OS_ANDROID)
+#include <android/native_window.h>
+#endif
 
 #include <utils/Log.h>
 #include <utils/ShaderDiskCache.h>
@@ -47,6 +53,12 @@ namespace t850 {
           << ";api=" << props.apiVersion;
       return sig.str();
     }
+
+    VkSurfaceTransformFlagBitsKHR ChooseSwapchainPreTransform(const VkSurfaceCapabilitiesKHR& caps) {
+      if (caps.supportedTransforms & VK_SURFACE_TRANSFORM_IDENTITY_BIT_KHR)
+        return VK_SURFACE_TRANSFORM_IDENTITY_BIT_KHR;
+      return caps.currentTransform;
+    }
   }
 
   extern Device*        T8Device;
@@ -71,7 +83,9 @@ namespace t850 {
     }
     key.colorFormat = colorFormat;
     key.depthFormat = depthFormat;
-    VkRenderPass renderPass = m_backbufferRenderPass;
+    VkRenderPass renderPass = (m_renderPassActive && m_activeRenderPass)
+      ? m_activeRenderPass
+      : m_backbufferRenderPass;
     if (CurrentRT >= 0 && CurrentRT < (int)RTs.size()) {
       VulkanRT* rt = static_cast<VulkanRT*>(RTs[CurrentRT]);
       renderPass = rt->m_renderPass;
@@ -257,10 +271,12 @@ namespace t850 {
   // ══════════════════════════════════════════════════════
 
   void VulkanDriver::SetWindow(void* window) {
-    m_hwnd = (HWND)window;
-    if (!m_hwnd) m_hwnd = GetActiveWindow();
+    m_nativeWindow = window;
+#if defined(OS_WINDOWS)
+    if (!m_nativeWindow) m_nativeWindow = GetActiveWindow();
+#endif
     // Surface creation is deferred to InitDriver where the VkInstance is available.
-    // The window pointer is stored for use there.
+    // The native window pointer is stored for use there.
   }
 
   void VulkanDriver::SetDimensions(int w, int h) { width = w; height = h; }
@@ -273,13 +289,17 @@ namespace t850 {
     appInfo.engineVersion = VK_MAKE_VERSION(1, 0, 0);
     appInfo.apiVersion = VK_API_VERSION_1_0;
 
+    std::vector<const char*> extensions;
+#if defined(OS_WINDOWS)
     // Get SDL-required extensions
     uint32_t sdlExtCount = 0;
     const char* const* sdlExts = SDL_Vulkan_GetInstanceExtensions(&sdlExtCount);
-
-    std::vector<const char*> extensions;
     for (uint32_t i = 0; i < sdlExtCount; i++)
       extensions.push_back(sdlExts[i]);
+#elif defined(OS_ANDROID)
+    extensions.push_back(VK_KHR_SURFACE_EXTENSION_NAME);
+    extensions.push_back(VK_KHR_ANDROID_SURFACE_EXTENSION_NAME);
+#endif
 
 #ifdef T8_VULKAN_VALIDATION
     // Check if validation layer is available
@@ -415,6 +435,12 @@ namespace t850 {
     allocCI.device = m_device;
     allocCI.instance = m_instance;
     allocCI.vulkanApiVersion = VK_API_VERSION_1_0;
+#if defined(OS_ANDROID)
+    VmaVulkanFunctions vmaVulkanFunctions = {};
+    vmaVulkanFunctions.vkGetInstanceProcAddr = vkGetInstanceProcAddr;
+    vmaVulkanFunctions.vkGetDeviceProcAddr = vkGetDeviceProcAddr;
+    allocCI.pVulkanFunctions = &vmaVulkanFunctions;
+#endif
 
     VkResult res = vmaCreateAllocator(&allocCI, &m_allocator);
     if (res != VK_SUCCESS) {
@@ -424,7 +450,130 @@ namespace t850 {
     T8_LOG_INFO("[Vulkan] VMA allocator created");
   }
 
+  bool VulkanDriver::CreatePlatformSurface() {
+    if (!m_nativeWindow || !m_instance) return false;
+    if (m_surface) return true;
+
+#if defined(OS_WINDOWS)
+    SDL_Window* sdlWin = (SDL_Window*)m_nativeWindow;
+    if (!SDL_Vulkan_CreateSurface(sdlWin, m_instance, nullptr, &m_surface)) {
+      T8_LOG_ERROR("[Vulkan] SDL_Vulkan_CreateSurface failed: %s", SDL_GetError());
+      return false;
+    }
+    T8_LOG_INFO("[Vulkan] Surface created via SDL");
+    return true;
+#elif defined(OS_ANDROID)
+    VkAndroidSurfaceCreateInfoKHR surfaceCI = { VK_STRUCTURE_TYPE_ANDROID_SURFACE_CREATE_INFO_KHR };
+    surfaceCI.window = static_cast<ANativeWindow*>(m_nativeWindow);
+    VkResult surfaceResult = vkCreateAndroidSurfaceKHR(m_instance, &surfaceCI, nullptr, &m_surface);
+    if (surfaceResult != VK_SUCCESS) {
+      T8_LOG_ERROR("[Vulkan] vkCreateAndroidSurfaceKHR failed res=%d", surfaceResult);
+      return false;
+    }
+    T8_LOG_INFO("[Vulkan] Surface created from ANativeWindow");
+    return true;
+#else
+    return false;
+#endif
+  }
+
+  void VulkanDriver::DestroyWindowSurfaceResources(bool destroySurface) {
+    if (!m_device && !m_instance) return;
+
+    m_renderPassActive = false;
+    m_activeRenderPass = VK_NULL_HANDLE;
+    m_frameStarted = false;
+    m_lastPipeline = VK_NULL_HANDLE;
+    m_lastPipelineLayout = VK_NULL_HANDLE;
+    m_latePresentRT = -1;
+    m_latePresentAttachment = 0;
+
+    if (m_device) {
+      if (m_allocator) {
+        for (auto& cleanupList : m_deferredCleanup) {
+          for (auto& db : cleanupList)
+            vmaDestroyBuffer(m_allocator, db.buffer, db.alloc);
+          cleanupList.clear();
+        }
+      }
+
+      for (auto& pair : m_pipelineCache)
+        vkDestroyPipeline(m_device, pair.second, nullptr);
+      m_pipelineCache.clear();
+
+      for (auto& fb : m_backbufferFramebuffers)
+        if (fb) { vkDestroyFramebuffer(m_device, fb, nullptr); fb = VK_NULL_HANDLE; }
+      m_backbufferFramebuffers.clear();
+
+      if (m_depthImageView) { vkDestroyImageView(m_device, m_depthImageView, nullptr); m_depthImageView = VK_NULL_HANDLE; }
+      if (m_depthImage)     { vmaDestroyImage(m_allocator, m_depthImage, m_depthAllocation); m_depthImage = VK_NULL_HANDLE; m_depthAllocation = VK_NULL_HANDLE; }
+
+      if (m_backbufferRenderPass) { vkDestroyRenderPass(m_device, m_backbufferRenderPass, nullptr); m_backbufferRenderPass = VK_NULL_HANDLE; }
+      if (m_backbufferRenderPassLoad) { vkDestroyRenderPass(m_device, m_backbufferRenderPassLoad, nullptr); m_backbufferRenderPassLoad = VK_NULL_HANDLE; }
+
+      for (auto& iv : m_swapChainImageViews)
+        if (iv) vkDestroyImageView(m_device, iv, nullptr);
+      m_swapChainImageViews.clear();
+      m_swapChainImages.clear();
+
+      if (m_swapChain) { vkDestroySwapchainKHR(m_device, m_swapChain, nullptr); m_swapChain = VK_NULL_HANDLE; }
+    }
+
+    if (destroySurface && m_surface && m_instance) {
+      vkDestroySurfaceKHR(m_instance, m_surface, nullptr);
+      m_surface = VK_NULL_HANDLE;
+    }
+
+    m_swapChainSupportsTransferDst = false;
+    m_swapChainExtent = {};
+    m_imageIndex = 0;
+    m_currentFrame = 0;
+  }
+
+  bool VulkanDriver::SuspendWindowSurface() {
+    if (!m_device) return false;
+    FlushGPUResources();
+    DestroyWindowSurfaceResources(true);
+    m_nativeWindow = nullptr;
+    T8_LOG_INFO("[Vulkan] Window surface suspended; device and assets remain resident");
+    return true;
+  }
+
+  bool VulkanDriver::ResumeWindowSurface(void* nativeWindow, int newW, int newH) {
+    if (!m_device || !m_instance || !nativeWindow || newW <= 0 || newH <= 0) return false;
+
+    FlushGPUResources();
+    DestroyWindowSurfaceResources(true);
+
+    m_nativeWindow = nativeWindow;
+    width = newW;
+    height = newH;
+
+    if (!CreatePlatformSurface()) return false;
+
+    CreateSwapChain();
+    if (!m_swapChain) return false;
+    CreateBackBufferViews();
+    CreateRenderPass();
+    CreateDepthBuffer();
+    CreateFramebuffers();
+
+    m_viewport = { 0.f, (float)m_swapChainExtent.height, (float)m_swapChainExtent.width, -(float)m_swapChainExtent.height, 0.f, 1.f };
+    m_scissorRect = { {0, 0}, m_swapChainExtent };
+    m_currentFrame = 0;
+    m_frameStarted = false;
+    m_renderPassActive = false;
+    m_activeRenderPass = VK_NULL_HANDLE;
+    T8_LOG_INFO("[Vulkan] Window surface resumed (%dx%d)", width, height);
+    return true;
+  }
+
   void VulkanDriver::CreateSwapChain() {
+    if (!m_surface) {
+      T8_LOG_ERROR("[Vulkan] Cannot create swapchain without a surface");
+      return;
+    }
+
     // Query surface capabilities
     VkSurfaceCapabilitiesKHR surfCaps;
     vkGetPhysicalDeviceSurfaceCapabilitiesKHR(m_physicalDevice, m_surface, &surfCaps);
@@ -452,6 +601,7 @@ namespace t850 {
     vkGetPhysicalDeviceSurfacePresentModesKHR(m_physicalDevice, m_surface, &presentModeCount, presentModes.data());
 
     VkPresentModeKHR chosenMode = VK_PRESENT_MODE_FIFO_KHR;
+#if !defined(OS_ANDROID)
     for (auto mode : presentModes) {
       if (mode == VK_PRESENT_MODE_IMMEDIATE_KHR) { chosenMode = mode; break; }
     }
@@ -461,7 +611,13 @@ namespace t850 {
         if (mode == VK_PRESENT_MODE_MAILBOX_KHR) { chosenMode = mode; break; }
       }
     }
+#endif
     T8_LOG_INFO("[Vulkan] Present mode: %d (0=IMMEDIATE,1=MAILBOX,2=FIFO)", (int)chosenMode);
+    T8_LOG_INFO("[Vulkan] Surface caps extent=%ux%u minImages=%u maxImages=%u currentTransform=0x%x supportedTransforms=0x%x usage=0x%x composite=0x%x",
+                surfCaps.currentExtent.width, surfCaps.currentExtent.height,
+                surfCaps.minImageCount, surfCaps.maxImageCount,
+                surfCaps.currentTransform, surfCaps.supportedTransforms,
+                surfCaps.supportedUsageFlags, surfCaps.supportedCompositeAlpha);
 
     m_swapChainExtent = { (uint32_t)width, (uint32_t)height };
     if (surfCaps.currentExtent.width != UINT32_MAX)
@@ -479,9 +635,16 @@ namespace t850 {
     scCI.imageColorSpace = colorSpace;
     scCI.imageExtent = m_swapChainExtent;
     scCI.imageArrayLayers = 1;
+    m_swapChainSupportsTransferDst = (surfCaps.supportedUsageFlags & VK_IMAGE_USAGE_TRANSFER_DST_BIT) != 0;
     scCI.imageUsage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT;
+    if (m_swapChainSupportsTransferDst) {
+      scCI.imageUsage |= VK_IMAGE_USAGE_TRANSFER_DST_BIT;
+    } else {
+      T8_LOG_INFO("[Vulkan] Swapchain does not report TRANSFER_DST support; late-present copy disabled");
+    }
     scCI.imageSharingMode = VK_SHARING_MODE_EXCLUSIVE;
-    scCI.preTransform = surfCaps.currentTransform;
+    const VkSurfaceTransformFlagBitsKHR preTransform = ChooseSwapchainPreTransform(surfCaps);
+    scCI.preTransform = preTransform;
     scCI.compositeAlpha = VK_COMPOSITE_ALPHA_OPAQUE_BIT_KHR;
     scCI.presentMode = chosenMode;
     scCI.clipped = VK_TRUE;
@@ -491,8 +654,8 @@ namespace t850 {
       T8_LOG_ERROR("[Vulkan] vkCreateSwapchainKHR failed res=%d", res);
       return;
     }
-    T8_LOG_INFO("[Vulkan] Swap chain created (%ux%u, %u images, mode=%d)",
-                m_swapChainExtent.width, m_swapChainExtent.height, imageCount, chosenMode);
+    T8_LOG_INFO("[Vulkan] Swap chain created (%ux%u, %u images, mode=%d, preTransform=0x%x)",
+                m_swapChainExtent.width, m_swapChainExtent.height, imageCount, chosenMode, preTransform);
   }
 
   void VulkanDriver::CreateBackBufferViews() {
@@ -736,15 +899,7 @@ namespace t850 {
     }
 #endif
 
-    // Create surface via SDL — m_hwnd holds the SDL_Window* passed through SetWindow()
-    if (m_hwnd && m_instance) {
-      SDL_Window* sdlWin = (SDL_Window*)m_hwnd;
-      if (!SDL_Vulkan_CreateSurface(sdlWin, m_instance, nullptr, &m_surface)) {
-        T8_LOG_ERROR("[Vulkan] SDL_Vulkan_CreateSurface failed: %s", SDL_GetError());
-      } else {
-        T8_LOG_INFO("[Vulkan] Surface created via SDL");
-      }
-    }
+    CreatePlatformSurface();
 
     CreateDevice();
     T8_LOG_INFO("[Vulkan] >> CreateAllocator...");
@@ -798,8 +953,8 @@ namespace t850 {
     }
 
     // Negative height flips Y to match D3D/GL NDC (requires VK_KHR_maintenance1)
-    m_viewport = { 0.f, (float)height, (float)width, -(float)height, 0.f, 1.f };
-    m_scissorRect = { {0, 0}, {(uint32_t)width, (uint32_t)height} };
+    m_viewport = { 0.f, (float)m_swapChainExtent.height, (float)m_swapChainExtent.width, -(float)m_swapChainExtent.height, 0.f, 1.f };
+    m_scissorRect = { {0, 0}, m_swapChainExtent };
 
     CreateDummyTexture();
 
@@ -847,8 +1002,8 @@ namespace t850 {
     CreateFramebuffers();
 
     // Update viewport
-    m_viewport = { 0.f, (float)height, (float)width, -(float)height, 0.f, 1.f };
-    m_scissorRect = { {0, 0}, {(uint32_t)width, (uint32_t)height} };
+    m_viewport = { 0.f, (float)m_swapChainExtent.height, (float)m_swapChainExtent.width, -(float)m_swapChainExtent.height, 0.f, 1.f };
+    m_scissorRect = { {0, 0}, m_swapChainExtent };
 
     // Invalidate pipeline cache entries that reference the old backbuffer render pass
     // (render passes themselves are NOT recreated — same formats, same attachments)
@@ -880,6 +1035,13 @@ namespace t850 {
 
   void VulkanDriver::DestroyDriver() {
     FlushGPUResources();
+    if (m_allocator) {
+      for (auto& cleanupList : m_deferredCleanup) {
+        for (auto& db : cleanupList)
+          vmaDestroyBuffer(m_allocator, db.buffer, db.alloc);
+        cleanupList.clear();
+      }
+    }
 
     DestroyShaders();
     DestroyRTs();
@@ -1222,6 +1384,163 @@ namespace t850 {
     }
   }
 
+  void VulkanDriver::SetLatePresentSource(int rtID, int attachment) {
+    m_latePresentRT = rtID;
+    m_latePresentAttachment = attachment;
+  }
+
+  bool VulkanDriver::CopyLatePresentSourceToSwapchain(VkCommandBuffer cmd) {
+    const int rtID = m_latePresentRT;
+    const int attachment = m_latePresentAttachment;
+    m_latePresentRT = -1;
+    m_latePresentAttachment = 0;
+
+    if (!m_swapChainSupportsTransferDst) {
+      return false;
+    }
+
+    if (rtID < 0 || attachment < COLOR0_ATTACHMENT ||
+        rtID >= static_cast<int>(RTs.size()) || !RTs[rtID]) {
+      return false;
+    }
+
+    auto* rt = static_cast<VulkanRT*>(RTs[rtID]);
+    const int colorIndex = attachment;
+    if (colorIndex < 0 || colorIndex >= rt->number_RT ||
+        colorIndex >= static_cast<int>(rt->vColorImages.size())) {
+      return false;
+    }
+
+    const VkFormat srcFormat = (colorIndex < static_cast<int>(rt->m_colorFormats.size()))
+      ? rt->m_colorFormats[colorIndex]
+      : rt->m_colorFormat;
+
+    if (m_renderPassActive) {
+      vkCmdEndRenderPass(cmd);
+      m_renderPassActive = false;
+      m_activeRenderPass = VK_NULL_HANDLE;
+    }
+
+    VkImageLayout srcOldLayout = rt->vColorLayouts[colorIndex];
+    if (srcOldLayout != VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL) {
+      TransitionImageLayout(cmd, rt->vColorImages[colorIndex],
+                            srcOldLayout,
+                            VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+                            VK_IMAGE_ASPECT_COLOR_BIT);
+      rt->vColorLayouts[colorIndex] = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
+    }
+
+    TransitionImageLayout(cmd, m_swapChainImages[m_imageIndex],
+                          VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
+                          VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+                          VK_IMAGE_ASPECT_COLOR_BIT);
+
+    auto formatTexelBytes = [](VkFormat fmt) -> uint32_t {
+      switch (fmt) {
+        case VK_FORMAT_R8G8B8A8_UNORM:
+        case VK_FORMAT_B8G8R8A8_UNORM:
+        case VK_FORMAT_R8G8B8A8_SRGB:
+        case VK_FORMAT_B8G8R8A8_SRGB:
+        case VK_FORMAT_A2B10G10R10_UNORM_PACK32:
+        case VK_FORMAT_A2R10G10B10_UNORM_PACK32:
+          return 4;
+        case VK_FORMAT_R16_SFLOAT:
+          return 2;
+        case VK_FORMAT_R16G16B16A16_SFLOAT:
+          return 8;
+        case VK_FORMAT_R32_SFLOAT:
+          return 4;
+        default:
+          return 0;
+      }
+    };
+
+    const bool sameExtent =
+      rt->w == static_cast<int>(m_swapChainExtent.width) &&
+      rt->h == static_cast<int>(m_swapChainExtent.height);
+    const bool copyCompatible =
+      formatTexelBytes(srcFormat) != 0 &&
+      formatTexelBytes(srcFormat) == formatTexelBytes(m_swapChainFormat);
+
+    static bool loggedLatePresent = false;
+    if (!loggedLatePresent) {
+      T8_LOG_INFO("[Vulkan] Late present copy source rt=%d attachment=%d size=%dx%d srcFmt=%d swapFmt=%d swapSize=%ux%u path=%s",
+                  rtID, attachment, rt->w, rt->h, (int)srcFormat, (int)m_swapChainFormat,
+                  m_swapChainExtent.width, m_swapChainExtent.height,
+                  (sameExtent && copyCompatible) ? "copy" : "blit");
+      loggedLatePresent = true;
+    }
+
+    if (sameExtent && copyCompatible) {
+      VkImageCopy copy = {};
+      copy.srcSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+      copy.srcSubresource.baseArrayLayer = 0;
+      copy.srcSubresource.layerCount = 1;
+      copy.dstSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+      copy.dstSubresource.baseArrayLayer = 0;
+      copy.dstSubresource.layerCount = 1;
+      copy.extent = {
+        static_cast<uint32_t>(rt->w),
+        static_cast<uint32_t>(rt->h),
+        1
+      };
+      vkCmdCopyImage(cmd,
+                     rt->vColorImages[colorIndex], VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+                     m_swapChainImages[m_imageIndex], VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+                     1, &copy);
+    } else {
+      VkFormatProperties srcProps = {};
+      VkFormatProperties dstProps = {};
+      vkGetPhysicalDeviceFormatProperties(m_physicalDevice, srcFormat, &srcProps);
+      vkGetPhysicalDeviceFormatProperties(m_physicalDevice, m_swapChainFormat, &dstProps);
+      const bool canBlit =
+        (srcProps.optimalTilingFeatures & VK_FORMAT_FEATURE_BLIT_SRC_BIT) != 0 &&
+        (dstProps.optimalTilingFeatures & VK_FORMAT_FEATURE_BLIT_DST_BIT) != 0;
+      if (!canBlit) {
+        T8_LOG_INFO("[Vulkan] Late present skipped: blit unsupported for srcFmt=%d dstFmt=%d",
+                    (int)srcFormat, (int)m_swapChainFormat);
+        if (srcOldLayout != VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL) {
+          TransitionImageLayout(cmd, rt->vColorImages[colorIndex],
+                                VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+                                srcOldLayout,
+                                VK_IMAGE_ASPECT_COLOR_BIT);
+          rt->vColorLayouts[colorIndex] = srcOldLayout;
+        }
+        return true;
+      }
+
+      VkImageBlit blit = {};
+      blit.srcSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+      blit.srcSubresource.baseArrayLayer = 0;
+      blit.srcSubresource.layerCount = 1;
+      blit.srcOffsets[0] = { 0, 0, 0 };
+      blit.srcOffsets[1] = { rt->w, rt->h, 1 };
+      blit.dstSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+      blit.dstSubresource.baseArrayLayer = 0;
+      blit.dstSubresource.layerCount = 1;
+      blit.dstOffsets[0] = { 0, 0, 0 };
+      blit.dstOffsets[1] = {
+        static_cast<int32_t>(m_swapChainExtent.width),
+        static_cast<int32_t>(m_swapChainExtent.height),
+        1
+      };
+      vkCmdBlitImage(cmd,
+                     rt->vColorImages[colorIndex], VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+                     m_swapChainImages[m_imageIndex], VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+                     1, &blit, VK_FILTER_NEAREST);
+    }
+
+    if (srcOldLayout != VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL) {
+      TransitionImageLayout(cmd, rt->vColorImages[colorIndex],
+                            VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+                            srcOldLayout,
+                            VK_IMAGE_ASPECT_COLOR_BIT);
+      rt->vColorLayouts[colorIndex] = srcOldLayout;
+    }
+
+    return true;
+  }
+
   void VulkanDriver::SwapBuffers() {
     T8_LOG_TRACE("[Vulkan] SwapBuffers");
     VkCommandBuffer cmd = m_commandBuffers[m_currentFrame];
@@ -1230,6 +1549,7 @@ namespace t850 {
       if (m_renderPassActive) {
         vkCmdEndRenderPass(cmd);
         m_renderPassActive = false;
+        m_activeRenderPass = VK_NULL_HANDLE;
       }
 
       VkResult endRes = vkEndCommandBuffer(cmd);
@@ -1256,15 +1576,34 @@ namespace t850 {
       return;
     }
 
+    bool latePresentCopied = false;
+#if defined(OS_ANDROID)
+    latePresentCopied = CopyLatePresentSourceToSwapchain(cmd);
+#endif
+
+    if (m_prePresentOverlayCallback) {
+      if (latePresentCopied) {
+        TransitionImageLayout(cmd, m_swapChainImages[m_imageIndex],
+                              VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+                              VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
+                              VK_IMAGE_ASPECT_COLOR_BIT);
+        latePresentCopied = false;
+      }
+      EnsureBackbufferRenderPass();
+      m_prePresentOverlayCallback();
+      m_prePresentOverlayCallback = nullptr;
+    }
+
     // End the render pass if one is active
     if (m_renderPassActive) {
       vkCmdEndRenderPass(cmd);
       m_renderPassActive = false;
+      m_activeRenderPass = VK_NULL_HANDLE;
     }
 
     // Transition backbuffer from COLOR_ATTACHMENT → PRESENT_SRC for presentation
     TransitionImageLayout(cmd, m_swapChainImages[m_imageIndex],
-                          VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
+                          latePresentCopied ? VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL : VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
                           VK_IMAGE_LAYOUT_PRESENT_SRC_KHR,
                           VK_IMAGE_ASPECT_COLOR_BIT);
 
@@ -1276,7 +1615,7 @@ namespace t850 {
 
     // Submit
     VkSemaphore waitSemaphores[] = { m_imageAvailableSemaphores[m_currentFrame] };
-    VkPipelineStageFlags waitStages[] = { VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT };
+    VkPipelineStageFlags waitStages[] = { VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT | VK_PIPELINE_STAGE_TRANSFER_BIT };
     VkSemaphore signalSemaphores[] = { m_renderFinishedSemaphores[m_currentFrame] };
 
     VkSubmitInfo submitInfo = { VK_STRUCTURE_TYPE_SUBMIT_INFO };
@@ -1397,20 +1736,9 @@ namespace t850 {
         return;
       }
 
-      // 4. Restore the backbuffer render pass (LOAD variant to preserve content)
-      VkRenderPassBeginInfo rpBegin = { VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO };
-      rpBegin.renderPass = m_backbufferRenderPassLoad;
-      rpBegin.framebuffer = m_backbufferFramebuffers[m_imageIndex];
-      rpBegin.renderArea.offset = { 0, 0 };
-      rpBegin.renderArea.extent = m_swapChainExtent;
-      rpBegin.clearValueCount = 0;
-
-      vkCmdBeginRenderPass(cmd, &rpBegin, VK_SUBPASS_CONTENTS_INLINE);
-      m_activeRenderPass = m_backbufferRenderPassLoad;
-      m_renderPassActive = true;
-
-      vkCmdSetViewport(cmd, 0, 1, &m_viewport);
-      vkCmdSetScissor(cmd, 0, 1, &m_scissorRect);
+      // Backbuffer rendering is resumed lazily by DrawIndexed/overlay code.
+      // This avoids repeatedly opening LOAD render passes between offscreen
+      // passes when nothing is actually drawn to the swapchain.
     }
 
     CurrentRT = -1;

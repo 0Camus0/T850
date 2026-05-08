@@ -1,4 +1,5 @@
 #include <pch.h>
+#include <utils/ResourceLocator.h>
 /*********************************************************
 * Copyright (C) 2017 Daniel Enriquez (camus_mm@hotmail.com)
 * All Rights Reserved
@@ -109,55 +110,18 @@ char *file2string(const char *path) {
 		return nullptr;
 	}
 
-	FILE* fd = std::fopen(path, "rb");
-	if (!fd) {
-		T8_LOG_ERROR("Can't open file '%s': %s", path, std::strerror(errno));
+	std::string text;
+	if (!t850::ResourceLocator::Instance().ReadText(path, text)) {
+		T8_LOG_ERROR("Can't open file '%s'", path);
 		return nullptr;
 	}
-
-	if (std::fseek(fd, 0, SEEK_END) != 0) {
-		T8_LOG_ERROR("Can't seek file '%s'", path);
-		std::fclose(fd);
-		return nullptr;
-	}
-
-	const long end = std::ftell(fd);
-	if (end < 0) {
-		T8_LOG_ERROR("Can't determine file size for '%s'", path);
-		std::fclose(fd);
-		return nullptr;
-	}
-
-	if (static_cast<unsigned long>(end) >= (std::numeric_limits<size_t>::max)()) {
-		T8_LOG_ERROR("File '%s' is too large to load", path);
-		std::fclose(fd);
-		return nullptr;
-	}
-
-	if (std::fseek(fd, 0, SEEK_SET) != 0) {
-		T8_LOG_ERROR("Can't rewind file '%s'", path);
-		std::fclose(fd);
-		return nullptr;
-	}
-
-	const size_t len = static_cast<size_t>(end);
-	char* str = static_cast<char*>(std::malloc(len + 1));
+	char* str = static_cast<char*>(std::malloc(text.size() + 1));
 	if (!str) {
-		T8_LOG_ERROR("Out of memory loading file '%s' (%zu bytes)", path, len);
-		std::fclose(fd);
+		T8_LOG_ERROR("Out of memory loading file '%s' (%zu bytes)", path, text.size());
 		return nullptr;
 	}
-
-	const size_t read = std::fread(str, 1, len, fd);
-	if (read != len && std::ferror(fd)) {
-		T8_LOG_ERROR("Failed reading file '%s'", path);
-		std::free(str);
-		std::fclose(fd);
-		return nullptr;
-	}
-
-	str[read] = '\0';
-	std::fclose(fd);
+	memcpy(str, text.data(), text.size());
+	str[text.size()] = '\0';
 	return str;
 }
 

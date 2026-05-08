@@ -1,10 +1,12 @@
 #include <pch.h>
 #include <scene/IBLResources.h>
 
+#include <Config.h>
 #include <algorithm>
 #include <array>
 #include <cmath>
 #include <cstdint>
+#include <cstring>
 #include <filesystem>
 #include <fstream>
 #include <iomanip>
@@ -16,6 +18,7 @@
 #include <video/BaseDriver.h>
 #include <utils/cil.h>
 #include <utils/Log.h>
+#include <utils/ResourceLocator.h>
 
 namespace t850 {
 namespace {
@@ -55,6 +58,25 @@ namespace {
   };
 
   constexpr std::array<char, 8> IBLCacheMagic = {'T', '8', 'I', 'B', 'L', 'F', '3', '2'};
+
+  bool IsUnsupportedHighBitDepthPng(const std::string& relativeTexturePath) {
+    const std::string fullPath = "Textures/" + relativeTexturePath;
+    std::vector<unsigned char> bytes;
+    if (!ResourceLocator::Instance().ReadBinary(fullPath, bytes) || bytes.size() < 25)
+      return false;
+
+    unsigned char header[25] = {};
+    std::memcpy(header, bytes.data(), sizeof(header));
+
+    static const unsigned char pngSig[8] = {0x89, 'P', 'N', 'G', 0x0D, 0x0A, 0x1A, 0x0A};
+    if (std::memcmp(header, pngSig, sizeof(pngSig)) != 0)
+      return false;
+    if (header[12] != 'I' || header[13] != 'H' || header[14] != 'D' || header[15] != 'R')
+      return false;
+
+    const unsigned char bitDepth = header[24];
+    return bitDepth > 8;
+  }
 
   float Saturate(float value) {
     return std::max(0.0f, std::min(1.0f, value));
@@ -165,7 +187,7 @@ namespace {
   }
 
   std::filesystem::path IBLCacheRoot() {
-    return std::filesystem::path("Textures") / "GeneratedIBLCache";
+    return ResourceLocator::Instance().ResolveCachePath((std::filesystem::path("Textures") / "GeneratedIBLCache").string());
   }
 
   uint64_t BuildIBLCacheKey(
@@ -193,26 +215,31 @@ namespace {
     hash = HashValue(hash, GeneratedCharlieSamples);
 
     if (!sourcePath.empty()) {
-      std::error_code ec;
-      std::filesystem::path path(sourcePath);
-      std::filesystem::path canonical = std::filesystem::weakly_canonical(path, ec);
-      const std::string normalized = ec ? path.generic_string() : canonical.generic_string();
-      hash = HashString(hash, normalized);
+      std::vector<unsigned char> sourceBytes;
+      if (ResourceLocator::Instance().ReadBinary(sourcePath, sourceBytes)) {
+        const uint64_t sourceSize = static_cast<uint64_t>(sourceBytes.size());
+        hash = HashValue(hash, sourceSize);
+        hash = FNV1a64(sourceBytes.data(), sourceBytes.size(), hash);
+      } else {
+        const std::string normalized = ResourceLocator::NormalizePath(sourcePath);
+        hash = HashString(hash, normalized);
 
-      ec.clear();
-      uint64_t fileSize = 0;
-      if (std::filesystem::exists(path, ec)) {
+        std::error_code ec;
+        const std::filesystem::path path = ResourceLocator::Instance().ResolveFilePath(sourcePath);
+        uint64_t fileSize = 0;
+        if (std::filesystem::exists(path, ec)) {
+          ec.clear();
+          const auto measuredSize = std::filesystem::file_size(path, ec);
+          if (!ec)
+            fileSize = static_cast<uint64_t>(measuredSize);
+        }
+        hash = HashValue(hash, fileSize);
+
         ec.clear();
-        const auto measuredSize = std::filesystem::file_size(path, ec);
-        if (!ec)
-          fileSize = static_cast<uint64_t>(measuredSize);
+        const auto writeTime = std::filesystem::last_write_time(path, ec);
+        const int64_t writeTicks = ec ? 0ll : static_cast<int64_t>(writeTime.time_since_epoch().count());
+        hash = HashValue(hash, writeTicks);
       }
-      hash = HashValue(hash, fileSize);
-
-      ec.clear();
-      const auto writeTime = std::filesystem::last_write_time(path, ec);
-      const int64_t writeTicks = ec ? 0ll : static_cast<int64_t>(writeTime.time_since_epoch().count());
-      hash = HashValue(hash, writeTicks);
     }
 
     return hash;
@@ -234,7 +261,7 @@ namespace {
   }
 
   template <typename T>
-  bool ReadPod(std::ifstream& file, T& value) {
+  bool ReadPod(std::istream& file, T& value) {
     file.read(reinterpret_cast<char*>(&value), sizeof(T));
     return file.good();
   }
@@ -253,15 +280,12 @@ namespace {
     int expectedMipCount,
     int expectedSampleCount,
     std::vector<float>& outData) {
-    std::error_code existsError;
-    if (!std::filesystem::exists(path, existsError))
+    std::vector<unsigned char> bytes;
+    if (!ResourceLocator::Instance().ReadBinary(path.string(), bytes))
       return false;
 
-    std::ifstream file(path, std::ios::binary);
-    if (!file.is_open()) {
-      T8_LOG_INFO("[IBL] Cache exists but cannot be opened: '%s'", path.string().c_str());
-      return false;
-    }
+    std::string streamData(reinterpret_cast<const char*>(bytes.data()), bytes.size());
+    std::istringstream file(streamData, std::ios::in | std::ios::binary);
 
     std::array<char, 8> magic = {};
     file.read(magic.data(), magic.size());
@@ -1016,6 +1040,21 @@ int CreateGGXBrdfLUTTexture(BaseDriver* driver, int resolution, int sampleCount)
   return textureIndex;
 }
 
+int CreateCachedGeneratedFloatImageTexture(BaseDriver* driver, IBLCacheKind kind, int resolution, int sampleCount, const char* label) {
+  if (!driver || resolution <= 0 || sampleCount <= 0)
+    return -1;
+
+  std::vector<float> lutData;
+  if (!LoadCachedFloatImage(kind, resolution, resolution, sampleCount, lutData))
+    return -1;
+
+  int textureIndex = driver->CreateFloatTexture(resolution, resolution, lutData.data());
+  if (textureIndex >= 0)
+    T8_LOG_INFO("[IBL] Loaded cached %s: slot=%d %dx%d samples=%d",
+                label, textureIndex, resolution, resolution, sampleCount);
+  return textureIndex;
+}
+
 int CreateCachedGeneratedDiffuseIBLTexture(BaseDriver* driver, const std::string& sourcePath) {
   if (!driver || sourcePath.empty())
     return -1;
@@ -1146,6 +1185,8 @@ void LoadEnvironmentIBLResources(
   if (!driver)
     return;
 
+  constexpr bool allowRuntimeGeneratedIBL = true;
+
   auto loadTextureOnce = [&](int& textureIndex, const std::string& path, const char* label) {
     if (textureIndex >= 0) {
       T8_LOG_INFO("[IBL] Reusing %s: slot=%d path='%s'", label, textureIndex, path.c_str());
@@ -1199,7 +1240,7 @@ void LoadEnvironmentIBLResources(
       envMaps.CharlieIBL = sheenTextureIndex;
   }
 
-  if (diffuseTextureIndex < 0 || specularTextureIndex < 0 || sheenTextureIndex < 0) {
+  if (allowRuntimeGeneratedIBL && (diffuseTextureIndex < 0 || specularTextureIndex < 0 || sheenTextureIndex < 0)) {
     SourceCubemap source;
     if (LoadSourceCubemap(driver, envMaps.Sky, source)) {
       if (diffuseTextureIndex < 0) {
@@ -1219,26 +1260,37 @@ void LoadEnvironmentIBLResources(
       }
     }
   }
+#if defined(OS_ANDROID)
+  if (diffuseTextureIndex < 0 || specularTextureIndex < 0 || sheenTextureIndex < 0) {
+    T8_LOG_INFO("[IBL] Android runtime IBL generation skipped; using sky fallback for missing generated maps");
+  }
+#endif
 
   if (!paths.brdfLUT.empty()) {
     loadTextureOnce(brdfTextureIndex, paths.brdfLUT, "explicit GGX BRDF LUT");
   }
   if (brdfTextureIndex < 0) {
-    brdfTextureIndex = CreateGGXBrdfLUTTexture(driver);
+    brdfTextureIndex = allowRuntimeGeneratedIBL
+      ? CreateGGXBrdfLUTTexture(driver)
+      : CreateCachedGeneratedFloatImageTexture(driver, IBLCacheKind::GGXBrdfLUT, 256, 256, "GGX BRDF LUT");
   }
 
   if (!paths.charlieLUT.empty()) {
     loadTextureOnce(charlieLUTTextureIndex, paths.charlieLUT, "explicit Charlie LUT");
   }
   if (charlieLUTTextureIndex < 0) {
-    charlieLUTTextureIndex = CreateCharlieLUTTexture(driver);
+    charlieLUTTextureIndex = allowRuntimeGeneratedIBL
+      ? CreateCharlieLUTTexture(driver)
+      : CreateCachedGeneratedFloatImageTexture(driver, IBLCacheKind::CharlieLUT, 256, 256, "Charlie LUT");
   }
 
   if (!paths.sheenELUT.empty()) {
     loadTextureOnce(sheenELUTTextureIndex, paths.sheenELUT, "explicit sheen E LUT");
   }
   if (sheenELUTTextureIndex < 0) {
-    sheenELUTTextureIndex = CreateSheenELUTTexture(driver);
+    sheenELUTTextureIndex = allowRuntimeGeneratedIBL
+      ? CreateSheenELUTTexture(driver)
+      : CreateCachedGeneratedFloatImageTexture(driver, IBLCacheKind::SheenELUT, 256, 128, "sheen E LUT");
   }
 
   if (brdfTextureIndex >= 0)

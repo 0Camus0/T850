@@ -19,6 +19,7 @@
 #include <utils/gltf/GLTFAccessor.h>
 #include <utils/Log.h>
 #include <utils/ThreadPool.h>
+#include <utils/ResourceLocator.h>
 
 #include <cstdint>
 #include <cstring>
@@ -37,14 +38,7 @@ constexpr uint32_t GLB_CHUNK_BIN  = 0x004E4942; // "BIN\0"
 constexpr std::size_t kParallelBufferByteThreshold = 4ull * 1024ull * 1024ull;
 
 bool ReadFileBytes(const std::string& path, std::vector<unsigned char>& out) {
-  std::ifstream f(path, std::ios::binary | std::ios::ate);
-  if (!f.is_open()) return false;
-  std::streamsize sz = f.tellg();
-  if (sz < 0) return false;
-  f.seekg(0, std::ios::beg);
-  out.resize(static_cast<std::size_t>(sz));
-  if (sz > 0 && !f.read(reinterpret_cast<char*>(out.data()), sz)) return false;
-  return true;
+  return ResourceLocator::Instance().ReadBinary(path, out);
 }
 
 // Strip the file name from `path`, leaving the directory (with trailing

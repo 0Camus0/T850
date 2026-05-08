@@ -48,6 +48,8 @@ struct DevToolsJson {
   std::optional<bool> offscreen;
   std::optional<bool> offscreenDebug;
   std::optional<std::string> glOffscreenFlushMode;
+  std::optional<bool> dumpShaderPermutations;
+  std::optional<std::string> shaderPermutationOutput;
 };
 
 struct RuntimeConfigJson {
@@ -81,6 +83,8 @@ struct RuntimeConfigJson {
   std::optional<bool> offscreen;
   std::optional<bool> offscreenDebug;
   std::optional<std::string> glOffscreenFlushMode;
+  std::optional<bool> dumpShaderPermutations;
+  std::optional<std::string> shaderPermutationOutput;
   std::optional<float> orbitYaw;
 
   std::optional<DisplayJson> display;

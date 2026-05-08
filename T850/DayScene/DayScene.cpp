@@ -578,6 +578,7 @@ void DayScene::SetSpectatorDebugEnabled(bool enabled) {
 
 void DayScene::DestroyAssets() {
   SceneProp.SSAOKernel.Destroy();
+  m_debugText.Destroy();
   m_wireframeSphere.Destroy();
   m_wireframeArrow.Destroy();
   PrimitiveMgr.DestroyPrimitives();

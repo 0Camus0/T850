@@ -1,12 +1,16 @@
 #include <pch.h>
 #include <scene/TextRenderer.h>
 #include <utils/Log.h>
+#include <utils/ResourceLocator.h>
+#include <utils/Utils.h>
 #define STB_TRUETYPE_IMPLEMENTATION
 #include <stb_truetype.h>
 #include <fstream>
 
+#ifndef OS_ANDROID
 #include <video/gl/GLShader.h>
 #include <video/gl/GLDriver.h>
+#endif
 #if defined(OS_WINDOWS)
 #include <video/d3d11/D3D11Shader.h>
 #include <video/d3d11/D3D11Driver.h>
@@ -19,15 +23,18 @@ namespace t850 {
     m_fontSize = fontSize;
     m_textureSize = (int)textureSize;
     m_fontPath = path;
-    unsigned char* ttf_buffer = new unsigned char [1 << 25];
-    unsigned char* temp_bitmap = new unsigned char[m_textureSize * m_textureSize];
+    std::vector<unsigned char> ttf_buffer;
+    if (!ResourceLocator::Instance().ReadBinary(path, ttf_buffer)) {
+      T8_LOG_ERROR("[TextRenderer] Failed to load font '%s'", path.c_str());
+      return;
+    }
+    std::vector<unsigned char> temp_bitmap(static_cast<size_t>(m_textureSize) * static_cast<size_t>(m_textureSize));
 
 
-    fread(ttf_buffer, 1, 1 << 20, fopen(path.c_str(), "rb"));
-    stbtt_BakeFontBitmap(ttf_buffer, 0, fontSize, temp_bitmap, m_textureSize, m_textureSize, 32, 96, cdata);
+    stbtt_BakeFontBitmap(ttf_buffer.data(), 0, fontSize, temp_bitmap.data(), m_textureSize, m_textureSize, 32, 96, cdata);
 
     // Compute ascent for DrawPixelScaled (must happen before ttf_buffer is freed)
-    stbtt_InitFont(&font, ttf_buffer, stbtt_GetFontOffsetForIndex(ttf_buffer, 0));
+    stbtt_InitFont(&font, ttf_buffer.data(), stbtt_GetFontOffsetForIndex(ttf_buffer.data(), 0));
     {
       int asc, desc, gap;
       stbtt_GetFontVMetrics(&font, &asc, &desc, &gap);
@@ -54,7 +61,7 @@ namespace t850 {
       }
     }
 
-    ftex = T8Device->CreateTextureFromMemory(temp_bitmap, m_textureSize, m_textureSize, 1, path);
+    ftex = T8Device->CreateTextureFromMemory(temp_bitmap.data(), m_textureSize, m_textureSize, 1, path);
     if (ftex) {
       ftex->params = TextBasicParams::CLAMP_TO_EDGE;
       ftex->SetTextureParams();
@@ -148,8 +155,6 @@ namespace t850 {
     }
 
     /*DEALLOCATE MEMORY*/
-    delete[] temp_bitmap;
-    delete[]ttf_buffer;
   }
   void TextRenderer::Draw(float x, float y,const XVECTOR3& color, std::string text)
   {
@@ -374,14 +379,17 @@ namespace t850 {
     if (std::abs(newFontSize - m_fontSize) < 0.5f) return;
     m_fontSize = newFontSize;
 
-    unsigned char* ttf_buffer  = new unsigned char[1 << 25];
-    unsigned char* temp_bitmap = new unsigned char[m_textureSize * m_textureSize];
+    std::vector<unsigned char> ttf_buffer;
+    if (!ResourceLocator::Instance().ReadBinary(m_fontPath, ttf_buffer)) {
+      T8_LOG_ERROR("[TextRenderer] Failed to rebake font '%s'", m_fontPath.c_str());
+      return;
+    }
+    std::vector<unsigned char> temp_bitmap(static_cast<size_t>(m_textureSize) * static_cast<size_t>(m_textureSize));
 
-    fread(ttf_buffer, 1, 1 << 20, fopen(m_fontPath.c_str(), "rb"));
-    stbtt_BakeFontBitmap(ttf_buffer, 0, newFontSize, temp_bitmap,
+    stbtt_BakeFontBitmap(ttf_buffer.data(), 0, newFontSize, temp_bitmap.data(),
                          m_textureSize, m_textureSize, 32, 96, cdata);
 
-    stbtt_InitFont(&font, ttf_buffer, stbtt_GetFontOffsetForIndex(ttf_buffer, 0));
+    stbtt_InitFont(&font, ttf_buffer.data(), stbtt_GetFontOffsetForIndex(ttf_buffer.data(), 0));
     {
       int asc, desc, gap;
       stbtt_GetFontVMetrics(&font, &asc, &desc, &gap);
@@ -406,10 +414,7 @@ namespace t850 {
     }
 
     if (ftex) ftex->release();
-    ftex = T8Device->CreateTextureFromMemory(temp_bitmap, m_textureSize, m_textureSize, 1, m_fontPath);
-
-    delete[] temp_bitmap;
-    delete[] ttf_buffer;
+    ftex = T8Device->CreateTextureFromMemory(temp_bitmap.data(), m_textureSize, m_textureSize, 1, m_fontPath);
     printf("[TextRenderer] Rebaked font at size %.1f\n", newFontSize);
   }
 

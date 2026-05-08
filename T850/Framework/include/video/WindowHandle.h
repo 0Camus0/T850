@@ -32,12 +32,13 @@ namespace t850 {
     enum Kind {
       NONE = 0,
       SDL_WINDOW,    // sdlWindow points to an SDL_Window
-      WIN32_HWND     // nativeHandle is an HWND
+      WIN32_HWND,    // nativeHandle is an HWND
+      ANDROID_NATIVE_WINDOW // nativeHandle is an ANativeWindow*
     };
 
     Kind  kind;
     void* sdlWindow;     // valid when kind == SDL_WINDOW
-    void* nativeHandle;  // valid when kind == WIN32_HWND (HWND on Windows)
+    void* nativeHandle;  // valid when kind == WIN32_HWND or ANDROID_NATIVE_WINDOW
 
     WindowHandle()
       : kind(NONE), sdlWindow(nullptr), nativeHandle(nullptr) {}
@@ -53,6 +54,13 @@ namespace t850 {
       WindowHandle h;
       h.kind = WIN32_HWND;
       h.nativeHandle = hwnd;
+      return h;
+    }
+
+    static WindowHandle FromAndroidNativeWindow(void* nativeWindow) {
+      WindowHandle h;
+      h.kind = ANDROID_NATIVE_WINDOW;
+      h.nativeHandle = nativeWindow;
       return h;
     }
   };

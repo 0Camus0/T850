@@ -18,6 +18,14 @@
 #include <cstring>
 #include <cstdint>
 
+#ifndef T850_ENABLE_DRACO
+#if defined(OS_ANDROID)
+#define T850_ENABLE_DRACO 0
+#else
+#define T850_ENABLE_DRACO 1
+#endif
+#endif
+
 namespace t850 {
 namespace gltf {
 
@@ -211,13 +219,13 @@ bool ReadAccessorIndices(const Document& doc, int accessorIndex,
 } // namespace gltf
 } // namespace t850
 
+#if T850_ENABLE_DRACO
 // ── Draco mesh decompression ───────────────────────────────────────
 #include <draco/compression/decode.h>
 #include <draco/mesh/mesh.h>
 #include <draco/core/decoder_buffer.h>
 
-// draco.lib is linked via DayScene.vcxproj AdditionalDependencies
-// (uses the dynamic import lib from $(T8VcpkgDynamic)\lib).
+// Draco is linked by the platform build files when T850_ENABLE_DRACO is enabled.
 
 namespace t850 {
 namespace gltf {
@@ -322,3 +330,17 @@ bool DecodeDracoMesh(const Document& doc,
 
 } // namespace gltf
 } // namespace t850
+#else
+namespace t850 {
+namespace gltf {
+
+bool DecodeDracoMesh(const Document&,
+                     const DracoMeshCompression&,
+                     DracoDecodeResult&) {
+  T8_LOG_ERROR("[glTF] Draco mesh compression is not available in this build");
+  return false;
+}
+
+} // namespace gltf
+} // namespace t850
+#endif

@@ -12,17 +12,27 @@
 
 #include <Application.h>
 #include <video/BaseDriver.h>
+#ifndef OS_ANDROID
 #include <video/gl/GLTexture.h>
+#endif
 #include <utils/InputManager.h>
+#ifndef OS_ANDROID
 #include <SDL3/SDL.h>
+#endif
 #include <utils/Log.h>
+#include <utils/ResourceLocator.h>
 #include <utils/Utils.h>
 #include <debug/Profiler.h>
 #include <debug/RenderTrace.h>
 #include <core/Config.h>
 #include <core/EngineContext.h>
+#include <scene/MeshAssetCache.h>
+#include <scene/MaterialAsset.h>
 #include <imgui/DevGuiContext.h>
+#ifndef OS_ANDROID
+
 #include <imgui_impl_vulkan.h>
+#endif
 
 #ifdef OS_WINDOWS
 #  include <video/d3d11/D3D11Texture.h>
@@ -30,9 +40,15 @@
 #  include <video/d3d12/D3D12Texture.h>
 #  include <video/vulkan/VulkanTexture.h>
 #endif
+#ifdef OS_ANDROID
+#  include <android/input.h>
+#  include <video/vulkan/VulkanDriver.h>
+#endif
 
 #include <algorithm>
 #include <cstdint>
+#include <cmath>
+#include <fstream>
 #include <stdio.h>
 #include <stdlib.h>
 #include <time.h>
@@ -43,6 +59,7 @@
 
 #include <iostream>
 #include <string>
+#include <system_error>
 #include <vector>
 
 using namespace t850;
@@ -52,6 +69,7 @@ namespace t850 {
   extern Device*       T8Device;
 }
 
+#ifndef OS_ANDROID
 namespace {
   struct DebugRTEntry {
     std::string key;
@@ -400,6 +418,7 @@ namespace {
     }
   }
 }
+#endif // !OS_ANDROID
 
 #ifdef T850_RENDER_TRACE
 namespace {
@@ -446,9 +465,11 @@ void App::InitVars() {
   m_actualScene = m_scenes[sceneIdx].get();
   m_actualScene->InitVars();
 
+#ifndef OS_ANDROID
   m_devLayer.Init(pFramework);
   m_devLayer.SetLegacyGuiEnabled(false);
   m_devLayer.SetActiveScene(m_actualScene);
+#endif
 
   Cam.InitPerspective(XVECTOR3(0.0f, 1.0f, 10.0f), Deg2Rad(46.8f), 1280.0f / 720.0f, 2.0f, 12000.0f);
   Cam.Speed = 10.0f;
@@ -475,8 +496,10 @@ void App::LoadScene(int id) {
   m_actualScene = m_scenes[id].get();
   m_actualScene->SetEngineContext(&t850::GetEngineContext());
   m_actualScene->OnLoadScene();
+#ifndef OS_ANDROID
   m_devLayer.SetActiveScene(m_actualScene);
   m_devLayer.RebuildGUIForScene();
+#endif
   FadeFX(0.5,false);
 }
 
@@ -522,8 +545,13 @@ void App::CreateAssets() {
       T8_LOG_ERROR("[App] Runtime ImGui init failed");
     }
   }
+#ifdef OS_ANDROID
+  LoadAndroidGuiSettings();
+#endif
 
-  FadeFX(0.5, false);
+  if (!g_config.flags.dumpShaderPermutations) {
+    FadeFX(0.5, false);
+  }
 
   // Initialize profiler if requested (after driver is fully set up)
 #ifdef T8_ENABLE_PROFILER
@@ -549,9 +577,13 @@ void App::DestroyAssets() {
      s_traceDriver = nullptr;
    }
 #endif
+#ifndef OS_ANDROID
    m_devLayer.Destroy();
+#endif
    if (m_imguiReady) {
+#ifndef OS_ANDROID
      ReleaseDebugTextureDescriptors(m_debugTextureDescriptors, m_debugOpaqueTextureDescriptors);
+#endif
      m_imgui.Shutdown();
      m_imguiReady = false;
    }
@@ -560,6 +592,8 @@ void App::DestroyAssets() {
    if (m_actualScene) {
      m_actualScene->DestroyAssets();
    }
+   t850::MeshAssetCache::Get().Clear();
+   t850::MaterialAssetCache::Get().Clear();
 }
 
 void App::OnUpdate() {
@@ -577,8 +611,12 @@ void App::OnUpdate() {
      timeAccum = 0;
    }
 
+#ifndef OS_ANDROID
    m_devLayer.GetGUI().SetFPSText(m_fpsString, m_fpsCol);
    m_devLayer.Update(DtSecs);
+#else
+   if (m_actualScene) m_actualScene->OnUpdate(DtSecs);
+#endif
 
    OnInput();
    OnDraw();
@@ -597,7 +635,11 @@ void App::OnDraw() {
   pFramework->pVideoDriver->Clear();
   FirstFrame = false;
 
+#ifndef OS_ANDROID
   m_devLayer.Draw();
+#else
+  if (m_actualScene) m_actualScene->OnDraw();
+#endif
   if (fading) {
     T8_LOG_TRACE("[Frame %d] Fade quad draw", frameCount);
     pFramework->pVideoDriver->SetBlendState(BaseDriver::ALPHA_BLEND);
@@ -652,11 +694,17 @@ void App::OnDraw() {
 void App::OnInput() {
 	if (FirstFrame)
 		return;
+#ifndef OS_ANDROID
   if (m_imguiReady && IManager.PressedOnceKey(T800K_g)) {
     m_imguiVisible = !m_imguiVisible;
   }
   m_devLayer.SetSceneInputBlocked(m_imguiVisible && m_imgui.WantsKeyboard());
   m_devLayer.ProcessInput(&IManager);
+#else
+  UpdateAndroidGuiHoldToggle();
+  if (m_imguiVisible && m_imgui.WantsMouse()) return;
+  if (m_actualScene) m_actualScene->OnInput(&IManager);
+#endif
 }
 
 void App::OnPause() {
@@ -672,28 +720,86 @@ void App::OnReset() {
 }
 
 bool App::IsModalActive() const {
+#ifdef OS_ANDROID
+  return false;
+#else
   return m_devLayer.IsLegacyPopupActive() || (m_imguiVisible && m_imgui.WantsKeyboard());
+#endif
 }
 
 void App::DrawRuntimeGui() {
   if (!m_imguiReady) return;
 
+#ifdef OS_ANDROID
+  ImGui::GetIO().FontGlobalScale = m_androidGuiScale;
+#endif
   m_imgui.NewFrame(m_imguiVisible);
 
   t850::DevGuiContext gui;
   gui.DrawFrameStatsOverlay(m_fpsString.c_str());
 
   if (m_imguiVisible) {
+#ifdef OS_ANDROID
+    const bool androidUndockThisFrame = m_androidGuiUndockRequested;
+    const ImGuiIO& io = ImGui::GetIO();
+    constexpr float kPanelMargin = 24.0f;
+    const float availableW = (std::max)(1.0f, io.DisplaySize.x - kPanelMargin * 2.0f);
+    const float availableH = (std::max)(1.0f, io.DisplaySize.y - kPanelMargin * 2.0f);
+    const float panelW = (std::min)((std::max)(420.0f, 620.0f * m_androidGuiScale), availableW);
+    const float panelH = (std::min)((std::max)(560.0f, 760.0f * m_androidGuiScale), availableH);
+    const ImVec2 panelPos((std::max)(kPanelMargin, io.DisplaySize.x - panelW - kPanelMargin), kPanelMargin);
+    const ImVec2 panelSize(panelW, panelH);
+    if (androidUndockThisFrame) {
+      ImGui::SetNextWindowDockID(0, ImGuiCond_Always);
+      ImGui::SetNextWindowPos(panelPos, ImGuiCond_Always);
+      ImGui::SetNextWindowSize(panelSize, ImGuiCond_Always);
+    } else {
+      ImGui::SetNextWindowPos(panelPos, ImGuiCond_FirstUseEver);
+      ImGui::SetNextWindowSize(panelSize, ImGuiCond_FirstUseEver);
+    }
+    const char* panelTitle = "Scene Controls##Android";
+#else
     ImGui::SetNextWindowSize(ImVec2(420.0f, 680.0f), ImGuiCond_FirstUseEver);
-    if (gui.BeginPanel("Scene Controls", &m_imguiVisible)) {
+    const char* panelTitle = "Scene Controls";
+#endif
+    const bool panelBegun = gui.BeginPanel(panelTitle, &m_imguiVisible);
+#ifdef OS_ANDROID
+    if (androidUndockThisFrame) {
+      m_androidGuiUndockRequested = false;
+      T8_LOG_INFO("[App] Android ImGui panel undocked");
+    }
+#endif
+    if (panelBegun) {
+#ifdef OS_ANDROID
+      if (ImGui::Button("Close GUI")) {
+        m_imguiVisible = false;
+        SaveAndroidGuiSettings();
+        T8_LOG_INFO("[App] Android close button closed ImGui overlay");
+      }
+      ImGui::SameLine();
+      if (ImGui::Button("Undock")) {
+        m_androidGuiUndockRequested = true;
+      }
+      ImGui::SameLine();
+      ImGui::TextUnformatted("Triple-tap to reopen");
+      float scale = m_androidGuiScale;
+      if (ImGui::SliderFloat("GUI scale", &scale, 1.0f, 2.5f, "%.2f")) {
+        m_androidGuiScale = (std::max)(1.0f, (std::min)(2.5f, scale));
+        SaveAndroidGuiSettings();
+      }
+      ImGui::Separator();
+#endif
       if (m_actualScene) {
         m_actualScene->DrawDevGui(gui);
       }
+#ifndef OS_ANDROID
       ImGui::Separator();
       ImGui::Checkbox("DEBUG Render Targets", &m_debugPanelVisible);
+#endif
     }
     gui.EndPanel();
 
+#ifndef OS_ANDROID
     if (m_debugPanelVisible || !m_debugOpenTargets.empty()) {
       t850::BaseDriver* driver = pFramework ? pFramework->pVideoDriver : nullptr;
       std::vector<DebugRTEntry> debugRTs = BuildDebugRTEntries(driver, m_debugTextureDescriptors, m_debugOpaqueTextureDescriptors);
@@ -701,7 +807,165 @@ void App::DrawRuntimeGui() {
       DrawDebugRenderTargetPanel(debugRTs, m_debugOpenTargets, &m_debugPanelVisible);
       DrawDebugPreviewWindows(debugRTs, m_debugOpenTargets);
     }
+#endif
   }
 
+#ifdef OS_ANDROID
+  m_imgui.BuildDrawData();
+  if (auto* vkDriver = static_cast<t850::VulkanDriver*>(pFramework ? pFramework->pVideoDriver : nullptr)) {
+    vkDriver->SetPrePresentOverlayCallback([this]() {
+      m_imgui.RenderDrawData();
+    });
+  }
+#else
   m_imgui.Render();
+#endif
 }
+
+#ifdef OS_ANDROID
+bool App::HandleAndroidInputEvent(AInputEvent* event) {
+  if (event && AInputEvent_getType(event) == AINPUT_EVENT_TYPE_KEY) {
+    const int32_t key = AKeyEvent_getKeyCode(event);
+    const int32_t action = AKeyEvent_getAction(event);
+    if (key == AKEYCODE_BACK) {
+      if (!m_imguiReady || !m_imguiVisible) return false;
+      if (action == AKEY_EVENT_ACTION_UP) {
+        m_imguiVisible = false;
+        SaveAndroidGuiSettings();
+        T8_LOG_INFO("[App] Android back closed ImGui overlay");
+      }
+      return true;
+    }
+  }
+
+  if (m_imguiReady && !m_imguiVisible && event && AInputEvent_getType(event) == AINPUT_EVENT_TYPE_MOTION) {
+    const int32_t rawAction = AMotionEvent_getAction(event);
+    const int32_t action = rawAction & AMOTION_EVENT_ACTION_MASK;
+    if (action == AMOTION_EVENT_ACTION_UP && AMotionEvent_getPointerCount(event) > 0) {
+      RegisterAndroidGuiTap(AMotionEvent_getX(event, 0), AMotionEvent_getY(event, 0));
+    }
+  }
+  return m_imguiReady && m_imgui.HandleAndroidInputEvent(event);
+}
+
+void App::RegisterAndroidGuiTap(float x, float y) {
+  constexpr float kTapWindowSeconds = 0.75f;
+  constexpr float kTapTolerancePixels = 120.0f;
+  constexpr int kRequiredTapCount = 3;
+
+  if (!m_imguiReady || m_imguiVisible) return;
+
+  const bool startsNewSequence = (m_androidGuiTapCount == 0 || m_androidGuiTapWindowSecs <= 0.0f);
+  if (startsNewSequence) {
+    m_androidGuiTapCount = 1;
+    m_androidGuiTapStartX = x;
+    m_androidGuiTapStartY = y;
+    m_androidGuiTapWindowSecs = kTapWindowSeconds;
+    return;
+  }
+
+  const float dx = x - m_androidGuiTapStartX;
+  const float dy = y - m_androidGuiTapStartY;
+  if ((dx * dx + dy * dy) > (kTapTolerancePixels * kTapTolerancePixels)) {
+    m_androidGuiTapCount = 1;
+    m_androidGuiTapStartX = x;
+    m_androidGuiTapStartY = y;
+    m_androidGuiTapWindowSecs = kTapWindowSeconds;
+    return;
+  }
+
+  ++m_androidGuiTapCount;
+  m_androidGuiTapWindowSecs = kTapWindowSeconds;
+  if (m_androidGuiTapCount >= kRequiredTapCount) {
+    m_imguiVisible = true;
+    m_androidGuiTapCount = 0;
+    m_androidGuiTapWindowSecs = 0.0f;
+    m_androidGuiHoldSecs = 0.0f;
+    m_androidGuiHoldActive = false;
+    m_androidGuiHoldSuppressed = true;
+    T8_LOG_INFO("[App] Android triple tap opened ImGui overlay");
+  }
+}
+
+void App::LoadAndroidGuiSettings() {
+  const std::filesystem::path path = t850::ResourceLocator::Instance().ResolveCachePath("android_gui_settings.txt");
+  std::ifstream file(path);
+  if (!file.is_open()) return;
+
+  float scale = m_androidGuiScale;
+  file >> scale;
+  if (file && std::isfinite(scale)) {
+    m_androidGuiScale = (std::max)(1.0f, (std::min)(2.5f, scale));
+    T8_LOG_INFO("[App] Android GUI scale loaded: %.2f", m_androidGuiScale);
+  }
+}
+
+void App::SaveAndroidGuiSettings() const {
+  const std::filesystem::path path = t850::ResourceLocator::Instance().ResolveCachePath("android_gui_settings.txt");
+  std::error_code ec;
+  std::filesystem::create_directories(path.parent_path(), ec);
+  if (ec) {
+    T8_LOG_ERROR("[App] Failed to create Android GUI settings directory '%s': %s",
+                 path.parent_path().string().c_str(), ec.message().c_str());
+    return;
+  }
+
+  std::ofstream file(path, std::ios::out | std::ios::trunc);
+  if (!file.is_open()) {
+    T8_LOG_ERROR("[App] Failed to save Android GUI settings '%s'", path.string().c_str());
+    return;
+  }
+  file << m_androidGuiScale << '\n';
+}
+
+void App::UpdateAndroidGuiHoldToggle() {
+  constexpr float kHoldSeconds = 3.0f;
+  constexpr float kMoveTolerancePixels = 72.0f;
+
+  if (m_androidGuiTapWindowSecs > 0.0f) {
+    m_androidGuiTapWindowSecs -= DtSecs;
+    if (m_androidGuiTapWindowSecs <= 0.0f) {
+      m_androidGuiTapCount = 0;
+      m_androidGuiTapWindowSecs = 0.0f;
+    }
+  }
+
+  if (!m_imguiReady || m_imguiVisible || !IManager.PressedMouseButton(0)) {
+    m_androidGuiHoldSecs = 0.0f;
+    m_androidGuiHoldActive = false;
+    m_androidGuiHoldSuppressed = false;
+    return;
+  }
+
+  const float x = static_cast<float>(IManager.mouseX);
+  const float y = static_cast<float>(IManager.mouseY);
+  if (!m_androidGuiHoldActive && !m_androidGuiHoldSuppressed) {
+    m_androidGuiHoldActive = true;
+    m_androidGuiHoldStartX = x;
+    m_androidGuiHoldStartY = y;
+    m_androidGuiHoldSecs = 0.0f;
+  }
+
+  if (!m_androidGuiHoldActive) return;
+
+  const float dx = x - m_androidGuiHoldStartX;
+  const float dy = y - m_androidGuiHoldStartY;
+  if ((dx * dx + dy * dy) > (kMoveTolerancePixels * kMoveTolerancePixels)) {
+    m_androidGuiHoldSecs = 0.0f;
+    m_androidGuiHoldActive = false;
+    m_androidGuiHoldSuppressed = true;
+    return;
+  }
+
+  m_androidGuiHoldSecs += DtSecs;
+  if (m_androidGuiHoldSecs >= kHoldSeconds) {
+    m_imguiVisible = true;
+    m_androidGuiTapCount = 0;
+    m_androidGuiTapWindowSecs = 0.0f;
+    m_androidGuiHoldSecs = 0.0f;
+    m_androidGuiHoldActive = false;
+    m_androidGuiHoldSuppressed = true;
+    T8_LOG_INFO("[App] Android long press opened ImGui overlay");
+  }
+}
+#endif

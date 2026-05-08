@@ -9,7 +9,7 @@
 #include <video/vulkan/VulkanDeviceContext.h>
 #include <video/vulkan/VulkanUtils.h>
 
-#if defined(OS_WINDOWS)
+#if defined(OS_WINDOWS) || defined(OS_ANDROID)
 
 #include <utils/Log.h>
 #include <debug/RenderTrace.h>

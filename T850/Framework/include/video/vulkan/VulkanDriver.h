@@ -9,7 +9,7 @@
 
 #include <Config.h>
 
-#if defined(OS_WINDOWS)
+#if defined(OS_WINDOWS) || defined(OS_ANDROID)
 
 // Include all per-class headers
 #include <video/vulkan/VulkanVertexBuffer.h>
@@ -23,13 +23,20 @@
 #include <video/vulkan/VulkanPipelineKey.h>
 #include <video/vulkan/VulkanUtils.h>
 
+#if defined(OS_WINDOWS)
 #define VK_USE_PLATFORM_WIN32_KHR
+#elif defined(OS_ANDROID)
+#define VK_USE_PLATFORM_ANDROID_KHR
+#endif
 #include <vulkan/vulkan.h>
 #include <vma/vk_mem_alloc.h>
 
 #include <unordered_map>
 #include <string>
 #include <vector>
+#include <cstdint>
+#include <functional>
+#include <utility>
 
 namespace t850 {
 
@@ -38,7 +45,7 @@ namespace t850 {
   // ══════════════════════════════════════════════════════
   class VulkanDriver : public BaseDriver {
   public:
-    static const UINT kBackBufferCount = 3;  // triple-buffer for full CPU-GPU overlap
+    static constexpr uint32_t kBackBufferCount = 3;  // triple-buffer for full CPU-GPU overlap
 
     VulkanDriver() { m_currentAPI = GraphicsApi::VULKAN; }
 
@@ -122,12 +129,34 @@ namespace t850 {
 
     // Ensure the backbuffer render pass is active (for ImGui overlay rendering)
     void EnsureBackbufferRenderPass();
+    void SetPrePresentOverlayCallback(std::function<void()> callback) {
+      if (!callback) {
+        m_prePresentOverlayCallback = nullptr;
+        return;
+      }
+      if (!m_prePresentOverlayCallback) {
+        m_prePresentOverlayCallback = std::move(callback);
+        return;
+      }
+      auto previous = std::move(m_prePresentOverlayCallback);
+      m_prePresentOverlayCallback = [previous = std::move(previous), callback = std::move(callback)]() mutable {
+        previous();
+        callback();
+      };
+    }
+
+    // Copy a rendered RT to the swapchain immediately before present. Used on
+    // Android to avoid compositor-visible issues with the normal final quad.
+    void SetLatePresentSource(int rtID, int attachment);
+    bool SuspendWindowSurface();
+    bool ResumeWindowSurface(void* nativeWindow, int newW, int newH);
 
     // End the currently active render pass (if any) — safe to call even when none is active
     void EndRenderPassIfActive(VkCommandBuffer cmd) {
       if (m_renderPassActive) {
         vkCmdEndRenderPass(cmd);
         m_renderPassActive = false;
+        m_activeRenderPass = VK_NULL_HANDLE;
       }
     }
     void SetRenderPassActive(bool active) { m_renderPassActive = active; }
@@ -174,8 +203,11 @@ namespace t850 {
     void CreateDescriptorPool();
     void CreateAllocator();
     void WaitForFence(uint32_t frameIndex);
+    bool CreatePlatformSurface();
+    void DestroyWindowSurfaceResources(bool destroySurface);
+    bool CopyLatePresentSourceToSwapchain(VkCommandBuffer cmd);
 
-    HWND m_hwnd = nullptr;
+    void* m_nativeWindow = nullptr;
 
     // Core Vulkan objects
     VkInstance          m_instance = VK_NULL_HANDLE;
@@ -191,6 +223,7 @@ namespace t850 {
     VkSwapchainKHR      m_swapChain = VK_NULL_HANDLE;
     VkFormat            m_swapChainFormat = VK_FORMAT_B8G8R8A8_UNORM;
     VkExtent2D          m_swapChainExtent = {};
+    bool                m_swapChainSupportsTransferDst = false;
 
     // Back buffer images (owned by swap chain)
     std::vector<VkImage>     m_swapChainImages;
@@ -264,6 +297,8 @@ namespace t850 {
 
     // Active render pass (set when beginning backbuffer or RT render passes)
     VkRenderPass    m_activeRenderPass = VK_NULL_HANDLE;
+    int             m_latePresentRT = -1;
+    int             m_latePresentAttachment = 0;
 
     // Dummy 1x1 texture for unbound descriptor slots
     VkImage         m_dummyImage = VK_NULL_HANDLE;
@@ -278,6 +313,7 @@ namespace t850 {
     // Pipeline cache: lazy-created per (shader × blend × depth × cull × attachment config)
     std::unordered_map<VulkanPipelineKey, VkPipeline, VulkanPipelineKeyHash> m_pipelineCache;
     VkPipelineCache m_vkPipelineCache = VK_NULL_HANDLE;  // Vulkan driver-level cache
+    std::function<void()> m_prePresentOverlayCallback;
 
     // Debug
     VkDebugUtilsMessengerEXT m_debugMessenger = VK_NULL_HANDLE;

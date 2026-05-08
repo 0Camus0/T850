@@ -334,8 +334,12 @@ namespace t850 {
     // (VS_W + FS_W, #version 130 with blanked precision qualifiers).
     // This is known to work on all GL backends.
     {
-      char* vsP = file2string(g_pBaseDriver->UsesGLSL() ? "Shaders/VS_W.glsl" : "Shaders/VS_W.hlsl");
-      char* fsP = file2string(g_pBaseDriver->UsesGLSL() ? "Shaders/FS_W.glsl" : "Shaders/FS_W.hlsl");
+      const std::string vsName = g_pBaseDriver->UsesGLSL() ? "VS_W.glsl" : "VS_W.hlsl";
+      const std::string fsName = g_pBaseDriver->UsesGLSL() ? "FS_W.glsl" : "FS_W.hlsl";
+      const std::string vsPath = "Shaders/" + vsName;
+      const std::string fsPath = "Shaders/" + fsName;
+      char* vsP = file2string(vsPath.c_str());
+      char* fsP = file2string(fsPath.c_str());
       if (vsP && fsP) {
         std::string vs(vsP), fs(fsP);
         free(vsP); free(fsP);
@@ -353,7 +357,7 @@ namespace t850 {
           vs = defs + vs;
           fs = defs + fs;
         }
-        int sid = g_pBaseDriver->CreateShader(vs, fs);
+        int sid = g_pBaseDriver->CreateShader(vs, fs, ShaderKey(), vsName, fsName);
         m_skelShader = g_pBaseDriver->GetShaderIdx(sid);
       } else {
         if (vsP) free(vsP);

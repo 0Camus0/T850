@@ -12,6 +12,10 @@
   #define WIN32_LEAN_AND_MEAN
   #include <windows.h>
   #include <psapi.h>
+#elif defined(OS_ANDROID)
+  #include <android/log.h>
+  #include <unistd.h>
+  #include <pthread.h>
 #else
   #include <unistd.h>
   #include <pthread.h>
@@ -80,7 +84,9 @@ namespace Log {
   }
 
   static size_t GetProcessRAM_MB() {
-#ifdef OS_WINDOWS
+#ifdef OS_ANDROID
+    return 0;
+#elif defined(OS_WINDOWS)
     PROCESS_MEMORY_COUNTERS pmc;
     if (GetProcessMemoryInfo(GetCurrentProcess(), &pmc, sizeof(pmc)))
       return pmc.WorkingSetSize / (1024 * 1024);
@@ -126,6 +132,19 @@ namespace Log {
       case LVL_VERBOSE: return "\033[90m";   // dark gray
       case LVL_TRACE:   return "\033[34m";   // blue
       default:          return "\033[0m";
+    }
+  }
+#endif
+
+#ifdef OS_ANDROID
+  static int AndroidLogPriority(Level lvl) {
+    switch (lvl) {
+      case LVL_ERROR:   return ANDROID_LOG_ERROR;
+      case LVL_INFO:    return ANDROID_LOG_INFO;
+      case LVL_DEBUG:   return ANDROID_LOG_DEBUG;
+      case LVL_VERBOSE: return ANDROID_LOG_VERBOSE;
+      case LVL_TRACE:   return ANDROID_LOG_VERBOSE;
+      default:          return ANDROID_LOG_DEBUG;
     }
   }
 #endif
@@ -244,6 +263,10 @@ namespace Log {
       if (s_backends & T8_LOG_BACKEND_DEBUG_OUTPUT) {
         OutputDebugStringA(fullLine);
         OutputDebugStringA("\n");
+      }
+#elif defined(OS_ANDROID)
+      if (s_backends & T8_LOG_BACKEND_ANDROID_LOGCAT) {
+        __android_log_write(AndroidLogPriority(level), "T850", fullLine);
       }
 #endif
 

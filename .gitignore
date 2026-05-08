@@ -21,6 +21,7 @@
 # ── Generated asset caches ──
 **/.t8cache/
 /T850/Assets/Shaders/.t8shadercache/
+/T850/Assets/Textures/GeneratedIBLCache/
 
 # ── vcpkg build-time artifacts (huge, reproducible) ──
 /T850/Librerias/vcpkg/buildtrees/
@@ -35,3 +36,13 @@
 *.pdb
 __pycache__/
 *.py[cod]
+
+# Android/Gradle local state
+T850/android/.gradle/
+T850/android/app/.cxx/
+T850/android/app/build/
+T850/android/build/
+T850/android/java_pid*.hprof
+
+# Downloaded by SetupAndroidToolchain.bat
+T850/Librerias/VulkanMemoryAllocator/

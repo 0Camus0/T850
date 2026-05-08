@@ -20,6 +20,10 @@
 #include <utils/ResourceManager.h>
 #include <scene/SceneProp.h>
 
+#ifdef OS_ANDROID
+struct AInputEvent;
+#endif
+
 namespace t850 {
   class GUIManager;   // forward
   class DevGuiContext; // forward
@@ -44,6 +48,9 @@ namespace t850 {
     // Return true if the app is currently showing a modal UI (e.g. a line-edit popup).
     // Frameworks use this to suppress global keys like Escape-to-quit while modal.
     virtual bool IsModalActive() const { return false; }
+#ifdef OS_ANDROID
+    virtual bool HandleAndroidInputEvent(AInputEvent* /*event*/) { return false; }
+#endif
 
     void	SetParentFramework(RootFramework* pParentFramework) {
       pFramework = pParentFramework;

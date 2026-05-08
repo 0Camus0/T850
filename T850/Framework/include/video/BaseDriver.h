@@ -275,7 +275,7 @@ namespace t850 {
     virtual void   SetWindowHandle(const WindowHandle& handle) {
       if (handle.kind == WindowHandle::SDL_WINDOW) {
         SetWindow(handle.sdlWindow);
-      } else if (handle.kind == WindowHandle::WIN32_HWND) {
+      } else if (handle.kind == WindowHandle::WIN32_HWND || handle.kind == WindowHandle::ANDROID_NATIVE_WINDOW) {
         SetWindow(handle.nativeHandle);
       } else {
         SetWindow(nullptr);

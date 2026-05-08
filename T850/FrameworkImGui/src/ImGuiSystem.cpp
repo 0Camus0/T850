@@ -7,16 +7,17 @@
 #include <video/BaseDriver.h>
 
 #include <imgui.h>
+#ifndef OS_ANDROID
 #include <imgui_impl_opengl3.h>
-#include <imgui_impl_sdl3.h>
+#endif
 #include <imgui_impl_vulkan.h>
-
-#include <SDL3/SDL.h>
 
 #ifdef OS_WINDOWS
 #  include <core/windows/Win32Framework.h>
 #  include <d3d11.h>
 #  include <imgui_impl_dx11.h>
+#  include <imgui_impl_sdl3.h>
+#  include <SDL3/SDL.h>
 #  include <video/d3d11/D3D11Texture.h>
 #  if __has_include(<imgui_impl_dx12.h>)
 #    define T850_IMGUI_HAS_DX12 1
@@ -25,6 +26,12 @@
 #  else
 #    define T850_IMGUI_HAS_DX12 0
 #  endif
+#endif
+#ifdef OS_ANDROID
+#  include <android/input.h>
+#  include <android/native_window.h>
+#  include <core/android/AndroidFramework.h>
+#  include <imgui_impl_android.h>
 #endif
 
 #include <video/vulkan/VulkanDriver.h>
@@ -37,6 +44,7 @@ namespace t850 {
 }
 
 namespace {
+#ifndef OS_ANDROID
   static bool sdlEventWatcher(void* userdata, SDL_Event* event) {
     ImGui_ImplSDL3_ProcessEvent(event);
     auto* system = static_cast<t850::ImGuiSystem*>(userdata);
@@ -45,6 +53,7 @@ namespace {
     }
     return true;
   }
+#endif
 }
 
 namespace t850 {
@@ -57,17 +66,28 @@ bool ImGuiSystem::Init(RootFramework* framework, const char* iniFileName, bool e
   if (m_inited) return true;
   if (!framework || !framework->pVideoDriver) return false;
 
-#ifdef OS_WINDOWS
+#ifdef OS_ANDROID
+  auto* androidFramework = static_cast<AndroidFramework*>(framework);
+  m_androidWindow = androidFramework ? androidFramework->GetNativeWindow() : nullptr;
+  m_sdlWindow = nullptr;
+#elif defined(OS_WINDOWS)
   auto* w32 = static_cast<Win32Framework*>(framework);
   m_sdlWindow = w32 ? w32->m_pWindow : nullptr;
 #else
   m_sdlWindow = nullptr;
 #endif
 
+#ifdef OS_ANDROID
+  if (!m_androidWindow) {
+    T8_LOG_ERROR("[ImGuiSystem] Init failed: no Android native window");
+    return false;
+  }
+#else
   if (!m_sdlWindow) {
     T8_LOG_ERROR("[ImGuiSystem] Init failed: no SDL window");
     return false;
   }
+#endif
 
   m_api = framework->pVideoDriver->m_currentAPI;
   m_dockingEnabled = enableDocking;
@@ -90,7 +110,9 @@ bool ImGuiSystem::Init(RootFramework* framework, const char* iniFileName, bool e
   style.ScrollbarRounding = 3.0f;
 
   bool platformOK = false;
-#ifdef OS_WINDOWS
+#ifdef OS_ANDROID
+  platformOK = ImGui_ImplAndroid_Init(m_androidWindow);
+#elif defined(OS_WINDOWS)
   if (m_api == GraphicsApi::OPENGL) {
     platformOK = ImGui_ImplSDL3_InitForOpenGL(m_sdlWindow, nullptr);
   } else if (m_api == GraphicsApi::VULKAN) {
@@ -103,7 +125,7 @@ bool ImGuiSystem::Init(RootFramework* framework, const char* iniFileName, bool e
 #endif
 
   if (!platformOK) {
-    T8_LOG_ERROR("[ImGuiSystem] SDL3 platform backend init failed");
+    T8_LOG_ERROR("[ImGuiSystem] Platform backend init failed");
     ImGui::DestroyContext();
     return false;
   }
@@ -139,9 +161,11 @@ bool ImGuiSystem::Init(RootFramework* framework, const char* iniFileName, bool e
 #endif
 #endif
 
+#ifndef OS_ANDROID
   if (m_api == GraphicsApi::OPENGL) {
     rendererOK = ImGui_ImplOpenGL3_Init("#version 300 es");
   }
+#endif
 
   if (m_api == GraphicsApi::VULKAN) {
     auto* vkDriver = static_cast<VulkanDriver*>(framework->pVideoDriver);
@@ -168,13 +192,22 @@ bool ImGuiSystem::Init(RootFramework* framework, const char* iniFileName, bool e
     }
 #endif
 #endif
+#ifdef OS_ANDROID
+    ImGui_ImplAndroid_Shutdown();
+#else
     ImGui_ImplSDL3_Shutdown();
+#endif
     ImGui::DestroyContext();
     m_sdlWindow = nullptr;
+#ifdef OS_ANDROID
+    m_androidWindow = nullptr;
+#endif
     return false;
   }
 
+#ifndef OS_ANDROID
   SDL_AddEventWatch(sdlEventWatcher, this);
+#endif
   m_wheelAccum = 0.0f;
   m_inited = true;
   T8_LOG_INFO("[ImGuiSystem] Initialized (api=%d)", (int)m_api);
@@ -196,18 +229,27 @@ void ImGuiSystem::Shutdown() {
 #endif
 #endif
 
+#ifndef OS_ANDROID
   if (m_api == GraphicsApi::OPENGL) {
     ImGui_ImplOpenGL3_Shutdown();
   }
+#endif
   if (m_api == GraphicsApi::VULKAN) {
     ImGui_ImplVulkan_Shutdown();
   }
 
+#ifdef OS_ANDROID
+  ImGui_ImplAndroid_Shutdown();
+#else
   ImGui_ImplSDL3_Shutdown();
   SDL_RemoveEventWatch(sdlEventWatcher, this);
+#endif
   ImGui::DestroyContext();
 
   m_sdlWindow = nullptr;
+#ifdef OS_ANDROID
+  m_androidWindow = nullptr;
+#endif
   m_wheelAccum = 0.0f;
   m_inited = false;
   T8_LOG_INFO("[ImGuiSystem] Shutdown complete");
@@ -227,14 +269,20 @@ void ImGuiSystem::NewFrame(bool createDockspace) {
 #endif
 #endif
 
+#ifndef OS_ANDROID
   if (m_api == GraphicsApi::OPENGL) {
     ImGui_ImplOpenGL3_NewFrame();
   }
+#endif
   if (m_api == GraphicsApi::VULKAN) {
     ImGui_ImplVulkan_NewFrame();
   }
 
+#ifdef OS_ANDROID
+  ImGui_ImplAndroid_NewFrame();
+#else
   ImGui_ImplSDL3_NewFrame();
+#endif
   ImGui::NewFrame();
 
   if (m_dockingEnabled && createDockspace) {
@@ -245,7 +293,19 @@ void ImGuiSystem::NewFrame(bool createDockspace) {
 void ImGuiSystem::Render() {
   if (!m_inited) return;
 
+  BuildDrawData();
+  RenderDrawData();
+}
+
+void ImGuiSystem::BuildDrawData() {
+  if (!m_inited) return;
+
   ImGui::Render();
+}
+
+void ImGuiSystem::RenderDrawData() {
+  if (!m_inited) return;
+
   ImDrawData* drawData = ImGui::GetDrawData();
 
 #ifdef OS_WINDOWS
@@ -263,9 +323,11 @@ void ImGuiSystem::Render() {
 #endif
 #endif
 
+#ifndef OS_ANDROID
   if (m_api == GraphicsApi::OPENGL) {
     ImGui_ImplOpenGL3_RenderDrawData(drawData);
   }
+#endif
   if (m_api == GraphicsApi::VULKAN) {
     auto* vkDriver = static_cast<VulkanDriver*>(g_pBaseDriver);
     std::memset(vkDriver->m_pendingTextures, 0, sizeof(vkDriver->m_pendingTextures));
@@ -294,5 +356,12 @@ float ImGuiSystem::ConsumeWheelDelta() {
   m_wheelAccum = 0.0f;
   return delta;
 }
+
+#ifdef OS_ANDROID
+bool ImGuiSystem::HandleAndroidInputEvent(AInputEvent* event) {
+  if (!m_inited || !event) return false;
+  return ImGui_ImplAndroid_HandleInputEvent(event) != 0;
+}
+#endif
 
 } // namespace t850

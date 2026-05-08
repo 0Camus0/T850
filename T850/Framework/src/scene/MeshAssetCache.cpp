@@ -3,6 +3,7 @@
 #include <scene/MeshAssetCache.h>
 #include <video/BaseDriver.h>
 #include <utils/Log.h>
+#include <utils/ResourceLocator.h>
 
 #include <algorithm>
 #include <array>
@@ -78,9 +79,22 @@ namespace t850 {
 
     bool SourceSignature(const std::string& sourcePath, uint64_t& outSize, int64_t& outWriteTicks) {
       std::error_code ec;
-      const std::filesystem::path path(sourcePath);
+      const std::filesystem::path path = ResourceLocator::Instance().ResolveFilePath(sourcePath);
       if (!std::filesystem::exists(path, ec))
-        return false;
+      {
+        std::vector<unsigned char> bytes;
+        if (!ResourceLocator::Instance().ReadBinary(sourcePath, bytes))
+          return false;
+
+        uint64_t hash = 0xcbf29ce484222325ull;
+        for (unsigned char byte : bytes) {
+          hash ^= byte;
+          hash *= 0x100000001b3ull;
+        }
+        outSize = static_cast<uint64_t>(bytes.size());
+        outWriteTicks = static_cast<int64_t>(hash);
+        return true;
+      }
 
       ec.clear();
       const auto fileSize = std::filesystem::file_size(path, ec);
@@ -130,7 +144,11 @@ namespace t850 {
       std::ostringstream name;
       name << stem << "_v" << kMeshPreprocessCacheVersion << "_"
            << std::hex << std::setw(16) << std::setfill('0') << key << ".t8mesh";
-      return parent / ".t8cache" / name.str();
+      std::filesystem::path relativeCachePath = parent / ".t8cache" / name.str();
+      if (source.is_absolute()) {
+        return relativeCachePath;
+      }
+      return ResourceLocator::Instance().ResolveCachePath(relativeCachePath.string());
     }
 
     void WriteAABB(std::ofstream& file, const AABB& aabb) {

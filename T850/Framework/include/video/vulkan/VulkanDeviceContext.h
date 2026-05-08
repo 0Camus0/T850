@@ -10,9 +10,13 @@
 #include <Config.h>
 #include <video/BaseDriver.h>
 
-#if defined(OS_WINDOWS)
+#if defined(OS_WINDOWS) || defined(OS_ANDROID)
 
+#if defined(OS_WINDOWS)
 #define VK_USE_PLATFORM_WIN32_KHR
+#elif defined(OS_ANDROID)
+#define VK_USE_PLATFORM_ANDROID_KHR
+#endif
 #include <vulkan/vulkan.h>
 
 namespace t850 {

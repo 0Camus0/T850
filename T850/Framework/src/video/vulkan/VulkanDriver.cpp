@@ -1581,6 +1581,19 @@ namespace t850 {
     latePresentCopied = CopyLatePresentSourceToSwapchain(cmd);
 #endif
 
+    if (m_prePresentOverlayCallback) {
+      if (latePresentCopied) {
+        TransitionImageLayout(cmd, m_swapChainImages[m_imageIndex],
+                              VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+                              VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
+                              VK_IMAGE_ASPECT_COLOR_BIT);
+        latePresentCopied = false;
+      }
+      EnsureBackbufferRenderPass();
+      m_prePresentOverlayCallback();
+      m_prePresentOverlayCallback = nullptr;
+    }
+
     // End the render pass if one is active
     if (m_renderPassActive) {
       vkCmdEndRenderPass(cmd);

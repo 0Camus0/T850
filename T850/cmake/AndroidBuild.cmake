@@ -18,6 +18,8 @@ set(T850_ANDROID_VCPKG_ROOT ${T850_SOURCE_DIR}/Librerias/vcpkg/installed/${T850_
 set(T850_ANDROID_DRACO_LIB ${T850_ANDROID_VCPKG_ROOT}/lib/libdraco.a)
 list(APPEND CMAKE_PREFIX_PATH ${T850_ANDROID_VCPKG_ROOT})
 set(glslang_DIR ${T850_ANDROID_VCPKG_ROOT}/share/glslang)
+set(imgui_DIR ${T850_ANDROID_VCPKG_ROOT}/share/imgui)
+find_package(imgui CONFIG REQUIRED)
 find_package(glslang CONFIG REQUIRED)
 message(STATUS "T850 Android ABI: ${ANDROID_ABI} (${T850_ANDROID_VCPKG_TRIPLET})")
 
@@ -119,6 +121,8 @@ set(T850_ANDROID_FRAMEWORK_SOURCES
   ${T850_SOURCE_DIR}/Framework/src/gui/GUIAtlas.cpp
   ${T850_SOURCE_DIR}/Framework/src/gui/GUIElement.cpp
   ${T850_SOURCE_DIR}/Framework/src/gui/GUIManager.cpp
+  ${T850_SOURCE_DIR}/FrameworkImGui/src/ImGuiSystem.cpp
+  ${T850_SOURCE_DIR}/FrameworkImGui/src/DevGuiContext.cpp
   ${T850_SOURCE_DIR}/Librerias/tinyxml2/tinyxml2.cpp
   ${T850_SOURCE_DIR}/Librerias/mikktspace/src/mikktspace.c)
 
@@ -142,6 +146,7 @@ target_compile_options(T850Android PRIVATE -Wall -Wextra -Wno-unused-parameter -
 target_precompile_headers(T850Android PRIVATE $<$<COMPILE_LANGUAGE:CXX>:${T850_SOURCE_DIR}/Framework/pch.h>)
 target_include_directories(T850Android PRIVATE
   ${T850_SOURCE_DIR}/DayScene
+  ${T850_SOURCE_DIR}/FrameworkImGui/include
   ${T850_SOURCE_DIR}/Framework
   ${T850_SOURCE_DIR}/Framework/include
   ${T850_SOURCE_DIR}/Librerias/glaze/include
@@ -159,6 +164,7 @@ target_link_libraries(T850Android PRIVATE
   vulkan
   native_app_glue
   "${T850_ANDROID_DRACO_LIB}"
+  imgui::imgui
   glslang::glslang
   glslang::glslang-default-resource-limits
   glslang::SPIRV)

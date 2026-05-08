@@ -31,16 +31,19 @@ bool LineRenderer::Create() {
   }
 
   const bool useGL = (g_pBaseDriver->m_currentAPI == GraphicsApi::OPENGL);
+  const std::string vsName = useGL ? "VS_EditorLine.glsl" : "VS_EditorLine.hlsl";
+  const std::string fsDepthName = useGL ? "FS_EditorLine.glsl" : "FS_EditorLine.hlsl";
+  const std::string fsFlatName = useGL ? "FS_LineFlat.glsl" : "FS_LineFlat.hlsl";
+  const std::string vsPath = "Shaders/" + vsName;
+  const std::string fsDepthPath = "Shaders/" + fsDepthName;
+  const std::string fsFlatPath = "Shaders/" + fsFlatName;
 
   // Load vertex shader (shared by both variants)
-  char* vsSrc = file2string(useGL ? "Shaders/VS_EditorLine.glsl"
-                                  : "Shaders/VS_EditorLine.hlsl");
+  char* vsSrc = file2string(vsPath.c_str());
   // Depth-tested fragment shader
-  char* fsDepthSrc = file2string(useGL ? "Shaders/FS_EditorLine.glsl"
-                                       : "Shaders/FS_EditorLine.hlsl");
+  char* fsDepthSrc = file2string(fsDepthPath.c_str());
   // Flat (always-visible) fragment shader
-  char* fsFlatSrc = file2string(useGL ? "Shaders/FS_LineFlat.glsl"
-                                      : "Shaders/FS_LineFlat.hlsl");
+  char* fsFlatSrc = file2string(fsFlatPath.c_str());
 
   if (!vsSrc || !fsDepthSrc || !fsFlatSrc) {
     T8_LOG_ERROR("[LineRenderer] shader file load failed");
@@ -74,7 +77,7 @@ bool LineRenderer::Create() {
   }
 
   // Compile depth-tested shader variant
-  int depthId = g_pBaseDriver->CreateShader(vstr, fsDepthStr);
+  int depthId = g_pBaseDriver->CreateShader(vstr, fsDepthStr, ShaderKey(), vsName, fsDepthName);
   m_shaderDepth = g_pBaseDriver->GetShaderIdx(depthId);
   if (!m_shaderDepth) {
     T8_LOG_ERROR("[LineRenderer] depth shader compile failed");
@@ -82,7 +85,7 @@ bool LineRenderer::Create() {
   }
 
   // Compile flat (always-visible) shader variant
-  int flatId = g_pBaseDriver->CreateShader(vstr, fsFlatStr);
+  int flatId = g_pBaseDriver->CreateShader(vstr, fsFlatStr, ShaderKey(), vsName, fsFlatName);
   m_shaderFlat = g_pBaseDriver->GetShaderIdx(flatId);
   if (!m_shaderFlat) {
     T8_LOG_ERROR("[LineRenderer] flat shader compile failed");

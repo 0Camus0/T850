@@ -226,8 +226,16 @@ if not exist "%VCPKG_EXE%" (
 )
 echo [T850] Installing Android vcpkg dependencies...
 set "VCPKG_PACKAGES="
-echo,%ANDROID_ABIS%| findstr /I /C:"arm64-v8a" >nul && set "VCPKG_PACKAGES=!VCPKG_PACKAGES! draco:arm64-android glslang:arm64-android"
-echo,%ANDROID_ABIS%| findstr /I /C:"x86_64" >nul && set "VCPKG_PACKAGES=!VCPKG_PACKAGES! draco:x64-android glslang:x64-android"
+echo,%ANDROID_ABIS%| findstr /I /C:"arm64-v8a" >nul
+if not errorlevel 1 (
+    call :add_android_vcpkg_packages arm64-android
+    if errorlevel 1 exit /b 1
+)
+echo,%ANDROID_ABIS%| findstr /I /C:"x86_64" >nul
+if not errorlevel 1 (
+    call :add_android_vcpkg_packages x64-android
+    if errorlevel 1 exit /b 1
+)
 if not defined VCPKG_PACKAGES (
     echo [ERROR] Unsupported Android ABI list: %ANDROID_ABIS%
     echo [ERROR] Supported ABIs: arm64-v8a,x86_64
@@ -274,3 +282,19 @@ exit /b 0
 :usage
 echo Usage: SetupAndroidToolchain.bat [--sdk C:\Android\Sdk] [--skip-winget] [--with-emulator] [--android-abis arm64-v8a,x86_64]
 exit /b 1
+
+:add_android_vcpkg_packages
+set "ANDROID_TRIPLET=%~1"
+set "IMGUI_INCLUDE_DIR=%VCPKG_ROOT%\installed\%ANDROID_TRIPLET%\include"
+set "IMGUI_NEEDS_REINSTALL=0"
+if exist "%IMGUI_INCLUDE_DIR%\imgui.h" (
+    if not exist "%IMGUI_INCLUDE_DIR%\imgui_impl_android.h" set "IMGUI_NEEDS_REINSTALL=1"
+    if not exist "%IMGUI_INCLUDE_DIR%\imgui_impl_vulkan.h" set "IMGUI_NEEDS_REINSTALL=1"
+    if "!IMGUI_NEEDS_REINSTALL!"=="1" (
+        echo [T850] imgui:%ANDROID_TRIPLET% present but missing Android/Vulkan backend features -- removing for reinstall
+        call "%VCPKG_EXE%" remove imgui:%ANDROID_TRIPLET% --recurse --no-print-usage
+        if errorlevel 1 exit /b 1
+    )
+)
+set "VCPKG_PACKAGES=!VCPKG_PACKAGES! draco:%ANDROID_TRIPLET% glslang:%ANDROID_TRIPLET% imgui[android-binding,docking-experimental,vulkan-binding]:%ANDROID_TRIPLET%"
+exit /b 0

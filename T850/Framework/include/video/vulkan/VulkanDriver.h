@@ -35,6 +35,8 @@
 #include <string>
 #include <vector>
 #include <cstdint>
+#include <functional>
+#include <utility>
 
 namespace t850 {
 
@@ -127,6 +129,21 @@ namespace t850 {
 
     // Ensure the backbuffer render pass is active (for ImGui overlay rendering)
     void EnsureBackbufferRenderPass();
+    void SetPrePresentOverlayCallback(std::function<void()> callback) {
+      if (!callback) {
+        m_prePresentOverlayCallback = nullptr;
+        return;
+      }
+      if (!m_prePresentOverlayCallback) {
+        m_prePresentOverlayCallback = std::move(callback);
+        return;
+      }
+      auto previous = std::move(m_prePresentOverlayCallback);
+      m_prePresentOverlayCallback = [previous = std::move(previous), callback = std::move(callback)]() mutable {
+        previous();
+        callback();
+      };
+    }
 
     // Copy a rendered RT to the swapchain immediately before present. Used on
     // Android to avoid compositor-visible issues with the normal final quad.
@@ -296,6 +313,7 @@ namespace t850 {
     // Pipeline cache: lazy-created per (shader × blend × depth × cull × attachment config)
     std::unordered_map<VulkanPipelineKey, VkPipeline, VulkanPipelineKeyHash> m_pipelineCache;
     VkPipelineCache m_vkPipelineCache = VK_NULL_HANDLE;  // Vulkan driver-level cache
+    std::function<void()> m_prePresentOverlayCallback;
 
     // Debug
     VkDebugUtilsMessengerEXT m_debugMessenger = VK_NULL_HANDLE;

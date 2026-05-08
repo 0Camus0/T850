@@ -196,10 +196,14 @@ jobs:
 
           $stage = 'artifacts\android'
           New-Item -ItemType Directory -Path $stage -Force | Out-Null
-          Copy-Item $unsigned -Destination (Join-Path $stage "T850-Android-$abi-release-unsigned.apk") -Force
 
           if ([string]::IsNullOrWhiteSpace($env:ANDROID_KEYSTORE_BASE64)) {
-            Write-Host 'ANDROID_KEYSTORE_BASE64 was not provided; uploading unsigned Release APK only.'
+            $isReleaseTag = '${{ startsWith(github.ref, 'refs/tags/v') }}' -eq 'true'
+            if ($isReleaseTag) {
+              throw 'ANDROID_KEYSTORE_BASE64 is required for tagged releases. Configure Android signing secrets before publishing a release tag.'
+            }
+            Write-Host 'ANDROID_KEYSTORE_BASE64 was not provided; uploading unsigned Android CI APK.'
+            Copy-Item $unsigned -Destination (Join-Path $stage "T850-Android-$abi-release-unsigned.apk") -Force
             exit 0
           }
           if ([string]::IsNullOrWhiteSpace($env:ANDROID_KEYSTORE_PASSWORD)) {
@@ -229,6 +233,8 @@ jobs:
             $keyPassword = $env:ANDROID_KEYSTORE_PASSWORD
           }
           & $apksigner sign --ks $keystore --ks-pass "pass:$env:ANDROID_KEYSTORE_PASSWORD" --ks-key-alias $env:ANDROID_KEY_ALIAS --key-pass "pass:$keyPassword" --out $signed $aligned
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          & $apksigner verify --verbose $signed
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
       - name: Upload Android APK

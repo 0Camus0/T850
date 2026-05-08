@@ -44,5 +44,12 @@ T850/android/app/build/
 T850/android/build/
 T850/android/java_pid*.hprof
 
+# Android signing material
+*.keystore
+*.jks
+*.p12
+*.pem
+*.key
+
 # Downloaded by SetupAndroidToolchain.bat
 T850/Librerias/VulkanMemoryAllocator/

@@ -89,14 +89,14 @@ class DayScene : public t850::SceneBase
   };
   public:
   DayScene() {}
-  void OnUpdate(float _DtSecs);
-  void OnDraw();
-  void OnInput(InputManager* IManager);
-  void OnLoadScene();
-  void OnDestoryScene();
-  void InitVars();
-  void CreateAssets();
-  void DestroyAssets();
+  void OnUpdate(float _DtSecs) override;
+  void OnDraw() override;
+  void OnInput(InputManager* IManager) override;
+  void OnLoadScene() override;
+  void OnDestoryScene() override;
+  void InitVars() override;
+  void CreateAssets() override;
+  void DestroyAssets() override;
 
   void ChangeSettingsOnPlus();
   void ChangeSettingsOnMinus();

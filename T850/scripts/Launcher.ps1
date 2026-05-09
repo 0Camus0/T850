@@ -535,6 +535,32 @@ function Get-AndroidAdbArguments {
     return $CommandArguments
 }
 
+function Invoke-AndroidAdbCapture {
+    param([string[]]$CommandArguments)
+    $adb = Get-AndroidAdbPath
+    if (-not (Test-Path $adb)) {
+        return [pscustomobject]@{ ExitCode = 1; Output = "adb.exe not found: $adb" }
+    }
+
+    $allArgs = Get-AndroidAdbArguments $CommandArguments
+    $output = & $adb @allArgs 2>&1
+    return [pscustomobject]@{
+        ExitCode = $LASTEXITCODE
+        Output = (($output | ForEach-Object { $_.ToString() }) -join [System.Environment]::NewLine)
+    }
+}
+
+function Test-AndroidPackageInstalled {
+    if (-not (Test-AndroidDeviceReady)) { return $false }
+    $result = Invoke-AndroidAdbCapture -CommandArguments @("shell", "pm", "path", "com.t850.engine")
+    if ($result.ExitCode -eq 0 -and $result.Output -match "package:") { return $true }
+
+    [System.Windows.MessageBox]::Show(
+        ("T850 is not installed on the selected Android device." + "`n`n" + "Click Install first to install the APK, then use Deploy to run it."),
+        "T850 Launcher", "OK", "Warning")
+    return $false
+}
+
 function Test-AndroidDeviceReady {
     $serial = Get-SelectedAndroidDeviceSerial
     if (-not $serial) {
@@ -1003,9 +1029,78 @@ function Test-CommandExists {
     return [bool](Get-Command $Name -ErrorAction SilentlyContinue)
 }
 
+function Get-BuildWorkerCount {
+    $workers = [Math]::Max(1, [Environment]::ProcessorCount - 1)
+    if ($env:T850_BUILD_WORKERS) {
+        $parsedWorkers = 0
+        if ([int]::TryParse($env:T850_BUILD_WORKERS, [ref]$parsedWorkers) -and $parsedWorkers -gt 0) {
+            $workers = $parsedWorkers
+        }
+    }
+    return $workers
+}
+
+function Test-JavaExecutable17OrNewer {
+    param([string]$JavaExe)
+    if (-not $JavaExe -or -not (Test-Path $JavaExe)) { return $false }
+    try {
+        $versionLine = (& $JavaExe -version 2>&1 | Select-Object -First 1).ToString()
+        $versionText = $null
+        if ($versionLine -match 'version "([^"]+)"') { $versionText = $Matches[1] }
+        elseif ($versionLine -match 'openjdk\s+([0-9][^\s]*)') { $versionText = $Matches[1] }
+        if (-not $versionText) { return $false }
+
+        if ($versionText -match '^1\.(\d+)') { return ([int]$Matches[1] -ge 17) }
+        if ($versionText -match '^(\d+)') { return ([int]$Matches[1] -ge 17) }
+    } catch {
+        return $false
+    }
+    return $false
+}
+
+function Find-InstalledJavaHome {
+    $candidates = New-Object System.Collections.Generic.List[string]
+    if ($env:JAVA_HOME) { $candidates.Add($env:JAVA_HOME) }
+
+    $programFiles = [System.Environment]::GetFolderPath("ProgramFiles")
+    $programFilesX86 = [System.Environment]::GetFolderPath("ProgramFilesX86")
+    $jdkRoots = @(
+        (Join-Path $programFiles "Eclipse Adoptium"),
+        (Join-Path $programFiles "Java"),
+        (Join-Path $programFilesX86 "Eclipse Adoptium"),
+        (Join-Path $programFilesX86 "Java")
+    )
+    foreach ($root in $jdkRoots) {
+        if (-not (Test-Path $root)) { continue }
+        Get-ChildItem -Path $root -Directory -Filter "jdk-*" -ErrorAction SilentlyContinue |
+            Sort-Object Name -Descending |
+            ForEach-Object { $candidates.Add($_.FullName) }
+    }
+
+    $androidStudioJbr = Join-Path $programFiles "Android\Android Studio\jbr"
+    if (Test-Path $androidStudioJbr) { $candidates.Add($androidStudioJbr) }
+
+    $seen = @{}
+    foreach ($candidate in $candidates) {
+        if (-not $candidate -or $seen.ContainsKey($candidate)) { continue }
+        $seen[$candidate] = $true
+        $javaExe = Join-Path $candidate "bin\java.exe"
+        if (Test-JavaExecutable17OrNewer $javaExe) { return $candidate }
+    }
+    return $null
+}
+
 function Test-JavaAvailable {
-    if (Test-CommandExists "java") { return $true }
-    if ($env:JAVA_HOME -and (Test-Path (Join-Path $env:JAVA_HOME "bin\java.exe"))) { return $true }
+    $javaHome = Find-InstalledJavaHome
+    if ($javaHome) {
+        $javaBin = Join-Path $javaHome "bin"
+        $env:JAVA_HOME = $javaHome
+        if (-not (($env:PATH -split ';') -contains $javaBin)) { $env:PATH = "$javaBin;$env:PATH" }
+        return $true
+    }
+
+    $javaCommand = Get-Command "java.exe" -ErrorAction SilentlyContinue
+    if ($javaCommand -and (Test-JavaExecutable17OrNewer $javaCommand.Source)) { return $true }
     return $false
 }
 
@@ -1457,11 +1552,11 @@ function Update-Preview {
             $txtStatus.Text = "Select a connected Android device"
             $txtStatus.Foreground = $window.FindResource("RedBrush")
         } elseif ($btnRun.IsEnabled) {
-            $txtStatus.Text = "Android APK ready - Install or Deploy"
+            $txtStatus.Text = "Android APK ready - Install; Deploy runs installed app"
             $txtStatus.Foreground = $window.FindResource("GreenBrush")
         } else {
-            $txtStatus.Text = "Android APK not found - build this configuration first"
-            $txtStatus.Foreground = $window.FindResource("RedBrush")
+            $txtStatus.Text = "Build APK to Install, or Deploy an already-installed app"
+            $txtStatus.Foreground = $window.FindResource("AccentBrush")
         }
         return
     }
@@ -1658,7 +1753,7 @@ function Invoke-AndroidInstall {
     Save-Config
     if (-not $AppendLog) { $txtBuildOutput.Text = "" }
     $pnlBuildOutput.Visibility = [System.Windows.Visibility]::Visible
-    if (-not $KeepBusy) { Set-LauncherBusy $true "BUILD" }
+    if (-not $KeepBusy) { Set-LauncherBusy $true "INSTALL" }
     $txtStatus.Text = "Installing Android APK..."
     $txtStatus.Foreground = $window.FindResource("AccentBrush")
 
@@ -1682,20 +1777,25 @@ function Invoke-AndroidInstall {
 
 function Invoke-AndroidDeploy {
     if (-not (Test-AndroidDeviceReady)) { return }
-    if (-not (Invoke-AndroidBuild)) { return }
-    Refresh-AndroidDevices
     $adb = Get-AndroidAdbPath
     if (-not (Test-Path $adb)) {
-        [System.Windows.MessageBox]::Show(("adb.exe not found:" + "`n" + $adb), "T850 Launcher", "OK", "Error")
-        return
+        if (-not (Ensure-AndroidToolchain)) { return }
+        $adb = Get-AndroidAdbPath
+        if (-not (Test-Path $adb)) {
+            [System.Windows.MessageBox]::Show(("adb.exe not found:" + "`n" + $adb), "T850 Launcher", "OK", "Error")
+            return
+        }
     }
     if (-not (Test-AndroidDeviceReady)) { return }
+    if (-not (Test-AndroidPackageInstalled)) { return }
 
-    Set-LauncherBusy $true "BUILD"
-    $txtStatus.Text = "Installing Android APK..."
+    Save-Config
+    $txtBuildOutput.Text = ""
+    $pnlBuildOutput.Visibility = [System.Windows.Visibility]::Visible
+    Set-LauncherBusy $true "DEPLOY"
+    $txtStatus.Text = "Launching installed Android app..."
     $txtStatus.Foreground = $window.FindResource("AccentBrush")
     try {
-        if (-not (Invoke-AndroidInstall -AppendLog $true -KeepBusy $true)) { return }
         $txtStatus.Text = "Restarting Android app..."
         $stopExitCode = Invoke-LoggedProcess -FilePath $adb -Arguments (Get-AndroidAdbArguments (Get-AndroidForceStopArguments)) -WorkingDirectory $rootDir -StatusPrefix "Stopping Android app"
         if ($stopExitCode -ne 0) {
@@ -1705,7 +1805,7 @@ function Invoke-AndroidDeploy {
         }
         $exitCode = Invoke-LoggedProcess -FilePath $adb -Arguments (Get-AndroidAdbArguments (Get-AndroidLaunchArguments)) -WorkingDirectory $rootDir -StatusPrefix "Launching Android app"
         if ($exitCode -eq 0) {
-            $txtStatus.Text = "Android app deployed"
+            $txtStatus.Text = "Android app launched"
             $txtStatus.Foreground = $window.FindResource("GreenBrush")
         } else {
             $txtStatus.Text = "Android deploy launch failed (exit code $exitCode)"
@@ -1757,7 +1857,8 @@ function Invoke-Build {
     $pnlBuildOutput.Visibility = [System.Windows.Visibility]::Visible
 
     $label = if ($buildTarget -eq "Rebuild") { "Rebuilding" } else { "Building" }
-    $txtStatus.Text = "$label $config|$platform ..."
+    $buildWorkers = Get-BuildWorkerCount
+    $txtStatus.Text = "$label $config|$platform using $buildWorkers workers..."
     $txtStatus.Foreground = $window.FindResource("AccentBrush")
     $window.Dispatcher.Invoke([Action]{}, [System.Windows.Threading.DispatcherPriority]::Background)
 
@@ -1787,7 +1888,7 @@ function Invoke-Build {
     $slnPath = Join-Path $rootDir "T850.sln"
     $psi = New-Object System.Diagnostics.ProcessStartInfo
     $psi.FileName = $msbuild
-    $msbArgs = '"{0}" /p:Configuration={1} /p:Platform={2} /t:{3} /v:minimal /m' -f $slnPath, $config, $platform, $buildTarget
+    $msbArgs = '"{0}" /p:Configuration={1} /p:Platform={2} /t:{3} /v:minimal /m:{4}' -f $slnPath, $config, $platform, $buildTarget, $buildWorkers
     $psi.Arguments = $msbArgs
     $psi.UseShellExecute = $false
     $psi.RedirectStandardOutput = $true

@@ -1475,11 +1475,6 @@ void SandboxScene::PopulateGUI(t850::GUIManager& gui) {
         sp.selector->options.clear();
         int numSets = skinned->GetNumAnimSets();
         for (int i = 0; i < numSets; i++) {
-          auto& ctrl = skinned->GetAnimController();
-          // Use animation set name if available
-          xF::xAnimationInfo* info = nullptr;
-          const xF::xSkeleton* skel = ctrl.GetAnimSkeleton();
-          // Get name from the mesh container's animation info
           if (skinned->xFile && !skinned->xFile->XMeshDataBase.empty()) {
             auto& anims = skinned->xFile->XMeshDataBase[0]->Animation.Animations;
             if (i < (int)anims.size() && !anims[i].Name.empty()) {

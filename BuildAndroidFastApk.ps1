@@ -16,6 +16,15 @@ $VulkanValidation = $false
 $GradleVersion = '8.10.2'
 $NdkVersion = '27.2.12479018'
 
+$BuildWorkers = [Math]::Max(1, [Environment]::ProcessorCount - 1)
+if ($env:T850_BUILD_WORKERS) {
+  $parsedWorkers = 0
+  if ([int]::TryParse($env:T850_BUILD_WORKERS, [ref]$parsedWorkers) -and $parsedWorkers -gt 0) {
+    $BuildWorkers = $parsedWorkers
+  }
+}
+$env:CMAKE_BUILD_PARALLEL_LEVEL = $BuildWorkers.ToString()
+
 function Show-Usage {
   Write-Host 'Usage: Scripts\Bat\BuildAndroidFastApk.bat [Debug|Release] [--sdk C:\Android\Sdk] [--abi ABI[,ABI...]] [--template APK] [--out APK] [--install] [--launch] [--skip-native-build] [--vulkan-validation]'
   Write-Host ''
@@ -128,13 +137,14 @@ Write-Host "SDK root: $AndroidSdk"
 Write-Host "Project : $AndroidProject"
 Write-Host "ABIs    : $AbiFilters"
 Write-Host "Vulkan validation: $validationValue"
+Write-Host "Workers : $BuildWorkers (cores - 1)"
 Write-Host 'Mode    : native .so rebuild + APK repack'
 Write-Host ''
 
 if (-not $SkipNativeBuild) {
   Push-Location $AndroidProject
   try {
-    & gradle --no-daemon --console=plain "-Pt850AndroidAbis=$AbiFilters" "-Pt850VulkanValidation=$validationValue" ":app:$stripTask"
+    & gradle --no-daemon --console=plain --parallel "--max-workers=$BuildWorkers" "-Pt850AndroidAbis=$AbiFilters" "-Pt850VulkanValidation=$validationValue" ":app:$stripTask"
     if ($LASTEXITCODE -ne 0) { throw "Gradle $stripTask failed with exit code $LASTEXITCODE." }
   } finally {
     Pop-Location

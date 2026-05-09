@@ -22,6 +22,7 @@ import java.util.Collections;
 import java.util.List;
 import java.util.Locale;
 
+@SuppressWarnings("deprecation")
 public final class LauncherActivity extends Activity {
     public static final String EXTRA_SCENE = "com.t850.engine.extra.SCENE";
     public static final String EXTRA_MODEL = "com.t850.engine.extra.MODEL";
@@ -131,6 +132,7 @@ public final class LauncherActivity extends Activity {
     }
 
     @Override
+    @SuppressWarnings("deprecation")
     protected void onActivityResult(int requestCode, int resultCode, Intent data) {
         super.onActivityResult(requestCode, resultCode, data);
         if (requestCode == REQUEST_NATIVE_SCENE) {
@@ -426,6 +428,7 @@ public final class LauncherActivity extends Activity {
         launchNativeScene(options);
     }
 
+    @SuppressWarnings("deprecation")
     private void launchNativeScene(NativeLaunchOptions options) {
         launchingNative = true;
         Intent intent = new Intent();

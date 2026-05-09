@@ -20,10 +20,14 @@
 #ifdef min
 #undef min
 #endif
+#ifdef _MSC_VER
 #pragma warning(push)
 #pragma warning(disable: 4267 4244)
+#endif
 #include <glaze/glaze.hpp>
+#ifdef _MSC_VER
 #pragma warning(pop)
+#endif
 
 #include <algorithm>
 #include <fstream>
@@ -1216,17 +1220,6 @@ void GUIManager::DrawControlEditPreview() {
     return ControlEditRect{ x, y, w, h, true };
   };
 
-  auto mapRectToPreview = [&](const ControlEditRect& r, const ControlEditRect& p) {
-    ControlEditRect out;
-    out.valid = r.valid && p.valid;
-    if (!out.valid) return out;
-    out.x = p.x + (r.x / screenW) * p.w;
-    out.y = p.y + (r.y / screenH) * p.h;
-    out.w = (r.w / screenW) * p.w;
-    out.h = (r.h / screenH) * p.h;
-    return out;
-  };
-
   switch (m_controlEditTarget) {
     case GUIControlEditTarget::SliderKnob: {
       // Parent bar in original texture aspect ratio.
@@ -1456,8 +1449,6 @@ void GUIManager::UpdateControlEditMode(float mx, float my, bool mouseDown) {
     if (!m_controlEditRect.valid) return;
     float partW = (std::max)(1.0f, m_controlEditRect.w);
     float partH = (std::max)(1.0f, m_controlEditRect.h);
-    float cx = (screenW - partW) * 0.5f;
-    float cy = (screenH - partH) * 0.5f;
 
     switch (m_controlEditTarget) {
       case GUIControlEditTarget::SliderKnob: {

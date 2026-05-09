@@ -2962,7 +2962,7 @@ namespace xF {
 
 		#else
 		int current_index = index;
-		int token = 0, last_token = 0;
+		int token = 0;
 		while (pData[current_index] != ';') {
 			current_index++;
 			if (pData[current_index] == ' ')

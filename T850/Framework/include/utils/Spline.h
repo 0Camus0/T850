@@ -20,9 +20,9 @@ namespace t850 {
     const float STEP_SIZE = 0.005f;
     void Init();
     void ReCalculateSegmentsLength();
-    explicit Spline(bool _looped = false) : m_looped(_looped), m_totalLength(0) {}
+    explicit Spline(bool _looped = false) : m_totalLength(0), m_looped(_looped) {}
     explicit Spline(std::vector<SplinePoint>& points, bool _looped = false) :
-      m_looped(_looped), m_points(points), m_totalLength(0) {}
+      m_points(points), m_totalLength(0), m_looped(_looped) {}
     SplinePoint GetPoint(float t);
     XVECTOR3 GetGradient(float t);
     float GetSegmentLength(int node);

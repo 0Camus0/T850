@@ -83,6 +83,7 @@
     <ClInclude Include="include\utils\xMaths.h" />
     <ClInclude Include="include\utils\GUIAtlasGenerator.h" />
     <ClInclude Include="include\utils\ConfigRuntime.h" />
+    <ClInclude Include="include\utils\RuntimeProfile.h" />
     <ClInclude Include="include\utils\ShaderPermutationDump.h" />
     <ClInclude Include="include\utils\SPIRVReflection.h" />
     <ClInclude Include="include\utils\ShaderDiskCache.h" />
@@ -204,6 +205,7 @@
     <ClCompile Include="src\utils\XMaths.cpp" />
     <ClCompile Include="src\utils\GUIAtlasGenerator.cpp" />
     <ClCompile Include="src\utils\ConfigRuntime.cpp" />
+    <ClCompile Include="src\utils\RuntimeProfile.cpp" />
     <ClCompile Include="src\utils\ShaderPermutationDump.cpp" />
     <ClCompile Include="src\utils\SPIRVReflection.cpp" />
     <ClCompile Include="src\utils\ShaderDiskCache.cpp" />

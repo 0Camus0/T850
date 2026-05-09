@@ -380,6 +380,9 @@
     <ClInclude Include="include\utils\ConfigRuntime.h">
       <Filter>Header Files\utils</Filter>
     </ClInclude>
+    <ClInclude Include="include\utils\RuntimeProfile.h">
+      <Filter>Header Files\utils</Filter>
+    </ClInclude>
     <ClInclude Include="include\utils\ShaderPermutationDump.h">
       <Filter>Header Files\utils</Filter>
     </ClInclude>
@@ -686,6 +689,9 @@
       <Filter>Source Files\utils</Filter>
     </ClCompile>
     <ClCompile Include="src\utils\ConfigRuntime.cpp">
+      <Filter>Source Files\utils</Filter>
+    </ClCompile>
+    <ClCompile Include="src\utils\RuntimeProfile.cpp">
       <Filter>Source Files\utils</Filter>
     </ClCompile>
     <ClCompile Include="src\utils\ShaderPermutationDump.cpp">

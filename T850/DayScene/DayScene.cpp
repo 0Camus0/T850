@@ -15,6 +15,7 @@
 #include <utils/Log.h>
 #include <core/Config.h>
 #include <utils/ConfigRuntime.h>
+#include <utils/RuntimeProfile.h>
 #include <imgui/DevGuiContext.h>
 using namespace t850;
 using std::cout;
@@ -46,6 +47,259 @@ double Percentile(const std::vector<double>& sortedValues, double percentile) {
   return sortedValues[lower] * (1.0 - t) + sortedValues[upper] * t;
 }
 
+bool NearlyEqual(float lhs, float rhs, float epsilon = 0.0001f) {
+  return std::fabs(lhs - rhs) <= epsilon;
+}
+
+const t850::FloatOverrideDesc* FindFloatOverride(const std::vector<t850::FloatOverrideDesc>& values, const std::string& name) {
+  for (const auto& value : values)
+    if (value.name == name) return &value;
+  return nullptr;
+}
+
+const t850::BoolOverrideDesc* FindBoolOverride(const std::vector<t850::BoolOverrideDesc>& values, const std::string& name) {
+  for (const auto& value : values)
+    if (value.name == name) return &value;
+  return nullptr;
+}
+
+const t850::IntOverrideDesc* FindIntOverride(const std::vector<t850::IntOverrideDesc>& values, const std::string& name) {
+  for (const auto& value : values)
+    if (value.name == name) return &value;
+  return nullptr;
+}
+}
+
+
+void DayScene::CaptureSceneProfileState(t850::SandboxProfileDesc& state) const {
+  state = t850::SandboxProfileDesc{};
+  auto addFloat = [&](const char* name, float value) { state.sliders.push_back({name, value}); };
+  auto addBool = [&](const char* name, bool value) { state.checkboxes.push_back({name, value}); };
+  auto addInt = [&](const char* name, int value) { state.selectors.push_back({name, value}); };
+
+  addFloat("exposure", SceneProp.Exposure);
+  addFloat("bloom_factor", SceneProp.BloomFactor);
+  addFloat("bloom_threshold", SceneProp.BloomThreshold);
+  addFloat("tm_white_level", SceneProp.ToneMapWhiteLevel);
+  addFloat("tm_adapt_tau", SceneProp.LuminanceTau);
+  addFloat("pcf_radius", SceneProp.PCFScale);
+  addFloat("pcf_samples", SceneProp.PCFSamples);
+  addFloat("ssao_kernel_size", (float)SceneProp.SSAOKernel.KernelSize);
+  addFloat("ssao_radius", SceneProp.SSAOKernel.Radius);
+  addFloat("dof_aperture", SceneProp.Aperture);
+  addFloat("dof_focal_length", SceneProp.FocalLength);
+  addFloat("dof_max_coc", SceneProp.MaxCoc);
+  addFloat("dof_far_samples", SceneProp.DOF_Far_Samples_squared);
+  addFloat("dof_near_samples", SceneProp.DOF_Near_Samples_squared);
+  addFloat("parallax_low_samples", SceneProp.ParallaxLowSamples);
+  addFloat("parallax_high_samples", SceneProp.ParallaxHighSamples);
+  addFloat("parallax_height", SceneProp.ParallaxHeight);
+  addFloat("parallax_shadow_min_layers", SceneProp.ParallaxShadowMinLayers);
+  addFloat("parallax_shadow_max_layers", SceneProp.ParallaxShadowMaxLayers);
+  addFloat("parallax_shadow_softness", SceneProp.ParallaxShadowSoftness);
+  addFloat("parallax_shadow_strength", SceneProp.ParallaxShadowStrength);
+  addFloat("light_volume_steps", SceneProp.LightVolumeSteps);
+  addFloat("godrays_factor", SceneProp.GodRaysFactor);
+  addFloat("shadow_bias", SceneProp.ShadowBias);
+  addFloat("shadow_min", SceneProp.ShadowMin);
+  addFloat("env_factor", SceneProp.EnvFactor);
+  addFloat("ibl_factor", SceneProp.IBLFactor);
+  addFloat("material_emissive_intensity", SceneProp.MaterialEmissiveIntensity);
+  addFloat("material_transmission_multiplier", SceneProp.MaterialTransmissionMultiplier);
+  addFloat("material_refraction_strength", SceneProp.MaterialRefractionStrength);
+  if (ActiveCam) addFloat("fov", Rad2Deg(ActiveCam->Fov));
+
+  for (int kernelIndex = 0; kernelIndex < (int)SceneProp.pGaussKernels.size(); ++kernelIndex) {
+    GaussFilter* kernel = SceneProp.pGaussKernels[kernelIndex];
+    if (!kernel) continue;
+    std::string prefix = "gauss_" + std::to_string(kernelIndex) + "_";
+    addFloat((prefix + "radius").c_str(), kernel->radius);
+    addFloat((prefix + "sigma").c_str(), kernel->sigma);
+    addInt((prefix + "kernel_size").c_str(), kernel->kernelSize);
+  }
+
+  addBool("shadow_toggle", SceneProp.ToogleShadow != 0);
+  addBool("ssao_toggle", SceneProp.ToogleSSAO != 0);
+  addBool("dof_auto_focus", SceneProp.AutoFocus);
+  addBool("show_spline", m_showSpline);
+  addBool("show_lights", m_showLights);
+  addBool("dof_toggle", SceneProp.ToogleDOF != 0);
+  addBool("parallax_toggle", SceneProp.ToogleParallax != 0);
+  addBool("parallax_shadow_toggle", SceneProp.ToogleParallaxShadow != 0);
+  addBool("godrays_toggle", SceneProp.ToogleGodRays != 0);
+  addBool("frustum_culling", SceneProp.FrustumCullingEnabled);
+  addBool("show_culling_debug", m_showCullStats);
+
+  addInt("num_lights", SceneProp.ActiveLights);
+  addInt("active_gauss_kernel", ChangeActiveGaussSelection);
+  addInt("debug_render_target", m_debugRTSelection);
+  addInt("active_camera", m_activeCameraIndex);
+  addInt("cubemap", m_currentCubemapIndex);
+}
+
+void DayScene::ApplySceneProfileState(const t850::SandboxProfileDesc& state) {
+  for (const auto& value : state.sliders) {
+    if (value.name == "exposure") SceneProp.Exposure = value.value;
+    else if (value.name == "bloom_factor") SceneProp.BloomFactor = value.value;
+    else if (value.name == "bloom_threshold") SceneProp.BloomThreshold = value.value;
+    else if (value.name == "tm_white_level") SceneProp.ToneMapWhiteLevel = value.value;
+    else if (value.name == "tm_adapt_tau") SceneProp.LuminanceTau = value.value;
+    else if (value.name == "pcf_radius") SceneProp.PCFScale = value.value;
+    else if (value.name == "pcf_samples") SceneProp.PCFSamples = value.value;
+    else if (value.name == "ssao_kernel_size") { SceneProp.SSAOKernel.KernelSize = (int)value.value; SceneProp.SSAOKernel.Update(); }
+    else if (value.name == "ssao_radius") SceneProp.SSAOKernel.Radius = value.value;
+    else if (value.name == "dof_aperture") SceneProp.Aperture = value.value;
+    else if (value.name == "dof_focal_length") SceneProp.FocalLength = value.value;
+    else if (value.name == "dof_max_coc") SceneProp.MaxCoc = value.value;
+    else if (value.name == "dof_far_samples") SceneProp.DOF_Far_Samples_squared = value.value;
+    else if (value.name == "dof_near_samples") SceneProp.DOF_Near_Samples_squared = value.value;
+    else if (value.name == "parallax_low_samples") SceneProp.ParallaxLowSamples = value.value;
+    else if (value.name == "parallax_high_samples") SceneProp.ParallaxHighSamples = value.value;
+    else if (value.name == "parallax_height") SceneProp.ParallaxHeight = value.value;
+    else if (value.name == "parallax_shadow_min_layers") SceneProp.ParallaxShadowMinLayers = value.value;
+    else if (value.name == "parallax_shadow_max_layers") SceneProp.ParallaxShadowMaxLayers = value.value;
+    else if (value.name == "parallax_shadow_softness") SceneProp.ParallaxShadowSoftness = value.value;
+    else if (value.name == "parallax_shadow_strength") SceneProp.ParallaxShadowStrength = value.value;
+    else if (value.name == "light_volume_steps") SceneProp.LightVolumeSteps = value.value;
+    else if (value.name == "godrays_factor") SceneProp.GodRaysFactor = value.value;
+    else if (value.name == "shadow_bias") SceneProp.ShadowBias = value.value;
+    else if (value.name == "shadow_min") SceneProp.ShadowMin = value.value;
+    else if (value.name == "env_factor") SceneProp.EnvFactor = value.value;
+    else if (value.name == "ibl_factor") SceneProp.IBLFactor = value.value;
+    else if (value.name == "material_emissive_intensity") SceneProp.MaterialEmissiveIntensity = value.value;
+    else if (value.name == "material_transmission_multiplier") SceneProp.MaterialTransmissionMultiplier = value.value;
+    else if (value.name == "material_refraction_strength") SceneProp.MaterialRefractionStrength = value.value;
+    else if (value.name == "fov" && ActiveCam) { ActiveCam->SetFov(Deg2Rad(value.value)); ActiveCam->VP = ActiveCam->View * ActiveCam->Projection; VP = ActiveCam->VP; }
+
+    for (int kernelIndex = 0; kernelIndex < (int)SceneProp.pGaussKernels.size(); ++kernelIndex) {
+      GaussFilter* kernel = SceneProp.pGaussKernels[kernelIndex];
+      if (!kernel) continue;
+      std::string prefix = "gauss_" + std::to_string(kernelIndex) + "_";
+      if (value.name == prefix + "radius") { kernel->radius = value.value; kernel->Update(); }
+      else if (value.name == prefix + "sigma") { kernel->sigma = value.value; kernel->Update(); }
+    }
+  }
+
+  for (const auto& value : state.checkboxes) {
+    if (value.name == "shadow_toggle") SceneProp.ToogleShadow = value.value ? 1 : 0;
+    else if (value.name == "ssao_toggle") SceneProp.ToogleSSAO = value.value ? 1 : 0;
+    else if (value.name == "dof_auto_focus") SceneProp.AutoFocus = value.value;
+    else if (value.name == "show_spline") m_showSpline = value.value;
+    else if (value.name == "show_lights") m_showLights = value.value;
+    else if (value.name == "dof_toggle") { SceneProp.ToogleDOF = value.value ? 1 : 0; m_renderGraph.SetPassEnabled("CoC", value.value); m_renderGraph.SetPassEnabled("Combine CoC", value.value); m_renderGraph.SetPassEnabled("DOF", value.value); m_renderGraph.SetPassEnabled("DOF 2", value.value); }
+    else if (value.name == "parallax_toggle") { SceneProp.ToogleParallax = value.value ? 1 : 0; if (Meshes[0].pBase) Meshes[0].SetParallaxEnabled(value.value); }
+    else if (value.name == "parallax_shadow_toggle") { SceneProp.ToogleParallaxShadow = value.value ? 1 : 0; SceneProp.ParallaxShadowStrength = value.value ? SceneProp.ParallaxShadowStrength : 0.0f; }
+    else if (value.name == "godrays_toggle") SceneProp.ToogleGodRays = value.value ? 1 : 0;
+    else if (value.name == "frustum_culling") SceneProp.FrustumCullingEnabled = SceneProp.FrustumCullingToggleAllowed && value.value;
+    else if (value.name == "show_culling_debug") { m_showCullStats = value.value; SceneProp.ShowCullingDebug = value.value; }
+  }
+
+  for (const auto& value : state.selectors) {
+    if (value.name == "num_lights") SceneProp.ActiveLights = value.value;
+    else if (value.name == "active_gauss_kernel") ChangeActiveGaussSelection = value.value;
+    else if (value.name == "debug_render_target") m_debugRTSelection = value.value;
+    else if (value.name == "active_camera") ApplyActiveCameraSelection(value.value);
+    else if (value.name == "cubemap") m_currentCubemapIndex = value.value;
+    for (int kernelIndex = 0; kernelIndex < (int)SceneProp.pGaussKernels.size(); ++kernelIndex) {
+      GaussFilter* kernel = SceneProp.pGaussKernels[kernelIndex];
+      if (!kernel) continue;
+      std::string name = "gauss_" + std::to_string(kernelIndex) + "_kernel_size";
+      if (value.name == name) { kernel->kernelSize = value.value; kernel->Update(); }
+    }
+  }
+
+  if (Meshes[0].pBase) {
+    Meshes[0].SetParallaxSettings(SceneProp.ParallaxLowSamples, SceneProp.ParallaxHighSamples, SceneProp.ParallaxHeight);
+    Meshes[0].SetParallaxShadowSettings(SceneProp.ParallaxShadowMinLayers, SceneProp.ParallaxShadowMaxLayers,
+                                         SceneProp.ParallaxShadowSoftness, SceneProp.ParallaxShadowStrength);
+  }
+}
+
+t850::SandboxProfileDesc DayScene::BuildSparseSceneProfile(const t850::SandboxProfileDesc& current) const {
+  t850::SandboxProfileDesc sparse;
+  sparse.name = current.name;
+  sparse.platform = current.platform;
+  sparse.architecture = current.architecture;
+  sparse.gpu_family = current.gpu_family;
+  sparse.gpu_name_contains = current.gpu_name_contains;
+  for (const auto& value : current.sliders) {
+    const auto* baseline = FindFloatOverride(m_sceneProfileBaselineState.sliders, value.name);
+    if (!baseline || !NearlyEqual(value.value, baseline->value)) sparse.sliders.push_back(value);
+  }
+  for (const auto& value : current.checkboxes) {
+    const auto* baseline = FindBoolOverride(m_sceneProfileBaselineState.checkboxes, value.name);
+    if (!baseline || value.value != baseline->value) sparse.checkboxes.push_back(value);
+  }
+  for (const auto& value : current.selectors) {
+    const auto* baseline = FindIntOverride(m_sceneProfileBaselineState.selectors, value.name);
+    if (!baseline || value.value != baseline->value) sparse.selectors.push_back(value);
+  }
+  return sparse;
+}
+
+void DayScene::LoadSceneProfile() {
+  m_selectedProfileTargetIndex = t850::DefaultProfileTargetIndex();
+  CaptureSceneProfileState(m_sceneProfileBaselineState);
+  m_sceneProfileSavedState = m_sceneProfileBaselineState;
+  m_sceneProfileReady = true;
+  m_sceneProfileDirty = false;
+
+  const t850::SandboxProfileDesc* bestProfile = nullptr;
+  int bestScore = -1;
+  for (const auto& profile : m_sceneSetup.descriptor.profiles) {
+    if (!profile.model.empty()) continue;
+    const bool hasTarget = !profile.name.empty() || !profile.platform.empty() || !profile.architecture.empty() ||
+                           !profile.gpu_family.empty() || !profile.gpu_name_contains.empty();
+    if (!hasTarget) continue;
+    int score = t850::ScoreSceneProfileMatch(profile);
+    if (score > bestScore) {
+      bestScore = score;
+      bestProfile = &profile;
+    }
+  }
+
+  if (bestProfile) ApplySceneProfileState(*bestProfile);
+  CaptureSceneProfileState(m_sceneProfileSavedState);
+
+  const auto& runtime = t850::GetRuntimeProfileInfo();
+  T8_LOG_INFO("[DayScene] Profile runtime='%s' platform=%s arch=%s gpu='%s' family=%s applied=%d",
+              runtime.recommendedProfile.c_str(), runtime.platform.c_str(), runtime.architecture.c_str(),
+              runtime.gpuName.c_str(), runtime.gpuFamily.c_str(), bestProfile ? 1 : 0);
+}
+
+void DayScene::SaveSceneProfile() {
+  if (!m_sceneProfileReady) return;
+
+  t850::SandboxProfileDesc current;
+  CaptureSceneProfileState(current);
+  t850::SandboxProfileDesc sparse = BuildSparseSceneProfile(current);
+  t850::ApplyProfileTarget(sparse, m_selectedProfileTargetIndex);
+
+  t850::SandboxProfileDesc target;
+  t850::ApplyProfileTarget(target, m_selectedProfileTargetIndex);
+  auto& profiles = m_sceneSetup.descriptor.profiles;
+  auto existing = std::find_if(profiles.begin(), profiles.end(), [&](const t850::SandboxProfileDesc& profile) {
+    return profile.model.empty() && profile.name == target.name && profile.platform == target.platform &&
+           profile.architecture == target.architecture && profile.gpu_family == target.gpu_family &&
+           profile.gpu_name_contains == target.gpu_name_contains;
+  });
+
+  bool hasOverrides = !sparse.sliders.empty() || !sparse.checkboxes.empty() || !sparse.selectors.empty();
+  if (hasOverrides) {
+    if (existing == profiles.end()) profiles.push_back(sparse);
+    else *existing = sparse;
+  } else if (existing != profiles.end()) {
+    profiles.erase(existing);
+  }
+
+  if (t850::SaveSceneDescriptor("Scenes/DayScene.json", m_sceneSetup.descriptor)) {
+    m_sceneProfileSavedState = current;
+    m_sceneProfileDirty = false;
+    T8_LOG_INFO("[DayScene] Saved profile '%s'", target.name.empty() ? "pc/base" : target.name.c_str());
+  }
+}
+
+namespace {
 std::string TimestampForFilename() {
   auto now = std::chrono::system_clock::now();
   std::time_t nowTime = std::chrono::system_clock::to_time_t(now);
@@ -200,6 +454,7 @@ void DayScene::CreateAssets() {
     T8_LOG_ERROR("[DayScene] Failed to load render graph");
     return;
   }
+  LoadSceneProfile();
   m_renderGraph.CreateRenderTargets(pFramework->pVideoDriver, SceneProp);
   m_renderGraph.PrintGraph();
 
@@ -1944,6 +2199,36 @@ void DayScene::DrawDevGui(t850::DevGuiContext& gui) {
       int selectedIndex = 0;
       if (getSelectorIndex(desc, settingIndex, selectedIndex) && gui.Combo(desc, selectedIndex)) {
         setSelectorIndex(desc, settingIndex, selectedIndex);
+      }
+    }
+  }
+
+  if (m_sceneProfileReady) {
+    t850::SandboxProfileDesc currentProfileState;
+    CaptureSceneProfileState(currentProfileState);
+    t850::SandboxProfileDesc currentSparse = BuildSparseSceneProfile(currentProfileState);
+    t850::SandboxProfileDesc savedSparse = BuildSparseSceneProfile(m_sceneProfileSavedState);
+    m_sceneProfileDirty = currentSparse.sliders != savedSparse.sliders || currentSparse.checkboxes != savedSparse.checkboxes || currentSparse.selectors != savedSparse.selectors;
+    if (gui.BeginSection("Profile")) {
+      const auto& runtime = t850::GetRuntimeProfileInfo();
+      std::string gpuText = runtime.gpuName.empty() ? runtime.gpuFamily : runtime.gpuName;
+      if (gpuText.empty()) gpuText = "unknown GPU";
+      else if (!runtime.gpuFamily.empty() && runtime.gpuFamily != runtime.gpuName) gpuText += " (" + runtime.gpuFamily + ")";
+      std::string runtimeText = "Runtime: " + runtime.platform + " / " + runtime.architecture + " / " + gpuText;
+      gui.Text(runtimeText.c_str());
+
+      t850::SelectorDesc targetDesc;
+      targetDesc.name = "profile_target";
+      targetDesc.label = "Save target";
+      for (const auto& target : t850::GetProfileTargets()) targetDesc.options.push_back(target.label);
+      targetDesc.default_index = m_selectedProfileTargetIndex;
+      int targetIndex = m_selectedProfileTargetIndex;
+      if (gui.Combo(targetDesc, targetIndex)) {
+        m_selectedProfileTargetIndex = targetIndex;
+      }
+      bool canSaveProfile = m_sceneProfileDirty || m_selectedProfileTargetIndex != t850::DefaultProfileTargetIndex();
+      if (gui.Button("Save Profile", canSaveProfile)) {
+        SaveSceneProfile();
       }
     }
   }

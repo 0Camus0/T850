@@ -45,6 +45,8 @@ T850/android/build/
 T850/android/java_pid*.hprof
 
 # Android signing material
+T850/android/signing.properties
+T850/android/app/signing.properties
 *.keystore
 *.jks
 *.p12

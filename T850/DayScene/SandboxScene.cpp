@@ -1,6 +1,7 @@
 #include <SandboxScene.h>
 #include <video/BaseDriver.h>
 #include <utils/Log.h>
+#include <utils/RuntimeProfile.h>
 #include <scene/PrimitiveManager.h>
 #include <scene/PrimitiveInstance.h>
 #include <scene/RenderMesh.h>
@@ -1017,6 +1018,11 @@ void SandboxScene::ApplySandboxProfileState(const t850::SandboxProfileDesc& stat
 
 t850::SandboxProfileDesc SandboxScene::BuildSparseSandboxProfile(const t850::SandboxProfileDesc& current) const {
   t850::SandboxProfileDesc sparse;
+  sparse.name = current.name;
+  sparse.platform = current.platform;
+  sparse.architecture = current.architecture;
+  sparse.gpu_family = current.gpu_family;
+  sparse.gpu_name_contains = current.gpu_name_contains;
   sparse.model = current.model;
   for (const auto& value : current.sliders) {
     const auto* baseline = FindFloatOverride(m_profileBaselineState.sliders, value.name);
@@ -1091,19 +1097,42 @@ bool SandboxScene::SandboxProfileStatesEqual(const t850::SandboxProfileDesc& lhs
 
 void SandboxScene::LoadSandboxProfile() {
   m_profileModelKey = SandboxProfileModelKey(g_config.modelPath);
+  m_selectedProfileTargetIndex = t850::DefaultProfileTargetIndex();
   CaptureSandboxProfileState(m_profileBaselineState);
   m_profileSavedState = m_profileBaselineState;
   m_profileReady = true;
   m_profileDirty = false;
 
+  const t850::SandboxProfileDesc* baseProfile = nullptr;
+  const t850::SandboxProfileDesc* runtimeProfile = nullptr;
+  int bestRuntimeScore = -1;
   for (const auto& profile : m_guiSetup.descriptor.profiles) {
-    if (SandboxProfileModelKey(profile.model) != m_profileModelKey) continue;
-    ApplySandboxProfileState(profile);
-    CaptureSandboxProfileState(m_profileSavedState);
-    T8_LOG_INFO("[SandboxScene] Applied profile for model '%s'", m_profileModelKey.c_str());
-    return;
+    const bool modelSpecific = !profile.model.empty();
+    const bool modelMatches = !modelSpecific || SandboxProfileModelKey(profile.model) == m_profileModelKey;
+    if (!modelMatches) continue;
+
+    const bool hasTarget = !profile.name.empty() || !profile.platform.empty() || !profile.architecture.empty() ||
+                           !profile.gpu_family.empty() || !profile.gpu_name_contains.empty();
+    if (!hasTarget && modelSpecific) {
+      baseProfile = &profile;
+      continue;
+    }
+
+    int score = t850::ScoreSceneProfileMatch(profile, m_profileModelKey);
+    if (score > bestRuntimeScore) {
+      bestRuntimeScore = score;
+      runtimeProfile = &profile;
+    }
   }
-  T8_LOG_INFO("[SandboxScene] No profile for model '%s'; using defaults", m_profileModelKey.c_str());
+
+  if (baseProfile) ApplySandboxProfileState(*baseProfile);
+  if (runtimeProfile && runtimeProfile != baseProfile) ApplySandboxProfileState(*runtimeProfile);
+  CaptureSandboxProfileState(m_profileSavedState);
+
+  const auto& runtime = t850::GetRuntimeProfileInfo();
+  T8_LOG_INFO("[SandboxScene] Profile model='%s' runtime='%s' platform=%s arch=%s gpu='%s' family=%s base=%d runtime=%d",
+              m_profileModelKey.c_str(), runtime.recommendedProfile.c_str(), runtime.platform.c_str(), runtime.architecture.c_str(),
+              runtime.gpuName.c_str(), runtime.gpuFamily.c_str(), baseProfile ? 1 : 0, runtimeProfile ? 1 : 0);
 }
 
 void SandboxScene::SaveSandboxProfile() {
@@ -1112,10 +1141,17 @@ void SandboxScene::SaveSandboxProfile() {
   t850::SandboxProfileDesc current;
   CaptureSandboxProfileState(current);
   t850::SandboxProfileDesc sparse = BuildSparseSandboxProfile(current);
+  t850::ApplyProfileTarget(sparse, m_selectedProfileTargetIndex);
+  sparse.model = m_profileModelKey;
+
+  t850::SandboxProfileDesc target;
+  t850::ApplyProfileTarget(target, m_selectedProfileTargetIndex);
 
   auto& profiles = m_guiSetup.descriptor.profiles;
   auto existing = std::find_if(profiles.begin(), profiles.end(), [&](const t850::SandboxProfileDesc& profile) {
-    return SandboxProfileModelKey(profile.model) == m_profileModelKey;
+    return SandboxProfileModelKey(profile.model) == m_profileModelKey && profile.name == target.name &&
+           profile.platform == target.platform && profile.architecture == target.architecture &&
+           profile.gpu_family == target.gpu_family && profile.gpu_name_contains == target.gpu_name_contains;
   });
 
   bool hasOverrides = !sparse.sliders.empty() || !sparse.checkboxes.empty() || !sparse.selectors.empty() ||
@@ -1132,7 +1168,7 @@ void SandboxScene::SaveSandboxProfile() {
   if (t850::SaveSceneDescriptor("Scenes/SandboxScene.json", m_guiSetup.descriptor)) {
     m_profileSavedState = current;
     m_profileDirty = false;
-    T8_LOG_INFO("[SandboxScene] Saved profile for model '%s'", m_profileModelKey.c_str());
+    T8_LOG_INFO("[SandboxScene] Saved profile '%s' for model '%s'", target.name.empty() ? "pc/base" : target.name.c_str(), m_profileModelKey.c_str());
   }
 }
 
@@ -1702,6 +1738,12 @@ void SandboxScene::DrawDevGui(t850::DevGuiContext& gui) {
   };
 
   if (gui.BeginSection("Controls")) {
+    if (RenderSkinnedMesh* sk = skinnedMesh()) {
+      if (gui.Button(sk->IsPlaying() ? "Pause Animation" : "Resume Animation")) {
+        if (sk->IsPlaying()) sk->PauseAnimation();
+        else sk->PlayAnimation();
+      }
+    }
     for (const auto& desc : m_guiSetup.descriptor.sliders) {
       int settingIndex = findSetting(desc.name, sliderMappings, (int)(sizeof(sliderMappings) / sizeof(sliderMappings[0])));
       if (settingIndex < 0) continue;
@@ -1855,7 +1897,24 @@ void SandboxScene::DrawDevGui(t850::DevGuiContext& gui) {
     if (gui.BeginSection("Profile")) {
       std::string profileText = "Model profile: " + (m_profileModelKey.empty() ? std::string("none") : m_profileModelKey);
       gui.Text(profileText.c_str());
-      if (gui.Button("Save Profile", m_profileDirty)) {
+      const auto& runtime = t850::GetRuntimeProfileInfo();
+      std::string gpuText = runtime.gpuName.empty() ? runtime.gpuFamily : runtime.gpuName;
+      if (gpuText.empty()) gpuText = "unknown GPU";
+      else if (!runtime.gpuFamily.empty() && runtime.gpuFamily != runtime.gpuName) gpuText += " (" + runtime.gpuFamily + ")";
+      std::string runtimeText = "Runtime: " + runtime.platform + " / " + runtime.architecture + " / " + gpuText;
+      gui.Text(runtimeText.c_str());
+
+      t850::SelectorDesc targetDesc;
+      targetDesc.name = "profile_target";
+      targetDesc.label = "Save target";
+      for (const auto& target : t850::GetProfileTargets()) targetDesc.options.push_back(target.label);
+      targetDesc.default_index = m_selectedProfileTargetIndex;
+      int targetIndex = m_selectedProfileTargetIndex;
+      if (gui.Combo(targetDesc, targetIndex)) {
+        m_selectedProfileTargetIndex = targetIndex;
+      }
+      bool canSaveProfile = m_profileDirty || m_selectedProfileTargetIndex != t850::DefaultProfileTargetIndex();
+      if (gui.Button("Save Profile", canSaveProfile)) {
         SaveSandboxProfile();
       }
     }

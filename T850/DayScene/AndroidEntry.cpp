@@ -7,6 +7,7 @@
 #include <core/Config.h>
 #include <utils/ConfigRuntime.h>
 #include <utils/Log.h>
+#include <utils/RuntimeProfile.h>
 #include <utils/AndroidAssets.h>
 #include <utils/ResourceLocator.h>
 
@@ -109,6 +110,48 @@ namespace {
     }
     env->DeleteLocalRef(value);
     return out;
+  }
+
+  std::string GetStaticStringField(JNIEnv* env, jclass cls, const char* name) {
+    jfieldID field = env->GetStaticFieldID(cls, name, "Ljava/lang/String;");
+    if (!field || env->ExceptionCheck()) {
+      env->ExceptionClear();
+      return {};
+    }
+    jstring value = static_cast<jstring>(env->GetStaticObjectField(cls, field));
+    if (env->ExceptionCheck()) {
+      env->ExceptionClear();
+      return {};
+    }
+    if (!value) return {};
+
+    std::string out;
+    const char* chars = env->GetStringUTFChars(value, nullptr);
+    if (chars) {
+      out = chars;
+      env->ReleaseStringUTFChars(value, chars);
+    }
+    env->DeleteLocalRef(value);
+    return out;
+  }
+
+  void CaptureAndroidBuildInfo(android_app* state) {
+    if (!state || !state->activity) return;
+    AndroidJniEnv jni(state->activity);
+    JNIEnv* env = jni.env;
+    if (!env) return;
+    jclass buildClass = env->FindClass("android/os/Build");
+    if (!buildClass || env->ExceptionCheck()) {
+      env->ExceptionClear();
+      return;
+    }
+    t850::SetAndroidBuildInfo(
+      GetStaticStringField(env, buildClass, "MANUFACTURER"),
+      GetStaticStringField(env, buildClass, "MODEL"),
+      GetStaticStringField(env, buildClass, "HARDWARE"),
+      GetStaticStringField(env, buildClass, "BOARD"),
+      GetStaticStringField(env, buildClass, "SOC_MODEL"));
+    env->DeleteLocalRef(buildClass);
   }
 
   void ApplyLauncherIntent(android_app* state) {
@@ -234,6 +277,7 @@ void android_main(android_app* state) {
   t850::g_config.startScene = 0;
   t850::g_config.logLevel = t850::Log::LVL_DEBUG;
   ApplyLauncherIntent(state);
+  CaptureAndroidBuildInfo(state);
 
   t850::Log::Init(static_cast<t850::Log::Level>(t850::g_config.logLevel),
                   t850::Log::T8_LOG_BACKEND_ANDROID_LOGCAT,

@@ -1,7 +1,7 @@
 @echo off
 setlocal enabledelayedexpansion
 
-set "ROOT=%~dp0"
+set "ROOT=%~dp0..\..\"
 set "PROJECT=%ROOT%T850"
 set "EXE_DIR=%PROJECT%\bin\x64\Debug"
 set "EXE=%EXE_DIR%\DayScene.exe"

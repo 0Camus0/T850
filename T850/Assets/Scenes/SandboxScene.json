@@ -438,6 +438,52 @@
    ],
    "profiles": [
       {
+         "name": "android/adreno-700",
+         "platform": "android",
+         "gpu_family": "adreno-700",
+         "sliders": [
+            {
+               "name": "ssao_kernel_size",
+               "value": 8
+            },
+            {
+               "name": "light_volume_steps",
+               "value": 64
+            },
+            {
+               "name": "dof_far_samples",
+               "value": 2
+            },
+            {
+               "name": "godrays_factor",
+               "value": 0.45
+            }
+         ]
+      },
+      {
+         "name": "android/adreno-800",
+         "platform": "android",
+         "gpu_family": "adreno-800",
+         "sliders": [
+            {
+               "name": "ssao_kernel_size",
+               "value": 12
+            },
+            {
+               "name": "light_volume_steps",
+               "value": 96
+            },
+            {
+               "name": "dof_far_samples",
+               "value": 3
+            },
+            {
+               "name": "godrays_factor",
+               "value": 0.6
+            }
+         ]
+      },
+      {
          "model": "porsche_992_gt3_r__www.vecarz.com.glb",
          "sliders": [
             {

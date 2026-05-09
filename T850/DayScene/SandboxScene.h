@@ -138,6 +138,7 @@ public:
   int m_selectedLightIndex = 0;
   std::vector<bool> m_lightAttachToCamera;
   std::string m_profileModelKey;
+  int m_selectedProfileTargetIndex = 0;
   t850::SandboxProfileDesc m_profileBaselineState;
   t850::SandboxProfileDesc m_profileSavedState;
 

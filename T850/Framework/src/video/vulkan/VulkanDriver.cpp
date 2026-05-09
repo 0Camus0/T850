@@ -24,6 +24,7 @@
 #endif
 
 #include <utils/Log.h>
+#include <utils/RuntimeProfile.h>
 #include <utils/ShaderDiskCache.h>
 #include <utils/SPIRVReflection.h>
 #include <debug/Profiler.h>
@@ -372,10 +373,14 @@ namespace t850 {
       vkGetPhysicalDeviceProperties(dev, &props);
       if (props.deviceType == VK_PHYSICAL_DEVICE_TYPE_DISCRETE_GPU) {
         m_physicalDevice = dev;
-        T8_LOG_INFO("[Vulkan] GPU: %s", props.deviceName);
         break;
       }
     }
+
+    VkPhysicalDeviceProperties selectedProps;
+    vkGetPhysicalDeviceProperties(m_physicalDevice, &selectedProps);
+    SetRuntimeGpuInfo(selectedProps.deviceName, selectedProps.vendorID, selectedProps.deviceID);
+    T8_LOG_INFO("[Vulkan] GPU: %s (vendor=0x%04x device=0x%04x)", selectedProps.deviceName, selectedProps.vendorID, selectedProps.deviceID);
 
     // Find graphics queue family
     uint32_t queueFamilyCount = 0;

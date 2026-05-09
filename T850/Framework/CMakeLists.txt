@@ -53,6 +53,7 @@ set(FRAMEWORK_SOURCES
   src/utils/XMaths.cpp
   src/utils/GUIAtlasGenerator.cpp
   src/utils/ConfigRuntime.cpp
+  src/utils/RuntimeProfile.cpp
   src/utils/ShaderPermutationDump.cpp
   src/utils/SPIRVReflection.cpp
   src/utils/ShaderDiskCache.cpp

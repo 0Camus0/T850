@@ -55,6 +55,7 @@ public:
   CullingLoadMode cullingLoadMode = CullingLoadMode::FullOnLoad;
   std::string benchmarkOutputPath;
   std::string modelPath = "Models/DamagedHelmet.glb";
+  std::string sceneProfile;
   std::string shaderPermutationOutputPath = "shader_permutations.json";
   bool orbitYawOverride = false;
   float orbitYaw = 0.0f;

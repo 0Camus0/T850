@@ -15,6 +15,36 @@ def t850AndroidAbis = (findProperty('t850AndroidAbis') ?: 'arm64-v8a')
     .findAll { !it.isEmpty() }
 def t850VulkanValidation = (findProperty('t850VulkanValidation') ?: 'false').toString().toBoolean()
 
+def localSigningProperties = new Properties()
+[
+    file('../signing.properties'),
+    file('signing.properties'),
+    new File(System.getProperty('user.home'), '.android/t850-release-signing.properties')
+].findAll { it.isFile() }.each { propsFile ->
+    propsFile.withInputStream { localSigningProperties.load(it) }
+}
+
+def signingValue = { String name ->
+    def value = findProperty(name)
+    if (value == null) value = localSigningProperties.getProperty(name)
+    if (value == null) value = System.getenv(name)
+    value == null ? null : value.toString()
+}
+
+def releaseStoreFile = signingValue('T850_RELEASE_STORE_FILE') ?: signingValue('ANDROID_KEYSTORE_PATH')
+def releaseStorePassword = signingValue('T850_RELEASE_STORE_PASSWORD') ?: signingValue('ANDROID_KEYSTORE_PASSWORD')
+def releaseKeyAlias = signingValue('T850_RELEASE_KEY_ALIAS') ?: signingValue('ANDROID_KEY_ALIAS')
+def releaseKeyPassword = signingValue('T850_RELEASE_KEY_PASSWORD') ?: signingValue('ANDROID_KEY_PASSWORD')
+def releaseSigningReady = releaseStoreFile && releaseStorePassword && releaseKeyAlias && releaseKeyPassword
+def releaseTaskRequested = gradle.startParameter.taskNames.any { it.toLowerCase(Locale.ROOT).contains('release') }
+
+if (releaseTaskRequested && !releaseSigningReady) {
+    throw new GradleException(
+        'Release signing is not configured. Set ANDROID_KEYSTORE_PATH, ANDROID_KEYSTORE_PASSWORD, ' +
+        'ANDROID_KEY_ALIAS, and ANDROID_KEY_PASSWORD as environment variables, Gradle properties, ' +
+        'or in ~/.android/t850-release-signing.properties.')
+}
+
 if (t850AndroidAbis.isEmpty()) {
     throw new GradleException('At least one Android ABI must be specified in t850AndroidAbis.')
 }
@@ -61,6 +91,25 @@ android {
                     '-DT850_ANDROID_NATIVE_ACTIVITY=ON',
                     "-DT850_VULKAN_VALIDATION=${t850VulkanValidation ? 'ON' : 'OFF'}"
                 cppFlags '-std=c++23 -fexceptions -frtti'
+            }
+        }
+    }
+
+    signingConfigs {
+        release {
+            if (releaseSigningReady) {
+                storeFile file(releaseStoreFile)
+                storePassword releaseStorePassword
+                keyAlias releaseKeyAlias
+                keyPassword releaseKeyPassword
+            }
+        }
+    }
+
+    buildTypes {
+        release {
+            if (releaseSigningReady) {
+                signingConfig signingConfigs.release
             }
         }
     }

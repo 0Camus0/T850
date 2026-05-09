@@ -360,7 +360,39 @@ float ImGuiSystem::ConsumeWheelDelta() {
 #ifdef OS_ANDROID
 bool ImGuiSystem::HandleAndroidInputEvent(AInputEvent* event) {
   if (!m_inited || !event) return false;
-  return ImGui_ImplAndroid_HandleInputEvent(event) != 0;
+  const bool handled = ImGui_ImplAndroid_HandleInputEvent(event) != 0;
+  if (AInputEvent_getType(event) == AINPUT_EVENT_TYPE_MOTION) {
+    const int32_t rawAction = AMotionEvent_getAction(event);
+    const int32_t action = rawAction & AMOTION_EVENT_ACTION_MASK;
+    int32_t pointerIndex = (rawAction & AMOTION_EVENT_ACTION_POINTER_INDEX_MASK) >> AMOTION_EVENT_ACTION_POINTER_INDEX_SHIFT;
+    const size_t pointerCount = AMotionEvent_getPointerCount(event);
+    if (pointerCount == 0) return handled;
+    if (pointerIndex < 0 || pointerIndex >= static_cast<int32_t>(pointerCount)) pointerIndex = 0;
+    const int32_t toolType = AMotionEvent_getToolType(event, pointerIndex);
+    if (toolType == AMOTION_EVENT_TOOL_TYPE_STYLUS || toolType == AMOTION_EVENT_TOOL_TYPE_ERASER) {
+      ImGuiIO& io = ImGui::GetIO();
+      io.AddMouseSourceEvent(ImGuiMouseSource_TouchScreen);
+      switch (action) {
+      case AMOTION_EVENT_ACTION_DOWN:
+      case AMOTION_EVENT_ACTION_POINTER_DOWN:
+        io.AddMousePosEvent(AMotionEvent_getX(event, pointerIndex), AMotionEvent_getY(event, pointerIndex));
+        io.AddMouseButtonEvent(0, true);
+        return true;
+      case AMOTION_EVENT_ACTION_UP:
+      case AMOTION_EVENT_ACTION_POINTER_UP:
+      case AMOTION_EVENT_ACTION_CANCEL:
+        io.AddMousePosEvent(AMotionEvent_getX(event, pointerIndex), AMotionEvent_getY(event, pointerIndex));
+        io.AddMouseButtonEvent(0, false);
+        return true;
+      case AMOTION_EVENT_ACTION_MOVE:
+        io.AddMousePosEvent(AMotionEvent_getX(event, pointerIndex), AMotionEvent_getY(event, pointerIndex));
+        return true;
+      default:
+        break;
+      }
+    }
+  }
+  return handled;
 }
 #endif
 

@@ -4,15 +4,15 @@ setlocal enabledelayedexpansion
 :: T850 Engine - Android APK build wrapper for local development.
 :: Default build is incremental Debug. Use --clean to force a full rebuild.
 :: Usage:
-::   BuildAndroid.bat
-::   BuildAndroid.bat Release
-::   BuildAndroid.bat --configuration Release --clean
-::   BuildAndroid.bat Debug --install --launch
-::   BuildAndroid.bat --sdk C:\Android\Sdk
-::   BuildAndroid.bat Debug --emulator
-::   BuildAndroid.bat Debug --vulkan-validation
+::   Scripts\Bat\BuildAndroid.bat
+::   Scripts\Bat\BuildAndroid.bat Release
+::   Scripts\Bat\BuildAndroid.bat --configuration Release --clean
+::   Scripts\Bat\BuildAndroid.bat Debug --install --launch
+::   Scripts\Bat\BuildAndroid.bat --sdk C:\Android\Sdk
+::   Scripts\Bat\BuildAndroid.bat Debug --emulator
+::   Scripts\Bat\BuildAndroid.bat Debug --vulkan-validation
 
-set "ROOT=%~dp0"
+set "ROOT=%~dp0..\..\"
 set "ANDROID_PROJECT=%ROOT%T850\android"
 set "CONFIG=Debug"
 set "CLEAN=0"
@@ -122,7 +122,7 @@ if not defined JAVA_HOME (
 )
 if defined JAVA_HOME set "PATH=%JAVA_HOME%\bin;%PATH%"
 where java >nul 2>nul || (
-    echo [ERROR] JDK 17+ was not found. Run SetupAndroidToolchain.bat first.
+    echo [ERROR] JDK 17+ was not found. Run ..\..\SetupAndroidToolchain.bat first.
     exit /b 1
 )
 
@@ -132,14 +132,14 @@ set "ANDROID_NDK_HOME=%ANDROID_SDK%\ndk\%NDK_VERSION%"
 set "ANDROID_NDK_ROOT=%ANDROID_NDK_HOME%"
 if not exist "%ANDROID_NDK_HOME%" (
     echo [ERROR] Android NDK %NDK_VERSION% was not found at "%ANDROID_NDK_HOME%".
-    echo [ERROR] Run SetupAndroidToolchain.bat first, or pass --sdk to this script.
+    echo [ERROR] Run ..\..\SetupAndroidToolchain.bat first, or pass --sdk to this script.
     exit /b 1
 )
 
 set "GRADLE_HOME=%ANDROID_SDK%\gradle\gradle-%GRADLE_VERSION%"
 if exist "%GRADLE_HOME%\bin\gradle.bat" set "PATH=%GRADLE_HOME%\bin;%PATH%"
 where gradle >nul 2>nul || (
-    echo [ERROR] Gradle %GRADLE_VERSION% was not found. Run SetupAndroidToolchain.bat first.
+    echo [ERROR] Gradle %GRADLE_VERSION% was not found. Run ..\..\SetupAndroidToolchain.bat first.
     exit /b 1
 )
 
@@ -206,6 +206,8 @@ if "%LAUNCH%"=="1" (
         echo [ERROR] adb.exe was not found at "!ADB!".
         exit /b 1
     )
+    "!ADB!" shell am force-stop com.t850.engine
+    if errorlevel 1 exit /b 1
     "!ADB!" shell am start -n com.t850.engine/.LauncherActivity
     if errorlevel 1 exit /b 1
 )
@@ -222,5 +224,5 @@ echo APK: %APK_PATH%
 exit /b 0
 
 :usage
-echo Usage: BuildAndroid.bat [Debug^|Release] [--configuration Debug^|Release] [--sdk C:\Android\Sdk] [--abi ABI[,ABI...]] [--emulator] [--vulkan-validation] [--clean] [--install] [--launch]
+echo Usage: Scripts\Bat\BuildAndroid.bat [Debug^|Release] [--configuration Debug^|Release] [--sdk C:\Android\Sdk] [--abi ABI[,ABI...]] [--emulator] [--vulkan-validation] [--clean] [--install] [--launch]
 exit /b 1

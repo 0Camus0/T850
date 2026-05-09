@@ -183,6 +183,7 @@ void ApplyConfigJson(const RuntimeConfigJson& json, Config& cfg) {
   if (json.scene) cfg.startScene = *json.scene;
   if (json.title) cfg.title = *json.title;
   if (json.model) cfg.modelPath = *json.model;
+  if (json.sceneProfile) cfg.sceneProfile = StripQuotes(*json.sceneProfile);
   if (json.debugFrames) {
     cfg.flags.debugFrames = *json.debugFrames;
     if (*json.debugFrames) cfg.flags.dumpEnabled = true;
@@ -224,6 +225,7 @@ void ApplyConfigJson(const RuntimeConfigJson& json, Config& cfg) {
     if (display.fullscreen) cfg.flags.fullscreen = *display.fullscreen;
     if (display.scene) cfg.startScene = *display.scene;
     if (display.model) cfg.modelPath = *display.model;
+    if (display.sceneProfile) cfg.sceneProfile = StripQuotes(*display.sceneProfile);
     if (display.title) cfg.title = *display.title;
   }
 
@@ -487,6 +489,9 @@ void ApplyCommandLine(int argc, char** argv, Config& cfg) {
     else if (arg == "--model" && i + 1 < argc) {
       cfg.modelPath = argv[++i];
     }
+    else if (arg == "--sceneProfile" && i + 1 < argc) {
+      cfg.sceneProfile = StripQuotes(argv[++i]);
+    }
     else if (arg == "--orbitYaw") {
       float value = 0.0f;
       if (ReadFloatArgument(arg, argc, argv, i, value)) {
@@ -555,7 +560,8 @@ void PrintHelp() {
     << "  --height <pixels>                  Window height\n"
     << "  --fullscreen                       Launch fullscreen\n"
     << "  --scene <index>                    Starting scene index\n"
-    << "  --model <path>                     glTF model for Sandbox\n\n"
+    << "  --model <path>                     glTF model for Sandbox\n"
+    << "  --sceneProfile <name>              Override runtime scene profile selection\n\n"
     << "  --orbitYaw <radians>               Override Sandbox orbit yaw after model fit\n\n"
     << "Capture/debug:\n"
     << "  --dump-frame <frame>               Dump render targets at frame\n"

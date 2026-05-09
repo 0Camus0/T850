@@ -120,6 +120,11 @@ class DayScene : public t850::SceneBase
   void RecordBenchmarkFrame(float dtSecs);
   void WriteBenchmarkResults(float durationSecs) const;
   std::string BuildBenchmarkOutputPath() const;
+  void LoadSceneProfile();
+  void SaveSceneProfile();
+  void CaptureSceneProfileState(t850::SandboxProfileDesc& state) const;
+  void ApplySceneProfileState(const t850::SandboxProfileDesc& state);
+  t850::SandboxProfileDesc BuildSparseSceneProfile(const t850::SandboxProfileDesc& current) const;
 
   struct BenchmarkCullingTotals {
     unsigned long long samples = 0;
@@ -146,6 +151,11 @@ class DayScene : public t850::SceneBase
   t850::SceneSetup  m_sceneSetup;
   t850::RenderGraph  m_renderGraph;
   t850::FrameDumper  m_dumper;
+  bool m_sceneProfileReady = false;
+  bool m_sceneProfileDirty = false;
+  int m_selectedProfileTargetIndex = 0;
+  t850::SandboxProfileDesc m_sceneProfileBaselineState;
+  t850::SandboxProfileDesc m_sceneProfileSavedState;
 
   Camera			*ActiveCam;
 

@@ -33,6 +33,7 @@ public final class LauncherActivity extends Activity {
     public static final String EXTRA_KEEP_RUNNING = "com.t850.engine.extra.KEEP_RUNNING";
     public static final String EXTRA_REPLAY_SNAPSHOT = "com.t850.engine.extra.REPLAY_SNAPSHOT";
     public static final String EXTRA_RETURN_TO_NATIVE = "com.t850.engine.extra.RETURN_TO_NATIVE";
+    public static final String EXTRA_RUN_ID = "com.t850.engine.extra.RUN_ID";
 
     private static final String PREFS_NAME = "t850_launcher";
     private static final String PREF_SCENE = "scene";
@@ -368,7 +369,10 @@ public final class LauncherActivity extends Activity {
         }
 
         SharedPreferences prefs = getSharedPreferences(PREFS_NAME, MODE_PRIVATE);
-        String autoRunKey = intent.toUri(0);
+        String autoRunKey = intent.getStringExtra(EXTRA_RUN_ID);
+        if (autoRunKey == null || autoRunKey.isEmpty()) {
+            autoRunKey = intent.toUri(0);
+        }
         if (autoRunKey.equals(prefs.getString(PREF_CONSUMED_AUTO_RUN, null))) {
             intent.removeExtra(EXTRA_AUTO_RUN);
             setIntent(intent);

@@ -222,6 +222,7 @@ function(t850_apply_app target)
 	target_link_libraries(${target} PRIVATE
 		Framework
 		dxguid
+		dxgi
 		SDL3
 		d3d11
 		d3dcompiler

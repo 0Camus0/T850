@@ -1,10 +1,26 @@
 {
-  "api": "d3d12",
+  "architecture": "arm64",
+  "benchmark": false,
+  "dump": {
+    "trigger": "frame",
+    "enabled": false,
+    "frame": -1,
+    "seconds": -1
+  },
+  "cullingMode": "full",
+  "configuration": "Release",
+  "api": "vulkan",
+  "targetPlatform": "android",
+  "replaySnapshot": {
+    "path": "D:\\Code\\Game\\T850\\T850\\bin\\x64\\Release\\dumps_vulkan_f863_20260507_090650\\snapshot.json",
+    "enabled": false
+  },
+  "keepRunning": false,
   "cullDisabled": false,
   "debugFrames": false,
   "display": {
     "fullscreen": false,
-    "model": "Models/rewind_cyborg.glb",
+    "model": "Models/DamagedHelmet.glb",
     "scene": 1,
     "height": 1440,
     "width": 2560
@@ -13,20 +29,5 @@
     "logToFile": false,
     "d3d12Debug": false,
     "logLevel": "error"
-  },
-  "configuration": "Release",
-  "dump": {
-    "trigger": "frame",
-    "enabled": false,
-    "frame": -1,
-    "seconds": -1
-  },
-  "keepRunning": false,
-  "cullingMode": "full",
-  "replaySnapshot": {
-    "path": "D:\\Code\\Game\\T850\\T850\\bin\\x64\\Release\\dumps_vulkan_f863_20260507_090650\\snapshot.json",
-    "enabled": false
-  },
-  "architecture": "x64",
-  "benchmark": false
+  }
 }

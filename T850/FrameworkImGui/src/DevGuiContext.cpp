@@ -48,12 +48,30 @@ bool DevGuiContext::Combo(const SelectorDesc& desc, int& selectedIndex, const st
   selectedIndex = (std::max)(0, (std::min)(selectedIndex, (int)options.size() - 1));
   const char* label = desc.label.empty() ? desc.name.c_str() : desc.label.c_str();
   bool changed = false;
-  if (ImGui::BeginCombo(label, options[selectedIndex].c_str())) {
+  if (ImGui::BeginCombo(label, options[selectedIndex].c_str(), ImGuiComboFlags_HeightLarge)) {
+#ifdef OS_ANDROID
+    ImGuiIO& io = ImGui::GetIO();
+    const float dragThreshold = io.MouseDragThreshold * io.MouseDragThreshold;
+    const bool touchDragged = io.MouseDragMaxDistanceSqr[ImGuiMouseButton_Left] > dragThreshold;
+    if (ImGui::IsMouseDragging(ImGuiMouseButton_Left) && ImGui::IsWindowHovered(ImGuiHoveredFlags_AllowWhenBlockedByActiveItem)) {
+      ImGui::SetScrollY(ImGui::GetScrollY() - io.MouseDelta.y);
+    }
+#endif
     for (int i = 0; i < (int)options.size(); ++i) {
       bool selected = (i == selectedIndex);
-      if (ImGui::Selectable(options[i].c_str(), selected)) {
+      ImGuiSelectableFlags selectableFlags = 0;
+#ifdef OS_ANDROID
+      selectableFlags |= ImGuiSelectableFlags_NoAutoClosePopups;
+#endif
+      if (ImGui::Selectable(options[i].c_str(), selected, selectableFlags)) {
+#ifdef OS_ANDROID
+        if (touchDragged) continue;
+#endif
         selectedIndex = i;
         changed = true;
+#ifdef OS_ANDROID
+        ImGui::CloseCurrentPopup();
+#endif
       }
       if (selected) ImGui::SetItemDefaultFocus();
     }

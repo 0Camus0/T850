@@ -23,6 +23,13 @@
 /T850/Assets/Shaders/.t8shadercache/
 /T850/Assets/Textures/GeneratedIBLCache/
 
+# ── Local-only model assets ──
+/T850/Assets/Models/Marauder.glb
+/T850/Assets/Models/rewind_cyborg.glb
+/T850/Assets/Models/Tyrant.glb
+/T850/Assets/Models/doomslayer_cine_all_animations_no-damage_double-sided-opaque.glb
+/T850/Assets/Models/doomslayer_cine_base_all_animations_no-damage_double-sided-opaque.glb
+
 # ── vcpkg build-time artifacts (huge, reproducible) ──
 /T850/Librerias/vcpkg/buildtrees/
 /T850/Librerias/vcpkg/packages/

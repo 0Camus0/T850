@@ -127,6 +127,13 @@ set(T850_ANDROID_FRAMEWORK_SOURCES
   ${T850_SOURCE_DIR}/Librerias/tinyxml2/tinyxml2.cpp
   ${T850_SOURCE_DIR}/Librerias/mikktspace/src/mikktspace.c)
 
+set_source_files_properties(
+  ${T850_SOURCE_DIR}/Framework/src/utils/cil.cpp
+  PROPERTIES COMPILE_OPTIONS "-Wno-deprecated-enum-enum-conversion")
+set_source_files_properties(
+  ${T850_SOURCE_DIR}/Librerias/mikktspace/src/mikktspace.c
+  PROPERTIES COMPILE_OPTIONS "-Wno-unused-but-set-variable")
+
 add_library(T850Android SHARED
   ${T850_SOURCE_DIR}/DayScene/AndroidEntry.cpp
   ${T850_SOURCE_DIR}/DayScene/Application.cpp
@@ -150,14 +157,16 @@ target_include_directories(T850Android PRIVATE
   ${T850_SOURCE_DIR}/FrameworkImGui/include
   ${T850_SOURCE_DIR}/Framework
   ${T850_SOURCE_DIR}/Framework/include
-  ${T850_SOURCE_DIR}/Librerias/glaze/include
   ${T850_SOURCE_DIR}/Librerias/tinyxml2/include
-  ${T850_SOURCE_DIR}/Librerias/stb/include
-  ${T850_SOURCE_DIR}/Librerias/mikktspace/include
   ${T850_ANDROID_VCPKG_ROOT}/include
-  ${T850_SOURCE_DIR}/Librerias/VulkanMemoryAllocator/include
   ${T850_SOURCE_DIR}/GLSLParser/Include
   ${CMAKE_ANDROID_NDK}/sources/android/native_app_glue)
+
+target_include_directories(T850Android SYSTEM PRIVATE
+  ${T850_SOURCE_DIR}/Librerias/glaze/include
+  ${T850_SOURCE_DIR}/Librerias/stb/include
+  ${T850_SOURCE_DIR}/Librerias/mikktspace/include
+  ${T850_SOURCE_DIR}/Librerias/VulkanMemoryAllocator/include)
 
 target_link_libraries(T850Android PRIVATE
   android

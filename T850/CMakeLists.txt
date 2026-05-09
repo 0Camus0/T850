@@ -204,7 +204,6 @@ function(t850_apply_app target)
 	t850_apply_runtime_output(${target})
 	target_compile_definitions(${target} PRIVATE _CONSOLE)
 	target_include_directories(${target} PRIVATE
-		${T850_SOURCE_DIR}/Librerias/glaze/include
 		${T850_SOURCE_DIR}/Librerias/tinyxml2/include
 		${T850_SOURCE_DIR}/DayScene
 		${T850_SOURCE_DIR}/Framework
@@ -213,6 +212,8 @@ function(t850_apply_app target)
 		${T850_VCPKG_STATIC}/include
 		${T850_VCPKG_DYNAMIC}/include
 		${T850_SOURCE_DIR}/Librerias/stb/include)
+	target_include_directories(${target} SYSTEM PRIVATE
+		${T850_SOURCE_DIR}/Librerias/glaze/include)
 	target_link_directories(${target} PRIVATE
 		${T850_SOURCE_DIR}/Librerias/tinyxml2/lib
 		${T850_SOURCE_DIR}/Librerias/SDL3/lib/${T850_ARCH}

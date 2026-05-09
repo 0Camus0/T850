@@ -87,7 +87,7 @@ namespace t850 {
     free(vsSourceP);
     free(fsSourceP);
 
-    int shaderID = g_pBaseDriver->CreateShader(vstr, fstr, sigBase, vsName, fsName);
+    g_pBaseDriver->CreateShader(vstr, fstr, sigBase, vsName, fsName);
 
     // Simple pass variants (no toggle combinations)
     static const uint8_t simplePasses[] = {
@@ -134,12 +134,6 @@ namespace t850 {
       if (gr) k.bits |= ShaderKey::GOD_RAYS;
       g_pBaseDriver->CreateShader(vstr, fstr, k, vsName, fsName);
     }
-
-
-
-
-
-    ShaderBase* s = g_pBaseDriver->GetShaderIdx(shaderID);
     T8_LOG_INFO("RenderQuad created: %zu shader variants compiled", g_pBaseDriver->m_shaderCache.size());
 
 

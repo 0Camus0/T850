@@ -14,6 +14,14 @@ param(
 
 $ErrorActionPreference = "Stop"
 
+$buildWorkers = [Math]::Max(1, [Environment]::ProcessorCount - 1)
+if ($env:T850_BUILD_WORKERS) {
+    $parsedWorkers = 0
+    if ([int]::TryParse($env:T850_BUILD_WORKERS, [ref]$parsedWorkers) -and $parsedWorkers -gt 0) {
+        $buildWorkers = $parsedWorkers
+    }
+}
+
 # Resolve paths
 $scriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 $rootDir   = Split-Path -Parent $scriptDir
@@ -110,6 +118,7 @@ Write-Host "========================================" -ForegroundColor Cyan
 Write-Host " T850 Rebuild" -ForegroundColor Cyan
 Write-Host " Config:   $Config" -ForegroundColor Cyan
 Write-Host " Platform: $Platform ($msbuildPlatform)" -ForegroundColor Cyan
+Write-Host " Workers:  $buildWorkers (cores - 1)" -ForegroundColor Cyan
 Write-Host " Solution: $slnPath" -ForegroundColor Cyan
 Write-Host " MSBuild:  $msbuild" -ForegroundColor Cyan
 Write-Host "========================================" -ForegroundColor Cyan
@@ -118,7 +127,7 @@ Write-Host ""
 $stopwatch = [System.Diagnostics.Stopwatch]::StartNew()
 
 # Run MSBuild
-& $msbuild $slnPath /p:Configuration=$Config /p:Platform=$msbuildPlatform /t:Rebuild /v:minimal 2>&1 | ForEach-Object {
+& $msbuild $slnPath /p:Configuration=$Config /p:Platform=$msbuildPlatform /t:Rebuild /v:minimal /m:$buildWorkers 2>&1 | ForEach-Object {
     $line = $_.ToString()
     # Color errors red, warnings yellow
     if ($line -match ": error ") {

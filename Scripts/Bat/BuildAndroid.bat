@@ -24,6 +24,13 @@ set "GRADLE_VERSION=8.10.2"
 set "NDK_VERSION=27.2.12479018"
 set "VULKAN_VALIDATION=false"
 
+set "HOST_CORES=%NUMBER_OF_PROCESSORS%"
+if not defined HOST_CORES set "HOST_CORES=1"
+set /a DEFAULT_BUILD_WORKERS=HOST_CORES-1
+if %DEFAULT_BUILD_WORKERS% LSS 1 set "DEFAULT_BUILD_WORKERS=1"
+if not defined T850_BUILD_WORKERS set "T850_BUILD_WORKERS=%DEFAULT_BUILD_WORKERS%"
+set "CMAKE_BUILD_PARALLEL_LEVEL=%T850_BUILD_WORKERS%"
+
 :parse_args
 if "%~1"=="" goto done_args
 if /i "%~1"=="Debug" (
@@ -170,6 +177,7 @@ echo SDK root: %ANDROID_SDK%
 echo Project : %ANDROID_PROJECT%
 echo ABIs    : %ABI_FILTERS%
 echo Vulkan validation: %VULKAN_VALIDATION%
+echo Workers : %T850_BUILD_WORKERS% ^(cores - 1^)
 if "%CLEAN%"=="1" echo Mode    : clean rebuild
 if not "%CLEAN%"=="1" echo Mode    : incremental
 echo(
@@ -177,21 +185,21 @@ echo(
 pushd "%ANDROID_PROJECT%" || exit /b 1
 
 if "%CLEAN%"=="1" (
-    call gradle --no-daemon --console=plain clean
+    call gradle --no-daemon --console=plain --parallel --max-workers=%T850_BUILD_WORKERS% clean
     if errorlevel 1 (
         popd
         exit /b 1
     )
 )
 
-call gradle --no-daemon --console=plain "-Pt850AndroidAbis=%ABI_FILTERS%" "-Pt850VulkanValidation=%VULKAN_VALIDATION%" "%BUILD_TASK%"
+call gradle --no-daemon --console=plain --parallel --max-workers=%T850_BUILD_WORKERS% "-Pt850AndroidAbis=%ABI_FILTERS%" "-Pt850VulkanValidation=%VULKAN_VALIDATION%" "%BUILD_TASK%"
 if errorlevel 1 (
     popd
     exit /b 1
 )
 
 if "%INSTALL%"=="1" (
-    call gradle --no-daemon --console=plain "-Pt850AndroidAbis=%ABI_FILTERS%" "-Pt850VulkanValidation=%VULKAN_VALIDATION%" "%INSTALL_TASK%"
+    call gradle --no-daemon --console=plain --parallel --max-workers=%T850_BUILD_WORKERS% "-Pt850AndroidAbis=%ABI_FILTERS%" "-Pt850VulkanValidation=%VULKAN_VALIDATION%" "%INSTALL_TASK%"
     if errorlevel 1 (
         popd
         exit /b 1

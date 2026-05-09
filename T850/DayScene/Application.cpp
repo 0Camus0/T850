@@ -615,7 +615,7 @@ void App::OnUpdate() {
    m_devLayer.GetGUI().SetFPSText(m_fpsString, m_fpsCol);
    m_devLayer.Update(DtSecs);
 #else
-   if (m_actualScene) m_actualScene->OnUpdate(DtSecs);
+  if (m_actualScene && !bPaused) m_actualScene->OnUpdate(DtSecs);
 #endif
 
    OnInput();
@@ -703,7 +703,7 @@ void App::OnInput() {
 #else
   UpdateAndroidGuiHoldToggle();
   if (m_imguiVisible && m_imgui.WantsMouse()) return;
-  if (m_actualScene) m_actualScene->OnInput(&IManager);
+  if (m_actualScene && !bPaused) m_actualScene->OnInput(&IManager);
 #endif
 }
 
@@ -775,6 +775,11 @@ void App::DrawRuntimeGui() {
         m_imguiVisible = false;
         SaveAndroidGuiSettings();
         T8_LOG_INFO("[App] Android close button closed ImGui overlay");
+      }
+      ImGui::SameLine();
+      if (ImGui::Button(bPaused ? "Resume" : "Pause")) {
+        bPaused = !bPaused;
+        T8_LOG_INFO("[App] Android GUI %s", bPaused ? "paused" : "resumed");
       }
       ImGui::SameLine();
       if (ImGui::Button("Undock")) {

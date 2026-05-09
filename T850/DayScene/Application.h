@@ -34,20 +34,20 @@
 class App : public t850::AppBase {
 public:
 	App() : AppBase() {}
-	void InitVars();
-  void LoadAssets();
-	void CreateAssets();
-	void DestroyAssets();
+  void InitVars() override;
+  void LoadAssets() override;
+  void CreateAssets() override;
+  void DestroyAssets() override;
 
-	void OnUpdate();
-	void OnDraw();
-	void OnInput();
+  void OnUpdate() override;
+  void OnDraw() override;
+  void OnInput() override;
 
-	void OnPause();
-	void OnResume();
-	void OnReset();
+  void OnPause() override;
+  void OnResume() override;
+  void OnReset() override;
 
-  void LoadScene(int id);
+  void LoadScene(int id) override;
   void DrawRuntimeGui();
 #ifdef OS_ANDROID
   bool HandleAndroidInputEvent(AInputEvent* event) override;

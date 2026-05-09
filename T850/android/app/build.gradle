@@ -74,6 +74,64 @@ def resolveGlslangValidator = {
         'Run SetupAndroidToolchain.bat without --skip-winget, or install the Vulkan SDK and set VULKAN_SDK/PATH.')
 }
 
+def getT850BuildWorkers = {
+    def envWorkers = System.getenv('T850_BUILD_WORKERS')
+    if (envWorkers) {
+        try {
+            def parsedWorkers = envWorkers.toInteger()
+            if (parsedWorkers > 0) return parsedWorkers
+        } catch (ignored) {
+        }
+    }
+    Math.max(1, Runtime.runtime.availableProcessors() - 1)
+}
+
+def runShaderCompileCommands = { List shaderCommands, int requestedWorkers ->
+    if (shaderCommands.isEmpty()) return
+
+    def workerCount = Math.max(1, Math.min(requestedWorkers, shaderCommands.size()))
+    logger.lifecycle("[T850] Compiling ${shaderCommands.size()} Android shader outputs with ${workerCount} workers.")
+
+    def executor = java.util.concurrent.Executors.newFixedThreadPool(workerCount)
+    try {
+        def futures = shaderCommands.collect { command ->
+            executor.submit({ ->
+                def processBuilder = new ProcessBuilder(command.args)
+                processBuilder.redirectErrorStream(true)
+                def process = processBuilder.start()
+                def output = process.inputStream.getText('UTF-8')
+                def exitCode = process.waitFor()
+                [command: command, output: output, exitCode: exitCode]
+            } as java.util.concurrent.Callable)
+        }
+
+        def failures = []
+        futures.each { future ->
+            def result = future.get()
+            if (result.exitCode != 0) {
+                failures << result
+            }
+        }
+
+        if (!failures.isEmpty()) {
+            def message = new StringBuilder()
+            message << "${failures.size()} Android shader compile command(s) failed."
+            failures.each { failure ->
+                message << System.lineSeparator()
+                message << "\n[${failure.command.label}] exit ${failure.exitCode}: "
+                message << failure.command.args.collect { arg -> arg.contains(' ') ? "\"${arg}\"" : arg }.join(' ')
+                if (failure.output?.trim()) {
+                    message << System.lineSeparator()
+                    message << failure.output.trim()
+                }
+            }
+            throw new GradleException(message.toString())
+        }
+    } finally {
+        executor.shutdownNow()
+    }
+}
+
 android {
     namespace 'com.t850.engine'
     compileSdk 35
@@ -150,6 +208,7 @@ tasks.register('compileT850AndroidShaders') {
     outputs.dir(shaderOutputDir)
     doLast {
         def validator = resolveGlslangValidator()
+        def shaderCompileCommands = []
         shaderOutputDir.mkdirs()
 
         def compiledOutputs = [] as Set
@@ -162,46 +221,48 @@ tasks.register('compileT850AndroidShaders') {
             if (stage == null) return
             def output = new File(shaderOutputDir, name + '.spv')
             compiledOutputs << output.absolutePath
-            exec {
-                commandLine validator, '-D', '-V', '-S', stage, '-e', entry,
-                    shader.absolutePath, '-o', output.absolutePath
-            }
+            shaderCompileCommands << [
+                label: output.name,
+                args: [validator, '-D', '-V', '-S', stage, '-e', entry, shader.absolutePath, '-o', output.absolutePath].collect { it.toString() }
+            ]
         }
 
-        if (!shaderPermutationFile.isFile()) {
+        if (shaderPermutationFile.isFile()) {
+            def json = new groovy.json.JsonSlurper().parse(shaderPermutationFile)
+            def permutations = json.permutations ?: [:]
+            permutations.each { key, permutation ->
+                def normalizedKey = key.toString().replaceFirst('^0[xX]', '').toUpperCase()
+                def defines = (permutation.defines ?: []).collect { it.toString() }
+                [permutation.vertexShader, permutation.fragmentShader].findAll { it }.each { shaderName ->
+                    def shader = shaderByName[shaderName.toString()]
+                    if (shader == null) {
+                        throw new GradleException("Shader permutation references missing shader '${shaderName}'")
+                    }
+
+                    def name = shader.name
+                    def stage = name.startsWith('VS_') ? 'vert' : (name.startsWith('FS_') ? 'frag' : null)
+                    def entry = name.startsWith('VS_') ? 'VS' : (name.startsWith('FS_') ? 'FS' : null)
+                    if (stage == null) return
+
+                    def output = new File(shaderOutputDir, "${name}.${normalizedKey}.spv")
+                    if (!compiledOutputs.add(output.absolutePath)) return
+
+                    def args = [validator, '-D', '-V', '-S', stage, '-e', entry]
+                    defines.each { args << "-D${it}" }
+                    args << shader.absolutePath
+                    args << '-o'
+                    args << output.absolutePath
+                    shaderCompileCommands << [
+                        label: output.name,
+                        args: args.collect { it.toString() }
+                    ]
+                }
+            }
+        } else {
             logger.lifecycle('[T850] No shader_permutations.json found; Android APK will include base SPIR-V only.')
-            return
         }
 
-        def json = new groovy.json.JsonSlurper().parse(shaderPermutationFile)
-        def permutations = json.permutations ?: [:]
-        permutations.each { key, permutation ->
-            def normalizedKey = key.toString().replaceFirst('^0[xX]', '').toUpperCase()
-            def defines = (permutation.defines ?: []).collect { it.toString() }
-            [permutation.vertexShader, permutation.fragmentShader].findAll { it }.each { shaderName ->
-                def shader = shaderByName[shaderName.toString()]
-                if (shader == null) {
-                    throw new GradleException("Shader permutation references missing shader '${shaderName}'")
-                }
-
-                def name = shader.name
-                def stage = name.startsWith('VS_') ? 'vert' : (name.startsWith('FS_') ? 'frag' : null)
-                def entry = name.startsWith('VS_') ? 'VS' : (name.startsWith('FS_') ? 'FS' : null)
-                if (stage == null) return
-
-                def output = new File(shaderOutputDir, "${name}.${normalizedKey}.spv")
-                if (!compiledOutputs.add(output.absolutePath)) return
-
-                def args = [validator, '-D', '-V', '-S', stage, '-e', entry]
-                defines.each { args << "-D${it}" }
-                args << shader.absolutePath
-                args << '-o'
-                args << output.absolutePath
-                exec {
-                    commandLine args
-                }
-            }
-        }
+        runShaderCompileCommands(shaderCompileCommands, getT850BuildWorkers())
     }
 }
 

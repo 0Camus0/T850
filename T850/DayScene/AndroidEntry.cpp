@@ -266,8 +266,6 @@ namespace {
 }
 
 void android_main(android_app* state) {
-  app_dummy();
-
   t850::Config defaultConfig;
   t850::g_config = defaultConfig;
   t850::g_config.api = "vulkan";

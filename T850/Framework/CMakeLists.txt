@@ -124,7 +124,6 @@ target_precompile_headers(Framework PRIVATE $<$<COMPILE_LANGUAGE:CXX>:pch.h>)
 target_include_directories(Framework PUBLIC
   ${CMAKE_CURRENT_SOURCE_DIR}
   ${CMAKE_CURRENT_SOURCE_DIR}/include
-  ${T850_SOURCE_DIR}/Librerias/glaze/include
   ${T850_SOURCE_DIR}/Librerias/tinyxml2/include
   ${T850_SOURCE_DIR}/Librerias/SDL3/include
   ${T850_VCPKG_STATIC}/include
@@ -132,6 +131,9 @@ target_include_directories(Framework PUBLIC
   ${T850_SOURCE_DIR}/Librerias/stb/include
   ${T850_SOURCE_DIR}/Librerias/mikktspace/include
   ${T850_SOURCE_DIR}/GLSLParser/Include)
+
+target_include_directories(Framework SYSTEM PUBLIC
+  ${T850_SOURCE_DIR}/Librerias/glaze/include)
 
 target_link_directories(Framework PRIVATE
   $<$<CONFIG:Debug>:${T850_VCPKG_STATIC}/debug/lib>

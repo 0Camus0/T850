@@ -44,10 +44,10 @@ if(NOT CMAKE_ANDROID_NDK AND DEFINED ANDROID_NDK)
   set(CMAKE_ANDROID_NDK ${ANDROID_NDK})
 endif()
 
-add_library(native_app_glue STATIC
-  ${CMAKE_ANDROID_NDK}/sources/android/native_app_glue/android_native_app_glue.c)
-target_include_directories(native_app_glue PUBLIC
+set(T850_ANDROID_NATIVE_APP_GLUE_DIR
   ${CMAKE_ANDROID_NDK}/sources/android/native_app_glue)
+set(T850_ANDROID_NATIVE_APP_GLUE_SOURCE
+  ${T850_ANDROID_NATIVE_APP_GLUE_DIR}/android_native_app_glue.c)
 
 set(T850_ANDROID_FRAMEWORK_SOURCES
   ${T850_SOURCE_DIR}/Framework/pch.cpp
@@ -135,6 +135,7 @@ set_source_files_properties(
   PROPERTIES COMPILE_OPTIONS "-Wno-unused-but-set-variable")
 
 add_library(T850Android SHARED
+  ${T850_ANDROID_NATIVE_APP_GLUE_SOURCE}
   ${T850_SOURCE_DIR}/DayScene/AndroidEntry.cpp
   ${T850_SOURCE_DIR}/DayScene/Application.cpp
   ${T850_SOURCE_DIR}/DayScene/DayScene.cpp
@@ -160,7 +161,7 @@ target_include_directories(T850Android PRIVATE
   ${T850_SOURCE_DIR}/Librerias/tinyxml2/include
   ${T850_ANDROID_VCPKG_ROOT}/include
   ${T850_SOURCE_DIR}/GLSLParser/Include
-  ${CMAKE_ANDROID_NDK}/sources/android/native_app_glue)
+  ${T850_ANDROID_NATIVE_APP_GLUE_DIR})
 
 target_include_directories(T850Android SYSTEM PRIVATE
   ${T850_SOURCE_DIR}/Librerias/glaze/include
@@ -172,7 +173,6 @@ target_link_libraries(T850Android PRIVATE
   android
   log
   vulkan
-  native_app_glue
   "${T850_ANDROID_DRACO_LIB}"
   imgui::imgui
   glslang::glslang

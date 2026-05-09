@@ -771,15 +771,15 @@ void App::DrawRuntimeGui() {
 #endif
     if (panelBegun) {
 #ifdef OS_ANDROID
+      if (ImGui::Button(bPaused ? "Resume Scene" : "Pause Scene")) {
+        bPaused = !bPaused;
+        T8_LOG_INFO("[App] Android GUI %s", bPaused ? "paused" : "resumed");
+      }
+      ImGui::SameLine();
       if (ImGui::Button("Close GUI")) {
         m_imguiVisible = false;
         SaveAndroidGuiSettings();
         T8_LOG_INFO("[App] Android close button closed ImGui overlay");
-      }
-      ImGui::SameLine();
-      if (ImGui::Button(bPaused ? "Resume" : "Pause")) {
-        bPaused = !bPaused;
-        T8_LOG_INFO("[App] Android GUI %s", bPaused ? "paused" : "resumed");
       }
       ImGui::SameLine();
       if (ImGui::Button("Undock")) {

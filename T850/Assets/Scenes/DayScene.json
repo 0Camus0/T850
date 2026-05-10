@@ -427,7 +427,7 @@
    "environment_brdf_lut": "LUT/lut_ggx.png",
    "environment_sheen_ibl": "",
    "environment_charlie_lut": "LUT/lut_charlie.png",
-   "environment_sheen_e_lut": "LUT/lut_sheen_E.png",
+   "environment_sheen_e_lut": "LUT/lut_sheen_E.dds",
    "quality": {
       "shadow_map_resolution": 2048,
       "god_rays_resolution": 0,

@@ -30,9 +30,12 @@ public:
   // Call BEFORE the render graph — updates animation and uploads bone texture.
   // Must happen outside any render pass (Vulkan copy commands require it).
   void UpdateAnimationAndBones();
+  void UpdateAnimationPose();
+  void UploadBoneTexture();
 
   // ── Animation playback API ──
   AnimationController& GetAnimController() { return m_animController; }
+  const AnimationController& GetAnimController() const { return m_animController; }
 
   void PlayAnimation()  { m_playing = true; }
   void PauseAnimation() { m_playing = false; }

@@ -397,6 +397,106 @@ void AnimationController::ComputeHierarchy() {
   }
 }
 
+namespace {
+  bool InvertAffineFull(const XMATRIX44& matrix, XMATRIX44& out) {
+    const float a00 = matrix.m11, a01 = matrix.m12, a02 = matrix.m13;
+    const float a10 = matrix.m21, a11 = matrix.m22, a12 = matrix.m23;
+    const float a20 = matrix.m31, a21 = matrix.m32, a22 = matrix.m33;
+
+    const float det =
+        a00 * (a11 * a22 - a12 * a21) -
+        a01 * (a10 * a22 - a12 * a20) +
+        a02 * (a10 * a21 - a11 * a20);
+    if (std::fabs(det) <= 0.000001f) {
+      return false;
+    }
+
+    const float invDet = 1.0f / det;
+    out.m11 =  (a11 * a22 - a12 * a21) * invDet;
+    out.m12 =  (a02 * a21 - a01 * a22) * invDet;
+    out.m13 =  (a01 * a12 - a02 * a11) * invDet;
+    out.m14 = 0.0f;
+    out.m21 =  (a12 * a20 - a10 * a22) * invDet;
+    out.m22 =  (a00 * a22 - a02 * a20) * invDet;
+    out.m23 =  (a02 * a10 - a00 * a12) * invDet;
+    out.m24 = 0.0f;
+    out.m31 =  (a10 * a21 - a11 * a20) * invDet;
+    out.m32 =  (a01 * a20 - a00 * a21) * invDet;
+    out.m33 =  (a00 * a11 - a01 * a10) * invDet;
+    out.m34 = 0.0f;
+
+    const float tx = matrix.m41;
+    const float ty = matrix.m42;
+    const float tz = matrix.m43;
+    out.m41 = -(tx * out.m11 + ty * out.m21 + tz * out.m31);
+    out.m42 = -(tx * out.m12 + ty * out.m22 + tz * out.m32);
+    out.m43 = -(tx * out.m13 + ty * out.m23 + tz * out.m33);
+    out.m44 = 1.0f;
+    return true;
+  }
+}
+
+bool AnimationController::ApplyCombinedPoseOverrides(const std::vector<int>& boneIndices,
+                                                     const std::vector<XMATRIX44>& combinedMatrices) {
+  if (!m_initialized || !m_pSkeletonAnim || boneIndices.size() != combinedMatrices.size()) {
+    return false;
+  }
+
+  auto& bones = m_pSkeletonAnim->Bones;
+  const int n = (m_numBones < static_cast<int>(bones.size()))
+      ? m_numBones
+      : static_cast<int>(bones.size());
+  if (n <= 0) {
+    return false;
+  }
+
+  std::vector<unsigned char> hasOverride(static_cast<std::size_t>(n), 0);
+  std::vector<XMATRIX44> overrideCombined(static_cast<std::size_t>(n));
+  for (std::size_t i = 0; i < boneIndices.size(); ++i) {
+    const int boneIndex = boneIndices[i];
+    if (boneIndex < 0 || boneIndex >= n) {
+      continue;
+    }
+    hasOverride[static_cast<std::size_t>(boneIndex)] = 1;
+    overrideCombined[static_cast<std::size_t>(boneIndex)] = combinedMatrices[i];
+  }
+
+  bool appliedAny = false;
+  const XMATRIX44& rootWorld = m_pSkeletonAnim->RootParentWorld;
+  for (int i = 0; i < n; ++i) {
+    if (hasOverride[static_cast<std::size_t>(i)]) {
+      const XMATRIX44& parentCombined =
+          (i == 0 || bones[i].Dad == static_cast<unsigned short>(i) || bones[i].Dad >= n)
+              ? rootWorld
+              : bones[bones[i].Dad].Combined;
+
+      XMATRIX44 inverseParent;
+      XMATRIX44 inverseIntermediate;
+      if (InvertAffineFull(parentCombined, inverseParent) &&
+          InvertAffineFull(bones[i].IntermediateTransform, inverseIntermediate)) {
+        const XMATRIX44 localWithIntermediate = overrideCombined[static_cast<std::size_t>(i)] * inverseParent;
+        bones[i].Bone = localWithIntermediate * inverseIntermediate;
+        appliedAny = true;
+      }
+    }
+
+    const XMATRIX44 localWithIntermediate = bones[i].Bone * bones[i].IntermediateTransform;
+    if (i == 0 || bones[i].Dad == static_cast<unsigned short>(i)) {
+      bones[i].Combined = localWithIntermediate * rootWorld;
+    } else {
+      const unsigned short dad = bones[i].Dad;
+      bones[i].Combined = dad < n
+          ? localWithIntermediate * bones[dad].Combined
+          : localWithIntermediate;
+    }
+  }
+
+  if (appliedAny) {
+    ComputeFinalMatrices();
+  }
+  return appliedAny;
+}
+
 // ── Invert an affine 4x4 matrix (rotation + translation) ──
 
 XMATRIX44 AnimationController::InvertAffine(const XMATRIX44& m) {

@@ -419,7 +419,7 @@
       }
    ],
    "meshes": [
-      "Models/SponzaEsc.X"
+      "Models/SponzaEsc.glb"
    ],
    "environment_map": "sky/CubeMap_SkyWater.dds",
    "environment_diffuse_ibl": "",
@@ -771,6 +771,11 @@
       {
          "name": "show_lights",
          "label": "Show Lights",
+         "default_val": false
+      },
+      {
+         "name": "show_physics",
+         "label": "Physics",
          "default_val": false
       },
       {

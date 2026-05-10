@@ -19,8 +19,10 @@ set(T850_ANDROID_DRACO_LIB ${T850_ANDROID_VCPKG_ROOT}/lib/libdraco.a)
 list(APPEND CMAKE_PREFIX_PATH ${T850_ANDROID_VCPKG_ROOT})
 set(glslang_DIR ${T850_ANDROID_VCPKG_ROOT}/share/glslang)
 set(imgui_DIR ${T850_ANDROID_VCPKG_ROOT}/share/imgui)
+set(Jolt_DIR ${T850_ANDROID_VCPKG_ROOT}/share/Jolt)
 find_package(imgui CONFIG REQUIRED)
 find_package(glslang CONFIG REQUIRED)
+find_package(Jolt CONFIG REQUIRED)
 message(STATUS "T850 Android ABI: ${ANDROID_ABI} (${T850_ANDROID_VCPKG_TRIPLET})")
 
 set(T850_ANDROID_API_LEVEL 0)
@@ -55,6 +57,9 @@ set(T850_ANDROID_FRAMEWORK_SOURCES
   ${T850_SOURCE_DIR}/Framework/src/core/Core.cpp
   ${T850_SOURCE_DIR}/Framework/src/core/EngineContext.cpp
   ${T850_SOURCE_DIR}/Framework/src/core/android/AndroidFramework.cpp
+  ${T850_SOURCE_DIR}/Framework/src/physics/JoltPhysicsSystem.cpp
+  ${T850_SOURCE_DIR}/Framework/src/physics/PhysicsDebugRenderer.cpp
+  ${T850_SOURCE_DIR}/Framework/src/physics/PhysicsAuthoring.cpp
   ${T850_SOURCE_DIR}/Framework/src/utils/AndroidAssets.cpp
   ${T850_SOURCE_DIR}/Framework/src/utils/Log.cpp
   ${T850_SOURCE_DIR}/Framework/src/utils/InputManager.cpp
@@ -146,6 +151,7 @@ target_compile_definitions(T850Android PRIVATE
   OS_ANDROID
   T850_ANDROID_NATIVE_ACTIVITY
   T850_ENABLE_DRACO=1
+  T850_ENABLE_JOLT=1
   VMA_STATIC_VULKAN_FUNCTIONS=0
   VMA_DYNAMIC_VULKAN_FUNCTIONS=1)
 if(T850_VULKAN_VALIDATION)
@@ -174,6 +180,7 @@ target_link_libraries(T850Android PRIVATE
   log
   vulkan
   "${T850_ANDROID_DRACO_LIB}"
+  Jolt::Jolt
   imgui::imgui
   glslang::glslang
   glslang::glslang-default-resource-limits

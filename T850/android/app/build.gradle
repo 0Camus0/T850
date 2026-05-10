@@ -135,6 +135,7 @@ def runShaderCompileCommands = { List shaderCommands, int requestedWorkers ->
 android {
     namespace 'com.t850.engine'
     compileSdk 35
+    ndkVersion '27.2.12479018'
 
     defaultConfig {
         applicationId 'com.t850.engine'

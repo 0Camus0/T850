@@ -10,12 +10,16 @@
 #include <scene/WireframeSphere.h>
 #include <scene/LineRenderer.h>
 #include <scene/TextRenderer.h>
+#include <physics/PhysicsDebugRenderer.h>
+#include <physics/PhysicsTypes.h>
 #include <debug/FrameDumper.h>
 #include <gui/GUIManager.h>
 #include <Config.h>
 
 #include <string>
 #include <vector>
+
+namespace t850 { class JoltPhysicsSystem; }
 
 class SandboxScene : public t850::SceneBase
 {
@@ -59,6 +63,7 @@ class SandboxScene : public t850::SceneBase
     CHANGE_ANIM_MODE,     // selector: "Interpolation" / "Keyframe"
     CHANGE_SHOW_WIREFRAME,
     CHANGE_SHOW_SKELETON,
+    CHANGE_SHOW_PHYSICS,
     CHANGE_MAX_NUM_OPTIONS
   };
 public:
@@ -125,6 +130,7 @@ public:
   t850::TextRenderer m_debugText;
   t850::WireframeSphere m_debugSphere;
   t850::LineRenderer m_lightArrowRenderer;
+  t850::PhysicsDebugRenderer m_physicsDebugRenderer;
   t850::VertexBuffer* m_lightArrowVB = nullptr;
   t850::IndexBuffer* m_lightArrowIB = nullptr;
   unsigned m_lightArrowIndexCount = 0;
@@ -132,6 +138,7 @@ public:
   bool m_showAABBs = false;
   bool m_showWireframe = false;
   bool m_showSkeleton = false;
+  bool m_showPhysics = false;
   bool m_drawLightDirection = false;
   bool m_profileReady = false;
   bool m_profileDirty = false;
@@ -141,6 +148,16 @@ public:
   int m_selectedProfileTargetIndex = 0;
   t850::SandboxProfileDesc m_profileBaselineState;
   t850::SandboxProfileDesc m_profileSavedState;
+  t850::PhysicsRagdollAnimationBinding m_ragdollAnimationBinding;
+  t850::PhysicsRagdollDesc m_ragdollAnimationPose;
+  std::vector<t850::PhysicsBodyState> m_ragdollPhysicsStates;
+  std::vector<int> m_ragdollPhysicsBoneIndices;
+  std::vector<XMATRIX44> m_ragdollPhysicsCombinedMatrices;
+  t850::PhysicsBodyHandle m_floorBody;
+  bool m_driveRagdollFromAnimation = false;
+  bool m_ragdollPhysicsDriven = false;
+  bool m_ragdollDriveLogEmitted = false;
+  bool m_ragdollPhysicsLogEmitted = false;
 
   // Orbit camera state
   XVECTOR3 m_orbitTarget;    // center of the model (world space)
@@ -157,6 +174,10 @@ public:
   void SyncLightCameraFromDirectionalLight();
   bool AdjustSelectedDirectionalLightFromMouse(float dx, float dy);
   void DrawSelectedDirectionalLightArrow();
+  void DriveRagdollFromAnimation(float deltaSeconds);
+  void UpdateSkeletonFromRagdollPhysics();
+  void SwitchRagdollToPhysics();
+  void CreatePhysicsFloor(t850::JoltPhysicsSystem& physics);
   void LoadSandboxProfile();
   void SaveSandboxProfile();
   void CaptureSandboxProfileState(t850::SandboxProfileDesc& state);

@@ -353,6 +353,12 @@
          "label": "Skeleton",
          "default_val": false,
          "enabled": true
+      },
+      {
+         "name": "show_physics",
+         "label": "Physics",
+         "default_val": false,
+         "enabled": true
       }
    ],
    "selectors": [

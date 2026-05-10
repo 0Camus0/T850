@@ -16,31 +16,14 @@
 #include <Config.h>
 
 #include <scene/PrimitiveBase.h>
+#include <physics/PhysicsTypes.h>
 #include <video/BaseDriver.h>
 #include <utils/xMaths.h>
 
 namespace t850 {
   class PrimitiveInst {
   public:
-    void	CreateInstance(PrimitiveBase *pPrim, XMATRIX44 *pVP) {
-      gKey.bits = 0;
-        for (int i = 0; i < MaxPrimitiveTextures; i++) {
-        Textures[i] = 0;
-      }
-      EnvMap = 0;
-
-      pBase = pPrim;
-      pViewProj = pVP;
-      XMatIdentity(Position);
-      XMatIdentity(Scale);
-      XMatIdentity(RotationX);
-      XMatIdentity(RotationY);
-      XMatIdentity(RotationZ);
-      XMatIdentity(RotationZ);
-      XMatIdentity(Final);
-      Visible = true;
-      m_brightness = 1.0f;
-    }
+    void	CreateInstance(PrimitiveBase *pPrim, XMATRIX44 *pVP);
 
     void	TranslateAbsolute(float x, float y, float z);
     void	RotateXAbsolute(float ang);
@@ -93,6 +76,15 @@ namespace t850 {
 	class RenderSkinnedMesh* GetSkinnedMesh() const;
 	bool IsSkinnedMesh() const;
 
+    uint32_t GetEntityId() const { return EntityId; }
+    void AttachPhysicsBody(PhysicsBodyHandle handle) { BodyHandle = handle; }
+    void AttachPhysicsRagdoll(PhysicsRagdollHandle handle) { RagdollHandle = handle; }
+    PhysicsBodyHandle GetPhysicsBody() const { return BodyHandle; }
+    PhysicsRagdollHandle GetPhysicsRagdoll() const { return RagdollHandle; }
+    bool HasPhysicsBody() const { return BodyHandle.IsValid(); }
+    bool HasPhysicsRagdoll() const { return RagdollHandle.IsValid(); }
+    void ClearPhysicsLinks();
+
     Texture*				 Textures[MaxPrimitiveTextures];
     Texture*			     EnvMap;
     ShaderKey gKey;
@@ -114,6 +106,9 @@ namespace t850 {
 
     XMATRIX44		*pViewProj;
     PrimitiveBase	*pBase;
+    uint32_t EntityId = 0;
+    PhysicsBodyHandle BodyHandle;
+    PhysicsRagdollHandle RagdollHandle;
   };
 }
 

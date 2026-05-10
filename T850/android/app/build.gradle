@@ -14,6 +14,21 @@ def t850AndroidAbis = (findProperty('t850AndroidAbis') ?: 'arm64-v8a')
     .collect { it.trim() }
     .findAll { !it.isEmpty() }
 def t850VulkanValidation = (findProperty('t850VulkanValidation') ?: 'false').toString().toBoolean()
+def t850AndroidAssetProfile = (findProperty('t850AndroidAssetProfile') ?: 'physics-demo').toString().trim()
+def t850PhysicsDemoAssetIncludes = [
+    'Fonts/**',
+    'Layouts/**',
+    'Scenes/**',
+    'Shaders/**',
+    'Techniques/**',
+    'Models/DamagedHelmet.glb',
+    'Models/SkyBox.glb',
+    'Models/SponzaEsc.glb',
+    'Models/doomslayer_cine_all_animations_no-damage_double-sided-opaque.glb',
+    'Models/doomslayer_cine_base_all_animations_no-damage_double-sided-opaque.glb',
+    'Textures/LUT/**',
+    'Textures/sky/*.dds'
+]
 
 def localSigningProperties = new Properties()
 [
@@ -47,6 +62,10 @@ if (releaseTaskRequested && !releaseSigningReady) {
 
 if (t850AndroidAbis.isEmpty()) {
     throw new GradleException('At least one Android ABI must be specified in t850AndroidAbis.')
+}
+
+if (!(t850AndroidAssetProfile in ['physics-demo', 'full'])) {
+    throw new GradleException("Unsupported t850AndroidAssetProfile '${t850AndroidAssetProfile}'. Use 'physics-demo' or 'full'.")
 }
 
 def findExecutableOnPath = { String executableName ->
@@ -190,7 +209,11 @@ android {
 
 
 tasks.register('syncT850AndroidAssets', Sync) {
+    inputs.property('t850AndroidAssetProfile', t850AndroidAssetProfile)
     from(assetSourceDir) {
+        if (t850AndroidAssetProfile == 'physics-demo') {
+            include(t850PhysicsDemoAssetIncludes)
+        }
         exclude 'Models/.t8cache/**'
         exclude 'Shaders/.t8shadercache/**'
         exclude 'Textures/GeneratedIBLCache/**'
@@ -202,6 +225,9 @@ tasks.register('syncT850AndroidAssets', Sync) {
         exclude '**/*.dxbc'
     }
     into(filteredAssetDir)
+    doFirst {
+        logger.lifecycle("[T850] Android asset profile: ${t850AndroidAssetProfile}")
+    }
 }
 
 tasks.register('compileT850AndroidShaders') {

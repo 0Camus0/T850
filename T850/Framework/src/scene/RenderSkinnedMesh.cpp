@@ -577,8 +577,8 @@ namespace t850 {
 
   // ── Animation update + bone texture upload (call BEFORE render passes) ──
 
-  void RenderSkinnedMesh::UpdateAnimationAndBones() {
-    if (!m_hasSkin || !m_boneTexture) return;
+  void RenderSkinnedMesh::UpdateAnimationPose() {
+    if (!m_hasSkin) return;
 
     // Dump matrices on first frame for debugging
     static bool sDumped = false;
@@ -594,6 +594,10 @@ namespace t850 {
       float deltaTime = pScProp ? pScProp->FrameDeltaSec : (1.0f / 60.0f);
       m_animController.Update(deltaTime);
     }
+  }
+
+  void RenderSkinnedMesh::UploadBoneTexture() {
+    if (!m_hasSkin || !m_boneTexture) return;
 
     // Upload bone matrices to texture
     int numBones = m_snapshotPoseActive
@@ -612,6 +616,11 @@ namespace t850 {
     }
     m_boneTexture->UpdateFloatData(*T8DeviceContext, m_boneTexWidth, m_boneTexWidth,
                                     m_boneTexData.data());
+  }
+
+  void RenderSkinnedMesh::UpdateAnimationAndBones() {
+    UpdateAnimationPose();
+    UploadBoneTexture();
   }
 
   void RenderSkinnedMesh::ExportBoneMatrices(std::vector<XMATRIX44>& out) const {

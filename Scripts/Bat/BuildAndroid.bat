@@ -20,7 +20,6 @@ set "INSTALL=0"
 set "LAUNCH=0"
 set "ANDROID_SDK="
 set "ABI_FILTERS=arm64-v8a"
-set "GRADLE_VERSION=8.10.2"
 set "NDK_VERSION=27.2.12479018"
 set "VULKAN_VALIDATION=false"
 
@@ -103,7 +102,15 @@ shift
 if "%~1"=="" goto usage
 set "ABI_FILTERS=%~1"
 shift
-goto parse_args
+:arg_abi_more
+if "%~1"=="" goto parse_args
+set "NEXT_ARG=%~1"
+if "!NEXT_ARG:~0,1!"=="-" goto parse_args
+if /i "%~1"=="Debug" goto parse_args
+if /i "%~1"=="Release" goto parse_args
+set "ABI_FILTERS=!ABI_FILTERS!,%~1"
+shift
+goto arg_abi_more
 
 :done_args
 
@@ -122,6 +129,12 @@ if not defined ANDROID_SDK (
     set "ANDROID_SDK=%LOCALAPPDATA%\Android\Sdk"
 )
 
+if not defined JAVA_HOME (
+    if exist "%ProgramFiles%\Android\Android Studio\jbr\bin\java.exe" set "JAVA_HOME=%ProgramFiles%\Android\Android Studio\jbr"
+)
+if not defined JAVA_HOME (
+    if exist "%ProgramFiles(x86)%\Android\Android Studio\jbr\bin\java.exe" set "JAVA_HOME=%ProgramFiles(x86)%\Android\Android Studio\jbr"
+)
 if not defined JAVA_HOME (
     for /d %%j in ("%ProgramFiles%\Eclipse Adoptium\jdk-17*" "%ProgramFiles%\Java\jdk-17*") do (
         if exist "%%~fj\bin\java.exe" set "JAVA_HOME=%%~fj"
@@ -143,10 +156,10 @@ if not exist "%ANDROID_NDK_HOME%" (
     exit /b 1
 )
 
-set "GRADLE_HOME=%ANDROID_SDK%\gradle\gradle-%GRADLE_VERSION%"
-if exist "%GRADLE_HOME%\bin\gradle.bat" set "PATH=%GRADLE_HOME%\bin;%PATH%"
-where gradle >nul 2>nul || (
-    echo [ERROR] Gradle %GRADLE_VERSION% was not found. Run ..\..\SetupAndroidToolchain.bat first.
+set "GRADLEW=%ANDROID_PROJECT%\gradlew.bat"
+if not exist "%GRADLEW%" (
+    echo [ERROR] Gradle wrapper was not found at "%GRADLEW%".
+    echo [ERROR] Restore T850\android\gradlew.bat and gradle\wrapper before building.
     exit /b 1
 )
 
@@ -167,6 +180,8 @@ if /i "%CONFIG%"=="Debug" (
     set "OUTPUT_VARIANT=debug"
 ) else (
     set "OUTPUT_VARIANT=release"
+    call :check_release_signing
+    if errorlevel 1 exit /b 1
 )
 
 echo(
@@ -185,21 +200,21 @@ echo(
 pushd "%ANDROID_PROJECT%" || exit /b 1
 
 if "%CLEAN%"=="1" (
-    call gradle --no-daemon --console=plain --parallel --max-workers=%T850_BUILD_WORKERS% clean
+    call "%GRADLEW%" --no-daemon --console=plain --parallel --max-workers=%T850_BUILD_WORKERS% clean
     if errorlevel 1 (
         popd
         exit /b 1
     )
 )
 
-call gradle --no-daemon --console=plain --parallel --max-workers=%T850_BUILD_WORKERS% "-Pt850AndroidAbis=%ABI_FILTERS%" "-Pt850VulkanValidation=%VULKAN_VALIDATION%" "%BUILD_TASK%"
+call "%GRADLEW%" --no-daemon --console=plain --parallel --max-workers=%T850_BUILD_WORKERS% "-Pt850AndroidAbis=%ABI_FILTERS%" "-Pt850VulkanValidation=%VULKAN_VALIDATION%" "%BUILD_TASK%"
 if errorlevel 1 (
     popd
     exit /b 1
 )
 
 if "%INSTALL%"=="1" (
-    call gradle --no-daemon --console=plain --parallel --max-workers=%T850_BUILD_WORKERS% "-Pt850AndroidAbis=%ABI_FILTERS%" "-Pt850VulkanValidation=%VULKAN_VALIDATION%" "%INSTALL_TASK%"
+    call "%GRADLEW%" --no-daemon --console=plain --parallel --max-workers=%T850_BUILD_WORKERS% "-Pt850AndroidAbis=%ABI_FILTERS%" "-Pt850VulkanValidation=%VULKAN_VALIDATION%" "%INSTALL_TASK%"
     if errorlevel 1 (
         popd
         exit /b 1
@@ -229,6 +244,14 @@ echo(
 echo [T850] Android %CONFIG% build complete.
 echo(
 echo APK: %APK_PATH%
+exit /b 0
+
+:check_release_signing
+powershell -NoProfile -ExecutionPolicy Bypass -Command "$ErrorActionPreference='Stop'; $project='%ANDROID_PROJECT%'; $app=Join-Path $project 'app'; $props=@{}; $files=@((Join-Path $project 'signing.properties'),(Join-Path $app 'signing.properties'),(Join-Path $env:USERPROFILE '.android\t850-release-signing.properties')); foreach($file in $files){ if(Test-Path $file){ Get-Content $file | ForEach-Object { $line=$_.Trim(); if($line -and (-not $line.StartsWith('#')) -and $line.Contains('=')){ $idx=$line.IndexOf('='); $props[$line.Substring(0,$idx).Trim()]=$line.Substring($idx+1).Trim() } } } }; function Get-SigningValue([string[]]$names){ foreach($name in $names){ $value=[Environment]::GetEnvironmentVariable($name); if($value){ return $value }; if($props.ContainsKey($name) -and $props[$name]){ return $props[$name] } }; return $null }; $store=Get-SigningValue @('T850_RELEASE_STORE_FILE','ANDROID_KEYSTORE_PATH'); $storePass=Get-SigningValue @('T850_RELEASE_STORE_PASSWORD','ANDROID_KEYSTORE_PASSWORD'); $alias=Get-SigningValue @('T850_RELEASE_KEY_ALIAS','ANDROID_KEY_ALIAS'); $keyPass=Get-SigningValue @('T850_RELEASE_KEY_PASSWORD','ANDROID_KEY_PASSWORD'); $missing=@(); if(-not $store){$missing+='ANDROID_KEYSTORE_PATH or T850_RELEASE_STORE_FILE'}; if(-not $storePass){$missing+='ANDROID_KEYSTORE_PASSWORD or T850_RELEASE_STORE_PASSWORD'}; if(-not $alias){$missing+='ANDROID_KEY_ALIAS or T850_RELEASE_KEY_ALIAS'}; if(-not $keyPass){$missing+='ANDROID_KEY_PASSWORD or T850_RELEASE_KEY_PASSWORD'}; if($missing.Count){ Write-Host ('[ERROR] Release signing is not configured. Missing: ' + ($missing -join ', ')); Write-Host '[ERROR] Set environment variables or create android\signing.properties, android\app\signing.properties, or ~/.android/t850-release-signing.properties.'; exit 1 }; $storePath=$store; if(-not ([IO.Path]::IsPathRooted($storePath))){ $candidate=Join-Path $app $storePath; if(Test-Path $candidate){ $storePath=$candidate } else { $candidate=Join-Path $project $storePath; if(Test-Path $candidate){ $storePath=$candidate } } }; if(-not (Test-Path $storePath)){ Write-Host ('[ERROR] Release keystore was not found: ' + $store); exit 1 }"
+if errorlevel 1 (
+    echo [ERROR] Android Release builds must be signed. Configure signing and retry.
+    exit /b 1
+)
 exit /b 0
 
 :usage

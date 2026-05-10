@@ -16,6 +16,7 @@
 #endif
 #include <imgui/ImGuiSystem.h>
 
+#include <physics/JoltPhysicsSystem.h>
 #include <scene/PrimitiveManager.h>
 #include <scene/PrimitiveInstance.h>
 #include <scene/SceneProp.h>
@@ -71,6 +72,7 @@ public:
   t850::TextRenderer m_textRender;
   std::vector<std::unique_ptr<t850::SceneBase>> m_scenes;
   t850::SceneBase* m_actualScene = nullptr;
+  t850::JoltPhysicsSystem m_physics;
   t850::ImGuiSystem m_imgui;
   bool m_imguiReady = false;
   bool m_imguiVisible = false;

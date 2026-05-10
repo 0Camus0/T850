@@ -9,6 +9,9 @@ set(FRAMEWORK_SOURCES
   src/core/Config.cpp
   src/core/EngineContext.cpp
   src/core/windows/Win32Framework.cpp
+  src/physics/JoltPhysicsSystem.cpp
+  src/physics/PhysicsDebugRenderer.cpp
+  src/physics/PhysicsAuthoring.cpp
   src/scene/LensFlare.cpp
   src/scene/RenderMesh.cpp
   src/scene/RenderSkinnedMesh.cpp
@@ -121,6 +124,10 @@ t850_apply_profiler_defines(Framework)
 set_target_properties(Framework PROPERTIES DEBUG_POSTFIX d)
 target_compile_definitions(Framework PRIVATE _LIB)
 target_precompile_headers(Framework PRIVATE $<$<COMPILE_LANGUAGE:CXX>:pch.h>)
+if(T850_JOLT_ENABLED)
+  target_compile_definitions(Framework PUBLIC T850_ENABLE_JOLT=1)
+  target_link_libraries(Framework PUBLIC Jolt::Jolt)
+endif()
 target_include_directories(Framework PUBLIC
   ${CMAKE_CURRENT_SOURCE_DIR}
   ${CMAKE_CURRENT_SOURCE_DIR}/include

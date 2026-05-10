@@ -9,6 +9,7 @@
 #include <scene/SceneSetup.h>
 #include <scene/RenderGraph.h>
 #include <debug/FrameDumper.h>
+#include <physics/PhysicsDebugRenderer.h>
 #include <scene/LensFlare.h>
 #include <scene/TextRenderer.h>
 #include <gui/GUIManager.h>
@@ -85,6 +86,7 @@ class DayScene : public t850::SceneBase
     CHANGE_PARALLAX_SHADOW_SOFTNESS,
     CHANGE_PARALLAX_SHADOW_STRENGTH,
     CHANGE_PARALLAX_SHADOW_TOGGLE,
+    CHANGE_SHOW_PHYSICS,
     CHANGE_MAX_NUM_OPTIONS
   };
   public:
@@ -111,6 +113,12 @@ class DayScene : public t850::SceneBase
   // Dump scene state to JSON
   void SaveSceneState() override;
   void RequestDump() override { m_dumper.RequestDump(); }
+#ifdef OS_ANDROID
+  bool HandleAndroidVirtualControls(AInputEvent* event);
+  bool AndroidVirtualControlsActive() const;
+  void DrawAndroidVirtualControls(bool guiVisible);
+  void ResetAndroidVirtualControls();
+#endif
 
   // Helper: find selector index for a light count value
   int FindLightOption(int activeLights);
@@ -224,12 +232,27 @@ class DayScene : public t850::SceneBase
   t850::PrimitiveInst splineInst;
   t850::WireframeSphere m_wireframeSphere;
   t850::WireframeArrow m_wireframeArrow;
+  t850::PhysicsDebugRenderer m_physicsDebugRenderer;
   t850::TextRenderer m_debugText;
   bool m_showCullStats = false;
+  bool m_showPhysics = false;
   float m_tourTimeSec = 0.0f;
   std::vector<double> m_benchmarkFrameTimesMs;
   BenchmarkCullingTotals m_benchmarkCullingTotals;
   t850::LensFlare m_flare;
   XMATRIX44 m;
-};
 
+#ifdef OS_ANDROID
+  bool AndroidVirtualControlsVisible() const;
+  void ApplyAndroidVirtualControls();
+
+  int m_androidMovePointerId = -1;
+  int m_androidLookPointerId = -1;
+  int m_androidUpPointerId = -1;
+  int m_androidDownPointerId = -1;
+  XVECTOR2 m_androidMoveAxis;
+  XVECTOR2 m_androidLookAxis;
+  bool m_androidMoveUp = false;
+  bool m_androidMoveDown = false;
+#endif
+};

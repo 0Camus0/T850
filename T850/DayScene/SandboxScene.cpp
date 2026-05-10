@@ -9,6 +9,8 @@
 #include <scene/SceneDescriptor.h>
 #include <scene/IBLResources.h>
 #include <core/Config.h>
+#include <core/EngineContext.h>
+#include <physics/PhysicsAuthoring.h>
 #ifdef OS_ANDROID
 #include <video/vulkan/VulkanDriver.h>
 #endif
@@ -169,6 +171,39 @@ namespace {
     return XVECTOR3(value[0], value[1], value[2]);
   }
 
+  XVECTOR3 TransformPoint(const XVECTOR3& point, const XMATRIX44& matrix) {
+    return XVECTOR3(
+        point.x * matrix.m11 + point.y * matrix.m21 + point.z * matrix.m31 + matrix.m41,
+        point.x * matrix.m12 + point.y * matrix.m22 + point.z * matrix.m32 + matrix.m42,
+        point.x * matrix.m13 + point.y * matrix.m23 + point.z * matrix.m33 + matrix.m43,
+        1.0f);
+  }
+
+  bool BuildWorldBounds(RenderMesh* mesh, const XMATRIX44& worldFromMesh, RenderMesh::AABB& outBounds) {
+    if (!mesh) {
+      return false;
+    }
+
+    outBounds.Reset();
+    bool expanded = false;
+    for (const RenderMesh::MeshInfo& meshInfo : mesh->Info) {
+      const RenderMesh::AABB& bounds = meshInfo.bounds;
+      const float xs[2] = { bounds.min.x, bounds.max.x };
+      const float ys[2] = { bounds.min.y, bounds.max.y };
+      const float zs[2] = { bounds.min.z, bounds.max.z };
+      for (float x : xs) {
+        for (float y : ys) {
+          for (float z : zs) {
+            const XVECTOR3 point = TransformPoint(XVECTOR3(x, y, z, 1.0f), worldFromMesh);
+            outBounds.Expand(point.x, point.y, point.z);
+            expanded = true;
+          }
+        }
+      }
+    }
+    return expanded;
+  }
+
   const t850::SelectorDesc* FindSelectorDesc(const std::vector<t850::SelectorDesc>& selectors, const std::string& name) {
     for (const auto& selector : selectors)
       if (selector.name == name) return &selector;
@@ -252,7 +287,18 @@ void SandboxScene::InitVars() {
   SceneProp.ToogleSSAO = true;
   m_showWireframe = false;
   m_showSkeleton = false;
+  m_showPhysics = false;
   m_drawLightDirection = false;
+  m_driveRagdollFromAnimation = false;
+  m_ragdollPhysicsDriven = false;
+  m_ragdollDriveLogEmitted = false;
+  m_ragdollPhysicsLogEmitted = false;
+  m_ragdollAnimationBinding = t850::PhysicsRagdollAnimationBinding{};
+  m_ragdollAnimationPose = t850::PhysicsRagdollDesc{};
+  m_ragdollPhysicsStates.clear();
+  m_ragdollPhysicsBoneIndices.clear();
+  m_ragdollPhysicsCombinedMatrices.clear();
+  m_floorBody.Reset();
 
   SceneProp.Exposure = 1.0f;
   SceneProp.BloomFactor = 0.35f;
@@ -362,11 +408,66 @@ void SandboxScene::CreateAssets() {
   m_debugText.LoadFromFile(24, "Fonts/Martius-LV9L4.ttf", 512.0f);
   m_debugSphere.Create(6, 12);
   m_lightArrowRenderer.Create();
+  m_physicsDebugRenderer.Create();
   float arrowVerts[10 * 4] = {};
   unsigned short arrowIndices[10] = {0, 1, 2, 3, 4, 5, 6, 7, 8, 9};
   m_lightArrowVB = t850::LineRenderer::CreatePositionVB(arrowVerts, 10, BufferUsage::DINAMIC);
   m_lightArrowIB = t850::LineRenderer::CreateIndexBuffer16(arrowIndices, 10);
   m_lightArrowIndexCount = 10;
+
+  if (Meshes[0].pBase && !Meshes[0].HasPhysicsBody() && !Meshes[0].HasPhysicsRagdoll()) {
+    t850::EngineContext* engineContext = GetEngineContext();
+    if (!engineContext) engineContext = &t850::GetEngineContext();
+    if (engineContext && engineContext->physics && engineContext->physics->IsInitialized()) {
+      CreatePhysicsFloor(*engineContext->physics);
+      bool attachedPhysics = false;
+      RenderSkinnedMesh* skinned = Meshes[0].GetSkinnedMesh();
+      if (skinned) {
+        t850::PhysicsRagdollBuildSettings settings;
+        settings.fitToSkinnedGeometry = true;
+        settings.preferHumanoidBones = true;
+        settings.minBoneLength = (std::max)(0.02f, m_modelRadius * 0.030f);
+        settings.minRadius = (std::max)(0.006f, m_modelRadius * 0.010f);
+        settings.maxRadius = (std::max)(0.08f, m_modelRadius * 0.140f);
+        settings.radiusScale = 0.18f;
+        settings.minSkinWeight = 0.08f;
+        settings.radiusPercentile = 0.86f;
+        settings.jointTrimFraction = 0.12f;
+        t850::PhysicsRagdollDesc ragdollDesc;
+        attachedPhysics = t850::AttachSkeletonRagdoll(
+            *engineContext->physics,
+            Meshes[0],
+            *skinned,
+            settings,
+            t850::PhysicsBodyMotion::Kinematic,
+            &ragdollDesc);
+        if (attachedPhysics) {
+          m_driveRagdollFromAnimation = t850::BuildRagdollAnimationBinding(
+              *skinned,
+              Meshes[0].Final,
+              ragdollDesc,
+              m_ragdollAnimationBinding);
+          m_ragdollPhysicsDriven = false;
+          m_ragdollPhysicsLogEmitted = false;
+          m_ragdollDriveLogEmitted = false;
+          T8_LOG_INFO("[SandboxScene] Attached fitted humanoid ragdoll physics for '%s'", g_config.modelPath.c_str());
+          if (!m_driveRagdollFromAnimation) {
+            T8_LOG_ERROR("[SandboxScene] Failed to bind humanoid ragdoll to animation pose for '%s'", g_config.modelPath.c_str());
+          }
+        } else {
+          T8_LOG_ERROR("[SandboxScene] Failed to attach fitted humanoid ragdoll physics for '%s'", g_config.modelPath.c_str());
+        }
+      }
+
+      if (!attachedPhysics && !skinned) {
+        RenderMesh* mesh = static_cast<RenderMesh*>(Meshes[0].pBase);
+        attachedPhysics = t850::AttachMeshBoxBody(*engineContext->physics, Meshes[0], *mesh, t850::PhysicsBodyMotion::Static);
+        if (attachedPhysics) {
+          T8_LOG_INFO("[SandboxScene] Attached static mesh-box physics for '%s'", g_config.modelPath.c_str());
+        }
+      }
+    }
+  }
 }
 
 void SandboxScene::OnLoadScene() {
@@ -379,6 +480,32 @@ void SandboxScene::OnDestoryScene() {
 }
 
 void SandboxScene::DestroyAssets() {
+  if (Meshes[0].HasPhysicsRagdoll() || Meshes[0].HasPhysicsBody() || m_floorBody.IsValid()) {
+    t850::EngineContext* engineContext = GetEngineContext();
+    if (!engineContext) engineContext = &t850::GetEngineContext();
+    if (engineContext && engineContext->physics) {
+      if (Meshes[0].HasPhysicsRagdoll()) {
+        engineContext->physics->DestroyRagdoll(Meshes[0].GetPhysicsRagdoll());
+      }
+      if (Meshes[0].HasPhysicsBody()) {
+        engineContext->physics->DestroyBody(Meshes[0].GetPhysicsBody());
+      }
+      if (m_floorBody.IsValid()) {
+        engineContext->physics->DestroyBody(m_floorBody);
+      }
+    }
+    Meshes[0].ClearPhysicsLinks();
+    m_floorBody.Reset();
+  }
+  m_driveRagdollFromAnimation = false;
+  m_ragdollPhysicsDriven = false;
+  m_ragdollDriveLogEmitted = false;
+  m_ragdollPhysicsLogEmitted = false;
+  m_ragdollAnimationBinding = t850::PhysicsRagdollAnimationBinding{};
+  m_ragdollAnimationPose = t850::PhysicsRagdollDesc{};
+  m_ragdollPhysicsStates.clear();
+  m_ragdollPhysicsBoneIndices.clear();
+  m_ragdollPhysicsCombinedMatrices.clear();
   m_debugText.Destroy();
   if (m_lightArrowVB) m_lightArrowVB->release();
   if (m_lightArrowIB) m_lightArrowIB->release();
@@ -386,6 +513,7 @@ void SandboxScene::DestroyAssets() {
   m_lightArrowIB = nullptr;
   m_lightArrowIndexCount = 0;
   m_lightArrowRenderer.Destroy();
+  m_physicsDebugRenderer.Destroy();
   PrimitiveMgr.DestroyPrimitives();
   pFramework->pVideoDriver->DestroyRTs();
 }
@@ -527,6 +655,158 @@ void SandboxScene::OnUpdate(float _DtSecs) {
       exit(0);
     }
   }
+
+  if (Meshes[0].pBase) {
+    RenderSkinnedMesh* skinned = Meshes[0].GetSkinnedMesh();
+    if (skinned && skinned->HasSkinData() && !m_ragdollPhysicsDriven) {
+      skinned->UpdateAnimationPose();
+      DriveRagdollFromAnimation(DtSecs);
+    }
+  }
+}
+
+void SandboxScene::DriveRagdollFromAnimation(float deltaSeconds) {
+  if (!m_driveRagdollFromAnimation || !Meshes[0].HasPhysicsRagdoll()) {
+    return;
+  }
+
+  t850::EngineContext* engineContext = GetEngineContext();
+  if (!engineContext) engineContext = &t850::GetEngineContext();
+  RenderSkinnedMesh* skinned = Meshes[0].GetSkinnedMesh();
+  if (!engineContext || !engineContext->physics || !skinned || skinned->HasSnapshotBoneMatrices()) {
+    return;
+  }
+
+  if (!t850::BuildRagdollPoseFromAnimation(*skinned, Meshes[0].Final, m_ragdollAnimationBinding, m_ragdollAnimationPose)) {
+    if (!m_ragdollDriveLogEmitted) {
+      T8_LOG_ERROR("[SandboxScene] Failed to build animation-driven ragdoll pose for '%s'", g_config.modelPath.c_str());
+      m_ragdollDriveLogEmitted = true;
+    }
+    return;
+  }
+
+  if (!engineContext->physics->DriveRagdollFromPose(Meshes[0].GetPhysicsRagdoll(), m_ragdollAnimationPose, deltaSeconds)) {
+    if (!m_ragdollDriveLogEmitted) {
+      T8_LOG_ERROR("[SandboxScene] Failed to drive ragdoll from animation pose for '%s'", g_config.modelPath.c_str());
+      m_ragdollDriveLogEmitted = true;
+    }
+    return;
+  }
+
+  if (!m_ragdollDriveLogEmitted) {
+    T8_LOG_INFO("[SandboxScene] Driving humanoid ragdoll from animation pose: bodies=%zu", m_ragdollAnimationPose.bones.size());
+    m_ragdollDriveLogEmitted = true;
+  }
+}
+
+void SandboxScene::UpdateSkeletonFromRagdollPhysics() {
+  if (!m_ragdollPhysicsDriven || !Meshes[0].HasPhysicsRagdoll()) {
+    return;
+  }
+
+  t850::EngineContext* engineContext = GetEngineContext();
+  if (!engineContext) engineContext = &t850::GetEngineContext();
+  RenderSkinnedMesh* skinned = Meshes[0].GetSkinnedMesh();
+  if (!engineContext || !engineContext->physics || !skinned || !skinned->HasSkinData()) {
+    return;
+  }
+
+  if (!engineContext->physics->GetRagdollState(Meshes[0].GetPhysicsRagdoll(), m_ragdollPhysicsStates) ||
+      !t850::BuildSkeletonPoseFromRagdollState(
+          *skinned,
+          Meshes[0].Final,
+          m_ragdollAnimationBinding,
+          m_ragdollPhysicsStates,
+          m_ragdollPhysicsBoneIndices,
+          m_ragdollPhysicsCombinedMatrices) ||
+      !skinned->GetAnimController().ApplyCombinedPoseOverrides(
+          m_ragdollPhysicsBoneIndices,
+          m_ragdollPhysicsCombinedMatrices)) {
+    if (!m_ragdollPhysicsLogEmitted) {
+      T8_LOG_ERROR("[SandboxScene] Failed to drive skinned skeleton from physics for '%s'", g_config.modelPath.c_str());
+      m_ragdollPhysicsLogEmitted = true;
+    }
+    return;
+  }
+
+  if (!m_ragdollPhysicsLogEmitted) {
+    T8_LOG_INFO("[SandboxScene] Driving skinned skeleton from dynamic ragdoll physics: bodies=%zu", m_ragdollPhysicsStates.size());
+    m_ragdollPhysicsLogEmitted = true;
+  }
+}
+
+void SandboxScene::SwitchRagdollToPhysics() {
+  if (m_ragdollPhysicsDriven) {
+    T8_LOG_INFO("[SandboxScene] Ragdoll is already physics-driven");
+    return;
+  }
+
+  t850::EngineContext* engineContext = GetEngineContext();
+  if (!engineContext) engineContext = &t850::GetEngineContext();
+  RenderSkinnedMesh* skinned = Meshes[0].GetSkinnedMesh();
+  if (!engineContext || !engineContext->physics || !Meshes[0].HasPhysicsRagdoll() || !skinned || !skinned->HasSkinData()) {
+    T8_LOG_ERROR("[SandboxScene] Cannot switch to ragdoll physics: no skinned ragdoll is attached");
+    return;
+  }
+
+  if (m_driveRagdollFromAnimation &&
+      t850::BuildRagdollPoseFromAnimation(*skinned, Meshes[0].Final, m_ragdollAnimationBinding, m_ragdollAnimationPose)) {
+    engineContext->physics->DriveRagdollFromPose(Meshes[0].GetPhysicsRagdoll(), m_ragdollAnimationPose, 0.0f);
+  }
+
+  if (!engineContext->physics->SetRagdollMotion(Meshes[0].GetPhysicsRagdoll(), t850::PhysicsBodyMotion::Dynamic)) {
+    T8_LOG_ERROR("[SandboxScene] Failed to switch ragdoll bodies to dynamic physics");
+    return;
+  }
+
+  m_driveRagdollFromAnimation = false;
+  m_ragdollPhysicsDriven = true;
+  m_ragdollPhysicsLogEmitted = false;
+  m_showPhysics = true;
+  skinned->PauseAnimation();
+  skinned->ClearSnapshotBoneMatrices();
+  T8_LOG_INFO("[SandboxScene] F5: animation-to-physics ragdoll transition started");
+}
+
+void SandboxScene::CreatePhysicsFloor(t850::JoltPhysicsSystem& physics) {
+  if (m_floorBody.IsValid() || !Meshes[0].pBase) {
+    return;
+  }
+
+  RenderMesh* mesh = static_cast<RenderMesh*>(Meshes[0].pBase);
+  RenderMesh::AABB worldBounds;
+  if (!BuildWorldBounds(mesh, Meshes[0].Final, worldBounds)) {
+    T8_LOG_ERROR("[SandboxScene] Failed to build physics floor: model bounds are unavailable");
+    return;
+  }
+
+  const float extentX = (worldBounds.max.x - worldBounds.min.x) * 0.5f;
+  const float extentZ = (worldBounds.max.z - worldBounds.min.z) * 0.5f;
+  const float halfSize = (std::max)((std::max)(extentX, extentZ) * 2.0f, (std::max)(1.0f, m_modelRadius * 2.0f));
+  const float halfHeight = (std::max)(0.02f, m_modelRadius * 0.015f);
+  const float gap = (std::max)(0.02f, m_modelRadius * 0.02f);
+
+  XMATRIX44 floorTransform;
+  floorTransform.Identity();
+  floorTransform.m41 = (worldBounds.min.x + worldBounds.max.x) * 0.5f;
+  floorTransform.m42 = worldBounds.min.y - gap - halfHeight;
+  floorTransform.m43 = (worldBounds.min.z + worldBounds.max.z) * 0.5f;
+
+  t850::PhysicsBodyDesc floorDesc;
+  floorDesc.entityId = Meshes[0].GetEntityId();
+  floorDesc.debugName = "Sandbox ragdoll floor";
+  floorDesc.shape = t850::PhysicsShapeDesc::Box(XVECTOR3(halfSize, halfHeight, halfSize, 0.0f));
+  floorDesc.worldTransform = floorTransform;
+  floorDesc.motion = t850::PhysicsBodyMotion::Static;
+  floorDesc.friction = 0.85f;
+  floorDesc.restitution = 0.05f;
+
+  m_floorBody = physics.CreateBody(floorDesc);
+  if (m_floorBody.IsValid()) {
+    T8_LOG_INFO("[SandboxScene] Added static ragdoll floor at y=%.3f halfSize=%.3f", floorTransform.m42 + halfHeight, halfSize);
+  } else {
+    T8_LOG_ERROR("[SandboxScene] Failed to create static ragdoll floor");
+  }
 }
 
 void SandboxScene::OnInput(InputManager* IManager) {
@@ -608,6 +888,10 @@ void SandboxScene::OnInput(InputManager* IManager) {
   }
   if (IManager->PressedOnceKey(T800K_F3))
     m_showAABBs = !m_showAABBs;
+  if (IManager->PressedOnceKey(T800K_F4))
+    m_showPhysics = !m_showPhysics;
+  if (IManager->PressedOnceKey(T800K_F5))
+    SwitchRagdollToPhysics();
 
   // Arrow keys: step keyframes when in keyframe mode
   RenderSkinnedMesh* sk = Meshes[0].GetSkinnedMesh();
@@ -846,6 +1130,7 @@ void SandboxScene::CaptureSandboxProfileState(t850::SandboxProfileDesc& state) {
   addBool("ssao_toggle", SceneProp.ToogleSSAO != 0);
   addBool("show_wireframe", m_showWireframe);
   addBool("show_skeleton", Meshes[0].GetSkinnedMesh() != nullptr && m_showSkeleton);
+  addBool("show_physics", m_showPhysics);
   addBool("draw_direction", m_drawLightDirection);
 
   addInt("debug_render_target", m_debugRTSelection);
@@ -924,6 +1209,7 @@ void SandboxScene::ApplySandboxProfileState(const t850::SandboxProfileDesc& stat
     else if (value.name == "ssao_toggle") SceneProp.ToogleSSAO = value.value ? 1 : 0;
     else if (value.name == "show_wireframe") m_showWireframe = value.value;
     else if (value.name == "show_skeleton") m_showSkeleton = value.value && (Meshes[0].GetSkinnedMesh() != nullptr);
+    else if (value.name == "show_physics") m_showPhysics = value.value;
     else if (value.name == "draw_direction") m_drawLightDirection = value.value;
   }
 
@@ -1185,12 +1471,12 @@ void SandboxScene::OnDraw() {
                 avgFps, sFrameCount, DtSecs * 1000.0f);
   }
 
-  // Update animation and upload bone texture BEFORE render graph
-  // (Vulkan copy commands cannot run inside a render pass)
   if (Meshes[0].pBase) {
-    RenderSkinnedMesh* skinned = dynamic_cast<RenderSkinnedMesh*>(Meshes[0].pBase);
-    if (skinned && skinned->HasSkinData())
-      skinned->UpdateAnimationAndBones();
+    RenderSkinnedMesh* skinned = Meshes[0].GetSkinnedMesh();
+    if (skinned && skinned->HasSkinData()) {
+      UpdateSkeletonFromRagdollPhysics();
+      skinned->UploadBoneTexture();
+    }
   }
 
   // Execute the render graph (all passes through HDR Composition)
@@ -1276,40 +1562,61 @@ void SandboxScene::OnDraw() {
 #endif
 
   auto drawMeshDebugOverlays = [this]() {
-    if (!Meshes[0].pBase) return;
-    RenderSkinnedMesh* skinned = dynamic_cast<RenderSkinnedMesh*>(Meshes[0].pBase);
-    if (skinned && skinned->HasSkinData()) {
-      if (m_showWireframe) {
-        // Bind GBuffer depth for shader-based depth comparison
+    if (Meshes[0].pBase) {
+      RenderSkinnedMesh* skinned = dynamic_cast<RenderSkinnedMesh*>(Meshes[0].pBase);
+      if (skinned && skinned->HasSkinData()) {
+        if (m_showWireframe) {
+          // Bind GBuffer depth for shader-based depth comparison
+          int gbufHandle = GBufferPass;
+          if (gbufHandle >= 0 && gbufHandle < (int)pFramework->pVideoDriver->RTs.size()) {
+            auto* gbufRT = pFramework->pVideoDriver->RTs[gbufHandle];
+            skinned->SetWireframeDepthTex(gbufRT->pDepthTexture);
+          }
+          skinned->SetWireframeViewport(g_pBaseDriver->width, g_pBaseDriver->height);
+          pFramework->pVideoDriver->SetDepthStencilState(BaseDriver::NONE);
+          skinned->DrawWireframe();
+        }
+        if (m_showSkeleton) {
+          pFramework->pVideoDriver->SetDepthStencilState(BaseDriver::NONE);
+          pFramework->pVideoDriver->SetBlendState(BaseDriver::BLEND_DEFAULT);
+          skinned->DrawSkeleton();
+        }
+      } else if (m_showWireframe) {
+        RenderMesh* mesh = static_cast<RenderMesh*>(Meshes[0].pBase);
         int gbufHandle = GBufferPass;
         if (gbufHandle >= 0 && gbufHandle < (int)pFramework->pVideoDriver->RTs.size()) {
           auto* gbufRT = pFramework->pVideoDriver->RTs[gbufHandle];
-          skinned->SetWireframeDepthTex(gbufRT->pDepthTexture);
+          mesh->SetWireframeDepthTex(gbufRT->pDepthTexture);
         }
-        skinned->SetWireframeViewport(g_pBaseDriver->width, g_pBaseDriver->height);
+        mesh->SetWireframeViewport(g_pBaseDriver->width, g_pBaseDriver->height);
         pFramework->pVideoDriver->SetDepthStencilState(BaseDriver::NONE);
-        skinned->DrawWireframe();
+        mesh->DrawWireframe();
       }
-      if (m_showSkeleton) {
+    }
+
+    if (m_showPhysics) {
+      t850::EngineContext* engineContext = GetEngineContext();
+      if (!engineContext) engineContext = &t850::GetEngineContext();
+      if (engineContext && engineContext->physics && m_physicsDebugRenderer.IsReady()) {
+        Texture* depthTexture = nullptr;
+        int gbufHandle = GBufferPass;
+        if (gbufHandle >= 0 && gbufHandle < (int)pFramework->pVideoDriver->RTs.size()) {
+          auto* gbufRT = pFramework->pVideoDriver->RTs[gbufHandle];
+          depthTexture = gbufRT ? gbufRT->pDepthTexture : nullptr;
+        }
+        m_physicsDebugRenderer.SetDepthTexture(depthTexture);
+        m_physicsDebugRenderer.SetDepthTestEnabled(depthTexture != nullptr);
+        m_physicsDebugRenderer.SetViewport(g_pBaseDriver->width, g_pBaseDriver->height);
+        m_physicsDebugRenderer.SetFarPlane(Cam.FPlane);
         pFramework->pVideoDriver->SetDepthStencilState(BaseDriver::NONE);
         pFramework->pVideoDriver->SetBlendState(BaseDriver::BLEND_DEFAULT);
-        skinned->DrawSkeleton();
+        m_physicsDebugRenderer.Draw(*engineContext->physics, VP);
       }
-    } else if (m_showWireframe) {
-      RenderMesh* mesh = static_cast<RenderMesh*>(Meshes[0].pBase);
-      int gbufHandle = GBufferPass;
-      if (gbufHandle >= 0 && gbufHandle < (int)pFramework->pVideoDriver->RTs.size()) {
-        auto* gbufRT = pFramework->pVideoDriver->RTs[gbufHandle];
-        mesh->SetWireframeDepthTex(gbufRT->pDepthTexture);
-      }
-      mesh->SetWireframeViewport(g_pBaseDriver->width, g_pBaseDriver->height);
-      pFramework->pVideoDriver->SetDepthStencilState(BaseDriver::NONE);
-      mesh->DrawWireframe();
     }
   };
 
 #ifdef OS_ANDROID
-  if (m_showWireframe || m_showSkeleton) {
+  if (m_showWireframe || m_showSkeleton || m_showPhysics) {
     if (auto* vkDriver = static_cast<VulkanDriver*>(pFramework->pVideoDriver)) {
       vkDriver->SetPrePresentOverlayCallback(drawMeshDebugOverlays);
     }
@@ -1439,6 +1746,7 @@ void SandboxScene::PopulateGUI(t850::GUIManager& gui) {
     {"ssao_toggle",            CHANGLE_SSAO_TOOGLE},
     {"show_wireframe",         CHANGE_SHOW_WIREFRAME},
     {"show_skeleton",          CHANGE_SHOW_SKELETON},
+    {"show_physics",           CHANGE_SHOW_PHYSICS},
   };
 
   for (auto& cd : m_guiSetup.descriptor.checkboxes) {
@@ -1536,6 +1844,7 @@ void SandboxScene::DrawDevGui(t850::DevGuiContext& gui) {
     {"ssao_toggle", CHANGLE_SSAO_TOOGLE},
     {"show_wireframe", CHANGE_SHOW_WIREFRAME},
     {"show_skeleton", CHANGE_SHOW_SKELETON},
+    {"show_physics", CHANGE_SHOW_PHYSICS},
   };
 
   static const Mapping selectorMappings[] = {
@@ -1664,6 +1973,7 @@ void SandboxScene::DrawDevGui(t850::DevGuiContext& gui) {
     case CHANGLE_SSAO_TOOGLE: value = (SceneProp.ToogleSSAO != 0); return true;
     case CHANGE_SHOW_WIREFRAME: value = m_showWireframe; return true;
     case CHANGE_SHOW_SKELETON: value = (skinnedMesh() != nullptr) && m_showSkeleton; return true;
+    case CHANGE_SHOW_PHYSICS: value = m_showPhysics; return true;
     }
     return false;
   };
@@ -1674,6 +1984,7 @@ void SandboxScene::DrawDevGui(t850::DevGuiContext& gui) {
     case CHANGLE_SSAO_TOOGLE: SceneProp.ToogleSSAO = value ? 1 : 0; break;
     case CHANGE_SHOW_WIREFRAME: m_showWireframe = value; break;
     case CHANGE_SHOW_SKELETON: m_showSkeleton = value && (skinnedMesh() != nullptr); break;
+    case CHANGE_SHOW_PHYSICS: m_showPhysics = value; break;
     }
   };
 
@@ -1984,6 +2295,7 @@ void SandboxScene::SyncToGUI(t850::GUIManager& gui) {
     case CHANGLE_SSAO_TOOGLE: cb->checked = (SceneProp.ToogleSSAO != 0); break;
     case CHANGE_SHOW_WIREFRAME: cb->checked = m_showWireframe; break;
     case CHANGE_SHOW_SKELETON:  cb->checked = (Meshes[0].GetSkinnedMesh() != nullptr) && m_showSkeleton; break;
+    case CHANGE_SHOW_PHYSICS:   cb->checked = m_showPhysics; break;
     }
   }
 
@@ -2059,6 +2371,7 @@ void SandboxScene::SyncFromGUI(t850::GUIManager& gui) {
     case CHANGLE_SSAO_TOOGLE: SceneProp.ToogleSSAO = cb->checked ? 1 : 0; break;
     case CHANGE_SHOW_WIREFRAME: m_showWireframe = cb->checked; break;
     case CHANGE_SHOW_SKELETON:  m_showSkeleton = cb->checked && (Meshes[0].GetSkinnedMesh() != nullptr); break;
+    case CHANGE_SHOW_PHYSICS:   m_showPhysics = cb->checked; break;
     }
   }
 

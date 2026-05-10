@@ -494,8 +494,66 @@ function Get-AndroidRepoRoot {
     return (Split-Path -Parent $rootDir)
 }
 
+function Get-AndroidProjectRoot {
+    return (Join-Path $rootDir "android")
+}
+
 function Get-AndroidBuildScript {
     return (Join-Path (Get-AndroidRepoRoot) "Scripts\Bat\BuildAndroid.bat")
+}
+
+function Get-AndroidGradleWrapperPath {
+    return (Join-Path (Get-AndroidProjectRoot) "gradlew.bat")
+}
+
+function Get-AndroidAbiFilters {
+    $arch = if ($cmbArch -and $cmbArch.SelectedItem) { ($cmbArch.SelectedItem).Content.ToString().ToLowerInvariant() } else { "arm64" }
+    switch ($arch) {
+        "x64" { return "x86_64" }
+        "arm64" { return "arm64-v8a" }
+        default { return "arm64-v8a" }
+    }
+}
+
+function Get-AndroidVcpkgTriplets {
+    $triplets = New-Object System.Collections.Generic.List[string]
+    foreach ($abi in ((Get-AndroidAbiFilters) -split ",")) {
+        switch ($abi.Trim()) {
+            "x86_64" { if (-not $triplets.Contains("x64-android")) { $triplets.Add("x64-android") } }
+            "arm64-v8a" { if (-not $triplets.Contains("arm64-android")) { $triplets.Add("arm64-android") } }
+        }
+    }
+    return @($triplets)
+}
+
+function Test-VcpkgFiles {
+    param(
+        [Parameter(Mandatory = $true)] [string]$TripletRoot,
+        [Parameter(Mandatory = $true)] [string[]]$RelativePaths
+    )
+
+    foreach ($relativePath in $RelativePaths) {
+        if (-not (Test-Path (Join-Path $TripletRoot $relativePath))) { return $false }
+    }
+    return $true
+}
+
+function Test-AndroidVcpkgTripletReady {
+    param(
+        [Parameter(Mandatory = $true)] [string]$VcpkgRoot,
+        [Parameter(Mandatory = $true)] [string]$Triplet
+    )
+
+    $tripletRoot = Join-Path $VcpkgRoot "installed\$Triplet"
+    if (-not (Test-Path $tripletRoot)) { return $false }
+    return (Test-VcpkgFiles -TripletRoot $tripletRoot -RelativePaths @(
+        "include\Jolt\Jolt.h",
+        "share\Jolt\JoltConfig.cmake",
+        "include\imgui_impl_android.h",
+        "include\imgui_impl_vulkan.h",
+        "include\glslang\Public\ShaderLang.h",
+        "include\draco\compression\encode.h"
+    ))
 }
 
 function Get-AndroidAdbPath {
@@ -509,7 +567,7 @@ function Get-AndroidConfigName {
 
 function Get-AndroidApkPath {
     $variant = if ((Get-AndroidConfigName) -ieq "Debug") { "debug" } else { "release" }
-    return (Join-Path $rootDir "android\app\build\outputs\apk\$variant\app-$variant.apk")
+    return (Join-Path (Get-AndroidProjectRoot) "app\build\outputs\apk\$variant\app-$variant.apk")
 }
 
 function Get-SelectedAndroidDeviceSerial {
@@ -715,7 +773,7 @@ function Invoke-LoggedProcess {
     $quotedFile = '"' + $FilePath + '"'
     $quotedArgs = @()
     foreach ($arg in $Arguments) {
-        if ($arg -match '[\s"]') { $quotedArgs += ('"' + ($arg -replace '"', '\"') + '"') }
+        if ($arg -match '[\s",]') { $quotedArgs += ('"' + ($arg -replace '"', '\"') + '"') }
         else { $quotedArgs += $arg }
     }
     $commandLine = ($quotedFile + ' ' + ($quotedArgs -join ' ')).Trim() + ' 2>&1'
@@ -1107,7 +1165,112 @@ function Test-JavaAvailable {
 function Test-GlslangAvailable {
     if (Test-CommandExists "glslangValidator.exe") { return $true }
     if ($env:VULKAN_SDK -and (Test-Path (Join-Path $env:VULKAN_SDK "Bin\glslangValidator.exe"))) { return $true }
+    $vulkanRoot = "C:\VulkanSDK"
+    if (Test-Path $vulkanRoot) {
+        $latest = Get-ChildItem $vulkanRoot -Directory -ErrorAction SilentlyContinue |
+            Sort-Object Name -Descending |
+            Select-Object -First 1
+        if ($latest -and (Test-Path (Join-Path $latest.FullName "Bin\glslangValidator.exe"))) {
+            $env:VULKAN_SDK = $latest.FullName
+            $env:PATH = (Join-Path $latest.FullName "Bin") + ";" + $env:PATH
+            return $true
+        }
+    }
     return $false
+}
+
+function Read-AndroidSigningProperties {
+    $props = @{}
+    $project = Get-AndroidProjectRoot
+    $files = @(
+        (Join-Path $project "signing.properties"),
+        (Join-Path $project "app\signing.properties"),
+        (Join-Path $env:USERPROFILE ".android\t850-release-signing.properties")
+    )
+
+    foreach ($file in $files) {
+        if (-not (Test-Path $file)) { continue }
+        foreach ($rawLine in (Get-Content $file -ErrorAction SilentlyContinue)) {
+            $line = $rawLine.Trim()
+            if (-not $line -or $line.StartsWith("#") -or $line.StartsWith("!") -or -not $line.Contains("=")) { continue }
+            $idx = $line.IndexOf("=")
+            $key = $line.Substring(0, $idx).Trim()
+            $value = $line.Substring($idx + 1).Trim()
+            if ($key) { $props[$key] = $value }
+        }
+    }
+    return $props
+}
+
+function Get-AndroidSigningValue {
+    param(
+        [hashtable]$Properties,
+        [string[]]$Names
+    )
+
+    foreach ($name in $Names) {
+        $envValue = [System.Environment]::GetEnvironmentVariable($name)
+        if (-not [string]::IsNullOrWhiteSpace($envValue)) { return $envValue }
+        if ($Properties.ContainsKey($name) -and -not [string]::IsNullOrWhiteSpace($Properties[$name])) {
+            return $Properties[$name]
+        }
+    }
+    return $null
+}
+
+function Resolve-AndroidSigningStorePath {
+    param([string]$StoreFile)
+
+    if (-not $StoreFile) { return $StoreFile }
+    if ([System.IO.Path]::IsPathRooted($StoreFile)) { return $StoreFile }
+
+    $project = Get-AndroidProjectRoot
+    $candidates = @(
+        (Join-Path $project "app\$StoreFile"),
+        (Join-Path $project $StoreFile),
+        (Join-Path (Get-AndroidRepoRoot) $StoreFile)
+    )
+    foreach ($candidate in $candidates) {
+        if (Test-Path $candidate) { return $candidate }
+    }
+    return $candidates[0]
+}
+
+function Get-AndroidReleaseSigningStatus {
+    $props = Read-AndroidSigningProperties
+    $storeFile = Get-AndroidSigningValue -Properties $props -Names @("T850_RELEASE_STORE_FILE", "ANDROID_KEYSTORE_PATH")
+    $storePassword = Get-AndroidSigningValue -Properties $props -Names @("T850_RELEASE_STORE_PASSWORD", "ANDROID_KEYSTORE_PASSWORD")
+    $keyAlias = Get-AndroidSigningValue -Properties $props -Names @("T850_RELEASE_KEY_ALIAS", "ANDROID_KEY_ALIAS")
+    $keyPassword = Get-AndroidSigningValue -Properties $props -Names @("T850_RELEASE_KEY_PASSWORD", "ANDROID_KEY_PASSWORD")
+
+    $missing = New-Object System.Collections.Generic.List[string]
+    if (-not $storeFile) { $missing.Add("ANDROID_KEYSTORE_PATH or T850_RELEASE_STORE_FILE") }
+    if (-not $storePassword) { $missing.Add("ANDROID_KEYSTORE_PASSWORD or T850_RELEASE_STORE_PASSWORD") }
+    if (-not $keyAlias) { $missing.Add("ANDROID_KEY_ALIAS or T850_RELEASE_KEY_ALIAS") }
+    if (-not $keyPassword) { $missing.Add("ANDROID_KEY_PASSWORD or T850_RELEASE_KEY_PASSWORD") }
+
+    $resolvedStoreFile = Resolve-AndroidSigningStorePath $storeFile
+    if ($storeFile -and -not (Test-Path $resolvedStoreFile)) {
+        $missing.Add("release keystore file: $storeFile")
+    }
+
+    return [pscustomobject]@{
+        Ready = ($missing.Count -eq 0)
+        Missing = @($missing)
+        StoreFile = $resolvedStoreFile
+    }
+}
+
+function Show-AndroidReleaseSigningWarning {
+    param($SigningStatus)
+
+    $message = "Android Release builds must be signed before Gradle can produce app-release.apk." +
+        [System.Environment]::NewLine + [System.Environment]::NewLine +
+        "Missing:" + [System.Environment]::NewLine +
+        (($SigningStatus.Missing | ForEach-Object { "- $_" }) -join [System.Environment]::NewLine) +
+        [System.Environment]::NewLine + [System.Environment]::NewLine +
+        "Set the ANDROID_KEYSTORE_PATH, ANDROID_KEYSTORE_PASSWORD, ANDROID_KEY_ALIAS, and ANDROID_KEY_PASSWORD variables, or the T850_RELEASE_* equivalents, in the environment or in android\signing.properties, android\app\signing.properties, or ~/.android/t850-release-signing.properties."
+    [System.Windows.MessageBox]::Show($message, "T850 Launcher", "OK", "Warning") | Out-Null
 }
 
 function Get-AndroidSdkRoot {
@@ -1122,7 +1285,6 @@ function Get-AndroidToolchainStatus {
     $missing = New-Object System.Collections.Generic.List[string]
     $ndkVersion = "27.2.12479018"
     $cmakeVersion = "3.22.1"
-    $gradleVersion = "8.10.2"
     $buildToolsVersion = "35.0.0"
 
     if (-not (Test-Path $sdk)) { $missing.Add("Android SDK at $sdk") }
@@ -1132,13 +1294,18 @@ function Get-AndroidToolchainStatus {
     if (-not (Test-Path (Join-Path $sdk "build-tools\$buildToolsVersion\apksigner.bat"))) { $missing.Add("Android build-tools $buildToolsVersion") }
     if (-not (Test-Path (Join-Path $sdk "ndk\$ndkVersion"))) { $missing.Add("Android NDK $ndkVersion") }
     if (-not (Test-Path (Join-Path $sdk "cmake\$cmakeVersion"))) { $missing.Add("Android CMake $cmakeVersion") }
-    if (-not (Test-Path (Join-Path $sdk "gradle\gradle-$gradleVersion\bin\gradle.bat")) -and -not (Test-CommandExists "gradle")) { $missing.Add("Gradle $gradleVersion") }
+    if (-not (Test-Path (Get-AndroidGradleWrapperPath))) { $missing.Add("repo Gradle wrapper at T850\android\gradlew.bat") }
+    if (-not (Test-Path (Join-Path (Get-AndroidProjectRoot) "gradle\wrapper\gradle-wrapper.jar"))) { $missing.Add("Gradle wrapper jar") }
     if (-not (Test-JavaAvailable)) { $missing.Add("JDK 17+") }
     if (-not (Test-GlslangAvailable)) { $missing.Add("Vulkan SDK / glslangValidator") }
 
     $vcpkgRoot = Join-Path $repoRoot "T850\Librerias\vcpkg"
     if (-not (Test-Path (Join-Path $vcpkgRoot "vcpkg.exe"))) { $missing.Add("vcpkg executable") }
-    if (-not (Test-Path (Join-Path $vcpkgRoot "installed\arm64-android"))) { $missing.Add("vcpkg Android arm64 dependencies") }
+    foreach ($triplet in (Get-AndroidVcpkgTriplets)) {
+        if (-not (Test-AndroidVcpkgTripletReady -VcpkgRoot $vcpkgRoot -Triplet $triplet)) {
+            $missing.Add("vcpkg Android dependencies for $triplet (Jolt/imgui/glslang/draco)")
+        }
+    }
 
     return [pscustomobject]@{
         SdkRoot = $sdk
@@ -1168,7 +1335,8 @@ function Ensure-AndroidToolchain {
     $txtStatus.Text = "Installing Android toolchain..."
     $txtStatus.Foreground = $window.FindResource("AccentBrush")
     try {
-        $exitCode = Invoke-LoggedProcess -FilePath $status.SetupScript -WorkingDirectory (Get-AndroidRepoRoot) -StatusPrefix "Android toolchain setup"
+        $setupArgs = @("--android-abis", (Get-AndroidAbiFilters))
+        $exitCode = Invoke-LoggedProcess -FilePath $status.SetupScript -Arguments $setupArgs -WorkingDirectory (Get-AndroidRepoRoot) -StatusPrefix "Android toolchain setup"
         if ($exitCode -ne 0) {
             $txtStatus.Text = "Android toolchain setup failed (exit code $exitCode)"
             $txtStatus.Foreground = $window.FindResource("RedBrush")
@@ -1198,6 +1366,43 @@ function Get-WindowsTripletsForPlatform {
     }
 }
 
+function Test-WindowsVcpkgTripletReady {
+    param(
+        [Parameter(Mandatory = $true)] [string]$VcpkgRoot,
+        [Parameter(Mandatory = $true)] [string]$Triplet,
+        [Parameter(Mandatory = $true)] [string]$TargetPlatform
+    )
+
+    $tripletRoot = Join-Path $VcpkgRoot "installed\$Triplet"
+    if (-not (Test-Path $tripletRoot)) { return $false }
+
+    if ($Triplet -like "*-windows-static") {
+        $required = New-Object System.Collections.Generic.List[string]
+        @(
+            "include\imgui.h",
+            "include\imgui_impl_dx11.h",
+            "include\imgui_impl_vulkan.h",
+            "include\imgui_impl_opengl3.h",
+            "include\imgui_impl_sdl3.h"
+        ) | ForEach-Object { $required.Add($_) }
+
+        if ($TargetPlatform -ne "x86") {
+            $required.Add("include\imgui_impl_dx12.h")
+            $required.Add("include\Jolt\Jolt.h")
+            $required.Add("lib\Jolt.lib")
+            $required.Add("share\Jolt\JoltConfig.cmake")
+        }
+
+        return (Test-VcpkgFiles -TripletRoot $tripletRoot -RelativePaths @($required))
+    }
+
+    return (Test-VcpkgFiles -TripletRoot $tripletRoot -RelativePaths @(
+        "lib\draco.lib",
+        "bin\libEGL.dll",
+        "bin\libGLESv2.dll"
+    ))
+}
+
 function Get-WindowsToolchainStatus {
     param([string]$TargetPlatform)
     $repoRoot = Get-AndroidRepoRoot
@@ -1213,7 +1418,7 @@ function Get-WindowsToolchainStatus {
         $missing.Add("vcpkg executable and dependencies")
     } else {
         foreach ($triplet in (Get-WindowsTripletsForPlatform $TargetPlatform)) {
-            if (-not (Test-Path (Join-Path $vcpkgRoot "installed\$triplet"))) {
+            if (-not (Test-WindowsVcpkgTripletReady -VcpkgRoot $vcpkgRoot -Triplet $triplet -TargetPlatform $TargetPlatform)) {
                 $missing.Add("vcpkg dependencies for $triplet")
             }
         }
@@ -1544,8 +1749,9 @@ function Update-Preview {
     if ($script:LauncherBusy) { return }
     if (Test-AndroidTarget) {
         $apkPath = Get-AndroidApkPath
+        $abiFilters = Get-AndroidAbiFilters
         $deviceReady = ((Get-SelectedAndroidDeviceSerial) -ne "" -and (Get-SelectedAndroidDeviceState) -eq "device")
-        $txtCmdPreview.Text = 'Android APK: "' + $apkPath + '"'
+        $txtCmdPreview.Text = 'Android APK: "' + $apkPath + '"  ABI: ' + $abiFilters
         $btnRun.IsEnabled = ((Test-Path $apkPath) -and $deviceReady)
         $btnEditor.IsEnabled = $deviceReady
         if (-not $deviceReady) {
@@ -1690,7 +1896,17 @@ function Set-LauncherBusy {
 function Invoke-AndroidBuild {
     param([bool]$Clean = $false, [bool]$Install = $false)
 
+    $config = Get-AndroidConfigName
     if (-not (Ensure-AndroidToolchain)) { return $false }
+    if ($config -ieq "Release") {
+        $signingStatus = Get-AndroidReleaseSigningStatus
+        if (-not $signingStatus.Ready) {
+            Show-AndroidReleaseSigningWarning $signingStatus
+            $txtStatus.Text = "Android Release signing is not configured"
+            $txtStatus.Foreground = $window.FindResource("RedBrush")
+            return $false
+        }
+    }
 
     $buildScript = Get-AndroidBuildScript
     if (-not (Test-Path $buildScript)) {
@@ -1705,8 +1921,7 @@ function Invoke-AndroidBuild {
     $txtStatus.Text = "Android build starting..."
     $txtStatus.Foreground = $window.FindResource("AccentBrush")
 
-    $config = Get-AndroidConfigName
-    $args = @($config)
+    $args = @($config, "--abi", (Get-AndroidAbiFilters))
     if ($Clean) { $args += "--clean" }
     if ($Install) { $args += "--install" }
 

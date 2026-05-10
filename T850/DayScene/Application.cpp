@@ -453,6 +453,10 @@ void App::InitVars() {
   m_scenes.emplace_back(std::make_unique<SandboxScene>());
   m_scenes.emplace_back(std::make_unique<DayScene>());
   t850::EngineContext& engineContext = t850::GetEngineContext();
+  engineContext.physics = &m_physics;
+  if (!m_physics.Initialize() && m_physics.IsAvailable()) {
+    T8_LOG_ERROR("[Physics] Failed to initialize Jolt physics system");
+  }
   for (auto &it : m_scenes) {
     it->pFramework = pFramework;
     it->SetEngineContext(&engineContext);
@@ -594,6 +598,8 @@ void App::DestroyAssets() {
    }
    t850::MeshAssetCache::Get().Clear();
    t850::MaterialAssetCache::Get().Clear();
+   m_physics.Shutdown();
+   t850::GetEngineContext().physics = nullptr;
 }
 
 void App::OnUpdate() {
@@ -617,6 +623,9 @@ void App::OnUpdate() {
 #else
   if (m_actualScene && !bPaused) m_actualScene->OnUpdate(DtSecs);
 #endif
+   if (t850::GetEngineContext().physics && t850::GetEngineContext().physics->IsInitialized()) {
+     t850::GetEngineContext().physics->Update(DtSecs);
+   }
 
    OnInput();
    OnDraw();
@@ -702,6 +711,11 @@ void App::OnInput() {
   m_devLayer.ProcessInput(&IManager);
 #else
   UpdateAndroidGuiHoldToggle();
+  if (m_imguiVisible) {
+    if (auto* dayScene = dynamic_cast<DayScene*>(m_actualScene)) {
+      dayScene->ResetAndroidVirtualControls();
+    }
+  }
   if (m_imguiVisible && m_imgui.WantsMouse()) return;
   if (m_actualScene && !bPaused) m_actualScene->OnInput(&IManager);
 #endif
@@ -816,6 +830,10 @@ void App::DrawRuntimeGui() {
   }
 
 #ifdef OS_ANDROID
+  if (auto* dayScene = dynamic_cast<DayScene*>(m_actualScene)) {
+    dayScene->DrawAndroidVirtualControls(m_imguiVisible);
+  }
+
   m_imgui.BuildDrawData();
   if (auto* vkDriver = static_cast<t850::VulkanDriver*>(pFramework ? pFramework->pVideoDriver : nullptr)) {
     vkDriver->SetPrePresentOverlayCallback([this]() {
@@ -843,14 +861,22 @@ bool App::HandleAndroidInputEvent(AInputEvent* event) {
     }
   }
 
-  if (m_imguiReady && !m_imguiVisible && event && AInputEvent_getType(event) == AINPUT_EVENT_TYPE_MOTION) {
+  bool sceneHandled = false;
+  if (!m_imguiVisible && event && AInputEvent_getType(event) == AINPUT_EVENT_TYPE_MOTION) {
+    if (auto* dayScene = dynamic_cast<DayScene*>(m_actualScene)) {
+      sceneHandled = dayScene->HandleAndroidVirtualControls(event);
+    }
+  }
+
+  if (m_imguiReady && !m_imguiVisible && !sceneHandled && event && AInputEvent_getType(event) == AINPUT_EVENT_TYPE_MOTION) {
     const int32_t rawAction = AMotionEvent_getAction(event);
     const int32_t action = rawAction & AMOTION_EVENT_ACTION_MASK;
     if (action == AMOTION_EVENT_ACTION_UP && AMotionEvent_getPointerCount(event) > 0) {
       RegisterAndroidGuiTap(AMotionEvent_getX(event, 0), AMotionEvent_getY(event, 0));
     }
   }
-  return m_imguiReady && m_imgui.HandleAndroidInputEvent(event);
+  const bool imguiHandled = m_imguiReady && m_imgui.HandleAndroidInputEvent(event);
+  return sceneHandled || imguiHandled;
 }
 
 void App::RegisterAndroidGuiTap(float x, float y) {
@@ -932,6 +958,15 @@ void App::UpdateAndroidGuiHoldToggle() {
     if (m_androidGuiTapWindowSecs <= 0.0f) {
       m_androidGuiTapCount = 0;
       m_androidGuiTapWindowSecs = 0.0f;
+    }
+  }
+
+  if (auto* dayScene = dynamic_cast<DayScene*>(m_actualScene)) {
+    if (dayScene->AndroidVirtualControlsActive()) {
+      m_androidGuiHoldSecs = 0.0f;
+      m_androidGuiHoldActive = false;
+      m_androidGuiHoldSuppressed = true;
+      return;
     }
   }
 

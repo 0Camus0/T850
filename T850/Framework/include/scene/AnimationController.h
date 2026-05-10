@@ -13,6 +13,8 @@
 #include <utils/xDefs.h>
 #include <utils/xMaths.h>
 
+#include <vector>
+
 namespace t850 {
 
 static constexpr int kMaxBones = 256;
@@ -63,6 +65,8 @@ public:
 
   // Access the animated skeleton (for debug bone visualization)
   const xF::xSkeleton* GetAnimSkeleton() const { return m_pSkeletonAnim; }
+  bool ApplyCombinedPoseOverrides(const std::vector<int>& boneIndices,
+                                  const std::vector<XMATRIX44>& combinedMatrices);
 
   // Dump all bone matrices to a text file for debugging
   void DumpMatrices(const char* filename) const;

@@ -12,10 +12,16 @@
 #include <sstream>
 #include <scene/IBLResources.h>
 #include <scene/RenderMesh.h>
+#include <physics/PhysicsAuthoring.h>
 #include <utils/Log.h>
 #include <core/Config.h>
+#include <core/EngineContext.h>
 #include <utils/ConfigRuntime.h>
 #include <utils/RuntimeProfile.h>
+#ifdef OS_ANDROID
+#include <android/input.h>
+#include <video/vulkan/VulkanDriver.h>
+#endif
 #include <imgui/DevGuiContext.h>
 using namespace t850;
 using std::cout;
@@ -68,6 +74,86 @@ const t850::IntOverrideDesc* FindIntOverride(const std::vector<t850::IntOverride
     if (value.name == name) return &value;
   return nullptr;
 }
+
+#ifdef OS_ANDROID
+struct AndroidVirtualControlsLayout {
+  ImVec2 moveCenter;
+  ImVec2 lookCenter;
+  ImVec2 upCenter;
+  ImVec2 downCenter;
+  float stickRadius = 0.0f;
+  float knobRadius = 0.0f;
+  float buttonRadius = 0.0f;
+};
+
+float ClampFloat(float value, float minValue, float maxValue) {
+  return (std::max)(minValue, (std::min)(maxValue, value));
+}
+
+AndroidVirtualControlsLayout BuildAndroidVirtualControlsLayout(float width, float height) {
+  AndroidVirtualControlsLayout layout;
+  const float shortest = (std::max)(1.0f, (std::min)(width, height));
+  layout.stickRadius = ClampFloat(shortest * 0.105f, 72.0f, 135.0f);
+  layout.knobRadius = layout.stickRadius * 0.38f;
+  layout.buttonRadius = layout.stickRadius * 0.42f;
+  const float margin = layout.stickRadius * 1.35f;
+  const float centerY = height - margin;
+  layout.moveCenter = ImVec2(margin, centerY);
+  layout.lookCenter = ImVec2(width - margin, centerY);
+  layout.upCenter = ImVec2(layout.moveCenter.x + layout.stickRadius * 1.55f,
+                           layout.moveCenter.y - layout.stickRadius * 0.58f);
+  layout.downCenter = ImVec2(layout.upCenter.x,
+                             layout.moveCenter.y + layout.stickRadius * 0.58f);
+  return layout;
+}
+
+bool PointInsideCircle(float x, float y, const ImVec2& center, float radius) {
+  const float dx = x - center.x;
+  const float dy = y - center.y;
+  return (dx * dx + dy * dy) <= radius * radius;
+}
+
+XVECTOR2 StickAxisFromPoint(float x, float y, const ImVec2& center, float radius) {
+  constexpr float kDeadZone = 0.12f;
+  const float dx = x - center.x;
+  const float dy = y - center.y;
+  const float length = std::sqrt(dx * dx + dy * dy);
+  if (length <= radius * kDeadZone) {
+    return XVECTOR2(0.0f, 0.0f);
+  }
+
+  const float scale = 1.0f / (std::max)(radius, 1.0f);
+  XVECTOR2 axis(dx * scale, dy * scale);
+  const float axisLength = axis.Length();
+  if (axisLength > 1.0f) {
+    axis /= axisLength;
+  }
+  return axis;
+}
+
+int FindPointerIndexById(AInputEvent* event, int pointerId) {
+  const size_t pointerCount = AMotionEvent_getPointerCount(event);
+  for (size_t pointerIndex = 0; pointerIndex < pointerCount; ++pointerIndex) {
+    if (AMotionEvent_getPointerId(event, pointerIndex) == pointerId) {
+      return static_cast<int>(pointerIndex);
+    }
+  }
+  return -1;
+}
+
+void DrawLabeledCircle(ImDrawList* drawList,
+                       const ImVec2& center,
+                       float radius,
+                       const char* label,
+                       ImU32 fillColor,
+                       ImU32 lineColor,
+                       ImU32 textColor) {
+  drawList->AddCircleFilled(center, radius, fillColor, 32);
+  drawList->AddCircle(center, radius, lineColor, 32, 2.0f);
+  const ImVec2 textSize = ImGui::CalcTextSize(label);
+  drawList->AddText(ImVec2(center.x - textSize.x * 0.5f, center.y - textSize.y * 0.5f), textColor, label);
+}
+#endif
 }
 
 
@@ -123,6 +209,7 @@ void DayScene::CaptureSceneProfileState(t850::SandboxProfileDesc& state) const {
   addBool("dof_auto_focus", SceneProp.AutoFocus);
   addBool("show_spline", m_showSpline);
   addBool("show_lights", m_showLights);
+  addBool("show_physics", m_showPhysics);
   addBool("dof_toggle", SceneProp.ToogleDOF != 0);
   addBool("parallax_toggle", SceneProp.ToogleParallax != 0);
   addBool("parallax_shadow_toggle", SceneProp.ToogleParallaxShadow != 0);
@@ -186,6 +273,7 @@ void DayScene::ApplySceneProfileState(const t850::SandboxProfileDesc& state) {
     else if (value.name == "dof_auto_focus") SceneProp.AutoFocus = value.value;
     else if (value.name == "show_spline") m_showSpline = value.value;
     else if (value.name == "show_lights") m_showLights = value.value;
+    else if (value.name == "show_physics") m_showPhysics = value.value;
     else if (value.name == "dof_toggle") { SceneProp.ToogleDOF = value.value ? 1 : 0; m_renderGraph.SetPassEnabled("CoC", value.value); m_renderGraph.SetPassEnabled("Combine CoC", value.value); m_renderGraph.SetPassEnabled("DOF", value.value); m_renderGraph.SetPassEnabled("DOF 2", value.value); }
     else if (value.name == "parallax_toggle") { SceneProp.ToogleParallax = value.value ? 1 : 0; if (Meshes[0].pBase) Meshes[0].SetParallaxEnabled(value.value); }
     else if (value.name == "parallax_shadow_toggle") { SceneProp.ToogleParallaxShadow = value.value ? 1 : 0; SceneProp.ParallaxShadowStrength = value.value ? SceneProp.ParallaxShadowStrength : 0.0f; }
@@ -427,6 +515,10 @@ void DayScene::InitVars() {
   m_debugRTSelection = 0;
   m_showSpline = false;
   m_showLights = false;
+  m_showPhysics = false;
+#ifdef OS_ANDROID
+  ResetAndroidVirtualControls();
+#endif
   m_spectatorCameraEnabled = false;
   m_activeCameraIndex = 0;
   m_tourTimeSec = 0.0f;
@@ -500,13 +592,37 @@ void DayScene::CreateAssets() {
     SheenELUTTexIndex);
   UpdateSceneIBLSettings(SceneProp, g_pBaseDriver, EnvMaps);
 
-  int index = PrimitiveMgr.CreateMesh("Models/SkyBox.X");
+  int index = PrimitiveMgr.CreateMesh("Models/SkyBox.glb");
   Meshes[1].CreateInstance(PrimitiveMgr.GetPrimitive(index), &VP);
   Meshes[1].TranslateAbsolute(0.0, -10.0f, 0.0f);
   Meshes[1].Update();
 
-  index = PrimitiveMgr.CreateMesh("Models/SponzaEsc.X");
+  index = PrimitiveMgr.CreateMesh("Models/SponzaEsc.glb");
   Meshes[0].CreateInstance(PrimitiveMgr.GetPrimitive(index), &VP);
+  Meshes[0].Update();
+  if (pEngineContext && pEngineContext->physics && pEngineContext->physics->IsInitialized()) {
+    RenderMesh* sponzaMesh = dynamic_cast<RenderMesh*>(Meshes[0].pBase);
+    PhysicsTriangleMeshCookSettings cookSettings;
+    cookSettings.maxTrianglesPerLeaf = 8;
+    cookSettings.buildQuality = PhysicsMeshBuildQuality::FavorRuntimePerformance;
+    cookSettings.useDiskCache = true;
+
+    PhysicsCookStats cookStats;
+    if (sponzaMesh && AttachStaticTriangleMeshBody(*pEngineContext->physics, Meshes[0], *sponzaMesh, cookSettings, &cookStats)) {
+      T8_LOG_INFO("[DayScene] Sponza physics mesh ready: cache=%s vertices=%u triangles=%u extract=%.2fms load=%.2fms cook=%.2fms save=%.2fms total=%.2fms path='%s'",
+                  cookStats.cacheHit ? "hit" : "miss",
+                  cookStats.vertexCount,
+                  cookStats.triangleCount,
+                  cookStats.extractionMs,
+                  cookStats.cacheLoadMs,
+                  cookStats.cookMs,
+                  cookStats.cacheSaveMs,
+                  cookStats.totalMs,
+                  cookStats.cachePath.c_str());
+    } else {
+      T8_LOG_ERROR("[DayScene] Failed to create Sponza physics mesh");
+    }
+  }
 
   index = PrimitiveMgr.CreateSpline(m_sceneSetup.splines[0]);
   splineWire = (SplineWireframe*)PrimitiveMgr.GetPrimitive(index);
@@ -532,6 +648,7 @@ void DayScene::CreateAssets() {
 
   m_wireframeSphere.Create(8, 16);
   m_wireframeArrow.Create(24, 6);
+  m_physicsDebugRenderer.Create();
   m_debugText.LoadFromFile(24, "Fonts/Martius-LV9L4.ttf", 512.0f);
 
   t850::Spline& m_spline = m_sceneSetup.splines[0];
@@ -778,6 +895,11 @@ void DayScene::ApplyActiveCameraSelection(int selection) {
     selection = maxSelection;
 
   m_activeCameraIndex = selection;
+#ifdef OS_ANDROID
+  if (m_activeCameraIndex != 1) {
+    ResetAndroidVirtualControls();
+  }
+#endif
   if (m_activeCameraIndex == 0) {
     if (t850::SplineAgent* agent = m_sceneSetup.GetAgent(0)) {
       mainCam->AttachAgent(*agent);
@@ -831,9 +953,280 @@ void DayScene::SetSpectatorDebugEnabled(bool enabled) {
   SceneProp.ShowCullingDebug = m_showCullStats;
 }
 
+#ifdef OS_ANDROID
+bool DayScene::AndroidVirtualControlsVisible() const {
+  return m_activeCameraIndex == 1 && ActiveCam != nullptr;
+}
+
+bool DayScene::AndroidVirtualControlsActive() const {
+  return m_androidMovePointerId >= 0 || m_androidLookPointerId >= 0 ||
+         m_androidUpPointerId >= 0 || m_androidDownPointerId >= 0;
+}
+
+void DayScene::ResetAndroidVirtualControls() {
+  m_androidMovePointerId = -1;
+  m_androidLookPointerId = -1;
+  m_androidUpPointerId = -1;
+  m_androidDownPointerId = -1;
+  m_androidMoveAxis = XVECTOR2(0.0f, 0.0f);
+  m_androidLookAxis = XVECTOR2(0.0f, 0.0f);
+  m_androidMoveUp = false;
+  m_androidMoveDown = false;
+}
+
+bool DayScene::HandleAndroidVirtualControls(AInputEvent* event) {
+  if (!event || AInputEvent_getType(event) != AINPUT_EVENT_TYPE_MOTION) {
+    return false;
+  }
+
+  if (!AndroidVirtualControlsVisible()) {
+    ResetAndroidVirtualControls();
+    return false;
+  }
+
+  const float width = pFramework && pFramework->pVideoDriver
+      ? static_cast<float>(pFramework->pVideoDriver->width)
+      : ImGui::GetIO().DisplaySize.x;
+  const float height = pFramework && pFramework->pVideoDriver
+      ? static_cast<float>(pFramework->pVideoDriver->height)
+      : ImGui::GetIO().DisplaySize.y;
+  if (width <= 0.0f || height <= 0.0f) {
+    return false;
+  }
+
+  const AndroidVirtualControlsLayout layout = BuildAndroidVirtualControlsLayout(width, height);
+  const int32_t rawAction = AMotionEvent_getAction(event);
+  const int32_t action = rawAction & AMOTION_EVENT_ACTION_MASK;
+  int32_t actionPointerIndex =
+      (rawAction & AMOTION_EVENT_ACTION_POINTER_INDEX_MASK) >> AMOTION_EVENT_ACTION_POINTER_INDEX_SHIFT;
+  const size_t pointerCount = AMotionEvent_getPointerCount(event);
+  if (pointerCount == 0) {
+    ResetAndroidVirtualControls();
+    return false;
+  }
+  if (actionPointerIndex < 0 || actionPointerIndex >= static_cast<int32_t>(pointerCount)) {
+    actionPointerIndex = 0;
+  }
+
+  auto resetPointer = [&](int pointerId) {
+    bool handled = false;
+    if (pointerId == m_androidMovePointerId) {
+      m_androidMovePointerId = -1;
+      m_androidMoveAxis = XVECTOR2(0.0f, 0.0f);
+      handled = true;
+    }
+    if (pointerId == m_androidLookPointerId) {
+      m_androidLookPointerId = -1;
+      m_androidLookAxis = XVECTOR2(0.0f, 0.0f);
+      handled = true;
+    }
+    if (pointerId == m_androidUpPointerId) {
+      m_androidUpPointerId = -1;
+      m_androidMoveUp = false;
+      handled = true;
+    }
+    if (pointerId == m_androidDownPointerId) {
+      m_androidDownPointerId = -1;
+      m_androidMoveDown = false;
+      handled = true;
+    }
+    return handled;
+  };
+
+  if (action == AMOTION_EVENT_ACTION_CANCEL) {
+    ResetAndroidVirtualControls();
+    return true;
+  }
+
+  if (action == AMOTION_EVENT_ACTION_UP || action == AMOTION_EVENT_ACTION_POINTER_UP) {
+    const int pointerId = AMotionEvent_getPointerId(event, actionPointerIndex);
+    if (action == AMOTION_EVENT_ACTION_UP) {
+      const bool handled = m_androidMovePointerId >= 0 || m_androidLookPointerId >= 0 ||
+                           m_androidUpPointerId >= 0 || m_androidDownPointerId >= 0;
+      ResetAndroidVirtualControls();
+      return handled;
+    }
+    return resetPointer(pointerId);
+  }
+
+  auto capturePointer = [&](int pointerIndex) {
+    const int pointerId = AMotionEvent_getPointerId(event, pointerIndex);
+    const float x = AMotionEvent_getX(event, pointerIndex);
+    const float y = AMotionEvent_getY(event, pointerIndex);
+
+    if (m_androidUpPointerId < 0 && PointInsideCircle(x, y, layout.upCenter, layout.buttonRadius * 1.2f)) {
+      m_androidUpPointerId = pointerId;
+      m_androidMoveUp = true;
+      return true;
+    }
+    if (m_androidDownPointerId < 0 && PointInsideCircle(x, y, layout.downCenter, layout.buttonRadius * 1.2f)) {
+      m_androidDownPointerId = pointerId;
+      m_androidMoveDown = true;
+      return true;
+    }
+    if (m_androidMovePointerId < 0 && PointInsideCircle(x, y, layout.moveCenter, layout.stickRadius * 1.45f)) {
+      m_androidMovePointerId = pointerId;
+      m_androidMoveAxis = StickAxisFromPoint(x, y, layout.moveCenter, layout.stickRadius);
+      return true;
+    }
+    if (m_androidLookPointerId < 0 && PointInsideCircle(x, y, layout.lookCenter, layout.stickRadius * 1.45f)) {
+      m_androidLookPointerId = pointerId;
+      m_androidLookAxis = StickAxisFromPoint(x, y, layout.lookCenter, layout.stickRadius);
+      return true;
+    }
+    return false;
+  };
+
+  if (action == AMOTION_EVENT_ACTION_DOWN || action == AMOTION_EVENT_ACTION_POINTER_DOWN) {
+    return capturePointer(actionPointerIndex);
+  }
+
+  if (action != AMOTION_EVENT_ACTION_MOVE) {
+    return false;
+  }
+
+  bool handled = false;
+  const int moveIndex = FindPointerIndexById(event, m_androidMovePointerId);
+  if (moveIndex >= 0) {
+    m_androidMoveAxis = StickAxisFromPoint(AMotionEvent_getX(event, moveIndex),
+                                           AMotionEvent_getY(event, moveIndex),
+                                           layout.moveCenter,
+                                           layout.stickRadius);
+    handled = true;
+  } else {
+    m_androidMovePointerId = -1;
+    m_androidMoveAxis = XVECTOR2(0.0f, 0.0f);
+  }
+
+  const int lookIndex = FindPointerIndexById(event, m_androidLookPointerId);
+  if (lookIndex >= 0) {
+    m_androidLookAxis = StickAxisFromPoint(AMotionEvent_getX(event, lookIndex),
+                                           AMotionEvent_getY(event, lookIndex),
+                                           layout.lookCenter,
+                                           layout.stickRadius);
+    handled = true;
+  } else {
+    m_androidLookPointerId = -1;
+    m_androidLookAxis = XVECTOR2(0.0f, 0.0f);
+  }
+
+  const int upIndex = FindPointerIndexById(event, m_androidUpPointerId);
+  if (upIndex >= 0) {
+    m_androidMoveUp = PointInsideCircle(AMotionEvent_getX(event, upIndex),
+                                        AMotionEvent_getY(event, upIndex),
+                                        layout.upCenter,
+                                        layout.buttonRadius * 1.2f);
+    handled = true;
+    if (!m_androidMoveUp) {
+      m_androidUpPointerId = -1;
+    }
+  } else {
+    m_androidUpPointerId = -1;
+    m_androidMoveUp = false;
+  }
+
+  const int downIndex = FindPointerIndexById(event, m_androidDownPointerId);
+  if (downIndex >= 0) {
+    m_androidMoveDown = PointInsideCircle(AMotionEvent_getX(event, downIndex),
+                                          AMotionEvent_getY(event, downIndex),
+                                          layout.downCenter,
+                                          layout.buttonRadius * 1.2f);
+    handled = true;
+    if (!m_androidMoveDown) {
+      m_androidDownPointerId = -1;
+    }
+  } else {
+    m_androidDownPointerId = -1;
+    m_androidMoveDown = false;
+  }
+
+  return handled;
+}
+
+void DayScene::ApplyAndroidVirtualControls() {
+  if (!AndroidVirtualControlsVisible() || !ActiveCam) {
+    ResetAndroidVirtualControls();
+    return;
+  }
+
+  constexpr float kAxisThreshold = 0.02f;
+  constexpr float kLookYawRadiansPerSecond = 2.6f;
+  constexpr float kLookPitchRadiansPerSecond = 2.2f;
+
+  if (m_androidMoveAxis.y < -kAxisThreshold) {
+    ActiveCam->MoveForward(DtSecs * -m_androidMoveAxis.y);
+  } else if (m_androidMoveAxis.y > kAxisThreshold) {
+    ActiveCam->MoveBackward(DtSecs * m_androidMoveAxis.y);
+  }
+
+  if (m_androidMoveAxis.x < -kAxisThreshold) {
+    ActiveCam->StrafeLeft(DtSecs * -m_androidMoveAxis.x);
+  } else if (m_androidMoveAxis.x > kAxisThreshold) {
+    ActiveCam->StrafeRight(DtSecs * m_androidMoveAxis.x);
+  }
+
+  if (m_androidMoveUp) {
+    ActiveCam->MoveUp(DtSecs);
+  }
+  if (m_androidMoveDown) {
+    ActiveCam->MoveDown(DtSecs);
+  }
+
+  if (std::fabs(m_androidLookAxis.x) > kAxisThreshold) {
+    ActiveCam->MoveYaw(m_androidLookAxis.x * kLookYawRadiansPerSecond * DtSecs);
+  }
+  if (std::fabs(m_androidLookAxis.y) > kAxisThreshold) {
+    ActiveCam->MovePitch(m_androidLookAxis.y * kLookPitchRadiansPerSecond * DtSecs);
+  }
+}
+
+void DayScene::DrawAndroidVirtualControls(bool guiVisible) {
+  if (guiVisible || !AndroidVirtualControlsVisible()) {
+    ResetAndroidVirtualControls();
+    return;
+  }
+
+  ImGuiIO& io = ImGui::GetIO();
+  if (io.DisplaySize.x <= 0.0f || io.DisplaySize.y <= 0.0f) {
+    return;
+  }
+
+  const AndroidVirtualControlsLayout layout = BuildAndroidVirtualControlsLayout(io.DisplaySize.x, io.DisplaySize.y);
+  ImDrawList* drawList = ImGui::GetForegroundDrawList();
+  if (!drawList) {
+    return;
+  }
+
+  const ImU32 stickFill = IM_COL32(36, 44, 56, 76);
+  const ImU32 stickLine = IM_COL32(220, 230, 255, 120);
+  const ImU32 knobFill = IM_COL32(90, 170, 255, 120);
+  const ImU32 buttonFill = IM_COL32(40, 50, 65, 96);
+  const ImU32 buttonActiveFill = IM_COL32(90, 170, 255, 150);
+  const ImU32 textColor = IM_COL32(235, 245, 255, 190);
+
+  auto drawStick = [&](const ImVec2& center, const XVECTOR2& axis) {
+    drawList->AddCircleFilled(center, layout.stickRadius, stickFill, 48);
+    drawList->AddCircle(center, layout.stickRadius, stickLine, 48, 2.0f);
+    drawList->AddCircle(center, layout.stickRadius * 0.42f, IM_COL32(220, 230, 255, 42), 32, 1.0f);
+    const ImVec2 knob(center.x + axis.x * layout.stickRadius,
+                      center.y + axis.y * layout.stickRadius);
+    drawList->AddCircleFilled(knob, layout.knobRadius, knobFill, 32);
+    drawList->AddCircle(knob, layout.knobRadius, stickLine, 32, 2.0f);
+  };
+
+  drawStick(layout.moveCenter, m_androidMoveAxis);
+  drawStick(layout.lookCenter, m_androidLookAxis);
+  DrawLabeledCircle(drawList, layout.upCenter, layout.buttonRadius, "UP",
+                    m_androidMoveUp ? buttonActiveFill : buttonFill, stickLine, textColor);
+  DrawLabeledCircle(drawList, layout.downCenter, layout.buttonRadius, "DN",
+                    m_androidMoveDown ? buttonActiveFill : buttonFill, stickLine, textColor);
+}
+#endif
+
 void DayScene::DestroyAssets() {
   SceneProp.SSAOKernel.Destroy();
   m_debugText.Destroy();
+  m_physicsDebugRenderer.Destroy();
   m_wireframeSphere.Destroy();
   m_wireframeArrow.Destroy();
   PrimitiveMgr.DestroyPrimitives();
@@ -1112,6 +1505,11 @@ void DayScene::OnInput(InputManager* IManager) {
     SceneProp.ShowCullingDebug = m_showCullStats;
   }
 
+  if (IManager->PressedOnceKey(T800K_F4)) {
+    m_showPhysics = !m_showPhysics;
+    T8_LOG_INFO("[PHYSICS] Debug draw %s", m_showPhysics ? "enabled" : "disabled");
+  }
+
   if (IManager->PressedOnceKey(T800K_KP6) || IManager->PressedOnceKey(T800K_6)) {
     if (SceneProp.FrustumCullingToggleAllowed) {
       const bool requested = !SceneProp.FrustumCullingEnabled;
@@ -1151,10 +1549,21 @@ void DayScene::OnInput(InputManager* IManager) {
 
   // Skip mouse-driven camera movement when replay snapshot is active
   if (!m_dumper.IsReplayActive()) {
+#ifdef OS_ANDROID
+    if (AndroidVirtualControlsVisible()) {
+      ApplyAndroidVirtualControls();
+    } else {
+      float yaw = 0.005f*static_cast<float>(IManager->xDelta);
+      ActiveCam->MoveYaw(yaw);
+      float pitch = 0.005f*static_cast<float>(IManager->yDelta);
+      ActiveCam->MovePitch(pitch);
+    }
+#else
     float yaw = 0.005f*static_cast<float>(IManager->xDelta);
     ActiveCam->MoveYaw(yaw);
     float pitch = 0.005f*static_cast<float>(IManager->yDelta);
     ActiveCam->MovePitch(pitch);
+#endif
   }
 }
 
@@ -1250,8 +1659,49 @@ void DayScene::OnDraw() {
       ShaderKey dbgKey(0); dbgKey.setPass(PassType::FSQUAD_1_TEX); dbgKey.bits |= ShaderKey::HAS_TEXCOORD0;
       Quads[7].SetGlobalKey(dbgKey);
       Quads[7].Draw();
+#ifdef OS_ANDROID
+      if (auto* vkDriver = static_cast<VulkanDriver*>(pFramework->pVideoDriver)) {
+        vkDriver->SetLatePresentSource(selected, attachment);
+      }
+#endif
     }
   }
+
+  auto drawPhysicsDebugOverlay = [this, viewCam]() {
+    if (!m_showPhysics) {
+      return;
+    }
+
+    t850::EngineContext* engineContext = GetEngineContext();
+    if (!engineContext) engineContext = &t850::GetEngineContext();
+    if (!engineContext || !engineContext->physics || !m_physicsDebugRenderer.IsReady()) {
+      return;
+    }
+
+    Texture* depthTexture = nullptr;
+    if (GBufferPass >= 0 && GBufferPass < (int)pFramework->pVideoDriver->RTs.size()) {
+      auto* gbufRT = pFramework->pVideoDriver->RTs[GBufferPass];
+      depthTexture = gbufRT ? gbufRT->pDepthTexture : nullptr;
+    }
+
+    m_physicsDebugRenderer.SetDepthTexture(depthTexture);
+    m_physicsDebugRenderer.SetDepthTestEnabled(depthTexture != nullptr);
+    m_physicsDebugRenderer.SetViewport(g_pBaseDriver->width, g_pBaseDriver->height);
+    m_physicsDebugRenderer.SetFarPlane(viewCam ? viewCam->FPlane : 1000.0f);
+    pFramework->pVideoDriver->SetDepthStencilState(BaseDriver::NONE);
+    pFramework->pVideoDriver->SetBlendState(BaseDriver::BLEND_DEFAULT);
+    m_physicsDebugRenderer.Draw(*engineContext->physics, VP);
+  };
+
+#ifdef OS_ANDROID
+  if (m_showPhysics) {
+    if (auto* vkDriver = static_cast<VulkanDriver*>(pFramework->pVideoDriver)) {
+      vkDriver->SetPrePresentOverlayCallback(drawPhysicsDebugOverlay);
+    }
+  }
+#else
+  drawPhysicsDebugOverlay();
+#endif
 
   if (SceneProp.pCameras[0]->Eye.y > 80) {
     m_flare.Draw();
@@ -1496,6 +1946,10 @@ void  DayScene::ChangeSettingsOnPlus() {
     m_showLights = true;
     T8_LOG_VERBOSE("[CHANGE_SHOW_LIGHTS] Value[%d]", (int)m_showLights);
   }break;
+  case CHANGE_SHOW_PHYSICS: {
+    m_showPhysics = true;
+    T8_LOG_VERBOSE("[CHANGE_SHOW_PHYSICS] Value[%d]", (int)m_showPhysics);
+  }break;
   case CHANGE_LIGHT_INTENSITY: {
     if (!SceneProp.Lights.empty()) {
       float prevVal = SceneProp.Lights[0].Intensity;
@@ -1689,6 +2143,10 @@ void  DayScene::ChangeSettingsOnMinus() {
     m_showLights = false;
     T8_LOG_VERBOSE("[CHANGE_SHOW_LIGHTS] Value[%d]", (int)m_showLights);
   }break;
+  case CHANGE_SHOW_PHYSICS: {
+    m_showPhysics = false;
+    T8_LOG_VERBOSE("[CHANGE_SHOW_PHYSICS] Value[%d]", (int)m_showPhysics);
+  }break;
   case CHANGE_LIGHT_INTENSITY: {
     if (!SceneProp.Lights.empty()) {
       float prevVal = SceneProp.Lights[0].Intensity;
@@ -1796,6 +2254,9 @@ void DayScene::printCurrSelection() {
   case CHANGE_SHOW_LIGHTS: {
     T8_LOG_VERBOSE("Option[CHANGE_SHOW_LIGHTS] Value[%d]", (int)m_showLights);
   }break;
+  case CHANGE_SHOW_PHYSICS: {
+    T8_LOG_VERBOSE("Option[CHANGE_SHOW_PHYSICS] Value[%d]", (int)m_showPhysics);
+  }break;
   case CHANGE_LIGHT_INTENSITY: {
     if (!SceneProp.Lights.empty())
       T8_LOG_VERBOSE("Option[CHANGE_LIGHT_INTENSITY] Value[%f]", SceneProp.Lights[0].Intensity);
@@ -1881,6 +2342,7 @@ void DayScene::PopulateGUI(t850::GUIManager& gui) {
     {"dof_auto_focus",  CHANGE_DOF_AUTO_FOCUS},
     {"show_spline",    CHANGE_SHOW_SPLINE},
     {"show_lights",    CHANGE_SHOW_LIGHTS},
+    {"show_physics",   CHANGE_SHOW_PHYSICS},
     {"dof_toggle",     CHANGE_DOF_TOGGLE},
     {"parallax_toggle", CHANGE_PARALLAX_TOGGLE},
     {"parallax_shadow_toggle", CHANGE_PARALLAX_SHADOW_TOGGLE},
@@ -1972,6 +2434,7 @@ void DayScene::DrawDevGui(t850::DevGuiContext& gui) {
     {"dof_auto_focus", CHANGE_DOF_AUTO_FOCUS},
     {"show_spline", CHANGE_SHOW_SPLINE},
     {"show_lights", CHANGE_SHOW_LIGHTS},
+    {"show_physics", CHANGE_SHOW_PHYSICS},
     {"dof_toggle", CHANGE_DOF_TOGGLE},
     {"parallax_toggle", CHANGE_PARALLAX_TOGGLE},
     {"parallax_shadow_toggle", CHANGE_PARALLAX_SHADOW_TOGGLE},
@@ -2093,6 +2556,7 @@ void DayScene::DrawDevGui(t850::DevGuiContext& gui) {
     case CHANGE_DOF_AUTO_FOCUS: value = SceneProp.AutoFocus; return true;
     case CHANGE_SHOW_SPLINE: value = m_showSpline; return true;
     case CHANGE_SHOW_LIGHTS: value = m_showLights; return true;
+    case CHANGE_SHOW_PHYSICS: value = m_showPhysics; return true;
     case CHANGE_DOF_TOGGLE: value = (SceneProp.ToogleDOF != 0); return true;
     case CHANGE_PARALLAX_TOGGLE: value = (SceneProp.ToogleParallax != 0); return true;
     case CHANGE_PARALLAX_SHADOW_TOGGLE: value = (SceneProp.ToogleParallaxShadow != 0); return true;
@@ -2108,6 +2572,7 @@ void DayScene::DrawDevGui(t850::DevGuiContext& gui) {
     case CHANGE_DOF_AUTO_FOCUS: SceneProp.AutoFocus = value; break;
     case CHANGE_SHOW_SPLINE: m_showSpline = value; break;
     case CHANGE_SHOW_LIGHTS: m_showLights = value; break;
+    case CHANGE_SHOW_PHYSICS: m_showPhysics = value; break;
     case CHANGE_DOF_TOGGLE:
       SceneProp.ToogleDOF = value ? 1 : 0;
       m_renderGraph.SetPassEnabled("CoC", value);
@@ -2314,6 +2779,7 @@ void DayScene::SyncToGUI(t850::GUIManager& gui) {
     case CHANGE_DOF_AUTO_FOCUS: cb->checked = SceneProp.AutoFocus; break;
     case CHANGE_SHOW_SPLINE:    cb->checked = m_showSpline; break;
     case CHANGE_SHOW_LIGHTS:    cb->checked = m_showLights; break;
+    case CHANGE_SHOW_PHYSICS:   cb->checked = m_showPhysics; break;
     case CHANGE_DOF_TOGGLE:     cb->checked = (SceneProp.ToogleDOF != 0); break;
     case CHANGE_PARALLAX_TOGGLE: cb->checked = (SceneProp.ToogleParallax != 0); break;
     case CHANGE_PARALLAX_SHADOW_TOGGLE: cb->checked = (SceneProp.ToogleParallaxShadow != 0); break;
@@ -2423,6 +2889,7 @@ void DayScene::SyncFromGUI(t850::GUIManager& gui) {
     case CHANGE_DOF_AUTO_FOCUS: SceneProp.AutoFocus = cb->checked; break;
     case CHANGE_SHOW_SPLINE:    m_showSpline = cb->checked; break;
     case CHANGE_SHOW_LIGHTS:    m_showLights = cb->checked; break;
+    case CHANGE_SHOW_PHYSICS:   m_showPhysics = cb->checked; break;
     case CHANGE_DOF_TOGGLE:
       SceneProp.ToogleDOF = cb->checked ? 1 : 0;
       m_renderGraph.SetPassEnabled("CoC", cb->checked);

@@ -22,6 +22,7 @@ set "ANDROID_SDK="
 set "ABI_FILTERS=arm64-v8a"
 set "NDK_VERSION=27.2.12479018"
 set "VULKAN_VALIDATION=false"
+set "ASSET_PROFILE=physics-demo"
 
 set "HOST_CORES=%NUMBER_OF_PROCESSORS%"
 if not defined HOST_CORES set "HOST_CORES=1"
@@ -47,6 +48,7 @@ if /i "%~1"=="--config" goto arg_config
 if /i "%~1"=="--sdk" goto arg_sdk
 if /i "%~1"=="--abi" goto arg_abi
 if /i "%~1"=="--abis" goto arg_abi
+if /i "%~1"=="--asset-profile" goto arg_asset_profile
 if /i "%~1"=="--emulator" (
     set "ABI_FILTERS=x86_64"
     shift
@@ -111,6 +113,13 @@ if /i "%~1"=="Release" goto parse_args
 set "ABI_FILTERS=!ABI_FILTERS!,%~1"
 shift
 goto arg_abi_more
+
+:arg_asset_profile
+shift
+if "%~1"=="" goto usage
+set "ASSET_PROFILE=%~1"
+shift
+goto parse_args
 
 :done_args
 
@@ -191,6 +200,7 @@ echo ========================================
 echo SDK root: %ANDROID_SDK%
 echo Project : %ANDROID_PROJECT%
 echo ABIs    : %ABI_FILTERS%
+echo Assets  : %ASSET_PROFILE%
 echo Vulkan validation: %VULKAN_VALIDATION%
 echo Workers : %T850_BUILD_WORKERS% ^(cores - 1^)
 if "%CLEAN%"=="1" echo Mode    : clean rebuild
@@ -207,14 +217,14 @@ if "%CLEAN%"=="1" (
     )
 )
 
-call "%GRADLEW%" --no-daemon --console=plain --parallel --max-workers=%T850_BUILD_WORKERS% "-Pt850AndroidAbis=%ABI_FILTERS%" "-Pt850VulkanValidation=%VULKAN_VALIDATION%" "%BUILD_TASK%"
+call "%GRADLEW%" --no-daemon --console=plain --parallel --max-workers=%T850_BUILD_WORKERS% "-Pt850AndroidAbis=%ABI_FILTERS%" "-Pt850VulkanValidation=%VULKAN_VALIDATION%" "-Pt850AndroidAssetProfile=%ASSET_PROFILE%" "%BUILD_TASK%"
 if errorlevel 1 (
     popd
     exit /b 1
 )
 
 if "%INSTALL%"=="1" (
-    call "%GRADLEW%" --no-daemon --console=plain --parallel --max-workers=%T850_BUILD_WORKERS% "-Pt850AndroidAbis=%ABI_FILTERS%" "-Pt850VulkanValidation=%VULKAN_VALIDATION%" "%INSTALL_TASK%"
+    call "%GRADLEW%" --no-daemon --console=plain --parallel --max-workers=%T850_BUILD_WORKERS% "-Pt850AndroidAbis=%ABI_FILTERS%" "-Pt850VulkanValidation=%VULKAN_VALIDATION%" "-Pt850AndroidAssetProfile=%ASSET_PROFILE%" "%INSTALL_TASK%"
     if errorlevel 1 (
         popd
         exit /b 1
@@ -255,5 +265,5 @@ if errorlevel 1 (
 exit /b 0
 
 :usage
-echo Usage: Scripts\Bat\BuildAndroid.bat [Debug^|Release] [--configuration Debug^|Release] [--sdk C:\Android\Sdk] [--abi ABI[,ABI...]] [--emulator] [--vulkan-validation] [--clean] [--install] [--launch]
+echo Usage: Scripts\Bat\BuildAndroid.bat [Debug^|Release] [--configuration Debug^|Release] [--sdk C:\Android\Sdk] [--abi ABI[,ABI...]] [--asset-profile physics-demo^|full] [--emulator] [--vulkan-validation] [--clean] [--install] [--launch]
 exit /b 1

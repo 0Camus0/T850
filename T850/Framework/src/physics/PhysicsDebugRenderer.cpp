@@ -188,7 +188,8 @@ void PhysicsDebugRenderer::ReleaseGeometryBuffers() {
     m_indexBuffer->release();
     m_indexBuffer = nullptr;
   }
-  m_vertexCount = 0;
+  m_vertexCapacity = 0;
+  m_indexCapacity = 0;
   m_indexCount = 0;
 }
 
@@ -211,11 +212,13 @@ bool PhysicsDebugRenderer::UploadGeometry(const std::vector<PhysicsDebugBody>& b
   const unsigned vertexCount = static_cast<unsigned>(m_vertices.size() / 4);
   const unsigned indexCount = static_cast<unsigned>(m_indices.size());
   if (vertexCount == 0 || indexCount == 0) {
-    ReleaseGeometryBuffers();
+    m_indexCount = 0;
     return false;
   }
 
-  if (vertexCount != m_vertexCount || indexCount != m_indexCount) {
+  if (!m_vertexBuffer || !m_indexBuffer ||
+      vertexCount > m_vertexCapacity ||
+      indexCount > m_indexCapacity) {
     ReleaseGeometryBuffers();
 
     m_vertexBuffer = LineRenderer::CreatePositionVB(m_vertices.data(), vertexCount, BufferUsage::DINAMIC);
@@ -231,7 +234,8 @@ bool PhysicsDebugRenderer::UploadGeometry(const std::vector<PhysicsDebugBody>& b
       return false;
     }
 
-    m_vertexCount = vertexCount;
+    m_vertexCapacity = vertexCount;
+    m_indexCapacity = indexCount;
     m_indexCount = indexCount;
     return true;
   }
@@ -240,8 +244,11 @@ bool PhysicsDebugRenderer::UploadGeometry(const std::vector<PhysicsDebugBody>& b
     return false;
   }
 
+  m_vertices.resize(static_cast<std::size_t>(m_vertexCapacity) * 4, 0.0f);
+  m_indices.resize(m_indexCapacity, 0u);
   m_vertexBuffer->UpdateFromBuffer(*T8DeviceContext, m_vertices.data());
   m_indexBuffer->UpdateFromBuffer(*T8DeviceContext, m_indices.data());
+  m_indexCount = indexCount;
   return true;
 }
 

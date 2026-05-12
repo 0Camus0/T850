@@ -27,7 +27,8 @@ private:
   LineRenderer m_lineRenderer;
   VertexBuffer* m_vertexBuffer = nullptr;
   IndexBuffer* m_indexBuffer = nullptr;
-  unsigned m_vertexCount = 0;
+  unsigned m_vertexCapacity = 0;
+  unsigned m_indexCapacity = 0;
   unsigned m_indexCount = 0;
   Texture* m_depthTexture = nullptr;
   int m_viewWidth = 1280;

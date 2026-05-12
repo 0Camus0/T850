@@ -1678,14 +1678,8 @@ void DayScene::OnDraw() {
       return;
     }
 
-    Texture* depthTexture = nullptr;
-    if (GBufferPass >= 0 && GBufferPass < (int)pFramework->pVideoDriver->RTs.size()) {
-      auto* gbufRT = pFramework->pVideoDriver->RTs[GBufferPass];
-      depthTexture = gbufRT ? gbufRT->pDepthTexture : nullptr;
-    }
-
-    m_physicsDebugRenderer.SetDepthTexture(depthTexture);
-    m_physicsDebugRenderer.SetDepthTestEnabled(depthTexture != nullptr);
+    m_physicsDebugRenderer.SetDepthTexture(nullptr);
+    m_physicsDebugRenderer.SetDepthTestEnabled(false);
     m_physicsDebugRenderer.SetViewport(g_pBaseDriver->width, g_pBaseDriver->height);
     m_physicsDebugRenderer.SetFarPlane(viewCam ? viewCam->FPlane : 1000.0f);
     pFramework->pVideoDriver->SetDepthStencilState(BaseDriver::NONE);

@@ -24,6 +24,7 @@ def t850PhysicsDemoAssetIncludes = [
     'Models/DamagedHelmet.glb',
     'Models/SkyBox.glb',
     'Models/SponzaEsc.glb',
+    'Models/RagdollEdits/**',
     'Models/doomslayer_cine_all_animations_no-damage_double-sided-opaque.glb',
     'Models/doomslayer_cine_base_all_animations_no-damage_double-sided-opaque.glb',
     'Textures/LUT/**',

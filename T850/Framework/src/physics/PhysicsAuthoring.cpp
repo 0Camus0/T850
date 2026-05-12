@@ -79,8 +79,8 @@ XMATRIX44 MakeBodyTransform(const XVECTOR3& position, const XVECTOR3& localY) {
   XVECTOR3 reference = std::fabs(Dot(up, XVECTOR3(0.0f, 0.0f, 1.0f, 0.0f))) > 0.92f
       ? XVECTOR3(1.0f, 0.0f, 0.0f, 0.0f)
       : XVECTOR3(0.0f, 0.0f, 1.0f, 0.0f);
-  XVECTOR3 right = Normalize(Cross(reference, up));
-  XVECTOR3 forward = Normalize(Cross(up, right));
+  XVECTOR3 right = Normalize(Cross(up, reference));
+  XVECTOR3 forward = Normalize(Cross(right, up));
 
   XMATRIX44 out;
   out.m11 = right.x;   out.m12 = right.y;   out.m13 = right.z;   out.m14 = 0.0f;
@@ -125,6 +125,36 @@ XMATRIX44 BoneWorldTransform(const xF::xBone& bone, const XMATRIX44& worldFromMe
   return FlipMatrixZ(bone.Combined) * worldFromMesh;
 }
 
+float BasisLength(const XMATRIX44& matrix, int row) {
+  return Length(XVECTOR3(matrix.m[row][0], matrix.m[row][1], matrix.m[row][2], 0.0f));
+}
+
+void PreserveBasisLengths(const XMATRIX44& source, XMATRIX44& target) {
+  for (int row = 0; row < 3; ++row) {
+    const float sourceLength = BasisLength(source, row);
+    const float targetLength = BasisLength(target, row);
+    if (sourceLength <= 0.000001f || targetLength <= 0.000001f) {
+      continue;
+    }
+    const float scale = sourceLength / targetLength;
+    target.m[row][0] *= scale;
+    target.m[row][1] *= scale;
+    target.m[row][2] *= scale;
+  }
+}
+
+void NormalizeBasisRows(XMATRIX44& matrix) {
+  for (int row = 0; row < 3; ++row) {
+    const float length = BasisLength(matrix, row);
+    if (length <= 0.000001f) {
+      continue;
+    }
+    matrix.m[row][0] /= length;
+    matrix.m[row][1] /= length;
+    matrix.m[row][2] /= length;
+  }
+}
+
 bool InvertAffine(const XMATRIX44& matrix, XMATRIX44& out) {
   const float a00 = matrix.m11, a01 = matrix.m12, a02 = matrix.m13;
   const float a10 = matrix.m21, a11 = matrix.m22, a12 = matrix.m23;
@@ -163,6 +193,10 @@ bool InvertAffine(const XMATRIX44& matrix, XMATRIX44& out) {
 }
 
 const xF::xSkeleton* FindReferenceSkeleton(const RenderSkinnedMesh& mesh) {
+  const xF::xSkeleton* animatedSkeleton = mesh.GetAnimController().GetAnimSkeleton();
+  if (animatedSkeleton && !animatedSkeleton->Bones.empty()) {
+    return animatedSkeleton;
+  }
   if (mesh.xFile && !mesh.xFile->XMeshDataBase.empty() && mesh.xFile->XMeshDataBase[0]) {
     const xF::xMeshContainer* meshContainer = mesh.xFile->XMeshDataBase[0];
     if (!meshContainer->Skeleton.Bones.empty()) {
@@ -222,12 +256,20 @@ bool NameContainsAny(const std::string& name, const std::initializer_list<const 
   return false;
 }
 
-bool IsExcludedHumanoidBoneName(const std::string& lowerName) {
+bool IsDeformationHelperBoneName(const std::string& lowerName) {
+  return NameContains(lowerName, "roll") || NameContains(lowerName, "twist") || NameContains(lowerName, "_pin");
+}
+
+bool IsAttachmentBoneName(const std::string& lowerName) {
   return NameContainsAny(lowerName, {
-      "roll", "twist", "armor", "weapon", "launcher", "blade", "serration", "guard",
+      "armor", "weapon", "launcher", "blade", "serration", "guard",
       "thumb", "index", "middle", "ring", "pinky", "knuckle",
       "jaw", "tongue", "teeth", "lip", "brow", "nose", "nostril", "snarl",
       "cheek", "eye", "ear", "crease", "puff", "eyelid", "helmet"});
+}
+
+bool IsExcludedHumanoidBoneName(const std::string& lowerName) {
+  return IsDeformationHelperBoneName(lowerName) || IsAttachmentBoneName(lowerName);
 }
 
 bool IsHumanoidRagdollBoneName(const std::string& lowerName) {
@@ -258,6 +300,170 @@ bool IsEndpointHelperForBone(const std::string& parentLowerName, const std::stri
     return true;
   }
   return false;
+}
+
+bool IsSpineLikeName(const std::string& lowerName) {
+  return NameContainsAny(lowerName, {"hips", "pelvis", "spine", "chest", "neck", "head"});
+}
+
+bool IsUpperLegName(const std::string& lowerName) {
+  return NameContainsAny(lowerName, {"leg_upper", "upperleg", "upper_leg", "thigh"});
+}
+
+bool IsLowerLegName(const std::string& lowerName) {
+  return NameContainsAny(lowerName, {"leg_lower", "lowerleg", "lower_leg", "calf", "shin"});
+}
+
+bool IsFootName(const std::string& lowerName) {
+  return NameContainsAny(lowerName, {"leg_foot", "foot"});
+}
+
+bool IsUpperArmName(const std::string& lowerName) {
+  return NameContainsAny(lowerName, {"arm_upper", "upperarm", "upper_arm"});
+}
+
+bool IsLowerArmName(const std::string& lowerName) {
+  return NameContainsAny(lowerName, {"arm_lower", "lowerarm", "forearm", "lower_arm"});
+}
+
+bool IsHandName(const std::string& lowerName) {
+  return NameContains(lowerName, "hand") && !NameContains(lowerName, "weapon");
+}
+
+bool IsFingerName(const std::string& lowerName) {
+  return NameContainsAny(lowerName, {"thumb", "index", "middle", "ring", "pinky", "finger"});
+}
+
+bool IsToeName(const std::string& lowerName) {
+  return NameContainsAny(lowerName, {"ball", "toe"});
+}
+
+struct RagdollJointLimits {
+  float swingRadians = Deg2Rad(35.0f);
+  float twistRadians = Deg2Rad(15.0f);
+};
+
+RagdollJointLimits JointLimits(float swingDegrees, float twistDegrees) {
+  RagdollJointLimits limits;
+  limits.swingRadians = Deg2Rad(swingDegrees);
+  limits.twistRadians = Deg2Rad(twistDegrees);
+  return limits;
+}
+
+RagdollJointLimits InferRagdollJointLimits(const xF::xSkeleton& skeleton,
+                                           uint32_t boneIndex,
+                                           int parentBoneIndex,
+                                           int endpointBoneIndex) {
+  if (boneIndex >= skeleton.Bones.size()) {
+    return {};
+  }
+
+  const std::string boneName = LowerName(skeleton.Bones[boneIndex].Name);
+  const std::string parentName =
+      parentBoneIndex >= 0 && static_cast<std::size_t>(parentBoneIndex) < skeleton.Bones.size()
+          ? LowerName(skeleton.Bones[static_cast<std::size_t>(parentBoneIndex)].Name)
+          : std::string();
+  const std::string endpointName =
+      endpointBoneIndex >= 0 && static_cast<std::size_t>(endpointBoneIndex) < skeleton.Bones.size()
+          ? LowerName(skeleton.Bones[static_cast<std::size_t>(endpointBoneIndex)].Name)
+          : std::string();
+
+  const std::string& jointName = boneName;
+  const std::string& leafName = endpointName.empty() ? boneName : endpointName;
+
+  if (NameContains(jointName, "end") || NameContains(leafName, "end")) {
+    return JointLimits(8.0f, 4.0f);
+  }
+  if (IsDeformationHelperBoneName(jointName) || IsDeformationHelperBoneName(leafName)) {
+    return JointLimits(8.0f, 5.0f);
+  }
+  if (IsFingerName(jointName) || IsFingerName(leafName)) {
+    return JointLimits(24.0f, 8.0f);
+  }
+  if (IsToeName(jointName) || IsToeName(leafName)) {
+    return JointLimits(18.0f, 6.0f);
+  }
+  if (IsAttachmentBoneName(jointName) || IsAttachmentBoneName(leafName)) {
+    return JointLimits(6.0f, 3.0f);
+  }
+
+  if (NameContainsAny(jointName, {"hips", "pelvis"})) {
+    return JointLimits(24.0f, 12.0f);
+  }
+  if (NameContainsAny(jointName, {"spine", "chest"})) {
+    if (NameContainsAny(parentName, {"hips", "pelvis"})) {
+      return JointLimits(22.0f, 14.0f);
+    }
+    return JointLimits(16.0f, 10.0f);
+  }
+  if (NameContains(jointName, "neck")) {
+    return JointLimits(22.0f, 14.0f);
+  }
+  if (NameContains(jointName, "head")) {
+    return JointLimits(28.0f, 18.0f);
+  }
+  if (NameContains(jointName, "clavicle")) {
+    return JointLimits(35.0f, 18.0f);
+  }
+  if (IsUpperArmName(jointName)) {
+    return JointLimits(65.0f, 32.0f);
+  }
+  if (IsLowerArmName(jointName)) {
+    return JointLimits(75.0f, 8.0f);
+  }
+  if (IsHandName(jointName)) {
+    return JointLimits(35.0f, 18.0f);
+  }
+  if (IsUpperLegName(jointName)) {
+    return JointLimits(55.0f, 24.0f);
+  }
+  if (IsLowerLegName(jointName)) {
+    return JointLimits(80.0f, 8.0f);
+  }
+  if (IsFootName(jointName)) {
+    return JointLimits(35.0f, 14.0f);
+  }
+
+  return JointLimits(30.0f, 12.0f);
+}
+
+int AnatomicalChildPriority(const std::string& parentLowerName, const std::string& childLowerName) {
+  int score = 0;
+  if (IsAttachmentBoneName(childLowerName)) {
+    score -= 1000;
+  }
+  if (IsDeformationHelperBoneName(childLowerName)) {
+    score -= 300;
+  }
+
+  if (NameContainsAny(parentLowerName, {"hips", "pelvis"})) {
+    if (NameContainsAny(childLowerName, {"spine", "chest", "neck", "head"})) score += 600;
+    if (IsUpperLegName(childLowerName)) score += 200;
+  } else if (NameContainsAny(parentLowerName, {"spine", "chest"})) {
+    if (NameContainsAny(childLowerName, {"spine", "chest", "neck", "head"})) score += 600;
+    if (NameContains(childLowerName, "clavicle")) score += 150;
+  } else if (NameContains(parentLowerName, "neck")) {
+    if (NameContains(childLowerName, "head")) score += 600;
+    if (NameContains(childLowerName, "neck")) score += 300;
+  } else if (NameContains(parentLowerName, "clavicle")) {
+    if (IsUpperArmName(childLowerName)) score += 600;
+  } else if (IsUpperArmName(parentLowerName)) {
+    if (IsLowerArmName(childLowerName)) score += 600;
+  } else if (IsLowerArmName(parentLowerName)) {
+    if (IsHandName(childLowerName)) score += 600;
+  } else if (IsUpperLegName(parentLowerName)) {
+    if (IsLowerLegName(childLowerName)) score += 600;
+    if (IsFootName(childLowerName)) score += 250;
+  } else if (IsLowerLegName(parentLowerName)) {
+    if (IsFootName(childLowerName)) score += 600;
+  } else if (IsFootName(parentLowerName)) {
+    if (NameContainsAny(childLowerName, {"ball", "toe"})) score += 600;
+  }
+
+  if (IsHumanoidRagdollBoneName(childLowerName)) {
+    score += 100;
+  }
+  return score;
 }
 
 struct WeightedPoint {
@@ -355,6 +561,142 @@ int FindNearestSelectedParent(const xF::xSkeleton& skeleton, uint32_t boneIndex,
   return -1;
 }
 
+void AppendUniqueChild(std::vector<uint32_t>& out, uint32_t childIndex) {
+  if (std::find(out.begin(), out.end(), childIndex) == out.end()) {
+    out.push_back(childIndex);
+  }
+}
+
+std::vector<uint32_t> GetCombinedChildren(const xF::xSkeleton& skeleton,
+                                          uint32_t boneIndex,
+                                          const std::vector<std::vector<uint32_t>>& children) {
+  std::vector<uint32_t> result;
+  if (boneIndex >= skeleton.Bones.size()) {
+    return result;
+  }
+  for (uint32_t childIndex : skeleton.Bones[boneIndex].Sons) {
+    if (childIndex < skeleton.Bones.size()) {
+      AppendUniqueChild(result, childIndex);
+    }
+  }
+  if (boneIndex < children.size()) {
+    for (uint32_t childIndex : children[boneIndex]) {
+      if (childIndex < skeleton.Bones.size()) {
+        AppendUniqueChild(result, childIndex);
+      }
+    }
+  }
+  return result;
+}
+
+struct ChildEndpointCandidate {
+  uint32_t boneIndex = 0;
+  int score = 0;
+  float length = 0.0f;
+};
+
+void GatherHumanoidEndpointCandidates(const xF::xSkeleton& skeleton,
+                                      uint32_t ownerBoneIndex,
+                                      uint32_t searchBoneIndex,
+                                      const std::vector<std::vector<uint32_t>>& children,
+                                      const std::vector<bool>& selected,
+                                      const XMATRIX44& worldFromMesh,
+                                      const PhysicsRagdollBuildSettings& settings,
+                                      uint32_t depth,
+                                      std::vector<ChildEndpointCandidate>& outCandidates) {
+  if (ownerBoneIndex >= skeleton.Bones.size() || searchBoneIndex >= skeleton.Bones.size() || depth > 4) {
+    return;
+  }
+
+  const std::string ownerName = LowerName(skeleton.Bones[ownerBoneIndex].Name);
+  const XVECTOR3 ownerWorld = BonePosition(skeleton.Bones[ownerBoneIndex], worldFromMesh);
+  const std::vector<uint32_t> combinedChildren = GetCombinedChildren(skeleton, searchBoneIndex, children);
+  for (uint32_t childIndex : combinedChildren) {
+    const std::string childName = LowerName(skeleton.Bones[childIndex].Name);
+    if (IsAttachmentBoneName(childName)) {
+      continue;
+    }
+
+    const XVECTOR3 childWorld = BonePosition(skeleton.Bones[childIndex], worldFromMesh);
+    const float length = Length(Subtract(childWorld, ownerWorld));
+    const bool childSelected = childIndex < selected.size() && selected[childIndex];
+    const bool endpointHelper = IsEndpointHelperForBone(ownerName, childName);
+    if ((childSelected || endpointHelper) && length >= settings.minBoneLength) {
+      outCandidates.push_back({
+          childIndex,
+          AnatomicalChildPriority(ownerName, childName) - static_cast<int>(depth) * 10,
+          length});
+    }
+
+    const bool canSearchThroughChild =
+        length < settings.minBoneLength ||
+        IsDeformationHelperBoneName(childName) ||
+        (!childSelected && !endpointHelper);
+    if (canSearchThroughChild) {
+      GatherHumanoidEndpointCandidates(
+          skeleton,
+          ownerBoneIndex,
+          childIndex,
+          children,
+          selected,
+          worldFromMesh,
+          settings,
+          depth + 1,
+          outCandidates);
+    }
+  }
+}
+
+void GatherEndpointCandidates(const xF::xSkeleton& skeleton,
+                              uint32_t ownerBoneIndex,
+                              uint32_t searchBoneIndex,
+                              const std::vector<std::vector<uint32_t>>& children,
+                              const std::vector<bool>& selected,
+                              const XMATRIX44& worldFromMesh,
+                              const PhysicsRagdollBuildSettings& settings,
+                              uint32_t depth,
+                              std::vector<unsigned char>& visited,
+                              std::vector<ChildEndpointCandidate>& outCandidates) {
+  if (ownerBoneIndex >= skeleton.Bones.size() ||
+      searchBoneIndex >= skeleton.Bones.size() ||
+      depth > skeleton.Bones.size()) {
+    return;
+  }
+
+  const XVECTOR3 ownerWorld = BonePosition(skeleton.Bones[ownerBoneIndex], worldFromMesh);
+  const float endpointThreshold = settings.forceCapsuleForEveryBone ? 0.00001f : settings.minBoneLength;
+  const std::vector<uint32_t> combinedChildren = GetCombinedChildren(skeleton, searchBoneIndex, children);
+  for (uint32_t childIndex : combinedChildren) {
+    if (childIndex >= skeleton.Bones.size() ||
+        childIndex >= visited.size() ||
+        visited[childIndex]) {
+      continue;
+    }
+    visited[childIndex] = 1;
+
+    const XVECTOR3 childWorld = BonePosition(skeleton.Bones[childIndex], worldFromMesh);
+    const float length = Length(Subtract(childWorld, ownerWorld));
+    if (childIndex < selected.size() && selected[childIndex] && length > endpointThreshold) {
+      outCandidates.push_back({
+          childIndex,
+          -static_cast<int>(depth),
+          length});
+    }
+
+    GatherEndpointCandidates(
+        skeleton,
+        ownerBoneIndex,
+        childIndex,
+        children,
+        selected,
+        worldFromMesh,
+        settings,
+        depth + 1,
+        visited,
+        outCandidates);
+  }
+}
+
 int FindPrimaryChild(const xF::xSkeleton& skeleton,
                      uint32_t boneIndex,
                      const std::vector<std::vector<uint32_t>>& children,
@@ -365,73 +707,99 @@ int FindPrimaryChild(const xF::xSkeleton& skeleton,
     return -1;
   }
 
-  const xF::xBone& bone = skeleton.Bones[boneIndex];
-  for (uint32_t childIndex : bone.Sons) {
-    if (childIndex < selected.size() && selected[childIndex]) {
-      return static_cast<int>(childIndex);
-    }
-  }
-  if (boneIndex < children.size()) {
-    for (uint32_t childIndex : children[boneIndex]) {
-      if (childIndex < selected.size() && selected[childIndex]) {
-        return static_cast<int>(childIndex);
-      }
-    }
-  }
-
   if (settings.preferHumanoidBones) {
-    const std::string parentName = LowerName(bone.Name);
-    for (uint32_t childIndex : bone.Sons) {
-      if (childIndex >= skeleton.Bones.size()) {
-        continue;
-      }
-      const std::string childName = LowerName(skeleton.Bones[childIndex].Name);
-      if (IsEndpointHelperForBone(parentName, childName)) {
-        return static_cast<int>(childIndex);
-      }
-    }
-    if (boneIndex < children.size()) {
-      for (uint32_t childIndex : children[boneIndex]) {
-        if (childIndex >= skeleton.Bones.size()) {
-          continue;
+    std::vector<ChildEndpointCandidate> candidates;
+    GatherHumanoidEndpointCandidates(
+        skeleton,
+        boneIndex,
+        boneIndex,
+        children,
+        selected,
+        worldFromMesh,
+        settings,
+        0,
+        candidates);
+    if (!candidates.empty()) {
+      std::sort(candidates.begin(), candidates.end(), [](const ChildEndpointCandidate& a, const ChildEndpointCandidate& b) {
+        if (a.score != b.score) {
+          return a.score > b.score;
         }
-        const std::string childName = LowerName(skeleton.Bones[childIndex].Name);
-        if (IsEndpointHelperForBone(parentName, childName)) {
-          return static_cast<int>(childIndex);
-        }
-      }
+        return a.length > b.length;
+      });
+      return static_cast<int>(candidates.front().boneIndex);
     }
     return -1;
   }
 
-  float bestLength = 0.0f;
-  int bestChild = -1;
-  const XVECTOR3 boneWorld = BonePosition(bone, worldFromMesh);
-  for (uint32_t childIndex : bone.Sons) {
+  std::vector<ChildEndpointCandidate> candidates;
+  std::vector<unsigned char> visited(skeleton.Bones.size(), 0);
+  if (boneIndex < visited.size()) {
+    visited[boneIndex] = 1;
+  }
+  GatherEndpointCandidates(
+      skeleton,
+      boneIndex,
+      boneIndex,
+      children,
+      selected,
+      worldFromMesh,
+      settings,
+      0,
+      visited,
+      candidates);
+  if (!candidates.empty()) {
+    std::sort(candidates.begin(), candidates.end(), [](const ChildEndpointCandidate& a, const ChildEndpointCandidate& b) {
+      if (a.score != b.score) {
+        return a.score > b.score;
+      }
+      return a.length > b.length;
+    });
+    return static_cast<int>(candidates.front().boneIndex);
+  }
+  return -1;
+}
+
+XVECTOR3 FindFallbackBoneDirection(const xF::xSkeleton& skeleton,
+                                   uint32_t boneIndex,
+                                   const std::vector<std::vector<uint32_t>>& children,
+                                   const XMATRIX44& worldFromMesh) {
+  if (boneIndex >= skeleton.Bones.size()) {
+    return XVECTOR3(0.0f, 1.0f, 0.0f, 0.0f);
+  }
+
+  const XVECTOR3 boneWorld = BonePosition(skeleton.Bones[boneIndex], worldFromMesh);
+  const std::vector<uint32_t> combinedChildren = GetCombinedChildren(skeleton, boneIndex, children);
+  float bestChildLength = 0.0f;
+  XVECTOR3 bestChildDirection(0.0f, 0.0f, 0.0f, 0.0f);
+  for (uint32_t childIndex : combinedChildren) {
     if (childIndex >= skeleton.Bones.size()) {
       continue;
     }
-    const XVECTOR3 childWorld = BonePosition(skeleton.Bones[childIndex], worldFromMesh);
-    const float length = Length(Subtract(childWorld, boneWorld));
-    if (length > bestLength) {
-      bestLength = length;
-      bestChild = static_cast<int>(childIndex);
+    const XVECTOR3 childVector = Subtract(BonePosition(skeleton.Bones[childIndex], worldFromMesh), boneWorld);
+    const float childLength = Length(childVector);
+    if (childLength > bestChildLength) {
+      bestChildLength = childLength;
+      bestChildDirection = childVector;
     }
   }
-  if (boneIndex < children.size()) {
-    for (uint32_t childIndex : children[boneIndex]) {
-      if (childIndex >= skeleton.Bones.size()) {
-        continue;
-      }
-      const XVECTOR3 childWorld = BonePosition(skeleton.Bones[childIndex], worldFromMesh);
-      const float length = Length(Subtract(childWorld, boneWorld));
-      if (length > bestLength) {
-        bestLength = length;
-        bestChild = static_cast<int>(childIndex);
-      }
+  if (bestChildLength > 0.0001f) {
+    return Normalize(bestChildDirection);
+  }
+
+  const xF::xBone& bone = skeleton.Bones[boneIndex];
+  if (bone.Dad < skeleton.Bones.size() && bone.Dad != boneIndex) {
+    const XVECTOR3 parentVector = Subtract(boneWorld, BonePosition(skeleton.Bones[bone.Dad], worldFromMesh));
+    if (Length(parentVector) > 0.0001f) {
+      return Normalize(parentVector);
     }
   }
-  return bestChild;
+
+  const XMATRIX44 boneTransform = BoneWorldTransform(bone, worldFromMesh);
+  const XVECTOR3 localY(boneTransform.m21, boneTransform.m22, boneTransform.m23, 0.0f);
+  if (Length(localY) > 0.0001f) {
+    return Normalize(localY);
+  }
+  return XVECTOR3(0.0f, 1.0f, 0.0f, 0.0f);
 }
 
 bool CollectSkinnedVertexSamples(const RenderSkinnedMesh& mesh,
@@ -506,6 +874,116 @@ bool CollectSkinnedVertexSamples(const RenderSkinnedMesh& mesh,
     }
   }
   return false;
+}
+
+void AppendHelperSamplesForBone(const xF::xSkeleton& skeleton,
+                                uint32_t currentBoneIndex,
+                                const std::vector<std::vector<uint32_t>>& children,
+                                const std::vector<bool>& selected,
+                                const std::vector<std::vector<WeightedPoint>>& directSamples,
+                                std::vector<WeightedPoint>& outSamples,
+                                uint32_t depth) {
+  if (currentBoneIndex >= skeleton.Bones.size() || depth > 6) {
+    return;
+  }
+
+  const std::vector<uint32_t> combinedChildren = GetCombinedChildren(skeleton, currentBoneIndex, children);
+  for (uint32_t childIndex : combinedChildren) {
+    if (childIndex >= skeleton.Bones.size()) {
+      continue;
+    }
+    const std::string childName = LowerName(skeleton.Bones[childIndex].Name);
+    if (childIndex < selected.size() && selected[childIndex]) {
+      continue;
+    }
+    if (IsAttachmentBoneName(childName) || !IsDeformationHelperBoneName(childName)) {
+      continue;
+    }
+    if (childIndex < directSamples.size()) {
+      outSamples.insert(outSamples.end(), directSamples[childIndex].begin(), directSamples[childIndex].end());
+    }
+    AppendHelperSamplesForBone(
+        skeleton,
+        childIndex,
+        children,
+        selected,
+        directSamples,
+        outSamples,
+        depth + 1);
+  }
+}
+
+std::vector<std::vector<WeightedPoint>> BuildMergedFitSamples(const xF::xSkeleton& skeleton,
+                                                              const std::vector<std::vector<uint32_t>>& children,
+                                                              const std::vector<bool>& selected,
+                                                              const std::vector<std::vector<WeightedPoint>>& directSamples) {
+  std::vector<std::vector<WeightedPoint>> merged = directSamples;
+  for (uint32_t boneIndex = 0; boneIndex < skeleton.Bones.size() && boneIndex < selected.size(); ++boneIndex) {
+    if (!selected[boneIndex]) {
+      continue;
+    }
+    AppendHelperSamplesForBone(skeleton, boneIndex, children, selected, directSamples, merged[boneIndex], 0);
+  }
+  return merged;
+}
+
+bool IsRedundantCoLocatedHumanoidBone(const xF::xSkeleton& skeleton,
+                                      uint32_t boneIndex,
+                                      const std::vector<bool>& selected,
+                                      const XMATRIX44& worldFromMesh,
+                                      const PhysicsRagdollBuildSettings& settings) {
+  if (!settings.preferHumanoidBones || boneIndex >= skeleton.Bones.size()) {
+    return false;
+  }
+
+  const xF::xBone& bone = skeleton.Bones[boneIndex];
+  if (bone.Dad >= skeleton.Bones.size() || bone.Dad == boneIndex ||
+      bone.Dad >= selected.size() || !selected[bone.Dad]) {
+    return false;
+  }
+
+  const std::string boneName = LowerName(bone.Name);
+  const std::string parentName = LowerName(skeleton.Bones[bone.Dad].Name);
+  if (!IsSpineLikeName(boneName) || !IsSpineLikeName(parentName)) {
+    return false;
+  }
+
+  const float parentDistance = Length(Subtract(
+      BonePosition(bone, worldFromMesh),
+      BonePosition(skeleton.Bones[bone.Dad], worldFromMesh)));
+  return parentDistance < settings.minBoneLength * 0.25f;
+}
+
+int FindNearestGeneratedParent(const xF::xSkeleton& skeleton, int boneIndex, const std::vector<bool>& generated) {
+  if (boneIndex < 0 || static_cast<std::size_t>(boneIndex) >= skeleton.Bones.size()) {
+    return -1;
+  }
+
+  uint32_t current = static_cast<uint32_t>(boneIndex);
+  for (std::size_t depth = 0; depth < skeleton.Bones.size(); ++depth) {
+    const xF::xBone& bone = skeleton.Bones[current];
+    if (bone.Dad >= skeleton.Bones.size() || bone.Dad == current) {
+      return -1;
+    }
+    current = bone.Dad;
+    if (current < generated.size() && generated[current]) {
+      return static_cast<int>(current);
+    }
+  }
+  return -1;
+}
+
+void RebuildGeneratedParentLinks(const xF::xSkeleton& skeleton, PhysicsRagdollDesc& desc) {
+  std::vector<bool> generated(skeleton.Bones.size(), false);
+  for (const PhysicsRagdollBoneDesc& bone : desc.bones) {
+    if (bone.body.boneIndex >= 0 && static_cast<std::size_t>(bone.body.boneIndex) < generated.size()) {
+      generated[static_cast<std::size_t>(bone.body.boneIndex)] = true;
+    }
+  }
+
+  for (PhysicsRagdollBoneDesc& bone : desc.bones) {
+    bone.parentBoneIndex = FindNearestGeneratedParent(skeleton, bone.body.boneIndex, generated);
+  }
 }
 
 bool FitCapsuleToSamples(const std::vector<WeightedPoint>& samples,
@@ -778,18 +1256,7 @@ bool BuildRagdollDescFromSkeleton(const RenderSkinnedMesh& mesh,
                                   uint32_t entityId,
                                   const PhysicsRagdollBuildSettings& settings,
                                   PhysicsRagdollDesc& outDesc) {
-  const xF::xSkeleton* skeleton = nullptr;
-  if (mesh.xFile && !mesh.xFile->XMeshDataBase.empty() && mesh.xFile->XMeshDataBase[0]) {
-    const xF::xMeshContainer* meshContainer = mesh.xFile->XMeshDataBase[0];
-    if (!meshContainer->Skeleton.Bones.empty()) {
-      skeleton = &meshContainer->Skeleton;
-    } else if (!meshContainer->SkeletonAnimated.Bones.empty()) {
-      skeleton = &meshContainer->SkeletonAnimated;
-    }
-  }
-  if (!skeleton || skeleton->Bones.empty()) {
-    skeleton = mesh.GetAnimController().GetAnimSkeleton();
-  }
+  const xF::xSkeleton* skeleton = FindReferenceSkeleton(mesh);
   if (!skeleton || skeleton->Bones.empty()) {
     return false;
   }
@@ -809,6 +1276,10 @@ bool BuildRagdollDescFromSkeleton(const RenderSkinnedMesh& mesh,
   }
   std::vector<std::vector<WeightedPoint>> skinnedSamples;
   const bool hasSkinnedSamples = CollectSkinnedVertexSamples(mesh, worldFromMesh, skeleton->Bones.size(), settings, skinnedSamples);
+  const std::vector<std::vector<WeightedPoint>> fitSamples =
+      hasSkinnedSamples && settings.preferHumanoidBones
+          ? BuildMergedFitSamples(*skeleton, children, selectedBones, skinnedSamples)
+          : skinnedSamples;
   uint32_t sampledBoneCount = 0;
   if (hasSkinnedSamples) {
     for (const std::vector<WeightedPoint>& samples : skinnedSamples) {
@@ -819,19 +1290,47 @@ bool BuildRagdollDescFromSkeleton(const RenderSkinnedMesh& mesh,
   }
   uint32_t noEndpointCount = 0;
   uint32_t tooShortCount = 0;
+  uint32_t redundantCount = 0;
+  uint32_t syntheticCount = 0;
+  uint32_t directEdgeCount = 0;
+  float maxDirectEdgeLength = 0.0f;
+  float maxRootDistance = 0.0f;
+  const XVECTOR3 rootWorldPosition = BonePosition(skeleton->Bones[0], worldFromMesh);
+  for (uint32_t boneIndex = 0; boneIndex < skeleton->Bones.size(); ++boneIndex) {
+    const XVECTOR3 boneWorld = BonePosition(skeleton->Bones[boneIndex], worldFromMesh);
+    maxRootDistance = (std::max)(maxRootDistance, Length(Subtract(boneWorld, rootWorldPosition)));
+    const xF::xBone& bone = skeleton->Bones[boneIndex];
+    if (bone.Dad < skeleton->Bones.size() && bone.Dad != boneIndex) {
+      const float edgeLength = Length(Subtract(boneWorld, BonePosition(skeleton->Bones[bone.Dad], worldFromMesh)));
+      maxDirectEdgeLength = (std::max)(maxDirectEdgeLength, edgeLength);
+      if (edgeLength > 0.00001f) {
+        ++directEdgeCount;
+      }
+    }
+  }
 
   for (uint32_t boneIndex = 0; boneIndex < skeleton->Bones.size(); ++boneIndex) {
     if (boneIndex >= selectedBones.size() || !selectedBones[boneIndex]) {
+      continue;
+    }
+    if (!settings.forceCapsuleForEveryBone &&
+        IsRedundantCoLocatedHumanoidBone(*skeleton, boneIndex, selectedBones, worldFromMesh, settings)) {
+      ++redundantCount;
       continue;
     }
 
     const xF::xBone& bone = skeleton->Bones[boneIndex];
     const XVECTOR3 boneWorld = BonePosition(bone, worldFromMesh);
 
-    XVECTOR3 endWorld = boneWorld;
     const int parentBoneIndex = FindNearestSelectedParent(*skeleton, boneIndex, selectedBones);
-    const int primaryChildIndex = FindPrimaryChild(*skeleton, boneIndex, children, selectedBones, worldFromMesh, settings);
-    if (primaryChildIndex >= 0 && static_cast<std::size_t>(primaryChildIndex) < skeleton->Bones.size()) {
+    XVECTOR3 capsuleStartWorld = boneWorld;
+    XVECTOR3 endWorld = boneWorld;
+    XVECTOR3 jointWorldPosition = boneWorld;
+    int primaryChildIndex = -1;
+    primaryChildIndex = FindPrimaryChild(*skeleton, boneIndex, children, selectedBones, worldFromMesh, settings);
+
+    if (primaryChildIndex >= 0 &&
+        static_cast<std::size_t>(primaryChildIndex) < skeleton->Bones.size()) {
       endWorld = BonePosition(skeleton->Bones[primaryChildIndex], worldFromMesh);
     } else if (settings.includeLeafBones && parentBoneIndex >= 0) {
       const XVECTOR3 parentWorld = BonePosition(skeleton->Bones[parentBoneIndex], worldFromMesh);
@@ -842,18 +1341,33 @@ bool BuildRagdollDescFromSkeleton(const RenderSkinnedMesh& mesh,
           1.0f);
     } else {
       ++noEndpointCount;
-      continue;
+      if (!settings.forceCapsuleForEveryBone) {
+        continue;
+      }
+      const XVECTOR3 fallbackDirection = FindFallbackBoneDirection(*skeleton, boneIndex, children, worldFromMesh);
+      const float syntheticLength = (std::max)(settings.minBoneLength, settings.syntheticBoneLength);
+      endWorld = AddScaled(capsuleStartWorld, fallbackDirection, syntheticLength);
+      ++syntheticCount;
     }
 
     XVECTOR3 boneVector(
-        endWorld.x - boneWorld.x,
-        endWorld.y - boneWorld.y,
-        endWorld.z - boneWorld.z,
+        endWorld.x - capsuleStartWorld.x,
+        endWorld.y - capsuleStartWorld.y,
+        endWorld.z - capsuleStartWorld.z,
         0.0f);
     float length = Length(boneVector);
     if (length < settings.minBoneLength) {
       ++tooShortCount;
-      continue;
+      if (!settings.forceCapsuleForEveryBone) {
+        continue;
+      }
+      if (length <= 0.00001f) {
+        const XVECTOR3 fallbackDirection = FindFallbackBoneDirection(*skeleton, boneIndex, children, worldFromMesh);
+        length = (std::max)(settings.minBoneLength, settings.syntheticBoneLength);
+        boneVector = fallbackDirection * length;
+        endWorld = AddScaled(capsuleStartWorld, fallbackDirection, length);
+        ++syntheticCount;
+      }
     }
 
     XVECTOR3 direction = Normalize(boneVector);
@@ -864,13 +1378,13 @@ bool BuildRagdollDescFromSkeleton(const RenderSkinnedMesh& mesh,
         primaryChildIndex >= 0 &&
         static_cast<std::size_t>(primaryChildIndex) < selectedBones.size() &&
         selectedBones[static_cast<std::size_t>(primaryChildIndex)];
-    if (hasSkinnedSamples && boneIndex < skinnedSamples.size()) {
+    if (hasSkinnedSamples && boneIndex < fitSamples.size()) {
       float fittedStartT = startT;
       float fittedEndT = endT;
       float fittedRadius = radius;
       if (FitCapsuleToSamples(
-          skinnedSamples[boneIndex],
-          boneWorld,
+          fitSamples[boneIndex],
+          capsuleStartWorld,
           direction,
           length,
           parentBoneIndex >= 0,
@@ -884,13 +1398,17 @@ bool BuildRagdollDescFromSkeleton(const RenderSkinnedMesh& mesh,
         radius = fittedRadius;
       }
     }
+    if (settings.preferHumanoidBones) {
+      startT = 0.0f;
+      endT = length;
+    }
 
     const float capsuleLength = (std::max)(settings.minBoneLength * 0.25f, endT - startT);
-    const XVECTOR3 center = AddScaled(boneWorld, direction, (startT + endT) * 0.5f);
+    const XVECTOR3 center = AddScaled(capsuleStartWorld, direction, (startT + endT) * 0.5f);
 
     PhysicsRagdollBoneDesc boneDesc;
     boneDesc.parentBoneIndex = parentBoneIndex;
-    boneDesc.jointWorldPosition = boneWorld;
+    boneDesc.jointWorldPosition = jointWorldPosition;
     boneDesc.body.entityId = entityId;
     boneDesc.body.boneIndex = static_cast<int>(boneIndex);
     boneDesc.body.debugName = bone.Name;
@@ -902,24 +1420,84 @@ bool BuildRagdollDescFromSkeleton(const RenderSkinnedMesh& mesh,
     } else {
       boneDesc.body.shape = PhysicsShapeDesc::Box(XVECTOR3(radius, capsuleLength * 0.5f, radius, 0.0f));
     }
+    const RagdollJointLimits jointLimits =
+        InferRagdollJointLimits(*skeleton, boneIndex, parentBoneIndex, primaryChildIndex);
+    boneDesc.swingLimitRadians = jointLimits.swingRadians;
+    boneDesc.twistLimitRadians = jointLimits.twistRadians;
     outDesc.bones.push_back(boneDesc);
+  }
+  RebuildGeneratedParentLinks(*skeleton, outDesc);
+
+  uint32_t connectedEdgeCount = 0;
+  uint32_t disconnectedEdgeCount = 0;
+  uint32_t leafBodyCount = 0;
+  if (settings.forceCapsuleForEveryBone) {
+    std::vector<int> generatedParent(skeleton->Bones.size(), -2);
+    for (const PhysicsRagdollBoneDesc& boneDesc : outDesc.bones) {
+      if (boneDesc.body.boneIndex >= 0 &&
+          static_cast<std::size_t>(boneDesc.body.boneIndex) < generatedParent.size()) {
+        generatedParent[static_cast<std::size_t>(boneDesc.body.boneIndex)] = boneDesc.parentBoneIndex;
+      }
+    }
+
+    for (uint32_t boneIndex = 0; boneIndex < skeleton->Bones.size(); ++boneIndex) {
+      if (boneIndex >= selectedBones.size() || !selectedBones[boneIndex]) {
+        continue;
+      }
+      const bool hasBody = generatedParent[boneIndex] != -2;
+      const std::vector<uint32_t> boneChildren = GetCombinedChildren(*skeleton, boneIndex, children);
+      bool hasSelectedChild = false;
+      for (uint32_t childIndex : boneChildren) {
+        if (childIndex < selectedBones.size() && selectedBones[childIndex]) {
+          hasSelectedChild = true;
+          break;
+        }
+      }
+      if (!hasSelectedChild && hasBody) {
+        ++leafBodyCount;
+      }
+
+      const xF::xBone& bone = skeleton->Bones[boneIndex];
+      if (bone.Dad >= skeleton->Bones.size() ||
+          bone.Dad == boneIndex ||
+          bone.Dad >= selectedBones.size() ||
+          !selectedBones[bone.Dad]) {
+        continue;
+      }
+      if (hasBody && generatedParent[boneIndex] == static_cast<int>(bone.Dad)) {
+        ++connectedEdgeCount;
+      } else {
+        ++disconnectedEdgeCount;
+      }
+    }
   }
 
   if (outDesc.bones.empty()) {
-    T8_LOG_ERROR("[PhysicsAuthoring] Ragdoll build produced no bodies: skeletonBones=%zu selected=%u sampled=%u noEndpoint=%u tooShort=%u minBoneLength=%.3f model='%s'",
+    T8_LOG_ERROR("[PhysicsAuthoring] Ragdoll build produced no bodies: skeletonBones=%zu selected=%u sampled=%u noEndpoint=%u tooShort=%u redundant=%u synthetic=%u disconnected=%u minBoneLength=%.3f model='%s'",
                  skeleton->Bones.size(),
                  selectedCount,
                  sampledBoneCount,
                  noEndpointCount,
                  tooShortCount,
+                 redundantCount,
+                 syntheticCount,
+                 disconnectedEdgeCount,
                  settings.minBoneLength,
                  mesh.m_sourcePath.c_str());
   } else {
-    T8_LOG_INFO("[PhysicsAuthoring] Ragdoll build: bodies=%zu skeletonBones=%zu selected=%u sampled=%u model='%s'",
+    T8_LOG_INFO("[PhysicsAuthoring] Ragdoll build: bodies=%zu skeletonBones=%zu selected=%u sampled=%u redundant=%u synthetic=%u connectedEdges=%u disconnectedEdges=%u leafBodies=%u directEdges=%u maxDirect=%.6f maxRoot=%.6f model='%s'",
                 outDesc.bones.size(),
                 skeleton->Bones.size(),
                 selectedCount,
                 sampledBoneCount,
+                redundantCount,
+                syntheticCount,
+                connectedEdgeCount,
+                disconnectedEdgeCount,
+                leafBodyCount,
+                directEdgeCount,
+                maxDirectEdgeLength,
+                maxRootDistance,
                 mesh.m_sourcePath.c_str());
   }
   return !outDesc.bones.empty();
@@ -960,6 +1538,8 @@ bool BuildRagdollAnimationBinding(const RenderSkinnedMesh& mesh,
   PhysicsRagdollAnimationBinding binding;
   binding.referencePose = referencePose;
   binding.bodyFromBone.resize(referencePose.bones.size());
+  binding.controlledBoneIndices.resize(referencePose.bones.size());
+  binding.controlledBodyFromBone.resize(referencePose.bones.size());
 
   for (std::size_t i = 0; i < referencePose.bones.size(); ++i) {
     const int boneIndex = referencePose.bones[i].body.boneIndex;
@@ -973,6 +1553,8 @@ bool BuildRagdollAnimationBinding(const RenderSkinnedMesh& mesh,
       return false;
     }
     binding.bodyFromBone[i] = referencePose.bones[i].body.worldTransform * inverseBoneWorld;
+    binding.controlledBoneIndices[i].push_back(boneIndex);
+    binding.controlledBodyFromBone[i].push_back(binding.bodyFromBone[i]);
   }
 
   outBinding = std::move(binding);
@@ -1002,6 +1584,7 @@ bool BuildRagdollPoseFromAnimation(const RenderSkinnedMesh& mesh,
     const xF::xBone& bone = skeleton->Bones[boneIndex];
     const XMATRIX44 boneWorld = BoneWorldTransform(bone, worldFromMesh);
     pose.bones[i].body.worldTransform = binding.bodyFromBone[i] * boneWorld;
+    NormalizeBasisRows(pose.bones[i].body.worldTransform);
     pose.bones[i].jointWorldPosition = BonePosition(bone, worldFromMesh);
   }
 
@@ -1031,6 +1614,7 @@ bool BuildSkeletonPoseFromRagdollState(const RenderSkinnedMesh& mesh,
   outCombinedMatrices.clear();
   outBoneIndices.reserve(binding.referencePose.bones.size());
   outCombinedMatrices.reserve(binding.referencePose.bones.size());
+  std::vector<unsigned char> emitted(skeleton->Bones.size(), 0);
 
   for (std::size_t i = 0; i < binding.referencePose.bones.size(); ++i) {
     const int boneIndex = binding.referencePose.bones[i].body.boneIndex;
@@ -1049,15 +1633,40 @@ bool BuildSkeletonPoseFromRagdollState(const RenderSkinnedMesh& mesh,
       continue;
     }
 
-    XMATRIX44 boneFromBody;
-    if (!InvertAffine(binding.bodyFromBone[i], boneFromBody)) {
-      continue;
-    }
+    const bool hasControlledList =
+        i < binding.controlledBoneIndices.size() &&
+        i < binding.controlledBodyFromBone.size() &&
+        binding.controlledBoneIndices[i].size() == binding.controlledBodyFromBone[i].size();
+    const std::size_t controlledCount = hasControlledList ? binding.controlledBoneIndices[i].size() : 1u;
+    for (std::size_t controlledIndex = 0; controlledIndex < controlledCount; ++controlledIndex) {
+      const int controlledBoneIndex =
+          hasControlledList ? binding.controlledBoneIndices[i][controlledIndex] : boneIndex;
+      if (controlledBoneIndex < 0 ||
+          static_cast<std::size_t>(controlledBoneIndex) >= skeleton->Bones.size() ||
+          emitted[static_cast<std::size_t>(controlledBoneIndex)]) {
+        continue;
+      }
 
-    const XMATRIX44 boneWorld = boneFromBody * state->worldTransform;
-    const XMATRIX44 boneMesh = boneWorld * meshFromWorld;
-    outBoneIndices.push_back(boneIndex);
-    outCombinedMatrices.push_back(FlipMatrixZ(boneMesh));
+      const XMATRIX44& controlledBodyFromBone =
+          hasControlledList ? binding.controlledBodyFromBone[i][controlledIndex] : binding.bodyFromBone[i];
+      XMATRIX44 boneFromBody;
+      if (!InvertAffine(controlledBodyFromBone, boneFromBody)) {
+        continue;
+      }
+
+      const XMATRIX44 currentBoneWorld = BoneWorldTransform(skeleton->Bones[controlledBoneIndex], worldFromMesh);
+      const XMATRIX44 currentBodyWorld = controlledBodyFromBone * currentBoneWorld;
+      XMATRIX44 scaledBodyWorld = state->worldTransform;
+      PreserveBasisLengths(currentBodyWorld, scaledBodyWorld);
+
+      const XMATRIX44 boneWorld = boneFromBody * scaledBodyWorld;
+      const XMATRIX44 boneMesh = boneWorld * meshFromWorld;
+      XMATRIX44 combined = FlipMatrixZ(boneMesh);
+      PreserveBasisLengths(skeleton->Bones[controlledBoneIndex].Combined, combined);
+      emitted[static_cast<std::size_t>(controlledBoneIndex)] = 1;
+      outBoneIndices.push_back(controlledBoneIndex);
+      outCombinedMatrices.push_back(combined);
+    }
   }
 
   return !outBoneIndices.empty();

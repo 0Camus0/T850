@@ -16,6 +16,8 @@
 #include <Jolt/Physics/Body/BodyInterface.h>
 #include <Jolt/Physics/Body/MotionType.h>
 #include <Jolt/Physics/Collision/BroadPhase/BroadPhaseLayer.h>
+#include <Jolt/Physics/Collision/CollisionGroup.h>
+#include <Jolt/Physics/Collision/GroupFilterTable.h>
 #include <Jolt/Physics/Collision/ObjectLayer.h>
 #include <Jolt/Physics/Collision/Shape/MeshShape.h>
 #include <Jolt/Physics/Collision/Shape/Shape.h>
@@ -754,6 +756,7 @@ struct JoltPhysicsSystem::Impl {
     uint32_t entityId = 0;
     std::vector<PhysicsBodyHandle> bodies;
     std::vector<JPH::Ref<JPH::Constraint>> constraints;
+    JPH::Ref<JPH::GroupFilterTable> groupFilter;
     bool alive = false;
   };
 
@@ -870,11 +873,15 @@ void JoltPhysicsSystem::Update(float deltaSeconds) {
     return;
   }
 
-  constexpr int collisionSteps = 1;
+  constexpr int collisionSteps = 2;
   m_impl->physicsSystem.Update(deltaSeconds, collisionSteps, &m_impl->tempAllocator, &m_impl->jobSystem);
 }
 
 PhysicsBodyHandle JoltPhysicsSystem::CreateBody(const PhysicsBodyDesc& desc) {
+  return CreateBodyInternal(desc, nullptr);
+}
+
+PhysicsBodyHandle JoltPhysicsSystem::CreateBodyInternal(const PhysicsBodyDesc& desc, const void* collisionGroup) {
   if (!m_initialized || !m_impl) {
     return {};
   }
@@ -895,9 +902,14 @@ PhysicsBodyHandle JoltPhysicsSystem::CreateBody(const PhysicsBodyDesc& desc) {
   settings.mFriction = desc.friction;
   settings.mRestitution = desc.restitution;
   settings.mIsSensor = desc.sensor;
+  if (collisionGroup) {
+    settings.mCollisionGroup = *static_cast<const JPH::CollisionGroup*>(collisionGroup);
+  }
   if (desc.motion != PhysicsBodyMotion::Static && desc.mass > 0.0f) {
     settings.mOverrideMassProperties = JPH::EOverrideMassProperties::CalculateInertia;
     settings.mMassPropertiesOverride.mMass = desc.mass;
+    settings.mMotionQuality = JPH::EMotionQuality::LinearCast;
+    settings.mAllowSleeping = false;
   }
 
   JPH::BodyInterface& bodyInterface = m_impl->physicsSystem.GetBodyInterface();
@@ -1059,6 +1071,25 @@ bool JoltPhysicsSystem::SetBodyMotion(PhysicsBodyHandle handle, PhysicsBodyMotio
   return true;
 }
 
+bool JoltPhysicsSystem::SetBodyVelocity(PhysicsBodyHandle handle, const XVECTOR3& linearVelocity, const XVECTOR3& angularVelocity) {
+  if (!m_initialized || !m_impl) {
+    return false;
+  }
+
+  Impl::BodySlot* slot = m_impl->Resolve(handle);
+  if (!slot || slot->motion == PhysicsBodyMotion::Static) {
+    return false;
+  }
+
+  JPH::BodyInterface& bodyInterface = m_impl->physicsSystem.GetBodyInterface();
+  bodyInterface.SetLinearAndAngularVelocity(
+      slot->id,
+      JPH::Vec3(linearVelocity.x, linearVelocity.y, linearVelocity.z),
+      JPH::Vec3(angularVelocity.x, angularVelocity.y, angularVelocity.z));
+  bodyInterface.ActivateBody(slot->id);
+  return true;
+}
+
 bool JoltPhysicsSystem::DriveBodyKinematic(PhysicsBodyHandle handle, const XMATRIX44& worldTransform, float deltaSeconds) {
   if (!m_initialized || !m_impl) {
     return false;
@@ -1137,12 +1168,20 @@ PhysicsRagdollHandle JoltPhysicsSystem::CreateRagdoll(const PhysicsRagdollDesc& 
   slot.entityId = desc.entityId;
   slot.alive = true;
   slot.bodies.reserve(desc.bones.size());
+  const JPH::CollisionGroup::GroupID groupId =
+      static_cast<JPH::CollisionGroup::GroupID>(0x10000u + static_cast<uint32_t>(m_impl->ragdolls.size()));
+  slot.groupFilter = new JPH::GroupFilterTable(static_cast<JPH::uint>(desc.bones.size()));
 
-  for (const PhysicsRagdollBoneDesc& bone : desc.bones) {
+  for (std::size_t boneIndex = 0; boneIndex < desc.bones.size(); ++boneIndex) {
+    const PhysicsRagdollBoneDesc& bone = desc.bones[boneIndex];
     PhysicsBodyDesc bodyDesc = bone.body;
     bodyDesc.entityId = desc.entityId;
     bodyDesc.motion = initialMotion;
-    PhysicsBodyHandle body = CreateBody(bodyDesc);
+    JPH::CollisionGroup collisionGroup(
+        slot.groupFilter,
+        groupId,
+        static_cast<JPH::CollisionGroup::SubGroupID>(boneIndex));
+    PhysicsBodyHandle body = CreateBodyInternal(bodyDesc, &collisionGroup);
     if (body.IsValid()) {
       slot.bodies.push_back(body);
     }
@@ -1264,6 +1303,23 @@ bool JoltPhysicsSystem::SetRagdollMotion(PhysicsRagdollHandle handle, PhysicsBod
   return changed;
 }
 
+bool JoltPhysicsSystem::SetRagdollVelocity(PhysicsRagdollHandle handle, const XVECTOR3& linearVelocity, const XVECTOR3& angularVelocity) {
+  if (!m_initialized || !m_impl) {
+    return false;
+  }
+
+  Impl::RagdollSlot* slot = m_impl->Resolve(handle);
+  if (!slot) {
+    return false;
+  }
+
+  bool updated = false;
+  for (PhysicsBodyHandle body : slot->bodies) {
+    updated = SetBodyVelocity(body, linearVelocity, angularVelocity) || updated;
+  }
+  return updated;
+}
+
 bool JoltPhysicsSystem::DriveRagdollFromPose(PhysicsRagdollHandle handle, const PhysicsRagdollDesc& pose, float deltaSeconds) {
   if (!m_initialized || !m_impl) {
     return false;
@@ -1381,6 +1437,10 @@ bool JoltPhysicsSystem::SetBodyMotion(PhysicsBodyHandle, PhysicsBodyMotion) {
   return false;
 }
 
+bool JoltPhysicsSystem::SetBodyVelocity(PhysicsBodyHandle, const XVECTOR3&, const XVECTOR3&) {
+  return false;
+}
+
 bool JoltPhysicsSystem::DriveBodyKinematic(PhysicsBodyHandle, const XMATRIX44&, float) {
   return false;
 }
@@ -1402,6 +1462,10 @@ bool JoltPhysicsSystem::DestroyRagdoll(PhysicsRagdollHandle) {
 }
 
 bool JoltPhysicsSystem::SetRagdollMotion(PhysicsRagdollHandle, PhysicsBodyMotion) {
+  return false;
+}
+
+bool JoltPhysicsSystem::SetRagdollVelocity(PhysicsRagdollHandle, const XVECTOR3&, const XVECTOR3&) {
   return false;
 }
 

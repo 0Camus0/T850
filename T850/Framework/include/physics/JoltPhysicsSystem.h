@@ -26,6 +26,7 @@ public:
                                             PhysicsBodyMotion motion);
   bool DestroyBody(PhysicsBodyHandle handle);
   bool SetBodyMotion(PhysicsBodyHandle handle, PhysicsBodyMotion motion);
+  bool SetBodyVelocity(PhysicsBodyHandle handle, const XVECTOR3& linearVelocity, const XVECTOR3& angularVelocity);
   bool DriveBodyKinematic(PhysicsBodyHandle handle, const XMATRIX44& worldTransform, float deltaSeconds);
   bool SetBodyTransform(PhysicsBodyHandle handle, const XMATRIX44& worldTransform, bool activate);
   bool GetBodyState(PhysicsBodyHandle handle, PhysicsBodyState& outState) const;
@@ -33,6 +34,7 @@ public:
   PhysicsRagdollHandle CreateRagdoll(const PhysicsRagdollDesc& desc, PhysicsBodyMotion initialMotion);
   bool DestroyRagdoll(PhysicsRagdollHandle handle);
   bool SetRagdollMotion(PhysicsRagdollHandle handle, PhysicsBodyMotion motion);
+  bool SetRagdollVelocity(PhysicsRagdollHandle handle, const XVECTOR3& linearVelocity, const XVECTOR3& angularVelocity);
   bool DriveRagdollFromPose(PhysicsRagdollHandle handle, const PhysicsRagdollDesc& pose, float deltaSeconds);
   bool GetRagdollState(PhysicsRagdollHandle handle, std::vector<PhysicsBodyState>& outStates) const;
   bool GetDebugBodies(std::vector<PhysicsDebugBody>& outBodies) const;
@@ -42,6 +44,8 @@ public:
 
 private:
   struct Impl;
+
+  PhysicsBodyHandle CreateBodyInternal(const PhysicsBodyDesc& desc, const void* collisionGroup);
 
   Impl* m_impl;
   bool m_initialized;

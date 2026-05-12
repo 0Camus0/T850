@@ -11,17 +11,27 @@
 #include <core/Config.h>
 #include <core/EngineContext.h>
 #include <physics/PhysicsAuthoring.h>
+#include <utils/Picking.h>
+#include <utils/ResourceLocator.h>
 #ifdef OS_ANDROID
 #include <video/vulkan/VulkanDriver.h>
 #endif
 #include <imgui/DevGuiContext.h>
+#include <array>
 #include <iostream>
 #include <fstream>
+#include <filesystem>
+#include <iomanip>
 #include <string>
 #include <cmath>
 #include <vector>
 #include <algorithm>
 #include <cctype>
+#include <cstdlib>
+#include <cstdio>
+#include <utility>
+#include <functional>
+#include <initializer_list>
 
 using namespace t850;
 using std::string;
@@ -31,6 +41,105 @@ namespace t850 {
 }
 
 namespace {
+  bool InvertAffineNoExit(const XMATRIX44& matrix, XMATRIX44& out) {
+    for (int i = 0; i < 16; ++i) {
+      if (!std::isfinite(matrix.mat[i])) {
+        return false;
+      }
+    }
+
+    const float a00 = matrix.m11, a01 = matrix.m12, a02 = matrix.m13;
+    const float a10 = matrix.m21, a11 = matrix.m22, a12 = matrix.m23;
+    const float a20 = matrix.m31, a21 = matrix.m32, a22 = matrix.m33;
+
+    const float det =
+        a00 * (a11 * a22 - a12 * a21) -
+        a01 * (a10 * a22 - a12 * a20) +
+        a02 * (a10 * a21 - a11 * a20);
+    if (!std::isfinite(det) || std::fabs(det) <= 0.000001f) {
+      return false;
+    }
+
+    const float invDet = 1.0f / det;
+    out.m11 =  (a11 * a22 - a12 * a21) * invDet;
+    out.m12 =  (a02 * a21 - a01 * a22) * invDet;
+    out.m13 =  (a01 * a12 - a02 * a11) * invDet;
+    out.m14 = 0.0f;
+    out.m21 =  (a12 * a20 - a10 * a22) * invDet;
+    out.m22 =  (a00 * a22 - a02 * a20) * invDet;
+    out.m23 =  (a02 * a10 - a00 * a12) * invDet;
+    out.m24 = 0.0f;
+    out.m31 =  (a10 * a21 - a11 * a20) * invDet;
+    out.m32 =  (a01 * a20 - a00 * a21) * invDet;
+    out.m33 =  (a00 * a11 - a01 * a10) * invDet;
+    out.m34 = 0.0f;
+
+    const float tx = matrix.m41;
+    const float ty = matrix.m42;
+    const float tz = matrix.m43;
+    out.m41 = -(tx * out.m11 + ty * out.m21 + tz * out.m31);
+    out.m42 = -(tx * out.m12 + ty * out.m22 + tz * out.m32);
+    out.m43 = -(tx * out.m13 + ty * out.m23 + tz * out.m33);
+    out.m44 = 1.0f;
+    return true;
+  }
+
+  std::filesystem::path ResolveRagdollEditWritePath(const std::string& resourcePath) {
+    std::filesystem::path requested(resourcePath);
+    if (requested.is_absolute()) {
+      return requested;
+    }
+
+    const std::string normalized = t850::ResourceLocator::NormalizePath(resourcePath);
+#ifdef OS_ANDROID
+    return t850::ResourceLocator::Instance().ResolveCachePath(normalized);
+#else
+    t850::ResourceLocator& locator = t850::ResourceLocator::Instance();
+    std::error_code ec;
+    const std::filesystem::path existingPath = locator.ResolveFilePath(normalized);
+    if (std::filesystem::is_regular_file(existingPath, ec)) {
+      return existingPath;
+    }
+
+    auto canCreateNear = [](const std::filesystem::path& candidate) {
+      const std::filesystem::path parent = candidate.parent_path();
+      if (parent.empty()) {
+        return false;
+      }
+      std::error_code existsEc;
+      if (std::filesystem::exists(parent, existsEc)) {
+        return true;
+      }
+      const std::filesystem::path parentParent = parent.parent_path();
+      return !parentParent.empty() && std::filesystem::exists(parentParent, existsEc);
+    };
+
+    std::vector<std::filesystem::path> bases;
+    if (!locator.GetBasePath().empty()) {
+      bases.push_back(locator.GetBasePath());
+    }
+    const std::filesystem::path cwd = std::filesystem::current_path(ec);
+    if (!ec) {
+      bases.push_back(cwd);
+    }
+
+    const std::filesystem::path relative(normalized);
+    for (const std::filesystem::path& base : bases) {
+      const std::array<std::filesystem::path, 3> candidates = {
+          base / relative,
+          base / "Assets" / relative,
+          base / "T850" / "Assets" / relative};
+      for (const std::filesystem::path& candidate : candidates) {
+        if (canCreateNear(candidate)) {
+          return candidate;
+        }
+      }
+    }
+
+    return relative;
+#endif
+  }
+
   t850::Mat4Json MatrixToSnapshotJson(const XMATRIX44& mat) {
     t850::Mat4Json j;
     for (int r = 0; r < 4; r++)
@@ -179,6 +288,707 @@ namespace {
         1.0f);
   }
 
+  XVECTOR3 TransformVectorNoTranslation(const XVECTOR3& vector, const XMATRIX44& matrix) {
+    return XVECTOR3(
+        vector.x * matrix.m11 + vector.y * matrix.m21 + vector.z * matrix.m31,
+        vector.x * matrix.m12 + vector.y * matrix.m22 + vector.z * matrix.m32,
+        vector.x * matrix.m13 + vector.y * matrix.m23 + vector.z * matrix.m33,
+        0.0f);
+  }
+
+  float Dot3(const XVECTOR3& lhs, const XVECTOR3& rhs) {
+    return lhs.x * rhs.x + lhs.y * rhs.y + lhs.z * rhs.z;
+  }
+
+  float Length3(const XVECTOR3& vector) {
+    return std::sqrt((std::max)(0.0f, Dot3(vector, vector)));
+  }
+
+  XVECTOR3 Cross3(const XVECTOR3& lhs, const XVECTOR3& rhs) {
+    return XVECTOR3(
+        lhs.y * rhs.z - lhs.z * rhs.y,
+        lhs.z * rhs.x - lhs.x * rhs.z,
+        lhs.x * rhs.y - lhs.y * rhs.x,
+        0.0f);
+  }
+
+  XVECTOR3 Normalize3(const XVECTOR3& vector, const XVECTOR3& fallback = XVECTOR3(0.0f, 1.0f, 0.0f, 0.0f)) {
+    const float length = Length3(vector);
+    if (length <= 0.000001f) {
+      return fallback;
+    }
+    return XVECTOR3(vector.x / length, vector.y / length, vector.z / length, 0.0f);
+  }
+
+  std::string LowerName(const std::string& name) {
+    std::string out;
+    out.reserve(name.size());
+    for (unsigned char c : name) {
+      out.push_back(static_cast<char>(std::tolower(c)));
+    }
+    return out;
+  }
+
+  bool NameContains(const std::string& name, const char* token) {
+    return name.find(token) != std::string::npos;
+  }
+
+  bool NameContainsAny(const std::string& name, std::initializer_list<const char*> tokens) {
+    for (const char* token : tokens) {
+      if (NameContains(name, token)) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  bool IsDeformationHelperBoneName(const std::string& lowerName) {
+    return NameContains(lowerName, "roll") || NameContains(lowerName, "twist") || NameContains(lowerName, "_pin");
+  }
+
+  bool IsAttachmentBoneName(const std::string& lowerName) {
+    return NameContainsAny(lowerName, {
+        "armor", "weapon", "launcher", "blade", "serration", "guard",
+        "thumb", "index", "middle", "ring", "pinky", "knuckle",
+        "jaw", "tongue", "teeth", "lip", "brow", "nose", "nostril", "snarl",
+        "cheek", "eye", "ear", "crease", "puff", "eyelid", "helmet"});
+  }
+
+  bool IsHumanoidDisplayBoneName(const std::string& lowerName) {
+    if (lowerName.empty() || IsDeformationHelperBoneName(lowerName) || IsAttachmentBoneName(lowerName)) {
+      return false;
+    }
+    if (NameContainsAny(lowerName, {"hips", "pelvis", "spine", "chest", "neck", "head", "clavicle"})) return true;
+    if (NameContainsAny(lowerName, {"arm_upper", "upperarm", "upper_arm", "arm_lower", "lowerarm", "forearm", "lower_arm", "arm_hand"})) return true;
+    if (NameContains(lowerName, "hand") && !NameContains(lowerName, "weapon")) return true;
+    if (NameContainsAny(lowerName, {"leg_upper", "upperleg", "upper_leg", "thigh", "leg_lower", "lowerleg", "lower_leg", "calf", "shin", "leg_foot"})) return true;
+    return NameContains(lowerName, "foot");
+  }
+
+  bool IsEndpointHelperForBone(const std::string& parentLowerName, const std::string& childLowerName) {
+    if (NameContains(childLowerName, "end")) return true;
+    if (NameContains(parentLowerName, "foot") && NameContainsAny(childLowerName, {"ball", "toe"})) return true;
+    return false;
+  }
+
+  bool IsSpineLikeDisplayName(const std::string& lowerName) {
+    return NameContainsAny(lowerName, {"hips", "pelvis", "spine", "chest", "neck", "head"});
+  }
+
+  bool IsUpperLegName(const std::string& lowerName) {
+    return NameContainsAny(lowerName, {"leg_upper", "upperleg", "upper_leg", "thigh"});
+  }
+
+  bool IsLowerLegName(const std::string& lowerName) {
+    return NameContainsAny(lowerName, {"leg_lower", "lowerleg", "lower_leg", "calf", "shin"});
+  }
+
+  bool IsFootName(const std::string& lowerName) {
+    return NameContainsAny(lowerName, {"leg_foot", "foot"});
+  }
+
+  bool IsUpperArmName(const std::string& lowerName) {
+    return NameContainsAny(lowerName, {"arm_upper", "upperarm", "upper_arm"});
+  }
+
+  bool IsLowerArmName(const std::string& lowerName) {
+    return NameContainsAny(lowerName, {"arm_lower", "lowerarm", "forearm", "lower_arm"});
+  }
+
+  bool IsHandName(const std::string& lowerName) {
+    return NameContains(lowerName, "hand") && !NameContains(lowerName, "weapon");
+  }
+
+  int DisplayChildPriority(const std::string& parentLowerName, const std::string& childLowerName) {
+    int score = 0;
+    if (IsAttachmentBoneName(childLowerName)) score -= 1000;
+    if (IsDeformationHelperBoneName(childLowerName)) score -= 300;
+    if (NameContainsAny(parentLowerName, {"hips", "pelvis"})) {
+      if (NameContainsAny(childLowerName, {"spine", "chest", "neck", "head"})) score += 600;
+      if (IsUpperLegName(childLowerName)) score += 200;
+    } else if (NameContainsAny(parentLowerName, {"spine", "chest"})) {
+      if (NameContainsAny(childLowerName, {"spine", "chest", "neck", "head"})) score += 600;
+      if (NameContains(childLowerName, "clavicle")) score += 150;
+    } else if (NameContains(parentLowerName, "neck")) {
+      if (NameContains(childLowerName, "head")) score += 600;
+    } else if (NameContains(parentLowerName, "clavicle")) {
+      if (IsUpperArmName(childLowerName)) score += 600;
+    } else if (IsUpperArmName(parentLowerName)) {
+      if (IsLowerArmName(childLowerName)) score += 600;
+    } else if (IsLowerArmName(parentLowerName)) {
+      if (IsHandName(childLowerName)) score += 600;
+    } else if (IsUpperLegName(parentLowerName)) {
+      if (IsLowerLegName(childLowerName)) score += 600;
+    } else if (IsLowerLegName(parentLowerName)) {
+      if (IsFootName(childLowerName)) score += 600;
+    } else if (IsFootName(parentLowerName)) {
+      if (NameContainsAny(childLowerName, {"ball", "toe"})) score += 600;
+    }
+    if (IsHumanoidDisplayBoneName(childLowerName)) score += 100;
+    return score;
+  }
+
+  XMATRIX44 FlipMatrixZ(const XMATRIX44& matrix) {
+    XMATRIX44 out = matrix;
+    for (int i = 0; i < 4; ++i) {
+      out.m[2][i] = -out.m[2][i];
+      out.m[i][2] = -out.m[i][2];
+    }
+    out.m[2][2] = matrix.m[2][2];
+    return out;
+  }
+
+  XMATRIX44 MakeCapsuleBodyTransform(const XVECTOR3& position, const XVECTOR3& localY) {
+    const XVECTOR3 up = Normalize3(localY);
+    const XVECTOR3 reference = std::fabs(Dot3(up, XVECTOR3(0.0f, 0.0f, 1.0f, 0.0f))) > 0.92f
+        ? XVECTOR3(1.0f, 0.0f, 0.0f, 0.0f)
+        : XVECTOR3(0.0f, 0.0f, 1.0f, 0.0f);
+    const XVECTOR3 right = Normalize3(Cross3(up, reference), XVECTOR3(1.0f, 0.0f, 0.0f, 0.0f));
+    const XVECTOR3 forward = Normalize3(Cross3(right, up), XVECTOR3(0.0f, 0.0f, 1.0f, 0.0f));
+
+    XMATRIX44 out;
+    out.m11 = right.x;   out.m12 = right.y;   out.m13 = right.z;   out.m14 = 0.0f;
+    out.m21 = up.x;      out.m22 = up.y;      out.m23 = up.z;      out.m24 = 0.0f;
+    out.m31 = forward.x; out.m32 = forward.y; out.m33 = forward.z; out.m34 = 0.0f;
+    out.m41 = position.x; out.m42 = position.y; out.m43 = position.z; out.m44 = 1.0f;
+    return out;
+  }
+
+  void BuildOctahedralBonePoints(const XVECTOR3& root,
+                                 const XVECTOR3& tip,
+                                 float widthScale,
+                                 float minWidth,
+                                 std::array<XVECTOR3, 6>& outPoints) {
+    XVECTOR3 axis = tip - root;
+    float length = Length3(axis);
+    if (length <= 0.0001f) {
+      axis = XVECTOR3(0.0f, 1.0f, 0.0f, 0.0f);
+      length = 0.02f;
+    } else {
+      axis = axis / length;
+    }
+
+    const XVECTOR3 ref = std::fabs(axis.y) < 0.85f
+        ? XVECTOR3(0.0f, 1.0f, 0.0f, 0.0f)
+        : XVECTOR3(1.0f, 0.0f, 0.0f, 0.0f);
+    const XVECTOR3 sideA = Normalize3(Cross3(ref, axis), XVECTOR3(1.0f, 0.0f, 0.0f, 0.0f));
+    const XVECTOR3 sideB = Normalize3(Cross3(axis, sideA), XVECTOR3(0.0f, 0.0f, 1.0f, 0.0f));
+    const XVECTOR3 center = root + axis * (length * 0.38f);
+    const float width = (std::max)(minWidth, length * widthScale);
+
+    outPoints[0] = root;
+    outPoints[1] = tip;
+    outPoints[2] = center + sideA * width;
+    outPoints[3] = center - sideA * width;
+    outPoints[4] = center + sideB * width;
+    outPoints[5] = center - sideB * width;
+  }
+
+  float MatrixMaxAbsDiff(const XMATRIX44& a, const XMATRIX44& b) {
+    float maxDiff = 0.0f;
+    for (int r = 0; r < 4; ++r)
+      for (int c = 0; c < 4; ++c)
+        maxDiff = (std::max)(maxDiff, std::fabs(a.m[r][c] - b.m[r][c]));
+    return maxDiff;
+  }
+
+  float MatrixTranslationDistance(const XMATRIX44& a, const XMATRIX44& b) {
+    const float dx = a.m41 - b.m41;
+    const float dy = a.m42 - b.m42;
+    const float dz = a.m43 - b.m43;
+    return std::sqrt(dx * dx + dy * dy + dz * dz);
+  }
+
+  void WriteMatrixCsv(std::ofstream& file, const XMATRIX44& matrix) {
+    for (int r = 0; r < 4; ++r) {
+      for (int c = 0; c < 4; ++c) {
+        file << ',' << matrix.m[r][c];
+      }
+    }
+  }
+
+  const char* BoneNameOrEmpty(const xF::xSkeleton* skeleton, int boneIndex) {
+    if (!skeleton || boneIndex < 0 || boneIndex >= static_cast<int>(skeleton->Bones.size())) {
+      return "";
+    }
+    return skeleton->Bones[boneIndex].Name.c_str();
+  }
+
+  struct SkeletonEditBoneJson {
+    int index = -1;
+    std::string name;
+    std::array<float, 16> combined{};
+  };
+
+  struct SkeletonEditJson {
+    std::string model;
+    std::vector<SkeletonEditBoneJson> bones;
+  };
+
+  struct RagdollEditCapsuleJson {
+    int index = -1;
+    int boneIndex = -1;
+    std::string name;
+    int parentCapsule = -1;
+    std::array<float, 16> bodyFromBone{};
+    float radius = 0.0f;
+    float halfHeight = 0.0f;
+    float swingLimitRadians = 0.0f;
+    float twistLimitRadians = 0.0f;
+    std::vector<int> controlledBones;
+  };
+
+  struct RagdollEditJson {
+    int schema = 1;
+    std::string model;
+    std::vector<RagdollEditCapsuleJson> capsules;
+  };
+
+  std::string JsonEscape(const std::string& value) {
+    std::string out;
+    out.reserve(value.size());
+    for (char ch : value) {
+      if (ch == '\\' || ch == '"') {
+        out.push_back('\\');
+      }
+      out.push_back(ch);
+    }
+    return out;
+  }
+
+  bool ParseJsonStringAt(const std::string& json, std::size_t keyPos, std::string& out) {
+    const std::size_t colon = json.find(':', keyPos);
+    if (colon == std::string::npos) return false;
+    std::size_t quote = json.find('"', colon + 1);
+    if (quote == std::string::npos) return false;
+    ++quote;
+    out.clear();
+    bool escaped = false;
+    for (std::size_t i = quote; i < json.size(); ++i) {
+      const char ch = json[i];
+      if (escaped) {
+        out.push_back(ch);
+        escaped = false;
+      } else if (ch == '\\') {
+        escaped = true;
+      } else if (ch == '"') {
+        return true;
+      } else {
+        out.push_back(ch);
+      }
+    }
+    return false;
+  }
+
+  bool ParseJsonIntAt(const std::string& json, std::size_t keyPos, int& out) {
+    const std::size_t colon = json.find(':', keyPos);
+    if (colon == std::string::npos) return false;
+    char* end = nullptr;
+    const long value = std::strtol(json.c_str() + colon + 1, &end, 10);
+    if (end == json.c_str() + colon + 1) return false;
+    out = static_cast<int>(value);
+    return true;
+  }
+
+  bool ParseJsonFloatAt(const std::string& json, std::size_t keyPos, float& out) {
+    const std::size_t colon = json.find(':', keyPos);
+    if (colon == std::string::npos) return false;
+    char* end = nullptr;
+    const float value = std::strtof(json.c_str() + colon + 1, &end);
+    if (end == json.c_str() + colon + 1) return false;
+    out = value;
+    return true;
+  }
+
+  bool ParseFloatArray16At(const std::string& json, std::size_t keyPos, std::array<float, 16>& out) {
+    const std::size_t start = json.find('[', keyPos);
+    if (start == std::string::npos) return false;
+    const char* cursor = json.c_str() + start + 1;
+    char* end = nullptr;
+    for (std::size_t i = 0; i < out.size(); ++i) {
+      while (*cursor == ' ' || *cursor == '\t' || *cursor == '\r' || *cursor == '\n' || *cursor == ',') ++cursor;
+      out[i] = std::strtof(cursor, &end);
+      if (end == cursor) return false;
+      cursor = end;
+    }
+    return true;
+  }
+
+  bool ParseIntArrayAt(const std::string& json, std::size_t keyPos, std::vector<int>& out) {
+    out.clear();
+    const std::size_t start = json.find('[', keyPos);
+    if (start == std::string::npos) return false;
+    const std::size_t endArray = json.find(']', start + 1);
+    if (endArray == std::string::npos) return false;
+
+    const char* cursor = json.c_str() + start + 1;
+    const char* endCursor = json.c_str() + endArray;
+    while (cursor < endCursor) {
+      while (cursor < endCursor && (*cursor == ' ' || *cursor == '\t' || *cursor == '\r' || *cursor == '\n' || *cursor == ',')) {
+        ++cursor;
+      }
+      if (cursor >= endCursor) break;
+      char* parsedEnd = nullptr;
+      const long value = std::strtol(cursor, &parsedEnd, 10);
+      if (parsedEnd == cursor) return false;
+      out.push_back(static_cast<int>(value));
+      cursor = parsedEnd;
+    }
+    return true;
+  }
+
+  bool ParseSkeletonEditJson(const std::string& json, SkeletonEditJson& out) {
+    out = SkeletonEditJson{};
+    if (const std::size_t modelKey = json.find("\"model\""); modelKey != std::string::npos) {
+      ParseJsonStringAt(json, modelKey, out.model);
+    }
+
+    std::size_t pos = json.find("\"bones\"");
+    if (pos == std::string::npos) return true;
+    while ((pos = json.find("\"index\"", pos)) != std::string::npos) {
+      SkeletonEditBoneJson bone;
+      const std::size_t colon = json.find(':', pos);
+      if (colon == std::string::npos) break;
+      bone.index = std::atoi(json.c_str() + colon + 1);
+
+      const std::size_t nameKey = json.find("\"name\"", colon);
+      const std::size_t combinedKey = json.find("\"combined\"", colon);
+      if (nameKey == std::string::npos || combinedKey == std::string::npos) break;
+      ParseJsonStringAt(json, nameKey, bone.name);
+      if (!ParseFloatArray16At(json, combinedKey, bone.combined)) break;
+      out.bones.push_back(std::move(bone));
+      pos = combinedKey + 10;
+    }
+    return true;
+  }
+
+  bool ParseRagdollEditJson(const std::string& json, RagdollEditJson& out) {
+    out = RagdollEditJson{};
+    if (const std::size_t schemaKey = json.find("\"schema\""); schemaKey != std::string::npos) {
+      ParseJsonIntAt(json, schemaKey, out.schema);
+    }
+    if (const std::size_t modelKey = json.find("\"model\""); modelKey != std::string::npos) {
+      ParseJsonStringAt(json, modelKey, out.model);
+    }
+
+    std::size_t pos = json.find("\"capsules\"");
+    if (pos == std::string::npos) return true;
+    while ((pos = json.find("\"index\"", pos)) != std::string::npos) {
+      RagdollEditCapsuleJson capsule;
+      if (!ParseJsonIntAt(json, pos, capsule.index)) break;
+
+      const std::size_t boneIndexKey = json.find("\"bone_index\"", pos);
+      const std::size_t nameKey = json.find("\"name\"", pos);
+      const std::size_t parentKey = json.find("\"parent_capsule\"", pos);
+      const std::size_t matrixKey = json.find("\"body_from_bone\"", pos);
+      const std::size_t radiusKey = json.find("\"radius\"", pos);
+      const std::size_t halfHeightKey = json.find("\"half_height\"", pos);
+      const std::size_t swingKey = json.find("\"swing_limit\"", pos);
+      const std::size_t twistKey = json.find("\"twist_limit\"", pos);
+      const std::size_t controlledKey = json.find("\"controlled_bones\"", pos);
+      const std::size_t objectEnd = json.find('}', pos);
+      if (boneIndexKey == std::string::npos || nameKey == std::string::npos ||
+          matrixKey == std::string::npos || radiusKey == std::string::npos ||
+          halfHeightKey == std::string::npos || swingKey == std::string::npos ||
+          twistKey == std::string::npos) {
+        break;
+      }
+
+      ParseJsonIntAt(json, boneIndexKey, capsule.boneIndex);
+      ParseJsonStringAt(json, nameKey, capsule.name);
+      if (parentKey != std::string::npos && parentKey < objectEnd) {
+        ParseJsonIntAt(json, parentKey, capsule.parentCapsule);
+      }
+      if (!ParseFloatArray16At(json, matrixKey, capsule.bodyFromBone)) break;
+      if (!ParseJsonFloatAt(json, radiusKey, capsule.radius)) break;
+      if (!ParseJsonFloatAt(json, halfHeightKey, capsule.halfHeight)) break;
+      if (!ParseJsonFloatAt(json, swingKey, capsule.swingLimitRadians)) break;
+      if (!ParseJsonFloatAt(json, twistKey, capsule.twistLimitRadians)) break;
+      if (controlledKey != std::string::npos && controlledKey < objectEnd) {
+        ParseIntArrayAt(json, controlledKey, capsule.controlledBones);
+      }
+      out.capsules.push_back(std::move(capsule));
+      pos = twistKey + 13;
+    }
+    return true;
+  }
+
+  std::array<float, 16> MatrixToArray16(const XMATRIX44& matrix) {
+    std::array<float, 16> out{};
+    for (int r = 0; r < 4; ++r)
+      for (int c = 0; c < 4; ++c)
+        out[static_cast<std::size_t>(r * 4 + c)] = matrix.m[r][c];
+    return out;
+  }
+
+  XMATRIX44 MatrixFromArray16(const std::array<float, 16>& values) {
+    XMATRIX44 out;
+    for (int r = 0; r < 4; ++r)
+      for (int c = 0; c < 4; ++c)
+        out.m[r][c] = values[static_cast<std::size_t>(r * 4 + c)];
+    return out;
+  }
+
+  std::array<float, 3> MatrixTranslation(const XMATRIX44& matrix) {
+    return {matrix.m41, matrix.m42, matrix.m43};
+  }
+
+  std::array<float, 3> MatrixEulerDegreesXYZ(const XMATRIX44& matrix) {
+    const float y = std::asin((std::max)(-1.0f, (std::min)(1.0f, -matrix.m13)));
+    const float cy = std::cos(y);
+    float x = 0.0f;
+    float z = 0.0f;
+    if (std::fabs(cy) > 0.00001f) {
+      x = std::atan2(matrix.m23, matrix.m33);
+      z = std::atan2(matrix.m12, matrix.m11);
+    } else {
+      x = std::atan2(-matrix.m32, matrix.m22);
+    }
+    return {Rad2Deg(x), Rad2Deg(y), Rad2Deg(z)};
+  }
+
+  XMATRIX44 MatrixFromTranslationEulerDegreesXYZ(const std::array<float, 3>& translation,
+                                                 const std::array<float, 3>& eulerDegrees) {
+    XMATRIX44 rx, ry, rz;
+    XMatIdentity(rx);
+    XMatIdentity(ry);
+    XMatIdentity(rz);
+    XMatRotationX(rx, Deg2Rad(eulerDegrees[0]));
+    XMatRotationY(ry, Deg2Rad(eulerDegrees[1]));
+    XMatRotationZ(rz, Deg2Rad(eulerDegrees[2]));
+    XMATRIX44 matrix = rx * ry * rz;
+    matrix.m41 = translation[0];
+    matrix.m42 = translation[1];
+    matrix.m43 = translation[2];
+    matrix.m44 = 1.0f;
+    return matrix;
+  }
+
+  const char* RagdollCapsuleHandleName(int handleIndex) {
+    switch (handleIndex) {
+    case 0: return "center";
+    case 1: return "top length";
+    case 2: return "bottom length";
+    case 3: return "+X radius";
+    case 4: return "-X radius";
+    case 5: return "+Z radius";
+    case 6: return "-Z radius";
+    default: return "none";
+    }
+  }
+
+  std::string FileSafeModelKey(std::string key) {
+    if (key.empty()) key = "model";
+    for (char& ch : key) {
+      const bool ok = (ch >= 'a' && ch <= 'z') || (ch >= 'A' && ch <= 'Z') ||
+                      (ch >= '0' && ch <= '9') || ch == '_' || ch == '-' || ch == '.';
+      if (!ok) ch = '_';
+    }
+    return key;
+  }
+
+  ImVec2 ProjectWorldToScreen(const XVECTOR3& point, const XMATRIX44& vp, int width, int height, bool& visible) {
+    const float cx = point.x * vp.m11 + point.y * vp.m21 + point.z * vp.m31 + vp.m41;
+    const float cy = point.x * vp.m12 + point.y * vp.m22 + point.z * vp.m32 + vp.m42;
+    const float cw = point.x * vp.m14 + point.y * vp.m24 + point.z * vp.m34 + vp.m44;
+    visible = std::fabs(cw) > 0.000001f;
+    if (!visible) return ImVec2(-1.0f, -1.0f);
+    const float ndcX = cx / cw;
+    const float ndcY = cy / cw;
+    visible = ndcX >= -1.15f && ndcX <= 1.15f && ndcY >= -1.15f && ndcY <= 1.15f;
+    return ImVec2((ndcX * 0.5f + 0.5f) * width,
+                  (1.0f - (ndcY * 0.5f + 0.5f)) * height);
+  }
+
+  float DistancePointToSegmentSq(const ImVec2& p, const ImVec2& a, const ImVec2& b) {
+    const float abX = b.x - a.x;
+    const float abY = b.y - a.y;
+    const float abLenSq = abX * abX + abY * abY;
+    float t = 0.0f;
+    if (abLenSq > 0.000001f) {
+      t = ((p.x - a.x) * abX + (p.y - a.y) * abY) / abLenSq;
+      t = (std::max)(0.0f, (std::min)(1.0f, t));
+    }
+    const float closestX = a.x + abX * t;
+    const float closestY = a.y + abY * t;
+    const float dx = p.x - closestX;
+    const float dy = p.y - closestY;
+    return dx * dx + dy * dy;
+  }
+
+  bool RayPlaneIntersection(const t850::Ray& ray,
+                            const XVECTOR3& planePoint,
+                            const XVECTOR3& planeNormal,
+                            XVECTOR3& outPoint) {
+    const float denom = Dot3(ray.direction, planeNormal);
+    if (std::fabs(denom) < 0.000001f) {
+      return false;
+    }
+    const float t = Dot3(planePoint - ray.origin, planeNormal) / denom;
+    if (t < 0.0f) {
+      return false;
+    }
+    outPoint = ray.origin + ray.direction * t;
+    outPoint.w = 1.0f;
+    return true;
+  }
+
+  bool ClosestRayAxisParameter(const t850::Ray& ray,
+                               const XVECTOR3& axisOrigin,
+                               const XVECTOR3& axisDirection,
+                               float& outParameter) {
+    const XVECTOR3 axis = Normalize3(axisDirection, XVECTOR3(1.0f, 0.0f, 0.0f, 0.0f));
+    const XVECTOR3 rayDirection = Normalize3(ray.direction, XVECTOR3(0.0f, 0.0f, 1.0f, 0.0f));
+    const XVECTOR3 w0 = axisOrigin - ray.origin;
+    const float a = Dot3(axis, axis);
+    const float b = Dot3(axis, rayDirection);
+    const float c = Dot3(rayDirection, rayDirection);
+    const float d = Dot3(axis, w0);
+    const float e = Dot3(rayDirection, w0);
+    const float denom = a * c - b * b;
+    if (std::fabs(denom) < 0.000001f) {
+      return false;
+    }
+    outParameter = (b * e - c * d) / denom;
+    return true;
+  }
+
+  ImU32 RagdollGizmoAxisColor(int axis, bool active) {
+    if (active) return IM_COL32(255, 255, 255, 255);
+    switch (axis) {
+    case 0: return IM_COL32(245, 70, 70, 235);
+    case 1: return IM_COL32(70, 230, 90, 235);
+    case 2: return IM_COL32(80, 130, 255, 235);
+    default: return IM_COL32(255, 255, 255, 235);
+    }
+  }
+
+  bool DumpRagdollF5MatrixComparison(const RenderSkinnedMesh& skinned,
+                                     const t850::PhysicsRagdollDesc& expectedPose,
+                                     const std::vector<t850::PhysicsBodyState>& physicsStates,
+                                     const std::vector<int>& physicsBoneIndices,
+                                     const std::vector<XMATRIX44>& physicsCombinedMatrices,
+                                     const std::vector<XMATRIX44>& animationShaderMatrices,
+                                     const std::vector<XMATRIX44>& physicsShaderMatrices) {
+    std::error_code ec;
+    std::filesystem::create_directories("Logs", ec);
+    if (ec) {
+      T8_LOG_ERROR("[SandboxScene] Failed to create Logs directory for ragdoll matrix dump");
+      return false;
+    }
+
+    const xF::xSkeleton* skeleton = skinned.GetAnimController().GetAnimSkeleton();
+    const std::filesystem::path shaderPath = std::filesystem::path("Logs") / "ragdoll_f5_shader_compare.csv";
+    const std::filesystem::path combinedPath = std::filesystem::path("Logs") / "ragdoll_f5_combined_overrides.csv";
+    const std::filesystem::path bodyPath = std::filesystem::path("Logs") / "ragdoll_f5_physics_bodies.csv";
+
+    std::ofstream shaderFile(shaderPath, std::ios::out | std::ios::trunc);
+    if (!shaderFile.is_open()) {
+      T8_LOG_ERROR("[SandboxScene] Failed to open ragdoll shader matrix dump '%s'", shaderPath.string().c_str());
+      return false;
+    }
+    shaderFile << std::fixed << std::setprecision(8);
+    shaderFile << "bone_index,bone_name,has_physics_override,max_abs_diff,translation_diff";
+    for (int i = 0; i < 16; ++i) shaderFile << ",anim_m" << i;
+    for (int i = 0; i < 16; ++i) shaderFile << ",phys_m" << i;
+    shaderFile << '\n';
+
+    float maxShaderDiff = 0.0f;
+    float maxShaderTranslationDiff = 0.0f;
+    int maxShaderBone = -1;
+    const std::size_t shaderCount = (std::min)(animationShaderMatrices.size(), physicsShaderMatrices.size());
+    for (std::size_t boneIndex = 0; boneIndex < shaderCount; ++boneIndex) {
+      const bool hasOverride = std::find(physicsBoneIndices.begin(), physicsBoneIndices.end(), static_cast<int>(boneIndex)) != physicsBoneIndices.end();
+      const float maxDiff = MatrixMaxAbsDiff(animationShaderMatrices[boneIndex], physicsShaderMatrices[boneIndex]);
+      const float translationDiff = MatrixTranslationDistance(animationShaderMatrices[boneIndex], physicsShaderMatrices[boneIndex]);
+      if (maxDiff > maxShaderDiff) {
+        maxShaderDiff = maxDiff;
+        maxShaderTranslationDiff = translationDiff;
+        maxShaderBone = static_cast<int>(boneIndex);
+      }
+      shaderFile << boneIndex << ",\"" << BoneNameOrEmpty(skeleton, static_cast<int>(boneIndex)) << "\","
+                 << (hasOverride ? 1 : 0) << ',' << maxDiff << ',' << translationDiff;
+      WriteMatrixCsv(shaderFile, animationShaderMatrices[boneIndex]);
+      WriteMatrixCsv(shaderFile, physicsShaderMatrices[boneIndex]);
+      shaderFile << '\n';
+    }
+
+    std::ofstream combinedFile(combinedPath, std::ios::out | std::ios::trunc);
+    if (!combinedFile.is_open()) {
+      T8_LOG_ERROR("[SandboxScene] Failed to open ragdoll combined matrix dump '%s'", combinedPath.string().c_str());
+      return false;
+    }
+    combinedFile << std::fixed << std::setprecision(8);
+    combinedFile << "bone_index,bone_name";
+    for (int i = 0; i < 16; ++i) combinedFile << ",combined_m" << i;
+    combinedFile << '\n';
+    for (std::size_t i = 0; i < physicsBoneIndices.size() && i < physicsCombinedMatrices.size(); ++i) {
+      const int boneIndex = physicsBoneIndices[i];
+      combinedFile << boneIndex << ",\"" << BoneNameOrEmpty(skeleton, boneIndex) << "\"";
+      WriteMatrixCsv(combinedFile, physicsCombinedMatrices[i]);
+      combinedFile << '\n';
+    }
+
+    std::ofstream bodyFile(bodyPath, std::ios::out | std::ios::trunc);
+    if (!bodyFile.is_open()) {
+      T8_LOG_ERROR("[SandboxScene] Failed to open ragdoll body matrix dump '%s'", bodyPath.string().c_str());
+      return false;
+    }
+    bodyFile << std::fixed << std::setprecision(8);
+    bodyFile << "bone_index,bone_name,body_max_abs_diff,body_translation_diff";
+    for (int i = 0; i < 16; ++i) bodyFile << ",expected_body_world_m" << i;
+    for (int i = 0; i < 16; ++i) bodyFile << ",actual_body_world_m" << i;
+    bodyFile << ",linear_vx,linear_vy,linear_vz,angular_vx,angular_vy,angular_vz\n";
+
+    float maxBodyDiff = 0.0f;
+    float maxBodyTranslationDiff = 0.0f;
+    int maxBodyBone = -1;
+    for (const t850::PhysicsBodyState& state : physicsStates) {
+      const XMATRIX44* expectedBodyWorld = nullptr;
+      for (const t850::PhysicsRagdollBoneDesc& bone : expectedPose.bones) {
+        if (bone.body.boneIndex == state.boneIndex) {
+          expectedBodyWorld = &bone.body.worldTransform;
+          break;
+        }
+      }
+      const float bodyDiff = expectedBodyWorld ? MatrixMaxAbsDiff(*expectedBodyWorld, state.worldTransform) : 0.0f;
+      const float bodyTranslationDiff = expectedBodyWorld ? MatrixTranslationDistance(*expectedBodyWorld, state.worldTransform) : 0.0f;
+      if (bodyDiff > maxBodyDiff) {
+        maxBodyDiff = bodyDiff;
+        maxBodyTranslationDiff = bodyTranslationDiff;
+        maxBodyBone = state.boneIndex;
+      }
+
+      bodyFile << state.boneIndex << ",\"" << BoneNameOrEmpty(skeleton, state.boneIndex) << "\","
+               << bodyDiff << ',' << bodyTranslationDiff;
+      if (expectedBodyWorld) {
+        WriteMatrixCsv(bodyFile, *expectedBodyWorld);
+      } else {
+        XMATRIX44 identity;
+        identity.Identity();
+        WriteMatrixCsv(bodyFile, identity);
+      }
+      WriteMatrixCsv(bodyFile, state.worldTransform);
+      bodyFile << ',' << state.linearVelocity.x << ',' << state.linearVelocity.y << ',' << state.linearVelocity.z
+               << ',' << state.angularVelocity.x << ',' << state.angularVelocity.y << ',' << state.angularVelocity.z
+               << '\n';
+    }
+
+    T8_LOG_INFO("[SandboxScene] F5 ragdoll matrix dump: shader='%s' combined='%s' bodies='%s' maxShaderDiff=%.6f bone=%d('%s') transDiff=%.6f maxBodyDiff=%.6f bone=%d('%s') bodyTransDiff=%.6f",
+                shaderPath.string().c_str(),
+                combinedPath.string().c_str(),
+                bodyPath.string().c_str(),
+                maxShaderDiff,
+                maxShaderBone,
+                BoneNameOrEmpty(skeleton, maxShaderBone),
+                maxShaderTranslationDiff,
+                maxBodyDiff,
+                maxBodyBone,
+                BoneNameOrEmpty(skeleton, maxBodyBone),
+                maxBodyTranslationDiff);
+    return true;
+  }
+
   bool BuildWorldBounds(RenderMesh* mesh, const XMATRIX44& worldFromMesh, RenderMesh::AABB& outBounds) {
     if (!mesh) {
       return false;
@@ -293,12 +1103,32 @@ void SandboxScene::InitVars() {
   m_ragdollPhysicsDriven = false;
   m_ragdollDriveLogEmitted = false;
   m_ragdollPhysicsLogEmitted = false;
+  m_ragdollEditDirty = false;
+  m_ragdollEditHandleDragging = false;
+  m_ragdollEditGizmoDragging = false;
+  m_ragdollEditGizmoAxis = -1;
+  m_ragdollEditSelectedCapsule = -1;
+  m_ragdollEditSelectedJoint = -1;
+  m_ragdollEditSelectedHandle = -1;
+  m_ragdollEditRenamingCapsule = -1;
+  m_ragdollEditRenameFocusPending = false;
+  m_ragdollEditSavePath.clear();
+  m_skeletonEditMode = false;
+  m_skeletonEditWasPlaying = false;
+  m_skeletonEditDragging = false;
+  m_skeletonEditDirty = false;
+  m_skeletonEditSelectedBone = -1;
+  m_skeletonEditBindCombined.clear();
+  m_skeletonEditCombined.clear();
+  m_skeletonEditSavePath.clear();
   m_ragdollAnimationBinding = t850::PhysicsRagdollAnimationBinding{};
   m_ragdollAnimationPose = t850::PhysicsRagdollDesc{};
+  m_ragdollParentCapsules.clear();
   m_ragdollPhysicsStates.clear();
   m_ragdollPhysicsBoneIndices.clear();
   m_ragdollPhysicsCombinedMatrices.clear();
   m_floorBody.Reset();
+  m_ragdollGeneratedBinding = t850::PhysicsRagdollAnimationBinding{};
 
   SceneProp.Exposure = 1.0f;
   SceneProp.BloomFactor = 0.35f;
@@ -423,16 +1253,19 @@ void SandboxScene::CreateAssets() {
       bool attachedPhysics = false;
       RenderSkinnedMesh* skinned = Meshes[0].GetSkinnedMesh();
       if (skinned) {
+        skinned->UpdateAnimationPose();
         t850::PhysicsRagdollBuildSettings settings;
-        settings.fitToSkinnedGeometry = true;
-        settings.preferHumanoidBones = true;
-        settings.minBoneLength = (std::max)(0.02f, m_modelRadius * 0.030f);
-        settings.minRadius = (std::max)(0.006f, m_modelRadius * 0.010f);
-        settings.maxRadius = (std::max)(0.08f, m_modelRadius * 0.140f);
-        settings.radiusScale = 0.18f;
+        settings.fitToSkinnedGeometry = false;
+        settings.preferHumanoidBones = false;
+        settings.forceCapsuleForEveryBone = true;
+        settings.minBoneLength = (std::max)(0.0002f, m_modelRadius * 0.0002f);
+        settings.syntheticBoneLength = (std::max)(0.001f, m_modelRadius * 0.001f);
+        settings.minRadius = (std::max)(0.0006f, m_modelRadius * 0.0008f);
+        settings.maxRadius = (std::max)(0.02f, m_modelRadius * 0.035f);
+        settings.radiusScale = 0.12f;
         settings.minSkinWeight = 0.08f;
         settings.radiusPercentile = 0.86f;
-        settings.jointTrimFraction = 0.12f;
+        settings.jointTrimFraction = 0.0f;
         t850::PhysicsRagdollDesc ragdollDesc;
         attachedPhysics = t850::AttachSkeletonRagdoll(
             *engineContext->physics,
@@ -450,12 +1283,19 @@ void SandboxScene::CreateAssets() {
           m_ragdollPhysicsDriven = false;
           m_ragdollPhysicsLogEmitted = false;
           m_ragdollDriveLogEmitted = false;
-          T8_LOG_INFO("[SandboxScene] Attached fitted humanoid ragdoll physics for '%s'", g_config.modelPath.c_str());
+          if (m_driveRagdollFromAnimation) {
+            m_ragdollGeneratedBinding = m_ragdollAnimationBinding;
+            m_ragdollEditSavePath = BuildRagdollEditSavePath();
+            m_ragdollEditSelectedCapsule = m_ragdollAnimationBinding.referencePose.bones.empty() ? -1 : 0;
+            m_ragdollEditSelectedHandle = 0;
+            LoadRagdollEditPose();
+          }
+          T8_LOG_INFO("[SandboxScene] Attached full-skeleton ragdoll physics for '%s'", g_config.modelPath.c_str());
           if (!m_driveRagdollFromAnimation) {
-            T8_LOG_ERROR("[SandboxScene] Failed to bind humanoid ragdoll to animation pose for '%s'", g_config.modelPath.c_str());
+            T8_LOG_ERROR("[SandboxScene] Failed to bind full-skeleton ragdoll to animation pose for '%s'", g_config.modelPath.c_str());
           }
         } else {
-          T8_LOG_ERROR("[SandboxScene] Failed to attach fitted humanoid ragdoll physics for '%s'", g_config.modelPath.c_str());
+          T8_LOG_ERROR("[SandboxScene] Failed to attach full-skeleton ragdoll physics for '%s'", g_config.modelPath.c_str());
         }
       }
 
@@ -494,18 +1334,38 @@ void SandboxScene::DestroyAssets() {
         engineContext->physics->DestroyBody(m_floorBody);
       }
     }
-    Meshes[0].ClearPhysicsLinks();
+    Meshes[0].AttachPhysicsRagdoll(t850::PhysicsRagdollHandle{});
     m_floorBody.Reset();
   }
   m_driveRagdollFromAnimation = false;
   m_ragdollPhysicsDriven = false;
   m_ragdollDriveLogEmitted = false;
   m_ragdollPhysicsLogEmitted = false;
+  m_ragdollEditDirty = false;
+  m_ragdollEditHandleDragging = false;
+  m_ragdollEditGizmoDragging = false;
+  m_ragdollEditGizmoAxis = -1;
+  m_ragdollEditSelectedCapsule = -1;
+  m_ragdollEditSelectedJoint = -1;
+  m_ragdollEditSelectedHandle = -1;
+  m_ragdollEditRenamingCapsule = -1;
+  m_ragdollEditRenameFocusPending = false;
+  m_ragdollEditSavePath.clear();
+  m_skeletonEditMode = false;
+  m_skeletonEditWasPlaying = false;
+  m_skeletonEditDragging = false;
+  m_skeletonEditDirty = false;
+  m_skeletonEditSelectedBone = -1;
+  m_skeletonEditBindCombined.clear();
+  m_skeletonEditCombined.clear();
+  m_skeletonEditSavePath.clear();
   m_ragdollAnimationBinding = t850::PhysicsRagdollAnimationBinding{};
   m_ragdollAnimationPose = t850::PhysicsRagdollDesc{};
+  m_ragdollParentCapsules.clear();
   m_ragdollPhysicsStates.clear();
   m_ragdollPhysicsBoneIndices.clear();
   m_ragdollPhysicsCombinedMatrices.clear();
+  m_ragdollGeneratedBinding = t850::PhysicsRagdollAnimationBinding{};
   m_debugText.Destroy();
   if (m_lightArrowVB) m_lightArrowVB->release();
   if (m_lightArrowIB) m_lightArrowIB->release();
@@ -521,6 +1381,14 @@ void SandboxScene::DestroyAssets() {
 void SandboxScene::OnUpdate(float _DtSecs) {
   DtSecs = _DtSecs;
   SceneProp.FrameDeltaSec = DtSecs;
+
+  if (m_ragdollClearRequested) {
+    ClearRagdollCapsules();
+  }
+  if (m_ragdollEditRebuildRequested && !m_ragdollClearRequested) {
+    m_ragdollEditRebuildRequested = false;
+    ApplyRagdollEditPose(true);
+  }
 
   // Apply deferred cubemap change BEFORE any rendering begins.
   // D3D12 texture upload submits a temp command list + fence wait, which
@@ -749,15 +1617,51 @@ void SandboxScene::SwitchRagdollToPhysics() {
     return;
   }
 
+  std::vector<XMATRIX44> animationShaderMatrices;
+  skinned->ExportBoneMatrices(animationShaderMatrices);
+
   if (m_driveRagdollFromAnimation &&
       t850::BuildRagdollPoseFromAnimation(*skinned, Meshes[0].Final, m_ragdollAnimationBinding, m_ragdollAnimationPose)) {
     engineContext->physics->DriveRagdollFromPose(Meshes[0].GetPhysicsRagdoll(), m_ragdollAnimationPose, 0.0f);
+  }
+
+  std::vector<t850::PhysicsBodyState> handoffPhysicsStates;
+  std::vector<int> handoffBoneIndices;
+  std::vector<XMATRIX44> handoffCombinedMatrices;
+  std::vector<XMATRIX44> handoffShaderMatrices;
+  if (engineContext->physics->GetRagdollState(Meshes[0].GetPhysicsRagdoll(), handoffPhysicsStates) &&
+      t850::BuildSkeletonPoseFromRagdollState(
+          *skinned,
+          Meshes[0].Final,
+          m_ragdollAnimationBinding,
+          handoffPhysicsStates,
+          handoffBoneIndices,
+          handoffCombinedMatrices) &&
+      skinned->GetAnimController().ApplyCombinedPoseOverrides(handoffBoneIndices, handoffCombinedMatrices)) {
+    skinned->ExportBoneMatrices(handoffShaderMatrices);
+    DumpRagdollF5MatrixComparison(
+        *skinned,
+        m_ragdollAnimationPose,
+        handoffPhysicsStates,
+        handoffBoneIndices,
+        handoffCombinedMatrices,
+        animationShaderMatrices,
+        handoffShaderMatrices);
+    m_ragdollPhysicsStates = std::move(handoffPhysicsStates);
+    m_ragdollPhysicsBoneIndices = std::move(handoffBoneIndices);
+    m_ragdollPhysicsCombinedMatrices = std::move(handoffCombinedMatrices);
+  } else {
+    T8_LOG_ERROR("[SandboxScene] Failed to dump F5 ragdoll matrix comparison for '%s'", g_config.modelPath.c_str());
   }
 
   if (!engineContext->physics->SetRagdollMotion(Meshes[0].GetPhysicsRagdoll(), t850::PhysicsBodyMotion::Dynamic)) {
     T8_LOG_ERROR("[SandboxScene] Failed to switch ragdoll bodies to dynamic physics");
     return;
   }
+  engineContext->physics->SetRagdollVelocity(
+      Meshes[0].GetPhysicsRagdoll(),
+      XVECTOR3(0.0f, 0.0f, 0.0f, 0.0f),
+      XVECTOR3(0.0f, 0.0f, 0.0f, 0.0f));
 
   m_driveRagdollFromAnimation = false;
   m_ragdollPhysicsDriven = true;
@@ -766,6 +1670,63 @@ void SandboxScene::SwitchRagdollToPhysics() {
   skinned->PauseAnimation();
   skinned->ClearSnapshotBoneMatrices();
   T8_LOG_INFO("[SandboxScene] F5: animation-to-physics ragdoll transition started");
+}
+
+bool SandboxScene::ResetRagdollPhysicsAndAnimation() {
+  RenderSkinnedMesh* skinned = Meshes[0].GetSkinnedMesh();
+  t850::EngineContext* engineContext = GetEngineContext();
+  if (!engineContext) engineContext = &t850::GetEngineContext();
+  if (!skinned || !skinned->HasSkinData()) {
+    T8_LOG_ERROR("[SandboxScene] Cannot reset ragdoll: no skinned model is loaded");
+    return false;
+  }
+
+  if (m_skeletonEditMode) {
+    ExitSkeletonEditMode();
+  }
+
+  skinned->ClearSnapshotBoneMatrices();
+  skinned->ResetAnimation();
+  skinned->PlayAnimation();
+  skinned->GetAnimController().Update(0.0f);
+
+  m_ragdollPhysicsDriven = false;
+  m_driveRagdollFromAnimation = true;
+  m_ragdollDriveLogEmitted = false;
+  m_ragdollPhysicsLogEmitted = false;
+  m_ragdollPhysicsStates.clear();
+  m_ragdollPhysicsBoneIndices.clear();
+  m_ragdollPhysicsCombinedMatrices.clear();
+
+  if (!engineContext || !engineContext->physics || m_ragdollAnimationBinding.referencePose.bones.empty()) {
+    T8_LOG_INFO("[SandboxScene] F7: animation state reset");
+    return true;
+  }
+
+  t850::PhysicsRagdollDesc pose;
+  if (!t850::BuildRagdollPoseFromAnimation(*skinned, Meshes[0].Final, m_ragdollAnimationBinding, pose)) {
+    return ApplyRagdollEditPose(true);
+  }
+
+  if (!Meshes[0].HasPhysicsRagdoll()) {
+    const bool recreated = RecreateRagdollFromPose(pose);
+    if (recreated) {
+      T8_LOG_INFO("[SandboxScene] F7: animation and ragdoll reset");
+    }
+    return recreated;
+  }
+
+  engineContext->physics->SetRagdollMotion(Meshes[0].GetPhysicsRagdoll(), t850::PhysicsBodyMotion::Kinematic);
+  engineContext->physics->SetRagdollVelocity(
+      Meshes[0].GetPhysicsRagdoll(),
+      XVECTOR3(0.0f, 0.0f, 0.0f, 0.0f),
+      XVECTOR3(0.0f, 0.0f, 0.0f, 0.0f));
+  const bool driven = engineContext->physics->DriveRagdollFromPose(Meshes[0].GetPhysicsRagdoll(), pose, 0.0f);
+  if (driven) {
+    m_ragdollAnimationPose = std::move(pose);
+    T8_LOG_INFO("[SandboxScene] F7: animation and ragdoll reset");
+  }
+  return driven;
 }
 
 void SandboxScene::CreatePhysicsFloor(t850::JoltPhysicsSystem& physics) {
@@ -783,8 +1744,8 @@ void SandboxScene::CreatePhysicsFloor(t850::JoltPhysicsSystem& physics) {
   const float extentX = (worldBounds.max.x - worldBounds.min.x) * 0.5f;
   const float extentZ = (worldBounds.max.z - worldBounds.min.z) * 0.5f;
   const float halfSize = (std::max)((std::max)(extentX, extentZ) * 2.0f, (std::max)(1.0f, m_modelRadius * 2.0f));
-  const float halfHeight = (std::max)(0.02f, m_modelRadius * 0.015f);
-  const float gap = (std::max)(0.02f, m_modelRadius * 0.02f);
+  const float halfHeight = (std::max)(0.05f, m_modelRadius * 0.04f);
+  const float gap = (std::max)(0.08f, m_modelRadius * 0.08f);
 
   XMATRIX44 floorTransform;
   floorTransform.Identity();
@@ -803,10 +1764,2948 @@ void SandboxScene::CreatePhysicsFloor(t850::JoltPhysicsSystem& physics) {
 
   m_floorBody = physics.CreateBody(floorDesc);
   if (m_floorBody.IsValid()) {
-    T8_LOG_INFO("[SandboxScene] Added static ragdoll floor at y=%.3f halfSize=%.3f", floorTransform.m42 + halfHeight, halfSize);
+    T8_LOG_INFO("[SandboxScene] Added static ragdoll floor top y=%.3f boundsMinY=%.3f halfSize=%.3f halfHeight=%.3f",
+                floorTransform.m42 + halfHeight,
+                worldBounds.min.y,
+                halfSize,
+                halfHeight);
   } else {
     T8_LOG_ERROR("[SandboxScene] Failed to create static ragdoll floor");
   }
+}
+
+std::string SandboxScene::BuildSkeletonEditSavePath() const {
+  const std::string key = FileSafeModelKey(m_profileModelKey.empty() ? SandboxProfileModelKey(g_config.modelPath) : m_profileModelKey);
+  return t850::ResourceLocator::Instance().ResolveCachePath("SkeletonEdits/" + key + ".json").string();
+}
+
+bool SandboxScene::EnterSkeletonEditMode() {
+  RenderSkinnedMesh* skinned = Meshes[0].GetSkinnedMesh();
+  if (!skinned || !skinned->HasSkinData()) {
+    T8_LOG_ERROR("[SkeletonEdit] Cannot enter edit mode: active model has no skinned skeleton");
+    return false;
+  }
+
+  if (m_ragdollPhysicsDriven) {
+    t850::EngineContext* engineContext = GetEngineContext();
+    if (!engineContext) engineContext = &t850::GetEngineContext();
+    if (engineContext && engineContext->physics && Meshes[0].HasPhysicsRagdoll()) {
+      engineContext->physics->SetRagdollMotion(Meshes[0].GetPhysicsRagdoll(), t850::PhysicsBodyMotion::Kinematic);
+      engineContext->physics->SetRagdollVelocity(
+          Meshes[0].GetPhysicsRagdoll(),
+          XVECTOR3(0.0f, 0.0f, 0.0f, 0.0f),
+          XVECTOR3(0.0f, 0.0f, 0.0f, 0.0f));
+    }
+    m_ragdollPhysicsDriven = false;
+  }
+
+  m_skeletonEditWasPlaying = skinned->IsPlaying();
+  skinned->PauseAnimation();
+  skinned->ClearSnapshotBoneMatrices();
+  T8_LOG_INFO("[SkeletonEdit] Moving '%s' to bind pose", g_config.modelPath.c_str());
+  if (!skinned->GetAnimController().ApplyBindPose() ||
+      !skinned->GetAnimController().ExportCombinedPose(m_skeletonEditBindCombined)) {
+    T8_LOG_ERROR("[SkeletonEdit] Failed to move '%s' to bind pose", g_config.modelPath.c_str());
+    return false;
+  }
+  T8_LOG_INFO("[SkeletonEdit] Captured bind pose: bones=%zu", m_skeletonEditBindCombined.size());
+
+  m_skeletonEditCombined = m_skeletonEditBindCombined;
+  m_skeletonEditSavePath = BuildSkeletonEditSavePath();
+  m_skeletonEditSelectedBone = m_skeletonEditCombined.empty() ? -1 : 0;
+  m_skeletonEditDragging = false;
+  m_ragdollEditHandleDragging = false;
+  m_ragdollEditGizmoDragging = false;
+  m_ragdollEditGizmoAxis = -1;
+  m_skeletonEditDirty = false;
+  m_skeletonEditMode = true;
+  m_showSkeleton = true;
+  m_showPhysics = m_showPhysics || Meshes[0].HasPhysicsRagdoll();
+  T8_LOG_INFO("[SkeletonEdit] Applying edit pose");
+  LoadSkeletonEditPose();
+  ApplySkeletonEditPose();
+  T8_LOG_INFO("[SkeletonEdit] Entered bind-pose edit mode for '%s'", g_config.modelPath.c_str());
+  return true;
+}
+
+void SandboxScene::ExitSkeletonEditMode() {
+  RenderSkinnedMesh* skinned = Meshes[0].GetSkinnedMesh();
+  m_skeletonEditMode = false;
+  m_skeletonEditDragging = false;
+  m_ragdollEditHandleDragging = false;
+  m_ragdollEditGizmoDragging = false;
+  m_ragdollEditGizmoAxis = -1;
+  if (skinned && m_skeletonEditWasPlaying) {
+    skinned->PlayAnimation();
+  }
+  T8_LOG_INFO("[SkeletonEdit] Exited edit mode");
+}
+
+bool SandboxScene::ApplySkeletonEditPose() {
+  RenderSkinnedMesh* skinned = Meshes[0].GetSkinnedMesh();
+  if (!skinned || !skinned->HasSkinData() || m_skeletonEditCombined.empty()) {
+    return false;
+  }
+
+  std::vector<int> boneIndices;
+  boneIndices.reserve(m_skeletonEditCombined.size());
+  for (std::size_t i = 0; i < m_skeletonEditCombined.size(); ++i) {
+    boneIndices.push_back(static_cast<int>(i));
+  }
+  if (!skinned->GetAnimController().ApplyCombinedPoseOverrides(boneIndices, m_skeletonEditCombined)) {
+    return false;
+  }
+  m_ragdollDriveLogEmitted = false;
+  return true;
+}
+
+bool SandboxScene::ResetSkeletonEditPose() {
+  if (m_skeletonEditBindCombined.empty()) {
+    return false;
+  }
+  m_skeletonEditCombined = m_skeletonEditBindCombined;
+  m_skeletonEditDirty = true;
+  return ApplySkeletonEditPose();
+}
+
+bool SandboxScene::LoadSkeletonEditPose() {
+  if (m_skeletonEditSavePath.empty()) {
+    m_skeletonEditSavePath = BuildSkeletonEditSavePath();
+  }
+
+  std::ifstream file(m_skeletonEditSavePath, std::ios::binary | std::ios::ate);
+  if (!file.is_open()) {
+    return false;
+  }
+
+  const std::streamsize size = file.tellg();
+  if (size < 0) {
+    T8_LOG_ERROR("[SkeletonEdit] Failed to read '%s'", m_skeletonEditSavePath.c_str());
+    return false;
+  }
+  file.seekg(0, std::ios::beg);
+  std::string json(static_cast<std::size_t>(size), '\0');
+  if (size > 0 && !file.read(json.data(), size)) {
+    T8_LOG_ERROR("[SkeletonEdit] Failed to read '%s'", m_skeletonEditSavePath.c_str());
+    return false;
+  }
+
+  SkeletonEditJson data;
+  if (!ParseSkeletonEditJson(json, data)) {
+    T8_LOG_ERROR("[SkeletonEdit] Failed to parse '%s'", m_skeletonEditSavePath.c_str());
+    return false;
+  }
+
+  const xF::xSkeleton* skeleton = Meshes[0].GetSkinnedMesh()
+      ? Meshes[0].GetSkinnedMesh()->GetAnimController().GetAnimSkeleton()
+      : nullptr;
+  if (!skeleton || m_skeletonEditCombined.empty()) {
+    return false;
+  }
+
+  int applied = 0;
+  for (const SkeletonEditBoneJson& bone : data.bones) {
+    int target = -1;
+    if (bone.index >= 0 && bone.index < static_cast<int>(m_skeletonEditCombined.size()) &&
+        bone.index < static_cast<int>(skeleton->Bones.size()) &&
+        (bone.name.empty() || skeleton->Bones[bone.index].Name == bone.name)) {
+      target = bone.index;
+    } else if (!bone.name.empty()) {
+      for (int i = 0; i < static_cast<int>(skeleton->Bones.size()) && i < static_cast<int>(m_skeletonEditCombined.size()); ++i) {
+        if (skeleton->Bones[i].Name == bone.name) {
+          target = i;
+          break;
+        }
+      }
+    }
+    if (target >= 0) {
+      m_skeletonEditCombined[static_cast<std::size_t>(target)] = MatrixFromArray16(bone.combined);
+      ++applied;
+    }
+  }
+
+  m_skeletonEditDirty = false;
+  if (applied > 0) {
+    ApplySkeletonEditPose();
+    T8_LOG_INFO("[SkeletonEdit] Loaded %d edited bones from '%s'", applied, m_skeletonEditSavePath.c_str());
+  }
+  return applied > 0;
+}
+
+bool SandboxScene::SaveSkeletonEditPose() {
+  if (m_skeletonEditSavePath.empty()) {
+    m_skeletonEditSavePath = BuildSkeletonEditSavePath();
+  }
+  if (m_skeletonEditCombined.empty() || m_skeletonEditBindCombined.size() != m_skeletonEditCombined.size()) {
+    return false;
+  }
+
+  const xF::xSkeleton* skeleton = Meshes[0].GetSkinnedMesh()
+      ? Meshes[0].GetSkinnedMesh()->GetAnimController().GetAnimSkeleton()
+      : nullptr;
+
+  SkeletonEditJson data;
+  data.model = m_profileModelKey.empty() ? SandboxProfileModelKey(g_config.modelPath) : m_profileModelKey;
+  for (std::size_t i = 0; i < m_skeletonEditCombined.size(); ++i) {
+    if (MatrixMaxAbsDiff(m_skeletonEditCombined[i], m_skeletonEditBindCombined[i]) <= 0.00001f) {
+      continue;
+    }
+    SkeletonEditBoneJson bone;
+    bone.index = static_cast<int>(i);
+    if (skeleton && i < skeleton->Bones.size()) {
+      bone.name = skeleton->Bones[i].Name;
+    }
+    bone.combined = MatrixToArray16(m_skeletonEditCombined[i]);
+    data.bones.push_back(std::move(bone));
+  }
+
+  const std::filesystem::path path(m_skeletonEditSavePath);
+  std::error_code ec;
+  std::filesystem::create_directories(path.parent_path(), ec);
+  if (ec) {
+    T8_LOG_ERROR("[SkeletonEdit] Failed to create '%s'", path.parent_path().string().c_str());
+    return false;
+  }
+
+  std::ofstream file(path, std::ios::out | std::ios::trunc);
+  if (!file.is_open()) {
+    T8_LOG_ERROR("[SkeletonEdit] Failed to open '%s' for writing", m_skeletonEditSavePath.c_str());
+    return false;
+  }
+  file << "{\n";
+  file << "  \"model\": \"" << JsonEscape(data.model) << "\",\n";
+  file << "  \"bones\": [\n";
+  file << std::fixed << std::setprecision(8);
+  for (std::size_t boneIndex = 0; boneIndex < data.bones.size(); ++boneIndex) {
+    const SkeletonEditBoneJson& bone = data.bones[boneIndex];
+    file << "    {\n";
+    file << "      \"index\": " << bone.index << ",\n";
+    file << "      \"name\": \"" << JsonEscape(bone.name) << "\",\n";
+    file << "      \"combined\": [";
+    for (std::size_t valueIndex = 0; valueIndex < bone.combined.size(); ++valueIndex) {
+      if (valueIndex > 0) file << ", ";
+      file << bone.combined[valueIndex];
+    }
+    file << "]\n";
+    file << "    }" << (boneIndex + 1 < data.bones.size() ? "," : "") << "\n";
+  }
+  file << "  ]\n";
+  file << "}\n";
+  m_skeletonEditDirty = false;
+  T8_LOG_INFO("[SkeletonEdit] Saved %zu edited bones to '%s'", data.bones.size(), m_skeletonEditSavePath.c_str());
+  return true;
+}
+
+std::string SandboxScene::BuildRagdollEditSavePath() const {
+  const std::string key = FileSafeModelKey(m_profileModelKey.empty() ? SandboxProfileModelKey(g_config.modelPath) : m_profileModelKey);
+  return "Models/RagdollEdits/" + key + ".json";
+}
+
+int SandboxScene::FindRagdollCapsuleForBone(int boneIndex) const {
+  const auto& bones = m_ragdollAnimationBinding.referencePose.bones;
+  for (int i = 0; i < static_cast<int>(bones.size()); ++i) {
+    if (bones[static_cast<std::size_t>(i)].body.boneIndex == boneIndex) {
+      return i;
+    }
+  }
+  return -1;
+}
+
+int SandboxScene::FindRagdollCapsuleControllingBone(int boneIndex) const {
+  const auto& controlled = m_ragdollAnimationBinding.controlledBoneIndices;
+  for (int capsuleIndex = 0; capsuleIndex < static_cast<int>(controlled.size()); ++capsuleIndex) {
+    const auto& controlledBones = controlled[static_cast<std::size_t>(capsuleIndex)];
+    if (std::find(controlledBones.begin(), controlledBones.end(), boneIndex) != controlledBones.end()) {
+      return capsuleIndex;
+    }
+  }
+  return -1;
+}
+
+void SandboxScene::EnsureRagdollControlledBones() {
+  auto& binding = m_ragdollAnimationBinding;
+  const std::size_t capsuleCount = binding.referencePose.bones.size();
+  const std::size_t previousControlledCount = binding.controlledBoneIndices.size();
+  const std::size_t previousFrameCount = binding.controlledBodyFromBone.size();
+  if (binding.controlledBoneIndices.size() != capsuleCount) {
+    binding.controlledBoneIndices.resize(capsuleCount);
+  }
+  if (binding.controlledBodyFromBone.size() != capsuleCount) {
+    binding.controlledBodyFromBone.resize(capsuleCount);
+  }
+
+  for (std::size_t i = 0; i < capsuleCount; ++i) {
+    auto& controlledBones = binding.controlledBoneIndices[i];
+    auto& controlledFrames = binding.controlledBodyFromBone[i];
+    const bool invalidMapping = controlledBones.size() != controlledFrames.size();
+    if (invalidMapping) {
+      controlledBones.clear();
+      controlledFrames.clear();
+    }
+    const bool addedMissingEntry = i >= previousControlledCount || i >= previousFrameCount;
+    if ((addedMissingEntry || invalidMapping) &&
+        controlledBones.empty() &&
+        i < binding.bodyFromBone.size() &&
+        binding.referencePose.bones[i].body.boneIndex >= 0) {
+      controlledBones.push_back(binding.referencePose.bones[i].body.boneIndex);
+      controlledFrames.push_back(binding.bodyFromBone[i]);
+    }
+  }
+}
+
+void SandboxScene::SyncRagdollParentCapsulesFromBoneLinks() {
+  const auto& bones = m_ragdollAnimationBinding.referencePose.bones;
+  m_ragdollParentCapsules.assign(bones.size(), -1);
+  for (std::size_t i = 0; i < bones.size(); ++i) {
+    const int parentCapsule = FindRagdollCapsuleForBone(bones[i].parentBoneIndex);
+    if (parentCapsule >= 0 && parentCapsule != static_cast<int>(i)) {
+      m_ragdollParentCapsules[i] = parentCapsule;
+    }
+  }
+}
+
+void SandboxScene::EnsureRagdollParentCapsules() {
+  const std::size_t capsuleCount = m_ragdollAnimationBinding.referencePose.bones.size();
+  if (m_ragdollParentCapsules.size() == capsuleCount) {
+    return;
+  }
+
+  if (m_ragdollParentCapsules.empty()) {
+    SyncRagdollParentCapsulesFromBoneLinks();
+    return;
+  }
+
+  std::vector<int> previous = std::move(m_ragdollParentCapsules);
+  m_ragdollParentCapsules.assign(capsuleCount, -1);
+  const std::size_t copyCount = (std::min)(previous.size(), capsuleCount);
+  for (std::size_t i = 0; i < copyCount; ++i) {
+    const int parentCapsule = previous[i];
+    if (parentCapsule >= 0 && parentCapsule < static_cast<int>(capsuleCount) &&
+        parentCapsule != static_cast<int>(i)) {
+      m_ragdollParentCapsules[i] = parentCapsule;
+    }
+  }
+}
+
+bool SandboxScene::ApplyRagdollParentCapsuleLinks() {
+  auto& bones = m_ragdollAnimationBinding.referencePose.bones;
+  EnsureRagdollParentCapsules();
+  if (m_ragdollParentCapsules.size() != bones.size()) {
+    return false;
+  }
+
+  for (std::size_t childIndex = 0; childIndex < bones.size(); ++childIndex) {
+    int parentCapsule = m_ragdollParentCapsules[childIndex];
+    bool invalidParent = parentCapsule < 0 ||
+        parentCapsule >= static_cast<int>(bones.size()) ||
+        parentCapsule == static_cast<int>(childIndex);
+    int current = parentCapsule;
+    for (std::size_t depth = 0; !invalidParent && depth < bones.size(); ++depth) {
+      if (current == static_cast<int>(childIndex)) {
+        invalidParent = true;
+        break;
+      }
+      if (current < 0 || current >= static_cast<int>(m_ragdollParentCapsules.size())) {
+        break;
+      }
+      current = m_ragdollParentCapsules[static_cast<std::size_t>(current)];
+    }
+
+    if (invalidParent) {
+      m_ragdollParentCapsules[childIndex] = -1;
+      bones[childIndex].parentBoneIndex = -1;
+      continue;
+    }
+    bones[childIndex].parentBoneIndex = bones[static_cast<std::size_t>(parentCapsule)].body.boneIndex;
+  }
+  return true;
+}
+
+bool SandboxScene::SetRagdollCapsuleParent(int childCapsule, int parentCapsule) {
+  const auto& bones = m_ragdollAnimationBinding.referencePose.bones;
+  EnsureRagdollParentCapsules();
+  if (childCapsule < 0 || childCapsule >= static_cast<int>(bones.size()) ||
+      parentCapsule < 0 || parentCapsule >= static_cast<int>(bones.size()) ||
+      childCapsule == parentCapsule ||
+      m_ragdollParentCapsules.size() != bones.size()) {
+    return false;
+  }
+
+  int current = parentCapsule;
+  for (std::size_t depth = 0; depth < m_ragdollParentCapsules.size(); ++depth) {
+    if (current == childCapsule) {
+      T8_LOG_ERROR("[RagdollEdit] Refusing cyclic parent link: capsule %d -> %d", childCapsule, parentCapsule);
+      return false;
+    }
+    if (current < 0 || current >= static_cast<int>(m_ragdollParentCapsules.size())) {
+      break;
+    }
+    current = m_ragdollParentCapsules[static_cast<std::size_t>(current)];
+  }
+
+  if (m_ragdollParentCapsules[static_cast<std::size_t>(childCapsule)] == parentCapsule) {
+    return true;
+  }
+
+  m_ragdollParentCapsules[static_cast<std::size_t>(childCapsule)] = parentCapsule;
+  if (!ApplyRagdollParentCapsuleLinks()) {
+    return false;
+  }
+  m_ragdollEditDirty = true;
+  m_ragdollEditSelectedJoint = childCapsule;
+  m_showPhysics = true;
+  T8_LOG_INFO("[RagdollEdit] Capsule %d parent set to capsule %d", childCapsule, parentCapsule);
+  return ApplyRagdollEditPose(true);
+}
+
+bool SandboxScene::ClearRagdollCapsuleParent(int childCapsule) {
+  EnsureRagdollParentCapsules();
+  if (childCapsule < 0 ||
+      childCapsule >= static_cast<int>(m_ragdollParentCapsules.size())) {
+    return false;
+  }
+  if (m_ragdollParentCapsules[static_cast<std::size_t>(childCapsule)] < 0) {
+    return true;
+  }
+
+  m_ragdollParentCapsules[static_cast<std::size_t>(childCapsule)] = -1;
+  if (!ApplyRagdollParentCapsuleLinks()) {
+    return false;
+  }
+  if (m_ragdollEditSelectedJoint == childCapsule) {
+    m_ragdollEditSelectedJoint = -1;
+  }
+  m_ragdollEditDirty = true;
+  T8_LOG_INFO("[RagdollEdit] Capsule %d parent cleared", childCapsule);
+  return ApplyRagdollEditPose(true);
+}
+
+bool SandboxScene::AddControlledBoneToSelectedCapsule(int boneIndex) {
+  EnsureRagdollControlledBones();
+  if (m_ragdollEditSelectedCapsule < 0 ||
+      m_ragdollEditSelectedCapsule >= static_cast<int>(m_ragdollAnimationBinding.referencePose.bones.size()) ||
+      boneIndex < 0) {
+    return false;
+  }
+
+  const std::size_t capsuleIndex = static_cast<std::size_t>(m_ragdollEditSelectedCapsule);
+  auto& controlledBones = m_ragdollAnimationBinding.controlledBoneIndices[capsuleIndex];
+  auto& controlledFrames = m_ragdollAnimationBinding.controlledBodyFromBone[capsuleIndex];
+  if (std::find(controlledBones.begin(), controlledBones.end(), boneIndex) != controlledBones.end()) {
+    return false;
+  }
+
+  XMATRIX44 bodyWorld;
+  XMATRIX44 boneWorld;
+  if (!GetCurrentRagdollEditCapsuleWorld(m_ragdollEditSelectedCapsule, bodyWorld) ||
+      !GetSkeletonEditBoneWorldTransform(boneIndex, boneWorld)) {
+    return false;
+  }
+
+  for (std::size_t otherCapsule = 0; otherCapsule < m_ragdollAnimationBinding.controlledBoneIndices.size(); ++otherCapsule) {
+    if (otherCapsule == capsuleIndex) {
+      continue;
+    }
+    auto& otherBones = m_ragdollAnimationBinding.controlledBoneIndices[otherCapsule];
+    auto& otherFrames = m_ragdollAnimationBinding.controlledBodyFromBone[otherCapsule];
+    for (std::size_t i = 0; i < otherBones.size(); ++i) {
+      if (otherBones[i] == boneIndex) {
+        otherBones.erase(otherBones.begin() + static_cast<std::ptrdiff_t>(i));
+        if (i < otherFrames.size()) {
+          otherFrames.erase(otherFrames.begin() + static_cast<std::ptrdiff_t>(i));
+        }
+        break;
+      }
+    }
+  }
+
+  XMATRIX44 inverseBoneWorld;
+  if (!InvertAffineNoExit(boneWorld, inverseBoneWorld)) {
+    T8_LOG_ERROR("[RagdollEdit] Cannot add bone %d to capsule %d: bone transform is singular",
+                 boneIndex, m_ragdollEditSelectedCapsule);
+    return false;
+  }
+  controlledBones.push_back(boneIndex);
+  controlledFrames.push_back(bodyWorld * inverseBoneWorld);
+  m_ragdollEditDirty = true;
+  T8_LOG_INFO("[RagdollEdit] Capsule %d now controls bone %d", m_ragdollEditSelectedCapsule, boneIndex);
+  return true;
+}
+
+bool SandboxScene::RemoveControlledBoneFromSelectedCapsule(int boneIndex) {
+  EnsureRagdollControlledBones();
+  if (m_ragdollEditSelectedCapsule < 0 ||
+      m_ragdollEditSelectedCapsule >= static_cast<int>(m_ragdollAnimationBinding.controlledBoneIndices.size()) ||
+      boneIndex < 0) {
+    return false;
+  }
+
+  const std::size_t capsuleIndex = static_cast<std::size_t>(m_ragdollEditSelectedCapsule);
+  auto& controlledBones = m_ragdollAnimationBinding.controlledBoneIndices[capsuleIndex];
+  auto& controlledFrames = m_ragdollAnimationBinding.controlledBodyFromBone[capsuleIndex];
+  for (std::size_t i = 0; i < controlledBones.size(); ++i) {
+    if (controlledBones[i] == boneIndex) {
+      controlledBones.erase(controlledBones.begin() + static_cast<std::ptrdiff_t>(i));
+      if (i < controlledFrames.size()) {
+        controlledFrames.erase(controlledFrames.begin() + static_cast<std::ptrdiff_t>(i));
+      }
+      m_ragdollEditDirty = true;
+      T8_LOG_INFO("[RagdollEdit] Capsule %d no longer controls bone %d", m_ragdollEditSelectedCapsule, boneIndex);
+      return true;
+    }
+  }
+  return false;
+}
+
+int SandboxScene::FindGeneratedRagdollCapsuleForBone(int boneIndex) const {
+  const auto& bones = m_ragdollGeneratedBinding.referencePose.bones;
+  for (int i = 0; i < static_cast<int>(bones.size()); ++i) {
+    if (bones[static_cast<std::size_t>(i)].body.boneIndex == boneIndex) {
+      return i;
+    }
+  }
+  return -1;
+}
+
+bool SandboxScene::GetSkeletonEditBoneWorldTransform(int boneIndex, XMATRIX44& outWorld) const {
+  if (boneIndex >= 0 && boneIndex < static_cast<int>(m_skeletonEditCombined.size())) {
+    outWorld = FlipMatrixZ(m_skeletonEditCombined[static_cast<std::size_t>(boneIndex)]) * Meshes[0].Final;
+    return true;
+  }
+
+  RenderSkinnedMesh* skinned = Meshes[0].GetSkinnedMesh();
+  const xF::xSkeleton* skeleton = skinned ? skinned->GetAnimController().GetAnimSkeleton() : nullptr;
+  if (!skeleton || boneIndex < 0 || boneIndex >= static_cast<int>(skeleton->Bones.size())) {
+    return false;
+  }
+  outWorld = FlipMatrixZ(skeleton->Bones[static_cast<std::size_t>(boneIndex)].Combined) * Meshes[0].Final;
+  return true;
+}
+
+int SandboxScene::FindSkeletonEditDisplayEndpoint(int boneIndex) const {
+  RenderSkinnedMesh* skinned = Meshes[0].GetSkinnedMesh();
+  const xF::xSkeleton* skeleton = skinned ? skinned->GetAnimController().GetAnimSkeleton() : nullptr;
+  if (!skeleton || boneIndex < 0 || boneIndex >= static_cast<int>(skeleton->Bones.size())) {
+    return -1;
+  }
+
+  const std::string ownerName = LowerName(skeleton->Bones[static_cast<std::size_t>(boneIndex)].Name);
+  if (!IsHumanoidDisplayBoneName(ownerName)) {
+    return -1;
+  }
+
+  const xF::xBone& bone = skeleton->Bones[static_cast<std::size_t>(boneIndex)];
+  if (bone.Dad < skeleton->Bones.size() && bone.Dad != static_cast<unsigned short>(boneIndex)) {
+    const std::string parentName = LowerName(skeleton->Bones[bone.Dad].Name);
+    XMATRIX44 boneWorld;
+    XMATRIX44 parentWorld;
+    if (IsSpineLikeDisplayName(ownerName) &&
+        IsSpineLikeDisplayName(parentName) &&
+        GetSkeletonEditBoneWorldTransform(boneIndex, boneWorld) &&
+        GetSkeletonEditBoneWorldTransform(bone.Dad, parentWorld) &&
+        Length3(XVECTOR3(boneWorld.m41 - parentWorld.m41, boneWorld.m42 - parentWorld.m42, boneWorld.m43 - parentWorld.m43, 0.0f)) < 0.001f) {
+      return -1;
+    }
+  }
+
+  auto combinedChildren = [&](int index) {
+    std::vector<int> result;
+    if (index < 0 || index >= static_cast<int>(skeleton->Bones.size())) {
+      return result;
+    }
+    for (unsigned int child : skeleton->Bones[static_cast<std::size_t>(index)].Sons) {
+      if (child < skeleton->Bones.size() &&
+          std::find(result.begin(), result.end(), static_cast<int>(child)) == result.end()) {
+        result.push_back(static_cast<int>(child));
+      }
+    }
+    for (int child = 0; child < static_cast<int>(skeleton->Bones.size()); ++child) {
+      if (skeleton->Bones[static_cast<std::size_t>(child)].Dad == static_cast<unsigned short>(index) &&
+          child != index &&
+          std::find(result.begin(), result.end(), child) == result.end()) {
+        result.push_back(child);
+      }
+    }
+    return result;
+  };
+
+  XMATRIX44 ownerWorld;
+  if (!GetSkeletonEditBoneWorldTransform(boneIndex, ownerWorld)) {
+    return -1;
+  }
+  const XVECTOR3 ownerPosition(ownerWorld.m41, ownerWorld.m42, ownerWorld.m43, 1.0f);
+
+  struct Candidate {
+    int boneIndex = -1;
+    int score = 0;
+    float length = 0.0f;
+  };
+  std::vector<Candidate> candidates;
+  std::function<void(int, int)> gather = [&](int searchBoneIndex, int depth) {
+    if (searchBoneIndex < 0 || searchBoneIndex >= static_cast<int>(skeleton->Bones.size()) || depth > 4) {
+      return;
+    }
+    for (int childIndex : combinedChildren(searchBoneIndex)) {
+      const std::string childName = LowerName(skeleton->Bones[static_cast<std::size_t>(childIndex)].Name);
+      if (IsAttachmentBoneName(childName)) {
+        continue;
+      }
+
+      XMATRIX44 childWorld;
+      if (!GetSkeletonEditBoneWorldTransform(childIndex, childWorld)) {
+        continue;
+      }
+      const XVECTOR3 childPosition(childWorld.m41, childWorld.m42, childWorld.m43, 1.0f);
+      const float length = Length3(childPosition - ownerPosition);
+      const bool displayChild = IsHumanoidDisplayBoneName(childName);
+      const bool endpointHelper = IsEndpointHelperForBone(ownerName, childName);
+      if ((displayChild || endpointHelper) && length >= 0.001f) {
+        candidates.push_back({childIndex, DisplayChildPriority(ownerName, childName) - depth * 10, length});
+      }
+      if (length < 0.001f || IsDeformationHelperBoneName(childName) || (!displayChild && !endpointHelper)) {
+        gather(childIndex, depth + 1);
+      }
+    }
+  };
+  gather(boneIndex, 0);
+  if (candidates.empty()) {
+    return -1;
+  }
+  std::sort(candidates.begin(), candidates.end(), [](const Candidate& a, const Candidate& b) {
+    if (a.score != b.score) {
+      return a.score > b.score;
+    }
+    return a.length > b.length;
+  });
+  return candidates.front().boneIndex;
+}
+
+bool SandboxScene::BuildSkeletonEditBoneOctahedron(int boneIndex, float widthScale, std::array<XVECTOR3, 6>& outPoints) const {
+  RenderSkinnedMesh* skinned = Meshes[0].GetSkinnedMesh();
+  const xF::xSkeleton* skeleton = skinned ? skinned->GetAnimController().GetAnimSkeleton() : nullptr;
+  if (!skeleton || boneIndex < 0 || boneIndex >= static_cast<int>(skeleton->Bones.size())) {
+    return false;
+  }
+
+  const xF::xBone& bone = skeleton->Bones[static_cast<std::size_t>(boneIndex)];
+  if (bone.Dad == static_cast<unsigned short>(boneIndex) || bone.Dad >= skeleton->Bones.size()) {
+    return false;
+  }
+
+  XMATRIX44 rootWorld;
+  XMATRIX44 tipWorld;
+  if (!GetSkeletonEditBoneWorldTransform(bone.Dad, rootWorld) ||
+      !GetSkeletonEditBoneWorldTransform(boneIndex, tipWorld)) {
+    return false;
+  }
+
+  const XVECTOR3 root(rootWorld.m41, rootWorld.m42, rootWorld.m43, 1.0f);
+  const XVECTOR3 tip(tipWorld.m41, tipWorld.m42, tipWorld.m43, 1.0f);
+  BuildOctahedralBonePoints(root, tip, widthScale, (std::max)(0.001f, m_modelRadius * 0.004f), outPoints);
+  return true;
+}
+
+bool SandboxScene::RebuildRagdollParentLinks() {
+  if (!m_ragdollParentCapsules.empty()) {
+    return ApplyRagdollParentCapsuleLinks();
+  }
+
+  RenderSkinnedMesh* skinned = Meshes[0].GetSkinnedMesh();
+  const xF::xSkeleton* skeleton = skinned ? skinned->GetAnimController().GetAnimSkeleton() : nullptr;
+  if (!skeleton) {
+    return false;
+  }
+
+  auto& bones = m_ragdollAnimationBinding.referencePose.bones;
+  for (auto& ragdollBone : bones) {
+    ragdollBone.parentBoneIndex = -1;
+    int current = ragdollBone.body.boneIndex;
+    for (std::size_t depth = 0; depth < skeleton->Bones.size(); ++depth) {
+      if (current < 0 || current >= static_cast<int>(skeleton->Bones.size())) {
+        break;
+      }
+      const xF::xBone& skeletonBone = skeleton->Bones[static_cast<std::size_t>(current)];
+      if (skeletonBone.Dad == static_cast<unsigned short>(current) ||
+          skeletonBone.Dad >= skeleton->Bones.size()) {
+        break;
+      }
+      current = skeletonBone.Dad;
+      if (FindRagdollCapsuleForBone(current) >= 0) {
+        ragdollBone.parentBoneIndex = current;
+        break;
+      }
+    }
+  }
+  SyncRagdollParentCapsulesFromBoneLinks();
+  return true;
+}
+
+bool SandboxScene::BuildDefaultRagdollCapsuleForBone(int boneIndex,
+                                                     t850::PhysicsRagdollBoneDesc& outBone,
+                                                     XMATRIX44& outBodyFromBone) const {
+  RenderSkinnedMesh* skinned = Meshes[0].GetSkinnedMesh();
+  const xF::xSkeleton* skeleton = skinned ? skinned->GetAnimController().GetAnimSkeleton() : nullptr;
+  if (!skeleton || boneIndex < 0 || boneIndex >= static_cast<int>(skeleton->Bones.size())) {
+    return false;
+  }
+
+  XMATRIX44 boneWorld;
+  if (!GetSkeletonEditBoneWorldTransform(boneIndex, boneWorld)) {
+    return false;
+  }
+  const XVECTOR3 root(boneWorld.m41, boneWorld.m42, boneWorld.m43, 1.0f);
+
+  int endpointBone = FindSkeletonEditDisplayEndpoint(boneIndex);
+  float bestLength = 0.0f;
+  if (endpointBone < 0) {
+    for (int i = 0; i < static_cast<int>(skeleton->Bones.size()); ++i) {
+      const xF::xBone& candidate = skeleton->Bones[static_cast<std::size_t>(i)];
+      if (candidate.Dad != static_cast<unsigned short>(boneIndex)) {
+        continue;
+      }
+      XMATRIX44 childWorld;
+      if (!GetSkeletonEditBoneWorldTransform(i, childWorld)) {
+        continue;
+      }
+      const XVECTOR3 childPosition(childWorld.m41, childWorld.m42, childWorld.m43, 1.0f);
+      const float length = Length3(childPosition - root);
+      if (length > bestLength) {
+        bestLength = length;
+        endpointBone = i;
+      }
+    }
+  }
+
+  XVECTOR3 end = root;
+  if (endpointBone >= 0) {
+    XMATRIX44 childWorld;
+    if (!GetSkeletonEditBoneWorldTransform(endpointBone, childWorld)) {
+      return false;
+    }
+    end = XVECTOR3(childWorld.m41, childWorld.m42, childWorld.m43, 1.0f);
+  } else {
+    const xF::xBone& bone = skeleton->Bones[static_cast<std::size_t>(boneIndex)];
+    if (bone.Dad == static_cast<unsigned short>(boneIndex) || bone.Dad >= skeleton->Bones.size()) {
+      return false;
+    }
+    XMATRIX44 parentWorld;
+    if (!GetSkeletonEditBoneWorldTransform(bone.Dad, parentWorld)) {
+      return false;
+    }
+    const XVECTOR3 parent(parentWorld.m41, parentWorld.m42, parentWorld.m43, 1.0f);
+    end = root + (root - parent);
+  }
+
+  XVECTOR3 axis = end - root;
+  float length = Length3(axis);
+  if (length <= 0.0001f) {
+    return false;
+  }
+  axis = axis / length;
+
+  const float radius = (std::max)(0.004f, (std::min)((std::max)(0.004f, m_modelRadius * 0.035f), length * 0.18f));
+  const float capsuleLength = (std::max)(radius * 2.0f + 0.002f, length);
+  const XVECTOR3 center = root + axis * (capsuleLength * 0.5f);
+  const XMATRIX44 bodyWorld = MakeCapsuleBodyTransform(center, axis);
+
+  XMATRIX44 inverseBoneWorld;
+  if (!InvertAffineNoExit(boneWorld, inverseBoneWorld)) {
+    T8_LOG_ERROR("[RagdollEdit] Failed to create capsule for bone %d: bone transform is singular", boneIndex);
+    return false;
+  }
+
+  t850::PhysicsRagdollBoneDesc desc;
+  desc.parentBoneIndex = -1;
+  desc.jointWorldPosition = root;
+  desc.body.entityId = Meshes[0].GetEntityId();
+  desc.body.boneIndex = boneIndex;
+  desc.body.debugName = skeleton->Bones[static_cast<std::size_t>(boneIndex)].Name;
+  desc.body.motion = t850::PhysicsBodyMotion::Kinematic;
+  desc.body.mass = (std::max)(0.1f, capsuleLength + radius * 2.0f);
+  desc.body.worldTransform = bodyWorld;
+  desc.body.shape = t850::PhysicsShapeDesc::Capsule(radius, (std::max)(0.001f, capsuleLength * 0.5f - radius));
+
+  outBone = desc;
+  outBodyFromBone = bodyWorld * inverseBoneWorld;
+  return true;
+}
+
+bool SandboxScene::CreateRagdollCapsuleForBone(int boneIndex) {
+  EnsureRagdollControlledBones();
+  if (boneIndex < 0 ||
+      FindRagdollCapsuleForBone(boneIndex) >= 0 ||
+      FindRagdollCapsuleControllingBone(boneIndex) >= 0) {
+    return false;
+  }
+
+  t850::PhysicsRagdollBoneDesc bone;
+  XMATRIX44 bodyFromBone;
+  const int generatedIndex = FindGeneratedRagdollCapsuleForBone(boneIndex);
+  if (generatedIndex >= 0 &&
+      generatedIndex < static_cast<int>(m_ragdollGeneratedBinding.referencePose.bones.size()) &&
+      generatedIndex < static_cast<int>(m_ragdollGeneratedBinding.bodyFromBone.size())) {
+    bone = m_ragdollGeneratedBinding.referencePose.bones[static_cast<std::size_t>(generatedIndex)];
+    bodyFromBone = m_ragdollGeneratedBinding.bodyFromBone[static_cast<std::size_t>(generatedIndex)];
+    bone.body.entityId = Meshes[0].GetEntityId();
+    bone.body.motion = t850::PhysicsBodyMotion::Kinematic;
+  } else if (!BuildDefaultRagdollCapsuleForBone(boneIndex, bone, bodyFromBone)) {
+    T8_LOG_ERROR("[RagdollEdit] Failed to create capsule for bone %d", boneIndex);
+    return false;
+  }
+
+  auto& desc = m_ragdollAnimationBinding.referencePose;
+  if (desc.entityId == 0) {
+    desc.entityId = Meshes[0].GetEntityId();
+    desc.animationMode = t850::PhysicsAnimationMode::AnimationDriven;
+    desc.animationToPhysicsBlend = 0.0f;
+  }
+  desc.bones.push_back(bone);
+  m_ragdollAnimationBinding.bodyFromBone.push_back(bodyFromBone);
+  m_ragdollAnimationBinding.controlledBoneIndices.push_back(std::vector<int>{bone.body.boneIndex});
+  m_ragdollAnimationBinding.controlledBodyFromBone.push_back(std::vector<XMATRIX44>{bodyFromBone});
+  EnsureRagdollParentCapsules();
+  if (m_ragdollParentCapsules.size() < desc.bones.size()) {
+    m_ragdollParentCapsules.resize(desc.bones.size(), -1);
+  } else if (m_ragdollParentCapsules.size() > desc.bones.size()) {
+    m_ragdollParentCapsules.resize(desc.bones.size());
+  }
+  m_ragdollParentCapsules.back() = -1;
+  const int newIndex = static_cast<int>(desc.bones.size()) - 1;
+  if (!UpdateRagdollReferenceBodyFromLocal(newIndex)) {
+    desc.bones.pop_back();
+    m_ragdollAnimationBinding.bodyFromBone.pop_back();
+    m_ragdollAnimationBinding.controlledBoneIndices.pop_back();
+    m_ragdollAnimationBinding.controlledBodyFromBone.pop_back();
+    if (!m_ragdollParentCapsules.empty()) {
+      m_ragdollParentCapsules.pop_back();
+    }
+    T8_LOG_ERROR("[RagdollEdit] Failed to create capsule for bone %d '%s': could not update reference transform",
+                 bone.body.boneIndex, bone.body.debugName.c_str());
+    return false;
+  }
+  RebuildRagdollParentLinks();
+
+  m_ragdollEditSelectedCapsule = newIndex;
+  m_ragdollEditSelectedJoint = -1;
+  m_ragdollEditSelectedHandle = 0;
+  m_ragdollEditDirty = true;
+  m_ragdollEditRebuildRequested = true;
+  m_showPhysics = true;
+  T8_LOG_INFO("[RagdollEdit] Created capsule for bone %d '%s'", bone.body.boneIndex, bone.body.debugName.c_str());
+  return true;
+}
+
+bool SandboxScene::DeleteSelectedRagdollCapsule() {
+  auto& bones = m_ragdollAnimationBinding.referencePose.bones;
+  auto& locals = m_ragdollAnimationBinding.bodyFromBone;
+  const int index = m_ragdollEditSelectedCapsule;
+  if (index < 0 || index >= static_cast<int>(bones.size()) || index >= static_cast<int>(locals.size())) {
+    return false;
+  }
+
+  const int boneIndex = bones[static_cast<std::size_t>(index)].body.boneIndex;
+  const std::string debugName = bones[static_cast<std::size_t>(index)].body.debugName;
+  bones.erase(bones.begin() + index);
+  locals.erase(locals.begin() + index);
+  if (index < static_cast<int>(m_ragdollAnimationBinding.controlledBoneIndices.size())) {
+    m_ragdollAnimationBinding.controlledBoneIndices.erase(
+        m_ragdollAnimationBinding.controlledBoneIndices.begin() + index);
+  }
+  if (index < static_cast<int>(m_ragdollAnimationBinding.controlledBodyFromBone.size())) {
+    m_ragdollAnimationBinding.controlledBodyFromBone.erase(
+        m_ragdollAnimationBinding.controlledBodyFromBone.begin() + index);
+  }
+  if (index < static_cast<int>(m_ragdollParentCapsules.size())) {
+    m_ragdollParentCapsules.erase(m_ragdollParentCapsules.begin() + index);
+    for (int& parentCapsule : m_ragdollParentCapsules) {
+      if (parentCapsule == index) {
+        parentCapsule = -1;
+      } else if (parentCapsule > index) {
+        --parentCapsule;
+      }
+    }
+  } else {
+    m_ragdollParentCapsules.clear();
+  }
+  if (m_ragdollEditSelectedJoint == index) {
+    m_ragdollEditSelectedJoint = -1;
+  } else if (m_ragdollEditSelectedJoint > index) {
+    --m_ragdollEditSelectedJoint;
+  }
+  if (m_ragdollEditRenamingCapsule == index) {
+    m_ragdollEditRenamingCapsule = -1;
+    m_ragdollEditRenameFocusPending = false;
+  } else if (m_ragdollEditRenamingCapsule > index) {
+    --m_ragdollEditRenamingCapsule;
+  }
+  m_ragdollEditSelectedHandle = 0;
+  m_ragdollEditGizmoDragging = false;
+  m_ragdollEditGizmoAxis = -1;
+  m_ragdollEditSelectedCapsule = bones.empty()
+      ? -1
+      : (std::min)(index, static_cast<int>(bones.size()) - 1);
+  RebuildRagdollParentLinks();
+  m_ragdollEditDirty = true;
+
+  if (bones.empty()) {
+    m_ragdollClearRequested = true;
+    m_ragdollEditSelectedCapsule = -1;
+    m_ragdollEditSelectedJoint = -1;
+    m_ragdollEditSelectedHandle = -1;
+    m_ragdollEditHandleDragging = false;
+    m_ragdollEditGizmoDragging = false;
+    m_ragdollEditGizmoAxis = -1;
+    m_driveRagdollFromAnimation = false;
+    m_ragdollPhysicsDriven = false;
+    T8_LOG_INFO("[RagdollEdit] Deleted last capsule assignment for bone %d '%s'", boneIndex, debugName.c_str());
+    return true;
+  }
+
+  T8_LOG_INFO("[RagdollEdit] Deleted capsule assignment for bone %d '%s'", boneIndex, debugName.c_str());
+  return ApplyRagdollEditPose(true);
+}
+
+bool SandboxScene::ClearRagdollCapsules() {
+  const t850::PhysicsRagdollHandle ragdollHandle = Meshes[0].GetPhysicsRagdoll();
+  Meshes[0].AttachPhysicsRagdoll(t850::PhysicsRagdollHandle{});
+
+  t850::EngineContext* engineContext = GetEngineContext();
+  if (!engineContext) engineContext = &t850::GetEngineContext();
+  if (engineContext && engineContext->physics && ragdollHandle.IsValid()) {
+    engineContext->physics->DestroyRagdoll(ragdollHandle);
+  }
+
+  m_ragdollAnimationBinding.referencePose.bones.clear();
+  m_ragdollAnimationBinding.bodyFromBone.clear();
+  m_ragdollAnimationBinding.controlledBoneIndices.clear();
+  m_ragdollAnimationBinding.controlledBodyFromBone.clear();
+  m_ragdollParentCapsules.clear();
+  m_ragdollAnimationPose = t850::PhysicsRagdollDesc{};
+  m_ragdollPhysicsStates.clear();
+  m_ragdollPhysicsBoneIndices.clear();
+  m_ragdollPhysicsCombinedMatrices.clear();
+  m_ragdollEditSelectedCapsule = -1;
+  m_ragdollEditSelectedJoint = -1;
+  m_ragdollEditSelectedHandle = -1;
+  m_ragdollEditRenamingCapsule = -1;
+  m_ragdollEditRenameFocusPending = false;
+  m_ragdollEditHandleDragging = false;
+  m_ragdollEditGizmoDragging = false;
+  m_ragdollEditGizmoAxis = -1;
+  m_skeletonEditDragging = false;
+  m_ragdollClearRequested = false;
+  m_ragdollEditRebuildRequested = false;
+  m_driveRagdollFromAnimation = false;
+  m_ragdollPhysicsDriven = false;
+  m_showPhysics = false;
+  m_ragdollEditDirty = true;
+  T8_LOG_INFO("[RagdollEdit] Cleared all capsule assignments for '%s'", g_config.modelPath.c_str());
+  return true;
+}
+
+bool SandboxScene::UpdateRagdollReferenceBodyFromLocal(int capsuleIndex) {
+  if (capsuleIndex < 0 ||
+      capsuleIndex >= static_cast<int>(m_ragdollAnimationBinding.referencePose.bones.size()) ||
+      capsuleIndex >= static_cast<int>(m_ragdollAnimationBinding.bodyFromBone.size())) {
+    return false;
+  }
+
+  auto& bone = m_ragdollAnimationBinding.referencePose.bones[static_cast<std::size_t>(capsuleIndex)];
+  XMATRIX44 boneWorld;
+  if (!GetSkeletonEditBoneWorldTransform(bone.body.boneIndex, boneWorld)) {
+    const int generatedIndex = FindGeneratedRagdollCapsuleForBone(bone.body.boneIndex);
+    if (generatedIndex < 0 ||
+        generatedIndex >= static_cast<int>(m_ragdollGeneratedBinding.referencePose.bones.size()) ||
+        generatedIndex >= static_cast<int>(m_ragdollGeneratedBinding.bodyFromBone.size())) {
+      return false;
+    }
+    XMATRIX44 generatedBodyFromBone = m_ragdollGeneratedBinding.bodyFromBone[static_cast<std::size_t>(generatedIndex)];
+    XMATRIX44 boneFromGeneratedBody;
+    if (!InvertAffineNoExit(generatedBodyFromBone, boneFromGeneratedBody)) {
+      T8_LOG_ERROR("[RagdollEdit] Cannot update capsule %d: generated capsule frame is singular", capsuleIndex);
+      return false;
+    }
+    boneWorld =
+        boneFromGeneratedBody *
+        m_ragdollGeneratedBinding.referencePose.bones[static_cast<std::size_t>(generatedIndex)].body.worldTransform;
+  }
+
+  m_ragdollAnimationBinding.referencePose.bones[static_cast<std::size_t>(capsuleIndex)].body.worldTransform =
+      m_ragdollAnimationBinding.bodyFromBone[static_cast<std::size_t>(capsuleIndex)] * boneWorld;
+  m_ragdollAnimationBinding.referencePose.bones[static_cast<std::size_t>(capsuleIndex)].jointWorldPosition =
+      XVECTOR3(boneWorld.m41, boneWorld.m42, boneWorld.m43, 1.0f);
+  if (capsuleIndex < static_cast<int>(m_ragdollAnimationBinding.controlledBoneIndices.size()) &&
+      capsuleIndex < static_cast<int>(m_ragdollAnimationBinding.controlledBodyFromBone.size())) {
+    const XMATRIX44& bodyWorld =
+        m_ragdollAnimationBinding.referencePose.bones[static_cast<std::size_t>(capsuleIndex)].body.worldTransform;
+    const std::vector<int>& controlledBones =
+        m_ragdollAnimationBinding.controlledBoneIndices[static_cast<std::size_t>(capsuleIndex)];
+    std::vector<XMATRIX44>& controlledOffsets =
+        m_ragdollAnimationBinding.controlledBodyFromBone[static_cast<std::size_t>(capsuleIndex)];
+    controlledOffsets.clear();
+    controlledOffsets.reserve(controlledBones.size());
+    for (int controlledBone : controlledBones) {
+      XMATRIX44 controlledBoneWorld;
+      if (!GetSkeletonEditBoneWorldTransform(controlledBone, controlledBoneWorld)) {
+        controlledOffsets.push_back(m_ragdollAnimationBinding.bodyFromBone[static_cast<std::size_t>(capsuleIndex)]);
+        continue;
+      }
+      XMATRIX44 inverseControlledBoneWorld;
+      if (InvertAffineNoExit(controlledBoneWorld, inverseControlledBoneWorld)) {
+        controlledOffsets.push_back(bodyWorld * inverseControlledBoneWorld);
+      } else {
+        T8_LOG_ERROR("[RagdollEdit] Controlled bone %d for capsule %d has a singular transform; using primary capsule offset",
+                     controlledBone, capsuleIndex);
+        controlledOffsets.push_back(m_ragdollAnimationBinding.bodyFromBone[static_cast<std::size_t>(capsuleIndex)]);
+      }
+    }
+  }
+  return true;
+}
+
+bool SandboxScene::SetRagdollEditCapsuleWorldTransform(int capsuleIndex, const XMATRIX44& bodyWorld, bool rebuildRagdoll) {
+  auto& bones = m_ragdollAnimationBinding.referencePose.bones;
+  auto& locals = m_ragdollAnimationBinding.bodyFromBone;
+  if (capsuleIndex < 0 ||
+      capsuleIndex >= static_cast<int>(bones.size()) ||
+      capsuleIndex >= static_cast<int>(locals.size())) {
+    return false;
+  }
+
+  XMATRIX44 boneWorld;
+  if (!GetSkeletonEditBoneWorldTransform(bones[static_cast<std::size_t>(capsuleIndex)].body.boneIndex, boneWorld)) {
+    return false;
+  }
+  XMATRIX44 inverseBoneWorld;
+  if (!InvertAffineNoExit(boneWorld, inverseBoneWorld)) {
+    T8_LOG_ERROR("[RagdollEdit] Cannot set capsule %d transform: bone %d transform is singular",
+                 capsuleIndex, bones[static_cast<std::size_t>(capsuleIndex)].body.boneIndex);
+    return false;
+  }
+  locals[static_cast<std::size_t>(capsuleIndex)] = bodyWorld * inverseBoneWorld;
+  if (!UpdateRagdollReferenceBodyFromLocal(capsuleIndex)) {
+    return false;
+  }
+  m_ragdollEditDirty = true;
+  return ApplyRagdollEditPose(rebuildRagdoll);
+}
+
+bool SandboxScene::MoveRagdollEditCapsuleByWorldDelta(int capsuleIndex, const XVECTOR3& worldDelta, bool rebuildRagdoll) {
+  XMATRIX44 bodyWorld;
+  if (!GetCurrentRagdollEditCapsuleWorld(capsuleIndex, bodyWorld)) {
+    return false;
+  }
+  bodyWorld.m41 += worldDelta.x;
+  bodyWorld.m42 += worldDelta.y;
+  bodyWorld.m43 += worldDelta.z;
+  return SetRagdollEditCapsuleWorldTransform(capsuleIndex, bodyWorld, rebuildRagdoll);
+}
+
+bool SandboxScene::RotateRagdollEditCapsuleWorld(int capsuleIndex,
+                                                 const XVECTOR3& axisWorld,
+                                                 float angleRadians,
+                                                 bool rebuildRagdoll) {
+  if (std::fabs(angleRadians) < 0.000001f) {
+    return true;
+  }
+
+  XMATRIX44 bodyWorld;
+  if (!GetCurrentRagdollEditCapsuleWorld(capsuleIndex, bodyWorld)) {
+    return false;
+  }
+  const XVECTOR3 center(bodyWorld.m41, bodyWorld.m42, bodyWorld.m43, 1.0f);
+  XMATRIX44 toOrigin;
+  XMATRIX44 rotation;
+  XMATRIX44 fromOrigin;
+  XMatTranslation(toOrigin, -center.x, -center.y, -center.z);
+  XMatRotationAxis(rotation, Normalize3(axisWorld, XVECTOR3(0.0f, 1.0f, 0.0f, 0.0f)), angleRadians);
+  XMatTranslation(fromOrigin, center.x, center.y, center.z);
+  const XMATRIX44 rotatedWorld = bodyWorld * toOrigin * rotation * fromOrigin;
+  return SetRagdollEditCapsuleWorldTransform(capsuleIndex, rotatedWorld, rebuildRagdoll);
+}
+
+bool SandboxScene::RecreateRagdollFromPose(const t850::PhysicsRagdollDesc& pose) {
+  if (pose.bones.empty()) {
+    return false;
+  }
+
+  t850::EngineContext* engineContext = GetEngineContext();
+  if (!engineContext) engineContext = &t850::GetEngineContext();
+  if (!engineContext || !engineContext->physics || !engineContext->physics->IsInitialized()) {
+    return false;
+  }
+
+  const t850::PhysicsRagdollHandle oldHandle = Meshes[0].GetPhysicsRagdoll();
+  const t850::PhysicsRagdollHandle newHandle =
+      engineContext->physics->CreateRagdoll(pose, t850::PhysicsBodyMotion::Kinematic);
+  if (!newHandle.IsValid()) {
+    T8_LOG_ERROR("[RagdollEdit] Failed to recreate ragdoll for '%s'", g_config.modelPath.c_str());
+    return false;
+  }
+
+  if (oldHandle.IsValid()) {
+    engineContext->physics->DestroyRagdoll(oldHandle);
+  }
+  Meshes[0].AttachPhysicsRagdoll(newHandle);
+  m_ragdollAnimationPose = pose;
+  m_driveRagdollFromAnimation = true;
+  m_ragdollPhysicsDriven = false;
+  m_ragdollDriveLogEmitted = false;
+  m_ragdollPhysicsLogEmitted = false;
+  m_showPhysics = true;
+  return true;
+}
+
+bool SandboxScene::ApplyRagdollEditPose(bool rebuildRagdoll) {
+  if (m_ragdollAnimationBinding.referencePose.bones.empty() ||
+      m_ragdollAnimationBinding.referencePose.bones.size() != m_ragdollAnimationBinding.bodyFromBone.size()) {
+    return false;
+  }
+  EnsureRagdollControlledBones();
+
+  t850::PhysicsRagdollDesc pose = m_ragdollAnimationBinding.referencePose;
+  RenderSkinnedMesh* skinned = Meshes[0].GetSkinnedMesh();
+  if (skinned && skinned->HasSkinData()) {
+    t850::PhysicsRagdollDesc animationPose;
+    if (t850::BuildRagdollPoseFromAnimation(*skinned, Meshes[0].Final, m_ragdollAnimationBinding, animationPose)) {
+      pose = std::move(animationPose);
+    }
+  }
+
+  if (rebuildRagdoll || !Meshes[0].HasPhysicsRagdoll()) {
+    return RecreateRagdollFromPose(pose);
+  }
+
+  t850::EngineContext* engineContext = GetEngineContext();
+  if (!engineContext) engineContext = &t850::GetEngineContext();
+  if (!engineContext || !engineContext->physics) {
+    return false;
+  }
+
+  const bool updated = engineContext->physics->DriveRagdollFromPose(Meshes[0].GetPhysicsRagdoll(), pose, 0.0f);
+  if (updated) {
+    m_ragdollAnimationPose = pose;
+    m_ragdollDriveLogEmitted = false;
+  }
+  return updated;
+}
+
+bool SandboxScene::LoadRagdollEditPose() {
+  if (m_ragdollEditSavePath.empty()) {
+    m_ragdollEditSavePath = BuildRagdollEditSavePath();
+  }
+
+  std::string json;
+  if (!t850::ResourceLocator::Instance().ReadText(m_ragdollEditSavePath, json)) {
+    T8_LOG_INFO("[RagdollEdit] No saved capsule file found at '%s'; keeping generated ragdoll", m_ragdollEditSavePath.c_str());
+    return false;
+  }
+
+  RagdollEditJson data;
+  if (!ParseRagdollEditJson(json, data)) {
+    T8_LOG_ERROR("[RagdollEdit] Failed to parse '%s'", m_ragdollEditSavePath.c_str());
+    return false;
+  }
+
+  auto& bones = m_ragdollAnimationBinding.referencePose.bones;
+  auto& bodyFromBone = m_ragdollAnimationBinding.bodyFromBone;
+  if (bones.size() != bodyFromBone.size()) {
+    return false;
+  }
+  std::vector<t850::PhysicsRagdollBoneDesc> loadedBones;
+  std::vector<XMATRIX44> loadedBodyFromBone;
+  std::vector<std::vector<int>> loadedControlledBones;
+  std::vector<std::vector<XMATRIX44>> loadedControlledBodyFromBone;
+  std::vector<int> loadedSavedIndices;
+  std::vector<int> loadedParentRefs;
+  loadedBones.reserve(data.capsules.size());
+  loadedBodyFromBone.reserve(data.capsules.size());
+  loadedControlledBones.reserve(data.capsules.size());
+  loadedControlledBodyFromBone.reserve(data.capsules.size());
+  loadedSavedIndices.reserve(data.capsules.size());
+  loadedParentRefs.reserve(data.capsules.size());
+
+  int applied = 0;
+  for (const RagdollEditCapsuleJson& capsule : data.capsules) {
+    int target = -1;
+    if (capsule.index >= 0 && capsule.index < static_cast<int>(bones.size())) {
+      const auto& candidate = bones[static_cast<std::size_t>(capsule.index)];
+      if (capsule.boneIndex < 0 || candidate.body.boneIndex == capsule.boneIndex) {
+        target = capsule.index;
+      }
+    }
+    if (target < 0) {
+      for (int i = 0; i < static_cast<int>(bones.size()); ++i) {
+        const auto& candidate = bones[static_cast<std::size_t>(i)];
+        if (candidate.body.boneIndex == capsule.boneIndex) {
+          target = i;
+          break;
+        }
+      }
+    }
+    if (target < 0) {
+      t850::PhysicsRagdollBoneDesc createdBone;
+      XMATRIX44 createdBodyFromBone;
+      if (!BuildDefaultRagdollCapsuleForBone(capsule.boneIndex, createdBone, createdBodyFromBone)) {
+        continue;
+      }
+      bones.push_back(createdBone);
+      bodyFromBone.push_back(createdBodyFromBone);
+      target = static_cast<int>(bones.size()) - 1;
+    }
+    if (capsule.boneIndex >= 0) {
+      bool duplicate = false;
+      for (const t850::PhysicsRagdollBoneDesc& loaded : loadedBones) {
+        if (loaded.body.boneIndex == capsule.boneIndex) {
+          duplicate = true;
+          break;
+        }
+      }
+      if (duplicate) {
+        continue;
+      }
+    }
+
+    t850::PhysicsRagdollBoneDesc targetBone = bones[static_cast<std::size_t>(target)];
+    if (!capsule.name.empty()) {
+      targetBone.body.debugName = capsule.name;
+    }
+    XMATRIX44 targetBodyFromBone =
+        data.schema >= 3
+            ? MatrixFromArray16(capsule.bodyFromBone)
+            : bodyFromBone[static_cast<std::size_t>(target)];
+    XMATRIX44 targetPrimaryBoneWorld;
+    if (GetSkeletonEditBoneWorldTransform(targetBone.body.boneIndex, targetPrimaryBoneWorld)) {
+      targetBone.body.worldTransform = targetBodyFromBone * targetPrimaryBoneWorld;
+    }
+    targetBone.body.shape.type = t850::PhysicsShapeType::Capsule;
+    targetBone.body.shape.radius = (std::max)(0.001f, capsule.radius);
+    targetBone.body.shape.halfHeight = (std::max)(0.001f, capsule.halfHeight);
+    if (data.schema >= 2) {
+      targetBone.swingLimitRadians = (std::max)(0.0f, capsule.swingLimitRadians);
+      targetBone.twistLimitRadians = (std::max)(0.0f, capsule.twistLimitRadians);
+    }
+    std::vector<int> controlledBones;
+    if (data.schema >= 4) {
+      controlledBones = capsule.controlledBones;
+    }
+    if (data.schema < 4 && controlledBones.empty() && targetBone.body.boneIndex >= 0) {
+      controlledBones.push_back(targetBone.body.boneIndex);
+    }
+
+    std::vector<XMATRIX44> controlledBodyFromBone;
+    controlledBodyFromBone.reserve(controlledBones.size());
+    for (int controlledBone : controlledBones) {
+      XMATRIX44 controlledBoneWorld;
+      if (!GetSkeletonEditBoneWorldTransform(controlledBone, controlledBoneWorld)) {
+        continue;
+      }
+      XMATRIX44 inverseControlledBoneWorld;
+      if (!InvertAffineNoExit(controlledBoneWorld, inverseControlledBoneWorld)) {
+        T8_LOG_ERROR("[RagdollEdit] Saved controlled bone %d for capsule %d has a singular transform",
+                     controlledBone, targetBone.body.boneIndex);
+        continue;
+      }
+      controlledBodyFromBone.push_back(targetBone.body.worldTransform * inverseControlledBoneWorld);
+    }
+    if (controlledBodyFromBone.size() != controlledBones.size()) {
+      controlledBones.clear();
+      controlledBodyFromBone.clear();
+      if (targetBone.body.boneIndex >= 0) {
+        controlledBones.push_back(targetBone.body.boneIndex);
+        controlledBodyFromBone.push_back(targetBodyFromBone);
+      }
+    }
+
+    loadedBones.push_back(targetBone);
+    loadedBodyFromBone.push_back(targetBodyFromBone);
+    loadedControlledBones.push_back(std::move(controlledBones));
+    loadedControlledBodyFromBone.push_back(std::move(controlledBodyFromBone));
+    loadedSavedIndices.push_back(capsule.index >= 0 ? capsule.index : static_cast<int>(loadedSavedIndices.size()));
+    loadedParentRefs.push_back(data.schema >= 5 ? capsule.parentCapsule : -1);
+    ++applied;
+  }
+
+  if (applied > 0 || data.capsules.empty()) {
+    std::vector<int> loadedParentCapsules(loadedBones.size(), -1);
+    if (data.schema >= 5) {
+      auto findLoadedBySavedIndex = [&](int savedIndex) {
+        for (int i = 0; i < static_cast<int>(loadedSavedIndices.size()); ++i) {
+          if (loadedSavedIndices[static_cast<std::size_t>(i)] == savedIndex) {
+            return i;
+          }
+        }
+        if (savedIndex >= 0 && savedIndex < static_cast<int>(loadedBones.size())) {
+          return savedIndex;
+        }
+        return -1;
+      };
+      for (int child = 0; child < static_cast<int>(loadedParentRefs.size()); ++child) {
+        loadedParentCapsules[static_cast<std::size_t>(child)] =
+            findLoadedBySavedIndex(loadedParentRefs[static_cast<std::size_t>(child)]);
+      }
+    }
+
+    bones = std::move(loadedBones);
+    bodyFromBone = std::move(loadedBodyFromBone);
+    m_ragdollAnimationBinding.controlledBoneIndices = std::move(loadedControlledBones);
+    m_ragdollAnimationBinding.controlledBodyFromBone = std::move(loadedControlledBodyFromBone);
+    EnsureRagdollControlledBones();
+    if (data.schema >= 5) {
+      m_ragdollParentCapsules = std::move(loadedParentCapsules);
+      ApplyRagdollParentCapsuleLinks();
+    } else {
+      m_ragdollParentCapsules.clear();
+      RebuildRagdollParentLinks();
+    }
+    for (int i = 0; i < static_cast<int>(bones.size()); ++i) {
+      UpdateRagdollReferenceBodyFromLocal(i);
+    }
+    if (m_ragdollEditSelectedCapsule < 0 || m_ragdollEditSelectedCapsule >= static_cast<int>(bones.size())) {
+      m_ragdollEditSelectedCapsule = bones.empty() ? -1 : 0;
+    }
+    m_ragdollEditSelectedJoint =
+        m_ragdollEditSelectedCapsule >= 0 &&
+        m_ragdollEditSelectedCapsule < static_cast<int>(m_ragdollParentCapsules.size()) &&
+        m_ragdollParentCapsules[static_cast<std::size_t>(m_ragdollEditSelectedCapsule)] >= 0
+            ? m_ragdollEditSelectedCapsule
+            : -1;
+    m_ragdollEditRenamingCapsule = -1;
+    m_ragdollEditRenameFocusPending = false;
+    m_ragdollEditHandleDragging = false;
+    m_ragdollEditGizmoDragging = false;
+    m_ragdollEditGizmoAxis = -1;
+    m_ragdollEditDirty = false;
+    if (!bones.empty()) {
+      ApplyRagdollEditPose(true);
+    }
+    if (data.schema < 2) {
+      T8_LOG_INFO("[RagdollEdit] Preserved inferred constraints for legacy cache '%s'", m_ragdollEditSavePath.c_str());
+    }
+    if (data.schema < 3) {
+      T8_LOG_INFO("[RagdollEdit] Preserved generated capsule frames for legacy cache '%s'", m_ragdollEditSavePath.c_str());
+    }
+    if (data.schema < 4) {
+      T8_LOG_INFO("[RagdollEdit] Initialized controlled bones for legacy cache '%s'", m_ragdollEditSavePath.c_str());
+    }
+    if (data.schema < 5) {
+      T8_LOG_INFO("[RagdollEdit] Initialized capsule parent links for legacy cache '%s'", m_ragdollEditSavePath.c_str());
+    }
+    T8_LOG_INFO("[RagdollEdit] Loaded %d edited capsules from '%s'", applied, m_ragdollEditSavePath.c_str());
+  }
+  return applied > 0 || data.capsules.empty();
+}
+
+bool SandboxScene::SaveRagdollEditPose() {
+  if (m_ragdollEditSavePath.empty()) {
+    m_ragdollEditSavePath = BuildRagdollEditSavePath();
+  }
+
+  EnsureRagdollParentCapsules();
+  ApplyRagdollParentCapsuleLinks();
+
+  const auto& bones = m_ragdollAnimationBinding.referencePose.bones;
+  if (bones.size() != m_ragdollAnimationBinding.bodyFromBone.size()) {
+    return false;
+  }
+
+  const std::filesystem::path path = ResolveRagdollEditWritePath(m_ragdollEditSavePath);
+  std::error_code ec;
+  if (!path.parent_path().empty()) {
+    std::filesystem::create_directories(path.parent_path(), ec);
+  }
+  if (ec) {
+    T8_LOG_ERROR("[RagdollEdit] Failed to create '%s'", path.parent_path().string().c_str());
+    return false;
+  }
+
+  std::ofstream file(path, std::ios::out | std::ios::trunc);
+  if (!file.is_open()) {
+    T8_LOG_ERROR("[RagdollEdit] Failed to open '%s' for writing", path.string().c_str());
+    return false;
+  }
+
+  const std::string model = m_profileModelKey.empty() ? SandboxProfileModelKey(g_config.modelPath) : m_profileModelKey;
+  file << "{\n";
+  file << "  \"schema\": 5,\n";
+  file << "  \"model\": \"" << JsonEscape(model) << "\",\n";
+  file << "  \"constraint_profile\": \"inferred-name-v1\",\n";
+  file << "  \"capsule_frame_profile\": \"bone-to-endpoint-v1\",\n";
+  file << "  \"capsules\": [\n";
+  file << std::fixed << std::setprecision(8);
+  for (std::size_t i = 0; i < bones.size(); ++i) {
+    const auto& bone = bones[i];
+    const auto& shape = bone.body.shape;
+    const auto matrix = MatrixToArray16(m_ragdollAnimationBinding.bodyFromBone[i]);
+    file << "    {\n";
+    file << "      \"index\": " << i << ",\n";
+    file << "      \"bone_index\": " << bone.body.boneIndex << ",\n";
+    file << "      \"name\": \"" << JsonEscape(bone.body.debugName) << "\",\n";
+    const int parentCapsule =
+        i < m_ragdollParentCapsules.size() ? m_ragdollParentCapsules[i] : -1;
+    file << "      \"parent_capsule\": " << parentCapsule << ",\n";
+    file << "      \"body_from_bone\": [";
+    for (std::size_t valueIndex = 0; valueIndex < matrix.size(); ++valueIndex) {
+      if (valueIndex > 0) file << ", ";
+      file << matrix[valueIndex];
+    }
+    file << "],\n";
+    file << "      \"radius\": " << shape.radius << ",\n";
+    file << "      \"half_height\": " << shape.halfHeight << ",\n";
+    file << "      \"swing_limit\": " << bone.swingLimitRadians << ",\n";
+    file << "      \"twist_limit\": " << bone.twistLimitRadians << ",\n";
+    file << "      \"controlled_bones\": [";
+    const std::vector<int>* controlledBones =
+        i < m_ragdollAnimationBinding.controlledBoneIndices.size()
+            ? &m_ragdollAnimationBinding.controlledBoneIndices[i]
+            : nullptr;
+    if (controlledBones) {
+      for (std::size_t controlledIndex = 0; controlledIndex < controlledBones->size(); ++controlledIndex) {
+        if (controlledIndex > 0) file << ", ";
+        file << (*controlledBones)[controlledIndex];
+      }
+    }
+    file << "]\n";
+    file << "    }" << (i + 1 < bones.size() ? "," : "") << "\n";
+  }
+  file << "  ]\n";
+  file << "}\n";
+  m_ragdollEditDirty = false;
+  T8_LOG_INFO("[RagdollEdit] Saved %zu capsules to '%s'", bones.size(), path.string().c_str());
+  return true;
+}
+
+bool SandboxScene::ResetRagdollEditPose() {
+  if (m_ragdollGeneratedBinding.referencePose.bones.empty() ||
+      m_ragdollGeneratedBinding.referencePose.bones.size() != m_ragdollGeneratedBinding.bodyFromBone.size()) {
+    return false;
+  }
+  m_ragdollAnimationBinding = m_ragdollGeneratedBinding;
+  m_ragdollParentCapsules.clear();
+  RebuildRagdollParentLinks();
+  m_ragdollEditSelectedJoint = -1;
+  m_ragdollEditRenamingCapsule = -1;
+  m_ragdollEditRenameFocusPending = false;
+  m_ragdollEditHandleDragging = false;
+  m_ragdollEditGizmoDragging = false;
+  m_ragdollEditGizmoAxis = -1;
+  m_ragdollEditDirty = true;
+  return ApplyRagdollEditPose(true);
+}
+
+bool SandboxScene::ResetSelectedRagdollCapsule() {
+  EnsureRagdollControlledBones();
+  const int index = m_ragdollEditSelectedCapsule;
+  if (index < 0 ||
+      index >= static_cast<int>(m_ragdollAnimationBinding.referencePose.bones.size()) ||
+      index >= static_cast<int>(m_ragdollAnimationBinding.bodyFromBone.size())) {
+    return false;
+  }
+
+  const int boneIndex = m_ragdollAnimationBinding.referencePose.bones[static_cast<std::size_t>(index)].body.boneIndex;
+  const int generatedIndex = FindGeneratedRagdollCapsuleForBone(boneIndex);
+  if (generatedIndex < 0 ||
+      generatedIndex >= static_cast<int>(m_ragdollGeneratedBinding.referencePose.bones.size()) ||
+      generatedIndex >= static_cast<int>(m_ragdollGeneratedBinding.bodyFromBone.size())) {
+    return false;
+  }
+
+  m_ragdollAnimationBinding.referencePose.bones[static_cast<std::size_t>(index)] =
+      m_ragdollGeneratedBinding.referencePose.bones[static_cast<std::size_t>(generatedIndex)];
+  m_ragdollAnimationBinding.bodyFromBone[static_cast<std::size_t>(index)] =
+      m_ragdollGeneratedBinding.bodyFromBone[static_cast<std::size_t>(generatedIndex)];
+  if (index < static_cast<int>(m_ragdollAnimationBinding.controlledBoneIndices.size())) {
+    m_ragdollAnimationBinding.controlledBoneIndices[static_cast<std::size_t>(index)] =
+        std::vector<int>{m_ragdollAnimationBinding.referencePose.bones[static_cast<std::size_t>(index)].body.boneIndex};
+  }
+  if (index < static_cast<int>(m_ragdollAnimationBinding.controlledBodyFromBone.size())) {
+    m_ragdollAnimationBinding.controlledBodyFromBone[static_cast<std::size_t>(index)] =
+        std::vector<XMATRIX44>{m_ragdollAnimationBinding.bodyFromBone[static_cast<std::size_t>(index)]};
+  }
+  ApplyRagdollParentCapsuleLinks();
+  m_ragdollEditHandleDragging = false;
+  m_ragdollEditGizmoDragging = false;
+  m_ragdollEditGizmoAxis = -1;
+  m_ragdollEditDirty = true;
+  return ApplyRagdollEditPose(true);
+}
+
+bool SandboxScene::GetSkeletonEditBoneWorldPosition(int boneIndex, XVECTOR3& outWorld) const {
+  if (boneIndex < 0 || boneIndex >= static_cast<int>(m_skeletonEditCombined.size())) {
+    return false;
+  }
+  const XMATRIX44& combined = m_skeletonEditCombined[static_cast<std::size_t>(boneIndex)];
+  const XVECTOR3 meshPosition(combined.m41, combined.m42, -combined.m43, 1.0f);
+  outWorld = t850::TransformPoint(meshPosition, Meshes[0].Final);
+  return true;
+}
+
+bool SandboxScene::SetSkeletonEditBoneWorldPosition(int boneIndex, const XVECTOR3& worldPosition) {
+  if (boneIndex < 0 || boneIndex >= static_cast<int>(m_skeletonEditCombined.size())) {
+    return false;
+  }
+  XMATRIX44 meshFromWorld;
+  Meshes[0].Final.Inverse(&meshFromWorld);
+  const XVECTOR3 meshPosition = t850::TransformPoint(worldPosition, meshFromWorld);
+  XMATRIX44& combined = m_skeletonEditCombined[static_cast<std::size_t>(boneIndex)];
+  combined.m41 = meshPosition.x;
+  combined.m42 = meshPosition.y;
+  combined.m43 = -meshPosition.z;
+  m_skeletonEditDirty = true;
+  return ApplySkeletonEditPose();
+}
+
+std::array<float, 3> SandboxScene::GetSkeletonEditBoneScale(int boneIndex) const {
+  std::array<float, 3> scale = {1.0f, 1.0f, 1.0f};
+  if (boneIndex < 0 || boneIndex >= static_cast<int>(m_skeletonEditCombined.size())) {
+    return scale;
+  }
+  const XMATRIX44& matrix = m_skeletonEditCombined[static_cast<std::size_t>(boneIndex)];
+  for (int row = 0; row < 3; ++row) {
+    const float x = matrix.m[row][0];
+    const float y = matrix.m[row][1];
+    const float z = matrix.m[row][2];
+    scale[static_cast<std::size_t>(row)] = std::sqrt(x * x + y * y + z * z);
+  }
+  return scale;
+}
+
+bool SandboxScene::SetSkeletonEditBoneScale(int boneIndex, const std::array<float, 3>& scale) {
+  if (boneIndex < 0 || boneIndex >= static_cast<int>(m_skeletonEditCombined.size())) {
+    return false;
+  }
+  XMATRIX44& matrix = m_skeletonEditCombined[static_cast<std::size_t>(boneIndex)];
+  for (int row = 0; row < 3; ++row) {
+    const float x = matrix.m[row][0];
+    const float y = matrix.m[row][1];
+    const float z = matrix.m[row][2];
+    const float length = std::sqrt(x * x + y * y + z * z);
+    const float target = (std::max)(0.001f, scale[static_cast<std::size_t>(row)]);
+    if (length > 0.000001f) {
+      const float factor = target / length;
+      matrix.m[row][0] *= factor;
+      matrix.m[row][1] *= factor;
+      matrix.m[row][2] *= factor;
+    }
+  }
+  m_skeletonEditDirty = true;
+  return ApplySkeletonEditPose();
+}
+
+bool SandboxScene::GetCurrentRagdollEditCapsuleWorld(int capsuleIndex, XMATRIX44& outWorld) {
+  const auto& bones = m_ragdollAnimationBinding.referencePose.bones;
+  if (capsuleIndex < 0 || capsuleIndex >= static_cast<int>(bones.size())) {
+    return false;
+  }
+
+  RenderSkinnedMesh* skinned = Meshes[0].GetSkinnedMesh();
+  t850::PhysicsRagdollDesc pose;
+  if (skinned && skinned->HasSkinData() &&
+      t850::BuildRagdollPoseFromAnimation(*skinned, Meshes[0].Final, m_ragdollAnimationBinding, pose) &&
+      capsuleIndex < static_cast<int>(pose.bones.size())) {
+    outWorld = pose.bones[static_cast<std::size_t>(capsuleIndex)].body.worldTransform;
+    return true;
+  }
+
+  outWorld = bones[static_cast<std::size_t>(capsuleIndex)].body.worldTransform;
+  return true;
+}
+
+bool SandboxScene::GetRagdollJointVisualFrame(int childCapsule,
+                                              XVECTOR3& outJoint,
+                                              XVECTOR3& outParentCenter,
+                                              XVECTOR3& outChildCenter,
+                                              XVECTOR3& outParentTwistAxis,
+                                              XVECTOR3& outChildTwistAxis,
+                                              XVECTOR3& outChildPlaneAxis,
+                                              float& outSize) {
+  const auto& bones = m_ragdollAnimationBinding.referencePose.bones;
+  EnsureRagdollParentCapsules();
+  if (childCapsule < 0 ||
+      childCapsule >= static_cast<int>(bones.size()) ||
+      childCapsule >= static_cast<int>(m_ragdollParentCapsules.size())) {
+    return false;
+  }
+
+  const int parentCapsule = m_ragdollParentCapsules[static_cast<std::size_t>(childCapsule)];
+  if (parentCapsule < 0 || parentCapsule >= static_cast<int>(bones.size()) || parentCapsule == childCapsule) {
+    return false;
+  }
+
+  XMATRIX44 parentWorld;
+  XMATRIX44 childWorld;
+  if (!GetCurrentRagdollEditCapsuleWorld(parentCapsule, parentWorld) ||
+      !GetCurrentRagdollEditCapsuleWorld(childCapsule, childWorld)) {
+    return false;
+  }
+
+  outParentCenter = XVECTOR3(parentWorld.m41, parentWorld.m42, parentWorld.m43, 1.0f);
+  outChildCenter = XVECTOR3(childWorld.m41, childWorld.m42, childWorld.m43, 1.0f);
+  XMATRIX44 childBoneWorld;
+  if (GetSkeletonEditBoneWorldTransform(bones[static_cast<std::size_t>(childCapsule)].body.boneIndex, childBoneWorld)) {
+    outJoint = XVECTOR3(childBoneWorld.m41, childBoneWorld.m42, childBoneWorld.m43, 1.0f);
+  } else {
+    outJoint = bones[static_cast<std::size_t>(childCapsule)].jointWorldPosition;
+  }
+
+  outParentTwistAxis = Normalize3(XVECTOR3(parentWorld.m21, parentWorld.m22, parentWorld.m23, 0.0f),
+                                  XVECTOR3(0.0f, 1.0f, 0.0f, 0.0f));
+  outChildTwistAxis = Normalize3(XVECTOR3(childWorld.m21, childWorld.m22, childWorld.m23, 0.0f),
+                                 XVECTOR3(0.0f, 1.0f, 0.0f, 0.0f));
+  outChildPlaneAxis = Normalize3(XVECTOR3(childWorld.m11, childWorld.m12, childWorld.m13, 0.0f),
+                                 XVECTOR3(1.0f, 0.0f, 0.0f, 0.0f));
+
+  const float distanceToCamera = Length3(outJoint - Cam.Eye);
+  const float minSize = (std::max)(0.03f, m_modelRadius * 0.06f);
+  const float maxSize = (std::max)(minSize, m_modelRadius * 0.35f);
+  outSize = (std::max)(minSize, (std::min)(maxSize, distanceToCamera * 0.08f));
+  return true;
+}
+
+void SandboxScene::DrawRagdollJointGizmos() {
+  if (!m_skeletonEditMode || !g_pBaseDriver || !ImGui::GetCurrentContext()) {
+    return;
+  }
+
+  const auto& bones = m_ragdollAnimationBinding.referencePose.bones;
+  if (bones.empty()) {
+    return;
+  }
+  EnsureRagdollParentCapsules();
+
+  const int width = (std::max)(1, g_pBaseDriver->width);
+  const int height = (std::max)(1, g_pBaseDriver->height);
+  ImDrawList* drawList = ImGui::GetBackgroundDrawList();
+  const ImU32 lineColor = IM_COL32(255, 185, 40, 165);
+  const ImU32 jointColor = IM_COL32(255, 220, 80, 230);
+  const ImU32 selectedColor = IM_COL32(255, 245, 120, 255);
+  const ImU32 parentAxisColor = IM_COL32(255, 130, 40, 245);
+  const ImU32 childAxisColor = IM_COL32(80, 220, 255, 255);
+  const ImU32 planeAxisColor = IM_COL32(255, 90, 220, 245);
+  const ImU32 coneColor = IM_COL32(255, 215, 70, 205);
+  const ImU32 twistColor = IM_COL32(190, 120, 255, 230);
+
+  for (int childCapsule = 0; childCapsule < static_cast<int>(m_ragdollParentCapsules.size()); ++childCapsule) {
+    if (childCapsule >= static_cast<int>(bones.size()) ||
+        m_ragdollParentCapsules[static_cast<std::size_t>(childCapsule)] < 0) {
+      continue;
+    }
+
+    XVECTOR3 joint;
+    XVECTOR3 parentCenter;
+    XVECTOR3 childCenter;
+    XVECTOR3 parentTwist;
+    XVECTOR3 childTwist;
+    XVECTOR3 childPlane;
+    float size = 0.0f;
+    if (!GetRagdollJointVisualFrame(childCapsule, joint, parentCenter, childCenter, parentTwist, childTwist, childPlane, size)) {
+      continue;
+    }
+
+    bool jointVisible = false;
+    bool parentVisible = false;
+    bool childVisible = false;
+    const ImVec2 jointScreen = ProjectWorldToScreen(joint, VP, width, height, jointVisible);
+    const ImVec2 parentScreen = ProjectWorldToScreen(parentCenter, VP, width, height, parentVisible);
+    const ImVec2 childScreen = ProjectWorldToScreen(childCenter, VP, width, height, childVisible);
+    if (!jointVisible) {
+      continue;
+    }
+
+    const bool selected = childCapsule == m_ragdollEditSelectedJoint;
+    if (parentVisible) {
+      drawList->AddLine(parentScreen, jointScreen, selected ? selectedColor : lineColor, selected ? 3.0f : 1.6f);
+    }
+    if (childVisible) {
+      drawList->AddLine(jointScreen, childScreen, selected ? selectedColor : lineColor, selected ? 3.0f : 1.6f);
+    }
+    drawList->AddCircleFilled(jointScreen, selected ? 6.0f : 4.0f, selected ? selectedColor : jointColor, 16);
+    drawList->AddCircle(jointScreen, selected ? 11.0f : 7.0f, selected ? selectedColor : jointColor, 20, selected ? 2.5f : 1.5f);
+
+    if (!selected) {
+      continue;
+    }
+
+    drawList->AddText(ImVec2(jointScreen.x + 10.0f, jointScreen.y + 5.0f), selectedColor, "joint");
+
+    auto drawAxis = [&](const XVECTOR3& axis, float length, ImU32 color, const char* label) {
+      bool endVisible = false;
+      const ImVec2 endScreen = ProjectWorldToScreen(joint + axis * length, VP, width, height, endVisible);
+      if (!endVisible) {
+        return;
+      }
+      drawList->AddLine(jointScreen, endScreen, color, 3.0f);
+      drawList->AddCircleFilled(endScreen, 4.5f, color, 12);
+      drawList->AddText(ImVec2(endScreen.x + 6.0f, endScreen.y - 6.0f), color, label);
+    };
+    drawAxis(parentTwist, size * 0.85f, parentAxisColor, "parent +Y");
+    drawAxis(childTwist, size, childAxisColor, "child +Y twist");
+    drawAxis(childPlane, size * 0.7f, planeAxisColor, "child +X plane");
+
+    const float coneLength = size * 0.75f;
+    const float swing = (std::max)(0.0f, (std::min)(Deg2Rad(85.0f), bones[static_cast<std::size_t>(childCapsule)].swingLimitRadians));
+    const float coneRadius = (std::min)(size * 1.25f, std::tan(swing) * coneLength);
+    const XVECTOR3 coneCenter = joint + childTwist * coneLength;
+    const XVECTOR3 coneU = childPlane;
+    const XVECTOR3 coneV = Normalize3(Cross3(childTwist, coneU), XVECTOR3(0.0f, 0.0f, 1.0f, 0.0f));
+    ImVec2 previousCone;
+    bool previousConeVisible = false;
+    constexpr int kConeSegments = 48;
+    for (int segment = 0; segment <= kConeSegments; ++segment) {
+      const float t = static_cast<float>(segment) / static_cast<float>(kConeSegments) * (2.0f * xPI);
+      const XVECTOR3 point = coneCenter + (coneU * std::cos(t) + coneV * std::sin(t)) * coneRadius;
+      bool visible = false;
+      const ImVec2 screen = ProjectWorldToScreen(point, VP, width, height, visible);
+      if (visible && previousConeVisible) {
+        drawList->AddLine(previousCone, screen, coneColor, 2.0f);
+      }
+      previousCone = screen;
+      previousConeVisible = visible;
+    }
+    for (int spoke = 0; spoke < 4; ++spoke) {
+      const float t = static_cast<float>(spoke) * (0.5f * xPI);
+      const XVECTOR3 point = coneCenter + (coneU * std::cos(t) + coneV * std::sin(t)) * coneRadius;
+      bool visible = false;
+      const ImVec2 screen = ProjectWorldToScreen(point, VP, width, height, visible);
+      if (visible) {
+        drawList->AddLine(jointScreen, screen, coneColor, 1.4f);
+      }
+    }
+
+    const float twist = (std::max)(0.0f, (std::min)(Deg2Rad(180.0f), bones[static_cast<std::size_t>(childCapsule)].twistLimitRadians));
+    const float twistRadius = size * 0.38f;
+    ImVec2 previousTwist;
+    bool previousTwistVisible = false;
+    constexpr int kTwistSegments = 32;
+    for (int segment = 0; segment <= kTwistSegments; ++segment) {
+      const float t = -twist + (2.0f * twist * static_cast<float>(segment) / static_cast<float>(kTwistSegments));
+      const XVECTOR3 point = joint + (coneU * std::cos(t) + coneV * std::sin(t)) * twistRadius;
+      bool visible = false;
+      const ImVec2 screen = ProjectWorldToScreen(point, VP, width, height, visible);
+      if (visible && previousTwistVisible) {
+        drawList->AddLine(previousTwist, screen, twistColor, 2.5f);
+      }
+      previousTwist = screen;
+      previousTwistVisible = visible;
+    }
+  }
+}
+
+bool SandboxScene::GetRagdollEditGizmoFrame(int capsuleIndex,
+                                            XVECTOR3& outCenter,
+                                            std::array<XVECTOR3, 3>& outAxes,
+                                            float& outSize) {
+  XMATRIX44 bodyWorld;
+  if (!GetCurrentRagdollEditCapsuleWorld(capsuleIndex, bodyWorld)) {
+    return false;
+  }
+
+  outCenter = XVECTOR3(bodyWorld.m41, bodyWorld.m42, bodyWorld.m43, 1.0f);
+  outAxes[0] = Normalize3(XVECTOR3(bodyWorld.m11, bodyWorld.m12, bodyWorld.m13, 0.0f),
+                          XVECTOR3(1.0f, 0.0f, 0.0f, 0.0f));
+  outAxes[1] = Normalize3(XVECTOR3(bodyWorld.m21, bodyWorld.m22, bodyWorld.m23, 0.0f),
+                          XVECTOR3(0.0f, 1.0f, 0.0f, 0.0f));
+  outAxes[2] = Normalize3(XVECTOR3(bodyWorld.m31, bodyWorld.m32, bodyWorld.m33, 0.0f),
+                          XVECTOR3(0.0f, 0.0f, 1.0f, 0.0f));
+
+  const float distanceToCamera = Length3(outCenter - Cam.Eye);
+  const float minSize = (std::max)(0.03f, m_modelRadius * 0.08f);
+  const float maxSize = (std::max)(minSize, m_modelRadius * 0.45f);
+  outSize = (std::max)(minSize, (std::min)(maxSize, distanceToCamera * 0.10f));
+  return true;
+}
+
+bool SandboxScene::BuildRagdollEditHandlePoints(int capsuleIndex, std::array<XVECTOR3, 7>& outPoints) {
+  const auto& bones = m_ragdollAnimationBinding.referencePose.bones;
+  if (capsuleIndex < 0 || capsuleIndex >= static_cast<int>(bones.size())) {
+    return false;
+  }
+
+  const auto& shape = bones[static_cast<std::size_t>(capsuleIndex)].body.shape;
+  if (shape.type != t850::PhysicsShapeType::Capsule) {
+    return false;
+  }
+
+  XMATRIX44 bodyWorld;
+  if (!GetCurrentRagdollEditCapsuleWorld(capsuleIndex, bodyWorld)) {
+    return false;
+  }
+
+  const float radius = (std::max)(0.001f, shape.radius);
+  const float extent = (std::max)(0.002f, shape.halfHeight + radius);
+  outPoints[0] = t850::TransformPoint(XVECTOR3(0.0f, 0.0f, 0.0f, 1.0f), bodyWorld);
+  outPoints[1] = t850::TransformPoint(XVECTOR3(0.0f,  extent, 0.0f, 1.0f), bodyWorld);
+  outPoints[2] = t850::TransformPoint(XVECTOR3(0.0f, -extent, 0.0f, 1.0f), bodyWorld);
+  outPoints[3] = t850::TransformPoint(XVECTOR3( radius, 0.0f, 0.0f, 1.0f), bodyWorld);
+  outPoints[4] = t850::TransformPoint(XVECTOR3(-radius, 0.0f, 0.0f, 1.0f), bodyWorld);
+  outPoints[5] = t850::TransformPoint(XVECTOR3(0.0f, 0.0f,  radius, 1.0f), bodyWorld);
+  outPoints[6] = t850::TransformPoint(XVECTOR3(0.0f, 0.0f, -radius, 1.0f), bodyWorld);
+  return true;
+}
+
+bool SandboxScene::PickRagdollEditHandle(float mouseX, float mouseY, float thresholdPixels, int& outCapsuleIndex, int& outHandleIndex) {
+  outCapsuleIndex = -1;
+  outHandleIndex = -1;
+  if (!m_skeletonEditMode || !g_pBaseDriver || m_ragdollAnimationBinding.referencePose.bones.empty()) {
+    return false;
+  }
+
+  const int width = (std::max)(1, g_pBaseDriver->width);
+  const int height = (std::max)(1, g_pBaseDriver->height);
+  float bestDistanceSq = thresholdPixels * thresholdPixels;
+  for (int capsuleIndex = 0; capsuleIndex < static_cast<int>(m_ragdollAnimationBinding.referencePose.bones.size()); ++capsuleIndex) {
+    std::array<XVECTOR3, 7> points;
+    if (!BuildRagdollEditHandlePoints(capsuleIndex, points)) {
+      continue;
+    }
+    for (int handleIndex = 0; handleIndex < static_cast<int>(points.size()); ++handleIndex) {
+      bool visible = false;
+      const ImVec2 screen = ProjectWorldToScreen(points[static_cast<std::size_t>(handleIndex)], VP, width, height, visible);
+      if (!visible) {
+        continue;
+      }
+      const float dx = screen.x - mouseX;
+      const float dy = screen.y - mouseY;
+      const float distanceSq = dx * dx + dy * dy;
+      if (distanceSq < bestDistanceSq) {
+        bestDistanceSq = distanceSq;
+        outCapsuleIndex = capsuleIndex;
+        outHandleIndex = handleIndex;
+      }
+    }
+  }
+  return outCapsuleIndex >= 0 && outHandleIndex >= 0;
+}
+
+bool SandboxScene::PickRagdollEditCapsule(float mouseX, float mouseY, float thresholdPixels, int& outCapsuleIndex) {
+  outCapsuleIndex = -1;
+  if (!m_skeletonEditMode || !g_pBaseDriver || m_ragdollAnimationBinding.referencePose.bones.empty()) {
+    return false;
+  }
+
+  const int width = (std::max)(1, g_pBaseDriver->width);
+  const int height = (std::max)(1, g_pBaseDriver->height);
+  const ImVec2 mouse(mouseX, mouseY);
+  float bestScore = FLT_MAX;
+
+  for (int capsuleIndex = 0; capsuleIndex < static_cast<int>(m_ragdollAnimationBinding.referencePose.bones.size()); ++capsuleIndex) {
+    std::array<XVECTOR3, 7> points;
+    if (!BuildRagdollEditHandlePoints(capsuleIndex, points)) {
+      continue;
+    }
+
+    bool centerVisible = false;
+    bool topVisible = false;
+    bool bottomVisible = false;
+    const ImVec2 center = ProjectWorldToScreen(points[0], VP, width, height, centerVisible);
+    const ImVec2 top = ProjectWorldToScreen(points[1], VP, width, height, topVisible);
+    const ImVec2 bottom = ProjectWorldToScreen(points[2], VP, width, height, bottomVisible);
+    if (!centerVisible || !topVisible || !bottomVisible) {
+      continue;
+    }
+
+    float radiusPixels = thresholdPixels;
+    for (int handleIndex = 3; handleIndex < 7; ++handleIndex) {
+      bool sideVisible = false;
+      const ImVec2 side = ProjectWorldToScreen(points[static_cast<std::size_t>(handleIndex)], VP, width, height, sideVisible);
+      if (!sideVisible) {
+        continue;
+      }
+      const float dx = side.x - center.x;
+      const float dy = side.y - center.y;
+      radiusPixels = (std::max)(radiusPixels, std::sqrt(dx * dx + dy * dy));
+    }
+
+    const float axisDistance = std::sqrt(DistancePointToSegmentSq(mouse, top, bottom));
+    const float surfaceDistance = (std::max)(0.0f, axisDistance - radiusPixels);
+    const float score = surfaceDistance + axisDistance * 0.001f;
+    if (surfaceDistance <= thresholdPixels && score < bestScore) {
+      bestScore = score;
+      outCapsuleIndex = capsuleIndex;
+    }
+  }
+
+  return outCapsuleIndex >= 0;
+}
+
+bool SandboxScene::PickRagdollEditTransformGizmo(float mouseX, float mouseY, int& outAxis) {
+  outAxis = -1;
+  if (!m_skeletonEditMode || !g_pBaseDriver || m_ragdollEditSelectedCapsule < 0) {
+    return false;
+  }
+
+  XVECTOR3 center;
+  std::array<XVECTOR3, 3> axes;
+  float size = 0.0f;
+  if (!GetRagdollEditGizmoFrame(m_ragdollEditSelectedCapsule, center, axes, size)) {
+    return false;
+  }
+
+  const int width = (std::max)(1, g_pBaseDriver->width);
+  const int height = (std::max)(1, g_pBaseDriver->height);
+  const ImVec2 mouse(mouseX, mouseY);
+  constexpr float kThresholdPixels = 12.0f;
+  float bestDistanceSq = kThresholdPixels * kThresholdPixels;
+
+  if (m_ragdollEditGizmoMode == 0) {
+    for (int axisIndex = 0; axisIndex < 3; ++axisIndex) {
+      bool startVisible = false;
+      bool endVisible = false;
+      const ImVec2 start = ProjectWorldToScreen(center + axes[static_cast<std::size_t>(axisIndex)] * (size * 0.16f),
+                                                VP, width, height, startVisible);
+      const ImVec2 end = ProjectWorldToScreen(center + axes[static_cast<std::size_t>(axisIndex)] * size,
+                                              VP, width, height, endVisible);
+      if (!startVisible || !endVisible) {
+        continue;
+      }
+      const float distanceSq = DistancePointToSegmentSq(mouse, start, end);
+      if (distanceSq < bestDistanceSq) {
+        bestDistanceSq = distanceSq;
+        outAxis = axisIndex;
+      }
+    }
+  } else {
+    constexpr int kSegments = 64;
+    const float radius = size * 0.78f;
+    for (int axisIndex = 0; axisIndex < 3; ++axisIndex) {
+      const XVECTOR3 u = axes[static_cast<std::size_t>((axisIndex + 1) % 3)];
+      const XVECTOR3 v = axes[static_cast<std::size_t>((axisIndex + 2) % 3)];
+      ImVec2 previous;
+      bool previousVisible = false;
+      for (int segment = 0; segment <= kSegments; ++segment) {
+        const float t = static_cast<float>(segment) / static_cast<float>(kSegments) * (2.0f * xPI);
+        const XVECTOR3 point = center + (u * std::cos(t) + v * std::sin(t)) * radius;
+        bool visible = false;
+        const ImVec2 screen = ProjectWorldToScreen(point, VP, width, height, visible);
+        if (visible && previousVisible) {
+          const float distanceSq = DistancePointToSegmentSq(mouse, previous, screen);
+          if (distanceSq < bestDistanceSq) {
+            bestDistanceSq = distanceSq;
+            outAxis = axisIndex;
+          }
+        }
+        previous = screen;
+        previousVisible = visible;
+      }
+    }
+  }
+
+  return outAxis >= 0;
+}
+
+bool SandboxScene::BeginRagdollEditTransformGizmoDrag(float mouseX, float mouseY) {
+  int pickedAxis = -1;
+  if (!PickRagdollEditTransformGizmo(mouseX, mouseY, pickedAxis)) {
+    return false;
+  }
+
+  XVECTOR3 center;
+  std::array<XVECTOR3, 3> axes;
+  float size = 0.0f;
+  if (!GetRagdollEditGizmoFrame(m_ragdollEditSelectedCapsule, center, axes, size)) {
+    return false;
+  }
+  (void)size;
+
+  XMATRIX44 invVP;
+  VP.Inverse(&invVP);
+  const int width = (std::max)(1, g_pBaseDriver ? g_pBaseDriver->width : 1);
+  const int height = (std::max)(1, g_pBaseDriver ? g_pBaseDriver->height : 1);
+  const t850::Ray ray = t850::ScreenPointToRay(mouseX, mouseY, 0, 0, width, height, invVP);
+  const XVECTOR3 axis = axes[static_cast<std::size_t>(pickedAxis)];
+  m_ragdollEditGizmoDragCenter = center;
+  m_ragdollEditGizmoDragAxis = axis;
+
+  if (m_ragdollEditGizmoMode == 0) {
+    if (!ClosestRayAxisParameter(ray, m_ragdollEditGizmoDragCenter, m_ragdollEditGizmoDragAxis, m_ragdollEditGizmoLastParameter)) {
+      return false;
+    }
+  } else {
+    XVECTOR3 hitPoint;
+    if (!RayPlaneIntersection(ray, m_ragdollEditGizmoDragCenter, m_ragdollEditGizmoDragAxis, hitPoint)) {
+      return false;
+    }
+    m_ragdollEditGizmoLastVector = Normalize3(hitPoint - m_ragdollEditGizmoDragCenter,
+                                              axes[static_cast<std::size_t>((pickedAxis + 1) % 3)]);
+  }
+
+  m_ragdollEditGizmoAxis = pickedAxis;
+  m_ragdollEditGizmoDragging = true;
+  m_ragdollEditHandleDragging = false;
+  m_skeletonEditDragging = false;
+  return true;
+}
+
+bool SandboxScene::DragRagdollEditTransformGizmo(float mouseX, float mouseY) {
+  if (!m_ragdollEditGizmoDragging ||
+      m_ragdollEditSelectedCapsule < 0 ||
+      m_ragdollEditGizmoAxis < 0 ||
+      !g_pBaseDriver) {
+    return false;
+  }
+
+  XVECTOR3 center;
+  std::array<XVECTOR3, 3> axes;
+  float size = 0.0f;
+  if (!GetRagdollEditGizmoFrame(m_ragdollEditSelectedCapsule, center, axes, size)) {
+    return false;
+  }
+  (void)center;
+  (void)size;
+
+  XMATRIX44 invVP;
+  VP.Inverse(&invVP);
+  const int width = (std::max)(1, g_pBaseDriver->width);
+  const int height = (std::max)(1, g_pBaseDriver->height);
+  const t850::Ray ray = t850::ScreenPointToRay(mouseX, mouseY, 0, 0, width, height, invVP);
+  const XVECTOR3 axis = Normalize3(m_ragdollEditGizmoDragAxis, axes[static_cast<std::size_t>(m_ragdollEditGizmoAxis)]);
+
+  if (m_ragdollEditGizmoMode == 0) {
+    float currentParameter = 0.0f;
+    if (!ClosestRayAxisParameter(ray, m_ragdollEditGizmoDragCenter, axis, currentParameter)) {
+      return false;
+    }
+    const float deltaParameter = currentParameter - m_ragdollEditGizmoLastParameter;
+    m_ragdollEditGizmoLastParameter = currentParameter;
+    if (std::fabs(deltaParameter) <= 0.000001f) {
+      return true;
+    }
+    return MoveRagdollEditCapsuleByWorldDelta(m_ragdollEditSelectedCapsule, axis * deltaParameter, false);
+  }
+
+  XVECTOR3 hitPoint;
+  if (!RayPlaneIntersection(ray, m_ragdollEditGizmoDragCenter, axis, hitPoint)) {
+    return false;
+  }
+  const XVECTOR3 currentVector = Normalize3(hitPoint - m_ragdollEditGizmoDragCenter, m_ragdollEditGizmoLastVector);
+  const float dot = (std::max)(-1.0f, (std::min)(1.0f, Dot3(m_ragdollEditGizmoLastVector, currentVector)));
+  const float signedAngle = std::atan2(Dot3(axis, Cross3(m_ragdollEditGizmoLastVector, currentVector)), dot);
+  m_ragdollEditGizmoLastVector = currentVector;
+  if (std::fabs(signedAngle) <= 0.000001f) {
+    return true;
+  }
+  return RotateRagdollEditCapsuleWorld(m_ragdollEditSelectedCapsule, axis, signedAngle, false);
+}
+
+void SandboxScene::DrawRagdollEditTransformGizmo() {
+  if (!m_skeletonEditMode ||
+      m_ragdollEditSelectedCapsule < 0 ||
+      !g_pBaseDriver ||
+      !ImGui::GetCurrentContext()) {
+    return;
+  }
+
+  XVECTOR3 center;
+  std::array<XVECTOR3, 3> axes;
+  float size = 0.0f;
+  if (!GetRagdollEditGizmoFrame(m_ragdollEditSelectedCapsule, center, axes, size)) {
+    return;
+  }
+
+  const int width = (std::max)(1, g_pBaseDriver->width);
+  const int height = (std::max)(1, g_pBaseDriver->height);
+  bool centerVisible = false;
+  const ImVec2 centerScreen = ProjectWorldToScreen(center, VP, width, height, centerVisible);
+  if (!centerVisible) {
+    return;
+  }
+
+  ImDrawList* drawList = ImGui::GetBackgroundDrawList();
+  const ImU32 originColor = IM_COL32(64, 160, 255, 255);
+  const ImU32 originFill = IM_COL32(24, 96, 255, 180);
+  drawList->AddCircle(centerScreen, 9.0f, originColor, 24, 2.5f);
+  drawList->AddCircleFilled(centerScreen, 3.5f, originFill, 16);
+  drawList->AddLine(ImVec2(centerScreen.x - 11.0f, centerScreen.y), ImVec2(centerScreen.x + 11.0f, centerScreen.y), originColor, 2.0f);
+  drawList->AddLine(ImVec2(centerScreen.x, centerScreen.y - 11.0f), ImVec2(centerScreen.x, centerScreen.y + 11.0f), originColor, 2.0f);
+  drawList->AddText(ImVec2(centerScreen.x + 11.0f, centerScreen.y + 5.0f), originColor, "origin");
+
+  const auto& bones = m_ragdollAnimationBinding.referencePose.bones;
+  if (m_ragdollEditSelectedCapsule < static_cast<int>(bones.size())) {
+    const auto& shape = bones[static_cast<std::size_t>(m_ragdollEditSelectedCapsule)].body.shape;
+    const float capsuleExtent = shape.type == t850::PhysicsShapeType::Capsule
+        ? (std::max)(0.002f, shape.halfHeight + shape.radius)
+        : size * 0.75f;
+    const float markerLength = (std::min)((std::max)(capsuleExtent, size * 0.45f), size * 1.15f);
+    const XVECTOR3 localY = axes[1];
+    const XVECTOR3 yPositive = center + localY * markerLength;
+    const XVECTOR3 yNegative = center - localY * (markerLength * 0.72f);
+    bool yPositiveVisible = false;
+    bool yNegativeVisible = false;
+    const ImVec2 yPositiveScreen = ProjectWorldToScreen(yPositive, VP, width, height, yPositiveVisible);
+    const ImVec2 yNegativeScreen = ProjectWorldToScreen(yNegative, VP, width, height, yNegativeVisible);
+    if (yPositiveVisible) {
+      drawList->AddLine(centerScreen, yPositiveScreen, originColor, 3.0f);
+      drawList->AddCircleFilled(yPositiveScreen, 5.0f, originColor, 16);
+      drawList->AddText(ImVec2(yPositiveScreen.x + 7.0f, yPositiveScreen.y - 7.0f), originColor, "+Y top");
+    }
+    if (yNegativeVisible) {
+      const ImU32 negativeColor = IM_COL32(80, 110, 180, 230);
+      drawList->AddLine(centerScreen, yNegativeScreen, negativeColor, 1.8f);
+      drawList->AddCircle(yNegativeScreen, 5.0f, negativeColor, 16, 2.0f);
+      drawList->AddText(ImVec2(yNegativeScreen.x + 7.0f, yNegativeScreen.y - 7.0f), negativeColor, "-Y bottom");
+    }
+  }
+
+  if (m_ragdollEditGizmoMode == 0) {
+    for (int axisIndex = 0; axisIndex < 3; ++axisIndex) {
+      const bool active = m_ragdollEditGizmoDragging && m_ragdollEditGizmoAxis == axisIndex;
+      const ImU32 color = RagdollGizmoAxisColor(axisIndex, active);
+      bool endVisible = false;
+      const ImVec2 end = ProjectWorldToScreen(center + axes[static_cast<std::size_t>(axisIndex)] * size,
+                                              VP, width, height, endVisible);
+      if (!endVisible) {
+        continue;
+      }
+      drawList->AddLine(centerScreen, end, color, active ? 4.0f : 3.0f);
+      const float dx = end.x - centerScreen.x;
+      const float dy = end.y - centerScreen.y;
+      const float len = std::sqrt(dx * dx + dy * dy);
+      if (len > 0.001f) {
+        const float ux = dx / len;
+        const float uy = dy / len;
+        const ImVec2 perp(-uy, ux);
+        const ImVec2 base(end.x - ux * 14.0f, end.y - uy * 14.0f);
+        drawList->AddTriangleFilled(end,
+                                    ImVec2(base.x + perp.x * 5.0f, base.y + perp.y * 5.0f),
+                                    ImVec2(base.x - perp.x * 5.0f, base.y - perp.y * 5.0f),
+                                    color);
+      }
+    }
+    return;
+  }
+
+  constexpr int kSegments = 72;
+  const float radius = size * 0.78f;
+  for (int axisIndex = 0; axisIndex < 3; ++axisIndex) {
+    const bool active = m_ragdollEditGizmoDragging && m_ragdollEditGizmoAxis == axisIndex;
+    const ImU32 color = RagdollGizmoAxisColor(axisIndex, active);
+    const XVECTOR3 u = axes[static_cast<std::size_t>((axisIndex + 1) % 3)];
+    const XVECTOR3 v = axes[static_cast<std::size_t>((axisIndex + 2) % 3)];
+    ImVec2 previous;
+    bool previousVisible = false;
+    for (int segment = 0; segment <= kSegments; ++segment) {
+      const float t = static_cast<float>(segment) / static_cast<float>(kSegments) * (2.0f * xPI);
+      const XVECTOR3 point = center + (u * std::cos(t) + v * std::sin(t)) * radius;
+      bool visible = false;
+      const ImVec2 screen = ProjectWorldToScreen(point, VP, width, height, visible);
+      if (visible && previousVisible) {
+        drawList->AddLine(previous, screen, color, active ? 3.5f : 2.5f);
+      }
+      previous = screen;
+      previousVisible = visible;
+    }
+  }
+}
+
+bool SandboxScene::DragRagdollEditHandle(int capsuleIndex, int handleIndex, const XVECTOR3& worldDelta) {
+  auto& bones = m_ragdollAnimationBinding.referencePose.bones;
+  if (capsuleIndex < 0 || capsuleIndex >= static_cast<int>(bones.size()) ||
+      capsuleIndex >= static_cast<int>(m_ragdollAnimationBinding.bodyFromBone.size()) ||
+      handleIndex < 0 || handleIndex >= 7) {
+    return false;
+  }
+
+  auto& bone = bones[static_cast<std::size_t>(capsuleIndex)];
+  auto& local = m_ragdollAnimationBinding.bodyFromBone[static_cast<std::size_t>(capsuleIndex)];
+  auto& shape = bone.body.shape;
+  if (shape.type != t850::PhysicsShapeType::Capsule) {
+    return false;
+  }
+
+  XMATRIX44 bodyWorld;
+  if (!GetCurrentRagdollEditCapsuleWorld(capsuleIndex, bodyWorld)) {
+    return false;
+  }
+
+  XMATRIX44 inverseLocal;
+  if (!InvertAffineNoExit(local, inverseLocal)) {
+    T8_LOG_ERROR("[RagdollEdit] Cannot drag capsule %d handle: local capsule frame is singular", capsuleIndex);
+    return false;
+  }
+  XMATRIX44 boneWorld = inverseLocal * bodyWorld;
+  XMATRIX44 inverseBoneWorld;
+  if (!InvertAffineNoExit(boneWorld, inverseBoneWorld)) {
+    T8_LOG_ERROR("[RagdollEdit] Cannot drag capsule %d handle: bone frame is singular", capsuleIndex);
+    return false;
+  }
+  XMATRIX44 inverseBodyWorld;
+  if (!InvertAffineNoExit(bodyWorld, inverseBodyWorld)) {
+    T8_LOG_ERROR("[RagdollEdit] Cannot drag capsule %d handle: body frame is singular", capsuleIndex);
+    return false;
+  }
+
+  auto translateCenterByWorld = [&](const XVECTOR3& deltaWorld) {
+    const XVECTOR3 deltaBone = TransformVectorNoTranslation(deltaWorld, inverseBoneWorld);
+    local.m41 += deltaBone.x;
+    local.m42 += deltaBone.y;
+    local.m43 += deltaBone.z;
+  };
+
+  bool rebuildRagdoll = false;
+  if (handleIndex == 0) {
+    translateCenterByWorld(worldDelta);
+  } else {
+    const XVECTOR3 deltaBody = TransformVectorNoTranslation(worldDelta, inverseBodyWorld);
+    const float radius = (std::max)(0.001f, shape.radius);
+    float extent = (std::max)(radius + 0.001f, shape.halfHeight + radius);
+
+    if (handleIndex == 1 || handleIndex == 2) {
+      const float signedDelta = handleIndex == 1 ? deltaBody.y : -deltaBody.y;
+      const float centerShiftBodyY = (handleIndex == 1 ? deltaBody.y : deltaBody.y) * 0.5f;
+      extent = (std::max)(radius + 0.001f, extent + signedDelta * 0.5f);
+      const XVECTOR3 bodyAxisY(bodyWorld.m21, bodyWorld.m22, bodyWorld.m23, 0.0f);
+      translateCenterByWorld(bodyAxisY * centerShiftBodyY);
+      shape.halfHeight = (std::max)(0.001f, extent - radius);
+      rebuildRagdoll = true;
+    } else {
+      float radiusDelta = 0.0f;
+      if (handleIndex == 3) radiusDelta = deltaBody.x;
+      else if (handleIndex == 4) radiusDelta = -deltaBody.x;
+      else if (handleIndex == 5) radiusDelta = deltaBody.z;
+      else if (handleIndex == 6) radiusDelta = -deltaBody.z;
+      const float newRadius = (std::max)(0.001f, radius + radiusDelta);
+      extent = (std::max)(newRadius + 0.001f, extent);
+      shape.radius = newRadius;
+      shape.halfHeight = (std::max)(0.001f, extent - newRadius);
+      rebuildRagdoll = true;
+    }
+  }
+
+  UpdateRagdollReferenceBodyFromLocal(capsuleIndex);
+  m_ragdollEditDirty = true;
+  return ApplyRagdollEditPose(rebuildRagdoll);
+}
+
+int SandboxScene::PickSkeletonEditBone(float mouseX, float mouseY, float thresholdPixels) const {
+  if (!m_skeletonEditMode || m_skeletonEditCombined.empty() || !g_pBaseDriver) {
+    return -1;
+  }
+  (void)thresholdPixels;
+
+  const int width = (std::max)(1, g_pBaseDriver->width);
+  const int height = (std::max)(1, g_pBaseDriver->height);
+
+  XMATRIX44 viewProjection = VP;
+  XMATRIX44 invVP;
+  viewProjection.Inverse(&invVP);
+  const t850::Ray ray = t850::ScreenPointToRay(mouseX, mouseY, 0, 0, width, height, invVP);
+
+  static constexpr int kFaces[8][3] = {
+      {0, 2, 4}, {0, 4, 3}, {0, 3, 5}, {0, 5, 2},
+      {1, 4, 2}, {1, 3, 4}, {1, 5, 3}, {1, 2, 5}};
+
+  float bestDistance = FLT_MAX;
+  int bestBone = -1;
+  for (int boneIndex = 0; boneIndex < static_cast<int>(m_skeletonEditCombined.size()); ++boneIndex) {
+    std::array<XVECTOR3, 6> points{};
+    if (!BuildSkeletonEditBoneOctahedron(boneIndex, 0.18f, points)) {
+      continue;
+    }
+    for (const auto& face : kFaces) {
+      float t = 0.0f;
+      float u = 0.0f;
+      float v = 0.0f;
+      if (t850::RayIntersectsTriangle(ray, points[face[0]], points[face[1]], points[face[2]], t, u, v) &&
+          t >= 0.0f && t < bestDistance) {
+        bestDistance = t;
+        bestBone = boneIndex;
+      }
+    }
+  }
+  return bestBone;
+}
+
+bool SandboxScene::HandleSkeletonEditInput(InputManager* input, bool imguiWantsMouse) {
+  if (!m_skeletonEditMode || !input) {
+    return false;
+  }
+
+  if (!input->PressedMouseButton(0)) {
+    const bool finishedGizmoDrag = m_ragdollEditGizmoDragging;
+    m_skeletonEditDragging = false;
+    m_ragdollEditHandleDragging = false;
+    m_ragdollEditGizmoDragging = false;
+    m_ragdollEditGizmoAxis = -1;
+    if (finishedGizmoDrag &&
+        m_ragdollEditSelectedCapsule >= 0 &&
+        m_ragdollEditSelectedCapsule < static_cast<int>(m_ragdollAnimationBinding.referencePose.bones.size())) {
+      ApplyRagdollEditPose(true);
+    }
+  }
+
+  const bool imguiWantsKeyboard = ImGui::GetCurrentContext() && ImGui::GetIO().WantCaptureKeyboard;
+  if (!imguiWantsKeyboard) {
+    if (input->PressedOnceKey(T800K_w)) {
+      m_ragdollEditGizmoMode = 0;
+      m_ragdollEditGizmoDragging = false;
+      m_ragdollEditGizmoAxis = -1;
+    }
+    if (input->PressedOnceKey(T800K_e)) {
+      m_ragdollEditGizmoMode = 1;
+      m_ragdollEditGizmoDragging = false;
+      m_ragdollEditGizmoAxis = -1;
+    }
+  }
+
+  if (m_ragdollEditGizmoDragging && input->PressedMouseButton(0)) {
+    DragRagdollEditTransformGizmo(static_cast<float>(input->mouseX), static_cast<float>(input->mouseY));
+    return true;
+  }
+  if (imguiWantsMouse) {
+    return false;
+  }
+
+  const bool ctrlDown = input->PressedKey(T800K_LCTRL) || input->PressedKey(T800K_RCTRL);
+  const bool leftShiftDown = input->PressedKey(T800K_LSHIFT);
+  const bool leftClick = input->PressedOnceMouseButton(0);
+  const bool rightClick = input->PressedOnceMouseButton(2);
+
+  if (m_ragdollEditSelectionMode == 0 && leftShiftDown && leftClick && m_ragdollEditSelectedCapsule >= 0) {
+    int pickedParentCapsule = -1;
+    if (PickRagdollEditCapsule(static_cast<float>(input->mouseX), static_cast<float>(input->mouseY), 18.0f, pickedParentCapsule) &&
+        pickedParentCapsule != m_ragdollEditSelectedCapsule) {
+      SetRagdollCapsuleParent(m_ragdollEditSelectedCapsule, pickedParentCapsule);
+    }
+    m_skeletonEditDragging = false;
+    m_ragdollEditHandleDragging = false;
+    m_ragdollEditGizmoDragging = false;
+    return true;
+  }
+
+  if (ctrlDown && (leftClick || rightClick)) {
+    const int picked = PickSkeletonEditBone(static_cast<float>(input->mouseX), static_cast<float>(input->mouseY), 18.0f);
+    if (picked >= 0) {
+      m_skeletonEditSelectedBone = picked;
+      if (m_ragdollEditSelectedCapsule >= 0 &&
+          m_ragdollEditSelectedCapsule < static_cast<int>(m_ragdollAnimationBinding.referencePose.bones.size())) {
+        if (leftClick) {
+          AddControlledBoneToSelectedCapsule(picked);
+        } else {
+          RemoveControlledBoneFromSelectedCapsule(picked);
+        }
+      }
+      m_skeletonEditDragging = false;
+      m_ragdollEditHandleDragging = false;
+      m_ragdollEditGizmoDragging = false;
+    }
+    return true;
+  }
+
+  if (leftClick) {
+    if (m_ragdollEditSelectionMode == 0) {
+      if (BeginRagdollEditTransformGizmoDrag(static_cast<float>(input->mouseX), static_cast<float>(input->mouseY))) {
+        return true;
+      }
+
+      int pickedCapsule = -1;
+      int pickedHandle = -1;
+      if (PickRagdollEditHandle(static_cast<float>(input->mouseX), static_cast<float>(input->mouseY), 18.0f, pickedCapsule, pickedHandle)) {
+        m_ragdollEditSelectedCapsule = pickedCapsule;
+        if (pickedCapsule >= 0 &&
+            pickedCapsule < static_cast<int>(m_ragdollParentCapsules.size()) &&
+            m_ragdollParentCapsules[static_cast<std::size_t>(pickedCapsule)] >= 0) {
+          m_ragdollEditSelectedJoint = pickedCapsule;
+        }
+        m_ragdollEditSelectedHandle = pickedHandle;
+        m_ragdollEditHandleDragging = true;
+        m_skeletonEditDragging = false;
+        return true;
+      }
+      if (PickRagdollEditCapsule(static_cast<float>(input->mouseX), static_cast<float>(input->mouseY), 18.0f, pickedCapsule)) {
+        m_ragdollEditSelectedCapsule = pickedCapsule;
+        if (pickedCapsule >= 0 &&
+            pickedCapsule < static_cast<int>(m_ragdollParentCapsules.size()) &&
+            m_ragdollParentCapsules[static_cast<std::size_t>(pickedCapsule)] >= 0) {
+          m_ragdollEditSelectedJoint = pickedCapsule;
+        }
+        m_ragdollEditSelectedHandle = 0;
+        m_ragdollEditHandleDragging = true;
+        m_skeletonEditDragging = false;
+        return true;
+      }
+    } else {
+      const int picked = PickSkeletonEditBone(static_cast<float>(input->mouseX), static_cast<float>(input->mouseY), 18.0f);
+      if (picked >= 0) {
+        m_skeletonEditSelectedBone = picked;
+        m_skeletonEditDragging = !m_ragdollAnimationBinding.referencePose.bones.empty();
+        return true;
+      }
+    }
+  }
+
+  if (m_ragdollEditHandleDragging && m_ragdollEditSelectedCapsule >= 0 && m_ragdollEditSelectedHandle >= 0 && input->PressedMouseButton(0)) {
+    const float dragScale = (std::max)(0.001f, m_orbitDist) * 0.0015f;
+    XVECTOR3 worldDelta = Cam.Right * (static_cast<float>(input->xDelta) * dragScale);
+    worldDelta += Cam.Up * (-static_cast<float>(input->yDelta) * dragScale);
+    if (DragRagdollEditHandle(m_ragdollEditSelectedCapsule, m_ragdollEditSelectedHandle, worldDelta)) {
+      return true;
+    }
+  }
+
+  if (m_skeletonEditDragging && m_skeletonEditSelectedBone >= 0 && input->PressedMouseButton(0)) {
+    XVECTOR3 worldPosition;
+    if (GetSkeletonEditBoneWorldPosition(m_skeletonEditSelectedBone, worldPosition)) {
+      const float dragScale = (std::max)(0.001f, m_orbitDist) * 0.0015f;
+      worldPosition += Cam.Right * (static_cast<float>(input->xDelta) * dragScale);
+      worldPosition += Cam.Up * (-static_cast<float>(input->yDelta) * dragScale);
+      SetSkeletonEditBoneWorldPosition(m_skeletonEditSelectedBone, worldPosition);
+      return true;
+    }
+  }
+
+  return false;
+}
+
+void SandboxScene::DrawRagdollCapsuleEditPanel(t850::DevGuiContext& gui) {
+  ImGui::Separator();
+  gui.Text("Ragdoll Capsules");
+
+  auto& bones = m_ragdollAnimationBinding.referencePose.bones;
+  EnsureRagdollControlledBones();
+  if (m_ragdollEditSavePath.empty()) {
+    m_ragdollEditSavePath = BuildRagdollEditSavePath();
+  }
+
+  ImGui::Text("Viewport selection:");
+  ImGui::SameLine();
+  if (ImGui::RadioButton("Capsules/Joints", m_ragdollEditSelectionMode == 0)) {
+    m_ragdollEditSelectionMode = 0;
+    m_skeletonEditDragging = false;
+  }
+  ImGui::SameLine();
+  if (ImGui::RadioButton("Bones", m_ragdollEditSelectionMode == 1)) {
+    m_ragdollEditSelectionMode = 1;
+    m_ragdollEditHandleDragging = false;
+    m_ragdollEditGizmoDragging = false;
+    m_ragdollEditGizmoAxis = -1;
+  }
+  ImGui::TextWrapped("Normal clicks select only the active mode. Ctrl+Left/Ctrl+Right still add or remove bones from the selected capsule.");
+
+  if (gui.Button("Load Ragdoll Edits")) {
+    LoadRagdollEditPose();
+  }
+  ImGui::SameLine();
+  if (gui.Button(m_ragdollEditDirty ? "Save Ragdoll Edits *" : "Save Ragdoll Edits")) {
+    SaveRagdollEditPose();
+  }
+
+  if (gui.Button("Reset All Capsules")) {
+    ResetRagdollEditPose();
+  }
+  ImGui::SameLine();
+  if (gui.Button("Reset Selected Capsule", m_ragdollEditSelectedCapsule >= 0 &&
+      m_ragdollEditSelectedCapsule < static_cast<int>(bones.size()))) {
+    ResetSelectedRagdollCapsule();
+  }
+
+  if (!m_ragdollEditSavePath.empty()) {
+    ImGui::TextWrapped("Ragdoll save path: %s", m_ragdollEditSavePath.c_str());
+  }
+
+  const bool selectedBoneValid = m_skeletonEditSelectedBone >= 0 &&
+      m_skeletonEditSelectedBone < static_cast<int>(m_skeletonEditCombined.size());
+  const int selectedBoneCapsule = selectedBoneValid ? FindRagdollCapsuleControllingBone(m_skeletonEditSelectedBone) : -1;
+  const int selectedBonePrimaryCapsule = selectedBoneValid ? FindRagdollCapsuleForBone(m_skeletonEditSelectedBone) : -1;
+  const bool canCreateCapsule = selectedBoneValid && selectedBoneCapsule < 0 && selectedBonePrimaryCapsule < 0;
+  const bool canDeleteCapsule = m_ragdollEditSelectedCapsule >= 0 &&
+      m_ragdollEditSelectedCapsule < static_cast<int>(bones.size());
+
+  if (selectedBoneValid) {
+    if (selectedBoneCapsule >= 0) {
+      ImGui::Text("Selected bone %d is controlled by capsule %d.", m_skeletonEditSelectedBone, selectedBoneCapsule);
+    } else if (selectedBonePrimaryCapsule >= 0) {
+      ImGui::Text("Selected bone %d already owns capsule %d but is not assigned to it.", m_skeletonEditSelectedBone, selectedBonePrimaryCapsule);
+    } else {
+      ImGui::Text("Selected bone %d has no capsule assignment.", m_skeletonEditSelectedBone);
+    }
+  } else {
+    gui.Text("Select a bone to create a capsule assignment.");
+  }
+  if (gui.Button("Create Capsule", canCreateCapsule)) {
+    CreateRagdollCapsuleForBone(m_skeletonEditSelectedBone);
+  }
+  ImGui::SameLine();
+  if (gui.Button("Delete Selected Capsule", canDeleteCapsule)) {
+    DeleteSelectedRagdollCapsule();
+  }
+  ImGui::SameLine();
+  if (gui.Button("Clear All Capsules", !bones.empty())) {
+    m_ragdollClearRequested = true;
+    m_ragdollEditSelectedCapsule = -1;
+    m_ragdollEditSelectedJoint = -1;
+    m_ragdollEditSelectedHandle = -1;
+    m_ragdollEditRenamingCapsule = -1;
+    m_ragdollEditRenameFocusPending = false;
+    m_ragdollEditHandleDragging = false;
+    m_ragdollEditGizmoDragging = false;
+    m_ragdollEditGizmoAxis = -1;
+    m_skeletonEditDragging = false;
+    m_driveRagdollFromAnimation = false;
+    m_ragdollPhysicsDriven = false;
+    m_showPhysics = false;
+    m_ragdollEditDirty = true;
+  }
+
+  if (m_ragdollClearRequested) {
+    gui.Text("Clearing ragdoll capsules...");
+    return;
+  }
+
+  if (bones.empty() || bones.size() != m_ragdollAnimationBinding.bodyFromBone.size()) {
+    gui.Text("No editable ragdoll capsules are attached to this model.");
+    return;
+  }
+  EnsureRagdollParentCapsules();
+
+  if (m_ragdollEditSelectedCapsule < 0 ||
+      m_ragdollEditSelectedCapsule >= static_cast<int>(bones.size())) {
+    m_ragdollEditSelectedCapsule = 0;
+  }
+
+  std::vector<std::string> capsuleOptions;
+  capsuleOptions.reserve(bones.size());
+  for (std::size_t i = 0; i < bones.size(); ++i) {
+    const auto& bone = bones[i];
+    capsuleOptions.push_back(std::to_string(i) + ": " + std::to_string(bone.body.boneIndex) + " " + bone.body.debugName);
+  }
+
+  t850::SelectorDesc capsuleSelector;
+  capsuleSelector.name = "ragdoll_edit_capsule";
+  capsuleSelector.label = "Capsule";
+  int selectedCapsule = m_ragdollEditSelectedCapsule;
+  if (gui.Combo(capsuleSelector, selectedCapsule, &capsuleOptions)) {
+    m_ragdollEditSelectedCapsule = selectedCapsule;
+    if (selectedCapsule >= 0 &&
+        selectedCapsule < static_cast<int>(m_ragdollParentCapsules.size()) &&
+        m_ragdollParentCapsules[static_cast<std::size_t>(selectedCapsule)] >= 0) {
+      m_ragdollEditSelectedJoint = selectedCapsule;
+    }
+    m_ragdollEditRenamingCapsule = -1;
+    m_ragdollEditRenameFocusPending = false;
+    m_ragdollEditGizmoDragging = false;
+    m_ragdollEditGizmoAxis = -1;
+    if (m_ragdollEditSelectedHandle < 0) {
+      m_ragdollEditSelectedHandle = 0;
+    }
+  }
+
+  if (m_ragdollEditSelectedCapsule < 0 ||
+      m_ragdollEditSelectedCapsule >= static_cast<int>(bones.size())) {
+    return;
+  }
+
+  const int capsuleIndex = m_ragdollEditSelectedCapsule;
+  auto& bone = bones[static_cast<std::size_t>(capsuleIndex)];
+  auto& local = m_ragdollAnimationBinding.bodyFromBone[static_cast<std::size_t>(capsuleIndex)];
+  auto& shape = bone.body.shape;
+  if (shape.type != t850::PhysicsShapeType::Capsule) {
+    gui.Text("Selected ragdoll body is not a capsule.");
+    return;
+  }
+
+  ImGui::PushID(capsuleIndex);
+  if (m_ragdollEditRenamingCapsule == capsuleIndex) {
+    if (m_ragdollEditRenameFocusPending) {
+      ImGui::SetKeyboardFocusHere();
+      m_ragdollEditRenameFocusPending = false;
+    }
+    ImGui::SetNextItemWidth(260.0f);
+    const bool submitted = ImGui::InputText("Capsule name", m_ragdollEditNameBuffer.data(),
+                                            m_ragdollEditNameBuffer.size(),
+                                            ImGuiInputTextFlags_EnterReturnsTrue);
+    if (submitted || ImGui::IsItemDeactivatedAfterEdit()) {
+      std::string newName(m_ragdollEditNameBuffer.data());
+      if (newName.empty()) {
+        newName = "capsule_" + std::to_string(capsuleIndex);
+      }
+      if (newName != bone.body.debugName) {
+        bone.body.debugName = std::move(newName);
+        m_ragdollEditDirty = true;
+      }
+      m_ragdollEditRenamingCapsule = -1;
+    }
+  } else {
+    ImGui::Text("Capsule name: %s", bone.body.debugName.c_str());
+    if (ImGui::IsItemHovered() && ImGui::IsMouseDoubleClicked(0)) {
+      std::fill(m_ragdollEditNameBuffer.begin(), m_ragdollEditNameBuffer.end(), '\0');
+      std::snprintf(m_ragdollEditNameBuffer.data(), m_ragdollEditNameBuffer.size(), "%s", bone.body.debugName.c_str());
+      m_ragdollEditRenamingCapsule = capsuleIndex;
+      m_ragdollEditRenameFocusPending = true;
+    }
+  }
+  ImGui::Text("Bone: %d", bone.body.boneIndex);
+  ImGui::Text("Viewport handle: %s", RagdollCapsuleHandleName(m_ragdollEditSelectedHandle));
+  ImGui::Text("Transform gizmo:");
+  ImGui::SameLine();
+  if (ImGui::RadioButton("Move (W)", m_ragdollEditGizmoMode == 0)) {
+    m_ragdollEditGizmoMode = 0;
+    m_ragdollEditGizmoDragging = false;
+    m_ragdollEditGizmoAxis = -1;
+  }
+  ImGui::SameLine();
+  if (ImGui::RadioButton("Rotate (E)", m_ragdollEditGizmoMode == 1)) {
+    m_ragdollEditGizmoMode = 1;
+    m_ragdollEditGizmoDragging = false;
+    m_ragdollEditGizmoAxis = -1;
+  }
+  DrawRagdollEditTransformGizmo();
+  ImGui::TextWrapped("Assignment: Ctrl+Left-click a bone to add it to this capsule; Ctrl+Right-click a bone to remove it. Left Shift+Left-click another capsule to make it this capsule's parent.");
+  const int parentCapsule =
+      capsuleIndex < static_cast<int>(m_ragdollParentCapsules.size())
+          ? m_ragdollParentCapsules[static_cast<std::size_t>(capsuleIndex)]
+          : -1;
+  if (parentCapsule >= 0 && parentCapsule < static_cast<int>(bones.size())) {
+    const auto& parentBone = bones[static_cast<std::size_t>(parentCapsule)];
+    ImGui::Text("Parent capsule: %d %s", parentCapsule, parentBone.body.debugName.c_str());
+    ImGui::SameLine();
+    if (gui.Button("Clear Parent")) {
+      ClearRagdollCapsuleParent(capsuleIndex);
+    }
+  } else {
+    ImGui::Text("Parent capsule: None");
+  }
+  ImGui::Text("Children capsules:");
+  bool hasChildCapsules = false;
+  for (int childCapsule = 0; childCapsule < static_cast<int>(m_ragdollParentCapsules.size()); ++childCapsule) {
+    if (m_ragdollParentCapsules[static_cast<std::size_t>(childCapsule)] != capsuleIndex ||
+        childCapsule >= static_cast<int>(bones.size())) {
+      continue;
+    }
+    hasChildCapsules = true;
+    ImGui::Text("  %d %s", childCapsule, bones[static_cast<std::size_t>(childCapsule)].body.debugName.c_str());
+  }
+  if (!hasChildCapsules) {
+    ImGui::Text("  None");
+  }
+  if (capsuleIndex < static_cast<int>(m_ragdollAnimationBinding.controlledBoneIndices.size())) {
+    const auto& controlledBones = m_ragdollAnimationBinding.controlledBoneIndices[static_cast<std::size_t>(capsuleIndex)];
+    RenderSkinnedMesh* skinned = Meshes[0].GetSkinnedMesh();
+    const xF::xSkeleton* skeleton = skinned ? skinned->GetAnimController().GetAnimSkeleton() : nullptr;
+    ImGui::Text("Affected bones: %zu", controlledBones.size());
+    for (int controlledBone : controlledBones) {
+      ImGui::Text("  %d %s", controlledBone, BoneNameOrEmpty(skeleton, controlledBone));
+    }
+  }
+
+  std::array<float, 3> translation = MatrixTranslation(local);
+  std::array<float, 3> rotation = MatrixEulerDegreesXYZ(local);
+  float translationValues[3] = {translation[0], translation[1], translation[2]};
+  float rotationValues[3] = {rotation[0], rotation[1], rotation[2]};
+  float radius = shape.radius;
+  float totalLength = (shape.halfHeight + shape.radius) * 2.0f;
+  float swingLimitDeg = Rad2Deg(bone.swingLimitRadians);
+  float twistLimitDeg = Rad2Deg(bone.twistLimitRadians);
+
+  bool transformChanged = false;
+  bool rebuildRagdoll = false;
+  const float moveStep = (std::max)(0.001f, m_modelRadius * 0.0005f);
+  if (ImGui::DragFloat3("Local translate", translationValues, moveStep, 0.0f, 0.0f, "%.4f")) {
+    transformChanged = true;
+  }
+  if (ImGui::DragFloat3("Local rotate XYZ", rotationValues, 0.25f, -180.0f, 180.0f, "%.2f deg")) {
+    transformChanged = true;
+  }
+  if (ImGui::DragFloat("Capsule radius", &radius, moveStep, 0.001f, (std::max)(0.001f, m_modelRadius), "%.4f")) {
+    rebuildRagdoll = true;
+  }
+  if (ImGui::DragFloat("Capsule total length", &totalLength, moveStep, 0.003f, (std::max)(0.003f, m_modelRadius * 4.0f), "%.4f")) {
+    rebuildRagdoll = true;
+  }
+  if (ImGui::DragFloat("Swing limit", &swingLimitDeg, 0.5f, 0.0f, 180.0f, "%.1f deg")) {
+    rebuildRagdoll = true;
+  }
+  if (ImGui::DragFloat("Twist limit", &twistLimitDeg, 0.5f, 0.0f, 180.0f, "%.1f deg")) {
+    rebuildRagdoll = true;
+  }
+
+  if (transformChanged || rebuildRagdoll) {
+    translation = {translationValues[0], translationValues[1], translationValues[2]};
+    rotation = {rotationValues[0], rotationValues[1], rotationValues[2]};
+    local = MatrixFromTranslationEulerDegreesXYZ(translation, rotation);
+
+    radius = (std::max)(0.001f, radius);
+    totalLength = (std::max)(radius * 2.0f + 0.002f, totalLength);
+    shape.radius = radius;
+    shape.halfHeight = (std::max)(0.001f, totalLength * 0.5f - radius);
+    bone.swingLimitRadians = Deg2Rad((std::max)(0.0f, (std::min)(180.0f, swingLimitDeg)));
+    bone.twistLimitRadians = Deg2Rad((std::max)(0.0f, (std::min)(180.0f, twistLimitDeg)));
+    UpdateRagdollReferenceBodyFromLocal(capsuleIndex);
+    ApplyRagdollEditPose(rebuildRagdoll || transformChanged);
+    m_ragdollEditDirty = true;
+  }
+
+  ImGui::TextWrapped("Viewport: W/E choose move/rotate gizmos. Drag colored axes to move the capsule in its local frame, or colored rings to rotate it. Shape handles still edit center, length, and radius; numeric translate/rotate are stored in bone-local space.");
+  ImGui::PopID();
+}
+
+void SandboxScene::DrawRagdollJointEditPanel(t850::DevGuiContext& gui) {
+  ImGui::Separator();
+  gui.Text("Ragdoll Joints");
+  ImGui::TextWrapped("Self collision: enabled between capsule bodies in the same ragdoll, including parent/child pairs. A single capsule body never collides with itself; parent/child links are also held by SwingTwist constraints.");
+
+  auto& bones = m_ragdollAnimationBinding.referencePose.bones;
+  if (bones.empty()) {
+    gui.Text("No ragdoll capsules are available.");
+    return;
+  }
+
+  EnsureRagdollParentCapsules();
+  std::vector<int> jointChildren;
+  std::vector<std::string> jointOptions;
+  jointChildren.reserve(m_ragdollParentCapsules.size());
+  jointOptions.reserve(m_ragdollParentCapsules.size());
+  for (int childCapsule = 0; childCapsule < static_cast<int>(m_ragdollParentCapsules.size()); ++childCapsule) {
+    const int parentCapsule = m_ragdollParentCapsules[static_cast<std::size_t>(childCapsule)];
+    if (childCapsule >= static_cast<int>(bones.size()) ||
+        parentCapsule < 0 ||
+        parentCapsule >= static_cast<int>(bones.size()) ||
+        parentCapsule == childCapsule) {
+      continue;
+    }
+
+    jointChildren.push_back(childCapsule);
+    jointOptions.push_back(
+        std::to_string(childCapsule) + " " + bones[static_cast<std::size_t>(childCapsule)].body.debugName +
+        " <- " + std::to_string(parentCapsule) + " " + bones[static_cast<std::size_t>(parentCapsule)].body.debugName);
+  }
+
+  if (jointChildren.empty()) {
+    ImGui::TextWrapped("No capsule parent links are assigned yet. Shift+Left-click another capsule while one is selected to create a joint.");
+    m_ragdollEditSelectedJoint = -1;
+    return;
+  }
+
+  auto findJointOption = [&](int childCapsule) {
+    for (int i = 0; i < static_cast<int>(jointChildren.size()); ++i) {
+      if (jointChildren[static_cast<std::size_t>(i)] == childCapsule) {
+        return i;
+      }
+    }
+    return -1;
+  };
+
+  int optionIndex = findJointOption(m_ragdollEditSelectedJoint);
+  if (optionIndex < 0 && findJointOption(m_ragdollEditSelectedCapsule) >= 0) {
+    optionIndex = findJointOption(m_ragdollEditSelectedCapsule);
+  }
+  if (optionIndex < 0) {
+    optionIndex = 0;
+  }
+  m_ragdollEditSelectedJoint = jointChildren[static_cast<std::size_t>(optionIndex)];
+
+  t850::SelectorDesc jointSelector;
+  jointSelector.name = "ragdoll_edit_joint";
+  jointSelector.label = "Joint";
+  int selectedOption = optionIndex;
+  if (gui.Combo(jointSelector, selectedOption, &jointOptions) &&
+      selectedOption >= 0 &&
+      selectedOption < static_cast<int>(jointChildren.size())) {
+    m_ragdollEditSelectedJoint = jointChildren[static_cast<std::size_t>(selectedOption)];
+    m_ragdollEditSelectedCapsule = m_ragdollEditSelectedJoint;
+    m_ragdollEditSelectedHandle = 0;
+    m_ragdollEditGizmoDragging = false;
+    m_ragdollEditGizmoAxis = -1;
+  }
+
+  DrawRagdollJointGizmos();
+
+  const int childCapsule = m_ragdollEditSelectedJoint;
+  if (childCapsule < 0 ||
+      childCapsule >= static_cast<int>(bones.size()) ||
+      childCapsule >= static_cast<int>(m_ragdollParentCapsules.size())) {
+    return;
+  }
+  const int parentCapsule = m_ragdollParentCapsules[static_cast<std::size_t>(childCapsule)];
+  if (parentCapsule < 0 || parentCapsule >= static_cast<int>(bones.size())) {
+    return;
+  }
+
+  auto& childBone = bones[static_cast<std::size_t>(childCapsule)];
+  const auto& parentBone = bones[static_cast<std::size_t>(parentCapsule)];
+  ImGui::Text("Parent capsule: %d %s", parentCapsule, parentBone.body.debugName.c_str());
+  ImGui::Text("Child capsule: %d %s", childCapsule, childBone.body.debugName.c_str());
+  ImGui::Text("Constraint axes: child +Y is twist direction; child +X is plane direction.");
+
+  XVECTOR3 joint;
+  XVECTOR3 parentCenter;
+  XVECTOR3 childCenter;
+  XVECTOR3 parentTwist;
+  XVECTOR3 childTwist;
+  XVECTOR3 childPlane;
+  float jointSize = 0.0f;
+  if (GetRagdollJointVisualFrame(childCapsule, joint, parentCenter, childCenter, parentTwist, childTwist, childPlane, jointSize)) {
+    ImGui::Text("Joint anchor: %.3f, %.3f, %.3f", joint.x, joint.y, joint.z);
+  }
+
+  float swingApertureDeg = Rad2Deg(childBone.swingLimitRadians);
+  float twistAngleDeg = Rad2Deg(childBone.twistLimitRadians);
+  bool changed = false;
+  if (ImGui::DragFloat("Swing aperture cone", &swingApertureDeg, 0.5f, 0.0f, 180.0f, "%.1f deg")) {
+    changed = true;
+  }
+  if (ImGui::DragFloat("Twist angle +/-", &twistAngleDeg, 0.5f, 0.0f, 180.0f, "%.1f deg")) {
+    changed = true;
+  }
+
+  if (changed) {
+    childBone.swingLimitRadians = Deg2Rad((std::max)(0.0f, (std::min)(180.0f, swingApertureDeg)));
+    childBone.twistLimitRadians = Deg2Rad((std::max)(0.0f, (std::min)(180.0f, twistAngleDeg)));
+    m_ragdollEditDirty = true;
+    m_ragdollEditRebuildRequested = true;
+  }
+
+  if (gui.Button("Select Child Capsule")) {
+    m_ragdollEditSelectedCapsule = childCapsule;
+    m_ragdollEditSelectedHandle = 0;
+  }
+  ImGui::SameLine();
+  if (gui.Button("Select Parent Capsule")) {
+    m_ragdollEditSelectedCapsule = parentCapsule;
+    m_ragdollEditSelectedHandle = 0;
+  }
+  ImGui::SameLine();
+  if (gui.Button("Clear Joint Parent")) {
+    ClearRagdollCapsuleParent(childCapsule);
+  }
+}
+
+void SandboxScene::DrawSkeletonEditPanel(t850::DevGuiContext& gui) {
+  if (!gui.BeginSection("Skeleton Edit")) {
+    return;
+  }
+
+  RenderSkinnedMesh* skinned = Meshes[0].GetSkinnedMesh();
+  if (!skinned || !skinned->HasSkinData()) {
+    gui.Text("Load a skinned model to edit its skeleton.");
+    return;
+  }
+
+  gui.Text("Runtime Controls");
+  if (gui.Button(m_showPhysics ? "F4 Physics Debug: On" : "F4 Physics Debug: Off")) {
+    m_showPhysics = !m_showPhysics;
+  }
+  ImGui::SameLine();
+  if (gui.Button("F5 Start Simulation", Meshes[0].HasPhysicsRagdoll())) {
+    SwitchRagdollToPhysics();
+  }
+  if (gui.Button(m_skeletonEditMode ? "F6 Exit Edit Mode" : "F6 Enter Edit Mode")) {
+    if (m_skeletonEditMode) ExitSkeletonEditMode();
+    else EnterSkeletonEditMode();
+  }
+  ImGui::SameLine();
+  if (gui.Button("F7 Reset Physics/Animation")) {
+    ResetRagdollPhysicsAndAnimation();
+  }
+  ImGui::Separator();
+
+  gui.Text(m_skeletonEditMode
+      ? "Bind-pose edit mode is active. Bone clicks edit the animation skeleton; capsule handle clicks edit the physical ragdoll body. F6 exits."
+      : "Enter mode to pause animation and move the model to bind pose. F6 toggles this mode.");
+
+  if (!m_skeletonEditMode) {
+    if (gui.Button("Enter Skeleton Edit Mode")) {
+      EnterSkeletonEditMode();
+    }
+    return;
+  }
+
+  if (gui.Button("Exit Edit Mode")) {
+    ExitSkeletonEditMode();
+  }
+  ImGui::SameLine();
+  if (gui.Button("Reset Bind Pose")) {
+    ResetSkeletonEditPose();
+  }
+
+  if (gui.Button("Load Saved Edits")) {
+    LoadSkeletonEditPose();
+  }
+  ImGui::SameLine();
+  if (gui.Button(m_skeletonEditDirty ? "Save Edits *" : "Save Edits")) {
+    SaveSkeletonEditPose();
+  }
+
+  if (!m_skeletonEditSavePath.empty()) {
+    ImGui::TextWrapped("Save path: %s", m_skeletonEditSavePath.c_str());
+  }
+
+  const xF::xSkeleton* skeleton = skinned->GetAnimController().GetAnimSkeleton();
+  if (!skeleton || skeleton->Bones.empty() || m_skeletonEditCombined.empty()) {
+    gui.Text("Skeleton data is unavailable.");
+    return;
+  }
+
+  std::vector<std::string> boneOptions;
+  const int boneCount = (std::min)(static_cast<int>(skeleton->Bones.size()), static_cast<int>(m_skeletonEditCombined.size()));
+  boneOptions.reserve(static_cast<std::size_t>(boneCount));
+  for (int i = 0; i < boneCount; ++i) {
+    boneOptions.push_back(std::to_string(i) + ": " + skeleton->Bones[i].Name);
+  }
+
+  if (m_skeletonEditSelectedBone < 0 || m_skeletonEditSelectedBone >= boneCount) {
+    m_skeletonEditSelectedBone = boneCount > 0 ? 0 : -1;
+  }
+
+  t850::SelectorDesc boneSelector;
+  boneSelector.name = "skeleton_edit_bone";
+  boneSelector.label = "Bone";
+  int selectedBone = m_skeletonEditSelectedBone;
+  if (gui.Combo(boneSelector, selectedBone, &boneOptions)) {
+    m_skeletonEditSelectedBone = selectedBone;
+  }
+
+  if (m_skeletonEditSelectedBone < 0 || m_skeletonEditSelectedBone >= boneCount) {
+    return;
+  }
+
+  ImGui::PushID(m_skeletonEditSelectedBone);
+  XVECTOR3 worldPosition;
+  if (GetSkeletonEditBoneWorldPosition(m_skeletonEditSelectedBone, worldPosition)) {
+    float position[3] = {worldPosition.x, worldPosition.y, worldPosition.z};
+    if (ImGui::DragFloat3("World position", position, (std::max)(0.001f, m_modelRadius * 0.002f), 0.0f, 0.0f, "%.3f")) {
+      SetSkeletonEditBoneWorldPosition(m_skeletonEditSelectedBone, XVECTOR3(position[0], position[1], position[2], 1.0f));
+    }
+  }
+
+  std::array<float, 3> scale = GetSkeletonEditBoneScale(m_skeletonEditSelectedBone);
+  float scaleValues[3] = {scale[0], scale[1], scale[2]};
+  if (ImGui::DragFloat3("Bone basis scale", scaleValues, 0.01f, 0.001f, 100.0f, "%.3f")) {
+    SetSkeletonEditBoneScale(m_skeletonEditSelectedBone, {scaleValues[0], scaleValues[1], scaleValues[2]});
+  }
+
+  if (gui.Button("Reset Selected Bone")) {
+    if (m_skeletonEditSelectedBone >= 0 &&
+        m_skeletonEditSelectedBone < static_cast<int>(m_skeletonEditBindCombined.size()) &&
+        m_skeletonEditSelectedBone < static_cast<int>(m_skeletonEditCombined.size())) {
+      m_skeletonEditCombined[static_cast<std::size_t>(m_skeletonEditSelectedBone)] =
+          m_skeletonEditBindCombined[static_cast<std::size_t>(m_skeletonEditSelectedBone)];
+      m_skeletonEditDirty = true;
+      ApplySkeletonEditPose();
+    }
+  }
+  ImGui::SameLine();
+  if (gui.Button("Frame Selected")) {
+    if (GetSkeletonEditBoneWorldPosition(m_skeletonEditSelectedBone, worldPosition)) {
+      m_orbitTarget = worldPosition;
+      m_panOffset = XVECTOR3(0.0f, 0.0f, 0.0f);
+      ComputeOrbitCamera();
+      VP = Cam.VP;
+    }
+  }
+
+  ImGui::TextWrapped("Viewport: click inside a gray octahedral bone volume to select it. Ctrl+Left-click adds a bone to the selected capsule; Ctrl+Right-click removes it.");
+  ImGui::PopID();
+  DrawRagdollCapsuleEditPanel(gui);
+  DrawRagdollJointEditPanel(gui);
+}
+
+void SandboxScene::DrawSkinningAuthoringPanel(t850::DevGuiContext& gui) {
+  ImGui::SetNextWindowSize(ImVec2(460.0f, 680.0f), ImGuiCond_FirstUseEver);
+  const bool begun = gui.BeginPanel("Skinning / Bones / Capsules");
+  if (begun) {
+    DrawSkeletonEditPanel(gui);
+  }
+  gui.EndPanel();
 }
 
 void SandboxScene::OnInput(InputManager* IManager) {
@@ -820,6 +4719,9 @@ void SandboxScene::OnInput(InputManager* IManager) {
 #ifndef OS_ANDROID
   imguiWantsMouse = ImGui::GetCurrentContext() && ImGui::GetIO().WantCaptureMouse;
 #endif
+  if (HandleSkeletonEditInput(IManager, imguiWantsMouse)) {
+    return;
+  }
   if (!imguiWantsMouse && IManager->PressedKey(T800K_LCTRL) && IManager->PressedMouseButton(0)) {
     if (AdjustSelectedDirectionalLightFromMouse(dx, dy)) return;
   }
@@ -892,6 +4794,13 @@ void SandboxScene::OnInput(InputManager* IManager) {
     m_showPhysics = !m_showPhysics;
   if (IManager->PressedOnceKey(T800K_F5))
     SwitchRagdollToPhysics();
+  if (IManager->PressedOnceKey(T800K_F6)) {
+    if (m_skeletonEditMode) ExitSkeletonEditMode();
+    else EnterSkeletonEditMode();
+  }
+  if (IManager->PressedOnceKey(T800K_F7)) {
+    ResetRagdollPhysicsAndAnimation();
+  }
 
   // Arrow keys: step keyframes when in keyframe mode
   RenderSkinnedMesh* sk = Meshes[0].GetSkinnedMesh();
@@ -1579,7 +5488,13 @@ void SandboxScene::OnDraw() {
         if (m_showSkeleton) {
           pFramework->pVideoDriver->SetDepthStencilState(BaseDriver::NONE);
           pFramework->pVideoDriver->SetBlendState(BaseDriver::BLEND_DEFAULT);
-          skinned->DrawSkeleton();
+          const std::vector<int>* controlledBones = nullptr;
+          if (m_skeletonEditMode &&
+              m_ragdollEditSelectedCapsule >= 0 &&
+              m_ragdollEditSelectedCapsule < static_cast<int>(m_ragdollAnimationBinding.controlledBoneIndices.size())) {
+            controlledBones = &m_ragdollAnimationBinding.controlledBoneIndices[static_cast<std::size_t>(m_ragdollEditSelectedCapsule)];
+          }
+          skinned->DrawSkeleton(m_skeletonEditMode ? m_skeletonEditSelectedBone : -1, controlledBones);
         }
       } else if (m_showWireframe) {
         RenderMesh* mesh = static_cast<RenderMesh*>(Meshes[0].pBase);
@@ -1598,14 +5513,8 @@ void SandboxScene::OnDraw() {
       t850::EngineContext* engineContext = GetEngineContext();
       if (!engineContext) engineContext = &t850::GetEngineContext();
       if (engineContext && engineContext->physics && m_physicsDebugRenderer.IsReady()) {
-        Texture* depthTexture = nullptr;
-        int gbufHandle = GBufferPass;
-        if (gbufHandle >= 0 && gbufHandle < (int)pFramework->pVideoDriver->RTs.size()) {
-          auto* gbufRT = pFramework->pVideoDriver->RTs[gbufHandle];
-          depthTexture = gbufRT ? gbufRT->pDepthTexture : nullptr;
-        }
-        m_physicsDebugRenderer.SetDepthTexture(depthTexture);
-        m_physicsDebugRenderer.SetDepthTestEnabled(depthTexture != nullptr);
+        m_physicsDebugRenderer.SetDepthTexture(nullptr);
+        m_physicsDebugRenderer.SetDepthTestEnabled(false);
         m_physicsDebugRenderer.SetViewport(g_pBaseDriver->width, g_pBaseDriver->height);
         m_physicsDebugRenderer.SetFarPlane(Cam.FPlane);
         pFramework->pVideoDriver->SetDepthStencilState(BaseDriver::NONE);
@@ -1626,7 +5535,19 @@ void SandboxScene::OnDraw() {
 #endif
 
   DrawSelectedDirectionalLightArrow();
-
+  if (m_skeletonEditMode && m_ragdollEditSelectedCapsule >= 0) {
+    std::array<XVECTOR3, 7> capsuleHandles;
+    if (BuildRagdollEditHandlePoints(m_ragdollEditSelectedCapsule, capsuleHandles)) {
+      pFramework->pVideoDriver->SetDepthStencilState(BaseDriver::NONE);
+      pFramework->pVideoDriver->SetBlendState(BaseDriver::ALPHA_BLEND);
+      const float baseRadius = (std::max)(0.01f, m_modelRadius * 0.014f);
+      for (int handleIndex = 0; handleIndex < static_cast<int>(capsuleHandles.size()); ++handleIndex) {
+        const float radius = handleIndex == m_ragdollEditSelectedHandle ? baseRadius * 1.45f : baseRadius;
+        m_debugSphere.Draw(VP, capsuleHandles[static_cast<std::size_t>(handleIndex)], radius);
+      }
+      pFramework->pVideoDriver->SetBlendState(BaseDriver::BLEND_DEFAULT);
+    }
+  }
   // Debug: draw wireframe AABBs for visible meshes
   if (m_showAABBs && Meshes[0].pBase) {
     RenderMesh* rm = static_cast<RenderMesh*>(Meshes[0].pBase);
@@ -2045,10 +5966,12 @@ void SandboxScene::DrawDevGui(t850::DevGuiContext& gui) {
 
   if (gui.BeginSection("Controls")) {
     if (RenderSkinnedMesh* sk = skinnedMesh()) {
+      if (m_skeletonEditMode) ImGui::BeginDisabled();
       if (gui.Button(sk->IsPlaying() ? "Pause Animation" : "Resume Animation")) {
         if (sk->IsPlaying()) sk->PauseAnimation();
         else sk->PlayAnimation();
       }
+      if (m_skeletonEditMode) ImGui::EndDisabled();
     }
     for (const auto& desc : m_guiSetup.descriptor.sliders) {
       int settingIndex = findSetting(desc.name, sliderMappings, (int)(sizeof(sliderMappings) / sizeof(sliderMappings[0])));
@@ -2248,6 +6171,8 @@ void SandboxScene::DrawDevGui(t850::DevGuiContext& gui) {
       SceneProp.ShowCullingDebug = showCulling;
     }
   }
+
+  DrawSkinningAuthoringPanel(gui);
 }
 
 void SandboxScene::SyncToGUI(t850::GUIManager& gui) {

@@ -158,10 +158,12 @@ struct PhysicsRagdollBuildSettings {
   float projectionPadding = 0.18f;
   float jointTrimFraction = 0.10f;
   uint32_t minFitSamples = 8;
+  float syntheticBoneLength = 0.02f;
   bool includeLeafBones = true;
   bool useCapsules = true;
   bool fitToSkinnedGeometry = false;
   bool preferHumanoidBones = false;
+  bool forceCapsuleForEveryBone = false;
 };
 
 struct PhysicsRagdollBoneDesc {
@@ -182,6 +184,8 @@ struct PhysicsRagdollDesc {
 struct PhysicsRagdollAnimationBinding {
   PhysicsRagdollDesc referencePose;
   std::vector<XMATRIX44> bodyFromBone;
+  std::vector<std::vector<int>> controlledBoneIndices;
+  std::vector<std::vector<XMATRIX44>> controlledBodyFromBone;
 };
 
 } // namespace t850

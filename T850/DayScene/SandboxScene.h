@@ -16,6 +16,7 @@
 #include <gui/GUIManager.h>
 #include <Config.h>
 
+#include <array>
 #include <string>
 #include <vector>
 
@@ -149,7 +150,9 @@ public:
   t850::SandboxProfileDesc m_profileBaselineState;
   t850::SandboxProfileDesc m_profileSavedState;
   t850::PhysicsRagdollAnimationBinding m_ragdollAnimationBinding;
+  t850::PhysicsRagdollAnimationBinding m_ragdollGeneratedBinding;
   t850::PhysicsRagdollDesc m_ragdollAnimationPose;
+  std::vector<int> m_ragdollParentCapsules;
   std::vector<t850::PhysicsBodyState> m_ragdollPhysicsStates;
   std::vector<int> m_ragdollPhysicsBoneIndices;
   std::vector<XMATRIX44> m_ragdollPhysicsCombinedMatrices;
@@ -158,6 +161,33 @@ public:
   bool m_ragdollPhysicsDriven = false;
   bool m_ragdollDriveLogEmitted = false;
   bool m_ragdollPhysicsLogEmitted = false;
+  bool m_ragdollEditDirty = false;
+  bool m_ragdollEditHandleDragging = false;
+  bool m_ragdollEditGizmoDragging = false;
+  bool m_ragdollClearRequested = false;
+  bool m_ragdollEditRebuildRequested = false;
+  int m_ragdollEditSelectedCapsule = -1;
+  int m_ragdollEditSelectedJoint = -1;
+  int m_ragdollEditSelectionMode = 0; // 0=capsules/joints, 1=bones
+  int m_ragdollEditSelectedHandle = -1;
+  int m_ragdollEditGizmoMode = 0; // 0=translate, 1=rotate
+  int m_ragdollEditGizmoAxis = -1;
+  float m_ragdollEditGizmoLastParameter = 0.0f;
+  XVECTOR3 m_ragdollEditGizmoLastVector = XVECTOR3(1.0f, 0.0f, 0.0f, 0.0f);
+  XVECTOR3 m_ragdollEditGizmoDragCenter = XVECTOR3(0.0f, 0.0f, 0.0f, 1.0f);
+  XVECTOR3 m_ragdollEditGizmoDragAxis = XVECTOR3(1.0f, 0.0f, 0.0f, 0.0f);
+  int m_ragdollEditRenamingCapsule = -1;
+  bool m_ragdollEditRenameFocusPending = false;
+  std::array<char, 128> m_ragdollEditNameBuffer{};
+  std::string m_ragdollEditSavePath;
+  bool m_skeletonEditMode = false;
+  bool m_skeletonEditWasPlaying = false;
+  bool m_skeletonEditDragging = false;
+  bool m_skeletonEditDirty = false;
+  int m_skeletonEditSelectedBone = -1;
+  std::vector<XMATRIX44> m_skeletonEditBindCombined;
+  std::vector<XMATRIX44> m_skeletonEditCombined;
+  std::string m_skeletonEditSavePath;
 
   // Orbit camera state
   XVECTOR3 m_orbitTarget;    // center of the model (world space)
@@ -177,7 +207,74 @@ public:
   void DriveRagdollFromAnimation(float deltaSeconds);
   void UpdateSkeletonFromRagdollPhysics();
   void SwitchRagdollToPhysics();
+  bool ResetRagdollPhysicsAndAnimation();
   void CreatePhysicsFloor(t850::JoltPhysicsSystem& physics);
+  bool EnterSkeletonEditMode();
+  void ExitSkeletonEditMode();
+  void DrawSkeletonEditPanel(t850::DevGuiContext& gui);
+  void DrawSkinningAuthoringPanel(t850::DevGuiContext& gui);
+  bool HandleSkeletonEditInput(InputManager* input, bool imguiWantsMouse);
+  bool ApplySkeletonEditPose();
+  bool ResetSkeletonEditPose();
+  bool LoadSkeletonEditPose();
+  bool SaveSkeletonEditPose();
+  std::string BuildSkeletonEditSavePath() const;
+  std::string BuildRagdollEditSavePath() const;
+  void DrawRagdollCapsuleEditPanel(t850::DevGuiContext& gui);
+  bool LoadRagdollEditPose();
+  bool SaveRagdollEditPose();
+  bool ResetRagdollEditPose();
+  bool ResetSelectedRagdollCapsule();
+  void DrawRagdollJointEditPanel(t850::DevGuiContext& gui);
+  int FindRagdollCapsuleForBone(int boneIndex) const;
+  int FindRagdollCapsuleControllingBone(int boneIndex) const;
+  int FindGeneratedRagdollCapsuleForBone(int boneIndex) const;
+  void EnsureRagdollControlledBones();
+  void SyncRagdollParentCapsulesFromBoneLinks();
+  void EnsureRagdollParentCapsules();
+  bool ApplyRagdollParentCapsuleLinks();
+  bool SetRagdollCapsuleParent(int childCapsule, int parentCapsule);
+  bool ClearRagdollCapsuleParent(int childCapsule);
+  bool AddControlledBoneToSelectedCapsule(int boneIndex);
+  bool RemoveControlledBoneFromSelectedCapsule(int boneIndex);
+  bool ClearRagdollCapsules();
+  bool RebuildRagdollParentLinks();
+  bool BuildDefaultRagdollCapsuleForBone(int boneIndex, t850::PhysicsRagdollBoneDesc& outBone, XMATRIX44& outBodyFromBone) const;
+  bool CreateRagdollCapsuleForBone(int boneIndex);
+  bool DeleteSelectedRagdollCapsule();
+  bool UpdateRagdollReferenceBodyFromLocal(int capsuleIndex);
+  bool SetRagdollEditCapsuleWorldTransform(int capsuleIndex, const XMATRIX44& bodyWorld, bool rebuildRagdoll);
+  bool MoveRagdollEditCapsuleByWorldDelta(int capsuleIndex, const XVECTOR3& worldDelta, bool rebuildRagdoll);
+  bool RotateRagdollEditCapsuleWorld(int capsuleIndex, const XVECTOR3& axisWorld, float angleRadians, bool rebuildRagdoll);
+  bool ApplyRagdollEditPose(bool rebuildRagdoll);
+  bool RecreateRagdollFromPose(const t850::PhysicsRagdollDesc& pose);
+  bool GetCurrentRagdollEditCapsuleWorld(int capsuleIndex, XMATRIX44& outWorld);
+  bool GetRagdollJointVisualFrame(int childCapsule,
+                                  XVECTOR3& outJoint,
+                                  XVECTOR3& outParentCenter,
+                                  XVECTOR3& outChildCenter,
+                                  XVECTOR3& outParentTwistAxis,
+                                  XVECTOR3& outChildTwistAxis,
+                                  XVECTOR3& outChildPlaneAxis,
+                                  float& outSize);
+  void DrawRagdollJointGizmos();
+  bool GetRagdollEditGizmoFrame(int capsuleIndex, XVECTOR3& outCenter, std::array<XVECTOR3, 3>& outAxes, float& outSize);
+  bool BuildRagdollEditHandlePoints(int capsuleIndex, std::array<XVECTOR3, 7>& outPoints);
+  bool PickRagdollEditHandle(float mouseX, float mouseY, float thresholdPixels, int& outCapsuleIndex, int& outHandleIndex);
+  bool PickRagdollEditCapsule(float mouseX, float mouseY, float thresholdPixels, int& outCapsuleIndex);
+  bool PickRagdollEditTransformGizmo(float mouseX, float mouseY, int& outAxis);
+  bool BeginRagdollEditTransformGizmoDrag(float mouseX, float mouseY);
+  bool DragRagdollEditTransformGizmo(float mouseX, float mouseY);
+  void DrawRagdollEditTransformGizmo();
+  bool DragRagdollEditHandle(int capsuleIndex, int handleIndex, const XVECTOR3& worldDelta);
+  bool GetSkeletonEditBoneWorldTransform(int boneIndex, XMATRIX44& outWorld) const;
+  int FindSkeletonEditDisplayEndpoint(int boneIndex) const;
+  bool BuildSkeletonEditBoneOctahedron(int boneIndex, float widthScale, std::array<XVECTOR3, 6>& outPoints) const;
+  int PickSkeletonEditBone(float mouseX, float mouseY, float thresholdPixels) const;
+  bool GetSkeletonEditBoneWorldPosition(int boneIndex, XVECTOR3& outWorld) const;
+  bool SetSkeletonEditBoneWorldPosition(int boneIndex, const XVECTOR3& worldPosition);
+  std::array<float, 3> GetSkeletonEditBoneScale(int boneIndex) const;
+  bool SetSkeletonEditBoneScale(int boneIndex, const std::array<float, 3>& scale);
   void LoadSandboxProfile();
   void SaveSandboxProfile();
   void CaptureSandboxProfileState(t850::SandboxProfileDesc& state);

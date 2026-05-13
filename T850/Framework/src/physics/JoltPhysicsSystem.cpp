@@ -23,6 +23,7 @@
 #include <Jolt/Physics/Collision/Shape/Shape.h>
 #include <Jolt/Physics/Collision/Shape/BoxShape.h>
 #include <Jolt/Physics/Collision/Shape/CapsuleShape.h>
+#include <Jolt/Physics/Constraints/FixedConstraint.h>
 #include <Jolt/Physics/Constraints/SwingTwistConstraint.h>
 #include <Jolt/Physics/PhysicsSystem.h>
 #include <utils/ResourceLocator.h>
@@ -46,6 +47,7 @@ JPH_SUPPRESS_WARNINGS
 namespace {
 
 using t850::AABB;
+using t850::PhysicsBodyDesc;
 using t850::PhysicsBodyMotion;
 using t850::PhysicsCookStats;
 using t850::PhysicsMeshBuildQuality;
@@ -59,6 +61,45 @@ namespace Layers {
 static constexpr JPH::ObjectLayer NonMoving = 0;
 static constexpr JPH::ObjectLayer Moving = 1;
 static constexpr JPH::ObjectLayer Count = 2;
+}
+
+static constexpr float kFixedPhysicsStepSeconds = 0.016f;
+static constexpr float kMaxJoltBroadPhaseCoordinate = 1.0e12f;
+
+static bool IsUsablePhysicsCoordinate(float value) {
+  return std::isfinite(value) && std::fabs(value) <= kMaxJoltBroadPhaseCoordinate;
+}
+
+static bool IsBoundedPhysicsExtent(float value) {
+  return std::isfinite(value) && value >= 0.0f && value <= kMaxJoltBroadPhaseCoordinate;
+}
+
+static bool IsUsablePhysicsTransform(const XMATRIX44& transform) {
+  for (int i = 0; i < 16; ++i) {
+    if (!IsUsablePhysicsCoordinate(transform.mat[i])) {
+      return false;
+    }
+  }
+  return true;
+}
+
+static bool IsUsablePhysicsShape(const PhysicsShapeDesc& shape) {
+  switch (shape.type) {
+  case PhysicsShapeType::Box:
+  case PhysicsShapeType::TriangleMesh:
+    return IsBoundedPhysicsExtent(shape.halfExtents.x) &&
+           IsBoundedPhysicsExtent(shape.halfExtents.y) &&
+           IsBoundedPhysicsExtent(shape.halfExtents.z);
+  case PhysicsShapeType::Capsule:
+    return IsBoundedPhysicsExtent(shape.radius) &&
+           IsBoundedPhysicsExtent(shape.halfHeight);
+  default:
+    return false;
+  }
+}
+
+static bool IsUsablePhysicsBodyDesc(const PhysicsBodyDesc& desc) {
+  return IsUsablePhysicsTransform(desc.worldTransform) && IsUsablePhysicsShape(desc.shape);
 }
 
 namespace BroadPhaseLayers {
@@ -874,7 +915,7 @@ void JoltPhysicsSystem::Update(float deltaSeconds) {
   }
 
   constexpr int collisionSteps = 2;
-  m_impl->physicsSystem.Update(deltaSeconds, collisionSteps, &m_impl->tempAllocator, &m_impl->jobSystem);
+  m_impl->physicsSystem.Update(kFixedPhysicsStepSeconds, collisionSteps, &m_impl->tempAllocator, &m_impl->jobSystem);
 }
 
 PhysicsBodyHandle JoltPhysicsSystem::CreateBody(const PhysicsBodyDesc& desc) {
@@ -883,6 +924,13 @@ PhysicsBodyHandle JoltPhysicsSystem::CreateBody(const PhysicsBodyDesc& desc) {
 
 PhysicsBodyHandle JoltPhysicsSystem::CreateBodyInternal(const PhysicsBodyDesc& desc, const void* collisionGroup) {
   if (!m_initialized || !m_impl) {
+    return {};
+  }
+
+  if (!IsUsablePhysicsBodyDesc(desc)) {
+    T8_LOG_ERROR("Jolt body creation skipped for entity %u ('%s'): invalid or oversized transform/shape",
+                 desc.entityId,
+                 desc.debugName.c_str());
     return {};
   }
 
@@ -1063,9 +1111,14 @@ bool JoltPhysicsSystem::SetBodyMotion(PhysicsBodyHandle handle, PhysicsBodyMotio
   }
 
   JPH::BodyInterface& bodyInterface = m_impl->physicsSystem.GetBodyInterface();
+  const JPH::ObjectLayer objectLayer = ToJoltObjectLayer(motion);
+  if (bodyInterface.GetObjectLayer(slot->id) != objectLayer) {
+    bodyInterface.SetObjectLayer(slot->id, objectLayer);
+  }
   bodyInterface.SetMotionType(slot->id, ToJoltMotion(motion), JPH::EActivation::Activate);
-  if (bodyInterface.GetObjectLayer(slot->id) != ToJoltObjectLayer(motion)) {
-    bodyInterface.SetObjectLayer(slot->id, ToJoltObjectLayer(motion));
+  if (motion == PhysicsBodyMotion::Dynamic) {
+    bodyInterface.SetMotionQuality(slot->id, JPH::EMotionQuality::LinearCast);
+    bodyInterface.ActivateBody(slot->id);
   }
   slot->motion = motion;
   return true;
@@ -1094,6 +1147,13 @@ bool JoltPhysicsSystem::DriveBodyKinematic(PhysicsBodyHandle handle, const XMATR
   if (!m_initialized || !m_impl) {
     return false;
   }
+  (void)deltaSeconds;
+
+  if (!IsUsablePhysicsTransform(worldTransform)) {
+    T8_LOG_ERROR("Jolt kinematic drive skipped for handle %u: invalid or oversized target transform",
+                 handle.value);
+    return false;
+  }
 
   Impl::BodySlot* slot = m_impl->Resolve(handle);
   if (!slot) {
@@ -1105,11 +1165,7 @@ bool JoltPhysicsSystem::DriveBodyKinematic(PhysicsBodyHandle handle, const XMATR
   }
 
   JPH::BodyInterface& bodyInterface = m_impl->physicsSystem.GetBodyInterface();
-  if (deltaSeconds > 0.0f) {
-    bodyInterface.MoveKinematic(slot->id, ToJoltPosition(worldTransform), ToJoltRotation(worldTransform), deltaSeconds);
-  } else {
-    bodyInterface.SetPositionAndRotation(slot->id, ToJoltPosition(worldTransform), ToJoltRotation(worldTransform), JPH::EActivation::Activate);
-  }
+  bodyInterface.SetPositionAndRotation(slot->id, ToJoltPosition(worldTransform), ToJoltRotation(worldTransform), JPH::EActivation::Activate);
   return true;
 }
 
@@ -1120,6 +1176,12 @@ bool JoltPhysicsSystem::SetBodyTransform(PhysicsBodyHandle handle, const XMATRIX
 
   Impl::BodySlot* slot = m_impl->Resolve(handle);
   if (!slot) {
+    return false;
+  }
+
+  if (!IsUsablePhysicsTransform(worldTransform)) {
+    T8_LOG_ERROR("Jolt body transform skipped for handle %u: invalid or oversized target transform",
+                 handle.value);
     return false;
   }
 
@@ -1233,21 +1295,35 @@ PhysicsRagdollHandle JoltPhysicsSystem::CreateRagdoll(const PhysicsRagdollDesc& 
       continue;
     }
 
-    JPH::SwingTwistConstraintSettings settings;
-    settings.mSpace = JPH::EConstraintSpace::WorldSpace;
-    settings.mPosition1 = JPH::RVec3(bone.jointWorldPosition.x, bone.jointWorldPosition.y, bone.jointWorldPosition.z);
-    settings.mPosition2 = settings.mPosition1;
-    settings.mTwistAxis1 = ToJoltAxisY(*parentTransform);
-    settings.mTwistAxis2 = ToJoltAxisY(*childTransform);
-    settings.mPlaneAxis1 = ToJoltAxisX(*parentTransform);
-    settings.mPlaneAxis2 = ToJoltAxisX(*childTransform);
-    settings.mSwingType = JPH::ESwingType::Cone;
-    settings.mNormalHalfConeAngle = bone.swingLimitRadians;
-    settings.mPlaneHalfConeAngle = bone.swingLimitRadians;
-    settings.mTwistMinAngle = -bone.twistLimitRadians;
-    settings.mTwistMaxAngle = bone.twistLimitRadians;
-
-    JPH::TwoBodyConstraint* constraint = bodyInterface.CreateConstraint(&settings, parentSlot->id, childSlot->id);
+    JPH::TwoBodyConstraint* constraint = nullptr;
+    const JPH::RVec3 jointPosition(bone.jointWorldPosition.x, bone.jointWorldPosition.y, bone.jointWorldPosition.z);
+    if (bone.jointType == PhysicsRagdollJointType::Fixed) {
+      JPH::FixedConstraintSettings settings;
+      settings.mSpace = JPH::EConstraintSpace::WorldSpace;
+      settings.mAutoDetectPoint = false;
+      settings.mPoint1 = jointPosition;
+      settings.mPoint2 = jointPosition;
+      settings.mAxisX1 = ToJoltAxisX(*parentTransform);
+      settings.mAxisY1 = ToJoltAxisY(*parentTransform);
+      settings.mAxisX2 = ToJoltAxisX(*childTransform);
+      settings.mAxisY2 = ToJoltAxisY(*childTransform);
+      constraint = bodyInterface.CreateConstraint(&settings, parentSlot->id, childSlot->id);
+    } else {
+      JPH::SwingTwistConstraintSettings settings;
+      settings.mSpace = JPH::EConstraintSpace::WorldSpace;
+      settings.mPosition1 = jointPosition;
+      settings.mPosition2 = settings.mPosition1;
+      settings.mTwistAxis1 = ToJoltAxisY(*parentTransform);
+      settings.mTwistAxis2 = ToJoltAxisY(*childTransform);
+      settings.mPlaneAxis1 = ToJoltAxisX(*parentTransform);
+      settings.mPlaneAxis2 = ToJoltAxisX(*childTransform);
+      settings.mSwingType = JPH::ESwingType::Cone;
+      settings.mNormalHalfConeAngle = bone.swingLimitRadians;
+      settings.mPlaneHalfConeAngle = bone.swingLimitRadians;
+      settings.mTwistMinAngle = -bone.twistLimitRadians;
+      settings.mTwistMaxAngle = bone.twistLimitRadians;
+      constraint = bodyInterface.CreateConstraint(&settings, parentSlot->id, childSlot->id);
+    }
     if (constraint) {
       m_impl->physicsSystem.AddConstraint(constraint);
       bodyInterface.ActivateConstraint(constraint);

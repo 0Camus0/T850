@@ -166,9 +166,15 @@ struct PhysicsRagdollBuildSettings {
   bool forceCapsuleForEveryBone = false;
 };
 
+enum class PhysicsRagdollJointType {
+  SwingTwist = 0,
+  Fixed = 1,
+};
+
 struct PhysicsRagdollBoneDesc {
   PhysicsBodyDesc body;
   int parentBoneIndex = -1;
+  PhysicsRagdollJointType jointType = PhysicsRagdollJointType::SwingTwist;
   XVECTOR3 jointWorldPosition = XVECTOR3(0.0f, 0.0f, 0.0f, 1.0f);
   float swingLimitRadians = Deg2Rad(70.0f);
   float twistLimitRadians = Deg2Rad(35.0f);
@@ -184,6 +190,7 @@ struct PhysicsRagdollDesc {
 struct PhysicsRagdollAnimationBinding {
   PhysicsRagdollDesc referencePose;
   std::vector<XMATRIX44> bodyFromBone;
+  std::vector<XVECTOR3> jointFromBone;
   std::vector<std::vector<int>> controlledBoneIndices;
   std::vector<std::vector<XMATRIX44>> controlledBodyFromBone;
 };

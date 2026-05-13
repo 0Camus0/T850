@@ -1,5 +1,5 @@
 {
-  "architecture": "arm64",
+  "architecture": "x64",
   "benchmark": false,
   "dump": {
     "trigger": "frame",
@@ -9,21 +9,22 @@
   },
   "cullingMode": "full",
   "configuration": "Release",
-  "api": "vulkan",
-  "targetPlatform": "android",
+  "api": "d3d12",
+  "targetPlatform": "windows",
   "replaySnapshot": {
     "path": "D:\\Code\\Game\\T850\\T850\\bin\\x64\\Release\\dumps_vulkan_f863_20260507_090650\\snapshot.json",
     "enabled": false
   },
   "keepRunning": false,
+  "androidDeviceSerial": "",
   "cullDisabled": false,
   "debugFrames": false,
   "display": {
     "fullscreen": false,
-    "model": "Models/DamagedHelmet.glb",
-    "scene": 1,
-    "height": 1440,
-    "width": 2560
+    "model": "Models/doomslayer_cine_all_animations_no-damage_double-sided-opaque.glb",
+    "scene": 0,
+    "height": 2160,
+    "width": 3840
   },
   "devTools": {
     "logToFile": false,

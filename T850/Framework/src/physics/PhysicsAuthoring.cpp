@@ -20,8 +20,24 @@
 namespace t850 {
 namespace {
 
+constexpr float kMaxPhysicsAuthoringCoordinate = 1.0e12f;
+
+bool IsUsablePhysicsCoordinate(float value) {
+  return std::isfinite(value) && std::fabs(value) <= kMaxPhysicsAuthoringCoordinate;
+}
+
+bool IsUsablePhysicsPoint(const XVECTOR3& point) {
+  return IsUsablePhysicsCoordinate(point.x) &&
+         IsUsablePhysicsCoordinate(point.y) &&
+         IsUsablePhysicsCoordinate(point.z);
+}
+
 bool IsValidRenderBounds(const RenderMesh::AABB& bounds) {
-  return bounds.min.x <= bounds.max.x && bounds.min.y <= bounds.max.y && bounds.min.z <= bounds.max.z;
+  return IsUsablePhysicsPoint(bounds.min) &&
+         IsUsablePhysicsPoint(bounds.max) &&
+         bounds.min.x <= bounds.max.x &&
+         bounds.min.y <= bounds.max.y &&
+         bounds.min.z <= bounds.max.z;
 }
 
 float Length(const XVECTOR3& v) {
@@ -1538,6 +1554,7 @@ bool BuildRagdollAnimationBinding(const RenderSkinnedMesh& mesh,
   PhysicsRagdollAnimationBinding binding;
   binding.referencePose = referencePose;
   binding.bodyFromBone.resize(referencePose.bones.size());
+  binding.jointFromBone.resize(referencePose.bones.size());
   binding.controlledBoneIndices.resize(referencePose.bones.size());
   binding.controlledBodyFromBone.resize(referencePose.bones.size());
 
@@ -1553,6 +1570,7 @@ bool BuildRagdollAnimationBinding(const RenderSkinnedMesh& mesh,
       return false;
     }
     binding.bodyFromBone[i] = referencePose.bones[i].body.worldTransform * inverseBoneWorld;
+    binding.jointFromBone[i] = TransformPhysicsPoint(referencePose.bones[i].jointWorldPosition, inverseBoneWorld);
     binding.controlledBoneIndices[i].push_back(boneIndex);
     binding.controlledBodyFromBone[i].push_back(binding.bodyFromBone[i]);
   }
@@ -1585,7 +1603,10 @@ bool BuildRagdollPoseFromAnimation(const RenderSkinnedMesh& mesh,
     const XMATRIX44 boneWorld = BoneWorldTransform(bone, worldFromMesh);
     pose.bones[i].body.worldTransform = binding.bodyFromBone[i] * boneWorld;
     NormalizeBasisRows(pose.bones[i].body.worldTransform);
-    pose.bones[i].jointWorldPosition = BonePosition(bone, worldFromMesh);
+    pose.bones[i].jointWorldPosition =
+        i < binding.jointFromBone.size()
+            ? TransformPhysicsPoint(binding.jointFromBone[i], boneWorld)
+            : BonePosition(bone, worldFromMesh);
   }
 
   outPose = std::move(pose);

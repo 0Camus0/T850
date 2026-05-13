@@ -76,8 +76,11 @@ public:
   // ── Debug wireframe / skeleton visualization ──
   // Draw mesh wireframe using GPU skinning pipeline (green, LINE_LIST)
   void DrawWireframe();
-  // Draw skeleton bones without depth testing. Pass a bone index to highlight it.
-  void DrawSkeleton(int selectedBone = -1, const std::vector<int>* controlledBones = nullptr);
+  // Draw skeleton bones without depth testing. Pass bone indices to highlight them.
+  void DrawSkeleton(int selectedBone = -1,
+                    const std::vector<int>* controlledBones = nullptr,
+                    const std::vector<int>* previewBones = nullptr,
+                    const std::vector<int>* pendingBones = nullptr);
 
   // Exact pose snapshot/replay support.
   void ExportBoneMatrices(std::vector<XMATRIX44>& out) const;

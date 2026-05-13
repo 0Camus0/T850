@@ -29,14 +29,17 @@
 #include <cctype>
 #include <cstdlib>
 #include <cstdio>
+#include <cstring>
 #include <utility>
 #include <functional>
 #include <initializer_list>
+#include <limits>
 
 using namespace t850;
 using std::string;
 
 namespace t850 {
+  extern Device* T8Device;
   extern DeviceContext* T8DeviceContext;
 }
 
@@ -304,6 +307,26 @@ namespace {
     return std::sqrt((std::max)(0.0f, Dot3(vector, vector)));
   }
 
+  constexpr float kMaxPhysicsAuthoringCoordinate = 1.0e12f;
+
+  bool IsUsablePhysicsCoordinate(float value) {
+    return std::isfinite(value) && std::fabs(value) <= kMaxPhysicsAuthoringCoordinate;
+  }
+
+  bool IsUsablePhysicsPoint(const XVECTOR3& point) {
+    return IsUsablePhysicsCoordinate(point.x) &&
+           IsUsablePhysicsCoordinate(point.y) &&
+           IsUsablePhysicsCoordinate(point.z);
+  }
+
+  bool IsUsableRenderBounds(const RenderMesh::AABB& bounds) {
+    return IsUsablePhysicsPoint(bounds.min) &&
+           IsUsablePhysicsPoint(bounds.max) &&
+           bounds.min.x <= bounds.max.x &&
+           bounds.min.y <= bounds.max.y &&
+           bounds.min.z <= bounds.max.z;
+  }
+
   XVECTOR3 Cross3(const XVECTOR3& lhs, const XVECTOR3& rhs) {
     return XVECTOR3(
         lhs.y * rhs.z - lhs.z * rhs.y,
@@ -514,6 +537,39 @@ namespace {
     return skeleton->Bones[boneIndex].Name.c_str();
   }
 
+  constexpr int kRagdollJointDisabled = -2;
+  constexpr int kRagdollJointInheritParent = -1;
+  constexpr int kRagdollSelectCapsules = 0;
+  constexpr int kRagdollSelectJoints = 1;
+  constexpr int kRagdollSelectBones = 2;
+  constexpr int kRagdollToolSelect = 0;
+  constexpr int kRagdollToolEditCapsule = 1;
+  constexpr int kRagdollToolMove = 2;
+  constexpr int kRagdollToolRotate = 3;
+
+  const char* RagdollToolName(int toolMode) {
+    switch (toolMode) {
+      case kRagdollToolEditCapsule: return "Edit capsule";
+      case kRagdollToolMove: return "Move";
+      case kRagdollToolRotate: return "Rotate";
+      default: return "Select";
+    }
+  }
+
+  t850::PhysicsRagdollJointType RagdollJointTypeFromInt(int value) {
+    return value == static_cast<int>(t850::PhysicsRagdollJointType::Fixed)
+        ? t850::PhysicsRagdollJointType::Fixed
+        : t850::PhysicsRagdollJointType::SwingTwist;
+  }
+
+  int RagdollJointTypeToInt(t850::PhysicsRagdollJointType type) {
+    return type == t850::PhysicsRagdollJointType::Fixed ? 1 : 0;
+  }
+
+  const char* RagdollJointTypeName(t850::PhysicsRagdollJointType type) {
+    return type == t850::PhysicsRagdollJointType::Fixed ? "Fixed" : "Swing/Twist";
+  }
+
   struct SkeletonEditBoneJson {
     int index = -1;
     std::string name;
@@ -530,6 +586,14 @@ namespace {
     int boneIndex = -1;
     std::string name;
     int parentCapsule = -1;
+    int jointParentCapsule = kRagdollJointInheritParent;
+    bool capsuleFrozen = false;
+    bool jointFrozen = false;
+    bool hasJointContactAnchor = false;
+    bool jointContactAnchor = false;
+    int jointType = 0;
+    bool hasJointAnchor = false;
+    std::array<float, 3> jointAnchor{};
     std::array<float, 16> bodyFromBone{};
     float radius = 0.0f;
     float halfHeight = 0.0f;
@@ -600,7 +664,37 @@ namespace {
     return true;
   }
 
+  bool ParseJsonBoolAt(const std::string& json, std::size_t keyPos, bool& out) {
+    const std::size_t colon = json.find(':', keyPos);
+    if (colon == std::string::npos) return false;
+    const char* cursor = json.c_str() + colon + 1;
+    while (*cursor == ' ' || *cursor == '\t' || *cursor == '\r' || *cursor == '\n') ++cursor;
+    if (std::strncmp(cursor, "true", 4) == 0) {
+      out = true;
+      return true;
+    }
+    if (std::strncmp(cursor, "false", 5) == 0) {
+      out = false;
+      return true;
+    }
+    return false;
+  }
+
   bool ParseFloatArray16At(const std::string& json, std::size_t keyPos, std::array<float, 16>& out) {
+    const std::size_t start = json.find('[', keyPos);
+    if (start == std::string::npos) return false;
+    const char* cursor = json.c_str() + start + 1;
+    char* end = nullptr;
+    for (std::size_t i = 0; i < out.size(); ++i) {
+      while (*cursor == ' ' || *cursor == '\t' || *cursor == '\r' || *cursor == '\n' || *cursor == ',') ++cursor;
+      out[i] = std::strtof(cursor, &end);
+      if (end == cursor) return false;
+      cursor = end;
+    }
+    return true;
+  }
+
+  bool ParseFloatArray3At(const std::string& json, std::size_t keyPos, std::array<float, 3>& out) {
     const std::size_t start = json.find('[', keyPos);
     if (start == std::string::npos) return false;
     const char* cursor = json.c_str() + start + 1;
@@ -680,6 +774,12 @@ namespace {
       const std::size_t boneIndexKey = json.find("\"bone_index\"", pos);
       const std::size_t nameKey = json.find("\"name\"", pos);
       const std::size_t parentKey = json.find("\"parent_capsule\"", pos);
+      const std::size_t jointParentKey = json.find("\"joint_parent_capsule\"", pos);
+      const std::size_t capsuleFrozenKey = json.find("\"capsule_frozen\"", pos);
+      const std::size_t jointFrozenKey = json.find("\"joint_frozen\"", pos);
+      const std::size_t jointContactKey = json.find("\"joint_contact_anchor\"", pos);
+      const std::size_t jointTypeKey = json.find("\"joint_type\"", pos);
+      const std::size_t jointAnchorKey = json.find("\"joint_anchor\"", pos);
       const std::size_t matrixKey = json.find("\"body_from_bone\"", pos);
       const std::size_t radiusKey = json.find("\"radius\"", pos);
       const std::size_t halfHeightKey = json.find("\"half_height\"", pos);
@@ -687,6 +787,9 @@ namespace {
       const std::size_t twistKey = json.find("\"twist_limit\"", pos);
       const std::size_t controlledKey = json.find("\"controlled_bones\"", pos);
       const std::size_t objectEnd = json.find('}', pos);
+      if (objectEnd == std::string::npos) {
+        break;
+      }
       if (boneIndexKey == std::string::npos || nameKey == std::string::npos ||
           matrixKey == std::string::npos || radiusKey == std::string::npos ||
           halfHeightKey == std::string::npos || swingKey == std::string::npos ||
@@ -698,6 +801,24 @@ namespace {
       ParseJsonStringAt(json, nameKey, capsule.name);
       if (parentKey != std::string::npos && parentKey < objectEnd) {
         ParseJsonIntAt(json, parentKey, capsule.parentCapsule);
+      }
+      if (jointParentKey != std::string::npos && jointParentKey < objectEnd) {
+        ParseJsonIntAt(json, jointParentKey, capsule.jointParentCapsule);
+      }
+      if (capsuleFrozenKey != std::string::npos && capsuleFrozenKey < objectEnd) {
+        ParseJsonBoolAt(json, capsuleFrozenKey, capsule.capsuleFrozen);
+      }
+      if (jointFrozenKey != std::string::npos && jointFrozenKey < objectEnd) {
+        ParseJsonBoolAt(json, jointFrozenKey, capsule.jointFrozen);
+      }
+      if (jointContactKey != std::string::npos && jointContactKey < objectEnd) {
+        capsule.hasJointContactAnchor = ParseJsonBoolAt(json, jointContactKey, capsule.jointContactAnchor);
+      }
+      if (jointTypeKey != std::string::npos && jointTypeKey < objectEnd) {
+        ParseJsonIntAt(json, jointTypeKey, capsule.jointType);
+      }
+      if (jointAnchorKey != std::string::npos && jointAnchorKey < objectEnd) {
+        capsule.hasJointAnchor = ParseFloatArray3At(json, jointAnchorKey, capsule.jointAnchor);
       }
       if (!ParseFloatArray16At(json, matrixKey, capsule.bodyFromBone)) break;
       if (!ParseJsonFloatAt(json, radiusKey, capsule.radius)) break;
@@ -814,6 +935,64 @@ namespace {
     const float dx = p.x - closestX;
     const float dy = p.y - closestY;
     return dx * dx + dy * dy;
+  }
+
+  float Clamp01(float value) {
+    return (std::max)(0.0f, (std::min)(1.0f, value));
+  }
+
+  void ClosestPointsOnSegments(const XVECTOR3& p1,
+                               const XVECTOR3& q1,
+                               const XVECTOR3& p2,
+                               const XVECTOR3& q2,
+                               XVECTOR3& outPoint1,
+                               XVECTOR3& outPoint2) {
+    constexpr float kEpsilon = 0.000001f;
+    const XVECTOR3 d1 = q1 - p1;
+    const XVECTOR3 d2 = q2 - p2;
+    const XVECTOR3 r = p1 - p2;
+    const float a = Dot3(d1, d1);
+    const float e = Dot3(d2, d2);
+    const float f = Dot3(d2, r);
+
+    float s = 0.0f;
+    float t = 0.0f;
+    if (a <= kEpsilon && e <= kEpsilon) {
+      outPoint1 = p1;
+      outPoint2 = p2;
+      return;
+    }
+
+    if (a <= kEpsilon) {
+      t = e > kEpsilon ? Clamp01(f / e) : 0.0f;
+    } else {
+      const float c = Dot3(d1, r);
+      if (e <= kEpsilon) {
+        s = Clamp01(-c / a);
+      } else {
+        const float b = Dot3(d1, d2);
+        const float denom = a * e - b * b;
+        if (std::fabs(denom) > kEpsilon) {
+          s = Clamp01((b * f - c * e) / denom);
+        }
+
+        const float tNumerator = b * s + f;
+        if (tNumerator < 0.0f) {
+          t = 0.0f;
+          s = Clamp01(-c / a);
+        } else if (tNumerator > e) {
+          t = 1.0f;
+          s = Clamp01((b - c) / a);
+        } else {
+          t = tNumerator / e;
+        }
+      }
+    }
+
+    outPoint1 = p1 + d1 * s;
+    outPoint2 = p2 + d2 * t;
+    outPoint1.w = 1.0f;
+    outPoint2.w = 1.0f;
   }
 
   bool RayPlaneIntersection(const t850::Ray& ray,
@@ -998,6 +1177,10 @@ namespace {
     bool expanded = false;
     for (const RenderMesh::MeshInfo& meshInfo : mesh->Info) {
       const RenderMesh::AABB& bounds = meshInfo.bounds;
+      if (!IsUsableRenderBounds(bounds)) {
+        continue;
+      }
+
       const float xs[2] = { bounds.min.x, bounds.max.x };
       const float ys[2] = { bounds.min.y, bounds.max.y };
       const float zs[2] = { bounds.min.z, bounds.max.z };
@@ -1005,13 +1188,60 @@ namespace {
         for (float y : ys) {
           for (float z : zs) {
             const XVECTOR3 point = TransformPoint(XVECTOR3(x, y, z, 1.0f), worldFromMesh);
+            if (!IsUsablePhysicsPoint(point)) {
+              continue;
+            }
             outBounds.Expand(point.x, point.y, point.z);
             expanded = true;
           }
         }
       }
     }
-    return expanded;
+    return expanded && IsUsableRenderBounds(outBounds);
+  }
+
+  void ExpandBounds(RenderMesh::AABB& bounds, const RenderMesh::AABB& other) {
+    if (!IsUsableRenderBounds(other)) {
+      return;
+    }
+    bounds.Expand(other.min.x, other.min.y, other.min.z);
+    bounds.Expand(other.max.x, other.max.y, other.max.z);
+  }
+
+  bool BuildRagdollCapsuleBounds(const t850::PhysicsRagdollDesc& pose, RenderMesh::AABB& outBounds) {
+    outBounds.Reset();
+    bool expanded = false;
+    for (const t850::PhysicsRagdollBoneDesc& bone : pose.bones) {
+      if (bone.body.shape.type != t850::PhysicsShapeType::Capsule ||
+          !IsUsablePhysicsPoint(XVECTOR3(
+              bone.body.worldTransform.m41,
+              bone.body.worldTransform.m42,
+              bone.body.worldTransform.m43,
+              1.0f))) {
+        continue;
+      }
+
+      XVECTOR3 axisY(
+          bone.body.worldTransform.m21,
+          bone.body.worldTransform.m22,
+          bone.body.worldTransform.m23,
+          0.0f);
+      axisY = Normalize3(axisY, XVECTOR3(0.0f, 1.0f, 0.0f, 0.0f));
+      const float radius = (std::max)(0.0f, bone.body.shape.radius);
+      const float halfHeight = (std::max)(0.0f, bone.body.shape.halfHeight);
+      const float extentX = radius + std::fabs(axisY.x) * halfHeight;
+      const float extentY = radius + std::fabs(axisY.y) * halfHeight;
+      const float extentZ = radius + std::fabs(axisY.z) * halfHeight;
+      const XVECTOR3 center(
+          bone.body.worldTransform.m41,
+          bone.body.worldTransform.m42,
+          bone.body.worldTransform.m43,
+          1.0f);
+      outBounds.Expand(center.x - extentX, center.y - extentY, center.z - extentZ);
+      outBounds.Expand(center.x + extentX, center.y + extentY, center.z + extentZ);
+      expanded = true;
+    }
+    return expanded && IsUsableRenderBounds(outBounds);
   }
 
   const t850::SelectorDesc* FindSelectorDesc(const std::vector<t850::SelectorDesc>& selectors, const std::string& name) {
@@ -1124,6 +1354,7 @@ void SandboxScene::InitVars() {
   m_ragdollAnimationBinding = t850::PhysicsRagdollAnimationBinding{};
   m_ragdollAnimationPose = t850::PhysicsRagdollDesc{};
   m_ragdollParentCapsules.clear();
+  m_ragdollJointParentCapsules.clear();
   m_ragdollPhysicsStates.clear();
   m_ragdollPhysicsBoneIndices.clear();
   m_ragdollPhysicsCombinedMatrices.clear();
@@ -1238,18 +1469,21 @@ void SandboxScene::CreateAssets() {
   m_debugText.LoadFromFile(24, "Fonts/Martius-LV9L4.ttf", 512.0f);
   m_debugSphere.Create(6, 12);
   m_lightArrowRenderer.Create();
+  m_ragdollJointRenderer.Create();
   m_physicsDebugRenderer.Create();
   float arrowVerts[10 * 4] = {};
   unsigned short arrowIndices[10] = {0, 1, 2, 3, 4, 5, 6, 7, 8, 9};
   m_lightArrowVB = t850::LineRenderer::CreatePositionVB(arrowVerts, 10, BufferUsage::DINAMIC);
   m_lightArrowIB = t850::LineRenderer::CreateIndexBuffer16(arrowIndices, 10);
   m_lightArrowIndexCount = 10;
+  m_ragdollJointVertexCapacity = 0;
+  m_ragdollJointIndexCapacity = 0;
+  m_ragdollJointIndexCount = 0;
 
   if (Meshes[0].pBase && !Meshes[0].HasPhysicsBody() && !Meshes[0].HasPhysicsRagdoll()) {
     t850::EngineContext* engineContext = GetEngineContext();
     if (!engineContext) engineContext = &t850::GetEngineContext();
     if (engineContext && engineContext->physics && engineContext->physics->IsInitialized()) {
-      CreatePhysicsFloor(*engineContext->physics);
       bool attachedPhysics = false;
       RenderSkinnedMesh* skinned = Meshes[0].GetSkinnedMesh();
       if (skinned) {
@@ -1294,12 +1528,14 @@ void SandboxScene::CreateAssets() {
           if (!m_driveRagdollFromAnimation) {
             T8_LOG_ERROR("[SandboxScene] Failed to bind full-skeleton ragdoll to animation pose for '%s'", g_config.modelPath.c_str());
           }
+          CreatePhysicsFloor(*engineContext->physics);
         } else {
           T8_LOG_ERROR("[SandboxScene] Failed to attach full-skeleton ragdoll physics for '%s'", g_config.modelPath.c_str());
         }
       }
 
       if (!attachedPhysics && !skinned) {
+        CreatePhysicsFloor(*engineContext->physics);
         RenderMesh* mesh = static_cast<RenderMesh*>(Meshes[0].pBase);
         attachedPhysics = t850::AttachMeshBoxBody(*engineContext->physics, Meshes[0], *mesh, t850::PhysicsBodyMotion::Static);
         if (attachedPhysics) {
@@ -1362,6 +1598,7 @@ void SandboxScene::DestroyAssets() {
   m_ragdollAnimationBinding = t850::PhysicsRagdollAnimationBinding{};
   m_ragdollAnimationPose = t850::PhysicsRagdollDesc{};
   m_ragdollParentCapsules.clear();
+  m_ragdollJointParentCapsules.clear();
   m_ragdollPhysicsStates.clear();
   m_ragdollPhysicsBoneIndices.clear();
   m_ragdollPhysicsCombinedMatrices.clear();
@@ -1372,7 +1609,9 @@ void SandboxScene::DestroyAssets() {
   m_lightArrowVB = nullptr;
   m_lightArrowIB = nullptr;
   m_lightArrowIndexCount = 0;
+  ReleaseRagdollJointDebugBuffers();
   m_lightArrowRenderer.Destroy();
+  m_ragdollJointRenderer.Destroy();
   m_physicsDebugRenderer.Destroy();
   PrimitiveMgr.DestroyPrimitives();
   pFramework->pVideoDriver->DestroyRTs();
@@ -1563,6 +1802,7 @@ void SandboxScene::DriveRagdollFromAnimation(float deltaSeconds) {
 
   if (!m_ragdollDriveLogEmitted) {
     T8_LOG_INFO("[SandboxScene] Driving humanoid ragdoll from animation pose: bodies=%zu", m_ragdollAnimationPose.bones.size());
+    LogRagdollFloorDiagnostics("animation driven");
     m_ragdollDriveLogEmitted = true;
   }
 }
@@ -1600,6 +1840,10 @@ void SandboxScene::UpdateSkeletonFromRagdollPhysics() {
   if (!m_ragdollPhysicsLogEmitted) {
     T8_LOG_INFO("[SandboxScene] Driving skinned skeleton from dynamic ragdoll physics: bodies=%zu", m_ragdollPhysicsStates.size());
     m_ragdollPhysicsLogEmitted = true;
+  }
+  if (!m_ragdollFloorRuntimeDiagEmitted) {
+    LogRagdollFloorDiagnostics("first dynamic frame");
+    m_ragdollFloorRuntimeDiagEmitted = true;
   }
 }
 
@@ -1654,6 +1898,12 @@ void SandboxScene::SwitchRagdollToPhysics() {
     T8_LOG_ERROR("[SandboxScene] Failed to dump F5 ragdoll matrix comparison for '%s'", g_config.modelPath.c_str());
   }
 
+  if (m_floorBody.IsValid()) {
+    engineContext->physics->DestroyBody(m_floorBody);
+    m_floorBody.Reset();
+  }
+  CreatePhysicsFloor(*engineContext->physics);
+  LogRagdollFloorDiagnostics("F5 pre-dynamic");
   if (!engineContext->physics->SetRagdollMotion(Meshes[0].GetPhysicsRagdoll(), t850::PhysicsBodyMotion::Dynamic)) {
     T8_LOG_ERROR("[SandboxScene] Failed to switch ragdoll bodies to dynamic physics");
     return;
@@ -1666,9 +1916,11 @@ void SandboxScene::SwitchRagdollToPhysics() {
   m_driveRagdollFromAnimation = false;
   m_ragdollPhysicsDriven = true;
   m_ragdollPhysicsLogEmitted = false;
+  m_ragdollFloorRuntimeDiagEmitted = false;
   m_showPhysics = true;
   skinned->PauseAnimation();
   skinned->ClearSnapshotBoneMatrices();
+  LogRagdollFloorDiagnostics("F5 post-dynamic");
   T8_LOG_INFO("[SandboxScene] F5: animation-to-physics ragdoll transition started");
 }
 
@@ -1729,6 +1981,98 @@ bool SandboxScene::ResetRagdollPhysicsAndAnimation() {
   return driven;
 }
 
+void SandboxScene::LogRagdollFloorDiagnostics(const char* stage) {
+  t850::EngineContext* engineContext = GetEngineContext();
+  if (!engineContext) engineContext = &t850::GetEngineContext();
+  if (!engineContext || !engineContext->physics || !engineContext->physics->IsInitialized()) {
+    return;
+  }
+
+  std::vector<t850::PhysicsDebugBody> bodies;
+  if (!engineContext->physics->GetDebugBodies(bodies)) {
+    return;
+  }
+
+  auto boxVerticalExtent = [](const XMATRIX44& transform, const XVECTOR3& halfExtents) {
+    return std::fabs(transform.m12) * halfExtents.x +
+           std::fabs(transform.m22) * halfExtents.y +
+           std::fabs(transform.m32) * halfExtents.z;
+  };
+  auto capsuleVerticalExtent = [](const XMATRIX44& transform, const t850::PhysicsShapeDesc& shape) {
+    return shape.radius + std::fabs(transform.m22) * shape.halfHeight;
+  };
+
+  bool hasFloor = false;
+  float floorTop = 0.0f;
+  float floorCenterY = 0.0f;
+  float floorHalfHeight = 0.0f;
+  for (const t850::PhysicsDebugBody& body : bodies) {
+    if (body.debugName == "Sandbox ragdoll floor" && body.shape.type == t850::PhysicsShapeType::Box) {
+      floorCenterY = body.state.worldTransform.m42;
+      floorHalfHeight = boxVerticalExtent(body.state.worldTransform, body.shape.halfExtents);
+      floorTop = floorCenterY + floorHalfHeight;
+      hasFloor = true;
+      break;
+    }
+  }
+  if (!hasFloor) {
+    T8_LOG_INFO("[RagdollFloor] %s: no static ragdoll floor body is present", stage ? stage : "unknown");
+    return;
+  }
+
+  RenderSkinnedMesh* skinned = Meshes[0].GetSkinnedMesh();
+  const xF::xSkeleton* skeleton = skinned ? skinned->GetAnimController().GetAnimSkeleton() : nullptr;
+  const uint32_t entityId = Meshes[0].GetEntityId();
+  int capsuleCount = 0;
+  int lowestBone = -1;
+  float lowestMinY = (std::numeric_limits<float>::max)();
+  float lowestCenterY = 0.0f;
+  float lowestRadius = 0.0f;
+  float lowestHalfHeight = 0.0f;
+  float highestMaxY = -(std::numeric_limits<float>::max)();
+
+  for (const t850::PhysicsDebugBody& body : bodies) {
+    if (body.state.entityId != entityId ||
+        body.state.boneIndex < 0 ||
+        body.shape.type != t850::PhysicsShapeType::Capsule) {
+      continue;
+    }
+
+    const float extentY = capsuleVerticalExtent(body.state.worldTransform, body.shape);
+    const float minY = body.state.worldTransform.m42 - extentY;
+    const float maxY = body.state.worldTransform.m42 + extentY;
+    ++capsuleCount;
+    if (minY < lowestMinY) {
+      lowestMinY = minY;
+      lowestCenterY = body.state.worldTransform.m42;
+      lowestRadius = body.shape.radius;
+      lowestHalfHeight = body.shape.halfHeight;
+      lowestBone = body.state.boneIndex;
+    }
+    highestMaxY = (std::max)(highestMaxY, maxY);
+
+  }
+
+  const char* lowestBoneName =
+      skeleton && lowestBone >= 0 && lowestBone < static_cast<int>(skeleton->Bones.size())
+          ? skeleton->Bones[static_cast<std::size_t>(lowestBone)].Name.c_str()
+          : "<unknown>";
+  T8_LOG_INFO("[RagdollFloor] %s summary: floorTop=%.3f floorCenterY=%.3f floorHalfHeight=%.3f capsules=%d minCapsuleY=%.3f maxCapsuleY=%.3f lowestBone=%d '%s' lowestCenterY=%.3f clearance=%.3f lowestRadius=%.3f lowestHalfHeight=%.3f",
+              stage ? stage : "unknown",
+              floorTop,
+              floorCenterY,
+              floorHalfHeight,
+              capsuleCount,
+              lowestMinY,
+              highestMaxY,
+              lowestBone,
+              lowestBoneName,
+              lowestCenterY,
+              lowestMinY - floorTop,
+              lowestRadius,
+              lowestHalfHeight);
+}
+
 void SandboxScene::CreatePhysicsFloor(t850::JoltPhysicsSystem& physics) {
   if (m_floorBody.IsValid() || !Meshes[0].pBase) {
     return;
@@ -1741,17 +2085,33 @@ void SandboxScene::CreatePhysicsFloor(t850::JoltPhysicsSystem& physics) {
     return;
   }
 
-  const float extentX = (worldBounds.max.x - worldBounds.min.x) * 0.5f;
-  const float extentZ = (worldBounds.max.z - worldBounds.min.z) * 0.5f;
-  const float halfSize = (std::max)((std::max)(extentX, extentZ) * 2.0f, (std::max)(1.0f, m_modelRadius * 2.0f));
+  RenderMesh::AABB floorBounds;
+  floorBounds.Reset();
+  ExpandBounds(floorBounds, worldBounds);
+  RenderMesh::AABB ragdollBounds;
+  const bool hasRagdollBounds =
+      BuildRagdollCapsuleBounds(m_ragdollAnimationPose, ragdollBounds) ||
+      BuildRagdollCapsuleBounds(m_ragdollAnimationBinding.referencePose, ragdollBounds);
+  if (hasRagdollBounds) {
+    ExpandBounds(floorBounds, ragdollBounds);
+  }
+
+  const float extentX = (floorBounds.max.x - floorBounds.min.x) * 0.5f;
+  const float extentZ = (floorBounds.max.z - floorBounds.min.z) * 0.5f;
+  constexpr float kRagdollFloorAreaScale = 3.0f;
+  const float baseHalfSize = (std::max)((std::max)(extentX, extentZ) * 2.0f, (std::max)(1.0f, m_modelRadius * 2.0f));
+  const float halfSize = baseHalfSize * std::sqrt(kRagdollFloorAreaScale);
   const float halfHeight = (std::max)(0.05f, m_modelRadius * 0.04f);
-  const float gap = (std::max)(0.08f, m_modelRadius * 0.08f);
+  const float gap = hasRagdollBounds
+      ? (std::max)(0.05f, (std::min)(25.0f, m_modelRadius * 0.04f))
+      : (std::max)(0.08f, m_modelRadius * 0.08f);
+  const float floorSourceMinY = hasRagdollBounds ? ragdollBounds.min.y : worldBounds.min.y;
 
   XMATRIX44 floorTransform;
   floorTransform.Identity();
-  floorTransform.m41 = (worldBounds.min.x + worldBounds.max.x) * 0.5f;
-  floorTransform.m42 = worldBounds.min.y - gap - halfHeight;
-  floorTransform.m43 = (worldBounds.min.z + worldBounds.max.z) * 0.5f;
+  floorTransform.m41 = (floorBounds.min.x + floorBounds.max.x) * 0.5f;
+  floorTransform.m42 = floorSourceMinY - gap - halfHeight;
+  floorTransform.m43 = (floorBounds.min.z + floorBounds.max.z) * 0.5f;
 
   t850::PhysicsBodyDesc floorDesc;
   floorDesc.entityId = Meshes[0].GetEntityId();
@@ -1764,11 +2124,15 @@ void SandboxScene::CreatePhysicsFloor(t850::JoltPhysicsSystem& physics) {
 
   m_floorBody = physics.CreateBody(floorDesc);
   if (m_floorBody.IsValid()) {
-    T8_LOG_INFO("[SandboxScene] Added static ragdoll floor top y=%.3f boundsMinY=%.3f halfSize=%.3f halfHeight=%.3f",
+    T8_LOG_INFO("[SandboxScene] Added static ragdoll floor top y=%.3f source=%s sourceMinY=%.3f meshMinY=%.3f halfSize=%.3f halfHeight=%.3f gap=%.3f areaScale=%.1f",
                 floorTransform.m42 + halfHeight,
+                hasRagdollBounds ? "ragdoll" : "mesh",
+                floorSourceMinY,
                 worldBounds.min.y,
                 halfSize,
-                halfHeight);
+                halfHeight,
+                gap,
+                kRagdollFloorAreaScale);
   } else {
     T8_LOG_ERROR("[SandboxScene] Failed to create static ragdoll floor");
   }
@@ -1816,7 +2180,9 @@ bool SandboxScene::EnterSkeletonEditMode() {
   m_skeletonEditDragging = false;
   m_ragdollEditHandleDragging = false;
   m_ragdollEditGizmoDragging = false;
+  m_ragdollEditJointDragging = false;
   m_ragdollEditGizmoAxis = -1;
+  m_ragdollEditJointAxis = -1;
   m_skeletonEditDirty = false;
   m_skeletonEditMode = true;
   m_showSkeleton = true;
@@ -1824,6 +2190,14 @@ bool SandboxScene::EnterSkeletonEditMode() {
   T8_LOG_INFO("[SkeletonEdit] Applying edit pose");
   LoadSkeletonEditPose();
   ApplySkeletonEditPose();
+  if (!m_ragdollEditDirty) {
+    LoadRagdollEditPose();
+  } else if (!m_ragdollAnimationBinding.referencePose.bones.empty()) {
+    for (int capsuleIndex = 0; capsuleIndex < static_cast<int>(m_ragdollAnimationBinding.referencePose.bones.size()); ++capsuleIndex) {
+      UpdateRagdollReferenceBodyFromLocal(capsuleIndex);
+    }
+    ApplyRagdollEditPose(true);
+  }
   T8_LOG_INFO("[SkeletonEdit] Entered bind-pose edit mode for '%s'", g_config.modelPath.c_str());
   return true;
 }
@@ -1834,7 +2208,9 @@ void SandboxScene::ExitSkeletonEditMode() {
   m_skeletonEditDragging = false;
   m_ragdollEditHandleDragging = false;
   m_ragdollEditGizmoDragging = false;
+  m_ragdollEditJointDragging = false;
   m_ragdollEditGizmoAxis = -1;
+  m_ragdollEditJointAxis = -1;
   if (skinned && m_skeletonEditWasPlaying) {
     skinned->PlayAnimation();
   }
@@ -2053,6 +2429,64 @@ void SandboxScene::EnsureRagdollControlledBones() {
   }
 }
 
+void SandboxScene::SelectRagdollEditCapsule(int capsuleIndex, bool syncBoneSelection) {
+  const auto& bones = m_ragdollAnimationBinding.referencePose.bones;
+  if (capsuleIndex < 0 || capsuleIndex >= static_cast<int>(bones.size())) {
+    m_ragdollEditSelectedCapsule = -1;
+    m_ragdollEditSelectedJoint = -1;
+    m_ragdollEditSelectedHandle = -1;
+    m_ragdollEditHandleDragging = false;
+    m_ragdollEditGizmoDragging = false;
+    m_ragdollEditJointDragging = false;
+    m_skeletonEditDragging = false;
+    m_ragdollEditGizmoAxis = -1;
+    m_ragdollEditJointAxis = -1;
+    m_ragdollEditRenamingCapsule = -1;
+    m_ragdollEditRenameFocusPending = false;
+    m_ragdollEditSelectedUnassignedBone = -1;
+    m_ragdollEditSelectedAffectedBone = -1;
+    if (m_ragdollBoneSelectionActive) {
+      m_ragdollEditSelectionMode = m_ragdollBoneSelectionPreviousSelectionMode;
+      m_ragdollEditGizmoMode = m_ragdollBoneSelectionPreviousGizmoMode;
+    }
+    m_ragdollBoneSelectionActive = false;
+    m_ragdollBoneMarqueeDragging = false;
+    m_ragdollBoneSelectionPending.clear();
+    return;
+  }
+
+  m_ragdollEditSelectedCapsule = capsuleIndex;
+  m_ragdollEditSelectedHandle = 0;
+  m_ragdollEditHandleDragging = false;
+  m_ragdollEditGizmoDragging = false;
+  m_ragdollEditJointDragging = false;
+  m_skeletonEditDragging = false;
+  m_ragdollEditGizmoAxis = -1;
+  m_ragdollEditJointAxis = -1;
+  m_ragdollEditRenamingCapsule = -1;
+  m_ragdollEditRenameFocusPending = false;
+  m_ragdollEditSelectedUnassignedBone = -1;
+  m_ragdollEditSelectedAffectedBone = -1;
+  if (m_ragdollBoneSelectionActive) {
+    m_ragdollEditSelectionMode = m_ragdollBoneSelectionPreviousSelectionMode;
+    m_ragdollEditGizmoMode = m_ragdollBoneSelectionPreviousGizmoMode;
+  }
+  m_ragdollBoneSelectionActive = false;
+  m_ragdollBoneMarqueeDragging = false;
+  m_ragdollBoneSelectionPending.clear();
+  if (GetRagdollEffectiveJointParentCapsule(capsuleIndex) >= 0) {
+    m_ragdollEditSelectedJoint = capsuleIndex;
+  } else {
+    m_ragdollEditSelectedJoint = -1;
+  }
+  const int boneIndex = bones[static_cast<std::size_t>(capsuleIndex)].body.boneIndex;
+  if (syncBoneSelection &&
+      boneIndex >= 0 &&
+      boneIndex < static_cast<int>(m_skeletonEditCombined.size())) {
+    m_skeletonEditSelectedBone = boneIndex;
+  }
+}
+
 void SandboxScene::SyncRagdollParentCapsulesFromBoneLinks() {
   const auto& bones = m_ragdollAnimationBinding.referencePose.bones;
   m_ragdollParentCapsules.assign(bones.size(), -1);
@@ -2087,15 +2521,138 @@ void SandboxScene::EnsureRagdollParentCapsules() {
   }
 }
 
+void SandboxScene::EnsureRagdollJointState() {
+  EnsureRagdollParentCapsules();
+  auto& binding = m_ragdollAnimationBinding;
+  const std::size_t capsuleCount = binding.referencePose.bones.size();
+
+  if (m_ragdollJointParentCapsules.size() != capsuleCount) {
+    const std::size_t previousSize = m_ragdollJointParentCapsules.size();
+    m_ragdollJointParentCapsules.resize(capsuleCount, kRagdollJointInheritParent);
+    for (std::size_t i = 0; i < (std::min)(previousSize, capsuleCount); ++i) {
+      int& jointParent = m_ragdollJointParentCapsules[i];
+      if (jointParent >= static_cast<int>(capsuleCount) || jointParent == static_cast<int>(i)) {
+        jointParent = kRagdollJointInheritParent;
+      }
+    }
+  }
+
+  m_ragdollContactJoints.resize(capsuleCount, 0u);
+
+  if (binding.jointFromBone.size() != capsuleCount) {
+    const std::size_t previousSize = binding.jointFromBone.size();
+    binding.jointFromBone.resize(capsuleCount, XVECTOR3(0.0f, 0.0f, 0.0f, 1.0f));
+    for (std::size_t i = previousSize; i < capsuleCount; ++i) {
+      UpdateRagdollJointOffsetFromWorld(static_cast<int>(i));
+    }
+  }
+}
+
+void SandboxScene::EnsureRagdollFreezeState() {
+  const std::size_t capsuleCount = m_ragdollAnimationBinding.referencePose.bones.size();
+  m_ragdollFrozenCapsules.resize(capsuleCount, 0u);
+  m_ragdollFrozenJoints.resize(capsuleCount, 0u);
+}
+
+bool SandboxScene::IsRagdollCapsuleFrozen(int capsuleIndex) const {
+  return capsuleIndex >= 0 &&
+      capsuleIndex < static_cast<int>(m_ragdollFrozenCapsules.size()) &&
+      m_ragdollFrozenCapsules[static_cast<std::size_t>(capsuleIndex)] != 0u;
+}
+
+bool SandboxScene::IsRagdollJointFrozen(int childCapsule) const {
+  return childCapsule >= 0 &&
+      childCapsule < static_cast<int>(m_ragdollFrozenJoints.size()) &&
+      m_ragdollFrozenJoints[static_cast<std::size_t>(childCapsule)] != 0u;
+}
+
+void SandboxScene::SetRagdollCapsuleFrozen(int capsuleIndex, bool frozen) {
+  EnsureRagdollFreezeState();
+  if (capsuleIndex < 0 || capsuleIndex >= static_cast<int>(m_ragdollFrozenCapsules.size())) {
+    return;
+  }
+  m_ragdollFrozenCapsules[static_cast<std::size_t>(capsuleIndex)] = frozen ? 1u : 0u;
+  if (frozen && m_ragdollEditSelectedCapsule == capsuleIndex) {
+    m_ragdollEditHandleDragging = false;
+    m_ragdollEditGizmoDragging = false;
+    m_ragdollEditGizmoAxis = -1;
+  }
+  m_ragdollEditDirty = true;
+}
+
+void SandboxScene::SetRagdollJointFrozen(int childCapsule, bool frozen) {
+  EnsureRagdollFreezeState();
+  if (childCapsule < 0 || childCapsule >= static_cast<int>(m_ragdollFrozenJoints.size())) {
+    return;
+  }
+  m_ragdollFrozenJoints[static_cast<std::size_t>(childCapsule)] = frozen ? 1u : 0u;
+  if (frozen && m_ragdollEditSelectedJoint == childCapsule) {
+    m_ragdollEditJointDragging = false;
+    m_ragdollEditJointAxis = -1;
+  }
+  m_ragdollEditDirty = true;
+}
+
+int SandboxScene::GetRagdollEffectiveJointParentCapsule(int childCapsule) const {
+  const auto& bones = m_ragdollAnimationBinding.referencePose.bones;
+  if (childCapsule < 0 || childCapsule >= static_cast<int>(bones.size())) {
+    return -1;
+  }
+
+  if (childCapsule < static_cast<int>(m_ragdollJointParentCapsules.size())) {
+    const int jointParent = m_ragdollJointParentCapsules[static_cast<std::size_t>(childCapsule)];
+    if (jointParent == kRagdollJointDisabled) {
+      return -1;
+    }
+    if (jointParent >= 0 && jointParent < static_cast<int>(bones.size()) && jointParent != childCapsule) {
+      return jointParent;
+    }
+  }
+
+  if (childCapsule < static_cast<int>(m_ragdollParentCapsules.size())) {
+    const int parentCapsule = m_ragdollParentCapsules[static_cast<std::size_t>(childCapsule)];
+    if (parentCapsule >= 0 && parentCapsule < static_cast<int>(bones.size()) && parentCapsule != childCapsule) {
+      return parentCapsule;
+    }
+  }
+  return -1;
+}
+
+bool SandboxScene::UpdateRagdollJointOffsetFromWorld(int childCapsule) {
+  auto& binding = m_ragdollAnimationBinding;
+  if (childCapsule < 0 ||
+      childCapsule >= static_cast<int>(binding.referencePose.bones.size())) {
+    return false;
+  }
+  if (binding.jointFromBone.size() != binding.referencePose.bones.size()) {
+    binding.jointFromBone.resize(binding.referencePose.bones.size(), XVECTOR3(0.0f, 0.0f, 0.0f, 1.0f));
+  }
+
+  XMATRIX44 boneWorld;
+  if (!GetRagdollAuthoringBoneWorldTransform(binding.referencePose.bones[static_cast<std::size_t>(childCapsule)].body.boneIndex, boneWorld)) {
+    binding.jointFromBone[static_cast<std::size_t>(childCapsule)] = XVECTOR3(0.0f, 0.0f, 0.0f, 1.0f);
+    return false;
+  }
+  XMATRIX44 inverseBoneWorld;
+  if (!InvertAffineNoExit(boneWorld, inverseBoneWorld)) {
+    T8_LOG_ERROR("[RagdollEdit] Cannot update joint offset for capsule %d: bone frame is singular", childCapsule);
+    return false;
+  }
+  binding.jointFromBone[static_cast<std::size_t>(childCapsule)] =
+      t850::TransformPoint(binding.referencePose.bones[static_cast<std::size_t>(childCapsule)].jointWorldPosition,
+                           inverseBoneWorld);
+  return true;
+}
+
 bool SandboxScene::ApplyRagdollParentCapsuleLinks() {
   auto& bones = m_ragdollAnimationBinding.referencePose.bones;
-  EnsureRagdollParentCapsules();
+  EnsureRagdollJointState();
   if (m_ragdollParentCapsules.size() != bones.size()) {
     return false;
   }
 
   for (std::size_t childIndex = 0; childIndex < bones.size(); ++childIndex) {
-    int parentCapsule = m_ragdollParentCapsules[childIndex];
+    int parentCapsule = GetRagdollEffectiveJointParentCapsule(static_cast<int>(childIndex));
     bool invalidParent = parentCapsule < 0 ||
         parentCapsule >= static_cast<int>(bones.size()) ||
         parentCapsule == static_cast<int>(childIndex);
@@ -2108,11 +2665,10 @@ bool SandboxScene::ApplyRagdollParentCapsuleLinks() {
       if (current < 0 || current >= static_cast<int>(m_ragdollParentCapsules.size())) {
         break;
       }
-      current = m_ragdollParentCapsules[static_cast<std::size_t>(current)];
+      current = GetRagdollEffectiveJointParentCapsule(current);
     }
 
     if (invalidParent) {
-      m_ragdollParentCapsules[childIndex] = -1;
       bones[childIndex].parentBoneIndex = -1;
       continue;
     }
@@ -2123,11 +2679,16 @@ bool SandboxScene::ApplyRagdollParentCapsuleLinks() {
 
 bool SandboxScene::SetRagdollCapsuleParent(int childCapsule, int parentCapsule) {
   const auto& bones = m_ragdollAnimationBinding.referencePose.bones;
-  EnsureRagdollParentCapsules();
+  EnsureRagdollJointState();
+  EnsureRagdollFreezeState();
   if (childCapsule < 0 || childCapsule >= static_cast<int>(bones.size()) ||
       parentCapsule < 0 || parentCapsule >= static_cast<int>(bones.size()) ||
       childCapsule == parentCapsule ||
       m_ragdollParentCapsules.size() != bones.size()) {
+    return false;
+  }
+  if (IsRagdollCapsuleFrozen(childCapsule)) {
+    T8_LOG_INFO("[RagdollEdit] Capsule %d is frozen; unfreeze it before changing its parent", childCapsule);
     return false;
   }
 
@@ -2148,6 +2709,13 @@ bool SandboxScene::SetRagdollCapsuleParent(int childCapsule, int parentCapsule) 
   }
 
   m_ragdollParentCapsules[static_cast<std::size_t>(childCapsule)] = parentCapsule;
+  if (childCapsule < static_cast<int>(m_ragdollContactJoints.size())) {
+    m_ragdollContactJoints[static_cast<std::size_t>(childCapsule)] = 0u;
+  }
+  if (childCapsule < static_cast<int>(m_ragdollJointParentCapsules.size()) &&
+      m_ragdollJointParentCapsules[static_cast<std::size_t>(childCapsule)] == kRagdollJointDisabled) {
+    m_ragdollJointParentCapsules[static_cast<std::size_t>(childCapsule)] = kRagdollJointInheritParent;
+  }
   if (!ApplyRagdollParentCapsuleLinks()) {
     return false;
   }
@@ -2159,9 +2727,14 @@ bool SandboxScene::SetRagdollCapsuleParent(int childCapsule, int parentCapsule) 
 }
 
 bool SandboxScene::ClearRagdollCapsuleParent(int childCapsule) {
-  EnsureRagdollParentCapsules();
+  EnsureRagdollJointState();
+  EnsureRagdollFreezeState();
   if (childCapsule < 0 ||
       childCapsule >= static_cast<int>(m_ragdollParentCapsules.size())) {
+    return false;
+  }
+  if (IsRagdollCapsuleFrozen(childCapsule)) {
+    T8_LOG_INFO("[RagdollEdit] Capsule %d is frozen; unfreeze it before clearing its parent", childCapsule);
     return false;
   }
   if (m_ragdollParentCapsules[static_cast<std::size_t>(childCapsule)] < 0) {
@@ -2169,6 +2742,9 @@ bool SandboxScene::ClearRagdollCapsuleParent(int childCapsule) {
   }
 
   m_ragdollParentCapsules[static_cast<std::size_t>(childCapsule)] = -1;
+  if (childCapsule < static_cast<int>(m_ragdollContactJoints.size())) {
+    m_ragdollContactJoints[static_cast<std::size_t>(childCapsule)] = 0u;
+  }
   if (!ApplyRagdollParentCapsuleLinks()) {
     return false;
   }
@@ -2180,11 +2756,317 @@ bool SandboxScene::ClearRagdollCapsuleParent(int childCapsule) {
   return ApplyRagdollEditPose(true);
 }
 
+bool SandboxScene::SetRagdollCapsuleJoint(int childCapsule, int parentCapsule) {
+  auto& bones = m_ragdollAnimationBinding.referencePose.bones;
+  EnsureRagdollJointState();
+  EnsureRagdollFreezeState();
+  if (childCapsule < 0 || childCapsule >= static_cast<int>(bones.size()) ||
+      parentCapsule < 0 || parentCapsule >= static_cast<int>(bones.size()) ||
+      childCapsule == parentCapsule ||
+      m_ragdollJointParentCapsules.size() != bones.size()) {
+    return false;
+  }
+  if (IsRagdollCapsuleFrozen(childCapsule) || IsRagdollJointFrozen(childCapsule)) {
+    T8_LOG_INFO("[RagdollEdit] Capsule/joint %d is frozen; unfreeze it before changing its joint", childCapsule);
+    return false;
+  }
+
+  int current = parentCapsule;
+  for (std::size_t depth = 0; depth < bones.size(); ++depth) {
+    if (current == childCapsule) {
+      T8_LOG_ERROR("[RagdollEdit] Refusing cyclic joint link: capsule %d -> %d", childCapsule, parentCapsule);
+      return false;
+    }
+    if (current < 0 || current >= static_cast<int>(bones.size())) {
+      break;
+    }
+    current = GetRagdollEffectiveJointParentCapsule(current);
+  }
+
+  XMATRIX44 childWorld;
+  XMATRIX44 parentWorld;
+  if (GetCurrentRagdollEditCapsuleWorld(childCapsule, childWorld) &&
+      GetCurrentRagdollEditCapsuleWorld(parentCapsule, parentWorld)) {
+    bones[static_cast<std::size_t>(childCapsule)].jointWorldPosition =
+        XVECTOR3((childWorld.m41 + parentWorld.m41) * 0.5f,
+                 (childWorld.m42 + parentWorld.m42) * 0.5f,
+                 (childWorld.m43 + parentWorld.m43) * 0.5f,
+                 1.0f);
+    UpdateRagdollJointOffsetFromWorld(childCapsule);
+  }
+
+  m_ragdollParentCapsules[static_cast<std::size_t>(childCapsule)] = parentCapsule;
+  m_ragdollJointParentCapsules[static_cast<std::size_t>(childCapsule)] = parentCapsule;
+  if (childCapsule < static_cast<int>(m_ragdollContactJoints.size())) {
+    m_ragdollContactJoints[static_cast<std::size_t>(childCapsule)] = 0u;
+  }
+  if (!ApplyRagdollParentCapsuleLinks()) {
+    return false;
+  }
+  m_ragdollEditDirty = true;
+  m_ragdollEditSelectedJoint = childCapsule;
+  m_showPhysics = true;
+  T8_LOG_INFO("[RagdollEdit] Capsule %d parent/joint set to capsule %d", childCapsule, parentCapsule);
+  return ApplyRagdollEditPose(true);
+}
+
+bool SandboxScene::ComputeRagdollCapsuleContactAnchor(int childCapsule, int parentCapsule, XVECTOR3& outAnchor) {
+  const auto& bones = m_ragdollAnimationBinding.referencePose.bones;
+  if (childCapsule < 0 || childCapsule >= static_cast<int>(bones.size()) ||
+      parentCapsule < 0 || parentCapsule >= static_cast<int>(bones.size()) ||
+      childCapsule == parentCapsule) {
+    return false;
+  }
+
+  auto getCapsuleSegment = [&](int capsuleIndex,
+                               const XMATRIX44& bodyWorld,
+                               XVECTOR3& outStart,
+                               XVECTOR3& outEnd,
+                               XVECTOR3& outCenter,
+                               XVECTOR3& outAxis,
+                               float& outRadius) {
+    const auto& shape = bones[static_cast<std::size_t>(capsuleIndex)].body.shape;
+    if (shape.type != t850::PhysicsShapeType::Capsule) {
+      return false;
+    }
+    outCenter = XVECTOR3(bodyWorld.m41, bodyWorld.m42, bodyWorld.m43, 1.0f);
+    outAxis = Normalize3(XVECTOR3(bodyWorld.m21, bodyWorld.m22, bodyWorld.m23, 0.0f),
+                         XVECTOR3(0.0f, 1.0f, 0.0f, 0.0f));
+    outRadius = (std::max)(0.001f, shape.radius);
+    const float halfHeight = (std::max)(0.0f, shape.halfHeight);
+    outStart = outCenter - outAxis * halfHeight;
+    outEnd = outCenter + outAxis * halfHeight;
+    outStart.w = 1.0f;
+    outEnd.w = 1.0f;
+    return true;
+  };
+
+  const XMATRIX44& childWorld = bones[static_cast<std::size_t>(childCapsule)].body.worldTransform;
+  const XMATRIX44& parentWorld = bones[static_cast<std::size_t>(parentCapsule)].body.worldTransform;
+
+  XVECTOR3 childStart;
+  XVECTOR3 childEnd;
+  XVECTOR3 childCenter;
+  XVECTOR3 childAxis;
+  float childRadius = 0.0f;
+  XVECTOR3 parentStart;
+  XVECTOR3 parentEnd;
+  XVECTOR3 parentCenter;
+  XVECTOR3 parentAxis;
+  float parentRadius = 0.0f;
+  if (!getCapsuleSegment(childCapsule, childWorld, childStart, childEnd, childCenter, childAxis, childRadius) ||
+      !getCapsuleSegment(parentCapsule, parentWorld, parentStart, parentEnd, parentCenter, parentAxis, parentRadius)) {
+    return false;
+  }
+
+  XVECTOR3 childAxisPoint;
+  XVECTOR3 parentAxisPoint;
+  ClosestPointsOnSegments(childStart, childEnd, parentStart, parentEnd, childAxisPoint, parentAxisPoint);
+  const XVECTOR3 normal = Normalize3(parentAxisPoint - childAxisPoint,
+                                     Normalize3(parentCenter - childCenter, parentAxis));
+  const XVECTOR3 childSurface = childAxisPoint + normal * childRadius;
+  const XVECTOR3 parentSurface = parentAxisPoint - normal * parentRadius;
+  outAnchor = (childSurface + parentSurface) * 0.5f;
+  outAnchor.w = 1.0f;
+  return true;
+}
+
+bool SandboxScene::SetRagdollCapsuleJointAtContact(int childCapsule, int parentCapsule) {
+  auto& bones = m_ragdollAnimationBinding.referencePose.bones;
+  EnsureRagdollJointState();
+  EnsureRagdollFreezeState();
+  if (childCapsule < 0 || childCapsule >= static_cast<int>(bones.size()) ||
+      parentCapsule < 0 || parentCapsule >= static_cast<int>(bones.size()) ||
+      childCapsule == parentCapsule ||
+      m_ragdollParentCapsules.size() != bones.size() ||
+      m_ragdollJointParentCapsules.size() != bones.size()) {
+    return false;
+  }
+  if (IsRagdollCapsuleFrozen(childCapsule) || IsRagdollJointFrozen(childCapsule)) {
+    T8_LOG_INFO("[RagdollEdit] Capsule/joint %d is frozen; unfreeze it before changing its joint", childCapsule);
+    return false;
+  }
+
+  int current = parentCapsule;
+  for (std::size_t depth = 0; depth < bones.size(); ++depth) {
+    if (current == childCapsule) {
+      T8_LOG_ERROR("[RagdollEdit] Refusing cyclic contact joint link: capsule %d -> %d", childCapsule, parentCapsule);
+      return false;
+    }
+    if (current < 0 || current >= static_cast<int>(bones.size())) {
+      break;
+    }
+    current = GetRagdollEffectiveJointParentCapsule(current);
+  }
+
+  auto getCapsuleSegment = [&](int capsuleIndex,
+                               const XMATRIX44& bodyWorld,
+                               XVECTOR3& outStart,
+                               XVECTOR3& outEnd,
+                               XVECTOR3& outCenter,
+                               XVECTOR3& outAxis,
+                               float& outRadius) {
+    if (capsuleIndex < 0 || capsuleIndex >= static_cast<int>(bones.size())) {
+      return false;
+    }
+    const auto& shape = bones[static_cast<std::size_t>(capsuleIndex)].body.shape;
+    if (shape.type != t850::PhysicsShapeType::Capsule) {
+      return false;
+    }
+    outCenter = XVECTOR3(bodyWorld.m41, bodyWorld.m42, bodyWorld.m43, 1.0f);
+    outAxis = Normalize3(XVECTOR3(bodyWorld.m21, bodyWorld.m22, bodyWorld.m23, 0.0f),
+                         XVECTOR3(0.0f, 1.0f, 0.0f, 0.0f));
+    outRadius = (std::max)(0.001f, shape.radius);
+    const float halfHeight = (std::max)(0.0f, shape.halfHeight);
+    outStart = outCenter - outAxis * halfHeight;
+    outEnd = outCenter + outAxis * halfHeight;
+    outStart.w = 1.0f;
+    outEnd.w = 1.0f;
+    return true;
+  };
+
+  XMATRIX44 childWorld;
+  XMATRIX44 parentWorld;
+  if (!GetCurrentRagdollEditCapsuleWorld(childCapsule, childWorld) ||
+      !GetCurrentRagdollEditCapsuleWorld(parentCapsule, parentWorld)) {
+    return false;
+  }
+
+  XVECTOR3 childStart;
+  XVECTOR3 childEnd;
+  XVECTOR3 childCenter;
+  XVECTOR3 childAxis;
+  float childRadius = 0.0f;
+  XVECTOR3 parentStart;
+  XVECTOR3 parentEnd;
+  XVECTOR3 parentCenter;
+  XVECTOR3 parentAxis;
+  float parentRadius = 0.0f;
+  if (!getCapsuleSegment(childCapsule, childWorld, childStart, childEnd, childCenter, childAxis, childRadius) ||
+      !getCapsuleSegment(parentCapsule, parentWorld, parentStart, parentEnd, parentCenter, parentAxis, parentRadius)) {
+    return false;
+  }
+
+  XVECTOR3 movedChildStart = childStart;
+  XVECTOR3 movedChildEnd = childEnd;
+  XVECTOR3 totalDelta(0.0f, 0.0f, 0.0f, 0.0f);
+  XVECTOR3 normal = Normalize3(parentCenter - childCenter, parentAxis);
+  constexpr float kContactTolerance = 0.0001f;
+  for (int iteration = 0; iteration < 4; ++iteration) {
+    XVECTOR3 childAxisPoint;
+    XVECTOR3 parentAxisPoint;
+    ClosestPointsOnSegments(movedChildStart, movedChildEnd, parentStart, parentEnd, childAxisPoint, parentAxisPoint);
+    normal = Normalize3(parentAxisPoint - childAxisPoint, normal);
+    const float centerlineDistance = Length3(parentAxisPoint - childAxisPoint);
+    const float surfaceGap = centerlineDistance - (childRadius + parentRadius);
+    if (std::fabs(surfaceGap) <= kContactTolerance) {
+      break;
+    }
+
+    const XVECTOR3 delta = normal * surfaceGap;
+    movedChildStart += delta;
+    movedChildEnd += delta;
+    totalDelta += delta;
+  }
+
+  childWorld.m41 += totalDelta.x;
+  childWorld.m42 += totalDelta.y;
+  childWorld.m43 += totalDelta.z;
+  if ((std::fabs(totalDelta.x) > 0.000001f ||
+       std::fabs(totalDelta.y) > 0.000001f ||
+       std::fabs(totalDelta.z) > 0.000001f) &&
+      !SetRagdollEditCapsuleWorldTransform(childCapsule, childWorld, false)) {
+    return false;
+  }
+
+  XVECTOR3 childAxisPoint;
+  XVECTOR3 parentAxisPoint;
+  ClosestPointsOnSegments(movedChildStart, movedChildEnd, parentStart, parentEnd, childAxisPoint, parentAxisPoint);
+  normal = Normalize3(parentAxisPoint - childAxisPoint, normal);
+  const XVECTOR3 childSurface = childAxisPoint + normal * childRadius;
+  const XVECTOR3 parentSurface = parentAxisPoint - normal * parentRadius;
+  XVECTOR3 jointAnchor = (childSurface + parentSurface) * 0.5f;
+  jointAnchor.w = 1.0f;
+
+  bones[static_cast<std::size_t>(childCapsule)].jointWorldPosition = jointAnchor;
+  UpdateRagdollJointOffsetFromWorld(childCapsule);
+  m_ragdollParentCapsules[static_cast<std::size_t>(childCapsule)] = parentCapsule;
+  m_ragdollJointParentCapsules[static_cast<std::size_t>(childCapsule)] = parentCapsule;
+  if (childCapsule < static_cast<int>(m_ragdollContactJoints.size())) {
+    m_ragdollContactJoints[static_cast<std::size_t>(childCapsule)] = 1u;
+  }
+  if (!ApplyRagdollParentCapsuleLinks()) {
+    return false;
+  }
+  m_ragdollEditDirty = true;
+  m_ragdollEditSelectedJoint = childCapsule;
+  m_showPhysics = true;
+  T8_LOG_INFO("[RagdollEdit] Capsule %d contact-snapped to parent/joint capsule %d at %.3f, %.3f, %.3f",
+              childCapsule, parentCapsule, jointAnchor.x, jointAnchor.y, jointAnchor.z);
+  return ApplyRagdollEditPose(true);
+}
+
+bool SandboxScene::ClearRagdollCapsuleJoint(int childCapsule) {
+  EnsureRagdollJointState();
+  EnsureRagdollFreezeState();
+  if (childCapsule < 0 ||
+      childCapsule >= static_cast<int>(m_ragdollJointParentCapsules.size())) {
+    return false;
+  }
+  if (IsRagdollJointFrozen(childCapsule)) {
+    T8_LOG_INFO("[RagdollEdit] Joint %d is frozen; unfreeze it before deleting", childCapsule);
+    return false;
+  }
+
+  const int jointParent = GetRagdollEffectiveJointParentCapsule(childCapsule);
+  if (jointParent < 0) {
+    return true;
+  }
+
+  const int logicalParent =
+      childCapsule < static_cast<int>(m_ragdollParentCapsules.size())
+          ? m_ragdollParentCapsules[static_cast<std::size_t>(childCapsule)]
+          : -1;
+  m_ragdollJointParentCapsules[static_cast<std::size_t>(childCapsule)] =
+      logicalParent >= 0 ? kRagdollJointDisabled : kRagdollJointInheritParent;
+  if (childCapsule < static_cast<int>(m_ragdollContactJoints.size())) {
+    m_ragdollContactJoints[static_cast<std::size_t>(childCapsule)] = 0u;
+  }
+  if (!ApplyRagdollParentCapsuleLinks()) {
+    return false;
+  }
+  if (m_ragdollEditSelectedJoint == childCapsule) {
+    m_ragdollEditSelectedJoint = -1;
+  }
+  m_ragdollEditDirty = true;
+  T8_LOG_INFO("[RagdollEdit] Capsule %d joint cleared", childCapsule);
+  return ApplyRagdollEditPose(true);
+}
+
+bool SandboxScene::ClearRagdollCapsuleJointBetween(int capsuleA, int capsuleB) {
+  EnsureRagdollJointState();
+  if (capsuleA < 0 || capsuleB < 0 || capsuleA == capsuleB) {
+    return false;
+  }
+  if (GetRagdollEffectiveJointParentCapsule(capsuleA) == capsuleB) {
+    return ClearRagdollCapsuleJoint(capsuleA);
+  }
+  if (GetRagdollEffectiveJointParentCapsule(capsuleB) == capsuleA) {
+    return ClearRagdollCapsuleJoint(capsuleB);
+  }
+  return false;
+}
+
 bool SandboxScene::AddControlledBoneToSelectedCapsule(int boneIndex) {
   EnsureRagdollControlledBones();
+  EnsureRagdollFreezeState();
   if (m_ragdollEditSelectedCapsule < 0 ||
       m_ragdollEditSelectedCapsule >= static_cast<int>(m_ragdollAnimationBinding.referencePose.bones.size()) ||
       boneIndex < 0) {
+    return false;
+  }
+  if (IsRagdollCapsuleFrozen(m_ragdollEditSelectedCapsule)) {
+    T8_LOG_INFO("[RagdollEdit] Capsule %d is frozen; unfreeze it before adding bones", m_ragdollEditSelectedCapsule);
     return false;
   }
 
@@ -2227,6 +3109,8 @@ bool SandboxScene::AddControlledBoneToSelectedCapsule(int boneIndex) {
   }
   controlledBones.push_back(boneIndex);
   controlledFrames.push_back(bodyWorld * inverseBoneWorld);
+  m_ragdollEditSelectedUnassignedBone = -1;
+  m_ragdollEditSelectedAffectedBone = boneIndex;
   m_ragdollEditDirty = true;
   T8_LOG_INFO("[RagdollEdit] Capsule %d now controls bone %d", m_ragdollEditSelectedCapsule, boneIndex);
   return true;
@@ -2234,9 +3118,14 @@ bool SandboxScene::AddControlledBoneToSelectedCapsule(int boneIndex) {
 
 bool SandboxScene::RemoveControlledBoneFromSelectedCapsule(int boneIndex) {
   EnsureRagdollControlledBones();
+  EnsureRagdollFreezeState();
   if (m_ragdollEditSelectedCapsule < 0 ||
       m_ragdollEditSelectedCapsule >= static_cast<int>(m_ragdollAnimationBinding.controlledBoneIndices.size()) ||
       boneIndex < 0) {
+    return false;
+  }
+  if (IsRagdollCapsuleFrozen(m_ragdollEditSelectedCapsule)) {
+    T8_LOG_INFO("[RagdollEdit] Capsule %d is frozen; unfreeze it before removing bones", m_ragdollEditSelectedCapsule);
     return false;
   }
 
@@ -2249,6 +3138,8 @@ bool SandboxScene::RemoveControlledBoneFromSelectedCapsule(int boneIndex) {
       if (i < controlledFrames.size()) {
         controlledFrames.erase(controlledFrames.begin() + static_cast<std::ptrdiff_t>(i));
       }
+      m_ragdollEditSelectedUnassignedBone = boneIndex;
+      m_ragdollEditSelectedAffectedBone = -1;
       m_ragdollEditDirty = true;
       T8_LOG_INFO("[RagdollEdit] Capsule %d no longer controls bone %d", m_ragdollEditSelectedCapsule, boneIndex);
       return true;
@@ -2280,6 +3171,28 @@ bool SandboxScene::GetSkeletonEditBoneWorldTransform(int boneIndex, XMATRIX44& o
   }
   outWorld = FlipMatrixZ(skeleton->Bones[static_cast<std::size_t>(boneIndex)].Combined) * Meshes[0].Final;
   return true;
+}
+
+bool SandboxScene::GetRagdollAuthoringBoneWorldTransform(int boneIndex, XMATRIX44& outWorld) const {
+  if (boneIndex >= 0 && boneIndex < static_cast<int>(m_skeletonEditCombined.size())) {
+    outWorld = FlipMatrixZ(m_skeletonEditCombined[static_cast<std::size_t>(boneIndex)]) * Meshes[0].Final;
+    return true;
+  }
+
+  const int generatedIndex = FindGeneratedRagdollCapsuleForBone(boneIndex);
+  if (generatedIndex >= 0 &&
+      generatedIndex < static_cast<int>(m_ragdollGeneratedBinding.referencePose.bones.size()) &&
+      generatedIndex < static_cast<int>(m_ragdollGeneratedBinding.bodyFromBone.size())) {
+    XMATRIX44 boneFromGeneratedBody;
+    if (InvertAffineNoExit(m_ragdollGeneratedBinding.bodyFromBone[static_cast<std::size_t>(generatedIndex)],
+                           boneFromGeneratedBody)) {
+      outWorld = boneFromGeneratedBody *
+          m_ragdollGeneratedBinding.referencePose.bones[static_cast<std::size_t>(generatedIndex)].body.worldTransform;
+      return true;
+    }
+  }
+
+  return GetSkeletonEditBoneWorldTransform(boneIndex, outWorld);
 }
 
 int SandboxScene::FindSkeletonEditDisplayEndpoint(int boneIndex) const {
@@ -2561,8 +3474,9 @@ bool SandboxScene::CreateRagdollCapsuleForBone(int boneIndex) {
   }
   desc.bones.push_back(bone);
   m_ragdollAnimationBinding.bodyFromBone.push_back(bodyFromBone);
-  m_ragdollAnimationBinding.controlledBoneIndices.push_back(std::vector<int>{bone.body.boneIndex});
-  m_ragdollAnimationBinding.controlledBodyFromBone.push_back(std::vector<XMATRIX44>{bodyFromBone});
+  m_ragdollAnimationBinding.jointFromBone.push_back(XVECTOR3(0.0f, 0.0f, 0.0f, 1.0f));
+  m_ragdollAnimationBinding.controlledBoneIndices.emplace_back();
+  m_ragdollAnimationBinding.controlledBodyFromBone.emplace_back();
   EnsureRagdollParentCapsules();
   if (m_ragdollParentCapsules.size() < desc.bones.size()) {
     m_ragdollParentCapsules.resize(desc.bones.size(), -1);
@@ -2570,14 +3484,36 @@ bool SandboxScene::CreateRagdollCapsuleForBone(int boneIndex) {
     m_ragdollParentCapsules.resize(desc.bones.size());
   }
   m_ragdollParentCapsules.back() = -1;
+  m_ragdollJointParentCapsules.resize(desc.bones.size(), kRagdollJointInheritParent);
+  m_ragdollJointParentCapsules.back() = kRagdollJointInheritParent;
+  m_ragdollFrozenCapsules.resize(desc.bones.size(), 0u);
+  m_ragdollFrozenCapsules.back() = 0u;
+  m_ragdollFrozenJoints.resize(desc.bones.size(), 0u);
+  m_ragdollFrozenJoints.back() = 0u;
+  m_ragdollContactJoints.resize(desc.bones.size(), 0u);
+  m_ragdollContactJoints.back() = 0u;
   const int newIndex = static_cast<int>(desc.bones.size()) - 1;
+  UpdateRagdollJointOffsetFromWorld(newIndex);
   if (!UpdateRagdollReferenceBodyFromLocal(newIndex)) {
     desc.bones.pop_back();
     m_ragdollAnimationBinding.bodyFromBone.pop_back();
+    m_ragdollAnimationBinding.jointFromBone.pop_back();
     m_ragdollAnimationBinding.controlledBoneIndices.pop_back();
     m_ragdollAnimationBinding.controlledBodyFromBone.pop_back();
     if (!m_ragdollParentCapsules.empty()) {
       m_ragdollParentCapsules.pop_back();
+    }
+    if (!m_ragdollJointParentCapsules.empty()) {
+      m_ragdollJointParentCapsules.pop_back();
+    }
+    if (!m_ragdollFrozenCapsules.empty()) {
+      m_ragdollFrozenCapsules.pop_back();
+    }
+    if (!m_ragdollFrozenJoints.empty()) {
+      m_ragdollFrozenJoints.pop_back();
+    }
+    if (!m_ragdollContactJoints.empty()) {
+      m_ragdollContactJoints.pop_back();
     }
     T8_LOG_ERROR("[RagdollEdit] Failed to create capsule for bone %d '%s': could not update reference transform",
                  bone.body.boneIndex, bone.body.debugName.c_str());
@@ -2585,9 +3521,8 @@ bool SandboxScene::CreateRagdollCapsuleForBone(int boneIndex) {
   }
   RebuildRagdollParentLinks();
 
-  m_ragdollEditSelectedCapsule = newIndex;
+  SelectRagdollEditCapsule(newIndex, true);
   m_ragdollEditSelectedJoint = -1;
-  m_ragdollEditSelectedHandle = 0;
   m_ragdollEditDirty = true;
   m_ragdollEditRebuildRequested = true;
   m_showPhysics = true;
@@ -2602,11 +3537,20 @@ bool SandboxScene::DeleteSelectedRagdollCapsule() {
   if (index < 0 || index >= static_cast<int>(bones.size()) || index >= static_cast<int>(locals.size())) {
     return false;
   }
+  EnsureRagdollFreezeState();
+  if (IsRagdollCapsuleFrozen(index)) {
+    T8_LOG_INFO("[RagdollEdit] Capsule %d is frozen; unfreeze it before deleting", index);
+    return false;
+  }
 
   const int boneIndex = bones[static_cast<std::size_t>(index)].body.boneIndex;
   const std::string debugName = bones[static_cast<std::size_t>(index)].body.debugName;
   bones.erase(bones.begin() + index);
   locals.erase(locals.begin() + index);
+  if (index < static_cast<int>(m_ragdollAnimationBinding.jointFromBone.size())) {
+    m_ragdollAnimationBinding.jointFromBone.erase(
+        m_ragdollAnimationBinding.jointFromBone.begin() + index);
+  }
   if (index < static_cast<int>(m_ragdollAnimationBinding.controlledBoneIndices.size())) {
     m_ragdollAnimationBinding.controlledBoneIndices.erase(
         m_ragdollAnimationBinding.controlledBoneIndices.begin() + index);
@@ -2627,6 +3571,33 @@ bool SandboxScene::DeleteSelectedRagdollCapsule() {
   } else {
     m_ragdollParentCapsules.clear();
   }
+  if (index < static_cast<int>(m_ragdollJointParentCapsules.size())) {
+    m_ragdollJointParentCapsules.erase(m_ragdollJointParentCapsules.begin() + index);
+    for (int& jointParentCapsule : m_ragdollJointParentCapsules) {
+      if (jointParentCapsule == index) {
+        jointParentCapsule = kRagdollJointDisabled;
+      } else if (jointParentCapsule > index) {
+        --jointParentCapsule;
+      }
+    }
+  } else {
+    m_ragdollJointParentCapsules.clear();
+  }
+  if (index < static_cast<int>(m_ragdollFrozenCapsules.size())) {
+    m_ragdollFrozenCapsules.erase(m_ragdollFrozenCapsules.begin() + index);
+  } else {
+    m_ragdollFrozenCapsules.clear();
+  }
+  if (index < static_cast<int>(m_ragdollFrozenJoints.size())) {
+    m_ragdollFrozenJoints.erase(m_ragdollFrozenJoints.begin() + index);
+  } else {
+    m_ragdollFrozenJoints.clear();
+  }
+  if (index < static_cast<int>(m_ragdollContactJoints.size())) {
+    m_ragdollContactJoints.erase(m_ragdollContactJoints.begin() + index);
+  } else {
+    m_ragdollContactJoints.clear();
+  }
   if (m_ragdollEditSelectedJoint == index) {
     m_ragdollEditSelectedJoint = -1;
   } else if (m_ragdollEditSelectedJoint > index) {
@@ -2640,7 +3611,9 @@ bool SandboxScene::DeleteSelectedRagdollCapsule() {
   }
   m_ragdollEditSelectedHandle = 0;
   m_ragdollEditGizmoDragging = false;
+  m_ragdollEditJointDragging = false;
   m_ragdollEditGizmoAxis = -1;
+  m_ragdollEditJointAxis = -1;
   m_ragdollEditSelectedCapsule = bones.empty()
       ? -1
       : (std::min)(index, static_cast<int>(bones.size()) - 1);
@@ -2654,7 +3627,9 @@ bool SandboxScene::DeleteSelectedRagdollCapsule() {
     m_ragdollEditSelectedHandle = -1;
     m_ragdollEditHandleDragging = false;
     m_ragdollEditGizmoDragging = false;
+    m_ragdollEditJointDragging = false;
     m_ragdollEditGizmoAxis = -1;
+    m_ragdollEditJointAxis = -1;
     m_driveRagdollFromAnimation = false;
     m_ragdollPhysicsDriven = false;
     T8_LOG_INFO("[RagdollEdit] Deleted last capsule assignment for bone %d '%s'", boneIndex, debugName.c_str());
@@ -2677,9 +3652,14 @@ bool SandboxScene::ClearRagdollCapsules() {
 
   m_ragdollAnimationBinding.referencePose.bones.clear();
   m_ragdollAnimationBinding.bodyFromBone.clear();
+  m_ragdollAnimationBinding.jointFromBone.clear();
   m_ragdollAnimationBinding.controlledBoneIndices.clear();
   m_ragdollAnimationBinding.controlledBodyFromBone.clear();
   m_ragdollParentCapsules.clear();
+  m_ragdollJointParentCapsules.clear();
+  m_ragdollFrozenCapsules.clear();
+  m_ragdollFrozenJoints.clear();
+  m_ragdollContactJoints.clear();
   m_ragdollAnimationPose = t850::PhysicsRagdollDesc{};
   m_ragdollPhysicsStates.clear();
   m_ragdollPhysicsBoneIndices.clear();
@@ -2691,7 +3671,9 @@ bool SandboxScene::ClearRagdollCapsules() {
   m_ragdollEditRenameFocusPending = false;
   m_ragdollEditHandleDragging = false;
   m_ragdollEditGizmoDragging = false;
+  m_ragdollEditJointDragging = false;
   m_ragdollEditGizmoAxis = -1;
+  m_ragdollEditJointAxis = -1;
   m_skeletonEditDragging = false;
   m_ragdollClearRequested = false;
   m_ragdollEditRebuildRequested = false;
@@ -2712,7 +3694,7 @@ bool SandboxScene::UpdateRagdollReferenceBodyFromLocal(int capsuleIndex) {
 
   auto& bone = m_ragdollAnimationBinding.referencePose.bones[static_cast<std::size_t>(capsuleIndex)];
   XMATRIX44 boneWorld;
-  if (!GetSkeletonEditBoneWorldTransform(bone.body.boneIndex, boneWorld)) {
+  if (!GetRagdollAuthoringBoneWorldTransform(bone.body.boneIndex, boneWorld)) {
     const int generatedIndex = FindGeneratedRagdollCapsuleForBone(bone.body.boneIndex);
     if (generatedIndex < 0 ||
         generatedIndex >= static_cast<int>(m_ragdollGeneratedBinding.referencePose.bones.size()) ||
@@ -2732,8 +3714,14 @@ bool SandboxScene::UpdateRagdollReferenceBodyFromLocal(int capsuleIndex) {
 
   m_ragdollAnimationBinding.referencePose.bones[static_cast<std::size_t>(capsuleIndex)].body.worldTransform =
       m_ragdollAnimationBinding.bodyFromBone[static_cast<std::size_t>(capsuleIndex)] * boneWorld;
-  m_ragdollAnimationBinding.referencePose.bones[static_cast<std::size_t>(capsuleIndex)].jointWorldPosition =
-      XVECTOR3(boneWorld.m41, boneWorld.m42, boneWorld.m43, 1.0f);
+  if (capsuleIndex < static_cast<int>(m_ragdollAnimationBinding.jointFromBone.size())) {
+    m_ragdollAnimationBinding.referencePose.bones[static_cast<std::size_t>(capsuleIndex)].jointWorldPosition =
+        t850::TransformPoint(m_ragdollAnimationBinding.jointFromBone[static_cast<std::size_t>(capsuleIndex)], boneWorld);
+  } else {
+    m_ragdollAnimationBinding.referencePose.bones[static_cast<std::size_t>(capsuleIndex)].jointWorldPosition =
+        XVECTOR3(boneWorld.m41, boneWorld.m42, boneWorld.m43, 1.0f);
+    UpdateRagdollJointOffsetFromWorld(capsuleIndex);
+  }
   if (capsuleIndex < static_cast<int>(m_ragdollAnimationBinding.controlledBoneIndices.size()) &&
       capsuleIndex < static_cast<int>(m_ragdollAnimationBinding.controlledBodyFromBone.size())) {
     const XMATRIX44& bodyWorld =
@@ -2746,7 +3734,7 @@ bool SandboxScene::UpdateRagdollReferenceBodyFromLocal(int capsuleIndex) {
     controlledOffsets.reserve(controlledBones.size());
     for (int controlledBone : controlledBones) {
       XMATRIX44 controlledBoneWorld;
-      if (!GetSkeletonEditBoneWorldTransform(controlledBone, controlledBoneWorld)) {
+      if (!GetRagdollAuthoringBoneWorldTransform(controlledBone, controlledBoneWorld)) {
         controlledOffsets.push_back(m_ragdollAnimationBinding.bodyFromBone[static_cast<std::size_t>(capsuleIndex)]);
         continue;
       }
@@ -2771,6 +3759,10 @@ bool SandboxScene::SetRagdollEditCapsuleWorldTransform(int capsuleIndex, const X
       capsuleIndex >= static_cast<int>(locals.size())) {
     return false;
   }
+  EnsureRagdollFreezeState();
+  if (IsRagdollCapsuleFrozen(capsuleIndex)) {
+    return false;
+  }
 
   XMATRIX44 boneWorld;
   if (!GetSkeletonEditBoneWorldTransform(bones[static_cast<std::size_t>(capsuleIndex)].body.boneIndex, boneWorld)) {
@@ -2791,6 +3783,9 @@ bool SandboxScene::SetRagdollEditCapsuleWorldTransform(int capsuleIndex, const X
 }
 
 bool SandboxScene::MoveRagdollEditCapsuleByWorldDelta(int capsuleIndex, const XVECTOR3& worldDelta, bool rebuildRagdoll) {
+  if (IsRagdollCapsuleFrozen(capsuleIndex)) {
+    return false;
+  }
   XMATRIX44 bodyWorld;
   if (!GetCurrentRagdollEditCapsuleWorld(capsuleIndex, bodyWorld)) {
     return false;
@@ -2808,6 +3803,9 @@ bool SandboxScene::RotateRagdollEditCapsuleWorld(int capsuleIndex,
   if (std::fabs(angleRadians) < 0.000001f) {
     return true;
   }
+  if (IsRagdollCapsuleFrozen(capsuleIndex)) {
+    return false;
+  }
 
   XMATRIX44 bodyWorld;
   if (!GetCurrentRagdollEditCapsuleWorld(capsuleIndex, bodyWorld)) {
@@ -2822,6 +3820,21 @@ bool SandboxScene::RotateRagdollEditCapsuleWorld(int capsuleIndex,
   XMatTranslation(fromOrigin, center.x, center.y, center.z);
   const XMATRIX44 rotatedWorld = bodyWorld * toOrigin * rotation * fromOrigin;
   return SetRagdollEditCapsuleWorldTransform(capsuleIndex, rotatedWorld, rebuildRagdoll);
+}
+
+bool SandboxScene::FlipRagdollEditCapsuleLocalAxis(int capsuleIndex, int axisIndex) {
+  if (axisIndex < 0 || axisIndex > 2 || IsRagdollCapsuleFrozen(capsuleIndex)) {
+    return false;
+  }
+  XVECTOR3 center;
+  std::array<XVECTOR3, 3> axes;
+  float size = 0.0f;
+  if (!GetRagdollEditGizmoFrame(capsuleIndex, center, axes, size)) {
+    return false;
+  }
+  (void)center;
+  (void)size;
+  return RotateRagdollEditCapsuleWorld(capsuleIndex, axes[static_cast<std::size_t>(axisIndex)], xPI, true);
 }
 
 bool SandboxScene::RecreateRagdollFromPose(const t850::PhysicsRagdollDesc& pose) {
@@ -2914,16 +3927,26 @@ bool SandboxScene::LoadRagdollEditPose() {
   }
   std::vector<t850::PhysicsRagdollBoneDesc> loadedBones;
   std::vector<XMATRIX44> loadedBodyFromBone;
+  std::vector<XVECTOR3> loadedJointFromBone;
   std::vector<std::vector<int>> loadedControlledBones;
   std::vector<std::vector<XMATRIX44>> loadedControlledBodyFromBone;
   std::vector<int> loadedSavedIndices;
   std::vector<int> loadedParentRefs;
+  std::vector<int> loadedJointParentRefs;
+  std::vector<uint8_t> loadedFrozenCapsules;
+  std::vector<uint8_t> loadedFrozenJoints;
+  std::vector<uint8_t> loadedContactJoints;
   loadedBones.reserve(data.capsules.size());
   loadedBodyFromBone.reserve(data.capsules.size());
+  loadedJointFromBone.reserve(data.capsules.size());
   loadedControlledBones.reserve(data.capsules.size());
   loadedControlledBodyFromBone.reserve(data.capsules.size());
   loadedSavedIndices.reserve(data.capsules.size());
   loadedParentRefs.reserve(data.capsules.size());
+  loadedJointParentRefs.reserve(data.capsules.size());
+  loadedFrozenCapsules.reserve(data.capsules.size());
+  loadedFrozenJoints.reserve(data.capsules.size());
+  loadedContactJoints.reserve(data.capsules.size());
 
   int applied = 0;
   for (const RagdollEditCapsuleJson& capsule : data.capsules) {
@@ -2975,8 +3998,22 @@ bool SandboxScene::LoadRagdollEditPose() {
             ? MatrixFromArray16(capsule.bodyFromBone)
             : bodyFromBone[static_cast<std::size_t>(target)];
     XMATRIX44 targetPrimaryBoneWorld;
-    if (GetSkeletonEditBoneWorldTransform(targetBone.body.boneIndex, targetPrimaryBoneWorld)) {
+    const bool hasTargetBoneWorld = GetRagdollAuthoringBoneWorldTransform(targetBone.body.boneIndex, targetPrimaryBoneWorld);
+    if (hasTargetBoneWorld) {
       targetBone.body.worldTransform = targetBodyFromBone * targetPrimaryBoneWorld;
+    }
+    if (data.schema >= 6) {
+      targetBone.jointType = RagdollJointTypeFromInt(capsule.jointType);
+      if (capsule.hasJointAnchor) {
+        targetBone.jointWorldPosition = XVECTOR3(capsule.jointAnchor[0], capsule.jointAnchor[1], capsule.jointAnchor[2], 1.0f);
+      }
+    }
+    XVECTOR3 targetJointFromBone(0.0f, 0.0f, 0.0f, 1.0f);
+    if (hasTargetBoneWorld) {
+      XMATRIX44 inverseTargetBoneWorld;
+      if (InvertAffineNoExit(targetPrimaryBoneWorld, inverseTargetBoneWorld)) {
+        targetJointFromBone = t850::TransformPoint(targetBone.jointWorldPosition, inverseTargetBoneWorld);
+      }
     }
     targetBone.body.shape.type = t850::PhysicsShapeType::Capsule;
     targetBone.body.shape.radius = (std::max)(0.001f, capsule.radius);
@@ -2997,7 +4034,7 @@ bool SandboxScene::LoadRagdollEditPose() {
     controlledBodyFromBone.reserve(controlledBones.size());
     for (int controlledBone : controlledBones) {
       XMATRIX44 controlledBoneWorld;
-      if (!GetSkeletonEditBoneWorldTransform(controlledBone, controlledBoneWorld)) {
+      if (!GetRagdollAuthoringBoneWorldTransform(controlledBone, controlledBoneWorld)) {
         continue;
       }
       XMATRIX44 inverseControlledBoneWorld;
@@ -3019,15 +4056,23 @@ bool SandboxScene::LoadRagdollEditPose() {
 
     loadedBones.push_back(targetBone);
     loadedBodyFromBone.push_back(targetBodyFromBone);
+    loadedJointFromBone.push_back(targetJointFromBone);
     loadedControlledBones.push_back(std::move(controlledBones));
     loadedControlledBodyFromBone.push_back(std::move(controlledBodyFromBone));
     loadedSavedIndices.push_back(capsule.index >= 0 ? capsule.index : static_cast<int>(loadedSavedIndices.size()));
     loadedParentRefs.push_back(data.schema >= 5 ? capsule.parentCapsule : -1);
+    loadedJointParentRefs.push_back(data.schema >= 6 ? capsule.jointParentCapsule : kRagdollJointInheritParent);
+    loadedFrozenCapsules.push_back(data.schema >= 7 && capsule.capsuleFrozen ? 1u : 0u);
+    loadedFrozenJoints.push_back(data.schema >= 7 && capsule.jointFrozen ? 1u : 0u);
+    const bool legacyContactAnchor = data.schema < 9 && capsule.jointParentCapsule != kRagdollJointDisabled;
+    loadedContactJoints.push_back(
+        ((data.schema >= 9 && capsule.hasJointContactAnchor && capsule.jointContactAnchor) || legacyContactAnchor) ? 1u : 0u);
     ++applied;
   }
 
   if (applied > 0 || data.capsules.empty()) {
     std::vector<int> loadedParentCapsules(loadedBones.size(), -1);
+    std::vector<int> loadedJointParentCapsules(loadedBones.size(), kRagdollJointInheritParent);
     if (data.schema >= 5) {
       auto findLoadedBySavedIndex = [&](int savedIndex) {
         for (int i = 0; i < static_cast<int>(loadedSavedIndices.size()); ++i) {
@@ -3044,37 +4089,71 @@ bool SandboxScene::LoadRagdollEditPose() {
         loadedParentCapsules[static_cast<std::size_t>(child)] =
             findLoadedBySavedIndex(loadedParentRefs[static_cast<std::size_t>(child)]);
       }
+      if (data.schema >= 6) {
+        for (int child = 0; child < static_cast<int>(loadedJointParentRefs.size()); ++child) {
+          const int savedJointParent = loadedJointParentRefs[static_cast<std::size_t>(child)];
+          loadedJointParentCapsules[static_cast<std::size_t>(child)] =
+              savedJointParent >= 0 ? findLoadedBySavedIndex(savedJointParent) : savedJointParent;
+        }
+      }
     }
 
     bones = std::move(loadedBones);
     bodyFromBone = std::move(loadedBodyFromBone);
+    m_ragdollAnimationBinding.jointFromBone = std::move(loadedJointFromBone);
     m_ragdollAnimationBinding.controlledBoneIndices = std::move(loadedControlledBones);
     m_ragdollAnimationBinding.controlledBodyFromBone = std::move(loadedControlledBodyFromBone);
+    m_ragdollFrozenCapsules = std::move(loadedFrozenCapsules);
+    m_ragdollFrozenJoints = std::move(loadedFrozenJoints);
+    m_ragdollContactJoints = std::move(loadedContactJoints);
+    EnsureRagdollFreezeState();
     EnsureRagdollControlledBones();
+    m_ragdollContactJoints.resize(bones.size(), 0u);
     if (data.schema >= 5) {
       m_ragdollParentCapsules = std::move(loadedParentCapsules);
+      m_ragdollJointParentCapsules = std::move(loadedJointParentCapsules);
       ApplyRagdollParentCapsuleLinks();
     } else {
       m_ragdollParentCapsules.clear();
+      m_ragdollJointParentCapsules.clear();
       RebuildRagdollParentLinks();
     }
     for (int i = 0; i < static_cast<int>(bones.size()); ++i) {
       UpdateRagdollReferenceBodyFromLocal(i);
     }
-    if (m_ragdollEditSelectedCapsule < 0 || m_ragdollEditSelectedCapsule >= static_cast<int>(bones.size())) {
-      m_ragdollEditSelectedCapsule = bones.empty() ? -1 : 0;
+    int repairedContactAnchors = 0;
+    for (int childCapsule = 0; childCapsule < static_cast<int>(bones.size()); ++childCapsule) {
+      if (childCapsule >= static_cast<int>(m_ragdollContactJoints.size()) ||
+          m_ragdollContactJoints[static_cast<std::size_t>(childCapsule)] == 0u) {
+        continue;
+      }
+      const int parentCapsule = GetRagdollEffectiveJointParentCapsule(childCapsule);
+      if (parentCapsule < 0 || parentCapsule >= static_cast<int>(bones.size()) || parentCapsule == childCapsule) {
+        continue;
+      }
+      XVECTOR3 contactAnchor;
+      if (ComputeRagdollCapsuleContactAnchor(childCapsule, parentCapsule, contactAnchor)) {
+        bones[static_cast<std::size_t>(childCapsule)].jointWorldPosition = contactAnchor;
+        UpdateRagdollJointOffsetFromWorld(childCapsule);
+        ++repairedContactAnchors;
+      }
     }
-    m_ragdollEditSelectedJoint =
-        m_ragdollEditSelectedCapsule >= 0 &&
-        m_ragdollEditSelectedCapsule < static_cast<int>(m_ragdollParentCapsules.size()) &&
-        m_ragdollParentCapsules[static_cast<std::size_t>(m_ragdollEditSelectedCapsule)] >= 0
-            ? m_ragdollEditSelectedCapsule
-            : -1;
+    if (repairedContactAnchors > 0) {
+      T8_LOG_INFO("[RagdollEdit] Recovered %d contact joint anchors from capsule surfaces for '%s'",
+                  repairedContactAnchors, m_ragdollEditSavePath.c_str());
+    }
+    SelectRagdollEditCapsule(
+        (m_ragdollEditSelectedCapsule < 0 || m_ragdollEditSelectedCapsule >= static_cast<int>(bones.size()))
+            ? (bones.empty() ? -1 : 0)
+            : m_ragdollEditSelectedCapsule,
+        false);
     m_ragdollEditRenamingCapsule = -1;
     m_ragdollEditRenameFocusPending = false;
     m_ragdollEditHandleDragging = false;
     m_ragdollEditGizmoDragging = false;
+    m_ragdollEditJointDragging = false;
     m_ragdollEditGizmoAxis = -1;
+    m_ragdollEditJointAxis = -1;
     m_ragdollEditDirty = false;
     if (!bones.empty()) {
       ApplyRagdollEditPose(true);
@@ -3091,6 +4170,12 @@ bool SandboxScene::LoadRagdollEditPose() {
     if (data.schema < 5) {
       T8_LOG_INFO("[RagdollEdit] Initialized capsule parent links for legacy cache '%s'", m_ragdollEditSavePath.c_str());
     }
+    if (data.schema < 6) {
+      T8_LOG_INFO("[RagdollEdit] Initialized explicit joint data for legacy cache '%s'", m_ragdollEditSavePath.c_str());
+    }
+    if (data.schema < 7) {
+      T8_LOG_INFO("[RagdollEdit] Initialized freeze flags for legacy cache '%s'", m_ragdollEditSavePath.c_str());
+    }
     T8_LOG_INFO("[RagdollEdit] Loaded %d edited capsules from '%s'", applied, m_ragdollEditSavePath.c_str());
   }
   return applied > 0 || data.capsules.empty();
@@ -3102,6 +4187,8 @@ bool SandboxScene::SaveRagdollEditPose() {
   }
 
   EnsureRagdollParentCapsules();
+  EnsureRagdollJointState();
+  EnsureRagdollFreezeState();
   ApplyRagdollParentCapsuleLinks();
 
   const auto& bones = m_ragdollAnimationBinding.referencePose.bones;
@@ -3127,7 +4214,7 @@ bool SandboxScene::SaveRagdollEditPose() {
 
   const std::string model = m_profileModelKey.empty() ? SandboxProfileModelKey(g_config.modelPath) : m_profileModelKey;
   file << "{\n";
-  file << "  \"schema\": 5,\n";
+  file << "  \"schema\": 9,\n";
   file << "  \"model\": \"" << JsonEscape(model) << "\",\n";
   file << "  \"constraint_profile\": \"inferred-name-v1\",\n";
   file << "  \"capsule_frame_profile\": \"bone-to-endpoint-v1\",\n";
@@ -3143,7 +4230,22 @@ bool SandboxScene::SaveRagdollEditPose() {
     file << "      \"name\": \"" << JsonEscape(bone.body.debugName) << "\",\n";
     const int parentCapsule =
         i < m_ragdollParentCapsules.size() ? m_ragdollParentCapsules[i] : -1;
+    const int jointParentCapsule =
+        i < m_ragdollJointParentCapsules.size() ? m_ragdollJointParentCapsules[i] : kRagdollJointInheritParent;
+    const bool capsuleFrozen =
+        i < m_ragdollFrozenCapsules.size() && m_ragdollFrozenCapsules[i] != 0u;
+    const bool jointFrozen =
+        i < m_ragdollFrozenJoints.size() && m_ragdollFrozenJoints[i] != 0u;
+    const bool jointContactAnchor =
+        i < m_ragdollContactJoints.size() && m_ragdollContactJoints[i] != 0u;
     file << "      \"parent_capsule\": " << parentCapsule << ",\n";
+    file << "      \"joint_parent_capsule\": " << jointParentCapsule << ",\n";
+    file << "      \"capsule_frozen\": " << (capsuleFrozen ? "true" : "false") << ",\n";
+    file << "      \"joint_frozen\": " << (jointFrozen ? "true" : "false") << ",\n";
+    file << "      \"joint_contact_anchor\": " << (jointContactAnchor ? "true" : "false") << ",\n";
+    file << "      \"joint_type\": " << RagdollJointTypeToInt(bone.jointType) << ",\n";
+    file << "      \"joint_anchor\": [" << bone.jointWorldPosition.x << ", "
+         << bone.jointWorldPosition.y << ", " << bone.jointWorldPosition.z << "],\n";
     file << "      \"body_from_bone\": [";
     for (std::size_t valueIndex = 0; valueIndex < matrix.size(); ++valueIndex) {
       if (valueIndex > 0) file << ", ";
@@ -3182,13 +4284,19 @@ bool SandboxScene::ResetRagdollEditPose() {
   }
   m_ragdollAnimationBinding = m_ragdollGeneratedBinding;
   m_ragdollParentCapsules.clear();
+  m_ragdollJointParentCapsules.clear();
+  m_ragdollFrozenCapsules.assign(m_ragdollAnimationBinding.referencePose.bones.size(), 0u);
+  m_ragdollFrozenJoints.assign(m_ragdollAnimationBinding.referencePose.bones.size(), 0u);
+  m_ragdollContactJoints.assign(m_ragdollAnimationBinding.referencePose.bones.size(), 0u);
   RebuildRagdollParentLinks();
   m_ragdollEditSelectedJoint = -1;
   m_ragdollEditRenamingCapsule = -1;
   m_ragdollEditRenameFocusPending = false;
   m_ragdollEditHandleDragging = false;
   m_ragdollEditGizmoDragging = false;
+  m_ragdollEditJointDragging = false;
   m_ragdollEditGizmoAxis = -1;
+  m_ragdollEditJointAxis = -1;
   m_ragdollEditDirty = true;
   return ApplyRagdollEditPose(true);
 }
@@ -3199,6 +4307,11 @@ bool SandboxScene::ResetSelectedRagdollCapsule() {
   if (index < 0 ||
       index >= static_cast<int>(m_ragdollAnimationBinding.referencePose.bones.size()) ||
       index >= static_cast<int>(m_ragdollAnimationBinding.bodyFromBone.size())) {
+    return false;
+  }
+  EnsureRagdollFreezeState();
+  if (IsRagdollCapsuleFrozen(index)) {
+    T8_LOG_INFO("[RagdollEdit] Capsule %d is frozen; unfreeze it before resetting", index);
     return false;
   }
 
@@ -3214,6 +4327,16 @@ bool SandboxScene::ResetSelectedRagdollCapsule() {
       m_ragdollGeneratedBinding.referencePose.bones[static_cast<std::size_t>(generatedIndex)];
   m_ragdollAnimationBinding.bodyFromBone[static_cast<std::size_t>(index)] =
       m_ragdollGeneratedBinding.bodyFromBone[static_cast<std::size_t>(generatedIndex)];
+  if (m_ragdollAnimationBinding.jointFromBone.size() < m_ragdollAnimationBinding.referencePose.bones.size()) {
+    m_ragdollAnimationBinding.jointFromBone.resize(m_ragdollAnimationBinding.referencePose.bones.size(),
+                                                   XVECTOR3(0.0f, 0.0f, 0.0f, 1.0f));
+  }
+  if (generatedIndex < static_cast<int>(m_ragdollGeneratedBinding.jointFromBone.size())) {
+    m_ragdollAnimationBinding.jointFromBone[static_cast<std::size_t>(index)] =
+        m_ragdollGeneratedBinding.jointFromBone[static_cast<std::size_t>(generatedIndex)];
+  } else {
+    UpdateRagdollJointOffsetFromWorld(index);
+  }
   if (index < static_cast<int>(m_ragdollAnimationBinding.controlledBoneIndices.size())) {
     m_ragdollAnimationBinding.controlledBoneIndices[static_cast<std::size_t>(index)] =
         std::vector<int>{m_ragdollAnimationBinding.referencePose.bones[static_cast<std::size_t>(index)].body.boneIndex};
@@ -3225,7 +4348,9 @@ bool SandboxScene::ResetSelectedRagdollCapsule() {
   ApplyRagdollParentCapsuleLinks();
   m_ragdollEditHandleDragging = false;
   m_ragdollEditGizmoDragging = false;
+  m_ragdollEditJointDragging = false;
   m_ragdollEditGizmoAxis = -1;
+  m_ragdollEditJointAxis = -1;
   m_ragdollEditDirty = true;
   return ApplyRagdollEditPose(true);
 }
@@ -3298,6 +4423,34 @@ bool SandboxScene::GetCurrentRagdollEditCapsuleWorld(int capsuleIndex, XMATRIX44
     return false;
   }
 
+  if (m_ragdollPhysicsDriven && Meshes[0].HasPhysicsRagdoll()) {
+    const int boneIndex = bones[static_cast<std::size_t>(capsuleIndex)].body.boneIndex;
+    auto findPhysicsState = [&](const std::vector<t850::PhysicsBodyState>& states) {
+      for (const t850::PhysicsBodyState& state : states) {
+        if (state.boneIndex == boneIndex) {
+          outWorld = state.worldTransform;
+          return true;
+        }
+      }
+      return false;
+    };
+
+    if (findPhysicsState(m_ragdollPhysicsStates)) {
+      return true;
+    }
+
+    t850::EngineContext* engineContext = GetEngineContext();
+    if (!engineContext) engineContext = &t850::GetEngineContext();
+    if (engineContext && engineContext->physics) {
+      std::vector<t850::PhysicsBodyState> states;
+      if (engineContext->physics->GetRagdollState(Meshes[0].GetPhysicsRagdoll(), states) &&
+          findPhysicsState(states)) {
+        m_ragdollPhysicsStates = std::move(states);
+        return true;
+      }
+    }
+  }
+
   RenderSkinnedMesh* skinned = Meshes[0].GetSkinnedMesh();
   t850::PhysicsRagdollDesc pose;
   if (skinned && skinned->HasSkinData() &&
@@ -3309,6 +4462,95 @@ bool SandboxScene::GetCurrentRagdollEditCapsuleWorld(int capsuleIndex, XMATRIX44
 
   outWorld = bones[static_cast<std::size_t>(capsuleIndex)].body.worldTransform;
   return true;
+}
+
+bool SandboxScene::SetRagdollEditJointWorldPosition(int childCapsule, const XVECTOR3& worldPosition) {
+  auto& bones = m_ragdollAnimationBinding.referencePose.bones;
+  EnsureRagdollJointState();
+  EnsureRagdollFreezeState();
+  if (childCapsule < 0 ||
+      childCapsule >= static_cast<int>(bones.size()) ||
+      GetRagdollEffectiveJointParentCapsule(childCapsule) < 0) {
+    return false;
+  }
+  if (IsRagdollJointFrozen(childCapsule)) {
+    return false;
+  }
+
+  bones[static_cast<std::size_t>(childCapsule)].jointWorldPosition =
+      XVECTOR3(worldPosition.x, worldPosition.y, worldPosition.z, 1.0f);
+  if (childCapsule < static_cast<int>(m_ragdollContactJoints.size())) {
+    m_ragdollContactJoints[static_cast<std::size_t>(childCapsule)] = 0u;
+  }
+  UpdateRagdollJointOffsetFromWorld(childCapsule);
+  m_ragdollEditDirty = true;
+  return true;
+}
+
+bool SandboxScene::MoveRagdollEditJointByWorldDelta(int childCapsule, const XVECTOR3& worldDelta) {
+  if (childCapsule < 0 || childCapsule >= static_cast<int>(m_ragdollAnimationBinding.referencePose.bones.size())) {
+    return false;
+  }
+  if (IsRagdollJointFrozen(childCapsule)) {
+    return false;
+  }
+  XVECTOR3 joint = m_ragdollAnimationBinding.referencePose.bones[static_cast<std::size_t>(childCapsule)].jointWorldPosition;
+  joint.x += worldDelta.x;
+  joint.y += worldDelta.y;
+  joint.z += worldDelta.z;
+  return SetRagdollEditJointWorldPosition(childCapsule, joint);
+}
+
+bool SandboxScene::RotateRagdollEditJointWorld(int childCapsule, const XVECTOR3& axisWorld, float angleRadians) {
+  if (std::fabs(angleRadians) < 0.000001f) {
+    return true;
+  }
+  if (IsRagdollJointFrozen(childCapsule)) {
+    return false;
+  }
+
+  XVECTOR3 joint;
+  XVECTOR3 parentCenter;
+  XVECTOR3 childCenter;
+  XVECTOR3 parentTwist;
+  XVECTOR3 childTwist;
+  XVECTOR3 childPlane;
+  float size = 0.0f;
+  if (!GetRagdollJointVisualFrame(childCapsule, joint, parentCenter, childCenter, parentTwist, childTwist, childPlane, size)) {
+    return false;
+  }
+
+  XMATRIX44 childWorld;
+  if (!GetCurrentRagdollEditCapsuleWorld(childCapsule, childWorld)) {
+    return false;
+  }
+
+  XMATRIX44 toOrigin;
+  XMATRIX44 rotation;
+  XMATRIX44 fromOrigin;
+  XMatTranslation(toOrigin, -joint.x, -joint.y, -joint.z);
+  XMatRotationAxis(rotation, Normalize3(axisWorld, XVECTOR3(0.0f, 1.0f, 0.0f, 0.0f)), angleRadians);
+  XMatTranslation(fromOrigin, joint.x, joint.y, joint.z);
+  const XMATRIX44 rotatedWorld = childWorld * toOrigin * rotation * fromOrigin;
+  return SetRagdollEditCapsuleWorldTransform(childCapsule, rotatedWorld, false);
+}
+
+bool SandboxScene::FlipRagdollEditJointLocalAxis(int childCapsule, int axisIndex) {
+  if (axisIndex < 0 || axisIndex > 2 || IsRagdollJointFrozen(childCapsule)) {
+    return false;
+  }
+  XVECTOR3 center;
+  std::array<XVECTOR3, 3> axes;
+  float size = 0.0f;
+  if (!GetRagdollJointGizmoFrame(childCapsule, center, axes, size)) {
+    return false;
+  }
+  (void)center;
+  (void)size;
+  if (!RotateRagdollEditJointWorld(childCapsule, axes[static_cast<std::size_t>(axisIndex)], xPI)) {
+    return false;
+  }
+  return ApplyRagdollEditPose(true);
 }
 
 bool SandboxScene::GetRagdollJointVisualFrame(int childCapsule,
@@ -3327,7 +4569,7 @@ bool SandboxScene::GetRagdollJointVisualFrame(int childCapsule,
     return false;
   }
 
-  const int parentCapsule = m_ragdollParentCapsules[static_cast<std::size_t>(childCapsule)];
+  const int parentCapsule = GetRagdollEffectiveJointParentCapsule(childCapsule);
   if (parentCapsule < 0 || parentCapsule >= static_cast<int>(bones.size()) || parentCapsule == childCapsule) {
     return false;
   }
@@ -3341,11 +4583,13 @@ bool SandboxScene::GetRagdollJointVisualFrame(int childCapsule,
 
   outParentCenter = XVECTOR3(parentWorld.m41, parentWorld.m42, parentWorld.m43, 1.0f);
   outChildCenter = XVECTOR3(childWorld.m41, childWorld.m42, childWorld.m43, 1.0f);
-  XMATRIX44 childBoneWorld;
-  if (GetSkeletonEditBoneWorldTransform(bones[static_cast<std::size_t>(childCapsule)].body.boneIndex, childBoneWorld)) {
-    outJoint = XVECTOR3(childBoneWorld.m41, childBoneWorld.m42, childBoneWorld.m43, 1.0f);
-  } else {
-    outJoint = bones[static_cast<std::size_t>(childCapsule)].jointWorldPosition;
+  outJoint = bones[static_cast<std::size_t>(childCapsule)].jointWorldPosition;
+  RenderSkinnedMesh* skinned = Meshes[0].GetSkinnedMesh();
+  t850::PhysicsRagdollDesc currentPose;
+  if (skinned && skinned->HasSkinData() &&
+      t850::BuildRagdollPoseFromAnimation(*skinned, Meshes[0].Final, m_ragdollAnimationBinding, currentPose) &&
+      childCapsule < static_cast<int>(currentPose.bones.size())) {
+    outJoint = currentPose.bones[static_cast<std::size_t>(childCapsule)].jointWorldPosition;
   }
 
   outParentTwistAxis = Normalize3(XVECTOR3(parentWorld.m21, parentWorld.m22, parentWorld.m23, 0.0f),
@@ -3362,8 +4606,246 @@ bool SandboxScene::GetRagdollJointVisualFrame(int childCapsule,
   return true;
 }
 
-void SandboxScene::DrawRagdollJointGizmos() {
-  if (!m_skeletonEditMode || !g_pBaseDriver || !ImGui::GetCurrentContext()) {
+bool SandboxScene::GetRagdollJointGizmoFrame(int childCapsule,
+                                             XVECTOR3& outCenter,
+                                             std::array<XVECTOR3, 3>& outAxes,
+                                             float& outSize) {
+  XVECTOR3 parentCenter;
+  XVECTOR3 childCenter;
+  XVECTOR3 parentTwist;
+  XVECTOR3 childTwist;
+  XVECTOR3 childPlane;
+  if (!GetRagdollJointVisualFrame(childCapsule, outCenter, parentCenter, childCenter, parentTwist, childTwist, childPlane, outSize)) {
+    return false;
+  }
+
+  outAxes[1] = Normalize3(childTwist, XVECTOR3(0.0f, 1.0f, 0.0f, 0.0f));
+  outAxes[0] = Normalize3(childPlane, XVECTOR3(1.0f, 0.0f, 0.0f, 0.0f));
+  outAxes[2] = Normalize3(Cross3(outAxes[0], outAxes[1]), XVECTOR3(0.0f, 0.0f, 1.0f, 0.0f));
+  outAxes[0] = Normalize3(Cross3(outAxes[1], outAxes[2]), XVECTOR3(1.0f, 0.0f, 0.0f, 0.0f));
+  return true;
+}
+
+bool SandboxScene::PickRagdollEditJoint(float mouseX, float mouseY, float thresholdPixels, int& outChildCapsule) {
+  outChildCapsule = -1;
+  if (!m_skeletonEditMode || !g_pBaseDriver || m_ragdollAnimationBinding.referencePose.bones.empty()) {
+    return false;
+  }
+
+  const int width = (std::max)(1, g_pBaseDriver->width);
+  const int height = (std::max)(1, g_pBaseDriver->height);
+  const ImVec2 mouse(mouseX, mouseY);
+  float bestDistanceSq = thresholdPixels * thresholdPixels;
+  for (int childCapsule = 0; childCapsule < static_cast<int>(m_ragdollAnimationBinding.referencePose.bones.size()); ++childCapsule) {
+    XVECTOR3 joint;
+    XVECTOR3 parentCenter;
+    XVECTOR3 childCenter;
+    XVECTOR3 parentTwist;
+    XVECTOR3 childTwist;
+    XVECTOR3 childPlane;
+    float size = 0.0f;
+    if (!GetRagdollJointVisualFrame(childCapsule, joint, parentCenter, childCenter, parentTwist, childTwist, childPlane, size)) {
+      continue;
+    }
+
+    bool jointVisible = false;
+    const ImVec2 jointScreen = ProjectWorldToScreen(joint, VP, width, height, jointVisible);
+    if (!jointVisible) {
+      continue;
+    }
+    float distanceSq = (jointScreen.x - mouse.x) * (jointScreen.x - mouse.x) +
+                       (jointScreen.y - mouse.y) * (jointScreen.y - mouse.y);
+
+    bool parentVisible = false;
+    bool childVisible = false;
+    const ImVec2 parentScreen = ProjectWorldToScreen(parentCenter, VP, width, height, parentVisible);
+    const ImVec2 childScreen = ProjectWorldToScreen(childCenter, VP, width, height, childVisible);
+    if (parentVisible) {
+      distanceSq = (std::min)(distanceSq, DistancePointToSegmentSq(mouse, jointScreen, parentScreen));
+    }
+    if (childVisible) {
+      distanceSq = (std::min)(distanceSq, DistancePointToSegmentSq(mouse, jointScreen, childScreen));
+    }
+
+    if (distanceSq < bestDistanceSq) {
+      bestDistanceSq = distanceSq;
+      outChildCapsule = childCapsule;
+    }
+  }
+
+  return outChildCapsule >= 0;
+}
+
+bool SandboxScene::PickRagdollEditJointGizmo(float mouseX, float mouseY, int& outAxis) {
+  outAxis = -1;
+  if (!m_skeletonEditMode || !g_pBaseDriver || m_ragdollEditSelectedJoint < 0 ||
+      m_ragdollEditSelectionMode != kRagdollSelectJoints ||
+      (m_ragdollEditGizmoMode != kRagdollToolMove && m_ragdollEditGizmoMode != kRagdollToolRotate) ||
+      IsRagdollJointFrozen(m_ragdollEditSelectedJoint)) {
+    return false;
+  }
+
+  XVECTOR3 center;
+  std::array<XVECTOR3, 3> axes;
+  float size = 0.0f;
+  if (!GetRagdollJointGizmoFrame(m_ragdollEditSelectedJoint, center, axes, size)) {
+    return false;
+  }
+
+  const int width = (std::max)(1, g_pBaseDriver->width);
+  const int height = (std::max)(1, g_pBaseDriver->height);
+  const ImVec2 mouse(mouseX, mouseY);
+  constexpr float kThresholdPixels = 12.0f;
+  float bestDistanceSq = kThresholdPixels * kThresholdPixels;
+
+  if (m_ragdollEditGizmoMode == kRagdollToolMove) {
+    for (int axisIndex = 0; axisIndex < 3; ++axisIndex) {
+      bool startVisible = false;
+      bool endVisible = false;
+      const ImVec2 start = ProjectWorldToScreen(center + axes[static_cast<std::size_t>(axisIndex)] * (size * 0.12f),
+                                                VP, width, height, startVisible);
+      const ImVec2 end = ProjectWorldToScreen(center + axes[static_cast<std::size_t>(axisIndex)] * (size * 0.75f),
+                                              VP, width, height, endVisible);
+      if (!startVisible || !endVisible) {
+        continue;
+      }
+      const float distanceSq = DistancePointToSegmentSq(mouse, start, end);
+      if (distanceSq < bestDistanceSq) {
+        bestDistanceSq = distanceSq;
+        outAxis = axisIndex;
+      }
+    }
+  } else if (m_ragdollEditGizmoMode == kRagdollToolRotate) {
+    constexpr int kSegments = 64;
+    const float radius = size * 0.62f;
+    for (int axisIndex = 0; axisIndex < 3; ++axisIndex) {
+      const XVECTOR3 u = axes[static_cast<std::size_t>((axisIndex + 1) % 3)];
+      const XVECTOR3 v = axes[static_cast<std::size_t>((axisIndex + 2) % 3)];
+      ImVec2 previous;
+      bool previousVisible = false;
+      for (int segment = 0; segment <= kSegments; ++segment) {
+        const float t = static_cast<float>(segment) / static_cast<float>(kSegments) * (2.0f * xPI);
+        const XVECTOR3 point = center + (u * std::cos(t) + v * std::sin(t)) * radius;
+        bool visible = false;
+        const ImVec2 screen = ProjectWorldToScreen(point, VP, width, height, visible);
+        if (visible && previousVisible) {
+          const float distanceSq = DistancePointToSegmentSq(mouse, previous, screen);
+          if (distanceSq < bestDistanceSq) {
+            bestDistanceSq = distanceSq;
+            outAxis = axisIndex;
+          }
+        }
+        previous = screen;
+        previousVisible = visible;
+      }
+    }
+  }
+  return outAxis >= 0;
+}
+
+bool SandboxScene::BeginRagdollEditJointGizmoDrag(float mouseX, float mouseY) {
+  int pickedAxis = -1;
+  if (!PickRagdollEditJointGizmo(mouseX, mouseY, pickedAxis)) {
+    return false;
+  }
+
+  XVECTOR3 center;
+  std::array<XVECTOR3, 3> axes;
+  float size = 0.0f;
+  if (!GetRagdollJointGizmoFrame(m_ragdollEditSelectedJoint, center, axes, size)) {
+    return false;
+  }
+  (void)size;
+
+  XMATRIX44 invVP;
+  VP.Inverse(&invVP);
+  const int width = (std::max)(1, g_pBaseDriver ? g_pBaseDriver->width : 1);
+  const int height = (std::max)(1, g_pBaseDriver ? g_pBaseDriver->height : 1);
+  const t850::Ray ray = t850::ScreenPointToRay(mouseX, mouseY, 0, 0, width, height, invVP);
+  const XVECTOR3 axis = axes[static_cast<std::size_t>(pickedAxis)];
+  if (m_ragdollEditGizmoMode == kRagdollToolMove) {
+    if (!ClosestRayAxisParameter(ray, center, axis, m_ragdollEditJointLastParameter)) {
+      return false;
+    }
+  } else if (m_ragdollEditGizmoMode == kRagdollToolRotate) {
+    XVECTOR3 hitPoint;
+    if (!RayPlaneIntersection(ray, center, axis, hitPoint)) {
+      return false;
+    }
+    m_ragdollEditJointLastVector = Normalize3(hitPoint - center,
+                                              axes[static_cast<std::size_t>((pickedAxis + 1) % 3)]);
+  } else {
+    return false;
+  }
+
+  m_ragdollEditJointAxis = pickedAxis;
+  m_ragdollEditJointDragCenter = center;
+  m_ragdollEditJointDragAxis = axis;
+  m_ragdollEditJointDragging = true;
+  m_ragdollEditGizmoDragging = false;
+  m_ragdollEditHandleDragging = false;
+  m_skeletonEditDragging = false;
+  return true;
+}
+
+bool SandboxScene::DragRagdollEditJointGizmo(float mouseX, float mouseY) {
+  if (!m_ragdollEditJointDragging ||
+      m_ragdollEditSelectedJoint < 0 ||
+      m_ragdollEditJointAxis < 0 ||
+      !g_pBaseDriver) {
+    return false;
+  }
+
+  XVECTOR3 center;
+  std::array<XVECTOR3, 3> axes;
+  float size = 0.0f;
+  if (!GetRagdollJointGizmoFrame(m_ragdollEditSelectedJoint, center, axes, size)) {
+    return false;
+  }
+  (void)center;
+  (void)size;
+
+  XMATRIX44 invVP;
+  VP.Inverse(&invVP);
+  const int width = (std::max)(1, g_pBaseDriver->width);
+  const int height = (std::max)(1, g_pBaseDriver->height);
+  const t850::Ray ray = t850::ScreenPointToRay(mouseX, mouseY, 0, 0, width, height, invVP);
+  const XVECTOR3 axis = Normalize3(m_ragdollEditJointDragAxis, axes[static_cast<std::size_t>(m_ragdollEditJointAxis)]);
+
+  if (m_ragdollEditGizmoMode == kRagdollToolMove) {
+    float currentParameter = 0.0f;
+    if (!ClosestRayAxisParameter(ray, m_ragdollEditJointDragCenter, axis, currentParameter)) {
+      return false;
+    }
+    const float deltaParameter = currentParameter - m_ragdollEditJointLastParameter;
+    m_ragdollEditJointLastParameter = currentParameter;
+    if (std::fabs(deltaParameter) <= 0.000001f) {
+      return true;
+    }
+    return MoveRagdollEditJointByWorldDelta(m_ragdollEditSelectedJoint, axis * deltaParameter);
+  }
+
+  if (m_ragdollEditGizmoMode != kRagdollToolRotate) {
+    return false;
+  }
+
+  XVECTOR3 hitPoint;
+  if (!RayPlaneIntersection(ray, m_ragdollEditJointDragCenter, axis, hitPoint)) {
+    return false;
+  }
+  const XVECTOR3 currentVector = Normalize3(hitPoint - m_ragdollEditJointDragCenter, m_ragdollEditJointLastVector);
+  const float dot = (std::max)(-1.0f, (std::min)(1.0f, Dot3(m_ragdollEditJointLastVector, currentVector)));
+  const float signedAngle = std::atan2(Dot3(axis, Cross3(m_ragdollEditJointLastVector, currentVector)), dot);
+  m_ragdollEditJointLastVector = currentVector;
+  if (std::fabs(signedAngle) <= 0.000001f) {
+    return true;
+  }
+  return RotateRagdollEditJointWorld(m_ragdollEditSelectedJoint, axis, signedAngle);
+}
+
+void SandboxScene::DrawRagdollJointGizmos(bool editable) {
+  const bool allowEditing = editable && m_skeletonEditMode && m_ragdollEditSelectionMode == kRagdollSelectJoints;
+  if (!allowEditing || !g_pBaseDriver || !ImGui::GetCurrentContext()) {
     return;
   }
 
@@ -3385,9 +4867,8 @@ void SandboxScene::DrawRagdollJointGizmos() {
   const ImU32 coneColor = IM_COL32(255, 215, 70, 205);
   const ImU32 twistColor = IM_COL32(190, 120, 255, 230);
 
-  for (int childCapsule = 0; childCapsule < static_cast<int>(m_ragdollParentCapsules.size()); ++childCapsule) {
-    if (childCapsule >= static_cast<int>(bones.size()) ||
-        m_ragdollParentCapsules[static_cast<std::size_t>(childCapsule)] < 0) {
+  for (int childCapsule = 0; childCapsule < static_cast<int>(bones.size()); ++childCapsule) {
+    if (GetRagdollEffectiveJointParentCapsule(childCapsule) < 0) {
       continue;
     }
 
@@ -3412,7 +4893,7 @@ void SandboxScene::DrawRagdollJointGizmos() {
       continue;
     }
 
-    const bool selected = childCapsule == m_ragdollEditSelectedJoint;
+    const bool selected = allowEditing && childCapsule == m_ragdollEditSelectedJoint;
     if (parentVisible) {
       drawList->AddLine(parentScreen, jointScreen, selected ? selectedColor : lineColor, selected ? 3.0f : 1.6f);
     }
@@ -3441,6 +4922,57 @@ void SandboxScene::DrawRagdollJointGizmos() {
     drawAxis(parentTwist, size * 0.85f, parentAxisColor, "parent +Y");
     drawAxis(childTwist, size, childAxisColor, "child +Y twist");
     drawAxis(childPlane, size * 0.7f, planeAxisColor, "child +X plane");
+
+    std::array<XVECTOR3, 3> gizmoAxes = {
+        childPlane,
+        childTwist,
+        Normalize3(Cross3(childPlane, childTwist), XVECTOR3(0.0f, 0.0f, 1.0f, 0.0f))};
+
+    if (IsRagdollJointFrozen(childCapsule)) {
+      drawList->AddText(ImVec2(jointScreen.x + 10.0f, jointScreen.y + 37.0f), selectedColor, "frozen");
+    } else if (m_ragdollEditGizmoMode == kRagdollToolMove) {
+      drawList->AddText(ImVec2(jointScreen.x + 10.0f, jointScreen.y + 37.0f), selectedColor, "move anchor");
+      for (int axisIndex = 0; axisIndex < 3; ++axisIndex) {
+        const bool active = m_ragdollEditJointDragging && m_ragdollEditJointAxis == axisIndex;
+        const ImU32 color = RagdollGizmoAxisColor(axisIndex, active);
+        bool endVisible = false;
+        const ImVec2 end = ProjectWorldToScreen(joint + gizmoAxes[static_cast<std::size_t>(axisIndex)] * (size * 0.75f),
+                                                VP, width, height, endVisible);
+        if (!endVisible) {
+          continue;
+        }
+        drawList->AddLine(jointScreen, end, color, active ? 4.0f : 2.5f);
+        drawList->AddCircleFilled(end, active ? 5.5f : 4.0f, color, 12);
+      }
+    } else if (m_ragdollEditGizmoMode == kRagdollToolRotate) {
+      drawList->AddText(ImVec2(jointScreen.x + 10.0f, jointScreen.y + 37.0f), selectedColor, "rotate child frame");
+      constexpr int kGizmoSegments = 72;
+      const float radius = size * 0.62f;
+      for (int axisIndex = 0; axisIndex < 3; ++axisIndex) {
+        const bool active = m_ragdollEditJointDragging && m_ragdollEditJointAxis == axisIndex;
+        const ImU32 color = RagdollGizmoAxisColor(axisIndex, active);
+        const XVECTOR3 u = gizmoAxes[static_cast<std::size_t>((axisIndex + 1) % 3)];
+        const XVECTOR3 v = gizmoAxes[static_cast<std::size_t>((axisIndex + 2) % 3)];
+        ImVec2 previous;
+        bool previousVisible = false;
+        for (int segment = 0; segment <= kGizmoSegments; ++segment) {
+          const float t = static_cast<float>(segment) / static_cast<float>(kGizmoSegments) * (2.0f * xPI);
+          const XVECTOR3 point = joint + (u * std::cos(t) + v * std::sin(t)) * radius;
+          bool visible = false;
+          const ImVec2 screen = ProjectWorldToScreen(point, VP, width, height, visible);
+          if (visible && previousVisible) {
+            drawList->AddLine(previous, screen, color, active ? 3.5f : 2.5f);
+          }
+          previous = screen;
+          previousVisible = visible;
+        }
+      }
+    }
+
+    if (bones[static_cast<std::size_t>(childCapsule)].jointType == t850::PhysicsRagdollJointType::Fixed) {
+      drawList->AddText(ImVec2(jointScreen.x + 10.0f, jointScreen.y + 21.0f), selectedColor, "fixed");
+      continue;
+    }
 
     const float coneLength = size * 0.75f;
     const float swing = (std::max)(0.0f, (std::min)(Deg2Rad(85.0f), bones[static_cast<std::size_t>(childCapsule)].swingLimitRadians));
@@ -3489,6 +5021,146 @@ void SandboxScene::DrawRagdollJointGizmos() {
       previousTwistVisible = visible;
     }
   }
+}
+
+void SandboxScene::ReleaseRagdollJointDebugBuffers() {
+  if (m_ragdollJointVB) {
+    m_ragdollJointVB->release();
+    m_ragdollJointVB = nullptr;
+  }
+  if (m_ragdollJointIB) {
+    m_ragdollJointIB->release();
+    m_ragdollJointIB = nullptr;
+  }
+  m_ragdollJointVertexCapacity = 0;
+  m_ragdollJointIndexCapacity = 0;
+  m_ragdollJointIndexCount = 0;
+}
+
+bool SandboxScene::UploadRagdollJointDebugGeometry(const std::vector<float>& vertices,
+                                                   const std::vector<unsigned int>& indices) {
+  const unsigned vertexCount = static_cast<unsigned>(vertices.size() / 4);
+  const unsigned indexCount = static_cast<unsigned>(indices.size());
+  if (vertexCount == 0 || indexCount == 0) {
+    m_ragdollJointIndexCount = 0;
+    return false;
+  }
+
+  if (!m_ragdollJointVB || !m_ragdollJointIB ||
+      vertexCount > m_ragdollJointVertexCapacity ||
+      indexCount > m_ragdollJointIndexCapacity) {
+    ReleaseRagdollJointDebugBuffers();
+
+    m_ragdollJointVB = t850::LineRenderer::CreatePositionVB(vertices.data(), vertexCount, BufferUsage::DINAMIC);
+
+    BufferDesc indexDesc;
+    indexDesc.byteWidth = static_cast<int>(sizeof(unsigned int) * indexCount);
+    indexDesc.usage = BufferUsage::DINAMIC;
+    m_ragdollJointIB = t850::T8Device
+        ? static_cast<IndexBuffer*>(t850::T8Device->CreateBuffer(BufferType::INDEX, indexDesc, const_cast<unsigned int*>(indices.data())))
+        : nullptr;
+
+    if (!m_ragdollJointVB || !m_ragdollJointIB) {
+      ReleaseRagdollJointDebugBuffers();
+      return false;
+    }
+
+    m_ragdollJointVertexCapacity = vertexCount;
+    m_ragdollJointIndexCapacity = indexCount;
+    m_ragdollJointIndexCount = indexCount;
+    return true;
+  }
+
+  if (!t850::T8DeviceContext) {
+    return false;
+  }
+
+  std::vector<float> paddedVertices = vertices;
+  std::vector<unsigned int> paddedIndices = indices;
+  paddedVertices.resize(static_cast<std::size_t>(m_ragdollJointVertexCapacity) * 4u, 0.0f);
+  paddedIndices.resize(m_ragdollJointIndexCapacity, 0u);
+  m_ragdollJointVB->UpdateFromBuffer(*t850::T8DeviceContext, paddedVertices.data());
+  m_ragdollJointIB->UpdateFromBuffer(*t850::T8DeviceContext, paddedIndices.data());
+  m_ragdollJointIndexCount = indexCount;
+  return true;
+}
+
+void SandboxScene::DrawRagdollJointDebugOverlay() {
+  if (!m_showPhysics || m_skeletonEditMode || !m_ragdollJointRenderer.IsReady()) {
+    return;
+  }
+
+  const auto& bones = m_ragdollAnimationBinding.referencePose.bones;
+  if (bones.empty()) {
+    return;
+  }
+
+  EnsureRagdollJointState();
+  std::vector<float> vertices;
+  std::vector<unsigned int> indices;
+  vertices.reserve(bones.size() * 32u);
+  indices.reserve(bones.size() * 16u);
+
+  auto appendLine = [&](const XVECTOR3& start, const XVECTOR3& end) {
+    const unsigned base = static_cast<unsigned>(vertices.size() / 4);
+    vertices.push_back(start.x);
+    vertices.push_back(start.y);
+    vertices.push_back(start.z);
+    vertices.push_back(1.0f);
+    vertices.push_back(end.x);
+    vertices.push_back(end.y);
+    vertices.push_back(end.z);
+    vertices.push_back(1.0f);
+    indices.push_back(base);
+    indices.push_back(base + 1);
+  };
+
+  for (int childCapsule = 0; childCapsule < static_cast<int>(bones.size()); ++childCapsule) {
+    if (GetRagdollEffectiveJointParentCapsule(childCapsule) < 0) {
+      continue;
+    }
+
+    XVECTOR3 joint;
+    XVECTOR3 parentCenter;
+    XVECTOR3 childCenter;
+    XVECTOR3 parentTwist;
+    XVECTOR3 childTwist;
+    XVECTOR3 childPlane;
+    float size = 0.0f;
+    if (!GetRagdollJointVisualFrame(childCapsule, joint, parentCenter, childCenter, parentTwist, childTwist, childPlane, size)) {
+      continue;
+    }
+
+    appendLine(parentCenter, joint);
+    appendLine(joint, childCenter);
+
+    const float markerSize = (std::max)(0.01f, size * 0.10f);
+    const XVECTOR3 normal = Normalize3(Cross3(childPlane, childTwist), XVECTOR3(0.0f, 0.0f, 1.0f, 0.0f));
+    appendLine(joint - childPlane * markerSize, joint + childPlane * markerSize);
+    appendLine(joint - childTwist * markerSize, joint + childTwist * markerSize);
+    appendLine(joint - normal * markerSize, joint + normal * markerSize);
+  }
+
+  if (!UploadRagdollJointDebugGeometry(vertices, indices)) {
+    return;
+  }
+
+  XMATRIX44 identity;
+  identity.Identity();
+  m_ragdollJointRenderer.SetDepthTestEnabled(false);
+  m_ragdollJointRenderer.SetViewport(g_pBaseDriver ? g_pBaseDriver->width : 1,
+                                     g_pBaseDriver ? g_pBaseDriver->height : 1);
+  m_ragdollJointRenderer.SetFarPlane(Cam.FPlane);
+  pFramework->pVideoDriver->SetDepthStencilState(BaseDriver::NONE);
+  pFramework->pVideoDriver->SetBlendState(BaseDriver::BLEND_DEFAULT);
+  m_ragdollJointRenderer.DrawLines(identity,
+                                   VP,
+                                   XVECTOR3(1.0f, 0.72f, 0.12f, 1.0f),
+                                   m_ragdollJointVB,
+                                   m_ragdollJointIB,
+                                   m_ragdollJointIndexCount,
+                                   sizeof(float) * 4,
+                                   IndexBufferFormat::R32);
 }
 
 bool SandboxScene::GetRagdollEditGizmoFrame(int capsuleIndex,
@@ -3546,7 +5218,9 @@ bool SandboxScene::BuildRagdollEditHandlePoints(int capsuleIndex, std::array<XVE
 bool SandboxScene::PickRagdollEditHandle(float mouseX, float mouseY, float thresholdPixels, int& outCapsuleIndex, int& outHandleIndex) {
   outCapsuleIndex = -1;
   outHandleIndex = -1;
-  if (!m_skeletonEditMode || !g_pBaseDriver || m_ragdollAnimationBinding.referencePose.bones.empty()) {
+  if (!m_skeletonEditMode || !g_pBaseDriver || m_ragdollAnimationBinding.referencePose.bones.empty() ||
+      m_ragdollEditSelectionMode != kRagdollSelectCapsules ||
+      m_ragdollEditGizmoMode != kRagdollToolEditCapsule) {
     return false;
   }
 
@@ -3554,6 +5228,9 @@ bool SandboxScene::PickRagdollEditHandle(float mouseX, float mouseY, float thres
   const int height = (std::max)(1, g_pBaseDriver->height);
   float bestDistanceSq = thresholdPixels * thresholdPixels;
   for (int capsuleIndex = 0; capsuleIndex < static_cast<int>(m_ragdollAnimationBinding.referencePose.bones.size()); ++capsuleIndex) {
+    if (IsRagdollCapsuleFrozen(capsuleIndex)) {
+      continue;
+    }
     std::array<XVECTOR3, 7> points;
     if (!BuildRagdollEditHandlePoints(capsuleIndex, points)) {
       continue;
@@ -3630,7 +5307,9 @@ bool SandboxScene::PickRagdollEditCapsule(float mouseX, float mouseY, float thre
 
 bool SandboxScene::PickRagdollEditTransformGizmo(float mouseX, float mouseY, int& outAxis) {
   outAxis = -1;
-  if (!m_skeletonEditMode || !g_pBaseDriver || m_ragdollEditSelectedCapsule < 0) {
+  if (!m_skeletonEditMode || !g_pBaseDriver || m_ragdollEditSelectedCapsule < 0 ||
+      (m_ragdollEditGizmoMode != kRagdollToolMove && m_ragdollEditGizmoMode != kRagdollToolRotate) ||
+      IsRagdollCapsuleFrozen(m_ragdollEditSelectedCapsule)) {
     return false;
   }
 
@@ -3647,7 +5326,7 @@ bool SandboxScene::PickRagdollEditTransformGizmo(float mouseX, float mouseY, int
   constexpr float kThresholdPixels = 12.0f;
   float bestDistanceSq = kThresholdPixels * kThresholdPixels;
 
-  if (m_ragdollEditGizmoMode == 0) {
+  if (m_ragdollEditGizmoMode == kRagdollToolMove) {
     for (int axisIndex = 0; axisIndex < 3; ++axisIndex) {
       bool startVisible = false;
       bool endVisible = false;
@@ -3664,7 +5343,7 @@ bool SandboxScene::PickRagdollEditTransformGizmo(float mouseX, float mouseY, int
         outAxis = axisIndex;
       }
     }
-  } else {
+  } else if (m_ragdollEditGizmoMode == kRagdollToolRotate) {
     constexpr int kSegments = 64;
     const float radius = size * 0.78f;
     for (int axisIndex = 0; axisIndex < 3; ++axisIndex) {
@@ -3716,17 +5395,19 @@ bool SandboxScene::BeginRagdollEditTransformGizmoDrag(float mouseX, float mouseY
   m_ragdollEditGizmoDragCenter = center;
   m_ragdollEditGizmoDragAxis = axis;
 
-  if (m_ragdollEditGizmoMode == 0) {
+  if (m_ragdollEditGizmoMode == kRagdollToolMove) {
     if (!ClosestRayAxisParameter(ray, m_ragdollEditGizmoDragCenter, m_ragdollEditGizmoDragAxis, m_ragdollEditGizmoLastParameter)) {
       return false;
     }
-  } else {
+  } else if (m_ragdollEditGizmoMode == kRagdollToolRotate) {
     XVECTOR3 hitPoint;
     if (!RayPlaneIntersection(ray, m_ragdollEditGizmoDragCenter, m_ragdollEditGizmoDragAxis, hitPoint)) {
       return false;
     }
     m_ragdollEditGizmoLastVector = Normalize3(hitPoint - m_ragdollEditGizmoDragCenter,
                                               axes[static_cast<std::size_t>((pickedAxis + 1) % 3)]);
+  } else {
+    return false;
   }
 
   m_ragdollEditGizmoAxis = pickedAxis;
@@ -3760,7 +5441,7 @@ bool SandboxScene::DragRagdollEditTransformGizmo(float mouseX, float mouseY) {
   const t850::Ray ray = t850::ScreenPointToRay(mouseX, mouseY, 0, 0, width, height, invVP);
   const XVECTOR3 axis = Normalize3(m_ragdollEditGizmoDragAxis, axes[static_cast<std::size_t>(m_ragdollEditGizmoAxis)]);
 
-  if (m_ragdollEditGizmoMode == 0) {
+  if (m_ragdollEditGizmoMode == kRagdollToolMove) {
     float currentParameter = 0.0f;
     if (!ClosestRayAxisParameter(ray, m_ragdollEditGizmoDragCenter, axis, currentParameter)) {
       return false;
@@ -3771,6 +5452,10 @@ bool SandboxScene::DragRagdollEditTransformGizmo(float mouseX, float mouseY) {
       return true;
     }
     return MoveRagdollEditCapsuleByWorldDelta(m_ragdollEditSelectedCapsule, axis * deltaParameter, false);
+  }
+
+  if (m_ragdollEditGizmoMode != kRagdollToolRotate) {
+    return false;
   }
 
   XVECTOR3 hitPoint;
@@ -3789,6 +5474,7 @@ bool SandboxScene::DragRagdollEditTransformGizmo(float mouseX, float mouseY) {
 
 void SandboxScene::DrawRagdollEditTransformGizmo() {
   if (!m_skeletonEditMode ||
+      m_ragdollEditSelectionMode != kRagdollSelectCapsules ||
       m_ragdollEditSelectedCapsule < 0 ||
       !g_pBaseDriver ||
       !ImGui::GetCurrentContext()) {
@@ -3846,7 +5532,11 @@ void SandboxScene::DrawRagdollEditTransformGizmo() {
     }
   }
 
-  if (m_ragdollEditGizmoMode == 0) {
+  if (IsRagdollCapsuleFrozen(m_ragdollEditSelectedCapsule)) {
+    return;
+  }
+
+  if (m_ragdollEditGizmoMode == kRagdollToolMove) {
     for (int axisIndex = 0; axisIndex < 3; ++axisIndex) {
       const bool active = m_ragdollEditGizmoDragging && m_ragdollEditGizmoAxis == axisIndex;
       const ImU32 color = RagdollGizmoAxisColor(axisIndex, active);
@@ -3871,6 +5561,9 @@ void SandboxScene::DrawRagdollEditTransformGizmo() {
                                     color);
       }
     }
+    return;
+  }
+  if (m_ragdollEditGizmoMode != kRagdollToolRotate) {
     return;
   }
 
@@ -3908,6 +5601,9 @@ bool SandboxScene::DragRagdollEditHandle(int capsuleIndex, int handleIndex, cons
   auto& bone = bones[static_cast<std::size_t>(capsuleIndex)];
   auto& local = m_ragdollAnimationBinding.bodyFromBone[static_cast<std::size_t>(capsuleIndex)];
   auto& shape = bone.body.shape;
+  if (IsRagdollCapsuleFrozen(capsuleIndex)) {
+    return false;
+  }
   if (shape.type != t850::PhysicsShapeType::Capsule) {
     return false;
   }
@@ -4015,6 +5711,55 @@ int SandboxScene::PickSkeletonEditBone(float mouseX, float mouseY, float thresho
   return bestBone;
 }
 
+void SandboxScene::PickSkeletonEditBonesInScreenRect(float minX, float minY, float maxX, float maxY, std::vector<int>& outBones) const {
+  outBones.clear();
+  if (!m_skeletonEditMode || m_skeletonEditCombined.empty() || !g_pBaseDriver) {
+    return;
+  }
+
+  if (minX > maxX) std::swap(minX, maxX);
+  if (minY > maxY) std::swap(minY, maxY);
+  const int width = (std::max)(1, g_pBaseDriver->width);
+  const int height = (std::max)(1, g_pBaseDriver->height);
+
+  for (int boneIndex = 0; boneIndex < static_cast<int>(m_skeletonEditCombined.size()); ++boneIndex) {
+    if (FindRagdollCapsuleControllingBone(boneIndex) >= 0) {
+      continue;
+    }
+
+    std::array<XVECTOR3, 6> points{};
+    if (!BuildSkeletonEditBoneOctahedron(boneIndex, 0.18f, points)) {
+      continue;
+    }
+
+    bool hasVisiblePoint = false;
+    float boneMinX = FLT_MAX;
+    float boneMinY = FLT_MAX;
+    float boneMaxX = -FLT_MAX;
+    float boneMaxY = -FLT_MAX;
+    for (const XVECTOR3& point : points) {
+      bool visible = false;
+      const ImVec2 screen = ProjectWorldToScreen(point, VP, width, height, visible);
+      if (!visible) {
+        continue;
+      }
+      hasVisiblePoint = true;
+      boneMinX = (std::min)(boneMinX, screen.x);
+      boneMinY = (std::min)(boneMinY, screen.y);
+      boneMaxX = (std::max)(boneMaxX, screen.x);
+      boneMaxY = (std::max)(boneMaxY, screen.y);
+    }
+
+    if (!hasVisiblePoint) {
+      continue;
+    }
+
+    if (!(boneMaxX < minX || boneMinX > maxX || boneMaxY < minY || boneMinY > maxY)) {
+      outBones.push_back(boneIndex);
+    }
+  }
+}
+
 bool SandboxScene::HandleSkeletonEditInput(InputManager* input, bool imguiWantsMouse) {
   if (!m_skeletonEditMode || !input) {
     return false;
@@ -4022,31 +5767,57 @@ bool SandboxScene::HandleSkeletonEditInput(InputManager* input, bool imguiWantsM
 
   if (!input->PressedMouseButton(0)) {
     const bool finishedGizmoDrag = m_ragdollEditGizmoDragging;
+    const bool finishedJointDrag = m_ragdollEditJointDragging;
     m_skeletonEditDragging = false;
     m_ragdollEditHandleDragging = false;
     m_ragdollEditGizmoDragging = false;
+    m_ragdollEditJointDragging = false;
     m_ragdollEditGizmoAxis = -1;
+    m_ragdollEditJointAxis = -1;
     if (finishedGizmoDrag &&
         m_ragdollEditSelectedCapsule >= 0 &&
         m_ragdollEditSelectedCapsule < static_cast<int>(m_ragdollAnimationBinding.referencePose.bones.size())) {
+      ApplyRagdollEditPose(true);
+    }
+    if (finishedJointDrag &&
+        m_ragdollEditSelectedJoint >= 0 &&
+        m_ragdollEditSelectedJoint < static_cast<int>(m_ragdollAnimationBinding.referencePose.bones.size())) {
       ApplyRagdollEditPose(true);
     }
   }
 
   const bool imguiWantsKeyboard = ImGui::GetCurrentContext() && ImGui::GetIO().WantCaptureKeyboard;
   if (!imguiWantsKeyboard) {
-    if (input->PressedOnceKey(T800K_w)) {
-      m_ragdollEditGizmoMode = 0;
+    auto cancelRagdollDrags = [&]() {
+      m_ragdollEditHandleDragging = false;
       m_ragdollEditGizmoDragging = false;
+      m_ragdollEditJointDragging = false;
+      m_skeletonEditDragging = false;
       m_ragdollEditGizmoAxis = -1;
+      m_ragdollEditJointAxis = -1;
+    };
+    if (input->PressedOnceKey(T800K_q)) {
+      m_ragdollEditGizmoMode = kRagdollToolSelect;
+      cancelRagdollDrags();
+    }
+    if (input->PressedOnceKey(T800K_r)) {
+      m_ragdollEditGizmoMode = kRagdollToolEditCapsule;
+      cancelRagdollDrags();
+    }
+    if (input->PressedOnceKey(T800K_w)) {
+      m_ragdollEditGizmoMode = kRagdollToolMove;
+      cancelRagdollDrags();
     }
     if (input->PressedOnceKey(T800K_e)) {
-      m_ragdollEditGizmoMode = 1;
-      m_ragdollEditGizmoDragging = false;
-      m_ragdollEditGizmoAxis = -1;
+      m_ragdollEditGizmoMode = kRagdollToolRotate;
+      cancelRagdollDrags();
     }
   }
 
+  if (m_ragdollEditJointDragging && input->PressedMouseButton(0)) {
+    DragRagdollEditJointGizmo(static_cast<float>(input->mouseX), static_cast<float>(input->mouseY));
+    return true;
+  }
   if (m_ragdollEditGizmoDragging && input->PressedMouseButton(0)) {
     DragRagdollEditTransformGizmo(static_cast<float>(input->mouseX), static_cast<float>(input->mouseY));
     return true;
@@ -4057,18 +5828,104 @@ bool SandboxScene::HandleSkeletonEditInput(InputManager* input, bool imguiWantsM
 
   const bool ctrlDown = input->PressedKey(T800K_LCTRL) || input->PressedKey(T800K_RCTRL);
   const bool leftShiftDown = input->PressedKey(T800K_LSHIFT);
+  const bool leftAltDown = input->PressedKey(T800K_LALT);
   const bool leftClick = input->PressedOnceMouseButton(0);
+  const bool middleClick = input->PressedOnceMouseButton(1);
   const bool rightClick = input->PressedOnceMouseButton(2);
 
-  if (m_ragdollEditSelectionMode == 0 && leftShiftDown && leftClick && m_ragdollEditSelectedCapsule >= 0) {
-    int pickedParentCapsule = -1;
-    if (PickRagdollEditCapsule(static_cast<float>(input->mouseX), static_cast<float>(input->mouseY), 18.0f, pickedParentCapsule) &&
-        pickedParentCapsule != m_ragdollEditSelectedCapsule) {
-      SetRagdollCapsuleParent(m_ragdollEditSelectedCapsule, pickedParentCapsule);
+  if (m_ragdollBoneSelectionActive) {
+    m_ragdollEditSelectionMode = kRagdollSelectBones;
+    m_ragdollEditGizmoMode = kRagdollToolSelect;
+    m_skeletonEditDragging = false;
+    m_ragdollEditHandleDragging = false;
+    m_ragdollEditGizmoDragging = false;
+    m_ragdollEditJointDragging = false;
+    m_ragdollEditGizmoAxis = -1;
+    m_ragdollEditJointAxis = -1;
+
+    if (leftClick) {
+      m_ragdollBoneMarqueeDragging = true;
+      m_ragdollBoneMarqueeStartX = static_cast<float>(input->mouseX);
+      m_ragdollBoneMarqueeStartY = static_cast<float>(input->mouseY);
+      m_ragdollBoneMarqueeCurrentX = m_ragdollBoneMarqueeStartX;
+      m_ragdollBoneMarqueeCurrentY = m_ragdollBoneMarqueeStartY;
+      return true;
+    }
+
+    if (m_ragdollBoneMarqueeDragging && input->PressedMouseButton(0)) {
+      m_ragdollBoneMarqueeCurrentX = static_cast<float>(input->mouseX);
+      m_ragdollBoneMarqueeCurrentY = static_cast<float>(input->mouseY);
+      return true;
+    }
+
+    if (m_ragdollBoneMarqueeDragging && !input->PressedMouseButton(0)) {
+      m_ragdollBoneMarqueeDragging = false;
+      m_ragdollBoneMarqueeCurrentX = static_cast<float>(input->mouseX);
+      m_ragdollBoneMarqueeCurrentY = static_cast<float>(input->mouseY);
+      const float dxSelect = m_ragdollBoneMarqueeCurrentX - m_ragdollBoneMarqueeStartX;
+      const float dySelect = m_ragdollBoneMarqueeCurrentY - m_ragdollBoneMarqueeStartY;
+
+      m_ragdollBoneSelectionPending.clear();
+      if (std::fabs(dxSelect) < 5.0f && std::fabs(dySelect) < 5.0f) {
+        const int picked = PickSkeletonEditBone(m_ragdollBoneMarqueeCurrentX, m_ragdollBoneMarqueeCurrentY, 18.0f);
+        if (picked >= 0 && FindRagdollCapsuleControllingBone(picked) < 0) {
+          m_ragdollBoneSelectionPending.push_back(picked);
+          m_skeletonEditSelectedBone = picked;
+        }
+      } else {
+        PickSkeletonEditBonesInScreenRect(m_ragdollBoneMarqueeStartX,
+                                          m_ragdollBoneMarqueeStartY,
+                                          m_ragdollBoneMarqueeCurrentX,
+                                          m_ragdollBoneMarqueeCurrentY,
+                                          m_ragdollBoneSelectionPending);
+        if (!m_ragdollBoneSelectionPending.empty()) {
+          m_skeletonEditSelectedBone = m_ragdollBoneSelectionPending.front();
+        }
+      }
+      m_ragdollEditSelectedUnassignedBone = -1;
+      m_ragdollEditSelectedAffectedBone = -1;
+      return true;
+    }
+
+    return true;
+  }
+
+  if (m_ragdollEditSelectionMode == kRagdollSelectCapsules &&
+      leftAltDown && (leftClick || middleClick || rightClick) && m_ragdollEditSelectedCapsule >= 0) {
+    int pickedCapsule = -1;
+    if (PickRagdollEditCapsule(static_cast<float>(input->mouseX), static_cast<float>(input->mouseY), 18.0f, pickedCapsule) &&
+        pickedCapsule != m_ragdollEditSelectedCapsule) {
+      if (middleClick) {
+        SetRagdollCapsuleJointAtContact(m_ragdollEditSelectedCapsule, pickedCapsule);
+      } else if (leftClick) {
+        SetRagdollCapsuleJoint(m_ragdollEditSelectedCapsule, pickedCapsule);
+      } else {
+        ClearRagdollCapsuleJointBetween(m_ragdollEditSelectedCapsule, pickedCapsule);
+      }
     }
     m_skeletonEditDragging = false;
     m_ragdollEditHandleDragging = false;
     m_ragdollEditGizmoDragging = false;
+    m_ragdollEditJointDragging = false;
+    return true;
+  }
+
+  if (m_ragdollEditSelectionMode == kRagdollSelectCapsules &&
+      leftShiftDown && (leftClick || rightClick) && m_ragdollEditSelectedCapsule >= 0) {
+    int pickedParentCapsule = -1;
+    if (PickRagdollEditCapsule(static_cast<float>(input->mouseX), static_cast<float>(input->mouseY), 18.0f, pickedParentCapsule) &&
+        pickedParentCapsule != m_ragdollEditSelectedCapsule) {
+      if (leftClick) {
+        SetRagdollCapsuleParent(m_ragdollEditSelectedCapsule, pickedParentCapsule);
+      } else if (m_ragdollEditSelectedCapsule < static_cast<int>(m_ragdollParentCapsules.size()) &&
+                 m_ragdollParentCapsules[static_cast<std::size_t>(m_ragdollEditSelectedCapsule)] == pickedParentCapsule) {
+        ClearRagdollCapsuleParent(m_ragdollEditSelectedCapsule);
+      }
+    }
+    m_skeletonEditDragging = false;
+    m_ragdollEditHandleDragging = false;
+    m_ragdollEditGizmoDragging = false;
+    m_ragdollEditJointDragging = false;
     return true;
   }
 
@@ -4087,53 +5944,60 @@ bool SandboxScene::HandleSkeletonEditInput(InputManager* input, bool imguiWantsM
       m_skeletonEditDragging = false;
       m_ragdollEditHandleDragging = false;
       m_ragdollEditGizmoDragging = false;
+      m_ragdollEditJointDragging = false;
     }
     return true;
   }
 
   if (leftClick) {
-    if (m_ragdollEditSelectionMode == 0) {
+    if (m_ragdollEditSelectionMode == kRagdollSelectCapsules) {
       if (BeginRagdollEditTransformGizmoDrag(static_cast<float>(input->mouseX), static_cast<float>(input->mouseY))) {
         return true;
       }
 
       int pickedCapsule = -1;
       int pickedHandle = -1;
-      if (PickRagdollEditHandle(static_cast<float>(input->mouseX), static_cast<float>(input->mouseY), 18.0f, pickedCapsule, pickedHandle)) {
-        m_ragdollEditSelectedCapsule = pickedCapsule;
-        if (pickedCapsule >= 0 &&
-            pickedCapsule < static_cast<int>(m_ragdollParentCapsules.size()) &&
-            m_ragdollParentCapsules[static_cast<std::size_t>(pickedCapsule)] >= 0) {
-          m_ragdollEditSelectedJoint = pickedCapsule;
-        }
+      if (m_ragdollEditGizmoMode == kRagdollToolEditCapsule &&
+          PickRagdollEditHandle(static_cast<float>(input->mouseX), static_cast<float>(input->mouseY), 18.0f, pickedCapsule, pickedHandle)) {
+        SelectRagdollEditCapsule(pickedCapsule, true);
         m_ragdollEditSelectedHandle = pickedHandle;
         m_ragdollEditHandleDragging = true;
-        m_skeletonEditDragging = false;
         return true;
       }
       if (PickRagdollEditCapsule(static_cast<float>(input->mouseX), static_cast<float>(input->mouseY), 18.0f, pickedCapsule)) {
-        m_ragdollEditSelectedCapsule = pickedCapsule;
-        if (pickedCapsule >= 0 &&
-            pickedCapsule < static_cast<int>(m_ragdollParentCapsules.size()) &&
-            m_ragdollParentCapsules[static_cast<std::size_t>(pickedCapsule)] >= 0) {
-          m_ragdollEditSelectedJoint = pickedCapsule;
-        }
-        m_ragdollEditSelectedHandle = 0;
-        m_ragdollEditHandleDragging = true;
-        m_skeletonEditDragging = false;
+        SelectRagdollEditCapsule(pickedCapsule, true);
+        m_ragdollEditHandleDragging =
+            m_ragdollEditGizmoMode == kRagdollToolEditCapsule && !IsRagdollCapsuleFrozen(pickedCapsule);
+        return true;
+      }
+    } else if (m_ragdollEditSelectionMode == kRagdollSelectJoints) {
+      if (BeginRagdollEditJointGizmoDrag(static_cast<float>(input->mouseX), static_cast<float>(input->mouseY))) {
+        return true;
+      }
+      int pickedJoint = -1;
+      if (PickRagdollEditJoint(static_cast<float>(input->mouseX), static_cast<float>(input->mouseY), 18.0f, pickedJoint)) {
+        m_ragdollEditSelectedJoint = pickedJoint;
+        SelectRagdollEditCapsule(pickedJoint, true);
+        m_ragdollEditSelectedHandle = -1;
         return true;
       }
     } else {
       const int picked = PickSkeletonEditBone(static_cast<float>(input->mouseX), static_cast<float>(input->mouseY), 18.0f);
       if (picked >= 0) {
         m_skeletonEditSelectedBone = picked;
-        m_skeletonEditDragging = !m_ragdollAnimationBinding.referencePose.bones.empty();
+        m_skeletonEditDragging =
+            m_ragdollEditGizmoMode == kRagdollToolMove && !m_ragdollAnimationBinding.referencePose.bones.empty();
         return true;
       }
     }
   }
 
-  if (m_ragdollEditHandleDragging && m_ragdollEditSelectedCapsule >= 0 && m_ragdollEditSelectedHandle >= 0 && input->PressedMouseButton(0)) {
+  if (m_ragdollEditHandleDragging &&
+      m_ragdollEditSelectionMode == kRagdollSelectCapsules &&
+      m_ragdollEditGizmoMode == kRagdollToolEditCapsule &&
+      m_ragdollEditSelectedCapsule >= 0 &&
+      m_ragdollEditSelectedHandle >= 0 &&
+      input->PressedMouseButton(0)) {
     const float dragScale = (std::max)(0.001f, m_orbitDist) * 0.0015f;
     XVECTOR3 worldDelta = Cam.Right * (static_cast<float>(input->xDelta) * dragScale);
     worldDelta += Cam.Up * (-static_cast<float>(input->yDelta) * dragScale);
@@ -4162,27 +6026,70 @@ void SandboxScene::DrawRagdollCapsuleEditPanel(t850::DevGuiContext& gui) {
 
   auto& bones = m_ragdollAnimationBinding.referencePose.bones;
   EnsureRagdollControlledBones();
+  EnsureRagdollFreezeState();
   if (m_ragdollEditSavePath.empty()) {
     m_ragdollEditSavePath = BuildRagdollEditSavePath();
   }
 
-  ImGui::Text("Viewport selection:");
-  ImGui::SameLine();
-  if (ImGui::RadioButton("Capsules/Joints", m_ragdollEditSelectionMode == 0)) {
-    m_ragdollEditSelectionMode = 0;
+  auto cancelRagdollDrags = [&]() {
     m_skeletonEditDragging = false;
-  }
-  ImGui::SameLine();
-  if (ImGui::RadioButton("Bones", m_ragdollEditSelectionMode == 1)) {
-    m_ragdollEditSelectionMode = 1;
     m_ragdollEditHandleDragging = false;
     m_ragdollEditGizmoDragging = false;
+    m_ragdollEditJointDragging = false;
     m_ragdollEditGizmoAxis = -1;
+    m_ragdollEditJointAxis = -1;
+  };
+
+  ImGui::Text("Viewport selection:");
+  ImGui::SameLine();
+  if (ImGui::RadioButton("Capsules", m_ragdollEditSelectionMode == kRagdollSelectCapsules)) {
+    m_ragdollEditSelectionMode = kRagdollSelectCapsules;
+    cancelRagdollDrags();
   }
-  ImGui::TextWrapped("Normal clicks select only the active mode. Ctrl+Left/Ctrl+Right still add or remove bones from the selected capsule.");
+  ImGui::SameLine();
+  if (ImGui::RadioButton("Joints", m_ragdollEditSelectionMode == kRagdollSelectJoints)) {
+    m_ragdollEditSelectionMode = kRagdollSelectJoints;
+    cancelRagdollDrags();
+  }
+  ImGui::SameLine();
+  if (ImGui::RadioButton("Bones", m_ragdollEditSelectionMode == kRagdollSelectBones)) {
+    m_ragdollEditSelectionMode = kRagdollSelectBones;
+    cancelRagdollDrags();
+  }
+
+  ImGui::Text("Viewport tool:");
+  ImGui::SameLine();
+  if (ImGui::RadioButton("Select (Q)", m_ragdollEditGizmoMode == kRagdollToolSelect)) {
+    m_ragdollEditGizmoMode = kRagdollToolSelect;
+    cancelRagdollDrags();
+  }
+  ImGui::SameLine();
+  if (ImGui::RadioButton("Edit Capsule (R)", m_ragdollEditGizmoMode == kRagdollToolEditCapsule)) {
+    m_ragdollEditGizmoMode = kRagdollToolEditCapsule;
+    cancelRagdollDrags();
+  }
+  ImGui::SameLine();
+  if (ImGui::RadioButton("Move (W)", m_ragdollEditGizmoMode == kRagdollToolMove)) {
+    m_ragdollEditGizmoMode = kRagdollToolMove;
+    cancelRagdollDrags();
+  }
+  ImGui::SameLine();
+  if (ImGui::RadioButton("Rotate (E)", m_ragdollEditGizmoMode == kRagdollToolRotate)) {
+    m_ragdollEditGizmoMode = kRagdollToolRotate;
+    cancelRagdollDrags();
+  }
+  ImGui::Text("Active tool: %s", RagdollToolName(m_ragdollEditGizmoMode));
+  ImGui::TextWrapped("Normal clicks affect only the selected target type: Capsules, Joints, or Bones. Select (Q) never transforms.");
+  ImGui::TextWrapped("Ctrl+Left on bone: add bone to selected capsule. Ctrl+Right on bone: remove bone from selected capsule.");
+  ImGui::TextWrapped("Left Shift+Left on capsule: set it as selected capsule's logical parent. Left Shift+Right on that parent: clear the parent link.");
+  ImGui::TextWrapped("Left Alt+Left on capsule: set selected capsule as child of clicked parent and create the physical joint.");
+  ImGui::TextWrapped("Left Alt+Middle on capsule: contact-snap the selected child to the clicked parent and place the joint at their meeting point. Left Alt+Right on either linked capsule: delete that joint.");
 
   if (gui.Button("Load Ragdoll Edits")) {
-    LoadRagdollEditPose();
+    if (LoadRagdollEditPose()) {
+      m_ragdollEditTopologyChangedThisFrame = true;
+      return;
+    }
   }
   ImGui::SameLine();
   if (gui.Button(m_ragdollEditDirty ? "Save Ragdoll Edits *" : "Save Ragdoll Edits")) {
@@ -4190,12 +6097,19 @@ void SandboxScene::DrawRagdollCapsuleEditPanel(t850::DevGuiContext& gui) {
   }
 
   if (gui.Button("Reset All Capsules")) {
-    ResetRagdollEditPose();
+    if (ResetRagdollEditPose()) {
+      m_ragdollEditTopologyChangedThisFrame = true;
+      return;
+    }
   }
   ImGui::SameLine();
   if (gui.Button("Reset Selected Capsule", m_ragdollEditSelectedCapsule >= 0 &&
-      m_ragdollEditSelectedCapsule < static_cast<int>(bones.size()))) {
-    ResetSelectedRagdollCapsule();
+      m_ragdollEditSelectedCapsule < static_cast<int>(bones.size()) &&
+      !IsRagdollCapsuleFrozen(m_ragdollEditSelectedCapsule))) {
+    if (ResetSelectedRagdollCapsule()) {
+      m_ragdollEditTopologyChangedThisFrame = true;
+      return;
+    }
   }
 
   if (!m_ragdollEditSavePath.empty()) {
@@ -4208,7 +6122,8 @@ void SandboxScene::DrawRagdollCapsuleEditPanel(t850::DevGuiContext& gui) {
   const int selectedBonePrimaryCapsule = selectedBoneValid ? FindRagdollCapsuleForBone(m_skeletonEditSelectedBone) : -1;
   const bool canCreateCapsule = selectedBoneValid && selectedBoneCapsule < 0 && selectedBonePrimaryCapsule < 0;
   const bool canDeleteCapsule = m_ragdollEditSelectedCapsule >= 0 &&
-      m_ragdollEditSelectedCapsule < static_cast<int>(bones.size());
+      m_ragdollEditSelectedCapsule < static_cast<int>(bones.size()) &&
+      !IsRagdollCapsuleFrozen(m_ragdollEditSelectedCapsule);
 
   if (selectedBoneValid) {
     if (selectedBoneCapsule >= 0) {
@@ -4222,11 +6137,17 @@ void SandboxScene::DrawRagdollCapsuleEditPanel(t850::DevGuiContext& gui) {
     gui.Text("Select a bone to create a capsule assignment.");
   }
   if (gui.Button("Create Capsule", canCreateCapsule)) {
-    CreateRagdollCapsuleForBone(m_skeletonEditSelectedBone);
+    if (CreateRagdollCapsuleForBone(m_skeletonEditSelectedBone)) {
+      m_ragdollEditTopologyChangedThisFrame = true;
+      return;
+    }
   }
   ImGui::SameLine();
   if (gui.Button("Delete Selected Capsule", canDeleteCapsule)) {
-    DeleteSelectedRagdollCapsule();
+    if (DeleteSelectedRagdollCapsule()) {
+      m_ragdollEditTopologyChangedThisFrame = true;
+      return;
+    }
   }
   ImGui::SameLine();
   if (gui.Button("Clear All Capsules", !bones.empty())) {
@@ -4244,6 +6165,8 @@ void SandboxScene::DrawRagdollCapsuleEditPanel(t850::DevGuiContext& gui) {
     m_ragdollPhysicsDriven = false;
     m_showPhysics = false;
     m_ragdollEditDirty = true;
+    m_ragdollEditTopologyChangedThisFrame = true;
+    return;
   }
 
   if (m_ragdollClearRequested) {
@@ -4259,7 +6182,7 @@ void SandboxScene::DrawRagdollCapsuleEditPanel(t850::DevGuiContext& gui) {
 
   if (m_ragdollEditSelectedCapsule < 0 ||
       m_ragdollEditSelectedCapsule >= static_cast<int>(bones.size())) {
-    m_ragdollEditSelectedCapsule = 0;
+    SelectRagdollEditCapsule(0, true);
   }
 
   std::vector<std::string> capsuleOptions;
@@ -4274,19 +6197,7 @@ void SandboxScene::DrawRagdollCapsuleEditPanel(t850::DevGuiContext& gui) {
   capsuleSelector.label = "Capsule";
   int selectedCapsule = m_ragdollEditSelectedCapsule;
   if (gui.Combo(capsuleSelector, selectedCapsule, &capsuleOptions)) {
-    m_ragdollEditSelectedCapsule = selectedCapsule;
-    if (selectedCapsule >= 0 &&
-        selectedCapsule < static_cast<int>(m_ragdollParentCapsules.size()) &&
-        m_ragdollParentCapsules[static_cast<std::size_t>(selectedCapsule)] >= 0) {
-      m_ragdollEditSelectedJoint = selectedCapsule;
-    }
-    m_ragdollEditRenamingCapsule = -1;
-    m_ragdollEditRenameFocusPending = false;
-    m_ragdollEditGizmoDragging = false;
-    m_ragdollEditGizmoAxis = -1;
-    if (m_ragdollEditSelectedHandle < 0) {
-      m_ragdollEditSelectedHandle = 0;
-    }
+    SelectRagdollEditCapsule(selectedCapsule, true);
   }
 
   if (m_ragdollEditSelectedCapsule < 0 ||
@@ -4302,8 +6213,13 @@ void SandboxScene::DrawRagdollCapsuleEditPanel(t850::DevGuiContext& gui) {
     gui.Text("Selected ragdoll body is not a capsule.");
     return;
   }
+  const bool capsuleFrozen = IsRagdollCapsuleFrozen(capsuleIndex);
 
   ImGui::PushID(capsuleIndex);
+  if (capsuleFrozen && m_ragdollEditRenamingCapsule == capsuleIndex) {
+    m_ragdollEditRenamingCapsule = -1;
+    m_ragdollEditRenameFocusPending = false;
+  }
   if (m_ragdollEditRenamingCapsule == capsuleIndex) {
     if (m_ragdollEditRenameFocusPending) {
       ImGui::SetKeyboardFocusHere();
@@ -4326,7 +6242,7 @@ void SandboxScene::DrawRagdollCapsuleEditPanel(t850::DevGuiContext& gui) {
     }
   } else {
     ImGui::Text("Capsule name: %s", bone.body.debugName.c_str());
-    if (ImGui::IsItemHovered() && ImGui::IsMouseDoubleClicked(0)) {
+    if (!capsuleFrozen && ImGui::IsItemHovered() && ImGui::IsMouseDoubleClicked(0)) {
       std::fill(m_ragdollEditNameBuffer.begin(), m_ragdollEditNameBuffer.end(), '\0');
       std::snprintf(m_ragdollEditNameBuffer.data(), m_ragdollEditNameBuffer.size(), "%s", bone.body.debugName.c_str());
       m_ragdollEditRenamingCapsule = capsuleIndex;
@@ -4335,21 +6251,26 @@ void SandboxScene::DrawRagdollCapsuleEditPanel(t850::DevGuiContext& gui) {
   }
   ImGui::Text("Bone: %d", bone.body.boneIndex);
   ImGui::Text("Viewport handle: %s", RagdollCapsuleHandleName(m_ragdollEditSelectedHandle));
-  ImGui::Text("Transform gizmo:");
-  ImGui::SameLine();
-  if (ImGui::RadioButton("Move (W)", m_ragdollEditGizmoMode == 0)) {
-    m_ragdollEditGizmoMode = 0;
-    m_ragdollEditGizmoDragging = false;
-    m_ragdollEditGizmoAxis = -1;
+  if (gui.Button(capsuleFrozen ? "Unfreeze Capsule" : "Freeze Capsule")) {
+    SetRagdollCapsuleFrozen(capsuleIndex, !capsuleFrozen);
   }
   ImGui::SameLine();
-  if (ImGui::RadioButton("Rotate (E)", m_ragdollEditGizmoMode == 1)) {
-    m_ragdollEditGizmoMode = 1;
-    m_ragdollEditGizmoDragging = false;
-    m_ragdollEditGizmoAxis = -1;
+  ImGui::TextUnformatted(capsuleFrozen ? "Frozen" : "Editable");
+  ImGui::Text("Flip capsule local axis:");
+  ImGui::SameLine();
+  if (gui.Button("Flip X", !capsuleFrozen)) {
+    FlipRagdollEditCapsuleLocalAxis(capsuleIndex, 0);
+  }
+  ImGui::SameLine();
+  if (gui.Button("Flip Y", !capsuleFrozen)) {
+    FlipRagdollEditCapsuleLocalAxis(capsuleIndex, 1);
+  }
+  ImGui::SameLine();
+  if (gui.Button("Flip Z", !capsuleFrozen)) {
+    FlipRagdollEditCapsuleLocalAxis(capsuleIndex, 2);
   }
   DrawRagdollEditTransformGizmo();
-  ImGui::TextWrapped("Assignment: Ctrl+Left-click a bone to add it to this capsule; Ctrl+Right-click a bone to remove it. Left Shift+Left-click another capsule to make it this capsule's parent.");
+  ImGui::TextWrapped("Capsule shortcuts: Q selects only, R edits capsule handles, W moves, E rotates. Ctrl+Left/Right edits affected bones, Left Shift+Left/Right edits the logical parent, Left Alt+Left/Right creates or removes the physical joint.");
   const int parentCapsule =
       capsuleIndex < static_cast<int>(m_ragdollParentCapsules.size())
           ? m_ragdollParentCapsules[static_cast<std::size_t>(capsuleIndex)]
@@ -4358,7 +6279,7 @@ void SandboxScene::DrawRagdollCapsuleEditPanel(t850::DevGuiContext& gui) {
     const auto& parentBone = bones[static_cast<std::size_t>(parentCapsule)];
     ImGui::Text("Parent capsule: %d %s", parentCapsule, parentBone.body.debugName.c_str());
     ImGui::SameLine();
-    if (gui.Button("Clear Parent")) {
+    if (gui.Button("Clear Parent", !capsuleFrozen)) {
       ClearRagdollCapsuleParent(capsuleIndex);
     }
   } else {
@@ -4378,12 +6299,154 @@ void SandboxScene::DrawRagdollCapsuleEditPanel(t850::DevGuiContext& gui) {
     ImGui::Text("  None");
   }
   if (capsuleIndex < static_cast<int>(m_ragdollAnimationBinding.controlledBoneIndices.size())) {
-    const auto& controlledBones = m_ragdollAnimationBinding.controlledBoneIndices[static_cast<std::size_t>(capsuleIndex)];
+    auto& controlledBones = m_ragdollAnimationBinding.controlledBoneIndices[static_cast<std::size_t>(capsuleIndex)];
     RenderSkinnedMesh* skinned = Meshes[0].GetSkinnedMesh();
     const xF::xSkeleton* skeleton = skinned ? skinned->GetAnimController().GetAnimSkeleton() : nullptr;
-    ImGui::Text("Affected bones: %zu", controlledBones.size());
-    for (int controlledBone : controlledBones) {
-      ImGui::Text("  %d %s", controlledBone, BoneNameOrEmpty(skeleton, controlledBone));
+    const int boneCount = skeleton
+        ? (std::min)(static_cast<int>(skeleton->Bones.size()), static_cast<int>(m_skeletonEditCombined.size()))
+        : 0;
+    auto containsBone = [](const std::vector<int>& boneList, int boneIndex) {
+      return std::find(boneList.begin(), boneList.end(), boneIndex) != boneList.end();
+    };
+    auto boneLabel = [&](int boneIndex) {
+      std::string label = std::to_string(boneIndex) + ": ";
+      label += BoneNameOrEmpty(skeleton, boneIndex);
+      const int ownerCapsule = FindRagdollCapsuleForBone(boneIndex);
+      if (ownerCapsule >= 0) {
+        label += "  (capsule ";
+        label += std::to_string(ownerCapsule);
+        label += ")";
+      }
+      return label;
+    };
+
+    std::vector<int> unassignedBones;
+    if (boneCount > 0) {
+      unassignedBones.reserve(static_cast<std::size_t>(boneCount));
+      for (int boneIndex = 0; boneIndex < boneCount; ++boneIndex) {
+        if (FindRagdollCapsuleControllingBone(boneIndex) < 0) {
+          unassignedBones.push_back(boneIndex);
+        }
+      }
+    }
+
+    if (!containsBone(unassignedBones, m_ragdollEditSelectedUnassignedBone)) {
+      m_ragdollEditSelectedUnassignedBone = -1;
+    }
+    if (!containsBone(controlledBones, m_ragdollEditSelectedAffectedBone)) {
+      m_ragdollEditSelectedAffectedBone = -1;
+    }
+    m_ragdollBoneSelectionPending.erase(
+        std::remove_if(m_ragdollBoneSelectionPending.begin(),
+                       m_ragdollBoneSelectionPending.end(),
+                       [&](int boneIndex) { return !containsBone(unassignedBones, boneIndex); }),
+        m_ragdollBoneSelectionPending.end());
+    if (capsuleFrozen && m_ragdollBoneSelectionActive) {
+      m_ragdollEditSelectionMode = m_ragdollBoneSelectionPreviousSelectionMode;
+      m_ragdollEditGizmoMode = m_ragdollBoneSelectionPreviousGizmoMode;
+      cancelRagdollDrags();
+      m_ragdollBoneSelectionActive = false;
+      m_ragdollBoneMarqueeDragging = false;
+      m_ragdollBoneSelectionPending.clear();
+    }
+
+    ImGui::Separator();
+    ImGui::Text("Affected bone assignment");
+    ImGui::TextWrapped("Red overlay shows this capsule's affected bones. Blue previews the single list selection. Select bones enables viewport rectangle selection; pending bones are magenta.");
+    if (!skeleton || boneCount <= 0) {
+      ImGui::Text("Skeleton bone data is unavailable.");
+    } else {
+      const float listHeight = (std::max)(140.0f, ImGui::GetTextLineHeightWithSpacing() * 9.0f);
+      ImGui::Columns(3, "ragdoll_bone_assignment_columns", false);
+
+      ImGui::Text("Unassigned bones (%zu)", unassignedBones.size());
+      ImGui::BeginChild("unassigned_bones", ImVec2(0.0f, listHeight), true);
+      for (int unassignedBone : unassignedBones) {
+        const std::string label = boneLabel(unassignedBone);
+        if (ImGui::Selectable(label.c_str(), m_ragdollEditSelectedUnassignedBone == unassignedBone)) {
+          m_ragdollEditSelectedUnassignedBone = unassignedBone;
+          m_ragdollEditSelectedAffectedBone = -1;
+        }
+      }
+      ImGui::EndChild();
+
+      ImGui::NextColumn();
+      ImGui::Spacing();
+      const bool canAddBone = !capsuleFrozen && !m_ragdollBoneSelectionActive && m_ragdollEditSelectedUnassignedBone >= 0;
+      if (gui.Button("Add ->", canAddBone)) {
+        const int boneToAdd = m_ragdollEditSelectedUnassignedBone;
+        if (AddControlledBoneToSelectedCapsule(boneToAdd)) {
+          m_ragdollEditSelectedAffectedBone = boneToAdd;
+          m_ragdollEditSelectedUnassignedBone = -1;
+        }
+      }
+      const bool canRemoveBone = !capsuleFrozen && m_ragdollEditSelectedAffectedBone >= 0;
+      if (gui.Button("<- Remove", canRemoveBone)) {
+        const int boneToRemove = m_ragdollEditSelectedAffectedBone;
+        if (RemoveControlledBoneFromSelectedCapsule(boneToRemove)) {
+          m_ragdollEditSelectedUnassignedBone = boneToRemove;
+          m_ragdollEditSelectedAffectedBone = -1;
+        }
+      }
+      ImGui::Spacing();
+      if (!m_ragdollBoneSelectionActive) {
+        if (gui.Button("Select bones", !capsuleFrozen)) {
+          m_ragdollBoneSelectionPreviousSelectionMode = m_ragdollEditSelectionMode;
+          m_ragdollBoneSelectionPreviousGizmoMode = m_ragdollEditGizmoMode;
+          m_ragdollBoneSelectionActive = true;
+          m_ragdollBoneMarqueeDragging = false;
+          m_ragdollBoneSelectionPending.clear();
+          m_ragdollEditSelectedUnassignedBone = -1;
+          m_ragdollEditSelectedAffectedBone = -1;
+          m_ragdollEditSelectionMode = kRagdollSelectBones;
+          m_ragdollEditGizmoMode = kRagdollToolSelect;
+          m_showSkeleton = true;
+          cancelRagdollDrags();
+        }
+      } else {
+        ImGui::Text("Viewport selected: %zu", m_ragdollBoneSelectionPending.size());
+        const bool canAddSelectedBones = !capsuleFrozen && !m_ragdollBoneSelectionPending.empty();
+        if (gui.Button("Add selected bones", canAddSelectedBones)) {
+          int lastAddedBone = -1;
+          const std::vector<int> bonesToAdd = m_ragdollBoneSelectionPending;
+          for (int boneToAdd : bonesToAdd) {
+            if (AddControlledBoneToSelectedCapsule(boneToAdd)) {
+              lastAddedBone = boneToAdd;
+            }
+          }
+          m_ragdollEditSelectionMode = m_ragdollBoneSelectionPreviousSelectionMode;
+          m_ragdollEditGizmoMode = m_ragdollBoneSelectionPreviousGizmoMode;
+          cancelRagdollDrags();
+          m_ragdollBoneSelectionActive = false;
+          m_ragdollBoneMarqueeDragging = false;
+          m_ragdollBoneSelectionPending.clear();
+          if (lastAddedBone >= 0) {
+            m_ragdollEditSelectedAffectedBone = lastAddedBone;
+          }
+        }
+        if (gui.Button("Cancel")) {
+          m_ragdollEditSelectionMode = m_ragdollBoneSelectionPreviousSelectionMode;
+          m_ragdollEditGizmoMode = m_ragdollBoneSelectionPreviousGizmoMode;
+          cancelRagdollDrags();
+          m_ragdollBoneSelectionActive = false;
+          m_ragdollBoneMarqueeDragging = false;
+          m_ragdollBoneSelectionPending.clear();
+        }
+        ImGui::TextWrapped("Drag in the viewport to marquee-select unassigned bones. Click empty space to clear the magenta selection.");
+      }
+
+      ImGui::NextColumn();
+      ImGui::Text("Affected bones (%zu)", controlledBones.size());
+      ImGui::BeginChild("affected_bones", ImVec2(0.0f, listHeight), true);
+      for (int affectedBone : controlledBones) {
+        const std::string label = boneLabel(affectedBone);
+        if (ImGui::Selectable(label.c_str(), m_ragdollEditSelectedAffectedBone == affectedBone)) {
+          m_ragdollEditSelectedAffectedBone = affectedBone;
+          m_ragdollEditSelectedUnassignedBone = -1;
+        }
+      }
+      ImGui::EndChild();
+      ImGui::Columns(1);
     }
   }
 
@@ -4399,6 +6462,9 @@ void SandboxScene::DrawRagdollCapsuleEditPanel(t850::DevGuiContext& gui) {
   bool transformChanged = false;
   bool rebuildRagdoll = false;
   const float moveStep = (std::max)(0.001f, m_modelRadius * 0.0005f);
+  if (capsuleFrozen) {
+    ImGui::BeginDisabled();
+  }
   if (ImGui::DragFloat3("Local translate", translationValues, moveStep, 0.0f, 0.0f, "%.4f")) {
     transformChanged = true;
   }
@@ -4417,8 +6483,11 @@ void SandboxScene::DrawRagdollCapsuleEditPanel(t850::DevGuiContext& gui) {
   if (ImGui::DragFloat("Twist limit", &twistLimitDeg, 0.5f, 0.0f, 180.0f, "%.1f deg")) {
     rebuildRagdoll = true;
   }
+  if (capsuleFrozen) {
+    ImGui::EndDisabled();
+  }
 
-  if (transformChanged || rebuildRagdoll) {
+  if (!capsuleFrozen && (transformChanged || rebuildRagdoll)) {
     translation = {translationValues[0], translationValues[1], translationValues[2]};
     rotation = {rotationValues[0], rotationValues[1], rotationValues[2]};
     local = MatrixFromTranslationEulerDegreesXYZ(translation, rotation);
@@ -4441,7 +6510,9 @@ void SandboxScene::DrawRagdollCapsuleEditPanel(t850::DevGuiContext& gui) {
 void SandboxScene::DrawRagdollJointEditPanel(t850::DevGuiContext& gui) {
   ImGui::Separator();
   gui.Text("Ragdoll Joints");
-  ImGui::TextWrapped("Self collision: enabled between capsule bodies in the same ragdoll, including parent/child pairs. A single capsule body never collides with itself; parent/child links are also held by SwingTwist constraints.");
+  ImGui::TextWrapped("Self collision: enabled between capsule bodies in the same ragdoll, including parent/child pairs. A single capsule body never collides with itself.");
+  ImGui::TextWrapped("Joint properties: anchor, type, swing aperture, twist angle, and child constraint frame direction. W moves the selected joint anchor; E rotates the child frame around the anchor.");
+  ImGui::TextWrapped("Joint shortcuts: Left Alt+Left-click another capsule makes the selected capsule the child, the clicked capsule the parent, and creates the physical joint. Left Alt+Middle-click also contact-snaps the child to the parent and anchors the joint at their meeting point. Left Alt+Right-click a linked capsule removes that joint.");
 
   auto& bones = m_ragdollAnimationBinding.referencePose.bones;
   if (bones.empty()) {
@@ -4449,15 +6520,15 @@ void SandboxScene::DrawRagdollJointEditPanel(t850::DevGuiContext& gui) {
     return;
   }
 
-  EnsureRagdollParentCapsules();
+  EnsureRagdollJointState();
+  EnsureRagdollFreezeState();
   std::vector<int> jointChildren;
   std::vector<std::string> jointOptions;
-  jointChildren.reserve(m_ragdollParentCapsules.size());
-  jointOptions.reserve(m_ragdollParentCapsules.size());
-  for (int childCapsule = 0; childCapsule < static_cast<int>(m_ragdollParentCapsules.size()); ++childCapsule) {
-    const int parentCapsule = m_ragdollParentCapsules[static_cast<std::size_t>(childCapsule)];
-    if (childCapsule >= static_cast<int>(bones.size()) ||
-        parentCapsule < 0 ||
+  jointChildren.reserve(bones.size());
+  jointOptions.reserve(bones.size());
+  for (int childCapsule = 0; childCapsule < static_cast<int>(bones.size()); ++childCapsule) {
+    const int parentCapsule = GetRagdollEffectiveJointParentCapsule(childCapsule);
+    if (parentCapsule < 0 ||
         parentCapsule >= static_cast<int>(bones.size()) ||
         parentCapsule == childCapsule) {
       continue;
@@ -4470,7 +6541,7 @@ void SandboxScene::DrawRagdollJointEditPanel(t850::DevGuiContext& gui) {
   }
 
   if (jointChildren.empty()) {
-    ImGui::TextWrapped("No capsule parent links are assigned yet. Shift+Left-click another capsule while one is selected to create a joint.");
+    ImGui::TextWrapped("No joints are assigned yet. Select a capsule, then Left Alt+Left-click another capsule to create one.");
     m_ragdollEditSelectedJoint = -1;
     return;
   }
@@ -4484,47 +6555,86 @@ void SandboxScene::DrawRagdollJointEditPanel(t850::DevGuiContext& gui) {
     return -1;
   };
 
-  int optionIndex = findJointOption(m_ragdollEditSelectedJoint);
-  if (optionIndex < 0 && findJointOption(m_ragdollEditSelectedCapsule) >= 0) {
-    optionIndex = findJointOption(m_ragdollEditSelectedCapsule);
-  }
-  if (optionIndex < 0) {
-    optionIndex = 0;
-  }
-  m_ragdollEditSelectedJoint = jointChildren[static_cast<std::size_t>(optionIndex)];
+  const int selectedCapsuleJointOption = findJointOption(m_ragdollEditSelectedCapsule);
+  int optionIndex = selectedCapsuleJointOption >= 0
+      ? selectedCapsuleJointOption
+      : findJointOption(m_ragdollEditSelectedJoint);
 
   t850::SelectorDesc jointSelector;
   jointSelector.name = "ragdoll_edit_joint";
   jointSelector.label = "Joint";
-  int selectedOption = optionIndex;
+  int selectedOption = optionIndex >= 0 ? optionIndex : 0;
   if (gui.Combo(jointSelector, selectedOption, &jointOptions) &&
       selectedOption >= 0 &&
       selectedOption < static_cast<int>(jointChildren.size())) {
     m_ragdollEditSelectedJoint = jointChildren[static_cast<std::size_t>(selectedOption)];
-    m_ragdollEditSelectedCapsule = m_ragdollEditSelectedJoint;
-    m_ragdollEditSelectedHandle = 0;
-    m_ragdollEditGizmoDragging = false;
-    m_ragdollEditGizmoAxis = -1;
+    SelectRagdollEditCapsule(m_ragdollEditSelectedJoint, true);
+    optionIndex = selectedOption;
   }
+  if (optionIndex < 0) {
+    m_ragdollEditSelectedJoint = -1;
+    DrawRagdollJointGizmos(true);
+    ImGui::TextWrapped("Selected capsule has no joint. Choose an existing joint from the list to edit it.");
+    return;
+  }
+  m_ragdollEditSelectedJoint = jointChildren[static_cast<std::size_t>(optionIndex)];
 
-  DrawRagdollJointGizmos();
+  DrawRagdollJointGizmos(true);
 
   const int childCapsule = m_ragdollEditSelectedJoint;
   if (childCapsule < 0 ||
       childCapsule >= static_cast<int>(bones.size()) ||
-      childCapsule >= static_cast<int>(m_ragdollParentCapsules.size())) {
+      childCapsule >= static_cast<int>(m_ragdollJointParentCapsules.size())) {
     return;
   }
-  const int parentCapsule = m_ragdollParentCapsules[static_cast<std::size_t>(childCapsule)];
+  const int parentCapsule = GetRagdollEffectiveJointParentCapsule(childCapsule);
   if (parentCapsule < 0 || parentCapsule >= static_cast<int>(bones.size())) {
     return;
   }
 
   auto& childBone = bones[static_cast<std::size_t>(childCapsule)];
   const auto& parentBone = bones[static_cast<std::size_t>(parentCapsule)];
+  const bool jointFrozen = IsRagdollJointFrozen(childCapsule);
   ImGui::Text("Parent capsule: %d %s", parentCapsule, parentBone.body.debugName.c_str());
   ImGui::Text("Child capsule: %d %s", childCapsule, childBone.body.debugName.c_str());
+  ImGui::Text("Joint type: %s", RagdollJointTypeName(childBone.jointType));
+  ImGui::Text("Joint gizmo: %s",
+              m_ragdollEditGizmoMode == kRagdollToolMove ? "Move anchor (W)" :
+              m_ragdollEditGizmoMode == kRagdollToolRotate ? "Rotate child frame (E)" :
+              "Select only (Q)");
   ImGui::Text("Constraint axes: child +Y is twist direction; child +X is plane direction.");
+  if (gui.Button(jointFrozen ? "Unfreeze Joint" : "Freeze Joint")) {
+    SetRagdollJointFrozen(childCapsule, !jointFrozen);
+  }
+  ImGui::SameLine();
+  ImGui::TextUnformatted(jointFrozen ? "Frozen" : "Editable");
+  ImGui::Text("Flip joint local axis:");
+  ImGui::SameLine();
+  if (gui.Button("Flip X", !jointFrozen)) {
+    FlipRagdollEditJointLocalAxis(childCapsule, 0);
+  }
+  ImGui::SameLine();
+  if (gui.Button("Flip Y", !jointFrozen)) {
+    FlipRagdollEditJointLocalAxis(childCapsule, 1);
+  }
+  ImGui::SameLine();
+  if (gui.Button("Flip Z", !jointFrozen)) {
+    FlipRagdollEditJointLocalAxis(childCapsule, 2);
+  }
+
+  std::vector<std::string> jointTypeOptions = {"Swing/Twist", "Fixed"};
+  int jointTypeOption = RagdollJointTypeToInt(childBone.jointType);
+  t850::SelectorDesc jointTypeSelector;
+  jointTypeSelector.name = "ragdoll_joint_type";
+  jointTypeSelector.label = "Type";
+  if (jointFrozen) {
+    ImGui::BeginDisabled();
+  }
+  if (gui.Combo(jointTypeSelector, jointTypeOption, &jointTypeOptions) && !jointFrozen) {
+    childBone.jointType = RagdollJointTypeFromInt(jointTypeOption);
+    m_ragdollEditDirty = true;
+    m_ragdollEditRebuildRequested = true;
+  }
 
   XVECTOR3 joint;
   XVECTOR3 parentCenter;
@@ -4535,19 +6645,32 @@ void SandboxScene::DrawRagdollJointEditPanel(t850::DevGuiContext& gui) {
   float jointSize = 0.0f;
   if (GetRagdollJointVisualFrame(childCapsule, joint, parentCenter, childCenter, parentTwist, childTwist, childPlane, jointSize)) {
     ImGui::Text("Joint anchor: %.3f, %.3f, %.3f", joint.x, joint.y, joint.z);
+    float anchorValues[3] = {joint.x, joint.y, joint.z};
+    if (ImGui::DragFloat3("Joint anchor world", anchorValues, (std::max)(0.001f, m_modelRadius * 0.001f), 0.0f, 0.0f, "%.3f") &&
+        !jointFrozen) {
+      SetRagdollEditJointWorldPosition(childCapsule, XVECTOR3(anchorValues[0], anchorValues[1], anchorValues[2], 1.0f));
+      m_ragdollEditRebuildRequested = true;
+    }
   }
 
   float swingApertureDeg = Rad2Deg(childBone.swingLimitRadians);
   float twistAngleDeg = Rad2Deg(childBone.twistLimitRadians);
   bool changed = false;
-  if (ImGui::DragFloat("Swing aperture cone", &swingApertureDeg, 0.5f, 0.0f, 180.0f, "%.1f deg")) {
-    changed = true;
+  if (childBone.jointType == t850::PhysicsRagdollJointType::SwingTwist) {
+    if (ImGui::DragFloat("Swing aperture cone", &swingApertureDeg, 0.5f, 0.0f, 180.0f, "%.1f deg") && !jointFrozen) {
+      changed = true;
+    }
+    if (ImGui::DragFloat("Twist angle +/-", &twistAngleDeg, 0.5f, 0.0f, 180.0f, "%.1f deg") && !jointFrozen) {
+      changed = true;
+    }
+  } else {
+    ImGui::TextWrapped("Fixed joints weld translation and rotation; switch back to Swing/Twist to edit cone and twist limits.");
   }
-  if (ImGui::DragFloat("Twist angle +/-", &twistAngleDeg, 0.5f, 0.0f, 180.0f, "%.1f deg")) {
-    changed = true;
+  if (jointFrozen) {
+    ImGui::EndDisabled();
   }
 
-  if (changed) {
+  if (!jointFrozen && changed) {
     childBone.swingLimitRadians = Deg2Rad((std::max)(0.0f, (std::min)(180.0f, swingApertureDeg)));
     childBone.twistLimitRadians = Deg2Rad((std::max)(0.0f, (std::min)(180.0f, twistAngleDeg)));
     m_ragdollEditDirty = true;
@@ -4555,17 +6678,15 @@ void SandboxScene::DrawRagdollJointEditPanel(t850::DevGuiContext& gui) {
   }
 
   if (gui.Button("Select Child Capsule")) {
-    m_ragdollEditSelectedCapsule = childCapsule;
-    m_ragdollEditSelectedHandle = 0;
+    SelectRagdollEditCapsule(childCapsule, true);
   }
   ImGui::SameLine();
   if (gui.Button("Select Parent Capsule")) {
-    m_ragdollEditSelectedCapsule = parentCapsule;
-    m_ragdollEditSelectedHandle = 0;
+    SelectRagdollEditCapsule(parentCapsule, true);
   }
   ImGui::SameLine();
-  if (gui.Button("Clear Joint Parent")) {
-    ClearRagdollCapsuleParent(childCapsule);
+  if (gui.Button("Delete Joint", !jointFrozen)) {
+    ClearRagdollCapsuleJoint(childCapsule);
   }
 }
 
@@ -4695,8 +6816,11 @@ void SandboxScene::DrawSkeletonEditPanel(t850::DevGuiContext& gui) {
 
   ImGui::TextWrapped("Viewport: click inside a gray octahedral bone volume to select it. Ctrl+Left-click adds a bone to the selected capsule; Ctrl+Right-click removes it.");
   ImGui::PopID();
+  m_ragdollEditTopologyChangedThisFrame = false;
   DrawRagdollCapsuleEditPanel(gui);
-  DrawRagdollJointEditPanel(gui);
+  if (!m_ragdollEditTopologyChangedThisFrame) {
+    DrawRagdollJointEditPanel(gui);
+  }
 }
 
 void SandboxScene::DrawSkinningAuthoringPanel(t850::DevGuiContext& gui) {
@@ -5489,12 +7613,33 @@ void SandboxScene::OnDraw() {
           pFramework->pVideoDriver->SetDepthStencilState(BaseDriver::NONE);
           pFramework->pVideoDriver->SetBlendState(BaseDriver::BLEND_DEFAULT);
           const std::vector<int>* controlledBones = nullptr;
+          std::vector<int> previewBones;
+          const std::vector<int>* previewBoneList = nullptr;
+          const std::vector<int>* pendingBoneList = nullptr;
           if (m_skeletonEditMode &&
               m_ragdollEditSelectedCapsule >= 0 &&
               m_ragdollEditSelectedCapsule < static_cast<int>(m_ragdollAnimationBinding.controlledBoneIndices.size())) {
             controlledBones = &m_ragdollAnimationBinding.controlledBoneIndices[static_cast<std::size_t>(m_ragdollEditSelectedCapsule)];
+            if (m_ragdollEditSelectedUnassignedBone >= 0 &&
+                FindRagdollCapsuleControllingBone(m_ragdollEditSelectedUnassignedBone) < 0) {
+              previewBones.push_back(m_ragdollEditSelectedUnassignedBone);
+              previewBoneList = &previewBones;
+            }
+            if (m_ragdollBoneSelectionActive && !m_ragdollBoneSelectionPending.empty()) {
+              pendingBoneList = &m_ragdollBoneSelectionPending;
+            }
           }
-          skinned->DrawSkeleton(m_skeletonEditMode ? m_skeletonEditSelectedBone : -1, controlledBones);
+          int selectedSkeletonBone = m_skeletonEditMode ? m_skeletonEditSelectedBone : -1;
+          if (m_ragdollBoneSelectionActive) {
+            selectedSkeletonBone = -1;
+          } else if (previewBoneList && selectedSkeletonBone == m_ragdollEditSelectedUnassignedBone) {
+            selectedSkeletonBone = -1;
+          }
+          if (pendingBoneList &&
+              std::find(pendingBoneList->begin(), pendingBoneList->end(), selectedSkeletonBone) != pendingBoneList->end()) {
+            selectedSkeletonBone = -1;
+          }
+          skinned->DrawSkeleton(selectedSkeletonBone, controlledBones, previewBoneList, pendingBoneList);
         }
       } else if (m_showWireframe) {
         RenderMesh* mesh = static_cast<RenderMesh*>(Meshes[0].pBase);
@@ -5520,6 +7665,7 @@ void SandboxScene::OnDraw() {
         pFramework->pVideoDriver->SetDepthStencilState(BaseDriver::NONE);
         pFramework->pVideoDriver->SetBlendState(BaseDriver::BLEND_DEFAULT);
         m_physicsDebugRenderer.Draw(*engineContext->physics, VP);
+        DrawRagdollJointDebugOverlay();
       }
     }
   };
@@ -5535,7 +7681,24 @@ void SandboxScene::OnDraw() {
 #endif
 
   DrawSelectedDirectionalLightArrow();
-  if (m_skeletonEditMode && m_ragdollEditSelectedCapsule >= 0) {
+  if (m_skeletonEditMode &&
+      m_ragdollBoneSelectionActive &&
+      m_ragdollBoneMarqueeDragging &&
+      ImGui::GetCurrentContext()) {
+    ImGuiViewport* viewport = ImGui::GetMainViewport();
+    if (viewport) {
+      ImDrawList* drawList = ImGui::GetBackgroundDrawList(viewport);
+      const ImVec2 start(m_ragdollBoneMarqueeStartX, m_ragdollBoneMarqueeStartY);
+      const ImVec2 current(m_ragdollBoneMarqueeCurrentX, m_ragdollBoneMarqueeCurrentY);
+      drawList->AddRectFilled(start, current, IM_COL32(255, 0, 255, 36));
+      drawList->AddRect(start, current, IM_COL32(255, 0, 255, 220), 0.0f, 0, 1.6f);
+    }
+  }
+  if (m_skeletonEditMode &&
+      m_ragdollEditSelectionMode == kRagdollSelectCapsules &&
+      m_ragdollEditGizmoMode == kRagdollToolEditCapsule &&
+      m_ragdollEditSelectedCapsule >= 0 &&
+      !IsRagdollCapsuleFrozen(m_ragdollEditSelectedCapsule)) {
     std::array<XVECTOR3, 7> capsuleHandles;
     if (BuildRagdollEditHandlePoints(m_ragdollEditSelectedCapsule, capsuleHandles)) {
       pFramework->pVideoDriver->SetDepthStencilState(BaseDriver::NONE);

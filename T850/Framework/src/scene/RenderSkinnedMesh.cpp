@@ -774,7 +774,7 @@ namespace t850 {
       if (endpointBoneIndex < 0 || endpointBoneIndex >= n) {
         continue;
       }
-      if (!isHighlighted(boneIndex) && !isHighlighted(endpointBoneIndex)) {
+      if (!isHighlighted(endpointBoneIndex)) {
         continue;
       }
 
@@ -906,7 +906,10 @@ namespace t850 {
     }
   }
 
-  void RenderSkinnedMesh::DrawSkeleton(int selectedBone, const std::vector<int>* controlledBones) {
+  void RenderSkinnedMesh::DrawSkeleton(int selectedBone,
+                                       const std::vector<int>* controlledBones,
+                                       const std::vector<int>* previewBones,
+                                       const std::vector<int>* pendingBones) {
     if (!m_hasSkin || !m_skelIB || !m_skelVB || !m_lineRenderer.IsReady() || m_skelIndexCount == 0)
       return;
 
@@ -933,6 +936,28 @@ namespace t850 {
       m_lineRenderer.DrawLines(transform,
                                cam->VP,
                                XVECTOR3(1.0f, 0.0f, 0.0f, 1.0f),
+                               m_skelSelectedVB,
+                               m_skelSelectedIB,
+                               m_skelSelectedIndexCount,
+                               sizeof(float) * 4,
+                               IndexBufferFormat::R16);
+    }
+
+    if (previewBones && UpdateHighlightedSkeletonPositions(*previewBones)) {
+      m_lineRenderer.DrawLines(transform,
+                               cam->VP,
+                               XVECTOR3(0.0f, 0.35f, 1.0f, 1.0f),
+                               m_skelSelectedVB,
+                               m_skelSelectedIB,
+                               m_skelSelectedIndexCount,
+                               sizeof(float) * 4,
+                               IndexBufferFormat::R16);
+    }
+
+    if (pendingBones && UpdateHighlightedSkeletonPositions(*pendingBones)) {
+      m_lineRenderer.DrawLines(transform,
+                               cam->VP,
+                               XVECTOR3(1.0f, 0.0f, 1.0f, 1.0f),
                                m_skelSelectedVB,
                                m_skelSelectedIB,
                                m_skelSelectedIndexCount,

@@ -17,6 +17,7 @@
 #include <Config.h>
 
 #include <array>
+#include <cstdint>
 #include <string>
 #include <vector>
 
@@ -131,10 +132,16 @@ public:
   t850::TextRenderer m_debugText;
   t850::WireframeSphere m_debugSphere;
   t850::LineRenderer m_lightArrowRenderer;
+  t850::LineRenderer m_ragdollJointRenderer;
   t850::PhysicsDebugRenderer m_physicsDebugRenderer;
   t850::VertexBuffer* m_lightArrowVB = nullptr;
   t850::IndexBuffer* m_lightArrowIB = nullptr;
   unsigned m_lightArrowIndexCount = 0;
+  t850::VertexBuffer* m_ragdollJointVB = nullptr;
+  t850::IndexBuffer* m_ragdollJointIB = nullptr;
+  unsigned m_ragdollJointVertexCapacity = 0;
+  unsigned m_ragdollJointIndexCapacity = 0;
+  unsigned m_ragdollJointIndexCount = 0;
   bool m_showCullStats = false;
   bool m_showAABBs = false;
   bool m_showWireframe = false;
@@ -153,6 +160,7 @@ public:
   t850::PhysicsRagdollAnimationBinding m_ragdollGeneratedBinding;
   t850::PhysicsRagdollDesc m_ragdollAnimationPose;
   std::vector<int> m_ragdollParentCapsules;
+  std::vector<int> m_ragdollJointParentCapsules;
   std::vector<t850::PhysicsBodyState> m_ragdollPhysicsStates;
   std::vector<int> m_ragdollPhysicsBoneIndices;
   std::vector<XMATRIX44> m_ragdollPhysicsCombinedMatrices;
@@ -161,25 +169,47 @@ public:
   bool m_ragdollPhysicsDriven = false;
   bool m_ragdollDriveLogEmitted = false;
   bool m_ragdollPhysicsLogEmitted = false;
+  bool m_ragdollFloorRuntimeDiagEmitted = false;
   bool m_ragdollEditDirty = false;
   bool m_ragdollEditHandleDragging = false;
   bool m_ragdollEditGizmoDragging = false;
+  bool m_ragdollEditJointDragging = false;
   bool m_ragdollClearRequested = false;
   bool m_ragdollEditRebuildRequested = false;
+  bool m_ragdollEditTopologyChangedThisFrame = false;
   int m_ragdollEditSelectedCapsule = -1;
   int m_ragdollEditSelectedJoint = -1;
-  int m_ragdollEditSelectionMode = 0; // 0=capsules/joints, 1=bones
+  int m_ragdollEditSelectedUnassignedBone = -1;
+  int m_ragdollEditSelectedAffectedBone = -1;
+  bool m_ragdollBoneSelectionActive = false;
+  bool m_ragdollBoneMarqueeDragging = false;
+  float m_ragdollBoneMarqueeStartX = 0.0f;
+  float m_ragdollBoneMarqueeStartY = 0.0f;
+  float m_ragdollBoneMarqueeCurrentX = 0.0f;
+  float m_ragdollBoneMarqueeCurrentY = 0.0f;
+  std::vector<int> m_ragdollBoneSelectionPending;
+  int m_ragdollBoneSelectionPreviousSelectionMode = 0;
+  int m_ragdollBoneSelectionPreviousGizmoMode = 0;
+  int m_ragdollEditSelectionMode = 0; // 0=capsules, 1=joints, 2=bones
   int m_ragdollEditSelectedHandle = -1;
-  int m_ragdollEditGizmoMode = 0; // 0=translate, 1=rotate
+  int m_ragdollEditGizmoMode = 0; // 0=select, 1=edit capsule, 2=translate, 3=rotate
   int m_ragdollEditGizmoAxis = -1;
   float m_ragdollEditGizmoLastParameter = 0.0f;
   XVECTOR3 m_ragdollEditGizmoLastVector = XVECTOR3(1.0f, 0.0f, 0.0f, 0.0f);
   XVECTOR3 m_ragdollEditGizmoDragCenter = XVECTOR3(0.0f, 0.0f, 0.0f, 1.0f);
   XVECTOR3 m_ragdollEditGizmoDragAxis = XVECTOR3(1.0f, 0.0f, 0.0f, 0.0f);
+  int m_ragdollEditJointAxis = -1;
+  float m_ragdollEditJointLastParameter = 0.0f;
+  XVECTOR3 m_ragdollEditJointLastVector = XVECTOR3(1.0f, 0.0f, 0.0f, 0.0f);
+  XVECTOR3 m_ragdollEditJointDragCenter = XVECTOR3(0.0f, 0.0f, 0.0f, 1.0f);
+  XVECTOR3 m_ragdollEditJointDragAxis = XVECTOR3(1.0f, 0.0f, 0.0f, 0.0f);
   int m_ragdollEditRenamingCapsule = -1;
   bool m_ragdollEditRenameFocusPending = false;
   std::array<char, 128> m_ragdollEditNameBuffer{};
   std::string m_ragdollEditSavePath;
+  std::vector<uint8_t> m_ragdollFrozenCapsules;
+  std::vector<uint8_t> m_ragdollFrozenJoints;
+  std::vector<uint8_t> m_ragdollContactJoints;
   bool m_skeletonEditMode = false;
   bool m_skeletonEditWasPlaying = false;
   bool m_skeletonEditDragging = false;
@@ -209,6 +239,7 @@ public:
   void SwitchRagdollToPhysics();
   bool ResetRagdollPhysicsAndAnimation();
   void CreatePhysicsFloor(t850::JoltPhysicsSystem& physics);
+  void LogRagdollFloorDiagnostics(const char* stage);
   bool EnterSkeletonEditMode();
   void ExitSkeletonEditMode();
   void DrawSkeletonEditPanel(t850::DevGuiContext& gui);
@@ -230,11 +261,25 @@ public:
   int FindRagdollCapsuleControllingBone(int boneIndex) const;
   int FindGeneratedRagdollCapsuleForBone(int boneIndex) const;
   void EnsureRagdollControlledBones();
+  void SelectRagdollEditCapsule(int capsuleIndex, bool syncBoneSelection);
   void SyncRagdollParentCapsulesFromBoneLinks();
   void EnsureRagdollParentCapsules();
+  void EnsureRagdollJointState();
+  void EnsureRagdollFreezeState();
+  bool IsRagdollCapsuleFrozen(int capsuleIndex) const;
+  bool IsRagdollJointFrozen(int childCapsule) const;
+  void SetRagdollCapsuleFrozen(int capsuleIndex, bool frozen);
+  void SetRagdollJointFrozen(int childCapsule, bool frozen);
+  int GetRagdollEffectiveJointParentCapsule(int childCapsule) const;
+  bool UpdateRagdollJointOffsetFromWorld(int childCapsule);
   bool ApplyRagdollParentCapsuleLinks();
   bool SetRagdollCapsuleParent(int childCapsule, int parentCapsule);
   bool ClearRagdollCapsuleParent(int childCapsule);
+  bool SetRagdollCapsuleJoint(int childCapsule, int parentCapsule);
+  bool SetRagdollCapsuleJointAtContact(int childCapsule, int parentCapsule);
+  bool ComputeRagdollCapsuleContactAnchor(int childCapsule, int parentCapsule, XVECTOR3& outAnchor);
+  bool ClearRagdollCapsuleJoint(int childCapsule);
+  bool ClearRagdollCapsuleJointBetween(int capsuleA, int capsuleB);
   bool AddControlledBoneToSelectedCapsule(int boneIndex);
   bool RemoveControlledBoneFromSelectedCapsule(int boneIndex);
   bool ClearRagdollCapsules();
@@ -246,9 +291,14 @@ public:
   bool SetRagdollEditCapsuleWorldTransform(int capsuleIndex, const XMATRIX44& bodyWorld, bool rebuildRagdoll);
   bool MoveRagdollEditCapsuleByWorldDelta(int capsuleIndex, const XVECTOR3& worldDelta, bool rebuildRagdoll);
   bool RotateRagdollEditCapsuleWorld(int capsuleIndex, const XVECTOR3& axisWorld, float angleRadians, bool rebuildRagdoll);
+  bool FlipRagdollEditCapsuleLocalAxis(int capsuleIndex, int axisIndex);
   bool ApplyRagdollEditPose(bool rebuildRagdoll);
   bool RecreateRagdollFromPose(const t850::PhysicsRagdollDesc& pose);
   bool GetCurrentRagdollEditCapsuleWorld(int capsuleIndex, XMATRIX44& outWorld);
+  bool SetRagdollEditJointWorldPosition(int childCapsule, const XVECTOR3& worldPosition);
+  bool MoveRagdollEditJointByWorldDelta(int childCapsule, const XVECTOR3& worldDelta);
+  bool RotateRagdollEditJointWorld(int childCapsule, const XVECTOR3& axisWorld, float angleRadians);
+  bool FlipRagdollEditJointLocalAxis(int childCapsule, int axisIndex);
   bool GetRagdollJointVisualFrame(int childCapsule,
                                   XVECTOR3& outJoint,
                                   XVECTOR3& outParentCenter,
@@ -257,7 +307,15 @@ public:
                                   XVECTOR3& outChildTwistAxis,
                                   XVECTOR3& outChildPlaneAxis,
                                   float& outSize);
-  void DrawRagdollJointGizmos();
+  bool GetRagdollJointGizmoFrame(int childCapsule, XVECTOR3& outCenter, std::array<XVECTOR3, 3>& outAxes, float& outSize);
+  bool PickRagdollEditJoint(float mouseX, float mouseY, float thresholdPixels, int& outChildCapsule);
+  bool PickRagdollEditJointGizmo(float mouseX, float mouseY, int& outAxis);
+  bool BeginRagdollEditJointGizmoDrag(float mouseX, float mouseY);
+  bool DragRagdollEditJointGizmo(float mouseX, float mouseY);
+  void DrawRagdollJointGizmos(bool editable);
+  void ReleaseRagdollJointDebugBuffers();
+  bool UploadRagdollJointDebugGeometry(const std::vector<float>& vertices, const std::vector<unsigned int>& indices);
+  void DrawRagdollJointDebugOverlay();
   bool GetRagdollEditGizmoFrame(int capsuleIndex, XVECTOR3& outCenter, std::array<XVECTOR3, 3>& outAxes, float& outSize);
   bool BuildRagdollEditHandlePoints(int capsuleIndex, std::array<XVECTOR3, 7>& outPoints);
   bool PickRagdollEditHandle(float mouseX, float mouseY, float thresholdPixels, int& outCapsuleIndex, int& outHandleIndex);
@@ -267,10 +325,12 @@ public:
   bool DragRagdollEditTransformGizmo(float mouseX, float mouseY);
   void DrawRagdollEditTransformGizmo();
   bool DragRagdollEditHandle(int capsuleIndex, int handleIndex, const XVECTOR3& worldDelta);
+  bool GetRagdollAuthoringBoneWorldTransform(int boneIndex, XMATRIX44& outWorld) const;
   bool GetSkeletonEditBoneWorldTransform(int boneIndex, XMATRIX44& outWorld) const;
   int FindSkeletonEditDisplayEndpoint(int boneIndex) const;
   bool BuildSkeletonEditBoneOctahedron(int boneIndex, float widthScale, std::array<XVECTOR3, 6>& outPoints) const;
   int PickSkeletonEditBone(float mouseX, float mouseY, float thresholdPixels) const;
+  void PickSkeletonEditBonesInScreenRect(float minX, float minY, float maxX, float maxY, std::vector<int>& outBones) const;
   bool GetSkeletonEditBoneWorldPosition(int boneIndex, XVECTOR3& outWorld) const;
   bool SetSkeletonEditBoneWorldPosition(int boneIndex, const XVECTOR3& worldPosition);
   std::array<float, 3> GetSkeletonEditBoneScale(int boneIndex) const;

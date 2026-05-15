@@ -432,49 +432,162 @@ namespace t850 {
   }
 
   void D3D12Texture::UpdateFloatData(const DeviceContext& deviceContext, int w, int h, const float* data) {
-    if (!pTexResource || !m_uploadBuffer || !data) return;
-    auto* cmdList = static_cast<const D3D12DeviceContext*>(&deviceContext)->GetCommandList();
-    auto* device = reinterpret_cast<ID3D12Device*>(T8Device->GetAPIObject());
+    (void)deviceContext;
+    if (m_floatUpdateDisabled) {
+      return;
+    }
+    if (!pTexResource || !m_uploadBuffer || !data) {
+      T8_LOG_ERROR("[D3D12] UpdateFloatData skipped: missing texture, upload buffer, or source data");
+      return;
+    }
+    if (w <= 0 || h <= 0) {
+      T8_LOG_ERROR("[D3D12] UpdateFloatData skipped: invalid source dimensions %dx%d", w, h);
+      return;
+    }
+
+    auto* driver = GetD3D12Driver();
+    auto* device = T8Device ? reinterpret_cast<ID3D12Device*>(T8Device->GetAPIObject()) : nullptr;
+    auto* queue = driver ? driver->GetCmdQueue() : nullptr;
+    if (!device || !queue) {
+      T8_LOG_ERROR("[D3D12] UpdateFloatData skipped: device or command queue is unavailable");
+      return;
+    }
 
     // Get texture footprint for row pitch
     D3D12_RESOURCE_DESC texDesc = pTexResource->GetDesc();
+    if (texDesc.Dimension != D3D12_RESOURCE_DIMENSION_TEXTURE2D ||
+        texDesc.Format != DXGI_FORMAT_R32G32B32A32_FLOAT ||
+        texDesc.Width != static_cast<UINT64>(w) ||
+        texDesc.Height != static_cast<UINT>(h)) {
+      T8_LOG_ERROR("[D3D12] UpdateFloatData skipped: source %dx%d does not match texture %llux%u format=%u",
+                   w, h,
+                   static_cast<unsigned long long>(texDesc.Width),
+                   static_cast<unsigned>(texDesc.Height),
+                   static_cast<unsigned>(texDesc.Format));
+      return;
+    }
+
     D3D12_PLACED_SUBRESOURCE_FOOTPRINT layout;
     UINT numRows; UINT64 rowSize;
     device->GetCopyableFootprints(&texDesc, 0, 1, 0, &layout, &numRows, &rowSize, nullptr);
+    const UINT64 rowBytes = static_cast<UINT64>(w) * 4u * sizeof(float);
+    if (rowBytes == 0 || rowBytes > layout.Footprint.RowPitch || rowSize != rowBytes || numRows != static_cast<UINT>(h)) {
+      T8_LOG_ERROR("[D3D12] UpdateFloatData skipped: invalid copy footprint rowBytes=%llu rowSize=%llu rowPitch=%u rows=%u height=%d",
+                   static_cast<unsigned long long>(rowBytes),
+                   static_cast<unsigned long long>(rowSize),
+                   static_cast<unsigned>(layout.Footprint.RowPitch),
+                   static_cast<unsigned>(numRows),
+                   h);
+      return;
+    }
+    const UINT64 uploadSize = m_uploadBuffer->GetDesc().Width;
 
     // Copy data to upload buffer (respecting row pitch alignment)
     void* mapped = nullptr;
-    m_uploadBuffer->Map(0, nullptr, &mapped);
+    const HRESULT mapResult = m_uploadBuffer->Map(0, nullptr, &mapped);
+    if (FAILED(mapResult) || !mapped) {
+      T8_LOG_ERROR("[D3D12] UpdateFloatData skipped: upload buffer Map failed (hr=0x%08X)",
+                   static_cast<unsigned>(mapResult));
+      if (mapResult == DXGI_ERROR_DEVICE_REMOVED || mapResult == DXGI_ERROR_DEVICE_RESET) {
+        const HRESULT removedReason = device->GetDeviceRemovedReason();
+        T8_LOG_ERROR("[D3D12] Device was removed during float texture upload (reason=0x%08X); disabling this texture's updates",
+                     static_cast<unsigned>(removedReason));
+        m_floatUpdateDisabled = true;
+      }
+      return;
+    }
     for (UINT r = 0; r < numRows; r++) {
+      const UINT64 dstOffset = layout.Offset + static_cast<UINT64>(r) * layout.Footprint.RowPitch;
+      if (dstOffset + rowBytes > uploadSize) {
+        T8_LOG_ERROR("[D3D12] UpdateFloatData aborted: copy row %u exceeds upload buffer (%llu + %llu > %llu)",
+                     static_cast<unsigned>(r),
+                     static_cast<unsigned long long>(dstOffset),
+                     static_cast<unsigned long long>(rowBytes),
+                     static_cast<unsigned long long>(uploadSize));
+        m_uploadBuffer->Unmap(0, nullptr);
+        return;
+      }
       memcpy((uint8_t*)mapped + layout.Offset + r * layout.Footprint.RowPitch,
-             (const uint8_t*)data + r * w * 16, w * 16);
+             (const uint8_t*)data + static_cast<UINT64>(r) * rowBytes,
+             static_cast<size_t>(rowBytes));
     }
     m_uploadBuffer->Unmap(0, nullptr);
 
     const D3D12_RESOURCE_STATES shaderReadState =
         D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE | D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE;
 
-    // Barrier: SRV → COPY_DEST
+    ComPtr<ID3D12CommandAllocator> allocator;
+    HRESULT hr = device->CreateCommandAllocator(D3D12_COMMAND_LIST_TYPE_DIRECT, IID_PPV_ARGS(&allocator));
+    if (FAILED(hr) || !allocator) {
+      T8_LOG_ERROR("[D3D12] UpdateFloatData skipped: command allocator creation failed (hr=0x%08X)",
+                   static_cast<unsigned>(hr));
+      return;
+    }
+
+    ComPtr<ID3D12GraphicsCommandList> uploadList;
+    hr = device->CreateCommandList(0, D3D12_COMMAND_LIST_TYPE_DIRECT, allocator.Get(), nullptr, IID_PPV_ARGS(&uploadList));
+    if (FAILED(hr) || !uploadList) {
+      T8_LOG_ERROR("[D3D12] UpdateFloatData skipped: command list creation failed (hr=0x%08X)",
+                   static_cast<unsigned>(hr));
+      return;
+    }
+
     D3D12_RESOURCE_BARRIER barrier = {};
     barrier.Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
     barrier.Transition.pResource = pTexResource.Get();
     barrier.Transition.StateBefore = shaderReadState;
     barrier.Transition.StateAfter = D3D12_RESOURCE_STATE_COPY_DEST;
-    cmdList->ResourceBarrier(1, &barrier);
+    barrier.Transition.Subresource = D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES;
+    uploadList->ResourceBarrier(1, &barrier);
 
-    // Copy upload buffer to texture
     D3D12_TEXTURE_COPY_LOCATION dst = {}, src = {};
     dst.pResource = pTexResource.Get();
     dst.Type = D3D12_TEXTURE_COPY_TYPE_SUBRESOURCE_INDEX;
     src.pResource = m_uploadBuffer.Get();
     src.Type = D3D12_TEXTURE_COPY_TYPE_PLACED_FOOTPRINT;
     src.PlacedFootprint = layout;
-    cmdList->CopyTextureRegion(&dst, 0, 0, 0, &src, nullptr);
+    uploadList->CopyTextureRegion(&dst, 0, 0, 0, &src, nullptr);
 
-    // Barrier: COPY_DEST → SRV
     barrier.Transition.StateBefore = D3D12_RESOURCE_STATE_COPY_DEST;
     barrier.Transition.StateAfter = shaderReadState;
-    cmdList->ResourceBarrier(1, &barrier);
+    uploadList->ResourceBarrier(1, &barrier);
+
+    hr = uploadList->Close();
+    if (FAILED(hr)) {
+      T8_LOG_ERROR("[D3D12] UpdateFloatData skipped: upload command list close failed (hr=0x%08X)",
+                   static_cast<unsigned>(hr));
+      return;
+    }
+
+    ID3D12CommandList* lists[] = { uploadList.Get() };
+    queue->ExecuteCommandLists(1, lists);
+
+    ComPtr<ID3D12Fence> fence;
+    hr = device->CreateFence(0, D3D12_FENCE_FLAG_NONE, IID_PPV_ARGS(&fence));
+    if (FAILED(hr) || !fence) {
+      T8_LOG_ERROR("[D3D12] UpdateFloatData submitted without wait: fence creation failed (hr=0x%08X)",
+                   static_cast<unsigned>(hr));
+      return;
+    }
+
+    HANDLE eventHandle = CreateEvent(nullptr, FALSE, FALSE, nullptr);
+    if (!eventHandle) {
+      T8_LOG_ERROR("[D3D12] UpdateFloatData submitted without wait: fence event creation failed");
+      return;
+    }
+
+    hr = queue->Signal(fence.Get(), 1);
+    if (SUCCEEDED(hr) && fence->GetCompletedValue() < 1) {
+      hr = fence->SetEventOnCompletion(1, eventHandle);
+      if (SUCCEEDED(hr)) {
+        WaitForSingleObject(eventHandle, INFINITE);
+      }
+    }
+    CloseHandle(eventHandle);
+    if (FAILED(hr)) {
+      T8_LOG_ERROR("[D3D12] UpdateFloatData fence wait failed (hr=0x%08X)",
+                   static_cast<unsigned>(hr));
+    }
   }
 
 } // namespace t850

@@ -176,6 +176,10 @@ struct PhysicsRagdollBoneDesc {
   int parentBoneIndex = -1;
   PhysicsRagdollJointType jointType = PhysicsRagdollJointType::SwingTwist;
   XVECTOR3 jointWorldPosition = XVECTOR3(0.0f, 0.0f, 0.0f, 1.0f);
+  XVECTOR3 parentJointTwistAxis = XVECTOR3(0.0f, 0.0f, 0.0f, 0.0f);
+  XVECTOR3 parentJointPlaneAxis = XVECTOR3(0.0f, 0.0f, 0.0f, 0.0f);
+  XVECTOR3 childJointTwistAxis = XVECTOR3(0.0f, 0.0f, 0.0f, 0.0f);
+  XVECTOR3 childJointPlaneAxis = XVECTOR3(0.0f, 0.0f, 0.0f, 0.0f);
   float swingLimitRadians = Deg2Rad(70.0f);
   float twistLimitRadians = Deg2Rad(35.0f);
 };
@@ -191,6 +195,10 @@ struct PhysicsRagdollAnimationBinding {
   PhysicsRagdollDesc referencePose;
   std::vector<XMATRIX44> bodyFromBone;
   std::vector<XVECTOR3> jointFromBone;
+  std::vector<XVECTOR3> parentJointTwistFromBody;
+  std::vector<XVECTOR3> parentJointPlaneFromBody;
+  std::vector<XVECTOR3> childJointTwistFromBody;
+  std::vector<XVECTOR3> childJointPlaneFromBody;
   std::vector<std::vector<int>> controlledBoneIndices;
   std::vector<std::vector<XMATRIX44>> controlledBodyFromBone;
 };

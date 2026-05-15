@@ -117,6 +117,7 @@ class DayScene : public t850::SceneBase
   bool HandleAndroidVirtualControls(AInputEvent* event);
   bool AndroidVirtualControlsActive() const;
   void DrawAndroidVirtualControls(bool guiVisible);
+  void DrawAndroidPhysicsPanel(t850::DevGuiContext& gui);
   void ResetAndroidVirtualControls();
 #endif
 

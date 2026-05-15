@@ -56,6 +56,7 @@ public:
   void UpdateAndroidGuiHoldToggle();
   void LoadAndroidGuiSettings();
   void SaveAndroidGuiSettings() const;
+  void DrawAndroidPhysicsGui(t850::DevGuiContext& gui);
 #endif
 
   // Modal state (DevLayer's GUI popup) — queried by the framework to block Esc-to-quit.
@@ -84,6 +85,8 @@ public:
   std::unordered_map<void*, uintptr_t> m_debugOpaqueTextureDescriptors;
 #else
   float m_androidGuiScale = 1.6f;
+  int m_androidGuiPanelMode = 0;
+  int m_androidGuiTapSide = -1;
   int m_androidGuiTapCount = 0;
   float m_androidGuiTapWindowSecs = 0.0f;
   float m_androidGuiTapStartX = 0.0f;

@@ -2941,6 +2941,21 @@ void DayScene::SyncFromGUI(t850::GUIManager& gui) {
   }
 }
 
+#ifdef OS_ANDROID
+void DayScene::DrawAndroidPhysicsPanel(t850::DevGuiContext& gui) {
+  if (!gui.BeginSection("Physics")) {
+    return;
+  }
+
+  bool showPhysics = m_showPhysics;
+  if (ImGui::Checkbox("Physics Debug", &showPhysics)) {
+    m_showPhysics = showPhysics;
+    T8_LOG_INFO("[PHYSICS] Debug draw %s", m_showPhysics ? "enabled" : "disabled");
+  }
+  ImGui::TextWrapped("Left triple-tap opens this physics panel. Right triple-tap opens full scene controls.");
+}
+#endif
+
 void DayScene::SaveSceneState() {
   // Sync cubemap path back to descriptor before saving
   auto& selDescs = m_sceneSetup.descriptor.selectors;

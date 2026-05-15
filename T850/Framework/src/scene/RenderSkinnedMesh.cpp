@@ -1000,21 +1000,54 @@ namespace t850 {
 
   void RenderSkinnedMesh::UploadBoneTexture() {
     if (!m_hasSkin || !m_boneTexture) return;
+    if (!T8DeviceContext) {
+      T8_LOG_ERROR("[SkinnedMesh] Bone texture upload skipped: device context is unavailable");
+      return;
+    }
+    if (m_boneTexWidth <= 0 || m_boneTexData.empty()) {
+      T8_LOG_ERROR("[SkinnedMesh] Bone texture upload skipped: invalid texture backing store (%dx%d, %zu floats)",
+                   m_boneTexWidth, m_boneTexWidth, m_boneTexData.size());
+      return;
+    }
+
+    const std::size_t expectedFloats =
+        static_cast<std::size_t>(m_boneTexWidth) * static_cast<std::size_t>(m_boneTexWidth) * 4u;
+    if (m_boneTexData.size() < expectedFloats) {
+      T8_LOG_ERROR("[SkinnedMesh] Bone texture upload skipped: backing store has %zu floats, expected at least %zu",
+                   m_boneTexData.size(), expectedFloats);
+      return;
+    }
 
     // Upload bone matrices to texture
     int numBones = m_snapshotPoseActive
       ? static_cast<int>(m_snapshotBoneMatrices.size())
       : m_animController.GetNumBones();
-    int count = (numBones < kMaxBones) ? numBones : kMaxBones;
     const XMATRIX44* bones = m_snapshotPoseActive
       ? m_snapshotBoneMatrices.data()
       : m_animController.GetBoneMatrices();
+    if (numBones <= 0 || !bones) {
+      T8_LOG_ERROR("[SkinnedMesh] Bone texture upload skipped: no bone matrices are available");
+      return;
+    }
+
+    const int textureBoneCapacity = static_cast<int>(m_boneTexData.size() / 16u);
+    int count = (std::min)((std::min)(numBones, kMaxBones), textureBoneCapacity);
+    if (count <= 0) {
+      T8_LOG_ERROR("[SkinnedMesh] Bone texture upload skipped: texture cannot hold any bone matrices");
+      return;
+    }
+    if (numBones > textureBoneCapacity) {
+      T8_LOG_ERROR("[SkinnedMesh] Bone matrix count %d exceeds bone texture capacity %d; clamping upload",
+                   numBones, textureBoneCapacity);
+    }
+
+    std::fill(m_boneTexData.begin(), m_boneTexData.end(), 0.0f);
     for (int b = 0; b < count; b++) {
       int texelBase = b * 4 * 4;
-      memcpy(&m_boneTexData[texelBase],      &bones[b].m[0][0], 16);
-      memcpy(&m_boneTexData[texelBase + 4],  &bones[b].m[1][0], 16);
-      memcpy(&m_boneTexData[texelBase + 8],  &bones[b].m[2][0], 16);
-      memcpy(&m_boneTexData[texelBase + 12], &bones[b].m[3][0], 16);
+      memcpy(&m_boneTexData[texelBase],      &bones[b].m[0][0], sizeof(float) * 4u);
+      memcpy(&m_boneTexData[texelBase + 4],  &bones[b].m[1][0], sizeof(float) * 4u);
+      memcpy(&m_boneTexData[texelBase + 8],  &bones[b].m[2][0], sizeof(float) * 4u);
+      memcpy(&m_boneTexData[texelBase + 12], &bones[b].m[3][0], sizeof(float) * 4u);
     }
     m_boneTexture->UpdateFloatData(*T8DeviceContext, m_boneTexWidth, m_boneTexWidth,
                                     m_boneTexData.data());

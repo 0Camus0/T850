@@ -17,6 +17,8 @@ public:
   bool Initialize();
   void Shutdown();
   void Update(float deltaSeconds);
+  void SetSimulationSpeedScale(float scale);
+  float GetSimulationSpeedScale() const;
 
   PhysicsBodyHandle CreateBody(const PhysicsBodyDesc& desc);
   PhysicsBodyHandle CreateTriangleMeshBody(const PhysicsTriangleMeshBodyDesc& desc, PhysicsCookStats* outStats = nullptr);

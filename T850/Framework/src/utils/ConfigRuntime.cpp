@@ -477,7 +477,6 @@ void ApplyCommandLine(int argc, char** argv, Config& cfg) {
     else if (arg == "--d3d12debug") {
       cfg.flags.d3d12Debug = true;
     }
-#ifdef T8_ENABLE_PROFILER
     else if (arg == "--profile") {
       cfg.flags.profile = true;
     }
@@ -485,7 +484,6 @@ void ApplyCommandLine(int argc, char** argv, Config& cfg) {
       int value = 0;
       if (ReadIntArgument(arg, argc, argv, i, value)) cfg.profileFrames = value;
     }
-#endif
     else if (arg == "--model" && i + 1 < argc) {
       cfg.modelPath = argv[++i];
     }
@@ -589,10 +587,8 @@ void PrintHelp() {
     << "  --logLevel <error|info|debug|verbose|trace|0..4>\n"
     << "  --logFile <path>                   Write log to file\n"
     << "  --d3d12debug                       Enable D3D12 debug layer\n"
-#ifdef T8_ENABLE_PROFILER
     << "  --profile                          Enable GPU+CPU profiling\n"
     << "  --profileFrames <frames>           Frames to profile before report\n"
-#endif
     ;
 }
 

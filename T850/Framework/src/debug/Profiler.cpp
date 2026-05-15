@@ -1,23 +1,26 @@
 #include <pch.h>
 #include <debug/Profiler.h>
 
-#ifdef T8_ENABLE_PROFILER
-
 #include <video/BaseDriver.h>
 #include <utils/Log.h>
 
 #include <algorithm>
+#include <chrono>
 #include <cstring>
 #include <cstdio>
 
 #ifdef OS_WINDOWS
 #include <video/d3d12/D3D12Driver.h>
 #include <video/d3d11/D3D11Driver.h>
-#include <video/vulkan/VulkanDriver.h>
 #include <d3d12.h>
 #include <d3d11.h>
 #include <wrl/client.h>
 using Microsoft::WRL::ComPtr;
+#endif
+
+#if defined(OS_WINDOWS) || defined(OS_ANDROID)
+#include <video/vulkan/VulkanDriver.h>
+#include <video/vulkan/VulkanDeviceContext.h>
 #endif
 
 #if defined(USING_OPENGL)
@@ -66,7 +69,9 @@ struct D3D11ProfileState {
   int writeSet = 0;
   int maxQueries = 0;
 };
+#endif
 
+#if defined(OS_WINDOWS) || defined(OS_ANDROID)
 struct VulkanProfileState {
   VkQueryPool queryPool = VK_NULL_HANDLE;
   VkBuffer    readbackBuffer = VK_NULL_HANDLE;
@@ -97,6 +102,19 @@ struct GLProfileState {
   int maxQueries = 0;
 };
 
+namespace {
+  int64_t GetProfilerTicks() {
+#ifdef OS_WINDOWS
+    LARGE_INTEGER now;
+    QueryPerformanceCounter(&now);
+    return now.QuadPart;
+#else
+    return std::chrono::duration_cast<std::chrono::nanoseconds>(
+      std::chrono::steady_clock::now().time_since_epoch()).count();
+#endif
+  }
+}
+
 // ═════════════════════════════════════════════════════════════
 //  Init / Destroy
 // ═════════════════════════════════════════════════════════════
@@ -111,6 +129,8 @@ void Profiler::Init(BaseDriver* driver, int maxScopes) {
   LARGE_INTEGER freq;
   QueryPerformanceFrequency(&freq);
   m_cpuFreq = freq.QuadPart;
+#else
+  m_cpuFreq = 1000000000LL;
 #endif
 
   // Detect API
@@ -230,7 +250,7 @@ void Profiler::InitGPU_GL() {
 }
 
 void Profiler::InitGPU_Vulkan() {
-#ifdef OS_WINDOWS
+#if defined(OS_WINDOWS) || defined(OS_ANDROID)
   auto* state = new VulkanProfileState();
   state->maxQueries = m_maxScopes * 2;  // begin + end per scope
 
@@ -268,25 +288,32 @@ void Profiler::InitGPU_Vulkan() {
       std::vector<VkTimeDomainEXT> domains(domainCount);
       vkGetPhysicalDeviceCalibrateableTimeDomainsEXT(vkDrv->GetPhysicalDevice(), &domainCount, domains.data());
 
-      bool hasDevice = false, hasQPC = false;
+      bool hasDevice = false, hasCpuDomain = false;
+#ifdef OS_WINDOWS
+      constexpr VkTimeDomainEXT kCpuTimeDomain = VK_TIME_DOMAIN_QUERY_PERFORMANCE_COUNTER_EXT;
+      constexpr const char* kCpuTimeDomainName = "QPC";
+#else
+      constexpr VkTimeDomainEXT kCpuTimeDomain = VK_TIME_DOMAIN_CLOCK_MONOTONIC_EXT;
+      constexpr const char* kCpuTimeDomainName = "CLOCK_MONOTONIC";
+#endif
       for (auto d : domains) {
         if (d == VK_TIME_DOMAIN_DEVICE_EXT) hasDevice = true;
-        if (d == VK_TIME_DOMAIN_QUERY_PERFORMANCE_COUNTER_EXT) hasQPC = true;
+        if (d == kCpuTimeDomain) hasCpuDomain = true;
       }
 
-      if (hasDevice && hasQPC) {
+      if (hasDevice && hasCpuDomain) {
         VkCalibratedTimestampInfoEXT infos[2] = {};
         infos[0].sType = VK_STRUCTURE_TYPE_CALIBRATED_TIMESTAMP_INFO_EXT;
         infos[0].timeDomain = VK_TIME_DOMAIN_DEVICE_EXT;
         infos[1].sType = VK_STRUCTURE_TYPE_CALIBRATED_TIMESTAMP_INFO_EXT;
-        infos[1].timeDomain = VK_TIME_DOMAIN_QUERY_PERFORMANCE_COUNTER_EXT;
+        infos[1].timeDomain = kCpuTimeDomain;
 
         uint64_t timestamps[2];
         uint64_t maxDeviation;
         vkGetCalibratedTimestampsEXT(device, 2, infos, timestamps, &maxDeviation);
 
-        T8_LOG_INFO("[Profiler] Calibrated timestamps: GPU=%llu QPC=%llu deviation=%llu ns",
-                    timestamps[0], timestamps[1], maxDeviation);
+        T8_LOG_INFO("[Profiler] Calibrated timestamps: GPU=%llu %s=%llu deviation=%llu ns",
+                    timestamps[0], kCpuTimeDomainName, timestamps[1], maxDeviation);
         T8_LOG_INFO("[Profiler] Max deviation: %.3f us", maxDeviation * state->timestampPeriod / 1000.0);
       }
     }
@@ -303,7 +330,9 @@ void Profiler::DestroyGPU() {
 #ifdef OS_WINDOWS
   if (m_apiType == 1) delete static_cast<D3D12ProfileState*>(m_gpuState);
   if (m_apiType == 2) delete static_cast<D3D11ProfileState*>(m_gpuState);
-  if (m_apiType == 4) {
+#endif
+#if defined(OS_WINDOWS) || defined(OS_ANDROID)
+  if (m_apiType == 4 && m_gpuState) {
     auto* state = static_cast<VulkanProfileState*>(m_gpuState);
     auto* vkDrv = static_cast<VulkanDriver*>(m_driver);
     VkDevice device = vkDrv->GetDevice();
@@ -337,11 +366,13 @@ void Profiler::BeginFrame() {
 
   m_activeQueryCount = 0;
 
-#ifdef OS_WINDOWS
+#if defined(OS_WINDOWS) || defined(OS_ANDROID)
   if (m_apiType == 2) {
+#ifdef OS_WINDOWS
     // D3D11: flip write set
     auto* state = static_cast<D3D11ProfileState*>(m_gpuState);
     state->writeSet = 1 - state->writeSet;
+#endif
   }
   else if (m_apiType == 4) {
     // Vulkan: mark that query pool needs reset (flushed from VulkanDriver::BeginFrame)
@@ -358,8 +389,9 @@ void Profiler::BeginFrame() {
 void Profiler::EndFrame() {
   if (!m_initialized) return;
 
-#ifdef OS_WINDOWS
+#if defined(OS_WINDOWS) || defined(OS_ANDROID)
   if (m_apiType == 1) {
+#ifdef OS_WINDOWS
     // D3D12: save scope mappings for this frame, then resolve timestamps
     auto* state = static_cast<D3D12ProfileState*>(m_gpuState);
     int frameSlot = state->writeFrame % D3D12ProfileState::kFrameDelay;
@@ -381,6 +413,7 @@ void Profiler::EndFrame() {
         baseQuery * sizeof(uint64_t));
     }
     state->writeFrame++;
+#endif
   }
   else if (m_apiType == 4) {
     // Vulkan: save scope mappings for this frame
@@ -426,11 +459,7 @@ void Profiler::BeginScope(const char* name) {
   m_frameQueries[queryIdx].cpuOnly = false;
 
   // CPU timestamp
-#ifdef OS_WINDOWS
-  LARGE_INTEGER now;
-  QueryPerformanceCounter(&now);
-  m_frameQueries[queryIdx].cpuBegin = now.QuadPart;
-#endif
+  m_frameQueries[queryIdx].cpuBegin = GetProfilerTicks();
 
   // GPU timestamp
   BeginGPUScope(queryIdx);
@@ -445,11 +474,7 @@ void Profiler::EndScope() {
   int queryIdx = m_activeQueryCount - 1;
 
   // CPU timestamp
-#ifdef OS_WINDOWS
-  LARGE_INTEGER now;
-  QueryPerformanceCounter(&now);
-  m_frameQueries[queryIdx].cpuEnd = now.QuadPart;
-#endif
+  m_frameQueries[queryIdx].cpuEnd = GetProfilerTicks();
 
   // GPU timestamp
   EndGPUScope(queryIdx);
@@ -477,11 +502,7 @@ void Profiler::BeginCPUScope(const char* name) {
   m_frameQueries[queryIdx].scopeIndex = scopeIdx;
   m_frameQueries[queryIdx].cpuOnly = true;
 
-#ifdef OS_WINDOWS
-  LARGE_INTEGER now;
-  QueryPerformanceCounter(&now);
-  m_frameQueries[queryIdx].cpuBegin = now.QuadPart;
-#endif
+  m_frameQueries[queryIdx].cpuBegin = GetProfilerTicks();
 
   m_activeQueryCount++;
 }
@@ -492,11 +513,7 @@ void Profiler::EndCPUScope() {
 
   int queryIdx = m_activeQueryCount - 1;
 
-#ifdef OS_WINDOWS
-  LARGE_INTEGER now;
-  QueryPerformanceCounter(&now);
-  m_frameQueries[queryIdx].cpuEnd = now.QuadPart;
-#endif
+  m_frameQueries[queryIdx].cpuEnd = GetProfilerTicks();
 
   auto& fq = m_frameQueries[queryIdx];
   if (fq.scopeIndex >= 0 && fq.scopeIndex < (int)m_scopes.size()) {
@@ -517,7 +534,7 @@ void Profiler::AddDrawCall(int vertexCount) {
 }
 
 void Profiler::FlushVulkanQueryReset(void* commandBuffer) {
-#ifdef OS_WINDOWS
+#if defined(OS_WINDOWS) || defined(OS_ANDROID)
   if (m_apiType == 4 && m_gpuState) {
     auto* state = static_cast<VulkanProfileState*>(m_gpuState);
     if (state->needsReset) {
@@ -536,21 +553,25 @@ void Profiler::FlushVulkanQueryReset(void* commandBuffer) {
 // ═════════════════════════════════════════════════════════════
 
 void Profiler::BeginGPUScope(int queryIndex) {
-#ifdef OS_WINDOWS
+#if defined(OS_WINDOWS) || defined(OS_ANDROID)
   if (m_apiType == 1) {
+#ifdef OS_WINDOWS
     auto* state = static_cast<D3D12ProfileState*>(m_gpuState);
     auto* cmdList = static_cast<D3D12Driver*>(m_driver)->GetCmdList();
     int frameSlot = state->writeFrame % D3D12ProfileState::kFrameDelay;
     int slot = frameSlot * state->maxQueries + queryIndex * 2;
     cmdList->EndQuery(state->queryHeap.Get(), D3D12_QUERY_TYPE_TIMESTAMP, slot);
+#endif
   }
   else if (m_apiType == 2) {
+#ifdef OS_WINDOWS
     auto* state = static_cast<D3D11ProfileState*>(m_gpuState);
     auto* ctx = reinterpret_cast<ID3D11DeviceContext*>(
         T8DeviceContext->GetAPIObject());
     auto& qp = state->querySets[state->writeSet][queryIndex];
     ctx->Begin(qp.disjoint.Get());
     ctx->End(qp.begin.Get());
+#endif
   }
   else if (m_apiType == 4) {
     auto* state = static_cast<VulkanProfileState*>(m_gpuState);
@@ -570,15 +591,18 @@ void Profiler::BeginGPUScope(int queryIndex) {
 }
 
 void Profiler::EndGPUScope(int queryIndex) {
-#ifdef OS_WINDOWS
+#if defined(OS_WINDOWS) || defined(OS_ANDROID)
   if (m_apiType == 1) {
+#ifdef OS_WINDOWS
     auto* state = static_cast<D3D12ProfileState*>(m_gpuState);
     auto* cmdList = static_cast<D3D12Driver*>(m_driver)->GetCmdList();
     int frameSlot = state->writeFrame % D3D12ProfileState::kFrameDelay;
     int slot = frameSlot * state->maxQueries + queryIndex * 2 + 1;
     cmdList->EndQuery(state->queryHeap.Get(), D3D12_QUERY_TYPE_TIMESTAMP, slot);
+#endif
   }
   else if (m_apiType == 2) {
+#ifdef OS_WINDOWS
     auto* state = static_cast<D3D11ProfileState*>(m_gpuState);
     auto* ctx = reinterpret_cast<ID3D11DeviceContext*>(
         T8DeviceContext->GetAPIObject());
@@ -586,6 +610,7 @@ void Profiler::EndGPUScope(int queryIndex) {
     ctx->End(qp.end.Get());
     ctx->End(qp.disjoint.Get());
     qp.pending = true;
+#endif
   }
   else if (m_apiType == 4) {
     auto* state = static_cast<VulkanProfileState*>(m_gpuState);
@@ -609,8 +634,9 @@ void Profiler::EndGPUScope(int queryIndex) {
 // ═════════════════════════════════════════════════════════════
 
 void Profiler::ResolveGPUFrame() {
-#ifdef OS_WINDOWS
+#if defined(OS_WINDOWS) || defined(OS_ANDROID)
   if (m_apiType == 1 && m_gpuState) {
+#ifdef OS_WINDOWS
     auto* state = static_cast<D3D12ProfileState*>(m_gpuState);
     // Read results from kFrameDelay frames ago
     int readFrame = state->writeFrame - D3D12ProfileState::kFrameDelay;
@@ -637,8 +663,10 @@ void Profiler::ResolveGPUFrame() {
       D3D12_RANGE written = {0, 0};
       state->readbackBuffer->Unmap(0, &written);
     }
+#endif
   }
   else if (m_apiType == 2 && m_gpuState) {
+#ifdef OS_WINDOWS
     auto* state = static_cast<D3D11ProfileState*>(m_gpuState);
     auto* ctx = reinterpret_cast<ID3D11DeviceContext*>(
         T8DeviceContext->GetAPIObject());
@@ -664,6 +692,7 @@ void Profiler::ResolveGPUFrame() {
       }
       qp.pending = false;
     }
+#endif
   }
   else if (m_apiType == 4 && m_gpuState) {
     auto* state = static_cast<VulkanProfileState*>(m_gpuState);
@@ -766,5 +795,3 @@ void Profiler::Reset() {
 }
 
 } // namespace t850
-
-#endif // T8_ENABLE_PROFILER

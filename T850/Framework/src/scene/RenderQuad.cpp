@@ -105,6 +105,19 @@ namespace t850 {
       g_pBaseDriver->CreateShader(vstr, fstr, k, vsName, fsName);
     }
 
+    // Deferred: variants that either sample the shadow/SSAO factor texture or compile it out.
+    for (uint8_t p : { PassType::DEFERRED, PassType::DEFERRED_LDR }) {
+      for (int sh = 0; sh <= 1; ++sh) {
+        for (int ao = 0; ao <= 1; ++ao) {
+          ShaderKey k(sigBase.bits);
+          k.setPass(p);
+          if (sh) k.bits |= ShaderKey::SHADOWS;
+          if (ao) k.bits |= ShaderKey::SSAO;
+          g_pBaseDriver->CreateShader(vstr, fstr, k, vsName, fsName);
+        }
+      }
+    }
+
     // SHADOW_COMP: 4 toggle variants (+-SHADOWS +-SSAO), also with OMNI_SHADOWS
     for (int sh = 0; sh <= 1; sh++) {
       for (int ao = 0; ao <= 1; ao++) {
@@ -181,6 +194,10 @@ namespace t850 {
 
     // Add toggle bits based on pass and scene properties
     if (pass == PassType::SHADOW_COMP) {
+      if (pScProp->ToogleShadow) finalKey.bits |= ShaderKey::SHADOWS;
+      if (pScProp->ToogleSSAO)   finalKey.bits |= ShaderKey::SSAO;
+    }
+    else if (pass == PassType::DEFERRED || pass == PassType::DEFERRED_LDR) {
       if (pScProp->ToogleShadow) finalKey.bits |= ShaderKey::SHADOWS;
       if (pScProp->ToogleSSAO)   finalKey.bits |= ShaderKey::SSAO;
     }

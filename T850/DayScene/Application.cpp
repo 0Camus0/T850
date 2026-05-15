@@ -43,6 +43,7 @@
 #ifdef OS_ANDROID
 #  include <android/input.h>
 #  include <video/vulkan/VulkanDriver.h>
+#  include <unistd.h>
 #endif
 
 #include <algorithm>
@@ -519,24 +520,20 @@ void App::LoadScene(int id) {
 
 void App::LoadAssets()
 {
-#ifdef T8_ENABLE_PROFILER
   if (g_config.flags.profile && !t850::g_profiler) {
     t850::g_profiler = new t850::Profiler();
     t850::g_profiler->Init(pFramework->pVideoDriver);
   }
-#endif
 #ifdef T850_RENDER_TRACE
   EnsureRenderTracer(pFramework->pVideoDriver);
 #endif
 }
 
 void App::CreateAssets() {
-#ifdef T8_ENABLE_PROFILER
   if (g_config.flags.profile && !t850::g_profiler) {
     t850::g_profiler = new t850::Profiler();
     t850::g_profiler->Init(pFramework->pVideoDriver);
   }
-#endif
 #ifdef T850_RENDER_TRACE
   EnsureRenderTracer(pFramework->pVideoDriver);
 #endif
@@ -568,21 +565,17 @@ void App::CreateAssets() {
   }
 
   // Initialize profiler if requested (after driver is fully set up)
-#ifdef T8_ENABLE_PROFILER
   if (g_config.flags.profile && !t850::g_profiler) {
     t850::g_profiler = new t850::Profiler();
     t850::g_profiler->Init(pFramework->pVideoDriver);
   }
-#endif
 }
 
 void App::DestroyAssets() {
-#ifdef T8_ENABLE_PROFILER
    if (t850::g_profiler) {
      delete t850::g_profiler;
      t850::g_profiler = nullptr;
    }
-#endif
 #ifdef T850_RENDER_TRACE
    if (t850::g_renderTracer) {
      t850::g_renderTracer->Destroy();
@@ -642,9 +635,7 @@ void App::OnUpdate() {
 }
 
 void App::OnDraw() {
-#ifdef T8_ENABLE_PROFILER
   if (t850::g_profiler) t850::g_profiler->BeginFrame();
-#endif
   static int frameCount = 0;
 #ifdef T850_RENDER_TRACE
   EnsureRenderTracer(pFramework->pVideoDriver);
@@ -679,7 +670,6 @@ void App::OnDraw() {
 
   frameCount++;
 
-#ifdef T8_ENABLE_PROFILER
   if (t850::g_profiler) {
     t850::g_profiler->EndFrame();
     static bool reported = false;
@@ -697,7 +687,6 @@ void App::OnDraw() {
       _exit(0);
     }
   }
-#endif
 
   // Skip presenting the first frame (black with only text)
   if (frameCount > 1) {

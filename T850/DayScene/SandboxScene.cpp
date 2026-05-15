@@ -364,6 +364,15 @@ namespace {
     return XVECTOR3(vector.x / length, vector.y / length, vector.z / length, 0.0f);
   }
 
+  XVECTOR3 ClampVectorLength3(const XVECTOR3& vector, float maxLength) {
+    const float length = Length3(vector);
+    if (length <= 0.000001f || length <= maxLength) {
+      return XVECTOR3(vector.x, vector.y, vector.z, 0.0f);
+    }
+    const float scale = maxLength / length;
+    return XVECTOR3(vector.x * scale, vector.y * scale, vector.z * scale, 0.0f);
+  }
+
   std::string LowerName(const std::string& name) {
     std::string out;
     out.reserve(name.size());
@@ -1647,6 +1656,122 @@ namespace {
     return true;
   }
 
+  bool ClosestRaySegment(const t850::Ray& ray,
+                         const XVECTOR3& segmentStart,
+                         const XVECTOR3& segmentEnd,
+                         float& outRayT,
+                         XVECTOR3& outRayPoint,
+                         XVECTOR3& outSegmentPoint) {
+    constexpr float kEpsilon = 0.000001f;
+    const XVECTOR3 rayDirection = Normalize3(ray.direction, XVECTOR3(0.0f, 0.0f, 1.0f, 0.0f));
+    const XVECTOR3 segmentDirection = segmentEnd - segmentStart;
+    const XVECTOR3 r = ray.origin - segmentStart;
+    const float a = Dot3(rayDirection, rayDirection);
+    const float e = Dot3(segmentDirection, segmentDirection);
+    const float c = Dot3(rayDirection, r);
+
+    if (e <= kEpsilon) {
+      outRayT = (std::max)(0.0f, -c / a);
+      outRayPoint = ray.origin + rayDirection * outRayT;
+      outSegmentPoint = segmentStart;
+      outRayPoint.w = 1.0f;
+      outSegmentPoint.w = 1.0f;
+      return true;
+    }
+
+    const float b = Dot3(rayDirection, segmentDirection);
+    const float f = Dot3(segmentDirection, r);
+    const float denom = a * e - b * b;
+    float rayT = std::fabs(denom) > kEpsilon ? (b * f - c * e) / denom : 0.0f;
+    rayT = (std::max)(0.0f, rayT);
+
+    float segmentT = (b * rayT + f) / e;
+    if (segmentT < 0.0f) {
+      segmentT = 0.0f;
+      rayT = (std::max)(0.0f, -c / a);
+    } else if (segmentT > 1.0f) {
+      segmentT = 1.0f;
+      rayT = (std::max)(0.0f, (b - c) / a);
+    }
+
+    outRayT = rayT;
+    outRayPoint = ray.origin + rayDirection * rayT;
+    outSegmentPoint = segmentStart + segmentDirection * segmentT;
+    outRayPoint.w = 1.0f;
+    outSegmentPoint.w = 1.0f;
+    return true;
+  }
+
+  bool RayIntersectsRagdollShape(const t850::Ray& ray,
+                                 const t850::PhysicsShapeDesc& shape,
+                                 const XMATRIX44& bodyWorld,
+                                 float& outDistance,
+                                 XVECTOR3& outPoint) {
+    if (shape.type == t850::PhysicsShapeType::Box) {
+      XMATRIX44 inverseWorld;
+      if (!InvertAffineNoExit(bodyWorld, inverseWorld)) {
+        return false;
+      }
+      t850::Ray localRay;
+      localRay.origin = TransformPoint(ray.origin, inverseWorld);
+      localRay.direction = Normalize3(TransformVectorNoTranslation(ray.direction, inverseWorld),
+                                      XVECTOR3(0.0f, 0.0f, 1.0f, 0.0f));
+      const XVECTOR3 extents = ClampRagdollBoxHalfExtents(shape.halfExtents);
+      const t850::AABB localBox(
+          XVECTOR3(-extents.x, -extents.y, -extents.z, 1.0f),
+          XVECTOR3( extents.x,  extents.y,  extents.z, 1.0f));
+      float localT = 0.0f;
+      if (!t850::RayIntersectsAABB(localRay, localBox, localT)) {
+        return false;
+      }
+      const XVECTOR3 localHit = localRay.origin + localRay.direction * localT;
+      outPoint = TransformPoint(localHit, bodyWorld);
+      outPoint.w = 1.0f;
+      outDistance = (std::max)(0.0f, Dot3(outPoint - ray.origin, Normalize3(ray.direction)));
+      return true;
+    }
+
+    if (shape.type != t850::PhysicsShapeType::Capsule) {
+      return false;
+    }
+
+    const XVECTOR3 center(bodyWorld.m41, bodyWorld.m42, bodyWorld.m43, 1.0f);
+    const XVECTOR3 axis = MatrixAxisY(bodyWorld);
+    const float radius = (std::max)(kRagdollMinShapeExtent, shape.radius);
+    const float halfHeight = (std::max)(0.0f, shape.halfHeight);
+    const XVECTOR3 start = center - axis * halfHeight;
+    const XVECTOR3 end = center + axis * halfHeight;
+
+    if (halfHeight <= 0.000001f) {
+      t850::BoundingSphere sphere;
+      sphere.center = center;
+      sphere.radius = radius;
+      if (!t850::RayIntersectsSphere(ray, sphere, outDistance)) {
+        return false;
+      }
+      outPoint = ray.origin + Normalize3(ray.direction) * outDistance;
+      outPoint.w = 1.0f;
+      return true;
+    }
+
+    float rayT = 0.0f;
+    XVECTOR3 rayPoint;
+    XVECTOR3 segmentPoint;
+    if (!ClosestRaySegment(ray, start, end, rayT, rayPoint, segmentPoint)) {
+      return false;
+    }
+    const float distanceSq = Dot3(rayPoint - segmentPoint, rayPoint - segmentPoint);
+    if (distanceSq > radius * radius) {
+      return false;
+    }
+
+    const float surfaceOffset = std::sqrt((std::max)(0.0f, radius * radius - distanceSq));
+    outDistance = (std::max)(0.0f, rayT - surfaceOffset);
+    outPoint = ray.origin + Normalize3(ray.direction) * outDistance;
+    outPoint.w = 1.0f;
+    return true;
+  }
+
   bool ClosestRayAxisParameter(const t850::Ray& ray,
                                const XVECTOR3& axisOrigin,
                                const XVECTOR3& axisDirection,
@@ -2607,7 +2732,224 @@ void SandboxScene::SwitchRagdollToPhysics() {
   T8_LOG_INFO("[SandboxScene] F5: animation-to-physics ragdoll transition started");
 }
 
+bool SandboxScene::PickRagdollSimulationBody(float mouseX,
+                                             float mouseY,
+                                             int& outBodyIndex,
+                                             t850::PhysicsBodyState& outState,
+                                             XVECTOR3& outHitPoint,
+                                             float& outHitDistance) {
+  outBodyIndex = -1;
+  outHitDistance = FLT_MAX;
+  if (!m_ragdollPhysicsDriven ||
+      !Meshes[0].HasPhysicsRagdoll() ||
+      !g_pBaseDriver ||
+      m_ragdollAnimationBinding.referencePose.bones.empty()) {
+    return false;
+  }
+
+  t850::EngineContext* engineContext = GetEngineContext();
+  if (!engineContext) engineContext = &t850::GetEngineContext();
+  if (!engineContext || !engineContext->physics) {
+    return false;
+  }
+
+  std::vector<t850::PhysicsBodyState> states;
+  if (!engineContext->physics->GetRagdollState(Meshes[0].GetPhysicsRagdoll(), states)) {
+    return false;
+  }
+
+  XMATRIX44 invVP;
+  VP.Inverse(&invVP);
+  const int width = (std::max)(1, g_pBaseDriver->width);
+  const int height = (std::max)(1, g_pBaseDriver->height);
+  const t850::Ray ray = t850::ScreenPointToRay(mouseX, mouseY, 0, 0, width, height, invVP);
+  const auto& bones = m_ragdollAnimationBinding.referencePose.bones;
+  const int count = (std::min)(static_cast<int>(states.size()), static_cast<int>(bones.size()));
+  for (int bodyIndex = 0; bodyIndex < count; ++bodyIndex) {
+    const auto& shape = bones[static_cast<std::size_t>(bodyIndex)].body.shape;
+    if (!IsEditableRagdollShape(shape)) {
+      continue;
+    }
+
+    float hitDistance = FLT_MAX;
+    XVECTOR3 hitPoint;
+    if (!RayIntersectsRagdollShape(
+            ray,
+            shape,
+            states[static_cast<std::size_t>(bodyIndex)].worldTransform,
+            hitDistance,
+            hitPoint)) {
+      continue;
+    }
+
+    if (hitDistance < outHitDistance) {
+      outBodyIndex = bodyIndex;
+      outState = states[static_cast<std::size_t>(bodyIndex)];
+      outHitPoint = hitPoint;
+      outHitDistance = hitDistance;
+    }
+  }
+
+  if (outBodyIndex >= 0) {
+    m_ragdollPhysicsStates = std::move(states);
+    return true;
+  }
+  return false;
+}
+
+bool SandboxScene::BeginRagdollSimulationGrab(float mouseX, float mouseY) {
+  t850::PhysicsBodyState pickedState;
+  XVECTOR3 hitPoint;
+  float hitDistance = 0.0f;
+  int bodyIndex = -1;
+  if (!PickRagdollSimulationBody(mouseX, mouseY, bodyIndex, pickedState, hitPoint, hitDistance) ||
+      !pickedState.handle.IsValid()) {
+    return false;
+  }
+
+  t850::EngineContext* engineContext = GetEngineContext();
+  if (!engineContext) engineContext = &t850::GetEngineContext();
+  if (!engineContext || !engineContext->physics) {
+    return false;
+  }
+
+  if (!engineContext->physics->SetBodyMotion(pickedState.handle, t850::PhysicsBodyMotion::Dynamic)) {
+    return false;
+  }
+  engineContext->physics->SetBodyVelocity(
+      pickedState.handle,
+      XVECTOR3(0.0f, 0.0f, 0.0f, 0.0f),
+      pickedState.angularVelocity);
+
+  const XVECTOR3 center(pickedState.worldTransform.m41,
+                        pickedState.worldTransform.m42,
+                        pickedState.worldTransform.m43,
+                        1.0f);
+  m_ragdollSimulationGrabActive = true;
+  m_ragdollSimulationGrabBodyIndex = bodyIndex;
+  m_ragdollSimulationGrabHandle = pickedState.handle;
+  m_ragdollSimulationGrabDepth = hitDistance;
+  m_ragdollSimulationGrabCenterOffset = center - hitPoint;
+  m_ragdollSimulationGrabCenterOffset.w = 0.0f;
+  m_ragdollSimulationGrabPreviousTarget = center;
+  m_ragdollSimulationGrabReleaseVelocity = XVECTOR3(0.0f, 0.0f, 0.0f, 0.0f);
+  m_ragdollEditSelectedCapsule = bodyIndex;
+  if (bodyIndex >= 0 && bodyIndex < static_cast<int>(m_ragdollAnimationBinding.referencePose.bones.size())) {
+    const auto& bone = m_ragdollAnimationBinding.referencePose.bones[static_cast<std::size_t>(bodyIndex)];
+    T8_LOG_INFO("[SandboxScene] Grabbed ragdoll body %d (%s)", bodyIndex, bone.body.debugName.c_str());
+  }
+  return UpdateRagdollSimulationGrab(mouseX, mouseY);
+}
+
+bool SandboxScene::UpdateRagdollSimulationGrab(float mouseX, float mouseY) {
+  if (!m_ragdollSimulationGrabActive || !m_ragdollSimulationGrabHandle.IsValid() || !g_pBaseDriver) {
+    return false;
+  }
+
+  t850::EngineContext* engineContext = GetEngineContext();
+  if (!engineContext) engineContext = &t850::GetEngineContext();
+  if (!engineContext || !engineContext->physics) {
+    EndRagdollSimulationGrab(false);
+    return false;
+  }
+
+  XMATRIX44 invVP;
+  VP.Inverse(&invVP);
+  const int width = (std::max)(1, g_pBaseDriver->width);
+  const int height = (std::max)(1, g_pBaseDriver->height);
+  const t850::Ray ray = t850::ScreenPointToRay(mouseX, mouseY, 0, 0, width, height, invVP);
+  const XVECTOR3 targetOnRay = ray.origin + Normalize3(ray.direction) * m_ragdollSimulationGrabDepth;
+  XVECTOR3 targetCenter = targetOnRay + m_ragdollSimulationGrabCenterOffset;
+  targetCenter.w = 1.0f;
+
+  t850::PhysicsBodyState currentState;
+  if (!engineContext->physics->GetBodyState(m_ragdollSimulationGrabHandle, currentState)) {
+    EndRagdollSimulationGrab(false);
+    return false;
+  }
+
+  const float dt = (std::max)(0.0001f, DtSecs);
+  const XVECTOR3 currentCenter(currentState.worldTransform.m41,
+                               currentState.worldTransform.m42,
+                               currentState.worldTransform.m43,
+                               1.0f);
+  const XVECTOR3 cursorVelocity = (targetCenter - m_ragdollSimulationGrabPreviousTarget) * (1.0f / dt);
+  const XVECTOR3 pullError = targetCenter - currentCenter;
+  constexpr float kGrabSpring = 12.0f;
+  const XVECTOR3 desiredVelocity = cursorVelocity + pullError * kGrabSpring;
+  const float maxThrowSpeed = (std::max)(1.0f, m_modelRadius * 8.0f);
+  const float maxPullSpeed = (std::max)(maxThrowSpeed, m_modelRadius * 12.0f);
+  const XVECTOR3 pullVelocity = ClampVectorLength3(desiredVelocity, maxPullSpeed);
+  m_ragdollSimulationGrabReleaseVelocity = ClampVectorLength3(cursorVelocity, maxThrowSpeed);
+  m_ragdollSimulationGrabPreviousTarget = targetCenter;
+  return engineContext->physics->SetBodyVelocity(
+      m_ragdollSimulationGrabHandle,
+      pullVelocity,
+      currentState.angularVelocity);
+}
+
+void SandboxScene::EndRagdollSimulationGrab(bool applyThrow) {
+  if (!m_ragdollSimulationGrabActive) {
+    return;
+  }
+
+  t850::EngineContext* engineContext = GetEngineContext();
+  if (!engineContext) engineContext = &t850::GetEngineContext();
+  if (engineContext && engineContext->physics && m_ragdollSimulationGrabHandle.IsValid()) {
+    engineContext->physics->SetBodyMotion(m_ragdollSimulationGrabHandle, t850::PhysicsBodyMotion::Dynamic);
+    if (applyThrow) {
+      t850::PhysicsBodyState currentState;
+      const XVECTOR3 angularVelocity =
+          engineContext->physics->GetBodyState(m_ragdollSimulationGrabHandle, currentState)
+              ? currentState.angularVelocity
+              : XVECTOR3(0.0f, 0.0f, 0.0f, 0.0f);
+      engineContext->physics->SetBodyVelocity(
+          m_ragdollSimulationGrabHandle,
+          m_ragdollSimulationGrabReleaseVelocity,
+          angularVelocity);
+    }
+  }
+
+  m_ragdollSimulationGrabActive = false;
+  m_ragdollSimulationGrabBodyIndex = -1;
+  m_ragdollSimulationGrabHandle.Reset();
+  m_ragdollSimulationGrabDepth = 0.0f;
+  m_ragdollSimulationGrabCenterOffset = XVECTOR3(0.0f, 0.0f, 0.0f, 0.0f);
+  m_ragdollSimulationGrabPreviousTarget = XVECTOR3(0.0f, 0.0f, 0.0f, 1.0f);
+  m_ragdollSimulationGrabReleaseVelocity = XVECTOR3(0.0f, 0.0f, 0.0f, 0.0f);
+}
+
+bool SandboxScene::HandleRagdollSimulationGrabInput(InputManager* input, bool imguiWantsMouse) {
+  if (!input) {
+    return false;
+  }
+
+  if (!m_ragdollPhysicsDriven || m_skeletonEditMode) {
+    if (m_ragdollSimulationGrabActive) {
+      EndRagdollSimulationGrab(false);
+    }
+    return false;
+  }
+
+  if (m_ragdollSimulationGrabActive) {
+    if (input->PressedMouseButton(0)) {
+      UpdateRagdollSimulationGrab(static_cast<float>(input->mouseX), static_cast<float>(input->mouseY));
+      return true;
+    }
+    EndRagdollSimulationGrab(true);
+    return true;
+  }
+
+  if (imguiWantsMouse || !input->PressedOnceMouseButton(0)) {
+    return false;
+  }
+
+  return BeginRagdollSimulationGrab(static_cast<float>(input->mouseX), static_cast<float>(input->mouseY));
+}
+
 bool SandboxScene::ResetRagdollPhysicsAndAnimation() {
+  EndRagdollSimulationGrab(false);
+
   RenderSkinnedMesh* skinned = Meshes[0].GetSkinnedMesh();
   t850::EngineContext* engineContext = GetEngineContext();
   if (!engineContext) engineContext = &t850::GetEngineContext();
@@ -9920,6 +10262,16 @@ void SandboxScene::DrawSkeletonEditPanel(t850::DevGuiContext& gui) {
     if (gui.Button("Start Simulation", Meshes[0].HasPhysicsRagdoll())) {
       SwitchRagdollToPhysics();
     }
+    if (m_ragdollPhysicsDriven) {
+      ImGui::TextWrapped("Simulation grab: left-click a capsule/box to hold it, drag to move or throw it, release to let it fall.");
+      if (m_ragdollSimulationGrabActive && m_ragdollSimulationGrabBodyIndex >= 0) {
+        const auto& bones = m_ragdollAnimationBinding.referencePose.bones;
+        const char* name = m_ragdollSimulationGrabBodyIndex < static_cast<int>(bones.size())
+            ? bones[static_cast<std::size_t>(m_ragdollSimulationGrabBodyIndex)].body.debugName.c_str()
+            : "body";
+        ImGui::Text("Holding body %d: %s", m_ragdollSimulationGrabBodyIndex, name);
+      }
+    }
     ImGui::SetNextItemWidth(160.0f);
     int simulationSpeedIndex = ClampRagdollSimulationSpeedIndex(m_ragdollSimulationSpeedIndex);
     if (ImGui::SliderInt("Simulation speed",
@@ -10088,6 +10440,16 @@ void SandboxScene::DrawAndroidPhysicsPanel(t850::DevGuiContext& gui) {
     if (gui.Button("Start Simulation")) {
       SwitchRagdollToPhysics();
     }
+    if (m_ragdollPhysicsDriven) {
+      ImGui::TextWrapped("Simulation grab: touch/left-click a body, drag to move or throw it, release to drop.");
+      if (m_ragdollSimulationGrabActive && m_ragdollSimulationGrabBodyIndex >= 0) {
+        const auto& bones = m_ragdollAnimationBinding.referencePose.bones;
+        const char* name = m_ragdollSimulationGrabBodyIndex < static_cast<int>(bones.size())
+            ? bones[static_cast<std::size_t>(m_ragdollSimulationGrabBodyIndex)].body.debugName.c_str()
+            : "body";
+        ImGui::Text("Holding body %d: %s", m_ragdollSimulationGrabBodyIndex, name);
+      }
+    }
     ImGui::SetNextItemWidth(220.0f);
     int simulationSpeedIndex = ClampRagdollSimulationSpeedIndex(m_ragdollSimulationSpeedIndex);
     if (ImGui::SliderInt("Simulation speed",
@@ -10171,6 +10533,9 @@ void SandboxScene::OnInput(InputManager* IManager) {
     handledSkeletonEditInput = HandleSkeletonEditInput(IManager, imguiWantsMouse);
   }
   if (handledSkeletonEditInput) {
+    return;
+  }
+  if (HandleRagdollSimulationGrabInput(IManager, imguiWantsMouse)) {
     return;
   }
   // Left click + drag: orbit rotate

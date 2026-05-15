@@ -185,6 +185,30 @@
       "fragmentShader": "FS_Quad.hlsl",
       "defines": ["DEFERRED_PASS", "USE_TEXCOORD0"]
     },
+    "0x0000000000810008": {
+      "key": "0x0000000000810008",
+      "bits": "0x0000000000810008",
+      "pass": 8,
+      "vertexShader": "VS_Quad.hlsl",
+      "fragmentShader": "FS_Quad.hlsl",
+      "defines": ["DEFERRED_PASS", "ENABLE_SHADOWS", "USE_TEXCOORD0"]
+    },
+    "0x0000000000820008": {
+      "key": "0x0000000000820008",
+      "bits": "0x0000000000820008",
+      "pass": 8,
+      "vertexShader": "VS_Quad.hlsl",
+      "fragmentShader": "FS_Quad.hlsl",
+      "defines": ["DEFERRED_PASS", "ENABLE_SSAO", "USE_TEXCOORD0"]
+    },
+    "0x0000000000830008": {
+      "key": "0x0000000000830008",
+      "bits": "0x0000000000830008",
+      "pass": 8,
+      "vertexShader": "VS_Quad.hlsl",
+      "fragmentShader": "FS_Quad.hlsl",
+      "defines": ["DEFERRED_PASS", "ENABLE_SHADOWS", "ENABLE_SSAO", "USE_TEXCOORD0"]
+    },
     "0x0000000000900008": {
       "key": "0x0000000000900008",
       "bits": "0x0000000000900008",
@@ -456,6 +480,30 @@
       "vertexShader": "VS_Quad.hlsl",
       "fragmentShader": "FS_Quad.hlsl",
       "defines": ["DEFERRED_LDR_PASS", "USE_TEXCOORD0"]
+    },
+    "0x0000000001E10008": {
+      "key": "0x0000000001E10008",
+      "bits": "0x0000000001E10008",
+      "pass": 30,
+      "vertexShader": "VS_Quad.hlsl",
+      "fragmentShader": "FS_Quad.hlsl",
+      "defines": ["DEFERRED_LDR_PASS", "ENABLE_SHADOWS", "USE_TEXCOORD0"]
+    },
+    "0x0000000001E20008": {
+      "key": "0x0000000001E20008",
+      "bits": "0x0000000001E20008",
+      "pass": 30,
+      "vertexShader": "VS_Quad.hlsl",
+      "fragmentShader": "FS_Quad.hlsl",
+      "defines": ["DEFERRED_LDR_PASS", "ENABLE_SSAO", "USE_TEXCOORD0"]
+    },
+    "0x0000000001E30008": {
+      "key": "0x0000000001E30008",
+      "bits": "0x0000000001E30008",
+      "pass": 30,
+      "vertexShader": "VS_Quad.hlsl",
+      "fragmentShader": "FS_Quad.hlsl",
+      "defines": ["DEFERRED_LDR_PASS", "ENABLE_SHADOWS", "ENABLE_SSAO", "USE_TEXCOORD0"]
     },
     "0x0000000008000001": {
       "key": "0x0000000008000001",

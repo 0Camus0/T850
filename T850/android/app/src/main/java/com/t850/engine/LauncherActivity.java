@@ -33,6 +33,8 @@ public final class LauncherActivity extends Activity {
     public static final String EXTRA_DEBUG_FRAMES = "com.t850.engine.extra.DEBUG_FRAMES";
     public static final String EXTRA_KEEP_RUNNING = "com.t850.engine.extra.KEEP_RUNNING";
     public static final String EXTRA_REPLAY_SNAPSHOT = "com.t850.engine.extra.REPLAY_SNAPSHOT";
+    public static final String EXTRA_PROFILE = "com.t850.engine.extra.PROFILE";
+    public static final String EXTRA_PROFILE_FRAMES = "com.t850.engine.extra.PROFILE_FRAMES";
     public static final String EXTRA_RETURN_TO_NATIVE = "com.t850.engine.extra.RETURN_TO_NATIVE";
     public static final String EXTRA_RUN_ID = "com.t850.engine.extra.RUN_ID";
 
@@ -94,6 +96,8 @@ public final class LauncherActivity extends Activity {
         float dumpSeconds = -1.0f;
         boolean debugFrames;
         boolean keepRunning;
+        boolean profile;
+        int profileFrames = 300;
         boolean returnToNative;
         String replaySnapshot;
     }
@@ -408,6 +412,8 @@ public final class LauncherActivity extends Activity {
         options.dumpSeconds = intent.getFloatExtra(EXTRA_DUMP_SECONDS, -1.0f);
         options.debugFrames = intent.getBooleanExtra(EXTRA_DEBUG_FRAMES, false);
         options.keepRunning = intent.getBooleanExtra(EXTRA_KEEP_RUNNING, false);
+        options.profile = intent.getBooleanExtra(EXTRA_PROFILE, false);
+        options.profileFrames = intent.getIntExtra(EXTRA_PROFILE_FRAMES, 300);
         options.replaySnapshot = intent.getStringExtra(EXTRA_REPLAY_SNAPSHOT);
         options.returnToNative = intent.getBooleanExtra(EXTRA_RETURN_TO_NATIVE, false);
 
@@ -449,6 +455,10 @@ public final class LauncherActivity extends Activity {
         }
         if (options.keepRunning) {
             intent.putExtra(EXTRA_KEEP_RUNNING, true);
+        }
+        if (options.profile) {
+            intent.putExtra(EXTRA_PROFILE, true);
+            intent.putExtra(EXTRA_PROFILE_FRAMES, Math.max(1, options.profileFrames));
         }
         if (options.replaySnapshot != null && !options.replaySnapshot.isEmpty()) {
             intent.putExtra(EXTRA_REPLAY_SNAPSHOT, options.replaySnapshot);

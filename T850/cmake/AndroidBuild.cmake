@@ -23,6 +23,21 @@ set(Jolt_DIR ${T850_ANDROID_VCPKG_ROOT}/share/Jolt)
 find_package(imgui CONFIG REQUIRED)
 find_package(glslang CONFIG REQUIRED)
 find_package(Jolt CONFIG REQUIRED)
+function(t850_map_android_imported_release_config)
+  foreach(T850_IMPORTED_TARGET IN LISTS ARGN)
+    if(TARGET ${T850_IMPORTED_TARGET})
+      set_target_properties(${T850_IMPORTED_TARGET} PROPERTIES
+        MAP_IMPORTED_CONFIG_RELWITHDEBINFO Release
+        MAP_IMPORTED_CONFIG_MINSIZEREL Release)
+    endif()
+  endforeach()
+endfunction()
+t850_map_android_imported_release_config(
+  imgui::imgui
+  glslang::glslang
+  glslang::glslang-default-resource-limits
+  glslang::SPIRV
+  Jolt::Jolt)
 message(STATUS "T850 Android ABI: ${ANDROID_ABI} (${T850_ANDROID_VCPKG_TRIPLET})")
 
 set(T850_ANDROID_API_LEVEL 0)

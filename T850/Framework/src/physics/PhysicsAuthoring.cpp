@@ -76,6 +76,62 @@ XVECTOR3 TransformPhysicsPoint(const XVECTOR3& point, const XMATRIX44& matrix) {
       1.0f);
 }
 
+XVECTOR3 TransformPhysicsVector(const XVECTOR3& vector, const XMATRIX44& matrix) {
+  return XVECTOR3(
+      vector.x * matrix.m11 + vector.y * matrix.m21 + vector.z * matrix.m31,
+      vector.x * matrix.m12 + vector.y * matrix.m22 + vector.z * matrix.m32,
+      vector.x * matrix.m13 + vector.y * matrix.m23 + vector.z * matrix.m33,
+      0.0f);
+}
+
+XVECTOR3 NormalizeOr(const XVECTOR3& v, const XVECTOR3& fallback) {
+  const float length = Length(v);
+  if (length <= 0.000001f) {
+    return fallback;
+  }
+  return XVECTOR3(v.x / length, v.y / length, v.z / length, 0.0f);
+}
+
+bool IsValidAxis(const XVECTOR3& axis) {
+  return IsUsablePhysicsCoordinate(axis.x) &&
+         IsUsablePhysicsCoordinate(axis.y) &&
+         IsUsablePhysicsCoordinate(axis.z) &&
+         Length(axis) > 0.000001f;
+}
+
+XVECTOR3 MatrixAxisX(const XMATRIX44& matrix) {
+  return NormalizeOr(XVECTOR3(matrix.m11, matrix.m12, matrix.m13, 0.0f),
+                     XVECTOR3(1.0f, 0.0f, 0.0f, 0.0f));
+}
+
+XVECTOR3 MatrixAxisY(const XMATRIX44& matrix) {
+  return NormalizeOr(XVECTOR3(matrix.m21, matrix.m22, matrix.m23, 0.0f),
+                     XVECTOR3(0.0f, 1.0f, 0.0f, 0.0f));
+}
+
+XVECTOR3 RejectFromAxis(const XVECTOR3& vector, const XVECTOR3& axis) {
+  const float dot = Dot(vector, axis);
+  return XVECTOR3(vector.x - axis.x * dot,
+                  vector.y - axis.y * dot,
+                  vector.z - axis.z * dot,
+                  0.0f);
+}
+
+void NormalizeJointFrameAxes(XVECTOR3& twist,
+                             XVECTOR3& plane,
+                             const XVECTOR3& fallbackTwist,
+                             const XVECTOR3& fallbackPlane) {
+  twist = NormalizeOr(IsValidAxis(twist) ? twist : fallbackTwist, fallbackTwist);
+  plane = RejectFromAxis(IsValidAxis(plane) ? plane : fallbackPlane, twist);
+  if (!IsValidAxis(plane)) {
+    plane = RejectFromAxis(std::fabs(twist.x) < 0.8f
+                               ? XVECTOR3(1.0f, 0.0f, 0.0f, 0.0f)
+                               : XVECTOR3(0.0f, 0.0f, 1.0f, 0.0f),
+                           twist);
+  }
+  plane = NormalizeOr(plane, fallbackPlane);
+}
+
 XMATRIX44 FlipMatrixZ(const XMATRIX44& matrix) {
   XMATRIX44 out = matrix;
   for (int i = 0; i < 4; ++i) {
@@ -209,10 +265,6 @@ bool InvertAffine(const XMATRIX44& matrix, XMATRIX44& out) {
 }
 
 const xF::xSkeleton* FindReferenceSkeleton(const RenderSkinnedMesh& mesh) {
-  const xF::xSkeleton* animatedSkeleton = mesh.GetAnimController().GetAnimSkeleton();
-  if (animatedSkeleton && !animatedSkeleton->Bones.empty()) {
-    return animatedSkeleton;
-  }
   if (mesh.xFile && !mesh.xFile->XMeshDataBase.empty() && mesh.xFile->XMeshDataBase[0]) {
     const xF::xMeshContainer* meshContainer = mesh.xFile->XMeshDataBase[0];
     if (!meshContainer->Skeleton.Bones.empty()) {
@@ -434,7 +486,7 @@ RagdollJointLimits InferRagdollJointLimits(const xF::xSkeleton& skeleton,
     return JointLimits(55.0f, 24.0f);
   }
   if (IsLowerLegName(jointName)) {
-    return JointLimits(80.0f, 8.0f);
+    return JointLimits(80.0f, 0.0f);
   }
   if (IsFootName(jointName)) {
     return JointLimits(35.0f, 14.0f);
@@ -1002,6 +1054,45 @@ void RebuildGeneratedParentLinks(const xF::xSkeleton& skeleton, PhysicsRagdollDe
   }
 }
 
+int FindRagdollDescIndexForBone(const PhysicsRagdollDesc& desc, int boneIndex) {
+  for (std::size_t i = 0; i < desc.bones.size(); ++i) {
+    if (desc.bones[i].body.boneIndex == boneIndex) {
+      return static_cast<int>(i);
+    }
+  }
+  return -1;
+}
+
+void InitializeRagdollJointFrames(PhysicsRagdollDesc& desc) {
+  for (PhysicsRagdollBoneDesc& bone : desc.bones) {
+    const int parentIndex = FindRagdollDescIndexForBone(desc, bone.parentBoneIndex);
+    const XMATRIX44& childWorld = bone.body.worldTransform;
+    const XMATRIX44& parentWorld = parentIndex >= 0
+        ? desc.bones[static_cast<std::size_t>(parentIndex)].body.worldTransform
+        : childWorld;
+
+    XVECTOR3 parentTwist = IsValidAxis(bone.parentJointTwistAxis)
+        ? bone.parentJointTwistAxis
+        : MatrixAxisY(parentWorld);
+    XVECTOR3 parentPlane = IsValidAxis(bone.parentJointPlaneAxis)
+        ? bone.parentJointPlaneAxis
+        : MatrixAxisX(parentWorld);
+    XVECTOR3 childTwist = IsValidAxis(bone.childJointTwistAxis)
+        ? bone.childJointTwistAxis
+        : MatrixAxisY(childWorld);
+    XVECTOR3 childPlane = IsValidAxis(bone.childJointPlaneAxis)
+        ? bone.childJointPlaneAxis
+        : MatrixAxisX(childWorld);
+
+    NormalizeJointFrameAxes(parentTwist, parentPlane, MatrixAxisY(parentWorld), MatrixAxisX(parentWorld));
+    NormalizeJointFrameAxes(childTwist, childPlane, MatrixAxisY(childWorld), MatrixAxisX(childWorld));
+    bone.parentJointTwistAxis = parentTwist;
+    bone.parentJointPlaneAxis = parentPlane;
+    bone.childJointTwistAxis = childTwist;
+    bone.childJointPlaneAxis = childPlane;
+  }
+}
+
 bool FitCapsuleToSamples(const std::vector<WeightedPoint>& samples,
                          const XVECTOR3& boneWorld,
                          const XVECTOR3& direction,
@@ -1443,6 +1534,7 @@ bool BuildRagdollDescFromSkeleton(const RenderSkinnedMesh& mesh,
     outDesc.bones.push_back(boneDesc);
   }
   RebuildGeneratedParentLinks(*skeleton, outDesc);
+  InitializeRagdollJointFrames(outDesc);
 
   uint32_t connectedEdgeCount = 0;
   uint32_t disconnectedEdgeCount = 0;
@@ -1555,6 +1647,10 @@ bool BuildRagdollAnimationBinding(const RenderSkinnedMesh& mesh,
   binding.referencePose = referencePose;
   binding.bodyFromBone.resize(referencePose.bones.size());
   binding.jointFromBone.resize(referencePose.bones.size());
+  binding.parentJointTwistFromBody.resize(referencePose.bones.size());
+  binding.parentJointPlaneFromBody.resize(referencePose.bones.size());
+  binding.childJointTwistFromBody.resize(referencePose.bones.size());
+  binding.childJointPlaneFromBody.resize(referencePose.bones.size());
   binding.controlledBoneIndices.resize(referencePose.bones.size());
   binding.controlledBodyFromBone.resize(referencePose.bones.size());
 
@@ -1571,6 +1667,29 @@ bool BuildRagdollAnimationBinding(const RenderSkinnedMesh& mesh,
     }
     binding.bodyFromBone[i] = referencePose.bones[i].body.worldTransform * inverseBoneWorld;
     binding.jointFromBone[i] = TransformPhysicsPoint(referencePose.bones[i].jointWorldPosition, inverseBoneWorld);
+
+    const int parentDescIndex = FindRagdollDescIndexForBone(referencePose, referencePose.bones[i].parentBoneIndex);
+    const XMATRIX44& childBodyWorld = referencePose.bones[i].body.worldTransform;
+    const XMATRIX44& parentBodyWorld = parentDescIndex >= 0
+        ? referencePose.bones[static_cast<std::size_t>(parentDescIndex)].body.worldTransform
+        : childBodyWorld;
+    XMATRIX44 inverseChildBodyWorld;
+    XMATRIX44 inverseParentBodyWorld;
+    if (!InvertAffine(childBodyWorld, inverseChildBodyWorld) ||
+        !InvertAffine(parentBodyWorld, inverseParentBodyWorld)) {
+      return false;
+    }
+
+    XVECTOR3 parentTwist = referencePose.bones[i].parentJointTwistAxis;
+    XVECTOR3 parentPlane = referencePose.bones[i].parentJointPlaneAxis;
+    XVECTOR3 childTwist = referencePose.bones[i].childJointTwistAxis;
+    XVECTOR3 childPlane = referencePose.bones[i].childJointPlaneAxis;
+    NormalizeJointFrameAxes(parentTwist, parentPlane, MatrixAxisY(parentBodyWorld), MatrixAxisX(parentBodyWorld));
+    NormalizeJointFrameAxes(childTwist, childPlane, MatrixAxisY(childBodyWorld), MatrixAxisX(childBodyWorld));
+    binding.parentJointTwistFromBody[i] = TransformPhysicsVector(parentTwist, inverseParentBodyWorld);
+    binding.parentJointPlaneFromBody[i] = TransformPhysicsVector(parentPlane, inverseParentBodyWorld);
+    binding.childJointTwistFromBody[i] = TransformPhysicsVector(childTwist, inverseChildBodyWorld);
+    binding.childJointPlaneFromBody[i] = TransformPhysicsVector(childPlane, inverseChildBodyWorld);
     binding.controlledBoneIndices[i].push_back(boneIndex);
     binding.controlledBodyFromBone[i].push_back(binding.bodyFromBone[i]);
   }
@@ -1607,6 +1726,38 @@ bool BuildRagdollPoseFromAnimation(const RenderSkinnedMesh& mesh,
         i < binding.jointFromBone.size()
             ? TransformPhysicsPoint(binding.jointFromBone[i], boneWorld)
             : BonePosition(bone, worldFromMesh);
+  }
+
+  const bool hasJointFrameOffsets =
+      binding.parentJointTwistFromBody.size() == pose.bones.size() &&
+      binding.parentJointPlaneFromBody.size() == pose.bones.size() &&
+      binding.childJointTwistFromBody.size() == pose.bones.size() &&
+      binding.childJointPlaneFromBody.size() == pose.bones.size();
+  for (std::size_t i = 0; i < pose.bones.size(); ++i) {
+    const int parentDescIndex = FindRagdollDescIndexForBone(pose, pose.bones[i].parentBoneIndex);
+    const XMATRIX44& childBodyWorld = pose.bones[i].body.worldTransform;
+    const XMATRIX44& parentBodyWorld = parentDescIndex >= 0
+        ? pose.bones[static_cast<std::size_t>(parentDescIndex)].body.worldTransform
+        : childBodyWorld;
+
+    XVECTOR3 parentTwist = hasJointFrameOffsets
+        ? TransformPhysicsVector(binding.parentJointTwistFromBody[i], parentBodyWorld)
+        : pose.bones[i].parentJointTwistAxis;
+    XVECTOR3 parentPlane = hasJointFrameOffsets
+        ? TransformPhysicsVector(binding.parentJointPlaneFromBody[i], parentBodyWorld)
+        : pose.bones[i].parentJointPlaneAxis;
+    XVECTOR3 childTwist = hasJointFrameOffsets
+        ? TransformPhysicsVector(binding.childJointTwistFromBody[i], childBodyWorld)
+        : pose.bones[i].childJointTwistAxis;
+    XVECTOR3 childPlane = hasJointFrameOffsets
+        ? TransformPhysicsVector(binding.childJointPlaneFromBody[i], childBodyWorld)
+        : pose.bones[i].childJointPlaneAxis;
+    NormalizeJointFrameAxes(parentTwist, parentPlane, MatrixAxisY(parentBodyWorld), MatrixAxisX(parentBodyWorld));
+    NormalizeJointFrameAxes(childTwist, childPlane, MatrixAxisY(childBodyWorld), MatrixAxisX(childBodyWorld));
+    pose.bones[i].parentJointTwistAxis = parentTwist;
+    pose.bones[i].parentJointPlaneAxis = parentPlane;
+    pose.bones[i].childJointTwistAxis = childTwist;
+    pose.bones[i].childJointPlaneAxis = childPlane;
   }
 
   outPose = std::move(pose);

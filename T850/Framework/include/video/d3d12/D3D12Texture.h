@@ -34,6 +34,7 @@ namespace t850 {
     // Per-texture sampler (created in SetTextureParams based on texture params)
     D3D12_GPU_DESCRIPTOR_HANDLE samplerGPU = {};
     bool hasSampler = false;
+    bool m_floatUpdateDisabled = false;
   };
 
 } // namespace t850

@@ -16,6 +16,6 @@
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
     <LocalDebuggerWorkingDirectory>$(SolutionDir)bin\$(Platform)\$(Configuration)\</LocalDebuggerWorkingDirectory>
     <DebuggerFlavor>WindowsLocalDebugger</DebuggerFlavor>
-    <LocalDebuggerCommandArguments>--api vulkan --width 1920 --height 1080 --model ./Models/Dragon.glb --logLevel error</LocalDebuggerCommandArguments>
+    <LocalDebuggerCommandArguments>--api vulkan --width 3840 --height 2160 --model ./Models/doomslayer_cine_all_animations_no-damage_double-sided-opaque.glb</LocalDebuggerCommandArguments>
   </PropertyGroup>
 </Project>

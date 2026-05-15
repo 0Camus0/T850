@@ -64,6 +64,7 @@ static constexpr JPH::ObjectLayer Count = 2;
 }
 
 static constexpr float kFixedPhysicsStepSeconds = 0.016f;
+static constexpr float kMaxSimulationSpeedScale = 32.0f;
 static constexpr float kMaxJoltBroadPhaseCoordinate = 1.0e12f;
 
 static bool IsUsablePhysicsCoordinate(float value) {
@@ -214,6 +215,20 @@ static JPH::Vec3 ToJoltAxisY(const XMATRIX44& matrix) {
   float x = matrix.m21;
   float y = matrix.m22;
   float z = matrix.m23;
+  Normalize3(x, y, z);
+  return JPH::Vec3(x, y, z);
+}
+
+static JPH::Vec3 ToJoltAxis(const XVECTOR3& axis, const JPH::Vec3& fallback) {
+  float x = axis.x;
+  float y = axis.y;
+  float z = axis.z;
+  if (!IsUsablePhysicsCoordinate(x) ||
+      !IsUsablePhysicsCoordinate(y) ||
+      !IsUsablePhysicsCoordinate(z) ||
+      Length3(x, y, z) <= 0.000001f) {
+    return fallback;
+  }
   Normalize3(x, y, z);
   return JPH::Vec3(x, y, z);
 }
@@ -809,6 +824,8 @@ struct JoltPhysicsSystem::Impl {
   JPH::PhysicsSystem physicsSystem;
   std::vector<BodySlot> bodies;
   std::vector<RagdollSlot> ragdolls;
+  float simulationSpeedScale = 1.0f;
+  float simulationStepAccumulator = 0.0f;
 
   Impl()
       : tempAllocator(10 * 1024 * 1024),
@@ -915,7 +932,36 @@ void JoltPhysicsSystem::Update(float deltaSeconds) {
   }
 
   constexpr int collisionSteps = 2;
-  m_impl->physicsSystem.Update(kFixedPhysicsStepSeconds, collisionSteps, &m_impl->tempAllocator, &m_impl->jobSystem);
+  constexpr int maxStepsPerFrame = 32;
+  m_impl->simulationStepAccumulator = (std::min)(
+      m_impl->simulationStepAccumulator + m_impl->simulationSpeedScale,
+      static_cast<float>(maxStepsPerFrame));
+
+  int steps = 0;
+  while (m_impl->simulationStepAccumulator >= 1.0f && steps < maxStepsPerFrame) {
+    m_impl->physicsSystem.Update(kFixedPhysicsStepSeconds, collisionSteps, &m_impl->tempAllocator, &m_impl->jobSystem);
+    m_impl->simulationStepAccumulator -= 1.0f;
+    ++steps;
+  }
+}
+
+void JoltPhysicsSystem::SetSimulationSpeedScale(float scale) {
+  if (!m_impl) {
+    return;
+  }
+  if (!std::isfinite(scale)) {
+    T8_LOG_ERROR("Ignoring invalid Jolt simulation speed scale %.3f", scale);
+    return;
+  }
+
+  m_impl->simulationSpeedScale = (std::min)((std::max)(scale, 0.0f), kMaxSimulationSpeedScale);
+  if (m_impl->simulationSpeedScale <= 0.0f) {
+    m_impl->simulationStepAccumulator = 0.0f;
+  }
+}
+
+float JoltPhysicsSystem::GetSimulationSpeedScale() const {
+  return m_impl ? m_impl->simulationSpeedScale : 1.0f;
 }
 
 PhysicsBodyHandle JoltPhysicsSystem::CreateBody(const PhysicsBodyDesc& desc) {
@@ -1297,26 +1343,30 @@ PhysicsRagdollHandle JoltPhysicsSystem::CreateRagdoll(const PhysicsRagdollDesc& 
 
     JPH::TwoBodyConstraint* constraint = nullptr;
     const JPH::RVec3 jointPosition(bone.jointWorldPosition.x, bone.jointWorldPosition.y, bone.jointWorldPosition.z);
+    const JPH::Vec3 parentPlaneAxis = ToJoltAxis(bone.parentJointPlaneAxis, ToJoltAxisX(*parentTransform));
+    const JPH::Vec3 parentTwistAxis = ToJoltAxis(bone.parentJointTwistAxis, ToJoltAxisY(*parentTransform));
+    const JPH::Vec3 childPlaneAxis = ToJoltAxis(bone.childJointPlaneAxis, ToJoltAxisX(*childTransform));
+    const JPH::Vec3 childTwistAxis = ToJoltAxis(bone.childJointTwistAxis, ToJoltAxisY(*childTransform));
     if (bone.jointType == PhysicsRagdollJointType::Fixed) {
       JPH::FixedConstraintSettings settings;
       settings.mSpace = JPH::EConstraintSpace::WorldSpace;
       settings.mAutoDetectPoint = false;
       settings.mPoint1 = jointPosition;
       settings.mPoint2 = jointPosition;
-      settings.mAxisX1 = ToJoltAxisX(*parentTransform);
-      settings.mAxisY1 = ToJoltAxisY(*parentTransform);
-      settings.mAxisX2 = ToJoltAxisX(*childTransform);
-      settings.mAxisY2 = ToJoltAxisY(*childTransform);
+      settings.mAxisX1 = parentPlaneAxis;
+      settings.mAxisY1 = parentTwistAxis;
+      settings.mAxisX2 = childPlaneAxis;
+      settings.mAxisY2 = childTwistAxis;
       constraint = bodyInterface.CreateConstraint(&settings, parentSlot->id, childSlot->id);
     } else {
       JPH::SwingTwistConstraintSettings settings;
       settings.mSpace = JPH::EConstraintSpace::WorldSpace;
       settings.mPosition1 = jointPosition;
       settings.mPosition2 = settings.mPosition1;
-      settings.mTwistAxis1 = ToJoltAxisY(*parentTransform);
-      settings.mTwistAxis2 = ToJoltAxisY(*childTransform);
-      settings.mPlaneAxis1 = ToJoltAxisX(*parentTransform);
-      settings.mPlaneAxis2 = ToJoltAxisX(*childTransform);
+      settings.mTwistAxis1 = parentTwistAxis;
+      settings.mTwistAxis2 = childTwistAxis;
+      settings.mPlaneAxis1 = parentPlaneAxis;
+      settings.mPlaneAxis2 = childPlaneAxis;
       settings.mSwingType = JPH::ESwingType::Cone;
       settings.mNormalHalfConeAngle = bone.swingLimitRadians;
       settings.mPlaneHalfConeAngle = bone.swingLimitRadians;
@@ -1492,6 +1542,12 @@ void JoltPhysicsSystem::Shutdown() {
 }
 
 void JoltPhysicsSystem::Update(float) {}
+
+void JoltPhysicsSystem::SetSimulationSpeedScale(float) {}
+
+float JoltPhysicsSystem::GetSimulationSpeedScale() const {
+  return 1.0f;
+}
 
 PhysicsBodyHandle JoltPhysicsSystem::CreateBody(const PhysicsBodyDesc&) {
   return {};

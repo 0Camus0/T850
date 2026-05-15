@@ -1199,9 +1199,7 @@ namespace t850 {
     static_cast<VulkanDeviceContext*>(T8DeviceContext)->m_commandBuffer = cmd;
 
     // Flush profiler query pool reset (must happen before any render pass)
-#ifdef T8_ENABLE_PROFILER
     if (t850::g_profiler) t850::g_profiler->FlushVulkanQueryReset(cmd);
-#endif
 
     // Reset per-frame descriptor pool and pending state
     vkResetDescriptorPool(m_device, m_descriptorPools[m_currentFrame], 0);

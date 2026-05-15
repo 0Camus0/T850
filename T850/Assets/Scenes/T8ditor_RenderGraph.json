@@ -11,7 +11,7 @@
       "camera": "main",
       "clear": true,
       "clear_color": [0.0, 0.0, 0.0, 0.0],
-      "state": { "blend": "BLEND_OPAQUE", "depth_stencil": "READ_WRITE" },
+      "state": { "blend": "BLEND_OPAQUE", "depth_stencil": "READ_WRITE", "cull_face": "FRONT_FACES" },
       "draws": [
         { "type": "mesh", "mesh_indices": [], "signature": "GBUFF_PASS" }
       ],

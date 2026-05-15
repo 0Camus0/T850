@@ -26,6 +26,7 @@
     {
       "name": "GBuffer",
       "target": "GBuffer",
+      "state": { "blend": "BLEND_OPAQUE", "depth_stencil": "READ_WRITE", "cull_face": "FRONT_FACES" },
       "camera": "main",
       "draws": [
         { "type": "mesh", "mesh_indices": [0], "signature": "GBUFF_PASS" }

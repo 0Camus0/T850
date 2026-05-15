@@ -35,6 +35,7 @@
       "target": "GBuffer",
       "camera": "main",
       "clear": true,
+      "state": { "blend": "BLEND_OPAQUE", "depth_stencil": "READ_WRITE", "cull_face": "FRONT_FACES" },
       "draws": [
         { "type": "mesh", "mesh_indices": [0], "signature": "GBUFF_PASS" }
       ],

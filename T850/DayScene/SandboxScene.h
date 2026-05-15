@@ -197,12 +197,19 @@ public:
   std::vector<int> m_ragdollPhysicsBoneIndices;
   std::vector<XMATRIX44> m_ragdollPhysicsCombinedMatrices;
   t850::PhysicsBodyHandle m_floorBody;
+  t850::PhysicsBodyHandle m_ragdollSimulationGrabHandle;
   bool m_driveRagdollFromAnimation = false;
   bool m_ragdollPhysicsDriven = false;
   bool m_ragdollDriveLogEmitted = false;
   bool m_ragdollPhysicsLogEmitted = false;
   bool m_ragdollFloorRuntimeDiagEmitted = false;
   int m_ragdollSimulationSpeedIndex = 3;
+  bool m_ragdollSimulationGrabActive = false;
+  int m_ragdollSimulationGrabBodyIndex = -1;
+  float m_ragdollSimulationGrabDepth = 0.0f;
+  XVECTOR3 m_ragdollSimulationGrabCenterOffset = XVECTOR3(0.0f, 0.0f, 0.0f, 0.0f);
+  XVECTOR3 m_ragdollSimulationGrabPreviousTarget = XVECTOR3(0.0f, 0.0f, 0.0f, 1.0f);
+  XVECTOR3 m_ragdollSimulationGrabReleaseVelocity = XVECTOR3(0.0f, 0.0f, 0.0f, 0.0f);
   bool m_ragdollEditDirty = false;
   bool m_ragdollEditHandleDragging = false;
   bool m_ragdollEditGizmoDragging = false;
@@ -286,6 +293,16 @@ public:
   void UpdateSkeletonFromRagdollPhysics();
   void SwitchRagdollToPhysics();
   bool ResetRagdollPhysicsAndAnimation();
+  bool HandleRagdollSimulationGrabInput(InputManager* input, bool imguiWantsMouse);
+  bool PickRagdollSimulationBody(float mouseX,
+                                 float mouseY,
+                                 int& outBodyIndex,
+                                 t850::PhysicsBodyState& outState,
+                                 XVECTOR3& outHitPoint,
+                                 float& outHitDistance);
+  bool BeginRagdollSimulationGrab(float mouseX, float mouseY);
+  bool UpdateRagdollSimulationGrab(float mouseX, float mouseY);
+  void EndRagdollSimulationGrab(bool applyThrow);
   void CreatePhysicsFloor(t850::JoltPhysicsSystem& physics);
   void LogRagdollFloorDiagnostics(const char* stage);
   bool EnterSkeletonEditMode();

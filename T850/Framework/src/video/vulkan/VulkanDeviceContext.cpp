@@ -53,9 +53,7 @@ namespace t850 {
       driver->BindPendingDescriptors(m_commandBuffer, shader);
 
     vkCmdDrawIndexed(m_commandBuffer, vertexCount, 1, startIndex, (int32_t)startVertex, 0);
-#ifdef T8_ENABLE_PROFILER
     if (t850::g_profiler) t850::g_profiler->AddDrawCall(vertexCount);
-#endif
     T8_TRACE(EvDrawIndexed(vertexCount, startIndex, startVertex));
   }
 

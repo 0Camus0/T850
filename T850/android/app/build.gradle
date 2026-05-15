@@ -15,20 +15,37 @@ def t850AndroidAbis = (findProperty('t850AndroidAbis') ?: 'arm64-v8a')
     .findAll { !it.isEmpty() }
 def t850VulkanValidation = (findProperty('t850VulkanValidation') ?: 'false').toString().toBoolean()
 def t850AndroidAssetProfile = (findProperty('t850AndroidAssetProfile') ?: 'physics-demo').toString().trim()
-def t850PhysicsDemoAssetIncludes = [
+def t850AndroidCommonAssetIncludes = [
     'Fonts/**',
     'Layouts/**',
     'Scenes/**',
     'Shaders/**',
     'Techniques/**',
+    'Textures/LUT/**',
+    'Textures/sky/*.dds'
+]
+def t850PhysicsDemoAssetIncludes = t850AndroidCommonAssetIncludes + [
     'Models/DamagedHelmet.glb',
     'Models/SkyBox.glb',
     'Models/SponzaEsc.glb',
     'Models/RagdollEdits/**',
     'Models/doomslayer_cine_all_animations_no-damage_double-sided-opaque.glb',
-    'Models/doomslayer_cine_base_all_animations_no-damage_double-sided-opaque.glb',
-    'Textures/LUT/**',
-    'Textures/sky/*.dds'
+    'Models/doomslayer_cine_base_all_animations_no-damage_double-sided-opaque.glb'
+]
+def t850DoomPorscheAssetIncludes = t850AndroidCommonAssetIncludes + [
+    'Models/doomslayer_cine_all_animations_no-damage_double-sided-opaque.glb',
+    'Models/porsche_992_gt3_r__www.vecarz.com.glb'
+]
+def t850ModelAssetIncludes = t850AndroidCommonAssetIncludes + [
+    'Models/**/*.glb',
+    'Models/**/*.gltf',
+    'Models/**/*.bin',
+    'Models/**/*.fbx',
+    'Models/**/*.obj',
+    'Models/**/*.X',
+    'Models/**/*.x',
+    'Models/RagdollEdits/**',
+    'Models/Q3/*_work/*_manifest.json'
 ]
 
 def localSigningProperties = new Properties()
@@ -65,8 +82,8 @@ if (t850AndroidAbis.isEmpty()) {
     throw new GradleException('At least one Android ABI must be specified in t850AndroidAbis.')
 }
 
-if (!(t850AndroidAssetProfile in ['physics-demo', 'full'])) {
-    throw new GradleException("Unsupported t850AndroidAssetProfile '${t850AndroidAssetProfile}'. Use 'physics-demo' or 'full'.")
+if (!(t850AndroidAssetProfile in ['physics-demo', 'doom-porsche', 'models-full', 'full'])) {
+    throw new GradleException("Unsupported t850AndroidAssetProfile '${t850AndroidAssetProfile}'. Use 'physics-demo', 'doom-porsche', 'models-full', or 'full'.")
 }
 
 def findExecutableOnPath = { String executableName ->
@@ -214,8 +231,13 @@ tasks.register('syncT850AndroidAssets', Sync) {
     from(assetSourceDir) {
         if (t850AndroidAssetProfile == 'physics-demo') {
             include(t850PhysicsDemoAssetIncludes)
+        } else if (t850AndroidAssetProfile == 'doom-porsche') {
+            include(t850DoomPorscheAssetIncludes)
+        } else if (t850AndroidAssetProfile == 'models-full') {
+            include(t850ModelAssetIncludes)
         }
         exclude 'Models/.t8cache/**'
+        exclude 'Models/RagdollEdits - Copy/**'
         exclude 'Shaders/.t8shadercache/**'
         exclude 'Textures/GeneratedIBLCache/**'
         exclude '**/.t8cache/**'

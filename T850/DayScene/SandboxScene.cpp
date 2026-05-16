@@ -1968,6 +1968,106 @@ namespace {
     bounds.Expand(other.max.x, other.max.y, other.max.z);
   }
 
+  float VectorComponent(const XVECTOR3& value, int component) {
+    switch (component) {
+      case 0: return value.x;
+      case 1: return value.y;
+      case 2: return value.z;
+      case 3: return value.w;
+      default: return 0.0f;
+    }
+  }
+
+  bool BuildSkinnedWorldBounds(RenderSkinnedMesh* skinned,
+                               const XMATRIX44& worldFromMesh,
+                               RenderMesh::AABB& outBounds) {
+    if (!skinned || !skinned->HasSkinData() || !skinned->xFile ||
+        skinned->xFile->XMeshDataBase.empty() || !skinned->xFile->XMeshDataBase[0]) {
+      return false;
+    }
+
+    std::vector<XMATRIX44> boneMatrices;
+    skinned->ExportBoneMatrices(boneMatrices);
+    if (boneMatrices.empty()) {
+      return false;
+    }
+
+    const xF::xMeshContainer* meshContainer = skinned->xFile->XMeshDataBase[0];
+    const std::size_t geometryCount = (std::min)(meshContainer->Geometry.size(), skinned->xFile->MeshInfo.size());
+    outBounds.Reset();
+    bool expanded = false;
+
+    for (std::size_t geometryIndex = 0; geometryIndex < geometryCount; ++geometryIndex) {
+      const xF::xMeshGeometry& sourceGeometry = meshContainer->Geometry[geometryIndex];
+      const xF::xFinalGeometry& finalGeometry = skinned->xFile->MeshInfo[geometryIndex];
+      const bool hasSkin =
+          (sourceGeometry.VertexAttributes & xF::xMeshGeometry::HAS_SKINWEIGHTS0) != 0 &&
+          (sourceGeometry.VertexAttributes & xF::xMeshGeometry::HAS_SKININDEXES0) != 0 &&
+          !sourceGeometry.SkinWeights.empty() &&
+          !sourceGeometry.SkinIndices.empty();
+      if (!hasSkin) {
+        continue;
+      }
+
+      std::size_t vertexCount = (std::min)(sourceGeometry.SkinWeights.size(), sourceGeometry.SkinIndices.size());
+      if (!sourceGeometry.Positions.empty()) {
+        vertexCount = (std::min)(vertexCount, sourceGeometry.Positions.size());
+      }
+      const uint32_t strideFloats = finalGeometry.VertexSize / sizeof(float);
+      if (finalGeometry.pData && strideFloats >= 3u) {
+        vertexCount = (std::min)(vertexCount, static_cast<std::size_t>(finalGeometry.NumVertex));
+      } else if (sourceGeometry.Positions.empty()) {
+        continue;
+      }
+
+      for (std::size_t vertexIndex = 0; vertexIndex < vertexCount; ++vertexIndex) {
+        XVECTOR3 localPosition;
+        if (finalGeometry.pData && strideFloats >= 3u) {
+          const float* vertex = finalGeometry.pData + vertexIndex * strideFloats;
+          localPosition = XVECTOR3(vertex[0], vertex[1], vertex[2], 1.0f);
+        } else {
+          localPosition = sourceGeometry.Positions[vertexIndex];
+          localPosition.w = 1.0f;
+        }
+
+        const XVECTOR3& weights = sourceGeometry.SkinWeights[vertexIndex];
+        const XVECTOR3& indices = sourceGeometry.SkinIndices[vertexIndex];
+        XVECTOR3 skinnedPosition(0.0f, 0.0f, 0.0f, 1.0f);
+        bool hasWeightedBone = false;
+        for (int component = 0; component < 4; ++component) {
+          const float weight = VectorComponent(weights, component);
+          if (weight <= 0.0f) {
+            continue;
+          }
+
+          const int boneIndex = static_cast<int>(std::floor(VectorComponent(indices, component) + 0.5f));
+          if (boneIndex < 0 || static_cast<std::size_t>(boneIndex) >= boneMatrices.size()) {
+            continue;
+          }
+
+          const XVECTOR3 bonePosition = TransformPoint(localPosition, boneMatrices[static_cast<std::size_t>(boneIndex)]);
+          skinnedPosition.x += bonePosition.x * weight;
+          skinnedPosition.y += bonePosition.y * weight;
+          skinnedPosition.z += bonePosition.z * weight;
+          hasWeightedBone = true;
+        }
+
+        if (!hasWeightedBone) {
+          continue;
+        }
+
+        const XVECTOR3 worldPosition = TransformPoint(skinnedPosition, worldFromMesh);
+        if (!IsUsablePhysicsPoint(worldPosition)) {
+          continue;
+        }
+        outBounds.Expand(worldPosition.x, worldPosition.y, worldPosition.z);
+        expanded = true;
+      }
+    }
+
+    return expanded && IsUsableRenderBounds(outBounds);
+  }
+
   bool BuildRagdollCapsuleBounds(const t850::PhysicsRagdollDesc& pose, RenderMesh::AABB& outBounds) {
     outBounds.Reset();
     bool expanded = false;
@@ -3132,10 +3232,12 @@ void SandboxScene::CreatePhysicsFloor(t850::JoltPhysicsSystem& physics) {
     T8_LOG_ERROR("[SandboxScene] Failed to build physics floor: model bounds are unavailable");
     return;
   }
+  RenderMesh::AABB modelFloorBounds = worldBounds;
+  const bool hasSkinnedBounds = BuildSkinnedWorldBounds(Meshes[0].GetSkinnedMesh(), Meshes[0].Final, modelFloorBounds);
 
   RenderMesh::AABB floorBounds;
   floorBounds.Reset();
-  ExpandBounds(floorBounds, worldBounds);
+  ExpandBounds(floorBounds, modelFloorBounds);
   RenderMesh::AABB ragdollBounds;
   const bool hasRagdollBounds =
       BuildRagdollCapsuleBounds(m_ragdollAnimationPose, ragdollBounds) ||
@@ -3150,15 +3252,12 @@ void SandboxScene::CreatePhysicsFloor(t850::JoltPhysicsSystem& physics) {
   const float baseHalfSize = (std::max)((std::max)(extentX, extentZ) * 2.0f, (std::max)(1.0f, m_modelRadius * 2.0f));
   const float halfSize = baseHalfSize * std::sqrt(kRagdollFloorAreaScale);
   const float halfHeight = (std::max)(0.05f, m_modelRadius * 0.04f);
-  const float gap = hasRagdollBounds
-      ? (std::max)(0.05f, (std::min)(25.0f, m_modelRadius * 0.04f))
-      : (std::max)(0.08f, m_modelRadius * 0.08f);
-  const float floorSourceMinY = worldBounds.min.y;
+  const float floorSourceMinY = modelFloorBounds.min.y;
 
   XMATRIX44 floorTransform;
   floorTransform.Identity();
   floorTransform.m41 = (floorBounds.min.x + floorBounds.max.x) * 0.5f;
-  floorTransform.m42 = floorSourceMinY - gap - halfHeight;
+  floorTransform.m42 = floorSourceMinY - halfHeight;
   floorTransform.m43 = (floorBounds.min.z + floorBounds.max.z) * 0.5f;
 
   t850::PhysicsBodyDesc floorDesc;
@@ -3172,14 +3271,15 @@ void SandboxScene::CreatePhysicsFloor(t850::JoltPhysicsSystem& physics) {
 
   m_floorBody = physics.CreateBody(floorDesc);
   if (m_floorBody.IsValid()) {
-    T8_LOG_INFO("[SandboxScene] Added static ragdoll floor top y=%.3f source=model sourceMinY=%.3f meshMinY=%.3f ragdollMinY=%.3f halfSize=%.3f halfHeight=%.3f gap=%.3f areaScale=%.1f",
+    T8_LOG_INFO("[SandboxScene] Added static ragdoll floor top y=%.3f source=%s sourceMinY=%.3f meshMinY=%.3f skinnedMinY=%.3f ragdollMinY=%.3f halfSize=%.3f halfHeight=%.3f areaScale=%.1f",
                 floorTransform.m42 + halfHeight,
+                hasSkinnedBounds ? "skinned-mesh" : "mesh",
                 floorSourceMinY,
                 worldBounds.min.y,
+                hasSkinnedBounds ? modelFloorBounds.min.y : worldBounds.min.y,
                 hasRagdollBounds ? ragdollBounds.min.y : worldBounds.min.y,
                 halfSize,
                 halfHeight,
-                gap,
                 kRagdollFloorAreaScale);
   } else {
     T8_LOG_ERROR("[SandboxScene] Failed to create static ragdoll floor");

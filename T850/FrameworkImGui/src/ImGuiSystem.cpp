@@ -346,6 +346,11 @@ bool ImGuiSystem::WantsKeyboard() const {
   return ImGui::GetIO().WantCaptureKeyboard;
 }
 
+bool ImGuiSystem::WantsTextInput() const {
+  if (!m_inited) return false;
+  return ImGui::GetIO().WantTextInput;
+}
+
 bool ImGuiSystem::WantsMouse() const {
   if (!m_inited) return false;
   return ImGui::GetIO().WantCaptureMouse;

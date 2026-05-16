@@ -31,6 +31,7 @@ namespace t850 {
 
     bool IsReady() const { return m_inited; }
     bool WantsKeyboard() const;
+    bool WantsTextInput() const;
     bool WantsMouse() const;
     float ConsumeWheelDelta();
     void AddWheelDelta(float delta) { m_wheelAccum += delta; }

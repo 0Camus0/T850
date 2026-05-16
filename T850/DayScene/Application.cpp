@@ -703,10 +703,12 @@ void App::OnInput() {
 	if (FirstFrame)
 		return;
 #ifndef OS_ANDROID
-  if (m_imguiReady && IManager.PressedOnceKey(T800K_g)) {
+  const bool imguiConsumesKeyboard =
+      m_imguiReady && m_imguiVisible && (m_imgui.WantsKeyboard() || m_imgui.WantsTextInput());
+  if (m_imguiReady && !imguiConsumesKeyboard && IManager.PressedOnceKey(T800K_g)) {
     m_imguiVisible = !m_imguiVisible;
   }
-  m_devLayer.SetSceneInputBlocked(m_imguiVisible && m_imgui.WantsKeyboard());
+  m_devLayer.SetSceneInputBlocked(imguiConsumesKeyboard);
   m_devLayer.ProcessInput(&IManager);
 #else
   UpdateAndroidGuiHoldToggle();
@@ -736,7 +738,8 @@ bool App::IsModalActive() const {
 #ifdef OS_ANDROID
   return false;
 #else
-  return m_devLayer.IsLegacyPopupActive() || (m_imguiVisible && m_imgui.WantsKeyboard());
+  return m_devLayer.IsLegacyPopupActive() ||
+         (m_imguiVisible && (m_imgui.WantsKeyboard() || m_imgui.WantsTextInput()));
 #endif
 }
 

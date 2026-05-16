@@ -35,6 +35,8 @@ public final class LauncherActivity extends Activity {
     public static final String EXTRA_REPLAY_SNAPSHOT = "com.t850.engine.extra.REPLAY_SNAPSHOT";
     public static final String EXTRA_PROFILE = "com.t850.engine.extra.PROFILE";
     public static final String EXTRA_PROFILE_FRAMES = "com.t850.engine.extra.PROFILE_FRAMES";
+    public static final String EXTRA_AUTO_START_RAGDOLL = "com.t850.engine.extra.AUTO_START_RAGDOLL";
+    public static final String EXTRA_RAGDOLL_SPEED_INDEX = "com.t850.engine.extra.RAGDOLL_SPEED_INDEX";
     public static final String EXTRA_RETURN_TO_NATIVE = "com.t850.engine.extra.RETURN_TO_NATIVE";
     public static final String EXTRA_RUN_ID = "com.t850.engine.extra.RUN_ID";
 
@@ -98,6 +100,8 @@ public final class LauncherActivity extends Activity {
         boolean keepRunning;
         boolean profile;
         int profileFrames = 300;
+        boolean autoStartRagdoll;
+        int ragdollSpeedIndex = -1;
         boolean returnToNative;
         String replaySnapshot;
     }
@@ -414,6 +418,8 @@ public final class LauncherActivity extends Activity {
         options.keepRunning = intent.getBooleanExtra(EXTRA_KEEP_RUNNING, false);
         options.profile = intent.getBooleanExtra(EXTRA_PROFILE, false);
         options.profileFrames = intent.getIntExtra(EXTRA_PROFILE_FRAMES, 300);
+        options.autoStartRagdoll = intent.getBooleanExtra(EXTRA_AUTO_START_RAGDOLL, false);
+        options.ragdollSpeedIndex = intent.getIntExtra(EXTRA_RAGDOLL_SPEED_INDEX, -1);
         options.replaySnapshot = intent.getStringExtra(EXTRA_REPLAY_SNAPSHOT);
         options.returnToNative = intent.getBooleanExtra(EXTRA_RETURN_TO_NATIVE, false);
 
@@ -459,6 +465,12 @@ public final class LauncherActivity extends Activity {
         if (options.profile) {
             intent.putExtra(EXTRA_PROFILE, true);
             intent.putExtra(EXTRA_PROFILE_FRAMES, Math.max(1, options.profileFrames));
+        }
+        if (options.autoStartRagdoll) {
+            intent.putExtra(EXTRA_AUTO_START_RAGDOLL, true);
+        }
+        if (options.ragdollSpeedIndex >= 0) {
+            intent.putExtra(EXTRA_RAGDOLL_SPEED_INDEX, options.ragdollSpeedIndex);
         }
         if (options.replaySnapshot != null && !options.replaySnapshot.isEmpty()) {
             intent.putExtra(EXTRA_REPLAY_SNAPSHOT, options.replaySnapshot);

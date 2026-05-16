@@ -203,7 +203,14 @@ public:
   bool m_ragdollDriveLogEmitted = false;
   bool m_ragdollPhysicsLogEmitted = false;
   bool m_ragdollFloorRuntimeDiagEmitted = false;
-  int m_ragdollSimulationSpeedIndex = 3;
+#if defined(OS_ANDROID)
+  int m_ragdollSimulationSpeedIndex = 8;
+#else
+  int m_ragdollSimulationSpeedIndex = 5;
+#endif
+  bool m_ragdollUseFixedSimulationDelta = false;
+  bool m_ragdollConfigSpeedApplied = false;
+  bool m_ragdollAutoStartAttempted = false;
   bool m_ragdollSimulationGrabActive = false;
   int m_ragdollSimulationGrabBodyIndex = -1;
   float m_ragdollSimulationGrabDepth = 0.0f;

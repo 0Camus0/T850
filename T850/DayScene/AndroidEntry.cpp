@@ -33,6 +33,8 @@ namespace {
   constexpr const char* kExtraReplaySnapshot = "com.t850.engine.extra.REPLAY_SNAPSHOT";
   constexpr const char* kExtraProfile = "com.t850.engine.extra.PROFILE";
   constexpr const char* kExtraProfileFrames = "com.t850.engine.extra.PROFILE_FRAMES";
+  constexpr const char* kExtraAutoStartRagdoll = "com.t850.engine.extra.AUTO_START_RAGDOLL";
+  constexpr const char* kExtraRagdollSpeedIndex = "com.t850.engine.extra.RAGDOLL_SPEED_INDEX";
 
   struct AndroidJniEnv {
     JavaVM* vm = nullptr;
@@ -218,6 +220,8 @@ namespace {
       if (profileFrames > 0) {
         t850::g_config.profileFrames = profileFrames;
       }
+      t850::g_config.ragdollSimulationSpeedIndex =
+        GetIntentIntExtra(env, intent, getIntExtra, kExtraRagdollSpeedIndex, t850::g_config.ragdollSimulationSpeedIndex);
     }
 
     if (getFloatExtra && t850::g_config.dumpFrame < 0) {
@@ -238,6 +242,8 @@ namespace {
         GetIntentBoolExtra(env, intent, getBooleanExtra, kExtraKeepRunning, t850::g_config.flags.keepRunning);
       t850::g_config.flags.profile =
         GetIntentBoolExtra(env, intent, getBooleanExtra, kExtraProfile, t850::g_config.flags.profile);
+      t850::g_config.flags.autoStartRagdoll =
+        GetIntentBoolExtra(env, intent, getBooleanExtra, kExtraAutoStartRagdoll, t850::g_config.flags.autoStartRagdoll);
     }
 
     if (getStringExtra) {

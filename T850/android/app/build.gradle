@@ -34,6 +34,7 @@ def t850PhysicsDemoAssetIncludes = t850AndroidCommonAssetIncludes + [
 ]
 def t850DoomPorscheAssetIncludes = t850AndroidCommonAssetIncludes + [
     'Models/doomslayer_cine_all_animations_no-damage_double-sided-opaque.glb',
+    'Models/RagdollEdits/doomslayer_cine_all_animations_no-damage_double-sided-opaque.glb.json',
     'Models/porsche_992_gt3_r__www.vecarz.com.glb'
 ]
 def t850ModelAssetIncludes = t850AndroidCommonAssetIncludes + [

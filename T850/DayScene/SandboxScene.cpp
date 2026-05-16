@@ -46,10 +46,10 @@ namespace t850 {
 }
 
 namespace {
-  constexpr std::array<float, 7> kRagdollSimulationSpeedScales = {
-      0.125f, 0.25f, 0.5f, 1.0f, 2.0f, 4.0f, 8.0f};
-  constexpr std::array<const char*, 7> kRagdollSimulationSpeedLabels = {
-      "0.125x", "0.25x", "0.5x", "1x", "2x", "4x", "8x"};
+  constexpr std::array<float, 9> kRagdollSimulationSpeedScales = {
+      0.125f, 0.25f, 0.5f, 1.0f, 2.0f, 4.0f, 8.0f, 16.0f, 32.0f};
+  constexpr std::array<const char*, 9> kRagdollSimulationSpeedLabels = {
+      "0.125x", "0.25x", "0.5x", "1x", "2x", "4x", "8x", "16x", "32x"};
 
   int ClampRagdollSimulationSpeedIndex(int index) {
     if (index < 0) return 0;
@@ -2396,12 +2396,17 @@ void SandboxScene::DestroyAssets() {
 void SandboxScene::OnUpdate(float _DtSecs) {
   DtSecs = _DtSecs;
   SceneProp.FrameDeltaSec = DtSecs;
+  if (!m_ragdollConfigSpeedApplied && g_config.ragdollSimulationSpeedIndex >= 0) {
+    m_ragdollSimulationSpeedIndex = ClampRagdollSimulationSpeedIndex(g_config.ragdollSimulationSpeedIndex);
+    m_ragdollConfigSpeedApplied = true;
+  }
   m_ragdollSimulationSpeedIndex = ClampRagdollSimulationSpeedIndex(m_ragdollSimulationSpeedIndex);
   t850::EngineContext* updateEngineContext = GetEngineContext();
   if (!updateEngineContext) updateEngineContext = &t850::GetEngineContext();
   if (updateEngineContext && updateEngineContext->physics) {
     updateEngineContext->physics->SetSimulationSpeedScale(
         RagdollSimulationSpeedScaleForIndex(m_ragdollSimulationSpeedIndex));
+    updateEngineContext->physics->SetUseFixedSimulationDelta(m_ragdollUseFixedSimulationDelta);
   }
 
   if (m_ragdollClearRequested) {
@@ -2412,6 +2417,15 @@ void SandboxScene::OnUpdate(float _DtSecs) {
   if (m_ragdollEditRebuildRequested && !m_ragdollClearRequested) {
     m_ragdollEditRebuildRequested = false;
     ApplyRagdollEditPose(true);
+  }
+  if (g_config.flags.autoStartRagdoll &&
+      !m_ragdollAutoStartAttempted &&
+      Meshes[0].HasPhysicsRagdoll() &&
+      !m_ragdollPhysicsDriven) {
+    m_ragdollAutoStartAttempted = true;
+    T8_LOG_INFO("[SandboxScene] Auto-starting ragdoll simulation at %s",
+                RagdollSimulationSpeedLabelForIndex(m_ragdollSimulationSpeedIndex));
+    SwitchRagdollToPhysics();
   }
   if (!m_ragdollSyncCliAttempted && HasCommandLineFlag("--ragdollSyncOnce")) {
     ++m_ragdollSyncCliWaitFrames;
@@ -10287,6 +10301,16 @@ void SandboxScene::DrawSkeletonEditPanel(t850::DevGuiContext& gui) {
             RagdollSimulationSpeedScaleForIndex(m_ragdollSimulationSpeedIndex));
       }
     }
+    if (ImGui::Checkbox("Fixed 1/60 physics delta", &m_ragdollUseFixedSimulationDelta)) {
+      t850::EngineContext* engineContext = GetEngineContext();
+      if (!engineContext) engineContext = &t850::GetEngineContext();
+      if (engineContext && engineContext->physics) {
+        engineContext->physics->SetUseFixedSimulationDelta(m_ragdollUseFixedSimulationDelta);
+      }
+    }
+    ImGui::TextDisabled(m_ragdollUseFixedSimulationDelta
+                            ? "Physics advances one 1/60s input per frame."
+                            : "Physics uses the measured frame delta.");
     if (gui.Button(m_skeletonEditMode ? "Exit Edit Mode" : "Enter Edit Mode")) {
       if (m_skeletonEditMode) ExitSkeletonEditMode();
       else EnterSkeletonEditMode();
@@ -10465,6 +10489,14 @@ void SandboxScene::DrawAndroidPhysicsPanel(t850::DevGuiContext& gui) {
             RagdollSimulationSpeedScaleForIndex(m_ragdollSimulationSpeedIndex));
       }
     }
+    if (ImGui::Checkbox("Fixed 1/60 physics delta", &m_ragdollUseFixedSimulationDelta)) {
+      t850::EngineContext* engineContext = GetEngineContext();
+      if (!engineContext) engineContext = &t850::GetEngineContext();
+      if (engineContext && engineContext->physics) {
+        engineContext->physics->SetUseFixedSimulationDelta(m_ragdollUseFixedSimulationDelta);
+      }
+    }
+    ImGui::TextDisabled(m_ragdollUseFixedSimulationDelta ? "Fixed per-frame input." : "Measured frame delta.");
     if (gui.Button("Reset Physics/Animation")) {
       ResetRagdollPhysicsAndAnimation();
     }

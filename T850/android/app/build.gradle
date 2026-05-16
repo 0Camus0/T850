@@ -15,6 +15,7 @@ def t850AndroidAbis = (findProperty('t850AndroidAbis') ?: 'arm64-v8a')
     .findAll { !it.isEmpty() }
 def t850VulkanValidation = (findProperty('t850VulkanValidation') ?: 'false').toString().toBoolean()
 def t850AndroidAssetProfile = (findProperty('t850AndroidAssetProfile') ?: 'physics-demo').toString().trim()
+def t850AllowUnsignedRelease = (findProperty('t850AllowUnsignedRelease') ?: 'false').toString().toBoolean()
 def t850AndroidCommonAssetIncludes = [
     'Fonts/**',
     'Layouts/**',
@@ -72,11 +73,12 @@ def releaseKeyPassword = signingValue('T850_RELEASE_KEY_PASSWORD') ?: signingVal
 def releaseSigningReady = releaseStoreFile && releaseStorePassword && releaseKeyAlias && releaseKeyPassword
 def releaseTaskRequested = gradle.startParameter.taskNames.any { it.toLowerCase(Locale.ROOT).contains('release') }
 
-if (releaseTaskRequested && !releaseSigningReady) {
+if (releaseTaskRequested && !releaseSigningReady && !t850AllowUnsignedRelease) {
     throw new GradleException(
         'Release signing is not configured. Set ANDROID_KEYSTORE_PATH, ANDROID_KEYSTORE_PASSWORD, ' +
         'ANDROID_KEY_ALIAS, and ANDROID_KEY_PASSWORD as environment variables, Gradle properties, ' +
-        'or in ~/.android/t850-release-signing.properties.')
+        'or in ~/.android/t850-release-signing.properties. CI may pass -Pt850AllowUnsignedRelease=true ' +
+        'to create an unsigned APK for later signing/staging.')
 }
 
 if (t850AndroidAbis.isEmpty()) {

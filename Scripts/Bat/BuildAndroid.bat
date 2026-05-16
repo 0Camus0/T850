@@ -11,6 +11,7 @@ setlocal enabledelayedexpansion
 ::   Scripts\Bat\BuildAndroid.bat --sdk C:\Android\Sdk
 ::   Scripts\Bat\BuildAndroid.bat Debug --emulator
 ::   Scripts\Bat\BuildAndroid.bat Debug --vulkan-validation
+::   Scripts\Bat\BuildAndroid.bat Release --allow-unsigned-release
 
 set "ROOT=%~dp0..\..\"
 set "ANDROID_PROJECT=%ROOT%T850\android"
@@ -23,6 +24,7 @@ set "ABI_FILTERS=arm64-v8a"
 set "NDK_VERSION=27.2.12479018"
 set "VULKAN_VALIDATION=false"
 set "ASSET_PROFILE=physics-demo"
+set "ALLOW_UNSIGNED_RELEASE=0"
 
 set "HOST_CORES=%NUMBER_OF_PROCESSORS%"
 if not defined HOST_CORES set "HOST_CORES=1"
@@ -49,6 +51,11 @@ if /i "%~1"=="--sdk" goto arg_sdk
 if /i "%~1"=="--abi" goto arg_abi
 if /i "%~1"=="--abis" goto arg_abi
 if /i "%~1"=="--asset-profile" goto arg_asset_profile
+if /i "%~1"=="--allow-unsigned-release" (
+    set "ALLOW_UNSIGNED_RELEASE=1"
+    shift
+    goto parse_args
+)
 if /i "%~1"=="--emulator" (
     set "ABI_FILTERS=x86_64"
     shift
@@ -189,8 +196,10 @@ if /i "%CONFIG%"=="Debug" (
     set "OUTPUT_VARIANT=debug"
 ) else (
     set "OUTPUT_VARIANT=release"
-    call :check_release_signing
-    if errorlevel 1 exit /b 1
+    if not "%ALLOW_UNSIGNED_RELEASE%"=="1" (
+        call :check_release_signing
+        if errorlevel 1 exit /b 1
+    )
 )
 
 echo(
@@ -203,6 +212,7 @@ echo ABIs    : %ABI_FILTERS%
 echo Assets  : %ASSET_PROFILE%
 echo Vulkan validation: %VULKAN_VALIDATION%
 echo Workers : %T850_BUILD_WORKERS% ^(cores - 1^)
+if "%ALLOW_UNSIGNED_RELEASE%"=="1" echo Release signing: unsigned allowed
 if "%CLEAN%"=="1" echo Mode    : clean rebuild
 if not "%CLEAN%"=="1" echo Mode    : incremental
 echo(
@@ -217,14 +227,14 @@ if "%CLEAN%"=="1" (
     )
 )
 
-call "%GRADLEW%" --no-daemon --console=plain --parallel --max-workers=%T850_BUILD_WORKERS% "-Pt850AndroidAbis=%ABI_FILTERS%" "-Pt850VulkanValidation=%VULKAN_VALIDATION%" "-Pt850AndroidAssetProfile=%ASSET_PROFILE%" "%BUILD_TASK%"
+call "%GRADLEW%" --no-daemon --console=plain --parallel --max-workers=%T850_BUILD_WORKERS% "-Pt850AndroidAbis=%ABI_FILTERS%" "-Pt850VulkanValidation=%VULKAN_VALIDATION%" "-Pt850AndroidAssetProfile=%ASSET_PROFILE%" "-Pt850AllowUnsignedRelease=%ALLOW_UNSIGNED_RELEASE%" "%BUILD_TASK%"
 if errorlevel 1 (
     popd
     exit /b 1
 )
 
 if "%INSTALL%"=="1" (
-    call "%GRADLEW%" --no-daemon --console=plain --parallel --max-workers=%T850_BUILD_WORKERS% "-Pt850AndroidAbis=%ABI_FILTERS%" "-Pt850VulkanValidation=%VULKAN_VALIDATION%" "-Pt850AndroidAssetProfile=%ASSET_PROFILE%" "%INSTALL_TASK%"
+    call "%GRADLEW%" --no-daemon --console=plain --parallel --max-workers=%T850_BUILD_WORKERS% "-Pt850AndroidAbis=%ABI_FILTERS%" "-Pt850VulkanValidation=%VULKAN_VALIDATION%" "-Pt850AndroidAssetProfile=%ASSET_PROFILE%" "-Pt850AllowUnsignedRelease=%ALLOW_UNSIGNED_RELEASE%" "%INSTALL_TASK%"
     if errorlevel 1 (
         popd
         exit /b 1
@@ -265,5 +275,5 @@ if errorlevel 1 (
 exit /b 0
 
 :usage
-echo Usage: Scripts\Bat\BuildAndroid.bat [Debug^|Release] [--configuration Debug^|Release] [--sdk C:\Android\Sdk] [--abi ABI[,ABI...]] [--asset-profile physics-demo^|doom-porsche^|models-full^|full] [--emulator] [--vulkan-validation] [--clean] [--install] [--launch]
+echo Usage: Scripts\Bat\BuildAndroid.bat [Debug^|Release] [--configuration Debug^|Release] [--sdk C:\Android\Sdk] [--abi ABI[,ABI...]] [--asset-profile physics-demo^|doom-porsche^|models-full^|full] [--emulator] [--vulkan-validation] [--allow-unsigned-release] [--clean] [--install] [--launch]
 exit /b 1

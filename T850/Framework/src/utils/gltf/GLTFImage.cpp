@@ -358,17 +358,7 @@ void ResolveAllImages(const Document& doc,
     r.error = "image has neither uri nor bufferView";
   };
 
-  // Phase 1: Gather encoded bytes (disk I/O + base64 decode + bufferView copy).
-  if (g_threadPool && numImages > 1) {
-    T8_LOG_INFO("[glTF] Reading %d images with %u global worker threads", numImages, g_threadPool->NumWorkers());
-    g_threadPool->ParallelFor(0, numImages, gatherImageBytes);
-  } else {
-    for (int i = 0; i < numImages; i++) {
-      gatherImageBytes(i);
-    }
-  }
-
-  // Phase 2: Parallel stbi decode (CPU-only, thread-safe)
+  // Decode one encoded image byte buffer with stb_image (CPU-only, thread-safe).
   auto decodeImage = [&](int i) {
       DecodeResult& r = results[i];
       if (!r.ok || r.rawBytes.empty()) return;
@@ -385,19 +375,8 @@ void ResolveAllImages(const Document& doc,
       r.rawBytes.clear();
       r.rawBytes.shrink_to_fit();
   };
-  if (g_threadPool && numImages > 1) {
-    T8_LOG_INFO("[glTF] Decoding %d images with %u global worker threads", numImages, g_threadPool->NumWorkers());
-    g_threadPool->ParallelFor(0, numImages, decodeImage);
-  } else {
-    for (int i = 0; i < numImages; i++) {
-      decodeImage(i);
-    }
-  }
 
-  // Phase 3: Serial GPU upload + driver cache insertion
-  if (g_pBaseDriver)
-    g_pBaseDriver->BeginResourceUploadBatch();
-  for (int i = 0; i < numImages; i++) {
+  auto uploadImage = [&](int i) {
     DecodeResult& r = results[i];
     if (!r.ok) {
       int slot = RegisterPlaceholder(r.keyName, r.error.c_str());
@@ -405,7 +384,7 @@ void ResolveAllImages(const Document& doc,
         outNames[i] = r.keyName;
         outSlots[i] = slot;
       }
-      continue;
+      return;
     }
 
     if (!r.pixels) {
@@ -414,7 +393,7 @@ void ResolveAllImages(const Document& doc,
         outNames[i] = r.keyName;
         outSlots[i] = slot;
       }
-      continue;
+      return;
     }
 
     std::string filepath = "Textures/" + r.keyName;
@@ -423,14 +402,16 @@ void ResolveAllImages(const Document& doc,
       outNames[i] = r.keyName;
       outSlots[i] = existing;
       stbi_image_free(r.pixels);
-      continue;
+      r.pixels = nullptr;
+      return;
     }
 
     ::t850::Texture* t = ::t850::T8Device->CreateTextureFromMemory(
         r.pixels, r.w, r.h, 4, r.keyName);
     stbi_image_free(r.pixels);
+    r.pixels = nullptr;
 
-    if (!t) continue;
+    if (!t) return;
     t->filepath = filepath;
     std::strncpy(t->optname, r.keyName.c_str(), sizeof(t->optname) - 1);
     t->optname[sizeof(t->optname) - 1] = '\0';
@@ -451,6 +432,43 @@ void ResolveAllImages(const Document& doc,
     }
     T8_TRACE_REGISTER_TEXTURE(t, "tex2d");
     outNames[i] = r.keyName;
+  };
+
+  if (sizeof(void*) < 8) {
+    T8_LOG_INFO("[glTF] Resolving %d images serially for 32-bit process", numImages);
+    for (int i = 0; i < numImages; i++) {
+      gatherImageBytes(i);
+      decodeImage(i);
+      uploadImage(i);
+    }
+    T8_LOG_INFO("[glTF] Image resolution complete: %d images", numImages);
+    return;
+  }
+
+  // Phase 1: Gather encoded bytes (disk I/O + base64 decode + bufferView copy).
+  if (g_threadPool && numImages > 1) {
+    T8_LOG_INFO("[glTF] Reading %d images with %u global worker threads", numImages, g_threadPool->NumWorkers());
+    g_threadPool->ParallelFor(0, numImages, gatherImageBytes);
+  } else {
+    for (int i = 0; i < numImages; i++) {
+      gatherImageBytes(i);
+    }
+  }
+
+  if (g_threadPool && numImages > 1) {
+    T8_LOG_INFO("[glTF] Decoding %d images with %u global worker threads", numImages, g_threadPool->NumWorkers());
+    g_threadPool->ParallelFor(0, numImages, decodeImage);
+  } else {
+    for (int i = 0; i < numImages; i++) {
+      decodeImage(i);
+    }
+  }
+
+  // Phase 3: Serial GPU upload + driver cache insertion
+  if (g_pBaseDriver)
+    g_pBaseDriver->BeginResourceUploadBatch();
+  for (int i = 0; i < numImages; i++) {
+    uploadImage(i);
   }
   if (g_pBaseDriver)
     g_pBaseDriver->EndResourceUploadBatch();

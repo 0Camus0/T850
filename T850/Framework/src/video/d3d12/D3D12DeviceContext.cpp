@@ -53,9 +53,7 @@ namespace t850 {
   void D3D12DeviceContext::DrawIndexed(unsigned vertexCount, unsigned startIndex, unsigned startVertex) {
     T8_LOG_TRACE("[D3D12] DrawIndexed(%u, %u, %u)", vertexCount, startIndex, startVertex);
     m_commandList->DrawIndexedInstanced(vertexCount, 1, startIndex, startVertex, 0);
-#ifdef T8_ENABLE_PROFILER
     if (t850::g_profiler) t850::g_profiler->AddDrawCall(vertexCount);
-#endif
     T8_TRACE(EvDrawIndexed(vertexCount, startIndex, startVertex));
   }
 

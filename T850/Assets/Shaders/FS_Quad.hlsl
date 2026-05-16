@@ -284,7 +284,9 @@ float4 FS( VS_OUTPUT input ) : SV_TARGET {
 		float3 RefCol = texEnv.SampleLevel(SS6, skyDir, 0.0f).xyz;
 		Final.xyz = RefCol.xyz * toogles.x;
 	} else if(MatId > 0) {
+		#if defined(ENABLE_SHADOWS) || defined(ENABLE_SSAO)
 		Shadow = tex5.SampleLevel(SS5, input.texture0, 0.0f).r;
+		#endif
 
 		float4 normalmap = tex1.SampleLevel(SS1, input.texture0, 0.0f);
 		float3 normal = normalmap.xyz * 2.0 - 1.0;
@@ -499,7 +501,9 @@ float4 FS(VS_OUTPUT input) : SV_TARGET {
 		float3 RefCol = texEnv.SampleLevel(SS6, EyeDir_mod, 0.0f).xyz;
 		Final.xyz = RefCol.xyz * 2.0;
 	} else if (MatId > 0) {
+		#if defined(ENABLE_SHADOWS) || defined(ENABLE_SSAO)
 		Shadow = tex5.SampleLevel(SS5, input.texture0, 0.0f).r;
+		#endif
 		float4 normalmap = tex1.SampleLevel(SS1, input.texture0, 0.0f);
 		float3 normal = normalize(normalmap.xyz * 2.0 - 1.0);
 		float4 geoData = tex3.SampleLevel(SS3, input.texture0, 0.0f);

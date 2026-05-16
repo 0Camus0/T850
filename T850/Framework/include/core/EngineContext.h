@@ -6,12 +6,14 @@ class BaseDriver;
 class Config;
 class Device;
 class DeviceContext;
+class JoltPhysicsSystem;
 class ThreadPool;
 
 struct EngineContext {
   BaseDriver* driver = nullptr;
   Device* device = nullptr;
   DeviceContext* deviceContext = nullptr;
+  JoltPhysicsSystem* physics = nullptr;
   ThreadPool* threadPool = nullptr;
   Config* config = nullptr;
 

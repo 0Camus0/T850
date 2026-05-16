@@ -53,8 +53,6 @@ bool SPIRVReflection::Parse(const uint32_t* code, size_t wordCount) {
   uint32_t magic = code[0];
   if (magic != 0x07230203) return false; // not SPIR-V
 
-  uint32_t bound = code[3]; // upper bound of IDs
-
   // Maps for collecting info per ID
   struct IDInfo {
     std::string name;

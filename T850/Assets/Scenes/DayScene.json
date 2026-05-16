@@ -419,7 +419,7 @@
       }
    ],
    "meshes": [
-      "Models/SponzaEsc.X"
+      "Models/SponzaEsc.glb"
    ],
    "environment_map": "sky/CubeMap_SkyWater.dds",
    "environment_diffuse_ibl": "",
@@ -427,7 +427,7 @@
    "environment_brdf_lut": "LUT/lut_ggx.png",
    "environment_sheen_ibl": "",
    "environment_charlie_lut": "LUT/lut_charlie.png",
-   "environment_sheen_e_lut": "LUT/lut_sheen_E.png",
+   "environment_sheen_e_lut": "LUT/lut_sheen_E.dds",
    "quality": {
       "shadow_map_resolution": 2048,
       "god_rays_resolution": 0,
@@ -774,6 +774,11 @@
          "default_val": false
       },
       {
+         "name": "show_physics",
+         "label": "Physics",
+         "default_val": false
+      },
+      {
          "name": "dof_toggle",
          "label": "DOF",
          "default_val": true
@@ -889,6 +894,54 @@
             "CubeMap_SkyWater.dds"
          ],
          "default_index": 10
+      }
+   ],
+   "profiles": [
+      {
+         "name": "android/adreno-700",
+         "platform": "android",
+         "gpu_family": "adreno-700",
+         "sliders": [
+            {
+               "name": "ssao_kernel_size",
+               "value": 8
+            },
+            {
+               "name": "light_volume_steps",
+               "value": 64
+            },
+            {
+               "name": "dof_far_samples",
+               "value": 2
+            },
+            {
+               "name": "godrays_factor",
+               "value": 0.45
+            }
+         ]
+      },
+      {
+         "name": "android/adreno-800",
+         "platform": "android",
+         "gpu_family": "adreno-800",
+         "sliders": [
+            {
+               "name": "ssao_kernel_size",
+               "value": 12
+            },
+            {
+               "name": "light_volume_steps",
+               "value": 96
+            },
+            {
+               "name": "dof_far_samples",
+               "value": 3
+            },
+            {
+               "name": "godrays_factor",
+               "value": 0.6
+            }
+         ]
       }
    ]
 }

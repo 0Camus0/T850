@@ -42,7 +42,7 @@ else()
 endif()
 
 set(T850_SOURCE_DIR ${CMAKE_CURRENT_SOURCE_DIR})
-set(T850_BIN_DIR ${T850_SOURCE_DIR}/bin/${T850_ARCH}/$<CONFIG>)
+set(T850_BIN_DIR ${T850_SOURCE_DIR}/bin/${T850_VS_PLATFORM}/$<CONFIG>)
 set(T850_LIB_DIR ${T850_SOURCE_DIR}/Lib/$<CONFIG>/${T850_VS_PLATFORM})
 set(T850_VCPKG_ROOT ${T850_SOURCE_DIR}/Librerias/vcpkg/installed)
 set(T850_VCPKG_SOURCE_DIR ${T850_SOURCE_DIR}/Librerias/vcpkg)
@@ -108,6 +108,9 @@ function(t850_ensure_vcpkg)
 		vulkan-memory-allocator:${T850_VCPKG_STATIC_TRIPLET}
 		glslang:${T850_VCPKG_STATIC_TRIPLET})
 
+	list(APPEND T850_VCPKG_PACKAGE_SPECS
+		joltphysics:${T850_VCPKG_STATIC_TRIPLET})
+
 	set(T850_IMGUI_HEADER ${T850_VCPKG_STATIC}/include/imgui.h)
 	set(T850_IMGUI_DX11_HEADER ${T850_VCPKG_STATIC}/include/imgui_impl_dx11.h)
 	set(T850_IMGUI_DX12_HEADER ${T850_VCPKG_STATIC}/include/imgui_impl_dx12.h)
@@ -159,6 +162,10 @@ endfunction()
 
 t850_ensure_vcpkg()
 
+list(APPEND CMAKE_PREFIX_PATH ${T850_VCPKG_STATIC})
+find_package(Jolt CONFIG REQUIRED)
+set(T850_JOLT_ENABLED ON)
+
 if(EXISTS ${T850_VCPKG_DYNAMIC}/bin/zlib1.dll)
 	set(T850_ZLIB_RUNTIME_DLL ${T850_VCPKG_DYNAMIC}/bin/zlib1.dll)
 elseif(EXISTS ${T850_VCPKG_DYNAMIC}/bin/z.dll)
@@ -184,10 +191,10 @@ endfunction()
 function(t850_apply_runtime_output target)
 	set_target_properties(${target} PROPERTIES
 		RUNTIME_OUTPUT_DIRECTORY "${T850_BIN_DIR}"
-		RUNTIME_OUTPUT_DIRECTORY_DEBUG "${T850_SOURCE_DIR}/bin/${T850_ARCH}/Debug"
-		RUNTIME_OUTPUT_DIRECTORY_RELEASE "${T850_SOURCE_DIR}/bin/${T850_ARCH}/Release"
-		RUNTIME_OUTPUT_DIRECTORY_RELWITHDEBINFO "${T850_SOURCE_DIR}/bin/${T850_ARCH}/RelWithDebInfo"
-		RUNTIME_OUTPUT_DIRECTORY_MINSIZEREL "${T850_SOURCE_DIR}/bin/${T850_ARCH}/MinSizeRel")
+		RUNTIME_OUTPUT_DIRECTORY_DEBUG "${T850_SOURCE_DIR}/bin/${T850_VS_PLATFORM}/Debug"
+		RUNTIME_OUTPUT_DIRECTORY_RELEASE "${T850_SOURCE_DIR}/bin/${T850_VS_PLATFORM}/Release"
+		RUNTIME_OUTPUT_DIRECTORY_RELWITHDEBINFO "${T850_SOURCE_DIR}/bin/${T850_VS_PLATFORM}/RelWithDebInfo"
+		RUNTIME_OUTPUT_DIRECTORY_MINSIZEREL "${T850_SOURCE_DIR}/bin/${T850_VS_PLATFORM}/MinSizeRel")
 endfunction()
 
 function(t850_apply_library_output target)
@@ -204,7 +211,6 @@ function(t850_apply_app target)
 	t850_apply_runtime_output(${target})
 	target_compile_definitions(${target} PRIVATE _CONSOLE)
 	target_include_directories(${target} PRIVATE
-		${T850_SOURCE_DIR}/Librerias/glaze/include
 		${T850_SOURCE_DIR}/Librerias/tinyxml2/include
 		${T850_SOURCE_DIR}/DayScene
 		${T850_SOURCE_DIR}/Framework
@@ -213,6 +219,8 @@ function(t850_apply_app target)
 		${T850_VCPKG_STATIC}/include
 		${T850_VCPKG_DYNAMIC}/include
 		${T850_SOURCE_DIR}/Librerias/stb/include)
+	target_include_directories(${target} SYSTEM PRIVATE
+		${T850_SOURCE_DIR}/Librerias/glaze/include)
 	target_link_directories(${target} PRIVATE
 		${T850_SOURCE_DIR}/Librerias/tinyxml2/lib
 		${T850_SOURCE_DIR}/Librerias/SDL3/lib/${T850_ARCH}
@@ -222,6 +230,7 @@ function(t850_apply_app target)
 	target_link_libraries(${target} PRIVATE
 		Framework
 		dxguid
+		dxgi
 		SDL3
 		d3d11
 		d3dcompiler

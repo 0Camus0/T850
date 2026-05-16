@@ -27,7 +27,6 @@
 namespace t850 {
 namespace gltf {
 
-static constexpr bool kFlipToLeftHanded = true;
 static constexpr float kTicksPerSecond = 4800.0f;
 
 // ── Helper: glTF column-major mat4 → engine row-major XMATRIX44 ─────
@@ -78,31 +77,6 @@ static XMATRIX44 NodeLocalMatrix(const Node& n) {
     T.Identity();
   }
   return S * R * T;  // row-vector convention: Scale * Rotation * Translation
-}
-
-// ── Helper: negate Z in a translation for RH→LH flip ────────────────
-static XVECTOR3 FlipPositionZ(const XVECTOR3& p) {
-  return XVECTOR3(p.x, p.y, kFlipToLeftHanded ? -p.z : p.z);
-}
-
-// ── Helper: flip quaternion for RH→LH (negate x and y components) ───
-static XQUATERNION FlipQuaternionZ(const XQUATERNION& q) {
-  if (kFlipToLeftHanded)
-    return XQUATERNION(-q.x, -q.y, q.z, q.w);
-  return q;
-}
-
-// ── Helper: negate Z column/row in a 4x4 matrix for RH→LH flip ─────
-static XMATRIX44 FlipMatrixZ(const XMATRIX44& m) {
-  if (!kFlipToLeftHanded) return m;
-  XMATRIX44 result = m;
-  // Negate row 2 and column 2 (Z axis), then un-negate [2][2]
-  for (int i = 0; i < 4; i++) {
-    result.m[2][i] = -result.m[2][i];
-    result.m[i][2] = -result.m[i][2];
-  }
-  result.m[2][2] = m.m[2][2]; // double-negated → restore
-  return result;
 }
 
 static bool IsValidAccessorIndex(const Document& doc, int accessorIndex, const char* label) {

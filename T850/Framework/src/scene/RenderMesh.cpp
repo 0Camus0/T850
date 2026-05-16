@@ -147,11 +147,6 @@ namespace t850 {
       return bounds;
     }
 
-    void ExpandMeshBounds(RenderMesh::MeshInfo& meshInfo, const RenderMesh::AABB& bounds) {
-      meshInfo.bounds.Expand(bounds.min.x, bounds.min.y, bounds.min.z);
-      meshInfo.bounds.Expand(bounds.max.x, bounds.max.y, bounds.max.z);
-    }
-
     bool IsMaterialTiled(const xMaterial* material) {
       if (!material)
         return false;
@@ -834,7 +829,7 @@ namespace t850 {
           int counter = 0;
           bool first = false;
           for (int k = 0; k < NumFaceIndices; k++) {
-            if (pActual->MaterialList.FaceIndices[k] == j) {
+            if (pActual->MaterialList.FaceIndices[k] == static_cast<unsigned long>(j)) {
               unsigned int index = k * 3;
               if (!first) {
                 it_subsetinfo->TriStart = k;
@@ -893,7 +888,7 @@ namespace t850 {
           int counter = 0;
           bool first = false;
           for (int k = 0; k < NumFaceIndices; k++) {
-            if (pActual->MaterialList.FaceIndices[k] == j) {
+            if (pActual->MaterialList.FaceIndices[k] == static_cast<unsigned long>(j)) {
               unsigned int index = k * 3;
               if (!first) {
                 it_subsetinfo->TriStart = k;
@@ -1174,7 +1169,7 @@ namespace t850 {
           std::vector<unsigned short> indices;
           indices.reserve(subset.NumVertex);
           for (int k = 0; k < numFaceIndices; ++k) {
-            if (sourceGeometry->MaterialList.FaceIndices[k] != static_cast<int>(j))
+            if (sourceGeometry->MaterialList.FaceIndices[k] != static_cast<unsigned long>(j))
               continue;
             const unsigned int index = k * 3u;
 #if CHANGE_TO_RH
@@ -1206,7 +1201,7 @@ namespace t850 {
           std::vector<unsigned int> indices;
           indices.reserve(subset.NumVertex);
           for (int k = 0; k < numFaceIndices; ++k) {
-            if (sourceGeometry->MaterialList.FaceIndices[k] != static_cast<int>(j))
+            if (sourceGeometry->MaterialList.FaceIndices[k] != static_cast<unsigned long>(j))
               continue;
             const unsigned int index = k * 3u;
 #if CHANGE_TO_RH
@@ -1442,7 +1437,6 @@ namespace t850 {
     free(fsSourceP);
 
     for (std::size_t i = 0; i < xFile->MeshInfo.size(); i++) {
-      xFinalGeometry *it = &xFile->MeshInfo[i];
       xMeshGeometry *pActual = &xFile->XMeshDataBase[0]->Geometry[i];
       ShaderKey baseKey(0);
 
@@ -1468,7 +1462,6 @@ namespace t850 {
       int NumMaterials = static_cast<int>(pActual->MaterialList.Materials.size());
       for (int j = 0; j < NumMaterials; j++) {
         ShaderKey matKey(baseKey.bits);
-        xSubsetInfo *subinfo = &it->Subsets[j];
         xMaterial *material = &pActual->MaterialList.Materials[j];
         SubSetInfo stmp;
 
@@ -2019,8 +2012,6 @@ namespace t850 {
     for (std::size_t oi = 0; oi < numGeometries; oi++) {
       std::size_t i = geometryOrder[oi];
       MeshInfo  *it_MeshInfo = &Info[i];
-      xMeshGeometry *pActual = &xFile->XMeshDataBase[0]->Geometry[i];
-
       int drawableSubsetCount = 0;
       int drawableClusterCount = 0;
       unsigned long long drawableIndexCount = 0;
@@ -2106,8 +2097,6 @@ namespace t850 {
       unsigned int offset = 0;
 
       ShaderBase *s = 0;
-      ShaderBase *last = (ShaderBase*)32;
-
       // Phase A.5 step 2: bind shared VB pool if available, otherwise
       // fall back to the per-asset VB. Pool uploads are explicit at
       // the end of mesh creation; GetGPUBuffer() is a pure accessor.
@@ -2469,7 +2458,6 @@ namespace t850 {
         }
         if (trackCullStats && drewSubset)
           m_drawnSubsets++;
-        last = s;
       }
     }
     if (ownsScope) tracker.End();

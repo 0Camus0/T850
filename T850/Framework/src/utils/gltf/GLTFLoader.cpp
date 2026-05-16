@@ -66,8 +66,9 @@ bool DecodeDataUri(const std::string& uri, std::vector<unsigned char>& out) {
                       uri.size() - comma - 1, out);
 }
 
-// Resolve every Buffer in the document. `glbBin` is the BIN chunk for
-// .glb (empty for .gltf). For .gltf, buffer 0 with no uri is invalid.
+// Resolve every Buffer in the document. `glbBin` is either the BIN chunk for
+// .glb or, for large GLBs, the whole GLB container with bufferView offsets
+// already rebased to the BIN chunk. For .gltf, buffer 0 with no uri is invalid.
 bool ResolveBuffers(Document& doc,
                     const std::string& sourcePath,
                     std::vector<unsigned char>&& glbBin) {
@@ -156,6 +157,25 @@ bool ResolveBuffers(Document& doc,
   return true;
 }
 
+bool RebaseGlbBufferViews(Document& doc,
+                          std::size_t binOffset,
+                          std::size_t binLength,
+                          const std::string& sourcePath) {
+  for (std::size_t i = 0; i < doc.bufferViews.size(); ++i) {
+    BufferView& bv = doc.bufferViews[i];
+    if (bv.buffer != 0) {
+      continue;
+    }
+    if (bv.byteOffset > binLength || bv.byteLength > binLength - bv.byteOffset) {
+      T8_LOG_ERROR("[glTF] GLB '%s' bufferView %zu range %zu+%zu exceeds BIN chunk length %zu",
+                   sourcePath.c_str(), i, bv.byteOffset, bv.byteLength, binLength);
+      return false;
+    }
+    bv.byteOffset += binOffset;
+  }
+  return true;
+}
+
 } // namespace
 
 bool LoadGLTF(const std::string& path, Document& out) {
@@ -174,6 +194,9 @@ bool LoadGLTF(const std::string& path, Document& out) {
 
   std::string json;
   std::vector<unsigned char> glbBin;
+  std::size_t glbBinOffset = 0;
+  std::size_t glbBinLength = 0;
+  bool hasGlbBin = false;
 
   uint32_t magic;
   std::memcpy(&magic, raw.data(), 4);
@@ -214,7 +237,9 @@ bool LoadGLTF(const std::string& path, Document& out) {
         }
         json.assign(reinterpret_cast<const char*>(raw.data() + off), cLen);
       } else if (chunkIdx == 1 && cType == GLB_CHUNK_BIN) {
-        glbBin.assign(raw.data() + off, raw.data() + off + cLen);
+        glbBinOffset = off;
+        glbBinLength = cLen;
+        hasGlbBin = true;
       } // any further chunks: ignored per spec
 
       off += cLen;
@@ -274,6 +299,13 @@ bool LoadGLTF(const std::string& path, Document& out) {
                    path.c_str(), unsupported.c_str());
       return false;
     }
+  }
+
+  if (magic == GLB_MAGIC && hasGlbBin) {
+    if (!RebaseGlbBufferViews(out, glbBinOffset, glbBinLength, path)) {
+      return false;
+    }
+    glbBin = std::move(raw);
   }
 
   if (!ResolveBuffers(out, path, std::move(glbBin))) {

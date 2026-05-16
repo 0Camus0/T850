@@ -87,7 +87,7 @@ namespace t850 {
     free(vsSourceP);
     free(fsSourceP);
 
-    int shaderID = g_pBaseDriver->CreateShader(vstr, fstr, sigBase, vsName, fsName);
+    g_pBaseDriver->CreateShader(vstr, fstr, sigBase, vsName, fsName);
 
     // Simple pass variants (no toggle combinations)
     static const uint8_t simplePasses[] = {
@@ -103,6 +103,19 @@ namespace t850 {
       ShaderKey k(sigBase.bits);
       k.setPass(p);
       g_pBaseDriver->CreateShader(vstr, fstr, k, vsName, fsName);
+    }
+
+    // Deferred: variants that either sample the shadow/SSAO factor texture or compile it out.
+    for (uint8_t p : { PassType::DEFERRED, PassType::DEFERRED_LDR }) {
+      for (int sh = 0; sh <= 1; ++sh) {
+        for (int ao = 0; ao <= 1; ++ao) {
+          ShaderKey k(sigBase.bits);
+          k.setPass(p);
+          if (sh) k.bits |= ShaderKey::SHADOWS;
+          if (ao) k.bits |= ShaderKey::SSAO;
+          g_pBaseDriver->CreateShader(vstr, fstr, k, vsName, fsName);
+        }
+      }
     }
 
     // SHADOW_COMP: 4 toggle variants (+-SHADOWS +-SSAO), also with OMNI_SHADOWS
@@ -134,12 +147,6 @@ namespace t850 {
       if (gr) k.bits |= ShaderKey::GOD_RAYS;
       g_pBaseDriver->CreateShader(vstr, fstr, k, vsName, fsName);
     }
-
-
-
-
-
-    ShaderBase* s = g_pBaseDriver->GetShaderIdx(shaderID);
     T8_LOG_INFO("RenderQuad created: %zu shader variants compiled", g_pBaseDriver->m_shaderCache.size());
 
 
@@ -187,6 +194,10 @@ namespace t850 {
 
     // Add toggle bits based on pass and scene properties
     if (pass == PassType::SHADOW_COMP) {
+      if (pScProp->ToogleShadow) finalKey.bits |= ShaderKey::SHADOWS;
+      if (pScProp->ToogleSSAO)   finalKey.bits |= ShaderKey::SSAO;
+    }
+    else if (pass == PassType::DEFERRED || pass == PassType::DEFERRED_LDR) {
       if (pScProp->ToogleShadow) finalKey.bits |= ShaderKey::SHADOWS;
       if (pScProp->ToogleSSAO)   finalKey.bits |= ShaderKey::SSAO;
     }

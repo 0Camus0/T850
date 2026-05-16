@@ -7,6 +7,7 @@
 #include <core/Config.h>
 #include <utils/ConfigRuntime.h>
 #include <utils/Log.h>
+#include <utils/RuntimeProfile.h>
 #include <utils/AndroidAssets.h>
 #include <utils/ResourceLocator.h>
 
@@ -30,6 +31,10 @@ namespace {
   constexpr const char* kExtraDebugFrames = "com.t850.engine.extra.DEBUG_FRAMES";
   constexpr const char* kExtraKeepRunning = "com.t850.engine.extra.KEEP_RUNNING";
   constexpr const char* kExtraReplaySnapshot = "com.t850.engine.extra.REPLAY_SNAPSHOT";
+  constexpr const char* kExtraProfile = "com.t850.engine.extra.PROFILE";
+  constexpr const char* kExtraProfileFrames = "com.t850.engine.extra.PROFILE_FRAMES";
+  constexpr const char* kExtraAutoStartRagdoll = "com.t850.engine.extra.AUTO_START_RAGDOLL";
+  constexpr const char* kExtraRagdollSpeedIndex = "com.t850.engine.extra.RAGDOLL_SPEED_INDEX";
 
   struct AndroidJniEnv {
     JavaVM* vm = nullptr;
@@ -111,6 +116,48 @@ namespace {
     return out;
   }
 
+  std::string GetStaticStringField(JNIEnv* env, jclass cls, const char* name) {
+    jfieldID field = env->GetStaticFieldID(cls, name, "Ljava/lang/String;");
+    if (!field || env->ExceptionCheck()) {
+      env->ExceptionClear();
+      return {};
+    }
+    jstring value = static_cast<jstring>(env->GetStaticObjectField(cls, field));
+    if (env->ExceptionCheck()) {
+      env->ExceptionClear();
+      return {};
+    }
+    if (!value) return {};
+
+    std::string out;
+    const char* chars = env->GetStringUTFChars(value, nullptr);
+    if (chars) {
+      out = chars;
+      env->ReleaseStringUTFChars(value, chars);
+    }
+    env->DeleteLocalRef(value);
+    return out;
+  }
+
+  void CaptureAndroidBuildInfo(android_app* state) {
+    if (!state || !state->activity) return;
+    AndroidJniEnv jni(state->activity);
+    JNIEnv* env = jni.env;
+    if (!env) return;
+    jclass buildClass = env->FindClass("android/os/Build");
+    if (!buildClass || env->ExceptionCheck()) {
+      env->ExceptionClear();
+      return;
+    }
+    t850::SetAndroidBuildInfo(
+      GetStaticStringField(env, buildClass, "MANUFACTURER"),
+      GetStaticStringField(env, buildClass, "MODEL"),
+      GetStaticStringField(env, buildClass, "HARDWARE"),
+      GetStaticStringField(env, buildClass, "BOARD"),
+      GetStaticStringField(env, buildClass, "SOC_MODEL"));
+    env->DeleteLocalRef(buildClass);
+  }
+
   void ApplyLauncherIntent(android_app* state) {
     if (!state || !state->activity || !state->activity->clazz) return;
 
@@ -168,6 +215,13 @@ namespace {
         t850::g_config.flags.dumpByFrame = true;
         t850::g_config.dumpFrame = dumpFrame;
       }
+
+      int profileFrames = GetIntentIntExtra(env, intent, getIntExtra, kExtraProfileFrames, t850::g_config.profileFrames);
+      if (profileFrames > 0) {
+        t850::g_config.profileFrames = profileFrames;
+      }
+      t850::g_config.ragdollSimulationSpeedIndex =
+        GetIntentIntExtra(env, intent, getIntExtra, kExtraRagdollSpeedIndex, t850::g_config.ragdollSimulationSpeedIndex);
     }
 
     if (getFloatExtra && t850::g_config.dumpFrame < 0) {
@@ -186,6 +240,10 @@ namespace {
       }
       t850::g_config.flags.keepRunning =
         GetIntentBoolExtra(env, intent, getBooleanExtra, kExtraKeepRunning, t850::g_config.flags.keepRunning);
+      t850::g_config.flags.profile =
+        GetIntentBoolExtra(env, intent, getBooleanExtra, kExtraProfile, t850::g_config.flags.profile);
+      t850::g_config.flags.autoStartRagdoll =
+        GetIntentBoolExtra(env, intent, getBooleanExtra, kExtraAutoStartRagdoll, t850::g_config.flags.autoStartRagdoll);
     }
 
     if (getStringExtra) {
@@ -223,8 +281,6 @@ namespace {
 }
 
 void android_main(android_app* state) {
-  app_dummy();
-
   t850::Config defaultConfig;
   t850::g_config = defaultConfig;
   t850::g_config.api = "vulkan";
@@ -234,6 +290,7 @@ void android_main(android_app* state) {
   t850::g_config.startScene = 0;
   t850::g_config.logLevel = t850::Log::LVL_DEBUG;
   ApplyLauncherIntent(state);
+  CaptureAndroidBuildInfo(state);
 
   t850::Log::Init(static_cast<t850::Log::Level>(t850::g_config.logLevel),
                   t850::Log::T8_LOG_BACKEND_ANDROID_LOGCAT,
@@ -254,13 +311,15 @@ void android_main(android_app* state) {
     }
   }
   T8_LOG_INFO("[Android] T850 NativeActivity starting");
-  T8_LOG_INFO("[Android] Launch config: scene=%d model='%s' logLevel=%d api=vulkan dumpEnabled=%d dumpByFrame=%d dumpFrame=%d dumpSeconds=%.3f keepRunning=%d replay='%s'",
+  T8_LOG_INFO("[Android] Launch config: scene=%d model='%s' logLevel=%d api=vulkan dumpEnabled=%d dumpByFrame=%d dumpFrame=%d dumpSeconds=%.3f keepRunning=%d profile=%d profileFrames=%d replay='%s'",
               t850::g_config.startScene, t850::g_config.modelPath.c_str(), t850::g_config.logLevel,
               t850::g_config.flags.dumpEnabled ? 1 : 0,
               t850::g_config.flags.dumpByFrame ? 1 : 0,
               t850::g_config.dumpFrame,
               t850::g_config.dumpSeconds,
               t850::g_config.flags.keepRunning ? 1 : 0,
+              t850::g_config.flags.profile ? 1 : 0,
+              t850::g_config.profileFrames,
               t850::g_config.replaySnapshotPath.c_str());
 
   t850::ApplicationDesc desc;

@@ -34,6 +34,7 @@ namespace t850 {
 
   class DeviceContext {
   public:
+    virtual ~DeviceContext() = default;
     virtual void* GetAPIObject() const = 0;
     virtual void** GetAPIObjectReference() const = 0;
 
@@ -48,6 +49,7 @@ namespace t850 {
   };
   class Device {
   public:
+    virtual ~Device() = default;
     virtual void* GetAPIObject() const = 0;
     virtual void** GetAPIObjectReference() const = 0;
 
@@ -68,6 +70,7 @@ namespace t850 {
   /* BUFFERS */
   class Buffer {
   public:
+    virtual ~Buffer() = default;
     virtual void* GetAPIObject() const = 0;
     virtual void** GetAPIObjectReference() const = 0;
 
@@ -154,6 +157,7 @@ namespace t850 {
 
   class BaseRT {
   public:
+    virtual ~BaseRT() = default;
     enum ATTACHMENTS {
       COLOR0_ATTACHMENT = 1,
       COLOR1_ATTACHMENT = 2,
@@ -204,6 +208,7 @@ namespace t850 {
   class ShaderBase {
   public:
     ShaderBase() {}
+    virtual ~ShaderBase() = default;
     bool CreateShader(std::string src_vs, std::string src_fs, ShaderKey key = ShaderKey(), const std::string& vs_name = "", const std::string& fs_name = "");
     virtual bool    CreateShaderAPI(std::string src_vs, std::string src_fs, const std::string& vs_name = "", const std::string& fs_name = "") = 0;
     virtual void  Set(const t850::DeviceContext& deviceContext) = 0;
@@ -215,6 +220,7 @@ namespace t850 {
 
   class BaseDriver {
   public:
+    virtual ~BaseDriver() = default;
     enum {
       DEPTH_ATTACHMENT = -1,
       COLOR0_ATTACHMENT = 0,

@@ -27,6 +27,7 @@ struct DisplayJson {
   std::optional<bool> fullscreen;
   std::optional<int> scene;
   std::optional<std::string> model;
+  std::optional<std::string> sceneProfile;
   std::optional<std::string> title;
 };
 
@@ -86,6 +87,7 @@ struct RuntimeConfigJson {
   std::optional<bool> dumpShaderPermutations;
   std::optional<std::string> shaderPermutationOutput;
   std::optional<float> orbitYaw;
+  std::optional<std::string> sceneProfile;
 
   std::optional<DisplayJson> display;
   std::optional<ReplaySnapshotJson> replaySnapshot;

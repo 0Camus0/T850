@@ -16,6 +16,7 @@
 #endif
 #include <imgui/ImGuiSystem.h>
 
+#include <physics/JoltPhysicsSystem.h>
 #include <scene/PrimitiveManager.h>
 #include <scene/PrimitiveInstance.h>
 #include <scene/SceneProp.h>
@@ -34,20 +35,20 @@
 class App : public t850::AppBase {
 public:
 	App() : AppBase() {}
-	void InitVars();
-  void LoadAssets();
-	void CreateAssets();
-	void DestroyAssets();
+  void InitVars() override;
+  void LoadAssets() override;
+  void CreateAssets() override;
+  void DestroyAssets() override;
 
-	void OnUpdate();
-	void OnDraw();
-	void OnInput();
+  void OnUpdate() override;
+  void OnDraw() override;
+  void OnInput() override;
 
-	void OnPause();
-	void OnResume();
-	void OnReset();
+  void OnPause() override;
+  void OnResume() override;
+  void OnReset() override;
 
-  void LoadScene(int id);
+  void LoadScene(int id) override;
   void DrawRuntimeGui();
 #ifdef OS_ANDROID
   bool HandleAndroidInputEvent(AInputEvent* event) override;
@@ -55,6 +56,7 @@ public:
   void UpdateAndroidGuiHoldToggle();
   void LoadAndroidGuiSettings();
   void SaveAndroidGuiSettings() const;
+  void DrawAndroidPhysicsGui(t850::DevGuiContext& gui);
 #endif
 
   // Modal state (DevLayer's GUI popup) — queried by the framework to block Esc-to-quit.
@@ -71,6 +73,7 @@ public:
   t850::TextRenderer m_textRender;
   std::vector<std::unique_ptr<t850::SceneBase>> m_scenes;
   t850::SceneBase* m_actualScene = nullptr;
+  t850::JoltPhysicsSystem m_physics;
   t850::ImGuiSystem m_imgui;
   bool m_imguiReady = false;
   bool m_imguiVisible = false;
@@ -82,6 +85,8 @@ public:
   std::unordered_map<void*, uintptr_t> m_debugOpaqueTextureDescriptors;
 #else
   float m_androidGuiScale = 1.6f;
+  int m_androidGuiPanelMode = 0;
+  int m_androidGuiTapSide = -1;
   int m_androidGuiTapCount = 0;
   float m_androidGuiTapWindowSecs = 0.0f;
   float m_androidGuiTapStartX = 0.0f;

@@ -64,6 +64,8 @@ namespace t850 {
     apiDesc.ByteWidth = desc.byteWidth;
     apiDesc.BindFlags = D3D11_BIND_INDEX_BUFFER;
     apiDesc.Usage = usage;
+    if (usage == D3D11_USAGE_DYNAMIC)
+      apiDesc.CPUAccessFlags = D3D11_CPU_ACCESS_WRITE;
 
     if (initialData != nullptr)
     {
@@ -84,7 +86,17 @@ namespace t850 {
   }
   void D3DXIndexBuffer::UpdateFromSystemCopy(const DeviceContext& deviceContext)
   {
-    reinterpret_cast<ID3D11DeviceContext*>(deviceContext.GetAPIObject())->UpdateSubresource(APIBuffer.Get(), 0, 0, &sysMemCpy[0], 0, 0);
+    ID3D11DeviceContext* ctx = reinterpret_cast<ID3D11DeviceContext*>(deviceContext.GetAPIObject());
+    if (descriptor.usage == BufferUsage::DINAMIC) {
+      D3D11_MAPPED_SUBRESOURCE mapped = {};
+      HRESULT hr = ctx->Map(APIBuffer.Get(), 0, D3D11_MAP_WRITE_DISCARD, 0, &mapped);
+      if (SUCCEEDED(hr)) {
+        memcpy(mapped.pData, &sysMemCpy[0], sysMemCpy.size());
+        ctx->Unmap(APIBuffer.Get(), 0);
+      }
+    } else {
+      ctx->UpdateSubresource(APIBuffer.Get(), 0, 0, &sysMemCpy[0], 0, 0);
+    }
 #ifdef T850_RENDER_TRACE
     if (T8_TRACE_ACTIVE() && !sysMemCpy.empty()) {
       int bufId = g_renderTracer->EnsureBufferId(this, "ib");
@@ -96,7 +108,17 @@ namespace t850 {
   {
     sysMemCpy.clear();
     sysMemCpy.assign((char*)buffer, (char*)buffer + descriptor.byteWidth);
-    reinterpret_cast<ID3D11DeviceContext*>(deviceContext.GetAPIObject())->UpdateSubresource(APIBuffer.Get(), 0, 0, buffer, 0, 0);
+    ID3D11DeviceContext* ctx = reinterpret_cast<ID3D11DeviceContext*>(deviceContext.GetAPIObject());
+    if (descriptor.usage == BufferUsage::DINAMIC) {
+      D3D11_MAPPED_SUBRESOURCE mapped = {};
+      HRESULT hr = ctx->Map(APIBuffer.Get(), 0, D3D11_MAP_WRITE_DISCARD, 0, &mapped);
+      if (SUCCEEDED(hr)) {
+        memcpy(mapped.pData, buffer, descriptor.byteWidth);
+        ctx->Unmap(APIBuffer.Get(), 0);
+      }
+    } else {
+      ctx->UpdateSubresource(APIBuffer.Get(), 0, 0, buffer, 0, 0);
+    }
 #ifdef T850_RENDER_TRACE
     if (T8_TRACE_ACTIVE()) {
       int bufId = g_renderTracer->EnsureBufferId(this, "ib");

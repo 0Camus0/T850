@@ -28,6 +28,7 @@ using std::streampos;
 using std::ios;
 
 namespace {
+#if defined(OS_WINDOWS)
 uint16_t Float32ToFloat16(float value) {
 	uint32_t bits = 0;
 	std::memcpy(&bits, &value, sizeof(bits));
@@ -56,6 +57,7 @@ uint16_t Float32ToFloat16(float value) {
 
 	return static_cast<uint16_t>(sign | (static_cast<uint32_t>(exponent) << 10) | (mantissa >> 13));
 }
+#endif
 
 bool Is16BitPngFile(const char* filename) {
 	std::ifstream file(filename, std::ios::binary);
@@ -782,7 +784,7 @@ unsigned char*	cil_load(const char* filename, int *x, int *y, unsigned int *mipm
 
 			resizedBuf[nx*ny * 4] = '\0';
 
-			int result = stbir_resize_uint8(buffer, *x, *y, 0, resizedBuf, nx, ny, 0, 4);
+			stbir_resize_uint8(buffer, *x, *y, 0, resizedBuf, nx, ny, 0, 4);
 
 			stbi_image_free(buffer);
 

@@ -153,9 +153,9 @@ Built from scratch with no third-party glTF library:
 
 ### Build & Tooling
 
-- **CI pipeline** — GitHub Actions building x86/x64/ARM64 × Debug/Release on Windows via MSBuild + vcpkg
+- **CI pipeline** — GitHub Actions building Win32/x64/ARM64 × Debug/Release on Windows via MSBuild + vcpkg
 - **WPF Launcher** — GUI launcher for selecting API, scene, model, resolution, snapshot settings, and log level; dev version includes build button and editor launch
-- **LaunchSolution.bat** — One-click setup: clones vcpkg, installs dependencies (GLEW, SDL3, Draco, MikkTSpace, ImGui), opens VS solution
+- **LaunchSolution.bat** — One-click setup: clones vcpkg, installs dependencies (GLEW, SDL3, Draco, MikkTSpace, ImGui, Jolt Physics), opens VS solution
 - **Dual shader languages** — HLSL for D3D11/D3D12/Vulkan, GLSL for OpenGL; technique XML files define shader profiles with per-profile preprocessor defines
 
 ## Demo Scenes
@@ -517,6 +517,7 @@ Headless mode (`-DHEADLESS=ON`) enables EGL/GBM offscreen rendering for CI.
 | **stb** | Image loading (`stb_image`), font rendering (`stb_truetype`) |
 | **MikkTSpace** | Tangent generation for glTF models |
 | **Draco** | Google's mesh compression (glTF extension) |
+| **Jolt Physics** | Rigid body simulation, mesh collision, and ragdoll bodies |
 | **tinyxml2** | XML parsing for shader techniques |
 | **VMA** | Vulkan Memory Allocator |
 | **glslang** | HLSL → SPIR-V compilation for Vulkan |

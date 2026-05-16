@@ -1,12 +1,6 @@
 #pragma once
 // ─── T8 Profiler: Cross-API GPU + CPU Frame Profiling ────
 //
-// Guarded by T8_ENABLE_PROFILER.  When undefined, all profiler
-// calls compile to no-ops with zero runtime cost.
-//
-// To enable: add T8_ENABLE_PROFILER to preprocessor defines
-// (the build script does this for profiling builds).
-//
 // Usage:
 //   1. Call Init() after driver creation
 //   2. Call BeginFrame() / EndFrame() around each frame
@@ -16,9 +10,7 @@
 // GPU timestamps are collected asynchronously (results from frame N-2).
 // CPU timestamps use QueryPerformanceCounter.
 //
-// Enable via --profile CLI flag + T8_ENABLE_PROFILER define.
-
-#ifdef T8_ENABLE_PROFILER
+// Enable at runtime via --profile or the Android PROFILE launch extra.
 
 #include <string>
 #include <vector>
@@ -158,15 +150,3 @@ namespace t850 {
 
 #define T8_PROFILE_CPU_SCOPE(profiler, name) \
   t850::CPUProfileScopeGuard _t8cpuprof##__LINE__((profiler), (name))
-
-#else // T8_ENABLE_PROFILER not defined — everything compiles away
-
-namespace t850 {
-  class Profiler;
-  inline Profiler* g_profiler = nullptr;
-}
-
-#define T8_PROFILE_SCOPE(profiler, name)     ((void)0)
-#define T8_PROFILE_CPU_SCOPE(profiler, name) ((void)0)
-
-#endif // T8_ENABLE_PROFILER

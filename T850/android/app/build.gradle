@@ -14,9 +14,79 @@ def t850AndroidAbis = (findProperty('t850AndroidAbis') ?: 'arm64-v8a')
     .collect { it.trim() }
     .findAll { !it.isEmpty() }
 def t850VulkanValidation = (findProperty('t850VulkanValidation') ?: 'false').toString().toBoolean()
+def t850AndroidAssetProfile = (findProperty('t850AndroidAssetProfile') ?: 'physics-demo').toString().trim()
+def t850AllowUnsignedRelease = (findProperty('t850AllowUnsignedRelease') ?: 'false').toString().toBoolean()
+def t850AndroidCommonAssetIncludes = [
+    'Fonts/**',
+    'Layouts/**',
+    'Scenes/**',
+    'Shaders/**',
+    'Techniques/**',
+    'Textures/LUT/**',
+    'Textures/sky/*.dds'
+]
+def t850PhysicsDemoAssetIncludes = t850AndroidCommonAssetIncludes + [
+    'Models/DamagedHelmet.glb',
+    'Models/SkyBox.glb',
+    'Models/SponzaEsc.glb',
+    'Models/RagdollEdits/**',
+    'Models/doomslayer_cine_all_animations_no-damage_double-sided-opaque.glb',
+    'Models/doomslayer_cine_base_all_animations_no-damage_double-sided-opaque.glb'
+]
+def t850DoomPorscheAssetIncludes = t850AndroidCommonAssetIncludes + [
+    'Models/doomslayer_cine_all_animations_no-damage_double-sided-opaque.glb',
+    'Models/RagdollEdits/doomslayer_cine_all_animations_no-damage_double-sided-opaque.glb.json',
+    'Models/porsche_992_gt3_r__www.vecarz.com.glb'
+]
+def t850ModelAssetIncludes = t850AndroidCommonAssetIncludes + [
+    'Models/**/*.glb',
+    'Models/**/*.gltf',
+    'Models/**/*.bin',
+    'Models/**/*.fbx',
+    'Models/**/*.obj',
+    'Models/**/*.X',
+    'Models/**/*.x',
+    'Models/RagdollEdits/**',
+    'Models/Q3/*_work/*_manifest.json'
+]
+
+def localSigningProperties = new Properties()
+[
+    file('../signing.properties'),
+    file('signing.properties'),
+    new File(System.getProperty('user.home'), '.android/t850-release-signing.properties')
+].findAll { it.isFile() }.each { propsFile ->
+    propsFile.withInputStream { localSigningProperties.load(it) }
+}
+
+def signingValue = { String name ->
+    def value = findProperty(name)
+    if (value == null) value = localSigningProperties.getProperty(name)
+    if (value == null) value = System.getenv(name)
+    value == null ? null : value.toString()
+}
+
+def releaseStoreFile = signingValue('T850_RELEASE_STORE_FILE') ?: signingValue('ANDROID_KEYSTORE_PATH')
+def releaseStorePassword = signingValue('T850_RELEASE_STORE_PASSWORD') ?: signingValue('ANDROID_KEYSTORE_PASSWORD')
+def releaseKeyAlias = signingValue('T850_RELEASE_KEY_ALIAS') ?: signingValue('ANDROID_KEY_ALIAS')
+def releaseKeyPassword = signingValue('T850_RELEASE_KEY_PASSWORD') ?: signingValue('ANDROID_KEY_PASSWORD')
+def releaseSigningReady = releaseStoreFile && releaseStorePassword && releaseKeyAlias && releaseKeyPassword
+def releaseTaskRequested = gradle.startParameter.taskNames.any { it.toLowerCase(Locale.ROOT).contains('release') }
+
+if (releaseTaskRequested && !releaseSigningReady && !t850AllowUnsignedRelease) {
+    throw new GradleException(
+        'Release signing is not configured. Set ANDROID_KEYSTORE_PATH, ANDROID_KEYSTORE_PASSWORD, ' +
+        'ANDROID_KEY_ALIAS, and ANDROID_KEY_PASSWORD as environment variables, Gradle properties, ' +
+        'or in ~/.android/t850-release-signing.properties. CI may pass -Pt850AllowUnsignedRelease=true ' +
+        'to create an unsigned APK for later signing/staging.')
+}
 
 if (t850AndroidAbis.isEmpty()) {
     throw new GradleException('At least one Android ABI must be specified in t850AndroidAbis.')
+}
+
+if (!(t850AndroidAssetProfile in ['physics-demo', 'doom-porsche', 'models-full', 'full'])) {
+    throw new GradleException("Unsupported t850AndroidAssetProfile '${t850AndroidAssetProfile}'. Use 'physics-demo', 'doom-porsche', 'models-full', or 'full'.")
 }
 
 def findExecutableOnPath = { String executableName ->
@@ -44,9 +114,68 @@ def resolveGlslangValidator = {
         'Run SetupAndroidToolchain.bat without --skip-winget, or install the Vulkan SDK and set VULKAN_SDK/PATH.')
 }
 
+def getT850BuildWorkers = {
+    def envWorkers = System.getenv('T850_BUILD_WORKERS')
+    if (envWorkers) {
+        try {
+            def parsedWorkers = envWorkers.toInteger()
+            if (parsedWorkers > 0) return parsedWorkers
+        } catch (ignored) {
+        }
+    }
+    Math.max(1, Runtime.runtime.availableProcessors() - 1)
+}
+
+def runShaderCompileCommands = { List shaderCommands, int requestedWorkers ->
+    if (shaderCommands.isEmpty()) return
+
+    def workerCount = Math.max(1, Math.min(requestedWorkers, shaderCommands.size()))
+    logger.lifecycle("[T850] Compiling ${shaderCommands.size()} Android shader outputs with ${workerCount} workers.")
+
+    def executor = java.util.concurrent.Executors.newFixedThreadPool(workerCount)
+    try {
+        def futures = shaderCommands.collect { command ->
+            executor.submit({ ->
+                def processBuilder = new ProcessBuilder(command.args)
+                processBuilder.redirectErrorStream(true)
+                def process = processBuilder.start()
+                def output = process.inputStream.getText('UTF-8')
+                def exitCode = process.waitFor()
+                [command: command, output: output, exitCode: exitCode]
+            } as java.util.concurrent.Callable)
+        }
+
+        def failures = []
+        futures.each { future ->
+            def result = future.get()
+            if (result.exitCode != 0) {
+                failures << result
+            }
+        }
+
+        if (!failures.isEmpty()) {
+            def message = new StringBuilder()
+            message << "${failures.size()} Android shader compile command(s) failed."
+            failures.each { failure ->
+                message << System.lineSeparator()
+                message << "\n[${failure.command.label}] exit ${failure.exitCode}: "
+                message << failure.command.args.collect { arg -> arg.contains(' ') ? "\"${arg}\"" : arg }.join(' ')
+                if (failure.output?.trim()) {
+                    message << System.lineSeparator()
+                    message << failure.output.trim()
+                }
+            }
+            throw new GradleException(message.toString())
+        }
+    } finally {
+        executor.shutdownNow()
+    }
+}
+
 android {
     namespace 'com.t850.engine'
     compileSdk 35
+    ndkVersion '27.2.12479018'
 
     defaultConfig {
         applicationId 'com.t850.engine'
@@ -61,6 +190,25 @@ android {
                     '-DT850_ANDROID_NATIVE_ACTIVITY=ON',
                     "-DT850_VULKAN_VALIDATION=${t850VulkanValidation ? 'ON' : 'OFF'}"
                 cppFlags '-std=c++23 -fexceptions -frtti'
+            }
+        }
+    }
+
+    signingConfigs {
+        release {
+            if (releaseSigningReady) {
+                storeFile file(releaseStoreFile)
+                storePassword releaseStorePassword
+                keyAlias releaseKeyAlias
+                keyPassword releaseKeyPassword
+            }
+        }
+    }
+
+    buildTypes {
+        release {
+            if (releaseSigningReady) {
+                signingConfig signingConfigs.release
             }
         }
     }
@@ -82,8 +230,17 @@ android {
 
 
 tasks.register('syncT850AndroidAssets', Sync) {
+    inputs.property('t850AndroidAssetProfile', t850AndroidAssetProfile)
     from(assetSourceDir) {
+        if (t850AndroidAssetProfile == 'physics-demo') {
+            include(t850PhysicsDemoAssetIncludes)
+        } else if (t850AndroidAssetProfile == 'doom-porsche') {
+            include(t850DoomPorscheAssetIncludes)
+        } else if (t850AndroidAssetProfile == 'models-full') {
+            include(t850ModelAssetIncludes)
+        }
         exclude 'Models/.t8cache/**'
+        exclude 'Models/RagdollEdits - Copy/**'
         exclude 'Shaders/.t8shadercache/**'
         exclude 'Textures/GeneratedIBLCache/**'
         exclude '**/.t8cache/**'
@@ -94,6 +251,9 @@ tasks.register('syncT850AndroidAssets', Sync) {
         exclude '**/*.dxbc'
     }
     into(filteredAssetDir)
+    doFirst {
+        logger.lifecycle("[T850] Android asset profile: ${t850AndroidAssetProfile}")
+    }
 }
 
 tasks.register('compileT850AndroidShaders') {
@@ -101,6 +261,7 @@ tasks.register('compileT850AndroidShaders') {
     outputs.dir(shaderOutputDir)
     doLast {
         def validator = resolveGlslangValidator()
+        def shaderCompileCommands = []
         shaderOutputDir.mkdirs()
 
         def compiledOutputs = [] as Set
@@ -113,46 +274,48 @@ tasks.register('compileT850AndroidShaders') {
             if (stage == null) return
             def output = new File(shaderOutputDir, name + '.spv')
             compiledOutputs << output.absolutePath
-            exec {
-                commandLine validator, '-D', '-V', '-S', stage, '-e', entry,
-                    shader.absolutePath, '-o', output.absolutePath
-            }
+            shaderCompileCommands << [
+                label: output.name,
+                args: [validator, '-D', '-V', '-S', stage, '-e', entry, shader.absolutePath, '-o', output.absolutePath].collect { it.toString() }
+            ]
         }
 
-        if (!shaderPermutationFile.isFile()) {
+        if (shaderPermutationFile.isFile()) {
+            def json = new groovy.json.JsonSlurper().parse(shaderPermutationFile)
+            def permutations = json.permutations ?: [:]
+            permutations.each { key, permutation ->
+                def normalizedKey = key.toString().replaceFirst('^0[xX]', '').toUpperCase()
+                def defines = (permutation.defines ?: []).collect { it.toString() }
+                [permutation.vertexShader, permutation.fragmentShader].findAll { it }.each { shaderName ->
+                    def shader = shaderByName[shaderName.toString()]
+                    if (shader == null) {
+                        throw new GradleException("Shader permutation references missing shader '${shaderName}'")
+                    }
+
+                    def name = shader.name
+                    def stage = name.startsWith('VS_') ? 'vert' : (name.startsWith('FS_') ? 'frag' : null)
+                    def entry = name.startsWith('VS_') ? 'VS' : (name.startsWith('FS_') ? 'FS' : null)
+                    if (stage == null) return
+
+                    def output = new File(shaderOutputDir, "${name}.${normalizedKey}.spv")
+                    if (!compiledOutputs.add(output.absolutePath)) return
+
+                    def args = [validator, '-D', '-V', '-S', stage, '-e', entry]
+                    defines.each { args << "-D${it}" }
+                    args << shader.absolutePath
+                    args << '-o'
+                    args << output.absolutePath
+                    shaderCompileCommands << [
+                        label: output.name,
+                        args: args.collect { it.toString() }
+                    ]
+                }
+            }
+        } else {
             logger.lifecycle('[T850] No shader_permutations.json found; Android APK will include base SPIR-V only.')
-            return
         }
 
-        def json = new groovy.json.JsonSlurper().parse(shaderPermutationFile)
-        def permutations = json.permutations ?: [:]
-        permutations.each { key, permutation ->
-            def normalizedKey = key.toString().replaceFirst('^0[xX]', '').toUpperCase()
-            def defines = (permutation.defines ?: []).collect { it.toString() }
-            [permutation.vertexShader, permutation.fragmentShader].findAll { it }.each { shaderName ->
-                def shader = shaderByName[shaderName.toString()]
-                if (shader == null) {
-                    throw new GradleException("Shader permutation references missing shader '${shaderName}'")
-                }
-
-                def name = shader.name
-                def stage = name.startsWith('VS_') ? 'vert' : (name.startsWith('FS_') ? 'frag' : null)
-                def entry = name.startsWith('VS_') ? 'VS' : (name.startsWith('FS_') ? 'FS' : null)
-                if (stage == null) return
-
-                def output = new File(shaderOutputDir, "${name}.${normalizedKey}.spv")
-                if (!compiledOutputs.add(output.absolutePath)) return
-
-                def args = [validator, '-D', '-V', '-S', stage, '-e', entry]
-                defines.each { args << "-D${it}" }
-                args << shader.absolutePath
-                args << '-o'
-                args << output.absolutePath
-                exec {
-                    commandLine args
-                }
-            }
-        }
+        runShaderCompileCommands(shaderCompileCommands, getT850BuildWorkers())
     }
 }
 

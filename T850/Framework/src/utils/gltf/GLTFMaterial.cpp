@@ -118,7 +118,6 @@ std::string ResolveTextureName(const Document& doc, int texIdx) {
 
 // glTF wrap mode constants (per spec §5.29)
 constexpr int WRAP_REPEAT          = 10497;
-constexpr int WRAP_CLAMP_TO_EDGE   = 33071;
 constexpr int WRAP_MIRRORED_REPEAT = 33648;
 
 // Returns true if the sampler associated with `texIdx` uses tiling

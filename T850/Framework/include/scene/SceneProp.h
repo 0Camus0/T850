@@ -57,7 +57,7 @@ struct SSAOFilter {
 	void Update();
 };
 struct SceneProps{
-SceneProps() : ActiveCamera(0) , ActiveLights(1), ActiveLightCamera(0), ActiveGaussKernel(0), Exposure(0.0f) , BloomFactor(0.35f), BloomThreshold(2.0f), ToneMapWhiteLevel(4.0f), LuminanceTau(1.1f), FrameDeltaSec(1.0f / 60.0f), ToogleShadow(1), ToogleSSAO(1), DebugMode(0){}
+SceneProps() : ActiveCamera(0), ActiveLights(1), ActiveLightCamera(0), ActiveGaussKernel(0), ToogleShadow(1), ToogleSSAO(1), DebugMode(0), Exposure(0.0f), BloomFactor(0.35f), BloomThreshold(2.0f), ToneMapWhiteLevel(4.0f), LuminanceTau(1.1f), FrameDeltaSec(1.0f / 60.0f){}
 
 	void	AddLight(XVECTOR3 Pos, XVECTOR3 Color, float radius, float intensity, LightType type, bool enabled);
 	void	AddDirectionalLight(XVECTOR3 Dir, XVECTOR3 Color, float intensity, bool enabled);

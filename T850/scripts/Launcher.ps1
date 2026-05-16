@@ -157,8 +157,17 @@ $xaml = @"
                         <ColumnDefinition Width="*"/>
                         <ColumnDefinition Width="12"/>
                         <ColumnDefinition Width="*"/>
+                        <ColumnDefinition Width="12"/>
+                        <ColumnDefinition Width="*"/>
                     </Grid.ColumnDefinitions>
                     <StackPanel Grid.Column="0">
+                        <TextBlock Text="Target" Style="{StaticResource LabelStyle}"/>
+                        <ComboBox Name="cmbTarget">
+                            <ComboBoxItem Content="Windows" Tag="windows" IsSelected="True"/>
+                            <ComboBoxItem Content="Android" Tag="android"/>
+                        </ComboBox>
+                    </StackPanel>
+                    <StackPanel Grid.Column="2">
                         <TextBlock Text="Architecture" Style="{StaticResource LabelStyle}"/>
                         <ComboBox Name="cmbArch">
                             <ComboBoxItem Content="x64" IsSelected="True"/>
@@ -166,7 +175,7 @@ $xaml = @"
                             <ComboBoxItem Content="ARM64"/>
                         </ComboBox>
                     </StackPanel>
-                    <StackPanel Grid.Column="2">
+                    <StackPanel Grid.Column="4">
                         <TextBlock Text="Configuration" Style="{StaticResource LabelStyle}"/>
                         <ComboBox Name="cmbConfig">
                             <ComboBoxItem Content="Release" IsSelected="True"/>
@@ -189,6 +198,11 @@ $xaml = @"
                     <ComboBoxItem Content="Vulkan" Tag="vulkan"/>
                     <ComboBoxItem Content="OpenGL (Desktop GL 3.3)" Tag="gl"/>
                 </ComboBox>
+                <StackPanel Name="pnlAndroidDevice" Margin="0,12,0,0" Visibility="Collapsed">
+                    <TextBlock Text="Android Device" Style="{StaticResource LabelStyle}"/>
+                    <ComboBox Name="cmbAndroidDevice"/>
+                    <TextBlock Name="txtAndroidDeviceStatus" Text="No Android devices" Style="{StaticResource LabelStyle}" Margin="0,6,0,0"/>
+                </StackPanel>
             </StackPanel>
         </Border>
 
@@ -407,9 +421,13 @@ $reader = [System.Xml.XmlReader]::Create([System.IO.StringReader]::new($xaml))
 $window = [System.Windows.Markup.XamlReader]::Load($reader)
 
 # Get controls
+$cmbTarget      = $window.FindName("cmbTarget")
 $cmbArch        = $window.FindName("cmbArch")
 $cmbConfig      = $window.FindName("cmbConfig")
 $cmbApi         = $window.FindName("cmbApi")
+$pnlAndroidDevice = $window.FindName("pnlAndroidDevice")
+$cmbAndroidDevice = $window.FindName("cmbAndroidDevice")
+$txtAndroidDeviceStatus = $window.FindName("txtAndroidDeviceStatus")
 $chkDump        = $window.FindName("chkDump")
 $chkDebugFrames = $window.FindName("chkDebugFrames")
 $chkKeepRunning = $window.FindName("chkKeepRunning")
@@ -459,6 +477,337 @@ if ((Split-Path -Leaf $rootDir) -eq "scripts") {
 }
 
 $configPath = Join-Path $rootDir "config.json"
+$script:LauncherBusy = $false
+$script:AndroidDeviceRefreshInProgress = $false
+$script:SelectedAndroidDeviceSerial = ""
+
+function Get-TargetPlatform {
+    if ($cmbTarget -and $cmbTarget.SelectedItem) { return ($cmbTarget.SelectedItem).Tag.ToString() }
+    return "windows"
+}
+
+function Test-AndroidTarget {
+    return (Get-TargetPlatform) -eq "android"
+}
+
+function Get-AndroidRepoRoot {
+    return (Split-Path -Parent $rootDir)
+}
+
+function Get-AndroidProjectRoot {
+    return (Join-Path $rootDir "android")
+}
+
+function Get-AndroidBuildScript {
+    return (Join-Path (Get-AndroidRepoRoot) "Scripts\Bat\BuildAndroid.bat")
+}
+
+function Get-AndroidGradleWrapperPath {
+    return (Join-Path (Get-AndroidProjectRoot) "gradlew.bat")
+}
+
+function Get-AndroidAbiFilters {
+    $arch = if ($cmbArch -and $cmbArch.SelectedItem) { ($cmbArch.SelectedItem).Content.ToString().ToLowerInvariant() } else { "arm64" }
+    switch ($arch) {
+        "x64" { return "x86_64" }
+        "arm64" { return "arm64-v8a" }
+        default { return "arm64-v8a" }
+    }
+}
+
+function Get-AndroidVcpkgTriplets {
+    $triplets = New-Object System.Collections.Generic.List[string]
+    foreach ($abi in ((Get-AndroidAbiFilters) -split ",")) {
+        switch ($abi.Trim()) {
+            "x86_64" { if (-not $triplets.Contains("x64-android")) { $triplets.Add("x64-android") } }
+            "arm64-v8a" { if (-not $triplets.Contains("arm64-android")) { $triplets.Add("arm64-android") } }
+        }
+    }
+    return @($triplets)
+}
+
+function Test-VcpkgFiles {
+    param(
+        [Parameter(Mandatory = $true)] [string]$TripletRoot,
+        [Parameter(Mandatory = $true)] [string[]]$RelativePaths
+    )
+
+    foreach ($relativePath in $RelativePaths) {
+        if (-not (Test-Path (Join-Path $TripletRoot $relativePath))) { return $false }
+    }
+    return $true
+}
+
+function Test-AndroidVcpkgTripletReady {
+    param(
+        [Parameter(Mandatory = $true)] [string]$VcpkgRoot,
+        [Parameter(Mandatory = $true)] [string]$Triplet
+    )
+
+    $tripletRoot = Join-Path $VcpkgRoot "installed\$Triplet"
+    if (-not (Test-Path $tripletRoot)) { return $false }
+    return (Test-VcpkgFiles -TripletRoot $tripletRoot -RelativePaths @(
+        "include\Jolt\Jolt.h",
+        "share\Jolt\JoltConfig.cmake",
+        "include\imgui_impl_android.h",
+        "include\imgui_impl_vulkan.h",
+        "include\glslang\Public\ShaderLang.h",
+        "include\draco\compression\encode.h"
+    ))
+}
+
+function Get-AndroidAdbPath {
+    $sdk = Get-AndroidSdkRoot
+    return (Join-Path $sdk "platform-tools\adb.exe")
+}
+
+function Get-AndroidConfigName {
+    return ($cmbConfig.SelectedItem).Content.ToString()
+}
+
+function Get-AndroidApkPath {
+    $variant = if ((Get-AndroidConfigName) -ieq "Debug") { "debug" } else { "release" }
+    return (Join-Path (Get-AndroidProjectRoot) "app\build\outputs\apk\$variant\app-$variant.apk")
+}
+
+function Get-SelectedAndroidDeviceSerial {
+    if ($cmbAndroidDevice -and $cmbAndroidDevice.SelectedItem) {
+        $serial = $cmbAndroidDevice.SelectedItem.Tag
+        if ($serial) { return $serial.ToString() }
+    }
+    return ""
+}
+
+function Get-SelectedAndroidDeviceState {
+    if ($cmbAndroidDevice -and $cmbAndroidDevice.SelectedItem) {
+        $state = $cmbAndroidDevice.SelectedItem.DataContext
+        if ($state) { return $state.ToString() }
+    }
+    return ""
+}
+
+function Get-AndroidAdbArguments {
+    param([string[]]$CommandArguments)
+    $serial = Get-SelectedAndroidDeviceSerial
+    if ($serial) { return @("-s", $serial) + $CommandArguments }
+    return $CommandArguments
+}
+
+function Invoke-AndroidAdbCapture {
+    param([string[]]$CommandArguments)
+    $adb = Get-AndroidAdbPath
+    if (-not (Test-Path $adb)) {
+        return [pscustomobject]@{ ExitCode = 1; Output = "adb.exe not found: $adb" }
+    }
+
+    $allArgs = Get-AndroidAdbArguments $CommandArguments
+    $output = & $adb @allArgs 2>&1
+    return [pscustomobject]@{
+        ExitCode = $LASTEXITCODE
+        Output = (($output | ForEach-Object { $_.ToString() }) -join [System.Environment]::NewLine)
+    }
+}
+
+function Test-AndroidPackageInstalled {
+    if (-not (Test-AndroidDeviceReady)) { return $false }
+    $result = Invoke-AndroidAdbCapture -CommandArguments @("shell", "pm", "path", "com.t850.engine")
+    if ($result.ExitCode -eq 0 -and $result.Output -match "package:") { return $true }
+
+    [System.Windows.MessageBox]::Show(
+        ("T850 is not installed on the selected Android device." + "`n`n" + "Click Install first to install the APK, then use Deploy to run it."),
+        "T850 Launcher", "OK", "Warning")
+    return $false
+}
+
+function Test-AndroidDeviceReady {
+    $serial = Get-SelectedAndroidDeviceSerial
+    if (-not $serial) {
+        [System.Windows.MessageBox]::Show("No Android device is selected.", "T850 Launcher", "OK", "Error")
+        return $false
+    }
+    $state = Get-SelectedAndroidDeviceState
+    if ($state -ne "device") {
+        [System.Windows.MessageBox]::Show(("Selected Android device is not ready:" + "`n" + $serial + " (" + $state + ")"), "T850 Launcher", "OK", "Error")
+        return $false
+    }
+    return $true
+}
+
+function Invoke-AdbDevices {
+    $adb = Get-AndroidAdbPath
+    if (-not (Test-Path $adb)) {
+        return @{ Error = "adb.exe not found"; Devices = @() }
+    }
+
+    $psi = New-Object System.Diagnostics.ProcessStartInfo
+    $psi.FileName = $adb
+    $psi.Arguments = "devices -l"
+    $psi.UseShellExecute = $false
+    $psi.RedirectStandardOutput = $true
+    $psi.RedirectStandardError = $true
+    $psi.CreateNoWindow = $true
+
+    $proc = New-Object System.Diagnostics.Process
+    $proc.StartInfo = $psi
+    try {
+        $proc.Start() | Out-Null
+        if (-not $proc.WaitForExit(1500)) {
+            try { $proc.Kill() } catch {}
+            return @{ Error = "adb devices timed out"; Devices = @() }
+        }
+        $stdout = $proc.StandardOutput.ReadToEnd()
+        $stderr = $proc.StandardError.ReadToEnd()
+        if ($proc.ExitCode -ne 0) {
+            $message = if ($stderr.Trim()) { $stderr.Trim() } else { "adb devices failed" }
+            return @{ Error = $message; Devices = @() }
+        }
+
+        $devices = @()
+        foreach ($line in ($stdout -split "\r?\n")) {
+            $trimmed = $line.Trim()
+            if (-not $trimmed -or $trimmed -like "List of devices*") { continue }
+            $parts = $trimmed -split "\s+", 3
+            if ($parts.Count -lt 2) { continue }
+            $serial = $parts[0]
+            $state = $parts[1]
+            $details = if ($parts.Count -ge 3) { $parts[2] } else { "" }
+            $model = ""
+            if ($details -match "model:([^\s]+)") { $model = $Matches[1] }
+            $device = ""
+            if ($details -match "device:([^\s]+)") { $device = $Matches[1] }
+            $labelParts = @($serial, "($state)")
+            if ($model) { $labelParts += $model }
+            elseif ($device) { $labelParts += $device }
+            $devices += [pscustomobject]@{
+                Serial = $serial
+                State = $state
+                Label = ($labelParts -join " ")
+            }
+        }
+        return @{ Error = ""; Devices = $devices }
+    } finally {
+        if ($proc -and -not $proc.HasExited) {
+            try { $proc.Kill() } catch {}
+        }
+    }
+}
+
+function Refresh-AndroidDevices {
+    if ($script:AndroidDeviceRefreshInProgress) { return }
+    $script:AndroidDeviceRefreshInProgress = $true
+    try {
+        $previousSerial = Get-SelectedAndroidDeviceSerial
+        if (-not $previousSerial) { $previousSerial = $script:SelectedAndroidDeviceSerial }
+        $result = Invoke-AdbDevices
+        $devices = @($result.Devices)
+
+        $cmbAndroidDevice.Items.Clear()
+        foreach ($device in $devices) {
+            $item = New-Object System.Windows.Controls.ComboBoxItem
+            $item.Content = $device.Label
+            $item.Tag = $device.Serial
+            $item.DataContext = $device.State
+            $item.IsEnabled = ($device.State -eq "device")
+            $cmbAndroidDevice.Items.Add($item) | Out-Null
+        }
+
+        $selected = $false
+        foreach ($item in $cmbAndroidDevice.Items) {
+            if ($item.Tag -eq $previousSerial) {
+                $cmbAndroidDevice.SelectedItem = $item
+                $selected = $true
+                break
+            }
+        }
+        if (-not $selected) {
+            foreach ($item in $cmbAndroidDevice.Items) {
+                if ($item.DataContext -eq "device") {
+                    $cmbAndroidDevice.SelectedItem = $item
+                    $selected = $true
+                    break
+                }
+            }
+        }
+        if (-not $selected -and $cmbAndroidDevice.Items.Count -gt 0) {
+            $cmbAndroidDevice.SelectedIndex = 0
+        }
+
+        $script:SelectedAndroidDeviceSerial = Get-SelectedAndroidDeviceSerial
+        $readyCount = @($devices | Where-Object { $_.State -eq "device" }).Count
+        if ($result.Error) {
+            $txtAndroidDeviceStatus.Text = $result.Error
+            $txtAndroidDeviceStatus.Foreground = $window.FindResource("RedBrush")
+        } elseif ($devices.Count -eq 0) {
+            $txtAndroidDeviceStatus.Text = "No Android devices connected"
+            $txtAndroidDeviceStatus.Foreground = $window.FindResource("RedBrush")
+        } elseif ($readyCount -eq 0) {
+            $txtAndroidDeviceStatus.Text = "$($devices.Count) device(s), none ready"
+            $txtAndroidDeviceStatus.Foreground = $window.FindResource("RedBrush")
+        } else {
+            $txtAndroidDeviceStatus.Text = "$readyCount ready / $($devices.Count) connected"
+            $txtAndroidDeviceStatus.Foreground = $window.FindResource("GreenBrush")
+        }
+    } finally {
+        $script:AndroidDeviceRefreshInProgress = $false
+    }
+}
+
+function Append-BuildOutput {
+    param([string]$Line)
+    if ($pnlBuildOutput.Visibility -ne [System.Windows.Visibility]::Visible) {
+        $pnlBuildOutput.Visibility = [System.Windows.Visibility]::Visible
+    }
+    $txtBuildOutput.Text += $Line + [System.Environment]::NewLine
+    $svBuildOutput.ScrollToEnd()
+    $window.Dispatcher.Invoke([Action]{}, [System.Windows.Threading.DispatcherPriority]::Background)
+}
+
+function Invoke-LoggedProcess {
+    param(
+        [Parameter(Mandatory = $true)] [string]$FilePath,
+        [string[]]$Arguments = @(),
+        [string]$WorkingDirectory = $rootDir,
+        [string]$StatusPrefix = "Running"
+    )
+
+    $quotedFile = '"' + $FilePath + '"'
+    $quotedArgs = @()
+    foreach ($arg in $Arguments) {
+        if ($arg -match '[\s",]') { $quotedArgs += ('"' + ($arg -replace '"', '\"') + '"') }
+        else { $quotedArgs += $arg }
+    }
+    $commandLine = ($quotedFile + ' ' + ($quotedArgs -join ' ')).Trim() + ' 2>&1'
+
+    Append-BuildOutput ("> " + $commandLine)
+
+    $psi = New-Object System.Diagnostics.ProcessStartInfo
+    $psi.FileName = "cmd.exe"
+    $psi.Arguments = "/d /s /c " + ('"' + $commandLine + '"')
+    $psi.WorkingDirectory = $WorkingDirectory
+    $psi.UseShellExecute = $false
+    $psi.RedirectStandardOutput = $true
+    $psi.RedirectStandardError = $false
+    $psi.CreateNoWindow = $true
+
+    $proc = New-Object System.Diagnostics.Process
+    $proc.StartInfo = $psi
+    $sw = [System.Diagnostics.Stopwatch]::StartNew()
+    try {
+        $proc.Start() | Out-Null
+        while (-not $proc.StandardOutput.EndOfStream) {
+            $line = $proc.StandardOutput.ReadLine()
+            Append-BuildOutput $line
+            $txtStatus.Text = "$StatusPrefix ... ($($sw.Elapsed.ToString('mm\:ss')))"
+        }
+        $proc.WaitForExit()
+        return $proc.ExitCode
+    } finally {
+        $sw.Stop()
+        if ($proc -and -not $proc.HasExited) {
+            try { $proc.Kill() } catch {}
+        }
+    }
+}
 
 # ── Config load/save ──
 
@@ -491,6 +840,18 @@ function Load-Config {
     if (-not (Test-Path $configPath)) { return }
     try {
         $cfg = Get-Content $configPath -Raw | ConvertFrom-Json
+
+        # Target platform
+        if ($cfg.PSObject.Properties['targetPlatform']) {
+            foreach ($item in $cmbTarget.Items) {
+                if ($item.Tag -ieq $cfg.targetPlatform) {
+                    $cmbTarget.SelectedItem = $item; break
+                }
+            }
+        }
+        if ($cfg.PSObject.Properties['androidDeviceSerial']) {
+            $script:SelectedAndroidDeviceSerial = $cfg.androidDeviceSerial.ToString()
+        }
 
         # Architecture
         foreach ($item in $cmbArch.Items) {
@@ -598,9 +959,11 @@ function Save-Config {
     $sceneTag = ($cmbScene.SelectedItem).Tag.ToString()
     $cullingMode = Get-CullingMode
     $cfg = @{
+        targetPlatform = (Get-TargetPlatform)
+        androidDeviceSerial = (Get-SelectedAndroidDeviceSerial)
         architecture  = ($cmbArch.SelectedItem).Content.ToString().ToLower()
         configuration = ($cmbConfig.SelectedItem).Content.ToString()
-        api           = ($cmbApi.SelectedItem).Tag.ToString()
+        api           = if (Test-AndroidTarget) { "vulkan" } else { ($cmbApi.SelectedItem).Tag.ToString() }
         display = @{
             width      = [int]$txtWidth.Text
             height     = [int]$txtHeight.Text
@@ -717,6 +1080,431 @@ function Find-MSBuild {
         }
     }
     return $null
+}
+
+function Test-CommandExists {
+    param([string]$Name)
+    return [bool](Get-Command $Name -ErrorAction SilentlyContinue)
+}
+
+function Get-BuildWorkerCount {
+    $workers = [Math]::Max(1, [Environment]::ProcessorCount - 1)
+    if ($env:T850_BUILD_WORKERS) {
+        $parsedWorkers = 0
+        if ([int]::TryParse($env:T850_BUILD_WORKERS, [ref]$parsedWorkers) -and $parsedWorkers -gt 0) {
+            $workers = $parsedWorkers
+        }
+    }
+    return $workers
+}
+
+function Test-JavaExecutable17OrNewer {
+    param([string]$JavaExe)
+    if (-not $JavaExe -or -not (Test-Path $JavaExe)) { return $false }
+    try {
+        $versionLine = (& $JavaExe -version 2>&1 | Select-Object -First 1).ToString()
+        $versionText = $null
+        if ($versionLine -match 'version "([^"]+)"') { $versionText = $Matches[1] }
+        elseif ($versionLine -match 'openjdk\s+([0-9][^\s]*)') { $versionText = $Matches[1] }
+        if (-not $versionText) { return $false }
+
+        if ($versionText -match '^1\.(\d+)') { return ([int]$Matches[1] -ge 17) }
+        if ($versionText -match '^(\d+)') { return ([int]$Matches[1] -ge 17) }
+    } catch {
+        return $false
+    }
+    return $false
+}
+
+function Find-InstalledJavaHome {
+    $candidates = New-Object System.Collections.Generic.List[string]
+    if ($env:JAVA_HOME) { $candidates.Add($env:JAVA_HOME) }
+
+    $programFiles = [System.Environment]::GetFolderPath("ProgramFiles")
+    $programFilesX86 = [System.Environment]::GetFolderPath("ProgramFilesX86")
+    $jdkRoots = @(
+        (Join-Path $programFiles "Eclipse Adoptium"),
+        (Join-Path $programFiles "Java"),
+        (Join-Path $programFilesX86 "Eclipse Adoptium"),
+        (Join-Path $programFilesX86 "Java")
+    )
+    foreach ($root in $jdkRoots) {
+        if (-not (Test-Path $root)) { continue }
+        Get-ChildItem -Path $root -Directory -Filter "jdk-*" -ErrorAction SilentlyContinue |
+            Sort-Object Name -Descending |
+            ForEach-Object { $candidates.Add($_.FullName) }
+    }
+
+    $androidStudioJbr = Join-Path $programFiles "Android\Android Studio\jbr"
+    if (Test-Path $androidStudioJbr) { $candidates.Add($androidStudioJbr) }
+
+    $seen = @{}
+    foreach ($candidate in $candidates) {
+        if (-not $candidate -or $seen.ContainsKey($candidate)) { continue }
+        $seen[$candidate] = $true
+        $javaExe = Join-Path $candidate "bin\java.exe"
+        if (Test-JavaExecutable17OrNewer $javaExe) { return $candidate }
+    }
+    return $null
+}
+
+function Test-JavaAvailable {
+    $javaHome = Find-InstalledJavaHome
+    if ($javaHome) {
+        $javaBin = Join-Path $javaHome "bin"
+        $env:JAVA_HOME = $javaHome
+        if (-not (($env:PATH -split ';') -contains $javaBin)) { $env:PATH = "$javaBin;$env:PATH" }
+        return $true
+    }
+
+    $javaCommand = Get-Command "java.exe" -ErrorAction SilentlyContinue
+    if ($javaCommand -and (Test-JavaExecutable17OrNewer $javaCommand.Source)) { return $true }
+    return $false
+}
+
+function Test-GlslangAvailable {
+    if (Test-CommandExists "glslangValidator.exe") { return $true }
+    if ($env:VULKAN_SDK -and (Test-Path (Join-Path $env:VULKAN_SDK "Bin\glslangValidator.exe"))) { return $true }
+    $vulkanRoot = "C:\VulkanSDK"
+    if (Test-Path $vulkanRoot) {
+        $latest = Get-ChildItem $vulkanRoot -Directory -ErrorAction SilentlyContinue |
+            Sort-Object Name -Descending |
+            Select-Object -First 1
+        if ($latest -and (Test-Path (Join-Path $latest.FullName "Bin\glslangValidator.exe"))) {
+            $env:VULKAN_SDK = $latest.FullName
+            $env:PATH = (Join-Path $latest.FullName "Bin") + ";" + $env:PATH
+            return $true
+        }
+    }
+    return $false
+}
+
+function Read-AndroidSigningProperties {
+    $props = @{}
+    $project = Get-AndroidProjectRoot
+    $files = @(
+        (Join-Path $project "signing.properties"),
+        (Join-Path $project "app\signing.properties"),
+        (Join-Path $env:USERPROFILE ".android\t850-release-signing.properties")
+    )
+
+    foreach ($file in $files) {
+        if (-not (Test-Path $file)) { continue }
+        foreach ($rawLine in (Get-Content $file -ErrorAction SilentlyContinue)) {
+            $line = $rawLine.Trim()
+            if (-not $line -or $line.StartsWith("#") -or $line.StartsWith("!") -or -not $line.Contains("=")) { continue }
+            $idx = $line.IndexOf("=")
+            $key = $line.Substring(0, $idx).Trim()
+            $value = $line.Substring($idx + 1).Trim()
+            if ($key) { $props[$key] = $value }
+        }
+    }
+    return $props
+}
+
+function Get-AndroidSigningValue {
+    param(
+        [hashtable]$Properties,
+        [string[]]$Names
+    )
+
+    foreach ($name in $Names) {
+        $envValue = [System.Environment]::GetEnvironmentVariable($name)
+        if (-not [string]::IsNullOrWhiteSpace($envValue)) { return $envValue }
+        if ($Properties.ContainsKey($name) -and -not [string]::IsNullOrWhiteSpace($Properties[$name])) {
+            return $Properties[$name]
+        }
+    }
+    return $null
+}
+
+function Resolve-AndroidSigningStorePath {
+    param([string]$StoreFile)
+
+    if (-not $StoreFile) { return $StoreFile }
+    if ([System.IO.Path]::IsPathRooted($StoreFile)) { return $StoreFile }
+
+    $project = Get-AndroidProjectRoot
+    $candidates = @(
+        (Join-Path $project "app\$StoreFile"),
+        (Join-Path $project $StoreFile),
+        (Join-Path (Get-AndroidRepoRoot) $StoreFile)
+    )
+    foreach ($candidate in $candidates) {
+        if (Test-Path $candidate) { return $candidate }
+    }
+    return $candidates[0]
+}
+
+function Get-AndroidReleaseSigningStatus {
+    $props = Read-AndroidSigningProperties
+    $storeFile = Get-AndroidSigningValue -Properties $props -Names @("T850_RELEASE_STORE_FILE", "ANDROID_KEYSTORE_PATH")
+    $storePassword = Get-AndroidSigningValue -Properties $props -Names @("T850_RELEASE_STORE_PASSWORD", "ANDROID_KEYSTORE_PASSWORD")
+    $keyAlias = Get-AndroidSigningValue -Properties $props -Names @("T850_RELEASE_KEY_ALIAS", "ANDROID_KEY_ALIAS")
+    $keyPassword = Get-AndroidSigningValue -Properties $props -Names @("T850_RELEASE_KEY_PASSWORD", "ANDROID_KEY_PASSWORD")
+
+    $missing = New-Object System.Collections.Generic.List[string]
+    if (-not $storeFile) { $missing.Add("ANDROID_KEYSTORE_PATH or T850_RELEASE_STORE_FILE") }
+    if (-not $storePassword) { $missing.Add("ANDROID_KEYSTORE_PASSWORD or T850_RELEASE_STORE_PASSWORD") }
+    if (-not $keyAlias) { $missing.Add("ANDROID_KEY_ALIAS or T850_RELEASE_KEY_ALIAS") }
+    if (-not $keyPassword) { $missing.Add("ANDROID_KEY_PASSWORD or T850_RELEASE_KEY_PASSWORD") }
+
+    $resolvedStoreFile = Resolve-AndroidSigningStorePath $storeFile
+    if ($storeFile -and -not (Test-Path $resolvedStoreFile)) {
+        $missing.Add("release keystore file: $storeFile")
+    }
+
+    return [pscustomobject]@{
+        Ready = ($missing.Count -eq 0)
+        Missing = @($missing)
+        StoreFile = $resolvedStoreFile
+    }
+}
+
+function Show-AndroidReleaseSigningWarning {
+    param($SigningStatus)
+
+    $message = "Android Release builds must be signed before Gradle can produce app-release.apk." +
+        [System.Environment]::NewLine + [System.Environment]::NewLine +
+        "Missing:" + [System.Environment]::NewLine +
+        (($SigningStatus.Missing | ForEach-Object { "- $_" }) -join [System.Environment]::NewLine) +
+        [System.Environment]::NewLine + [System.Environment]::NewLine +
+        "Set the ANDROID_KEYSTORE_PATH, ANDROID_KEYSTORE_PASSWORD, ANDROID_KEY_ALIAS, and ANDROID_KEY_PASSWORD variables, or the T850_RELEASE_* equivalents, in the environment or in android\signing.properties, android\app\signing.properties, or ~/.android/t850-release-signing.properties."
+    [System.Windows.MessageBox]::Show($message, "T850 Launcher", "OK", "Warning") | Out-Null
+}
+
+function Get-AndroidSdkRoot {
+    if ($env:ANDROID_HOME) { return $env:ANDROID_HOME }
+    if ($env:ANDROID_SDK_ROOT) { return $env:ANDROID_SDK_ROOT }
+    return (Join-Path $env:LOCALAPPDATA "Android\Sdk")
+}
+
+function Get-AndroidToolchainStatus {
+    $sdk = Get-AndroidSdkRoot
+    $repoRoot = Get-AndroidRepoRoot
+    $missing = New-Object System.Collections.Generic.List[string]
+    $ndkVersion = "27.2.12479018"
+    $cmakeVersion = "3.22.1"
+    $buildToolsVersion = "35.0.0"
+
+    if (-not (Test-Path $sdk)) { $missing.Add("Android SDK at $sdk") }
+    if (-not (Test-Path (Join-Path $sdk "platform-tools\adb.exe"))) { $missing.Add("Android platform-tools / adb") }
+    if (-not (Test-Path (Join-Path $sdk "cmdline-tools\latest\bin\sdkmanager.bat"))) { $missing.Add("Android command-line tools") }
+    if (-not (Test-Path (Join-Path $sdk "platforms\android-35"))) { $missing.Add("Android platform android-35") }
+    if (-not (Test-Path (Join-Path $sdk "build-tools\$buildToolsVersion\apksigner.bat"))) { $missing.Add("Android build-tools $buildToolsVersion") }
+    if (-not (Test-Path (Join-Path $sdk "ndk\$ndkVersion"))) { $missing.Add("Android NDK $ndkVersion") }
+    if (-not (Test-Path (Join-Path $sdk "cmake\$cmakeVersion"))) { $missing.Add("Android CMake $cmakeVersion") }
+    if (-not (Test-Path (Get-AndroidGradleWrapperPath))) { $missing.Add("repo Gradle wrapper at T850\android\gradlew.bat") }
+    if (-not (Test-Path (Join-Path (Get-AndroidProjectRoot) "gradle\wrapper\gradle-wrapper.jar"))) { $missing.Add("Gradle wrapper jar") }
+    if (-not (Test-JavaAvailable)) { $missing.Add("JDK 17+") }
+    if (-not (Test-GlslangAvailable)) { $missing.Add("Vulkan SDK / glslangValidator") }
+
+    $vcpkgRoot = Join-Path $repoRoot "T850\Librerias\vcpkg"
+    if (-not (Test-Path (Join-Path $vcpkgRoot "vcpkg.exe"))) { $missing.Add("vcpkg executable") }
+    foreach ($triplet in (Get-AndroidVcpkgTriplets)) {
+        if (-not (Test-AndroidVcpkgTripletReady -VcpkgRoot $vcpkgRoot -Triplet $triplet)) {
+            $missing.Add("vcpkg Android dependencies for $triplet (Jolt/imgui/glslang/draco)")
+        }
+    }
+
+    return [pscustomobject]@{
+        SdkRoot = $sdk
+        Missing = @($missing)
+        SetupScript = (Join-Path $repoRoot "SetupAndroidToolchain.bat")
+    }
+}
+
+function Ensure-AndroidToolchain {
+    $status = Get-AndroidToolchainStatus
+    if ($status.Missing.Count -eq 0) { return $true }
+
+    $message = "Android toolchain is incomplete:" + [System.Environment]::NewLine + [System.Environment]::NewLine +
+        (($status.Missing | ForEach-Object { "- $_" }) -join [System.Environment]::NewLine) +
+        [System.Environment]::NewLine + [System.Environment]::NewLine +
+        "Install the missing Android toolchain now?"
+    $answer = [System.Windows.MessageBox]::Show($message, "T850 Launcher", "YesNo", "Warning")
+    if ($answer -ne [System.Windows.MessageBoxResult]::Yes) { return $false }
+    if (-not (Test-Path $status.SetupScript)) {
+        [System.Windows.MessageBox]::Show(("Setup script not found:" + "`n" + $status.SetupScript), "T850 Launcher", "OK", "Error")
+        return $false
+    }
+
+    $txtBuildOutput.Text = ""
+    $pnlBuildOutput.Visibility = [System.Windows.Visibility]::Visible
+    Set-LauncherBusy $true "SETUP..."
+    $txtStatus.Text = "Installing Android toolchain..."
+    $txtStatus.Foreground = $window.FindResource("AccentBrush")
+    try {
+        $setupArgs = @("--android-abis", (Get-AndroidAbiFilters))
+        $exitCode = Invoke-LoggedProcess -FilePath $status.SetupScript -Arguments $setupArgs -WorkingDirectory (Get-AndroidRepoRoot) -StatusPrefix "Android toolchain setup"
+        if ($exitCode -ne 0) {
+            $txtStatus.Text = "Android toolchain setup failed (exit code $exitCode)"
+            $txtStatus.Foreground = $window.FindResource("RedBrush")
+            return $false
+        }
+        $status = Get-AndroidToolchainStatus
+        if ($status.Missing.Count -gt 0) {
+            [System.Windows.MessageBox]::Show(("Android setup finished, but these pieces are still missing:" + "`n`n" + (($status.Missing | ForEach-Object { "- $_" }) -join "`n")), "T850 Launcher", "OK", "Warning")
+            return $false
+        }
+        $txtStatus.Text = "Android toolchain ready"
+        $txtStatus.Foreground = $window.FindResource("GreenBrush")
+        Refresh-AndroidDevices
+        return $true
+    } finally {
+        Set-LauncherBusy $false
+        Update-Preview
+    }
+}
+
+function Get-WindowsTripletsForPlatform {
+    param([string]$TargetPlatform)
+    switch ($TargetPlatform) {
+        "x86" { return @("x86-windows-static", "x86-windows") }
+        "ARM64" { return @("arm64-windows-static", "arm64-windows") }
+        default { return @("x64-windows-static", "x64-windows") }
+    }
+}
+
+function Test-WindowsVcpkgTripletReady {
+    param(
+        [Parameter(Mandatory = $true)] [string]$VcpkgRoot,
+        [Parameter(Mandatory = $true)] [string]$Triplet,
+        [Parameter(Mandatory = $true)] [string]$TargetPlatform
+    )
+
+    $tripletRoot = Join-Path $VcpkgRoot "installed\$Triplet"
+    if (-not (Test-Path $tripletRoot)) { return $false }
+
+    if ($Triplet -like "*-windows-static") {
+        $required = New-Object System.Collections.Generic.List[string]
+        @(
+            "include\imgui.h",
+            "include\imgui_impl_dx11.h",
+            "include\imgui_impl_vulkan.h",
+            "include\imgui_impl_opengl3.h",
+            "include\imgui_impl_sdl3.h"
+        ) | ForEach-Object { $required.Add($_) }
+
+        if ($TargetPlatform -ne "x86") {
+            $required.Add("include\imgui_impl_dx12.h")
+            $required.Add("include\Jolt\Jolt.h")
+            $required.Add("lib\Jolt.lib")
+            $required.Add("share\Jolt\JoltConfig.cmake")
+        }
+
+        return (Test-VcpkgFiles -TripletRoot $tripletRoot -RelativePaths @($required))
+    }
+
+    return (Test-VcpkgFiles -TripletRoot $tripletRoot -RelativePaths @(
+        "lib\draco.lib",
+        "bin\libEGL.dll",
+        "bin\libGLESv2.dll"
+    ))
+}
+
+function Get-WindowsToolchainStatus {
+    param([string]$TargetPlatform)
+    $repoRoot = Get-AndroidRepoRoot
+    $missing = New-Object System.Collections.Generic.List[string]
+
+    if (-not (Find-MSBuild -TargetPlatform $TargetPlatform)) {
+        $missing.Add("Visual Studio 2022 C++ Build Tools / MSBuild for $TargetPlatform")
+    }
+    if (-not (Test-CommandExists "git")) { $missing.Add("Git on PATH") }
+
+    $vcpkgRoot = Join-Path $repoRoot "T850\Librerias\vcpkg"
+    if (-not (Test-Path (Join-Path $vcpkgRoot "vcpkg.exe"))) {
+        $missing.Add("vcpkg executable and dependencies")
+    } else {
+        foreach ($triplet in (Get-WindowsTripletsForPlatform $TargetPlatform)) {
+            if (-not (Test-WindowsVcpkgTripletReady -VcpkgRoot $vcpkgRoot -Triplet $triplet -TargetPlatform $TargetPlatform)) {
+                $missing.Add("vcpkg dependencies for $triplet")
+            }
+        }
+    }
+
+    return [pscustomobject]@{
+        Missing = @($missing)
+        SetupScript = (Join-Path $repoRoot "LaunchSolution.bat")
+    }
+}
+
+function Invoke-WindowsVcpkgSetup {
+    param([string]$TargetPlatform)
+    $setupScript = Join-Path (Get-AndroidRepoRoot) "LaunchSolution.bat"
+    if (-not (Test-Path $setupScript)) {
+        [System.Windows.MessageBox]::Show(("Setup script not found:" + "`n" + $setupScript), "T850 Launcher", "OK", "Error")
+        return $false
+    }
+    $args = @("--setup-only")
+    if ($TargetPlatform -eq "x86") { $args += "--x86" }
+    elseif ($TargetPlatform -eq "ARM64") { $args += "--arm64" }
+
+    $txtBuildOutput.Text = ""
+    $pnlBuildOutput.Visibility = [System.Windows.Visibility]::Visible
+    Set-LauncherBusy $true "SETUP..."
+    $txtStatus.Text = "Installing Windows dependencies..."
+    $txtStatus.Foreground = $window.FindResource("AccentBrush")
+    try {
+        $exitCode = Invoke-LoggedProcess -FilePath $setupScript -Arguments $args -WorkingDirectory (Get-AndroidRepoRoot) -StatusPrefix "Windows dependency setup"
+        if ($exitCode -ne 0) {
+            $txtStatus.Text = "Windows dependency setup failed (exit code $exitCode)"
+            $txtStatus.Foreground = $window.FindResource("RedBrush")
+            return $false
+        }
+        return $true
+    } finally {
+        Set-LauncherBusy $false
+        Update-Preview
+    }
+}
+
+function Ensure-WindowsToolchain {
+    param([string]$TargetPlatform)
+    $status = Get-WindowsToolchainStatus -TargetPlatform $TargetPlatform
+    if ($status.Missing.Count -eq 0) { return $true }
+
+    $missingText = ($status.Missing | ForEach-Object { "- $_" }) -join [System.Environment]::NewLine
+    if ($status.Missing -match "Visual Studio") {
+        $answer = [System.Windows.MessageBox]::Show(("Windows C++ build tools are missing:" + "`n`n" + $missingText + "`n`nInstall Visual Studio Build Tools with winget now?"), "T850 Launcher", "YesNo", "Warning")
+        if ($answer -eq [System.Windows.MessageBoxResult]::Yes) {
+            $winget = Get-Command winget -ErrorAction SilentlyContinue
+            if ($winget) {
+                $txtBuildOutput.Text = ""
+                $pnlBuildOutput.Visibility = [System.Windows.Visibility]::Visible
+                Set-LauncherBusy $true "SETUP..."
+                try {
+                    $override = "--wait --add Microsoft.VisualStudio.Workload.VCTools --add Microsoft.VisualStudio.Component.VC.ATL --add Microsoft.VisualStudio.Component.VC.Tools.ARM64 --add Microsoft.VisualStudio.Component.VC.ATL.ARM64 --add Microsoft.VisualStudio.Component.Windows11SDK.26100 --includeRecommended"
+                    $exitCode = Invoke-LoggedProcess -FilePath $winget.Source -Arguments @("install", "--id", "Microsoft.VisualStudio.2022.BuildTools", "-e", "--accept-package-agreements", "--accept-source-agreements", "--override", $override) -WorkingDirectory (Get-AndroidRepoRoot) -StatusPrefix "Visual Studio Build Tools setup"
+                    if ($exitCode -ne 0) { return $false }
+                } finally {
+                    Set-LauncherBusy $false
+                    Update-Preview
+                }
+            } else {
+                Start-Process "https://visualstudio.microsoft.com/downloads/#build-tools-for-visual-studio-2022"
+                return $false
+            }
+        } else {
+            return $false
+        }
+    }
+
+    $status = Get-WindowsToolchainStatus -TargetPlatform $TargetPlatform
+    $vcpkgMissing = @($status.Missing | Where-Object { $_ -like "vcpkg*" })
+    if ($vcpkgMissing.Count -gt 0) {
+        $answer = [System.Windows.MessageBox]::Show(("Windows dependencies are missing:" + "`n`n" + (($vcpkgMissing | ForEach-Object { "- $_" }) -join "`n") + "`n`nInstall them now?"), "T850 Launcher", "YesNo", "Warning")
+        if ($answer -ne [System.Windows.MessageBoxResult]::Yes) { return $false }
+        if (-not (Invoke-WindowsVcpkgSetup -TargetPlatform $TargetPlatform)) { return $false }
+    }
+
+    $status = Get-WindowsToolchainStatus -TargetPlatform $TargetPlatform
+    if ($status.Missing.Count -gt 0) {
+        [System.Windows.MessageBox]::Show(("Windows setup finished, but these pieces are still missing:" + "`n`n" + (($status.Missing | ForEach-Object { "- $_" }) -join "`n")), "T850 Launcher", "OK", "Warning")
+        return $false
+    }
+    return $true
 }
 
 function Get-LaunchCommand {
@@ -864,7 +1652,121 @@ function Get-EditorLaunchCommand {
     }
 }
 
+function Set-ComboByTag {
+    param($Combo, [string]$Tag)
+    foreach ($item in $Combo.Items) {
+        if ($item.Tag -ieq $Tag) {
+            $Combo.SelectedItem = $item
+            return
+        }
+    }
+}
+
+function Set-ComboByContent {
+    param($Combo, [string]$Content)
+    foreach ($item in $Combo.Items) {
+        if ($item.Content -ieq $Content) {
+            $Combo.SelectedItem = $item
+            return
+        }
+    }
+}
+
+function Set-ArchitectureOptionVisibility {
+    param([bool]$IsAndroid)
+    foreach ($item in $cmbArch.Items) {
+        if ($item.Content -ieq "x86") {
+            $item.Visibility = if ($IsAndroid) { [System.Windows.Visibility]::Collapsed } else { [System.Windows.Visibility]::Visible }
+        }
+    }
+    if ($IsAndroid -and $cmbArch.SelectedItem -and $cmbArch.SelectedItem.Content -ieq "x86") {
+        Set-ComboByContent $cmbArch "ARM64"
+    }
+}
+
+function Update-TargetPlatformState {
+    $isAndroid = Test-AndroidTarget
+    Set-ArchitectureOptionVisibility $isAndroid
+    if ($isAndroid) {
+        Set-ComboByTag $cmbApi "vulkan"
+        $cmbApi.IsEnabled = $false
+        $pnlAndroidDevice.Visibility = [System.Windows.Visibility]::Visible
+        $txtWidth.IsEnabled = $false
+        $txtHeight.IsEnabled = $false
+        $chkFullscreen.IsEnabled = $false
+        $btnRun.Content = "Install"
+        $btnEditor.Content = "Deploy"
+    } else {
+        $cmbApi.IsEnabled = $true
+        $pnlAndroidDevice.Visibility = [System.Windows.Visibility]::Collapsed
+        $txtWidth.IsEnabled = $true
+        $txtHeight.IsEnabled = $true
+        $chkFullscreen.IsEnabled = $true
+        $btnRun.Content = ([char]0x25B6).ToString() + "  RUN"
+        $btnEditor.Content = ([char]0x270E).ToString() + "  EDITOR"
+    }
+}
+
+function Get-AndroidLaunchArguments {
+    $sceneTag = ($cmbScene.SelectedItem).Tag.ToString()
+    $logTag = ($cmbLogLevel.SelectedItem).Tag.ToString()
+    $logLevel = switch ($logTag) {
+        "error" { 0 }
+        "info" { 1 }
+        "debug" { 2 }
+        "verbose" { 3 }
+        "trace" { 4 }
+        default { 2 }
+    }
+
+    $args = @(
+        "shell", "am", "start", "-n", "com.t850.engine/.LauncherActivity",
+        "--ez", "com.t850.engine.extra.AUTO_RUN", "true",
+        "--ei", "com.t850.engine.extra.SCENE", $sceneTag,
+        "--ei", "com.t850.engine.extra.LOG_LEVEL", $logLevel.ToString(),
+        "--ez", "com.t850.engine.extra.RETURN_TO_NATIVE", "false",
+        "--es", "com.t850.engine.extra.RUN_ID", ([DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds().ToString())
+    )
+    if ($sceneTag -eq "0" -and $cmbModel.SelectedItem) {
+        $args += @("--es", "com.t850.engine.extra.MODEL", ($cmbModel.SelectedItem).Tag.ToString())
+    }
+    if ($chkDump.IsChecked) {
+        if ($rbFrame.IsChecked) { $args += @("--ei", "com.t850.engine.extra.DUMP_FRAME", $txtFrame.Text) }
+        else { $args += @("--ef", "com.t850.engine.extra.DUMP_SECONDS", $txtSeconds.Text) }
+    }
+    if ($chkDebugFrames.IsChecked) { $args += @("--ez", "com.t850.engine.extra.DEBUG_FRAMES", "true") }
+    if ($chkKeepRunning.IsChecked) { $args += @("--ez", "com.t850.engine.extra.KEEP_RUNNING", "true") }
+    if ($chkReplaySnapshot.IsChecked -and $txtReplaySnapshotPath.Text) { $args += @("--es", "com.t850.engine.extra.REPLAY_SNAPSHOT", $txtReplaySnapshotPath.Text) }
+    return $args
+}
+
+function Get-AndroidForceStopArguments {
+    return @("shell", "am", "force-stop", "com.t850.engine")
+}
+
 function Update-Preview {
+    Update-TargetPlatformState
+    if ($script:LauncherBusy) { return }
+    if (Test-AndroidTarget) {
+        $apkPath = Get-AndroidApkPath
+        $abiFilters = Get-AndroidAbiFilters
+        $deviceReady = ((Get-SelectedAndroidDeviceSerial) -ne "" -and (Get-SelectedAndroidDeviceState) -eq "device")
+        $txtCmdPreview.Text = 'Android APK: "' + $apkPath + '"  ABI: ' + $abiFilters
+        $btnRun.IsEnabled = ((Test-Path $apkPath) -and $deviceReady)
+        $btnEditor.IsEnabled = $deviceReady
+        if (-not $deviceReady) {
+            $txtStatus.Text = "Select a connected Android device"
+            $txtStatus.Foreground = $window.FindResource("RedBrush")
+        } elseif ($btnRun.IsEnabled) {
+            $txtStatus.Text = "Android APK ready - Install; Deploy runs installed app"
+            $txtStatus.Foreground = $window.FindResource("GreenBrush")
+        } else {
+            $txtStatus.Text = "Build APK to Install, or Deploy an already-installed app"
+            $txtStatus.Foreground = $window.FindResource("AccentBrush")
+        }
+        return
+    }
+
     $cmd = Get-LaunchCommand
     $txtCmdPreview.Text = $cmd.Display
 
@@ -950,6 +1852,15 @@ $btnBrowseSnapshot.Add_Click({
 
 $cmbModel.Add_SelectionChanged({ Update-Preview })
 
+$cmbAndroidDevice.Add_SelectionChanged({
+    $script:SelectedAndroidDeviceSerial = Get-SelectedAndroidDeviceSerial
+    Update-Preview
+})
+$cmbTarget.Add_SelectionChanged({
+    Populate-ModelList
+    if (Test-AndroidTarget) { Refresh-AndroidDevices }
+    Update-Preview
+})
 $cmbArch.Add_SelectionChanged({ Populate-ModelList; Update-Preview })
 $cmbConfig.Add_SelectionChanged({ Populate-ModelList; Update-Preview })
 $cmbApi.Add_SelectionChanged({ Update-Preview })
@@ -972,9 +1883,163 @@ $txtFrame.Add_TextChanged({ Update-Preview })
 $txtWidth.Add_TextChanged({ Update-Preview })
 $txtHeight.Add_TextChanged({ Update-Preview })
 
+function Set-LauncherBusy {
+    param([bool]$Busy, [string]$BuildText = "BUILD")
+    $script:LauncherBusy = $Busy
+    $btnBuild.IsEnabled = -not $Busy
+    $btnRebuild.IsEnabled = -not $Busy
+    $btnRun.IsEnabled = -not $Busy
+    $btnEditor.IsEnabled = -not $Busy
+    $btnBuild.Content = $BuildText
+}
+
+function Invoke-AndroidBuild {
+    param([bool]$Clean = $false, [bool]$Install = $false)
+
+    $config = Get-AndroidConfigName
+    if (-not (Ensure-AndroidToolchain)) { return $false }
+    if ($config -ieq "Release") {
+        $signingStatus = Get-AndroidReleaseSigningStatus
+        if (-not $signingStatus.Ready) {
+            Show-AndroidReleaseSigningWarning $signingStatus
+            $txtStatus.Text = "Android Release signing is not configured"
+            $txtStatus.Foreground = $window.FindResource("RedBrush")
+            return $false
+        }
+    }
+
+    $buildScript = Get-AndroidBuildScript
+    if (-not (Test-Path $buildScript)) {
+        [System.Windows.MessageBox]::Show(("Android build script not found:" + "`n" + $buildScript), "T850 Launcher", "OK", "Error")
+        return $false
+    }
+
+    Save-Config
+    $txtBuildOutput.Text = ""
+    $pnlBuildOutput.Visibility = [System.Windows.Visibility]::Visible
+    Set-LauncherBusy $true "BUILDING..."
+    $txtStatus.Text = "Android build starting..."
+    $txtStatus.Foreground = $window.FindResource("AccentBrush")
+
+    $args = @($config, "--abi", (Get-AndroidAbiFilters))
+    if ($Clean) { $args += "--clean" }
+    if ($Install) { $args += "--install" }
+
+    try {
+        $exitCode = Invoke-LoggedProcess -FilePath $buildScript -Arguments $args -WorkingDirectory (Get-AndroidRepoRoot) -StatusPrefix "Android $config build"
+        if ($exitCode -eq 0) {
+            $txtStatus.Text = if ($Install) { "Android $config build/install succeeded" } else { "Android $config build succeeded" }
+            $txtStatus.Foreground = $window.FindResource("GreenBrush")
+            return $true
+        }
+        $txtStatus.Text = "Android $config build failed (exit code $exitCode)"
+        $txtStatus.Foreground = $window.FindResource("RedBrush")
+        return $false
+    } catch {
+        Append-BuildOutput ("Exception: " + $_.Exception.Message)
+        $txtStatus.Text = "Android build error"
+        $txtStatus.Foreground = $window.FindResource("RedBrush")
+        return $false
+    } finally {
+        Set-LauncherBusy $false
+        Update-Preview
+    }
+}
+
+function Invoke-AndroidInstall {
+    param([bool]$AppendLog = $false, [bool]$KeepBusy = $false)
+
+    $apkPath = Get-AndroidApkPath
+    if (-not (Test-Path $apkPath)) {
+        [System.Windows.MessageBox]::Show(("APK not found:" + "`n" + $apkPath + "`n`nBuild this Android configuration first."), "T850 Launcher", "OK", "Error")
+        return $false
+    }
+    $adb = Get-AndroidAdbPath
+    if (-not (Test-Path $adb)) {
+        if (-not (Ensure-AndroidToolchain)) { return $false }
+        $adb = Get-AndroidAdbPath
+        if (-not (Test-Path $adb)) {
+            [System.Windows.MessageBox]::Show(("adb.exe not found:" + "`n" + $adb), "T850 Launcher", "OK", "Error")
+            return $false
+        }
+    }
+    if (-not (Test-AndroidDeviceReady)) { return $false }
+
+    Save-Config
+    if (-not $AppendLog) { $txtBuildOutput.Text = "" }
+    $pnlBuildOutput.Visibility = [System.Windows.Visibility]::Visible
+    if (-not $KeepBusy) { Set-LauncherBusy $true "INSTALL" }
+    $txtStatus.Text = "Installing Android APK..."
+    $txtStatus.Foreground = $window.FindResource("AccentBrush")
+
+    try {
+        $exitCode = Invoke-LoggedProcess -FilePath $adb -Arguments (Get-AndroidAdbArguments @("install", "-r", $apkPath)) -WorkingDirectory $rootDir -StatusPrefix "Installing Android APK"
+        if ($exitCode -eq 0) {
+            $txtStatus.Text = "Android APK installed"
+            $txtStatus.Foreground = $window.FindResource("GreenBrush")
+            return $true
+        }
+        $txtStatus.Text = "Android install failed (exit code $exitCode)"
+        $txtStatus.Foreground = $window.FindResource("RedBrush")
+        return $false
+    } finally {
+        if (-not $KeepBusy) {
+            Set-LauncherBusy $false
+            Update-Preview
+        }
+    }
+}
+
+function Invoke-AndroidDeploy {
+    if (-not (Test-AndroidDeviceReady)) { return }
+    $adb = Get-AndroidAdbPath
+    if (-not (Test-Path $adb)) {
+        if (-not (Ensure-AndroidToolchain)) { return }
+        $adb = Get-AndroidAdbPath
+        if (-not (Test-Path $adb)) {
+            [System.Windows.MessageBox]::Show(("adb.exe not found:" + "`n" + $adb), "T850 Launcher", "OK", "Error")
+            return
+        }
+    }
+    if (-not (Test-AndroidDeviceReady)) { return }
+    if (-not (Test-AndroidPackageInstalled)) { return }
+
+    Save-Config
+    $txtBuildOutput.Text = ""
+    $pnlBuildOutput.Visibility = [System.Windows.Visibility]::Visible
+    Set-LauncherBusy $true "DEPLOY"
+    $txtStatus.Text = "Launching installed Android app..."
+    $txtStatus.Foreground = $window.FindResource("AccentBrush")
+    try {
+        $txtStatus.Text = "Restarting Android app..."
+        $stopExitCode = Invoke-LoggedProcess -FilePath $adb -Arguments (Get-AndroidAdbArguments (Get-AndroidForceStopArguments)) -WorkingDirectory $rootDir -StatusPrefix "Stopping Android app"
+        if ($stopExitCode -ne 0) {
+            $txtStatus.Text = "Android deploy stop failed (exit code $stopExitCode)"
+            $txtStatus.Foreground = $window.FindResource("RedBrush")
+            return
+        }
+        $exitCode = Invoke-LoggedProcess -FilePath $adb -Arguments (Get-AndroidAdbArguments (Get-AndroidLaunchArguments)) -WorkingDirectory $rootDir -StatusPrefix "Launching Android app"
+        if ($exitCode -eq 0) {
+            $txtStatus.Text = "Android app launched"
+            $txtStatus.Foreground = $window.FindResource("GreenBrush")
+        } else {
+            $txtStatus.Text = "Android deploy launch failed (exit code $exitCode)"
+            $txtStatus.Foreground = $window.FindResource("RedBrush")
+        }
+    } finally {
+        Set-LauncherBusy $false
+        Update-Preview
+    }
+}
+
 # Shared build function — $buildTarget is "Build" (incremental) or "Rebuild" (clean)
 function Invoke-Build {
     param([string]$buildTarget = "Build")
+
+    if (Test-AndroidTarget) {
+        Invoke-AndroidBuild -Clean:($buildTarget -eq "Rebuild") | Out-Null
+        return
+    }
 
     $arch   = ($cmbArch.SelectedItem).Content.ToString().ToLower()
     $config = ($cmbConfig.SelectedItem).Content.ToString()
@@ -984,6 +2049,8 @@ function Invoke-Build {
         "x86"   { "x86" }
         default { "x64" }
     }
+
+    if (-not (Ensure-WindowsToolchain -TargetPlatform $platform)) { return }
 
     # Locate the build script
     $buildScript = Join-Path $rootDir "scripts\build.ps1"
@@ -1005,7 +2072,8 @@ function Invoke-Build {
     $pnlBuildOutput.Visibility = [System.Windows.Visibility]::Visible
 
     $label = if ($buildTarget -eq "Rebuild") { "Rebuilding" } else { "Building" }
-    $txtStatus.Text = "$label $config|$platform ..."
+    $buildWorkers = Get-BuildWorkerCount
+    $txtStatus.Text = "$label $config|$platform using $buildWorkers workers..."
     $txtStatus.Foreground = $window.FindResource("AccentBrush")
     $window.Dispatcher.Invoke([Action]{}, [System.Windows.Threading.DispatcherPriority]::Background)
 
@@ -1035,7 +2103,7 @@ function Invoke-Build {
     $slnPath = Join-Path $rootDir "T850.sln"
     $psi = New-Object System.Diagnostics.ProcessStartInfo
     $psi.FileName = $msbuild
-    $msbArgs = '"{0}" /p:Configuration={1} /p:Platform={2} /t:{3} /v:minimal /m' -f $slnPath, $config, $platform, $buildTarget
+    $msbArgs = '"{0}" /p:Configuration={1} /p:Platform={2} /t:{3} /v:minimal /m:{4}' -f $slnPath, $config, $platform, $buildTarget, $buildWorkers
     $psi.Arguments = $msbArgs
     $psi.UseShellExecute = $false
     $psi.RedirectStandardOutput = $true
@@ -1046,7 +2114,6 @@ function Invoke-Build {
     $proc = New-Object System.Diagnostics.Process
     $proc.StartInfo = $psi
 
-    $buildLog   = New-Object System.Text.StringBuilder
     $errorLines = New-Object System.Collections.Generic.List[string]
 
     try {
@@ -1127,6 +2194,11 @@ $btnRebuild.Add_Click({ Invoke-Build -buildTarget "Rebuild" })
 
 # RUN button — launch the app with current settings (no dump override)
 $btnRun.Add_Click({
+    if (Test-AndroidTarget) {
+        Invoke-AndroidInstall | Out-Null
+        return
+    }
+
     $cmd = Get-LaunchCommand
     if (-not (Test-Path $cmd.ExePath)) {
         [System.Windows.MessageBox]::Show(
@@ -1150,6 +2222,11 @@ $btnRun.Add_Click({
 
 # EDITOR button — launch T8ditor with current graphics/resolution/log settings
 $btnEditor.Add_Click({
+    if (Test-AndroidTarget) {
+        Invoke-AndroidDeploy
+        return
+    }
+
     $cmd = Get-EditorLaunchCommand
     if (-not (Test-Path $cmd.ExePath)) {
         [System.Windows.MessageBox]::Show(
@@ -1176,10 +2253,14 @@ $btnEditor.Add_Click({
 # Scan Models folder for .glb/.gltf files and populate the dropdown
 function Populate-ModelList {
     $cmbModel.Items.Clear()
-    $arch = ($cmbArch.SelectedItem).Content.ToString().ToLower()
-    $config = ($cmbConfig.SelectedItem).Content.ToString()
-    $archFolder = switch ($arch) { "arm64" { "arm64" }; "x86" { "x86" }; default { "x64" } }
-    $modelsDir = Join-Path $rootDir "bin\$archFolder\$config\Models"
+    if (Test-AndroidTarget) {
+        $modelsDir = Join-Path $rootDir "Assets\Models"
+    } else {
+        $arch = ($cmbArch.SelectedItem).Content.ToString().ToLower()
+        $config = ($cmbConfig.SelectedItem).Content.ToString()
+        $archFolder = switch ($arch) { "arm64" { "arm64" }; "x86" { "x86" }; default { "x64" } }
+        $modelsDir = Join-Path $rootDir "bin\$archFolder\$config\Models"
+    }
     if (Test-Path $modelsDir) {
         $files = Get-ChildItem $modelsDir -Filter "*.glb" | Sort-Object Name
         $files += Get-ChildItem $modelsDir -Filter "*.gltf" | Sort-Object Name
@@ -1204,7 +2285,19 @@ function Populate-ModelList {
 
 Populate-ModelList
 Load-Config
+Populate-ModelList
+Load-Config
+Refresh-AndroidDevices
 Update-SceneOptionVisibility
 Update-Preview
+
+$deviceRefreshTimer = New-Object System.Windows.Threading.DispatcherTimer
+$deviceRefreshTimer.Interval = [TimeSpan]::FromSeconds(2)
+$deviceRefreshTimer.Add_Tick({
+    Refresh-AndroidDevices
+    Update-Preview
+})
+$window.Add_Closed({ $deviceRefreshTimer.Stop() })
+$deviceRefreshTimer.Start()
 
 $window.ShowDialog() | Out-Null

@@ -397,7 +397,8 @@ struct Document {
   std::vector<std::string> extensionsRequired;
 
   // Resolved binary buffer payloads (Phase 2-stage data, not from JSON).
-  // buffers[i].byteLength bytes long; populated by GLTFLoader.cpp.
+  // GLB payloads may retain the whole container with bufferViews rebased to
+  // the BIN chunk to avoid duplicating large buffers on 32-bit builds.
   std::vector<std::vector<unsigned char>> _bufferData;
 
   // Source file path (for resolving relative URIs and naming embedded

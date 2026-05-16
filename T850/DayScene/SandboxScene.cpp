@@ -2329,6 +2329,7 @@ void SandboxScene::OnDestoryScene() {
 }
 
 void SandboxScene::DestroyAssets() {
+  SceneProp.SSAOKernel.Destroy();
   if (Meshes[0].HasPhysicsRagdoll() || Meshes[0].HasPhysicsBody() || m_floorBody.IsValid()) {
     t850::EngineContext* engineContext = GetEngineContext();
     if (!engineContext) engineContext = &t850::GetEngineContext();
@@ -2380,6 +2381,7 @@ void SandboxScene::DestroyAssets() {
   m_ragdollPhysicsCombinedMatrices.clear();
   m_ragdollGeneratedBinding = t850::PhysicsRagdollAnimationBinding{};
   m_debugText.Destroy();
+  m_debugSphere.Destroy();
   if (m_lightArrowVB) m_lightArrowVB->release();
   if (m_lightArrowIB) m_lightArrowIB->release();
   m_lightArrowVB = nullptr;

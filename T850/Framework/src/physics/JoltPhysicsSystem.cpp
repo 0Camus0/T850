@@ -63,7 +63,7 @@ static constexpr JPH::ObjectLayer Moving = 1;
 static constexpr JPH::ObjectLayer Count = 2;
 }
 
-static constexpr float kFixedPhysicsStepSeconds = 0.016f;
+static constexpr float kFixedPhysicsStepSeconds = 1.0f / 60.0f;
 static constexpr float kMaxSimulationSpeedScale = 32.0f;
 static constexpr float kMaxJoltBroadPhaseCoordinate = 1.0e12f;
 
@@ -825,7 +825,14 @@ struct JoltPhysicsSystem::Impl {
   std::vector<BodySlot> bodies;
   std::vector<RagdollSlot> ragdolls;
   float simulationSpeedScale = 1.0f;
-  float simulationStepAccumulator = 0.0f;
+  bool useFixedSimulationDelta = false;
+  uint32_t updateStatsFrames = 0;
+  uint32_t updateStatsTotalJoltUpdates = 0;
+  uint32_t updateStatsMaxJoltUpdates = 0;
+  uint32_t updateStatsMaxMovingStaticContacts = 0;
+  uint32_t updateStatsMaxMovingMovingContacts = 0;
+  double updateStatsTotalMs = 0.0;
+  double updateStatsMaxMs = 0.0;
 
   Impl()
       : tempAllocator(10 * 1024 * 1024),
@@ -900,7 +907,7 @@ bool JoltPhysicsSystem::Initialize() {
   m_impl->physicsSystem.OptimizeBroadPhase();
 
   m_initialized = true;
-  T8_LOG_INFO("Jolt Physics initialized");
+  T8_LOG_INFO("Jolt Physics initialized (max concurrency=%d)", m_impl->jobSystem.GetMaxConcurrency());
   return true;
 }
 
@@ -927,21 +934,91 @@ void JoltPhysicsSystem::Shutdown() {
 }
 
 void JoltPhysicsSystem::Update(float deltaSeconds) {
-  if (!m_initialized || deltaSeconds <= 0.0f) {
+  if (!m_initialized || !m_impl) {
+    return;
+  }
+  if (!std::isfinite(deltaSeconds)) {
+    T8_LOG_ERROR("Ignoring invalid Jolt update delta %.6f", deltaSeconds);
+    return;
+  }
+  if (deltaSeconds <= 0.0f || m_impl->simulationSpeedScale <= 0.0f) {
     return;
   }
 
   constexpr int collisionSteps = 2;
-  constexpr int maxStepsPerFrame = 32;
-  m_impl->simulationStepAccumulator = (std::min)(
-      m_impl->simulationStepAccumulator + m_impl->simulationSpeedScale,
-      static_cast<float>(maxStepsPerFrame));
+  const float updateDeltaSeconds =
+      m_impl->useFixedSimulationDelta ? kFixedPhysicsStepSeconds : deltaSeconds;
+  const float simulationDeltaSeconds = updateDeltaSeconds * m_impl->simulationSpeedScale;
+  if (!std::isfinite(simulationDeltaSeconds) || simulationDeltaSeconds <= 0.0f) {
+    T8_LOG_ERROR("Ignoring invalid scaled Jolt update delta %.6f", simulationDeltaSeconds);
+    return;
+  }
 
-  int steps = 0;
-  while (m_impl->simulationStepAccumulator >= 1.0f && steps < maxStepsPerFrame) {
-    m_impl->physicsSystem.Update(kFixedPhysicsStepSeconds, collisionSteps, &m_impl->tempAllocator, &m_impl->jobSystem);
-    m_impl->simulationStepAccumulator -= 1.0f;
-    ++steps;
+  const auto updateStart = std::chrono::high_resolution_clock::now();
+  m_impl->physicsSystem.Update(simulationDeltaSeconds, collisionSteps, &m_impl->tempAllocator, &m_impl->jobSystem);
+  const auto updateEnd = std::chrono::high_resolution_clock::now();
+  const double updateMs = std::chrono::duration<double, std::milli>(updateEnd - updateStart).count();
+
+  const JPH::uint32 activeRigidBodies = m_impl->physicsSystem.GetNumActiveBodies(JPH::EBodyType::RigidBody);
+  uint32_t movingStaticContacts = 0;
+  uint32_t movingMovingContacts = 0;
+  for (std::size_t i = 0; i < m_impl->bodies.size(); ++i) {
+    const auto& bodyA = m_impl->bodies[i];
+    if (!bodyA.alive) {
+      continue;
+    }
+    for (std::size_t j = i + 1; j < m_impl->bodies.size(); ++j) {
+      const auto& bodyB = m_impl->bodies[j];
+      if (!bodyB.alive || !m_impl->physicsSystem.WereBodiesInContact(bodyA.id, bodyB.id)) {
+        continue;
+      }
+      const bool aMoving = bodyA.motion != PhysicsBodyMotion::Static;
+      const bool bMoving = bodyB.motion != PhysicsBodyMotion::Static;
+      if (aMoving && bMoving) {
+        ++movingMovingContacts;
+      } else if (aMoving || bMoving) {
+        ++movingStaticContacts;
+      }
+    }
+  }
+  constexpr uint32_t joltUpdates = 1;
+  if (activeRigidBodies > 0) {
+    ++m_impl->updateStatsFrames;
+    m_impl->updateStatsTotalMs += updateMs;
+    m_impl->updateStatsMaxMs = (std::max)(m_impl->updateStatsMaxMs, updateMs);
+    m_impl->updateStatsTotalJoltUpdates += joltUpdates;
+    m_impl->updateStatsMaxJoltUpdates = (std::max)(m_impl->updateStatsMaxJoltUpdates, joltUpdates);
+    m_impl->updateStatsMaxMovingStaticContacts =
+        (std::max)(m_impl->updateStatsMaxMovingStaticContacts, movingStaticContacts);
+    m_impl->updateStatsMaxMovingMovingContacts =
+        (std::max)(m_impl->updateStatsMaxMovingMovingContacts, movingMovingContacts);
+    if (m_impl->updateStatsFrames >= 120) {
+      const double avgMs = m_impl->updateStatsTotalMs / static_cast<double>(m_impl->updateStatsFrames);
+      const double avgJoltUpdates =
+          static_cast<double>(m_impl->updateStatsTotalJoltUpdates) / static_cast<double>(m_impl->updateStatsFrames);
+      T8_LOG_DEBUG("[JoltPhysics] update avg=%.3fms max=%.3fms avgJoltUpdates=%.2f maxJoltUpdates=%u stepDt=%.4f activeRigid=%u bodies=%u contactsMS=%u contactsMM=%u maxContactsMS=%u maxContactsMM=%u mode=%s speed=%.3fx concurrency=%d",
+                   avgMs,
+                   m_impl->updateStatsMaxMs,
+                   avgJoltUpdates,
+                   m_impl->updateStatsMaxJoltUpdates,
+                   simulationDeltaSeconds,
+                   activeRigidBodies,
+                   m_impl->physicsSystem.GetNumBodies(),
+                   movingStaticContacts,
+                   movingMovingContacts,
+                   m_impl->updateStatsMaxMovingStaticContacts,
+                   m_impl->updateStatsMaxMovingMovingContacts,
+                   m_impl->useFixedSimulationDelta ? "fixed" : "delta",
+                   m_impl->simulationSpeedScale,
+                   m_impl->jobSystem.GetMaxConcurrency());
+      m_impl->updateStatsFrames = 0;
+      m_impl->updateStatsTotalJoltUpdates = 0;
+      m_impl->updateStatsMaxJoltUpdates = 0;
+      m_impl->updateStatsMaxMovingStaticContacts = 0;
+      m_impl->updateStatsMaxMovingMovingContacts = 0;
+      m_impl->updateStatsTotalMs = 0.0;
+      m_impl->updateStatsMaxMs = 0.0;
+    }
   }
 }
 
@@ -955,13 +1032,21 @@ void JoltPhysicsSystem::SetSimulationSpeedScale(float scale) {
   }
 
   m_impl->simulationSpeedScale = (std::min)((std::max)(scale, 0.0f), kMaxSimulationSpeedScale);
-  if (m_impl->simulationSpeedScale <= 0.0f) {
-    m_impl->simulationStepAccumulator = 0.0f;
-  }
 }
 
 float JoltPhysicsSystem::GetSimulationSpeedScale() const {
   return m_impl ? m_impl->simulationSpeedScale : 1.0f;
+}
+
+void JoltPhysicsSystem::SetUseFixedSimulationDelta(bool useFixedDelta) {
+  if (!m_impl) {
+    return;
+  }
+  m_impl->useFixedSimulationDelta = useFixedDelta;
+}
+
+bool JoltPhysicsSystem::GetUseFixedSimulationDelta() const {
+  return m_impl ? m_impl->useFixedSimulationDelta : false;
 }
 
 PhysicsBodyHandle JoltPhysicsSystem::CreateBody(const PhysicsBodyDesc& desc) {
@@ -1002,8 +1087,6 @@ PhysicsBodyHandle JoltPhysicsSystem::CreateBodyInternal(const PhysicsBodyDesc& d
   if (desc.motion != PhysicsBodyMotion::Static && desc.mass > 0.0f) {
     settings.mOverrideMassProperties = JPH::EOverrideMassProperties::CalculateInertia;
     settings.mMassPropertiesOverride.mMass = desc.mass;
-    settings.mMotionQuality = JPH::EMotionQuality::LinearCast;
-    settings.mAllowSleeping = false;
   }
 
   JPH::BodyInterface& bodyInterface = m_impl->physicsSystem.GetBodyInterface();
@@ -1163,7 +1246,7 @@ bool JoltPhysicsSystem::SetBodyMotion(PhysicsBodyHandle handle, PhysicsBodyMotio
   }
   bodyInterface.SetMotionType(slot->id, ToJoltMotion(motion), JPH::EActivation::Activate);
   if (motion == PhysicsBodyMotion::Dynamic) {
-    bodyInterface.SetMotionQuality(slot->id, JPH::EMotionQuality::LinearCast);
+    bodyInterface.SetMotionQuality(slot->id, JPH::EMotionQuality::Discrete);
     bodyInterface.ActivateBody(slot->id);
   }
   slot->motion = motion;
@@ -1384,6 +1467,9 @@ PhysicsRagdollHandle JoltPhysicsSystem::CreateRagdoll(const PhysicsRagdollDesc& 
   PhysicsRagdollHandle handle;
   handle.value = static_cast<uint32_t>(m_impl->ragdolls.size());
   m_impl->ragdolls.push_back(slot);
+  T8_LOG_DEBUG("Jolt ragdoll created: bodies=%zu constraints=%zu",
+               m_impl->ragdolls.back().bodies.size(),
+               m_impl->ragdolls.back().constraints.size());
   return handle;
 }
 
@@ -1547,6 +1633,12 @@ void JoltPhysicsSystem::SetSimulationSpeedScale(float) {}
 
 float JoltPhysicsSystem::GetSimulationSpeedScale() const {
   return 1.0f;
+}
+
+void JoltPhysicsSystem::SetUseFixedSimulationDelta(bool) {}
+
+bool JoltPhysicsSystem::GetUseFixedSimulationDelta() const {
+  return false;
 }
 
 PhysicsBodyHandle JoltPhysicsSystem::CreateBody(const PhysicsBodyDesc&) {

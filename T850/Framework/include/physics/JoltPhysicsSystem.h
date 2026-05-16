@@ -19,6 +19,8 @@ public:
   void Update(float deltaSeconds);
   void SetSimulationSpeedScale(float scale);
   float GetSimulationSpeedScale() const;
+  void SetUseFixedSimulationDelta(bool useFixedDelta);
+  bool GetUseFixedSimulationDelta() const;
 
   PhysicsBodyHandle CreateBody(const PhysicsBodyDesc& desc);
   PhysicsBodyHandle CreateTriangleMeshBody(const PhysicsTriangleMeshBodyDesc& desc, PhysicsCookStats* outStats = nullptr);

@@ -34,6 +34,7 @@ public:
     bool offscreen : 1 = false;
     bool offscreenDebug : 1 = false;
     bool dumpShaderPermutations : 1 = false;
+    bool autoStartRagdoll : 1 = false;
   } flags;
 
   std::string api = "d3d11";
@@ -59,6 +60,7 @@ public:
   std::string shaderPermutationOutputPath = "shader_permutations.json";
   bool orbitYawOverride = false;
   float orbitYaw = 0.0f;
+  int ragdollSimulationSpeedIndex = -1;
 };
 
 extern Config g_config;

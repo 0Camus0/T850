@@ -4576,11 +4576,28 @@ bool SandboxScene::BuildDefaultRagdollCapsuleForBone(int boneIndex,
   if (!GetSkeletonEditBoneWorldTransform(boneIndex, boneWorld)) {
     return false;
   }
-  const XVECTOR3 root(boneWorld.m41, boneWorld.m42, boneWorld.m43, 1.0f);
+  const XVECTOR3 selectedBonePosition(boneWorld.m41, boneWorld.m42, boneWorld.m43, 1.0f);
+  XVECTOR3 root = selectedBonePosition;
+  XVECTOR3 end = selectedBonePosition;
+  bool hasAuthoringSegment = false;
 
-  int endpointBone = FindSkeletonEditDisplayEndpoint(boneIndex);
+  const xF::xBone& selectedBone = skeleton->Bones[static_cast<std::size_t>(boneIndex)];
+  if (selectedBone.Dad < skeleton->Bones.size() &&
+      selectedBone.Dad != static_cast<unsigned short>(boneIndex)) {
+    XMATRIX44 parentWorld;
+    if (GetSkeletonEditBoneWorldTransform(selectedBone.Dad, parentWorld)) {
+      const XVECTOR3 parentPosition(parentWorld.m41, parentWorld.m42, parentWorld.m43, 1.0f);
+      if (Length3(selectedBonePosition - parentPosition) > 0.0001f) {
+        root = parentPosition;
+        end = selectedBonePosition;
+        hasAuthoringSegment = true;
+      }
+    }
+  }
+
+  int endpointBone = hasAuthoringSegment ? -1 : FindSkeletonEditDisplayEndpoint(boneIndex);
   float bestLength = 0.0f;
-  if (endpointBone < 0) {
+  if (!hasAuthoringSegment && endpointBone < 0) {
     for (int i = 0; i < static_cast<int>(skeleton->Bones.size()); ++i) {
       const xF::xBone& candidate = skeleton->Bones[static_cast<std::size_t>(i)];
       if (candidate.Dad != static_cast<unsigned short>(boneIndex)) {
@@ -4599,14 +4616,13 @@ bool SandboxScene::BuildDefaultRagdollCapsuleForBone(int boneIndex,
     }
   }
 
-  XVECTOR3 end = root;
-  if (endpointBone >= 0) {
+  if (!hasAuthoringSegment && endpointBone >= 0) {
     XMATRIX44 childWorld;
     if (!GetSkeletonEditBoneWorldTransform(endpointBone, childWorld)) {
       return false;
     }
     end = XVECTOR3(childWorld.m41, childWorld.m42, childWorld.m43, 1.0f);
-  } else {
+  } else if (!hasAuthoringSegment) {
     const xF::xBone& bone = skeleton->Bones[static_cast<std::size_t>(boneIndex)];
     if (bone.Dad == static_cast<unsigned short>(boneIndex) || bone.Dad >= skeleton->Bones.size()) {
       return false;
@@ -4667,17 +4683,18 @@ bool SandboxScene::CreateRagdollCapsuleForBone(int boneIndex) {
 
   t850::PhysicsRagdollBoneDesc bone;
   XMATRIX44 bodyFromBone;
-  const int generatedIndex = FindGeneratedRagdollCapsuleForBone(boneIndex);
-  if (generatedIndex >= 0 &&
-      generatedIndex < static_cast<int>(m_ragdollGeneratedBinding.referencePose.bones.size()) &&
-      generatedIndex < static_cast<int>(m_ragdollGeneratedBinding.bodyFromBone.size())) {
+  if (!BuildDefaultRagdollCapsuleForBone(boneIndex, bone, bodyFromBone)) {
+    const int generatedIndex = FindGeneratedRagdollCapsuleForBone(boneIndex);
+    if (generatedIndex < 0 ||
+        generatedIndex >= static_cast<int>(m_ragdollGeneratedBinding.referencePose.bones.size()) ||
+        generatedIndex >= static_cast<int>(m_ragdollGeneratedBinding.bodyFromBone.size())) {
+      T8_LOG_ERROR("[RagdollEdit] Failed to create capsule for bone %d", boneIndex);
+      return false;
+    }
     bone = m_ragdollGeneratedBinding.referencePose.bones[static_cast<std::size_t>(generatedIndex)];
     bodyFromBone = m_ragdollGeneratedBinding.bodyFromBone[static_cast<std::size_t>(generatedIndex)];
     bone.body.entityId = Meshes[0].GetEntityId();
     bone.body.motion = t850::PhysicsBodyMotion::Kinematic;
-  } else if (!BuildDefaultRagdollCapsuleForBone(boneIndex, bone, bodyFromBone)) {
-    T8_LOG_ERROR("[RagdollEdit] Failed to create capsule for bone %d", boneIndex);
-    return false;
   }
 
   auto& desc = m_ragdollAnimationBinding.referencePose;
@@ -4693,8 +4710,8 @@ bool SandboxScene::CreateRagdollCapsuleForBone(int boneIndex) {
   m_ragdollAnimationBinding.parentJointPlaneFromBody.push_back(XVECTOR3(1.0f, 0.0f, 0.0f, 0.0f));
   m_ragdollAnimationBinding.childJointTwistFromBody.push_back(XVECTOR3(0.0f, 1.0f, 0.0f, 0.0f));
   m_ragdollAnimationBinding.childJointPlaneFromBody.push_back(XVECTOR3(1.0f, 0.0f, 0.0f, 0.0f));
-  m_ragdollAnimationBinding.controlledBoneIndices.emplace_back();
-  m_ragdollAnimationBinding.controlledBodyFromBone.emplace_back();
+  m_ragdollAnimationBinding.controlledBoneIndices.push_back(std::vector<int>{bone.body.boneIndex});
+  m_ragdollAnimationBinding.controlledBodyFromBone.push_back(std::vector<XMATRIX44>{bodyFromBone});
   EnsureRagdollParentCapsules();
   if (m_ragdollParentCapsules.size() < desc.bones.size()) {
     m_ragdollParentCapsules.resize(desc.bones.size(), -1);
@@ -6806,22 +6823,30 @@ bool SandboxScene::ResetSelectedRagdollCapsule() {
   }
 
   const int boneIndex = m_ragdollAnimationBinding.referencePose.bones[static_cast<std::size_t>(index)].body.boneIndex;
-  const int generatedIndex = FindGeneratedRagdollCapsuleForBone(boneIndex);
-  if (generatedIndex < 0 ||
-      generatedIndex >= static_cast<int>(m_ragdollGeneratedBinding.referencePose.bones.size()) ||
-      generatedIndex >= static_cast<int>(m_ragdollGeneratedBinding.bodyFromBone.size())) {
-    return false;
+  t850::PhysicsRagdollBoneDesc resetBone;
+  XMATRIX44 resetBodyFromBone;
+  int generatedIndex = -1;
+  const bool hasDefault = BuildDefaultRagdollCapsuleForBone(boneIndex, resetBone, resetBodyFromBone);
+  if (!hasDefault) {
+    generatedIndex = FindGeneratedRagdollCapsuleForBone(boneIndex);
+    if (generatedIndex < 0 ||
+        generatedIndex >= static_cast<int>(m_ragdollGeneratedBinding.referencePose.bones.size()) ||
+        generatedIndex >= static_cast<int>(m_ragdollGeneratedBinding.bodyFromBone.size())) {
+      return false;
+    }
+    resetBone = m_ragdollGeneratedBinding.referencePose.bones[static_cast<std::size_t>(generatedIndex)];
+    resetBodyFromBone = m_ragdollGeneratedBinding.bodyFromBone[static_cast<std::size_t>(generatedIndex)];
   }
 
   m_ragdollAnimationBinding.referencePose.bones[static_cast<std::size_t>(index)] =
-      m_ragdollGeneratedBinding.referencePose.bones[static_cast<std::size_t>(generatedIndex)];
+      resetBone;
   m_ragdollAnimationBinding.bodyFromBone[static_cast<std::size_t>(index)] =
-      m_ragdollGeneratedBinding.bodyFromBone[static_cast<std::size_t>(generatedIndex)];
+      resetBodyFromBone;
   if (m_ragdollAnimationBinding.jointFromBone.size() < m_ragdollAnimationBinding.referencePose.bones.size()) {
     m_ragdollAnimationBinding.jointFromBone.resize(m_ragdollAnimationBinding.referencePose.bones.size(),
                                                    XVECTOR3(0.0f, 0.0f, 0.0f, 1.0f));
   }
-  if (generatedIndex < static_cast<int>(m_ragdollGeneratedBinding.jointFromBone.size())) {
+  if (!hasDefault && generatedIndex < static_cast<int>(m_ragdollGeneratedBinding.jointFromBone.size())) {
     m_ragdollAnimationBinding.jointFromBone[static_cast<std::size_t>(index)] =
         m_ragdollGeneratedBinding.jointFromBone[static_cast<std::size_t>(generatedIndex)];
   } else {

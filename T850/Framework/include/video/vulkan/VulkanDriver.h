@@ -264,7 +264,7 @@ namespace t850 {
     VkRect2D        m_scissorRect = {};
 
     // Per-frame constant buffer ring allocator
-    static const uint32_t kCBRingBufferSize = 16 * 1024 * 1024; // 16 MB per frame
+    static const uint32_t kCBRingBufferSize = 64 * 1024 * 1024; // 64 MB per frame for large draw-count scenes
     VkBuffer        m_cbRingBuffers[kBackBufferCount] = {};
     VmaAllocation   m_cbRingAllocations[kBackBufferCount] = {};
     void*           m_cbRingMapped[kBackBufferCount] = {};

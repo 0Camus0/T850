@@ -49,7 +49,7 @@ jobs:
         shell: pwsh
         run: |
           cd T850/Librerias/vcpkg
-          ./vcpkg.exe install --recurse glew:x86-windows-static angle:x86-windows draco:x86-windows draco:x86-windows-static vulkan-headers:x86-windows-static vulkan-loader:x86-windows-static vulkan-memory-allocator:x86-windows-static glslang:x86-windows-static "imgui[docking-experimental,dx11-binding,vulkan-binding,opengl3-binding,sdl3-binding,win32-binding]:x86-windows-static"
+          ./vcpkg.exe install --recurse glew:x86-windows-static angle:x86-windows draco:x86-windows draco:x86-windows-static vulkan-headers:x86-windows-static vulkan-loader:x86-windows-static vulkan-memory-allocator:x86-windows-static glslang:x86-windows-static joltphysics:x86-windows-static "imgui[docking-experimental,dx11-binding,vulkan-binding,opengl3-binding,sdl3-binding,win32-binding]:x86-windows-static"
 
       - name: Install vcpkg packages (x64)
         if: matrix.platform == 'x64'

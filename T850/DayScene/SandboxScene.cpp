@@ -7825,7 +7825,24 @@ bool SandboxScene::PickRagdollEditHandle(float mouseX, float mouseY, float thres
 
   const int width = (std::max)(1, g_pBaseDriver->width);
   const int height = (std::max)(1, g_pBaseDriver->height);
-  float bestDistanceSq = thresholdPixels * thresholdPixels;
+  int bestPriority = (std::numeric_limits<int>::max)();
+  float bestDistanceSq = FLT_MAX;
+  const float handleWorldRadius = (std::max)(0.01f, m_modelRadius * 0.014f);
+
+  auto pickRadiusPixels = [&](const XVECTOR3& worldPoint) {
+    float radiusPixels = thresholdPixels;
+    bool centerVisible = false;
+    bool edgeVisible = false;
+    const ImVec2 center = ProjectWorldToScreen(worldPoint, VP, width, height, centerVisible);
+    const ImVec2 edge = ProjectWorldToScreen(worldPoint + Cam.Right * handleWorldRadius, VP, width, height, edgeVisible);
+    if (centerVisible && edgeVisible) {
+      const float dx = edge.x - center.x;
+      const float dy = edge.y - center.y;
+      radiusPixels = (std::max)(radiusPixels, std::sqrt(dx * dx + dy * dy) * 1.2f);
+    }
+    return radiusPixels;
+  };
+
   for (int capsuleIndex = 0; capsuleIndex < static_cast<int>(m_ragdollAnimationBinding.referencePose.bones.size()); ++capsuleIndex) {
     if (IsRagdollCapsuleFrozen(capsuleIndex)) {
       continue;
@@ -7843,7 +7860,16 @@ bool SandboxScene::PickRagdollEditHandle(float mouseX, float mouseY, float thres
       const float dx = screen.x - mouseX;
       const float dy = screen.y - mouseY;
       const float distanceSq = dx * dx + dy * dy;
-      if (distanceSq < bestDistanceSq) {
+      const float radiusPixels = pickRadiusPixels(points[static_cast<std::size_t>(handleIndex)]);
+      if (distanceSq > radiusPixels * radiusPixels) {
+        continue;
+      }
+      const bool selectedCapsule = capsuleIndex == m_ragdollEditSelectedCapsule;
+      const bool centerHandle = handleIndex == 0;
+      const int priority = (selectedCapsule ? 0 : 2) + (centerHandle ? 1 : 0);
+      if (priority < bestPriority ||
+          (priority == bestPriority && distanceSq < bestDistanceSq)) {
+        bestPriority = priority;
         bestDistanceSq = distanceSq;
         outCapsuleIndex = capsuleIndex;
         outHandleIndex = handleIndex;
@@ -9143,8 +9169,7 @@ bool SandboxScene::HandleSkeletonEditInput(InputManager* input, bool imguiWantsM
       }
       if (PickRagdollEditCapsule(static_cast<float>(input->mouseX), static_cast<float>(input->mouseY), 18.0f, pickedCapsule)) {
         SelectRagdollEditCapsule(pickedCapsule, true);
-        m_ragdollEditHandleDragging =
-            m_ragdollEditGizmoMode == kRagdollToolEditCapsule && !IsRagdollCapsuleFrozen(pickedCapsule);
+        m_ragdollEditHandleDragging = false;
         return true;
       }
     } else if (m_ragdollEditSelectionMode == kRagdollSelectJoints) {

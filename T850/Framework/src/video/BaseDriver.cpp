@@ -297,7 +297,6 @@ namespace t850 {
     bounded = 1;
     this->x = x;
     this->y = y;
-    this->params = params;
     props = 0;
 
     if (cil_props&CIL_RGBA) {
@@ -339,7 +338,6 @@ namespace t850 {
     bounded = 1;
     this->x = w;
     this->y = h;
-    this->params = params;
     props = 0;
 
     if (channels == 4) {
@@ -373,7 +371,6 @@ namespace t850 {
     bounded = 1;
     this->x = w;
     this->y = h;
-    this->params = params;
     props = 0;
 
     if (m_channels == 4) {

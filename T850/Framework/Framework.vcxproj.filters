@@ -81,6 +81,12 @@
     <Filter Include="Header Files\gui">
       <UniqueIdentifier>{807894bf-e95e-4fbe-aa5f-6e72e46165d3}</UniqueIdentifier>
     </Filter>
+    <Filter Include="Header Files\physics">
+      <UniqueIdentifier>{1f2936b2-e74b-4bdb-9ad2-32a060e17d06}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Source Files\physics">
+      <UniqueIdentifier>{fb7d6cf1-65eb-4045-984c-2ef7a95d15cc}</UniqueIdentifier>
+    </Filter>
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="include\core\Core.h">
@@ -269,6 +275,18 @@
     <ClInclude Include="include\scene\TextRenderer.h">
       <Filter>Header Files\scene</Filter>
     </ClInclude>
+    <ClInclude Include="include\physics\JoltPhysicsSystem.h">
+      <Filter>Header Files\physics</Filter>
+    </ClInclude>
+    <ClInclude Include="include\physics\PhysicsDebugRenderer.h">
+      <Filter>Header Files\physics</Filter>
+    </ClInclude>
+    <ClInclude Include="include\physics\PhysicsAuthoring.h">
+      <Filter>Header Files\physics</Filter>
+    </ClInclude>
+    <ClInclude Include="include\physics\PhysicsTypes.h">
+      <Filter>Header Files\physics</Filter>
+    </ClInclude>
     <ClInclude Include="include\scene\Quad.h">
       <Filter>Header Files\scene</Filter>
     </ClInclude>
@@ -378,6 +396,9 @@
       <Filter>Header Files\utils</Filter>
     </ClInclude>
     <ClInclude Include="include\utils\ConfigRuntime.h">
+      <Filter>Header Files\utils</Filter>
+    </ClInclude>
+    <ClInclude Include="include\utils\RuntimeProfile.h">
       <Filter>Header Files\utils</Filter>
     </ClInclude>
     <ClInclude Include="include\utils\ShaderPermutationDump.h">
@@ -580,6 +601,15 @@
     <ClCompile Include="src\scene\AnimationController.cpp">
       <Filter>Source Files\scene</Filter>
     </ClCompile>
+    <ClCompile Include="src\physics\JoltPhysicsSystem.cpp">
+      <Filter>Source Files\physics</Filter>
+    </ClCompile>
+    <ClCompile Include="src\physics\PhysicsDebugRenderer.cpp">
+      <Filter>Source Files\physics</Filter>
+    </ClCompile>
+    <ClCompile Include="src\physics\PhysicsAuthoring.cpp">
+      <Filter>Source Files\physics</Filter>
+    </ClCompile>
     <ClCompile Include="..\Librerias\tinyxml2\tinyxml2.cpp">
       <Filter>Source Files\ext</Filter>
     </ClCompile>
@@ -686,6 +716,9 @@
       <Filter>Source Files\utils</Filter>
     </ClCompile>
     <ClCompile Include="src\utils\ConfigRuntime.cpp">
+      <Filter>Source Files\utils</Filter>
+    </ClCompile>
+    <ClCompile Include="src\utils\RuntimeProfile.cpp">
       <Filter>Source Files\utils</Filter>
     </ClCompile>
     <ClCompile Include="src\utils\ShaderPermutationDump.cpp">

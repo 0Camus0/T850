@@ -9,6 +9,7 @@
 #include <scene/SceneSetup.h>
 #include <scene/RenderGraph.h>
 #include <debug/FrameDumper.h>
+#include <physics/PhysicsDebugRenderer.h>
 #include <scene/LensFlare.h>
 #include <scene/TextRenderer.h>
 #include <gui/GUIManager.h>
@@ -85,18 +86,19 @@ class DayScene : public t850::SceneBase
     CHANGE_PARALLAX_SHADOW_SOFTNESS,
     CHANGE_PARALLAX_SHADOW_STRENGTH,
     CHANGE_PARALLAX_SHADOW_TOGGLE,
+    CHANGE_SHOW_PHYSICS,
     CHANGE_MAX_NUM_OPTIONS
   };
   public:
   DayScene() {}
-  void OnUpdate(float _DtSecs);
-  void OnDraw();
-  void OnInput(InputManager* IManager);
-  void OnLoadScene();
-  void OnDestoryScene();
-  void InitVars();
-  void CreateAssets();
-  void DestroyAssets();
+  void OnUpdate(float _DtSecs) override;
+  void OnDraw() override;
+  void OnInput(InputManager* IManager) override;
+  void OnLoadScene() override;
+  void OnDestoryScene() override;
+  void InitVars() override;
+  void CreateAssets() override;
+  void DestroyAssets() override;
 
   void ChangeSettingsOnPlus();
   void ChangeSettingsOnMinus();
@@ -111,6 +113,13 @@ class DayScene : public t850::SceneBase
   // Dump scene state to JSON
   void SaveSceneState() override;
   void RequestDump() override { m_dumper.RequestDump(); }
+#ifdef OS_ANDROID
+  bool HandleAndroidVirtualControls(AInputEvent* event);
+  bool AndroidVirtualControlsActive() const;
+  void DrawAndroidVirtualControls(bool guiVisible);
+  void DrawAndroidPhysicsPanel(t850::DevGuiContext& gui);
+  void ResetAndroidVirtualControls();
+#endif
 
   // Helper: find selector index for a light count value
   int FindLightOption(int activeLights);
@@ -120,6 +129,11 @@ class DayScene : public t850::SceneBase
   void RecordBenchmarkFrame(float dtSecs);
   void WriteBenchmarkResults(float durationSecs) const;
   std::string BuildBenchmarkOutputPath() const;
+  void LoadSceneProfile();
+  void SaveSceneProfile();
+  void CaptureSceneProfileState(t850::SandboxProfileDesc& state) const;
+  void ApplySceneProfileState(const t850::SandboxProfileDesc& state);
+  t850::SandboxProfileDesc BuildSparseSceneProfile(const t850::SandboxProfileDesc& current) const;
 
   struct BenchmarkCullingTotals {
     unsigned long long samples = 0;
@@ -146,6 +160,11 @@ class DayScene : public t850::SceneBase
   t850::SceneSetup  m_sceneSetup;
   t850::RenderGraph  m_renderGraph;
   t850::FrameDumper  m_dumper;
+  bool m_sceneProfileReady = false;
+  bool m_sceneProfileDirty = false;
+  int m_selectedProfileTargetIndex = 0;
+  t850::SandboxProfileDesc m_sceneProfileBaselineState;
+  t850::SandboxProfileDesc m_sceneProfileSavedState;
 
   Camera			*ActiveCam;
 
@@ -214,12 +233,27 @@ class DayScene : public t850::SceneBase
   t850::PrimitiveInst splineInst;
   t850::WireframeSphere m_wireframeSphere;
   t850::WireframeArrow m_wireframeArrow;
+  t850::PhysicsDebugRenderer m_physicsDebugRenderer;
   t850::TextRenderer m_debugText;
   bool m_showCullStats = false;
+  bool m_showPhysics = false;
   float m_tourTimeSec = 0.0f;
   std::vector<double> m_benchmarkFrameTimesMs;
   BenchmarkCullingTotals m_benchmarkCullingTotals;
   t850::LensFlare m_flare;
   XMATRIX44 m;
-};
 
+#ifdef OS_ANDROID
+  bool AndroidVirtualControlsVisible() const;
+  void ApplyAndroidVirtualControls();
+
+  int m_androidMovePointerId = -1;
+  int m_androidLookPointerId = -1;
+  int m_androidUpPointerId = -1;
+  int m_androidDownPointerId = -1;
+  XVECTOR2 m_androidMoveAxis;
+  XVECTOR2 m_androidLookAxis;
+  bool m_androidMoveUp = false;
+  bool m_androidMoveDown = false;
+#endif
+};

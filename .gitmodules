@@ -1,0 +1,3 @@
+[submodule "T850/Librerias/vcpkg"]
+	path = T850/Librerias/vcpkg
+	url = https://github.com/microsoft/vcpkg.git

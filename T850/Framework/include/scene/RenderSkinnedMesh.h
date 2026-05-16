@@ -30,9 +30,12 @@ public:
   // Call BEFORE the render graph — updates animation and uploads bone texture.
   // Must happen outside any render pass (Vulkan copy commands require it).
   void UpdateAnimationAndBones();
+  void UpdateAnimationPose();
+  void UploadBoneTexture();
 
   // ── Animation playback API ──
   AnimationController& GetAnimController() { return m_animController; }
+  const AnimationController& GetAnimController() const { return m_animController; }
 
   void PlayAnimation()  { m_playing = true; }
   void PauseAnimation() { m_playing = false; }
@@ -73,8 +76,11 @@ public:
   // ── Debug wireframe / skeleton visualization ──
   // Draw mesh wireframe using GPU skinning pipeline (green, LINE_LIST)
   void DrawWireframe();
-  // Draw skeleton bones without depth testing (magenta)
-  void DrawSkeleton();
+  // Draw skeleton bones without depth testing. Pass bone indices to highlight them.
+  void DrawSkeleton(int selectedBone = -1,
+                    const std::vector<int>* controlledBones = nullptr,
+                    const std::vector<int>* previewBones = nullptr,
+                    const std::vector<int>* pendingBones = nullptr);
 
   // Exact pose snapshot/replay support.
   void ExportBoneMatrices(std::vector<XMATRIX44>& out) const;
@@ -136,6 +142,8 @@ private:
   void BuildWireframeBuffers();
   void BuildSkeletonBuffers();
   void UpdateSkeletonPositions();
+  bool UpdateHighlightedSkeletonPositions(const std::vector<int>& boneIndices);
+  bool UpdateSelectedSkeletonPositions(int selectedBone);
 
   AnimationController m_animController;
   std::vector<CBufferSkinned> m_skinnedCBuffers;   // matrix path (one per geometry)
@@ -161,15 +169,23 @@ private:
   std::vector<WireGeo> m_wireGeo;      // per-geometry line-list IBs
   ShaderBase*          m_wireShader = nullptr;
 
-  // Skeleton bone lines (CPU-updated each frame)
-  // Uses WireframeSphere-style shader (VS_W + FS_W) which is known to
-  // work on all GL backends, bypassing the LineRenderer.
-  ShaderBase*          m_skelShader     = nullptr;
-  ConstantBuffer*      m_skelCB         = nullptr;
-  VertexBuffer*        m_skelVB         = nullptr;
-  IndexBuffer*         m_skelIB         = nullptr;
+  // Octahedral skeleton bones (CPU-updated each frame)
+  struct SkeletonBoneSegment {
+    int boneIndex = -1;
+    int endpointBoneIndex = -1;
+    unsigned vertexOffset = 0;
+  };
+  VertexBuffer*        m_skelVB = nullptr;
+  IndexBuffer*         m_skelIB = nullptr;
   unsigned             m_skelIndexCount = 0;
-  std::vector<float>   m_skelPositions;   // xyzw per bone endpoint
+  std::vector<float>   m_skelPositions;   // xyzw per octahedral bone vertex
+  std::vector<SkeletonBoneSegment> m_skelSegments;
+  VertexBuffer*        m_skelSelectedVB = nullptr;
+  IndexBuffer*         m_skelSelectedIB = nullptr;
+  unsigned             m_skelSelectedVertexCapacity = 0;
+  unsigned             m_skelSelectedIndexCapacity = 0;
+  unsigned             m_skelSelectedIndexCount = 0;
+  std::vector<float>   m_skelSelectedPositions;
 
   // LineRenderer kept for depth-tested wireframe overlays
   LineRenderer         m_lineRenderer;

@@ -168,6 +168,11 @@ namespace t850 {
   };
 
   struct SandboxProfileDesc {
+    std::string name;
+    std::string platform;
+    std::string architecture;
+    std::string gpu_family;
+    std::string gpu_name_contains;
     std::string model;
     std::vector<FloatOverrideDesc> sliders;
     std::vector<BoolOverrideDesc> checkboxes;

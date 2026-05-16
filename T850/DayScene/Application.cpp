@@ -43,6 +43,7 @@
 #ifdef OS_ANDROID
 #  include <android/input.h>
 #  include <video/vulkan/VulkanDriver.h>
+#  include <unistd.h>
 #endif
 
 #include <algorithm>
@@ -443,6 +444,16 @@ namespace {
 
 #include <DayScene.h>
 #include <SandboxScene.h>
+
+#ifdef OS_ANDROID
+namespace {
+  constexpr int kAndroidGuiPanelControls = 0;
+  constexpr int kAndroidGuiPanelPhysics = 1;
+  constexpr int kAndroidTapSideLeft = 0;
+  constexpr int kAndroidTapSideRight = 1;
+}
+#endif
+
 void App::InitVars() {
   //t850::Technique tech("Techniques/test_technique.xml");
 	DtTimer.Init();
@@ -453,6 +464,10 @@ void App::InitVars() {
   m_scenes.emplace_back(std::make_unique<SandboxScene>());
   m_scenes.emplace_back(std::make_unique<DayScene>());
   t850::EngineContext& engineContext = t850::GetEngineContext();
+  engineContext.physics = &m_physics;
+  if (!m_physics.Initialize() && m_physics.IsAvailable()) {
+    T8_LOG_ERROR("[Physics] Failed to initialize Jolt physics system");
+  }
   for (auto &it : m_scenes) {
     it->pFramework = pFramework;
     it->SetEngineContext(&engineContext);
@@ -505,24 +520,20 @@ void App::LoadScene(int id) {
 
 void App::LoadAssets()
 {
-#ifdef T8_ENABLE_PROFILER
   if (g_config.flags.profile && !t850::g_profiler) {
     t850::g_profiler = new t850::Profiler();
     t850::g_profiler->Init(pFramework->pVideoDriver);
   }
-#endif
 #ifdef T850_RENDER_TRACE
   EnsureRenderTracer(pFramework->pVideoDriver);
 #endif
 }
 
 void App::CreateAssets() {
-#ifdef T8_ENABLE_PROFILER
   if (g_config.flags.profile && !t850::g_profiler) {
     t850::g_profiler = new t850::Profiler();
     t850::g_profiler->Init(pFramework->pVideoDriver);
   }
-#endif
 #ifdef T850_RENDER_TRACE
   EnsureRenderTracer(pFramework->pVideoDriver);
 #endif
@@ -554,21 +565,17 @@ void App::CreateAssets() {
   }
 
   // Initialize profiler if requested (after driver is fully set up)
-#ifdef T8_ENABLE_PROFILER
   if (g_config.flags.profile && !t850::g_profiler) {
     t850::g_profiler = new t850::Profiler();
     t850::g_profiler->Init(pFramework->pVideoDriver);
   }
-#endif
 }
 
 void App::DestroyAssets() {
-#ifdef T8_ENABLE_PROFILER
    if (t850::g_profiler) {
      delete t850::g_profiler;
      t850::g_profiler = nullptr;
    }
-#endif
 #ifdef T850_RENDER_TRACE
    if (t850::g_renderTracer) {
      t850::g_renderTracer->Destroy();
@@ -594,6 +601,8 @@ void App::DestroyAssets() {
    }
    t850::MeshAssetCache::Get().Clear();
    t850::MaterialAssetCache::Get().Clear();
+   m_physics.Shutdown();
+   t850::GetEngineContext().physics = nullptr;
 }
 
 void App::OnUpdate() {
@@ -615,17 +624,18 @@ void App::OnUpdate() {
    m_devLayer.GetGUI().SetFPSText(m_fpsString, m_fpsCol);
    m_devLayer.Update(DtSecs);
 #else
-   if (m_actualScene) m_actualScene->OnUpdate(DtSecs);
+  if (m_actualScene && !bPaused) m_actualScene->OnUpdate(DtSecs);
 #endif
+   if (t850::GetEngineContext().physics && t850::GetEngineContext().physics->IsInitialized()) {
+     t850::GetEngineContext().physics->Update(DtSecs);
+   }
 
    OnInput();
    OnDraw();
 }
 
 void App::OnDraw() {
-#ifdef T8_ENABLE_PROFILER
   if (t850::g_profiler) t850::g_profiler->BeginFrame();
-#endif
   static int frameCount = 0;
 #ifdef T850_RENDER_TRACE
   EnsureRenderTracer(pFramework->pVideoDriver);
@@ -660,7 +670,6 @@ void App::OnDraw() {
 
   frameCount++;
 
-#ifdef T8_ENABLE_PROFILER
   if (t850::g_profiler) {
     t850::g_profiler->EndFrame();
     static bool reported = false;
@@ -678,7 +687,6 @@ void App::OnDraw() {
       _exit(0);
     }
   }
-#endif
 
   // Skip presenting the first frame (black with only text)
   if (frameCount > 1) {
@@ -695,15 +703,22 @@ void App::OnInput() {
 	if (FirstFrame)
 		return;
 #ifndef OS_ANDROID
-  if (m_imguiReady && IManager.PressedOnceKey(T800K_g)) {
+  const bool imguiConsumesKeyboard =
+      m_imguiReady && m_imguiVisible && (m_imgui.WantsKeyboard() || m_imgui.WantsTextInput());
+  if (m_imguiReady && !imguiConsumesKeyboard && IManager.PressedOnceKey(T800K_g)) {
     m_imguiVisible = !m_imguiVisible;
   }
-  m_devLayer.SetSceneInputBlocked(m_imguiVisible && m_imgui.WantsKeyboard());
+  m_devLayer.SetSceneInputBlocked(imguiConsumesKeyboard);
   m_devLayer.ProcessInput(&IManager);
 #else
   UpdateAndroidGuiHoldToggle();
+  if (m_imguiVisible) {
+    if (auto* dayScene = dynamic_cast<DayScene*>(m_actualScene)) {
+      dayScene->ResetAndroidVirtualControls();
+    }
+  }
   if (m_imguiVisible && m_imgui.WantsMouse()) return;
-  if (m_actualScene) m_actualScene->OnInput(&IManager);
+  if (m_actualScene && !bPaused) m_actualScene->OnInput(&IManager);
 #endif
 }
 
@@ -723,7 +738,8 @@ bool App::IsModalActive() const {
 #ifdef OS_ANDROID
   return false;
 #else
-  return m_devLayer.IsLegacyPopupActive() || (m_imguiVisible && m_imgui.WantsKeyboard());
+  return m_devLayer.IsLegacyPopupActive() ||
+         (m_imguiVisible && (m_imgui.WantsKeyboard() || m_imgui.WantsTextInput()));
 #endif
 }
 
@@ -741,13 +757,16 @@ void App::DrawRuntimeGui() {
   if (m_imguiVisible) {
 #ifdef OS_ANDROID
     const bool androidUndockThisFrame = m_androidGuiUndockRequested;
+    const bool androidPhysicsPanel = m_androidGuiPanelMode == kAndroidGuiPanelPhysics;
     const ImGuiIO& io = ImGui::GetIO();
     constexpr float kPanelMargin = 24.0f;
     const float availableW = (std::max)(1.0f, io.DisplaySize.x - kPanelMargin * 2.0f);
     const float availableH = (std::max)(1.0f, io.DisplaySize.y - kPanelMargin * 2.0f);
     const float panelW = (std::min)((std::max)(420.0f, 620.0f * m_androidGuiScale), availableW);
     const float panelH = (std::min)((std::max)(560.0f, 760.0f * m_androidGuiScale), availableH);
-    const ImVec2 panelPos((std::max)(kPanelMargin, io.DisplaySize.x - panelW - kPanelMargin), kPanelMargin);
+    const ImVec2 panelPos(
+        androidPhysicsPanel ? kPanelMargin : (std::max)(kPanelMargin, io.DisplaySize.x - panelW - kPanelMargin),
+        kPanelMargin);
     const ImVec2 panelSize(panelW, panelH);
     if (androidUndockThisFrame) {
       ImGui::SetNextWindowDockID(0, ImGuiCond_Always);
@@ -757,7 +776,7 @@ void App::DrawRuntimeGui() {
       ImGui::SetNextWindowPos(panelPos, ImGuiCond_FirstUseEver);
       ImGui::SetNextWindowSize(panelSize, ImGuiCond_FirstUseEver);
     }
-    const char* panelTitle = "Scene Controls##Android";
+    const char* panelTitle = androidPhysicsPanel ? "Physics##Android" : "Scene Controls##Android";
 #else
     ImGui::SetNextWindowSize(ImVec2(420.0f, 680.0f), ImGuiCond_FirstUseEver);
     const char* panelTitle = "Scene Controls";
@@ -771,6 +790,11 @@ void App::DrawRuntimeGui() {
 #endif
     if (panelBegun) {
 #ifdef OS_ANDROID
+      if (ImGui::Button(bPaused ? "Resume Scene" : "Pause Scene")) {
+        bPaused = !bPaused;
+        T8_LOG_INFO("[App] Android GUI %s", bPaused ? "paused" : "resumed");
+      }
+      ImGui::SameLine();
       if (ImGui::Button("Close GUI")) {
         m_imguiVisible = false;
         SaveAndroidGuiSettings();
@@ -781,7 +805,7 @@ void App::DrawRuntimeGui() {
         m_androidGuiUndockRequested = true;
       }
       ImGui::SameLine();
-      ImGui::TextUnformatted("Triple-tap to reopen");
+      ImGui::TextUnformatted("Left triple-tap: Physics | Right: Controls");
       float scale = m_androidGuiScale;
       if (ImGui::SliderFloat("GUI scale", &scale, 1.0f, 2.5f, "%.2f")) {
         m_androidGuiScale = (std::max)(1.0f, (std::min)(2.5f, scale));
@@ -790,7 +814,14 @@ void App::DrawRuntimeGui() {
       ImGui::Separator();
 #endif
       if (m_actualScene) {
-        m_actualScene->DrawDevGui(gui);
+#ifdef OS_ANDROID
+        if (androidPhysicsPanel) {
+          DrawAndroidPhysicsGui(gui);
+        } else
+#endif
+        {
+          m_actualScene->DrawDevGui(gui);
+        }
       }
 #ifndef OS_ANDROID
       ImGui::Separator();
@@ -811,6 +842,10 @@ void App::DrawRuntimeGui() {
   }
 
 #ifdef OS_ANDROID
+  if (auto* dayScene = dynamic_cast<DayScene*>(m_actualScene)) {
+    dayScene->DrawAndroidVirtualControls(m_imguiVisible);
+  }
+
   m_imgui.BuildDrawData();
   if (auto* vkDriver = static_cast<t850::VulkanDriver*>(pFramework ? pFramework->pVideoDriver : nullptr)) {
     vkDriver->SetPrePresentOverlayCallback([this]() {
@@ -838,6 +873,13 @@ bool App::HandleAndroidInputEvent(AInputEvent* event) {
     }
   }
 
+  bool sceneHandled = false;
+  if (!m_imguiVisible && event && AInputEvent_getType(event) == AINPUT_EVENT_TYPE_MOTION) {
+    if (auto* dayScene = dynamic_cast<DayScene*>(m_actualScene)) {
+      sceneHandled = dayScene->HandleAndroidVirtualControls(event);
+    }
+  }
+
   if (m_imguiReady && !m_imguiVisible && event && AInputEvent_getType(event) == AINPUT_EVENT_TYPE_MOTION) {
     const int32_t rawAction = AMotionEvent_getAction(event);
     const int32_t action = rawAction & AMOTION_EVENT_ACTION_MASK;
@@ -845,29 +887,39 @@ bool App::HandleAndroidInputEvent(AInputEvent* event) {
       RegisterAndroidGuiTap(AMotionEvent_getX(event, 0), AMotionEvent_getY(event, 0));
     }
   }
-  return m_imguiReady && m_imgui.HandleAndroidInputEvent(event);
+  const bool imguiHandled = m_imguiReady && m_imgui.HandleAndroidInputEvent(event);
+  return sceneHandled || imguiHandled;
 }
 
 void App::RegisterAndroidGuiTap(float x, float y) {
   constexpr float kTapWindowSeconds = 0.75f;
-  constexpr float kTapTolerancePixels = 120.0f;
   constexpr int kRequiredTapCount = 3;
 
   if (!m_imguiReady || m_imguiVisible) return;
 
+  const ImGuiIO& io = ImGui::GetIO();
+  float displayWidth = io.DisplaySize.x;
+  if (displayWidth <= 1.0f && pFramework && pFramework->pVideoDriver) {
+    displayWidth = static_cast<float>(pFramework->pVideoDriver->width);
+  }
+  if (displayWidth <= 1.0f) {
+    displayWidth = (std::max)(1.0f, x * 2.0f);
+  }
+  const int tapSide = x < displayWidth * 0.5f ? kAndroidTapSideLeft : kAndroidTapSideRight;
+
   const bool startsNewSequence = (m_androidGuiTapCount == 0 || m_androidGuiTapWindowSecs <= 0.0f);
   if (startsNewSequence) {
     m_androidGuiTapCount = 1;
+    m_androidGuiTapSide = tapSide;
     m_androidGuiTapStartX = x;
     m_androidGuiTapStartY = y;
     m_androidGuiTapWindowSecs = kTapWindowSeconds;
     return;
   }
 
-  const float dx = x - m_androidGuiTapStartX;
-  const float dy = y - m_androidGuiTapStartY;
-  if ((dx * dx + dy * dy) > (kTapTolerancePixels * kTapTolerancePixels)) {
+  if (tapSide != m_androidGuiTapSide) {
     m_androidGuiTapCount = 1;
+    m_androidGuiTapSide = tapSide;
     m_androidGuiTapStartX = x;
     m_androidGuiTapStartY = y;
     m_androidGuiTapWindowSecs = kTapWindowSeconds;
@@ -877,13 +929,30 @@ void App::RegisterAndroidGuiTap(float x, float y) {
   ++m_androidGuiTapCount;
   m_androidGuiTapWindowSecs = kTapWindowSeconds;
   if (m_androidGuiTapCount >= kRequiredTapCount) {
+    m_androidGuiPanelMode = tapSide == kAndroidTapSideLeft ? kAndroidGuiPanelPhysics : kAndroidGuiPanelControls;
     m_imguiVisible = true;
     m_androidGuiTapCount = 0;
+    m_androidGuiTapSide = -1;
     m_androidGuiTapWindowSecs = 0.0f;
     m_androidGuiHoldSecs = 0.0f;
     m_androidGuiHoldActive = false;
     m_androidGuiHoldSuppressed = true;
-    T8_LOG_INFO("[App] Android triple tap opened ImGui overlay");
+    T8_LOG_INFO("[App] Android triple tap opened %s overlay",
+                m_androidGuiPanelMode == kAndroidGuiPanelPhysics ? "physics" : "controls");
+  }
+}
+
+void App::DrawAndroidPhysicsGui(t850::DevGuiContext& gui) {
+  if (auto* dayScene = dynamic_cast<DayScene*>(m_actualScene)) {
+    dayScene->DrawAndroidPhysicsPanel(gui);
+    return;
+  }
+  if (auto* sandboxScene = dynamic_cast<SandboxScene*>(m_actualScene)) {
+    sandboxScene->DrawAndroidPhysicsPanel(gui);
+    return;
+  }
+  if (m_actualScene) {
+    m_actualScene->DrawDevGui(gui);
   }
 }
 
@@ -927,6 +996,16 @@ void App::UpdateAndroidGuiHoldToggle() {
     if (m_androidGuiTapWindowSecs <= 0.0f) {
       m_androidGuiTapCount = 0;
       m_androidGuiTapWindowSecs = 0.0f;
+      m_androidGuiTapSide = -1;
+    }
+  }
+
+  if (auto* dayScene = dynamic_cast<DayScene*>(m_actualScene)) {
+    if (dayScene->AndroidVirtualControlsActive()) {
+      m_androidGuiHoldSecs = 0.0f;
+      m_androidGuiHoldActive = false;
+      m_androidGuiHoldSuppressed = true;
+      return;
     }
   }
 
@@ -959,8 +1038,10 @@ void App::UpdateAndroidGuiHoldToggle() {
 
   m_androidGuiHoldSecs += DtSecs;
   if (m_androidGuiHoldSecs >= kHoldSeconds) {
+    m_androidGuiPanelMode = kAndroidGuiPanelControls;
     m_imguiVisible = true;
     m_androidGuiTapCount = 0;
+    m_androidGuiTapSide = -1;
     m_androidGuiTapWindowSecs = 0.0f;
     m_androidGuiHoldSecs = 0.0f;
     m_androidGuiHoldActive = false;

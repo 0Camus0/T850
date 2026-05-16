@@ -7,10 +7,14 @@
 #include <Descriptors.h>
 #include <utils/Log.h>
 
+#ifdef _MSC_VER
 #pragma warning(push)
 #pragma warning(disable: 4267 4244)
+#endif
 #include <glaze/glaze.hpp>
+#ifdef _MSC_VER
 #pragma warning(pop)
+#endif
 
 #include <fstream>
 #include <chrono>

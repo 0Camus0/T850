@@ -16,8 +16,55 @@
 #include <cmath>
 #include <algorithm>
 #include <cstdio>
+#include <functional>
 
 namespace t850 {
+
+namespace {
+
+void ComputeSkeletonCombinedParentFirst(xF::xSkeleton& skeleton, int requestedBones) {
+  auto& bones = skeleton.Bones;
+  const int n = (requestedBones < static_cast<int>(bones.size()))
+      ? requestedBones
+      : static_cast<int>(bones.size());
+  if (n <= 0) {
+    return;
+  }
+
+  const XMATRIX44& rootWorld = skeleton.RootParentWorld;
+  std::vector<unsigned char> state(static_cast<std::size_t>(n), 0);
+
+  std::function<void(int)> computeBone = [&](int i) {
+    if (i < 0 || i >= n || state[static_cast<std::size_t>(i)] == 2) {
+      return;
+    }
+    if (state[static_cast<std::size_t>(i)] == 1) {
+      return;
+    }
+
+    state[static_cast<std::size_t>(i)] = 1;
+    const unsigned short dad = bones[static_cast<std::size_t>(i)].Dad;
+    const bool hasParent = dad < n && dad != static_cast<unsigned short>(i);
+    if (hasParent) {
+      computeBone(static_cast<int>(dad));
+    }
+
+    const XMATRIX44 localWithIntermediate =
+        bones[static_cast<std::size_t>(i)].Bone * bones[static_cast<std::size_t>(i)].IntermediateTransform;
+    if (hasParent && state[static_cast<std::size_t>(dad)] == 2) {
+      bones[static_cast<std::size_t>(i)].Combined = localWithIntermediate * bones[static_cast<std::size_t>(dad)].Combined;
+    } else {
+      bones[static_cast<std::size_t>(i)].Combined = localWithIntermediate * rootWorld;
+    }
+    state[static_cast<std::size_t>(i)] = 2;
+  };
+
+  for (int i = 0; i < n; ++i) {
+    computeBone(i);
+  }
+}
+
+}
 
 AnimationController::AnimationController() {
   for (int i = 0; i < kMaxBones; i++) {
@@ -367,34 +414,173 @@ void AnimationController::ComputeHierarchy() {
   int n = (m_numBones < static_cast<int>(bones.size()))
         ? m_numBones : static_cast<int>(bones.size());
 
-  // First pass: root bones (Dad == 0 and index != 0 means parent is bone 0,
-  // but if index == 0 and Dad == 0 then it's the true root)
-  // Actually the convention is: Dad is the parent index.
-  // We iterate in order, assuming parents come before children (common for
-  // glTF which stores joints in topological order).
-  //
-  // Root bones include the non-skeleton ancestor world transform
-  // (RootParentWorld) so that the combined matrix matches the IBM.
-  const XMATRIX44& rootWorld = m_pSkeletonAnim->RootParentWorld;
+  ComputeSkeletonCombinedParentFirst(*m_pSkeletonAnim, n);
+}
 
-  for (int i = 0; i < n; i++) {
-    // Apply intermediate non-joint transforms between this joint and its parent joint
-    // Combined = (Bone * Intermediate) * parent.Combined
-    XMATRIX44 localWithIntermediate = bones[i].Bone * bones[i].IntermediateTransform;
+namespace {
+  bool InvertAffineFull(const XMATRIX44& matrix, XMATRIX44& out) {
+    const float a00 = matrix.m11, a01 = matrix.m12, a02 = matrix.m13;
+    const float a10 = matrix.m21, a11 = matrix.m22, a12 = matrix.m23;
+    const float a20 = matrix.m31, a21 = matrix.m32, a22 = matrix.m33;
 
-    if (i == 0 || bones[i].Dad == static_cast<unsigned short>(i)) {
-      // Root bone: combined = local * ancestorWorld
-      bones[i].Combined = localWithIntermediate * rootWorld;
+    const float det =
+        a00 * (a11 * a22 - a12 * a21) -
+        a01 * (a10 * a22 - a12 * a20) +
+        a02 * (a10 * a21 - a11 * a20);
+    if (std::fabs(det) <= 0.000001f) {
+      return false;
+    }
+
+    const float invDet = 1.0f / det;
+    out.m11 =  (a11 * a22 - a12 * a21) * invDet;
+    out.m12 =  (a02 * a21 - a01 * a22) * invDet;
+    out.m13 =  (a01 * a12 - a02 * a11) * invDet;
+    out.m14 = 0.0f;
+    out.m21 =  (a12 * a20 - a10 * a22) * invDet;
+    out.m22 =  (a00 * a22 - a02 * a20) * invDet;
+    out.m23 =  (a02 * a10 - a00 * a12) * invDet;
+    out.m24 = 0.0f;
+    out.m31 =  (a10 * a21 - a11 * a20) * invDet;
+    out.m32 =  (a01 * a20 - a00 * a21) * invDet;
+    out.m33 =  (a00 * a11 - a01 * a10) * invDet;
+    out.m34 = 0.0f;
+
+    const float tx = matrix.m41;
+    const float ty = matrix.m42;
+    const float tz = matrix.m43;
+    out.m41 = -(tx * out.m11 + ty * out.m21 + tz * out.m31);
+    out.m42 = -(tx * out.m12 + ty * out.m22 + tz * out.m32);
+    out.m43 = -(tx * out.m13 + ty * out.m23 + tz * out.m33);
+    out.m44 = 1.0f;
+    return true;
+  }
+}
+
+bool AnimationController::ApplyCombinedPoseOverrides(const std::vector<int>& boneIndices,
+                                                     const std::vector<XMATRIX44>& combinedMatrices) {
+  if (!m_initialized || !m_pSkeletonAnim || boneIndices.size() != combinedMatrices.size()) {
+    return false;
+  }
+
+  auto& bones = m_pSkeletonAnim->Bones;
+  const int n = (m_numBones < static_cast<int>(bones.size()))
+      ? m_numBones
+      : static_cast<int>(bones.size());
+  if (n <= 0) {
+    return false;
+  }
+
+  std::vector<unsigned char> hasOverride(static_cast<std::size_t>(n), 0);
+  std::vector<XMATRIX44> overrideCombined(static_cast<std::size_t>(n));
+  for (std::size_t i = 0; i < boneIndices.size(); ++i) {
+    const int boneIndex = boneIndices[i];
+    if (boneIndex < 0 || boneIndex >= n) {
+      continue;
+    }
+    hasOverride[static_cast<std::size_t>(boneIndex)] = 1;
+    overrideCombined[static_cast<std::size_t>(boneIndex)] = combinedMatrices[i];
+  }
+
+  std::vector<std::vector<int>> children(static_cast<std::size_t>(n));
+  std::vector<int> roots;
+  roots.reserve(static_cast<std::size_t>(n));
+  for (int i = 0; i < n; ++i) {
+    const unsigned short dad = bones[i].Dad;
+    if (dad < n && dad != static_cast<unsigned short>(i)) {
+      children[static_cast<std::size_t>(dad)].push_back(i);
     } else {
-      // Child: combined = local * parent.combined (row-vector convention)
-      unsigned short dad = bones[i].Dad;
-      if (dad < n) {
-        bones[i].Combined = localWithIntermediate * bones[dad].Combined;
-      } else {
-        bones[i].Combined = localWithIntermediate;
-      }
+      roots.push_back(i);
     }
   }
+
+  bool appliedAny = false;
+  const XMATRIX44& rootWorld = m_pSkeletonAnim->RootParentWorld;
+  std::vector<unsigned char> visited(static_cast<std::size_t>(n), 0);
+  std::function<void(int)> applyBone = [&](int i) {
+    if (i < 0 || i >= n || visited[static_cast<std::size_t>(i)]) {
+      return;
+    }
+    visited[static_cast<std::size_t>(i)] = 1;
+
+    if (hasOverride[static_cast<std::size_t>(i)]) {
+      const unsigned short dad = bones[i].Dad;
+      const XMATRIX44& parentCombined =
+          (dad < n && dad != static_cast<unsigned short>(i))
+              ? bones[dad].Combined
+              : rootWorld;
+
+      XMATRIX44 inverseParent;
+      XMATRIX44 inverseIntermediate;
+      if (InvertAffineFull(parentCombined, inverseParent) &&
+          InvertAffineFull(bones[i].IntermediateTransform, inverseIntermediate)) {
+        const XMATRIX44 localWithIntermediate = overrideCombined[static_cast<std::size_t>(i)] * inverseParent;
+        bones[i].Bone = localWithIntermediate * inverseIntermediate;
+        appliedAny = true;
+      }
+    }
+
+    const XMATRIX44 localWithIntermediate = bones[i].Bone * bones[i].IntermediateTransform;
+    const unsigned short dad = bones[i].Dad;
+    if (dad < n && dad != static_cast<unsigned short>(i)) {
+      bones[i].Combined = localWithIntermediate * bones[dad].Combined;
+    } else {
+      bones[i].Combined = localWithIntermediate * rootWorld;
+    }
+
+    for (int child : children[static_cast<std::size_t>(i)]) {
+      applyBone(child);
+    }
+  };
+
+  for (int root : roots) {
+    applyBone(root);
+  }
+  for (int i = 0; i < n; ++i) {
+    applyBone(i);
+  }
+
+  if (appliedAny) {
+    ComputeFinalMatrices();
+  }
+  return appliedAny;
+}
+
+bool AnimationController::ApplyBindPose() {
+  if (!m_initialized || !m_pSkeletonBind || !m_pSkeletonAnim) {
+    return false;
+  }
+
+  const int n = (std::min)(m_numBones, (int)(std::min)(m_pSkeletonBind->Bones.size(), m_pSkeletonAnim->Bones.size()));
+  if (n <= 0) {
+    return false;
+  }
+
+  m_pSkeletonAnim->RootParentWorld = m_pSkeletonBind->RootParentWorld;
+  for (int i = 0; i < n; ++i) {
+    m_pSkeletonAnim->Bones[i].Bone = m_pSkeletonBind->Bones[i].Bone;
+    m_pSkeletonAnim->Bones[i].IntermediateTransform = m_pSkeletonBind->Bones[i].IntermediateTransform;
+    m_pSkeletonAnim->Bones[i].Combined = m_pSkeletonBind->Bones[i].Combined;
+  }
+  ComputeFinalMatrices();
+  return true;
+}
+
+bool AnimationController::ExportCombinedPose(std::vector<XMATRIX44>& out) const {
+  out.clear();
+  if (!m_initialized || !m_pSkeletonAnim) {
+    return false;
+  }
+
+  const int n = (std::min)(m_numBones, static_cast<int>(m_pSkeletonAnim->Bones.size()));
+  if (n <= 0) {
+    return false;
+  }
+
+  out.reserve(static_cast<std::size_t>(n));
+  for (int i = 0; i < n; ++i) {
+    out.push_back(m_pSkeletonAnim->Bones[i].Combined);
+  }
+  return true;
 }
 
 // ── Invert an affine 4x4 matrix (rotation + translation) ──
@@ -426,21 +612,9 @@ void AnimationController::ComputeBindPose() {
   int n = (m_numBones < static_cast<int>(bindBones.size()))
         ? m_numBones : static_cast<int>(bindBones.size());
 
-  const XMATRIX44& rootWorld = m_pSkeletonBind->RootParentWorld;
+  ComputeSkeletonCombinedParentFirst(*m_pSkeletonBind, n);
 
-  // Compute bind-pose combined (world) matrices from the ORIGINAL node TRS
   for (int i = 0; i < n; i++) {
-    XMATRIX44 localWithIntermediate = bindBones[i].Bone * bindBones[i].IntermediateTransform;
-
-    if (i == 0 || bindBones[i].Dad == static_cast<unsigned short>(i)) {
-      bindBones[i].Combined = localWithIntermediate * rootWorld;
-    } else {
-      unsigned short dad = bindBones[i].Dad;
-      if (dad < n)
-        bindBones[i].Combined = localWithIntermediate * bindBones[dad].Combined;
-      else
-        bindBones[i].Combined = localWithIntermediate;
-    }
     // Compute our own IBM as the exact inverse of the bind-pose combined
     m_invBindPose[i] = InvertAffine(bindBones[i].Combined);
   }

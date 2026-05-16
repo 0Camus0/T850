@@ -10,10 +10,14 @@
 #include <utils/Log.h>
 #include <utils/ResourceLocator.h>
 
+#ifdef _MSC_VER
 #pragma warning(push)
 #pragma warning(disable: 4267 4244)
+#endif
 #include <glaze/glaze.hpp>
+#ifdef _MSC_VER
 #pragma warning(pop)
+#endif
 
 #include <debug/Profiler.h>
 
@@ -391,8 +395,17 @@ void RenderGraph::Execute(
   ::Camera* omniCams,
       const EnvironmentMapSet& envMaps)
 {
+  const bool shadowsEnabled = props.ToogleShadow != 0;
+  const bool ssaoEnabled = props.ToogleSSAO != 0;
   for (const auto& node : m_nodes) {
     if (m_disabledPasses.count(node.desc->name)) continue;
+    if (!shadowsEnabled && node.desc->name == "Shadow Depth") continue;
+    if (!shadowsEnabled && !ssaoEnabled &&
+        (node.desc->name == "Shadow Accumulation" ||
+         node.desc->name == "Shadow Blur V" ||
+         node.desc->name == "Shadow Blur H")) {
+      continue;
+    }
     ExecutePass(node, driver, props, meshes, meshCount, quads,
                 mainCam, lightCam, omniCams, envMaps);
   }
@@ -414,6 +427,27 @@ void RenderGraph::ExecutePass(
 {
   const auto& pass = *node.desc;
   T8_PROFILE_SCOPE(t850::g_profiler, pass.name.c_str());
+  const bool shadowsEnabled = props.ToogleShadow != 0;
+  const bool ssaoEnabled = props.ToogleSSAO != 0;
+
+  auto shouldSkipTextureInput = [&](const TextureInput& input) -> bool {
+    if (!shadowsEnabled && input.source == "DepthPass:DEPTH") {
+      return true;
+    }
+    if (!ssaoEnabled && input.source == "@ssao_noise") {
+      return true;
+    }
+    if (!shadowsEnabled && !ssaoEnabled && input.source.rfind("ShadowAccum:", 0) == 0) {
+      return true;
+    }
+    return false;
+  };
+
+  auto clearTextureSlot = [](PrimitiveInst& primitive, int slot) {
+    if (slot >= 0 && slot < MaxPrimitiveTextures) {
+      primitive.SetTexture(nullptr, slot);
+    }
+  };
 
   // Pre-pass state changes
   int ds = ResolveDepthStencilState(pass.state.depth_stencil);
@@ -508,6 +542,11 @@ void RenderGraph::ExecutePass(
 
     // Bind input textures
     for (const auto& input : pass.inputs) {
+      if (shouldSkipTextureInput(input)) {
+        clearTextureSlot(quads[0], input.slot);
+        continue;
+      }
+
       auto resolved = ResolveTextureInput(input.source);
 
       if (resolved.is_builtin) {
@@ -561,6 +600,11 @@ void RenderGraph::ExecutePass(
 
     auto bindMeshPassResources = [&](PrimitiveInst& mesh) {
       for (const auto& input : pass.inputs) {
+        if (shouldSkipTextureInput(input)) {
+          clearTextureSlot(mesh, input.slot);
+          continue;
+        }
+
         auto resolved = ResolveTextureInput(input.source);
         if (!resolved.is_builtin && resolved.rt_handle >= 0 && input.slot >= 0 && input.slot < MaxPrimitiveTextures) {
           mesh.SetTexture(driver->GetRTTexture(resolved.rt_handle, resolved.attachment), input.slot);
@@ -620,6 +664,11 @@ void RenderGraph::ExecutePass(
         if (meshTrackerOpened) { MeshDrawStateTracker::Get().End(); meshTrackerOpened = false; }
         driver->SetDepthStencilState(BaseDriver::DepthStencilStates::NONE);
         for (const auto& input : pass.inputs) {
+          if (shouldSkipTextureInput(input)) {
+            clearTextureSlot(quads[0], input.slot);
+            continue;
+          }
+
           auto resolved = ResolveTextureInput(input.source);
           if (!resolved.is_builtin && resolved.rt_handle >= 0) {
             quads[0].SetTexture(driver->GetRTTexture(resolved.rt_handle, resolved.attachment), input.slot);

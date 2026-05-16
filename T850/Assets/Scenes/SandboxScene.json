@@ -121,7 +121,7 @@
    "environment_brdf_lut": "LUT/lut_ggx.png",
    "environment_sheen_ibl": "",
    "environment_charlie_lut": "LUT/lut_charlie.png",
-   "environment_sheen_e_lut": "LUT/lut_sheen_E.png",
+   "environment_sheen_e_lut": "LUT/lut_sheen_E.dds",
    "quality": {
       "shadow_map_resolution": 1024,
       "god_rays_resolution": 0,
@@ -353,6 +353,12 @@
          "label": "Skeleton",
          "default_val": false,
          "enabled": true
+      },
+      {
+         "name": "show_physics",
+         "label": "Physics",
+         "default_val": false,
+         "enabled": true
       }
    ],
    "selectors": [
@@ -438,6 +444,69 @@
    ],
    "profiles": [
       {
+         "name": "android/adreno-700",
+         "platform": "android",
+         "architecture": "",
+         "gpu_family": "adreno-700",
+         "gpu_name_contains": "",
+         "model": "",
+         "sliders": [
+            {
+               "name": "ssao_kernel_size",
+               "value": 8
+            },
+            {
+               "name": "light_volume_steps",
+               "value": 64
+            },
+            {
+               "name": "dof_far_samples",
+               "value": 2
+            },
+            {
+               "name": "godrays_factor",
+               "value": 0.45
+            }
+         ],
+         "checkboxes": [],
+         "selectors": [],
+         "lights": []
+      },
+      {
+         "name": "android/adreno-800",
+         "platform": "android",
+         "architecture": "",
+         "gpu_family": "adreno-800",
+         "gpu_name_contains": "",
+         "model": "",
+         "sliders": [
+            {
+               "name": "ssao_kernel_size",
+               "value": 12
+            },
+            {
+               "name": "light_volume_steps",
+               "value": 96
+            },
+            {
+               "name": "dof_far_samples",
+               "value": 3
+            },
+            {
+               "name": "godrays_factor",
+               "value": 0.6
+            }
+         ],
+         "checkboxes": [],
+         "selectors": [],
+         "lights": []
+      },
+      {
+         "name": "",
+         "platform": "",
+         "architecture": "",
+         "gpu_family": "",
+         "gpu_name_contains": "",
          "model": "porsche_992_gt3_r__www.vecarz.com.glb",
          "sliders": [
             {
@@ -519,6 +588,11 @@
          }
       },
       {
+         "name": "",
+         "platform": "",
+         "architecture": "",
+         "gpu_family": "",
+         "gpu_name_contains": "",
          "model": "2021_bmw_m4_competition.glb",
          "sliders": [
             {
@@ -597,6 +671,11 @@
          }
       },
       {
+         "name": "",
+         "platform": "",
+         "architecture": "",
+         "gpu_family": "",
+         "gpu_name_contains": "",
          "model": "4_20_2026.glb",
          "sliders": [
             {
@@ -668,6 +747,11 @@
          }
       },
       {
+         "name": "",
+         "platform": "",
+         "architecture": "",
+         "gpu_family": "",
+         "gpu_name_contains": "",
          "model": "damagedhelmet.glb",
          "sliders": [
             {
@@ -759,6 +843,11 @@
          }
       },
       {
+         "name": "",
+         "platform": "",
+         "architecture": "",
+         "gpu_family": "",
+         "gpu_name_contains": "",
          "model": "dragon.glb",
          "sliders": [
             {
@@ -827,6 +916,11 @@
          }
       },
       {
+         "name": "",
+         "platform": "",
+         "architecture": "",
+         "gpu_family": "",
+         "gpu_name_contains": "",
          "model": "rewind_cyborg.glb",
          "sliders": [
             {
@@ -904,6 +998,11 @@
          }
       },
       {
+         "name": "",
+         "platform": "",
+         "architecture": "",
+         "gpu_family": "",
+         "gpu_name_contains": "",
          "model": "marauder.glb",
          "sliders": [
             {
@@ -983,6 +1082,11 @@
          }
       },
       {
+         "name": "",
+         "platform": "",
+         "architecture": "",
+         "gpu_family": "",
+         "gpu_name_contains": "",
          "model": "mercedes-amg_gt3__www.vecarz.com(1).glb",
          "sliders": [
             {
@@ -1073,6 +1177,11 @@
          }
       },
       {
+         "name": "",
+         "platform": "",
+         "architecture": "",
+         "gpu_family": "",
+         "gpu_name_contains": "",
          "model": "space_station_scene_hd.glb",
          "sliders": [
             {
@@ -1151,6 +1260,11 @@
          }
       },
       {
+         "name": "",
+         "platform": "",
+         "architecture": "",
+         "gpu_family": "",
+         "gpu_name_contains": "",
          "model": "tyrant.glb",
          "sliders": [
             {
@@ -1235,6 +1349,11 @@
          }
       },
       {
+         "name": "",
+         "platform": "",
+         "architecture": "",
+         "gpu_family": "",
+         "gpu_name_contains": "",
          "model": "doomslayer_cine_all_animations_no-damage_double-sided-opaque.glb",
          "sliders": [
             {
@@ -1319,6 +1438,11 @@
          }
       },
       {
+         "name": "",
+         "platform": "",
+         "architecture": "",
+         "gpu_family": "",
+         "gpu_name_contains": "",
          "model": "doomslayer_cine_base_all_animations_no-damage_double-sided-opaque.glb",
          "sliders": [
             {
@@ -1382,6 +1506,11 @@
          }
       },
       {
+         "name": "",
+         "platform": "",
+         "architecture": "",
+         "gpu_family": "",
+         "gpu_name_contains": "",
          "model": "jaguar_xj13_1959__www.vecarz.com.glb",
          "sliders": [
             {
@@ -1448,6 +1577,11 @@
          }
       },
       {
+         "name": "",
+         "platform": "",
+         "architecture": "",
+         "gpu_family": "",
+         "gpu_name_contains": "",
          "model": "mclaren_p1__www.vecarz.com.glb",
          "sliders": [
             {
@@ -1508,6 +1642,95 @@
             "yaw": 2.4550014,
             "pitch": 0.28499997,
             "distance": 2.3179905
+         }
+      },
+      {
+         "name": "pc/x64",
+         "platform": "windows",
+         "architecture": "x64",
+         "gpu_family": "",
+         "gpu_name_contains": "",
+         "model": "doomslayer_cine_all_animations_no-damage_double-sided-opaque.glb",
+         "sliders": [
+            {
+               "name": "exposure",
+               "value": 2.464
+            },
+            {
+               "name": "bloom_factor",
+               "value": 0.558
+            },
+            {
+               "name": "bloom_threshold",
+               "value": 0.66
+            },
+            {
+               "name": "ssao_radius",
+               "value": 3
+            },
+            {
+               "name": "env_factor",
+               "value": 0.427
+            },
+            {
+               "name": "gauss_1_radius",
+               "value": 3.5
+            },
+            {
+               "name": "gauss_1_sigma",
+               "value": 1
+            }
+         ],
+         "checkboxes": [
+            {
+               "name": "shadow_toggle",
+               "value": false
+            },
+            {
+               "name": "ssao_toggle",
+               "value": false
+            }
+         ],
+         "selectors": [
+            {
+               "name": "gauss_1_kernel_size",
+               "value": 27
+            },
+            {
+               "name": "cubemap",
+               "value": 1
+            }
+         ],
+         "lights": [
+            {
+               "index": 0,
+               "direction": [
+                  0.24106516,
+                  0.07309007,
+                  0.9677528
+               ],
+               "intensity": 4.846
+            }
+         ],
+         "orbit_camera": {
+            "target": [
+               8.635834,
+               0.07846069,
+               493.62683
+            ],
+            "pan_offset": [
+               -37.06934,
+               2518.8604,
+               -931.6866
+            ],
+            "eye": [
+               6833.6455,
+               3835.7593,
+               -3332.9387
+            ],
+            "yaw": 1.9700096,
+            "pitch": 0.17500006,
+            "distance": 7563.2314
          }
       }
    ]

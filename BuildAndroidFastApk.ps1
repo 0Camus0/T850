@@ -13,11 +13,19 @@ $Install = $false
 $Launch = $false
 $SkipNativeBuild = $false
 $VulkanValidation = $false
-$GradleVersion = '8.10.2'
 $NdkVersion = '27.2.12479018'
 
+$BuildWorkers = [Math]::Max(1, [Environment]::ProcessorCount - 1)
+if ($env:T850_BUILD_WORKERS) {
+  $parsedWorkers = 0
+  if ([int]::TryParse($env:T850_BUILD_WORKERS, [ref]$parsedWorkers) -and $parsedWorkers -gt 0) {
+    $BuildWorkers = $parsedWorkers
+  }
+}
+$env:CMAKE_BUILD_PARALLEL_LEVEL = $BuildWorkers.ToString()
+
 function Show-Usage {
-  Write-Host 'Usage: BuildAndroidFastApk.bat [Debug|Release] [--sdk C:\Android\Sdk] [--abi ABI[,ABI...]] [--template APK] [--out APK] [--install] [--launch] [--skip-native-build] [--vulkan-validation]'
+  Write-Host 'Usage: Scripts\Bat\BuildAndroidFastApk.bat [Debug|Release] [--sdk C:\Android\Sdk] [--abi ABI[,ABI...]] [--template APK] [--out APK] [--install] [--launch] [--skip-native-build] [--vulkan-validation]'
   Write-Host ''
   Write-Host 'Builds/strips the native .so, copies an existing APK as a template, replaces only lib/<abi>/libT850Android.so, zipaligns, and signs it.'
 }
@@ -66,6 +74,10 @@ for ($i = 0; $i -lt $args.Count; $i++) {
 if (-not (Test-Path (Join-Path $AndroidProject 'build.gradle'))) {
   throw "Android project was not found at '$AndroidProject'."
 }
+$GradleWrapper = Join-Path $AndroidProject 'gradlew.bat'
+if (-not (Test-Path $GradleWrapper)) {
+  throw "Gradle wrapper was not found at '$GradleWrapper'. Restore T850\android\gradlew.bat and gradle\wrapper before building."
+}
 if (-not (Test-Path $AndroidSdk)) {
   throw "Android SDK was not found at '$AndroidSdk'. Pass --sdk or set ANDROID_HOME."
 }
@@ -79,10 +91,15 @@ if (-not (Test-Path $env:ANDROID_NDK_HOME)) {
 }
 
 if (-not $env:JAVA_HOME) {
-  $jdk = Get-ChildItem -Path "${env:ProgramFiles}\Eclipse Adoptium","${env:ProgramFiles}\Java" -Directory -Filter 'jdk-17*' -ErrorAction SilentlyContinue |
+  $javaHomes = @(
+    "${env:ProgramFiles}\Android\Android Studio\jbr",
+    "${env:ProgramFiles(x86)}\Android\Android Studio\jbr"
+  )
+  $javaHomes += Get-ChildItem -Path "${env:ProgramFiles}\Eclipse Adoptium","${env:ProgramFiles}\Java" -Directory -Filter 'jdk-*' -ErrorAction SilentlyContinue |
     Sort-Object Name -Descending |
-    Select-Object -First 1
-  if ($jdk) { $env:JAVA_HOME = $jdk.FullName }
+    Select-Object -ExpandProperty FullName
+  $jdk = $javaHomes | Where-Object { $_ -and (Test-Path (Join-Path $_ 'bin\java.exe')) } | Select-Object -First 1
+  if ($jdk) { $env:JAVA_HOME = $jdk }
 }
 if ($env:JAVA_HOME) { $env:PATH = "$env:JAVA_HOME\bin;$env:PATH" }
 if (-not (Get-Command java -ErrorAction SilentlyContinue)) {
@@ -95,14 +112,6 @@ if (-not $jarExe -or -not (Test-Path $jarExe)) {
 }
 if (-not $jarExe -or -not (Test-Path $jarExe)) {
   throw 'jar.exe was not found in the JDK. Run SetupAndroidToolchain.bat first.'
-}
-
-$gradleHome = Join-Path $AndroidSdk "gradle\gradle-$GradleVersion"
-if (Test-Path (Join-Path $gradleHome 'bin\gradle.bat')) {
-  $env:PATH = "$gradleHome\bin;$env:PATH"
-}
-if (-not (Get-Command gradle -ErrorAction SilentlyContinue)) {
-  throw "Gradle $GradleVersion was not found. Run SetupAndroidToolchain.bat first."
 }
 
 $buildToolsDir = Get-ChildItem (Join-Path $AndroidSdk 'build-tools') -Directory -ErrorAction Stop |
@@ -128,13 +137,14 @@ Write-Host "SDK root: $AndroidSdk"
 Write-Host "Project : $AndroidProject"
 Write-Host "ABIs    : $AbiFilters"
 Write-Host "Vulkan validation: $validationValue"
+Write-Host "Workers : $BuildWorkers (cores - 1)"
 Write-Host 'Mode    : native .so rebuild + APK repack'
 Write-Host ''
 
 if (-not $SkipNativeBuild) {
   Push-Location $AndroidProject
   try {
-    & gradle --no-daemon --console=plain "-Pt850AndroidAbis=$AbiFilters" "-Pt850VulkanValidation=$validationValue" ":app:$stripTask"
+    & $GradleWrapper --no-daemon --console=plain --parallel "--max-workers=$BuildWorkers" "-Pt850AndroidAbis=$AbiFilters" "-Pt850VulkanValidation=$validationValue" ":app:$stripTask"
     if ($LASTEXITCODE -ne 0) { throw "Gradle $stripTask failed with exit code $LASTEXITCODE." }
   } finally {
     Pop-Location
@@ -150,7 +160,7 @@ if (-not $TemplateApk) {
   $TemplateApk = $candidate
 }
 if (-not (Test-Path $TemplateApk)) {
-  throw "Template APK was not found at '$TemplateApk'. Run a full BuildAndroid.bat once, or pass --template."
+  throw "Template APK was not found at '$TemplateApk'. Run a full Scripts\Bat\BuildAndroid.bat once, or pass --template."
 }
 
 $defaultOutDir = Join-Path $AndroidProject "app\build\outputs\apk\$variant"

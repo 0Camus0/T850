@@ -1,32 +1,34 @@
 {
-  "api": "d3d12",
-  "cullDisabled": false,
-  "debugFrames": false,
-  "display": {
-    "fullscreen": false,
-    "model": "Models/rewind_cyborg.glb",
-    "scene": 1,
-    "height": 1440,
-    "width": 2560
-  },
-  "devTools": {
-    "logToFile": false,
-    "d3d12Debug": false,
-    "logLevel": "error"
-  },
-  "configuration": "Release",
+  "architecture": "x64",
+  "benchmark": false,
   "dump": {
     "trigger": "frame",
     "enabled": false,
     "frame": -1,
     "seconds": -1
   },
-  "keepRunning": false,
   "cullingMode": "full",
+  "configuration": "Release",
+  "api": "d3d12",
+  "targetPlatform": "windows",
   "replaySnapshot": {
     "path": "D:\\Code\\Game\\T850\\T850\\bin\\x64\\Release\\dumps_vulkan_f863_20260507_090650\\snapshot.json",
     "enabled": false
   },
-  "architecture": "x64",
-  "benchmark": false
+  "keepRunning": false,
+  "androidDeviceSerial": "",
+  "cullDisabled": false,
+  "debugFrames": false,
+  "display": {
+    "fullscreen": false,
+    "model": "Models/doomslayer_cine_all_animations_no-damage_double-sided-opaque.glb",
+    "scene": 0,
+    "height": 2160,
+    "width": 3840
+  },
+  "devTools": {
+    "logToFile": false,
+    "d3d12Debug": false,
+    "logLevel": "error"
+  }
 }

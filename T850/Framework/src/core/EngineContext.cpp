@@ -25,6 +25,7 @@ namespace t850 {
     context.driver = g_pBaseDriver;
     context.device = T8Device;
     context.deviceContext = T8DeviceContext;
+    context.physics = GetEngineContext().physics;
     context.threadPool = g_threadPool;
     context.config = &g_config;
     SetEngineContext(context);

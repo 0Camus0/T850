@@ -32,6 +32,7 @@ namespace t850 {
   class AppBase {
   public:
     AppBase() : bInited(false), bPaused(false), pFramework(0) {}
+    virtual ~AppBase() = default;
     virtual void InitVars() = 0;
     virtual void CreateAssets() = 0;
     virtual void LoadAssets() = 0;

@@ -90,8 +90,6 @@ namespace t850 {
     if (t == 0) return m_points[p0];
 
     float tt = t * t;
-    float ttt = tt * t;
-
     float q1 = -3.0f * tt + 4.0f*t - 1;
     float q2 = 9.0f*tt - 10.0f*t;
     float q3 = -9.0f*tt + 8.0f*t + 1.0f;

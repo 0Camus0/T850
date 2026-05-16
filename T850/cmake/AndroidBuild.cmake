@@ -19,8 +19,25 @@ set(T850_ANDROID_DRACO_LIB ${T850_ANDROID_VCPKG_ROOT}/lib/libdraco.a)
 list(APPEND CMAKE_PREFIX_PATH ${T850_ANDROID_VCPKG_ROOT})
 set(glslang_DIR ${T850_ANDROID_VCPKG_ROOT}/share/glslang)
 set(imgui_DIR ${T850_ANDROID_VCPKG_ROOT}/share/imgui)
+set(Jolt_DIR ${T850_ANDROID_VCPKG_ROOT}/share/Jolt)
 find_package(imgui CONFIG REQUIRED)
 find_package(glslang CONFIG REQUIRED)
+find_package(Jolt CONFIG REQUIRED)
+function(t850_map_android_imported_release_config)
+  foreach(T850_IMPORTED_TARGET IN LISTS ARGN)
+    if(TARGET ${T850_IMPORTED_TARGET})
+      set_target_properties(${T850_IMPORTED_TARGET} PROPERTIES
+        MAP_IMPORTED_CONFIG_RELWITHDEBINFO Release
+        MAP_IMPORTED_CONFIG_MINSIZEREL Release)
+    endif()
+  endforeach()
+endfunction()
+t850_map_android_imported_release_config(
+  imgui::imgui
+  glslang::glslang
+  glslang::glslang-default-resource-limits
+  glslang::SPIRV
+  Jolt::Jolt)
 message(STATUS "T850 Android ABI: ${ANDROID_ABI} (${T850_ANDROID_VCPKG_TRIPLET})")
 
 set(T850_ANDROID_API_LEVEL 0)
@@ -44,10 +61,10 @@ if(NOT CMAKE_ANDROID_NDK AND DEFINED ANDROID_NDK)
   set(CMAKE_ANDROID_NDK ${ANDROID_NDK})
 endif()
 
-add_library(native_app_glue STATIC
-  ${CMAKE_ANDROID_NDK}/sources/android/native_app_glue/android_native_app_glue.c)
-target_include_directories(native_app_glue PUBLIC
+set(T850_ANDROID_NATIVE_APP_GLUE_DIR
   ${CMAKE_ANDROID_NDK}/sources/android/native_app_glue)
+set(T850_ANDROID_NATIVE_APP_GLUE_SOURCE
+  ${T850_ANDROID_NATIVE_APP_GLUE_DIR}/android_native_app_glue.c)
 
 set(T850_ANDROID_FRAMEWORK_SOURCES
   ${T850_SOURCE_DIR}/Framework/pch.cpp
@@ -55,6 +72,9 @@ set(T850_ANDROID_FRAMEWORK_SOURCES
   ${T850_SOURCE_DIR}/Framework/src/core/Core.cpp
   ${T850_SOURCE_DIR}/Framework/src/core/EngineContext.cpp
   ${T850_SOURCE_DIR}/Framework/src/core/android/AndroidFramework.cpp
+  ${T850_SOURCE_DIR}/Framework/src/physics/JoltPhysicsSystem.cpp
+  ${T850_SOURCE_DIR}/Framework/src/physics/PhysicsDebugRenderer.cpp
+  ${T850_SOURCE_DIR}/Framework/src/physics/PhysicsAuthoring.cpp
   ${T850_SOURCE_DIR}/Framework/src/utils/AndroidAssets.cpp
   ${T850_SOURCE_DIR}/Framework/src/utils/Log.cpp
   ${T850_SOURCE_DIR}/Framework/src/utils/InputManager.cpp
@@ -67,6 +87,7 @@ set(T850_ANDROID_FRAMEWORK_SOURCES
   ${T850_SOURCE_DIR}/Framework/src/utils/XMaths.cpp
   ${T850_SOURCE_DIR}/Framework/src/utils/Technique.cpp
   ${T850_SOURCE_DIR}/Framework/src/utils/ConfigRuntime.cpp
+  ${T850_SOURCE_DIR}/Framework/src/utils/RuntimeProfile.cpp
   ${T850_SOURCE_DIR}/Framework/src/utils/ShaderDiskCache.cpp
   ${T850_SOURCE_DIR}/Framework/src/utils/ShaderPermutationDump.cpp
   ${T850_SOURCE_DIR}/Framework/src/utils/SPIRVReflection.cpp
@@ -116,6 +137,7 @@ set(T850_ANDROID_FRAMEWORK_SOURCES
   ${T850_SOURCE_DIR}/Framework/src/scene/TextRenderer.cpp
   ${T850_SOURCE_DIR}/Framework/src/scene/Quad.cpp
   ${T850_SOURCE_DIR}/Framework/src/scene/LensFlare.cpp
+  ${T850_SOURCE_DIR}/Framework/src/debug/Profiler.cpp
   ${T850_SOURCE_DIR}/Framework/src/debug/FrameDumper.cpp
   ${T850_SOURCE_DIR}/Framework/src/debug/FrameDumperIO.cpp
   ${T850_SOURCE_DIR}/Framework/src/gui/GUIAtlas.cpp
@@ -126,7 +148,15 @@ set(T850_ANDROID_FRAMEWORK_SOURCES
   ${T850_SOURCE_DIR}/Librerias/tinyxml2/tinyxml2.cpp
   ${T850_SOURCE_DIR}/Librerias/mikktspace/src/mikktspace.c)
 
+set_source_files_properties(
+  ${T850_SOURCE_DIR}/Framework/src/utils/cil.cpp
+  PROPERTIES COMPILE_OPTIONS "-Wno-deprecated-enum-enum-conversion")
+set_source_files_properties(
+  ${T850_SOURCE_DIR}/Librerias/mikktspace/src/mikktspace.c
+  PROPERTIES COMPILE_OPTIONS "-Wno-unused-but-set-variable")
+
 add_library(T850Android SHARED
+  ${T850_ANDROID_NATIVE_APP_GLUE_SOURCE}
   ${T850_SOURCE_DIR}/DayScene/AndroidEntry.cpp
   ${T850_SOURCE_DIR}/DayScene/Application.cpp
   ${T850_SOURCE_DIR}/DayScene/DayScene.cpp
@@ -137,6 +167,7 @@ target_compile_definitions(T850Android PRIVATE
   OS_ANDROID
   T850_ANDROID_NATIVE_ACTIVITY
   T850_ENABLE_DRACO=1
+  T850_ENABLE_JOLT=1
   VMA_STATIC_VULKAN_FUNCTIONS=0
   VMA_DYNAMIC_VULKAN_FUNCTIONS=1)
 if(T850_VULKAN_VALIDATION)
@@ -149,21 +180,23 @@ target_include_directories(T850Android PRIVATE
   ${T850_SOURCE_DIR}/FrameworkImGui/include
   ${T850_SOURCE_DIR}/Framework
   ${T850_SOURCE_DIR}/Framework/include
-  ${T850_SOURCE_DIR}/Librerias/glaze/include
   ${T850_SOURCE_DIR}/Librerias/tinyxml2/include
+  ${T850_ANDROID_VCPKG_ROOT}/include
+  ${T850_SOURCE_DIR}/GLSLParser/Include
+  ${T850_ANDROID_NATIVE_APP_GLUE_DIR})
+
+target_include_directories(T850Android SYSTEM PRIVATE
+  ${T850_SOURCE_DIR}/Librerias/glaze/include
   ${T850_SOURCE_DIR}/Librerias/stb/include
   ${T850_SOURCE_DIR}/Librerias/mikktspace/include
-  ${T850_ANDROID_VCPKG_ROOT}/include
-  ${T850_SOURCE_DIR}/Librerias/VulkanMemoryAllocator/include
-  ${T850_SOURCE_DIR}/GLSLParser/Include
-  ${CMAKE_ANDROID_NDK}/sources/android/native_app_glue)
+  ${T850_SOURCE_DIR}/Librerias/VulkanMemoryAllocator/include)
 
 target_link_libraries(T850Android PRIVATE
   android
   log
   vulkan
-  native_app_glue
   "${T850_ANDROID_DRACO_LIB}"
+  Jolt::Jolt
   imgui::imgui
   glslang::glslang
   glslang::glslang-default-resource-limits

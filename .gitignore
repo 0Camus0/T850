@@ -2,8 +2,10 @@
 /T850/Lib/
 /T850/build/
 /T850/bin/x86/
+/T850/bin/Win32/
 /T850/bin/x64/
 /T850/bin/arm64/
+/T850/bin/ARM64/
 
 # ── IDE / editor ──
 /T850/.vs/
@@ -22,6 +24,20 @@
 **/.t8cache/
 /T850/Assets/Shaders/.t8shadercache/
 /T850/Assets/Textures/GeneratedIBLCache/
+/T850/Shaders/
+/T850/Textures/GeneratedIBLCache/
+/T850/dumps_*/
+/T850/imgui_runtime_layout.ini
+/T850/anim_debug_bindpose.txt
+
+# ── Local-only model assets ──
+/T850/Assets/Models/Marauder.glb
+/T850/Assets/Models/rewind_cyborg.glb
+/T850/Assets/Models/Tyrant.glb
+/T850/Assets/Models/doomslayer_cine_all_animations_no-damage_double-sided-opaque.glb
+/T850/Assets/Models/doomslayer_cine_base_all_animations_no-damage_double-sided-opaque.glb
+/T850/Assets/Models/Q3/
+/T850/Assets/Models/SkyBox.glb
 
 # ── vcpkg build-time artifacts (huge, reproducible) ──
 /T850/Librerias/vcpkg/buildtrees/
@@ -45,6 +61,8 @@ T850/android/build/
 T850/android/java_pid*.hprof
 
 # Android signing material
+T850/android/signing.properties
+T850/android/app/signing.properties
 *.keystore
 *.jks
 *.p12

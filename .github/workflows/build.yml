@@ -13,7 +13,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        platform: [x86, x64, ARM64]
+        platform: [Win32, x64, ARM64]
         configuration: [Debug, Release]
 
     steps:
@@ -44,26 +44,26 @@ jobs:
           cd T850/Librerias/vcpkg
           ./bootstrap-vcpkg.bat -disableMetrics
 
-      - name: Install vcpkg packages (x86)
-        if: matrix.platform == 'x86'
+      - name: Install vcpkg packages (Win32)
+        if: matrix.platform == 'Win32'
         shell: pwsh
         run: |
           cd T850/Librerias/vcpkg
-          ./vcpkg.exe install --recurse glew:x86-windows-static angle:x86-windows draco:x86-windows draco:x86-windows-static vulkan-headers:x86-windows-static vulkan-loader:x86-windows-static vulkan-memory-allocator:x86-windows-static glslang:x86-windows-static "imgui[docking-experimental,dx11-binding,vulkan-binding,opengl3-binding,sdl3-binding,win32-binding]:x86-windows-static"
+          ./vcpkg.exe install --recurse glew:x86-windows-static angle:x86-windows draco:x86-windows draco:x86-windows-static vulkan-headers:x86-windows-static vulkan-loader:x86-windows-static vulkan-memory-allocator:x86-windows-static glslang:x86-windows-static joltphysics:x86-windows-static "imgui[docking-experimental,dx11-binding,vulkan-binding,opengl3-binding,sdl3-binding,win32-binding]:x86-windows-static"
 
       - name: Install vcpkg packages (x64)
         if: matrix.platform == 'x64'
         shell: pwsh
         run: |
           cd T850/Librerias/vcpkg
-          ./vcpkg.exe install --recurse glew:x64-windows-static angle:x64-windows draco:x64-windows draco:x64-windows-static vulkan-headers:x64-windows-static vulkan-loader:x64-windows-static vulkan-memory-allocator:x64-windows-static glslang:x64-windows-static "imgui[docking-experimental,dx11-binding,dx12-binding,vulkan-binding,opengl3-binding,sdl3-binding,win32-binding]:x64-windows-static" imguizmo:x64-windows-static
+          ./vcpkg.exe install --recurse glew:x64-windows-static angle:x64-windows draco:x64-windows draco:x64-windows-static vulkan-headers:x64-windows-static vulkan-loader:x64-windows-static vulkan-memory-allocator:x64-windows-static glslang:x64-windows-static joltphysics:x64-windows-static "imgui[docking-experimental,dx11-binding,dx12-binding,vulkan-binding,opengl3-binding,sdl3-binding,win32-binding]:x64-windows-static" imguizmo:x64-windows-static
 
       - name: Install vcpkg packages (ARM64)
         if: matrix.platform == 'ARM64'
         shell: pwsh
         run: |
           cd T850/Librerias/vcpkg
-          ./vcpkg.exe install --recurse glew:arm64-windows-static angle:arm64-windows draco:arm64-windows draco:arm64-windows-static vulkan-headers:arm64-windows-static vulkan-loader:arm64-windows-static vulkan-memory-allocator:arm64-windows-static glslang:arm64-windows-static "imgui[docking-experimental,dx11-binding,dx12-binding,vulkan-binding,opengl3-binding,sdl3-binding,win32-binding]:arm64-windows-static"
+          ./vcpkg.exe install --recurse glew:arm64-windows-static angle:arm64-windows draco:arm64-windows draco:arm64-windows-static vulkan-headers:arm64-windows-static vulkan-loader:arm64-windows-static vulkan-memory-allocator:arm64-windows-static glslang:arm64-windows-static joltphysics:arm64-windows-static "imgui[docking-experimental,dx11-binding,dx12-binding,vulkan-binding,opengl3-binding,sdl3-binding,win32-binding]:arm64-windows-static"
 
       - name: Build
         shell: pwsh
@@ -87,7 +87,7 @@ jobs:
         id: arch
         shell: pwsh
         run: |
-          $map = @{ "x86" = "x86"; "x64" = "x64"; "ARM64" = "arm64" }
+          $map = @{ "Win32" = "Win32"; "x64" = "x64"; "ARM64" = "ARM64" }
           $arch = $map["${{ matrix.platform }}"]
           echo "name=$arch" >> $env:GITHUB_OUTPUT
 
@@ -177,7 +177,7 @@ jobs:
 
       - name: Build Android Release APK
         shell: cmd
-        run: BuildAndroid.bat Release --sdk "%RUNNER_TEMP%\AndroidSdk" --abi ${{ matrix.abi }}
+        run: Scripts\Bat\BuildAndroid.bat Release --allow-unsigned-release --sdk "%RUNNER_TEMP%\AndroidSdk" --abi ${{ matrix.abi }}
 
       - name: Stage Android APK
         shell: pwsh

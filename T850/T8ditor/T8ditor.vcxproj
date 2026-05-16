@@ -111,33 +111,33 @@
   </PropertyGroup>
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">
     <LinkIncremental>true</LinkIncremental>
-    <OutDir>$(SolutionDir)bin\$(T8Arch)\$(Configuration)\</OutDir>
+    <OutDir>$(SolutionDir)bin\$(Platform)\$(Configuration)\</OutDir>
     <IntDir>$(SolutionDir)Lib\VStuff\$(ProjectName)\$(Configuration)\$(Platform)\</IntDir>
   </PropertyGroup>
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">
     <LinkIncremental>true</LinkIncremental>
     <IntDir>$(SolutionDir)Lib\VStuff\$(ProjectName)\$(Configuration)\$(Platform)\</IntDir>
-    <OutDir>$(SolutionDir)bin\$(T8Arch)\$(Configuration)\</OutDir>
+    <OutDir>$(SolutionDir)bin\$(Platform)\$(Configuration)\</OutDir>
   </PropertyGroup>
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|ARM64'">
     <LinkIncremental>true</LinkIncremental>
     <IntDir>$(SolutionDir)Lib\VStuff\$(ProjectName)\$(Configuration)\$(Platform)\</IntDir>
-    <OutDir>$(SolutionDir)bin\$(T8Arch)\$(Configuration)\</OutDir>
+    <OutDir>$(SolutionDir)bin\$(Platform)\$(Configuration)\</OutDir>
   </PropertyGroup>
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">
     <LinkIncremental>false</LinkIncremental>
-    <OutDir>$(SolutionDir)bin\$(T8Arch)\$(Configuration)\</OutDir>
+    <OutDir>$(SolutionDir)bin\$(Platform)\$(Configuration)\</OutDir>
     <IntDir>$(SolutionDir)Lib\VStuff\$(ProjectName)\$(Configuration)\$(Platform)\</IntDir>
   </PropertyGroup>
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
     <LinkIncremental>false</LinkIncremental>
     <IntDir>$(SolutionDir)Lib\VStuff\$(ProjectName)\$(Configuration)\$(Platform)\</IntDir>
-    <OutDir>$(SolutionDir)bin\$(T8Arch)\$(Configuration)\</OutDir>
+    <OutDir>$(SolutionDir)bin\$(Platform)\$(Configuration)\</OutDir>
   </PropertyGroup>
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|ARM64'">
     <LinkIncremental>false</LinkIncremental>
     <IntDir>$(SolutionDir)Lib\VStuff\$(ProjectName)\$(Configuration)\$(Platform)\</IntDir>
-    <OutDir>$(SolutionDir)bin\$(T8Arch)\$(Configuration)\</OutDir>
+    <OutDir>$(SolutionDir)bin\$(Platform)\$(Configuration)\</OutDir>
   </PropertyGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">
     <ClCompile>
@@ -157,7 +157,7 @@
       <SubSystem>Console</SubSystem>
       <GenerateDebugInformation>true</GenerateDebugInformation>
       <AdditionalLibraryDirectories>$(SolutionDir)Librerias\tinyxml2\lib;$(SolutionDir)Lib\$(Configuration)\$(Platform)\;$(SolutionDir)$(Configuration);$(SolutionDir)Librerias\SDL3\lib\$(T8Arch);$(T8VcpkgStatic)\debug\lib;$(T8VcpkgStatic)\lib;$(T8VcpkgDynamic)\lib;%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
-      <AdditionalDependencies>dxguid.lib;Frameworkd.lib;SDL3.lib;D3D11.lib;D3DCompiler.lib;imguid.lib;imguizmo.lib;vulkan-1.lib;$(T8VcpkgDynamic)\lib\draco.lib;glslangd.lib;SPIRVd.lib;glslang-default-resource-limitsd.lib;%(AdditionalDependencies)</AdditionalDependencies>
+      <AdditionalDependencies>dxguid.lib;Frameworkd.lib;SDL3.lib;D3D11.lib;D3DCompiler.lib;imguid.lib;imguizmo.lib;vulkan-1.lib;Jolt.lib;$(T8VcpkgDynamic)\lib\draco.lib;glslangd.lib;SPIRVd.lib;glslang-default-resource-limitsd.lib;%(AdditionalDependencies)</AdditionalDependencies>
       <OutputFile>$(OutDir)$(TargetName)$(TargetExt)</OutputFile>
     </Link>
     <PostBuildEvent>
@@ -191,7 +191,7 @@ call "$(SolutionDir)scripts\CopyFirstExisting.cmd" "$(OutDir)" "$(T8VcpkgDynamic
       <SubSystem>Console</SubSystem>
       <GenerateDebugInformation>true</GenerateDebugInformation>
       <AdditionalLibraryDirectories>$(SolutionDir)Librerias\tinyxml2\lib;$(SolutionDir)Lib\$(Configuration)\$(Platform)\;$(SolutionDir)$(Configuration);$(SolutionDir)Librerias\SDL3\lib\$(T8Arch);$(T8VcpkgStatic)\debug\lib;$(T8VcpkgStatic)\lib;$(T8VcpkgDynamic)\lib;%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
-      <AdditionalDependencies>dxguid.lib;Frameworkd.lib;SDL3.lib;D3D11.lib;D3DCompiler.lib;imguid.lib;imguizmo.lib;vulkan-1.lib;$(T8VcpkgDynamic)\lib\draco.lib;glslangd.lib;SPIRVd.lib;glslang-default-resource-limitsd.lib;%(AdditionalDependencies)</AdditionalDependencies>
+      <AdditionalDependencies>dxguid.lib;Frameworkd.lib;SDL3.lib;D3D11.lib;D3DCompiler.lib;imguid.lib;imguizmo.lib;vulkan-1.lib;Jolt.lib;$(T8VcpkgDynamic)\lib\draco.lib;glslangd.lib;SPIRVd.lib;glslang-default-resource-limitsd.lib;%(AdditionalDependencies)</AdditionalDependencies>
       <OutputFile>$(OutDir)$(TargetName)$(TargetExt)</OutputFile>
     </Link>
     <PostBuildEvent>
@@ -225,7 +225,7 @@ call "$(SolutionDir)scripts\CopyFirstExisting.cmd" "$(OutDir)" "$(T8VcpkgDynamic
       <SubSystem>Console</SubSystem>
       <GenerateDebugInformation>true</GenerateDebugInformation>
       <AdditionalLibraryDirectories>$(SolutionDir)Librerias\tinyxml2\lib;$(SolutionDir)Lib\$(Configuration)\$(Platform)\;$(SolutionDir)$(Configuration);$(SolutionDir)Librerias\SDL3\lib\$(T8Arch);$(T8VcpkgStatic)\debug\lib;$(T8VcpkgStatic)\lib;$(T8VcpkgDynamic)\lib;%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
-      <AdditionalDependencies>dxguid.lib;Frameworkd.lib;SDL3.lib;D3D11.lib;D3DCompiler.lib;imguid.lib;imguizmo.lib;vulkan-1.lib;$(T8VcpkgDynamic)\lib\draco.lib;glslangd.lib;SPIRVd.lib;glslang-default-resource-limitsd.lib;%(AdditionalDependencies)</AdditionalDependencies>
+      <AdditionalDependencies>dxguid.lib;Frameworkd.lib;SDL3.lib;D3D11.lib;D3DCompiler.lib;imguid.lib;imguizmo.lib;vulkan-1.lib;Jolt.lib;$(T8VcpkgDynamic)\lib\draco.lib;glslangd.lib;SPIRVd.lib;glslang-default-resource-limitsd.lib;%(AdditionalDependencies)</AdditionalDependencies>
       <OutputFile>$(OutDir)$(TargetName)$(TargetExt)</OutputFile>
     </Link>
     <PostBuildEvent>
@@ -260,7 +260,7 @@ call "$(SolutionDir)scripts\CopyFirstExisting.cmd" "$(OutDir)" "$(T8VcpkgDynamic
       <SubSystem>Console</SubSystem>
       <GenerateDebugInformation>true</GenerateDebugInformation>
       <AdditionalLibraryDirectories>$(SolutionDir)Librerias\tinyxml2\lib;$(SolutionDir)Lib\$(Configuration)\$(Platform)\;$(SolutionDir)$(Configuration);$(SolutionDir)Librerias\SDL3\lib\$(T8Arch);$(T8VcpkgStatic)\lib;$(T8VcpkgDynamic)\lib;%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
-      <AdditionalDependencies>dxguid.lib;Framework.lib;SDL3.lib;D3D11.lib;D3DCompiler.lib;imgui.lib;imguizmo.lib;vulkan-1.lib;$(T8VcpkgDynamic)\lib\draco.lib;glslang.lib;SPIRV.lib;glslang-default-resource-limits.lib;%(AdditionalDependencies)</AdditionalDependencies>
+      <AdditionalDependencies>dxguid.lib;Framework.lib;SDL3.lib;D3D11.lib;D3DCompiler.lib;imgui.lib;imguizmo.lib;vulkan-1.lib;Jolt.lib;$(T8VcpkgDynamic)\lib\draco.lib;glslang.lib;SPIRV.lib;glslang-default-resource-limits.lib;%(AdditionalDependencies)</AdditionalDependencies>
       <OutputFile>$(OutDir)$(TargetName)$(TargetExt)</OutputFile>
       <LinkTimeCodeGeneration>UseLinkTimeCodeGeneration</LinkTimeCodeGeneration>
     </Link>
@@ -298,7 +298,7 @@ call "$(SolutionDir)scripts\CopyFirstExisting.cmd" "$(OutDir)" "$(T8VcpkgDynamic
       <OptimizeReferences>true</OptimizeReferences>
       <GenerateDebugInformation>true</GenerateDebugInformation>
       <AdditionalLibraryDirectories>$(SolutionDir)Librerias\tinyxml2\lib;$(SolutionDir)Lib\$(Configuration)\$(Platform)\;$(SolutionDir)$(Configuration);$(SolutionDir)Librerias\SDL3\lib\$(T8Arch);$(T8VcpkgStatic)\lib;$(T8VcpkgDynamic)\lib;%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
-      <AdditionalDependencies>dxguid.lib;Framework.lib;SDL3.lib;D3D11.lib;D3DCompiler.lib;imgui.lib;imguizmo.lib;vulkan-1.lib;$(T8VcpkgDynamic)\lib\draco.lib;glslang.lib;SPIRV.lib;glslang-default-resource-limits.lib;%(AdditionalDependencies)</AdditionalDependencies>
+      <AdditionalDependencies>dxguid.lib;Framework.lib;SDL3.lib;D3D11.lib;D3DCompiler.lib;imgui.lib;imguizmo.lib;vulkan-1.lib;Jolt.lib;$(T8VcpkgDynamic)\lib\draco.lib;glslang.lib;SPIRV.lib;glslang-default-resource-limits.lib;%(AdditionalDependencies)</AdditionalDependencies>
       <OutputFile>$(OutDir)$(TargetName)$(TargetExt)</OutputFile>
       <LinkTimeCodeGeneration>UseLinkTimeCodeGeneration</LinkTimeCodeGeneration>
     </Link>
@@ -336,7 +336,7 @@ call "$(SolutionDir)scripts\CopyFirstExisting.cmd" "$(OutDir)" "$(T8VcpkgDynamic
       <OptimizeReferences>true</OptimizeReferences>
       <GenerateDebugInformation>true</GenerateDebugInformation>
       <AdditionalLibraryDirectories>$(SolutionDir)Librerias\tinyxml2\lib;$(SolutionDir)Lib\$(Configuration)\$(Platform)\;$(SolutionDir)$(Configuration);$(SolutionDir)Librerias\SDL3\lib\$(T8Arch);$(T8VcpkgStatic)\lib;$(T8VcpkgDynamic)\lib;%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
-      <AdditionalDependencies>dxguid.lib;Framework.lib;SDL3.lib;D3D11.lib;D3DCompiler.lib;imgui.lib;imguizmo.lib;vulkan-1.lib;$(T8VcpkgDynamic)\lib\draco.lib;glslang.lib;SPIRV.lib;glslang-default-resource-limits.lib;%(AdditionalDependencies)</AdditionalDependencies>
+      <AdditionalDependencies>dxguid.lib;Framework.lib;SDL3.lib;D3D11.lib;D3DCompiler.lib;imgui.lib;imguizmo.lib;vulkan-1.lib;Jolt.lib;$(T8VcpkgDynamic)\lib\draco.lib;glslang.lib;SPIRV.lib;glslang-default-resource-limits.lib;%(AdditionalDependencies)</AdditionalDependencies>
       <OutputFile>$(OutDir)$(TargetName)$(TargetExt)</OutputFile>
       <LinkTimeCodeGeneration>UseLinkTimeCodeGeneration</LinkTimeCodeGeneration>
     </Link>

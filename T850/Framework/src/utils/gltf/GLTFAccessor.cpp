@@ -31,15 +31,6 @@ namespace gltf {
 
 namespace {
 
-// Read N raw bytes at byte offset `off` of buffer `buf` into dst.
-// Returns false if out of range.
-bool RawRead(const std::vector<unsigned char>& buf,
-             std::size_t off, std::size_t n, void* dst) {
-  if (off + n > buf.size()) return false;
-  std::memcpy(dst, buf.data() + off, n);
-  return true;
-}
-
 // Promote one raw component to float, applying glTF normalization rules.
 float ToFloat(const unsigned char* src, int componentType, bool normalized) {
   switch (componentType) {

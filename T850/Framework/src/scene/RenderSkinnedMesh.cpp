@@ -8,7 +8,7 @@
  * animation and upload bone matrices before rendering.
  *
  * Also provides debug wireframe (mesh edges with depth test)
- * and skeleton bone visualization (no depth test, magenta).
+ * and octahedral skeleton bone visualization (no depth test).
  *********************************************************/
 
 #include <video/BaseDriver.h>
@@ -20,6 +20,9 @@
 #include <cstring>
 #include <cmath>
 #include <algorithm>
+#include <cctype>
+#include <initializer_list>
+#include <string>
 
 extern t850::AppBase *pApp;
 
@@ -174,6 +177,309 @@ namespace t850 {
       dst.TransmissionUVTransform0 = src.TransmissionUVTransform0;
       dst.TransmissionUVTransform1 = src.TransmissionUVTransform1;
     }
+
+    static constexpr unsigned kSkeletonBoneVertexCount = 6;
+    static constexpr unsigned kSkeletonBoneIndexCount = 24;
+    static constexpr unsigned short kSkeletonBoneIndices[kSkeletonBoneIndexCount] = {
+      0, 2, 0, 3, 0, 4, 0, 5,
+      1, 2, 1, 3, 1, 4, 1, 5,
+      2, 4, 4, 3, 3, 5, 5, 2
+    };
+
+    XVECTOR3 SkeletonJointPositionLH(const xF::xBone& bone) {
+      return XVECTOR3(bone.Combined.m[3][0],
+                      bone.Combined.m[3][1],
+                     -bone.Combined.m[3][2],
+                      1.0f);
+    }
+
+    std::string LowerName(const std::string& name) {
+      std::string out;
+      out.reserve(name.size());
+      for (unsigned char c : name) {
+        out.push_back(static_cast<char>(std::tolower(c)));
+      }
+      return out;
+    }
+
+    bool NameContains(const std::string& name, const char* token) {
+      return name.find(token) != std::string::npos;
+    }
+
+    bool NameContainsAny(const std::string& name, std::initializer_list<const char*> tokens) {
+      for (const char* token : tokens) {
+        if (NameContains(name, token)) {
+          return true;
+        }
+      }
+      return false;
+    }
+
+    bool IsDeformationHelperBoneName(const std::string& lowerName) {
+      return NameContains(lowerName, "roll") || NameContains(lowerName, "twist") || NameContains(lowerName, "_pin");
+    }
+
+    bool IsAttachmentBoneName(const std::string& lowerName) {
+      return NameContainsAny(lowerName, {
+          "armor", "weapon", "launcher", "blade", "serration", "guard",
+          "thumb", "index", "middle", "ring", "pinky", "knuckle",
+          "jaw", "tongue", "teeth", "lip", "brow", "nose", "nostril", "snarl",
+          "cheek", "eye", "ear", "crease", "puff", "eyelid", "helmet"});
+    }
+
+    bool IsHumanoidDisplayBoneName(const std::string& lowerName) {
+      if (lowerName.empty() || IsDeformationHelperBoneName(lowerName) || IsAttachmentBoneName(lowerName)) {
+        return false;
+      }
+      if (NameContainsAny(lowerName, {"hips", "pelvis", "spine", "chest", "neck", "head", "clavicle"})) return true;
+      if (NameContainsAny(lowerName, {"arm_upper", "upperarm", "upper_arm", "arm_lower", "lowerarm", "forearm", "lower_arm", "arm_hand"})) return true;
+      if (NameContains(lowerName, "hand") && !NameContains(lowerName, "weapon")) return true;
+      if (NameContainsAny(lowerName, {"leg_upper", "upperleg", "upper_leg", "thigh", "leg_lower", "lowerleg", "lower_leg", "calf", "shin", "leg_foot"})) return true;
+      return NameContains(lowerName, "foot");
+    }
+
+    bool IsEndpointHelperForBone(const std::string& parentLowerName, const std::string& childLowerName) {
+      if (NameContains(childLowerName, "end")) return true;
+      if (NameContains(parentLowerName, "foot") && NameContainsAny(childLowerName, {"ball", "toe"})) return true;
+      return false;
+    }
+
+    bool IsUpperLegName(const std::string& lowerName) {
+      return NameContainsAny(lowerName, {"leg_upper", "upperleg", "upper_leg", "thigh"});
+    }
+
+    bool IsLowerLegName(const std::string& lowerName) {
+      return NameContainsAny(lowerName, {"leg_lower", "lowerleg", "lower_leg", "calf", "shin"});
+    }
+
+    bool IsFootName(const std::string& lowerName) {
+      return NameContainsAny(lowerName, {"leg_foot", "foot"});
+    }
+
+    bool IsUpperArmName(const std::string& lowerName) {
+      return NameContainsAny(lowerName, {"arm_upper", "upperarm", "upper_arm"});
+    }
+
+    bool IsLowerArmName(const std::string& lowerName) {
+      return NameContainsAny(lowerName, {"arm_lower", "lowerarm", "forearm", "lower_arm"});
+    }
+
+    bool IsHandName(const std::string& lowerName) {
+      return NameContains(lowerName, "hand") && !NameContains(lowerName, "weapon");
+    }
+
+    int DisplayChildPriority(const std::string& parentLowerName, const std::string& childLowerName) {
+      int score = 0;
+      if (IsAttachmentBoneName(childLowerName)) score -= 1000;
+      if (IsDeformationHelperBoneName(childLowerName)) score -= 300;
+      if (NameContainsAny(parentLowerName, {"hips", "pelvis"})) {
+        if (NameContainsAny(childLowerName, {"spine", "chest", "neck", "head"})) score += 600;
+        if (IsUpperLegName(childLowerName)) score += 200;
+      } else if (NameContainsAny(parentLowerName, {"spine", "chest"})) {
+        if (NameContainsAny(childLowerName, {"spine", "chest", "neck", "head"})) score += 600;
+        if (NameContains(childLowerName, "clavicle")) score += 150;
+      } else if (NameContains(parentLowerName, "neck")) {
+        if (NameContains(childLowerName, "head")) score += 600;
+      } else if (NameContains(parentLowerName, "clavicle")) {
+        if (IsUpperArmName(childLowerName)) score += 600;
+      } else if (IsUpperArmName(parentLowerName)) {
+        if (IsLowerArmName(childLowerName)) score += 600;
+      } else if (IsLowerArmName(parentLowerName)) {
+        if (IsHandName(childLowerName)) score += 600;
+      } else if (IsUpperLegName(parentLowerName)) {
+        if (IsLowerLegName(childLowerName)) score += 600;
+      } else if (IsLowerLegName(parentLowerName)) {
+        if (IsFootName(childLowerName)) score += 600;
+      } else if (IsFootName(parentLowerName)) {
+        if (NameContainsAny(childLowerName, {"ball", "toe"})) score += 600;
+      }
+      if (IsHumanoidDisplayBoneName(childLowerName)) score += 100;
+      return score;
+    }
+
+    float Dot3(const XVECTOR3& a, const XVECTOR3& b) {
+      return a.x * b.x + a.y * b.y + a.z * b.z;
+    }
+
+    XVECTOR3 Cross3(const XVECTOR3& a, const XVECTOR3& b) {
+      return XVECTOR3(a.y * b.z - a.z * b.y,
+                      a.z * b.x - a.x * b.z,
+                      a.x * b.y - a.y * b.x,
+                      0.0f);
+    }
+
+    XVECTOR3 Normalize3(const XVECTOR3& v, const XVECTOR3& fallback) {
+      const float lenSq = Dot3(v, v);
+      if (lenSq <= 0.00000001f) {
+        return fallback;
+      }
+      const float invLen = 1.0f / std::sqrt(lenSq);
+      return XVECTOR3(v.x * invLen, v.y * invLen, v.z * invLen, 0.0f);
+    }
+
+    float Length3(const XVECTOR3& v) {
+      return std::sqrt((std::max)(0.0f, Dot3(v, v)));
+    }
+
+    void AppendUniqueChild(std::vector<unsigned int>& out, unsigned int childIndex) {
+      if (std::find(out.begin(), out.end(), childIndex) == out.end()) {
+        out.push_back(childIndex);
+      }
+    }
+
+    std::vector<unsigned int> GetDisplayChildren(const std::vector<xF::xBone>& bones, int boneIndex) {
+      std::vector<unsigned int> result;
+      if (boneIndex < 0 || boneIndex >= static_cast<int>(bones.size())) {
+        return result;
+      }
+      for (unsigned int childIndex : bones[boneIndex].Sons) {
+        if (childIndex < bones.size()) {
+          AppendUniqueChild(result, childIndex);
+        }
+      }
+      for (unsigned int childIndex = 0; childIndex < bones.size(); ++childIndex) {
+        if (bones[childIndex].Dad == static_cast<unsigned short>(boneIndex) &&
+            childIndex != static_cast<unsigned int>(boneIndex)) {
+          AppendUniqueChild(result, childIndex);
+        }
+      }
+      return result;
+    }
+
+    bool IsSpineLikeDisplayName(const std::string& lowerName) {
+      return NameContainsAny(lowerName, {"hips", "pelvis", "spine", "chest", "neck", "head"});
+    }
+
+    bool IsRedundantDisplayBone(const std::vector<xF::xBone>& bones, int boneIndex) {
+      if (boneIndex < 0 || boneIndex >= static_cast<int>(bones.size())) {
+        return true;
+      }
+      const xF::xBone& bone = bones[boneIndex];
+      if (bone.Dad >= bones.size() || bone.Dad == static_cast<unsigned short>(boneIndex)) {
+        return false;
+      }
+      const std::string boneName = LowerName(bone.Name);
+      const std::string parentName = LowerName(bones[bone.Dad].Name);
+      if (!IsSpineLikeDisplayName(boneName) || !IsSpineLikeDisplayName(parentName)) {
+        return false;
+      }
+      return Length3(SkeletonJointPositionLH(bone) - SkeletonJointPositionLH(bones[bone.Dad])) < 0.001f;
+    }
+
+    struct DisplayEndpointCandidate {
+      int boneIndex = -1;
+      int score = 0;
+      float length = 0.0f;
+    };
+
+    void GatherDisplayEndpointCandidates(const std::vector<xF::xBone>& bones,
+                                         int ownerBoneIndex,
+                                         int searchBoneIndex,
+                                         unsigned depth,
+                                         std::vector<DisplayEndpointCandidate>& outCandidates) {
+      if (ownerBoneIndex < 0 || searchBoneIndex < 0 ||
+          ownerBoneIndex >= static_cast<int>(bones.size()) ||
+          searchBoneIndex >= static_cast<int>(bones.size()) ||
+          depth > 4) {
+        return;
+      }
+
+      const std::string ownerName = LowerName(bones[ownerBoneIndex].Name);
+      const XVECTOR3 ownerPosition = SkeletonJointPositionLH(bones[ownerBoneIndex]);
+      const std::vector<unsigned int> children = GetDisplayChildren(bones, searchBoneIndex);
+      for (unsigned int childIndex : children) {
+        const std::string childName = LowerName(bones[childIndex].Name);
+        if (IsAttachmentBoneName(childName)) {
+          continue;
+        }
+
+        const float length = Length3(SkeletonJointPositionLH(bones[childIndex]) - ownerPosition);
+        const bool displayChild = IsHumanoidDisplayBoneName(childName);
+        const bool endpointHelper = IsEndpointHelperForBone(ownerName, childName);
+        if ((displayChild || endpointHelper) && length >= 0.001f) {
+          outCandidates.push_back({
+              static_cast<int>(childIndex),
+              DisplayChildPriority(ownerName, childName) - static_cast<int>(depth) * 10,
+              length});
+        }
+
+        const bool canSearchThroughChild =
+            length < 0.001f ||
+            IsDeformationHelperBoneName(childName) ||
+            (!displayChild && !endpointHelper);
+        if (canSearchThroughChild) {
+          GatherDisplayEndpointCandidates(bones, ownerBoneIndex, static_cast<int>(childIndex), depth + 1, outCandidates);
+        }
+      }
+    }
+
+    int FindDisplayEndpointBone(const std::vector<xF::xBone>& bones, int boneIndex) {
+      if (boneIndex < 0 || boneIndex >= static_cast<int>(bones.size())) {
+        return -1;
+      }
+      if (!IsHumanoidDisplayBoneName(LowerName(bones[boneIndex].Name)) || IsRedundantDisplayBone(bones, boneIndex)) {
+        return -1;
+      }
+
+      std::vector<DisplayEndpointCandidate> candidates;
+      GatherDisplayEndpointCandidates(bones, boneIndex, boneIndex, 0, candidates);
+      if (candidates.empty()) {
+        return -1;
+      }
+      std::sort(candidates.begin(), candidates.end(), [](const DisplayEndpointCandidate& a, const DisplayEndpointCandidate& b) {
+        if (a.score != b.score) {
+          return a.score > b.score;
+        }
+        return a.length > b.length;
+      });
+      return candidates.front().boneIndex;
+    }
+
+    void WritePosition(std::vector<float>& positions, unsigned vertexIndex, const XVECTOR3& p) {
+      const std::size_t base = static_cast<std::size_t>(vertexIndex) * 4;
+      if (base + 3 >= positions.size()) {
+        return;
+      }
+      positions[base + 0] = p.x;
+      positions[base + 1] = p.y;
+      positions[base + 2] = p.z;
+      positions[base + 3] = 1.0f;
+    }
+
+    void WriteOctahedralBone(std::vector<float>& positions,
+                             unsigned vertexOffset,
+                             const XVECTOR3& root,
+                             const XVECTOR3& tip) {
+      XVECTOR3 axis = tip - root;
+      float length = std::sqrt((std::max)(0.0f, Dot3(axis, axis)));
+      if (length <= 0.0001f) {
+        axis = XVECTOR3(0.0f, 1.0f, 0.0f, 0.0f);
+        length = 0.02f;
+      } else {
+        axis = axis / length;
+      }
+
+      const XVECTOR3 ref = std::fabs(axis.y) < 0.85f
+          ? XVECTOR3(0.0f, 1.0f, 0.0f, 0.0f)
+          : XVECTOR3(1.0f, 0.0f, 0.0f, 0.0f);
+      const XVECTOR3 sideA = Normalize3(Cross3(ref, axis), XVECTOR3(1.0f, 0.0f, 0.0f, 0.0f));
+      const XVECTOR3 sideB = Normalize3(Cross3(axis, sideA), XVECTOR3(0.0f, 0.0f, 1.0f, 0.0f));
+      const XVECTOR3 center = root + axis * (length * 0.38f);
+      const float width = (std::max)(0.001f, length * 0.12f);
+
+      WritePosition(positions, vertexOffset + 0, root);
+      WritePosition(positions, vertexOffset + 1, tip);
+      WritePosition(positions, vertexOffset + 2, center + sideA * width);
+      WritePosition(positions, vertexOffset + 3, center - sideA * width);
+      WritePosition(positions, vertexOffset + 4, center + sideB * width);
+      WritePosition(positions, vertexOffset + 5, center - sideB * width);
+    }
+
+    void AppendOctahedralBoneIndices(std::vector<unsigned short>& indices, unsigned vertexOffset) {
+      for (unsigned i = 0; i < kSkeletonBoneIndexCount; ++i) {
+        indices.push_back(static_cast<unsigned short>(vertexOffset + kSkeletonBoneIndices[i]));
+      }
+    }
   }
 
   void RenderSkinnedMesh::Create() {
@@ -326,50 +632,10 @@ namespace t850 {
                 m_animController.GetNumBones(),
                 mc->Animation.Animations.size());
 
-    // Build wireframe and skeleton debug buffers
+    // Build wireframe and octahedral skeleton debug buffers
     BuildWireframeBuffers();
     BuildSkeletonBuffers();
-
-    // Compile skeleton line shader using the exact WireframeSphere approach
-    // (VS_W + FS_W, #version 130 with blanked precision qualifiers).
-    // This is known to work on all GL backends.
-    {
-      const std::string vsName = g_pBaseDriver->UsesGLSL() ? "VS_W.glsl" : "VS_W.hlsl";
-      const std::string fsName = g_pBaseDriver->UsesGLSL() ? "FS_W.glsl" : "FS_W.hlsl";
-      const std::string vsPath = "Shaders/" + vsName;
-      const std::string fsPath = "Shaders/" + fsName;
-      char* vsP = file2string(vsPath.c_str());
-      char* fsP = file2string(fsPath.c_str());
-      if (vsP && fsP) {
-        std::string vs(vsP), fs(fsP);
-        free(vsP); free(fsP);
-        if (g_pBaseDriver->UsesGLSL()) {
-          std::string defs;
-#if defined(USING_OPENGL)
-          defs += "#version 130\n\n";
-          defs += "#define lowp \n\n";
-          defs += "#define mediump \n\n";
-          defs += "#define highp \n\n";
-#elif defined(USING_OPENGL_ES30) || defined(USING_OPENGL_ES31)
-          defs += "#version 300 es\n\n";
-          defs += "#define ES_30\n\n";
-#endif
-          vs = defs + vs;
-          fs = defs + fs;
-        }
-        int sid = g_pBaseDriver->CreateShader(vs, fs, ShaderKey(), vsName, fsName);
-        m_skelShader = g_pBaseDriver->GetShaderIdx(sid);
-      } else {
-        if (vsP) free(vsP);
-        if (fsP) free(fsP);
-      }
-      if (m_skelShader) {
-        BufferDesc bd;
-        bd.byteWidth = sizeof(XMATRIX44);  // 64 bytes — just WVP, matching VS_W
-        bd.usage = BufferUsage::DEFAULT;
-        m_skelCB = (ConstantBuffer*)T8Device->CreateBuffer(BufferType::CONSTANT, bd);
-      }
-    }
+    m_lineRenderer.Create();
   }
 
   // ── Wireframe buffer construction (per-geometry line-list IBs) ─
@@ -426,15 +692,18 @@ namespace t850 {
     int n = (int)bones.size();
     if (n == 0) return;
 
-    // One line segment (2 vertices, 2 indices) per bone that has a parent
     std::vector<unsigned short> lineIdx;
     unsigned vertCount = 0;
+    m_skelSegments.clear();
     for (int i = 0; i < n; i++) {
-      if (bones[i].Dad != (unsigned short)i && bones[i].Dad < n) {
-        // line from parent position to child position
-        lineIdx.push_back((unsigned short)vertCount);
-        lineIdx.push_back((unsigned short)(vertCount + 1));
-        vertCount += 2;
+      if (bones[i].Dad != static_cast<unsigned short>(i) && bones[i].Dad < n) {
+        SkeletonBoneSegment segment;
+        segment.boneIndex = bones[i].Dad;
+        segment.endpointBoneIndex = i;
+        segment.vertexOffset = vertCount;
+        m_skelSegments.push_back(segment);
+        AppendOctahedralBoneIndices(lineIdx, vertCount);
+        vertCount += kSkeletonBoneVertexCount;
       }
     }
 
@@ -456,26 +725,114 @@ namespace t850 {
     const auto& bones = skel->Bones;
     int n = (int)bones.size();
 
-    // Extract LH world position from each bone's Combined matrix.
-    // Combined is in RH space. LH position = (m[3][0], m[3][1], -m[3][2]).
-    unsigned vOff = 0;
-    for (int i = 0; i < n; i++) {
-      if (bones[i].Dad != (unsigned short)i && bones[i].Dad < n) {
-        unsigned dadIdx = bones[i].Dad;
-        // Parent position
-        m_skelPositions[vOff * 4 + 0] = bones[dadIdx].Combined.m[3][0];
-        m_skelPositions[vOff * 4 + 1] = bones[dadIdx].Combined.m[3][1];
-        m_skelPositions[vOff * 4 + 2] = -bones[dadIdx].Combined.m[3][2];
-        m_skelPositions[vOff * 4 + 3] = 1.0f;
-        vOff++;
-        // Child position
-        m_skelPositions[vOff * 4 + 0] = bones[i].Combined.m[3][0];
-        m_skelPositions[vOff * 4 + 1] = bones[i].Combined.m[3][1];
-        m_skelPositions[vOff * 4 + 2] = -bones[i].Combined.m[3][2];
-        m_skelPositions[vOff * 4 + 3] = 1.0f;
-        vOff++;
+    for (const SkeletonBoneSegment& segment : m_skelSegments) {
+      const int boneIndex = segment.boneIndex;
+      if (boneIndex < 0 || boneIndex >= n) {
+        continue;
       }
+      const int endpointBoneIndex = segment.endpointBoneIndex;
+      if (endpointBoneIndex < 0 || endpointBoneIndex >= n) {
+        continue;
+      }
+      const XVECTOR3 root = SkeletonJointPositionLH(bones[boneIndex]);
+      const XVECTOR3 tip = SkeletonJointPositionLH(bones[endpointBoneIndex]);
+      WriteOctahedralBone(m_skelPositions, segment.vertexOffset, root, tip);
     }
+  }
+
+  bool RenderSkinnedMesh::UpdateHighlightedSkeletonPositions(const std::vector<int>& boneIndices) {
+    if (boneIndices.empty()) {
+      return false;
+    }
+
+    const xF::xSkeleton* skel = m_animController.GetAnimSkeleton();
+    if (!skel) return false;
+    const auto& bones = skel->Bones;
+    const int n = static_cast<int>(bones.size());
+
+    const unsigned maxVertexCapacity = static_cast<unsigned>(m_skelSegments.size()) * kSkeletonBoneVertexCount;
+    const unsigned maxIndexCapacity = static_cast<unsigned>(m_skelSegments.size()) * kSkeletonBoneIndexCount;
+    if (maxVertexCapacity == 0 || maxIndexCapacity == 0) {
+      return false;
+    }
+
+    m_skelSelectedPositions.assign(static_cast<std::size_t>(maxVertexCapacity) * 4, 0.0f);
+    std::vector<unsigned short> selectedIndices;
+    selectedIndices.reserve(maxIndexCapacity);
+    unsigned vertexCount = 0;
+    auto isHighlighted = [&boneIndices, n](int boneIndex) {
+      return boneIndex >= 0 &&
+             boneIndex < n &&
+             std::find(boneIndices.begin(), boneIndices.end(), boneIndex) != boneIndices.end();
+    };
+    for (const SkeletonBoneSegment& segment : m_skelSegments) {
+      const int boneIndex = segment.boneIndex;
+      if (boneIndex < 0 || boneIndex >= n) {
+        continue;
+      }
+      const int endpointBoneIndex = segment.endpointBoneIndex;
+      if (endpointBoneIndex < 0 || endpointBoneIndex >= n) {
+        continue;
+      }
+      if (!isHighlighted(endpointBoneIndex)) {
+        continue;
+      }
+
+      const unsigned vertexOffset = vertexCount;
+      WriteOctahedralBone(m_skelSelectedPositions,
+                           vertexOffset,
+                           SkeletonJointPositionLH(bones[boneIndex]),
+                           SkeletonJointPositionLH(bones[endpointBoneIndex]));
+      AppendOctahedralBoneIndices(selectedIndices, vertexOffset);
+      vertexCount += kSkeletonBoneVertexCount;
+    }
+
+    const unsigned indexCount = static_cast<unsigned>(selectedIndices.size());
+    if (vertexCount == 0 || indexCount == 0) {
+      m_skelSelectedIndexCount = 0;
+      return false;
+    }
+
+    if (!m_skelSelectedVB || !m_skelSelectedIB ||
+        vertexCount > m_skelSelectedVertexCapacity ||
+        indexCount > m_skelSelectedIndexCapacity) {
+      if (m_skelSelectedVB) { m_skelSelectedVB->release(); m_skelSelectedVB = nullptr; }
+      if (m_skelSelectedIB) { m_skelSelectedIB->release(); m_skelSelectedIB = nullptr; }
+
+      std::vector<unsigned short> fullHighlightIndices;
+      fullHighlightIndices.reserve(maxIndexCapacity);
+      for (unsigned vertexOffset = 0; vertexOffset < maxVertexCapacity; vertexOffset += kSkeletonBoneVertexCount) {
+        AppendOctahedralBoneIndices(fullHighlightIndices, vertexOffset);
+      }
+
+      m_skelSelectedVB = LineRenderer::CreatePositionVB(m_skelSelectedPositions.data(), maxVertexCapacity, BufferUsage::DINAMIC);
+      m_skelSelectedIB = LineRenderer::CreateIndexBuffer16(fullHighlightIndices.data(), static_cast<unsigned>(fullHighlightIndices.size()));
+      if (!m_skelSelectedVB || !m_skelSelectedIB) {
+        if (m_skelSelectedVB) { m_skelSelectedVB->release(); m_skelSelectedVB = nullptr; }
+        if (m_skelSelectedIB) { m_skelSelectedIB->release(); m_skelSelectedIB = nullptr; }
+        m_skelSelectedVertexCapacity = 0;
+        m_skelSelectedIndexCapacity = 0;
+        m_skelSelectedIndexCount = 0;
+        return false;
+      }
+      m_skelSelectedVertexCapacity = maxVertexCapacity;
+      m_skelSelectedIndexCapacity = static_cast<unsigned>(fullHighlightIndices.size());
+    }
+
+    if (!T8DeviceContext || !m_skelSelectedVB || !m_skelSelectedIB) {
+      return false;
+    }
+    m_skelSelectedVB->UpdateFromBuffer(*T8DeviceContext, m_skelSelectedPositions.data());
+    m_skelSelectedIndexCount = indexCount;
+    return true;
+  }
+
+  bool RenderSkinnedMesh::UpdateSelectedSkeletonPositions(int selectedBone) {
+    if (selectedBone < 0) {
+      return false;
+    }
+    std::vector<int> selectedBones{selectedBone};
+    return UpdateHighlightedSkeletonPositions(selectedBones);
   }
 
   // ── Debug wireframe draw (GPU-skinned) ─────────────────
@@ -549,9 +906,11 @@ namespace t850 {
     }
   }
 
-  void RenderSkinnedMesh::DrawSkeleton() {
-    if (!m_hasSkin || !m_skelIB || !m_skelVB || !m_skelShader || !m_skelCB
-        || m_skelIndexCount == 0)
+  void RenderSkinnedMesh::DrawSkeleton(int selectedBone,
+                                       const std::vector<int>* controlledBones,
+                                       const std::vector<int>* previewBones,
+                                       const std::vector<int>* pendingBones) {
+    if (!m_hasSkin || !m_skelIB || !m_skelVB || !m_lineRenderer.IsReady() || m_skelIndexCount == 0)
       return;
 
     if (!pScProp || pScProp->pCameras.empty()) return;
@@ -560,25 +919,68 @@ namespace t850 {
     UpdateSkeletonPositions();
     m_skelVB->UpdateFromBuffer(*T8DeviceContext, m_skelPositions.data());
 
-    // WVP = mesh world transform * VP (skeleton positions are in model space)
-    XMATRIX44 wvp = transform * cam->VP;
+    m_lineRenderer.SetDepthTestEnabled(false);
+    m_lineRenderer.SetDepthTexture(nullptr);
+    m_lineRenderer.SetViewport(m_wireViewW, m_wireViewH);
+    m_lineRenderer.SetFarPlane(cam->FPlane);
+    m_lineRenderer.DrawLines(transform,
+                             cam->VP,
+                             XVECTOR3(0.46f, 0.46f, 0.46f, 1.0f),
+                             m_skelVB,
+                             m_skelIB,
+                             m_skelIndexCount,
+                             sizeof(float) * 4,
+                             IndexBufferFormat::R16);
 
-    // Draw using the exact WireframeSphere pattern (known to work on all APIs)
-    m_skelIB->Set(*T8DeviceContext, 0, IndexBufferFormat::R16);
-    m_skelVB->Set(*T8DeviceContext, 16, 0);
-    // Topology BEFORE shader — Vulkan bakes topology into pipeline at Set() time
-    T8DeviceContext->SetPrimitiveTopology(Topology::LINE_LIST);
-    m_skelShader->Set(*T8DeviceContext);
-    m_skelCB->UpdateFromBuffer(*T8DeviceContext, &wvp[0]);
-    m_skelCB->Set(*T8DeviceContext);
-    T8DeviceContext->DrawIndexed(m_skelIndexCount, 0, 0);
-    T8DeviceContext->SetPrimitiveTopology(Topology::TRIANLE_LIST);
+    if (controlledBones && UpdateHighlightedSkeletonPositions(*controlledBones)) {
+      m_lineRenderer.DrawLines(transform,
+                               cam->VP,
+                               XVECTOR3(1.0f, 0.0f, 0.0f, 1.0f),
+                               m_skelSelectedVB,
+                               m_skelSelectedIB,
+                               m_skelSelectedIndexCount,
+                               sizeof(float) * 4,
+                               IndexBufferFormat::R16);
+    }
+
+    if (previewBones && UpdateHighlightedSkeletonPositions(*previewBones)) {
+      m_lineRenderer.DrawLines(transform,
+                               cam->VP,
+                               XVECTOR3(0.0f, 0.35f, 1.0f, 1.0f),
+                               m_skelSelectedVB,
+                               m_skelSelectedIB,
+                               m_skelSelectedIndexCount,
+                               sizeof(float) * 4,
+                               IndexBufferFormat::R16);
+    }
+
+    if (pendingBones && UpdateHighlightedSkeletonPositions(*pendingBones)) {
+      m_lineRenderer.DrawLines(transform,
+                               cam->VP,
+                               XVECTOR3(1.0f, 0.0f, 1.0f, 1.0f),
+                               m_skelSelectedVB,
+                               m_skelSelectedIB,
+                               m_skelSelectedIndexCount,
+                               sizeof(float) * 4,
+                               IndexBufferFormat::R16);
+    }
+
+    if (UpdateSelectedSkeletonPositions(selectedBone)) {
+      m_lineRenderer.DrawLines(transform,
+                               cam->VP,
+                               XVECTOR3(1.0f, 1.0f, 1.0f, 1.0f),
+                               m_skelSelectedVB,
+                               m_skelSelectedIB,
+                               m_skelSelectedIndexCount,
+                               sizeof(float) * 4,
+                               IndexBufferFormat::R16);
+    }
   }
 
   // ── Animation update + bone texture upload (call BEFORE render passes) ──
 
-  void RenderSkinnedMesh::UpdateAnimationAndBones() {
-    if (!m_hasSkin || !m_boneTexture) return;
+  void RenderSkinnedMesh::UpdateAnimationPose() {
+    if (!m_hasSkin) return;
 
     // Dump matrices on first frame for debugging
     static bool sDumped = false;
@@ -594,24 +996,66 @@ namespace t850 {
       float deltaTime = pScProp ? pScProp->FrameDeltaSec : (1.0f / 60.0f);
       m_animController.Update(deltaTime);
     }
+  }
+
+  void RenderSkinnedMesh::UploadBoneTexture() {
+    if (!m_hasSkin || !m_boneTexture) return;
+    if (!T8DeviceContext) {
+      T8_LOG_ERROR("[SkinnedMesh] Bone texture upload skipped: device context is unavailable");
+      return;
+    }
+    if (m_boneTexWidth <= 0 || m_boneTexData.empty()) {
+      T8_LOG_ERROR("[SkinnedMesh] Bone texture upload skipped: invalid texture backing store (%dx%d, %zu floats)",
+                   m_boneTexWidth, m_boneTexWidth, m_boneTexData.size());
+      return;
+    }
+
+    const std::size_t expectedFloats =
+        static_cast<std::size_t>(m_boneTexWidth) * static_cast<std::size_t>(m_boneTexWidth) * 4u;
+    if (m_boneTexData.size() < expectedFloats) {
+      T8_LOG_ERROR("[SkinnedMesh] Bone texture upload skipped: backing store has %zu floats, expected at least %zu",
+                   m_boneTexData.size(), expectedFloats);
+      return;
+    }
 
     // Upload bone matrices to texture
     int numBones = m_snapshotPoseActive
       ? static_cast<int>(m_snapshotBoneMatrices.size())
       : m_animController.GetNumBones();
-    int count = (numBones < kMaxBones) ? numBones : kMaxBones;
     const XMATRIX44* bones = m_snapshotPoseActive
       ? m_snapshotBoneMatrices.data()
       : m_animController.GetBoneMatrices();
+    if (numBones <= 0 || !bones) {
+      T8_LOG_ERROR("[SkinnedMesh] Bone texture upload skipped: no bone matrices are available");
+      return;
+    }
+
+    const int textureBoneCapacity = static_cast<int>(m_boneTexData.size() / 16u);
+    int count = (std::min)((std::min)(numBones, kMaxBones), textureBoneCapacity);
+    if (count <= 0) {
+      T8_LOG_ERROR("[SkinnedMesh] Bone texture upload skipped: texture cannot hold any bone matrices");
+      return;
+    }
+    if (numBones > textureBoneCapacity) {
+      T8_LOG_ERROR("[SkinnedMesh] Bone matrix count %d exceeds bone texture capacity %d; clamping upload",
+                   numBones, textureBoneCapacity);
+    }
+
+    std::fill(m_boneTexData.begin(), m_boneTexData.end(), 0.0f);
     for (int b = 0; b < count; b++) {
       int texelBase = b * 4 * 4;
-      memcpy(&m_boneTexData[texelBase],      &bones[b].m[0][0], 16);
-      memcpy(&m_boneTexData[texelBase + 4],  &bones[b].m[1][0], 16);
-      memcpy(&m_boneTexData[texelBase + 8],  &bones[b].m[2][0], 16);
-      memcpy(&m_boneTexData[texelBase + 12], &bones[b].m[3][0], 16);
+      memcpy(&m_boneTexData[texelBase],      &bones[b].m[0][0], sizeof(float) * 4u);
+      memcpy(&m_boneTexData[texelBase + 4],  &bones[b].m[1][0], sizeof(float) * 4u);
+      memcpy(&m_boneTexData[texelBase + 8],  &bones[b].m[2][0], sizeof(float) * 4u);
+      memcpy(&m_boneTexData[texelBase + 12], &bones[b].m[3][0], sizeof(float) * 4u);
     }
     m_boneTexture->UpdateFloatData(*T8DeviceContext, m_boneTexWidth, m_boneTexWidth,
                                     m_boneTexData.data());
+  }
+
+  void RenderSkinnedMesh::UpdateAnimationAndBones() {
+    UpdateAnimationPose();
+    UploadBoneTexture();
   }
 
   void RenderSkinnedMesh::ExportBoneMatrices(std::vector<XMATRIX44>& out) const {
@@ -1039,12 +1483,17 @@ namespace t850 {
     }
     m_wireGeo.clear();
     m_wireShader = nullptr;
-    if (m_skelCB) { m_skelCB->release(); m_skelCB = nullptr; }
     if (m_skelVB) { m_skelVB->release(); m_skelVB = nullptr; }
     if (m_skelIB) { m_skelIB->release(); m_skelIB = nullptr; }
-    m_skelShader = nullptr;
+    if (m_skelSelectedVB) { m_skelSelectedVB->release(); m_skelSelectedVB = nullptr; }
+    if (m_skelSelectedIB) { m_skelSelectedIB->release(); m_skelSelectedIB = nullptr; }
     m_skelIndexCount = 0;
     m_skelPositions.clear();
+    m_skelSegments.clear();
+    m_skelSelectedVertexCapacity = 0;
+    m_skelSelectedIndexCapacity = 0;
+    m_skelSelectedIndexCount = 0;
+    m_skelSelectedPositions.clear();
     m_wireDepthTex = nullptr;
 
     RenderMesh::Destroy();

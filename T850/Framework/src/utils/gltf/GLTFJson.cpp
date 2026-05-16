@@ -14,10 +14,14 @@
 
 #include <cctype>
 
+#ifdef _MSC_VER
 #pragma warning(push)
 #pragma warning(disable: 4244 4267)
+#endif
 #include <glaze/glaze.hpp>
+#ifdef _MSC_VER
 #pragma warning(pop)
+#endif
 
 namespace t850 {
 namespace gltf {

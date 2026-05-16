@@ -14,6 +14,37 @@
 #include <scene/PrimitiveInstance.h>
 #include <scene/RenderSkinnedMesh.h>
 namespace t850 {
+  namespace {
+    uint32_t NextPrimitiveEntityId() {
+      static uint32_t nextEntityId = 1;
+      return nextEntityId++;
+    }
+  }
+
+  void PrimitiveInst::CreateInstance(PrimitiveBase *pPrim, XMATRIX44 *pVP) {
+    gKey.bits = 0;
+    for (int i = 0; i < MaxPrimitiveTextures; i++) {
+      Textures[i] = 0;
+    }
+    EnvMap = 0;
+
+    pBase = pPrim;
+    pViewProj = pVP;
+    XMatIdentity(Position);
+    XMatIdentity(Scale);
+    XMatIdentity(RotationX);
+    XMatIdentity(RotationY);
+    XMatIdentity(RotationZ);
+    XMatIdentity(Final);
+    Visible = true;
+    m_brightness = 1.0f;
+    m_fParallaxLowSamples = 0.0f;
+    m_fParallaxHighSamples = 0.0f;
+    m_fParallaxHeight = 0.0f;
+    EntityId = NextPrimitiveEntityId();
+    ClearPhysicsLinks();
+  }
+
   void PrimitiveInst::TranslateAbsolute(float x, float y, float z) {
     XMatTranslation(Position, x, y, z);
   }
@@ -92,5 +123,10 @@ namespace t850 {
 
   bool PrimitiveInst::IsSkinnedMesh() const {
     return GetSkinnedMesh() != nullptr;
+  }
+
+  void PrimitiveInst::ClearPhysicsLinks() {
+    BodyHandle.Reset();
+    RagdollHandle.Reset();
   }
 }

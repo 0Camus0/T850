@@ -301,6 +301,9 @@ void DevLayer::ProcessInput(InputManager* input) {
   if (m_legacyGuiEnabled && m_gui.IsPopupActive()) {
     return;
   }
+  if (m_blockSceneInput) {
+    return;
+  }
   if (m_legacyGuiEnabled) {
     // Toggle GUI with G key
     if (input->PressedOnceKey(T800K_g)) {

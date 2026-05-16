@@ -108,10 +108,8 @@ function(t850_ensure_vcpkg)
 		vulkan-memory-allocator:${T850_VCPKG_STATIC_TRIPLET}
 		glslang:${T850_VCPKG_STATIC_TRIPLET})
 
-	if(NOT T850_ARCH STREQUAL "x86")
-		list(APPEND T850_VCPKG_PACKAGE_SPECS
-			joltphysics:${T850_VCPKG_STATIC_TRIPLET})
-	endif()
+	list(APPEND T850_VCPKG_PACKAGE_SPECS
+		joltphysics:${T850_VCPKG_STATIC_TRIPLET})
 
 	set(T850_IMGUI_HEADER ${T850_VCPKG_STATIC}/include/imgui.h)
 	set(T850_IMGUI_DX11_HEADER ${T850_VCPKG_STATIC}/include/imgui_impl_dx11.h)
@@ -164,12 +162,9 @@ endfunction()
 
 t850_ensure_vcpkg()
 
-set(T850_JOLT_ENABLED OFF)
-if(NOT T850_ARCH STREQUAL "x86")
-	list(APPEND CMAKE_PREFIX_PATH ${T850_VCPKG_STATIC})
-	find_package(Jolt CONFIG REQUIRED)
-	set(T850_JOLT_ENABLED ON)
-endif()
+list(APPEND CMAKE_PREFIX_PATH ${T850_VCPKG_STATIC})
+find_package(Jolt CONFIG REQUIRED)
+set(T850_JOLT_ENABLED ON)
 
 if(EXISTS ${T850_VCPKG_DYNAMIC}/bin/zlib1.dll)
 	set(T850_ZLIB_RUNTIME_DLL ${T850_VCPKG_DYNAMIC}/bin/zlib1.dll)

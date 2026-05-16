@@ -13,7 +13,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        platform: [x86, x64, ARM64]
+        platform: [Win32, x64, ARM64]
         configuration: [Debug, Release]
 
     steps:
@@ -44,8 +44,8 @@ jobs:
           cd T850/Librerias/vcpkg
           ./bootstrap-vcpkg.bat -disableMetrics
 
-      - name: Install vcpkg packages (x86)
-        if: matrix.platform == 'x86'
+      - name: Install vcpkg packages (Win32)
+        if: matrix.platform == 'Win32'
         shell: pwsh
         run: |
           cd T850/Librerias/vcpkg
@@ -87,7 +87,7 @@ jobs:
         id: arch
         shell: pwsh
         run: |
-          $map = @{ "x86" = "x86"; "x64" = "x64"; "ARM64" = "arm64" }
+          $map = @{ "Win32" = "Win32"; "x64" = "x64"; "ARM64" = "ARM64" }
           $arch = $map["${{ matrix.platform }}"]
           echo "name=$arch" >> $env:GITHUB_OUTPUT
 

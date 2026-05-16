@@ -3153,7 +3153,7 @@ void SandboxScene::CreatePhysicsFloor(t850::JoltPhysicsSystem& physics) {
   const float gap = hasRagdollBounds
       ? (std::max)(0.05f, (std::min)(25.0f, m_modelRadius * 0.04f))
       : (std::max)(0.08f, m_modelRadius * 0.08f);
-  const float floorSourceMinY = hasRagdollBounds ? ragdollBounds.min.y : worldBounds.min.y;
+  const float floorSourceMinY = worldBounds.min.y;
 
   XMATRIX44 floorTransform;
   floorTransform.Identity();
@@ -3172,11 +3172,11 @@ void SandboxScene::CreatePhysicsFloor(t850::JoltPhysicsSystem& physics) {
 
   m_floorBody = physics.CreateBody(floorDesc);
   if (m_floorBody.IsValid()) {
-    T8_LOG_INFO("[SandboxScene] Added static ragdoll floor top y=%.3f source=%s sourceMinY=%.3f meshMinY=%.3f halfSize=%.3f halfHeight=%.3f gap=%.3f areaScale=%.1f",
+    T8_LOG_INFO("[SandboxScene] Added static ragdoll floor top y=%.3f source=model sourceMinY=%.3f meshMinY=%.3f ragdollMinY=%.3f halfSize=%.3f halfHeight=%.3f gap=%.3f areaScale=%.1f",
                 floorTransform.m42 + halfHeight,
-                hasRagdollBounds ? "ragdoll" : "mesh",
                 floorSourceMinY,
                 worldBounds.min.y,
+                hasRagdollBounds ? ragdollBounds.min.y : worldBounds.min.y,
                 halfSize,
                 halfHeight,
                 gap,

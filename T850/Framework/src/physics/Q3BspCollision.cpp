@@ -1,0 +1,458 @@
+#include <pch.h>
+
+#include <physics/Q3BspCollision.h>
+
+#include <utils/Log.h>
+#include <utils/ResourceLocator.h>
+
+#ifdef _MSC_VER
+#pragma warning(push)
+#pragma warning(disable: 4244 4267)
+#endif
+#include <glaze/glaze.hpp>
+#ifdef _MSC_VER
+#pragma warning(pop)
+#endif
+
+#include <algorithm>
+#include <cmath>
+
+namespace t850 {
+
+struct Q3ClipVec3 {
+  float x = 0.0f;
+  float y = 0.0f;
+  float z = 0.0f;
+};
+
+struct Q3ClipPlaneDesc {
+  Q3ClipVec3 normal;
+  float dist = 0.0f;
+};
+
+struct Q3ClipBrushDesc {
+  std::vector<Q3ClipPlaneDesc> planes;
+};
+
+struct Q3ClipPatchFacetDesc {
+  Q3ClipPlaneDesc surface;
+  std::vector<Q3ClipPlaneDesc> borders;
+  Q3ClipVec3 mins;
+  Q3ClipVec3 maxs;
+};
+
+struct Q3ClipJumpPadDesc {
+  int entity_id = 0;
+  Q3ClipVec3 mins;
+  Q3ClipVec3 maxs;
+  Q3ClipVec3 velocity;
+};
+
+struct Q3ClipFileDesc {
+  int version = 1;
+  std::string source;
+  float unit_scale = 1.0f;
+  std::vector<Q3ClipBrushDesc> brushes;
+  std::vector<Q3ClipPatchFacetDesc> patch_facets;
+  std::vector<Q3ClipJumpPadDesc> jump_pads;
+};
+
+namespace {
+
+constexpr float kQ3SurfaceClipEpsilon = 0.125f;
+constexpr float kQ3EntityLinkEpsilon = 1.0f;
+constexpr float kDefaultQ3UnitScale = 1.0f / 32.0f;
+constexpr float kMinTraceEpsilon = 0.0001f;
+
+float ClampFloat(float value, float minValue, float maxValue) {
+  return (std::max)(minValue, (std::min)(value, maxValue));
+}
+
+float Dot3(const XVECTOR3& a, const XVECTOR3& b) {
+  return a.x * b.x + a.y * b.y + a.z * b.z;
+}
+
+float LengthSq3(const XVECTOR3& value) {
+  return Dot3(value, value);
+}
+
+float Length3(const XVECTOR3& value) {
+  return std::sqrt(LengthSq3(value));
+}
+
+XVECTOR3 NormalizeOr(XVECTOR3 value, const XVECTOR3& fallback) {
+  const float length = Length3(value);
+  if (length <= 0.000001f) {
+    return fallback;
+  }
+  value.x /= length;
+  value.y /= length;
+  value.z /= length;
+  value.w = 0.0f;
+  return value;
+}
+
+XVECTOR3 BoxHalfExtentsForCapsuleApprox(const CharacterCollisionSweep& sweep) {
+  return XVECTOR3(sweep.radius, sweep.halfHeight + sweep.radius, sweep.radius, 0.0f);
+}
+
+bool OverlapsAabb(const CharacterTriggerQuery& query, const Q3BspCollisionWorld::JumpPad& jumpPad, float slop) {
+  const XVECTOR3 queryMin = query.center - query.halfExtents;
+  const XVECTOR3 queryMax = query.center + query.halfExtents;
+  return queryMax.x >= jumpPad.mins.x - slop &&
+      queryMin.x <= jumpPad.maxs.x + slop &&
+      queryMax.y >= jumpPad.mins.y - slop &&
+      queryMin.y <= jumpPad.maxs.y + slop &&
+      queryMax.z >= jumpPad.mins.z - slop &&
+      queryMin.z <= jumpPad.maxs.z + slop;
+}
+
+bool OverlapsAabb(const XVECTOR3& firstMin,
+                  const XVECTOR3& firstMax,
+                  const XVECTOR3& secondMin,
+                  const XVECTOR3& secondMax) {
+  return firstMax.x >= secondMin.x &&
+      firstMin.x <= secondMax.x &&
+      firstMax.y >= secondMin.y &&
+      firstMin.y <= secondMax.y &&
+      firstMax.z >= secondMin.z &&
+      firstMin.z <= secondMax.z;
+}
+
+bool TraceBrush(const Q3BspCollisionWorld::Brush& brush,
+                const XVECTOR3& start,
+                const XVECTOR3& end,
+                const XVECTOR3& halfExtents,
+                float surfaceClipEpsilon,
+                float& inOutFraction,
+                XVECTOR3& outNormal,
+                bool& inOutAllSolid) {
+  float enterFraction = -1.0f;
+  float leaveFraction = 1.0f;
+  XVECTOR3 enterNormal(0.0f, 1.0f, 0.0f, 0.0f);
+  bool getOut = false;
+  bool startOut = false;
+
+  for (const Q3BspCollisionWorld::Plane& plane : brush.planes) {
+    const XVECTOR3& normal = plane.normal;
+    const float offset =
+        std::fabs(normal.x * halfExtents.x) +
+        std::fabs(normal.y * halfExtents.y) +
+        std::fabs(normal.z * halfExtents.z);
+    const float expandedDist = plane.dist + offset;
+    const float startDist = Dot3(start, normal) - expandedDist;
+    const float endDist = Dot3(end, normal) - expandedDist;
+
+    if (endDist > 0.0f) {
+      getOut = true;
+    }
+
+    if (startDist > 0.0f) {
+      startOut = true;
+    }
+
+    if (startDist > 0.0f && (endDist >= surfaceClipEpsilon || endDist >= startDist)) {
+      return false;
+    }
+
+    if (startDist <= 0.0f && endDist <= 0.0f) {
+      continue;
+    }
+
+    if (startDist > endDist) {
+      float fraction = (startDist - surfaceClipEpsilon) / (startDist - endDist);
+      if (fraction < 0.0f) {
+        fraction = 0.0f;
+      }
+      if (fraction > enterFraction) {
+        enterFraction = fraction;
+        enterNormal = normal;
+      }
+    } else {
+      float fraction = (startDist + surfaceClipEpsilon) / (startDist - endDist);
+      if (fraction > 1.0f) {
+        fraction = 1.0f;
+      }
+      leaveFraction = (std::min)(leaveFraction, fraction);
+    }
+
+    if (enterFraction > leaveFraction) {
+      return false;
+    }
+  }
+
+  if (!startOut) {
+    if (!getOut && inOutFraction > 0.0f) {
+      inOutFraction = 0.0f;
+      outNormal = NormalizeOr(start - end, XVECTOR3(0.0f, 1.0f, 0.0f, 0.0f));
+      inOutAllSolid = true;
+    }
+    return true;
+  }
+
+  if (enterFraction < 0.0f || enterFraction > inOutFraction) {
+    return false;
+  }
+
+  inOutFraction = ClampFloat(enterFraction, 0.0f, 1.0f);
+  outNormal = enterNormal;
+  return true;
+}
+
+bool TracePatchFacet(const Q3BspCollisionWorld::PatchFacet& facet,
+                     const XVECTOR3& start,
+                     const XVECTOR3& end,
+                     const XVECTOR3& halfExtents,
+                     float surfaceClipEpsilon,
+                     float& inOutFraction,
+                     XVECTOR3& outNormal) {
+  const XVECTOR3 sweepMin(
+      (std::min)(start.x, end.x) - halfExtents.x - surfaceClipEpsilon,
+      (std::min)(start.y, end.y) - halfExtents.y - surfaceClipEpsilon,
+      (std::min)(start.z, end.z) - halfExtents.z - surfaceClipEpsilon,
+      1.0f);
+  const XVECTOR3 sweepMax(
+      (std::max)(start.x, end.x) + halfExtents.x + surfaceClipEpsilon,
+      (std::max)(start.y, end.y) + halfExtents.y + surfaceClipEpsilon,
+      (std::max)(start.z, end.z) + halfExtents.z + surfaceClipEpsilon,
+      1.0f);
+  if (!OverlapsAabb(sweepMin, sweepMax, facet.mins, facet.maxs)) {
+    return false;
+  }
+
+  const XVECTOR3& normal = facet.surface.normal;
+  const float offset =
+      std::fabs(normal.x * halfExtents.x) +
+      std::fabs(normal.y * halfExtents.y) +
+      std::fabs(normal.z * halfExtents.z);
+  const float expandedDist = facet.surface.dist + offset;
+  const float startDist = Dot3(start, normal) - expandedDist;
+  const float endDist = Dot3(end, normal) - expandedDist;
+  if (startDist <= 0.0f || startDist <= endDist) {
+    return false;
+  }
+
+  const float denom = startDist - endDist;
+  if (denom <= 0.000001f) {
+    return false;
+  }
+
+  float fraction = (startDist - surfaceClipEpsilon) / denom;
+  fraction = ClampFloat(fraction, 0.0f, 1.0f);
+  if (fraction > inOutFraction) {
+    return false;
+  }
+
+  const XVECTOR3 hitCenter = start + (end - start) * fraction;
+  for (const Q3BspCollisionWorld::Plane& border : facet.borders) {
+    const XVECTOR3& borderNormal = border.normal;
+    const float borderOffset =
+        std::fabs(borderNormal.x * halfExtents.x) +
+        std::fabs(borderNormal.y * halfExtents.y) +
+        std::fabs(borderNormal.z * halfExtents.z);
+    const float borderDist = border.dist + borderOffset + surfaceClipEpsilon;
+    if (Dot3(hitCenter, borderNormal) > borderDist) {
+      return false;
+    }
+  }
+
+  inOutFraction = fraction;
+  outNormal = normal;
+  return true;
+}
+
+} // namespace
+
+bool Q3BspCollisionWorld::Load(const std::string& resourcePath, std::string* error) {
+  Clear();
+
+  std::string content;
+  if (!ResourceLocator::Instance().ReadText(resourcePath, content)) {
+    if (error) *error = "Q3 collision file not found or unreadable: " + resourcePath;
+    return false;
+  }
+
+  Q3ClipFileDesc desc;
+  auto err = glz::read<glz::opts{.error_on_unknown_keys = false}>(desc, content);
+  if (err) {
+    if (error) *error = glz::format_error(err, content);
+    return false;
+  }
+
+  m_brushes.reserve(desc.brushes.size());
+  for (const Q3ClipBrushDesc& brushDesc : desc.brushes) {
+    Brush brush;
+    brush.planes.reserve(brushDesc.planes.size());
+    for (const Q3ClipPlaneDesc& planeDesc : brushDesc.planes) {
+      Plane plane;
+      plane.normal = NormalizeOr(
+          XVECTOR3(planeDesc.normal.x, planeDesc.normal.y, planeDesc.normal.z, 0.0f),
+          XVECTOR3(0.0f, 1.0f, 0.0f, 0.0f));
+      plane.dist = planeDesc.dist;
+      if (std::isfinite(plane.dist)) {
+        brush.planes.push_back(plane);
+      }
+    }
+
+    if (brush.planes.size() >= 4) {
+      m_brushes.push_back(std::move(brush));
+    }
+  }
+
+  m_patchFacets.reserve(desc.patch_facets.size());
+  for (const Q3ClipPatchFacetDesc& facetDesc : desc.patch_facets) {
+    PatchFacet facet;
+    facet.surface.normal = NormalizeOr(
+        XVECTOR3(facetDesc.surface.normal.x, facetDesc.surface.normal.y, facetDesc.surface.normal.z, 0.0f),
+        XVECTOR3(0.0f, 1.0f, 0.0f, 0.0f));
+    facet.surface.dist = facetDesc.surface.dist;
+    if (!std::isfinite(facet.surface.dist)) {
+      continue;
+    }
+
+    facet.borders.reserve(facetDesc.borders.size());
+    for (const Q3ClipPlaneDesc& borderDesc : facetDesc.borders) {
+      Plane border;
+      border.normal = NormalizeOr(
+          XVECTOR3(borderDesc.normal.x, borderDesc.normal.y, borderDesc.normal.z, 0.0f),
+          XVECTOR3(0.0f, 1.0f, 0.0f, 0.0f));
+      border.dist = borderDesc.dist;
+      if (std::isfinite(border.dist)) {
+        facet.borders.push_back(border);
+      }
+    }
+
+    facet.mins = XVECTOR3(facetDesc.mins.x, facetDesc.mins.y, facetDesc.mins.z, 1.0f);
+    facet.maxs = XVECTOR3(facetDesc.maxs.x, facetDesc.maxs.y, facetDesc.maxs.z, 1.0f);
+    if (facet.mins.x > facet.maxs.x) std::swap(facet.mins.x, facet.maxs.x);
+    if (facet.mins.y > facet.maxs.y) std::swap(facet.mins.y, facet.maxs.y);
+    if (facet.mins.z > facet.maxs.z) std::swap(facet.mins.z, facet.maxs.z);
+    if (facet.borders.size() >= 3 &&
+        std::isfinite(facet.mins.x) && std::isfinite(facet.mins.y) && std::isfinite(facet.mins.z) &&
+        std::isfinite(facet.maxs.x) && std::isfinite(facet.maxs.y) && std::isfinite(facet.maxs.z)) {
+      m_patchFacets.push_back(std::move(facet));
+    }
+  }
+
+  m_jumpPads.reserve(desc.jump_pads.size());
+  for (const Q3ClipJumpPadDesc& jumpPadDesc : desc.jump_pads) {
+    JumpPad jumpPad;
+    jumpPad.entityId = static_cast<uint32_t>((std::max)(0, jumpPadDesc.entity_id));
+    jumpPad.mins = XVECTOR3(jumpPadDesc.mins.x, jumpPadDesc.mins.y, jumpPadDesc.mins.z, 1.0f);
+    jumpPad.maxs = XVECTOR3(jumpPadDesc.maxs.x, jumpPadDesc.maxs.y, jumpPadDesc.maxs.z, 1.0f);
+    jumpPad.velocity = XVECTOR3(jumpPadDesc.velocity.x, jumpPadDesc.velocity.y, jumpPadDesc.velocity.z, 0.0f);
+    if (jumpPad.mins.x > jumpPad.maxs.x) std::swap(jumpPad.mins.x, jumpPad.maxs.x);
+    if (jumpPad.mins.y > jumpPad.maxs.y) std::swap(jumpPad.mins.y, jumpPad.maxs.y);
+    if (jumpPad.mins.z > jumpPad.maxs.z) std::swap(jumpPad.mins.z, jumpPad.maxs.z);
+    if (std::isfinite(jumpPad.velocity.x) &&
+        std::isfinite(jumpPad.velocity.y) &&
+        std::isfinite(jumpPad.velocity.z)) {
+      m_jumpPads.push_back(jumpPad);
+    }
+  }
+
+  if (m_brushes.empty()) {
+    if (error) *error = "Q3 collision file has no valid brushes: " + resourcePath;
+    Clear();
+    return false;
+  }
+
+  m_resourcePath = resourcePath;
+  const float unitScale = std::isfinite(desc.unit_scale) && desc.unit_scale > 0.0f
+      ? std::fabs(desc.unit_scale)
+      : kDefaultQ3UnitScale;
+  m_surfaceClipEpsilon = (std::max)(kQ3SurfaceClipEpsilon * unitScale, kMinTraceEpsilon);
+  m_triggerTouchSlop = (std::max)(kQ3EntityLinkEpsilon * unitScale, m_surfaceClipEpsilon);
+  T8_LOG_INFO(
+      "[Q3BspCollision] Loaded %s brushes=%zu patchFacets=%zu jumpPads=%zu",
+      resourcePath.c_str(),
+      m_brushes.size(),
+      m_patchFacets.size(),
+      m_jumpPads.size());
+  return true;
+}
+
+void Q3BspCollisionWorld::Clear() {
+  m_resourcePath.clear();
+  m_brushes.clear();
+  m_patchFacets.clear();
+  m_jumpPads.clear();
+  m_surfaceClipEpsilon = kQ3SurfaceClipEpsilon * kDefaultQ3UnitScale;
+  m_triggerTouchSlop = kQ3EntityLinkEpsilon * kDefaultQ3UnitScale;
+}
+
+bool Q3BspCollisionWorld::SweepCapsule(const CharacterCollisionSweep& sweep, CharacterCollisionHit& outHit) const {
+  CharacterBoxSweep boxSweep;
+  boxSweep.startCenter = sweep.startCenter;
+  boxSweep.displacement = sweep.displacement;
+  boxSweep.halfExtents = BoxHalfExtentsForCapsuleApprox(sweep);
+  return SweepBox(boxSweep, outHit);
+}
+
+bool Q3BspCollisionWorld::SweepBox(const CharacterBoxSweep& sweep, CharacterCollisionHit& outHit) const {
+  outHit = CharacterCollisionHit{};
+  if (m_brushes.empty() || LengthSq3(sweep.displacement) <= 0.00000001f) {
+    return false;
+  }
+
+  const XVECTOR3 end = sweep.startCenter + sweep.displacement;
+  float hitFraction = 1.0f;
+  XVECTOR3 hitNormal(0.0f, 1.0f, 0.0f, 0.0f);
+  bool allSolid = false;
+
+  for (const Brush& brush : m_brushes) {
+    TraceBrush(
+        brush,
+        sweep.startCenter,
+        end,
+        sweep.halfExtents,
+        m_surfaceClipEpsilon,
+        hitFraction,
+        hitNormal,
+        allSolid);
+  }
+
+  for (const PatchFacet& facet : m_patchFacets) {
+    TracePatchFacet(
+        facet,
+        sweep.startCenter,
+        end,
+        sweep.halfExtents,
+        m_surfaceClipEpsilon,
+        hitFraction,
+        hitNormal);
+  }
+
+  if (hitFraction >= 1.0f && !allSolid) {
+    return false;
+  }
+
+  outHit.hit = true;
+  outHit.fraction = ClampFloat(hitFraction, 0.0f, 1.0f);
+  outHit.normal = NormalizeOr(hitNormal, XVECTOR3(0.0f, 1.0f, 0.0f, 0.0f));
+  outHit.position = sweep.startCenter + sweep.displacement * outHit.fraction;
+  outHit.position.w = 1.0f;
+  return true;
+}
+
+bool Q3BspCollisionWorld::QueryTriggerTouch(const CharacterTriggerQuery& query, CharacterTriggerTouch& outTouch) const {
+  outTouch = CharacterTriggerTouch{};
+  if (m_jumpPads.empty()) {
+    return false;
+  }
+
+  for (const JumpPad& jumpPad : m_jumpPads) {
+    if (!OverlapsAabb(query, jumpPad, m_triggerTouchSlop)) {
+      continue;
+    }
+
+    outTouch.type = CharacterTriggerTouch::Type::JumpPad;
+    outTouch.entityId = jumpPad.entityId;
+    outTouch.velocity = jumpPad.velocity;
+    return true;
+  }
+
+  return false;
+}
+
+} // namespace t850

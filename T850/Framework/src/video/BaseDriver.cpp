@@ -468,6 +468,7 @@ namespace t850 {
       if (key.has(ShaderKey::SPECULAR_FACTOR_MAP)) Defines += "#define SPECULAR_FACTOR_MAP\n\n";
       if (key.has(ShaderKey::SPECULAR_COLOR_MAP)) Defines += "#define SPECULAR_COLOR_MAP\n\n";
       if (key.has(ShaderKey::TRANSMISSION_MAP)) Defines += "#define TRANSMISSION_MAP\n\n";
+      if (key.has(ShaderKey::LIGHTMAP_MAP)) Defines += "#define LIGHTMAP_MAP\n\n";
 
       // Material conventions
       if (key.has(ShaderKey::GLTF_TANGENT_SPACE)) Defines += "#define GLTF_TANGENT_SPACE\n\n";

@@ -474,6 +474,9 @@ void App::InitVars() {
     //it->InitVars();
   }
   int sceneIdx = (g_config.startScene >= 0 && g_config.startScene < (int)m_scenes.size()) ? g_config.startScene : 0;
+  if (!g_config.sceneFilePath.empty()) {
+    sceneIdx = 0;
+  }
   if (g_config.flags.benchmark && m_scenes.size() > 1) {
     sceneIdx = 1;
   }

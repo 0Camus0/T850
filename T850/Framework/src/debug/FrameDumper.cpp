@@ -174,6 +174,7 @@ void FrameDumper::ApplySnapshot(Camera& cam, Camera& lightCam, SceneProps& props
   if (sp.material_emissive_intensity) props.MaterialEmissiveIntensity = *sp.material_emissive_intensity;
   if (sp.material_transmission_multiplier) props.MaterialTransmissionMultiplier = *sp.material_transmission_multiplier;
   if (sp.material_refraction_strength) props.MaterialRefractionStrength = *sp.material_refraction_strength;
+  if (sp.lightmap_intensity) props.LightmapIntensity = *sp.lightmap_intensity;
   if (sp.parallax_shadow_min_layers) props.ParallaxShadowMinLayers = *sp.parallax_shadow_min_layers;
   if (sp.parallax_shadow_max_layers) props.ParallaxShadowMaxLayers = *sp.parallax_shadow_max_layers;
   if (sp.parallax_shadow_softness) props.ParallaxShadowSoftness = *sp.parallax_shadow_softness;
@@ -425,6 +426,7 @@ void FrameDumper::WriteSnapshot(const std::string& path,
   sp.material_emissive_intensity = props.MaterialEmissiveIntensity;
   sp.material_transmission_multiplier = props.MaterialTransmissionMultiplier;
   sp.material_refraction_strength = props.MaterialRefractionStrength;
+  sp.lightmap_intensity = props.LightmapIntensity;
   sp.parallax_shadow_min_layers = props.ParallaxShadowMinLayers;
   sp.parallax_shadow_max_layers = props.ParallaxShadowMaxLayers;
   sp.parallax_shadow_softness = props.ParallaxShadowSoftness;

@@ -378,6 +378,7 @@ void main(){
 			highp vec4 geoData = texture2D(tex3, coords);
 		#endif
 		highp vec3 geoNormal = DecodeOctahedralNormal(geoData.xy);
+		highp float lightmap = clamp(geoData.b, 0.0, 1.0);
 		highp float packedMaterial = geoData.a;
 		bool unlitMaterial = packedMaterial >= 0.5;
 		highp float clearcoatRoughness = unlitMaterial ? (packedMaterial - 0.5) * 2.0 : packedMaterial * 2.0;
@@ -509,6 +510,7 @@ void main(){
 			highp float diffuseMip = clamp(brightness.z, 0.0, iblMaxMip);
 			highp vec3 irradiance = SampleCubeLod(texIBLDiffuse, irradianceDir, diffuseMip);
 			indirectLight += irradiance * Albedo.xyz * kDiffuseEnv * toogles.z;
+			indirectLight += Albedo.xyz * kDiffuseEnv * lightmap;
 
 			// PBR: avoid adding a constant ambient floor term; rely on IBL + AO.
 			if (hasSheenLUT && sheenStrength > 0.0) {

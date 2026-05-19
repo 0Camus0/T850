@@ -204,8 +204,14 @@ bool ResolveImage(const Document& doc, int imageIndex,
   }
 
   // Build a stable cache key for the embedded blob.
+  // We include imageIndex to guarantee uniqueness: glTF does not require image
+  // names to be unique (they exist only for tooling display).  Without the
+  // index, multiple materials that each embed their own "normal.png" would all
+  // collide on the same cache slot and every surface would sample the first
+  // loaded image.  Two glTF textures that intentionally share the same image
+  // (same imageIndex) still generate the same key, so deduplication is preserved.
   std::string baseKey = !img.name.empty()
-      ? img.name
+      ? img.name + "_img" + std::to_string(imageIndex)
       : (Stem(doc._sourcePath) + "_img" + std::to_string(imageIndex));
   // Force a benign extension so any downstream user of `filepath`
   // doesn't trip on missing dots.
@@ -288,9 +294,9 @@ void ResolveAllImages(const Document& doc,
     const Image& img = doc.images[i];
     DecodeResult& r = results[i];
 
-    // Build cache key
+    // Build cache key — include image index for uniqueness (see ResolveImage comment).
     std::string baseKey = !img.name.empty()
-        ? img.name
+        ? img.name + "_img" + std::to_string(i)
         : (Stem(doc._sourcePath) + "_img" + std::to_string(i));
     if (baseKey.find('.') == std::string::npos) baseKey += ".png";
 

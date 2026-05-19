@@ -128,6 +128,30 @@ struct PhysicsTriangleMeshBodyDesc {
   bool sensor = false;
 };
 
+struct PhysicsCapsuleCastDesc {
+  XVECTOR3 startCenter = XVECTOR3(0.0f, 0.0f, 0.0f, 1.0f);
+  XVECTOR3 displacement = XVECTOR3(0.0f, 0.0f, 0.0f, 0.0f);
+  float radius = 0.35f;
+  float halfHeight = 0.55f;
+  std::vector<uint32_t> ignoredEntityIds;
+};
+
+struct PhysicsBoxCastDesc {
+  XVECTOR3 startCenter = XVECTOR3(0.0f, 0.0f, 0.0f, 1.0f);
+  XVECTOR3 displacement = XVECTOR3(0.0f, 0.0f, 0.0f, 0.0f);
+  XVECTOR3 halfExtents = XVECTOR3(0.35f, 0.90f, 0.35f, 0.0f);
+  std::vector<uint32_t> ignoredEntityIds;
+};
+
+struct PhysicsCastHit {
+  bool hit = false;
+  float fraction = 1.0f;
+  XVECTOR3 position = XVECTOR3(0.0f, 0.0f, 0.0f, 1.0f);
+  XVECTOR3 normal = XVECTOR3(0.0f, 1.0f, 0.0f, 0.0f);
+  PhysicsBodyHandle body;
+  uint32_t entityId = 0;
+};
+
 struct PhysicsBodyState {
   PhysicsBodyHandle handle;
   uint32_t entityId = 0;
@@ -201,6 +225,21 @@ struct PhysicsRagdollAnimationBinding {
   std::vector<XVECTOR3> childJointPlaneFromBody;
   std::vector<std::vector<int>> controlledBoneIndices;
   std::vector<std::vector<XMATRIX44>> controlledBodyFromBone;
+};
+
+static constexpr int kPhysicsRagdollEditSchemaVersion = 11;
+static constexpr int kPhysicsRagdollJointDisabled = -2;
+static constexpr int kPhysicsRagdollJointInheritParent = -1;
+
+struct PhysicsRagdollAuthoringDesc {
+  int schema = kPhysicsRagdollEditSchemaVersion;
+  std::string model;
+  PhysicsRagdollAnimationBinding binding;
+  std::vector<int> parentBodyIndices;
+  std::vector<int> jointParentBodyIndices;
+  std::vector<uint8_t> frozenBodies;
+  std::vector<uint8_t> frozenJoints;
+  std::vector<uint8_t> contactJoints;
 };
 
 } // namespace t850

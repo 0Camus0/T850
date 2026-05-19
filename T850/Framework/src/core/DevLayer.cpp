@@ -386,8 +386,8 @@ void DevLayer::ProcessInput(InputManager* input) {
     T8_LOG_INFO("[DevLayer] %s", m_paused ? "PAUSED" : "RESUMED");
   }
 
-  // Spacebar dump works even when paused
-  if (input->PressedOnceKey(T800K_SPACE)) {
+  // F10 dump works even when paused. Space is reserved for gameplay/camera jump.
+  if (input->PressedOnceKey(T800K_F10)) {
     if (m_activeScene) m_activeScene->RequestDump();
   }
 

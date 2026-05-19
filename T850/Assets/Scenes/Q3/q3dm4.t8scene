@@ -1,0 +1,2044 @@
+{
+   "version": 1,
+   "editor": {
+      "camera_target": {
+         "x": 35.248535,
+         "y": 2.0,
+         "z": 8.498535
+      },
+      "camera_yaw": -0.75,
+      "camera_pitch": 0.4,
+      "camera_distance": 107.060315,
+      "show_skybox": true,
+      "show_wireframe": false
+   },
+   "objects": [
+      {
+         "name": "q3dm4",
+         "mesh": "Models/Q3/q3dm4.glb",
+         "position": {
+            "x": 0.0,
+            "y": 0.0,
+            "z": 0.0
+         },
+         "rotation": {
+            "x": 0.0,
+            "y": 0.0,
+            "z": 0.0
+         },
+         "scale": {
+            "x": 0.03125,
+            "y": 0.03125,
+            "z": 0.03125
+         },
+         "visible": true,
+         "frozen": false,
+         "show_wire": false
+      }
+   ],
+   "cameras": [
+      {
+         "name": "Overview Camera",
+         "type": 0,
+         "position": {
+            "x": 35.248535,
+            "y": -105.060315,
+            "z": 45.969645
+         },
+         "target": {
+            "x": 35.248535,
+            "y": 2.0,
+            "z": 8.498535
+         },
+         "fov_deg": 60.0,
+         "ortho_w": 156.50293,
+         "ortho_h": 81.00293,
+         "near_plane": 0.1,
+         "far_plane": 535.301573,
+         "visible": true,
+         "frozen": false
+      }
+   ],
+   "lights": [
+      {
+         "name": "Q3 Omni Light 000",
+         "type": 1,
+         "position": {
+            "x": -9.5,
+            "y": -2.375,
+            "z": 4.25
+         },
+         "direction": {
+            "x": 0.0,
+            "y": 0.0,
+            "z": -1.0
+         },
+         "color": {
+            "x": 0.10182,
+            "y": 0.063337,
+            "z": 0.015798
+         },
+         "intensity": 3.0,
+         "radius": 4.330127,
+         "enabled": true,
+         "visible": true,
+         "frozen": false,
+         "q3": {
+            "source": "bsp_entity_lump",
+            "classname": "light",
+            "light": 300.0,
+            "radius": null,
+            "target": "",
+            "targeted": false,
+            "spawnflags": "",
+            "angle": "",
+            "origin": "-304 136 -76",
+            "color": "0.101820 0.063337 0.015798"
+         }
+      },
+      {
+         "name": "Q3 Spot Light 001",
+         "type": 1,
+         "position": {
+            "x": -6.0,
+            "y": -7.5,
+            "z": 42.5
+         },
+         "direction": {
+            "x": 0.0,
+            "y": 0.998618,
+            "z": 0.052559
+         },
+         "color": {
+            "x": 0.369309,
+            "y": 0.339817,
+            "z": 0.268275
+         },
+         "intensity": 6.0,
+         "radius": 6.123724,
+         "enabled": true,
+         "visible": true,
+         "frozen": false,
+         "q3": {
+            "source": "bsp_entity_lump",
+            "classname": "light",
+            "light": 600.0,
+            "radius": null,
+            "target": "t34",
+            "targeted": true,
+            "spawnflags": "",
+            "angle": "",
+            "origin": "-192 1360 -240",
+            "color": "0.369309 0.339817 0.268275"
+         }
+      },
+      {
+         "name": "Q3 Spot Light 002",
+         "type": 1,
+         "position": {
+            "x": -27.0,
+            "y": 1.25,
+            "z": 26.0
+         },
+         "direction": {
+            "x": 0.0,
+            "y": -1.0,
+            "z": 0.0
+         },
+         "color": {
+            "x": 0.443056,
+            "y": 0.393797,
+            "z": 0.375887
+         },
+         "intensity": 5.0,
+         "radius": 1.875,
+         "enabled": true,
+         "visible": true,
+         "frozen": false,
+         "q3": {
+            "source": "bsp_entity_lump",
+            "classname": "light",
+            "light": 500.0,
+            "radius": 60.0,
+            "target": "t26",
+            "targeted": true,
+            "spawnflags": "",
+            "angle": "",
+            "origin": "-864 832 40",
+            "color": "0.443056 0.393797 0.375887"
+         }
+      },
+      {
+         "name": "Q3 Spot Light 003",
+         "type": 1,
+         "position": {
+            "x": 7.25,
+            "y": 10.75,
+            "z": -19.25
+         },
+         "direction": {
+            "x": 0.141968,
+            "y": -0.977072,
+            "z": -0.15867
+         },
+         "color": {
+            "x": 0.369309,
+            "y": 0.339817,
+            "z": 0.268275
+         },
+         "intensity": 20.0,
+         "radius": 1.40625,
+         "enabled": true,
+         "visible": true,
+         "frozen": false,
+         "q3": {
+            "source": "bsp_entity_lump",
+            "classname": "light",
+            "light": 4500.0,
+            "radius": 45.0,
+            "target": "t13",
+            "targeted": true,
+            "spawnflags": "",
+            "angle": "",
+            "origin": "232 -616 344",
+            "color": "0.369309 0.339817 0.268275"
+         }
+      },
+      {
+         "name": "Q3 Spot Light 004",
+         "type": 1,
+         "position": {
+            "x": 12.0,
+            "y": 10.75,
+            "z": -19.25
+         },
+         "direction": {
+            "x": 0.0,
+            "y": -0.987069,
+            "z": -0.160293
+         },
+         "color": {
+            "x": 0.369309,
+            "y": 0.339817,
+            "z": 0.268275
+         },
+         "intensity": 20.0,
+         "radius": 1.40625,
+         "enabled": true,
+         "visible": true,
+         "frozen": false,
+         "q3": {
+            "source": "bsp_entity_lump",
+            "classname": "light",
+            "light": 4500.0,
+            "radius": 45.0,
+            "target": "t14",
+            "targeted": true,
+            "spawnflags": "",
+            "angle": "",
+            "origin": "384 -616 344",
+            "color": "0.369309 0.339817 0.268275"
+         }
+      },
+      {
+         "name": "Q3 Spot Light 005",
+         "type": 1,
+         "position": {
+            "x": 17.25,
+            "y": 10.75,
+            "z": -14.0
+         },
+         "direction": {
+            "x": 0.160293,
+            "y": -0.987069,
+            "z": 0.0
+         },
+         "color": {
+            "x": 0.369309,
+            "y": 0.339817,
+            "z": 0.268275
+         },
+         "intensity": 20.0,
+         "radius": 1.40625,
+         "enabled": true,
+         "visible": true,
+         "frozen": false,
+         "q3": {
+            "source": "bsp_entity_lump",
+            "classname": "light",
+            "light": 4500.0,
+            "radius": 45.0,
+            "target": "t15",
+            "targeted": true,
+            "spawnflags": "",
+            "angle": "",
+            "origin": "552 -448 344",
+            "color": "0.369309 0.339817 0.268275"
+         }
+      },
+      {
+         "name": "Q3 Spot Light 006",
+         "type": 1,
+         "position": {
+            "x": 17.25,
+            "y": 10.75,
+            "z": -10.0
+         },
+         "direction": {
+            "x": 0.160293,
+            "y": -0.987069,
+            "z": 0.0
+         },
+         "color": {
+            "x": 0.369309,
+            "y": 0.339817,
+            "z": 0.268275
+         },
+         "intensity": 20.0,
+         "radius": 1.40625,
+         "enabled": true,
+         "visible": true,
+         "frozen": false,
+         "q3": {
+            "source": "bsp_entity_lump",
+            "classname": "light",
+            "light": 4500.0,
+            "radius": 45.0,
+            "target": "t16",
+            "targeted": true,
+            "spawnflags": "",
+            "angle": "",
+            "origin": "552 -320 344",
+            "color": "0.369309 0.339817 0.268275"
+         }
+      },
+      {
+         "name": "Q3 Spot Light 007",
+         "type": 1,
+         "position": {
+            "x": 17.25,
+            "y": 10.75,
+            "z": -6.0
+         },
+         "direction": {
+            "x": 0.160293,
+            "y": -0.987069,
+            "z": 0.0
+         },
+         "color": {
+            "x": 0.369309,
+            "y": 0.339817,
+            "z": 0.268275
+         },
+         "intensity": 20.0,
+         "radius": 1.40625,
+         "enabled": true,
+         "visible": true,
+         "frozen": false,
+         "q3": {
+            "source": "bsp_entity_lump",
+            "classname": "light",
+            "light": 4500.0,
+            "radius": 45.0,
+            "target": "t17",
+            "targeted": true,
+            "spawnflags": "",
+            "angle": "",
+            "origin": "552 -192 344",
+            "color": "0.369309 0.339817 0.268275"
+         }
+      },
+      {
+         "name": "Q3 Spot Light 008",
+         "type": 1,
+         "position": {
+            "x": 16.0,
+            "y": 10.75,
+            "z": -4.75
+         },
+         "direction": {
+            "x": 0.0,
+            "y": -0.986129,
+            "z": 0.165982
+         },
+         "color": {
+            "x": 0.369309,
+            "y": 0.339817,
+            "z": 0.268275
+         },
+         "intensity": 20.0,
+         "radius": 1.40625,
+         "enabled": true,
+         "visible": true,
+         "frozen": false,
+         "q3": {
+            "source": "bsp_entity_lump",
+            "classname": "light",
+            "light": 4500.0,
+            "radius": 45.0,
+            "target": "t18",
+            "targeted": true,
+            "spawnflags": "",
+            "angle": "",
+            "origin": "512 -152 344",
+            "color": "0.369309 0.339817 0.268275"
+         }
+      },
+      {
+         "name": "Q3 Spot Light 009",
+         "type": 1,
+         "position": {
+            "x": 12.0,
+            "y": 10.75,
+            "z": -4.75
+         },
+         "direction": {
+            "x": 0.0,
+            "y": -0.986129,
+            "z": 0.165982
+         },
+         "color": {
+            "x": 0.369309,
+            "y": 0.339817,
+            "z": 0.268275
+         },
+         "intensity": 20.0,
+         "radius": 1.40625,
+         "enabled": true,
+         "visible": true,
+         "frozen": false,
+         "q3": {
+            "source": "bsp_entity_lump",
+            "classname": "light",
+            "light": 4500.0,
+            "radius": 45.0,
+            "target": "t19",
+            "targeted": true,
+            "spawnflags": "",
+            "angle": "",
+            "origin": "384 -152 344",
+            "color": "0.369309 0.339817 0.268275"
+         }
+      },
+      {
+         "name": "Q3 Spot Light 010",
+         "type": 1,
+         "position": {
+            "x": 16.375,
+            "y": 10.75,
+            "z": -18.375
+         },
+         "direction": {
+            "x": 0.150329,
+            "y": -0.97714,
+            "z": -0.150329
+         },
+         "color": {
+            "x": 0.369309,
+            "y": 0.339817,
+            "z": 0.268275
+         },
+         "intensity": 20.0,
+         "radius": 1.40625,
+         "enabled": true,
+         "visible": true,
+         "frozen": false,
+         "q3": {
+            "source": "bsp_entity_lump",
+            "classname": "light",
+            "light": 4500.0,
+            "radius": 45.0,
+            "target": "t23",
+            "targeted": true,
+            "spawnflags": "",
+            "angle": "",
+            "origin": "524 -588 344",
+            "color": "0.369309 0.339817 0.268275"
+         }
+      },
+      {
+         "name": "Q3 Spot Light 011",
+         "type": 1,
+         "position": {
+            "x": -2.125,
+            "y": 10.75,
+            "z": -6.0
+         },
+         "direction": {
+            "x": 0.0,
+            "y": -0.952215,
+            "z": 0.305428
+         },
+         "color": {
+            "x": 0.369309,
+            "y": 0.339817,
+            "z": 0.268275
+         },
+         "intensity": 20.0,
+         "radius": 1.40625,
+         "enabled": true,
+         "visible": true,
+         "frozen": false,
+         "q3": {
+            "source": "bsp_entity_lump",
+            "classname": "light",
+            "light": 2000.0,
+            "radius": 45.0,
+            "target": "t24",
+            "targeted": true,
+            "spawnflags": "",
+            "angle": "",
+            "origin": "-68 -192 344",
+            "color": "0.369309 0.339817 0.268275"
+         }
+      },
+      {
+         "name": "Q3 Spot Light 012",
+         "type": 1,
+         "position": {
+            "x": -9.875,
+            "y": 10.75,
+            "z": -6.0
+         },
+         "direction": {
+            "x": 0.0,
+            "y": -0.952215,
+            "z": 0.305428
+         },
+         "color": {
+            "x": 0.369309,
+            "y": 0.339817,
+            "z": 0.268275
+         },
+         "intensity": 20.0,
+         "radius": 1.40625,
+         "enabled": true,
+         "visible": true,
+         "frozen": false,
+         "q3": {
+            "source": "bsp_entity_lump",
+            "classname": "light",
+            "light": 2000.0,
+            "radius": 45.0,
+            "target": "t25",
+            "targeted": true,
+            "spawnflags": "",
+            "angle": "",
+            "origin": "-316 -192 344",
+            "color": "0.369309 0.339817 0.268275"
+         }
+      },
+      {
+         "name": "Q3 Spot Light 013",
+         "type": 1,
+         "position": {
+            "x": -27.0,
+            "y": 1.25,
+            "z": 30.0
+         },
+         "direction": {
+            "x": 0.0,
+            "y": -1.0,
+            "z": 0.0
+         },
+         "color": {
+            "x": 0.443056,
+            "y": 0.393797,
+            "z": 0.375887
+         },
+         "intensity": 5.0,
+         "radius": 1.875,
+         "enabled": true,
+         "visible": true,
+         "frozen": false,
+         "q3": {
+            "source": "bsp_entity_lump",
+            "classname": "light",
+            "light": 500.0,
+            "radius": 60.0,
+            "target": "t27",
+            "targeted": true,
+            "spawnflags": "",
+            "angle": "",
+            "origin": "-864 960 40",
+            "color": "0.443056 0.393797 0.375887"
+         }
+      },
+      {
+         "name": "Q3 Spot Light 014",
+         "type": 1,
+         "position": {
+            "x": -23.0,
+            "y": 1.25,
+            "z": 35.0
+         },
+         "direction": {
+            "x": 0.0,
+            "y": -1.0,
+            "z": 0.0
+         },
+         "color": {
+            "x": 0.443056,
+            "y": 0.393797,
+            "z": 0.375887
+         },
+         "intensity": 5.0,
+         "radius": 1.875,
+         "enabled": true,
+         "visible": true,
+         "frozen": false,
+         "q3": {
+            "source": "bsp_entity_lump",
+            "classname": "light",
+            "light": 500.0,
+            "radius": 60.0,
+            "target": "t28",
+            "targeted": true,
+            "spawnflags": "",
+            "angle": "",
+            "origin": "-736 1120 40",
+            "color": "0.443056 0.393797 0.375887"
+         }
+      },
+      {
+         "name": "Q3 Spot Light 015",
+         "type": 1,
+         "position": {
+            "x": -19.0,
+            "y": 1.25,
+            "z": 35.0
+         },
+         "direction": {
+            "x": 0.0,
+            "y": -1.0,
+            "z": 0.0
+         },
+         "color": {
+            "x": 0.443056,
+            "y": 0.393797,
+            "z": 0.375887
+         },
+         "intensity": 5.0,
+         "radius": 1.875,
+         "enabled": true,
+         "visible": true,
+         "frozen": false,
+         "q3": {
+            "source": "bsp_entity_lump",
+            "classname": "light",
+            "light": 500.0,
+            "radius": 60.0,
+            "target": "t29",
+            "targeted": true,
+            "spawnflags": "",
+            "angle": "",
+            "origin": "-608 1120 40",
+            "color": "0.443056 0.393797 0.375887"
+         }
+      },
+      {
+         "name": "Q3 Spot Light 016",
+         "type": 1,
+         "position": {
+            "x": 7.0,
+            "y": 1.25,
+            "z": 35.0
+         },
+         "direction": {
+            "x": 0.0,
+            "y": -1.0,
+            "z": 0.0
+         },
+         "color": {
+            "x": 0.443056,
+            "y": 0.393797,
+            "z": 0.375887
+         },
+         "intensity": 5.0,
+         "radius": 1.875,
+         "enabled": true,
+         "visible": true,
+         "frozen": false,
+         "q3": {
+            "source": "bsp_entity_lump",
+            "classname": "light",
+            "light": 500.0,
+            "radius": 60.0,
+            "target": "t30",
+            "targeted": true,
+            "spawnflags": "",
+            "angle": "",
+            "origin": "224 1120 40",
+            "color": "0.443056 0.393797 0.375887"
+         }
+      },
+      {
+         "name": "Q3 Spot Light 017",
+         "type": 1,
+         "position": {
+            "x": 11.0,
+            "y": 1.25,
+            "z": 35.0
+         },
+         "direction": {
+            "x": 0.0,
+            "y": -1.0,
+            "z": 0.0
+         },
+         "color": {
+            "x": 0.443056,
+            "y": 0.393797,
+            "z": 0.375887
+         },
+         "intensity": 5.0,
+         "radius": 1.875,
+         "enabled": true,
+         "visible": true,
+         "frozen": false,
+         "q3": {
+            "source": "bsp_entity_lump",
+            "classname": "light",
+            "light": 500.0,
+            "radius": 60.0,
+            "target": "t31",
+            "targeted": true,
+            "spawnflags": "",
+            "angle": "",
+            "origin": "352 1120 40",
+            "color": "0.443056 0.393797 0.375887"
+         }
+      },
+      {
+         "name": "Q3 Spot Light 018",
+         "type": 1,
+         "position": {
+            "x": 15.0,
+            "y": 1.25,
+            "z": 30.0
+         },
+         "direction": {
+            "x": 0.0,
+            "y": -1.0,
+            "z": 0.0
+         },
+         "color": {
+            "x": 0.443056,
+            "y": 0.393797,
+            "z": 0.375887
+         },
+         "intensity": 5.0,
+         "radius": 1.875,
+         "enabled": true,
+         "visible": true,
+         "frozen": false,
+         "q3": {
+            "source": "bsp_entity_lump",
+            "classname": "light",
+            "light": 500.0,
+            "radius": 60.0,
+            "target": "t32",
+            "targeted": true,
+            "spawnflags": "",
+            "angle": "",
+            "origin": "480 960 40",
+            "color": "0.443056 0.393797 0.375887"
+         }
+      },
+      {
+         "name": "Q3 Spot Light 019",
+         "type": 1,
+         "position": {
+            "x": 15.0,
+            "y": 1.25,
+            "z": 26.0
+         },
+         "direction": {
+            "x": 0.0,
+            "y": -1.0,
+            "z": 0.0
+         },
+         "color": {
+            "x": 0.443056,
+            "y": 0.393797,
+            "z": 0.375887
+         },
+         "intensity": 5.0,
+         "radius": 1.875,
+         "enabled": true,
+         "visible": true,
+         "frozen": false,
+         "q3": {
+            "source": "bsp_entity_lump",
+            "classname": "light",
+            "light": 500.0,
+            "radius": 60.0,
+            "target": "t33",
+            "targeted": true,
+            "spawnflags": "",
+            "angle": "",
+            "origin": "480 832 40",
+            "color": "0.443056 0.393797 0.375887"
+         }
+      },
+      {
+         "name": "Q3 Spot Light 020",
+         "type": 1,
+         "position": {
+            "x": -9.25,
+            "y": -7.5,
+            "z": 43.75
+         },
+         "direction": {
+            "x": 0.052486,
+            "y": 0.997241,
+            "z": 0.052486
+         },
+         "color": {
+            "x": 0.369309,
+            "y": 0.339817,
+            "z": 0.268275
+         },
+         "intensity": 6.0,
+         "radius": 6.123724,
+         "enabled": true,
+         "visible": true,
+         "frozen": false,
+         "q3": {
+            "source": "bsp_entity_lump",
+            "classname": "light",
+            "light": 600.0,
+            "radius": null,
+            "target": "t35",
+            "targeted": true,
+            "spawnflags": "",
+            "angle": "",
+            "origin": "-296 1400 -240",
+            "color": "0.369309 0.339817 0.268275"
+         }
+      },
+      {
+         "name": "Q3 Spot Light 021",
+         "type": 1,
+         "position": {
+            "x": -2.75,
+            "y": -7.5,
+            "z": 43.625
+         },
+         "direction": {
+            "x": -0.052486,
+            "y": 0.997241,
+            "z": 0.052486
+         },
+         "color": {
+            "x": 0.369309,
+            "y": 0.339817,
+            "z": 0.268275
+         },
+         "intensity": 6.0,
+         "radius": 6.123724,
+         "enabled": true,
+         "visible": true,
+         "frozen": false,
+         "q3": {
+            "source": "bsp_entity_lump",
+            "classname": "light",
+            "light": 600.0,
+            "radius": null,
+            "target": "t36",
+            "targeted": true,
+            "spawnflags": "",
+            "angle": "",
+            "origin": "-88 1396 -240",
+            "color": "0.369309 0.339817 0.268275"
+         }
+      },
+      {
+         "name": "Q3 Spot Light 022",
+         "type": 1,
+         "position": {
+            "x": -29.25,
+            "y": 10.75,
+            "z": -6.0
+         },
+         "direction": {
+            "x": -0.160293,
+            "y": -0.987069,
+            "z": 0.0
+         },
+         "color": {
+            "x": 0.369309,
+            "y": 0.339817,
+            "z": 0.268275
+         },
+         "intensity": 20.0,
+         "radius": 1.40625,
+         "enabled": true,
+         "visible": true,
+         "frozen": false,
+         "q3": {
+            "source": "bsp_entity_lump",
+            "classname": "light",
+            "light": 4500.0,
+            "radius": 45.0,
+            "target": "t37",
+            "targeted": true,
+            "spawnflags": "",
+            "angle": "",
+            "origin": "-936 -192 344",
+            "color": "0.369309 0.339817 0.268275"
+         }
+      },
+      {
+         "name": "Q3 Spot Light 023",
+         "type": 1,
+         "position": {
+            "x": -29.25,
+            "y": 10.75,
+            "z": -10.0
+         },
+         "direction": {
+            "x": -0.160293,
+            "y": -0.987069,
+            "z": 0.0
+         },
+         "color": {
+            "x": 0.369309,
+            "y": 0.339817,
+            "z": 0.268275
+         },
+         "intensity": 20.0,
+         "radius": 1.40625,
+         "enabled": true,
+         "visible": true,
+         "frozen": false,
+         "q3": {
+            "source": "bsp_entity_lump",
+            "classname": "light",
+            "light": 4500.0,
+            "radius": 45.0,
+            "target": "t38",
+            "targeted": true,
+            "spawnflags": "",
+            "angle": "",
+            "origin": "-936 -320 344",
+            "color": "0.369309 0.339817 0.268275"
+         }
+      },
+      {
+         "name": "Q3 Spot Light 024",
+         "type": 1,
+         "position": {
+            "x": -29.25,
+            "y": 10.75,
+            "z": -14.0
+         },
+         "direction": {
+            "x": -0.160293,
+            "y": -0.987069,
+            "z": 0.0
+         },
+         "color": {
+            "x": 0.369309,
+            "y": 0.339817,
+            "z": 0.268275
+         },
+         "intensity": 20.0,
+         "radius": 1.40625,
+         "enabled": true,
+         "visible": true,
+         "frozen": false,
+         "q3": {
+            "source": "bsp_entity_lump",
+            "classname": "light",
+            "light": 4500.0,
+            "radius": 45.0,
+            "target": "t39",
+            "targeted": true,
+            "spawnflags": "",
+            "angle": "",
+            "origin": "-936 -448 344",
+            "color": "0.369309 0.339817 0.268275"
+         }
+      },
+      {
+         "name": "Q3 Spot Light 025",
+         "type": 1,
+         "position": {
+            "x": -19.25,
+            "y": 10.75,
+            "z": -19.25
+         },
+         "direction": {
+            "x": -0.141968,
+            "y": -0.977072,
+            "z": -0.15867
+         },
+         "color": {
+            "x": 0.369309,
+            "y": 0.339817,
+            "z": 0.268275
+         },
+         "intensity": 20.0,
+         "radius": 1.40625,
+         "enabled": true,
+         "visible": true,
+         "frozen": false,
+         "q3": {
+            "source": "bsp_entity_lump",
+            "classname": "light",
+            "light": 4500.0,
+            "radius": 45.0,
+            "target": "t40",
+            "targeted": true,
+            "spawnflags": "",
+            "angle": "",
+            "origin": "-616 -616 344",
+            "color": "0.369309 0.339817 0.268275"
+         }
+      },
+      {
+         "name": "Q3 Spot Light 026",
+         "type": 1,
+         "position": {
+            "x": -24.0,
+            "y": 10.75,
+            "z": -19.25
+         },
+         "direction": {
+            "x": 0.0,
+            "y": -0.987069,
+            "z": -0.160293
+         },
+         "color": {
+            "x": 0.369309,
+            "y": 0.339817,
+            "z": 0.268275
+         },
+         "intensity": 20.0,
+         "radius": 1.40625,
+         "enabled": true,
+         "visible": true,
+         "frozen": false,
+         "q3": {
+            "source": "bsp_entity_lump",
+            "classname": "light",
+            "light": 4500.0,
+            "radius": 45.0,
+            "target": "t41",
+            "targeted": true,
+            "spawnflags": "",
+            "angle": "",
+            "origin": "-768 -616 344",
+            "color": "0.369309 0.339817 0.268275"
+         }
+      },
+      {
+         "name": "Q3 Spot Light 027",
+         "type": 1,
+         "position": {
+            "x": -28.0,
+            "y": 10.75,
+            "z": -4.75
+         },
+         "direction": {
+            "x": 0.0,
+            "y": -0.986129,
+            "z": 0.165982
+         },
+         "color": {
+            "x": 0.369309,
+            "y": 0.339817,
+            "z": 0.268275
+         },
+         "intensity": 20.0,
+         "radius": 1.40625,
+         "enabled": true,
+         "visible": true,
+         "frozen": false,
+         "q3": {
+            "source": "bsp_entity_lump",
+            "classname": "light",
+            "light": 4500.0,
+            "radius": 45.0,
+            "target": "t42",
+            "targeted": true,
+            "spawnflags": "",
+            "angle": "",
+            "origin": "-896 -152 344",
+            "color": "0.369309 0.339817 0.268275"
+         }
+      },
+      {
+         "name": "Q3 Spot Light 028",
+         "type": 1,
+         "position": {
+            "x": -24.0,
+            "y": 10.75,
+            "z": -4.75
+         },
+         "direction": {
+            "x": 0.0,
+            "y": -0.986129,
+            "z": 0.165982
+         },
+         "color": {
+            "x": 0.369309,
+            "y": 0.339817,
+            "z": 0.268275
+         },
+         "intensity": 20.0,
+         "radius": 1.40625,
+         "enabled": true,
+         "visible": true,
+         "frozen": false,
+         "q3": {
+            "source": "bsp_entity_lump",
+            "classname": "light",
+            "light": 4500.0,
+            "radius": 45.0,
+            "target": "t43",
+            "targeted": true,
+            "spawnflags": "",
+            "angle": "",
+            "origin": "-768 -152 344",
+            "color": "0.369309 0.339817 0.268275"
+         }
+      },
+      {
+         "name": "Q3 Omni Light 029",
+         "type": 1,
+         "position": {
+            "x": -2.5,
+            "y": -2.375,
+            "z": 4.25
+         },
+         "direction": {
+            "x": 0.0,
+            "y": 0.0,
+            "z": -1.0
+         },
+         "color": {
+            "x": 0.10182,
+            "y": 0.063337,
+            "z": 0.015798
+         },
+         "intensity": 3.0,
+         "radius": 4.330127,
+         "enabled": true,
+         "visible": true,
+         "frozen": false,
+         "q3": {
+            "source": "bsp_entity_lump",
+            "classname": "light",
+            "light": 300.0,
+            "radius": null,
+            "target": "",
+            "targeted": false,
+            "spawnflags": "",
+            "angle": "",
+            "origin": "-80 136 -76",
+            "color": "0.101820 0.063337 0.015798"
+         }
+      },
+      {
+         "name": "Q3 Omni Light 030",
+         "type": 1,
+         "position": {
+            "x": 1.0,
+            "y": -5.875,
+            "z": -20.25
+         },
+         "direction": {
+            "x": 0.0,
+            "y": 0.0,
+            "z": -1.0
+         },
+         "color": {
+            "x": 0.10182,
+            "y": 0.063337,
+            "z": 0.015798
+         },
+         "intensity": 3.0,
+         "radius": 4.330127,
+         "enabled": true,
+         "visible": true,
+         "frozen": false,
+         "q3": {
+            "source": "bsp_entity_lump",
+            "classname": "light",
+            "light": 300.0,
+            "radius": null,
+            "target": "",
+            "targeted": false,
+            "spawnflags": "",
+            "angle": "",
+            "origin": "32 -648 -188",
+            "color": "0.101820 0.063337 0.015798"
+         }
+      },
+      {
+         "name": "Q3 Omni Light 031",
+         "type": 1,
+         "position": {
+            "x": -13.0,
+            "y": -5.875,
+            "z": -20.25
+         },
+         "direction": {
+            "x": 0.0,
+            "y": 0.0,
+            "z": -1.0
+         },
+         "color": {
+            "x": 0.10182,
+            "y": 0.063337,
+            "z": 0.015798
+         },
+         "intensity": 3.0,
+         "radius": 4.330127,
+         "enabled": true,
+         "visible": true,
+         "frozen": false,
+         "q3": {
+            "source": "bsp_entity_lump",
+            "classname": "light",
+            "light": 300.0,
+            "radius": null,
+            "target": "",
+            "targeted": false,
+            "spawnflags": "",
+            "angle": "",
+            "origin": "-416 -648 -188",
+            "color": "0.101820 0.063337 0.015798"
+         }
+      },
+      {
+         "name": "Q3 Omni Light 032",
+         "type": 1,
+         "position": {
+            "x": -6.0,
+            "y": -5.875,
+            "z": -31.75
+         },
+         "direction": {
+            "x": 0.0,
+            "y": 0.0,
+            "z": -1.0
+         },
+         "color": {
+            "x": 0.10182,
+            "y": 0.063337,
+            "z": 0.015798
+         },
+         "intensity": 3.0,
+         "radius": 4.330127,
+         "enabled": true,
+         "visible": true,
+         "frozen": false,
+         "q3": {
+            "source": "bsp_entity_lump",
+            "classname": "light",
+            "light": 300.0,
+            "radius": null,
+            "target": "",
+            "targeted": false,
+            "spawnflags": "",
+            "angle": "",
+            "origin": "-192 -1016 -188",
+            "color": "0.101820 0.063337 0.015798"
+         }
+      },
+      {
+         "name": "Q3 Omni Light 033",
+         "type": 1,
+         "position": {
+            "x": -29.75,
+            "y": -2.125,
+            "z": -12.0
+         },
+         "direction": {
+            "x": 0.0,
+            "y": 0.0,
+            "z": -1.0
+         },
+         "color": {
+            "x": 0.10182,
+            "y": 0.063337,
+            "z": 0.015798
+         },
+         "intensity": 3.0,
+         "radius": 4.330127,
+         "enabled": true,
+         "visible": true,
+         "frozen": false,
+         "q3": {
+            "source": "bsp_entity_lump",
+            "classname": "light",
+            "light": 300.0,
+            "radius": null,
+            "target": "",
+            "targeted": false,
+            "spawnflags": "",
+            "angle": "",
+            "origin": "-952 -384 -68",
+            "color": "0.101820 0.063337 0.015798"
+         }
+      },
+      {
+         "name": "Q3 Omni Light 034",
+         "type": 1,
+         "position": {
+            "x": 17.75,
+            "y": -2.125,
+            "z": -12.0
+         },
+         "direction": {
+            "x": 0.0,
+            "y": 0.0,
+            "z": -1.0
+         },
+         "color": {
+            "x": 0.10182,
+            "y": 0.063337,
+            "z": 0.015798
+         },
+         "intensity": 3.0,
+         "radius": 4.330127,
+         "enabled": true,
+         "visible": true,
+         "frozen": false,
+         "q3": {
+            "source": "bsp_entity_lump",
+            "classname": "light",
+            "light": 300.0,
+            "radius": null,
+            "target": "",
+            "targeted": false,
+            "spawnflags": "",
+            "angle": "",
+            "origin": "568 -384 -68",
+            "color": "0.101820 0.063337 0.015798"
+         }
+      },
+      {
+         "name": "Q3 Omni Light 035",
+         "type": 1,
+         "position": {
+            "x": -22.25,
+            "y": -2.375,
+            "z": 14.0
+         },
+         "direction": {
+            "x": 0.0,
+            "y": 0.0,
+            "z": -1.0
+         },
+         "color": {
+            "x": 0.10182,
+            "y": 0.063337,
+            "z": 0.015798
+         },
+         "intensity": 1.5,
+         "radius": 3.061862,
+         "enabled": true,
+         "visible": true,
+         "frozen": false,
+         "q3": {
+            "source": "bsp_entity_lump",
+            "classname": "light",
+            "light": 150.0,
+            "radius": null,
+            "target": "",
+            "targeted": false,
+            "spawnflags": "",
+            "angle": "",
+            "origin": "-712 448 -76",
+            "color": "0.101820 0.063337 0.015798"
+         }
+      },
+      {
+         "name": "Q3 Omni Light 036",
+         "type": 1,
+         "position": {
+            "x": -22.25,
+            "y": -2.375,
+            "z": 20.0
+         },
+         "direction": {
+            "x": 0.0,
+            "y": 0.0,
+            "z": -1.0
+         },
+         "color": {
+            "x": 0.10182,
+            "y": 0.063337,
+            "z": 0.015798
+         },
+         "intensity": 1.5,
+         "radius": 3.061862,
+         "enabled": true,
+         "visible": true,
+         "frozen": false,
+         "q3": {
+            "source": "bsp_entity_lump",
+            "classname": "light",
+            "light": 150.0,
+            "radius": null,
+            "target": "",
+            "targeted": false,
+            "spawnflags": "",
+            "angle": "",
+            "origin": "-712 640 -76",
+            "color": "0.101820 0.063337 0.015798"
+         }
+      },
+      {
+         "name": "Q3 Omni Light 037",
+         "type": 1,
+         "position": {
+            "x": 10.25,
+            "y": -2.375,
+            "z": 20.0
+         },
+         "direction": {
+            "x": 0.0,
+            "y": 0.0,
+            "z": -1.0
+         },
+         "color": {
+            "x": 0.10182,
+            "y": 0.063337,
+            "z": 0.015798
+         },
+         "intensity": 1.5,
+         "radius": 3.061862,
+         "enabled": true,
+         "visible": true,
+         "frozen": false,
+         "q3": {
+            "source": "bsp_entity_lump",
+            "classname": "light",
+            "light": 150.0,
+            "radius": null,
+            "target": "",
+            "targeted": false,
+            "spawnflags": "",
+            "angle": "",
+            "origin": "328 640 -76",
+            "color": "0.101820 0.063337 0.015798"
+         }
+      },
+      {
+         "name": "Q3 Omni Light 038",
+         "type": 1,
+         "position": {
+            "x": -10.0,
+            "y": -2.375,
+            "z": 28.25
+         },
+         "direction": {
+            "x": 0.0,
+            "y": 0.0,
+            "z": -1.0
+         },
+         "color": {
+            "x": 0.10182,
+            "y": 0.063337,
+            "z": 0.015798
+         },
+         "intensity": 3.0,
+         "radius": 4.330127,
+         "enabled": true,
+         "visible": true,
+         "frozen": false,
+         "q3": {
+            "source": "bsp_entity_lump",
+            "classname": "light",
+            "light": 300.0,
+            "radius": null,
+            "target": "",
+            "targeted": false,
+            "spawnflags": "",
+            "angle": "",
+            "origin": "-320 904 -76",
+            "color": "0.101820 0.063337 0.015798"
+         }
+      },
+      {
+         "name": "Q3 Omni Light 039",
+         "type": 1,
+         "position": {
+            "x": -2.0,
+            "y": -2.375,
+            "z": 28.25
+         },
+         "direction": {
+            "x": 0.0,
+            "y": 0.0,
+            "z": -1.0
+         },
+         "color": {
+            "x": 0.10182,
+            "y": 0.063337,
+            "z": 0.015798
+         },
+         "intensity": 3.0,
+         "radius": 4.330127,
+         "enabled": true,
+         "visible": true,
+         "frozen": false,
+         "q3": {
+            "source": "bsp_entity_lump",
+            "classname": "light",
+            "light": 300.0,
+            "radius": null,
+            "target": "",
+            "targeted": false,
+            "spawnflags": "",
+            "angle": "",
+            "origin": "-64 904 -76",
+            "color": "0.101820 0.063337 0.015798"
+         }
+      },
+      {
+         "name": "Q3 Omni Light 040",
+         "type": 1,
+         "position": {
+            "x": -6.0,
+            "y": 6.125,
+            "z": 23.75
+         },
+         "direction": {
+            "x": 0.0,
+            "y": 0.0,
+            "z": -1.0
+         },
+         "color": {
+            "x": 0.10182,
+            "y": 0.063337,
+            "z": 0.015798
+         },
+         "intensity": 2.0,
+         "radius": 3.535534,
+         "enabled": true,
+         "visible": true,
+         "frozen": false,
+         "q3": {
+            "source": "bsp_entity_lump",
+            "classname": "light",
+            "light": 200.0,
+            "radius": null,
+            "target": "",
+            "targeted": false,
+            "spawnflags": "",
+            "angle": "",
+            "origin": "-192 760 196",
+            "color": "0.101820 0.063337 0.015798"
+         }
+      },
+      {
+         "name": "Q3 Omni Light 041",
+         "type": 1,
+         "position": {
+            "x": 30.75,
+            "y": -2.375,
+            "z": 15.0
+         },
+         "direction": {
+            "x": 0.0,
+            "y": 0.0,
+            "z": -1.0
+         },
+         "color": {
+            "x": 0.10182,
+            "y": 0.063337,
+            "z": 0.015798
+         },
+         "intensity": 1.5,
+         "radius": 3.061862,
+         "enabled": true,
+         "visible": true,
+         "frozen": false,
+         "q3": {
+            "source": "bsp_entity_lump",
+            "classname": "light",
+            "light": 150.0,
+            "radius": null,
+            "target": "",
+            "targeted": false,
+            "spawnflags": "",
+            "angle": "",
+            "origin": "984 480 -76",
+            "color": "0.101820 0.063337 0.015798"
+         }
+      },
+      {
+         "name": "Q3 Omni Light 042",
+         "type": 1,
+         "position": {
+            "x": -42.75,
+            "y": -2.375,
+            "z": 15.0
+         },
+         "direction": {
+            "x": 0.0,
+            "y": 0.0,
+            "z": -1.0
+         },
+         "color": {
+            "x": 0.10182,
+            "y": 0.063337,
+            "z": 0.015798
+         },
+         "intensity": 1.5,
+         "radius": 3.061862,
+         "enabled": true,
+         "visible": true,
+         "frozen": false,
+         "q3": {
+            "source": "bsp_entity_lump",
+            "classname": "light",
+            "light": 150.0,
+            "radius": null,
+            "target": "",
+            "targeted": false,
+            "spawnflags": "",
+            "angle": "",
+            "origin": "-1368 480 -76",
+            "color": "0.101820 0.063337 0.015798"
+         }
+      },
+      {
+         "name": "Q3 Omni Light 043",
+         "type": 1,
+         "position": {
+            "x": 14.0,
+            "y": -3.625,
+            "z": -4.8125
+         },
+         "direction": {
+            "x": 0.0,
+            "y": 0.0,
+            "z": -1.0
+         },
+         "color": {
+            "x": 0.229496,
+            "y": 0.122492,
+            "z": 0.122492
+         },
+         "intensity": 0.35,
+         "radius": 1.47902,
+         "enabled": true,
+         "visible": true,
+         "frozen": false,
+         "q3": {
+            "source": "bsp_entity_lump",
+            "classname": "light",
+            "light": 35.0,
+            "radius": null,
+            "target": "",
+            "targeted": false,
+            "spawnflags": "",
+            "angle": "",
+            "origin": "448 -154 -116",
+            "color": "0.229496 0.122492 0.122492"
+         }
+      },
+      {
+         "name": "Q3 Omni Light 044",
+         "type": 1,
+         "position": {
+            "x": -26.0,
+            "y": -3.625,
+            "z": -4.8125
+         },
+         "direction": {
+            "x": 0.0,
+            "y": 0.0,
+            "z": -1.0
+         },
+         "color": {
+            "x": 0.229496,
+            "y": 0.122492,
+            "z": 0.122492
+         },
+         "intensity": 0.35,
+         "radius": 1.47902,
+         "enabled": true,
+         "visible": true,
+         "frozen": false,
+         "q3": {
+            "source": "bsp_entity_lump",
+            "classname": "light",
+            "light": 35.0,
+            "radius": null,
+            "target": "",
+            "targeted": false,
+            "spawnflags": "",
+            "angle": "",
+            "origin": "-832 -154 -116",
+            "color": "0.229496 0.122492 0.122492"
+         }
+      },
+      {
+         "name": "Q3 Omni Light 045",
+         "type": 1,
+         "position": {
+            "x": -26.0,
+            "y": -3.625,
+            "z": 4.8125
+         },
+         "direction": {
+            "x": 0.0,
+            "y": 0.0,
+            "z": -1.0
+         },
+         "color": {
+            "x": 0.229496,
+            "y": 0.122492,
+            "z": 0.122492
+         },
+         "intensity": 0.35,
+         "radius": 1.47902,
+         "enabled": true,
+         "visible": true,
+         "frozen": false,
+         "q3": {
+            "source": "bsp_entity_lump",
+            "classname": "light",
+            "light": 35.0,
+            "radius": null,
+            "target": "",
+            "targeted": false,
+            "spawnflags": "",
+            "angle": "",
+            "origin": "-832 154 -116",
+            "color": "0.229496 0.122492 0.122492"
+         }
+      },
+      {
+         "name": "Q3 Omni Light 046",
+         "type": 1,
+         "position": {
+            "x": 14.0,
+            "y": -3.625,
+            "z": 4.8125
+         },
+         "direction": {
+            "x": 0.0,
+            "y": 0.0,
+            "z": -1.0
+         },
+         "color": {
+            "x": 0.229496,
+            "y": 0.122492,
+            "z": 0.122492
+         },
+         "intensity": 0.35,
+         "radius": 1.47902,
+         "enabled": true,
+         "visible": true,
+         "frozen": false,
+         "q3": {
+            "source": "bsp_entity_lump",
+            "classname": "light",
+            "light": 35.0,
+            "radius": null,
+            "target": "",
+            "targeted": false,
+            "spawnflags": "",
+            "angle": "",
+            "origin": "448 154 -116",
+            "color": "0.229496 0.122492 0.122492"
+         }
+      },
+      {
+         "name": "Q3 Omni Light 047",
+         "type": 1,
+         "position": {
+            "x": 10.8125,
+            "y": -3.625,
+            "z": 10.0
+         },
+         "direction": {
+            "x": 0.0,
+            "y": 0.0,
+            "z": -1.0
+         },
+         "color": {
+            "x": 0.229496,
+            "y": 0.122492,
+            "z": 0.122492
+         },
+         "intensity": 0.35,
+         "radius": 1.47902,
+         "enabled": true,
+         "visible": true,
+         "frozen": false,
+         "q3": {
+            "source": "bsp_entity_lump",
+            "classname": "light",
+            "light": 35.0,
+            "radius": null,
+            "target": "",
+            "targeted": false,
+            "spawnflags": "",
+            "angle": "",
+            "origin": "346 320 -116",
+            "color": "0.229496 0.122492 0.122492"
+         }
+      },
+      {
+         "name": "Q3 Omni Light 048",
+         "type": 1,
+         "position": {
+            "x": 5.1875,
+            "y": -3.625,
+            "z": 10.0
+         },
+         "direction": {
+            "x": 0.0,
+            "y": 0.0,
+            "z": -1.0
+         },
+         "color": {
+            "x": 0.229496,
+            "y": 0.122492,
+            "z": 0.122492
+         },
+         "intensity": 0.35,
+         "radius": 1.47902,
+         "enabled": true,
+         "visible": true,
+         "frozen": false,
+         "q3": {
+            "source": "bsp_entity_lump",
+            "classname": "light",
+            "light": 35.0,
+            "radius": null,
+            "target": "",
+            "targeted": false,
+            "spawnflags": "",
+            "angle": "",
+            "origin": "166 320 -116",
+            "color": "0.229496 0.122492 0.122492"
+         }
+      },
+      {
+         "name": "Q3 Omni Light 049",
+         "type": 1,
+         "position": {
+            "x": -17.1875,
+            "y": -3.625,
+            "z": 10.0
+         },
+         "direction": {
+            "x": 0.0,
+            "y": 0.0,
+            "z": -1.0
+         },
+         "color": {
+            "x": 0.229496,
+            "y": 0.122492,
+            "z": 0.122492
+         },
+         "intensity": 0.35,
+         "radius": 1.47902,
+         "enabled": true,
+         "visible": true,
+         "frozen": false,
+         "q3": {
+            "source": "bsp_entity_lump",
+            "classname": "light",
+            "light": 35.0,
+            "radius": null,
+            "target": "",
+            "targeted": false,
+            "spawnflags": "",
+            "angle": "",
+            "origin": "-550 320 -116",
+            "color": "0.229496 0.122492 0.122492"
+         }
+      },
+      {
+         "name": "Q3 Omni Light 050",
+         "type": 1,
+         "position": {
+            "x": -22.8125,
+            "y": -3.625,
+            "z": 10.0
+         },
+         "direction": {
+            "x": 0.0,
+            "y": 0.0,
+            "z": -1.0
+         },
+         "color": {
+            "x": 0.229496,
+            "y": 0.122492,
+            "z": 0.122492
+         },
+         "intensity": 0.35,
+         "radius": 1.47902,
+         "enabled": true,
+         "visible": true,
+         "frozen": false,
+         "q3": {
+            "source": "bsp_entity_lump",
+            "classname": "light",
+            "light": 35.0,
+            "radius": null,
+            "target": "",
+            "targeted": false,
+            "spawnflags": "",
+            "angle": "",
+            "origin": "-730 320 -116",
+            "color": "0.229496 0.122492 0.122492"
+         }
+      },
+      {
+         "name": "Q3 Omni Light 051",
+         "type": 1,
+         "position": {
+            "x": -6.0,
+            "y": -3.625,
+            "z": 4.8125
+         },
+         "direction": {
+            "x": 0.0,
+            "y": 0.0,
+            "z": -1.0
+         },
+         "color": {
+            "x": 0.229496,
+            "y": 0.122492,
+            "z": 0.122492
+         },
+         "intensity": 0.35,
+         "radius": 1.47902,
+         "enabled": true,
+         "visible": true,
+         "frozen": false,
+         "q3": {
+            "source": "bsp_entity_lump",
+            "classname": "light",
+            "light": 35.0,
+            "radius": null,
+            "target": "",
+            "targeted": false,
+            "spawnflags": "",
+            "angle": "",
+            "origin": "-192 154 -116",
+            "color": "0.229496 0.122492 0.122492"
+         }
+      },
+      {
+         "name": "Q3 Omni Light 052",
+         "type": 1,
+         "position": {
+            "x": -6.0,
+            "y": 4.3125,
+            "z": 4.8125
+         },
+         "direction": {
+            "x": 0.0,
+            "y": 0.0,
+            "z": -1.0
+         },
+         "color": {
+            "x": 0.229496,
+            "y": 0.122492,
+            "z": 0.122492
+         },
+         "intensity": 0.35,
+         "radius": 1.47902,
+         "enabled": true,
+         "visible": true,
+         "frozen": false,
+         "q3": {
+            "source": "bsp_entity_lump",
+            "classname": "light",
+            "light": 35.0,
+            "radius": null,
+            "target": "",
+            "targeted": false,
+            "spawnflags": "",
+            "angle": "",
+            "origin": "-192 154 138",
+            "color": "0.229496 0.122492 0.122492"
+         }
+      },
+      {
+         "name": "Q3 Omni Light 053",
+         "type": 1,
+         "position": {
+            "x": -6.0,
+            "y": 4.3125,
+            "z": -4.6875
+         },
+         "direction": {
+            "x": 0.0,
+            "y": 0.0,
+            "z": -1.0
+         },
+         "color": {
+            "x": 0.229496,
+            "y": 0.122492,
+            "z": 0.122492
+         },
+         "intensity": 0.35,
+         "radius": 1.47902,
+         "enabled": true,
+         "visible": true,
+         "frozen": false,
+         "q3": {
+            "source": "bsp_entity_lump",
+            "classname": "light",
+            "light": 35.0,
+            "radius": null,
+            "target": "",
+            "targeted": false,
+            "spawnflags": "",
+            "angle": "",
+            "origin": "-192 -150 138",
+            "color": "0.229496 0.122492 0.122492"
+         }
+      },
+      {
+         "name": "Q3 Omni Light 054",
+         "type": 1,
+         "position": {
+            "x": -6.0625,
+            "y": -3.625,
+            "z": -4.5625
+         },
+         "direction": {
+            "x": 0.0,
+            "y": 0.0,
+            "z": -1.0
+         },
+         "color": {
+            "x": 0.229496,
+            "y": 0.122492,
+            "z": 0.122492
+         },
+         "intensity": 0.35,
+         "radius": 1.47902,
+         "enabled": true,
+         "visible": true,
+         "frozen": false,
+         "q3": {
+            "source": "bsp_entity_lump",
+            "classname": "light",
+            "light": 35.0,
+            "radius": null,
+            "target": "",
+            "targeted": false,
+            "spawnflags": "",
+            "angle": "",
+            "origin": "-194 -146 -116",
+            "color": "0.229496 0.122492 0.122492"
+         }
+      }
+   ]
+}

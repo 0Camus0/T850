@@ -110,6 +110,7 @@ SceneProps() : ActiveCamera(0), ActiveLights(1), ActiveLightCamera(0), ActiveGau
 	float MaterialEmissiveIntensity = 1.0f;
 	float MaterialTransmissionMultiplier = 1.0f;
 	float MaterialRefractionStrength = 0.03f;
+	float LightmapIntensity = 1.0f;
 
 	float ShadowMapResolution = 1024.0f;
   float GoodRaysResolution = 0.0f;
@@ -125,6 +126,8 @@ SceneProps() : ActiveCamera(0), ActiveLights(1), ActiveLightCamera(0), ActiveGau
 	float ParallaxShadowStrength = 1.0f;
 
 	float LightVolumeSteps = 0.0f;
+	float LightRadiusScale = 1.0f;
+	float LightIntensityScale = 1.0f;
 	// HDR
 	float	Exposure = 0.0f;
 	float	BloomFactor = 0.35f;

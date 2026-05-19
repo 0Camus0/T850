@@ -293,9 +293,20 @@ $xaml = @"
                     </StackPanel>
                 </StackPanel>
                 <CheckBox Name="chkBenchmark" Content="Benchmark mode" Margin="0,0,0,6" Visibility="Collapsed"/>
-                <StackPanel Name="pnlModelSelect" Margin="0,6,0,0">
+                <StackPanel Name="pnlSandboxInput" Margin="0,6,0,8">
+                    <TextBlock Text="Sandbox input" Style="{StaticResource LabelStyle}"/>
+                    <ComboBox Name="cmbSandboxInput">
+                        <ComboBoxItem Content="Single GLB model" Tag="model" IsSelected="True"/>
+                        <ComboBoxItem Content="Editor scene (.t8scene)" Tag="scene"/>
+                    </ComboBox>
+                </StackPanel>
+                <StackPanel Name="pnlModelSelect" Margin="0,0,0,8">
                     <TextBlock Text="Model (Sandbox)" Style="{StaticResource LabelStyle}"/>
                     <ComboBox Name="cmbModel"/>
+                </StackPanel>
+                <StackPanel Name="pnlSceneFileSelect" Margin="0,0,0,8" Visibility="Collapsed">
+                    <TextBlock Text="Scene file (Sandbox)" Style="{StaticResource LabelStyle}"/>
+                    <ComboBox Name="cmbSceneFile"/>
                 </StackPanel>
                 <Grid>
                     <Grid.ColumnDefinitions>
@@ -448,8 +459,12 @@ $rbCullingFull     = $window.FindName("rbCullingFull")
 $rbCullingLazy     = $window.FindName("rbCullingLazy")
 $rbCullingDisabled = $window.FindName("rbCullingDisabled")
 $chkBenchmark   = $window.FindName("chkBenchmark")
+$cmbSandboxInput = $window.FindName("cmbSandboxInput")
 $cmbModel       = $window.FindName("cmbModel")
+$cmbSceneFile   = $window.FindName("cmbSceneFile")
+$pnlSandboxInput = $window.FindName("pnlSandboxInput")
 $pnlModelSelect = $window.FindName("pnlModelSelect")
+$pnlSceneFileSelect = $window.FindName("pnlSceneFileSelect")
 $txtWidth       = $window.FindName("txtWidth")
 $txtHeight      = $window.FindName("txtHeight")
 $txtStatus      = $window.FindName("txtStatus")
@@ -488,6 +503,126 @@ function Get-TargetPlatform {
 
 function Test-AndroidTarget {
     return (Get-TargetPlatform) -eq "android"
+}
+
+function Get-SandboxInputMode {
+    if ($cmbSandboxInput -and $cmbSandboxInput.SelectedItem) { return $cmbSandboxInput.SelectedItem.Tag.ToString() }
+    return "model"
+}
+
+function Get-ArchFolder {
+    $arch = ($cmbArch.SelectedItem).Content.ToString().ToLower()
+    switch ($arch) {
+        "arm64" { "arm64" }
+        "x86"   { "x86" }
+        default { "x64" }
+    }
+}
+
+function Get-WindowsRuntimeRoot {
+    $config = ($cmbConfig.SelectedItem).Content.ToString()
+    return (Join-Path $rootDir ("bin\{0}\{1}" -f (Get-ArchFolder), $config))
+}
+
+function Normalize-ResourcePath {
+    param([string]$Path)
+    if (-not $Path) { return "" }
+    $normalized = $Path.Replace('\', '/').Trim()
+    while ($normalized.StartsWith("/")) { $normalized = $normalized.Substring(1) }
+    if ($normalized.StartsWith("Assets/", [System.StringComparison]::OrdinalIgnoreCase)) {
+        $normalized = $normalized.Substring(7)
+    }
+    return $normalized
+}
+
+function Get-SelectedSceneFilePath {
+    if ($cmbSceneFile -and $cmbSceneFile.SelectedItem) { return $cmbSceneFile.SelectedItem.Tag.ToString() }
+    return ""
+}
+
+function Get-SceneFileResourcePath {
+    param([string]$ScenePath)
+    if (-not $ScenePath) { return "" }
+    try { $full = (Resolve-Path $ScenePath).Path } catch { $full = $ScenePath }
+    $assetsRoot = Join-Path $rootDir "Assets"
+    if ($full.StartsWith($assetsRoot, [System.StringComparison]::OrdinalIgnoreCase)) {
+        return (Normalize-ResourcePath $full.Substring($assetsRoot.Length).TrimStart('\', '/'))
+    }
+    if ($full.StartsWith($rootDir, [System.StringComparison]::OrdinalIgnoreCase)) {
+        return (Normalize-ResourcePath $full.Substring($rootDir.Length).TrimStart('\', '/'))
+    }
+    return $full
+}
+
+function Resolve-SceneAssetPath {
+    param([string]$ResourcePath, [string]$RuntimeRoot)
+    if (-not $ResourcePath) { return "" }
+    if ([System.IO.Path]::IsPathRooted($ResourcePath)) {
+        if (Test-Path $ResourcePath) { return $ResourcePath }
+        return ""
+    }
+    $rel = (Normalize-ResourcePath $ResourcePath).Replace('/', '\')
+    $candidates = @()
+    if ($RuntimeRoot) {
+        $candidates += (Join-Path $RuntimeRoot $rel)
+        $candidates += (Join-Path (Join-Path $RuntimeRoot "Assets") $rel)
+    }
+    $candidates += (Join-Path (Join-Path $rootDir "Assets") $rel)
+    $candidates += (Join-Path $rootDir $rel)
+    foreach ($candidate in $candidates) {
+        if ($candidate -and (Test-Path $candidate)) { return $candidate }
+    }
+    return ""
+}
+
+function Get-SceneRequiredMeshes {
+    param([string]$ScenePath)
+    if (-not $ScenePath -or -not (Test-Path $ScenePath)) { return @() }
+    try {
+        $scene = Get-Content $ScenePath -Raw | ConvertFrom-Json
+        if (-not $scene.objects) { return @() }
+        $meshes = @()
+        foreach ($object in $scene.objects) {
+            if ($object.PSObject.Properties['visible'] -and -not [bool]$object.visible) { continue }
+            if ($object.PSObject.Properties['mesh'] -and $object.mesh) {
+                $meshes += (Normalize-ResourcePath $object.mesh.ToString())
+            }
+        }
+        return @($meshes | Sort-Object -Unique)
+    } catch {
+        return @()
+    }
+}
+
+function Test-SelectedSceneDependencies {
+    if (((Get-SandboxInputMode) -ne "scene") -or (-not $cmbScene.SelectedItem) -or (($cmbScene.SelectedItem.Tag.ToString()) -ne "0")) {
+        return @{ Ok = $true; Missing = @(); ScenePath = ""; Required = @() }
+    }
+    $scenePath = Get-SelectedSceneFilePath
+    if (-not $scenePath -or -not (Test-Path $scenePath)) {
+        return @{ Ok = $false; Missing = @("Selected .t8scene file"); ScenePath = $scenePath; Required = @() }
+    }
+    if (Test-AndroidTarget) {
+        $filteredAssets = Join-Path $rootDir "android\app\build\generated\t850FilteredAssets"
+        $runtimeRoot = if (Test-Path $filteredAssets) { $filteredAssets } else { Join-Path $rootDir "Assets" }
+    } else {
+        $runtimeRoot = Get-WindowsRuntimeRoot
+    }
+    $missing = @()
+    $required = Get-SceneRequiredMeshes $scenePath
+    foreach ($mesh in $required) {
+        if (-not (Resolve-SceneAssetPath $mesh $runtimeRoot)) { $missing += $mesh }
+    }
+    return @{ Ok = ($missing.Count -eq 0); Missing = $missing; ScenePath = $scenePath; Required = $required }
+}
+
+function Show-SceneDependencyError {
+    param($Result)
+    if ($Result.Ok) { return $true }
+    $message = "The selected scene cannot be launched because required files are missing:" + "`n`n" +
+        (($Result.Missing | ForEach-Object { "- $_" }) -join "`n")
+    [System.Windows.MessageBox]::Show($message, "T850 Launcher", "OK", "Error") | Out-Null
+    return $false
 }
 
 function Get-AndroidRepoRoot {
@@ -892,6 +1027,23 @@ function Load-Config {
                     }
                 }
             }
+            if ($cfg.display.PSObject.Properties['sceneFile'] -and $cfg.display.sceneFile) {
+                foreach ($item in $cmbSandboxInput.Items) {
+                    if ($item.Tag -eq "scene") { $cmbSandboxInput.SelectedItem = $item; break }
+                }
+                foreach ($item in $cmbScene.Items) {
+                    if ($item.Tag -eq "0") { $cmbScene.SelectedItem = $item; break }
+                }
+                foreach ($item in $cmbSceneFile.Items) {
+                    if ($item.Tag -eq $cfg.display.sceneFile -or $item.Tag -eq (Resolve-SceneAssetPath $cfg.display.sceneFile (Get-WindowsRuntimeRoot))) {
+                        $cmbSceneFile.SelectedItem = $item; break
+                    }
+                }
+            } elseif ($cfg.display.PSObject.Properties['model'] -and $cfg.display.model) {
+                foreach ($item in $cmbSandboxInput.Items) {
+                    if ($item.Tag -eq "model") { $cmbSandboxInput.SelectedItem = $item; break }
+                }
+            }
         }
         # Debug Frames
         if ($cfg.PSObject.Properties['debugFrames']) {
@@ -958,19 +1110,25 @@ function Load-Config {
 function Save-Config {
     $sceneTag = ($cmbScene.SelectedItem).Tag.ToString()
     $cullingMode = Get-CullingMode
+    $sandboxMode = Get-SandboxInputMode
+    $display = @{
+        width      = [int]$txtWidth.Text
+        height     = [int]$txtHeight.Text
+        fullscreen = [bool]$chkFullscreen.IsChecked
+        scene      = [int]$sceneTag
+    }
+    if (($sceneTag -eq "0") -and ($sandboxMode -eq "scene")) {
+        $display.sceneFile = Get-SelectedSceneFilePath
+    } else {
+        $display.model = if ($cmbModel.SelectedItem) { ($cmbModel.SelectedItem).Tag.ToString() } else { "Models/DamagedHelmet.glb" }
+    }
     $cfg = @{
         targetPlatform = (Get-TargetPlatform)
         androidDeviceSerial = (Get-SelectedAndroidDeviceSerial)
         architecture  = ($cmbArch.SelectedItem).Content.ToString().ToLower()
         configuration = ($cmbConfig.SelectedItem).Content.ToString()
         api           = if (Test-AndroidTarget) { "vulkan" } else { ($cmbApi.SelectedItem).Tag.ToString() }
-        display = @{
-            width      = [int]$txtWidth.Text
-            height     = [int]$txtHeight.Text
-            fullscreen = [bool]$chkFullscreen.IsChecked
-            scene      = [int]$sceneTag
-            model      = if ($cmbModel.SelectedItem) { ($cmbModel.SelectedItem).Tag.ToString() } else { "Models/DamagedHelmet.glb" }
-        }
+        display = $display
         debugFrames = [bool]$chkDebugFrames.IsChecked
         benchmark = ($sceneTag -eq "1" -and [bool]$chkBenchmark.IsChecked)
         cullingMode = $cullingMode
@@ -1554,9 +1712,15 @@ function Get-LaunchCommand {
 
     $argList += @("--culling", (Get-CullingMode))
 
-    # Model path (for Sandbox scene)
-    if ($cmbModel.SelectedItem) {
-        $argList += @("--model", ($cmbModel.SelectedItem).Tag.ToString())
+    if ($sceneTag -eq "0") {
+        if ((Get-SandboxInputMode) -eq "scene") {
+            $sceneFile = Get-SelectedSceneFilePath
+            if ($sceneFile) {
+                $argList += @("--sceneFile", ('"{0}"' -f $sceneFile))
+            }
+        } elseif ($cmbModel.SelectedItem) {
+            $argList += @("--model", ($cmbModel.SelectedItem).Tag.ToString())
+        }
     }
 
     if ($chkFullscreen.IsChecked) {
@@ -1727,7 +1891,9 @@ function Get-AndroidLaunchArguments {
         "--ez", "com.t850.engine.extra.RETURN_TO_NATIVE", "false",
         "--es", "com.t850.engine.extra.RUN_ID", ([DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds().ToString())
     )
-    if ($sceneTag -eq "0" -and $cmbModel.SelectedItem) {
+    if (($sceneTag -eq "0") -and ((Get-SandboxInputMode) -eq "scene") -and (Get-SelectedSceneFilePath)) {
+        $args += @("--es", "com.t850.engine.extra.SCENE_FILE", (Get-SceneFileResourcePath (Get-SelectedSceneFilePath)))
+    } elseif ($sceneTag -eq "0" -and $cmbModel.SelectedItem) {
         $args += @("--es", "com.t850.engine.extra.MODEL", ($cmbModel.SelectedItem).Tag.ToString())
     }
     if ($chkDump.IsChecked) {
@@ -1747,14 +1913,18 @@ function Get-AndroidForceStopArguments {
 function Update-Preview {
     Update-TargetPlatformState
     if ($script:LauncherBusy) { return }
+    $sceneDeps = Test-SelectedSceneDependencies
     if (Test-AndroidTarget) {
         $apkPath = Get-AndroidApkPath
         $abiFilters = Get-AndroidAbiFilters
-        $deviceReady = ((Get-SelectedAndroidDeviceSerial) -ne "" -and (Get-SelectedAndroidDeviceState) -eq "device")
+        $deviceReady = (((Get-SelectedAndroidDeviceSerial) -ne "") -and ((Get-SelectedAndroidDeviceState) -eq "device"))
         $txtCmdPreview.Text = 'Android APK: "' + $apkPath + '"  ABI: ' + $abiFilters
-        $btnRun.IsEnabled = ((Test-Path $apkPath) -and $deviceReady)
-        $btnEditor.IsEnabled = $deviceReady
-        if (-not $deviceReady) {
+        $btnRun.IsEnabled = ((Test-Path $apkPath) -and $deviceReady -and $sceneDeps.Ok)
+        $btnEditor.IsEnabled = ($deviceReady -and $sceneDeps.Ok)
+        if (-not $sceneDeps.Ok) {
+            $txtStatus.Text = "Scene missing: $($sceneDeps.Missing -join ', ')"
+            $txtStatus.Foreground = $window.FindResource("RedBrush")
+        } elseif (-not $deviceReady) {
             $txtStatus.Text = "Select a connected Android device"
             $txtStatus.Foreground = $window.FindResource("RedBrush")
         } elseif ($btnRun.IsEnabled) {
@@ -1774,7 +1944,12 @@ function Update-Preview {
     $editorCmd = Get-EditorLaunchCommand
     $editorOk = Test-Path $editorCmd.ExePath
 
-    if ($sceneOk -and $editorOk) {
+    if (-not $sceneDeps.Ok) {
+        $txtStatus.Text = "Scene missing: $($sceneDeps.Missing -join ', ')"
+        $txtStatus.Foreground = $window.FindResource("RedBrush")
+        $btnRun.IsEnabled = $false
+        $btnEditor.IsEnabled = $editorOk
+    } elseif ($sceneOk -and $editorOk) {
         $txtStatus.Text = "Ready to run (Scene + Editor)"
         $txtStatus.Foreground = $window.FindResource("GreenBrush")
         $btnRun.IsEnabled = $true
@@ -1798,7 +1973,11 @@ function Update-Preview {
 function Update-SceneOptionVisibility {
     if (-not $cmbScene.SelectedItem) { return }
     $sceneTag = ($cmbScene.SelectedItem).Tag.ToString()
-    $pnlModelSelect.Visibility = if ($sceneTag -eq "0") { "Visible" } else { "Collapsed" }
+    $sandboxVisible = ($sceneTag -eq "0")
+    $sandboxMode = Get-SandboxInputMode
+    $pnlSandboxInput.Visibility = if ($sandboxVisible) { "Visible" } else { "Collapsed" }
+    $pnlModelSelect.Visibility = if ($sandboxVisible -and ($sandboxMode -eq "model")) { "Visible" } else { "Collapsed" }
+    $pnlSceneFileSelect.Visibility = if ($sandboxVisible -and ($sandboxMode -eq "scene")) { "Visible" } else { "Collapsed" }
     $chkBenchmark.Visibility = if ($sceneTag -eq "1") { "Visible" } else { "Collapsed" }
     if ($sceneTag -ne "1") { $chkBenchmark.IsChecked = $false }
 }
@@ -1851,6 +2030,11 @@ $btnBrowseSnapshot.Add_Click({
 })
 
 $cmbModel.Add_SelectionChanged({ Update-Preview })
+$cmbSceneFile.Add_SelectionChanged({ Update-Preview })
+$cmbSandboxInput.Add_SelectionChanged({
+    Update-SceneOptionVisibility
+    Update-Preview
+})
 
 $cmbAndroidDevice.Add_SelectionChanged({
     $script:SelectedAndroidDeviceSerial = Get-SelectedAndroidDeviceSerial
@@ -1858,11 +2042,12 @@ $cmbAndroidDevice.Add_SelectionChanged({
 })
 $cmbTarget.Add_SelectionChanged({
     Populate-ModelList
+    Populate-SceneFileList
     if (Test-AndroidTarget) { Refresh-AndroidDevices }
     Update-Preview
 })
-$cmbArch.Add_SelectionChanged({ Populate-ModelList; Update-Preview })
-$cmbConfig.Add_SelectionChanged({ Populate-ModelList; Update-Preview })
+$cmbArch.Add_SelectionChanged({ Populate-ModelList; Populate-SceneFileList; Update-Preview })
+$cmbConfig.Add_SelectionChanged({ Populate-ModelList; Populate-SceneFileList; Update-Preview })
 $cmbApi.Add_SelectionChanged({ Update-Preview })
 $cmbScene.Add_SelectionChanged({
     Update-SceneOptionVisibility
@@ -2194,6 +2379,8 @@ $btnRebuild.Add_Click({ Invoke-Build -buildTarget "Rebuild" })
 
 # RUN button — launch the app with current settings (no dump override)
 $btnRun.Add_Click({
+    $sceneDeps = Test-SelectedSceneDependencies
+    if (-not (Show-SceneDependencyError $sceneDeps)) { return }
     if (Test-AndroidTarget) {
         Invoke-AndroidInstall | Out-Null
         return
@@ -2223,6 +2410,8 @@ $btnRun.Add_Click({
 # EDITOR button — launch T8ditor with current graphics/resolution/log settings
 $btnEditor.Add_Click({
     if (Test-AndroidTarget) {
+        $sceneDeps = Test-SelectedSceneDependencies
+        if (-not (Show-SceneDependencyError $sceneDeps)) { return }
         Invoke-AndroidDeploy
         return
     }
@@ -2262,8 +2451,9 @@ function Populate-ModelList {
         $modelsDir = Join-Path $rootDir "bin\$archFolder\$config\Models"
     }
     if (Test-Path $modelsDir) {
-        $files = Get-ChildItem $modelsDir -Filter "*.glb" | Sort-Object Name
-        $files += Get-ChildItem $modelsDir -Filter "*.gltf" | Sort-Object Name
+        $files = @()
+        $files += @(Get-ChildItem $modelsDir -Filter "*.glb" | Sort-Object Name)
+        $files += @(Get-ChildItem $modelsDir -Filter "*.gltf" | Sort-Object Name)
         foreach ($f in $files) {
             $item = New-Object System.Windows.Controls.ComboBoxItem
             $item.Content = $f.Name
@@ -2283,9 +2473,44 @@ function Populate-ModelList {
     }
 }
 
+function Populate-SceneFileList {
+    $previous = Get-SelectedSceneFilePath
+    $cmbSceneFile.Items.Clear()
+    if (Test-AndroidTarget) {
+        $scenesDir = Join-Path $rootDir "Assets\Scenes"
+    } else {
+        $runtimeScenes = Join-Path (Get-WindowsRuntimeRoot) "Scenes"
+        $sourceScenes = Join-Path $rootDir "Assets\Scenes"
+        $scenesDir = if (Test-Path $runtimeScenes) { $runtimeScenes } else { $sourceScenes }
+    }
+    if (Test-Path $scenesDir) {
+        $files = Get-ChildItem $scenesDir -Filter "*.t8scene" -Recurse | Sort-Object FullName
+        foreach ($f in $files) {
+            $item = New-Object System.Windows.Controls.ComboBoxItem
+            $relative = $f.FullName.Substring($scenesDir.Length).TrimStart('\', '/')
+            $item.Content = if ($relative) { $relative } else { $f.Name }
+            $item.Tag = $f.FullName
+            $cmbSceneFile.Items.Add($item) | Out-Null
+        }
+    }
+    $selected = $false
+    if ($previous) {
+        foreach ($item in $cmbSceneFile.Items) {
+            if ($item.Tag -eq $previous) {
+                $cmbSceneFile.SelectedItem = $item; $selected = $true; break
+            }
+        }
+    }
+    if (-not $selected -and $cmbSceneFile.Items.Count -gt 0) {
+        $cmbSceneFile.SelectedIndex = 0
+    }
+}
+
 Populate-ModelList
+Populate-SceneFileList
 Load-Config
 Populate-ModelList
+Populate-SceneFileList
 Load-Config
 Refresh-AndroidDevices
 Update-SceneOptionVisibility

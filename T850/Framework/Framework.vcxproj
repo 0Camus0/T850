@@ -51,6 +51,7 @@
     <ClInclude Include="include\scene\IBLResources.h" />
     <ClInclude Include="include\debug\FrameDumper.h" />
     <ClInclude Include="include\debug\Profiler.h" />
+    <ClInclude Include="include\scene\EditorSceneFile.h" />
     <ClInclude Include="include\scene\RenderGraph.h" />
     <ClInclude Include="include\scene\RenderGraphDescriptor.h" />
     <ClInclude Include="include\scene\SceneDescriptor.h" />
@@ -61,8 +62,10 @@
     <ClInclude Include="include\scene\WireframeArrow.h" />
     <ClInclude Include="include\scene\Quad.h" />
     <ClInclude Include="include\scene\TextRenderer.h" />
+    <ClInclude Include="include\physics\CharacterController.h" />
     <ClInclude Include="include\physics\JoltPhysicsSystem.h" />
     <ClInclude Include="include\physics\PhysicsDebugRenderer.h" />
+    <ClInclude Include="include\physics\Q3BspCollision.h" />
     <ClInclude Include="include\physics\PhysicsAuthoring.h" />
     <ClInclude Include="include\physics\PhysicsTypes.h" />
     <ClInclude Include="include\gui\GUIAtlas.h" />
@@ -81,6 +84,7 @@
     <ClInclude Include="include\utils\ThreadPool.h" />
     <ClInclude Include="include\utils\Utils.h" />
     <ClInclude Include="include\utils\Camera.h" />
+    <ClInclude Include="include\utils\CameraProfiles.h" />
     <ClInclude Include="include\utils\Picking.h" />
     <ClInclude Include="include\utils\XDataBase.h" />
     <ClInclude Include="include\utils\xDefs.h" />
@@ -165,8 +169,10 @@
     <ClCompile Include="src\core\Config.cpp" />
     <ClCompile Include="src\core\EngineContext.cpp" />
     <ClCompile Include="src\core\windows\Win32Framework.cpp" />
+    <ClCompile Include="src\physics\CharacterController.cpp" />
     <ClCompile Include="src\physics\JoltPhysicsSystem.cpp" />
     <ClCompile Include="src\physics\PhysicsDebugRenderer.cpp" />
+    <ClCompile Include="src\physics\Q3BspCollision.cpp" />
     <ClCompile Include="src\physics\PhysicsAuthoring.cpp" />
     <ClCompile Include="src\scene\LensFlare.cpp" />
     <ClCompile Include="src\scene\RenderMesh.cpp" />
@@ -185,6 +191,7 @@
     <ClCompile Include="src\debug\FrameDumperIO.cpp" />
     <ClCompile Include="src\debug\Profiler.cpp" />
     <ClCompile Include="src\debug\RenderTrace.cpp" />
+    <ClCompile Include="src\scene\EditorSceneFile.cpp" />
     <ClCompile Include="src\scene\RenderGraph.cpp" />
     <ClCompile Include="src\scene\SceneDescriptor.cpp" />
     <ClCompile Include="src\scene\SceneSetup.cpp" />
@@ -207,6 +214,7 @@
     <ClCompile Include="src\utils\Timer.cpp" />
     <ClCompile Include="src\utils\Utils.cpp" />
     <ClCompile Include="src\utils\Camera.cpp" />
+    <ClCompile Include="src\utils\CameraProfiles.cpp" />
     <ClCompile Include="src\utils\Picking.cpp" />
     <ClCompile Include="src\utils\XDataBase.cpp" />
     <ClCompile Include="src\utils\XMaths.cpp" />

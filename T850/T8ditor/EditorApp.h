@@ -33,6 +33,8 @@
 #include <scene/PrimitiveManager.h>
 #include <scene/PrimitiveInstance.h>
 #include <scene/SceneProp.h>
+#include <physics/JoltPhysicsSystem.h>
+#include <physics/PhysicsDebugRenderer.h>
 
 #include <string>
 
@@ -71,8 +73,19 @@ namespace t8ditor {
   private:
     void ProcessSelectionInput();
     void ImportMesh(const std::string& path);
+    void CloneSelected();
     void CheckResize();
     void HandleMousePick();
+    void SyncSceneObjectTransforms();
+    void DestroyObjectRagdoll(struct SceneObject& obj);
+    void DestroyAllObjectRagdolls();
+    bool EnsureObjectRagdollAuthoring(struct SceneObject& obj);
+    bool RecreateObjectRagdoll(struct SceneObject& obj, t850::PhysicsBodyMotion motion);
+    bool StartObjectRagdollSimulation(struct SceneObject& obj);
+    bool ResetObjectRagdollToAnimation(struct SceneObject& obj);
+    void UpdateSkinnedAnimationAndRagdolls();
+    void UploadSkinnedBoneTextures();
+    void DrawRagdollInspector(struct SceneObject& obj);
 
     Timer m_dtTimer;
     float m_dtSecs   = 0.0f;
@@ -90,6 +103,8 @@ namespace t8ditor {
     t850::PrimitiveInst   m_meshInst;
     int                   m_meshPrimId = -1;  // -1 = no lit mesh loaded
     XMATRIX44             m_vp;               // VP matrix for the prim mgr
+    t850::JoltPhysicsSystem m_physics;
+    t850::PhysicsDebugRenderer m_physicsDebug;
 
     bool m_assetsCreated = false;
     bool m_imguiReady   = false;

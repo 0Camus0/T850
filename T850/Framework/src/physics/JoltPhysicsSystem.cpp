@@ -12,11 +12,15 @@
 #include <Jolt/Core/StreamWrapper.h>
 #include <Jolt/Core/TempAllocator.h>
 #include <Jolt/Physics/Body/BodyCreationSettings.h>
+#include <Jolt/Physics/Body/BodyFilter.h>
 #include <Jolt/Physics/Body/BodyID.h>
 #include <Jolt/Physics/Body/BodyInterface.h>
 #include <Jolt/Physics/Body/MotionType.h>
 #include <Jolt/Physics/Collision/BroadPhase/BroadPhaseLayer.h>
 #include <Jolt/Physics/Collision/CollisionGroup.h>
+#include <Jolt/Physics/Collision/CollisionCollectorImpl.h>
+#include <Jolt/Physics/Collision/NarrowPhaseQuery.h>
+#include <Jolt/Physics/Collision/ShapeCast.h>
 #include <Jolt/Physics/Collision/GroupFilterTable.h>
 #include <Jolt/Physics/Collision/ObjectLayer.h>
 #include <Jolt/Physics/Collision/Shape/MeshShape.h>
@@ -1350,6 +1354,191 @@ bool JoltPhysicsSystem::GetBodyState(PhysicsBodyHandle handle, PhysicsBodyState&
   return true;
 }
 
+bool JoltPhysicsSystem::CastCapsule(const PhysicsCapsuleCastDesc& desc, PhysicsCastHit& outHit) const {
+  outHit = PhysicsCastHit{};
+  if (!m_initialized || !m_impl) {
+    return false;
+  }
+
+  if (!IsUsablePhysicsCoordinate(desc.startCenter.x) ||
+      !IsUsablePhysicsCoordinate(desc.startCenter.y) ||
+      !IsUsablePhysicsCoordinate(desc.startCenter.z) ||
+      !IsUsablePhysicsCoordinate(desc.displacement.x) ||
+      !IsUsablePhysicsCoordinate(desc.displacement.y) ||
+      !IsUsablePhysicsCoordinate(desc.displacement.z) ||
+      !IsBoundedPhysicsExtent(desc.radius) ||
+      !IsBoundedPhysicsExtent(desc.halfHeight)) {
+    T8_LOG_ERROR("Jolt capsule cast skipped: invalid start/displacement/radius/height");
+    return false;
+  }
+
+  const float radius = (std::max)(0.001f, desc.radius);
+  const float halfHeight = (std::max)(0.001f, desc.halfHeight);
+  const JPH::Vec3 displacement(desc.displacement.x, desc.displacement.y, desc.displacement.z);
+  if (displacement.LengthSq() <= 0.00000001f) {
+    return false;
+  }
+
+  JPH::RefConst<JPH::Shape> capsuleShape = new JPH::CapsuleShape(halfHeight, radius);
+  const JPH::RMat44 startTransform =
+      JPH::RMat44::sTranslation(JPH::RVec3(desc.startCenter.x, desc.startCenter.y, desc.startCenter.z));
+  const JPH::RShapeCast shapeCast =
+      JPH::RShapeCast::sFromWorldTransform(capsuleShape.GetPtr(), JPH::Vec3::sReplicate(1.0f), startTransform, displacement);
+
+  JPH::ShapeCastSettings settings;
+  settings.mBackFaceModeTriangles = JPH::EBackFaceMode::CollideWithBackFaces;
+  settings.mBackFaceModeConvex = JPH::EBackFaceMode::CollideWithBackFaces;
+  settings.mUseShrunkenShapeAndConvexRadius = true;
+  settings.mReturnDeepestPoint = true;
+
+  JPH::ClosestHitCollisionCollector<JPH::CastShapeCollector> collector;
+  const JPH::RVec3 baseOffset(desc.startCenter.x, desc.startCenter.y, desc.startCenter.z);
+  JPH::IgnoreMultipleBodiesFilter ignoredBodies;
+  if (!desc.ignoredEntityIds.empty()) {
+    ignoredBodies.Reserve(static_cast<JPH::uint>(desc.ignoredEntityIds.size()));
+    for (const Impl::BodySlot& slot : m_impl->bodies) {
+      if (slot.alive &&
+          std::find(desc.ignoredEntityIds.begin(), desc.ignoredEntityIds.end(), slot.entityId) != desc.ignoredEntityIds.end()) {
+        ignoredBodies.IgnoreBody(slot.id);
+      }
+    }
+  }
+  m_impl->physicsSystem.GetNarrowPhaseQuery().CastShape(
+      shapeCast,
+      settings,
+      baseOffset,
+      collector,
+      JPH::BroadPhaseLayerFilter(),
+      JPH::ObjectLayerFilter(),
+      ignoredBodies);
+
+  if (!collector.HadHit()) {
+    return false;
+  }
+
+  const JPH::ShapeCastResult& hit = collector.mHit;
+  outHit.hit = true;
+  outHit.fraction = (std::max)(0.0f, (std::min)(hit.mFraction, 1.0f));
+  outHit.position = XVECTOR3(
+      static_cast<float>(baseOffset.GetX() + hit.mContactPointOn2.GetX()),
+      static_cast<float>(baseOffset.GetY() + hit.mContactPointOn2.GetY()),
+      static_cast<float>(baseOffset.GetZ() + hit.mContactPointOn2.GetZ()),
+      1.0f);
+
+  JPH::Vec3 normal = -hit.mPenetrationAxis;
+  if (normal.LengthSq() <= 0.00000001f) {
+    normal = JPH::Vec3(0.0f, 1.0f, 0.0f);
+  } else {
+    normal = normal.Normalized();
+  }
+  outHit.normal = XVECTOR3(normal.GetX(), normal.GetY(), normal.GetZ(), 0.0f);
+
+  for (uint32_t index = 0; index < static_cast<uint32_t>(m_impl->bodies.size()); ++index) {
+    const Impl::BodySlot& slot = m_impl->bodies[index];
+    if (slot.alive && slot.id == hit.mBodyID2) {
+      outHit.body.value = index;
+      outHit.entityId = slot.entityId;
+      break;
+    }
+  }
+
+  return true;
+}
+
+bool JoltPhysicsSystem::CastBox(const PhysicsBoxCastDesc& desc, PhysicsCastHit& outHit) const {
+  outHit = PhysicsCastHit{};
+  if (!m_initialized || !m_impl) {
+    return false;
+  }
+
+  if (!IsUsablePhysicsCoordinate(desc.startCenter.x) ||
+      !IsUsablePhysicsCoordinate(desc.startCenter.y) ||
+      !IsUsablePhysicsCoordinate(desc.startCenter.z) ||
+      !IsUsablePhysicsCoordinate(desc.displacement.x) ||
+      !IsUsablePhysicsCoordinate(desc.displacement.y) ||
+      !IsUsablePhysicsCoordinate(desc.displacement.z) ||
+      !IsBoundedPhysicsExtent(desc.halfExtents.x) ||
+      !IsBoundedPhysicsExtent(desc.halfExtents.y) ||
+      !IsBoundedPhysicsExtent(desc.halfExtents.z)) {
+    T8_LOG_ERROR("Jolt box cast skipped: invalid start/displacement/extents");
+    return false;
+  }
+
+  const JPH::Vec3 halfExtents(
+      (std::max)(0.001f, desc.halfExtents.x),
+      (std::max)(0.001f, desc.halfExtents.y),
+      (std::max)(0.001f, desc.halfExtents.z));
+  const JPH::Vec3 displacement(desc.displacement.x, desc.displacement.y, desc.displacement.z);
+  if (displacement.LengthSq() <= 0.00000001f) {
+    return false;
+  }
+
+  JPH::RefConst<JPH::Shape> boxShape = new JPH::BoxShape(halfExtents, 0.0f);
+  const JPH::RMat44 startTransform =
+      JPH::RMat44::sTranslation(JPH::RVec3(desc.startCenter.x, desc.startCenter.y, desc.startCenter.z));
+  const JPH::RShapeCast shapeCast =
+      JPH::RShapeCast::sFromWorldTransform(boxShape.GetPtr(), JPH::Vec3::sReplicate(1.0f), startTransform, displacement);
+
+  JPH::ShapeCastSettings settings;
+  settings.mBackFaceModeTriangles = JPH::EBackFaceMode::CollideWithBackFaces;
+  settings.mBackFaceModeConvex = JPH::EBackFaceMode::CollideWithBackFaces;
+  settings.mUseShrunkenShapeAndConvexRadius = true;
+  settings.mReturnDeepestPoint = true;
+
+  JPH::ClosestHitCollisionCollector<JPH::CastShapeCollector> collector;
+  const JPH::RVec3 baseOffset(desc.startCenter.x, desc.startCenter.y, desc.startCenter.z);
+  JPH::IgnoreMultipleBodiesFilter ignoredBodies;
+  if (!desc.ignoredEntityIds.empty()) {
+    ignoredBodies.Reserve(static_cast<JPH::uint>(desc.ignoredEntityIds.size()));
+    for (const Impl::BodySlot& slot : m_impl->bodies) {
+      if (slot.alive &&
+          std::find(desc.ignoredEntityIds.begin(), desc.ignoredEntityIds.end(), slot.entityId) != desc.ignoredEntityIds.end()) {
+        ignoredBodies.IgnoreBody(slot.id);
+      }
+    }
+  }
+  m_impl->physicsSystem.GetNarrowPhaseQuery().CastShape(
+      shapeCast,
+      settings,
+      baseOffset,
+      collector,
+      JPH::BroadPhaseLayerFilter(),
+      JPH::ObjectLayerFilter(),
+      ignoredBodies);
+
+  if (!collector.HadHit()) {
+    return false;
+  }
+
+  const JPH::ShapeCastResult& hit = collector.mHit;
+  outHit.hit = true;
+  outHit.fraction = (std::max)(0.0f, (std::min)(hit.mFraction, 1.0f));
+  outHit.position = XVECTOR3(
+      static_cast<float>(baseOffset.GetX() + hit.mContactPointOn2.GetX()),
+      static_cast<float>(baseOffset.GetY() + hit.mContactPointOn2.GetY()),
+      static_cast<float>(baseOffset.GetZ() + hit.mContactPointOn2.GetZ()),
+      1.0f);
+
+  JPH::Vec3 normal = -hit.mPenetrationAxis;
+  if (normal.LengthSq() <= 0.00000001f) {
+    normal = JPH::Vec3(0.0f, 1.0f, 0.0f);
+  } else {
+    normal = normal.Normalized();
+  }
+  outHit.normal = XVECTOR3(normal.GetX(), normal.GetY(), normal.GetZ(), 0.0f);
+
+  for (uint32_t index = 0; index < static_cast<uint32_t>(m_impl->bodies.size()); ++index) {
+    const Impl::BodySlot& slot = m_impl->bodies[index];
+    if (slot.alive && slot.id == hit.mBodyID2) {
+      outHit.body.value = index;
+      outHit.entityId = slot.entityId;
+      break;
+    }
+  }
+
+  return true;
+}
+
 PhysicsRagdollHandle JoltPhysicsSystem::CreateRagdoll(const PhysicsRagdollDesc& desc, PhysicsBodyMotion initialMotion) {
   if (!m_initialized || !m_impl || desc.bones.empty()) {
     return {};
@@ -1674,6 +1863,14 @@ bool JoltPhysicsSystem::SetBodyTransform(PhysicsBodyHandle, const XMATRIX44&, bo
 }
 
 bool JoltPhysicsSystem::GetBodyState(PhysicsBodyHandle, PhysicsBodyState&) const {
+  return false;
+}
+
+bool JoltPhysicsSystem::CastCapsule(const PhysicsCapsuleCastDesc&, PhysicsCastHit&) const {
+  return false;
+}
+
+bool JoltPhysicsSystem::CastBox(const PhysicsBoxCastDesc&, PhysicsCastHit&) const {
   return false;
 }
 

@@ -183,6 +183,7 @@ void ApplyConfigJson(const RuntimeConfigJson& json, Config& cfg) {
   if (json.scene) cfg.startScene = *json.scene;
   if (json.title) cfg.title = *json.title;
   if (json.model) cfg.modelPath = *json.model;
+  if (json.sceneFile) cfg.sceneFilePath = StripQuotes(*json.sceneFile);
   if (json.sceneProfile) cfg.sceneProfile = StripQuotes(*json.sceneProfile);
   if (json.debugFrames) {
     cfg.flags.debugFrames = *json.debugFrames;
@@ -201,6 +202,7 @@ void ApplyConfigJson(const RuntimeConfigJson& json, Config& cfg) {
   if (json.d3d12Debug) cfg.flags.d3d12Debug = *json.d3d12Debug;
   if (json.profile) cfg.flags.profile = *json.profile;
   if (json.profileFrames) cfg.profileFrames = *json.profileFrames;
+  if (json.autoStartRagdoll) cfg.flags.autoStartRagdoll = *json.autoStartRagdoll;
   if (json.dumpMatrices) cfg.flags.dumpMatrices = *json.dumpMatrices;
   if (json.dumpMatricesFrames) cfg.dumpMatricesFrames = *json.dumpMatricesFrames;
   if (json.benchmark) cfg.flags.benchmark = *json.benchmark;
@@ -225,6 +227,7 @@ void ApplyConfigJson(const RuntimeConfigJson& json, Config& cfg) {
     if (display.fullscreen) cfg.flags.fullscreen = *display.fullscreen;
     if (display.scene) cfg.startScene = *display.scene;
     if (display.model) cfg.modelPath = *display.model;
+    if (display.sceneFile) cfg.sceneFilePath = StripQuotes(*display.sceneFile);
     if (display.sceneProfile) cfg.sceneProfile = StripQuotes(*display.sceneProfile);
     if (display.title) cfg.title = *display.title;
   }
@@ -253,6 +256,7 @@ void ApplyConfigJson(const RuntimeConfigJson& json, Config& cfg) {
     if (devTools.d3d12Debug) cfg.flags.d3d12Debug = *devTools.d3d12Debug;
     if (devTools.profile) cfg.flags.profile = *devTools.profile;
     if (devTools.profileFrames) cfg.profileFrames = *devTools.profileFrames;
+    if (devTools.autoStartRagdoll) cfg.flags.autoStartRagdoll = *devTools.autoStartRagdoll;
     if (devTools.dumpMatrices) cfg.flags.dumpMatrices = *devTools.dumpMatrices;
     if (devTools.dumpMatricesFrames) cfg.dumpMatricesFrames = *devTools.dumpMatricesFrames;
     if (devTools.benchmark) cfg.flags.benchmark = *devTools.benchmark;
@@ -332,11 +336,17 @@ bool ValidateConfig(Config& cfg) {
     valid = false;
   }
 
-  if (cfg.modelPath.empty()) {
+  cfg.sceneFilePath = StripQuotes(cfg.sceneFilePath);
+  if (!cfg.sceneFilePath.empty()) {
+    cfg.startScene = 0;
+    cfg.modelPath.clear();
+  }
+
+  if (cfg.modelPath.empty() && cfg.sceneFilePath.empty()) {
     WarnConfigAdjusted("modelPath", "must not be empty, using '" + defaults.modelPath + "'");
     cfg.modelPath = defaults.modelPath;
     valid = false;
-  } else {
+  } else if (!cfg.modelPath.empty()) {
     cfg.modelPath = StripQuotes(cfg.modelPath);
   }
 
@@ -484,8 +494,17 @@ void ApplyCommandLine(int argc, char** argv, Config& cfg) {
       int value = 0;
       if (ReadIntArgument(arg, argc, argv, i, value)) cfg.profileFrames = value;
     }
+    else if (arg == "--autoStartRagdoll") {
+      cfg.flags.autoStartRagdoll = true;
+    }
     else if (arg == "--model" && i + 1 < argc) {
       cfg.modelPath = argv[++i];
+      cfg.sceneFilePath.clear();
+    }
+    else if ((arg == "--sceneFile" || arg == "--t8scene") && i + 1 < argc) {
+      cfg.sceneFilePath = StripQuotes(argv[++i]);
+      cfg.modelPath.clear();
+      cfg.startScene = 0;
     }
     else if (arg == "--sceneProfile" && i + 1 < argc) {
       cfg.sceneProfile = StripQuotes(argv[++i]);
@@ -559,6 +578,7 @@ void PrintHelp() {
     << "  --fullscreen                       Launch fullscreen\n"
     << "  --scene <index>                    Starting scene index\n"
     << "  --model <path>                     glTF model for Sandbox\n"
+    << "  --sceneFile <path>                 T8ditor .t8scene file for Sandbox\n"
     << "  --sceneProfile <name>              Override runtime scene profile selection\n\n"
     << "  --orbitYaw <radians>               Override Sandbox orbit yaw after model fit\n\n"
     << "Capture/debug:\n"
@@ -589,6 +609,7 @@ void PrintHelp() {
     << "  --d3d12debug                       Enable D3D12 debug layer\n"
     << "  --profile                          Enable GPU+CPU profiling\n"
     << "  --profileFrames <frames>           Frames to profile before report\n"
+    << "  --autoStartRagdoll                 Start ragdoll simulation as soon as it is ready\n"
     ;
 }
 

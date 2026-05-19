@@ -78,12 +78,29 @@ AnimationController::AnimationController() {
 void AnimationController::Init(xF::xAnimationInfo* animInfo,
                                xF::xSkeleton* skeletonBind,
                                xF::xSkeleton* skeletonAnim) {
-  m_pAnimInfo     = animInfo;
-  m_pSkeletonBind = skeletonBind;
-  m_pSkeletonAnim = skeletonAnim;
+  m_animInfoInstance = xF::xAnimationInfo();
+  m_skeletonBindInstance = xF::xSkeleton();
+  m_skeletonAnimInstance = xF::xSkeleton();
+  m_pAnimInfo     = nullptr;
+  m_pSkeletonBind = nullptr;
+  m_pSkeletonAnim = nullptr;
+  m_pSkinWeights  = nullptr;
   m_currentSet    = 0;
+  m_currentKeyframe = 0;
   m_localTime     = 0.0f;
   m_initialized   = false;
+
+  if (!animInfo || !skeletonBind || !skeletonAnim) return;
+
+  // Keep mutable animation playback state per renderer. The XDataBase is shared
+  // by mesh/material caches, so cloned skinned instances must not write to its
+  // cached SkeletonAnimated or ActualKey state.
+  m_animInfoInstance = *animInfo;
+  m_skeletonBindInstance = *skeletonBind;
+  m_skeletonAnimInstance = *skeletonAnim;
+  m_pAnimInfo     = &m_animInfoInstance;
+  m_pSkeletonBind = &m_skeletonBindInstance;
+  m_pSkeletonAnim = &m_skeletonAnimInstance;
 
   if (!m_pAnimInfo || !m_pSkeletonBind || !m_pSkeletonAnim) return;
   if (m_pSkeletonAnim->Bones.empty()) return;
@@ -130,6 +147,18 @@ void AnimationController::Init(xF::xAnimationInfo* animInfo,
   // This guarantees IBM * BindCombined = Identity exactly, avoiding
   // accumulated numerical drift from glTF's pre-baked IBM values.
   ComputeBindPose();
+
+  // Start the animated skeleton from this instance's bind pose, not from a
+  // potentially already-animated cached SkeletonAnimated owned by another clone.
+  m_pSkeletonAnim->RootParentWorld = m_pSkeletonBind->RootParentWorld;
+  const int availableBones = static_cast<int>(
+      (std::min)(m_pSkeletonBind->Bones.size(), m_pSkeletonAnim->Bones.size()));
+  const int copyCount = (std::min)(m_numBones, availableBones);
+  for (int i = 0; i < copyCount; ++i) {
+    m_pSkeletonAnim->Bones[i].Bone = m_pSkeletonBind->Bones[i].Bone;
+    m_pSkeletonAnim->Bones[i].Combined = m_pSkeletonBind->Bones[i].Combined;
+    m_pSkeletonAnim->Bones[i].IntermediateTransform = m_pSkeletonBind->Bones[i].IntermediateTransform;
+  }
 
   T8_LOG_INFO("[AnimCtrl] Initialized: %d bones, %zu animation sets, %.0f tps",
               m_numBones, m_pAnimInfo->Animations.size(), m_ticksPerSecond);

@@ -19,11 +19,10 @@
  *   alphaCutoff                               → alphaCutoff  (FLOATS)
  *   doubleSided                               → doubleSided  (DWORDS)
  *
- * Note (per plan §6.5): glTF packs metallic in the B channel of the
+ * Note: glTF packs metallic in the B channel of the
  * combined metallic-roughness texture and roughness in G. The current
- * FS_Mesh shader reads MetallicTex.r → metallic; this is documented as
- * a follow-up phase so we still bind the texture but the visual
- * mapping may be off until the shader is updated.
+ * FS_Mesh shader reads mrSample.b → metallic and mrSample.g → roughness,
+ * which is correct per the glTF 2.0 spec.
  *********************************************************/
 
 #include <utils/gltf/GLTFMaterial.h>
@@ -249,6 +248,11 @@ void ConvertMaterial(const Document& doc, int materialIndex,
   if (m.emissiveTexture) {
     AddTextureBinding(outMat, doc, m, *m.emissiveTexture, "emissiveMap", "emissiveTexCoord", "emissiveTexture", "emissive");
   }
+  if (m.extensions && m.extensions->MOZ_lightmap) {
+    const auto& lightmap = *m.extensions->MOZ_lightmap;
+    AddTextureBinding(outMat, doc, m, lightmap, "lightmapMap", "lightmapTexCoord", "MOZ_lightmap", "lightmap");
+    AddFloats(outMat, "lightmapIntensity", {lightmap.intensity});
+  }
   float emissiveStrength = 1.0f;
   if (m.extensions && m.extensions->KHR_materials_emissive_strength) {
     emissiveStrength = m.extensions->KHR_materials_emissive_strength->emissiveStrength;
@@ -356,6 +360,8 @@ void ConvertMaterial(const Document& doc, int materialIndex,
   if (m.normalTexture)    checkTex(m.normalTexture->index);
   if (m.occlusionTexture) checkTex(m.occlusionTexture->index);
   if (m.emissiveTexture)  checkTex(m.emissiveTexture->index);
+  if (m.extensions && m.extensions->MOZ_lightmap)
+    checkTex(m.extensions->MOZ_lightmap->index);
   if (m.extensions && m.extensions->KHR_materials_sheen) {
     if (m.extensions->KHR_materials_sheen->sheenColorTexture)
       checkTex(m.extensions->KHR_materials_sheen->sheenColorTexture->index);

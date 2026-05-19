@@ -74,6 +74,10 @@ uniform mediump sampler2D SpecularColorTex;
 uniform mediump sampler2D TransmissionTex;
 #endif
 
+#ifdef LIGHTMAP_MAP
+uniform mediump sampler2D LightmapTex;
+#endif
+
 uniform highp vec4 LightPos;
 uniform highp vec4 LightColor;
 uniform highp vec4 CameraPosition;
@@ -123,6 +127,8 @@ uniform highp vec4 SpecularColorUVTransform0;
 uniform highp vec4 SpecularColorUVTransform1;
 uniform highp vec4 TransmissionUVTransform0;
 uniform highp vec4 TransmissionUVTransform1;
+uniform highp vec4 LightmapUVTransform0;
+uniform highp vec4 LightmapUVTransform1;
 uniform highp vec4 LightPositions[128];
 uniform highp vec4 LightColors[128];
 uniform highp vec4 LightRadius[32];
@@ -497,6 +503,19 @@ highp vec3 SampleEmissive(highp vec2 uv)
     return emissive * MaterialParams.w;
 }
 
+highp float SampleLightmap()
+{
+#ifdef LIGHTMAP_MAP
+    highp vec2 lightmapUV = GetTexCoord(MaterialParams9.z);
+    lightmapUV = ApplyUVTransform(lightmapUV, LightmapUVTransform0, LightmapUVTransform1);
+    highp vec3 lightmap = SampleTexture2D(LightmapTex, lightmapUV).rgb;
+    highp float luminance = dot(lightmap, vec3(0.2126, 0.7152, 0.0722));
+    return max(luminance * MaterialParams9.w, 0.0);
+#else
+    return 0.0;
+#endif
+}
+
 void ApplyAlphaMask(inout highp vec4 color)
 {
     if (AlphaParams.x > 0.5 && AlphaParams.x < 1.5) {
@@ -769,7 +788,8 @@ void main()
     colorOut_1 = vec4(normal * 0.5 + 0.5, roughness);
     colorOut_2 = vec4(metallic, selfShadow, clearcoatFactor, Intensities.w / 255.0);
     highp float packedMaterial = clearcoatRoughness * 0.5 + (MaterialParams.z > 0.5 ? 0.5 : 0.0);
-    colorOut_3 = vec4(EncodeOctahedralNormal(geoNormal), 0.0, packedMaterial);
+    highp float lightmap = SampleLightmap();
+    colorOut_3 = vec4(EncodeOctahedralNormal(geoNormal), clamp(lightmap, 0.0, 1.0), packedMaterial);
     colorOut_4 = vec4(SampleEmissive(uv), 0.0);
     colorOut_5 = vec4(sheenColor, sheenRoughness);
     colorOut_6 = vec4(dielectricF0, occlusion);
@@ -778,7 +798,8 @@ void main()
     gl_FragData[1] = vec4(normal * 0.5 + 0.5, roughness);
     gl_FragData[2] = vec4(metallic, selfShadow, clearcoatFactor, Intensities.w / 255.0);
     highp float packedMaterial = clearcoatRoughness * 0.5 + (MaterialParams.z > 0.5 ? 0.5 : 0.0);
-    gl_FragData[3] = vec4(EncodeOctahedralNormal(geoNormal), 0.0, packedMaterial);
+    highp float lightmap = SampleLightmap();
+    gl_FragData[3] = vec4(EncodeOctahedralNormal(geoNormal), clamp(lightmap, 0.0, 1.0), packedMaterial);
     gl_FragData[4] = vec4(SampleEmissive(uv), 0.0);
     gl_FragData[5] = vec4(sheenColor, sheenRoughness);
     gl_FragData[6] = vec4(dielectricF0, occlusion);
@@ -926,6 +947,7 @@ void main()
     highp float diffuseMip = clamp(MaterialParams3.z, 0.0, iblMaxMip);
     highp vec3 irradiance = SampleCubeLod(texIBLDiffuse, irradianceDir, diffuseMip);
     indirectLight += irradiance * albedo * kDiffuseEnv * iblFactor;
+    indirectLight += albedo * kDiffuseEnv * SampleLightmap();
     if (hasSheenLUT && sheenStrength > 0.0) {
         highp float albedoSheenScaling = 1.0 - sheenStrength * AlbedoSheenScalingLUT(NdotV, sheenRoughness);
         highp vec3 sheenIBL = GetIBLRadianceCharlie(normal, eyeDir, sheenRoughness, sheenColor, iblMaxMip) * iblFactor;

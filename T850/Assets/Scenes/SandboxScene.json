@@ -163,6 +163,9 @@
       "env_factor": 0.3,
       "ibl_factor": 1,
       "godrays_factor": 1,
+      "light_radius_scale": 1,
+      "light_intensity_scale": 1,
+      "lightmap_intensity": 1,
       "material_emissive_intensity": 1,
       "material_transmission_multiplier": 1,
       "material_refraction_strength": 0.03
@@ -191,6 +194,30 @@
          "max_val": 10,
          "step": 0.1,
          "default_val": 1.5
+      },
+      {
+         "name": "light_radius_scale",
+         "label": "Light Radius Scale",
+         "min_val": 0.01,
+         "max_val": 32,
+         "step": 0.05,
+         "default_val": 1
+      },
+      {
+         "name": "light_intensity_scale",
+         "label": "Light Intensity Scale",
+         "min_val": 0,
+         "max_val": 32,
+         "step": 0.05,
+         "default_val": 1
+      },
+      {
+         "name": "lightmap_intensity",
+         "label": "Lightmap Intensity",
+         "min_val": 0,
+         "max_val": 4,
+         "step": 0.05,
+         "default_val": 1
       },
       {
          "name": "tm_white_level",
@@ -466,6 +493,10 @@
             {
                "name": "godrays_factor",
                "value": 0.45
+            },
+            {
+               "name": "lightmap_intensity",
+               "value": 1
             }
          ],
          "checkboxes": [],
@@ -495,6 +526,10 @@
             {
                "name": "godrays_factor",
                "value": 0.6
+            },
+            {
+               "name": "lightmap_intensity",
+               "value": 1
             }
          ],
          "checkboxes": [],
@@ -532,6 +567,10 @@
             {
                "name": "gauss_1_sigma",
                "value": 1.102
+            },
+            {
+               "name": "lightmap_intensity",
+               "value": 1
             }
          ],
          "checkboxes": [
@@ -568,9 +607,9 @@
          ],
          "orbit_camera": {
             "target": [
-               0.000056272373,
+               5.6272373e-05,
                0.0064673093,
-               -4.656613E-9
+               -4.656613e-09
             ],
             "pan_offset": [
                -0.0019408631,
@@ -629,6 +668,10 @@
             },
             {
                "name": "gauss_1_sigma",
+               "value": 1
+            },
+            {
+               "name": "lightmap_intensity",
                "value": 1
             }
          ],
@@ -700,6 +743,10 @@
             },
             {
                "name": "gauss_1_sigma",
+               "value": 1
+            },
+            {
+               "name": "lightmap_intensity",
                "value": 1
             }
          ],
@@ -777,6 +824,10 @@
             {
                "name": "gauss_1_sigma",
                "value": 1
+            },
+            {
+               "name": "lightmap_intensity",
+               "value": 1
             }
          ],
          "checkboxes": [
@@ -824,7 +875,7 @@
          "orbit_camera": {
             "target": [
                -0.0024815798,
-               0.00001052022,
+               1.052022e-05,
                0.18715498
             ],
             "pan_offset": [
@@ -853,6 +904,10 @@
             {
                "name": "exposure",
                "value": 1.995
+            },
+            {
+               "name": "lightmap_intensity",
+               "value": 1
             }
          ],
          "checkboxes": [
@@ -942,6 +997,10 @@
             {
                "name": "gauss_1_sigma",
                "value": 1
+            },
+            {
+               "name": "lightmap_intensity",
+               "value": 1
             }
          ],
          "checkboxes": [
@@ -1015,6 +1074,10 @@
             },
             {
                "name": "gauss_1_sigma",
+               "value": 1
+            },
+            {
+               "name": "lightmap_intensity",
                "value": 1
             }
          ],
@@ -1112,6 +1175,10 @@
             {
                "name": "gauss_1_sigma",
                "value": 1
+            },
+            {
+               "name": "lightmap_intensity",
+               "value": 1
             }
          ],
          "checkboxes": [
@@ -1203,6 +1270,10 @@
             {
                "name": "gauss_1_sigma",
                "value": 1
+            },
+            {
+               "name": "lightmap_intensity",
+               "value": 1
             }
          ],
          "checkboxes": [
@@ -1290,6 +1361,10 @@
             {
                "name": "anim_speed",
                "value": 0.312
+            },
+            {
+               "name": "lightmap_intensity",
+               "value": 1
             }
          ],
          "checkboxes": [
@@ -1379,6 +1454,10 @@
             {
                "name": "gauss_1_sigma",
                "value": 1
+            },
+            {
+               "name": "lightmap_intensity",
+               "value": 1
             }
          ],
          "checkboxes": [
@@ -1456,6 +1535,10 @@
             {
                "name": "gauss_1_sigma",
                "value": 1
+            },
+            {
+               "name": "lightmap_intensity",
+               "value": 1
             }
          ],
          "checkboxes": [
@@ -1515,6 +1598,10 @@
          "sliders": [
             {
                "name": "gauss_1_sigma",
+               "value": 1
+            },
+            {
+               "name": "lightmap_intensity",
                "value": 1
             }
          ],
@@ -1591,6 +1678,10 @@
             {
                "name": "material_emissive_intensity",
                "value": 0.095
+            },
+            {
+               "name": "lightmap_intensity",
+               "value": 1
             }
          ],
          "checkboxes": [
@@ -1625,7 +1716,7 @@
          ],
          "orbit_camera": {
             "target": [
-               -5.9604645E-8,
+               -5.9604645e-08,
                0.26260284,
                0.001106143
             ],
@@ -1678,6 +1769,10 @@
             },
             {
                "name": "gauss_1_sigma",
+               "value": 1
+            },
+            {
+               "name": "lightmap_intensity",
                "value": 1
             }
          ],

@@ -40,6 +40,7 @@
 extern t850::AppBase		  *pApp;
 namespace t850 {
   static constexpr unsigned MaterialSamplerSlot = 0;
+  static constexpr unsigned LightmapSamplerSlot = 7;
   static constexpr unsigned EnvSamplerSlot = 4;
 
   const EngineContext& RenderMesh::Context() const {
@@ -593,6 +594,10 @@ namespace t850 {
           it_subsetinfo->NormalScale = mDef->CaseFloat[0];
         }
 
+        if (mDef->NameParam == "lightmapIntensity") {
+          it_subsetinfo->LightmapIntensity = mDef->CaseFloat[0];
+        }
+
         if (mDef->NameParam == "sheenColor") {
           it_subsetinfo->SheenColor.x = mDef->CaseFloat[0];
           it_subsetinfo->SheenColor.y = mDef->CaseFloat[1];
@@ -628,6 +633,8 @@ namespace t850 {
         assignUVTransform("specularColorUVTransform1", it_subsetinfo->SpecularColorUVTransform1);
         assignUVTransform("transmissionUVTransform0", it_subsetinfo->TransmissionUVTransform0);
         assignUVTransform("transmissionUVTransform1", it_subsetinfo->TransmissionUVTransform1);
+        assignUVTransform("lightmapUVTransform0", it_subsetinfo->LightmapUVTransform0);
+        assignUVTransform("lightmapUVTransform1", it_subsetinfo->LightmapUVTransform1);
 
 			  if (mDef->NameParam == "speclevel") {
 				  // Legacy: ignored in PBR
@@ -646,15 +653,18 @@ namespace t850 {
 #if DEBUG_MODEL
             T8_LOG_DEBUG("[%s]", mDef->NameParam.c_str());
 #endif
-            auto loadTexture = [&](const char* key, int& id, Texture** tex) -> bool {
+            auto loadTextureWithTiling = [&](const char* key, int& id, Texture** tex, bool tiled) -> bool {
               if (mDef->NameParam != key)
                 return false;
               std::string path = RemovePath(mDef->CaseString);
 #if DEBUG_MODEL
               T8_LOG_DEBUG("path[%s]", path.c_str());
 #endif
-              id = LoadTex(path, tex, materialTiled);
+              id = LoadTex(path, tex, tiled);
               return true;
+            };
+            auto loadTexture = [&](const char* key, int& id, Texture** tex) -> bool {
+              return loadTextureWithTiling(key, id, tex, materialTiled);
             };
 
             loadTexture("diffuseMap", it_subsetinfo->DiffuseId, &it_subsetinfo->DiffuseTex)
@@ -671,7 +681,8 @@ namespace t850 {
               || loadTexture("occlusionMap", it_subsetinfo->OcclusionId, &it_subsetinfo->OcclusionTex)
               || loadTexture("specularFactorMap", it_subsetinfo->SpecularFactorId, &it_subsetinfo->SpecularFactorTex)
               || loadTexture("specularColorMap", it_subsetinfo->SpecularColorId, &it_subsetinfo->SpecularColorTex)
-              || loadTexture("transmissionMap", it_subsetinfo->TransmissionId, &it_subsetinfo->TransmissionTex);
+              || loadTexture("transmissionMap", it_subsetinfo->TransmissionId, &it_subsetinfo->TransmissionTex)
+              || loadTextureWithTiling("lightmapMap", it_subsetinfo->LightmapId, &it_subsetinfo->LightmapTex, false);
           }
 
           if (mDef->Type == xF::xEFFECTENUM::STDX_DWORDS) {
@@ -724,6 +735,9 @@ namespace t850 {
             if (mDef->NameParam == "transmissionTexCoord") {
               it_subsetinfo->TransmissionTexCoord = mDef->CaseDWORD;
             }
+            if (mDef->NameParam == "lightmapTexCoord") {
+              it_subsetinfo->LightmapTexCoord = mDef->CaseDWORD;
+            }
           }
         }
 
@@ -759,6 +773,7 @@ namespace t850 {
           proto.textures[(int)MatTexSlot::SpecularFactor]     = it_subsetinfo->SpecularFactorTex;   proto.textureIds[(int)MatTexSlot::SpecularFactor]     = it_subsetinfo->SpecularFactorId;
           proto.textures[(int)MatTexSlot::SpecularColor]      = it_subsetinfo->SpecularColorTex;    proto.textureIds[(int)MatTexSlot::SpecularColor]      = it_subsetinfo->SpecularColorId;
           proto.textures[(int)MatTexSlot::Transmission]       = it_subsetinfo->TransmissionTex;     proto.textureIds[(int)MatTexSlot::Transmission]       = it_subsetinfo->TransmissionId;
+          proto.textures[(int)MatTexSlot::Lightmap]           = it_subsetinfo->LightmapTex;         proto.textureIds[(int)MatTexSlot::Lightmap]           = it_subsetinfo->LightmapId;
           auto copy4 = [](float dst[4], const XVECTOR3& src) { dst[0]=src.x; dst[1]=src.y; dst[2]=src.z; dst[3]=src.w; };
           MaterialParams& p = proto.params;
           copy4(p.ambientColor,   it_subsetinfo->AmbientColor);
@@ -776,6 +791,7 @@ namespace t850 {
           p.occlusionStrength  = it_subsetinfo->OcclusionStrength;
           p.normalScale        = it_subsetinfo->NormalScale;
           p.alphaCutoff        = it_subsetinfo->AlphaCutoff;
+          p.lightmapIntensity  = it_subsetinfo->LightmapIntensity;
           copy4(p.baseColorUV0,      it_subsetinfo->BaseColorUVTransform0);     copy4(p.baseColorUV1,      it_subsetinfo->BaseColorUVTransform1);
           copy4(p.normalUV0,         it_subsetinfo->NormalUVTransform0);        copy4(p.normalUV1,         it_subsetinfo->NormalUVTransform1);
           copy4(p.metallicUV0,       it_subsetinfo->MetallicUVTransform0);      copy4(p.metallicUV1,       it_subsetinfo->MetallicUVTransform1);
@@ -788,6 +804,7 @@ namespace t850 {
           copy4(p.specFactorUV0,     it_subsetinfo->SpecularFactorUVTransform0);copy4(p.specFactorUV1,     it_subsetinfo->SpecularFactorUVTransform1);
           copy4(p.specColorUV0,      it_subsetinfo->SpecularColorUVTransform0); copy4(p.specColorUV1,      it_subsetinfo->SpecularColorUVTransform1);
           copy4(p.transmissionUV0,   it_subsetinfo->TransmissionUVTransform0);  copy4(p.transmissionUV1,   it_subsetinfo->TransmissionUVTransform1);
+          copy4(p.lightmapUV0,       it_subsetinfo->LightmapUVTransform0);      copy4(p.lightmapUV1,       it_subsetinfo->LightmapUVTransform1);
           p.diffuseTexCoord    = (uint8_t)it_subsetinfo->DiffuseTexCoord;
           p.normalTexCoord     = (uint8_t)it_subsetinfo->NormalTexCoord;
           p.metallicTexCoord   = (uint8_t)it_subsetinfo->MetallicTexCoord;
@@ -800,6 +817,7 @@ namespace t850 {
           p.specFactorTexCoord = (uint8_t)it_subsetinfo->SpecularFactorTexCoord;
           p.specColorTexCoord  = (uint8_t)it_subsetinfo->SpecularColorTexCoord;
           p.transmissionTexCoord = (uint8_t)it_subsetinfo->TransmissionTexCoord;
+          p.lightmapTexCoord   = (uint8_t)it_subsetinfo->LightmapTexCoord;
           p.alphaMode          = (uint8_t)it_subsetinfo->AlphaMode;
           p.doubleSided        = it_subsetinfo->DoubleSided ? 1u : 0u;
           p.unlit              = it_subsetinfo->Unlit ? 1u : 0u;
@@ -1502,6 +1520,8 @@ namespace t850 {
               matKey.bits |= ShaderKey::SPECULAR_COLOR_MAP;
             if (mDef->NameParam == "transmissionMap")
               matKey.bits |= ShaderKey::TRANSMISSION_MAP;
+            if (mDef->NameParam == "lightmapMap")
+              matKey.bits |= ShaderKey::LIGHTMAP_MAP;
           }
 
           if (mDef->Type == xF::xEFFECTENUM::STDX_DWORDS) {
@@ -1836,6 +1856,8 @@ namespace t850 {
     dst.SpecularColorUVTransform1 = src.SpecularColorUVTransform1;
     dst.TransmissionUVTransform0 = src.TransmissionUVTransform0;
     dst.TransmissionUVTransform1 = src.TransmissionUVTransform1;
+    dst.LightmapUVTransform0 = src.LightmapUVTransform0;
+    dst.LightmapUVTransform1 = src.LightmapUVTransform1;
   }
 
   static void FillMaterialCBFromSubset(RenderMesh::MeshMaterialCBuffer& cb, const RenderMesh::SubSetInfo& subInfo) {
@@ -1849,7 +1871,7 @@ namespace t850 {
     cb.AlphaParams = XVECTOR3((float)subInfo.AlphaMode, subInfo.AlphaCutoff, subInfo.DoubleSided ? 1.0f : 0.0f, subInfo.TransmissionFactor);
     cb.TexCoordSets = XVECTOR3((float)subInfo.DiffuseTexCoord, (float)subInfo.NormalTexCoord, (float)subInfo.MetallicTexCoord, (float)subInfo.EmissiveTexCoord);
     cb.MaterialParams4 = XVECTOR3(subInfo.SheenColor.x, subInfo.SheenColor.y, subInfo.SheenColor.z, subInfo.SheenRoughness);
-    cb.MaterialParams9 = XVECTOR3((float)subInfo.SpecularColorTexCoord, subInfo.NormalScale, 0.0f, 0.0f);
+    cb.MaterialParams9 = XVECTOR3((float)subInfo.SpecularColorTexCoord, subInfo.NormalScale, (float)subInfo.LightmapTexCoord, subInfo.LightmapIntensity);
     cb.BaseColorUVTransform0 = subInfo.BaseColorUVTransform0;
     cb.BaseColorUVTransform1 = subInfo.BaseColorUVTransform1;
     cb.NormalUVTransform0 = subInfo.NormalUVTransform0;
@@ -1874,6 +1896,8 @@ namespace t850 {
     cb.SpecularColorUVTransform1 = subInfo.SpecularColorUVTransform1;
     cb.TransmissionUVTransform0 = subInfo.TransmissionUVTransform0;
     cb.TransmissionUVTransform1 = subInfo.TransmissionUVTransform1;
+    cb.LightmapUVTransform0 = subInfo.LightmapUVTransform0;
+    cb.LightmapUVTransform1 = subInfo.LightmapUVTransform1;
   }
 
   void RenderMesh::Draw(float *t, float *vp) {
@@ -2072,17 +2096,19 @@ namespace t850 {
       }
       for (unsigned int li = 0; li < numLights; li++) {
         Light& light = pScProp->Lights[li];
+        const float effectiveRadius = light.Type == LIGHT_POINT ? light.radius * (std::max)(0.0f, pScProp->LightRadiusScale) : light.radius;
+        const float effectiveIntensity = light.Intensity * (std::max)(0.0f, pScProp->LightIntensityScale);
         if (light.Type == LIGHT_DIRECTIONAL) {
           frameCB.LightPositions[li] = XVECTOR3(light.Direction.x, light.Direction.y, light.Direction.z, 0.0f);
         } else {
           frameCB.LightPositions[li] = XVECTOR3(light.Position.x, light.Position.y, light.Position.z, 1.0f);
         }
-        frameCB.LightColors[li] = XVECTOR3(light.Color.x, light.Color.y, light.Color.z, light.Intensity);
+        frameCB.LightColors[li] = XVECTOR3(light.Color.x, light.Color.y, light.Color.z, effectiveIntensity);
         XVECTOR3& radiusPack = frameCB.LightRadius[li >> 2];
-        if ((li & 3u) == 0u) radiusPack.x = light.radius;
-        else if ((li & 3u) == 1u) radiusPack.y = light.radius;
-        else if ((li & 3u) == 2u) radiusPack.z = light.radius;
-        else radiusPack.w = light.radius;
+        if ((li & 3u) == 0u) radiusPack.x = effectiveRadius;
+        else if ((li & 3u) == 1u) radiusPack.y = effectiveRadius;
+        else if ((li & 3u) == 2u) radiusPack.z = effectiveRadius;
+        else radiusPack.w = effectiveRadius;
       }
       frameCB.ParallaxSettings = XVECTOR3(m_fParallaxLowSamples, m_fParallaxHighSamples, m_fParallaxHeight);
       frameCB.ParallaxSettings.w = m_fParallaxEnabled;
@@ -2190,6 +2216,7 @@ namespace t850 {
         float emissiveMul = pScProp ? pScProp->MaterialEmissiveIntensity : 1.0f;
         float transmissionMul = pScProp ? pScProp->MaterialTransmissionMultiplier : 1.0f;
         float refractionStrength = pScProp ? pScProp->MaterialRefractionStrength : 0.03f;
+        float lightmapMul = pScProp ? (std::max)(0.0f, pScProp->LightmapIntensity) : 1.0f;
         float iblFactor = pScProp ? pScProp->IBLFactor : 1.0f;
         float iblMipCount = pScProp ? pScProp->IBLMipCount : 4.0f;
         float iblDiffuseMipLevel = pScProp ? pScProp->IBLDiffuseMipLevel : 4.0f;
@@ -2221,6 +2248,7 @@ namespace t850 {
           materialCB.MaterialParams7 = XVECTOR3(sub_info->OcclusionTex ? 1.0f : 0.0f, sub_info->OcclusionStrength, (float)sub_info->OcclusionTexCoord, sub_info->TransmissionTex ? 1.0f : 0.0f);
           materialCB.MaterialParams8 = XVECTOR3((float)sub_info->TransmissionTexCoord, sub_info->SpecularFactorTex ? 1.0f : 0.0f, (float)sub_info->SpecularFactorTexCoord, sub_info->SpecularColorTex ? 1.0f : 0.0f);
         }
+        materialCB.MaterialParams9.w *= lightmapMul;
         materialCB.MaterialParams2 = XVECTOR3(transmissionMul, refractionStrength, Textures[9] ? 1.0f : 0.0f, iblFactor);
         materialCB.MaterialParams3 = XVECTOR3(iblMipCount, iblBrdfLutEnabled, iblDiffuseMipLevel, 0.0f);
         ApplyMeshMaterialCB(it_MeshInfo->CnstBuffer, materialCB);
@@ -2387,6 +2415,10 @@ namespace t850 {
         if (s->key.has(ShaderKey::TRANSMISSION_MAP)) {
           Texture* t = matTex(MatTexSlot::Transmission); if (!t) t = sub_info->TransmissionTex;
           bindTextureOnce(t, MaterialTextureSlot::Transmission, "TransmissionTex", MaterialSamplerSlot);
+        }
+        if (s->key.has(ShaderKey::LIGHTMAP_MAP)) {
+          Texture* t = matTex(MatTexSlot::Lightmap); if (!t) t = sub_info->LightmapTex;
+          bindTextureOnce(t, MaterialTextureSlot::Lightmap, "LightmapTex", LightmapSamplerSlot);
         }
 
         if (trackCullStats) m_renderStateChanges++;

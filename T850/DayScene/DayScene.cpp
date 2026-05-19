@@ -186,6 +186,9 @@ void DayScene::CaptureSceneProfileState(t850::SandboxProfileDesc& state) const {
   addFloat("parallax_shadow_strength", SceneProp.ParallaxShadowStrength);
   addFloat("light_volume_steps", SceneProp.LightVolumeSteps);
   addFloat("godrays_factor", SceneProp.GodRaysFactor);
+  addFloat("light_radius_scale", SceneProp.LightRadiusScale);
+  addFloat("light_intensity_scale", SceneProp.LightIntensityScale);
+  addFloat("lightmap_intensity", SceneProp.LightmapIntensity);
   addFloat("shadow_bias", SceneProp.ShadowBias);
   addFloat("shadow_min", SceneProp.ShadowMin);
   addFloat("env_factor", SceneProp.EnvFactor);
@@ -249,6 +252,9 @@ void DayScene::ApplySceneProfileState(const t850::SandboxProfileDesc& state) {
     else if (value.name == "parallax_shadow_strength") SceneProp.ParallaxShadowStrength = value.value;
     else if (value.name == "light_volume_steps") SceneProp.LightVolumeSteps = value.value;
     else if (value.name == "godrays_factor") SceneProp.GodRaysFactor = value.value;
+    else if (value.name == "light_radius_scale") SceneProp.LightRadiusScale = value.value;
+    else if (value.name == "light_intensity_scale") SceneProp.LightIntensityScale = value.value;
+    else if (value.name == "lightmap_intensity") SceneProp.LightmapIntensity = value.value;
     else if (value.name == "shadow_bias") SceneProp.ShadowBias = value.value;
     else if (value.name == "shadow_min") SceneProp.ShadowMin = value.value;
     else if (value.name == "env_factor") SceneProp.EnvFactor = value.value;
@@ -1492,7 +1498,7 @@ void DayScene::OnInput(InputManager* IManager) {
 	  ActiveCam->MoveRoll(-DtSecs);
   }
 
-  if (IManager->PressedOnceKey(T800K_SPACE)) {
+  if (IManager->PressedOnceKey(T800K_F10)) {
     m_dumper.RequestDump();
   }
 
@@ -1944,6 +1950,21 @@ void  DayScene::ChangeSettingsOnPlus() {
       T8_LOG_VERBOSE("[CHANGE_LIGHT_INTENSITY] Previous Value[%f] Actual Value[%f]", prevVal, SceneProp.Lights[0].Intensity);
     }
   }break;
+  case CHANGE_LIGHT_RADIUS_SCALE: {
+    float prevVal = SceneProp.LightRadiusScale;
+    SceneProp.LightRadiusScale += 0.25f;
+    T8_LOG_VERBOSE("[CHANGE_LIGHT_RADIUS_SCALE] Previous Value[%f] Actual Value[%f]", prevVal, SceneProp.LightRadiusScale);
+  }break;
+  case CHANGE_LIGHT_INTENSITY_SCALE: {
+    float prevVal = SceneProp.LightIntensityScale;
+    SceneProp.LightIntensityScale += 0.25f;
+    T8_LOG_VERBOSE("[CHANGE_LIGHT_INTENSITY_SCALE] Previous Value[%f] Actual Value[%f]", prevVal, SceneProp.LightIntensityScale);
+  }break;
+  case CHANGE_LIGHTMAP_INTENSITY: {
+    float prevVal = SceneProp.LightmapIntensity;
+    SceneProp.LightmapIntensity += 0.25f;
+    T8_LOG_VERBOSE("[CHANGE_LIGHTMAP_INTENSITY] Previous Value[%f] Actual Value[%f]", prevVal, SceneProp.LightmapIntensity);
+  }break;
   }
 }
 
@@ -2141,6 +2162,24 @@ void  DayScene::ChangeSettingsOnMinus() {
       T8_LOG_VERBOSE("[CHANGE_LIGHT_INTENSITY] Previous Value[%f] Actual Value[%f]", prevVal, SceneProp.Lights[0].Intensity);
     }
   }break;
+  case CHANGE_LIGHT_RADIUS_SCALE: {
+    float prevVal = SceneProp.LightRadiusScale;
+    SceneProp.LightRadiusScale -= 0.25f;
+    if (SceneProp.LightRadiusScale < 0.01f) SceneProp.LightRadiusScale = 0.01f;
+    T8_LOG_VERBOSE("[CHANGE_LIGHT_RADIUS_SCALE] Previous Value[%f] Actual Value[%f]", prevVal, SceneProp.LightRadiusScale);
+  }break;
+  case CHANGE_LIGHT_INTENSITY_SCALE: {
+    float prevVal = SceneProp.LightIntensityScale;
+    SceneProp.LightIntensityScale -= 0.25f;
+    if (SceneProp.LightIntensityScale < 0.0f) SceneProp.LightIntensityScale = 0.0f;
+    T8_LOG_VERBOSE("[CHANGE_LIGHT_INTENSITY_SCALE] Previous Value[%f] Actual Value[%f]", prevVal, SceneProp.LightIntensityScale);
+  }break;
+  case CHANGE_LIGHTMAP_INTENSITY: {
+    float prevVal = SceneProp.LightmapIntensity;
+    SceneProp.LightmapIntensity -= 0.25f;
+    if (SceneProp.LightmapIntensity < 0.0f) SceneProp.LightmapIntensity = 0.0f;
+    T8_LOG_VERBOSE("[CHANGE_LIGHTMAP_INTENSITY] Previous Value[%f] Actual Value[%f]", prevVal, SceneProp.LightmapIntensity);
+  }break;
   }
 }
 
@@ -2247,6 +2286,15 @@ void DayScene::printCurrSelection() {
     if (!SceneProp.Lights.empty())
       T8_LOG_VERBOSE("Option[CHANGE_LIGHT_INTENSITY] Value[%f]", SceneProp.Lights[0].Intensity);
   }break;
+  case CHANGE_LIGHT_RADIUS_SCALE: {
+    T8_LOG_VERBOSE("Option[CHANGE_LIGHT_RADIUS_SCALE] Value[%f]", SceneProp.LightRadiusScale);
+  }break;
+  case CHANGE_LIGHT_INTENSITY_SCALE: {
+    T8_LOG_VERBOSE("Option[CHANGE_LIGHT_INTENSITY_SCALE] Value[%f]", SceneProp.LightIntensityScale);
+  }break;
+  case CHANGE_LIGHTMAP_INTENSITY: {
+    T8_LOG_VERBOSE("Option[CHANGE_LIGHTMAP_INTENSITY] Value[%f]", SceneProp.LightmapIntensity);
+  }break;
   }
 }
 
@@ -2296,6 +2344,9 @@ void DayScene::PopulateGUI(t850::GUIManager& gui) {
     {"gauss_kernel_deviation", CHANGE_GAUSS_KERNEL_DEVIATION},
     {"fov",                    CHANGE_FOV},
     {"light_intensity",        CHANGE_LIGHT_INTENSITY},
+    {"light_radius_scale",      CHANGE_LIGHT_RADIUS_SCALE},
+    {"light_intensity_scale",   CHANGE_LIGHT_INTENSITY_SCALE},
+    {"lightmap_intensity",      CHANGE_LIGHTMAP_INTENSITY},
     {"shadow_bias",             CHANGE_SHADOW_BIAS},
     {"shadow_min",              CHANGE_SHADOW_MIN},
     {"env_factor",              CHANGE_ENV_FACTOR},
@@ -2405,6 +2456,9 @@ void DayScene::DrawDevGui(t850::DevGuiContext& gui) {
     {"gauss_kernel_deviation", CHANGE_GAUSS_KERNEL_DEVIATION},
     {"fov", CHANGE_FOV},
     {"light_intensity", CHANGE_LIGHT_INTENSITY},
+    {"light_radius_scale", CHANGE_LIGHT_RADIUS_SCALE},
+    {"light_intensity_scale", CHANGE_LIGHT_INTENSITY_SCALE},
+    {"lightmap_intensity", CHANGE_LIGHTMAP_INTENSITY},
     {"shadow_bias", CHANGE_SHADOW_BIAS},
     {"shadow_min", CHANGE_SHADOW_MIN},
     {"env_factor", CHANGE_ENV_FACTOR},
@@ -2478,6 +2532,9 @@ void DayScene::DrawDevGui(t850::DevGuiContext& gui) {
     case CHANGE_GAUSS_KERNEL_DEVIATION: if (!kernel) return false; value = kernel->sigma; return true;
     case CHANGE_FOV: if (!ActiveCam) return false; value = Rad2Deg(ActiveCam->Fov); return true;
     case CHANGE_LIGHT_INTENSITY: if (SceneProp.Lights.empty()) return false; value = SceneProp.Lights[0].Intensity; return true;
+    case CHANGE_LIGHT_RADIUS_SCALE: value = SceneProp.LightRadiusScale; return true;
+    case CHANGE_LIGHT_INTENSITY_SCALE: value = SceneProp.LightIntensityScale; return true;
+    case CHANGE_LIGHTMAP_INTENSITY: value = SceneProp.LightmapIntensity; return true;
     case CHANGE_SHADOW_BIAS: value = SceneProp.ShadowBias; return true;
     case CHANGE_SHADOW_MIN: value = SceneProp.ShadowMin; return true;
     case CHANGE_ENV_FACTOR: value = SceneProp.EnvFactor; return true;
@@ -2525,6 +2582,9 @@ void DayScene::DrawDevGui(t850::DevGuiContext& gui) {
       }
       break;
     case CHANGE_LIGHT_INTENSITY: if (!SceneProp.Lights.empty()) SceneProp.Lights[0].Intensity = value; break;
+    case CHANGE_LIGHT_RADIUS_SCALE: SceneProp.LightRadiusScale = value; break;
+    case CHANGE_LIGHT_INTENSITY_SCALE: SceneProp.LightIntensityScale = value; break;
+    case CHANGE_LIGHTMAP_INTENSITY: SceneProp.LightmapIntensity = value; break;
     case CHANGE_SHADOW_BIAS: SceneProp.ShadowBias = value; break;
     case CHANGE_SHADOW_MIN: SceneProp.ShadowMin = value; break;
     case CHANGE_ENV_FACTOR: SceneProp.EnvFactor = value; break;
@@ -2748,6 +2808,9 @@ void DayScene::SyncToGUI(t850::GUIManager& gui) {
     case CHANGE_GAUSS_KERNEL_DEVIATION: slider->SetValue(SceneProp.pGaussKernels[ChangeActiveGaussSelection]->sigma); break;
     case CHANGE_FOV:                slider->SetValue(Rad2Deg(ActiveCam->Fov)); break;
     case CHANGE_LIGHT_INTENSITY:    if (!SceneProp.Lights.empty()) slider->SetValue(SceneProp.Lights[0].Intensity); break;
+    case CHANGE_LIGHT_RADIUS_SCALE: slider->SetValue(SceneProp.LightRadiusScale); break;
+    case CHANGE_LIGHT_INTENSITY_SCALE: slider->SetValue(SceneProp.LightIntensityScale); break;
+    case CHANGE_LIGHTMAP_INTENSITY: slider->SetValue(SceneProp.LightmapIntensity); break;
     case CHANGE_SHADOW_BIAS:        slider->SetValue(SceneProp.ShadowBias); break;
     case CHANGE_SHADOW_MIN:         slider->SetValue(SceneProp.ShadowMin); break;
     case CHANGE_ENV_FACTOR:         slider->SetValue(SceneProp.EnvFactor); break;
@@ -2836,6 +2899,15 @@ void DayScene::SyncFromGUI(t850::GUIManager& gui) {
       break;
     case CHANGE_LIGHT_INTENSITY:
       if (!SceneProp.Lights.empty()) SceneProp.Lights[0].Intensity = slider->value;
+      break;
+    case CHANGE_LIGHT_RADIUS_SCALE:
+      SceneProp.LightRadiusScale = slider->value;
+      break;
+    case CHANGE_LIGHT_INTENSITY_SCALE:
+      SceneProp.LightIntensityScale = slider->value;
+      break;
+    case CHANGE_LIGHTMAP_INTENSITY:
+      SceneProp.LightmapIntensity = slider->value;
       break;
     case CHANGE_SHADOW_BIAS:
       SceneProp.ShadowBias = slider->value;
@@ -2969,6 +3041,7 @@ void DayScene::SaveSceneState() {
     else if (sd.name == "material_emissive_intensity") sd.default_val = SceneProp.MaterialEmissiveIntensity;
     else if (sd.name == "material_transmission_multiplier") sd.default_val = SceneProp.MaterialTransmissionMultiplier;
     else if (sd.name == "material_refraction_strength") sd.default_val = SceneProp.MaterialRefractionStrength;
+    else if (sd.name == "lightmap_intensity") sd.default_val = SceneProp.LightmapIntensity;
   }
   for (auto& cd : m_sceneSetup.descriptor.checkboxes) {
     if (cd.name == "dof_toggle")       cd.default_val = (SceneProp.ToogleDOF != 0);

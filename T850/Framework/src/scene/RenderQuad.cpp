@@ -247,13 +247,15 @@ namespace t850 {
 
       for (unsigned int i = 0; i < numLights; i++) {
         Light& light = pScProp->Lights[i];
+        const float effectiveRadius = light.Type == LIGHT_POINT ? light.radius * (std::max)(0.0f, pScProp->LightRadiusScale) : light.radius;
+        const float effectiveIntensity = light.Intensity * (std::max)(0.0f, pScProp->LightIntensityScale);
         if (light.Type == LIGHT_DIRECTIONAL) {
           CnstBuffer.LightPositions[i] = XVECTOR3(light.Direction.x, light.Direction.y, light.Direction.z, 0.0f);
         } else {
           CnstBuffer.LightPositions[i] = XVECTOR3(light.Position.x, light.Position.y, light.Position.z, 1.0f);
         }
-        CnstBuffer.LightColors[i] = XVECTOR3(light.Color.x, light.Color.y, light.Color.z, light.Intensity);
-        CnstBuffer.LightRadius[i] = light.radius;
+        CnstBuffer.LightColors[i] = XVECTOR3(light.Color.x, light.Color.y, light.Color.z, effectiveIntensity);
+        CnstBuffer.LightRadius[i] = effectiveRadius;
       }
     }
 	else if (pass == PassType::SHADOW_COMP) {

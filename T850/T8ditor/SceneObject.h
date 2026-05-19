@@ -4,10 +4,13 @@
 #define T8DITOR_SCENE_OBJECT_H
 
 #include "EditorMesh.h"
+#include <physics/PhysicsTypes.h>
 #include <scene/PrimitiveInstance.h>
+#include <scene/EditorSceneFile.h>
 #include <utils/Camera.h>
 #include <utils/Picking.h>
 #include <video/BaseDriver.h>
+#include <optional>
 #include <string>
 #include <vector>
 #include <set>
@@ -29,9 +32,26 @@ struct SceneObject {
   t850::PrimitiveInst   litInst;
   int                   primId = -1;
   std::string           name;
+  std::string           meshPath;
   bool                  visible = true;
   bool                  frozen  = false;  // visible but not selectable
   bool                  showWire = false; // per-object wireframe override
+
+  std::string                         ragdollModelKey;
+  std::string                         ragdollResourcePath;
+  t850::PhysicsRagdollAuthoringDesc   ragdollAuthoring;
+  std::vector<t850::PhysicsBodyState> ragdollPhysicsStates;
+  std::vector<int>                    ragdollPhysicsBoneIndices;
+  std::vector<XMATRIX44>              ragdollPhysicsCombinedMatrices;
+  bool                                ragdollAuthoringTried = false;
+  bool                                ragdollAuthoringReady = false;
+  bool                                ragdollLoadedFromAsset = false;
+  bool                                ragdollPreviewEnabled = false;
+  bool                                ragdollDriveFromAnimation = false;
+  bool                                ragdollSimulating = false;
+  bool                                ragdollDebugDraw = false;
+  int                                 ragdollBodyCount = 0;
+  std::string                         ragdollStatus;
 };
 
 // ── Camera ───────────────────────────────────────────
@@ -68,6 +88,7 @@ struct SceneLight {
   bool            enabled   = true;
   bool            visible   = true;
   bool            frozen    = false;
+  std::optional<t850::scene::SceneQ3LightDesc> q3;
   mutable GizmoCache gizmo;
 };
 

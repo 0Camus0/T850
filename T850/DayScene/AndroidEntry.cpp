@@ -25,6 +25,7 @@ t850::AppBase* pApp = nullptr;
 namespace {
   constexpr const char* kExtraScene = "com.t850.engine.extra.SCENE";
   constexpr const char* kExtraModel = "com.t850.engine.extra.MODEL";
+  constexpr const char* kExtraSceneFile = "com.t850.engine.extra.SCENE_FILE";
   constexpr const char* kExtraLogLevel = "com.t850.engine.extra.LOG_LEVEL";
   constexpr const char* kExtraDumpFrame = "com.t850.engine.extra.DUMP_FRAME";
   constexpr const char* kExtraDumpSeconds = "com.t850.engine.extra.DUMP_SECONDS";
@@ -250,6 +251,14 @@ namespace {
       std::string model = GetIntentStringExtra(env, intent, getStringExtra, kExtraModel);
       if (!model.empty()) {
         t850::g_config.modelPath = model;
+        t850::g_config.sceneFilePath.clear();
+      }
+
+      std::string sceneFile = GetIntentStringExtra(env, intent, getStringExtra, kExtraSceneFile);
+      if (!sceneFile.empty()) {
+        t850::g_config.sceneFilePath = sceneFile;
+        t850::g_config.modelPath.clear();
+        t850::g_config.startScene = 0;
       }
 
       std::string replaySnapshot = GetIntentStringExtra(env, intent, getStringExtra, kExtraReplaySnapshot);
@@ -311,8 +320,8 @@ void android_main(android_app* state) {
     }
   }
   T8_LOG_INFO("[Android] T850 NativeActivity starting");
-  T8_LOG_INFO("[Android] Launch config: scene=%d model='%s' logLevel=%d api=vulkan dumpEnabled=%d dumpByFrame=%d dumpFrame=%d dumpSeconds=%.3f keepRunning=%d profile=%d profileFrames=%d replay='%s'",
-              t850::g_config.startScene, t850::g_config.modelPath.c_str(), t850::g_config.logLevel,
+  T8_LOG_INFO("[Android] Launch config: scene=%d model='%s' sceneFile='%s' logLevel=%d api=vulkan dumpEnabled=%d dumpByFrame=%d dumpFrame=%d dumpSeconds=%.3f keepRunning=%d profile=%d profileFrames=%d replay='%s'",
+              t850::g_config.startScene, t850::g_config.modelPath.c_str(), t850::g_config.sceneFilePath.c_str(), t850::g_config.logLevel,
               t850::g_config.flags.dumpEnabled ? 1 : 0,
               t850::g_config.flags.dumpByFrame ? 1 : 0,
               t850::g_config.dumpFrame,

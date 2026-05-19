@@ -1,8 +1,19 @@
 #include <imgui/DevGuiContext.h>
 
 #include <algorithm>
+#include <string>
 
 namespace t850 {
+
+namespace {
+
+std::string MakeImGuiLabel(const std::string& name, const std::string& label) {
+  const std::string& visible = label.empty() ? name : label;
+  if (name.empty() || visible.find("##") != std::string::npos) return visible;
+  return visible + "##" + name;
+}
+
+} // namespace
 
 bool DevGuiContext::BeginPanel(const char* title, bool* open, ImGuiWindowFlags flags) {
   return ImGui::Begin(title, open, flags);
@@ -26,17 +37,17 @@ void DevGuiContext::Text(const char* text) {
 }
 
 bool DevGuiContext::Slider(const SliderDesc& desc, float& value) {
-  const char* label = desc.label.empty() ? desc.name.c_str() : desc.label.c_str();
+  const std::string label = MakeImGuiLabel(desc.name, desc.label);
   float clamped = (std::max)(desc.min_val, (std::min)(desc.max_val, value));
-  bool changed = ImGui::SliderFloat(label, &clamped, desc.min_val, desc.max_val, "%.3f");
+  bool changed = ImGui::SliderFloat(label.c_str(), &clamped, desc.min_val, desc.max_val, "%.3f");
   if (changed) value = clamped;
   return changed;
 }
 
 bool DevGuiContext::Checkbox(const CheckboxDesc& desc, bool& value) {
-  const char* label = desc.label.empty() ? desc.name.c_str() : desc.label.c_str();
+  const std::string label = MakeImGuiLabel(desc.name, desc.label);
   if (!desc.enabled) ImGui::BeginDisabled();
-  bool changed = ImGui::Checkbox(label, &value);
+  bool changed = ImGui::Checkbox(label.c_str(), &value);
   if (!desc.enabled) ImGui::EndDisabled();
   return desc.enabled && changed;
 }
@@ -46,9 +57,9 @@ bool DevGuiContext::Combo(const SelectorDesc& desc, int& selectedIndex, const st
   if (options.empty()) return false;
 
   selectedIndex = (std::max)(0, (std::min)(selectedIndex, (int)options.size() - 1));
-  const char* label = desc.label.empty() ? desc.name.c_str() : desc.label.c_str();
+  const std::string label = MakeImGuiLabel(desc.name, desc.label);
   bool changed = false;
-  if (ImGui::BeginCombo(label, options[selectedIndex].c_str(), ImGuiComboFlags_HeightLarge)) {
+  if (ImGui::BeginCombo(label.c_str(), options[selectedIndex].c_str(), ImGuiComboFlags_HeightLarge)) {
 #ifdef OS_ANDROID
     ImGuiIO& io = ImGui::GetIO();
     const float dragThreshold = io.MouseDragThreshold * io.MouseDragThreshold;

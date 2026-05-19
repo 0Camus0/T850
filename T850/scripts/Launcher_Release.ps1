@@ -153,9 +153,9 @@ $xaml = @"
                 <TextBlock Text="GRAPHICS API" FontSize="12" FontWeight="SemiBold"
                            Foreground="{StaticResource AccentBrush}" Margin="0,0,0,10"/>
                 <ComboBox Name="cmbApi">
-                    <ComboBoxItem Content="D3D11 (Direct3D 11)" IsSelected="True" Tag="d3d11"/>
+                    <ComboBoxItem Content="D3D11 (Direct3D 11)" Tag="d3d11"/>
                     <ComboBoxItem Content="D3D12 (Direct3D 12)" Tag="d3d12"/>
-                    <ComboBoxItem Content="Vulkan" Tag="vulkan"/>
+                    <ComboBoxItem Content="Vulkan" IsSelected="True" Tag="vulkan"/>
                     <ComboBoxItem Content="OpenGL (Desktop GL 3.3)" Tag="gl"/>
                 </ComboBox>
             </StackPanel>
@@ -193,9 +193,20 @@ $xaml = @"
                     </StackPanel>
                 </StackPanel>
                 <CheckBox Name="chkBenchmark" Content="Benchmark mode" Margin="0,0,0,6" Visibility="Collapsed"/>
-                <StackPanel Name="pnlModelSelect" Margin="0,6,0,0">
+                <StackPanel Name="pnlSandboxInput" Margin="0,6,0,8">
+                    <TextBlock Text="Sandbox input" Style="{StaticResource LabelStyle}"/>
+                    <ComboBox Name="cmbSandboxInput">
+                        <ComboBoxItem Content="Single GLB model" Tag="model" IsSelected="True"/>
+                        <ComboBoxItem Content="Editor scene (.t8scene)" Tag="scene"/>
+                    </ComboBox>
+                </StackPanel>
+                <StackPanel Name="pnlModelSelect" Margin="0,0,0,8">
                     <TextBlock Text="Model (Sandbox)" Style="{StaticResource LabelStyle}"/>
                     <ComboBox Name="cmbModel"/>
+                </StackPanel>
+                <StackPanel Name="pnlSceneFileSelect" Margin="0,0,0,8" Visibility="Collapsed">
+                    <TextBlock Text="Scene file (Sandbox)" Style="{StaticResource LabelStyle}"/>
+                    <ComboBox Name="cmbSceneFile"/>
                 </StackPanel>
                 <Grid>
                     <Grid.ColumnDefinitions>
@@ -205,11 +216,11 @@ $xaml = @"
                     </Grid.ColumnDefinitions>
                     <StackPanel Grid.Column="0">
                         <TextBlock Text="Width" Style="{StaticResource LabelStyle}"/>
-                        <TextBox Name="txtWidth" Text="1280"/>
+                        <TextBox Name="txtWidth" Text="2560"/>
                     </StackPanel>
                     <StackPanel Grid.Column="2">
                         <TextBlock Text="Height" Style="{StaticResource LabelStyle}"/>
-                        <TextBox Name="txtHeight" Text="720"/>
+                        <TextBox Name="txtHeight" Text="1440"/>
                     </StackPanel>
                 </Grid>
             </StackPanel>
@@ -279,8 +290,8 @@ $xaml = @"
                 <StackPanel Margin="0,0,0,10">
                     <TextBlock Text="Log Level" Style="{StaticResource LabelStyle}"/>
                     <ComboBox Name="cmbLogLevel">
-                        <ComboBoxItem Content="Error" Tag="error"/>
-                        <ComboBoxItem Content="Info" Tag="info" IsSelected="True"/>
+                        <ComboBoxItem Content="Error" Tag="error" IsSelected="True"/>
+                        <ComboBoxItem Content="Info" Tag="info"/>
                         <ComboBoxItem Content="Debug" Tag="debug"/>
                         <ComboBoxItem Content="Verbose" Tag="verbose"/>
                         <ComboBoxItem Content="Trace" Tag="trace"/>
@@ -358,8 +369,12 @@ $rbCullingFull     = $window.FindName("rbCullingFull")
 $rbCullingLazy     = $window.FindName("rbCullingLazy")
 $rbCullingDisabled = $window.FindName("rbCullingDisabled")
 $chkBenchmark   = $window.FindName("chkBenchmark")
+$cmbSandboxInput = $window.FindName("cmbSandboxInput")
 $cmbModel       = $window.FindName("cmbModel")
+$cmbSceneFile   = $window.FindName("cmbSceneFile")
+$pnlSandboxInput = $window.FindName("pnlSandboxInput")
 $pnlModelSelect = $window.FindName("pnlModelSelect")
+$pnlSceneFileSelect = $window.FindName("pnlSceneFileSelect")
 $txtWidth       = $window.FindName("txtWidth")
 $txtHeight      = $window.FindName("txtHeight")
 $cmbLogLevel    = $window.FindName("cmbLogLevel")
@@ -381,6 +396,98 @@ if ((Split-Path -Leaf $rootDir) -eq "scripts") {
 }
 
 $configPath = Join-Path $rootDir "config.json"
+
+function Get-SandboxInputMode {
+    if ($cmbSandboxInput -and $cmbSandboxInput.SelectedItem) { return $cmbSandboxInput.SelectedItem.Tag.ToString() }
+    return "model"
+}
+
+function Normalize-ResourcePath {
+    param([string]$Path)
+    if (-not $Path) { return "" }
+    $normalized = $Path.Replace('\', '/').Trim()
+    while ($normalized.StartsWith("/")) { $normalized = $normalized.Substring(1) }
+    if ($normalized.StartsWith("Assets/", [System.StringComparison]::OrdinalIgnoreCase)) {
+        $normalized = $normalized.Substring(7)
+    }
+    return $normalized
+}
+
+function Get-SelectedSceneFilePath {
+    if ($cmbSceneFile -and $cmbSceneFile.SelectedItem) { return $cmbSceneFile.SelectedItem.Tag.ToString() }
+    return ""
+}
+
+function Get-SceneFileResourcePath {
+    param([string]$ScenePath)
+    if (-not $ScenePath) { return "" }
+    try { $full = (Resolve-Path $ScenePath).Path } catch { $full = $ScenePath }
+    if ($full.StartsWith($rootDir, [System.StringComparison]::OrdinalIgnoreCase)) {
+        return (Normalize-ResourcePath $full.Substring($rootDir.Length).TrimStart('\', '/'))
+    }
+    return $full
+}
+
+function Resolve-SceneAssetPath {
+    param([string]$ResourcePath)
+    if (-not $ResourcePath) { return "" }
+    if ([System.IO.Path]::IsPathRooted($ResourcePath)) {
+        if (Test-Path $ResourcePath) { return $ResourcePath }
+        return ""
+    }
+    $rel = (Normalize-ResourcePath $ResourcePath).Replace('/', '\')
+    $candidates = @(
+        (Join-Path $rootDir $rel),
+        (Join-Path (Join-Path $rootDir "Assets") $rel)
+    )
+    foreach ($candidate in $candidates) {
+        if ($candidate -and (Test-Path $candidate)) { return $candidate }
+    }
+    return ""
+}
+
+function Get-SceneRequiredMeshes {
+    param([string]$ScenePath)
+    if (-not $ScenePath -or -not (Test-Path $ScenePath)) { return @() }
+    try {
+        $scene = Get-Content $ScenePath -Raw | ConvertFrom-Json
+        if (-not $scene.objects) { return @() }
+        $meshes = @()
+        foreach ($object in $scene.objects) {
+            if ($object.PSObject.Properties['visible'] -and -not [bool]$object.visible) { continue }
+            if ($object.PSObject.Properties['mesh'] -and $object.mesh) {
+                $meshes += (Normalize-ResourcePath $object.mesh.ToString())
+            }
+        }
+        return @($meshes | Sort-Object -Unique)
+    } catch {
+        return @()
+    }
+}
+
+function Test-SelectedSceneDependencies {
+    if (((Get-SandboxInputMode) -ne "scene") -or (-not $cmbScene.SelectedItem) -or (($cmbScene.SelectedItem.Tag.ToString()) -ne "0")) {
+        return @{ Ok = $true; Missing = @() }
+    }
+    $scenePath = Get-SelectedSceneFilePath
+    if (-not $scenePath -or -not (Test-Path $scenePath)) {
+        return @{ Ok = $false; Missing = @("Selected .t8scene file") }
+    }
+    $missing = @()
+    foreach ($mesh in (Get-SceneRequiredMeshes $scenePath)) {
+        if (-not (Resolve-SceneAssetPath $mesh)) { $missing += $mesh }
+    }
+    return @{ Ok = ($missing.Count -eq 0); Missing = $missing }
+}
+
+function Show-SceneDependencyError {
+    param($Result)
+    if ($Result.Ok) { return $true }
+    [System.Windows.MessageBox]::Show(
+        ("The selected scene cannot be launched because required files are missing:" + "`n`n" + (($Result.Missing | ForEach-Object { "- $_" }) -join "`n")),
+        "T850 Launcher", "OK", "Error") | Out-Null
+    return $false
+}
 
 # ── Config load/save ──
 
@@ -439,6 +546,23 @@ function Load-Config {
                     if ($item.Tag -eq $cfg.display.model) {
                         $cmbModel.SelectedItem = $item; break
                     }
+                }
+            }
+            if ($cfg.display.PSObject.Properties['sceneFile'] -and $cfg.display.sceneFile) {
+                foreach ($item in $cmbSandboxInput.Items) {
+                    if ($item.Tag -eq "scene") { $cmbSandboxInput.SelectedItem = $item; break }
+                }
+                foreach ($item in $cmbScene.Items) {
+                    if ($item.Tag -eq "0") { $cmbScene.SelectedItem = $item; break }
+                }
+                foreach ($item in $cmbSceneFile.Items) {
+                    if ($item.Tag -eq $cfg.display.sceneFile -or (Get-SceneFileResourcePath $item.Tag) -eq $cfg.display.sceneFile) {
+                        $cmbSceneFile.SelectedItem = $item; break
+                    }
+                }
+            } elseif ($cfg.display.PSObject.Properties['model'] -and $cfg.display.model) {
+                foreach ($item in $cmbSandboxInput.Items) {
+                    if ($item.Tag -eq "model") { $cmbSandboxInput.SelectedItem = $item; break }
                 }
             }
         }
@@ -510,15 +634,21 @@ function Load-Config {
 function Save-Config {
     $sceneTag = ($cmbScene.SelectedItem).Tag.ToString()
     $cullingMode = Get-CullingMode
+    $sandboxMode = Get-SandboxInputMode
+    $display = @{
+        width      = [int]$txtWidth.Text
+        height     = [int]$txtHeight.Text
+        fullscreen = [bool]$chkFullscreen.IsChecked
+        scene      = [int]$sceneTag
+    }
+    if (($sceneTag -eq "0") -and ($sandboxMode -eq "scene")) {
+        $display.sceneFile = Get-SceneFileResourcePath (Get-SelectedSceneFilePath)
+    } else {
+        $display.model = if ($cmbModel.SelectedItem) { ($cmbModel.SelectedItem).Tag.ToString() } else { "Models/DamagedHelmet.glb" }
+    }
     $cfg = @{
         api           = ($cmbApi.SelectedItem).Tag.ToString()
-        display = @{
-            width      = [int]$txtWidth.Text
-            height     = [int]$txtHeight.Text
-            fullscreen = [bool]$chkFullscreen.IsChecked
-            scene      = [int]$sceneTag
-            model      = if ($cmbModel.SelectedItem) { ($cmbModel.SelectedItem).Tag.ToString() } else { "Models/DamagedHelmet.glb" }
-        }
+        display = $display
         debugFrames = [bool]$chkDebugFrames.IsChecked
         benchmark = ($sceneTag -eq "1" -and [bool]$chkBenchmark.IsChecked)
         cullingMode = $cullingMode
@@ -581,9 +711,15 @@ function Get-LaunchCommand {
 
     $argList += @("--culling", (Get-CullingMode))
 
-    # Model path (for Sandbox scene)
-    if ($cmbModel.SelectedItem) {
-        $argList += @("--model", ($cmbModel.SelectedItem).Tag.ToString())
+    if ($sceneTag -eq "0") {
+        if ((Get-SandboxInputMode) -eq "scene") {
+            $sceneFile = Get-SelectedSceneFilePath
+            if ($sceneFile) {
+                $argList += @("--sceneFile", ('"{0}"' -f (Get-SceneFileResourcePath $sceneFile)))
+            }
+        } elseif ($cmbModel.SelectedItem) {
+            $argList += @("--model", ($cmbModel.SelectedItem).Tag.ToString())
+        }
     }
 
     if ($chkFullscreen.IsChecked) {
@@ -652,8 +788,14 @@ function Update-Preview {
     $sceneOk = Test-Path $cmd.ExePath
     $editorCmd = Get-EditorLaunchCommand
     $editorOk = Test-Path $editorCmd.ExePath
+    $sceneDeps = Test-SelectedSceneDependencies
 
-    if ($sceneOk -and $editorOk) {
+    if (-not $sceneDeps.Ok) {
+        $txtStatus.Text = "Scene missing: $($sceneDeps.Missing -join ', ')"
+        $txtStatus.Foreground = $window.FindResource("RedBrush")
+        $btnRun.IsEnabled = $false
+        $btnEditor.IsEnabled = $editorOk
+    } elseif ($sceneOk -and $editorOk) {
         $txtStatus.Text = "Ready to run (Scene + Editor)"
         $txtStatus.Foreground = $window.FindResource("GreenBrush")
         $btnRun.IsEnabled = $true
@@ -674,7 +816,11 @@ function Update-Preview {
 function Update-SceneOptionVisibility {
     if (-not $cmbScene.SelectedItem) { return }
     $sceneTag = ($cmbScene.SelectedItem).Tag.ToString()
-    $pnlModelSelect.Visibility = if ($sceneTag -eq "0") { "Visible" } else { "Collapsed" }
+    $sandboxVisible = ($sceneTag -eq "0")
+    $sandboxMode = Get-SandboxInputMode
+    $pnlSandboxInput.Visibility = if ($sandboxVisible) { "Visible" } else { "Collapsed" }
+    $pnlModelSelect.Visibility = if ($sandboxVisible -and ($sandboxMode -eq "model")) { "Visible" } else { "Collapsed" }
+    $pnlSceneFileSelect.Visibility = if ($sandboxVisible -and ($sandboxMode -eq "scene")) { "Visible" } else { "Collapsed" }
     $chkBenchmark.Visibility = if ($sceneTag -eq "1") { "Visible" } else { "Collapsed" }
     if ($sceneTag -ne "1") { $chkBenchmark.IsChecked = $false }
 }
@@ -727,6 +873,11 @@ $btnBrowseSnapshot.Add_Click({
 })
 
 $cmbModel.Add_SelectionChanged({ Update-Preview })
+$cmbSceneFile.Add_SelectionChanged({ Update-Preview })
+$cmbSandboxInput.Add_SelectionChanged({
+    Update-SceneOptionVisibility
+    Update-Preview
+})
 
 $cmbApi.Add_SelectionChanged({ Update-Preview })
 $cmbScene.Add_SelectionChanged({
@@ -750,6 +901,8 @@ $txtHeight.Add_TextChanged({ Update-Preview })
 
 # RUN button
 $btnRun.Add_Click({
+    $sceneDeps = Test-SelectedSceneDependencies
+    if (-not (Show-SceneDependencyError $sceneDeps)) { return }
     $cmd = Get-LaunchCommand
     if (-not (Test-Path $cmd.ExePath)) {
         [System.Windows.MessageBox]::Show(
@@ -801,8 +954,9 @@ function Populate-ModelList {
     $cmbModel.Items.Clear()
     $modelsDir = Join-Path $rootDir "Models"
     if (Test-Path $modelsDir) {
-        $files = Get-ChildItem $modelsDir -Filter "*.glb" | Sort-Object Name
-        $files += Get-ChildItem $modelsDir -Filter "*.gltf" | Sort-Object Name
+        $files = @()
+        $files += @(Get-ChildItem $modelsDir -Filter "*.glb" | Sort-Object Name)
+        $files += @(Get-ChildItem $modelsDir -Filter "*.gltf" | Sort-Object Name)
         foreach ($f in $files) {
             $item = New-Object System.Windows.Controls.ComboBoxItem
             $item.Content = $f.Name
@@ -821,7 +975,35 @@ function Populate-ModelList {
     }
 }
 
+function Populate-SceneFileList {
+    $previous = Get-SelectedSceneFilePath
+    $cmbSceneFile.Items.Clear()
+    $scenesDir = Join-Path $rootDir "Scenes"
+    if (Test-Path $scenesDir) {
+        $files = Get-ChildItem $scenesDir -Filter "*.t8scene" -Recurse | Sort-Object FullName
+        foreach ($f in $files) {
+            $item = New-Object System.Windows.Controls.ComboBoxItem
+            $relative = $f.FullName.Substring($scenesDir.Length).TrimStart('\', '/')
+            $item.Content = if ($relative) { $relative } else { $f.Name }
+            $item.Tag = $f.FullName
+            $cmbSceneFile.Items.Add($item) | Out-Null
+        }
+    }
+    $selected = $false
+    if ($previous) {
+        foreach ($item in $cmbSceneFile.Items) {
+            if ($item.Tag -eq $previous -or (Get-SceneFileResourcePath $item.Tag) -eq $previous) {
+                $cmbSceneFile.SelectedItem = $item; $selected = $true; break
+            }
+        }
+    }
+    if (-not $selected -and $cmbSceneFile.Items.Count -gt 0) {
+        $cmbSceneFile.SelectedIndex = 0
+    }
+}
+
 Populate-ModelList
+Populate-SceneFileList
 Load-Config
 Update-SceneOptionVisibility
 Update-Preview

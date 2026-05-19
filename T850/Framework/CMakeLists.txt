@@ -9,8 +9,10 @@ set(FRAMEWORK_SOURCES
   src/core/Config.cpp
   src/core/EngineContext.cpp
   src/core/windows/Win32Framework.cpp
+  src/physics/CharacterController.cpp
   src/physics/JoltPhysicsSystem.cpp
   src/physics/PhysicsDebugRenderer.cpp
+  src/physics/Q3BspCollision.cpp
   src/physics/PhysicsAuthoring.cpp
   src/scene/LensFlare.cpp
   src/scene/RenderMesh.cpp
@@ -29,6 +31,7 @@ set(FRAMEWORK_SOURCES
   src/debug/FrameDumperIO.cpp
   src/debug/Profiler.cpp
   src/debug/RenderTrace.cpp
+  src/scene/EditorSceneFile.cpp
   src/scene/RenderGraph.cpp
   src/scene/SceneDescriptor.cpp
   src/scene/SceneSetup.cpp
@@ -51,6 +54,7 @@ set(FRAMEWORK_SOURCES
   src/utils/Timer.cpp
   src/utils/Utils.cpp
   src/utils/Camera.cpp
+  src/utils/CameraProfiles.cpp
   src/utils/Picking.cpp
   src/utils/XDataBase.cpp
   src/utils/XMaths.cpp

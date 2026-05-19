@@ -72,8 +72,10 @@ set(T850_ANDROID_FRAMEWORK_SOURCES
   ${T850_SOURCE_DIR}/Framework/src/core/Core.cpp
   ${T850_SOURCE_DIR}/Framework/src/core/EngineContext.cpp
   ${T850_SOURCE_DIR}/Framework/src/core/android/AndroidFramework.cpp
+  ${T850_SOURCE_DIR}/Framework/src/physics/CharacterController.cpp
   ${T850_SOURCE_DIR}/Framework/src/physics/JoltPhysicsSystem.cpp
   ${T850_SOURCE_DIR}/Framework/src/physics/PhysicsDebugRenderer.cpp
+  ${T850_SOURCE_DIR}/Framework/src/physics/Q3BspCollision.cpp
   ${T850_SOURCE_DIR}/Framework/src/physics/PhysicsAuthoring.cpp
   ${T850_SOURCE_DIR}/Framework/src/utils/AndroidAssets.cpp
   ${T850_SOURCE_DIR}/Framework/src/utils/Log.cpp
@@ -83,6 +85,7 @@ set(T850_ANDROID_FRAMEWORK_SOURCES
   ${T850_SOURCE_DIR}/Framework/src/utils/Timer.cpp
   ${T850_SOURCE_DIR}/Framework/src/utils/Utils.cpp
   ${T850_SOURCE_DIR}/Framework/src/utils/Camera.cpp
+  ${T850_SOURCE_DIR}/Framework/src/utils/CameraProfiles.cpp
   ${T850_SOURCE_DIR}/Framework/src/utils/XDataBase.cpp
   ${T850_SOURCE_DIR}/Framework/src/utils/XMaths.cpp
   ${T850_SOURCE_DIR}/Framework/src/utils/Technique.cpp
@@ -130,6 +133,7 @@ set(T850_ANDROID_FRAMEWORK_SOURCES
   ${T850_SOURCE_DIR}/Framework/src/scene/MeshPool.cpp
   ${T850_SOURCE_DIR}/Framework/src/scene/RenderQueue.cpp
   ${T850_SOURCE_DIR}/Framework/src/scene/IBLResources.cpp
+  ${T850_SOURCE_DIR}/Framework/src/scene/EditorSceneFile.cpp
   ${T850_SOURCE_DIR}/Framework/src/scene/RenderGraph.cpp
   ${T850_SOURCE_DIR}/Framework/src/scene/SceneDescriptor.cpp
   ${T850_SOURCE_DIR}/Framework/src/scene/SceneSetup.cpp

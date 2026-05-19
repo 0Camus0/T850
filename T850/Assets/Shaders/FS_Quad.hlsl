@@ -301,6 +301,7 @@ float4 FS( VS_OUTPUT input ) : SV_TARGET {
 
 		float4 geoData = tex3.SampleLevel(SS3, input.texture0, 0.0f);
 		float3 geoNormal = DecodeOctahedralNormal(geoData.xy);
+		float lightmap = saturate(geoData.b);
 		float packedMaterial = geoData.a;
 		bool unlitMaterial = packedMaterial >= 0.5f;
 		float clearcoatRoughness = unlitMaterial ? (packedMaterial - 0.5f) * 2.0f : packedMaterial * 2.0f;
@@ -410,6 +411,7 @@ float4 FS( VS_OUTPUT input ) : SV_TARGET {
 		float diffuseMip = clamp(brightness.z, 0.0f, iblMaxMip);
 		float3 irradiance = texIBLDiffuse.SampleLevel(SS10, irradianceDir, diffuseMip).xyz;
 		indirectLight += irradiance * Albedo.xyz * kDiffuseEnv * toogles.z;
+		indirectLight += Albedo.xyz * kDiffuseEnv * lightmap;
 
 		// PBR: avoid a constant ambient floor; rely on IBL + AO.
 		if (hasSheenLUT && sheenStrength > 0.0f) {
@@ -508,6 +510,7 @@ float4 FS(VS_OUTPUT input) : SV_TARGET {
 		float3 normal = normalize(normalmap.xyz * 2.0 - 1.0);
 		float4 geoData = tex3.SampleLevel(SS3, input.texture0, 0.0f);
 		float3 geoNormal = DecodeOctahedralNormal(geoData.xy);
+		float lightmap = saturate(geoData.b);
 		float packedMaterial = geoData.a;
 		bool unlitMaterial = packedMaterial >= 0.5f;
 		float clearcoatRoughness = unlitMaterial ? (packedMaterial - 0.5f) * 2.0f : packedMaterial * 2.0f;
@@ -594,11 +597,13 @@ float4 FS(VS_OUTPUT input) : SV_TARGET {
 		bool hasBrdfLUT = brightness.w > 0.5f;
 		float NdotV = max(dot(normal, EyeDir), 0.0f);
 		float3 kSpecular = clamp(fresnelSchlickRoughness(NdotV, F0, rough), 0.0, 1.0);
+		float3 kDiffuseEnv = (float3(1.0f, 1.0f, 1.0f) - kSpecular) * (1.0f - metallic);
 		float3 RefleCol = texIBLSpecular.SampleLevel(SS11, ReflectedVec, rough * iblMaxMip).xyz;
 		float envAtten = (1.0f - rough) * (1.0f - rough);
 		float2 brdfSample = hasBrdfLUT ? texIBLBRDF.SampleLevel(SS12, float2(NdotV, rough), 0.0f).rg : float2(0.0f, 0.0f);
 		float3 specularIBL = hasBrdfLUT ? IBLGGXFresnel(NdotV, rough, F0, brdfSample) : kSpecular * envAtten;
 		float3 ldrIBL = RefleCol * specularIBL * toogles.z;
+		ldrIBL += Albedo.xyz * kDiffuseEnv * lightmap;
 		if (hasSheenLUT && sheenStrength > 0.0f) {
 			float albedoSheenScaling = 1.0f - sheenStrength * AlbedoSheenScalingLUT(NdotV, sheenRoughness);
 			float3 sheenIBL = GetIBLRadianceCharlie(normal, EyeDir, sheenRoughness, sheenColor, iblMaxMip) * toogles.z;

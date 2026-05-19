@@ -19,7 +19,7 @@
       "state": { "depth_stencil": "READ_WRITE", "cull_face": "BACK_FACES" },
       "camera": "light",
       "draws": [
-        { "type": "mesh", "mesh_indices": [0], "signature": "SHADOW_MAP_PASS" }
+        { "type": "mesh", "mesh_indices": [], "signature": "SHADOW_MAP_PASS" }
       ],
       "post_state": { "cull_face": "FRONT_FACES" }
     },
@@ -29,7 +29,7 @@
       "state": { "blend": "BLEND_OPAQUE", "depth_stencil": "READ_WRITE", "cull_face": "FRONT_FACES" },
       "camera": "main",
       "draws": [
-        { "type": "mesh", "mesh_indices": [0], "signature": "GBUFF_PASS" }
+        { "type": "mesh", "mesh_indices": [], "signature": "GBUFF_PASS" }
       ],
       "post_state": { "depth_stencil": "READ" }
     },
@@ -109,7 +109,7 @@
       ],
       "bind_environment_map": true,
       "draws": [
-        { "type": "mesh", "mesh_indices": [0], "signature": "FORWARD_PASS" }
+        { "type": "mesh", "mesh_indices": [], "signature": "FORWARD_PASS" }
       ],
       "post_state": { "blend": "BLEND_DEFAULT", "cull_face": "FRONT_FACES" }
     },

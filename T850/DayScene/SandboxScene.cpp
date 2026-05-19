@@ -7,6 +7,7 @@
 #include <scene/RenderMesh.h>
 #include <scene/RenderSkinnedMesh.h>
 #include <scene/SceneDescriptor.h>
+#include <scene/EditorSceneFile.h>
 #include <scene/IBLResources.h>
 #include <core/Config.h>
 #include <core/EngineContext.h>
@@ -34,6 +35,7 @@
 #include <functional>
 #include <initializer_list>
 #include <limits>
+#include <mutex>
 
 using namespace t850;
 using std::string;
@@ -50,6 +52,100 @@ namespace {
       0.125f, 0.25f, 0.5f, 1.0f, 2.0f, 4.0f, 8.0f, 16.0f, 32.0f};
   constexpr std::array<const char*, 9> kRagdollSimulationSpeedLabels = {
       "0.125x", "0.25x", "0.5x", "1x", "2x", "4x", "8x", "16x", "32x"};
+  constexpr std::size_t kSandboxConsoleMaxLines = 500;
+
+  struct SandboxConsoleLine {
+    t850::Log::Level level = t850::Log::LVL_INFO;
+    std::string text;
+  };
+
+  std::vector<SandboxConsoleLine> g_sandboxConsoleLines;
+  std::mutex g_sandboxConsoleMutex;
+  bool g_sandboxConsoleAutoScroll = true;
+  bool g_sandboxConsoleOpen = true;
+  bool g_sandboxConsoleCallbackInstalled = false;
+
+  void SandboxConsoleLogCallback(t850::Log::Level level, const char* message) {
+    std::lock_guard<std::mutex> lock(g_sandboxConsoleMutex);
+    if (g_sandboxConsoleLines.size() >= kSandboxConsoleMaxLines) {
+      g_sandboxConsoleLines.erase(g_sandboxConsoleLines.begin());
+    }
+    g_sandboxConsoleLines.push_back({level, message ? message : ""});
+  }
+
+  void InstallSandboxConsoleLogCapture() {
+    {
+      std::lock_guard<std::mutex> lock(g_sandboxConsoleMutex);
+      g_sandboxConsoleLines.clear();
+    }
+    t850::Log::SetCallback(SandboxConsoleLogCallback);
+    g_sandboxConsoleCallbackInstalled = true;
+    T8_LOG_INFO("[SandboxConsole] Capturing log output in ImGui console panel");
+  }
+
+  void UninstallSandboxConsoleLogCapture() {
+    if (g_sandboxConsoleCallbackInstalled) {
+      t850::Log::SetCallback(nullptr);
+      g_sandboxConsoleCallbackInstalled = false;
+    }
+  }
+
+  ImVec4 SandboxConsoleLogColor(t850::Log::Level level) {
+    switch (level) {
+    case t850::Log::LVL_ERROR: return ImVec4(1.0f, 0.30f, 0.30f, 1.0f);
+    case t850::Log::LVL_DEBUG: return ImVec4(0.45f, 0.95f, 0.45f, 1.0f);
+    case t850::Log::LVL_VERBOSE: return ImVec4(0.65f, 0.65f, 0.65f, 1.0f);
+    case t850::Log::LVL_TRACE: return ImVec4(0.55f, 0.65f, 1.0f, 1.0f);
+    case t850::Log::LVL_INFO:
+    default: return ImVec4(0.92f, 0.92f, 0.92f, 1.0f);
+    }
+  }
+
+  void DrawSandboxConsolePanel(t850::CameraProfileType activeProfile, const XVECTOR3& eye) {
+    if (!g_sandboxConsoleOpen) {
+      return;
+    }
+
+    ImGui::SetNextWindowSize(ImVec2(760.0f, 260.0f), ImGuiCond_FirstUseEver);
+    if (!ImGui::Begin("Sandbox Console", &g_sandboxConsoleOpen)) {
+      ImGui::End();
+      return;
+    }
+
+    ImGui::Text("Camera: %s  Pos: %.2f, %.2f, %.2f",
+                t850::CameraProfileName(activeProfile),
+                eye.x,
+                eye.y,
+                eye.z);
+    ImGui::TextUnformatted("F9 cycles camera profiles | F10 dumps a frame | Space jumps in FPS profiles");
+    ImGui::TextUnformatted("Free/Colliding Fly: WASD move, Q/E up/down, Shift sprint, mouse look");
+    ImGui::TextUnformatted("Grounded/COD/Q3 FPS: WASD move/strafe, Shift run, Space jump, mouse look");
+
+    if (ImGui::SmallButton("Clear")) {
+      std::lock_guard<std::mutex> lock(g_sandboxConsoleMutex);
+      g_sandboxConsoleLines.clear();
+    }
+    ImGui::SameLine();
+    ImGui::Checkbox("Auto-scroll", &g_sandboxConsoleAutoScroll);
+    ImGui::Separator();
+
+    ImGui::BeginChild("SandboxConsoleScroll", ImVec2(0.0f, 0.0f), ImGuiChildFlags_None, ImGuiWindowFlags_HorizontalScrollbar);
+    {
+      std::lock_guard<std::mutex> lock(g_sandboxConsoleMutex);
+      for (const SandboxConsoleLine& line : g_sandboxConsoleLines) {
+        ImGui::PushStyleColor(ImGuiCol_Text, SandboxConsoleLogColor(line.level));
+        if (ImGui::Selectable(line.text.c_str(), false)) {
+          ImGui::SetClipboardText(line.text.c_str());
+        }
+        ImGui::PopStyleColor();
+      }
+    }
+    if (g_sandboxConsoleAutoScroll && ImGui::GetScrollY() >= ImGui::GetScrollMaxY()) {
+      ImGui::SetScrollHereY(1.0f);
+    }
+    ImGui::EndChild();
+    ImGui::End();
+  }
 
   int ClampRagdollSimulationSpeedIndex(int index) {
     if (index < 0) return 0;
@@ -63,6 +159,119 @@ namespace {
 
   const char* RagdollSimulationSpeedLabelForIndex(int index) {
     return kRagdollSimulationSpeedLabels[static_cast<std::size_t>(ClampRagdollSimulationSpeedIndex(index))];
+  }
+
+  std::string NormalizeSceneResourcePath(std::string path) {
+    std::replace(path.begin(), path.end(), '\\', '/');
+    std::string lowerPath = path;
+    std::transform(lowerPath.begin(), lowerPath.end(), lowerPath.begin(), [](unsigned char c) {
+      return static_cast<char>(std::tolower(c));
+    });
+    const std::string embeddedAssetsMarker = "/assets/";
+    const std::size_t embeddedAssets = lowerPath.rfind(embeddedAssetsMarker);
+    if (embeddedAssets != std::string::npos) {
+      path.erase(0, embeddedAssets + 1);
+    }
+    while (!path.empty() && path.front() == '/') {
+      path.erase(path.begin());
+    }
+    const std::string assetsPrefix = "Assets/";
+    if (path.size() >= assetsPrefix.size()) {
+      std::string prefix = path.substr(0, assetsPrefix.size());
+      std::transform(prefix.begin(), prefix.end(), prefix.begin(), [](unsigned char c) {
+        return static_cast<char>(std::tolower(c));
+      });
+      if (prefix == "assets/") {
+        path.erase(0, assetsPrefix.size());
+      }
+    }
+    return path;
+  }
+
+  std::string InferQ3CollisionResourcePath(const std::string& scenePath) {
+    std::string normalized = NormalizeSceneResourcePath(scenePath);
+    std::string lower = normalized;
+    std::transform(lower.begin(), lower.end(), lower.begin(), [](unsigned char c) {
+      return static_cast<char>(std::tolower(c));
+    });
+
+    const std::string q3Marker = "scenes/q3/";
+    const std::string sceneExt = ".t8scene";
+    const std::size_t q3Offset = lower.rfind(q3Marker);
+    if (q3Offset == std::string::npos ||
+        lower.size() < sceneExt.size() ||
+        lower.substr(lower.size() - sceneExt.size()) != sceneExt) {
+      return {};
+    }
+
+    std::string resourcePath = normalized.substr(q3Offset);
+    resourcePath.resize(resourcePath.size() - sceneExt.size());
+    resourcePath += ".t8q3clip";
+    return resourcePath;
+  }
+
+  std::string FileStemFromResourcePath(const std::string& path) {
+    const std::size_t slash = path.find_last_of('/');
+    const std::size_t begin = slash == std::string::npos ? 0 : slash + 1;
+    const std::size_t dot = path.find_last_of('.');
+    const std::size_t end = (dot == std::string::npos || dot < begin) ? path.size() : dot;
+    return path.substr(begin, end - begin);
+  }
+
+  std::string InferQ3CollisionResourcePathFromMesh(const std::string& meshPath) {
+    std::string normalized = NormalizeSceneResourcePath(meshPath);
+    std::string lower = normalized;
+    std::transform(lower.begin(), lower.end(), lower.begin(), [](unsigned char c) {
+      return static_cast<char>(std::tolower(c));
+    });
+
+    const std::string q3Marker = "models/q3/";
+    const std::size_t q3Offset = lower.rfind(q3Marker);
+    if (q3Offset == std::string::npos) {
+      return {};
+    }
+
+    const std::string mapName = FileStemFromResourcePath(normalized.substr(q3Offset + q3Marker.size()));
+    if (mapName.empty()) {
+      return {};
+    }
+    return "Scenes/Q3/" + mapName + ".t8q3clip";
+  }
+
+  std::string ToLowerAscii(std::string value) {
+    std::transform(value.begin(), value.end(), value.begin(), [](unsigned char c) {
+      return static_cast<char>(std::tolower(c));
+    });
+    return value;
+  }
+
+  bool MeshUsesQ3CollisionClip(const std::string& meshPath, const std::string& q3CollisionPath) {
+    if (q3CollisionPath.empty()) {
+      return false;
+    }
+
+    const std::string inferredClip = InferQ3CollisionResourcePathFromMesh(meshPath);
+    return !inferredClip.empty() &&
+           ToLowerAscii(NormalizeSceneResourcePath(inferredClip)) ==
+               ToLowerAscii(NormalizeSceneResourcePath(q3CollisionPath));
+  }
+
+  bool ContainsEntityId(const std::vector<uint32_t>& entityIds, uint32_t entityId) {
+    return std::find(entityIds.begin(), entityIds.end(), entityId) != entityIds.end();
+  }
+
+  std::string InferQ3CollisionResourcePathFromObjects(const t850::scene::EditorSceneFile& scene) {
+    for (const t850::scene::SceneObjectDesc& object : scene.objects) {
+      const std::string candidate = InferQ3CollisionResourcePathFromMesh(object.mesh.empty() ? object.name : object.mesh);
+      if (!candidate.empty() && t850::ResourceLocator::Instance().Exists(candidate)) {
+        return candidate;
+      }
+    }
+    return {};
+  }
+
+  XVECTOR3 SceneVecToVector(const t850::scene::Vec3f& value, float w = 1.0f) {
+    return XVECTOR3(value.x, value.y, value.z, w);
   }
 
   bool InvertAffineNoExit(const XMATRIX44& matrix, XMATRIX44& out) {
@@ -106,62 +315,6 @@ namespace {
     out.m43 = -(tx * out.m13 + ty * out.m23 + tz * out.m33);
     out.m44 = 1.0f;
     return true;
-  }
-
-  std::filesystem::path ResolveRagdollEditWritePath(const std::string& resourcePath) {
-    std::filesystem::path requested(resourcePath);
-    if (requested.is_absolute()) {
-      return requested;
-    }
-
-    const std::string normalized = t850::ResourceLocator::NormalizePath(resourcePath);
-#ifdef OS_ANDROID
-    return t850::ResourceLocator::Instance().ResolveCachePath(normalized);
-#else
-    t850::ResourceLocator& locator = t850::ResourceLocator::Instance();
-    std::error_code ec;
-    const std::filesystem::path existingPath = locator.ResolveFilePath(normalized);
-    if (std::filesystem::is_regular_file(existingPath, ec)) {
-      return existingPath;
-    }
-
-    auto canCreateNear = [](const std::filesystem::path& candidate) {
-      const std::filesystem::path parent = candidate.parent_path();
-      if (parent.empty()) {
-        return false;
-      }
-      std::error_code existsEc;
-      if (std::filesystem::exists(parent, existsEc)) {
-        return true;
-      }
-      const std::filesystem::path parentParent = parent.parent_path();
-      return !parentParent.empty() && std::filesystem::exists(parentParent, existsEc);
-    };
-
-    std::vector<std::filesystem::path> bases;
-    if (!locator.GetBasePath().empty()) {
-      bases.push_back(locator.GetBasePath());
-    }
-    const std::filesystem::path cwd = std::filesystem::current_path(ec);
-    if (!ec) {
-      bases.push_back(cwd);
-    }
-
-    const std::filesystem::path relative(normalized);
-    for (const std::filesystem::path& base : bases) {
-      const std::array<std::filesystem::path, 3> candidates = {
-          base / relative,
-          base / "Assets" / relative,
-          base / "T850" / "Assets" / relative};
-      for (const std::filesystem::path& candidate : candidates) {
-        if (canCreateNear(candidate)) {
-          return candidate;
-        }
-      }
-    }
-
-    return relative;
-#endif
   }
 
   t850::Mat4Json MatrixToSnapshotJson(const XMATRIX44& mat) {
@@ -261,6 +414,38 @@ namespace {
     return NearlyEqual(lhs[0], rhs[0]) && NearlyEqual(lhs[1], rhs[1]) && NearlyEqual(lhs[2], rhs[2]);
   }
 
+  bool OrbitCameraNearlyEqual(const t850::SandboxOrbitCameraDesc& lhs, const t850::SandboxOrbitCameraDesc& rhs) {
+    return VecNearlyEqual(lhs.target, rhs.target) &&
+           VecNearlyEqual(lhs.pan_offset, rhs.pan_offset) &&
+           VecNearlyEqual(lhs.eye, rhs.eye) &&
+           NearlyEqual(lhs.yaw, rhs.yaw) &&
+           NearlyEqual(lhs.pitch, rhs.pitch) &&
+           NearlyEqual(lhs.distance, rhs.distance);
+  }
+
+  bool CameraNearlyEqual(const t850::SandboxCameraDesc& lhs, const t850::SandboxCameraDesc& rhs) {
+    const bool orbitMatches =
+        (!lhs.orbit.has_value() && !rhs.orbit.has_value()) ||
+        (lhs.orbit.has_value() && rhs.orbit.has_value() && OrbitCameraNearlyEqual(*lhs.orbit, *rhs.orbit));
+    return lhs.profile == rhs.profile &&
+           VecNearlyEqual(lhs.eye, rhs.eye) &&
+           VecNearlyEqual(lhs.look, rhs.look) &&
+           VecNearlyEqual(lhs.up, rhs.up) &&
+           VecNearlyEqual(lhs.right, rhs.right) &&
+           NearlyEqual(lhs.yaw, rhs.yaw) &&
+           NearlyEqual(lhs.pitch, rhs.pitch) &&
+           NearlyEqual(lhs.roll, rhs.roll) &&
+           NearlyEqual(lhs.fov, rhs.fov) &&
+           NearlyEqual(lhs.aspect_ratio, rhs.aspect_ratio) &&
+           NearlyEqual(lhs.near_plane, rhs.near_plane) &&
+           NearlyEqual(lhs.far_plane, rhs.far_plane) &&
+           lhs.ortho == rhs.ortho &&
+           NearlyEqual(lhs.width, rhs.width) &&
+           NearlyEqual(lhs.height, rhs.height) &&
+           lhs.left_handed == rhs.left_handed &&
+           orbitMatches;
+  }
+
   std::string SandboxProfileModelKey(const std::string& path) {
     std::string key = path;
     size_t slash = key.find_last_of("/\\");
@@ -322,6 +507,53 @@ namespace {
 
   float Dot3(const XVECTOR3& lhs, const XVECTOR3& rhs) {
     return lhs.x * rhs.x + lhs.y * rhs.y + lhs.z * rhs.z;
+  }
+
+  bool IsBlockingSweepHit(const t850::CharacterCollisionHit& hit, const XVECTOR3& displacement) {
+    constexpr float kInitialHitEpsilon = 0.0005f;
+    return hit.hit &&
+           (hit.fraction > kInitialHitEpsilon || Dot3(displacement, hit.normal) < -0.00001f);
+  }
+
+  bool IsQ3JoltFallbackHit(const t850::CharacterCollisionHit& hit, const XVECTOR3& displacement) {
+    if (!hit.hit) {
+      return false;
+    }
+
+    constexpr float kQ3MinWalkNormalY = 0.70f;
+    constexpr float kMinHorizontalSweep = 0.002f;
+    const float horizontalLengthSq = displacement.x * displacement.x + displacement.z * displacement.z;
+    if (horizontalLengthSq <= kMinHorizontalSweep * kMinHorizontalSweep) {
+      return false;
+    }
+
+    const float horizontalLength = std::sqrt(horizontalLengthSq);
+    if (horizontalLength <= std::abs(displacement.y) * 0.25f) {
+      return false;
+    }
+
+    return hit.normal.y < kQ3MinWalkNormalY;
+  }
+
+  bool ConsiderSweepHit(const t850::CharacterCollisionHit& candidate,
+                        const XVECTOR3& displacement,
+                        t850::CharacterCollisionHit& best,
+                        bool& hasHit,
+                        bool& hasBlockingHit) {
+    if (!candidate.hit) {
+      return false;
+    }
+
+    const bool candidateBlocking = IsBlockingSweepHit(candidate, displacement);
+    if (!hasHit ||
+        (candidateBlocking && !hasBlockingHit) ||
+        (candidateBlocking == hasBlockingHit && candidate.fraction < best.fraction)) {
+      best = candidate;
+      hasHit = true;
+      hasBlockingHit = candidateBlocking;
+      return true;
+    }
+    return false;
   }
 
   float Length3(const XVECTOR3& vector) {
@@ -1191,43 +1423,6 @@ namespace {
     std::vector<SkeletonEditBoneJson> bones;
   };
 
-  struct RagdollEditCapsuleJson {
-    int index = -1;
-    int boneIndex = -1;
-    std::string name;
-    int parentCapsule = -1;
-    int jointParentCapsule = kRagdollJointInheritParent;
-    bool capsuleFrozen = false;
-    bool jointFrozen = false;
-    bool hasJointContactAnchor = false;
-    bool jointContactAnchor = false;
-    int jointType = 0;
-    bool hasJointAnchor = false;
-    std::array<float, 3> jointAnchor{};
-    bool hasParentJointTwistAxis = false;
-    bool hasParentJointPlaneAxis = false;
-    bool hasChildJointTwistAxis = false;
-    bool hasChildJointPlaneAxis = false;
-    std::array<float, 3> parentJointTwistAxis{};
-    std::array<float, 3> parentJointPlaneAxis{};
-    std::array<float, 3> childJointTwistAxis{};
-    std::array<float, 3> childJointPlaneAxis{};
-    std::array<float, 16> bodyFromBone{};
-    std::string shapeType = "capsule";
-    float radius = 0.0f;
-    float halfHeight = 0.0f;
-    std::array<float, 3> halfExtents{};
-    float swingLimitRadians = 0.0f;
-    float twistLimitRadians = 0.0f;
-    std::vector<int> controlledBones;
-  };
-
-  struct RagdollEditJson {
-    int schema = 1;
-    std::string model;
-    std::vector<RagdollEditCapsuleJson> capsules;
-  };
-
   std::string JsonEscape(const std::string& value) {
     std::string out;
     out.reserve(value.size());
@@ -1372,108 +1567,6 @@ namespace {
       if (!ParseFloatArray16At(json, combinedKey, bone.combined)) break;
       out.bones.push_back(std::move(bone));
       pos = combinedKey + 10;
-    }
-    return true;
-  }
-
-  bool ParseRagdollEditJson(const std::string& json, RagdollEditJson& out) {
-    out = RagdollEditJson{};
-    if (const std::size_t schemaKey = json.find("\"schema\""); schemaKey != std::string::npos) {
-      ParseJsonIntAt(json, schemaKey, out.schema);
-    }
-    if (const std::size_t modelKey = json.find("\"model\""); modelKey != std::string::npos) {
-      ParseJsonStringAt(json, modelKey, out.model);
-    }
-
-    std::size_t pos = json.find("\"capsules\"");
-    if (pos == std::string::npos) return true;
-    while ((pos = json.find("\"index\"", pos)) != std::string::npos) {
-      RagdollEditCapsuleJson capsule;
-      if (!ParseJsonIntAt(json, pos, capsule.index)) break;
-
-      const std::size_t boneIndexKey = json.find("\"bone_index\"", pos);
-      const std::size_t nameKey = json.find("\"name\"", pos);
-      const std::size_t parentKey = json.find("\"parent_capsule\"", pos);
-      const std::size_t jointParentKey = json.find("\"joint_parent_capsule\"", pos);
-      const std::size_t capsuleFrozenKey = json.find("\"capsule_frozen\"", pos);
-      const std::size_t jointFrozenKey = json.find("\"joint_frozen\"", pos);
-      const std::size_t jointContactKey = json.find("\"joint_contact_anchor\"", pos);
-      const std::size_t jointTypeKey = json.find("\"joint_type\"", pos);
-      const std::size_t jointAnchorKey = json.find("\"joint_anchor\"", pos);
-      const std::size_t parentJointTwistKey = json.find("\"parent_joint_twist_axis\"", pos);
-      const std::size_t parentJointPlaneKey = json.find("\"parent_joint_plane_axis\"", pos);
-      const std::size_t childJointTwistKey = json.find("\"child_joint_twist_axis\"", pos);
-      const std::size_t childJointPlaneKey = json.find("\"child_joint_plane_axis\"", pos);
-      const std::size_t matrixKey = json.find("\"body_from_bone\"", pos);
-      const std::size_t shapeTypeKey = json.find("\"shape_type\"", pos);
-      const std::size_t radiusKey = json.find("\"radius\"", pos);
-      const std::size_t halfHeightKey = json.find("\"half_height\"", pos);
-      const std::size_t halfExtentsKey = json.find("\"half_extents\"", pos);
-      const std::size_t swingKey = json.find("\"swing_limit\"", pos);
-      const std::size_t twistKey = json.find("\"twist_limit\"", pos);
-      const std::size_t controlledKey = json.find("\"controlled_bones\"", pos);
-      const std::size_t objectEnd = json.find('}', pos);
-      if (objectEnd == std::string::npos) {
-        break;
-      }
-      if (boneIndexKey == std::string::npos || nameKey == std::string::npos ||
-          matrixKey == std::string::npos || radiusKey == std::string::npos ||
-          halfHeightKey == std::string::npos || swingKey == std::string::npos ||
-          twistKey == std::string::npos) {
-        break;
-      }
-
-      ParseJsonIntAt(json, boneIndexKey, capsule.boneIndex);
-      ParseJsonStringAt(json, nameKey, capsule.name);
-      if (parentKey != std::string::npos && parentKey < objectEnd) {
-        ParseJsonIntAt(json, parentKey, capsule.parentCapsule);
-      }
-      if (jointParentKey != std::string::npos && jointParentKey < objectEnd) {
-        ParseJsonIntAt(json, jointParentKey, capsule.jointParentCapsule);
-      }
-      if (capsuleFrozenKey != std::string::npos && capsuleFrozenKey < objectEnd) {
-        ParseJsonBoolAt(json, capsuleFrozenKey, capsule.capsuleFrozen);
-      }
-      if (jointFrozenKey != std::string::npos && jointFrozenKey < objectEnd) {
-        ParseJsonBoolAt(json, jointFrozenKey, capsule.jointFrozen);
-      }
-      if (jointContactKey != std::string::npos && jointContactKey < objectEnd) {
-        capsule.hasJointContactAnchor = ParseJsonBoolAt(json, jointContactKey, capsule.jointContactAnchor);
-      }
-      if (jointTypeKey != std::string::npos && jointTypeKey < objectEnd) {
-        ParseJsonIntAt(json, jointTypeKey, capsule.jointType);
-      }
-      if (jointAnchorKey != std::string::npos && jointAnchorKey < objectEnd) {
-        capsule.hasJointAnchor = ParseFloatArray3At(json, jointAnchorKey, capsule.jointAnchor);
-      }
-      if (parentJointTwistKey != std::string::npos && parentJointTwistKey < objectEnd) {
-        capsule.hasParentJointTwistAxis = ParseFloatArray3At(json, parentJointTwistKey, capsule.parentJointTwistAxis);
-      }
-      if (parentJointPlaneKey != std::string::npos && parentJointPlaneKey < objectEnd) {
-        capsule.hasParentJointPlaneAxis = ParseFloatArray3At(json, parentJointPlaneKey, capsule.parentJointPlaneAxis);
-      }
-      if (childJointTwistKey != std::string::npos && childJointTwistKey < objectEnd) {
-        capsule.hasChildJointTwistAxis = ParseFloatArray3At(json, childJointTwistKey, capsule.childJointTwistAxis);
-      }
-      if (childJointPlaneKey != std::string::npos && childJointPlaneKey < objectEnd) {
-        capsule.hasChildJointPlaneAxis = ParseFloatArray3At(json, childJointPlaneKey, capsule.childJointPlaneAxis);
-      }
-      if (!ParseFloatArray16At(json, matrixKey, capsule.bodyFromBone)) break;
-      if (shapeTypeKey != std::string::npos && shapeTypeKey < objectEnd) {
-        ParseJsonStringAt(json, shapeTypeKey, capsule.shapeType);
-      }
-      if (!ParseJsonFloatAt(json, radiusKey, capsule.radius)) break;
-      if (!ParseJsonFloatAt(json, halfHeightKey, capsule.halfHeight)) break;
-      if (halfExtentsKey != std::string::npos && halfExtentsKey < objectEnd) {
-        ParseFloatArray3At(json, halfExtentsKey, capsule.halfExtents);
-      }
-      if (!ParseJsonFloatAt(json, swingKey, capsule.swingLimitRadians)) break;
-      if (!ParseJsonFloatAt(json, twistKey, capsule.twistLimitRadians)) break;
-      if (controlledKey != std::string::npos && controlledKey < objectEnd) {
-        ParseIntArrayAt(json, controlledKey, capsule.controlledBones);
-      }
-      out.capsules.push_back(std::move(capsule));
-      pos = twistKey + 13;
     }
     return true;
   }
@@ -2150,6 +2243,10 @@ void SandboxScene::InitVars() {
   LightCam.Update(0.0f);
 
   ActiveCam = &Cam;
+  m_cameraController.AttachCamera(&Cam);
+  m_cameraProfileSelection = t850::CameraProfileIndex(t850::CameraProfileType::Orbit);
+  SyncOrbitProfileFromSandbox();
+  SetCameraProfile(t850::CameraProfileType::Orbit);
 
   SceneProp.AddCamera(ActiveCam);
   SceneProp.AddLightCamera(&LightCam);
@@ -2197,6 +2294,18 @@ void SandboxScene::InitVars() {
   m_showSkeleton = false;
   m_showPhysics = false;
   m_drawLightDirection = false;
+  m_meshCount = 0;
+  m_loadedEditorScene = false;
+  m_loadedEditorScenePath.clear();
+  m_q3CollisionWorld.reset();
+  m_primaryRagdollResourcePath.clear();
+  m_sceneMeshPaths.clear();
+  m_sceneRagdollPaths.clear();
+  m_sceneRagdolls.clear();
+  m_selectedSkinningMeshIndex = 0;
+  m_selectedAnimationMeshIndex = 0;
+  m_lightAttachToCamera.clear();
+  m_profileModelKey.clear();
   m_driveRagdollFromAnimation = false;
   m_ragdollPhysicsDriven = false;
   m_ragdollDriveLogEmitted = false;
@@ -2262,6 +2371,570 @@ void SandboxScene::InitVars() {
   m_dumper.Init(dumpCfg);
 }
 
+void SandboxScene::ApplyEditorSceneCameraAndLights(const t850::scene::EditorSceneFile& scene) {
+  const XVECTOR3 eye(0.0f, 0.0f, 0.0f, 1.0f);
+  const XVECTOR3 target(-1.0f, 0.0f, 0.0f, 1.0f);
+  const float aspect = g_config.height > 0 ? static_cast<float>(g_config.width) / static_cast<float>(g_config.height) : Cam.AspectRatio;
+  const float nearPlane = (std::max)(0.0001f, Cam.NPlane);
+  const float farPlane = (std::max)(nearPlane + 0.01f, Cam.FPlane);
+  const float fov = Cam.Fov > 0.0f ? Cam.Fov : Deg2Rad(46.8f);
+  Cam.InitPerspective(eye, fov, aspect, nearPlane, farPlane);
+  Cam.Speed = 10.0f;
+  Cam.Velocity = XVECTOR3(0.0f, 0.0f, 0.0f);
+  Cam.SetLookAt(target);
+  m_orbitTarget = target;
+  m_panOffset = XVECTOR3(0.0f, 0.0f, 0.0f);
+  m_orbitDist = 1.0f;
+  m_orbitPitch = 0.0f;
+  m_orbitYaw = -1.57079632679f;
+  SyncOrbitProfileFromSandbox();
+  SetCameraProfile(t850::CameraProfileType::FreeFly);
+  VP = Cam.VP;
+  T8_LOG_INFO("[SandboxScene] Ignoring scene cameras; using origin camera looking toward (-1,0,0)");
+
+  if (!scene.lights.empty()) {
+    SceneProp.Lights.clear();
+    for (const auto& light : scene.lights) {
+      const bool enabled = light.enabled && light.visible;
+      if (light.type == 0) {
+        const XVECTOR3 dir = SceneVecToVector(light.direction, 0.0f);
+        SceneProp.AddDirectionalLight(dir, SceneVecToVector(light.color, 0.0f), light.intensity, enabled);
+        if (!SceneProp.Lights.empty()) {
+          SceneProp.Lights.back().Position = SceneVecToVector(light.position);
+        }
+      } else {
+        SceneProp.AddLight(SceneVecToVector(light.position),
+                           SceneVecToVector(light.color, 0.0f),
+                           light.radius,
+                           light.intensity,
+                           LIGHT_POINT,
+                           enabled);
+      }
+    }
+    SceneProp.ActiveLights = static_cast<int>(SceneProp.Lights.size());
+    m_selectedLightIndex = 0;
+    EnsureLightRuntimeState();
+    for (const Light& light : SceneProp.Lights) {
+      if (light.Type == LIGHT_DIRECTIONAL) {
+        LightCam.Eye = light.Position;
+        break;
+      }
+    }
+    SyncLightCameraFromDirectionalLight();
+    T8_LOG_INFO("[SandboxScene] Applied %zu scene lights", SceneProp.Lights.size());
+  }
+}
+
+int SandboxScene::GetRuntimeMeshCount() const {
+  return (std::max)(m_meshCount, Meshes[0].pBase ? 1 : 0);
+}
+
+RenderSkinnedMesh* SandboxScene::GetSkinnedMeshForIndex(int meshIndex) const {
+  if (meshIndex < 0 || meshIndex >= kMaxSandboxMeshes || !Meshes[meshIndex].pBase) {
+    return nullptr;
+  }
+  RenderSkinnedMesh* skinned = Meshes[meshIndex].GetSkinnedMesh();
+  return (skinned && skinned->HasSkinData()) ? skinned : nullptr;
+}
+
+std::vector<std::string> SandboxScene::BuildSkinnedMeshOptions(std::vector<int>* outMeshIndices) const {
+  if (outMeshIndices) {
+    outMeshIndices->clear();
+  }
+
+  std::vector<std::string> options;
+  const int meshCount = GetRuntimeMeshCount();
+  for (int meshIndex = 0; meshIndex < meshCount && meshIndex < kMaxSandboxMeshes; ++meshIndex) {
+    RenderSkinnedMesh* skinned = GetSkinnedMeshForIndex(meshIndex);
+    if (!skinned) {
+      continue;
+    }
+
+    std::string label;
+    if (meshIndex >= 0 && meshIndex < static_cast<int>(m_sceneMeshPaths.size())) {
+      label = m_sceneMeshPaths[static_cast<std::size_t>(meshIndex)];
+    } else if (!g_config.modelPath.empty()) {
+      label = g_config.modelPath;
+    }
+    if (label.empty()) {
+      label = "Skinned Mesh";
+    }
+
+    std::replace(label.begin(), label.end(), '\\', '/');
+    std::filesystem::path labelPath(label);
+    const std::string filename = labelPath.filename().string();
+    if (!filename.empty()) {
+      label = filename;
+    }
+
+    label = std::to_string(meshIndex) + ": " + label;
+    if (Meshes[meshIndex].HasPhysicsRagdoll()) {
+      const SceneRagdollRuntime* sceneRagdoll = FindSceneRagdollRuntime(meshIndex);
+      label += sceneRagdoll ? " (scene ragdoll)" : " (ragdoll)";
+    }
+
+    if (outMeshIndices) {
+      outMeshIndices->push_back(meshIndex);
+    }
+    options.push_back(label);
+  }
+
+  if (options.empty()) {
+    options.push_back("No skinned models");
+  }
+  return options;
+}
+
+int SandboxScene::ClampSkinnedMeshSelection(int preferredMeshIndex) const {
+  std::vector<int> meshIndices;
+  BuildSkinnedMeshOptions(&meshIndices);
+  if (meshIndices.empty()) {
+    return -1;
+  }
+  for (int meshIndex : meshIndices) {
+    if (meshIndex == preferredMeshIndex) {
+      return preferredMeshIndex;
+    }
+  }
+  return meshIndices.front();
+}
+
+RenderSkinnedMesh* SandboxScene::GetSelectedSkinningMesh() const {
+  return GetSkinnedMeshForIndex(ClampSkinnedMeshSelection(m_selectedSkinningMeshIndex));
+}
+
+RenderSkinnedMesh* SandboxScene::GetSelectedAnimationMesh() const {
+  return GetSkinnedMeshForIndex(ClampSkinnedMeshSelection(m_selectedAnimationMeshIndex));
+}
+
+bool SandboxScene::AttachSceneObjectRagdoll(int meshIndex,
+                                            const std::string& meshPath,
+                                            const std::string& ragdollPath) {
+  if (meshIndex < 0 || meshIndex >= kMaxSandboxMeshes || !Meshes[meshIndex].pBase) {
+    return false;
+  }
+
+  RenderSkinnedMesh* skinned = dynamic_cast<RenderSkinnedMesh*>(Meshes[meshIndex].pBase);
+  if (!skinned || ragdollPath.empty()) {
+    return false;
+  }
+
+  t850::EngineContext* engineContext = GetEngineContext();
+  if (!engineContext) engineContext = &t850::GetEngineContext();
+  t850::JoltPhysicsSystem* physics = engineContext ? engineContext->physics : nullptr;
+  if (!physics || !physics->IsInitialized()) {
+    T8_LOG_INFO("[SandboxScene] Cannot attach ragdoll '%s' for scene object '%s' because physics is not initialized",
+                ragdollPath.c_str(),
+                meshPath.c_str());
+    return false;
+  }
+
+  RenderMesh::AABB bounds;
+  float objectRadius = 1.0f;
+  if (BuildSkinnedWorldBounds(skinned, Meshes[meshIndex].Final, bounds)) {
+    const float ex = 0.5f * (bounds.max.x - bounds.min.x);
+    const float ey = 0.5f * (bounds.max.y - bounds.min.y);
+    const float ez = 0.5f * (bounds.max.z - bounds.min.z);
+    objectRadius = (std::max)(0.01f, std::sqrt(ex * ex + ey * ey + ez * ez));
+  }
+
+  skinned->UpdateAnimationPose();
+
+  t850::PhysicsRagdollBuildSettings settings;
+  settings.fitToSkinnedGeometry = false;
+  settings.preferHumanoidBones = false;
+  settings.forceCapsuleForEveryBone = true;
+  settings.minBoneLength = (std::max)(0.0002f, objectRadius * 0.0002f);
+  settings.syntheticBoneLength = (std::max)(0.001f, objectRadius * 0.001f);
+  settings.minRadius = (std::max)(0.0006f, objectRadius * 0.0008f);
+  settings.maxRadius = (std::max)(0.02f, objectRadius * 0.035f);
+  settings.radiusScale = 0.12f;
+  settings.minSkinWeight = 0.08f;
+  settings.radiusPercentile = 0.86f;
+  settings.jointTrimFraction = 0.0f;
+
+  t850::PhysicsRagdollAuthoringDesc generatedAuthoring;
+  if (!t850::BuildRagdollAuthoringFromSkeleton(*skinned,
+                                               Meshes[meshIndex].Final,
+                                               Meshes[meshIndex].GetEntityId(),
+                                               settings,
+                                               generatedAuthoring)) {
+    T8_LOG_INFO("[SandboxScene] Failed to generate ragdoll binding for scene object '%s' using '%s'",
+                meshPath.c_str(),
+                ragdollPath.c_str());
+    return false;
+  }
+
+  t850::PhysicsRagdollAuthoringDesc authoring = generatedAuthoring;
+  int appliedBodies = 0;
+  if (!t850::LoadRagdollAuthoringAsset(ragdollPath,
+                                       *skinned,
+                                       Meshes[meshIndex].Final,
+                                       generatedAuthoring.binding,
+                                       authoring,
+                                       &appliedBodies)) {
+    T8_LOG_INFO("[SandboxScene] Failed to load authored ragdoll '%s' for scene object '%s'",
+                ragdollPath.c_str(),
+                meshPath.c_str());
+    return false;
+  }
+
+  t850::PhysicsRagdollDesc pose = authoring.binding.referencePose;
+  if (pose.bones.empty()) {
+    T8_LOG_INFO("[SandboxScene] Authored ragdoll '%s' for scene object '%s' produced no bodies",
+                ragdollPath.c_str(),
+                meshPath.c_str());
+    return false;
+  }
+
+  const t850::PhysicsRagdollHandle handle = physics->CreateRagdoll(pose, t850::PhysicsBodyMotion::Kinematic);
+  if (!handle.IsValid()) {
+    T8_LOG_INFO("[SandboxScene] Failed to create runtime ragdoll '%s' for scene object '%s'",
+                ragdollPath.c_str(),
+                meshPath.c_str());
+    return false;
+  }
+
+  Meshes[meshIndex].AttachPhysicsRagdoll(handle);
+
+  SceneRagdollRuntime runtime;
+  runtime.meshIndex = meshIndex;
+  runtime.resourcePath = ragdollPath;
+  runtime.binding = authoring.binding;
+  runtime.pose = std::move(pose);
+  m_sceneRagdolls.push_back(std::move(runtime));
+
+  T8_LOG_INFO("[SandboxScene] Loaded scene ragdoll '%s' for mesh '%s' bodies=%d appliedEdits=%d",
+              ragdollPath.c_str(),
+              meshPath.c_str(),
+              static_cast<int>(authoring.binding.referencePose.bones.size()),
+              appliedBodies);
+  return true;
+}
+
+SandboxScene::SceneRagdollRuntime* SandboxScene::FindSceneRagdollRuntime(int meshIndex) {
+  for (SceneRagdollRuntime& runtime : m_sceneRagdolls) {
+    if (runtime.meshIndex == meshIndex) {
+      return &runtime;
+    }
+  }
+  return nullptr;
+}
+
+const SandboxScene::SceneRagdollRuntime* SandboxScene::FindSceneRagdollRuntime(int meshIndex) const {
+  for (const SceneRagdollRuntime& runtime : m_sceneRagdolls) {
+    if (runtime.meshIndex == meshIndex) {
+      return &runtime;
+    }
+  }
+  return nullptr;
+}
+
+bool SandboxScene::IsSceneRagdollPhysicsDriven(int meshIndex) const {
+  const SceneRagdollRuntime* runtime = FindSceneRagdollRuntime(meshIndex);
+  return runtime && runtime->physicsDriven;
+}
+
+void SandboxScene::DriveSceneRagdollsFromAnimation(float deltaSeconds) {
+  t850::EngineContext* engineContext = GetEngineContext();
+  if (!engineContext) engineContext = &t850::GetEngineContext();
+  t850::JoltPhysicsSystem* physics = engineContext ? engineContext->physics : nullptr;
+  if (!physics || !physics->IsInitialized() || m_sceneRagdolls.empty()) {
+    return;
+  }
+
+  for (SceneRagdollRuntime& runtime : m_sceneRagdolls) {
+    if (runtime.physicsDriven) {
+      continue;
+    }
+    if (runtime.meshIndex < 0 || runtime.meshIndex >= static_cast<int>(m_meshCount) ||
+        runtime.meshIndex >= kMaxSandboxMeshes) {
+      continue;
+    }
+
+    const t850::PhysicsRagdollHandle handle = Meshes[runtime.meshIndex].GetPhysicsRagdoll();
+    if (!handle.IsValid()) {
+      continue;
+    }
+
+    RenderSkinnedMesh* skinned = dynamic_cast<RenderSkinnedMesh*>(Meshes[runtime.meshIndex].pBase);
+    if (!skinned) {
+      continue;
+    }
+
+    t850::PhysicsRagdollDesc pose;
+    if (!t850::BuildRagdollPoseFromAnimation(*skinned,
+                                             Meshes[runtime.meshIndex].Final,
+                                             runtime.binding,
+                                             pose)) {
+      if (!runtime.driveLogEmitted) {
+        T8_LOG_INFO("[SandboxScene] Failed to drive scene ragdoll '%s' from animation",
+                    runtime.resourcePath.c_str());
+        runtime.driveLogEmitted = true;
+      }
+      continue;
+    }
+
+    if (physics->DriveRagdollFromPose(handle, pose, deltaSeconds)) {
+      runtime.pose = std::move(pose);
+      if (!runtime.driveLogEmitted) {
+        T8_LOG_INFO("[SandboxScene] Driving scene ragdoll '%s' from animation", runtime.resourcePath.c_str());
+        runtime.driveLogEmitted = true;
+      }
+    }
+  }
+}
+
+bool SandboxScene::SwitchSceneRagdollsToPhysics(int meshIndexFilter) {
+  if (m_sceneRagdolls.empty()) {
+    return false;
+  }
+
+  t850::EngineContext* engineContext = GetEngineContext();
+  if (!engineContext) engineContext = &t850::GetEngineContext();
+  if (!engineContext || !engineContext->physics || !engineContext->physics->IsInitialized()) {
+    return false;
+  }
+
+  int switchedCount = 0;
+  for (SceneRagdollRuntime& runtime : m_sceneRagdolls) {
+    if (meshIndexFilter >= 0 && runtime.meshIndex != meshIndexFilter) {
+      continue;
+    }
+    if (runtime.physicsDriven ||
+        runtime.meshIndex < 0 ||
+        runtime.meshIndex >= static_cast<int>(m_meshCount) ||
+        runtime.meshIndex >= kMaxSandboxMeshes ||
+        !Meshes[runtime.meshIndex].HasPhysicsRagdoll()) {
+      continue;
+    }
+
+    RenderSkinnedMesh* skinned = Meshes[runtime.meshIndex].GetSkinnedMesh();
+    if (!skinned || !skinned->HasSkinData()) {
+      continue;
+    }
+
+    t850::PhysicsRagdollDesc pose;
+    if (t850::BuildRagdollPoseFromAnimation(*skinned, Meshes[runtime.meshIndex].Final, runtime.binding, pose)) {
+      engineContext->physics->DriveRagdollFromPose(Meshes[runtime.meshIndex].GetPhysicsRagdoll(), pose, 0.0f);
+      runtime.pose = std::move(pose);
+    }
+
+    if (!engineContext->physics->SetRagdollMotion(Meshes[runtime.meshIndex].GetPhysicsRagdoll(),
+                                                   t850::PhysicsBodyMotion::Dynamic)) {
+      T8_LOG_ERROR("[SandboxScene] Failed to switch scene ragdoll '%s' to dynamic physics",
+                   runtime.resourcePath.c_str());
+      continue;
+    }
+
+    engineContext->physics->SetRagdollVelocity(
+        Meshes[runtime.meshIndex].GetPhysicsRagdoll(),
+        XVECTOR3(0.0f, 0.0f, 0.0f, 0.0f),
+        XVECTOR3(0.0f, 0.0f, 0.0f, 0.0f));
+    runtime.physicsDriven = true;
+    runtime.physicsLogEmitted = false;
+    skinned->PauseAnimation();
+    skinned->ClearSnapshotBoneMatrices();
+    ++switchedCount;
+  }
+
+  if (switchedCount > 0) {
+    T8_LOG_INFO("[SandboxScene] F5: %d scene-file ragdoll(s) switched to dynamic physics", switchedCount);
+  }
+  return switchedCount > 0;
+}
+
+bool SandboxScene::ResetSceneRagdollPhysicsAndAnimation(int meshIndex) {
+  SceneRagdollRuntime* runtime = FindSceneRagdollRuntime(meshIndex);
+  if (!runtime ||
+      runtime->meshIndex < 0 ||
+      runtime->meshIndex >= static_cast<int>(m_meshCount) ||
+      runtime->meshIndex >= kMaxSandboxMeshes ||
+      !Meshes[runtime->meshIndex].HasPhysicsRagdoll()) {
+    return false;
+  }
+
+  t850::EngineContext* engineContext = GetEngineContext();
+  if (!engineContext) engineContext = &t850::GetEngineContext();
+  RenderSkinnedMesh* skinned = Meshes[runtime->meshIndex].GetSkinnedMesh();
+  if (!engineContext || !engineContext->physics || !skinned || !skinned->HasSkinData()) {
+    return false;
+  }
+
+  skinned->ResetAnimation();
+  skinned->PlayAnimation();
+  skinned->ClearSnapshotBoneMatrices();
+  skinned->UpdateAnimationPose();
+
+  t850::PhysicsRagdollDesc pose;
+  if (!t850::BuildRagdollPoseFromAnimation(*skinned, Meshes[runtime->meshIndex].Final, runtime->binding, pose)) {
+    T8_LOG_ERROR("[SandboxScene] Failed to reset scene ragdoll '%s' from animation",
+                 runtime->resourcePath.c_str());
+    return false;
+  }
+
+  const t850::PhysicsRagdollHandle handle = Meshes[runtime->meshIndex].GetPhysicsRagdoll();
+  if (!engineContext->physics->SetRagdollMotion(handle, t850::PhysicsBodyMotion::Kinematic) ||
+      !engineContext->physics->DriveRagdollFromPose(handle, pose, 0.0f)) {
+    T8_LOG_ERROR("[SandboxScene] Failed to reset scene ragdoll physics for '%s'",
+                 runtime->resourcePath.c_str());
+    return false;
+  }
+
+  engineContext->physics->SetRagdollVelocity(
+      handle,
+      XVECTOR3(0.0f, 0.0f, 0.0f, 0.0f),
+      XVECTOR3(0.0f, 0.0f, 0.0f, 0.0f));
+  runtime->pose = std::move(pose);
+  runtime->physicsDriven = false;
+  runtime->driveLogEmitted = false;
+  runtime->physicsLogEmitted = false;
+  runtime->physicsStates.clear();
+  runtime->physicsBoneIndices.clear();
+  runtime->physicsCombinedMatrices.clear();
+  T8_LOG_INFO("[SandboxScene] Reset scene ragdoll '%s' to animation drive", runtime->resourcePath.c_str());
+  return true;
+}
+
+bool SandboxScene::LoadEditorSceneAssets(const std::string& scenePath) {
+  t850::scene::EditorSceneFile scene;
+  std::string error;
+  if (!t850::scene::LoadEditorSceneFile(scenePath, scene, &error)) {
+    T8_LOG_ERROR("[SandboxScene] Failed to load editor scene '%s': %s", scenePath.c_str(), error.c_str());
+    return false;
+  }
+
+  m_loadedEditorScene = true;
+  m_loadedEditorScenePath = scenePath;
+  m_meshCount = 0;
+  m_q3CollisionWorld.reset();
+  m_sceneMeshPaths.clear();
+  m_sceneRagdollPaths.clear();
+  m_sceneRagdolls.clear();
+  m_q3StaticCollisionEntityIds.clear();
+  m_primaryRagdollResourcePath.clear();
+
+  std::string q3CollisionPath = NormalizeSceneResourcePath(scene.collision);
+  if (q3CollisionPath.empty()) {
+    q3CollisionPath = InferQ3CollisionResourcePath(scenePath);
+  }
+  if (q3CollisionPath.empty() || !t850::ResourceLocator::Instance().Exists(q3CollisionPath)) {
+    const std::string objectCollisionPath = InferQ3CollisionResourcePathFromObjects(scene);
+    if (!objectCollisionPath.empty()) {
+      q3CollisionPath = objectCollisionPath;
+    }
+  }
+  if (!q3CollisionPath.empty() && t850::ResourceLocator::Instance().Exists(q3CollisionPath)) {
+    auto q3CollisionWorld = std::make_unique<t850::Q3BspCollisionWorld>();
+    std::string q3CollisionError;
+    if (q3CollisionWorld->Load(q3CollisionPath, &q3CollisionError)) {
+      T8_LOG_INFO("[SandboxScene] Q3 collision clip loaded: %s brushes=%zu patchFacets=%zu jumpPads=%zu",
+                  q3CollisionPath.c_str(),
+                  q3CollisionWorld->GetBrushCount(),
+                  q3CollisionWorld->GetPatchFacetCount(),
+                  q3CollisionWorld->GetJumpPadCount());
+      m_q3CollisionWorld = std::move(q3CollisionWorld);
+    } else {
+      T8_LOG_ERROR("[SandboxScene] Failed to load Q3 collision clip '%s': %s",
+                   q3CollisionPath.c_str(),
+                   q3CollisionError.c_str());
+    }
+  }
+
+  for (const auto& object : scene.objects) {
+    if (!object.visible) continue;
+    const std::string meshPath = NormalizeSceneResourcePath(object.mesh);
+    if (meshPath.empty()) {
+      T8_LOG_ERROR("[SandboxScene] Scene object '%s' has no mesh path; skipping", object.name.c_str());
+      continue;
+    }
+    if (m_meshCount >= kMaxSandboxMeshes) {
+      T8_LOG_ERROR("[SandboxScene] Scene '%s' has more than %d visible meshes; remaining objects skipped",
+                   scenePath.c_str(), kMaxSandboxMeshes);
+      break;
+    }
+
+    const int primitiveIndex = PrimitiveMgr.CreateMesh(meshPath.c_str());
+    if (primitiveIndex < 0) {
+      T8_LOG_ERROR("[SandboxScene] Failed to load scene object '%s' mesh '%s'", object.name.c_str(), meshPath.c_str());
+      continue;
+    }
+
+    PrimitiveInst& instance = Meshes[m_meshCount];
+    instance.CreateInstance(PrimitiveMgr.GetPrimitive(primitiveIndex), &VP);
+    instance.ScaleAbsolute(object.scale.x, object.scale.y, object.scale.z);
+    instance.RotateXAbsolute(object.rotation.x);
+    instance.RotateYAbsolute(object.rotation.y);
+    instance.RotateZAbsolute(object.rotation.z);
+    instance.TranslateAbsolute(object.position.x, object.position.y, object.position.z);
+    instance.Visible = object.visible;
+    instance.Update();
+
+    const std::string ragdollPath = NormalizeSceneResourcePath(object.ragdoll);
+    const bool isSkinnedObject = (instance.GetSkinnedMesh() != nullptr);
+    if (!ragdollPath.empty() && isSkinnedObject) {
+      AttachSceneObjectRagdoll(static_cast<int>(m_meshCount), meshPath, ragdollPath);
+    } else if (!isSkinnedObject) {
+      if (!ragdollPath.empty()) {
+        T8_LOG_INFO("[SandboxScene] Ignoring ragdoll '%s' on non-skinned scene object '%s'",
+                    ragdollPath.c_str(),
+                    object.name.c_str());
+      }
+      t850::EngineContext* engineContext = GetEngineContext();
+      if (!engineContext) engineContext = &t850::GetEngineContext();
+      if (engineContext && engineContext->physics && engineContext->physics->IsInitialized()) {
+        t850::PhysicsTriangleMeshCookSettings cookSettings;
+        cookSettings.maxTrianglesPerLeaf = 8;
+        cookSettings.buildQuality = t850::PhysicsMeshBuildQuality::FavorRuntimePerformance;
+        cookSettings.useDiskCache = true;
+        t850::PhysicsCookStats cookStats;
+        RenderMesh* renderMesh = dynamic_cast<RenderMesh*>(instance.pBase);
+        if (renderMesh && t850::AttachStaticTriangleMeshBody(
+            *engineContext->physics, instance, *renderMesh, cookSettings, &cookStats)) {
+          if (m_q3CollisionWorld && MeshUsesQ3CollisionClip(meshPath, q3CollisionPath)) {
+            m_q3StaticCollisionEntityIds.push_back(instance.GetEntityId());
+            T8_LOG_INFO("[SandboxScene] Q3 map Jolt body ignored by Q3 camera: object='%s' entity=%u clip='%s'",
+                        object.name.c_str(),
+                        instance.GetEntityId(),
+                        q3CollisionPath.c_str());
+          }
+          T8_LOG_INFO("[SandboxScene] Scene collision mesh ready for '%s': cache=%s vertices=%u triangles=%u total=%.2fms",
+                      object.name.c_str(),
+                      cookStats.cacheHit ? "hit" : "miss",
+                      cookStats.vertexCount,
+                      cookStats.triangleCount,
+                      cookStats.totalMs);
+        } else {
+          T8_LOG_ERROR("[SandboxScene] Failed to create scene collision mesh for '%s'", object.name.c_str());
+        }
+      }
+    }
+    if (m_meshCount == 0) {
+      m_profileModelKey = meshPath;
+      m_primaryRagdollResourcePath = ragdollPath;
+    }
+    m_sceneMeshPaths.push_back(meshPath);
+    m_sceneRagdollPaths.push_back(ragdollPath);
+    T8_LOG_INFO("[SandboxScene] Loaded scene object '%s' mesh='%s' ragdoll='%s' slot=%d",
+                object.name.c_str(), meshPath.c_str(), ragdollPath.c_str(), m_meshCount);
+    ++m_meshCount;
+  }
+
+  if (m_meshCount <= 0) {
+    T8_LOG_ERROR("[SandboxScene] Editor scene '%s' did not load any visible meshes", scenePath.c_str());
+    return false;
+  }
+
+  m_selectedSkinningMeshIndex = ClampSkinnedMeshSelection(m_selectedSkinningMeshIndex);
+  m_selectedAnimationMeshIndex = ClampSkinnedMeshSelection(m_selectedAnimationMeshIndex);
+  FitModelToView();
+  ApplyEditorSceneCameraAndLights(scene);
+  m_guiSetup.descriptor.profiles = scene.profiles;
+  LoadSandboxProfile(true);
+  T8_LOG_INFO("[SandboxScene] Loaded editor scene '%s' with %d mesh instances", scenePath.c_str(), m_meshCount);
+  return true;
+}
+
 void SandboxScene::CreateAssets() {
   if (!m_renderGraph.Load("Scenes/SandboxScene_RenderGraph.json")) {
     T8_LOG_ERROR("[SandboxScene] Failed to load render graph");
@@ -2304,15 +2977,26 @@ void SandboxScene::CreateAssets() {
     SheenELUTTexIndex);
   UpdateSceneIBLSettings(SceneProp, g_pBaseDriver, EnvMaps);
 
-  // Load the glTF model
-  int index = PrimitiveMgr.CreateMesh(g_config.modelPath.c_str());
-  if (index < 0) {
-    T8_LOG_ERROR("[SandboxScene] Failed to load '%s'", g_config.modelPath.c_str());
+  if (!g_config.sceneFilePath.empty()) {
+    if (!LoadEditorSceneAssets(g_config.sceneFilePath)) {
+      T8_LOG_ERROR("[SandboxScene] Cannot continue without scene assets for '%s'", g_config.sceneFilePath.c_str());
+    }
   } else {
-    T8_LOG_INFO("[SandboxScene] Loaded model '%s', primitive index=%d", g_config.modelPath.c_str(), index);
-    Meshes[0].CreateInstance(PrimitiveMgr.GetPrimitive(index), &VP);
-    FitModelToView();
-    LoadSandboxProfile();
+    // Load the glTF model
+    int index = PrimitiveMgr.CreateMesh(g_config.modelPath.c_str());
+    if (index < 0) {
+      T8_LOG_ERROR("[SandboxScene] Failed to load '%s'", g_config.modelPath.c_str());
+    } else {
+      T8_LOG_INFO("[SandboxScene] Loaded model '%s', primitive index=%d", g_config.modelPath.c_str(), index);
+      Meshes[0].CreateInstance(PrimitiveMgr.GetPrimitive(index), &VP);
+      Meshes[0].Update();
+      m_meshCount = 1;
+      m_selectedSkinningMeshIndex = 0;
+      m_selectedAnimationMeshIndex = 0;
+      m_profileModelKey.clear();
+      FitModelToView();
+      LoadSandboxProfile();
+    }
   }
 
   // No SkyBox mesh needed — cleared GBuffer pixels (MatId=0) sample
@@ -2373,20 +3057,31 @@ void SandboxScene::CreateAssets() {
         settings.minSkinWeight = 0.08f;
         settings.radiusPercentile = 0.86f;
         settings.jointTrimFraction = 0.0f;
-        t850::PhysicsRagdollDesc ragdollDesc;
-        attachedPhysics = t850::AttachSkeletonRagdoll(
-            *engineContext->physics,
-            Meshes[0],
+        t850::PhysicsRagdollAuthoringDesc generatedAuthoring;
+        attachedPhysics = t850::BuildRagdollAuthoringFromSkeleton(
             *skinned,
+            Meshes[0].Final,
+            Meshes[0].GetEntityId(),
             settings,
-            t850::PhysicsBodyMotion::Kinematic,
-            &ragdollDesc);
+            generatedAuthoring);
         if (attachedPhysics) {
-          m_driveRagdollFromAnimation = t850::BuildRagdollAnimationBinding(
-              *skinned,
-              Meshes[0].Final,
-              ragdollDesc,
-              m_ragdollAnimationBinding);
+          t850::PhysicsRagdollHandle handle =
+              engineContext->physics->CreateRagdoll(
+                  generatedAuthoring.binding.referencePose,
+                  t850::PhysicsBodyMotion::Kinematic);
+          attachedPhysics = handle.IsValid();
+          if (attachedPhysics) {
+            Meshes[0].AttachPhysicsRagdoll(handle);
+          }
+        }
+        if (attachedPhysics) {
+          m_ragdollAnimationBinding = generatedAuthoring.binding;
+          m_ragdollParentCapsules = generatedAuthoring.parentBodyIndices;
+          m_ragdollJointParentCapsules = generatedAuthoring.jointParentBodyIndices;
+          m_ragdollFrozenCapsules = generatedAuthoring.frozenBodies;
+          m_ragdollFrozenJoints = generatedAuthoring.frozenJoints;
+          m_ragdollContactJoints = generatedAuthoring.contactJoints;
+          m_driveRagdollFromAnimation = true;
           m_ragdollPhysicsDriven = false;
           m_ragdollPhysicsLogEmitted = false;
           m_ragdollDriveLogEmitted = false;
@@ -2420,31 +3115,42 @@ void SandboxScene::CreateAssets() {
 }
 
 void SandboxScene::OnLoadScene() {
+  InstallSandboxConsoleLogCapture();
   InitVars();
   CreateAssets();
 }
 
 void SandboxScene::OnDestoryScene() {
   DestroyAssets();
+  UninstallSandboxConsoleLogCapture();
 }
 
 void SandboxScene::DestroyAssets() {
   SceneProp.SSAOKernel.Destroy();
-  if (Meshes[0].HasPhysicsRagdoll() || Meshes[0].HasPhysicsBody() || m_floorBody.IsValid()) {
+  bool hasPhysicsLinks = m_floorBody.IsValid();
+  const int meshCount = (std::max)(m_meshCount, Meshes[0].pBase ? 1 : 0);
+  for (int meshIndex = 0; meshIndex < meshCount; ++meshIndex) {
+    hasPhysicsLinks = hasPhysicsLinks || Meshes[meshIndex].HasPhysicsRagdoll() || Meshes[meshIndex].HasPhysicsBody();
+  }
+  if (hasPhysicsLinks) {
     t850::EngineContext* engineContext = GetEngineContext();
     if (!engineContext) engineContext = &t850::GetEngineContext();
     if (engineContext && engineContext->physics) {
-      if (Meshes[0].HasPhysicsRagdoll()) {
-        engineContext->physics->DestroyRagdoll(Meshes[0].GetPhysicsRagdoll());
-      }
-      if (Meshes[0].HasPhysicsBody()) {
-        engineContext->physics->DestroyBody(Meshes[0].GetPhysicsBody());
+      for (int meshIndex = 0; meshIndex < meshCount; ++meshIndex) {
+        if (Meshes[meshIndex].HasPhysicsRagdoll()) {
+          engineContext->physics->DestroyRagdoll(Meshes[meshIndex].GetPhysicsRagdoll());
+        }
+        if (Meshes[meshIndex].HasPhysicsBody()) {
+          engineContext->physics->DestroyBody(Meshes[meshIndex].GetPhysicsBody());
+        }
       }
       if (m_floorBody.IsValid()) {
         engineContext->physics->DestroyBody(m_floorBody);
       }
     }
-    Meshes[0].AttachPhysicsRagdoll(t850::PhysicsRagdollHandle{});
+    for (int meshIndex = 0; meshIndex < meshCount; ++meshIndex) {
+      Meshes[meshIndex].ClearPhysicsLinks();
+    }
     m_floorBody.Reset();
   }
   m_driveRagdollFromAnimation = false;
@@ -2480,6 +3186,16 @@ void SandboxScene::DestroyAssets() {
   m_ragdollPhysicsBoneIndices.clear();
   m_ragdollPhysicsCombinedMatrices.clear();
   m_ragdollGeneratedBinding = t850::PhysicsRagdollAnimationBinding{};
+  m_meshCount = 0;
+  m_loadedEditorScene = false;
+  m_loadedEditorScenePath.clear();
+  m_q3CollisionWorld.reset();
+  m_primaryRagdollResourcePath.clear();
+  m_sceneMeshPaths.clear();
+  m_sceneRagdollPaths.clear();
+  m_sceneRagdolls.clear();
+  m_selectedSkinningMeshIndex = 0;
+  m_selectedAnimationMeshIndex = 0;
   m_debugText.Destroy();
   m_debugSphere.Destroy();
   if (m_lightArrowVB) m_lightArrowVB->release();
@@ -2522,8 +3238,7 @@ void SandboxScene::OnUpdate(float _DtSecs) {
   }
   if (g_config.flags.autoStartRagdoll &&
       !m_ragdollAutoStartAttempted &&
-      Meshes[0].HasPhysicsRagdoll() &&
-      !m_ragdollPhysicsDriven) {
+      ((Meshes[0].HasPhysicsRagdoll() && !m_ragdollPhysicsDriven) || !m_sceneRagdolls.empty())) {
     m_ragdollAutoStartAttempted = true;
     T8_LOG_INFO("[SandboxScene] Auto-starting ragdoll simulation at %s",
                 RagdollSimulationSpeedLabelForIndex(m_ragdollSimulationSpeedIndex));
@@ -2601,8 +3316,11 @@ void SandboxScene::OnUpdate(float _DtSecs) {
       T8_LOG_INFO("[SandboxScene] Cubemap loaded: slot=%d tex=%p (%dx%d)",
                   EnvMapTexIndex, newTex, newTex ? newTex->x : 0, newTex ? newTex->y : 0);
       Quads[0].SetEnvironmentMap(newTex);
-      if (Meshes[0].pBase) {
-        Meshes[0].SetEnvironmentMap(newTex);
+      const int meshCount = (std::max)(m_meshCount, Meshes[0].pBase ? 1 : 0);
+      for (int meshIndex = 0; meshIndex < meshCount; ++meshIndex) {
+        if (Meshes[meshIndex].pBase) {
+          Meshes[meshIndex].SetEnvironmentMap(newTex);
+        }
       }
     } else {
       T8_LOG_ERROR("[SandboxScene] Failed to load cubemap '%s'; keeping previous cubemap", m_pendingCubemap.c_str());
@@ -2626,7 +3344,15 @@ void SandboxScene::OnUpdate(float _DtSecs) {
   m_dumper.UpdateReplayState();
 
   if (!m_dumper.SkipCameraUpdates()) {
-    ComputeOrbitCamera();
+    if (m_cameraController.GetActiveProfileType() == t850::CameraProfileType::Orbit) {
+      SyncOrbitProfileFromSandbox();
+    }
+    t850::CameraUpdateContext cameraContext;
+    cameraContext.collisionWorld = this;
+    m_cameraController.Update(DtSecs, cameraContext);
+    if (m_cameraController.GetActiveProfileType() == t850::CameraProfileType::Orbit) {
+      SyncSandboxOrbitFromProfile();
+    }
     VP = Cam.VP;
     UpdateAttachedLights();
     SyncLightCameraFromDirectionalLight();
@@ -2688,13 +3414,23 @@ void SandboxScene::OnUpdate(float _DtSecs) {
     }
   }
 
-  if (Meshes[0].pBase) {
-    RenderSkinnedMesh* skinned = Meshes[0].GetSkinnedMesh();
-    if (skinned && skinned->HasSkinData() && !m_ragdollPhysicsDriven) {
+  const int updateMeshCount = (std::max)(m_meshCount, Meshes[0].pBase ? 1 : 0);
+  for (int meshIndex = 0; meshIndex < updateMeshCount; ++meshIndex) {
+    if (!Meshes[meshIndex].pBase) continue;
+    RenderSkinnedMesh* skinned = Meshes[meshIndex].GetSkinnedMesh();
+    if (!skinned || !skinned->HasSkinData()) continue;
+    const bool sceneRagdollPhysicsDriven = IsSceneRagdollPhysicsDriven(meshIndex);
+    if (sceneRagdollPhysicsDriven) {
+      continue;
+    }
+    if (meshIndex == 0 && !m_ragdollPhysicsDriven) {
       skinned->UpdateAnimationPose();
       DriveRagdollFromAnimation(DtSecs);
+    } else if (meshIndex != 0) {
+      skinned->UpdateAnimationPose();
     }
   }
+  DriveSceneRagdollsFromAnimation(DtSecs);
 }
 
 void SandboxScene::DriveRagdollFromAnimation(float deltaSeconds) {
@@ -2704,7 +3440,7 @@ void SandboxScene::DriveRagdollFromAnimation(float deltaSeconds) {
 
   t850::EngineContext* engineContext = GetEngineContext();
   if (!engineContext) engineContext = &t850::GetEngineContext();
-  RenderSkinnedMesh* skinned = Meshes[0].GetSkinnedMesh();
+  RenderSkinnedMesh* skinned = GetSelectedAnimationMesh();
   if (!engineContext || !engineContext->physics || !skinned || skinned->HasSnapshotBoneMatrices()) {
     return;
   }
@@ -2739,7 +3475,7 @@ void SandboxScene::UpdateSkeletonFromRagdollPhysics() {
 
   t850::EngineContext* engineContext = GetEngineContext();
   if (!engineContext) engineContext = &t850::GetEngineContext();
-  RenderSkinnedMesh* skinned = Meshes[0].GetSkinnedMesh();
+  RenderSkinnedMesh* skinned = GetSelectedAnimationMesh();
   if (!engineContext || !engineContext->physics || !skinned || !skinned->HasSkinData()) {
     return;
   }
@@ -2772,6 +3508,72 @@ void SandboxScene::UpdateSkeletonFromRagdollPhysics() {
   }
 }
 
+void SandboxScene::UpdateSceneSkeletonsFromRagdollPhysics() {
+  if (m_sceneRagdolls.empty()) {
+    return;
+  }
+
+  t850::EngineContext* engineContext = GetEngineContext();
+  if (!engineContext) engineContext = &t850::GetEngineContext();
+  if (!engineContext || !engineContext->physics) {
+    return;
+  }
+
+  for (SceneRagdollRuntime& runtime : m_sceneRagdolls) {
+    if (!runtime.physicsDriven ||
+        runtime.meshIndex < 0 ||
+        runtime.meshIndex >= static_cast<int>(m_meshCount) ||
+        runtime.meshIndex >= kMaxSandboxMeshes ||
+        !Meshes[runtime.meshIndex].HasPhysicsRagdoll()) {
+      continue;
+    }
+
+    RenderSkinnedMesh* skinned = Meshes[runtime.meshIndex].GetSkinnedMesh();
+    if (!skinned || !skinned->HasSkinData()) {
+      continue;
+    }
+
+    const bool gotState =
+        engineContext->physics->GetRagdollState(
+            Meshes[runtime.meshIndex].GetPhysicsRagdoll(),
+            runtime.physicsStates);
+    const bool builtPose =
+        gotState &&
+        t850::BuildSkeletonPoseFromRagdollState(
+            *skinned,
+            Meshes[runtime.meshIndex].Final,
+            runtime.binding,
+            runtime.physicsStates,
+            runtime.physicsBoneIndices,
+            runtime.physicsCombinedMatrices);
+    const bool appliedPose =
+        builtPose &&
+        skinned->GetAnimController().ApplyCombinedPoseOverrides(
+            runtime.physicsBoneIndices,
+            runtime.physicsCombinedMatrices);
+    if (!gotState || !builtPose || !appliedPose) {
+      if (!runtime.physicsLogEmitted) {
+        T8_LOG_ERROR("[SandboxScene] Failed to drive scene object skeleton from ragdoll '%s' state=%d bodies=%zu pose=%d overrides=%d bones=%zu",
+                     runtime.resourcePath.c_str(),
+                     gotState ? 1 : 0,
+                     runtime.physicsStates.size(),
+                     builtPose ? 1 : 0,
+                     appliedPose ? 1 : 0,
+                     runtime.physicsBoneIndices.size());
+        runtime.physicsLogEmitted = true;
+      }
+      continue;
+    }
+
+    if (!runtime.physicsLogEmitted) {
+      T8_LOG_INFO("[SandboxScene] Driving scene object skeleton from dynamic ragdoll '%s': bodies=%zu",
+                  runtime.resourcePath.c_str(),
+                  runtime.physicsStates.size());
+      runtime.physicsLogEmitted = true;
+    }
+  }
+}
+
 void SandboxScene::SwitchRagdollToPhysics() {
   if (m_ragdollPhysicsDriven) {
     T8_LOG_INFO("[SandboxScene] Ragdoll is already physics-driven");
@@ -2780,8 +3582,11 @@ void SandboxScene::SwitchRagdollToPhysics() {
 
   t850::EngineContext* engineContext = GetEngineContext();
   if (!engineContext) engineContext = &t850::GetEngineContext();
-  RenderSkinnedMesh* skinned = Meshes[0].GetSkinnedMesh();
+  RenderSkinnedMesh* skinned = GetSelectedAnimationMesh();
   if (!engineContext || !engineContext->physics || !Meshes[0].HasPhysicsRagdoll() || !skinned || !skinned->HasSkinData()) {
+    if (SwitchSceneRagdollsToPhysics()) {
+      return;
+    }
     T8_LOG_ERROR("[SandboxScene] Cannot switch to ragdoll physics: no skinned ragdoll is attached");
     return;
   }
@@ -2845,6 +3650,7 @@ void SandboxScene::SwitchRagdollToPhysics() {
   skinned->PauseAnimation();
   skinned->ClearSnapshotBoneMatrices();
   LogRagdollFloorDiagnostics("F5 post-dynamic");
+  SwitchSceneRagdollsToPhysics();
   T8_LOG_INFO("[SandboxScene] F5: animation-to-physics ragdoll transition started");
 }
 
@@ -3540,8 +4346,11 @@ bool SandboxScene::SaveSkeletonEditPose() {
 }
 
 std::string SandboxScene::BuildRagdollEditSavePath() const {
-  const std::string key = FileSafeModelKey(m_profileModelKey.empty() ? SandboxProfileModelKey(g_config.modelPath) : m_profileModelKey);
-  return "Models/RagdollEdits/" + key + ".json";
+  if (!m_primaryRagdollResourcePath.empty()) {
+    return m_primaryRagdollResourcePath;
+  }
+  return t850::BuildRagdollEditResourcePath(
+      m_profileModelKey.empty() ? g_config.modelPath : m_profileModelKey);
 }
 
 int SandboxScene::FindRagdollCapsuleForBone(int boneIndex) const {
@@ -6365,312 +7174,58 @@ bool SandboxScene::LoadRagdollEditPose() {
     m_ragdollEditSavePath = BuildRagdollEditSavePath();
   }
 
-  std::string json;
-  if (!t850::ResourceLocator::Instance().ReadText(m_ragdollEditSavePath, json)) {
-    T8_LOG_INFO("[RagdollEdit] No saved capsule file found at '%s'; keeping generated ragdoll", m_ragdollEditSavePath.c_str());
+  RenderSkinnedMesh* skinned = Meshes[0].GetSkinnedMesh();
+  if (!skinned || !skinned->HasSkinData()) {
     return false;
   }
 
-  RagdollEditJson data;
-  if (!ParseRagdollEditJson(json, data)) {
-    T8_LOG_ERROR("[RagdollEdit] Failed to parse '%s'", m_ragdollEditSavePath.c_str());
-    return false;
-  }
-
-  auto& bones = m_ragdollAnimationBinding.referencePose.bones;
-  auto& bodyFromBone = m_ragdollAnimationBinding.bodyFromBone;
-  if (bones.size() != bodyFromBone.size()) {
-    return false;
-  }
-  std::vector<t850::PhysicsRagdollBoneDesc> loadedBones;
-  std::vector<XMATRIX44> loadedBodyFromBone;
-  std::vector<XVECTOR3> loadedJointFromBone;
-  std::vector<std::vector<int>> loadedControlledBones;
-  std::vector<std::vector<XMATRIX44>> loadedControlledBodyFromBone;
-  std::vector<int> loadedSavedIndices;
-  std::vector<int> loadedParentRefs;
-  std::vector<int> loadedJointParentRefs;
-  std::vector<uint8_t> loadedFrozenCapsules;
-  std::vector<uint8_t> loadedFrozenJoints;
-  std::vector<uint8_t> loadedContactJoints;
-  loadedBones.reserve(data.capsules.size());
-  loadedBodyFromBone.reserve(data.capsules.size());
-  loadedJointFromBone.reserve(data.capsules.size());
-  loadedControlledBones.reserve(data.capsules.size());
-  loadedControlledBodyFromBone.reserve(data.capsules.size());
-  loadedSavedIndices.reserve(data.capsules.size());
-  loadedParentRefs.reserve(data.capsules.size());
-  loadedJointParentRefs.reserve(data.capsules.size());
-  loadedFrozenCapsules.reserve(data.capsules.size());
-  loadedFrozenJoints.reserve(data.capsules.size());
-  loadedContactJoints.reserve(data.capsules.size());
-
+  const t850::PhysicsRagdollAnimationBinding& generatedBinding =
+      m_ragdollGeneratedBinding.referencePose.bones.empty()
+          ? m_ragdollAnimationBinding
+          : m_ragdollGeneratedBinding;
+  t850::PhysicsRagdollAuthoringDesc authoring;
   int applied = 0;
-  for (const RagdollEditCapsuleJson& capsule : data.capsules) {
-    int target = -1;
-    if (capsule.index >= 0 && capsule.index < static_cast<int>(bones.size())) {
-      const auto& candidate = bones[static_cast<std::size_t>(capsule.index)];
-      if (capsule.boneIndex < 0 || candidate.body.boneIndex == capsule.boneIndex) {
-        target = capsule.index;
-      }
-    }
-    if (target < 0) {
-      for (int i = 0; i < static_cast<int>(bones.size()); ++i) {
-        const auto& candidate = bones[static_cast<std::size_t>(i)];
-        if (candidate.body.boneIndex == capsule.boneIndex) {
-          target = i;
-          break;
-        }
-      }
-    }
-    if (target < 0) {
-      t850::PhysicsRagdollBoneDesc createdBone;
-      XMATRIX44 createdBodyFromBone;
-      if (!BuildDefaultRagdollCapsuleForBone(capsule.boneIndex, createdBone, createdBodyFromBone)) {
-        continue;
-      }
-      bones.push_back(createdBone);
-      bodyFromBone.push_back(createdBodyFromBone);
-      target = static_cast<int>(bones.size()) - 1;
-    }
-    if (capsule.boneIndex >= 0) {
-      bool duplicate = false;
-      for (const t850::PhysicsRagdollBoneDesc& loaded : loadedBones) {
-        if (loaded.body.boneIndex == capsule.boneIndex) {
-          duplicate = true;
-          break;
-        }
-      }
-      if (duplicate) {
-        continue;
-      }
-    }
-
-    t850::PhysicsRagdollBoneDesc targetBone = bones[static_cast<std::size_t>(target)];
-    if (!capsule.name.empty()) {
-      targetBone.body.debugName = capsule.name;
-    }
-    XMATRIX44 targetBodyFromBone =
-        data.schema >= 3
-            ? MatrixFromArray16(capsule.bodyFromBone)
-            : bodyFromBone[static_cast<std::size_t>(target)];
-    XMATRIX44 targetPrimaryBoneWorld;
-    const bool hasTargetBoneWorld = GetRagdollAuthoringBoneWorldTransform(targetBone.body.boneIndex, targetPrimaryBoneWorld);
-    if (hasTargetBoneWorld) {
-      targetBone.body.worldTransform = targetBodyFromBone * targetPrimaryBoneWorld;
-    }
-    if (data.schema >= 6) {
-      targetBone.jointType = RagdollJointTypeFromInt(capsule.jointType);
-      if (capsule.hasJointAnchor) {
-        targetBone.jointWorldPosition = XVECTOR3(capsule.jointAnchor[0], capsule.jointAnchor[1], capsule.jointAnchor[2], 1.0f);
-      }
-    }
-    if (data.schema >= 11) {
-      if (capsule.hasParentJointTwistAxis) {
-        targetBone.parentJointTwistAxis =
-            XVECTOR3(capsule.parentJointTwistAxis[0], capsule.parentJointTwistAxis[1], capsule.parentJointTwistAxis[2], 0.0f);
-      }
-      if (capsule.hasParentJointPlaneAxis) {
-        targetBone.parentJointPlaneAxis =
-            XVECTOR3(capsule.parentJointPlaneAxis[0], capsule.parentJointPlaneAxis[1], capsule.parentJointPlaneAxis[2], 0.0f);
-      }
-      if (capsule.hasChildJointTwistAxis) {
-        targetBone.childJointTwistAxis =
-            XVECTOR3(capsule.childJointTwistAxis[0], capsule.childJointTwistAxis[1], capsule.childJointTwistAxis[2], 0.0f);
-      }
-      if (capsule.hasChildJointPlaneAxis) {
-        targetBone.childJointPlaneAxis =
-            XVECTOR3(capsule.childJointPlaneAxis[0], capsule.childJointPlaneAxis[1], capsule.childJointPlaneAxis[2], 0.0f);
-      }
-    }
-    XVECTOR3 targetJointFromBone(0.0f, 0.0f, 0.0f, 1.0f);
-    if (hasTargetBoneWorld) {
-      XMATRIX44 inverseTargetBoneWorld;
-      if (InvertAffineNoExit(targetPrimaryBoneWorld, inverseTargetBoneWorld)) {
-        targetJointFromBone = t850::TransformPoint(targetBone.jointWorldPosition, inverseTargetBoneWorld);
-      }
-    }
-    targetBone.body.shape.type = data.schema >= 10
-        ? RagdollShapeTypeFromSaveName(capsule.shapeType)
-        : t850::PhysicsShapeType::Capsule;
-    targetBone.body.shape.radius = (std::max)(kRagdollMinShapeExtent, capsule.radius);
-    targetBone.body.shape.halfHeight = (std::max)(kRagdollMinShapeExtent, capsule.halfHeight);
-    if (data.schema >= 10 && targetBone.body.shape.type == t850::PhysicsShapeType::Box) {
-      targetBone.body.shape.halfExtents = ClampRagdollBoxHalfExtents(
-          XVECTOR3(capsule.halfExtents[0], capsule.halfExtents[1], capsule.halfExtents[2], 0.0f));
-    } else {
-      targetBone.body.shape.halfExtents = EquivalentBoxHalfExtentsFromCapsule(targetBone.body.shape);
-    }
-    if (data.schema >= 2) {
-      targetBone.swingLimitRadians = (std::max)(0.0f, capsule.swingLimitRadians);
-      targetBone.twistLimitRadians = (std::max)(0.0f, capsule.twistLimitRadians);
-    }
-    std::vector<int> controlledBones;
-    if (data.schema >= 4) {
-      controlledBones = capsule.controlledBones;
-    }
-    if (data.schema < 4 && controlledBones.empty() && targetBone.body.boneIndex >= 0) {
-      controlledBones.push_back(targetBone.body.boneIndex);
-    }
-
-    std::vector<XMATRIX44> controlledBodyFromBone;
-    controlledBodyFromBone.reserve(controlledBones.size());
-    for (int controlledBone : controlledBones) {
-      XMATRIX44 controlledBoneWorld;
-      if (!GetRagdollAuthoringBoneWorldTransform(controlledBone, controlledBoneWorld)) {
-        continue;
-      }
-      XMATRIX44 inverseControlledBoneWorld;
-      if (!InvertAffineNoExit(controlledBoneWorld, inverseControlledBoneWorld)) {
-        T8_LOG_ERROR("[RagdollEdit] Saved controlled bone %d for capsule %d has a singular transform",
-                     controlledBone, targetBone.body.boneIndex);
-        continue;
-      }
-      controlledBodyFromBone.push_back(targetBone.body.worldTransform * inverseControlledBoneWorld);
-    }
-    if (controlledBodyFromBone.size() != controlledBones.size()) {
-      controlledBones.clear();
-      controlledBodyFromBone.clear();
-      if (targetBone.body.boneIndex >= 0) {
-        controlledBones.push_back(targetBone.body.boneIndex);
-        controlledBodyFromBone.push_back(targetBodyFromBone);
-      }
-    }
-
-    loadedBones.push_back(targetBone);
-    loadedBodyFromBone.push_back(targetBodyFromBone);
-    loadedJointFromBone.push_back(targetJointFromBone);
-    loadedControlledBones.push_back(std::move(controlledBones));
-    loadedControlledBodyFromBone.push_back(std::move(controlledBodyFromBone));
-    loadedSavedIndices.push_back(capsule.index >= 0 ? capsule.index : static_cast<int>(loadedSavedIndices.size()));
-    loadedParentRefs.push_back(data.schema >= 5 ? capsule.parentCapsule : -1);
-    loadedJointParentRefs.push_back(data.schema >= 6 ? capsule.jointParentCapsule : kRagdollJointInheritParent);
-    loadedFrozenCapsules.push_back(data.schema >= 7 && capsule.capsuleFrozen ? 1u : 0u);
-    loadedFrozenJoints.push_back(data.schema >= 7 && capsule.jointFrozen ? 1u : 0u);
-    const bool legacyContactAnchor = data.schema < 9 && capsule.jointParentCapsule != kRagdollJointDisabled;
-    loadedContactJoints.push_back(
-        ((data.schema >= 9 && capsule.hasJointContactAnchor && capsule.jointContactAnchor) || legacyContactAnchor) ? 1u : 0u);
-    ++applied;
+  if (!t850::LoadRagdollAuthoringAsset(
+          m_ragdollEditSavePath,
+          *skinned,
+          Meshes[0].Final,
+          generatedBinding,
+          authoring,
+          &applied)) {
+    return false;
   }
 
-  if (applied > 0 || data.capsules.empty()) {
-    std::vector<int> loadedParentCapsules(loadedBones.size(), -1);
-    std::vector<int> loadedJointParentCapsules(loadedBones.size(), kRagdollJointInheritParent);
-    if (data.schema >= 5) {
-      auto findLoadedBySavedIndex = [&](int savedIndex) {
-        for (int i = 0; i < static_cast<int>(loadedSavedIndices.size()); ++i) {
-          if (loadedSavedIndices[static_cast<std::size_t>(i)] == savedIndex) {
-            return i;
-          }
-        }
-        if (savedIndex >= 0 && savedIndex < static_cast<int>(loadedBones.size())) {
-          return savedIndex;
-        }
-        return -1;
-      };
-      for (int child = 0; child < static_cast<int>(loadedParentRefs.size()); ++child) {
-        loadedParentCapsules[static_cast<std::size_t>(child)] =
-            findLoadedBySavedIndex(loadedParentRefs[static_cast<std::size_t>(child)]);
-      }
-      if (data.schema >= 6) {
-        for (int child = 0; child < static_cast<int>(loadedJointParentRefs.size()); ++child) {
-          const int savedJointParent = loadedJointParentRefs[static_cast<std::size_t>(child)];
-          loadedJointParentCapsules[static_cast<std::size_t>(child)] =
-              savedJointParent >= 0 ? findLoadedBySavedIndex(savedJointParent) : savedJointParent;
-        }
-      }
-    }
+  m_ragdollAnimationBinding = std::move(authoring.binding);
+  m_ragdollParentCapsules = std::move(authoring.parentBodyIndices);
+  m_ragdollJointParentCapsules = std::move(authoring.jointParentBodyIndices);
+  m_ragdollFrozenCapsules = std::move(authoring.frozenBodies);
+  m_ragdollFrozenJoints = std::move(authoring.frozenJoints);
+  m_ragdollContactJoints = std::move(authoring.contactJoints);
+  EnsureRagdollFreezeState();
+  EnsureRagdollControlledBones();
+  EnsureRagdollJointState();
+  ApplyRagdollParentCapsuleLinks();
+  EnsureRagdollJointFrames();
 
-    bones = std::move(loadedBones);
-    bodyFromBone = std::move(loadedBodyFromBone);
-    m_ragdollAnimationBinding.jointFromBone = std::move(loadedJointFromBone);
-    m_ragdollAnimationBinding.controlledBoneIndices = std::move(loadedControlledBones);
-    m_ragdollAnimationBinding.controlledBodyFromBone = std::move(loadedControlledBodyFromBone);
-    m_ragdollFrozenCapsules = std::move(loadedFrozenCapsules);
-    m_ragdollFrozenJoints = std::move(loadedFrozenJoints);
-    m_ragdollContactJoints = std::move(loadedContactJoints);
-    EnsureRagdollFreezeState();
-    EnsureRagdollControlledBones();
-    m_ragdollContactJoints.resize(bones.size(), 0u);
-    if (data.schema >= 5) {
-      m_ragdollParentCapsules = std::move(loadedParentCapsules);
-      m_ragdollJointParentCapsules = std::move(loadedJointParentCapsules);
-      ApplyRagdollParentCapsuleLinks();
-    } else {
-      m_ragdollParentCapsules.clear();
-      m_ragdollJointParentCapsules.clear();
-      RebuildRagdollParentLinks();
-    }
-    for (int i = 0; i < static_cast<int>(bones.size()); ++i) {
-      UpdateRagdollReferenceBodyFromLocal(i);
-    }
-    EnsureRagdollJointFrames();
-    int repairedContactAnchors = 0;
-    for (int childCapsule = 0; childCapsule < static_cast<int>(bones.size()); ++childCapsule) {
-      if (childCapsule >= static_cast<int>(m_ragdollContactJoints.size()) ||
-          m_ragdollContactJoints[static_cast<std::size_t>(childCapsule)] == 0u) {
-        continue;
-      }
-      const int parentCapsule = GetRagdollEffectiveJointParentCapsule(childCapsule);
-      if (parentCapsule < 0 || parentCapsule >= static_cast<int>(bones.size()) || parentCapsule == childCapsule) {
-        continue;
-      }
-      XVECTOR3 contactAnchor;
-      if (ComputeRagdollShapeContactAnchor(
-              bones[static_cast<std::size_t>(childCapsule)].body.shape,
-              bones[static_cast<std::size_t>(childCapsule)].body.worldTransform,
-              bones[static_cast<std::size_t>(parentCapsule)].body.shape,
-              bones[static_cast<std::size_t>(parentCapsule)].body.worldTransform,
-              contactAnchor)) {
-        bones[static_cast<std::size_t>(childCapsule)].jointWorldPosition = contactAnchor;
-        UpdateRagdollJointOffsetFromWorld(childCapsule);
-        ++repairedContactAnchors;
-      }
-    }
-    if (repairedContactAnchors > 0) {
-      T8_LOG_INFO("[RagdollEdit] Recovered %d contact joint anchors from shape surfaces for '%s'",
-                  repairedContactAnchors, m_ragdollEditSavePath.c_str());
-    }
-    SelectRagdollEditCapsule(
-        (m_ragdollEditSelectedCapsule < 0 || m_ragdollEditSelectedCapsule >= static_cast<int>(bones.size()))
-            ? (bones.empty() ? -1 : 0)
-            : m_ragdollEditSelectedCapsule,
-        false);
-    m_ragdollEditRenamingCapsule = -1;
-    m_ragdollEditRenameFocusPending = false;
-    m_ragdollEditHandleDragging = false;
-    m_ragdollEditGizmoDragging = false;
-    m_ragdollEditJointDragging = false;
-    m_ragdollEditGizmoAxis = -1;
-    m_ragdollEditJointAxis = -1;
-    m_ragdollEditDirty = false;
-    if (!bones.empty()) {
-      ApplyRagdollEditPose(true);
-    }
-    if (data.schema < 2) {
-      T8_LOG_INFO("[RagdollEdit] Preserved inferred constraints for legacy cache '%s'", m_ragdollEditSavePath.c_str());
-    }
-    if (data.schema < 3) {
-      T8_LOG_INFO("[RagdollEdit] Preserved generated capsule frames for legacy cache '%s'", m_ragdollEditSavePath.c_str());
-    }
-    if (data.schema < 4) {
-      T8_LOG_INFO("[RagdollEdit] Initialized controlled bones for legacy cache '%s'", m_ragdollEditSavePath.c_str());
-    }
-    if (data.schema < 5) {
-      T8_LOG_INFO("[RagdollEdit] Initialized capsule parent links for legacy cache '%s'", m_ragdollEditSavePath.c_str());
-    }
-    if (data.schema < 6) {
-      T8_LOG_INFO("[RagdollEdit] Initialized explicit joint data for legacy cache '%s'", m_ragdollEditSavePath.c_str());
-    }
-    if (data.schema < 7) {
-      T8_LOG_INFO("[RagdollEdit] Initialized freeze flags for legacy cache '%s'", m_ragdollEditSavePath.c_str());
-    }
-    if (data.schema < 11) {
-      T8_LOG_INFO("[RagdollEdit] Initialized independent joint frames for legacy cache '%s'", m_ragdollEditSavePath.c_str());
-    }
-    T8_LOG_INFO("[RagdollEdit] Loaded %d edited capsules from '%s'", applied, m_ragdollEditSavePath.c_str());
+  const auto& bones = m_ragdollAnimationBinding.referencePose.bones;
+  SelectRagdollEditCapsule(
+      (m_ragdollEditSelectedCapsule < 0 || m_ragdollEditSelectedCapsule >= static_cast<int>(bones.size()))
+          ? (bones.empty() ? -1 : 0)
+          : m_ragdollEditSelectedCapsule,
+      false);
+  m_ragdollEditRenamingCapsule = -1;
+  m_ragdollEditRenameFocusPending = false;
+  m_ragdollEditHandleDragging = false;
+  m_ragdollEditGizmoDragging = false;
+  m_ragdollEditJointDragging = false;
+  m_ragdollEditGizmoAxis = -1;
+  m_ragdollEditJointAxis = -1;
+  m_ragdollEditDirty = false;
+  if (!bones.empty()) {
+    ApplyRagdollEditPose(true);
   }
-  return applied > 0 || data.capsules.empty();
+  T8_LOG_INFO("[RagdollEdit] Loaded %d edited bodies from '%s'", applied, m_ragdollEditSavePath.c_str());
+  return true;
 }
 
 bool SandboxScene::SaveRagdollEditPose() {
@@ -6689,98 +7244,22 @@ bool SandboxScene::SaveRagdollEditPose() {
     return false;
   }
 
-  const std::filesystem::path path = ResolveRagdollEditWritePath(m_ragdollEditSavePath);
-  std::error_code ec;
-  if (!path.parent_path().empty()) {
-    std::filesystem::create_directories(path.parent_path(), ec);
-  }
-  if (ec) {
-    T8_LOG_ERROR("[RagdollEdit] Failed to create '%s'", path.parent_path().string().c_str());
+  t850::PhysicsRagdollAuthoringDesc authoring;
+  authoring.model = m_profileModelKey.empty() ? t850::BuildRagdollEditModelKey(g_config.modelPath) : m_profileModelKey;
+  authoring.binding = m_ragdollAnimationBinding;
+  authoring.parentBodyIndices = m_ragdollParentCapsules;
+  authoring.jointParentBodyIndices = m_ragdollJointParentCapsules;
+  authoring.frozenBodies = m_ragdollFrozenCapsules;
+  authoring.frozenJoints = m_ragdollFrozenJoints;
+  authoring.contactJoints = m_ragdollContactJoints;
+
+  std::filesystem::path path;
+  if (!t850::SaveRagdollAuthoringAsset(m_ragdollEditSavePath, authoring.model, authoring, &path)) {
     return false;
   }
 
-  std::ofstream file(path, std::ios::out | std::ios::trunc);
-  if (!file.is_open()) {
-    T8_LOG_ERROR("[RagdollEdit] Failed to open '%s' for writing", path.string().c_str());
-    return false;
-  }
-
-  const std::string model = m_profileModelKey.empty() ? SandboxProfileModelKey(g_config.modelPath) : m_profileModelKey;
-  file << "{\n";
-  file << "  \"schema\": 11,\n";
-  file << "  \"model\": \"" << JsonEscape(model) << "\",\n";
-  file << "  \"constraint_profile\": \"inferred-name-v1\",\n";
-  file << "  \"capsule_frame_profile\": \"bone-to-endpoint-v1\",\n";
-  file << "  \"capsules\": [\n";
-  file << std::fixed << std::setprecision(8);
-  for (std::size_t i = 0; i < bones.size(); ++i) {
-    const auto& bone = bones[i];
-    const auto& shape = bone.body.shape;
-    const auto matrix = MatrixToArray16(m_ragdollAnimationBinding.bodyFromBone[i]);
-    file << "    {\n";
-    file << "      \"index\": " << i << ",\n";
-    file << "      \"bone_index\": " << bone.body.boneIndex << ",\n";
-    file << "      \"name\": \"" << JsonEscape(bone.body.debugName) << "\",\n";
-    const int parentCapsule =
-        i < m_ragdollParentCapsules.size() ? m_ragdollParentCapsules[i] : -1;
-    const int jointParentCapsule =
-        i < m_ragdollJointParentCapsules.size() ? m_ragdollJointParentCapsules[i] : kRagdollJointInheritParent;
-    const bool capsuleFrozen =
-        i < m_ragdollFrozenCapsules.size() && m_ragdollFrozenCapsules[i] != 0u;
-    const bool jointFrozen =
-        i < m_ragdollFrozenJoints.size() && m_ragdollFrozenJoints[i] != 0u;
-    const bool jointContactAnchor =
-        i < m_ragdollContactJoints.size() && m_ragdollContactJoints[i] != 0u;
-    file << "      \"parent_capsule\": " << parentCapsule << ",\n";
-    file << "      \"joint_parent_capsule\": " << jointParentCapsule << ",\n";
-    file << "      \"capsule_frozen\": " << (capsuleFrozen ? "true" : "false") << ",\n";
-    file << "      \"joint_frozen\": " << (jointFrozen ? "true" : "false") << ",\n";
-    file << "      \"joint_contact_anchor\": " << (jointContactAnchor ? "true" : "false") << ",\n";
-    file << "      \"joint_type\": " << RagdollJointTypeToInt(bone.jointType) << ",\n";
-    file << "      \"joint_anchor\": [" << bone.jointWorldPosition.x << ", "
-         << bone.jointWorldPosition.y << ", " << bone.jointWorldPosition.z << "],\n";
-    file << "      \"parent_joint_twist_axis\": [" << bone.parentJointTwistAxis.x << ", "
-         << bone.parentJointTwistAxis.y << ", " << bone.parentJointTwistAxis.z << "],\n";
-    file << "      \"parent_joint_plane_axis\": [" << bone.parentJointPlaneAxis.x << ", "
-         << bone.parentJointPlaneAxis.y << ", " << bone.parentJointPlaneAxis.z << "],\n";
-    file << "      \"child_joint_twist_axis\": [" << bone.childJointTwistAxis.x << ", "
-         << bone.childJointTwistAxis.y << ", " << bone.childJointTwistAxis.z << "],\n";
-    file << "      \"child_joint_plane_axis\": [" << bone.childJointPlaneAxis.x << ", "
-         << bone.childJointPlaneAxis.y << ", " << bone.childJointPlaneAxis.z << "],\n";
-    file << "      \"body_from_bone\": [";
-    for (std::size_t valueIndex = 0; valueIndex < matrix.size(); ++valueIndex) {
-      if (valueIndex > 0) file << ", ";
-      file << matrix[valueIndex];
-    }
-    file << "],\n";
-    const XVECTOR3 savedHalfExtents = shape.type == t850::PhysicsShapeType::Box
-        ? ClampRagdollBoxHalfExtents(shape.halfExtents)
-        : EquivalentBoxHalfExtentsFromCapsule(shape);
-    file << "      \"shape_type\": \"" << RagdollShapeTypeSaveName(shape.type) << "\",\n";
-    file << "      \"radius\": " << shape.radius << ",\n";
-    file << "      \"half_height\": " << shape.halfHeight << ",\n";
-    file << "      \"half_extents\": [" << savedHalfExtents.x << ", "
-         << savedHalfExtents.y << ", " << savedHalfExtents.z << "],\n";
-    file << "      \"swing_limit\": " << bone.swingLimitRadians << ",\n";
-    file << "      \"twist_limit\": " << bone.twistLimitRadians << ",\n";
-    file << "      \"controlled_bones\": [";
-    const std::vector<int>* controlledBones =
-        i < m_ragdollAnimationBinding.controlledBoneIndices.size()
-            ? &m_ragdollAnimationBinding.controlledBoneIndices[i]
-            : nullptr;
-    if (controlledBones) {
-      for (std::size_t controlledIndex = 0; controlledIndex < controlledBones->size(); ++controlledIndex) {
-        if (controlledIndex > 0) file << ", ";
-        file << (*controlledBones)[controlledIndex];
-      }
-    }
-    file << "]\n";
-    file << "    }" << (i + 1 < bones.size() ? "," : "") << "\n";
-  }
-  file << "  ]\n";
-  file << "}\n";
   m_ragdollEditDirty = false;
-  T8_LOG_INFO("[RagdollEdit] Saved %zu capsules to '%s'", bones.size(), path.string().c_str());
+  T8_LOG_INFO("[RagdollEdit] Saved %zu bodies to '%s'", bones.size(), path.string().c_str());
   return true;
 }
 
@@ -10400,14 +10879,51 @@ void SandboxScene::DrawSkeletonEditPanel(t850::DevGuiContext& gui) {
     return;
   }
 
-  RenderSkinnedMesh* skinned = Meshes[0].GetSkinnedMesh();
+  std::vector<int> skinnedMeshIndices;
+  std::vector<std::string> skinnedMeshOptions = BuildSkinnedMeshOptions(&skinnedMeshIndices);
+  if (skinnedMeshIndices.empty()) {
+    gui.Text("Load a skinned model to edit its skeleton.");
+    return;
+  }
+
+  m_selectedSkinningMeshIndex = ClampSkinnedMeshSelection(m_selectedSkinningMeshIndex);
+  int selectedSkinnedOption = 0;
+  for (int optionIndex = 0; optionIndex < static_cast<int>(skinnedMeshIndices.size()); ++optionIndex) {
+    if (skinnedMeshIndices[static_cast<std::size_t>(optionIndex)] == m_selectedSkinningMeshIndex) {
+      selectedSkinnedOption = optionIndex;
+      break;
+    }
+  }
+
+  t850::SelectorDesc skinnedSelector;
+  skinnedSelector.name = "skinning_model";
+  skinnedSelector.label = "Skinned Model";
+  if (gui.Combo(skinnedSelector, selectedSkinnedOption, &skinnedMeshOptions) &&
+      selectedSkinnedOption >= 0 &&
+      selectedSkinnedOption < static_cast<int>(skinnedMeshIndices.size())) {
+    if (m_skeletonEditMode) {
+      ExitSkeletonEditMode();
+    }
+    m_selectedSkinningMeshIndex = skinnedMeshIndices[static_cast<std::size_t>(selectedSkinnedOption)];
+    m_ragdollEditRenamingCapsule = -1;
+    m_ragdollEditRenameFocusPending = false;
+  }
+
+  const int selectedMeshIndex = m_selectedSkinningMeshIndex;
+  RenderSkinnedMesh* skinned = GetSkinnedMeshForIndex(selectedMeshIndex);
   if (!skinned || !skinned->HasSkinData()) {
     gui.Text("Load a skinned model to edit its skeleton.");
     return;
   }
 
+  const SceneRagdollRuntime* sceneRagdoll = FindSceneRagdollRuntime(selectedMeshIndex);
+  const bool selectedPrimaryAuthoring = (selectedMeshIndex == 0 && sceneRagdoll == nullptr && !m_loadedEditorScene);
+  if (!selectedPrimaryAuthoring && m_skeletonEditMode) {
+    ExitSkeletonEditMode();
+  }
+
   if (m_ragdollEditRenamingCapsule >= 0) {
-    if (!m_skeletonEditMode) {
+    if (!m_skeletonEditMode || !selectedPrimaryAuthoring) {
       m_ragdollEditRenamingCapsule = -1;
       m_ragdollEditRenameFocusPending = false;
       return;
@@ -10418,6 +10934,16 @@ void SandboxScene::DrawSkeletonEditPanel(t850::DevGuiContext& gui) {
   }
 
   if (ImGui::CollapsingHeader("Runtime controls", ImGuiTreeNodeFlags_DefaultOpen)) {
+    ImGui::Text("Selected slot: %d", selectedMeshIndex);
+    if (sceneRagdoll) {
+      ImGui::TextWrapped("Authored ragdoll: %s", sceneRagdoll->resourcePath.c_str());
+      ImGui::Text("Bodies: %zu", sceneRagdoll->binding.referencePose.bones.size());
+      ImGui::TextDisabled("Capsules/joints are loaded through the scene object's transform, so scale, rotation, and translation are applied at runtime.");
+    } else if (selectedPrimaryAuthoring && !m_ragdollAnimationBinding.referencePose.bones.empty()) {
+      ImGui::Text("Bodies: %zu", m_ragdollAnimationBinding.referencePose.bones.size());
+    } else {
+      ImGui::TextDisabled("No authored ragdoll is attached to this skinned model.");
+    }
     if (gui.Button(m_showPhysics ? "Physics Debug: On" : "Physics Debug: Off")) {
       m_showPhysics = !m_showPhysics;
     }
@@ -10425,10 +10951,21 @@ void SandboxScene::DrawSkeletonEditPanel(t850::DevGuiContext& gui) {
     if (gui.Button(m_showSkeleton ? "Skeleton Debug: On" : "Skeleton Debug: Off")) {
       m_showSkeleton = !m_showSkeleton;
     }
-    if (gui.Button("Start Simulation", Meshes[0].HasPhysicsRagdoll())) {
-      SwitchRagdollToPhysics();
+    const bool hasSelectedRagdoll =
+        selectedMeshIndex >= 0 &&
+        selectedMeshIndex < kMaxSandboxMeshes &&
+        Meshes[selectedMeshIndex].HasPhysicsRagdoll();
+    if (gui.Button("Start Simulation", hasSelectedRagdoll)) {
+      if (selectedPrimaryAuthoring) {
+        SwitchRagdollToPhysics();
+      } else {
+        SwitchSceneRagdollsToPhysics(selectedMeshIndex);
+      }
     }
-    if (m_ragdollPhysicsDriven) {
+    const bool selectedPhysicsDriven = selectedPrimaryAuthoring
+        ? m_ragdollPhysicsDriven
+        : IsSceneRagdollPhysicsDriven(selectedMeshIndex);
+    if (selectedPhysicsDriven && selectedPrimaryAuthoring) {
       ImGui::TextWrapped("Simulation grab: left-click a capsule/box to hold it, drag to move or throw it, release to let it fall.");
       if (m_ragdollSimulationGrabActive && m_ragdollSimulationGrabBodyIndex >= 0) {
         const auto& bones = m_ragdollAnimationBinding.referencePose.bones;
@@ -10437,6 +10974,8 @@ void SandboxScene::DrawSkeletonEditPanel(t850::DevGuiContext& gui) {
             : "body";
         ImGui::Text("Holding body %d: %s", m_ragdollSimulationGrabBodyIndex, name);
       }
+    } else if (selectedPhysicsDriven) {
+      ImGui::TextWrapped("Selected scene ragdoll is running as dynamic Jolt physics.");
     }
     ImGui::SetNextItemWidth(160.0f);
     int simulationSpeedIndex = ClampRagdollSimulationSpeedIndex(m_ragdollSimulationSpeedIndex);
@@ -10463,13 +11002,23 @@ void SandboxScene::DrawSkeletonEditPanel(t850::DevGuiContext& gui) {
     ImGui::TextDisabled(m_ragdollUseFixedSimulationDelta
                             ? "Physics advances one 1/60s input per frame."
                             : "Physics uses the measured frame delta.");
+    if (!selectedPrimaryAuthoring) {
+      ImGui::BeginDisabled();
+    }
     if (gui.Button(m_skeletonEditMode ? "Exit Edit Mode" : "Enter Edit Mode")) {
       if (m_skeletonEditMode) ExitSkeletonEditMode();
       else EnterSkeletonEditMode();
     }
+    if (!selectedPrimaryAuthoring) {
+      ImGui::EndDisabled();
+    }
     ImGui::SameLine();
     if (gui.Button("Reset Physics/Animation")) {
-      ResetRagdollPhysicsAndAnimation();
+      if (selectedPrimaryAuthoring) {
+        ResetRagdollPhysicsAndAnimation();
+      } else {
+        ResetSceneRagdollPhysicsAndAnimation(selectedMeshIndex);
+      }
     }
     ImGui::SameLine();
     if (gui.Button("Undo", CanUndoRagdollAuthoringEdit())) {
@@ -10477,6 +11026,13 @@ void SandboxScene::DrawSkeletonEditPanel(t850::DevGuiContext& gui) {
     }
     ImGui::SameLine();
     ImGui::TextDisabled("Ctrl+Z (%zu/10)", m_ragdollUndoStack.size());
+  }
+
+  if (!selectedPrimaryAuthoring) {
+    if (ImGui::CollapsingHeader("Scene ragdoll", ImGuiTreeNodeFlags_DefaultOpen)) {
+      ImGui::TextWrapped("This is a scene instance. It uses the authored ragdoll asset for simulation, transformed by the scene object matrix. Capsule authoring still targets directly loaded GLBs.");
+    }
+    return;
   }
 
   if (ImGui::CollapsingHeader("Skeleton edit mode", ImGuiTreeNodeFlags_DefaultOpen)) {
@@ -10612,11 +11168,47 @@ void SandboxScene::DrawAndroidPhysicsPanel(t850::DevGuiContext& gui) {
     m_showSkeleton = !m_showSkeleton;
   }
 
-  if (Meshes[0].HasPhysicsRagdoll()) {
-    if (gui.Button("Start Simulation")) {
-      SwitchRagdollToPhysics();
+  std::vector<int> skinnedMeshIndices;
+  std::vector<std::string> skinnedMeshOptions = BuildSkinnedMeshOptions(&skinnedMeshIndices);
+  if (!skinnedMeshIndices.empty()) {
+    m_selectedSkinningMeshIndex = ClampSkinnedMeshSelection(m_selectedSkinningMeshIndex);
+    int selectedSkinnedOption = 0;
+    for (int optionIndex = 0; optionIndex < static_cast<int>(skinnedMeshIndices.size()); ++optionIndex) {
+      if (skinnedMeshIndices[static_cast<std::size_t>(optionIndex)] == m_selectedSkinningMeshIndex) {
+        selectedSkinnedOption = optionIndex;
+        break;
+      }
     }
-    if (m_ragdollPhysicsDriven) {
+    t850::SelectorDesc skinnedSelector;
+    skinnedSelector.name = "android_physics_model";
+    skinnedSelector.label = "Skinned Model";
+    if (gui.Combo(skinnedSelector, selectedSkinnedOption, &skinnedMeshOptions) &&
+        selectedSkinnedOption >= 0 &&
+        selectedSkinnedOption < static_cast<int>(skinnedMeshIndices.size())) {
+      m_selectedSkinningMeshIndex = skinnedMeshIndices[static_cast<std::size_t>(selectedSkinnedOption)];
+    }
+  }
+
+  const int selectedMeshIndex = ClampSkinnedMeshSelection(m_selectedSkinningMeshIndex);
+  const SceneRagdollRuntime* sceneRagdoll = FindSceneRagdollRuntime(selectedMeshIndex);
+  const bool selectedPrimaryAuthoring = (selectedMeshIndex == 0 && sceneRagdoll == nullptr && !m_loadedEditorScene);
+  const bool hasSelectedRagdoll =
+      selectedMeshIndex >= 0 &&
+      selectedMeshIndex < kMaxSandboxMeshes &&
+      Meshes[selectedMeshIndex].HasPhysicsRagdoll();
+
+  if (hasSelectedRagdoll) {
+    if (gui.Button("Start Simulation")) {
+      if (selectedPrimaryAuthoring) {
+        SwitchRagdollToPhysics();
+      } else {
+        SwitchSceneRagdollsToPhysics(selectedMeshIndex);
+      }
+    }
+    const bool selectedPhysicsDriven = selectedPrimaryAuthoring
+        ? m_ragdollPhysicsDriven
+        : IsSceneRagdollPhysicsDriven(selectedMeshIndex);
+    if (selectedPhysicsDriven && selectedPrimaryAuthoring) {
       ImGui::TextWrapped("Simulation grab: touch/left-click a body, drag to move or throw it, release to drop.");
       if (m_ragdollSimulationGrabActive && m_ragdollSimulationGrabBodyIndex >= 0) {
         const auto& bones = m_ragdollAnimationBinding.referencePose.bones;
@@ -10625,6 +11217,8 @@ void SandboxScene::DrawAndroidPhysicsPanel(t850::DevGuiContext& gui) {
             : "body";
         ImGui::Text("Holding body %d: %s", m_ragdollSimulationGrabBodyIndex, name);
       }
+    } else if (selectedPhysicsDriven) {
+      ImGui::TextWrapped("Selected scene ragdoll is running as dynamic Jolt physics.");
     }
     ImGui::SetNextItemWidth(220.0f);
     int simulationSpeedIndex = ClampRagdollSimulationSpeedIndex(m_ragdollSimulationSpeedIndex);
@@ -10650,7 +11244,11 @@ void SandboxScene::DrawAndroidPhysicsPanel(t850::DevGuiContext& gui) {
     }
     ImGui::TextDisabled(m_ragdollUseFixedSimulationDelta ? "Fixed per-frame input." : "Measured frame delta.");
     if (gui.Button("Reset Physics/Animation")) {
-      ResetRagdollPhysicsAndAnimation();
+      if (selectedPrimaryAuthoring) {
+        ResetRagdollPhysicsAndAnimation();
+      } else {
+        ResetSceneRagdollPhysicsAndAnimation(selectedMeshIndex);
+      }
     }
   } else {
     gui.Text("No physics ragdoll is attached to this model.");
@@ -10693,9 +11291,6 @@ void SandboxScene::OnInput(InputManager* IManager) {
     return;
   }
 
-  float dx = static_cast<float>(IManager->xDelta);
-  float dy = static_cast<float>(IManager->yDelta);
-
   bool imguiWantsMouse = false;
 #ifndef OS_ANDROID
   imguiWantsMouse = ImGui::GetCurrentContext() && ImGui::GetIO().WantCaptureMouse;
@@ -10722,43 +11317,25 @@ void SandboxScene::OnInput(InputManager* IManager) {
   if (HandleRagdollSimulationGrabInput(IManager, imguiWantsMouse)) {
     return;
   }
-  // Left click + drag: orbit rotate
-  if (IManager->PressedMouseButton(0)) {
-    m_orbitYaw   += dx * 0.005f;
-    m_orbitPitch += dy * 0.005f;
-    // Clamp pitch to avoid gimbal lock
-    const float maxP = Deg2Rad(89.0f);
-    if (m_orbitPitch >  maxP) m_orbitPitch =  maxP;
-    if (m_orbitPitch < -maxP) m_orbitPitch = -maxP;
+
+  if (IManager->PressedOnceKey(T800K_F9)) {
+    const int nextProfile = (m_cameraController.GetActiveProfileIndex() + 1) %
+        static_cast<int>(t850::CameraProfileType::Count);
+    SetCameraProfile(t850::CameraProfileTypeFromIndex(nextProfile));
   }
 
-  // Right click + drag: zoom (vertical drag)
-  if (IManager->PressedMouseButton(2)) {
-    m_orbitDist -= dy * 0.02f * m_modelRadius;
-    if (m_orbitDist < m_modelRadius * 0.05f)
-      m_orbitDist = m_modelRadius * 0.05f;
-  }
+  m_cameraController.HandleInput(BuildCameraInputState(IManager, imguiWantsMouse));
 
-  // Middle click + drag: pan
-  if (IManager->PressedMouseButton(1)) {
-    float panSpeed = m_orbitDist * 0.002f;
-    // Pan along camera right and up axes
-    m_panOffset += Cam.Right * (-dx * panSpeed);
-    m_panOffset += Cam.Up    * ( dy * panSpeed);
-  }
-
-  // Mouse wheel: zoom
-  if (IManager->scrollDelta != 0.0f) {
-    m_orbitDist -= IManager->scrollDelta * 0.15f * m_modelRadius;
-    if (m_orbitDist < m_modelRadius * 0.05f)
-      m_orbitDist = m_modelRadius * 0.05f;
-  }
-
-  // Print camera position
   if (IManager->PressedOnceKey(T800K_k)) {
-    T8_LOG_INFO("Orbit: target[%f,%f,%f] dist=%f yaw=%f pitch=%f",
-      m_orbitTarget.x, m_orbitTarget.y, m_orbitTarget.z,
-      m_orbitDist, m_orbitYaw, m_orbitPitch);
+    if (m_cameraController.GetActiveProfileType() == t850::CameraProfileType::Orbit) {
+      T8_LOG_INFO("Orbit: target[%f,%f,%f] dist=%f yaw=%f pitch=%f",
+        m_orbitTarget.x, m_orbitTarget.y, m_orbitTarget.z,
+        m_orbitDist, m_orbitYaw, m_orbitPitch);
+    } else {
+      T8_LOG_INFO("Camera profile='%s' position[%f,%f,%f] orientation[pitch=%f yaw=%f roll=%f]",
+        t850::CameraProfileName(m_cameraController.GetActiveProfileType()),
+        Cam.Eye.x, Cam.Eye.y, Cam.Eye.z, Cam.Pitch, Cam.Yaw, Cam.Roll);
+    }
   }
 
   // API switching
@@ -10795,7 +11372,12 @@ void SandboxScene::OnInput(InputManager* IManager) {
     else EnterSkeletonEditMode();
   }
   if (IManager->PressedOnceKey(T800K_F7)) {
-    ResetRagdollPhysicsAndAnimation();
+    const int selectedMeshIndex = ClampSkinnedMeshSelection(m_selectedSkinningMeshIndex);
+    if (FindSceneRagdollRuntime(selectedMeshIndex)) {
+      ResetSceneRagdollPhysicsAndAnimation(selectedMeshIndex);
+    } else {
+      ResetRagdollPhysicsAndAnimation();
+    }
   }
   if (IManager->PressedOnceKey(T800K_F8)) {
     if (!m_skeletonEditMode) {
@@ -10807,7 +11389,7 @@ void SandboxScene::OnInput(InputManager* IManager) {
   }
 
   // Arrow keys: step keyframes when in keyframe mode
-  RenderSkinnedMesh* sk = Meshes[0].GetSkinnedMesh();
+  RenderSkinnedMesh* sk = GetSelectedAnimationMesh();
   if (sk && sk->GetKeyframeMode()) {
     if (IManager->PressedOnceKey(T800K_RIGHT))
       sk->StepKeyframe(1);
@@ -10817,15 +11399,25 @@ void SandboxScene::OnInput(InputManager* IManager) {
 }
 
 void SandboxScene::FitModelToView() {
-  if (!Meshes[0].pBase) return;
-  RenderMesh* rm = static_cast<RenderMesh*>(Meshes[0].pBase);
-
-  // Compute the union of all geometry AABBs
   RenderMesh::AABB total;
   total.Reset();
-  for (auto& mi : rm->Info) {
-    total.Expand(mi.bounds.min.x, mi.bounds.min.y, mi.bounds.min.z);
-    total.Expand(mi.bounds.max.x, mi.bounds.max.y, mi.bounds.max.z);
+  bool hasBounds = false;
+  const int count = (std::max)(m_meshCount, Meshes[0].pBase ? 1 : 0);
+  for (int meshIndex = 0; meshIndex < count; ++meshIndex) {
+    if (!Meshes[meshIndex].pBase || !Meshes[meshIndex].Visible) continue;
+    RenderMesh* rm = static_cast<RenderMesh*>(Meshes[meshIndex].pBase);
+    RenderMesh::AABB worldBounds;
+    if (BuildWorldBounds(rm, Meshes[meshIndex].Final, worldBounds)) {
+      if (!hasBounds) {
+        total = worldBounds;
+      } else {
+        ExpandBounds(total, worldBounds);
+      }
+      hasBounds = true;
+    }
+  }
+  if (!hasBounds) {
+    return;
   }
 
   m_orbitTarget = XVECTOR3(
@@ -10845,29 +11437,325 @@ void SandboxScene::FitModelToView() {
   m_orbitDist = m_modelRadius / std::tan(halfFov);
   m_orbitYaw = g_config.orbitYawOverride ? g_config.orbitYaw : 0.0f;
   m_orbitPitch = 0.0f;
+  SyncOrbitProfileFromSandbox();
 
-  // Adjust near/far planes to the model scale
-  Cam.NPlane = m_modelRadius * 0.01f;
+  // Q3's default r_znear is 4 map units. Larger near planes can clip through walls
+  // before the Q3-sized player hull reaches them.
+  Cam.NPlane = (m_q3CollisionWorld && m_q3CollisionWorld->IsLoaded())
+    ? (4.0f / 32.0f)
+    : m_modelRadius * 0.01f;
   Cam.FPlane = m_modelRadius * 100.0f;
   Cam.CreatePojection();
 
-  T8_LOG_INFO("[SandboxScene] Model center=(%.2f,%.2f,%.2f) radius=%.2f dist=%.2f",
-    m_orbitTarget.x, m_orbitTarget.y, m_orbitTarget.z, m_modelRadius, m_orbitDist);
+  T8_LOG_INFO("[SandboxScene] Model center=(%.2f,%.2f,%.2f) radius=%.2f dist=%.2f near=%.3f",
+    m_orbitTarget.x, m_orbitTarget.y, m_orbitTarget.z, m_modelRadius, m_orbitDist, Cam.NPlane);
 }
 
 void SandboxScene::ComputeOrbitCamera() {
-  // Spherical coordinates around the target
-  XVECTOR3 target = m_orbitTarget + m_panOffset;
-  float cy = std::cos(m_orbitYaw),   sy = std::sin(m_orbitYaw);
-  float cp = std::cos(m_orbitPitch), sp = std::sin(m_orbitPitch);
+  SyncOrbitProfileFromSandbox();
+  if (t850::OrbitCameraProfile* orbit = m_cameraController.GetOrbitProfile()) {
+    orbit->Update(Cam, 0.0f, t850::CameraUpdateContext{});
+    SyncSandboxOrbitFromProfile();
+    return;
+  }
 
-  XVECTOR3 offset(sy * cp, sp, cy * cp);
-  Cam.Eye = target + offset * m_orbitDist;
-  // Clear velocity — orbit camera manages Eye directly; any residual
-  // velocity from Input would be re-applied inside SetLookAt→Update,
-  // corrupting the position we just computed.
+  XVECTOR3 target = m_orbitTarget + m_panOffset;
   Cam.Velocity = XVECTOR3(0, 0, 0);
   Cam.SetLookAt(target);
+}
+
+bool SandboxScene::SetCameraProfile(t850::CameraProfileType type) {
+  if (type == t850::CameraProfileType::Orbit) {
+    SyncOrbitProfileFromSandbox();
+  }
+  if (!m_cameraController.SetActiveProfile(type)) {
+    T8_LOG_ERROR("[SandboxScene] Failed to activate camera profile '%s'", t850::CameraProfileName(type));
+    return false;
+  }
+  m_cameraProfileSelection = m_cameraController.GetActiveProfileIndex();
+  if (type == t850::CameraProfileType::Orbit) {
+    SyncSandboxOrbitFromProfile();
+  }
+  T8_LOG_INFO("[SandboxScene] Camera profile: %s", t850::CameraProfileName(type));
+  return true;
+}
+
+void SandboxScene::SyncOrbitProfileFromSandbox() {
+  t850::OrbitCameraProfile* orbit = m_cameraController.GetOrbitProfile();
+  if (!orbit) {
+    return;
+  }
+  t850::OrbitCameraState state;
+  state.target = m_orbitTarget;
+  state.panOffset = m_panOffset;
+  state.yaw = m_orbitYaw;
+  state.pitch = m_orbitPitch;
+  state.distance = m_orbitDist;
+  state.modelRadius = m_modelRadius;
+  orbit->SetState(state);
+}
+
+void SandboxScene::SyncSandboxOrbitFromProfile() {
+  const t850::OrbitCameraProfile* orbit = m_cameraController.GetOrbitProfile();
+  if (!orbit) {
+    return;
+  }
+  const t850::OrbitCameraState& state = orbit->GetState();
+  m_orbitTarget = state.target;
+  m_panOffset = state.panOffset;
+  m_orbitYaw = state.yaw;
+  m_orbitPitch = state.pitch;
+  m_orbitDist = state.distance;
+  m_modelRadius = state.modelRadius;
+}
+
+t850::CameraInputState SandboxScene::BuildCameraInputState(InputManager* input, bool imguiWantsMouse) const {
+  t850::CameraInputState state;
+  if (!input) {
+    return state;
+  }
+
+  state.moveForward = input->PressedKey(T800K_w);
+  state.moveBackward = input->PressedKey(T800K_s);
+  state.moveLeft = input->PressedKey(T800K_a);
+  state.moveRight = input->PressedKey(T800K_d);
+  state.moveUp = input->PressedKey(T800K_q);
+  state.moveDown = input->PressedKey(T800K_e);
+  state.jump = input->PressedKey(T800K_SPACE);
+  state.crouch = input->PressedKey(T800K_LCTRL) || input->PressedKey(T800K_RCTRL);
+  state.sprint = input->PressedKey(T800K_LSHIFT) || input->PressedKey(T800K_RSHIFT);
+
+  state.mouseDeltaX = static_cast<float>(input->xDelta);
+  state.mouseDeltaY = static_cast<float>(input->yDelta);
+  state.scrollDelta = input->scrollDelta;
+
+  const bool allowMouse = !imguiWantsMouse;
+  state.mouseLook = allowMouse && m_cameraController.GetActiveProfileType() != t850::CameraProfileType::Orbit;
+  state.orbitRotate = allowMouse && input->PressedMouseButton(0);
+  state.orbitPan = allowMouse && input->PressedMouseButton(1);
+  state.orbitZoom = allowMouse && input->PressedMouseButton(2);
+  return state;
+}
+
+bool SandboxScene::SweepCapsule(const t850::CameraCollisionSweep& sweep, t850::CameraCollisionHit& outHit) const {
+  outHit = t850::CameraCollisionHit{};
+  bool hasHit = false;
+  bool hasBlockingHit = false;
+  bool q3HasHit = false;
+  bool physicsHasHit = false;
+  bool physicsIgnoredForQ3Clip = false;
+  t850::CameraCollisionHit q3Hit;
+  t850::CameraCollisionHit cameraHit;
+  const char* chosenSource = "none";
+  const bool q3ClipLoaded = m_q3CollisionWorld && m_q3CollisionWorld->IsLoaded();
+  const bool q3PatchCollisionLoaded = q3ClipLoaded && m_q3CollisionWorld->GetPatchFacetCount() > 0;
+  if (q3ClipLoaded) {
+    t850::CharacterBoxSweep boxSweep;
+    boxSweep.startCenter = sweep.startCenter;
+    boxSweep.displacement = sweep.displacement;
+    boxSweep.halfExtents = XVECTOR3(
+        sweep.radius,
+        sweep.halfHeight + sweep.radius,
+        sweep.radius,
+        0.0f);
+    q3HasHit = m_q3CollisionWorld->SweepBox(boxSweep, q3Hit) && q3Hit.hit;
+    if (q3HasHit &&
+        ConsiderSweepHit(q3Hit, sweep.displacement, outHit, hasHit, hasBlockingHit)) {
+      chosenSource = "q3clip";
+    }
+  }
+
+  const t850::EngineContext* engineContext = GetEngineContext();
+  if (!engineContext) engineContext = &t850::GetEngineContext();
+  const bool physicsReady = engineContext && engineContext->physics && engineContext->physics->IsInitialized();
+  if (!physicsReady) {
+    T8_LOG_VERBOSE(
+        "[Q3CameraSweepCapsule] start=(%.4f, %.4f, %.4f) disp=(%.4f, %.4f, %.4f) radius=%.4f halfHeight=%.4f q3Hit=%d q3Fraction=%.5f q3Normal=(%.4f, %.4f, %.4f) joltReady=0 chosen=%s chosenFraction=%.5f blocking=%d",
+        sweep.startCenter.x,
+        sweep.startCenter.y,
+        sweep.startCenter.z,
+        sweep.displacement.x,
+        sweep.displacement.y,
+        sweep.displacement.z,
+        sweep.radius,
+        sweep.halfHeight,
+        q3HasHit ? 1 : 0,
+        q3Hit.fraction,
+        q3Hit.normal.x,
+        q3Hit.normal.y,
+        q3Hit.normal.z,
+        chosenSource,
+        outHit.fraction,
+        hasBlockingHit ? 1 : 0);
+    return hasHit;
+  }
+
+  t850::PhysicsCapsuleCastDesc desc;
+  desc.startCenter = sweep.startCenter;
+  desc.displacement = sweep.displacement;
+  desc.radius = sweep.radius;
+  desc.halfHeight = sweep.halfHeight;
+  if (q3PatchCollisionLoaded) {
+    desc.ignoredEntityIds = m_q3StaticCollisionEntityIds;
+  }
+
+  t850::PhysicsCastHit physicsHit;
+  physicsHasHit = engineContext->physics->CastCapsule(desc, physicsHit) && physicsHit.hit;
+  if (physicsHasHit) {
+    cameraHit.hit = true;
+    cameraHit.fraction = physicsHit.fraction;
+    cameraHit.position = physicsHit.position;
+    cameraHit.normal = physicsHit.normal;
+    cameraHit.entityId = physicsHit.entityId;
+    if (q3ClipLoaded) {
+      physicsIgnoredForQ3Clip = q3PatchCollisionLoaded
+          ? ContainsEntityId(m_q3StaticCollisionEntityIds, physicsHit.entityId)
+          : !IsQ3JoltFallbackHit(cameraHit, sweep.displacement);
+    }
+    if (!physicsIgnoredForQ3Clip &&
+        ConsiderSweepHit(cameraHit, sweep.displacement, outHit, hasHit, hasBlockingHit)) {
+      chosenSource = "jolt";
+    }
+  }
+  T8_LOG_VERBOSE(
+      "[Q3CameraSweepCapsule] start=(%.4f, %.4f, %.4f) disp=(%.4f, %.4f, %.4f) radius=%.4f halfHeight=%.4f q3Hit=%d q3Fraction=%.5f q3Normal=(%.4f, %.4f, %.4f) joltHit=%d joltIgnoredForQ3=%d joltFraction=%.5f joltNormal=(%.4f, %.4f, %.4f) chosen=%s chosenFraction=%.5f chosenNormal=(%.4f, %.4f, %.4f) blocking=%d",
+      sweep.startCenter.x,
+      sweep.startCenter.y,
+      sweep.startCenter.z,
+      sweep.displacement.x,
+      sweep.displacement.y,
+      sweep.displacement.z,
+      sweep.radius,
+      sweep.halfHeight,
+      q3HasHit ? 1 : 0,
+      q3Hit.fraction,
+      q3Hit.normal.x,
+      q3Hit.normal.y,
+      q3Hit.normal.z,
+      physicsHasHit ? 1 : 0,
+      physicsIgnoredForQ3Clip ? 1 : 0,
+      cameraHit.fraction,
+      cameraHit.normal.x,
+      cameraHit.normal.y,
+      cameraHit.normal.z,
+      chosenSource,
+      outHit.fraction,
+      outHit.normal.x,
+      outHit.normal.y,
+      outHit.normal.z,
+      hasBlockingHit ? 1 : 0);
+  return hasHit;
+}
+
+bool SandboxScene::SweepBox(const t850::CharacterBoxSweep& sweep, t850::CameraCollisionHit& outHit) const {
+  outHit = t850::CameraCollisionHit{};
+  bool hasHit = false;
+  bool hasBlockingHit = false;
+  bool q3HasHit = false;
+  bool physicsHasHit = false;
+  bool physicsIgnoredForQ3Clip = false;
+  t850::CameraCollisionHit q3Hit;
+  t850::CameraCollisionHit cameraHit;
+  const char* chosenSource = "none";
+  const bool q3ClipLoaded = m_q3CollisionWorld && m_q3CollisionWorld->IsLoaded();
+  const bool q3PatchCollisionLoaded = q3ClipLoaded && m_q3CollisionWorld->GetPatchFacetCount() > 0;
+  if (q3ClipLoaded) {
+    q3HasHit = m_q3CollisionWorld->SweepBox(sweep, q3Hit) && q3Hit.hit;
+    if (q3HasHit &&
+        ConsiderSweepHit(q3Hit, sweep.displacement, outHit, hasHit, hasBlockingHit)) {
+      chosenSource = "q3clip";
+    }
+  }
+
+  const t850::EngineContext* engineContext = GetEngineContext();
+  if (!engineContext) engineContext = &t850::GetEngineContext();
+  const bool physicsReady = engineContext && engineContext->physics && engineContext->physics->IsInitialized();
+  if (!physicsReady) {
+    T8_LOG_VERBOSE(
+        "[Q3CameraSweepBox] start=(%.4f, %.4f, %.4f) disp=(%.4f, %.4f, %.4f) half=(%.4f, %.4f, %.4f) q3Hit=%d q3Fraction=%.5f q3Normal=(%.4f, %.4f, %.4f) joltReady=0 chosen=%s chosenFraction=%.5f blocking=%d",
+        sweep.startCenter.x,
+        sweep.startCenter.y,
+        sweep.startCenter.z,
+        sweep.displacement.x,
+        sweep.displacement.y,
+        sweep.displacement.z,
+        sweep.halfExtents.x,
+        sweep.halfExtents.y,
+        sweep.halfExtents.z,
+        q3HasHit ? 1 : 0,
+        q3Hit.fraction,
+        q3Hit.normal.x,
+        q3Hit.normal.y,
+        q3Hit.normal.z,
+        chosenSource,
+        outHit.fraction,
+        hasBlockingHit ? 1 : 0);
+    return hasHit;
+  }
+
+  t850::PhysicsBoxCastDesc desc;
+  desc.startCenter = sweep.startCenter;
+  desc.displacement = sweep.displacement;
+  desc.halfExtents = sweep.halfExtents;
+  if (q3PatchCollisionLoaded) {
+    desc.ignoredEntityIds = m_q3StaticCollisionEntityIds;
+  }
+
+  t850::PhysicsCastHit physicsHit;
+  physicsHasHit = engineContext->physics->CastBox(desc, physicsHit) && physicsHit.hit;
+  if (physicsHasHit) {
+    cameraHit.hit = true;
+    cameraHit.fraction = physicsHit.fraction;
+    cameraHit.position = physicsHit.position;
+    cameraHit.normal = physicsHit.normal;
+    cameraHit.entityId = physicsHit.entityId;
+    if (q3ClipLoaded) {
+      physicsIgnoredForQ3Clip = q3PatchCollisionLoaded
+          ? ContainsEntityId(m_q3StaticCollisionEntityIds, physicsHit.entityId)
+          : !IsQ3JoltFallbackHit(cameraHit, sweep.displacement);
+    }
+    if (!physicsIgnoredForQ3Clip &&
+        ConsiderSweepHit(cameraHit, sweep.displacement, outHit, hasHit, hasBlockingHit)) {
+      chosenSource = "jolt";
+    }
+  }
+  T8_LOG_VERBOSE(
+      "[Q3CameraSweepBox] start=(%.4f, %.4f, %.4f) disp=(%.4f, %.4f, %.4f) half=(%.4f, %.4f, %.4f) q3Hit=%d q3Fraction=%.5f q3Normal=(%.4f, %.4f, %.4f) joltHit=%d joltIgnoredForQ3=%d joltFraction=%.5f joltNormal=(%.4f, %.4f, %.4f) chosen=%s chosenFraction=%.5f chosenNormal=(%.4f, %.4f, %.4f) blocking=%d",
+      sweep.startCenter.x,
+      sweep.startCenter.y,
+      sweep.startCenter.z,
+      sweep.displacement.x,
+      sweep.displacement.y,
+      sweep.displacement.z,
+      sweep.halfExtents.x,
+      sweep.halfExtents.y,
+      sweep.halfExtents.z,
+      q3HasHit ? 1 : 0,
+      q3Hit.fraction,
+      q3Hit.normal.x,
+      q3Hit.normal.y,
+      q3Hit.normal.z,
+      physicsHasHit ? 1 : 0,
+      physicsIgnoredForQ3Clip ? 1 : 0,
+      cameraHit.fraction,
+      cameraHit.normal.x,
+      cameraHit.normal.y,
+      cameraHit.normal.z,
+      chosenSource,
+      outHit.fraction,
+      outHit.normal.x,
+      outHit.normal.y,
+      outHit.normal.z,
+      hasBlockingHit ? 1 : 0);
+  return hasHit;
+}
+
+bool SandboxScene::QueryTriggerTouch(const t850::CharacterTriggerQuery& query, t850::CharacterTriggerTouch& outTouch) const {
+  outTouch = t850::CharacterTriggerTouch{};
+  if (m_q3CollisionWorld && m_q3CollisionWorld->IsLoaded()) {
+    return m_q3CollisionWorld->QueryTriggerTouch(query, outTouch);
+  }
+  return false;
 }
 
 void SandboxScene::EnsureLightRuntimeState() {
@@ -10981,7 +11869,9 @@ void SandboxScene::DrawSelectedDirectionalLightArrow() {
 
 void SandboxScene::CaptureSandboxProfileState(t850::SandboxProfileDesc& state) {
   state = t850::SandboxProfileDesc{};
-  state.model = m_profileModelKey.empty() ? SandboxProfileModelKey(g_config.modelPath) : m_profileModelKey;
+  state.model = m_profileEmbeddedInScene
+      ? std::string{}
+      : (m_profileModelKey.empty() ? SandboxProfileModelKey(g_config.modelPath) : m_profileModelKey);
 
   auto addFloat = [&](const char* name, float value) {
     state.sliders.push_back({name, value});
@@ -11010,6 +11900,9 @@ void SandboxScene::CaptureSandboxProfileState(t850::SandboxProfileDesc& state) {
   addFloat("light_volume_steps", SceneProp.LightVolumeSteps);
   addFloat("godrays_factor", SceneProp.GodRaysFactor);
   addFloat("fov", ActiveCam ? Rad2Deg(ActiveCam->Fov) : Rad2Deg(Cam.Fov));
+  addFloat("light_radius_scale", SceneProp.LightRadiusScale);
+  addFloat("light_intensity_scale", SceneProp.LightIntensityScale);
+  addFloat("lightmap_intensity", SceneProp.LightmapIntensity);
   addFloat("shadow_bias", SceneProp.ShadowBias);
   addFloat("shadow_min", SceneProp.ShadowMin);
   addFloat("env_factor", SceneProp.EnvFactor);
@@ -11027,7 +11920,8 @@ void SandboxScene::CaptureSandboxProfileState(t850::SandboxProfileDesc& state) {
     addInt((prefix + "kernel_size").c_str(), kernel->kernelSize);
   }
 
-  if (RenderSkinnedMesh* skinned = Meshes[0].GetSkinnedMesh()) {
+  if (RenderSkinnedMesh* skinned = GetSelectedAnimationMesh()) {
+    addInt("animation_model", m_selectedAnimationMeshIndex);
     addFloat("anim_speed", skinned->GetAnimSpeed());
     addInt("anim_select", skinned->GetCurrentAnimSet());
     addInt("anim_mode", skinned->GetKeyframeMode() ? 1 : 0);
@@ -11042,7 +11936,7 @@ void SandboxScene::CaptureSandboxProfileState(t850::SandboxProfileDesc& state) {
   addBool("shadow_toggle", SceneProp.ToogleShadow != 0);
   addBool("ssao_toggle", SceneProp.ToogleSSAO != 0);
   addBool("show_wireframe", m_showWireframe);
-  addBool("show_skeleton", Meshes[0].GetSkinnedMesh() != nullptr && m_showSkeleton);
+  addBool("show_skeleton", GetSelectedSkinningMesh() != nullptr && m_showSkeleton);
   addBool("show_physics", m_showPhysics);
   addBool("draw_direction", m_drawLightDirection);
 
@@ -11069,6 +11963,10 @@ void SandboxScene::CaptureSandboxProfileState(t850::SandboxProfileDesc& state) {
   state.frustum_culling = SceneProp.FrustumCullingEnabled;
   state.show_culling_debug = m_showCullStats;
 
+  if (m_cameraController.GetActiveProfileType() == t850::CameraProfileType::Orbit) {
+    SyncSandboxOrbitFromProfile();
+  }
+
   t850::SandboxOrbitCameraDesc orbit;
   orbit.target = {m_orbitTarget.x, m_orbitTarget.y, m_orbitTarget.z};
   orbit.pan_offset = {m_panOffset.x, m_panOffset.y, m_panOffset.z};
@@ -11077,6 +11975,27 @@ void SandboxScene::CaptureSandboxProfileState(t850::SandboxProfileDesc& state) {
   orbit.pitch = m_orbitPitch;
   orbit.distance = m_orbitDist;
   state.orbit_camera = orbit;
+
+  Camera* profileCamera = ActiveCam ? ActiveCam : &Cam;
+  t850::SandboxCameraDesc camera;
+  camera.profile = m_cameraController.GetActiveProfileIndex();
+  camera.eye = ToArray(profileCamera->Eye);
+  camera.look = ToArray(profileCamera->Look);
+  camera.up = ToArray(profileCamera->Up);
+  camera.right = ToArray(profileCamera->Right);
+  camera.yaw = profileCamera->Yaw;
+  camera.pitch = profileCamera->Pitch;
+  camera.roll = profileCamera->Roll;
+  camera.fov = Rad2Deg(profileCamera->Fov);
+  camera.aspect_ratio = profileCamera->AspectRatio;
+  camera.near_plane = profileCamera->NPlane;
+  camera.far_plane = profileCamera->FPlane;
+  camera.ortho = profileCamera->Ortho;
+  camera.width = profileCamera->Width;
+  camera.height = profileCamera->Height;
+  camera.left_handed = profileCamera->LeftHanded;
+  camera.orbit = orbit;
+  state.camera = camera;
 }
 
 void SandboxScene::ApplySandboxProfileState(const t850::SandboxProfileDesc& state) {
@@ -11099,6 +12018,9 @@ void SandboxScene::ApplySandboxProfileState(const t850::SandboxProfileDesc& stat
     else if (value.name == "godrays_factor") SceneProp.GodRaysFactor = value.value;
     else if (value.name == "fov" && ActiveCam) { ActiveCam->SetFov(Deg2Rad(value.value)); VP = ActiveCam->VP; }
     else if (value.name == "light_intensity" && !SceneProp.Lights.empty()) SceneProp.Lights[0].Intensity = value.value;
+    else if (value.name == "light_radius_scale") SceneProp.LightRadiusScale = value.value;
+    else if (value.name == "light_intensity_scale") SceneProp.LightIntensityScale = value.value;
+    else if (value.name == "lightmap_intensity") SceneProp.LightmapIntensity = value.value;
     else if (value.name == "shadow_bias") SceneProp.ShadowBias = value.value;
     else if (value.name == "shadow_min") SceneProp.ShadowMin = value.value;
     else if (value.name == "env_factor") SceneProp.EnvFactor = value.value;
@@ -11106,7 +12028,7 @@ void SandboxScene::ApplySandboxProfileState(const t850::SandboxProfileDesc& stat
     else if (value.name == "material_emissive_intensity") SceneProp.MaterialEmissiveIntensity = value.value;
     else if (value.name == "material_transmission_multiplier") SceneProp.MaterialTransmissionMultiplier = value.value;
     else if (value.name == "material_refraction_strength") SceneProp.MaterialRefractionStrength = value.value;
-    else if (value.name == "anim_speed") { if (RenderSkinnedMesh* skinned = Meshes[0].GetSkinnedMesh()) skinned->SetAnimSpeed(value.value); }
+    else if (value.name == "anim_speed") { if (RenderSkinnedMesh* skinned = GetSelectedAnimationMesh()) skinned->SetAnimSpeed(value.value); }
 
     for (int kernelIndex = 0; kernelIndex < (int)SceneProp.pGaussKernels.size(); ++kernelIndex) {
       GaussFilter* kernel = SceneProp.pGaussKernels[kernelIndex];
@@ -11121,7 +12043,7 @@ void SandboxScene::ApplySandboxProfileState(const t850::SandboxProfileDesc& stat
     if (value.name == "shadow_toggle") SceneProp.ToogleShadow = value.value ? 1 : 0;
     else if (value.name == "ssao_toggle") SceneProp.ToogleSSAO = value.value ? 1 : 0;
     else if (value.name == "show_wireframe") m_showWireframe = value.value;
-    else if (value.name == "show_skeleton") m_showSkeleton = value.value && (Meshes[0].GetSkinnedMesh() != nullptr);
+    else if (value.name == "show_skeleton") m_showSkeleton = value.value && (GetSelectedSkinningMesh() != nullptr);
     else if (value.name == "show_physics") m_showPhysics = value.value;
     else if (value.name == "draw_direction") m_drawLightDirection = value.value;
   }
@@ -11137,14 +12059,19 @@ void SandboxScene::ApplySandboxProfileState(const t850::SandboxProfileDesc& stat
       }
     }
     else if (value.name == "active_gauss_kernel") ChangeActiveGaussSelection = value.value;
+    else if (value.name == "animation_model") {
+      if (GetSkinnedMeshForIndex(value.value)) {
+        m_selectedAnimationMeshIndex = value.value;
+      }
+    }
     else if (value.name == "anim_select") {
-      if (RenderSkinnedMesh* skinned = Meshes[0].GetSkinnedMesh()) {
+      if (RenderSkinnedMesh* skinned = GetSelectedAnimationMesh()) {
         int guard = skinned->GetNumAnimSets() + 1;
         while (skinned->GetCurrentAnimSet() != value.value && guard-- > 0) skinned->NextAnimation();
       }
     }
     else if (value.name == "anim_mode") {
-      if (RenderSkinnedMesh* skinned = Meshes[0].GetSkinnedMesh()) {
+      if (RenderSkinnedMesh* skinned = GetSelectedAnimationMesh()) {
         bool keyframeMode = (value.value == 1);
         skinned->SetKeyframeMode(keyframeMode);
         if (keyframeMode) skinned->StepKeyframe(0);
@@ -11191,7 +12118,48 @@ void SandboxScene::ApplySandboxProfileState(const t850::SandboxProfileDesc& stat
     m_showCullStats = *state.show_culling_debug;
     SceneProp.ShowCullingDebug = m_showCullStats;
   }
-  if (state.orbit_camera.has_value()) {
+
+  auto applyCameraPoseProjection = [&](const t850::SandboxCameraDesc& cameraState) {
+    Cam.Ortho = cameraState.ortho;
+    Cam.Fov = Deg2Rad(cameraState.fov);
+    Cam.AspectRatio = cameraState.aspect_ratio;
+    Cam.NPlane = cameraState.near_plane;
+    Cam.FPlane = cameraState.far_plane;
+    Cam.Width = cameraState.width;
+    Cam.Height = cameraState.height;
+    Cam.LeftHanded = cameraState.left_handed;
+    Cam.Eye = FromArray(cameraState.eye);
+    Cam.Eye.w = 1.0f;
+    Cam.Yaw = cameraState.yaw;
+    Cam.Pitch = cameraState.pitch;
+    Cam.Roll = cameraState.roll;
+    Cam.Velocity = XVECTOR3(0.0f, 0.0f, 0.0f, 0.0f);
+    Cam.CreatePojection();
+    Cam.Update(0.0f);
+    VP = Cam.VP;
+  };
+
+  if (state.camera.has_value()) {
+    const auto& cameraState = *state.camera;
+    const t850::CameraProfileType profileType = t850::CameraProfileTypeFromIndex(cameraState.profile);
+    if (cameraState.orbit.has_value()) {
+      const auto& orbit = *cameraState.orbit;
+      m_orbitTarget = XVECTOR3(orbit.target[0], orbit.target[1], orbit.target[2]);
+      m_panOffset = XVECTOR3(orbit.pan_offset[0], orbit.pan_offset[1], orbit.pan_offset[2]);
+      m_orbitYaw = orbit.yaw;
+      m_orbitPitch = orbit.pitch;
+      m_orbitDist = orbit.distance;
+      SyncOrbitProfileFromSandbox();
+    }
+    applyCameraPoseProjection(cameraState);
+    SetCameraProfile(profileType);
+    if (profileType != t850::CameraProfileType::Orbit || !cameraState.orbit.has_value()) {
+      applyCameraPoseProjection(cameraState);
+    } else {
+      VP = Cam.VP;
+    }
+    UpdateAttachedLights();
+  } else if (state.orbit_camera.has_value()) {
     const auto& orbit = *state.orbit_camera;
     m_orbitTarget = XVECTOR3(orbit.target[0], orbit.target[1], orbit.target[2]);
     m_panOffset = XVECTOR3(orbit.pan_offset[0], orbit.pan_offset[1], orbit.pan_offset[2]);
@@ -11204,7 +12172,7 @@ void SandboxScene::ApplySandboxProfileState(const t850::SandboxProfileDesc& stat
     UpdateAttachedLights();
   }
   if (state.current_keyframe.has_value()) {
-    if (RenderSkinnedMesh* skinned = Meshes[0].GetSkinnedMesh()) {
+    if (RenderSkinnedMesh* skinned = GetSelectedAnimationMesh()) {
       int targetKeyframe = *state.current_keyframe;
       int guard = skinned->GetTotalKeyframes() + 1;
       while (skinned->GetCurrentKeyframe() != targetKeyframe && guard-- > 0) {
@@ -11266,16 +12234,16 @@ t850::SandboxProfileDesc SandboxScene::BuildSparseSandboxProfile(const t850::San
   if (current.frustum_culling != m_profileBaselineState.frustum_culling) sparse.frustum_culling = current.frustum_culling;
   if (current.show_culling_debug != m_profileBaselineState.show_culling_debug) sparse.show_culling_debug = current.show_culling_debug;
   if (current.current_keyframe != m_profileBaselineState.current_keyframe) sparse.current_keyframe = current.current_keyframe;
+  if (current.camera.has_value() && m_profileBaselineState.camera.has_value()) {
+    if (!CameraNearlyEqual(*current.camera, *m_profileBaselineState.camera)) {
+      sparse.camera = current.camera;
+    }
+  } else if (current.camera != m_profileBaselineState.camera) {
+    sparse.camera = current.camera;
+  }
   if (current.orbit_camera.has_value() && m_profileBaselineState.orbit_camera.has_value()) {
-    const auto& currentOrbit = *current.orbit_camera;
-    const auto& baselineOrbit = *m_profileBaselineState.orbit_camera;
-    if (!VecNearlyEqual(currentOrbit.target, baselineOrbit.target) ||
-        !VecNearlyEqual(currentOrbit.pan_offset, baselineOrbit.pan_offset) ||
-        !VecNearlyEqual(currentOrbit.eye, baselineOrbit.eye) ||
-        !NearlyEqual(currentOrbit.yaw, baselineOrbit.yaw) ||
-        !NearlyEqual(currentOrbit.pitch, baselineOrbit.pitch) ||
-        !NearlyEqual(currentOrbit.distance, baselineOrbit.distance)) {
-      sparse.orbit_camera = currentOrbit;
+    if (!OrbitCameraNearlyEqual(*current.orbit_camera, *m_profileBaselineState.orbit_camera)) {
+      sparse.orbit_camera = current.orbit_camera;
     }
   } else if (current.orbit_camera != m_profileBaselineState.orbit_camera) {
     sparse.orbit_camera = current.orbit_camera;
@@ -11288,14 +12256,16 @@ bool SandboxScene::SandboxProfileStatesEqual(const t850::SandboxProfileDesc& lhs
          BuildSparseSandboxProfile(lhs).checkboxes == BuildSparseSandboxProfile(rhs).checkboxes &&
          BuildSparseSandboxProfile(lhs).selectors == BuildSparseSandboxProfile(rhs).selectors &&
          BuildSparseSandboxProfile(lhs).lights == BuildSparseSandboxProfile(rhs).lights &&
+         BuildSparseSandboxProfile(lhs).camera == BuildSparseSandboxProfile(rhs).camera &&
          BuildSparseSandboxProfile(lhs).orbit_camera == BuildSparseSandboxProfile(rhs).orbit_camera &&
          BuildSparseSandboxProfile(lhs).frustum_culling == BuildSparseSandboxProfile(rhs).frustum_culling &&
          BuildSparseSandboxProfile(lhs).show_culling_debug == BuildSparseSandboxProfile(rhs).show_culling_debug &&
          BuildSparseSandboxProfile(lhs).current_keyframe == BuildSparseSandboxProfile(rhs).current_keyframe;
 }
 
-void SandboxScene::LoadSandboxProfile() {
-  m_profileModelKey = SandboxProfileModelKey(g_config.modelPath);
+void SandboxScene::LoadSandboxProfile(bool embeddedInScene) {
+  m_profileEmbeddedInScene = embeddedInScene;
+  m_profileModelKey = embeddedInScene ? std::string{} : SandboxProfileModelKey(g_config.modelPath);
   m_selectedProfileTargetIndex = t850::DefaultProfileTargetIndex();
   CaptureSandboxProfileState(m_profileBaselineState);
   m_profileSavedState = m_profileBaselineState;
@@ -11307,12 +12277,14 @@ void SandboxScene::LoadSandboxProfile() {
   int bestRuntimeScore = -1;
   for (const auto& profile : m_guiSetup.descriptor.profiles) {
     const bool modelSpecific = !profile.model.empty();
-    const bool modelMatches = !modelSpecific || SandboxProfileModelKey(profile.model) == m_profileModelKey;
+    const bool modelMatches = embeddedInScene
+        ? !modelSpecific
+        : (!modelSpecific || SandboxProfileModelKey(profile.model) == m_profileModelKey);
     if (!modelMatches) continue;
 
     const bool hasTarget = !profile.name.empty() || !profile.platform.empty() || !profile.architecture.empty() ||
                            !profile.gpu_family.empty() || !profile.gpu_name_contains.empty();
-    if (!hasTarget && modelSpecific) {
+    if (!hasTarget && (embeddedInScene || modelSpecific)) {
       baseProfile = &profile;
       continue;
     }
@@ -11329,8 +12301,11 @@ void SandboxScene::LoadSandboxProfile() {
   CaptureSandboxProfileState(m_profileSavedState);
 
   const auto& runtime = t850::GetRuntimeProfileInfo();
-  T8_LOG_INFO("[SandboxScene] Profile model='%s' runtime='%s' platform=%s arch=%s gpu='%s' family=%s base=%d runtime=%d",
-              m_profileModelKey.c_str(), runtime.recommendedProfile.c_str(), runtime.platform.c_str(), runtime.architecture.c_str(),
+  T8_LOG_INFO("[SandboxScene] Profile scope='%s' runtime='%s' platform=%s arch=%s gpu='%s' family=%s base=%d runtime=%d",
+              embeddedInScene ? m_loadedEditorScenePath.c_str() : m_profileModelKey.c_str(),
+              runtime.recommendedProfile.c_str(),
+              runtime.platform.c_str(),
+              runtime.architecture.c_str(),
               runtime.gpuName.c_str(), runtime.gpuFamily.c_str(), baseProfile ? 1 : 0, runtimeProfile ? 1 : 0);
 }
 
@@ -11341,21 +12316,24 @@ void SandboxScene::SaveSandboxProfile() {
   CaptureSandboxProfileState(current);
   t850::SandboxProfileDesc sparse = BuildSparseSandboxProfile(current);
   t850::ApplyProfileTarget(sparse, m_selectedProfileTargetIndex);
-  sparse.model = m_profileModelKey;
+  sparse.model = m_profileEmbeddedInScene ? std::string{} : m_profileModelKey;
 
   t850::SandboxProfileDesc target;
   t850::ApplyProfileTarget(target, m_selectedProfileTargetIndex);
 
   auto& profiles = m_guiSetup.descriptor.profiles;
   auto existing = std::find_if(profiles.begin(), profiles.end(), [&](const t850::SandboxProfileDesc& profile) {
-    return SandboxProfileModelKey(profile.model) == m_profileModelKey && profile.name == target.name &&
+    const bool modelMatches = m_profileEmbeddedInScene
+        ? profile.model.empty()
+        : SandboxProfileModelKey(profile.model) == m_profileModelKey;
+    return modelMatches && profile.name == target.name &&
            profile.platform == target.platform && profile.architecture == target.architecture &&
            profile.gpu_family == target.gpu_family && profile.gpu_name_contains == target.gpu_name_contains;
   });
 
   bool hasOverrides = !sparse.sliders.empty() || !sparse.checkboxes.empty() || !sparse.selectors.empty() ||
                       !sparse.lights.empty() ||
-                      sparse.orbit_camera.has_value() || sparse.frustum_culling.has_value() ||
+                      sparse.camera.has_value() || sparse.orbit_camera.has_value() || sparse.frustum_culling.has_value() ||
                       sparse.show_culling_debug.has_value() || sparse.current_keyframe.has_value();
   if (hasOverrides) {
     if (existing == profiles.end()) profiles.push_back(sparse);
@@ -11364,10 +12342,34 @@ void SandboxScene::SaveSandboxProfile() {
     profiles.erase(existing);
   }
 
-  if (t850::SaveSceneDescriptor("Scenes/SandboxScene.json", m_guiSetup.descriptor)) {
+  bool saved = false;
+  if (m_profileEmbeddedInScene) {
+    t850::scene::EditorSceneFile scene;
+    std::string error;
+    if (t850::scene::LoadEditorSceneFile(m_loadedEditorScenePath, scene, &error)) {
+      scene.profiles = profiles;
+      saved = t850::scene::SaveEditorSceneFile(scene, m_loadedEditorScenePath, &error);
+      if (!saved && !error.empty()) {
+        T8_LOG_ERROR("[SandboxScene] Failed to save scene profile '%s': %s",
+                     m_loadedEditorScenePath.c_str(),
+                     error.c_str());
+      }
+    } else {
+      T8_LOG_ERROR("[SandboxScene] Failed to reload scene '%s' for profile save: %s",
+                   m_loadedEditorScenePath.c_str(),
+                   error.c_str());
+    }
+  } else {
+    saved = t850::SaveSceneDescriptor("Scenes/SandboxScene.json", m_guiSetup.descriptor);
+  }
+
+  if (saved) {
     m_profileSavedState = current;
     m_profileDirty = false;
-    T8_LOG_INFO("[SandboxScene] Saved profile '%s' for model '%s'", target.name.empty() ? "pc/base" : target.name.c_str(), m_profileModelKey.c_str());
+    T8_LOG_INFO("[SandboxScene] Saved profile '%s' for %s '%s'",
+                target.name.empty() ? "pc/base" : target.name.c_str(),
+                m_profileEmbeddedInScene ? "scene" : "model",
+                m_profileEmbeddedInScene ? m_loadedEditorScenePath.c_str() : m_profileModelKey.c_str());
   }
 }
 
@@ -11384,10 +12386,15 @@ void SandboxScene::OnDraw() {
                 avgFps, sFrameCount, DtSecs * 1000.0f);
   }
 
-  if (Meshes[0].pBase) {
-    RenderSkinnedMesh* skinned = Meshes[0].GetSkinnedMesh();
+  const int drawMeshCount = (std::max)(m_meshCount, Meshes[0].pBase ? 1 : 0);
+  UpdateSceneSkeletonsFromRagdollPhysics();
+  for (int meshIndex = 0; meshIndex < drawMeshCount; ++meshIndex) {
+    if (!Meshes[meshIndex].pBase) continue;
+    RenderSkinnedMesh* skinned = Meshes[meshIndex].GetSkinnedMesh();
     if (skinned && skinned->HasSkinData()) {
-      UpdateSkeletonFromRagdollPhysics();
+      if (meshIndex == 0) {
+        UpdateSkeletonFromRagdollPhysics();
+      }
       skinned->UploadBoneTexture();
     }
   }
@@ -11396,7 +12403,7 @@ void SandboxScene::OnDraw() {
   m_renderGraph.Execute(
     pFramework->pVideoDriver,
     SceneProp,
-    Meshes, 1,
+    Meshes, drawMeshCount,
     Quads,
     &Cam,
     &LightCam,
@@ -11408,8 +12415,7 @@ void SandboxScene::OnDraw() {
   if (m_dumper.ShouldDump(DtSecs)) {
     t850::SnapshotSkinnedJson skinnedSnapshot;
     const t850::SnapshotSkinnedJson* skinnedSnapshotPtr = nullptr;
-    if (Meshes[0].pBase) {
-      RenderSkinnedMesh* skinned = dynamic_cast<RenderSkinnedMesh*>(Meshes[0].pBase);
+    if (RenderSkinnedMesh* skinned = GetSelectedAnimationMesh()) {
       skinnedSnapshot = CaptureSkinnedSnapshot(skinned, m_showWireframe, m_showSkeleton);
       if (skinnedSnapshot.has_skin)
         skinnedSnapshotPtr = &skinnedSnapshot;
@@ -11478,6 +12484,7 @@ void SandboxScene::OnDraw() {
     if (Meshes[0].pBase) {
       RenderSkinnedMesh* skinned = dynamic_cast<RenderSkinnedMesh*>(Meshes[0].pBase);
       if (skinned && skinned->HasSkinData()) {
+        skinned->transform = Meshes[0].Final;
         if (m_showWireframe) {
           // Bind GBuffer depth for shader-based depth comparison
           int gbufHandle = GBufferPass;
@@ -11523,6 +12530,7 @@ void SandboxScene::OnDraw() {
         }
       } else if (m_showWireframe) {
         RenderMesh* mesh = static_cast<RenderMesh*>(Meshes[0].pBase);
+        mesh->transform = Meshes[0].Final;
         int gbufHandle = GBufferPass;
         if (gbufHandle >= 0 && gbufHandle < (int)pFramework->pVideoDriver->RTs.size()) {
           auto* gbufRT = pFramework->pVideoDriver->RTs[gbufHandle];
@@ -11531,6 +12539,31 @@ void SandboxScene::OnDraw() {
         mesh->SetWireframeViewport(g_pBaseDriver->width, g_pBaseDriver->height);
         pFramework->pVideoDriver->SetDepthStencilState(BaseDriver::NONE);
         mesh->DrawWireframe();
+      }
+    }
+
+    const int selectedSkeletonMeshIndex = ClampSkinnedMeshSelection(m_selectedSkinningMeshIndex);
+    if ((m_showWireframe || m_showSkeleton) &&
+        selectedSkeletonMeshIndex > 0 &&
+        selectedSkeletonMeshIndex < kMaxSandboxMeshes) {
+      RenderSkinnedMesh* selectedSkinned = GetSkinnedMeshForIndex(selectedSkeletonMeshIndex);
+      if (selectedSkinned) {
+        selectedSkinned->transform = Meshes[selectedSkeletonMeshIndex].Final;
+        if (m_showWireframe) {
+          int gbufHandle = GBufferPass;
+          if (gbufHandle >= 0 && gbufHandle < (int)pFramework->pVideoDriver->RTs.size()) {
+            auto* gbufRT = pFramework->pVideoDriver->RTs[gbufHandle];
+            selectedSkinned->SetWireframeDepthTex(gbufRT->pDepthTexture);
+          }
+          selectedSkinned->SetWireframeViewport(g_pBaseDriver->width, g_pBaseDriver->height);
+          pFramework->pVideoDriver->SetDepthStencilState(BaseDriver::NONE);
+          selectedSkinned->DrawWireframe();
+        }
+        if (m_showSkeleton) {
+          pFramework->pVideoDriver->SetDepthStencilState(BaseDriver::NONE);
+          pFramework->pVideoDriver->SetBlendState(BaseDriver::BLEND_DEFAULT);
+          selectedSkinned->DrawSkeleton(-1, nullptr, nullptr, nullptr);
+        }
       }
     }
 
@@ -11686,6 +12719,9 @@ void SandboxScene::PopulateGUI(t850::GUIManager& gui) {
     {"gauss_kernel_radius",   CHANGE_GAUSS_KERNEL_RADIUS},
     {"gauss_kernel_deviation", CHANGE_GAUSS_KERNEL_DEVIATION},
     {"fov",                   CHANGE_FOV},
+    {"light_radius_scale",    CHANGE_LIGHT_RADIUS_SCALE},
+    {"light_intensity_scale", CHANGE_LIGHT_INTENSITY_SCALE},
+    {"lightmap_intensity",    CHANGE_LIGHTMAP_INTENSITY},
     {"shadow_bias",           CHANGE_SHADOW_BIAS},
     {"shadow_min",            CHANGE_SHADOW_MIN},
     {"env_factor",            CHANGE_ENV_FACTOR},
@@ -11793,6 +12829,9 @@ void SandboxScene::DrawDevGui(t850::DevGuiContext& gui) {
     {"gauss_kernel_radius", CHANGE_GAUSS_KERNEL_RADIUS},
     {"gauss_kernel_deviation", CHANGE_GAUSS_KERNEL_DEVIATION},
     {"fov", CHANGE_FOV},
+    {"light_radius_scale", CHANGE_LIGHT_RADIUS_SCALE},
+    {"light_intensity_scale", CHANGE_LIGHT_INTENSITY_SCALE},
+    {"lightmap_intensity", CHANGE_LIGHTMAP_INTENSITY},
     {"shadow_bias", CHANGE_SHADOW_BIAS},
     {"shadow_min", CHANGE_SHADOW_MIN},
     {"env_factor", CHANGE_ENV_FACTOR},
@@ -11833,7 +12872,8 @@ void SandboxScene::DrawDevGui(t850::DevGuiContext& gui) {
   };
 
   auto skinnedMesh = [&]() -> RenderSkinnedMesh* {
-    return Meshes[0].GetSkinnedMesh();
+    m_selectedAnimationMeshIndex = ClampSkinnedMeshSelection(m_selectedAnimationMeshIndex);
+    return GetSkinnedMeshForIndex(m_selectedAnimationMeshIndex);
   };
 
   auto buildAnimationOptions = [&]() {
@@ -11879,6 +12919,9 @@ void SandboxScene::DrawDevGui(t850::DevGuiContext& gui) {
     case CHANGE_GAUSS_KERNEL_DEVIATION: if (!kernel) return false; value = kernel->sigma; return true;
     case CHANGE_FOV: if (!ActiveCam) return false; value = Rad2Deg(ActiveCam->Fov); return true;
     case CHANGE_LIGHT_INTENSITY: if (SceneProp.Lights.empty()) return false; value = SceneProp.Lights[0].Intensity; return true;
+    case CHANGE_LIGHT_RADIUS_SCALE: value = SceneProp.LightRadiusScale; return true;
+    case CHANGE_LIGHT_INTENSITY_SCALE: value = SceneProp.LightIntensityScale; return true;
+    case CHANGE_LIGHTMAP_INTENSITY: value = SceneProp.LightmapIntensity; return true;
     case CHANGE_SHADOW_BIAS: value = SceneProp.ShadowBias; return true;
     case CHANGE_SHADOW_MIN: value = SceneProp.ShadowMin; return true;
     case CHANGE_ENV_FACTOR: value = SceneProp.EnvFactor; return true;
@@ -11920,6 +12963,9 @@ void SandboxScene::DrawDevGui(t850::DevGuiContext& gui) {
       }
       break;
     case CHANGE_LIGHT_INTENSITY: if (!SceneProp.Lights.empty()) SceneProp.Lights[0].Intensity = value; break;
+    case CHANGE_LIGHT_RADIUS_SCALE: SceneProp.LightRadiusScale = value; break;
+    case CHANGE_LIGHT_INTENSITY_SCALE: SceneProp.LightIntensityScale = value; break;
+    case CHANGE_LIGHTMAP_INTENSITY: SceneProp.LightmapIntensity = value; break;
     case CHANGE_SHADOW_BIAS: SceneProp.ShadowBias = value; break;
     case CHANGE_SHADOW_MIN: SceneProp.ShadowMin = value; break;
     case CHANGE_ENV_FACTOR: SceneProp.EnvFactor = value; break;
@@ -12007,41 +13053,40 @@ void SandboxScene::DrawDevGui(t850::DevGuiContext& gui) {
     }
   };
 
-  if (gui.BeginSection("Controls")) {
-    if (RenderSkinnedMesh* sk = skinnedMesh()) {
-      if (m_skeletonEditMode) ImGui::BeginDisabled();
-      if (gui.Button(sk->IsPlaying() ? "Pause Animation" : "Resume Animation")) {
-        if (sk->IsPlaying()) sk->PauseAnimation();
-        else sk->PlayAnimation();
-      }
-      if (m_skeletonEditMode) ImGui::EndDisabled();
-    }
+  auto drawSliderByName = [&](const char* name) -> bool {
     for (const auto& desc : m_guiSetup.descriptor.sliders) {
+      if (desc.name != name) continue;
       int settingIndex = findSetting(desc.name, sliderMappings, (int)(sizeof(sliderMappings) / sizeof(sliderMappings[0])));
-      if (settingIndex < 0) continue;
+      if (settingIndex < 0) return false;
       float value = 0.0f;
       if (getSliderValue(settingIndex, value) && gui.Slider(desc, value)) {
         setSliderValue(settingIndex, value);
       }
+      return true;
     }
-  }
+    return false;
+  };
 
-  if (gui.BeginSection("Toggles")) {
+  auto drawCheckboxByName = [&](const char* name) -> bool {
     for (const auto& desc : m_guiSetup.descriptor.checkboxes) {
+      if (desc.name != name) continue;
       int settingIndex = findSetting(desc.name, checkboxMappings, (int)(sizeof(checkboxMappings) / sizeof(checkboxMappings[0])));
-      if (settingIndex < 0) continue;
+      if (settingIndex < 0) return false;
       bool value = false;
       if (getCheckboxValue(settingIndex, value) && gui.Checkbox(desc, value)) {
         setCheckboxValue(settingIndex, value);
       }
+      return true;
     }
-  }
+    return false;
+  };
 
-  if (gui.BeginSection("Selectors")) {
-    std::vector<std::string> animOptions;
+  auto drawSelectorByName = [&](const char* name) -> bool {
     for (const auto& desc : m_guiSetup.descriptor.selectors) {
+      if (desc.name != name) continue;
       int settingIndex = findSetting(desc.name, selectorMappings, (int)(sizeof(selectorMappings) / sizeof(selectorMappings[0])));
-      if (settingIndex < 0) continue;
+      if (settingIndex < 0) return false;
+      std::vector<std::string> animOptions;
       const std::vector<std::string>* overrideOptions = nullptr;
       if (settingIndex == CHANGE_ANIM_SELECT) {
         animOptions = buildAnimationOptions();
@@ -12051,7 +13096,100 @@ void SandboxScene::DrawDevGui(t850::DevGuiContext& gui) {
       if (getSelectorIndex(desc, settingIndex, selectedIndex) && gui.Combo(desc, selectedIndex, overrideOptions)) {
         setSelectorIndex(desc, overrideOptions, settingIndex, selectedIndex);
       }
+      return true;
     }
+    return false;
+  };
+
+  if (gui.BeginSection("Camera")) {
+    std::vector<std::string> cameraOptions = t850::CameraProfileNames();
+    t850::SelectorDesc cameraSelector;
+    cameraSelector.name = "camera_profile";
+    cameraSelector.label = "Camera Profile";
+    cameraSelector.options = cameraOptions;
+    cameraSelector.default_index = m_cameraProfileSelection;
+    int selectedProfile = m_cameraProfileSelection;
+    if (gui.Combo(cameraSelector, selectedProfile, &cameraOptions)) {
+      SetCameraProfile(t850::CameraProfileTypeFromIndex(selectedProfile));
+    }
+    std::string activeCameraText = std::string("Active: ") +
+        t850::CameraProfileName(m_cameraController.GetActiveProfileType()) +
+        " (F9 cycles profiles)";
+    gui.Text(activeCameraText.c_str());
+    ImGui::Checkbox("Show console output", &g_sandboxConsoleOpen);
+    ImGui::TextUnformatted("Controls:");
+    ImGui::BulletText("Orbit: left mouse rotate, right mouse pan, middle/scroll zoom");
+    ImGui::BulletText("Free/Colliding Fly: WASD move, Q/E up/down, Shift sprint, mouse look");
+    ImGui::BulletText("Grounded/COD/Q3 FPS: A/D strafe, W/S forward/back, Shift run, Space jump");
+    ImGui::BulletText("F10 dumps a frame; Space no longer triggers dump/exit");
+    if (ImGui::Button("Unstick camera")) {
+      Cam.Eye += XVECTOR3(0.0f, 0.75f, 0.0f, 0.0f);
+      Cam.Eye -= Cam.Look * 1.5f;
+      Cam.Eye.w = 1.0f;
+      Cam.Velocity = XVECTOR3(0.0f, 0.0f, 0.0f, 0.0f);
+      Cam.Update(0.0f);
+      VP = Cam.VP;
+      T8_LOG_INFO("[SandboxScene] Camera unstuck to position[%f,%f,%f]", Cam.Eye.x, Cam.Eye.y, Cam.Eye.z);
+    }
+  }
+
+  if (gui.BeginSection("Rendering")) {
+    drawSelectorByName("cubemap");
+    drawSelectorByName("active_gauss_kernel");
+    drawSelectorByName("gauss_kernel_sample_count");
+    drawSelectorByName("debug_render_target");
+    drawCheckboxByName("shadow_toggle");
+    drawCheckboxByName("ssao_toggle");
+    for (const auto& desc : m_guiSetup.descriptor.sliders) {
+      if (desc.name == "anim_speed") continue;
+      int settingIndex = findSetting(desc.name, sliderMappings, (int)(sizeof(sliderMappings) / sizeof(sliderMappings[0])));
+      if (settingIndex < 0) continue;
+      float value = 0.0f;
+      if (getSliderValue(settingIndex, value) && gui.Slider(desc, value)) {
+        setSliderValue(settingIndex, value);
+      }
+    }
+  }
+
+  if (gui.BeginSection("Animation")) {
+    std::vector<int> skinnedMeshIndices;
+    std::vector<std::string> skinnedMeshOptions = BuildSkinnedMeshOptions(&skinnedMeshIndices);
+    if (!skinnedMeshIndices.empty()) {
+      m_selectedAnimationMeshIndex = ClampSkinnedMeshSelection(m_selectedAnimationMeshIndex);
+      int selectedSkinnedOption = 0;
+      for (int optionIndex = 0; optionIndex < static_cast<int>(skinnedMeshIndices.size()); ++optionIndex) {
+        if (skinnedMeshIndices[static_cast<std::size_t>(optionIndex)] == m_selectedAnimationMeshIndex) {
+          selectedSkinnedOption = optionIndex;
+          break;
+        }
+      }
+      t850::SelectorDesc skinnedSelector;
+      skinnedSelector.name = "animation_model";
+      skinnedSelector.label = "Animated Model";
+      if (gui.Combo(skinnedSelector, selectedSkinnedOption, &skinnedMeshOptions) &&
+          selectedSkinnedOption >= 0 &&
+          selectedSkinnedOption < static_cast<int>(skinnedMeshIndices.size())) {
+        m_selectedAnimationMeshIndex = skinnedMeshIndices[static_cast<std::size_t>(selectedSkinnedOption)];
+      }
+    }
+
+    if (RenderSkinnedMesh* sk = skinnedMesh()) {
+      if (m_skeletonEditMode) ImGui::BeginDisabled();
+      if (gui.Button(sk->IsPlaying() ? "Pause Animation" : "Resume Animation")) {
+        if (sk->IsPlaying()) sk->PauseAnimation();
+        else sk->PlayAnimation();
+      }
+      if (m_skeletonEditMode) ImGui::EndDisabled();
+    }
+    drawSelectorByName("anim_select");
+    drawSelectorByName("anim_mode");
+    drawSliderByName("anim_speed");
+  }
+
+  if (gui.BeginSection("Debug Views")) {
+    drawCheckboxByName("show_wireframe");
+    drawCheckboxByName("show_skeleton");
+    drawCheckboxByName("show_physics");
   }
 
   if (gui.BeginSection("Lights")) {
@@ -12167,7 +13305,9 @@ void SandboxScene::DrawDevGui(t850::DevGuiContext& gui) {
     CaptureSandboxProfileState(currentProfileState);
     m_profileDirty = !SandboxProfileStatesEqual(currentProfileState, m_profileSavedState);
     if (gui.BeginSection("Profile")) {
-      std::string profileText = "Model profile: " + (m_profileModelKey.empty() ? std::string("none") : m_profileModelKey);
+      std::string profileText = m_profileEmbeddedInScene
+          ? ("Scene profile: " + (m_loadedEditorScenePath.empty() ? std::string("none") : m_loadedEditorScenePath))
+          : ("Model profile: " + (m_profileModelKey.empty() ? std::string("none") : m_profileModelKey));
       gui.Text(profileText.c_str());
       const auto& runtime = t850::GetRuntimeProfileInfo();
       std::string gpuText = runtime.gpuName.empty() ? runtime.gpuFamily : runtime.gpuName;
@@ -12216,6 +13356,7 @@ void SandboxScene::DrawDevGui(t850::DevGuiContext& gui) {
   }
 
   DrawSkinningAuthoringPanel(gui);
+  DrawSandboxConsolePanel(m_cameraController.GetActiveProfileType(), Cam.Eye);
 }
 
 void SandboxScene::SyncToGUI(t850::GUIManager& gui) {
@@ -12242,6 +13383,9 @@ void SandboxScene::SyncToGUI(t850::GUIManager& gui) {
     case CHANGE_GAUSS_KERNEL_DEVIATION: slider->SetValue(SceneProp.pGaussKernels[ChangeActiveGaussSelection]->sigma); break;
     case CHANGE_FOV:             slider->SetValue(Rad2Deg(ActiveCam->Fov)); break;
     case CHANGE_LIGHT_INTENSITY: if (!SceneProp.Lights.empty()) slider->SetValue(SceneProp.Lights[0].Intensity); break;
+    case CHANGE_LIGHT_RADIUS_SCALE: slider->SetValue(SceneProp.LightRadiusScale); break;
+    case CHANGE_LIGHT_INTENSITY_SCALE: slider->SetValue(SceneProp.LightIntensityScale); break;
+    case CHANGE_LIGHTMAP_INTENSITY: slider->SetValue(SceneProp.LightmapIntensity); break;
     case CHANGE_SHADOW_BIAS:     slider->SetValue(SceneProp.ShadowBias); break;
     case CHANGE_SHADOW_MIN:      slider->SetValue(SceneProp.ShadowMin); break;
     case CHANGE_ENV_FACTOR:      slider->SetValue(SceneProp.EnvFactor); break;
@@ -12250,7 +13394,7 @@ void SandboxScene::SyncToGUI(t850::GUIManager& gui) {
     case CHANGE_MATERIAL_TRANSMISSION_MULTIPLIER: slider->SetValue(SceneProp.MaterialTransmissionMultiplier); break;
     case CHANGE_MATERIAL_REFRACTION_STRENGTH: slider->SetValue(SceneProp.MaterialRefractionStrength); break;
     case CHANGE_ANIM_SPEED: {
-      RenderSkinnedMesh* sk = Meshes[0].GetSkinnedMesh();
+      RenderSkinnedMesh* sk = GetSelectedAnimationMesh();
       if (sk) slider->SetValue(sk->GetAnimSpeed());
     } break;
     }
@@ -12262,7 +13406,7 @@ void SandboxScene::SyncToGUI(t850::GUIManager& gui) {
     case CHANGE_PCF_TOOGLE:   cb->checked = (SceneProp.ToogleShadow != 0); break;
     case CHANGLE_SSAO_TOOGLE: cb->checked = (SceneProp.ToogleSSAO != 0); break;
     case CHANGE_SHOW_WIREFRAME: cb->checked = m_showWireframe; break;
-    case CHANGE_SHOW_SKELETON:  cb->checked = (Meshes[0].GetSkinnedMesh() != nullptr) && m_showSkeleton; break;
+    case CHANGE_SHOW_SKELETON:  cb->checked = (GetSelectedSkinningMesh() != nullptr) && m_showSkeleton; break;
     case CHANGE_SHOW_PHYSICS:   cb->checked = m_showPhysics; break;
     }
   }
@@ -12283,7 +13427,7 @@ void SandboxScene::SyncToGUI(t850::GUIManager& gui) {
       sel->selectedIndex = ChangeActiveGaussSelection;
       break;
     case CHANGE_ANIM_SELECT: {
-      RenderSkinnedMesh* sk = Meshes[0].GetSkinnedMesh();
+      RenderSkinnedMesh* sk = GetSelectedAnimationMesh();
       if (sk) sel->selectedIndex = sk->GetCurrentAnimSet();
     } break;
     }
@@ -12317,6 +13461,9 @@ void SandboxScene::SyncFromGUI(t850::GUIManager& gui) {
       SceneProp.pGaussKernels[ChangeActiveGaussSelection]->Update(); break;
     case CHANGE_FOV:             ActiveCam->Fov = Deg2Rad(slider->value); break;
     case CHANGE_LIGHT_INTENSITY: if (!SceneProp.Lights.empty()) SceneProp.Lights[0].Intensity = slider->value; break;
+    case CHANGE_LIGHT_RADIUS_SCALE: SceneProp.LightRadiusScale = slider->value; break;
+    case CHANGE_LIGHT_INTENSITY_SCALE: SceneProp.LightIntensityScale = slider->value; break;
+    case CHANGE_LIGHTMAP_INTENSITY: SceneProp.LightmapIntensity = slider->value; break;
     case CHANGE_SHADOW_BIAS:     SceneProp.ShadowBias = slider->value; break;
     case CHANGE_SHADOW_MIN:      SceneProp.ShadowMin = slider->value; break;
     case CHANGE_ENV_FACTOR:      SceneProp.EnvFactor = slider->value; break;
@@ -12325,7 +13472,7 @@ void SandboxScene::SyncFromGUI(t850::GUIManager& gui) {
     case CHANGE_MATERIAL_TRANSMISSION_MULTIPLIER: SceneProp.MaterialTransmissionMultiplier = slider->value; break;
     case CHANGE_MATERIAL_REFRACTION_STRENGTH: SceneProp.MaterialRefractionStrength = slider->value; break;
     case CHANGE_ANIM_SPEED: {
-      RenderSkinnedMesh* sk = Meshes[0].GetSkinnedMesh();
+      RenderSkinnedMesh* sk = GetSelectedAnimationMesh();
       if (sk) sk->SetAnimSpeed(slider->value);
     } break;
     }
@@ -12338,7 +13485,7 @@ void SandboxScene::SyncFromGUI(t850::GUIManager& gui) {
     case CHANGE_PCF_TOOGLE:   SceneProp.ToogleShadow = cb->checked ? 1 : 0; break;
     case CHANGLE_SSAO_TOOGLE: SceneProp.ToogleSSAO = cb->checked ? 1 : 0; break;
     case CHANGE_SHOW_WIREFRAME: m_showWireframe = cb->checked; break;
-    case CHANGE_SHOW_SKELETON:  m_showSkeleton = cb->checked && (Meshes[0].GetSkinnedMesh() != nullptr); break;
+    case CHANGE_SHOW_SKELETON:  m_showSkeleton = cb->checked && (GetSelectedSkinningMesh() != nullptr); break;
     case CHANGE_SHOW_PHYSICS:   m_showPhysics = cb->checked; break;
     }
   }
@@ -12366,7 +13513,7 @@ void SandboxScene::SyncFromGUI(t850::GUIManager& gui) {
       ChangeActiveGaussSelection = sel->selectedIndex;
       break;
     case CHANGE_ANIM_SELECT: {
-      RenderSkinnedMesh* sk = Meshes[0].GetSkinnedMesh();
+      RenderSkinnedMesh* sk = GetSelectedAnimationMesh();
       if (sk && sel->selectedIndex != sk->GetCurrentAnimSet()) {
         // Switch to selected animation set
         while (sk->GetCurrentAnimSet() != sel->selectedIndex) {
@@ -12375,7 +13522,7 @@ void SandboxScene::SyncFromGUI(t850::GUIManager& gui) {
       }
     } break;
     case CHANGE_ANIM_MODE: {
-      RenderSkinnedMesh* sk = Meshes[0].GetSkinnedMesh();
+      RenderSkinnedMesh* sk = GetSelectedAnimationMesh();
       if (sk) {
         bool keyMode = (sel->selectedIndex == 1);
         sk->SetKeyframeMode(keyMode);

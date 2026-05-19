@@ -52,6 +52,8 @@ cbuffer ConstantBuffer : register(b0) {
     float4   SpecularColorUVTransform1;
     float4   TransmissionUVTransform0;
     float4   TransmissionUVTransform1;
+    float4   LightmapUVTransform0;
+    float4   LightmapUVTransform1;
     float4   LightPositions[128];
     float4   LightColors[128];
     float4   LightRadius[32];
@@ -113,6 +115,8 @@ cbuffer MeshMaterialCB : register(b2) {
     float4   SpecularColorUVTransform1;
     float4   TransmissionUVTransform0;
     float4   TransmissionUVTransform1;
+    float4   LightmapUVTransform0;
+    float4   LightmapUVTransform1;
 }
 #endif
 
@@ -188,6 +192,10 @@ Texture2D SpecularColorTex : register(t22);
 Texture2D TransmissionTex : register(t23);
 #endif
 
+#ifdef LIGHTMAP_MAP
+Texture2D LightmapTex : register(t25);
+#endif
+
 SamplerState MaterialSS : register(s0);
 SamplerState SpecularSS : register(s1);
 SamplerState GlossSS : register(s2);
@@ -195,7 +203,7 @@ SamplerState NormalSS : register(s3);
 SamplerState EnvSS : register(s4);
 SamplerState HeightSS : register(s5);
 SamplerState MetallicSS : register(s6);
-SamplerState SceneDepthSS : register(s7);
+SamplerState LightmapSS : register(s7);
 SamplerState EmissiveSS : register(s8);
 SamplerState SceneColorSS : register(s9);
 SamplerState IBLDiffuseSS : register(s10);
@@ -516,6 +524,19 @@ float3 SampleEmissive(VS_OUTPUT input, float2 uv)
     return emissive * MaterialParams.w;
 }
 
+float SampleLightmap(VS_OUTPUT input)
+{
+#ifdef LIGHTMAP_MAP
+    float2 lightmapUV = GetTexCoord(input, MaterialParams9.z);
+    lightmapUV = ApplyUVTransform(lightmapUV, LightmapUVTransform0, LightmapUVTransform1);
+    float3 lightmap = LightmapTex.Sample(LightmapSS, lightmapUV).rgb;
+    float luminance = dot(lightmap, float3(0.2126f, 0.7152f, 0.0722f));
+    return max(luminance * MaterialParams9.w, 0.0f);
+#else
+    return 0.0f;
+#endif
+}
+
 void ApplyAlphaMask(inout float4 color)
 {
     if (AlphaParams.x > 0.5f && AlphaParams.x < 1.5f) {
@@ -784,7 +805,8 @@ FS_OUT FS(VS_OUTPUT input, bool isFrontFace : SV_IsFrontFace)
     fout.color2.b = clearcoatFactor;
     fout.color2.a = Intensities.w / 255.0f;
     float packedMaterial = clearcoatRoughness * 0.5f + (MaterialParams.z > 0.5f ? 0.5f : 0.0f);
-    fout.color3 = float4(EncodeOctahedralNormal(geoNormal), 0.0f, packedMaterial);
+    float lightmap = SampleLightmap(input);
+    fout.color3 = float4(EncodeOctahedralNormal(geoNormal), saturate(lightmap), packedMaterial);
     fout.depth = input.Pos.z / input.Pos.w;
     fout.color4 = float4(SampleEmissive(input, uv), 0.0f);
     fout.color5 = float4(sheenColor, sheenRoughness);
@@ -924,6 +946,7 @@ float4 FS(VS_OUTPUT input, bool isFrontFace : SV_IsFrontFace) : SV_TARGET
     float diffuseMip = clamp(MaterialParams3.z, 0.0f, iblMaxMip);
     float3 irradiance = texIBLDiffuse.SampleLevel(IBLDiffuseSS, irradianceDir, diffuseMip).xyz;
     indirectLight += irradiance * albedo * kDiffuseEnv * iblFactor;
+    indirectLight += albedo * kDiffuseEnv * SampleLightmap(input);
     if (hasSheenLUT && sheenStrength > 0.0f) {
         float albedoSheenScaling = 1.0f - sheenStrength * AlbedoSheenScalingLUT(NdotV, sheenRoughness);
         float3 sheenIBL = GetIBLRadianceCharlie(normal, eyeDir, sheenRoughness, sheenColor, iblMaxMip) * iblFactor;

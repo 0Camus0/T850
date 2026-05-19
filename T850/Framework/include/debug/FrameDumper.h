@@ -82,6 +82,7 @@ namespace t850 {
     std::optional<float> material_emissive_intensity;
     std::optional<float> material_transmission_multiplier;
     std::optional<float> material_refraction_strength;
+    std::optional<float> lightmap_intensity;
     std::optional<float> parallax_shadow_min_layers;
     std::optional<float> parallax_shadow_max_layers;
     std::optional<float> parallax_shadow_softness;

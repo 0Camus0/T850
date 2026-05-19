@@ -133,9 +133,11 @@ MenuAction ImGuiDrawMenuBar(PanelVisibility& panels) {
 
 // ── Toolbar ───────────────────────────────────────────
 int ImGuiDrawToolbar(int currentMode, int& addCamera, int& addLight,
-                     bool& wantsGroup, bool& wantsUngroup, bool hasMultiSelect) {
+                     bool& wantsClone, bool& wantsGroup, bool& wantsUngroup,
+                     bool hasSelection, bool hasMultiSelect) {
   addCamera = -1;
   addLight  = -1;
+  wantsClone = false;
   wantsGroup = false;
   wantsUngroup = false;
   if (!s_inited) return currentMode;
@@ -201,6 +203,13 @@ int ImGuiDrawToolbar(int currentMode, int& addCamera, int& addLight,
     ImGui::Text("|");
     ImGui::SameLine();
 
+    if (!hasSelection) ImGui::BeginDisabled();
+    if (ImGui::Button("Clone", ImVec2(55, 0)))
+      wantsClone = true;
+    if (!hasSelection) ImGui::EndDisabled();
+
+    ImGui::SameLine();
+
     // Group / Ungroup buttons
     if (!hasMultiSelect) ImGui::BeginDisabled();
     if (ImGui::Button("Group", ImVec2(55, 0)))
@@ -254,6 +263,7 @@ ContextAction ImGuiDrawContextMenu(bool hasSelection, bool hasMultiSelect, bool 
     // Selection actions
     if (!hasSelection) ImGui::BeginDisabled();
     if (ImGui::MenuItem("Frame View (Z)")) action.wantsFrameView = true;
+    if (ImGui::MenuItem("Clone"))          action.wantsClone = true;
     if (ImGui::MenuItem("Delete"))         action.wantsDelete = true;
     if (!hasSelection) ImGui::EndDisabled();
 

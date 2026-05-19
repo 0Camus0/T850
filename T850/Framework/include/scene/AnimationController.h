@@ -65,6 +65,7 @@ public:
 
   // Access the animated skeleton (for debug bone visualization)
   const xF::xSkeleton* GetAnimSkeleton() const { return m_pSkeletonAnim; }
+  const xF::xSkeleton* GetBindSkeleton() const { return m_pSkeletonBind; }
   bool ApplyBindPose();
   bool ExportCombinedPose(std::vector<XMATRIX44>& out) const;
   bool ApplyCombinedPoseOverrides(const std::vector<int>& boneIndices,
@@ -96,6 +97,9 @@ private:
   // Quaternion to rotation matrix (row-major)
   static XMATRIX44 QuaternionToMatrix(const XQUATERNION& q);
 
+  xF::xAnimationInfo   m_animInfoInstance;
+  xF::xSkeleton        m_skeletonBindInstance;
+  xF::xSkeleton        m_skeletonAnimInstance;
   xF::xAnimationInfo*  m_pAnimInfo      = nullptr;
   xF::xSkeleton*       m_pSkeletonBind  = nullptr;
   xF::xSkeleton*       m_pSkeletonAnim  = nullptr;

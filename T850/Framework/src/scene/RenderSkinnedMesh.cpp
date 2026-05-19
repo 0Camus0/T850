@@ -31,6 +31,7 @@ namespace t850 {
   extern DeviceContext*  T8DeviceContext;
 
   static constexpr unsigned MaterialSamplerSlot = 0;
+  static constexpr unsigned LightmapSamplerSlot = 7;
   static constexpr unsigned EnvSamplerSlot = 4;
   static constexpr unsigned BoneTextureSlot = 24;
 
@@ -176,6 +177,8 @@ namespace t850 {
       dst.SpecularColorUVTransform1 = src.SpecularColorUVTransform1;
       dst.TransmissionUVTransform0 = src.TransmissionUVTransform0;
       dst.TransmissionUVTransform1 = src.TransmissionUVTransform1;
+      dst.LightmapUVTransform0 = src.LightmapUVTransform0;
+      dst.LightmapUVTransform1 = src.LightmapUVTransform1;
     }
 
     static constexpr unsigned kSkeletonBoneVertexCount = 6;
@@ -1099,6 +1102,10 @@ namespace t850 {
 
     // Now do the actual draw using base CBuffer + bone texture
     // (animation update + texture upload already done in UpdateAnimationAndBones)
+    if (!pScProp || pScProp->pCameras.empty() || !pScProp->pCameras[0]) {
+      T8_LOG_ERROR("[SkinnedMesh] Draw skipped: missing scene camera");
+      return;
+    }
     Camera *pActualCamera = pScProp->pCameras[0];
     XMATRIX44 VP = pActualCamera->VP;
 
@@ -1162,17 +1169,19 @@ namespace t850 {
         }
         for (unsigned int li = 0; li < numLights; li++) {
           Light& light = pScProp->Lights[li];
+          const float effectiveRadius = light.Type == LIGHT_POINT ? light.radius * (std::max)(0.0f, pScProp->LightRadiusScale) : light.radius;
+          const float effectiveIntensity = light.Intensity * (std::max)(0.0f, pScProp->LightIntensityScale);
           if (light.Type == LIGHT_DIRECTIONAL) {
             baseCB.LightPositions[li] = XVECTOR3(light.Direction.x, light.Direction.y, light.Direction.z, 0.0f);
           } else {
             baseCB.LightPositions[li] = XVECTOR3(light.Position.x, light.Position.y, light.Position.z, 1.0f);
           }
-          baseCB.LightColors[li] = XVECTOR3(light.Color.x, light.Color.y, light.Color.z, light.Intensity);
+          baseCB.LightColors[li] = XVECTOR3(light.Color.x, light.Color.y, light.Color.z, effectiveIntensity);
           XVECTOR3& radiusPack = baseCB.LightRadius[li >> 2];
-          if ((li & 3u) == 0u) radiusPack.x = light.radius;
-          else if ((li & 3u) == 1u) radiusPack.y = light.radius;
-          else if ((li & 3u) == 2u) radiusPack.z = light.radius;
-          else radiusPack.w = light.radius;
+          if ((li & 3u) == 0u) radiusPack.x = effectiveRadius;
+          else if ((li & 3u) == 1u) radiusPack.y = effectiveRadius;
+          else if ((li & 3u) == 2u) radiusPack.z = effectiveRadius;
+          else radiusPack.w = effectiveRadius;
         }
       }
       baseCB.ParallaxSettings = XVECTOR3(m_fParallaxLowSamples, m_fParallaxHighSamples, m_fParallaxHeight);
@@ -1257,11 +1266,15 @@ namespace t850 {
           baseCB.EmissiveColor = sub_info->EmissiveColor;
           baseCB.AlphaParams = XVECTOR3((float)sub_info->AlphaMode, sub_info->AlphaCutoff, sub_info->DoubleSided ? 1.0f : 0.0f, sub_info->TransmissionFactor);
           baseCB.TexCoordSets = XVECTOR3((float)sub_info->DiffuseTexCoord, (float)sub_info->NormalTexCoord, (float)sub_info->MetallicTexCoord, (float)sub_info->EmissiveTexCoord);
+          baseCB.MaterialParams9 = XVECTOR3((float)sub_info->SpecularColorTexCoord, sub_info->NormalScale, (float)sub_info->LightmapTexCoord, sub_info->LightmapIntensity);
+          baseCB.LightmapUVTransform0 = sub_info->LightmapUVTransform0;
+          baseCB.LightmapUVTransform1 = sub_info->LightmapUVTransform1;
         }
         baseCB.ForwardParams = XVECTOR3((float)g_pBaseDriver->width, (float)g_pBaseDriver->height, Textures[7] ? 1.0f : 0.0f, mp ? mp->ior : sub_info->IOR);
         float emissiveMul = pScProp ? pScProp->MaterialEmissiveIntensity : 1.0f;
         float transmissionMul = pScProp ? pScProp->MaterialTransmissionMultiplier : 1.0f;
         float refractionStrength = pScProp ? pScProp->MaterialRefractionStrength : 0.03f;
+        float lightmapMul = pScProp ? (std::max)(0.0f, pScProp->LightmapIntensity) : 1.0f;
         float iblFactor = pScProp ? pScProp->IBLFactor : 1.0f;
         float iblMipCount = pScProp ? pScProp->IBLMipCount : 4.0f;
         float iblDiffuseMipLevel = pScProp ? pScProp->IBLDiffuseMipLevel : 4.0f;
@@ -1291,6 +1304,7 @@ namespace t850 {
           baseCB.MaterialParams7 = XVECTOR3(sub_info->OcclusionTex ? 1.0f : 0.0f, sub_info->OcclusionStrength, (float)sub_info->OcclusionTexCoord, sub_info->TransmissionTex ? 1.0f : 0.0f);
           baseCB.MaterialParams8 = XVECTOR3((float)sub_info->TransmissionTexCoord, sub_info->SpecularFactorTex ? 1.0f : 0.0f, (float)sub_info->SpecularFactorTexCoord, sub_info->SpecularColorTex ? 1.0f : 0.0f);
         }
+        baseCB.MaterialParams9.w *= lightmapMul;
         baseCB.MaterialParams2 = XVECTOR3(transmissionMul, refractionStrength, Textures[9] ? 1.0f : 0.0f, iblFactor);
         baseCB.MaterialParams3 = XVECTOR3(iblMipCount, iblBrdfLutEnabled, iblDiffuseMipLevel, 0.0f);
         ExtractMeshMaterialCB(sub_info->MaterialCB, baseCB);
@@ -1448,6 +1462,10 @@ namespace t850 {
         if (s->key.has(ShaderKey::TRANSMISSION_MAP) && sub_info->TransmissionTex) {
           sub_info->TransmissionTex->Set(*T8DeviceContext, MaterialTextureSlot::Transmission, "TransmissionTex");
           sub_info->TransmissionTex->SetSampler(*T8DeviceContext, MaterialSamplerSlot);
+        }
+        if (s->key.has(ShaderKey::LIGHTMAP_MAP) && sub_info->LightmapTex) {
+          sub_info->LightmapTex->Set(*T8DeviceContext, MaterialTextureSlot::Lightmap, "LightmapTex");
+          sub_info->LightmapTex->SetSampler(*T8DeviceContext, LightmapSamplerSlot);
         }
 
         T8DeviceContext->SetPrimitiveTopology(Topology::TRIANLE_LIST);

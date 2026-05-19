@@ -34,6 +34,7 @@ namespace t850 {
     constexpr int SpecularFactor = 21;
     constexpr int SpecularColor = 22;
     constexpr int Transmission = 23;
+    constexpr int Lightmap = 25; // t24 is reserved for skinned bone textures
   }
 
   struct EnvironmentMapSet {

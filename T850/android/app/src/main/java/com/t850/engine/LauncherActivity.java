@@ -26,6 +26,7 @@ import java.util.Locale;
 public final class LauncherActivity extends Activity {
     public static final String EXTRA_SCENE = "com.t850.engine.extra.SCENE";
     public static final String EXTRA_MODEL = "com.t850.engine.extra.MODEL";
+    public static final String EXTRA_SCENE_FILE = "com.t850.engine.extra.SCENE_FILE";
     public static final String EXTRA_LOG_LEVEL = "com.t850.engine.extra.LOG_LEVEL";
     public static final String EXTRA_AUTO_RUN = "com.t850.engine.extra.AUTO_RUN";
     public static final String EXTRA_DUMP_FRAME = "com.t850.engine.extra.DUMP_FRAME";
@@ -104,6 +105,7 @@ public final class LauncherActivity extends Activity {
         int ragdollSpeedIndex = -1;
         boolean returnToNative;
         String replaySnapshot;
+        String sceneFile;
     }
 
     @Override
@@ -408,6 +410,11 @@ public final class LauncherActivity extends Activity {
         if (options.model == null || options.model.isEmpty()) {
             options.model = fallbackModel;
         }
+        options.sceneFile = intent.getStringExtra(EXTRA_SCENE_FILE);
+        if (options.sceneFile != null && !options.sceneFile.isEmpty()) {
+            options.scene = 0;
+            options.model = null;
+        }
         options.logLevel = intent.getIntExtra(EXTRA_LOG_LEVEL, prefs.getInt(PREF_LOG_LEVEL, 2));
         if (options.logLevel < 0 || options.logLevel > 4) {
             options.logLevel = 2;
@@ -424,13 +431,15 @@ public final class LauncherActivity extends Activity {
         options.returnToNative = intent.getBooleanExtra(EXTRA_RETURN_TO_NATIVE, false);
 
         selectOption(sceneSpinner, scenes, options.scene);
-        selectModel(options.model);
+        if (options.model != null) {
+            selectModel(options.model);
+        }
         selectOption(logSpinner, logLevels, options.logLevel);
         updateModelControls();
 
         prefs.edit()
                 .putInt(PREF_SCENE, options.scene)
-                .putString(PREF_MODEL, options.model)
+                .putString(PREF_MODEL, options.model != null ? options.model : fallbackModel)
                 .putInt(PREF_LOG_LEVEL, options.logLevel)
                 .putBoolean(PREF_RETURN_TO_NATIVE, options.returnToNative)
                 .putString(PREF_CONSUMED_AUTO_RUN, autoRunKey)
@@ -449,6 +458,9 @@ public final class LauncherActivity extends Activity {
         intent.putExtra(EXTRA_LOG_LEVEL, options.logLevel);
         if (options.model != null && !options.model.isEmpty()) {
             intent.putExtra(EXTRA_MODEL, options.model);
+        }
+        if (options.sceneFile != null && !options.sceneFile.isEmpty()) {
+            intent.putExtra(EXTRA_SCENE_FILE, options.sceneFile);
         }
         if (options.dumpFrame >= 0) {
             intent.putExtra(EXTRA_DUMP_FRAME, options.dumpFrame);

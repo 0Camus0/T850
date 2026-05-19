@@ -464,11 +464,14 @@
       "godrays_enabled": true,
       "auto_focus": true,
       "debug_mode": 0,
-      "shadow_bias": 0.000005,
+      "shadow_bias": 5e-06,
       "shadow_min": 0.0,
       "env_factor": 1.6,
       "ibl_factor": 0.2,
       "godrays_factor": 0.7,
+      "light_radius_scale": 1,
+      "light_intensity_scale": 1,
+      "lightmap_intensity": 1,
       "material_emissive_intensity": 1,
       "material_transmission_multiplier": 1,
       "material_refraction_strength": 0.03
@@ -497,6 +500,30 @@
          "max_val": 10,
          "step": 0.1,
          "default_val": 2
+      },
+      {
+         "name": "light_radius_scale",
+         "label": "Light Radius Scale",
+         "min_val": 0.01,
+         "max_val": 32,
+         "step": 0.05,
+         "default_val": 1
+      },
+      {
+         "name": "light_intensity_scale",
+         "label": "Light Intensity Scale",
+         "min_val": 0,
+         "max_val": 32,
+         "step": 0.05,
+         "default_val": 1
+      },
+      {
+         "name": "lightmap_intensity",
+         "label": "Lightmap Intensity",
+         "min_val": 0,
+         "max_val": 4,
+         "step": 0.05,
+         "default_val": 1
       },
       {
          "name": "tm_white_level",
@@ -694,9 +721,9 @@
          "name": "shadow_bias",
          "label": "Shadow Bias",
          "min_val": 0,
-         "max_val": 0.00005,
-         "step": 1.0E-7,
-         "default_val": 0.000005
+         "max_val": 5e-05,
+         "step": 1e-07,
+         "default_val": 5e-06
       },
       {
          "name": "shadow_min",
@@ -917,6 +944,10 @@
             {
                "name": "godrays_factor",
                "value": 0.45
+            },
+            {
+               "name": "lightmap_intensity",
+               "value": 1
             }
          ]
       },
@@ -940,6 +971,10 @@
             {
                "name": "godrays_factor",
                "value": 0.6
+            },
+            {
+               "name": "lightmap_intensity",
+               "value": 1
             }
          ]
       }

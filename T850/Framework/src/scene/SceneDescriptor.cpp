@@ -8,7 +8,6 @@
 #ifdef _MSC_VER
 #pragma warning(pop)
 #endif
-#include <fstream>
 #include <sstream>
 #include <cstdio>
 #include <utils/Log.h>
@@ -43,13 +42,11 @@ bool SaveSceneDescriptor(const std::string& path, const SceneDescriptor& desc) {
     return false;
   }
 
-  std::ofstream file(path);
-  if (!file.is_open()) {
+  if (!ResourceLocator::Instance().WriteText(path, result.value())) {
     T8_LOG_ERROR("[SceneDescriptor] Cannot write '%s'", path.c_str());
     return false;
   }
 
-  file << result.value();
   T8_LOG_INFO("[SceneDescriptor] Saved '%s'", path.c_str());
   return true;
 }

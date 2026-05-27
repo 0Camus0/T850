@@ -12,6 +12,9 @@
 #include <video/vulkan/VulkanRT.h>
 #include <video/vulkan/VulkanShader.h>
 #include <video/vulkan/VulkanDriver.h>
+#include <cmath>
+#include <cstdint>
+#include <cstring>
 #include <vector>
 
 #if defined(OS_WINDOWS) || defined(OS_ANDROID)
@@ -22,6 +25,49 @@ namespace t850 {
 
   extern Device*        T8Device;
   extern DeviceContext*  T8DeviceContext;
+
+  namespace {
+    uint16_t Float32ToFloat16(float value) {
+      if (!std::isfinite(value)) {
+        value = value < 0.0f ? -65504.0f : 65504.0f;
+      }
+
+      uint32_t bits = 0;
+      std::memcpy(&bits, &value, sizeof(bits));
+
+      const uint32_t sign = (bits >> 16) & 0x8000u;
+      int32_t exponent = static_cast<int32_t>((bits >> 23) & 0xffu) - 127 + 15;
+      uint32_t mantissa = bits & 0x7fffffu;
+
+      if (exponent <= 0) {
+        if (exponent < -10)
+          return static_cast<uint16_t>(sign);
+        mantissa = (mantissa | 0x800000u) >> (1 - exponent);
+        return static_cast<uint16_t>(sign | ((mantissa + 0x1000u) >> 13));
+      }
+
+      if (exponent >= 31)
+        return static_cast<uint16_t>(sign | 0x7bffu);
+
+      mantissa += 0x1000u;
+      if (mantissa & 0x800000u) {
+        mantissa = 0;
+        ++exponent;
+        if (exponent >= 31)
+          return static_cast<uint16_t>(sign | 0x7bffu);
+      }
+
+      return static_cast<uint16_t>(sign | (static_cast<uint32_t>(exponent) << 10) | (mantissa >> 13));
+    }
+
+    const char* FloatCubeFormatName(VkFormat format) {
+      switch (format) {
+      case VK_FORMAT_R16G16B16A16_SFLOAT: return "RGBA16F";
+      case VK_FORMAT_R32G32B32A32_SFLOAT: return "RGBA32F";
+      default: return "unknown";
+      }
+    }
+  }
 
   // ══════════════════════════════════════════════════════
   //  VulkanDevice
@@ -135,16 +181,31 @@ namespace t850 {
     // Upload initial data if provided
     if (data) {
       VkDeviceSize totalSize = (VkDeviceSize)w * h * 16;
-      VkBuffer stagingBuffer; VmaAllocation stagingAlloc;
+      VkBuffer stagingBuffer = VK_NULL_HANDLE;
+      VmaAllocation stagingAlloc = nullptr;
       VkBufferCreateInfo stagingInfo = { VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO };
       stagingInfo.size = totalSize;
       stagingInfo.usage = VK_BUFFER_USAGE_TRANSFER_SRC_BIT;
       VmaAllocationCreateInfo stagingAllocCI = {};
       stagingAllocCI.usage = VMA_MEMORY_USAGE_AUTO;
       stagingAllocCI.flags = VMA_ALLOCATION_CREATE_HOST_ACCESS_SEQUENTIAL_WRITE_BIT | VMA_ALLOCATION_CREATE_MAPPED_BIT;
-      VmaAllocationInfo stagingAllocInfo;
-      vmaCreateBuffer(allocator, &stagingInfo, &stagingAllocCI, &stagingBuffer, &stagingAlloc, &stagingAllocInfo);
+      VmaAllocationInfo stagingAllocInfo = {};
+      VkResult stagingRes = vmaCreateBuffer(allocator, &stagingInfo, &stagingAllocCI, &stagingBuffer, &stagingAlloc, &stagingAllocInfo);
+      if (stagingRes != VK_SUCCESS || !stagingAllocInfo.pMappedData) {
+        T8_LOG_ERROR("[Vulkan] CreateFloatTexture: staging buffer failed res=%d mapped=%p", stagingRes, stagingAllocInfo.pMappedData);
+        if (stagingBuffer)
+          vmaDestroyBuffer(allocator, stagingBuffer, stagingAlloc);
+        delete tex;
+        return nullptr;
+      }
       memcpy(stagingAllocInfo.pMappedData, data, static_cast<size_t>(totalSize));
+      VkResult flushRes = vmaFlushAllocation(allocator, stagingAlloc, 0, totalSize);
+      if (flushRes != VK_SUCCESS) {
+        T8_LOG_ERROR("[Vulkan] CreateFloatTexture: staging flush failed res=%d", flushRes);
+        vmaDestroyBuffer(allocator, stagingBuffer, stagingAlloc);
+        delete tex;
+        return nullptr;
+      }
 
       VkCommandBuffer cmd = driver->GetTransientCommandBuffer();
       VkImageMemoryBarrier barrier = { VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER };
@@ -186,7 +247,12 @@ namespace t850 {
     VmaAllocator allocator = driver->GetAllocator();
 
     VulkanTexture* tex = new VulkanTexture;
-    tex->m_format = VK_FORMAT_R32G32B32A32_SFLOAT;
+#if defined(OS_ANDROID)
+    constexpr bool kUseHalfFloatCubeMap = true;
+#else
+    constexpr bool kUseHalfFloatCubeMap = false;
+#endif
+    tex->m_format = kUseHalfFloatCubeMap ? VK_FORMAT_R16G16B16A16_SFLOAT : VK_FORMAT_R32G32B32A32_SFLOAT;
     tex->x = size;
     tex->y = size;
     tex->mipmaps = mipCount;
@@ -227,7 +293,18 @@ namespace t850 {
       sourceFloats = zeroData.data();
     }
 
-    VkDeviceSize totalSize = static_cast<VkDeviceSize>(floatCount * sizeof(float));
+    std::vector<uint16_t> halfData;
+    const void* sourceBytes = sourceFloats;
+    const VkDeviceSize bytesPerComponent = kUseHalfFloatCubeMap ? sizeof(uint16_t) : sizeof(float);
+    if (kUseHalfFloatCubeMap) {
+      halfData.resize(floatCount);
+      for (size_t i = 0; i < floatCount; ++i) {
+        halfData[i] = Float32ToFloat16(sourceFloats[i]);
+      }
+      sourceBytes = halfData.data();
+    }
+
+    VkDeviceSize totalSize = static_cast<VkDeviceSize>(floatCount) * bytesPerComponent;
     VkBuffer stagingBuffer; VmaAllocation stagingAlloc;
     VkBufferCreateInfo stagingInfo = { VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO };
     stagingInfo.size = totalSize;
@@ -240,7 +317,7 @@ namespace t850 {
       T8_LOG_ERROR("[Vulkan] CreateFloatCubeMap: staging buffer failed");
       delete tex; return nullptr;
     }
-    memcpy(stagingAllocInfo.pMappedData, sourceFloats, static_cast<size_t>(totalSize));
+    memcpy(stagingAllocInfo.pMappedData, sourceBytes, static_cast<size_t>(totalSize));
 
     VkCommandBuffer cmd = driver->GetTransientCommandBuffer();
     VkImageMemoryBarrier barrier = { VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER };
@@ -263,10 +340,16 @@ namespace t850 {
         regions[regionIndex].bufferOffset = sourceOffset;
         regions[regionIndex].imageSubresource = { VK_IMAGE_ASPECT_COLOR_BIT, mip, face, 1 };
         regions[regionIndex].imageExtent = { mipSize, mipSize, 1 };
-        sourceOffset += VkDeviceSize(mipSize) * VkDeviceSize(mipSize) * 16;
+        sourceOffset += VkDeviceSize(mipSize) * VkDeviceSize(mipSize) * 4 * bytesPerComponent;
         mipSize >>= 1; if (mipSize < 1) mipSize = 1;
       }
     }
+    T8_LOG_DEBUG("[Vulkan] CreateFloatCubeMap upload: %dx%d mips=%d %s bytes=%llu",
+                 size,
+                 size,
+                 mipCount,
+                 FloatCubeFormatName(tex->m_format),
+                 static_cast<unsigned long long>(totalSize));
     vkCmdCopyBufferToImage(cmd, stagingBuffer, tex->m_image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
                            static_cast<uint32_t>(regions.size()), regions.data());
 
@@ -290,7 +373,7 @@ namespace t850 {
     }
 
     tex->SetTextureParams();
-    T8_LOG_INFO("[Vulkan] CreateFloatCubeMap: %dx%d mips=%d RGBA32F", size, size, mipCount);
+    T8_LOG_INFO("[Vulkan] CreateFloatCubeMap: %dx%d mips=%d %s", size, size, mipCount, FloatCubeFormatName(tex->m_format));
     return tex;
   }
 

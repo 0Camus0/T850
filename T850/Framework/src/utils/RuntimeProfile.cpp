@@ -147,6 +147,8 @@ namespace t850 {
     std::string RecommendedProfile(const RuntimeProfileInfo& info) {
       if (g_config.sceneProfile.size()) return g_config.sceneProfile;
       if (info.platform == "android") {
+        if (info.gpuFamily == "mali-g700") return "android/mali-g700";
+        if (info.gpuFamily == "mali-g600") return "android/mali-g600";
         if (info.gpuFamily == "adreno-800") return "android/adreno-800";
         if (info.gpuFamily == "adreno-700") return "android/adreno-700";
         return "android/default";
@@ -158,6 +160,21 @@ namespace t850 {
 
     bool StringFieldMatches(const std::string& required, const std::string& actual) {
       return required.empty() || Lower(required) == Lower(actual);
+    }
+
+    bool MatchesProfileTarget(const SandboxProfileDesc& profile, const ProfileTargetDesc& target) {
+      return Lower(profile.name) == Lower(target.name) &&
+             Lower(profile.platform) == Lower(target.platform) &&
+             Lower(profile.architecture) == Lower(target.architecture) &&
+             Lower(profile.gpu_family) == Lower(target.gpuFamily);
+    }
+
+    int ExactProfileTargetBonus(const SandboxProfileDesc& profile) {
+      if (profile.name.empty()) return 0;
+      const int targetIndex = ProfileTargetIndexByName(profile.name);
+      const auto& targets = GetProfileTargets();
+      if (targetIndex < 0 || targetIndex >= (int)targets.size()) return 0;
+      return MatchesProfileTarget(profile, targets[targetIndex]) ? 128 : 0;
     }
   }
 
@@ -222,8 +239,11 @@ namespace t850 {
       {"PC base", "pc/base", "", "", ""},
       {"PC x64", "pc/x64", "windows", "x64", ""},
       {"PC ARM64", "pc/arm64", "windows", "arm64", ""},
+      {"Android Default", "android/default", "android", "", ""},
       {"Android Adreno 700", "android/adreno-700", "android", "", "adreno-700"},
       {"Android Adreno 800", "android/adreno-800", "android", "", "adreno-800"},
+      {"Android Mali G600", "android/mali-g600", "android", "", "mali-g600"},
+      {"Android Mali G700", "android/mali-g700", "android", "", "mali-g700"},
     };
     return targets;
   }
@@ -263,6 +283,19 @@ namespace t850 {
       if (slash != std::string::npos) profileModel = profileModel.substr(slash + 1);
       if (!modelKey.empty() && profileModel != Lower(modelKey)) return -1;
     }
+
+    if (!g_config.sceneProfile.empty()) {
+      if (Lower(profile.name) != Lower(g_config.sceneProfile)) return -1;
+      int score = 100000;
+      if (!profile.model.empty()) score += 4;
+      if (!profile.platform.empty()) score += 16;
+      if (!profile.architecture.empty()) score += 8;
+      if (!profile.gpu_family.empty()) score += 32;
+      if (!profile.gpu_name_contains.empty()) score += 24;
+      score += ExactProfileTargetBonus(profile);
+      return score;
+    }
+
     if (!StringFieldMatches(profile.platform, runtime.platform)) return -1;
     if (!StringFieldMatches(profile.architecture, runtime.architecture)) return -1;
     if (!StringFieldMatches(profile.gpu_family, runtime.gpuFamily)) return -1;
@@ -276,6 +309,7 @@ namespace t850 {
     if (!profile.name.empty()) {
       if (profile.name == ActiveProfileName()) score += 64;
       else score += 2;
+      score += ExactProfileTargetBonus(profile);
     }
     return score;
   }

@@ -396,6 +396,13 @@ if ((Split-Path -Leaf $rootDir) -eq "scripts") {
 }
 
 $configPath = Join-Path $rootDir "config.json"
+$script:SceneDependencyCacheKey = ""
+$script:SceneDependencyResult = @{ Ok = $true; Missing = @() }
+$script:SuppressSceneDependencyValidation = $false
+$script:LauncherInitializing = $true
+$modelCloudScript = Join-Path $rootDir "scripts\ModelCloud.ps1"
+if (-not (Test-Path $modelCloudScript) -and $PSScriptRoot) { $modelCloudScript = Join-Path $PSScriptRoot "ModelCloud.ps1" }
+if (Test-Path $modelCloudScript) { . $modelCloudScript }
 
 function Get-SandboxInputMode {
     if ($cmbSandboxInput -and $cmbSandboxInput.SelectedItem) { return $cmbSandboxInput.SelectedItem.Tag.ToString() }
@@ -446,6 +453,27 @@ function Resolve-SceneAssetPath {
     return ""
 }
 
+function Invoke-LauncherModelDownload {
+    param([bool]$Quiet = $false)
+    if (-not (Get-Command Ensure-T850CloudModels -ErrorAction SilentlyContinue)) { return $true }
+    $statusCallback = {
+        param([string]$Message)
+        if (-not $Quiet -and $txtStatus) {
+            $txtStatus.Text = $Message
+            $txtStatus.Foreground = $window.FindResource("AccentBrush")
+            $window.Dispatcher.Invoke([Action]{}, [System.Windows.Threading.DispatcherPriority]::Background)
+        }
+    }
+    $result = Ensure-T850CloudModels -RootDir $rootDir -AssetRoot $rootDir -StatusCallback $statusCallback
+    if (-not $result.Ok) {
+        if (-not $Quiet) {
+            [System.Windows.MessageBox]::Show(("Could not download model assets:" + "`n`n" + $result.Message), "T850 Launcher", "OK", "Error") | Out-Null
+        }
+        return $false
+    }
+    return $true
+}
+
 function Get-SceneRequiredMeshes {
     param([string]$ScenePath)
     if (-not $ScenePath -or -not (Test-Path $ScenePath)) { return @() }
@@ -487,6 +515,51 @@ function Show-SceneDependencyError {
         ("The selected scene cannot be launched because required files are missing:" + "`n`n" + (($Result.Missing | ForEach-Object { "- $_" }) -join "`n")),
         "T850 Launcher", "OK", "Error") | Out-Null
     return $false
+}
+
+function Get-ComboBoxItemKey {
+    param($Item)
+    if ($null -eq $Item) { return "" }
+    if ($null -ne $Item.Tag) { return $Item.Tag.ToString() }
+    if ($null -ne $Item.Content) { return $Item.Content.ToString() }
+    return ""
+}
+
+function Get-LauncherControl {
+    param([string]$Name)
+    $control = Get-Variable -Name $Name -Scope Script -ValueOnly -ErrorAction SilentlyContinue
+    if ($null -eq $control -and $script:window) {
+        $control = $script:window.FindName($Name)
+        if ($null -ne $control) {
+            Set-Variable -Name $Name -Scope Script -Value $control
+        }
+    }
+    if ($null -eq $control) {
+        throw "Launcher UI control '$Name' was not found."
+    }
+    return $control
+}
+
+function Get-SceneDependencyCacheKey {
+    $sceneTag = if ($cmbScene) { Get-ComboBoxItemKey $cmbScene.SelectedItem } else { "" }
+    return (((Get-SandboxInputMode), $sceneTag, (Get-SelectedSceneFilePath)) -join "|")
+}
+
+function Update-SceneDependencyCache {
+    if ($script:LauncherInitializing -or $script:SuppressSceneDependencyValidation) {
+        $script:SceneDependencyCacheKey = ""
+        $script:SceneDependencyResult = @{ Ok = $true; Missing = @() }
+        return
+    }
+    $script:SceneDependencyCacheKey = Get-SceneDependencyCacheKey
+    $script:SceneDependencyResult = Test-SelectedSceneDependencies
+}
+
+function Get-CachedSceneDependencyResult {
+    if ($script:SceneDependencyCacheKey -ne (Get-SceneDependencyCacheKey)) {
+        return @{ Ok = $true; Missing = @() }
+    }
+    return $script:SceneDependencyResult
 }
 
 # ── Config load/save ──
@@ -788,7 +861,7 @@ function Update-Preview {
     $sceneOk = Test-Path $cmd.ExePath
     $editorCmd = Get-EditorLaunchCommand
     $editorOk = Test-Path $editorCmd.ExePath
-    $sceneDeps = Test-SelectedSceneDependencies
+    $sceneDeps = Get-CachedSceneDependencyResult
 
     if (-not $sceneDeps.Ok) {
         $txtStatus.Text = "Scene missing: $($sceneDeps.Missing -join ', ')"
@@ -873,15 +946,20 @@ $btnBrowseSnapshot.Add_Click({
 })
 
 $cmbModel.Add_SelectionChanged({ Update-Preview })
-$cmbSceneFile.Add_SelectionChanged({ Update-Preview })
+$cmbSceneFile.Add_SelectionChanged({
+    Update-SceneDependencyCache
+    Update-Preview
+})
 $cmbSandboxInput.Add_SelectionChanged({
     Update-SceneOptionVisibility
+    Update-SceneDependencyCache
     Update-Preview
 })
 
 $cmbApi.Add_SelectionChanged({ Update-Preview })
 $cmbScene.Add_SelectionChanged({
     Update-SceneOptionVisibility
+    Update-SceneDependencyCache
     Update-Preview
 })
 $chkFullscreen.Add_Checked({ Update-Preview })
@@ -901,8 +979,12 @@ $txtHeight.Add_TextChanged({ Update-Preview })
 
 # RUN button
 $btnRun.Add_Click({
-    $sceneDeps = Test-SelectedSceneDependencies
+    Update-SceneDependencyCache
+    $sceneDeps = $script:SceneDependencyResult
     if (-not (Show-SceneDependencyError $sceneDeps)) { return }
+    if (-not (Invoke-LauncherModelDownload)) { return }
+    Populate-ModelList
+
     $cmd = Get-LaunchCommand
     if (-not (Test-Path $cmd.ExePath)) {
         [System.Windows.MessageBox]::Show(
@@ -926,6 +1008,8 @@ $btnRun.Add_Click({
 
 # EDITOR button
 $btnEditor.Add_Click({
+    if (-not (Invoke-LauncherModelDownload)) { return }
+    Populate-ModelList
     $cmd = Get-EditorLaunchCommand
     if (-not (Test-Path $cmd.ExePath)) {
         [System.Windows.MessageBox]::Show(
@@ -976,36 +1060,47 @@ function Populate-ModelList {
 }
 
 function Populate-SceneFileList {
-    $previous = Get-SelectedSceneFilePath
-    $cmbSceneFile.Items.Clear()
-    $scenesDir = Join-Path $rootDir "Scenes"
-    if (Test-Path $scenesDir) {
-        $files = Get-ChildItem $scenesDir -Filter "*.t8scene" -Recurse | Sort-Object FullName
-        foreach ($f in $files) {
-            $item = New-Object System.Windows.Controls.ComboBoxItem
-            $relative = $f.FullName.Substring($scenesDir.Length).TrimStart('\', '/')
-            $item.Content = if ($relative) { $relative } else { $f.Name }
-            $item.Tag = $f.FullName
-            $cmbSceneFile.Items.Add($item) | Out-Null
-        }
-    }
-    $selected = $false
-    if ($previous) {
-        foreach ($item in $cmbSceneFile.Items) {
-            if ($item.Tag -eq $previous -or (Get-SceneFileResourcePath $item.Tag) -eq $previous) {
-                $cmbSceneFile.SelectedItem = $item; $selected = $true; break
+    $script:SuppressSceneDependencyValidation = $true
+    try {
+        $sceneFileCombo = Get-LauncherControl "cmbSceneFile"
+        $previous = Get-SelectedSceneFilePath
+        $sceneFileCombo.Items.Clear()
+        $scenesDir = Join-Path $rootDir "Scenes"
+        if (Test-Path $scenesDir) {
+            $files = Get-ChildItem $scenesDir -Filter "*.t8scene" -Recurse | Sort-Object FullName
+            foreach ($f in $files) {
+                $item = New-Object System.Windows.Controls.ComboBoxItem
+                $relative = $f.FullName.Substring($scenesDir.Length).TrimStart('\', '/')
+                $item.Content = if ($relative) { $relative } else { $f.Name }
+                $item.Tag = $f.FullName
+                $sceneFileCombo.Items.Add($item) | Out-Null
             }
         }
-    }
-    if (-not $selected -and $cmbSceneFile.Items.Count -gt 0) {
-        $cmbSceneFile.SelectedIndex = 0
+        $selected = $false
+        if ($previous) {
+            foreach ($item in $sceneFileCombo.Items) {
+                if ($item.Tag -eq $previous -or (Get-SceneFileResourcePath $item.Tag) -eq $previous) {
+                    $sceneFileCombo.SelectedItem = $item; $selected = $true; break
+                }
+            }
+        }
+        if (-not $selected -and $sceneFileCombo.Items.Count -gt 0) {
+            $sceneFileCombo.SelectedIndex = 0
+        }
+    } finally {
+        $script:SuppressSceneDependencyValidation = $false
     }
 }
 
-Populate-ModelList
-Populate-SceneFileList
-Load-Config
-Update-SceneOptionVisibility
-Update-Preview
+try {
+    Invoke-LauncherModelDownload -Quiet $true | Out-Null
+    Populate-ModelList
+    Populate-SceneFileList
+    Load-Config
+    Update-SceneOptionVisibility
+    Update-Preview
+} finally {
+    $script:LauncherInitializing = $false
+}
 
 $window.ShowDialog() | Out-Null

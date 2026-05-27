@@ -70,13 +70,39 @@ namespace t850 {
               UINT sy0 = y * 2;
               UINT sx1 = (sx0 + 1 < prevWidth) ? sx0 + 1 : sx0;
               UINT sy1 = (sy0 + 1 < prevHeight) ? sy0 + 1 : sy0;
-              for (UINT c = 0; c < bytesPerPixel; ++c) {
-                UINT accum = 0;
-                accum += srcMip[(static_cast<size_t>(sy0) * prevWidth + sx0) * bytesPerPixel + c];
-                accum += srcMip[(static_cast<size_t>(sy0) * prevWidth + sx1) * bytesPerPixel + c];
-                accum += srcMip[(static_cast<size_t>(sy1) * prevWidth + sx0) * bytesPerPixel + c];
-                accum += srcMip[(static_cast<size_t>(sy1) * prevWidth + sx1) * bytesPerPixel + c];
-                dst[(static_cast<size_t>(y) * mipWidth + x) * bytesPerPixel + c] = static_cast<unsigned char>((accum + 2) / 4);
+              const size_t dstIndex = (static_cast<size_t>(y) * mipWidth + x) * bytesPerPixel;
+              const size_t i00 = (static_cast<size_t>(sy0) * prevWidth + sx0) * bytesPerPixel;
+              const size_t i10 = (static_cast<size_t>(sy0) * prevWidth + sx1) * bytesPerPixel;
+              const size_t i01 = (static_cast<size_t>(sy1) * prevWidth + sx0) * bytesPerPixel;
+              const size_t i11 = (static_cast<size_t>(sy1) * prevWidth + sx1) * bytesPerPixel;
+              if (bytesPerPixel == 4) {
+                const UINT a00 = srcMip[i00 + 3];
+                const UINT a10 = srcMip[i10 + 3];
+                const UINT a01 = srcMip[i01 + 3];
+                const UINT a11 = srcMip[i11 + 3];
+                const UINT alphaSum = a00 + a10 + a01 + a11;
+                dst[dstIndex + 3] = static_cast<unsigned char>((alphaSum + 2) / 4);
+                if (alphaSum > 0) {
+                  for (UINT c = 0; c < 3; ++c) {
+                    const UINT weighted =
+                      srcMip[i00 + c] * a00 + srcMip[i10 + c] * a10 +
+                      srcMip[i01 + c] * a01 + srcMip[i11 + c] * a11;
+                    dst[dstIndex + c] = static_cast<unsigned char>((weighted + alphaSum / 2) / alphaSum);
+                  }
+                } else {
+                  dst[dstIndex + 0] = 0;
+                  dst[dstIndex + 1] = 0;
+                  dst[dstIndex + 2] = 0;
+                }
+              } else {
+                for (UINT c = 0; c < bytesPerPixel; ++c) {
+                  UINT accum = 0;
+                  accum += srcMip[i00 + c];
+                  accum += srcMip[i10 + c];
+                  accum += srcMip[i01 + c];
+                  accum += srcMip[i11 + c];
+                  dst[dstIndex + c] = static_cast<unsigned char>((accum + 2) / 4);
+                }
               }
             }
           }

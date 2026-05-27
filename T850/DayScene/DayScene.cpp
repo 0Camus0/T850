@@ -92,8 +92,10 @@ float ClampFloat(float value, float minValue, float maxValue) {
 
 AndroidVirtualControlsLayout BuildAndroidVirtualControlsLayout(float width, float height) {
   AndroidVirtualControlsLayout layout;
+  width = (std::max)(width, 1.0f);
+  height = (std::max)(height, 1.0f);
   const float shortest = (std::max)(1.0f, (std::min)(width, height));
-  layout.stickRadius = ClampFloat(shortest * 0.105f, 72.0f, 135.0f);
+  layout.stickRadius = ClampFloat(shortest * 0.12f, 64.0f, shortest * 0.18f);
   layout.knobRadius = layout.stickRadius * 0.38f;
   layout.buttonRadius = layout.stickRadius * 0.42f;
   const float margin = layout.stickRadius * 1.35f;
@@ -217,6 +219,7 @@ void DayScene::CaptureSceneProfileState(t850::SandboxProfileDesc& state) const {
   addBool("parallax_toggle", SceneProp.ToogleParallax != 0);
   addBool("parallax_shadow_toggle", SceneProp.ToogleParallaxShadow != 0);
   addBool("godrays_toggle", SceneProp.ToogleGodRays != 0);
+  addBool("point_lights_enabled", SceneProp.PointLightsEnabled);
   addBool("frustum_culling", SceneProp.FrustumCullingEnabled);
   addBool("show_culling_debug", m_showCullStats);
 
@@ -225,6 +228,7 @@ void DayScene::CaptureSceneProfileState(t850::SandboxProfileDesc& state) const {
   addInt("debug_render_target", m_debugRTSelection);
   addInt("active_camera", m_activeCameraIndex);
   addInt("cubemap", m_currentCubemapIndex);
+  addInt("luminance_mode", SceneProp.LuminanceMode);
 }
 
 void DayScene::ApplySceneProfileState(const t850::SandboxProfileDesc& state) {
@@ -284,6 +288,7 @@ void DayScene::ApplySceneProfileState(const t850::SandboxProfileDesc& state) {
     else if (value.name == "parallax_toggle") { SceneProp.ToogleParallax = value.value ? 1 : 0; if (Meshes[0].pBase) Meshes[0].SetParallaxEnabled(value.value); }
     else if (value.name == "parallax_shadow_toggle") { SceneProp.ToogleParallaxShadow = value.value ? 1 : 0; SceneProp.ParallaxShadowStrength = value.value ? SceneProp.ParallaxShadowStrength : 0.0f; }
     else if (value.name == "godrays_toggle") SceneProp.ToogleGodRays = value.value ? 1 : 0;
+    else if (value.name == "point_lights_enabled") SceneProp.PointLightsEnabled = value.value;
     else if (value.name == "frustum_culling") SceneProp.FrustumCullingEnabled = SceneProp.FrustumCullingToggleAllowed && value.value;
     else if (value.name == "show_culling_debug") { m_showCullStats = value.value; SceneProp.ShowCullingDebug = value.value; }
   }
@@ -292,6 +297,7 @@ void DayScene::ApplySceneProfileState(const t850::SandboxProfileDesc& state) {
     if (value.name == "num_lights") SceneProp.ActiveLights = value.value;
     else if (value.name == "active_gauss_kernel") ChangeActiveGaussSelection = value.value;
     else if (value.name == "debug_render_target") m_debugRTSelection = value.value;
+    else if (value.name == "luminance_mode") SceneProp.LuminanceMode = value.value;
     else if (value.name == "active_camera") ApplyActiveCameraSelection(value.value);
     else if (value.name == "cubemap") m_currentCubemapIndex = value.value;
     for (int kernelIndex = 0; kernelIndex < (int)SceneProp.pGaussKernels.size(); ++kernelIndex) {
@@ -567,7 +573,6 @@ void DayScene::CreateAssets() {
   BrightPassPass   = m_renderGraph.GetRTHandle("BrightPass");
   GodRaysCalcPass  = m_renderGraph.GetRTHandle("GodRaysCalc");
   GodRaysCalcExtraPass = m_renderGraph.GetRTHandle("GodRaysCalcExtra");
-  LuminanceMapPass = m_renderGraph.GetRTHandle("LuminanceMap");
   AdaptedLumCurrentPass = m_renderGraph.GetRTHandle("AdaptedLumCurrent");
   AdaptedLumPrevPass = m_renderGraph.GetRTHandle("AdaptedLumPrev");
   CoCPass          = m_renderGraph.GetRTHandle("CoC");
@@ -990,12 +995,17 @@ bool DayScene::HandleAndroidVirtualControls(AInputEvent* event) {
     return false;
   }
 
-  const float width = pFramework && pFramework->pVideoDriver
-      ? static_cast<float>(pFramework->pVideoDriver->width)
-      : ImGui::GetIO().DisplaySize.x;
-  const float height = pFramework && pFramework->pVideoDriver
-      ? static_cast<float>(pFramework->pVideoDriver->height)
-      : ImGui::GetIO().DisplaySize.y;
+  ImGuiIO& io = ImGui::GetIO();
+  float width = io.DisplaySize.x;
+  float height = io.DisplaySize.y;
+  if (pFramework && pFramework->pVideoDriver) {
+    if (pFramework->pVideoDriver->width > 0) {
+      width = static_cast<float>(pFramework->pVideoDriver->width);
+    }
+    if (pFramework->pVideoDriver->height > 0) {
+      height = static_cast<float>(pFramework->pVideoDriver->height);
+    }
+  }
   if (width <= 0.0f || height <= 0.0f) {
     return false;
   }
@@ -1015,28 +1025,22 @@ bool DayScene::HandleAndroidVirtualControls(AInputEvent* event) {
   }
 
   auto resetPointer = [&](int pointerId) {
-    bool handled = false;
     if (pointerId == m_androidMovePointerId) {
       m_androidMovePointerId = -1;
       m_androidMoveAxis = XVECTOR2(0.0f, 0.0f);
-      handled = true;
     }
     if (pointerId == m_androidLookPointerId) {
       m_androidLookPointerId = -1;
       m_androidLookAxis = XVECTOR2(0.0f, 0.0f);
-      handled = true;
     }
     if (pointerId == m_androidUpPointerId) {
       m_androidUpPointerId = -1;
       m_androidMoveUp = false;
-      handled = true;
     }
     if (pointerId == m_androidDownPointerId) {
       m_androidDownPointerId = -1;
       m_androidMoveDown = false;
-      handled = true;
     }
-    return handled;
   };
 
   if (action == AMOTION_EVENT_ACTION_CANCEL) {
@@ -1047,12 +1051,11 @@ bool DayScene::HandleAndroidVirtualControls(AInputEvent* event) {
   if (action == AMOTION_EVENT_ACTION_UP || action == AMOTION_EVENT_ACTION_POINTER_UP) {
     const int pointerId = AMotionEvent_getPointerId(event, actionPointerIndex);
     if (action == AMOTION_EVENT_ACTION_UP) {
-      const bool handled = m_androidMovePointerId >= 0 || m_androidLookPointerId >= 0 ||
-                           m_androidUpPointerId >= 0 || m_androidDownPointerId >= 0;
       ResetAndroidVirtualControls();
-      return handled;
+      return true;
     }
-    return resetPointer(pointerId);
+    resetPointer(pointerId);
+    return true;
   }
 
   auto capturePointer = [&](int pointerIndex) {
@@ -1084,21 +1087,20 @@ bool DayScene::HandleAndroidVirtualControls(AInputEvent* event) {
   };
 
   if (action == AMOTION_EVENT_ACTION_DOWN || action == AMOTION_EVENT_ACTION_POINTER_DOWN) {
-    return capturePointer(actionPointerIndex);
+    capturePointer(actionPointerIndex);
+    return true;
   }
 
   if (action != AMOTION_EVENT_ACTION_MOVE) {
-    return false;
+    return true;
   }
 
-  bool handled = false;
   const int moveIndex = FindPointerIndexById(event, m_androidMovePointerId);
   if (moveIndex >= 0) {
     m_androidMoveAxis = StickAxisFromPoint(AMotionEvent_getX(event, moveIndex),
                                            AMotionEvent_getY(event, moveIndex),
                                            layout.moveCenter,
                                            layout.stickRadius);
-    handled = true;
   } else {
     m_androidMovePointerId = -1;
     m_androidMoveAxis = XVECTOR2(0.0f, 0.0f);
@@ -1110,7 +1112,6 @@ bool DayScene::HandleAndroidVirtualControls(AInputEvent* event) {
                                            AMotionEvent_getY(event, lookIndex),
                                            layout.lookCenter,
                                            layout.stickRadius);
-    handled = true;
   } else {
     m_androidLookPointerId = -1;
     m_androidLookAxis = XVECTOR2(0.0f, 0.0f);
@@ -1122,7 +1123,6 @@ bool DayScene::HandleAndroidVirtualControls(AInputEvent* event) {
                                         AMotionEvent_getY(event, upIndex),
                                         layout.upCenter,
                                         layout.buttonRadius * 1.2f);
-    handled = true;
     if (!m_androidMoveUp) {
       m_androidUpPointerId = -1;
     }
@@ -1137,7 +1137,6 @@ bool DayScene::HandleAndroidVirtualControls(AInputEvent* event) {
                                           AMotionEvent_getY(event, downIndex),
                                           layout.downCenter,
                                           layout.buttonRadius * 1.2f);
-    handled = true;
     if (!m_androidMoveDown) {
       m_androidDownPointerId = -1;
     }
@@ -1146,7 +1145,7 @@ bool DayScene::HandleAndroidVirtualControls(AInputEvent* event) {
     m_androidMoveDown = false;
   }
 
-  return handled;
+  return true;
 }
 
 void DayScene::ApplyAndroidVirtualControls() {
@@ -1193,11 +1192,21 @@ void DayScene::DrawAndroidVirtualControls(bool guiVisible) {
   }
 
   ImGuiIO& io = ImGui::GetIO();
-  if (io.DisplaySize.x <= 0.0f || io.DisplaySize.y <= 0.0f) {
+  float width = io.DisplaySize.x;
+  float height = io.DisplaySize.y;
+  if (pFramework && pFramework->pVideoDriver) {
+    if (pFramework->pVideoDriver->width > 0) {
+      width = static_cast<float>(pFramework->pVideoDriver->width);
+    }
+    if (pFramework->pVideoDriver->height > 0) {
+      height = static_cast<float>(pFramework->pVideoDriver->height);
+    }
+  }
+  if (width <= 0.0f || height <= 0.0f) {
     return;
   }
 
-  const AndroidVirtualControlsLayout layout = BuildAndroidVirtualControlsLayout(io.DisplaySize.x, io.DisplaySize.y);
+  const AndroidVirtualControlsLayout layout = BuildAndroidVirtualControlsLayout(width, height);
   ImDrawList* drawList = ImGui::GetForegroundDrawList();
   if (!drawList) {
     return;
@@ -1604,32 +1613,6 @@ void DayScene::OnDraw() {
     screenshotNum++;
   }
 #else
-  // RT Dump via FrameDumper (skip when profiling — GPU queries conflict with dump's cmd buffer reset)
-  if (m_dumper.ShouldDump(DtSecs) && !g_config.flags.profile) {
-    std::vector<RTDumpEntry> rts = {
-      {GBufferPass,     BaseDriver::COLOR0_ATTACHMENT, "GBuffer_Color0"},
-      {GBufferPass,     BaseDriver::COLOR1_ATTACHMENT, "GBuffer_Normals"},
-      {GBufferPass,     BaseDriver::COLOR2_ATTACHMENT, "GBuffer_Color2"},
-      {GBufferPass,     BaseDriver::COLOR3_ATTACHMENT, "GBuffer_Color3"},
-      {GBufferPass,     BaseDriver::COLOR4_ATTACHMENT, "GBuffer_Emissive"},
-      {GBufferPass,     BaseDriver::COLOR5_ATTACHMENT, "GBuffer_Sheen"},
-      {GBufferPass,     BaseDriver::COLOR6_ATTACHMENT, "GBuffer_SpecularOcclusion"},
-      {GBufferPass,     BaseDriver::DEPTH_ATTACHMENT,  "GBuffer_Depth"},
-      {DepthPass,       BaseDriver::DEPTH_ATTACHMENT,  "ShadowMap_Depth"},
-      {ShadowAccumPass, BaseDriver::COLOR0_ATTACHMENT, "ShadowAccum"},
-      {DeferredPass,    BaseDriver::COLOR0_ATTACHMENT, "Deferred"},
-      {Extra16FPass,    BaseDriver::COLOR0_ATTACHMENT, "Extra16F"},
-      {ExtraHelperPass, BaseDriver::COLOR0_ATTACHMENT, "HDR_Final"},
-      {BloomAccumPass,  BaseDriver::COLOR0_ATTACHMENT, "Bloom"},
-      {GodRaysCalcPass, BaseDriver::COLOR0_ATTACHMENT, "GodRays"},
-      {LuminanceMapPass, BaseDriver::COLOR0_ATTACHMENT, "LuminanceMap"},
-      {AdaptedLumCurrentPass, BaseDriver::COLOR0_ATTACHMENT, "AdaptedLumCurrent"},
-      {AdaptedLumPrevPass, BaseDriver::COLOR0_ATTACHMENT, "AdaptedLumPrev"},
-    };
-    m_dumper.DumpFrame(pFramework->pVideoDriver, Cam, LightCam, SceneProp, rts, DtSecs);
-    if (m_dumper.ShouldExit() && !g_config.flags.profile) exit(0);
-  }
-
   // Debug RT override: draw selected render target fullscreen
   if (m_debugRTSelection > 0) {
     int selected = -1;
@@ -1647,10 +1630,9 @@ void DayScene::OnDraw() {
     case 10: selected = ExtraHelperPass; attachment = BaseDriver::COLOR0_ATTACHMENT; break; // HDR
     case 11: selected = BloomAccumPass;  attachment = BaseDriver::COLOR0_ATTACHMENT; break; // Bloom
     case 12: selected = GodRaysCalcPass; attachment = BaseDriver::COLOR0_ATTACHMENT; break; // God Rays
-    case 13: selected = LuminanceMapPass;attachment = BaseDriver::COLOR0_ATTACHMENT; break; // Luminance
-    case 14: selected = CoCPass;         attachment = BaseDriver::COLOR0_ATTACHMENT; break; // CoC
-    case 15: selected = BrightPassPass;  attachment = BaseDriver::COLOR0_ATTACHMENT; break; // Bright
-    case 16: selected = AdaptedLumCurrentPass; attachment = BaseDriver::COLOR0_ATTACHMENT; break; // Adapted Lum
+    case 13: selected = CoCPass;         attachment = BaseDriver::COLOR0_ATTACHMENT; break; // CoC
+    case 14: selected = BrightPassPass;  attachment = BaseDriver::COLOR0_ATTACHMENT; break; // Bright
+    case 15: selected = AdaptedLumCurrentPass; attachment = BaseDriver::COLOR0_ATTACHMENT; break; // Adapted Lum
     }
     if (selected >= 0) {
       Quads[7].SetTexture(pFramework->pVideoDriver->GetRTTexture(selected, attachment), 0);
@@ -1715,7 +1697,7 @@ void DayScene::OnDraw() {
         // Draw arrow gizmo at an editor position above scene center
         XVECTOR3 gizmoPos(0.0f, 80.0f, 0.0f);
         m_wireframeArrow.Draw(VP, gizmoPos, light.Direction, 10.0f);
-      } else {
+      } else if (SceneProp.PointLightsEnabled) {
         m_wireframeSphere.Draw(VP, light.Position, light.radius);
       }
     }
@@ -1762,6 +1744,31 @@ void DayScene::OnDraw() {
 
     pFramework->pVideoDriver->SetBlendState(BaseDriver::BLEND_DEFAULT);
     pFramework->pVideoDriver->SetDepthStencilState(BaseDriver::DEPTH_DEFAULT);
+  }
+
+  // RT Dump via FrameDumper (skip when profiling — GPU queries conflict with dump's cmd buffer reset)
+  if (m_dumper.ShouldDump(DtSecs) && !g_config.flags.profile) {
+    std::vector<RTDumpEntry> rts = {
+      {GBufferPass,     BaseDriver::COLOR0_ATTACHMENT, "GBuffer_Color0"},
+      {GBufferPass,     BaseDriver::COLOR1_ATTACHMENT, "GBuffer_Normals"},
+      {GBufferPass,     BaseDriver::COLOR2_ATTACHMENT, "GBuffer_Color2"},
+      {GBufferPass,     BaseDriver::COLOR3_ATTACHMENT, "GBuffer_Color3"},
+      {GBufferPass,     BaseDriver::COLOR4_ATTACHMENT, "GBuffer_Emissive"},
+      {GBufferPass,     BaseDriver::COLOR5_ATTACHMENT, "GBuffer_Sheen"},
+      {GBufferPass,     BaseDriver::COLOR6_ATTACHMENT, "GBuffer_SpecularOcclusion"},
+      {GBufferPass,     BaseDriver::DEPTH_ATTACHMENT,  "GBuffer_Depth"},
+      {DepthPass,       BaseDriver::DEPTH_ATTACHMENT,  "ShadowMap_Depth"},
+      {ShadowAccumPass, BaseDriver::COLOR0_ATTACHMENT, "ShadowAccum"},
+      {DeferredPass,    BaseDriver::COLOR0_ATTACHMENT, "Deferred"},
+      {Extra16FPass,    BaseDriver::COLOR0_ATTACHMENT, "Extra16F"},
+      {ExtraHelperPass, BaseDriver::COLOR0_ATTACHMENT, "HDR_Final"},
+      {BloomAccumPass,  BaseDriver::COLOR0_ATTACHMENT, "Bloom"},
+      {GodRaysCalcPass, BaseDriver::COLOR0_ATTACHMENT, "GodRays"},
+      {AdaptedLumCurrentPass, BaseDriver::COLOR0_ATTACHMENT, "AdaptedLumCurrent"},
+      {AdaptedLumPrevPass, BaseDriver::COLOR0_ATTACHMENT, "AdaptedLumPrev"},
+    };
+    m_dumper.DumpFrame(pFramework->pVideoDriver, Cam, LightCam, SceneProp, rts, DtSecs);
+    if (m_dumper.ShouldExit() && !g_config.flags.profile) exit(0);
   }
 
 #endif
@@ -2311,120 +2318,6 @@ int DayScene::FindLightOption(int activeLights) {
   return 0;
 }
 
-void DayScene::PopulateGUI(t850::GUIManager& gui) {
-  struct SliderMapping {
-    const char* name;
-    int settingIndex;
-  };
-  static const SliderMapping mappings[] = {
-    {"exposure",              CHANGE_EXPOSURE},
-    {"bloom_factor",          CHANGE_BLOOM_FACTOR},
-    {"bloom_threshold",       CHANGE_BLOOM_THRESHOLD},
-    {"tm_white_level",        CHANGE_TM_WHITE_LEVEL},
-    {"tm_adapt_tau",          CHANGE_TM_ADAPT_TAU},
-    {"pcf_radius",            CHANGE_PCF_RADIUS},
-    {"pcf_samples",           CHANGE_PCF_SAMPLES},
-    {"ssao_kernel_size",      CHANGE_SSAO_KERNEL_SIZE},
-    {"ssao_radius",           CHANGE_SSAO_RADIUS},
-    {"dof_aperture",          CHANGE_DOF_APERTURE},
-    {"dof_focal_length",      CHANGE_DOF_FOCAL_LENGHT},
-    {"dof_max_coc",           CHANGE_DOF_MAX_COC},
-    {"dof_far_samples",       CHANGE_DOF_FAR_SAMPLE},
-    {"dof_near_samples",      CHANGE_DOF_NEAR_SAMPLE},
-    {"parallax_low_samples",  CHANGE_PARALLAX_LOW_SAMPLES},
-    {"parallax_high_samples", CHANGE_PARALLAX_HIGH_SAMPLES},
-    {"parallax_height",       CHANGE_PARALLAX_HEIGHT},
-    {"parallax_shadow_min_layers", CHANGE_PARALLAX_SHADOW_MIN_LAYERS},
-    {"parallax_shadow_max_layers", CHANGE_PARALLAX_SHADOW_MAX_LAYERS},
-    {"parallax_shadow_softness",   CHANGE_PARALLAX_SHADOW_SOFTNESS},
-    {"parallax_shadow_strength",   CHANGE_PARALLAX_SHADOW_STRENGTH},
-    {"light_volume_steps",    CHANGE_LIGHT_VOLUME_STEPS},
-    {"godrays_factor",        CHANGE_GODRAYS_FACTOR},
-    {"gauss_kernel_radius",   CHANGE_GAUSS_KERNEL_RADIUS},
-    {"gauss_kernel_deviation", CHANGE_GAUSS_KERNEL_DEVIATION},
-    {"fov",                    CHANGE_FOV},
-    {"light_intensity",        CHANGE_LIGHT_INTENSITY},
-    {"light_radius_scale",      CHANGE_LIGHT_RADIUS_SCALE},
-    {"light_intensity_scale",   CHANGE_LIGHT_INTENSITY_SCALE},
-    {"lightmap_intensity",      CHANGE_LIGHTMAP_INTENSITY},
-    {"shadow_bias",             CHANGE_SHADOW_BIAS},
-    {"shadow_min",              CHANGE_SHADOW_MIN},
-    {"env_factor",              CHANGE_ENV_FACTOR},
-    {"ibl_factor",               CHANGE_IBL_FACTOR},
-    {"material_emissive_intensity", CHANGE_MATERIAL_EMISSIVE_INTENSITY},
-    {"material_transmission_multiplier", CHANGE_MATERIAL_TRANSMISSION_MULTIPLIER},
-    {"material_refraction_strength", CHANGE_MATERIAL_REFRACTION_STRENGTH},
-  };
-
-  auto& sliderDescs = m_sceneSetup.descriptor.sliders;
-  for (auto& sd : sliderDescs) {
-    int settingIdx = -1;
-    for (auto& m : mappings) {
-      if (sd.name == m.name) {
-        settingIdx = m.settingIndex;
-        break;
-      }
-    }
-    gui.AddSlider(sd, settingIdx);
-  }
-
-  // Checkbox mappings
-  struct CheckboxMapping {
-    const char* name;
-    int settingIndex;
-  };
-  static const CheckboxMapping cbMappings[] = {
-    {"shadow_toggle",   CHANGE_PCF_TOOGLE},
-    {"ssao_toggle",     CHANGLE_SSAO_TOOGLE},
-    {"dof_auto_focus",  CHANGE_DOF_AUTO_FOCUS},
-    {"show_spline",    CHANGE_SHOW_SPLINE},
-    {"show_lights",    CHANGE_SHOW_LIGHTS},
-    {"show_physics",   CHANGE_SHOW_PHYSICS},
-    {"dof_toggle",     CHANGE_DOF_TOGGLE},
-    {"parallax_toggle", CHANGE_PARALLAX_TOGGLE},
-    {"parallax_shadow_toggle", CHANGE_PARALLAX_SHADOW_TOGGLE},
-    {"godrays_toggle", CHANGE_GODRAYS_TOGGLE},
-  };
-
-  auto& cbDescs = m_sceneSetup.descriptor.checkboxes;
-  for (auto& cd : cbDescs) {
-    int settingIdx = -1;
-    for (auto& m : cbMappings) {
-      if (cd.name == m.name) {
-        settingIdx = m.settingIndex;
-        break;
-      }
-    }
-    gui.AddCheckbox(cd, settingIdx);
-  }
-
-  // Selector mappings
-  struct SelectorMapping {
-    const char* name;
-    int settingIndex;
-  };
-  static const SelectorMapping selMappings[] = {
-    {"num_lights",          CHANGE_NUM_LIGHTS},
-    {"active_gauss_kernel",      CHANGE_ACTIVE_GAUSS_KERNEL},
-    {"gauss_kernel_sample_count", CHANGE_GAUSS_KERNEL_SAMPLE_COUNT},
-    {"debug_render_target",       CHANGE_DEBUG_RT},
-    {"active_camera",               CHANGE_ACTIVE_CAMERA},
-    {"cubemap",                     CHANGE_CUBEMAP},
-  };
-
-  auto& selDescs = m_sceneSetup.descriptor.selectors;
-  for (auto& sd : selDescs) {
-    int settingIdx = -1;
-    for (auto& m : selMappings) {
-      if (sd.name == m.name) {
-        settingIdx = m.settingIndex;
-        break;
-      }
-    }
-    gui.AddSelector(sd, settingIdx);
-  }
-}
-
 void DayScene::DrawDevGui(t850::DevGuiContext& gui) {
   struct Mapping { const char* name; int settingIndex; };
 
@@ -2479,6 +2372,7 @@ void DayScene::DrawDevGui(t850::DevGuiContext& gui) {
     {"parallax_toggle", CHANGE_PARALLAX_TOGGLE},
     {"parallax_shadow_toggle", CHANGE_PARALLAX_SHADOW_TOGGLE},
     {"godrays_toggle", CHANGE_GODRAYS_TOGGLE},
+    {"point_lights_enabled", CHANGE_POINT_LIGHTS_ENABLED},
   };
 
   static const Mapping selectorMappings[] = {
@@ -2488,6 +2382,7 @@ void DayScene::DrawDevGui(t850::DevGuiContext& gui) {
     {"debug_render_target", CHANGE_DEBUG_RT},
     {"active_camera", CHANGE_ACTIVE_CAMERA},
     {"cubemap", CHANGE_CUBEMAP},
+    {"luminance_mode", CHANGE_LUMINANCE_MODE},
   };
 
   auto findSetting = [](const std::string& name, const Mapping* mappings, int count) {
@@ -2607,6 +2502,7 @@ void DayScene::DrawDevGui(t850::DevGuiContext& gui) {
     case CHANGE_PARALLAX_TOGGLE: value = (SceneProp.ToogleParallax != 0); return true;
     case CHANGE_PARALLAX_SHADOW_TOGGLE: value = (SceneProp.ToogleParallaxShadow != 0); return true;
     case CHANGE_GODRAYS_TOGGLE: value = (SceneProp.ToogleGodRays != 0); return true;
+    case CHANGE_POINT_LIGHTS_ENABLED: value = SceneProp.PointLightsEnabled; return true;
     }
     return false;
   };
@@ -2635,6 +2531,7 @@ void DayScene::DrawDevGui(t850::DevGuiContext& gui) {
       SceneProp.ParallaxShadowStrength = value ? 1.0f : 0.0f;
       break;
     case CHANGE_GODRAYS_TOGGLE: SceneProp.ToogleGodRays = value ? 1 : 0; break;
+    case CHANGE_POINT_LIGHTS_ENABLED: SceneProp.PointLightsEnabled = value; break;
     }
   };
 
@@ -2654,6 +2551,7 @@ void DayScene::DrawDevGui(t850::DevGuiContext& gui) {
     case CHANGE_DEBUG_RT: selectedIndex = m_debugRTSelection; return true;
     case CHANGE_ACTIVE_CAMERA: selectedIndex = m_activeCameraIndex; return true;
     case CHANGE_CUBEMAP: selectedIndex = m_currentCubemapIndex; return true;
+    case CHANGE_LUMINANCE_MODE: selectedIndex = SceneProp.LuminanceMode; return true;
     }
     return false;
   };
@@ -2675,6 +2573,7 @@ void DayScene::DrawDevGui(t850::DevGuiContext& gui) {
         m_pendingCubemap = "sky/" + desc.options[selectedIndex];
       }
       break;
+    case CHANGE_LUMINANCE_MODE: SceneProp.LuminanceMode = selectedIndex; break;
     }
   };
 
@@ -2693,6 +2592,14 @@ void DayScene::DrawDevGui(t850::DevGuiContext& gui) {
   }
 
   if (gui.BeginSection("Toggles")) {
+    t850::CheckboxDesc pointLightsDesc;
+    pointLightsDesc.name = "point_lights_enabled";
+    pointLightsDesc.label = "Dynamic point lights";
+    bool pointLightsEnabled = SceneProp.PointLightsEnabled;
+    if (gui.Checkbox(pointLightsDesc, pointLightsEnabled)) {
+      SceneProp.PointLightsEnabled = pointLightsEnabled;
+    }
+
     for (const auto& desc : m_sceneSetup.descriptor.checkboxes) {
       int settingIndex = findSetting(desc.name, checkboxMappings, (int)(sizeof(checkboxMappings) / sizeof(checkboxMappings[0])));
       if (settingIndex < 0) continue;
@@ -2777,234 +2684,6 @@ void DayScene::DrawDevGui(t850::DevGuiContext& gui) {
   }
 }
 
-void DayScene::SyncToGUI(t850::GUIManager& gui) {
-  for (auto& sp : gui.GetSliderPairs()) {
-    auto* slider = sp.slider;
-    switch (slider->settingIndex) {
-    case CHANGE_EXPOSURE:           slider->SetValue(SceneProp.Exposure); break;
-    case CHANGE_BLOOM_FACTOR:       slider->SetValue(SceneProp.BloomFactor); break;
-    case CHANGE_BLOOM_THRESHOLD:     slider->SetValue(SceneProp.BloomThreshold); break;
-    case CHANGE_TM_WHITE_LEVEL:     slider->SetValue(SceneProp.ToneMapWhiteLevel); break;
-    case CHANGE_TM_ADAPT_TAU:       slider->SetValue(SceneProp.LuminanceTau); break;
-    case CHANGE_PCF_RADIUS:         slider->SetValue(SceneProp.PCFScale); break;
-    case CHANGE_PCF_SAMPLES:        slider->SetValue(SceneProp.PCFSamples); break;
-    case CHANGE_SSAO_KERNEL_SIZE:   slider->SetValue((float)SceneProp.SSAOKernel.KernelSize); break;
-    case CHANGE_SSAO_RADIUS:        slider->SetValue(SceneProp.SSAOKernel.Radius); break;
-    case CHANGE_DOF_APERTURE:       slider->SetValue(SceneProp.Aperture); break;
-    case CHANGE_DOF_FOCAL_LENGHT:   slider->SetValue(SceneProp.FocalLength); break;
-    case CHANGE_DOF_MAX_COC:        slider->SetValue(SceneProp.MaxCoc); break;
-    case CHANGE_DOF_FAR_SAMPLE:     slider->SetValue(SceneProp.DOF_Far_Samples_squared); break;
-    case CHANGE_DOF_NEAR_SAMPLE:    slider->SetValue(SceneProp.DOF_Near_Samples_squared); break;
-    case CHANGE_PARALLAX_LOW_SAMPLES:  slider->SetValue(SceneProp.ParallaxLowSamples); break;
-    case CHANGE_PARALLAX_HIGH_SAMPLES: slider->SetValue(SceneProp.ParallaxHighSamples); break;
-    case CHANGE_PARALLAX_HEIGHT:    slider->SetValue(SceneProp.ParallaxHeight); break;
-    case CHANGE_PARALLAX_SHADOW_MIN_LAYERS: slider->SetValue(SceneProp.ParallaxShadowMinLayers); break;
-    case CHANGE_PARALLAX_SHADOW_MAX_LAYERS: slider->SetValue(SceneProp.ParallaxShadowMaxLayers); break;
-    case CHANGE_PARALLAX_SHADOW_SOFTNESS:   slider->SetValue(SceneProp.ParallaxShadowSoftness); break;
-    case CHANGE_PARALLAX_SHADOW_STRENGTH:   slider->SetValue(SceneProp.ParallaxShadowStrength); break;
-    case CHANGE_LIGHT_VOLUME_STEPS: slider->SetValue(SceneProp.LightVolumeSteps); break;
-    case CHANGE_GODRAYS_FACTOR:    slider->SetValue(SceneProp.GodRaysFactor); break;
-    case CHANGE_GAUSS_KERNEL_RADIUS:   slider->SetValue(SceneProp.pGaussKernels[ChangeActiveGaussSelection]->radius); break;
-    case CHANGE_GAUSS_KERNEL_DEVIATION: slider->SetValue(SceneProp.pGaussKernels[ChangeActiveGaussSelection]->sigma); break;
-    case CHANGE_FOV:                slider->SetValue(Rad2Deg(ActiveCam->Fov)); break;
-    case CHANGE_LIGHT_INTENSITY:    if (!SceneProp.Lights.empty()) slider->SetValue(SceneProp.Lights[0].Intensity); break;
-    case CHANGE_LIGHT_RADIUS_SCALE: slider->SetValue(SceneProp.LightRadiusScale); break;
-    case CHANGE_LIGHT_INTENSITY_SCALE: slider->SetValue(SceneProp.LightIntensityScale); break;
-    case CHANGE_LIGHTMAP_INTENSITY: slider->SetValue(SceneProp.LightmapIntensity); break;
-    case CHANGE_SHADOW_BIAS:        slider->SetValue(SceneProp.ShadowBias); break;
-    case CHANGE_SHADOW_MIN:         slider->SetValue(SceneProp.ShadowMin); break;
-    case CHANGE_ENV_FACTOR:         slider->SetValue(SceneProp.EnvFactor); break;
-    case CHANGE_IBL_FACTOR:         slider->SetValue(SceneProp.IBLFactor); break;
-    case CHANGE_MATERIAL_EMISSIVE_INTENSITY: slider->SetValue(SceneProp.MaterialEmissiveIntensity); break;
-    case CHANGE_MATERIAL_TRANSMISSION_MULTIPLIER: slider->SetValue(SceneProp.MaterialTransmissionMultiplier); break;
-    case CHANGE_MATERIAL_REFRACTION_STRENGTH: slider->SetValue(SceneProp.MaterialRefractionStrength); break;
-    }
-  }
-  for (auto& cp : gui.GetCheckboxPairs()) {
-    auto* cb = cp.checkbox;
-    switch (cb->settingIndex) {
-    case CHANGE_PCF_TOOGLE:     cb->checked = (SceneProp.ToogleShadow != 0); break;
-    case CHANGLE_SSAO_TOOGLE:   cb->checked = (SceneProp.ToogleSSAO != 0); break;
-    case CHANGE_DOF_AUTO_FOCUS: cb->checked = SceneProp.AutoFocus; break;
-    case CHANGE_SHOW_SPLINE:    cb->checked = m_showSpline; break;
-    case CHANGE_SHOW_LIGHTS:    cb->checked = m_showLights; break;
-    case CHANGE_SHOW_PHYSICS:   cb->checked = m_showPhysics; break;
-    case CHANGE_DOF_TOGGLE:     cb->checked = (SceneProp.ToogleDOF != 0); break;
-    case CHANGE_PARALLAX_TOGGLE: cb->checked = (SceneProp.ToogleParallax != 0); break;
-    case CHANGE_PARALLAX_SHADOW_TOGGLE: cb->checked = (SceneProp.ToogleParallaxShadow != 0); break;
-    case CHANGE_GODRAYS_TOGGLE: cb->checked = (SceneProp.ToogleGodRays != 0); break;
-    }
-  }
-  for (auto& sp : gui.GetSelectorPairs()) {
-    auto* sel = sp.selector;
-    switch (sel->settingIndex) {
-    case CHANGE_NUM_LIGHTS:         sel->selectedIndex = FindLightOption(SceneProp.ActiveLights); break;
-    case CHANGE_ACTIVE_GAUSS_KERNEL: sel->selectedIndex = ChangeActiveGaussSelection; break;
-    case CHANGE_GAUSS_KERNEL_SAMPLE_COUNT: {
-      int ks = SceneProp.pGaussKernels[ChangeActiveGaussSelection]->kernelSize;
-      // Find matching option index for the kernel size
-      for (int i = 0; i < (int)sel->options.size(); i++) {
-        if (std::atoi(sel->options[i].c_str()) == ks) { sel->selectedIndex = i; break; }
-      }
-    } break;
-    case CHANGE_DEBUG_RT: sel->selectedIndex = m_debugRTSelection; break;
-    case CHANGE_ACTIVE_CAMERA: sel->selectedIndex = m_activeCameraIndex; break;
-    case CHANGE_CUBEMAP: sel->selectedIndex = m_currentCubemapIndex; break;
-    }
-  }
-}
-
-void DayScene::SyncFromGUI(t850::GUIManager& gui) {
-  for (auto& sp : gui.GetSliderPairs()) {
-    auto* slider = sp.slider;
-    if (!slider->knobDragging && !slider->knobHover) continue;
-    switch (slider->settingIndex) {
-    case CHANGE_EXPOSURE:           SceneProp.Exposure = slider->value; break;
-    case CHANGE_BLOOM_FACTOR:       SceneProp.BloomFactor = slider->value; break;
-    case CHANGE_BLOOM_THRESHOLD:     SceneProp.BloomThreshold = slider->value; break;
-    case CHANGE_TM_WHITE_LEVEL:     SceneProp.ToneMapWhiteLevel = slider->value; break;
-    case CHANGE_TM_ADAPT_TAU:       SceneProp.LuminanceTau = slider->value; break;
-    case CHANGE_PCF_RADIUS:         SceneProp.PCFScale = slider->value; break;
-    case CHANGE_PCF_SAMPLES:        SceneProp.PCFSamples = slider->value; break;
-    case CHANGE_SSAO_KERNEL_SIZE:   SceneProp.SSAOKernel.KernelSize = (int)slider->value; SceneProp.SSAOKernel.Update(); break;
-    case CHANGE_SSAO_RADIUS:        SceneProp.SSAOKernel.Radius = slider->value; break;
-    case CHANGE_DOF_APERTURE:       SceneProp.Aperture = slider->value; break;
-    case CHANGE_DOF_FOCAL_LENGHT:   SceneProp.FocalLength = slider->value; break;
-    case CHANGE_DOF_MAX_COC:        SceneProp.MaxCoc = slider->value; break;
-    case CHANGE_DOF_FAR_SAMPLE:     SceneProp.DOF_Far_Samples_squared = slider->value; break;
-    case CHANGE_DOF_NEAR_SAMPLE:    SceneProp.DOF_Near_Samples_squared = slider->value; break;
-    case CHANGE_PARALLAX_LOW_SAMPLES:  SceneProp.ParallaxLowSamples = slider->value; break;
-    case CHANGE_PARALLAX_HIGH_SAMPLES: SceneProp.ParallaxHighSamples = slider->value; break;
-    case CHANGE_PARALLAX_HEIGHT:    SceneProp.ParallaxHeight = slider->value; break;
-    case CHANGE_PARALLAX_SHADOW_MIN_LAYERS: SceneProp.ParallaxShadowMinLayers = slider->value; break;
-    case CHANGE_PARALLAX_SHADOW_MAX_LAYERS: SceneProp.ParallaxShadowMaxLayers = slider->value; break;
-    case CHANGE_PARALLAX_SHADOW_SOFTNESS:   SceneProp.ParallaxShadowSoftness = slider->value; break;
-    case CHANGE_PARALLAX_SHADOW_STRENGTH:   SceneProp.ParallaxShadowStrength = slider->value; break;
-    case CHANGE_LIGHT_VOLUME_STEPS: SceneProp.LightVolumeSteps = slider->value; break;
-    case CHANGE_GODRAYS_FACTOR:    SceneProp.GodRaysFactor = slider->value; break;
-    case CHANGE_GAUSS_KERNEL_RADIUS:
-      SceneProp.pGaussKernels[ChangeActiveGaussSelection]->radius = slider->value;
-      SceneProp.pGaussKernels[ChangeActiveGaussSelection]->Update();
-      break;
-    case CHANGE_GAUSS_KERNEL_DEVIATION:
-      SceneProp.pGaussKernels[ChangeActiveGaussSelection]->sigma = slider->value;
-      SceneProp.pGaussKernels[ChangeActiveGaussSelection]->Update();
-      break;
-    case CHANGE_FOV:
-      ActiveCam->SetFov(Deg2Rad(slider->value));
-      // Recompute VP so FOV changes are visible even when paused
-      // (Camera::Update is skipped while paused, leaving VP stale).
-      ActiveCam->VP = ActiveCam->View * ActiveCam->Projection;
-      VP = ActiveCam->VP;
-      break;
-    case CHANGE_LIGHT_INTENSITY:
-      if (!SceneProp.Lights.empty()) SceneProp.Lights[0].Intensity = slider->value;
-      break;
-    case CHANGE_LIGHT_RADIUS_SCALE:
-      SceneProp.LightRadiusScale = slider->value;
-      break;
-    case CHANGE_LIGHT_INTENSITY_SCALE:
-      SceneProp.LightIntensityScale = slider->value;
-      break;
-    case CHANGE_LIGHTMAP_INTENSITY:
-      SceneProp.LightmapIntensity = slider->value;
-      break;
-    case CHANGE_SHADOW_BIAS:
-      SceneProp.ShadowBias = slider->value;
-      break;
-    case CHANGE_SHADOW_MIN:
-      SceneProp.ShadowMin = slider->value;
-      break;
-    case CHANGE_ENV_FACTOR:
-      SceneProp.EnvFactor = slider->value;
-      break;
-    case CHANGE_IBL_FACTOR:
-      SceneProp.IBLFactor = slider->value;
-      break;
-    case CHANGE_MATERIAL_EMISSIVE_INTENSITY:
-      SceneProp.MaterialEmissiveIntensity = slider->value;
-      break;
-    case CHANGE_MATERIAL_TRANSMISSION_MULTIPLIER:
-      SceneProp.MaterialTransmissionMultiplier = slider->value;
-      break;
-    case CHANGE_MATERIAL_REFRACTION_STRENGTH:
-      SceneProp.MaterialRefractionStrength = slider->value;
-      break;
-    }
-  }
-
-  // Apply parallax settings immediately so changes are visible even when paused.
-  Meshes[0].SetParallaxSettings(SceneProp.ParallaxLowSamples, SceneProp.ParallaxHighSamples, SceneProp.ParallaxHeight);
-  Meshes[0].SetParallaxShadowSettings(SceneProp.ParallaxShadowMinLayers, SceneProp.ParallaxShadowMaxLayers,
-                                       SceneProp.ParallaxShadowSoftness, SceneProp.ParallaxShadowStrength);
-
-  for (auto& cp : gui.GetCheckboxPairs()) {
-    auto* cb = cp.checkbox;
-    if (!cb->justToggled) continue;
-    switch (cb->settingIndex) {
-    case CHANGE_PCF_TOOGLE:     SceneProp.ToogleShadow = cb->checked ? 1 : 0; break;
-    case CHANGLE_SSAO_TOOGLE:   SceneProp.ToogleSSAO = cb->checked ? 1 : 0; break;
-    case CHANGE_DOF_AUTO_FOCUS: SceneProp.AutoFocus = cb->checked; break;
-    case CHANGE_SHOW_SPLINE:    m_showSpline = cb->checked; break;
-    case CHANGE_SHOW_LIGHTS:    m_showLights = cb->checked; break;
-    case CHANGE_SHOW_PHYSICS:   m_showPhysics = cb->checked; break;
-    case CHANGE_DOF_TOGGLE:
-      SceneProp.ToogleDOF = cb->checked ? 1 : 0;
-      m_renderGraph.SetPassEnabled("CoC", cb->checked);
-      m_renderGraph.SetPassEnabled("Combine CoC", cb->checked);
-      m_renderGraph.SetPassEnabled("DOF", cb->checked);
-      m_renderGraph.SetPassEnabled("DOF 2", cb->checked);
-      break;
-    case CHANGE_PARALLAX_TOGGLE:
-      SceneProp.ToogleParallax = cb->checked ? 1 : 0;
-      Meshes[0].SetParallaxEnabled(cb->checked);
-      break;
-    case CHANGE_PARALLAX_SHADOW_TOGGLE:
-      SceneProp.ToogleParallaxShadow = cb->checked ? 1 : 0;
-      // Toggle via strength uniform: 0 = disabled, saved value = enabled
-      if (cb->checked) {
-        SceneProp.ParallaxShadowStrength = 1.0f; // restore default
-      } else {
-        SceneProp.ParallaxShadowStrength = 0.0f; // disable
-      }
-      break;
-    case CHANGE_GODRAYS_TOGGLE:
-      SceneProp.ToogleGodRays = cb->checked ? 1 : 0;
-      break;
-    }
-  }
-  for (auto& sp : gui.GetSelectorPairs()) {
-    auto* sel = sp.selector;
-    if (!sel->justChanged) continue;
-    switch (sel->settingIndex) {
-    case CHANGE_NUM_LIGHTS: {
-      int val = std::atoi(sel->CurrentOption().c_str());
-      SceneProp.ActiveLights = val;
-    } break;
-    case CHANGE_ACTIVE_GAUSS_KERNEL:
-      ChangeActiveGaussSelection = sel->selectedIndex;
-      break;
-    case CHANGE_GAUSS_KERNEL_SAMPLE_COUNT: {
-      int newSize = std::atoi(sel->CurrentOption().c_str());
-      SceneProp.pGaussKernels[ChangeActiveGaussSelection]->kernelSize = newSize;
-      SceneProp.pGaussKernels[ChangeActiveGaussSelection]->Update();
-    } break;
-    case CHANGE_DEBUG_RT:
-      m_debugRTSelection = sel->selectedIndex;
-      break;
-    case CHANGE_ACTIVE_CAMERA: {
-      ApplyActiveCameraSelection(sel->selectedIndex);
-    } break;
-    case CHANGE_CUBEMAP: {
-      if (sel->selectedIndex != m_currentCubemapIndex) {
-        m_currentCubemapIndex = sel->selectedIndex;
-        m_pendingCubemap = "sky/" + sel->CurrentOption();
-      }
-    } break;
-    }
-  }
-}
-
 #ifdef OS_ANDROID
 void DayScene::DrawAndroidPhysicsPanel(t850::DevGuiContext& gui) {
   if (!gui.BeginSection("Physics")) {
@@ -3031,7 +2710,7 @@ void DayScene::SaveSceneState() {
     }
   }
 
-  // Sync GUI element defaults to match current runtime state
+  // Sync control descriptor defaults to match current runtime state.
   for (auto& sd : m_sceneSetup.descriptor.sliders) {
     if (sd.name == "shadow_bias") sd.default_val = SceneProp.ShadowBias;
     else if (sd.name == "shadow_min")  sd.default_val = SceneProp.ShadowMin;
@@ -3050,6 +2729,7 @@ void DayScene::SaveSceneState() {
     else if (cd.name == "shadow_toggle")    cd.default_val = (SceneProp.ToogleShadow != 0);
     else if (cd.name == "ssao_toggle")      cd.default_val = (SceneProp.ToogleSSAO != 0);
     else if (cd.name == "dof_auto_focus")   cd.default_val = SceneProp.AutoFocus;
+    else if (cd.name == "point_lights_enabled") cd.default_val = SceneProp.PointLightsEnabled;
   }
 
   m_sceneSetup.SaveState(this, "Scenes/DayScene.json");

@@ -34,6 +34,7 @@ struct SceneObject {
   std::string           name;
   std::string           meshPath;
   bool                  visible = true;
+  std::optional<bool>   mobileVisible;
   bool                  frozen  = false;  // visible but not selectable
   bool                  showWire = false; // per-object wireframe override
 

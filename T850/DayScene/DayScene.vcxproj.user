@@ -21,7 +21,7 @@
     <LocalDebuggerCommand>$(TargetPath)</LocalDebuggerCommand>
     <LocalDebuggerWorkingDirectory>$(OutDir)</LocalDebuggerWorkingDirectory>
     <DebuggerFlavor>WindowsLocalDebugger</DebuggerFlavor>
-    <LocalDebuggerCommandArguments>--api vulkan --width 3840 --height 2160 --model ./Models/doomslayer_cine_all_animations_no-damage_double-sided-opaque.glb</LocalDebuggerCommandArguments>
+    <LocalDebuggerCommandArguments>--api vulkan --width 3840 --height 2160 --model ./Models/cyberpunk_city.glb</LocalDebuggerCommandArguments>
   </PropertyGroup>
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|ARM64'">
     <LocalDebuggerCommand>$(TargetPath)</LocalDebuggerCommand>

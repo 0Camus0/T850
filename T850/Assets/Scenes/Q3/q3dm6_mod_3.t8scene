@@ -3,13 +3,13 @@
    "collision": "Scenes/Q3/q3dm6.t8q3clip",
    "editor": {
       "camera_target": {
-         "x": 7.982305,
-         "y": 2.0279312,
-         "z": -15.231749
+         "x": -34.10334,
+         "y": 10.842996,
+         "z": 6.820883
       },
-      "camera_yaw": -0.05499597,
-      "camera_pitch": 0.20000018,
-      "camera_distance": 9.597176,
+      "camera_yaw": 4.4899774,
+      "camera_pitch": 0.20500012,
+      "camera_distance": 0.6654993,
       "show_skybox": true,
       "show_wireframe": false
    },
@@ -78,6 +78,98 @@
             "x": 0.0006204003,
             "y": 0.0006203996,
             "z": 0.0006204003
+         },
+         "visible": true,
+         "frozen": false,
+         "show_wire": false
+      },
+      {
+         "name": "Models\\rewind_cyborg.glb",
+         "mesh": "Models\\rewind_cyborg.glb",
+         "ragdoll": "Models/RagdollEdits/rewind_cyborg.glb.json",
+         "position": {
+            "x": 8.06249,
+            "y": 8.365992,
+            "z": -8.319095
+         },
+         "rotation": {
+            "x": 0,
+            "y": -0,
+            "z": 0
+         },
+         "scale": {
+            "x": 0.53,
+            "y": 0.53,
+            "z": 0.53
+         },
+         "visible": true,
+         "frozen": false,
+         "show_wire": false
+      },
+      {
+         "name": "Models\\rewind_cyborg.glb Clone",
+         "mesh": "Models\\rewind_cyborg.glb",
+         "ragdoll": "Models/RagdollEdits/rewind_cyborg.glb.json",
+         "position": {
+            "x": 9.125077,
+            "y": 8.365992,
+            "z": -8.319095
+         },
+         "rotation": {
+            "x": 0,
+            "y": -0,
+            "z": 0
+         },
+         "scale": {
+            "x": 0.53,
+            "y": 0.53,
+            "z": 0.53
+         },
+         "visible": true,
+         "frozen": false,
+         "show_wire": false
+      },
+      {
+         "name": "Models\\rewind_cyborg.glb Clone Clone",
+         "mesh": "Models\\rewind_cyborg.glb",
+         "ragdoll": "Models/RagdollEdits/rewind_cyborg.glb.json",
+         "position": {
+            "x": 5.909848,
+            "y": 8.365992,
+            "z": -8.319095
+         },
+         "rotation": {
+            "x": 0,
+            "y": -0,
+            "z": 0
+         },
+         "scale": {
+            "x": 0.53,
+            "y": 0.53,
+            "z": 0.53
+         },
+         "visible": true,
+         "frozen": false,
+         "show_wire": false
+      },
+      {
+         "name": "Models\\porsche_992_gt3_r__www.vecarz.com.glb",
+         "mesh": "Models\\porsche_992_gt3_r__www.vecarz.com.glb",
+         "ragdoll": "",
+         "position": {
+            "x": -23.545181,
+            "y": 7.8784404,
+            "z": 5.319562
+         },
+         "rotation": {
+            "x": 0,
+            "y": -0,
+            "z": 0
+         },
+         "scale": {
+            "x": 183.5291,
+            "y": 183.5291,
+            "z": 183.5291
          },
          "visible": true,
          "frozen": false,
@@ -814,7 +906,7 @@
          "position": {
             "x": -10.75,
             "y": 3.25,
-            "z": -2.75
+            "z": -0.49559343
          },
          "direction": {
             "x": 0,
@@ -3277,7 +3369,7 @@
             "z": 1
          },
          "intensity": 0.3,
-         "radius": 1.369306,
+         "radius": 185.7183,
          "enabled": true,
          "visible": true,
          "frozen": false,
@@ -4082,7 +4174,7 @@
             "z": 1
          },
          "intensity": 2,
-         "radius": 5.7,
+         "radius": 6.5,
          "enabled": true,
          "visible": true,
          "frozen": false
@@ -4111,15 +4203,15 @@
             },
             {
                "name": "ssao_kernel_size",
-               "value": 14
+               "value": 16
             },
             {
                "name": "ssao_radius",
-               "value": 0.533
+               "value": 2.237
             },
             {
                "name": "fov",
-               "value": 120
+               "value": 100
             },
             {
                "name": "light_intensity_scale",
@@ -4136,6 +4228,10 @@
             {
                "name": "material_emissive_intensity",
                "value": 2
+            },
+            {
+               "name": "gauss_1_radius",
+               "value": 2.544
             },
             {
                "name": "gauss_1_sigma",
@@ -4163,36 +4259,40 @@
             },
             {
                "name": "cubemap",
-               "value": 4
+               "value": 3
+            },
+            {
+               "name": "luminance_mode",
+               "value": 1
             }
          ],
          "lights": [],
          "camera": {
             "profile": 5,
             "eye": [
-               8.273758,
-               1.6464884,
-               -11.181501
+               -18.524239,
+               9.683158,
+               2.7011344
             ],
             "look": [
-               0.09922929,
-               0.02999177,
-               -0.9946125
+               -0.96796095,
+               -0.2035667,
+               0.14701098
             ],
             "up": [
-               -0.0029774015,
-               0.99955016,
-               0.029843615
+               -0.20125876,
+               0.97906107,
+               0.030566571
             ],
             "right": [
-               -0.99506015,
+               0.15015507,
                0,
-               -0.09927395
+               0.9886625
             ],
-            "yaw": -9.524216,
-            "pitch": -0.029996268,
+            "yaw": 29.995855,
+            "pitch": 0.20499954,
             "roll": 0,
-            "fov": 120,
+            "fov": 100,
             "aspect_ratio": 1.7777778,
             "near_plane": 0.125,
             "far_plane": 6198.7783,
@@ -4212,9 +4312,9 @@
                   0
                ],
                "eye": [
-                  8.273758,
-                  1.6464884,
-                  -11.181501
+                  -18.524239,
+                  9.683158,
+                  2.7011344
                ],
                "yaw": -1.5757964,
                "pitch": -0.005,
@@ -4233,9 +4333,493 @@
                0
             ],
             "eye": [
-               8.273758,
-               1.6464884,
-               -11.181501
+               -18.524239,
+               9.683158,
+               2.7011344
+            ],
+            "yaw": -1.5757964,
+            "pitch": -0.005,
+            "distance": 3.099389
+         },
+         "frustum_culling": true
+      },
+{
+         "name": "android/mali-g700",
+         "platform": "android",
+         "architecture": "",
+         "gpu_family": "mali-g700",
+         "gpu_name_contains": "",
+         "model": "",
+         "sliders": [
+            {
+               "name": "exposure",
+               "value": 2
+            },
+            {
+               "name": "bloom_factor",
+               "value": 1
+            },
+            {
+               "name": "bloom_threshold",
+               "value": 1
+            },
+            {
+               "name": "ssao_kernel_size",
+               "value": 16
+            },
+            {
+               "name": "ssao_radius",
+               "value": 2.237
+            },
+            {
+               "name": "light_intensity_scale",
+               "value": 16.256
+            },
+            {
+               "name": "lightmap_intensity",
+               "value": 2
+            },
+            {
+               "name": "shadow_min",
+               "value": 0
+            },
+            {
+               "name": "material_emissive_intensity",
+               "value": 2
+            },
+            {
+               "name": "gauss_1_radius",
+               "value": 2.544
+            },
+            {
+               "name": "gauss_1_sigma",
+               "value": 1
+            }
+         ],
+         "checkboxes": [
+            {
+               "name": "shadow_toggle",
+               "value": false
+            },
+            {
+               "name": "point_lights_enabled",
+               "value": false
+            }
+         ],
+         "selectors": [
+            {
+               "name": "gauss_1_kernel_size",
+               "value": 27
+            },
+            {
+               "name": "animation_model",
+               "value": 2
+            },
+            {
+               "name": "anim_select",
+               "value": 82
+            },
+            {
+               "name": "cubemap",
+               "value": 3
+            },
+            {
+               "name": "luminance_mode",
+               "value": 1
+            }
+         ],
+         "lights": [],
+         "camera": {
+            "profile": 5,
+            "eye": [
+               -19.500628,
+               9.683158,
+               9.753779
+            ],
+            "look": [
+               -0.6847219,
+               -0.22337587,
+               0.69372845
+            ],
+            "up": [
+               -0.15691522,
+               0.9747324,
+               0.15897922
+            ],
+            "right": [
+               0.7117117,
+               0,
+               0.7024717
+            ],
+            "yaw": 30.637062,
+            "pitch": 0.22527649,
+            "roll": 0,
+            "fov": 99.99999,
+            "aspect_ratio": 1.6017317,
+            "near_plane": 0.125,
+            "far_plane": 6198.7783,
+            "ortho": false,
+            "width": 2960,
+            "height": 1848,
+            "left_handed": true,
+            "orbit": {
+               "target": [
+                  -1,
+                  0,
+                  0
+               ],
+               "pan_offset": [
+                  0,
+                  0,
+                  0
+               ],
+               "eye": [
+                  -19.500628,
+                  9.683158,
+                  9.753779
+               ],
+               "yaw": -1.5757964,
+               "pitch": -0.005,
+               "distance": 3.099389
+            }
+         },
+         "orbit_camera": {
+            "target": [
+               -1,
+               0,
+               0
+            ],
+            "pan_offset": [
+               0,
+               0,
+               0
+            ],
+            "eye": [
+               -19.500628,
+               9.683158,
+               9.753779
+            ],
+            "yaw": -1.5757964,
+            "pitch": -0.005,
+            "distance": 3.099389
+         }
+      },
+{
+         "name": "android/adreno-700",
+         "platform": "android",
+         "architecture": "",
+         "gpu_family": "adreno-700",
+         "gpu_name_contains": "",
+         "model": "",
+         "sliders": [
+            {
+               "name": "exposure",
+               "value": 2
+            },
+            {
+               "name": "bloom_factor",
+               "value": 1
+            },
+            {
+               "name": "bloom_threshold",
+               "value": 1
+            },
+            {
+               "name": "ssao_kernel_size",
+               "value": 16
+            },
+            {
+               "name": "ssao_radius",
+               "value": 2.237
+            },
+            {
+               "name": "light_intensity_scale",
+               "value": 16.256
+            },
+            {
+               "name": "lightmap_intensity",
+               "value": 2
+            },
+            {
+               "name": "shadow_min",
+               "value": 0
+            },
+            {
+               "name": "material_emissive_intensity",
+               "value": 2
+            },
+            {
+               "name": "gauss_1_radius",
+               "value": 2.544
+            },
+            {
+               "name": "gauss_1_sigma",
+               "value": 1
+            }
+         ],
+         "checkboxes": [
+            {
+               "name": "shadow_toggle",
+               "value": false
+            },
+            {
+               "name": "point_lights_enabled",
+               "value": false
+            }
+         ],
+         "selectors": [
+            {
+               "name": "gauss_1_kernel_size",
+               "value": 27
+            },
+            {
+               "name": "animation_model",
+               "value": 2
+            },
+            {
+               "name": "anim_select",
+               "value": 82
+            },
+            {
+               "name": "cubemap",
+               "value": 3
+            },
+            {
+               "name": "luminance_mode",
+               "value": 1
+            }
+         ],
+         "lights": [],
+         "camera": {
+            "profile": 5,
+            "eye": [
+               -19.500628,
+               9.683158,
+               9.753779
+            ],
+            "look": [
+               -0.6847219,
+               -0.22337587,
+               0.69372845
+            ],
+            "up": [
+               -0.15691522,
+               0.9747324,
+               0.15897922
+            ],
+            "right": [
+               0.7117117,
+               0,
+               0.7024717
+            ],
+            "yaw": 30.637062,
+            "pitch": 0.22527649,
+            "roll": 0,
+            "fov": 99.99999,
+            "aspect_ratio": 1.6017317,
+            "near_plane": 0.125,
+            "far_plane": 6198.7783,
+            "ortho": false,
+            "width": 2960,
+            "height": 1848,
+            "left_handed": true,
+            "orbit": {
+               "target": [
+                  -1,
+                  0,
+                  0
+               ],
+               "pan_offset": [
+                  0,
+                  0,
+                  0
+               ],
+               "eye": [
+                  -19.500628,
+                  9.683158,
+                  9.753779
+               ],
+               "yaw": -1.5757964,
+               "pitch": -0.005,
+               "distance": 3.099389
+            }
+         },
+         "orbit_camera": {
+            "target": [
+               -1,
+               0,
+               0
+            ],
+            "pan_offset": [
+               0,
+               0,
+               0
+            ],
+            "eye": [
+               -19.500628,
+               9.683158,
+               9.753779
+            ],
+            "yaw": -1.5757964,
+            "pitch": -0.005,
+            "distance": 3.099389
+         }
+      },
+{
+         "name": "android/adreno-800",
+         "platform": "android",
+         "architecture": "",
+         "gpu_family": "adreno-800",
+         "gpu_name_contains": "",
+         "model": "",
+         "sliders": [
+            {
+               "name": "exposure",
+               "value": 2
+            },
+            {
+               "name": "bloom_factor",
+               "value": 1
+            },
+            {
+               "name": "bloom_threshold",
+               "value": 1
+            },
+            {
+               "name": "ssao_kernel_size",
+               "value": 16
+            },
+            {
+               "name": "ssao_radius",
+               "value": 2.237
+            },
+            {
+               "name": "light_intensity_scale",
+               "value": 16.256
+            },
+            {
+               "name": "lightmap_intensity",
+               "value": 2
+            },
+            {
+               "name": "shadow_min",
+               "value": 0
+            },
+            {
+               "name": "material_emissive_intensity",
+               "value": 2
+            },
+            {
+               "name": "gauss_1_radius",
+               "value": 2.544
+            },
+            {
+               "name": "gauss_1_sigma",
+               "value": 1
+            }
+         ],
+         "checkboxes": [
+            {
+               "name": "shadow_toggle",
+               "value": false
+            },
+            {
+               "name": "point_lights_enabled",
+               "value": false
+            }
+         ],
+         "selectors": [
+            {
+               "name": "gauss_1_kernel_size",
+               "value": 27
+            },
+            {
+               "name": "animation_model",
+               "value": 2
+            },
+            {
+               "name": "anim_select",
+               "value": 82
+            },
+            {
+               "name": "cubemap",
+               "value": 3
+            },
+            {
+               "name": "luminance_mode",
+               "value": 1
+            }
+         ],
+         "lights": [],
+         "camera": {
+            "profile": 5,
+            "eye": [
+               -19.500628,
+               9.683158,
+               9.753779
+            ],
+            "look": [
+               -0.6847219,
+               -0.22337587,
+               0.69372845
+            ],
+            "up": [
+               -0.15691522,
+               0.9747324,
+               0.15897922
+            ],
+            "right": [
+               0.7117117,
+               0,
+               0.7024717
+            ],
+            "yaw": 30.637062,
+            "pitch": 0.22527649,
+            "roll": 0,
+            "fov": 99.99999,
+            "aspect_ratio": 1.6017317,
+            "near_plane": 0.125,
+            "far_plane": 6198.7783,
+            "ortho": false,
+            "width": 2960,
+            "height": 1848,
+            "left_handed": true,
+            "orbit": {
+               "target": [
+                  -1,
+                  0,
+                  0
+               ],
+               "pan_offset": [
+                  0,
+                  0,
+                  0
+               ],
+               "eye": [
+                  -19.500628,
+                  9.683158,
+                  9.753779
+               ],
+               "yaw": -1.5757964,
+               "pitch": -0.005,
+               "distance": 3.099389
+            }
+         },
+         "orbit_camera": {
+            "target": [
+               -1,
+               0,
+               0
+            ],
+            "pan_offset": [
+               0,
+               0,
+               0
+            ],
+            "eye": [
+               -19.500628,
+               9.683158,
+               9.753779
             ],
             "yaw": -1.5757964,
             "pitch": -0.005,

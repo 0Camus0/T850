@@ -10,19 +10,29 @@ setlocal enabledelayedexpansion
 ::    LaunchSolution.bat --x86        x64 + x86
 ::    LaunchSolution.bat --arm64      x64 + ARM64
 ::    LaunchSolution.bat --all        x64 + x86 + ARM64
-::    LaunchSolution.bat --skip       skip vcpkg, just open solution
-::    LaunchSolution.bat --setup-only install dependencies without opening solution
+::    LaunchSolution.bat --skip       skip vcpkg, download models, open solution
+::    LaunchSolution.bat --skip-models skip model download
+::    LaunchSolution.bat --models-only download runtime models and exit
+::    LaunchSolution.bat --all-models download all cloud models instead of runtime set
+::    LaunchSolution.bat --setup-only install dependencies/download runtime models without opening solution
 :: ═══════════════════════════════════════════════════════════
 
 set "ROOT=%~dp0"
 set "VCPKG_DIR=%ROOT%T850\Librerias\vcpkg"
 set "VCPKG_EXE=%VCPKG_DIR%\vcpkg.exe"
 set "SOLUTION=%ROOT%T850\T850.sln"
+set "RUNTIME_MODEL_MANIFEST_URL=https://pub-2fa5c50bbfbc4b829da0d6c6300815b0.r2.dev/runtime_assets.json"
+set "FULL_MODEL_MANIFEST_URL=https://pub-2fa5c50bbfbc4b829da0d6c6300815b0.r2.dev/manifest.json"
+set "MODEL_MANIFEST_URL=%RUNTIME_MODEL_MANIFEST_URL%"
+set "MODEL_DOWNLOAD_SCRIPT=%ROOT%T850\scripts\DownloadModels.ps1"
+set "MODEL_DOWNLOAD_THREADS=7"
 
 set BUILD_X86=0
 set BUILD_ARM64=0
 set SKIP_VCPKG=0
 set SKIP_LAUNCH=0
+set SKIP_MODELS=0
+set MODELS_ONLY=0
 
 :: Parse command-line arguments
 :parse_args
@@ -31,6 +41,9 @@ if /i "%~1"=="--x86"   set BUILD_X86=1
 if /i "%~1"=="--arm64" set BUILD_ARM64=1
 if /i "%~1"=="--all"   set BUILD_X86=1& set BUILD_ARM64=1
 if /i "%~1"=="--skip"  set SKIP_VCPKG=1
+if /i "%~1"=="--skip-models" set SKIP_MODELS=1
+if /i "%~1"=="--models-only" set MODELS_ONLY=1& set SKIP_VCPKG=1& set SKIP_LAUNCH=1
+if /i "%~1"=="--all-models" set "MODEL_MANIFEST_URL=%FULL_MODEL_MANIFEST_URL%"
 if /i "%~1"=="--setup-only" set SKIP_LAUNCH=1
 shift
 goto parse_args
@@ -84,6 +97,7 @@ for %%p in (%PACKAGES_DYNAMIC%) do (
     "%VCPKG_EXE%" install %%p:x64-windows --no-print-usage 2>nul
 )
 call :install_imgui x64-windows-static dx12
+
 if errorlevel 1 exit /b 1
 
 :: ── x86 (optional) ──
@@ -98,7 +112,8 @@ if %BUILD_X86%==1 (
         echo   %%p:x86-windows
         "%VCPKG_EXE%" install %%p:x86-windows --no-print-usage 2>nul
     )
-    call :install_imgui x86-windows-static nodx12
+        call :install_imgui x86-windows-static nodx12
+
     if errorlevel 1 exit /b 1
 )
 
@@ -114,7 +129,8 @@ if %BUILD_ARM64%==1 (
         echo   %%p:arm64-windows
         "%VCPKG_EXE%" install %%p:arm64-windows --no-print-usage 2>nul
     )
-    call :install_imgui arm64-windows-static dx12
+        call :install_imgui arm64-windows-static dx12
+
     if errorlevel 1 exit /b 1
 )
 
@@ -122,15 +138,42 @@ echo.
 echo [T850] vcpkg setup complete.
 
 :launch
+call :download_models
+if errorlevel 1 exit /b 1
+
 if %SKIP_LAUNCH%==1 (
     echo.
-    echo [T850] Setup complete. Solution launch skipped.
+    if %MODELS_ONLY%==1 (
+        echo [T850] Model download complete. Solution launch skipped.
+    ) else (
+        echo [T850] Setup complete. Solution launch skipped.
+    )
     exit /b 0
 )
 
 echo.
 echo [T850] Opening solution: %SOLUTION%
 start "" "%SOLUTION%"
+exit /b 0
+
+:download_models
+if %SKIP_MODELS%==1 (
+    echo [T850] Skipping model download...
+    exit /b 0
+)
+echo.
+echo ════════════════════════════════════════
+echo  T850 — Downloading GLB models
+echo ════════════════════════════════════════
+if not exist "%MODEL_DOWNLOAD_SCRIPT%" (
+    echo [ERROR] Model download script not found: %MODEL_DOWNLOAD_SCRIPT%
+    exit /b 1
+)
+powershell -NoProfile -ExecutionPolicy Bypass -File "%MODEL_DOWNLOAD_SCRIPT%" -RootDir "%ROOT%T850" -ManifestUrl "%MODEL_MANIFEST_URL%" -MaxThreads %MODEL_DOWNLOAD_THREADS%
+if errorlevel 1 (
+    echo [ERROR] Model download failed.
+    exit /b 1
+)
 exit /b 0
 
 :install_imgui

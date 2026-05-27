@@ -21,6 +21,29 @@ namespace t850 {
     }
   }
 
+  PrimitiveInst::PrimitiveInst() {
+    gKey.bits = 0;
+    for (int i = 0; i < MaxPrimitiveTextures; i++) {
+      Textures[i] = 0;
+    }
+    EnvMap = 0;
+    pBase = nullptr;
+    pViewProj = nullptr;
+    XMatIdentity(Position);
+    XMatIdentity(Scale);
+    XMatIdentity(RotationX);
+    XMatIdentity(RotationY);
+    XMatIdentity(RotationZ);
+    XMatIdentity(Final);
+    Visible = false;
+    m_brightness = 1.0f;
+    m_fParallaxLowSamples = 0.0f;
+    m_fParallaxHighSamples = 0.0f;
+    m_fParallaxHeight = 0.0f;
+    EntityId = 0;
+    ClearPhysicsLinks();
+  }
+
   void PrimitiveInst::CreateInstance(PrimitiveBase *pPrim, XMATRIX44 *pVP) {
     gKey.bits = 0;
     for (int i = 0; i < MaxPrimitiveTextures; i++) {
@@ -105,7 +128,7 @@ namespace t850 {
   }
 
   void PrimitiveInst::Draw() {
-    if (!Visible)
+    if (!Visible || !pBase)
       return;
     pBase->SetEnvironmentMap(EnvMap);
     pBase->SetGlobalKey(gKey);
@@ -118,6 +141,9 @@ namespace t850 {
   }
 
   RenderSkinnedMesh* PrimitiveInst::GetSkinnedMesh() const {
+    if (!pBase) {
+      return nullptr;
+    }
     return dynamic_cast<RenderSkinnedMesh*>(pBase);
   }
 

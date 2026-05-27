@@ -39,6 +39,9 @@ namespace PassType {
     LIGHT_ADD,
     FADE,
     DEFERRED_LDR,
+    DEFERRED_LIGHT_VOLUME,
+    LENS_FLARE_SUN,
+    LENS_FLARE_GHOST,
     COUNT
   };
 }

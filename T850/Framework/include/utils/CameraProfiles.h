@@ -34,6 +34,8 @@ struct CameraInputState {
   bool moveRight = false;
   bool moveUp = false;
   bool moveDown = false;
+  float moveForwardAmount = 0.0f;
+  float moveRightAmount = 0.0f;
   bool jump = false;
   bool crouch = false;
   bool sprint = false;

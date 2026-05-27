@@ -17,6 +17,7 @@ namespace t850 {
     std::string depth_format = "NONE";     // F32, CUBE_F32, NONE
     std::array<int, 2> size = {0, 0};      // [0,0] = screen size
     bool linear_filter = true;
+    bool generate_mips = false;
     std::string size_ref;                  // e.g. "$shadow_resolution", "$god_rays_resolution"
   };
 

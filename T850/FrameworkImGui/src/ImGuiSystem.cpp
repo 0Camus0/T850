@@ -66,6 +66,7 @@ bool ImGuiSystem::Init(RootFramework* framework, const char* iniFileName, bool e
   if (m_inited) return true;
   if (!framework || !framework->pVideoDriver) return false;
 
+  m_framework = framework;
 #ifdef OS_ANDROID
   auto* androidFramework = static_cast<AndroidFramework*>(framework);
   m_androidWindow = androidFramework ? androidFramework->GetNativeWindow() : nullptr;
@@ -127,8 +128,12 @@ bool ImGuiSystem::Init(RootFramework* framework, const char* iniFileName, bool e
   if (!platformOK) {
     T8_LOG_ERROR("[ImGuiSystem] Platform backend init failed");
     ImGui::DestroyContext();
+    m_framework = nullptr;
     return false;
   }
+#ifdef OS_ANDROID
+  m_androidPlatformInited = true;
+#endif
 
   bool rendererOK = false;
 
@@ -193,11 +198,15 @@ bool ImGuiSystem::Init(RootFramework* framework, const char* iniFileName, bool e
 #endif
 #endif
 #ifdef OS_ANDROID
-    ImGui_ImplAndroid_Shutdown();
+    if (m_androidPlatformInited) {
+      ImGui_ImplAndroid_Shutdown();
+      m_androidPlatformInited = false;
+    }
 #else
     ImGui_ImplSDL3_Shutdown();
 #endif
     ImGui::DestroyContext();
+    m_framework = nullptr;
     m_sdlWindow = nullptr;
 #ifdef OS_ANDROID
     m_androidWindow = nullptr;
@@ -239,13 +248,17 @@ void ImGuiSystem::Shutdown() {
   }
 
 #ifdef OS_ANDROID
-  ImGui_ImplAndroid_Shutdown();
+  if (m_androidPlatformInited) {
+    ImGui_ImplAndroid_Shutdown();
+    m_androidPlatformInited = false;
+  }
 #else
   ImGui_ImplSDL3_Shutdown();
   SDL_RemoveEventWatch(sdlEventWatcher, this);
 #endif
   ImGui::DestroyContext();
 
+  m_framework = nullptr;
   m_sdlWindow = nullptr;
 #ifdef OS_ANDROID
   m_androidWindow = nullptr;
@@ -255,8 +268,14 @@ void ImGuiSystem::Shutdown() {
   T8_LOG_INFO("[ImGuiSystem] Shutdown complete");
 }
 
-void ImGuiSystem::NewFrame(bool createDockspace) {
-  if (!m_inited) return;
+bool ImGuiSystem::NewFrame(bool createDockspace) {
+  if (!m_inited) return false;
+
+#ifdef OS_ANDROID
+  auto* androidFramework = static_cast<AndroidFramework*>(m_framework);
+  ANativeWindow* currentWindow = androidFramework ? androidFramework->GetNativeWindow() : nullptr;
+  if (!SetAndroidNativeWindow(currentWindow)) return false;
+#endif
 
 #ifdef OS_WINDOWS
   if (m_api == GraphicsApi::D3D11) {
@@ -288,6 +307,7 @@ void ImGuiSystem::NewFrame(bool createDockspace) {
   if (m_dockingEnabled && createDockspace) {
     ImGui::DockSpaceOverViewport(0, ImGui::GetMainViewport(), ImGuiDockNodeFlags_PassthruCentralNode);
   }
+  return true;
 }
 
 void ImGuiSystem::Render() {
@@ -363,8 +383,37 @@ float ImGuiSystem::ConsumeWheelDelta() {
 }
 
 #ifdef OS_ANDROID
+bool ImGuiSystem::SetAndroidNativeWindow(ANativeWindow* window) {
+  if (!m_inited) {
+    m_androidWindow = window;
+    return window != nullptr;
+  }
+
+  if (m_androidPlatformInited && m_androidWindow == window && window) {
+    return true;
+  }
+
+  if (m_androidPlatformInited) {
+    ImGui_ImplAndroid_Shutdown();
+    m_androidPlatformInited = false;
+  }
+
+  m_androidWindow = nullptr;
+  if (!window) return false;
+
+  if (!ImGui_ImplAndroid_Init(window)) {
+    T8_LOG_ERROR("[ImGuiSystem] Android platform backend reinit failed");
+    return false;
+  }
+
+  m_androidWindow = window;
+  m_androidPlatformInited = true;
+  T8_LOG_INFO("[ImGuiSystem] Android native window rebound");
+  return true;
+}
+
 bool ImGuiSystem::HandleAndroidInputEvent(AInputEvent* event) {
-  if (!m_inited || !event) return false;
+  if (!m_inited || !m_androidPlatformInited || !event) return false;
   const bool handled = ImGui_ImplAndroid_HandleInputEvent(event) != 0;
   if (AInputEvent_getType(event) == AINPUT_EVENT_TYPE_MOTION) {
     const int32_t rawAction = AMotionEvent_getAction(event);

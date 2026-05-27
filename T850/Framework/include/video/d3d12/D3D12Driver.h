@@ -69,6 +69,7 @@ namespace t850 {
     void PopRT() override;
     void SaveScreenshot(std::string path) override;
     void SaveRTToFile(int rtID, int attachment, std::string path) override;
+    bool ReadRTColorFloat(int rtID, int attachment, float outRGBA[4]) override;
 #ifdef T850_RENDER_TRACE
     void RefreshTracePendingRenderState() override;
 #endif
@@ -81,6 +82,8 @@ namespace t850 {
     void EndResourceUploadBatch() override;
     bool IsResourceUploadBatchActive() const override { return m_uploadBatchDepth > 0; }
     void BuildPipelineObjects() override;
+    void SetViewport(float x, float y, float w, float h) override;
+    void SetScissorRect(int x, int y, int w, int h) override;
 
     // ── Helpers for resource creation ──
     D3D12Heap& GetHeap(D3D12Heap::Type type) { return m_heaps[type]; }

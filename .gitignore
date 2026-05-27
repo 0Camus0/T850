@@ -71,3 +71,18 @@ T850/android/app/signing.properties
 
 # Downloaded by SetupAndroidToolchain.bat
 T850/Librerias/VulkanMemoryAllocator/
+
+# Cloud-downloaded model binaries
+T850/Assets/Models/**/*.glb
+T850/Assets/Models/**/*.gltf
+T850/Assets/Models/**/*.bin
+
+/T850/Assets/Models/*.glb
+/T850/Assets/Models/**/*.glb
+/T850/Assets/Models/*.gltf
+/T850/Assets/Models/**/*.gltf
+/T850/Assets/Models/*.bin
+/T850/Assets/Models/**/*.bin
+/T850/Assets/Models/**/*.download
+/T850/Assets/Models/RagdollEdits - Copy/
+/T850/imgui_layout.ini

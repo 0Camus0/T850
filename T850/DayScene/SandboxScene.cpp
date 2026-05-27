@@ -15,6 +15,7 @@
 #include <utils/Picking.h>
 #include <utils/ResourceLocator.h>
 #ifdef OS_ANDROID
+#include <android/input.h>
 #include <video/vulkan/VulkanDriver.h>
 #endif
 #include <imgui/DevGuiContext.h>
@@ -46,7 +47,6 @@ namespace t850 {
   extern Device* T8Device;
   extern DeviceContext* T8DeviceContext;
 }
-
 namespace {
   constexpr std::array<float, 9> kRagdollSimulationSpeedScales = {
       0.125f, 0.25f, 0.5f, 1.0f, 2.0f, 4.0f, 8.0f, 16.0f, 32.0f};
@@ -90,6 +90,90 @@ namespace {
     }
   }
 
+#ifdef OS_ANDROID
+  struct SandboxAndroidVirtualControlsLayout {
+    ImVec2 moveCenter;
+    ImVec2 lookCenter;
+    ImVec2 jumpCenter;
+    ImVec2 runCenter;
+    float stickRadius = 0.0f;
+    float knobRadius = 0.0f;
+    float buttonRadius = 0.0f;
+  };
+
+  float ClampFloat(float value, float minValue, float maxValue) {
+    return (std::max)(minValue, (std::min)(maxValue, value));
+  }
+
+  SandboxAndroidVirtualControlsLayout BuildSandboxAndroidVirtualControlsLayout(float width, float height) {
+    SandboxAndroidVirtualControlsLayout layout;
+    width = (std::max)(width, 1.0f);
+    height = (std::max)(height, 1.0f);
+    const float shortest = (std::max)(1.0f, (std::min)(width, height));
+    layout.stickRadius = ClampFloat(shortest * 0.12f, 64.0f, shortest * 0.18f);
+    layout.knobRadius = layout.stickRadius * 0.38f;
+    layout.buttonRadius = layout.stickRadius * 0.42f;
+    const float margin = layout.stickRadius * 1.35f;
+    const float centerY = height - margin;
+    layout.moveCenter = ImVec2(margin, centerY);
+    layout.lookCenter = ImVec2(width - margin, centerY);
+    layout.jumpCenter = ImVec2(layout.moveCenter.x + layout.stickRadius * 1.55f,
+                               layout.moveCenter.y - layout.stickRadius * 0.58f);
+    layout.runCenter = ImVec2(layout.jumpCenter.x,
+                              layout.moveCenter.y + layout.stickRadius * 0.58f);
+    return layout;
+  }
+
+  bool PointInsideCircle(float x, float y, const ImVec2& center, float radius) {
+    const float dx = x - center.x;
+    const float dy = y - center.y;
+    return (dx * dx + dy * dy) <= radius * radius;
+  }
+
+  XVECTOR2 StickAxisFromPoint(float x, float y, const ImVec2& center, float radius) {
+    constexpr float kDeadZone = 0.12f;
+    const float dx = x - center.x;
+    const float dy = y - center.y;
+    const float length = std::sqrt(dx * dx + dy * dy);
+    if (length <= radius * kDeadZone) {
+      return XVECTOR2(0.0f, 0.0f);
+    }
+
+    const float scale = 1.0f / (std::max)(radius, 1.0f);
+    XVECTOR2 axis(dx * scale, dy * scale);
+    const float axisLength = axis.Length();
+    if (axisLength > 1.0f) {
+      axis /= axisLength;
+    }
+    return axis;
+  }
+
+  int FindPointerIndexById(AInputEvent* event, int pointerId) {
+    const size_t pointerCount = AMotionEvent_getPointerCount(event);
+    for (size_t pointerIndex = 0; pointerIndex < pointerCount; ++pointerIndex) {
+      if (AMotionEvent_getPointerId(event, pointerIndex) == pointerId) {
+        return static_cast<int>(pointerIndex);
+      }
+    }
+    return -1;
+  }
+
+  void DrawLabeledCircle(ImDrawList* drawList,
+                         const ImVec2& center,
+                         float radius,
+                         const char* label,
+                         ImU32 fillColor,
+                         ImU32 lineColor,
+                         ImU32 textColor) {
+    drawList->AddCircleFilled(center, radius, fillColor, 32);
+    drawList->AddCircle(center, radius, lineColor, 32, 2.0f);
+    const ImVec2 textSize = ImGui::CalcTextSize(label);
+    drawList->AddText(ImVec2(center.x - textSize.x * 0.5f, center.y - textSize.y * 0.5f),
+                      textColor,
+                      label);
+  }
+#endif
+
   ImVec4 SandboxConsoleLogColor(t850::Log::Level level) {
     switch (level) {
     case t850::Log::LVL_ERROR: return ImVec4(1.0f, 0.30f, 0.30f, 1.0f);
@@ -101,49 +185,157 @@ namespace {
     }
   }
 
-  void DrawSandboxConsolePanel(t850::CameraProfileType activeProfile, const XVECTOR3& eye) {
+  const char* LuminanceModeName(int mode) {
+    return mode == 0 ? "Temporal HDR" : "Robust temporal";
+  }
+
+  void DrawSandboxConsolePanel(t850::CameraProfileType activeProfile,
+                               const XVECTOR3& eye,
+                               const SceneProps& sceneProps,
+                               const RenderMesh* cullingMesh) {
     if (!g_sandboxConsoleOpen) {
       return;
     }
 
-    ImGui::SetNextWindowSize(ImVec2(760.0f, 260.0f), ImGuiCond_FirstUseEver);
+    ImGui::SetNextWindowSize(ImVec2(1120.0f, 360.0f), ImGuiCond_FirstUseEver);
     if (!ImGui::Begin("Sandbox Console", &g_sandboxConsoleOpen)) {
       ImGui::End();
       return;
     }
 
-    ImGui::Text("Camera: %s  Pos: %.2f, %.2f, %.2f",
-                t850::CameraProfileName(activeProfile),
-                eye.x,
-                eye.y,
-                eye.z);
-    ImGui::TextUnformatted("F9 cycles camera profiles | F10 dumps a frame | Space jumps in FPS profiles");
-    ImGui::TextUnformatted("Free/Colliding Fly: WASD move, Q/E up/down, Shift sprint, mouse look");
-    ImGui::TextUnformatted("Grounded/COD/Q3 FPS: WASD move/strafe, Shift run, Space jump, mouse look");
+    const float blockHeight = ImGui::GetContentRegionAvail().y;
+    ImGui::Columns(3, "SandboxConsoleBlocks", true);
 
-    if (ImGui::SmallButton("Clear")) {
-      std::lock_guard<std::mutex> lock(g_sandboxConsoleMutex);
-      g_sandboxConsoleLines.clear();
-    }
-    ImGui::SameLine();
-    ImGui::Checkbox("Auto-scroll", &g_sandboxConsoleAutoScroll);
-    ImGui::Separator();
+    if (ImGui::BeginChild("SandboxConsoleCullingBlock", ImVec2(0.0f, blockHeight), true, ImGuiWindowFlags_HorizontalScrollbar)) {
+      ImGui::TextUnformatted("Culling / Light Culling");
+      ImGui::Separator();
+      ImGui::Text("Frustum culling: %s", sceneProps.FrustumCullingEnabled ? "ON" : "OFF");
+      ImGui::Text("Culling debug: %s", sceneProps.ShowCullingDebug ? "ON" : "OFF");
+      if (cullingMesh) {
+        ImGui::Spacing();
+        ImGui::Text("Meshes: %d/%d visible, %d culled",
+                    cullingMesh->m_visibleMeshes,
+                    cullingMesh->m_totalMeshes,
+                    cullingMesh->m_culledMeshes);
+        ImGui::Text("Subsets: %d/%d visible, %d culled, %d drawn",
+                    cullingMesh->m_visibleSubsets,
+                    cullingMesh->m_totalSubsets,
+                    cullingMesh->m_culledSubsets,
+                    cullingMesh->m_drawnSubsets);
+        ImGui::Text("Clusters: %d/%d visible, %d culled, %d drawn",
+                    cullingMesh->m_visibleClusters,
+                    cullingMesh->m_totalClusters,
+                    cullingMesh->m_culledClusters,
+                    cullingMesh->m_drawnClusters);
+        ImGui::Text("Indices: %llu/%llu drawn, %llu culled",
+                    cullingMesh->m_drawnIndices,
+                    cullingMesh->m_totalIndices,
+                    cullingMesh->m_culledIndices);
+        ImGui::Text("Cull CPU: %.3f ms", cullingMesh->m_cullingCpuMs);
+      } else {
+        ImGui::TextUnformatted("Mesh culling stats: unavailable");
+      }
 
-    ImGui::BeginChild("SandboxConsoleScroll", ImVec2(0.0f, 0.0f), ImGuiChildFlags_None, ImGuiWindowFlags_HorizontalScrollbar);
-    {
-      std::lock_guard<std::mutex> lock(g_sandboxConsoleMutex);
-      for (const SandboxConsoleLine& line : g_sandboxConsoleLines) {
-        ImGui::PushStyleColor(ImGuiCol_Text, SandboxConsoleLogColor(line.level));
-        if (ImGui::Selectable(line.text.c_str(), false)) {
-          ImGui::SetClipboardText(line.text.c_str());
-        }
-        ImGui::PopStyleColor();
+      ImGui::Spacing();
+      ImGui::Text("Point lights: %s", sceneProps.PointLightsEnabled ? "enabled" : "disabled");
+      ImGui::Text("Deferred lights: %u packed (%u dir + %u tiled)",
+                  sceneProps.DebugDeferredLightsPacked,
+                  sceneProps.DebugDeferredLightsDirectional,
+                  sceneProps.DebugDeferredLightsPointVolumes);
+      ImGui::Text("Light set: %u considered / %u active / %u scene",
+                  sceneProps.DebugDeferredLightsConsidered,
+                  sceneProps.DebugDeferredLightsActiveLimit,
+                  sceneProps.DebugDeferredLightsSceneTotal);
+      ImGui::Text("Light skips: %u frustum, %u disabled, %u zero, %u capped",
+                  sceneProps.DebugDeferredLightsFrustumCulled,
+                  sceneProps.DebugDeferredLightsDisabled,
+                  sceneProps.DebugDeferredLightsZeroIntensity,
+                  sceneProps.DebugDeferredLightsMaxCapped);
+      ImGui::Text("Projected work: %.1f%% of screen",
+                  sceneProps.DebugDeferredLightVolumeScreenPercent);
+      if (sceneProps.DebugDeferredLightTileCount > 0) {
+        ImGui::Text("Tiles: %ux%u = %u, %u px",
+                    sceneProps.DebugDeferredLightTilesX,
+                    sceneProps.DebugDeferredLightTilesY,
+                    sceneProps.DebugDeferredLightTileCount,
+                    sceneProps.DebugDeferredLightTileSize);
+        ImGui::Text("Tile usage: %u active, %u refs, avg %.2f",
+                    sceneProps.DebugDeferredLightActiveTiles,
+                    sceneProps.DebugDeferredLightTileLightRefs,
+                    sceneProps.DebugDeferredLightAverageLightsPerTile);
+        ImGui::Text("Tile max: %u lights, saturated %u",
+                    sceneProps.DebugDeferredLightMaxLightsInTile,
+                    sceneProps.DebugDeferredLightSaturatedTiles);
+      } else {
+        ImGui::TextUnformatted("Tiles: inactive");
       }
     }
-    if (g_sandboxConsoleAutoScroll && ImGui::GetScrollY() >= ImGui::GetScrollMaxY()) {
-      ImGui::SetScrollHereY(1.0f);
+    ImGui::EndChild();
+
+    ImGui::NextColumn();
+    if (ImGui::BeginChild("SandboxConsoleCameraBlock", ImVec2(0.0f, blockHeight), true, ImGuiWindowFlags_HorizontalScrollbar)) {
+      ImGui::TextUnformatted("Camera / Luminance");
+      ImGui::Separator();
+      ImGui::Text("Profile: %s", t850::CameraProfileName(activeProfile));
+      ImGui::Text("Position: %.2f, %.2f, %.2f", eye.x, eye.y, eye.z);
+      ImGui::Text("Frame dt: %.3f ms", sceneProps.FrameDeltaSec * 1000.0f);
+      ImGui::Spacing();
+      if (sceneProps.DebugAdaptedLuminanceValid) {
+        ImGui::Text("Adapted luminance: %.4f", sceneProps.DebugAdaptedLuminance);
+      } else {
+        ImGui::TextUnformatted("Adapted luminance: pending");
+      }
+      ImGui::Text("Mode: %s", LuminanceModeName(sceneProps.LuminanceMode));
+      ImGui::Text("Tau: %.2f", sceneProps.LuminanceTau);
+      ImGui::Text("Exposure: %.3f", sceneProps.Exposure);
+      ImGui::Text("Tone white: %.3f", sceneProps.ToneMapWhiteLevel);
+      ImGui::Text("Bloom: factor %.3f, threshold %.3f",
+                  sceneProps.BloomFactor,
+                  sceneProps.BloomThreshold);
+      ImGui::Spacing();
+      ImGui::TextUnformatted("F9 camera profiles | F10 frame dump");
+      ImGui::TextUnformatted("Free Fly: WASD, Q/E, Shift, mouse");
+      ImGui::TextUnformatted("FPS: WASD, Shift run, Space jump");
     }
     ImGui::EndChild();
+
+    ImGui::NextColumn();
+    if (ImGui::BeginChild("SandboxConsoleLogBlock", ImVec2(0.0f, blockHeight), true, ImGuiWindowFlags_HorizontalScrollbar)) {
+      std::size_t logCount = 0;
+      {
+        std::lock_guard<std::mutex> lock(g_sandboxConsoleMutex);
+        logCount = g_sandboxConsoleLines.size();
+      }
+      ImGui::Text("Events / Logs (%u)", static_cast<unsigned int>(logCount));
+      ImGui::Separator();
+      if (ImGui::SmallButton("Clear")) {
+        std::lock_guard<std::mutex> lock(g_sandboxConsoleMutex);
+        g_sandboxConsoleLines.clear();
+      }
+      ImGui::SameLine();
+      ImGui::Checkbox("Auto-scroll", &g_sandboxConsoleAutoScroll);
+      ImGui::BeginChild("SandboxConsoleLogScroll", ImVec2(0.0f, 0.0f), ImGuiChildFlags_None, ImGuiWindowFlags_HorizontalScrollbar);
+      {
+        std::lock_guard<std::mutex> lock(g_sandboxConsoleMutex);
+        for (std::size_t lineIndex = 0; lineIndex < g_sandboxConsoleLines.size(); ++lineIndex) {
+          const SandboxConsoleLine& line = g_sandboxConsoleLines[lineIndex];
+          ImGui::PushID(static_cast<int>(lineIndex));
+          ImGui::PushStyleColor(ImGuiCol_Text, SandboxConsoleLogColor(line.level));
+          if (ImGui::Selectable(line.text.c_str(), false)) {
+            ImGui::SetClipboardText(line.text.c_str());
+          }
+          ImGui::PopStyleColor();
+          ImGui::PopID();
+        }
+      }
+      if (g_sandboxConsoleAutoScroll) {
+        ImGui::SetScrollHereY(1.0f);
+      }
+      ImGui::EndChild();
+    }
+    ImGui::EndChild();
+
+    ImGui::Columns(1);
     ImGui::End();
   }
 
@@ -2245,6 +2437,9 @@ void SandboxScene::InitVars() {
   ActiveCam = &Cam;
   m_cameraController.AttachCamera(&Cam);
   m_cameraProfileSelection = t850::CameraProfileIndex(t850::CameraProfileType::Orbit);
+#ifdef OS_ANDROID
+  ResetAndroidVirtualControls();
+#endif
   SyncOrbitProfileFromSandbox();
   SetCameraProfile(t850::CameraProfileType::Orbit);
 
@@ -2293,6 +2488,7 @@ void SandboxScene::InitVars() {
   m_showWireframe = false;
   m_showSkeleton = false;
   m_showPhysics = false;
+  m_showLightVolumes = false;
   m_drawLightDirection = false;
   m_meshCount = 0;
   m_loadedEditorScene = false;
@@ -2351,8 +2547,8 @@ void SandboxScene::InitVars() {
   SceneProp.IBLMipCount = 4.0f;
   SceneProp.IBLBRDFLUTEnabled = 0.0f;
 
-  if (m_guiSetup.Load("Scenes/SandboxScene.json")) {
-    m_guiSetup.ApplyQualityAndSettings(SceneProp);
+  if (m_controlSetup.Load("Scenes/SandboxScene.json")) {
+    m_controlSetup.ApplyQualityAndSettings(SceneProp);
   } else {
     T8_LOG_ERROR("[SandboxScene] Failed to load Scenes/SandboxScene.json");
   }
@@ -2372,12 +2568,18 @@ void SandboxScene::InitVars() {
 }
 
 void SandboxScene::ApplyEditorSceneCameraAndLights(const t850::scene::EditorSceneFile& scene) {
-  const XVECTOR3 eye(0.0f, 0.0f, 0.0f, 1.0f);
-  const XVECTOR3 target(-1.0f, 0.0f, 0.0f, 1.0f);
+  const bool useQ3CameraDefaults = m_q3CollisionWorld && m_q3CollisionWorld->IsLoaded();
+  XVECTOR3 eye(0.0f, 0.0f, 0.0f, 1.0f);
+  XVECTOR3 look(-1.0f, 0.0f, 0.0f, 0.0f);
+  if (useQ3CameraDefaults) {
+    eye = XVECTOR3(-18.524239f, 9.683158f, 2.7011344f, 1.0f);
+    look = XVECTOR3(-0.96796095f, -0.2035667f, 0.14701098f, 0.0f);
+  }
+  const XVECTOR3 target = eye + look;
   const float aspect = g_config.height > 0 ? static_cast<float>(g_config.width) / static_cast<float>(g_config.height) : Cam.AspectRatio;
-  const float nearPlane = (std::max)(0.0001f, Cam.NPlane);
-  const float farPlane = (std::max)(nearPlane + 0.01f, Cam.FPlane);
-  const float fov = Cam.Fov > 0.0f ? Cam.Fov : Deg2Rad(46.8f);
+  const float nearPlane = useQ3CameraDefaults ? 0.125f : (std::max)(0.0001f, Cam.NPlane);
+  const float farPlane = useQ3CameraDefaults ? 6198.7783f : (std::max)(nearPlane + 0.01f, Cam.FPlane);
+  const float fov = useQ3CameraDefaults ? Deg2Rad(100.0f) : (Cam.Fov > 0.0f ? Cam.Fov : Deg2Rad(46.8f));
   Cam.InitPerspective(eye, fov, aspect, nearPlane, farPlane);
   Cam.Speed = 10.0f;
   Cam.Velocity = XVECTOR3(0.0f, 0.0f, 0.0f);
@@ -2388,9 +2590,13 @@ void SandboxScene::ApplyEditorSceneCameraAndLights(const t850::scene::EditorScen
   m_orbitPitch = 0.0f;
   m_orbitYaw = -1.57079632679f;
   SyncOrbitProfileFromSandbox();
-  SetCameraProfile(t850::CameraProfileType::FreeFly);
+  SetCameraProfile(useQ3CameraDefaults ? t850::CameraProfileType::Quake3Fps : t850::CameraProfileType::FreeFly);
   VP = Cam.VP;
-  T8_LOG_INFO("[SandboxScene] Ignoring scene cameras; using origin camera looking toward (-1,0,0)");
+  T8_LOG_INFO("[SandboxScene] Ignoring scene cameras; using %s camera eye=(%.3f,%.3f,%.3f) look=(%.3f,%.3f,%.3f) fov=%.1f",
+              useQ3CameraDefaults ? "Quake 3 FPS" : "free-fly",
+              Cam.Eye.x, Cam.Eye.y, Cam.Eye.z,
+              Cam.Look.x, Cam.Look.y, Cam.Look.z,
+              Rad2Deg(Cam.Fov));
 
   if (!scene.lights.empty()) {
     SceneProp.Lights.clear();
@@ -2421,7 +2627,9 @@ void SandboxScene::ApplyEditorSceneCameraAndLights(const t850::scene::EditorScen
       }
     }
     SyncLightCameraFromDirectionalLight();
-    T8_LOG_INFO("[SandboxScene] Applied %zu scene lights", SceneProp.Lights.size());
+    T8_LOG_INFO("[SandboxScene] Applied %zu scene lights; dynamic point lights %s",
+                SceneProp.Lights.size(),
+                SceneProp.PointLightsEnabled ? "enabled" : "disabled");
   }
 }
 
@@ -2430,7 +2638,7 @@ int SandboxScene::GetRuntimeMeshCount() const {
 }
 
 RenderSkinnedMesh* SandboxScene::GetSkinnedMeshForIndex(int meshIndex) const {
-  if (meshIndex < 0 || meshIndex >= kMaxSandboxMeshes || !Meshes[meshIndex].pBase) {
+  if (meshIndex < 0 || meshIndex >= kMaxSandboxMeshes || meshIndex >= GetRuntimeMeshCount() || !Meshes[meshIndex].pBase) {
     return nullptr;
   }
   RenderSkinnedMesh* skinned = Meshes[meshIndex].GetSkinnedMesh();
@@ -2843,6 +3051,12 @@ bool SandboxScene::LoadEditorSceneAssets(const std::string& scenePath) {
 
   for (const auto& object : scene.objects) {
     if (!object.visible) continue;
+#if defined(OS_ANDROID)
+    if (object.mobile_visible && !*object.mobile_visible) {
+      T8_LOG_INFO("[SandboxScene] Android skipped mobile-hidden scene object '%s'", object.name.c_str());
+      continue;
+    }
+#endif
     const std::string meshPath = NormalizeSceneResourcePath(object.mesh);
     if (meshPath.empty()) {
       T8_LOG_ERROR("[SandboxScene] Scene object '%s' has no mesh path; skipping", object.name.c_str());
@@ -2854,6 +3068,7 @@ bool SandboxScene::LoadEditorSceneAssets(const std::string& scenePath) {
       break;
     }
 
+    T8_LOG_INFO("[SandboxScene] Loading scene object '%s' mesh='%s'", object.name.c_str(), meshPath.c_str());
     const int primitiveIndex = PrimitiveMgr.CreateMesh(meshPath.c_str());
     if (primitiveIndex < 0) {
       T8_LOG_ERROR("[SandboxScene] Failed to load scene object '%s' mesh '%s'", object.name.c_str(), meshPath.c_str());
@@ -2889,9 +3104,10 @@ bool SandboxScene::LoadEditorSceneAssets(const std::string& scenePath) {
         cookSettings.useDiskCache = true;
         t850::PhysicsCookStats cookStats;
         RenderMesh* renderMesh = dynamic_cast<RenderMesh*>(instance.pBase);
+        const bool meshMatchesQ3Clip = MeshUsesQ3CollisionClip(meshPath, q3CollisionPath);
         if (renderMesh && t850::AttachStaticTriangleMeshBody(
             *engineContext->physics, instance, *renderMesh, cookSettings, &cookStats)) {
-          if (m_q3CollisionWorld && MeshUsesQ3CollisionClip(meshPath, q3CollisionPath)) {
+          if (m_q3CollisionWorld && meshMatchesQ3Clip) {
             m_q3StaticCollisionEntityIds.push_back(instance.GetEntityId());
             T8_LOG_INFO("[SandboxScene] Q3 map Jolt body ignored by Q3 camera: object='%s' entity=%u clip='%s'",
                         object.name.c_str(),
@@ -2929,7 +3145,7 @@ bool SandboxScene::LoadEditorSceneAssets(const std::string& scenePath) {
   m_selectedAnimationMeshIndex = ClampSkinnedMeshSelection(m_selectedAnimationMeshIndex);
   FitModelToView();
   ApplyEditorSceneCameraAndLights(scene);
-  m_guiSetup.descriptor.profiles = scene.profiles;
+  m_controlSetup.descriptor.profiles = scene.profiles;
   LoadSandboxProfile(true);
   T8_LOG_INFO("[SandboxScene] Loaded editor scene '%s' with %d mesh instances", scenePath.c_str(), m_meshCount);
   return true;
@@ -2949,7 +3165,6 @@ void SandboxScene::CreateAssets() {
   ShadowAccumPass       = m_renderGraph.GetRTHandle("ShadowAccum");
   ExtraHelperPass       = m_renderGraph.GetRTHandle("ExtraHelper");
   BloomAccumPass        = m_renderGraph.GetRTHandle("BloomAccum");
-  LuminanceMapPass      = m_renderGraph.GetRTHandle("LuminanceMap");
   AdaptedLumCurrentPass = m_renderGraph.GetRTHandle("AdaptedLumCurrent");
   AdaptedLumPrevPass    = m_renderGraph.GetRTHandle("AdaptedLumPrev");
 
@@ -2961,13 +3176,13 @@ void SandboxScene::CreateAssets() {
 
   EnvMapTexIndex = g_pBaseDriver->CreateTexture(string("sky/Ennis.dds"));
   EnvMaps.SetFallback(EnvMapTexIndex);
-  if (m_guiSetup.descriptor.name.empty()) {
-    m_guiSetup.Load("Scenes/SandboxScene.json");
+  if (m_controlSetup.descriptor.name.empty()) {
+    m_controlSetup.Load("Scenes/SandboxScene.json");
   }
   LoadEnvironmentIBLResources(
     g_pBaseDriver,
-    {m_guiSetup.environmentDiffuseIBL, m_guiSetup.environmentSpecularIBL, m_guiSetup.environmentBrdfLUT,
-     m_guiSetup.environmentSheenIBL, m_guiSetup.environmentCharlieLUT, m_guiSetup.environmentSheenELUT},
+    {m_controlSetup.environmentDiffuseIBL, m_controlSetup.environmentSpecularIBL, m_controlSetup.environmentBrdfLUT,
+     m_controlSetup.environmentSheenIBL, m_controlSetup.environmentCharlieLUT, m_controlSetup.environmentSheenELUT},
     EnvMaps,
     DiffuseIBLTexIndex,
     SpecularIBLTexIndex,
@@ -3037,7 +3252,10 @@ void SandboxScene::CreateAssets() {
   m_ragdollJointIndexCapacity = 0;
   m_ragdollJointIndexCount = 0;
 
-  if (Meshes[0].pBase && !Meshes[0].HasPhysicsBody() && !Meshes[0].HasPhysicsRagdoll()) {
+  if (g_config.sceneFilePath.empty() &&
+      Meshes[0].pBase &&
+      !Meshes[0].HasPhysicsBody() &&
+      !Meshes[0].HasPhysicsRagdoll()) {
     t850::EngineContext* engineContext = GetEngineContext();
     if (!engineContext) engineContext = &t850::GetEngineContext();
     if (engineContext && engineContext->physics && engineContext->physics->IsInitialized()) {
@@ -3283,23 +3501,23 @@ void SandboxScene::OnUpdate(float _DtSecs) {
       if (EnvMapTexIndex >= 0 && EnvMapTexIndex != newEnvMapTexIndex)
         g_pBaseDriver->DestroyTexture(EnvMapTexIndex);
       EnvMapTexIndex = newEnvMapTexIndex;
-      if (m_guiSetup.environmentDiffuseIBL.empty() && DiffuseIBLTexIndex >= 0) {
+      if (m_controlSetup.environmentDiffuseIBL.empty() && DiffuseIBLTexIndex >= 0) {
         g_pBaseDriver->DestroyTexture(DiffuseIBLTexIndex);
         DiffuseIBLTexIndex = -1;
       }
-      if (m_guiSetup.environmentSpecularIBL.empty() && SpecularIBLTexIndex >= 0) {
+      if (m_controlSetup.environmentSpecularIBL.empty() && SpecularIBLTexIndex >= 0) {
         g_pBaseDriver->DestroyTexture(SpecularIBLTexIndex);
         SpecularIBLTexIndex = -1;
       }
-      if (m_guiSetup.environmentSheenIBL.empty() && SheenIBLTexIndex >= 0) {
+      if (m_controlSetup.environmentSheenIBL.empty() && SheenIBLTexIndex >= 0) {
         g_pBaseDriver->DestroyTexture(SheenIBLTexIndex);
         SheenIBLTexIndex = -1;
       }
       EnvMaps.SetFallback(EnvMapTexIndex);
       LoadEnvironmentIBLResources(
         g_pBaseDriver,
-        {m_guiSetup.environmentDiffuseIBL, m_guiSetup.environmentSpecularIBL, m_guiSetup.environmentBrdfLUT,
-         m_guiSetup.environmentSheenIBL, m_guiSetup.environmentCharlieLUT, m_guiSetup.environmentSheenELUT},
+        {m_controlSetup.environmentDiffuseIBL, m_controlSetup.environmentSpecularIBL, m_controlSetup.environmentBrdfLUT,
+         m_controlSetup.environmentSheenIBL, m_controlSetup.environmentCharlieLUT, m_controlSetup.environmentSheenELUT},
         EnvMaps,
         DiffuseIBLTexIndex,
         SpecularIBLTexIndex,
@@ -11476,9 +11694,261 @@ bool SandboxScene::SetCameraProfile(t850::CameraProfileType type) {
   if (type == t850::CameraProfileType::Orbit) {
     SyncSandboxOrbitFromProfile();
   }
+#ifdef OS_ANDROID
+  if (type == t850::CameraProfileType::Orbit) {
+    ResetAndroidVirtualControls();
+  }
+#endif
   T8_LOG_INFO("[SandboxScene] Camera profile: %s", t850::CameraProfileName(type));
   return true;
 }
+
+#ifdef OS_ANDROID
+bool SandboxScene::AndroidVirtualControlsVisible() const {
+  if (!ActiveCam) {
+    return false;
+  }
+  return m_cameraController.GetActiveProfileType() != t850::CameraProfileType::Orbit;
+}
+
+bool SandboxScene::AndroidVirtualControlsActive() const {
+  return m_androidMovePointerId >= 0 || m_androidLookPointerId >= 0 ||
+         m_androidJumpPointerId >= 0 || m_androidRunPointerId >= 0;
+}
+
+void SandboxScene::ResetAndroidVirtualControls() {
+  m_androidMovePointerId = -1;
+  m_androidLookPointerId = -1;
+  m_androidJumpPointerId = -1;
+  m_androidRunPointerId = -1;
+  m_androidMoveAxis = XVECTOR2(0.0f, 0.0f);
+  m_androidLookAxis = XVECTOR2(0.0f, 0.0f);
+  m_androidJump = false;
+  m_androidRun = false;
+}
+
+bool SandboxScene::HandleAndroidVirtualControls(AInputEvent* event) {
+  if (!event || AInputEvent_getType(event) != AINPUT_EVENT_TYPE_MOTION) {
+    return false;
+  }
+
+  if (!AndroidVirtualControlsVisible()) {
+    ResetAndroidVirtualControls();
+    return false;
+  }
+
+  ImGuiIO& io = ImGui::GetIO();
+  float width = io.DisplaySize.x;
+  float height = io.DisplaySize.y;
+  if (pFramework && pFramework->pVideoDriver) {
+    if (pFramework->pVideoDriver->width > 0) {
+      width = static_cast<float>(pFramework->pVideoDriver->width);
+    }
+    if (pFramework->pVideoDriver->height > 0) {
+      height = static_cast<float>(pFramework->pVideoDriver->height);
+    }
+  }
+  if (width <= 0.0f || height <= 0.0f) {
+    return false;
+  }
+
+  const SandboxAndroidVirtualControlsLayout layout = BuildSandboxAndroidVirtualControlsLayout(width, height);
+  const int32_t rawAction = AMotionEvent_getAction(event);
+  const int32_t action = rawAction & AMOTION_EVENT_ACTION_MASK;
+  int32_t actionPointerIndex =
+      (rawAction & AMOTION_EVENT_ACTION_POINTER_INDEX_MASK) >> AMOTION_EVENT_ACTION_POINTER_INDEX_SHIFT;
+  const size_t pointerCount = AMotionEvent_getPointerCount(event);
+  if (pointerCount == 0) {
+    ResetAndroidVirtualControls();
+    return false;
+  }
+  if (actionPointerIndex < 0 || actionPointerIndex >= static_cast<int32_t>(pointerCount)) {
+    actionPointerIndex = 0;
+  }
+
+  auto resetPointer = [&](int pointerId) {
+    if (pointerId == m_androidMovePointerId) {
+      m_androidMovePointerId = -1;
+      m_androidMoveAxis = XVECTOR2(0.0f, 0.0f);
+    }
+    if (pointerId == m_androidLookPointerId) {
+      m_androidLookPointerId = -1;
+      m_androidLookAxis = XVECTOR2(0.0f, 0.0f);
+    }
+    if (pointerId == m_androidJumpPointerId) {
+      m_androidJumpPointerId = -1;
+      m_androidJump = false;
+    }
+    if (pointerId == m_androidRunPointerId) {
+      m_androidRunPointerId = -1;
+      m_androidRun = false;
+    }
+  };
+
+  if (action == AMOTION_EVENT_ACTION_CANCEL) {
+    ResetAndroidVirtualControls();
+    return true;
+  }
+
+  if (action == AMOTION_EVENT_ACTION_UP || action == AMOTION_EVENT_ACTION_POINTER_UP) {
+    const int pointerId = AMotionEvent_getPointerId(event, actionPointerIndex);
+    if (action == AMOTION_EVENT_ACTION_UP) {
+      ResetAndroidVirtualControls();
+      return true;
+    }
+    resetPointer(pointerId);
+    return true;
+  }
+
+  auto capturePointer = [&](int pointerIndex) {
+    const int pointerId = AMotionEvent_getPointerId(event, pointerIndex);
+    const float x = AMotionEvent_getX(event, pointerIndex);
+    const float y = AMotionEvent_getY(event, pointerIndex);
+
+    if (m_androidJumpPointerId < 0 && PointInsideCircle(x, y, layout.jumpCenter, layout.buttonRadius * 1.2f)) {
+      m_androidJumpPointerId = pointerId;
+      m_androidJump = true;
+      return true;
+    }
+    if (m_androidRunPointerId < 0 && PointInsideCircle(x, y, layout.runCenter, layout.buttonRadius * 1.2f)) {
+      m_androidRunPointerId = pointerId;
+      m_androidRun = true;
+      return true;
+    }
+    if (m_androidMovePointerId < 0 && PointInsideCircle(x, y, layout.moveCenter, layout.stickRadius * 1.45f)) {
+      m_androidMovePointerId = pointerId;
+      m_androidMoveAxis = StickAxisFromPoint(x, y, layout.moveCenter, layout.stickRadius);
+      return true;
+    }
+    if (m_androidLookPointerId < 0 && PointInsideCircle(x, y, layout.lookCenter, layout.stickRadius * 1.45f)) {
+      m_androidLookPointerId = pointerId;
+      m_androidLookAxis = StickAxisFromPoint(x, y, layout.lookCenter, layout.stickRadius);
+      return true;
+    }
+    return false;
+  };
+
+  if (action == AMOTION_EVENT_ACTION_DOWN || action == AMOTION_EVENT_ACTION_POINTER_DOWN) {
+    capturePointer(actionPointerIndex);
+    return true;
+  }
+
+  if (action != AMOTION_EVENT_ACTION_MOVE) {
+    return true;
+  }
+
+  const int moveIndex = FindPointerIndexById(event, m_androidMovePointerId);
+  if (moveIndex >= 0) {
+    m_androidMoveAxis = StickAxisFromPoint(AMotionEvent_getX(event, moveIndex),
+                                          AMotionEvent_getY(event, moveIndex),
+                                          layout.moveCenter,
+                                          layout.stickRadius);
+  } else {
+    m_androidMovePointerId = -1;
+    m_androidMoveAxis = XVECTOR2(0.0f, 0.0f);
+  }
+
+  const int lookIndex = FindPointerIndexById(event, m_androidLookPointerId);
+  if (lookIndex >= 0) {
+    m_androidLookAxis = StickAxisFromPoint(AMotionEvent_getX(event, lookIndex),
+                                          AMotionEvent_getY(event, lookIndex),
+                                          layout.lookCenter,
+                                          layout.stickRadius);
+  } else {
+    m_androidLookPointerId = -1;
+    m_androidLookAxis = XVECTOR2(0.0f, 0.0f);
+  }
+
+  const int jumpIndex = FindPointerIndexById(event, m_androidJumpPointerId);
+  if (jumpIndex >= 0) {
+    m_androidJump = PointInsideCircle(AMotionEvent_getX(event, jumpIndex),
+                                      AMotionEvent_getY(event, jumpIndex),
+                                      layout.jumpCenter,
+                                      layout.buttonRadius * 1.2f);
+    if (!m_androidJump) {
+      m_androidJumpPointerId = -1;
+    }
+  } else {
+    m_androidJumpPointerId = -1;
+    m_androidJump = false;
+  }
+
+  const int runIndex = FindPointerIndexById(event, m_androidRunPointerId);
+  if (runIndex >= 0) {
+    m_androidRun = PointInsideCircle(AMotionEvent_getX(event, runIndex),
+                                     AMotionEvent_getY(event, runIndex),
+                                     layout.runCenter,
+                                     layout.buttonRadius * 1.2f);
+    if (!m_androidRun) {
+      m_androidRunPointerId = -1;
+    }
+  } else {
+    m_androidRunPointerId = -1;
+    m_androidRun = false;
+  }
+
+  return true;
+}
+
+void SandboxScene::DrawAndroidVirtualControls(bool guiVisible) {
+  if (guiVisible || !AndroidVirtualControlsVisible()) {
+    ResetAndroidVirtualControls();
+    return;
+  }
+
+  ImGuiIO& io = ImGui::GetIO();
+  float width = io.DisplaySize.x;
+  float height = io.DisplaySize.y;
+  if (pFramework && pFramework->pVideoDriver) {
+    if (pFramework->pVideoDriver->width > 0) {
+      width = static_cast<float>(pFramework->pVideoDriver->width);
+    }
+    if (pFramework->pVideoDriver->height > 0) {
+      height = static_cast<float>(pFramework->pVideoDriver->height);
+    }
+  }
+  if (width <= 0.0f || height <= 0.0f) {
+    return;
+  }
+
+  const SandboxAndroidVirtualControlsLayout layout =
+      BuildSandboxAndroidVirtualControlsLayout(width, height);
+  ImDrawList* drawList = ImGui::GetForegroundDrawList();
+  if (!drawList) {
+    return;
+  }
+
+  const ImU32 stickFill = IM_COL32(36, 44, 56, 76);
+  const ImU32 stickLine = IM_COL32(220, 230, 255, 120);
+  const ImU32 knobFill = IM_COL32(90, 170, 255, 120);
+  const ImU32 buttonFill = IM_COL32(40, 50, 65, 96);
+  const ImU32 buttonActiveFill = IM_COL32(90, 170, 255, 150);
+  const ImU32 textColor = IM_COL32(235, 245, 255, 190);
+  const ImU32 labelColor = IM_COL32(235, 245, 255, 130);
+
+  auto drawStick = [&](const ImVec2& center, const XVECTOR2& axis, const char* label) {
+    drawList->AddCircleFilled(center, layout.stickRadius, stickFill, 48);
+    drawList->AddCircle(center, layout.stickRadius, stickLine, 48, 2.0f);
+    drawList->AddCircle(center, layout.stickRadius * 0.42f, IM_COL32(220, 230, 255, 42), 32, 1.0f);
+    const ImVec2 knob(center.x + axis.x * layout.stickRadius,
+                      center.y + axis.y * layout.stickRadius);
+    drawList->AddCircleFilled(knob, layout.knobRadius, knobFill, 32);
+    drawList->AddCircle(knob, layout.knobRadius, stickLine, 32, 2.0f);
+    const ImVec2 labelSize = ImGui::CalcTextSize(label);
+    drawList->AddText(ImVec2(center.x - labelSize.x * 0.5f,
+                             center.y - layout.stickRadius - labelSize.y - 8.0f),
+                      labelColor,
+                      label);
+  };
+
+  drawStick(layout.moveCenter, m_androidMoveAxis, "MOVE");
+  drawStick(layout.lookCenter, m_androidLookAxis, "LOOK");
+  DrawLabeledCircle(drawList, layout.jumpCenter, layout.buttonRadius, "JMP",
+                    m_androidJump ? buttonActiveFill : buttonFill, stickLine, textColor);
+  DrawLabeledCircle(drawList, layout.runCenter, layout.buttonRadius, "RUN",
+                    m_androidRun ? buttonActiveFill : buttonFill, stickLine, textColor);
+}
+#endif
 
 void SandboxScene::SyncOrbitProfileFromSandbox() {
   t850::OrbitCameraProfile* orbit = m_cameraController.GetOrbitProfile();
@@ -11511,29 +11981,61 @@ void SandboxScene::SyncSandboxOrbitFromProfile() {
 
 t850::CameraInputState SandboxScene::BuildCameraInputState(InputManager* input, bool imguiWantsMouse) const {
   t850::CameraInputState state;
-  if (!input) {
-    return state;
+  if (input) {
+    state.moveForward = input->PressedKey(T800K_w);
+    state.moveBackward = input->PressedKey(T800K_s);
+    state.moveLeft = input->PressedKey(T800K_a);
+    state.moveRight = input->PressedKey(T800K_d);
+    state.moveUp = input->PressedKey(T800K_q);
+    state.moveDown = input->PressedKey(T800K_e);
+    state.jump = input->PressedKey(T800K_SPACE);
+    state.crouch = input->PressedKey(T800K_LCTRL) || input->PressedKey(T800K_RCTRL);
+    state.sprint = input->PressedKey(T800K_LSHIFT) || input->PressedKey(T800K_RSHIFT);
+
+    state.mouseDeltaX = static_cast<float>(input->xDelta);
+    state.mouseDeltaY = static_cast<float>(input->yDelta);
+    state.scrollDelta = input->scrollDelta;
+
+    const bool allowMouse = !imguiWantsMouse;
+    state.mouseLook = allowMouse && m_cameraController.GetActiveProfileType() != t850::CameraProfileType::Orbit;
+    state.orbitRotate = allowMouse && input->PressedMouseButton(0);
+    state.orbitPan = allowMouse && input->PressedMouseButton(1);
+    state.orbitZoom = allowMouse && input->PressedMouseButton(2);
   }
+#ifdef OS_ANDROID
+  if (AndroidVirtualControlsVisible()) {
+    constexpr float kLookThreshold = 0.02f;
+    constexpr float kLookYawMouseDeltaPerSecond = 520.0f;
+    constexpr float kLookPitchMouseDeltaPerSecond = 440.0f;
 
-  state.moveForward = input->PressedKey(T800K_w);
-  state.moveBackward = input->PressedKey(T800K_s);
-  state.moveLeft = input->PressedKey(T800K_a);
-  state.moveRight = input->PressedKey(T800K_d);
-  state.moveUp = input->PressedKey(T800K_q);
-  state.moveDown = input->PressedKey(T800K_e);
-  state.jump = input->PressedKey(T800K_SPACE);
-  state.crouch = input->PressedKey(T800K_LCTRL) || input->PressedKey(T800K_RCTRL);
-  state.sprint = input->PressedKey(T800K_LSHIFT) || input->PressedKey(T800K_RSHIFT);
+    state.mouseDeltaX = 0.0f;
+    state.mouseDeltaY = 0.0f;
+    state.scrollDelta = 0.0f;
+    state.mouseLook = false;
+    state.orbitRotate = false;
+    state.orbitPan = false;
+    state.orbitZoom = false;
 
-  state.mouseDeltaX = static_cast<float>(input->xDelta);
-  state.mouseDeltaY = static_cast<float>(input->yDelta);
-  state.scrollDelta = input->scrollDelta;
+    state.moveForwardAmount = ClampFloat(state.moveForwardAmount - m_androidMoveAxis.y, -1.0f, 1.0f);
+    state.moveRightAmount = ClampFloat(state.moveRightAmount + m_androidMoveAxis.x, -1.0f, 1.0f);
+    state.sprint = state.sprint || m_androidRun;
 
-  const bool allowMouse = !imguiWantsMouse;
-  state.mouseLook = allowMouse && m_cameraController.GetActiveProfileType() != t850::CameraProfileType::Orbit;
-  state.orbitRotate = allowMouse && input->PressedMouseButton(0);
-  state.orbitPan = allowMouse && input->PressedMouseButton(1);
-  state.orbitZoom = allowMouse && input->PressedMouseButton(2);
+    const t850::CameraProfileType profileType = m_cameraController.GetActiveProfileType();
+    const bool flyProfile = profileType == t850::CameraProfileType::FreeFly ||
+                            profileType == t850::CameraProfileType::CollidingFly;
+    state.jump = state.jump || m_androidJump;
+    if (flyProfile && m_androidJump) {
+      state.moveUp = true;
+    }
+
+    if (std::fabs(m_androidLookAxis.x) > kLookThreshold ||
+        std::fabs(m_androidLookAxis.y) > kLookThreshold) {
+      state.mouseLook = true;
+      state.mouseDeltaX += m_androidLookAxis.x * kLookYawMouseDeltaPerSecond * DtSecs;
+      state.mouseDeltaY += m_androidLookAxis.y * kLookPitchMouseDeltaPerSecond * DtSecs;
+    }
+  }
+#endif
   return state;
 }
 
@@ -11938,10 +12440,13 @@ void SandboxScene::CaptureSandboxProfileState(t850::SandboxProfileDesc& state) {
   addBool("show_wireframe", m_showWireframe);
   addBool("show_skeleton", GetSelectedSkinningMesh() != nullptr && m_showSkeleton);
   addBool("show_physics", m_showPhysics);
+  addBool("show_light_volumes", m_showLightVolumes);
+  addBool("point_lights_enabled", SceneProp.PointLightsEnabled);
   addBool("draw_direction", m_drawLightDirection);
 
   addInt("debug_render_target", m_debugRTSelection);
   addInt("cubemap", m_currentCubemapIndex);
+  addInt("luminance_mode", SceneProp.LuminanceMode);
   addInt("gauss_kernel_sample_count", 0);
   addInt("active_gauss_kernel", ChangeActiveGaussSelection);
   addInt("active_light", m_selectedLightIndex);
@@ -12045,14 +12550,17 @@ void SandboxScene::ApplySandboxProfileState(const t850::SandboxProfileDesc& stat
     else if (value.name == "show_wireframe") m_showWireframe = value.value;
     else if (value.name == "show_skeleton") m_showSkeleton = value.value && (GetSelectedSkinningMesh() != nullptr);
     else if (value.name == "show_physics") m_showPhysics = value.value;
+    else if (value.name == "show_light_volumes") m_showLightVolumes = value.value;
+    else if (value.name == "point_lights_enabled") SceneProp.PointLightsEnabled = value.value;
     else if (value.name == "draw_direction") m_drawLightDirection = value.value;
   }
 
   for (const auto& value : state.selectors) {
     if (value.name == "debug_render_target") m_debugRTSelection = value.value;
+    else if (value.name == "luminance_mode") SceneProp.LuminanceMode = value.value;
     else if (value.name == "active_light") m_selectedLightIndex = value.value;
     else if (value.name == "cubemap") {
-      const t850::SelectorDesc* cubemapDesc = FindSelectorDesc(m_guiSetup.descriptor.selectors, "cubemap");
+      const t850::SelectorDesc* cubemapDesc = FindSelectorDesc(m_controlSetup.descriptor.selectors, "cubemap");
       if (cubemapDesc && value.value >= 0 && value.value < (int)cubemapDesc->options.size()) {
         m_currentCubemapIndex = value.value;
         m_pendingCubemap = "sky/" + cubemapDesc->options[value.value];
@@ -12110,7 +12618,7 @@ void SandboxScene::ApplySandboxProfileState(const t850::SandboxProfileDesc& stat
   if (state.frustum_culling.has_value()) {
     if (!SceneProp.FrustumCullingToggleAllowed) {
       SceneProp.FrustumCullingEnabled = false;
-    } else if (g_config.cullingLoadMode == t850::Config::CullingLoadMode::FullOnLoad || !*state.frustum_culling) {
+    } else {
       SceneProp.FrustumCullingEnabled = *state.frustum_culling;
     }
   }
@@ -12122,11 +12630,13 @@ void SandboxScene::ApplySandboxProfileState(const t850::SandboxProfileDesc& stat
   auto applyCameraPoseProjection = [&](const t850::SandboxCameraDesc& cameraState) {
     Cam.Ortho = cameraState.ortho;
     Cam.Fov = Deg2Rad(cameraState.fov);
-    Cam.AspectRatio = cameraState.aspect_ratio;
+    const float liveWidth = (g_pBaseDriver && g_pBaseDriver->width > 0) ? static_cast<float>(g_pBaseDriver->width) : cameraState.width;
+    const float liveHeight = (g_pBaseDriver && g_pBaseDriver->height > 0) ? static_cast<float>(g_pBaseDriver->height) : cameraState.height;
+    Cam.AspectRatio = liveHeight > 0.0f ? liveWidth / liveHeight : cameraState.aspect_ratio;
     Cam.NPlane = cameraState.near_plane;
     Cam.FPlane = cameraState.far_plane;
-    Cam.Width = cameraState.width;
-    Cam.Height = cameraState.height;
+    Cam.Width = liveWidth > 0.0f ? liveWidth : cameraState.width;
+    Cam.Height = liveHeight > 0.0f ? liveHeight : cameraState.height;
     Cam.LeftHanded = cameraState.left_handed;
     Cam.Eye = FromArray(cameraState.eye);
     Cam.Eye.w = 1.0f;
@@ -12275,7 +12785,7 @@ void SandboxScene::LoadSandboxProfile(bool embeddedInScene) {
   const t850::SandboxProfileDesc* baseProfile = nullptr;
   const t850::SandboxProfileDesc* runtimeProfile = nullptr;
   int bestRuntimeScore = -1;
-  for (const auto& profile : m_guiSetup.descriptor.profiles) {
+  for (const auto& profile : m_controlSetup.descriptor.profiles) {
     const bool modelSpecific = !profile.model.empty();
     const bool modelMatches = embeddedInScene
         ? !modelSpecific
@@ -12321,15 +12831,17 @@ void SandboxScene::SaveSandboxProfile() {
   t850::SandboxProfileDesc target;
   t850::ApplyProfileTarget(target, m_selectedProfileTargetIndex);
 
-  auto& profiles = m_guiSetup.descriptor.profiles;
-  auto existing = std::find_if(profiles.begin(), profiles.end(), [&](const t850::SandboxProfileDesc& profile) {
+  auto& profiles = m_controlSetup.descriptor.profiles;
+  auto profileMatchesSaveTarget = [&](const t850::SandboxProfileDesc& profile) {
     const bool modelMatches = m_profileEmbeddedInScene
         ? profile.model.empty()
         : SandboxProfileModelKey(profile.model) == m_profileModelKey;
+    const bool architectureMatches = target.architecture.empty() || profile.architecture == target.architecture;
     return modelMatches && profile.name == target.name &&
-           profile.platform == target.platform && profile.architecture == target.architecture &&
+           profile.platform == target.platform && architectureMatches &&
            profile.gpu_family == target.gpu_family && profile.gpu_name_contains == target.gpu_name_contains;
-  });
+  };
+  auto existing = std::find_if(profiles.begin(), profiles.end(), profileMatchesSaveTarget);
 
   bool hasOverrides = !sparse.sliders.empty() || !sparse.checkboxes.empty() || !sparse.selectors.empty() ||
                       !sparse.lights.empty() ||
@@ -12337,9 +12849,17 @@ void SandboxScene::SaveSandboxProfile() {
                       sparse.show_culling_debug.has_value() || sparse.current_keyframe.has_value();
   if (hasOverrides) {
     if (existing == profiles.end()) profiles.push_back(sparse);
-    else *existing = sparse;
+    else {
+      const size_t keepIndex = (size_t)std::distance(profiles.begin(), existing);
+      *existing = sparse;
+      for (size_t i = profiles.size(); i-- > 0;) {
+        if (i != keepIndex && profileMatchesSaveTarget(profiles[i])) {
+          profiles.erase(profiles.begin() + (std::ptrdiff_t)i);
+        }
+      }
+    }
   } else if (existing != profiles.end()) {
-    profiles.erase(existing);
+    profiles.erase(std::remove_if(profiles.begin(), profiles.end(), profileMatchesSaveTarget), profiles.end());
   }
 
   bool saved = false;
@@ -12360,7 +12880,7 @@ void SandboxScene::SaveSandboxProfile() {
                    error.c_str());
     }
   } else {
-    saved = t850::SaveSceneDescriptor("Scenes/SandboxScene.json", m_guiSetup.descriptor);
+    saved = t850::SaveSceneDescriptor("Scenes/SandboxScene.json", m_controlSetup.descriptor);
   }
 
   if (saved) {
@@ -12375,6 +12895,25 @@ void SandboxScene::SaveSandboxProfile() {
 
 void SandboxScene::OnDraw() {
   SceneProp.ShowCullingDebug = m_showCullStats;
+  static float sLuminanceReadbackAccum = 0.0f;
+  if (g_sandboxConsoleOpen) {
+    sLuminanceReadbackAccum += DtSecs;
+  }
+  if (g_sandboxConsoleOpen && sLuminanceReadbackAccum >= 0.25f) {
+    sLuminanceReadbackAccum = 0.0f;
+    const int adaptedLumRT = m_renderGraph.GetRTHandle("AdaptedLumCurrent");
+    float lumRGBA[4] = {};
+    if (adaptedLumRT >= 0 &&
+        pFramework && pFramework->pVideoDriver &&
+        pFramework->pVideoDriver->ReadRTColorFloat(adaptedLumRT, BaseDriver::COLOR0_ATTACHMENT, lumRGBA)) {
+      const float logLum = lumRGBA[0];
+      if (std::isfinite(logLum) && logLum > -20.0f && logLum < 20.0f) {
+        SceneProp.DebugAdaptedLuminance = std::exp(logLum);
+        SceneProp.DebugAdaptedLuminanceValid = true;
+      }
+    }
+  }
+
   // FPS logging (every 120 frames)
   static int sFrameCount = 0;
   static float sAccumTime = 0.0f;
@@ -12436,7 +12975,6 @@ void SandboxScene::OnDraw() {
       {Extra16FPass,          BaseDriver::COLOR0_ATTACHMENT, "Extra16F"},
       {ExtraHelperPass,       BaseDriver::COLOR0_ATTACHMENT, "HDR_Final"},
       {BloomAccumPass,        BaseDriver::COLOR0_ATTACHMENT, "Bloom"},
-      {LuminanceMapPass,      BaseDriver::COLOR0_ATTACHMENT, "LuminanceMap"},
       {AdaptedLumCurrentPass, BaseDriver::COLOR0_ATTACHMENT, "AdaptedLumCurrent"},
     };
     m_dumper.DumpFrame(pFramework->pVideoDriver, Cam, LightCam, SceneProp, rts, DtSecs,
@@ -12444,11 +12982,11 @@ void SandboxScene::OnDraw() {
     if (m_dumper.ShouldExit()) exit(0);
   }
 
-  // Blit final HDR result to backbuffer
-  int selected = ExtraHelperPass;
-  int attachment = BaseDriver::COLOR0_ATTACHMENT;
-
+  // Normal final output is emitted by the render graph BackBuffer pass.
   if (m_debugRTSelection > 0) {
+    int selected = ExtraHelperPass;
+    int attachment = BaseDriver::COLOR0_ATTACHMENT;
+
     switch (m_debugRTSelection) {
     case 1:  selected = GBufferPass;     attachment = BaseDriver::COLOR0_ATTACHMENT; break;
     case 2:  selected = GBufferPass;     attachment = BaseDriver::COLOR1_ATTACHMENT; break;
@@ -12461,24 +12999,18 @@ void SandboxScene::OnDraw() {
     case 9:  selected = Extra16FPass;    attachment = BaseDriver::COLOR0_ATTACHMENT; break;
     case 10: selected = ExtraHelperPass; attachment = BaseDriver::COLOR0_ATTACHMENT; break;
     case 11: selected = BloomAccumPass;  attachment = BaseDriver::COLOR0_ATTACHMENT; break;
-    case 12: selected = LuminanceMapPass; attachment = BaseDriver::COLOR0_ATTACHMENT; break;
-    case 13: selected = AdaptedLumCurrentPass; attachment = BaseDriver::COLOR0_ATTACHMENT; break;
+    case 12: selected = AdaptedLumCurrentPass; attachment = BaseDriver::COLOR0_ATTACHMENT; break;
     }
-  }
 
-  pFramework->pVideoDriver->SetBlendState(BaseDriver::BLEND_DEFAULT);
-  pFramework->pVideoDriver->SetDepthStencilState(BaseDriver::NONE);
-  Quads[0].SetTexture(pFramework->pVideoDriver->GetRTTexture(selected, attachment), 0);
-  ShaderKey finalKey(0);
-  finalKey.setPass(PassType::FSQUAD_1_TEX);
-  finalKey.bits |= ShaderKey::HAS_TEXCOORD0;
-  Quads[0].SetGlobalKey(finalKey);
-  Quads[0].Draw();
-#ifdef OS_ANDROID
-  if (auto* vkDriver = static_cast<VulkanDriver*>(pFramework->pVideoDriver)) {
-    vkDriver->SetLatePresentSource(selected, attachment);
+    pFramework->pVideoDriver->SetBlendState(BaseDriver::BLEND_DEFAULT);
+    pFramework->pVideoDriver->SetDepthStencilState(BaseDriver::NONE);
+    Quads[0].SetTexture(pFramework->pVideoDriver->GetRTTexture(selected, attachment), 0);
+    ShaderKey finalKey(0);
+    finalKey.setPass(PassType::FSQUAD_1_TEX);
+    finalKey.bits |= ShaderKey::HAS_TEXCOORD0;
+    Quads[0].SetGlobalKey(finalKey);
+    Quads[0].Draw();
   }
-#endif
 
   auto drawMeshDebugOverlays = [this]() {
     if (Meshes[0].pBase) {
@@ -12581,10 +13113,41 @@ void SandboxScene::OnDraw() {
         DrawRagdollJointDebugOverlay();
       }
     }
+
+    if (m_showLightVolumes) {
+      pFramework->pVideoDriver->SetDepthStencilState(BaseDriver::NONE);
+      pFramework->pVideoDriver->SetBlendState(BaseDriver::ALPHA_BLEND);
+
+      unsigned int numLights = SceneProp.ActiveLights;
+      if (numLights > SceneProp.Lights.size())
+        numLights = static_cast<unsigned int>(SceneProp.Lights.size());
+      if (numLights > 128u)
+        numLights = 128u;
+
+      for (unsigned int i = 0; i < numLights; ++i) {
+        const Light& light = SceneProp.Lights[i];
+        if (light.Type != LIGHT_POINT || !light.Enabled || !SceneProp.PointLightsEnabled)
+          continue;
+
+        const float effectiveIntensity = light.Intensity * (std::max)(0.0f, SceneProp.LightIntensityScale);
+        const float effectiveRadius = light.radius * (std::max)(0.0f, SceneProp.LightRadiusScale);
+        const float shaderRange = effectiveRadius * 2.0f;
+        if (effectiveIntensity <= 0.0f || shaderRange <= 0.0f)
+          continue;
+
+        XVECTOR3 color((std::min)(light.Color.x, 1.0f),
+                       (std::min)(light.Color.y, 1.0f),
+                       (std::min)(light.Color.z, 1.0f),
+                       0.65f);
+        m_debugSphere.Draw(VP, light.Position, shaderRange, color);
+      }
+
+      pFramework->pVideoDriver->SetBlendState(BaseDriver::BLEND_DEFAULT);
+    }
   };
 
 #ifdef OS_ANDROID
-  if (m_showWireframe || m_showSkeleton || m_showPhysics) {
+  if (m_showWireframe || m_showSkeleton || m_showPhysics || m_showLightVolumes) {
     if (auto* vkDriver = static_cast<VulkanDriver*>(pFramework->pVideoDriver)) {
       vkDriver->SetPrePresentOverlayCallback(drawMeshDebugOverlays);
     }
@@ -12692,119 +13255,9 @@ void SandboxScene::OnDraw() {
   }
 }
 
-void SandboxScene::PopulateGUI(t850::GUIManager& gui) {
-  // Load SandboxScene.json for GUI descriptors
-  if (m_guiSetup.descriptor.name.empty()) {
-    m_guiSetup.Load("Scenes/SandboxScene.json");
-  }
-
-  struct SliderMapping { const char* name; int settingIndex; };
-  static const SliderMapping mappings[] = {
-    {"exposure",              CHANGE_EXPOSURE},
-    {"bloom_factor",          CHANGE_BLOOM_FACTOR},
-    {"bloom_threshold",       CHANGE_BLOOM_THRESHOLD},
-    {"tm_white_level",        CHANGE_TM_WHITE_LEVEL},
-    {"tm_adapt_tau",          CHANGE_TM_ADAPT_TAU},
-    {"pcf_radius",            CHANGE_PCF_RADIUS},
-    {"pcf_samples",           CHANGE_PCF_SAMPLES},
-    {"ssao_kernel_size",      CHANGE_SSAO_KERNEL_SIZE},
-    {"ssao_radius",           CHANGE_SSAO_RADIUS},
-    {"dof_aperture",          CHANGE_DOF_APERTURE},
-    {"dof_focal_length",      CHANGE_DOF_FOCAL_LENGHT},
-    {"dof_max_coc",           CHANGE_DOF_MAX_COC},
-    {"dof_far_samples",       CHANGE_DOF_FAR_SAMPLE},
-    {"dof_near_samples",      CHANGE_DOF_NEAR_SAMPLE},
-    {"light_volume_steps",    CHANGE_LIGHT_VOLUME_STEPS},
-    {"godrays_factor",        CHANGE_GODRAYS_FACTOR},
-    {"gauss_kernel_radius",   CHANGE_GAUSS_KERNEL_RADIUS},
-    {"gauss_kernel_deviation", CHANGE_GAUSS_KERNEL_DEVIATION},
-    {"fov",                   CHANGE_FOV},
-    {"light_radius_scale",    CHANGE_LIGHT_RADIUS_SCALE},
-    {"light_intensity_scale", CHANGE_LIGHT_INTENSITY_SCALE},
-    {"lightmap_intensity",    CHANGE_LIGHTMAP_INTENSITY},
-    {"shadow_bias",           CHANGE_SHADOW_BIAS},
-    {"shadow_min",            CHANGE_SHADOW_MIN},
-    {"env_factor",            CHANGE_ENV_FACTOR},
-    {"ibl_factor",             CHANGE_IBL_FACTOR},
-    {"material_emissive_intensity", CHANGE_MATERIAL_EMISSIVE_INTENSITY},
-    {"material_transmission_multiplier", CHANGE_MATERIAL_TRANSMISSION_MULTIPLIER},
-    {"material_refraction_strength", CHANGE_MATERIAL_REFRACTION_STRENGTH},
-    {"anim_speed",             CHANGE_ANIM_SPEED},
-  };
-
-  for (auto& sd : m_guiSetup.descriptor.sliders) {
-    int settingIdx = -1;
-    for (auto& m : mappings) {
-      if (sd.name == m.name) { settingIdx = m.settingIndex; break; }
-    }
-    gui.AddSlider(sd, settingIdx);
-  }
-
-  struct CheckboxMapping { const char* name; int settingIndex; };
-  static const CheckboxMapping cbMappings[] = {
-    {"shadow_toggle",          CHANGE_PCF_TOOGLE},
-    {"ssao_toggle",            CHANGLE_SSAO_TOOGLE},
-    {"show_wireframe",         CHANGE_SHOW_WIREFRAME},
-    {"show_skeleton",          CHANGE_SHOW_SKELETON},
-    {"show_physics",           CHANGE_SHOW_PHYSICS},
-  };
-
-  for (auto& cd : m_guiSetup.descriptor.checkboxes) {
-    int settingIdx = -1;
-    for (auto& m : cbMappings) {
-      if (cd.name == m.name) { settingIdx = m.settingIndex; break; }
-    }
-    gui.AddCheckbox(cd, settingIdx);
-  }
-
-  struct SelectorMapping { const char* name; int settingIndex; };
-  static const SelectorMapping selMappings[] = {
-    {"debug_render_target", CHANGE_DEBUG_RT},
-    {"cubemap",             CHANGE_CUBEMAP},
-    {"gauss_kernel_sample_count", CHANGE_GAUSS_KERNEL_SAMPLE_COUNT},
-    {"active_gauss_kernel",        CHANGE_ACTIVE_GAUSS_KERNEL},
-    {"anim_select",                CHANGE_ANIM_SELECT},
-    {"anim_mode",                  CHANGE_ANIM_MODE},
-  };
-
-  for (auto& sd : m_guiSetup.descriptor.selectors) {
-    int settingIdx = -1;
-    for (auto& m : selMappings) {
-      if (sd.name == m.name) { settingIdx = m.settingIndex; break; }
-    }
-    gui.AddSelector(sd, settingIdx);
-  }
-
-  // Populate animation selector with actual animation names from the loaded model
-  RenderSkinnedMesh* skinned = Meshes[0].GetSkinnedMesh();
-  if (skinned && skinned->HasSkinData()) {
-    for (auto& sp : gui.GetSelectorPairs()) {
-      if (sp.selector->settingIndex == CHANGE_ANIM_SELECT) {
-        sp.selector->options.clear();
-        int numSets = skinned->GetNumAnimSets();
-        for (int i = 0; i < numSets; i++) {
-          if (skinned->xFile && !skinned->xFile->XMeshDataBase.empty()) {
-            auto& anims = skinned->xFile->XMeshDataBase[0]->Animation.Animations;
-            if (i < (int)anims.size() && !anims[i].Name.empty()) {
-              sp.selector->options.push_back(anims[i].Name);
-            } else {
-              sp.selector->options.push_back("Anim " + std::to_string(i));
-            }
-          } else {
-            sp.selector->options.push_back("Anim " + std::to_string(i));
-          }
-        }
-        if (sp.selector->options.empty())
-          sp.selector->options.push_back("None");
-        break;
-      }
-    }
-  }
-}
-
 void SandboxScene::DrawDevGui(t850::DevGuiContext& gui) {
-  if (m_guiSetup.descriptor.name.empty()) {
-    m_guiSetup.Load("Scenes/SandboxScene.json");
+  if (m_controlSetup.descriptor.name.empty()) {
+    m_controlSetup.Load("Scenes/SandboxScene.json");
   }
 
   struct Mapping { const char* name; int settingIndex; };
@@ -12848,6 +13301,8 @@ void SandboxScene::DrawDevGui(t850::DevGuiContext& gui) {
     {"show_wireframe", CHANGE_SHOW_WIREFRAME},
     {"show_skeleton", CHANGE_SHOW_SKELETON},
     {"show_physics", CHANGE_SHOW_PHYSICS},
+    {"show_light_volumes", CHANGE_SHOW_LIGHT_VOLUMES},
+    {"point_lights_enabled", CHANGE_POINT_LIGHTS_ENABLED},
   };
 
   static const Mapping selectorMappings[] = {
@@ -12855,6 +13310,7 @@ void SandboxScene::DrawDevGui(t850::DevGuiContext& gui) {
     {"cubemap", CHANGE_CUBEMAP},
     {"gauss_kernel_sample_count", CHANGE_GAUSS_KERNEL_SAMPLE_COUNT},
     {"active_gauss_kernel", CHANGE_ACTIVE_GAUSS_KERNEL},
+    {"luminance_mode", CHANGE_LUMINANCE_MODE},
     {"anim_select", CHANGE_ANIM_SELECT},
     {"anim_mode", CHANGE_ANIM_MODE},
   };
@@ -12984,6 +13440,8 @@ void SandboxScene::DrawDevGui(t850::DevGuiContext& gui) {
     case CHANGE_SHOW_WIREFRAME: value = m_showWireframe; return true;
     case CHANGE_SHOW_SKELETON: value = (skinnedMesh() != nullptr) && m_showSkeleton; return true;
     case CHANGE_SHOW_PHYSICS: value = m_showPhysics; return true;
+    case CHANGE_SHOW_LIGHT_VOLUMES: value = m_showLightVolumes; return true;
+    case CHANGE_POINT_LIGHTS_ENABLED: value = SceneProp.PointLightsEnabled; return true;
     }
     return false;
   };
@@ -12995,6 +13453,8 @@ void SandboxScene::DrawDevGui(t850::DevGuiContext& gui) {
     case CHANGE_SHOW_WIREFRAME: m_showWireframe = value; break;
     case CHANGE_SHOW_SKELETON: m_showSkeleton = value && (skinnedMesh() != nullptr); break;
     case CHANGE_SHOW_PHYSICS: m_showPhysics = value; break;
+    case CHANGE_SHOW_LIGHT_VOLUMES: m_showLightVolumes = value; break;
+    case CHANGE_POINT_LIGHTS_ENABLED: SceneProp.PointLightsEnabled = value; break;
     }
   };
 
@@ -13012,6 +13472,7 @@ void SandboxScene::DrawDevGui(t850::DevGuiContext& gui) {
       return true;
     }
     case CHANGE_ACTIVE_GAUSS_KERNEL: selectedIndex = ChangeActiveGaussSelection; return true;
+    case CHANGE_LUMINANCE_MODE: selectedIndex = SceneProp.LuminanceMode; return true;
     case CHANGE_ANIM_SELECT: if (RenderSkinnedMesh* sk = skinnedMesh()) { selectedIndex = sk->GetCurrentAnimSet(); return true; } selectedIndex = 0; return true;
     case CHANGE_ANIM_MODE: if (RenderSkinnedMesh* sk = skinnedMesh()) { selectedIndex = sk->GetKeyframeMode() ? 1 : 0; return true; } selectedIndex = 0; return true;
     }
@@ -13035,6 +13496,7 @@ void SandboxScene::DrawDevGui(t850::DevGuiContext& gui) {
       if (kernel) { kernel->kernelSize = std::atoi(sourceOptions[selectedIndex].c_str()); kernel->Update(); }
     } break;
     case CHANGE_ACTIVE_GAUSS_KERNEL: ChangeActiveGaussSelection = selectedIndex; break;
+    case CHANGE_LUMINANCE_MODE: SceneProp.LuminanceMode = selectedIndex; break;
     case CHANGE_ANIM_SELECT:
       if (RenderSkinnedMesh* sk = skinnedMesh()) {
         int guard = sk->GetNumAnimSets() + 1;
@@ -13054,7 +13516,7 @@ void SandboxScene::DrawDevGui(t850::DevGuiContext& gui) {
   };
 
   auto drawSliderByName = [&](const char* name) -> bool {
-    for (const auto& desc : m_guiSetup.descriptor.sliders) {
+    for (const auto& desc : m_controlSetup.descriptor.sliders) {
       if (desc.name != name) continue;
       int settingIndex = findSetting(desc.name, sliderMappings, (int)(sizeof(sliderMappings) / sizeof(sliderMappings[0])));
       if (settingIndex < 0) return false;
@@ -13068,7 +13530,7 @@ void SandboxScene::DrawDevGui(t850::DevGuiContext& gui) {
   };
 
   auto drawCheckboxByName = [&](const char* name) -> bool {
-    for (const auto& desc : m_guiSetup.descriptor.checkboxes) {
+    for (const auto& desc : m_controlSetup.descriptor.checkboxes) {
       if (desc.name != name) continue;
       int settingIndex = findSetting(desc.name, checkboxMappings, (int)(sizeof(checkboxMappings) / sizeof(checkboxMappings[0])));
       if (settingIndex < 0) return false;
@@ -13082,7 +13544,7 @@ void SandboxScene::DrawDevGui(t850::DevGuiContext& gui) {
   };
 
   auto drawSelectorByName = [&](const char* name) -> bool {
-    for (const auto& desc : m_guiSetup.descriptor.selectors) {
+    for (const auto& desc : m_controlSetup.descriptor.selectors) {
       if (desc.name != name) continue;
       int settingIndex = findSetting(desc.name, selectorMappings, (int)(sizeof(selectorMappings) / sizeof(selectorMappings[0])));
       if (settingIndex < 0) return false;
@@ -13137,10 +13599,11 @@ void SandboxScene::DrawDevGui(t850::DevGuiContext& gui) {
     drawSelectorByName("cubemap");
     drawSelectorByName("active_gauss_kernel");
     drawSelectorByName("gauss_kernel_sample_count");
+    drawSelectorByName("luminance_mode");
     drawSelectorByName("debug_render_target");
     drawCheckboxByName("shadow_toggle");
     drawCheckboxByName("ssao_toggle");
-    for (const auto& desc : m_guiSetup.descriptor.sliders) {
+    for (const auto& desc : m_controlSetup.descriptor.sliders) {
       if (desc.name == "anim_speed") continue;
       int settingIndex = findSetting(desc.name, sliderMappings, (int)(sizeof(sliderMappings) / sizeof(sliderMappings[0])));
       if (settingIndex < 0) continue;
@@ -13190,9 +13653,18 @@ void SandboxScene::DrawDevGui(t850::DevGuiContext& gui) {
     drawCheckboxByName("show_wireframe");
     drawCheckboxByName("show_skeleton");
     drawCheckboxByName("show_physics");
+    drawCheckboxByName("show_light_volumes");
   }
 
   if (gui.BeginSection("Lights")) {
+    t850::CheckboxDesc pointLightsDesc;
+    pointLightsDesc.name = "point_lights_enabled";
+    pointLightsDesc.label = "Dynamic point lights";
+    bool pointLightsEnabled = SceneProp.PointLightsEnabled;
+    if (gui.Checkbox(pointLightsDesc, pointLightsEnabled)) {
+      SceneProp.PointLightsEnabled = pointLightsEnabled;
+    }
+
     EnsureLightRuntimeState();
     if (SceneProp.Lights.empty()) {
       gui.Text("No lights");
@@ -13356,181 +13828,6 @@ void SandboxScene::DrawDevGui(t850::DevGuiContext& gui) {
   }
 
   DrawSkinningAuthoringPanel(gui);
-  DrawSandboxConsolePanel(m_cameraController.GetActiveProfileType(), Cam.Eye);
-}
-
-void SandboxScene::SyncToGUI(t850::GUIManager& gui) {
-  for (auto& sp : gui.GetSliderPairs()) {
-    auto* slider = sp.slider;
-    switch (slider->settingIndex) {
-    case CHANGE_EXPOSURE:        slider->SetValue(SceneProp.Exposure); break;
-    case CHANGE_BLOOM_FACTOR:    slider->SetValue(SceneProp.BloomFactor); break;
-    case CHANGE_BLOOM_THRESHOLD: slider->SetValue(SceneProp.BloomThreshold); break;
-    case CHANGE_TM_WHITE_LEVEL:  slider->SetValue(SceneProp.ToneMapWhiteLevel); break;
-    case CHANGE_TM_ADAPT_TAU:    slider->SetValue(SceneProp.LuminanceTau); break;
-    case CHANGE_PCF_RADIUS:      slider->SetValue(SceneProp.PCFScale); break;
-    case CHANGE_PCF_SAMPLES:     slider->SetValue(SceneProp.PCFSamples); break;
-    case CHANGE_SSAO_KERNEL_SIZE: slider->SetValue((float)SceneProp.SSAOKernel.KernelSize); break;
-    case CHANGE_SSAO_RADIUS:     slider->SetValue(SceneProp.SSAOKernel.Radius); break;
-    case CHANGE_DOF_APERTURE:    slider->SetValue(SceneProp.Aperture); break;
-    case CHANGE_DOF_FOCAL_LENGHT: slider->SetValue(SceneProp.FocalLength); break;
-    case CHANGE_DOF_MAX_COC:     slider->SetValue(SceneProp.MaxCoc); break;
-    case CHANGE_DOF_FAR_SAMPLE:  slider->SetValue(SceneProp.DOF_Far_Samples_squared); break;
-    case CHANGE_DOF_NEAR_SAMPLE: slider->SetValue(SceneProp.DOF_Near_Samples_squared); break;
-    case CHANGE_LIGHT_VOLUME_STEPS: slider->SetValue(SceneProp.LightVolumeSteps); break;
-    case CHANGE_GODRAYS_FACTOR:  slider->SetValue(SceneProp.GodRaysFactor); break;
-    case CHANGE_GAUSS_KERNEL_RADIUS: slider->SetValue(SceneProp.pGaussKernels[ChangeActiveGaussSelection]->radius); break;
-    case CHANGE_GAUSS_KERNEL_DEVIATION: slider->SetValue(SceneProp.pGaussKernels[ChangeActiveGaussSelection]->sigma); break;
-    case CHANGE_FOV:             slider->SetValue(Rad2Deg(ActiveCam->Fov)); break;
-    case CHANGE_LIGHT_INTENSITY: if (!SceneProp.Lights.empty()) slider->SetValue(SceneProp.Lights[0].Intensity); break;
-    case CHANGE_LIGHT_RADIUS_SCALE: slider->SetValue(SceneProp.LightRadiusScale); break;
-    case CHANGE_LIGHT_INTENSITY_SCALE: slider->SetValue(SceneProp.LightIntensityScale); break;
-    case CHANGE_LIGHTMAP_INTENSITY: slider->SetValue(SceneProp.LightmapIntensity); break;
-    case CHANGE_SHADOW_BIAS:     slider->SetValue(SceneProp.ShadowBias); break;
-    case CHANGE_SHADOW_MIN:      slider->SetValue(SceneProp.ShadowMin); break;
-    case CHANGE_ENV_FACTOR:      slider->SetValue(SceneProp.EnvFactor); break;
-    case CHANGE_IBL_FACTOR:      slider->SetValue(SceneProp.IBLFactor); break;
-    case CHANGE_MATERIAL_EMISSIVE_INTENSITY: slider->SetValue(SceneProp.MaterialEmissiveIntensity); break;
-    case CHANGE_MATERIAL_TRANSMISSION_MULTIPLIER: slider->SetValue(SceneProp.MaterialTransmissionMultiplier); break;
-    case CHANGE_MATERIAL_REFRACTION_STRENGTH: slider->SetValue(SceneProp.MaterialRefractionStrength); break;
-    case CHANGE_ANIM_SPEED: {
-      RenderSkinnedMesh* sk = GetSelectedAnimationMesh();
-      if (sk) slider->SetValue(sk->GetAnimSpeed());
-    } break;
-    }
-  }
-
-  for (auto& cp : gui.GetCheckboxPairs()) {
-    auto* cb = cp.checkbox;
-    switch (cb->settingIndex) {
-    case CHANGE_PCF_TOOGLE:   cb->checked = (SceneProp.ToogleShadow != 0); break;
-    case CHANGLE_SSAO_TOOGLE: cb->checked = (SceneProp.ToogleSSAO != 0); break;
-    case CHANGE_SHOW_WIREFRAME: cb->checked = m_showWireframe; break;
-    case CHANGE_SHOW_SKELETON:  cb->checked = (GetSelectedSkinningMesh() != nullptr) && m_showSkeleton; break;
-    case CHANGE_SHOW_PHYSICS:   cb->checked = m_showPhysics; break;
-    }
-  }
-
-  for (auto& sp : gui.GetSelectorPairs()) {
-    auto* sel = sp.selector;
-    switch (sel->settingIndex) {
-    case CHANGE_DEBUG_RT: sel->selectedIndex = m_debugRTSelection; break;
-    case CHANGE_CUBEMAP:  sel->selectedIndex = m_currentCubemapIndex; break;
-    case CHANGE_GAUSS_KERNEL_SAMPLE_COUNT: {
-      int ks = SceneProp.pGaussKernels[ChangeActiveGaussSelection]->kernelSize;
-      std::string ksStr = std::to_string(ks);
-      for (int i = 0; i < (int)sel->options.size(); i++) {
-        if (sel->options[i] == ksStr) { sel->selectedIndex = i; break; }
-      }
-    } break;
-    case CHANGE_ACTIVE_GAUSS_KERNEL:
-      sel->selectedIndex = ChangeActiveGaussSelection;
-      break;
-    case CHANGE_ANIM_SELECT: {
-      RenderSkinnedMesh* sk = GetSelectedAnimationMesh();
-      if (sk) sel->selectedIndex = sk->GetCurrentAnimSet();
-    } break;
-    }
-  }
-}
-
-void SandboxScene::SyncFromGUI(t850::GUIManager& gui) {
-  for (auto& sp : gui.GetSliderPairs()) {
-    auto* slider = sp.slider;
-    if (!slider->knobDragging && !slider->knobHover) continue;
-    switch (slider->settingIndex) {
-    case CHANGE_EXPOSURE:        SceneProp.Exposure = slider->value; break;
-    case CHANGE_BLOOM_FACTOR:    SceneProp.BloomFactor = slider->value; break;
-    case CHANGE_BLOOM_THRESHOLD: SceneProp.BloomThreshold = slider->value; break;
-    case CHANGE_TM_WHITE_LEVEL:  SceneProp.ToneMapWhiteLevel = slider->value; break;
-    case CHANGE_TM_ADAPT_TAU:    SceneProp.LuminanceTau = slider->value; break;
-    case CHANGE_PCF_RADIUS:      SceneProp.PCFScale = slider->value; break;
-    case CHANGE_PCF_SAMPLES:     SceneProp.PCFSamples = slider->value; break;
-    case CHANGE_SSAO_KERNEL_SIZE: SceneProp.SSAOKernel.KernelSize = (int)slider->value; SceneProp.SSAOKernel.Update(); break;
-    case CHANGE_SSAO_RADIUS:     SceneProp.SSAOKernel.Radius = slider->value; break;
-    case CHANGE_DOF_APERTURE:    SceneProp.Aperture = slider->value; break;
-    case CHANGE_DOF_FOCAL_LENGHT: SceneProp.FocalLength = slider->value; break;
-    case CHANGE_DOF_MAX_COC:     SceneProp.MaxCoc = slider->value; break;
-    case CHANGE_DOF_FAR_SAMPLE:  SceneProp.DOF_Far_Samples_squared = slider->value; break;
-    case CHANGE_DOF_NEAR_SAMPLE: SceneProp.DOF_Near_Samples_squared = slider->value; break;
-    case CHANGE_LIGHT_VOLUME_STEPS: SceneProp.LightVolumeSteps = slider->value; break;
-    case CHANGE_GODRAYS_FACTOR:  SceneProp.GodRaysFactor = slider->value; break;
-    case CHANGE_GAUSS_KERNEL_RADIUS: SceneProp.pGaussKernels[ChangeActiveGaussSelection]->radius = slider->value;
-      SceneProp.pGaussKernels[ChangeActiveGaussSelection]->Update(); break;
-    case CHANGE_GAUSS_KERNEL_DEVIATION: SceneProp.pGaussKernels[ChangeActiveGaussSelection]->sigma = slider->value;
-      SceneProp.pGaussKernels[ChangeActiveGaussSelection]->Update(); break;
-    case CHANGE_FOV:             ActiveCam->Fov = Deg2Rad(slider->value); break;
-    case CHANGE_LIGHT_INTENSITY: if (!SceneProp.Lights.empty()) SceneProp.Lights[0].Intensity = slider->value; break;
-    case CHANGE_LIGHT_RADIUS_SCALE: SceneProp.LightRadiusScale = slider->value; break;
-    case CHANGE_LIGHT_INTENSITY_SCALE: SceneProp.LightIntensityScale = slider->value; break;
-    case CHANGE_LIGHTMAP_INTENSITY: SceneProp.LightmapIntensity = slider->value; break;
-    case CHANGE_SHADOW_BIAS:     SceneProp.ShadowBias = slider->value; break;
-    case CHANGE_SHADOW_MIN:      SceneProp.ShadowMin = slider->value; break;
-    case CHANGE_ENV_FACTOR:      SceneProp.EnvFactor = slider->value; break;
-    case CHANGE_IBL_FACTOR:      SceneProp.IBLFactor = slider->value; break;
-    case CHANGE_MATERIAL_EMISSIVE_INTENSITY: SceneProp.MaterialEmissiveIntensity = slider->value; break;
-    case CHANGE_MATERIAL_TRANSMISSION_MULTIPLIER: SceneProp.MaterialTransmissionMultiplier = slider->value; break;
-    case CHANGE_MATERIAL_REFRACTION_STRENGTH: SceneProp.MaterialRefractionStrength = slider->value; break;
-    case CHANGE_ANIM_SPEED: {
-      RenderSkinnedMesh* sk = GetSelectedAnimationMesh();
-      if (sk) sk->SetAnimSpeed(slider->value);
-    } break;
-    }
-  }
-
-  for (auto& cp : gui.GetCheckboxPairs()) {
-    auto* cb = cp.checkbox;
-    if (!cb->justToggled) continue;
-    switch (cb->settingIndex) {
-    case CHANGE_PCF_TOOGLE:   SceneProp.ToogleShadow = cb->checked ? 1 : 0; break;
-    case CHANGLE_SSAO_TOOGLE: SceneProp.ToogleSSAO = cb->checked ? 1 : 0; break;
-    case CHANGE_SHOW_WIREFRAME: m_showWireframe = cb->checked; break;
-    case CHANGE_SHOW_SKELETON:  m_showSkeleton = cb->checked && (GetSelectedSkinningMesh() != nullptr); break;
-    case CHANGE_SHOW_PHYSICS:   m_showPhysics = cb->checked; break;
-    }
-  }
-
-  for (auto& sp : gui.GetSelectorPairs()) {
-    auto* sel = sp.selector;
-    if (!sel->justChanged) continue;
-    switch (sel->settingIndex) {
-    case CHANGE_DEBUG_RT:
-      m_debugRTSelection = sel->selectedIndex;
-      break;
-    case CHANGE_CUBEMAP: {
-      if (sel->selectedIndex != m_currentCubemapIndex) {
-        m_currentCubemapIndex = sel->selectedIndex;
-        m_pendingCubemap = "sky/" + sel->CurrentOption();
-        T8_LOG_INFO("[SandboxScene] Cubemap change queued: '%s'", m_pendingCubemap.c_str());
-      }
-    } break;
-    case CHANGE_GAUSS_KERNEL_SAMPLE_COUNT: {
-      int newSize = std::atoi(sel->CurrentOption().c_str());
-      SceneProp.pGaussKernels[ChangeActiveGaussSelection]->kernelSize = newSize;
-      SceneProp.pGaussKernels[ChangeActiveGaussSelection]->Update();
-    } break;
-    case CHANGE_ACTIVE_GAUSS_KERNEL:
-      ChangeActiveGaussSelection = sel->selectedIndex;
-      break;
-    case CHANGE_ANIM_SELECT: {
-      RenderSkinnedMesh* sk = GetSelectedAnimationMesh();
-      if (sk && sel->selectedIndex != sk->GetCurrentAnimSet()) {
-        // Switch to selected animation set
-        while (sk->GetCurrentAnimSet() != sel->selectedIndex) {
-          sk->NextAnimation();
-        }
-      }
-    } break;
-    case CHANGE_ANIM_MODE: {
-      RenderSkinnedMesh* sk = GetSelectedAnimationMesh();
-      if (sk) {
-        bool keyMode = (sel->selectedIndex == 1);
-        sk->SetKeyframeMode(keyMode);
-        if (keyMode) {
-          sk->StepKeyframe(0); // snap to current keyframe
-        }
-      }
-    } break;
-    }
-  }
+  const RenderMesh* consoleCullMesh = Meshes[0].pBase ? static_cast<const RenderMesh*>(Meshes[0].pBase) : nullptr;
+  DrawSandboxConsolePanel(m_cameraController.GetActiveProfileType(), Cam.Eye, SceneProp, consoleCullMesh);
 }

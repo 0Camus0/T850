@@ -40,6 +40,28 @@
       "pop": false
     },
     {
+      "name": "Deferred Light Volumes",
+      "target": "Deferred",
+      "push": false,
+      "inputs": [
+        { "source": "GBuffer:COLOR0", "slot": 0 },
+        { "source": "GBuffer:COLOR1", "slot": 1 },
+        { "source": "GBuffer:COLOR2", "slot": 2 },
+        { "source": "GBuffer:COLOR3", "slot": 3 },
+        { "source": "GBuffer:DEPTH",  "slot": 4 },
+        { "source": "GBuffer:COLOR5", "slot": 7 },
+        { "source": "GBuffer:COLOR6", "slot": 8 },
+        { "source": "GBuffer:COLOR4", "slot": 9 }
+      ],
+      "bind_environment_map": true,
+      "state": { "blend": "ADDITIVE", "depth_stencil": "NONE", "cull_face": "FRONT_AND_BACK" },
+      "draws": [
+        { "type": "fullscreen_quad", "signature": "DEFERRED_LIGHT_VOLUME_PASS" }
+      ],
+      "post_state": { "blend": "BLEND_OPAQUE" },
+      "pop": false
+    },
+    {
       "name": "Opaque Scene Copy",
       "target": "SceneColor",
       "clear": true,

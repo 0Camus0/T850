@@ -275,5 +275,5 @@ if errorlevel 1 (
 exit /b 0
 
 :usage
-echo Usage: Scripts\Bat\BuildAndroid.bat [Debug^|Release] [--configuration Debug^|Release] [--sdk C:\Android\Sdk] [--abi ABI[,ABI...]] [--asset-profile physics-demo^|doom-porsche^|models-full^|full] [--emulator] [--vulkan-validation] [--allow-unsigned-release] [--clean] [--install] [--launch]
+echo Usage: Scripts\Bat\BuildAndroid.bat [Debug^|Release] [--configuration Debug^|Release] [--sdk C:\Android\Sdk] [--abi ABI[,ABI...]] [--asset-profile physics-demo^|doom-porsche^|q3-sandbox^|models-full^|full] [--emulator] [--vulkan-validation] [--allow-unsigned-release] [--clean] [--install] [--launch]
 exit /b 1

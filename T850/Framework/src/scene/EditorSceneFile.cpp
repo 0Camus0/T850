@@ -14,6 +14,8 @@
 #pragma warning(pop)
 #endif
 
+#include <algorithm>
+#include <cctype>
 #include <filesystem>
 #include <fstream>
 
@@ -23,6 +25,97 @@ namespace {
 
 void SetError(std::string* out, const std::string& message) {
   if (out) *out = message;
+}
+
+std::string ToLowerAsciiCopy(std::string value) {
+  std::transform(value.begin(), value.end(), value.begin(), [](unsigned char c) {
+    return static_cast<char>(std::tolower(c));
+  });
+  return value;
+}
+
+std::string NormalizeSceneResourcePath(std::string path) {
+  std::replace(path.begin(), path.end(), '\\', '/');
+  const std::string lower = ToLowerAsciiCopy(path);
+  const std::string assetsMarker = "/assets/";
+  const std::size_t embeddedAssets = lower.rfind(assetsMarker);
+  if (embeddedAssets != std::string::npos) {
+    path.erase(0, embeddedAssets + 1);
+  }
+  while (!path.empty() && path.front() == '/') {
+    path.erase(path.begin());
+  }
+  const std::string assetsPrefix = "assets/";
+  if (ToLowerAsciiCopy(path).rfind(assetsPrefix, 0) == 0) {
+    path.erase(0, assetsPrefix.size());
+  }
+  return path;
+}
+
+std::string ExtensionLower(const std::string& path) {
+  return ToLowerAsciiCopy(std::filesystem::path(path).extension().string());
+}
+
+bool IsSceneGltfMeshPath(const std::string& path) {
+  const std::string ext = ExtensionLower(path);
+  return ext == ".glb" || ext == ".gltf";
+}
+
+void AddUniqueSearchDirectory(std::vector<std::string>& directories, const std::string& directory) {
+  const std::string normalized = NormalizeSceneResourcePath(directory);
+  if (normalized.empty()) {
+    return;
+  }
+  if (std::find(directories.begin(), directories.end(), normalized) == directories.end()) {
+    directories.push_back(normalized);
+  }
+}
+
+std::string FirstResourceDirectory(const std::string& path) {
+  const std::string normalized = NormalizeSceneResourcePath(path);
+  const std::size_t slash = normalized.find('/');
+  if (slash == std::string::npos || slash == 0) return {};
+  std::string first = normalized.substr(0, slash);
+  if (first.find(':') != std::string::npos) return {};
+  return first;
+}
+
+std::vector<std::string> BuildSceneMeshFallbackDirectories(const std::string& meshPath,
+                                                           const std::string& scenePath) {
+  std::vector<std::string> directories;
+  AddUniqueSearchDirectory(directories, std::filesystem::path(scenePath).parent_path().string());
+  AddUniqueSearchDirectory(directories, std::filesystem::path(meshPath).parent_path().string());
+  AddUniqueSearchDirectory(directories, FirstResourceDirectory(meshPath));
+  AddUniqueSearchDirectory(directories, "Models");
+  return directories;
+}
+
+void ResolveSceneMeshFallbacks(const std::string& scenePath, EditorSceneFile& scene) {
+  ResourceLocator& locator = ResourceLocator::Instance();
+  for (SceneObjectDesc& object : scene.objects) {
+    const bool meshWasEmpty = object.mesh.empty();
+    const std::string originalMeshPath = meshWasEmpty ? object.name : object.mesh;
+    std::string normalizedMeshPath = NormalizeSceneResourcePath(originalMeshPath);
+    if (normalizedMeshPath.empty() || !IsSceneGltfMeshPath(normalizedMeshPath)) {
+      continue;
+    }
+
+    if (locator.Exists(normalizedMeshPath)) {
+      object.mesh = normalizedMeshPath;
+      continue;
+    }
+
+    std::string fallbackPath;
+    const std::vector<std::string> searchDirectories =
+        BuildSceneMeshFallbackDirectories(normalizedMeshPath, scenePath);
+    if (locator.FindFileByNameRecursive(normalizedMeshPath, fallbackPath, searchDirectories)) {
+      object.mesh = fallbackPath;
+      T8_LOG_INFO("[SceneFile] Resolved missing mesh '%s' to recursive fallback '%s'",
+                  normalizedMeshPath.c_str(), fallbackPath.c_str());
+    } else if (!meshWasEmpty) {
+      object.mesh = normalizedMeshPath;
+    }
+  }
 }
 
 } // namespace
@@ -43,6 +136,8 @@ bool LoadEditorSceneFile(const std::string& path, EditorSceneFile& scene, std::s
     T8_LOG_ERROR("[SceneFile] Failed to parse %s: %s", path.c_str(), message.c_str());
     return false;
   }
+
+  ResolveSceneMeshFallbacks(path, scene);
 
   T8_LOG_INFO("[SceneFile] Loaded %s (%zu objects, %zu cameras, %zu lights)",
               path.c_str(), scene.objects.size(), scene.cameras.size(), scene.lights.size());

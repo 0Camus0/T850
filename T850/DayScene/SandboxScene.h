@@ -16,7 +16,6 @@
 #include <physics/Q3BspCollision.h>
 #include <physics/PhysicsTypes.h>
 #include <debug/FrameDumper.h>
-#include <gui/GUIManager.h>
 #include <Config.h>
 
 #include <array>
@@ -69,6 +68,7 @@ class SandboxScene : public t850::SceneBase, public t850::CameraCollisionWorld
     CHANGE_CUBEMAP,
     CHANGE_GAUSS_KERNEL_SAMPLE_COUNT,
     CHANGE_ACTIVE_GAUSS_KERNEL,
+    CHANGE_LUMINANCE_MODE,
     // Animation controls (only active for skinned meshes)
     CHANGE_ANIM_SPEED,
     CHANGE_ANIM_SELECT,
@@ -76,6 +76,8 @@ class SandboxScene : public t850::SceneBase, public t850::CameraCollisionWorld
     CHANGE_SHOW_WIREFRAME,
     CHANGE_SHOW_SKELETON,
     CHANGE_SHOW_PHYSICS,
+    CHANGE_SHOW_LIGHT_VOLUMES,
+    CHANGE_POINT_LIGHTS_ENABLED,
     CHANGE_MAX_NUM_OPTIONS
   };
 public:
@@ -89,12 +91,13 @@ public:
   void CreateAssets() override;
   void DestroyAssets() override;
 
-  void PopulateGUI(t850::GUIManager& gui) override;
-  void SyncToGUI(t850::GUIManager& gui) override;
-  void SyncFromGUI(t850::GUIManager& gui) override;
   void DrawDevGui(t850::DevGuiContext& gui) override;
 #ifdef OS_ANDROID
+  bool HandleAndroidVirtualControls(AInputEvent* event);
+  bool AndroidVirtualControlsActive() const;
+  void DrawAndroidVirtualControls(bool guiVisible);
   void DrawAndroidPhysicsPanel(t850::DevGuiContext& gui);
+  void ResetAndroidVirtualControls();
 #endif
   void RequestDump() override { m_dumper.RequestDump(); }
 
@@ -106,7 +109,7 @@ public:
   int m_meshCount = 0;
 
   t850::RenderGraph m_renderGraph;
-  t850::SceneSetup m_guiSetup; // loaded from SandboxScene.json for GUI descriptors
+  t850::SceneSetup m_controlSetup;
   t850::FrameDumper m_dumper;
   int ChangeActiveGaussSelection = 1; // 0=Shadow, 1=Bloom, 2=DOF
   int m_debugRTSelection = 0;
@@ -116,6 +119,17 @@ public:
   Camera* ActiveCam = nullptr;
   t850::CameraController m_cameraController;
   int m_cameraProfileSelection = 0;
+#ifdef OS_ANDROID
+  bool AndroidVirtualControlsVisible() const;
+  int m_androidMovePointerId = -1;
+  int m_androidLookPointerId = -1;
+  int m_androidJumpPointerId = -1;
+  int m_androidRunPointerId = -1;
+  XVECTOR2 m_androidMoveAxis;
+  XVECTOR2 m_androidLookAxis;
+  bool m_androidJump = false;
+  bool m_androidRun = false;
+#endif
 
   XMATRIX44 VP;
   XMATRIX44 m;
@@ -139,7 +153,6 @@ public:
   int ShadowAccumPass = -1;
   int ExtraHelperPass = -1;
   int BloomAccumPass = -1;
-  int LuminanceMapPass = -1;
   int AdaptedLumCurrentPass = -1;
   int AdaptedLumPrevPass = -1;
 
@@ -164,6 +177,7 @@ public:
   bool m_showWireframe = false;
   bool m_showSkeleton = false;
   bool m_showPhysics = false;
+  bool m_showLightVolumes = false;
   bool m_drawLightDirection = false;
   bool m_profileReady = false;
   bool m_profileDirty = false;

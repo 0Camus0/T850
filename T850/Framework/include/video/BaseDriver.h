@@ -62,8 +62,9 @@ namespace t850 {
     // Create an RGBA32F texture for raw float data (e.g., bone matrices).
     // No mips, NEAREST filtering. Can be updated per-frame via Texture::UpdateFloatData.
     virtual Texture* CreateFloatTexture(int w, int h, const float* data = nullptr) = 0;
-    // Create an RGBA32F cubemap with explicit mip levels. Data is face-major:
+    // Create a float cubemap with explicit mip levels. Data is face-major:
     // face 0 mip 0..N, face 1 mip 0..N, etc.; each texel is four floats.
+    // Backends may choose RGBA16F internally on mobile GPUs.
     virtual Texture* CreateFloatCubeMap(int size, int mipCount, const float* data = nullptr) = 0;
     virtual BaseRT* CreateRT(int nrt, int cf, int df, int w, int h, bool genMips = false) = 0;
   };
@@ -296,6 +297,7 @@ namespace t850 {
 
     virtual void SaveScreenshot(std::string path) = 0;
     virtual void SaveRTToFile(int rtID, int attachment, std::string path) {}
+    virtual bool ReadRTColorFloat(int rtID, int attachment, float outRGBA[4]) { (void)rtID; (void)attachment; (void)outRGBA; return false; }
 	virtual void SetCullFace(FaceCulling state) = 0;
 
     // Trace-only hook: each backend overrides to refresh the cached

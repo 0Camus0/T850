@@ -42,7 +42,7 @@ namespace t850 {
     VkBuffer        m_buffer = VK_NULL_HANDLE;
     VmaAllocation   m_allocation = VK_NULL_HANDLE;
     void*           m_mappedData = nullptr;
-    // Ring-buffer suballocation for dynamic updates (GUI quads)
+    // Ring-buffer suballocation for dynamic overlay updates.
     VkBuffer        m_ringBuffer = VK_NULL_HANDLE;
     VkDeviceSize    m_ringOffset = 0;
     bool            m_usesRing = false;

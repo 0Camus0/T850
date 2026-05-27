@@ -33,6 +33,9 @@
 #include <fstream>
 #include <string>
 #include <vector>
+#include <algorithm>
+#include <cmath>
+#include <cstdlib>
 #include <utils/ThreadPool.h>
 #include <utils/Log.h>
 
@@ -70,6 +73,51 @@ int FindTextureSlot(const std::string& filepath) {
   return -1;
 }
 
+#if defined(OS_ANDROID)
+constexpr int kAndroidGltfMaxTextureDimension = 1024;
+
+bool DownsampleAndroidRgba8(unsigned char*& pixels, int& width, int& height, const std::string& keyName) {
+  if (!pixels || width <= 0 || height <= 0)
+    return false;
+
+  const int maxDimension = std::max(width, height);
+  if (maxDimension <= kAndroidGltfMaxTextureDimension)
+    return false;
+
+  const float scale = static_cast<float>(kAndroidGltfMaxTextureDimension) / static_cast<float>(maxDimension);
+  const int targetWidth = std::max(1, static_cast<int>(std::lround(static_cast<float>(width) * scale)));
+  const int targetHeight = std::max(1, static_cast<int>(std::lround(static_cast<float>(height) * scale)));
+  const std::size_t targetBytes = static_cast<std::size_t>(targetWidth) * static_cast<std::size_t>(targetHeight) * 4u;
+  unsigned char* resized = static_cast<unsigned char*>(std::malloc(targetBytes));
+  if (!resized) {
+    T8_LOG_ERROR("[glTF] Android texture downsample allocation failed for '%s' (%dx%d -> %dx%d)",
+                 keyName.c_str(), width, height, targetWidth, targetHeight);
+    return false;
+  }
+
+  for (int y = 0; y < targetHeight; ++y) {
+    const int srcY = std::min(height - 1, (y * height + targetHeight / 2) / targetHeight);
+    for (int x = 0; x < targetWidth; ++x) {
+      const int srcX = std::min(width - 1, (x * width + targetWidth / 2) / targetWidth);
+      const unsigned char* src = pixels + (static_cast<std::size_t>(srcY) * width + srcX) * 4u;
+      unsigned char* dst = resized + (static_cast<std::size_t>(y) * targetWidth + x) * 4u;
+      dst[0] = src[0];
+      dst[1] = src[1];
+      dst[2] = src[2];
+      dst[3] = src[3];
+    }
+  }
+
+  T8_LOG_INFO("[glTF] Android downscaled texture '%s': %dx%d -> %dx%d",
+              keyName.c_str(), width, height, targetWidth, targetHeight);
+  stbi_image_free(pixels);
+  pixels = resized;
+  width = targetWidth;
+  height = targetHeight;
+  return true;
+}
+#endif
+
 // Decode an encoded (PNG/JPEG/...) byte buffer with stb_image and
 // register the resulting RGBA8 surface into the driver. The cache key
 // is `keyName`; the EffectDefault stored on the material should be the
@@ -91,6 +139,10 @@ int RegisterEncoded(const unsigned char* bytes, std::size_t size,
                  keyName.c_str(), stbi_failure_reason());
     return -1;
   }
+
+#if defined(OS_ANDROID)
+  DownsampleAndroidRgba8(px, w, h, keyName);
+#endif
 
   ::t850::Texture* t = ::t850::T8Device->CreateTextureFromMemory(px, w, h, 4, keyName);
   stbi_image_free(px);
@@ -412,6 +464,10 @@ void ResolveAllImages(const Document& doc,
       return;
     }
 
+#if defined(OS_ANDROID)
+    DownsampleAndroidRgba8(r.pixels, r.w, r.h, r.keyName);
+#endif
+
     ::t850::Texture* t = ::t850::T8Device->CreateTextureFromMemory(
         r.pixels, r.w, r.h, 4, r.keyName);
     stbi_image_free(r.pixels);
@@ -440,8 +496,17 @@ void ResolveAllImages(const Document& doc,
     outNames[i] = r.keyName;
   };
 
-  if (sizeof(void*) < 8) {
+#if defined(OS_ANDROID)
+  constexpr bool resolveImagesSerially = true;
+#else
+  constexpr bool resolveImagesSerially = sizeof(void*) < 8;
+#endif
+  if (resolveImagesSerially) {
+#if defined(OS_ANDROID)
+    T8_LOG_INFO("[glTF] Resolving %d images serially for Android", numImages);
+#else
     T8_LOG_INFO("[glTF] Resolving %d images serially for 32-bit process", numImages);
+#endif
     for (int i = 0; i < numImages; i++) {
       gatherImageBytes(i);
       decodeImage(i);

@@ -80,14 +80,39 @@ namespace t850 {
               uint32_t sy0 = y * 2;
               uint32_t sx1 = (sx0 + 1 < prevWidth) ? sx0 + 1 : sx0;
               uint32_t sy1 = (sy0 + 1 < prevHeight) ? sy0 + 1 : sy0;
-              for (uint32_t c = 0; c < bytesPerPixel; ++c) {
-                uint32_t accum = 0;
-                accum += srcMip[(static_cast<size_t>(sy0) * prevWidth + sx0) * bytesPerPixel + c];
-                accum += srcMip[(static_cast<size_t>(sy0) * prevWidth + sx1) * bytesPerPixel + c];
-                accum += srcMip[(static_cast<size_t>(sy1) * prevWidth + sx0) * bytesPerPixel + c];
-                accum += srcMip[(static_cast<size_t>(sy1) * prevWidth + sx1) * bytesPerPixel + c];
-                dst[(static_cast<size_t>(y) * mipWidth + x) * bytesPerPixel + c] =
-                  static_cast<unsigned char>((accum + 2) / 4);
+              const size_t dstIndex = (static_cast<size_t>(y) * mipWidth + x) * bytesPerPixel;
+              const size_t i00 = (static_cast<size_t>(sy0) * prevWidth + sx0) * bytesPerPixel;
+              const size_t i10 = (static_cast<size_t>(sy0) * prevWidth + sx1) * bytesPerPixel;
+              const size_t i01 = (static_cast<size_t>(sy1) * prevWidth + sx0) * bytesPerPixel;
+              const size_t i11 = (static_cast<size_t>(sy1) * prevWidth + sx1) * bytesPerPixel;
+              if (bytesPerPixel == 4) {
+                const uint32_t a00 = srcMip[i00 + 3];
+                const uint32_t a10 = srcMip[i10 + 3];
+                const uint32_t a01 = srcMip[i01 + 3];
+                const uint32_t a11 = srcMip[i11 + 3];
+                const uint32_t alphaSum = a00 + a10 + a01 + a11;
+                dst[dstIndex + 3] = static_cast<unsigned char>((alphaSum + 2) / 4);
+                if (alphaSum > 0) {
+                  for (uint32_t c = 0; c < 3; ++c) {
+                    const uint32_t weighted =
+                      srcMip[i00 + c] * a00 + srcMip[i10 + c] * a10 +
+                      srcMip[i01 + c] * a01 + srcMip[i11 + c] * a11;
+                    dst[dstIndex + c] = static_cast<unsigned char>((weighted + alphaSum / 2) / alphaSum);
+                  }
+                } else {
+                  dst[dstIndex + 0] = 0;
+                  dst[dstIndex + 1] = 0;
+                  dst[dstIndex + 2] = 0;
+                }
+              } else {
+                for (uint32_t c = 0; c < bytesPerPixel; ++c) {
+                  uint32_t accum = 0;
+                  accum += srcMip[i00 + c];
+                  accum += srcMip[i10 + c];
+                  accum += srcMip[i01 + c];
+                  accum += srcMip[i11 + c];
+                  dst[dstIndex + c] = static_cast<unsigned char>((accum + 2) / 4);
+                }
               }
             }
           }
@@ -803,22 +828,39 @@ namespace t850 {
     VkDeviceSize totalSize = (VkDeviceSize)w * h * 16;
 
     // Create staging buffer
-    VkBuffer stagingBuffer; VmaAllocation stagingAlloc;
+    VkBuffer stagingBuffer = VK_NULL_HANDLE;
+    VmaAllocation stagingAlloc = nullptr;
     VkBufferCreateInfo stagingInfo = { VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO };
     stagingInfo.size = totalSize;
     stagingInfo.usage = VK_BUFFER_USAGE_TRANSFER_SRC_BIT;
     VmaAllocationCreateInfo stagingAllocCI = {};
     stagingAllocCI.usage = VMA_MEMORY_USAGE_AUTO;
     stagingAllocCI.flags = VMA_ALLOCATION_CREATE_HOST_ACCESS_SEQUENTIAL_WRITE_BIT | VMA_ALLOCATION_CREATE_MAPPED_BIT;
-    VmaAllocationInfo stagingAllocInfo;
-    vmaCreateBuffer(allocator, &stagingInfo, &stagingAllocCI, &stagingBuffer, &stagingAlloc, &stagingAllocInfo);
+    VmaAllocationInfo stagingAllocInfo = {};
+    VkResult res = vmaCreateBuffer(allocator, &stagingInfo, &stagingAllocCI, &stagingBuffer, &stagingAlloc, &stagingAllocInfo);
+    if (res != VK_SUCCESS || !stagingAllocInfo.pMappedData) {
+      T8_LOG_ERROR("[Vulkan] Float texture staging buffer creation failed res=%d mapped=%p", res, stagingAllocInfo.pMappedData);
+      if (stagingBuffer)
+        vmaDestroyBuffer(allocator, stagingBuffer, stagingAlloc);
+      return;
+    }
     memcpy(stagingAllocInfo.pMappedData, data, static_cast<size_t>(totalSize));
+    res = vmaFlushAllocation(allocator, stagingAlloc, 0, totalSize);
+    if (res != VK_SUCCESS) {
+      T8_LOG_ERROR("[Vulkan] Float texture staging buffer flush failed res=%d", res);
+      vmaDestroyBuffer(allocator, stagingBuffer, stagingAlloc);
+      return;
+    }
 
     // Record copy in current frame's command buffer
     VkCommandBuffer cmd = driver->GetCurrentCommandBuffer();
 
-    // End any active render pass — copy commands are invalid inside a render pass
-    driver->EndRenderPassIfActive(cmd);
+    // Copy commands are invalid inside a render pass. If a dynamic texture is
+    // updated mid-pass (the tiled deferred-light textures do this), close the
+    // pass for the transfer and reopen the same target with LOAD before the
+    // draw is recorded.
+    const bool resumeRenderPass = driver->EndRenderPassIfActive(cmd);
+    const int resumeRT = driver->CurrentRT;
 
     VkImageMemoryBarrier barrier = { VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER };
     barrier.image = m_image;
@@ -827,7 +869,8 @@ namespace t850 {
     barrier.newLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
     barrier.srcAccessMask = VK_ACCESS_SHADER_READ_BIT;
     barrier.dstAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
-    vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_VERTEX_SHADER_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT,
+    const VkPipelineStageFlags shaderStages = VK_PIPELINE_STAGE_VERTEX_SHADER_BIT | VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT;
+    vkCmdPipelineBarrier(cmd, shaderStages, VK_PIPELINE_STAGE_TRANSFER_BIT,
                          0, 0, nullptr, 0, nullptr, 1, &barrier);
 
     VkBufferImageCopy region = {};
@@ -839,11 +882,19 @@ namespace t850 {
     barrier.newLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
     barrier.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
     barrier.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
-    vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_VERTEX_SHADER_BIT,
+    vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_TRANSFER_BIT, shaderStages,
                          0, 0, nullptr, 0, nullptr, 1, &barrier);
 
     // Defer staging buffer cleanup to after frame completes
     driver->DeferCleanup(stagingBuffer, stagingAlloc);
+
+    if (resumeRenderPass) {
+      if (resumeRT >= 0 && resumeRT < static_cast<int>(driver->RTs.size()) && driver->RTs[resumeRT]) {
+        driver->RTs[resumeRT]->SetLoad(deviceContext);
+      } else if (!driver->IsOffscreenEnabled()) {
+        driver->EnsureBackbufferRenderPass();
+      }
+    }
   }
 
   // ══════════════════════════════════════════════════════

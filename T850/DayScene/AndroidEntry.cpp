@@ -36,6 +36,7 @@ namespace {
   constexpr const char* kExtraProfileFrames = "com.t850.engine.extra.PROFILE_FRAMES";
   constexpr const char* kExtraAutoStartRagdoll = "com.t850.engine.extra.AUTO_START_RAGDOLL";
   constexpr const char* kExtraRagdollSpeedIndex = "com.t850.engine.extra.RAGDOLL_SPEED_INDEX";
+  constexpr const char* kExtraSceneProfile = "com.t850.engine.extra.SCENE_PROFILE";
 
   struct AndroidJniEnv {
     JavaVM* vm = nullptr;
@@ -265,6 +266,11 @@ namespace {
       if (!replaySnapshot.empty()) {
         t850::g_config.replaySnapshotPath = replaySnapshot;
       }
+
+      std::string sceneProfile = GetIntentStringExtra(env, intent, getStringExtra, kExtraSceneProfile);
+      if (!sceneProfile.empty()) {
+        t850::g_config.sceneProfile = sceneProfile;
+      }
     }
 
     env->DeleteLocalRef(intentClass);
@@ -320,8 +326,9 @@ void android_main(android_app* state) {
     }
   }
   T8_LOG_INFO("[Android] T850 NativeActivity starting");
-  T8_LOG_INFO("[Android] Launch config: scene=%d model='%s' sceneFile='%s' logLevel=%d api=vulkan dumpEnabled=%d dumpByFrame=%d dumpFrame=%d dumpSeconds=%.3f keepRunning=%d profile=%d profileFrames=%d replay='%s'",
-              t850::g_config.startScene, t850::g_config.modelPath.c_str(), t850::g_config.sceneFilePath.c_str(), t850::g_config.logLevel,
+  T8_LOG_INFO("[Android] Launch config: scene=%d model='%s' sceneFile='%s' sceneProfile='%s' logLevel=%d api=vulkan dumpEnabled=%d dumpByFrame=%d dumpFrame=%d dumpSeconds=%.3f keepRunning=%d profile=%d profileFrames=%d replay='%s'",
+              t850::g_config.startScene, t850::g_config.modelPath.c_str(), t850::g_config.sceneFilePath.c_str(), t850::g_config.sceneProfile.c_str(),
+              t850::g_config.logLevel,
               t850::g_config.flags.dumpEnabled ? 1 : 0,
               t850::g_config.flags.dumpByFrame ? 1 : 0,
               t850::g_config.dumpFrame,

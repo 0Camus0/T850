@@ -83,6 +83,7 @@ namespace t850 {
     float bloom_threshold = 2.0f;
     float tone_map_white_level = 4.0f;
     float luminance_tau = 1.1f;
+    int luminance_mode = 0;
     float aperture = 120.0f;
     float focal_length = 50.0f;
     float max_coc = 2.5f;
@@ -106,6 +107,7 @@ namespace t850 {
     float material_transmission_multiplier = 1.0f;
     float material_refraction_strength = 0.03f;
     float lightmap_intensity = 1.0f;
+    std::optional<bool> point_lights_enabled;
   };
 
   struct SliderDesc {

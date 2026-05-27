@@ -60,6 +60,55 @@ namespace t850 {
         return VK_SURFACE_TRANSFORM_IDENTITY_BIT_KHR;
       return caps.currentTransform;
     }
+
+    VkCompositeAlphaFlagBitsKHR ChooseSwapchainCompositeAlpha(const VkSurfaceCapabilitiesKHR& caps) {
+      constexpr VkCompositeAlphaFlagBitsKHR kPreferred[] = {
+        VK_COMPOSITE_ALPHA_OPAQUE_BIT_KHR,
+        VK_COMPOSITE_ALPHA_PRE_MULTIPLIED_BIT_KHR,
+        VK_COMPOSITE_ALPHA_POST_MULTIPLIED_BIT_KHR,
+        VK_COMPOSITE_ALPHA_INHERIT_BIT_KHR,
+      };
+      for (const VkCompositeAlphaFlagBitsKHR alpha : kPreferred) {
+        if (caps.supportedCompositeAlpha & alpha)
+          return alpha;
+      }
+      return VK_COMPOSITE_ALPHA_INHERIT_BIT_KHR;
+    }
+
+    bool ShouldRecreateSwapchainAfterSuboptimal(VkPhysicalDevice physicalDevice,
+                                                VkSurfaceKHR surface,
+                                                VkExtent2D swapchainExtent) {
+#if defined(OS_ANDROID)
+      if (!physicalDevice || !surface)
+        return true;
+
+      VkSurfaceCapabilitiesKHR caps = {};
+      const VkResult res = vkGetPhysicalDeviceSurfaceCapabilitiesKHR(physicalDevice, surface, &caps);
+      if (res != VK_SUCCESS)
+        return true;
+
+      if (caps.currentExtent.width == UINT32_MAX || caps.currentExtent.height == UINT32_MAX)
+        return false;
+
+      return caps.currentExtent.width != swapchainExtent.width ||
+             caps.currentExtent.height != swapchainExtent.height;
+#else
+      (void)physicalDevice;
+      (void)surface;
+      (void)swapchainExtent;
+      return true;
+#endif
+    }
+
+    void LogIgnoredAndroidSuboptimalSwapchainOnce() {
+#if defined(OS_ANDROID)
+      static bool logged = false;
+      if (!logged) {
+        T8_LOG_INFO("[Vulkan] Android swapchain is suboptimal but extent is unchanged; keeping it to avoid per-frame recreation");
+        logged = true;
+      }
+#endif
+    }
   }
 
   extern Device*        T8Device;
@@ -281,6 +330,34 @@ namespace t850 {
   }
 
   void VulkanDriver::SetDimensions(int w, int h) { width = w; height = h; }
+
+  void VulkanDriver::SetViewport(float x, float y, float w, float h) {
+    if (w <= 0.0f || h <= 0.0f)
+      return;
+
+    m_viewport.x = x;
+    m_viewport.y = y + h;
+    m_viewport.width = w;
+    m_viewport.height = -h;
+    m_viewport.minDepth = 0.0f;
+    m_viewport.maxDepth = 1.0f;
+    m_scissorRect.offset = { int32_t(x), int32_t(y) };
+    m_scissorRect.extent = { uint32_t(w), uint32_t(h) };
+    if (m_currentFrame < kBackBufferCount && m_commandBuffers[m_currentFrame]) {
+      vkCmdSetViewport(m_commandBuffers[m_currentFrame], 0, 1, &m_viewport);
+      vkCmdSetScissor(m_commandBuffers[m_currentFrame], 0, 1, &m_scissorRect);
+    }
+  }
+
+  void VulkanDriver::SetScissorRect(int x, int y, int w, int h) {
+    if (w <= 0 || h <= 0)
+      return;
+
+    m_scissorRect.offset = { int32_t(x), int32_t(y) };
+    m_scissorRect.extent = { uint32_t(w), uint32_t(h) };
+    if (m_currentFrame < kBackBufferCount && m_commandBuffers[m_currentFrame])
+      vkCmdSetScissor(m_commandBuffers[m_currentFrame], 0, 1, &m_scissorRect);
+  }
 
   void VulkanDriver::CreateInstance() {
     VkApplicationInfo appInfo = { VK_STRUCTURE_TYPE_APPLICATION_INFO };
@@ -516,6 +593,8 @@ namespace t850 {
       if (m_backbufferRenderPass) { vkDestroyRenderPass(m_device, m_backbufferRenderPass, nullptr); m_backbufferRenderPass = VK_NULL_HANDLE; }
       if (m_backbufferRenderPassLoad) { vkDestroyRenderPass(m_device, m_backbufferRenderPassLoad, nullptr); m_backbufferRenderPassLoad = VK_NULL_HANDLE; }
 
+      DestroySwapchainImageSemaphores();
+
       for (auto& iv : m_swapChainImageViews)
         if (iv) vkDestroyImageView(m_device, iv, nullptr);
       m_swapChainImageViews.clear();
@@ -533,6 +612,7 @@ namespace t850 {
     m_swapChainExtent = {};
     m_imageIndex = 0;
     m_currentFrame = 0;
+    m_swapchainNeedsRecreate = false;
   }
 
   bool VulkanDriver::SuspendWindowSurface() {
@@ -569,6 +649,7 @@ namespace t850 {
     m_frameStarted = false;
     m_renderPassActive = false;
     m_activeRenderPass = VK_NULL_HANDLE;
+    m_swapchainNeedsRecreate = false;
     T8_LOG_INFO("[Vulkan] Window surface resumed (%dx%d)", width, height);
     return true;
   }
@@ -650,7 +731,8 @@ namespace t850 {
     scCI.imageSharingMode = VK_SHARING_MODE_EXCLUSIVE;
     const VkSurfaceTransformFlagBitsKHR preTransform = ChooseSwapchainPreTransform(surfCaps);
     scCI.preTransform = preTransform;
-    scCI.compositeAlpha = VK_COMPOSITE_ALPHA_OPAQUE_BIT_KHR;
+    const VkCompositeAlphaFlagBitsKHR compositeAlpha = ChooseSwapchainCompositeAlpha(surfCaps);
+    scCI.compositeAlpha = compositeAlpha;
     scCI.presentMode = chosenMode;
     scCI.clipped = VK_TRUE;
 
@@ -659,8 +741,8 @@ namespace t850 {
       T8_LOG_ERROR("[Vulkan] vkCreateSwapchainKHR failed res=%d", res);
       return;
     }
-    T8_LOG_INFO("[Vulkan] Swap chain created (%ux%u, %u images, mode=%d, preTransform=0x%x)",
-                m_swapChainExtent.width, m_swapChainExtent.height, imageCount, chosenMode, preTransform);
+    T8_LOG_INFO("[Vulkan] Swap chain created (%ux%u, %u images, mode=%d, preTransform=0x%x, compositeAlpha=0x%x)",
+                m_swapChainExtent.width, m_swapChainExtent.height, imageCount, chosenMode, preTransform, compositeAlpha);
   }
 
   void VulkanDriver::CreateBackBufferViews() {
@@ -680,6 +762,7 @@ namespace t850 {
       ivCI.subresourceRange.layerCount = 1;
       vkCreateImageView(m_device, &ivCI, nullptr, &m_swapChainImageViews[i]);
     }
+    CreateSwapchainImageSemaphores(imageCount);
     T8_LOG_INFO("[Vulkan] Back buffer image views created (%u)", imageCount);
   }
 
@@ -846,17 +929,44 @@ namespace t850 {
     T8_LOG_INFO("[Vulkan] Sync objects created (%u frames in flight)", kBackBufferCount);
   }
 
+  void VulkanDriver::CreateSwapchainImageSemaphores(uint32_t imageCount) {
+    DestroySwapchainImageSemaphores();
+    m_imageRenderFinishedSemaphores.resize(imageCount, VK_NULL_HANDLE);
+
+    VkSemaphoreCreateInfo semCI = { VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO };
+    for (uint32_t i = 0; i < imageCount; ++i) {
+      VkResult res = vkCreateSemaphore(m_device, &semCI, nullptr, &m_imageRenderFinishedSemaphores[i]);
+      if (res != VK_SUCCESS) {
+        T8_LOG_ERROR("[Vulkan] vkCreateSemaphore(imageRenderFinished[%u]) failed res=%d", i, res);
+      }
+    }
+    T8_LOG_INFO("[Vulkan] Swapchain image present semaphores created (%u)", imageCount);
+  }
+
+  void VulkanDriver::DestroySwapchainImageSemaphores() {
+    if (!m_device)
+      return;
+    for (VkSemaphore sem : m_imageRenderFinishedSemaphores) {
+      if (sem)
+        vkDestroySemaphore(m_device, sem, nullptr);
+    }
+    m_imageRenderFinishedSemaphores.clear();
+  }
+
   void VulkanDriver::CreateDescriptorPool() {
+    constexpr uint32_t kDescriptorSetsPerFrame = 8192;
+    constexpr uint32_t kUniformDescriptorsPerFrame = 8192;
+    constexpr uint32_t kCombinedImageDescriptorsPerFrame = 65536;
     VkDescriptorPoolSize poolSizes[] = {
-      { VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC, 1024 },
-      { VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 4096 },
+      { VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC, kUniformDescriptorsPerFrame },
+      { VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, kCombinedImageDescriptorsPerFrame },
     };
 
     VkDescriptorPoolCreateInfo dpCI = { VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO };
-    dpCI.maxSets = 4096;
+    dpCI.maxSets = kDescriptorSetsPerFrame;
     dpCI.poolSizeCount = 2;
     dpCI.pPoolSizes = poolSizes;
-    dpCI.flags = VK_DESCRIPTOR_POOL_CREATE_FREE_DESCRIPTOR_SET_BIT;
+    dpCI.flags = 0;
 
     for (uint32_t i = 0; i < kBackBufferCount; i++) {
       VkResult res = vkCreateDescriptorPool(m_device, &dpCI, nullptr, &m_descriptorPools[i]);
@@ -864,7 +974,11 @@ namespace t850 {
         T8_LOG_ERROR("[Vulkan] vkCreateDescriptorPool[%u] failed res=%d", i, res);
       }
     }
-    T8_LOG_INFO("[Vulkan] Descriptor pools created (%u)", kBackBufferCount);
+    T8_LOG_INFO("[Vulkan] Descriptor pools created (%u, sets/frame=%u ubo/frame=%u imageSampler/frame=%u)",
+                kBackBufferCount,
+                kDescriptorSetsPerFrame,
+                kUniformDescriptorsPerFrame,
+                kCombinedImageDescriptorsPerFrame);
   }
 
   void VulkanDriver::InitDriver() {
@@ -990,6 +1104,7 @@ namespace t850 {
       vkDestroyImageView(m_device, iv, nullptr);
     m_swapChainImageViews.clear();
     m_swapChainImages.clear();
+    DestroySwapchainImageSemaphores();
 
     // Destroy old swap chain
     VkSwapchainKHR oldSwapChain = m_swapChain;
@@ -1017,6 +1132,7 @@ namespace t850 {
     m_currentFrame = 0;
     m_frameStarted = false;
     m_renderPassActive = false;
+    m_swapchainNeedsRecreate = false;
 
     T8_LOG_INFO("[Vulkan] Swapchain recreated (%dx%d)", width, height);
     return true;
@@ -1094,6 +1210,7 @@ namespace t850 {
       if (m_renderFinishedSemaphores[i]) vkDestroySemaphore(m_device, m_renderFinishedSemaphores[i], nullptr);
       if (m_inFlightFences[i])           vkDestroyFence(m_device, m_inFlightFences[i], nullptr);
     }
+    DestroySwapchainImageSemaphores();
 
     for (auto& fb : m_backbufferFramebuffers)
       if (fb) { vkDestroyFramebuffer(m_device, fb, nullptr); fb = VK_NULL_HANDLE; }
@@ -1143,6 +1260,29 @@ namespace t850 {
   //  VulkanDriver — Synchronization
   // ══════════════════════════════════════════════════════
 
+  void VulkanDriver::SubmitCurrentFrameAndWait(VkCommandBuffer cmd) {
+    VkSemaphore waitSem[] = { m_imageAvailableSemaphores[m_currentFrame] };
+    VkPipelineStageFlags waitStage[] = { VK_PIPELINE_STAGE_ALL_COMMANDS_BIT };
+
+    VkSubmitInfo submitInfo = { VK_STRUCTURE_TYPE_SUBMIT_INFO };
+    const bool mustWaitForAcquire = !IsOffscreenEnabled() && !m_screenshotConsumedSemaphore;
+    submitInfo.waitSemaphoreCount = mustWaitForAcquire ? 1 : 0;
+    submitInfo.pWaitSemaphores = mustWaitForAcquire ? waitSem : nullptr;
+    submitInfo.pWaitDstStageMask = mustWaitForAcquire ? waitStage : nullptr;
+    submitInfo.commandBufferCount = 1;
+    submitInfo.pCommandBuffers = &cmd;
+
+    VkResult submitRes = vkQueueSubmit(m_graphicsQueue, 1, &submitInfo, VK_NULL_HANDLE);
+    if (submitRes != VK_SUCCESS) {
+      T8_LOG_ERROR("[Vulkan] mid-frame vkQueueSubmit failed res=%d", submitRes);
+      return;
+    }
+
+    vkQueueWaitIdle(m_graphicsQueue);
+    if (mustWaitForAcquire)
+      m_screenshotConsumedSemaphore = true;
+  }
+
   void VulkanDriver::WaitForFence(uint32_t frameIndex) {
     vkWaitForFences(m_device, 1, &m_inFlightFences[frameIndex], VK_TRUE, UINT64_MAX);
   }
@@ -1156,6 +1296,11 @@ namespace t850 {
   // ══════════════════════════════════════════════════════
 
   void VulkanDriver::BeginFrame() {
+    if (!IsOffscreenEnabled() && m_swapchainNeedsRecreate) {
+      T8_LOG_INFO("[Vulkan] Recreating suboptimal swapchain before acquire");
+      ResizeSwapchain(width, height);
+    }
+
     {
       T8_PROFILE_CPU_SCOPE(t850::g_profiler, "VK_FenceWait");
       WaitForFence(m_currentFrame);
@@ -1186,6 +1331,12 @@ namespace t850 {
         T8_LOG_ERROR("[Vulkan] vkAcquireNextImageKHR failed res=%d", res);
         m_frameStarted = false;
         return;
+      } else if (res == VK_SUBOPTIMAL_KHR) {
+        if (ShouldRecreateSwapchainAfterSuboptimal(m_physicalDevice, m_surface, m_swapChainExtent)) {
+          m_swapchainNeedsRecreate = true;
+        } else {
+          LogIgnoredAndroidSuboptimalSwapchainOnce();
+        }
       }
     }
 
@@ -1378,7 +1529,8 @@ namespace t850 {
       VkRenderPassBeginInfo rpInfo = { VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO };
       rpInfo.renderPass  = m_backbufferRenderPassLoad;
       rpInfo.framebuffer = m_backbufferFramebuffers[m_imageIndex];
-      rpInfo.renderArea  = m_scissorRect;
+      rpInfo.renderArea.offset = { 0, 0 };
+      rpInfo.renderArea.extent = m_swapChainExtent;
       vkCmdBeginRenderPass(cmd, &rpInfo, VK_SUBPASS_CONTENTS_INLINE);
       m_renderPassActive = true;
       m_activeRenderPass = m_backbufferRenderPassLoad;
@@ -1618,8 +1770,14 @@ namespace t850 {
 
     // Submit
     VkSemaphore waitSemaphores[] = { m_imageAvailableSemaphores[m_currentFrame] };
-    VkPipelineStageFlags waitStages[] = { VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT | VK_PIPELINE_STAGE_TRANSFER_BIT };
-    VkSemaphore signalSemaphores[] = { m_renderFinishedSemaphores[m_currentFrame] };
+    VkPipelineStageFlags waitStages[] = {
+      latePresentCopied ? VK_PIPELINE_STAGE_TRANSFER_BIT : VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT
+    };
+    VkSemaphore presentSemaphore =
+      (m_imageIndex < m_imageRenderFinishedSemaphores.size())
+        ? m_imageRenderFinishedSemaphores[m_imageIndex]
+        : m_renderFinishedSemaphores[m_currentFrame];
+    VkSemaphore signalSemaphores[] = { presentSemaphore };
 
     VkSubmitInfo submitInfo = { VK_STRUCTURE_TYPE_SUBMIT_INFO };
     submitInfo.waitSemaphoreCount = m_screenshotConsumedSemaphore ? 0 : 1;
@@ -1650,8 +1808,13 @@ namespace t850 {
     VkResult presentRes = vkQueuePresentKHR(m_presentQueue, &presentInfo);
     if (presentRes == VK_ERROR_OUT_OF_DATE_KHR || presentRes == VK_ERROR_SURFACE_LOST_KHR ||
         presentRes == VK_SUBOPTIMAL_KHR) {
-      T8_LOG_INFO("[Vulkan] Present: swap chain needs recreation (res=%d)", presentRes);
-      // Swapchain will be recreated on next BeginFrame's acquire
+      if (presentRes == VK_SUBOPTIMAL_KHR &&
+          !ShouldRecreateSwapchainAfterSuboptimal(m_physicalDevice, m_surface, m_swapChainExtent)) {
+        LogIgnoredAndroidSuboptimalSwapchainOnce();
+      } else {
+        T8_LOG_INFO("[Vulkan] Present: swap chain needs recreation (res=%d)", presentRes);
+        m_swapchainNeedsRecreate = true;
+      }
     } else if (presentRes != VK_SUCCESS) {
       T8_LOG_ERROR("[Vulkan] vkQueuePresentKHR failed res=%d", presentRes);
     }
@@ -1761,17 +1924,7 @@ namespace t850 {
     // Close and submit current command buffer, wait for GPU
     // Must wait on image-available semaphore (first submit using this swapchain image)
     vkEndCommandBuffer(cmd);
-    VkSemaphore waitSem[] = { m_imageAvailableSemaphores[m_currentFrame] };
-    VkPipelineStageFlags waitStage[] = { VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT };
-    VkSubmitInfo submitInfo = { VK_STRUCTURE_TYPE_SUBMIT_INFO };
-    submitInfo.waitSemaphoreCount = m_screenshotConsumedSemaphore ? 0 : 1;
-    submitInfo.pWaitSemaphores = waitSem;
-    submitInfo.pWaitDstStageMask = waitStage;
-    submitInfo.commandBufferCount = 1;
-    submitInfo.pCommandBuffers = &cmd;
-    vkQueueSubmit(m_graphicsQueue, 1, &submitInfo, VK_NULL_HANDLE);
-    vkQueueWaitIdle(m_graphicsQueue);
-    m_screenshotConsumedSemaphore = true;
+    SubmitCurrentFrameAndWait(cmd);
 
     // Get swap chain image
     VkImage srcImage = m_swapChainImages[m_imageIndex];
@@ -1886,11 +2039,7 @@ namespace t850 {
 
       // Flush command buffer.
       vkEndCommandBuffer(cmd);
-      VkSubmitInfo submitInfo = { VK_STRUCTURE_TYPE_SUBMIT_INFO };
-      submitInfo.commandBufferCount = 1;
-      submitInfo.pCommandBuffers = &cmd;
-      vkQueueSubmit(m_graphicsQueue, 1, &submitInfo, VK_NULL_HANDLE);
-      vkQueueWaitIdle(m_graphicsQueue);
+      SubmitCurrentFrameAndWait(cmd);
     } else {
       vkQueueWaitIdle(m_graphicsQueue);
     }
@@ -2003,7 +2152,7 @@ namespace t850 {
           // The previous (float)(*fp)/65535.0f path treated half-float bytes as a
           // normalized integer, which silently misinterpreted negative half-floats
           // (e.g. log(luminance) < 0) as ~0.5+ on the PPM, producing a fake "Vulkan
-          // LuminanceMap is 10x brighter than D3D12" signal during cross-API diffs.
+          // Keep color target values in the same range during cross-API diffs.
           const uint16_t* fp = (const uint16_t*)(pixels + i * 2);
           float v = h2f(*fp);
           v = v < 0 ? 0 : (v > 1 ? 1 : v);
@@ -2053,6 +2202,145 @@ reopen:
 
     vkCmdSetViewport(m_commandBuffers[m_currentFrame], 0, 1, &m_viewport);
     vkCmdSetScissor(m_commandBuffers[m_currentFrame], 0, 1, &m_scissorRect);
+  }
+
+  bool VulkanDriver::ReadRTColorFloat(int rtID, int attachment, float outRGBA[4]) {
+    if (!outRGBA || rtID < 0 || rtID >= (int)RTs.size() || !RTs[rtID] || attachment < 0)
+      return false;
+    VulkanRT* rt = static_cast<VulkanRT*>(RTs[rtID]);
+    if (!rt || attachment >= rt->number_RT)
+      return false;
+
+    VkCommandBuffer cmd = m_commandBuffers[m_currentFrame];
+    const bool frameOpen = m_frameStarted;
+
+    if (frameOpen) {
+      if (m_renderPassActive) {
+        vkCmdEndRenderPass(cmd);
+        m_renderPassActive = false;
+      }
+      vkEndCommandBuffer(cmd);
+      SubmitCurrentFrameAndWait(cmd);
+    } else {
+      vkQueueWaitIdle(m_graphicsQueue);
+    }
+
+    bool ok = false;
+    VkImage srcImage = rt->vColorImages[attachment];
+    VkImageLayout srcLayout = (attachment < (int)rt->vColorLayouts.size()) ? rt->vColorLayouts[attachment] : VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+    VkFormat fmt = (attachment < (int)rt->m_colorFormats.size()) ? rt->m_colorFormats[attachment] : rt->m_colorFormat;
+
+    uint32_t bpp = 4;
+    const bool isR8 = (fmt == VK_FORMAT_R8_UNORM);
+    const bool isR16F = (fmt == VK_FORMAT_R16_SFLOAT);
+    const bool isR32F = (fmt == VK_FORMAT_R32_SFLOAT);
+    const bool isRGBA16F = (fmt == VK_FORMAT_R16G16B16A16_SFLOAT);
+    const bool isRGBA32F = (fmt == VK_FORMAT_R32G32B32A32_SFLOAT);
+    const bool isRGBA8 = (fmt == VK_FORMAT_R8G8B8A8_UNORM || fmt == VK_FORMAT_B8G8R8A8_UNORM || fmt == VK_FORMAT_B8G8R8A8_SRGB);
+    if (isR8) bpp = 1;
+    else if (isR16F) bpp = 2;
+    else if (isR32F) bpp = 4;
+    else if (isRGBA16F) bpp = 8;
+    else if (isRGBA32F) bpp = 16;
+    else if (isRGBA8) bpp = 4;
+    else goto reopen_read_float;
+
+    {
+      VkBufferCreateInfo bufCI = { VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO };
+      bufCI.size = bpp;
+      bufCI.usage = VK_BUFFER_USAGE_TRANSFER_DST_BIT;
+      VmaAllocationCreateInfo allocCI = {};
+      allocCI.usage = VMA_MEMORY_USAGE_AUTO;
+      allocCI.flags = VMA_ALLOCATION_CREATE_HOST_ACCESS_RANDOM_BIT | VMA_ALLOCATION_CREATE_MAPPED_BIT;
+      VkBuffer stagingBuf = VK_NULL_HANDLE;
+      VmaAllocation stagingAlloc = VK_NULL_HANDLE;
+      VmaAllocationInfo stagingInfo = {};
+      if (vmaCreateBuffer(m_allocator, &bufCI, &allocCI, &stagingBuf, &stagingAlloc, &stagingInfo) != VK_SUCCESS)
+        goto reopen_read_float;
+
+      VkCommandBuffer copyCmd;
+      VkCommandBufferAllocateInfo cmdAlloc = { VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO };
+      cmdAlloc.commandPool = m_transientCommandPool;
+      cmdAlloc.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
+      cmdAlloc.commandBufferCount = 1;
+      vkAllocateCommandBuffers(m_device, &cmdAlloc, &copyCmd);
+      VkCommandBufferBeginInfo beginCI = { VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO };
+      beginCI.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
+      vkBeginCommandBuffer(copyCmd, &beginCI);
+
+      TransitionImageLayout(copyCmd, srcImage, srcLayout, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, VK_IMAGE_ASPECT_COLOR_BIT);
+      VkBufferImageCopy region = {};
+      region.imageSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+      region.imageSubresource.layerCount = 1;
+      region.imageExtent = { 1, 1, 1 };
+      vkCmdCopyImageToBuffer(copyCmd, srcImage, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, stagingBuf, 1, &region);
+      TransitionImageLayout(copyCmd, srcImage, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, srcLayout, VK_IMAGE_ASPECT_COLOR_BIT);
+
+      vkEndCommandBuffer(copyCmd);
+      VkSubmitInfo copySubmit = { VK_STRUCTURE_TYPE_SUBMIT_INFO };
+      copySubmit.commandBufferCount = 1;
+      copySubmit.pCommandBuffers = &copyCmd;
+      vkQueueSubmit(m_graphicsQueue, 1, &copySubmit, VK_NULL_HANDLE);
+      vkQueueWaitIdle(m_graphicsQueue);
+
+      auto h2f = [](uint16_t h) -> float {
+        uint32_t sign = (h >> 15) & 1;
+        uint32_t exp = (h >> 10) & 0x1F;
+        uint32_t mant = h & 0x3FF;
+        if (exp == 0) return sign ? -0.0f : 0.0f;
+        if (exp == 31) return sign ? -1e30f : 1e30f;
+        float f = ((float)mant / 1024.0f + 1.0f) * ldexpf(1.0f, (int)exp - 15);
+        return sign ? -f : f;
+      };
+
+      const uint8_t* pixels = (const uint8_t*)stagingInfo.pMappedData;
+      outRGBA[0] = outRGBA[1] = outRGBA[2] = 0.0f;
+      outRGBA[3] = 1.0f;
+      if (isR8) {
+        outRGBA[0] = outRGBA[1] = outRGBA[2] = pixels[0] / 255.0f;
+      } else if (isR16F) {
+        outRGBA[0] = outRGBA[1] = outRGBA[2] = h2f(*(const uint16_t*)pixels);
+      } else if (isR32F) {
+        outRGBA[0] = outRGBA[1] = outRGBA[2] = *(const float*)pixels;
+      } else if (isRGBA16F) {
+        const uint16_t* fp = (const uint16_t*)pixels;
+        outRGBA[0] = h2f(fp[0]); outRGBA[1] = h2f(fp[1]); outRGBA[2] = h2f(fp[2]); outRGBA[3] = h2f(fp[3]);
+      } else if (isRGBA32F) {
+        const float* fp = (const float*)pixels;
+        outRGBA[0] = fp[0]; outRGBA[1] = fp[1]; outRGBA[2] = fp[2]; outRGBA[3] = fp[3];
+      } else if (fmt == VK_FORMAT_B8G8R8A8_UNORM || fmt == VK_FORMAT_B8G8R8A8_SRGB) {
+        outRGBA[0] = pixels[2] / 255.0f; outRGBA[1] = pixels[1] / 255.0f; outRGBA[2] = pixels[0] / 255.0f; outRGBA[3] = pixels[3] / 255.0f;
+      } else {
+        outRGBA[0] = pixels[0] / 255.0f; outRGBA[1] = pixels[1] / 255.0f; outRGBA[2] = pixels[2] / 255.0f; outRGBA[3] = pixels[3] / 255.0f;
+      }
+      ok = true;
+
+      vkFreeCommandBuffers(m_device, m_transientCommandPool, 1, &copyCmd);
+      vmaDestroyBuffer(m_allocator, stagingBuf, stagingAlloc);
+    }
+
+  reopen_read_float:
+    if (frameOpen) {
+      vkResetCommandBuffer(m_commandBuffers[m_currentFrame], 0);
+      VkCommandBufferBeginInfo beginInfo = { VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO };
+      beginInfo.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
+      vkBeginCommandBuffer(m_commandBuffers[m_currentFrame], &beginInfo);
+
+      if (IsOffscreenEnabled()) {
+        BindOffscreenTarget(false);
+      } else {
+        VkRenderPassBeginInfo rpBegin = { VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO };
+        rpBegin.renderPass = m_backbufferRenderPassLoad;
+        rpBegin.framebuffer = m_backbufferFramebuffers[m_imageIndex];
+        rpBegin.renderArea.extent = m_swapChainExtent;
+        vkCmdBeginRenderPass(m_commandBuffers[m_currentFrame], &rpBegin, VK_SUBPASS_CONTENTS_INLINE);
+        m_renderPassActive = true;
+        m_activeRenderPass = m_backbufferRenderPassLoad;
+        vkCmdSetViewport(m_commandBuffers[m_currentFrame], 0, 1, &m_viewport);
+        vkCmdSetScissor(m_commandBuffers[m_currentFrame], 0, 1, &m_scissorRect);
+      }
+    }
+    return ok;
   }
 
   // ══════════════════════════════════════════════════════
@@ -2129,6 +2417,7 @@ reopen:
     uint32_t bufIdx = m_currentFrame;
     unsigned char* dst = (unsigned char*)m_cbRingMapped[bufIdx] + m_cbRingOffset;
     memcpy(dst, data, dataSize);
+    vmaFlushAllocation(m_allocator, m_cbRingAllocations[bufIdx], m_cbRingOffset, alignedSize);
 
     VkDescriptorBufferInfo info = {};
     info.buffer = m_cbRingBuffers[bufIdx];
@@ -2152,6 +2441,7 @@ reopen:
     uint32_t bufIdx = m_currentFrame;
     unsigned char* dst = (unsigned char*)m_cbRingMapped[bufIdx] + m_cbRingOffset;
     memcpy(dst, data, size);
+    vmaFlushAllocation(m_allocator, m_cbRingAllocations[bufIdx], m_cbRingOffset, aligned);
     VBRingAlloc alloc;
     alloc.buffer = m_cbRingBuffers[bufIdx];
     alloc.offset = m_cbRingOffset;
@@ -2180,7 +2470,10 @@ reopen:
     VkDescriptorSet ds = VK_NULL_HANDLE;
     VkResult res = vkAllocateDescriptorSets(m_device, &allocInfo, &ds);
     if (res != VK_SUCCESS) {
-      T8_LOG_ERROR("[Vulkan] AllocateDescriptorSets failed res=%d", res);
+      T8_LOG_ERROR("[Vulkan] AllocateDescriptorSets failed res=%d frame=%u cachedSets=%zu",
+                   res,
+                   m_currentFrame,
+                   m_descriptorSetCache.size());
       return VK_NULL_HANDLE;
     }
     return ds;
@@ -2497,4 +2790,3 @@ reopen:
 } // namespace t850
 
 #endif // OS_WINDOWS
-

@@ -97,7 +97,6 @@ set(T850_ANDROID_FRAMEWORK_SOURCES
   ${T850_SOURCE_DIR}/Framework/src/utils/ThreadPool.cpp
   ${T850_SOURCE_DIR}/Framework/src/utils/Spline.cpp
   ${T850_SOURCE_DIR}/Framework/src/utils/Picking.cpp
-  ${T850_SOURCE_DIR}/Framework/src/utils/GUIAtlasGenerator.cpp
   ${T850_SOURCE_DIR}/Framework/src/utils/cil.cpp
   ${T850_SOURCE_DIR}/Framework/src/utils/gltf/GLTFLoader.cpp
   ${T850_SOURCE_DIR}/Framework/src/utils/gltf/GLTFJson.cpp
@@ -144,9 +143,6 @@ set(T850_ANDROID_FRAMEWORK_SOURCES
   ${T850_SOURCE_DIR}/Framework/src/debug/Profiler.cpp
   ${T850_SOURCE_DIR}/Framework/src/debug/FrameDumper.cpp
   ${T850_SOURCE_DIR}/Framework/src/debug/FrameDumperIO.cpp
-  ${T850_SOURCE_DIR}/Framework/src/gui/GUIAtlas.cpp
-  ${T850_SOURCE_DIR}/Framework/src/gui/GUIElement.cpp
-  ${T850_SOURCE_DIR}/Framework/src/gui/GUIManager.cpp
   ${T850_SOURCE_DIR}/FrameworkImGui/src/ImGuiSystem.cpp
   ${T850_SOURCE_DIR}/FrameworkImGui/src/DevGuiContext.cpp
   ${T850_SOURCE_DIR}/Librerias/tinyxml2/tinyxml2.cpp

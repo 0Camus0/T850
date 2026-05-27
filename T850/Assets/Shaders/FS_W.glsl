@@ -2,10 +2,11 @@
 	precision mediump float;
 	layout(location = 0) out highp vec4 colorOut;
 #endif
+uniform highp vec4 LineColor;
 void main(){
 #ifdef ES_30
-	colorOut = vec4(1.0,0.0,1.0,1.0);		
+	colorOut = LineColor;		
 #else
-	gl_FragColor = vec4(1.0,0.0,1.0,1.0);	
+	gl_FragColor = LineColor;	
 #endif
 }

@@ -65,6 +65,7 @@ namespace t850 {
     void PopRT() override;
     void SaveScreenshot(std::string path) override;
     void SaveRTToFile(int rtID, int attachment, std::string path) override;
+    bool ReadRTColorFloat(int rtID, int attachment, float outRGBA[4]) override;
     bool ResizeSwapchain(int newW, int newH) override;
 #ifdef T850_RENDER_TRACE
     void RefreshTracePendingRenderState() override;
@@ -79,6 +80,8 @@ namespace t850 {
     void EndResourceUploadBatch() override;
     bool IsResourceUploadBatchActive() const override { return m_uploadBatchDepth > 0; }
     void BuildPipelineObjects() override;
+    void SetViewport(float x, float y, float w, float h) override;
+    void SetScissorRect(int x, int y, int w, int h) override;
 
     // ── Accessors ──
     VkCommandBuffer    GetCmdBuffer() const { return m_commandBuffers[m_currentFrame]; }
@@ -152,12 +155,14 @@ namespace t850 {
     bool ResumeWindowSurface(void* nativeWindow, int newW, int newH);
 
     // End the currently active render pass (if any) — safe to call even when none is active
-    void EndRenderPassIfActive(VkCommandBuffer cmd) {
+    bool EndRenderPassIfActive(VkCommandBuffer cmd) {
       if (m_renderPassActive) {
         vkCmdEndRenderPass(cmd);
         m_renderPassActive = false;
         m_activeRenderPass = VK_NULL_HANDLE;
+        return true;
       }
+      return false;
     }
     void SetRenderPassActive(bool active) { m_renderPassActive = active; }
 
@@ -183,7 +188,7 @@ namespace t850 {
     PendingConstantBufferBinding m_pendingCBs[VulkanShader::kMaxCBufferSlots] = {};
     bool m_cbDirty = false;
 
-    // Allocate vertex data from the per-frame ring buffer (for dynamic VBs like GUI quads)
+    // Allocate vertex data from the per-frame ring buffer for dynamic VBs.
     struct VBRingAlloc { VkBuffer buffer; VkDeviceSize offset; bool valid; };
     VBRingAlloc AllocateVBRing(const void* data, uint32_t size);
 
@@ -200,8 +205,11 @@ namespace t850 {
     void CreateFramebuffers();
     void CreateCommandInfrastructure();
     void CreateSyncObjects();
+    void CreateSwapchainImageSemaphores(uint32_t imageCount);
+    void DestroySwapchainImageSemaphores();
     void CreateDescriptorPool();
     void CreateAllocator();
+    void SubmitCurrentFrameAndWait(VkCommandBuffer cmd);
     void WaitForFence(uint32_t frameIndex);
     bool CreatePlatformSurface();
     void DestroyWindowSurfaceResources(bool destroySurface);
@@ -248,6 +256,7 @@ namespace t850 {
     // Synchronization — per frame in flight
     VkSemaphore     m_imageAvailableSemaphores[kBackBufferCount] = {};
     VkSemaphore     m_renderFinishedSemaphores[kBackBufferCount] = {};
+    std::vector<VkSemaphore> m_imageRenderFinishedSemaphores;
     VkFence         m_inFlightFences[kBackBufferCount] = {};
     uint32_t        m_currentFrame = 0;
     bool            m_renderPassActive = false;
@@ -290,6 +299,7 @@ namespace t850 {
     FaceCulling           m_currentCull  = FRONT_FACES;
     bool                   m_frameStarted = false;
     bool                   m_screenshotConsumedSemaphore = false;
+    bool                   m_swapchainNeedsRecreate = false;
 
     // Last-bound state for redundancy elimination
     VkPipeline      m_lastPipeline = VK_NULL_HANDLE;

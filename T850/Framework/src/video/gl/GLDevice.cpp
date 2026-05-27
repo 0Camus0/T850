@@ -21,6 +21,48 @@
 #include <video/gl/GLShader.h>
 
 namespace t850 {
+  namespace {
+    void ClearPendingGLErrors()
+    {
+      while (glGetError() != GL_NO_ERROR) {}
+    }
+
+    const char* FloatCubeInternalFormatName(GLenum internalFormat)
+    {
+      switch (internalFormat) {
+      case GL_RGBA32F: return "RGBA32F";
+      case GL_RGBA16F: return "RGBA16F";
+      default: return "UNKNOWN";
+      }
+    }
+
+    GLenum UploadFloatCubeMapFaces(int size, int mipCount, const float* data, GLenum internalFormat, int& failedFace, int& failedMip)
+    {
+      failedFace = -1;
+      failedMip = -1;
+      glPixelStorei(GL_UNPACK_ALIGNMENT, 4);
+
+      const float* pData = data;
+      for (int face = 0; face < 6; ++face) {
+        int mipSize = size;
+        for (int mip = 0; mip < mipCount; ++mip) {
+          glTexImage2D(GL_TEXTURE_CUBE_MAP_POSITIVE_X + face, mip, internalFormat, mipSize, mipSize, 0, GL_RGBA, GL_FLOAT, pData);
+          GLenum err = glGetError();
+          if (err != GL_NO_ERROR) {
+            failedFace = face;
+            failedMip = mip;
+            return err;
+          }
+          if (pData)
+            pData += mipSize * mipSize * 4;
+          mipSize >>= 1; if (mipSize < 1) mipSize = 1;
+        }
+      }
+
+      return GL_NO_ERROR;
+    }
+  }
+
   void * GLDevice::GetAPIObject() const
   {
     return nullptr;
@@ -120,40 +162,50 @@ namespace t850 {
     if (size <= 0 || mipCount <= 0)
       return nullptr;
 
-    GLTexture* tex = new GLTexture;
-    tex->glTarget = GL_TEXTURE_CUBE_MAP;
-    tex->x = size;
-    tex->y = size;
-    tex->mipmaps = mipCount;
-    tex->m_channels = 4;
-    tex->props = TextBasicFormat::CH_RGBA;
-    tex->cil_props = CIL_CUBE_MAP;
-    tex->params = TextBasicParams::CLAMP_TO_EDGE | TextBasicParams::MIPMAPS;
+    const GLenum formats[] = { GL_RGBA32F, GL_RGBA16F };
+    GLenum firstError = GL_NO_ERROR;
+    int firstFailedFace = -1;
+    int firstFailedMip = -1;
 
-    glGenTextures(1, &tex->id);
-    glBindTexture(GL_TEXTURE_CUBE_MAP, tex->id);
+    for (GLenum internalFormat : formats) {
+      GLTexture* tex = new GLTexture;
+      tex->glTarget = GL_TEXTURE_CUBE_MAP;
+      tex->x = size;
+      tex->y = size;
+      tex->mipmaps = mipCount;
+      tex->m_channels = 4;
+      tex->props = TextBasicFormat::CH_RGBA;
+      tex->cil_props = CIL_CUBE_MAP;
+      tex->params = TextBasicParams::CLAMP_TO_EDGE | TextBasicParams::MIPMAPS;
 
-    const float* pData = data;
-    for (int face = 0; face < 6; ++face) {
-      int mipSize = size;
-      for (int mip = 0; mip < mipCount; ++mip) {
-        glTexImage2D(GL_TEXTURE_CUBE_MAP_POSITIVE_X + face, mip, GL_RGBA32F, mipSize, mipSize, 0, GL_RGBA, GL_FLOAT, pData);
-        if (pData)
-          pData += mipSize * mipSize * 4;
-        mipSize >>= 1; if (mipSize < 1) mipSize = 1;
+      ClearPendingGLErrors();
+      glGenTextures(1, &tex->id);
+      glBindTexture(GL_TEXTURE_CUBE_MAP, tex->id);
+
+      int failedFace = -1;
+      int failedMip = -1;
+      GLenum err = UploadFloatCubeMapFaces(size, mipCount, data, internalFormat, failedFace, failedMip);
+      if (err == GL_NO_ERROR) {
+        tex->SetTextureParams();
+        T8_LOG_INFO("[GL] CreateFloatCubeMap: id=%u %dx%d mips=%d %s", tex->id, size, size, mipCount, FloatCubeInternalFormatName(internalFormat));
+        return tex;
       }
-    }
 
-    GLenum err = glGetError();
-    if (err != GL_NO_ERROR) {
-      T8_LOG_ERROR("[GL] CreateFloatCubeMap FAILED: glTexImage2D error=0x%X (%dx%d mips=%d)", err, size, size, mipCount);
+      if (firstError == GL_NO_ERROR) {
+        firstError = err;
+        firstFailedFace = failedFace;
+        firstFailedMip = failedMip;
+      }
+      T8_LOG_INFO("[GL] CreateFloatCubeMap %s upload failed: glTexImage2D error=0x%X (%dx%d mips=%d face=%d mip=%d)",
+                  FloatCubeInternalFormatName(internalFormat), err, size, size, mipCount, failedFace, failedMip);
+      glBindTexture(GL_TEXTURE_CUBE_MAP, 0);
+      glDeleteTextures(1, &tex->id);
       delete tex;
-      return nullptr;
     }
 
-    tex->SetTextureParams();
-    T8_LOG_INFO("[GL] CreateFloatCubeMap: id=%u %dx%d mips=%d RGBA32F", tex->id, size, size, mipCount);
-    return tex;
+    T8_LOG_ERROR("[GL] CreateFloatCubeMap FAILED: glTexImage2D error=0x%X (%dx%d mips=%d face=%d mip=%d)",
+                 firstError, size, size, mipCount, firstFailedFace, firstFailedMip);
+    return nullptr;
   }
 
   BaseRT * GLDevice::CreateRT(int nrt, int cf, int df, int w, int h, bool genMips)

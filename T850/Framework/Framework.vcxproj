@@ -68,11 +68,6 @@
     <ClInclude Include="include\physics\Q3BspCollision.h" />
     <ClInclude Include="include\physics\PhysicsAuthoring.h" />
     <ClInclude Include="include\physics\PhysicsTypes.h" />
-    <ClInclude Include="include\gui\GUIAtlas.h" />
-    <ClInclude Include="include\gui\GUIElement.h" />
-    <ClInclude Include="include\gui\GUIManager.h" />
-    <ClInclude Include="include\gui\SliderBarData.h" />
-    <ClInclude Include="include\gui\SliderKnobData.h" />
     <ClInclude Include="include\utils\cil.h" />
     <ClInclude Include="include\utils\Log.h" />
     <ClInclude Include="include\utils\InputManager.h" />
@@ -89,7 +84,6 @@
     <ClInclude Include="include\utils\XDataBase.h" />
     <ClInclude Include="include\utils\xDefs.h" />
     <ClInclude Include="include\utils\xMaths.h" />
-    <ClInclude Include="include\utils\GUIAtlasGenerator.h" />
     <ClInclude Include="include\utils\ConfigRuntime.h" />
     <ClInclude Include="include\utils\RuntimeProfile.h" />
     <ClInclude Include="include\utils\ShaderPermutationDump.h" />
@@ -201,9 +195,6 @@
     <ClCompile Include="src\scene\WireframeArrow.cpp" />
     <ClCompile Include="src\scene\Quad.cpp" />
     <ClCompile Include="src\scene\TextRenderer.cpp" />
-    <ClCompile Include="src\gui\GUIAtlas.cpp" />
-    <ClCompile Include="src\gui\GUIElement.cpp" />
-    <ClCompile Include="src\gui\GUIManager.cpp" />
     <ClCompile Include="src\utils\cil.cpp" />
     <ClCompile Include="src\utils\Log.cpp" />
     <ClCompile Include="src\utils\InputManager.cpp" />
@@ -218,7 +209,6 @@
     <ClCompile Include="src\utils\Picking.cpp" />
     <ClCompile Include="src\utils\XDataBase.cpp" />
     <ClCompile Include="src\utils\XMaths.cpp" />
-    <ClCompile Include="src\utils\GUIAtlasGenerator.cpp" />
     <ClCompile Include="src\utils\ConfigRuntime.cpp" />
     <ClCompile Include="src\utils\RuntimeProfile.cpp" />
     <ClCompile Include="src\utils\ShaderPermutationDump.cpp" />

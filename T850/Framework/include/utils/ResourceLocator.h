@@ -26,7 +26,11 @@ public:
   bool Exists(const std::string& path) const;
   bool ReadBinary(const std::string& path, std::vector<unsigned char>& out) const;
   bool ReadText(const std::string& path, std::string& out) const;
+  bool WriteText(const std::string& path, const std::string& text) const;
   std::vector<std::string> List(const std::string& directory, bool recursive = false) const;
+  bool FindFileByNameRecursive(const std::string& requestedPath,
+                               std::string& outPath,
+                               const std::vector<std::string>& searchDirectories = {}) const;
 
   // Returns a filesystem path for platforms/assets that are directly addressable on disk.
   // Android APK assets are not filesystem files, so callers must use ReadBinary/ReadText.

@@ -18,6 +18,7 @@
 #include <video/BaseDriver.h>
 #include <utils/xMaths.h>
 #include <scene/PrimitiveBase.h>
+#include <vector>
 
 
 #ifndef OS_ANDROID
@@ -85,6 +86,13 @@ namespace t850 {
     ConstantBuffer* pd3dConstantBuffer = nullptr;
     ConstantBuffer* FrameCBGPU = nullptr;
     ConstantBuffer* PassCBGPU = nullptr;
+    int m_tiledLightHeaderTex = -1;
+    int m_tiledLightIndexTex = -1;
+    int m_tiledLightTilesX = 0;
+    int m_tiledLightTilesY = 0;
+    std::vector<float> m_tiledLightHeaderData;
+    std::vector<float> m_tiledLightIndexData;
+    std::vector<unsigned int> m_tiledLightCounts;
     //ID3D11SamplerState*  pSampler;
     Quad m_quad;
     CBuffer			CnstBuffer;

@@ -40,22 +40,34 @@ public final class LauncherActivity extends Activity {
     public static final String EXTRA_RAGDOLL_SPEED_INDEX = "com.t850.engine.extra.RAGDOLL_SPEED_INDEX";
     public static final String EXTRA_RETURN_TO_NATIVE = "com.t850.engine.extra.RETURN_TO_NATIVE";
     public static final String EXTRA_RUN_ID = "com.t850.engine.extra.RUN_ID";
+    public static final String EXTRA_SCENE_PROFILE = "com.t850.engine.extra.SCENE_PROFILE";
 
     private static final String PREFS_NAME = "t850_launcher";
     private static final String PREF_SCENE = "scene";
     private static final String PREF_MODEL = "model";
+    private static final String PREF_SCENE_FILE = "sceneFile";
+    private static final String PREF_SANDBOX_CONTENT = "sandboxContent";
     private static final String PREF_LOG_LEVEL = "logLevel";
     private static final String PREF_RETURN_TO_NATIVE = "returnToNative";
     private static final String PREF_CONSUMED_AUTO_RUN = "consumedAutoRun";
     private static final int REQUEST_NATIVE_SCENE = 1;
+    private static final int CONTENT_SCENE_FILE = 0;
+    private static final int CONTENT_MODEL = 1;
 
     private final List<Option> scenes = new ArrayList<>();
+    private final List<Option> sandboxContentOptions = new ArrayList<>();
     private final List<Option> logLevels = new ArrayList<>();
-    private final List<ModelOption> models = new ArrayList<>();
+    private final List<AssetOption> sceneFiles = new ArrayList<>();
+    private final List<AssetOption> models = new ArrayList<>();
 
     private Spinner sceneSpinner;
+    private Spinner sandboxContentSpinner;
+    private Spinner sceneFileSpinner;
     private Spinner modelSpinner;
     private Spinner logSpinner;
+    private TextView sandboxContentLabel;
+    private TextView sceneFileLabel;
+    private TextView sceneFileHint;
     private TextView modelLabel;
     private TextView modelHint;
     private boolean launchingNative;
@@ -76,13 +88,13 @@ public final class LauncherActivity extends Activity {
         }
     }
 
-    private static final class ModelOption {
+    private static final class AssetOption {
         final String path;
         final String label;
 
-        ModelOption(String path) {
+        AssetOption(String path, String displayRoot) {
             this.path = path;
-            this.label = path.startsWith("Models/") ? path.substring("Models/".length()) : path;
+            this.label = path.startsWith(displayRoot) ? path.substring(displayRoot.length()) : path;
         }
 
         @Override
@@ -105,7 +117,9 @@ public final class LauncherActivity extends Activity {
         int ragdollSpeedIndex = -1;
         boolean returnToNative;
         String replaySnapshot;
+        int sandboxContent = CONTENT_SCENE_FILE;
         String sceneFile;
+        String sceneProfile;
     }
 
     @Override
@@ -115,16 +129,20 @@ public final class LauncherActivity extends Activity {
         scenes.add(new Option("Sandbox", 0));
         scenes.add(new Option("Day Scene", 1));
 
+        sandboxContentOptions.add(new Option("Scene file (.t8scene)", CONTENT_SCENE_FILE));
+        sandboxContentOptions.add(new Option("Model file", CONTENT_MODEL));
+
         logLevels.add(new Option("Error", 0));
         logLevels.add(new Option("Info", 1));
         logLevels.add(new Option("Debug", 2));
         logLevels.add(new Option("Verbose", 3));
         logLevels.add(new Option("Trace", 4));
 
+        loadSceneFiles();
         loadModels();
         buildUi();
         restoreSelections();
-        updateModelControls();
+        updateSandboxContentControls();
         handleAutoRunIntent(getIntent());
     }
 
@@ -185,7 +203,7 @@ public final class LauncherActivity extends Activity {
         root.addView(title);
 
         TextView subtitle = new TextView(this);
-        subtitle.setText("Select the scene and launch the native Vulkan renderer.");
+        subtitle.setText("Select a native scene, then a packaged .t8scene or model for Sandbox.");
         subtitle.setTextColor(Color.rgb(156, 163, 175));
         subtitle.setTextSize(14);
         subtitle.setPadding(0, 0, 0, dp(20));
@@ -197,9 +215,23 @@ public final class LauncherActivity extends Activity {
         root.addView(api);
 
         root.addView(spacer(12));
-        root.addView(label("Scene"));
+        root.addView(label("Native scene"));
         sceneSpinner = spinner(scenes);
         root.addView(sceneSpinner);
+
+        root.addView(spacer(12));
+        sandboxContentLabel = label("Sandbox content");
+        root.addView(sandboxContentLabel);
+        sandboxContentSpinner = spinner(sandboxContentOptions);
+        root.addView(sandboxContentSpinner);
+
+        root.addView(spacer(12));
+        sceneFileLabel = label("Scene file (.t8scene)");
+        root.addView(sceneFileLabel);
+        sceneFileSpinner = spinner(sceneFiles);
+        root.addView(sceneFileSpinner);
+        sceneFileHint = hint("Scene files are read from the packaged Assets/Scenes directory.");
+        root.addView(sceneFileHint);
 
         root.addView(spacer(12));
         modelLabel = label("Model (Sandbox)");
@@ -226,12 +258,24 @@ public final class LauncherActivity extends Activity {
         sceneSpinner.setOnItemSelectedListener(new AdapterView.OnItemSelectedListener() {
             @Override
             public void onItemSelected(AdapterView<?> parent, View view, int position, long id) {
-                updateModelControls();
+                updateSandboxContentControls();
             }
 
             @Override
             public void onNothingSelected(AdapterView<?> parent) {
-                updateModelControls();
+                updateSandboxContentControls();
+            }
+        });
+
+        sandboxContentSpinner.setOnItemSelectedListener(new AdapterView.OnItemSelectedListener() {
+            @Override
+            public void onItemSelected(AdapterView<?> parent, View view, int position, long id) {
+                updateSandboxContentControls();
+            }
+
+            @Override
+            public void onNothingSelected(AdapterView<?> parent) {
+                updateSandboxContentControls();
             }
         });
 
@@ -292,7 +336,9 @@ public final class LauncherActivity extends Activity {
     private void restoreSelections() {
         SharedPreferences prefs = getSharedPreferences(PREFS_NAME, MODE_PRIVATE);
         selectOption(sceneSpinner, scenes, prefs.getInt(PREF_SCENE, 0));
-        selectModel(prefs.getString(PREF_MODEL, "Models/DamagedHelmet.glb"));
+        selectOption(sandboxContentSpinner, sandboxContentOptions, prefs.getInt(PREF_SANDBOX_CONTENT, CONTENT_SCENE_FILE));
+        selectSceneFile(prefs.getString(PREF_SCENE_FILE, defaultSceneFilePath()));
+        selectModel(prefs.getString(PREF_MODEL, defaultModelPath()));
         selectOption(logSpinner, logLevels, prefs.getInt(PREF_LOG_LEVEL, 2));
     }
 
@@ -305,33 +351,57 @@ public final class LauncherActivity extends Activity {
         }
     }
 
-    private void selectModel(String path) {
-        for (int i = 0; i < models.size(); ++i) {
-            if (models.get(i).path.equals(path)) {
-                modelSpinner.setSelection(i);
-                return;
-            }
-        }
-        if (!models.isEmpty()) {
-            modelSpinner.setSelection(0);
+    private void selectSceneFile(String path) {
+        if (!selectAsset(sceneFileSpinner, sceneFiles, path)) {
+            selectAsset(sceneFileSpinner, sceneFiles, defaultSceneFilePath());
         }
     }
 
-    private void updateModelControls() {
+    private void selectModel(String path) {
+        selectAsset(modelSpinner, models, path);
+    }
+
+    private boolean selectAsset(Spinner spinner, List<AssetOption> options, String path) {
+        for (int i = 0; i < options.size(); ++i) {
+            if (options.get(i).path.equals(path)) {
+                spinner.setSelection(i);
+                return true;
+            }
+        }
+        if (!options.isEmpty()) {
+            spinner.setSelection(0);
+        }
+        return false;
+    }
+
+    private void updateSandboxContentControls() {
         boolean sandbox = selectedScene().value == 0;
-        modelLabel.setEnabled(sandbox);
-        modelSpinner.setEnabled(sandbox);
-        modelHint.setEnabled(sandbox);
+        boolean sceneFile = sandbox && selectedSandboxContent().value == CONTENT_SCENE_FILE;
+        boolean model = sandbox && selectedSandboxContent().value == CONTENT_MODEL;
+        sandboxContentLabel.setEnabled(sandbox);
+        sandboxContentSpinner.setEnabled(sandbox);
+        sceneFileLabel.setEnabled(sceneFile);
+        sceneFileSpinner.setEnabled(sceneFile);
+        sceneFileHint.setEnabled(sceneFile);
+        modelLabel.setEnabled(model);
+        modelSpinner.setEnabled(model);
+        modelHint.setEnabled(model);
     }
 
     private void runNativeScene() {
         Option scene = selectedScene();
+        Option sandboxContent = selectedSandboxContent();
         Option logLevel = selectedLogLevel();
-        ModelOption model = selectedModel();
+        AssetOption sceneFile = selectedSceneFile();
+        AssetOption model = selectedModel();
+        boolean launchSandboxSceneFile = scene.value == 0 && sandboxContent.value == CONTENT_SCENE_FILE;
+        boolean launchSandboxModel = scene.value == 0 && sandboxContent.value == CONTENT_MODEL;
 
         getSharedPreferences(PREFS_NAME, MODE_PRIVATE)
                 .edit()
                 .putInt(PREF_SCENE, scene.value)
+                .putInt(PREF_SANDBOX_CONTENT, sandboxContent.value)
+                .putString(PREF_SCENE_FILE, sceneFile.path)
                 .putString(PREF_MODEL, model.path)
                 .putInt(PREF_LOG_LEVEL, logLevel.value)
                 .putBoolean(PREF_RETURN_TO_NATIVE, true)
@@ -340,7 +410,12 @@ public final class LauncherActivity extends Activity {
 
         NativeLaunchOptions options = new NativeLaunchOptions();
         options.scene = scene.value;
-        options.model = model.path;
+        options.sandboxContent = sandboxContent.value;
+        if (launchSandboxSceneFile) {
+            options.sceneFile = sceneFile.path;
+        } else if (launchSandboxModel) {
+            options.model = model.path;
+        }
         options.logLevel = logLevel.value;
         options.returnToNative = true;
         launchNativeScene(options);
@@ -355,21 +430,22 @@ public final class LauncherActivity extends Activity {
             resumeNativeInCurrentProcess = false;
             return;
         }
-        if (!resumeNativeInCurrentProcess) {
-            prefs.edit()
-                    .putBoolean(PREF_RETURN_TO_NATIVE, false)
-                    .remove(PREF_CONSUMED_AUTO_RUN)
-                    .apply();
-            return;
-        }
+        resumeNativeInCurrentProcess = true;
         launchingNative = false;
 
         int scene = prefs.getInt(PREF_SCENE, 0);
-        String model = prefs.getString(PREF_MODEL, "Models/DamagedHelmet.glb");
+        int sandboxContent = prefs.getInt(PREF_SANDBOX_CONTENT, CONTENT_SCENE_FILE);
+        String sceneFile = prefs.getString(PREF_SCENE_FILE, defaultSceneFilePath());
+        String model = prefs.getString(PREF_MODEL, defaultModelPath());
         int logLevel = prefs.getInt(PREF_LOG_LEVEL, 2);
         NativeLaunchOptions options = new NativeLaunchOptions();
         options.scene = scene;
-        options.model = model;
+        options.sandboxContent = sandboxContent;
+        if (scene == 0 && sandboxContent == CONTENT_SCENE_FILE) {
+            options.sceneFile = sceneFile;
+        } else if (scene == 0) {
+            options.model = model;
+        }
         options.logLevel = logLevel;
         options.returnToNative = true;
         launchNativeScene(options);
@@ -392,7 +468,7 @@ public final class LauncherActivity extends Activity {
             prefs.edit()
                     .remove(PREF_CONSUMED_AUTO_RUN)
                     .commit();
-            if (shouldReturnToNative && resumeNativeInCurrentProcess) {
+            if (shouldReturnToNative) {
                 resumeNativeSceneIfNeeded();
             }
             return;
@@ -405,15 +481,27 @@ public final class LauncherActivity extends Activity {
         if (options.scene != 0 && options.scene != 1) {
             options.scene = 0;
         }
-        String fallbackModel = prefs.getString(PREF_MODEL, "Models/DamagedHelmet.glb");
+        int fallbackSandboxContent = prefs.getInt(PREF_SANDBOX_CONTENT, CONTENT_SCENE_FILE);
+        String fallbackSceneFile = prefs.getString(PREF_SCENE_FILE, defaultSceneFilePath());
+        String fallbackModel = prefs.getString(PREF_MODEL, defaultModelPath());
         options.model = intent.getStringExtra(EXTRA_MODEL);
-        if (options.model == null || options.model.isEmpty()) {
+        boolean explicitModel = options.model != null && !options.model.isEmpty();
+        if (!explicitModel) {
             options.model = fallbackModel;
         }
         options.sceneFile = intent.getStringExtra(EXTRA_SCENE_FILE);
         if (options.sceneFile != null && !options.sceneFile.isEmpty()) {
             options.scene = 0;
             options.model = null;
+            options.sandboxContent = CONTENT_SCENE_FILE;
+        } else {
+            options.sceneFile = fallbackSceneFile;
+            options.sandboxContent = explicitModel ? CONTENT_MODEL : fallbackSandboxContent;
+        }
+        if (options.scene == 0 && options.sandboxContent == CONTENT_SCENE_FILE) {
+            options.model = null;
+        } else {
+            options.sceneFile = null;
         }
         options.logLevel = intent.getIntExtra(EXTRA_LOG_LEVEL, prefs.getInt(PREF_LOG_LEVEL, 2));
         if (options.logLevel < 0 || options.logLevel > 4) {
@@ -428,17 +516,24 @@ public final class LauncherActivity extends Activity {
         options.autoStartRagdoll = intent.getBooleanExtra(EXTRA_AUTO_START_RAGDOLL, false);
         options.ragdollSpeedIndex = intent.getIntExtra(EXTRA_RAGDOLL_SPEED_INDEX, -1);
         options.replaySnapshot = intent.getStringExtra(EXTRA_REPLAY_SNAPSHOT);
+        options.sceneProfile = intent.getStringExtra(EXTRA_SCENE_PROFILE);
         options.returnToNative = intent.getBooleanExtra(EXTRA_RETURN_TO_NATIVE, false);
 
         selectOption(sceneSpinner, scenes, options.scene);
+        selectOption(sandboxContentSpinner, sandboxContentOptions, options.sandboxContent);
+        if (options.sceneFile != null) {
+            selectSceneFile(options.sceneFile);
+        }
         if (options.model != null) {
             selectModel(options.model);
         }
         selectOption(logSpinner, logLevels, options.logLevel);
-        updateModelControls();
+        updateSandboxContentControls();
 
         prefs.edit()
                 .putInt(PREF_SCENE, options.scene)
+                .putInt(PREF_SANDBOX_CONTENT, options.sandboxContent)
+                .putString(PREF_SCENE_FILE, options.sceneFile != null ? options.sceneFile : fallbackSceneFile)
                 .putString(PREF_MODEL, options.model != null ? options.model : fallbackModel)
                 .putInt(PREF_LOG_LEVEL, options.logLevel)
                 .putBoolean(PREF_RETURN_TO_NATIVE, options.returnToNative)
@@ -456,11 +551,10 @@ public final class LauncherActivity extends Activity {
         intent.setClassName(getPackageName(), "android.app.NativeActivity");
         intent.putExtra(EXTRA_SCENE, options.scene);
         intent.putExtra(EXTRA_LOG_LEVEL, options.logLevel);
-        if (options.model != null && !options.model.isEmpty()) {
-            intent.putExtra(EXTRA_MODEL, options.model);
-        }
         if (options.sceneFile != null && !options.sceneFile.isEmpty()) {
             intent.putExtra(EXTRA_SCENE_FILE, options.sceneFile);
+        } else if (options.model != null && !options.model.isEmpty()) {
+            intent.putExtra(EXTRA_MODEL, options.model);
         }
         if (options.dumpFrame >= 0) {
             intent.putExtra(EXTRA_DUMP_FRAME, options.dumpFrame);
@@ -487,6 +581,9 @@ public final class LauncherActivity extends Activity {
         if (options.replaySnapshot != null && !options.replaySnapshot.isEmpty()) {
             intent.putExtra(EXTRA_REPLAY_SNAPSHOT, options.replaySnapshot);
         }
+        if (options.sceneProfile != null && !options.sceneProfile.isEmpty()) {
+            intent.putExtra(EXTRA_SCENE_PROFILE, options.sceneProfile);
+        }
         if (options.returnToNative) {
             intent.addFlags(Intent.FLAG_ACTIVITY_REORDER_TO_FRONT | Intent.FLAG_ACTIVITY_SINGLE_TOP);
             startActivity(intent);
@@ -504,28 +601,59 @@ public final class LauncherActivity extends Activity {
         return (Option) logSpinner.getSelectedItem();
     }
 
-    private ModelOption selectedModel() {
-        Object selected = modelSpinner.getSelectedItem();
-        if (selected instanceof ModelOption) {
-            return (ModelOption) selected;
+    private Option selectedSandboxContent() {
+        Object selected = sandboxContentSpinner.getSelectedItem();
+        if (selected instanceof Option) {
+            return (Option) selected;
         }
-        return new ModelOption("Models/DamagedHelmet.glb");
+        return sandboxContentOptions.isEmpty()
+                ? new Option("Scene file (.t8scene)", CONTENT_SCENE_FILE)
+                : sandboxContentOptions.get(0);
+    }
+
+    private AssetOption selectedSceneFile() {
+        Object selected = sceneFileSpinner.getSelectedItem();
+        if (selected instanceof AssetOption) {
+            return (AssetOption) selected;
+        }
+        return new AssetOption(defaultSceneFilePath(), "Scenes/");
+    }
+
+    private AssetOption selectedModel() {
+        Object selected = modelSpinner.getSelectedItem();
+        if (selected instanceof AssetOption) {
+            return (AssetOption) selected;
+        }
+        return new AssetOption(defaultModelPath(), "Models/");
+    }
+
+    private void loadSceneFiles() {
+        List<String> paths = new ArrayList<>();
+        collectAssets(getAssets(), "Scenes", paths, true);
+        Collections.sort(paths, String.CASE_INSENSITIVE_ORDER);
+        if (paths.isEmpty()) {
+            Toast.makeText(this, "No packaged .t8scene files found; using Q3 default.", Toast.LENGTH_LONG).show();
+            paths.add("Scenes/Q3/q3dm6_mod_3.t8scene");
+        }
+        for (String path : paths) {
+            sceneFiles.add(new AssetOption(path, "Scenes/"));
+        }
     }
 
     private void loadModels() {
         List<String> paths = new ArrayList<>();
-        collectModels(getAssets(), "Models", paths);
+        collectAssets(getAssets(), "Models", paths, false);
         Collections.sort(paths, String.CASE_INSENSITIVE_ORDER);
         if (paths.isEmpty()) {
             Toast.makeText(this, "No packaged models found; using DamagedHelmet default.", Toast.LENGTH_LONG).show();
             paths.add("Models/DamagedHelmet.glb");
         }
         for (String path : paths) {
-            models.add(new ModelOption(path));
+            models.add(new AssetOption(path, "Models/"));
         }
     }
 
-    private void collectModels(AssetManager assets, String directory, List<String> out) {
+    private void collectAssets(AssetManager assets, String directory, List<String> out, boolean sceneFileMode) {
         String[] entries;
         try {
             entries = assets.list(directory);
@@ -537,17 +665,34 @@ public final class LauncherActivity extends Activity {
         }
         for (String entry : entries) {
             String path = directory + "/" + entry;
-            if (isModel(path)) {
+            if (sceneFileMode ? isSceneFile(path) : isModel(path)) {
                 out.add(path);
                 continue;
             }
-            collectModels(assets, path, out);
+            collectAssets(assets, path, out, sceneFileMode);
         }
+    }
+
+    private boolean isSceneFile(String path) {
+        return path.toLowerCase(Locale.ROOT).endsWith(".t8scene");
     }
 
     private boolean isModel(String path) {
         String lower = path.toLowerCase(Locale.ROOT);
         return lower.endsWith(".glb") || lower.endsWith(".gltf") || lower.endsWith(".x");
+    }
+
+    private String defaultSceneFilePath() {
+        for (AssetOption sceneFile : sceneFiles) {
+            if (sceneFile.path.equals("Scenes/Q3/q3dm6_mod_3.t8scene")) {
+                return sceneFile.path;
+            }
+        }
+        return sceneFiles.isEmpty() ? "Scenes/Q3/q3dm6_mod_3.t8scene" : sceneFiles.get(0).path;
+    }
+
+    private String defaultModelPath() {
+        return models.isEmpty() ? "Models/DamagedHelmet.glb" : models.get(0).path;
     }
 
     private int dp(int value) {

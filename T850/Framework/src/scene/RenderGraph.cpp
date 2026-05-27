@@ -25,6 +25,8 @@
 #include <sstream>
 #include <cstdio>
 #include <unordered_map>
+#include <algorithm>
+#include <cmath>
 
 namespace t850 {
 
@@ -93,7 +95,6 @@ static const std::unordered_map<std::string, uint8_t> s_passMap = {
   {"HORIZONTAL_BLUR_PASS",  PassType::HORIZONTAL_BLUR},
   {"BRIGHT_PASS",           PassType::BRIGHT},
   {"HDR_COMP_PASS",         PassType::HDR_COMP},
-  {"LUMINANCE_MAP_PASS",    PassType::LUMINANCE_MAP},
   {"ADAPT_LUMINANCE_PASS",  PassType::ADAPT_LUMINANCE},
   {"COC_PASS",              PassType::COC},
   {"COMBINE_COC_PASS",      PassType::COMBINE_COC},
@@ -109,6 +110,7 @@ static const std::unordered_map<std::string, uint8_t> s_passMap = {
   {"GOD_RAY_BLEND_PASS",    PassType::GOD_RAY_BLEND},
   {"SSAO_PASS",             PassType::SSAO},
   {"DEFERRED_LDR_PASS",     PassType::DEFERRED_LDR},
+  {"DEFERRED_LIGHT_VOLUME_PASS", PassType::DEFERRED_LIGHT_VOLUME},
 };
 
 // Feature name -> ShaderKey feature bit
@@ -236,6 +238,11 @@ bool RenderGraph::Load(const std::string& path) {
 void RenderGraph::CreateRenderTargets(BaseDriver* driver, const SceneProps& props) {
   m_rtHandles.clear();
 
+#if defined(OS_ANDROID)
+  constexpr float kAndroidScreenRenderScale = 0.5f;
+  bool loggedAndroidRenderScale = false;
+#endif
+
   for (const auto& rt : m_desc.render_targets) {
     int cf = ResolveColorFormat(rt.color_format);
     int df = ResolveDepthFormat(rt.depth_format);
@@ -251,16 +258,53 @@ void RenderGraph::CreateRenderTargets(BaseDriver* driver, const SceneProps& prop
       }
     }
 
+#if defined(OS_ANDROID)
+    const bool usesBackbufferSize = rt.size[0] == 0 && rt.size[1] == 0 && rt.size_ref.empty();
+    if (usesBackbufferSize && driver && driver->width > 0 && driver->height > 0) {
+      w = (std::max)(1, static_cast<int>(std::round(static_cast<float>(driver->width) * kAndroidScreenRenderScale)));
+      h = (std::max)(1, static_cast<int>(std::round(static_cast<float>(driver->height) * kAndroidScreenRenderScale)));
+      if (!loggedAndroidRenderScale) {
+        T8_LOG_INFO("[RenderGraph] Android screen render scale %.2f: %dx%d -> %dx%d",
+                    kAndroidScreenRenderScale, driver->width, driver->height, w, h);
+        loggedAndroidRenderScale = true;
+      }
+    }
+#endif
+
+    // CreateRT's final argument controls mip generation, not linear filtering.
+    // Keep it opt-in per target so bloom/intermediate passes never sample
+    // implicit mips unexpectedly.
+    const bool generateMips = rt.generate_mips;
     int handle;
     if (!rt.color_formats.empty()) {
       // Per-attachment formats specified in JSON
       std::vector<int> perCF;
       for (const auto& fmt : rt.color_formats)
         perCF.push_back(ResolveColorFormat(fmt));
-      handle = driver->CreateRT(rt.color_count, perCF, df, w, h, rt.linear_filter);
+      handle = driver->CreateRT(rt.color_count, perCF, df, w, h, generateMips);
     } else {
-      handle = driver->CreateRT(rt.color_count, cf, df, w, h, rt.linear_filter);
+      handle = driver->CreateRT(rt.color_count, cf, df, w, h, generateMips);
     }
+    auto applyFilter = [&](Texture* tex) {
+      if (!tex) return;
+      tex->params &= ~(TextBasicParams::NEAREST_FILTER | TextBasicParams::LINEAR_FILTER);
+      tex->params |= rt.linear_filter ? TextBasicParams::LINEAR_FILTER : TextBasicParams::NEAREST_FILTER;
+      tex->SetTextureParams();
+    };
+    for (int attachment = 0; attachment < rt.color_count; ++attachment) {
+      if (Texture* tex = driver->GetRTTexture(handle, attachment)) {
+        applyFilter(tex);
+        tex->mipmaps = 1;
+        if (generateMips &&
+            (driver->m_currentAPI == GraphicsApi::D3D11 || driver->m_currentAPI == GraphicsApi::OPENGL)) {
+          unsigned int maxDim = (tex->x > tex->y) ? tex->x : tex->y;
+          unsigned int levels = 1;
+          while (maxDim > 1) { maxDim >>= 1; ++levels; }
+          tex->mipmaps = levels;
+        }
+      }
+    }
+    applyFilter(driver->GetRTTexture(handle, BaseDriver::DEPTH_ATTACHMENT));
     m_rtHandles[rt.name] = handle;
 
     T8_LOG_INFO("[RenderGraph] Created RT '%s' -> handle %d (%dx%d, %d colors, cf=%s, df=%s)",
@@ -397,6 +441,18 @@ void RenderGraph::Execute(
 {
   const bool shadowsEnabled = props.ToogleShadow != 0;
   const bool ssaoEnabled = props.ToogleSSAO != 0;
+  props.DeferredLightVolumesEnabled = false;
+  for (const auto& node : m_nodes) {
+    if (m_disabledPasses.count(node.desc->name)) continue;
+    for (const auto& draw : node.desc->draws) {
+      if (draw.signature == "DEFERRED_LIGHT_VOLUME_PASS") {
+        props.DeferredLightVolumesEnabled = true;
+        break;
+      }
+    }
+    if (props.DeferredLightVolumesEnabled) break;
+  }
+
   for (const auto& node : m_nodes) {
     if (m_disabledPasses.count(node.desc->name)) continue;
     if (!shadowsEnabled && node.desc->name == "Shadow Depth") continue;
@@ -432,6 +488,9 @@ void RenderGraph::ExecutePass(
 
   auto shouldSkipTextureInput = [&](const TextureInput& input) -> bool {
     if (!shadowsEnabled && input.source == "DepthPass:DEPTH") {
+      return true;
+    }
+    if (pass.name == "Shadow Accumulation" && !ssaoEnabled && input.source == "GBuffer:COLOR3") {
       return true;
     }
     if (!ssaoEnabled && input.source == "@ssao_noise") {

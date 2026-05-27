@@ -21,6 +21,7 @@ struct SceneObjectDesc {
   Vec3f rotation;
   Vec3f scale = {1.0f, 1.0f, 1.0f};
   bool visible = true;
+  std::optional<bool> mobile_visible;
   bool frozen = false;
   bool show_wire = false;
 };

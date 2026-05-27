@@ -115,12 +115,12 @@
    ],
    "splines": [],
    "meshes": [],
-   "environment_map": "sky/Pisa.dds",
+   "environment_map": "sky/Uffizi.dds",
    "environment_diffuse_ibl": "",
    "environment_specular_ibl": "",
-   "environment_brdf_lut": "LUT/lut_ggx.png",
+   "environment_brdf_lut": "LUT/lut_ggx.dds",
    "environment_sheen_ibl": "",
-   "environment_charlie_lut": "LUT/lut_charlie.png",
+   "environment_charlie_lut": "LUT/lut_charlie.dds",
    "environment_sheen_e_lut": "LUT/lut_sheen_E.dds",
    "quality": {
       "shadow_map_resolution": 1024,
@@ -142,6 +142,7 @@
       "bloom_threshold": 0.7,
       "tone_map_white_level": 4,
       "luminance_tau": 1.1,
+      "luminance_mode": 0,
       "aperture": 120,
       "focal_length": 50,
       "max_coc": 2.5,
@@ -386,6 +387,12 @@
          "label": "Physics",
          "default_val": false,
          "enabled": true
+      },
+      {
+         "name": "show_light_volumes",
+         "label": "Light Volumes",
+         "default_val": false,
+         "enabled": true
       }
    ],
    "selectors": [
@@ -405,8 +412,16 @@
             "Extra16F",
             "HDR Output",
             "Bloom",
-            "Luminance",
             "Adapted Lum"
+         ],
+         "default_index": 0
+      },
+      {
+         "name": "luminance_mode",
+         "label": "Luminance Mode",
+         "options": [
+            "Temporal HDR",
+            "Robust Temporal"
          ],
          "default_index": 0
       },
@@ -424,7 +439,7 @@
             "CubeMap_SkyDawn.dds",
             "CubeMap_SkyWater.dds"
          ],
-         "default_index": 0
+         "default_index": 4
       },
       {
          "name": "gauss_kernel_sample_count",
@@ -499,8 +514,18 @@
                "value": 1
             }
          ],
-         "checkboxes": [],
-         "selectors": [],
+         "checkboxes": [
+            {
+               "name": "shadow_toggle",
+               "value": false
+            }
+         ],
+         "selectors": [
+            {
+               "name": "cubemap",
+               "value": 4
+            }
+         ],
          "lights": []
       },
       {
@@ -532,8 +557,69 @@
                "value": 1
             }
          ],
+         "checkboxes": [
+            {
+               "name": "shadow_toggle",
+               "value": false
+            }
+         ],
+         "selectors": [
+            {
+               "name": "cubemap",
+               "value": 4
+            }
+         ],
+         "lights": []
+      },
+      {
+         "name": "android/mali-g600",
+         "platform": "android",
+         "architecture": "",
+         "gpu_family": "mali-g600",
+         "gpu_name_contains": "",
+         "model": "",
+         "sliders": [],
          "checkboxes": [],
-         "selectors": [],
+         "selectors": [
+            {
+               "name": "cubemap",
+               "value": 4
+            }
+         ],
+         "lights": []
+      },
+      {
+         "name": "android/mali-g700",
+         "platform": "android",
+         "architecture": "",
+         "gpu_family": "mali-g700",
+         "gpu_name_contains": "",
+         "model": "",
+         "sliders": [],
+         "checkboxes": [],
+         "selectors": [
+            {
+               "name": "cubemap",
+               "value": 4
+            }
+         ],
+         "lights": []
+      },
+      {
+         "name": "android/default",
+         "platform": "android",
+         "architecture": "",
+         "gpu_family": "",
+         "gpu_name_contains": "",
+         "model": "",
+         "sliders": [],
+         "checkboxes": [],
+         "selectors": [
+            {
+               "name": "cubemap",
+               "value": 4
+            }
+         ],
          "lights": []
       },
       {

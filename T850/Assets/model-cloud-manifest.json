@@ -1,0 +1,59 @@
+{
+  "bucket": "t850-models",
+  "publicBaseUrl": "https://pub-2fa5c50bbfbc4b829da0d6c6300815b0.r2.dev",
+  "assetCount": 13,
+  "assets": [
+    {
+      "key": "rewind_cyborg.glb",
+      "url": "https://pub-2fa5c50bbfbc4b829da0d6c6300815b0.r2.dev/rewind_cyborg.glb"
+    },
+    {
+      "key": "Q3/q3dm6.glb",
+      "url": "https://pub-2fa5c50bbfbc4b829da0d6c6300815b0.r2.dev/Q3/q3dm6.glb"
+    },
+    {
+      "key": "DamagedHelmet.glb",
+      "url": "https://pub-2fa5c50bbfbc4b829da0d6c6300815b0.r2.dev/DamagedHelmet.glb"
+    },
+    {
+      "key": "doomslayer_cine_all_animations_no-damage_double-sided-opaque.glb",
+      "url": "https://pub-2fa5c50bbfbc4b829da0d6c6300815b0.r2.dev/doomslayer_cine_all_animations_no-damage_double-sided-opaque.glb"
+    },
+    {
+      "key": "porsche_992_gt3_r__www.vecarz.com.glb",
+      "url": "https://pub-2fa5c50bbfbc4b829da0d6c6300815b0.r2.dev/porsche_992_gt3_r__www.vecarz.com.glb"
+    },
+    {
+      "key": "mclaren_p1__www.vecarz.com.glb",
+      "url": "https://pub-2fa5c50bbfbc4b829da0d6c6300815b0.r2.dev/mclaren_p1__www.vecarz.com.glb"
+    },
+    {
+      "key": "mercedes-amg_gt3__www.vecarz.com(1).glb",
+      "url": "https://pub-2fa5c50bbfbc4b829da0d6c6300815b0.r2.dev/mercedes-amg_gt3__www.vecarz.com%281%29.glb"
+    },
+    {
+      "key": "SkyBox.glb",
+      "url": "https://pub-2fa5c50bbfbc4b829da0d6c6300815b0.r2.dev/SkyBox.glb"
+    },
+    {
+      "key": "SponzaEsc.glb",
+      "url": "https://pub-2fa5c50bbfbc4b829da0d6c6300815b0.r2.dev/SponzaEsc.glb"
+    },
+    {
+      "key": "Tyrant.glb",
+      "url": "https://pub-2fa5c50bbfbc4b829da0d6c6300815b0.r2.dev/Tyrant.glb"
+    },
+    {
+      "key": "Marauder.glb",
+      "url": "https://pub-2fa5c50bbfbc4b829da0d6c6300815b0.r2.dev/Marauder.glb"
+    },
+    {
+      "key": "jaguar_xj13_1959__www.vecarz.com.glb",
+      "url": "https://pub-2fa5c50bbfbc4b829da0d6c6300815b0.r2.dev/jaguar_xj13_1959__www.vecarz.com.glb"
+    },
+    {
+      "key": "bmw_m4_widebody__www.vecarz.com.glb",
+      "url": "https://pub-2fa5c50bbfbc4b829da0d6c6300815b0.r2.dev/bmw_m4_widebody__www.vecarz.com.glb"
+    }
+  ]
+}

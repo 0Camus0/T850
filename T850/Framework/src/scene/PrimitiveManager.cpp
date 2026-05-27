@@ -40,6 +40,7 @@ namespace t850 {
     // Probe: load to check if the model has skin/animation data
     RenderMesh* probe = new RenderMesh();
     probe->SetEngineContext(m_engineContext);
+    T8_LOG_INFO("Loading mesh begin: '%s'", fname);
     probe->Load(fname);
     T8_LOG_INFO("Loading mesh: '%s'", fname);
     if (!probe->xFile) {

@@ -102,11 +102,11 @@ int main(int argc, char** argv) {
   );
   t850::Log::SetSessionTag("t8ditor");
 
-  // Default to a sample model if the user didn't pick one — Models/SkyBox.X
+  // Default to a sample model if the user didn't pick one — Models/SkyBox.glb
   // ships with the repo and is loaded by DayScene, so it's known-good.
   if (meshPath.empty()) {
-    if (std::filesystem::exists("Models/SkyBox.X")) {
-      meshPath = "Models/SkyBox.X";
+    if (std::filesystem::exists("Models/SkyBox.glb")) {
+      meshPath = "Models/SkyBox.glb";
     }
   }
   t8ditor::SetStartupMeshPath(meshPath);

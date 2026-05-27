@@ -27,6 +27,21 @@ float Length3(const XVECTOR3& value) {
   return std::sqrt(LengthSq3(value));
 }
 
+float CombineAxis(float analogAmount, bool positive, bool negative) {
+  float value = ClampFloat(analogAmount, -1.0f, 1.0f);
+  if (positive) {
+    value += 1.0f;
+  }
+  if (negative) {
+    value -= 1.0f;
+  }
+  return ClampFloat(value, -1.0f, 1.0f);
+}
+
+float ClampCommandLength(float x, float y, float z = 0.0f) {
+  return ClampFloat(std::sqrt(x * x + y * y + z * z), 0.0f, 1.0f);
+}
+
 XVECTOR3 NormalizeOr(XVECTOR3 value, const XVECTOR3& fallback) {
   const float length = Length3(value);
   if (length <= 0.000001f) {
@@ -57,6 +72,8 @@ KinematicCharacterInput BuildCharacterInput(const Camera& camera, const CameraIn
   characterInput.moveBackward = input.moveBackward;
   characterInput.moveLeft = input.moveLeft;
   characterInput.moveRight = input.moveRight;
+  characterInput.moveForwardAmount = ClampFloat(input.moveForwardAmount, -1.0f, 1.0f);
+  characterInput.moveRightAmount = ClampFloat(input.moveRightAmount, -1.0f, 1.0f);
   characterInput.jump = input.jump;
   characterInput.sprint = input.sprint;
   characterInput.forward = camera.Look;
@@ -253,18 +270,19 @@ void FreeFlyCameraProfile::Update(Camera& camera, float deltaSeconds, const Came
   ApplyMouseLook(camera, m_input, m_mouseSensitivity);
   RefreshCamera(camera);
 
+  const float forwardAmount = CombineAxis(m_input.moveForwardAmount, m_input.moveForward, m_input.moveBackward);
+  const float rightAmount = CombineAxis(m_input.moveRightAmount, m_input.moveRight, m_input.moveLeft);
+  const float upAmount = (m_input.moveUp ? 1.0f : 0.0f) + (m_input.moveDown ? -1.0f : 0.0f);
+  const float moveAmount = ClampCommandLength(forwardAmount, rightAmount, upAmount);
   XVECTOR3 move(0.0f, 0.0f, 0.0f, 0.0f);
-  if (m_input.moveForward) move += camera.Look;
-  if (m_input.moveBackward) move -= camera.Look;
-  if (m_input.moveRight) move += camera.Right;
-  if (m_input.moveLeft) move -= camera.Right;
-  if (m_input.moveUp) move += camera.Up;
-  if (m_input.moveDown) move -= camera.Up;
+  move += camera.Look * forwardAmount;
+  move += camera.Right * rightAmount;
+  move += camera.Up * upAmount;
   move.w = 0.0f;
 
   if (LengthSq3(move) > 0.000001f) {
     move = NormalizeOr(move, XVECTOR3(0.0f, 0.0f, 0.0f, 0.0f));
-    const XVECTOR3 displacement = move * (MoveSpeed(m_input) * deltaSeconds);
+    const XVECTOR3 displacement = move * (MoveSpeed(m_input) * moveAmount * deltaSeconds);
     if (UsesCollision() && context.collisionWorld) {
       camera.Eye = SlideCapsule(context, camera.Eye, displacement, m_collisionRadius, m_collisionHalfHeight);
     } else {

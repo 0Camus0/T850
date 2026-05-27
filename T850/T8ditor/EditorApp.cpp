@@ -638,12 +638,12 @@ void EditorApp::CreateAssets() {
   }
 
   // Load skybox as persistent editor backdrop
-  if (std::filesystem::exists("Models/SkyBox.X")) {
+  if (std::filesystem::exists("Models/SkyBox.glb")) {
     g_skyboxMgr.SetEngineContext(&t850::GetEngineContext());
     g_skyboxMgr.Init();
     g_skyboxMgr.SetVP(&m_vp);
     g_skyboxMgr.SetSceneProps(&m_sceneProps);
-    int sid = g_skyboxMgr.CreateMesh("Models/SkyBox.X");
+    int sid = g_skyboxMgr.CreateMesh("Models/SkyBox.glb");
     if (sid >= 0) {
       g_skyboxPrimId = sid;
       g_skyboxInst.CreateInstance(g_skyboxMgr.GetPrimitive(sid), &m_vp);
@@ -700,7 +700,7 @@ void EditorApp::CreateAssets() {
     g_dumperInited = true;
   }
 
-  if (!g_startupMeshPath.empty() && g_startupMeshPath != "Models/SkyBox.X")
+  if (!g_startupMeshPath.empty() && g_startupMeshPath != "Models/SkyBox.glb")
     ImportMesh(g_startupMeshPath);
 
   m_assetsCreated = true;
@@ -723,28 +723,29 @@ void EditorApp::CreateAssets() {
 }
 
 void EditorApp::ImportMesh(const std::string& path) {
-  if (!std::filesystem::exists(path)) {
-    T8_LOG_ERROR("[T8ditor] Mesh file not found: %s", path.c_str());
+  const std::string meshPath = NormalizeEditorResourcePath(path);
+  if (!t850::ResourceLocator::Instance().Exists(meshPath)) {
+    T8_LOG_ERROR("[T8ditor] Mesh file not found: %s", meshPath.c_str());
     return;
   }
 
   // Create a new scene object (append, don't replace)
-  int id = m_primMgr.CreateMesh(path.c_str());
+  int id = m_primMgr.CreateMesh(meshPath.c_str());
   if (id < 0) {
-    T8_LOG_ERROR("[T8ditor] Failed to load mesh: %s", path.c_str());
+    T8_LOG_ERROR("[T8ditor] Failed to load mesh: %s", meshPath.c_str());
     return;
   }
 
   g_objects.emplace_back();
   SceneObject& obj = g_objects.back();
   obj.primId = id;
-  obj.name   = path;
-  obj.meshPath = path;
+  obj.name   = meshPath;
+  obj.meshPath = meshPath;
   obj.litInst.CreateInstance(m_primMgr.GetPrimitive(id), &m_vp);
   obj.litInst.Update();
   if (obj.litInst.GetSkinnedMesh()) {
-    obj.ragdollModelKey = t850::BuildRagdollEditModelKey(path);
-    obj.ragdollResourcePath = t850::BuildRagdollEditResourcePath(path);
+    obj.ragdollModelKey = t850::BuildRagdollEditModelKey(meshPath);
+    obj.ragdollResourcePath = t850::BuildRagdollEditResourcePath(meshPath);
   } else {
     obj.ragdollModelKey.clear();
     obj.ragdollResourcePath.clear();
@@ -752,7 +753,7 @@ void EditorApp::ImportMesh(const std::string& path) {
 
   m_primMgr.SetSceneProps(&m_sceneProps);
 
-  obj.wireframe.Load(path);
+  obj.wireframe.Load(meshPath);
 
   // Select the newly imported mesh
   g_selectedIdx = (int)g_objects.size() - 1;
@@ -761,7 +762,7 @@ void EditorApp::ImportMesh(const std::string& path) {
   m_camera.SetTarget(obj.wireframe.LocalCenter());
   m_camera.Frame();
 
-  T8_LOG_INFO("[T8ditor] Loaded mesh [%d]: %s", g_selectedIdx, path.c_str());
+  T8_LOG_INFO("[T8ditor] Loaded mesh [%d]: %s", g_selectedIdx, meshPath.c_str());
 }
 
 void EditorApp::CloneSelected() {
@@ -832,7 +833,7 @@ void EditorApp::CloneSelected() {
     const std::string sourceStatus = src.ragdollStatus;
     const t850::PhysicsRagdollAuthoringDesc sourceAuthoring = src.ragdollAuthoring;
 
-    if (meshPath.empty() || !std::filesystem::exists(meshPath)) {
+    if (meshPath.empty() || !t850::ResourceLocator::Instance().Exists(meshPath)) {
       T8_LOG_ERROR("[T8ditor] Cannot clone mesh '%s': source mesh path is missing or unreadable",
                    sourceName.c_str());
       return;
@@ -1093,6 +1094,7 @@ void EditorApp::OnUpdate() {
             od.rotation.x * kDegToRad, od.rotation.y * kDegToRad, od.rotation.z * kDegToRad);
           obj.wireframe.Scale() = XVECTOR3(od.scale.x, od.scale.y, od.scale.z);
           obj.visible  = od.visible;
+          obj.mobileVisible = od.mobile_visible;
           obj.frozen   = od.frozen;
           obj.showWire = od.show_wire;
         } else {
@@ -2153,7 +2155,7 @@ void EditorApp::OnDraw() {
     }
     if (menuAction.wantsImportX) {
       std::string path = OpenFileDialog(
-        L"3D Models (*.x;*.glb;*.gltf)\0*.x;*.glb;*.gltf\0DirectX Mesh (*.x)\0*.x\0glTF Binary (*.glb)\0*.glb\0glTF (*.gltf)\0*.gltf\0All Files (*.*)\0*.*\0",
+        L"3D Models (*.glb;*.gltf)\0*.glb;*.gltf\0glTF Binary (*.glb)\0*.glb\0glTF (*.gltf)\0*.gltf\0All Files (*.*)\0*.*\0",
         L"Import Mesh");
       if (!path.empty()) ImportMesh(path);
     }
@@ -2181,6 +2183,7 @@ void EditorApp::OnDraw() {
                           obj.wireframe.EulerRadians().z * kRadToDeg };
           od.scale    = { obj.wireframe.Scale().x, obj.wireframe.Scale().y, obj.wireframe.Scale().z };
           od.visible   = obj.visible;
+          od.mobile_visible = obj.mobileVisible;
           od.frozen    = obj.frozen;
           od.show_wire = obj.showWire;
           sf.objects.push_back(od);

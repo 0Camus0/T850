@@ -4072,7 +4072,7 @@
             },
             {
                "name": "fov",
-               "value": 120
+               "value": 100
             },
             {
                "name": "light_intensity_scale",
@@ -4105,6 +4105,10 @@
             {
                "name": "gauss_1_kernel_size",
                "value": 27
+            },
+            {
+               "name": "luminance_mode",
+               "value": 0
             },
             {
                "name": "anim_select",
@@ -4141,7 +4145,7 @@
             "yaw": -10.30925,
             "pitch": 0.02000227,
             "roll": 0,
-            "fov": 120,
+            "fov": 100,
             "aspect_ratio": 1.7777778,
             "near_plane": 0.125,
             "far_plane": 6198.7783,

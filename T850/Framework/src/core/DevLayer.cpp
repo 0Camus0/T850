@@ -22,8 +22,7 @@ namespace {
 
 DevLayer::DevLayer()
     : m_framework(nullptr)
-    , m_activeScene(nullptr)
-    , m_guiInited(false) {
+    , m_activeScene(nullptr) {
 }
 
 void DevLayer::Init(RootFramework* framework) {
@@ -32,10 +31,6 @@ void DevLayer::Init(RootFramework* framework) {
 
 void DevLayer::Destroy() {
   DestroyCullingDebugResources();
-  if (m_guiInited) {
-    m_gui.Destroy();
-    m_guiInited = false;
-  }
 }
 
 bool DevLayer::EnsureCullingDebugResources() {
@@ -224,56 +219,10 @@ SceneBase* DevLayer::GetActiveScene() const {
   return m_activeScene;
 }
 
-void DevLayer::RebuildGUIForScene() {
-  if (!m_legacyGuiEnabled) return;
-
-  // Initialise the GUI system once (textures, shader, font).
-  if (!m_guiInited && g_pBaseDriver) {
-    m_gui.Init(g_pBaseDriver->width, g_pBaseDriver->height);
-    m_gui.AddFPSLabel();
-    m_guiInited = true;
-  }
-
-  // Clear old sliders and let the new scene populate them.
-  m_gui.ClearSliders();
-  m_gui.AddFPSLabel();
-  if (m_activeScene) {
-    m_activeScene->PopulateGUI(m_gui);
-    m_gui.LayoutSliders(g_pBaseDriver->width, g_pBaseDriver->height);
-    m_activeScene->SyncToGUI(m_gui);
-  }
-
-  // Try to load a saved layout (overrides default positions)
-  m_gui.LoadLayout(kLayoutPath);
-  m_gui.LoadControlLayout(kControlLayoutPath);
-}
-
-void DevLayer::SetEditMode(bool e) { m_gui.SetEditMode(e); }
-void DevLayer::SetSnapToGrid(bool s) { m_gui.SetSnapToGrid(s); }
-void DevLayer::SetControlEditMode(bool e) { m_gui.SetControlEditMode(e); }
-bool DevLayer::SetControlEditTargetByName(const std::string& targetName) { return m_gui.SetControlEditTargetByName(targetName); }
-
-void DevLayer::SetLegacyGuiEnabled(bool enabled) {
-  m_legacyGuiEnabled = enabled;
-  if (!m_legacyGuiEnabled && m_guiInited) {
-    m_gui.Destroy();
-    m_guiInited = false;
-  }
-}
-
-bool DevLayer::IsLegacyPopupActive() const {
-  return m_legacyGuiEnabled && m_gui.IsPopupActive();
-}
-
 void DevLayer::Update(float dt) {
   if (m_activeScene) {
     if (!m_paused) {
       m_activeScene->OnUpdate(dt);
-    }
-    // Push changed slider values into scene props each frame (even when paused)
-    if (m_legacyGuiEnabled && m_gui.IsVisible()) {
-      m_activeScene->SyncFromGUI(m_gui);
-      m_activeScene->SyncToGUI(m_gui);
     }
   }
 }
@@ -284,101 +233,16 @@ void DevLayer::Draw() {
     m_activeScene->OnDraw();
     DrawCullingDebug(m_activeScene->SceneProp);
   }
-  // GUI draws on top of the scene
-  if (m_legacyGuiEnabled) {
-    T8_LOG_TRACE("[DevLayer] GUI Draw (visible=%d)", (int)m_gui.IsVisible());
-    m_gui.Draw();
-  }
 }
 
 void DevLayer::ProcessInput(InputManager* input) {
-  // Let the GUI (including a modal popup) consume input first.
-  if (m_legacyGuiEnabled && m_guiInited) {
-    m_gui.UpdateButtons(*input);
-    m_gui.Update(*input, g_pBaseDriver->width, g_pBaseDriver->height);
-  }
-  // When a line-edit popup is active, all other keyboard/mouse handling is suppressed.
-  if (m_legacyGuiEnabled && m_gui.IsPopupActive()) {
-    return;
-  }
   if (m_blockSceneInput) {
     return;
   }
-  if (m_legacyGuiEnabled) {
-    // Toggle GUI with G key
-    if (input->PressedOnceKey(T800K_g)) {
-      m_gui.ToggleVisible();
-    }
-    // F1: toggle group edit mode
-    if (input->PressedOnceKey(T800K_F1) && m_gui.IsVisible()) {
-      if (m_gui.IsGroupEditMode()) {
-        m_gui.ExitGroupEditMode();
-      } else {
-        m_gui.EnterGroupEditMode();
-      }
-    }
-    // F2 in group edit mode: delete all custom groups
-    if (m_gui.IsGroupEditMode() && input->PressedOnceKey(T800K_F2)) {
-      m_gui.DeleteAllCustomGroups();
-      m_gui.ExitGroupEditMode();
-    }
-    // Enter in group edit mode: open group name popup
-    if (m_gui.IsGroupEditMode() && input->PressedOnceKey(T800K_RETURN)) {
-      m_gui.OpenGroupNamePopup();
-    }
-    // Tab: save layout when in edit mode or when user has made label edits via the popup in
-    // the regular flow, otherwise dump scene state.
-    if (input->PressedOnceKey(T800K_TAB)) {
-      if (m_gui.IsControlEditMode()) {
-        m_gui.HandleControlEditTab(kControlLayoutPath);
-      } else if (m_gui.IsEditMode()) {
-        m_gui.SaveLayout(kLayoutPath);
-      } else if (m_gui.IsVisible() && m_gui.IsLayoutDirty()) {
-        m_gui.SaveLayout(kLayoutPath);
-      } else if (m_activeScene) {
-        m_activeScene->SaveSceneState();
-      }
-    }
-    // +/- controls:
-    // - regular edit mode: grid size
-    // - control edit mode: preview visual scale only (not saved)
-    if (m_gui.IsControlEditMode()) {
-      if (input->PressedOnceKey(T800K_PLUS) || input->PressedOnceKey(T800K_KP_PLUS)) {
-        m_gui.AdjustControlPreviewScale(0.05f);
-        input->KeyStates[0][T800K_PLUS]    = false;
-        input->KeyStates[0][T800K_KP_PLUS] = false;
-      }
-      if (input->PressedOnceKey(T800K_MINUS) || input->PressedOnceKey(T800K_KP_MINUS)) {
-        m_gui.AdjustControlPreviewScale(-0.05f);
-        input->KeyStates[0][T800K_MINUS]    = false;
-        input->KeyStates[0][T800K_KP_MINUS] = false;
-      }
-    } else if (m_gui.IsEditMode()) {
-      if (input->PressedOnceKey(T800K_PLUS) || input->PressedOnceKey(T800K_KP_PLUS)) {
-        m_gui.GrowGrid(5.0f);
-        input->KeyStates[0][T800K_PLUS]    = false;
-        input->KeyStates[0][T800K_KP_PLUS] = false;
-      }
-      if (input->PressedOnceKey(T800K_MINUS) || input->PressedOnceKey(T800K_KP_MINUS)) {
-        m_gui.GrowGrid(-5.0f);
-        input->KeyStates[0][T800K_MINUS]    = false;
-        input->KeyStates[0][T800K_KP_MINUS] = false;
-      }
-      // Enter: apply last-edited element's scale to all elements of the same kind
-      if (input->PressedOnceKey(T800K_RETURN)) {
-        m_gui.ApplyUniformScale();
-      }
-      // Left/Right arrows: switch group while in edit mode
-      if (input->PressedOnceKey(T800K_LEFT)) {
-        m_gui.SwitchToPrevGroup();
-      }
-      if (input->PressedOnceKey(T800K_RIGHT)) {
-        m_gui.SwitchToNextGroup();
-      }
-    }
-  } else if (input->PressedOnceKey(T800K_TAB) && m_activeScene) {
+
+  if (input->PressedOnceKey(T800K_TAB) && m_activeScene) {
     m_activeScene->SaveSceneState();
-    }
+  }
 
   // Pause toggle
   if (input->PressedOnceKey(T800K_p)) {
@@ -395,7 +259,6 @@ void DevLayer::ProcessInput(InputManager* input) {
   if (m_activeScene && !m_paused && !m_blockSceneInput) {
     m_activeScene->OnInput(input);
   }
-  // GUI update already ran at the top of ProcessInput (so popups can pre-empt input).
 }
 
 void DevLayer::LoadScene(SceneBase* scene) {
@@ -406,7 +269,6 @@ void DevLayer::LoadScene(SceneBase* scene) {
   if (m_activeScene) {
     m_activeScene->OnLoadScene();
   }
-  RebuildGUIForScene();
 }
 
 void DevLayer::UnloadScene() {
@@ -414,7 +276,6 @@ void DevLayer::UnloadScene() {
     m_activeScene->OnDestoryScene();
     m_activeScene = nullptr;
   }
-  m_gui.ClearSliders();
 }
 
 } // namespace t850

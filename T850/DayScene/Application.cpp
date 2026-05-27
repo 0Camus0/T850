@@ -42,6 +42,7 @@
 #endif
 #ifdef OS_ANDROID
 #  include <android/input.h>
+#  include <core/android/AndroidFramework.h>
 #  include <video/vulkan/VulkanDriver.h>
 #  include <unistd.h>
 #endif
@@ -485,7 +486,6 @@ void App::InitVars() {
 
 #ifndef OS_ANDROID
   m_devLayer.Init(pFramework);
-  m_devLayer.SetLegacyGuiEnabled(false);
   m_devLayer.SetActiveScene(m_actualScene);
 #endif
 
@@ -516,7 +516,6 @@ void App::LoadScene(int id) {
   m_actualScene->OnLoadScene();
 #ifndef OS_ANDROID
   m_devLayer.SetActiveScene(m_actualScene);
-  m_devLayer.RebuildGUIForScene();
 #endif
   FadeFX(0.5,false);
 }
@@ -624,7 +623,6 @@ void App::OnUpdate() {
    }
 
 #ifndef OS_ANDROID
-   m_devLayer.GetGUI().SetFPSText(m_fpsString, m_fpsCol);
    m_devLayer.Update(DtSecs);
 #else
   if (m_actualScene && !bPaused) m_actualScene->OnUpdate(DtSecs);
@@ -719,6 +717,9 @@ void App::OnInput() {
     if (auto* dayScene = dynamic_cast<DayScene*>(m_actualScene)) {
       dayScene->ResetAndroidVirtualControls();
     }
+    if (auto* sandboxScene = dynamic_cast<SandboxScene*>(m_actualScene)) {
+      sandboxScene->ResetAndroidVirtualControls();
+    }
   }
   if (m_imguiVisible && m_imgui.WantsMouse()) return;
   if (m_actualScene && !bPaused) m_actualScene->OnInput(&IManager);
@@ -726,11 +727,20 @@ void App::OnInput() {
 }
 
 void App::OnPause() {
-
+#ifdef OS_ANDROID
+  if (m_imguiReady) {
+    m_imgui.SetAndroidNativeWindow(nullptr);
+  }
+#endif
 }
 
 void App::OnResume() {
-
+#ifdef OS_ANDROID
+  if (m_imguiReady && pFramework) {
+    auto* androidFramework = static_cast<t850::AndroidFramework*>(pFramework);
+    m_imgui.SetAndroidNativeWindow(androidFramework ? androidFramework->GetNativeWindow() : nullptr);
+  }
+#endif
 }
 
 void App::OnReset() {
@@ -741,8 +751,7 @@ bool App::IsModalActive() const {
 #ifdef OS_ANDROID
   return false;
 #else
-  return m_devLayer.IsLegacyPopupActive() ||
-         (m_imguiVisible && (m_imgui.WantsKeyboard() || m_imgui.WantsTextInput()));
+  return m_imguiVisible && (m_imgui.WantsKeyboard() || m_imgui.WantsTextInput());
 #endif
 }
 
@@ -752,7 +761,7 @@ void App::DrawRuntimeGui() {
 #ifdef OS_ANDROID
   ImGui::GetIO().FontGlobalScale = m_androidGuiScale;
 #endif
-  m_imgui.NewFrame(m_imguiVisible);
+  if (!m_imgui.NewFrame(m_imguiVisible)) return;
 
   t850::DevGuiContext gui;
   gui.DrawFrameStatsOverlay(m_fpsString.c_str());
@@ -847,6 +856,8 @@ void App::DrawRuntimeGui() {
 #ifdef OS_ANDROID
   if (auto* dayScene = dynamic_cast<DayScene*>(m_actualScene)) {
     dayScene->DrawAndroidVirtualControls(m_imguiVisible);
+  } else if (auto* sandboxScene = dynamic_cast<SandboxScene*>(m_actualScene)) {
+    sandboxScene->DrawAndroidVirtualControls(m_imguiVisible);
   }
 
   m_imgui.BuildDrawData();
@@ -877,21 +888,33 @@ bool App::HandleAndroidInputEvent(AInputEvent* event) {
   }
 
   bool sceneHandled = false;
+  bool sceneControlsActiveBefore = false;
   if (!m_imguiVisible && event && AInputEvent_getType(event) == AINPUT_EVENT_TYPE_MOTION) {
     if (auto* dayScene = dynamic_cast<DayScene*>(m_actualScene)) {
+      sceneControlsActiveBefore = dayScene->AndroidVirtualControlsActive();
       sceneHandled = dayScene->HandleAndroidVirtualControls(event);
+    } else if (auto* sandboxScene = dynamic_cast<SandboxScene*>(m_actualScene)) {
+      sceneControlsActiveBefore = sandboxScene->AndroidVirtualControlsActive();
+      sceneHandled = sandboxScene->HandleAndroidVirtualControls(event);
     }
   }
 
-  if (m_imguiReady && !m_imguiVisible && event && AInputEvent_getType(event) == AINPUT_EVENT_TYPE_MOTION) {
+  if ((!sceneHandled || !sceneControlsActiveBefore) && m_imguiReady && !m_imguiVisible && event &&
+      AInputEvent_getType(event) == AINPUT_EVENT_TYPE_MOTION) {
     const int32_t rawAction = AMotionEvent_getAction(event);
     const int32_t action = rawAction & AMOTION_EVENT_ACTION_MASK;
     if (action == AMOTION_EVENT_ACTION_UP && AMotionEvent_getPointerCount(event) > 0) {
       RegisterAndroidGuiTap(AMotionEvent_getX(event, 0), AMotionEvent_getY(event, 0));
     }
   }
-  const bool imguiHandled = m_imguiReady && m_imgui.HandleAndroidInputEvent(event);
+  const bool imguiHandled = m_imguiReady && m_imguiVisible && m_imgui.HandleAndroidInputEvent(event);
   return sceneHandled || imguiHandled;
+}
+
+void App::OnAndroidNativeWindowChanged(ANativeWindow* window) {
+  if (m_imguiReady) {
+    m_imgui.SetAndroidNativeWindow(window);
+  }
 }
 
 void App::RegisterAndroidGuiTap(float x, float y) {
@@ -1005,6 +1028,14 @@ void App::UpdateAndroidGuiHoldToggle() {
 
   if (auto* dayScene = dynamic_cast<DayScene*>(m_actualScene)) {
     if (dayScene->AndroidVirtualControlsActive()) {
+      m_androidGuiHoldSecs = 0.0f;
+      m_androidGuiHoldActive = false;
+      m_androidGuiHoldSuppressed = true;
+      return;
+    }
+  }
+  if (auto* sandboxScene = dynamic_cast<SandboxScene*>(m_actualScene)) {
+    if (sandboxScene->AndroidVirtualControlsActive()) {
       m_androidGuiHoldSecs = 0.0f;
       m_androidGuiHoldActive = false;
       m_androidGuiHoldSuppressed = true;

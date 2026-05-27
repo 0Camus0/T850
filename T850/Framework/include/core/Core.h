@@ -22,10 +22,10 @@
 
 #ifdef OS_ANDROID
 struct AInputEvent;
+struct ANativeWindow;
 #endif
 
 namespace t850 {
-  class GUIManager;   // forward
   class DevGuiContext; // forward
   struct EngineContext;
   class RootFramework;
@@ -51,6 +51,7 @@ namespace t850 {
     virtual bool IsModalActive() const { return false; }
 #ifdef OS_ANDROID
     virtual bool HandleAndroidInputEvent(AInputEvent* /*event*/) { return false; }
+    virtual void OnAndroidNativeWindowChanged(ANativeWindow* /*window*/) {}
 #endif
 
     void	SetParentFramework(RootFramework* pParentFramework) {
@@ -75,10 +76,6 @@ namespace t850 {
     virtual void CreateAssets() = 0;
     virtual void DestroyAssets() = 0;
 
-    // GUI hooks – override in scene to participate in DevLayer GUI
-    virtual void PopulateGUI(GUIManager& /*gui*/) {}
-    virtual void SyncToGUI(GUIManager& /*gui*/)   {}   // scene props → sliders
-    virtual void SyncFromGUI(GUIManager& /*gui*/) {}   // sliders → scene props
     virtual void DrawDevGui(DevGuiContext& /*gui*/) {}
 
     // Dump current scene state back to its JSON file

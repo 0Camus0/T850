@@ -45,6 +45,33 @@ XVECTOR3 FlattenHorizontal(const XVECTOR3& value, const XVECTOR3& fallback) {
   return NormalizeOr(XVECTOR3(value.x, 0.0f, value.z, 0.0f), fallback);
 }
 
+float CombineMoveAxis(float analogAmount, bool positive, bool negative) {
+  float value = ClampFloat(analogAmount, -1.0f, 1.0f);
+  if (positive) {
+    value += 1.0f;
+  }
+  if (negative) {
+    value -= 1.0f;
+  }
+  return ClampFloat(value, -1.0f, 1.0f);
+}
+
+float ForwardMoveAmount(const KinematicCharacterInput& input) {
+  return CombineMoveAxis(input.moveForwardAmount, input.moveForward, input.moveBackward);
+}
+
+float RightMoveAmount(const KinematicCharacterInput& input) {
+  return CombineMoveAxis(input.moveRightAmount, input.moveRight, input.moveLeft);
+}
+
+float MoveCommandMagnitude(float forwardMove, float rightMove) {
+  return ClampFloat(std::sqrt(forwardMove * forwardMove + rightMove * rightMove), 0.0f, 1.0f);
+}
+
+int Q3MoveCommand(float amount) {
+  return static_cast<int>(std::round(ClampFloat(amount, -1.0f, 1.0f) * 127.0f));
+}
+
 bool SweepCapsule(const CharacterControllerContext& context,
                   const XVECTOR3& startCenter,
                   const XVECTOR3& displacement,
@@ -830,16 +857,18 @@ void KinematicCharacterController::UpdateFps(float deltaSeconds,
 
   const XVECTOR3 forward = FlattenHorizontal(input.forward, XVECTOR3(0.0f, 0.0f, 1.0f, 0.0f));
   const XVECTOR3 right = FlattenHorizontal(input.right, XVECTOR3(1.0f, 0.0f, 0.0f, 0.0f));
+  const float forwardMove = ForwardMoveAmount(input);
+  const float rightMove = RightMoveAmount(input);
   XVECTOR3 wish(0.0f, 0.0f, 0.0f, 0.0f);
-  if (input.moveForward) wish += forward;
-  if (input.moveBackward) wish -= forward;
-  if (input.moveRight) wish += right;
-  if (input.moveLeft) wish -= right;
+  wish += forward * forwardMove;
+  wish += right * rightMove;
 
   float wishSpeed = 0.0f;
   if (LengthSq3(wish) > 0.000001f) {
     wish = NormalizeOr(wish, XVECTOR3(0.0f, 0.0f, 0.0f, 0.0f));
-    wishSpeed = (input.sprint && m_settings.allowSprint) ? m_settings.sprintSpeed : m_settings.walkSpeed;
+    const float commandMagnitude = MoveCommandMagnitude(forwardMove, rightMove);
+    const float maxSpeed = (input.sprint && m_settings.allowSprint) ? m_settings.sprintSpeed : m_settings.walkSpeed;
+    wishSpeed = maxSpeed * commandMagnitude;
   }
 
   if (m_grounded) {
@@ -896,8 +925,8 @@ void KinematicCharacterController::UpdateQuake3(float deltaSeconds,
     m_jumpHeld = false;
   }
 
-  const int forwardMove = (input.moveForward ? 127 : 0) + (input.moveBackward ? -127 : 0);
-  const int rightMove = (input.moveRight ? 127 : 0) + (input.moveLeft ? -127 : 0);
+  const int forwardMove = Q3MoveCommand(ForwardMoveAmount(input));
+  const int rightMove = Q3MoveCommand(RightMoveAmount(input));
   int upMove = input.jump ? 20 : 0;
   const float playerSpeed = (input.sprint && m_settings.allowSprint) ? m_settings.sprintSpeed : m_settings.walkSpeed;
 

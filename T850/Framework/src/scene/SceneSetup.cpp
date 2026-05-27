@@ -6,6 +6,14 @@
 
 namespace t850 {
 
+namespace {
+
+bool DefaultPointLightsEnabled() {
+  return true;
+}
+
+}
+
 bool SceneSetup::Load(const std::string& jsonPath) {
   if (!LoadSceneDescriptor(jsonPath, descriptor)) {
     T8_LOG_ERROR("[SceneSetup] Failed to load '%s'", jsonPath.c_str());
@@ -143,6 +151,7 @@ void SceneSetup::ApplyQualityAndSettings(SceneProps& props) {
   props.BloomThreshold = s.bloom_threshold;
   props.ToneMapWhiteLevel = s.tone_map_white_level;
   props.LuminanceTau = s.luminance_tau;
+  props.LuminanceMode = s.luminance_mode;
   props.Aperture = s.aperture;
   props.FocalLength = s.focal_length;
   props.MaxCoc = s.max_coc;
@@ -167,6 +176,10 @@ void SceneSetup::ApplyQualityAndSettings(SceneProps& props) {
   props.MaterialTransmissionMultiplier = s.material_transmission_multiplier;
   props.MaterialRefractionStrength = s.material_refraction_strength;
   props.LightmapIntensity = s.lightmap_intensity;
+  if (s.point_lights_enabled.has_value())
+    props.PointLightsEnabled = *s.point_lights_enabled;
+  else
+    props.PointLightsEnabled = DefaultPointLightsEnabled();
   props.ActiveGaussKernel = 0;
 }
 
@@ -278,6 +291,7 @@ void SceneSetup::SaveState(SceneBase* scene, const std::string& jsonPath) {
   s.bloom_threshold = props.BloomThreshold;
   s.tone_map_white_level = props.ToneMapWhiteLevel;
   s.luminance_tau = props.LuminanceTau;
+  s.luminance_mode = props.LuminanceMode;
   s.aperture = props.Aperture;
   s.focal_length = props.FocalLength;
   s.max_coc = props.MaxCoc;
@@ -301,6 +315,10 @@ void SceneSetup::SaveState(SceneBase* scene, const std::string& jsonPath) {
   s.material_transmission_multiplier = props.MaterialTransmissionMultiplier;
   s.material_refraction_strength = props.MaterialRefractionStrength;
   s.lightmap_intensity = props.LightmapIntensity;
+  if (props.PointLightsEnabled != DefaultPointLightsEnabled())
+    s.point_lights_enabled = props.PointLightsEnabled;
+  else
+    s.point_lights_enabled.reset();
 
   SaveSceneDescriptor(jsonPath, desc);
 }

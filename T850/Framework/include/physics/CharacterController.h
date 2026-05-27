@@ -85,6 +85,8 @@ struct KinematicCharacterInput {
   bool moveBackward = false;
   bool moveLeft = false;
   bool moveRight = false;
+  float moveForwardAmount = 0.0f;
+  float moveRightAmount = 0.0f;
   bool jump = false;
   bool sprint = false;
   XVECTOR3 forward = XVECTOR3(0.0f, 0.0f, 1.0f, 0.0f);

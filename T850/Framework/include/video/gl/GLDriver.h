@@ -88,10 +88,13 @@ namespace t850 {
     void  SetWindowHandle(const WindowHandle& handle) override;
     void	SetDimensions(int, int);
     bool  ResizeSwapchain(int newW, int newH) override;
+    void SetViewport(float x, float y, float w, float h) override;
+    void SetScissorRect(int x, int y, int w, int h) override;
     void SetBlendState(BlendStates state) override;
     void SetDepthStencilState(DepthStencilStates state) override;
     void SaveScreenshot(std::string path) override;
     void SaveRTToFile(int rtID, int attachment, std::string path) override;
+    bool ReadRTColorFloat(int rtID, int attachment, float outRGBA[4]) override;
 	void SetCullFace(FaceCulling state) override;
 #ifdef T850_RENDER_TRACE
     void RefreshTracePendingRenderState() override;

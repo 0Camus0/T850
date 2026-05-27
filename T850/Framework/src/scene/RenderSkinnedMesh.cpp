@@ -36,6 +36,18 @@ namespace t850 {
   static constexpr unsigned BoneTextureSlot = 24;
 
   namespace {
+    bool SphereIntersectsFrustum(const XVECTOR3 planes[6], const XVECTOR3& center, float radius) {
+      for (int i = 0; i < 6; ++i) {
+        const float distance = planes[i].x * center.x +
+                               planes[i].y * center.y +
+                               planes[i].z * center.z +
+                               planes[i].w;
+        if (distance < -radius)
+          return false;
+      }
+      return true;
+    }
+
     bool IsForwardOnlySubset(const RenderMesh::SubSetInfo& subInfo) {
       return subInfo.AlphaMode == 2 || subInfo.TransmissionFactor > 0.0f;
     }
@@ -1157,8 +1169,6 @@ namespace t850 {
         if (numLights > pScProp->Lights.size())
           numLights = static_cast<unsigned int>(pScProp->Lights.size());
         if (numLights > 128u) numLights = 128u;
-        infoCam.w = static_cast<float>(numLights);
-        baseCB.CameraInfo = infoCam;
         baseCB.Light0Dir = pScProp->Lights[0].Direction;
         for (int li = 0; li < 128; li++) {
           baseCB.LightPositions[li] = XVECTOR3(0.0f, 0.0f, 0.0f, 0.0f);
@@ -1167,22 +1177,42 @@ namespace t850 {
         for (int ri = 0; ri < 32; ri++) {
           baseCB.LightRadius[ri] = XVECTOR3(0.0f, 0.0f, 0.0f, 0.0f);
         }
+
+        XVECTOR3 lightFrustumPlanes[6];
+        RenderMesh::ExtractFrustumPlanes(pActualCamera->VP, lightFrustumPlanes);
+        unsigned int packedLights = 0;
         for (unsigned int li = 0; li < numLights; li++) {
           Light& light = pScProp->Lights[li];
+          if (!light.Enabled)
+            continue;
+          if (light.Type == LIGHT_POINT && !pScProp->PointLightsEnabled)
+            continue;
+
           const float effectiveRadius = light.Type == LIGHT_POINT ? light.radius * (std::max)(0.0f, pScProp->LightRadiusScale) : light.radius;
           const float effectiveIntensity = light.Intensity * (std::max)(0.0f, pScProp->LightIntensityScale);
+          if (effectiveIntensity <= 0.0f)
+            continue;
+
+          const unsigned int packedIndex = packedLights++;
           if (light.Type == LIGHT_DIRECTIONAL) {
-            baseCB.LightPositions[li] = XVECTOR3(light.Direction.x, light.Direction.y, light.Direction.z, 0.0f);
+            baseCB.LightPositions[packedIndex] = XVECTOR3(light.Direction.x, light.Direction.y, light.Direction.z, 0.0f);
           } else {
-            baseCB.LightPositions[li] = XVECTOR3(light.Position.x, light.Position.y, light.Position.z, 1.0f);
+            const float shaderRange = effectiveRadius * 2.0f;
+            if (shaderRange <= 0.0f || !SphereIntersectsFrustum(lightFrustumPlanes, light.Position, shaderRange)) {
+              --packedLights;
+              continue;
+            }
+            baseCB.LightPositions[packedIndex] = XVECTOR3(light.Position.x, light.Position.y, light.Position.z, 1.0f);
           }
-          baseCB.LightColors[li] = XVECTOR3(light.Color.x, light.Color.y, light.Color.z, effectiveIntensity);
-          XVECTOR3& radiusPack = baseCB.LightRadius[li >> 2];
-          if ((li & 3u) == 0u) radiusPack.x = effectiveRadius;
-          else if ((li & 3u) == 1u) radiusPack.y = effectiveRadius;
-          else if ((li & 3u) == 2u) radiusPack.z = effectiveRadius;
+          baseCB.LightColors[packedIndex] = XVECTOR3(light.Color.x, light.Color.y, light.Color.z, effectiveIntensity);
+          XVECTOR3& radiusPack = baseCB.LightRadius[packedIndex >> 2];
+          if ((packedIndex & 3u) == 0u) radiusPack.x = effectiveRadius;
+          else if ((packedIndex & 3u) == 1u) radiusPack.y = effectiveRadius;
+          else if ((packedIndex & 3u) == 2u) radiusPack.z = effectiveRadius;
           else radiusPack.w = effectiveRadius;
         }
+        infoCam.w = static_cast<float>(packedLights);
+        baseCB.CameraInfo = infoCam;
       }
       baseCB.ParallaxSettings = XVECTOR3(m_fParallaxLowSamples, m_fParallaxHighSamples, m_fParallaxHeight);
       baseCB.ParallaxSettings.w = m_fParallaxEnabled;

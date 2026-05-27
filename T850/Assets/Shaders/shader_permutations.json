@@ -313,14 +313,6 @@
       "fragmentShader": "FS_Quad.hlsl",
       "defines": ["HDR_COMP_PASS", "USE_TEXCOORD0"]
     },
-    "0x0000000000F00008": {
-      "key": "0x0000000000F00008",
-      "bits": "0x0000000000F00008",
-      "pass": 15,
-      "vertexShader": "VS_Quad.hlsl",
-      "fragmentShader": "FS_Quad.hlsl",
-      "defines": ["LUMINANCE_MAP_PASS", "USE_TEXCOORD0"]
-    },
     "0x0000000001000008": {
       "key": "0x0000000001000008",
       "bits": "0x0000000001000008",
@@ -504,6 +496,54 @@
       "vertexShader": "VS_Quad.hlsl",
       "fragmentShader": "FS_Quad.hlsl",
       "defines": ["DEFERRED_LDR_PASS", "ENABLE_SHADOWS", "ENABLE_SSAO", "USE_TEXCOORD0"]
+    },
+    "0x0000000001F00008": {
+      "key": "0x0000000001F00008",
+      "bits": "0x0000000001F00008",
+      "pass": 31,
+      "vertexShader": "VS_Quad.hlsl",
+      "fragmentShader": "FS_Quad.hlsl",
+      "defines": ["DEFERRED_LIGHT_VOLUME_PASS", "USE_TEXCOORD0"]
+    },
+    "0x0000000001F10008": {
+      "key": "0x0000000001F10008",
+      "bits": "0x0000000001F10008",
+      "pass": 31,
+      "vertexShader": "VS_Quad.hlsl",
+      "fragmentShader": "FS_Quad.hlsl",
+      "defines": ["DEFERRED_LIGHT_VOLUME_PASS", "ENABLE_SHADOWS", "USE_TEXCOORD0"]
+    },
+    "0x0000000001F20008": {
+      "key": "0x0000000001F20008",
+      "bits": "0x0000000001F20008",
+      "pass": 31,
+      "vertexShader": "VS_Quad.hlsl",
+      "fragmentShader": "FS_Quad.hlsl",
+      "defines": ["DEFERRED_LIGHT_VOLUME_PASS", "ENABLE_SSAO", "USE_TEXCOORD0"]
+    },
+    "0x0000000001F30008": {
+      "key": "0x0000000001F30008",
+      "bits": "0x0000000001F30008",
+      "pass": 31,
+      "vertexShader": "VS_Quad.hlsl",
+      "fragmentShader": "FS_Quad.hlsl",
+      "defines": ["DEFERRED_LIGHT_VOLUME_PASS", "ENABLE_SHADOWS", "ENABLE_SSAO", "USE_TEXCOORD0"]
+    },
+    "0x0000000002000008": {
+      "key": "0x0000000002000008",
+      "bits": "0x0000000002000008",
+      "pass": 32,
+      "vertexShader": "VS_Quad.hlsl",
+      "fragmentShader": "FS_Quad.hlsl",
+      "defines": ["LENS_FLARE_SUN", "USE_TEXCOORD0"]
+    },
+    "0x0000000002100008": {
+      "key": "0x0000000002100008",
+      "bits": "0x0000000002100008",
+      "pass": 33,
+      "vertexShader": "VS_Quad.hlsl",
+      "fragmentShader": "FS_Quad.hlsl",
+      "defines": ["LENS_FLARE_GHOST", "USE_TEXCOORD0"]
     },
     "0x0000000008000001": {
       "key": "0x0000000008000001",

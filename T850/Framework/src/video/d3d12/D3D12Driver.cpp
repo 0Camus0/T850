@@ -384,6 +384,32 @@ namespace t850 {
   }
   void D3D12Driver::SetDimensions(int w, int h) { width = w; height = h; }
 
+  void D3D12Driver::SetViewport(float x, float y, float w, float h) {
+    if (w <= 0.0f || h <= 0.0f)
+      return;
+
+    m_viewport = { x, y, w, h, 0.0f, 1.0f };
+    m_scissorRect = {
+      LONG(x),
+      LONG(y),
+      LONG(x + w),
+      LONG(y + h)
+    };
+    if (m_currentBackBuffer < kBackBufferCount && m_commandLists[m_currentBackBuffer])
+      m_commandLists[m_currentBackBuffer]->RSSetViewports(1, &m_viewport);
+    if (m_currentBackBuffer < kBackBufferCount && m_commandLists[m_currentBackBuffer])
+      m_commandLists[m_currentBackBuffer]->RSSetScissorRects(1, &m_scissorRect);
+  }
+
+  void D3D12Driver::SetScissorRect(int x, int y, int w, int h) {
+    if (w <= 0 || h <= 0)
+      return;
+
+    m_scissorRect = { LONG(x), LONG(y), LONG(x + w), LONG(y + h) };
+    if (m_currentBackBuffer < kBackBufferCount && m_commandLists[m_currentBackBuffer])
+      m_commandLists[m_currentBackBuffer]->RSSetScissorRects(1, &m_scissorRect);
+  }
+
   bool D3D12Driver::ResizeSwapchain(int newW, int newH) {
     if (newW <= 0 || newH <= 0) return false;
     if (!m_swapChain) return false;
@@ -1125,6 +1151,144 @@ namespace t850 {
       SaveD3D12ResourceToPPM(rt->vColorResources[attachment].Get(),
                               rt->vColorStates[attachment], path, this);
     }
+  }
+
+  bool D3D12Driver::ReadRTColorFloat(int rtID, int attachment, float outRGBA[4]) {
+    if (!outRGBA || rtID < 0 || rtID >= (int)RTs.size() || attachment < 0)
+      return false;
+    D3D12RT* rt = static_cast<D3D12RT*>(RTs[rtID]);
+    if (!rt || attachment >= rt->number_RT || !rt->vColorResources[attachment])
+      return false;
+
+    WaitForGPU();
+
+    ID3D12Device* device = GetNativeDevice();
+    ID3D12Resource* srcResource = rt->vColorResources[attachment].Get();
+    D3D12_RESOURCE_STATES currentState = rt->vColorStates[attachment];
+    D3D12_RESOURCE_DESC desc = srcResource->GetDesc();
+    DXGI_FORMAT fmt = desc.Format;
+    if (fmt == DXGI_FORMAT_R32_TYPELESS) fmt = DXGI_FORMAT_R32_FLOAT;
+    else if (fmt == DXGI_FORMAT_R16_TYPELESS) fmt = DXGI_FORMAT_R16_FLOAT;
+
+    D3D12_RESOURCE_DESC readDesc = desc;
+    readDesc.Width = 1;
+    readDesc.Height = 1;
+    readDesc.Format = fmt;
+    readDesc.MipLevels = 1;
+    D3D12_PLACED_SUBRESOURCE_FOOTPRINT footprint = {};
+    UINT numRows = 0;
+    UINT64 rowSize = 0, totalSize = 0;
+    device->GetCopyableFootprints(&readDesc, 0, 1, 0, &footprint, &numRows, &rowSize, &totalSize);
+
+    D3D12_HEAP_PROPERTIES heapProps = {};
+    heapProps.Type = D3D12_HEAP_TYPE_READBACK;
+    D3D12_RESOURCE_DESC bufDesc = {};
+    bufDesc.Dimension = D3D12_RESOURCE_DIMENSION_BUFFER;
+    bufDesc.Width = totalSize;
+    bufDesc.Height = 1;
+    bufDesc.DepthOrArraySize = 1;
+    bufDesc.MipLevels = 1;
+    bufDesc.SampleDesc.Count = 1;
+    bufDesc.Layout = D3D12_TEXTURE_LAYOUT_ROW_MAJOR;
+
+    ComPtr<ID3D12Resource> readbackBuf;
+    HRESULT hr = device->CreateCommittedResource(&heapProps, D3D12_HEAP_FLAG_NONE, &bufDesc,
+                                      D3D12_RESOURCE_STATE_COPY_DEST, nullptr, IID_PPV_ARGS(&readbackBuf));
+    if (FAILED(hr)) return false;
+
+    ComPtr<ID3D12CommandAllocator> tmpAlloc;
+    ComPtr<ID3D12GraphicsCommandList> tmpList;
+    hr = device->CreateCommandAllocator(D3D12_COMMAND_LIST_TYPE_DIRECT, IID_PPV_ARGS(&tmpAlloc));
+    if (FAILED(hr)) return false;
+    hr = device->CreateCommandList(0, D3D12_COMMAND_LIST_TYPE_DIRECT, tmpAlloc.Get(), nullptr, IID_PPV_ARGS(&tmpList));
+    if (FAILED(hr)) return false;
+
+    if (currentState != D3D12_RESOURCE_STATE_COPY_SOURCE) {
+      D3D12_RESOURCE_BARRIER b = {};
+      b.Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
+      b.Transition.pResource = srcResource;
+      b.Transition.StateBefore = currentState;
+      b.Transition.StateAfter = D3D12_RESOURCE_STATE_COPY_SOURCE;
+      b.Transition.Subresource = D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES;
+      tmpList->ResourceBarrier(1, &b);
+    }
+
+    D3D12_TEXTURE_COPY_LOCATION dstLoc = {}, srcLoc = {};
+    dstLoc.pResource = readbackBuf.Get();
+    dstLoc.Type = D3D12_TEXTURE_COPY_TYPE_PLACED_FOOTPRINT;
+    dstLoc.PlacedFootprint = footprint;
+    srcLoc.pResource = srcResource;
+    srcLoc.Type = D3D12_TEXTURE_COPY_TYPE_SUBRESOURCE_INDEX;
+    srcLoc.SubresourceIndex = 0;
+    D3D12_BOX srcBox = { 0, 0, 0, 1, 1, 1 };
+    tmpList->CopyTextureRegion(&dstLoc, 0, 0, 0, &srcLoc, &srcBox);
+
+    if (currentState != D3D12_RESOURCE_STATE_COPY_SOURCE) {
+      D3D12_RESOURCE_BARRIER b = {};
+      b.Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
+      b.Transition.pResource = srcResource;
+      b.Transition.StateBefore = D3D12_RESOURCE_STATE_COPY_SOURCE;
+      b.Transition.StateAfter = currentState;
+      b.Transition.Subresource = D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES;
+      tmpList->ResourceBarrier(1, &b);
+    }
+
+    tmpList->Close();
+    ID3D12CommandList* lists[] = { tmpList.Get() };
+    m_commandQueue->ExecuteCommandLists(1, lists);
+
+    ComPtr<ID3D12Fence> tmpFence;
+    hr = device->CreateFence(0, D3D12_FENCE_FLAG_NONE, IID_PPV_ARGS(&tmpFence));
+    if (FAILED(hr)) return false;
+    HANDLE evt = CreateEvent(nullptr, FALSE, FALSE, nullptr);
+    m_commandQueue->Signal(tmpFence.Get(), 1);
+    if (tmpFence->GetCompletedValue() < 1) {
+      tmpFence->SetEventOnCompletion(1, evt);
+      WaitForSingleObject(evt, INFINITE);
+    }
+    CloseHandle(evt);
+
+    void* mapped = nullptr;
+    hr = readbackBuf->Map(0, nullptr, &mapped);
+    if (FAILED(hr) || !mapped) return false;
+
+    auto half2float = [](unsigned short h) -> float {
+      unsigned int sign = (h >> 15) & 1;
+      unsigned int exp  = (h >> 10) & 0x1F;
+      unsigned int mant = h & 0x3FF;
+      if (exp == 0) return sign ? -0.0f : 0.0f;
+      if (exp == 31) return sign ? -1e30f : 1e30f;
+      float f = powf(2.0f, (float)((int)exp - 15)) * (1.0f + mant / 1024.0f);
+      return sign ? -f : f;
+    };
+
+    const unsigned char* row = (const unsigned char*)mapped;
+    outRGBA[0] = outRGBA[1] = outRGBA[2] = 0.0f;
+    outRGBA[3] = 1.0f;
+    bool ok = true;
+    if (fmt == DXGI_FORMAT_R8G8B8A8_UNORM) {
+      outRGBA[0] = row[0] / 255.0f; outRGBA[1] = row[1] / 255.0f; outRGBA[2] = row[2] / 255.0f; outRGBA[3] = row[3] / 255.0f;
+    } else if (fmt == DXGI_FORMAT_B8G8R8A8_UNORM) {
+      outRGBA[0] = row[2] / 255.0f; outRGBA[1] = row[1] / 255.0f; outRGBA[2] = row[0] / 255.0f; outRGBA[3] = row[3] / 255.0f;
+    } else if (fmt == DXGI_FORMAT_R8_UNORM) {
+      outRGBA[0] = outRGBA[1] = outRGBA[2] = row[0] / 255.0f;
+    } else if (fmt == DXGI_FORMAT_R16_FLOAT) {
+      outRGBA[0] = outRGBA[1] = outRGBA[2] = half2float(*(const unsigned short*)row);
+    } else if (fmt == DXGI_FORMAT_R32_FLOAT) {
+      outRGBA[0] = outRGBA[1] = outRGBA[2] = *(const float*)row;
+    } else if (fmt == DXGI_FORMAT_R16G16B16A16_FLOAT) {
+      const unsigned short* hf = (const unsigned short*)row;
+      outRGBA[0] = half2float(hf[0]); outRGBA[1] = half2float(hf[1]); outRGBA[2] = half2float(hf[2]); outRGBA[3] = half2float(hf[3]);
+    } else if (fmt == DXGI_FORMAT_R32G32B32A32_FLOAT) {
+      const float* fp = (const float*)row;
+      outRGBA[0] = fp[0]; outRGBA[1] = fp[1]; outRGBA[2] = fp[2]; outRGBA[3] = fp[3];
+    } else {
+      ok = false;
+    }
+
+    D3D12_RANGE emptyRange = { 0, 0 };
+    readbackBuf->Unmap(0, &emptyRange);
+    return ok;
   }
 
   void D3D12Driver::BeginResourceUploadBatch() {

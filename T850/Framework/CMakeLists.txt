@@ -41,9 +41,6 @@ set(FRAMEWORK_SOURCES
   src/scene/WireframeArrow.cpp
   src/scene/Quad.cpp
   src/scene/TextRenderer.cpp
-  src/gui/GUIAtlas.cpp
-  src/gui/GUIElement.cpp
-  src/gui/GUIManager.cpp
   src/utils/cil.cpp
   src/utils/Log.cpp
   src/utils/InputManager.cpp
@@ -58,7 +55,6 @@ set(FRAMEWORK_SOURCES
   src/utils/Picking.cpp
   src/utils/XDataBase.cpp
   src/utils/XMaths.cpp
-  src/utils/GUIAtlasGenerator.cpp
   src/utils/ConfigRuntime.cpp
   src/utils/RuntimeProfile.cpp
   src/utils/ShaderPermutationDump.cpp

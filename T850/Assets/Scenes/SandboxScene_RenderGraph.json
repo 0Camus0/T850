@@ -8,7 +8,6 @@
     { "name": "ExtraHelper",       "color_count": 1, "color_format": "RGBA8",   "depth_format": "NONE", "size": [0,0], "linear_filter": true },
     { "name": "BloomAccum",        "color_count": 1, "color_format": "RGBA8",   "depth_format": "NONE", "size": [512,512], "linear_filter": true },
     { "name": "BloomHelper",       "color_count": 1, "color_format": "RGBA8",   "depth_format": "NONE", "size": [512,512], "linear_filter": true },
-    { "name": "LuminanceMap",      "color_count": 1, "color_format": "F16",     "depth_format": "NONE", "size": [0,0], "linear_filter": true },
     { "name": "AdaptedLumCurrent", "color_count": 1, "color_format": "F16",     "depth_format": "NONE", "size": [1,1], "linear_filter": false },
     { "name": "AdaptedLumPrev",    "color_count": 1, "color_format": "F16",     "depth_format": "NONE", "size": [1,1], "linear_filter": false }
   ],
@@ -89,6 +88,29 @@
       "pop": false
     },
     {
+      "name": "Deferred Light Volumes",
+      "target": "Deferred",
+      "push": false,
+      "inputs": [
+        { "source": "GBuffer:COLOR0",     "slot": 0 },
+        { "source": "GBuffer:COLOR1",     "slot": 1 },
+        { "source": "GBuffer:COLOR2",     "slot": 2 },
+        { "source": "GBuffer:COLOR3",     "slot": 3 },
+        { "source": "GBuffer:DEPTH",      "slot": 4 },
+        { "source": "ShadowAccum:COLOR0", "slot": 5 },
+        { "source": "GBuffer:COLOR5",     "slot": 7 },
+        { "source": "GBuffer:COLOR6",     "slot": 8 },
+        { "source": "GBuffer:COLOR4",     "slot": 9 }
+      ],
+      "bind_environment_map": true,
+      "state": { "blend": "ADDITIVE", "depth_stencil": "NONE", "cull_face": "FRONT_AND_BACK" },
+      "draws": [
+        { "type": "fullscreen_quad", "signature": "DEFERRED_LIGHT_VOLUME_PASS" }
+      ],
+      "post_state": { "blend": "BLEND_OPAQUE" },
+      "pop": false
+    },
+    {
       "name": "Opaque Scene Copy",
       "target": "Extra16F",
       "inputs": [
@@ -124,21 +146,11 @@
       ]
     },
     {
-      "name": "Luminance Map",
-      "target": "LuminanceMap",
-      "inputs": [
-        { "source": "Extra16F:COLOR0", "slot": 0 }
-      ],
-      "draws": [
-        { "type": "fullscreen_quad", "signature": "LUMINANCE_MAP_PASS" }
-      ]
-    },
-    {
       "name": "Adapt Luminance",
       "target": "AdaptedLumCurrent",
       "inputs": [
         { "source": "AdaptedLumPrev:COLOR0", "slot": 0 },
-        { "source": "LuminanceMap:COLOR0",   "slot": 1 }
+        { "source": "Extra16F:COLOR0",       "slot": 1 }
       ],
       "draws": [
         { "type": "fullscreen_quad", "signature": "ADAPT_LUMINANCE_PASS" }
@@ -197,6 +209,16 @@
       ],
       "draws": [
         { "type": "fullscreen_quad", "signature": "HDR_COMP_PASS" }
+      ]
+    },
+    {
+      "name": "BackBuffer",
+      "target": "",
+      "inputs": [
+        { "source": "ExtraHelper:COLOR0", "slot": 0 }
+      ],
+      "draws": [
+        { "type": "final_quad", "signature": "BACKBUFFER_PASS" }
       ]
     }
   ]

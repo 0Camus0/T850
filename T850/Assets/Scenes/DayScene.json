@@ -421,12 +421,12 @@
    "meshes": [
       "Models/SponzaEsc.glb"
    ],
-   "environment_map": "sky/CubeMap_SkyWater.dds",
+   "environment_map": "sky/Uffizi.dds",
    "environment_diffuse_ibl": "",
    "environment_specular_ibl": "",
-   "environment_brdf_lut": "LUT/lut_ggx.png",
+   "environment_brdf_lut": "LUT/lut_ggx.dds",
    "environment_sheen_ibl": "",
-   "environment_charlie_lut": "LUT/lut_charlie.png",
+   "environment_charlie_lut": "LUT/lut_charlie.dds",
    "environment_sheen_e_lut": "LUT/lut_sheen_E.dds",
    "quality": {
       "shadow_map_resolution": 2048,
@@ -448,6 +448,7 @@
       "bloom_threshold": 1.2,
       "tone_map_white_level": 5.5,
       "luminance_tau": 0.65000004,
+      "luminance_mode": 0,
       "aperture": 70,
       "focal_length": 1,
       "max_coc": 0.6,
@@ -888,10 +889,18 @@
             "HDR",
             "Bloom",
             "God Rays",
-            "Luminance",
             "CoC",
             "Bright",
             "Adapted Lum"
+         ],
+         "default_index": 0
+      },
+      {
+         "name": "luminance_mode",
+         "label": "Luminance Mode",
+         "options": [
+            "Temporal HDR",
+            "Robust Temporal"
          ],
          "default_index": 0
       },
@@ -920,7 +929,7 @@
             "CubeMap_SkyDawn.dds",
             "CubeMap_SkyWater.dds"
          ],
-         "default_index": 10
+         "default_index": 4
       }
    ],
    "profiles": [
@@ -949,6 +958,18 @@
                "name": "lightmap_intensity",
                "value": 1
             }
+         ],
+         "checkboxes": [
+            {
+               "name": "shadow_toggle",
+               "value": true
+            }
+         ],
+         "selectors": [
+            {
+               "name": "cubemap",
+               "value": 4
+            }
          ]
       },
       {
@@ -975,6 +996,57 @@
             {
                "name": "lightmap_intensity",
                "value": 1
+            }
+         ],
+         "checkboxes": [
+            {
+               "name": "shadow_toggle",
+               "value": true
+            }
+         ],
+         "selectors": [
+            {
+               "name": "cubemap",
+               "value": 4
+            }
+         ]
+      },
+      {
+         "name": "android/mali-g600",
+         "platform": "android",
+         "gpu_family": "mali-g600",
+         "sliders": [],
+         "checkboxes": [],
+         "selectors": [
+            {
+               "name": "cubemap",
+               "value": 4
+            }
+         ]
+      },
+      {
+         "name": "android/mali-g700",
+         "platform": "android",
+         "gpu_family": "mali-g700",
+         "sliders": [],
+         "checkboxes": [],
+         "selectors": [
+            {
+               "name": "cubemap",
+               "value": 4
+            }
+         ]
+      },
+      {
+         "name": "android/default",
+         "platform": "android",
+         "gpu_family": "",
+         "sliders": [],
+         "checkboxes": [],
+         "selectors": [
+            {
+               "name": "cubemap",
+               "value": 4
             }
          ]
       }

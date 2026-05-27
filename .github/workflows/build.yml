@@ -127,7 +127,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
         with:
-          lfs: true
+          lfs: false
 
       - name: Setup Java
         uses: actions/setup-java@v4
@@ -254,7 +254,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
         with:
-          lfs: true
+          lfs: false
 
       - name: Download all artifacts
         uses: actions/download-artifact@v4

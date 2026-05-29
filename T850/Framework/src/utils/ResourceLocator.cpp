@@ -422,8 +422,6 @@ std::vector<std::string> ResourceLocator::List(const std::string& directory, boo
 #ifdef OS_ANDROID
   if (m_assetManager) {
     ListAndroidAssets(m_assetManager, normalized, recursive, out);
-    std::sort(out.begin(), out.end());
-    return out;
   }
 #endif
 
@@ -437,7 +435,11 @@ std::vector<std::string> ResourceLocator::List(const std::string& directory, boo
       }
     }
   }
-  if (!IsDirectory(diskDir)) return out;
+  if (!IsDirectory(diskDir)) {
+    std::sort(out.begin(), out.end());
+    out.erase(std::unique(out.begin(), out.end()), out.end());
+    return out;
+  }
 
   std::error_code ec;
   if (recursive) {
@@ -455,6 +457,7 @@ std::vector<std::string> ResourceLocator::List(const std::string& directory, boo
   }
 
   std::sort(out.begin(), out.end());
+  out.erase(std::unique(out.begin(), out.end()), out.end());
   return out;
 }
 

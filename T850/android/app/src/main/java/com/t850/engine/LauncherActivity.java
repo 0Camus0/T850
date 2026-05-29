@@ -16,9 +16,11 @@ import android.widget.Spinner;
 import android.widget.TextView;
 import android.widget.Toast;
 
+import java.io.File;
 import java.io.IOException;
 import java.util.ArrayList;
 import java.util.Collections;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Locale;
 
@@ -196,7 +198,7 @@ public final class LauncherActivity extends Activity {
                 ScrollView.LayoutParams.WRAP_CONTENT));
 
         TextView title = new TextView(this);
-        title.setText("T850 Vulkan Launcher");
+        title.setText(getApplicationInfo().loadLabel(getPackageManager()) + " Launcher");
         title.setTextColor(Color.rgb(224, 231, 255));
         title.setTextSize(26);
         title.setPadding(0, 0, 0, dp(4));
@@ -238,7 +240,7 @@ public final class LauncherActivity extends Activity {
         root.addView(modelLabel);
         modelSpinner = spinner(models);
         root.addView(modelSpinner);
-        modelHint = hint("Models are read from the packaged Assets/Models directory.");
+        modelHint = hint("Models are read from packaged or downloaded Assets/Models directories.");
         root.addView(modelHint);
 
         root.addView(spacer(12));
@@ -643,6 +645,7 @@ public final class LauncherActivity extends Activity {
     private void loadModels() {
         List<String> paths = new ArrayList<>();
         collectAssets(getAssets(), "Models", paths, false);
+        collectDiskModels(paths);
         Collections.sort(paths, String.CASE_INSENSITIVE_ORDER);
         if (paths.isEmpty()) {
             Toast.makeText(this, "No packaged models found; using DamagedHelmet default.", Toast.LENGTH_LONG).show();
@@ -653,6 +656,29 @@ public final class LauncherActivity extends Activity {
         }
     }
 
+    private void collectDiskModels(List<String> out) {
+        HashSet<String> known = new HashSet<>(out);
+        File root = getExternalFilesDir(null);
+        if (root != null) {
+            collectDiskModelsRecursive(new File(root, "Models"), "Models", out, known);
+        }
+        collectDiskModelsRecursive(new File(getFilesDir(), "Models"), "Models", out, known);
+    }
+
+    private void collectDiskModelsRecursive(File directory, String resourceDirectory, List<String> out, HashSet<String> known) {
+        File[] entries = directory.listFiles();
+        if (entries == null) {
+            return;
+        }
+        for (File entry : entries) {
+            String resourcePath = resourceDirectory + "/" + entry.getName();
+            if (entry.isDirectory()) {
+                collectDiskModelsRecursive(entry, resourcePath, out, known);
+            } else if (isModel(resourcePath) && known.add(resourcePath)) {
+                out.add(resourcePath);
+            }
+        }
+    }
     private void collectAssets(AssetManager assets, String directory, List<String> out, boolean sceneFileMode) {
         String[] entries;
         try {
@@ -679,7 +705,7 @@ public final class LauncherActivity extends Activity {
 
     private boolean isModel(String path) {
         String lower = path.toLowerCase(Locale.ROOT);
-        return lower.endsWith(".glb") || lower.endsWith(".gltf") || lower.endsWith(".x");
+        return lower.endsWith(".glb") || lower.endsWith(".gltf");
     }
 
     private String defaultSceneFilePath() {

@@ -1,34 +1,34 @@
 {
-  "devTools": {
-    "d3d12Debug": false,
-    "logToFile": false,
-    "logLevel": "error"
-  },
-  "cullDisabled": false,
-  "display": {
-    "height": 1440,
-    "fullscreen": false,
-    "scene": 0,
-    "width": 2560,
-    "sceneFile": "D:\\Code\\Game\\T850\\T850\\bin\\x64\\Release\\Scenes\\Q3\\q3dm6_mod_3.t8scene"
-  },
-  "cullingMode": "full",
   "dump": {
     "enabled": false,
-    "trigger": "frame",
+    "seconds": -1,
     "frame": -1,
-    "seconds": -1
+    "trigger": "frame"
   },
-  "debugFrames": false,
-  "architecture": "x64",
-  "androidDeviceSerial": "",
-  "targetPlatform": "windows",
-  "keepRunning": false,
-  "benchmark": false,
-  "configuration": "Release",
   "api": "vulkan",
+  "cullDisabled": false,
+  "configuration": "Release",
   "replaySnapshot": {
     "enabled": false,
     "path": "D:\\Code\\Game\\T850\\T850\\bin\\x64\\Release\\dumps_vulkan_f863_20260507_090650\\snapshot.json"
-  }
+  },
+  "keepRunning": false,
+  "cullingMode": "full",
+  "architecture": "x64",
+  "debugFrames": false,
+  "benchmark": false,
+  "devTools": {
+    "logToFile": false,
+    "d3d12Debug": false,
+    "logLevel": "error"
+  },
+  "display": {
+    "width": 2560,
+    "sceneFile": "D:\\Code\\Game\\T850\\T850\\bin\\x64\\Release\\Scenes\\Q3\\q3dm6_mod_3.t8scene",
+    "fullscreen": false,
+    "height": 1440,
+    "scene": 0
+  },
+  "androidDeviceSerial": "",
+  "targetPlatform": "windows"
 }

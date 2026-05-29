@@ -249,6 +249,29 @@ namespace t850 {
     height = h;
   }
 
+  void D3DXDriver::SetViewport(float x, float y, float w, float h) {
+    ID3D11DeviceContext* deviceContext = reinterpret_cast<ID3D11DeviceContext*>(T8DeviceContext->GetAPIObject());
+    if (!deviceContext || w <= 0.0f || h <= 0.0f)
+      return;
+
+    viewport.TopLeftX = x;
+    viewport.TopLeftY = y;
+    viewport.Width = w;
+    viewport.Height = h;
+    viewport.MinDepth = 0.0f;
+    viewport.MaxDepth = 1.0f;
+    deviceContext->RSSetViewports(1, &viewport);
+  }
+
+  void D3DXDriver::SetScissorRect(int x, int y, int w, int h) {
+    ID3D11DeviceContext* deviceContext = reinterpret_cast<ID3D11DeviceContext*>(T8DeviceContext->GetAPIObject());
+    if (!deviceContext || w <= 0 || h <= 0)
+      return;
+
+    D3D11_RECT rect = { x, y, x + w, y + h };
+    deviceContext->RSSetScissorRects(1, &rect);
+  }
+
   bool D3DXDriver::ResizeSwapchain(int newW, int newH) {
     if (newW <= 0 || newH <= 0) return false;
     if (!DXGISwapchain) return false;
@@ -599,5 +622,93 @@ namespace t850 {
     D3DXTexture* d3dTex = dynamic_cast<D3DXTexture*>(tex);
     if (!d3dTex || !d3dTex->Tex) return;
     SaveD3D11TextureToPPM(d3dTex->Tex.Get(), path);
+  }
+
+  bool D3DXDriver::ReadRTColorFloat(int rtID, int attachment, float outRGBA[4]) {
+    if (!outRGBA || rtID < 0 || rtID >= (int)RTs.size() || attachment < 0)
+      return false;
+    Texture* tex = GetRTTexture(rtID, attachment);
+    if (!tex) return false;
+    D3DXTexture* d3dTex = dynamic_cast<D3DXTexture*>(tex);
+    if (!d3dTex || !d3dTex->Tex) return false;
+
+    ID3D11Device* device = reinterpret_cast<ID3D11Device*>(T8Device->GetAPIObject());
+    ID3D11DeviceContext* deviceContext = reinterpret_cast<ID3D11DeviceContext*>(T8DeviceContext->GetAPIObject());
+    D3D11_TEXTURE2D_DESC desc = {};
+    d3dTex->Tex->GetDesc(&desc);
+
+    DXGI_FORMAT readFormat = desc.Format;
+    if (readFormat == DXGI_FORMAT_R32_TYPELESS) readFormat = DXGI_FORMAT_R32_FLOAT;
+    else if (readFormat == DXGI_FORMAT_R16_TYPELESS) readFormat = DXGI_FORMAT_R16_FLOAT;
+
+    D3D11_TEXTURE2D_DESC stagingDesc = desc;
+    stagingDesc.Format = readFormat;
+    stagingDesc.Width = 1;
+    stagingDesc.Height = 1;
+    stagingDesc.Usage = D3D11_USAGE_STAGING;
+    stagingDesc.BindFlags = 0;
+    stagingDesc.CPUAccessFlags = D3D11_CPU_ACCESS_READ;
+    stagingDesc.MiscFlags = 0;
+    stagingDesc.MipLevels = 1;
+    stagingDesc.ArraySize = 1;
+
+    ComPtr<ID3D11Texture2D> stagingTex;
+    HRESULT hr = device->CreateTexture2D(&stagingDesc, nullptr, &stagingTex);
+    if (FAILED(hr)) return false;
+
+    D3D11_BOX box = {};
+    box.left = 0; box.top = 0; box.front = 0;
+    box.right = 1; box.bottom = 1; box.back = 1;
+    deviceContext->CopySubresourceRegion(stagingTex.Get(), 0, 0, 0, 0, d3dTex->Tex.Get(), 0, &box);
+
+    D3D11_MAPPED_SUBRESOURCE mapped = {};
+    hr = deviceContext->Map(stagingTex.Get(), 0, D3D11_MAP_READ, 0, &mapped);
+    if (FAILED(hr)) return false;
+
+    auto half2float = [](unsigned short h) -> float {
+      unsigned int sign = (h >> 15) & 1;
+      unsigned int exp = (h >> 10) & 0x1F;
+      unsigned int mant = h & 0x3FF;
+      if (exp == 0) return sign ? -0.0f : 0.0f;
+      if (exp == 31) return sign ? -1e30f : 1e30f;
+      float f = powf(2.0f, (float)((int)exp - 15)) * (1.0f + mant / 1024.0f);
+      return sign ? -f : f;
+    };
+
+    const unsigned char* row = reinterpret_cast<const unsigned char*>(mapped.pData);
+    outRGBA[0] = outRGBA[1] = outRGBA[2] = 0.0f;
+    outRGBA[3] = 1.0f;
+    if (readFormat == DXGI_FORMAT_R8G8B8A8_UNORM) {
+      outRGBA[0] = row[0] / 255.0f;
+      outRGBA[1] = row[1] / 255.0f;
+      outRGBA[2] = row[2] / 255.0f;
+      outRGBA[3] = row[3] / 255.0f;
+    } else if (readFormat == DXGI_FORMAT_B8G8R8A8_UNORM || readFormat == DXGI_FORMAT_B8G8R8A8_UNORM_SRGB) {
+      outRGBA[0] = row[2] / 255.0f;
+      outRGBA[1] = row[1] / 255.0f;
+      outRGBA[2] = row[0] / 255.0f;
+      outRGBA[3] = row[3] / 255.0f;
+    } else if (readFormat == DXGI_FORMAT_R8_UNORM) {
+      outRGBA[0] = outRGBA[1] = outRGBA[2] = row[0] / 255.0f;
+    } else if (readFormat == DXGI_FORMAT_R16_FLOAT) {
+      outRGBA[0] = outRGBA[1] = outRGBA[2] = half2float(*reinterpret_cast<const unsigned short*>(row));
+    } else if (readFormat == DXGI_FORMAT_R32_FLOAT) {
+      outRGBA[0] = outRGBA[1] = outRGBA[2] = *reinterpret_cast<const float*>(row);
+    } else if (readFormat == DXGI_FORMAT_R16G16B16A16_FLOAT) {
+      const unsigned short* hf = reinterpret_cast<const unsigned short*>(row);
+      outRGBA[0] = half2float(hf[0]);
+      outRGBA[1] = half2float(hf[1]);
+      outRGBA[2] = half2float(hf[2]);
+      outRGBA[3] = half2float(hf[3]);
+    } else if (readFormat == DXGI_FORMAT_R32G32B32A32_FLOAT) {
+      const float* fp = reinterpret_cast<const float*>(row);
+      outRGBA[0] = fp[0]; outRGBA[1] = fp[1]; outRGBA[2] = fp[2]; outRGBA[3] = fp[3];
+    } else {
+      deviceContext->Unmap(stagingTex.Get(), 0);
+      return false;
+    }
+
+    deviceContext->Unmap(stagingTex.Get(), 0);
+    return true;
   }
 }

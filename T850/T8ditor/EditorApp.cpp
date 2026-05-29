@@ -10,19 +10,26 @@
 #include "UndoRedo.h"
 
 #include <core/Core.h>
+#include <core/EngineContext.h>
 #include <video/BaseDriver.h>
+#include <physics/PhysicsAuthoring.h>
+#include <physics/Q3BspCollision.h>
 #include <scene/RenderGraph.h>
 #include <scene/RenderSkinnedMesh.h>
 #include <utils/InputManager.h>
 #include <utils/Log.h>
+#include <utils/ResourceLocator.h>
 #include <utils/xMaths.h>
 #include <utils/Picking.h>
 #include <debug/FrameDumper.h>
 
 #include <Descriptors.h>
 
+#include <algorithm>
 #include <cmath>
+#include <cctype>
 #include <filesystem>
+#include <memory>
 #include <set>
 #include <map>
 
@@ -44,6 +51,8 @@ namespace {
   std::string g_startupMeshPath;
   const float kRadToDeg = 180.0f / xPI;
   const float kDegToRad = xPI / 180.0f;
+  constexpr float kMinEditableScale = 0.000001f;
+  constexpr float kScaleDragSpeed = 0.0001f;
 
   // Persistent skybox (editor backdrop, separate from scene meshes).
   t850::PrimitiveManager g_skyboxMgr;
@@ -105,6 +114,12 @@ namespace {
 
   // Pending scene load — deferred to execute before next frame's BeginFrame
   std::string g_pendingLoadPath;
+  SceneFile g_loadedSceneFile;
+  bool g_hasLoadedSceneFile = false;
+  std::vector<SceneObjectDesc> g_unloadedSceneObjects;
+  std::string g_sceneCollisionResourcePath;
+  std::vector<t850::SandboxProfileDesc> g_sceneProfiles;
+  std::unique_ptr<t850::Q3BspCollisionWorld> g_q3CollisionWorld;
 
   // Frame dumper for RT snapshot debugging (space key)
   t850::FrameDumper g_dumper;
@@ -120,6 +135,454 @@ static SceneObject* SelectedObject() {
   if (g_selectionType == 0 && g_selectedIdx >= 0 && g_selectedIdx < (int)g_objects.size())
     return &g_objects[g_selectedIdx];
   return nullptr;
+}
+
+static t850::RenderSkinnedMesh* GetSkinnedMesh(SceneObject& obj) {
+  return obj.litInst.GetSkinnedMesh();
+}
+
+static std::string ToLowerCopy(std::string value) {
+  std::transform(value.begin(), value.end(), value.begin(), [](unsigned char c) {
+    return static_cast<char>(std::tolower(c));
+  });
+  return value;
+}
+
+static std::string NormalizeEditorResourcePath(std::string path) {
+  std::replace(path.begin(), path.end(), '\\', '/');
+  const std::string lower = ToLowerCopy(path);
+  const std::string assetsMarker = "/assets/";
+  const std::size_t embeddedAssets = lower.rfind(assetsMarker);
+  if (embeddedAssets != std::string::npos) {
+    path.erase(0, embeddedAssets + 1);
+  }
+  while (!path.empty() && path.front() == '/') {
+    path.erase(path.begin());
+  }
+  const std::string assetsPrefix = "assets/";
+  if (ToLowerCopy(path).rfind(assetsPrefix, 0) == 0) {
+    path.erase(0, assetsPrefix.size());
+  }
+  return path;
+}
+
+static std::string FileStemFromResourcePath(const std::string& path) {
+  const std::size_t slash = path.find_last_of('/');
+  const std::size_t begin = slash == std::string::npos ? 0 : slash + 1;
+  const std::size_t dot = path.find_last_of('.');
+  const std::size_t end = (dot == std::string::npos || dot < begin) ? path.size() : dot;
+  return path.substr(begin, end - begin);
+}
+
+static std::string InferQ3CollisionFromScenePath(const std::string& scenePath) {
+  std::string normalized = NormalizeEditorResourcePath(scenePath);
+  const std::string lower = ToLowerCopy(normalized);
+  const std::string q3Marker = "scenes/q3/";
+  const std::string sceneExt = ".t8scene";
+  const std::size_t q3Offset = lower.rfind(q3Marker);
+  if (q3Offset == std::string::npos ||
+      lower.size() < sceneExt.size() ||
+      lower.substr(lower.size() - sceneExt.size()) != sceneExt) {
+    return {};
+  }
+
+  std::string resourcePath = normalized.substr(q3Offset);
+  resourcePath.resize(resourcePath.size() - sceneExt.size());
+  resourcePath += ".t8q3clip";
+  return resourcePath;
+}
+
+static std::string InferQ3CollisionFromMeshPath(const std::string& meshPath) {
+  std::string normalized = NormalizeEditorResourcePath(meshPath);
+  const std::string lower = ToLowerCopy(normalized);
+  const std::string q3Marker = "models/q3/";
+  const std::size_t q3Offset = lower.rfind(q3Marker);
+  if (q3Offset == std::string::npos) {
+    return {};
+  }
+
+  const std::string mapName = FileStemFromResourcePath(normalized.substr(q3Offset + q3Marker.size()));
+  if (mapName.empty()) {
+    return {};
+  }
+  return "Scenes/Q3/" + mapName + ".t8q3clip";
+}
+
+static std::string ResolveSceneCollisionPath(const SceneFile& scene, const std::string& scenePath) {
+  std::string collisionPath = NormalizeEditorResourcePath(scene.collision);
+  if (!collisionPath.empty()) {
+    return collisionPath;
+  }
+
+  collisionPath = InferQ3CollisionFromScenePath(scenePath);
+  if (!collisionPath.empty() && t850::ResourceLocator::Instance().Exists(collisionPath)) {
+    return collisionPath;
+  }
+
+  for (const SceneObjectDesc& object : scene.objects) {
+    collisionPath = InferQ3CollisionFromMeshPath(object.mesh.empty() ? object.name : object.mesh);
+    if (!collisionPath.empty() && t850::ResourceLocator::Instance().Exists(collisionPath)) {
+      return collisionPath;
+    }
+  }
+  return {};
+}
+
+static void LoadSceneCollisionClip(const std::string& collisionPath) {
+  g_q3CollisionWorld.reset();
+  if (collisionPath.empty()) {
+    return;
+  }
+
+  if (!t850::ResourceLocator::Instance().Exists(collisionPath)) {
+    T8_LOG_INFO("[T8ditor] Scene collision clip not found: %s", collisionPath.c_str());
+    return;
+  }
+
+  auto q3CollisionWorld = std::make_unique<t850::Q3BspCollisionWorld>();
+  std::string error;
+  if (!q3CollisionWorld->Load(collisionPath, &error)) {
+    T8_LOG_ERROR("[T8ditor] Failed to load scene collision clip '%s': %s", collisionPath.c_str(), error.c_str());
+    return;
+  }
+
+  T8_LOG_INFO("[T8ditor] Scene collision clip loaded: %s brushes=%zu jumpPads=%zu",
+              collisionPath.c_str(),
+              q3CollisionWorld->GetBrushCount(),
+              q3CollisionWorld->GetJumpPadCount());
+  g_q3CollisionWorld = std::move(q3CollisionWorld);
+}
+
+static float EstimateRagdollRadius(const SceneObject& obj) {
+  t850::AABB bounds = obj.wireframe.WorldAABB();
+  if (!bounds.IsValid()) return 1.0f;
+  XVECTOR3 ext = bounds.Extents();
+  const float radius = std::sqrt(ext.x * ext.x + ext.y * ext.y + ext.z * ext.z);
+  return (std::max)(radius, 0.01f);
+}
+
+static t850::PhysicsRagdollBuildSettings BuildEditorRagdollSettings(const SceneObject& obj) {
+  const float modelRadius = EstimateRagdollRadius(obj);
+  t850::PhysicsRagdollBuildSettings settings;
+  settings.fitToSkinnedGeometry = false;
+  settings.preferHumanoidBones = false;
+  settings.forceCapsuleForEveryBone = true;
+  settings.minBoneLength = (std::max)(0.0002f, modelRadius * 0.0002f);
+  settings.syntheticBoneLength = (std::max)(0.001f, modelRadius * 0.001f);
+  settings.minRadius = (std::max)(0.0006f, modelRadius * 0.0008f);
+  settings.maxRadius = (std::max)(0.02f, modelRadius * 0.035f);
+  settings.radiusScale = 0.12f;
+  settings.minSkinWeight = 0.08f;
+  settings.radiusPercentile = 0.86f;
+  settings.jointTrimFraction = 0.0f;
+  return settings;
+}
+
+static bool ShouldDrawPhysicsDebug() {
+  for (const SceneObject& obj : g_objects) {
+    if (obj.ragdollDebugDraw && obj.litInst.HasPhysicsRagdoll())
+      return true;
+  }
+  return false;
+}
+
+void EditorApp::SyncSceneObjectTransforms() {
+  for (SceneObject& obj : g_objects) {
+    if (obj.primId < 0) continue;
+    const XVECTOR3& pos = obj.wireframe.Position();
+    const XVECTOR3& eul = obj.wireframe.EulerRadians();
+    const XVECTOR3& scl = obj.wireframe.Scale();
+    obj.litInst.TranslateAbsolute(pos.x, pos.y, pos.z);
+    obj.litInst.RotateXAbsolute(eul.x * kRadToDeg);
+    obj.litInst.RotateYAbsolute(eul.y * kRadToDeg);
+    obj.litInst.RotateZAbsolute(eul.z * kRadToDeg);
+    obj.litInst.ScaleAbsolute(scl.x, scl.y, scl.z);
+    obj.litInst.Visible = obj.visible;
+    obj.litInst.Update();
+  }
+}
+
+void EditorApp::DestroyObjectRagdoll(SceneObject& obj) {
+  if (obj.litInst.HasPhysicsRagdoll() && m_physics.IsInitialized()) {
+    m_physics.DestroyRagdoll(obj.litInst.GetPhysicsRagdoll());
+  }
+  obj.litInst.ClearPhysicsLinks();
+  obj.ragdollPreviewEnabled = false;
+  obj.ragdollDriveFromAnimation = false;
+  obj.ragdollSimulating = false;
+  obj.ragdollPhysicsStates.clear();
+  obj.ragdollPhysicsBoneIndices.clear();
+  obj.ragdollPhysicsCombinedMatrices.clear();
+  if (t850::RenderSkinnedMesh* skinned = GetSkinnedMesh(obj)) {
+    skinned->PlayAnimation();
+  }
+}
+
+void EditorApp::DestroyAllObjectRagdolls() {
+  for (SceneObject& obj : g_objects)
+    DestroyObjectRagdoll(obj);
+}
+
+bool EditorApp::EnsureObjectRagdollAuthoring(SceneObject& obj) {
+  if (obj.ragdollAuthoringReady)
+    return true;
+
+  obj.ragdollAuthoringTried = true;
+  t850::RenderSkinnedMesh* skinned = GetSkinnedMesh(obj);
+  if (!skinned || !skinned->HasSkinData()) {
+    obj.ragdollStatus = "Selected mesh has no skin/skeleton data.";
+    return false;
+  }
+
+  SyncSceneObjectTransforms();
+  skinned->UpdateAnimationPose();
+
+  const std::string modelPath = obj.meshPath.empty() ? obj.name : obj.meshPath;
+  obj.ragdollModelKey = t850::BuildRagdollEditModelKey(modelPath);
+  if (obj.ragdollResourcePath.empty())
+    obj.ragdollResourcePath = t850::BuildRagdollEditResourcePath(modelPath);
+
+  t850::PhysicsRagdollAuthoringDesc generatedAuthoring;
+  const t850::PhysicsRagdollBuildSettings settings = BuildEditorRagdollSettings(obj);
+  if (!t850::BuildRagdollAuthoringFromSkeleton(
+          *skinned,
+          obj.litInst.Final,
+          obj.litInst.GetEntityId(),
+          settings,
+          generatedAuthoring)) {
+    obj.ragdollStatus = "Failed to generate a skeleton ragdoll.";
+    T8_LOG_ERROR("[T8ditor] Failed to generate ragdoll authoring for '%s'", modelPath.c_str());
+    return false;
+  }
+
+  obj.ragdollAuthoring = generatedAuthoring;
+  obj.ragdollLoadedFromAsset = false;
+  int loadedBodyCount = 0;
+  if (!obj.ragdollResourcePath.empty() &&
+      t850::LoadRagdollAuthoringAsset(
+          obj.ragdollResourcePath,
+          *skinned,
+          obj.litInst.Final,
+          generatedAuthoring.binding,
+          obj.ragdollAuthoring,
+          &loadedBodyCount)) {
+    obj.ragdollLoadedFromAsset = true;
+    obj.ragdollBodyCount = loadedBodyCount;
+    obj.ragdollStatus = "Loaded authored ragdoll asset.";
+  } else {
+    obj.ragdollBodyCount = (int)obj.ragdollAuthoring.binding.referencePose.bones.size();
+    obj.ragdollStatus = "Using generated skeleton ragdoll.";
+  }
+
+  obj.ragdollAuthoringReady = !obj.ragdollAuthoring.binding.referencePose.bones.empty();
+  if (!obj.ragdollAuthoringReady) {
+    obj.ragdollStatus = "Ragdoll authoring produced no bodies.";
+    return false;
+  }
+
+  T8_LOG_INFO("[T8ditor] Ragdoll authoring ready for '%s': bodies=%d, asset='%s'",
+              modelPath.c_str(), obj.ragdollBodyCount, obj.ragdollResourcePath.c_str());
+  return true;
+}
+
+bool EditorApp::RecreateObjectRagdoll(SceneObject& obj, t850::PhysicsBodyMotion motion) {
+  if (!m_physics.IsInitialized()) {
+    obj.ragdollStatus = "Physics runtime is not initialized.";
+    return false;
+  }
+  if (!EnsureObjectRagdollAuthoring(obj))
+    return false;
+
+  DestroyObjectRagdoll(obj);
+
+  t850::PhysicsRagdollDesc desc = obj.ragdollAuthoring.binding.referencePose;
+  desc.entityId = obj.litInst.GetEntityId();
+  for (t850::PhysicsRagdollBoneDesc& bone : desc.bones)
+    bone.body.entityId = obj.litInst.GetEntityId();
+
+  t850::PhysicsRagdollHandle handle = m_physics.CreateRagdoll(desc, motion);
+  if (!handle.IsValid()) {
+    obj.ragdollStatus = "Failed to create runtime ragdoll.";
+    T8_LOG_ERROR("[T8ditor] Failed to create runtime ragdoll for '%s'", obj.name.c_str());
+    return false;
+  }
+
+  obj.litInst.AttachPhysicsRagdoll(handle);
+  obj.ragdollPreviewEnabled = true;
+  obj.ragdollDriveFromAnimation = (motion != t850::PhysicsBodyMotion::Dynamic);
+  obj.ragdollSimulating = (motion == t850::PhysicsBodyMotion::Dynamic);
+  obj.ragdollStatus = obj.ragdollSimulating ? "Dynamic ragdoll simulation active."
+                                            : "Kinematic ragdoll preview active.";
+  return true;
+}
+
+bool EditorApp::ResetObjectRagdollToAnimation(SceneObject& obj) {
+  if (!obj.litInst.HasPhysicsRagdoll()) {
+    if (!RecreateObjectRagdoll(obj, t850::PhysicsBodyMotion::Kinematic))
+      return false;
+  } else if (!m_physics.SetRagdollMotion(obj.litInst.GetPhysicsRagdoll(), t850::PhysicsBodyMotion::Kinematic)) {
+    obj.ragdollStatus = "Failed to switch ragdoll to kinematic mode.";
+    return false;
+  }
+
+  t850::RenderSkinnedMesh* skinned = GetSkinnedMesh(obj);
+  if (skinned) {
+    skinned->PlayAnimation();
+    skinned->ClearSnapshotBoneMatrices();
+  }
+  obj.ragdollDriveFromAnimation = true;
+  obj.ragdollSimulating = false;
+  obj.ragdollPreviewEnabled = true;
+  obj.ragdollStatus = "Ragdoll reset to animation drive.";
+  return true;
+}
+
+bool EditorApp::StartObjectRagdollSimulation(SceneObject& obj) {
+  if (!RecreateObjectRagdoll(obj, t850::PhysicsBodyMotion::Kinematic))
+    return false;
+
+  t850::RenderSkinnedMesh* skinned = GetSkinnedMesh(obj);
+  if (!skinned || !skinned->HasSkinData()) {
+    obj.ragdollStatus = "Cannot simulate: selected mesh has no skin data.";
+    return false;
+  }
+
+  t850::PhysicsRagdollDesc pose;
+  if (!t850::BuildRagdollPoseFromAnimation(*skinned, obj.litInst.Final, obj.ragdollAuthoring.binding, pose) ||
+      !m_physics.DriveRagdollFromPose(obj.litInst.GetPhysicsRagdoll(), pose, 0.0f)) {
+    obj.ragdollStatus = "Failed to align ragdoll to current animation pose.";
+    return false;
+  }
+
+  if (!m_physics.SetRagdollMotion(obj.litInst.GetPhysicsRagdoll(), t850::PhysicsBodyMotion::Dynamic)) {
+    obj.ragdollStatus = "Failed to switch ragdoll to dynamic mode.";
+    return false;
+  }
+  m_physics.SetRagdollVelocity(
+      obj.litInst.GetPhysicsRagdoll(),
+      XVECTOR3(0.0f, 0.0f, 0.0f, 0.0f),
+      XVECTOR3(0.0f, 0.0f, 0.0f, 0.0f));
+
+  skinned->PauseAnimation();
+  skinned->ClearSnapshotBoneMatrices();
+  obj.ragdollDriveFromAnimation = false;
+  obj.ragdollSimulating = true;
+  obj.ragdollPreviewEnabled = true;
+  obj.ragdollStatus = "Dynamic ragdoll simulation active.";
+  return true;
+}
+
+void EditorApp::UpdateSkinnedAnimationAndRagdolls() {
+  SyncSceneObjectTransforms();
+
+  for (SceneObject& obj : g_objects) {
+    if (obj.primId < 0 || !obj.visible) continue;
+    t850::RenderSkinnedMesh* skinned = GetSkinnedMesh(obj);
+    if (!skinned || !skinned->HasSkinData()) continue;
+
+    if (!obj.ragdollSimulating)
+      skinned->UpdateAnimationPose();
+
+    if (obj.ragdollDriveFromAnimation && obj.litInst.HasPhysicsRagdoll() && obj.ragdollAuthoringReady) {
+      t850::PhysicsRagdollDesc pose;
+      if (t850::BuildRagdollPoseFromAnimation(*skinned, obj.litInst.Final, obj.ragdollAuthoring.binding, pose)) {
+        m_physics.DriveRagdollFromPose(obj.litInst.GetPhysicsRagdoll(), pose, m_dtSecs);
+      }
+    }
+  }
+
+  if (m_physics.IsInitialized())
+    m_physics.Update(m_dtSecs);
+
+  for (SceneObject& obj : g_objects) {
+    if (!obj.ragdollSimulating || !obj.litInst.HasPhysicsRagdoll() || !obj.ragdollAuthoringReady)
+      continue;
+
+    t850::RenderSkinnedMesh* skinned = GetSkinnedMesh(obj);
+    if (!skinned || !skinned->HasSkinData()) continue;
+
+    if (m_physics.GetRagdollState(obj.litInst.GetPhysicsRagdoll(), obj.ragdollPhysicsStates) &&
+        t850::BuildSkeletonPoseFromRagdollState(
+            *skinned,
+            obj.litInst.Final,
+            obj.ragdollAuthoring.binding,
+            obj.ragdollPhysicsStates,
+            obj.ragdollPhysicsBoneIndices,
+            obj.ragdollPhysicsCombinedMatrices) &&
+        skinned->GetAnimController().ApplyCombinedPoseOverrides(
+            obj.ragdollPhysicsBoneIndices,
+            obj.ragdollPhysicsCombinedMatrices)) {
+      obj.ragdollStatus = "Skeleton driven by dynamic ragdoll.";
+    } else {
+      obj.ragdollStatus = "Failed to apply physics pose to skeleton.";
+    }
+  }
+}
+
+void EditorApp::UploadSkinnedBoneTextures() {
+  for (SceneObject& obj : g_objects) {
+    if (obj.primId < 0 || !obj.visible) continue;
+    t850::RenderSkinnedMesh* skinned = GetSkinnedMesh(obj);
+    if (skinned && skinned->HasSkinData())
+      skinned->UploadBoneTexture();
+  }
+}
+
+void EditorApp::DrawRagdollInspector(SceneObject& obj) {
+  t850::RenderSkinnedMesh* skinned = GetSkinnedMesh(obj);
+  if (!skinned || !skinned->HasSkinData())
+    return;
+
+  ImGui::SeparatorText("Ragdoll");
+  if (obj.ragdollResourcePath.empty()) {
+    const std::string modelPath = obj.meshPath.empty() ? obj.name : obj.meshPath;
+    obj.ragdollResourcePath = t850::BuildRagdollEditResourcePath(modelPath);
+  }
+
+  ImGui::TextWrapped("Asset: %s", obj.ragdollResourcePath.c_str());
+  ImGui::Text("Bodies: %d", obj.ragdollBodyCount);
+  ImGui::Text("Source: %s", obj.ragdollLoadedFromAsset ? "Authored JSON" : "Generated");
+  if (!obj.ragdollStatus.empty())
+    ImGui::TextWrapped("%s", obj.ragdollStatus.c_str());
+
+  if (ImGui::Button(obj.ragdollAuthoringReady ? "Reload Ragdoll" : "Load Ragdoll")) {
+    DestroyObjectRagdoll(obj);
+    obj.ragdollAuthoringReady = false;
+    obj.ragdollAuthoringTried = false;
+    EnsureObjectRagdollAuthoring(obj);
+  }
+  ImGui::SameLine();
+  if (ImGui::Button("Save Ragdoll") && EnsureObjectRagdollAuthoring(obj)) {
+    std::filesystem::path resolvedPath;
+    if (t850::SaveRagdollAuthoringAsset(
+            obj.ragdollResourcePath,
+            obj.ragdollModelKey,
+            obj.ragdollAuthoring,
+            &resolvedPath)) {
+      obj.ragdollStatus = "Saved ragdoll to " + resolvedPath.string();
+    } else {
+      obj.ragdollStatus = "Failed to save ragdoll asset.";
+    }
+  }
+
+  if (ImGui::Button(obj.ragdollPreviewEnabled ? "Recreate Preview" : "Create Preview")) {
+    RecreateObjectRagdoll(obj, t850::PhysicsBodyMotion::Kinematic);
+  }
+  ImGui::SameLine();
+  if (ImGui::Button("Destroy Preview")) {
+    DestroyObjectRagdoll(obj);
+    obj.ragdollStatus = "Runtime ragdoll destroyed.";
+  }
+
+  if (ImGui::Button("Start Simulation")) {
+    StartObjectRagdollSimulation(obj);
+  }
+  ImGui::SameLine();
+  if (ImGui::Button("Reset Animation")) {
+    ResetObjectRagdollToAnimation(obj);
+  }
+
+  ImGui::Checkbox("Physics Debug", &obj.ragdollDebugDraw);
 }
 
 void EditorApp::InitVars() {
@@ -160,16 +623,27 @@ void EditorApp::CreateAssets() {
   m_sceneProps.EnvFactor = 0.3f;  // reduced env reflections (no HDR tone mapping)
 
   XMatIdentity(m_vp);
+  t850::GetEngineContext().physics = &m_physics;
+  if (!m_physics.Initialize() && m_physics.IsAvailable()) {
+    T8_LOG_ERROR("[T8ditor] Physics runtime failed to initialize");
+  }
+  m_primMgr.SetEngineContext(&t850::GetEngineContext());
   m_primMgr.Init();
   m_primMgr.SetVP(&m_vp);
   m_primMgr.SetSceneProps(&m_sceneProps);
+  if (!m_physicsDebug.Create()) {
+    T8_LOG_ERROR("[T8ditor] Physics debug renderer failed to initialize");
+  } else {
+    m_physicsDebug.SetDepthTestEnabled(false);
+  }
 
   // Load skybox as persistent editor backdrop
-  if (std::filesystem::exists("Models/SkyBox.X")) {
+  if (std::filesystem::exists("Models/SkyBox.glb")) {
+    g_skyboxMgr.SetEngineContext(&t850::GetEngineContext());
     g_skyboxMgr.Init();
     g_skyboxMgr.SetVP(&m_vp);
     g_skyboxMgr.SetSceneProps(&m_sceneProps);
-    int sid = g_skyboxMgr.CreateMesh("Models/SkyBox.X");
+    int sid = g_skyboxMgr.CreateMesh("Models/SkyBox.glb");
     if (sid >= 0) {
       g_skyboxPrimId = sid;
       g_skyboxInst.CreateInstance(g_skyboxMgr.GetPrimitive(sid), &m_vp);
@@ -226,7 +700,7 @@ void EditorApp::CreateAssets() {
     g_dumperInited = true;
   }
 
-  if (!g_startupMeshPath.empty() && g_startupMeshPath != "Models/SkyBox.X")
+  if (!g_startupMeshPath.empty() && g_startupMeshPath != "Models/SkyBox.glb")
     ImportMesh(g_startupMeshPath);
 
   m_assetsCreated = true;
@@ -249,28 +723,37 @@ void EditorApp::CreateAssets() {
 }
 
 void EditorApp::ImportMesh(const std::string& path) {
-  if (!std::filesystem::exists(path)) {
-    T8_LOG_ERROR("[T8ditor] Mesh file not found: %s", path.c_str());
+  const std::string meshPath = NormalizeEditorResourcePath(path);
+  if (!t850::ResourceLocator::Instance().Exists(meshPath)) {
+    T8_LOG_ERROR("[T8ditor] Mesh file not found: %s", meshPath.c_str());
     return;
   }
 
   // Create a new scene object (append, don't replace)
-  int id = m_primMgr.CreateMesh(path.c_str());
+  int id = m_primMgr.CreateMesh(meshPath.c_str());
   if (id < 0) {
-    T8_LOG_ERROR("[T8ditor] Failed to load mesh: %s", path.c_str());
+    T8_LOG_ERROR("[T8ditor] Failed to load mesh: %s", meshPath.c_str());
     return;
   }
 
   g_objects.emplace_back();
   SceneObject& obj = g_objects.back();
   obj.primId = id;
-  obj.name   = path;
+  obj.name   = meshPath;
+  obj.meshPath = meshPath;
   obj.litInst.CreateInstance(m_primMgr.GetPrimitive(id), &m_vp);
   obj.litInst.Update();
+  if (obj.litInst.GetSkinnedMesh()) {
+    obj.ragdollModelKey = t850::BuildRagdollEditModelKey(meshPath);
+    obj.ragdollResourcePath = t850::BuildRagdollEditResourcePath(meshPath);
+  } else {
+    obj.ragdollModelKey.clear();
+    obj.ragdollResourcePath.clear();
+  }
 
   m_primMgr.SetSceneProps(&m_sceneProps);
 
-  obj.wireframe.Load(path);
+  obj.wireframe.Load(meshPath);
 
   // Select the newly imported mesh
   g_selectedIdx = (int)g_objects.size() - 1;
@@ -279,7 +762,161 @@ void EditorApp::ImportMesh(const std::string& path) {
   m_camera.SetTarget(obj.wireframe.LocalCenter());
   m_camera.Frame();
 
-  T8_LOG_INFO("[T8ditor] Loaded mesh [%d]: %s", g_selectedIdx, path.c_str());
+  T8_LOG_INFO("[T8ditor] Loaded mesh [%d]: %s", g_selectedIdx, meshPath.c_str());
+}
+
+void EditorApp::CloneSelected() {
+  if (g_selectedIdx < 0) return;
+
+  auto makeUniqueObjectName = [](const std::string& base) {
+    const std::string root = base.empty() ? "Object" : base;
+    std::string candidate = root + " Clone";
+    int suffix = 2;
+    auto exists = [](const std::string& name) {
+      return std::any_of(g_objects.begin(), g_objects.end(),
+        [&](const SceneObject& obj) { return obj.name == name; });
+    };
+    while (exists(candidate)) {
+      candidate = root + " Clone " + std::to_string(suffix++);
+    }
+    return candidate;
+  };
+
+  auto makeUniqueCameraName = [](const std::string& base) {
+    const std::string root = base.empty() ? "Camera" : base;
+    std::string candidate = root + " Clone";
+    int suffix = 2;
+    auto exists = [](const std::string& name) {
+      return std::any_of(g_cameras.begin(), g_cameras.end(),
+        [&](const SceneCamera& cam) { return cam.name == name; });
+    };
+    while (exists(candidate)) {
+      candidate = root + " Clone " + std::to_string(suffix++);
+    }
+    return candidate;
+  };
+
+  auto makeUniqueLightName = [](const std::string& base) {
+    const std::string root = base.empty() ? "Light" : base;
+    std::string candidate = root + " Clone";
+    int suffix = 2;
+    auto exists = [](const std::string& name) {
+      return std::any_of(g_lights.begin(), g_lights.end(),
+        [&](const SceneLight& light) { return light.name == name; });
+    };
+    while (exists(candidate)) {
+      candidate = root + " Clone " + std::to_string(suffix++);
+    }
+    return candidate;
+  };
+
+  if (g_selectionType == 0 && g_selectedIdx < (int)g_objects.size()) {
+    SceneObject& src = g_objects[g_selectedIdx];
+    const std::string meshPath = src.meshPath.empty() ? src.name : src.meshPath;
+    const std::string sourceName = src.name;
+    const std::string name = makeUniqueObjectName(sourceName);
+    const std::string ragdollResourcePath = src.ragdollResourcePath;
+    const bool visible = src.visible;
+    const bool frozen = src.frozen;
+    const bool showWire = src.showWire;
+    const XVECTOR3 position = src.wireframe.Position();
+    const XVECTOR3 rotation = src.wireframe.EulerRadians();
+    const XVECTOR3 scale = src.wireframe.Scale();
+    const bool sourceAuthoringReady = src.ragdollAuthoringReady;
+    const bool sourceLoadedFromAsset = src.ragdollLoadedFromAsset;
+    const bool sourceRuntimeRagdoll = src.litInst.HasPhysicsRagdoll();
+    const bool sourcePreviewEnabled = src.ragdollPreviewEnabled && sourceRuntimeRagdoll;
+    const bool sourceSimulating = src.ragdollSimulating;
+    const bool sourceDebugDraw = src.ragdollDebugDraw;
+    const bool sourceWantsRuntimeCapsules = sourceRuntimeRagdoll || sourceDebugDraw || sourcePreviewEnabled;
+    const int sourceBodyCount = src.ragdollBodyCount;
+    const std::string sourceStatus = src.ragdollStatus;
+    const t850::PhysicsRagdollAuthoringDesc sourceAuthoring = src.ragdollAuthoring;
+
+    if (meshPath.empty() || !t850::ResourceLocator::Instance().Exists(meshPath)) {
+      T8_LOG_ERROR("[T8ditor] Cannot clone mesh '%s': source mesh path is missing or unreadable",
+                   sourceName.c_str());
+      return;
+    }
+
+    int id = m_primMgr.CreateMesh(meshPath.c_str());
+    if (id < 0) {
+      T8_LOG_ERROR("[T8ditor] Failed to clone mesh: %s", meshPath.c_str());
+      return;
+    }
+    m_primMgr.SetSceneProps(&m_sceneProps);
+
+    g_objects.emplace_back();
+    SceneObject& clone = g_objects.back();
+    clone.primId = id;
+    clone.name = name;
+    clone.meshPath = meshPath;
+    clone.visible = visible;
+    clone.frozen = frozen;
+    clone.showWire = showWire;
+    clone.ragdollResourcePath = ragdollResourcePath;
+    clone.ragdollDebugDraw = sourceDebugDraw;
+    clone.litInst.CreateInstance(m_primMgr.GetPrimitive(id), &m_vp);
+    clone.litInst.Update();
+    if (clone.litInst.GetSkinnedMesh()) {
+      clone.ragdollModelKey = t850::BuildRagdollEditModelKey(meshPath);
+      if (clone.ragdollResourcePath.empty())
+        clone.ragdollResourcePath = t850::BuildRagdollEditResourcePath(meshPath);
+    } else {
+      clone.ragdollModelKey.clear();
+      clone.ragdollResourcePath.clear();
+    }
+    clone.wireframe.Load(meshPath);
+    clone.wireframe.Position() = position;
+    clone.wireframe.EulerRadians() = rotation;
+    clone.wireframe.Scale() = scale;
+    if (clone.litInst.GetSkinnedMesh() && sourceAuthoringReady) {
+      clone.ragdollAuthoring = sourceAuthoring;
+      clone.ragdollAuthoringReady = true;
+      clone.ragdollAuthoringTried = true;
+      clone.ragdollLoadedFromAsset = sourceLoadedFromAsset;
+      clone.ragdollBodyCount = sourceBodyCount;
+      clone.ragdollStatus = sourceStatus.empty() ? "Cloned ragdoll authoring." : sourceStatus;
+    }
+
+    g_selectedIdx = (int)g_objects.size() - 1;
+    g_selectionType = 0;
+    g_multiSelect.clear();
+    SyncSceneObjectTransforms();
+    if (clone.litInst.GetSkinnedMesh() && !clone.ragdollAuthoringReady) {
+      EnsureObjectRagdollAuthoring(clone);
+    }
+    if (clone.ragdollAuthoringReady && sourceWantsRuntimeCapsules) {
+      if (sourceSimulating) {
+        StartObjectRagdollSimulation(clone);
+      } else {
+        RecreateObjectRagdoll(clone, t850::PhysicsBodyMotion::Kinematic);
+      }
+    }
+    T8_LOG_INFO("[T8ditor] Cloned mesh '%s' as '%s'", sourceName.c_str(), clone.name.c_str());
+    return;
+  }
+
+  if (g_selectionType == 1 && g_selectedIdx < (int)g_cameras.size()) {
+    SceneCamera clone = g_cameras[g_selectedIdx];
+    clone.name = makeUniqueCameraName(clone.name);
+    g_cameras.push_back(clone);
+    g_selectedIdx = (int)g_cameras.size() - 1;
+    g_selectionType = 1;
+    g_multiSelect.clear();
+    T8_LOG_INFO("[T8ditor] Cloned camera '%s'", clone.name.c_str());
+    return;
+  }
+
+  if (g_selectionType == 2 && g_selectedIdx < (int)g_lights.size()) {
+    SceneLight clone = g_lights[g_selectedIdx];
+    clone.name = makeUniqueLightName(clone.name);
+    g_lights.push_back(clone);
+    g_selectedIdx = (int)g_lights.size() - 1;
+    g_selectionType = 2;
+    g_multiSelect.clear();
+    T8_LOG_INFO("[T8ditor] Cloned light '%s'", clone.name.c_str());
+  }
 }
 
 void EditorApp::LoadAssets() {}
@@ -295,6 +932,8 @@ void EditorApp::DestroyAssets() {
   // g_dummyEnvMapIdx is tracked in the driver's Textures vector and destroyed by DestroyTextures()
   g_dummyEnvMapIdx = -1;
 
+  DestroyAllObjectRagdolls();
+  m_physicsDebug.Destroy();
   m_primMgr.DestroyPrimitives();
   g_objects.clear();
   g_cameras.clear();
@@ -305,6 +944,11 @@ void EditorApp::DestroyAssets() {
   g_multiSelect.clear();
   g_groups.clear();
   g_activeGroupIdx = -1;
+  g_loadedSceneFile = SceneFile{};
+  g_hasLoadedSceneFile = false;
+  g_unloadedSceneObjects.clear();
+  g_sceneCollisionResourcePath.clear();
+  g_sceneProfiles.clear();
   g_undoStack.Clear();
   if (g_skyboxReady) {
     g_skyboxMgr.DestroyPrimitives();
@@ -314,6 +958,9 @@ void EditorApp::DestroyAssets() {
   m_gizmo.Destroy();
   m_grid.Destroy();
   m_lines.Destroy();
+  m_physics.Shutdown();
+  if (t850::GetEngineContext().physics == &m_physics)
+    t850::GetEngineContext().physics = nullptr;
   m_assetsCreated = false;
   T8_LOG_INFO("[T8ditor] DestroyAssets");
 }
@@ -374,10 +1021,14 @@ void EditorApp::OnUpdate() {
   if (!g_pendingLoadPath.empty()) {
     SceneFile sf;
     if (LoadSceneFromFile(g_pendingLoadPath, sf)) {
+      g_loadedSceneFile = sf;
+      g_hasLoadedSceneFile = true;
+
       // Flush all GPU work from previous frames
       pFramework->pVideoDriver->WaitForGPU();
 
       // Destroy old scene
+      DestroyAllObjectRagdolls();
       m_primMgr.DestroyPrimitives();
       g_objects.clear();
       g_cameras.clear();
@@ -389,6 +1040,11 @@ void EditorApp::OnUpdate() {
       g_groups.clear();
       g_activeGroupIdx = -1;
       g_undoStack.Clear();
+      g_unloadedSceneObjects.clear();
+      g_sceneCollisionResourcePath = ResolveSceneCollisionPath(sf, g_pendingLoadPath);
+      g_sceneProfiles = sf.profiles;
+      LoadSceneCollisionClip(g_sceneCollisionResourcePath);
+      m_primMgr.SetEngineContext(&t850::GetEngineContext());
       m_primMgr.Init();
       m_primMgr.SetVP(&m_vp);
       m_primMgr.SetSceneProps(&m_sceneProps);
@@ -417,17 +1073,35 @@ void EditorApp::OnUpdate() {
 
       // Load mesh objects
       for (auto& od : sf.objects) {
-        ImportMesh(od.mesh);
-        if (!g_objects.empty()) {
+        const std::string meshPath = od.mesh.empty() ? od.name : od.mesh;
+        const std::size_t objectCountBeforeImport = g_objects.size();
+        ImportMesh(meshPath);
+        if (g_objects.size() > objectCountBeforeImport) {
           auto& obj = g_objects.back();
           obj.name = od.name;
+          obj.meshPath = meshPath;
+          obj.ragdollResourcePath = od.ragdoll;
+          if (obj.litInst.GetSkinnedMesh()) {
+            if (obj.ragdollResourcePath.empty()) {
+              obj.ragdollResourcePath = t850::BuildRagdollEditResourcePath(meshPath);
+            }
+            obj.ragdollModelKey = t850::BuildRagdollEditModelKey(meshPath);
+          } else {
+            obj.ragdollModelKey.clear();
+          }
           obj.wireframe.Position() = XVECTOR3(od.position.x, od.position.y, od.position.z);
           obj.wireframe.EulerRadians() = XVECTOR3(
             od.rotation.x * kDegToRad, od.rotation.y * kDegToRad, od.rotation.z * kDegToRad);
           obj.wireframe.Scale() = XVECTOR3(od.scale.x, od.scale.y, od.scale.z);
           obj.visible  = od.visible;
+          obj.mobileVisible = od.mobile_visible;
           obj.frozen   = od.frozen;
           obj.showWire = od.show_wire;
+        } else {
+          g_unloadedSceneObjects.push_back(od);
+          T8_LOG_ERROR("[T8ditor] Preserving unloaded scene object '%s' mesh='%s' for save",
+                       od.name.c_str(),
+                       meshPath.c_str());
         }
       }
 
@@ -452,6 +1126,7 @@ void EditorApp::OnUpdate() {
         l.color = XVECTOR3(ld.color.x, ld.color.y, ld.color.z);
         l.intensity = ld.intensity; l.radius = ld.radius; l.enabled = ld.enabled;
         l.visible = ld.visible; l.frozen = ld.frozen;
+        l.q3 = ld.q3;
         g_lights.push_back(l);
       }
 
@@ -472,6 +1147,7 @@ void EditorApp::OnUpdate() {
   CheckResize();
 
   OnInput();
+  UpdateSkinnedAnimationAndRagdolls();
   OnDraw();
 }
 
@@ -535,6 +1211,7 @@ void EditorApp::OnInput() {
       T8_LOG_INFO("[T8ditor] Light deleted");
     }
     else if (g_selectionType == 0 && g_selectedIdx < (int)g_objects.size()) {
+      DestroyObjectRagdoll(g_objects[g_selectedIdx]);
       g_objects.erase(g_objects.begin() + g_selectedIdx);
       g_selectedIdx = -1;
       T8_LOG_INFO("[T8ditor] Mesh deleted");
@@ -847,21 +1524,8 @@ void EditorApp::OnDraw() {
     }
 
     // Update all mesh transforms
-    int visibleCount = 0;
-    for (int i = 0; i < (int)g_objects.size(); ++i) {
-      SceneObject& obj = g_objects[i];
-      if (obj.primId < 0 || !obj.visible) continue;
-      const XVECTOR3& pos = obj.wireframe.Position();
-      const XVECTOR3& eul = obj.wireframe.EulerRadians();
-      const XVECTOR3& scl = obj.wireframe.Scale();
-      obj.litInst.TranslateAbsolute(pos.x, pos.y, pos.z);
-      obj.litInst.RotateXAbsolute(eul.x * kRadToDeg);
-      obj.litInst.RotateYAbsolute(eul.y * kRadToDeg);
-      obj.litInst.RotateZAbsolute(eul.z * kRadToDeg);
-      obj.litInst.ScaleAbsolute(scl.x, scl.y, scl.z);
-      obj.litInst.Update();
-      visibleCount++;
-    }
+    SyncSceneObjectTransforms();
+    UploadSkinnedBoneTextures();
 
     // Render meshes: deferred via render graph on D3D11/D3D12, forward on GL
     bool useDeferred = g_deferredReady
@@ -895,14 +1559,6 @@ void EditorApp::OnDraw() {
       std::vector<t850::PrimitiveInst> meshArray;
       meshArray.reserve(allMeshes.size());
       for (auto* p : allMeshes) meshArray.push_back(*p);
-
-      // Update animation + bone texture before render passes (Vulkan requirement)
-      for (auto& obj : g_objects) {
-        if (obj.primId >= 0 && obj.visible && obj.litInst.pBase) {
-          auto* sk = dynamic_cast<t850::RenderSkinnedMesh*>(obj.litInst.pBase);
-          if (sk && sk->HasSkinData()) sk->UpdateAnimationAndBones();
-        }
-      }
 
       ::Camera* mainCam = m_sceneProps.pCameras[0];
       t850::EnvironmentMapSet editorEnvMaps;
@@ -1028,6 +1684,13 @@ void EditorApp::OnDraw() {
     // Grid
     if (m_lines.IsReady())
       m_grid.Draw(m_lines, cam.VP);
+
+    if (ShouldDrawPhysicsDebug() && m_physicsDebug.IsReady()) {
+      m_physicsDebug.SetViewport(m_lastW, m_lastH);
+      m_physicsDebug.SetFarPlane(cam.FPlane);
+      m_physicsDebug.SetDepthTexture(nullptr);
+      m_physicsDebug.Draw(m_physics, cam.VP);
+    }
   }
 
   // ImGui overlay
@@ -1037,9 +1700,10 @@ void EditorApp::OnDraw() {
     MenuAction menuAction = ImGuiDrawMenuBar(m_panels);
 
     int addCamera = -1, addLight = -1;
-    bool wantsGroup = false, wantsUngroup = false;
+    bool wantsClone = false, wantsGroup = false, wantsUngroup = false;
     int mode = ImGuiDrawToolbar((int)m_gizmo.Mode(), addCamera, addLight,
-                                 wantsGroup, wantsUngroup, g_multiSelect.size() >= 2);
+                                  wantsClone, wantsGroup, wantsUngroup,
+                                  g_selectedIdx >= 0, g_multiSelect.size() >= 2);
     m_gizmo.SetMode((GizmoMode)mode);
 
     // Handle add camera/light from toolbar
@@ -1074,10 +1738,12 @@ void EditorApp::OnDraw() {
       }
       ContextAction ctx = ImGuiDrawContextMenu(hasSel, hasMulti, hasGrp);
       if (ctx.setMode >= -1) m_gizmo.SetMode((GizmoMode)ctx.setMode);
+      if (ctx.wantsClone) wantsClone = true;
       if (ctx.wantsGroup) wantsGroup = true;
       if (ctx.wantsUngroup) wantsUngroup = true;
       if (ctx.wantsDelete && g_selectedIdx >= 0) {
         if (g_selectionType == 0 && g_selectedIdx < (int)g_objects.size()) {
+          DestroyObjectRagdoll(g_objects[g_selectedIdx]);
           g_objects.erase(g_objects.begin() + g_selectedIdx);
           g_multiSelect.erase(g_selectedIdx);
           g_selectedIdx = -1;
@@ -1114,6 +1780,10 @@ void EditorApp::OnDraw() {
         g_selectedIdx = (int)g_lights.size() - 1;
         g_selectionType = 2;
       }
+    }
+
+    if (wantsClone) {
+      CloneSelected();
     }
 
     // Group button / context menu: create persistent group
@@ -1361,11 +2031,9 @@ void EditorApp::OnDraw() {
         if (manipulated) {
           float translation[3], rotation[3], scale[3];
           ImGuizmo::DecomposeMatrixToComponents(&worldMat.m[0][0], translation, rotation, scale);
-          // Clamp scale to a small positive value to prevent degenerate matrices
-          const float kMinScale = 0.001f;
           for (int s = 0; s < 3; s++)
-            if (scale[s] < kMinScale && scale[s] > -kMinScale)
-              scale[s] = (scale[s] >= 0) ? kMinScale : -kMinScale;
+            if (scale[s] < kMinEditableScale && scale[s] > -kMinEditableScale)
+              scale[s] = (scale[s] >= 0) ? kMinEditableScale : -kMinEditableScale;
           sel->wireframe.Position() = XVECTOR3(translation[0], translation[1], translation[2]);
           sel->wireframe.EulerRadians() = XVECTOR3(
             rotation[0] * kDegToRad, rotation[1] * kDegToRad, rotation[2] * kDegToRad);
@@ -1487,7 +2155,7 @@ void EditorApp::OnDraw() {
     }
     if (menuAction.wantsImportX) {
       std::string path = OpenFileDialog(
-        L"3D Models (*.x;*.glb;*.gltf)\0*.x;*.glb;*.gltf\0DirectX Mesh (*.x)\0*.x\0glTF Binary (*.glb)\0*.glb\0glTF (*.gltf)\0*.gltf\0All Files (*.*)\0*.*\0",
+        L"3D Models (*.glb;*.gltf)\0*.glb;*.gltf\0glTF Binary (*.glb)\0*.glb\0glTF (*.gltf)\0*.gltf\0All Files (*.*)\0*.*\0",
         L"Import Mesh");
       if (!path.empty()) ImportMesh(path);
     }
@@ -1496,27 +2164,34 @@ void EditorApp::OnDraw() {
         L"T8ditor Scene (*.t8scene)\0*.t8scene\0JSON (*.json)\0*.json\0All Files (*.*)\0*.*\0",
         L"Save Scene", L"t8scene");
       if (!path.empty()) {
-        SceneFile sf;
+        SceneFile sf = g_hasLoadedSceneFile ? g_loadedSceneFile : SceneFile{};
         sf.editor.camera_target   = { m_camera.GetTarget().x, m_camera.GetTarget().y, m_camera.GetTarget().z };
         sf.editor.camera_yaw      = m_camera.GetYaw();
         sf.editor.camera_pitch    = m_camera.GetPitch();
         sf.editor.camera_distance = m_camera.GetDistance();
         sf.editor.show_skybox     = m_panels.showSkybox;
         sf.editor.show_wireframe  = m_panels.showWireframe;
+        sf.objects.clear();
         for (auto& obj : g_objects) {
           SceneObjectDesc od;
           od.name     = obj.name;
-          od.mesh     = obj.name;
+          od.mesh     = obj.meshPath.empty() ? obj.name : obj.meshPath;
+          od.ragdoll  = obj.ragdollResourcePath;
           od.position = { obj.wireframe.Position().x, obj.wireframe.Position().y, obj.wireframe.Position().z };
           od.rotation = { obj.wireframe.EulerRadians().x * kRadToDeg,
                           obj.wireframe.EulerRadians().y * kRadToDeg,
                           obj.wireframe.EulerRadians().z * kRadToDeg };
           od.scale    = { obj.wireframe.Scale().x, obj.wireframe.Scale().y, obj.wireframe.Scale().z };
           od.visible   = obj.visible;
+          od.mobile_visible = obj.mobileVisible;
           od.frozen    = obj.frozen;
           od.show_wire = obj.showWire;
           sf.objects.push_back(od);
         }
+        for (const SceneObjectDesc& od : g_unloadedSceneObjects) {
+          sf.objects.push_back(od);
+        }
+        sf.cameras.clear();
         for (auto& c : g_cameras) {
           SceneCameraDesc cd;
           cd.name       = c.name;
@@ -1532,6 +2207,7 @@ void EditorApp::OnDraw() {
           cd.frozen     = c.frozen;
           sf.cameras.push_back(cd);
         }
+        sf.lights.clear();
         for (auto& l : g_lights) {
           SceneLightDesc ld;
           ld.name      = l.name;
@@ -1544,9 +2220,19 @@ void EditorApp::OnDraw() {
           ld.enabled   = l.enabled;
           ld.visible   = l.visible;
           ld.frozen    = l.frozen;
+          ld.q3        = l.q3;
           sf.lights.push_back(ld);
         }
-        SaveSceneToFile(sf, path);
+        sf.collision = g_sceneCollisionResourcePath;
+        sf.profiles = g_sceneProfiles;
+        if (sf.collision.empty()) {
+          sf.collision = ResolveSceneCollisionPath(sf, path);
+          g_sceneCollisionResourcePath = sf.collision;
+        }
+        if (SaveSceneToFile(sf, path)) {
+          g_loadedSceneFile = sf;
+          g_hasLoadedSceneFile = true;
+        }
       }
     }
     if (menuAction.wantsLoadScene) {
@@ -1723,10 +2409,13 @@ void EditorApp::OnDraw() {
           float s[3] = {scl.x, scl.y, scl.z};
           if (ImGui::DragFloat3("Position", p, 0.1f)) { pos.x=p[0]; pos.y=p[1]; pos.z=p[2]; }
           if (ImGui::DragFloat3("Rotation", r, 0.5f)) { eulerDeg.x=r[0]; eulerDeg.y=r[1]; eulerDeg.z=r[2]; }
-          if (ImGui::DragFloat3("Scale", s, 0.01f, 0.01f, 100.0f)) { scl.x=s[0]; scl.y=s[1]; scl.z=s[2]; }
+          if (ImGui::DragFloat3("Scale", s, kScaleDragSpeed, kMinEditableScale, 100.0f, "%.6f")) {
+            scl.x=s[0]; scl.y=s[1]; scl.z=s[2];
+          }
           sel->wireframe.Position() = pos;
           sel->wireframe.EulerRadians() = XVECTOR3(eulerDeg.x*kDegToRad, eulerDeg.y*kDegToRad, eulerDeg.z*kDegToRad);
           sel->wireframe.Scale() = scl;
+          DrawRagdollInspector(*sel);
         }
         else if (g_selectionType == 1 && g_selectedIdx < (int)g_cameras.size()) {
           // Camera inspector

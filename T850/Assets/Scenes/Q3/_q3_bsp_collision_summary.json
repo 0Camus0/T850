@@ -1,0 +1,218 @@
+[
+  {
+    "map": "q3dm0",
+    "status": "ok",
+    "file": "D:\\Code\\Game\\T850\\T850\\Assets\\Scenes\\Q3\\q3dm0.t8q3clip",
+    "brushes": 1897,
+    "excluded_trigger_brushes": 9,
+    "jump_pads": 0
+  },
+  {
+    "map": "q3dm1",
+    "status": "ok",
+    "file": "D:\\Code\\Game\\T850\\T850\\Assets\\Scenes\\Q3\\q3dm1.t8q3clip",
+    "brushes": 963,
+    "excluded_trigger_brushes": 0,
+    "jump_pads": 0
+  },
+  {
+    "map": "q3dm2",
+    "status": "ok",
+    "file": "D:\\Code\\Game\\T850\\T850\\Assets\\Scenes\\Q3\\q3dm2.t8q3clip",
+    "brushes": 1323,
+    "excluded_trigger_brushes": 0,
+    "jump_pads": 0
+  },
+  {
+    "map": "q3dm3",
+    "status": "ok",
+    "file": "D:\\Code\\Game\\T850\\T850\\Assets\\Scenes\\Q3\\q3dm3.t8q3clip",
+    "brushes": 818,
+    "excluded_trigger_brushes": 0,
+    "jump_pads": 0
+  },
+  {
+    "map": "q3dm4",
+    "status": "ok",
+    "file": "D:\\Code\\Game\\T850\\T850\\Assets\\Scenes\\Q3\\q3dm4.t8q3clip",
+    "brushes": 1161,
+    "excluded_trigger_brushes": 9,
+    "jump_pads": 0
+  },
+  {
+    "map": "q3dm5",
+    "status": "ok",
+    "file": "D:\\Code\\Game\\T850\\T850\\Assets\\Scenes\\Q3\\q3dm5.t8q3clip",
+    "brushes": 1501,
+    "excluded_trigger_brushes": 3,
+    "jump_pads": 1
+  },
+  {
+    "map": "q3dm6",
+    "status": "ok",
+    "file": "D:\\Code\\Game\\T850\\T850\\Assets\\Scenes\\Q3\\q3dm6.t8q3clip",
+    "brushes": 2047,
+    "excluded_trigger_brushes": 3,
+    "jump_pads": 3
+  },
+  {
+    "map": "q3dm7",
+    "status": "ok",
+    "file": "D:\\Code\\Game\\T850\\T850\\Assets\\Scenes\\Q3\\q3dm7.t8q3clip",
+    "brushes": 2494,
+    "excluded_trigger_brushes": 4,
+    "jump_pads": 2
+  },
+  {
+    "map": "q3dm8",
+    "status": "ok",
+    "file": "D:\\Code\\Game\\T850\\T850\\Assets\\Scenes\\Q3\\q3dm8.t8q3clip",
+    "brushes": 2788,
+    "excluded_trigger_brushes": 5,
+    "jump_pads": 5
+  },
+  {
+    "map": "q3dm9",
+    "status": "ok",
+    "file": "D:\\Code\\Game\\T850\\T850\\Assets\\Scenes\\Q3\\q3dm9.t8q3clip",
+    "brushes": 2434,
+    "excluded_trigger_brushes": 26,
+    "jump_pads": 10
+  },
+  {
+    "map": "q3dm10",
+    "status": "ok",
+    "file": "D:\\Code\\Game\\T850\\T850\\Assets\\Scenes\\Q3\\q3dm10.t8q3clip",
+    "brushes": 2176,
+    "excluded_trigger_brushes": 1,
+    "jump_pads": 0
+  },
+  {
+    "map": "q3dm11",
+    "status": "ok",
+    "file": "D:\\Code\\Game\\T850\\T850\\Assets\\Scenes\\Q3\\q3dm11.t8q3clip",
+    "brushes": 5315,
+    "excluded_trigger_brushes": 17,
+    "jump_pads": 2
+  },
+  {
+    "map": "q3dm12",
+    "status": "ok",
+    "file": "D:\\Code\\Game\\T850\\T850\\Assets\\Scenes\\Q3\\q3dm12.t8q3clip",
+    "brushes": 4612,
+    "excluded_trigger_brushes": 26,
+    "jump_pads": 9
+  },
+  {
+    "map": "q3dm13",
+    "status": "ok",
+    "file": "D:\\Code\\Game\\T850\\T850\\Assets\\Scenes\\Q3\\q3dm13.t8q3clip",
+    "brushes": 1511,
+    "excluded_trigger_brushes": 3,
+    "jump_pads": 2
+  },
+  {
+    "map": "q3dm14",
+    "status": "ok",
+    "file": "D:\\Code\\Game\\T850\\T850\\Assets\\Scenes\\Q3\\q3dm14.t8q3clip",
+    "brushes": 2388,
+    "excluded_trigger_brushes": 7,
+    "jump_pads": 4
+  },
+  {
+    "map": "q3dm15",
+    "status": "ok",
+    "file": "D:\\Code\\Game\\T850\\T850\\Assets\\Scenes\\Q3\\q3dm15.t8q3clip",
+    "brushes": 2668,
+    "excluded_trigger_brushes": 17,
+    "jump_pads": 11
+  },
+  {
+    "map": "q3dm16",
+    "status": "ok",
+    "file": "D:\\Code\\Game\\T850\\T850\\Assets\\Scenes\\Q3\\q3dm16.t8q3clip",
+    "brushes": 1342,
+    "excluded_trigger_brushes": 11,
+    "jump_pads": 9
+  },
+  {
+    "map": "q3dm17",
+    "status": "ok",
+    "file": "D:\\Code\\Game\\T850\\T850\\Assets\\Scenes\\Q3\\q3dm17.t8q3clip",
+    "brushes": 432,
+    "excluded_trigger_brushes": 19,
+    "jump_pads": 13
+  },
+  {
+    "map": "q3dm18",
+    "status": "ok",
+    "file": "D:\\Code\\Game\\T850\\T850\\Assets\\Scenes\\Q3\\q3dm18.t8q3clip",
+    "brushes": 1485,
+    "excluded_trigger_brushes": 18,
+    "jump_pads": 15
+  },
+  {
+    "map": "q3dm19",
+    "status": "ok",
+    "file": "D:\\Code\\Game\\T850\\T850\\Assets\\Scenes\\Q3\\q3dm19.t8q3clip",
+    "brushes": 393,
+    "excluded_trigger_brushes": 5,
+    "jump_pads": 3
+  },
+  {
+    "map": "q3tourney1",
+    "status": "ok",
+    "file": "D:\\Code\\Game\\T850\\T850\\Assets\\Scenes\\Q3\\q3tourney1.t8q3clip",
+    "brushes": 1471,
+    "excluded_trigger_brushes": 3,
+    "jump_pads": 0
+  },
+  {
+    "map": "q3tourney2",
+    "status": "ok",
+    "file": "D:\\Code\\Game\\T850\\T850\\Assets\\Scenes\\Q3\\q3tourney2.t8q3clip",
+    "brushes": 1749,
+    "excluded_trigger_brushes": 10,
+    "jump_pads": 3
+  },
+  {
+    "map": "q3tourney3",
+    "status": "ok",
+    "file": "D:\\Code\\Game\\T850\\T850\\Assets\\Scenes\\Q3\\q3tourney3.t8q3clip",
+    "brushes": 819,
+    "excluded_trigger_brushes": 10,
+    "jump_pads": 6
+  },
+  {
+    "map": "q3tourney4",
+    "status": "ok",
+    "file": "D:\\Code\\Game\\T850\\T850\\Assets\\Scenes\\Q3\\q3tourney4.t8q3clip",
+    "brushes": 1345,
+    "excluded_trigger_brushes": 4,
+    "jump_pads": 4
+  },
+  {
+    "map": "q3tourney5",
+    "status": "ok",
+    "file": "D:\\Code\\Game\\T850\\T850\\Assets\\Scenes\\Q3\\q3tourney5.t8q3clip",
+    "brushes": 498,
+    "excluded_trigger_brushes": 1,
+    "jump_pads": 0
+  },
+  {
+    "map": "q3tourney6",
+    "status": "ok",
+    "file": "D:\\Code\\Game\\T850\\T850\\Assets\\Scenes\\Q3\\q3tourney6.t8q3clip",
+    "brushes": 541,
+    "excluded_trigger_brushes": 13,
+    "jump_pads": 8
+  },
+  {
+    "map": "nv15",
+    "status": "ok",
+    "file": "D:\\Code\\Game\\T850\\T850\\Assets\\Scenes\\Q3\\nv15.t8q3clip",
+    "brushes": 7594,
+    "excluded_trigger_brushes": 27,
+    "jump_pads": 0
+  }
+]

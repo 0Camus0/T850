@@ -269,6 +269,12 @@ struct Material {
       float glossinessFactor = 1.0f;
       std::optional<TextureInfo> specularGlossinessTexture;
     };
+    struct MOZLightmap {
+      int index = -1;
+      int texCoord = 1;
+      float intensity = 1.0f;
+      std::optional<TextureInfoExtensions> extensions;
+    };
 
     std::optional<KHRMaterialsTransmission> KHR_materials_transmission;
     std::optional<KHRMaterialsEmissiveStrength> KHR_materials_emissive_strength;
@@ -284,6 +290,7 @@ struct Material {
     std::optional<KHRMaterialsVolumeScatter> KHR_materials_volume_scatter;
     std::optional<KHRMaterialsUnlit> KHR_materials_unlit;
     std::optional<KHRMaterialsPBRSpecularGlossiness> KHR_materials_pbrSpecularGlossiness;
+    std::optional<MOZLightmap> MOZ_lightmap;
   };
   std::optional<Extensions> extensions;
 };

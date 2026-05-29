@@ -39,6 +39,9 @@ namespace PassType {
     LIGHT_ADD,
     FADE,
     DEFERRED_LDR,
+    DEFERRED_LIGHT_VOLUME,
+    LENS_FLARE_SUN,
+    LENS_FLARE_GHOST,
     COUNT
   };
 }
@@ -106,6 +109,7 @@ struct ShaderKey {
   // ── Extra UV channels (UV0/UV1 are bits 3/4) ──
   static constexpr uint64_t HAS_TEXCOORD2 = 1ull << 39;
   static constexpr uint64_t HAS_TEXCOORD3 = 1ull << 40;
+  static constexpr uint64_t LIGHTMAP_MAP = 1ull << 41;
 
   // Mask of every bit that affects vertex layout / IA reflection.
   // Used by passes that re-derive a key from a base subset key (e.g.

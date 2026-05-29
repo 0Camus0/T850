@@ -8,6 +8,7 @@ namespace t850 {
   public:
     struct CBuffer {
       XMATRIX44 WVP;
+      XVECTOR3  LineColor;
     };
     struct Vert {
       float x, y, z, w;
@@ -16,6 +17,7 @@ namespace t850 {
     WireframeSphere() : s(nullptr), IB(nullptr), VB(nullptr), CB(nullptr) {}
     void Create(int rings = 12, int segments = 24);
     void Draw(const XMATRIX44& vp, const XVECTOR3& center, float radius);
+    void Draw(const XMATRIX44& vp, const XVECTOR3& center, float radius, const XVECTOR3& color);
     void Destroy();
 
   private:

@@ -363,6 +363,26 @@ namespace t850 {
     height = h;
   }
 
+  void GLDriver::SetViewport(float x, float y, float w, float h) {
+    if (w <= 0.0f || h <= 0.0f)
+      return;
+
+    int targetHeight = height;
+    if (CurrentRT >= 0 && CurrentRT < static_cast<int>(RTs.size()) && RTs[CurrentRT])
+      targetHeight = RTs[CurrentRT]->h;
+    glViewport(GLint(x), GLint(targetHeight - y - h), GLsizei(w), GLsizei(h));
+  }
+
+  void GLDriver::SetScissorRect(int x, int y, int w, int h) {
+    if (w <= 0 || h <= 0)
+      return;
+
+    int targetHeight = height;
+    if (CurrentRT >= 0 && CurrentRT < static_cast<int>(RTs.size()) && RTs[CurrentRT])
+      targetHeight = RTs[CurrentRT]->h;
+    glScissor(x, targetHeight - y - h, w, h);
+  }
+
   bool GLDriver::ResizeSwapchain(int newW, int newH) {
     if (newW <= 0 || newH <= 0) return false;
 #if defined(T850_HEADLESS) || defined(USING_OPENGL) || defined(USING_OPENGL_ES30) || defined(USING_OPENGL_ES31)
@@ -576,6 +596,55 @@ namespace t850 {
 
     glBindFramebuffer(GL_FRAMEBUFFER, prevFBO);
     glViewport(prevViewport[0], prevViewport[1], prevViewport[2], prevViewport[3]);
+  }
+
+  bool GLDriver::ReadRTColorFloat(int rtID, int attachment, float outRGBA[4]) {
+    if (!outRGBA || rtID < 0 || rtID >= (int)RTs.size() || !RTs[rtID])
+      return false;
+    if (attachment < 0 || attachment >= RTs[rtID]->number_RT)
+      return false;
+
+    BaseRT* rt = RTs[rtID];
+    GLRT* glrt = static_cast<GLRT*>(rt);
+    int attachmentFormat = rt->color_format;
+    if (!rt->perColorFormats.empty() && attachment < (int)rt->perColorFormats.size())
+      attachmentFormat = rt->perColorFormats[attachment];
+
+    GLint prevFBO = 0;
+    GLint prevReadBuffer = 0;
+    glGetIntegerv(GL_FRAMEBUFFER_BINDING, &prevFBO);
+    glGetIntegerv(GL_READ_BUFFER, &prevReadBuffer);
+
+    glBindFramebuffer(GL_FRAMEBUFFER, glrt->vFrameBuffers[0]);
+    glReadBuffer(GL_COLOR_ATTACHMENT0 + attachment);
+
+    outRGBA[0] = outRGBA[1] = outRGBA[2] = 0.0f;
+    outRGBA[3] = 1.0f;
+    bool ok = true;
+    if (attachmentFormat == BaseRT::R8) {
+      unsigned char v = 0;
+      glReadPixels(0, 0, 1, 1, GL_RED, GL_UNSIGNED_BYTE, &v);
+      outRGBA[0] = outRGBA[1] = outRGBA[2] = (float)v / 255.0f;
+    } else if (attachmentFormat == BaseRT::F16 || attachmentFormat == BaseRT::F32) {
+      float v = 0.0f;
+      glReadPixels(0, 0, 1, 1, GL_RED, GL_FLOAT, &v);
+      outRGBA[0] = outRGBA[1] = outRGBA[2] = v;
+    } else if (attachmentFormat == BaseRT::RGBA16F || attachmentFormat == BaseRT::RGBA32F) {
+      glReadPixels(0, 0, 1, 1, GL_RGBA, GL_FLOAT, outRGBA);
+    } else {
+      unsigned char rgba[4] = {};
+      glReadPixels(0, 0, 1, 1, GL_RGBA, GL_UNSIGNED_BYTE, rgba);
+      outRGBA[0] = (float)rgba[0] / 255.0f;
+      outRGBA[1] = (float)rgba[1] / 255.0f;
+      outRGBA[2] = (float)rgba[2] / 255.0f;
+      outRGBA[3] = (float)rgba[3] / 255.0f;
+    }
+
+    GLenum err = glGetError();
+    ok = (err == GL_NO_ERROR);
+    glReadBuffer((GLenum)prevReadBuffer);
+    glBindFramebuffer(GL_FRAMEBUFFER, prevFBO);
+    return ok;
   }
 
   void GLDriver::SetCullFace(FaceCulling state) {

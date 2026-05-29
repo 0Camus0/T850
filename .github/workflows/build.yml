@@ -127,7 +127,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
         with:
-          lfs: true
+          lfs: false
 
       - name: Setup Java
         uses: actions/setup-java@v4
@@ -189,9 +189,20 @@ jobs:
         run: |
           $ErrorActionPreference = 'Stop'
           $abi = '${{ matrix.artifact_suffix }}'
-          $unsigned = 'T850\android\app\build\outputs\apk\release\app-release-unsigned.apk'
-          if (-not (Test-Path $unsigned)) {
-            throw "Build output not found: $unsigned"
+          $apkRoot = 'T850\android\app\build\outputs\apk'
+          $outputs = @(
+            @{ Flavor = 'development'; Source = Join-Path $apkRoot 'development\release\app-development-release-unsigned.apk' },
+            @{ Flavor = 'production'; Source = Join-Path $apkRoot 'production\release\app-production-release-unsigned.apk' }
+          )
+          foreach ($output in $outputs) {
+            if (-not (Test-Path $output.Source)) {
+              $signedByGradle = $output.Source -replace '-unsigned\.apk$', '.apk'
+              if (Test-Path $signedByGradle) {
+                $output.Source = $signedByGradle
+              } else {
+                throw "Build output not found: $($output.Source)"
+              }
+            }
           }
 
           $stage = 'artifacts\android'
@@ -203,7 +214,9 @@ jobs:
               throw 'ANDROID_KEYSTORE_BASE64 is required for tagged releases. Configure Android signing secrets before publishing a release tag.'
             }
             Write-Host 'ANDROID_KEYSTORE_BASE64 was not provided; uploading unsigned Android CI APK.'
-            Copy-Item $unsigned -Destination (Join-Path $stage "T850-Android-$abi-release-unsigned.apk") -Force
+            foreach ($output in $outputs) {
+              Copy-Item $output.Source -Destination (Join-Path $stage "T850-Android-$abi-$($output.Flavor)-release-unsigned.apk") -Force
+            }
             exit 0
           }
           if ([string]::IsNullOrWhiteSpace($env:ANDROID_KEYSTORE_PASSWORD)) {
@@ -223,19 +236,20 @@ jobs:
           $keystore = Join-Path $env:RUNNER_TEMP 'android-release.keystore'
           [IO.File]::WriteAllBytes($keystore, [Convert]::FromBase64String($env:ANDROID_KEYSTORE_BASE64))
 
-          $aligned = Join-Path $env:RUNNER_TEMP "T850-Android-$abi-release-aligned.apk"
-          $signed = Join-Path $stage "T850-Android-$abi-release-signed.apk"
-          & $zipalign -p -f 4 $unsigned $aligned
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-
           $keyPassword = $env:ANDROID_KEY_PASSWORD
           if ([string]::IsNullOrWhiteSpace($keyPassword)) {
             $keyPassword = $env:ANDROID_KEYSTORE_PASSWORD
           }
-          & $apksigner sign --ks $keystore --ks-pass "pass:$env:ANDROID_KEYSTORE_PASSWORD" --ks-key-alias $env:ANDROID_KEY_ALIAS --key-pass "pass:$keyPassword" --out $signed $aligned
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          & $apksigner verify --verbose $signed
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          foreach ($output in $outputs) {
+            $aligned = Join-Path $env:RUNNER_TEMP "T850-Android-$abi-$($output.Flavor)-release-aligned.apk"
+            $signed = Join-Path $stage "T850-Android-$abi-$($output.Flavor)-release-signed.apk"
+            & $zipalign -p -f 4 $output.Source $aligned
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+            & $apksigner sign --ks $keystore --ks-pass "pass:$env:ANDROID_KEYSTORE_PASSWORD" --ks-key-alias $env:ANDROID_KEY_ALIAS --key-pass "pass:$keyPassword" --out $signed $aligned
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+            & $apksigner verify --verbose $signed
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          }
 
       - name: Upload Android APK
         uses: actions/upload-artifact@v4
@@ -254,7 +268,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
         with:
-          lfs: true
+          lfs: false
 
       - name: Download all artifacts
         uses: actions/download-artifact@v4

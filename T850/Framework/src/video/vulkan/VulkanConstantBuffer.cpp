@@ -59,7 +59,10 @@ namespace t850 {
 
     if (initialData) {
       sysMemCpy.assign((char*)initialData, (char*)initialData + desc.byteWidth);
-      if (m_mappedData) memcpy(m_mappedData, initialData, desc.byteWidth);
+      if (m_mappedData) {
+        memcpy(m_mappedData, initialData, desc.byteWidth);
+        vmaFlushAllocation(allocator, m_allocation, 0, desc.byteWidth);
+      }
     }
     T8_LOG_DEBUG("[Vulkan] CB created: %d bytes (aligned=%u)", desc.byteWidth, m_alignedSize);
   }
@@ -88,13 +91,18 @@ namespace t850 {
   }
 
   void VulkanConstantBuffer::UpdateFromSystemCopy(const DeviceContext& deviceContext) {
-    if (m_mappedData && !sysMemCpy.empty())
+    if (m_mappedData && !sysMemCpy.empty()) {
       memcpy(m_mappedData, sysMemCpy.data(), sysMemCpy.size());
+      vmaFlushAllocation(GetVkDriver()->GetAllocator(), m_allocation, 0, sysMemCpy.size());
+    }
   }
 
   void VulkanConstantBuffer::UpdateFromBuffer(const DeviceContext& deviceContext, const void* buffer) {
     sysMemCpy.assign((char*)buffer, (char*)buffer + descriptor.byteWidth);
-    if (m_mappedData) memcpy(m_mappedData, buffer, descriptor.byteWidth);
+    if (m_mappedData) {
+      memcpy(m_mappedData, buffer, descriptor.byteWidth);
+      vmaFlushAllocation(GetVkDriver()->GetAllocator(), m_allocation, 0, descriptor.byteWidth);
+    }
   }
 
   void VulkanConstantBuffer::release() {

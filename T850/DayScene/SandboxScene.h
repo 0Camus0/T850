@@ -4,26 +4,32 @@
 #include <scene/PrimitiveInstance.h>
 #include <utils/xMaths.h>
 #include <utils/Camera.h>
+#include <utils/CameraProfiles.h>
 #include <utils/Timer.h>
 #include <scene/SceneSetup.h>
 #include <scene/RenderGraph.h>
+#include <scene/EditorSceneFile.h>
 #include <scene/WireframeSphere.h>
 #include <scene/LineRenderer.h>
 #include <scene/TextRenderer.h>
 #include <physics/PhysicsDebugRenderer.h>
+#include <physics/Q3BspCollision.h>
 #include <physics/PhysicsTypes.h>
 #include <debug/FrameDumper.h>
-#include <gui/GUIManager.h>
 #include <Config.h>
 
 #include <array>
 #include <cstdint>
+#include <memory>
 #include <string>
 #include <vector>
 
-namespace t850 { class JoltPhysicsSystem; }
+namespace t850 {
+class JoltPhysicsSystem;
+class RenderSkinnedMesh;
+}
 
-class SandboxScene : public t850::SceneBase
+class SandboxScene : public t850::SceneBase, public t850::CameraCollisionWorld
 {
   enum {
     CHANGE_EXPOSURE = 0,
@@ -46,6 +52,9 @@ class SandboxScene : public t850::SceneBase
     CHANGE_GAUSS_KERNEL_DEVIATION,
     CHANGE_FOV,
     CHANGE_LIGHT_INTENSITY,
+    CHANGE_LIGHT_RADIUS_SCALE,
+    CHANGE_LIGHT_INTENSITY_SCALE,
+    CHANGE_LIGHTMAP_INTENSITY,
     CHANGE_SHADOW_BIAS,
     CHANGE_SHADOW_MIN,
     CHANGE_ENV_FACTOR,
@@ -59,6 +68,7 @@ class SandboxScene : public t850::SceneBase
     CHANGE_CUBEMAP,
     CHANGE_GAUSS_KERNEL_SAMPLE_COUNT,
     CHANGE_ACTIVE_GAUSS_KERNEL,
+    CHANGE_LUMINANCE_MODE,
     // Animation controls (only active for skinned meshes)
     CHANGE_ANIM_SPEED,
     CHANGE_ANIM_SELECT,
@@ -66,6 +76,8 @@ class SandboxScene : public t850::SceneBase
     CHANGE_SHOW_WIREFRAME,
     CHANGE_SHOW_SKELETON,
     CHANGE_SHOW_PHYSICS,
+    CHANGE_SHOW_LIGHT_VOLUMES,
+    CHANGE_POINT_LIGHTS_ENABLED,
     CHANGE_MAX_NUM_OPTIONS
   };
 public:
@@ -79,22 +91,25 @@ public:
   void CreateAssets() override;
   void DestroyAssets() override;
 
-  void PopulateGUI(t850::GUIManager& gui) override;
-  void SyncToGUI(t850::GUIManager& gui) override;
-  void SyncFromGUI(t850::GUIManager& gui) override;
   void DrawDevGui(t850::DevGuiContext& gui) override;
 #ifdef OS_ANDROID
+  bool HandleAndroidVirtualControls(AInputEvent* event);
+  bool AndroidVirtualControlsActive() const;
+  void DrawAndroidVirtualControls(bool guiVisible);
   void DrawAndroidPhysicsPanel(t850::DevGuiContext& gui);
+  void ResetAndroidVirtualControls();
 #endif
   void RequestDump() override { m_dumper.RequestDump(); }
 
   float DtSecs = 0.0f;
   t850::PrimitiveManager PrimitiveMgr;
-  t850::PrimitiveInst Meshes[10];
+  static constexpr int kMaxSandboxMeshes = 64;
+  t850::PrimitiveInst Meshes[kMaxSandboxMeshes];
   t850::PrimitiveInst Quads[10];
+  int m_meshCount = 0;
 
   t850::RenderGraph m_renderGraph;
-  t850::SceneSetup m_guiSetup; // loaded from SandboxScene.json for GUI descriptors
+  t850::SceneSetup m_controlSetup;
   t850::FrameDumper m_dumper;
   int ChangeActiveGaussSelection = 1; // 0=Shadow, 1=Bloom, 2=DOF
   int m_debugRTSelection = 0;
@@ -102,6 +117,21 @@ public:
   Camera Cam;
   Camera LightCam;
   Camera* ActiveCam = nullptr;
+  t850::CameraController m_cameraController;
+  int m_cameraProfileSelection = 0;
+  float m_mouseSensitivityX = 1.0f;
+  float m_mouseSensitivityY = 1.0f;
+#ifdef OS_ANDROID
+  bool AndroidVirtualControlsVisible() const;
+  int m_androidMovePointerId = -1;
+  int m_androidLookPointerId = -1;
+  int m_androidJumpPointerId = -1;
+  int m_androidRunPointerId = -1;
+  XVECTOR2 m_androidMoveAxis;
+  XVECTOR2 m_androidLookAxis;
+  bool m_androidJump = false;
+  bool m_androidRun = false;
+#endif
 
   XMATRIX44 VP;
   XMATRIX44 m;
@@ -125,7 +155,6 @@ public:
   int ShadowAccumPass = -1;
   int ExtraHelperPass = -1;
   int BloomAccumPass = -1;
-  int LuminanceMapPass = -1;
   int AdaptedLumCurrentPass = -1;
   int AdaptedLumPrevPass = -1;
 
@@ -150,12 +179,36 @@ public:
   bool m_showWireframe = false;
   bool m_showSkeleton = false;
   bool m_showPhysics = false;
+  bool m_showLightVolumes = false;
   bool m_drawLightDirection = false;
   bool m_profileReady = false;
   bool m_profileDirty = false;
   int m_selectedLightIndex = 0;
   std::vector<bool> m_lightAttachToCamera;
+  bool m_loadedEditorScene = false;
+  std::string m_loadedEditorScenePath;
+  std::unique_ptr<t850::Q3BspCollisionWorld> m_q3CollisionWorld;
+  std::string m_primaryRagdollResourcePath;
+  std::vector<std::string> m_sceneMeshPaths;
+  std::vector<std::string> m_sceneRagdollPaths;
+  std::vector<uint32_t> m_q3StaticCollisionEntityIds;
+  struct SceneRagdollRuntime {
+    int meshIndex = -1;
+    std::string resourcePath;
+    t850::PhysicsRagdollAnimationBinding binding;
+    t850::PhysicsRagdollDesc pose;
+    std::vector<t850::PhysicsBodyState> physicsStates;
+    std::vector<int> physicsBoneIndices;
+    std::vector<XMATRIX44> physicsCombinedMatrices;
+    bool driveLogEmitted = false;
+    bool physicsDriven = false;
+    bool physicsLogEmitted = false;
+  };
+  std::vector<SceneRagdollRuntime> m_sceneRagdolls;
+  int m_selectedSkinningMeshIndex = 0;
+  int m_selectedAnimationMeshIndex = 0;
   std::string m_profileModelKey;
+  bool m_profileEmbeddedInScene = false;
   int m_selectedProfileTargetIndex = 0;
   t850::SandboxProfileDesc m_profileBaselineState;
   t850::SandboxProfileDesc m_profileSavedState;
@@ -203,11 +256,7 @@ public:
   bool m_ragdollDriveLogEmitted = false;
   bool m_ragdollPhysicsLogEmitted = false;
   bool m_ragdollFloorRuntimeDiagEmitted = false;
-#if defined(OS_ANDROID)
-  int m_ragdollSimulationSpeedIndex = 8;
-#else
-  int m_ragdollSimulationSpeedIndex = 5;
-#endif
+  int m_ragdollSimulationSpeedIndex = 3;
   bool m_ragdollUseFixedSimulationDelta = false;
   bool m_ragdollConfigSpeedApplied = false;
   bool m_ragdollAutoStartAttempted = false;
@@ -291,11 +340,34 @@ public:
 
   void ComputeOrbitCamera();
   void FitModelToView();
+  bool SetCameraProfile(t850::CameraProfileType type);
+  void SyncOrbitProfileFromSandbox();
+  void SyncSandboxOrbitFromProfile();
+  t850::CameraInputState BuildCameraInputState(InputManager* input, bool imguiWantsMouse) const;
+  bool SweepCapsule(const t850::CameraCollisionSweep& sweep, t850::CameraCollisionHit& outHit) const override;
+  bool SweepBox(const t850::CharacterBoxSweep& sweep, t850::CameraCollisionHit& outHit) const override;
+  bool QueryTriggerTouch(const t850::CharacterTriggerQuery& query, t850::CharacterTriggerTouch& outTouch) const override;
+  bool LoadEditorSceneAssets(const std::string& scenePath);
+  void ApplyEditorSceneCameraAndLights(const t850::scene::EditorSceneFile& scene);
+  int GetRuntimeMeshCount() const;
+  t850::RenderSkinnedMesh* GetSkinnedMeshForIndex(int meshIndex) const;
+  std::vector<std::string> BuildSkinnedMeshOptions(std::vector<int>* outMeshIndices = nullptr) const;
+  int ClampSkinnedMeshSelection(int preferredMeshIndex) const;
+  t850::RenderSkinnedMesh* GetSelectedSkinningMesh() const;
+  t850::RenderSkinnedMesh* GetSelectedAnimationMesh() const;
   void EnsureLightRuntimeState();
   void UpdateAttachedLights();
   void SyncLightCameraFromDirectionalLight();
   bool AdjustSelectedDirectionalLightFromMouse(float dx, float dy);
   void DrawSelectedDirectionalLightArrow();
+  bool AttachSceneObjectRagdoll(int meshIndex, const std::string& meshPath, const std::string& ragdollPath);
+  SceneRagdollRuntime* FindSceneRagdollRuntime(int meshIndex);
+  const SceneRagdollRuntime* FindSceneRagdollRuntime(int meshIndex) const;
+  bool IsSceneRagdollPhysicsDriven(int meshIndex) const;
+  void DriveSceneRagdollsFromAnimation(float deltaSeconds);
+  bool SwitchSceneRagdollsToPhysics(int meshIndexFilter = -1);
+  bool ResetSceneRagdollPhysicsAndAnimation(int meshIndex);
+  void UpdateSceneSkeletonsFromRagdollPhysics();
   void DriveRagdollFromAnimation(float deltaSeconds);
   void UpdateSkeletonFromRagdollPhysics();
   void SwitchRagdollToPhysics();
@@ -435,7 +507,7 @@ public:
   void DrawSkeletonPreviewBoneGizmo();
   std::array<float, 3> GetSkeletonEditBoneScale(int boneIndex) const;
   bool SetSkeletonEditBoneScale(int boneIndex, const std::array<float, 3>& scale);
-  void LoadSandboxProfile();
+  void LoadSandboxProfile(bool embeddedInScene = false);
   void SaveSandboxProfile();
   void CaptureSandboxProfileState(t850::SandboxProfileDesc& state);
   void ApplySandboxProfileState(const t850::SandboxProfileDesc& state);

@@ -283,6 +283,7 @@ bool LoadGLTF(const std::string& path, Document& out) {
     "KHR_materials_unlit",
     "KHR_materials_volume",
     "KHR_materials_volume_scatter",
+    "MOZ_lightmap",
     "KHR_texture_transform"
   };
   if (!out.extensionsRequired.empty()) {

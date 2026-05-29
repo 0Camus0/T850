@@ -6,12 +6,18 @@
 #include <scene/RenderMesh.h>
 #include <scene/RenderSkinnedMesh.h>
 #include <utils/Log.h>
+#include <utils/ResourceLocator.h>
 
 #include <algorithm>
 #include <array>
 #include <chrono>
 #include <cctype>
 #include <cmath>
+#include <cstdlib>
+#include <cstring>
+#include <filesystem>
+#include <fstream>
+#include <iomanip>
 #include <initializer_list>
 #include <limits>
 #include <string>
@@ -201,6 +207,22 @@ float BasisLength(const XMATRIX44& matrix, int row) {
   return Length(XVECTOR3(matrix.m[row][0], matrix.m[row][1], matrix.m[row][2], 0.0f));
 }
 
+float UniformScaleFromWorldTransform(const XMATRIX44& worldFromMesh) {
+  const float sx = BasisLength(worldFromMesh, 0);
+  const float sy = BasisLength(worldFromMesh, 1);
+  const float sz = BasisLength(worldFromMesh, 2);
+  const float scale = (std::max)(sx, (std::max)(sy, sz));
+  return std::isfinite(scale) && scale > 0.000001f ? scale : 1.0f;
+}
+
+XVECTOR3 TransformSavedRagdollAxis(const std::array<float, 3>& savedAxis,
+                                   const XMATRIX44& worldFromMesh,
+                                   const XVECTOR3& fallback) {
+  return NormalizeOr(
+      TransformPhysicsVector(XVECTOR3(savedAxis[0], savedAxis[1], savedAxis[2], 0.0f), worldFromMesh),
+      fallback);
+}
+
 void PreserveBasisLengths(const XMATRIX44& source, XMATRIX44& target) {
   for (int row = 0; row < 3; ++row) {
     const float sourceLength = BasisLength(source, row);
@@ -236,7 +258,11 @@ bool InvertAffine(const XMATRIX44& matrix, XMATRIX44& out) {
       a00 * (a11 * a22 - a12 * a21) -
       a01 * (a10 * a22 - a12 * a20) +
       a02 * (a10 * a21 - a11 * a20);
-  if (std::fabs(det) <= 0.000001f) {
+  const float maxBasis =
+      (std::max)(BasisLength(matrix, 0), (std::max)(BasisLength(matrix, 1), BasisLength(matrix, 2)));
+  const float detEpsilon =
+      (std::max)(1.0e-12f, maxBasis * maxBasis * maxBasis * 1.0e-6f);
+  if (!std::isfinite(det) || std::fabs(det) <= detEpsilon) {
     return false;
   }
 
@@ -265,6 +291,10 @@ bool InvertAffine(const XMATRIX44& matrix, XMATRIX44& out) {
 }
 
 const xF::xSkeleton* FindReferenceSkeleton(const RenderSkinnedMesh& mesh) {
+  const xF::xSkeleton* controllerBind = mesh.GetAnimController().GetBindSkeleton();
+  if (controllerBind && !controllerBind->Bones.empty()) {
+    return controllerBind;
+  }
   if (mesh.xFile && !mesh.xFile->XMeshDataBase.empty() && mesh.xFile->XMeshDataBase[0]) {
     const xF::xMeshContainer* meshContainer = mesh.xFile->XMeshDataBase[0];
     if (!meshContainer->Skeleton.Bones.empty()) {
@@ -1185,6 +1215,747 @@ bool FitCapsuleToSamples(const std::vector<WeightedPoint>& samples,
   return true;
 }
 
+struct RagdollEditBodyJson {
+  int index = -1;
+  int boneIndex = -1;
+  std::string name;
+  int parentBody = -1;
+  int jointParentBody = kPhysicsRagdollJointInheritParent;
+  bool bodyFrozen = false;
+  bool jointFrozen = false;
+  bool hasJointContactAnchor = false;
+  bool jointContactAnchor = false;
+  int jointType = 0;
+  bool hasJointAnchor = false;
+  std::array<float, 3> jointAnchor{};
+  bool hasParentJointTwistAxis = false;
+  bool hasParentJointPlaneAxis = false;
+  bool hasChildJointTwistAxis = false;
+  bool hasChildJointPlaneAxis = false;
+  std::array<float, 3> parentJointTwistAxis{};
+  std::array<float, 3> parentJointPlaneAxis{};
+  std::array<float, 3> childJointTwistAxis{};
+  std::array<float, 3> childJointPlaneAxis{};
+  std::array<float, 16> bodyFromBone{};
+  std::string shapeType = "capsule";
+  float radius = 0.0f;
+  float halfHeight = 0.0f;
+  std::array<float, 3> halfExtents{};
+  float swingLimitRadians = 0.0f;
+  float twistLimitRadians = 0.0f;
+  std::vector<int> controlledBones;
+};
+
+struct RagdollEditJson {
+  int schema = 1;
+  std::string model;
+  std::vector<RagdollEditBodyJson> bodies;
+};
+
+std::string JsonEscape(const std::string& value) {
+  std::string out;
+  out.reserve(value.size());
+  for (char ch : value) {
+    if (ch == '\\' || ch == '"') {
+      out.push_back('\\');
+    }
+    out.push_back(ch);
+  }
+  return out;
+}
+
+bool ParseJsonStringAt(const std::string& json, std::size_t keyPos, std::string& out) {
+  const std::size_t colon = json.find(':', keyPos);
+  if (colon == std::string::npos) return false;
+  std::size_t quote = json.find('"', colon + 1);
+  if (quote == std::string::npos) return false;
+  ++quote;
+  out.clear();
+  bool escaped = false;
+  for (std::size_t i = quote; i < json.size(); ++i) {
+    const char ch = json[i];
+    if (escaped) {
+      out.push_back(ch);
+      escaped = false;
+    } else if (ch == '\\') {
+      escaped = true;
+    } else if (ch == '"') {
+      return true;
+    } else {
+      out.push_back(ch);
+    }
+  }
+  return false;
+}
+
+bool ParseJsonIntAt(const std::string& json, std::size_t keyPos, int& out) {
+  const std::size_t colon = json.find(':', keyPos);
+  if (colon == std::string::npos) return false;
+  char* end = nullptr;
+  const long value = std::strtol(json.c_str() + colon + 1, &end, 10);
+  if (end == json.c_str() + colon + 1) return false;
+  out = static_cast<int>(value);
+  return true;
+}
+
+bool ParseJsonFloatAt(const std::string& json, std::size_t keyPos, float& out) {
+  const std::size_t colon = json.find(':', keyPos);
+  if (colon == std::string::npos) return false;
+  char* end = nullptr;
+  const float value = std::strtof(json.c_str() + colon + 1, &end);
+  if (end == json.c_str() + colon + 1) return false;
+  out = value;
+  return true;
+}
+
+bool ParseJsonBoolAt(const std::string& json, std::size_t keyPos, bool& out) {
+  const std::size_t colon = json.find(':', keyPos);
+  if (colon == std::string::npos) return false;
+  const char* cursor = json.c_str() + colon + 1;
+  while (*cursor == ' ' || *cursor == '\t' || *cursor == '\r' || *cursor == '\n') ++cursor;
+  if (std::strncmp(cursor, "true", 4) == 0) {
+    out = true;
+    return true;
+  }
+  if (std::strncmp(cursor, "false", 5) == 0) {
+    out = false;
+    return true;
+  }
+  return false;
+}
+
+bool ParseFloatArray16At(const std::string& json, std::size_t keyPos, std::array<float, 16>& out) {
+  const std::size_t start = json.find('[', keyPos);
+  if (start == std::string::npos) return false;
+  const char* cursor = json.c_str() + start + 1;
+  char* end = nullptr;
+  for (std::size_t i = 0; i < out.size(); ++i) {
+    while (*cursor == ' ' || *cursor == '\t' || *cursor == '\r' || *cursor == '\n' || *cursor == ',') ++cursor;
+    out[i] = std::strtof(cursor, &end);
+    if (end == cursor) return false;
+    cursor = end;
+  }
+  return true;
+}
+
+bool ParseFloatArray3At(const std::string& json, std::size_t keyPos, std::array<float, 3>& out) {
+  const std::size_t start = json.find('[', keyPos);
+  if (start == std::string::npos) return false;
+  const char* cursor = json.c_str() + start + 1;
+  char* end = nullptr;
+  for (std::size_t i = 0; i < out.size(); ++i) {
+    while (*cursor == ' ' || *cursor == '\t' || *cursor == '\r' || *cursor == '\n' || *cursor == ',') ++cursor;
+    out[i] = std::strtof(cursor, &end);
+    if (end == cursor) return false;
+    cursor = end;
+  }
+  return true;
+}
+
+bool ParseIntArrayAt(const std::string& json, std::size_t keyPos, std::vector<int>& out) {
+  out.clear();
+  const std::size_t start = json.find('[', keyPos);
+  if (start == std::string::npos) return false;
+  const std::size_t endArray = json.find(']', start + 1);
+  if (endArray == std::string::npos) return false;
+
+  const char* cursor = json.c_str() + start + 1;
+  const char* endCursor = json.c_str() + endArray;
+  while (cursor < endCursor) {
+    while (cursor < endCursor && (*cursor == ' ' || *cursor == '\t' || *cursor == '\r' || *cursor == '\n' || *cursor == ',')) {
+      ++cursor;
+    }
+    if (cursor >= endCursor) break;
+    char* parsedEnd = nullptr;
+    const long value = std::strtol(cursor, &parsedEnd, 10);
+    if (parsedEnd == cursor) return false;
+    out.push_back(static_cast<int>(value));
+    cursor = parsedEnd;
+  }
+  return true;
+}
+
+bool ParseRagdollEditJson(const std::string& json, RagdollEditJson& out) {
+  out = RagdollEditJson{};
+  if (const std::size_t schemaKey = json.find("\"schema\""); schemaKey != std::string::npos) {
+    ParseJsonIntAt(json, schemaKey, out.schema);
+  }
+  if (const std::size_t modelKey = json.find("\"model\""); modelKey != std::string::npos) {
+    ParseJsonStringAt(json, modelKey, out.model);
+  }
+
+  std::size_t pos = json.find("\"capsules\"");
+  if (pos == std::string::npos) {
+    pos = json.find("\"bodies\"");
+  }
+  if (pos == std::string::npos) return true;
+  while ((pos = json.find("\"index\"", pos)) != std::string::npos) {
+    RagdollEditBodyJson body;
+    if (!ParseJsonIntAt(json, pos, body.index)) break;
+
+    const std::size_t boneIndexKey = json.find("\"bone_index\"", pos);
+    const std::size_t nameKey = json.find("\"name\"", pos);
+    const std::size_t parentKey = json.find("\"parent_capsule\"", pos);
+    const std::size_t parentBodyKey = json.find("\"parent_body\"", pos);
+    const std::size_t jointParentKey = json.find("\"joint_parent_capsule\"", pos);
+    const std::size_t jointParentBodyKey = json.find("\"joint_parent_body\"", pos);
+    const std::size_t bodyFrozenKey = json.find("\"capsule_frozen\"", pos);
+    const std::size_t bodyFrozenKey2 = json.find("\"body_frozen\"", pos);
+    const std::size_t jointFrozenKey = json.find("\"joint_frozen\"", pos);
+    const std::size_t jointContactKey = json.find("\"joint_contact_anchor\"", pos);
+    const std::size_t jointTypeKey = json.find("\"joint_type\"", pos);
+    const std::size_t jointAnchorKey = json.find("\"joint_anchor\"", pos);
+    const std::size_t parentJointTwistKey = json.find("\"parent_joint_twist_axis\"", pos);
+    const std::size_t parentJointPlaneKey = json.find("\"parent_joint_plane_axis\"", pos);
+    const std::size_t childJointTwistKey = json.find("\"child_joint_twist_axis\"", pos);
+    const std::size_t childJointPlaneKey = json.find("\"child_joint_plane_axis\"", pos);
+    const std::size_t matrixKey = json.find("\"body_from_bone\"", pos);
+    const std::size_t shapeTypeKey = json.find("\"shape_type\"", pos);
+    const std::size_t radiusKey = json.find("\"radius\"", pos);
+    const std::size_t halfHeightKey = json.find("\"half_height\"", pos);
+    const std::size_t halfExtentsKey = json.find("\"half_extents\"", pos);
+    const std::size_t swingKey = json.find("\"swing_limit\"", pos);
+    const std::size_t twistKey = json.find("\"twist_limit\"", pos);
+    const std::size_t controlledKey = json.find("\"controlled_bones\"", pos);
+    const std::size_t objectEnd = json.find('}', pos);
+    if (objectEnd == std::string::npos) break;
+    if (boneIndexKey == std::string::npos || nameKey == std::string::npos ||
+        matrixKey == std::string::npos || radiusKey == std::string::npos ||
+        halfHeightKey == std::string::npos || swingKey == std::string::npos ||
+        twistKey == std::string::npos) {
+      break;
+    }
+
+    ParseJsonIntAt(json, boneIndexKey, body.boneIndex);
+    ParseJsonStringAt(json, nameKey, body.name);
+    if (parentKey != std::string::npos && parentKey < objectEnd) {
+      ParseJsonIntAt(json, parentKey, body.parentBody);
+    } else if (parentBodyKey != std::string::npos && parentBodyKey < objectEnd) {
+      ParseJsonIntAt(json, parentBodyKey, body.parentBody);
+    }
+    if (jointParentKey != std::string::npos && jointParentKey < objectEnd) {
+      ParseJsonIntAt(json, jointParentKey, body.jointParentBody);
+    } else if (jointParentBodyKey != std::string::npos && jointParentBodyKey < objectEnd) {
+      ParseJsonIntAt(json, jointParentBodyKey, body.jointParentBody);
+    }
+    if (bodyFrozenKey != std::string::npos && bodyFrozenKey < objectEnd) {
+      ParseJsonBoolAt(json, bodyFrozenKey, body.bodyFrozen);
+    } else if (bodyFrozenKey2 != std::string::npos && bodyFrozenKey2 < objectEnd) {
+      ParseJsonBoolAt(json, bodyFrozenKey2, body.bodyFrozen);
+    }
+    if (jointFrozenKey != std::string::npos && jointFrozenKey < objectEnd) {
+      ParseJsonBoolAt(json, jointFrozenKey, body.jointFrozen);
+    }
+    if (jointContactKey != std::string::npos && jointContactKey < objectEnd) {
+      body.hasJointContactAnchor = ParseJsonBoolAt(json, jointContactKey, body.jointContactAnchor);
+    }
+    if (jointTypeKey != std::string::npos && jointTypeKey < objectEnd) {
+      ParseJsonIntAt(json, jointTypeKey, body.jointType);
+    }
+    if (jointAnchorKey != std::string::npos && jointAnchorKey < objectEnd) {
+      body.hasJointAnchor = ParseFloatArray3At(json, jointAnchorKey, body.jointAnchor);
+    }
+    if (parentJointTwistKey != std::string::npos && parentJointTwistKey < objectEnd) {
+      body.hasParentJointTwistAxis = ParseFloatArray3At(json, parentJointTwistKey, body.parentJointTwistAxis);
+    }
+    if (parentJointPlaneKey != std::string::npos && parentJointPlaneKey < objectEnd) {
+      body.hasParentJointPlaneAxis = ParseFloatArray3At(json, parentJointPlaneKey, body.parentJointPlaneAxis);
+    }
+    if (childJointTwistKey != std::string::npos && childJointTwistKey < objectEnd) {
+      body.hasChildJointTwistAxis = ParseFloatArray3At(json, childJointTwistKey, body.childJointTwistAxis);
+    }
+    if (childJointPlaneKey != std::string::npos && childJointPlaneKey < objectEnd) {
+      body.hasChildJointPlaneAxis = ParseFloatArray3At(json, childJointPlaneKey, body.childJointPlaneAxis);
+    }
+    if (!ParseFloatArray16At(json, matrixKey, body.bodyFromBone)) break;
+    if (shapeTypeKey != std::string::npos && shapeTypeKey < objectEnd) {
+      ParseJsonStringAt(json, shapeTypeKey, body.shapeType);
+    }
+    if (!ParseJsonFloatAt(json, radiusKey, body.radius)) break;
+    if (!ParseJsonFloatAt(json, halfHeightKey, body.halfHeight)) break;
+    if (halfExtentsKey != std::string::npos && halfExtentsKey < objectEnd) {
+      ParseFloatArray3At(json, halfExtentsKey, body.halfExtents);
+    }
+    if (!ParseJsonFloatAt(json, swingKey, body.swingLimitRadians)) break;
+    if (!ParseJsonFloatAt(json, twistKey, body.twistLimitRadians)) break;
+    if (controlledKey != std::string::npos && controlledKey < objectEnd) {
+      ParseIntArrayAt(json, controlledKey, body.controlledBones);
+    }
+    out.bodies.push_back(std::move(body));
+    pos = twistKey + 13;
+  }
+  return true;
+}
+
+std::array<float, 16> MatrixToArray16(const XMATRIX44& matrix) {
+  std::array<float, 16> out{};
+  for (int r = 0; r < 4; ++r)
+    for (int c = 0; c < 4; ++c)
+      out[static_cast<std::size_t>(r * 4 + c)] = matrix.m[r][c];
+  return out;
+}
+
+XMATRIX44 MatrixFromArray16(const std::array<float, 16>& values) {
+  XMATRIX44 out;
+  for (int r = 0; r < 4; ++r)
+    for (int c = 0; c < 4; ++c)
+      out.m[r][c] = values[static_cast<std::size_t>(r * 4 + c)];
+  return out;
+}
+
+std::string FileSafeModelKey(std::string key) {
+  if (key.empty()) key = "model";
+  for (char& ch : key) {
+    const bool ok = (ch >= 'a' && ch <= 'z') || (ch >= 'A' && ch <= 'Z') ||
+                    (ch >= '0' && ch <= '9') || ch == '_' || ch == '-' || ch == '.';
+    if (!ok) ch = '_';
+  }
+  return key;
+}
+
+constexpr float kRagdollMinShapeExtent = 0.001f;
+
+const char* RagdollShapeTypeSaveName(PhysicsShapeType type) {
+  return type == PhysicsShapeType::Box ? "box" : "capsule";
+}
+
+PhysicsShapeType RagdollShapeTypeFromSaveName(const std::string& name) {
+  return LowerName(name) == "box" ? PhysicsShapeType::Box : PhysicsShapeType::Capsule;
+}
+
+XVECTOR3 ClampRagdollBoxHalfExtents(const XVECTOR3& halfExtents) {
+  return XVECTOR3(
+      (std::max)(kRagdollMinShapeExtent, halfExtents.x),
+      (std::max)(kRagdollMinShapeExtent, halfExtents.y),
+      (std::max)(kRagdollMinShapeExtent, halfExtents.z),
+      0.0f);
+}
+
+float RagdollCapsuleVolume(float radius, float halfHeight) {
+  radius = (std::max)(kRagdollMinShapeExtent, radius);
+  halfHeight = (std::max)(0.0f, halfHeight);
+  return 2.0f * xPI * radius * radius * halfHeight +
+         (4.0f / 3.0f) * xPI * radius * radius * radius;
+}
+
+XVECTOR3 EquivalentBoxHalfExtentsFromCapsule(const PhysicsShapeDesc& shape) {
+  const float radius = (std::max)(kRagdollMinShapeExtent, shape.radius);
+  const float halfHeight = (std::max)(0.0f, shape.halfHeight);
+  const float halfLength = (std::max)(radius + kRagdollMinShapeExtent, halfHeight + radius);
+  const float volume = RagdollCapsuleVolume(radius, halfHeight);
+  const float sideHalfExtent = std::sqrt((std::max)(kRagdollMinShapeExtent * kRagdollMinShapeExtent,
+                                                   volume / (8.0f * halfLength)));
+  return XVECTOR3(sideHalfExtent, halfLength, sideHalfExtent, 0.0f);
+}
+
+bool IsEditableRagdollShape(const PhysicsShapeDesc& shape) {
+  return shape.type == PhysicsShapeType::Capsule || shape.type == PhysicsShapeType::Box;
+}
+
+float RagdollShapeSupportRadius(const PhysicsShapeDesc& shape,
+                                const XMATRIX44& world,
+                                const XVECTOR3& normalWorld) {
+  const XVECTOR3 normal = NormalizeOr(normalWorld, XVECTOR3(0.0f, 1.0f, 0.0f, 0.0f));
+  if (shape.type == PhysicsShapeType::Box) {
+    const XVECTOR3 extents = ClampRagdollBoxHalfExtents(shape.halfExtents);
+    return std::fabs(Dot(MatrixAxisX(world), normal)) * extents.x +
+           std::fabs(Dot(MatrixAxisY(world), normal)) * extents.y +
+           std::fabs(Dot(NormalizeOr(XVECTOR3(world.m31, world.m32, world.m33, 0.0f),
+                                     XVECTOR3(0.0f, 0.0f, 1.0f, 0.0f)), normal)) * extents.z;
+  }
+  const float radius = (std::max)(kRagdollMinShapeExtent, shape.radius);
+  const float halfHeight = (std::max)(0.0f, shape.halfHeight);
+  return radius + std::fabs(Dot(MatrixAxisY(world), normal)) * halfHeight;
+}
+
+float Clamp01(float value) {
+  return (std::max)(0.0f, (std::min)(1.0f, value));
+}
+
+void ClosestPointsOnSegments(const XVECTOR3& p1,
+                             const XVECTOR3& q1,
+                             const XVECTOR3& p2,
+                             const XVECTOR3& q2,
+                             XVECTOR3& outPoint1,
+                             XVECTOR3& outPoint2) {
+  constexpr float kEpsilon = 0.000001f;
+  const XVECTOR3 d1 = q1 - p1;
+  const XVECTOR3 d2 = q2 - p2;
+  const XVECTOR3 r = p1 - p2;
+  const float a = Dot(d1, d1);
+  const float e = Dot(d2, d2);
+  const float f = Dot(d2, r);
+
+  float s = 0.0f;
+  float t = 0.0f;
+  if (a <= kEpsilon && e <= kEpsilon) {
+    outPoint1 = p1;
+    outPoint2 = p2;
+    return;
+  }
+
+  if (a <= kEpsilon) {
+    t = e > kEpsilon ? Clamp01(f / e) : 0.0f;
+  } else {
+    const float c = Dot(d1, r);
+    if (e <= kEpsilon) {
+      s = Clamp01(-c / a);
+    } else {
+      const float b = Dot(d1, d2);
+      const float denom = a * e - b * b;
+      if (std::fabs(denom) > kEpsilon) {
+        s = Clamp01((b * f - c * e) / denom);
+      }
+
+      const float tNumerator = b * s + f;
+      if (tNumerator < 0.0f) {
+        t = 0.0f;
+        s = Clamp01(-c / a);
+      } else if (tNumerator > e) {
+        t = 1.0f;
+        s = Clamp01((b - c) / a);
+      } else {
+        t = tNumerator / e;
+      }
+    }
+  }
+
+  outPoint1 = p1 + d1 * s;
+  outPoint2 = p2 + d2 * t;
+  outPoint1.w = 1.0f;
+  outPoint2.w = 1.0f;
+}
+
+bool ComputeCapsuleCapsuleContactAnchor(const PhysicsShapeDesc& childShape,
+                                        const XMATRIX44& childWorld,
+                                        const PhysicsShapeDesc& parentShape,
+                                        const XMATRIX44& parentWorld,
+                                        XVECTOR3& outAnchor) {
+  auto getCapsuleSegment = [](const PhysicsShapeDesc& shape,
+                              const XMATRIX44& bodyWorld,
+                              XVECTOR3& outStart,
+                              XVECTOR3& outEnd,
+                              XVECTOR3& outCenter,
+                              XVECTOR3& outAxis,
+                              float& outRadius) {
+    if (shape.type != PhysicsShapeType::Capsule) {
+      return false;
+    }
+    outCenter = XVECTOR3(bodyWorld.m41, bodyWorld.m42, bodyWorld.m43, 1.0f);
+    outAxis = MatrixAxisY(bodyWorld);
+    outRadius = (std::max)(kRagdollMinShapeExtent, shape.radius);
+    const float halfHeight = (std::max)(0.0f, shape.halfHeight);
+    outStart = outCenter - outAxis * halfHeight;
+    outEnd = outCenter + outAxis * halfHeight;
+    outStart.w = 1.0f;
+    outEnd.w = 1.0f;
+    return true;
+  };
+
+  XVECTOR3 childStart;
+  XVECTOR3 childEnd;
+  XVECTOR3 childCenter;
+  XVECTOR3 childAxis;
+  float childRadius = 0.0f;
+  XVECTOR3 parentStart;
+  XVECTOR3 parentEnd;
+  XVECTOR3 parentCenter;
+  XVECTOR3 parentAxis;
+  float parentRadius = 0.0f;
+  if (!getCapsuleSegment(childShape, childWorld, childStart, childEnd, childCenter, childAxis, childRadius) ||
+      !getCapsuleSegment(parentShape, parentWorld, parentStart, parentEnd, parentCenter, parentAxis, parentRadius)) {
+    return false;
+  }
+
+  XVECTOR3 childAxisPoint;
+  XVECTOR3 parentAxisPoint;
+  ClosestPointsOnSegments(childStart, childEnd, parentStart, parentEnd, childAxisPoint, parentAxisPoint);
+  XVECTOR3 normal = NormalizeOr(parentAxisPoint - childAxisPoint, NormalizeOr(parentCenter - childCenter, parentAxis));
+  const XVECTOR3 childSurface = childAxisPoint + normal * childRadius;
+  const XVECTOR3 parentSurface = parentAxisPoint - normal * parentRadius;
+  outAnchor = (childSurface + parentSurface) * 0.5f;
+  outAnchor.w = 1.0f;
+  return true;
+}
+
+bool ComputeRagdollShapeContactAnchor(const PhysicsShapeDesc& childShape,
+                                      const XMATRIX44& childWorld,
+                                      const PhysicsShapeDesc& parentShape,
+                                      const XMATRIX44& parentWorld,
+                                      XVECTOR3& outAnchor) {
+  if (!IsEditableRagdollShape(childShape) || !IsEditableRagdollShape(parentShape)) {
+    return false;
+  }
+  if (childShape.type == PhysicsShapeType::Capsule && parentShape.type == PhysicsShapeType::Capsule) {
+    return ComputeCapsuleCapsuleContactAnchor(childShape, childWorld, parentShape, parentWorld, outAnchor);
+  }
+  const XVECTOR3 childCenter(childWorld.m41, childWorld.m42, childWorld.m43, 1.0f);
+  const XVECTOR3 parentCenter(parentWorld.m41, parentWorld.m42, parentWorld.m43, 1.0f);
+  const XVECTOR3 centerDelta = Subtract(parentCenter, childCenter);
+  const XVECTOR3 normal = NormalizeOr(centerDelta, MatrixAxisY(parentWorld));
+  const float childSupport = RagdollShapeSupportRadius(childShape, childWorld, normal);
+  const float parentSupport = RagdollShapeSupportRadius(parentShape, parentWorld, normal);
+  const XVECTOR3 childSurface = AddScaled(childCenter, normal, childSupport);
+  const XVECTOR3 parentSurface = AddScaled(parentCenter, normal, -parentSupport);
+  outAnchor = XVECTOR3((childSurface.x + parentSurface.x) * 0.5f,
+                       (childSurface.y + parentSurface.y) * 0.5f,
+                       (childSurface.z + parentSurface.z) * 0.5f,
+                       1.0f);
+  return true;
+}
+
+bool GetGeneratedRagdollBoneWorldTransform(const PhysicsRagdollAnimationBinding& generatedBinding,
+                                           int boneIndex,
+                                           XMATRIX44& outWorld) {
+  for (std::size_t i = 0; i < generatedBinding.referencePose.bones.size(); ++i) {
+    if (generatedBinding.referencePose.bones[i].body.boneIndex != boneIndex ||
+        i >= generatedBinding.bodyFromBone.size()) {
+      continue;
+    }
+    XMATRIX44 boneFromBody;
+    if (!InvertAffine(generatedBinding.bodyFromBone[i], boneFromBody)) {
+      return false;
+    }
+    outWorld = boneFromBody * generatedBinding.referencePose.bones[i].body.worldTransform;
+    return true;
+  }
+  return false;
+}
+
+bool GetRagdollAuthoringBoneWorldTransform(const RenderSkinnedMesh& mesh,
+                                           const XMATRIX44& worldFromMesh,
+                                           const PhysicsRagdollAnimationBinding& generatedBinding,
+                                           int boneIndex,
+                                           XMATRIX44& outWorld) {
+  if (GetGeneratedRagdollBoneWorldTransform(generatedBinding, boneIndex, outWorld)) {
+    return true;
+  }
+  const xF::xSkeleton* skeleton = FindReferenceSkeleton(mesh);
+  if (!skeleton || boneIndex < 0 || boneIndex >= static_cast<int>(skeleton->Bones.size())) {
+    return false;
+  }
+  outWorld = BoneWorldTransform(skeleton->Bones[static_cast<std::size_t>(boneIndex)], worldFromMesh);
+  return true;
+}
+
+int GetEffectiveRagdollJointParent(const PhysicsRagdollAuthoringDesc& authoring, int childBody) {
+  const std::size_t bodyCount = authoring.binding.referencePose.bones.size();
+  if (childBody < 0 || childBody >= static_cast<int>(bodyCount)) {
+    return -1;
+  }
+  if (childBody < static_cast<int>(authoring.jointParentBodyIndices.size())) {
+    const int jointParent = authoring.jointParentBodyIndices[static_cast<std::size_t>(childBody)];
+    if (jointParent == kPhysicsRagdollJointDisabled) {
+      return -1;
+    }
+    if (jointParent >= 0 && jointParent < static_cast<int>(bodyCount) && jointParent != childBody) {
+      return jointParent;
+    }
+  }
+  if (childBody < static_cast<int>(authoring.parentBodyIndices.size())) {
+    const int parent = authoring.parentBodyIndices[static_cast<std::size_t>(childBody)];
+    if (parent >= 0 && parent < static_cast<int>(bodyCount) && parent != childBody) {
+      return parent;
+    }
+  }
+  return -1;
+}
+
+bool UpdateRagdollJointOffsetFromWorld(PhysicsRagdollAuthoringDesc& authoring,
+                                       const RenderSkinnedMesh& mesh,
+                                       const XMATRIX44& worldFromMesh,
+                                       const PhysicsRagdollAnimationBinding& generatedBinding,
+                                       int childBody) {
+  auto& binding = authoring.binding;
+  if (childBody < 0 || childBody >= static_cast<int>(binding.referencePose.bones.size())) {
+    return false;
+  }
+  if (binding.jointFromBone.size() != binding.referencePose.bones.size()) {
+    binding.jointFromBone.resize(binding.referencePose.bones.size(), XVECTOR3(0.0f, 0.0f, 0.0f, 1.0f));
+  }
+
+  XMATRIX44 boneWorld;
+  if (!GetRagdollAuthoringBoneWorldTransform(
+          mesh,
+          worldFromMesh,
+          generatedBinding,
+          binding.referencePose.bones[static_cast<std::size_t>(childBody)].body.boneIndex,
+          boneWorld)) {
+    binding.jointFromBone[static_cast<std::size_t>(childBody)] = XVECTOR3(0.0f, 0.0f, 0.0f, 1.0f);
+    return false;
+  }
+  XMATRIX44 inverseBoneWorld;
+  if (!InvertAffine(boneWorld, inverseBoneWorld)) {
+    return false;
+  }
+  binding.jointFromBone[static_cast<std::size_t>(childBody)] =
+      TransformPhysicsPoint(
+          binding.referencePose.bones[static_cast<std::size_t>(childBody)].jointWorldPosition,
+          inverseBoneWorld);
+  return true;
+}
+
+bool UpdateRagdollJointFrameOffsetsFromWorld(PhysicsRagdollAuthoringDesc& authoring, int childBody) {
+  auto& binding = authoring.binding;
+  auto& bones = binding.referencePose.bones;
+  if (childBody < 0 || childBody >= static_cast<int>(bones.size())) {
+    return false;
+  }
+  const int parentBody = GetEffectiveRagdollJointParent(authoring, childBody);
+  const XMATRIX44& childWorld = bones[static_cast<std::size_t>(childBody)].body.worldTransform;
+  const XMATRIX44& parentWorld =
+      parentBody >= 0 && parentBody < static_cast<int>(bones.size())
+          ? bones[static_cast<std::size_t>(parentBody)].body.worldTransform
+          : childWorld;
+
+  auto& bone = bones[static_cast<std::size_t>(childBody)];
+  XVECTOR3 parentTwist = bone.parentJointTwistAxis;
+  XVECTOR3 parentPlane = bone.parentJointPlaneAxis;
+  XVECTOR3 childTwist = bone.childJointTwistAxis;
+  XVECTOR3 childPlane = bone.childJointPlaneAxis;
+  NormalizeJointFrameAxes(parentTwist, parentPlane, MatrixAxisY(parentWorld), MatrixAxisX(parentWorld));
+  NormalizeJointFrameAxes(childTwist, childPlane, MatrixAxisY(childWorld), MatrixAxisX(childWorld));
+  bone.parentJointTwistAxis = parentTwist;
+  bone.parentJointPlaneAxis = parentPlane;
+  bone.childJointTwistAxis = childTwist;
+  bone.childJointPlaneAxis = childPlane;
+
+  XMATRIX44 inverseParentWorld;
+  XMATRIX44 inverseChildWorld;
+  if (!InvertAffine(parentWorld, inverseParentWorld) || !InvertAffine(childWorld, inverseChildWorld)) {
+    return false;
+  }
+
+  binding.parentJointTwistFromBody[static_cast<std::size_t>(childBody)] =
+      TransformPhysicsVector(parentTwist, inverseParentWorld);
+  binding.parentJointPlaneFromBody[static_cast<std::size_t>(childBody)] =
+      TransformPhysicsVector(parentPlane, inverseParentWorld);
+  binding.childJointTwistFromBody[static_cast<std::size_t>(childBody)] =
+      TransformPhysicsVector(childTwist, inverseChildWorld);
+  binding.childJointPlaneFromBody[static_cast<std::size_t>(childBody)] =
+      TransformPhysicsVector(childPlane, inverseChildWorld);
+  return true;
+}
+
+void SyncParentBodyIndicesFromBoneLinks(PhysicsRagdollAuthoringDesc& authoring) {
+  const auto& bones = authoring.binding.referencePose.bones;
+  authoring.parentBodyIndices.assign(bones.size(), -1);
+  for (std::size_t i = 0; i < bones.size(); ++i) {
+    const int parent = FindRagdollDescIndexForBone(authoring.binding.referencePose, bones[i].parentBoneIndex);
+    if (parent >= 0 && parent != static_cast<int>(i)) {
+      authoring.parentBodyIndices[i] = parent;
+    }
+  }
+}
+
+bool ApplyRagdollParentBodyLinks(PhysicsRagdollAuthoringDesc& authoring) {
+  auto& bones = authoring.binding.referencePose.bones;
+  if (authoring.parentBodyIndices.size() != bones.size()) {
+    return false;
+  }
+  for (std::size_t child = 0; child < bones.size(); ++child) {
+    int parent = GetEffectiveRagdollJointParent(authoring, static_cast<int>(child));
+    bool invalidParent = parent < 0 || parent >= static_cast<int>(bones.size()) || parent == static_cast<int>(child);
+    int current = parent;
+    for (std::size_t depth = 0; !invalidParent && depth < bones.size(); ++depth) {
+      if (current == static_cast<int>(child)) {
+        invalidParent = true;
+        break;
+      }
+      if (current < 0 || current >= static_cast<int>(authoring.parentBodyIndices.size())) {
+        break;
+      }
+      current = GetEffectiveRagdollJointParent(authoring, current);
+    }
+    bones[child].parentBoneIndex =
+        invalidParent ? -1 : bones[static_cast<std::size_t>(parent)].body.boneIndex;
+  }
+  return true;
+}
+
+void EnsureRagdollAuthoringState(PhysicsRagdollAuthoringDesc& authoring) {
+  auto& binding = authoring.binding;
+  const std::size_t bodyCount = binding.referencePose.bones.size();
+  if (authoring.parentBodyIndices.empty()) {
+    SyncParentBodyIndicesFromBoneLinks(authoring);
+  } else {
+    authoring.parentBodyIndices.resize(bodyCount, -1);
+  }
+  authoring.jointParentBodyIndices.resize(bodyCount, kPhysicsRagdollJointInheritParent);
+  authoring.frozenBodies.resize(bodyCount, 0u);
+  authoring.frozenJoints.resize(bodyCount, 0u);
+  authoring.contactJoints.resize(bodyCount, 0u);
+  binding.jointFromBone.resize(bodyCount, XVECTOR3(0.0f, 0.0f, 0.0f, 1.0f));
+  binding.parentJointTwistFromBody.resize(bodyCount, XVECTOR3(0.0f, 1.0f, 0.0f, 0.0f));
+  binding.parentJointPlaneFromBody.resize(bodyCount, XVECTOR3(1.0f, 0.0f, 0.0f, 0.0f));
+  binding.childJointTwistFromBody.resize(bodyCount, XVECTOR3(0.0f, 1.0f, 0.0f, 0.0f));
+  binding.childJointPlaneFromBody.resize(bodyCount, XVECTOR3(1.0f, 0.0f, 0.0f, 0.0f));
+  binding.controlledBoneIndices.resize(bodyCount);
+  binding.controlledBodyFromBone.resize(bodyCount);
+  for (std::size_t i = 0; i < bodyCount; ++i) {
+    if (binding.controlledBoneIndices[i].size() != binding.controlledBodyFromBone[i].size()) {
+      binding.controlledBoneIndices[i].clear();
+      binding.controlledBodyFromBone[i].clear();
+    }
+    if (binding.controlledBoneIndices[i].empty() &&
+        i < binding.bodyFromBone.size() &&
+        binding.referencePose.bones[i].body.boneIndex >= 0) {
+      binding.controlledBoneIndices[i].push_back(binding.referencePose.bones[i].body.boneIndex);
+      binding.controlledBodyFromBone[i].push_back(binding.bodyFromBone[i]);
+    }
+  }
+  ApplyRagdollParentBodyLinks(authoring);
+  for (int i = 0; i < static_cast<int>(bodyCount); ++i) {
+    UpdateRagdollJointFrameOffsetsFromWorld(authoring, i);
+  }
+}
+
+bool UpdateRagdollReferenceBodyFromLocal(PhysicsRagdollAuthoringDesc& authoring,
+                                         const RenderSkinnedMesh& mesh,
+                                         const XMATRIX44& worldFromMesh,
+                                         const PhysicsRagdollAnimationBinding& generatedBinding,
+                                         int bodyIndex) {
+  auto& binding = authoring.binding;
+  if (bodyIndex < 0 ||
+      bodyIndex >= static_cast<int>(binding.referencePose.bones.size()) ||
+      bodyIndex >= static_cast<int>(binding.bodyFromBone.size())) {
+    return false;
+  }
+  auto& bone = binding.referencePose.bones[static_cast<std::size_t>(bodyIndex)];
+  XMATRIX44 boneWorld;
+  if (!GetRagdollAuthoringBoneWorldTransform(mesh, worldFromMesh, generatedBinding, bone.body.boneIndex, boneWorld)) {
+    return false;
+  }
+  bone.body.worldTransform = binding.bodyFromBone[static_cast<std::size_t>(bodyIndex)] * boneWorld;
+  if (bodyIndex < static_cast<int>(binding.jointFromBone.size())) {
+    bone.jointWorldPosition =
+        TransformPhysicsPoint(binding.jointFromBone[static_cast<std::size_t>(bodyIndex)], boneWorld);
+  } else {
+    bone.jointWorldPosition = XVECTOR3(boneWorld.m41, boneWorld.m42, boneWorld.m43, 1.0f);
+    UpdateRagdollJointOffsetFromWorld(authoring, mesh, worldFromMesh, generatedBinding, bodyIndex);
+  }
+
+  if (bodyIndex < static_cast<int>(binding.controlledBoneIndices.size()) &&
+      bodyIndex < static_cast<int>(binding.controlledBodyFromBone.size())) {
+    const std::vector<int>& controlledBones = binding.controlledBoneIndices[static_cast<std::size_t>(bodyIndex)];
+    std::vector<XMATRIX44>& controlledOffsets = binding.controlledBodyFromBone[static_cast<std::size_t>(bodyIndex)];
+    controlledOffsets.clear();
+    controlledOffsets.reserve(controlledBones.size());
+    for (int controlledBone : controlledBones) {
+      XMATRIX44 controlledBoneWorld;
+      XMATRIX44 inverseControlledBoneWorld;
+      if (GetRagdollAuthoringBoneWorldTransform(mesh, worldFromMesh, generatedBinding, controlledBone, controlledBoneWorld) &&
+          InvertAffine(controlledBoneWorld, inverseControlledBoneWorld)) {
+        controlledOffsets.push_back(bone.body.worldTransform * inverseControlledBoneWorld);
+      } else {
+        controlledOffsets.push_back(binding.bodyFromBone[static_cast<std::size_t>(bodyIndex)]);
+      }
+    }
+  }
+  UpdateRagdollJointFrameOffsetsFromWorld(authoring, bodyIndex);
+  return true;
+}
+
 } // namespace
 
 bool BuildMeshBoxBodyDesc(const RenderMesh& mesh,
@@ -1842,6 +2613,530 @@ bool BuildSkeletonPoseFromRagdollState(const RenderSkinnedMesh& mesh,
   }
 
   return !outBoneIndices.empty();
+}
+
+bool BuildRagdollAuthoringFromSkeleton(const RenderSkinnedMesh& mesh,
+                                       const XMATRIX44& worldFromMesh,
+                                       uint32_t entityId,
+                                       const PhysicsRagdollBuildSettings& settings,
+                                       PhysicsRagdollAuthoringDesc& outAuthoring) {
+  PhysicsRagdollDesc desc;
+  if (!BuildRagdollDescFromSkeleton(mesh, worldFromMesh, entityId, settings, desc)) {
+    return false;
+  }
+
+  PhysicsRagdollAnimationBinding binding;
+  if (!BuildRagdollAnimationBinding(mesh, worldFromMesh, desc, binding)) {
+    return false;
+  }
+
+  PhysicsRagdollAuthoringDesc authoring;
+  authoring.binding = std::move(binding);
+  authoring.parentBodyIndices.assign(authoring.binding.referencePose.bones.size(), -1);
+  for (std::size_t i = 0; i < authoring.binding.referencePose.bones.size(); ++i) {
+    const int parentBody =
+        FindRagdollDescIndexForBone(
+            authoring.binding.referencePose,
+            authoring.binding.referencePose.bones[i].parentBoneIndex);
+    if (parentBody >= 0 && parentBody != static_cast<int>(i)) {
+      authoring.parentBodyIndices[i] = parentBody;
+    }
+  }
+  EnsureRagdollAuthoringState(authoring);
+  outAuthoring = std::move(authoring);
+  return true;
+}
+
+std::string BuildRagdollEditModelKey(const std::string& modelPath) {
+  std::string key = modelPath;
+  const std::size_t slash = key.find_last_of("/\\");
+  if (slash != std::string::npos) {
+    key = key.substr(slash + 1);
+  }
+  std::transform(key.begin(), key.end(), key.begin(), [](unsigned char ch) {
+    return static_cast<char>(std::tolower(ch));
+  });
+  return key;
+}
+
+std::string BuildRagdollEditResourcePath(const std::string& modelPathOrKey) {
+  return "Models/RagdollEdits/" + FileSafeModelKey(BuildRagdollEditModelKey(modelPathOrKey)) + ".json";
+}
+
+std::filesystem::path ResolveRagdollEditWritePath(const std::string& resourcePath) {
+  std::filesystem::path requested(resourcePath);
+  if (requested.is_absolute()) {
+    return requested;
+  }
+
+  const std::string normalized = ResourceLocator::NormalizePath(resourcePath);
+#ifdef OS_ANDROID
+  return ResourceLocator::Instance().ResolveCachePath(normalized);
+#else
+  ResourceLocator& locator = ResourceLocator::Instance();
+  std::error_code ec;
+  const std::filesystem::path existingPath = locator.ResolveFilePath(normalized);
+  if (std::filesystem::is_regular_file(existingPath, ec)) {
+    return existingPath;
+  }
+
+  auto canCreateNear = [](const std::filesystem::path& candidate) {
+    const std::filesystem::path parent = candidate.parent_path();
+    if (parent.empty()) {
+      return false;
+    }
+    std::error_code existsEc;
+    if (std::filesystem::exists(parent, existsEc)) {
+      return true;
+    }
+    const std::filesystem::path parentParent = parent.parent_path();
+    return !parentParent.empty() && std::filesystem::exists(parentParent, existsEc);
+  };
+
+  std::vector<std::filesystem::path> bases;
+  if (!locator.GetBasePath().empty()) {
+    bases.push_back(locator.GetBasePath());
+  }
+  const std::filesystem::path cwd = std::filesystem::current_path(ec);
+  if (!ec) {
+    bases.push_back(cwd);
+  }
+
+  const std::filesystem::path relative(normalized);
+  for (const std::filesystem::path& base : bases) {
+    const std::array<std::filesystem::path, 3> candidates = {
+        base / relative,
+        base / "Assets" / relative,
+        base / "T850" / "Assets" / relative};
+    for (const std::filesystem::path& candidate : candidates) {
+      if (canCreateNear(candidate)) {
+        return candidate;
+      }
+    }
+  }
+
+  return relative;
+#endif
+}
+
+bool LoadRagdollAuthoringAsset(const std::string& resourcePath,
+                               const RenderSkinnedMesh& mesh,
+                               const XMATRIX44& worldFromMesh,
+                               const PhysicsRagdollAnimationBinding& generatedBinding,
+                               PhysicsRagdollAuthoringDesc& outAuthoring,
+                               int* outLoadedBodyCount) {
+  if (outLoadedBodyCount) {
+    *outLoadedBodyCount = 0;
+  }
+
+  std::string json;
+  if (!ResourceLocator::Instance().ReadText(resourcePath, json)) {
+    T8_LOG_INFO("[RagdollAuthoring] No saved ragdoll file found at '%s'; keeping generated ragdoll", resourcePath.c_str());
+    return false;
+  }
+
+  RagdollEditJson data;
+  if (!ParseRagdollEditJson(json, data)) {
+    T8_LOG_ERROR("[RagdollAuthoring] Failed to parse '%s'", resourcePath.c_str());
+    return false;
+  }
+
+  if (generatedBinding.referencePose.bones.size() != generatedBinding.bodyFromBone.size()) {
+    T8_LOG_ERROR("[RagdollAuthoring] Cannot load '%s': generated binding is incomplete", resourcePath.c_str());
+    return false;
+  }
+
+  PhysicsRagdollAuthoringDesc loaded;
+  loaded.schema = data.schema;
+  loaded.model = data.model;
+  loaded.binding = generatedBinding;
+
+  const auto& generatedBones = generatedBinding.referencePose.bones;
+  std::vector<PhysicsRagdollBoneDesc> loadedBones;
+  std::vector<XMATRIX44> loadedBodyFromBone;
+  std::vector<XVECTOR3> loadedJointFromBone;
+  std::vector<std::vector<int>> loadedControlledBones;
+  std::vector<std::vector<XMATRIX44>> loadedControlledBodyFromBone;
+  std::vector<int> loadedSavedIndices;
+  std::vector<int> loadedParentRefs;
+  std::vector<int> loadedJointParentRefs;
+  std::vector<uint8_t> loadedFrozenBodies;
+  std::vector<uint8_t> loadedFrozenJoints;
+  std::vector<uint8_t> loadedContactJoints;
+  loadedBones.reserve(data.bodies.size());
+  loadedBodyFromBone.reserve(data.bodies.size());
+  loadedJointFromBone.reserve(data.bodies.size());
+  loadedControlledBones.reserve(data.bodies.size());
+  loadedControlledBodyFromBone.reserve(data.bodies.size());
+  loadedSavedIndices.reserve(data.bodies.size());
+  loadedParentRefs.reserve(data.bodies.size());
+  loadedJointParentRefs.reserve(data.bodies.size());
+  loadedFrozenBodies.reserve(data.bodies.size());
+  loadedFrozenJoints.reserve(data.bodies.size());
+  loadedContactJoints.reserve(data.bodies.size());
+
+  const float instanceUniformScale = UniformScaleFromWorldTransform(worldFromMesh);
+  int applied = 0;
+  for (const RagdollEditBodyJson& body : data.bodies) {
+    int target = -1;
+    if (body.index >= 0 && body.index < static_cast<int>(generatedBones.size())) {
+      const auto& candidate = generatedBones[static_cast<std::size_t>(body.index)];
+      if (body.boneIndex < 0 || candidate.body.boneIndex == body.boneIndex) {
+        target = body.index;
+      }
+    }
+    if (target < 0) {
+      for (int i = 0; i < static_cast<int>(generatedBones.size()); ++i) {
+        if (generatedBones[static_cast<std::size_t>(i)].body.boneIndex == body.boneIndex) {
+          target = i;
+          break;
+        }
+      }
+    }
+    if (target < 0) {
+      T8_LOG_ERROR("[RagdollAuthoring] Skipping saved body '%s': bone %d is not in generated ragdoll for '%s'",
+                   body.name.c_str(), body.boneIndex, resourcePath.c_str());
+      continue;
+    }
+    if (body.boneIndex >= 0) {
+      bool duplicate = false;
+      for (const PhysicsRagdollBoneDesc& existing : loadedBones) {
+        if (existing.body.boneIndex == body.boneIndex) {
+          duplicate = true;
+          break;
+        }
+      }
+      if (duplicate) {
+        continue;
+      }
+    }
+
+    PhysicsRagdollBoneDesc targetBone = generatedBones[static_cast<std::size_t>(target)];
+    if (!body.name.empty()) {
+      targetBone.body.debugName = body.name;
+    }
+    XMATRIX44 targetBodyFromBone =
+        data.schema >= 3
+            ? MatrixFromArray16(body.bodyFromBone)
+            : generatedBinding.bodyFromBone[static_cast<std::size_t>(target)];
+    XMATRIX44 targetPrimaryBoneWorld;
+    const bool hasTargetBoneWorld =
+        GetRagdollAuthoringBoneWorldTransform(
+            mesh, worldFromMesh, generatedBinding, targetBone.body.boneIndex, targetPrimaryBoneWorld);
+    if (hasTargetBoneWorld) {
+      targetBone.body.worldTransform = targetBodyFromBone * targetPrimaryBoneWorld;
+    }
+    if (data.schema >= 6) {
+      targetBone.jointType =
+          body.jointType == static_cast<int>(PhysicsRagdollJointType::Fixed)
+              ? PhysicsRagdollJointType::Fixed
+              : PhysicsRagdollJointType::SwingTwist;
+      if (body.hasJointAnchor) {
+        targetBone.jointWorldPosition =
+            TransformPhysicsPoint(
+                XVECTOR3(body.jointAnchor[0], body.jointAnchor[1], body.jointAnchor[2], 1.0f),
+                worldFromMesh);
+      }
+    }
+    if (data.schema >= 11) {
+      if (body.hasParentJointTwistAxis) {
+        targetBone.parentJointTwistAxis =
+            TransformSavedRagdollAxis(
+                body.parentJointTwistAxis,
+                worldFromMesh,
+                targetBone.parentJointTwistAxis);
+      }
+      if (body.hasParentJointPlaneAxis) {
+        targetBone.parentJointPlaneAxis =
+            TransformSavedRagdollAxis(
+                body.parentJointPlaneAxis,
+                worldFromMesh,
+                targetBone.parentJointPlaneAxis);
+      }
+      if (body.hasChildJointTwistAxis) {
+        targetBone.childJointTwistAxis =
+            TransformSavedRagdollAxis(
+                body.childJointTwistAxis,
+                worldFromMesh,
+                targetBone.childJointTwistAxis);
+      }
+      if (body.hasChildJointPlaneAxis) {
+        targetBone.childJointPlaneAxis =
+            TransformSavedRagdollAxis(
+                body.childJointPlaneAxis,
+                worldFromMesh,
+                targetBone.childJointPlaneAxis);
+      }
+    }
+
+    XVECTOR3 targetJointFromBone(0.0f, 0.0f, 0.0f, 1.0f);
+    if (hasTargetBoneWorld) {
+      XMATRIX44 inverseTargetBoneWorld;
+      if (InvertAffine(targetPrimaryBoneWorld, inverseTargetBoneWorld)) {
+        targetJointFromBone = TransformPhysicsPoint(targetBone.jointWorldPosition, inverseTargetBoneWorld);
+      }
+    }
+
+    targetBone.body.shape.type =
+        data.schema >= 10 ? RagdollShapeTypeFromSaveName(body.shapeType) : PhysicsShapeType::Capsule;
+    targetBone.body.shape.radius = (std::max)(kRagdollMinShapeExtent, body.radius * instanceUniformScale);
+    targetBone.body.shape.halfHeight = (std::max)(kRagdollMinShapeExtent, body.halfHeight * instanceUniformScale);
+    if (data.schema >= 10 && targetBone.body.shape.type == PhysicsShapeType::Box) {
+      targetBone.body.shape.halfExtents =
+          ClampRagdollBoxHalfExtents(
+              XVECTOR3(
+                  body.halfExtents[0] * instanceUniformScale,
+                  body.halfExtents[1] * instanceUniformScale,
+                  body.halfExtents[2] * instanceUniformScale,
+                  0.0f));
+    } else {
+      targetBone.body.shape.halfExtents = EquivalentBoxHalfExtentsFromCapsule(targetBone.body.shape);
+    }
+    if (data.schema >= 2) {
+      targetBone.swingLimitRadians = (std::max)(0.0f, body.swingLimitRadians);
+      targetBone.twistLimitRadians = (std::max)(0.0f, body.twistLimitRadians);
+    }
+
+    std::vector<int> controlledBones;
+    if (data.schema >= 4) {
+      controlledBones = body.controlledBones;
+    }
+    if (data.schema < 4 && controlledBones.empty() && targetBone.body.boneIndex >= 0) {
+      controlledBones.push_back(targetBone.body.boneIndex);
+    }
+
+    std::vector<XMATRIX44> controlledBodyFromBone;
+    controlledBodyFromBone.reserve(controlledBones.size());
+    for (int controlledBone : controlledBones) {
+      XMATRIX44 controlledBoneWorld;
+      XMATRIX44 inverseControlledBoneWorld;
+      if (!GetRagdollAuthoringBoneWorldTransform(
+              mesh, worldFromMesh, generatedBinding, controlledBone, controlledBoneWorld) ||
+          !InvertAffine(controlledBoneWorld, inverseControlledBoneWorld)) {
+        T8_LOG_ERROR("[RagdollAuthoring] Saved controlled bone %d for body %d has a singular or missing transform",
+                     controlledBone, targetBone.body.boneIndex);
+        continue;
+      }
+      controlledBodyFromBone.push_back(targetBone.body.worldTransform * inverseControlledBoneWorld);
+    }
+    if (controlledBodyFromBone.size() != controlledBones.size()) {
+      controlledBones.clear();
+      controlledBodyFromBone.clear();
+      if (targetBone.body.boneIndex >= 0) {
+        controlledBones.push_back(targetBone.body.boneIndex);
+        controlledBodyFromBone.push_back(targetBodyFromBone);
+      }
+    }
+
+    loadedBones.push_back(targetBone);
+    loadedBodyFromBone.push_back(targetBodyFromBone);
+    loadedJointFromBone.push_back(targetJointFromBone);
+    loadedControlledBones.push_back(std::move(controlledBones));
+    loadedControlledBodyFromBone.push_back(std::move(controlledBodyFromBone));
+    loadedSavedIndices.push_back(body.index >= 0 ? body.index : static_cast<int>(loadedSavedIndices.size()));
+    loadedParentRefs.push_back(data.schema >= 5 ? body.parentBody : -1);
+    loadedJointParentRefs.push_back(data.schema >= 6 ? body.jointParentBody : kPhysicsRagdollJointInheritParent);
+    loadedFrozenBodies.push_back(data.schema >= 7 && body.bodyFrozen ? 1u : 0u);
+    loadedFrozenJoints.push_back(data.schema >= 7 && body.jointFrozen ? 1u : 0u);
+    const bool legacyContactAnchor = data.schema < 9 && body.jointParentBody != kPhysicsRagdollJointDisabled;
+    loadedContactJoints.push_back(
+        ((data.schema >= 9 && body.hasJointContactAnchor && body.jointContactAnchor) || legacyContactAnchor) ? 1u : 0u);
+    ++applied;
+  }
+
+  if (applied <= 0 && !data.bodies.empty()) {
+    return false;
+  }
+
+  loaded.binding.referencePose.bones = std::move(loadedBones);
+  loaded.binding.bodyFromBone = std::move(loadedBodyFromBone);
+  loaded.binding.jointFromBone = std::move(loadedJointFromBone);
+  loaded.binding.controlledBoneIndices = std::move(loadedControlledBones);
+  loaded.binding.controlledBodyFromBone = std::move(loadedControlledBodyFromBone);
+  loaded.frozenBodies = std::move(loadedFrozenBodies);
+  loaded.frozenJoints = std::move(loadedFrozenJoints);
+  loaded.contactJoints = std::move(loadedContactJoints);
+
+  loaded.parentBodyIndices.assign(loaded.binding.referencePose.bones.size(), -1);
+  loaded.jointParentBodyIndices.assign(
+      loaded.binding.referencePose.bones.size(),
+      kPhysicsRagdollJointInheritParent);
+  if (data.schema >= 5) {
+    auto findLoadedBySavedIndex = [&](int savedIndex) {
+      for (int i = 0; i < static_cast<int>(loadedSavedIndices.size()); ++i) {
+        if (loadedSavedIndices[static_cast<std::size_t>(i)] == savedIndex) {
+          return i;
+        }
+      }
+      if (savedIndex >= 0 && savedIndex < static_cast<int>(loaded.binding.referencePose.bones.size())) {
+        return savedIndex;
+      }
+      return -1;
+    };
+    for (int child = 0; child < static_cast<int>(loadedParentRefs.size()); ++child) {
+      loaded.parentBodyIndices[static_cast<std::size_t>(child)] =
+          findLoadedBySavedIndex(loadedParentRefs[static_cast<std::size_t>(child)]);
+    }
+    if (data.schema >= 6) {
+      for (int child = 0; child < static_cast<int>(loadedJointParentRefs.size()); ++child) {
+        const int savedJointParent = loadedJointParentRefs[static_cast<std::size_t>(child)];
+        loaded.jointParentBodyIndices[static_cast<std::size_t>(child)] =
+            savedJointParent >= 0 ? findLoadedBySavedIndex(savedJointParent) : savedJointParent;
+      }
+    }
+  } else {
+    SyncParentBodyIndicesFromBoneLinks(loaded);
+  }
+
+  EnsureRagdollAuthoringState(loaded);
+  for (int i = 0; i < static_cast<int>(loaded.binding.referencePose.bones.size()); ++i) {
+    UpdateRagdollReferenceBodyFromLocal(loaded, mesh, worldFromMesh, generatedBinding, i);
+  }
+
+  int repairedContactAnchors = 0;
+  for (int childBody = 0; childBody < static_cast<int>(loaded.binding.referencePose.bones.size()); ++childBody) {
+    if (childBody >= static_cast<int>(loaded.contactJoints.size()) ||
+        loaded.contactJoints[static_cast<std::size_t>(childBody)] == 0u) {
+      continue;
+    }
+    const int parentBody = GetEffectiveRagdollJointParent(loaded, childBody);
+    if (parentBody < 0 || parentBody >= static_cast<int>(loaded.binding.referencePose.bones.size()) || parentBody == childBody) {
+      continue;
+    }
+    XVECTOR3 contactAnchor;
+    auto& bones = loaded.binding.referencePose.bones;
+    if (ComputeRagdollShapeContactAnchor(
+            bones[static_cast<std::size_t>(childBody)].body.shape,
+            bones[static_cast<std::size_t>(childBody)].body.worldTransform,
+            bones[static_cast<std::size_t>(parentBody)].body.shape,
+            bones[static_cast<std::size_t>(parentBody)].body.worldTransform,
+            contactAnchor)) {
+      bones[static_cast<std::size_t>(childBody)].jointWorldPosition = contactAnchor;
+      UpdateRagdollJointOffsetFromWorld(loaded, mesh, worldFromMesh, generatedBinding, childBody);
+      ++repairedContactAnchors;
+    }
+  }
+  if (repairedContactAnchors > 0) {
+    T8_LOG_INFO("[RagdollAuthoring] Recovered %d contact joint anchors from shape surfaces for '%s'",
+                repairedContactAnchors, resourcePath.c_str());
+  }
+
+  EnsureRagdollAuthoringState(loaded);
+  outAuthoring = std::move(loaded);
+  if (outLoadedBodyCount) {
+    *outLoadedBodyCount = applied;
+  }
+  T8_LOG_INFO("[RagdollAuthoring] Loaded %d edited bodies from '%s' instanceScale=%.6f",
+              applied,
+              resourcePath.c_str(),
+              instanceUniformScale);
+  return true;
+}
+
+bool SaveRagdollAuthoringAsset(const std::string& resourcePath,
+                               const std::string& modelKey,
+                               const PhysicsRagdollAuthoringDesc& authoring,
+                               std::filesystem::path* outResolvedPath) {
+  const auto& binding = authoring.binding;
+  const auto& bones = binding.referencePose.bones;
+  if (bones.size() != binding.bodyFromBone.size()) {
+    T8_LOG_ERROR("[RagdollAuthoring] Cannot save '%s': ragdoll binding has %zu bodies but %zu local frames",
+                 resourcePath.c_str(), bones.size(), binding.bodyFromBone.size());
+    return false;
+  }
+
+  const std::filesystem::path path = ResolveRagdollEditWritePath(resourcePath);
+  if (outResolvedPath) {
+    *outResolvedPath = path;
+  }
+
+  std::error_code ec;
+  if (!path.parent_path().empty()) {
+    std::filesystem::create_directories(path.parent_path(), ec);
+  }
+  if (ec) {
+    T8_LOG_ERROR("[RagdollAuthoring] Failed to create '%s'", path.parent_path().string().c_str());
+    return false;
+  }
+
+  std::ofstream file(path, std::ios::out | std::ios::trunc);
+  if (!file.is_open()) {
+    T8_LOG_ERROR("[RagdollAuthoring] Failed to open '%s' for writing", path.string().c_str());
+    return false;
+  }
+
+  const std::string savedModel = modelKey.empty() ? authoring.model : modelKey;
+  file << "{\n";
+  file << "  \"schema\": " << kPhysicsRagdollEditSchemaVersion << ",\n";
+  file << "  \"model\": \"" << JsonEscape(savedModel) << "\",\n";
+  file << "  \"constraint_profile\": \"inferred-name-v1\",\n";
+  file << "  \"capsule_frame_profile\": \"bone-to-endpoint-v1\",\n";
+  file << "  \"capsules\": [\n";
+  file << std::fixed << std::setprecision(8);
+  for (std::size_t i = 0; i < bones.size(); ++i) {
+    const auto& bone = bones[i];
+    const auto& shape = bone.body.shape;
+    const auto matrix = MatrixToArray16(binding.bodyFromBone[i]);
+    const int parentBody = i < authoring.parentBodyIndices.size() ? authoring.parentBodyIndices[i] : -1;
+    const int jointParentBody =
+        i < authoring.jointParentBodyIndices.size()
+            ? authoring.jointParentBodyIndices[i]
+            : kPhysicsRagdollJointInheritParent;
+    const bool bodyFrozen = i < authoring.frozenBodies.size() && authoring.frozenBodies[i] != 0u;
+    const bool jointFrozen = i < authoring.frozenJoints.size() && authoring.frozenJoints[i] != 0u;
+    const bool jointContactAnchor = i < authoring.contactJoints.size() && authoring.contactJoints[i] != 0u;
+    file << "    {\n";
+    file << "      \"index\": " << i << ",\n";
+    file << "      \"bone_index\": " << bone.body.boneIndex << ",\n";
+    file << "      \"name\": \"" << JsonEscape(bone.body.debugName) << "\",\n";
+    file << "      \"parent_capsule\": " << parentBody << ",\n";
+    file << "      \"joint_parent_capsule\": " << jointParentBody << ",\n";
+    file << "      \"capsule_frozen\": " << (bodyFrozen ? "true" : "false") << ",\n";
+    file << "      \"joint_frozen\": " << (jointFrozen ? "true" : "false") << ",\n";
+    file << "      \"joint_contact_anchor\": " << (jointContactAnchor ? "true" : "false") << ",\n";
+    file << "      \"joint_type\": " << (bone.jointType == PhysicsRagdollJointType::Fixed ? 1 : 0) << ",\n";
+    file << "      \"joint_anchor\": [" << bone.jointWorldPosition.x << ", "
+         << bone.jointWorldPosition.y << ", " << bone.jointWorldPosition.z << "],\n";
+    file << "      \"parent_joint_twist_axis\": [" << bone.parentJointTwistAxis.x << ", "
+         << bone.parentJointTwistAxis.y << ", " << bone.parentJointTwistAxis.z << "],\n";
+    file << "      \"parent_joint_plane_axis\": [" << bone.parentJointPlaneAxis.x << ", "
+         << bone.parentJointPlaneAxis.y << ", " << bone.parentJointPlaneAxis.z << "],\n";
+    file << "      \"child_joint_twist_axis\": [" << bone.childJointTwistAxis.x << ", "
+         << bone.childJointTwistAxis.y << ", " << bone.childJointTwistAxis.z << "],\n";
+    file << "      \"child_joint_plane_axis\": [" << bone.childJointPlaneAxis.x << ", "
+         << bone.childJointPlaneAxis.y << ", " << bone.childJointPlaneAxis.z << "],\n";
+    file << "      \"body_from_bone\": [";
+    for (std::size_t valueIndex = 0; valueIndex < matrix.size(); ++valueIndex) {
+      if (valueIndex > 0) file << ", ";
+      file << matrix[valueIndex];
+    }
+    file << "],\n";
+    const XVECTOR3 savedHalfExtents = shape.type == PhysicsShapeType::Box
+        ? ClampRagdollBoxHalfExtents(shape.halfExtents)
+        : EquivalentBoxHalfExtentsFromCapsule(shape);
+    file << "      \"shape_type\": \"" << RagdollShapeTypeSaveName(shape.type) << "\",\n";
+    file << "      \"radius\": " << shape.radius << ",\n";
+    file << "      \"half_height\": " << shape.halfHeight << ",\n";
+    file << "      \"half_extents\": [" << savedHalfExtents.x << ", "
+         << savedHalfExtents.y << ", " << savedHalfExtents.z << "],\n";
+    file << "      \"swing_limit\": " << bone.swingLimitRadians << ",\n";
+    file << "      \"twist_limit\": " << bone.twistLimitRadians << ",\n";
+    file << "      \"controlled_bones\": [";
+    if (i < binding.controlledBoneIndices.size()) {
+      const std::vector<int>& controlledBones = binding.controlledBoneIndices[i];
+      for (std::size_t controlledIndex = 0; controlledIndex < controlledBones.size(); ++controlledIndex) {
+        if (controlledIndex > 0) file << ", ";
+        file << controlledBones[controlledIndex];
+      }
+    }
+    file << "]\n";
+    file << "    }" << (i + 1 < bones.size() ? "," : "") << "\n";
+  }
+  file << "  ]\n";
+  file << "}\n";
+
+  T8_LOG_INFO("[RagdollAuthoring] Saved %zu bodies to '%s'", bones.size(), path.string().c_str());
+  return true;
 }
 
 } // namespace t850

@@ -92,7 +92,7 @@ namespace t850 {
     XVECTOR3  MaterialParams6; // .x=clearcoat map .y=clearcoat roughness map .z=factor uv .w=roughness uv
     XVECTOR3  MaterialParams7; // .x=occlusion map .y=occlusion strength .z=occlusion uv .w=transmission map
     XVECTOR3  MaterialParams8; // .x=transmission uv .y=specular factor map .z=specular factor uv .w=specular color map
-    XVECTOR3  MaterialParams9; // .x=specular color uv .y=normal scale
+    XVECTOR3  MaterialParams9; // .x=specular color uv .y=normal scale .z=lightmap uv .w=lightmap intensity
     XVECTOR3  BaseColorUVTransform0;
     XVECTOR3  BaseColorUVTransform1;
     XVECTOR3  NormalUVTransform0;
@@ -117,6 +117,8 @@ namespace t850 {
     XVECTOR3  SpecularColorUVTransform1;
     XVECTOR3  TransmissionUVTransform0;
     XVECTOR3  TransmissionUVTransform1;
+    XVECTOR3  LightmapUVTransform0;
+    XVECTOR3  LightmapUVTransform1;
     XVECTOR3  LightPositions[128];
     XVECTOR3  LightColors[128];
     XVECTOR3  LightRadius[32];
@@ -184,6 +186,8 @@ namespace t850 {
       XVECTOR3  SpecularColorUVTransform1;
       XVECTOR3  TransmissionUVTransform0;
       XVECTOR3  TransmissionUVTransform1;
+      XVECTOR3  LightmapUVTransform0;
+      XVECTOR3  LightmapUVTransform1;
     };
 
     struct AABB {
@@ -249,6 +253,8 @@ namespace t850 {
       SpecularFactorTexCoord = 0;
       SpecularColorTexCoord = 0;
       TransmissionTexCoord = 0;
+      LightmapTexCoord = 0;
+      LightmapIntensity = 1.0f;
       BaseColorUVTransform0 = XVECTOR3(1.0f, 0.0f, 0.0f, 0.0f);
       BaseColorUVTransform1 = XVECTOR3(0.0f, 1.0f, 0.0f, 0.0f);
       NormalUVTransform0 = XVECTOR3(1.0f, 0.0f, 0.0f, 0.0f);
@@ -273,6 +279,8 @@ namespace t850 {
       SpecularColorUVTransform1 = XVECTOR3(0.0f, 1.0f, 0.0f, 0.0f);
       TransmissionUVTransform0 = XVECTOR3(1.0f, 0.0f, 0.0f, 0.0f);
       TransmissionUVTransform1 = XVECTOR3(0.0f, 1.0f, 0.0f, 0.0f);
+      LightmapUVTransform0 = XVECTOR3(1.0f, 0.0f, 0.0f, 0.0f);
+      LightmapUVTransform1 = XVECTOR3(0.0f, 1.0f, 0.0f, 0.0f);
 			MetallicTex = nullptr;
       EmissiveTex = nullptr;
 			SheenColorTex = nullptr;
@@ -283,6 +291,7 @@ namespace t850 {
       SpecularFactorTex = nullptr;
       SpecularColorTex = nullptr;
       TransmissionTex = nullptr;
+      LightmapTex = nullptr;
 			MetallicId = -1;
       EmissiveId = -1;
 			SheenColorId = -1;
@@ -293,6 +302,7 @@ namespace t850 {
       SpecularFactorId = -1;
       SpecularColorId = -1;
       TransmissionId = -1;
+      LightmapId = -1;
 			bUseFresnel = false;
 			MatID = 0;
 		}
@@ -315,6 +325,7 @@ namespace t850 {
       Texture*					SpecularFactorTex;
       Texture*					SpecularColorTex;
       Texture*					TransmissionTex;
+      Texture*          LightmapTex;
 
 	  XVECTOR3		  AmbientColor;
 	  XVECTOR3	      DiffuseColor;
@@ -339,6 +350,7 @@ namespace t850 {
       int					SpecularFactorId;
       int					SpecularColorId;
       int					TransmissionId;
+      int         LightmapId;
 
 	  int					MatID;
       unsigned int      AlphaMode;
@@ -365,6 +377,8 @@ namespace t850 {
       unsigned int      SpecularColorTexCoord;
       unsigned int      TransmissionTexCoord;
       float             NormalScale;
+      unsigned int      LightmapTexCoord;
+      float             LightmapIntensity;
       XVECTOR3          BaseColorUVTransform0;
       XVECTOR3          BaseColorUVTransform1;
       XVECTOR3          NormalUVTransform0;
@@ -389,6 +403,8 @@ namespace t850 {
       XVECTOR3          SpecularColorUVTransform1;
       XVECTOR3          TransmissionUVTransform0;
       XVECTOR3          TransmissionUVTransform1;
+      XVECTOR3          LightmapUVTransform0;
+      XVECTOR3          LightmapUVTransform1;
 
       unsigned int		VertexStart;
       unsigned int		NumVertex;

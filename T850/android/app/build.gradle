@@ -3,7 +3,8 @@ plugins { id 'com.android.application' }
 def assetSourceDir = file('../../Assets')
 def shaderSourceDir = new File(assetSourceDir, 'Shaders')
 def shaderPermutationFile = new File(shaderSourceDir, 'shader_permutations.json')
-def filteredAssetDir = layout.buildDirectory.dir('generated/t850FilteredAssets').get().asFile
+def developmentFilteredAssetDir = layout.buildDirectory.dir('generated/t850FilteredAssets/development').get().asFile
+def productionFilteredAssetDir = layout.buildDirectory.dir('generated/t850FilteredAssets/production').get().asFile
 def generatedAssetDir = layout.buildDirectory.dir('generated/t850Assets').get().asFile
 def shaderOutputDir = new File(generatedAssetDir, 'Shaders/spirv')
 def isWindowsHost = System.getProperty('os.name').toLowerCase().contains('windows')
@@ -14,29 +15,51 @@ def t850AndroidAbis = (findProperty('t850AndroidAbis') ?: 'arm64-v8a')
     .collect { it.trim() }
     .findAll { !it.isEmpty() }
 def t850VulkanValidation = (findProperty('t850VulkanValidation') ?: 'false').toString().toBoolean()
+def t850VulkanValidationLayerDir = (findProperty('t850VulkanValidationLayerDir') ?: '').toString().trim()
 def t850AndroidAssetProfile = (findProperty('t850AndroidAssetProfile') ?: 'physics-demo').toString().trim()
 def t850AllowUnsignedRelease = (findProperty('t850AllowUnsignedRelease') ?: 'false').toString().toBoolean()
-def t850AndroidCommonAssetIncludes = [
+def t850AndroidCoreAssetIncludes = [
     'Fonts/**',
     'Layouts/**',
-    'Scenes/**',
     'Shaders/**',
-    'Techniques/**',
+    'Techniques/**'
+]
+def t850AndroidTextureAssetIncludes = [
+    'Textures/lens*.png',
     'Textures/LUT/**',
+    'Textures/GeneratedIBLCache/**',
     'Textures/sky/*.dds'
+]
+def t850AndroidBaseAssetIncludes = t850AndroidCoreAssetIncludes + t850AndroidTextureAssetIncludes
+def t850AndroidCommonAssetIncludes = t850AndroidBaseAssetIncludes + [
+    'Scenes/**'
 ]
 def t850PhysicsDemoAssetIncludes = t850AndroidCommonAssetIncludes + [
     'Models/DamagedHelmet.glb',
     'Models/SkyBox.glb',
+    'Models/Q3/q3dm6.glb',
     'Models/SponzaEsc.glb',
     'Models/RagdollEdits/**',
     'Models/doomslayer_cine_all_animations_no-damage_double-sided-opaque.glb',
-    'Models/doomslayer_cine_base_all_animations_no-damage_double-sided-opaque.glb'
+    'Models/doomslayer_cine_base_all_animations_no-damage_double-sided-opaque.glb',
+    'Models/rewind_cyborg.glb',
+    'Models/porsche_992_gt3_r__www.vecarz.com.glb'
 ]
 def t850DoomPorscheAssetIncludes = t850AndroidCommonAssetIncludes + [
     'Models/doomslayer_cine_all_animations_no-damage_double-sided-opaque.glb',
     'Models/RagdollEdits/doomslayer_cine_all_animations_no-damage_double-sided-opaque.glb.json',
     'Models/porsche_992_gt3_r__www.vecarz.com.glb'
+]
+def t850Q3SandboxAssetIncludes = t850AndroidBaseAssetIncludes + [
+    'Scenes/SandboxScene.json',
+    'Scenes/SandboxScene_RenderGraph.json',
+    'Scenes/Q3/q3dm6*',
+    'Models/Q3/q3dm6.glb',
+    'Models/doomslayer_cine_all_animations_no-damage_double-sided-opaque.glb',
+    'Models/rewind_cyborg.glb',
+    'Models/porsche_992_gt3_r__www.vecarz.com.glb',
+    'Models/RagdollEdits/doomslayer_cine_all_animations_no-damage_double-sided-opaque.glb.json',
+    'Models/RagdollEdits/rewind_cyborg.glb.json'
 ]
 def t850ModelAssetIncludes = t850AndroidCommonAssetIncludes + [
     'Models/**/*.glb',
@@ -44,8 +67,11 @@ def t850ModelAssetIncludes = t850AndroidCommonAssetIncludes + [
     'Models/**/*.bin',
     'Models/**/*.fbx',
     'Models/**/*.obj',
-    'Models/**/*.X',
-    'Models/**/*.x',
+    'Models/RagdollEdits/**',
+    'Models/Q3/*_work/*_manifest.json'
+]
+def t850ProductionAssetIncludes = t850AndroidCoreAssetIncludes + [
+    'Scenes/**',
     'Models/RagdollEdits/**',
     'Models/Q3/*_work/*_manifest.json'
 ]
@@ -85,8 +111,8 @@ if (t850AndroidAbis.isEmpty()) {
     throw new GradleException('At least one Android ABI must be specified in t850AndroidAbis.')
 }
 
-if (!(t850AndroidAssetProfile in ['physics-demo', 'doom-porsche', 'models-full', 'full'])) {
-    throw new GradleException("Unsupported t850AndroidAssetProfile '${t850AndroidAssetProfile}'. Use 'physics-demo', 'doom-porsche', 'models-full', or 'full'.")
+if (!(t850AndroidAssetProfile in ['physics-demo', 'doom-porsche', 'q3-sandbox', 'models-full', 'full'])) {
+    throw new GradleException("Unsupported t850AndroidAssetProfile '${t850AndroidAssetProfile}'. Use 'physics-demo', 'doom-porsche', 'q3-sandbox', 'models-full', or 'full'.")
 }
 
 def findExecutableOnPath = { String executableName ->
@@ -194,6 +220,22 @@ android {
         }
     }
 
+    flavorDimensions 'distribution'
+    productFlavors {
+        development {
+            dimension 'distribution'
+            applicationId 'com.t850.engine'
+            manifestPlaceholders = [appLabel: 'T850 Vulkan']
+            versionNameSuffix '-dev'
+        }
+        production {
+            dimension 'distribution'
+            applicationId 'com.t850.t8'
+            manifestPlaceholders = [appLabel: 'T8']
+            versionNameSuffix '-prod'
+        }
+    }
+
     signingConfigs {
         release {
             if (releaseSigningReady) {
@@ -219,41 +261,67 @@ android {
 
     sourceSets {
         main {
-            assets.srcDirs = [filteredAssetDir, 'src/main/assets', generatedAssetDir]
+            assets.srcDirs = ['src/main/assets', generatedAssetDir]
+            if (t850VulkanValidation && !t850VulkanValidationLayerDir.isEmpty()) {
+                jniLibs.srcDirs += [file(t850VulkanValidationLayerDir)]
+            }
+        }
+        development {
+            assets.srcDirs = [developmentFilteredAssetDir]
+        }
+        production {
+            assets.srcDirs = [productionFilteredAssetDir]
         }
     }
 
     androidResources {
-        noCompress += ['bin', 'dds', 'glb', 'gltf', 'hdr', 'ktx', 'ktx2', 'spv', 'tga', 'x']
+        noCompress += ['bin', 'dds', 'glb', 'gltf', 'hdr', 'ktx', 'ktx2', 'spv', 'tga']
     }
 }
 
 
-tasks.register('syncT850AndroidAssets', Sync) {
-    inputs.property('t850AndroidAssetProfile', t850AndroidAssetProfile)
-    from(assetSourceDir) {
-        if (t850AndroidAssetProfile == 'physics-demo') {
-            include(t850PhysicsDemoAssetIncludes)
-        } else if (t850AndroidAssetProfile == 'doom-porsche') {
-            include(t850DoomPorscheAssetIncludes)
-        } else if (t850AndroidAssetProfile == 'models-full') {
-            include(t850ModelAssetIncludes)
+def configureT850AssetSync = { Sync syncTask, File outputDir, List includes, boolean includeEverything, String label ->
+    syncTask.inputs.property('t850AndroidAssetProfile', label)
+    syncTask.from(assetSourceDir) {
+        if (!includeEverything) {
+            include(includes)
         }
         exclude 'Models/.t8cache/**'
         exclude 'Models/RagdollEdits - Copy/**'
         exclude 'Shaders/.t8shadercache/**'
-        exclude 'Textures/GeneratedIBLCache/**'
         exclude '**/.t8cache/**'
         exclude '**/.t8shadercache/**'
-        exclude '**/GeneratedIBLCache/**'
-        exclude '**/*.t8ibl'
         exclude '**/*.t8mesh'
         exclude '**/*.dxbc'
     }
-    into(filteredAssetDir)
-    doFirst {
-        logger.lifecycle("[T850] Android asset profile: ${t850AndroidAssetProfile}")
+    syncTask.into(outputDir)
+    syncTask.doFirst {
+        logger.lifecycle("[T850] Android asset profile: ${label}")
     }
+}
+
+def getDevelopmentAssetIncludes = {
+    if (t850AndroidAssetProfile == 'physics-demo') return t850PhysicsDemoAssetIncludes
+    if (t850AndroidAssetProfile == 'doom-porsche') return t850DoomPorscheAssetIncludes
+    if (t850AndroidAssetProfile == 'q3-sandbox') return t850Q3SandboxAssetIncludes
+    if (t850AndroidAssetProfile == 'models-full') return t850ModelAssetIncludes
+    return []
+}
+
+def syncDevelopmentAssets = tasks.register('syncT850AndroidDevelopmentAssets', Sync) {
+    configureT850AssetSync(delegate as Sync,
+        developmentFilteredAssetDir,
+        getDevelopmentAssetIncludes(),
+        t850AndroidAssetProfile == 'full',
+        "development/${t850AndroidAssetProfile}")
+}
+
+def syncProductionAssets = tasks.register('syncT850AndroidProductionAssets', Sync) {
+    configureT850AssetSync(delegate as Sync,
+        productionFilteredAssetDir,
+        t850ProductionAssetIncludes,
+        false,
+        'production/runtime-no-models')
 }
 
 tasks.register('compileT850AndroidShaders') {
@@ -262,6 +330,7 @@ tasks.register('compileT850AndroidShaders') {
     doLast {
         def validator = resolveGlslangValidator()
         def shaderCompileCommands = []
+        delete(shaderOutputDir)
         shaderOutputDir.mkdirs()
 
         def compiledOutputs = [] as Set
@@ -276,7 +345,9 @@ tasks.register('compileT850AndroidShaders') {
             compiledOutputs << output.absolutePath
             shaderCompileCommands << [
                 label: output.name,
-                args: [validator, '-D', '-V', '-S', stage, '-e', entry, shader.absolutePath, '-o', output.absolutePath].collect { it.toString() }
+                args: [validator, '-D', '-V', '-S', stage, '-e', entry,
+                       '--auto-map-bindings', '--auto-map-locations', '--auto-sampled-textures',
+                       shader.absolutePath, '-o', output.absolutePath].collect { it.toString() }
             ]
         }
 
@@ -300,7 +371,8 @@ tasks.register('compileT850AndroidShaders') {
                     def output = new File(shaderOutputDir, "${name}.${normalizedKey}.spv")
                     if (!compiledOutputs.add(output.absolutePath)) return
 
-                    def args = [validator, '-D', '-V', '-S', stage, '-e', entry]
+                    def args = [validator, '-D', '-V', '-S', stage, '-e', entry,
+                                '--auto-map-bindings', '--auto-map-locations', '--auto-sampled-textures']
                     defines.each { args << "-D${it}" }
                     args << shader.absolutePath
                     args << '-o'
@@ -319,5 +391,12 @@ tasks.register('compileT850AndroidShaders') {
     }
 }
 
-preBuild.dependsOn('syncT850AndroidAssets')
-preBuild.dependsOn('compileT850AndroidShaders')
+android.applicationVariants.all { variant ->
+    def syncTask = variant.flavorName == 'production'
+        ? syncProductionAssets
+        : syncDevelopmentAssets
+    variant.preBuildProvider.configure {
+        dependsOn(syncTask)
+        dependsOn(tasks.named('compileT850AndroidShaders'))
+    }
+}

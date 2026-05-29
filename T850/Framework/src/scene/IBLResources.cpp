@@ -262,8 +262,12 @@ namespace {
     int expectedSampleCount,
     std::vector<float>& outData) {
     std::vector<unsigned char> bytes;
-    if (!ResourceLocator::Instance().ReadBinary(path.string(), bytes))
-      return false;
+    if (!ResourceLocator::Instance().ReadBinary(path.string(), bytes)) {
+      const std::filesystem::path assetCachePath =
+        std::filesystem::path("Textures") / "GeneratedIBLCache" / path.filename();
+      if (!ResourceLocator::Instance().ReadBinary(assetCachePath.string(), bytes))
+        return false;
+    }
 
     std::string streamData(reinterpret_cast<const char*>(bytes.data()), bytes.size());
     std::istringstream file(streamData, std::ios::in | std::ios::binary);
@@ -1166,7 +1170,11 @@ void LoadEnvironmentIBLResources(
   if (!driver)
     return;
 
+#if defined(OS_ANDROID)
+  constexpr bool allowRuntimeGeneratedIBL = false;
+#else
   constexpr bool allowRuntimeGeneratedIBL = true;
+#endif
 
   auto loadTextureOnce = [&](int& textureIndex, const std::string& path, const char* label) {
     if (textureIndex >= 0) {

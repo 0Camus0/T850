@@ -182,7 +182,7 @@ namespace t850 {
         glGenTextures(1, &ctex);
         glBindTexture(GL_TEXTURE_2D, ctex);
         glTexImage2D(GL_TEXTURE_2D, 0, attachmentFormat, w, h, 0, attachmentDataFormat, attachmentType, 0);
-        if (i == 0 && this->color_format != BaseRT::R8) {
+        if (GenMips && i == 0 && this->color_format != BaseRT::R8) {
           glGenerateMipmap(GL_TEXTURE_2D);
           glTexParameterf(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR_MIPMAP_LINEAR);
           glTexParameterf(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);

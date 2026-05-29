@@ -110,6 +110,7 @@ SceneProps() : ActiveCamera(0), ActiveLights(1), ActiveLightCamera(0), ActiveGau
 	float MaterialEmissiveIntensity = 1.0f;
 	float MaterialTransmissionMultiplier = 1.0f;
 	float MaterialRefractionStrength = 0.03f;
+	float LightmapIntensity = 1.0f;
 
 	float ShadowMapResolution = 1024.0f;
   float GoodRaysResolution = 0.0f;
@@ -125,12 +126,39 @@ SceneProps() : ActiveCamera(0), ActiveLights(1), ActiveLightCamera(0), ActiveGau
 	float ParallaxShadowStrength = 1.0f;
 
 	float LightVolumeSteps = 0.0f;
+	float LightRadiusScale = 1.0f;
+	float LightIntensityScale = 1.0f;
 	// HDR
 	float	Exposure = 0.0f;
 	float	BloomFactor = 0.35f;
 	float	BloomThreshold = 2.0f;
 	float ToneMapWhiteLevel = 4.0f;
 	float LuminanceTau = 1.1f;
+	int LuminanceMode = 0; // 0: temporal HDR, 1: robust temporal
+	float DebugAdaptedLuminance = 1.0f;
+	bool DebugAdaptedLuminanceValid = false;
+	unsigned int DebugDeferredLightsSceneTotal = 0;
+	unsigned int DebugDeferredLightsActiveLimit = 0;
+	unsigned int DebugDeferredLightsConsidered = 0;
+	unsigned int DebugDeferredLightsPacked = 0;
+	unsigned int DebugDeferredLightsFrustumCulled = 0;
+	unsigned int DebugDeferredLightsDisabled = 0;
+	unsigned int DebugDeferredLightsZeroIntensity = 0;
+	unsigned int DebugDeferredLightsMaxCapped = 0;
+	unsigned int DebugDeferredLightsDirectional = 0;
+	unsigned int DebugDeferredLightsPointVolumes = 0;
+	float DebugDeferredLightVolumeScreenPercent = 0.0f;
+	unsigned int DebugDeferredLightTileSize = 0;
+	unsigned int DebugDeferredLightTilesX = 0;
+	unsigned int DebugDeferredLightTilesY = 0;
+	unsigned int DebugDeferredLightTileCount = 0;
+	unsigned int DebugDeferredLightActiveTiles = 0;
+	unsigned int DebugDeferredLightTileLightRefs = 0;
+	unsigned int DebugDeferredLightMaxLightsInTile = 0;
+	unsigned int DebugDeferredLightSaturatedTiles = 0;
+	float DebugDeferredLightAverageLightsPerTile = 0.0f;
+	bool DeferredLightVolumesEnabled = false;
+	bool PointLightsEnabled = true;
 	float FrameDeltaSec = 1.0f / 60.0f;
 
   //DOF

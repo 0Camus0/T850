@@ -227,7 +227,7 @@ namespace t850 {
       printf("Window creation failed: %s\n", SDL_GetError());
     }
 
-    // Enable text input so SDL_EVENT_TEXT_INPUT events are generated for GUI line-edit fields.
+    // Enable text input so SDL_EVENT_TEXT_INPUT events are generated for ImGui text fields.
     SDL_StartTextInput(m_pWindow);
 
     // Set window icon from embedded exe resource

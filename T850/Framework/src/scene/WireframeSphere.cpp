@@ -124,6 +124,10 @@ void WireframeSphere::Create(int rings, int segments) {
 }
 
 void WireframeSphere::Draw(const XMATRIX44& vp, const XVECTOR3& center, float radius) {
+  Draw(vp, center, radius, XVECTOR3(1.0f, 0.0f, 1.0f, 1.0f));
+}
+
+void WireframeSphere::Draw(const XMATRIX44& vp, const XVECTOR3& center, float radius, const XVECTOR3& color) {
   if (!s || !IB || !VB || !CB || !T8DeviceContext)
     return;
 
@@ -133,12 +137,13 @@ void WireframeSphere::Draw(const XMATRIX44& vp, const XVECTOR3& center, float ra
   XMatTranslation(translate, pos);
   world = scale * translate;
   constantBuff.WVP = world * vp;
+  constantBuff.LineColor = color;
 
   IB->Set(*T8DeviceContext, 0, IndexBufferFormat::R16);
   VB->Set(*T8DeviceContext, sizeof(Vert), 0);
   T8DeviceContext->SetPrimitiveTopology(Topology::LINE_LIST);
   s->Set(*T8DeviceContext);
-  CB->UpdateFromBuffer(*T8DeviceContext, &constantBuff.WVP[0]);
+  CB->UpdateFromBuffer(*T8DeviceContext, &constantBuff);
   CB->Set(*T8DeviceContext);
   T8DeviceContext->DrawIndexed(static_cast<unsigned>(indexCount), 0, 0);
   T8DeviceContext->SetPrimitiveTopology(Topology::TRIANLE_LIST);

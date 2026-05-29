@@ -17,6 +17,7 @@
 #include <android_native_app_glue.h>
 #include <jni.h>
 
+#include <algorithm>
 #include <cmath>
 
 namespace t850 {
@@ -88,7 +89,6 @@ namespace t850 {
   }
 
   void AndroidFramework::OnDestroyApplication() {
-    ClearReturnToNativePreference();
     DestroyVulkanRuntime();
     ShutdownGlobalThreadPool();
     m_inited = false;
@@ -148,6 +148,7 @@ namespace t850 {
   void AndroidFramework::OnNativeWindowCreated(ANativeWindow* window) {
     m_window = window;
     UpdateWindowSize();
+    if (pBaseApp) pBaseApp->OnAndroidNativeWindowChanged(m_window);
     if (!m_inited) return;
     if (m_hasRuntime) {
       ResumeVulkanWindow();
@@ -158,6 +159,7 @@ namespace t850 {
 
   void AndroidFramework::OnNativeWindowDestroyed() {
     ClearTouchState();
+    if (pBaseApp) pBaseApp->OnAndroidNativeWindowChanged(nullptr);
     SuspendVulkanWindow();
     m_window = nullptr;
   }
@@ -194,6 +196,11 @@ namespace t850 {
     if (!pBaseApp || !event) return 0;
     const bool appHandled = pBaseApp->HandleAndroidInputEvent(event);
     if (AInputEvent_getType(event) == AINPUT_EVENT_TYPE_MOTION) {
+      if (appHandled) {
+        ClearTouchState();
+        return 1;
+      }
+
       const int32_t rawAction = AMotionEvent_getAction(event);
       const int32_t action = rawAction & AMOTION_EVENT_ACTION_MASK;
       const int32_t actionPointerIndex =
@@ -393,6 +400,9 @@ namespace t850 {
     if (!m_window) return;
     int32_t w = ANativeWindow_getWidth(m_window);
     int32_t h = ANativeWindow_getHeight(m_window);
+    if (w > 0 && h > 0 && h > w) {
+      std::swap(w, h);
+    }
     if (w > 0) aplicationDescriptor.width = w;
     if (h > 0) aplicationDescriptor.height = h;
   }

@@ -468,6 +468,7 @@ namespace t850 {
       if (key.has(ShaderKey::SPECULAR_FACTOR_MAP)) Defines += "#define SPECULAR_FACTOR_MAP\n\n";
       if (key.has(ShaderKey::SPECULAR_COLOR_MAP)) Defines += "#define SPECULAR_COLOR_MAP\n\n";
       if (key.has(ShaderKey::TRANSMISSION_MAP)) Defines += "#define TRANSMISSION_MAP\n\n";
+      if (key.has(ShaderKey::LIGHTMAP_MAP)) Defines += "#define LIGHTMAP_MAP\n\n";
 
       // Material conventions
       if (key.has(ShaderKey::GLTF_TANGENT_SPACE)) Defines += "#define GLTF_TANGENT_SPACE\n\n";
@@ -503,7 +504,6 @@ namespace t850 {
       case PassType::ONE_PASS_BLUR:      Defines += "#define ONE_PASS_BLUR\n\n"; break;
       case PassType::BRIGHT:             Defines += "#define BRIGHT_PASS\n\n"; break;
       case PassType::HDR_COMP:           Defines += "#define HDR_COMP_PASS\n\n"; break;
-      case PassType::LUMINANCE_MAP:      Defines += "#define LUMINANCE_MAP_PASS\n\n"; break;
       case PassType::ADAPT_LUMINANCE:    Defines += "#define ADAPT_LUMINANCE_PASS\n\n"; break;
       case PassType::COC:                Defines += "#define COC_PASS\n\n"; break;
       case PassType::COMBINE_COC:        Defines += "#define COMBINE_COC_PASS\n\n"; break;
@@ -518,7 +518,10 @@ namespace t850 {
       case PassType::LIGHT_RAY_MARCHING: Defines += "#define LIGHT_RAY_MARCHING\n\n"; break;
       case PassType::LIGHT_ADD:          Defines += "#define LIGHT_ADD\n\n"; break;
       case PassType::FADE:               Defines += "#define FADE\n\n"; break;
+      case PassType::LENS_FLARE_SUN:     Defines += "#define LENS_FLARE_SUN\n\n"; break;
+      case PassType::LENS_FLARE_GHOST:   Defines += "#define LENS_FLARE_GHOST\n\n"; break;
       case PassType::DEFERRED_LDR:       Defines += "#define DEFERRED_LDR_PASS\n\n"; break;
+      case PassType::DEFERRED_LIGHT_VOLUME: Defines += "#define DEFERRED_LIGHT_VOLUME_PASS\n\n"; break;
       default: break;
       }
 

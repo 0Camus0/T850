@@ -13,6 +13,7 @@
 
 #include <scene/RenderQuad.h>
 #include <scene/RenderGraph.h>
+#include <scene/RenderMesh.h>
 #include <utils/Utils.h>
 
 #ifndef OS_ANDROID
@@ -24,12 +25,124 @@
 #include <video/d3d11/D3D11Driver.h>
 #endif
 #include <utils/Log.h>
+#include <algorithm>
+#include <cmath>
 #include <cstring>
 namespace t850 {
   extern Device*            T8Device;
   extern DeviceContext*     T8DeviceContext;
 
   namespace {
+    constexpr unsigned int kMaxDeferredLights = 128;
+    constexpr int kTiledLightTileSize = 32;
+    constexpr unsigned int kMaxTiledLightsPerTile = 128;
+    constexpr int kTiledLightHeaderSlot = 16;
+    constexpr int kTiledLightIndexSlot = 17;
+    constexpr int kLightVolumeViewportPadding = 2;
+
+    struct LightViewportRect {
+      int x = 0;
+      int y = 0;
+      int w = 0;
+      int h = 0;
+    };
+
+    bool SphereIntersectsFrustum(const XVECTOR3 planes[6], const XVECTOR3& center, float radius) {
+      for (int i = 0; i < 6; ++i) {
+        const float distance = planes[i].x * center.x +
+                               planes[i].y * center.y +
+                               planes[i].z * center.z +
+                               planes[i].w;
+        if (distance < -radius)
+          return false;
+      }
+      return true;
+    }
+
+    void SetFullViewportRect(LightViewportRect& out, int width, int height) {
+      out.x = 0;
+      out.y = 0;
+      out.w = (std::max)(0, width);
+      out.h = (std::max)(0, height);
+    }
+
+    bool BuildProjectedLightViewportRect(const Camera& camera,
+                                         const XVECTOR3& center,
+                                         float radius,
+                                         int width,
+                                         int height,
+                                         LightViewportRect& out) {
+      if (width <= 0 || height <= 0 || radius <= 0.0f)
+        return false;
+
+      const float dx = center.x - camera.Eye.x;
+      const float dy = center.y - camera.Eye.y;
+      const float dz = center.z - camera.Eye.z;
+      if ((dx * dx + dy * dy + dz * dz) <= radius * radius) {
+        SetFullViewportRect(out, width, height);
+        return true;
+      }
+
+      float minX = 1.0f;
+      float minY = 1.0f;
+      float maxX = -1.0f;
+      float maxY = -1.0f;
+      bool projectedAny = false;
+
+      for (int ox = -1; ox <= 1; ox += 2) {
+        for (int oy = -1; oy <= 1; oy += 2) {
+          for (int oz = -1; oz <= 1; oz += 2) {
+            XVECTOR3 corner(center.x + radius * float(ox),
+                            center.y + radius * float(oy),
+                            center.z + radius * float(oz),
+                            1.0f);
+            XVECTOR3 clip;
+            XVecTransform(clip, corner, camera.VP);
+            if (!std::isfinite(clip.w) || clip.w <= 0.0001f) {
+              SetFullViewportRect(out, width, height);
+              return true;
+            }
+
+            const float invW = 1.0f / clip.w;
+            const float ndcX = clip.x * invW;
+            const float ndcY = clip.y * invW;
+            if (!std::isfinite(ndcX) || !std::isfinite(ndcY)) {
+              SetFullViewportRect(out, width, height);
+              return true;
+            }
+
+            minX = (std::min)(minX, ndcX);
+            minY = (std::min)(minY, ndcY);
+            maxX = (std::max)(maxX, ndcX);
+            maxY = (std::max)(maxY, ndcY);
+            projectedAny = true;
+          }
+        }
+      }
+
+      if (!projectedAny || maxX < -1.0f || minX > 1.0f || maxY < -1.0f || minY > 1.0f)
+        return false;
+
+      minX = (std::max)(minX, -1.0f);
+      minY = (std::max)(minY, -1.0f);
+      maxX = (std::min)(maxX, 1.0f);
+      maxY = (std::min)(maxY, 1.0f);
+
+      const int x0 = (std::max)(0, int(std::floor((minX * 0.5f + 0.5f) * float(width))) - kLightVolumeViewportPadding);
+      const int x1 = (std::min)(width, int(std::ceil((maxX * 0.5f + 0.5f) * float(width))) + kLightVolumeViewportPadding);
+      const int y0 = (std::max)(0, int(std::floor((1.0f - (maxY * 0.5f + 0.5f)) * float(height))) - kLightVolumeViewportPadding);
+      const int y1 = (std::min)(height, int(std::ceil((1.0f - (minY * 0.5f + 0.5f)) * float(height))) + kLightVolumeViewportPadding);
+
+      if (x1 <= x0 || y1 <= y0)
+        return false;
+
+      out.x = x0;
+      out.y = y0;
+      out.w = x1 - x0;
+      out.h = y1 - y0;
+      return true;
+    }
+
     void ExtractFrameCB(RenderQuad::FrameCBuffer& dst, const RenderQuad::CBuffer& src) {
       dst.WVP = src.WVP;
       dst.World = src.World;
@@ -94,10 +207,11 @@ namespace t850 {
       PassType::DEFERRED, PassType::DEFERRED_LDR, PassType::FSQUAD_1_TEX, PassType::FSQUAD_2_TEX,
       PassType::FSQUAD_3_TEX, PassType::VERTICAL_BLUR, PassType::HORIZONTAL_BLUR,
       PassType::ONE_PASS_BLUR, PassType::BRIGHT, PassType::HDR_COMP,
-      PassType::LUMINANCE_MAP, PassType::ADAPT_LUMINANCE, PassType::COMBINE_COC,
+      PassType::ADAPT_LUMINANCE, PassType::COMBINE_COC,
       PassType::DOF, PassType::DOF_2, PassType::BACKBUFFER,
       PassType::GOD_RAY_CALCULATION, PassType::GOD_RAY_BLEND,
-      PassType::SSAO, PassType::RAY_MARCH, PassType::LIGHT_ADD, PassType::FADE
+      PassType::SSAO, PassType::RAY_MARCH, PassType::LIGHT_ADD, PassType::FADE,
+      PassType::LENS_FLARE_SUN, PassType::LENS_FLARE_GHOST
     };
     for (uint8_t p : simplePasses) {
       ShaderKey k(sigBase.bits);
@@ -106,7 +220,7 @@ namespace t850 {
     }
 
     // Deferred: variants that either sample the shadow/SSAO factor texture or compile it out.
-    for (uint8_t p : { PassType::DEFERRED, PassType::DEFERRED_LDR }) {
+    for (uint8_t p : { PassType::DEFERRED, PassType::DEFERRED_LDR, PassType::DEFERRED_LIGHT_VOLUME }) {
       for (int sh = 0; sh <= 1; ++sh) {
         for (int ao = 0; ao <= 1; ++ao) {
           ShaderKey k(sigBase.bits);
@@ -197,7 +311,7 @@ namespace t850 {
       if (pScProp->ToogleShadow) finalKey.bits |= ShaderKey::SHADOWS;
       if (pScProp->ToogleSSAO)   finalKey.bits |= ShaderKey::SSAO;
     }
-    else if (pass == PassType::DEFERRED || pass == PassType::DEFERRED_LDR) {
+    else if (pass == PassType::DEFERRED || pass == PassType::DEFERRED_LDR || pass == PassType::DEFERRED_LIGHT_VOLUME) {
       if (pScProp->ToogleShadow) finalKey.bits |= ShaderKey::SHADOWS;
       if (pScProp->ToogleSSAO)   finalKey.bits |= ShaderKey::SSAO;
     }
@@ -212,6 +326,54 @@ namespace t850 {
     if (!s) return;
 
     Camera *pActualCamera = pScProp->pCameras[0];
+    bool useTiledLightPass = false;
+    bool skipCurrentDraw = false;
+
+    auto clearTiledLightTextures = [&]() {
+      SetTexture(nullptr, kTiledLightHeaderSlot);
+      SetTexture(nullptr, kTiledLightIndexSlot);
+    };
+
+    auto ensureTiledLightTextures = [&](int tilesX, int tilesY) -> bool {
+      const int tileCount = tilesX * tilesY;
+      if (tilesX <= 0 || tilesY <= 0 || tileCount <= 0)
+        return false;
+
+      const bool recreateHeaders = m_tiledLightHeaderTex < 0 ||
+                                   m_tiledLightTilesX != tilesX ||
+                                   m_tiledLightTilesY != tilesY;
+      if (recreateHeaders) {
+        if (m_tiledLightHeaderTex >= 0)
+          g_pBaseDriver->DestroyTexture(m_tiledLightHeaderTex);
+        if (m_tiledLightIndexTex >= 0)
+          g_pBaseDriver->DestroyTexture(m_tiledLightIndexTex);
+
+        m_tiledLightTilesX = tilesX;
+        m_tiledLightTilesY = tilesY;
+        m_tiledLightHeaderData.assign(static_cast<size_t>(tileCount) * 4u, 0.0f);
+        m_tiledLightIndexData.assign(static_cast<size_t>(tileCount) * kMaxTiledLightsPerTile * 4u, 0.0f);
+        m_tiledLightHeaderTex = g_pBaseDriver->CreateFloatTexture(tilesX, tilesY, m_tiledLightHeaderData.data());
+        m_tiledLightIndexTex = g_pBaseDriver->CreateFloatTexture(static_cast<int>(kMaxTiledLightsPerTile), tileCount, m_tiledLightIndexData.data());
+        if (m_tiledLightHeaderTex < 0 || m_tiledLightIndexTex < 0) {
+          if (m_tiledLightHeaderTex >= 0) g_pBaseDriver->DestroyTexture(m_tiledLightHeaderTex);
+          if (m_tiledLightIndexTex >= 0) g_pBaseDriver->DestroyTexture(m_tiledLightIndexTex);
+          m_tiledLightHeaderTex = -1;
+          m_tiledLightIndexTex = -1;
+          return false;
+        }
+      }
+
+      const size_t headerCount = static_cast<size_t>(tileCount) * 4u;
+      const size_t indexCount = static_cast<size_t>(tileCount) * kMaxTiledLightsPerTile * 4u;
+      if (m_tiledLightHeaderData.size() != headerCount)
+        m_tiledLightHeaderData.resize(headerCount);
+      if (m_tiledLightIndexData.size() != indexCount)
+        m_tiledLightIndexData.resize(indexCount);
+      if (m_tiledLightCounts.size() != static_cast<size_t>(tileCount))
+        m_tiledLightCounts.resize(static_cast<size_t>(tileCount));
+      return true;
+    };
+
     XMATRIX44 VP = pActualCamera->VP;
     XMATRIX44 WV = pActualCamera->View;
     VP.Inverse(&CnstBuffer.WVPInverse);
@@ -231,12 +393,15 @@ namespace t850 {
       CnstBuffer.LightCameraInfo = XVECTOR3(pScProp->pLightCameras[selected]->NPlane, pScProp->pLightCameras[selected]->FPlane, pScProp->pLightCameras[selected]->Fov, 1.0f);
     }
 
-    if (pass == PassType::DEFERRED || pass == PassType::DEFERRED_LDR) {
-      unsigned int numLights = pScProp->ActiveLights;
-      if (numLights >= static_cast<unsigned int>(pScProp->Lights.size()))
-        numLights = static_cast<unsigned int>(pScProp->Lights.size());
+    if (pass == PassType::DEFERRED || pass == PassType::DEFERRED_LDR || pass == PassType::DEFERRED_LIGHT_VOLUME) {
+      const unsigned int sceneLightCount = static_cast<unsigned int>(pScProp->Lights.size());
+      unsigned int activeLightLimit = pScProp->ActiveLights;
+      if (activeLightLimit > sceneLightCount)
+        activeLightLimit = sceneLightCount;
+      unsigned int numLights = activeLightLimit;
+      if (numLights > kMaxDeferredLights)
+        numLights = kMaxDeferredLights;
 
-      CnstBuffer.CameraInfo = XVECTOR3(pActualCamera->NPlane, pActualCamera->FPlane, pActualCamera->Fov, float(numLights));
       CnstBuffer.toogles.x = pScProp->EnvFactor;
       CnstBuffer.toogles.z = pScProp->IBLFactor;
       CnstBuffer.toogles.w = pScProp->IBLMipCount;
@@ -245,15 +410,228 @@ namespace t850 {
       // Ambient intensity: average of AmbientColor components
       CnstBuffer.toogles.y = (pScProp->AmbientColor.x + pScProp->AmbientColor.y + pScProp->AmbientColor.z) / 3.0f;
 
-      for (unsigned int i = 0; i < numLights; i++) {
-        Light& light = pScProp->Lights[i];
-        if (light.Type == LIGHT_DIRECTIONAL) {
-          CnstBuffer.LightPositions[i] = XVECTOR3(light.Direction.x, light.Direction.y, light.Direction.z, 0.0f);
-        } else {
-          CnstBuffer.LightPositions[i] = XVECTOR3(light.Position.x, light.Position.y, light.Position.z, 1.0f);
+      unsigned int packedLights = 0;
+      unsigned int directionalLights = 0;
+      unsigned int disabledLights = 0;
+      unsigned int zeroIntensityLights = 0;
+      unsigned int frustumCulledLights = 0;
+      if (pass == PassType::DEFERRED_LIGHT_VOLUME) {
+        const int targetWidth = Textures[0] ? static_cast<int>(Textures[0]->x) : g_pBaseDriver->width;
+        const int targetHeight = Textures[0] ? static_cast<int>(Textures[0]->y) : g_pBaseDriver->height;
+        const int tilesX = (std::max)(1, (targetWidth + kTiledLightTileSize - 1) / kTiledLightTileSize);
+        const int tilesY = (std::max)(1, (targetHeight + kTiledLightTileSize - 1) / kTiledLightTileSize);
+
+        const int tileCount = tilesX * tilesY;
+        const size_t headerCount = static_cast<size_t>(tileCount) * 4u;
+        const size_t indexCount = static_cast<size_t>(tileCount) * kMaxTiledLightsPerTile * 4u;
+        if (m_tiledLightHeaderData.size() != headerCount)
+          m_tiledLightHeaderData.resize(headerCount);
+        if (m_tiledLightIndexData.size() != indexCount)
+          m_tiledLightIndexData.resize(indexCount);
+        if (m_tiledLightCounts.size() != static_cast<size_t>(tileCount))
+          m_tiledLightCounts.resize(static_cast<size_t>(tileCount));
+        std::fill(m_tiledLightHeaderData.begin(), m_tiledLightHeaderData.end(), 0.0f);
+        std::fill(m_tiledLightIndexData.begin(), m_tiledLightIndexData.end(), 0.0f);
+        std::fill(m_tiledLightCounts.begin(), m_tiledLightCounts.end(), 0u);
+
+        XVECTOR3 frustumPlanes[6];
+        RenderMesh::ExtractFrustumPlanes(pActualCamera->VP, frustumPlanes);
+        unsigned long long volumePixels = 0;
+
+        for (unsigned int i = 0; i < numLights && packedLights < kMaxDeferredLights; i++) {
+            Light& light = pScProp->Lights[i];
+            if (!light.Enabled) {
+              ++disabledLights;
+              continue;
+            }
+            if (light.Type == LIGHT_POINT && !pScProp->PointLightsEnabled) {
+              ++disabledLights;
+              continue;
+            }
+
+            const float effectiveRadius = light.Type == LIGHT_POINT ? light.radius * (std::max)(0.0f, pScProp->LightRadiusScale) : light.radius;
+            const float effectiveIntensity = light.Intensity * (std::max)(0.0f, pScProp->LightIntensityScale);
+            if (effectiveIntensity <= 0.0f) {
+              ++zeroIntensityLights;
+              continue;
+            }
+
+            if (light.Type == LIGHT_DIRECTIONAL) {
+              ++directionalLights;
+              continue;
+            }
+
+            const float shaderRange = effectiveRadius * 2.0f;
+            if (shaderRange <= 0.0f || !SphereIntersectsFrustum(frustumPlanes, light.Position, shaderRange)) {
+              ++frustumCulledLights;
+              continue;
+            }
+
+            LightViewportRect viewportRect;
+            if (!BuildProjectedLightViewportRect(*pActualCamera, light.Position, shaderRange, targetWidth, targetHeight, viewportRect)) {
+              ++frustumCulledLights;
+              continue;
+            }
+
+            const unsigned int lightIndex = packedLights++;
+            CnstBuffer.LightPositions[lightIndex] = XVECTOR3(light.Position.x, light.Position.y, light.Position.z, 1.0f);
+            CnstBuffer.LightColors[lightIndex] = XVECTOR3(light.Color.x, light.Color.y, light.Color.z, effectiveIntensity);
+            CnstBuffer.LightRadius[lightIndex] = effectiveRadius;
+
+            const int minTileX = (std::max)(0, viewportRect.x / kTiledLightTileSize);
+            const int maxTileX = (std::min)(tilesX - 1, (viewportRect.x + viewportRect.w - 1) / kTiledLightTileSize);
+            const int minTileY = (std::max)(0, viewportRect.y / kTiledLightTileSize);
+            const int maxTileY = (std::min)(tilesY - 1, (viewportRect.y + viewportRect.h - 1) / kTiledLightTileSize);
+            for (int ty = minTileY; ty <= maxTileY; ++ty) {
+              for (int tx = minTileX; tx <= maxTileX; ++tx) {
+                const int tileIndex = ty * tilesX + tx;
+                unsigned int& count = m_tiledLightCounts[static_cast<size_t>(tileIndex)];
+                if (count >= kMaxTiledLightsPerTile)
+                  continue;
+                const size_t texel = (static_cast<size_t>(tileIndex) * kMaxTiledLightsPerTile + count) * 4u;
+                m_tiledLightIndexData[texel] = static_cast<float>(lightIndex);
+                ++count;
+              }
+            }
+
+            volumePixels += static_cast<unsigned long long>(viewportRect.w) * static_cast<unsigned long long>(viewportRect.h);
         }
-        CnstBuffer.LightColors[i] = XVECTOR3(light.Color.x, light.Color.y, light.Color.z, light.Intensity);
-        CnstBuffer.LightRadius[i] = light.radius;
+
+        for (int tileIndex = 0; tileIndex < tileCount; ++tileIndex) {
+            const size_t texel = static_cast<size_t>(tileIndex) * 4u;
+            const unsigned int tileLightCount = m_tiledLightCounts[static_cast<size_t>(tileIndex)];
+            m_tiledLightHeaderData[texel] = static_cast<float>(tileIndex);
+            m_tiledLightHeaderData[texel + 1u] = static_cast<float>(tileLightCount);
+        }
+
+        if (packedLights > 0) {
+          if (ensureTiledLightTextures(tilesX, tilesY)) {
+            Texture* headerTex = g_pBaseDriver->GetTexture(m_tiledLightHeaderTex);
+            Texture* indexTex = g_pBaseDriver->GetTexture(m_tiledLightIndexTex);
+            if (headerTex && indexTex) {
+              headerTex->UpdateFloatData(*T8DeviceContext, tilesX, tilesY, m_tiledLightHeaderData.data());
+              indexTex->UpdateFloatData(*T8DeviceContext, static_cast<int>(kMaxTiledLightsPerTile), tileCount, m_tiledLightIndexData.data());
+              SetTexture(headerTex, kTiledLightHeaderSlot);
+              SetTexture(indexTex, kTiledLightIndexSlot);
+              useTiledLightPass = true;
+            } else {
+              clearTiledLightTextures();
+              skipCurrentDraw = true;
+            }
+          } else {
+            clearTiledLightTextures();
+            skipCurrentDraw = true;
+          }
+        } else {
+          skipCurrentDraw = true;
+        }
+
+        CnstBuffer.LightCameraInfo = XVECTOR3(static_cast<float>(kTiledLightTileSize),
+                                                static_cast<float>(tilesX),
+                                                static_cast<float>(tilesY),
+                                                static_cast<float>(kMaxTiledLightsPerTile));
+          pScProp->DebugDeferredLightsSceneTotal = sceneLightCount;
+          pScProp->DebugDeferredLightsActiveLimit = activeLightLimit;
+          pScProp->DebugDeferredLightsConsidered = numLights;
+          pScProp->DebugDeferredLightsPacked = directionalLights + packedLights;
+          pScProp->DebugDeferredLightsFrustumCulled = frustumCulledLights;
+          pScProp->DebugDeferredLightsDisabled = disabledLights;
+          pScProp->DebugDeferredLightsZeroIntensity = zeroIntensityLights;
+          pScProp->DebugDeferredLightsMaxCapped = activeLightLimit > numLights ? activeLightLimit - numLights : 0;
+          pScProp->DebugDeferredLightsDirectional = directionalLights;
+          pScProp->DebugDeferredLightsPointVolumes = packedLights;
+          const float fullPixels = float((std::max)(1, targetWidth) * (std::max)(1, targetHeight));
+          pScProp->DebugDeferredLightVolumeScreenPercent = fullPixels > 0.0f ? (float(volumePixels) * 100.0f) / fullPixels : 0.0f;
+          unsigned int activeTiles = 0;
+          unsigned int lightRefs = 0;
+          unsigned int maxLightsInTile = 0;
+          unsigned int saturatedTiles = 0;
+          for (unsigned int count : m_tiledLightCounts) {
+            lightRefs += count;
+            if (count > 0)
+              ++activeTiles;
+            if (count > maxLightsInTile)
+              maxLightsInTile = count;
+            if (count >= kMaxTiledLightsPerTile)
+              ++saturatedTiles;
+          }
+          pScProp->DebugDeferredLightTileSize = static_cast<unsigned int>(kTiledLightTileSize);
+          pScProp->DebugDeferredLightTilesX = static_cast<unsigned int>(tilesX);
+          pScProp->DebugDeferredLightTilesY = static_cast<unsigned int>(tilesY);
+          pScProp->DebugDeferredLightTileCount = static_cast<unsigned int>(tileCount);
+          pScProp->DebugDeferredLightActiveTiles = activeTiles;
+          pScProp->DebugDeferredLightTileLightRefs = lightRefs;
+          pScProp->DebugDeferredLightMaxLightsInTile = maxLightsInTile;
+          pScProp->DebugDeferredLightSaturatedTiles = saturatedTiles;
+        pScProp->DebugDeferredLightAverageLightsPerTile =
+          tileCount > 0 ? static_cast<float>(lightRefs) / static_cast<float>(tileCount) : 0.0f;
+      } else {
+        clearTiledLightTextures();
+        const bool pointLightsUseVolumes = pScProp->DeferredLightVolumesEnabled;
+        XVECTOR3 frustumPlanes[6];
+        if (!pointLightsUseVolumes)
+          RenderMesh::ExtractFrustumPlanes(pActualCamera->VP, frustumPlanes);
+
+        for (unsigned int i = 0; i < numLights && packedLights < kMaxDeferredLights; i++) {
+          Light& light = pScProp->Lights[i];
+          if (!light.Enabled) {
+            ++disabledLights;
+            continue;
+          }
+          if (light.Type == LIGHT_POINT && !pScProp->PointLightsEnabled) {
+            ++disabledLights;
+            continue;
+          }
+
+          const float effectiveIntensity = light.Intensity * (std::max)(0.0f, pScProp->LightIntensityScale);
+          if (effectiveIntensity <= 0.0f) {
+            ++zeroIntensityLights;
+            continue;
+          }
+
+          const float effectiveRadius = light.Type == LIGHT_POINT ? light.radius * (std::max)(0.0f, pScProp->LightRadiusScale) : light.radius;
+          if (light.Type == LIGHT_DIRECTIONAL) {
+            CnstBuffer.LightPositions[packedLights] = XVECTOR3(light.Direction.x, light.Direction.y, light.Direction.z, 0.0f);
+            ++directionalLights;
+          } else {
+            if (pointLightsUseVolumes)
+              continue;
+
+            const float shaderRange = effectiveRadius * 2.0f;
+            if (shaderRange <= 0.0f || !SphereIntersectsFrustum(frustumPlanes, light.Position, shaderRange)) {
+              ++frustumCulledLights;
+              continue;
+            }
+            CnstBuffer.LightPositions[packedLights] = XVECTOR3(light.Position.x, light.Position.y, light.Position.z, 1.0f);
+            CnstBuffer.LightRadius[packedLights] = effectiveRadius;
+          }
+          CnstBuffer.LightColors[packedLights] = XVECTOR3(light.Color.x, light.Color.y, light.Color.z, effectiveIntensity);
+          ++packedLights;
+        }
+      }
+
+      CnstBuffer.CameraInfo = XVECTOR3(pActualCamera->NPlane, pActualCamera->FPlane, pActualCamera->Fov, float(packedLights));
+      if (!useTiledLightPass) {
+        pScProp->DebugDeferredLightsSceneTotal = sceneLightCount;
+        pScProp->DebugDeferredLightsActiveLimit = activeLightLimit;
+        pScProp->DebugDeferredLightsConsidered = numLights;
+        pScProp->DebugDeferredLightsPacked = packedLights;
+        pScProp->DebugDeferredLightsFrustumCulled = frustumCulledLights;
+        pScProp->DebugDeferredLightsDisabled = disabledLights;
+        pScProp->DebugDeferredLightsZeroIntensity = zeroIntensityLights;
+        pScProp->DebugDeferredLightsMaxCapped = activeLightLimit > numLights ? activeLightLimit - numLights : 0;
+        pScProp->DebugDeferredLightsDirectional = directionalLights;
+        pScProp->DebugDeferredLightsPointVolumes = 0;
+        pScProp->DebugDeferredLightVolumeScreenPercent = 0.0f;
+        pScProp->DebugDeferredLightTileSize = 0;
+        pScProp->DebugDeferredLightTilesX = 0;
+        pScProp->DebugDeferredLightTilesY = 0;
+        pScProp->DebugDeferredLightTileCount = 0;
+        pScProp->DebugDeferredLightActiveTiles = 0;
+        pScProp->DebugDeferredLightTileLightRefs = 0;
+        pScProp->DebugDeferredLightMaxLightsInTile = 0;
+        pScProp->DebugDeferredLightSaturatedTiles = 0;
+        pScProp->DebugDeferredLightAverageLightsPerTile = 0.0f;
       }
     }
 	else if (pass == PassType::SHADOW_COMP) {
@@ -288,17 +666,14 @@ namespace t850 {
         CnstBuffer.LightPositions[i].x = roundTo(pScProp->pGaussKernels[pScProp->ActiveGaussKernel]->vGaussKernel[i].x, 6.0f);
       }
     }
-    else if (pass == PassType::HDR_COMP || pass == PassType::BRIGHT || pass == PassType::FSQUAD_3_TEX || pass == PassType::LUMINANCE_MAP || pass == PassType::ADAPT_LUMINANCE) {
+    else if (pass == PassType::HDR_COMP || pass == PassType::BRIGHT || pass == PassType::FSQUAD_3_TEX || pass == PassType::ADAPT_LUMINANCE) {
       Texture* mipSource = Textures[0];
       if ((pass == PassType::ADAPT_LUMINANCE) && Textures[1]) {
         mipSource = Textures[1];
       }
 
       if (mipSource) {
-        unsigned int maxDim = mipSource->x > mipSource->y ? mipSource->x : mipSource->y;
-        int mipLevels = 1;
-        while (maxDim > 1) { maxDim >>= 1; mipLevels++; }
-        CnstBuffer.CameraPos.w = (float)(mipLevels - 1);
+        CnstBuffer.CameraPos.w = (mipSource->mipmaps > 1) ? (float)(mipSource->mipmaps - 1) : 0.0f;
       }
 
       if (pass == PassType::BRIGHT) {
@@ -314,12 +689,17 @@ namespace t850 {
       }
 
       if (pass == PassType::ADAPT_LUMINANCE) {
+        float adaptDt = pScProp->FrameDeltaSec;
+        if (adaptDt < 0.0f) adaptDt = 0.0f;
+        if (adaptDt > (1.0f / 30.0f)) adaptDt = (1.0f / 30.0f);
         CnstBuffer.LightPositions[1].x = pScProp->LuminanceTau;
-        CnstBuffer.LightPositions[1].y = pScProp->FrameDeltaSec;
+        CnstBuffer.LightPositions[1].y = adaptDt;
+        CnstBuffer.LightPositions[1].z = (float)pScProp->LuminanceMode;
         static int adaptLogCount = 0;
         if (adaptLogCount++ % 300 == 0) {
-          T8_LOG_INFO("[AdaptLum] tau=%.4f dt=%.6f mipLevel=%.0f",
-                      pScProp->LuminanceTau, pScProp->FrameDeltaSec,
+          T8_LOG_INFO("[AdaptLum] mode=%d tau=%.4f dt=%.6f mipLevel=%.0f",
+                      pScProp->LuminanceMode,
+                      pScProp->LuminanceTau, adaptDt,
                       CnstBuffer.CameraPos.w);
         }
       }
@@ -354,6 +734,9 @@ namespace t850 {
     CnstBuffer.toogles.w = pScProp->ShadowBias;
 	}
 
+    if (skipCurrentDraw)
+      return;
+
     const BaseDriver::FaceCulling previousCull = g_pBaseDriver->m_FaceCulling;
     g_pBaseDriver->SetCullFace(BaseDriver::FRONT_AND_BACK);
 
@@ -361,17 +744,21 @@ namespace t850 {
     T8DeviceContext->SetPrimitiveTopology(Topology::TRIANLE_LIST);
     s->Set(*T8DeviceContext);
 
-    if (g_pBaseDriver->UsesGLSL()) {
-      pd3dConstantBuffer->UpdateFromBuffer(*T8DeviceContext, &CnstBuffer);
-      pd3dConstantBuffer->Set(*T8DeviceContext);
-    } else {
-      ExtractFrameCB(FrameCB, CnstBuffer);
-      ExtractPassCB(PassCB, CnstBuffer);
-      FrameCBGPU->UpdateFromBuffer(*T8DeviceContext, &FrameCB);
-      PassCBGPU->UpdateFromBuffer(*T8DeviceContext, &PassCB);
-      FrameCBGPU->Set(*T8DeviceContext, 0);
-      PassCBGPU->Set(*T8DeviceContext, 1);
-    }
+    auto updateQuadConstants = [&]() {
+      if (g_pBaseDriver->UsesGLSL()) {
+        pd3dConstantBuffer->UpdateFromBuffer(*T8DeviceContext, &CnstBuffer);
+        pd3dConstantBuffer->Set(*T8DeviceContext);
+      } else {
+        ExtractFrameCB(FrameCB, CnstBuffer);
+        ExtractPassCB(PassCB, CnstBuffer);
+        FrameCBGPU->UpdateFromBuffer(*T8DeviceContext, &FrameCB);
+        PassCBGPU->UpdateFromBuffer(*T8DeviceContext, &PassCB);
+        FrameCBGPU->Set(*T8DeviceContext, 0);
+        PassCBGPU->Set(*T8DeviceContext, 1);
+      }
+    };
+    updateQuadConstants();
+
     auto textureNameForSlot = [](int slot) -> const char* {
       switch (slot) {
       case 0: return "tex0";
@@ -383,6 +770,8 @@ namespace t850 {
       case 7: return "tex6";
       case 8: return "tex7";
       case 9: return "tex8";
+      case kTiledLightHeaderSlot: return "texTileHeaders";
+      case kTiledLightIndexSlot: return "texTileLightIndices";
       case EnvironmentTextureSlot::DiffuseIBL: return "texIBLDiffuse";
       case EnvironmentTextureSlot::SpecularIBL: return "texIBLSpecular";
       case EnvironmentTextureSlot::BrdfLUT: return "texIBLBRDF";
@@ -393,9 +782,26 @@ namespace t850 {
       }
     };
 
+    auto passUsesTextureSlot = [&](int slot) -> bool {
+      if (pass == PassType::SHADOW_COMP) {
+        if (slot == 1)
+          return finalKey.has(ShaderKey::SHADOWS);
+        if (slot == 2 || slot == 3)
+          return finalKey.has(ShaderKey::SSAO);
+      } else if (pass == PassType::DEFERRED ||
+                 pass == PassType::DEFERRED_LDR ||
+                 pass == PassType::DEFERRED_LIGHT_VOLUME) {
+        if (slot == 5)
+          return finalKey.has(ShaderKey::SHADOWS) || finalKey.has(ShaderKey::SSAO);
+        if (slot == kTiledLightHeaderSlot || slot == kTiledLightIndexSlot)
+          return pass == PassType::DEFERRED_LIGHT_VOLUME && useTiledLightPass;
+      }
+      return true;
+    };
+
     for (int slot = 0; slot < MaxPrimitiveTextures; ++slot) {
       const char* textureName = textureNameForSlot(slot);
-      if (Textures[slot] && textureName)
+      if (Textures[slot] && textureName && passUsesTextureSlot(slot))
         Textures[slot]->Set(*T8DeviceContext, slot, textureName);
     }
     if (EnvMap) {
@@ -404,7 +810,11 @@ namespace t850 {
     }
 
     for (int slot = 0; slot < MaxPrimitiveTextures; ++slot) {
-      if (Textures[slot] && textureNameForSlot(slot))
+      if ((slot == kTiledLightHeaderSlot || slot == kTiledLightIndexSlot) &&
+          pass == PassType::DEFERRED_LIGHT_VOLUME)
+        continue;
+
+      if (Textures[slot] && textureNameForSlot(slot) && passUsesTextureSlot(slot))
         Textures[slot]->SetSampler(*T8DeviceContext, slot);
     }
 
@@ -414,10 +824,10 @@ namespace t850 {
 
   void RenderQuad::Destroy() {
     m_quad.Destroy();
+    if (m_tiledLightHeaderTex >= 0) { g_pBaseDriver->DestroyTexture(m_tiledLightHeaderTex); m_tiledLightHeaderTex = -1; }
+    if (m_tiledLightIndexTex >= 0) { g_pBaseDriver->DestroyTexture(m_tiledLightIndexTex); m_tiledLightIndexTex = -1; }
     if (pd3dConstantBuffer) { pd3dConstantBuffer->release(); pd3dConstantBuffer = nullptr; }
     if (FrameCBGPU) { FrameCBGPU->release(); FrameCBGPU = nullptr; }
     if (PassCBGPU) { PassCBGPU->release(); PassCBGPU = nullptr; }
   }
 }
-
-

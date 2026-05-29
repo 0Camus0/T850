@@ -24,7 +24,7 @@ namespace t850 {
     bool Init(RootFramework* framework, const char* iniFileName, bool enableDocking);
     void Shutdown();
 
-    void NewFrame(bool createDockspace);
+    bool NewFrame(bool createDockspace);
     void Render();
     void BuildDrawData();
     void RenderDrawData();
@@ -37,9 +37,11 @@ namespace t850 {
     void AddWheelDelta(float delta) { m_wheelAccum += delta; }
 #ifdef OS_ANDROID
     bool HandleAndroidInputEvent(AInputEvent* event);
+    bool SetAndroidNativeWindow(ANativeWindow* window);
 #endif
 
   private:
+    RootFramework* m_framework = nullptr;
     bool m_inited = false;
     bool m_dockingEnabled = false;
     GraphicsApi::E m_api = GraphicsApi::D3D11;
@@ -51,6 +53,7 @@ namespace t850 {
 #endif
 #ifdef OS_ANDROID
     ANativeWindow* m_androidWindow = nullptr;
+    bool m_androidPlatformInited = false;
 #endif
   };
 

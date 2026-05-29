@@ -1,5 +1,6 @@
 cbuffer ConstantBuffer{
     float4x4 WVP;
+    float4 LineColor;
 }
 
 struct VS_OUTPUT{
@@ -7,6 +8,6 @@ struct VS_OUTPUT{
 };
 
 float4 FS( VS_OUTPUT input ) : SV_TARGET  {
-    float4 color =  float4(1.0,0.0,1.0,1.0);	
+    float4 color = LineColor;
     return color;
 }

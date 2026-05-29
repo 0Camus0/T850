@@ -59,11 +59,13 @@ namespace t8ditor {
   // `currentMode` is the active gizmo mode; returns the (possibly new) mode.
   // `addCamera`/`addLight` are set to the type to add (0=persp/dir, 1=ortho/omni, -1=none).
   int ImGuiDrawToolbar(int currentMode, int& addCamera, int& addLight,
-                       bool& wantsGroup, bool& wantsUngroup, bool hasMultiSelect);
+                       bool& wantsClone, bool& wantsGroup, bool& wantsUngroup,
+                       bool hasSelection, bool hasMultiSelect);
 
   // ── Context menu (right-click) ─────────────────────
   struct ContextAction {
     int  setMode       = -2;  // -2=no change, -1=select, 0/1/2=translate/rotate/scale
+    bool wantsClone    = false;
     bool wantsGroup    = false;
     bool wantsUngroup  = false;
     bool wantsDelete   = false;

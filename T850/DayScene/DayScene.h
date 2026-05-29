@@ -12,7 +12,6 @@
 #include <physics/PhysicsDebugRenderer.h>
 #include <scene/LensFlare.h>
 #include <scene/TextRenderer.h>
-#include <gui/GUIManager.h>
 #include <Config.h>
 
 
@@ -70,6 +69,9 @@ class DayScene : public t850::SceneBase
     CHANGE_SHOW_SPLINE,
     CHANGE_SHOW_LIGHTS,
     CHANGE_LIGHT_INTENSITY,
+    CHANGE_LIGHT_RADIUS_SCALE,
+    CHANGE_LIGHT_INTENSITY_SCALE,
+    CHANGE_LIGHTMAP_INTENSITY,
     CHANGE_DOF_TOGGLE,
     CHANGE_PARALLAX_TOGGLE,
     CHANGE_GODRAYS_TOGGLE,
@@ -80,6 +82,7 @@ class DayScene : public t850::SceneBase
     CHANGE_MATERIAL_EMISSIVE_INTENSITY,
     CHANGE_MATERIAL_TRANSMISSION_MULTIPLIER,
     CHANGE_MATERIAL_REFRACTION_STRENGTH,
+    CHANGE_LUMINANCE_MODE,
     CHANGE_CUBEMAP,
     CHANGE_PARALLAX_SHADOW_MIN_LAYERS,
     CHANGE_PARALLAX_SHADOW_MAX_LAYERS,
@@ -87,6 +90,7 @@ class DayScene : public t850::SceneBase
     CHANGE_PARALLAX_SHADOW_STRENGTH,
     CHANGE_PARALLAX_SHADOW_TOGGLE,
     CHANGE_SHOW_PHYSICS,
+    CHANGE_POINT_LIGHTS_ENABLED,
     CHANGE_MAX_NUM_OPTIONS
   };
   public:
@@ -104,10 +108,6 @@ class DayScene : public t850::SceneBase
   void ChangeSettingsOnMinus();
   void printCurrSelection();
 
-  // GUI hooks (called by DevLayer)
-  void PopulateGUI(t850::GUIManager& gui) override;
-  void SyncToGUI(t850::GUIManager& gui) override;
-  void SyncFromGUI(t850::GUIManager& gui) override;
   void DrawDevGui(t850::DevGuiContext& gui) override;
 
   // Dump scene state to JSON
@@ -188,7 +188,6 @@ class DayScene : public t850::SceneBase
   int Extra16FPass;
   int GodRaysCalcPass;
   int GodRaysCalcExtraPass;
-  int LuminanceMapPass;
   int AdaptedLumCurrentPass;
   int AdaptedLumPrevPass;
 

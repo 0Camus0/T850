@@ -81,16 +81,22 @@ highp vec3 DecodeOctahedralNormal(highp vec2 encoded)
 	layout(location = 0) out highp vec4 colorOut;
 #endif
 
-#if defined(DEFERRED_PASS) || defined(DEFERRED_LDR_PASS)
+#if defined(DEFERRED_PASS) || defined(DEFERRED_LDR_PASS) || defined(DEFERRED_LIGHT_VOLUME_PASS)
 uniform mediump sampler2D tex0;
 uniform mediump sampler2D tex1;
 uniform mediump sampler2D tex2;
 uniform mediump sampler2D tex3;
 uniform mediump sampler2D tex4;
+#if defined(ENABLE_SHADOWS) || defined(ENABLE_SSAO)
 uniform mediump sampler2D tex5;
+#endif
 uniform mediump sampler2D tex6;
 uniform mediump sampler2D tex7;
 uniform mediump sampler2D tex8;
+#if defined(DEFERRED_LIGHT_VOLUME_PASS)
+uniform mediump sampler2D texTileHeaders;
+uniform mediump sampler2D texTileLightIndices;
+#endif
 uniform mediump samplerCube texEnv;
 uniform mediump samplerCube texIBLDiffuse;
 uniform mediump samplerCube texIBLSpecular;
@@ -288,6 +294,128 @@ highp vec3 GetIBLRadianceCharlie(highp vec3 normal, highp vec3 viewDir, highp fl
 	return sheenLight * sheenColor * brdf;
 }
 
+#if defined(DEFERRED_LIGHT_VOLUME_PASS)
+void main(){
+	highp vec4 Final = vec4(0.0, 0.0, 0.0, 1.0);
+	highp vec2 bufferSize = vec2(textureSize(tex0, 0));
+	highp vec2 coords = gl_FragCoord.xy / max(bufferSize, vec2(1.0));
+	highp vec2 clipPos = coords * 2.0 - vec2(1.0);
+
+	highp vec4 Albedo = SampleTexture2DLod(tex0, coords, 0.0);
+	highp vec4 PBRData = SampleTexture2DLod(tex2, coords, 0.0);
+	highp float depth = SampleTexture2DLod(tex4, coords, 0.0).r;
+	if (!IsSceneDepthValid(depth)) {
+		discard;
+	}
+
+	int MatId = int(PBRData.a * 255.0 + 0.5);
+	if (MatId <= 0) {
+		discard;
+	}
+
+	highp vec4 geoData = SampleTexture2DLod(tex3, coords, 0.0);
+	highp float packedMaterial = geoData.a;
+	bool unlitMaterial = packedMaterial >= 0.5;
+	if (unlitMaterial) {
+		discard;
+	}
+
+	highp float Shadow = 1.0;
+#if defined(ENABLE_SHADOWS) || defined(ENABLE_SSAO)
+	Shadow = SampleTexture2DLod(tex5, coords, 0.0).r;
+#endif
+
+	highp vec4 SpecularOcclusionData = SampleTexture2DLod(tex7, coords, 0.0);
+	highp float specularFactor = max(Albedo.a, 0.0);
+	Albedo.xyz = pow(Albedo.xyz, vec3(2.2));
+
+	highp float metallic = PBRData.r;
+	highp vec3 dielectricF0 = max(SpecularOcclusionData.rgb, vec3(0.0));
+	highp vec3 F0 = mix(dielectricF0 * specularFactor, Albedo.xyz, metallic);
+
+	highp vec4 position = ReconstructPosition(clipPos, depth);
+	highp vec3 EyeDir = normalize(CameraPosition.xyz - position.xyz);
+
+	highp vec4 normalmap = SampleTexture2DLod(tex1, coords, 0.0);
+	highp vec3 normal = normalize(normalmap.xyz * 2.0 - 1.0);
+	highp float rough = normalmap.a;
+	highp vec4 SheenData = SampleTexture2DLod(tex6, coords, 0.0);
+	highp vec3 sheenColor = clamp(SheenData.rgb, 0.0, 1.0);
+	highp float sheenRoughness = clamp(SheenData.a, 0.0, 1.0);
+	highp float sheenStrength = Max3(sheenColor);
+	bool hasSheenLUT = brightness.w > 0.5;
+
+	highp float clearcoatRoughness = clamp(packedMaterial * 2.0, 0.04, 1.0);
+	highp float clearcoatFactor = clamp(PBRData.b, 0.0, 1.0);
+
+	highp float selfShadow = PBRData.g;
+	int tileSize = max(int(LightCameraInfo.x + 0.5), 1);
+	int tileCountX = max(int(LightCameraInfo.y + 0.5), 1);
+	int tileCountY = max(int(LightCameraInfo.z + 0.5), 1);
+	int maxTileLights = max(int(LightCameraInfo.w + 0.5), 1);
+	int tileX = int(gl_FragCoord.x) / tileSize;
+	int tileY = int(gl_FragCoord.y) / tileSize;
+	tileX = max(0, min(tileX, tileCountX - 1));
+	tileY = max(0, min(tileY, tileCountY - 1));
+	int tileIndex = tileY * tileCountX + tileX;
+	highp vec2 headerSize = vec2(textureSize(texTileHeaders, 0));
+	highp vec4 tileHeader = SampleTexture2DLod(texTileHeaders, (vec2(float(tileX), float(tileY)) + vec2(0.5)) / headerSize, 0.0);
+	int tileLightCount = min(int(tileHeader.y + 0.5), maxTileLights);
+	highp vec2 indexSize = vec2(textureSize(texTileLightIndices, 0));
+	highp vec3 directLight = vec3(0.0);
+
+	for (int tileLight = 0; tileLight < tileLightCount; ++tileLight) {
+		highp float encodedIndex = SampleTexture2DLod(texTileLightIndices, (vec2(float(tileLight), float(tileIndex)) + vec2(0.5)) / indexSize, 0.0).x;
+		int lightIndex = int(encodedIndex + 0.5);
+		int radiusVec = lightIndex / 4;
+		int radiusComp = lightIndex - radiusVec * 4;
+		highp float Rad = radiusComp == 0 ? LightRadius[radiusVec].x : (radiusComp == 1 ? LightRadius[radiusVec].y : (radiusComp == 2 ? LightRadius[radiusVec].z : LightRadius[radiusVec].w));
+		highp float dist = distance(LightPositions[lightIndex].xyz, position.xyz);
+		highp float attenuation = RangeAttenuation(Rad * 2.0, dist);
+		if (attenuation <= 0.0)
+			continue;
+
+		highp vec3 LightDir = normalize(LightPositions[lightIndex].xyz - position.xyz);
+		highp vec3 Half = normalize(EyeDir + LightDir);
+		highp float intensity = LightColors[lightIndex].w;
+		highp vec3 lightRadiance = LightColors[lightIndex].xyz * intensity * attenuation;
+		highp vec3 Diffuse = CalculateDiffuse(Albedo.xyz, normal, LightDir) * lightRadiance;
+		highp vec3 SpecularRes = CalculateSpecular(F0, normal, EyeDir, Half, LightDir, rough) * lightRadiance;
+
+		highp float VdotH = clamp(dot(EyeDir, Half), 0.0, 1.0);
+		highp vec3 F = FresnelCalc(VdotH, F0);
+		highp vec3 Kd = (vec3(1.0) - F) * (1.0 - metallic);
+
+		highp float NdotL = max(dot(normal, LightDir), 0.0);
+		highp float NdotVLight = max(dot(normal, EyeDir), 0.0);
+		highp float NdotH = max(dot(normal, Half), 0.0);
+		highp float albedoSheenScaling = 1.0;
+		highp vec3 sheenLight = vec3(0.0);
+		if (hasSheenLUT && sheenStrength > 0.0) {
+			albedoSheenScaling = min(1.0 - sheenStrength * AlbedoSheenScalingLUT(NdotVLight, sheenRoughness),
+			                         1.0 - sheenStrength * AlbedoSheenScalingLUT(NdotL, sheenRoughness));
+			sheenLight = CalculateSheenRadiance(sheenColor, sheenRoughness, LightColors[lightIndex].xyz, intensity, NdotL, NdotVLight, NdotH) * attenuation;
+		}
+
+		highp vec3 layerLight = sheenLight + (SpecularRes.xyz + Kd * Diffuse) * albedoSheenScaling;
+		if (clearcoatFactor > 0.001) {
+			highp float clearcoatF = FresnelCalc(clamp(dot(normal, EyeDir), 0.0, 1.0), vec3(0.04)).x;
+			highp float clearcoatWeight = clamp(clearcoatFactor * clearcoatF, 0.0, 1.0);
+			highp vec3 clearcoatLight = CalculateClearcoat(normal, EyeDir, Half, LightDir, clearcoatRoughness) * lightRadiance;
+			layerLight = mix(layerLight, clearcoatLight, clearcoatWeight);
+		}
+		directLight += layerLight;
+	}
+
+	Final.xyz = directLight * Shadow * selfShadow;
+
+#ifdef ES_30
+	colorOut = Final;
+#else
+	gl_FragColor = Final;
+#endif
+}
+#else
 void main(){
 	highp vec2 coords = vecUVCoords;
 	coords.y = 1.0 - coords.y;
@@ -351,10 +479,12 @@ void main(){
 		Final.xyz = RefCol.xyz * toogles.x;
 	}else if(MatId > 0){
 
-#ifdef ES_30
+#if defined(ENABLE_SHADOWS) || defined(ENABLE_SSAO)
+		#ifdef ES_30
 		Shadow = SampleTexture2DLod(tex5, coords, 0.0).r;
-#else
+		#else
 		Shadow = texture2D(tex5, coords).r;
+		#endif
 #endif
 
 		#ifdef ES_30
@@ -378,6 +508,7 @@ void main(){
 			highp vec4 geoData = texture2D(tex3, coords);
 		#endif
 		highp vec3 geoNormal = DecodeOctahedralNormal(geoData.xy);
+		highp float lightmap = clamp(geoData.b, 0.0, 1.0);
 		highp float packedMaterial = geoData.a;
 		bool unlitMaterial = packedMaterial >= 0.5;
 		highp float clearcoatRoughness = unlitMaterial ? (packedMaterial - 0.5) * 2.0 : packedMaterial * 2.0;
@@ -509,6 +640,7 @@ void main(){
 			highp float diffuseMip = clamp(brightness.z, 0.0, iblMaxMip);
 			highp vec3 irradiance = SampleCubeLod(texIBLDiffuse, irradianceDir, diffuseMip);
 			indirectLight += irradiance * Albedo.xyz * kDiffuseEnv * toogles.z;
+			indirectLight += Albedo.xyz * kDiffuseEnv * lightmap;
 
 			// PBR: avoid adding a constant ambient floor term; rely on IBL + AO.
 			if (hasSheenLUT && sheenStrength > 0.0) {
@@ -539,16 +671,22 @@ void main(){
 #endif
 	
 }
+#endif
 #elif defined(SHADOW_COMP_PASS)
 uniform highp sampler2D tex0;
+#ifdef ENABLE_SHADOWS
 #if defined OMNIDIRECTIONAL_SH
 uniform mediump samplerCube tex1;
 #else
 uniform mediump sampler2D tex1;
 #endif
+#endif
+#ifdef ENABLE_SSAO
 uniform mediump sampler2D tex2; // Normals (geometric)
 uniform mediump sampler2D tex3; // Noise
+#endif
 
+#ifdef ENABLE_SHADOWS
 highp vec4 CalculateShadow(highp vec4 position){
 highp vec4 FShadow = vec4(1.0,1.0,1.0,1.0);
 
@@ -639,7 +777,9 @@ highp vec4 FShadow = vec4(1.0,1.0,1.0,1.0);
 	#endif
 	return FShadow;
 }
+#endif
 
+#ifdef ENABLE_SSAO
 highp vec3 GetNormal(highp vec2 coords){
 	#ifdef ES_30
 		highp vec4 normalmap = texture(tex2,coords);
@@ -699,6 +839,7 @@ highp float GetOcclusion(highp float depth,highp vec2 uv, highp vec4 position, h
 	occlusion = 1.0 - (occlusion / LightPositions[0].x);
 	return occlusion;
 }
+#endif
 
 void main(){
 	highp vec4 Fcolor = vec4(1.0,1.0,1.0,1.0);
@@ -748,7 +889,7 @@ void main(){
 	coords.y = 1.0 - coords.y;
 	
 	mediump vec4 Sum = vec4(0.0,0.0,0.0,1.0);
-	mediump vec2 U = LightPositions[0].y*vec2( 1.0/LightPositions[0].z,1.0/LightPositions[0].w);
+	highp vec2 U = LightPositions[0].y / vec2(textureSize(tex0, 0));
 	highp int KernelSize = int(LightPositions[0].x);
 	highp float Origin = -(float(KernelSize)-3.0)/2.0;
 	mediump float V = (Origin);
@@ -756,9 +897,9 @@ void main(){
 	for(mediump int i=1;i<(KernelSize-1);i++){	
 		Texcoords.xy = vec2(coords.x ,coords.y + V*U.y);
 		#ifdef ES_30
-			Sum.xyz += LightPositions[i+1].x * texture( tex0, Texcoords.xy ).xyz;
+			Sum.xyz += LightPositions[i+1].x * textureLod( tex0, Texcoords.xy, 0.0 ).xyz;
 		#else
-			Sum.xyz += LightPositions[i+1].x * texture2D( tex0, Texcoords.xy ).xyz;
+			Sum.xyz += LightPositions[i+1].x * textureLod( tex0, Texcoords.xy, 0.0 ).xyz;
 		#endif
 		V++;
 	}
@@ -776,7 +917,7 @@ void main(){
 	coords.y = 1.0 - coords.y;
 	
 	mediump vec4 Sum = vec4(0.0,0.0,0.0,1.0);
-	mediump vec2 U = LightPositions[0].y*vec2( 1.0/LightPositions[0].z,1.0/LightPositions[0].w);
+	highp vec2 U = LightPositions[0].y / vec2(textureSize(tex0, 0));
 	highp int KernelSize = int(LightPositions[0].x);
 	highp float Origin = -(float(KernelSize)-3.0)/2.0;
 	mediump float H = Origin;
@@ -784,9 +925,9 @@ void main(){
 	for(mediump int i=1;i<(KernelSize-1);i++){	
 		Texcoords.xy = vec2(coords.x + H*U.x ,coords.y );
 		#ifdef ES_30
-			Sum.xyz += LightPositions[i+1].x * texture( tex0, Texcoords.xy ).xyz;
+			Sum.xyz += LightPositions[i+1].x * textureLod( tex0, Texcoords.xy, 0.0 ).xyz;
 		#else
-			Sum.xyz += LightPositions[i+1].x * texture2D( tex0, Texcoords.xy ).xyz;
+			Sum.xyz += LightPositions[i+1].x * textureLod( tex0, Texcoords.xy, 0.0 ).xyz;
 		#endif
 		H++;
 	}
@@ -804,7 +945,7 @@ void main(){
 	coords.y = 1.0 - coords.y;
 	
 	mediump vec4 Sum = vec4(0.0,0.0,0.0,1.0);
-	mediump vec2 U = LightPositions[0].y*vec2( 1.0/LightPositions[0].z,1.0/LightPositions[0].w);
+	highp vec2 U = LightPositions[0].y / vec2(textureSize(tex0, 0));
 	highp int KernelSize = int(LightPositions[0].x);
 	highp float Origin = -(float(KernelSize)-3.0)/2.0;
 	mediump float H = Origin;
@@ -817,9 +958,9 @@ void main(){
 			Texcoords.y = coords.y + V*U.y;
 			mediump float weight = roundTo(LightPositions[i+1].x*LightPositions[j+1].x,6.0);
 			#ifdef ES_30
-				Sum.xyz += weight * texture( tex0, Texcoords.xy ).xyz;
+				Sum.xyz += weight * textureLod( tex0, Texcoords.xy, 0.0 ).xyz;
 			#else
-				Sum.xyz += weight * texture2D( tex0, Texcoords.xy ).xyz;
+				Sum.xyz += weight * textureLod( tex0, Texcoords.xy, 0.0 ).xyz;
 			#endif
 			V++;
 		}
@@ -860,40 +1001,64 @@ void main(){
 		gl_FragColor = vec4(toneMapped, 1.0f);
 	#endif
 }
-#elif defined(LUMINANCE_MAP_PASS)
-uniform mediump sampler2D tex0;
-void main(){
-	highp vec2 uv = vecUVCoords;
-	uv.y = 1.0 - uv.y;
-
-	highp vec3 color = texture(tex0, uv).rgb;
-	highp float luminance = max(dot(color, vec3(0.299f, 0.587f, 0.114f)), 0.0001f);
-	highp float logLum = log(luminance);
-
-	#ifdef ES_30
-		colorOut = vec4(logLum, 1.0, 1.0, 1.0);
-	#else
-		gl_FragColor = vec4(logLum, 1.0, 1.0, 1.0);
-	#endif
-}
 #elif defined(ADAPT_LUMINANCE_PASS)
 uniform mediump sampler2D tex0;
 uniform mediump sampler2D tex1;
-void main(){
-	highp vec2 center = vec2(0.5, 0.5);
-	highp float lastLum = exp(texture(tex0, center).r);
-	highp float currentLogLum = textureLod(tex1, center, CameraPosition.w).r;
-	highp float currentLum = exp(currentLogLum);
+highp float FullAverageLogLuminance() {
+	highp float sumLogLum = 0.0;
+	for (int y = 0; y < 8; ++y) {
+		for (int x = 0; x < 8; ++x) {
+			highp vec2 uv = (vec2(float(x), float(y)) + vec2(0.5)) * 0.125;
+			highp vec3 color = textureLod(tex1, uv, 0.0).rgb;
+			highp float luminance = max(dot(color, vec3(0.299, 0.587, 0.114)), 0.0001);
+			sumLogLum += log(luminance);
+		}
+	}
+	return sumLogLum / 64.0;
+}
+highp float RobustAverageLogLuminance() {
+	const highp float minLogLum = -4.60517019; // log(0.01)
+	const highp float maxLogLum =  2.77258872; // log(16.0)
+	highp float sumLogLum = 0.0;
+	highp float minSample =  1.0e20;
+	highp float maxSample = -1.0e20;
 
+	for (int y = 0; y < 8; ++y) {
+		for (int x = 0; x < 8; ++x) {
+			highp vec2 uv = (vec2(float(x), float(y)) + vec2(0.5)) * 0.125;
+			highp vec3 color = textureLod(tex1, uv, 0.0).rgb;
+			highp float luminance = max(dot(color, vec3(0.299, 0.587, 0.114)), 0.0001);
+			highp float logLum = clamp(log(luminance), minLogLum, maxLogLum);
+			sumLogLum += logLum;
+			minSample = min(minSample, logLum);
+			maxSample = max(maxSample, logLum);
+		}
+	}
+
+	return (sumLogLum - minSample - maxSample) / 62.0;
+}
+void main(){
+	highp int mode = int(LightPositions[1].z + 0.5);
+	highp float currentLogLum = 0.0;
+	if (mode == 0) {
+		currentLogLum = FullAverageLogLuminance();
+	} else {
+		currentLogLum = RobustAverageLogLuminance();
+	}
+	highp float currentLum = max(exp(currentLogLum), 0.0001);
+	if (mode != 0) {
+		currentLum = clamp(currentLum, 0.05, 16.0);
+	}
+	highp float previousLum = max(exp(textureLod(tex0, vec2(0.5, 0.5), 0.0).r), 0.0001);
+	highp float tau = max(LightPositions[1].x, 0.0);
 	highp float dt = max(LightPositions[1].y, 0.0);
-	highp float tau = max(LightPositions[1].x, 0.0001);
-	highp float adaptedLum = lastLum + (currentLum - lastLum) * (1.0 - exp(-dt * tau));
-	highp float adaptedLogLum = log(max(adaptedLum, 0.0001));
+	highp float blend = clamp(1.0 - exp(-dt * tau), 0.0, 1.0);
+	highp float adaptedLum = mix(previousLum, currentLum, blend);
 
 	#ifdef ES_30
-		colorOut = vec4(adaptedLogLum, 1.0, 1.0, 1.0);
+		colorOut = vec4(log(max(adaptedLum, 0.0001)), 1.0, 1.0, 1.0);
 	#else
-		gl_FragColor = vec4(adaptedLogLum, 1.0, 1.0, 1.0);
+		gl_FragColor = vec4(log(max(adaptedLum, 0.0001)), 1.0, 1.0, 1.0);
 	#endif
 }
 #elif defined(HDR_COMP_PASS)
@@ -1436,6 +1601,40 @@ void main(){
 		gl_FragColor = vec4( 1.0,1.0,1.0, brightness.x);
 	#endif
 }
+#elif defined(LENS_FLARE_SUN)
+void main(){
+	highp vec2 centered = vecUVCoords.xy * 2.0 - 1.0;
+	highp float dist = length(centered);
+	highp float core = 1.0 - smoothstep(0.0, 0.28, dist);
+	highp float halo = 1.0 - smoothstep(0.0, 1.0, dist);
+	highp float mask = clamp(core + halo * 0.35, 0.0, 1.0);
+	highp vec3 color = vec3(1.0, 0.78, 0.42) * halo + vec3(1.0, 0.98, 0.86) * core;
+	#ifdef ES_30
+		colorOut = vec4(color * mask, clamp(brightness.x, 0.0, 1.0));
+	#else
+		gl_FragColor = vec4(color * mask, clamp(brightness.x, 0.0, 1.0));
+	#endif
+}
+#elif defined(LENS_FLARE_GHOST)
+uniform mediump sampler2D tex0;
+void main(){
+	lowp vec2 coords = vecUVCoords;
+	coords.y = 1.0 - coords.y;
+	#ifdef ES_30
+		highp vec4 tex = texture(tex0, coords);
+	#else
+		highp vec4 tex = texture2D(tex0, coords);
+	#endif
+	highp float alpha = clamp(tex.a, 0.0, 1.0);
+	if (alpha <= 0.003) {
+		discard;
+	}
+	#ifdef ES_30
+		colorOut = vec4(clamp(tex.rgb, 0.0, 1.0) * alpha, clamp(brightness.x, 0.0, 1.0));
+	#else
+		gl_FragColor = vec4(clamp(tex.rgb, 0.0, 1.0) * alpha, clamp(brightness.x, 0.0, 1.0));
+	#endif
+}
 #elif defined(FSQUAD_1_TEX)
 uniform mediump sampler2D tex0;
 void main(){
@@ -1483,7 +1682,4 @@ void main(){
 	#endif
 }
 #endif
-
-
-
 

@@ -27,6 +27,7 @@ struct DisplayJson {
   std::optional<bool> fullscreen;
   std::optional<int> scene;
   std::optional<std::string> model;
+  std::optional<std::string> sceneFile;
   std::optional<std::string> sceneProfile;
   std::optional<std::string> title;
 };
@@ -40,6 +41,7 @@ struct DevToolsJson {
   std::optional<bool> d3d12Debug;
   std::optional<bool> profile;
   std::optional<int> profileFrames;
+  std::optional<bool> autoStartRagdoll;
   std::optional<bool> dumpMatrices;
   std::optional<int> dumpMatricesFrames;
   std::optional<bool> benchmark;
@@ -61,6 +63,7 @@ struct RuntimeConfigJson {
   std::optional<int> scene;
   std::optional<std::string> title;
   std::optional<std::string> model;
+  std::optional<std::string> sceneFile;
   std::optional<bool> debugFrames;
   std::optional<bool> keepRunning;
   std::optional<std::string> replaySnapshotPath;
@@ -75,6 +78,7 @@ struct RuntimeConfigJson {
   std::optional<bool> d3d12Debug;
   std::optional<bool> profile;
   std::optional<int> profileFrames;
+  std::optional<bool> autoStartRagdoll;
   std::optional<bool> dumpMatrices;
   std::optional<int> dumpMatricesFrames;
   std::optional<bool> benchmark;

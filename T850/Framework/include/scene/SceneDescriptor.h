@@ -83,6 +83,7 @@ namespace t850 {
     float bloom_threshold = 2.0f;
     float tone_map_white_level = 4.0f;
     float luminance_tau = 1.1f;
+    int luminance_mode = 0;
     float aperture = 120.0f;
     float focal_length = 50.0f;
     float max_coc = 2.5f;
@@ -100,9 +101,13 @@ namespace t850 {
     float env_factor = 1.0f;
     float ibl_factor = 1.0f;
     float godrays_factor = 1.0f;
+    float light_radius_scale = 1.0f;
+    float light_intensity_scale = 1.0f;
     float material_emissive_intensity = 1.0f;
     float material_transmission_multiplier = 1.0f;
     float material_refraction_strength = 0.03f;
+    float lightmap_intensity = 1.0f;
+    std::optional<bool> point_lights_enabled;
   };
 
   struct SliderDesc {
@@ -156,6 +161,27 @@ namespace t850 {
     bool operator==(const SandboxOrbitCameraDesc&) const = default;
   };
 
+  struct SandboxCameraDesc {
+    int profile = 0;
+    std::array<float, 3> eye = {0, 0, 0};
+    std::array<float, 3> look = {0, 0, 1};
+    std::array<float, 3> up = {0, 1, 0};
+    std::array<float, 3> right = {1, 0, 0};
+    float yaw = 0.0f;
+    float pitch = 0.0f;
+    float roll = 0.0f;
+    float fov = 45.0f;
+    float aspect_ratio = 1.0f;
+    float near_plane = 0.01f;
+    float far_plane = 1000.0f;
+    bool ortho = false;
+    float width = 1280.0f;
+    float height = 720.0f;
+    bool left_handed = true;
+    std::optional<SandboxOrbitCameraDesc> orbit;
+    bool operator==(const SandboxCameraDesc&) const = default;
+  };
+
   struct SandboxLightOverrideDesc {
     int index = 0;
     std::optional<std::array<float, 3>> position;
@@ -178,6 +204,7 @@ namespace t850 {
     std::vector<BoolOverrideDesc> checkboxes;
     std::vector<IntOverrideDesc> selectors;
     std::vector<SandboxLightOverrideDesc> lights;
+    std::optional<SandboxCameraDesc> camera;
     std::optional<SandboxOrbitCameraDesc> orbit_camera;
     std::optional<bool> frustum_culling;
     std::optional<bool> show_culling_debug;

@@ -56,8 +56,9 @@ namespace t850 {
     float    occlusionStrength  = 1.0f;
     float    normalScale        = 1.0f;
     float    alphaCutoff        = 0.5f;
+    float    lightmapIntensity  = 1.0f;
 
-    // UV transforms — 12 textureInfos × 2 vec4 each (24 vec4 total).
+    // UV transforms - 13 textureInfos x 2 vec4 each (26 vec4 total).
     float    baseColorUV0[4]        = {1,0,0,0}, baseColorUV1[4]        = {0,1,0,0};
     float    normalUV0[4]           = {1,0,0,0}, normalUV1[4]           = {0,1,0,0};
     float    metallicUV0[4]         = {1,0,0,0}, metallicUV1[4]         = {0,1,0,0};
@@ -70,6 +71,7 @@ namespace t850 {
     float    specFactorUV0[4]       = {1,0,0,0}, specFactorUV1[4]       = {0,1,0,0};
     float    specColorUV0[4]        = {1,0,0,0}, specColorUV1[4]        = {0,1,0,0};
     float    transmissionUV0[4]     = {1,0,0,0}, transmissionUV1[4]     = {0,1,0,0};
+    float    lightmapUV0[4]         = {1,0,0,0}, lightmapUV1[4]         = {0,1,0,0};
 
     // Per-textureInfo texCoord set selector (0..3). Packed as bytes
     // to keep the struct small; convert to float in the CB upload.
@@ -85,13 +87,14 @@ namespace t850 {
     uint8_t  specFactorTexCoord = 0;
     uint8_t  specColorTexCoord  = 0;
     uint8_t  transmissionTexCoord = 0;
+    uint8_t  lightmapTexCoord   = 0;
 
     // Mode flags
     uint8_t  alphaMode          = 0;
     uint8_t  doubleSided        = 0;
     uint8_t  unlit              = 0;
     uint8_t  bUseFresnel        = 0;
-    uint8_t  _pad[4]            = {0,0,0,0};
+    uint8_t  _pad[3]            = {0,0,0};
   };
   static_assert(std::is_trivially_copyable<MaterialParams>::value,
                 "MaterialParams must be trivially copyable for memcmp dedup");
@@ -116,7 +119,8 @@ namespace t850 {
     SpecularFactor     = 13,
     SpecularColor      = 14,
     Transmission       = 15,
-    Count              = 16,
+    Lightmap           = 16,
+    Count              = 17,
   };
 
   struct MaterialAsset {
@@ -124,7 +128,7 @@ namespace t850 {
     uint64_t        contentHash    = 0;             // dedup key in MaterialAssetCache
     ShaderKey       featureKey;                     // material feature bits only (no vertex attribs, no pass)
     Texture*        textures[(int)MatTexSlot::Count] = {};
-    int             textureIds[(int)MatTexSlot::Count] = {-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1};
+    int             textureIds[(int)MatTexSlot::Count] = {-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1};
     MaterialParams  params;
     uint32_t        refCount       = 0;
   };
@@ -186,7 +190,10 @@ namespace t850 {
                                  static_cast<float>(mp.emissiveTexCoord));
     // MaterialParams .w slots filled by caller (emissiveMul, etc.).
     cb.MaterialParams4 = XVECTOR3(mp.sheenColor[0], mp.sheenColor[1], mp.sheenColor[2], mp.sheenRoughness);
-    cb.MaterialParams9 = XVECTOR3(static_cast<float>(mp.specColorTexCoord), mp.normalScale, 0.0f, 0.0f);
+    cb.MaterialParams9 = XVECTOR3(static_cast<float>(mp.specColorTexCoord),
+                                  mp.normalScale,
+                                  static_cast<float>(mp.lightmapTexCoord),
+                                  mp.lightmapIntensity);
     cb.BaseColorUVTransform0 = v3(mp.baseColorUV0); cb.BaseColorUVTransform1 = v3(mp.baseColorUV1);
     cb.NormalUVTransform0    = v3(mp.normalUV0);    cb.NormalUVTransform1    = v3(mp.normalUV1);
     cb.MetallicUVTransform0  = v3(mp.metallicUV0);  cb.MetallicUVTransform1  = v3(mp.metallicUV1);
@@ -199,6 +206,7 @@ namespace t850 {
     cb.SpecularFactorUVTransform0 = v3(mp.specFactorUV0); cb.SpecularFactorUVTransform1 = v3(mp.specFactorUV1);
     cb.SpecularColorUVTransform0  = v3(mp.specColorUV0);  cb.SpecularColorUVTransform1  = v3(mp.specColorUV1);
     cb.TransmissionUVTransform0   = v3(mp.transmissionUV0); cb.TransmissionUVTransform1 = v3(mp.transmissionUV1);
+    cb.LightmapUVTransform0       = v3(mp.lightmapUV0);   cb.LightmapUVTransform1       = v3(mp.lightmapUV1);
   }
 }
 

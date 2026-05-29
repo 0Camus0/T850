@@ -23,6 +23,8 @@
 namespace t850 {
   class PrimitiveInst {
   public:
+    PrimitiveInst();
+
     void	CreateInstance(PrimitiveBase *pPrim, XMATRIX44 *pVP);
 
     void	TranslateAbsolute(float x, float y, float z);

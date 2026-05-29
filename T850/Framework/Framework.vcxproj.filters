@@ -75,12 +75,6 @@
     <Filter Include="Shaders\HLSL">
       <UniqueIdentifier>{3b13b26b-42f4-4811-8eb4-58b6a06471e6}</UniqueIdentifier>
     </Filter>
-    <Filter Include="Source Files\gui">
-      <UniqueIdentifier>{5dbd3979-b70b-404c-b907-e7692e535a55}</UniqueIdentifier>
-    </Filter>
-    <Filter Include="Header Files\gui">
-      <UniqueIdentifier>{807894bf-e95e-4fbe-aa5f-6e72e46165d3}</UniqueIdentifier>
-    </Filter>
     <Filter Include="Header Files\physics">
       <UniqueIdentifier>{1f2936b2-e74b-4bdb-9ad2-32a060e17d06}</UniqueIdentifier>
     </Filter>
@@ -147,6 +141,9 @@
       <Filter>Header Files\utils</Filter>
     </ClInclude>
     <ClInclude Include="include\utils\Camera.h">
+      <Filter>Header Files\utils</Filter>
+    </ClInclude>
+    <ClInclude Include="include\utils\CameraProfiles.h">
       <Filter>Header Files\utils</Filter>
     </ClInclude>
     <ClInclude Include="include\utils\Picking.h">
@@ -275,10 +272,16 @@
     <ClInclude Include="include\scene\TextRenderer.h">
       <Filter>Header Files\scene</Filter>
     </ClInclude>
+    <ClInclude Include="include\physics\CharacterController.h">
+      <Filter>Header Files\physics</Filter>
+    </ClInclude>
     <ClInclude Include="include\physics\JoltPhysicsSystem.h">
       <Filter>Header Files\physics</Filter>
     </ClInclude>
     <ClInclude Include="include\physics\PhysicsDebugRenderer.h">
+      <Filter>Header Files\physics</Filter>
+    </ClInclude>
+    <ClInclude Include="include\physics\Q3BspCollision.h">
       <Filter>Header Files\physics</Filter>
     </ClInclude>
     <ClInclude Include="include\physics\PhysicsAuthoring.h">
@@ -353,19 +356,10 @@
     <ClInclude Include="include\debug\FrameDumper.h">
       <Filter>Header Files\utils</Filter>
     </ClInclude>
-    <ClInclude Include="include\gui\GUIAtlas.h">
-      <Filter>Header Files\gui</Filter>
-    </ClInclude>
-    <ClInclude Include="include\gui\GUIElement.h">
-      <Filter>Header Files\gui</Filter>
-    </ClInclude>
-    <ClInclude Include="include\utils\GUIAtlasGenerator.h">
-      <Filter>Header Files\gui</Filter>
-    </ClInclude>
-    <ClInclude Include="include\gui\GUIManager.h">
-      <Filter>Header Files\gui</Filter>
-    </ClInclude>
     <ClInclude Include="include\scene\RenderGraph.h">
+      <Filter>Header Files\scene</Filter>
+    </ClInclude>
+    <ClInclude Include="include\scene\EditorSceneFile.h">
       <Filter>Header Files\scene</Filter>
     </ClInclude>
     <ClInclude Include="include\scene\IBLResources.h">
@@ -380,14 +374,8 @@
     <ClInclude Include="include\scene\SceneSetup.h">
       <Filter>Header Files\scene</Filter>
     </ClInclude>
-    <ClInclude Include="include\gui\SliderBarData.h">
-      <Filter>Header Files\gui</Filter>
-    </ClInclude>
     <ClInclude Include="include\utils\Log.h">
       <Filter>Header Files\utils</Filter>
-    </ClInclude>
-    <ClInclude Include="include\gui\SliderKnobData.h">
-      <Filter>Header Files\gui</Filter>
     </ClInclude>
     <ClInclude Include="include\utils\SPIRVReflection.h">
       <Filter>Header Files\utils</Filter>
@@ -455,6 +443,9 @@
       <Filter>Source Files\utils</Filter>
     </ClCompile>
     <ClCompile Include="src\utils\Camera.cpp">
+      <Filter>Source Files\utils</Filter>
+    </ClCompile>
+    <ClCompile Include="src\utils\CameraProfiles.cpp">
       <Filter>Source Files\utils</Filter>
     </ClCompile>
     <ClCompile Include="src\utils\Picking.cpp">
@@ -601,10 +592,16 @@
     <ClCompile Include="src\scene\AnimationController.cpp">
       <Filter>Source Files\scene</Filter>
     </ClCompile>
+    <ClCompile Include="src\physics\CharacterController.cpp">
+      <Filter>Source Files\physics</Filter>
+    </ClCompile>
     <ClCompile Include="src\physics\JoltPhysicsSystem.cpp">
       <Filter>Source Files\physics</Filter>
     </ClCompile>
     <ClCompile Include="src\physics\PhysicsDebugRenderer.cpp">
+      <Filter>Source Files\physics</Filter>
+    </ClCompile>
+    <ClCompile Include="src\physics\Q3BspCollision.cpp">
       <Filter>Source Files\physics</Filter>
     </ClCompile>
     <ClCompile Include="src\physics\PhysicsAuthoring.cpp">
@@ -679,19 +676,10 @@
     <ClCompile Include="src\core\DevLayer.cpp">
       <Filter>Source Files\core</Filter>
     </ClCompile>
-    <ClCompile Include="src\utils\GUIAtlasGenerator.cpp">
-      <Filter>Source Files\gui</Filter>
-    </ClCompile>
-    <ClCompile Include="src\gui\GUIAtlas.cpp">
-      <Filter>Source Files\gui</Filter>
-    </ClCompile>
-    <ClCompile Include="src\gui\GUIElement.cpp">
-      <Filter>Source Files\gui</Filter>
-    </ClCompile>
-    <ClCompile Include="src\gui\GUIManager.cpp">
-      <Filter>Source Files\gui</Filter>
-    </ClCompile>
     <ClCompile Include="src\scene\RenderGraph.cpp">
+      <Filter>Source Files\scene</Filter>
+    </ClCompile>
+    <ClCompile Include="src\scene\EditorSceneFile.cpp">
       <Filter>Source Files\scene</Filter>
     </ClCompile>
     <ClCompile Include="src\scene\SceneDescriptor.cpp">

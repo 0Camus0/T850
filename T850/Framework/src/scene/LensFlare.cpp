@@ -21,21 +21,27 @@ namespace t850 {
     m_proj.Identity();
     aspectRatio = (float)g_pBaseDriver->height / (float)g_pBaseDriver->width;
     m_quads.resize(10);
+
+    ShaderKey sunKey(0);
+    sunKey.setPass(PassType::LENS_FLARE_SUN);
+    sunKey.bits |= ShaderKey::HAS_TEXCOORD0;
+    ShaderKey ghostKey(0);
+    ghostKey.setPass(PassType::LENS_FLARE_GHOST);
+    ghostKey.bits |= ShaderKey::HAS_TEXCOORD0;
+
     m_quads[0].CreateInstance(mngr.GetPrimitive(PrimitiveManager::QUAD), &m_proj);
-    m_quads[0].SetTexture(g_pBaseDriver->GetTexture(g_pBaseDriver->CreateTexture("lens5.png")), 0);
-    ShaderKey flKey(0); flKey.setPass(PassType::FSQUAD_1_TEX); flKey.bits |= ShaderKey::HAS_TEXCOORD0;
-    m_quads[0].SetGlobalKey(flKey);
+    m_quads[0].SetGlobalKey(sunKey);
     m_quads[0].ScaleAbsolute(aspectRatio*m_sunSize, 1 * m_sunSize, 1);
     m_quads[0].Update();
 
     for (int i = 1; i < 10; i++) {
       std::string path = "lens" + std::to_string(i);
-      path += +".png";
+      path += ".png";
       m_flareTextureID.push_back(g_pBaseDriver->CreateTexture(path));
     }
     for (int i = 1; i < 10; i++) {
       m_quads[i].CreateInstance(mngr.GetPrimitive(PrimitiveManager::QUAD), &m_proj);
-      m_quads[i].SetGlobalKey(flKey);
+      m_quads[i].SetGlobalKey(ghostKey);
       m_quads[i].Update();
       m_quads[i].SetTexture(g_pBaseDriver->GetTexture(m_flareTextureID[i-1]), 0);
     };
@@ -63,31 +69,45 @@ namespace t850 {
   {
 
     XVECTOR3 pos = WorldToScreenPos(m_sunWorldPos, *pVP);
-    if (pos.z < 0.0f ) {
+    const float visibilityMargin = 0.0f;
+    if (pos.z < 0.0f ||
+        pos.x < -1.0f - visibilityMargin || pos.x > 1.0f + visibilityMargin ||
+        pos.y < -1.0f - visibilityMargin || pos.y > 1.0f + visibilityMargin) {
       return;
     }
-    g_pBaseDriver->SetDepthStencilState(BaseDriver::DepthStencilStates::READ);
-    g_pBaseDriver->SetBlendState(BaseDriver::BlendStates::ADDITIVE);
-    m_quads[0].TranslateAbsolute(pos.x, pos.y, 0);
-    m_quads[0].Update();
+
     XVECTOR2 sunToCenter = CENTER_SCREEN - XVECTOR2(pos.x, pos.y);
     float scL = sunToCenter.Length();
-    float brightness = 1 - (scL);
-    sunToCenter.Normalize();
-    if (brightness > 0) {
+    float sunBrightness = 1.0f - scL * 0.5f;
+    if (sunBrightness > 1.0f) {
+      sunBrightness = 1.0f;
+    } else if (sunBrightness < 0.0f) {
+      sunBrightness = 0.0f;
+    }
+    float ghostBrightness = 1.0f - scL;
+    if (ghostBrightness < 0.0f) ghostBrightness = 0.0f;
+
+    aspectRatio = (float)g_pBaseDriver->height / (float)g_pBaseDriver->width;
+    m_quads[0].ScaleAbsolute(aspectRatio*m_sunSize, 1 * m_sunSize, 1);
+    m_quads[0].SetBrightness(sunBrightness);
+    m_quads[0].TranslateAbsolute(pos.x, pos.y, pos.z);
+    m_quads[0].Update();
+
+    g_pBaseDriver->SetDepthStencilState(BaseDriver::DepthStencilStates::READ);
+    g_pBaseDriver->SetBlendState(BaseDriver::BlendStates::ADDITIVE);
+    if (ghostBrightness > 0.0f && scL > 0.0001f) {
+      sunToCenter.Normalize();
       XVECTOR2 lastPos(pos.x, pos.y);
       for (std::size_t j = 1; j < m_quads.size(); j++) {
-        sunToCenter =  sunToCenter *scL*m_spacing;
+        sunToCenter = sunToCenter * scL * m_spacing;
         lastPos += sunToCenter;
         XVECTOR2 flarePos = lastPos;
-        m_quads[j].TranslateAbsolute(flarePos.x, flarePos.y, 0);
-        //m_quads[j].ScaleAbsolute(aspectRatio*m_sunSize , 1 * m_sunSize, 3.2f);
-       // m_quads[j].ScaleRelative(1.0/(0.8 + sunToCenter.Length()));
+        m_quads[j].TranslateAbsolute(flarePos.x, flarePos.y, pos.z);
         m_quads[j].Update();
       }
 
       for (int j = static_cast<int>(m_quads.size()) - 1; j > 0; j--) {
-        m_quads[j].SetBrightness(brightness);
+        m_quads[j].SetBrightness(ghostBrightness * 0.45f);
         m_quads[j].Draw();
       }
     }

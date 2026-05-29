@@ -82,6 +82,37 @@ std::string ToResourcePath(const std::string& directory, const std::filesystem::
   return dir + "/" + rel;
 }
 
+std::string ToLowerAsciiCopy(std::string value) {
+  std::transform(value.begin(), value.end(), value.begin(), [](unsigned char ch) {
+    return static_cast<char>(std::tolower(ch));
+  });
+  return value;
+}
+
+void AddUniqueResourceDirectory(std::vector<std::string>& directories, const std::string& directory) {
+  const std::string normalized = ResourceLocator::NormalizePath(directory);
+  if (normalized.empty()) {
+    return;
+  }
+  if (std::find(directories.begin(), directories.end(), normalized) == directories.end()) {
+    directories.push_back(normalized);
+  }
+}
+
+std::string ParentResourceDirectory(const std::string& path) {
+  const std::filesystem::path parent = std::filesystem::path(ResourceLocator::NormalizePath(path)).parent_path();
+  return ResourceLocator::NormalizePath(parent.string());
+}
+
+std::string FirstResourceDirectory(const std::string& path) {
+  const std::string normalized = ResourceLocator::NormalizePath(path);
+  const std::size_t slash = normalized.find('/');
+  if (slash == std::string::npos || slash == 0) return {};
+  std::string first = normalized.substr(0, slash);
+  if (first.find(':') != std::string::npos) return {};
+  return first;
+}
+
 #ifdef OS_ANDROID
 std::string ToLowerAscii(std::string value) {
   std::transform(value.begin(), value.end(), value.begin(), [](unsigned char ch) {
@@ -326,15 +357,16 @@ bool ResourceLocator::ReadBinary(const std::string& path, std::vector<unsigned c
   out.clear();
   const std::string normalized = NormalizePath(path);
 
-#ifdef OS_ANDROID
-  if (ReadAndroidAssetBinary(m_assetManager, normalized, out)) return true;
-#endif
-
   for (const auto& candidate : DiskCandidates(m_basePath, path, normalized)) {
     if (ReadDiskBinary(candidate, out)) {
       return true;
     }
   }
+
+#ifdef OS_ANDROID
+  if (ReadAndroidAssetBinary(m_assetManager, normalized, out)) return true;
+#endif
+
   return false;
 }
 
@@ -348,6 +380,41 @@ bool ResourceLocator::ReadText(const std::string& path, std::string& out) const 
   return true;
 }
 
+bool ResourceLocator::WriteText(const std::string& path, const std::string& text) const {
+  const std::filesystem::path requested(path);
+  if (requested.is_absolute()) {
+    std::error_code ec;
+    const std::filesystem::path parent = requested.parent_path();
+    if (!parent.empty()) {
+      std::filesystem::create_directories(parent, ec);
+      if (ec) return false;
+    }
+    std::ofstream file(requested, std::ios::binary | std::ios::trunc);
+    if (!file.is_open()) return false;
+    file.write(text.data(), static_cast<std::streamsize>(text.size()));
+    return file.good();
+  }
+
+  const std::string normalized = NormalizePath(path);
+  std::filesystem::path target = ResolveFilePath(normalized);
+  if (target == std::filesystem::path(normalized) && !std::filesystem::path(normalized).is_absolute()) {
+    target = ResolveCachePath(normalized);
+  }
+
+  std::error_code ec;
+  const std::filesystem::path parent = target.parent_path();
+  if (!parent.empty()) {
+    std::filesystem::create_directories(parent, ec);
+    if (ec) return false;
+  }
+
+  std::ofstream file(target, std::ios::binary | std::ios::trunc);
+  if (!file.is_open()) return false;
+
+  file.write(text.data(), static_cast<std::streamsize>(text.size()));
+  return file.good();
+}
+
 std::vector<std::string> ResourceLocator::List(const std::string& directory, bool recursive) const {
   std::vector<std::string> out;
   const std::string normalized = NormalizePath(directory);
@@ -355,8 +422,6 @@ std::vector<std::string> ResourceLocator::List(const std::string& directory, boo
 #ifdef OS_ANDROID
   if (m_assetManager) {
     ListAndroidAssets(m_assetManager, normalized, recursive, out);
-    std::sort(out.begin(), out.end());
-    return out;
   }
 #endif
 
@@ -370,7 +435,11 @@ std::vector<std::string> ResourceLocator::List(const std::string& directory, boo
       }
     }
   }
-  if (!IsDirectory(diskDir)) return out;
+  if (!IsDirectory(diskDir)) {
+    std::sort(out.begin(), out.end());
+    out.erase(std::unique(out.begin(), out.end()), out.end());
+    return out;
+  }
 
   std::error_code ec;
   if (recursive) {
@@ -388,7 +457,52 @@ std::vector<std::string> ResourceLocator::List(const std::string& directory, boo
   }
 
   std::sort(out.begin(), out.end());
+  out.erase(std::unique(out.begin(), out.end()), out.end());
   return out;
+}
+
+bool ResourceLocator::FindFileByNameRecursive(const std::string& requestedPath,
+                                              std::string& outPath,
+                                              const std::vector<std::string>& searchDirectories) const {
+  outPath.clear();
+
+  const std::string normalized = NormalizePath(requestedPath);
+  const std::filesystem::path requested(normalized);
+  const std::string filename = requested.filename().string();
+  if (filename.empty()) {
+    return false;
+  }
+
+  const std::string targetFilename = ToLowerAsciiCopy(filename);
+  std::vector<std::string> directories;
+  for (const std::string& directory : searchDirectories) {
+    AddUniqueResourceDirectory(directories, directory);
+  }
+
+  AddUniqueResourceDirectory(directories, ParentResourceDirectory(normalized));
+  AddUniqueResourceDirectory(directories, FirstResourceDirectory(normalized));
+
+  const std::string ext = ToLowerAsciiCopy(requested.extension().string());
+  if (ext == ".glb" || ext == ".gltf") {
+    AddUniqueResourceDirectory(directories, "Models");
+  }
+
+  if (std::find(directories.begin(), directories.end(), std::string()) == directories.end()) {
+    directories.push_back(std::string());
+  }
+
+  for (const std::string& directory : directories) {
+    const std::vector<std::string> entries = List(directory, true);
+    for (const std::string& entry : entries) {
+      const std::string candidateFilename = std::filesystem::path(entry).filename().string();
+      if (ToLowerAsciiCopy(candidateFilename) == targetFilename) {
+        outPath = NormalizePath(entry);
+        return true;
+      }
+    }
+  }
+
+  return false;
 }
 
 #ifdef OS_ANDROID

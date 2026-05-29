@@ -52,6 +52,7 @@ public:
   void DrawRuntimeGui();
 #ifdef OS_ANDROID
   bool HandleAndroidInputEvent(AInputEvent* event) override;
+  void OnAndroidNativeWindowChanged(ANativeWindow* window) override;
   void RegisterAndroidGuiTap(float x, float y);
   void UpdateAndroidGuiHoldToggle();
   void LoadAndroidGuiSettings();
@@ -59,7 +60,7 @@ public:
   void DrawAndroidPhysicsGui(t850::DevGuiContext& gui);
 #endif
 
-  // Modal state (DevLayer's GUI popup) — queried by the framework to block Esc-to-quit.
+  // Modal UI state queried by the framework to block Esc-to-quit.
   bool IsModalActive() const override;
 
 

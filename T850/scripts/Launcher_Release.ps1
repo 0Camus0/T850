@@ -455,7 +455,8 @@ function Resolve-SceneAssetPath {
 
 function Invoke-LauncherModelDownload {
     param([bool]$Quiet = $false)
-    if (-not (Get-Command Ensure-T850CloudModels -ErrorAction SilentlyContinue)) { return $true }
+    if (-not (Get-Command Ensure-T850CloudModels -ErrorAction SilentlyContinue) -and
+        -not (Get-Command Ensure-T850CloudTextures -ErrorAction SilentlyContinue)) { return $true }
     $statusCallback = {
         param([string]$Message)
         if (-not $Quiet -and $txtStatus) {
@@ -464,12 +465,23 @@ function Invoke-LauncherModelDownload {
             $window.Dispatcher.Invoke([Action]{}, [System.Windows.Threading.DispatcherPriority]::Background)
         }
     }
-    $result = Ensure-T850CloudModels -RootDir $rootDir -AssetRoot $rootDir -StatusCallback $statusCallback
-    if (-not $result.Ok) {
-        if (-not $Quiet) {
-            [System.Windows.MessageBox]::Show(("Could not download model assets:" + "`n`n" + $result.Message), "T850 Launcher", "OK", "Error") | Out-Null
+    if (Get-Command Ensure-T850CloudModels -ErrorAction SilentlyContinue) {
+        $result = Ensure-T850CloudModels -RootDir $rootDir -AssetRoot $rootDir -StatusCallback $statusCallback
+        if (-not $result.Ok) {
+            if (-not $Quiet) {
+                [System.Windows.MessageBox]::Show(("Could not download model assets:" + "`n`n" + $result.Message), "T850 Launcher", "OK", "Error") | Out-Null
+            }
+            return $false
         }
-        return $false
+    }
+    if (Get-Command Ensure-T850CloudTextures -ErrorAction SilentlyContinue) {
+        $result = Ensure-T850CloudTextures -RootDir $rootDir -AssetRoot $rootDir -StatusCallback $statusCallback
+        if (-not $result.Ok) {
+            if (-not $Quiet) {
+                [System.Windows.MessageBox]::Show(("Could not download texture assets:" + "`n`n" + $result.Message), "T850 Launcher", "OK", "Error") | Out-Null
+            }
+            return $false
+        }
     }
     return $true
 }

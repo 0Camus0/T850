@@ -199,6 +199,167 @@ function New-T850CloudDownloadTasks {
     return $tasks.ToArray()
 }
 
+function Get-T850CloudDownloadPlan {
+    param(
+        [object[]]$Entries,
+        [string]$AssetRoot,
+        [string]$BaseUrl,
+        [string]$DefaultRoot = 'Models'
+    )
+
+    $allTasks = @(New-T850CloudDownloadTasks -Entries $Entries -AssetRoot $AssetRoot -BaseUrl $BaseUrl -DefaultRoot $DefaultRoot)
+    $missingTasks = New-Object System.Collections.Generic.List[object]
+    $missingPaths = New-Object System.Collections.Generic.List[string]
+    $errors = New-Object System.Collections.Generic.List[string]
+    $ready = 0
+
+    foreach ($task in $allTasks) {
+        if (Test-T850CloudModelFile -Entry $task.Entry -TargetPath $task.TargetPath) {
+            $ready++
+            continue
+        }
+        $missingTasks.Add($task)
+        $missingPaths.Add($task.ResourcePath)
+        if (-not $task.Url) {
+            $errors.Add("No URL/baseUrl configured for $($task.ResourcePath)")
+        }
+    }
+
+    return [pscustomobject]@{
+        Total = $allTasks.Count
+        Ready = $ready
+        Missing = $missingTasks.Count
+        MissingTasks = $missingTasks.ToArray()
+        MissingPaths = $missingPaths.ToArray()
+        Errors = $errors.ToArray()
+    }
+}
+
+function Get-T850CloudModelsStatus {
+    param(
+        [string]$RootDir = (Get-Location).Path,
+        [string]$AssetRoot,
+        [string]$ManifestPath,
+        [string]$ManifestUrl,
+        [string]$BaseUrl = $env:T850_MODEL_BASE_URL
+    )
+
+    if (-not $AssetRoot) { $AssetRoot = Join-Path $RootDir 'Assets' }
+    $manifestInfo = Read-T850CloudManifest -RootDir $RootDir -ManifestPath $ManifestPath -ManifestUrl $ManifestUrl
+    $manifest = $manifestInfo.Manifest
+    if (-not $manifest) {
+        return [pscustomobject]@{ Kind = 'Models'; Ok = $true; Configured = $false; Total = 0; Ready = 0; Missing = 0; MissingPaths = @(); Errors = @(); Manifest = $null; Message = 'No model cloud manifest configured.' }
+    }
+
+    if (-not $BaseUrl -and $manifest.PSObject.Properties['baseUrl']) { $BaseUrl = [string]$manifest.baseUrl }
+    if (-not $BaseUrl -and $manifest.PSObject.Properties['publicBaseUrl']) { $BaseUrl = [string]$manifest.publicBaseUrl }
+
+    $entries = @(Convert-T850CloudManifestModels -Manifest $manifest)
+    if ($entries.Count -eq 0) {
+        return [pscustomobject]@{ Kind = 'Models'; Ok = $true; Configured = $false; Total = 0; Ready = 0; Missing = 0; MissingPaths = @(); Errors = @(); Manifest = $manifestInfo.Source; Message = 'Model cloud manifest has no models/assets.' }
+    }
+
+    $hasPerEntryUrls = @($entries | Where-Object { $_.PSObject.Properties['url'] -and $_.url }).Count -gt 0
+    if (-not $BaseUrl -and -not $hasPerEntryUrls) {
+        return [pscustomobject]@{ Kind = 'Models'; Ok = $false; Configured = $true; Total = $entries.Count; Ready = 0; Missing = $entries.Count; MissingPaths = @($entries | ForEach-Object { $_.path }); Errors = @('Model cloud manifest has no baseUrl; set T850_MODEL_BASE_URL or per-entry urls after public upload.'); Manifest = $manifestInfo.Source; Message = 'Model cloud manifest has no baseUrl; set T850_MODEL_BASE_URL or per-entry urls after public upload.' }
+    }
+
+    $plan = Get-T850CloudDownloadPlan -Entries $entries -AssetRoot $AssetRoot -BaseUrl $BaseUrl -DefaultRoot 'Models'
+    return [pscustomobject]@{
+        Kind = 'Models'
+        Ok = ($plan.Errors.Count -eq 0)
+        Configured = $true
+        Total = $plan.Total
+        Ready = $plan.Ready
+        Missing = $plan.Missing
+        MissingPaths = $plan.MissingPaths
+        Errors = $plan.Errors
+        Manifest = $manifestInfo.Source
+        Message = if ($plan.Missing -eq 0) { "Models ready ($($plan.Ready)/$($plan.Total))." } else { "Models missing $($plan.Missing)/$($plan.Total)." }
+    }
+}
+
+function Get-T850CloudTexturesStatus {
+    param(
+        [string]$RootDir = (Get-Location).Path,
+        [string]$AssetRoot,
+        [string]$ManifestPath,
+        [string]$ManifestUrl = $(if ($env:T850_TEXTURE_MANIFEST_URL) { $env:T850_TEXTURE_MANIFEST_URL } else { "https://pub-ef5de729f9044220aa32f0601d99faa8.r2.dev/manifest.json" }),
+        [string]$BaseUrl = $env:T850_TEXTURE_BASE_URL
+    )
+
+    if (-not $AssetRoot) { $AssetRoot = Join-Path $RootDir 'Assets' }
+    $manifestInfo = Read-T850CloudManifest -RootDir $RootDir -ManifestPath $ManifestPath -ManifestUrl $ManifestUrl
+    $manifest = $manifestInfo.Manifest
+    if (-not $manifest) {
+        return [pscustomobject]@{ Kind = 'Textures'; Ok = $true; Configured = $false; Total = 0; Ready = 0; Missing = 0; MissingPaths = @(); Errors = @(); Manifest = $null; Message = 'No texture cloud manifest configured.' }
+    }
+
+    if (-not $BaseUrl -and $manifest.PSObject.Properties['baseUrl']) { $BaseUrl = [string]$manifest.baseUrl }
+    if (-not $BaseUrl -and $manifest.PSObject.Properties['publicBaseUrl']) { $BaseUrl = [string]$manifest.publicBaseUrl }
+
+    $entries = @(Convert-T850CloudManifestTextures -Manifest $manifest)
+    if ($entries.Count -eq 0) {
+        return [pscustomobject]@{ Kind = 'Textures'; Ok = $true; Configured = $false; Total = 0; Ready = 0; Missing = 0; MissingPaths = @(); Errors = @(); Manifest = $manifestInfo.Source; Message = 'Texture cloud manifest has no textures/assets.' }
+    }
+
+    $hasPerEntryUrls = @($entries | Where-Object { $_.PSObject.Properties['url'] -and $_.url }).Count -gt 0
+    if (-not $BaseUrl -and -not $hasPerEntryUrls) {
+        return [pscustomobject]@{ Kind = 'Textures'; Ok = $false; Configured = $true; Total = $entries.Count; Ready = 0; Missing = $entries.Count; MissingPaths = @($entries | ForEach-Object { $_.path }); Errors = @('Texture cloud manifest has no baseUrl; set T850_TEXTURE_BASE_URL or per-entry urls after public upload.'); Manifest = $manifestInfo.Source; Message = 'Texture cloud manifest has no baseUrl; set T850_TEXTURE_BASE_URL or per-entry urls after public upload.' }
+    }
+
+    $plan = Get-T850CloudDownloadPlan -Entries $entries -AssetRoot $AssetRoot -BaseUrl $BaseUrl -DefaultRoot 'Textures'
+    return [pscustomobject]@{
+        Kind = 'Textures'
+        Ok = ($plan.Errors.Count -eq 0)
+        Configured = $true
+        Total = $plan.Total
+        Ready = $plan.Ready
+        Missing = $plan.Missing
+        MissingPaths = $plan.MissingPaths
+        Errors = $plan.Errors
+        Manifest = $manifestInfo.Source
+        Message = if ($plan.Missing -eq 0) { "Textures ready ($($plan.Ready)/$($plan.Total))." } else { "Textures missing $($plan.Missing)/$($plan.Total)." }
+    }
+}
+
+function Get-T850CloudAssetsStatus {
+    param(
+        [string]$RootDir = (Get-Location).Path,
+        [string]$AssetRoot,
+        [string]$ModelManifestPath,
+        [string]$ModelManifestUrl,
+        [string]$TextureManifestPath,
+        [string]$TextureManifestUrl
+    )
+
+    if (-not $AssetRoot) { $AssetRoot = Join-Path $RootDir 'Assets' }
+    $modelParams = @{ RootDir = $RootDir; AssetRoot = $AssetRoot; ManifestPath = $ModelManifestPath }
+    if ($ModelManifestUrl) { $modelParams.ManifestUrl = $ModelManifestUrl }
+    $textureParams = @{ RootDir = $RootDir; AssetRoot = $AssetRoot; ManifestPath = $TextureManifestPath }
+    if ($TextureManifestUrl) { $textureParams.ManifestUrl = $TextureManifestUrl }
+    $modelStatus = Get-T850CloudModelsStatus @modelParams
+    $textureStatus = Get-T850CloudTexturesStatus @textureParams
+    $statuses = @($modelStatus, $textureStatus)
+    $errors = @($statuses | ForEach-Object { $_.Errors } | Where-Object { $_ })
+    $missingPaths = @($statuses | ForEach-Object { $_.MissingPaths } | Where-Object { $_ })
+    $total = [int](($statuses | Measure-Object Total -Sum).Sum)
+    $ready = [int](($statuses | Measure-Object Ready -Sum).Sum)
+    $missing = [int](($statuses | Measure-Object Missing -Sum).Sum)
+
+    return [pscustomobject]@{
+        Ok = ($errors.Count -eq 0)
+        Configured = (@($statuses | Where-Object { $_.Configured }).Count -gt 0)
+        Total = $total
+        Ready = $ready
+        Missing = $missing
+        MissingPaths = $missingPaths
+        Errors = $errors
+        Details = $statuses
+        Message = if ($missing -eq 0) { "Assets ready ($ready/$total)." } else { "Assets missing $missing/$total." }
+    }
+}
+
 function Invoke-T850ParallelDownloads {
     param(
         [object[]]$Tasks,

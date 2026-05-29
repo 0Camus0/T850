@@ -300,9 +300,20 @@ jobs:
             # Copy launcher
             Copy-Item "T850/T850Launcher.exe" -Destination $staging
 
-            # Copy assets
+            # Copy lightweight tracked assets. Heavy model/texture payloads are
+            # downloaded by the launcher from the cloud manifests.
             foreach ($assetDir in @("Shaders", "Models", "Fonts", "Textures", "Scenes", "Layouts")) {
-              Copy-Item "$assets/$assetDir" -Destination "$staging/$assetDir" -Recurse
+              $source = "$assets/$assetDir"
+              if (Test-Path $source) {
+                Copy-Item $source -Destination "$staging/$assetDir" -Recurse
+              }
+            }
+
+            # Copy cloud asset downloader support used by T850Launcher.exe.
+            New-Item -ItemType Directory -Path "$staging/scripts" -Force | Out-Null
+            Copy-Item "T850/scripts/ModelCloud.ps1" -Destination "$staging/scripts/ModelCloud.ps1" -Force
+            if (Test-Path "$assets/model-cloud-manifest.json") {
+              Copy-Item "$assets/model-cloud-manifest.json" -Destination "$staging/model-cloud-manifest.json" -Force
             }
 
             # Copy config

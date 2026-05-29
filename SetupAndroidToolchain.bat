@@ -166,21 +166,33 @@ if not exist "%SDKMANAGER%" (
     )
 )
 
-echo [T850] Accepting Android SDK licenses...
-powershell -NoProfile -ExecutionPolicy Bypass -Command "1..20 | ForEach-Object { 'y' }" | call "%SDKMANAGER%" --sdk_root="%ANDROID_SDK%" --licenses
-if errorlevel 1 echo [WARN] License acceptance reported a non-zero exit code. Re-run this script if installs fail.
+set "SDK_PACKAGES_READY=1"
+if not exist "%ANDROID_SDK%\platform-tools\adb.exe" set "SDK_PACKAGES_READY=0"
+if not exist "%ANDROID_SDK%\platforms\%ANDROID_PLATFORM%\android.jar" set "SDK_PACKAGES_READY=0"
+if not exist "%ANDROID_SDK%\platforms\%ANDROID_MIN_PLATFORM%\android.jar" set "SDK_PACKAGES_READY=0"
+if not exist "%ANDROID_SDK%\build-tools\%BUILD_TOOLS%\aapt2.exe" set "SDK_PACKAGES_READY=0"
+if not exist "%ANDROID_SDK%\ndk\%NDK_VERSION%\source.properties" set "SDK_PACKAGES_READY=0"
+if not exist "%ANDROID_SDK%\cmake\%CMAKE_VERSION%\bin\cmake.exe" set "SDK_PACKAGES_READY=0"
 
-echo [T850] Installing Android SDK packages...
-call "%SDKMANAGER%" --sdk_root="%ANDROID_SDK%" ^
-    "platform-tools" ^
-    "platforms;%ANDROID_PLATFORM%" ^
-    "platforms;%ANDROID_MIN_PLATFORM%" ^
-    "build-tools;%BUILD_TOOLS%" ^
-    "ndk;%NDK_VERSION%" ^
-    "cmake;%CMAKE_VERSION%"
-if errorlevel 1 (
-    echo [ERROR] Android SDK package installation failed.
-    exit /b 1
+if "%SDK_PACKAGES_READY%"=="1" (
+    echo [T850] Android SDK packages already installed; skipping sdkmanager package install.
+) else (
+    echo [T850] Accepting Android SDK licenses...
+    powershell -NoProfile -ExecutionPolicy Bypass -Command "1..20 | ForEach-Object { 'y' }" | call "%SDKMANAGER%" --sdk_root="%ANDROID_SDK%" --licenses
+    if errorlevel 1 echo [WARN] License acceptance reported a non-zero exit code. Re-run this script if installs fail.
+
+    echo [T850] Installing Android SDK packages...
+    call "%SDKMANAGER%" --sdk_root="%ANDROID_SDK%" ^
+        "platform-tools" ^
+        "platforms;%ANDROID_PLATFORM%" ^
+        "platforms;%ANDROID_MIN_PLATFORM%" ^
+        "build-tools;%BUILD_TOOLS%" ^
+        "ndk;%NDK_VERSION%" ^
+        "cmake;%CMAKE_VERSION%"
+    if errorlevel 1 (
+        echo [ERROR] Android SDK package installation failed.
+        exit /b 1
+    )
 )
 
 if "%WITH_EMULATOR%"=="1" (

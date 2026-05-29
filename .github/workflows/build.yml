@@ -150,6 +150,14 @@ jobs:
           restore-keys: |
             android-vcpkg-${{ matrix.vcpkg_triplet }}-
 
+      - name: Cache Android SDK
+        uses: actions/cache@v4
+        with:
+          path: ${{ runner.temp }}\AndroidSdk
+          key: android-sdk-${{ runner.os }}-${{ hashFiles('SetupAndroidToolchain.bat') }}
+          restore-keys: |
+            android-sdk-${{ runner.os }}-
+
       - name: Setup Vulkan SDK
         shell: pwsh
         run: |

@@ -10,11 +10,13 @@ setlocal enabledelayedexpansion
 ::    LaunchSolution.bat --x86        x64 + x86
 ::    LaunchSolution.bat --arm64      x64 + ARM64
 ::    LaunchSolution.bat --all        x64 + x86 + ARM64
-::    LaunchSolution.bat --skip       skip vcpkg, download models, open solution
-::    LaunchSolution.bat --skip-models skip model download
-::    LaunchSolution.bat --models-only download runtime models and exit
+::    LaunchSolution.bat --skip       skip vcpkg, download cloud assets, open solution
+::    LaunchSolution.bat --skip-assets skip cloud asset download
+::    LaunchSolution.bat --skip-models legacy alias for --skip-assets
+::    LaunchSolution.bat --models-only legacy alias: download runtime cloud assets and exit
+::    LaunchSolution.bat --assets-only download runtime cloud assets and exit
 ::    LaunchSolution.bat --all-models download all cloud models instead of runtime set
-::    LaunchSolution.bat --setup-only install dependencies/download runtime models without opening solution
+::    LaunchSolution.bat --setup-only install dependencies/download runtime cloud assets without opening solution
 :: ═══════════════════════════════════════════════════════════
 
 set "ROOT=%~dp0"
@@ -23,9 +25,11 @@ set "VCPKG_EXE=%VCPKG_DIR%\vcpkg.exe"
 set "SOLUTION=%ROOT%T850\T850.sln"
 set "RUNTIME_MODEL_MANIFEST_URL=https://pub-2fa5c50bbfbc4b829da0d6c6300815b0.r2.dev/runtime_assets.json"
 set "FULL_MODEL_MANIFEST_URL=https://pub-2fa5c50bbfbc4b829da0d6c6300815b0.r2.dev/manifest.json"
+set "TEXTURE_MANIFEST_URL=https://pub-ef5de729f9044220aa32f0601d99faa8.r2.dev/manifest.json"
 set "MODEL_MANIFEST_URL=%RUNTIME_MODEL_MANIFEST_URL%"
 set "MODEL_DOWNLOAD_SCRIPT=%ROOT%T850\scripts\DownloadModels.ps1"
-set "MODEL_DOWNLOAD_THREADS=7"
+set "TEXTURE_DOWNLOAD_SCRIPT=%ROOT%T850\scripts\DownloadTextures.ps1"
+set "CLOUD_DOWNLOAD_THREADS=7"
 
 set BUILD_X86=0
 set BUILD_ARM64=0
@@ -42,7 +46,9 @@ if /i "%~1"=="--arm64" set BUILD_ARM64=1
 if /i "%~1"=="--all"   set BUILD_X86=1& set BUILD_ARM64=1
 if /i "%~1"=="--skip"  set SKIP_VCPKG=1
 if /i "%~1"=="--skip-models" set SKIP_MODELS=1
+if /i "%~1"=="--skip-assets" set SKIP_MODELS=1
 if /i "%~1"=="--models-only" set MODELS_ONLY=1& set SKIP_VCPKG=1& set SKIP_LAUNCH=1
+if /i "%~1"=="--assets-only" set MODELS_ONLY=1& set SKIP_VCPKG=1& set SKIP_LAUNCH=1
 if /i "%~1"=="--all-models" set "MODEL_MANIFEST_URL=%FULL_MODEL_MANIFEST_URL%"
 if /i "%~1"=="--setup-only" set SKIP_LAUNCH=1
 shift
@@ -144,7 +150,7 @@ if errorlevel 1 exit /b 1
 if %SKIP_LAUNCH%==1 (
     echo.
     if %MODELS_ONLY%==1 (
-        echo [T850] Model download complete. Solution launch skipped.
+        echo [T850] Cloud asset download complete. Solution launch skipped.
     ) else (
         echo [T850] Setup complete. Solution launch skipped.
     )
@@ -158,20 +164,29 @@ exit /b 0
 
 :download_models
 if %SKIP_MODELS%==1 (
-    echo [T850] Skipping model download...
+    echo [T850] Skipping cloud asset download...
     exit /b 0
 )
 echo.
 echo ════════════════════════════════════════
-echo  T850 — Downloading GLB models
+echo  T850 — Downloading cloud assets
 echo ════════════════════════════════════════
 if not exist "%MODEL_DOWNLOAD_SCRIPT%" (
     echo [ERROR] Model download script not found: %MODEL_DOWNLOAD_SCRIPT%
     exit /b 1
 )
-powershell -NoProfile -ExecutionPolicy Bypass -File "%MODEL_DOWNLOAD_SCRIPT%" -RootDir "%ROOT%T850" -ManifestUrl "%MODEL_MANIFEST_URL%" -MaxThreads %MODEL_DOWNLOAD_THREADS%
+if not exist "%TEXTURE_DOWNLOAD_SCRIPT%" (
+    echo [ERROR] Texture download script not found: %TEXTURE_DOWNLOAD_SCRIPT%
+    exit /b 1
+)
+powershell -NoProfile -ExecutionPolicy Bypass -File "%MODEL_DOWNLOAD_SCRIPT%" -RootDir "%ROOT%T850" -ManifestUrl "%MODEL_MANIFEST_URL%" -MaxThreads %CLOUD_DOWNLOAD_THREADS%
 if errorlevel 1 (
     echo [ERROR] Model download failed.
+    exit /b 1
+)
+powershell -NoProfile -ExecutionPolicy Bypass -File "%TEXTURE_DOWNLOAD_SCRIPT%" -RootDir "%ROOT%T850" -ManifestUrl "%TEXTURE_MANIFEST_URL%" -MaxThreads %CLOUD_DOWNLOAD_THREADS%
+if errorlevel 1 (
+    echo [ERROR] Texture download failed.
     exit /b 1
 )
 exit /b 0

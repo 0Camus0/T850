@@ -18,16 +18,19 @@ def t850VulkanValidation = (findProperty('t850VulkanValidation') ?: 'false').toS
 def t850VulkanValidationLayerDir = (findProperty('t850VulkanValidationLayerDir') ?: '').toString().trim()
 def t850AndroidAssetProfile = (findProperty('t850AndroidAssetProfile') ?: 'physics-demo').toString().trim()
 def t850AllowUnsignedRelease = (findProperty('t850AllowUnsignedRelease') ?: 'false').toString().toBoolean()
-def t850AndroidBaseAssetIncludes = [
+def t850AndroidCoreAssetIncludes = [
     'Fonts/**',
     'Layouts/**',
     'Shaders/**',
-    'Techniques/**',
+    'Techniques/**'
+]
+def t850AndroidTextureAssetIncludes = [
     'Textures/lens*.png',
     'Textures/LUT/**',
     'Textures/GeneratedIBLCache/**',
     'Textures/sky/*.dds'
 ]
+def t850AndroidBaseAssetIncludes = t850AndroidCoreAssetIncludes + t850AndroidTextureAssetIncludes
 def t850AndroidCommonAssetIncludes = t850AndroidBaseAssetIncludes + [
     'Scenes/**'
 ]
@@ -67,7 +70,8 @@ def t850ModelAssetIncludes = t850AndroidCommonAssetIncludes + [
     'Models/RagdollEdits/**',
     'Models/Q3/*_work/*_manifest.json'
 ]
-def t850ProductionAssetIncludes = t850AndroidCommonAssetIncludes + [
+def t850ProductionAssetIncludes = t850AndroidCoreAssetIncludes + [
+    'Scenes/**',
     'Models/RagdollEdits/**',
     'Models/Q3/*_work/*_manifest.json'
 ]

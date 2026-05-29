@@ -30,7 +30,8 @@ import java.util.concurrent.atomic.AtomicInteger;
 
 public final class AssetDownloadActivity extends Activity {
     private static final String TAG = "T850AssetDownload";
-    private static final String MANIFEST_URL = "https://pub-2fa5c50bbfbc4b829da0d6c6300815b0.r2.dev/runtime_assets.json";
+    private static final String RUNTIME_MODEL_MANIFEST_URL = "https://pub-2fa5c50bbfbc4b829da0d6c6300815b0.r2.dev/runtime_assets.json";
+    private static final String TEXTURE_MANIFEST_URL = "https://pub-ef5de729f9044220aa32f0601d99faa8.r2.dev/manifest.json";
     private static final int WORKER_COUNT = 7;
 
     private ProgressBar progressBar;
@@ -113,9 +114,11 @@ public final class AssetDownloadActivity extends Activity {
     private void checkAndDownloadAssets() {
         try {
             updateProgress(0, 0, 1, "Checking game data...");
-            List<AssetEntry> assets = fetchManifest();
+            List<AssetEntry> assets = new ArrayList<>();
+            assets.addAll(fetchManifest(RUNTIME_MODEL_MANIFEST_URL, "Models", null));
+            assets.addAll(fetchManifest(TEXTURE_MANIFEST_URL, "Textures", "texture"));
             if (assets.isEmpty()) {
-                throw new IllegalStateException("Manifest did not contain runtime assets.");
+                throw new IllegalStateException("Manifests did not contain runtime assets.");
             }
 
             File assetRoot = getExternalFilesDir(null);
@@ -170,14 +173,20 @@ public final class AssetDownloadActivity extends Activity {
         }
     }
 
-    private List<AssetEntry> fetchManifest() throws Exception {
-        String json = readUrl(MANIFEST_URL);
+    private List<AssetEntry> fetchManifest(String manifestUrl, String defaultRoot, String requiredKind) throws Exception {
+        String json = readUrl(manifestUrl);
         JSONObject root = new JSONObject(json);
         JSONArray assets = root.getJSONArray("assets");
         List<AssetEntry> entries = new ArrayList<>();
         for (int i = 0; i < assets.length(); ++i) {
             JSONObject item = assets.getJSONObject(i);
-            String key = item.optString("key", "");
+            String key = item.optString("localRelativePath", "");
+            if (key.isEmpty()) {
+                key = item.optString("key", "");
+            }
+            if (key.isEmpty()) {
+                key = item.optString("localPath", "");
+            }
             String url = item.optString("url", "");
             if (key.isEmpty() && !url.isEmpty()) {
                 int slash = url.lastIndexOf('/');
@@ -186,14 +195,21 @@ public final class AssetDownloadActivity extends Activity {
             if (url.isEmpty() || key.isEmpty()) {
                 continue;
             }
-            String resourcePath = normalizeModelPath(key);
+            String rawPath = normalizeManifestPath(key);
+            String kind = item.optString("kind", "");
+            if (requiredKind != null
+                    && !kind.equalsIgnoreCase(requiredKind)
+                    && !rawPath.toLowerCase(Locale.ROOT).startsWith(defaultRoot.toLowerCase(Locale.ROOT) + "/")) {
+                continue;
+            }
+            String resourcePath = normalizeAssetPath(rawPath, defaultRoot);
             long size = item.has("size") ? item.optLong("size", 0L) : 0L;
             entries.add(new AssetEntry(resourcePath, url, size));
         }
         return entries;
     }
 
-    private static String normalizeModelPath(String key) {
+    private static String normalizeManifestPath(String key) {
         String path = key.replace('\\', '/');
         while (path.startsWith("/")) {
             path = path.substring(1);
@@ -201,8 +217,16 @@ public final class AssetDownloadActivity extends Activity {
         if (path.startsWith("Assets/")) {
             path = path.substring("Assets/".length());
         }
-        if (!path.startsWith("Models/")) {
-            path = "Models/" + path;
+        int assetsIndex = path.indexOf("/Assets/");
+        if (assetsIndex >= 0) {
+            path = path.substring(assetsIndex + "/Assets/".length());
+        }
+        return path;
+    }
+
+    private static String normalizeAssetPath(String path, String defaultRoot) {
+        if (!path.startsWith(defaultRoot + "/")) {
+            path = defaultRoot + "/" + path;
         }
         return path;
     }

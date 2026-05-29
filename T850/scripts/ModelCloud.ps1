@@ -1,4 +1,4 @@
-# T850 public model downloader.
+# T850 public cloud asset downloader.
 # Configure either:
 #   - T850_MODEL_BASE_URL=https://public.example.com/t850-assets
 #   - T850_MODEL_MANIFEST=D:\path\to\model-cloud-manifest.json
@@ -75,6 +75,7 @@ function Convert-T850CloudManifestModels {
 
     if ($Manifest.PSObject.Properties['assets'] -and $Manifest.assets) {
         foreach ($asset in $Manifest.assets) {
+            $kind = if ($asset.PSObject.Properties['kind']) { [string]$asset.kind } else { "" }
             $resourcePath = ""
             if ($asset.PSObject.Properties['key'] -and $asset.key) {
                 $resourcePath = [string]$asset.key
@@ -87,8 +88,51 @@ function Convert-T850CloudManifestModels {
             }
 
             $resourcePath = Normalize-T850CloudResourcePath $resourcePath
+            if ($kind -and -not $kind.Equals('model', [System.StringComparison]::OrdinalIgnoreCase)) { continue }
+            if ($resourcePath.StartsWith('Textures/', [System.StringComparison]::OrdinalIgnoreCase)) { continue }
             if ($resourcePath -and -not $resourcePath.StartsWith('Models/', [System.StringComparison]::OrdinalIgnoreCase)) {
                 $resourcePath = 'Models/' + $resourcePath.TrimStart('/')
+            }
+            if (-not $resourcePath) { continue }
+
+            $entries.Add([pscustomobject]@{
+                path = $resourcePath
+                url = if ($asset.PSObject.Properties['url']) { [string]$asset.url } else { $null }
+                size = if ($asset.PSObject.Properties['size']) { [int64]$asset.size } else { 0 }
+                sha256 = if ($asset.PSObject.Properties['sha256']) { [string]$asset.sha256 } else { $null }
+            })
+        }
+    }
+
+    return $entries.ToArray()
+}
+
+function Convert-T850CloudManifestTextures {
+    param($Manifest)
+    $entries = New-Object System.Collections.Generic.List[object]
+
+    if ($Manifest.PSObject.Properties['assets'] -and $Manifest.assets) {
+        foreach ($asset in $Manifest.assets) {
+            $kind = if ($asset.PSObject.Properties['kind']) { [string]$asset.kind } else { "" }
+            $resourcePath = ""
+            if ($asset.PSObject.Properties['localRelativePath'] -and $asset.localRelativePath) {
+                $resourcePath = [string]$asset.localRelativePath
+            } elseif ($asset.PSObject.Properties['key'] -and $asset.key) {
+                $resourcePath = [string]$asset.key
+            } elseif ($asset.PSObject.Properties['localPath'] -and $asset.localPath) {
+                $local = Normalize-T850CloudResourcePath ([string]$asset.localPath)
+                $marker = 'Assets/'
+                $idx = $local.IndexOf($marker, [System.StringComparison]::OrdinalIgnoreCase)
+                if ($idx -ge 0) { $resourcePath = $local.Substring($idx + $marker.Length) }
+                else { $resourcePath = $local }
+            }
+
+            $resourcePath = Normalize-T850CloudResourcePath $resourcePath
+            $isTexture = $kind.Equals('texture', [System.StringComparison]::OrdinalIgnoreCase) -or
+                $resourcePath.StartsWith('Textures/', [System.StringComparison]::OrdinalIgnoreCase)
+            if (-not $isTexture) { continue }
+            if ($resourcePath -and -not $resourcePath.StartsWith('Textures/', [System.StringComparison]::OrdinalIgnoreCase)) {
+                $resourcePath = 'Textures/' + $resourcePath.TrimStart('/')
             }
             if (-not $resourcePath) { continue }
 
@@ -126,15 +170,16 @@ function New-T850CloudDownloadTasks {
     param(
         [object[]]$Entries,
         [string]$AssetRoot,
-        [string]$BaseUrl
+        [string]$BaseUrl,
+        [string]$DefaultRoot = 'Models'
     )
 
     $tasks = New-Object System.Collections.Generic.List[object]
     foreach ($entry in $Entries) {
         $resourcePath = Normalize-T850CloudResourcePath ([string]$entry.path)
         if (-not $resourcePath) { continue }
-        if (-not $resourcePath.StartsWith('Models/', [System.StringComparison]::OrdinalIgnoreCase)) {
-            $resourcePath = 'Models/' + $resourcePath.TrimStart('/')
+        if ($DefaultRoot -and -not $resourcePath.StartsWith("$DefaultRoot/", [System.StringComparison]::OrdinalIgnoreCase)) {
+            $resourcePath = $DefaultRoot.TrimEnd('/') + '/' + $resourcePath.TrimStart('/')
         }
         $targetPath = Join-Path $AssetRoot ($resourcePath.Replace('/', '\'))
 
@@ -160,7 +205,8 @@ function Invoke-T850ParallelDownloads {
         [int]$Skipped,
         [int]$Total,
         [int]$MaxThreads,
-        [scriptblock]$StatusCallback
+        [scriptblock]$StatusCallback,
+        [string]$Label = 'Model'
     )
 
     if ($Tasks.Count -eq 0) {
@@ -227,7 +273,7 @@ function Invoke-T850ParallelDownloads {
 
                 $completed = $Skipped + $downloaded + $failed
                 $percent = if ($Total -gt 0) { [int][Math]::Floor(($completed * 100.0) / $Total) } else { 100 }
-                $message = "Model download progress: $completed/$Total ($percent%) - downloaded=$downloaded skipped=$Skipped failed=$failed"
+                $message = "$Label download progress: $completed/$Total ($percent%) - downloaded=$downloaded skipped=$Skipped failed=$failed"
                 if ($percent -ne $lastPercent -or $result.Ok -eq $false) {
                     if (-not $StatusCallback) { Write-Host ("[T850] " + $message) }
                     Invoke-T850CloudStatus -StatusCallback $StatusCallback -Message $message
@@ -319,5 +365,79 @@ function Ensure-T850CloudModels {
         Manifest = $manifestInfo.Source
         Errors = @($errors)
         Message = if ($errors.Count -eq 0) { "Models ready ($downloaded downloaded, $skipped already present)." } else { ($errors -join [System.Environment]::NewLine) }
+    }
+}
+
+function Ensure-T850CloudTextures {
+    param(
+        [string]$RootDir = (Get-Location).Path,
+        [string]$AssetRoot,
+        [string]$ManifestPath,
+        [string]$ManifestUrl = $(if ($env:T850_TEXTURE_MANIFEST_URL) { $env:T850_TEXTURE_MANIFEST_URL } else { "https://pub-ef5de729f9044220aa32f0601d99faa8.r2.dev/manifest.json" }),
+        [string]$BaseUrl = $env:T850_TEXTURE_BASE_URL,
+        [int]$MaxThreads = 7,
+        [scriptblock]$StatusCallback
+    )
+
+    if (-not $AssetRoot) { $AssetRoot = Join-Path $RootDir 'Assets' }
+    $manifestInfo = Read-T850CloudManifest -RootDir $RootDir -ManifestPath $ManifestPath -ManifestUrl $ManifestUrl
+    $manifest = $manifestInfo.Manifest
+    if (-not $manifest) {
+        return [pscustomobject]@{ Ok = $true; Configured = $false; Downloaded = 0; Skipped = 0; Manifest = $null; Message = 'No texture cloud manifest configured.' }
+    }
+
+    if (-not $BaseUrl -and $manifest.PSObject.Properties['baseUrl']) { $BaseUrl = [string]$manifest.baseUrl }
+    if (-not $BaseUrl -and $manifest.PSObject.Properties['publicBaseUrl']) { $BaseUrl = [string]$manifest.publicBaseUrl }
+
+    $entries = @(Convert-T850CloudManifestTextures -Manifest $manifest)
+    if ($entries.Count -eq 0) {
+        return [pscustomobject]@{ Ok = $true; Configured = $false; Downloaded = 0; Skipped = 0; Manifest = $manifestInfo.Source; Message = 'Texture cloud manifest has no textures/assets.' }
+    }
+
+    $hasPerEntryUrls = @($entries | Where-Object { $_.PSObject.Properties['url'] -and $_.url }).Count -gt 0
+    if (-not $BaseUrl -and -not $hasPerEntryUrls) {
+        return [pscustomobject]@{ Ok = $true; Configured = $false; Downloaded = 0; Skipped = 0; Manifest = $manifestInfo.Source; Message = 'Texture cloud manifest has no baseUrl; set T850_TEXTURE_BASE_URL or per-entry urls after public upload.' }
+    }
+
+    $allTasks = @(New-T850CloudDownloadTasks -Entries $entries -AssetRoot $AssetRoot -BaseUrl $BaseUrl -DefaultRoot 'Textures')
+    $downloadTasks = New-Object System.Collections.Generic.List[object]
+    $skipped = 0
+    $errors = New-Object System.Collections.Generic.List[string]
+
+    foreach ($task in $allTasks) {
+        if (Test-T850CloudModelFile -Entry $task.Entry -TargetPath $task.TargetPath) {
+            $skipped++
+            continue
+        }
+        if (-not $task.Url) {
+            $errors.Add("No URL/baseUrl configured for $($task.ResourcePath)")
+            continue
+        }
+        $downloadTasks.Add($task)
+    }
+
+    $total = $allTasks.Count
+    $initialPercent = if ($total -gt 0) { [int][Math]::Floor(($skipped * 100.0) / $total) } else { 100 }
+    $startMessage = "Texture download progress: $skipped/$total ($initialPercent%) - downloaded=0 skipped=$skipped failed=0"
+    if (-not $StatusCallback) { Write-Host ("[T850] " + $startMessage) }
+    Invoke-T850CloudStatus -StatusCallback $StatusCallback -Message $startMessage
+
+    if ($downloadTasks.Count -gt 0) {
+        if (-not $StatusCallback) { Write-Host ("[T850] Starting $($downloadTasks.Count) texture download(s) with $([Math]::Max(1, [Math]::Min($MaxThreads, $downloadTasks.Count))) worker(s).") }
+        $parallel = Invoke-T850ParallelDownloads -Tasks $downloadTasks.ToArray() -Skipped $skipped -Total $total -MaxThreads $MaxThreads -StatusCallback $StatusCallback -Label 'Texture'
+        foreach ($err in $parallel.Errors) { $errors.Add($err) }
+        $downloaded = $parallel.Downloaded
+    } else {
+        $downloaded = 0
+    }
+
+    return [pscustomobject]@{
+        Ok = ($errors.Count -eq 0)
+        Configured = $true
+        Downloaded = $downloaded
+        Skipped = $skipped
+        Manifest = $manifestInfo.Source
+        Errors = @($errors)
+        Message = if ($errors.Count -eq 0) { "Textures ready ($downloaded downloaded, $skipped already present)." } else { ($errors -join [System.Environment]::NewLine) }
     }
 }

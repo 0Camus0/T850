@@ -1074,11 +1074,12 @@ $btnDownloadAssets.Add_Click({
 
 # RUN button
 $btnRun.Add_Click({
+    if (-not (Invoke-LauncherModelDownload)) { return }
+    Populate-ModelList
+    Populate-SceneFileList
     Update-SceneDependencyCache
     $sceneDeps = $script:SceneDependencyResult
     if (-not (Show-SceneDependencyError $sceneDeps)) { return }
-    if (-not (Invoke-LauncherModelDownload)) { return }
-    Populate-ModelList
 
     $cmd = Get-LaunchCommand
     if (-not (Test-Path $cmd.ExePath)) {
@@ -1134,8 +1135,8 @@ function Populate-ModelList {
     $modelsDir = Join-Path $rootDir "Models"
     if (Test-Path $modelsDir) {
         $files = @()
-        $files += @(Get-ChildItem $modelsDir -Filter "*.glb" | Sort-Object Name)
-        $files += @(Get-ChildItem $modelsDir -Filter "*.gltf" | Sort-Object Name)
+        $files += @(Get-ChildItem $modelsDir -Filter "*.glb" -ErrorAction SilentlyContinue | Sort-Object Name)
+        $files += @(Get-ChildItem $modelsDir -Filter "*.gltf" -ErrorAction SilentlyContinue | Sort-Object Name)
         foreach ($f in $files) {
             $item = New-Object System.Windows.Controls.ComboBoxItem
             $item.Content = $f.Name

@@ -546,8 +546,7 @@ function Get-WindowsRuntimeRoot {
 }
 
 function Get-LauncherAssetRoot {
-    if (Test-AndroidTarget) { return (Join-Path $rootDir "Assets") }
-    return (Get-WindowsRuntimeRoot)
+    return (Join-Path $rootDir "Assets")
 }
 
 function Get-LauncherCloudAssetStatus {
@@ -2559,11 +2558,12 @@ $btnDownloadAssets.Add_Click({
 
 # RUN button — launch the app with current settings (no dump override)
 $btnRun.Add_Click({
+    if (-not (Invoke-LauncherModelDownload)) { return }
+    Populate-ModelList
+    Populate-SceneFileList
     Update-SceneDependencyCache
     $sceneDeps = $script:SceneDependencyResult
     if (-not (Show-SceneDependencyError $sceneDeps)) { return }
-    if (-not (Invoke-LauncherModelDownload)) { return }
-    Populate-ModelList
     if (Test-AndroidTarget) {
         Invoke-AndroidInstall | Out-Null
         return
@@ -2628,18 +2628,11 @@ $btnEditor.Add_Click({
 # Scan Models folder for .glb/.gltf files and populate the dropdown
 function Populate-ModelList {
     $cmbModel.Items.Clear()
-    if (Test-AndroidTarget) {
-        $modelsDir = Join-Path $rootDir "Assets\Models"
-    } else {
-        $arch = ($cmbArch.SelectedItem).Content.ToString().ToLower()
-        $config = ($cmbConfig.SelectedItem).Content.ToString()
-        $archFolder = switch ($arch) { "arm64" { "arm64" }; "x86" { "x86" }; default { "x64" } }
-        $modelsDir = Join-Path $rootDir "bin\$archFolder\$config\Models"
-    }
+    $modelsDir = Join-Path $rootDir "Assets\Models"
     if (Test-Path $modelsDir) {
         $files = @()
-        $files += @(Get-ChildItem $modelsDir -Filter "*.glb" | Sort-Object Name)
-        $files += @(Get-ChildItem $modelsDir -Filter "*.gltf" | Sort-Object Name)
+        $files += @(Get-ChildItem $modelsDir -Filter "*.glb" -ErrorAction SilentlyContinue | Sort-Object Name)
+        $files += @(Get-ChildItem $modelsDir -Filter "*.gltf" -ErrorAction SilentlyContinue | Sort-Object Name)
         foreach ($f in $files) {
             $item = New-Object System.Windows.Controls.ComboBoxItem
             $item.Content = $f.Name

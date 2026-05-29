@@ -356,6 +356,9 @@
     <ClInclude Include="include\debug\FrameDumper.h">
       <Filter>Header Files\utils</Filter>
     </ClInclude>
+    <ClInclude Include="include\debug\LoadingProgress.h">
+      <Filter>Header Files\utils</Filter>
+    </ClInclude>
     <ClInclude Include="include\scene\RenderGraph.h">
       <Filter>Header Files\scene</Filter>
     </ClInclude>

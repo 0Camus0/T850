@@ -23,6 +23,7 @@
 #include <utils/gltf/GLTFTypes.h>
 #include <video/BaseDriver.h>
 #include <debug/RenderTrace.h>
+#include <debug/LoadingProgress.h>
 #include <utils/Log.h>
 #include <utils/ResourceLocator.h>
 
@@ -60,6 +61,13 @@ std::string Stem(const std::string& p) {
   std::string b = Basename(p);
   auto d = b.find_last_of('.');
   return (d == std::string::npos) ? b : b.substr(0, d);
+}
+
+std::string ImageProgressLabel(const Document& doc, int imageIndex) {
+  const Image& img = doc.images[imageIndex];
+  if (!img.name.empty()) return img.name;
+  if (img.uri && img.uri->compare(0, 5, "data:") != 0) return Basename(*img.uri);
+  return Stem(doc._sourcePath) + "_img" + std::to_string(imageIndex);
 }
 
 // Look up an existing texture by filepath; returns its slot or -1.
@@ -508,8 +516,13 @@ void ResolveAllImages(const Document& doc,
     T8_LOG_INFO("[glTF] Resolving %d images serially for 32-bit process", numImages);
 #endif
     for (int i = 0; i < numImages; i++) {
+      const std::string label = ImageProgressLabel(doc, i);
+      const std::string prefix = "Texture " + std::to_string(i + 1) + "/" + std::to_string(numImages) + ": ";
+      LoadingProgress::SetDetail(prefix + "reading " + label);
       gatherImageBytes(i);
+      LoadingProgress::SetDetail(prefix + "decoding " + label);
       decodeImage(i);
+      LoadingProgress::SetDetail(prefix + "uploading " + label);
       uploadImage(i);
     }
     T8_LOG_INFO("[glTF] Image resolution complete: %d images", numImages);
@@ -518,19 +531,25 @@ void ResolveAllImages(const Document& doc,
 
   // Phase 1: Gather encoded bytes (disk I/O + base64 decode + bufferView copy).
   if (g_threadPool && numImages > 1) {
+    LoadingProgress::SetDetail("Reading " + std::to_string(numImages) + " texture payloads");
     T8_LOG_INFO("[glTF] Reading %d images with %u global worker threads", numImages, g_threadPool->NumWorkers());
     g_threadPool->ParallelFor(0, numImages, gatherImageBytes);
   } else {
     for (int i = 0; i < numImages; i++) {
+      LoadingProgress::SetDetail("Texture " + std::to_string(i + 1) + "/" + std::to_string(numImages) +
+                                 ": reading " + ImageProgressLabel(doc, i));
       gatherImageBytes(i);
     }
   }
 
   if (g_threadPool && numImages > 1) {
+    LoadingProgress::SetDetail("Decoding " + std::to_string(numImages) + " texture images");
     T8_LOG_INFO("[glTF] Decoding %d images with %u global worker threads", numImages, g_threadPool->NumWorkers());
     g_threadPool->ParallelFor(0, numImages, decodeImage);
   } else {
     for (int i = 0; i < numImages; i++) {
+      LoadingProgress::SetDetail("Texture " + std::to_string(i + 1) + "/" + std::to_string(numImages) +
+                                 ": decoding " + ImageProgressLabel(doc, i));
       decodeImage(i);
     }
   }
@@ -539,6 +558,8 @@ void ResolveAllImages(const Document& doc,
   if (g_pBaseDriver)
     g_pBaseDriver->BeginResourceUploadBatch();
   for (int i = 0; i < numImages; i++) {
+    LoadingProgress::SetDetail("Texture " + std::to_string(i + 1) + "/" + std::to_string(numImages) +
+                               ": uploading " + (results[i].keyName.empty() ? ImageProgressLabel(doc, i) : results[i].keyName));
     uploadImage(i);
   }
   if (g_pBaseDriver)

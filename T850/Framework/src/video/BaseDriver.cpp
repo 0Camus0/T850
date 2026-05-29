@@ -16,6 +16,7 @@
 #include <utils/ShaderPermutationDump.h>
 #include <utils/ResourceLocator.h>
 #include <debug/RenderTrace.h>
+#include <debug/LoadingProgress.h>
 #include <core/Config.h>
 #include <algorithm>
 #include <ctime>
@@ -731,6 +732,8 @@ namespace t850 {
         return i;
       }
     }
+    LoadingProgress::SetCurrent("Loading texture", path, "Creating GPU texture");
+    LoadingProgress::ScopedStep loadingStep("Loading texture", path, 0.8f, false);
     Texture *pTex = T8Device->CreateTexture(path);
     if (!pTex) {
       T8_LOG_ERROR("Texture creation failed: '%s'", path.c_str());
@@ -788,6 +791,12 @@ namespace t850 {
         }
       }
     }
+    const std::string shaderName =
+      (!vs_name.empty() || !fs_name.empty())
+        ? (vs_name + " / " + fs_name)
+        : std::string("runtime shader");
+    LoadingProgress::SetCurrent("Compiling shader", shaderName, "Creating API shader/pipeline state");
+    LoadingProgress::ScopedStep loadingStep("Compiling shader", shaderName, 0.45f, false);
     ShaderBase* shader = T8Device->CreateShader(src_vs, src_fs, key, vs_name, fs_name);
     if (shader != nullptr) {
       m_shaders.push_back(shader);
@@ -808,6 +817,10 @@ namespace t850 {
       w = width;
     if (h == 0)
       h = height;
+    LoadingProgress::ScopedStep loadingStep(
+      "Creating render target",
+      std::to_string(w) + "x" + std::to_string(h) + " (" + std::to_string(nrt) + " color)",
+      0.3f);
     BaseRT	*pRT = T8Device->CreateRT(nrt,cf,df,w,h,genMips);
     pRT->number_RT = nrt;
     if (pRT!= nullptr) {
@@ -822,6 +835,10 @@ namespace t850 {
   {
     if (w == 0) w = width;
     if (h == 0) h = height;
+    LoadingProgress::ScopedStep loadingStep(
+      "Creating render target",
+      std::to_string(w) + "x" + std::to_string(h) + " (" + std::to_string(nrt) + " color)",
+      0.3f);
     int cf = perColorFormats.empty() ? BaseRT::RGBA8 : perColorFormats[0];
     BaseRT* pRT = T8Device->CreateRT(nrt, cf, df, w, h, genMips);
     if (pRT) {

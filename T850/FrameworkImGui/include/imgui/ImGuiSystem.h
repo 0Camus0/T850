@@ -28,6 +28,9 @@ namespace t850 {
     void Render();
     void BuildDrawData();
     void RenderDrawData();
+    void InstallLoadingProgressRenderer();
+    void ClearLoadingProgressRenderer();
+    void RenderLoadingFrame();
 
     bool IsReady() const { return m_inited; }
     bool WantsKeyboard() const;
@@ -44,6 +47,7 @@ namespace t850 {
     RootFramework* m_framework = nullptr;
     bool m_inited = false;
     bool m_dockingEnabled = false;
+    bool m_loadingFrameActive = false;
     GraphicsApi::E m_api = GraphicsApi::D3D11;
     SDL_Window* m_sdlWindow = nullptr;
     float m_wheelAccum = 0.0f;

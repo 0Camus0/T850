@@ -24,11 +24,13 @@
 #include <utils/Utils.h>
 #include <debug/Profiler.h>
 #include <debug/RenderTrace.h>
+#include <debug/LoadingProgress.h>
 #include <core/Config.h>
 #include <core/EngineContext.h>
 #include <scene/MeshAssetCache.h>
 #include <scene/MaterialAsset.h>
 #include <imgui/DevGuiContext.h>
+#include <imgui.h>
 #ifndef OS_ANDROID
 
 #include <imgui_impl_vulkan.h>
@@ -543,24 +545,48 @@ void App::CreateAssets() {
     T8_LOG_ERROR("[App] CreateAssets skipped: active scene is null");
     return;
   }
-  m_actualScene->CreateAssets();
-  m_textRender.LoadFromFile(36,"Fonts/Martius-LV9L4.ttf",512.0f);
-  PrimitiveMgr.SetEngineContext(&t850::GetEngineContext());
-  PrimitiveMgr.Init();
-  PrimitiveMgr.SetVP(&VP);
-  PrimitiveMgr.SetSceneProps(&SceneProp);
-  Quads[0].CreateInstance(PrimitiveMgr.GetPrimitive(PrimitiveManager::QUAD), &VP);
-
   m_imguiVisible = g_config.flags.guiOnStart;
   if (!g_config.flags.benchmark) {
+    t850::LoadingProgress::Reset(160.0f, "Starting", "Preparing renderer");
     m_imguiReady = m_imgui.Init(pFramework, "imgui_runtime_layout.ini", true);
     if (!m_imguiReady) {
       T8_LOG_ERROR("[App] Runtime ImGui init failed");
+      t850::LoadingProgress::Clear();
+    } else {
+      m_imgui.InstallLoadingProgressRenderer();
+      t850::LoadingProgress::RequestFrame(true);
     }
   }
+
+  t850::LoadingProgress::Advance(5.0f);
+  {
+    t850::LoadingProgress::ScopedStep sceneStep("Loading scene", "Creating scene assets", 35.0f);
+    m_actualScene->CreateAssets();
+  }
+  {
+    t850::LoadingProgress::ScopedStep fontStep("Loading font", "Fonts/Martius-LV9L4.ttf", 4.0f);
+    m_textRender.LoadFromFile(36,"Fonts/Martius-LV9L4.ttf",512.0f);
+  }
+  {
+    t850::LoadingProgress::ScopedStep primitiveStep("Preparing primitives", "Runtime draw helpers", 6.0f);
+    PrimitiveMgr.SetEngineContext(&t850::GetEngineContext());
+    PrimitiveMgr.Init();
+    PrimitiveMgr.SetVP(&VP);
+    PrimitiveMgr.SetSceneProps(&SceneProp);
+    Quads[0].CreateInstance(PrimitiveMgr.GetPrimitive(PrimitiveManager::QUAD), &VP);
+  }
 #ifdef OS_ANDROID
-  LoadAndroidGuiSettings();
+  {
+    t850::LoadingProgress::ScopedStep androidGuiStep("Loading UI settings", "Android GUI profile", 2.0f);
+    LoadAndroidGuiSettings();
+  }
 #endif
+
+  if (!g_config.flags.benchmark && m_imguiReady) {
+    t850::LoadingProgress::Complete("Ready", "Starting renderer");
+    m_imgui.ClearLoadingProgressRenderer();
+    t850::LoadingProgress::Clear();
+  }
 
   if (!g_config.flags.dumpShaderPermutations) {
     FadeFX(0.5, false);

@@ -20,6 +20,7 @@
 #include <utils/Log.h>
 #include <utils/ThreadPool.h>
 #include <utils/ResourceLocator.h>
+#include <debug/LoadingProgress.h>
 
 #include <cstdint>
 #include <cstring>
@@ -179,6 +180,7 @@ bool RebaseGlbBufferViews(Document& doc,
 } // namespace
 
 bool LoadGLTF(const std::string& path, Document& out) {
+  LoadingProgress::SetCurrent("Loading model", path, "Reading glTF/GLB file");
   std::vector<unsigned char> raw;
   if (!ReadFileBytes(path, raw)) {
     T8_LOG_ERROR("[glTF] cannot open '%s'", path.c_str());
@@ -188,6 +190,7 @@ bool LoadGLTF(const std::string& path, Document& out) {
     T8_LOG_ERROR("[glTF] file too small: '%s'", path.c_str());
     return false;
   }
+  LoadingProgress::Advance(0.8f);
 
   out = Document{};
   out._sourcePath = path;
@@ -202,6 +205,7 @@ bool LoadGLTF(const std::string& path, Document& out) {
   std::memcpy(&magic, raw.data(), 4);
 
   if (magic == GLB_MAGIC) {
+    LoadingProgress::SetDetail("Parsing GLB chunks");
     if (raw.size() < 12) {
       T8_LOG_ERROR("[glTF] truncated GLB header in '%s'", path.c_str());
       return false;
@@ -250,6 +254,7 @@ bool LoadGLTF(const std::string& path, Document& out) {
       return false;
     }
   } else {
+    LoadingProgress::SetDetail("Reading .gltf JSON");
     // Treat as plain JSON .gltf (UTF-8). Strip a UTF-8 BOM if present.
     std::size_t start = 0;
     if (raw.size() >= 3 && raw[0] == 0xEF && raw[1] == 0xBB && raw[2] == 0xBF) {
@@ -259,10 +264,12 @@ bool LoadGLTF(const std::string& path, Document& out) {
                 raw.size() - start);
   }
 
+  LoadingProgress::SetCurrent("Loading model", path, "Parsing glTF JSON");
   if (!ParseJson(json, out)) {
     T8_LOG_ERROR("[glTF] JSON parse failed for '%s'", path.c_str());
     return false;
   }
+  LoadingProgress::Advance(0.8f);
   out._sourcePath = path;
 
   // Hard-fail on required extensions we don't implement.
@@ -303,19 +310,24 @@ bool LoadGLTF(const std::string& path, Document& out) {
   }
 
   if (magic == GLB_MAGIC && hasGlbBin) {
+    LoadingProgress::SetDetail("Rebasing GLB buffer views");
     if (!RebaseGlbBufferViews(out, glbBinOffset, glbBinLength, path)) {
       return false;
     }
     glbBin = std::move(raw);
   }
 
+  LoadingProgress::SetCurrent("Loading model", path, "Resolving buffers: " + std::to_string(out.buffers.size()));
   if (!ResolveBuffers(out, path, std::move(glbBin))) {
     return false;
   }
+  LoadingProgress::Advance(0.8f);
 
+  LoadingProgress::SetCurrent("Loading model", path, "Validating meshes/materials/accessors");
   if (!ValidateDocument(out)) {
     return false;
   }
+  LoadingProgress::Advance(0.5f);
 
   T8_LOG_INFO("[glTF] '%s' loaded: %zu meshes, %zu materials, %zu textures, "
               "%zu images, %zu buffers, %zu animations",

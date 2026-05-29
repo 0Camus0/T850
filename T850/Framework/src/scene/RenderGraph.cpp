@@ -20,6 +20,7 @@
 #endif
 
 #include <debug/Profiler.h>
+#include <debug/LoadingProgress.h>
 
 #include <fstream>
 #include <sstream>
@@ -33,6 +34,7 @@ namespace t850 {
 // ---- JSON loading via glaze ----
 
 bool LoadRenderGraphDescriptor(const std::string& path, RenderGraphDesc& desc) {
+  LoadingProgress::ScopedStep loadingStep("Loading render graph", path, 1.0f);
   std::string json;
   if (!ResourceLocator::Instance().ReadText(path, json)) {
     T8_LOG_ERROR("[RenderGraph] Cannot open '%s'", path.c_str());

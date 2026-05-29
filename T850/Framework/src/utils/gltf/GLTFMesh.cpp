@@ -19,6 +19,7 @@
  *********************************************************/
 
 #include <utils/gltf/GLTFLoader.h>
+#include <debug/LoadingProgress.h>
 #include <utils/gltf/GLTFAccessor.h>
 #include <utils/gltf/GLTFMaterial.h>
 #include <utils/gltf/GLTFImage.h>
@@ -815,6 +816,7 @@ void GatherNodes(const Document& doc, int nodeIdx, const XMATRIX44& parent,
 
 bool ConvertToXDatabase(const Document& doc, xF::XDataBase& out,
                         const std::string& sourcePath) {
+  LoadingProgress::SetCurrent("Building model", sourcePath, "Collecting scene nodes");
   // Use the requested scene if specified, else scene 0, else all roots.
   std::vector<int> rootNodes;
   int sceneIdx = doc.scene.value_or(doc.scenes.empty() ? -1 : 0);
@@ -863,7 +865,9 @@ bool ConvertToXDatabase(const Document& doc, xF::XDataBase& out,
   if (!doc.images.empty()) {
     std::vector<std::string> imgNames;
     std::vector<int> imgSlots;
+    LoadingProgress::SetCurrent("Building model", sourcePath, "Loading textures: " + std::to_string(doc.images.size()));
     ResolveAllImages(doc, imgNames, imgSlots);
+    LoadingProgress::Advance(1.2f);
   }
 
   // ── Parallel Draco pre-decode ──────────────────────────────────
@@ -905,6 +909,7 @@ bool ConvertToXDatabase(const Document& doc, xF::XDataBase& out,
   int dracoCount = 0;
   for (auto& j : jobs) { if (j.hasDraco) dracoCount++; }
   if (dracoCount > 0 && g_threadPool) {
+    LoadingProgress::SetCurrent("Building model", sourcePath, "Decoding Draco geometry: " + std::to_string(dracoCount));
     T8_LOG_INFO("[glTF] Decoding %d Draco meshes with %u threads",
                 dracoCount, g_threadPool->NumWorkers());
     g_threadPool->ParallelForHeavy(0, static_cast<int>(jobs.size()), [&](int i) {
@@ -914,13 +919,16 @@ bool ConvertToXDatabase(const Document& doc, xF::XDataBase& out,
       j.decodeOk = DecodeDracoMesh(doc, dracoExt, j.dracoResult);
     });
     T8_LOG_INFO("[glTF] Draco decode complete");
+    LoadingProgress::Advance(1.0f);
   } else if (dracoCount > 0) {
+    LoadingProgress::SetCurrent("Building model", sourcePath, "Decoding Draco geometry: " + std::to_string(dracoCount));
     // Serial fallback
     for (auto& j : jobs) {
       if (!j.hasDraco) continue;
       const auto& dracoExt = *j.prim->extensions->KHR_draco_mesh_compression;
       j.decodeOk = DecodeDracoMesh(doc, dracoExt, j.dracoResult);
     }
+    LoadingProgress::Advance(1.0f);
   }
 
   // ── Parallel geometry build + serial commit ────────────────────
@@ -973,15 +981,19 @@ bool ConvertToXDatabase(const Document& doc, xF::XDataBase& out,
   };
 
   if (g_threadPool && jobs.size() > 1) {
+    LoadingProgress::SetCurrent("Building model", sourcePath, "Building geometry primitives: " + std::to_string(jobs.size()));
     T8_LOG_INFO("[glTF] Building %zu primitives with %u global worker threads",
                 jobs.size(), g_threadPool->NumWorkers());
     g_threadPool->ParallelForHeavy(0, static_cast<int>(jobs.size()), buildPrimitive);
   } else {
+    LoadingProgress::SetCurrent("Building model", sourcePath, "Building geometry primitives: " + std::to_string(jobs.size()));
     for (int i = 0; i < static_cast<int>(jobs.size()); ++i) {
       buildPrimitive(i);
     }
   }
+  LoadingProgress::Advance(2.0f);
 
+  LoadingProgress::SetDetail("Committing geometry to engine buffers");
   for (std::size_t i = 0; i < jobs.size(); ++i) {
     PrimJob& job = jobs[i];
     PrimBuildResult& result = buildResults[i];
@@ -1009,7 +1021,9 @@ bool ConvertToXDatabase(const Document& doc, xF::XDataBase& out,
 
   // Build skeleton and animation data (Phase 2)
   if (!doc.skins.empty() || !doc.animations.empty()) {
+    LoadingProgress::SetCurrent("Building model", sourcePath, "Building skins and animations");
     BuildSkinsAndAnimations(doc, out);
+    LoadingProgress::Advance(0.8f);
   }
 
   return !mc->Geometry.empty();

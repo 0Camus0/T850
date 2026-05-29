@@ -1,6 +1,7 @@
 #include <pch.h>
 
 #include <scene/EditorSceneFile.h>
+#include <debug/LoadingProgress.h>
 
 #include <utils/Log.h>
 #include <utils/ResourceLocator.h>
@@ -121,6 +122,7 @@ void ResolveSceneMeshFallbacks(const std::string& scenePath, EditorSceneFile& sc
 } // namespace
 
 bool LoadEditorSceneFile(const std::string& path, EditorSceneFile& scene, std::string* error) {
+  LoadingProgress::ScopedStep loadingStep("Loading scene file", path, 1.0f);
   std::string content;
   if (!ResourceLocator::Instance().ReadText(path, content)) {
     std::string message = "Scene file not found or unreadable: " + path;

@@ -3,6 +3,7 @@
 #include <Config.h>
 #include <Descriptors.h>
 #include <core/Core.h>
+#include <debug/LoadingProgress.h>
 #include <utils/Log.h>
 #include <video/BaseDriver.h>
 
@@ -37,6 +38,8 @@
 #include <video/vulkan/VulkanDriver.h>
 
 #include <cstring>
+#include <algorithm>
+#include <string>
 
 namespace t850 {
   extern Device* T8Device;
@@ -54,6 +57,12 @@ namespace {
     return true;
   }
 #endif
+
+  std::string TrimLoadingText(std::string text, std::size_t maxChars) {
+    if (text.size() <= maxChars) return text;
+    if (maxChars <= 3) return text.substr(0, maxChars);
+    return "..." + text.substr(text.size() - (maxChars - 3));
+  }
 }
 
 namespace t850 {
@@ -226,6 +235,8 @@ bool ImGuiSystem::Init(RootFramework* framework, const char* iniFileName, bool e
 void ImGuiSystem::Shutdown() {
   if (!m_inited) return;
 
+  ClearLoadingProgressRenderer();
+
 #ifdef OS_WINDOWS
   if (m_api == GraphicsApi::D3D11) {
     ImGui_ImplDX11_Shutdown();
@@ -315,6 +326,122 @@ void ImGuiSystem::Render() {
 
   BuildDrawData();
   RenderDrawData();
+}
+
+void ImGuiSystem::InstallLoadingProgressRenderer() {
+  LoadingProgress::SetFrameCallback([this]() {
+    RenderLoadingFrame();
+  });
+}
+
+void ImGuiSystem::ClearLoadingProgressRenderer() {
+  LoadingProgress::ClearFrameCallback();
+}
+
+void ImGuiSystem::RenderLoadingFrame() {
+  if (m_loadingFrameActive || !m_inited || !m_framework || !m_framework->pVideoDriver) return;
+
+  m_loadingFrameActive = true;
+
+#if defined(OS_WINDOWS)
+  m_framework->ProcessInput();
+#endif
+
+  auto* driver = m_framework->pVideoDriver;
+  driver->Clear();
+
+  if (NewFrame(false)) {
+    const LoadingProgress::Snapshot snapshot = LoadingProgress::GetSnapshot();
+    ImGuiIO& io = ImGui::GetIO();
+    const ImVec2 displaySize = io.DisplaySize;
+    const float scale = (std::max)(0.75f, (std::min)(displaySize.x / 1920.0f, displaySize.y / 1080.0f));
+
+    ImGuiWindowFlags flags =
+      ImGuiWindowFlags_NoDecoration |
+      ImGuiWindowFlags_NoMove |
+      ImGuiWindowFlags_NoSavedSettings |
+      ImGuiWindowFlags_NoBringToFrontOnFocus |
+      ImGuiWindowFlags_NoNav |
+      ImGuiWindowFlags_NoInputs;
+
+    ImGui::SetNextWindowPos(ImVec2(0.0f, 0.0f), ImGuiCond_Always);
+    ImGui::SetNextWindowSize(displaySize, ImGuiCond_Always);
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0.0f, 0.0f));
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize, 0.0f);
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 0.0f);
+    ImGui::PushStyleColor(ImGuiCol_WindowBg, ImVec4(0.0f, 0.0f, 0.0f, 1.0f));
+    ImGui::Begin("##T850LoadingScreen", nullptr, flags);
+
+    ImDrawList* draw = ImGui::GetWindowDrawList();
+    const ImVec2 center(displaySize.x * 0.5f, displaySize.y * 0.5f);
+    ImFont* font = ImGui::GetFont();
+
+    const char* title = "T850";
+    const float titleSize = ImGui::GetFontSize() * 3.4f * scale;
+    const ImVec2 titleTextSize = font->CalcTextSizeA(titleSize, 10000.0f, 0.0f, title);
+    draw->AddText(font,
+                  titleSize,
+                  ImVec2(center.x - titleTextSize.x * 0.5f, center.y - 130.0f * scale),
+                  IM_COL32(255, 255, 255, 255),
+                  title);
+
+    const std::string phase = snapshot.phase.empty() ? "Loading" : snapshot.phase;
+    const float phaseSize = ImGui::GetFontSize() * 1.15f * scale;
+    const ImVec2 phaseTextSize = font->CalcTextSizeA(phaseSize, 10000.0f, 0.0f, phase.c_str());
+    draw->AddText(font,
+                  phaseSize,
+                  ImVec2(center.x - phaseTextSize.x * 0.5f, center.y - 40.0f * scale),
+                  IM_COL32(230, 230, 230, 255),
+                  phase.c_str());
+
+    const float barWidth = (std::min)(displaySize.x * 0.58f, 640.0f * scale);
+    const float barHeight = 14.0f * scale;
+    const ImVec2 barMin(center.x - barWidth * 0.5f, center.y + 8.0f * scale);
+    const ImVec2 barMax(barMin.x + barWidth, barMin.y + barHeight);
+    const float fillWidth = barWidth * std::clamp(snapshot.percent / 100.0f, 0.0f, 1.0f);
+
+    draw->AddRectFilled(barMin, barMax, IM_COL32(28, 28, 28, 255), barHeight * 0.5f);
+    draw->AddRectFilled(barMin, ImVec2(barMin.x + fillWidth, barMax.y), IM_COL32(56, 168, 255, 255), barHeight * 0.5f);
+    draw->AddRect(barMin, barMax, IM_COL32(95, 95, 95, 255), barHeight * 0.5f);
+
+    const int percentInt = static_cast<int>(snapshot.percent + 0.5f);
+    const std::string percent = std::to_string(percentInt) + "%";
+    const float percentSize = ImGui::GetFontSize() * 0.95f * scale;
+    const ImVec2 percentTextSize = font->CalcTextSizeA(percentSize, 10000.0f, 0.0f, percent.c_str());
+    draw->AddText(font,
+                  percentSize,
+                  ImVec2(center.x - percentTextSize.x * 0.5f, barMax.y + 12.0f * scale),
+                  IM_COL32(210, 210, 210, 255),
+                  percent.c_str());
+
+    std::string item = TrimLoadingText(snapshot.item.empty() ? std::string("Preparing...") : snapshot.item, 92);
+    const float itemSize = ImGui::GetFontSize() * 0.85f * scale;
+    const ImVec2 itemTextSize = font->CalcTextSizeA(itemSize, 10000.0f, 0.0f, item.c_str());
+    draw->AddText(font,
+                  itemSize,
+                  ImVec2(center.x - itemTextSize.x * 0.5f, barMax.y + 42.0f * scale),
+                  IM_COL32(160, 160, 160, 255),
+                  item.c_str());
+
+    if (!snapshot.detail.empty()) {
+      std::string detail = TrimLoadingText(snapshot.detail, 104);
+      const float detailSize = ImGui::GetFontSize() * 0.78f * scale;
+      const ImVec2 detailTextSize = font->CalcTextSizeA(detailSize, 10000.0f, 0.0f, detail.c_str());
+      draw->AddText(font,
+                    detailSize,
+                    ImVec2(center.x - detailTextSize.x * 0.5f, barMax.y + 66.0f * scale),
+                    IM_COL32(120, 120, 120, 255),
+                    detail.c_str());
+    }
+
+    ImGui::End();
+    ImGui::PopStyleColor();
+    ImGui::PopStyleVar(3);
+    Render();
+  }
+
+  driver->SwapBuffers();
+  m_loadingFrameActive = false;
 }
 
 void ImGuiSystem::BuildDrawData() {

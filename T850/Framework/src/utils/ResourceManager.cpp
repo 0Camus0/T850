@@ -6,6 +6,7 @@
 #include <string>
 #include <utils/Log.h>
 #include <utils/gltf/GLTFLoader.h>
+#include <debug/LoadingProgress.h>
 
 namespace t850 {
 
@@ -31,6 +32,10 @@ namespace t850 {
     }
 
     const std::string ext = FileExtensionLower(filename);
+    LoadingProgress::ScopedStep loadingStep(
+      (ext == "gltf" || ext == "glb") ? "Loading model" : "Loading asset",
+      filename,
+      (ext == "gltf" || ext == "glb") ? 5.0f : 2.0f);
     m_resources.push_back(new xF::XDataBase);
     xF::XDataBase* db = m_resources.back();
 

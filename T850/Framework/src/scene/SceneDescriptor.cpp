@@ -12,10 +12,12 @@
 #include <cstdio>
 #include <utils/Log.h>
 #include <utils/ResourceLocator.h>
+#include <debug/LoadingProgress.h>
 
 namespace t850 {
 
 bool LoadSceneDescriptor(const std::string& path, SceneDescriptor& desc) {
+  LoadingProgress::ScopedStep loadingStep("Loading scene descriptor", path, 1.0f);
   std::string json;
   if (!ResourceLocator::Instance().ReadText(path, json)) {
     T8_LOG_ERROR("[SceneDescriptor] Cannot open '%s'", path.c_str());

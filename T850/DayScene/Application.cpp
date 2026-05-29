@@ -790,7 +790,16 @@ void App::DrawRuntimeGui() {
     }
     const char* panelTitle = androidPhysicsPanel ? "Physics##Android" : "Scene Controls##Android";
 #else
-    ImGui::SetNextWindowSize(ImVec2(420.0f, 680.0f), ImGuiCond_FirstUseEver);
+    ImGuiViewport* viewport = ImGui::GetMainViewport();
+    const float panelW = (std::min)(420.0f, (std::max)(320.0f, viewport->WorkSize.x - 48.0f));
+    const float panelH = (std::min)(680.0f, (std::max)(320.0f, viewport->WorkSize.y - 48.0f));
+    const ImVec2 panelPos(
+        (std::max)(viewport->WorkPos.x + 24.0f, viewport->WorkPos.x + viewport->WorkSize.x - panelW - 24.0f),
+        viewport->WorkPos.y + 24.0f);
+    ImGui::SetNextWindowDockID(0, ImGuiCond_Appearing);
+    ImGui::SetNextWindowPos(panelPos, ImGuiCond_Appearing);
+    ImGui::SetNextWindowSize(ImVec2(panelW, panelH), ImGuiCond_FirstUseEver);
+    ImGui::SetNextWindowCollapsed(false, ImGuiCond_Appearing);
     const char* panelTitle = "Scene Controls";
 #endif
     const bool panelBegun = gui.BeginPanel(panelTitle, &m_imguiVisible);

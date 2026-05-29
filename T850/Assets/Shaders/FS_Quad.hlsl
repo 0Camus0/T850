@@ -903,13 +903,12 @@ float4 FS( VS_OUTPUT input ) : SV_TARGET {
 	tex0.GetDimensions(texWidth, texHeight);
 	float2 U = LightPositions[0].y / float2(max(1u, texWidth), max(1u, texHeight));
 	int KernelSize = (int)LightPositions[0].x;
-	float Origin = -((((float)(KernelSize))-3.0)/2.0);
-	float V = Origin;
+	float Origin = -(((float)(KernelSize - 1)) * 0.5);
 	float2 Texcoords;
-	for(int i=1;i<(KernelSize-1);i++){	
+	for(int i=0;i<KernelSize;i++){
+		float V = Origin + (float)i;
 		Texcoords.xy = float2(input.texture0.x ,input.texture0.y + V*U.y);
 		Sum.xyz += LightPositions[i+1].x * tex0.SampleLevel( SS, Texcoords.xy, 0.0f ).xyz;
-		V++;
 	}
 	return Sum;
 }
@@ -921,13 +920,12 @@ float4 FS( VS_OUTPUT input ) : SV_TARGET {
 	tex0.GetDimensions(texWidth, texHeight);
 	float2 U = LightPositions[0].y / float2(max(1u, texWidth), max(1u, texHeight));
 	int KernelSize = (int)LightPositions[0].x;
-	float Origin = -((((float)(KernelSize))-3.0)/2.0);
-	float H = Origin;
+	float Origin = -(((float)(KernelSize - 1)) * 0.5);
 	float2 Texcoords;
-	for(int i=1;i<(KernelSize-1);i++){	
+	for(int i=0;i<KernelSize;i++){
+		float H = Origin + (float)i;
 		Texcoords.xy = float2(input.texture0.x + H*U.x ,input.texture0.y );
 		Sum.xyz += LightPositions[i+1].x * tex0.SampleLevel( SS, Texcoords.xy, 0.0f ).xyz;
-		H++;
 	}
 	return Sum;
 }
@@ -939,20 +937,17 @@ float4 FS( VS_OUTPUT input ) : SV_TARGET {
 	tex0.GetDimensions(texWidth, texHeight);
 	float2 U = LightPositions[0].y / float2(max(1u, texWidth), max(1u, texHeight));
 	int KernelSize = (int)LightPositions[0].x;
-	float Origin = -((((float)(KernelSize))-3.0)/2.0);
-	float H = Origin;
-	float V = Origin;
+	float Origin = -(((float)(KernelSize - 1)) * 0.5);
 	float2 Texcoords;	
-	for(int i=1;i<(KernelSize-1);i++){		
+	for(int i=0;i<KernelSize;i++){
+		float H = Origin + (float)i;
 		Texcoords.x = input.texture0.x + H*U.x;
-		V = Origin;
-		for(int j=1;j<(KernelSize-1);j++){
+		for(int j=0;j<KernelSize;j++){
+			float V = Origin + (float)j;
 			Texcoords.y = input.texture0.y + V*U.y;
 			float weight = roundTo(LightPositions[i+1].x*LightPositions[j+1].x,6.0);
 			Sum.xyz += weight * tex0.SampleLevel( SS, Texcoords.xy, 0.0f ).xyz;
-			V++;
 		}
-		H++;
 	}
 	
 	return Sum;

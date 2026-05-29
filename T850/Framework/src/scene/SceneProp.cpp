@@ -15,6 +15,7 @@
 #include <scene/SceneProp.h>
 
 #include <cstdio>
+#include <algorithm>
 
 #include <utils/Log.h>
 
@@ -161,11 +162,14 @@ void	GaussFilter::Update(){
 		kernelSize--;
 
 	std::vector<sample_> allSamples = UpdateKernel(sigma, (float)kernelSize, 1000.0f);
-	XVECTOR3 KernelSize = XVECTOR3((float)allSamples.size(), radius, 0.0f, 0.0f);
+	const int firstTap = 1;
+	const int lastTap = (int)allSamples.size() - 1;
+	const int shaderSampleCount = (std::max)(0, lastTap - firstTap);
+	XVECTOR3 KernelSize = XVECTOR3((float)shaderSampleCount, radius, 0.0f, 0.0f);
 
 	vGaussKernel.clear();
 	vGaussKernel.push_back(KernelSize);
-	for (unsigned int i = 0; i < allSamples.size(); i++) {
+	for (int i = firstTap; i < lastTap; i++) {
 		vGaussKernel.push_back(XVECTOR3(allSamples[i].weight, 0.0f, 0.0f, 0.0f));
 	}
 }

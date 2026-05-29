@@ -777,8 +777,8 @@ KinematicCharacterSettings MakeQuake3CharacterSettings() {
   constexpr float q3ToEngine = 1.0f / 32.0f;
   KinematicCharacterSettings settings;
   settings.collisionShape = KinematicCharacterSettings::CollisionShape::Box;
-  settings.walkSpeed = 220.0f * q3ToEngine;
-  settings.sprintSpeed = 320.0f * q3ToEngine;
+  settings.walkSpeed = 320.0f * q3ToEngine;
+  settings.sprintSpeed = settings.walkSpeed;
   settings.groundAcceleration = 10.0f;
   settings.airAcceleration = 1.0f;
   settings.friction = 6.0f;
@@ -790,7 +790,7 @@ KinematicCharacterSettings MakeQuake3CharacterSettings() {
   settings.eyeHeight = 50.0f * q3ToEngine;
   settings.groundProbeDistance = 4.0f * q3ToEngine;
   settings.stepHeight = 18.0f * q3ToEngine;
-  settings.allowSprint = true;
+  settings.allowSprint = false;
   settings.airControl = true;
   return settings;
 }
@@ -927,7 +927,7 @@ void KinematicCharacterController::UpdateQuake3(float deltaSeconds,
 
   const int forwardMove = Q3MoveCommand(ForwardMoveAmount(input));
   const int rightMove = Q3MoveCommand(RightMoveAmount(input));
-  int upMove = input.jump ? 20 : 0;
+  int upMove = input.jump ? 127 : 0;
   const float playerSpeed = (input.sprint && m_settings.allowSprint) ? m_settings.sprintSpeed : m_settings.walkSpeed;
 
   auto runAirMove = [&](float frameSeconds, const GroundTraceState& ground) {
@@ -1015,6 +1015,9 @@ void KinematicCharacterController::UpdateQuake3(float deltaSeconds,
     ground = TraceGround(context, m_position, m_velocity, m_settings);
     m_grounded = ground.walking;
     ApplyCharacterTriggerTouch(context, m_settings, m_position, m_velocity, m_grounded, m_lastTriggerEntityId);
+    if (m_jumpHeld) {
+      upMove = 20;
+    }
     T8_LOG_VERBOSE(
         "[Q3Update] substep=%.5f center=(%.4f, %.4f, %.4f) eye=(%.4f, %.4f, %.4f) velocity=(%.4f, %.4f, %.4f) grounded=%d hasCollision=%d",
         frameSeconds,

@@ -85,7 +85,7 @@
       },
       {
          "name": "Models\\rewind_cyborg.glb",
-         "mesh": "Models\\rewind_cyborg.glb",
+         "mesh": "Models/rewind_cyborg.glb",
          "ragdoll": "Models/RagdollEdits/rewind_cyborg.glb.json",
          "position": {
             "x": 8.06249,
@@ -108,7 +108,7 @@
       },
       {
          "name": "Models\\rewind_cyborg.glb Clone",
-         "mesh": "Models\\rewind_cyborg.glb",
+         "mesh": "Models/rewind_cyborg.glb",
          "ragdoll": "Models/RagdollEdits/rewind_cyborg.glb.json",
          "position": {
             "x": 9.125077,
@@ -131,7 +131,7 @@
       },
       {
          "name": "Models\\rewind_cyborg.glb Clone Clone",
-         "mesh": "Models\\rewind_cyborg.glb",
+         "mesh": "Models/rewind_cyborg.glb",
          "ragdoll": "Models/RagdollEdits/rewind_cyborg.glb.json",
          "position": {
             "x": 5.909848,
@@ -154,7 +154,7 @@
       },
       {
          "name": "Models\\porsche_992_gt3_r__www.vecarz.com.glb",
-         "mesh": "Models\\porsche_992_gt3_r__www.vecarz.com.glb",
+         "mesh": "Models/porsche_992_gt3_r__www.vecarz.com.glb",
          "ragdoll": "",
          "position": {
             "x": -23.545181,
@@ -4210,10 +4210,6 @@
                "value": 2.237
             },
             {
-               "name": "fov",
-               "value": 100
-            },
-            {
                "name": "light_intensity_scale",
                "value": 2
             },
@@ -4231,11 +4227,11 @@
             },
             {
                "name": "gauss_1_radius",
-               "value": 2.544
+               "value": 1.177
             },
             {
                "name": "gauss_1_sigma",
-               "value": 1
+               "value": 2.5
             }
          ],
          "checkboxes": [
@@ -4270,35 +4266,35 @@
          "camera": {
             "profile": 5,
             "eye": [
-               -18.524239,
+               -19.226711,
                9.683158,
-               2.7011344
+               0.71661586
             ],
             "look": [
-               -0.96796095,
-               -0.2035667,
-               0.14701098
+               -0.862305,
+               -0.23284249,
+               0.44968265
             ],
             "up": [
-               -0.20125876,
-               0.97906107,
-               0.030566571
+               -0.20645581,
+               0.9725145,
+               0.10766445
             ],
             "right": [
-               0.15015507,
+               0.46239173,
                0,
-               0.9886625
+               0.8866758
             ],
-            "yaw": 29.995855,
-            "pitch": 0.20499954,
+            "yaw": 30.32582,
+            "pitch": 0.2349995,
             "roll": 0,
-            "fov": 100,
+            "fov": 99.99999,
             "aspect_ratio": 1.7777778,
             "near_plane": 0.125,
             "far_plane": 6198.7783,
             "ortho": false,
-            "width": 1280,
-            "height": 720,
+            "width": 2560,
+            "height": 1440,
             "left_handed": true,
             "orbit": {
                "target": [
@@ -4312,9 +4308,9 @@
                   0
                ],
                "eye": [
-                  -18.524239,
+                  -19.226711,
                   9.683158,
-                  2.7011344
+                  0.71661586
                ],
                "yaw": -1.5757964,
                "pitch": -0.005,
@@ -4333,17 +4329,16 @@
                0
             ],
             "eye": [
-               -18.524239,
+               -19.226711,
                9.683158,
-               2.7011344
+               0.71661586
             ],
             "yaw": -1.5757964,
             "pitch": -0.005,
             "distance": 3.099389
-         },
-         "frustum_culling": true
+         }
       },
-{
+      {
          "name": "android/mali-g700",
          "platform": "android",
          "architecture": "",
@@ -4389,11 +4384,11 @@
             },
             {
                "name": "gauss_1_radius",
-               "value": 2.544
+               "value": 1.177
             },
             {
                "name": "gauss_1_sigma",
-               "value": 1
+               "value": 2.5
             }
          ],
          "checkboxes": [
@@ -4504,7 +4499,7 @@
             "distance": 3.099389
          }
       },
-{
+      {
          "name": "android/adreno-700",
          "platform": "android",
          "architecture": "",
@@ -4550,11 +4545,11 @@
             },
             {
                "name": "gauss_1_radius",
-               "value": 2.544
+               "value": 1.177
             },
             {
                "name": "gauss_1_sigma",
-               "value": 1
+               "value": 2.5
             }
          ],
          "checkboxes": [
@@ -4665,7 +4660,7 @@
             "distance": 3.099389
          }
       },
-{
+      {
          "name": "android/adreno-800",
          "platform": "android",
          "architecture": "",
@@ -4711,11 +4706,11 @@
             },
             {
                "name": "gauss_1_radius",
-               "value": 2.544
+               "value": 1.177
             },
             {
                "name": "gauss_1_sigma",
-               "value": 1
+               "value": 2.5
             }
          ],
          "checkboxes": [

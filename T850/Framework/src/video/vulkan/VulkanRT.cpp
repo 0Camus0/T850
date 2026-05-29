@@ -106,7 +106,7 @@ namespace t850 {
       tex->x = (unsigned int)w;
       tex->y = (unsigned int)h;
       tex->m_channels = 4;
-      tex->params = CLAMP_TO_EDGE;
+      tex->params = CLAMP_TO_EDGE | LINEAR_FILTER;
       tex->SetTextureParams();
       vColorTextures[i] = tex;
     }

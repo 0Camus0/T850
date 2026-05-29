@@ -92,7 +92,7 @@ namespace t850 {
       colorTex->x = w; colorTex->y = h;
       colorTex->mipmaps = 1;
       colorTex->m_channels = 4;
-      colorTex->params = TextBasicParams::CLAMP_TO_EDGE;
+      colorTex->params = TextBasicParams::CLAMP_TO_EDGE | TextBasicParams::LINEAR_FILTER;
       D3D12_SHADER_RESOURCE_VIEW_DESC srvDesc = {};
       srvDesc.Format = thisFmt;
       srvDesc.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE2D;

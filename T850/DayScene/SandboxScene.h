@@ -119,6 +119,8 @@ public:
   Camera* ActiveCam = nullptr;
   t850::CameraController m_cameraController;
   int m_cameraProfileSelection = 0;
+  float m_mouseSensitivityX = 1.0f;
+  float m_mouseSensitivityY = 1.0f;
 #ifdef OS_ANDROID
   bool AndroidVirtualControlsVisible() const;
   int m_androidMovePointerId = -1;

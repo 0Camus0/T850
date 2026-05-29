@@ -14,6 +14,7 @@
 #include <physics/PhysicsAuthoring.h>
 #include <utils/Picking.h>
 #include <utils/ResourceLocator.h>
+
 #ifdef OS_ANDROID
 #include <android/input.h>
 #include <video/vulkan/VulkanDriver.h>
@@ -53,6 +54,10 @@ namespace {
   constexpr std::array<const char*, 9> kRagdollSimulationSpeedLabels = {
       "0.125x", "0.25x", "0.5x", "1x", "2x", "4x", "8x", "16x", "32x"};
   constexpr std::size_t kSandboxConsoleMaxLines = 500;
+
+  float ClampMouseSensitivity(float value) {
+    return (std::max)(0.05f, (std::min)(5.0f, value));
+  }
 
   struct SandboxConsoleLine {
     t850::Log::Level level = t850::Log::LVL_INFO;
@@ -12036,6 +12041,8 @@ t850::CameraInputState SandboxScene::BuildCameraInputState(InputManager* input, 
     }
   }
 #endif
+  state.mouseDeltaX *= m_mouseSensitivityX;
+  state.mouseDeltaY *= m_mouseSensitivityY;
   return state;
 }
 
@@ -12412,6 +12419,8 @@ void SandboxScene::CaptureSandboxProfileState(t850::SandboxProfileDesc& state) {
   addFloat("material_emissive_intensity", SceneProp.MaterialEmissiveIntensity);
   addFloat("material_transmission_multiplier", SceneProp.MaterialTransmissionMultiplier);
   addFloat("material_refraction_strength", SceneProp.MaterialRefractionStrength);
+  addFloat("mouse_sensitivity_x", m_mouseSensitivityX);
+  addFloat("mouse_sensitivity_y", m_mouseSensitivityY);
 
   for (int kernelIndex = 0; kernelIndex < (int)SceneProp.pGaussKernels.size(); ++kernelIndex) {
     GaussFilter* kernel = SceneProp.pGaussKernels[kernelIndex];
@@ -12533,6 +12542,8 @@ void SandboxScene::ApplySandboxProfileState(const t850::SandboxProfileDesc& stat
     else if (value.name == "material_emissive_intensity") SceneProp.MaterialEmissiveIntensity = value.value;
     else if (value.name == "material_transmission_multiplier") SceneProp.MaterialTransmissionMultiplier = value.value;
     else if (value.name == "material_refraction_strength") SceneProp.MaterialRefractionStrength = value.value;
+    else if (value.name == "mouse_sensitivity_x") m_mouseSensitivityX = ClampMouseSensitivity(value.value);
+    else if (value.name == "mouse_sensitivity_y") m_mouseSensitivityY = ClampMouseSensitivity(value.value);
     else if (value.name == "anim_speed") { if (RenderSkinnedMesh* skinned = GetSelectedAnimationMesh()) skinned->SetAnimSpeed(value.value); }
 
     for (int kernelIndex = 0; kernelIndex < (int)SceneProp.pGaussKernels.size(); ++kernelIndex) {
@@ -13578,6 +13589,28 @@ void SandboxScene::DrawDevGui(t850::DevGuiContext& gui) {
         t850::CameraProfileName(m_cameraController.GetActiveProfileType()) +
         " (F9 cycles profiles)";
     gui.Text(activeCameraText.c_str());
+    t850::SliderDesc sensitivityXDesc;
+    sensitivityXDesc.name = "mouse_sensitivity_x";
+    sensitivityXDesc.label = "Mouse sensitivity X";
+    sensitivityXDesc.min_val = 0.05f;
+    sensitivityXDesc.max_val = 5.0f;
+    sensitivityXDesc.step = 0.01f;
+    sensitivityXDesc.default_val = 1.0f;
+    float sensitivityX = m_mouseSensitivityX;
+    if (gui.Slider(sensitivityXDesc, sensitivityX)) {
+      m_mouseSensitivityX = ClampMouseSensitivity(sensitivityX);
+    }
+    t850::SliderDesc sensitivityYDesc;
+    sensitivityYDesc.name = "mouse_sensitivity_y";
+    sensitivityYDesc.label = "Mouse sensitivity Y";
+    sensitivityYDesc.min_val = 0.05f;
+    sensitivityYDesc.max_val = 5.0f;
+    sensitivityYDesc.step = 0.01f;
+    sensitivityYDesc.default_val = 1.0f;
+    float sensitivityY = m_mouseSensitivityY;
+    if (gui.Slider(sensitivityYDesc, sensitivityY)) {
+      m_mouseSensitivityY = ClampMouseSensitivity(sensitivityY);
+    }
     ImGui::Checkbox("Show console output", &g_sandboxConsoleOpen);
     ImGui::TextUnformatted("Controls:");
     ImGui::BulletText("Orbit: left mouse rotate, right mouse pan, middle/scroll zoom");

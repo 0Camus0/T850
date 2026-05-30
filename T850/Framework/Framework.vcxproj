@@ -52,6 +52,7 @@
     <ClInclude Include="include\debug\FrameDumper.h" />
     <ClInclude Include="include\debug\LoadingProgress.h" />
     <ClInclude Include="include\debug\Profiler.h" />
+    <ClInclude Include="include\debug\RuntimeTelemetry.h" />
     <ClInclude Include="include\scene\EditorSceneFile.h" />
     <ClInclude Include="include\scene\RenderGraph.h" />
     <ClInclude Include="include\scene\RenderGraphDescriptor.h" />
@@ -185,6 +186,7 @@
     <ClCompile Include="src\debug\FrameDumper.cpp" />
     <ClCompile Include="src\debug\FrameDumperIO.cpp" />
     <ClCompile Include="src\debug\Profiler.cpp" />
+    <ClCompile Include="src\debug\RuntimeTelemetry.cpp" />
     <ClCompile Include="src\debug\RenderTrace.cpp" />
     <ClCompile Include="src\scene\EditorSceneFile.cpp" />
     <ClCompile Include="src\scene\RenderGraph.cpp" />

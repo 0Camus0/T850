@@ -393,6 +393,12 @@
          "label": "Light Volumes",
          "default_val": false,
          "enabled": true
+      },
+      {
+         "name": "debug_luminance",
+         "label": "Debug luminance",
+         "default_val": false,
+         "enabled": true
       }
    ],
    "selectors": [
@@ -518,6 +524,10 @@
             {
                "name": "shadow_toggle",
                "value": false
+            },
+            {
+               "name": "debug_luminance",
+               "value": false
             }
          ],
          "selectors": [
@@ -561,6 +571,10 @@
             {
                "name": "shadow_toggle",
                "value": false
+            },
+            {
+               "name": "debug_luminance",
+               "value": false
             }
          ],
          "selectors": [
@@ -579,7 +593,12 @@
          "gpu_name_contains": "",
          "model": "",
          "sliders": [],
-         "checkboxes": [],
+         "checkboxes": [
+            {
+               "name": "debug_luminance",
+               "value": false
+            }
+         ],
          "selectors": [
             {
                "name": "cubemap",
@@ -596,7 +615,12 @@
          "gpu_name_contains": "",
          "model": "",
          "sliders": [],
-         "checkboxes": [],
+         "checkboxes": [
+            {
+               "name": "debug_luminance",
+               "value": false
+            }
+         ],
          "selectors": [
             {
                "name": "cubemap",
@@ -613,7 +637,12 @@
          "gpu_name_contains": "",
          "model": "",
          "sliders": [],
-         "checkboxes": [],
+         "checkboxes": [
+            {
+               "name": "debug_luminance",
+               "value": false
+            }
+         ],
          "selectors": [
             {
                "name": "cubemap",
@@ -662,6 +691,10 @@
          "checkboxes": [
             {
                "name": "shadow_toggle",
+               "value": false
+            },
+            {
+               "name": "debug_luminance",
                "value": false
             }
          ],
@@ -765,6 +798,10 @@
             {
                "name": "shadow_toggle",
                "value": false
+            },
+            {
+               "name": "debug_luminance",
+               "value": false
             }
          ],
          "selectors": [
@@ -839,6 +876,10 @@
          "checkboxes": [
             {
                "name": "shadow_toggle",
+               "value": false
+            },
+            {
+               "name": "debug_luminance",
                "value": false
             }
          ],
@@ -920,6 +961,10 @@
             {
                "name": "shadow_toggle",
                "value": false
+            },
+            {
+               "name": "debug_luminance",
+               "value": false
             }
          ],
          "selectors": [
@@ -999,6 +1044,10 @@
          "checkboxes": [
             {
                "name": "shadow_toggle",
+               "value": false
+            },
+            {
+               "name": "debug_luminance",
                "value": false
             }
          ],
@@ -1093,6 +1142,10 @@
             {
                "name": "shadow_toggle",
                "value": false
+            },
+            {
+               "name": "debug_luminance",
+               "value": false
             }
          ],
          "selectors": [
@@ -1170,6 +1223,10 @@
          "checkboxes": [
             {
                "name": "shadow_toggle",
+               "value": false
+            },
+            {
+               "name": "debug_luminance",
                "value": false
             }
          ],
@@ -1271,6 +1328,10 @@
             {
                "name": "shadow_toggle",
                "value": false
+            },
+            {
+               "name": "debug_luminance",
+               "value": false
             }
          ],
          "selectors": [
@@ -1365,6 +1426,10 @@
          "checkboxes": [
             {
                "name": "shadow_toggle",
+               "value": false
+            },
+            {
+               "name": "debug_luminance",
                "value": false
             }
          ],
@@ -1461,6 +1526,10 @@
             {
                "name": "draw_direction",
                "value": true
+            },
+            {
+               "name": "debug_luminance",
+               "value": false
             }
          ],
          "selectors": [
@@ -1554,6 +1623,10 @@
             {
                "name": "ssao_toggle",
                "value": false
+            },
+            {
+               "name": "debug_luminance",
+               "value": false
             }
          ],
          "selectors": [
@@ -1631,6 +1704,10 @@
             {
                "name": "shadow_toggle",
                "value": false
+            },
+            {
+               "name": "debug_luminance",
+               "value": false
             }
          ],
          "selectors": [
@@ -1694,6 +1771,10 @@
          "checkboxes": [
             {
                "name": "shadow_toggle",
+               "value": false
+            },
+            {
+               "name": "debug_luminance",
                "value": false
             }
          ],
@@ -1773,6 +1854,10 @@
          "checkboxes": [
             {
                "name": "shadow_toggle",
+               "value": false
+            },
+            {
+               "name": "debug_luminance",
                "value": false
             }
          ],
@@ -1869,6 +1954,10 @@
             },
             {
                "name": "ssao_toggle",
+               "value": false
+            },
+            {
+               "name": "debug_luminance",
                "value": false
             }
          ],

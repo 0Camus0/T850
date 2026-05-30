@@ -12,6 +12,7 @@
 #include <utils/Log.h>
 #include <debug/Profiler.h>
 #include <debug/RenderTrace.h>
+#include <debug/RuntimeTelemetry.h>
 #include <core/Config.h>
 #include <iostream>
 #include <string>
@@ -743,6 +744,7 @@ namespace t850 {
   void D3D12Driver::BeginFrame() {
     {
       T8_PROFILE_CPU_SCOPE(t850::g_profiler, "D3D12_FenceWait");
+      T8_TELEMETRY_SCOPE("gpu.d3d12.fence_wait");
       // Wait for the specific backbuffer's fence to ensure its allocator is safe to reset
       const UINT64 lastFenceForThisBuffer = m_frameFenceValues[m_currentBackBuffer];
       if (m_fence->GetCompletedValue() < lastFenceForThisBuffer) {
@@ -844,6 +846,7 @@ namespace t850 {
     if (IsOffscreenEnabled()) {
       {
         T8_PROFILE_CPU_SCOPE(t850::g_profiler, "D3D12_OffscreenCmdClose+Execute");
+        T8_TELEMETRY_SCOPE("gpu.d3d12.cmd_close_execute");
         m_commandLists[m_currentBackBuffer]->Close();
         ID3D12CommandList* lists[] = { m_commandLists[m_currentBackBuffer].Get() };
         m_commandQueue->ExecuteCommandLists(1, lists);
@@ -863,6 +866,7 @@ namespace t850 {
 
     {
       T8_PROFILE_CPU_SCOPE(t850::g_profiler, "D3D12_CmdClose+Execute");
+      T8_TELEMETRY_SCOPE("gpu.d3d12.cmd_close_execute");
       D3D12_RESOURCE_BARRIER b = {};
       b.Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
       b.Transition.pResource = m_backBuffers[m_currentBackBuffer].Get();
@@ -877,6 +881,7 @@ namespace t850 {
 
     {
       T8_PROFILE_CPU_SCOPE(t850::g_profiler, "D3D12_Present_Call");
+      T8_TELEMETRY_SCOPE("gpu.d3d12.present");
       UINT presentFlags = m_tearingSupported ? DXGI_PRESENT_ALLOW_TEARING : 0;
       m_swapChain->Present(0, presentFlags);
     }
@@ -1154,13 +1159,18 @@ namespace t850 {
   }
 
   bool D3D12Driver::ReadRTColorFloat(int rtID, int attachment, float outRGBA[4]) {
+    T8_TELEMETRY_SCOPE("gpu.d3d12.read_rt_color_float");
+    RuntimeTelemetry::AddCounter("gpu.readRTColorFloat.count", 1.0);
     if (!outRGBA || rtID < 0 || rtID >= (int)RTs.size() || attachment < 0)
       return false;
     D3D12RT* rt = static_cast<D3D12RT*>(RTs[rtID]);
     if (!rt || attachment >= rt->number_RT || !rt->vColorResources[attachment])
       return false;
 
-    WaitForGPU();
+    {
+      T8_TELEMETRY_SCOPE("gpu.d3d12.read_rt_initial_wait");
+      WaitForGPU();
+    }
 
     ID3D12Device* device = GetNativeDevice();
     ID3D12Resource* srcResource = rt->vColorResources[attachment].Get();
@@ -1235,7 +1245,10 @@ namespace t850 {
 
     tmpList->Close();
     ID3D12CommandList* lists[] = { tmpList.Get() };
-    m_commandQueue->ExecuteCommandLists(1, lists);
+    {
+      T8_TELEMETRY_SCOPE("gpu.d3d12.read_rt_execute");
+      m_commandQueue->ExecuteCommandLists(1, lists);
+    }
 
     ComPtr<ID3D12Fence> tmpFence;
     hr = device->CreateFence(0, D3D12_FENCE_FLAG_NONE, IID_PPV_ARGS(&tmpFence));
@@ -1244,6 +1257,7 @@ namespace t850 {
     m_commandQueue->Signal(tmpFence.Get(), 1);
     if (tmpFence->GetCompletedValue() < 1) {
       tmpFence->SetEventOnCompletion(1, evt);
+      T8_TELEMETRY_SCOPE("gpu.d3d12.read_rt_fence_wait");
       WaitForSingleObject(evt, INFINITE);
     }
     CloseHandle(evt);

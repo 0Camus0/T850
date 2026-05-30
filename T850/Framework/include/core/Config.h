@@ -35,6 +35,7 @@ public:
     bool offscreenDebug : 1 = false;
     bool dumpShaderPermutations : 1 = false;
     bool autoStartRagdoll : 1 = false;
+    bool runtimeTelemetry : 1 = false;
   } flags;
 
   std::string api = "d3d11";
@@ -59,6 +60,8 @@ public:
   std::string sceneFilePath;
   std::string sceneProfile;
   std::string shaderPermutationOutputPath = "shader_permutations.json";
+  int runtimeTelemetryFrequencyFrames = 60;
+  std::string runtimeTelemetryOutputPath = "logs/perf_telemetry.json";
   bool orbitYawOverride = false;
   float orbitYaw = 0.0f;
   int ragdollSimulationSpeedIndex = -1;

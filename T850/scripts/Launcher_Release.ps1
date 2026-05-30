@@ -298,6 +298,11 @@ $xaml = @"
                     </ComboBox>
                 </StackPanel>
                 <CheckBox Name="chkLogToFile" Content="Save log to file" Margin="0,0,0,6"/>
+                <CheckBox Name="chkTelemetry" Content="Runtime telemetry JSON" Margin="0,0,0,6"/>
+                <StackPanel Name="pnlTelemetryOptions" Margin="20,0,0,0">
+                    <TextBlock Text="Telemetry frequency frames (0 = every frame)" Style="{StaticResource LabelStyle}"/>
+                    <TextBox Name="txtTelemetryFrequency" Text="60"/>
+                </StackPanel>
             </StackPanel>
         </Border>
 
@@ -391,6 +396,8 @@ $txtWidth       = $window.FindName("txtWidth")
 $txtHeight      = $window.FindName("txtHeight")
 $cmbLogLevel    = $window.FindName("cmbLogLevel")
 $chkLogToFile   = $window.FindName("chkLogToFile")
+$chkTelemetry   = $window.FindName("chkTelemetry")
+$txtTelemetryFrequency = $window.FindName("txtTelemetryFrequency")
 $txtStatus      = $window.FindName("txtStatus")
 $txtCmdPreview  = $window.FindName("txtCmdPreview")
 $btnRun         = $window.FindName("btnRun")
@@ -766,6 +773,14 @@ function Load-Config {
         } elseif ($cfg.devTools -and $cfg.devTools.PSObject.Properties['logToFile']) {
             $chkLogToFile.IsChecked = [bool]$cfg.devTools.logToFile
         }
+        if ($cfg.PSObject.Properties['telemetry']) {
+            if ($cfg.telemetry.PSObject.Properties['enabled']) {
+                $chkTelemetry.IsChecked = [bool]$cfg.telemetry.enabled
+            }
+            if ($cfg.telemetry.PSObject.Properties['frequencyFrames']) {
+                $txtTelemetryFrequency.Text = ([int]$cfg.telemetry.frequencyFrames).ToString()
+            }
+        }
     } catch {
         # Silently ignore corrupt config — defaults will be used
     }
@@ -806,6 +821,11 @@ function Save-Config {
         }
         logLevel  = ($cmbLogLevel.SelectedItem).Tag.ToString()
         logToFile = [bool]$chkLogToFile.IsChecked
+        telemetry = @{
+            enabled = [bool]$chkTelemetry.IsChecked
+            frequencyFrames = [int]$txtTelemetryFrequency.Text
+            outputPath = "logs\perf_telemetry.json"
+        }
     }
     $cfg | ConvertTo-Json -Depth 3 | Set-Content $configPath -Encoding UTF8
 }
@@ -879,6 +899,10 @@ function Get-LaunchCommand {
         $ts = Get-Date -Format "yyyyMMdd_HHmmss"
         $logFilename = "logs\T850_${ts}_${apiTag}.log"
         $argList += @("--logFile", $logFilename)
+    }
+
+    if ($chkTelemetry.IsChecked) {
+        $argList += @("--telemetry", "--telemetryFrequencyFrames", $txtTelemetryFrequency.Text, "--telemetryOutput", "logs\perf_telemetry.json")
     }
 
     return @{
@@ -1052,6 +1076,9 @@ $chkBenchmark.Add_Unchecked({ Update-Preview })
 $cmbLogLevel.Add_SelectionChanged({ Update-Preview })
 $chkLogToFile.Add_Checked({ Update-Preview })
 $chkLogToFile.Add_Unchecked({ Update-Preview })
+$chkTelemetry.Add_Checked({ Update-Preview })
+$chkTelemetry.Add_Unchecked({ Update-Preview })
+$txtTelemetryFrequency.Add_TextChanged({ Update-Preview })
 $txtSeconds.Add_TextChanged({ Update-Preview })
 $txtFrame.Add_TextChanged({ Update-Preview })
 $txtWidth.Add_TextChanged({ Update-Preview })

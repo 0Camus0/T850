@@ -4,6 +4,7 @@
 #if defined(T850_ENABLE_JOLT)
 
 #include <utils/Log.h>
+#include <debug/RuntimeTelemetry.h>
 
 #include <Jolt/Jolt.h>
 #include <Jolt/RegisterTypes.h>
@@ -938,6 +939,7 @@ void JoltPhysicsSystem::Shutdown() {
 }
 
 void JoltPhysicsSystem::Update(float deltaSeconds) {
+  T8_TELEMETRY_SCOPE("physics.jolt.update_total");
   if (!m_initialized || !m_impl) {
     return;
   }
@@ -959,32 +961,49 @@ void JoltPhysicsSystem::Update(float deltaSeconds) {
   }
 
   const auto updateStart = std::chrono::high_resolution_clock::now();
-  m_impl->physicsSystem.Update(simulationDeltaSeconds, collisionSteps, &m_impl->tempAllocator, &m_impl->jobSystem);
+  {
+    T8_TELEMETRY_SCOPE("physics.jolt.simulate");
+    m_impl->physicsSystem.Update(simulationDeltaSeconds, collisionSteps, &m_impl->tempAllocator, &m_impl->jobSystem);
+  }
   const auto updateEnd = std::chrono::high_resolution_clock::now();
   const double updateMs = std::chrono::duration<double, std::milli>(updateEnd - updateStart).count();
 
   const JPH::uint32 activeRigidBodies = m_impl->physicsSystem.GetNumActiveBodies(JPH::EBodyType::RigidBody);
+  RuntimeTelemetry::SetCounter("physics.jolt.activeRigidBodies", static_cast<double>(activeRigidBodies));
+  RuntimeTelemetry::SetCounter("physics.jolt.totalBodies", static_cast<double>(m_impl->physicsSystem.GetNumBodies()));
+  RuntimeTelemetry::SetCounter("physics.jolt.bodySlots", static_cast<double>(m_impl->bodies.size()));
   uint32_t movingStaticContacts = 0;
   uint32_t movingMovingContacts = 0;
-  for (std::size_t i = 0; i < m_impl->bodies.size(); ++i) {
-    const auto& bodyA = m_impl->bodies[i];
-    if (!bodyA.alive) {
-      continue;
-    }
-    for (std::size_t j = i + 1; j < m_impl->bodies.size(); ++j) {
-      const auto& bodyB = m_impl->bodies[j];
-      if (!bodyB.alive || !m_impl->physicsSystem.WereBodiesInContact(bodyA.id, bodyB.id)) {
+  uint64_t contactPairsChecked = 0;
+  {
+    T8_TELEMETRY_SCOPE("physics.jolt.contact_stats");
+    for (std::size_t i = 0; i < m_impl->bodies.size(); ++i) {
+      const auto& bodyA = m_impl->bodies[i];
+      if (!bodyA.alive) {
         continue;
       }
-      const bool aMoving = bodyA.motion != PhysicsBodyMotion::Static;
-      const bool bMoving = bodyB.motion != PhysicsBodyMotion::Static;
-      if (aMoving && bMoving) {
-        ++movingMovingContacts;
-      } else if (aMoving || bMoving) {
-        ++movingStaticContacts;
+      for (std::size_t j = i + 1; j < m_impl->bodies.size(); ++j) {
+        const auto& bodyB = m_impl->bodies[j];
+        if (!bodyB.alive) {
+          continue;
+        }
+        ++contactPairsChecked;
+        if (!m_impl->physicsSystem.WereBodiesInContact(bodyA.id, bodyB.id)) {
+          continue;
+        }
+        const bool aMoving = bodyA.motion != PhysicsBodyMotion::Static;
+        const bool bMoving = bodyB.motion != PhysicsBodyMotion::Static;
+        if (aMoving && bMoving) {
+          ++movingMovingContacts;
+        } else if (aMoving || bMoving) {
+          ++movingStaticContacts;
+        }
       }
     }
   }
+  RuntimeTelemetry::SetCounter("physics.jolt.contactPairsChecked", static_cast<double>(contactPairsChecked));
+  RuntimeTelemetry::SetCounter("physics.jolt.movingStaticContacts", static_cast<double>(movingStaticContacts));
+  RuntimeTelemetry::SetCounter("physics.jolt.movingMovingContacts", static_cast<double>(movingMovingContacts));
   constexpr uint32_t joltUpdates = 1;
   if (activeRigidBodies > 0) {
     ++m_impl->updateStatsFrames;
@@ -1355,6 +1374,8 @@ bool JoltPhysicsSystem::GetBodyState(PhysicsBodyHandle handle, PhysicsBodyState&
 }
 
 bool JoltPhysicsSystem::CastCapsule(const PhysicsCapsuleCastDesc& desc, PhysicsCastHit& outHit) const {
+  T8_TELEMETRY_SCOPE("physics.jolt.cast_capsule");
+  RuntimeTelemetry::AddCounter("physics.jolt.castCapsule.count", 1.0);
   outHit = PhysicsCastHit{};
   if (!m_initialized || !m_impl) {
     return false;
@@ -1446,6 +1467,8 @@ bool JoltPhysicsSystem::CastCapsule(const PhysicsCapsuleCastDesc& desc, PhysicsC
 }
 
 bool JoltPhysicsSystem::CastBox(const PhysicsBoxCastDesc& desc, PhysicsCastHit& outHit) const {
+  T8_TELEMETRY_SCOPE("physics.jolt.cast_box");
+  RuntimeTelemetry::AddCounter("physics.jolt.castBox.count", 1.0);
   outHit = PhysicsCastHit{};
   if (!m_initialized || !m_impl) {
     return false;

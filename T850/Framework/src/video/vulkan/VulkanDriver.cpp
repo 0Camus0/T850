@@ -29,6 +29,7 @@
 #include <utils/SPIRVReflection.h>
 #include <debug/Profiler.h>
 #include <debug/RenderTrace.h>
+#include <debug/RuntimeTelemetry.h>
 #include <iostream>
 #include <fstream>
 #include <string>
@@ -1303,6 +1304,7 @@ namespace t850 {
 
     {
       T8_PROFILE_CPU_SCOPE(t850::g_profiler, "VK_FenceWait");
+      T8_TELEMETRY_SCOPE("gpu.vulkan.fence_wait");
       WaitForFence(m_currentFrame);
       vkResetFences(m_device, 1, &m_inFlightFences[m_currentFrame]);
     }
@@ -1716,7 +1718,11 @@ namespace t850 {
       submitInfo.commandBufferCount = 1;
       submitInfo.pCommandBuffers = &cmd;
 
-      VkResult submitRes = vkQueueSubmit(m_graphicsQueue, 1, &submitInfo, m_inFlightFences[m_currentFrame]);
+      VkResult submitRes;
+      {
+        T8_TELEMETRY_SCOPE("gpu.vulkan.queue_submit");
+        submitRes = vkQueueSubmit(m_graphicsQueue, 1, &submitInfo, m_inFlightFences[m_currentFrame]);
+      }
       if (submitRes != VK_SUCCESS) {
         T8_LOG_ERROR("[Vulkan] offscreen vkQueueSubmit failed res=%d", submitRes);
         if (submitRes == VK_ERROR_DEVICE_LOST) {
@@ -1788,7 +1794,11 @@ namespace t850 {
     submitInfo.signalSemaphoreCount = 1;
     submitInfo.pSignalSemaphores = signalSemaphores;
 
-    VkResult submitRes = vkQueueSubmit(m_graphicsQueue, 1, &submitInfo, m_inFlightFences[m_currentFrame]);
+    VkResult submitRes;
+    {
+      T8_TELEMETRY_SCOPE("gpu.vulkan.queue_submit");
+      submitRes = vkQueueSubmit(m_graphicsQueue, 1, &submitInfo, m_inFlightFences[m_currentFrame]);
+    }
     if (submitRes != VK_SUCCESS) {
       T8_LOG_ERROR("[Vulkan] vkQueueSubmit failed res=%d", submitRes);
       if (submitRes == VK_ERROR_DEVICE_LOST) {
@@ -1805,7 +1815,11 @@ namespace t850 {
     presentInfo.pSwapchains = &m_swapChain;
     presentInfo.pImageIndices = &m_imageIndex;
 
-    VkResult presentRes = vkQueuePresentKHR(m_presentQueue, &presentInfo);
+    VkResult presentRes;
+    {
+      T8_TELEMETRY_SCOPE("gpu.vulkan.present");
+      presentRes = vkQueuePresentKHR(m_presentQueue, &presentInfo);
+    }
     if (presentRes == VK_ERROR_OUT_OF_DATE_KHR || presentRes == VK_ERROR_SURFACE_LOST_KHR ||
         presentRes == VK_SUBOPTIMAL_KHR) {
       if (presentRes == VK_SUBOPTIMAL_KHR &&
@@ -2205,6 +2219,8 @@ reopen:
   }
 
   bool VulkanDriver::ReadRTColorFloat(int rtID, int attachment, float outRGBA[4]) {
+    T8_TELEMETRY_SCOPE("gpu.vulkan.read_rt_color_float");
+    RuntimeTelemetry::AddCounter("gpu.readRTColorFloat.count", 1.0);
     if (!outRGBA || rtID < 0 || rtID >= (int)RTs.size() || !RTs[rtID] || attachment < 0)
       return false;
     VulkanRT* rt = static_cast<VulkanRT*>(RTs[rtID]);
@@ -2280,8 +2296,14 @@ reopen:
       VkSubmitInfo copySubmit = { VK_STRUCTURE_TYPE_SUBMIT_INFO };
       copySubmit.commandBufferCount = 1;
       copySubmit.pCommandBuffers = &copyCmd;
-      vkQueueSubmit(m_graphicsQueue, 1, &copySubmit, VK_NULL_HANDLE);
-      vkQueueWaitIdle(m_graphicsQueue);
+      {
+        T8_TELEMETRY_SCOPE("gpu.vulkan.read_rt_submit");
+        vkQueueSubmit(m_graphicsQueue, 1, &copySubmit, VK_NULL_HANDLE);
+      }
+      {
+        T8_TELEMETRY_SCOPE("gpu.vulkan.read_rt_wait_idle");
+        vkQueueWaitIdle(m_graphicsQueue);
+      }
 
       auto h2f = [](uint16_t h) -> float {
         uint32_t sign = (h >> 15) & 1;

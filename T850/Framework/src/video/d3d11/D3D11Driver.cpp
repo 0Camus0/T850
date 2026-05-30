@@ -18,6 +18,7 @@
 
 #include <debug/Profiler.h>
 #include <debug/RenderTrace.h>
+#include <debug/RuntimeTelemetry.h>
 #include <iostream>
 #include <string>
 #include <fstream>
@@ -468,6 +469,7 @@ namespace t850 {
 
   void D3DXDriver::SwapBuffers() {
     T8_PROFILE_SCOPE(t850::g_profiler, "D3D11_Present");
+    T8_TELEMETRY_SCOPE("gpu.d3d11.present");
     T8_LOG_TRACE("[D3DXDriver] SwapBuffers/Present");
 
     if (IsOffscreenEnabled()) {
@@ -625,6 +627,8 @@ namespace t850 {
   }
 
   bool D3DXDriver::ReadRTColorFloat(int rtID, int attachment, float outRGBA[4]) {
+    T8_TELEMETRY_SCOPE("gpu.d3d11.read_rt_color_float");
+    RuntimeTelemetry::AddCounter("gpu.readRTColorFloat.count", 1.0);
     if (!outRGBA || rtID < 0 || rtID >= (int)RTs.size() || attachment < 0)
       return false;
     Texture* tex = GetRTTexture(rtID, attachment);
@@ -662,7 +666,10 @@ namespace t850 {
     deviceContext->CopySubresourceRegion(stagingTex.Get(), 0, 0, 0, 0, d3dTex->Tex.Get(), 0, &box);
 
     D3D11_MAPPED_SUBRESOURCE mapped = {};
-    hr = deviceContext->Map(stagingTex.Get(), 0, D3D11_MAP_READ, 0, &mapped);
+    {
+      T8_TELEMETRY_SCOPE("gpu.d3d11.read_rt_map_wait");
+      hr = deviceContext->Map(stagingTex.Get(), 0, D3D11_MAP_READ, 0, &mapped);
+    }
     if (FAILED(hr)) return false;
 
     auto half2float = [](unsigned short h) -> float {

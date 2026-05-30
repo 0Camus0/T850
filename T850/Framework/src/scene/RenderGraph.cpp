@@ -21,6 +21,7 @@
 
 #include <debug/Profiler.h>
 #include <debug/LoadingProgress.h>
+#include <debug/RuntimeTelemetry.h>
 
 #include <fstream>
 #include <sstream>
@@ -485,6 +486,8 @@ void RenderGraph::ExecutePass(
 {
   const auto& pass = *node.desc;
   T8_PROFILE_SCOPE(t850::g_profiler, pass.name.c_str());
+  RuntimeTelemetry::ScopedTimer telemetryPass("render.pass." + pass.name);
+  RuntimeTelemetry::AddCounter("render.pass.count", 1.0);
   const bool shadowsEnabled = props.ToogleShadow != 0;
   const bool ssaoEnabled = props.ToogleSSAO != 0;
 

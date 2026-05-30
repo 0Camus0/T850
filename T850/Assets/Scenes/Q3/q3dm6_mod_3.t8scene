@@ -4238,6 +4238,10 @@
             {
                "name": "shadow_toggle",
                "value": false
+            },
+            {
+               "name": "debug_luminance",
+               "value": false
             }
          ],
          "selectors": [
@@ -4398,6 +4402,10 @@
             },
             {
                "name": "point_lights_enabled",
+               "value": false
+            },
+            {
+               "name": "debug_luminance",
                "value": false
             }
          ],
@@ -4560,6 +4568,10 @@
             {
                "name": "point_lights_enabled",
                "value": false
+            },
+            {
+               "name": "debug_luminance",
+               "value": false
             }
          ],
          "selectors": [
@@ -4720,6 +4732,10 @@
             },
             {
                "name": "point_lights_enabled",
+               "value": false
+            },
+            {
+               "name": "debug_luminance",
                "value": false
             }
          ],

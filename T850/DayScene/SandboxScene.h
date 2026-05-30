@@ -78,6 +78,7 @@ class SandboxScene : public t850::SceneBase, public t850::CameraCollisionWorld
     CHANGE_SHOW_PHYSICS,
     CHANGE_SHOW_LIGHT_VOLUMES,
     CHANGE_POINT_LIGHTS_ENABLED,
+    CHANGE_DEBUG_LUMINANCE,
     CHANGE_MAX_NUM_OPTIONS
   };
 public:

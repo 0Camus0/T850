@@ -12,6 +12,7 @@
 *********************************************************/
 
 #include <video/gl/GLDriver.h>
+#include <debug/RuntimeTelemetry.h>
 #include <video/gl/GLTexture.h>
 #include <video/gl/GLRT.h>
 #include <video/gl/GLShader.h>
@@ -599,6 +600,8 @@ namespace t850 {
   }
 
   bool GLDriver::ReadRTColorFloat(int rtID, int attachment, float outRGBA[4]) {
+    T8_TELEMETRY_SCOPE("gpu.gl.read_rt_color_float");
+    RuntimeTelemetry::AddCounter("gpu.readRTColorFloat.count", 1.0);
     if (!outRGBA || rtID < 0 || rtID >= (int)RTs.size() || !RTs[rtID])
       return false;
     if (attachment < 0 || attachment >= RTs[rtID]->number_RT)
@@ -727,6 +730,7 @@ namespace t850 {
   }
 
   void	GLDriver::SwapBuffers() {
+    T8_TELEMETRY_SCOPE("gpu.gl.swap_buffers");
     T8_LOG_TRACE("[GLDriver] SwapBuffers");
     if (IsOffscreenEnabled()) {
 #if defined(T850_HEADLESS) || defined(USING_OPENGL) || defined(USING_OPENGL_ES30) || defined(USING_OPENGL_ES31)

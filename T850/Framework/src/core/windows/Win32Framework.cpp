@@ -13,6 +13,7 @@
 
 #include <core/windows/Win32Framework.h>
 #include <core/EngineContext.h>
+#include <core/Config.h>
 
 #include <video/gl/GLDriver.h>
 #if defined(OS_WINDOWS)
@@ -27,6 +28,7 @@
 #include <mmsystem.h>
 #include <utils/ThreadPool.h>
 #include <utils/Log.h>
+#include <debug/RuntimeTelemetry.h>
 namespace t850 {
   void Win32Framework::InitGlobalVars() {
 
@@ -36,6 +38,7 @@ namespace t850 {
   void Win32Framework::OnCreateApplication(ApplicationDesc desc) {
     aplicationDescriptor = desc;
     InitGlobalThreadPool();
+    RuntimeTelemetry::InitializeFromConfig(g_config);
     if (!SDL_Init(SDL_INIT_VIDEO)) {
       printf("Video initialization failed: %s\n", SDL_GetError());
     }
@@ -46,6 +49,7 @@ namespace t850 {
   void Win32Framework::OnDestroyApplication() {
     pVideoDriver->FlushGPUResources();  // release cmd buffer/descriptor refs before scene cleanup
     pBaseApp->DestroyAssets();
+    RuntimeTelemetry::Shutdown();
     pVideoDriver->DestroyDriver();
     delete pVideoDriver;
     pVideoDriver = nullptr;

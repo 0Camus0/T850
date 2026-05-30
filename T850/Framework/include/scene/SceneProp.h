@@ -135,6 +135,7 @@ SceneProps() : ActiveCamera(0), ActiveLights(1), ActiveLightCamera(0), ActiveGau
 	float ToneMapWhiteLevel = 4.0f;
 	float LuminanceTau = 1.1f;
 	int LuminanceMode = 0; // 0: temporal HDR, 1: robust temporal
+	bool DebugLuminanceEnabled = false;
 	float DebugAdaptedLuminance = 1.0f;
 	bool DebugAdaptedLuminanceValid = false;
 	unsigned int DebugDeferredLightsSceneTotal = 0;

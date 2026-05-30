@@ -34,6 +34,9 @@ namespace {
   constexpr const char* kExtraReplaySnapshot = "com.t850.engine.extra.REPLAY_SNAPSHOT";
   constexpr const char* kExtraProfile = "com.t850.engine.extra.PROFILE";
   constexpr const char* kExtraProfileFrames = "com.t850.engine.extra.PROFILE_FRAMES";
+  constexpr const char* kExtraTelemetry = "com.t850.engine.extra.TELEMETRY";
+  constexpr const char* kExtraTelemetryFrequencyFrames = "com.t850.engine.extra.TELEMETRY_FREQUENCY_FRAMES";
+  constexpr const char* kExtraTelemetryOutput = "com.t850.engine.extra.TELEMETRY_OUTPUT";
   constexpr const char* kExtraAutoStartRagdoll = "com.t850.engine.extra.AUTO_START_RAGDOLL";
   constexpr const char* kExtraRagdollSpeedIndex = "com.t850.engine.extra.RAGDOLL_SPEED_INDEX";
   constexpr const char* kExtraSceneProfile = "com.t850.engine.extra.SCENE_PROFILE";
@@ -222,6 +225,10 @@ namespace {
       if (profileFrames > 0) {
         t850::g_config.profileFrames = profileFrames;
       }
+      int telemetryFrequency = GetIntentIntExtra(env, intent, getIntExtra, kExtraTelemetryFrequencyFrames, t850::g_config.runtimeTelemetryFrequencyFrames);
+      if (telemetryFrequency >= 0) {
+        t850::g_config.runtimeTelemetryFrequencyFrames = telemetryFrequency;
+      }
       t850::g_config.ragdollSimulationSpeedIndex =
         GetIntentIntExtra(env, intent, getIntExtra, kExtraRagdollSpeedIndex, t850::g_config.ragdollSimulationSpeedIndex);
     }
@@ -244,6 +251,8 @@ namespace {
         GetIntentBoolExtra(env, intent, getBooleanExtra, kExtraKeepRunning, t850::g_config.flags.keepRunning);
       t850::g_config.flags.profile =
         GetIntentBoolExtra(env, intent, getBooleanExtra, kExtraProfile, t850::g_config.flags.profile);
+      t850::g_config.flags.runtimeTelemetry =
+        GetIntentBoolExtra(env, intent, getBooleanExtra, kExtraTelemetry, t850::g_config.flags.runtimeTelemetry);
       t850::g_config.flags.autoStartRagdoll =
         GetIntentBoolExtra(env, intent, getBooleanExtra, kExtraAutoStartRagdoll, t850::g_config.flags.autoStartRagdoll);
     }
@@ -270,6 +279,11 @@ namespace {
       std::string sceneProfile = GetIntentStringExtra(env, intent, getStringExtra, kExtraSceneProfile);
       if (!sceneProfile.empty()) {
         t850::g_config.sceneProfile = sceneProfile;
+      }
+
+      std::string telemetryOutput = GetIntentStringExtra(env, intent, getStringExtra, kExtraTelemetryOutput);
+      if (!telemetryOutput.empty()) {
+        t850::g_config.runtimeTelemetryOutputPath = telemetryOutput;
       }
     }
 
@@ -326,7 +340,7 @@ void android_main(android_app* state) {
     }
   }
   T8_LOG_INFO("[Android] T850 NativeActivity starting");
-  T8_LOG_INFO("[Android] Launch config: scene=%d model='%s' sceneFile='%s' sceneProfile='%s' logLevel=%d api=vulkan dumpEnabled=%d dumpByFrame=%d dumpFrame=%d dumpSeconds=%.3f keepRunning=%d profile=%d profileFrames=%d replay='%s'",
+  T8_LOG_INFO("[Android] Launch config: scene=%d model='%s' sceneFile='%s' sceneProfile='%s' logLevel=%d api=vulkan dumpEnabled=%d dumpByFrame=%d dumpFrame=%d dumpSeconds=%.3f keepRunning=%d profile=%d profileFrames=%d telemetry=%d telemetryFrequencyFrames=%d telemetryOutput='%s' replay='%s'",
               t850::g_config.startScene, t850::g_config.modelPath.c_str(), t850::g_config.sceneFilePath.c_str(), t850::g_config.sceneProfile.c_str(),
               t850::g_config.logLevel,
               t850::g_config.flags.dumpEnabled ? 1 : 0,
@@ -336,6 +350,9 @@ void android_main(android_app* state) {
               t850::g_config.flags.keepRunning ? 1 : 0,
               t850::g_config.flags.profile ? 1 : 0,
               t850::g_config.profileFrames,
+              t850::g_config.flags.runtimeTelemetry ? 1 : 0,
+              t850::g_config.runtimeTelemetryFrequencyFrames,
+              t850::g_config.runtimeTelemetryOutputPath.c_str(),
               t850::g_config.replaySnapshotPath.c_str());
 
   t850::ApplicationDesc desc;

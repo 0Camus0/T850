@@ -34,6 +34,7 @@
 #include <core/Core.h>
 #include <core/EngineContext.h>
 #include <utils/Log.h>
+#include <debug/RuntimeTelemetry.h>
 
 #define CHANGE_TO_RH 0
 #define DEBUG_MODEL 0
@@ -1913,6 +1914,7 @@ namespace t850 {
   }
 
   void RenderMesh::Draw(float *t, float *vp) {
+    T8_TELEMETRY_SCOPE("render.mesh.draw");
     if (t)
       transform = t;
 
@@ -1988,6 +1990,7 @@ namespace t850 {
       if (trackCullStats)
         m_cullingMeshTests += static_cast<unsigned long long>(numGeometries);
       timeCullWork([&]() -> bool {
+        T8_TELEMETRY_SCOPE("render.mesh.culling");
         threadPool->ParallelFor(0, static_cast<int>(numGeometries), [&](int i) {
           visible[i] = static_cast<uint8_t>(ClassifyAABBFrustum(Info[i].bounds, worldCopy, frustumPlanes));
         });
@@ -1997,6 +2000,7 @@ namespace t850 {
       if (trackCullStats)
         m_cullingMeshTests += static_cast<unsigned long long>(numGeometries);
       timeCullWork([&]() -> bool {
+        T8_TELEMETRY_SCOPE("render.mesh.culling");
         for (std::size_t i = 0; i < numGeometries; i++) {
           visible[i] = static_cast<uint8_t>(ClassifyAABBFrustum(Info[i].bounds, transform, frustumPlanes));
         }
@@ -2028,6 +2032,7 @@ namespace t850 {
     geometryOrder.resize(numGeometries);
     for (std::size_t i = 0; i < numGeometries; i++) geometryOrder[i] = i;
     if (currentPass == PassType::FORWARD) {
+      T8_TELEMETRY_SCOPE("render.mesh.geometry_sort");
       std::stable_sort(geometryOrder.begin(), geometryOrder.end(),
         [&](std::size_t a, std::size_t b) {
           int groupA = GeometryForwardGroup(Info[a]);
@@ -2039,6 +2044,7 @@ namespace t850 {
           return da > db;
         });
       } else if (currentPass == PassType::GBUFFER || currentPass == PassType::SHADOW_MAP || currentPass == PassType::RADIAL_DEPTH) {
+        T8_TELEMETRY_SCOPE("render.mesh.geometry_sort");
         std::stable_sort(geometryOrder.begin(), geometryOrder.end(),
           [&](std::size_t a, std::size_t b) {
             return GeometryNonForwardGroup(Info[a], currentPass) < GeometryNonForwardGroup(Info[b], currentPass);
@@ -2108,36 +2114,40 @@ namespace t850 {
       XVECTOR3 lightFrustumPlanes[6];
       RenderMesh::ExtractFrustumPlanes(pRenderCamera->VP, lightFrustumPlanes);
       unsigned int packedLights = 0;
-      for (unsigned int li = 0; li < numLights; li++) {
-        Light& light = pScProp->Lights[li];
-        if (!light.Enabled)
-          continue;
-        if (light.Type == LIGHT_POINT && !pScProp->PointLightsEnabled)
-          continue;
-
-        const float effectiveRadius = light.Type == LIGHT_POINT ? light.radius * (std::max)(0.0f, pScProp->LightRadiusScale) : light.radius;
-        const float effectiveIntensity = light.Intensity * (std::max)(0.0f, pScProp->LightIntensityScale);
-        if (effectiveIntensity <= 0.0f)
-          continue;
-
-        const unsigned int packedIndex = packedLights++;
-        if (light.Type == LIGHT_DIRECTIONAL) {
-          frameCB.LightPositions[packedIndex] = XVECTOR3(light.Direction.x, light.Direction.y, light.Direction.z, 0.0f);
-        } else {
-          const float shaderRange = effectiveRadius * 2.0f;
-          if (shaderRange <= 0.0f || !SphereIntersectsFrustum(lightFrustumPlanes, light.Position, shaderRange)) {
-            --packedLights;
+      {
+        T8_TELEMETRY_SCOPE("render.mesh.light_pack");
+        for (unsigned int li = 0; li < numLights; li++) {
+          Light& light = pScProp->Lights[li];
+          if (!light.Enabled)
             continue;
+          if (light.Type == LIGHT_POINT && !pScProp->PointLightsEnabled)
+            continue;
+
+          const float effectiveRadius = light.Type == LIGHT_POINT ? light.radius * (std::max)(0.0f, pScProp->LightRadiusScale) : light.radius;
+          const float effectiveIntensity = light.Intensity * (std::max)(0.0f, pScProp->LightIntensityScale);
+          if (effectiveIntensity <= 0.0f)
+            continue;
+
+          const unsigned int packedIndex = packedLights++;
+          if (light.Type == LIGHT_DIRECTIONAL) {
+            frameCB.LightPositions[packedIndex] = XVECTOR3(light.Direction.x, light.Direction.y, light.Direction.z, 0.0f);
+          } else {
+            const float shaderRange = effectiveRadius * 2.0f;
+            if (shaderRange <= 0.0f || !SphereIntersectsFrustum(lightFrustumPlanes, light.Position, shaderRange)) {
+              --packedLights;
+              continue;
+            }
+            frameCB.LightPositions[packedIndex] = XVECTOR3(light.Position.x, light.Position.y, light.Position.z, 1.0f);
           }
-          frameCB.LightPositions[packedIndex] = XVECTOR3(light.Position.x, light.Position.y, light.Position.z, 1.0f);
+          frameCB.LightColors[packedIndex] = XVECTOR3(light.Color.x, light.Color.y, light.Color.z, effectiveIntensity);
+          XVECTOR3& radiusPack = frameCB.LightRadius[packedIndex >> 2];
+          if ((packedIndex & 3u) == 0u) radiusPack.x = effectiveRadius;
+          else if ((packedIndex & 3u) == 1u) radiusPack.y = effectiveRadius;
+          else if ((packedIndex & 3u) == 2u) radiusPack.z = effectiveRadius;
+          else radiusPack.w = effectiveRadius;
         }
-        frameCB.LightColors[packedIndex] = XVECTOR3(light.Color.x, light.Color.y, light.Color.z, effectiveIntensity);
-        XVECTOR3& radiusPack = frameCB.LightRadius[packedIndex >> 2];
-        if ((packedIndex & 3u) == 0u) radiusPack.x = effectiveRadius;
-        else if ((packedIndex & 3u) == 1u) radiusPack.y = effectiveRadius;
-        else if ((packedIndex & 3u) == 2u) radiusPack.z = effectiveRadius;
-        else radiusPack.w = effectiveRadius;
       }
+      RuntimeTelemetry::AddCounter("render.mesh.packedLights", static_cast<double>(packedLights));
       infoCam.w = static_cast<float>(packedLights);
       frameCB.CameraInfo = infoCam;
       frameCB.ParallaxSettings = XVECTOR3(m_fParallaxLowSamples, m_fParallaxHighSamples, m_fParallaxHeight);
@@ -2175,27 +2185,31 @@ namespace t850 {
       std::vector<std::size_t>& drawOrder = m_drawOrderScratch;
       drawOrder.resize(numSubsets);
       for (std::size_t k = 0; k < numSubsets; k++) drawOrder[k] = k;
-      std::stable_sort(drawOrder.begin(), drawOrder.end(),
-        [&](std::size_t a, std::size_t b) {
-          if (currentPass == PassType::FORWARD) {
-            int groupA = ForwardSubsetGroup(it_MeshInfo->SubSets[a]);
-            int groupB = ForwardSubsetGroup(it_MeshInfo->SubSets[b]);
-            if (groupA != groupB)
-              return groupA < groupB;
-            float da = SubsetViewDepth(it_MeshInfo->SubSets[a], transform, pRenderCamera->Eye, pRenderCamera->Look);
-            float db = SubsetViewDepth(it_MeshInfo->SubSets[b], transform, pRenderCamera->Eye, pRenderCamera->Look);
-            return da > db;
+      {
+        T8_TELEMETRY_SCOPE("render.mesh.subset_sort");
+        std::stable_sort(drawOrder.begin(), drawOrder.end(),
+          [&](std::size_t a, std::size_t b) {
+            if (currentPass == PassType::FORWARD) {
+              int groupA = ForwardSubsetGroup(it_MeshInfo->SubSets[a]);
+              int groupB = ForwardSubsetGroup(it_MeshInfo->SubSets[b]);
+              if (groupA != groupB)
+                return groupA < groupB;
+              float da = SubsetViewDepth(it_MeshInfo->SubSets[a], transform, pRenderCamera->Eye, pRenderCamera->Look);
+              float db = SubsetViewDepth(it_MeshInfo->SubSets[b], transform, pRenderCamera->Eye, pRenderCamera->Look);
+              return da > db;
+            }
+            if (currentPass == PassType::GBUFFER || currentPass == PassType::SHADOW_MAP || currentPass == PassType::RADIAL_DEPTH) {
+              int groupA = NonForwardSubsetGroup(it_MeshInfo->SubSets[a]);
+              int groupB = NonForwardSubsetGroup(it_MeshInfo->SubSets[b]);
+              if (groupA != groupB)
+                return groupA < groupB;
+            }
+            ShaderKey ka(it_MeshInfo->SubSets[a].key.bits); ka.setPass(currentPass);
+            ShaderKey kb(it_MeshInfo->SubSets[b].key.bits); kb.setPass(currentPass);
+            return ka.bits < kb.bits;
           }
-          if (currentPass == PassType::GBUFFER || currentPass == PassType::SHADOW_MAP || currentPass == PassType::RADIAL_DEPTH) {
-            int groupA = NonForwardSubsetGroup(it_MeshInfo->SubSets[a]);
-            int groupB = NonForwardSubsetGroup(it_MeshInfo->SubSets[b]);
-            if (groupA != groupB)
-              return groupA < groupB;
-          }
-          ShaderKey ka(it_MeshInfo->SubSets[a].key.bits); ka.setPass(currentPass);
-          ShaderKey kb(it_MeshInfo->SubSets[b].key.bits); kb.setPass(currentPass);
-          return ka.bits < kb.bits;
-        });
+        );
+      }
 
       for (std::size_t ki = 0; ki < numSubsets; ki++) {
         std::size_t k = drawOrder[ki];
@@ -2526,6 +2540,14 @@ namespace t850 {
     if (trackCullStats) {
       m_culledIndices = m_totalIndices > m_drawnIndices ? (m_totalIndices - m_drawnIndices) : 0;
       m_cullingCpuMs = static_cast<double>(cullingCpuNs) / 1000000.0;
+      RuntimeTelemetry::AddCounter("render.mesh.totalMeshes", static_cast<double>(m_totalMeshes));
+      RuntimeTelemetry::AddCounter("render.mesh.visibleMeshes", static_cast<double>(m_visibleMeshes));
+      RuntimeTelemetry::AddCounter("render.mesh.culledMeshes", static_cast<double>(m_culledMeshes));
+      RuntimeTelemetry::AddCounter("render.mesh.totalSubsets", static_cast<double>(m_totalSubsets));
+      RuntimeTelemetry::AddCounter("render.mesh.drawnSubsets", static_cast<double>(m_drawnSubsets));
+      RuntimeTelemetry::AddCounter("render.mesh.drawCalls", static_cast<double>(m_drawCalls));
+      RuntimeTelemetry::AddCounter("render.mesh.drawnIndices", static_cast<double>(m_drawnIndices));
+      RuntimeTelemetry::AddCounter("render.mesh.cullingCpuMs", m_cullingCpuMs);
     }
   }
 

@@ -55,6 +55,13 @@ struct DevToolsJson {
   std::optional<std::string> shaderPermutationOutput;
 };
 
+struct RuntimeTelemetryJson {
+  std::optional<bool> enabled;
+  std::optional<int> frequencyFrames;
+  std::optional<std::string> outputPath;
+  std::optional<std::string> output;
+};
+
 struct RuntimeConfigJson {
   std::optional<std::string> api;
   std::optional<int> width;
@@ -90,6 +97,9 @@ struct RuntimeConfigJson {
   std::optional<std::string> glOffscreenFlushMode;
   std::optional<bool> dumpShaderPermutations;
   std::optional<std::string> shaderPermutationOutput;
+  std::optional<bool> runtimeTelemetry;
+  std::optional<int> runtimeTelemetryFrequencyFrames;
+  std::optional<std::string> runtimeTelemetryOutputPath;
   std::optional<float> orbitYaw;
   std::optional<std::string> sceneProfile;
 
@@ -97,6 +107,7 @@ struct RuntimeConfigJson {
   std::optional<ReplaySnapshotJson> replaySnapshot;
   std::optional<DumpJson> dump;
   std::optional<DevToolsJson> devTools;
+  std::optional<RuntimeTelemetryJson> telemetry;
 };
 
 std::string StripQuotes(std::string value);

@@ -25,6 +25,7 @@
 #include <debug/Profiler.h>
 #include <debug/RenderTrace.h>
 #include <debug/LoadingProgress.h>
+#include <debug/RuntimeTelemetry.h>
 #include <core/Config.h>
 #include <core/EngineContext.h>
 #include <scene/MeshAssetCache.h>
@@ -639,29 +640,46 @@ void App::OnUpdate() {
    if (FirstFrame) {
      DtSecs = 1.0f / 60.0f;
    }
-   static float timeAccum = 0;
-   timeAccum += DtSecs;
+   static uint64_t telemetryFrameIndex = 0;
+   t850::RuntimeTelemetry::BeginFrame(telemetryFrameIndex++, DtSecs);
+   {
+     T8_TELEMETRY_SCOPE("frame.update");
+     static float timeAccum = 0;
+     timeAccum += DtSecs;
 
-   if (timeAccum > 1.0) {
-     m_fpsString = "FPS " + std::to_string((int)(1.0 / DtSecs));
-     m_fpsCol = XVECTOR3(0.2, 0.8, 0.2);
-     timeAccum = 0;
-   }
+     if (timeAccum > 1.0) {
+       m_fpsString = "FPS " + std::to_string((int)(1.0 / DtSecs));
+       m_fpsCol = XVECTOR3(0.2, 0.8, 0.2);
+       timeAccum = 0;
+     }
 
 #ifndef OS_ANDROID
-   m_devLayer.Update(DtSecs);
+     {
+       T8_TELEMETRY_SCOPE("scene.update");
+       m_devLayer.Update(DtSecs);
+     }
 #else
-  if (m_actualScene && !bPaused) m_actualScene->OnUpdate(DtSecs);
+    if (m_actualScene && !bPaused) {
+      T8_TELEMETRY_SCOPE("scene.update");
+      m_actualScene->OnUpdate(DtSecs);
+    }
 #endif
-   if (t850::GetEngineContext().physics && t850::GetEngineContext().physics->IsInitialized()) {
-     t850::GetEngineContext().physics->Update(DtSecs);
-   }
+     if (t850::GetEngineContext().physics && t850::GetEngineContext().physics->IsInitialized()) {
+       T8_TELEMETRY_SCOPE("physics.update");
+       t850::GetEngineContext().physics->Update(DtSecs);
+     }
 
-   OnInput();
+     {
+       T8_TELEMETRY_SCOPE("input.update");
+       OnInput();
+     }
+   }
    OnDraw();
+   t850::RuntimeTelemetry::EndFrame();
 }
 
 void App::OnDraw() {
+  T8_TELEMETRY_SCOPE("frame.draw");
   if (t850::g_profiler) t850::g_profiler->BeginFrame();
   static int frameCount = 0;
 #ifdef T850_RENDER_TRACE
@@ -782,6 +800,7 @@ bool App::IsModalActive() const {
 }
 
 void App::DrawRuntimeGui() {
+  T8_TELEMETRY_SCOPE("ui.runtime_gui");
   if (!m_imguiReady) return;
 
 #ifdef OS_ANDROID
@@ -861,6 +880,7 @@ void App::DrawRuntimeGui() {
       ImGui::Separator();
 #endif
       if (m_actualScene) {
+        T8_TELEMETRY_SCOPE("ui.scene_dev_gui");
 #ifdef OS_ANDROID
         if (androidPhysicsPanel) {
           DrawAndroidPhysicsGui(gui);
@@ -879,6 +899,7 @@ void App::DrawRuntimeGui() {
 
 #ifndef OS_ANDROID
     if (m_debugPanelVisible || !m_debugOpenTargets.empty()) {
+      T8_TELEMETRY_SCOPE("ui.debug_rt_panel");
       t850::BaseDriver* driver = pFramework ? pFramework->pVideoDriver : nullptr;
       std::vector<DebugRTEntry> debugRTs = BuildDebugRTEntries(driver, m_debugTextureDescriptors, m_debugOpaqueTextureDescriptors);
       PruneDebugTextureDescriptors(driver, debugRTs, m_debugTextureDescriptors, m_debugOpaqueTextureDescriptors);
@@ -902,6 +923,7 @@ void App::DrawRuntimeGui() {
     });
   }
 #else
+  T8_TELEMETRY_SCOPE("ui.imgui_render");
   m_imgui.Render();
 #endif
 }

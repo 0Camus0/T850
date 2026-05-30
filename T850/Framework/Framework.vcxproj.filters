@@ -398,6 +398,9 @@
     <ClInclude Include="include\debug\Profiler.h">
       <Filter>Header Files\utils</Filter>
     </ClInclude>
+    <ClInclude Include="include\debug\RuntimeTelemetry.h">
+      <Filter>Header Files\utils</Filter>
+    </ClInclude>
     <ClInclude Include="include\debug\RenderTrace.h">
       <Filter>Header Files\utils</Filter>
     </ClInclude>
@@ -695,6 +698,9 @@
       <Filter>Source Files\utils</Filter>
     </ClCompile>
     <ClCompile Include="src\debug\Profiler.cpp">
+      <Filter>Source Files\utils</Filter>
+    </ClCompile>
+    <ClCompile Include="src\debug\RuntimeTelemetry.cpp">
       <Filter>Source Files\utils</Filter>
     </ClCompile>
     <ClCompile Include="src\debug\RenderTrace.cpp">

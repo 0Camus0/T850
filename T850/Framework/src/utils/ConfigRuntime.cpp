@@ -215,6 +215,9 @@ void ApplyConfigJson(const RuntimeConfigJson& json, Config& cfg) {
   if (json.glOffscreenFlushMode) cfg.glOffscreenFlushMode = ParseGLOffscreenFlushMode(*json.glOffscreenFlushMode, cfg.glOffscreenFlushMode);
   if (json.dumpShaderPermutations) cfg.flags.dumpShaderPermutations = *json.dumpShaderPermutations;
   if (json.shaderPermutationOutput) cfg.shaderPermutationOutputPath = StripQuotes(*json.shaderPermutationOutput);
+  if (json.runtimeTelemetry) cfg.flags.runtimeTelemetry = *json.runtimeTelemetry;
+  if (json.runtimeTelemetryFrequencyFrames) cfg.runtimeTelemetryFrequencyFrames = *json.runtimeTelemetryFrequencyFrames;
+  if (json.runtimeTelemetryOutputPath) cfg.runtimeTelemetryOutputPath = StripQuotes(*json.runtimeTelemetryOutputPath);
   if (json.orbitYaw) {
     cfg.orbitYawOverride = true;
     cfg.orbitYaw = *json.orbitYaw;
@@ -269,6 +272,14 @@ void ApplyConfigJson(const RuntimeConfigJson& json, Config& cfg) {
     if (devTools.glOffscreenFlushMode) cfg.glOffscreenFlushMode = ParseGLOffscreenFlushMode(*devTools.glOffscreenFlushMode, cfg.glOffscreenFlushMode);
     if (devTools.dumpShaderPermutations) cfg.flags.dumpShaderPermutations = *devTools.dumpShaderPermutations;
     if (devTools.shaderPermutationOutput) cfg.shaderPermutationOutputPath = StripQuotes(*devTools.shaderPermutationOutput);
+  }
+
+  if (json.telemetry) {
+    const RuntimeTelemetryJson& telemetry = *json.telemetry;
+    if (telemetry.enabled) cfg.flags.runtimeTelemetry = *telemetry.enabled;
+    if (telemetry.frequencyFrames) cfg.runtimeTelemetryFrequencyFrames = *telemetry.frequencyFrames;
+    if (telemetry.outputPath) cfg.runtimeTelemetryOutputPath = StripQuotes(*telemetry.outputPath);
+    if (telemetry.output) cfg.runtimeTelemetryOutputPath = StripQuotes(*telemetry.output);
   }
 }
 
@@ -369,6 +380,12 @@ bool ValidateConfig(Config& cfg) {
     valid = false;
   }
 
+  if (cfg.runtimeTelemetryFrequencyFrames < 0) {
+    WarnConfigAdjusted("runtimeTelemetryFrequencyFrames", "must be non-negative, using 60");
+    cfg.runtimeTelemetryFrequencyFrames = defaults.runtimeTelemetryFrequencyFrames;
+    valid = false;
+  }
+
   if (cfg.flags.dumpEnabled && cfg.flags.dumpByFrame && cfg.dumpFrame < 0) {
     WarnConfigAdjusted("dumpFrame", "frame dump requested with a negative frame, disabling dump");
     cfg.flags.dumpEnabled = false;
@@ -403,6 +420,10 @@ bool ValidateConfig(Config& cfg) {
   cfg.logFile = StripQuotes(cfg.logFile);
   cfg.replaySnapshotPath = StripQuotes(cfg.replaySnapshotPath);
   cfg.benchmarkOutputPath = StripQuotes(cfg.benchmarkOutputPath);
+  cfg.runtimeTelemetryOutputPath = StripQuotes(cfg.runtimeTelemetryOutputPath);
+  if (cfg.flags.runtimeTelemetry && cfg.runtimeTelemetryOutputPath.empty()) {
+    cfg.runtimeTelemetryOutputPath = defaults.runtimeTelemetryOutputPath;
+  }
   cfg.flags.cullDisabled = cfg.cullingLoadMode == Config::CullingLoadMode::Disabled;
   return valid;
 }
@@ -493,6 +514,16 @@ void ApplyCommandLine(int argc, char** argv, Config& cfg) {
     else if (arg == "--profileFrames") {
       int value = 0;
       if (ReadIntArgument(arg, argc, argv, i, value)) cfg.profileFrames = value;
+    }
+    else if (arg == "--telemetry" || arg == "--runtimeTelemetry") {
+      cfg.flags.runtimeTelemetry = true;
+    }
+    else if (arg == "--telemetryFrequencyFrames" || arg == "--runtimeTelemetryFrequencyFrames") {
+      int value = 0;
+      if (ReadIntArgument(arg, argc, argv, i, value)) cfg.runtimeTelemetryFrequencyFrames = value;
+    }
+    else if ((arg == "--telemetryOutput" || arg == "--runtimeTelemetryOutput") && i + 1 < argc) {
+      cfg.runtimeTelemetryOutputPath = StripQuotes(argv[++i]);
     }
     else if (arg == "--autoStartRagdoll") {
       cfg.flags.autoStartRagdoll = true;
@@ -609,6 +640,9 @@ void PrintHelp() {
     << "  --d3d12debug                       Enable D3D12 debug layer\n"
     << "  --profile                          Enable GPU+CPU profiling\n"
     << "  --profileFrames <frames>           Frames to profile before report\n"
+    << "  --telemetry                        Enable lightweight sampled runtime telemetry\n"
+    << "  --telemetryFrequencyFrames <N>     Sample every N frames (0 = every frame)\n"
+    << "  --telemetryOutput <path>           Runtime telemetry JSON output path\n"
     << "  --autoStartRagdoll                 Start ragdoll simulation as soon as it is ready\n"
     ;
 }

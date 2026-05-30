@@ -220,6 +220,7 @@ void DayScene::CaptureSceneProfileState(t850::SandboxProfileDesc& state) const {
   addBool("parallax_shadow_toggle", SceneProp.ToogleParallaxShadow != 0);
   addBool("godrays_toggle", SceneProp.ToogleGodRays != 0);
   addBool("point_lights_enabled", SceneProp.PointLightsEnabled);
+  addBool("debug_luminance", SceneProp.DebugLuminanceEnabled);
   addBool("frustum_culling", SceneProp.FrustumCullingEnabled);
   addBool("show_culling_debug", m_showCullStats);
 
@@ -289,6 +290,7 @@ void DayScene::ApplySceneProfileState(const t850::SandboxProfileDesc& state) {
     else if (value.name == "parallax_shadow_toggle") { SceneProp.ToogleParallaxShadow = value.value ? 1 : 0; SceneProp.ParallaxShadowStrength = value.value ? SceneProp.ParallaxShadowStrength : 0.0f; }
     else if (value.name == "godrays_toggle") SceneProp.ToogleGodRays = value.value ? 1 : 0;
     else if (value.name == "point_lights_enabled") SceneProp.PointLightsEnabled = value.value;
+    else if (value.name == "debug_luminance") { SceneProp.DebugLuminanceEnabled = value.value; if (!value.value) SceneProp.DebugAdaptedLuminanceValid = false; }
     else if (value.name == "frustum_culling") SceneProp.FrustumCullingEnabled = SceneProp.FrustumCullingToggleAllowed && value.value;
     else if (value.name == "show_culling_debug") { m_showCullStats = value.value; SceneProp.ShowCullingDebug = value.value; }
   }

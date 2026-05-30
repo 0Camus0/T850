@@ -29,6 +29,11 @@
     "height": 1440,
     "scene": 0
   },
+  "telemetry": {
+    "enabled": true,
+    "frequencyFrames": 20,
+    "outputPath": "logs\\perf_telemetry.json"
+  },
   "androidDeviceSerial": "",
   "targetPlatform": "windows"
 }

@@ -141,6 +141,7 @@ set(T850_ANDROID_FRAMEWORK_SOURCES
   ${T850_SOURCE_DIR}/Framework/src/scene/Quad.cpp
   ${T850_SOURCE_DIR}/Framework/src/scene/LensFlare.cpp
   ${T850_SOURCE_DIR}/Framework/src/debug/Profiler.cpp
+  ${T850_SOURCE_DIR}/Framework/src/debug/RuntimeTelemetry.cpp
   ${T850_SOURCE_DIR}/Framework/src/debug/FrameDumper.cpp
   ${T850_SOURCE_DIR}/Framework/src/debug/FrameDumperIO.cpp
   ${T850_SOURCE_DIR}/FrameworkImGui/src/ImGuiSystem.cpp

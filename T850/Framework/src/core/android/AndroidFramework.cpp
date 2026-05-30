@@ -6,9 +6,11 @@
 
 #include <core/android/AndroidFramework.h>
 #include <core/EngineContext.h>
+#include <core/Config.h>
 #include <video/vulkan/VulkanDriver.h>
 #include <utils/Log.h>
 #include <utils/ThreadPool.h>
+#include <debug/RuntimeTelemetry.h>
 
 #include <android/native_activity.h>
 #include <android/native_window.h>
@@ -84,12 +86,14 @@ namespace t850 {
     aplicationDescriptor = desc;
     aplicationDescriptor.api = GraphicsApi::VULKAN;
     InitGlobalThreadPool();
+    RuntimeTelemetry::InitializeFromConfig(g_config);
     pBaseApp->InitVars();
     m_inited = true;
   }
 
   void AndroidFramework::OnDestroyApplication() {
     DestroyVulkanRuntime();
+    RuntimeTelemetry::Shutdown();
     ShutdownGlobalThreadPool();
     m_inited = false;
   }

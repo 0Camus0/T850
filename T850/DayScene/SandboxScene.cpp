@@ -14,6 +14,7 @@
 #include <physics/PhysicsAuthoring.h>
 #include <utils/Picking.h>
 #include <utils/ResourceLocator.h>
+#include <debug/RuntimeTelemetry.h>
 
 #ifdef OS_ANDROID
 #include <android/input.h>
@@ -285,7 +286,9 @@ namespace {
       ImGui::Text("Position: %.2f, %.2f, %.2f", eye.x, eye.y, eye.z);
       ImGui::Text("Frame dt: %.3f ms", sceneProps.FrameDeltaSec * 1000.0f);
       ImGui::Spacing();
-      if (sceneProps.DebugAdaptedLuminanceValid) {
+      if (!sceneProps.DebugLuminanceEnabled) {
+        ImGui::TextUnformatted("Adapted luminance: debug disabled");
+      } else if (sceneProps.DebugAdaptedLuminanceValid) {
         ImGui::Text("Adapted luminance: %.4f", sceneProps.DebugAdaptedLuminance);
       } else {
         ImGui::TextUnformatted("Adapted luminance: pending");
@@ -12452,6 +12455,7 @@ void SandboxScene::CaptureSandboxProfileState(t850::SandboxProfileDesc& state) {
   addBool("show_light_volumes", m_showLightVolumes);
   addBool("point_lights_enabled", SceneProp.PointLightsEnabled);
   addBool("draw_direction", m_drawLightDirection);
+  addBool("debug_luminance", SceneProp.DebugLuminanceEnabled);
 
   addInt("debug_render_target", m_debugRTSelection);
   addInt("cubemap", m_currentCubemapIndex);
@@ -12564,6 +12568,10 @@ void SandboxScene::ApplySandboxProfileState(const t850::SandboxProfileDesc& stat
     else if (value.name == "show_light_volumes") m_showLightVolumes = value.value;
     else if (value.name == "point_lights_enabled") SceneProp.PointLightsEnabled = value.value;
     else if (value.name == "draw_direction") m_drawLightDirection = value.value;
+    else if (value.name == "debug_luminance") {
+      SceneProp.DebugLuminanceEnabled = value.value;
+      if (!value.value) SceneProp.DebugAdaptedLuminanceValid = false;
+    }
   }
 
   for (const auto& value : state.selectors) {
@@ -12905,22 +12913,29 @@ void SandboxScene::SaveSandboxProfile() {
 }
 
 void SandboxScene::OnDraw() {
+  T8_TELEMETRY_SCOPE("sandbox.draw");
   SceneProp.ShowCullingDebug = m_showCullStats;
   static float sLuminanceReadbackAccum = 0.0f;
-  if (g_sandboxConsoleOpen) {
+  if (g_sandboxConsoleOpen && SceneProp.DebugLuminanceEnabled) {
     sLuminanceReadbackAccum += DtSecs;
+  } else {
+    sLuminanceReadbackAccum = 0.0f;
+    SceneProp.DebugAdaptedLuminanceValid = false;
   }
-  if (g_sandboxConsoleOpen && sLuminanceReadbackAccum >= 0.25f) {
+  if (g_sandboxConsoleOpen && SceneProp.DebugLuminanceEnabled && sLuminanceReadbackAccum >= 0.25f) {
     sLuminanceReadbackAccum = 0.0f;
     const int adaptedLumRT = m_renderGraph.GetRTHandle("AdaptedLumCurrent");
     float lumRGBA[4] = {};
-    if (adaptedLumRT >= 0 &&
-        pFramework && pFramework->pVideoDriver &&
-        pFramework->pVideoDriver->ReadRTColorFloat(adaptedLumRT, BaseDriver::COLOR0_ATTACHMENT, lumRGBA)) {
-      const float logLum = lumRGBA[0];
-      if (std::isfinite(logLum) && logLum > -20.0f && logLum < 20.0f) {
-        SceneProp.DebugAdaptedLuminance = std::exp(logLum);
-        SceneProp.DebugAdaptedLuminanceValid = true;
+    {
+      T8_TELEMETRY_SCOPE("sandbox.adapted_luminance_readback");
+      if (adaptedLumRT >= 0 &&
+          pFramework && pFramework->pVideoDriver &&
+          pFramework->pVideoDriver->ReadRTColorFloat(adaptedLumRT, BaseDriver::COLOR0_ATTACHMENT, lumRGBA)) {
+        const float logLum = lumRGBA[0];
+        if (std::isfinite(logLum) && logLum > -20.0f && logLum < 20.0f) {
+          SceneProp.DebugAdaptedLuminance = std::exp(logLum);
+          SceneProp.DebugAdaptedLuminanceValid = true;
+        }
       }
     }
   }
@@ -13314,6 +13329,7 @@ void SandboxScene::DrawDevGui(t850::DevGuiContext& gui) {
     {"show_physics", CHANGE_SHOW_PHYSICS},
     {"show_light_volumes", CHANGE_SHOW_LIGHT_VOLUMES},
     {"point_lights_enabled", CHANGE_POINT_LIGHTS_ENABLED},
+    {"debug_luminance", CHANGE_DEBUG_LUMINANCE},
   };
 
   static const Mapping selectorMappings[] = {
@@ -13453,6 +13469,7 @@ void SandboxScene::DrawDevGui(t850::DevGuiContext& gui) {
     case CHANGE_SHOW_PHYSICS: value = m_showPhysics; return true;
     case CHANGE_SHOW_LIGHT_VOLUMES: value = m_showLightVolumes; return true;
     case CHANGE_POINT_LIGHTS_ENABLED: value = SceneProp.PointLightsEnabled; return true;
+    case CHANGE_DEBUG_LUMINANCE: value = SceneProp.DebugLuminanceEnabled; return true;
     }
     return false;
   };
@@ -13466,6 +13483,7 @@ void SandboxScene::DrawDevGui(t850::DevGuiContext& gui) {
     case CHANGE_SHOW_PHYSICS: m_showPhysics = value; break;
     case CHANGE_SHOW_LIGHT_VOLUMES: m_showLightVolumes = value; break;
     case CHANGE_POINT_LIGHTS_ENABLED: SceneProp.PointLightsEnabled = value; break;
+    case CHANGE_DEBUG_LUMINANCE: SceneProp.DebugLuminanceEnabled = value; if (!value) SceneProp.DebugAdaptedLuminanceValid = false; break;
     }
   };
 
@@ -13633,6 +13651,7 @@ void SandboxScene::DrawDevGui(t850::DevGuiContext& gui) {
     drawSelectorByName("active_gauss_kernel");
     drawSelectorByName("gauss_kernel_sample_count");
     drawSelectorByName("luminance_mode");
+    drawCheckboxByName("debug_luminance");
     drawSelectorByName("debug_render_target");
     drawCheckboxByName("shadow_toggle");
     drawCheckboxByName("ssao_toggle");

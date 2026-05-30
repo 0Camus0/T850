@@ -344,6 +344,11 @@ $xaml = @"
                 </StackPanel>
                 <CheckBox Name="chkLogToFile" Content="Save log to file" Margin="0,0,0,6"/>
                 <CheckBox Name="chkD3D12Debug" Content="D3D12 Debug Layer (validates API usage)" Margin="0,0,0,6"/>
+                <CheckBox Name="chkTelemetry" Content="Runtime telemetry JSON" Margin="0,0,0,6"/>
+                <StackPanel Name="pnlTelemetryOptions" Margin="20,0,0,0">
+                    <TextBlock Text="Telemetry frequency frames (0 = every frame)" Style="{StaticResource LabelStyle}"/>
+                    <TextBox Name="txtTelemetryFrequency" Text="60"/>
+                </StackPanel>
             </StackPanel>
         </Border>
 
@@ -492,6 +497,8 @@ $btnEditor      = $window.FindName("btnEditor")
 $cmbLogLevel    = $window.FindName("cmbLogLevel")
 $chkLogToFile   = $window.FindName("chkLogToFile")
 $chkD3D12Debug  = $window.FindName("chkD3D12Debug")
+$chkTelemetry   = $window.FindName("chkTelemetry")
+$txtTelemetryFrequency = $window.FindName("txtTelemetryFrequency")
 
 # Resolve root directory: if running from ps2exe, use exe location; otherwise script location
 if ($MyInvocation.MyCommand.Path) {
@@ -1244,6 +1251,14 @@ function Load-Config {
                 $chkD3D12Debug.IsChecked = [bool]$cfg.devTools.d3d12Debug
             }
         }
+        if ($cfg.PSObject.Properties['telemetry']) {
+            if ($cfg.telemetry.PSObject.Properties['enabled']) {
+                $chkTelemetry.IsChecked = [bool]$cfg.telemetry.enabled
+            }
+            if ($cfg.telemetry.PSObject.Properties['frequencyFrames']) {
+                $txtTelemetryFrequency.Text = ([int]$cfg.telemetry.frequencyFrames).ToString()
+            }
+        }
     } catch {
         # Silently ignore corrupt config — defaults will be used
     }
@@ -1290,6 +1305,11 @@ function Save-Config {
             logLevel  = ($cmbLogLevel.SelectedItem).Tag.ToString()
             logToFile = [bool]$chkLogToFile.IsChecked
             d3d12Debug = [bool]$chkD3D12Debug.IsChecked
+        }
+        telemetry = @{
+            enabled = [bool]$chkTelemetry.IsChecked
+            frequencyFrames = [int]$txtTelemetryFrequency.Text
+            outputPath = "logs\perf_telemetry.json"
         }
     }
     $cfg | ConvertTo-Json -Depth 3 | Set-Content $configPath -Encoding UTF8
@@ -1896,6 +1916,10 @@ function Get-LaunchCommand {
         }
     }
 
+    if ($chkTelemetry.IsChecked) {
+        $argList += @("--telemetry", "--telemetryFrequencyFrames", $txtTelemetryFrequency.Text, "--telemetryOutput", "logs\perf_telemetry.json")
+    }
+
     return @{
         ExePath = $exePath
         Args    = $argList
@@ -2044,6 +2068,11 @@ function Get-AndroidLaunchArguments {
     }
     if ($chkDebugFrames.IsChecked) { $args += @("--ez", "com.t850.engine.extra.DEBUG_FRAMES", "true") }
     if ($chkKeepRunning.IsChecked) { $args += @("--ez", "com.t850.engine.extra.KEEP_RUNNING", "true") }
+    if ($chkTelemetry.IsChecked) {
+        $args += @("--ez", "com.t850.engine.extra.TELEMETRY", "true")
+        $args += @("--ei", "com.t850.engine.extra.TELEMETRY_FREQUENCY_FRAMES", $txtTelemetryFrequency.Text)
+        $args += @("--es", "com.t850.engine.extra.TELEMETRY_OUTPUT", "logs/perf_telemetry.json")
+    }
     if ($chkReplaySnapshot.IsChecked -and $txtReplaySnapshotPath.Text) { $args += @("--es", "com.t850.engine.extra.REPLAY_SNAPSHOT", $txtReplaySnapshotPath.Text) }
     return $args
 }
@@ -2227,6 +2256,9 @@ $chkBenchmark.Add_Unchecked({ Update-Preview })
 $chkLogToFile.Add_Checked({ Update-Preview })
 $chkLogToFile.Add_Unchecked({ Update-Preview })
 $cmbLogLevel.Add_SelectionChanged({ Update-Preview })
+$chkTelemetry.Add_Checked({ Update-Preview })
+$chkTelemetry.Add_Unchecked({ Update-Preview })
+$txtTelemetryFrequency.Add_TextChanged({ Update-Preview })
 $txtSeconds.Add_TextChanged({ Update-Preview })
 $txtFrame.Add_TextChanged({ Update-Preview })
 $txtWidth.Add_TextChanged({ Update-Preview })

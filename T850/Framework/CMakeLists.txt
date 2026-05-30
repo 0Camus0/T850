@@ -30,6 +30,7 @@ set(FRAMEWORK_SOURCES
   src/debug/FrameDumper.cpp
   src/debug/FrameDumperIO.cpp
   src/debug/Profiler.cpp
+  src/debug/RuntimeTelemetry.cpp
   src/debug/RenderTrace.cpp
   src/scene/EditorSceneFile.cpp
   src/scene/RenderGraph.cpp

@@ -4,6 +4,7 @@
 
 #include <utils/Log.h>
 #include <utils/ResourceLocator.h>
+#include <debug/RuntimeTelemetry.h>
 
 #ifdef _MSC_VER
 #pragma warning(push)
@@ -390,6 +391,8 @@ bool Q3BspCollisionWorld::SweepCapsule(const CharacterCollisionSweep& sweep, Cha
 }
 
 bool Q3BspCollisionWorld::SweepBox(const CharacterBoxSweep& sweep, CharacterCollisionHit& outHit) const {
+  T8_TELEMETRY_SCOPE("character.q3_sweep_box");
+  RuntimeTelemetry::AddCounter("character.q3SweepBox.count", 1.0);
   outHit = CharacterCollisionHit{};
   if (m_brushes.empty() || LengthSq3(sweep.displacement) <= 0.00000001f) {
     return false;

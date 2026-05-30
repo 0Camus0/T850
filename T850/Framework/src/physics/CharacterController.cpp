@@ -2,6 +2,7 @@
 
 #include <physics/CharacterController.h>
 #include <utils/Log.h>
+#include <debug/RuntimeTelemetry.h>
 
 #include <algorithm>
 #include <array>
@@ -838,6 +839,7 @@ float KinematicCharacterController::CapsuleCenterOffsetFromEye() const {
 void KinematicCharacterController::UpdateFps(float deltaSeconds,
                                              const KinematicCharacterInput& input,
                                              const CharacterControllerContext& context) {
+  T8_TELEMETRY_SCOPE("character.fps_update");
   deltaSeconds = ClampFloat(deltaSeconds, 0.0f, 0.1f);
 
   if (context.collisionWorld) {
@@ -919,6 +921,7 @@ void KinematicCharacterController::UpdateFps(float deltaSeconds,
 void KinematicCharacterController::UpdateQuake3(float deltaSeconds,
                                                 const KinematicCharacterInput& input,
                                                 const CharacterControllerContext& context) {
+  T8_TELEMETRY_SCOPE("character.q3_update");
   deltaSeconds = ClampFloat(deltaSeconds, 0.0f, 0.2f);
 
   if (!input.jump) {

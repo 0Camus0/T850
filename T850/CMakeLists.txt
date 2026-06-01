@@ -109,7 +109,8 @@ function(t850_ensure_vcpkg)
 		glslang:${T850_VCPKG_STATIC_TRIPLET})
 
 	list(APPEND T850_VCPKG_PACKAGE_SPECS
-		joltphysics:${T850_VCPKG_STATIC_TRIPLET})
+		joltphysics:${T850_VCPKG_STATIC_TRIPLET}
+		recastnavigation:${T850_VCPKG_STATIC_TRIPLET})
 
 	set(T850_IMGUI_HEADER ${T850_VCPKG_STATIC}/include/imgui.h)
 	set(T850_IMGUI_DX11_HEADER ${T850_VCPKG_STATIC}/include/imgui_impl_dx11.h)
@@ -166,10 +167,20 @@ list(APPEND CMAKE_PREFIX_PATH ${T850_VCPKG_STATIC})
 set(CMAKE_MAP_IMPORTED_CONFIG_RELWITHDEBINFO Release)
 set(CMAKE_MAP_IMPORTED_CONFIG_MINSIZEREL Release)
 find_package(Jolt CONFIG REQUIRED)
+find_package(recastnavigation CONFIG REQUIRED)
 set_target_properties(Jolt::Jolt PROPERTIES
 	MAP_IMPORTED_CONFIG_RELWITHDEBINFO Release
 	MAP_IMPORTED_CONFIG_MINSIZEREL Release)
+set_target_properties(
+	RecastNavigation::Recast
+	RecastNavigation::Detour
+	RecastNavigation::DetourCrowd
+	RecastNavigation::DetourTileCache
+	PROPERTIES
+	MAP_IMPORTED_CONFIG_RELWITHDEBINFO Release
+	MAP_IMPORTED_CONFIG_MINSIZEREL Release)
 set(T850_JOLT_ENABLED ON)
+set(T850_RECAST_ENABLED ON)
 
 if(EXISTS ${T850_VCPKG_DYNAMIC}/bin/zlib1.dll)
 	set(T850_ZLIB_RUNTIME_DLL ${T850_VCPKG_DYNAMIC}/bin/zlib1.dll)

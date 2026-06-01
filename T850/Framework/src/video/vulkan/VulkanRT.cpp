@@ -165,7 +165,7 @@ namespace t850 {
       depthTex->x = (unsigned int)w;
       depthTex->y = (unsigned int)h;
       depthTex->m_channels = 1;
-      depthTex->params = CLAMP_TO_BORDER;
+      depthTex->params = CLAMP_TO_BORDER | NEAREST_FILTER;
       depthTex->SetTextureParams();
       pDepthTexture = depthTex;
     }

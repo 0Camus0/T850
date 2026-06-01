@@ -14,6 +14,8 @@ set(FRAMEWORK_SOURCES
   src/physics/PhysicsDebugRenderer.cpp
   src/physics/Q3BspCollision.cpp
   src/physics/PhysicsAuthoring.cpp
+  src/navigation/NavigationSystem.cpp
+  src/navigation/NavigationDebugRenderer.cpp
   src/scene/LensFlare.cpp
   src/scene/RenderMesh.cpp
   src/scene/RenderSkinnedMesh.cpp
@@ -128,6 +130,14 @@ target_precompile_headers(Framework PRIVATE $<$<COMPILE_LANGUAGE:CXX>:pch.h>)
 if(T850_JOLT_ENABLED)
   target_compile_definitions(Framework PUBLIC T850_ENABLE_JOLT=1)
   target_link_libraries(Framework PUBLIC Jolt::Jolt)
+endif()
+if(T850_RECAST_ENABLED)
+  target_compile_definitions(Framework PUBLIC T850_ENABLE_RECAST=1)
+  target_link_libraries(Framework PUBLIC
+    RecastNavigation::Recast
+    RecastNavigation::Detour
+    RecastNavigation::DetourCrowd
+    RecastNavigation::DetourTileCache)
 endif()
 target_include_directories(Framework PUBLIC
   ${CMAKE_CURRENT_SOURCE_DIR}

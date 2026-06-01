@@ -316,5 +316,5 @@ if exist "%IMGUI_INCLUDE_DIR%\imgui.h" (
         if errorlevel 1 exit /b 1
     )
 )
-set "VCPKG_PACKAGES=!VCPKG_PACKAGES! draco:%ANDROID_TRIPLET% glslang:%ANDROID_TRIPLET% joltphysics:%ANDROID_TRIPLET% imgui[android-binding,docking-experimental,vulkan-binding]:%ANDROID_TRIPLET%"
+set "VCPKG_PACKAGES=!VCPKG_PACKAGES! draco:%ANDROID_TRIPLET% glslang:%ANDROID_TRIPLET% joltphysics:%ANDROID_TRIPLET% recastnavigation:%ANDROID_TRIPLET% imgui[android-binding,docking-experimental,vulkan-binding]:%ANDROID_TRIPLET%"
 exit /b 0

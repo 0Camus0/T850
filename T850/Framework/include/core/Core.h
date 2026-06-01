@@ -49,6 +49,7 @@ namespace t850 {
     // Return true if the app is currently showing a modal UI (e.g. a line-edit popup).
     // Frameworks use this to suppress global keys like Escape-to-quit while modal.
     virtual bool IsModalActive() const { return false; }
+    virtual bool WantsRelativeMouseMode() const { return false; }
 #ifdef OS_ANDROID
     virtual bool HandleAndroidInputEvent(AInputEvent* /*event*/) { return false; }
     virtual void OnAndroidNativeWindowChanged(ANativeWindow* /*window*/) {}
@@ -83,6 +84,8 @@ namespace t850 {
 
     // Request a frame dump (spacebar snapshot)
     virtual void RequestDump() {}
+
+    virtual void ResetViewInput() {}
 
     void SetEngineContext(EngineContext* context) { pEngineContext = context; }
     EngineContext* GetEngineContext() const { return pEngineContext; }

@@ -357,9 +357,13 @@ $xaml = @"
             <TextBlock Name="txtStatus" Text="" FontSize="12"
                        Foreground="#A6ADC8" Margin="0,0,0,4"
                        TextWrapping="Wrap"/>
-            <TextBlock Name="txtCmdPreview" Text="" FontSize="11"
-                       Foreground="#45475A" Margin="0"
-                       TextWrapping="Wrap" FontFamily="Consolas"/>
+            <TextBox Name="txtCmdPreview" Text="" FontSize="11"
+                     Foreground="#A6ADC8" Margin="0" Padding="0"
+                     TextWrapping="Wrap" FontFamily="Consolas"
+                     IsReadOnly="True" IsReadOnlyCaretVisible="True"
+                     Background="Transparent" BorderThickness="0"
+                     Height="Auto" MinHeight="24" VerticalContentAlignment="Top"
+                     Cursor="IBeam"/>
             <!-- Build output log -->
             <Border Name="pnlBuildOutput" Background="#0D1117" CornerRadius="4"
                     Margin="0,8,0,0" Padding="2" MaxHeight="200"
@@ -517,6 +521,7 @@ $script:SceneDependencyResult = @{ Ok = $true; Missing = @() }
 $script:SuppressSceneDependencyValidation = $false
 $script:LauncherInitializing = $true
 $script:LauncherBusy = $false
+$script:AssetDownloadInProgress = $false
 $script:AndroidDeviceRefreshInProgress = $false
 $script:SelectedAndroidDeviceSerial = ""
 $script:CloudAssetStatus = $null
@@ -571,14 +576,16 @@ function Update-DownloadAssetsButton {
     if (-not $btnDownloadAssets) { return }
     $status = $script:CloudAssetStatus
     $missing = if ($status) { [int]$status.Missing } else { 0 }
-    $btnDownloadAssets.Content = "Download Assets"
-    $btnDownloadAssets.IsEnabled = ((-not $script:LauncherBusy) -and ($missing -gt 0))
-    $btnDownloadAssets.ToolTip = if ($missing -gt 0) {
+    $btnDownloadAssets.Content = if ($script:AssetDownloadInProgress) { "Downloading..." } else { "Download Assets" }
+    $btnDownloadAssets.IsEnabled = -not $script:AssetDownloadInProgress
+    $btnDownloadAssets.ToolTip = if ($script:AssetDownloadInProgress) {
+        "Asset download is already running."
+    } elseif ($missing -gt 0) {
         "$missing cloud asset(s) missing. Click to download only missing files."
     } elseif ($status -and $status.Total -gt 0) {
-        "All cloud assets are present."
+        "All cloud assets are present. Click to scan again."
     } else {
-        "No cloud asset manifest is configured."
+        "Click to scan cloud asset manifests."
     }
 }
 
@@ -602,7 +609,15 @@ function Invoke-LauncherModelDownload {
         }
     }
     $status = Update-LauncherCloudAssetStatus
-    if ($status -and $status.Missing -eq 0 -and $status.Ok) { return $true }
+    if ($status -and $status.Missing -eq 0 -and $status.Ok) {
+        if (-not $Quiet) {
+            $message = if ($status.Total -gt 0) { "OK, all asset files are there." } else { $status.Message }
+            $txtStatus.Text = $message
+            $txtStatus.Foreground = $window.FindResource("GreenBrush")
+            [System.Windows.MessageBox]::Show($message, "T850 Launcher", "OK", "Information") | Out-Null
+        }
+        return $true
+    }
     if (Get-Command Ensure-T850CloudModels -ErrorAction SilentlyContinue) {
         $result = Ensure-T850CloudModels -RootDir $rootDir -AssetRoot $targetRoot -StatusCallback $statusCallback
         if (-not $result.Ok) {
@@ -1091,6 +1106,19 @@ function Invoke-LoggedProcess {
             try { $proc.Kill() } catch {}
         }
     }
+}
+
+function Format-LauncherCommandLine {
+    param(
+        [Parameter(Mandatory = $true)] [string]$FilePath,
+        [string[]]$Arguments = @()
+    )
+    $quotedArgs = @()
+    foreach ($arg in $Arguments) {
+        if ($arg -match '[\s",]') { $quotedArgs += ('"' + ($arg -replace '"', '\"') + '"') }
+        else { $quotedArgs += $arg }
+    }
+    return (('"' + $FilePath + '" ' + ($quotedArgs -join ' ')).Trim())
 }
 
 # ── Config load/save ──
@@ -2087,14 +2115,18 @@ function Update-Preview {
     if ($script:LauncherBusy) { return }
     $sceneDeps = Get-CachedSceneDependencyResult
     $assetStatus = $script:CloudAssetStatus
-    $assetsMissing = ($assetStatus -and $assetStatus.Missing -gt 0)
+    $assetsMissing = ($assetStatus -and $assetStatus.Configured -and ($assetStatus.Missing -gt 0 -or -not $assetStatus.Ok))
     if (Test-AndroidTarget) {
         $apkPath = Get-AndroidApkPath
         $abiFilters = Get-AndroidAbiFilters
         $deviceReady = (((Get-SelectedAndroidDeviceSerial) -ne "") -and ((Get-SelectedAndroidDeviceState) -eq "device"))
-        $txtCmdPreview.Text = 'Android APK: "' + $apkPath + '"  ABI: ' + $abiFilters
-        $btnRun.IsEnabled = ((Test-Path $apkPath) -and $deviceReady -and $sceneDeps.Ok)
-        $btnEditor.IsEnabled = ($deviceReady -and $sceneDeps.Ok)
+        $adbPath = Get-AndroidAdbPath
+        $installArgs = Get-AndroidAdbArguments @("install", "-r", $apkPath)
+        $deployArgs = Get-AndroidAdbArguments (Get-AndroidLaunchArguments)
+        $txtCmdPreview.Text = "Install: " + (Format-LauncherCommandLine -FilePath $adbPath -Arguments $installArgs) + [System.Environment]::NewLine +
+            "Deploy: " + (Format-LauncherCommandLine -FilePath $adbPath -Arguments $deployArgs)
+        $btnRun.IsEnabled = ((Test-Path $apkPath) -and $deviceReady -and $sceneDeps.Ok -and -not $assetsMissing)
+        $btnEditor.IsEnabled = ($deviceReady -and $sceneDeps.Ok -and -not $assetsMissing)
         if (-not $sceneDeps.Ok) {
             $txtStatus.Text = "Scene missing: $($sceneDeps.Missing -join ', ')"
             $txtStatus.Foreground = $window.FindResource("RedBrush")
@@ -2102,7 +2134,7 @@ function Update-Preview {
             $txtStatus.Text = "Select a connected Android device"
             $txtStatus.Foreground = $window.FindResource("RedBrush")
         } elseif ($assetsMissing) {
-            $txtStatus.Text = "Cloud assets missing: $($assetStatus.Missing)/$($assetStatus.Total). Download Assets, or Install/Deploy will download them."
+            $txtStatus.Text = "Cloud assets missing: $($assetStatus.Missing)/$($assetStatus.Total). Click Download Assets before running."
             $txtStatus.Foreground = $window.FindResource("AccentBrush")
         } elseif ($btnRun.IsEnabled) {
             $txtStatus.Text = "Android APK ready - Install; Deploy runs installed app"
@@ -2126,24 +2158,19 @@ function Update-Preview {
         $txtStatus.Foreground = $window.FindResource("RedBrush")
         $btnRun.IsEnabled = $false
         $btnEditor.IsEnabled = $editorOk
+    } elseif ($assetsMissing) {
+        $txtStatus.Text = "Cloud assets missing: $($assetStatus.Missing)/$($assetStatus.Total). Click Download Assets before running."
+        $txtStatus.Foreground = $window.FindResource("AccentBrush")
+        $btnRun.IsEnabled = $false
+        $btnEditor.IsEnabled = $editorOk
     } elseif ($sceneOk -and $editorOk) {
-        if ($assetsMissing) {
-            $txtStatus.Text = "Cloud assets missing: $($assetStatus.Missing)/$($assetStatus.Total). Download Assets, or Run/Editor will download them."
-            $txtStatus.Foreground = $window.FindResource("AccentBrush")
-        } else {
-            $txtStatus.Text = "Ready to run (Scene + Editor)"
-            $txtStatus.Foreground = $window.FindResource("GreenBrush")
-        }
+        $txtStatus.Text = "Ready to run (Scene + Editor)"
+        $txtStatus.Foreground = $window.FindResource("GreenBrush")
         $btnRun.IsEnabled = $true
         $btnEditor.IsEnabled = $true
     } elseif ($sceneOk) {
-        if ($assetsMissing) {
-            $txtStatus.Text = "Cloud assets missing: $($assetStatus.Missing)/$($assetStatus.Total). Download Assets, or Run will download them."
-            $txtStatus.Foreground = $window.FindResource("AccentBrush")
-        } else {
-            $txtStatus.Text = "Scene ready, Editor not found - build required"
-            $txtStatus.Foreground = $window.FindResource("GreenBrush")
-        }
+        $txtStatus.Text = "Scene ready, Editor not found - build required"
+        $txtStatus.Foreground = $window.FindResource("GreenBrush")
         $btnRun.IsEnabled = $true
         $btnEditor.IsEnabled = $false
     } else {
@@ -2270,7 +2297,7 @@ function Set-LauncherBusy {
     $btnBuild.IsEnabled = -not $Busy
     $btnRebuild.IsEnabled = -not $Busy
     $btnRun.IsEnabled = -not $Busy
-    if ($btnDownloadAssets) { $btnDownloadAssets.IsEnabled = ((-not $Busy) -and $script:CloudAssetStatus -and $script:CloudAssetStatus.Missing -gt 0) }
+    Update-DownloadAssetsButton
     $btnEditor.IsEnabled = -not $Busy
     $btnBuild.Content = $BuildText
 }
@@ -2576,6 +2603,7 @@ $btnRebuild.Add_Click({ Invoke-Build -buildTarget "Rebuild" })
 
 # DOWNLOAD ASSETS button — downloads only missing cloud assets
 $btnDownloadAssets.Add_Click({
+    $script:AssetDownloadInProgress = $true
     Set-LauncherBusy $true "DOWNLOADING..."
     try {
         if (-not (Invoke-LauncherModelDownload)) { return }
@@ -2583,6 +2611,7 @@ $btnDownloadAssets.Add_Click({
         Populate-SceneFileList
         Update-SceneDependencyCache
     } finally {
+        $script:AssetDownloadInProgress = $false
         Set-LauncherBusy $false
         Update-Preview
     }
@@ -2590,7 +2619,15 @@ $btnDownloadAssets.Add_Click({
 
 # RUN button — launch the app with current settings (no dump override)
 $btnRun.Add_Click({
-    if (-not (Invoke-LauncherModelDownload)) { return }
+    Update-LauncherCloudAssetStatus | Out-Null
+    Update-Preview
+    $assetStatus = $script:CloudAssetStatus
+    if ($assetStatus -and $assetStatus.Configured -and ($assetStatus.Missing -gt 0 -or -not $assetStatus.Ok)) {
+        [System.Windows.MessageBox]::Show(
+            ("Cloud assets are missing or invalid. Click Download Assets before running." + "`n`n" + $assetStatus.Message),
+            "T850 Launcher", "OK", "Warning") | Out-Null
+        return
+    }
     Populate-ModelList
     Populate-SceneFileList
     Update-SceneDependencyCache
@@ -2624,7 +2661,6 @@ $btnRun.Add_Click({
 
 # EDITOR button — launch T8ditor with current graphics/resolution/log settings
 $btnEditor.Add_Click({
-    if (-not (Invoke-LauncherModelDownload)) { return }
     Populate-ModelList
     if (Test-AndroidTarget) {
         Update-SceneDependencyCache

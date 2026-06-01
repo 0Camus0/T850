@@ -108,6 +108,7 @@ public:
   void ResetAndroidVirtualControls();
 #endif
   void RequestDump() override { m_dumper.RequestDump(); }
+  void ResetViewInput() override;
 
   float DtSecs = 0.0f;
   t850::PrimitiveManager PrimitiveMgr;
@@ -167,6 +168,7 @@ public:
   int AdaptedLumPrevPass = -1;
 
   int m_currentCubemapIndex = 0;
+  std::string m_currentCubemapPath;
   std::string m_pendingCubemap; // deferred load — set in SyncFromGUI, applied in OnUpdate
 
   t850::TextRenderer m_debugText;
@@ -206,6 +208,7 @@ public:
   std::vector<std::string> m_sceneMeshPaths;
   std::vector<std::string> m_sceneRagdollPaths;
   std::vector<float> m_sceneNavAgentFrontYawOffsets;
+  std::vector<float> m_sceneNavAgentFaceYawSigns;
   std::vector<uint32_t> m_q3StaticCollisionEntityIds;
   struct SceneRagdollRuntime {
     int meshIndex = -1;
@@ -231,16 +234,26 @@ public:
     XVECTOR3 lastPathEnd = XVECTOR3(0.0f, 0.0f, 0.0f, 1.0f);
     XVECTOR3 lastPathFirst = XVECTOR3(0.0f, 0.0f, 0.0f, 1.0f);
     XVECTOR3 navToOriginOffset = XVECTOR3(0.0f, 0.0f, 0.0f, 0.0f);
+    t850::KinematicCharacterController physicsController;
+    XVECTOR3 physicsTraversalStart = XVECTOR3(0.0f, 0.0f, 0.0f, 1.0f);
+    XVECTOR3 physicsTarget = XVECTOR3(0.0f, 0.0f, 0.0f, 1.0f);
     std::vector<XVECTOR3> path;
+    std::vector<t850::navigation::NavTraversalType> pathSegmentTypes;
     std::string lastPathError;
     int waypointIndex = 0;
+    int physicsTargetWaypointIndex = 0;
     int followSlot = 0;
     unsigned int pathGeneration = 0;
     float repathCooldownSec = 0.0f;
+    float physicsTraversalTimeSec = 0.0f;
     float frontYawOffsetDeg = 0.0f;
+    float faceYawSign = 1.0f;
+    t850::navigation::NavTraversalType physicsTraversalType = t850::navigation::NavTraversalType::Walk;
     bool returning = false;
     bool active = false;
     bool needsPath = false;
+    bool physicsTraversalActive = false;
+    bool physicsWasAirborne = false;
     bool targetInitialized = false;
     bool lastPathSuccess = false;
   };

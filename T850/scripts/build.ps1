@@ -37,7 +37,7 @@ $Config = $Config.Substring(0,1).ToUpper() + $Config.Substring(1).ToLower()
 
 # Map platform to MSBuild platform name (x86 -> Win32 in .sln)
 $msbuildPlatform = switch ($Platform.ToLower()) {
-    "x86"   { "x86" }
+    "x86"   { "Win32" }
     "x64"   { "x64" }
     "arm64" { "ARM64" }
 }

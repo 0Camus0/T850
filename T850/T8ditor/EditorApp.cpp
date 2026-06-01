@@ -817,8 +817,11 @@ void EditorApp::CloneSelected() {
     const std::string name = makeUniqueObjectName(sourceName);
     const std::string ragdollResourcePath = src.ragdollResourcePath;
     const bool visible = src.visible;
+    const std::optional<bool> mobileVisible = src.mobileVisible;
     const bool frozen = src.frozen;
     const bool showWire = src.showWire;
+    const std::optional<float> navAgentFrontYawOffsetDeg = src.navAgentFrontYawOffsetDeg;
+    const std::optional<float> navAgentFaceYawSign = src.navAgentFaceYawSign;
     const XVECTOR3 position = src.wireframe.Position();
     const XVECTOR3 rotation = src.wireframe.EulerRadians();
     const XVECTOR3 scale = src.wireframe.Scale();
@@ -852,8 +855,11 @@ void EditorApp::CloneSelected() {
     clone.name = name;
     clone.meshPath = meshPath;
     clone.visible = visible;
+    clone.mobileVisible = mobileVisible;
     clone.frozen = frozen;
     clone.showWire = showWire;
+    clone.navAgentFrontYawOffsetDeg = navAgentFrontYawOffsetDeg;
+    clone.navAgentFaceYawSign = navAgentFaceYawSign;
     clone.ragdollResourcePath = ragdollResourcePath;
     clone.ragdollDebugDraw = sourceDebugDraw;
     clone.litInst.CreateInstance(m_primMgr.GetPrimitive(id), &m_vp);
@@ -1097,6 +1103,8 @@ void EditorApp::OnUpdate() {
           obj.mobileVisible = od.mobile_visible;
           obj.frozen   = od.frozen;
           obj.showWire = od.show_wire;
+          obj.navAgentFrontYawOffsetDeg = od.nav_agent_front_yaw_offset_deg;
+          obj.navAgentFaceYawSign = od.nav_agent_face_yaw_sign;
         } else {
           g_unloadedSceneObjects.push_back(od);
           T8_LOG_ERROR("[T8ditor] Preserving unloaded scene object '%s' mesh='%s' for save",
@@ -2186,6 +2194,8 @@ void EditorApp::OnDraw() {
           od.mobile_visible = obj.mobileVisible;
           od.frozen    = obj.frozen;
           od.show_wire = obj.showWire;
+          od.nav_agent_front_yaw_offset_deg = obj.navAgentFrontYawOffsetDeg;
+          od.nav_agent_face_yaw_sign = obj.navAgentFaceYawSign;
           sf.objects.push_back(od);
         }
         for (const SceneObjectDesc& od : g_unloadedSceneObjects) {

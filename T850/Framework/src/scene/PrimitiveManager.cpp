@@ -19,6 +19,7 @@
 #include <scene/SplineWireframe.h>
 #include <core/EngineContext.h>
 #include <utils/Log.h>
+#include <exception>
 
 namespace t850 {
   PrimitiveBase*	PrimitiveManager::GetPrimitive(unsigned int index) const {
@@ -41,7 +42,13 @@ namespace t850 {
     RenderMesh* probe = new RenderMesh();
     probe->SetEngineContext(m_engineContext);
     T8_LOG_INFO("Loading mesh begin: '%s'", fname);
-    probe->Load(fname);
+    try {
+      probe->Load(fname);
+    } catch (const std::exception& ex) {
+      T8_LOG_ERROR("Mesh '%s' threw while loading: %s", fname ? fname : "<null>", ex.what());
+      delete probe;
+      return -1;
+    }
     T8_LOG_INFO("Loading mesh: '%s'", fname);
     if (!probe->xFile) {
       T8_LOG_ERROR("Mesh '%s' failed to load; primitive creation aborted", fname);

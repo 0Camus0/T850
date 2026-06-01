@@ -14,6 +14,89 @@ namespace t850 {
 namespace t850 {
 namespace navigation {
 
+namespace {
+
+void ReleaseLineBuffers(VertexBuffer*& vertexBuffer,
+                        IndexBuffer*& indexBuffer,
+                        unsigned& vertexCapacity,
+                        unsigned& indexCapacity,
+                        unsigned& indexCount) {
+  if (vertexBuffer) {
+    vertexBuffer->release();
+    vertexBuffer = nullptr;
+  }
+  if (indexBuffer) {
+    indexBuffer->release();
+    indexBuffer = nullptr;
+  }
+  vertexCapacity = 0;
+  indexCapacity = 0;
+  indexCount = 0;
+}
+
+bool UploadLineBuffers(const char* debugName,
+                       const std::vector<XVECTOR3>& points,
+                       std::vector<unsigned int>& indices,
+                       std::vector<float>& vertices,
+                       VertexBuffer*& vertexBuffer,
+                       IndexBuffer*& indexBuffer,
+                       unsigned& vertexCapacity,
+                       unsigned& indexCapacity,
+                       unsigned& indexCount) {
+  vertices.clear();
+  vertices.reserve(points.size() * 4u);
+  for (const XVECTOR3& point : points) {
+    vertices.push_back(point.x);
+    vertices.push_back(point.y);
+    vertices.push_back(point.z);
+    vertices.push_back(1.0f);
+  }
+
+  const unsigned vertexCount = static_cast<unsigned>(vertices.size() / 4u);
+  const unsigned newIndexCount = static_cast<unsigned>(indices.size());
+  if (vertexCount == 0 || newIndexCount == 0) {
+    indexCount = 0;
+    return true;
+  }
+
+  if (!vertexBuffer || !indexBuffer ||
+      vertexCount > vertexCapacity ||
+      newIndexCount > indexCapacity) {
+    ReleaseLineBuffers(vertexBuffer, indexBuffer, vertexCapacity, indexCapacity, indexCount);
+
+    vertexBuffer = LineRenderer::CreatePositionVB(vertices.data(), vertexCount, BufferUsage::DINAMIC);
+
+    BufferDesc indexDesc;
+    indexDesc.byteWidth = static_cast<int>(sizeof(unsigned int) * newIndexCount);
+    indexDesc.usage = BufferUsage::DINAMIC;
+    indexBuffer = T8Device ? static_cast<IndexBuffer*>(
+        T8Device->CreateBuffer(BufferType::INDEX, indexDesc, indices.data())) : nullptr;
+
+    if (!vertexBuffer || !indexBuffer) {
+      T8_LOG_ERROR("[NavigationDebugRenderer] Failed to create %s line buffers", debugName);
+      ReleaseLineBuffers(vertexBuffer, indexBuffer, vertexCapacity, indexCapacity, indexCount);
+      return false;
+    }
+
+    vertexCapacity = vertexCount;
+    indexCapacity = newIndexCount;
+  } else {
+    if (!T8DeviceContext) {
+      return false;
+    }
+    vertices.resize(static_cast<std::size_t>(vertexCapacity) * 4u, 0.0f);
+    std::vector<unsigned int> paddedIndices = indices;
+    paddedIndices.resize(indexCapacity, 0u);
+    vertexBuffer->UpdateFromBuffer(*T8DeviceContext, vertices.data());
+    indexBuffer->UpdateFromBuffer(*T8DeviceContext, paddedIndices.data());
+  }
+
+  indexCount = newIndexCount;
+  return true;
+}
+
+} // namespace
+
 bool NavMeshDebugRenderer::Create() {
   return m_lineRenderer.Create();
 }
@@ -27,11 +110,15 @@ void NavMeshDebugRenderer::Invalidate() {
   m_uploadedNavMesh = nullptr;
   m_uploadedPolygonCount = 0;
   m_uploadedDetailTriangleCount = 0;
+  m_uploadedOffMeshLinkCount = 0;
   m_uploadedVerticalOffset = -1.0f;
   m_uploadedGraphVerticalOffset = -1.0f;
   m_uploadedShapeMode = m_shapeMode;
   m_indexCount = 0;
   m_graphIndexCount = 0;
+  m_dropLinkIndexCount = 0;
+  m_jumpLinkIndexCount = 0;
+  m_jumpPadLinkIndexCount = 0;
 }
 
 void NavMeshDebugRenderer::ReleaseGeometryBuffers() {
@@ -51,10 +138,40 @@ void NavMeshDebugRenderer::ReleaseGeometryBuffers() {
     m_graphIndexBuffer->release();
     m_graphIndexBuffer = nullptr;
   }
+  if (m_dropLinkVertexBuffer) {
+    m_dropLinkVertexBuffer->release();
+    m_dropLinkVertexBuffer = nullptr;
+  }
+  if (m_dropLinkIndexBuffer) {
+    m_dropLinkIndexBuffer->release();
+    m_dropLinkIndexBuffer = nullptr;
+  }
+  if (m_jumpLinkVertexBuffer) {
+    m_jumpLinkVertexBuffer->release();
+    m_jumpLinkVertexBuffer = nullptr;
+  }
+  if (m_jumpLinkIndexBuffer) {
+    m_jumpLinkIndexBuffer->release();
+    m_jumpLinkIndexBuffer = nullptr;
+  }
+  if (m_jumpPadLinkVertexBuffer) {
+    m_jumpPadLinkVertexBuffer->release();
+    m_jumpPadLinkVertexBuffer = nullptr;
+  }
+  if (m_jumpPadLinkIndexBuffer) {
+    m_jumpPadLinkIndexBuffer->release();
+    m_jumpPadLinkIndexBuffer = nullptr;
+  }
   m_vertexCapacity = 0;
   m_indexCapacity = 0;
   m_graphVertexCapacity = 0;
   m_graphIndexCapacity = 0;
+  m_dropLinkVertexCapacity = 0;
+  m_dropLinkIndexCapacity = 0;
+  m_jumpLinkVertexCapacity = 0;
+  m_jumpLinkIndexCapacity = 0;
+  m_jumpPadLinkVertexCapacity = 0;
+  m_jumpPadLinkIndexCapacity = 0;
   Invalidate();
 }
 
@@ -64,6 +181,7 @@ bool NavMeshDebugRenderer::UploadGeometry(const NavMesh& navMesh) {
       m_uploadedNavMesh == &navMesh &&
       m_uploadedPolygonCount == stats.polygonCount &&
       m_uploadedDetailTriangleCount == stats.detailTriangleCount &&
+      m_uploadedOffMeshLinkCount == stats.offMeshLinkCount &&
       m_uploadedVerticalOffset == m_verticalOffset &&
       m_uploadedGraphVerticalOffset == m_graphVerticalOffset &&
       m_uploadedShapeMode == m_shapeMode) {
@@ -137,78 +255,69 @@ bool NavMeshDebugRenderer::UploadGeometry(const NavMesh& navMesh) {
   }
 
   navMesh.GetDebugGraphEdges(m_graphPoints, m_graphIndices, m_graphVerticalOffset);
-  m_graphVertices.clear();
-  m_graphVertices.reserve(m_graphPoints.size() * 4u);
-  for (const XVECTOR3& point : m_graphPoints) {
-    m_graphVertices.push_back(point.x);
-    m_graphVertices.push_back(point.y);
-    m_graphVertices.push_back(point.z);
-    m_graphVertices.push_back(1.0f);
+  if (!UploadLineBuffers("navmesh graph edge",
+                         m_graphPoints,
+                         m_graphIndices,
+                         m_graphVertices,
+                         m_graphVertexBuffer,
+                         m_graphIndexBuffer,
+                         m_graphVertexCapacity,
+                         m_graphIndexCapacity,
+                         m_graphIndexCount)) {
+    return false;
   }
 
-  const unsigned graphVertexCount = static_cast<unsigned>(m_graphVertices.size() / 4u);
-  const unsigned graphIndexCount = static_cast<unsigned>(m_graphIndices.size());
-  if (graphVertexCount == 0 || graphIndexCount == 0) {
-    m_graphIndexCount = 0;
-  } else if (!m_graphVertexBuffer || !m_graphIndexBuffer ||
-             graphVertexCount > m_graphVertexCapacity ||
-             graphIndexCount > m_graphIndexCapacity) {
-    if (m_graphVertexBuffer) {
-      m_graphVertexBuffer->release();
-      m_graphVertexBuffer = nullptr;
-    }
-    if (m_graphIndexBuffer) {
-      m_graphIndexBuffer->release();
-      m_graphIndexBuffer = nullptr;
-    }
-    m_graphVertexCapacity = 0;
-    m_graphIndexCapacity = 0;
+  navMesh.GetDebugOffMeshLinks(NavTraversalType::Drop, m_dropLinkPoints, m_dropLinkIndices, m_graphVerticalOffset + 0.010f);
+  if (!UploadLineBuffers("navmesh drop link",
+                         m_dropLinkPoints,
+                         m_dropLinkIndices,
+                         m_dropLinkVertices,
+                         m_dropLinkVertexBuffer,
+                         m_dropLinkIndexBuffer,
+                         m_dropLinkVertexCapacity,
+                         m_dropLinkIndexCapacity,
+                         m_dropLinkIndexCount)) {
+    return false;
+  }
 
-    m_graphVertexBuffer = LineRenderer::CreatePositionVB(m_graphVertices.data(), graphVertexCount, BufferUsage::DINAMIC);
+  navMesh.GetDebugOffMeshLinks(NavTraversalType::Jump, m_jumpLinkPoints, m_jumpLinkIndices, m_graphVerticalOffset + 0.020f);
+  if (!UploadLineBuffers("navmesh jump link",
+                         m_jumpLinkPoints,
+                         m_jumpLinkIndices,
+                         m_jumpLinkVertices,
+                         m_jumpLinkVertexBuffer,
+                         m_jumpLinkIndexBuffer,
+                         m_jumpLinkVertexCapacity,
+                         m_jumpLinkIndexCapacity,
+                         m_jumpLinkIndexCount)) {
+    return false;
+  }
 
-    BufferDesc graphIndexDesc;
-    graphIndexDesc.byteWidth = static_cast<int>(sizeof(unsigned int) * graphIndexCount);
-    graphIndexDesc.usage = BufferUsage::DINAMIC;
-    m_graphIndexBuffer = T8Device ? static_cast<IndexBuffer*>(
-        T8Device->CreateBuffer(BufferType::INDEX, graphIndexDesc, m_graphIndices.data())) : nullptr;
-
-    if (!m_graphVertexBuffer || !m_graphIndexBuffer) {
-      T8_LOG_ERROR("[NavigationDebugRenderer] Failed to create navmesh graph edge buffers");
-      if (m_graphVertexBuffer) {
-        m_graphVertexBuffer->release();
-        m_graphVertexBuffer = nullptr;
-      }
-      if (m_graphIndexBuffer) {
-        m_graphIndexBuffer->release();
-        m_graphIndexBuffer = nullptr;
-      }
-      m_graphIndexCount = 0;
-    } else {
-      m_graphVertexCapacity = graphVertexCount;
-      m_graphIndexCapacity = graphIndexCount;
-      m_graphIndexCount = graphIndexCount;
-    }
-  } else {
-    if (!T8DeviceContext) {
-      return false;
-    }
-    m_graphVertices.resize(static_cast<std::size_t>(m_graphVertexCapacity) * 4u, 0.0f);
-    m_graphIndices.resize(m_graphIndexCapacity, 0u);
-    m_graphVertexBuffer->UpdateFromBuffer(*T8DeviceContext, m_graphVertices.data());
-    m_graphIndexBuffer->UpdateFromBuffer(*T8DeviceContext, m_graphIndices.data());
-    m_graphIndexCount = graphIndexCount;
+  navMesh.GetDebugOffMeshLinks(NavTraversalType::JumpPad, m_jumpPadLinkPoints, m_jumpPadLinkIndices, m_graphVerticalOffset + 0.030f);
+  if (!UploadLineBuffers("navmesh jump pad link",
+                         m_jumpPadLinkPoints,
+                         m_jumpPadLinkIndices,
+                         m_jumpPadLinkVertices,
+                         m_jumpPadLinkVertexBuffer,
+                         m_jumpPadLinkIndexBuffer,
+                         m_jumpPadLinkVertexCapacity,
+                         m_jumpPadLinkIndexCapacity,
+                         m_jumpPadLinkIndexCount)) {
+    return false;
   }
 
   m_uploadedNavMesh = &navMesh;
   m_uploadedPolygonCount = stats.polygonCount;
   m_uploadedDetailTriangleCount = stats.detailTriangleCount;
+  m_uploadedOffMeshLinkCount = stats.offMeshLinkCount;
   m_uploadedVerticalOffset = m_verticalOffset;
   m_uploadedGraphVerticalOffset = m_graphVerticalOffset;
   m_uploadedShapeMode = m_shapeMode;
   m_indexCount = indexCount;
-  T8_LOG_INFO("[NavigationDebugRenderer] Uploaded navmesh debug mode=%d magentaLines=%u graphEdges=%u verts=%u bounds=(%.2f,%.2f,%.2f)-(%.2f,%.2f,%.2f) offsets=(%.2f,%.2f)",
+  T8_LOG_INFO("[NavigationDebugRenderer] Uploaded navmesh debug mode=%d magentaLines=%u graphEdges=%u dropLinks=%u jumpLinks=%u jumpPadLinks=%u verts=%u bounds=(%.2f,%.2f,%.2f)-(%.2f,%.2f,%.2f) offsets=(%.2f,%.2f)",
               static_cast<int>(m_shapeMode),
-              indexCount / 2u, m_graphIndexCount / 2u, vertexCount,
+              indexCount / 2u, m_graphIndexCount / 2u,
+              m_dropLinkIndexCount / 2u, m_jumpLinkIndexCount / 2u, m_jumpPadLinkIndexCount / 2u, vertexCount,
               minPoint.x, minPoint.y, minPoint.z,
               maxPoint.x, maxPoint.y, maxPoint.z,
               m_verticalOffset, m_graphVerticalOffset);
@@ -249,6 +358,36 @@ void NavMeshDebugRenderer::Draw(const NavMesh& navMesh, const XMATRIX44& viewPro
                              m_graphVertexBuffer,
                              m_graphIndexBuffer,
                              m_graphIndexCount,
+                             sizeof(float) * 4,
+                             IndexBufferFormat::R32);
+  }
+  if (m_dropLinkVertexBuffer && m_dropLinkIndexBuffer && m_dropLinkIndexCount > 0) {
+    m_lineRenderer.DrawLines(identity,
+                             viewProjection,
+                             XVECTOR3(1.0f, 0.55f, 0.0f, 1.0f),
+                             m_dropLinkVertexBuffer,
+                             m_dropLinkIndexBuffer,
+                             m_dropLinkIndexCount,
+                             sizeof(float) * 4,
+                             IndexBufferFormat::R32);
+  }
+  if (m_jumpLinkVertexBuffer && m_jumpLinkIndexBuffer && m_jumpLinkIndexCount > 0) {
+    m_lineRenderer.DrawLines(identity,
+                             viewProjection,
+                             XVECTOR3(1.0f, 1.0f, 0.0f, 1.0f),
+                             m_jumpLinkVertexBuffer,
+                             m_jumpLinkIndexBuffer,
+                             m_jumpLinkIndexCount,
+                             sizeof(float) * 4,
+                             IndexBufferFormat::R32);
+  }
+  if (m_jumpPadLinkVertexBuffer && m_jumpPadLinkIndexBuffer && m_jumpPadLinkIndexCount > 0) {
+    m_lineRenderer.DrawLines(identity,
+                             viewProjection,
+                             XVECTOR3(0.0f, 0.75f, 1.0f, 1.0f),
+                             m_jumpPadLinkVertexBuffer,
+                             m_jumpPadLinkIndexBuffer,
+                             m_jumpPadLinkIndexCount,
                              sizeof(float) * 4,
                              IndexBufferFormat::R32);
   }

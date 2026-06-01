@@ -59,7 +59,8 @@
          "visible": true,
          "frozen": false,
          "show_wire": false,
-         "nav_agent_front_yaw_offset_deg": 270
+         "nav_agent_front_yaw_offset_deg": 270,
+         "nav_agent_face_yaw_sign": -1
       },
       {
          "name": "Models/doomslayer_cine_all_animations_no-damage_double-sided-opaque.glb Clone",
@@ -83,7 +84,8 @@
          "visible": true,
          "frozen": false,
          "show_wire": false,
-         "nav_agent_front_yaw_offset_deg": 270
+         "nav_agent_front_yaw_offset_deg": 270,
+         "nav_agent_face_yaw_sign": -1
       },
       {
          "name": "Models\\rewind_cyborg.glb",
@@ -96,7 +98,7 @@
          },
          "rotation": {
             "x": 0,
-            "y": -0,
+            "y": 0,
             "z": 0
          },
          "scale": {
@@ -120,7 +122,7 @@
          },
          "rotation": {
             "x": 0,
-            "y": -0,
+            "y": 0,
             "z": 0
          },
          "scale": {
@@ -144,7 +146,7 @@
          },
          "rotation": {
             "x": 0,
-            "y": -0,
+            "y": 0,
             "z": 0
          },
          "scale": {
@@ -168,7 +170,7 @@
          },
          "rotation": {
             "x": 0,
-            "y": -0,
+            "y": 0,
             "z": 0
          },
          "scale": {
@@ -4200,11 +4202,11 @@
             },
             {
                "name": "bloom_factor",
-               "value": 1
+               "value": 0.823
             },
             {
                "name": "bloom_threshold",
-               "value": 1
+               "value": 1.5
             },
             {
                "name": "ssao_kernel_size",
@@ -4215,24 +4217,40 @@
                "value": 2.237
             },
             {
+               "name": "fov",
+               "value": 95
+            },
+            {
                "name": "light_intensity_scale",
                "value": 2
             },
             {
                "name": "lightmap_intensity",
-               "value": 2
+               "value": 2.5
             },
             {
                "name": "shadow_min",
                "value": 0
             },
             {
+               "name": "ibl_factor",
+               "value": 1.3
+            },
+            {
                "name": "material_emissive_intensity",
-               "value": 2
+               "value": 0.734
+            },
+            {
+               "name": "material_transmission_multiplier",
+               "value": 3.481
+            },
+            {
+               "name": "nav_agent_speed_multiplier",
+               "value": 4
             },
             {
                "name": "gauss_1_radius",
-               "value": 1.177
+               "value": 1
             },
             {
                "name": "gauss_1_sigma",
@@ -4245,7 +4263,7 @@
                "value": false
             },
             {
-               "name": "debug_luminance",
+               "name": "point_lights_enabled",
                "value": false
             }
          ],
@@ -4255,16 +4273,8 @@
                "value": 27
             },
             {
-               "name": "animation_model",
-               "value": 2
-            },
-            {
                "name": "anim_select",
-               "value": 82
-            },
-            {
-               "name": "cubemap",
-               "value": 3
+               "value": 92
             },
             {
                "name": "luminance_mode",
@@ -4272,32 +4282,48 @@
             }
          ],
          "lights": [],
+         "animations": [
+            {
+               "index": 1,
+               "mesh": "Models/doomslayer_cine_all_animations_no-damage_double-sided-opaque.glb",
+               "anim_speed": 1,
+               "anim_select": 92,
+               "anim_mode": 0
+            },
+            {
+               "index": 2,
+               "mesh": "Models/doomslayer_cine_all_animations_no-damage_double-sided-opaque.glb",
+               "anim_speed": 1,
+               "anim_select": 92,
+               "anim_mode": 0
+            }
+         ],
          "camera": {
             "profile": 5,
             "eye": [
-               -19.226711,
-               9.683158,
-               0.71661586
+               3.6418679,
+               1.6571285,
+               -7.339037
             ],
             "look": [
-               -0.862305,
-               -0.23284249,
-               0.44968265
+               0.32910568,
+               -0.1593183,
+               -0.9307562
             ],
             "up": [
-               -0.20645581,
-               0.9725145,
-               0.10766445
+               0.05311093,
+               0.98722726,
+               -0.15020502
             ],
             "right": [
-               0.46239173,
+               -0.9427983,
                0,
-               0.8866758
+               -0.33336365
             ],
-            "yaw": 30.32582,
-            "pitch": 0.2349995,
+            "yaw": 40.500835,
+            "pitch": 0.16000009,
             "roll": 0,
-            "fov": 99.99999,
+            "fov": 95,
             "aspect_ratio": 1.7777778,
             "near_plane": 0.125,
             "far_plane": 6198.7783,
@@ -4317,9 +4343,9 @@
                   0
                ],
                "eye": [
-                  -19.226711,
-                  9.683158,
-                  0.71661586
+                  3.6418679,
+                  1.6571285,
+                  -7.339037
                ],
                "yaw": -1.5757964,
                "pitch": -0.005,
@@ -4338,9 +4364,9 @@
                0
             ],
             "eye": [
-               -19.226711,
-               9.683158,
-               0.71661586
+               3.6418679,
+               1.6571285,
+               -7.339037
             ],
             "yaw": -1.5757964,
             "pitch": -0.005,
@@ -4361,11 +4387,11 @@
             },
             {
                "name": "bloom_factor",
-               "value": 1
+               "value": 0.823
             },
             {
                "name": "bloom_threshold",
-               "value": 1
+               "value": 1.5
             },
             {
                "name": "ssao_kernel_size",
@@ -4376,24 +4402,40 @@
                "value": 2.237
             },
             {
+               "name": "fov",
+               "value": 95
+            },
+            {
                "name": "light_intensity_scale",
-               "value": 16.256
+               "value": 2
             },
             {
                "name": "lightmap_intensity",
-               "value": 2
+               "value": 2.5
             },
             {
                "name": "shadow_min",
                "value": 0
             },
             {
+               "name": "ibl_factor",
+               "value": 1.3
+            },
+            {
                "name": "material_emissive_intensity",
+               "value": 0.734
+            },
+            {
+               "name": "material_transmission_multiplier",
+               "value": 3.481
+            },
+            {
+               "name": "nav_agent_speed_multiplier",
                "value": 2
             },
             {
                "name": "gauss_1_radius",
-               "value": 1.177
+               "value": 1
             },
             {
                "name": "gauss_1_sigma",
@@ -4408,10 +4450,6 @@
             {
                "name": "point_lights_enabled",
                "value": false
-            },
-            {
-               "name": "debug_luminance",
-               "value": false
             }
          ],
          "selectors": [
@@ -4420,12 +4458,8 @@
                "value": 27
             },
             {
-               "name": "animation_model",
-               "value": 2
-            },
-            {
                "name": "anim_select",
-               "value": 82
+               "value": 92
             },
             {
                "name": "cubemap",
@@ -4437,38 +4471,55 @@
             }
          ],
          "lights": [],
+         "animations": [
+            {
+               "index": 1,
+               "mesh": "Models/doomslayer_cine_all_animations_no-damage_double-sided-opaque.glb",
+               "anim_speed": 1,
+               "anim_select": 92,
+               "anim_mode": 0
+            },
+            {
+               "index": 2,
+               "mesh": "Models/doomslayer_cine_all_animations_no-damage_double-sided-opaque.glb",
+               "anim_speed": 1,
+               "anim_select": 92,
+               "anim_mode": 0
+            }
+         ],
+         "cubemap_path": "sky/GraceCathedral.dds",
          "camera": {
             "profile": 5,
             "eye": [
-               -19.500628,
-               9.683158,
-               9.753779
+               3.6418679,
+               1.6571285,
+               -7.339037
             ],
             "look": [
-               -0.6847219,
-               -0.22337587,
-               0.69372845
+               0.32910568,
+               -0.1593183,
+               -0.9307562
             ],
             "up": [
-               -0.15691522,
-               0.9747324,
-               0.15897922
+               0.05311093,
+               0.98722726,
+               -0.15020502
             ],
             "right": [
-               0.7117117,
+               -0.9427983,
                0,
-               0.7024717
+               -0.33336365
             ],
-            "yaw": 30.637062,
-            "pitch": 0.22527649,
+            "yaw": 40.500835,
+            "pitch": 0.16000009,
             "roll": 0,
-            "fov": 99.99999,
-            "aspect_ratio": 1.6017317,
+            "fov": 95,
+            "aspect_ratio": 1.7777778,
             "near_plane": 0.125,
             "far_plane": 6198.7783,
             "ortho": false,
-            "width": 2960,
-            "height": 1848,
+            "width": 2560,
+            "height": 1440,
             "left_handed": true,
             "orbit": {
                "target": [
@@ -4482,9 +4533,9 @@
                   0
                ],
                "eye": [
-                  -19.500628,
-                  9.683158,
-                  9.753779
+                  3.6418679,
+                  1.6571285,
+                  -7.339037
                ],
                "yaw": -1.5757964,
                "pitch": -0.005,
@@ -4503,9 +4554,9 @@
                0
             ],
             "eye": [
-               -19.500628,
-               9.683158,
-               9.753779
+               3.6418679,
+               1.6571285,
+               -7.339037
             ],
             "yaw": -1.5757964,
             "pitch": -0.005,
@@ -4526,11 +4577,11 @@
             },
             {
                "name": "bloom_factor",
-               "value": 1
+               "value": 0.823
             },
             {
                "name": "bloom_threshold",
-               "value": 1
+               "value": 1.5
             },
             {
                "name": "ssao_kernel_size",
@@ -4541,24 +4592,40 @@
                "value": 2.237
             },
             {
+               "name": "fov",
+               "value": 95
+            },
+            {
                "name": "light_intensity_scale",
-               "value": 16.256
+               "value": 2
             },
             {
                "name": "lightmap_intensity",
-               "value": 2
+               "value": 2.5
             },
             {
                "name": "shadow_min",
                "value": 0
             },
             {
+               "name": "ibl_factor",
+               "value": 1.3
+            },
+            {
                "name": "material_emissive_intensity",
+               "value": 0.734
+            },
+            {
+               "name": "material_transmission_multiplier",
+               "value": 3.481
+            },
+            {
+               "name": "nav_agent_speed_multiplier",
                "value": 2
             },
             {
                "name": "gauss_1_radius",
-               "value": 1.177
+               "value": 1
             },
             {
                "name": "gauss_1_sigma",
@@ -4573,10 +4640,6 @@
             {
                "name": "point_lights_enabled",
                "value": false
-            },
-            {
-               "name": "debug_luminance",
-               "value": false
             }
          ],
          "selectors": [
@@ -4585,12 +4648,8 @@
                "value": 27
             },
             {
-               "name": "animation_model",
-               "value": 2
-            },
-            {
                "name": "anim_select",
-               "value": 82
+               "value": 92
             },
             {
                "name": "cubemap",
@@ -4602,38 +4661,55 @@
             }
          ],
          "lights": [],
+         "animations": [
+            {
+               "index": 1,
+               "mesh": "Models/doomslayer_cine_all_animations_no-damage_double-sided-opaque.glb",
+               "anim_speed": 1,
+               "anim_select": 92,
+               "anim_mode": 0
+            },
+            {
+               "index": 2,
+               "mesh": "Models/doomslayer_cine_all_animations_no-damage_double-sided-opaque.glb",
+               "anim_speed": 1,
+               "anim_select": 92,
+               "anim_mode": 0
+            }
+         ],
+         "cubemap_path": "sky/GraceCathedral.dds",
          "camera": {
             "profile": 5,
             "eye": [
-               -19.500628,
-               9.683158,
-               9.753779
+               3.6418679,
+               1.6571285,
+               -7.339037
             ],
             "look": [
-               -0.6847219,
-               -0.22337587,
-               0.69372845
+               0.32910568,
+               -0.1593183,
+               -0.9307562
             ],
             "up": [
-               -0.15691522,
-               0.9747324,
-               0.15897922
+               0.05311093,
+               0.98722726,
+               -0.15020502
             ],
             "right": [
-               0.7117117,
+               -0.9427983,
                0,
-               0.7024717
+               -0.33336365
             ],
-            "yaw": 30.637062,
-            "pitch": 0.22527649,
+            "yaw": 40.500835,
+            "pitch": 0.16000009,
             "roll": 0,
-            "fov": 99.99999,
-            "aspect_ratio": 1.6017317,
+            "fov": 95,
+            "aspect_ratio": 1.7777778,
             "near_plane": 0.125,
             "far_plane": 6198.7783,
             "ortho": false,
-            "width": 2960,
-            "height": 1848,
+            "width": 2560,
+            "height": 1440,
             "left_handed": true,
             "orbit": {
                "target": [
@@ -4647,9 +4723,9 @@
                   0
                ],
                "eye": [
-                  -19.500628,
-                  9.683158,
-                  9.753779
+                  3.6418679,
+                  1.6571285,
+                  -7.339037
                ],
                "yaw": -1.5757964,
                "pitch": -0.005,
@@ -4668,9 +4744,9 @@
                0
             ],
             "eye": [
-               -19.500628,
-               9.683158,
-               9.753779
+               3.6418679,
+               1.6571285,
+               -7.339037
             ],
             "yaw": -1.5757964,
             "pitch": -0.005,
@@ -4691,11 +4767,11 @@
             },
             {
                "name": "bloom_factor",
-               "value": 1
+               "value": 0.823
             },
             {
                "name": "bloom_threshold",
-               "value": 1
+               "value": 1.5
             },
             {
                "name": "ssao_kernel_size",
@@ -4706,24 +4782,40 @@
                "value": 2.237
             },
             {
+               "name": "fov",
+               "value": 95
+            },
+            {
                "name": "light_intensity_scale",
-               "value": 16.256
+               "value": 2
             },
             {
                "name": "lightmap_intensity",
-               "value": 2
+               "value": 2.5
             },
             {
                "name": "shadow_min",
                "value": 0
             },
             {
+               "name": "ibl_factor",
+               "value": 1.3
+            },
+            {
                "name": "material_emissive_intensity",
+               "value": 0.734
+            },
+            {
+               "name": "material_transmission_multiplier",
+               "value": 3.481
+            },
+            {
+               "name": "nav_agent_speed_multiplier",
                "value": 2
             },
             {
                "name": "gauss_1_radius",
-               "value": 1.177
+               "value": 1
             },
             {
                "name": "gauss_1_sigma",
@@ -4738,10 +4830,6 @@
             {
                "name": "point_lights_enabled",
                "value": false
-            },
-            {
-               "name": "debug_luminance",
-               "value": false
             }
          ],
          "selectors": [
@@ -4750,12 +4838,8 @@
                "value": 27
             },
             {
-               "name": "animation_model",
-               "value": 2
-            },
-            {
                "name": "anim_select",
-               "value": 82
+               "value": 92
             },
             {
                "name": "cubemap",
@@ -4767,38 +4851,55 @@
             }
          ],
          "lights": [],
+         "animations": [
+            {
+               "index": 1,
+               "mesh": "Models/doomslayer_cine_all_animations_no-damage_double-sided-opaque.glb",
+               "anim_speed": 1,
+               "anim_select": 92,
+               "anim_mode": 0
+            },
+            {
+               "index": 2,
+               "mesh": "Models/doomslayer_cine_all_animations_no-damage_double-sided-opaque.glb",
+               "anim_speed": 1,
+               "anim_select": 92,
+               "anim_mode": 0
+            }
+         ],
+         "cubemap_path": "sky/GraceCathedral.dds",
          "camera": {
             "profile": 5,
             "eye": [
-               -19.500628,
-               9.683158,
-               9.753779
+               3.6418679,
+               1.6571285,
+               -7.339037
             ],
             "look": [
-               -0.6847219,
-               -0.22337587,
-               0.69372845
+               0.32910568,
+               -0.1593183,
+               -0.9307562
             ],
             "up": [
-               -0.15691522,
-               0.9747324,
-               0.15897922
+               0.05311093,
+               0.98722726,
+               -0.15020502
             ],
             "right": [
-               0.7117117,
+               -0.9427983,
                0,
-               0.7024717
+               -0.33336365
             ],
-            "yaw": 30.637062,
-            "pitch": 0.22527649,
+            "yaw": 40.500835,
+            "pitch": 0.16000009,
             "roll": 0,
-            "fov": 99.99999,
-            "aspect_ratio": 1.6017317,
+            "fov": 95,
+            "aspect_ratio": 1.7777778,
             "near_plane": 0.125,
             "far_plane": 6198.7783,
             "ortho": false,
-            "width": 2960,
-            "height": 1848,
+            "width": 2560,
+            "height": 1440,
             "left_handed": true,
             "orbit": {
                "target": [
@@ -4812,9 +4913,9 @@
                   0
                ],
                "eye": [
-                  -19.500628,
-                  9.683158,
-                  9.753779
+                  3.6418679,
+                  1.6571285,
+                  -7.339037
                ],
                "yaw": -1.5757964,
                "pitch": -0.005,
@@ -4833,9 +4934,9 @@
                0
             ],
             "eye": [
-               -19.500628,
-               9.683158,
-               9.753779
+               3.6418679,
+               1.6571285,
+               -7.339037
             ],
             "yaw": -1.5757964,
             "pitch": -0.005,

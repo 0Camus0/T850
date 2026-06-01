@@ -387,7 +387,6 @@ bool ValidateConfig(Config& cfg) {
   }
 
   if (cfg.flags.dumpEnabled && cfg.flags.dumpByFrame && cfg.dumpFrame < 0) {
-    WarnConfigAdjusted("dumpFrame", "frame dump requested with a negative frame, disabling dump");
     cfg.flags.dumpEnabled = false;
     valid = false;
   }
@@ -455,7 +454,7 @@ void ApplyCommandLine(int argc, char** argv, Config& cfg) {
     else if (arg == "--api" && i + 1 < argc) {
       cfg.api = argv[++i];
     }
-    else if (arg == "--dump-frame" || arg == "--dumpSnapshot-frame") {
+    else if (arg == "--dump-frame" || arg == "--dumpFrame" || arg == "--dumpSnapshot-frame") {
       int value = 0;
       if (ReadIntArgument(arg, argc, argv, i, value)) {
         cfg.flags.dumpEnabled = true;
@@ -614,6 +613,7 @@ void PrintHelp() {
     << "  --orbitYaw <radians>               Override Sandbox orbit yaw after model fit\n\n"
     << "Capture/debug:\n"
     << "  --dump-frame <frame>               Dump render targets at frame\n"
+    << "  --dumpFrame <frame>                Alias for --dump-frame\n"
     << "  --dumpSnapshot-frame <frame>       Legacy alias for --dump-frame\n"
     << "  --dumpSnapshot-seconds <seconds>   Dump render targets after elapsed seconds\n"
     << "  --debugFrames                      Enable spacebar dump/exit debug flow\n"

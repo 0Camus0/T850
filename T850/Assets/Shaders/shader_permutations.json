@@ -1792,6 +1792,246 @@
       "vertexShader": "VS_Mesh.hlsl",
       "fragmentShader": "FS_Mesh.hlsl",
       "defines": ["DIFFUSE_MAP", "EMISSIVE_MAP", "GLTF_TANGENT_SPACE", "METALLIC_MAP", "NORMAL_MAP", "RADIAL_DEPTH_PASS", "REFLECT_MAP", "USE_BINORMALS", "USE_NORMALS", "USE_TANGENTS", "USE_TEXCOORD0", "USE_TEXCOORD1", "USE_TEXCOORD2", "USE_TEXCOORD3"]
+    },
+    "0x000002000800003F": {
+      "key": "0x000002000800003F",
+      "bits": "0x000002000800003F",
+      "pass": 0,
+      "vertexShader": "VS_Mesh.hlsl",
+      "fragmentShader": "FS_Mesh.hlsl",
+      "defines": ["DIFFUSE_MAP", "GLTF_TANGENT_SPACE", "LIGHTMAP_MAP", "USE_BINORMALS", "USE_NORMALS", "USE_TANGENTS", "USE_TEXCOORD0", "USE_TEXCOORD1"]
+    },
+    "0x000002000800013F": {
+      "key": "0x000002000800013F",
+      "bits": "0x000002000800013F",
+      "pass": 0,
+      "vertexShader": "VS_Mesh.hlsl",
+      "fragmentShader": "FS_Mesh.hlsl",
+      "defines": ["DIFFUSE_MAP", "NORMAL_MAP", "GLTF_TANGENT_SPACE", "LIGHTMAP_MAP", "USE_BINORMALS", "USE_NORMALS", "USE_TANGENTS", "USE_TEXCOORD0", "USE_TEXCOORD1"]
+    },
+    "0x000002000800023F": {
+      "key": "0x000002000800023F",
+      "bits": "0x000002000800023F",
+      "pass": 0,
+      "vertexShader": "VS_Mesh.hlsl",
+      "fragmentShader": "FS_Mesh.hlsl",
+      "defines": ["DIFFUSE_MAP", "EMISSIVE_MAP", "REFLECT_MAP", "GLTF_TANGENT_SPACE", "LIGHTMAP_MAP", "USE_BINORMALS", "USE_NORMALS", "USE_TANGENTS", "USE_TEXCOORD0", "USE_TEXCOORD1"]
+    },
+    "0x000002000800033F": {
+      "key": "0x000002000800033F",
+      "bits": "0x000002000800033F",
+      "pass": 0,
+      "vertexShader": "VS_Mesh.hlsl",
+      "fragmentShader": "FS_Mesh.hlsl",
+      "defines": ["DIFFUSE_MAP", "NORMAL_MAP", "EMISSIVE_MAP", "REFLECT_MAP", "GLTF_TANGENT_SPACE", "LIGHTMAP_MAP", "USE_BINORMALS", "USE_NORMALS", "USE_TANGENTS", "USE_TEXCOORD0", "USE_TEXCOORD1"]
+    },
+    "0x000002000800093F": {
+      "key": "0x000002000800093F",
+      "bits": "0x000002000800093F",
+      "pass": 0,
+      "vertexShader": "VS_Mesh.hlsl",
+      "fragmentShader": "FS_Mesh.hlsl",
+      "defines": ["DIFFUSE_MAP", "NORMAL_MAP", "METALLIC_MAP", "GLTF_TANGENT_SPACE", "LIGHTMAP_MAP", "USE_BINORMALS", "USE_NORMALS", "USE_TANGENTS", "USE_TEXCOORD0", "USE_TEXCOORD1"]
+    },
+    "0x0000020008000B3F": {
+      "key": "0x0000020008000B3F",
+      "bits": "0x0000020008000B3F",
+      "pass": 0,
+      "vertexShader": "VS_Mesh.hlsl",
+      "fragmentShader": "FS_Mesh.hlsl",
+      "defines": ["DIFFUSE_MAP", "NORMAL_MAP", "EMISSIVE_MAP", "REFLECT_MAP", "METALLIC_MAP", "GLTF_TANGENT_SPACE", "LIGHTMAP_MAP", "USE_BINORMALS", "USE_NORMALS", "USE_TANGENTS", "USE_TEXCOORD0", "USE_TEXCOORD1"]
+    },
+    "0x000002000810003F": {
+      "key": "0x000002000810003F",
+      "bits": "0x000002000810003F",
+      "pass": 1,
+      "vertexShader": "VS_Mesh.hlsl",
+      "fragmentShader": "FS_Mesh.hlsl",
+      "defines": ["DIFFUSE_MAP", "GLTF_TANGENT_SPACE", "LIGHTMAP_MAP", "USE_BINORMALS", "USE_NORMALS", "USE_TANGENTS", "USE_TEXCOORD0", "USE_TEXCOORD1"]
+    },
+    "0x000002000810013F": {
+      "key": "0x000002000810013F",
+      "bits": "0x000002000810013F",
+      "pass": 1,
+      "vertexShader": "VS_Mesh.hlsl",
+      "fragmentShader": "FS_Mesh.hlsl",
+      "defines": ["DIFFUSE_MAP", "NORMAL_MAP", "GLTF_TANGENT_SPACE", "LIGHTMAP_MAP", "USE_BINORMALS", "USE_NORMALS", "USE_TANGENTS", "USE_TEXCOORD0", "USE_TEXCOORD1"]
+    },
+    "0x000002000810023F": {
+      "key": "0x000002000810023F",
+      "bits": "0x000002000810023F",
+      "pass": 1,
+      "vertexShader": "VS_Mesh.hlsl",
+      "fragmentShader": "FS_Mesh.hlsl",
+      "defines": ["DIFFUSE_MAP", "EMISSIVE_MAP", "REFLECT_MAP", "GLTF_TANGENT_SPACE", "LIGHTMAP_MAP", "USE_BINORMALS", "USE_NORMALS", "USE_TANGENTS", "USE_TEXCOORD0", "USE_TEXCOORD1"]
+    },
+    "0x000002000810033F": {
+      "key": "0x000002000810033F",
+      "bits": "0x000002000810033F",
+      "pass": 1,
+      "vertexShader": "VS_Mesh.hlsl",
+      "fragmentShader": "FS_Mesh.hlsl",
+      "defines": ["DIFFUSE_MAP", "NORMAL_MAP", "EMISSIVE_MAP", "REFLECT_MAP", "GLTF_TANGENT_SPACE", "LIGHTMAP_MAP", "USE_BINORMALS", "USE_NORMALS", "USE_TANGENTS", "USE_TEXCOORD0", "USE_TEXCOORD1"]
+    },
+    "0x000002000810093F": {
+      "key": "0x000002000810093F",
+      "bits": "0x000002000810093F",
+      "pass": 1,
+      "vertexShader": "VS_Mesh.hlsl",
+      "fragmentShader": "FS_Mesh.hlsl",
+      "defines": ["DIFFUSE_MAP", "NORMAL_MAP", "METALLIC_MAP", "GLTF_TANGENT_SPACE", "LIGHTMAP_MAP", "USE_BINORMALS", "USE_NORMALS", "USE_TANGENTS", "USE_TEXCOORD0", "USE_TEXCOORD1"]
+    },
+    "0x0000020008100B3F": {
+      "key": "0x0000020008100B3F",
+      "bits": "0x0000020008100B3F",
+      "pass": 1,
+      "vertexShader": "VS_Mesh.hlsl",
+      "fragmentShader": "FS_Mesh.hlsl",
+      "defines": ["DIFFUSE_MAP", "NORMAL_MAP", "EMISSIVE_MAP", "REFLECT_MAP", "METALLIC_MAP", "GLTF_TANGENT_SPACE", "LIGHTMAP_MAP", "USE_BINORMALS", "USE_NORMALS", "USE_TANGENTS", "USE_TEXCOORD0", "USE_TEXCOORD1"]
+    },
+    "0x000002000820003F": {
+      "key": "0x000002000820003F",
+      "bits": "0x000002000820003F",
+      "pass": 2,
+      "vertexShader": "VS_Mesh.hlsl",
+      "fragmentShader": "FS_Mesh.hlsl",
+      "defines": ["DIFFUSE_MAP", "GLTF_TANGENT_SPACE", "LIGHTMAP_MAP", "G_BUFFER_PASS", "USE_BINORMALS", "USE_NORMALS", "USE_TANGENTS", "USE_TEXCOORD0", "USE_TEXCOORD1"]
+    },
+    "0x000002000820013F": {
+      "key": "0x000002000820013F",
+      "bits": "0x000002000820013F",
+      "pass": 2,
+      "vertexShader": "VS_Mesh.hlsl",
+      "fragmentShader": "FS_Mesh.hlsl",
+      "defines": ["DIFFUSE_MAP", "NORMAL_MAP", "GLTF_TANGENT_SPACE", "LIGHTMAP_MAP", "G_BUFFER_PASS", "USE_BINORMALS", "USE_NORMALS", "USE_TANGENTS", "USE_TEXCOORD0", "USE_TEXCOORD1"]
+    },
+    "0x000002000820023F": {
+      "key": "0x000002000820023F",
+      "bits": "0x000002000820023F",
+      "pass": 2,
+      "vertexShader": "VS_Mesh.hlsl",
+      "fragmentShader": "FS_Mesh.hlsl",
+      "defines": ["DIFFUSE_MAP", "EMISSIVE_MAP", "REFLECT_MAP", "GLTF_TANGENT_SPACE", "LIGHTMAP_MAP", "G_BUFFER_PASS", "USE_BINORMALS", "USE_NORMALS", "USE_TANGENTS", "USE_TEXCOORD0", "USE_TEXCOORD1"]
+    },
+    "0x000002000820033F": {
+      "key": "0x000002000820033F",
+      "bits": "0x000002000820033F",
+      "pass": 2,
+      "vertexShader": "VS_Mesh.hlsl",
+      "fragmentShader": "FS_Mesh.hlsl",
+      "defines": ["DIFFUSE_MAP", "NORMAL_MAP", "EMISSIVE_MAP", "REFLECT_MAP", "GLTF_TANGENT_SPACE", "LIGHTMAP_MAP", "G_BUFFER_PASS", "USE_BINORMALS", "USE_NORMALS", "USE_TANGENTS", "USE_TEXCOORD0", "USE_TEXCOORD1"]
+    },
+    "0x000002000820093F": {
+      "key": "0x000002000820093F",
+      "bits": "0x000002000820093F",
+      "pass": 2,
+      "vertexShader": "VS_Mesh.hlsl",
+      "fragmentShader": "FS_Mesh.hlsl",
+      "defines": ["DIFFUSE_MAP", "NORMAL_MAP", "METALLIC_MAP", "GLTF_TANGENT_SPACE", "LIGHTMAP_MAP", "G_BUFFER_PASS", "USE_BINORMALS", "USE_NORMALS", "USE_TANGENTS", "USE_TEXCOORD0", "USE_TEXCOORD1"]
+    },
+    "0x0000020008200B3F": {
+      "key": "0x0000020008200B3F",
+      "bits": "0x0000020008200B3F",
+      "pass": 2,
+      "vertexShader": "VS_Mesh.hlsl",
+      "fragmentShader": "FS_Mesh.hlsl",
+      "defines": ["DIFFUSE_MAP", "NORMAL_MAP", "EMISSIVE_MAP", "REFLECT_MAP", "METALLIC_MAP", "GLTF_TANGENT_SPACE", "LIGHTMAP_MAP", "G_BUFFER_PASS", "USE_BINORMALS", "USE_NORMALS", "USE_TANGENTS", "USE_TEXCOORD0", "USE_TEXCOORD1"]
+    },
+    "0x000002000830003F": {
+      "key": "0x000002000830003F",
+      "bits": "0x000002000830003F",
+      "pass": 3,
+      "vertexShader": "VS_Mesh.hlsl",
+      "fragmentShader": "FS_Mesh.hlsl",
+      "defines": ["DIFFUSE_MAP", "GLTF_TANGENT_SPACE", "LIGHTMAP_MAP", "SHADOW_MAP_PASS", "USE_BINORMALS", "USE_NORMALS", "USE_TANGENTS", "USE_TEXCOORD0", "USE_TEXCOORD1"]
+    },
+    "0x000002000830013F": {
+      "key": "0x000002000830013F",
+      "bits": "0x000002000830013F",
+      "pass": 3,
+      "vertexShader": "VS_Mesh.hlsl",
+      "fragmentShader": "FS_Mesh.hlsl",
+      "defines": ["DIFFUSE_MAP", "NORMAL_MAP", "GLTF_TANGENT_SPACE", "LIGHTMAP_MAP", "SHADOW_MAP_PASS", "USE_BINORMALS", "USE_NORMALS", "USE_TANGENTS", "USE_TEXCOORD0", "USE_TEXCOORD1"]
+    },
+    "0x000002000830023F": {
+      "key": "0x000002000830023F",
+      "bits": "0x000002000830023F",
+      "pass": 3,
+      "vertexShader": "VS_Mesh.hlsl",
+      "fragmentShader": "FS_Mesh.hlsl",
+      "defines": ["DIFFUSE_MAP", "EMISSIVE_MAP", "REFLECT_MAP", "GLTF_TANGENT_SPACE", "LIGHTMAP_MAP", "SHADOW_MAP_PASS", "USE_BINORMALS", "USE_NORMALS", "USE_TANGENTS", "USE_TEXCOORD0", "USE_TEXCOORD1"]
+    },
+    "0x000002000830033F": {
+      "key": "0x000002000830033F",
+      "bits": "0x000002000830033F",
+      "pass": 3,
+      "vertexShader": "VS_Mesh.hlsl",
+      "fragmentShader": "FS_Mesh.hlsl",
+      "defines": ["DIFFUSE_MAP", "NORMAL_MAP", "EMISSIVE_MAP", "REFLECT_MAP", "GLTF_TANGENT_SPACE", "LIGHTMAP_MAP", "SHADOW_MAP_PASS", "USE_BINORMALS", "USE_NORMALS", "USE_TANGENTS", "USE_TEXCOORD0", "USE_TEXCOORD1"]
+    },
+    "0x000002000830093F": {
+      "key": "0x000002000830093F",
+      "bits": "0x000002000830093F",
+      "pass": 3,
+      "vertexShader": "VS_Mesh.hlsl",
+      "fragmentShader": "FS_Mesh.hlsl",
+      "defines": ["DIFFUSE_MAP", "NORMAL_MAP", "METALLIC_MAP", "GLTF_TANGENT_SPACE", "LIGHTMAP_MAP", "SHADOW_MAP_PASS", "USE_BINORMALS", "USE_NORMALS", "USE_TANGENTS", "USE_TEXCOORD0", "USE_TEXCOORD1"]
+    },
+    "0x0000020008300B3F": {
+      "key": "0x0000020008300B3F",
+      "bits": "0x0000020008300B3F",
+      "pass": 3,
+      "vertexShader": "VS_Mesh.hlsl",
+      "fragmentShader": "FS_Mesh.hlsl",
+      "defines": ["DIFFUSE_MAP", "NORMAL_MAP", "EMISSIVE_MAP", "REFLECT_MAP", "METALLIC_MAP", "GLTF_TANGENT_SPACE", "LIGHTMAP_MAP", "SHADOW_MAP_PASS", "USE_BINORMALS", "USE_NORMALS", "USE_TANGENTS", "USE_TEXCOORD0", "USE_TEXCOORD1"]
+    },
+    "0x0000020009A0003F": {
+      "key": "0x0000020009A0003F",
+      "bits": "0x0000020009A0003F",
+      "pass": 26,
+      "vertexShader": "VS_Mesh.hlsl",
+      "fragmentShader": "FS_Mesh.hlsl",
+      "defines": ["DIFFUSE_MAP", "GLTF_TANGENT_SPACE", "LIGHTMAP_MAP", "RADIAL_DEPTH_PASS", "USE_BINORMALS", "USE_NORMALS", "USE_TANGENTS", "USE_TEXCOORD0", "USE_TEXCOORD1"]
+    },
+    "0x0000020009A0013F": {
+      "key": "0x0000020009A0013F",
+      "bits": "0x0000020009A0013F",
+      "pass": 26,
+      "vertexShader": "VS_Mesh.hlsl",
+      "fragmentShader": "FS_Mesh.hlsl",
+      "defines": ["DIFFUSE_MAP", "NORMAL_MAP", "GLTF_TANGENT_SPACE", "LIGHTMAP_MAP", "RADIAL_DEPTH_PASS", "USE_BINORMALS", "USE_NORMALS", "USE_TANGENTS", "USE_TEXCOORD0", "USE_TEXCOORD1"]
+    },
+    "0x0000020009A0023F": {
+      "key": "0x0000020009A0023F",
+      "bits": "0x0000020009A0023F",
+      "pass": 26,
+      "vertexShader": "VS_Mesh.hlsl",
+      "fragmentShader": "FS_Mesh.hlsl",
+      "defines": ["DIFFUSE_MAP", "EMISSIVE_MAP", "REFLECT_MAP", "GLTF_TANGENT_SPACE", "LIGHTMAP_MAP", "RADIAL_DEPTH_PASS", "USE_BINORMALS", "USE_NORMALS", "USE_TANGENTS", "USE_TEXCOORD0", "USE_TEXCOORD1"]
+    },
+    "0x0000020009A0033F": {
+      "key": "0x0000020009A0033F",
+      "bits": "0x0000020009A0033F",
+      "pass": 26,
+      "vertexShader": "VS_Mesh.hlsl",
+      "fragmentShader": "FS_Mesh.hlsl",
+      "defines": ["DIFFUSE_MAP", "NORMAL_MAP", "EMISSIVE_MAP", "REFLECT_MAP", "GLTF_TANGENT_SPACE", "LIGHTMAP_MAP", "RADIAL_DEPTH_PASS", "USE_BINORMALS", "USE_NORMALS", "USE_TANGENTS", "USE_TEXCOORD0", "USE_TEXCOORD1"]
+    },
+    "0x0000020009A0093F": {
+      "key": "0x0000020009A0093F",
+      "bits": "0x0000020009A0093F",
+      "pass": 26,
+      "vertexShader": "VS_Mesh.hlsl",
+      "fragmentShader": "FS_Mesh.hlsl",
+      "defines": ["DIFFUSE_MAP", "NORMAL_MAP", "METALLIC_MAP", "GLTF_TANGENT_SPACE", "LIGHTMAP_MAP", "RADIAL_DEPTH_PASS", "USE_BINORMALS", "USE_NORMALS", "USE_TANGENTS", "USE_TEXCOORD0", "USE_TEXCOORD1"]
+    },
+    "0x0000020009A00B3F": {
+      "key": "0x0000020009A00B3F",
+      "bits": "0x0000020009A00B3F",
+      "pass": 26,
+      "vertexShader": "VS_Mesh.hlsl",
+      "fragmentShader": "FS_Mesh.hlsl",
+      "defines": ["DIFFUSE_MAP", "NORMAL_MAP", "EMISSIVE_MAP", "REFLECT_MAP", "METALLIC_MAP", "GLTF_TANGENT_SPACE", "LIGHTMAP_MAP", "RADIAL_DEPTH_PASS", "USE_BINORMALS", "USE_NORMALS", "USE_TANGENTS", "USE_TEXCOORD0", "USE_TEXCOORD1"]
     }
   }
 }

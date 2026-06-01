@@ -45,6 +45,10 @@ namespace t850 {
     SDL_Window* m_pWindow;
     SDL_GLContext m_glContext;
   private:
+    void UpdateMouseMode();
+    void ReleaseMouseMode();
+    bool m_cursorConfined = false;
+    bool m_relativeMouseMode = false;
   };
 }
 

@@ -1777,7 +1777,8 @@ namespace t850 {
     // Submit
     VkSemaphore waitSemaphores[] = { m_imageAvailableSemaphores[m_currentFrame] };
     VkPipelineStageFlags waitStages[] = {
-      latePresentCopied ? VK_PIPELINE_STAGE_TRANSFER_BIT : VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT
+      static_cast<VkPipelineStageFlags>(
+          latePresentCopied ? VK_PIPELINE_STAGE_TRANSFER_BIT : VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT)
     };
     VkSemaphore presentSemaphore =
       (m_imageIndex < m_imageRenderFinishedSemaphores.size())

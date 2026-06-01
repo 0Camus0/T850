@@ -81,9 +81,9 @@ def sanitize_name(value: str) -> str:
 
 
 def archive_roots(q3_root: Path, rtx_root: Path | None) -> list[Path]:
-    roots: list[Path] = [q3_root / "baseq3"]
+    roots: list[Path] = [q3_root if q3_root.name.lower() == "baseq3" else q3_root / "baseq3"]
     if rtx_root is not None:
-        roots.append(rtx_root / "baseq3")
+        roots.append(rtx_root if rtx_root.name.lower() == "baseq3" else rtx_root / "baseq3")
     return [root for root in roots if root.exists()]
 
 

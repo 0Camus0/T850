@@ -25,6 +25,7 @@ struct SceneObjectDesc {
   bool frozen = false;
   bool show_wire = false;
   std::optional<float> nav_agent_front_yaw_offset_deg;
+  std::optional<float> nav_agent_face_yaw_sign;
 };
 
 struct SceneCameraDesc {

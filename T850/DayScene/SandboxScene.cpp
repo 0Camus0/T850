@@ -27,6 +27,7 @@
 #include <filesystem>
 #include <iomanip>
 #include <string>
+#include <cstdint>
 #include <cmath>
 #include <vector>
 #include <algorithm>
@@ -74,6 +75,172 @@ namespace {
     const float dy = a.y - b.y;
     const float dz = a.z - b.z;
     return dx * dx + dy * dy + dz * dz;
+  }
+
+  float HorizontalDistanceSq3(const XVECTOR3& a, const XVECTOR3& b) {
+    const float dx = a.x - b.x;
+    const float dz = a.z - b.z;
+    return dx * dx + dz * dz;
+  }
+
+  template <typename T>
+  void HashNavCacheValue(uint64_t& hash, const T& value) {
+    const unsigned char* bytes = reinterpret_cast<const unsigned char*>(&value);
+    for (std::size_t i = 0; i < sizeof(T); ++i) {
+      hash ^= bytes[i];
+      hash *= 0x100000001b3ull;
+    }
+  }
+
+  void HashNavCacheString(uint64_t& hash, const std::string& value) {
+    for (unsigned char c : value) {
+      hash ^= c;
+      hash *= 0x100000001b3ull;
+    }
+    const unsigned char terminator = 0;
+    hash ^= terminator;
+    hash *= 0x100000001b3ull;
+  }
+
+  void HashNavCacheMatrix(uint64_t& hash, const XMATRIX44& matrix) {
+    for (int row = 0; row < 4; ++row) {
+      for (int col = 0; col < 4; ++col) {
+        HashNavCacheValue(hash, matrix.m[row][col]);
+      }
+    }
+  }
+
+  void HashNavCacheFileSignature(uint64_t& hash, const std::string& resourcePath) {
+    HashNavCacheString(hash, resourcePath);
+    std::error_code ec;
+    std::filesystem::path path(resourcePath);
+    if (path.empty() || !std::filesystem::is_regular_file(path, ec)) {
+      ec.clear();
+      path = t850::ResourceLocator::Instance().ResolveFilePath(resourcePath);
+    }
+    if (!path.empty() && std::filesystem::is_regular_file(path, ec)) {
+      ec.clear();
+      const uint64_t size = static_cast<uint64_t>(std::filesystem::file_size(path, ec));
+      if (!ec) {
+        HashNavCacheValue(hash, size);
+      }
+      ec.clear();
+      const auto writeTime = std::filesystem::last_write_time(path, ec);
+      if (!ec) {
+        const int64_t ticks = static_cast<int64_t>(writeTime.time_since_epoch().count());
+        HashNavCacheValue(hash, ticks);
+      }
+    }
+  }
+
+  void HashNavCacheSettings(uint64_t& hash, const t850::navigation::NavMeshBuildSettings& settings) {
+    HashNavCacheValue(hash, settings.cellSize);
+    HashNavCacheValue(hash, settings.cellHeight);
+    HashNavCacheValue(hash, settings.agentHeight);
+    HashNavCacheValue(hash, settings.agentRadius);
+    HashNavCacheValue(hash, settings.agentMaxClimb);
+    HashNavCacheValue(hash, settings.agentMaxSlope);
+    HashNavCacheValue(hash, settings.regionMinSize);
+    HashNavCacheValue(hash, settings.regionMergeSize);
+    HashNavCacheValue(hash, settings.edgeMaxLen);
+    HashNavCacheValue(hash, settings.edgeMaxError);
+    HashNavCacheValue(hash, settings.vertsPerPoly);
+    HashNavCacheValue(hash, settings.detailSampleDist);
+    HashNavCacheValue(hash, settings.detailSampleMaxError);
+    HashNavCacheValue(hash, settings.enableAutoDropLinks);
+    HashNavCacheValue(hash, settings.dropLinkMinHeight);
+    HashNavCacheValue(hash, settings.dropLinkMaxHeight);
+    HashNavCacheValue(hash, settings.dropLinkMaxHorizontalDistance);
+    HashNavCacheValue(hash, settings.dropLinkSampleSpacing);
+    HashNavCacheValue(hash, settings.dropLinkRadius);
+    HashNavCacheValue(hash, settings.enableAutoJumpLinks);
+    HashNavCacheValue(hash, settings.jumpLinkMaxHorizontalDistance);
+    HashNavCacheValue(hash, settings.jumpLinkSampleSpacing);
+    HashNavCacheValue(hash, settings.jumpLinkRadius);
+    HashNavCacheValue(hash, settings.enableHybridJumpLinks);
+    HashNavCacheValue(hash, settings.hybridJumpMaxLinks);
+    HashNavCacheValue(hash, settings.offMeshLinkValidationKey);
+  }
+
+  void HashQ3JumpPads(uint64_t& hash, const t850::Q3BspCollisionWorld* q3CollisionWorld) {
+    const uint32_t hasQ3Collision = q3CollisionWorld && q3CollisionWorld->IsLoaded() ? 1u : 0u;
+    HashNavCacheValue(hash, hasQ3Collision);
+    if (!hasQ3Collision) {
+      return;
+    }
+
+    HashNavCacheFileSignature(hash, q3CollisionWorld->GetResourcePath());
+    const std::vector<t850::Q3BspCollisionWorld::JumpPad>& jumpPads = q3CollisionWorld->GetJumpPads();
+    const uint64_t jumpPadCount = static_cast<uint64_t>(jumpPads.size());
+    HashNavCacheValue(hash, jumpPadCount);
+    for (const t850::Q3BspCollisionWorld::JumpPad& jumpPad : jumpPads) {
+      HashNavCacheValue(hash, jumpPad.entityId);
+      HashNavCacheValue(hash, jumpPad.mins.x);
+      HashNavCacheValue(hash, jumpPad.mins.y);
+      HashNavCacheValue(hash, jumpPad.mins.z);
+      HashNavCacheValue(hash, jumpPad.maxs.x);
+      HashNavCacheValue(hash, jumpPad.maxs.y);
+      HashNavCacheValue(hash, jumpPad.maxs.z);
+      HashNavCacheValue(hash, jumpPad.hasTargetPosition);
+      HashNavCacheValue(hash, jumpPad.targetPosition.x);
+      HashNavCacheValue(hash, jumpPad.targetPosition.y);
+      HashNavCacheValue(hash, jumpPad.targetPosition.z);
+      HashNavCacheValue(hash, jumpPad.velocity.x);
+      HashNavCacheValue(hash, jumpPad.velocity.y);
+      HashNavCacheValue(hash, jumpPad.velocity.z);
+    }
+  }
+
+  uint64_t ComputeQ3NavLinkValidationKey(const t850::Q3BspCollisionWorld* q3CollisionWorld) {
+    if (!q3CollisionWorld || !q3CollisionWorld->IsLoaded()) {
+      return 0;
+    }
+
+    uint64_t hash = 0xcbf29ce484222325ull;
+    constexpr uint32_t kQ3NavLinkValidationVersion = 7;
+    HashNavCacheValue(hash, kQ3NavLinkValidationVersion);
+    HashNavCacheFileSignature(hash, q3CollisionWorld->GetResourcePath());
+    const uint64_t brushCount = static_cast<uint64_t>(q3CollisionWorld->GetBrushCount());
+    const uint64_t patchFacetCount = static_cast<uint64_t>(q3CollisionWorld->GetPatchFacetCount());
+    const uint64_t jumpPadCount = static_cast<uint64_t>(q3CollisionWorld->GetJumpPadCount());
+    const uint64_t reachabilityCount = static_cast<uint64_t>(q3CollisionWorld->GetReachabilityCount());
+    HashNavCacheValue(hash, brushCount);
+    HashNavCacheValue(hash, patchFacetCount);
+    HashNavCacheValue(hash, jumpPadCount);
+    HashNavCacheValue(hash, reachabilityCount);
+    return hash;
+  }
+
+  uint64_t ComputeSandboxNavMeshCacheKey(const PrimitiveInst* instances,
+                                         int instanceCount,
+                                         const std::vector<std::string>& meshPaths,
+                                         const std::string& scenePath,
+                                         const t850::navigation::NavMeshBuildSettings& settings,
+                                         const t850::Q3BspCollisionWorld* q3CollisionWorld) {
+    uint64_t hash = 0xcbf29ce484222325ull;
+    constexpr uint32_t kSandboxNavCacheVersion = 3;
+    HashNavCacheValue(hash, kSandboxNavCacheVersion);
+    HashNavCacheFileSignature(hash, scenePath);
+    HashNavCacheSettings(hash, settings);
+    HashQ3JumpPads(hash, q3CollisionWorld);
+    int includedSources = 0;
+    for (int meshIndex = 0; meshIndex < instanceCount; ++meshIndex) {
+      const PrimitiveInst& instance = instances[meshIndex];
+      if (!instance.Visible || !instance.pBase || instance.GetSkinnedMesh()) {
+        continue;
+      }
+
+      ++includedSources;
+      HashNavCacheValue(hash, meshIndex);
+      if (meshIndex >= 0 && meshIndex < static_cast<int>(meshPaths.size())) {
+        HashNavCacheFileSignature(hash, meshPaths[static_cast<std::size_t>(meshIndex)]);
+      } else if (const RenderMesh* mesh = dynamic_cast<const RenderMesh*>(instance.pBase)) {
+        HashNavCacheFileSignature(hash, mesh->m_sourcePath);
+      }
+      HashNavCacheMatrix(hash, instance.Final);
+    }
+    HashNavCacheValue(hash, includedSources);
+    return includedSources > 0 ? hash : 0;
   }
 
   uint32_t NextNavTestRandom(uint32_t& state, uint32_t salt) {
@@ -138,14 +305,15 @@ namespace {
   bool RotateNavTestAgentToFace(PrimitiveInst& instance,
                                 const XVECTOR3& agentPosition,
                                 const XVECTOR3& targetPosition,
-                                float yawOffsetDegrees) {
+                                float yawOffsetDegrees,
+                                float yawSign) {
     const float dx = targetPosition.x - agentPosition.x;
     const float dz = targetPosition.z - agentPosition.z;
     if (dx * dx + dz * dz <= 0.0001f) {
       return false;
     }
 
-    const float yawDegrees = Rad2Deg(std::atan2(dx, dz)) + yawOffsetDegrees;
+    const float yawDegrees = Rad2Deg(std::atan2(dx, dz)) * (yawSign < 0.0f ? -1.0f : 1.0f) + yawOffsetDegrees;
     instance.RotateYAbsolute(yawDegrees);
     return true;
   }
@@ -197,6 +365,438 @@ namespace {
     projectedTarget = playerNavPoint;
     if (error) *error = "slot projection failed, using player nav point: " + projectionError;
     return true;
+  }
+
+  bool SimulateQ3JumpPadLanding(const t850::Q3BspCollisionWorld& collisionWorld,
+                                const XVECTOR3& source,
+                                const XVECTOR3& initialVelocity,
+                                XVECTOR3& outLanding) {
+    const t850::KinematicCharacterSettings q3Settings = t850::MakeQuake3CharacterSettings();
+    const XVECTOR3 halfExtents(
+        q3Settings.capsuleRadius,
+        q3Settings.capsuleHalfHeight + q3Settings.capsuleRadius,
+        q3Settings.capsuleRadius,
+        0.0f);
+
+    XVECTOR3 position = source;
+    position.w = 1.0f;
+    XVECTOR3 velocity = initialVelocity;
+    velocity.w = 0.0f;
+
+    constexpr float kStepSeconds = 1.0f / 60.0f;
+    constexpr float kMaxSimSeconds = 6.0f;
+    constexpr float kMinAirSeconds = 0.08f;
+    constexpr float kMinWalkNormalY = 0.62f;
+    const int maxSteps = static_cast<int>(kMaxSimSeconds / kStepSeconds);
+
+    for (int stepIndex = 0; stepIndex < maxSteps; ++stepIndex) {
+      const float elapsed = static_cast<float>(stepIndex) * kStepSeconds;
+      XVECTOR3 nextVelocity = velocity;
+      nextVelocity.y -= q3Settings.gravity * kStepSeconds;
+
+      XVECTOR3 displacement = (velocity + nextVelocity) * (0.5f * kStepSeconds);
+      displacement.w = 0.0f;
+      if (displacement.Length() <= 0.000001f) {
+        velocity = nextVelocity;
+        continue;
+      }
+
+      t850::CharacterBoxSweep sweep;
+      sweep.startCenter = position;
+      sweep.displacement = displacement;
+      sweep.halfExtents = halfExtents;
+      t850::CharacterCollisionHit hit;
+      if (collisionWorld.SweepBox(sweep, hit) && hit.hit) {
+        position += displacement * (std::max)(0.0f, (std::min)(1.0f, hit.fraction));
+        position.w = 1.0f;
+        if (elapsed >= kMinAirSeconds && hit.normal.y >= kMinWalkNormalY) {
+          outLanding = position;
+          return true;
+        }
+
+        const float intoNormal =
+            velocity.x * hit.normal.x +
+            velocity.y * hit.normal.y +
+            velocity.z * hit.normal.z;
+        velocity = nextVelocity - hit.normal * intoNormal;
+        velocity.w = 0.0f;
+        position += hit.normal * 0.01f;
+        position.w = 1.0f;
+        continue;
+      }
+
+      position += displacement;
+      position.w = 1.0f;
+      velocity = nextVelocity;
+    }
+
+    return false;
+  }
+
+  float Q3CharacterGroundOffsetY(const t850::KinematicCharacterSettings& settings) {
+    return settings.capsuleHalfHeight + settings.capsuleRadius;
+  }
+
+  XVECTOR3 Q3CenterFromGroundPoint(XVECTOR3 groundPoint, const t850::KinematicCharacterSettings& settings) {
+    groundPoint.y += Q3CharacterGroundOffsetY(settings);
+    groundPoint.w = 1.0f;
+    return groundPoint;
+  }
+
+  XVECTOR3 Q3GroundPointFromCenter(XVECTOR3 center, const t850::KinematicCharacterSettings& settings) {
+    center.y -= Q3CharacterGroundOffsetY(settings);
+    center.w = 1.0f;
+    return center;
+  }
+
+  XVECTOR3 HorizontalDirectionTo(const XVECTOR3& from, const XVECTOR3& to, const XVECTOR3& fallback) {
+    XVECTOR3 direction = to - from;
+    direction.y = 0.0f;
+    direction.w = 0.0f;
+    if (direction.Length() <= 0.0001f) {
+      direction = fallback;
+    }
+    direction.y = 0.0f;
+    direction.w = 0.0f;
+    if (direction.Length() <= 0.0001f) {
+      direction = XVECTOR3(0.0f, 0.0f, 1.0f, 0.0f);
+    }
+    direction.Normalize();
+    return direction;
+  }
+
+  t850::KinematicCharacterInput BuildNavAgentPhysicsInput(const XVECTOR3& groundPosition,
+                                                          const XVECTOR3& target,
+                                                          bool jump) {
+    t850::KinematicCharacterInput input;
+    const XVECTOR3 forward = HorizontalDirectionTo(groundPosition, target, XVECTOR3(0.0f, 0.0f, 1.0f, 0.0f));
+    input.forward = forward;
+    input.right = XVECTOR3(forward.z, 0.0f, -forward.x, 0.0f);
+    input.moveForward = true;
+    input.moveForwardAmount = 1.0f;
+    input.jump = jump;
+    input.sprint = false;
+    return input;
+  }
+
+  bool SimulateQ3TraversalLinkLanding(const t850::Q3BspCollisionWorld& collisionWorld,
+                                      const t850::navigation::NavOffMeshLink& link,
+                                      bool jump,
+                                      XVECTOR3& outLanding) {
+    const t850::KinematicCharacterSettings q3Settings = t850::MakeQuake3CharacterSettings();
+    XVECTOR3 horizontal = link.end - link.start;
+    horizontal.y = 0.0f;
+    horizontal.w = 0.0f;
+    const float horizontalDistance = horizontal.Length();
+    if (horizontalDistance <= 0.10f) {
+      return false;
+    }
+    horizontal /= horizontalDistance;
+
+    XVECTOR3 position = Q3CenterFromGroundPoint(link.start, q3Settings);
+    XVECTOR3 velocity = horizontal * q3Settings.walkSpeed;
+    velocity.y = jump ? q3Settings.jumpSpeed : 0.0f;
+    velocity.w = 0.0f;
+
+    const XVECTOR3 halfExtents(
+        q3Settings.capsuleRadius,
+        q3Settings.capsuleHalfHeight + q3Settings.capsuleRadius,
+        q3Settings.capsuleRadius,
+        0.0f);
+
+    constexpr float kStepSeconds = 1.0f / 60.0f;
+    constexpr float kMaxSimSeconds = 3.0f;
+    constexpr float kMinAirSeconds = 0.10f;
+    constexpr float kMinWalkNormalY = 0.62f;
+    const float landingTolerance = (std::max)(1.0f, link.radius * 2.0f);
+    const float landingToleranceSq = landingTolerance * landingTolerance;
+    const int maxSteps = static_cast<int>(kMaxSimSeconds / kStepSeconds);
+
+    for (int stepIndex = 0; stepIndex < maxSteps; ++stepIndex) {
+      const float elapsed = static_cast<float>(stepIndex) * kStepSeconds;
+      XVECTOR3 nextVelocity = velocity;
+      nextVelocity.y -= q3Settings.gravity * kStepSeconds;
+
+      XVECTOR3 displacement = (velocity + nextVelocity) * (0.5f * kStepSeconds);
+      displacement.w = 0.0f;
+      if (displacement.Length() <= 0.000001f) {
+        velocity = nextVelocity;
+        continue;
+      }
+
+      t850::CharacterBoxSweep sweep;
+      sweep.startCenter = position;
+      sweep.displacement = displacement;
+      sweep.halfExtents = halfExtents;
+      t850::CharacterCollisionHit hit;
+      if (collisionWorld.SweepBox(sweep, hit) && hit.hit) {
+        position += displacement * (std::max)(0.0f, (std::min)(1.0f, hit.fraction));
+        position.w = 1.0f;
+        if (elapsed >= kMinAirSeconds && nextVelocity.y <= 0.0f && hit.normal.y >= kMinWalkNormalY) {
+          const XVECTOR3 landing = Q3GroundPointFromCenter(position, q3Settings);
+          if (HorizontalDistanceSq3(landing, link.end) <= landingToleranceSq &&
+              std::fabs(landing.y - link.end.y) <= 1.25f) {
+            outLanding = landing;
+            return true;
+          }
+        }
+        return false;
+      }
+
+      position += displacement;
+      position.w = 1.0f;
+      velocity = nextVelocity;
+    }
+
+    return false;
+  }
+
+  bool ValidateQ3NavLinkSegment(const t850::Q3BspCollisionWorld& collisionWorld,
+                                const t850::navigation::NavOffMeshLink& link) {
+    if (!std::isfinite(link.start.x) || !std::isfinite(link.start.y) || !std::isfinite(link.start.z) ||
+        !std::isfinite(link.end.x) || !std::isfinite(link.end.y) || !std::isfinite(link.end.z)) {
+      return false;
+    }
+
+    XVECTOR3 delta = link.end - link.start;
+    delta.w = 0.0f;
+    const float length = delta.Length();
+    if (length <= 0.05f) {
+      return false;
+    }
+
+    XVECTOR3 horizontalDir(delta.x, 0.0f, delta.z, 0.0f);
+    if (horizontalDir.Length() > 0.0001f) {
+      horizontalDir.Normalize();
+    } else {
+      horizontalDir = XVECTOR3(0.0f, 0.0f, 0.0f, 0.0f);
+    }
+
+    const float endpointInset = (std::min)(0.25f, length * 0.10f);
+    const float radius = (std::max)(0.08f, (std::min)(0.28f, link.radius * 0.35f));
+    const float verticalHalfExtent = (std::max)(0.05f, (std::min)(0.14f, radius * 0.5f));
+    const float lift = (std::max)(0.30f, verticalHalfExtent + 0.18f);
+
+    XVECTOR3 start = link.start + horizontalDir * endpointInset;
+    XVECTOR3 end = link.end - horizontalDir * endpointInset;
+    start.y += lift;
+    end.y += lift;
+    start.w = 1.0f;
+    end.w = 1.0f;
+
+    t850::CharacterBoxSweep sweep;
+    sweep.startCenter = start;
+    sweep.displacement = end - start;
+    sweep.displacement.w = 0.0f;
+    sweep.halfExtents = XVECTOR3(radius, verticalHalfExtent, radius, 0.0f);
+
+    t850::CharacterCollisionHit hit;
+    if (!collisionWorld.SweepBox(sweep, hit) || !hit.hit) {
+      return true;
+    }
+    return hit.fraction >= 0.985f;
+  }
+
+  bool ValidateQ3HybridJumpIntentLink(const t850::Q3BspCollisionWorld& collisionWorld,
+                                      const t850::navigation::NavOffMeshLink& link) {
+    const t850::KinematicCharacterSettings q3Settings = t850::MakeQuake3CharacterSettings();
+    XVECTOR3 delta = link.end - link.start;
+    delta.y = 0.0f;
+    delta.w = 0.0f;
+    const float horizontalDistance = delta.Length();
+    if (horizontalDistance < 1.25f) {
+      return false;
+    }
+
+    const float verticalDelta = link.end.y - link.start.y;
+    if (verticalDelta > q3Settings.stepHeight * 0.75f) {
+      return false;
+    }
+    if (verticalDelta > -0.20f && horizontalDistance < 2.50f) {
+      return false;
+    }
+
+    delta /= horizontalDistance;
+
+    const XVECTOR3 halfExtents(
+        q3Settings.capsuleRadius * 0.85f,
+        q3Settings.capsuleHalfHeight + q3Settings.capsuleRadius * 0.85f,
+        q3Settings.capsuleRadius * 0.85f,
+        0.0f);
+    t850::CharacterBoxSweep corridorSweep;
+    corridorSweep.startCenter = Q3CenterFromGroundPoint(link.start, q3Settings);
+    corridorSweep.startCenter.y += 0.08f;
+    corridorSweep.displacement = delta * (std::min)(2.0f, horizontalDistance * 0.45f);
+    corridorSweep.displacement.w = 0.0f;
+    corridorSweep.halfExtents = halfExtents;
+
+    t850::CharacterCollisionHit corridorHit;
+    if (collisionWorld.SweepBox(corridorSweep, corridorHit) &&
+        corridorHit.hit &&
+        corridorHit.fraction < 0.95f &&
+        corridorHit.normal.y < q3Settings.minWalkNormalY) {
+      return false;
+    }
+
+    const XVECTOR3 probeHalfExtents(
+        q3Settings.capsuleRadius * 0.45f,
+        0.05f,
+        q3Settings.capsuleRadius * 0.45f,
+        0.0f);
+    t850::CharacterBoxSweep supportSweep;
+    supportSweep.startCenter = link.start + delta * (q3Settings.capsuleRadius + 0.45f);
+    supportSweep.startCenter.y += 0.35f;
+    supportSweep.startCenter.w = 1.0f;
+    supportSweep.displacement = XVECTOR3(0.0f, -1.25f, 0.0f, 0.0f);
+    supportSweep.halfExtents = probeHalfExtents;
+
+    t850::CharacterCollisionHit supportHit;
+    if (collisionWorld.SweepBox(supportSweep, supportHit) &&
+        supportHit.hit &&
+        supportHit.normal.y >= q3Settings.minWalkNormalY) {
+      const float supportGroundY = supportHit.position.y - probeHalfExtents.y;
+      const float dropFromStart = link.start.y - supportGroundY;
+      if (dropFromStart < q3Settings.stepHeight * 0.75f) {
+        return false;
+      }
+    }
+
+    return true;
+  }
+
+  bool ValidateQ3NavOffMeshLink(const t850::Q3BspCollisionWorld& collisionWorld,
+                                const t850::navigation::NavOffMeshLink& link) {
+    if (link.type == t850::navigation::NavTraversalType::Walk ||
+        link.type == t850::navigation::NavTraversalType::JumpPad) {
+      return true;
+    }
+    if (link.type == t850::navigation::NavTraversalType::JumpIntent) {
+      return ValidateQ3HybridJumpIntentLink(collisionWorld, link);
+    }
+    if (link.type == t850::navigation::NavTraversalType::Jump) {
+      XVECTOR3 landing;
+      return SimulateQ3TraversalLinkLanding(collisionWorld, link, true, landing);
+    }
+    if (link.type == t850::navigation::NavTraversalType::Drop) {
+      XVECTOR3 landing;
+      return SimulateQ3TraversalLinkLanding(collisionWorld, link, false, landing);
+    }
+    return ValidateQ3NavLinkSegment(collisionWorld, link);
+  }
+
+  std::vector<t850::navigation::NavOffMeshLink> BuildQ3JumpPadNavLinks(const t850::Q3BspCollisionWorld* q3CollisionWorld) {
+    std::vector<t850::navigation::NavOffMeshLink> links;
+    if (!q3CollisionWorld || !q3CollisionWorld->IsLoaded()) {
+      return links;
+    }
+
+    const std::vector<t850::Q3BspCollisionWorld::JumpPad>& jumpPads = q3CollisionWorld->GetJumpPads();
+    links.reserve(jumpPads.size());
+    for (const t850::Q3BspCollisionWorld::JumpPad& jumpPad : jumpPads) {
+      XVECTOR3 source(
+          (jumpPad.mins.x + jumpPad.maxs.x) * 0.5f,
+          (jumpPad.mins.y + jumpPad.maxs.y) * 0.5f,
+          (jumpPad.mins.z + jumpPad.maxs.z) * 0.5f,
+          1.0f);
+      XVECTOR3 landing = jumpPad.targetPosition;
+      const bool hasTargetPosition =
+          jumpPad.hasTargetPosition &&
+          std::isfinite(landing.x) &&
+          std::isfinite(landing.y) &&
+          std::isfinite(landing.z) &&
+          DistanceSquared(landing, source) > 0.25f;
+      if (!hasTargetPosition &&
+          !SimulateQ3JumpPadLanding(*q3CollisionWorld, source, jumpPad.velocity, landing)) {
+        T8_LOG_ERROR("[Navigation] Q3 jump pad %u did not produce a walkable landing link",
+                     jumpPad.entityId);
+        continue;
+      }
+
+      t850::navigation::NavOffMeshLink link;
+      link.start = source;
+      link.end = landing;
+      link.radius = 1.0f;
+      link.bidirectional = false;
+      link.type = t850::navigation::NavTraversalType::JumpPad;
+      link.userId = jumpPad.entityId;
+      links.push_back(link);
+    }
+    return links;
+  }
+
+  t850::navigation::NavTraversalType Q3ReachabilityTravelTypeToNavTraversal(const std::string& travelType) {
+    if (travelType == "walk_off_ledge") {
+      return t850::navigation::NavTraversalType::Drop;
+    }
+    if (travelType == "jump" || travelType == "barrier_jump") {
+      return t850::navigation::NavTraversalType::Jump;
+    }
+    if (travelType == "jump_pad") {
+      return t850::navigation::NavTraversalType::JumpPad;
+    }
+    return t850::navigation::NavTraversalType::Walk;
+  }
+
+  std::vector<t850::navigation::NavOffMeshLink> BuildQ3AasReachabilityNavLinks(
+      const t850::Q3BspCollisionWorld* q3CollisionWorld) {
+    std::vector<t850::navigation::NavOffMeshLink> links;
+    if (!q3CollisionWorld || !q3CollisionWorld->IsLoaded()) {
+      return links;
+    }
+
+    const std::vector<t850::Q3BspCollisionWorld::Reachability>& reachabilities =
+        q3CollisionWorld->GetReachabilities();
+    links.reserve(reachabilities.size());
+    int dropCount = 0;
+    int jumpCount = 0;
+    int jumpPadCount = 0;
+    int ignoredCount = 0;
+    for (const t850::Q3BspCollisionWorld::Reachability& reachability : reachabilities) {
+      const t850::navigation::NavTraversalType traversalType =
+          Q3ReachabilityTravelTypeToNavTraversal(reachability.travelType);
+      if (traversalType == t850::navigation::NavTraversalType::Walk) {
+        ++ignoredCount;
+        continue;
+      }
+      if (!std::isfinite(reachability.start.x) ||
+          !std::isfinite(reachability.start.y) ||
+          !std::isfinite(reachability.start.z) ||
+          !std::isfinite(reachability.end.x) ||
+          !std::isfinite(reachability.end.y) ||
+          !std::isfinite(reachability.end.z) ||
+          DistanceSquared(reachability.start, reachability.end) <= 0.01f) {
+        ++ignoredCount;
+        continue;
+      }
+
+      t850::navigation::NavOffMeshLink link;
+      link.start = reachability.start;
+      link.end = reachability.end;
+      link.radius = traversalType == t850::navigation::NavTraversalType::JumpPad ? 1.0f : 0.75f;
+      link.bidirectional = false;
+      link.type = traversalType;
+      link.userId = reachability.travelTypeId;
+      links.push_back(link);
+
+      if (traversalType == t850::navigation::NavTraversalType::Drop) {
+        ++dropCount;
+      } else if (traversalType == t850::navigation::NavTraversalType::Jump) {
+        ++jumpCount;
+      } else if (traversalType == t850::navigation::NavTraversalType::JumpPad) {
+        ++jumpPadCount;
+      }
+    }
+
+    if (!reachabilities.empty()) {
+      T8_LOG_INFO("[Navigation] Q3 AAS reachability links prepared: total=%zu used=%zu drop=%d jump=%d jumpPad=%d ignored=%d",
+                  reachabilities.size(),
+                  links.size(),
+                  dropCount,
+                  jumpCount,
+                  jumpPadCount,
+                  ignoredCount);
+    }
+    return links;
   }
 
   struct SandboxConsoleLine {
@@ -818,6 +1418,24 @@ namespace {
     for (const auto& value : values)
       if (value.index == index) return &value;
     return nullptr;
+  }
+
+  const t850::SandboxAnimationOverrideDesc* FindAnimationOverride(
+      const std::vector<t850::SandboxAnimationOverrideDesc>& values,
+      int index) {
+    for (const auto& value : values)
+      if (value.index == index) return &value;
+    return nullptr;
+  }
+
+  bool AnimationOverrideNearlyEqual(const t850::SandboxAnimationOverrideDesc& lhs,
+                                    const t850::SandboxAnimationOverrideDesc& rhs) {
+    return lhs.index == rhs.index &&
+           lhs.mesh == rhs.mesh &&
+           NearlyEqual(lhs.anim_speed, rhs.anim_speed) &&
+           lhs.anim_select == rhs.anim_select &&
+           lhs.anim_mode == rhs.anim_mode &&
+           lhs.current_keyframe == rhs.current_keyframe;
   }
 
   std::array<float, 3> ToArray(const XVECTOR3& value) {
@@ -2549,6 +3167,113 @@ namespace {
       if (selector.name == name) return &selector;
     return nullptr;
   }
+
+  struct CubemapSelection {
+    std::string path;
+    int index = -1;
+  };
+
+  std::string CubemapPathForSelectorIndex(const t850::SelectorDesc& selector, int selectedIndex) {
+    if (selectedIndex < 0 || selectedIndex >= static_cast<int>(selector.options.size())) {
+      return {};
+    }
+    return "sky/" + selector.options[static_cast<std::size_t>(selectedIndex)];
+  }
+
+  bool ResourcePathEquals(std::string lhs, std::string rhs) {
+    return ToLowerAscii(NormalizeSceneResourcePath(lhs)) ==
+           ToLowerAscii(NormalizeSceneResourcePath(rhs));
+  }
+
+  int CubemapSelectorIndexForPath(const t850::SelectorDesc& selector, const std::string& resourcePath) {
+    for (int index = 0; index < static_cast<int>(selector.options.size()); ++index) {
+      if (ResourcePathEquals(CubemapPathForSelectorIndex(selector, index), resourcePath)) {
+        return index;
+      }
+    }
+    return -1;
+  }
+
+  int CubemapSelectorIndexFromProfile(const t850::SandboxProfileDesc& profile) {
+    for (const t850::IntOverrideDesc& selector : profile.selectors) {
+      if (selector.name == "cubemap") {
+        return selector.value;
+      }
+    }
+    return -1;
+  }
+
+  CubemapSelection CubemapSelectionFromProfile(const t850::SelectorDesc& cubemapDesc,
+                                               const t850::SandboxProfileDesc& profile) {
+    CubemapSelection selection;
+    if (profile.cubemap_path.has_value()) {
+      selection.path = NormalizeSceneResourcePath(*profile.cubemap_path);
+      if (!selection.path.empty()) {
+        selection.index = CubemapSelectorIndexForPath(cubemapDesc, selection.path);
+        return selection;
+      }
+    }
+
+    selection.index = CubemapSelectorIndexFromProfile(profile);
+    if (selection.index >= 0 && selection.index < static_cast<int>(cubemapDesc.options.size())) {
+      selection.path = CubemapPathForSelectorIndex(cubemapDesc, selection.index);
+      return selection;
+    }
+
+    selection.index = -1;
+    return selection;
+  }
+
+  CubemapSelection ResolveStartupCubemapSelection(const std::vector<t850::SelectorDesc>& selectors,
+                                                  const std::vector<t850::SandboxProfileDesc>& profiles,
+                                                  bool embeddedInScene,
+                                                  const std::string& modelKey) {
+    const t850::SelectorDesc* cubemapDesc = FindSelectorDesc(selectors, "cubemap");
+    if (!cubemapDesc) {
+      return {};
+    }
+
+    const t850::SandboxProfileDesc* baseProfile = nullptr;
+    const t850::SandboxProfileDesc* runtimeProfile = nullptr;
+    int bestRuntimeScore = -1;
+    for (const t850::SandboxProfileDesc& profile : profiles) {
+      const bool modelSpecific = !profile.model.empty();
+      const bool modelMatches = embeddedInScene
+          ? !modelSpecific
+          : (!modelSpecific || SandboxProfileModelKey(profile.model) == modelKey);
+      if (!modelMatches) {
+        continue;
+      }
+
+      const bool hasTarget = !profile.name.empty() ||
+                             !profile.platform.empty() ||
+                             !profile.architecture.empty() ||
+                             !profile.gpu_family.empty() ||
+                             !profile.gpu_name_contains.empty();
+      if (!hasTarget && (embeddedInScene || modelSpecific)) {
+        baseProfile = &profile;
+        continue;
+      }
+
+      const int score = t850::ScoreSceneProfileMatch(profile, modelKey);
+      if (score > bestRuntimeScore) {
+        bestRuntimeScore = score;
+        runtimeProfile = &profile;
+      }
+    }
+
+    CubemapSelection selection;
+    if (baseProfile) {
+      selection = CubemapSelectionFromProfile(*cubemapDesc, *baseProfile);
+    }
+    if (runtimeProfile && runtimeProfile != baseProfile) {
+      const CubemapSelection runtimeSelection = CubemapSelectionFromProfile(*cubemapDesc, *runtimeProfile);
+      if (!runtimeSelection.path.empty()) {
+        selection = runtimeSelection;
+      }
+    }
+    return selection;
+  }
 }
 
 void SandboxScene::InitVars() {
@@ -2649,6 +3374,7 @@ void SandboxScene::InitVars() {
   m_sceneMeshPaths.clear();
   m_sceneRagdollPaths.clear();
   m_sceneNavAgentFrontYawOffsets.clear();
+  m_sceneNavAgentFaceYawSigns.clear();
   m_sceneRagdolls.clear();
   m_navTestAgents.clear();
   m_navTestCandidatePoints.clear();
@@ -3196,11 +3922,12 @@ bool SandboxScene::LoadEditorSceneAssets(const std::string& scenePath) {
     auto q3CollisionWorld = std::make_unique<t850::Q3BspCollisionWorld>();
     std::string q3CollisionError;
     if (q3CollisionWorld->Load(q3CollisionPath, &q3CollisionError)) {
-      T8_LOG_INFO("[SandboxScene] Q3 collision clip loaded: %s brushes=%zu patchFacets=%zu jumpPads=%zu",
+      T8_LOG_INFO("[SandboxScene] Q3 collision clip loaded: %s brushes=%zu patchFacets=%zu jumpPads=%zu reachabilities=%zu",
                   q3CollisionPath.c_str(),
                   q3CollisionWorld->GetBrushCount(),
                   q3CollisionWorld->GetPatchFacetCount(),
-                  q3CollisionWorld->GetJumpPadCount());
+                  q3CollisionWorld->GetJumpPadCount(),
+                  q3CollisionWorld->GetReachabilityCount());
       m_q3CollisionWorld = std::move(q3CollisionWorld);
     } else {
       T8_LOG_ERROR("[SandboxScene] Failed to load Q3 collision clip '%s': %s",
@@ -3293,8 +4020,11 @@ bool SandboxScene::LoadEditorSceneAssets(const std::string& scenePath) {
     m_sceneRagdollPaths.push_back(ragdollPath);
     const float navAgentFrontYawOffset = object.nav_agent_front_yaw_offset_deg.value_or(0.0f);
     m_sceneNavAgentFrontYawOffsets.push_back(navAgentFrontYawOffset);
-    T8_LOG_INFO("[SandboxScene] Loaded scene object '%s' mesh='%s' ragdoll='%s' slot=%d navFrontYawOffset=%.1f",
-                object.name.c_str(), meshPath.c_str(), ragdollPath.c_str(), m_meshCount, navAgentFrontYawOffset);
+    const float navAgentFaceYawSign = object.nav_agent_face_yaw_sign.value_or(1.0f) < 0.0f ? -1.0f : 1.0f;
+    m_sceneNavAgentFaceYawSigns.push_back(navAgentFaceYawSign);
+    T8_LOG_INFO("[SandboxScene] Loaded scene object '%s' mesh='%s' ragdoll='%s' slot=%d navFrontYawOffset=%.1f navFaceYawSign=%.1f",
+                object.name.c_str(), meshPath.c_str(), ragdollPath.c_str(), m_meshCount,
+                navAgentFrontYawOffset, navAgentFaceYawSign);
     ++m_meshCount;
   }
 
@@ -3322,8 +4052,33 @@ bool SandboxScene::EnsureNavMeshBuilt() {
   }
   m_navMeshBuildAttempted = true;
 
-  t850::navigation::NavMeshGeometry geometry;
   const int meshCount = (std::min)(kMaxSandboxMeshes, (std::max)(m_meshCount, Meshes[0].pBase ? 1 : 0));
+  t850::navigation::NavMeshBuildSettings navBuildSettings;
+  const bool hasQ3Clip = m_q3CollisionWorld && m_q3CollisionWorld->IsLoaded();
+  const bool hasQ3AasReachability = hasQ3Clip && m_q3CollisionWorld->GetReachabilityCount() > 0;
+  navBuildSettings.enableAutoDropLinks = hasQ3Clip && !hasQ3AasReachability;
+  navBuildSettings.enableAutoJumpLinks = hasQ3Clip && !hasQ3AasReachability;
+  navBuildSettings.enableHybridJumpLinks = hasQ3Clip && !hasQ3AasReachability;
+  navBuildSettings.hybridJumpMaxLinks = 192;
+  navBuildSettings.offMeshLinkValidationKey = ComputeQ3NavLinkValidationKey(m_q3CollisionWorld.get());
+  const uint64_t navCacheKey =
+      ComputeSandboxNavMeshCacheKey(
+          Meshes,
+          meshCount,
+          m_sceneMeshPaths,
+          m_loadedEditorScenePath,
+          navBuildSettings,
+          m_q3CollisionWorld.get());
+  if (navCacheKey != 0 && m_navMesh.LoadCached(navCacheKey, navBuildSettings, nullptr)) {
+    m_navMeshDebugRenderer.Invalidate();
+    const t850::navigation::NavMeshBuildStats& stats = m_navMesh.GetStats();
+    T8_LOG_INFO("[Navigation] Sandbox navmesh ready from cache: verts=%d tris=%d polys=%d offMesh=%d drop=%d jump=%d jumpPad=%d",
+                stats.vertexCount, stats.triangleCount, stats.polygonCount,
+                stats.offMeshLinkCount, stats.dropLinkCount, stats.jumpLinkCount, stats.jumpPadLinkCount);
+    return true;
+  }
+
+  t850::navigation::NavMeshGeometry geometry;
   t850::navigation::NavSourceBuildStats sourceStats;
   std::string error;
   if (!t850::navigation::BuildGeometryFromPrimitiveInstances(Meshes, meshCount, geometry, &sourceStats, &error)) {
@@ -3336,17 +4091,37 @@ bool SandboxScene::EnsureNavMeshBuilt() {
                  sourceStats.skippedInvalid);
     return false;
   }
+  geometry.offMeshLinks = hasQ3AasReachability
+      ? BuildQ3AasReachabilityNavLinks(m_q3CollisionWorld.get())
+      : BuildQ3JumpPadNavLinks(m_q3CollisionWorld.get());
+  if (hasQ3Clip) {
+    const t850::Q3BspCollisionWorld* q3CollisionWorld = m_q3CollisionWorld.get();
+    if (!hasQ3AasReachability) {
+      geometry.offMeshLinkValidator = [q3CollisionWorld](const t850::navigation::NavOffMeshLink& link) {
+        return ValidateQ3NavOffMeshLink(*q3CollisionWorld, link);
+      };
+      geometry.offMeshHybridLinkValidator = [q3CollisionWorld](const t850::navigation::NavOffMeshLink& link) {
+        return ValidateQ3HybridJumpIntentLink(*q3CollisionWorld, link);
+      };
+    }
+  }
+  if (!geometry.offMeshLinks.empty()) {
+    T8_LOG_INFO("[Navigation] Q3 nav links prepared: %zu source=%s",
+                geometry.offMeshLinks.size(),
+                hasQ3AasReachability ? "aas" : "heuristic");
+  }
 
-  if (!m_navMesh.Build(geometry, t850::navigation::NavMeshBuildSettings(), &error)) {
+  if (!m_navMesh.BuildCached(geometry, navBuildSettings, navCacheKey, &error)) {
     T8_LOG_ERROR("[Navigation] Sandbox navmesh build failed: %s", error.c_str());
     return false;
   }
 
   m_navMeshDebugRenderer.Invalidate();
   const t850::navigation::NavMeshBuildStats& stats = m_navMesh.GetStats();
-  T8_LOG_INFO("[Navigation] Sandbox navmesh ready: sources=%d skippedSkinned=%d skippedInvalid=%d verts=%d tris=%d polys=%d",
+  T8_LOG_INFO("[Navigation] Sandbox navmesh ready: sources=%d skippedSkinned=%d skippedInvalid=%d verts=%d tris=%d polys=%d offMesh=%d drop=%d jump=%d jumpPad=%d",
               sourceStats.included, sourceStats.skippedSkinned, sourceStats.skippedInvalid,
-              stats.vertexCount, stats.triangleCount, stats.polygonCount);
+              stats.vertexCount, stats.triangleCount, stats.polygonCount,
+              stats.offMeshLinkCount, stats.dropLinkCount, stats.jumpLinkCount, stats.jumpPadLinkCount);
   return true;
 }
 
@@ -3387,6 +4162,9 @@ void SandboxScene::InitializeNavTestAgents() {
     agent.followSlot = followSlot++;
     if (meshIndex < static_cast<int>(m_sceneNavAgentFrontYawOffsets.size())) {
       agent.frontYawOffsetDeg = m_sceneNavAgentFrontYawOffsets[static_cast<std::size_t>(meshIndex)];
+    }
+    if (meshIndex < static_cast<int>(m_sceneNavAgentFaceYawSigns.size())) {
+      agent.faceYawSign = m_sceneNavAgentFaceYawSigns[static_cast<std::size_t>(meshIndex)];
     }
     const XVECTOR3 visualPosition(instance.Final.m41, instance.Final.m42, instance.Final.m43, 1.0f);
     std::string projectionError;
@@ -3432,6 +4210,7 @@ void SandboxScene::InitializeNavTestAgents() {
 }
 
 void SandboxScene::PlanNavTestAgentPaths() {
+  T8_TELEMETRY_SCOPE("navigation.agents.plan_paths");
   if (!m_navMesh.IsReady() || m_navTestAgents.empty()) {
     return;
   }
@@ -3441,7 +4220,7 @@ void SandboxScene::PlanNavTestAgentPaths() {
   std::vector<t850::navigation::NavPathRequest> requests;
   for (int i = 0; i < static_cast<int>(m_navTestAgents.size()); ++i) {
     NavTestAgentRuntime& agent = m_navTestAgents[static_cast<std::size_t>(i)];
-    if (!agent.active || !agent.needsPath || agent.repathCooldownSec > 0.0f ||
+    if (!agent.active || agent.physicsTraversalActive || !agent.needsPath || agent.repathCooldownSec > 0.0f ||
         agent.meshIndex < 0 || agent.meshIndex >= kMaxSandboxMeshes ||
         !Meshes[agent.meshIndex].pBase) {
       continue;
@@ -3460,11 +4239,26 @@ void SandboxScene::PlanNavTestAgentPaths() {
   }
 
   if (requests.empty()) {
+    if (t850::RuntimeTelemetry::IsFrameActive()) {
+      t850::RuntimeTelemetry::SetCounter("navigation.agents.path_requests", 0.0);
+    }
     return;
+  }
+  if (t850::RuntimeTelemetry::IsFrameActive()) {
+    t850::RuntimeTelemetry::SetCounter("navigation.agents.path_requests", static_cast<double>(requests.size()));
   }
 
   std::vector<t850::navigation::NavPathResult> results;
-  m_navMesh.FindPaths(requests, results);
+  {
+    T8_TELEMETRY_SCOPE("navigation.agents.find_paths");
+    m_navMesh.FindPaths(requests, results);
+  }
+  int successfulPaths = 0;
+  int failedPaths = 0;
+  int totalPathPoints = 0;
+  int dropSegments = 0;
+  int jumpSegments = 0;
+  int jumpPadSegments = 0;
   for (std::size_t i = 0; i < agentIndices.size(); ++i) {
     NavTestAgentRuntime& agent = m_navTestAgents[static_cast<std::size_t>(agentIndices[i])];
     if (i >= requestGenerations.size() || agent.pathGeneration != requestGenerations[i]) {
@@ -3472,12 +4266,14 @@ void SandboxScene::PlanNavTestAgentPaths() {
     }
     agent.needsPath = false;
     if (i >= results.size() || !results[i].success || results[i].points.empty()) {
+      ++failedPaths;
       const PrimitiveInst& instance = Meshes[agent.meshIndex];
       const XVECTOR3 current(instance.Final.m41, instance.Final.m42, instance.Final.m43, 1.0f);
       agent.lastPathSuccess = false;
       agent.lastPathError = i < results.size() ? results[i].error : "missing result";
       agent.repathCooldownSec = kNavTestFailedPathRetrySec;
       agent.path.clear();
+      agent.pathSegmentTypes.clear();
       agent.waypointIndex = 0;
       if (m_navTestMode == kNavTestModeRandom) {
         agent.target = RandomNavTestPoint(m_navTestCandidatePoints,
@@ -3513,6 +4309,8 @@ void SandboxScene::PlanNavTestAgentPaths() {
       continue;
     }
 
+    ++successfulPaths;
+    totalPathPoints += static_cast<int>(results[i].points.size());
     agent.navPosition = results[i].points.front();
     agent.navToOriginOffset = agent.visualOffset;
     agent.lastPathFirst = results[i].points.front();
@@ -3520,11 +4318,41 @@ void SandboxScene::PlanNavTestAgentPaths() {
     agent.lastPathError.clear();
     agent.repathCooldownSec = 0.0f;
     agent.path = results[i].points;
+    agent.pathSegmentTypes.assign(agent.path.size() > 1 ? agent.path.size() - 1 : 0,
+                                  t850::navigation::NavTraversalType::Walk);
+    for (const t850::navigation::NavPathResult::Segment& segment : results[i].segments) {
+      if (segment.startPointIndex < 0 ||
+          segment.endPointIndex <= segment.startPointIndex ||
+          segment.endPointIndex > static_cast<int>(agent.path.size())) {
+        continue;
+      }
+      for (int pointIndex = segment.startPointIndex; pointIndex < segment.endPointIndex; ++pointIndex) {
+        if (pointIndex >= 0 && pointIndex < static_cast<int>(agent.pathSegmentTypes.size())) {
+          agent.pathSegmentTypes[static_cast<std::size_t>(pointIndex)] = segment.type;
+        }
+      }
+      if (segment.type == t850::navigation::NavTraversalType::Drop) {
+        ++dropSegments;
+      } else if (segment.type == t850::navigation::NavTraversalType::Jump) {
+        ++jumpSegments;
+      } else if (segment.type == t850::navigation::NavTraversalType::JumpPad) {
+        ++jumpPadSegments;
+      }
+    }
     agent.waypointIndex = agent.path.size() > 1 ? 1 : 0;
+  }
+  if (t850::RuntimeTelemetry::IsFrameActive()) {
+    t850::RuntimeTelemetry::SetCounter("navigation.agents.path_success", static_cast<double>(successfulPaths));
+    t850::RuntimeTelemetry::SetCounter("navigation.agents.path_fail", static_cast<double>(failedPaths));
+    t850::RuntimeTelemetry::SetCounter("navigation.agents.path_points", static_cast<double>(totalPathPoints));
+    t850::RuntimeTelemetry::SetCounter("navigation.agents.path_segments.drop", static_cast<double>(dropSegments));
+    t850::RuntimeTelemetry::SetCounter("navigation.agents.path_segments.jump", static_cast<double>(jumpSegments));
+    t850::RuntimeTelemetry::SetCounter("navigation.agents.path_segments.jump_pad", static_cast<double>(jumpPadSegments));
   }
 }
 
 void SandboxScene::UpdateNavTestAgents(float dtSecs) {
+  T8_TELEMETRY_SCOPE("navigation.agents.update");
   if (!m_loadedEditorScene) {
     return;
   }
@@ -3541,52 +4369,78 @@ void SandboxScene::UpdateNavTestAgents(float dtSecs) {
   if (m_navTestAgents.empty()) {
     return;
   }
-
-  for (NavTestAgentRuntime& agent : m_navTestAgents) {
-    if (!agent.active ||
-        agent.meshIndex < 0 || agent.meshIndex >= kMaxSandboxMeshes ||
-        !Meshes[agent.meshIndex].pBase) {
-      continue;
+  if (t850::RuntimeTelemetry::IsFrameActive()) {
+    int activeAgents = 0;
+    int physicsAgents = 0;
+    int needsPathAgents = 0;
+    for (const NavTestAgentRuntime& agent : m_navTestAgents) {
+      if (agent.active) {
+        ++activeAgents;
+      }
+      if (agent.physicsTraversalActive) {
+        ++physicsAgents;
+      }
+      if (agent.needsPath) {
+        ++needsPathAgents;
+      }
     }
+    t850::RuntimeTelemetry::SetCounter("navigation.agents.count", static_cast<double>(m_navTestAgents.size()));
+    t850::RuntimeTelemetry::SetCounter("navigation.agents.active", static_cast<double>(activeAgents));
+    t850::RuntimeTelemetry::SetCounter("navigation.agents.physics_active", static_cast<double>(physicsAgents));
+    t850::RuntimeTelemetry::SetCounter("navigation.agents.needs_path", static_cast<double>(needsPathAgents));
+  }
 
-    agent.repathCooldownSec = (std::max)(0.0f, agent.repathCooldownSec - (std::max)(0.0f, dtSecs));
-    if (m_navTestMode == kNavTestModeFollowPlayer) {
-      XVECTOR3 desiredTarget;
-      XVECTOR3 projectedTarget;
-      std::string targetError;
-      if (ResolveNavTestFollowTarget(m_navMesh, Cam, agent.followSlot, desiredTarget, projectedTarget, &targetError)) {
-        agent.desiredTarget = desiredTarget;
-        if ((!agent.targetInitialized || agent.path.empty() || DistanceSquared(agent.target, projectedTarget) > 1.0f) &&
-            agent.repathCooldownSec <= 0.0f) {
-          agent.target = projectedTarget;
+  {
+    T8_TELEMETRY_SCOPE("navigation.agents.target_update");
+    for (NavTestAgentRuntime& agent : m_navTestAgents) {
+      if (!agent.active ||
+          agent.meshIndex < 0 || agent.meshIndex >= kMaxSandboxMeshes ||
+          !Meshes[agent.meshIndex].pBase) {
+        continue;
+      }
+
+      agent.repathCooldownSec = (std::max)(0.0f, agent.repathCooldownSec - (std::max)(0.0f, dtSecs));
+      if (agent.physicsTraversalActive) {
+        continue;
+      }
+      if (m_navTestMode == kNavTestModeFollowPlayer) {
+        XVECTOR3 desiredTarget;
+        XVECTOR3 projectedTarget;
+        std::string targetError;
+        if (ResolveNavTestFollowTarget(m_navMesh, Cam, agent.followSlot, desiredTarget, projectedTarget, &targetError)) {
+          agent.desiredTarget = desiredTarget;
+          if ((!agent.targetInitialized || agent.path.empty() || DistanceSquared(agent.target, projectedTarget) > 1.0f) &&
+              agent.repathCooldownSec <= 0.0f) {
+            agent.target = projectedTarget;
+            agent.returning = false;
+            agent.needsPath = true;
+            agent.targetInitialized = true;
+          }
+        } else {
+          agent.desiredTarget = desiredTarget;
+          agent.lastPathSuccess = false;
+          agent.lastPathError = targetError;
+          agent.repathCooldownSec = kNavTestFailedPathRetrySec;
+          agent.needsPath = false;
+        }
+      } else if (m_navTestMode == kNavTestModeRandom) {
+        if (!agent.targetInitialized || (agent.path.empty() && !agent.needsPath)) {
+          agent.target = RandomNavTestPoint(m_navTestCandidatePoints,
+                                            agent.navPosition,
+                                            m_navTestRandomState,
+                                            static_cast<uint32_t>(agent.meshIndex + 17));
+          agent.desiredTarget = agent.target;
           agent.returning = false;
           agent.needsPath = true;
           agent.targetInitialized = true;
         }
-      } else {
-        agent.desiredTarget = desiredTarget;
-        agent.lastPathSuccess = false;
-        agent.lastPathError = targetError;
-        agent.repathCooldownSec = kNavTestFailedPathRetrySec;
-        agent.needsPath = false;
-      }
-    } else if (m_navTestMode == kNavTestModeRandom) {
-      if (!agent.targetInitialized || (agent.path.empty() && !agent.needsPath)) {
-        agent.target = RandomNavTestPoint(m_navTestCandidatePoints,
-                                          agent.navPosition,
-                                          m_navTestRandomState,
-                                          static_cast<uint32_t>(agent.meshIndex + 17));
+      } else if (!agent.targetInitialized) {
+        agent.target = FurthestNavTestPoint(m_navTestCandidatePoints, agent.home);
         agent.desiredTarget = agent.target;
         agent.returning = false;
         agent.needsPath = true;
         agent.targetInitialized = true;
       }
-    } else if (!agent.targetInitialized) {
-      agent.target = FurthestNavTestPoint(m_navTestCandidatePoints, agent.home);
-      agent.desiredTarget = agent.target;
-      agent.returning = false;
-      agent.needsPath = true;
-      agent.targetInitialized = true;
     }
   }
 
@@ -3595,20 +4449,328 @@ void SandboxScene::UpdateNavTestAgents(float dtSecs) {
   const float maxStep = (std::max)(0.0f, dtSecs) * m_navTestSpeed;
   std::vector<XVECTOR3> proposedPositions(m_navTestAgents.size());
   std::vector<unsigned char> movedAgents(m_navTestAgents.size(), 0);
+  std::vector<unsigned char> physicsMovedAgents(m_navTestAgents.size(), 0);
+  std::vector<unsigned char> suppressProjection(m_navTestAgents.size(), 0);
+  std::vector<unsigned char> jumpPadQueuedAgents(m_navTestAgents.size(), 0);
+  auto isJumpPadBaseOccupied = [&](std::size_t currentAgentIndex, const XVECTOR3& base) {
+    constexpr float kJumpPadBaseOccupiedRadiusSq = 4.0f;
+    float currentDistanceSq = 1.0e30f;
+    if (currentAgentIndex < m_navTestAgents.size()) {
+      currentDistanceSq = HorizontalDistanceSq3(m_navTestAgents[currentAgentIndex].navPosition, base);
+    }
+    for (std::size_t otherIndex = 0; otherIndex < m_navTestAgents.size(); ++otherIndex) {
+      if (otherIndex == currentAgentIndex) {
+        continue;
+      }
+      const NavTestAgentRuntime& other = m_navTestAgents[otherIndex];
+      if (!other.active) {
+        continue;
+      }
+
+      bool otherOwnsBase = false;
+      float otherDistanceSq = 1.0e30f;
+      if (other.physicsTraversalActive &&
+          other.physicsTraversalType == t850::navigation::NavTraversalType::JumpPad &&
+          !other.physicsWasAirborne &&
+          DistanceSquared(other.physicsTraversalStart, base) <= kJumpPadBaseOccupiedRadiusSq) {
+        otherOwnsBase = true;
+        otherDistanceSq = 0.0f;
+      } else if (!other.physicsTraversalActive &&
+                 !other.needsPath &&
+                 !other.path.empty() &&
+                 other.waypointIndex > 0 &&
+                 other.waypointIndex < static_cast<int>(other.path.size())) {
+        const int otherSegmentIndex = other.waypointIndex - 1;
+        const t850::navigation::NavTraversalType otherSegmentType =
+            otherSegmentIndex >= 0 && otherSegmentIndex < static_cast<int>(other.pathSegmentTypes.size())
+                ? other.pathSegmentTypes[static_cast<std::size_t>(otherSegmentIndex)]
+                : t850::navigation::NavTraversalType::Walk;
+        const XVECTOR3 otherBase = other.path[static_cast<std::size_t>(otherSegmentIndex)];
+        if (otherSegmentType == t850::navigation::NavTraversalType::JumpPad &&
+            DistanceSquared(otherBase, base) <= kJumpPadBaseOccupiedRadiusSq) {
+          otherDistanceSq = HorizontalDistanceSq3(other.navPosition, base);
+          otherOwnsBase =
+              otherDistanceSq + 0.01f < currentDistanceSq ||
+              (std::fabs(otherDistanceSq - currentDistanceSq) <= 0.01f && otherIndex < currentAgentIndex);
+        }
+      }
+
+      if (otherOwnsBase) {
+        return true;
+      }
+    }
+    return false;
+  };
+
+  auto findJumpPadForBase = [&](const XVECTOR3& base) -> const t850::Q3BspCollisionWorld::JumpPad* {
+    if (!m_q3CollisionWorld) {
+      return nullptr;
+    }
+
+    const t850::Q3BspCollisionWorld::JumpPad* bestJumpPad = nullptr;
+    float bestDistanceSq = 1.0e30f;
+    for (const t850::Q3BspCollisionWorld::JumpPad& jumpPad : m_q3CollisionWorld->GetJumpPads()) {
+      const bool insideHorizontal =
+          base.x >= jumpPad.mins.x - 1.0f && base.x <= jumpPad.maxs.x + 1.0f &&
+          base.z >= jumpPad.mins.z - 1.0f && base.z <= jumpPad.maxs.z + 1.0f;
+      const XVECTOR3 center(
+          (jumpPad.mins.x + jumpPad.maxs.x) * 0.5f,
+          (jumpPad.mins.y + jumpPad.maxs.y) * 0.5f,
+          (jumpPad.mins.z + jumpPad.maxs.z) * 0.5f,
+          1.0f);
+      const float distanceSq = HorizontalDistanceSq3(center, base);
+      if ((insideHorizontal || distanceSq <= 16.0f) && distanceSq < bestDistanceSq) {
+        bestDistanceSq = distanceSq;
+        bestJumpPad = &jumpPad;
+      }
+    }
+    return bestJumpPad;
+  };
+
+  auto jumpPadQueuePosition = [&](const NavTestAgentRuntime& agent,
+                                  const XVECTOR3& base,
+                                  std::size_t agentIndex) {
+    XVECTOR3 retreat(0.0f, 0.0f, 0.0f, 0.0f);
+    const int previousIndex = agent.waypointIndex - 2;
+    if (previousIndex >= 0 && previousIndex < static_cast<int>(agent.path.size())) {
+      retreat = agent.path[static_cast<std::size_t>(previousIndex)] - base;
+    }
+    retreat.y = 0.0f;
+    retreat.w = 0.0f;
+    if (retreat.Length() <= 0.0001f) {
+      retreat = agent.navPosition - base;
+      retreat.y = 0.0f;
+      retreat.w = 0.0f;
+    }
+    if (retreat.Length() <= 0.0001f) {
+      retreat = XVECTOR3(0.0f, 0.0f, -1.0f, 0.0f);
+    }
+    retreat.Normalize();
+
+    const t850::KinematicCharacterSettings q3Settings = t850::MakeQuake3CharacterSettings();
+    const float triggerMargin = q3Settings.capsuleRadius + 0.20f;
+    float queueDistance = 2.25f;
+    if (const t850::Q3BspCollisionWorld::JumpPad* jumpPad = findJumpPadForBase(base)) {
+      const float minX = jumpPad->mins.x - triggerMargin;
+      const float maxX = jumpPad->maxs.x + triggerMargin;
+      const float minZ = jumpPad->mins.z - triggerMargin;
+      const float maxZ = jumpPad->maxs.z + triggerMargin;
+      const bool baseInsideExpanded =
+          base.x >= minX && base.x <= maxX &&
+          base.z >= minZ && base.z <= maxZ;
+      if (baseInsideExpanded) {
+        float exitDistance = 1.0e30f;
+        if (std::fabs(retreat.x) > 0.0001f) {
+          const float boundary = retreat.x > 0.0f ? maxX : minX;
+          const float candidate = (boundary - base.x) / retreat.x;
+          if (candidate >= 0.0f) {
+            exitDistance = (std::min)(exitDistance, candidate);
+          }
+        }
+        if (std::fabs(retreat.z) > 0.0001f) {
+          const float boundary = retreat.z > 0.0f ? maxZ : minZ;
+          const float candidate = (boundary - base.z) / retreat.z;
+          if (candidate >= 0.0f) {
+            exitDistance = (std::min)(exitDistance, candidate);
+          }
+        }
+        if (exitDistance < 1.0e29f) {
+          queueDistance = (std::max)(queueDistance, exitDistance + q3Settings.capsuleRadius + 0.30f);
+        }
+      }
+    }
+
+    XVECTOR3 side(retreat.z, 0.0f, -retreat.x, 0.0f);
+    if (side.Length() > 0.0001f) {
+      side.Normalize();
+    }
+    const int laneIndex = static_cast<int>((agent.followSlot + static_cast<int>(agentIndex)) % 5) - 2;
+    const float laneOffset = static_cast<float>(laneIndex) * (q3Settings.capsuleRadius * 2.35f);
+    XVECTOR3 queued = base + retreat * queueDistance + side * laneOffset;
+
+    if (const t850::Q3BspCollisionWorld::JumpPad* jumpPad = findJumpPadForBase(base)) {
+      const float minX = jumpPad->mins.x - triggerMargin;
+      const float maxX = jumpPad->maxs.x + triggerMargin;
+      const float minZ = jumpPad->mins.z - triggerMargin;
+      const float maxZ = jumpPad->maxs.z + triggerMargin;
+      for (int guard = 0; guard < 8 &&
+          queued.x >= minX && queued.x <= maxX &&
+          queued.z >= minZ && queued.z <= maxZ; ++guard) {
+        queued += retreat * 0.50f;
+      }
+    }
+
+    queued.w = 1.0f;
+    return queued;
+  };
+
+  auto isJumpPadTraversalProtected = [&](std::size_t agentIndex) {
+    if (agentIndex >= m_navTestAgents.size()) {
+      return false;
+    }
+    const NavTestAgentRuntime& agent = m_navTestAgents[agentIndex];
+    return agent.active &&
+        agent.physicsTraversalActive &&
+        agent.physicsTraversalType == t850::navigation::NavTraversalType::JumpPad;
+  };
+
   for (std::size_t agentIndex = 0; agentIndex < m_navTestAgents.size(); ++agentIndex) {
     NavTestAgentRuntime& agent = m_navTestAgents[agentIndex];
-    if (!agent.active || agent.needsPath || agent.path.empty() ||
+    if (!agent.active ||
         agent.meshIndex < 0 || agent.meshIndex >= kMaxSandboxMeshes ||
         !Meshes[agent.meshIndex].pBase) {
       continue;
     }
 
+    if (agent.physicsTraversalActive) {
+      T8_TELEMETRY_SCOPE("navigation.agents.physics_traversal");
+      if (t850::RuntimeTelemetry::IsFrameActive()) {
+        t850::RuntimeTelemetry::AddCounter("navigation.agents.physics_traversal.count", 1.0);
+        if (agent.physicsTraversalType == t850::navigation::NavTraversalType::Drop) {
+          t850::RuntimeTelemetry::AddCounter("navigation.agents.physics_traversal.drop", 1.0);
+        } else if (agent.physicsTraversalType == t850::navigation::NavTraversalType::Jump) {
+          t850::RuntimeTelemetry::AddCounter("navigation.agents.physics_traversal.jump", 1.0);
+        } else if (agent.physicsTraversalType == t850::navigation::NavTraversalType::JumpPad) {
+          t850::RuntimeTelemetry::AddCounter("navigation.agents.physics_traversal.jump_pad", 1.0);
+        }
+      }
+      const t850::KinematicCharacterSettings q3Settings = t850::MakeQuake3CharacterSettings();
+      agent.physicsController.SetSettings(q3Settings);
+      const XVECTOR3 physicsGround = Q3GroundPointFromCenter(agent.physicsController.GetPosition(), q3Settings);
+      XVECTOR3 steeringTarget = agent.physicsTarget;
+      if (m_navTestMode == kNavTestModeFollowPlayer) {
+        steeringTarget = agent.desiredTarget;
+      }
+      const bool jumpInput =
+          agent.physicsTraversalType == t850::navigation::NavTraversalType::Jump &&
+          agent.physicsTraversalTimeSec < 0.18f;
+      agent.physicsController.UpdateQuake3(
+          (std::max)(0.0f, dtSecs),
+          BuildNavAgentPhysicsInput(physicsGround, steeringTarget, jumpInput),
+          t850::CharacterControllerContext{this});
+      agent.physicsTraversalTimeSec += (std::max)(0.0f, dtSecs);
+      if (!agent.physicsController.IsGrounded()) {
+        agent.physicsWasAirborne = true;
+      }
+
+      XVECTOR3 navPosition = Q3GroundPointFromCenter(agent.physicsController.GetPosition(), q3Settings);
+      agent.navPosition = navPosition;
+      proposedPositions[agentIndex] = navPosition;
+      movedAgents[agentIndex] = 1;
+      physicsMovedAgents[agentIndex] = 1;
+
+      const float minTraversalTime = agent.physicsTraversalType == t850::navigation::NavTraversalType::JumpPad
+          ? 0.20f
+          : 0.35f;
+      const bool canReattach =
+          agent.physicsWasAirborne &&
+          agent.physicsTraversalTimeSec >= minTraversalTime &&
+          agent.physicsController.IsGrounded();
+      if (canReattach) {
+        XVECTOR3 projected;
+        if (m_navMesh.ProjectPoint(navPosition, projected, NavTestAgentProjectionExtents(), nullptr)) {
+          agent.navPosition = projected;
+          proposedPositions[agentIndex] = projected;
+        }
+        agent.physicsTraversalActive = false;
+        agent.physicsWasAirborne = false;
+        agent.physicsTraversalType = t850::navigation::NavTraversalType::Walk;
+        agent.physicsTraversalTimeSec = 0.0f;
+        agent.needsPath = true;
+        agent.repathCooldownSec = 0.0f;
+        agent.path.clear();
+        agent.pathSegmentTypes.clear();
+        agent.waypointIndex = 0;
+      } else if (agent.physicsTraversalTimeSec > 6.0f || navPosition.y < -64.0f) {
+        agent.physicsTraversalActive = false;
+        agent.physicsWasAirborne = false;
+        agent.physicsTraversalType = t850::navigation::NavTraversalType::Walk;
+        agent.physicsTraversalTimeSec = 0.0f;
+        agent.needsPath = true;
+        agent.repathCooldownSec = kNavTestFailedPathRetrySec;
+        agent.path.clear();
+        agent.pathSegmentTypes.clear();
+        agent.waypointIndex = 0;
+      }
+      continue;
+    }
+
+    if (agent.needsPath || agent.path.empty()) {
+      continue;
+    }
+
+    T8_TELEMETRY_SCOPE("navigation.agents.walk_follow");
+    if (t850::RuntimeTelemetry::IsFrameActive()) {
+      t850::RuntimeTelemetry::AddCounter("navigation.agents.walk_follow.count", 1.0);
+    }
     XVECTOR3 current = agent.navPosition;
     float remaining = maxStep;
     while (remaining > 0.0f && agent.waypointIndex < static_cast<int>(agent.path.size())) {
+      const int segmentIndex = agent.waypointIndex - 1;
+      const t850::navigation::NavTraversalType segmentType =
+          (segmentIndex >= 0 && segmentIndex < static_cast<int>(agent.pathSegmentTypes.size()))
+              ? agent.pathSegmentTypes[static_cast<std::size_t>(segmentIndex)]
+              : t850::navigation::NavTraversalType::Walk;
+      const XVECTOR3 segmentStart =
+          (segmentIndex >= 0 && segmentIndex < static_cast<int>(agent.path.size()))
+              ? agent.path[static_cast<std::size_t>(segmentIndex)]
+              : current;
       const XVECTOR3 target = agent.path[static_cast<std::size_t>(agent.waypointIndex)];
       XVECTOR3 delta = target - current;
       const float distance = delta.Length();
+      if (segmentType != t850::navigation::NavTraversalType::Walk) {
+        if (segmentType == t850::navigation::NavTraversalType::JumpPad) {
+          const XVECTOR3 jumpPadBase = segmentStart;
+          if (isJumpPadBaseOccupied(agentIndex, jumpPadBase)) {
+            if (t850::RuntimeTelemetry::IsFrameActive()) {
+              t850::RuntimeTelemetry::AddCounter("navigation.agents.jump_pad_wait", 1.0);
+            }
+            current = jumpPadQueuePosition(agent, jumpPadBase, agentIndex);
+            jumpPadQueuedAgents[agentIndex] = 1;
+            proposedPositions[agentIndex] = current;
+            movedAgents[agentIndex] = 1;
+            remaining = 0.0f;
+            break;
+          }
+
+          XVECTOR3 toBase = jumpPadBase - current;
+          const float baseDistance = toBase.Length();
+          if (baseDistance > 0.05f) {
+            if (baseDistance <= remaining) {
+              current = jumpPadBase;
+              remaining -= baseDistance;
+            } else {
+              toBase /= baseDistance;
+              current += toBase * remaining;
+              proposedPositions[agentIndex] = current;
+              movedAgents[agentIndex] = 1;
+              remaining = 0.0f;
+              break;
+            }
+          } else {
+            current = jumpPadBase;
+          }
+        }
+        const t850::KinematicCharacterSettings q3Settings = t850::MakeQuake3CharacterSettings();
+        agent.physicsController.SetSettings(q3Settings);
+        agent.physicsController.Reset();
+        agent.physicsController.SetPosition(Q3CenterFromGroundPoint(current, q3Settings));
+        agent.physicsTraversalStart = current;
+        agent.physicsTarget = target;
+        agent.physicsTargetWaypointIndex = agent.waypointIndex;
+        agent.physicsTraversalType = segmentType;
+        agent.physicsTraversalTimeSec = 0.0f;
+        agent.physicsTraversalActive = true;
+        agent.physicsWasAirborne = false;
+        if (t850::RuntimeTelemetry::IsFrameActive()) {
+          t850::RuntimeTelemetry::AddCounter("navigation.agents.physics_traversal.start", 1.0);
+        }
+        proposedPositions[agentIndex] = current;
+        movedAgents[agentIndex] = 1;
+        physicsMovedAgents[agentIndex] = 1;
+        remaining = 0.0f;
+        break;
+      }
       if (distance <= 0.0001f) {
         current = target;
         ++agent.waypointIndex;
@@ -3653,6 +4815,7 @@ void SandboxScene::UpdateNavTestAgents(float dtSecs) {
       }
       agent.needsPath = true;
       agent.path.clear();
+      agent.pathSegmentTypes.clear();
       agent.waypointIndex = 0;
     }
 
@@ -3660,48 +4823,147 @@ void SandboxScene::UpdateNavTestAgents(float dtSecs) {
       movedAgents[agentIndex] = 1;
   }
 
-  constexpr float kAgentSeparation = 1.2f;
-  constexpr float kAgentSeparationSq = kAgentSeparation * kAgentSeparation;
-  for (std::size_t a = 0; a < m_navTestAgents.size(); ++a) {
-      if (!movedAgents[a]) continue;
-      for (std::size_t b = a + 1; b < m_navTestAgents.size(); ++b) {
-        if (!movedAgents[b]) continue;
-        XVECTOR3 delta = proposedPositions[b] - proposedPositions[a];
-        delta.y = 0.0f;
-        const float distanceSq = delta.x * delta.x + delta.z * delta.z;
-        if (distanceSq <= 0.0001f || distanceSq >= kAgentSeparationSq) {
+  {
+    T8_TELEMETRY_SCOPE("navigation.agents.separation");
+    const t850::KinematicCharacterSettings q3Settings = t850::MakeQuake3CharacterSettings();
+    const float agentHalfX = q3Settings.capsuleRadius;
+    const float agentHalfZ = q3Settings.capsuleRadius;
+    const float playerHalfX = q3Settings.capsuleRadius;
+    const float playerHalfZ = q3Settings.capsuleRadius;
+    XVECTOR3 playerGround = Cam.Eye;
+    playerGround.y -= q3Settings.eyeHeight;
+    playerGround.w = 1.0f;
+
+    auto resolveAabbOverlap = [](XVECTOR3& first,
+                                 float firstHalfX,
+                                 float firstHalfZ,
+                                 XVECTOR3& second,
+                                 float secondHalfX,
+                                 float secondHalfZ,
+                                 bool moveFirst,
+                                 bool moveSecond) {
+      const float dx = second.x - first.x;
+      const float dz = second.z - first.z;
+      const float overlapX = firstHalfX + secondHalfX - std::fabs(dx);
+      const float overlapZ = firstHalfZ + secondHalfZ - std::fabs(dz);
+      if (overlapX <= 0.0f || overlapZ <= 0.0f) {
+        return false;
+      }
+
+      const bool pushX = overlapX < overlapZ;
+      const float direction = pushX
+          ? (dx >= 0.0f ? 1.0f : -1.0f)
+          : (dz >= 0.0f ? 1.0f : -1.0f);
+      const float amount = (pushX ? overlapX : overlapZ) + 0.01f;
+      const float firstShare = moveFirst && moveSecond ? 0.5f : (moveFirst ? 1.0f : 0.0f);
+      const float secondShare = moveFirst && moveSecond ? 0.5f : (moveSecond ? 1.0f : 0.0f);
+      if (pushX) {
+        first.x -= direction * amount * firstShare;
+        second.x += direction * amount * secondShare;
+      } else {
+        first.z -= direction * amount * firstShare;
+        second.z += direction * amount * secondShare;
+      }
+      return true;
+    };
+
+    for (std::size_t iteration = 0; iteration < 3; ++iteration) {
+      for (std::size_t agentIndex = 0; agentIndex < m_navTestAgents.size(); ++agentIndex) {
+        NavTestAgentRuntime& agent = m_navTestAgents[agentIndex];
+        if (!agent.active ||
+            agent.meshIndex < 0 || agent.meshIndex >= kMaxSandboxMeshes ||
+            !Meshes[agent.meshIndex].pBase) {
           continue;
         }
-        const float distance = std::sqrt(distanceSq);
-        const float push = (kAgentSeparation - distance) * 0.5f;
-        delta /= distance;
-        proposedPositions[a] -= delta * push;
-        proposedPositions[b] += delta * push;
+        if (!movedAgents[agentIndex]) {
+          proposedPositions[agentIndex] = agent.navPosition;
+          movedAgents[agentIndex] = 1;
+        }
+        const bool agentProtected = isJumpPadTraversalProtected(agentIndex);
+        if (resolveAabbOverlap(playerGround,
+                               playerHalfX,
+                               playerHalfZ,
+                               proposedPositions[agentIndex],
+                               agentHalfX,
+                               agentHalfZ,
+                               false,
+                               !agentProtected)) {
+          if (t850::RuntimeTelemetry::IsFrameActive()) {
+            t850::RuntimeTelemetry::AddCounter("navigation.agents.aabb.player_overlaps", 1.0);
+          }
+        }
       }
+
+    for (std::size_t a = 0; a < m_navTestAgents.size(); ++a) {
+        if (!movedAgents[a]) continue;
+      for (std::size_t b = a + 1; b < m_navTestAgents.size(); ++b) {
+          if (!movedAgents[b]) continue;
+          const bool protectA = isJumpPadTraversalProtected(a);
+          const bool protectB = isJumpPadTraversalProtected(b);
+          if (protectA && protectB) {
+            continue;
+          }
+          if (resolveAabbOverlap(proposedPositions[a],
+                                 agentHalfX,
+                                 agentHalfZ,
+                                 proposedPositions[b],
+                                 agentHalfX,
+                                 agentHalfZ,
+                                 !protectA,
+                                 !protectB)) {
+            if (t850::RuntimeTelemetry::IsFrameActive()) {
+              t850::RuntimeTelemetry::AddCounter("navigation.agents.aabb.agent_overlaps", 1.0);
+            }
+          }
+        }
+
+        for (std::size_t agentIndex = 0; agentIndex < m_navTestAgents.size(); ++agentIndex) {
+          if (!jumpPadQueuedAgents[agentIndex]) {
+            continue;
+          }
+          NavTestAgentRuntime& agent = m_navTestAgents[agentIndex];
+          const int segmentIndex = agent.waypointIndex - 1;
+          if (segmentIndex >= 0 && segmentIndex < static_cast<int>(agent.path.size())) {
+            const XVECTOR3 base = agent.path[static_cast<std::size_t>(segmentIndex)];
+            proposedPositions[agentIndex] = jumpPadQueuePosition(agent, base, agentIndex);
+            movedAgents[agentIndex] = 1;
+          }
+        }
+      }
+    }
   }
 
-  for (std::size_t agentIndex = 0; agentIndex < m_navTestAgents.size(); ++agentIndex) {
-    NavTestAgentRuntime& agent = m_navTestAgents[agentIndex];
-    if (!agent.active ||
-        agent.meshIndex < 0 || agent.meshIndex >= kMaxSandboxMeshes ||
-        !Meshes[agent.meshIndex].pBase) {
-      continue;
-    }
-
-    PrimitiveInst& instance = Meshes[agent.meshIndex];
-    if (movedAgents[agentIndex]) {
-      XVECTOR3 navPosition = proposedPositions[agentIndex];
-      if (!m_navMesh.ProjectPoint(navPosition, navPosition, NavTestAgentProjectionExtents(), nullptr)) {
-        navPosition = agent.navPosition;
+  {
+    T8_TELEMETRY_SCOPE("navigation.agents.apply_transforms");
+    for (std::size_t agentIndex = 0; agentIndex < m_navTestAgents.size(); ++agentIndex) {
+      NavTestAgentRuntime& agent = m_navTestAgents[agentIndex];
+      if (!agent.active ||
+          agent.meshIndex < 0 || agent.meshIndex >= kMaxSandboxMeshes ||
+          !Meshes[agent.meshIndex].pBase) {
+        continue;
       }
-      agent.navPosition = navPosition;
-      agent.navToOriginOffset = agent.visualOffset;
-    }
 
-    const XVECTOR3 visualPosition = NavTestVisualPosition(agent.navPosition, agent.visualOffset);
-    instance.TranslateAbsolute(visualPosition.x, visualPosition.y, visualPosition.z);
-    RotateNavTestAgentToFace(instance, visualPosition, Cam.Eye, agent.frontYawOffsetDeg);
-    instance.Update();
+      PrimitiveInst& instance = Meshes[agent.meshIndex];
+      if (movedAgents[agentIndex]) {
+        XVECTOR3 navPosition = proposedPositions[agentIndex];
+        if (!physicsMovedAgents[agentIndex] && !jumpPadQueuedAgents[agentIndex] &&
+            !suppressProjection[agentIndex] &&
+            !m_navMesh.ProjectPoint(navPosition, navPosition, NavTestAgentProjectionExtents(), nullptr)) {
+          navPosition = agent.navPosition;
+        }
+        agent.navPosition = navPosition;
+        agent.navToOriginOffset = agent.visualOffset;
+        if (agent.physicsTraversalActive) {
+          const t850::KinematicCharacterSettings q3Settings = t850::MakeQuake3CharacterSettings();
+          agent.physicsController.SetPosition(Q3CenterFromGroundPoint(agent.navPosition, q3Settings));
+        }
+      }
+
+      const XVECTOR3 visualPosition = NavTestVisualPosition(agent.navPosition, agent.visualOffset);
+      instance.TranslateAbsolute(visualPosition.x, visualPosition.y, visualPosition.z);
+      RotateNavTestAgentToFace(instance, visualPosition, Cam.Eye, agent.frontYawOffsetDeg, agent.faceYawSign);
+      instance.Update();
+    }
   }
 
   if (m_navTestMode == kNavTestModeFollowPlayer) {
@@ -3775,11 +5037,53 @@ void SandboxScene::CreateAssets() {
 
   SceneProp.SSAOKernel.InitTexture();
 
-  EnvMapTexIndex = g_pBaseDriver->CreateTexture(string("sky/Ennis.dds"));
-  EnvMaps.SetFallback(EnvMapTexIndex);
   if (m_controlSetup.descriptor.name.empty()) {
     m_controlSetup.Load("Scenes/SandboxScene.json");
   }
+
+  const t850::SelectorDesc* cubemapDesc = FindSelectorDesc(m_controlSetup.descriptor.selectors, "cubemap");
+  const bool embeddedSceneProfile = !g_config.sceneFilePath.empty();
+  const std::string startupModelKey = embeddedSceneProfile ? std::string{} : SandboxProfileModelKey(g_config.modelPath);
+  std::vector<t850::SandboxProfileDesc> startupSceneProfiles;
+  const std::vector<t850::SandboxProfileDesc>* startupProfiles = &m_controlSetup.descriptor.profiles;
+  if (embeddedSceneProfile) {
+    t850::scene::EditorSceneFile startupScene;
+    std::string startupSceneError;
+    if (t850::scene::LoadEditorSceneFile(g_config.sceneFilePath, startupScene, &startupSceneError)) {
+      startupSceneProfiles = startupScene.profiles;
+      startupProfiles = &startupSceneProfiles;
+    } else {
+      T8_LOG_ERROR("[SandboxScene] Could not pre-read scene profiles from '%s': %s",
+                   g_config.sceneFilePath.c_str(), startupSceneError.c_str());
+    }
+  }
+  const CubemapSelection startupProfileCubemap =
+      ResolveStartupCubemapSelection(
+          m_controlSetup.descriptor.selectors,
+          *startupProfiles,
+          embeddedSceneProfile,
+          startupModelKey);
+  std::string startupCubemapPath = NormalizeSceneResourcePath(m_controlSetup.environmentMap);
+  if (startupCubemapPath.empty()) {
+    startupCubemapPath = "sky/Ennis.dds";
+  }
+  if (cubemapDesc && !startupProfileCubemap.path.empty()) {
+    startupCubemapPath = startupProfileCubemap.path;
+    const int startupCubemapIndex = startupProfileCubemap.index >= 0
+        ? startupProfileCubemap.index
+        : CubemapSelectorIndexForPath(*cubemapDesc, startupCubemapPath);
+    if (startupCubemapIndex >= 0) {
+      m_currentCubemapIndex = startupCubemapIndex;
+    }
+  } else if (cubemapDesc) {
+    const int environmentIndex = CubemapSelectorIndexForPath(*cubemapDesc, startupCubemapPath);
+    m_currentCubemapIndex = environmentIndex >= 0
+        ? environmentIndex
+        : (std::max)(0, (std::min)(cubemapDesc->default_index, static_cast<int>(cubemapDesc->options.size()) - 1));
+  }
+  EnvMapTexIndex = g_pBaseDriver->CreateTexture(startupCubemapPath);
+  m_currentCubemapPath = startupCubemapPath;
+  EnvMaps.SetFallback(EnvMapTexIndex);
   LoadEnvironmentIBLResources(
     g_pBaseDriver,
     {m_controlSetup.environmentDiffuseIBL, m_controlSetup.environmentSpecularIBL, m_controlSetup.environmentBrdfLUT,
@@ -3947,6 +5251,10 @@ void SandboxScene::OnDestoryScene() {
   UninstallSandboxConsoleLogCapture();
 }
 
+void SandboxScene::ResetViewInput() {
+  m_cameraController.ClearInput();
+}
+
 void SandboxScene::DestroyAssets() {
   SceneProp.SSAOKernel.Destroy();
   bool hasPhysicsLinks = m_floorBody.IsValid();
@@ -4016,12 +5324,16 @@ void SandboxScene::DestroyAssets() {
   m_sceneMeshPaths.clear();
   m_sceneRagdollPaths.clear();
   m_sceneNavAgentFrontYawOffsets.clear();
+  m_sceneNavAgentFaceYawSigns.clear();
   m_sceneRagdolls.clear();
   m_navTestAgents.clear();
   m_navTestCandidatePoints.clear();
   m_navTestInitialized = false;
   m_selectedSkinningMeshIndex = 0;
   m_selectedAnimationMeshIndex = 0;
+  m_currentCubemapIndex = 0;
+  m_currentCubemapPath.clear();
+  m_pendingCubemap.clear();
   m_debugText.Destroy();
   m_debugSphere.Destroy();
   if (m_lightArrowVB) m_lightArrowVB->release();
@@ -4041,59 +5353,63 @@ void SandboxScene::DestroyAssets() {
 }
 
 void SandboxScene::OnUpdate(float _DtSecs) {
+  T8_TELEMETRY_SCOPE("sandbox.update");
   DtSecs = _DtSecs;
   SceneProp.FrameDeltaSec = DtSecs;
-  if (!m_ragdollConfigSpeedApplied && g_config.ragdollSimulationSpeedIndex >= 0) {
-    m_ragdollSimulationSpeedIndex = ClampRagdollSimulationSpeedIndex(g_config.ragdollSimulationSpeedIndex);
-    m_ragdollConfigSpeedApplied = true;
-  }
-  m_ragdollSimulationSpeedIndex = ClampRagdollSimulationSpeedIndex(m_ragdollSimulationSpeedIndex);
-  t850::EngineContext* updateEngineContext = GetEngineContext();
-  if (!updateEngineContext) updateEngineContext = &t850::GetEngineContext();
-  if (updateEngineContext && updateEngineContext->physics) {
-    updateEngineContext->physics->SetSimulationSpeedScale(
-        RagdollSimulationSpeedScaleForIndex(m_ragdollSimulationSpeedIndex));
-    updateEngineContext->physics->SetUseFixedSimulationDelta(m_ragdollUseFixedSimulationDelta);
-  }
+  {
+    T8_TELEMETRY_SCOPE("sandbox.update.ragdoll_admin");
+    if (!m_ragdollConfigSpeedApplied && g_config.ragdollSimulationSpeedIndex >= 0) {
+      m_ragdollSimulationSpeedIndex = ClampRagdollSimulationSpeedIndex(g_config.ragdollSimulationSpeedIndex);
+      m_ragdollConfigSpeedApplied = true;
+    }
+    m_ragdollSimulationSpeedIndex = ClampRagdollSimulationSpeedIndex(m_ragdollSimulationSpeedIndex);
+    t850::EngineContext* updateEngineContext = GetEngineContext();
+    if (!updateEngineContext) updateEngineContext = &t850::GetEngineContext();
+    if (updateEngineContext && updateEngineContext->physics) {
+      updateEngineContext->physics->SetSimulationSpeedScale(
+          RagdollSimulationSpeedScaleForIndex(m_ragdollSimulationSpeedIndex));
+      updateEngineContext->physics->SetUseFixedSimulationDelta(m_ragdollUseFixedSimulationDelta);
+    }
 
-  if (m_ragdollClearRequested) {
-    BeginRagdollUndoScope("Clear all bodies");
-    ClearRagdollCapsules();
-    EndRagdollUndoScope(false);
-  }
-  if (m_ragdollEditRebuildRequested && !m_ragdollClearRequested) {
-    m_ragdollEditRebuildRequested = false;
-    ApplyRagdollEditPose(true);
-  }
-  if (g_config.flags.autoStartRagdoll &&
-      !m_ragdollAutoStartAttempted &&
-      ((Meshes[0].HasPhysicsRagdoll() && !m_ragdollPhysicsDriven) || !m_sceneRagdolls.empty())) {
-    m_ragdollAutoStartAttempted = true;
-    T8_LOG_INFO("[SandboxScene] Auto-starting ragdoll simulation at %s",
-                RagdollSimulationSpeedLabelForIndex(m_ragdollSimulationSpeedIndex));
-    SwitchRagdollToPhysics();
-  }
-  if (!m_ragdollSyncCliAttempted && HasCommandLineFlag("--ragdollSyncOnce")) {
-    ++m_ragdollSyncCliWaitFrames;
-    if (Meshes[0].pBase && !m_ragdollAnimationBinding.referencePose.bones.empty()) {
-      m_ragdollSyncCliAttempted = true;
-      T8_LOG_INFO("[RagdollEdit] --ragdollSyncOnce running for '%s'", g_config.modelPath.c_str());
-      if (!m_skeletonEditMode) {
-        EnterSkeletonEditMode();
-      }
-      if (m_skeletonEditMode) {
-        SyncRagdollCapsuleSymmetry();
-      } else {
-        T8_LOG_ERROR("[RagdollEdit] --ragdollSyncOnce could not enter edit mode");
-      }
-    } else if (m_ragdollSyncCliWaitFrames == 1 || (m_ragdollSyncCliWaitFrames % 120) == 0) {
-      T8_LOG_INFO("[RagdollEdit] --ragdollSyncOnce waiting: mesh=%s capsules=%zu model='%s'",
-                  Meshes[0].pBase ? "ready" : "not-ready",
-                  m_ragdollAnimationBinding.referencePose.bones.size(),
-                  g_config.modelPath.c_str());
-      if (m_ragdollSyncCliWaitFrames >= 1200) {
+    if (m_ragdollClearRequested) {
+      BeginRagdollUndoScope("Clear all bodies");
+      ClearRagdollCapsules();
+      EndRagdollUndoScope(false);
+    }
+    if (m_ragdollEditRebuildRequested && !m_ragdollClearRequested) {
+      m_ragdollEditRebuildRequested = false;
+      ApplyRagdollEditPose(true);
+    }
+    if (g_config.flags.autoStartRagdoll &&
+        !m_ragdollAutoStartAttempted &&
+        ((Meshes[0].HasPhysicsRagdoll() && !m_ragdollPhysicsDriven) || !m_sceneRagdolls.empty())) {
+      m_ragdollAutoStartAttempted = true;
+      T8_LOG_INFO("[SandboxScene] Auto-starting ragdoll simulation at %s",
+                  RagdollSimulationSpeedLabelForIndex(m_ragdollSimulationSpeedIndex));
+      SwitchRagdollToPhysics();
+    }
+    if (!m_ragdollSyncCliAttempted && HasCommandLineFlag("--ragdollSyncOnce")) {
+      ++m_ragdollSyncCliWaitFrames;
+      if (Meshes[0].pBase && !m_ragdollAnimationBinding.referencePose.bones.empty()) {
         m_ragdollSyncCliAttempted = true;
-        T8_LOG_ERROR("[RagdollEdit] --ragdollSyncOnce gave up after %d frames", m_ragdollSyncCliWaitFrames);
+        T8_LOG_INFO("[RagdollEdit] --ragdollSyncOnce running for '%s'", g_config.modelPath.c_str());
+        if (!m_skeletonEditMode) {
+          EnterSkeletonEditMode();
+        }
+        if (m_skeletonEditMode) {
+          SyncRagdollCapsuleSymmetry();
+        } else {
+          T8_LOG_ERROR("[RagdollEdit] --ragdollSyncOnce could not enter edit mode");
+        }
+      } else if (m_ragdollSyncCliWaitFrames == 1 || (m_ragdollSyncCliWaitFrames % 120) == 0) {
+        T8_LOG_INFO("[RagdollEdit] --ragdollSyncOnce waiting: mesh=%s capsules=%zu model='%s'",
+                    Meshes[0].pBase ? "ready" : "not-ready",
+                    m_ragdollAnimationBinding.referencePose.bones.size(),
+                    g_config.modelPath.c_str());
+        if (m_ragdollSyncCliWaitFrames >= 1200) {
+          m_ragdollSyncCliAttempted = true;
+          T8_LOG_ERROR("[RagdollEdit] --ragdollSyncOnce gave up after %d frames", m_ragdollSyncCliWaitFrames);
+        }
       }
     }
   }
@@ -4102,6 +5418,7 @@ void SandboxScene::OnUpdate(float _DtSecs) {
   // D3D12 texture upload submits a temp command list + fence wait, which
   // conflicts with the main command list if done mid-frame.
   if (!m_pendingCubemap.empty()) {
+    T8_TELEMETRY_SCOPE("sandbox.update.pending_cubemap");
     T8_LOG_INFO("[SandboxScene] Loading cubemap '%s' (old slot=%d)",
                 m_pendingCubemap.c_str(), EnvMapTexIndex);
     // Flush GPU before destroying — D3D12 may still reference the old
@@ -4112,6 +5429,7 @@ void SandboxScene::OnUpdate(float _DtSecs) {
       if (EnvMapTexIndex >= 0 && EnvMapTexIndex != newEnvMapTexIndex)
         g_pBaseDriver->DestroyTexture(EnvMapTexIndex);
       EnvMapTexIndex = newEnvMapTexIndex;
+      m_currentCubemapPath = m_pendingCubemap;
       if (m_controlSetup.environmentDiffuseIBL.empty() && DiffuseIBLTexIndex >= 0) {
         g_pBaseDriver->DestroyTexture(DiffuseIBLTexIndex);
         DiffuseIBLTexIndex = -1;
@@ -4159,6 +5477,7 @@ void SandboxScene::OnUpdate(float _DtSecs) {
 
   // Replay snapshot: load and apply (one-time)
   if (m_dumper.HasPendingReplay()) {
+    T8_TELEMETRY_SCOPE("sandbox.update.replay_snapshot");
     if (m_dumper.LoadReplaySnapshot()) {
       m_dumper.ApplySnapshot(Cam, LightCam, SceneProp);
       if (const t850::SnapshotSkinnedJson* skinnedSnap = m_dumper.GetReplaySkinnedState()) {
@@ -4170,26 +5489,42 @@ void SandboxScene::OnUpdate(float _DtSecs) {
       VP = Cam.VP;
     }
   }
-  m_dumper.UpdateReplayState();
+  {
+    T8_TELEMETRY_SCOPE("sandbox.update.dumper_state");
+    m_dumper.UpdateReplayState();
+  }
 
   if (!m_dumper.SkipCameraUpdates()) {
+    T8_TELEMETRY_SCOPE("sandbox.update.camera_and_lights");
     if (m_cameraController.GetActiveProfileType() == t850::CameraProfileType::Orbit) {
+      T8_TELEMETRY_SCOPE("sandbox.update.camera.sync_orbit_profile");
       SyncOrbitProfileFromSandbox();
     }
-    t850::CameraUpdateContext cameraContext;
-    cameraContext.collisionWorld = this;
-    m_cameraController.Update(DtSecs, cameraContext);
+    {
+      T8_TELEMETRY_SCOPE("sandbox.update.camera_controller");
+      t850::CameraUpdateContext cameraContext;
+      cameraContext.collisionWorld = this;
+      m_cameraController.Update(DtSecs, cameraContext);
+    }
     if (m_cameraController.GetActiveProfileType() == t850::CameraProfileType::Orbit) {
+      T8_TELEMETRY_SCOPE("sandbox.update.camera.sync_sandbox_orbit");
       SyncSandboxOrbitFromProfile();
     }
     VP = Cam.VP;
-    UpdateAttachedLights();
-    SyncLightCameraFromDirectionalLight();
+    {
+      T8_TELEMETRY_SCOPE("sandbox.update.attached_lights");
+      UpdateAttachedLights();
+      SyncLightCameraFromDirectionalLight();
+    }
   }
-  UpdateNavTestAgents(DtSecs);
+  {
+    T8_TELEMETRY_SCOPE("sandbox.update.nav_agents");
+    UpdateNavTestAgents(DtSecs);
+  }
 
   // --dumpMatrices: log all camera matrices per frame, then exit
   if (g_config.flags.dumpMatrices) {
+    T8_TELEMETRY_SCOPE("sandbox.update.dump_matrices");
     static int s_matDumpFrame = 0;
     static std::ofstream s_matFile;
     if (s_matDumpFrame == 0) {
@@ -4244,23 +5579,36 @@ void SandboxScene::OnUpdate(float _DtSecs) {
     }
   }
 
-  const int updateMeshCount = (std::max)(m_meshCount, Meshes[0].pBase ? 1 : 0);
-  for (int meshIndex = 0; meshIndex < updateMeshCount; ++meshIndex) {
-    if (!Meshes[meshIndex].pBase) continue;
-    RenderSkinnedMesh* skinned = Meshes[meshIndex].GetSkinnedMesh();
-    if (!skinned || !skinned->HasSkinData()) continue;
-    const bool sceneRagdollPhysicsDriven = IsSceneRagdollPhysicsDriven(meshIndex);
-    if (sceneRagdollPhysicsDriven) {
-      continue;
-    }
-    if (meshIndex == 0 && !m_ragdollPhysicsDriven) {
-      skinned->UpdateAnimationPose();
-      DriveRagdollFromAnimation(DtSecs);
-    } else if (meshIndex != 0) {
-      skinned->UpdateAnimationPose();
+  {
+    T8_TELEMETRY_SCOPE("sandbox.update.skinned_animation");
+    const int updateMeshCount = (std::max)(m_meshCount, Meshes[0].pBase ? 1 : 0);
+    for (int meshIndex = 0; meshIndex < updateMeshCount; ++meshIndex) {
+      if (!Meshes[meshIndex].pBase) continue;
+      RenderSkinnedMesh* skinned = Meshes[meshIndex].GetSkinnedMesh();
+      if (!skinned || !skinned->HasSkinData()) continue;
+      const bool sceneRagdollPhysicsDriven = IsSceneRagdollPhysicsDriven(meshIndex);
+      if (sceneRagdollPhysicsDriven) {
+        continue;
+      }
+      if (meshIndex == 0 && !m_ragdollPhysicsDriven) {
+        {
+          T8_TELEMETRY_SCOPE("sandbox.update.skinned_animation.primary_pose");
+          skinned->UpdateAnimationPose();
+        }
+        {
+          T8_TELEMETRY_SCOPE("sandbox.update.drive_primary_ragdoll");
+          DriveRagdollFromAnimation(DtSecs);
+        }
+      } else if (meshIndex != 0) {
+        T8_TELEMETRY_SCOPE("sandbox.update.skinned_animation.agent_pose");
+        skinned->UpdateAnimationPose();
+      }
     }
   }
-  DriveSceneRagdollsFromAnimation(DtSecs);
+  {
+    T8_TELEMETRY_SCOPE("sandbox.update.drive_scene_ragdolls");
+    DriveSceneRagdollsFromAnimation(DtSecs);
+  }
 }
 
 void SandboxScene::DriveRagdollFromAnimation(float deltaSeconds) {
@@ -13015,6 +14363,16 @@ void SandboxScene::CaptureSandboxProfileState(t850::SandboxProfileDesc& state) {
       ? std::string{}
       : (m_profileModelKey.empty() ? SandboxProfileModelKey(g_config.modelPath) : m_profileModelKey);
 
+  auto profileMeshPath = [&](int meshIndex) -> std::string {
+    if (meshIndex >= 0 && meshIndex < static_cast<int>(m_sceneMeshPaths.size())) {
+      return m_sceneMeshPaths[static_cast<std::size_t>(meshIndex)];
+    }
+    if (!m_profileModelKey.empty()) {
+      return m_profileModelKey;
+    }
+    return SandboxProfileModelKey(g_config.modelPath);
+  };
+
   auto addFloat = [&](const char* name, float value) {
     state.sliders.push_back({name, value});
   };
@@ -13024,6 +14382,15 @@ void SandboxScene::CaptureSandboxProfileState(t850::SandboxProfileDesc& state) {
   auto addInt = [&](const char* name, int value) {
     state.selectors.push_back({name, value});
   };
+
+  const t850::SelectorDesc* cubemapDesc = FindSelectorDesc(m_controlSetup.descriptor.selectors, "cubemap");
+  std::string selectedCubemapPath = NormalizeSceneResourcePath(m_pendingCubemap.empty() ? m_currentCubemapPath : m_pendingCubemap);
+  if (selectedCubemapPath.empty() && cubemapDesc) {
+    selectedCubemapPath = CubemapPathForSelectorIndex(*cubemapDesc, m_currentCubemapIndex);
+  }
+  if (!selectedCubemapPath.empty()) {
+    state.cubemap_path = selectedCubemapPath;
+  }
 
   addFloat("exposure", SceneProp.Exposure);
   addFloat("bloom_factor", SceneProp.BloomFactor);
@@ -13049,6 +14416,9 @@ void SandboxScene::CaptureSandboxProfileState(t850::SandboxProfileDesc& state) {
   addFloat("shadow_min", SceneProp.ShadowMin);
   addFloat("env_factor", SceneProp.EnvFactor);
   addFloat("ibl_factor", SceneProp.IBLFactor);
+  addFloat("ibl_mip_count", SceneProp.IBLMipCount);
+  addFloat("ibl_diffuse_mip_level", SceneProp.IBLDiffuseMipLevel);
+  addFloat("ibl_brdf_lut_enabled", SceneProp.IBLBRDFLUTEnabled);
   addFloat("material_emissive_intensity", SceneProp.MaterialEmissiveIntensity);
   addFloat("material_transmission_multiplier", SceneProp.MaterialTransmissionMultiplier);
   addFloat("material_refraction_strength", SceneProp.MaterialRefractionStrength);
@@ -13077,6 +14447,25 @@ void SandboxScene::CaptureSandboxProfileState(t850::SandboxProfileDesc& state) {
     addFloat("anim_speed", 1.0f);
     addInt("anim_select", 0);
     addInt("anim_mode", 0);
+  }
+
+  const int meshCount = GetRuntimeMeshCount();
+  for (int meshIndex = 0; meshIndex < meshCount && meshIndex < kMaxSandboxMeshes; ++meshIndex) {
+    RenderSkinnedMesh* skinned = GetSkinnedMeshForIndex(meshIndex);
+    if (!skinned) {
+      continue;
+    }
+
+    t850::SandboxAnimationOverrideDesc animation;
+    animation.index = meshIndex;
+    animation.mesh = profileMeshPath(meshIndex);
+    animation.anim_speed = skinned->GetAnimSpeed();
+    animation.anim_select = skinned->GetCurrentAnimSet();
+    animation.anim_mode = skinned->GetKeyframeMode() ? 1 : 0;
+    if (skinned->GetKeyframeMode()) {
+      animation.current_keyframe = skinned->GetCurrentKeyframe();
+    }
+    state.animations.push_back(animation);
   }
 
   addBool("shadow_toggle", SceneProp.ToogleShadow != 0);
@@ -13151,6 +14540,98 @@ void SandboxScene::CaptureSandboxProfileState(t850::SandboxProfileDesc& state) {
 }
 
 void SandboxScene::ApplySandboxProfileState(const t850::SandboxProfileDesc& state) {
+  auto applyCubemapPath = [&](const std::string& cubemapPath) {
+    const std::string normalizedPath = NormalizeSceneResourcePath(cubemapPath);
+    if (normalizedPath.empty()) {
+      return;
+    }
+
+    const t850::SelectorDesc* cubemapDesc = FindSelectorDesc(m_controlSetup.descriptor.selectors, "cubemap");
+    if (cubemapDesc) {
+      const int pathIndex = CubemapSelectorIndexForPath(*cubemapDesc, normalizedPath);
+      if (pathIndex >= 0) {
+        m_currentCubemapIndex = pathIndex;
+      }
+    }
+
+    if (!ResourcePathEquals(normalizedPath, m_currentCubemapPath)) {
+      m_pendingCubemap = normalizedPath;
+    }
+  };
+
+  const bool hasCubemapPath = state.cubemap_path.has_value() &&
+      !NormalizeSceneResourcePath(*state.cubemap_path).empty();
+  if (hasCubemapPath) {
+    applyCubemapPath(*state.cubemap_path);
+  }
+
+  auto profileMeshPath = [&](int meshIndex) -> std::string {
+    if (meshIndex >= 0 && meshIndex < static_cast<int>(m_sceneMeshPaths.size())) {
+      return m_sceneMeshPaths[static_cast<std::size_t>(meshIndex)];
+    }
+    if (!m_profileModelKey.empty()) {
+      return m_profileModelKey;
+    }
+    return SandboxProfileModelKey(g_config.modelPath);
+  };
+
+  auto resolveAnimationMeshIndex = [&](const t850::SandboxAnimationOverrideDesc& animation) -> int {
+    if (GetSkinnedMeshForIndex(animation.index) &&
+        (animation.mesh.empty() || ResourcePathEquals(animation.mesh, profileMeshPath(animation.index)))) {
+      return animation.index;
+    }
+    if (animation.mesh.empty()) {
+      return -1;
+    }
+
+    int matchedMeshIndex = -1;
+    const int meshCount = GetRuntimeMeshCount();
+    for (int meshIndex = 0; meshIndex < meshCount && meshIndex < kMaxSandboxMeshes; ++meshIndex) {
+      if (!GetSkinnedMeshForIndex(meshIndex) || !ResourcePathEquals(animation.mesh, profileMeshPath(meshIndex))) {
+        continue;
+      }
+      if (matchedMeshIndex >= 0) {
+        return -1;
+      }
+      matchedMeshIndex = meshIndex;
+    }
+    return matchedMeshIndex;
+  };
+
+  auto applyAnimationToMesh = [&](RenderSkinnedMesh* skinned,
+                                  const t850::SandboxAnimationOverrideDesc& animation) {
+    if (!skinned) {
+      return;
+    }
+    skinned->SetAnimSpeed(animation.anim_speed);
+    if (animation.anim_select >= 0 && animation.anim_select < skinned->GetNumAnimSets()) {
+      int guard = skinned->GetNumAnimSets() + 1;
+      while (skinned->GetCurrentAnimSet() != animation.anim_select && guard-- > 0) {
+        skinned->NextAnimation();
+      }
+    }
+
+    const bool keyframeMode = (animation.anim_mode == 1);
+    skinned->SetKeyframeMode(keyframeMode);
+    if (keyframeMode) {
+      skinned->StepKeyframe(0);
+    }
+    if (animation.current_keyframe.has_value()) {
+      const int targetKeyframe = *animation.current_keyframe;
+      int guard = skinned->GetTotalKeyframes() + 1;
+      while (skinned->GetCurrentKeyframe() != targetKeyframe && guard-- > 0) {
+        const int direction = targetKeyframe > skinned->GetCurrentKeyframe() ? 1 : -1;
+        skinned->StepKeyframe(direction);
+      }
+    }
+  };
+
+  for (const auto& value : state.selectors) {
+    if (value.name == "animation_model" && GetSkinnedMeshForIndex(value.value)) {
+      m_selectedAnimationMeshIndex = value.value;
+    }
+  }
+
   for (const auto& value : state.sliders) {
     if (value.name == "exposure") SceneProp.Exposure = value.value;
     else if (value.name == "bloom_factor") SceneProp.BloomFactor = value.value;
@@ -13177,6 +14658,9 @@ void SandboxScene::ApplySandboxProfileState(const t850::SandboxProfileDesc& stat
     else if (value.name == "shadow_min") SceneProp.ShadowMin = value.value;
     else if (value.name == "env_factor") SceneProp.EnvFactor = value.value;
     else if (value.name == "ibl_factor") SceneProp.IBLFactor = value.value;
+    else if (value.name == "ibl_mip_count") SceneProp.IBLMipCount = (std::max)(0.0f, value.value);
+    else if (value.name == "ibl_diffuse_mip_level") SceneProp.IBLDiffuseMipLevel = (std::max)(0.0f, value.value);
+    else if (value.name == "ibl_brdf_lut_enabled") SceneProp.IBLBRDFLUTEnabled = value.value > 0.5f ? 1.0f : 0.0f;
     else if (value.name == "material_emissive_intensity") SceneProp.MaterialEmissiveIntensity = value.value;
     else if (value.name == "material_transmission_multiplier") SceneProp.MaterialTransmissionMultiplier = value.value;
     else if (value.name == "material_refraction_strength") SceneProp.MaterialRefractionStrength = value.value;
@@ -13219,10 +14703,15 @@ void SandboxScene::ApplySandboxProfileState(const t850::SandboxProfileDesc& stat
     else if (value.name == "luminance_mode") SceneProp.LuminanceMode = value.value;
     else if (value.name == "active_light") m_selectedLightIndex = value.value;
     else if (value.name == "cubemap") {
-      const t850::SelectorDesc* cubemapDesc = FindSelectorDesc(m_controlSetup.descriptor.selectors, "cubemap");
+      const t850::SelectorDesc* cubemapDesc = hasCubemapPath
+          ? nullptr
+          : FindSelectorDesc(m_controlSetup.descriptor.selectors, "cubemap");
       if (cubemapDesc && value.value >= 0 && value.value < (int)cubemapDesc->options.size()) {
+        const std::string profileCubemapPath = CubemapPathForSelectorIndex(*cubemapDesc, value.value);
         m_currentCubemapIndex = value.value;
-        m_pendingCubemap = "sky/" + cubemapDesc->options[value.value];
+        if (!profileCubemapPath.empty() && !ResourcePathEquals(profileCubemapPath, m_currentCubemapPath)) {
+          m_pendingCubemap = profileCubemapPath;
+        }
       }
     }
     else if (value.name == "active_gauss_kernel") ChangeActiveGaussSelection = value.value;
@@ -13351,6 +14840,17 @@ void SandboxScene::ApplySandboxProfileState(const t850::SandboxProfileDesc& stat
       }
     }
   }
+
+  for (const auto& animation : state.animations) {
+    const int meshIndex = resolveAnimationMeshIndex(animation);
+    if (meshIndex < 0) {
+      T8_LOG_INFO("[SandboxScene] Skipped profile animation for mesh slot %d path='%s'",
+                  animation.index,
+                  animation.mesh.c_str());
+      continue;
+    }
+    applyAnimationToMesh(GetSkinnedMeshForIndex(meshIndex), animation);
+  }
 }
 
 t850::SandboxProfileDesc SandboxScene::BuildSparseSandboxProfile(const t850::SandboxProfileDesc& current) const {
@@ -13401,6 +14901,13 @@ t850::SandboxProfileDesc SandboxScene::BuildSparseSandboxProfile(const t850::San
       sparse.lights.push_back(lightSparse);
     }
   }
+  for (const auto& value : current.animations) {
+    const auto* baseline = FindAnimationOverride(m_profileBaselineState.animations, value.index);
+    if (!baseline || !AnimationOverrideNearlyEqual(value, *baseline)) {
+      sparse.animations.push_back(value);
+    }
+  }
+  if (current.cubemap_path != m_profileBaselineState.cubemap_path) sparse.cubemap_path = current.cubemap_path;
   if (current.frustum_culling != m_profileBaselineState.frustum_culling) sparse.frustum_culling = current.frustum_culling;
   if (current.show_culling_debug != m_profileBaselineState.show_culling_debug) sparse.show_culling_debug = current.show_culling_debug;
   if (current.current_keyframe != m_profileBaselineState.current_keyframe) sparse.current_keyframe = current.current_keyframe;
@@ -13422,15 +14929,19 @@ t850::SandboxProfileDesc SandboxScene::BuildSparseSandboxProfile(const t850::San
 }
 
 bool SandboxScene::SandboxProfileStatesEqual(const t850::SandboxProfileDesc& lhs, const t850::SandboxProfileDesc& rhs) const {
-  return BuildSparseSandboxProfile(lhs).sliders == BuildSparseSandboxProfile(rhs).sliders &&
-         BuildSparseSandboxProfile(lhs).checkboxes == BuildSparseSandboxProfile(rhs).checkboxes &&
-         BuildSparseSandboxProfile(lhs).selectors == BuildSparseSandboxProfile(rhs).selectors &&
-         BuildSparseSandboxProfile(lhs).lights == BuildSparseSandboxProfile(rhs).lights &&
-         BuildSparseSandboxProfile(lhs).camera == BuildSparseSandboxProfile(rhs).camera &&
-         BuildSparseSandboxProfile(lhs).orbit_camera == BuildSparseSandboxProfile(rhs).orbit_camera &&
-         BuildSparseSandboxProfile(lhs).frustum_culling == BuildSparseSandboxProfile(rhs).frustum_culling &&
-         BuildSparseSandboxProfile(lhs).show_culling_debug == BuildSparseSandboxProfile(rhs).show_culling_debug &&
-         BuildSparseSandboxProfile(lhs).current_keyframe == BuildSparseSandboxProfile(rhs).current_keyframe;
+  const t850::SandboxProfileDesc lhsSparse = BuildSparseSandboxProfile(lhs);
+  const t850::SandboxProfileDesc rhsSparse = BuildSparseSandboxProfile(rhs);
+  return lhsSparse.sliders == rhsSparse.sliders &&
+         lhsSparse.checkboxes == rhsSparse.checkboxes &&
+         lhsSparse.selectors == rhsSparse.selectors &&
+         lhsSparse.lights == rhsSparse.lights &&
+         lhsSparse.animations == rhsSparse.animations &&
+         lhsSparse.cubemap_path == rhsSparse.cubemap_path &&
+         lhsSparse.camera == rhsSparse.camera &&
+         lhsSparse.orbit_camera == rhsSparse.orbit_camera &&
+         lhsSparse.frustum_culling == rhsSparse.frustum_culling &&
+         lhsSparse.show_culling_debug == rhsSparse.show_culling_debug &&
+         lhsSparse.current_keyframe == rhsSparse.current_keyframe;
 }
 
 void SandboxScene::LoadSandboxProfile(bool embeddedInScene) {
@@ -13504,7 +15015,8 @@ void SandboxScene::SaveSandboxProfile() {
   auto existing = std::find_if(profiles.begin(), profiles.end(), profileMatchesSaveTarget);
 
   bool hasOverrides = !sparse.sliders.empty() || !sparse.checkboxes.empty() || !sparse.selectors.empty() ||
-                      !sparse.lights.empty() ||
+                      !sparse.lights.empty() || !sparse.animations.empty() ||
+                      sparse.cubemap_path.has_value() ||
                       sparse.camera.has_value() || sparse.orbit_camera.has_value() || sparse.frustum_culling.has_value() ||
                       sparse.show_culling_debug.has_value() || sparse.current_keyframe.has_value();
   if (hasOverrides) {
@@ -14183,10 +15695,14 @@ void SandboxScene::DrawDevGui(t850::DevGuiContext& gui) {
     switch (settingIndex) {
     case CHANGE_DEBUG_RT: m_debugRTSelection = selectedIndex; break;
     case CHANGE_CUBEMAP:
-      if (selectedIndex != m_currentCubemapIndex) {
-        m_currentCubemapIndex = selectedIndex;
-        m_pendingCubemap = "sky/" + sourceOptions[selectedIndex];
-        T8_LOG_INFO("[SandboxScene] Cubemap change queued: '%s'", m_pendingCubemap.c_str());
+      {
+        const std::string selectedCubemapPath = "sky/" + sourceOptions[selectedIndex];
+        const bool pathChanged = !ResourcePathEquals(selectedCubemapPath, m_currentCubemapPath);
+        if (selectedIndex != m_currentCubemapIndex || pathChanged) {
+          m_currentCubemapIndex = selectedIndex;
+          m_pendingCubemap = selectedCubemapPath;
+          T8_LOG_INFO("[SandboxScene] Cubemap change queued: '%s'", m_pendingCubemap.c_str());
+        }
       }
       break;
     case CHANGE_GAUSS_KERNEL_SAMPLE_COUNT: {

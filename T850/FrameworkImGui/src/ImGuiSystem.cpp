@@ -158,8 +158,6 @@ bool ImGuiSystem::Init(RootFramework* framework, const char* iniFileName, bool e
     ID3D12Device* device = static_cast<D3D12Device*>(T8Device)->GetNativeDevice();
     auto& srvHeap = d3d12Driver->GetHeap(D3D12Heap::CBV_SRV_UAV_VISIBLE);
     m_d3d12SrvHeap = srvHeap.GetHeap();
-    D3D12_CPU_DESCRIPTOR_HANDLE fontCpu = srvHeap.AllocateCPU();
-    D3D12_GPU_DESCRIPTOR_HANDLE fontGpu = srvHeap.AllocateGPU();
 
     ImGui_ImplDX12_InitInfo initInfo = {};
     initInfo.Device = device;
@@ -168,8 +166,25 @@ bool ImGuiSystem::Init(RootFramework* framework, const char* iniFileName, bool e
     initInfo.RTVFormat = DXGI_FORMAT_R8G8B8A8_UNORM;
     initInfo.DSVFormat = DXGI_FORMAT_D32_FLOAT;
     initInfo.SrvDescriptorHeap = m_d3d12SrvHeap;
-    initInfo.LegacySingleSrvCpuDescriptor = fontCpu;
-    initInfo.LegacySingleSrvGpuDescriptor = fontGpu;
+    initInfo.UserData = &srvHeap;
+    initInfo.SrvDescriptorAllocFn =
+        [](ImGui_ImplDX12_InitInfo* info,
+           D3D12_CPU_DESCRIPTOR_HANDLE* outCpu,
+           D3D12_GPU_DESCRIPTOR_HANDLE* outGpu) {
+          auto* heap = static_cast<D3D12Heap*>(info ? info->UserData : nullptr);
+          if (!heap || !outCpu || !outGpu) {
+            if (outCpu) *outCpu = D3D12_CPU_DESCRIPTOR_HANDLE{0};
+            if (outGpu) *outGpu = D3D12_GPU_DESCRIPTOR_HANDLE{0};
+            return;
+          }
+          *outCpu = heap->AllocateCPU();
+          *outGpu = heap->AllocateGPU();
+        };
+    initInfo.SrvDescriptorFreeFn =
+        [](ImGui_ImplDX12_InitInfo*,
+           D3D12_CPU_DESCRIPTOR_HANDLE,
+           D3D12_GPU_DESCRIPTOR_HANDLE) {
+        };
     rendererOK = ImGui_ImplDX12_Init(&initInfo);
   }
 #endif

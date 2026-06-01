@@ -1503,7 +1503,7 @@ namespace t850 {
       EndRenderPassIfActive(cmd);
 
       VkClearValue clearValues[2] = {};
-      clearValues[0].color = { {0.9f, 0.9f, 0.9f, 1.0f} };
+      clearValues[0].color = { {0.227f, 0.227f, 0.227f, 1.0f} };
       clearValues[1].depthStencil = { 0.0f, 0 };
 
       VkRenderPassBeginInfo rpBegin = { VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO };
@@ -1520,7 +1520,72 @@ namespace t850 {
 
       vkCmdSetViewport(cmd, 0, 1, &m_viewport);
       vkCmdSetScissor(cmd, 0, 1, &m_scissorRect);
-      T8_TRACE(EvClearRT(-1, 1u | 2u, 0.9f, 0.9f, 0.9f, 1.0f, 0.0f, 0));
+      T8_TRACE(EvClearRT(-1, 1u | 2u, 0.227f, 0.227f, 0.227f, 1.0f, 0.0f, 0));
+    }
+  }
+
+  void VulkanDriver::ClearWithColor(float r, float g, float b, float a) {
+    if (!m_frameStarted) {
+      BeginFrame();
+      m_frameStarted = true;
+    }
+
+    if (!m_renderPassActive) {
+      Clear();
+    }
+    if (!m_renderPassActive) {
+      return;
+    }
+
+    VkCommandBuffer cmd = m_commandBuffers[m_currentFrame];
+    std::vector<VkClearAttachment> attachments;
+    VkClearRect clearRect = {};
+    clearRect.rect.offset = { 0, 0 };
+    clearRect.baseArrayLayer = 0;
+    clearRect.layerCount = 1;
+
+    if (CurrentRT >= 0 && CurrentRT < static_cast<int>(RTs.size()) && RTs[CurrentRT]) {
+      VulkanRT* rt = static_cast<VulkanRT*>(RTs[CurrentRT]);
+      for (int colorIndex = 0; colorIndex < rt->number_RT; ++colorIndex) {
+        VkClearAttachment attachment = {};
+        attachment.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+        attachment.colorAttachment = static_cast<uint32_t>(colorIndex);
+        attachment.clearValue.color = {{ r, g, b, a }};
+        attachments.push_back(attachment);
+      }
+      if (rt->m_depthImage) {
+        VkClearAttachment attachment = {};
+        attachment.aspectMask = VK_IMAGE_ASPECT_DEPTH_BIT;
+        attachment.clearValue.depthStencil = { 0.0f, 0 };
+        attachments.push_back(attachment);
+      }
+      clearRect.rect.extent = { static_cast<uint32_t>(rt->w), static_cast<uint32_t>(rt->h) };
+    } else {
+      VkClearAttachment colorAttachment = {};
+      colorAttachment.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+      colorAttachment.colorAttachment = 0;
+      colorAttachment.clearValue.color = {{ r, g, b, a }};
+      attachments.push_back(colorAttachment);
+
+      VkClearAttachment depthAttachment = {};
+      depthAttachment.aspectMask = VK_IMAGE_ASPECT_DEPTH_BIT;
+      depthAttachment.clearValue.depthStencil = { 0.0f, 0 };
+      attachments.push_back(depthAttachment);
+      clearRect.rect.extent = m_swapChainExtent;
+    }
+
+    if (!attachments.empty() && clearRect.rect.extent.width > 0 && clearRect.rect.extent.height > 0) {
+      vkCmdClearAttachments(cmd,
+                            static_cast<uint32_t>(attachments.size()),
+                            attachments.data(),
+                            1,
+                            &clearRect);
+      T8_TRACE(EvClearRT(CurrentRT,
+                         (CurrentRT >= 0 && CurrentRT < static_cast<int>(RTs.size()) && RTs[CurrentRT])
+                             ? ((static_cast<VulkanRT*>(RTs[CurrentRT])->number_RT > 0 ? 1u : 0u) |
+                                (static_cast<VulkanRT*>(RTs[CurrentRT])->m_depthImage ? 2u : 0u))
+                             : (1u | 2u),
+                         r, g, b, a, 0.0f, 0));
     }
   }
 
@@ -1777,7 +1842,8 @@ namespace t850 {
     // Submit
     VkSemaphore waitSemaphores[] = { m_imageAvailableSemaphores[m_currentFrame] };
     VkPipelineStageFlags waitStages[] = {
-      latePresentCopied ? VK_PIPELINE_STAGE_TRANSFER_BIT : VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT
+      static_cast<VkPipelineStageFlags>(
+          latePresentCopied ? VK_PIPELINE_STAGE_TRANSFER_BIT : VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT)
     };
     VkSemaphore presentSemaphore =
       (m_imageIndex < m_imageRenderFinishedSemaphores.size())
@@ -2028,7 +2094,7 @@ namespace t850 {
     rpBegin.framebuffer = m_backbufferFramebuffers[m_imageIndex];
     rpBegin.renderArea.extent = { (uint32_t)width, (uint32_t)height };
     VkClearValue clears[2] = {};
-    clears[0].color = {{0.9f, 0.9f, 0.9f, 1.0f}};
+    clears[0].color = {{0.227f, 0.227f, 0.227f, 1.0f}};
     clears[1].depthStencil = {0.0f, 0};
     rpBegin.clearValueCount = 2;
     rpBegin.pClearValues = clears;

@@ -178,6 +178,7 @@ public:
   const OrbitCameraProfile* GetOrbitProfile() const;
 
   void HandleInput(const CameraInputState& input);
+  void ClearInput();
   void Update(float deltaSeconds, const CameraUpdateContext& context);
 
 private:

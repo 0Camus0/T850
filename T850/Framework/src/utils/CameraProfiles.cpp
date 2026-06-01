@@ -1,6 +1,7 @@
 #include <pch.h>
 
 #include <utils/CameraProfiles.h>
+#include <utils/Log.h>
 
 #include <algorithm>
 #include <cmath>
@@ -62,8 +63,23 @@ void ApplyMouseLook(Camera& camera, const CameraInputState& input, float sensiti
   if (!input.mouseLook) {
     return;
   }
-  camera.MoveYaw(input.mouseDeltaX * sensitivity);
-  camera.MovePitch(input.mouseDeltaY * sensitivity);
+  const float yawStep = input.mouseDeltaX * sensitivity;
+  const float pitchStep = input.mouseDeltaY * sensitivity;
+  T8_LOG_VERBOSE("[CameraMouse] delta=(%.3f,%.3f) sensitivity=%.6f yawStep=%.6f pitchStep=%.6f before=(yaw=%.6f,pitch=%.6f,roll=%.6f)",
+                 input.mouseDeltaX,
+                 input.mouseDeltaY,
+                 sensitivity,
+                 yawStep,
+                 pitchStep,
+                 camera.Yaw,
+                 camera.Pitch,
+                 camera.Roll);
+  camera.MoveYaw(yawStep);
+  camera.MovePitch(pitchStep);
+  T8_LOG_VERBOSE("[CameraMouse] after=(yaw=%.6f,pitch=%.6f,roll=%.6f)",
+                 camera.Yaw,
+                 camera.Pitch,
+                 camera.Roll);
 }
 
 KinematicCharacterInput BuildCharacterInput(const Camera& camera, const CameraInputState& input) {
@@ -422,6 +438,10 @@ void CameraController::HandleInput(const CameraInputState& input) {
   if (m_camera && GetActiveProfile()) {
     GetActiveProfile()->HandleInput(*m_camera, input);
   }
+}
+
+void CameraController::ClearInput() {
+  HandleInput(CameraInputState{});
 }
 
 void CameraController::Update(float deltaSeconds, const CameraUpdateContext& context) {

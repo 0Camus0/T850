@@ -70,7 +70,7 @@ def t850ModelAssetIncludes = t850AndroidCommonAssetIncludes + [
     'Models/RagdollEdits/**',
     'Models/Q3/*_work/*_manifest.json'
 ]
-def t850ProductionAssetIncludes = t850AndroidCoreAssetIncludes + [
+def t850ProductionAssetIncludes = t850AndroidBaseAssetIncludes + [
     'Scenes/**',
     'Models/RagdollEdits/**',
     'Models/Q3/*_work/*_manifest.json'

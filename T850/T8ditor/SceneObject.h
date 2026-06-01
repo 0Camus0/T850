@@ -37,6 +37,8 @@ struct SceneObject {
   std::optional<bool>   mobileVisible;
   bool                  frozen  = false;  // visible but not selectable
   bool                  showWire = false; // per-object wireframe override
+  std::optional<float>  navAgentFrontYawOffsetDeg;
+  std::optional<float>  navAgentFaceYawSign;
 
   std::string                         ragdollModelKey;
   std::string                         ragdollResourcePath;

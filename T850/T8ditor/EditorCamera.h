@@ -53,6 +53,7 @@ public:
 
   // Frame the target — re-center distance to FrameDistance.
   void Frame();
+  void FrameBounds(const XVECTOR3& center, float radius);
 
   // Reset camera to the default position and orientation.
   void ResetToDefault();

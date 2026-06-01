@@ -193,6 +193,16 @@ namespace t850 {
     bool operator==(const SandboxLightOverrideDesc&) const = default;
   };
 
+  struct SandboxAnimationOverrideDesc {
+    int index = 0;
+    std::string mesh;
+    float anim_speed = 1.0f;
+    int anim_select = 0;
+    int anim_mode = 0;
+    std::optional<int> current_keyframe;
+    bool operator==(const SandboxAnimationOverrideDesc&) const = default;
+  };
+
   struct SandboxProfileDesc {
     std::string name;
     std::string platform;
@@ -204,6 +214,8 @@ namespace t850 {
     std::vector<BoolOverrideDesc> checkboxes;
     std::vector<IntOverrideDesc> selectors;
     std::vector<SandboxLightOverrideDesc> lights;
+    std::vector<SandboxAnimationOverrideDesc> animations;
+    std::optional<std::string> cubemap_path;
     std::optional<SandboxCameraDesc> camera;
     std::optional<SandboxOrbitCameraDesc> orbit_camera;
     std::optional<bool> frustum_culling;

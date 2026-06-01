@@ -6,6 +6,7 @@
 
 #include <utils/InputManager.h>
 #include <utils/xMaths.h>   // xPI
+#include <algorithm>
 #include <cmath>
 
 namespace t8ditor {
@@ -40,6 +41,18 @@ void EditorCamera::SetTarget(const XVECTOR3& target) {
 
 void EditorCamera::Frame() {
   m_distance = FrameDistance;
+}
+
+void EditorCamera::FrameBounds(const XVECTOR3& center, float radius) {
+  m_target = center;
+  const float safeRadius = (std::max)(0.1f, radius);
+  const float aspect = m_viewportH > 0 ? static_cast<float>(m_viewportW) / static_cast<float>(m_viewportH) : 1.0f;
+  const float verticalFov = (std::max)(0.01f, m_cam.Fov);
+  const float horizontalFov = 2.0f * std::atan(std::tan(verticalFov * 0.5f) * (std::max)(0.01f, aspect));
+  const float fitFov = (std::max)(0.01f, (std::min)(verticalFov, horizontalFov));
+  m_distance = std::clamp((safeRadius / std::tan(fitFov * 0.5f)) * 1.25f, MinDistance, MaxDistance);
+  RecomputeEye();
+  m_cam.Update(0.0f);
 }
 
 void EditorCamera::ResetToDefault() {

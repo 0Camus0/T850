@@ -311,9 +311,13 @@ $xaml = @"
             <TextBlock Name="txtStatus" Text="" FontSize="12"
                        Foreground="#A6ADC8" Margin="0,0,0,4"
                        TextWrapping="Wrap"/>
-            <TextBlock Name="txtCmdPreview" Text="" FontSize="11"
-                       Foreground="#45475A" Margin="0"
-                       TextWrapping="Wrap" FontFamily="Consolas"/>
+            <TextBox Name="txtCmdPreview" Text="" FontSize="11"
+                     Foreground="#A6ADC8" Margin="0" Padding="0"
+                     TextWrapping="Wrap" FontFamily="Consolas"
+                     IsReadOnly="True" IsReadOnlyCaretVisible="True"
+                     Background="Transparent" BorderThickness="0"
+                     Height="Auto" MinHeight="24" VerticalContentAlignment="Top"
+                     Cursor="IBeam"/>
         </StackPanel>
 
         <!-- Buttons -->
@@ -421,6 +425,7 @@ $script:SceneDependencyResult = @{ Ok = $true; Missing = @() }
 $script:SuppressSceneDependencyValidation = $false
 $script:LauncherInitializing = $true
 $script:LauncherBusy = $false
+$script:AssetDownloadInProgress = $false
 $script:CloudAssetStatus = $null
 $modelCloudScript = Join-Path $rootDir "scripts\ModelCloud.ps1"
 if (-not (Test-Path $modelCloudScript) -and $PSScriptRoot) { $modelCloudScript = Join-Path $PSScriptRoot "ModelCloud.ps1" }
@@ -494,14 +499,16 @@ function Update-DownloadAssetsButton {
     if (-not $btnDownloadAssets) { return }
     $status = $script:CloudAssetStatus
     $missing = if ($status) { [int]$status.Missing } else { 0 }
-    $btnDownloadAssets.Content = "Download Assets"
-    $btnDownloadAssets.IsEnabled = ((-not $script:LauncherBusy) -and ($missing -gt 0))
-    $btnDownloadAssets.ToolTip = if ($missing -gt 0) {
+    $btnDownloadAssets.Content = if ($script:AssetDownloadInProgress) { "Downloading..." } else { "Download Assets" }
+    $btnDownloadAssets.IsEnabled = -not $script:AssetDownloadInProgress
+    $btnDownloadAssets.ToolTip = if ($script:AssetDownloadInProgress) {
+        "Asset download is already running."
+    } elseif ($missing -gt 0) {
         "$missing cloud asset(s) missing. Click to download only missing files."
     } elseif ($status -and $status.Total -gt 0) {
-        "All cloud assets are present."
+        "All cloud assets are present. Click to scan again."
     } else {
-        "No cloud asset manifest is configured."
+        "Click to scan cloud asset manifests."
     }
 }
 
@@ -525,7 +532,15 @@ function Invoke-LauncherModelDownload {
         }
     }
     $status = Update-LauncherCloudAssetStatus
-    if ($status -and $status.Missing -eq 0 -and $status.Ok) { return $true }
+    if ($status -and $status.Missing -eq 0 -and $status.Ok) {
+        if (-not $Quiet) {
+            $message = if ($status.Total -gt 0) { "OK, all asset files are there." } else { $status.Message }
+            $txtStatus.Text = $message
+            $txtStatus.Foreground = $window.FindResource("GreenBrush")
+            [System.Windows.MessageBox]::Show($message, "T850 Launcher", "OK", "Information") | Out-Null
+        }
+        return $true
+    }
     if (Get-Command Ensure-T850CloudModels -ErrorAction SilentlyContinue) {
         $result = Ensure-T850CloudModels -RootDir $rootDir -AssetRoot $targetRoot -StatusCallback $statusCallback
         if (-not $result.Ok) {
@@ -832,6 +847,19 @@ function Save-Config {
 
 # ── Helpers ──
 
+function Format-LauncherCommandLine {
+    param(
+        [Parameter(Mandatory = $true)] [string]$FilePath,
+        [string[]]$Arguments = @()
+    )
+    $quotedArgs = @()
+    foreach ($arg in $Arguments) {
+        if ($arg -match '[\s",]') { $quotedArgs += ('"' + ($arg -replace '"', '\"') + '"') }
+        else { $quotedArgs += $arg }
+    }
+    return (('"' + $FilePath + '" ' + ($quotedArgs -join ' ')).Trim())
+}
+
 function Get-LaunchCommand {
     $apiTag = ($cmbApi.SelectedItem).Tag.ToString()
 
@@ -955,31 +983,26 @@ function Update-Preview {
     $editorOk = Test-Path $editorCmd.ExePath
     $sceneDeps = Get-CachedSceneDependencyResult
     $assetStatus = $script:CloudAssetStatus
-    $assetsMissing = ($assetStatus -and $assetStatus.Missing -gt 0)
+    $assetsMissing = ($assetStatus -and $assetStatus.Configured -and ($assetStatus.Missing -gt 0 -or -not $assetStatus.Ok))
 
     if (-not $sceneDeps.Ok) {
         $txtStatus.Text = "Scene missing: $($sceneDeps.Missing -join ', ')"
         $txtStatus.Foreground = $window.FindResource("RedBrush")
         $btnRun.IsEnabled = $false
         $btnEditor.IsEnabled = $editorOk
+    } elseif ($assetsMissing) {
+        $txtStatus.Text = "Cloud assets missing: $($assetStatus.Missing)/$($assetStatus.Total). Click Download Assets before running."
+        $txtStatus.Foreground = $window.FindResource("AccentBrush")
+        $btnRun.IsEnabled = $false
+        $btnEditor.IsEnabled = $editorOk
     } elseif ($sceneOk -and $editorOk) {
-        if ($assetsMissing) {
-            $txtStatus.Text = "Cloud assets missing: $($assetStatus.Missing)/$($assetStatus.Total). Download Assets, or Run/Editor will download them."
-            $txtStatus.Foreground = $window.FindResource("AccentBrush")
-        } else {
-            $txtStatus.Text = "Ready to run (Scene + Editor)"
-            $txtStatus.Foreground = $window.FindResource("GreenBrush")
-        }
+        $txtStatus.Text = "Ready to run (Scene + Editor)"
+        $txtStatus.Foreground = $window.FindResource("GreenBrush")
         $btnRun.IsEnabled = $true
         $btnEditor.IsEnabled = $true
     } elseif ($sceneOk) {
-        if ($assetsMissing) {
-            $txtStatus.Text = "Cloud assets missing: $($assetStatus.Missing)/$($assetStatus.Total). Download Assets, or Run will download them."
-            $txtStatus.Foreground = $window.FindResource("AccentBrush")
-        } else {
-            $txtStatus.Text = "Scene ready, Editor not found"
-            $txtStatus.Foreground = $window.FindResource("GreenBrush")
-        }
+        $txtStatus.Text = "Scene ready, Editor not found"
+        $txtStatus.Foreground = $window.FindResource("GreenBrush")
         $btnRun.IsEnabled = $true
         $btnEditor.IsEnabled = $false
     } else {
@@ -1086,6 +1109,7 @@ $txtHeight.Add_TextChanged({ Update-Preview })
 
 # DOWNLOAD ASSETS button
 $btnDownloadAssets.Add_Click({
+    $script:AssetDownloadInProgress = $true
     $script:LauncherBusy = $true
     Update-DownloadAssetsButton
     try {
@@ -1094,6 +1118,7 @@ $btnDownloadAssets.Add_Click({
         Populate-SceneFileList
         Update-SceneDependencyCache
     } finally {
+        $script:AssetDownloadInProgress = $false
         $script:LauncherBusy = $false
         Update-Preview
     }
@@ -1101,7 +1126,15 @@ $btnDownloadAssets.Add_Click({
 
 # RUN button
 $btnRun.Add_Click({
-    if (-not (Invoke-LauncherModelDownload)) { return }
+    Update-LauncherCloudAssetStatus | Out-Null
+    Update-Preview
+    $assetStatus = $script:CloudAssetStatus
+    if ($assetStatus -and $assetStatus.Configured -and ($assetStatus.Missing -gt 0 -or -not $assetStatus.Ok)) {
+        [System.Windows.MessageBox]::Show(
+            ("Cloud assets are missing or invalid. Click Download Assets before running." + "`n`n" + $assetStatus.Message),
+            "T850 Launcher", "OK", "Warning") | Out-Null
+        return
+    }
     Populate-ModelList
     Populate-SceneFileList
     Update-SceneDependencyCache
@@ -1131,7 +1164,6 @@ $btnRun.Add_Click({
 
 # EDITOR button
 $btnEditor.Add_Click({
-    if (-not (Invoke-LauncherModelDownload)) { return }
     Populate-ModelList
     $cmd = Get-EditorLaunchCommand
     if (-not (Test-Path $cmd.ExePath)) {

@@ -81,6 +81,12 @@
     <Filter Include="Source Files\physics">
       <UniqueIdentifier>{fb7d6cf1-65eb-4045-984c-2ef7a95d15cc}</UniqueIdentifier>
     </Filter>
+    <Filter Include="Header Files\navigation">
+      <UniqueIdentifier>{1ec2dc93-6f40-45e4-b451-82da44d7a934}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Source Files\navigation">
+      <UniqueIdentifier>{f15980be-8b52-4411-bfad-e309f6e4a7f0}</UniqueIdentifier>
+    </Filter>
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="include\core\Core.h">
@@ -352,6 +358,12 @@
     </ClInclude>
     <ClInclude Include="include\core\Config.h">
       <Filter>Header Files\core</Filter>
+    </ClInclude>
+    <ClInclude Include="include\navigation\NavigationSystem.h">
+      <Filter>Header Files\navigation</Filter>
+    </ClInclude>
+    <ClInclude Include="include\navigation\NavigationDebugRenderer.h">
+      <Filter>Header Files\navigation</Filter>
     </ClInclude>
     <ClInclude Include="include\debug\FrameDumper.h">
       <Filter>Header Files\utils</Filter>
@@ -705,6 +717,12 @@
     </ClCompile>
     <ClCompile Include="src\debug\RenderTrace.cpp">
       <Filter>Source Files\utils</Filter>
+    </ClCompile>
+    <ClCompile Include="src\navigation\NavigationSystem.cpp">
+      <Filter>Source Files\navigation</Filter>
+    </ClCompile>
+    <ClCompile Include="src\navigation\NavigationDebugRenderer.cpp">
+      <Filter>Source Files\navigation</Filter>
     </ClCompile>
     <ClCompile Include="src\utils\SPIRVReflection.cpp">
       <Filter>Source Files\utils</Filter>

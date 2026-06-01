@@ -807,6 +807,11 @@
          "default_val": false
       },
       {
+         "name": "show_navmesh",
+         "label": "NavMesh",
+         "default_val": false
+      },
+      {
          "name": "dof_toggle",
          "label": "DOF",
          "default_val": true

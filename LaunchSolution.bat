@@ -88,7 +88,7 @@ echo  T850 — Installing vcpkg dependencies
 echo ════════════════════════════════════════
 
 :: ── Common packages for all platforms ──
-set "PACKAGES=glew vulkan-headers vulkan-loader vulkan-memory-allocator glslang draco joltphysics"
+set "PACKAGES=glew vulkan-headers vulkan-loader vulkan-memory-allocator glslang draco joltphysics recastnavigation"
 set "PACKAGES_DYNAMIC=angle draco"
 
 :: ── x64 (always) ──

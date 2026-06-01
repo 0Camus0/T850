@@ -132,7 +132,7 @@ void LineRenderer::DrawLines(const XMATRIX44& world,
     (m_viewW > 0) ? 1.0f / (float)m_viewW : 1.0f / 1280.0f,
     (m_viewH > 0) ? 1.0f / (float)m_viewH : 1.0f / 720.0f,
     m_farPlane,
-    0.005f);  // proportional depth bias (wireDepth *= 1 - bias)
+    m_depthBias);
 
   ib->Set(*T8DeviceContext, 0, ibFormat);
   vb->Set(*T8DeviceContext, vertexStride, 0);
@@ -143,6 +143,11 @@ void LineRenderer::DrawLines(const XMATRIX44& world,
   shader->Set(*T8DeviceContext);
   m_cb->UpdateFromBuffer(*T8DeviceContext, &cb);
   m_cb->Set(*T8DeviceContext);
+#if defined(USING_VULKAN) || defined(USING_VULKAN_ONLY)
+  // Android offline SPIR-V can auto-map VS/FS cbuffers to different bindings
+  // when the fragment shader also samples depth. Populate both logical slots.
+  m_cb->Set(*T8DeviceContext, 1);
+#endif
 
   // Bind depth texture AFTER shader is set (D3D12 needs active root signature)
   if (m_depthTest && m_depthTex)

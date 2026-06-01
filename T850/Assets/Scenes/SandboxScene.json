@@ -389,6 +389,12 @@
          "enabled": true
       },
       {
+         "name": "show_navmesh",
+         "label": "NavMesh",
+         "default_val": false,
+         "enabled": true
+      },
+      {
          "name": "show_light_volumes",
          "label": "Light Volumes",
          "default_val": false,

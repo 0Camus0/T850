@@ -10,6 +10,8 @@
 #include <scene/RenderGraph.h>
 #include <debug/FrameDumper.h>
 #include <physics/PhysicsDebugRenderer.h>
+#include <navigation/NavigationDebugRenderer.h>
+#include <navigation/NavigationSystem.h>
 #include <scene/LensFlare.h>
 #include <scene/TextRenderer.h>
 #include <Config.h>
@@ -90,6 +92,7 @@ class DayScene : public t850::SceneBase
     CHANGE_PARALLAX_SHADOW_STRENGTH,
     CHANGE_PARALLAX_SHADOW_TOGGLE,
     CHANGE_SHOW_PHYSICS,
+    CHANGE_SHOW_NAVMESH,
     CHANGE_POINT_LIGHTS_ENABLED,
     CHANGE_MAX_NUM_OPTIONS
   };
@@ -134,6 +137,7 @@ class DayScene : public t850::SceneBase
   void CaptureSceneProfileState(t850::SandboxProfileDesc& state) const;
   void ApplySceneProfileState(const t850::SandboxProfileDesc& state);
   t850::SandboxProfileDesc BuildSparseSceneProfile(const t850::SandboxProfileDesc& current) const;
+  bool EnsureNavMeshBuilt();
 
   struct BenchmarkCullingTotals {
     unsigned long long samples = 0;
@@ -233,9 +237,15 @@ class DayScene : public t850::SceneBase
   t850::WireframeSphere m_wireframeSphere;
   t850::WireframeArrow m_wireframeArrow;
   t850::PhysicsDebugRenderer m_physicsDebugRenderer;
+  t850::navigation::NavMeshDebugRenderer m_navMeshDebugRenderer;
+  t850::navigation::NavMesh m_navMesh;
   t850::TextRenderer m_debugText;
   bool m_showCullStats = false;
   bool m_showPhysics = false;
+  bool m_showNavMesh = false;
+  float m_navMeshDebugOffset = 0.01f;
+  int m_navMeshDebugShapeMode = 0;
+  bool m_navMeshBuildAttempted = false;
   float m_tourTimeSec = 0.0f;
   std::vector<double> m_benchmarkFrameTimesMs;
   BenchmarkCullingTotals m_benchmarkCullingTotals;

@@ -9,6 +9,7 @@ This directory documents the current engine architecture. Paths are relative to 
 | [Framework](framework.md) | Application lifecycle, core interfaces, platform hosts, services, and ownership. |
 | [Graphics layer](graphics-layer.md) | Driver abstraction, render graph, API backends, shaders, resources, frame pacing, and debugging hooks. |
 | [Scene, meshes, and physics](scene-meshes-physics.md) | Scene file formats, mesh loading, material/asset flow, Jolt physics, collision, and ragdoll synchronization. |
+| [Navigation architecture](navigation-architecture.md) | Recast/Detour wrapper design, scene mesh sources, path queries, source updates, and debug visualization. |
 
 ## High-level map
 

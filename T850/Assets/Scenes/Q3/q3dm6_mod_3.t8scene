@@ -3,14 +3,14 @@
    "collision": "Scenes/Q3/q3dm6.t8q3clip",
    "editor": {
       "camera_target": {
-         "x": -34.10334,
-         "y": 10.842996,
-         "z": 6.820883
+         "x": 6.5882893,
+         "y": 0.27237678,
+         "z": -17.15108
       },
-      "camera_yaw": 4.4899774,
-      "camera_pitch": 0.20500012,
-      "camera_distance": 0.6654993,
-      "show_skybox": true,
+      "camera_yaw": 0.16999967,
+      "camera_pitch": 0.1550003,
+      "camera_distance": 8.027201,
+      "show_skybox": false,
       "show_wireframe": false
    },
    "objects": [
@@ -48,13 +48,13 @@
          },
          "rotation": {
             "x": -179.99924,
-            "y": -61.339775,
+            "y": -61.33975,
             "z": -179.99089
          },
          "scale": {
-            "x": 0.0006204003,
-            "y": 0.0006203996,
-            "z": 0.0006204003
+            "x": 0.00032571016,
+            "y": 0.0003257098,
+            "z": 0.00032571016
          },
          "visible": true,
          "frozen": false,
@@ -77,9 +77,9 @@
             "z": -179.99089
          },
          "scale": {
-            "x": 0.0006204003,
-            "y": 0.0006203996,
-            "z": 0.0006204003
+            "x": 0.0003257102,
+            "y": 0.0003257098,
+            "z": 0.0003257102
          },
          "visible": true,
          "frozen": false,
@@ -228,7 +228,7 @@
          "intensity": 5,
          "radius": 5.59017,
          "enabled": true,
-         "visible": true,
+         "visible": false,
          "frozen": false,
          "q3": {
             "source": "bsp_entity_lump",
@@ -263,7 +263,7 @@
          "intensity": 0.35,
          "radius": 1.47902,
          "enabled": true,
-         "visible": true,
+         "visible": false,
          "frozen": false,
          "q3": {
             "source": "bsp_entity_lump",
@@ -298,7 +298,7 @@
          "intensity": 0.2,
          "radius": 1.118034,
          "enabled": true,
-         "visible": true,
+         "visible": false,
          "frozen": false,
          "q3": {
             "source": "bsp_entity_lump",
@@ -333,7 +333,7 @@
          "intensity": 0.3,
          "radius": 1.369306,
          "enabled": true,
-         "visible": true,
+         "visible": false,
          "frozen": false,
          "q3": {
             "source": "bsp_entity_lump",
@@ -368,7 +368,7 @@
          "intensity": 0.3,
          "radius": 1.369306,
          "enabled": true,
-         "visible": true,
+         "visible": false,
          "frozen": false,
          "q3": {
             "source": "bsp_entity_lump",
@@ -403,7 +403,7 @@
          "intensity": 0.3,
          "radius": 1.369306,
          "enabled": true,
-         "visible": true,
+         "visible": false,
          "frozen": false,
          "q3": {
             "source": "bsp_entity_lump",
@@ -438,7 +438,7 @@
          "intensity": 0.3,
          "radius": 1.369306,
          "enabled": true,
-         "visible": true,
+         "visible": false,
          "frozen": false,
          "q3": {
             "source": "bsp_entity_lump",
@@ -473,7 +473,7 @@
          "intensity": 0.3,
          "radius": 1.369306,
          "enabled": true,
-         "visible": true,
+         "visible": false,
          "frozen": false,
          "q3": {
             "source": "bsp_entity_lump",
@@ -508,7 +508,7 @@
          "intensity": 0.3,
          "radius": 1.369306,
          "enabled": true,
-         "visible": true,
+         "visible": false,
          "frozen": false,
          "q3": {
             "source": "bsp_entity_lump",
@@ -543,7 +543,7 @@
          "intensity": 0.3,
          "radius": 1.369306,
          "enabled": true,
-         "visible": true,
+         "visible": false,
          "frozen": false,
          "q3": {
             "source": "bsp_entity_lump",
@@ -578,7 +578,7 @@
          "intensity": 0.3,
          "radius": 1.369306,
          "enabled": true,
-         "visible": true,
+         "visible": false,
          "frozen": false,
          "q3": {
             "source": "bsp_entity_lump",
@@ -613,7 +613,7 @@
          "intensity": 0.3,
          "radius": 1.369306,
          "enabled": true,
-         "visible": true,
+         "visible": false,
          "frozen": false,
          "q3": {
             "source": "bsp_entity_lump",
@@ -648,7 +648,7 @@
          "intensity": 0.3,
          "radius": 1.369306,
          "enabled": true,
-         "visible": true,
+         "visible": false,
          "frozen": false,
          "q3": {
             "source": "bsp_entity_lump",
@@ -683,7 +683,7 @@
          "intensity": 0.3,
          "radius": 1.369306,
          "enabled": true,
-         "visible": true,
+         "visible": false,
          "frozen": false,
          "q3": {
             "source": "bsp_entity_lump",
@@ -718,7 +718,7 @@
          "intensity": 0.3,
          "radius": 1.369306,
          "enabled": true,
-         "visible": true,
+         "visible": false,
          "frozen": false,
          "q3": {
             "source": "bsp_entity_lump",
@@ -753,7 +753,7 @@
          "intensity": 0.3,
          "radius": 1.369306,
          "enabled": true,
-         "visible": true,
+         "visible": false,
          "frozen": false,
          "q3": {
             "source": "bsp_entity_lump",
@@ -788,7 +788,7 @@
          "intensity": 0.3,
          "radius": 1.369306,
          "enabled": true,
-         "visible": true,
+         "visible": false,
          "frozen": false,
          "q3": {
             "source": "bsp_entity_lump",
@@ -823,7 +823,7 @@
          "intensity": 0.3,
          "radius": 1.369306,
          "enabled": true,
-         "visible": true,
+         "visible": false,
          "frozen": false,
          "q3": {
             "source": "bsp_entity_lump",
@@ -858,7 +858,7 @@
          "intensity": 0.4,
          "radius": 1.581139,
          "enabled": true,
-         "visible": true,
+         "visible": false,
          "frozen": false,
          "q3": {
             "source": "bsp_entity_lump",
@@ -893,7 +893,7 @@
          "intensity": 0.4,
          "radius": 1.581139,
          "enabled": true,
-         "visible": true,
+         "visible": false,
          "frozen": false,
          "q3": {
             "source": "bsp_entity_lump",
@@ -928,7 +928,7 @@
          "intensity": 0.4,
          "radius": 1.581139,
          "enabled": true,
-         "visible": true,
+         "visible": false,
          "frozen": false,
          "q3": {
             "source": "bsp_entity_lump",
@@ -963,7 +963,7 @@
          "intensity": 0.4,
          "radius": 1.581139,
          "enabled": true,
-         "visible": true,
+         "visible": false,
          "frozen": false,
          "q3": {
             "source": "bsp_entity_lump",
@@ -998,7 +998,7 @@
          "intensity": 0.3,
          "radius": 1.369306,
          "enabled": true,
-         "visible": true,
+         "visible": false,
          "frozen": false,
          "q3": {
             "source": "bsp_entity_lump",
@@ -1033,7 +1033,7 @@
          "intensity": 0.3,
          "radius": 1.369306,
          "enabled": true,
-         "visible": true,
+         "visible": false,
          "frozen": false,
          "q3": {
             "source": "bsp_entity_lump",
@@ -1068,7 +1068,7 @@
          "intensity": 0.3,
          "radius": 1.369306,
          "enabled": true,
-         "visible": true,
+         "visible": false,
          "frozen": false,
          "q3": {
             "source": "bsp_entity_lump",
@@ -1103,7 +1103,7 @@
          "intensity": 3,
          "radius": 4.330127,
          "enabled": true,
-         "visible": true,
+         "visible": false,
          "frozen": false,
          "q3": {
             "source": "bsp_entity_lump",
@@ -1138,7 +1138,7 @@
          "intensity": 3,
          "radius": 4.330127,
          "enabled": true,
-         "visible": true,
+         "visible": false,
          "frozen": false,
          "q3": {
             "source": "bsp_entity_lump",
@@ -1173,7 +1173,7 @@
          "intensity": 3,
          "radius": 4.330127,
          "enabled": true,
-         "visible": true,
+         "visible": false,
          "frozen": false,
          "q3": {
             "source": "bsp_entity_lump",
@@ -1208,7 +1208,7 @@
          "intensity": 0.1,
          "radius": 0.790569,
          "enabled": true,
-         "visible": true,
+         "visible": false,
          "frozen": false,
          "q3": {
             "source": "bsp_entity_lump",
@@ -1243,7 +1243,7 @@
          "intensity": 0.3,
          "radius": 1.369306,
          "enabled": true,
-         "visible": true,
+         "visible": false,
          "frozen": false,
          "q3": {
             "source": "bsp_entity_lump",
@@ -1278,7 +1278,7 @@
          "intensity": 0.3,
          "radius": 1.369306,
          "enabled": true,
-         "visible": true,
+         "visible": false,
          "frozen": false,
          "q3": {
             "source": "bsp_entity_lump",
@@ -1313,7 +1313,7 @@
          "intensity": 1.5,
          "radius": 3.061862,
          "enabled": true,
-         "visible": true,
+         "visible": false,
          "frozen": false,
          "q3": {
             "source": "bsp_entity_lump",
@@ -1348,7 +1348,7 @@
          "intensity": 1.5,
          "radius": 3.061862,
          "enabled": true,
-         "visible": true,
+         "visible": false,
          "frozen": false,
          "q3": {
             "source": "bsp_entity_lump",
@@ -1383,7 +1383,7 @@
          "intensity": 1.5,
          "radius": 3.061862,
          "enabled": true,
-         "visible": true,
+         "visible": false,
          "frozen": false,
          "q3": {
             "source": "bsp_entity_lump",
@@ -1418,7 +1418,7 @@
          "intensity": 1.5,
          "radius": 3.061862,
          "enabled": true,
-         "visible": true,
+         "visible": false,
          "frozen": false,
          "q3": {
             "source": "bsp_entity_lump",
@@ -1453,7 +1453,7 @@
          "intensity": 1.5,
          "radius": 3.061862,
          "enabled": true,
-         "visible": true,
+         "visible": false,
          "frozen": false,
          "q3": {
             "source": "bsp_entity_lump",
@@ -1488,7 +1488,7 @@
          "intensity": 1.5,
          "radius": 3.061862,
          "enabled": true,
-         "visible": true,
+         "visible": false,
          "frozen": false,
          "q3": {
             "source": "bsp_entity_lump",
@@ -1523,7 +1523,7 @@
          "intensity": 0.3,
          "radius": 1.369306,
          "enabled": true,
-         "visible": true,
+         "visible": false,
          "frozen": false,
          "q3": {
             "source": "bsp_entity_lump",
@@ -1558,7 +1558,7 @@
          "intensity": 0.3,
          "radius": 1.369306,
          "enabled": true,
-         "visible": true,
+         "visible": false,
          "frozen": false,
          "q3": {
             "source": "bsp_entity_lump",
@@ -1593,7 +1593,7 @@
          "intensity": 0.3,
          "radius": 1.369306,
          "enabled": true,
-         "visible": true,
+         "visible": false,
          "frozen": false,
          "q3": {
             "source": "bsp_entity_lump",
@@ -1628,7 +1628,7 @@
          "intensity": 0.3,
          "radius": 1.369306,
          "enabled": true,
-         "visible": true,
+         "visible": false,
          "frozen": false,
          "q3": {
             "source": "bsp_entity_lump",
@@ -1663,7 +1663,7 @@
          "intensity": 0.35,
          "radius": 1.47902,
          "enabled": true,
-         "visible": true,
+         "visible": false,
          "frozen": false,
          "q3": {
             "source": "bsp_entity_lump",
@@ -1698,7 +1698,7 @@
          "intensity": 0.35,
          "radius": 1.47902,
          "enabled": true,
-         "visible": true,
+         "visible": false,
          "frozen": false,
          "q3": {
             "source": "bsp_entity_lump",
@@ -1733,7 +1733,7 @@
          "intensity": 1.5,
          "radius": 3.061862,
          "enabled": true,
-         "visible": true,
+         "visible": false,
          "frozen": false,
          "q3": {
             "source": "bsp_entity_lump",
@@ -1768,7 +1768,7 @@
          "intensity": 1.5,
          "radius": 3.061862,
          "enabled": true,
-         "visible": true,
+         "visible": false,
          "frozen": false,
          "q3": {
             "source": "bsp_entity_lump",
@@ -1803,7 +1803,7 @@
          "intensity": 1.5,
          "radius": 3.061862,
          "enabled": true,
-         "visible": true,
+         "visible": false,
          "frozen": false,
          "q3": {
             "source": "bsp_entity_lump",
@@ -1838,7 +1838,7 @@
          "intensity": 0.6,
          "radius": 1.936492,
          "enabled": true,
-         "visible": true,
+         "visible": false,
          "frozen": false,
          "q3": {
             "source": "bsp_entity_lump",
@@ -1873,7 +1873,7 @@
          "intensity": 1.5,
          "radius": 3.061862,
          "enabled": true,
-         "visible": true,
+         "visible": false,
          "frozen": false,
          "q3": {
             "source": "bsp_entity_lump",
@@ -1908,7 +1908,7 @@
          "intensity": 1.5,
          "radius": 3.061862,
          "enabled": true,
-         "visible": true,
+         "visible": false,
          "frozen": false,
          "q3": {
             "source": "bsp_entity_lump",
@@ -1943,7 +1943,7 @@
          "intensity": 1.5,
          "radius": 3.061862,
          "enabled": true,
-         "visible": true,
+         "visible": false,
          "frozen": false,
          "q3": {
             "source": "bsp_entity_lump",
@@ -1978,7 +1978,7 @@
          "intensity": 1.5,
          "radius": 3.061862,
          "enabled": true,
-         "visible": true,
+         "visible": false,
          "frozen": false,
          "q3": {
             "source": "bsp_entity_lump",
@@ -2013,7 +2013,7 @@
          "intensity": 1.5,
          "radius": 3.061862,
          "enabled": true,
-         "visible": true,
+         "visible": false,
          "frozen": false,
          "q3": {
             "source": "bsp_entity_lump",
@@ -2048,7 +2048,7 @@
          "intensity": 1.5,
          "radius": 3.061862,
          "enabled": true,
-         "visible": true,
+         "visible": false,
          "frozen": false,
          "q3": {
             "source": "bsp_entity_lump",
@@ -2083,7 +2083,7 @@
          "intensity": 1.5,
          "radius": 3.061862,
          "enabled": true,
-         "visible": true,
+         "visible": false,
          "frozen": false,
          "q3": {
             "source": "bsp_entity_lump",
@@ -2118,7 +2118,7 @@
          "intensity": 1.5,
          "radius": 3.061862,
          "enabled": true,
-         "visible": true,
+         "visible": false,
          "frozen": false,
          "q3": {
             "source": "bsp_entity_lump",
@@ -2153,7 +2153,7 @@
          "intensity": 0.2,
          "radius": 1.118034,
          "enabled": true,
-         "visible": true,
+         "visible": false,
          "frozen": false,
          "q3": {
             "source": "bsp_entity_lump",
@@ -2188,7 +2188,7 @@
          "intensity": 0.2,
          "radius": 1.118034,
          "enabled": true,
-         "visible": true,
+         "visible": false,
          "frozen": false,
          "q3": {
             "source": "bsp_entity_lump",
@@ -2223,7 +2223,7 @@
          "intensity": 0.2,
          "radius": 1.118034,
          "enabled": true,
-         "visible": true,
+         "visible": false,
          "frozen": false,
          "q3": {
             "source": "bsp_entity_lump",
@@ -2258,7 +2258,7 @@
          "intensity": 0.2,
          "radius": 1.118034,
          "enabled": true,
-         "visible": true,
+         "visible": false,
          "frozen": false,
          "q3": {
             "source": "bsp_entity_lump",
@@ -2293,7 +2293,7 @@
          "intensity": 0.2,
          "radius": 1.118034,
          "enabled": true,
-         "visible": true,
+         "visible": false,
          "frozen": false,
          "q3": {
             "source": "bsp_entity_lump",
@@ -2328,7 +2328,7 @@
          "intensity": 0.2,
          "radius": 1.118034,
          "enabled": true,
-         "visible": true,
+         "visible": false,
          "frozen": false,
          "q3": {
             "source": "bsp_entity_lump",
@@ -2363,7 +2363,7 @@
          "intensity": 0.2,
          "radius": 1.118034,
          "enabled": true,
-         "visible": true,
+         "visible": false,
          "frozen": false,
          "q3": {
             "source": "bsp_entity_lump",
@@ -2398,7 +2398,7 @@
          "intensity": 0.2,
          "radius": 1.118034,
          "enabled": true,
-         "visible": true,
+         "visible": false,
          "frozen": false,
          "q3": {
             "source": "bsp_entity_lump",
@@ -2433,7 +2433,7 @@
          "intensity": 0.2,
          "radius": 1.118034,
          "enabled": true,
-         "visible": true,
+         "visible": false,
          "frozen": false,
          "q3": {
             "source": "bsp_entity_lump",
@@ -2468,7 +2468,7 @@
          "intensity": 0.2,
          "radius": 1.118034,
          "enabled": true,
-         "visible": true,
+         "visible": false,
          "frozen": false,
          "q3": {
             "source": "bsp_entity_lump",
@@ -2503,7 +2503,7 @@
          "intensity": 0.2,
          "radius": 1.118034,
          "enabled": true,
-         "visible": true,
+         "visible": false,
          "frozen": false,
          "q3": {
             "source": "bsp_entity_lump",
@@ -2538,7 +2538,7 @@
          "intensity": 0.2,
          "radius": 1.118034,
          "enabled": true,
-         "visible": true,
+         "visible": false,
          "frozen": false,
          "q3": {
             "source": "bsp_entity_lump",
@@ -2573,7 +2573,7 @@
          "intensity": 0.2,
          "radius": 1.118034,
          "enabled": true,
-         "visible": true,
+         "visible": false,
          "frozen": false,
          "q3": {
             "source": "bsp_entity_lump",
@@ -2608,7 +2608,7 @@
          "intensity": 0.2,
          "radius": 1.118034,
          "enabled": true,
-         "visible": true,
+         "visible": false,
          "frozen": false,
          "q3": {
             "source": "bsp_entity_lump",
@@ -2643,7 +2643,7 @@
          "intensity": 0.5,
          "radius": 1.767767,
          "enabled": true,
-         "visible": true,
+         "visible": false,
          "frozen": false,
          "q3": {
             "source": "bsp_entity_lump",
@@ -2678,7 +2678,7 @@
          "intensity": 1.5,
          "radius": 3.061862,
          "enabled": true,
-         "visible": true,
+         "visible": false,
          "frozen": false,
          "q3": {
             "source": "bsp_entity_lump",
@@ -2713,7 +2713,7 @@
          "intensity": 0.2,
          "radius": 1.118034,
          "enabled": true,
-         "visible": true,
+         "visible": false,
          "frozen": false,
          "q3": {
             "source": "bsp_entity_lump",
@@ -2748,7 +2748,7 @@
          "intensity": 1.5,
          "radius": 3.061862,
          "enabled": true,
-         "visible": true,
+         "visible": false,
          "frozen": false,
          "q3": {
             "source": "bsp_entity_lump",
@@ -2783,7 +2783,7 @@
          "intensity": 0.2,
          "radius": 1.118034,
          "enabled": true,
-         "visible": true,
+         "visible": false,
          "frozen": false,
          "q3": {
             "source": "bsp_entity_lump",
@@ -2818,7 +2818,7 @@
          "intensity": 1.5,
          "radius": 3.061862,
          "enabled": true,
-         "visible": true,
+         "visible": false,
          "frozen": false,
          "q3": {
             "source": "bsp_entity_lump",
@@ -2853,7 +2853,7 @@
          "intensity": 0.2,
          "radius": 1.118034,
          "enabled": true,
-         "visible": true,
+         "visible": false,
          "frozen": false,
          "q3": {
             "source": "bsp_entity_lump",
@@ -2888,7 +2888,7 @@
          "intensity": 1.5,
          "radius": 3.061862,
          "enabled": true,
-         "visible": true,
+         "visible": false,
          "frozen": false,
          "q3": {
             "source": "bsp_entity_lump",
@@ -2923,7 +2923,7 @@
          "intensity": 0.2,
          "radius": 1.118034,
          "enabled": true,
-         "visible": true,
+         "visible": false,
          "frozen": false,
          "q3": {
             "source": "bsp_entity_lump",
@@ -2958,7 +2958,7 @@
          "intensity": 1.5,
          "radius": 3.061862,
          "enabled": true,
-         "visible": true,
+         "visible": false,
          "frozen": false,
          "q3": {
             "source": "bsp_entity_lump",
@@ -2993,7 +2993,7 @@
          "intensity": 0.2,
          "radius": 1.118034,
          "enabled": true,
-         "visible": true,
+         "visible": false,
          "frozen": false,
          "q3": {
             "source": "bsp_entity_lump",
@@ -3028,7 +3028,7 @@
          "intensity": 0.3,
          "radius": 1.369306,
          "enabled": true,
-         "visible": true,
+         "visible": false,
          "frozen": false,
          "q3": {
             "source": "bsp_entity_lump",
@@ -3063,7 +3063,7 @@
          "intensity": 1.5,
          "radius": 3.061862,
          "enabled": true,
-         "visible": true,
+         "visible": false,
          "frozen": false,
          "q3": {
             "source": "bsp_entity_lump",
@@ -3098,7 +3098,7 @@
          "intensity": 0.2,
          "radius": 1.118034,
          "enabled": true,
-         "visible": true,
+         "visible": false,
          "frozen": false,
          "q3": {
             "source": "bsp_entity_lump",
@@ -3133,7 +3133,7 @@
          "intensity": 1.5,
          "radius": 3.061862,
          "enabled": true,
-         "visible": true,
+         "visible": false,
          "frozen": false,
          "q3": {
             "source": "bsp_entity_lump",
@@ -3168,7 +3168,7 @@
          "intensity": 0.2,
          "radius": 1.118034,
          "enabled": true,
-         "visible": true,
+         "visible": false,
          "frozen": false,
          "q3": {
             "source": "bsp_entity_lump",
@@ -3203,7 +3203,7 @@
          "intensity": 1.5,
          "radius": 3.061862,
          "enabled": true,
-         "visible": true,
+         "visible": false,
          "frozen": false,
          "q3": {
             "source": "bsp_entity_lump",
@@ -3238,7 +3238,7 @@
          "intensity": 0.2,
          "radius": 1.118034,
          "enabled": true,
-         "visible": true,
+         "visible": false,
          "frozen": false,
          "q3": {
             "source": "bsp_entity_lump",
@@ -3273,7 +3273,7 @@
          "intensity": 0.3,
          "radius": 1.369306,
          "enabled": true,
-         "visible": true,
+         "visible": false,
          "frozen": false,
          "q3": {
             "source": "bsp_entity_lump",
@@ -3308,7 +3308,7 @@
          "intensity": 0.3,
          "radius": 1.369306,
          "enabled": true,
-         "visible": true,
+         "visible": false,
          "frozen": false,
          "q3": {
             "source": "bsp_entity_lump",
@@ -3343,7 +3343,7 @@
          "intensity": 0.35,
          "radius": 1.47902,
          "enabled": true,
-         "visible": true,
+         "visible": false,
          "frozen": false,
          "q3": {
             "source": "bsp_entity_lump",
@@ -3378,7 +3378,7 @@
          "intensity": 0.3,
          "radius": 185.7183,
          "enabled": true,
-         "visible": true,
+         "visible": false,
          "frozen": false,
          "q3": {
             "source": "bsp_entity_lump",
@@ -3413,7 +3413,7 @@
          "intensity": 0.35,
          "radius": 1.47902,
          "enabled": true,
-         "visible": true,
+         "visible": false,
          "frozen": false,
          "q3": {
             "source": "bsp_entity_lump",
@@ -3448,7 +3448,7 @@
          "intensity": 0.35,
          "radius": 1.47902,
          "enabled": true,
-         "visible": true,
+         "visible": false,
          "frozen": false,
          "q3": {
             "source": "bsp_entity_lump",
@@ -3483,7 +3483,7 @@
          "intensity": 0.35,
          "radius": 1.47902,
          "enabled": true,
-         "visible": true,
+         "visible": false,
          "frozen": false,
          "q3": {
             "source": "bsp_entity_lump",
@@ -3518,7 +3518,7 @@
          "intensity": 0.35,
          "radius": 1.47902,
          "enabled": true,
-         "visible": true,
+         "visible": false,
          "frozen": false,
          "q3": {
             "source": "bsp_entity_lump",
@@ -3553,7 +3553,7 @@
          "intensity": 0.35,
          "radius": 1.47902,
          "enabled": true,
-         "visible": true,
+         "visible": false,
          "frozen": false,
          "q3": {
             "source": "bsp_entity_lump",
@@ -3588,7 +3588,7 @@
          "intensity": 0.35,
          "radius": 1.47902,
          "enabled": true,
-         "visible": true,
+         "visible": false,
          "frozen": false,
          "q3": {
             "source": "bsp_entity_lump",
@@ -3623,7 +3623,7 @@
          "intensity": 0.4,
          "radius": 1.581139,
          "enabled": true,
-         "visible": true,
+         "visible": false,
          "frozen": false,
          "q3": {
             "source": "bsp_entity_lump",
@@ -3658,7 +3658,7 @@
          "intensity": 0.4,
          "radius": 1.581139,
          "enabled": true,
-         "visible": true,
+         "visible": false,
          "frozen": false,
          "q3": {
             "source": "bsp_entity_lump",
@@ -3693,7 +3693,7 @@
          "intensity": 0.35,
          "radius": 1.47902,
          "enabled": true,
-         "visible": true,
+         "visible": false,
          "frozen": false,
          "q3": {
             "source": "bsp_entity_lump",
@@ -3728,7 +3728,7 @@
          "intensity": 0.35,
          "radius": 1.47902,
          "enabled": true,
-         "visible": true,
+         "visible": false,
          "frozen": false,
          "q3": {
             "source": "bsp_entity_lump",
@@ -3763,7 +3763,7 @@
          "intensity": 0.35,
          "radius": 1.47902,
          "enabled": true,
-         "visible": true,
+         "visible": false,
          "frozen": false,
          "q3": {
             "source": "bsp_entity_lump",
@@ -3798,7 +3798,7 @@
          "intensity": 0.35,
          "radius": 1.47902,
          "enabled": true,
-         "visible": true,
+         "visible": false,
          "frozen": false,
          "q3": {
             "source": "bsp_entity_lump",
@@ -3833,7 +3833,7 @@
          "intensity": 0.35,
          "radius": 1.47902,
          "enabled": true,
-         "visible": true,
+         "visible": false,
          "frozen": false,
          "q3": {
             "source": "bsp_entity_lump",
@@ -3868,7 +3868,7 @@
          "intensity": 0.35,
          "radius": 1.47902,
          "enabled": true,
-         "visible": true,
+         "visible": false,
          "frozen": false,
          "q3": {
             "source": "bsp_entity_lump",
@@ -3903,7 +3903,7 @@
          "intensity": 0.3,
          "radius": 1.369306,
          "enabled": true,
-         "visible": true,
+         "visible": false,
          "frozen": false,
          "q3": {
             "source": "bsp_entity_lump",
@@ -3938,7 +3938,7 @@
          "intensity": 0.3,
          "radius": 1.369306,
          "enabled": true,
-         "visible": true,
+         "visible": false,
          "frozen": false,
          "q3": {
             "source": "bsp_entity_lump",
@@ -3973,7 +3973,7 @@
          "intensity": 0.35,
          "radius": 1.47902,
          "enabled": true,
-         "visible": true,
+         "visible": false,
          "frozen": false,
          "q3": {
             "source": "bsp_entity_lump",
@@ -4008,7 +4008,7 @@
          "intensity": 0.35,
          "radius": 1.47902,
          "enabled": true,
-         "visible": true,
+         "visible": false,
          "frozen": false,
          "q3": {
             "source": "bsp_entity_lump",
@@ -4043,7 +4043,7 @@
          "intensity": 1.5,
          "radius": 3.061862,
          "enabled": true,
-         "visible": true,
+         "visible": false,
          "frozen": false,
          "q3": {
             "source": "bsp_entity_lump",
@@ -4078,7 +4078,7 @@
          "intensity": 0.2,
          "radius": 1.118034,
          "enabled": true,
-         "visible": true,
+         "visible": false,
          "frozen": false,
          "q3": {
             "source": "bsp_entity_lump",
@@ -4113,7 +4113,7 @@
          "intensity": 5,
          "radius": 5.59017,
          "enabled": true,
-         "visible": true,
+         "visible": false,
          "frozen": false,
          "q3": {
             "source": "bsp_entity_lump",
@@ -4148,7 +4148,7 @@
          "intensity": 5,
          "radius": 5.59017,
          "enabled": true,
-         "visible": true,
+         "visible": false,
          "frozen": false,
          "q3": {
             "source": "bsp_entity_lump",
@@ -4183,7 +4183,7 @@
          "intensity": 2,
          "radius": 6.5,
          "enabled": true,
-         "visible": true,
+         "visible": false,
          "frozen": false
       }
    ],
@@ -4277,6 +4277,10 @@
                "value": 92
             },
             {
+               "name": "cubemap",
+               "value": 3
+            },
+            {
                "name": "luminance_mode",
                "value": 1
             }
@@ -4298,30 +4302,31 @@
                "anim_mode": 0
             }
          ],
+         "cubemap_path": "sky/GraceCathedral.dds",
          "camera": {
             "profile": 5,
             "eye": [
-               3.6418679,
+               6.050058,
                1.6571285,
-               -7.339037
+               -2.3202047
             ],
             "look": [
-               0.32910568,
-               -0.1593183,
-               -0.9307562
+               0.14688289,
+               -0.17902964,
+               -0.9728175
             ],
             "up": [
-               0.05311093,
-               0.98722726,
-               -0.15020502
+               0.02672822,
+               0.9838437,
+               -0.1770232
             ],
             "right": [
-               -0.9427983,
+               -0.9887927,
                0,
-               -0.33336365
+               -0.14929494
             ],
-            "yaw": 40.500835,
-            "pitch": 0.16000009,
+            "yaw": 40.69085,
+            "pitch": 0.18000007,
             "roll": 0,
             "fov": 95,
             "aspect_ratio": 1.7777778,
@@ -4343,9 +4348,9 @@
                   0
                ],
                "eye": [
-                  3.6418679,
+                  6.050058,
                   1.6571285,
-                  -7.339037
+                  -2.3202047
                ],
                "yaw": -1.5757964,
                "pitch": -0.005,
@@ -4364,9 +4369,9 @@
                0
             ],
             "eye": [
-               3.6418679,
+               6.050058,
                1.6571285,
-               -7.339037
+               -2.3202047
             ],
             "yaw": -1.5757964,
             "pitch": -0.005,

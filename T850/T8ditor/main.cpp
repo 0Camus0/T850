@@ -37,6 +37,7 @@ t850::AppBase* pApp = nullptr;
 namespace t8ditor {
   // Defined in EditorApp.cpp.
   void SetStartupMeshPath(const std::string& p);
+  void SetStartupDumpFrame(int frame);
 }
 
 static t850::AppBase*       g_pApp       = nullptr;
@@ -51,11 +52,13 @@ int main(int argc, char** argv) {
   desc.title     = "T8ditor";
 
   // Minimal CLI: --api {d3d12|d3d11|vulkan|gl}, --width N, --height N,
-  // --logFile PATH, --logLevel {error|info|debug|verbose|trace|0..4}, --mesh PATH.
+  // --logFile PATH, --logLevel {error|info|debug|verbose|trace|0..4}, --mesh PATH,
+  // --dump-frame N.
   // Default API is D3D12.
   int   logLevel = 3;
   std::string logFile;
   std::string meshPath;
+  int dumpFrame = -1;
 
   for (int i = 1; i < argc; ++i) {
     std::string a = argv[i];
@@ -69,6 +72,7 @@ int main(int argc, char** argv) {
     else if (a == "--width"  && i + 1 < argc) desc.width  = std::stoi(argv[++i]);
     else if (a == "--height" && i + 1 < argc) desc.height = std::stoi(argv[++i]);
     else if (a == "--mesh"   && i + 1 < argc) meshPath = argv[++i];
+    else if ((a == "--dump-frame" || a == "--dumpFrame") && i + 1 < argc) dumpFrame = std::stoi(argv[++i]);
     else if (a == "--logFile" && i + 1 < argc) logFile = argv[++i];
     else if (a == "--d3d12debug") t850::g_config.flags.d3d12Debug = true;
     else if (a == "--logLevel" && i + 1 < argc) {
@@ -110,6 +114,7 @@ int main(int argc, char** argv) {
     }
   }
   t8ditor::SetStartupMeshPath(meshPath);
+  t8ditor::SetStartupDumpFrame(dumpFrame);
 
   g_pApp = new t8ditor::EditorApp();
   pApp   = g_pApp;  // RenderMesh::Load() uses this global

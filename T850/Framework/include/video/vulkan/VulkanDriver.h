@@ -58,6 +58,7 @@ namespace t850 {
     void SetWindow(void* window) override;
     void SetDimensions(int w, int h) override;
     void Clear() override;
+    void ClearWithColor(float r, float g, float b, float a) override;
     void SwapBuffers() override;
     void SetBlendState(BlendStates state) override;
     void SetDepthStencilState(DepthStencilStates state) override;

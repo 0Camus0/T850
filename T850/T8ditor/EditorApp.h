@@ -49,6 +49,7 @@ namespace t8ditor {
 
   // Set by main.cpp before constructing the app.
   void SetStartupMeshPath(const std::string& p);
+  void SetStartupDumpFrame(int frame);
 
   class EditorApp : public t850::AppBase {
   public:
@@ -86,6 +87,7 @@ namespace t8ditor {
     void UpdateSkinnedAnimationAndRagdolls();
     void UploadSkinnedBoneTextures();
     void DrawRagdollInspector(struct SceneObject& obj);
+    void FrameSelectedEntity();
 
     Timer m_dtTimer;
     float m_dtSecs   = 0.0f;

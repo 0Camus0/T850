@@ -4452,8 +4452,73 @@ void SandboxScene::UpdateNavTestAgents(float dtSecs) {
   std::vector<unsigned char> physicsMovedAgents(m_navTestAgents.size(), 0);
   std::vector<unsigned char> suppressProjection(m_navTestAgents.size(), 0);
   std::vector<unsigned char> jumpPadQueuedAgents(m_navTestAgents.size(), 0);
+  static std::vector<float> s_navProjectionDebugCooldownSec;
+  if (s_navProjectionDebugCooldownSec.size() != m_navTestAgents.size()) {
+    s_navProjectionDebugCooldownSec.assign(m_navTestAgents.size(), 0.0f);
+  }
+  for (float& cooldown : s_navProjectionDebugCooldownSec) {
+    cooldown = (std::max)(0.0f, cooldown - (std::max)(0.0f, dtSecs));
+  }
+
+  const t850::KinematicCharacterSettings jumpPadDebugSettings = t850::MakeQuake3CharacterSettings();
+  const XVECTOR3 jumpPadAgentHalfExtents(
+      jumpPadDebugSettings.capsuleRadius,
+      jumpPadDebugSettings.capsuleHalfHeight + jumpPadDebugSettings.capsuleRadius,
+      jumpPadDebugSettings.capsuleRadius,
+      0.0f);
+
+  auto findJumpPadForBase = [&](const XVECTOR3& base) -> const t850::Q3BspCollisionWorld::JumpPad* {
+    if (!m_q3CollisionWorld) {
+      return nullptr;
+    }
+
+    const t850::Q3BspCollisionWorld::JumpPad* bestJumpPad = nullptr;
+    float bestDistanceSq = 1.0e30f;
+    for (const t850::Q3BspCollisionWorld::JumpPad& jumpPad : m_q3CollisionWorld->GetJumpPads()) {
+      const bool insideHorizontal =
+          base.x >= jumpPad.mins.x - 1.0f && base.x <= jumpPad.maxs.x + 1.0f &&
+          base.z >= jumpPad.mins.z - 1.0f && base.z <= jumpPad.maxs.z + 1.0f;
+      const XVECTOR3 center(
+          (jumpPad.mins.x + jumpPad.maxs.x) * 0.5f,
+          (jumpPad.mins.y + jumpPad.maxs.y) * 0.5f,
+          (jumpPad.mins.z + jumpPad.maxs.z) * 0.5f,
+          1.0f);
+      const float distanceSq = HorizontalDistanceSq3(center, base);
+      if ((insideHorizontal || distanceSq <= 16.0f) && distanceSq < bestDistanceSq) {
+        bestDistanceSq = distanceSq;
+        bestJumpPad = &jumpPad;
+      }
+    }
+    return bestJumpPad;
+  };
+
+  auto agentAabbOverlapsJumpPad = [&](const XVECTOR3& position,
+                                      const t850::Q3BspCollisionWorld::JumpPad& jumpPad,
+                                      float margin) {
+    const XVECTOR3 min = position - jumpPadAgentHalfExtents;
+    const XVECTOR3 max = position + jumpPadAgentHalfExtents;
+    return max.x >= jumpPad.mins.x - margin &&
+        min.x <= jumpPad.maxs.x + margin &&
+        max.y >= jumpPad.mins.y - margin &&
+        min.y <= jumpPad.maxs.y + margin &&
+        max.z >= jumpPad.mins.z - margin &&
+        min.z <= jumpPad.maxs.z + margin;
+  };
+
+  auto traversalName = [](t850::navigation::NavTraversalType type) {
+    switch (type) {
+      case t850::navigation::NavTraversalType::Drop: return "Drop";
+      case t850::navigation::NavTraversalType::Jump: return "Jump";
+      case t850::navigation::NavTraversalType::JumpPad: return "JumpPad";
+      case t850::navigation::NavTraversalType::JumpIntent: return "JumpIntent";
+      case t850::navigation::NavTraversalType::Walk:
+      default: return "Walk";
+    }
+  };
+
   auto isJumpPadBaseOccupied = [&](std::size_t currentAgentIndex, const XVECTOR3& base) {
     constexpr float kJumpPadBaseOccupiedRadiusSq = 4.0f;
+    const t850::Q3BspCollisionWorld::JumpPad* jumpPad = findJumpPadForBase(base);
     float currentDistanceSq = 1.0e30f;
     if (currentAgentIndex < m_navTestAgents.size()) {
       currentDistanceSq = HorizontalDistanceSq3(m_navTestAgents[currentAgentIndex].navPosition, base);
@@ -4469,7 +4534,10 @@ void SandboxScene::UpdateNavTestAgents(float dtSecs) {
 
       bool otherOwnsBase = false;
       float otherDistanceSq = 1.0e30f;
-      if (other.physicsTraversalActive &&
+      if (jumpPad && agentAabbOverlapsJumpPad(other.navPosition, *jumpPad, 0.05f)) {
+        otherOwnsBase = true;
+        otherDistanceSq = HorizontalDistanceSq3(other.navPosition, base);
+      } else if (other.physicsTraversalActive &&
           other.physicsTraversalType == t850::navigation::NavTraversalType::JumpPad &&
           !other.physicsWasAirborne &&
           DistanceSquared(other.physicsTraversalStart, base) <= kJumpPadBaseOccupiedRadiusSq) {
@@ -4500,31 +4568,6 @@ void SandboxScene::UpdateNavTestAgents(float dtSecs) {
       }
     }
     return false;
-  };
-
-  auto findJumpPadForBase = [&](const XVECTOR3& base) -> const t850::Q3BspCollisionWorld::JumpPad* {
-    if (!m_q3CollisionWorld) {
-      return nullptr;
-    }
-
-    const t850::Q3BspCollisionWorld::JumpPad* bestJumpPad = nullptr;
-    float bestDistanceSq = 1.0e30f;
-    for (const t850::Q3BspCollisionWorld::JumpPad& jumpPad : m_q3CollisionWorld->GetJumpPads()) {
-      const bool insideHorizontal =
-          base.x >= jumpPad.mins.x - 1.0f && base.x <= jumpPad.maxs.x + 1.0f &&
-          base.z >= jumpPad.mins.z - 1.0f && base.z <= jumpPad.maxs.z + 1.0f;
-      const XVECTOR3 center(
-          (jumpPad.mins.x + jumpPad.maxs.x) * 0.5f,
-          (jumpPad.mins.y + jumpPad.maxs.y) * 0.5f,
-          (jumpPad.mins.z + jumpPad.maxs.z) * 0.5f,
-          1.0f);
-      const float distanceSq = HorizontalDistanceSq3(center, base);
-      if ((insideHorizontal || distanceSq <= 16.0f) && distanceSq < bestDistanceSq) {
-        bestDistanceSq = distanceSq;
-        bestJumpPad = &jumpPad;
-      }
-    }
-    return bestJumpPad;
   };
 
   auto jumpPadQueuePosition = [&](const NavTestAgentRuntime& agent,
@@ -4614,6 +4657,35 @@ void SandboxScene::UpdateNavTestAgents(float dtSecs) {
         agent.physicsTraversalType == t850::navigation::NavTraversalType::JumpPad;
   };
 
+  auto startJumpPadPhysicsTraversal = [&](std::size_t agentIndex,
+                                          NavTestAgentRuntime& agent,
+                                          const XVECTOR3& groundPosition,
+                                          const t850::Q3BspCollisionWorld::JumpPad& jumpPad,
+                                          const XVECTOR3& fallbackTarget) {
+    const t850::KinematicCharacterSettings q3Settings = t850::MakeQuake3CharacterSettings();
+    agent.physicsController.SetSettings(q3Settings);
+    agent.physicsController.Reset();
+    agent.physicsController.SetPosition(Q3CenterFromGroundPoint(groundPosition, q3Settings));
+    agent.physicsController.SetVelocity(jumpPad.velocity);
+    agent.physicsTraversalStart = groundPosition;
+    agent.physicsTarget = jumpPad.hasTargetPosition ? jumpPad.targetPosition : fallbackTarget;
+    agent.physicsTargetWaypointIndex = agent.waypointIndex;
+    agent.physicsTraversalType = t850::navigation::NavTraversalType::JumpPad;
+    agent.physicsTraversalTimeSec = 0.0f;
+    agent.physicsTraversalActive = true;
+    agent.physicsWasAirborne = false;
+    proposedPositions[agentIndex] = groundPosition;
+    movedAgents[agentIndex] = 1;
+    physicsMovedAgents[agentIndex] = 1;
+    T8_LOG_INFO("[JumpPadDebug] forced-trigger pad=%u agent=%zu mesh=%d pos=(%.2f,%.2f,%.2f) velocity=(%.2f,%.2f,%.2f) target=(%.2f,%.2f,%.2f)",
+                jumpPad.entityId,
+                agentIndex,
+                agent.meshIndex,
+                groundPosition.x, groundPosition.y, groundPosition.z,
+                jumpPad.velocity.x, jumpPad.velocity.y, jumpPad.velocity.z,
+                agent.physicsTarget.x, agent.physicsTarget.y, agent.physicsTarget.z);
+  };
+
   for (std::size_t agentIndex = 0; agentIndex < m_navTestAgents.size(); ++agentIndex) {
     NavTestAgentRuntime& agent = m_navTestAgents[agentIndex];
     if (!agent.active ||
@@ -4695,6 +4767,22 @@ void SandboxScene::UpdateNavTestAgents(float dtSecs) {
       continue;
     }
 
+    bool forcedJumpPadTrigger = false;
+    if (m_q3CollisionWorld) {
+      const XVECTOR3 currentPosition = agent.navPosition;
+      for (const t850::Q3BspCollisionWorld::JumpPad& jumpPad : m_q3CollisionWorld->GetJumpPads()) {
+        if (!agentAabbOverlapsJumpPad(currentPosition, jumpPad, 0.05f)) {
+          continue;
+        }
+        startJumpPadPhysicsTraversal(agentIndex, agent, currentPosition, jumpPad, agent.target);
+        forcedJumpPadTrigger = true;
+        break;
+      }
+    }
+    if (forcedJumpPadTrigger) {
+      continue;
+    }
+
     if (agent.needsPath || agent.path.empty()) {
       continue;
     }
@@ -4718,8 +4806,28 @@ void SandboxScene::UpdateNavTestAgents(float dtSecs) {
       const XVECTOR3 target = agent.path[static_cast<std::size_t>(agent.waypointIndex)];
       XVECTOR3 delta = target - current;
       const float distance = delta.Length();
-      if (segmentType != t850::navigation::NavTraversalType::Walk) {
-        if (segmentType == t850::navigation::NavTraversalType::JumpPad) {
+      t850::navigation::NavTraversalType effectiveSegmentType = segmentType;
+      if (effectiveSegmentType == t850::navigation::NavTraversalType::Walk && m_q3CollisionWorld) {
+        const t850::KinematicCharacterSettings q3Settings = t850::MakeQuake3CharacterSettings();
+        const float verticalDrop = current.y - target.y;
+        const float horizontalDistanceSq = HorizontalDistanceSq3(current, target);
+        const float forcedDropHeight = (std::max)(1.25f, q3Settings.stepHeight * 2.0f);
+        if (verticalDrop >= forcedDropHeight &&
+            horizontalDistanceSq >= q3Settings.capsuleRadius * q3Settings.capsuleRadius) {
+          effectiveSegmentType = t850::navigation::NavTraversalType::Drop;
+          T8_LOG_INFO("[NavTraversalDebug] forced_drop mesh=%d agent=%zu current=(%.2f,%.2f,%.2f) target=(%.2f,%.2f,%.2f) verticalDrop=%.2f horizontal=%.2f wp=%d path=%zu",
+                      agent.meshIndex,
+                      agentIndex,
+                      current.x, current.y, current.z,
+                      target.x, target.y, target.z,
+                      verticalDrop,
+                      std::sqrt(horizontalDistanceSq),
+                      agent.waypointIndex,
+                      agent.path.size());
+        }
+      }
+      if (effectiveSegmentType != t850::navigation::NavTraversalType::Walk) {
+        if (effectiveSegmentType == t850::navigation::NavTraversalType::JumpPad) {
           const XVECTOR3 jumpPadBase = segmentStart;
           if (isJumpPadBaseOccupied(agentIndex, jumpPadBase)) {
             if (t850::RuntimeTelemetry::IsFrameActive()) {
@@ -4758,7 +4866,7 @@ void SandboxScene::UpdateNavTestAgents(float dtSecs) {
         agent.physicsTraversalStart = current;
         agent.physicsTarget = target;
         agent.physicsTargetWaypointIndex = agent.waypointIndex;
-        agent.physicsTraversalType = segmentType;
+        agent.physicsTraversalType = effectiveSegmentType;
         agent.physicsTraversalTimeSec = 0.0f;
         agent.physicsTraversalActive = true;
         agent.physicsWasAirborne = false;
@@ -4917,16 +5025,176 @@ void SandboxScene::UpdateNavTestAgents(float dtSecs) {
           }
         }
 
+      }
+    }
+  }
+
+  for (std::size_t agentIndex = 0; agentIndex < m_navTestAgents.size(); ++agentIndex) {
+    if (!jumpPadQueuedAgents[agentIndex]) {
+      continue;
+    }
+    NavTestAgentRuntime& agent = m_navTestAgents[agentIndex];
+    const int segmentIndex = agent.waypointIndex - 1;
+    if (segmentIndex >= 0 && segmentIndex < static_cast<int>(agent.path.size())) {
+      const XVECTOR3 base = agent.path[static_cast<std::size_t>(segmentIndex)];
+      proposedPositions[agentIndex] = jumpPadQueuePosition(agent, base, agentIndex);
+      movedAgents[agentIndex] = 1;
+    }
+  }
+
+  {
+    static float s_jumpPadDebugLogTimerSec = 0.0f;
+    s_jumpPadDebugLogTimerSec += (std::max)(0.0f, dtSecs);
+    if (m_q3CollisionWorld && s_jumpPadDebugLogTimerSec >= 0.75f) {
+      s_jumpPadDebugLogTimerSec = 0.0f;
+      auto agentDebugPosition = [&](std::size_t agentIndex) {
+        return movedAgents[agentIndex] ? proposedPositions[agentIndex] : m_navTestAgents[agentIndex].navPosition;
+      };
+      auto agentMeshLabel = [&](const NavTestAgentRuntime& agent) -> const char* {
+        if (agent.meshIndex >= 0 && agent.meshIndex < static_cast<int>(m_sceneMeshPaths.size())) {
+          return m_sceneMeshPaths[static_cast<std::size_t>(agent.meshIndex)].c_str();
+        }
+        return "";
+      };
+      auto segmentTypeForAgent = [&](const NavTestAgentRuntime& agent) {
+        const int segmentIndex = agent.waypointIndex - 1;
+        return segmentIndex >= 0 && segmentIndex < static_cast<int>(agent.pathSegmentTypes.size())
+            ? agent.pathSegmentTypes[static_cast<std::size_t>(segmentIndex)]
+            : t850::navigation::NavTraversalType::Walk;
+      };
+      auto segmentBaseForAgent = [&](const NavTestAgentRuntime& agent) {
+        const int segmentIndex = agent.waypointIndex - 1;
+        return segmentIndex >= 0 && segmentIndex < static_cast<int>(agent.path.size())
+            ? agent.path[static_cast<std::size_t>(segmentIndex)]
+            : agent.navPosition;
+      };
+      auto segmentTargetForAgent = [&](const NavTestAgentRuntime& agent) {
+        return agent.waypointIndex >= 0 && agent.waypointIndex < static_cast<int>(agent.path.size())
+            ? agent.path[static_cast<std::size_t>(agent.waypointIndex)]
+            : agent.target;
+      };
+
+      for (const t850::Q3BspCollisionWorld::JumpPad& jumpPad : m_q3CollisionWorld->GetJumpPads()) {
+        const XVECTOR3 padCenter(
+            (jumpPad.mins.x + jumpPad.maxs.x) * 0.5f,
+            (jumpPad.mins.y + jumpPad.maxs.y) * 0.5f,
+            (jumpPad.mins.z + jumpPad.maxs.z) * 0.5f,
+            1.0f);
+        std::vector<std::size_t> relevantAgents;
+        int insideCount = 0;
+        int queuedCount = 0;
+        int attemptingCount = 0;
+        int physicsCount = 0;
+
         for (std::size_t agentIndex = 0; agentIndex < m_navTestAgents.size(); ++agentIndex) {
-          if (!jumpPadQueuedAgents[agentIndex]) {
+          const NavTestAgentRuntime& agent = m_navTestAgents[agentIndex];
+          if (!agent.active ||
+              agent.meshIndex < 0 || agent.meshIndex >= kMaxSandboxMeshes ||
+              !Meshes[agent.meshIndex].pBase) {
             continue;
           }
-          NavTestAgentRuntime& agent = m_navTestAgents[agentIndex];
-          const int segmentIndex = agent.waypointIndex - 1;
-          if (segmentIndex >= 0 && segmentIndex < static_cast<int>(agent.path.size())) {
-            const XVECTOR3 base = agent.path[static_cast<std::size_t>(segmentIndex)];
-            proposedPositions[agentIndex] = jumpPadQueuePosition(agent, base, agentIndex);
-            movedAgents[agentIndex] = 1;
+
+          const XVECTOR3 position = agentDebugPosition(agentIndex);
+          const bool inside = agentAabbOverlapsJumpPad(position, jumpPad, 0.05f);
+          const bool physicsJumpPad =
+              agent.physicsTraversalActive &&
+              agent.physicsTraversalType == t850::navigation::NavTraversalType::JumpPad;
+          const t850::navigation::NavTraversalType segmentType = segmentTypeForAgent(agent);
+          const XVECTOR3 segmentBase = segmentBaseForAgent(agent);
+          const bool attempting =
+              segmentType == t850::navigation::NavTraversalType::JumpPad &&
+              findJumpPadForBase(segmentBase) == &jumpPad;
+          const bool queued = jumpPadQueuedAgents[agentIndex] != 0 && attempting;
+          const bool physicsForPad =
+              physicsJumpPad &&
+              (findJumpPadForBase(agent.physicsTraversalStart) == &jumpPad || inside);
+          const bool nearby = HorizontalDistanceSq3(position, padCenter) <= 36.0f;
+
+          insideCount += inside ? 1 : 0;
+          queuedCount += queued ? 1 : 0;
+          attemptingCount += attempting ? 1 : 0;
+          physicsCount += physicsForPad ? 1 : 0;
+          if (inside || queued || attempting || physicsForPad || nearby) {
+            relevantAgents.push_back(agentIndex);
+          }
+        }
+
+        const bool shouldLog =
+            queuedCount > 0 ||
+            insideCount > 1 ||
+            attemptingCount > 1 ||
+            physicsCount > 0;
+        if (!shouldLog) {
+          continue;
+        }
+
+        T8_LOG_INFO("[JumpPadDebug] pad=%u bounds=(%.2f,%.2f,%.2f)-(%.2f,%.2f,%.2f) center=(%.2f,%.2f,%.2f) vel=(%.2f,%.2f,%.2f) inside=%d queued=%d attempting=%d physics=%d relevant=%zu",
+                    jumpPad.entityId,
+                    jumpPad.mins.x, jumpPad.mins.y, jumpPad.mins.z,
+                    jumpPad.maxs.x, jumpPad.maxs.y, jumpPad.maxs.z,
+                    padCenter.x, padCenter.y, padCenter.z,
+                    jumpPad.velocity.x, jumpPad.velocity.y, jumpPad.velocity.z,
+                    insideCount, queuedCount, attemptingCount, physicsCount, relevantAgents.size());
+
+        for (std::size_t agentIndex : relevantAgents) {
+          const NavTestAgentRuntime& agent = m_navTestAgents[agentIndex];
+          const XVECTOR3 position = agentDebugPosition(agentIndex);
+          const XVECTOR3 aabbMin = position - jumpPadAgentHalfExtents;
+          const XVECTOR3 aabbMax = position + jumpPadAgentHalfExtents;
+          const t850::navigation::NavTraversalType segmentType = segmentTypeForAgent(agent);
+          const XVECTOR3 segmentBase = segmentBaseForAgent(agent);
+          const XVECTOR3 segmentTarget = segmentTargetForAgent(agent);
+          const bool inside = agentAabbOverlapsJumpPad(position, jumpPad, 0.05f);
+          const bool attempting =
+              segmentType == t850::navigation::NavTraversalType::JumpPad &&
+              findJumpPadForBase(segmentBase) == &jumpPad;
+          const bool queued = jumpPadQueuedAgents[agentIndex] != 0 && attempting;
+          const bool physicsForPad =
+              agent.physicsTraversalActive &&
+              agent.physicsTraversalType == t850::navigation::NavTraversalType::JumpPad &&
+              (findJumpPadForBase(agent.physicsTraversalStart) == &jumpPad || inside);
+          T8_LOG_INFO("[JumpPadDebug] pad=%u agent=%zu mesh=%d '%s' pos=(%.2f,%.2f,%.2f) aabb=(%.2f,%.2f,%.2f)-(%.2f,%.2f,%.2f) inside=%d queued=%d attempting=%d physics=%d type=%s airborne=%d wp=%d path=%zu base=(%.2f,%.2f,%.2f) segTarget=(%.2f,%.2f,%.2f) distBase=%.2f target=(%.2f,%.2f,%.2f) desired=(%.2f,%.2f,%.2f) cooldown=%.3f",
+                      jumpPad.entityId,
+                      agentIndex,
+                      agent.meshIndex,
+                      agentMeshLabel(agent),
+                      position.x, position.y, position.z,
+                      aabbMin.x, aabbMin.y, aabbMin.z,
+                      aabbMax.x, aabbMax.y, aabbMax.z,
+                      inside ? 1 : 0,
+                      queued ? 1 : 0,
+                      attempting ? 1 : 0,
+                      physicsForPad ? 1 : 0,
+                      traversalName(segmentType),
+                      agent.physicsWasAirborne ? 1 : 0,
+                      agent.waypointIndex,
+                      agent.path.size(),
+                      segmentBase.x, segmentBase.y, segmentBase.z,
+                      segmentTarget.x, segmentTarget.y, segmentTarget.z,
+                      std::sqrt(HorizontalDistanceSq3(position, segmentBase)),
+                      agent.target.x, agent.target.y, agent.target.z,
+                      agent.desiredTarget.x, agent.desiredTarget.y, agent.desiredTarget.z,
+                      agent.repathCooldownSec);
+        }
+
+        for (std::size_t i = 0; i < relevantAgents.size(); ++i) {
+          for (std::size_t j = i + 1; j < relevantAgents.size(); ++j) {
+            const std::size_t a = relevantAgents[i];
+            const std::size_t b = relevantAgents[j];
+            const XVECTOR3 posA = agentDebugPosition(a);
+            const XVECTOR3 posB = agentDebugPosition(b);
+            const float overlapX = jumpPadAgentHalfExtents.x * 2.0f - std::fabs(posB.x - posA.x);
+            const float overlapZ = jumpPadAgentHalfExtents.z * 2.0f - std::fabs(posB.z - posA.z);
+            if (overlapX > 0.0f && overlapZ > 0.0f) {
+              T8_LOG_INFO("[JumpPadDebug] pad=%u overlap agents=%zu/%zu overlap=(%.3f,%.3f) posA=(%.2f,%.2f,%.2f) posB=(%.2f,%.2f,%.2f)",
+                          jumpPad.entityId,
+                          a,
+                          b,
+                          overlapX,
+                          overlapZ,
+                          posA.x, posA.y, posA.z,
+                          posB.x, posB.y, posB.z);
+            }
           }
         }
       }
@@ -4946,10 +5214,76 @@ void SandboxScene::UpdateNavTestAgents(float dtSecs) {
       PrimitiveInst& instance = Meshes[agent.meshIndex];
       if (movedAgents[agentIndex]) {
         XVECTOR3 navPosition = proposedPositions[agentIndex];
-        if (!physicsMovedAgents[agentIndex] && !jumpPadQueuedAgents[agentIndex] &&
-            !suppressProjection[agentIndex] &&
-            !m_navMesh.ProjectPoint(navPosition, navPosition, NavTestAgentProjectionExtents(), nullptr)) {
-          navPosition = agent.navPosition;
+        if (!physicsMovedAgents[agentIndex] &&
+            !jumpPadQueuedAgents[agentIndex] &&
+            !suppressProjection[agentIndex]) {
+          const XVECTOR3 requestedNavPosition = navPosition;
+          XVECTOR3 projectedNavPosition = navPosition;
+          std::string projectionError;
+          const bool projected = m_navMesh.ProjectPoint(
+              requestedNavPosition,
+              projectedNavPosition,
+              NavTestAgentProjectionExtents(),
+              &projectionError);
+
+          const float correctionSq = projected
+              ? DistanceSquared(requestedNavPosition, projectedNavPosition)
+              : 0.0f;
+          const bool largeCorrection = projected && correctionSq > 0.25f;
+          const bool shouldLogProjection =
+              (!projected || largeCorrection) &&
+              agentIndex < s_navProjectionDebugCooldownSec.size() &&
+              s_navProjectionDebugCooldownSec[agentIndex] <= 0.0f;
+
+          if (shouldLogProjection) {
+            s_navProjectionDebugCooldownSec[agentIndex] = 0.50f;
+            const int segmentIndex = agent.waypointIndex - 1;
+            const t850::navigation::NavTraversalType segmentType =
+                (segmentIndex >= 0 && segmentIndex < static_cast<int>(agent.pathSegmentTypes.size()))
+                    ? agent.pathSegmentTypes[static_cast<std::size_t>(segmentIndex)]
+                    : t850::navigation::NavTraversalType::Walk;
+            const XVECTOR3 segmentBase =
+                (segmentIndex >= 0 && segmentIndex < static_cast<int>(agent.path.size()))
+                    ? agent.path[static_cast<std::size_t>(segmentIndex)]
+                    : agent.navPosition;
+            const XVECTOR3 nextPoint =
+                (agent.waypointIndex >= 0 && agent.waypointIndex < static_cast<int>(agent.path.size()))
+                    ? agent.path[static_cast<std::size_t>(agent.waypointIndex)]
+                    : agent.target;
+            const float requestedMove = std::sqrt(HorizontalDistanceSq3(agent.navPosition, requestedNavPosition));
+            const float distToNext = std::sqrt(HorizontalDistanceSq3(agent.navPosition, nextPoint));
+            const float correction = projected ? std::sqrt(correctionSq) : 0.0f;
+            T8_LOG_INFO("[NavProjectionDebug] mesh=%d agent=%zu projected=%d largeCorrection=%d old=(%.2f,%.2f,%.2f) requested=(%.2f,%.2f,%.2f) projectedPos=(%.2f,%.2f,%.2f) requestedMoveXZ=%.3f correction=%.3f segment=%s wp=%d path=%zu base=(%.2f,%.2f,%.2f) next=(%.2f,%.2f,%.2f) distNext=%.3f target=(%.2f,%.2f,%.2f) desired=(%.2f,%.2f,%.2f) physics=%d queued=%d suppressed=%d err='%s'",
+                        agent.meshIndex,
+                        agentIndex,
+                        projected ? 1 : 0,
+                        largeCorrection ? 1 : 0,
+                        agent.navPosition.x, agent.navPosition.y, agent.navPosition.z,
+                        requestedNavPosition.x, requestedNavPosition.y, requestedNavPosition.z,
+                        projected ? projectedNavPosition.x : requestedNavPosition.x,
+                        projected ? projectedNavPosition.y : requestedNavPosition.y,
+                        projected ? projectedNavPosition.z : requestedNavPosition.z,
+                        requestedMove,
+                        correction,
+                        traversalName(segmentType),
+                        agent.waypointIndex,
+                        agent.path.size(),
+                        segmentBase.x, segmentBase.y, segmentBase.z,
+                        nextPoint.x, nextPoint.y, nextPoint.z,
+                        distToNext,
+                        agent.target.x, agent.target.y, agent.target.z,
+                        agent.desiredTarget.x, agent.desiredTarget.y, agent.desiredTarget.z,
+                        agent.physicsTraversalActive ? 1 : 0,
+                        jumpPadQueuedAgents[agentIndex] ? 1 : 0,
+                        suppressProjection[agentIndex] ? 1 : 0,
+                        projectionError.c_str());
+          }
+
+          if (projected) {
+            navPosition = projectedNavPosition;
+          } else {
+            navPosition = agent.navPosition;
+          }
         }
         agent.navPosition = navPosition;
         agent.navToOriginOffset = agent.visualOffset;

@@ -22,6 +22,7 @@
 #include <utils/xMaths.h>
 #include <utils/Picking.h>
 #include <debug/FrameDumper.h>
+#include <debug/LoadingProgress.h>
 
 #include <Descriptors.h>
 
@@ -49,6 +50,7 @@ namespace t8ditor {
 
 namespace {
   std::string g_startupMeshPath;
+  int g_startupDumpFrame = -1;
   const float kRadToDeg = 180.0f / xPI;
   const float kDegToRad = xPI / 180.0f;
   constexpr float kMinEditableScale = 0.000001f;
@@ -124,10 +126,35 @@ namespace {
   // Frame dumper for RT snapshot debugging (space key)
   t850::FrameDumper g_dumper;
   bool              g_dumperInited = false;
+
+  std::string FormatLoadingProgressForConsole(const t850::LoadingProgress::Snapshot& snapshot) {
+    if (!snapshot.active) {
+      return {};
+    }
+    std::string text = "[Loading] " + snapshot.phase;
+    if (!snapshot.item.empty()) {
+      text += ": " + snapshot.item;
+    }
+    if (!snapshot.detail.empty()) {
+      text += " - " + snapshot.detail;
+    }
+    char percentText[32] = {};
+    std::snprintf(percentText, sizeof(percentText), " (%.0f%%)", snapshot.percent);
+    text += percentText;
+    return text;
+  }
+
+  void LogEditorLoadingLabel(const char* phase, const char* item) {
+    T8_LOG_INFO("[Loading] %s: %s", phase ? phase : "", item ? item : "");
+  }
 }
 
 void SetStartupMeshPath(const std::string& p) {
   g_startupMeshPath = p;
+}
+
+void SetStartupDumpFrame(int frame) {
+  g_startupDumpFrame = frame;
 }
 
 // Helpers to access current selection
@@ -600,102 +627,146 @@ void EditorApp::CreateAssets() {
     return;
   }
 
+  ImGuiLogCaptureStart();
+  t850::LoadingProgress::Reset(100.0f, "Starting editor", "Preparing renderer");
+  {
+    auto lastLoadingLine = std::make_shared<std::string>();
+    t850::LoadingProgress::SetFrameCallback([lastLoadingLine]() {
+      const t850::LoadingProgress::Snapshot snapshot = t850::LoadingProgress::GetSnapshot();
+      if (snapshot.detail.empty() && snapshot.percent < 99.5f) {
+        return;
+      }
+      const std::string line = FormatLoadingProgressForConsole(snapshot);
+      if (!line.empty() && line != *lastLoadingLine) {
+        *lastLoadingLine = line;
+        T8_LOG_INFO("%s", line.c_str());
+      }
+    });
+  }
+
   const auto& desc = pFramework->aplicationDescriptor;
   const int w = (int)desc.width;
   const int h = (int)desc.height;
 
-  m_camera.Init(w, h, 50.0f);
-  m_camera.SetTarget(XVECTOR3(0.0f, 0.0f, 0.0f));
-  m_camera.Frame();
-  m_lastW = w;
-  m_lastH = h;
-
-  if (!m_lines.Create())
-    T8_LOG_ERROR("[T8ditor] EditorLineRenderer::Create failed");
-  m_grid.Create(10, 1.0f);
-  m_gizmo.Create();
-
-  m_sceneProps.AddCamera(&m_camera.GetCameraMutable());
-  m_sceneProps.AddDirectionalLight(
-    XVECTOR3(0.0f, -1.0f, 0.0f), XVECTOR3(1.0f, 1.0f, 1.0f), 1.5f, true);
-  m_sceneProps.ActiveLights = 1;
-  m_sceneProps.AmbientColor = XVECTOR3(0.15f, 0.15f, 0.15f);
-  m_sceneProps.EnvFactor = 0.3f;  // reduced env reflections (no HDR tone mapping)
-
-  XMatIdentity(m_vp);
-  t850::GetEngineContext().physics = &m_physics;
-  if (!m_physics.Initialize() && m_physics.IsAvailable()) {
-    T8_LOG_ERROR("[T8ditor] Physics runtime failed to initialize");
-  }
-  m_primMgr.SetEngineContext(&t850::GetEngineContext());
-  m_primMgr.Init();
-  m_primMgr.SetVP(&m_vp);
-  m_primMgr.SetSceneProps(&m_sceneProps);
-  if (!m_physicsDebug.Create()) {
-    T8_LOG_ERROR("[T8ditor] Physics debug renderer failed to initialize");
-  } else {
-    m_physicsDebug.SetDepthTestEnabled(false);
+  {
+    LogEditorLoadingLabel("Initializing editor", "Camera and viewport");
+    t850::LoadingProgress::ScopedStep cameraStep("Initializing editor", "Camera and viewport", 8.0f);
+    m_camera.Init(w, h, 50.0f);
+    m_camera.SetTarget(XVECTOR3(0.0f, 0.0f, 0.0f));
+    m_camera.Frame();
+    m_lastW = w;
+    m_lastH = h;
   }
 
-  // Load skybox as persistent editor backdrop
-  if (std::filesystem::exists("Models/SkyBox.glb")) {
-    g_skyboxMgr.SetEngineContext(&t850::GetEngineContext());
-    g_skyboxMgr.Init();
-    g_skyboxMgr.SetVP(&m_vp);
-    g_skyboxMgr.SetSceneProps(&m_sceneProps);
-    int sid = g_skyboxMgr.CreateMesh("Models/SkyBox.glb");
-    if (sid >= 0) {
-      g_skyboxPrimId = sid;
-      g_skyboxInst.CreateInstance(g_skyboxMgr.GetPrimitive(sid), &m_vp);
-      g_skyboxInst.Update();
+  {
+    LogEditorLoadingLabel("Initializing editor", "Viewport helpers");
+    t850::LoadingProgress::ScopedStep helpersStep("Initializing editor", "Viewport helpers", 12.0f);
+    if (!m_lines.Create())
+      T8_LOG_ERROR("[T8ditor] EditorLineRenderer::Create failed");
+    m_grid.Create(10, 1.0f);
+    m_gizmo.Create();
+  }
+
+  {
+    LogEditorLoadingLabel("Initializing editor", "Scene properties");
+    t850::LoadingProgress::ScopedStep scenePropsStep("Initializing editor", "Scene properties", 8.0f);
+    m_sceneProps.AddCamera(&m_camera.GetCameraMutable());
+    m_sceneProps.AddDirectionalLight(
+      XVECTOR3(0.0f, -1.0f, 0.0f), XVECTOR3(1.0f, 1.0f, 1.0f), 1.5f, true);
+    m_sceneProps.ActiveLights = 1;
+    m_sceneProps.AmbientColor = XVECTOR3(0.15f, 0.15f, 0.15f);
+    m_sceneProps.EnvFactor = 0.3f;  // reduced env reflections (no HDR tone mapping)
+  }
+
+  {
+    LogEditorLoadingLabel("Initializing editor", "Physics and primitive managers");
+    t850::LoadingProgress::ScopedStep physicsStep("Initializing editor", "Physics and primitive managers", 12.0f);
+    XMatIdentity(m_vp);
+    t850::GetEngineContext().physics = &m_physics;
+    if (!m_physics.Initialize() && m_physics.IsAvailable()) {
+      T8_LOG_ERROR("[T8ditor] Physics runtime failed to initialize");
+    }
+    m_primMgr.SetEngineContext(&t850::GetEngineContext());
+    m_primMgr.Init();
+    m_primMgr.SetVP(&m_vp);
+    m_primMgr.SetSceneProps(&m_sceneProps);
+    if (!m_physicsDebug.Create()) {
+      T8_LOG_ERROR("[T8ditor] Physics debug renderer failed to initialize");
+    } else {
+      m_physicsDebug.SetDepthTestEnabled(false);
+    }
+  }
+
+  {
+    LogEditorLoadingLabel("Loading editor assets", "Skybox");
+    t850::LoadingProgress::ScopedStep skyboxStep("Loading editor assets", "Skybox", 18.0f);
+    if (std::filesystem::exists("Models/SkyBox.glb")) {
+      g_skyboxMgr.SetEngineContext(&t850::GetEngineContext());
+      g_skyboxMgr.Init();
+      g_skyboxMgr.SetVP(&m_vp);
       g_skyboxMgr.SetSceneProps(&m_sceneProps);
-      g_skyboxReady = true;
+      int sid = g_skyboxMgr.CreateMesh("Models/SkyBox.glb");
+      if (sid >= 0) {
+        g_skyboxPrimId = sid;
+        g_skyboxInst.CreateInstance(g_skyboxMgr.GetPrimitive(sid), &m_vp);
+        g_skyboxInst.Update();
+        g_skyboxMgr.SetSceneProps(&m_sceneProps);
+        g_skyboxReady = true;
+      }
     }
   }
 
-  // Set up deferred render graph
-  if (g_renderGraph.Load("Scenes/T8ditor_RenderGraph.json")) {
-    g_renderGraph.CreateRenderTargets(pFramework->pVideoDriver, m_sceneProps);
-    XMatIdentity(g_quadVP);
-    for (int i = 0; i < 8; ++i) {
-      g_quads[i].CreateInstance(m_primMgr.GetPrimitive(t850::PrimitiveManager::QUAD), &g_quadVP);
-      g_quads[i].Update();
-    }
-    // Bind the G-buffer textures to quads[0] — the deferred lighting quad reads from these
-    if (!pFramework->pVideoDriver->RTs.empty()) {
-      auto* gbufferRT = pFramework->pVideoDriver->RTs[0];
-      for (int j = 0; j < (int)gbufferRT->vColorTextures.size() && j < 4; ++j)
-        g_quads[0].SetTexture(gbufferRT->vColorTextures[j], j);
-      if (gbufferRT->vColorTextures.size() > 4)
-        g_quads[0].SetTexture(gbufferRT->vColorTextures[4], 9);
-      if (gbufferRT->pDepthTexture)
-        g_quads[0].SetTexture(gbufferRT->pDepthTexture, 4);
-    }
-    g_deferredReady = true;
-    m_primMgr.SetSceneProps(&m_sceneProps); // re-set so QUAD gets pScProp
+  {
+    LogEditorLoadingLabel("Loading editor assets", "Render graph");
+    t850::LoadingProgress::ScopedStep graphStep("Loading editor assets", "Render graph", 24.0f);
+    if (g_renderGraph.Load("Scenes/T8ditor_RenderGraph.json")) {
+      g_renderGraph.CreateRenderTargets(pFramework->pVideoDriver, m_sceneProps);
+      XMatIdentity(g_quadVP);
+      for (int i = 0; i < 8; ++i) {
+        g_quads[i].CreateInstance(m_primMgr.GetPrimitive(t850::PrimitiveManager::QUAD), &g_quadVP);
+        g_quads[i].Update();
+      }
+      // Bind the G-buffer textures to quads[0] — the deferred lighting quad reads from these
+      if (!pFramework->pVideoDriver->RTs.empty()) {
+        auto* gbufferRT = pFramework->pVideoDriver->RTs[0];
+        for (int j = 0; j < (int)gbufferRT->vColorTextures.size() && j < 4; ++j)
+          g_quads[0].SetTexture(gbufferRT->vColorTextures[j], j);
+        if (gbufferRT->vColorTextures.size() > 4)
+          g_quads[0].SetTexture(gbufferRT->vColorTextures[4], 9);
+        if (gbufferRT->pDepthTexture)
+          g_quads[0].SetTexture(gbufferRT->pDepthTexture, 4);
+      }
+      g_deferredReady = true;
+      m_primMgr.SetSceneProps(&m_sceneProps); // re-set so QUAD gets pScProp
 
-    // Create a 1x1 white texture for shadow slot (deferred shader reads
-    // shadow from tex5; without it, Shadow=0 and everything multiplies to black)
-    unsigned char white[4] = { 255, 255, 255, 255 };
-    g_dummyWhiteTex = t850::T8Device->CreateTextureFromMemory(white, 1, 1, 4, "dummyWhite");
+      // Create a 1x1 white texture for shadow slot (deferred shader reads
+      // shadow from tex5; without it, Shadow=0 and everything multiplies to black)
+      unsigned char white[4] = { 255, 255, 255, 255 };
+      g_dummyWhiteTex = t850::T8Device->CreateTextureFromMemory(white, 1, 1, 4, "dummyWhite");
 
-    // Load environment cubemap for skybox (matID=0 in deferred shader samples texEnv)
-    g_dummyEnvMapIdx = t850::g_pBaseDriver->CreateTexture("sky/CubeMap_SkyWater.dds");
-    if (g_dummyEnvMapIdx >= 0) {
-      g_quads[0].SetEnvironmentMap(t850::g_pBaseDriver->GetTexture(g_dummyEnvMapIdx));
-      T8_LOG_INFO("[T8ditor] Environment cubemap loaded");
+      // Load environment cubemap for skybox (matID=0 in deferred shader samples texEnv)
+      g_dummyEnvMapIdx = t850::g_pBaseDriver->CreateTexture("sky/CubeMap_SkyWater.dds");
+      if (g_dummyEnvMapIdx >= 0) {
+        g_quads[0].SetEnvironmentMap(t850::g_pBaseDriver->GetTexture(g_dummyEnvMapIdx));
+        T8_LOG_INFO("[T8ditor] Environment cubemap loaded");
+      }
+
+      T8_LOG_INFO("[T8ditor] Deferred render graph ready");
+    } else {
+      T8_LOG_ERROR("[T8ditor] Render graph load failed — using forward fallback");
     }
-
-    T8_LOG_INFO("[T8ditor] Deferred render graph ready");
-  } else {
-    T8_LOG_ERROR("[T8ditor] Render graph load failed — using forward fallback");
   }
 
   // Initialize frame dumper (space key to dump)
   {
     t850::FrameDumperConfig cfg;
-    cfg.debugFrames = true;
-    cfg.keepRunning = true;
+    cfg.debugFrames = g_startupDumpFrame < 0;
+    cfg.keepRunning = g_startupDumpFrame < 0;
+    if (g_startupDumpFrame >= 0) {
+      cfg.dumpEnabled = true;
+      cfg.dumpByFrame = true;
+      cfg.dumpFrame = g_startupDumpFrame;
+    }
     g_dumper.Init(cfg);
     g_dumperInited = true;
   }
@@ -713,12 +784,17 @@ void EditorApp::CreateAssets() {
   }
 #endif
 
-  m_imguiReady = ImGuiInit(pFramework);
+  {
+    LogEditorLoadingLabel("Loading editor UI", "ImGui panels");
+    t850::LoadingProgress::ScopedStep imguiStep("Loading editor UI", "ImGui panels", 12.0f);
+    m_imguiReady = ImGuiInit(pFramework);
+  }
   if (!m_imguiReady)
     T8_LOG_ERROR("[T8ditor] ImGui init failed");
-  else
-    ImGuiLogCaptureStart();
 
+  t850::LoadingProgress::Complete("Editor ready", "T8ditor");
+  t850::LoadingProgress::ClearFrameCallback();
+  t850::LoadingProgress::Clear();
   T8_LOG_INFO("[T8ditor] CreateAssets done (%dx%d)", w, h);
 }
 
@@ -1182,17 +1258,7 @@ void EditorApp::OnInput() {
       else if (ctrlDown)
         g_undoStack.Undo();
       else {
-        SceneObject* sel = SelectedObject();
-        if (sel && sel->wireframe.IsLoaded()) {
-          // Center camera on the selected model's position with default viewing angle
-          XVECTOR3 modelPos = sel->wireframe.Position();
-          m_camera.SetTarget(modelPos);
-          m_camera.ResetViewAngle();  // reset yaw/pitch/distance to default, keep target
-          T8_LOG_INFO("[T8ditor] View centered on model at (%.1f, %.1f, %.1f)",
-                      modelPos.x, modelPos.y, modelPos.z);
-        } else {
-          m_camera.ResetToDefault();
-        }
+        FrameSelectedEntity();
       }
     }
     // Ctrl+Y also redoes
@@ -1271,6 +1337,83 @@ void EditorApp::ProcessSelectionInput() {
   if (IManager.PressedKey(T800K_SEMICOLON)) {
     scl.x /= sclStep; scl.y /= sclStep; scl.z /= sclStep;
   }
+}
+
+void EditorApp::FrameSelectedEntity() {
+  auto frameSphere = [&](const XVECTOR3& center, float radius, const char* label) {
+    m_camera.FrameBounds(center, radius);
+    T8_LOG_INFO("[T8ditor] Framed %s at (%.2f, %.2f, %.2f), radius=%.2f",
+                label ? label : "selection", center.x, center.y, center.z, radius);
+  };
+
+  if (g_selectionType == 0) {
+    bool haveBounds = false;
+    t850::AABB bounds;
+    auto addMeshBounds = [&](int index) {
+      if (index < 0 || index >= static_cast<int>(g_objects.size())) {
+        return;
+      }
+      const SceneObject& object = g_objects[static_cast<std::size_t>(index)];
+      if (!object.wireframe.IsLoaded()) {
+        return;
+      }
+      const t850::AABB objectBounds = object.wireframe.WorldAABB();
+      if (!haveBounds) {
+        bounds = objectBounds;
+        haveBounds = true;
+      } else {
+        if (objectBounds.vMin.x < bounds.vMin.x) bounds.vMin.x = objectBounds.vMin.x;
+        if (objectBounds.vMin.y < bounds.vMin.y) bounds.vMin.y = objectBounds.vMin.y;
+        if (objectBounds.vMin.z < bounds.vMin.z) bounds.vMin.z = objectBounds.vMin.z;
+        if (objectBounds.vMax.x > bounds.vMax.x) bounds.vMax.x = objectBounds.vMax.x;
+        if (objectBounds.vMax.y > bounds.vMax.y) bounds.vMax.y = objectBounds.vMax.y;
+        if (objectBounds.vMax.z > bounds.vMax.z) bounds.vMax.z = objectBounds.vMax.z;
+      }
+    };
+
+    if (!g_multiSelect.empty()) {
+      for (int index : g_multiSelect) {
+        addMeshBounds(index);
+      }
+    } else {
+      addMeshBounds(g_selectedIdx);
+    }
+
+    if (haveBounds) {
+      const XVECTOR3 center(
+          (bounds.vMin.x + bounds.vMax.x) * 0.5f,
+          (bounds.vMin.y + bounds.vMax.y) * 0.5f,
+          (bounds.vMin.z + bounds.vMax.z) * 0.5f,
+          1.0f);
+      const float dx = bounds.vMax.x - center.x;
+      const float dy = bounds.vMax.y - center.y;
+      const float dz = bounds.vMax.z - center.z;
+      frameSphere(center, std::sqrt(dx * dx + dy * dy + dz * dz), "mesh selection");
+      return;
+    }
+  } else if (g_selectionType == 1 && g_selectedIdx >= 0 && g_selectedIdx < static_cast<int>(g_cameras.size())) {
+    const SceneCamera& camera = g_cameras[static_cast<std::size_t>(g_selectedIdx)];
+    const XVECTOR3 center(
+        (camera.position.x + camera.target.x) * 0.5f,
+        (camera.position.y + camera.target.y) * 0.5f,
+        (camera.position.z + camera.target.z) * 0.5f,
+        1.0f);
+    const float dx = camera.position.x - camera.target.x;
+    const float dy = camera.position.y - camera.target.y;
+    const float dz = camera.position.z - camera.target.z;
+    frameSphere(center, (std::max)(1.0f, 0.5f * std::sqrt(dx * dx + dy * dy + dz * dz)), "camera");
+    return;
+  } else if (g_selectionType == 2 && g_selectedIdx >= 0 && g_selectedIdx < static_cast<int>(g_lights.size())) {
+    const SceneLight& light = g_lights[static_cast<std::size_t>(g_selectedIdx)];
+    const float radius = light.type == EditorLightType::Omni
+        ? (std::clamp)(light.radius, 1.0f, 100.0f)
+        : 3.0f;
+    frameSphere(light.position, radius, "light");
+    return;
+  }
+
+  m_camera.ResetToDefault();
+  T8_LOG_INFO("[T8ditor] Reset editor view");
 }
 
 // Project a world-space point to screen coordinates.
@@ -2265,6 +2408,32 @@ void EditorApp::OnDraw() {
         if (ImGui::TreeNodeEx("Scene Root", ImGuiTreeNodeFlags_OpenOnArrow | ImGuiTreeNodeFlags_DefaultOpen)) {
           // Meshes & Groups
           if (ImGui::TreeNodeEx("Meshes", ImGuiTreeNodeFlags_DefaultOpen)) {
+            ImGui::PushID("MeshesBulkControls");
+            if (ImGui::SmallButton("Show all")) {
+              for (SceneObject& object : g_objects) object.visible = true;
+            }
+            ImGui::SameLine();
+            if (ImGui::SmallButton("Hide all")) {
+              for (SceneObject& object : g_objects) object.visible = false;
+            }
+            ImGui::SameLine();
+            if (ImGui::SmallButton("Freeze all")) {
+              for (SceneObject& object : g_objects) object.frozen = true;
+            }
+            ImGui::SameLine();
+            if (ImGui::SmallButton("Unfreeze all")) {
+              for (SceneObject& object : g_objects) object.frozen = false;
+            }
+            if (ImGui::SmallButton("Wire all")) {
+              for (SceneObject& object : g_objects) object.showWire = true;
+            }
+            ImGui::SameLine();
+            if (ImGui::SmallButton("Wire none")) {
+              for (SceneObject& object : g_objects) object.showWire = false;
+            }
+            ImGui::Separator();
+            ImGui::PopID();
+
             // Track which meshes are in persistent groups
             std::set<int> groupedIndices;
             for (auto& grp : g_groups)
@@ -2336,6 +2505,25 @@ void EditorApp::OnDraw() {
           }
           // Cameras
           if (ImGui::TreeNodeEx("Cameras", ImGuiTreeNodeFlags_DefaultOpen)) {
+            ImGui::PushID("CamerasBulkControls");
+            if (ImGui::SmallButton("Show all")) {
+              for (SceneCamera& camera : g_cameras) camera.visible = true;
+            }
+            ImGui::SameLine();
+            if (ImGui::SmallButton("Hide all")) {
+              for (SceneCamera& camera : g_cameras) camera.visible = false;
+            }
+            ImGui::SameLine();
+            if (ImGui::SmallButton("Freeze all")) {
+              for (SceneCamera& camera : g_cameras) camera.frozen = true;
+            }
+            ImGui::SameLine();
+            if (ImGui::SmallButton("Unfreeze all")) {
+              for (SceneCamera& camera : g_cameras) camera.frozen = false;
+            }
+            ImGui::Separator();
+            ImGui::PopID();
+
             {
               bool isDefault = (g_activeCameraIdx < 0);
               ImGui::PushID(20000);
@@ -2373,6 +2561,25 @@ void EditorApp::OnDraw() {
           }
           // Lights
           if (ImGui::TreeNodeEx("Lights", ImGuiTreeNodeFlags_DefaultOpen)) {
+            ImGui::PushID("LightsBulkControls");
+            if (ImGui::SmallButton("Show all")) {
+              for (SceneLight& light : g_lights) light.visible = true;
+            }
+            ImGui::SameLine();
+            if (ImGui::SmallButton("Hide all")) {
+              for (SceneLight& light : g_lights) light.visible = false;
+            }
+            ImGui::SameLine();
+            if (ImGui::SmallButton("Freeze all")) {
+              for (SceneLight& light : g_lights) light.frozen = true;
+            }
+            ImGui::SameLine();
+            if (ImGui::SmallButton("Unfreeze all")) {
+              for (SceneLight& light : g_lights) light.frozen = false;
+            }
+            ImGui::Separator();
+            ImGui::PopID();
+
             for (int i = 0; i < (int)g_lights.size(); ++i) {
               auto& l = g_lights[i];
               ImGui::PushID(i + 30000);
@@ -2512,6 +2719,7 @@ void EditorApp::OnDraw() {
     ::Camera dummyLightCam;
     g_dumper.DumpFrame(drv, m_camera.GetCameraMutable(), dummyLightCam, m_sceneProps, rts, m_dtSecs);
     T8_LOG_INFO("[T8ditor] Frame dumped to disk");
+    if (g_dumper.ShouldExit()) exit(0);
   }
 
   T8_LOG_TRACE("[T8ditor] OnDraw: SwapBuffers...");

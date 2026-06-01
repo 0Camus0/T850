@@ -1,5 +1,7 @@
 #pragma once
 
+#include <cstdint>
+#include <functional>
 #include <memory>
 #include <string>
 #include <vector>
@@ -41,11 +43,44 @@ struct NavMeshBuildSettings {
   float detailSampleDist = 6.0f;
   float detailSampleMaxError = 1.0f;
   XVECTOR3 queryExtents = XVECTOR3(2.0f, 4.0f, 2.0f, 0.0f);
+  bool enableAutoDropLinks = false;
+  float dropLinkMinHeight = 1.0f;
+  float dropLinkMaxHeight = 24.0f;
+  float dropLinkMaxHorizontalDistance = 2.4f;
+  float dropLinkSampleSpacing = 1.2f;
+  float dropLinkRadius = 0.75f;
+  bool enableAutoJumpLinks = false;
+  float jumpLinkMaxHorizontalDistance = 7.0f;
+  float jumpLinkSampleSpacing = 1.2f;
+  float jumpLinkRadius = 0.75f;
+  bool enableHybridJumpLinks = false;
+  int hybridJumpMaxLinks = 256;
+  uint64_t offMeshLinkValidationKey = 0;
+};
+
+enum class NavTraversalType : uint8_t {
+  Walk = 0,
+  Drop = 1,
+  Jump = 2,
+  JumpPad = 3,
+  JumpIntent = 4
+};
+
+struct NavOffMeshLink {
+  XVECTOR3 start = XVECTOR3(0.0f, 0.0f, 0.0f, 1.0f);
+  XVECTOR3 end = XVECTOR3(0.0f, 0.0f, 0.0f, 1.0f);
+  float radius = 0.75f;
+  bool bidirectional = false;
+  NavTraversalType type = NavTraversalType::Walk;
+  uint32_t userId = 0;
 };
 
 struct NavMeshGeometry {
   std::vector<XVECTOR3> vertices;
   std::vector<int> indices;
+  std::vector<NavOffMeshLink> offMeshLinks;
+  std::function<bool(const NavOffMeshLink&)> offMeshLinkValidator;
+  std::function<bool(const NavOffMeshLink&)> offMeshHybridLinkValidator;
 };
 
 struct NavMeshBuildStats {
@@ -55,6 +90,10 @@ struct NavMeshBuildStats {
   int height = 0;
   int polygonCount = 0;
   int detailTriangleCount = 0;
+  int offMeshLinkCount = 0;
+  int dropLinkCount = 0;
+  int jumpLinkCount = 0;
+  int jumpPadLinkCount = 0;
 };
 
 struct NavSourceBuildStats {
@@ -90,6 +129,12 @@ struct NavPathRequest {
 struct NavPathResult {
   bool success = false;
   std::vector<XVECTOR3> points;
+  struct Segment {
+    int startPointIndex = 0;
+    int endPointIndex = 0;
+    NavTraversalType type = NavTraversalType::Walk;
+  };
+  std::vector<Segment> segments;
   std::string error;
 };
 
@@ -124,6 +169,13 @@ public:
   bool Build(const NavMeshGeometry& geometry,
              const NavMeshBuildSettings& settings = NavMeshBuildSettings(),
              std::string* error = nullptr);
+  bool BuildCached(const NavMeshGeometry& geometry,
+                   const NavMeshBuildSettings& settings,
+                   uint64_t cacheKey,
+                   std::string* error = nullptr);
+  bool LoadCached(uint64_t cacheKey,
+                  const NavMeshBuildSettings& settings = NavMeshBuildSettings(),
+                  std::string* error = nullptr);
   bool BuildFromXDataBase(const xF::XDataBase& database,
                           const NavMeshBuildSettings& settings = NavMeshBuildSettings(),
                           std::string* error = nullptr);
@@ -151,6 +203,10 @@ public:
   bool GetDebugGraphEdges(std::vector<XVECTOR3>& outVertices,
                           std::vector<unsigned int>& outIndices,
                           float verticalOffset = 0.015f) const;
+  bool GetDebugOffMeshLinks(NavTraversalType type,
+                           std::vector<XVECTOR3>& outVertices,
+                           std::vector<unsigned int>& outIndices,
+                           float verticalOffset = 0.025f) const;
 
   const NavMeshBuildStats& GetStats() const override { return m_stats; }
 

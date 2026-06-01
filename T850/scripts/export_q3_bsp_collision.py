@@ -37,10 +37,41 @@ Q3_BSP_LUMP_MODELS = 7
 Q3_BSP_LUMP_BRUSHES = 8
 Q3_BSP_LUMP_BRUSHSIDES = 9
 
+Q3_AAS_LUMP_AREASETTINGS = 8
+Q3_AAS_LUMP_REACHABILITY = 9
+
 Q3_CONTENTS_SOLID = 0x00000001
 Q3_CONTENTS_PLAYERCLIP = 0x00010000
 Q3_PLAYER_COLLISION_CONTENTS = Q3_CONTENTS_SOLID | Q3_CONTENTS_PLAYERCLIP
 Q3_DEFAULT_GRAVITY = 800.0
+
+Q3_AAS_IDENT = (ord("S") << 24) + (ord("A") << 16) + (ord("A") << 8) + ord("E")
+Q3_AAS_VERSION = 5
+Q3_AAS_REACHABILITY_SIZE = 44
+Q3_AAS_AREA_SETTINGS_SIZE = 28
+
+TRAVELTYPE_MASK = 0xFFFFFF
+TRAVEL_TYPE_NAMES = {
+    1: "invalid",
+    2: "walk",
+    3: "crouch",
+    4: "barrier_jump",
+    5: "jump",
+    6: "ladder",
+    7: "walk_off_ledge",
+    8: "swim",
+    9: "water_jump",
+    10: "teleport",
+    11: "elevator",
+    12: "rocket_jump",
+    13: "bfg_jump",
+    14: "grapple_hook",
+    15: "double_jump",
+    16: "ramp_jump",
+    17: "strafe_jump",
+    18: "jump_pad",
+    19: "func_bob",
+}
 
 
 def q3_normal_to_scene(value: tuple[float, float, float]) -> tuple[float, float, float]:
@@ -200,6 +231,83 @@ def parse_jump_pads(bsp_data: bytes, unit_scale: float) -> list[dict[str, object
             "velocity": vec3(*q3_velocity_to_scene(q3_velocity, unit_scale)),
         })
     return jump_pads
+
+
+def parse_aas_reachabilities(aas_data: bytes, unit_scale: float) -> list[dict[str, object]]:
+    if len(aas_data) < 12 + 14 * 8:
+        raise ValueError("AAS data is too small")
+
+    header_size = 12 + 14 * 8
+    header = bytearray(aas_data[:header_size])
+    ident, version = struct.unpack_from("<II", header, 0)
+    if ident != Q3_AAS_IDENT:
+        raise ValueError(f"unexpected AAS ident 0x{ident:08x}")
+    if version != Q3_AAS_VERSION:
+        raise ValueError(f"unsupported AAS version {version}")
+
+    for index in range(8, header_size):
+        header[index] ^= ((index - 8) * 119) & 0xFF
+
+    lumps = [struct.unpack_from("<II", header, 12 + lump_index * 8) for lump_index in range(14)]
+    area_settings_offset, area_settings_length = lumps[Q3_AAS_LUMP_AREASETTINGS]
+    reachability_offset, reachability_length = lumps[Q3_AAS_LUMP_REACHABILITY]
+
+    reachability_source_areas: dict[int, int] = {}
+    area_count = area_settings_length // Q3_AAS_AREA_SETTINGS_SIZE
+    for area_index in range(area_count):
+        offset = area_settings_offset + area_index * Q3_AAS_AREA_SETTINGS_SIZE
+        if offset + Q3_AAS_AREA_SETTINGS_SIZE > len(aas_data):
+            break
+        (
+            _contents,
+            _area_flags,
+            _presence_type,
+            _cluster,
+            _cluster_area_num,
+            num_reachable_areas,
+            first_reachable_area,
+        ) = struct.unpack_from("<7i", aas_data, offset)
+        for reach_index in range(first_reachable_area, first_reachable_area + num_reachable_areas):
+            reachability_source_areas[reach_index] = area_index
+
+    reachabilities: list[dict[str, object]] = []
+    reachability_count = reachability_length // Q3_AAS_REACHABILITY_SIZE
+    for reach_index in range(reachability_count):
+        offset = reachability_offset + reach_index * Q3_AAS_REACHABILITY_SIZE
+        if offset + Q3_AAS_REACHABILITY_SIZE > len(aas_data):
+            break
+        (
+            target_area,
+            face_num,
+            edge_num,
+            start_x,
+            start_y,
+            start_z,
+            end_x,
+            end_y,
+            end_z,
+            travel_type,
+            travel_time,
+        ) = struct.unpack_from("<3i3f3fiHxx", aas_data, offset)
+
+        travel_type_id = travel_type & TRAVELTYPE_MASK
+        travel_type_name = TRAVEL_TYPE_NAMES.get(travel_type_id, f"unknown_{travel_type_id}")
+        start = q3_to_scene((start_x, start_y, start_z), unit_scale)
+        end = q3_to_scene((end_x, end_y, end_z), unit_scale)
+        reachabilities.append({
+            "source_area": reachability_source_areas.get(reach_index, 0),
+            "target_area": target_area,
+            "face": face_num,
+            "edge": edge_num,
+            "start": vec3(*start),
+            "end": vec3(*end),
+            "travel_type": travel_type_name,
+            "travel_type_id": travel_type_id,
+            "travel_flags": travel_type & ~TRAVELTYPE_MASK,
+            "travel_time": int(travel_time),
+        })
+
+    return reachabilities
 
 
 def parse_bsp_collision(
@@ -397,18 +505,27 @@ def export_collision(args: argparse.Namespace) -> None:
             continue
 
         bsp_data = read_archive_file(archive_index, bsp_path)
+        aas_path = f"maps/{map_name}.aas".lower()
+        reachabilities: list[dict[str, object]] = []
+        if not args.no_aas and aas_path in archive_index:
+            try:
+                reachabilities = parse_aas_reachabilities(read_archive_file(archive_index, aas_path), args.unit_scale)
+            except ValueError as exc:
+                print(f"warning: skipped {aas_path}: {exc}", file=sys.stderr)
         excluded_trigger_brushes = trigger_brush_indices(bsp_data)
         brushes = parse_bsp_collision(bsp_data, args.unit_scale, excluded_trigger_brushes)
         patch_facets = parse_bsp_patch_facets(bsp_data, args.unit_scale, args.patch_subdivisions)
         jump_pads = parse_jump_pads(bsp_data, args.unit_scale)
         clip = {
-            "version": 2,
+            "version": 3,
             "source": bsp_path,
+            "aas_source": aas_path if reachabilities else "",
             "unit_scale": args.unit_scale,
             "contents_mask": Q3_PLAYER_COLLISION_CONTENTS,
             "brushes": brushes,
             "patch_facets": patch_facets,
             "jump_pads": jump_pads,
+            "reachabilities": reachabilities,
         }
         output_path = output_dir / f"{map_name}.t8q3clip"
         output_path.write_text(json.dumps(clip, indent=2), encoding="utf-8")
@@ -421,10 +538,12 @@ def export_collision(args: argparse.Namespace) -> None:
             "patch_subdivisions": int(args.patch_subdivisions),
             "excluded_trigger_brushes": len(excluded_trigger_brushes),
             "jump_pads": len(jump_pads),
+            "reachabilities": len(reachabilities),
         })
         print(
             f"wrote {output_path} brushes={len(brushes)} patch_facets={len(patch_facets)} "
-            f"excluded_trigger_brushes={len(excluded_trigger_brushes)} jump_pads={len(jump_pads)}"
+            f"excluded_trigger_brushes={len(excluded_trigger_brushes)} jump_pads={len(jump_pads)} "
+            f"reachabilities={len(reachabilities)}"
         )
 
     summary_path = output_dir / "_q3_bsp_collision_summary.json"
@@ -449,6 +568,11 @@ def build_parser() -> argparse.ArgumentParser:
         type=float,
         default=DEFAULT_UNIT_SCALE,
         help="Scale Q3 map units into engine scene units; default maps 32 Q3 units to 1 engine unit",
+    )
+    parser.add_argument(
+        "--no-aas",
+        action="store_true",
+        help="Do not embed .aas reachability records even if maps/<map>.aas exists",
     )
     return parser
 

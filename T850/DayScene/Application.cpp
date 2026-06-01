@@ -87,6 +87,22 @@ namespace {
   };
 
 #ifdef OS_WINDOWS
+  uint64_t StoreVkDescriptorSet(VkDescriptorSet descriptor) {
+#if defined(VK_USE_64_BIT_PTR_DEFINES) && VK_USE_64_BIT_PTR_DEFINES
+    return static_cast<uint64_t>(reinterpret_cast<uintptr_t>(descriptor));
+#else
+    return static_cast<uint64_t>(descriptor);
+#endif
+  }
+
+  VkDescriptorSet LoadVkDescriptorSet(uint64_t descriptor) {
+#if defined(VK_USE_64_BIT_PTR_DEFINES) && VK_USE_64_BIT_PTR_DEFINES
+    return reinterpret_cast<VkDescriptorSet>(static_cast<uintptr_t>(descriptor));
+#else
+    return static_cast<VkDescriptorSet>(descriptor);
+#endif
+  }
+
   bool IsSingleChannelFormat(DXGI_FORMAT format) {
     switch (format) {
     case DXGI_FORMAT_R8_UNORM:
@@ -112,8 +128,8 @@ namespace {
 #endif
 
   ImTextureID GetDebugTextureID(t850::BaseDriver* driver, t850::Texture* texture,
-                                std::unordered_map<void*, uintptr_t>& textureDescriptors,
-                                std::unordered_map<void*, uintptr_t>& opaqueTextureDescriptors) {
+                                std::unordered_map<void*, uint64_t>& textureDescriptors,
+                                std::unordered_map<void*, uint64_t>& opaqueTextureDescriptors) {
     if (!driver || !texture) return (ImTextureID)nullptr;
 
 #ifdef OS_WINDOWS
@@ -159,7 +175,7 @@ namespace {
       }
 
       device->CreateShaderResourceView(d3dTexture->pTexResource.Get(), &srvDesc, srvCPU);
-      opaqueTextureDescriptors[texture] = srvGPU.ptr;
+      opaqueTextureDescriptors[texture] = static_cast<uint64_t>(srvGPU.ptr);
       return (ImTextureID)srvGPU.ptr;
     }
 #endif
@@ -182,7 +198,7 @@ namespace {
         vkTexture->m_sampler,
         vkTexture->m_imageView,
         VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
-      textureDescriptors[texture] = (uintptr_t)descriptor;
+      textureDescriptors[texture] = StoreVkDescriptorSet(descriptor);
       return (ImTextureID)descriptor;
     }
 #endif
@@ -211,8 +227,8 @@ namespace {
   }
 
   std::vector<DebugRTEntry> BuildDebugRTEntries(t850::BaseDriver* driver,
-                                                std::unordered_map<void*, uintptr_t>& textureDescriptors,
-                                                std::unordered_map<void*, uintptr_t>& opaqueTextureDescriptors) {
+                                                std::unordered_map<void*, uint64_t>& textureDescriptors,
+                                                std::unordered_map<void*, uint64_t>& opaqueTextureDescriptors) {
     std::vector<DebugRTEntry> entries;
     if (!driver) return entries;
 
@@ -250,8 +266,8 @@ namespace {
 
   void PruneDebugTextureDescriptors(t850::BaseDriver* driver,
                                     const std::vector<DebugRTEntry>& entries,
-                                    std::unordered_map<void*, uintptr_t>& textureDescriptors,
-                                    std::unordered_map<void*, uintptr_t>& opaqueTextureDescriptors) {
+                                    std::unordered_map<void*, uint64_t>& textureDescriptors,
+                                    std::unordered_map<void*, uint64_t>& opaqueTextureDescriptors) {
     if (!driver) return;
 
     std::unordered_set<void*> liveTextures;
@@ -263,7 +279,7 @@ namespace {
       for (auto it = textureDescriptors.begin(); it != textureDescriptors.end();) {
         if (liveTextures.find(it->first) == liveTextures.end()) {
 #ifdef OS_WINDOWS
-          ImGui_ImplVulkan_RemoveTexture((VkDescriptorSet)it->second);
+          ImGui_ImplVulkan_RemoveTexture(LoadVkDescriptorSet(it->second));
 #endif
           it = textureDescriptors.erase(it);
         } else {
@@ -283,11 +299,11 @@ namespace {
     }
   }
 
-  void ReleaseDebugTextureDescriptors(std::unordered_map<void*, uintptr_t>& textureDescriptors,
-                                      std::unordered_map<void*, uintptr_t>& opaqueTextureDescriptors) {
+  void ReleaseDebugTextureDescriptors(std::unordered_map<void*, uint64_t>& textureDescriptors,
+                                      std::unordered_map<void*, uint64_t>& opaqueTextureDescriptors) {
 #ifdef OS_WINDOWS
     for (auto& entry : textureDescriptors) {
-      ImGui_ImplVulkan_RemoveTexture((VkDescriptorSet)entry.second);
+      ImGui_ImplVulkan_RemoveTexture(LoadVkDescriptorSet(entry.second));
     }
 #endif
     textureDescriptors.clear();
@@ -643,38 +659,48 @@ void App::OnUpdate() {
    static uint64_t telemetryFrameIndex = 0;
    t850::RuntimeTelemetry::BeginFrame(telemetryFrameIndex++, DtSecs);
    {
-     T8_TELEMETRY_SCOPE("frame.update");
-     static float timeAccum = 0;
-     timeAccum += DtSecs;
+    T8_TELEMETRY_SCOPE("frame.total");
+    {
+      T8_TELEMETRY_SCOPE("frame.update");
+      static float timeAccum = 0;
+      timeAccum += DtSecs;
 
-     if (timeAccum > 1.0) {
-       m_fpsString = "FPS " + std::to_string((int)(1.0 / DtSecs));
-       m_fpsCol = XVECTOR3(0.2, 0.8, 0.2);
-       timeAccum = 0;
-     }
+      if (timeAccum > 1.0) {
+        T8_TELEMETRY_SCOPE("frame.fps_text_update");
+        m_fpsString = "FPS " + std::to_string((int)(1.0 / DtSecs));
+        m_fpsCol = XVECTOR3(0.2, 0.8, 0.2);
+        timeAccum = 0;
+      }
 
 #ifndef OS_ANDROID
-     {
-       T8_TELEMETRY_SCOPE("scene.update");
-       m_devLayer.Update(DtSecs);
-     }
+      HandleRuntimeGuiToggle("update");
+      if (m_imguiVisible && m_actualScene) {
+        IManager.xDelta = 0;
+        IManager.yDelta = 0;
+        m_actualScene->ResetViewInput();
+      }
+      {
+        T8_TELEMETRY_SCOPE("scene.update");
+        m_devLayer.Update(DtSecs);
+      }
 #else
-    if (m_actualScene && !bPaused) {
-      T8_TELEMETRY_SCOPE("scene.update");
-      m_actualScene->OnUpdate(DtSecs);
-    }
+      if (m_actualScene && !bPaused) {
+        T8_TELEMETRY_SCOPE("scene.update");
+        m_actualScene->OnUpdate(DtSecs);
+      }
 #endif
-     if (t850::GetEngineContext().physics && t850::GetEngineContext().physics->IsInitialized()) {
-       T8_TELEMETRY_SCOPE("physics.update");
-       t850::GetEngineContext().physics->Update(DtSecs);
-     }
+      if (t850::GetEngineContext().physics && t850::GetEngineContext().physics->IsInitialized()) {
+        T8_TELEMETRY_SCOPE("physics.update");
+        t850::GetEngineContext().physics->Update(DtSecs);
+      }
 
-     {
-       T8_TELEMETRY_SCOPE("input.update");
-       OnInput();
-     }
+      {
+        T8_TELEMETRY_SCOPE("input.update");
+        OnInput();
+      }
+    }
+    OnDraw();
    }
-   OnDraw();
    t850::RuntimeTelemetry::EndFrame();
 }
 
@@ -736,13 +762,46 @@ void App::OnDraw() {
   // Skip presenting the first frame (black with only text)
   if (frameCount > 1) {
     T8_LOG_TRACE("[Frame %d] === SwapBuffers ===" , frameCount);
-    pFramework->pVideoDriver->SwapBuffers();
+    {
+      T8_TELEMETRY_SCOPE("frame.swap_buffers");
+      pFramework->pVideoDriver->SwapBuffers();
+    }
   } else {
     T8_LOG_TRACE("[Frame %d] === SKIPPED SwapBuffers (first frame) ===" , frameCount);
   }
 }
 
+bool App::HandleRuntimeGuiToggle(const char* phase) {
+#ifdef OS_ANDROID
+  (void)phase;
+  return false;
+#else
+  if (!m_imguiReady) {
+    return false;
+  }
 
+  const bool imguiConsumesKeyboard =
+      m_imguiVisible && (m_imgui.WantsKeyboard() || m_imgui.WantsTextInput());
+  if (imguiConsumesKeyboard || !IManager.PressedOnceKey(T800K_g)) {
+    return false;
+  }
+
+  const bool oldVisible = m_imguiVisible;
+  m_imguiVisible = !m_imguiVisible;
+  IManager.xDelta = 0;
+  IManager.yDelta = 0;
+  if (m_actualScene) {
+    m_actualScene->ResetViewInput();
+  }
+  T8_LOG_VERBOSE("[MouseMode] G toggle phase=%s gui %d->%d mouse=(%d,%d) delta reset",
+                 phase ? phase : "",
+                 oldVisible ? 1 : 0,
+                 m_imguiVisible ? 1 : 0,
+                 IManager.mouseX,
+                 IManager.mouseY);
+  return true;
+#endif
+}
 
 void App::OnInput() {
 	if (FirstFrame)
@@ -750,10 +809,13 @@ void App::OnInput() {
 #ifndef OS_ANDROID
   const bool imguiConsumesKeyboard =
       m_imguiReady && m_imguiVisible && (m_imgui.WantsKeyboard() || m_imgui.WantsTextInput());
-  if (m_imguiReady && !imguiConsumesKeyboard && IManager.PressedOnceKey(T800K_g)) {
-    m_imguiVisible = !m_imguiVisible;
+  const bool guiToggled = HandleRuntimeGuiToggle("input");
+  if (m_imguiVisible && m_actualScene) {
+    IManager.xDelta = 0;
+    IManager.yDelta = 0;
+    m_actualScene->ResetViewInput();
   }
-  m_devLayer.SetSceneInputBlocked(imguiConsumesKeyboard);
+  m_devLayer.SetSceneInputBlocked(guiToggled || m_imguiVisible || imguiConsumesKeyboard);
   m_devLayer.ProcessInput(&IManager);
 #else
   UpdateAndroidGuiHoldToggle();
@@ -796,6 +858,14 @@ bool App::IsModalActive() const {
   return false;
 #else
   return m_imguiVisible && (m_imgui.WantsKeyboard() || m_imgui.WantsTextInput());
+#endif
+}
+
+bool App::WantsRelativeMouseMode() const {
+#ifdef OS_ANDROID
+  return false;
+#else
+  return m_imguiReady && !m_imguiVisible && !IsModalActive();
 #endif
 }
 

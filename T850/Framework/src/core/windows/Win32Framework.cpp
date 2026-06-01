@@ -31,6 +31,87 @@
 #include <debug/RuntimeTelemetry.h>
 #include <navigation/NavigationSystem.h>
 namespace t850 {
+  void Win32Framework::ReleaseMouseMode() {
+    if (m_pWindow && m_relativeMouseMode) {
+      SDL_SetWindowRelativeMouseMode(m_pWindow, false);
+    }
+    SDL_ShowCursor();
+    ClipCursor(nullptr);
+    m_cursorConfined = false;
+    m_relativeMouseMode = false;
+  }
+
+  void Win32Framework::UpdateMouseMode() {
+    if (!m_pWindow) {
+      ReleaseMouseMode();
+      return;
+    }
+
+    HWND hwnd = (HWND)SDL_GetPointerProperty(
+        SDL_GetWindowProperties(m_pWindow),
+        SDL_PROP_WINDOW_WIN32_HWND_POINTER,
+        NULL);
+    if (!hwnd || GetForegroundWindow() != hwnd || IsIconic(hwnd) || !IsWindowVisible(hwnd)) {
+      ReleaseMouseMode();
+      return;
+    }
+
+    const bool wantsRelativeMouse = pBaseApp && pBaseApp->WantsRelativeMouseMode();
+    if (wantsRelativeMouse) {
+      ClipCursor(nullptr);
+      m_cursorConfined = false;
+      if (!m_relativeMouseMode) {
+        SDL_SetWindowRelativeMouseMode(m_pWindow, true);
+        float discardX = 0.0f;
+        float discardY = 0.0f;
+        SDL_GetRelativeMouseState(&discardX, &discardY);
+      }
+      SDL_HideCursor();
+      m_relativeMouseMode = true;
+      return;
+    }
+
+    if (m_relativeMouseMode) {
+      SDL_SetWindowRelativeMouseMode(m_pWindow, false);
+      float discardX = 0.0f;
+      float discardY = 0.0f;
+      SDL_GetRelativeMouseState(&discardX, &discardY);
+      m_relativeMouseMode = false;
+    }
+    SDL_ShowCursor();
+
+    if (!pBaseApp || !pBaseApp->IsModalActive()) {
+      ClipCursor(nullptr);
+      m_cursorConfined = false;
+      return;
+    }
+
+    RECT clientRect = {};
+    if (!GetClientRect(hwnd, &clientRect) ||
+        clientRect.right <= clientRect.left ||
+        clientRect.bottom <= clientRect.top) {
+      ClipCursor(nullptr);
+      m_cursorConfined = false;
+      return;
+    }
+
+    POINT topLeft = { clientRect.left, clientRect.top };
+    POINT bottomRight = { clientRect.right, clientRect.bottom };
+    if (!ClientToScreen(hwnd, &topLeft) || !ClientToScreen(hwnd, &bottomRight)) {
+      ClipCursor(nullptr);
+      m_cursorConfined = false;
+      return;
+    }
+
+    RECT clipRect = { topLeft.x, topLeft.y, bottomRight.x, bottomRight.y };
+    if (ClipCursor(&clipRect)) {
+      m_cursorConfined = true;
+    } else if (m_cursorConfined) {
+      ClipCursor(nullptr);
+      m_cursorConfined = false;
+    }
+  }
+
   void Win32Framework::InitGlobalVars() {
 
 
@@ -56,6 +137,7 @@ namespace t850 {
     m_inited = true;
   }
   void Win32Framework::OnDestroyApplication() {
+    ReleaseMouseMode();
     pVideoDriver->FlushGPUResources();  // release cmd buffer/descriptor refs before scene cleanup
     pBaseApp->DestroyAssets();
     RuntimeTelemetry::Shutdown();
@@ -85,6 +167,7 @@ namespace t850 {
       ProcessInput();
       pBaseApp->OnUpdate();
     }
+    ReleaseMouseMode();
   }
   void Win32Framework::ProcessInput() {
     pBaseApp->IManager.scrollDelta = 0.0f;
@@ -111,8 +194,21 @@ namespace t850 {
       }break;
 
 	  case SDL_EVENT_QUIT: {
+      ReleaseMouseMode();
 		  m_alive = false;
 	  }break;
+
+      case SDL_EVENT_WINDOW_FOCUS_LOST:
+      case SDL_EVENT_WINDOW_MINIMIZED:
+      case SDL_EVENT_WINDOW_HIDDEN: {
+        ReleaseMouseMode();
+      } break;
+
+      case SDL_EVENT_WINDOW_FOCUS_GAINED:
+      case SDL_EVENT_WINDOW_RESTORED:
+      case SDL_EVENT_WINDOW_SHOWN: {
+        UpdateMouseMode();
+      } break;
 
       case SDL_EVENT_MOUSE_BUTTON_DOWN: {
         int btn = evento.button.button - 1; // SDL buttons are 1-based
@@ -141,10 +237,17 @@ namespace t850 {
 
       }
     }
+    UpdateMouseMode();
     static int xDelta = 0;
     static int yDelta = 0;
     static bool firstCall = true;
     int x = 0, y = 0;
+    float relativeX = 0.0f;
+    float relativeY = 0.0f;
+    const bool useRelativeMouse = m_relativeMouseMode && m_pWindow && SDL_GetWindowRelativeMouseMode(m_pWindow);
+    if (useRelativeMouse) {
+      SDL_GetRelativeMouseState(&relativeX, &relativeY);
+    }
 
 	POINT point;
 	GetCursorPos(&point);
@@ -160,6 +263,24 @@ namespace t850 {
     pBaseApp->IManager.mouseX = clientPt.x;
     pBaseApp->IManager.mouseY = clientPt.y;
 
+    if (useRelativeMouse) {
+      pBaseApp->IManager.xDelta = static_cast<int>(relativeX);
+      pBaseApp->IManager.yDelta = static_cast<int>(relativeY);
+      T8_LOG_VERBOSE("[MouseInput] mode=relative abs=(%d,%d) client=(%d,%d) rel=(%.3f,%.3f) delta=(%d,%d)",
+                     x,
+                     y,
+                     clientPt.x,
+                     clientPt.y,
+                     relativeX,
+                     relativeY,
+                     pBaseApp->IManager.xDelta,
+                     pBaseApp->IManager.yDelta);
+      xDelta = x;
+      yDelta = y;
+      firstCall = false;
+      return;
+    }
+
     if (firstCall) {
       firstCall = false;
       xDelta = x;
@@ -171,6 +292,15 @@ namespace t850 {
 
     pBaseApp->IManager.xDelta = xDelta;
     pBaseApp->IManager.yDelta = yDelta;
+    T8_LOG_VERBOSE("[MouseInput] mode=absolute abs=(%d,%d) client=(%d,%d) delta=(%d,%d) confined=%d relative=%d",
+                   x,
+                   y,
+                   clientPt.x,
+                   clientPt.y,
+                   pBaseApp->IManager.xDelta,
+                   pBaseApp->IManager.yDelta,
+                   m_cursorConfined ? 1 : 0,
+                   m_relativeMouseMode ? 1 : 0);
 
     xDelta = x;
     yDelta = y;
@@ -186,6 +316,7 @@ namespace t850 {
     }
 #endif
     if (m_inited) {
+      ReleaseMouseMode();
       pVideoDriver->FlushGPUResources();  // release cmd buffer/descriptor refs before scene cleanup
       pBaseApp->DestroyAssets();
       pVideoDriver->DestroyDriver();
@@ -201,6 +332,7 @@ namespace t850 {
       m_glContext = nullptr;
     }
     if (m_pWindow) {
+      ReleaseMouseMode();
       SDL_DestroyWindow(m_pWindow);
       m_pWindow = nullptr;
     }

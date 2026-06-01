@@ -17,6 +17,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <optional>
 
 namespace t850 {
 
@@ -46,16 +47,32 @@ struct Q3ClipJumpPadDesc {
   int entity_id = 0;
   Q3ClipVec3 mins;
   Q3ClipVec3 maxs;
+  std::optional<Q3ClipVec3> target_position;
   Q3ClipVec3 velocity;
+};
+
+struct Q3ClipReachabilityDesc {
+  int source_area = 0;
+  int target_area = 0;
+  int face = 0;
+  int edge = 0;
+  Q3ClipVec3 start;
+  Q3ClipVec3 end;
+  std::string travel_type;
+  int travel_type_id = 0;
+  int travel_flags = 0;
+  int travel_time = 0;
 };
 
 struct Q3ClipFileDesc {
   int version = 1;
   std::string source;
+  std::string aas_source;
   float unit_scale = 1.0f;
   std::vector<Q3ClipBrushDesc> brushes;
   std::vector<Q3ClipPatchFacetDesc> patch_facets;
   std::vector<Q3ClipJumpPadDesc> jump_pads;
+  std::vector<Q3ClipReachabilityDesc> reachabilities;
 };
 
 namespace {
@@ -341,14 +358,57 @@ bool Q3BspCollisionWorld::Load(const std::string& resourcePath, std::string* err
     jumpPad.entityId = static_cast<uint32_t>((std::max)(0, jumpPadDesc.entity_id));
     jumpPad.mins = XVECTOR3(jumpPadDesc.mins.x, jumpPadDesc.mins.y, jumpPadDesc.mins.z, 1.0f);
     jumpPad.maxs = XVECTOR3(jumpPadDesc.maxs.x, jumpPadDesc.maxs.y, jumpPadDesc.maxs.z, 1.0f);
+    if (jumpPadDesc.target_position) {
+      jumpPad.targetPosition = XVECTOR3(
+          jumpPadDesc.target_position->x,
+          jumpPadDesc.target_position->y,
+          jumpPadDesc.target_position->z,
+          1.0f);
+      jumpPad.hasTargetPosition =
+          std::isfinite(jumpPad.targetPosition.x) &&
+          std::isfinite(jumpPad.targetPosition.y) &&
+          std::isfinite(jumpPad.targetPosition.z);
+    }
     jumpPad.velocity = XVECTOR3(jumpPadDesc.velocity.x, jumpPadDesc.velocity.y, jumpPadDesc.velocity.z, 0.0f);
     if (jumpPad.mins.x > jumpPad.maxs.x) std::swap(jumpPad.mins.x, jumpPad.maxs.x);
     if (jumpPad.mins.y > jumpPad.maxs.y) std::swap(jumpPad.mins.y, jumpPad.maxs.y);
     if (jumpPad.mins.z > jumpPad.maxs.z) std::swap(jumpPad.mins.z, jumpPad.maxs.z);
     if (std::isfinite(jumpPad.velocity.x) &&
-        std::isfinite(jumpPad.velocity.y) &&
-        std::isfinite(jumpPad.velocity.z)) {
+    std::isfinite(jumpPad.velocity.y) &&
+    std::isfinite(jumpPad.velocity.z)) {
       m_jumpPads.push_back(jumpPad);
+    }
+  }
+
+  m_reachabilities.reserve(desc.reachabilities.size());
+  for (const Q3ClipReachabilityDesc& reachabilityDesc : desc.reachabilities) {
+    Reachability reachability;
+    reachability.sourceArea = static_cast<uint32_t>((std::max)(0, reachabilityDesc.source_area));
+    reachability.targetArea = static_cast<uint32_t>((std::max)(0, reachabilityDesc.target_area));
+    reachability.face = reachabilityDesc.face;
+    reachability.edge = reachabilityDesc.edge;
+    reachability.start = XVECTOR3(
+        reachabilityDesc.start.x,
+        reachabilityDesc.start.y,
+        reachabilityDesc.start.z,
+        1.0f);
+    reachability.end = XVECTOR3(
+        reachabilityDesc.end.x,
+        reachabilityDesc.end.y,
+        reachabilityDesc.end.z,
+        1.0f);
+    reachability.travelType = reachabilityDesc.travel_type;
+    reachability.travelTypeId = static_cast<uint32_t>((std::max)(0, reachabilityDesc.travel_type_id));
+    reachability.travelFlags = static_cast<uint32_t>((std::max)(0, reachabilityDesc.travel_flags));
+    reachability.travelTime = static_cast<uint32_t>((std::max)(0, reachabilityDesc.travel_time));
+    if (std::isfinite(reachability.start.x) &&
+        std::isfinite(reachability.start.y) &&
+        std::isfinite(reachability.start.z) &&
+        std::isfinite(reachability.end.x) &&
+        std::isfinite(reachability.end.y) &&
+        std::isfinite(reachability.end.z) &&
+        !reachability.travelType.empty()) {
+      m_reachabilities.push_back(std::move(reachability));
     }
   }
 
@@ -365,11 +425,12 @@ bool Q3BspCollisionWorld::Load(const std::string& resourcePath, std::string* err
   m_surfaceClipEpsilon = (std::max)(kQ3SurfaceClipEpsilon * unitScale, kMinTraceEpsilon);
   m_triggerTouchSlop = (std::max)(kQ3EntityLinkEpsilon * unitScale, m_surfaceClipEpsilon);
   T8_LOG_INFO(
-      "[Q3BspCollision] Loaded %s brushes=%zu patchFacets=%zu jumpPads=%zu",
+      "[Q3BspCollision] Loaded %s brushes=%zu patchFacets=%zu jumpPads=%zu reachabilities=%zu",
       resourcePath.c_str(),
       m_brushes.size(),
       m_patchFacets.size(),
-      m_jumpPads.size());
+      m_jumpPads.size(),
+      m_reachabilities.size());
   return true;
 }
 
@@ -378,6 +439,7 @@ void Q3BspCollisionWorld::Clear() {
   m_brushes.clear();
   m_patchFacets.clear();
   m_jumpPads.clear();
+  m_reachabilities.clear();
   m_surfaceClipEpsilon = kQ3SurfaceClipEpsilon * kDefaultQ3UnitScale;
   m_triggerTouchSlop = kQ3EntityLinkEpsilon * kDefaultQ3UnitScale;
 }

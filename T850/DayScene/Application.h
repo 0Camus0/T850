@@ -50,6 +50,7 @@ public:
 
   void LoadScene(int id) override;
   void DrawRuntimeGui();
+  bool HandleRuntimeGuiToggle(const char* phase);
 #ifdef OS_ANDROID
   bool HandleAndroidInputEvent(AInputEvent* event) override;
   void OnAndroidNativeWindowChanged(ANativeWindow* window) override;
@@ -62,6 +63,7 @@ public:
 
   // Modal UI state queried by the framework to block Esc-to-quit.
   bool IsModalActive() const override;
+  bool WantsRelativeMouseMode() const override;
 
 
   Timer			DtTimer;
@@ -82,8 +84,8 @@ public:
   t850::DevLayer m_devLayer;
   bool m_debugPanelVisible = false;
   std::unordered_set<std::string> m_debugOpenTargets;
-  std::unordered_map<void*, uintptr_t> m_debugTextureDescriptors;
-  std::unordered_map<void*, uintptr_t> m_debugOpaqueTextureDescriptors;
+  std::unordered_map<void*, uint64_t> m_debugTextureDescriptors;
+  std::unordered_map<void*, uint64_t> m_debugOpaqueTextureDescriptors;
 #else
   float m_androidGuiScale = 1.6f;
   int m_androidGuiPanelMode = 0;

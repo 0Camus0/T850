@@ -198,6 +198,7 @@ void DayScene::CaptureSceneProfileState(t850::SandboxProfileDesc& state) const {
   addFloat("material_emissive_intensity", SceneProp.MaterialEmissiveIntensity);
   addFloat("material_transmission_multiplier", SceneProp.MaterialTransmissionMultiplier);
   addFloat("material_refraction_strength", SceneProp.MaterialRefractionStrength);
+  addFloat("navmesh_debug_offset", m_navMeshDebugOffset);
   if (ActiveCam) addFloat("fov", Rad2Deg(ActiveCam->Fov));
 
   for (int kernelIndex = 0; kernelIndex < (int)SceneProp.pGaussKernels.size(); ++kernelIndex) {
@@ -215,6 +216,7 @@ void DayScene::CaptureSceneProfileState(t850::SandboxProfileDesc& state) const {
   addBool("show_spline", m_showSpline);
   addBool("show_lights", m_showLights);
   addBool("show_physics", m_showPhysics);
+  addBool("show_navmesh", m_showNavMesh);
   addBool("dof_toggle", SceneProp.ToogleDOF != 0);
   addBool("parallax_toggle", SceneProp.ToogleParallax != 0);
   addBool("parallax_shadow_toggle", SceneProp.ToogleParallaxShadow != 0);
@@ -230,6 +232,7 @@ void DayScene::CaptureSceneProfileState(t850::SandboxProfileDesc& state) const {
   addInt("active_camera", m_activeCameraIndex);
   addInt("cubemap", m_currentCubemapIndex);
   addInt("luminance_mode", SceneProp.LuminanceMode);
+  addInt("navmesh_debug_shape", m_navMeshDebugShapeMode);
 }
 
 void DayScene::ApplySceneProfileState(const t850::SandboxProfileDesc& state) {
@@ -267,6 +270,7 @@ void DayScene::ApplySceneProfileState(const t850::SandboxProfileDesc& state) {
     else if (value.name == "material_emissive_intensity") SceneProp.MaterialEmissiveIntensity = value.value;
     else if (value.name == "material_transmission_multiplier") SceneProp.MaterialTransmissionMultiplier = value.value;
     else if (value.name == "material_refraction_strength") SceneProp.MaterialRefractionStrength = value.value;
+    else if (value.name == "navmesh_debug_offset") m_navMeshDebugOffset = (std::max)(0.0f, (std::min)(0.25f, value.value));
     else if (value.name == "fov" && ActiveCam) { ActiveCam->SetFov(Deg2Rad(value.value)); ActiveCam->VP = ActiveCam->View * ActiveCam->Projection; VP = ActiveCam->VP; }
 
     for (int kernelIndex = 0; kernelIndex < (int)SceneProp.pGaussKernels.size(); ++kernelIndex) {
@@ -285,6 +289,10 @@ void DayScene::ApplySceneProfileState(const t850::SandboxProfileDesc& state) {
     else if (value.name == "show_spline") m_showSpline = value.value;
     else if (value.name == "show_lights") m_showLights = value.value;
     else if (value.name == "show_physics") m_showPhysics = value.value;
+    else if (value.name == "show_navmesh") {
+      m_showNavMesh = value.value;
+      if (m_showNavMesh && !m_navMesh.IsReady()) m_navMeshBuildAttempted = false;
+    }
     else if (value.name == "dof_toggle") { SceneProp.ToogleDOF = value.value ? 1 : 0; m_renderGraph.SetPassEnabled("CoC", value.value); m_renderGraph.SetPassEnabled("Combine CoC", value.value); m_renderGraph.SetPassEnabled("DOF", value.value); m_renderGraph.SetPassEnabled("DOF 2", value.value); }
     else if (value.name == "parallax_toggle") { SceneProp.ToogleParallax = value.value ? 1 : 0; if (Meshes[0].pBase) Meshes[0].SetParallaxEnabled(value.value); }
     else if (value.name == "parallax_shadow_toggle") { SceneProp.ToogleParallaxShadow = value.value ? 1 : 0; SceneProp.ParallaxShadowStrength = value.value ? SceneProp.ParallaxShadowStrength : 0.0f; }
@@ -302,6 +310,7 @@ void DayScene::ApplySceneProfileState(const t850::SandboxProfileDesc& state) {
     else if (value.name == "luminance_mode") SceneProp.LuminanceMode = value.value;
     else if (value.name == "active_camera") ApplyActiveCameraSelection(value.value);
     else if (value.name == "cubemap") m_currentCubemapIndex = value.value;
+    else if (value.name == "navmesh_debug_shape") m_navMeshDebugShapeMode = (std::max)(0, (std::min)(1, value.value));
     for (int kernelIndex = 0; kernelIndex < (int)SceneProp.pGaussKernels.size(); ++kernelIndex) {
       GaussFilter* kernel = SceneProp.pGaussKernels[kernelIndex];
       if (!kernel) continue;
@@ -337,6 +346,40 @@ t850::SandboxProfileDesc DayScene::BuildSparseSceneProfile(const t850::SandboxPr
     if (!baseline || value.value != baseline->value) sparse.selectors.push_back(value);
   }
   return sparse;
+}
+
+bool DayScene::EnsureNavMeshBuilt() {
+  if (m_navMesh.IsReady()) {
+    return true;
+  }
+  if (m_navMeshBuildAttempted) {
+    return false;
+  }
+  m_navMeshBuildAttempted = true;
+
+  t850::navigation::NavMeshGeometry geometry;
+  t850::navigation::NavSourceBuildStats sourceStats;
+  std::string error;
+  if (!t850::navigation::BuildGeometryFromPrimitiveInstances(Meshes, 1, geometry, &sourceStats, &error)) {
+    T8_LOG_ERROR("[Navigation] DayScene navmesh geometry extraction failed: %s (considered=%d included=%d skippedInvisible=%d skippedSkinned=%d skippedInvalid=%d)",
+                 error.c_str(),
+                 sourceStats.considered,
+                 sourceStats.included,
+                 sourceStats.skippedInvisible,
+                 sourceStats.skippedSkinned,
+                 sourceStats.skippedInvalid);
+    return false;
+  }
+  if (!m_navMesh.Build(geometry, t850::navigation::NavMeshBuildSettings(), &error)) {
+    T8_LOG_ERROR("[Navigation] DayScene navmesh build failed: %s", error.c_str());
+    return false;
+  }
+
+  m_navMeshDebugRenderer.Invalidate();
+  const t850::navigation::NavMeshBuildStats& stats = m_navMesh.GetStats();
+  T8_LOG_INFO("[Navigation] DayScene navmesh ready: sources=%d verts=%d tris=%d polys=%d",
+              sourceStats.included, stats.vertexCount, stats.triangleCount, stats.polygonCount);
+  return true;
 }
 
 void DayScene::LoadSceneProfile() {
@@ -442,6 +485,8 @@ void DayScene::InitVars() {
 
   CamSelection = NORMAL_CAM1;
   SceneSettingSelection = CHANGE_EXPOSURE;
+  m_navMeshDebugOffset = 0.01f;
+  m_navMeshDebugShapeMode = 0;
 
   // Default-initialize scene properties — JSON will overwrite them
   VP.Identity();
@@ -662,6 +707,9 @@ void DayScene::CreateAssets() {
   m_wireframeSphere.Create(8, 16);
   m_wireframeArrow.Create(24, 6);
   m_physicsDebugRenderer.Create();
+  m_navMeshDebugRenderer.Create();
+  m_navMesh.Clear();
+  m_navMeshBuildAttempted = false;
   m_debugText.LoadFromFile(24, "Fonts/Martius-LV9L4.ttf", 512.0f);
 
   t850::Spline& m_spline = m_sceneSetup.splines[0];
@@ -1244,6 +1292,9 @@ void DayScene::DestroyAssets() {
   SceneProp.SSAOKernel.Destroy();
   m_debugText.Destroy();
   m_physicsDebugRenderer.Destroy();
+  m_navMeshDebugRenderer.Destroy();
+  m_navMesh.Clear();
+  m_navMeshBuildAttempted = false;
   m_wireframeSphere.Destroy();
   m_wireframeArrow.Destroy();
   PrimitiveMgr.DestroyPrimitives();
@@ -1649,34 +1700,52 @@ void DayScene::OnDraw() {
     }
   }
 
-  auto drawPhysicsDebugOverlay = [this, viewCam]() {
-    if (!m_showPhysics) {
-      return;
+  auto drawDebugOverlays = [this, viewCam]() {
+    if (m_showPhysics) {
+      t850::EngineContext* engineContext = GetEngineContext();
+      if (!engineContext) engineContext = &t850::GetEngineContext();
+      if (engineContext && engineContext->physics && m_physicsDebugRenderer.IsReady()) {
+        m_physicsDebugRenderer.SetDepthTexture(nullptr);
+        m_physicsDebugRenderer.SetDepthTestEnabled(false);
+        m_physicsDebugRenderer.SetViewport(g_pBaseDriver->width, g_pBaseDriver->height);
+        m_physicsDebugRenderer.SetFarPlane(viewCam ? viewCam->FPlane : 1000.0f);
+        pFramework->pVideoDriver->SetDepthStencilState(BaseDriver::NONE);
+        pFramework->pVideoDriver->SetBlendState(BaseDriver::BLEND_DEFAULT);
+        m_physicsDebugRenderer.Draw(*engineContext->physics, VP);
+      }
     }
 
-    t850::EngineContext* engineContext = GetEngineContext();
-    if (!engineContext) engineContext = &t850::GetEngineContext();
-    if (!engineContext || !engineContext->physics || !m_physicsDebugRenderer.IsReady()) {
-      return;
+    if (m_showNavMesh && m_navMeshDebugRenderer.IsReady() && EnsureNavMeshBuilt()) {
+      Texture* depthTexture = nullptr;
+      if (GBufferPass >= 0 && GBufferPass < (int)pFramework->pVideoDriver->RTs.size()) {
+        if (auto* gbufRT = pFramework->pVideoDriver->RTs[GBufferPass]) {
+          depthTexture = gbufRT->pDepthTexture;
+        }
+      }
+      if (depthTexture) {
+        m_navMeshDebugRenderer.SetVerticalOffset(m_navMeshDebugOffset);
+        m_navMeshDebugRenderer.SetGraphVerticalOffset(m_navMeshDebugOffset + 0.005f);
+        m_navMeshDebugRenderer.SetShapeMode(m_navMeshDebugShapeMode == 1
+            ? t850::navigation::NavMeshDebugShapeMode::Nodes
+            : t850::navigation::NavMeshDebugShapeMode::Geometry);
+        m_navMeshDebugRenderer.SetDepthTexture(depthTexture);
+        m_navMeshDebugRenderer.SetViewport(g_pBaseDriver->width, g_pBaseDriver->height);
+        m_navMeshDebugRenderer.SetFarPlane(viewCam ? viewCam->FPlane : 1000.0f);
+        pFramework->pVideoDriver->SetDepthStencilState(BaseDriver::NONE);
+        pFramework->pVideoDriver->SetBlendState(BaseDriver::BLEND_DEFAULT);
+        m_navMeshDebugRenderer.Draw(m_navMesh, VP);
+      }
     }
-
-    m_physicsDebugRenderer.SetDepthTexture(nullptr);
-    m_physicsDebugRenderer.SetDepthTestEnabled(false);
-    m_physicsDebugRenderer.SetViewport(g_pBaseDriver->width, g_pBaseDriver->height);
-    m_physicsDebugRenderer.SetFarPlane(viewCam ? viewCam->FPlane : 1000.0f);
-    pFramework->pVideoDriver->SetDepthStencilState(BaseDriver::NONE);
-    pFramework->pVideoDriver->SetBlendState(BaseDriver::BLEND_DEFAULT);
-    m_physicsDebugRenderer.Draw(*engineContext->physics, VP);
   };
 
 #ifdef OS_ANDROID
-  if (m_showPhysics) {
+  if (m_showPhysics || m_showNavMesh) {
     if (auto* vkDriver = static_cast<VulkanDriver*>(pFramework->pVideoDriver)) {
-      vkDriver->SetPrePresentOverlayCallback(drawPhysicsDebugOverlay);
+      vkDriver->SetPrePresentOverlayCallback(drawDebugOverlays);
     }
   }
 #else
-  drawPhysicsDebugOverlay();
+  drawDebugOverlays();
 #endif
 
   if (SceneProp.pCameras[0]->Eye.y > 80) {
@@ -2370,6 +2439,7 @@ void DayScene::DrawDevGui(t850::DevGuiContext& gui) {
     {"show_spline", CHANGE_SHOW_SPLINE},
     {"show_lights", CHANGE_SHOW_LIGHTS},
     {"show_physics", CHANGE_SHOW_PHYSICS},
+    {"show_navmesh", CHANGE_SHOW_NAVMESH},
     {"dof_toggle", CHANGE_DOF_TOGGLE},
     {"parallax_toggle", CHANGE_PARALLAX_TOGGLE},
     {"parallax_shadow_toggle", CHANGE_PARALLAX_SHADOW_TOGGLE},
@@ -2500,6 +2570,7 @@ void DayScene::DrawDevGui(t850::DevGuiContext& gui) {
     case CHANGE_SHOW_SPLINE: value = m_showSpline; return true;
     case CHANGE_SHOW_LIGHTS: value = m_showLights; return true;
     case CHANGE_SHOW_PHYSICS: value = m_showPhysics; return true;
+    case CHANGE_SHOW_NAVMESH: value = m_showNavMesh; return true;
     case CHANGE_DOF_TOGGLE: value = (SceneProp.ToogleDOF != 0); return true;
     case CHANGE_PARALLAX_TOGGLE: value = (SceneProp.ToogleParallax != 0); return true;
     case CHANGE_PARALLAX_SHADOW_TOGGLE: value = (SceneProp.ToogleParallaxShadow != 0); return true;
@@ -2517,6 +2588,10 @@ void DayScene::DrawDevGui(t850::DevGuiContext& gui) {
     case CHANGE_SHOW_SPLINE: m_showSpline = value; break;
     case CHANGE_SHOW_LIGHTS: m_showLights = value; break;
     case CHANGE_SHOW_PHYSICS: m_showPhysics = value; break;
+    case CHANGE_SHOW_NAVMESH:
+      m_showNavMesh = value;
+      if (m_showNavMesh && !m_navMesh.IsReady()) m_navMeshBuildAttempted = false;
+      break;
     case CHANGE_DOF_TOGGLE:
       SceneProp.ToogleDOF = value ? 1 : 0;
       m_renderGraph.SetPassEnabled("CoC", value);
@@ -2610,6 +2685,17 @@ void DayScene::DrawDevGui(t850::DevGuiContext& gui) {
         setCheckboxValue(settingIndex, value);
       }
     }
+    t850::SliderDesc navOffsetDesc;
+    navOffsetDesc.name = "navmesh_debug_offset";
+    navOffsetDesc.label = "NavMesh offset";
+    navOffsetDesc.min_val = 0.0f;
+    navOffsetDesc.max_val = 0.25f;
+    navOffsetDesc.step = 0.001f;
+    navOffsetDesc.default_val = 0.01f;
+    gui.Slider(navOffsetDesc, m_navMeshDebugOffset);
+    const char* navShapeOptions[] = { "Geometry", "Nodes" };
+    ImGui::SetNextItemWidth(180.0f);
+    ImGui::Combo("NavMesh magenta", &m_navMeshDebugShapeMode, navShapeOptions, 2);
   }
 
   if (gui.BeginSection("Selectors")) {
@@ -2697,6 +2783,19 @@ void DayScene::DrawAndroidPhysicsPanel(t850::DevGuiContext& gui) {
     m_showPhysics = showPhysics;
     T8_LOG_INFO("[PHYSICS] Debug draw %s", m_showPhysics ? "enabled" : "disabled");
   }
+  bool showNavMesh = m_showNavMesh;
+  if (ImGui::Checkbox("NavMesh Debug", &showNavMesh)) {
+    m_showNavMesh = showNavMesh;
+    if (m_showNavMesh && !m_navMesh.IsReady()) m_navMeshBuildAttempted = false;
+    T8_LOG_INFO("[Navigation] Debug draw %s", m_showNavMesh ? "enabled" : "disabled");
+  }
+  const char* navShapeOptions[] = { "Geometry", "Nodes" };
+  ImGui::SetNextItemWidth(170.0f);
+  ImGui::Combo("NavMesh magenta", &m_navMeshDebugShapeMode, navShapeOptions, 2);
+  ImGui::SetNextItemWidth(220.0f);
+  if (ImGui::SliderFloat("NavMesh offset", &m_navMeshDebugOffset, 0.0f, 0.25f, "%.3f")) {
+    m_navMeshDebugOffset = (std::max)(0.0f, (std::min)(0.25f, m_navMeshDebugOffset));
+  }
   ImGui::TextWrapped("Left triple-tap opens this physics panel. Right triple-tap opens full scene controls.");
 }
 #endif
@@ -2731,6 +2830,7 @@ void DayScene::SaveSceneState() {
     else if (cd.name == "shadow_toggle")    cd.default_val = (SceneProp.ToogleShadow != 0);
     else if (cd.name == "ssao_toggle")      cd.default_val = (SceneProp.ToogleSSAO != 0);
     else if (cd.name == "dof_auto_focus")   cd.default_val = SceneProp.AutoFocus;
+    else if (cd.name == "show_navmesh")      cd.default_val = m_showNavMesh;
     else if (cd.name == "point_lights_enabled") cd.default_val = SceneProp.PointLightsEnabled;
   }
 

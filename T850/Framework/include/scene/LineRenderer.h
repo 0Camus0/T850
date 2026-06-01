@@ -56,6 +56,9 @@ public:
   // Set the camera far plane for depth-tested overlays.
   void SetFarPlane(float farPlane) { m_farPlane = farPlane; }
 
+  // Set proportional reversed-Z depth bias for shader depth-tested overlays.
+  void SetDepthBias(float bias) { m_depthBias = bias; }
+
   // Issue one indexed line-list draw using the supplied VB/IB.
   void DrawLines(const XMATRIX44& world,
                  const XMATRIX44& vp,
@@ -85,6 +88,7 @@ private:
   int             m_viewW       = 1280;
   int             m_viewH       = 720;
   float           m_farPlane    = 1000.0f;
+  float           m_depthBias   = 0.005f;
   bool            m_depthTest   = true;
 };
 

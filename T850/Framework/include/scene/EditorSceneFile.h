@@ -24,6 +24,7 @@ struct SceneObjectDesc {
   std::optional<bool> mobile_visible;
   bool frozen = false;
   bool show_wire = false;
+  std::optional<float> nav_agent_front_yaw_offset_deg;
 };
 
 struct SceneCameraDesc {

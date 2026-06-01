@@ -58,7 +58,8 @@
          },
          "visible": true,
          "frozen": false,
-         "show_wire": false
+         "show_wire": false,
+         "nav_agent_front_yaw_offset_deg": 270
       },
       {
          "name": "Models/doomslayer_cine_all_animations_no-damage_double-sided-opaque.glb Clone",
@@ -81,7 +82,8 @@
          },
          "visible": true,
          "frozen": false,
-         "show_wire": false
+         "show_wire": false,
+         "nav_agent_front_yaw_offset_deg": 270
       },
       {
          "name": "Models\\rewind_cyborg.glb",
@@ -104,7 +106,8 @@
          },
          "visible": true,
          "frozen": false,
-         "show_wire": false
+         "show_wire": false,
+         "nav_agent_front_yaw_offset_deg": 180
       },
       {
          "name": "Models\\rewind_cyborg.glb Clone",
@@ -127,7 +130,8 @@
          },
          "visible": true,
          "frozen": false,
-         "show_wire": false
+         "show_wire": false,
+         "nav_agent_front_yaw_offset_deg": 180
       },
       {
          "name": "Models\\rewind_cyborg.glb Clone Clone",
@@ -150,7 +154,8 @@
          },
          "visible": true,
          "frozen": false,
-         "show_wire": false
+         "show_wire": false,
+         "nav_agent_front_yaw_offset_deg": 180
       },
       {
          "name": "Models\\porsche_992_gt3_r__www.vecarz.com.glb",

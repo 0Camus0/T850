@@ -55,9 +55,148 @@ namespace {
   constexpr std::array<const char*, 9> kRagdollSimulationSpeedLabels = {
       "0.125x", "0.25x", "0.5x", "1x", "2x", "4x", "8x", "16x", "32x"};
   constexpr std::size_t kSandboxConsoleMaxLines = 500;
+  constexpr int kNavTestModeFurthest = 0;
+  constexpr int kNavTestModeRandom = 1;
+  constexpr int kNavTestModeFollowPlayer = 2;
+  constexpr float kNavTestDiagIntervalSec = 1.0f / 60.0f;
+  constexpr float kNavTestFailedPathRetrySec = 0.25f;
 
   float ClampMouseSensitivity(float value) {
     return (std::max)(0.05f, (std::min)(5.0f, value));
+  }
+
+  int ClampNavTestMode(int value) {
+    return (std::max)(kNavTestModeFurthest, (std::min)(kNavTestModeFollowPlayer, value));
+  }
+
+  float DistanceSquared(const XVECTOR3& a, const XVECTOR3& b) {
+    const float dx = a.x - b.x;
+    const float dy = a.y - b.y;
+    const float dz = a.z - b.z;
+    return dx * dx + dy * dy + dz * dz;
+  }
+
+  uint32_t NextNavTestRandom(uint32_t& state, uint32_t salt) {
+    state = state * 1664525u + 1013904223u + salt * 747796405u;
+    return state;
+  }
+
+  XVECTOR3 FurthestNavTestPoint(const std::vector<XVECTOR3>& points, const XVECTOR3& origin) {
+    XVECTOR3 best = origin;
+    float bestDistanceSq = -1.0f;
+    for (const XVECTOR3& point : points) {
+      const float distanceSq = DistanceSquared(point, origin);
+      if (distanceSq > bestDistanceSq) {
+        bestDistanceSq = distanceSq;
+        best = point;
+      }
+    }
+    return best;
+  }
+
+  XVECTOR3 RandomNavTestPoint(const std::vector<XVECTOR3>& points,
+                              XVECTOR3 fallback,
+                              uint32_t& randomState,
+                              uint32_t salt) {
+    if (points.empty()) {
+      return fallback;
+    }
+    for (std::size_t attempt = 0; attempt < points.size(); ++attempt) {
+      const uint32_t value = NextNavTestRandom(randomState, salt + static_cast<uint32_t>(attempt));
+      const XVECTOR3 candidate = points[static_cast<std::size_t>(value % points.size())];
+      if (DistanceSquared(candidate, fallback) > 0.25f) {
+        return candidate;
+      }
+    }
+    return points[static_cast<std::size_t>(NextNavTestRandom(randomState, salt) % points.size())];
+  }
+
+  XVECTOR3 HorizontalOrFallback(XVECTOR3 value, const XVECTOR3& fallback) {
+    value.y = 0.0f;
+    value.w = 0.0f;
+    if (value.Length() <= 0.0001f) {
+      value = fallback;
+    }
+    value.Normalize();
+    return value;
+  }
+
+  XVECTOR3 NavTestAgentProjectionExtents() {
+    return XVECTOR3(3.0f, 16.0f, 3.0f, 0.0f);
+  }
+
+  XVECTOR3 NavTestFollowProjectionExtents() {
+    return XVECTOR3(8.0f, 32.0f, 8.0f, 0.0f);
+  }
+
+  XVECTOR3 NavTestVisualPosition(const XVECTOR3& navPosition, const XVECTOR3& visualOffset) {
+    XVECTOR3 position = navPosition + visualOffset;
+    position.w = 1.0f;
+    return position;
+  }
+
+  bool RotateNavTestAgentToFace(PrimitiveInst& instance,
+                                const XVECTOR3& agentPosition,
+                                const XVECTOR3& targetPosition,
+                                float yawOffsetDegrees) {
+    const float dx = targetPosition.x - agentPosition.x;
+    const float dz = targetPosition.z - agentPosition.z;
+    if (dx * dx + dz * dz <= 0.0001f) {
+      return false;
+    }
+
+    const float yawDegrees = Rad2Deg(std::atan2(dx, dz)) + yawOffsetDegrees;
+    instance.RotateYAbsolute(yawDegrees);
+    return true;
+  }
+
+  XVECTOR3 NavTestFollowSlotTargetAt(const Camera& camera, XVECTOR3 anchor, int slotIndex) {
+    static constexpr float kBackSpacing = 2.0f;
+    static constexpr float kSideSpacing = 1.5f;
+    const XVECTOR3 forward = HorizontalOrFallback(camera.Look, XVECTOR3(0.0f, 0.0f, 1.0f, 0.0f));
+    const XVECTOR3 right = HorizontalOrFallback(camera.Right, XVECTOR3(1.0f, 0.0f, 0.0f, 0.0f));
+
+    anchor.w = 1.0f;
+    XVECTOR3 target = anchor;
+    if (slotIndex == 0) {
+      target -= forward * kBackSpacing;
+      return target;
+    }
+
+    const int pairIndex = (slotIndex + 1) / 2;
+    const float sideSign = (slotIndex % 2) ? 1.0f : -1.0f;
+    target -= forward * (kBackSpacing + static_cast<float>(pairIndex) * 1.25f);
+    target += right * (sideSign * kSideSpacing * static_cast<float>(pairIndex));
+    return target;
+  }
+
+  XVECTOR3 NavTestFollowSlotTarget(const Camera& camera, int slotIndex) {
+    return NavTestFollowSlotTargetAt(camera, camera.Eye, slotIndex);
+  }
+
+  bool ResolveNavTestFollowTarget(const t850::navigation::NavMesh& navMesh,
+                                  const Camera& camera,
+                                  int slotIndex,
+                                  XVECTOR3& desiredTarget,
+                                  XVECTOR3& projectedTarget,
+                                  std::string* error) {
+    XVECTOR3 playerNavPoint;
+    std::string projectionError;
+    if (!navMesh.ProjectPoint(camera.Eye, playerNavPoint, NavTestFollowProjectionExtents(), &projectionError)) {
+      desiredTarget = NavTestFollowSlotTarget(camera, slotIndex);
+      projectedTarget = desiredTarget;
+      if (error) *error = "player projection failed: " + projectionError;
+      return false;
+    }
+
+    desiredTarget = NavTestFollowSlotTargetAt(camera, playerNavPoint, slotIndex);
+    if (navMesh.ProjectPoint(desiredTarget, projectedTarget, NavTestFollowProjectionExtents(), &projectionError)) {
+      return true;
+    }
+
+    projectedTarget = playerNavPoint;
+    if (error) *error = "slot projection failed, using player nav point: " + projectionError;
+    return true;
   }
 
   struct SandboxConsoleLine {
@@ -2496,6 +2635,10 @@ void SandboxScene::InitVars() {
   m_showWireframe = false;
   m_showSkeleton = false;
   m_showPhysics = false;
+  m_showNavMesh = false;
+  m_navMeshDebugOffset = 0.01f;
+  m_navMeshDebugShapeMode = 0;
+  m_navMeshBuildAttempted = false;
   m_showLightVolumes = false;
   m_drawLightDirection = false;
   m_meshCount = 0;
@@ -2505,7 +2648,15 @@ void SandboxScene::InitVars() {
   m_primaryRagdollResourcePath.clear();
   m_sceneMeshPaths.clear();
   m_sceneRagdollPaths.clear();
+  m_sceneNavAgentFrontYawOffsets.clear();
   m_sceneRagdolls.clear();
+  m_navTestAgents.clear();
+  m_navTestCandidatePoints.clear();
+  m_navTestInitialized = false;
+  m_navTestMode = kNavTestModeFollowPlayer;
+  m_navTestAppliedMode = m_navTestMode;
+  m_navTestRandomState = 0x6d2b79f5u;
+  m_navTestSpeed = 3.0f;
   m_selectedSkinningMeshIndex = 0;
   m_selectedAnimationMeshIndex = 0;
   m_lightAttachToCamera.clear();
@@ -3026,6 +3177,7 @@ bool SandboxScene::LoadEditorSceneAssets(const std::string& scenePath) {
   m_q3CollisionWorld.reset();
   m_sceneMeshPaths.clear();
   m_sceneRagdollPaths.clear();
+  m_sceneNavAgentFrontYawOffsets.clear();
   m_sceneRagdolls.clear();
   m_q3StaticCollisionEntityIds.clear();
   m_primaryRagdollResourcePath.clear();
@@ -3139,8 +3291,10 @@ bool SandboxScene::LoadEditorSceneAssets(const std::string& scenePath) {
     }
     m_sceneMeshPaths.push_back(meshPath);
     m_sceneRagdollPaths.push_back(ragdollPath);
-    T8_LOG_INFO("[SandboxScene] Loaded scene object '%s' mesh='%s' ragdoll='%s' slot=%d",
-                object.name.c_str(), meshPath.c_str(), ragdollPath.c_str(), m_meshCount);
+    const float navAgentFrontYawOffset = object.nav_agent_front_yaw_offset_deg.value_or(0.0f);
+    m_sceneNavAgentFrontYawOffsets.push_back(navAgentFrontYawOffset);
+    T8_LOG_INFO("[SandboxScene] Loaded scene object '%s' mesh='%s' ragdoll='%s' slot=%d navFrontYawOffset=%.1f",
+                object.name.c_str(), meshPath.c_str(), ragdollPath.c_str(), m_meshCount, navAgentFrontYawOffset);
     ++m_meshCount;
   }
 
@@ -3157,6 +3311,445 @@ bool SandboxScene::LoadEditorSceneAssets(const std::string& scenePath) {
   LoadSandboxProfile(true);
   T8_LOG_INFO("[SandboxScene] Loaded editor scene '%s' with %d mesh instances", scenePath.c_str(), m_meshCount);
   return true;
+}
+
+bool SandboxScene::EnsureNavMeshBuilt() {
+  if (m_navMesh.IsReady()) {
+    return true;
+  }
+  if (m_navMeshBuildAttempted) {
+    return false;
+  }
+  m_navMeshBuildAttempted = true;
+
+  t850::navigation::NavMeshGeometry geometry;
+  const int meshCount = (std::min)(kMaxSandboxMeshes, (std::max)(m_meshCount, Meshes[0].pBase ? 1 : 0));
+  t850::navigation::NavSourceBuildStats sourceStats;
+  std::string error;
+  if (!t850::navigation::BuildGeometryFromPrimitiveInstances(Meshes, meshCount, geometry, &sourceStats, &error)) {
+    T8_LOG_ERROR("[Navigation] Sandbox navmesh build skipped: %s (considered=%d included=%d skippedInvisible=%d skippedSkinned=%d skippedInvalid=%d)",
+                 error.c_str(),
+                 sourceStats.considered,
+                 sourceStats.included,
+                 sourceStats.skippedInvisible,
+                 sourceStats.skippedSkinned,
+                 sourceStats.skippedInvalid);
+    return false;
+  }
+
+  if (!m_navMesh.Build(geometry, t850::navigation::NavMeshBuildSettings(), &error)) {
+    T8_LOG_ERROR("[Navigation] Sandbox navmesh build failed: %s", error.c_str());
+    return false;
+  }
+
+  m_navMeshDebugRenderer.Invalidate();
+  const t850::navigation::NavMeshBuildStats& stats = m_navMesh.GetStats();
+  T8_LOG_INFO("[Navigation] Sandbox navmesh ready: sources=%d skippedSkinned=%d skippedInvalid=%d verts=%d tris=%d polys=%d",
+              sourceStats.included, sourceStats.skippedSkinned, sourceStats.skippedInvalid,
+              stats.vertexCount, stats.triangleCount, stats.polygonCount);
+  return true;
+}
+
+void SandboxScene::InitializeNavTestAgents() {
+  if (m_navTestInitialized) {
+    return;
+  }
+  m_navTestInitialized = true;
+  m_navTestAgents.clear();
+  m_navTestCandidatePoints.clear();
+
+  if (!EnsureNavMeshBuilt()) {
+    return;
+  }
+
+  std::vector<unsigned int> graphIndices;
+  m_navMesh.GetDebugGraphEdges(m_navTestCandidatePoints, graphIndices, 0.0f);
+  if (m_navTestCandidatePoints.empty()) {
+    std::vector<unsigned int> wireIndices;
+    m_navMesh.GetDebugWireframe(m_navTestCandidatePoints, wireIndices, 0.0f);
+  }
+  if (m_navTestCandidatePoints.empty()) {
+    T8_LOG_ERROR("[NavigationTest] No navmesh candidate points available for skinned mesh path test");
+    return;
+  }
+
+  const int meshCount = (std::min)(kMaxSandboxMeshes, (std::max)(m_meshCount, Meshes[0].pBase ? 1 : 0));
+  int followSlot = 0;
+  for (int meshIndex = 0; meshIndex < meshCount; ++meshIndex) {
+    PrimitiveInst& instance = Meshes[meshIndex];
+    RenderSkinnedMesh* skinned = instance.GetSkinnedMesh();
+    if (!instance.Visible || !skinned || !skinned->HasSkinData()) {
+      continue;
+    }
+
+    NavTestAgentRuntime agent;
+    agent.meshIndex = meshIndex;
+    agent.followSlot = followSlot++;
+    if (meshIndex < static_cast<int>(m_sceneNavAgentFrontYawOffsets.size())) {
+      agent.frontYawOffsetDeg = m_sceneNavAgentFrontYawOffsets[static_cast<std::size_t>(meshIndex)];
+    }
+    const XVECTOR3 visualPosition(instance.Final.m41, instance.Final.m42, instance.Final.m43, 1.0f);
+    std::string projectionError;
+    if (!m_navMesh.ProjectPoint(visualPosition, agent.navPosition, NavTestAgentProjectionExtents(), &projectionError)) {
+      T8_LOG_ERROR("[NavigationTest] Skipping mesh %d nav agent; cannot project initial position (%.2f,%.2f,%.2f): %s",
+                   meshIndex,
+                   visualPosition.x, visualPosition.y, visualPosition.z,
+                   projectionError.c_str());
+      continue;
+    }
+    agent.home = agent.navPosition;
+    agent.visualOffset = visualPosition - agent.navPosition;
+    agent.visualOffset.x = 0.0f;
+    agent.visualOffset.z = 0.0f;
+    agent.visualOffset.w = 0.0f;
+    agent.navToOriginOffset = agent.visualOffset;
+    if (m_navTestMode == kNavTestModeFollowPlayer) {
+      if (!ResolveNavTestFollowTarget(m_navMesh, Cam, agent.followSlot,
+                                      agent.desiredTarget, agent.target, &agent.lastPathError)) {
+        agent.target = agent.navPosition;
+        agent.repathCooldownSec = kNavTestFailedPathRetrySec;
+      }
+    } else if (m_navTestMode == kNavTestModeRandom) {
+      agent.target = RandomNavTestPoint(m_navTestCandidatePoints,
+                                        agent.home,
+                                        m_navTestRandomState,
+                                        static_cast<uint32_t>(meshIndex + 1));
+      agent.desiredTarget = agent.target;
+    } else {
+      agent.target = FurthestNavTestPoint(m_navTestCandidatePoints, agent.home);
+      agent.desiredTarget = agent.target;
+    }
+    agent.targetInitialized = true;
+    agent.active = DistanceSquared(agent.target, agent.home) > 0.25f || m_navTestMode == kNavTestModeFollowPlayer;
+    agent.needsPath = agent.active && agent.repathCooldownSec <= 0.0f;
+    m_navTestAgents.push_back(std::move(agent));
+  }
+
+  if (!m_navTestAgents.empty()) {
+    T8_LOG_INFO("[NavigationTest] Initialized %zu skinned mesh nav agents mode=%d speed=%.2f q3 units/sec",
+                m_navTestAgents.size(), m_navTestMode, m_navTestSpeed);
+  }
+}
+
+void SandboxScene::PlanNavTestAgentPaths() {
+  if (!m_navMesh.IsReady() || m_navTestAgents.empty()) {
+    return;
+  }
+
+  std::vector<int> agentIndices;
+  std::vector<unsigned int> requestGenerations;
+  std::vector<t850::navigation::NavPathRequest> requests;
+  for (int i = 0; i < static_cast<int>(m_navTestAgents.size()); ++i) {
+    NavTestAgentRuntime& agent = m_navTestAgents[static_cast<std::size_t>(i)];
+    if (!agent.active || !agent.needsPath || agent.repathCooldownSec > 0.0f ||
+        agent.meshIndex < 0 || agent.meshIndex >= kMaxSandboxMeshes ||
+        !Meshes[agent.meshIndex].pBase) {
+      continue;
+    }
+
+    t850::navigation::NavPathRequest request;
+    request.start = agent.navPosition;
+    request.end = (m_navTestMode == kNavTestModeFurthest && agent.returning) ? agent.home : agent.target;
+    request.queryExtents = NavTestAgentProjectionExtents();
+    agent.lastPathStart = request.start;
+    agent.lastPathEnd = request.end;
+    ++agent.pathGeneration;
+    requests.push_back(request);
+    agentIndices.push_back(i);
+    requestGenerations.push_back(agent.pathGeneration);
+  }
+
+  if (requests.empty()) {
+    return;
+  }
+
+  std::vector<t850::navigation::NavPathResult> results;
+  m_navMesh.FindPaths(requests, results);
+  for (std::size_t i = 0; i < agentIndices.size(); ++i) {
+    NavTestAgentRuntime& agent = m_navTestAgents[static_cast<std::size_t>(agentIndices[i])];
+    if (i >= requestGenerations.size() || agent.pathGeneration != requestGenerations[i]) {
+      continue;
+    }
+    agent.needsPath = false;
+    if (i >= results.size() || !results[i].success || results[i].points.empty()) {
+      const PrimitiveInst& instance = Meshes[agent.meshIndex];
+      const XVECTOR3 current(instance.Final.m41, instance.Final.m42, instance.Final.m43, 1.0f);
+      agent.lastPathSuccess = false;
+      agent.lastPathError = i < results.size() ? results[i].error : "missing result";
+      agent.repathCooldownSec = kNavTestFailedPathRetrySec;
+      agent.path.clear();
+      agent.waypointIndex = 0;
+      if (m_navTestMode == kNavTestModeRandom) {
+        agent.target = RandomNavTestPoint(m_navTestCandidatePoints,
+                                          agent.navPosition,
+                                          m_navTestRandomState,
+                                          static_cast<uint32_t>(agent.meshIndex + 43));
+        agent.desiredTarget = agent.target;
+      } else if (m_navTestMode == kNavTestModeFollowPlayer) {
+        XVECTOR3 desiredTarget;
+        XVECTOR3 projectedTarget;
+        if (ResolveNavTestFollowTarget(m_navMesh, Cam, agent.followSlot,
+                                       desiredTarget, projectedTarget, nullptr)) {
+          agent.desiredTarget = desiredTarget;
+          agent.target = projectedTarget;
+        } else {
+          agent.desiredTarget = desiredTarget;
+          agent.target = agent.navPosition;
+        }
+      } else {
+        agent.active = false;
+      }
+      T8_LOG_ERROR("[NavigationTest] Agent mesh %d failed to find path gen=%u start=(%.2f,%.2f,%.2f) end=(%.2f,%.2f,%.2f) desired=(%.2f,%.2f,%.2f) player=(%.2f,%.2f,%.2f) nav=(%.2f,%.2f,%.2f) visual=(%.2f,%.2f,%.2f) offset=(%.2f,%.2f,%.2f): %s",
+                   agent.meshIndex,
+                   agent.pathGeneration,
+                   agent.lastPathStart.x, agent.lastPathStart.y, agent.lastPathStart.z,
+                   agent.lastPathEnd.x, agent.lastPathEnd.y, agent.lastPathEnd.z,
+                   agent.desiredTarget.x, agent.desiredTarget.y, agent.desiredTarget.z,
+                   Cam.Eye.x, Cam.Eye.y, Cam.Eye.z,
+                   agent.navPosition.x, agent.navPosition.y, agent.navPosition.z,
+                   current.x, current.y, current.z,
+                   agent.visualOffset.x, agent.visualOffset.y, agent.visualOffset.z,
+                   agent.lastPathError.c_str());
+      continue;
+    }
+
+    agent.navPosition = results[i].points.front();
+    agent.navToOriginOffset = agent.visualOffset;
+    agent.lastPathFirst = results[i].points.front();
+    agent.lastPathSuccess = true;
+    agent.lastPathError.clear();
+    agent.repathCooldownSec = 0.0f;
+    agent.path = results[i].points;
+    agent.waypointIndex = agent.path.size() > 1 ? 1 : 0;
+  }
+}
+
+void SandboxScene::UpdateNavTestAgents(float dtSecs) {
+  if (!m_loadedEditorScene) {
+    return;
+  }
+  m_navTestMode = ClampNavTestMode(m_navTestMode);
+  m_navTestSpeed = (std::max)(0.0f, (std::min)(10.0f, m_navTestSpeed));
+  if (m_navTestMode != m_navTestAppliedMode) {
+    m_navTestAppliedMode = m_navTestMode;
+    m_navTestInitialized = false;
+    m_navTestAgents.clear();
+    m_navTestRandomState = 0x6d2b79f5u;
+    m_navTestDiagAccumSec = 0.0f;
+  }
+  InitializeNavTestAgents();
+  if (m_navTestAgents.empty()) {
+    return;
+  }
+
+  for (NavTestAgentRuntime& agent : m_navTestAgents) {
+    if (!agent.active ||
+        agent.meshIndex < 0 || agent.meshIndex >= kMaxSandboxMeshes ||
+        !Meshes[agent.meshIndex].pBase) {
+      continue;
+    }
+
+    agent.repathCooldownSec = (std::max)(0.0f, agent.repathCooldownSec - (std::max)(0.0f, dtSecs));
+    if (m_navTestMode == kNavTestModeFollowPlayer) {
+      XVECTOR3 desiredTarget;
+      XVECTOR3 projectedTarget;
+      std::string targetError;
+      if (ResolveNavTestFollowTarget(m_navMesh, Cam, agent.followSlot, desiredTarget, projectedTarget, &targetError)) {
+        agent.desiredTarget = desiredTarget;
+        if ((!agent.targetInitialized || agent.path.empty() || DistanceSquared(agent.target, projectedTarget) > 1.0f) &&
+            agent.repathCooldownSec <= 0.0f) {
+          agent.target = projectedTarget;
+          agent.returning = false;
+          agent.needsPath = true;
+          agent.targetInitialized = true;
+        }
+      } else {
+        agent.desiredTarget = desiredTarget;
+        agent.lastPathSuccess = false;
+        agent.lastPathError = targetError;
+        agent.repathCooldownSec = kNavTestFailedPathRetrySec;
+        agent.needsPath = false;
+      }
+    } else if (m_navTestMode == kNavTestModeRandom) {
+      if (!agent.targetInitialized || (agent.path.empty() && !agent.needsPath)) {
+        agent.target = RandomNavTestPoint(m_navTestCandidatePoints,
+                                          agent.navPosition,
+                                          m_navTestRandomState,
+                                          static_cast<uint32_t>(agent.meshIndex + 17));
+        agent.desiredTarget = agent.target;
+        agent.returning = false;
+        agent.needsPath = true;
+        agent.targetInitialized = true;
+      }
+    } else if (!agent.targetInitialized) {
+      agent.target = FurthestNavTestPoint(m_navTestCandidatePoints, agent.home);
+      agent.desiredTarget = agent.target;
+      agent.returning = false;
+      agent.needsPath = true;
+      agent.targetInitialized = true;
+    }
+  }
+
+  PlanNavTestAgentPaths();
+
+  const float maxStep = (std::max)(0.0f, dtSecs) * m_navTestSpeed;
+  std::vector<XVECTOR3> proposedPositions(m_navTestAgents.size());
+  std::vector<unsigned char> movedAgents(m_navTestAgents.size(), 0);
+  for (std::size_t agentIndex = 0; agentIndex < m_navTestAgents.size(); ++agentIndex) {
+    NavTestAgentRuntime& agent = m_navTestAgents[agentIndex];
+    if (!agent.active || agent.needsPath || agent.path.empty() ||
+        agent.meshIndex < 0 || agent.meshIndex >= kMaxSandboxMeshes ||
+        !Meshes[agent.meshIndex].pBase) {
+      continue;
+    }
+
+    XVECTOR3 current = agent.navPosition;
+    float remaining = maxStep;
+    while (remaining > 0.0f && agent.waypointIndex < static_cast<int>(agent.path.size())) {
+      const XVECTOR3 target = agent.path[static_cast<std::size_t>(agent.waypointIndex)];
+      XVECTOR3 delta = target - current;
+      const float distance = delta.Length();
+      if (distance <= 0.0001f) {
+        current = target;
+        ++agent.waypointIndex;
+        continue;
+      }
+      if (distance <= remaining) {
+        current = target;
+        remaining -= distance;
+        ++agent.waypointIndex;
+      } else {
+        delta /= distance;
+        current += delta * remaining;
+        remaining = 0.0f;
+      }
+    }
+
+    if (agent.waypointIndex >= static_cast<int>(agent.path.size())) {
+      if (m_navTestMode == kNavTestModeFurthest && agent.returning) {
+        current = agent.home;
+        agent.returning = false;
+      } else if (m_navTestMode == kNavTestModeFurthest) {
+        agent.returning = true;
+      } else if (m_navTestMode == kNavTestModeRandom) {
+        agent.target = RandomNavTestPoint(m_navTestCandidatePoints,
+                                          current,
+                                          m_navTestRandomState,
+                                          static_cast<uint32_t>(agent.meshIndex + 31));
+        agent.desiredTarget = agent.target;
+        agent.returning = false;
+      } else {
+        XVECTOR3 desiredTarget;
+        XVECTOR3 projectedTarget;
+        if (ResolveNavTestFollowTarget(m_navMesh, Cam, agent.followSlot,
+                                       desiredTarget, projectedTarget, nullptr)) {
+          agent.desiredTarget = desiredTarget;
+          agent.target = projectedTarget;
+        } else {
+          agent.desiredTarget = desiredTarget;
+          agent.target = current;
+        }
+        agent.returning = false;
+      }
+      agent.needsPath = true;
+      agent.path.clear();
+      agent.waypointIndex = 0;
+    }
+
+      proposedPositions[agentIndex] = current;
+      movedAgents[agentIndex] = 1;
+  }
+
+  constexpr float kAgentSeparation = 1.2f;
+  constexpr float kAgentSeparationSq = kAgentSeparation * kAgentSeparation;
+  for (std::size_t a = 0; a < m_navTestAgents.size(); ++a) {
+      if (!movedAgents[a]) continue;
+      for (std::size_t b = a + 1; b < m_navTestAgents.size(); ++b) {
+        if (!movedAgents[b]) continue;
+        XVECTOR3 delta = proposedPositions[b] - proposedPositions[a];
+        delta.y = 0.0f;
+        const float distanceSq = delta.x * delta.x + delta.z * delta.z;
+        if (distanceSq <= 0.0001f || distanceSq >= kAgentSeparationSq) {
+          continue;
+        }
+        const float distance = std::sqrt(distanceSq);
+        const float push = (kAgentSeparation - distance) * 0.5f;
+        delta /= distance;
+        proposedPositions[a] -= delta * push;
+        proposedPositions[b] += delta * push;
+      }
+  }
+
+  for (std::size_t agentIndex = 0; agentIndex < m_navTestAgents.size(); ++agentIndex) {
+    NavTestAgentRuntime& agent = m_navTestAgents[agentIndex];
+    if (!agent.active ||
+        agent.meshIndex < 0 || agent.meshIndex >= kMaxSandboxMeshes ||
+        !Meshes[agent.meshIndex].pBase) {
+      continue;
+    }
+
+    PrimitiveInst& instance = Meshes[agent.meshIndex];
+    if (movedAgents[agentIndex]) {
+      XVECTOR3 navPosition = proposedPositions[agentIndex];
+      if (!m_navMesh.ProjectPoint(navPosition, navPosition, NavTestAgentProjectionExtents(), nullptr)) {
+        navPosition = agent.navPosition;
+      }
+      agent.navPosition = navPosition;
+      agent.navToOriginOffset = agent.visualOffset;
+    }
+
+    const XVECTOR3 visualPosition = NavTestVisualPosition(agent.navPosition, agent.visualOffset);
+    instance.TranslateAbsolute(visualPosition.x, visualPosition.y, visualPosition.z);
+    RotateNavTestAgentToFace(instance, visualPosition, Cam.Eye, agent.frontYawOffsetDeg);
+    instance.Update();
+  }
+
+  if (m_navTestMode == kNavTestModeFollowPlayer) {
+    m_navTestDiagAccumSec += (std::max)(0.0f, dtSecs);
+    if (m_navTestDiagAccumSec >= kNavTestDiagIntervalSec) {
+      m_navTestDiagAccumSec = 0.0f;
+      for (const NavTestAgentRuntime& agent : m_navTestAgents) {
+        if (!agent.active ||
+            agent.meshIndex < 0 || agent.meshIndex >= kMaxSandboxMeshes ||
+            !Meshes[agent.meshIndex].pBase) {
+          continue;
+        }
+
+        const PrimitiveInst& instance = Meshes[agent.meshIndex];
+        const XVECTOR3 position(instance.Final.m41, instance.Final.m42, instance.Final.m43, 1.0f);
+        const bool hasNextWaypoint =
+            !agent.path.empty() &&
+            agent.waypointIndex >= 0 &&
+            agent.waypointIndex < static_cast<int>(agent.path.size());
+        const XVECTOR3 nextNav = hasNextWaypoint
+            ? agent.path[static_cast<std::size_t>(agent.waypointIndex)]
+            : agent.lastPathFirst;
+        const XVECTOR3 nextWorld = NavTestVisualPosition(nextNav, agent.visualOffset);
+        T8_LOG_INFO("[NavigationTestPos] mesh=%d slot=%d active=%d needsPath=%d cooldown=%.3f pathOk=%d pathCount=%zu wp=%d player=(%.2f,%.2f,%.2f) nav=(%.2f,%.2f,%.2f) visual=(%.2f,%.2f,%.2f) dyPlayer=%.2f desired=(%.2f,%.2f,%.2f) target=(%.2f,%.2f,%.2f) lastStart=(%.2f,%.2f,%.2f) lastEnd=(%.2f,%.2f,%.2f) pathFirst=(%.2f,%.2f,%.2f) nextNav=(%.2f,%.2f,%.2f) nextWorld=(%.2f,%.2f,%.2f) offset=(%.2f,%.2f,%.2f) err='%s'",
+                    agent.meshIndex,
+                    agent.followSlot,
+                    agent.active ? 1 : 0,
+                    agent.needsPath ? 1 : 0,
+                    agent.repathCooldownSec,
+                    agent.lastPathSuccess ? 1 : 0,
+                    agent.path.size(),
+                    agent.waypointIndex,
+                    Cam.Eye.x, Cam.Eye.y, Cam.Eye.z,
+                    agent.navPosition.x, agent.navPosition.y, agent.navPosition.z,
+                    position.x, position.y, position.z,
+                    position.y - Cam.Eye.y,
+                    agent.desiredTarget.x, agent.desiredTarget.y, agent.desiredTarget.z,
+                    agent.target.x, agent.target.y, agent.target.z,
+                    agent.lastPathStart.x, agent.lastPathStart.y, agent.lastPathStart.z,
+                    agent.lastPathEnd.x, agent.lastPathEnd.y, agent.lastPathEnd.z,
+                    agent.lastPathFirst.x, agent.lastPathFirst.y, agent.lastPathFirst.z,
+                    nextNav.x, nextNav.y, nextNav.z,
+                    nextWorld.x, nextWorld.y, nextWorld.z,
+                    agent.visualOffset.x, agent.visualOffset.y, agent.visualOffset.z,
+                    agent.lastPathError.c_str());
+      }
+    }
+  }
 }
 
 void SandboxScene::CreateAssets() {
@@ -3251,6 +3844,9 @@ void SandboxScene::CreateAssets() {
   m_lightArrowRenderer.Create();
   m_ragdollJointRenderer.Create();
   m_physicsDebugRenderer.Create();
+  m_navMeshDebugRenderer.Create();
+  m_navMesh.Clear();
+  m_navMeshBuildAttempted = false;
   float arrowVerts[10 * 4] = {};
   unsigned short arrowIndices[10] = {0, 1, 2, 3, 4, 5, 6, 7, 8, 9};
   m_lightArrowVB = t850::LineRenderer::CreatePositionVB(arrowVerts, 10, BufferUsage::DINAMIC);
@@ -3419,7 +4015,11 @@ void SandboxScene::DestroyAssets() {
   m_primaryRagdollResourcePath.clear();
   m_sceneMeshPaths.clear();
   m_sceneRagdollPaths.clear();
+  m_sceneNavAgentFrontYawOffsets.clear();
   m_sceneRagdolls.clear();
+  m_navTestAgents.clear();
+  m_navTestCandidatePoints.clear();
+  m_navTestInitialized = false;
   m_selectedSkinningMeshIndex = 0;
   m_selectedAnimationMeshIndex = 0;
   m_debugText.Destroy();
@@ -3433,6 +4033,9 @@ void SandboxScene::DestroyAssets() {
   m_lightArrowRenderer.Destroy();
   m_ragdollJointRenderer.Destroy();
   m_physicsDebugRenderer.Destroy();
+  m_navMeshDebugRenderer.Destroy();
+  m_navMesh.Clear();
+  m_navMeshBuildAttempted = false;
   PrimitiveMgr.DestroyPrimitives();
   pFramework->pVideoDriver->DestroyRTs();
 }
@@ -3583,6 +4186,7 @@ void SandboxScene::OnUpdate(float _DtSecs) {
     UpdateAttachedLights();
     SyncLightCameraFromDirectionalLight();
   }
+  UpdateNavTestAgents(DtSecs);
 
   // --dumpMatrices: log all camera matrices per frame, then exit
   if (g_config.flags.dumpMatrices) {
@@ -11174,6 +11778,27 @@ void SandboxScene::DrawSkeletonEditPanel(t850::DevGuiContext& gui) {
       m_showPhysics = !m_showPhysics;
     }
     ImGui::SameLine();
+    if (gui.Button(m_showNavMesh ? "NavMesh: On" : "NavMesh: Off")) {
+      m_showNavMesh = !m_showNavMesh;
+      if (m_showNavMesh && !m_navMesh.IsReady()) m_navMeshBuildAttempted = false;
+    }
+    const char* navModeOptions[] = { "Furthest loop", "Random nodes", "Follow player" };
+    ImGui::SetNextItemWidth(220.0f);
+    if (ImGui::Combo("Bot nav mode", &m_navTestMode, navModeOptions, 3)) {
+      m_navTestMode = ClampNavTestMode(m_navTestMode);
+    }
+    ImGui::SetNextItemWidth(220.0f);
+    if (ImGui::SliderFloat("Bot speed multiplier", &m_navTestSpeed, 0.0f, 10.0f, "%.2fx")) {
+      m_navTestSpeed = (std::max)(0.0f, (std::min)(10.0f, m_navTestSpeed));
+    }
+    const char* navShapeOptions[] = { "Geometry", "Nodes" };
+    ImGui::SetNextItemWidth(170.0f);
+    ImGui::Combo("NavMesh magenta", &m_navMeshDebugShapeMode, navShapeOptions, 2);
+    ImGui::SetNextItemWidth(220.0f);
+    if (ImGui::SliderFloat("NavMesh offset", &m_navMeshDebugOffset, 0.0f, 0.25f, "%.3f")) {
+      m_navMeshDebugOffset = (std::max)(0.0f, (std::min)(0.25f, m_navMeshDebugOffset));
+    }
+    ImGui::SameLine();
     if (gui.Button(m_showSkeleton ? "Skeleton Debug: On" : "Skeleton Debug: Off")) {
       m_showSkeleton = !m_showSkeleton;
     }
@@ -11388,6 +12013,11 @@ void SandboxScene::DrawAndroidPhysicsPanel(t850::DevGuiContext& gui) {
 
   if (gui.Button(m_showPhysics ? "Physics Debug: On" : "Physics Debug: Off")) {
     m_showPhysics = !m_showPhysics;
+  }
+  ImGui::SameLine();
+  if (gui.Button(m_showNavMesh ? "NavMesh: On" : "NavMesh: Off")) {
+    m_showNavMesh = !m_showNavMesh;
+    if (m_showNavMesh && !m_navMesh.IsReady()) m_navMeshBuildAttempted = false;
   }
   ImGui::SameLine();
   if (gui.Button(m_showSkeleton ? "Skeleton Debug: On" : "Skeleton Debug: Off")) {
@@ -12424,6 +13054,8 @@ void SandboxScene::CaptureSandboxProfileState(t850::SandboxProfileDesc& state) {
   addFloat("material_refraction_strength", SceneProp.MaterialRefractionStrength);
   addFloat("mouse_sensitivity_x", m_mouseSensitivityX);
   addFloat("mouse_sensitivity_y", m_mouseSensitivityY);
+  addFloat("navmesh_debug_offset", m_navMeshDebugOffset);
+  addFloat("nav_agent_speed_multiplier", m_navTestSpeed);
 
   for (int kernelIndex = 0; kernelIndex < (int)SceneProp.pGaussKernels.size(); ++kernelIndex) {
     GaussFilter* kernel = SceneProp.pGaussKernels[kernelIndex];
@@ -12452,6 +13084,7 @@ void SandboxScene::CaptureSandboxProfileState(t850::SandboxProfileDesc& state) {
   addBool("show_wireframe", m_showWireframe);
   addBool("show_skeleton", GetSelectedSkinningMesh() != nullptr && m_showSkeleton);
   addBool("show_physics", m_showPhysics);
+  addBool("show_navmesh", m_showNavMesh);
   addBool("show_light_volumes", m_showLightVolumes);
   addBool("point_lights_enabled", SceneProp.PointLightsEnabled);
   addBool("draw_direction", m_drawLightDirection);
@@ -12463,6 +13096,7 @@ void SandboxScene::CaptureSandboxProfileState(t850::SandboxProfileDesc& state) {
   addInt("gauss_kernel_sample_count", 0);
   addInt("active_gauss_kernel", ChangeActiveGaussSelection);
   addInt("active_light", m_selectedLightIndex);
+  addInt("navmesh_debug_shape", m_navMeshDebugShapeMode);
 
   EnsureLightRuntimeState();
   for (int lightIndex = 0; lightIndex < (int)SceneProp.Lights.size(); ++lightIndex) {
@@ -12548,6 +13182,8 @@ void SandboxScene::ApplySandboxProfileState(const t850::SandboxProfileDesc& stat
     else if (value.name == "material_refraction_strength") SceneProp.MaterialRefractionStrength = value.value;
     else if (value.name == "mouse_sensitivity_x") m_mouseSensitivityX = ClampMouseSensitivity(value.value);
     else if (value.name == "mouse_sensitivity_y") m_mouseSensitivityY = ClampMouseSensitivity(value.value);
+    else if (value.name == "navmesh_debug_offset") m_navMeshDebugOffset = (std::max)(0.0f, (std::min)(0.25f, value.value));
+    else if (value.name == "nav_agent_speed_multiplier") m_navTestSpeed = (std::max)(0.0f, (std::min)(10.0f, value.value));
     else if (value.name == "anim_speed") { if (RenderSkinnedMesh* skinned = GetSelectedAnimationMesh()) skinned->SetAnimSpeed(value.value); }
 
     for (int kernelIndex = 0; kernelIndex < (int)SceneProp.pGaussKernels.size(); ++kernelIndex) {
@@ -12565,6 +13201,10 @@ void SandboxScene::ApplySandboxProfileState(const t850::SandboxProfileDesc& stat
     else if (value.name == "show_wireframe") m_showWireframe = value.value;
     else if (value.name == "show_skeleton") m_showSkeleton = value.value && (GetSelectedSkinningMesh() != nullptr);
     else if (value.name == "show_physics") m_showPhysics = value.value;
+    else if (value.name == "show_navmesh") {
+      m_showNavMesh = value.value;
+      if (m_showNavMesh && !m_navMesh.IsReady()) m_navMeshBuildAttempted = false;
+    }
     else if (value.name == "show_light_volumes") m_showLightVolumes = value.value;
     else if (value.name == "point_lights_enabled") SceneProp.PointLightsEnabled = value.value;
     else if (value.name == "draw_direction") m_drawLightDirection = value.value;
@@ -12586,6 +13226,7 @@ void SandboxScene::ApplySandboxProfileState(const t850::SandboxProfileDesc& stat
       }
     }
     else if (value.name == "active_gauss_kernel") ChangeActiveGaussSelection = value.value;
+    else if (value.name == "navmesh_debug_shape") m_navMeshDebugShapeMode = (std::max)(0, (std::min)(1, value.value));
     else if (value.name == "animation_model") {
       if (GetSkinnedMeshForIndex(value.value)) {
         m_selectedAnimationMeshIndex = value.value;
@@ -13140,6 +13781,28 @@ void SandboxScene::OnDraw() {
       }
     }
 
+    if (m_showNavMesh && m_navMeshDebugRenderer.IsReady() && EnsureNavMeshBuilt()) {
+      Texture* depthTexture = nullptr;
+      if (GBufferPass >= 0 && GBufferPass < (int)pFramework->pVideoDriver->RTs.size()) {
+        if (auto* gbufRT = pFramework->pVideoDriver->RTs[GBufferPass]) {
+          depthTexture = gbufRT->pDepthTexture;
+        }
+      }
+      if (depthTexture) {
+        m_navMeshDebugRenderer.SetVerticalOffset(m_navMeshDebugOffset);
+        m_navMeshDebugRenderer.SetGraphVerticalOffset(m_navMeshDebugOffset + 0.005f);
+        m_navMeshDebugRenderer.SetShapeMode(m_navMeshDebugShapeMode == 1
+            ? t850::navigation::NavMeshDebugShapeMode::Nodes
+            : t850::navigation::NavMeshDebugShapeMode::Geometry);
+        m_navMeshDebugRenderer.SetDepthTexture(depthTexture);
+        m_navMeshDebugRenderer.SetViewport(g_pBaseDriver->width, g_pBaseDriver->height);
+        m_navMeshDebugRenderer.SetFarPlane(Cam.FPlane);
+        pFramework->pVideoDriver->SetDepthStencilState(BaseDriver::NONE);
+        pFramework->pVideoDriver->SetBlendState(BaseDriver::BLEND_DEFAULT);
+        m_navMeshDebugRenderer.Draw(m_navMesh, VP);
+      }
+    }
+
     if (m_showLightVolumes) {
       pFramework->pVideoDriver->SetDepthStencilState(BaseDriver::NONE);
       pFramework->pVideoDriver->SetBlendState(BaseDriver::ALPHA_BLEND);
@@ -13173,7 +13836,7 @@ void SandboxScene::OnDraw() {
   };
 
 #ifdef OS_ANDROID
-  if (m_showWireframe || m_showSkeleton || m_showPhysics || m_showLightVolumes) {
+  if (m_showWireframe || m_showSkeleton || m_showPhysics || m_showNavMesh || m_showLightVolumes) {
     if (auto* vkDriver = static_cast<VulkanDriver*>(pFramework->pVideoDriver)) {
       vkDriver->SetPrePresentOverlayCallback(drawMeshDebugOverlays);
     }
@@ -13327,6 +13990,7 @@ void SandboxScene::DrawDevGui(t850::DevGuiContext& gui) {
     {"show_wireframe", CHANGE_SHOW_WIREFRAME},
     {"show_skeleton", CHANGE_SHOW_SKELETON},
     {"show_physics", CHANGE_SHOW_PHYSICS},
+    {"show_navmesh", CHANGE_SHOW_NAVMESH},
     {"show_light_volumes", CHANGE_SHOW_LIGHT_VOLUMES},
     {"point_lights_enabled", CHANGE_POINT_LIGHTS_ENABLED},
     {"debug_luminance", CHANGE_DEBUG_LUMINANCE},
@@ -13467,6 +14131,7 @@ void SandboxScene::DrawDevGui(t850::DevGuiContext& gui) {
     case CHANGE_SHOW_WIREFRAME: value = m_showWireframe; return true;
     case CHANGE_SHOW_SKELETON: value = (skinnedMesh() != nullptr) && m_showSkeleton; return true;
     case CHANGE_SHOW_PHYSICS: value = m_showPhysics; return true;
+    case CHANGE_SHOW_NAVMESH: value = m_showNavMesh; return true;
     case CHANGE_SHOW_LIGHT_VOLUMES: value = m_showLightVolumes; return true;
     case CHANGE_POINT_LIGHTS_ENABLED: value = SceneProp.PointLightsEnabled; return true;
     case CHANGE_DEBUG_LUMINANCE: value = SceneProp.DebugLuminanceEnabled; return true;
@@ -13481,6 +14146,10 @@ void SandboxScene::DrawDevGui(t850::DevGuiContext& gui) {
     case CHANGE_SHOW_WIREFRAME: m_showWireframe = value; break;
     case CHANGE_SHOW_SKELETON: m_showSkeleton = value && (skinnedMesh() != nullptr); break;
     case CHANGE_SHOW_PHYSICS: m_showPhysics = value; break;
+    case CHANGE_SHOW_NAVMESH:
+      m_showNavMesh = value;
+      if (m_showNavMesh && !m_navMesh.IsReady()) m_navMeshBuildAttempted = false;
+      break;
     case CHANGE_SHOW_LIGHT_VOLUMES: m_showLightVolumes = value; break;
     case CHANGE_POINT_LIGHTS_ENABLED: SceneProp.PointLightsEnabled = value; break;
     case CHANGE_DEBUG_LUMINANCE: SceneProp.DebugLuminanceEnabled = value; if (!value) SceneProp.DebugAdaptedLuminanceValid = false; break;
@@ -13705,6 +14374,31 @@ void SandboxScene::DrawDevGui(t850::DevGuiContext& gui) {
     drawCheckboxByName("show_wireframe");
     drawCheckboxByName("show_skeleton");
     drawCheckboxByName("show_physics");
+    drawCheckboxByName("show_navmesh");
+    t850::SliderDesc navOffsetDesc;
+    navOffsetDesc.name = "navmesh_debug_offset";
+    navOffsetDesc.label = "NavMesh offset";
+    navOffsetDesc.min_val = 0.0f;
+    navOffsetDesc.max_val = 0.25f;
+    navOffsetDesc.step = 0.001f;
+    navOffsetDesc.default_val = 0.01f;
+    gui.Slider(navOffsetDesc, m_navMeshDebugOffset);
+    const char* navModeOptions[] = { "Furthest loop", "Random nodes", "Follow player" };
+    ImGui::SetNextItemWidth(220.0f);
+    if (ImGui::Combo("Bot nav mode", &m_navTestMode, navModeOptions, 3)) {
+      m_navTestMode = ClampNavTestMode(m_navTestMode);
+    }
+    t850::SliderDesc navSpeedDesc;
+    navSpeedDesc.name = "nav_agent_speed_multiplier";
+    navSpeedDesc.label = "Bot speed multiplier";
+    navSpeedDesc.min_val = 0.0f;
+    navSpeedDesc.max_val = 10.0f;
+    navSpeedDesc.step = 0.1f;
+    navSpeedDesc.default_val = 3.0f;
+    gui.Slider(navSpeedDesc, m_navTestSpeed);
+    const char* navShapeOptions[] = { "Geometry", "Nodes" };
+    ImGui::SetNextItemWidth(180.0f);
+    ImGui::Combo("NavMesh magenta", &m_navMeshDebugShapeMode, navShapeOptions, 2);
     drawCheckboxByName("show_light_volumes");
   }
 

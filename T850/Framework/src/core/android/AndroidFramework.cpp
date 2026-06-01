@@ -11,6 +11,7 @@
 #include <utils/Log.h>
 #include <utils/ThreadPool.h>
 #include <debug/RuntimeTelemetry.h>
+#include <navigation/NavigationSystem.h>
 
 #include <android/native_activity.h>
 #include <android/native_window.h>
@@ -87,6 +88,14 @@ namespace t850 {
     aplicationDescriptor.api = GraphicsApi::VULKAN;
     InitGlobalThreadPool();
     RuntimeTelemetry::InitializeFromConfig(g_config);
+    const navigation::NavigationBackendInfo navInfo = navigation::GetNavigationBackendInfo();
+    T8_LOG_INFO("[Navigation] Recast=%d Detour=%d Crowd=%d TileCache=%d version=%s validation=%s",
+                navInfo.recastAvailable ? 1 : 0,
+                navInfo.detourAvailable ? 1 : 0,
+                navInfo.detourCrowdAvailable ? 1 : 0,
+                navInfo.detourTileCacheAvailable ? 1 : 0,
+                navInfo.recastVersion.c_str(),
+                navigation::ValidateNavigationBackend() ? "ok" : "failed");
     pBaseApp->InitVars();
     m_inited = true;
   }

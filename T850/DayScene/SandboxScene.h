@@ -13,6 +13,8 @@
 #include <scene/LineRenderer.h>
 #include <scene/TextRenderer.h>
 #include <physics/PhysicsDebugRenderer.h>
+#include <navigation/NavigationDebugRenderer.h>
+#include <navigation/NavigationSystem.h>
 #include <physics/Q3BspCollision.h>
 #include <physics/PhysicsTypes.h>
 #include <debug/FrameDumper.h>
@@ -76,6 +78,7 @@ class SandboxScene : public t850::SceneBase, public t850::CameraCollisionWorld
     CHANGE_SHOW_WIREFRAME,
     CHANGE_SHOW_SKELETON,
     CHANGE_SHOW_PHYSICS,
+    CHANGE_SHOW_NAVMESH,
     CHANGE_SHOW_LIGHT_VOLUMES,
     CHANGE_POINT_LIGHTS_ENABLED,
     CHANGE_DEBUG_LUMINANCE,
@@ -93,6 +96,10 @@ public:
   void DestroyAssets() override;
 
   void DrawDevGui(t850::DevGuiContext& gui) override;
+  bool EnsureNavMeshBuilt();
+  void InitializeNavTestAgents();
+  void UpdateNavTestAgents(float dtSecs);
+  void PlanNavTestAgentPaths();
 #ifdef OS_ANDROID
   bool HandleAndroidVirtualControls(AInputEvent* event);
   bool AndroidVirtualControlsActive() const;
@@ -167,6 +174,8 @@ public:
   t850::LineRenderer m_lightArrowRenderer;
   t850::LineRenderer m_ragdollJointRenderer;
   t850::PhysicsDebugRenderer m_physicsDebugRenderer;
+  t850::navigation::NavMeshDebugRenderer m_navMeshDebugRenderer;
+  t850::navigation::NavMesh m_navMesh;
   t850::VertexBuffer* m_lightArrowVB = nullptr;
   t850::IndexBuffer* m_lightArrowIB = nullptr;
   unsigned m_lightArrowIndexCount = 0;
@@ -180,6 +189,10 @@ public:
   bool m_showWireframe = false;
   bool m_showSkeleton = false;
   bool m_showPhysics = false;
+  bool m_showNavMesh = false;
+  float m_navMeshDebugOffset = 0.01f;
+  int m_navMeshDebugShapeMode = 0;
+  bool m_navMeshBuildAttempted = false;
   bool m_showLightVolumes = false;
   bool m_drawLightDirection = false;
   bool m_profileReady = false;
@@ -192,6 +205,7 @@ public:
   std::string m_primaryRagdollResourcePath;
   std::vector<std::string> m_sceneMeshPaths;
   std::vector<std::string> m_sceneRagdollPaths;
+  std::vector<float> m_sceneNavAgentFrontYawOffsets;
   std::vector<uint32_t> m_q3StaticCollisionEntityIds;
   struct SceneRagdollRuntime {
     int meshIndex = -1;
@@ -206,6 +220,38 @@ public:
     bool physicsLogEmitted = false;
   };
   std::vector<SceneRagdollRuntime> m_sceneRagdolls;
+  struct NavTestAgentRuntime {
+    int meshIndex = -1;
+    XVECTOR3 home = XVECTOR3(0.0f, 0.0f, 0.0f, 1.0f);
+    XVECTOR3 navPosition = XVECTOR3(0.0f, 0.0f, 0.0f, 1.0f);
+    XVECTOR3 visualOffset = XVECTOR3(0.0f, 0.0f, 0.0f, 0.0f);
+    XVECTOR3 desiredTarget = XVECTOR3(0.0f, 0.0f, 0.0f, 1.0f);
+    XVECTOR3 target = XVECTOR3(0.0f, 0.0f, 0.0f, 1.0f);
+    XVECTOR3 lastPathStart = XVECTOR3(0.0f, 0.0f, 0.0f, 1.0f);
+    XVECTOR3 lastPathEnd = XVECTOR3(0.0f, 0.0f, 0.0f, 1.0f);
+    XVECTOR3 lastPathFirst = XVECTOR3(0.0f, 0.0f, 0.0f, 1.0f);
+    XVECTOR3 navToOriginOffset = XVECTOR3(0.0f, 0.0f, 0.0f, 0.0f);
+    std::vector<XVECTOR3> path;
+    std::string lastPathError;
+    int waypointIndex = 0;
+    int followSlot = 0;
+    unsigned int pathGeneration = 0;
+    float repathCooldownSec = 0.0f;
+    float frontYawOffsetDeg = 0.0f;
+    bool returning = false;
+    bool active = false;
+    bool needsPath = false;
+    bool targetInitialized = false;
+    bool lastPathSuccess = false;
+  };
+  std::vector<NavTestAgentRuntime> m_navTestAgents;
+  std::vector<XVECTOR3> m_navTestCandidatePoints;
+  bool m_navTestInitialized = false;
+  float m_navTestSpeed = 3.0f;
+  int m_navTestMode = 2;
+  int m_navTestAppliedMode = 2;
+  uint32_t m_navTestRandomState = 0x6d2b79f5u;
+  float m_navTestDiagAccumSec = 0.0f;
   int m_selectedSkinningMeshIndex = 0;
   int m_selectedAnimationMeshIndex = 0;
   std::string m_profileModelKey;

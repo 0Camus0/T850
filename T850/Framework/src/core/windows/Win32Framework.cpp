@@ -29,6 +29,7 @@
 #include <utils/ThreadPool.h>
 #include <utils/Log.h>
 #include <debug/RuntimeTelemetry.h>
+#include <navigation/NavigationSystem.h>
 namespace t850 {
   void Win32Framework::InitGlobalVars() {
 
@@ -39,6 +40,14 @@ namespace t850 {
     aplicationDescriptor = desc;
     InitGlobalThreadPool();
     RuntimeTelemetry::InitializeFromConfig(g_config);
+    const navigation::NavigationBackendInfo navInfo = navigation::GetNavigationBackendInfo();
+    T8_LOG_INFO("[Navigation] Recast=%d Detour=%d Crowd=%d TileCache=%d version=%s validation=%s",
+                navInfo.recastAvailable ? 1 : 0,
+                navInfo.detourAvailable ? 1 : 0,
+                navInfo.detourCrowdAvailable ? 1 : 0,
+                navInfo.detourTileCacheAvailable ? 1 : 0,
+                navInfo.recastVersion.c_str(),
+                navigation::ValidateNavigationBackend() ? "ok" : "failed");
     if (!SDL_Init(SDL_INIT_VIDEO)) {
       printf("Video initialization failed: %s\n", SDL_GetError());
     }

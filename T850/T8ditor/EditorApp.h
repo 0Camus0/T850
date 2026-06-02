@@ -88,6 +88,7 @@ namespace t8ditor {
     void UploadSkinnedBoneTextures();
     void DrawRagdollInspector(struct SceneObject& obj);
     void FrameSelectedEntity();
+    void RenderLoadingProgressFrame();
 
     Timer m_dtTimer;
     float m_dtSecs   = 0.0f;

@@ -252,6 +252,11 @@ void ImGuiSystem::Shutdown() {
 
   ClearLoadingProgressRenderer();
 
+  ImGuiIO& io = ImGui::GetIO();
+  if (io.IniFilename && io.IniFilename[0] != '\0') {
+    ImGui::SaveIniSettingsToDisk(io.IniFilename);
+  }
+
 #ifdef OS_WINDOWS
   if (m_api == GraphicsApi::D3D11) {
     ImGui_ImplDX11_Shutdown();

@@ -911,10 +911,9 @@ void App::DrawRuntimeGui() {
     const ImVec2 panelPos(
         (std::max)(viewport->WorkPos.x + 24.0f, viewport->WorkPos.x + viewport->WorkSize.x - panelW - 24.0f),
         viewport->WorkPos.y + 24.0f);
-    ImGui::SetNextWindowDockID(0, ImGuiCond_Appearing);
-    ImGui::SetNextWindowPos(panelPos, ImGuiCond_Appearing);
+    ImGui::SetNextWindowPos(panelPos, ImGuiCond_FirstUseEver);
     ImGui::SetNextWindowSize(ImVec2(panelW, panelH), ImGuiCond_FirstUseEver);
-    ImGui::SetNextWindowCollapsed(false, ImGuiCond_Appearing);
+    ImGui::SetNextWindowCollapsed(false, ImGuiCond_FirstUseEver);
     const char* panelTitle = "Scene Controls";
 #endif
     const bool panelBegun = gui.BeginPanel(panelTitle, &m_imguiVisible);

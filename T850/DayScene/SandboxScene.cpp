@@ -40,6 +40,7 @@
 #include <initializer_list>
 #include <limits>
 #include <mutex>
+#include <chrono>
 
 using namespace t850;
 using std::string;
@@ -474,6 +475,54 @@ namespace {
     input.right = XVECTOR3(forward.z, 0.0f, -forward.x, 0.0f);
     input.moveForward = true;
     input.moveForwardAmount = 1.0f;
+    input.jump = jump;
+    input.sprint = false;
+    return input;
+  }
+
+  t850::KinematicCharacterInput BuildNavAgentAirControlInput(
+      const XVECTOR3& groundPosition,
+      const XVECTOR3& velocity,
+      const XVECTOR3& target,
+      bool jump,
+      const t850::KinematicCharacterSettings& settings) {
+    XVECTOR3 direction(0.0f, 0.0f, 0.0f, 0.0f);
+    float moveAmount = 1.0f;
+
+    XVECTOR3 org = groundPosition;
+    XVECTOR3 vel = velocity * 0.1f;
+    bool usedAirControl = false;
+    for (int i = 0; i < 50; ++i) {
+      vel.y -= settings.gravity * 0.01f;
+      if (vel.y < 0.0f && org.y + vel.y < target.y) {
+        const float scale = std::fabs(vel.y) > 0.000001f ? (target.y - org.y) / vel.y : 0.0f;
+        org += vel * scale;
+        direction = target - org;
+        direction.y = 0.0f;
+        direction.w = 0.0f;
+        float dist = direction.Length();
+        if (dist > 0.0001f) {
+          direction /= dist;
+          const float distQ3Units = (std::min)(32.0f, dist * 32.0f);
+          const float speedQ3 = (std::max)(32.0f, (std::min)(400.0f, 13.0f * distQ3Units));
+          moveAmount = std::clamp(speedQ3 / 400.0f, 0.08f, 1.0f);
+          usedAirControl = true;
+        }
+        break;
+      }
+      org += vel;
+    }
+
+    if (!usedAirControl) {
+      direction = HorizontalDirectionTo(groundPosition, target, XVECTOR3(0.0f, 0.0f, 1.0f, 0.0f));
+      moveAmount = 1.0f;
+    }
+
+    t850::KinematicCharacterInput input;
+    input.forward = direction;
+    input.right = XVECTOR3(direction.z, 0.0f, -direction.x, 0.0f);
+    input.moveForward = true;
+    input.moveForwardAmount = moveAmount;
     input.jump = jump;
     input.sprint = false;
     return input;
@@ -3364,6 +3413,13 @@ void SandboxScene::InitVars() {
   m_navMeshDebugOffset = 0.01f;
   m_navMeshDebugShapeMode = 0;
   m_navMeshBuildAttempted = false;
+  m_navMeshBuildSettings = t850::navigation::NavMeshBuildSettings();
+  m_navMeshBuildSettings.enableAutoDropLinks = true;
+  m_navMeshBuildSettings.enableAutoJumpLinks = true;
+  m_navMeshBuildSettings.enableHybridJumpLinks = true;
+  m_navMeshBuildSettings.hybridJumpMaxLinks = 192;
+  m_navMeshLastBuildMs = 0.0f;
+  m_navMeshLastBuildFromCache = false;
   m_showLightVolumes = false;
   m_drawLightDirection = false;
   m_meshCount = 0;
@@ -4053,13 +4109,12 @@ bool SandboxScene::EnsureNavMeshBuilt() {
   m_navMeshBuildAttempted = true;
 
   const int meshCount = (std::min)(kMaxSandboxMeshes, (std::max)(m_meshCount, Meshes[0].pBase ? 1 : 0));
-  t850::navigation::NavMeshBuildSettings navBuildSettings;
+  t850::navigation::NavMeshBuildSettings navBuildSettings = m_navMeshBuildSettings;
   const bool hasQ3Clip = m_q3CollisionWorld && m_q3CollisionWorld->IsLoaded();
   const bool hasQ3AasReachability = hasQ3Clip && m_q3CollisionWorld->GetReachabilityCount() > 0;
-  navBuildSettings.enableAutoDropLinks = hasQ3Clip && !hasQ3AasReachability;
-  navBuildSettings.enableAutoJumpLinks = hasQ3Clip && !hasQ3AasReachability;
-  navBuildSettings.enableHybridJumpLinks = hasQ3Clip && !hasQ3AasReachability;
-  navBuildSettings.hybridJumpMaxLinks = 192;
+  navBuildSettings.enableAutoDropLinks = navBuildSettings.enableAutoDropLinks && hasQ3Clip && !hasQ3AasReachability;
+  navBuildSettings.enableAutoJumpLinks = navBuildSettings.enableAutoJumpLinks && hasQ3Clip && !hasQ3AasReachability;
+  navBuildSettings.enableHybridJumpLinks = navBuildSettings.enableHybridJumpLinks && hasQ3Clip && !hasQ3AasReachability;
   navBuildSettings.offMeshLinkValidationKey = ComputeQ3NavLinkValidationKey(m_q3CollisionWorld.get());
   const uint64_t navCacheKey =
       ComputeSandboxNavMeshCacheKey(
@@ -4069,10 +4124,14 @@ bool SandboxScene::EnsureNavMeshBuilt() {
           m_loadedEditorScenePath,
           navBuildSettings,
           m_q3CollisionWorld.get());
+  const auto navBuildStart = std::chrono::steady_clock::now();
   if (navCacheKey != 0 && m_navMesh.LoadCached(navCacheKey, navBuildSettings, nullptr)) {
+    m_navMeshLastBuildMs = std::chrono::duration<float, std::milli>(std::chrono::steady_clock::now() - navBuildStart).count();
+    m_navMeshLastBuildFromCache = true;
     m_navMeshDebugRenderer.Invalidate();
     const t850::navigation::NavMeshBuildStats& stats = m_navMesh.GetStats();
-    T8_LOG_INFO("[Navigation] Sandbox navmesh ready from cache: verts=%d tris=%d polys=%d offMesh=%d drop=%d jump=%d jumpPad=%d",
+    T8_LOG_INFO("[Navigation] Sandbox navmesh ready from cache: %.2fms verts=%d tris=%d polys=%d offMesh=%d drop=%d jump=%d jumpPad=%d",
+                m_navMeshLastBuildMs,
                 stats.vertexCount, stats.triangleCount, stats.polygonCount,
                 stats.offMeshLinkCount, stats.dropLinkCount, stats.jumpLinkCount, stats.jumpPadLinkCount);
     return true;
@@ -4115,10 +4174,13 @@ bool SandboxScene::EnsureNavMeshBuilt() {
     T8_LOG_ERROR("[Navigation] Sandbox navmesh build failed: %s", error.c_str());
     return false;
   }
+  m_navMeshLastBuildMs = std::chrono::duration<float, std::milli>(std::chrono::steady_clock::now() - navBuildStart).count();
+  m_navMeshLastBuildFromCache = false;
 
   m_navMeshDebugRenderer.Invalidate();
   const t850::navigation::NavMeshBuildStats& stats = m_navMesh.GetStats();
-  T8_LOG_INFO("[Navigation] Sandbox navmesh ready: sources=%d skippedSkinned=%d skippedInvalid=%d verts=%d tris=%d polys=%d offMesh=%d drop=%d jump=%d jumpPad=%d",
+  T8_LOG_INFO("[Navigation] Sandbox navmesh ready: %.2fms sources=%d skippedSkinned=%d skippedInvalid=%d verts=%d tris=%d polys=%d offMesh=%d drop=%d jump=%d jumpPad=%d",
+              m_navMeshLastBuildMs,
               sourceStats.included, sourceStats.skippedSkinned, sourceStats.skippedInvalid,
               stats.vertexCount, stats.triangleCount, stats.polygonCount,
               stats.offMeshLinkCount, stats.dropLinkCount, stats.jumpLinkCount, stats.jumpPadLinkCount);
@@ -4516,12 +4578,52 @@ void SandboxScene::UpdateNavTestAgents(float dtSecs) {
     }
   };
 
-  auto isJumpPadBaseOccupied = [&](std::size_t currentAgentIndex, const XVECTOR3& base) {
-    constexpr float kJumpPadBaseOccupiedRadiusSq = 4.0f;
-    const t850::Q3BspCollisionWorld::JumpPad* jumpPad = findJumpPadForBase(base);
+  auto reachabilityTraversalDuration = [&](t850::navigation::NavTraversalType type,
+                                           const XVECTOR3& start,
+                                           const XVECTOR3& end) {
+    const float horizontal = std::sqrt(HorizontalDistanceSq3(start, end));
+    const float vertical = std::fabs(end.y - start.y);
+    const float speed = (std::max)(3.5f, m_navTestSpeed * 1.5f);
+    float duration = horizontal / speed;
+    if (type == t850::navigation::NavTraversalType::Drop) {
+      duration = (std::max)(duration, vertical > 2.0f ? 0.65f : 0.35f);
+    } else {
+      duration = (std::max)(duration, 0.45f);
+    }
+    return std::clamp(duration, 0.25f, 1.35f);
+  };
+
+  auto reachabilityTraversalPosition = [&](t850::navigation::NavTraversalType type,
+                                           const XVECTOR3& start,
+                                           const XVECTOR3& end,
+                                           float fraction) {
+    const float t = std::clamp(fraction, 0.0f, 1.0f);
+    XVECTOR3 position = start + (end - start) * t;
+    if (type == t850::navigation::NavTraversalType::Jump) {
+      const float horizontal = std::sqrt(HorizontalDistanceSq3(start, end));
+      const float arcHeight = (std::max)(0.45f, (std::min)(2.0f, horizontal * 0.25f));
+      position.y += std::sin(t * xPI) * arcHeight;
+    } else if (type == t850::navigation::NavTraversalType::Drop && end.y < start.y) {
+      position.y = start.y + (end.y - start.y) * (t * t);
+    }
+    position.w = 1.0f;
+    return position;
+  };
+
+  struct JumpPadOccupancyDecision {
+    bool occupied = false;
+    std::size_t ownerIndex = static_cast<std::size_t>(-1);
+    const char* reason = "free";
     float currentDistanceSq = 1.0e30f;
+    float ownerDistanceSq = 1.0e30f;
+  };
+
+  auto jumpPadOccupancyDecision = [&](std::size_t currentAgentIndex, const XVECTOR3& base) {
+    constexpr float kJumpPadBaseOccupiedRadiusSq = 4.0f;
+    JumpPadOccupancyDecision decision;
+    const t850::Q3BspCollisionWorld::JumpPad* jumpPad = findJumpPadForBase(base);
     if (currentAgentIndex < m_navTestAgents.size()) {
-      currentDistanceSq = HorizontalDistanceSq3(m_navTestAgents[currentAgentIndex].navPosition, base);
+      decision.currentDistanceSq = HorizontalDistanceSq3(m_navTestAgents[currentAgentIndex].navPosition, base);
     }
     for (std::size_t otherIndex = 0; otherIndex < m_navTestAgents.size(); ++otherIndex) {
       if (otherIndex == currentAgentIndex) {
@@ -4535,14 +4637,27 @@ void SandboxScene::UpdateNavTestAgents(float dtSecs) {
       bool otherOwnsBase = false;
       float otherDistanceSq = 1.0e30f;
       if (jumpPad && agentAabbOverlapsJumpPad(other.navPosition, *jumpPad, 0.05f)) {
-        otherOwnsBase = true;
         otherDistanceSq = HorizontalDistanceSq3(other.navPosition, base);
+        const bool closer = otherDistanceSq + 0.01f < decision.currentDistanceSq;
+        const bool tieBreak = std::fabs(otherDistanceSq - decision.currentDistanceSq) <= 0.01f && otherIndex < currentAgentIndex;
+        otherOwnsBase = closer || tieBreak;
+        if (otherOwnsBase) {
+          decision.reason = closer ? "other_inside_trigger_closer" : "other_inside_trigger_tiebreak";
+        }
       } else if (other.physicsTraversalActive &&
           other.physicsTraversalType == t850::navigation::NavTraversalType::JumpPad &&
-          !other.physicsWasAirborne &&
           DistanceSquared(other.physicsTraversalStart, base) <= kJumpPadBaseOccupiedRadiusSq) {
-        otherOwnsBase = true;
-        otherDistanceSq = 0.0f;
+        const bool otherStillInTrigger =
+            jumpPad && agentAabbOverlapsJumpPad(other.navPosition, *jumpPad, 0.25f);
+        const bool otherStillNearBase =
+            HorizontalDistanceSq3(other.navPosition, base) <= kJumpPadBaseOccupiedRadiusSq;
+        if (!other.physicsWasAirborne || otherStillInTrigger || otherStillNearBase) {
+          otherOwnsBase = true;
+          otherDistanceSq = 0.0f;
+          decision.reason = !other.physicsWasAirborne
+              ? "other_physics_not_airborne"
+              : (otherStillInTrigger ? "other_physics_still_in_trigger" : "other_physics_still_near_base");
+        }
       } else if (!other.physicsTraversalActive &&
                  !other.needsPath &&
                  !other.path.empty() &&
@@ -4557,17 +4672,27 @@ void SandboxScene::UpdateNavTestAgents(float dtSecs) {
         if (otherSegmentType == t850::navigation::NavTraversalType::JumpPad &&
             DistanceSquared(otherBase, base) <= kJumpPadBaseOccupiedRadiusSq) {
           otherDistanceSq = HorizontalDistanceSq3(other.navPosition, base);
-          otherOwnsBase =
-              otherDistanceSq + 0.01f < currentDistanceSq ||
-              (std::fabs(otherDistanceSq - currentDistanceSq) <= 0.01f && otherIndex < currentAgentIndex);
+          const bool closer = otherDistanceSq + 0.01f < decision.currentDistanceSq;
+          const bool tieBreak = std::fabs(otherDistanceSq - decision.currentDistanceSq) <= 0.01f && otherIndex < currentAgentIndex;
+          otherOwnsBase = closer || tieBreak;
+          if (otherOwnsBase) {
+            decision.reason = closer ? "other_planned_jump_closer" : "other_planned_jump_tiebreak";
+          }
         }
       }
 
       if (otherOwnsBase) {
-        return true;
+        decision.occupied = true;
+        decision.ownerIndex = otherIndex;
+        decision.ownerDistanceSq = otherDistanceSq;
+        return decision;
       }
     }
-    return false;
+    return decision;
+  };
+
+  auto isJumpPadBaseOccupied = [&](std::size_t currentAgentIndex, const XVECTOR3& base) {
+    return jumpPadOccupancyDecision(currentAgentIndex, base).occupied;
   };
 
   auto jumpPadQueuePosition = [&](const NavTestAgentRuntime& agent,
@@ -4657,31 +4782,47 @@ void SandboxScene::UpdateNavTestAgents(float dtSecs) {
         agent.physicsTraversalType == t850::navigation::NavTraversalType::JumpPad;
   };
 
+  auto isPhysicsTraversalProtected = [&](std::size_t agentIndex) {
+    if (agentIndex >= m_navTestAgents.size()) {
+      return false;
+    }
+    const NavTestAgentRuntime& agent = m_navTestAgents[agentIndex];
+    return agent.active && agent.physicsTraversalActive;
+  };
+
   auto startJumpPadPhysicsTraversal = [&](std::size_t agentIndex,
                                           NavTestAgentRuntime& agent,
                                           const XVECTOR3& groundPosition,
                                           const t850::Q3BspCollisionWorld::JumpPad& jumpPad,
                                           const XVECTOR3& fallbackTarget) {
     const t850::KinematicCharacterSettings q3Settings = t850::MakeQuake3CharacterSettings();
+    XVECTOR3 launchGround(
+        (jumpPad.mins.x + jumpPad.maxs.x) * 0.5f,
+        groundPosition.y,
+        (jumpPad.mins.z + jumpPad.maxs.z) * 0.5f,
+        1.0f);
     agent.physicsController.SetSettings(q3Settings);
     agent.physicsController.Reset();
-    agent.physicsController.SetPosition(Q3CenterFromGroundPoint(groundPosition, q3Settings));
+    agent.physicsController.SetPosition(Q3CenterFromGroundPoint(launchGround, q3Settings));
     agent.physicsController.SetVelocity(jumpPad.velocity);
-    agent.physicsTraversalStart = groundPosition;
+    agent.physicsTraversalStart = launchGround;
     agent.physicsTarget = jumpPad.hasTargetPosition ? jumpPad.targetPosition : fallbackTarget;
+    agent.physicsLastNavPosition = launchGround;
     agent.physicsTargetWaypointIndex = agent.waypointIndex;
     agent.physicsTraversalType = t850::navigation::NavTraversalType::JumpPad;
     agent.physicsTraversalTimeSec = 0.0f;
+    agent.physicsStuckTimeSec = 0.0f;
     agent.physicsTraversalActive = true;
     agent.physicsWasAirborne = false;
-    proposedPositions[agentIndex] = groundPosition;
+    proposedPositions[agentIndex] = launchGround;
     movedAgents[agentIndex] = 1;
     physicsMovedAgents[agentIndex] = 1;
-    T8_LOG_INFO("[JumpPadDebug] forced-trigger pad=%u agent=%zu mesh=%d pos=(%.2f,%.2f,%.2f) velocity=(%.2f,%.2f,%.2f) target=(%.2f,%.2f,%.2f)",
+    T8_LOG_INFO("[JumpPadDebug] forced-trigger pad=%u agent=%zu mesh=%d pos=(%.2f,%.2f,%.2f) launch=(%.2f,%.2f,%.2f) velocity=(%.2f,%.2f,%.2f) target=(%.2f,%.2f,%.2f)",
                 jumpPad.entityId,
                 agentIndex,
                 agent.meshIndex,
                 groundPosition.x, groundPosition.y, groundPosition.z,
+                launchGround.x, launchGround.y, launchGround.z,
                 jumpPad.velocity.x, jumpPad.velocity.y, jumpPad.velocity.z,
                 agent.physicsTarget.x, agent.physicsTarget.y, agent.physicsTarget.z);
   };
@@ -4706,19 +4847,54 @@ void SandboxScene::UpdateNavTestAgents(float dtSecs) {
           t850::RuntimeTelemetry::AddCounter("navigation.agents.physics_traversal.jump_pad", 1.0);
         }
       }
+
+      if (agent.physicsTraversalType == t850::navigation::NavTraversalType::Jump ||
+          agent.physicsTraversalType == t850::navigation::NavTraversalType::Drop) {
+        agent.physicsTraversalTimeSec += (std::max)(0.0f, dtSecs);
+        const float duration = (std::max)(0.01f, agent.physicsTraversalDurationSec);
+        const float fraction = std::clamp(agent.physicsTraversalTimeSec / duration, 0.0f, 1.0f);
+        XVECTOR3 navPosition = reachabilityTraversalPosition(
+            agent.physicsTraversalType,
+            agent.physicsTraversalStart,
+            agent.physicsTarget,
+            fraction);
+        agent.navPosition = navPosition;
+        proposedPositions[agentIndex] = navPosition;
+        movedAgents[agentIndex] = 1;
+        physicsMovedAgents[agentIndex] = 1;
+
+        if (fraction >= 1.0f) {
+          agent.navPosition = agent.physicsTarget;
+          proposedPositions[agentIndex] = agent.physicsTarget;
+          agent.physicsTraversalActive = false;
+          agent.physicsWasAirborne = false;
+          agent.physicsTraversalType = t850::navigation::NavTraversalType::Walk;
+          agent.physicsTraversalTimeSec = 0.0f;
+          agent.physicsTraversalDurationSec = 0.0f;
+          agent.physicsStuckTimeSec = 0.0f;
+          agent.needsPath = true;
+          agent.repathCooldownSec = 0.0f;
+          agent.path.clear();
+          agent.pathSegmentTypes.clear();
+          agent.waypointIndex = 0;
+        }
+        continue;
+      }
+
       const t850::KinematicCharacterSettings q3Settings = t850::MakeQuake3CharacterSettings();
       agent.physicsController.SetSettings(q3Settings);
       const XVECTOR3 physicsGround = Q3GroundPointFromCenter(agent.physicsController.GetPosition(), q3Settings);
-      XVECTOR3 steeringTarget = agent.physicsTarget;
-      if (m_navTestMode == kNavTestModeFollowPlayer) {
-        steeringTarget = agent.desiredTarget;
-      }
       const bool jumpInput =
           agent.physicsTraversalType == t850::navigation::NavTraversalType::Jump &&
           agent.physicsTraversalTimeSec < 0.18f;
       agent.physicsController.UpdateQuake3(
           (std::max)(0.0f, dtSecs),
-          BuildNavAgentPhysicsInput(physicsGround, steeringTarget, jumpInput),
+          BuildNavAgentAirControlInput(
+              physicsGround,
+              agent.physicsController.GetVelocity(),
+              agent.physicsTarget,
+              jumpInput,
+              q3Settings),
           t850::CharacterControllerContext{this});
       agent.physicsTraversalTimeSec += (std::max)(0.0f, dtSecs);
       if (!agent.physicsController.IsGrounded()) {
@@ -4726,6 +4902,15 @@ void SandboxScene::UpdateNavTestAgents(float dtSecs) {
       }
 
       XVECTOR3 navPosition = Q3GroundPointFromCenter(agent.physicsController.GetPosition(), q3Settings);
+      const float traversalMoveSq = DistanceSquared(navPosition, agent.physicsLastNavPosition);
+      if (!agent.physicsController.IsGrounded() &&
+          agent.physicsTraversalTimeSec > 0.50f &&
+          traversalMoveSq < 0.0004f) {
+        agent.physicsStuckTimeSec += (std::max)(0.0f, dtSecs);
+      } else {
+        agent.physicsStuckTimeSec = 0.0f;
+        agent.physicsLastNavPosition = navPosition;
+      }
       agent.navPosition = navPosition;
       proposedPositions[agentIndex] = navPosition;
       movedAgents[agentIndex] = 1;
@@ -4748,6 +4933,7 @@ void SandboxScene::UpdateNavTestAgents(float dtSecs) {
         agent.physicsWasAirborne = false;
         agent.physicsTraversalType = t850::navigation::NavTraversalType::Walk;
         agent.physicsTraversalTimeSec = 0.0f;
+        agent.physicsTraversalDurationSec = 0.0f;
         agent.needsPath = true;
         agent.repathCooldownSec = 0.0f;
         agent.path.clear();
@@ -4758,8 +4944,32 @@ void SandboxScene::UpdateNavTestAgents(float dtSecs) {
         agent.physicsWasAirborne = false;
         agent.physicsTraversalType = t850::navigation::NavTraversalType::Walk;
         agent.physicsTraversalTimeSec = 0.0f;
+        agent.physicsTraversalDurationSec = 0.0f;
         agent.needsPath = true;
         agent.repathCooldownSec = kNavTestFailedPathRetrySec;
+        agent.path.clear();
+        agent.pathSegmentTypes.clear();
+        agent.waypointIndex = 0;
+      } else if (agent.physicsStuckTimeSec > 0.75f) {
+        T8_LOG_INFO("[NavTraversalDebug] physics_stuck_repath mesh=%d agent=%zu type=%s pos=(%.2f,%.2f,%.2f) target=(%.2f,%.2f,%.2f) velocity=(%.2f,%.2f,%.2f) time=%.2f stuck=%.2f",
+                    agent.meshIndex,
+                    agentIndex,
+                    traversalName(agent.physicsTraversalType),
+                    navPosition.x, navPosition.y, navPosition.z,
+                    agent.physicsTarget.x, agent.physicsTarget.y, agent.physicsTarget.z,
+                    agent.physicsController.GetVelocity().x,
+                    agent.physicsController.GetVelocity().y,
+                    agent.physicsController.GetVelocity().z,
+                    agent.physicsTraversalTimeSec,
+                    agent.physicsStuckTimeSec);
+        agent.physicsTraversalActive = false;
+        agent.physicsWasAirborne = false;
+        agent.physicsTraversalType = t850::navigation::NavTraversalType::Walk;
+        agent.physicsTraversalTimeSec = 0.0f;
+        agent.physicsTraversalDurationSec = 0.0f;
+        agent.physicsStuckTimeSec = 0.0f;
+        agent.needsPath = true;
+        agent.repathCooldownSec = 0.0f;
         agent.path.clear();
         agent.pathSegmentTypes.clear();
         agent.waypointIndex = 0;
@@ -4773,6 +4983,22 @@ void SandboxScene::UpdateNavTestAgents(float dtSecs) {
       for (const t850::Q3BspCollisionWorld::JumpPad& jumpPad : m_q3CollisionWorld->GetJumpPads()) {
         if (!agentAabbOverlapsJumpPad(currentPosition, jumpPad, 0.05f)) {
           continue;
+        }
+        const XVECTOR3 jumpPadBase(
+            (jumpPad.mins.x + jumpPad.maxs.x) * 0.5f,
+            currentPosition.y,
+            (jumpPad.mins.z + jumpPad.maxs.z) * 0.5f,
+            1.0f);
+        if (isJumpPadBaseOccupied(agentIndex, jumpPadBase)) {
+          if (t850::RuntimeTelemetry::IsFrameActive()) {
+            t850::RuntimeTelemetry::AddCounter("navigation.agents.jump_pad_wait", 1.0);
+          }
+          const XVECTOR3 queued = jumpPadQueuePosition(agent, jumpPadBase, agentIndex);
+          jumpPadQueuedAgents[agentIndex] = 1;
+          proposedPositions[agentIndex] = queued;
+          movedAgents[agentIndex] = 1;
+          forcedJumpPadTrigger = true;
+          break;
         }
         startJumpPadPhysicsTraversal(agentIndex, agent, currentPosition, jumpPad, agent.target);
         forcedJumpPadTrigger = true;
@@ -4807,6 +5033,62 @@ void SandboxScene::UpdateNavTestAgents(float dtSecs) {
       XVECTOR3 delta = target - current;
       const float distance = delta.Length();
       t850::navigation::NavTraversalType effectiveSegmentType = segmentType;
+      if (effectiveSegmentType == t850::navigation::NavTraversalType::Walk &&
+          m_q3CollisionWorld &&
+          agent.waypointIndex + 1 < static_cast<int>(agent.path.size())) {
+        const t850::KinematicCharacterSettings q3Settings = t850::MakeQuake3CharacterSettings();
+        const bool hasNextSegment = agent.waypointIndex >= 0 &&
+            agent.waypointIndex < static_cast<int>(agent.pathSegmentTypes.size());
+        const t850::navigation::NavTraversalType nextSegmentType = hasNextSegment
+            ? agent.pathSegmentTypes[static_cast<std::size_t>(agent.waypointIndex)]
+            : t850::navigation::NavTraversalType::Walk;
+        const float waypointTolerance = nextSegmentType != t850::navigation::NavTraversalType::Walk
+            ? (std::max)(1.50f, q3Settings.capsuleRadius * 3.0f)
+            : (std::max)(0.70f, q3Settings.capsuleRadius * 1.5f);
+        if (distance <= waypointTolerance) {
+          if (nextSegmentType != t850::navigation::NavTraversalType::Walk) {
+            T8_LOG_INFO("[NavTraversalDebug] reachability_start_accept mesh=%d agent=%zu current=(%.2f,%.2f,%.2f) start=(%.2f,%.2f,%.2f) dist=%.3f tolerance=%.3f nextType=%s wp=%d path=%zu",
+                        agent.meshIndex,
+                        agentIndex,
+                        current.x, current.y, current.z,
+                        target.x, target.y, target.z,
+                        distance,
+                        waypointTolerance,
+                        traversalName(nextSegmentType),
+                        agent.waypointIndex,
+                        agent.path.size());
+          }
+          current = target;
+          ++agent.waypointIndex;
+          continue;
+        }
+      }
+      if (effectiveSegmentType == t850::navigation::NavTraversalType::Walk &&
+          m_q3CollisionWorld &&
+          agent.waypointIndex >= 0 &&
+          agent.waypointIndex < static_cast<int>(agent.pathSegmentTypes.size())) {
+        const t850::navigation::NavTraversalType nextSegmentType =
+            agent.pathSegmentTypes[static_cast<std::size_t>(agent.waypointIndex)];
+        if (nextSegmentType != t850::navigation::NavTraversalType::Walk) {
+          const t850::KinematicCharacterSettings q3Settings = t850::MakeQuake3CharacterSettings();
+          const float traversalStartTolerance = (std::max)(0.85f, q3Settings.capsuleRadius * 2.0f);
+          if (distance <= traversalStartTolerance) {
+            T8_LOG_INFO("[NavTraversalDebug] edge_start_accept mesh=%d agent=%zu current=(%.2f,%.2f,%.2f) start=(%.2f,%.2f,%.2f) dist=%.3f tolerance=%.3f nextType=%s wp=%d path=%zu",
+                        agent.meshIndex,
+                        agentIndex,
+                        current.x, current.y, current.z,
+                        target.x, target.y, target.z,
+                        distance,
+                        traversalStartTolerance,
+                        traversalName(nextSegmentType),
+                        agent.waypointIndex,
+                        agent.path.size());
+            current = target;
+            ++agent.waypointIndex;
+            continue;
+          }
+        }
+      }
       if (effectiveSegmentType == t850::navigation::NavTraversalType::Walk && m_q3CollisionWorld) {
         const t850::KinematicCharacterSettings q3Settings = t850::MakeQuake3CharacterSettings();
         const float verticalDrop = current.y - target.y;
@@ -4829,7 +5111,8 @@ void SandboxScene::UpdateNavTestAgents(float dtSecs) {
       if (effectiveSegmentType != t850::navigation::NavTraversalType::Walk) {
         if (effectiveSegmentType == t850::navigation::NavTraversalType::JumpPad) {
           const XVECTOR3 jumpPadBase = segmentStart;
-          if (isJumpPadBaseOccupied(agentIndex, jumpPadBase)) {
+        const t850::Q3BspCollisionWorld::JumpPad* pathJumpPad = findJumpPadForBase(jumpPadBase);
+        if (isJumpPadBaseOccupied(agentIndex, jumpPadBase)) {
             if (t850::RuntimeTelemetry::IsFrameActive()) {
               t850::RuntimeTelemetry::AddCounter("navigation.agents.jump_pad_wait", 1.0);
             }
@@ -4858,16 +5141,28 @@ void SandboxScene::UpdateNavTestAgents(float dtSecs) {
           } else {
             current = jumpPadBase;
           }
+          if (pathJumpPad) {
+            startJumpPadPhysicsTraversal(agentIndex, agent, current, *pathJumpPad, target);
+            remaining = 0.0f;
+            break;
+          }
         }
         const t850::KinematicCharacterSettings q3Settings = t850::MakeQuake3CharacterSettings();
         agent.physicsController.SetSettings(q3Settings);
         agent.physicsController.Reset();
         agent.physicsController.SetPosition(Q3CenterFromGroundPoint(current, q3Settings));
+        if (effectiveSegmentType == t850::navigation::NavTraversalType::Jump ||
+            effectiveSegmentType == t850::navigation::NavTraversalType::Drop) {
+          agent.physicsController.SetVelocity(XVECTOR3(0.0f, 0.0f, 0.0f, 0.0f));
+        }
         agent.physicsTraversalStart = current;
         agent.physicsTarget = target;
+        agent.physicsLastNavPosition = current;
         agent.physicsTargetWaypointIndex = agent.waypointIndex;
         agent.physicsTraversalType = effectiveSegmentType;
         agent.physicsTraversalTimeSec = 0.0f;
+        agent.physicsTraversalDurationSec = reachabilityTraversalDuration(effectiveSegmentType, current, target);
+        agent.physicsStuckTimeSec = 0.0f;
         agent.physicsTraversalActive = true;
         agent.physicsWasAirborne = false;
         if (t850::RuntimeTelemetry::IsFrameActive()) {
@@ -4987,7 +5282,7 @@ void SandboxScene::UpdateNavTestAgents(float dtSecs) {
           proposedPositions[agentIndex] = agent.navPosition;
           movedAgents[agentIndex] = 1;
         }
-        const bool agentProtected = isJumpPadTraversalProtected(agentIndex);
+        const bool agentProtected = isPhysicsTraversalProtected(agentIndex);
         if (resolveAabbOverlap(playerGround,
                                playerHalfX,
                                playerHalfZ,
@@ -5006,8 +5301,8 @@ void SandboxScene::UpdateNavTestAgents(float dtSecs) {
         if (!movedAgents[a]) continue;
       for (std::size_t b = a + 1; b < m_navTestAgents.size(); ++b) {
           if (!movedAgents[b]) continue;
-          const bool protectA = isJumpPadTraversalProtected(a);
-          const bool protectB = isJumpPadTraversalProtected(b);
+          const bool protectA = isPhysicsTraversalProtected(a);
+          const bool protectB = isPhysicsTraversalProtected(b);
           if (protectA && protectB) {
             continue;
           }
@@ -5096,6 +5391,7 @@ void SandboxScene::UpdateNavTestAgents(float dtSecs) {
 
           const XVECTOR3 position = agentDebugPosition(agentIndex);
           const bool inside = agentAabbOverlapsJumpPad(position, jumpPad, 0.05f);
+          const bool nearby = HorizontalDistanceSq3(position, padCenter) <= 36.0f;
           const bool physicsJumpPad =
               agent.physicsTraversalActive &&
               agent.physicsTraversalType == t850::navigation::NavTraversalType::JumpPad;
@@ -5108,7 +5404,6 @@ void SandboxScene::UpdateNavTestAgents(float dtSecs) {
           const bool physicsForPad =
               physicsJumpPad &&
               (findJumpPadForBase(agent.physicsTraversalStart) == &jumpPad || inside);
-          const bool nearby = HorizontalDistanceSq3(position, padCenter) <= 36.0f;
 
           insideCount += inside ? 1 : 0;
           queuedCount += queued ? 1 : 0;
@@ -5123,7 +5418,8 @@ void SandboxScene::UpdateNavTestAgents(float dtSecs) {
             queuedCount > 0 ||
             insideCount > 1 ||
             attemptingCount > 1 ||
-            physicsCount > 0;
+            physicsCount > 0 ||
+            !relevantAgents.empty();
         if (!shouldLog) {
           continue;
         }
@@ -5145,15 +5441,31 @@ void SandboxScene::UpdateNavTestAgents(float dtSecs) {
           const XVECTOR3 segmentBase = segmentBaseForAgent(agent);
           const XVECTOR3 segmentTarget = segmentTargetForAgent(agent);
           const bool inside = agentAabbOverlapsJumpPad(position, jumpPad, 0.05f);
+          const bool nearby = HorizontalDistanceSq3(position, padCenter) <= 36.0f;
           const bool attempting =
               segmentType == t850::navigation::NavTraversalType::JumpPad &&
               findJumpPadForBase(segmentBase) == &jumpPad;
+          const XVECTOR3 decisionBase = attempting
+              ? segmentBase
+              : XVECTOR3(padCenter.x, position.y, padCenter.z, 1.0f);
+          const JumpPadOccupancyDecision occupancy = jumpPadOccupancyDecision(agentIndex, decisionBase);
           const bool queued = jumpPadQueuedAgents[agentIndex] != 0 && attempting;
           const bool physicsForPad =
               agent.physicsTraversalActive &&
               agent.physicsTraversalType == t850::navigation::NavTraversalType::JumpPad &&
               (findJumpPadForBase(agent.physicsTraversalStart) == &jumpPad || inside);
-          T8_LOG_INFO("[JumpPadDebug] pad=%u agent=%zu mesh=%d '%s' pos=(%.2f,%.2f,%.2f) aabb=(%.2f,%.2f,%.2f)-(%.2f,%.2f,%.2f) inside=%d queued=%d attempting=%d physics=%d type=%s airborne=%d wp=%d path=%zu base=(%.2f,%.2f,%.2f) segTarget=(%.2f,%.2f,%.2f) distBase=%.2f target=(%.2f,%.2f,%.2f) desired=(%.2f,%.2f,%.2f) cooldown=%.3f",
+          const bool canForceTriggerJump = inside && !physicsForPad && !occupancy.occupied;
+          const bool canPathJump =
+              attempting &&
+              !physicsForPad &&
+              !occupancy.occupied &&
+              std::sqrt(HorizontalDistanceSq3(position, segmentBase)) <= 0.05f;
+          const char* blockReason = physicsForPad
+              ? "already_physics"
+              : (occupancy.occupied ? occupancy.reason :
+                 (!inside && !attempting ? "not_inside_or_attempting" :
+                  (attempting && std::sqrt(HorizontalDistanceSq3(position, segmentBase)) > 0.05f ? "moving_to_base" : "none")));
+          T8_LOG_INFO("[JumpPadDebug] pad=%u agent=%zu mesh=%d '%s' pos=(%.2f,%.2f,%.2f) aabb=(%.2f,%.2f,%.2f)-(%.2f,%.2f,%.2f) inside=%d nearby=%d queued=%d attempting=%d physics=%d type=%s airborne=%d wp=%d path=%zu base=(%.2f,%.2f,%.2f) decisionBase=(%.2f,%.2f,%.2f) segTarget=(%.2f,%.2f,%.2f) distBase=%.2f target=(%.2f,%.2f,%.2f) desired=(%.2f,%.2f,%.2f) cooldown=%.3f occupied=%d owner=%lld reason=%s currentDist=%.3f ownerDist=%.3f canForce=%d canPath=%d block=%s",
                       jumpPad.entityId,
                       agentIndex,
                       agent.meshIndex,
@@ -5162,6 +5474,7 @@ void SandboxScene::UpdateNavTestAgents(float dtSecs) {
                       aabbMin.x, aabbMin.y, aabbMin.z,
                       aabbMax.x, aabbMax.y, aabbMax.z,
                       inside ? 1 : 0,
+                      nearby ? 1 : 0,
                       queued ? 1 : 0,
                       attempting ? 1 : 0,
                       physicsForPad ? 1 : 0,
@@ -5170,11 +5483,20 @@ void SandboxScene::UpdateNavTestAgents(float dtSecs) {
                       agent.waypointIndex,
                       agent.path.size(),
                       segmentBase.x, segmentBase.y, segmentBase.z,
+                      decisionBase.x, decisionBase.y, decisionBase.z,
                       segmentTarget.x, segmentTarget.y, segmentTarget.z,
                       std::sqrt(HorizontalDistanceSq3(position, segmentBase)),
                       agent.target.x, agent.target.y, agent.target.z,
                       agent.desiredTarget.x, agent.desiredTarget.y, agent.desiredTarget.z,
-                      agent.repathCooldownSec);
+                      agent.repathCooldownSec,
+                      occupancy.occupied ? 1 : 0,
+                      occupancy.ownerIndex == static_cast<std::size_t>(-1) ? -1LL : static_cast<long long>(occupancy.ownerIndex),
+                      occupancy.reason,
+                      std::sqrt(occupancy.currentDistanceSq),
+                      occupancy.ownerDistanceSq >= 1.0e29f ? -1.0f : std::sqrt(occupancy.ownerDistanceSq),
+                      canForceTriggerJump ? 1 : 0,
+                      canPathJump ? 1 : 0,
+                      blockReason);
         }
 
         for (std::size_t i = 0; i < relevantAgents.size(); ++i) {
@@ -13460,27 +13782,6 @@ void SandboxScene::DrawSkeletonEditPanel(t850::DevGuiContext& gui) {
       m_showPhysics = !m_showPhysics;
     }
     ImGui::SameLine();
-    if (gui.Button(m_showNavMesh ? "NavMesh: On" : "NavMesh: Off")) {
-      m_showNavMesh = !m_showNavMesh;
-      if (m_showNavMesh && !m_navMesh.IsReady()) m_navMeshBuildAttempted = false;
-    }
-    const char* navModeOptions[] = { "Furthest loop", "Random nodes", "Follow player" };
-    ImGui::SetNextItemWidth(220.0f);
-    if (ImGui::Combo("Bot nav mode", &m_navTestMode, navModeOptions, 3)) {
-      m_navTestMode = ClampNavTestMode(m_navTestMode);
-    }
-    ImGui::SetNextItemWidth(220.0f);
-    if (ImGui::SliderFloat("Bot speed multiplier", &m_navTestSpeed, 0.0f, 10.0f, "%.2fx")) {
-      m_navTestSpeed = (std::max)(0.0f, (std::min)(10.0f, m_navTestSpeed));
-    }
-    const char* navShapeOptions[] = { "Geometry", "Nodes" };
-    ImGui::SetNextItemWidth(170.0f);
-    ImGui::Combo("NavMesh magenta", &m_navMeshDebugShapeMode, navShapeOptions, 2);
-    ImGui::SetNextItemWidth(220.0f);
-    if (ImGui::SliderFloat("NavMesh offset", &m_navMeshDebugOffset, 0.0f, 0.25f, "%.3f")) {
-      m_navMeshDebugOffset = (std::max)(0.0f, (std::min)(0.25f, m_navMeshDebugOffset));
-    }
-    ImGui::SameLine();
     if (gui.Button(m_showSkeleton ? "Skeleton Debug: On" : "Skeleton Debug: Off")) {
       m_showSkeleton = !m_showSkeleton;
     }
@@ -14760,6 +15061,29 @@ void SandboxScene::CaptureSandboxProfileState(t850::SandboxProfileDesc& state) {
   addFloat("mouse_sensitivity_y", m_mouseSensitivityY);
   addFloat("navmesh_debug_offset", m_navMeshDebugOffset);
   addFloat("nav_agent_speed_multiplier", m_navTestSpeed);
+  addFloat("navmesh_cell_size", m_navMeshBuildSettings.cellSize);
+  addFloat("navmesh_cell_height", m_navMeshBuildSettings.cellHeight);
+  addFloat("navmesh_agent_height", m_navMeshBuildSettings.agentHeight);
+  addFloat("navmesh_agent_radius", m_navMeshBuildSettings.agentRadius);
+  addFloat("navmesh_agent_max_climb", m_navMeshBuildSettings.agentMaxClimb);
+  addFloat("navmesh_agent_max_slope", m_navMeshBuildSettings.agentMaxSlope);
+  addFloat("navmesh_region_min_size", m_navMeshBuildSettings.regionMinSize);
+  addFloat("navmesh_region_merge_size", m_navMeshBuildSettings.regionMergeSize);
+  addFloat("navmesh_edge_max_len", m_navMeshBuildSettings.edgeMaxLen);
+  addFloat("navmesh_edge_max_error", m_navMeshBuildSettings.edgeMaxError);
+  addFloat("navmesh_detail_sample_dist", m_navMeshBuildSettings.detailSampleDist);
+  addFloat("navmesh_detail_sample_max_error", m_navMeshBuildSettings.detailSampleMaxError);
+  addFloat("navmesh_query_extent_x", m_navMeshBuildSettings.queryExtents.x);
+  addFloat("navmesh_query_extent_y", m_navMeshBuildSettings.queryExtents.y);
+  addFloat("navmesh_query_extent_z", m_navMeshBuildSettings.queryExtents.z);
+  addFloat("navmesh_drop_min_height", m_navMeshBuildSettings.dropLinkMinHeight);
+  addFloat("navmesh_drop_max_height", m_navMeshBuildSettings.dropLinkMaxHeight);
+  addFloat("navmesh_drop_max_horizontal", m_navMeshBuildSettings.dropLinkMaxHorizontalDistance);
+  addFloat("navmesh_drop_sample_spacing", m_navMeshBuildSettings.dropLinkSampleSpacing);
+  addFloat("navmesh_drop_link_radius", m_navMeshBuildSettings.dropLinkRadius);
+  addFloat("navmesh_jump_max_horizontal", m_navMeshBuildSettings.jumpLinkMaxHorizontalDistance);
+  addFloat("navmesh_jump_sample_spacing", m_navMeshBuildSettings.jumpLinkSampleSpacing);
+  addFloat("navmesh_jump_link_radius", m_navMeshBuildSettings.jumpLinkRadius);
 
   for (int kernelIndex = 0; kernelIndex < (int)SceneProp.pGaussKernels.size(); ++kernelIndex) {
     GaussFilter* kernel = SceneProp.pGaussKernels[kernelIndex];
@@ -14812,6 +15136,9 @@ void SandboxScene::CaptureSandboxProfileState(t850::SandboxProfileDesc& state) {
   addBool("point_lights_enabled", SceneProp.PointLightsEnabled);
   addBool("draw_direction", m_drawLightDirection);
   addBool("debug_luminance", SceneProp.DebugLuminanceEnabled);
+  addBool("navmesh_auto_drop_links", m_navMeshBuildSettings.enableAutoDropLinks);
+  addBool("navmesh_auto_jump_links", m_navMeshBuildSettings.enableAutoJumpLinks);
+  addBool("navmesh_hybrid_jump_links", m_navMeshBuildSettings.enableHybridJumpLinks);
 
   addInt("debug_render_target", m_debugRTSelection);
   addInt("cubemap", m_currentCubemapIndex);
@@ -14820,6 +15147,9 @@ void SandboxScene::CaptureSandboxProfileState(t850::SandboxProfileDesc& state) {
   addInt("active_gauss_kernel", ChangeActiveGaussSelection);
   addInt("active_light", m_selectedLightIndex);
   addInt("navmesh_debug_shape", m_navMeshDebugShapeMode);
+  addInt("nav_agent_mode", m_navTestMode);
+  addInt("navmesh_verts_per_poly", m_navMeshBuildSettings.vertsPerPoly);
+  addInt("navmesh_hybrid_max_links", m_navMeshBuildSettings.hybridJumpMaxLinks);
 
   EnsureLightRuntimeState();
   for (int lightIndex = 0; lightIndex < (int)SceneProp.Lights.size(); ++lightIndex) {
@@ -15002,6 +15332,29 @@ void SandboxScene::ApplySandboxProfileState(const t850::SandboxProfileDesc& stat
     else if (value.name == "mouse_sensitivity_y") m_mouseSensitivityY = ClampMouseSensitivity(value.value);
     else if (value.name == "navmesh_debug_offset") m_navMeshDebugOffset = (std::max)(0.0f, (std::min)(0.25f, value.value));
     else if (value.name == "nav_agent_speed_multiplier") m_navTestSpeed = (std::max)(0.0f, (std::min)(10.0f, value.value));
+    else if (value.name == "navmesh_cell_size") { m_navMeshBuildSettings.cellSize = (std::max)(0.0f, value.value); m_navMeshBuildAttempted = false; }
+    else if (value.name == "navmesh_cell_height") { m_navMeshBuildSettings.cellHeight = (std::max)(0.0f, value.value); m_navMeshBuildAttempted = false; }
+    else if (value.name == "navmesh_agent_height") { m_navMeshBuildSettings.agentHeight = (std::max)(0.1f, value.value); m_navMeshBuildAttempted = false; }
+    else if (value.name == "navmesh_agent_radius") { m_navMeshBuildSettings.agentRadius = (std::max)(0.0f, value.value); m_navMeshBuildAttempted = false; }
+    else if (value.name == "navmesh_agent_max_climb") { m_navMeshBuildSettings.agentMaxClimb = (std::max)(0.0f, value.value); m_navMeshBuildAttempted = false; }
+    else if (value.name == "navmesh_agent_max_slope") { m_navMeshBuildSettings.agentMaxSlope = std::clamp(value.value, 0.0f, 89.0f); m_navMeshBuildAttempted = false; }
+    else if (value.name == "navmesh_region_min_size") { m_navMeshBuildSettings.regionMinSize = (std::max)(0.0f, value.value); m_navMeshBuildAttempted = false; }
+    else if (value.name == "navmesh_region_merge_size") { m_navMeshBuildSettings.regionMergeSize = (std::max)(0.0f, value.value); m_navMeshBuildAttempted = false; }
+    else if (value.name == "navmesh_edge_max_len") { m_navMeshBuildSettings.edgeMaxLen = (std::max)(0.0f, value.value); m_navMeshBuildAttempted = false; }
+    else if (value.name == "navmesh_edge_max_error") { m_navMeshBuildSettings.edgeMaxError = (std::max)(0.0f, value.value); m_navMeshBuildAttempted = false; }
+    else if (value.name == "navmesh_detail_sample_dist") { m_navMeshBuildSettings.detailSampleDist = (std::max)(0.0f, value.value); m_navMeshBuildAttempted = false; }
+    else if (value.name == "navmesh_detail_sample_max_error") { m_navMeshBuildSettings.detailSampleMaxError = (std::max)(0.0f, value.value); m_navMeshBuildAttempted = false; }
+    else if (value.name == "navmesh_query_extent_x") { m_navMeshBuildSettings.queryExtents.x = (std::max)(0.05f, value.value); m_navMeshBuildAttempted = false; }
+    else if (value.name == "navmesh_query_extent_y") { m_navMeshBuildSettings.queryExtents.y = (std::max)(0.05f, value.value); m_navMeshBuildAttempted = false; }
+    else if (value.name == "navmesh_query_extent_z") { m_navMeshBuildSettings.queryExtents.z = (std::max)(0.05f, value.value); m_navMeshBuildAttempted = false; }
+    else if (value.name == "navmesh_drop_min_height") { m_navMeshBuildSettings.dropLinkMinHeight = (std::max)(0.0f, value.value); m_navMeshBuildAttempted = false; }
+    else if (value.name == "navmesh_drop_max_height") { m_navMeshBuildSettings.dropLinkMaxHeight = (std::max)(0.0f, value.value); m_navMeshBuildAttempted = false; }
+    else if (value.name == "navmesh_drop_max_horizontal") { m_navMeshBuildSettings.dropLinkMaxHorizontalDistance = (std::max)(0.0f, value.value); m_navMeshBuildAttempted = false; }
+    else if (value.name == "navmesh_drop_sample_spacing") { m_navMeshBuildSettings.dropLinkSampleSpacing = (std::max)(0.05f, value.value); m_navMeshBuildAttempted = false; }
+    else if (value.name == "navmesh_drop_link_radius") { m_navMeshBuildSettings.dropLinkRadius = (std::max)(0.05f, value.value); m_navMeshBuildAttempted = false; }
+    else if (value.name == "navmesh_jump_max_horizontal") { m_navMeshBuildSettings.jumpLinkMaxHorizontalDistance = (std::max)(0.0f, value.value); m_navMeshBuildAttempted = false; }
+    else if (value.name == "navmesh_jump_sample_spacing") { m_navMeshBuildSettings.jumpLinkSampleSpacing = (std::max)(0.05f, value.value); m_navMeshBuildAttempted = false; }
+    else if (value.name == "navmesh_jump_link_radius") { m_navMeshBuildSettings.jumpLinkRadius = (std::max)(0.05f, value.value); m_navMeshBuildAttempted = false; }
     else if (value.name == "anim_speed") { if (RenderSkinnedMesh* skinned = GetSelectedAnimationMesh()) skinned->SetAnimSpeed(value.value); }
 
     for (int kernelIndex = 0; kernelIndex < (int)SceneProp.pGaussKernels.size(); ++kernelIndex) {
@@ -15030,6 +15383,9 @@ void SandboxScene::ApplySandboxProfileState(const t850::SandboxProfileDesc& stat
       SceneProp.DebugLuminanceEnabled = value.value;
       if (!value.value) SceneProp.DebugAdaptedLuminanceValid = false;
     }
+    else if (value.name == "navmesh_auto_drop_links") { m_navMeshBuildSettings.enableAutoDropLinks = value.value; m_navMeshBuildAttempted = false; }
+    else if (value.name == "navmesh_auto_jump_links") { m_navMeshBuildSettings.enableAutoJumpLinks = value.value; m_navMeshBuildAttempted = false; }
+    else if (value.name == "navmesh_hybrid_jump_links") { m_navMeshBuildSettings.enableHybridJumpLinks = value.value; m_navMeshBuildAttempted = false; }
   }
 
   for (const auto& value : state.selectors) {
@@ -15050,6 +15406,17 @@ void SandboxScene::ApplySandboxProfileState(const t850::SandboxProfileDesc& stat
     }
     else if (value.name == "active_gauss_kernel") ChangeActiveGaussSelection = value.value;
     else if (value.name == "navmesh_debug_shape") m_navMeshDebugShapeMode = (std::max)(0, (std::min)(1, value.value));
+    else if (value.name == "nav_agent_mode") {
+      m_navTestMode = ClampNavTestMode(value.value);
+    }
+    else if (value.name == "navmesh_verts_per_poly") {
+      m_navMeshBuildSettings.vertsPerPoly = std::clamp(value.value, 3, 12);
+      m_navMeshBuildAttempted = false;
+    }
+    else if (value.name == "navmesh_hybrid_max_links") {
+      m_navMeshBuildSettings.hybridJumpMaxLinks = (std::max)(0, value.value);
+      m_navMeshBuildAttempted = false;
+    }
     else if (value.name == "animation_model") {
       if (GetSkinnedMeshForIndex(value.value)) {
         m_selectedAnimationMeshIndex = value.value;
@@ -16220,35 +16587,223 @@ void SandboxScene::DrawDevGui(t850::DevGuiContext& gui) {
     drawSliderByName("anim_speed");
   }
 
+  if (gui.BeginSection("NavMesh")) {
+    bool navRebuildRequested = false;
+    auto requestNavRebuild = [&]() {
+      navRebuildRequested = true;
+    };
+    auto rebuildNavMeshNow = [&](bool resetAgentsToSceneStart) {
+      m_navMesh.Clear();
+      m_navMeshBuildAttempted = false;
+      m_navMeshDebugRenderer.Invalidate();
+      m_navTestInitialized = false;
+      m_navTestAgents.clear();
+      const bool rebuilt = EnsureNavMeshBuilt();
+      if (rebuilt && resetAgentsToSceneStart) {
+        InitializeNavTestAgents();
+      }
+      T8_LOG_INFO("[Navigation] Auto re-create requested: result=%s elapsed=%.2fms source=%s",
+                  rebuilt ? "ok" : "failed",
+                  m_navMeshLastBuildMs,
+                  m_navMeshLastBuildFromCache ? "cache" : "build");
+    };
+    auto savedFloat = [&](const char* name, float fallback) {
+      if (const auto* value = FindFloatOverride(m_profileSavedState.sliders, name)) {
+        return value->value;
+      }
+      return fallback;
+    };
+    auto savedBool = [&](const char* name, bool fallback) {
+      if (const auto* value = FindBoolOverride(m_profileSavedState.checkboxes, name)) {
+        return value->value;
+      }
+      return fallback;
+    };
+    auto savedInt = [&](const char* name, int fallback) {
+      if (const auto* value = FindIntOverride(m_profileSavedState.selectors, name)) {
+        return value->value;
+      }
+      return fallback;
+    };
+    auto restoreSavedNavSettings = [&]() {
+      t850::navigation::NavMeshBuildSettings defaults;
+      m_navMeshDebugOffset = savedFloat("navmesh_debug_offset", 0.01f);
+      m_navTestSpeed = savedFloat("nav_agent_speed_multiplier", 3.0f);
+      m_navMeshBuildSettings.cellSize = savedFloat("navmesh_cell_size", defaults.cellSize);
+      m_navMeshBuildSettings.cellHeight = savedFloat("navmesh_cell_height", defaults.cellHeight);
+      m_navMeshBuildSettings.agentHeight = savedFloat("navmesh_agent_height", defaults.agentHeight);
+      m_navMeshBuildSettings.agentRadius = savedFloat("navmesh_agent_radius", defaults.agentRadius);
+      m_navMeshBuildSettings.agentMaxClimb = savedFloat("navmesh_agent_max_climb", defaults.agentMaxClimb);
+      m_navMeshBuildSettings.agentMaxSlope = savedFloat("navmesh_agent_max_slope", defaults.agentMaxSlope);
+      m_navMeshBuildSettings.regionMinSize = savedFloat("navmesh_region_min_size", defaults.regionMinSize);
+      m_navMeshBuildSettings.regionMergeSize = savedFloat("navmesh_region_merge_size", defaults.regionMergeSize);
+      m_navMeshBuildSettings.edgeMaxLen = savedFloat("navmesh_edge_max_len", defaults.edgeMaxLen);
+      m_navMeshBuildSettings.edgeMaxError = savedFloat("navmesh_edge_max_error", defaults.edgeMaxError);
+      m_navMeshBuildSettings.detailSampleDist = savedFloat("navmesh_detail_sample_dist", defaults.detailSampleDist);
+      m_navMeshBuildSettings.detailSampleMaxError = savedFloat("navmesh_detail_sample_max_error", defaults.detailSampleMaxError);
+      m_navMeshBuildSettings.queryExtents.x = savedFloat("navmesh_query_extent_x", defaults.queryExtents.x);
+      m_navMeshBuildSettings.queryExtents.y = savedFloat("navmesh_query_extent_y", defaults.queryExtents.y);
+      m_navMeshBuildSettings.queryExtents.z = savedFloat("navmesh_query_extent_z", defaults.queryExtents.z);
+      m_navMeshBuildSettings.queryExtents.w = 0.0f;
+      m_navMeshBuildSettings.dropLinkMinHeight = savedFloat("navmesh_drop_min_height", defaults.dropLinkMinHeight);
+      m_navMeshBuildSettings.dropLinkMaxHeight = savedFloat("navmesh_drop_max_height", defaults.dropLinkMaxHeight);
+      m_navMeshBuildSettings.dropLinkMaxHorizontalDistance = savedFloat("navmesh_drop_max_horizontal", defaults.dropLinkMaxHorizontalDistance);
+      m_navMeshBuildSettings.dropLinkSampleSpacing = savedFloat("navmesh_drop_sample_spacing", defaults.dropLinkSampleSpacing);
+      m_navMeshBuildSettings.dropLinkRadius = savedFloat("navmesh_drop_link_radius", defaults.dropLinkRadius);
+      m_navMeshBuildSettings.jumpLinkMaxHorizontalDistance = savedFloat("navmesh_jump_max_horizontal", defaults.jumpLinkMaxHorizontalDistance);
+      m_navMeshBuildSettings.jumpLinkSampleSpacing = savedFloat("navmesh_jump_sample_spacing", defaults.jumpLinkSampleSpacing);
+      m_navMeshBuildSettings.jumpLinkRadius = savedFloat("navmesh_jump_link_radius", defaults.jumpLinkRadius);
+      m_navMeshBuildSettings.enableAutoDropLinks = savedBool("navmesh_auto_drop_links", defaults.enableAutoDropLinks);
+      m_navMeshBuildSettings.enableAutoJumpLinks = savedBool("navmesh_auto_jump_links", defaults.enableAutoJumpLinks);
+      m_navMeshBuildSettings.enableHybridJumpLinks = savedBool("navmesh_hybrid_jump_links", defaults.enableHybridJumpLinks);
+      m_navTestMode = ClampNavTestMode(savedInt("nav_agent_mode", kNavTestModeFollowPlayer));
+      m_navMeshDebugShapeMode = std::clamp(savedInt("navmesh_debug_shape", 0), 0, 1);
+      m_navMeshBuildSettings.vertsPerPoly = std::clamp(savedInt("navmesh_verts_per_poly", defaults.vertsPerPoly), 3, 12);
+      m_navMeshBuildSettings.hybridJumpMaxLinks = (std::max)(0, savedInt("navmesh_hybrid_max_links", defaults.hybridJumpMaxLinks));
+    };
+    auto navSlider = [&](const char* label, float& value, float minValue, float maxValue, const char* format = "%.3f") {
+      ImGui::SetNextItemWidth(240.0f);
+      const bool changed = ImGui::SliderFloat(label, &value, minValue, maxValue, format);
+      if (changed) {
+        value = std::clamp(value, minValue, maxValue);
+      }
+      if (ImGui::IsItemDeactivatedAfterEdit()) {
+        requestNavRebuild();
+      }
+    };
+    auto navSliderInt = [&](const char* label, int& value, int minValue, int maxValue) {
+      ImGui::SetNextItemWidth(240.0f);
+      const bool changed = ImGui::SliderInt(label, &value, minValue, maxValue);
+      if (changed) {
+        value = std::clamp(value, minValue, maxValue);
+      }
+      if (ImGui::IsItemDeactivatedAfterEdit()) {
+        requestNavRebuild();
+      }
+    };
+    if (gui.Button(m_showNavMesh ? "Display: On" : "Display: Off")) {
+      m_showNavMesh = !m_showNavMesh;
+      if (m_showNavMesh && !m_navMesh.IsReady()) m_navMeshBuildAttempted = false;
+    }
+    ImGui::SameLine();
+    if (ImGui::Button("Default")) {
+      restoreSavedNavSettings();
+      navRebuildRequested = true;
+      rebuildNavMeshNow(true);
+      navRebuildRequested = false;
+    }
+    ImGui::SameLine();
+    if (ImGui::Button("Q3 preset")) {
+      m_navMeshBuildSettings.cellSize = 0.10f;
+      m_navMeshBuildSettings.cellHeight = 0.05f;
+      m_navMeshBuildSettings.agentHeight = 56.0f / 32.0f;
+      m_navMeshBuildSettings.agentRadius = 15.0f / 32.0f;
+      m_navMeshBuildSettings.agentMaxClimb = 18.0f / 32.0f;
+      m_navMeshBuildSettings.agentMaxSlope = 45.0f;
+      m_navMeshBuildSettings.regionMinSize = 4.0f;
+      m_navMeshBuildSettings.regionMergeSize = 12.0f;
+      m_navMeshBuildSettings.edgeMaxLen = 4.0f;
+      m_navMeshBuildSettings.edgeMaxError = 0.35f;
+      m_navMeshBuildSettings.detailSampleDist = 1.0f;
+      m_navMeshBuildSettings.detailSampleMaxError = 0.25f;
+      m_navMeshBuildSettings.queryExtents = XVECTOR3(2.0f, 4.0f, 2.0f, 0.0f);
+      navRebuildRequested = true;
+    }
+    if (m_navMesh.IsReady()) {
+      const t850::navigation::NavMeshBuildStats& stats = m_navMesh.GetStats();
+      ImGui::Text("Ready: polys=%d verts=%d tris=%d offMesh=%d drop=%d jump=%d jumpPad=%d",
+                  stats.polygonCount,
+                  stats.vertexCount,
+                  stats.triangleCount,
+                  stats.offMeshLinkCount,
+                  stats.dropLinkCount,
+                  stats.jumpLinkCount,
+                  stats.jumpPadLinkCount);
+      ImGui::Text("Last %s: %.2f ms", m_navMeshLastBuildFromCache ? "cache load" : "build", m_navMeshLastBuildMs);
+    } else {
+      ImGui::TextDisabled("NavMesh is not built. Change a value, press Default/Q3 preset, or enable display.");
+    }
+    ImGui::TextDisabled("Slider changes rebuild when released; cache keys include these values. Default restores saved profile values.");
+
+    const char* navModeOptions[] = { "Furthest loop", "Random nodes", "Follow player" };
+    ImGui::SetNextItemWidth(220.0f);
+    if (ImGui::Combo("Bot behavior", &m_navTestMode, navModeOptions, 3)) {
+      m_navTestMode = ClampNavTestMode(m_navTestMode);
+      m_navTestInitialized = false;
+      m_navTestAgents.clear();
+    }
+    ImGui::SetNextItemWidth(220.0f);
+    if (ImGui::SliderFloat("Bot speed multiplier", &m_navTestSpeed, 0.0f, 10.0f, "%.2fx")) {
+      m_navTestSpeed = (std::max)(0.0f, (std::min)(10.0f, m_navTestSpeed));
+    }
+    const char* navShapeOptions[] = { "Geometry", "Nodes" };
+    ImGui::SetNextItemWidth(180.0f);
+    ImGui::Combo("Debug shape", &m_navMeshDebugShapeMode, navShapeOptions, 2);
+    ImGui::SetNextItemWidth(220.0f);
+    if (ImGui::SliderFloat("Debug vertical offset", &m_navMeshDebugOffset, 0.0f, 0.25f, "%.3f")) {
+      m_navMeshDebugOffset = (std::max)(0.0f, (std::min)(0.25f, m_navMeshDebugOffset));
+    }
+
+    if (ImGui::CollapsingHeader("Rasterization", ImGuiTreeNodeFlags_DefaultOpen)) {
+      navSlider("Cell size", m_navMeshBuildSettings.cellSize, 0.0f, 1.0f);
+      navSlider("Cell height", m_navMeshBuildSettings.cellHeight, 0.0f, 1.0f);
+    }
+    if (ImGui::CollapsingHeader("Agent", ImGuiTreeNodeFlags_DefaultOpen)) {
+      navSlider("Agent height", m_navMeshBuildSettings.agentHeight, 0.1f, 5.0f);
+      navSlider("Agent radius", m_navMeshBuildSettings.agentRadius, 0.0f, 2.0f);
+      navSlider("Agent max climb", m_navMeshBuildSettings.agentMaxClimb, 0.0f, 3.0f);
+      navSlider("Agent max slope", m_navMeshBuildSettings.agentMaxSlope, 0.0f, 89.0f, "%.1f");
+    }
+    if (ImGui::CollapsingHeader("Regions and contours")) {
+      navSlider("Region min size", m_navMeshBuildSettings.regionMinSize, 0.0f, 128.0f, "%.1f");
+      navSlider("Region merge size", m_navMeshBuildSettings.regionMergeSize, 0.0f, 128.0f, "%.1f");
+      navSlider("Edge max len", m_navMeshBuildSettings.edgeMaxLen, 0.0f, 64.0f, "%.1f");
+      navSlider("Edge max error", m_navMeshBuildSettings.edgeMaxError, 0.0f, 8.0f, "%.2f");
+      navSliderInt("Verts per poly", m_navMeshBuildSettings.vertsPerPoly, 3, 12);
+    }
+    if (ImGui::CollapsingHeader("Detail and queries")) {
+      navSlider("Detail sample dist", m_navMeshBuildSettings.detailSampleDist, 0.0f, 16.0f, "%.2f");
+      navSlider("Detail max error", m_navMeshBuildSettings.detailSampleMaxError, 0.0f, 8.0f, "%.2f");
+      ImGui::SetNextItemWidth(300.0f);
+      const bool queryChanged = ImGui::SliderFloat3("Query extents", &m_navMeshBuildSettings.queryExtents.x, 0.05f, 16.0f, "%.2f");
+      if (queryChanged) {
+        m_navMeshBuildSettings.queryExtents.x = (std::max)(0.05f, m_navMeshBuildSettings.queryExtents.x);
+        m_navMeshBuildSettings.queryExtents.y = (std::max)(0.05f, m_navMeshBuildSettings.queryExtents.y);
+        m_navMeshBuildSettings.queryExtents.z = (std::max)(0.05f, m_navMeshBuildSettings.queryExtents.z);
+      }
+      if (ImGui::IsItemDeactivatedAfterEdit()) {
+        requestNavRebuild();
+      }
+      m_navMeshBuildSettings.queryExtents.w = 0.0f;
+    }
+    if (ImGui::CollapsingHeader("Generated traversal links")) {
+      if (ImGui::Checkbox("Auto drop links", &m_navMeshBuildSettings.enableAutoDropLinks)) requestNavRebuild();
+      navSlider("Drop min height", m_navMeshBuildSettings.dropLinkMinHeight, 0.0f, 64.0f, "%.2f");
+      navSlider("Drop max height", m_navMeshBuildSettings.dropLinkMaxHeight, 0.0f, 128.0f, "%.2f");
+      navSlider("Drop max horizontal", m_navMeshBuildSettings.dropLinkMaxHorizontalDistance, 0.0f, 16.0f, "%.2f");
+      navSlider("Drop sample spacing", m_navMeshBuildSettings.dropLinkSampleSpacing, 0.05f, 8.0f, "%.2f");
+      navSlider("Drop link radius", m_navMeshBuildSettings.dropLinkRadius, 0.05f, 4.0f, "%.2f");
+      ImGui::Separator();
+      if (ImGui::Checkbox("Auto jump links", &m_navMeshBuildSettings.enableAutoJumpLinks)) requestNavRebuild();
+      navSlider("Jump max horizontal", m_navMeshBuildSettings.jumpLinkMaxHorizontalDistance, 0.0f, 32.0f, "%.2f");
+      navSlider("Jump sample spacing", m_navMeshBuildSettings.jumpLinkSampleSpacing, 0.05f, 8.0f, "%.2f");
+      navSlider("Jump link radius", m_navMeshBuildSettings.jumpLinkRadius, 0.05f, 4.0f, "%.2f");
+      ImGui::Separator();
+      if (ImGui::Checkbox("Hybrid jump-intent links", &m_navMeshBuildSettings.enableHybridJumpLinks)) requestNavRebuild();
+      navSliderInt("Hybrid max links", m_navMeshBuildSettings.hybridJumpMaxLinks, 0, 4096);
+      if (m_q3CollisionWorld && m_q3CollisionWorld->GetReachabilityCount() > 0) {
+        ImGui::TextDisabled("Q3 AAS reachabilities are active; generated drop/jump/hybrid links are ignored for this map.");
+      }
+    }
+    if (navRebuildRequested) {
+      rebuildNavMeshNow(false);
+    }
+  }
+
   if (gui.BeginSection("Debug Views")) {
     drawCheckboxByName("show_wireframe");
     drawCheckboxByName("show_skeleton");
     drawCheckboxByName("show_physics");
-    drawCheckboxByName("show_navmesh");
-    t850::SliderDesc navOffsetDesc;
-    navOffsetDesc.name = "navmesh_debug_offset";
-    navOffsetDesc.label = "NavMesh offset";
-    navOffsetDesc.min_val = 0.0f;
-    navOffsetDesc.max_val = 0.25f;
-    navOffsetDesc.step = 0.001f;
-    navOffsetDesc.default_val = 0.01f;
-    gui.Slider(navOffsetDesc, m_navMeshDebugOffset);
-    const char* navModeOptions[] = { "Furthest loop", "Random nodes", "Follow player" };
-    ImGui::SetNextItemWidth(220.0f);
-    if (ImGui::Combo("Bot nav mode", &m_navTestMode, navModeOptions, 3)) {
-      m_navTestMode = ClampNavTestMode(m_navTestMode);
-    }
-    t850::SliderDesc navSpeedDesc;
-    navSpeedDesc.name = "nav_agent_speed_multiplier";
-    navSpeedDesc.label = "Bot speed multiplier";
-    navSpeedDesc.min_val = 0.0f;
-    navSpeedDesc.max_val = 10.0f;
-    navSpeedDesc.step = 0.1f;
-    navSpeedDesc.default_val = 3.0f;
-    gui.Slider(navSpeedDesc, m_navTestSpeed);
-    const char* navShapeOptions[] = { "Geometry", "Nodes" };
-    ImGui::SetNextItemWidth(180.0f);
-    ImGui::Combo("NavMesh magenta", &m_navMeshDebugShapeMode, navShapeOptions, 2);
     drawCheckboxByName("show_light_volumes");
   }
 

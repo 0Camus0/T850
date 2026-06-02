@@ -30,6 +30,9 @@ public:
 
   struct Brush {
     std::vector<Plane> planes;
+    XVECTOR3 mins = XVECTOR3(0.0f, 0.0f, 0.0f, 1.0f);
+    XVECTOR3 maxs = XVECTOR3(0.0f, 0.0f, 0.0f, 1.0f);
+    bool hasBounds = false;
   };
 
   struct PatchFacet {

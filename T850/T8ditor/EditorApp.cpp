@@ -1156,6 +1156,127 @@ void EditorApp::CheckResize() {
 #endif
 }
 
+void EditorApp::RenderLoadingProgressFrame() {
+  if (!pFramework || !pFramework->pVideoDriver || !m_imguiReady)
+    return;
+
+  t850::BaseDriver* drv = pFramework->pVideoDriver;
+  const t850::LoadingProgress::Snapshot snapshot = t850::LoadingProgress::GetSnapshot();
+  if (!snapshot.active)
+    return;
+
+  drv->BeginFrame();
+  drv->Clear();
+
+  ImGuiNewFrame();
+
+  const ImGuiViewport* viewport = ImGui::GetMainViewport();
+  const ImVec2 viewportSize = viewport ? viewport->Size : ImVec2((float)m_lastW, (float)m_lastH);
+  const ImVec2 center = viewport ? viewport->GetCenter() : ImVec2(viewportSize.x * 0.5f, viewportSize.y * 0.5f);
+  const ImGuiStyle& style = ImGui::GetStyle();
+  const std::string phaseText = snapshot.phase.empty() ? "Loading" : snapshot.phase;
+  const std::string itemText = snapshot.item;
+  const std::string detailText = snapshot.detail;
+
+  auto measureText = [](const std::string& text) -> float {
+    return text.empty() ? 0.0f : ImGui::CalcTextSize(text.c_str()).x;
+  };
+
+  const float maxViewportWidth = (std::max)(420.0f, viewportSize.x * 0.85f);
+  const float desiredTextWidth = (std::max)({
+      measureText(phaseText),
+      measureText(itemText),
+      measureText(detailText),
+      360.0f
+  });
+  const float windowWidth = std::clamp(desiredTextWidth + style.WindowPadding.x * 2.0f + 32.0f,
+                                       420.0f,
+                                       maxViewportWidth);
+  const float contentWidth = windowWidth - style.WindowPadding.x * 2.0f;
+  const float progressBarWidth = std::clamp(contentWidth * 0.86f, 320.0f, contentWidth);
+
+  auto wrappedLineCount = [&](const std::string& text) -> int {
+    if (text.empty()) {
+      return 0;
+    }
+    const float textWidth = measureText(text);
+    return (std::max)(1, static_cast<int>(std::ceil(textWidth / (std::max)(1.0f, contentWidth))));
+  };
+
+  const int labelLines =
+      wrappedLineCount(phaseText) +
+      wrappedLineCount(itemText) +
+      wrappedLineCount(detailText);
+  const float progressBarHeight = ImGui::GetFrameHeight();
+  const float windowHeight =
+      style.WindowPadding.y * 2.0f +
+      ImGui::GetFrameHeight() +
+      (std::max)(1, labelLines) * ImGui::GetTextLineHeightWithSpacing() +
+      progressBarHeight +
+      style.ItemSpacing.y * 4.0f;
+
+  ImGui::SetNextWindowPos(center, ImGuiCond_Always, ImVec2(0.5f, 0.5f));
+  ImGui::SetNextWindowSize(ImVec2(windowWidth, windowHeight), ImGuiCond_Always);
+  const ImGuiWindowFlags flags =
+      ImGuiWindowFlags_NoCollapse |
+      ImGuiWindowFlags_NoResize |
+      ImGuiWindowFlags_NoMove |
+      ImGuiWindowFlags_NoSavedSettings;
+
+  if (ImGui::Begin("Loading Scene", nullptr, flags)) {
+    auto drawCenteredText = [](const std::string& text, bool disabled = false) {
+      if (text.empty()) {
+        return;
+      }
+      const float avail = ImGui::GetContentRegionAvail().x;
+      std::size_t begin = 0;
+      while (begin < text.size()) {
+        std::size_t end = text.size();
+        while (end > begin + 1 &&
+               ImGui::CalcTextSize(text.substr(begin, end - begin).c_str()).x > avail) {
+          --end;
+        }
+
+        std::string line = text.substr(begin, end - begin);
+        const float textWidth = ImGui::CalcTextSize(line.c_str()).x;
+        if (textWidth < avail) {
+          ImGui::SetCursorPosX(ImGui::GetCursorPosX() + (avail - textWidth) * 0.5f);
+        }
+        if (disabled) {
+          ImGui::TextDisabled("%s", line.c_str());
+        } else {
+          ImGui::TextUnformatted(line.c_str());
+        }
+
+        begin = end;
+        while (begin < text.size() && text[begin] == ' ') {
+          ++begin;
+        }
+      }
+    };
+
+    drawCenteredText(phaseText);
+    drawCenteredText(itemText);
+    drawCenteredText(detailText, true);
+
+    ImGui::Spacing();
+    const float fraction = std::clamp(snapshot.percent / 100.0f, 0.0f, 1.0f);
+    char percentText[32] = {};
+    std::snprintf(percentText, sizeof(percentText), "%.0f%%", snapshot.percent);
+    ImGui::SetCursorPosX(ImGui::GetCursorPosX() + (ImGui::GetContentRegionAvail().x - progressBarWidth) * 0.5f);
+    ImGui::ProgressBar(fraction, ImVec2(progressBarWidth, progressBarHeight), percentText);
+  }
+  ImGui::End();
+
+  if (m_panels.showConsole) {
+    ImGuiDrawConsolePanel();
+  }
+
+  ImGuiRender();
+  drv->SwapBuffers();
+  drv->EndFrame();
+}
+
 void EditorApp::OnUpdate() {
   m_dtTimer.Update();
   m_dtSecs = m_dtTimer.GetDTSecs();
@@ -1164,38 +1285,82 @@ void EditorApp::OnUpdate() {
 
   // Execute deferred scene load BEFORE any GPU work this frame
   if (!g_pendingLoadPath.empty()) {
+    const std::string loadPath = g_pendingLoadPath;
+    auto lastLoadingLine = std::make_shared<std::string>();
+    auto loadingCallback = [this, lastLoadingLine]() {
+      const t850::LoadingProgress::Snapshot snapshot = t850::LoadingProgress::GetSnapshot();
+      const std::string line = FormatLoadingProgressForConsole(snapshot);
+      if (!line.empty() && line != *lastLoadingLine) {
+        *lastLoadingLine = line;
+        T8_LOG_INFO("%s", line.c_str());
+      }
+      RenderLoadingProgressFrame();
+    };
+
+    t850::LoadingProgress::Reset(100.0f, "Loading scene", loadPath, "Reading scene file");
+    t850::LoadingProgress::SetFrameCallback(loadingCallback);
+    t850::LoadingProgress::RequestFrame(true);
+
     SceneFile sf;
-    if (LoadSceneFromFile(g_pendingLoadPath, sf)) {
+    bool sceneLoaded = false;
+    {
+      t850::LoadingProgress::ScopedStep sceneFileStep("Loading scene", loadPath, 4.0f);
+      sceneLoaded = LoadSceneFromFile(loadPath, sf);
+    }
+
+    if (sceneLoaded) {
+      const float objectCount = (std::max)(1.0f, static_cast<float>(sf.objects.size()));
+      const float totalWeight = 25.0f + objectCount * 20.0f;
+      const float objectWeight = 12.0f;
+      t850::LoadingProgress::Reset(totalWeight, "Loading scene", loadPath, "Preparing scene");
+      t850::LoadingProgress::SetFrameCallback(loadingCallback);
+      t850::LoadingProgress::RequestFrame(true);
+
       g_loadedSceneFile = sf;
       g_hasLoadedSceneFile = true;
 
       // Flush all GPU work from previous frames
-      pFramework->pVideoDriver->WaitForGPU();
+      {
+        t850::LoadingProgress::ScopedStep gpuStep("Preparing scene", "Waiting for GPU", 2.0f);
+        pFramework->pVideoDriver->WaitForGPU();
+      }
 
       // Destroy old scene
-      DestroyAllObjectRagdolls();
-      m_primMgr.DestroyPrimitives();
-      g_objects.clear();
-      g_cameras.clear();
-      g_lights.clear();
-      g_selectedIdx = -1;
-      g_selectionType = 0;
-      g_activeCameraIdx = -1;
-      g_multiSelect.clear();
-      g_groups.clear();
-      g_activeGroupIdx = -1;
-      g_undoStack.Clear();
-      g_unloadedSceneObjects.clear();
-      g_sceneCollisionResourcePath = ResolveSceneCollisionPath(sf, g_pendingLoadPath);
+      {
+        t850::LoadingProgress::ScopedStep cleanupStep("Preparing scene", "Clearing current scene", 3.0f);
+        DestroyAllObjectRagdolls();
+        m_primMgr.DestroyPrimitives();
+        g_objects.clear();
+        g_cameras.clear();
+        g_lights.clear();
+        g_selectedIdx = -1;
+        g_selectionType = 0;
+        g_activeCameraIdx = -1;
+        g_multiSelect.clear();
+        g_groups.clear();
+        g_activeGroupIdx = -1;
+        g_undoStack.Clear();
+        g_unloadedSceneObjects.clear();
+      }
+
+      g_sceneCollisionResourcePath = ResolveSceneCollisionPath(sf, loadPath);
       g_sceneProfiles = sf.profiles;
-      LoadSceneCollisionClip(g_sceneCollisionResourcePath);
-      m_primMgr.SetEngineContext(&t850::GetEngineContext());
-      m_primMgr.Init();
-      m_primMgr.SetVP(&m_vp);
-      m_primMgr.SetSceneProps(&m_sceneProps);
+      {
+        t850::LoadingProgress::ScopedStep collisionStep("Loading scene", "Collision data", 4.0f);
+        LoadSceneCollisionClip(g_sceneCollisionResourcePath);
+      }
+
+      {
+        t850::LoadingProgress::ScopedStep managerStep("Preparing scene", "Primitive manager", 3.0f);
+        m_primMgr.SetEngineContext(&t850::GetEngineContext());
+        m_primMgr.Init();
+        m_primMgr.SetVP(&m_vp);
+        m_primMgr.SetSceneProps(&m_sceneProps);
+      }
 
       // Recreate deferred quads from fresh QUAD primitive
       if (g_deferredReady) {
+        t850::LoadingProgress::ScopedStep graphStep("Preparing scene", "Render graph quads", 3.0f);
         for (int i = 0; i < 8; ++i) {
           g_quads[i].CreateInstance(m_primMgr.GetPrimitive(t850::PrimitiveManager::QUAD), &g_quadVP);
           g_quads[i].Update();
@@ -1217,8 +1382,15 @@ void EditorApp::OnUpdate() {
       }
 
       // Load mesh objects
-      for (auto& od : sf.objects) {
+      for (std::size_t objectIndex = 0; objectIndex < sf.objects.size(); ++objectIndex) {
+        const auto& od = sf.objects[objectIndex];
         const std::string meshPath = od.mesh.empty() ? od.name : od.mesh;
+        t850::LoadingProgress::ScopedStep objectStep(
+            "Loading scene object",
+            od.name.empty() ? meshPath : od.name,
+            objectWeight);
+        t850::LoadingProgress::SetDetail(
+            "Model " + std::to_string(objectIndex + 1) + "/" + std::to_string(sf.objects.size()) + ": " + meshPath);
         const std::size_t objectCountBeforeImport = g_objects.size();
         ImportMesh(meshPath);
         if (g_objects.size() > objectCountBeforeImport) {
@@ -1253,41 +1425,56 @@ void EditorApp::OnUpdate() {
       }
 
       // Load cameras
-      for (auto& cd : sf.cameras) {
-        SceneCamera c;
-        c.name = cd.name; c.type = (CameraType)cd.type;
-        c.position = XVECTOR3(cd.position.x, cd.position.y, cd.position.z);
-        c.target = XVECTOR3(cd.target.x, cd.target.y, cd.target.z);
-        c.fovDeg = cd.fov_deg; c.orthoW = cd.ortho_w; c.orthoH = cd.ortho_h;
-        c.nearPlane = cd.near_plane; c.farPlane = cd.far_plane;
-        c.visible = cd.visible; c.frozen = cd.frozen;
-        g_cameras.push_back(c);
+      {
+        t850::LoadingProgress::ScopedStep cameraStep("Loading scene", "Cameras", 2.0f);
+        for (auto& cd : sf.cameras) {
+          SceneCamera c;
+          c.name = cd.name; c.type = (CameraType)cd.type;
+          c.position = XVECTOR3(cd.position.x, cd.position.y, cd.position.z);
+          c.target = XVECTOR3(cd.target.x, cd.target.y, cd.target.z);
+          c.fovDeg = cd.fov_deg; c.orthoW = cd.ortho_w; c.orthoH = cd.ortho_h;
+          c.nearPlane = cd.near_plane; c.farPlane = cd.far_plane;
+          c.visible = cd.visible; c.frozen = cd.frozen;
+          g_cameras.push_back(c);
+        }
       }
 
       // Load lights
-      for (auto& ld : sf.lights) {
-        SceneLight l;
-        l.name = ld.name; l.type = (EditorLightType)ld.type;
-        l.position = XVECTOR3(ld.position.x, ld.position.y, ld.position.z);
-        l.direction = XVECTOR3(ld.direction.x, ld.direction.y, ld.direction.z);
-        l.color = XVECTOR3(ld.color.x, ld.color.y, ld.color.z);
-        l.intensity = ld.intensity; l.radius = ld.radius; l.enabled = ld.enabled;
-        l.visible = ld.visible; l.frozen = ld.frozen;
-        l.q3 = ld.q3;
-        g_lights.push_back(l);
+      {
+        t850::LoadingProgress::ScopedStep lightsStep("Loading scene", "Lights", 3.0f);
+        for (auto& ld : sf.lights) {
+          SceneLight l;
+          l.name = ld.name; l.type = (EditorLightType)ld.type;
+          l.position = XVECTOR3(ld.position.x, ld.position.y, ld.position.z);
+          l.direction = XVECTOR3(ld.direction.x, ld.direction.y, ld.direction.z);
+          l.color = XVECTOR3(ld.color.x, ld.color.y, ld.color.z);
+          l.intensity = ld.intensity; l.radius = ld.radius; l.enabled = ld.enabled;
+          l.visible = ld.visible; l.frozen = ld.frozen;
+          l.q3 = ld.q3;
+          g_lights.push_back(l);
+        }
       }
 
       // Restore editor state
-      m_panels.showSkybox    = sf.editor.show_skybox;
-      m_panels.showWireframe = sf.editor.show_wireframe;
-      m_camera.SetTarget(XVECTOR3(sf.editor.camera_target.x,
-                                   sf.editor.camera_target.y,
-                                   sf.editor.camera_target.z));
-      m_camera.SetOrbitState(sf.editor.camera_yaw,
-                             sf.editor.camera_pitch,
-                             sf.editor.camera_distance);
-      g_selectedIdx = -1;
+      {
+        t850::LoadingProgress::ScopedStep editorStateStep("Loading scene", "Editor state", 3.0f);
+        m_panels.showSkybox    = sf.editor.show_skybox;
+        m_panels.showWireframe = sf.editor.show_wireframe;
+        m_camera.SetTarget(XVECTOR3(sf.editor.camera_target.x,
+                                     sf.editor.camera_target.y,
+                                     sf.editor.camera_target.z));
+        m_camera.SetOrbitState(sf.editor.camera_yaw,
+                               sf.editor.camera_pitch,
+                               sf.editor.camera_distance);
+        g_selectedIdx = -1;
+      }
+
+      t850::LoadingProgress::Complete("Scene loaded", loadPath);
+    } else {
+      t850::LoadingProgress::Complete("Scene load failed", loadPath);
     }
+    t850::LoadingProgress::ClearFrameCallback();
+    t850::LoadingProgress::Clear();
     g_pendingLoadPath.clear();
   }
 

@@ -178,6 +178,9 @@ public:
   t850::PhysicsDebugRenderer m_physicsDebugRenderer;
   t850::navigation::NavMeshDebugRenderer m_navMeshDebugRenderer;
   t850::navigation::NavMesh m_navMesh;
+  t850::navigation::NavMeshBuildSettings m_navMeshBuildSettings;
+  float m_navMeshLastBuildMs = 0.0f;
+  bool m_navMeshLastBuildFromCache = false;
   t850::VertexBuffer* m_lightArrowVB = nullptr;
   t850::IndexBuffer* m_lightArrowIB = nullptr;
   unsigned m_lightArrowIndexCount = 0;
@@ -237,6 +240,7 @@ public:
     t850::KinematicCharacterController physicsController;
     XVECTOR3 physicsTraversalStart = XVECTOR3(0.0f, 0.0f, 0.0f, 1.0f);
     XVECTOR3 physicsTarget = XVECTOR3(0.0f, 0.0f, 0.0f, 1.0f);
+    XVECTOR3 physicsLastNavPosition = XVECTOR3(0.0f, 0.0f, 0.0f, 1.0f);
     std::vector<XVECTOR3> path;
     std::vector<t850::navigation::NavTraversalType> pathSegmentTypes;
     std::string lastPathError;
@@ -246,6 +250,8 @@ public:
     unsigned int pathGeneration = 0;
     float repathCooldownSec = 0.0f;
     float physicsTraversalTimeSec = 0.0f;
+    float physicsTraversalDurationSec = 0.0f;
+    float physicsStuckTimeSec = 0.0f;
     float frontYawOffsetDeg = 0.0f;
     float faceYawSign = 1.0f;
     t850::navigation::NavTraversalType physicsTraversalType = t850::navigation::NavTraversalType::Walk;

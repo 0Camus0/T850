@@ -94,6 +94,8 @@ public:
   void SetWireframeDepthTex(Texture* depthTex) { m_wireDepthTex = depthTex; }
   void SetWireframeViewport(int w, int h) { m_wireViewW = w; m_wireViewH = h; }
 
+  bool GetSkeletonLocalAABB(RenderMesh::AABB& outBounds) const;
+
 private:
   // Extended CBuffer with bone matrices appended (matrix skinning path)
   struct CBufferSkinned {

@@ -168,6 +168,69 @@ static t850::RenderSkinnedMesh* GetSkinnedMesh(SceneObject& obj) {
   return obj.litInst.GetSkinnedMesh();
 }
 
+static void ExpandEditorAABB(t850::AABB& dst, const t850::AABB& src) {
+  if (!src.IsValid()) {
+    return;
+  }
+  if (!dst.IsValid()) {
+    dst = src;
+    return;
+  }
+  dst.ExpandToInclude(src.vMin);
+  dst.ExpandToInclude(src.vMax);
+}
+
+static bool GetSkinnedSkeletonWorldAABB(const SceneObject& object, t850::AABB& outBounds) {
+  const t850::RenderSkinnedMesh* skinned = object.litInst.GetSkinnedMesh();
+  if (!skinned || !skinned->HasSkinData()) {
+    return false;
+  }
+
+  t850::RenderMesh::AABB skeletonLocal;
+  if (!skinned->GetSkeletonLocalAABB(skeletonLocal)) {
+    return false;
+  }
+
+  const t850::AABB local(
+      XVECTOR3(skeletonLocal.min.x, skeletonLocal.min.y, skeletonLocal.min.z, 1.0f),
+      XVECTOR3(skeletonLocal.max.x, skeletonLocal.max.y, skeletonLocal.max.z, 1.0f));
+  outBounds = local.Transformed(object.wireframe.BuildWorld());
+  return outBounds.IsValid();
+}
+
+static bool GetEditorObjectWorldAABB(const SceneObject& object,
+                                     t850::AABB& outBounds,
+                                     t850::AABB* outWireBounds = nullptr,
+                                     t850::AABB* outSkeletonBounds = nullptr,
+                                     bool* outHasSkeletonBounds = nullptr) {
+  outBounds = t850::AABB{};
+  bool haveBounds = false;
+
+  if (object.wireframe.IsLoaded()) {
+    const t850::AABB wireBounds = object.wireframe.WorldAABB();
+    if (outWireBounds) {
+      *outWireBounds = wireBounds;
+    }
+    ExpandEditorAABB(outBounds, wireBounds);
+    haveBounds = outBounds.IsValid();
+  }
+
+  t850::AABB skeletonBounds;
+  const bool haveSkeleton = GetSkinnedSkeletonWorldAABB(object, skeletonBounds);
+  if (outHasSkeletonBounds) {
+    *outHasSkeletonBounds = haveSkeleton;
+  }
+  if (outSkeletonBounds && haveSkeleton) {
+    *outSkeletonBounds = skeletonBounds;
+  }
+  if (haveSkeleton) {
+    ExpandEditorAABB(outBounds, skeletonBounds);
+    haveBounds = outBounds.IsValid();
+  }
+
+  return haveBounds;
+}
+
 static std::string ToLowerCopy(std::string value) {
   std::transform(value.begin(), value.end(), value.begin(), [](unsigned char c) {
     return static_cast<char>(std::tolower(c));
@@ -1347,48 +1410,12 @@ void EditorApp::FrameSelectedEntity() {
   };
 
   if (g_selectionType == 0) {
-    bool haveBounds = false;
     t850::AABB bounds;
-    auto addMeshBounds = [&](int index) {
-      if (index < 0 || index >= static_cast<int>(g_objects.size())) {
-        return;
-      }
-      const SceneObject& object = g_objects[static_cast<std::size_t>(index)];
-      if (!object.wireframe.IsLoaded()) {
-        return;
-      }
-      const t850::AABB objectBounds = object.wireframe.WorldAABB();
-      if (!haveBounds) {
-        bounds = objectBounds;
-        haveBounds = true;
-      } else {
-        if (objectBounds.vMin.x < bounds.vMin.x) bounds.vMin.x = objectBounds.vMin.x;
-        if (objectBounds.vMin.y < bounds.vMin.y) bounds.vMin.y = objectBounds.vMin.y;
-        if (objectBounds.vMin.z < bounds.vMin.z) bounds.vMin.z = objectBounds.vMin.z;
-        if (objectBounds.vMax.x > bounds.vMax.x) bounds.vMax.x = objectBounds.vMax.x;
-        if (objectBounds.vMax.y > bounds.vMax.y) bounds.vMax.y = objectBounds.vMax.y;
-        if (objectBounds.vMax.z > bounds.vMax.z) bounds.vMax.z = objectBounds.vMax.z;
-      }
-    };
-
-    if (!g_multiSelect.empty()) {
-      for (int index : g_multiSelect) {
-        addMeshBounds(index);
-      }
-    } else {
-      addMeshBounds(g_selectedIdx);
-    }
-
-    if (haveBounds) {
-      const XVECTOR3 center(
-          (bounds.vMin.x + bounds.vMax.x) * 0.5f,
-          (bounds.vMin.y + bounds.vMax.y) * 0.5f,
-          (bounds.vMin.z + bounds.vMax.z) * 0.5f,
-          1.0f);
-      const float dx = bounds.vMax.x - center.x;
-      const float dy = bounds.vMax.y - center.y;
-      const float dz = bounds.vMax.z - center.z;
-      frameSphere(center, std::sqrt(dx * dx + dy * dy + dz * dz), "mesh selection");
+    if (g_selectedIdx >= 0 &&
+        g_selectedIdx < static_cast<int>(g_objects.size()) &&
+        GetEditorObjectWorldAABB(g_objects[static_cast<std::size_t>(g_selectedIdx)],
+                                 bounds)) {
+      m_camera.FrameBounds(bounds);
       return;
     }
   } else if (g_selectionType == 1 && g_selectedIdx >= 0 && g_selectedIdx < static_cast<int>(g_cameras.size())) {
@@ -1449,6 +1476,69 @@ static bool AABBInScreenRect(const t850::AABB& box, const XMATRIX44& vp,
   }
   // Overlap test
   return !(sMaxX < rMinX || sMinX > rMaxX || sMaxY < rMinY || sMinY > rMaxY);
+}
+
+static bool ProjectAABBToScreenRect(const t850::AABB& box, const XMATRIX44& vp,
+                                    int viewW, int viewH,
+                                    float& sMinX, float& sMinY,
+                                    float& sMaxX, float& sMaxY) {
+  if (!box.IsValid() || viewW <= 0 || viewH <= 0) {
+    return false;
+  }
+
+  sMinX = 1e30f;
+  sMinY = 1e30f;
+  sMaxX = -1e30f;
+  sMaxY = -1e30f;
+
+  float bmin[3] = { box.vMin.x, box.vMin.y, box.vMin.z };
+  float bmax[3] = { box.vMax.x, box.vMax.y, box.vMax.z };
+  bool anyValid = false;
+  for (int c = 0; c < 8; c++) {
+    float lx = (c & 1) ? bmax[0] : bmin[0];
+    float ly = (c & 2) ? bmax[1] : bmin[1];
+    float lz = (c & 4) ? bmax[2] : bmin[2];
+    ImVec2 s = WorldToScreen(XVECTOR3(lx, ly, lz), vp, viewW, viewH);
+    if (!std::isfinite(s.x) || !std::isfinite(s.y) || s.x < -100000.0f || s.y < -100000.0f) {
+      continue;
+    }
+    anyValid = true;
+    if (s.x < sMinX) sMinX = s.x;
+    if (s.y < sMinY) sMinY = s.y;
+    if (s.x > sMaxX) sMaxX = s.x;
+    if (s.y > sMaxY) sMaxY = s.y;
+  }
+  return anyValid && sMinX <= sMaxX && sMinY <= sMaxY;
+}
+
+static t850::Ray BuildEditorCameraRay(const ::Camera& camera,
+                                      float mouseX,
+                                      float mouseY,
+                                      int viewW,
+                                      int viewH) {
+  const float safeW = (std::max)(1.0f, static_cast<float>(viewW));
+  const float safeH = (std::max)(1.0f, static_cast<float>(viewH));
+  const float ndcX = 2.0f * ((mouseX + 0.5f) / safeW) - 1.0f;
+  const float ndcY = 1.0f - 2.0f * ((mouseY + 0.5f) / safeH);
+
+  t850::Ray ray;
+  ray.origin = camera.Eye;
+
+  if (camera.Ortho) {
+    const float halfW = camera.Width * 0.5f;
+    const float halfH = camera.Height * 0.5f;
+    ray.origin = camera.Eye + camera.Right * (ndcX * halfW) + camera.Up * (ndcY * halfH);
+    ray.direction = camera.Look;
+  } else {
+    const float aspect = camera.AspectRatio > 0.0f ? camera.AspectRatio : safeW / safeH;
+    const float tanHalfFov = std::tan((std::max)(0.01f, camera.Fov) * 0.5f);
+    ray.direction = camera.Look
+        + camera.Right * (ndcX * tanHalfFov * aspect)
+        + camera.Up * (ndcY * tanHalfFov);
+  }
+
+  ray.direction.Normalize();
+  return ray;
 }
 
 void EditorApp::HandleMousePick() {
@@ -1514,11 +1604,15 @@ void EditorApp::HandleMousePick() {
 single_pick:
   if (!IManager.PressedOnceMouseButton(0) && !selectMode) return;
 
-  XMATRIX44 invVP;
-  m_vp.Inverse(&invVP);
-  t850::Ray ray = t850::ScreenPointToRay(
-    (float)IManager.mouseX, (float)IManager.mouseY,
-    0, 0, m_lastW, m_lastH, invVP);
+  const ::Camera* activeCamera = &m_camera.GetCamera();
+  if (!m_sceneProps.pCameras.empty() && m_sceneProps.pCameras[0]) {
+    activeCamera = m_sceneProps.pCameras[0];
+  }
+  t850::Ray ray = BuildEditorCameraRay(*activeCamera,
+                                       static_cast<float>(IManager.mouseX),
+                                       static_cast<float>(IManager.mouseY),
+                                       m_lastW,
+                                       m_lastH);
 
   // Test all objects, pick the closest
   float bestT = FLT_MAX;
@@ -1527,11 +1621,37 @@ single_pick:
 
   // Test meshes
   for (int i = 0; i < (int)g_objects.size(); ++i) {
-    if (!g_objects[i].wireframe.IsLoaded() || g_objects[i].frozen) continue;
-    t850::AABB worldBox = g_objects[i].wireframe.WorldAABB();
-    float t = 0.0f;
-    if (t850::RayIntersectsAABB(ray, worldBox, t) && t < bestT) {
-      bestT = t; bestIdx = i; bestType = 0;
+    SceneObject& object = g_objects[i];
+    const bool loaded = object.wireframe.IsLoaded();
+    const bool skinnedMesh = object.litInst.GetSkinnedMesh() && object.litInst.GetSkinnedMesh()->HasSkinData();
+    if (!loaded || object.frozen || !object.visible) {
+      continue;
+    }
+
+    t850::AABB worldBox;
+    const bool haveBounds = GetEditorObjectWorldAABB(object, worldBox);
+    if (!haveBounds) {
+      continue;
+    }
+
+    float triT = 0.0f;
+    const bool triHit = object.wireframe.RaycastSurface(ray, triT);
+    float sMinX = 0.0f, sMinY = 0.0f, sMaxX = 0.0f, sMaxY = 0.0f;
+    const bool projected = ProjectAABBToScreenRect(worldBox, m_vp, m_lastW, m_lastH, sMinX, sMinY, sMaxX, sMaxY);
+    const float mouseX = static_cast<float>(IManager.mouseX);
+    const float mouseY = static_cast<float>(IManager.mouseY);
+    const bool mouseInsideScreenBounds = projected && mouseX >= sMinX && mouseX <= sMaxX && mouseY >= sMinY && mouseY <= sMaxY;
+    const float screenArea = (std::max)(1.0f, (sMaxX - sMinX) * (sMaxY - sMinY));
+    const float viewportArea = (std::max)(1.0f, static_cast<float>(m_lastW * m_lastH));
+    const bool smallProjectedMesh = projected && screenArea < viewportArea * 0.65f;
+    float boxT = 0.0f;
+    const bool boxHit = t850::RayIntersectsAABB(ray, worldBox, boxT);
+    const bool fallbackAllowed = mouseInsideScreenBounds && (skinnedMesh || smallProjectedMesh);
+    const bool candidateHit = triHit || (fallbackAllowed && boxHit);
+    const float candidateT = triHit ? triT : boxT;
+
+    if (candidateHit && candidateT < bestT) {
+      bestT = candidateT; bestIdx = i; bestType = 0;
     }
   }
 
@@ -1543,7 +1663,8 @@ single_pick:
       XVECTOR3(g_cameras[i].position.x - hs, g_cameras[i].position.y - hs, g_cameras[i].position.z - hs),
       XVECTOR3(g_cameras[i].position.x + hs, g_cameras[i].position.y + hs, g_cameras[i].position.z + hs));
     float t = 0.0f;
-    if (t850::RayIntersectsAABB(ray, box, t) && t < bestT) {
+    const bool hit = t850::RayIntersectsAABB(ray, box, t);
+    if (hit && t < bestT) {
       bestT = t; bestIdx = i; bestType = 1;
     }
   }
@@ -1556,7 +1677,8 @@ single_pick:
       XVECTOR3(g_lights[i].position.x - hs, g_lights[i].position.y - hs, g_lights[i].position.z - hs),
       XVECTOR3(g_lights[i].position.x + hs, g_lights[i].position.y + hs, g_lights[i].position.z + hs));
     float t = 0.0f;
-    if (t850::RayIntersectsAABB(ray, box, t) && t < bestT) {
+    const bool hit = t850::RayIntersectsAABB(ray, box, t);
+    if (hit && t < bestT) {
       bestT = t; bestIdx = i; bestType = 2;
     }
   }
@@ -2471,6 +2593,8 @@ void EditorApp::OnDraw() {
                   ImGui::TreeNodeEx(o.name.c_str(), flags);
                   if (ImGui::IsItemClicked()) {
                     g_selectedIdx = idx; g_selectionType = 0;
+                    g_multiSelect.clear();
+                    g_multiSelect.insert(idx);
                   }
                   ImGui::TreePop();
                   ImGui::PopID();
@@ -2494,8 +2618,14 @@ void EditorApp::OnDraw() {
               if (o.frozen) ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.5f,0.5f,0.5f,1));
               bool nodeOpen = ImGui::TreeNodeEx(o.name.c_str(), flags);
               if (ImGui::IsItemClicked() && !o.frozen) {
-                if (g_selectionType == 0 && g_selectedIdx == i) g_selectedIdx = -1;
-                else { g_selectedIdx = i; g_selectionType = 0; }
+                if (g_selectionType == 0 && g_selectedIdx == i) {
+                  g_selectedIdx = -1;
+                  g_multiSelect.clear();
+                } else {
+                  g_selectedIdx = i; g_selectionType = 0;
+                  g_multiSelect.clear();
+                  g_multiSelect.insert(i);
+                }
               }
               if (o.frozen) ImGui::PopStyleColor();
               if (nodeOpen) ImGui::TreePop();

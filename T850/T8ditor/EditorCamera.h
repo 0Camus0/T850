@@ -18,6 +18,7 @@
 #define T8DITOR_EDITOR_CAMERA_H
 
 #include <utils/Camera.h>
+#include <utils/Picking.h>
 #include <utils/xMaths.h>
 
 class InputManager;
@@ -54,6 +55,7 @@ public:
   // Frame the target — re-center distance to FrameDistance.
   void Frame();
   void FrameBounds(const XVECTOR3& center, float radius);
+  void FrameBounds(const t850::AABB& bounds);
 
   // Reset camera to the default position and orientation.
   void ResetToDefault();

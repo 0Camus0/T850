@@ -12,6 +12,7 @@
 
 #include <vector>
 #include <algorithm>
+#include <cfloat>
 #include <filesystem>
 
 namespace t8ditor {
@@ -52,6 +53,8 @@ bool EditorMesh::Load(const std::string& path) {
   // edges of every triangle. Use 32-bit indices to support large glTF meshes.
   std::vector<float>        verts; // xyzw per vertex
   std::vector<unsigned int> idx;
+  m_pickVertices.clear();
+  m_pickIndices.clear();
 
   // Bounding box for centre + initial framing.
   float bbMin[3] = {  1e30f,  1e30f,  1e30f };
@@ -68,6 +71,7 @@ bool EditorMesh::Load(const std::string& path) {
         verts.push_back(p.y);
         verts.push_back(p.z);
         verts.push_back(1.0f);
+        m_pickVertices.emplace_back(p.x, p.y, p.z, 1.0f);
         if (p.x < bbMin[0]) bbMin[0] = p.x;
         if (p.y < bbMin[1]) bbMin[1] = p.y;
         if (p.z < bbMin[2]) bbMin[2] = p.z;
@@ -84,6 +88,9 @@ bool EditorMesh::Load(const std::string& path) {
           unsigned int a = baseV + tris[t + 0];
           unsigned int b = baseV + tris[t + 1];
           unsigned int c = baseV + tris[t + 2];
+          m_pickIndices.push_back(a);
+          m_pickIndices.push_back(b);
+          m_pickIndices.push_back(c);
           idx.push_back(a); idx.push_back(b);
           idx.push_back(b); idx.push_back(c);
           idx.push_back(c); idx.push_back(a);
@@ -94,6 +101,9 @@ bool EditorMesh::Load(const std::string& path) {
           unsigned int a = baseV + tris[t + 0];
           unsigned int b = baseV + tris[t + 1];
           unsigned int c = baseV + tris[t + 2];
+          m_pickIndices.push_back(a);
+          m_pickIndices.push_back(b);
+          m_pickIndices.push_back(c);
           idx.push_back(a); idx.push_back(b);
           idx.push_back(b); idx.push_back(c);
           idx.push_back(c); idx.push_back(a);
@@ -148,6 +158,8 @@ void EditorMesh::Destroy() {
   m_ib = nullptr;
   m_indexCount = 0;
   m_path.clear();
+  m_pickVertices.clear();
+  m_pickIndices.clear();
 }
 
 XMATRIX44 EditorMesh::BuildWorld() const {
@@ -163,6 +175,41 @@ XMATRIX44 EditorMesh::BuildWorld() const {
   // PrimitiveInst::Update (Scale, RotationX, RotationY, RotationZ, Position).
   M = S * Rx * Ry * Rz * T;
   return M;
+}
+
+bool EditorMesh::RaycastSurface(const t850::Ray& ray, float& tOut) const {
+  tOut = FLT_MAX;
+  if (!IsLoaded() || m_pickVertices.empty() || m_pickIndices.size() < 3) {
+    return false;
+  }
+
+  float aabbT = 0.0f;
+  if (!t850::RayIntersectsAABB(ray, WorldAABB(), aabbT)) {
+    return false;
+  }
+
+  const XMATRIX44 world = BuildWorld();
+  bool hit = false;
+  for (std::size_t i = 0; i + 2 < m_pickIndices.size(); i += 3) {
+    const unsigned int i0 = m_pickIndices[i + 0];
+    const unsigned int i1 = m_pickIndices[i + 1];
+    const unsigned int i2 = m_pickIndices[i + 2];
+    if (i0 >= m_pickVertices.size() || i1 >= m_pickVertices.size() || i2 >= m_pickVertices.size()) {
+      continue;
+    }
+
+    const XVECTOR3 v0 = t850::TransformPoint(m_pickVertices[i0], world);
+    const XVECTOR3 v1 = t850::TransformPoint(m_pickVertices[i1], world);
+    const XVECTOR3 v2 = t850::TransformPoint(m_pickVertices[i2], world);
+    float t = 0.0f;
+    float u = 0.0f;
+    float v = 0.0f;
+    if (t850::RayIntersectsTriangle(ray, v0, v1, v2, t, u, v) && t < tOut) {
+      tOut = t;
+      hit = true;
+    }
+  }
+  return hit;
 }
 
 void EditorMesh::Draw(EditorLineRenderer& lines, const XMATRIX44& vp) {

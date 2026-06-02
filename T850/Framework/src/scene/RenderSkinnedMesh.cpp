@@ -756,6 +756,30 @@ namespace t850 {
     }
   }
 
+  bool RenderSkinnedMesh::GetSkeletonLocalAABB(RenderMesh::AABB& outBounds) const {
+    outBounds.Reset();
+    if (!m_hasSkin) {
+      return false;
+    }
+
+    const xF::xSkeleton* skel = m_animController.GetAnimSkeleton();
+    if (!skel) {
+      skel = m_animController.GetBindSkeleton();
+    }
+    if (!skel) {
+      return false;
+    }
+
+    for (const xF::xBone& bone : skel->Bones) {
+      const XVECTOR3 p = SkeletonJointPositionLH(bone);
+      outBounds.Expand(p.x, p.y, p.z);
+    }
+
+    return outBounds.min.x <= outBounds.max.x &&
+           outBounds.min.y <= outBounds.max.y &&
+           outBounds.min.z <= outBounds.max.z;
+  }
+
   bool RenderSkinnedMesh::UpdateHighlightedSkeletonPositions(const std::vector<int>& boneIndices) {
     if (boneIndices.empty()) {
       return false;

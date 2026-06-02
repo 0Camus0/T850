@@ -55,6 +55,57 @@ void EditorCamera::FrameBounds(const XVECTOR3& center, float radius) {
   m_cam.Update(0.0f);
 }
 
+void EditorCamera::FrameBounds(const t850::AABB& bounds) {
+  if (!bounds.IsValid()) {
+    return;
+  }
+
+  const XVECTOR3 center(
+      (bounds.vMin.x + bounds.vMax.x) * 0.5f,
+      (bounds.vMin.y + bounds.vMax.y) * 0.5f,
+      (bounds.vMin.z + bounds.vMax.z) * 0.5f,
+      1.0f);
+
+  m_target = center;
+  const float aspect = m_viewportH > 0
+      ? static_cast<float>(m_viewportW) / static_cast<float>(m_viewportH)
+      : 1.0f;
+  const float verticalFov = (std::max)(0.01f, m_cam.Fov);
+  const float horizontalFov = 2.0f * std::atan(std::tan(verticalFov * 0.5f) * (std::max)(0.01f, aspect));
+  const float tanHalfV = (std::max)(0.001f, std::tan(verticalFov * 0.5f));
+  const float tanHalfH = (std::max)(0.001f, std::tan(horizontalFov * 0.5f));
+
+  RecomputeEye();
+
+  float halfW = 0.0f;
+  float halfH = 0.0f;
+  float halfD = 0.0f;
+  const float bmin[3] = { bounds.vMin.x, bounds.vMin.y, bounds.vMin.z };
+  const float bmax[3] = { bounds.vMax.x, bounds.vMax.y, bounds.vMax.z };
+  for (int c = 0; c < 8; ++c) {
+    const XVECTOR3 corner(
+        (c & 1) ? bmax[0] : bmin[0],
+        (c & 2) ? bmax[1] : bmin[1],
+        (c & 4) ? bmax[2] : bmin[2],
+        1.0f);
+    const XVECTOR3 delta(corner.x - center.x, corner.y - center.y, corner.z - center.z, 0.0f);
+    float right = 0.0f;
+    float up = 0.0f;
+    float forward = 0.0f;
+    XVecDot(right, delta, m_cam.Right);
+    XVecDot(up, delta, m_cam.Up);
+    XVecDot(forward, delta, m_cam.Look);
+    halfW = (std::max)(halfW, std::fabs(right));
+    halfH = (std::max)(halfH, std::fabs(up));
+    halfD = (std::max)(halfD, std::fabs(forward));
+  }
+
+  const float fitDistance = (std::max)(halfW / tanHalfH, halfH / tanHalfV);
+  m_distance = std::clamp((fitDistance + halfD) * 1.20f, MinDistance, MaxDistance);
+  RecomputeEye();
+  m_cam.Update(0.0f);
+}
+
 void EditorCamera::ResetToDefault() {
   m_target   = XVECTOR3(0.0f, 0.0f, 0.0f);
   m_yaw      = -0.75f;   // ~-43° — upper-right quadrant (3dsmax style)

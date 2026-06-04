@@ -41,12 +41,14 @@ struct VS_OUTPUT{
 };
 
 Texture2D depthTex : register(t0);
+Texture2D depthTex2 : register(t1);
 SamplerState depthSampler : register(s0);
 
 float4 FS( VS_OUTPUT input ) : SV_TARGET {
-	// Manual depth test against GBuffer depth
+	// Manual depth test against the composed scene depth.
     float2 screenUV = input.hposition.xy * float2(1.0/CameraInfo.z, 1.0/CameraInfo.w);
-    float sceneDepth = depthTex.Sample(depthSampler, screenUV).r;
+    float sceneDepth = max(depthTex.Sample(depthSampler, screenUV).r,
+                           depthTex2.Sample(depthSampler, screenUV).r);
 	float wireDepth = input.Pos.z / input.Pos.w;
 	if (sceneDepth > 0.0001 && wireDepth < sceneDepth * 0.995)
         discard;

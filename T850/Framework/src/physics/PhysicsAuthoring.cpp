@@ -1958,6 +1958,13 @@ bool UpdateRagdollReferenceBodyFromLocal(PhysicsRagdollAuthoringDesc& authoring,
 
 } // namespace
 
+bool UpdateRagdollAuthoringBodyFromLocal(PhysicsRagdollAuthoringDesc& authoring,
+                                         const RenderSkinnedMesh& mesh,
+                                         const XMATRIX44& worldFromMesh,
+                                         int bodyIndex) {
+  return UpdateRagdollReferenceBodyFromLocal(authoring, mesh, worldFromMesh, authoring.binding, bodyIndex);
+}
+
 bool BuildMeshBoxBodyDesc(const RenderMesh& mesh,
                           const XMATRIX44& worldFromMesh,
                           uint32_t entityId,

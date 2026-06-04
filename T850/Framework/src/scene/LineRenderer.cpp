@@ -150,8 +150,12 @@ void LineRenderer::DrawLines(const XMATRIX44& world,
 #endif
 
   // Bind depth texture AFTER shader is set (D3D12 needs active root signature)
-  if (m_depthTest && m_depthTex)
-    m_depthTex->Set(*T8DeviceContext, 0, "depthTex");
+  if (m_depthTest && (m_depthTex || m_depthTex2)) {
+    Texture* primaryDepth = m_depthTex ? m_depthTex : m_depthTex2;
+    Texture* secondaryDepth = m_depthTex2 ? m_depthTex2 : primaryDepth;
+    primaryDepth->Set(*T8DeviceContext, 0, "depthTex");
+    secondaryDepth->Set(*T8DeviceContext, 1, "depthTex2");
+  }
 
   T8DeviceContext->DrawIndexed(indexCount, 0, startVertex);
 

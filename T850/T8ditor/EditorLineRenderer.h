@@ -26,7 +26,7 @@ public:
   struct CBuffer {
     XMATRIX44 WVP;
     XVECTOR3  LineColor;    // .x .y .z .w
-    XVECTOR3  DepthParams;  // .x=1/viewW, .y=1/viewH, .z=unused, .w=unused
+    XVECTOR3  DepthParams;  // .x=1/viewW, .y=1/viewH, .z=farPlane, .w=depthBias
     XVECTOR3  _glPad[2];   // GL uniform byte position padding
   };
 
@@ -42,8 +42,9 @@ public:
   // Set viewport dimensions for depth comparison (call once per frame or on resize)
   void SetViewport(int width, int height) { m_viewW = width; m_viewH = height; }
 
-  // Set the GBuffer depth texture for depth-tested wireframe. Pass nullptr to disable.
+  // Set the scene depth textures for depth-tested wireframe. Pass nullptr to disable.
   void SetDepthTexture(t850::Texture* depthTex) { m_depthTex = depthTex; }
+  void SetSecondaryDepthTexture(t850::Texture* depthTex) { m_depthTex2 = depthTex; }
 
   // Set the camera far plane for depth-tested overlays.
   void SetFarPlane(float farPlane) { m_farPlane = farPlane; }
@@ -73,6 +74,7 @@ private:
   t850::ShaderBase*     m_shader   = nullptr;
   t850::ConstantBuffer* m_cb       = nullptr;
   t850::Texture*        m_depthTex = nullptr;
+  t850::Texture*        m_depthTex2 = nullptr;
   int                   m_viewW    = 1280;
   int                   m_viewH    = 720;
   float                 m_farPlane = 1000.0f;

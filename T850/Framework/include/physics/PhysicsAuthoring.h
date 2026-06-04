@@ -47,6 +47,10 @@ bool BuildRagdollAuthoringFromSkeleton(const RenderSkinnedMesh& mesh,
                                        uint32_t entityId,
                                        const PhysicsRagdollBuildSettings& settings,
                                        PhysicsRagdollAuthoringDesc& outAuthoring);
+bool UpdateRagdollAuthoringBodyFromLocal(PhysicsRagdollAuthoringDesc& authoring,
+                                         const RenderSkinnedMesh& mesh,
+                                         const XMATRIX44& worldFromMesh,
+                                         int bodyIndex);
 bool BuildRagdollPoseFromAnimation(const RenderSkinnedMesh& mesh,
                                    const XMATRIX44& worldFromMesh,
                                    const PhysicsRagdollAnimationBinding& binding,

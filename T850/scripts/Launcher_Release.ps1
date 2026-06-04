@@ -178,6 +178,8 @@ $xaml = @"
                         <ComboBox Name="cmbScene">
                             <ComboBoxItem Content="Sandbox" Tag="0" IsSelected="True"/>
                             <ComboBoxItem Content="Day" Tag="1"/>
+                            <ComboBoxItem Content="Quake3 Mock" Tag="2"/>
+                            <ComboBoxItem Content="Ragdoll Editor" Tag="3"/>
                         </ComboBox>
                     </StackPanel>
                     <StackPanel Grid.Column="2" VerticalAlignment="Bottom">
@@ -583,7 +585,11 @@ function Get-SceneRequiredMeshes {
 }
 
 function Test-SelectedSceneDependencies {
-    if (((Get-SandboxInputMode) -ne "scene") -or (-not $cmbScene.SelectedItem) -or (($cmbScene.SelectedItem.Tag.ToString()) -ne "0")) {
+    if (-not $cmbScene.SelectedItem) {
+        return @{ Ok = $true; Missing = @() }
+    }
+    $sceneTag = $cmbScene.SelectedItem.Tag.ToString()
+    if (($sceneTag -ne "2") -and (($sceneTag -ne "0") -or ((Get-SandboxInputMode) -ne "scene"))) {
         return @{ Ok = $true; Missing = @() }
     }
     $scenePath = Get-SelectedSceneFilePath
@@ -714,8 +720,10 @@ function Load-Config {
                 foreach ($item in $cmbSandboxInput.Items) {
                     if ($item.Tag -eq "scene") { $cmbSandboxInput.SelectedItem = $item; break }
                 }
-                foreach ($item in $cmbScene.Items) {
-                    if ($item.Tag -eq "0") { $cmbScene.SelectedItem = $item; break }
+                if (-not ($cfg.display.PSObject.Properties['scene']) -or $cfg.display.scene.ToString() -eq "0") {
+                    foreach ($item in $cmbScene.Items) {
+                        if ($item.Tag -eq "0") { $cmbScene.SelectedItem = $item; break }
+                    }
                 }
                 foreach ($item in $cmbSceneFile.Items) {
                     if ($item.Tag -eq $cfg.display.sceneFile -or (Get-SceneFileResourcePath $item.Tag) -eq $cfg.display.sceneFile) {
@@ -811,7 +819,7 @@ function Save-Config {
         fullscreen = [bool]$chkFullscreen.IsChecked
         scene      = [int]$sceneTag
     }
-    if (($sceneTag -eq "0") -and ($sandboxMode -eq "scene")) {
+    if (($sceneTag -eq "2") -or (($sceneTag -eq "0") -and ($sandboxMode -eq "scene"))) {
         $display.sceneFile = Get-SceneFileResourcePath (Get-SelectedSceneFilePath)
     } else {
         $display.model = if ($cmbModel.SelectedItem) { ($cmbModel.SelectedItem).Tag.ToString() } else { "Models/DamagedHelmet.glb" }
@@ -899,13 +907,13 @@ function Get-LaunchCommand {
 
     $argList += @("--culling", (Get-CullingMode))
 
-    if ($sceneTag -eq "0") {
-        if ((Get-SandboxInputMode) -eq "scene") {
+    if ($sceneTag -eq "0" -or $sceneTag -eq "2" -or $sceneTag -eq "3") {
+        if (($sceneTag -eq "2") -or (($sceneTag -eq "0") -and ((Get-SandboxInputMode) -eq "scene"))) {
             $sceneFile = Get-SelectedSceneFilePath
             if ($sceneFile) {
                 $argList += @("--sceneFile", ('"{0}"' -f (Get-SceneFileResourcePath $sceneFile)))
             }
-        } elseif ($cmbModel.SelectedItem) {
+        } elseif (($sceneTag -eq "3" -or $sceneTag -eq "0") -and $cmbModel.SelectedItem) {
             $argList += @("--model", ($cmbModel.SelectedItem).Tag.ToString())
         }
     }
@@ -1019,8 +1027,8 @@ function Update-SceneOptionVisibility {
     $sandboxVisible = ($sceneTag -eq "0")
     $sandboxMode = Get-SandboxInputMode
     $pnlSandboxInput.Visibility = if ($sandboxVisible) { "Visible" } else { "Collapsed" }
-    $pnlModelSelect.Visibility = if ($sandboxVisible -and ($sandboxMode -eq "model")) { "Visible" } else { "Collapsed" }
-    $pnlSceneFileSelect.Visibility = if ($sandboxVisible -and ($sandboxMode -eq "scene")) { "Visible" } else { "Collapsed" }
+    $pnlModelSelect.Visibility = if (($sandboxVisible -and ($sandboxMode -eq "model")) -or ($sceneTag -eq "3")) { "Visible" } else { "Collapsed" }
+    $pnlSceneFileSelect.Visibility = if (($sandboxVisible -and ($sandboxMode -eq "scene")) -or ($sceneTag -eq "2")) { "Visible" } else { "Collapsed" }
     $chkBenchmark.Visibility = if ($sceneTag -eq "1") { "Visible" } else { "Collapsed" }
     if ($sceneTag -ne "1") { $chkBenchmark.IsChecked = $false }
 }
@@ -1190,6 +1198,7 @@ $btnEditor.Add_Click({
 
 # Scan Models folder for .glb/.gltf files and populate the dropdown
 function Populate-ModelList {
+    $previous = if ($cmbModel.SelectedItem -and $cmbModel.SelectedItem.Tag) { $cmbModel.SelectedItem.Tag.ToString() } else { "" }
     $cmbModel.Items.Clear()
     $modelsDir = Join-Path $rootDir "Models"
     if (Test-Path $modelsDir) {
@@ -1204,8 +1213,15 @@ function Populate-ModelList {
         }
     }
     $selected = $false
+    if ($previous) {
+        foreach ($item in $cmbModel.Items) {
+            if ($item.Tag -eq $previous) {
+                $cmbModel.SelectedItem = $item; $selected = $true; break
+            }
+        }
+    }
     foreach ($item in $cmbModel.Items) {
-        if ($item.Content -eq "DamagedHelmet.glb") {
+        if (-not $selected -and $item.Content -eq "DamagedHelmet.glb") {
             $cmbModel.SelectedItem = $item; $selected = $true; break
         }
     }

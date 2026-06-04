@@ -1,4 +1,4 @@
-#include <SandboxScene.h>
+#include <Quake3Mock.h>
 #include <video/BaseDriver.h>
 #include <utils/Log.h>
 #include <utils/RuntimeProfile.h>
@@ -2788,7 +2788,7 @@ namespace {
     std::error_code ec;
     std::filesystem::create_directories("Logs", ec);
     if (ec) {
-      T8_LOG_ERROR("[SandboxScene] Failed to create Logs directory for ragdoll matrix dump");
+      T8_LOG_ERROR("[Quake3Mock] Failed to create Logs directory for ragdoll matrix dump");
       return false;
     }
 
@@ -2799,7 +2799,7 @@ namespace {
 
     std::ofstream shaderFile(shaderPath, std::ios::out | std::ios::trunc);
     if (!shaderFile.is_open()) {
-      T8_LOG_ERROR("[SandboxScene] Failed to open ragdoll shader matrix dump '%s'", shaderPath.string().c_str());
+      T8_LOG_ERROR("[Quake3Mock] Failed to open ragdoll shader matrix dump '%s'", shaderPath.string().c_str());
       return false;
     }
     shaderFile << std::fixed << std::setprecision(8);
@@ -2830,7 +2830,7 @@ namespace {
 
     std::ofstream combinedFile(combinedPath, std::ios::out | std::ios::trunc);
     if (!combinedFile.is_open()) {
-      T8_LOG_ERROR("[SandboxScene] Failed to open ragdoll combined matrix dump '%s'", combinedPath.string().c_str());
+      T8_LOG_ERROR("[Quake3Mock] Failed to open ragdoll combined matrix dump '%s'", combinedPath.string().c_str());
       return false;
     }
     combinedFile << std::fixed << std::setprecision(8);
@@ -2846,7 +2846,7 @@ namespace {
 
     std::ofstream bodyFile(bodyPath, std::ios::out | std::ios::trunc);
     if (!bodyFile.is_open()) {
-      T8_LOG_ERROR("[SandboxScene] Failed to open ragdoll body matrix dump '%s'", bodyPath.string().c_str());
+      T8_LOG_ERROR("[Quake3Mock] Failed to open ragdoll body matrix dump '%s'", bodyPath.string().c_str());
       return false;
     }
     bodyFile << std::fixed << std::setprecision(8);
@@ -2889,7 +2889,7 @@ namespace {
                << '\n';
     }
 
-    T8_LOG_INFO("[SandboxScene] F5 ragdoll matrix dump: shader='%s' combined='%s' bodies='%s' maxShaderDiff=%.6f bone=%d('%s') transDiff=%.6f maxBodyDiff=%.6f bone=%d('%s') bodyTransDiff=%.6f",
+    T8_LOG_INFO("[Quake3Mock] F5 ragdoll matrix dump: shader='%s' combined='%s' bodies='%s' maxShaderDiff=%.6f bone=%d('%s') transDiff=%.6f maxBodyDiff=%.6f bone=%d('%s') bodyTransDiff=%.6f",
                 shaderPath.string().c_str(),
                 combinedPath.string().c_str(),
                 bodyPath.string().c_str(),
@@ -3202,7 +3202,7 @@ namespace {
   }
 }
 
-void SandboxScene::InitVars() {
+void Quake3Mock::InitVars() {
 
 
 
@@ -3365,10 +3365,10 @@ void SandboxScene::InitVars() {
   SceneProp.IBLMipCount = 4.0f;
   SceneProp.IBLBRDFLUTEnabled = 0.0f;
 
-  if (m_controlSetup.Load("Scenes/SandboxScene.json")) {
+  if (m_controlSetup.Load("Scenes/Quake3Mock.json")) {
     m_controlSetup.ApplyQualityAndSettings(SceneProp);
   } else {
-    T8_LOG_ERROR("[SandboxScene] Failed to load Scenes/SandboxScene.json");
+    T8_LOG_ERROR("[Quake3Mock] Failed to load Scenes/Quake3Mock.json");
   }
   SceneProp.FrustumCullingToggleAllowed = g_config.cullingLoadMode != t850::Config::CullingLoadMode::Disabled;
   SceneProp.FrustumCullingEnabled = g_config.cullingLoadMode == t850::Config::CullingLoadMode::FullOnLoad;
@@ -3385,7 +3385,7 @@ void SandboxScene::InitVars() {
   m_dumper.Init(dumpCfg);
 }
 
-void SandboxScene::ApplyEditorSceneCameraAndLights(const t850::scene::EditorSceneFile& scene) {
+void Quake3Mock::ApplyEditorSceneCameraAndLights(const t850::scene::EditorSceneFile& scene) {
   const bool useQ3CameraDefaults = m_q3CollisionWorld && m_q3CollisionWorld->IsLoaded();
   XVECTOR3 eye(0.0f, 0.0f, 0.0f, 1.0f);
   XVECTOR3 look(-1.0f, 0.0f, 0.0f, 0.0f);
@@ -3410,7 +3410,7 @@ void SandboxScene::ApplyEditorSceneCameraAndLights(const t850::scene::EditorScen
   SyncOrbitProfileFromSandbox();
   SetCameraProfile(useQ3CameraDefaults ? t850::CameraProfileType::Quake3Fps : t850::CameraProfileType::FreeFly);
   VP = Cam.VP;
-  T8_LOG_INFO("[SandboxScene] Ignoring scene cameras; using %s camera eye=(%.3f,%.3f,%.3f) look=(%.3f,%.3f,%.3f) fov=%.1f",
+  T8_LOG_INFO("[Quake3Mock] Ignoring scene cameras; using %s camera eye=(%.3f,%.3f,%.3f) look=(%.3f,%.3f,%.3f) fov=%.1f",
               useQ3CameraDefaults ? "Quake 3 FPS" : "free-fly",
               Cam.Eye.x, Cam.Eye.y, Cam.Eye.z,
               Cam.Look.x, Cam.Look.y, Cam.Look.z,
@@ -3445,17 +3445,17 @@ void SandboxScene::ApplyEditorSceneCameraAndLights(const t850::scene::EditorScen
       }
     }
     SyncLightCameraFromDirectionalLight();
-    T8_LOG_INFO("[SandboxScene] Applied %zu scene lights; dynamic point lights %s",
+    T8_LOG_INFO("[Quake3Mock] Applied %zu scene lights; dynamic point lights %s",
                 SceneProp.Lights.size(),
                 SceneProp.PointLightsEnabled ? "enabled" : "disabled");
   }
 }
 
-int SandboxScene::GetRuntimeMeshCount() const {
+int Quake3Mock::GetRuntimeMeshCount() const {
   return (std::max)(m_meshCount, Meshes[0].pBase ? 1 : 0);
 }
 
-RenderSkinnedMesh* SandboxScene::GetSkinnedMeshForIndex(int meshIndex) const {
+RenderSkinnedMesh* Quake3Mock::GetSkinnedMeshForIndex(int meshIndex) const {
   if (meshIndex < 0 || meshIndex >= kMaxSandboxMeshes || meshIndex >= GetRuntimeMeshCount() || !Meshes[meshIndex].pBase) {
     return nullptr;
   }
@@ -3463,7 +3463,7 @@ RenderSkinnedMesh* SandboxScene::GetSkinnedMeshForIndex(int meshIndex) const {
   return (skinned && skinned->HasSkinData()) ? skinned : nullptr;
 }
 
-std::vector<std::string> SandboxScene::BuildSkinnedMeshOptions(std::vector<int>* outMeshIndices) const {
+std::vector<std::string> Quake3Mock::BuildSkinnedMeshOptions(std::vector<int>* outMeshIndices) const {
   if (outMeshIndices) {
     outMeshIndices->clear();
   }
@@ -3511,7 +3511,7 @@ std::vector<std::string> SandboxScene::BuildSkinnedMeshOptions(std::vector<int>*
   return options;
 }
 
-int SandboxScene::ClampSkinnedMeshSelection(int preferredMeshIndex) const {
+int Quake3Mock::ClampSkinnedMeshSelection(int preferredMeshIndex) const {
   std::vector<int> meshIndices;
   BuildSkinnedMeshOptions(&meshIndices);
   if (meshIndices.empty()) {
@@ -3525,15 +3525,15 @@ int SandboxScene::ClampSkinnedMeshSelection(int preferredMeshIndex) const {
   return meshIndices.front();
 }
 
-RenderSkinnedMesh* SandboxScene::GetSelectedSkinningMesh() const {
+RenderSkinnedMesh* Quake3Mock::GetSelectedSkinningMesh() const {
   return GetSkinnedMeshForIndex(ClampSkinnedMeshSelection(m_selectedSkinningMeshIndex));
 }
 
-RenderSkinnedMesh* SandboxScene::GetSelectedAnimationMesh() const {
+RenderSkinnedMesh* Quake3Mock::GetSelectedAnimationMesh() const {
   return GetSkinnedMeshForIndex(ClampSkinnedMeshSelection(m_selectedAnimationMeshIndex));
 }
 
-bool SandboxScene::AttachSceneObjectRagdoll(int meshIndex,
+bool Quake3Mock::AttachSceneObjectRagdoll(int meshIndex,
                                             const std::string& meshPath,
                                             const std::string& ragdollPath) {
   if (meshIndex < 0 || meshIndex >= kMaxSandboxMeshes || !Meshes[meshIndex].pBase) {
@@ -3549,7 +3549,7 @@ bool SandboxScene::AttachSceneObjectRagdoll(int meshIndex,
   if (!engineContext) engineContext = &t850::GetEngineContext();
   t850::JoltPhysicsSystem* physics = engineContext ? engineContext->physics : nullptr;
   if (!physics || !physics->IsInitialized()) {
-    T8_LOG_INFO("[SandboxScene] Cannot attach ragdoll '%s' for scene object '%s' because physics is not initialized",
+    T8_LOG_INFO("[Quake3Mock] Cannot attach ragdoll '%s' for scene object '%s' because physics is not initialized",
                 ragdollPath.c_str(),
                 meshPath.c_str());
     return false;
@@ -3585,7 +3585,7 @@ bool SandboxScene::AttachSceneObjectRagdoll(int meshIndex,
                                                Meshes[meshIndex].GetEntityId(),
                                                settings,
                                                generatedAuthoring)) {
-    T8_LOG_INFO("[SandboxScene] Failed to generate ragdoll binding for scene object '%s' using '%s'",
+    T8_LOG_INFO("[Quake3Mock] Failed to generate ragdoll binding for scene object '%s' using '%s'",
                 meshPath.c_str(),
                 ragdollPath.c_str());
     return false;
@@ -3599,7 +3599,7 @@ bool SandboxScene::AttachSceneObjectRagdoll(int meshIndex,
                                        generatedAuthoring.binding,
                                        authoring,
                                        &appliedBodies)) {
-    T8_LOG_INFO("[SandboxScene] Failed to load authored ragdoll '%s' for scene object '%s'",
+    T8_LOG_INFO("[Quake3Mock] Failed to load authored ragdoll '%s' for scene object '%s'",
                 ragdollPath.c_str(),
                 meshPath.c_str());
     return false;
@@ -3607,7 +3607,7 @@ bool SandboxScene::AttachSceneObjectRagdoll(int meshIndex,
 
   t850::PhysicsRagdollDesc pose = authoring.binding.referencePose;
   if (pose.bones.empty()) {
-    T8_LOG_INFO("[SandboxScene] Authored ragdoll '%s' for scene object '%s' produced no bodies",
+    T8_LOG_INFO("[Quake3Mock] Authored ragdoll '%s' for scene object '%s' produced no bodies",
                 ragdollPath.c_str(),
                 meshPath.c_str());
     return false;
@@ -3615,7 +3615,7 @@ bool SandboxScene::AttachSceneObjectRagdoll(int meshIndex,
 
   const t850::PhysicsRagdollHandle handle = physics->CreateRagdoll(pose, t850::PhysicsBodyMotion::Kinematic);
   if (!handle.IsValid()) {
-    T8_LOG_INFO("[SandboxScene] Failed to create runtime ragdoll '%s' for scene object '%s'",
+    T8_LOG_INFO("[Quake3Mock] Failed to create runtime ragdoll '%s' for scene object '%s'",
                 ragdollPath.c_str(),
                 meshPath.c_str());
     return false;
@@ -3630,7 +3630,7 @@ bool SandboxScene::AttachSceneObjectRagdoll(int meshIndex,
   runtime.pose = std::move(pose);
   m_sceneRagdolls.push_back(std::move(runtime));
 
-  T8_LOG_INFO("[SandboxScene] Loaded scene ragdoll '%s' for mesh '%s' bodies=%d appliedEdits=%d",
+  T8_LOG_INFO("[Quake3Mock] Loaded scene ragdoll '%s' for mesh '%s' bodies=%d appliedEdits=%d",
               ragdollPath.c_str(),
               meshPath.c_str(),
               static_cast<int>(authoring.binding.referencePose.bones.size()),
@@ -3638,7 +3638,7 @@ bool SandboxScene::AttachSceneObjectRagdoll(int meshIndex,
   return true;
 }
 
-SandboxScene::SceneRagdollRuntime* SandboxScene::FindSceneRagdollRuntime(int meshIndex) {
+Quake3Mock::SceneRagdollRuntime* Quake3Mock::FindSceneRagdollRuntime(int meshIndex) {
   for (SceneRagdollRuntime& runtime : m_sceneRagdolls) {
     if (runtime.meshIndex == meshIndex) {
       return &runtime;
@@ -3647,7 +3647,7 @@ SandboxScene::SceneRagdollRuntime* SandboxScene::FindSceneRagdollRuntime(int mes
   return nullptr;
 }
 
-const SandboxScene::SceneRagdollRuntime* SandboxScene::FindSceneRagdollRuntime(int meshIndex) const {
+const Quake3Mock::SceneRagdollRuntime* Quake3Mock::FindSceneRagdollRuntime(int meshIndex) const {
   for (const SceneRagdollRuntime& runtime : m_sceneRagdolls) {
     if (runtime.meshIndex == meshIndex) {
       return &runtime;
@@ -3656,12 +3656,12 @@ const SandboxScene::SceneRagdollRuntime* SandboxScene::FindSceneRagdollRuntime(i
   return nullptr;
 }
 
-bool SandboxScene::IsSceneRagdollPhysicsDriven(int meshIndex) const {
+bool Quake3Mock::IsSceneRagdollPhysicsDriven(int meshIndex) const {
   const SceneRagdollRuntime* runtime = FindSceneRagdollRuntime(meshIndex);
   return runtime && runtime->physicsDriven;
 }
 
-void SandboxScene::DriveSceneRagdollsFromAnimation(float deltaSeconds) {
+void Quake3Mock::DriveSceneRagdollsFromAnimation(float deltaSeconds) {
   t850::EngineContext* engineContext = GetEngineContext();
   if (!engineContext) engineContext = &t850::GetEngineContext();
   t850::JoltPhysicsSystem* physics = engineContext ? engineContext->physics : nullptr;
@@ -3694,7 +3694,7 @@ void SandboxScene::DriveSceneRagdollsFromAnimation(float deltaSeconds) {
                                              runtime.binding,
                                              pose)) {
       if (!runtime.driveLogEmitted) {
-        T8_LOG_INFO("[SandboxScene] Failed to drive scene ragdoll '%s' from animation",
+        T8_LOG_INFO("[Quake3Mock] Failed to drive scene ragdoll '%s' from animation",
                     runtime.resourcePath.c_str());
         runtime.driveLogEmitted = true;
       }
@@ -3704,14 +3704,14 @@ void SandboxScene::DriveSceneRagdollsFromAnimation(float deltaSeconds) {
     if (physics->DriveRagdollFromPose(handle, pose, deltaSeconds)) {
       runtime.pose = std::move(pose);
       if (!runtime.driveLogEmitted) {
-        T8_LOG_INFO("[SandboxScene] Driving scene ragdoll '%s' from animation", runtime.resourcePath.c_str());
+        T8_LOG_INFO("[Quake3Mock] Driving scene ragdoll '%s' from animation", runtime.resourcePath.c_str());
         runtime.driveLogEmitted = true;
       }
     }
   }
 }
 
-bool SandboxScene::SwitchSceneRagdollsToPhysics(int meshIndexFilter) {
+bool Quake3Mock::SwitchSceneRagdollsToPhysics(int meshIndexFilter) {
   if (m_sceneRagdolls.empty()) {
     return false;
   }
@@ -3748,7 +3748,7 @@ bool SandboxScene::SwitchSceneRagdollsToPhysics(int meshIndexFilter) {
 
     if (!engineContext->physics->SetRagdollMotion(Meshes[runtime.meshIndex].GetPhysicsRagdoll(),
                                                    t850::PhysicsBodyMotion::Dynamic)) {
-      T8_LOG_ERROR("[SandboxScene] Failed to switch scene ragdoll '%s' to dynamic physics",
+      T8_LOG_ERROR("[Quake3Mock] Failed to switch scene ragdoll '%s' to dynamic physics",
                    runtime.resourcePath.c_str());
       continue;
     }
@@ -3765,12 +3765,12 @@ bool SandboxScene::SwitchSceneRagdollsToPhysics(int meshIndexFilter) {
   }
 
   if (switchedCount > 0) {
-    T8_LOG_INFO("[SandboxScene] F5: %d scene-file ragdoll(s) switched to dynamic physics", switchedCount);
+    T8_LOG_INFO("[Quake3Mock] F5: %d scene-file ragdoll(s) switched to dynamic physics", switchedCount);
   }
   return switchedCount > 0;
 }
 
-bool SandboxScene::ResetSceneRagdollPhysicsAndAnimation(int meshIndex) {
+bool Quake3Mock::ResetSceneRagdollPhysicsAndAnimation(int meshIndex) {
   SceneRagdollRuntime* runtime = FindSceneRagdollRuntime(meshIndex);
   if (!runtime ||
       runtime->meshIndex < 0 ||
@@ -3794,7 +3794,7 @@ bool SandboxScene::ResetSceneRagdollPhysicsAndAnimation(int meshIndex) {
 
   t850::PhysicsRagdollDesc pose;
   if (!t850::BuildRagdollPoseFromAnimation(*skinned, Meshes[runtime->meshIndex].Final, runtime->binding, pose)) {
-    T8_LOG_ERROR("[SandboxScene] Failed to reset scene ragdoll '%s' from animation",
+    T8_LOG_ERROR("[Quake3Mock] Failed to reset scene ragdoll '%s' from animation",
                  runtime->resourcePath.c_str());
     return false;
   }
@@ -3802,7 +3802,7 @@ bool SandboxScene::ResetSceneRagdollPhysicsAndAnimation(int meshIndex) {
   const t850::PhysicsRagdollHandle handle = Meshes[runtime->meshIndex].GetPhysicsRagdoll();
   if (!engineContext->physics->SetRagdollMotion(handle, t850::PhysicsBodyMotion::Kinematic) ||
       !engineContext->physics->DriveRagdollFromPose(handle, pose, 0.0f)) {
-    T8_LOG_ERROR("[SandboxScene] Failed to reset scene ragdoll physics for '%s'",
+    T8_LOG_ERROR("[Quake3Mock] Failed to reset scene ragdoll physics for '%s'",
                  runtime->resourcePath.c_str());
     return false;
   }
@@ -3818,15 +3818,15 @@ bool SandboxScene::ResetSceneRagdollPhysicsAndAnimation(int meshIndex) {
   runtime->physicsStates.clear();
   runtime->physicsBoneIndices.clear();
   runtime->physicsCombinedMatrices.clear();
-  T8_LOG_INFO("[SandboxScene] Reset scene ragdoll '%s' to animation drive", runtime->resourcePath.c_str());
+  T8_LOG_INFO("[Quake3Mock] Reset scene ragdoll '%s' to animation drive", runtime->resourcePath.c_str());
   return true;
 }
 
-bool SandboxScene::LoadEditorSceneAssets(const std::string& scenePath) {
+bool Quake3Mock::LoadEditorSceneAssets(const std::string& scenePath) {
   t850::scene::EditorSceneFile scene;
   std::string error;
   if (!t850::scene::LoadEditorSceneFile(scenePath, scene, &error)) {
-    T8_LOG_ERROR("[SandboxScene] Failed to load editor scene '%s': %s", scenePath.c_str(), error.c_str());
+    T8_LOG_ERROR("[Quake3Mock] Failed to load editor scene '%s': %s", scenePath.c_str(), error.c_str());
     return false;
   }
 
@@ -3858,7 +3858,7 @@ bool SandboxScene::LoadEditorSceneAssets(const std::string& scenePath) {
     auto q3CollisionWorld = std::make_unique<t850::Q3BspCollisionWorld>();
     std::string q3CollisionError;
     if (q3CollisionWorld->Load(q3CollisionPath, &q3CollisionError)) {
-      T8_LOG_INFO("[SandboxScene] Q3 collision clip loaded: %s brushes=%zu patchFacets=%zu jumpPads=%zu reachabilities=%zu",
+      T8_LOG_INFO("[Quake3Mock] Q3 collision clip loaded: %s brushes=%zu patchFacets=%zu jumpPads=%zu reachabilities=%zu",
                   q3CollisionPath.c_str(),
                   q3CollisionWorld->GetBrushCount(),
                   q3CollisionWorld->GetPatchFacetCount(),
@@ -3866,7 +3866,7 @@ bool SandboxScene::LoadEditorSceneAssets(const std::string& scenePath) {
                   q3CollisionWorld->GetReachabilityCount());
       m_q3CollisionWorld = std::move(q3CollisionWorld);
     } else {
-      T8_LOG_ERROR("[SandboxScene] Failed to load Q3 collision clip '%s': %s",
+      T8_LOG_ERROR("[Quake3Mock] Failed to load Q3 collision clip '%s': %s",
                    q3CollisionPath.c_str(),
                    q3CollisionError.c_str());
     }
@@ -3876,25 +3876,25 @@ bool SandboxScene::LoadEditorSceneAssets(const std::string& scenePath) {
     if (!object.visible) continue;
 #if defined(OS_ANDROID)
     if (object.mobile_visible && !*object.mobile_visible) {
-      T8_LOG_INFO("[SandboxScene] Android skipped mobile-hidden scene object '%s'", object.name.c_str());
+      T8_LOG_INFO("[Quake3Mock] Android skipped mobile-hidden scene object '%s'", object.name.c_str());
       continue;
     }
 #endif
     const std::string meshPath = NormalizeSceneResourcePath(object.mesh);
     if (meshPath.empty()) {
-      T8_LOG_ERROR("[SandboxScene] Scene object '%s' has no mesh path; skipping", object.name.c_str());
+      T8_LOG_ERROR("[Quake3Mock] Scene object '%s' has no mesh path; skipping", object.name.c_str());
       continue;
     }
     if (m_meshCount >= kMaxSandboxMeshes) {
-      T8_LOG_ERROR("[SandboxScene] Scene '%s' has more than %d visible meshes; remaining objects skipped",
+      T8_LOG_ERROR("[Quake3Mock] Scene '%s' has more than %d visible meshes; remaining objects skipped",
                    scenePath.c_str(), kMaxSandboxMeshes);
       break;
     }
 
-    T8_LOG_INFO("[SandboxScene] Loading scene object '%s' mesh='%s'", object.name.c_str(), meshPath.c_str());
+    T8_LOG_INFO("[Quake3Mock] Loading scene object '%s' mesh='%s'", object.name.c_str(), meshPath.c_str());
     const int primitiveIndex = PrimitiveMgr.CreateMesh(meshPath.c_str());
     if (primitiveIndex < 0) {
-      T8_LOG_ERROR("[SandboxScene] Failed to load scene object '%s' mesh '%s'", object.name.c_str(), meshPath.c_str());
+      T8_LOG_ERROR("[Quake3Mock] Failed to load scene object '%s' mesh '%s'", object.name.c_str(), meshPath.c_str());
       continue;
     }
 
@@ -3923,7 +3923,7 @@ bool SandboxScene::LoadEditorSceneAssets(const std::string& scenePath) {
       AttachSceneObjectRagdoll(static_cast<int>(m_meshCount), meshPath, ragdollPath);
     } else if (!isSkinnedObject && (physicsMeta.enabled || !object.physics.has_value())) {
       if (!ragdollPath.empty()) {
-        T8_LOG_INFO("[SandboxScene] Ignoring ragdoll '%s' on non-skinned scene object '%s'",
+        T8_LOG_INFO("[Quake3Mock] Ignoring ragdoll '%s' on non-skinned scene object '%s'",
                     ragdollPath.c_str(),
                     object.name.c_str());
       }
@@ -3944,19 +3944,19 @@ bool SandboxScene::LoadEditorSceneAssets(const std::string& scenePath) {
             *engineContext->physics, instance, *renderMesh, cookSettings, &cookStats)) {
           if (m_q3CollisionWorld && meshMatchesQ3Clip) {
             m_q3StaticCollisionEntityIds.push_back(instance.GetEntityId());
-            T8_LOG_INFO("[SandboxScene] Q3 map Jolt body ignored by Q3 camera: object='%s' entity=%u clip='%s'",
+            T8_LOG_INFO("[Quake3Mock] Q3 map Jolt body ignored by Q3 camera: object='%s' entity=%u clip='%s'",
                         object.name.c_str(),
                         instance.GetEntityId(),
                         q3CollisionPath.c_str());
           }
-          T8_LOG_INFO("[SandboxScene] Scene collision mesh ready for '%s': cache=%s vertices=%u triangles=%u total=%.2fms",
+          T8_LOG_INFO("[Quake3Mock] Scene collision mesh ready for '%s': cache=%s vertices=%u triangles=%u total=%.2fms",
                       object.name.c_str(),
                       cookStats.cacheHit ? "hit" : "miss",
                       cookStats.vertexCount,
                       cookStats.triangleCount,
                       cookStats.totalMs);
         } else {
-          T8_LOG_ERROR("[SandboxScene] Failed to create scene collision mesh for '%s'", object.name.c_str());
+          T8_LOG_ERROR("[Quake3Mock] Failed to create scene collision mesh for '%s'", object.name.c_str());
         }
       }
     }
@@ -3973,14 +3973,14 @@ bool SandboxScene::LoadEditorSceneAssets(const std::string& scenePath) {
     m_sceneNavAgentFrontYawOffsets.push_back(navAgentFrontYawOffset);
     const float navAgentFaceYawSign = object.nav_agent_face_yaw_sign.value_or(1.0f) < 0.0f ? -1.0f : 1.0f;
     m_sceneNavAgentFaceYawSigns.push_back(navAgentFaceYawSign);
-    T8_LOG_INFO("[SandboxScene] Loaded scene object '%s' mesh='%s' ragdoll='%s' slot=%d navFrontYawOffset=%.1f navFaceYawSign=%.1f",
+    T8_LOG_INFO("[Quake3Mock] Loaded scene object '%s' mesh='%s' ragdoll='%s' slot=%d navFrontYawOffset=%.1f navFaceYawSign=%.1f",
                 object.name.c_str(), meshPath.c_str(), ragdollPath.c_str(), m_meshCount,
                 navAgentFrontYawOffset, navAgentFaceYawSign);
     ++m_meshCount;
   }
 
   if (m_meshCount <= 0) {
-    T8_LOG_ERROR("[SandboxScene] Editor scene '%s' did not load any visible meshes", scenePath.c_str());
+    T8_LOG_ERROR("[Quake3Mock] Editor scene '%s' did not load any visible meshes", scenePath.c_str());
     return false;
   }
 
@@ -3990,11 +3990,11 @@ bool SandboxScene::LoadEditorSceneAssets(const std::string& scenePath) {
   ApplyEditorSceneCameraAndLights(scene);
   m_controlSetup.descriptor.profiles = scene.profiles;
   LoadSandboxProfile(true);
-  T8_LOG_INFO("[SandboxScene] Loaded editor scene '%s' with %d mesh instances", scenePath.c_str(), m_meshCount);
+  T8_LOG_INFO("[Quake3Mock] Loaded editor scene '%s' with %d mesh instances", scenePath.c_str(), m_meshCount);
   return true;
 }
 
-bool SandboxScene::EnsureNavMeshBuilt() {
+bool Quake3Mock::EnsureNavMeshBuilt() {
   if (m_navMesh.IsReady()) {
     return true;
   }
@@ -4099,7 +4099,7 @@ bool SandboxScene::EnsureNavMeshBuilt() {
   return true;
 }
 
-void SandboxScene::InitializeNavTestAgents() {
+void Quake3Mock::InitializeNavTestAgents() {
   if (m_navTestInitialized) {
     return;
   }
@@ -4183,7 +4183,7 @@ void SandboxScene::InitializeNavTestAgents() {
   }
 }
 
-void SandboxScene::PlanNavTestAgentPaths() {
+void Quake3Mock::PlanNavTestAgentPaths() {
   T8_TELEMETRY_SCOPE("navigation.agents.plan_paths");
   if (!m_navMesh.IsReady() || m_navTestAgents.empty()) {
     return;
@@ -4325,7 +4325,7 @@ void SandboxScene::PlanNavTestAgentPaths() {
   }
 }
 
-void SandboxScene::UpdateNavTestAgents(float dtSecs) {
+void Quake3Mock::UpdateNavTestAgents(float dtSecs) {
   T8_TELEMETRY_SCOPE("navigation.agents.update");
   if (!m_loadedEditorScene) {
     return;
@@ -5594,9 +5594,9 @@ void SandboxScene::UpdateNavTestAgents(float dtSecs) {
   }
 }
 
-void SandboxScene::CreateAssets() {
-  if (!m_renderGraph.Load("Scenes/SandboxScene_RenderGraph.json")) {
-    T8_LOG_ERROR("[SandboxScene] Failed to load render graph");
+void Quake3Mock::CreateAssets() {
+  if (!m_renderGraph.Load("Scenes/Quake3Mock_RenderGraph.json")) {
+    T8_LOG_ERROR("[Quake3Mock] Failed to load render graph");
     return;
   }
   m_renderGraph.CreateRenderTargets(pFramework->pVideoDriver, SceneProp);
@@ -5618,7 +5618,7 @@ void SandboxScene::CreateAssets() {
   SceneProp.SSAOKernel.InitTexture();
 
   if (m_controlSetup.descriptor.name.empty()) {
-    m_controlSetup.Load("Scenes/SandboxScene.json");
+    m_controlSetup.Load("Scenes/Quake3Mock.json");
   }
 
   const t850::SelectorDesc* cubemapDesc = FindSelectorDesc(m_controlSetup.descriptor.selectors, "cubemap");
@@ -5633,7 +5633,7 @@ void SandboxScene::CreateAssets() {
       startupSceneProfiles = startupScene.profiles;
       startupProfiles = &startupSceneProfiles;
     } else {
-      T8_LOG_ERROR("[SandboxScene] Could not pre-read scene profiles from '%s': %s",
+      T8_LOG_ERROR("[Quake3Mock] Could not pre-read scene profiles from '%s': %s",
                    g_config.sceneFilePath.c_str(), startupSceneError.c_str());
     }
   }
@@ -5679,15 +5679,15 @@ void SandboxScene::CreateAssets() {
 
   if (!g_config.sceneFilePath.empty()) {
     if (!LoadEditorSceneAssets(g_config.sceneFilePath)) {
-      T8_LOG_ERROR("[SandboxScene] Cannot continue without scene assets for '%s'", g_config.sceneFilePath.c_str());
+      T8_LOG_ERROR("[Quake3Mock] Cannot continue without scene assets for '%s'", g_config.sceneFilePath.c_str());
     }
   } else {
     // Load the glTF model
     int index = PrimitiveMgr.CreateMesh(g_config.modelPath.c_str());
     if (index < 0) {
-      T8_LOG_ERROR("[SandboxScene] Failed to load '%s'", g_config.modelPath.c_str());
+      T8_LOG_ERROR("[Quake3Mock] Failed to load '%s'", g_config.modelPath.c_str());
     } else {
-      T8_LOG_INFO("[SandboxScene] Loaded model '%s', primitive index=%d", g_config.modelPath.c_str(), index);
+      T8_LOG_INFO("[Quake3Mock] Loaded model '%s', primitive index=%d", g_config.modelPath.c_str(), index);
       Meshes[0].CreateInstance(PrimitiveMgr.GetPrimitive(index), &VP);
       Meshes[0].Update();
       m_meshCount = 1;
@@ -5726,7 +5726,6 @@ void SandboxScene::CreateAssets() {
   m_debugText.LoadFromFile(24, "Fonts/Martius-LV9L4.ttf", 512.0f);
   m_debugSphere.Create(6, 12);
   m_lightArrowRenderer.Create();
-  m_ragdollJointRenderer.Create();
   m_physicsDebugRenderer.Create();
   m_navMeshDebugRenderer.Create();
   m_navMesh.Clear();
@@ -5736,11 +5735,9 @@ void SandboxScene::CreateAssets() {
   m_lightArrowVB = t850::LineRenderer::CreatePositionVB(arrowVerts, 10, BufferUsage::DINAMIC);
   m_lightArrowIB = t850::LineRenderer::CreateIndexBuffer16(arrowIndices, 10);
   m_lightArrowIndexCount = 10;
-  m_ragdollJointVertexCapacity = 0;
-  m_ragdollJointIndexCapacity = 0;
-  m_ragdollJointIndexCount = 0;
 
-  if (g_config.sceneFilePath.empty() &&
+  if (false &&
+      g_config.sceneFilePath.empty() &&
       Meshes[0].pBase &&
       !Meshes[0].HasPhysicsBody() &&
       !Meshes[0].HasPhysicsRagdoll()) {
@@ -5798,13 +5795,13 @@ void SandboxScene::CreateAssets() {
             m_ragdollEditSelectedHandle = 0;
             LoadRagdollEditPose();
           }
-          T8_LOG_INFO("[SandboxScene] Attached full-skeleton ragdoll physics for '%s'", g_config.modelPath.c_str());
+          T8_LOG_INFO("[Quake3Mock] Attached full-skeleton ragdoll physics for '%s'", g_config.modelPath.c_str());
           if (!m_driveRagdollFromAnimation) {
-            T8_LOG_ERROR("[SandboxScene] Failed to bind full-skeleton ragdoll to animation pose for '%s'", g_config.modelPath.c_str());
+            T8_LOG_ERROR("[Quake3Mock] Failed to bind full-skeleton ragdoll to animation pose for '%s'", g_config.modelPath.c_str());
           }
           CreatePhysicsFloor(*engineContext->physics);
         } else {
-          T8_LOG_ERROR("[SandboxScene] Failed to attach full-skeleton ragdoll physics for '%s'", g_config.modelPath.c_str());
+          T8_LOG_ERROR("[Quake3Mock] Failed to attach full-skeleton ragdoll physics for '%s'", g_config.modelPath.c_str());
         }
       }
 
@@ -5813,29 +5810,29 @@ void SandboxScene::CreateAssets() {
         RenderMesh* mesh = static_cast<RenderMesh*>(Meshes[0].pBase);
         attachedPhysics = t850::AttachMeshBoxBody(*engineContext->physics, Meshes[0], *mesh, t850::PhysicsBodyMotion::Static);
         if (attachedPhysics) {
-          T8_LOG_INFO("[SandboxScene] Attached static mesh-box physics for '%s'", g_config.modelPath.c_str());
+          T8_LOG_INFO("[Quake3Mock] Attached static mesh-box physics for '%s'", g_config.modelPath.c_str());
         }
       }
     }
   }
 }
 
-void SandboxScene::OnLoadScene() {
+void Quake3Mock::OnLoadScene() {
   InstallSandboxConsoleLogCapture();
   InitVars();
   CreateAssets();
 }
 
-void SandboxScene::OnDestoryScene() {
+void Quake3Mock::OnDestoryScene() {
   DestroyAssets();
   UninstallSandboxConsoleLogCapture();
 }
 
-void SandboxScene::ResetViewInput() {
+void Quake3Mock::ResetViewInput() {
   m_cameraController.ClearInput();
 }
 
-void SandboxScene::DestroyAssets() {
+void Quake3Mock::DestroyAssets() {
   SceneProp.SSAOKernel.Destroy();
   bool hasPhysicsLinks = m_floorBody.IsValid();
   const int meshCount = (std::max)(m_meshCount, Meshes[0].pBase ? 1 : 0);
@@ -5921,9 +5918,7 @@ void SandboxScene::DestroyAssets() {
   m_lightArrowVB = nullptr;
   m_lightArrowIB = nullptr;
   m_lightArrowIndexCount = 0;
-  ReleaseRagdollJointDebugBuffers();
   m_lightArrowRenderer.Destroy();
-  m_ragdollJointRenderer.Destroy();
   m_physicsDebugRenderer.Destroy();
   m_navMeshDebugRenderer.Destroy();
   m_navMesh.Clear();
@@ -5932,74 +5927,17 @@ void SandboxScene::DestroyAssets() {
   pFramework->pVideoDriver->DestroyRTs();
 }
 
-void SandboxScene::OnUpdate(float _DtSecs) {
+void Quake3Mock::OnUpdate(float _DtSecs) {
   T8_TELEMETRY_SCOPE("sandbox.update");
   DtSecs = _DtSecs;
   SceneProp.FrameDeltaSec = DtSecs;
-  {
-    T8_TELEMETRY_SCOPE("sandbox.update.ragdoll_admin");
-    if (!m_ragdollConfigSpeedApplied && g_config.ragdollSimulationSpeedIndex >= 0) {
-      m_ragdollSimulationSpeedIndex = ClampRagdollSimulationSpeedIndex(g_config.ragdollSimulationSpeedIndex);
-      m_ragdollConfigSpeedApplied = true;
-    }
-    m_ragdollSimulationSpeedIndex = ClampRagdollSimulationSpeedIndex(m_ragdollSimulationSpeedIndex);
-    t850::EngineContext* updateEngineContext = GetEngineContext();
-    if (!updateEngineContext) updateEngineContext = &t850::GetEngineContext();
-    if (updateEngineContext && updateEngineContext->physics) {
-      updateEngineContext->physics->SetSimulationSpeedScale(
-          RagdollSimulationSpeedScaleForIndex(m_ragdollSimulationSpeedIndex));
-      updateEngineContext->physics->SetUseFixedSimulationDelta(m_ragdollUseFixedSimulationDelta);
-    }
-
-    if (m_ragdollClearRequested) {
-      BeginRagdollUndoScope("Clear all bodies");
-      ClearRagdollCapsules();
-      EndRagdollUndoScope(false);
-    }
-    if (m_ragdollEditRebuildRequested && !m_ragdollClearRequested) {
-      m_ragdollEditRebuildRequested = false;
-      ApplyRagdollEditPose(true);
-    }
-    if (g_config.flags.autoStartRagdoll &&
-        !m_ragdollAutoStartAttempted &&
-        ((Meshes[0].HasPhysicsRagdoll() && !m_ragdollPhysicsDriven) || !m_sceneRagdolls.empty())) {
-      m_ragdollAutoStartAttempted = true;
-      T8_LOG_INFO("[SandboxScene] Auto-starting ragdoll simulation at %s",
-                  RagdollSimulationSpeedLabelForIndex(m_ragdollSimulationSpeedIndex));
-      SwitchRagdollToPhysics();
-    }
-    if (!m_ragdollSyncCliAttempted && HasCommandLineFlag("--ragdollSyncOnce")) {
-      ++m_ragdollSyncCliWaitFrames;
-      if (Meshes[0].pBase && !m_ragdollAnimationBinding.referencePose.bones.empty()) {
-        m_ragdollSyncCliAttempted = true;
-        T8_LOG_INFO("[RagdollEdit] --ragdollSyncOnce running for '%s'", g_config.modelPath.c_str());
-        if (!m_skeletonEditMode) {
-          EnterSkeletonEditMode();
-        }
-        if (m_skeletonEditMode) {
-          SyncRagdollCapsuleSymmetry();
-        } else {
-          T8_LOG_ERROR("[RagdollEdit] --ragdollSyncOnce could not enter edit mode");
-        }
-      } else if (m_ragdollSyncCliWaitFrames == 1 || (m_ragdollSyncCliWaitFrames % 120) == 0) {
-        T8_LOG_INFO("[RagdollEdit] --ragdollSyncOnce waiting: mesh=%s capsules=%zu model='%s'",
-                    Meshes[0].pBase ? "ready" : "not-ready",
-                    m_ragdollAnimationBinding.referencePose.bones.size(),
-                    g_config.modelPath.c_str());
-        if (m_ragdollSyncCliWaitFrames >= 1200) {
-          m_ragdollSyncCliAttempted = true;
-          T8_LOG_ERROR("[RagdollEdit] --ragdollSyncOnce gave up after %d frames", m_ragdollSyncCliWaitFrames);
-        }
-      }
-    }
-  }
 
   // Apply deferred cubemap change BEFORE any rendering begins.
   // D3D12 texture upload submits a temp command list + fence wait, which
   // conflicts with the main command list if done mid-frame.
   if (!m_pendingCubemap.empty()) {
     T8_TELEMETRY_SCOPE("sandbox.update.pending_cubemap");
-    T8_LOG_INFO("[SandboxScene] Loading cubemap '%s' (old slot=%d)",
+    T8_LOG_INFO("[Quake3Mock] Loading cubemap '%s' (old slot=%d)",
                 m_pendingCubemap.c_str(), EnvMapTexIndex);
     // Flush GPU before destroying — D3D12 may still reference the old
     // texture from the previous frame's command list.
@@ -6040,7 +5978,7 @@ void SandboxScene::OnUpdate(float _DtSecs) {
       EnvMaps.SheenELUT = SheenELUTTexIndex;
       UpdateSceneIBLSettings(SceneProp, g_pBaseDriver, EnvMaps);
       Texture* newTex = g_pBaseDriver->GetTexture(EnvMapTexIndex);
-      T8_LOG_INFO("[SandboxScene] Cubemap loaded: slot=%d tex=%p (%dx%d)",
+      T8_LOG_INFO("[Quake3Mock] Cubemap loaded: slot=%d tex=%p (%dx%d)",
                   EnvMapTexIndex, newTex, newTex ? newTex->x : 0, newTex ? newTex->y : 0);
       Quads[0].SetEnvironmentMap(newTex);
       const int meshCount = (std::max)(m_meshCount, Meshes[0].pBase ? 1 : 0);
@@ -6050,7 +5988,7 @@ void SandboxScene::OnUpdate(float _DtSecs) {
         }
       }
     } else {
-      T8_LOG_ERROR("[SandboxScene] Failed to load cubemap '%s'; keeping previous cubemap", m_pendingCubemap.c_str());
+      T8_LOG_ERROR("[Quake3Mock] Failed to load cubemap '%s'; keeping previous cubemap", m_pendingCubemap.c_str());
     }
     m_pendingCubemap.clear();
   }
@@ -6166,32 +6104,13 @@ void SandboxScene::OnUpdate(float _DtSecs) {
       if (!Meshes[meshIndex].pBase) continue;
       RenderSkinnedMesh* skinned = Meshes[meshIndex].GetSkinnedMesh();
       if (!skinned || !skinned->HasSkinData()) continue;
-      const bool sceneRagdollPhysicsDriven = IsSceneRagdollPhysicsDriven(meshIndex);
-      if (sceneRagdollPhysicsDriven) {
-        continue;
-      }
-      if (meshIndex == 0 && !m_ragdollPhysicsDriven) {
-        {
-          T8_TELEMETRY_SCOPE("sandbox.update.skinned_animation.primary_pose");
-          skinned->UpdateAnimationPose();
-        }
-        {
-          T8_TELEMETRY_SCOPE("sandbox.update.drive_primary_ragdoll");
-          DriveRagdollFromAnimation(DtSecs);
-        }
-      } else if (meshIndex != 0) {
-        T8_TELEMETRY_SCOPE("sandbox.update.skinned_animation.agent_pose");
-        skinned->UpdateAnimationPose();
-      }
+      T8_TELEMETRY_SCOPE("sandbox.update.skinned_animation.pose");
+      skinned->UpdateAnimationPose();
     }
-  }
-  {
-    T8_TELEMETRY_SCOPE("sandbox.update.drive_scene_ragdolls");
-    DriveSceneRagdollsFromAnimation(DtSecs);
   }
 }
 
-void SandboxScene::DriveRagdollFromAnimation(float deltaSeconds) {
+void Quake3Mock::DriveRagdollFromAnimation(float deltaSeconds) {
   if (!m_driveRagdollFromAnimation || !Meshes[0].HasPhysicsRagdoll()) {
     return;
   }
@@ -6205,7 +6124,7 @@ void SandboxScene::DriveRagdollFromAnimation(float deltaSeconds) {
 
   if (!t850::BuildRagdollPoseFromAnimation(*skinned, Meshes[0].Final, m_ragdollAnimationBinding, m_ragdollAnimationPose)) {
     if (!m_ragdollDriveLogEmitted) {
-      T8_LOG_ERROR("[SandboxScene] Failed to build animation-driven ragdoll pose for '%s'", g_config.modelPath.c_str());
+      T8_LOG_ERROR("[Quake3Mock] Failed to build animation-driven ragdoll pose for '%s'", g_config.modelPath.c_str());
       m_ragdollDriveLogEmitted = true;
     }
     return;
@@ -6213,20 +6132,20 @@ void SandboxScene::DriveRagdollFromAnimation(float deltaSeconds) {
 
   if (!engineContext->physics->DriveRagdollFromPose(Meshes[0].GetPhysicsRagdoll(), m_ragdollAnimationPose, deltaSeconds)) {
     if (!m_ragdollDriveLogEmitted) {
-      T8_LOG_ERROR("[SandboxScene] Failed to drive ragdoll from animation pose for '%s'", g_config.modelPath.c_str());
+      T8_LOG_ERROR("[Quake3Mock] Failed to drive ragdoll from animation pose for '%s'", g_config.modelPath.c_str());
       m_ragdollDriveLogEmitted = true;
     }
     return;
   }
 
   if (!m_ragdollDriveLogEmitted) {
-    T8_LOG_INFO("[SandboxScene] Driving humanoid ragdoll from animation pose: bodies=%zu", m_ragdollAnimationPose.bones.size());
+    T8_LOG_INFO("[Quake3Mock] Driving humanoid ragdoll from animation pose: bodies=%zu", m_ragdollAnimationPose.bones.size());
     LogRagdollFloorDiagnostics("animation driven");
     m_ragdollDriveLogEmitted = true;
   }
 }
 
-void SandboxScene::UpdateSkeletonFromRagdollPhysics() {
+void Quake3Mock::UpdateSkeletonFromRagdollPhysics() {
   if (!m_ragdollPhysicsDriven || !Meshes[0].HasPhysicsRagdoll()) {
     return;
   }
@@ -6250,14 +6169,14 @@ void SandboxScene::UpdateSkeletonFromRagdollPhysics() {
           m_ragdollPhysicsBoneIndices,
           m_ragdollPhysicsCombinedMatrices)) {
     if (!m_ragdollPhysicsLogEmitted) {
-      T8_LOG_ERROR("[SandboxScene] Failed to drive skinned skeleton from physics for '%s'", g_config.modelPath.c_str());
+      T8_LOG_ERROR("[Quake3Mock] Failed to drive skinned skeleton from physics for '%s'", g_config.modelPath.c_str());
       m_ragdollPhysicsLogEmitted = true;
     }
     return;
   }
 
   if (!m_ragdollPhysicsLogEmitted) {
-    T8_LOG_INFO("[SandboxScene] Driving skinned skeleton from dynamic ragdoll physics: bodies=%zu", m_ragdollPhysicsStates.size());
+    T8_LOG_INFO("[Quake3Mock] Driving skinned skeleton from dynamic ragdoll physics: bodies=%zu", m_ragdollPhysicsStates.size());
     m_ragdollPhysicsLogEmitted = true;
   }
   if (!m_ragdollFloorRuntimeDiagEmitted) {
@@ -6266,7 +6185,7 @@ void SandboxScene::UpdateSkeletonFromRagdollPhysics() {
   }
 }
 
-void SandboxScene::UpdateSceneSkeletonsFromRagdollPhysics() {
+void Quake3Mock::UpdateSceneSkeletonsFromRagdollPhysics() {
   if (m_sceneRagdolls.empty()) {
     return;
   }
@@ -6311,7 +6230,7 @@ void SandboxScene::UpdateSceneSkeletonsFromRagdollPhysics() {
             runtime.physicsCombinedMatrices);
     if (!gotState || !builtPose || !appliedPose) {
       if (!runtime.physicsLogEmitted) {
-        T8_LOG_ERROR("[SandboxScene] Failed to drive scene object skeleton from ragdoll '%s' state=%d bodies=%zu pose=%d overrides=%d bones=%zu",
+        T8_LOG_ERROR("[Quake3Mock] Failed to drive scene object skeleton from ragdoll '%s' state=%d bodies=%zu pose=%d overrides=%d bones=%zu",
                      runtime.resourcePath.c_str(),
                      gotState ? 1 : 0,
                      runtime.physicsStates.size(),
@@ -6324,7 +6243,7 @@ void SandboxScene::UpdateSceneSkeletonsFromRagdollPhysics() {
     }
 
     if (!runtime.physicsLogEmitted) {
-      T8_LOG_INFO("[SandboxScene] Driving scene object skeleton from dynamic ragdoll '%s': bodies=%zu",
+      T8_LOG_INFO("[Quake3Mock] Driving scene object skeleton from dynamic ragdoll '%s': bodies=%zu",
                   runtime.resourcePath.c_str(),
                   runtime.physicsStates.size());
       runtime.physicsLogEmitted = true;
@@ -6332,9 +6251,9 @@ void SandboxScene::UpdateSceneSkeletonsFromRagdollPhysics() {
   }
 }
 
-void SandboxScene::SwitchRagdollToPhysics() {
+void Quake3Mock::SwitchRagdollToPhysics() {
   if (m_ragdollPhysicsDriven) {
-    T8_LOG_INFO("[SandboxScene] Ragdoll is already physics-driven");
+    T8_LOG_INFO("[Quake3Mock] Ragdoll is already physics-driven");
     return;
   }
 
@@ -6345,7 +6264,7 @@ void SandboxScene::SwitchRagdollToPhysics() {
     if (SwitchSceneRagdollsToPhysics()) {
       return;
     }
-    T8_LOG_ERROR("[SandboxScene] Cannot switch to ragdoll physics: no skinned ragdoll is attached");
+    T8_LOG_ERROR("[Quake3Mock] Cannot switch to ragdoll physics: no skinned ragdoll is attached");
     return;
   }
 
@@ -6383,7 +6302,7 @@ void SandboxScene::SwitchRagdollToPhysics() {
     m_ragdollPhysicsBoneIndices = std::move(handoffBoneIndices);
     m_ragdollPhysicsCombinedMatrices = std::move(handoffCombinedMatrices);
   } else {
-    T8_LOG_ERROR("[SandboxScene] Failed to dump F5 ragdoll matrix comparison for '%s'", g_config.modelPath.c_str());
+    T8_LOG_ERROR("[Quake3Mock] Failed to dump F5 ragdoll matrix comparison for '%s'", g_config.modelPath.c_str());
   }
 
   if (m_floorBody.IsValid()) {
@@ -6393,7 +6312,7 @@ void SandboxScene::SwitchRagdollToPhysics() {
   CreatePhysicsFloor(*engineContext->physics);
   LogRagdollFloorDiagnostics("F5 pre-dynamic");
   if (!engineContext->physics->SetRagdollMotion(Meshes[0].GetPhysicsRagdoll(), t850::PhysicsBodyMotion::Dynamic)) {
-    T8_LOG_ERROR("[SandboxScene] Failed to switch ragdoll bodies to dynamic physics");
+    T8_LOG_ERROR("[Quake3Mock] Failed to switch ragdoll bodies to dynamic physics");
     return;
   }
   engineContext->physics->SetRagdollVelocity(
@@ -6409,10 +6328,10 @@ void SandboxScene::SwitchRagdollToPhysics() {
   skinned->ClearSnapshotBoneMatrices();
   LogRagdollFloorDiagnostics("F5 post-dynamic");
   SwitchSceneRagdollsToPhysics();
-  T8_LOG_INFO("[SandboxScene] F5: animation-to-physics ragdoll transition started");
+  T8_LOG_INFO("[Quake3Mock] F5: animation-to-physics ragdoll transition started");
 }
 
-bool SandboxScene::PickRagdollSimulationBody(float mouseX,
+bool Quake3Mock::PickRagdollSimulationBody(float mouseX,
                                              float mouseY,
                                              int& outBodyIndex,
                                              t850::PhysicsBodyState& outState,
@@ -6477,7 +6396,7 @@ bool SandboxScene::PickRagdollSimulationBody(float mouseX,
   return false;
 }
 
-bool SandboxScene::BeginRagdollSimulationGrab(float mouseX, float mouseY) {
+bool Quake3Mock::BeginRagdollSimulationGrab(float mouseX, float mouseY) {
   t850::PhysicsBodyState pickedState;
   XVECTOR3 hitPoint;
   float hitDistance = 0.0f;
@@ -6516,12 +6435,12 @@ bool SandboxScene::BeginRagdollSimulationGrab(float mouseX, float mouseY) {
   m_ragdollEditSelectedCapsule = bodyIndex;
   if (bodyIndex >= 0 && bodyIndex < static_cast<int>(m_ragdollAnimationBinding.referencePose.bones.size())) {
     const auto& bone = m_ragdollAnimationBinding.referencePose.bones[static_cast<std::size_t>(bodyIndex)];
-    T8_LOG_INFO("[SandboxScene] Grabbed ragdoll body %d (%s)", bodyIndex, bone.body.debugName.c_str());
+    T8_LOG_INFO("[Quake3Mock] Grabbed ragdoll body %d (%s)", bodyIndex, bone.body.debugName.c_str());
   }
   return UpdateRagdollSimulationGrab(mouseX, mouseY);
 }
 
-bool SandboxScene::UpdateRagdollSimulationGrab(float mouseX, float mouseY) {
+bool Quake3Mock::UpdateRagdollSimulationGrab(float mouseX, float mouseY) {
   if (!m_ragdollSimulationGrabActive || !m_ragdollSimulationGrabHandle.IsValid() || !g_pBaseDriver) {
     return false;
   }
@@ -6568,7 +6487,7 @@ bool SandboxScene::UpdateRagdollSimulationGrab(float mouseX, float mouseY) {
       currentState.angularVelocity);
 }
 
-void SandboxScene::EndRagdollSimulationGrab(bool applyThrow) {
+void Quake3Mock::EndRagdollSimulationGrab(bool applyThrow) {
   if (!m_ragdollSimulationGrabActive) {
     return;
   }
@@ -6599,7 +6518,7 @@ void SandboxScene::EndRagdollSimulationGrab(bool applyThrow) {
   m_ragdollSimulationGrabReleaseVelocity = XVECTOR3(0.0f, 0.0f, 0.0f, 0.0f);
 }
 
-bool SandboxScene::HandleRagdollSimulationGrabInput(InputManager* input, bool imguiWantsMouse) {
+bool Quake3Mock::HandleRagdollSimulationGrabInput(InputManager* input, bool imguiWantsMouse) {
   if (!input) {
     return false;
   }
@@ -6627,14 +6546,14 @@ bool SandboxScene::HandleRagdollSimulationGrabInput(InputManager* input, bool im
   return BeginRagdollSimulationGrab(static_cast<float>(input->mouseX), static_cast<float>(input->mouseY));
 }
 
-bool SandboxScene::ResetRagdollPhysicsAndAnimation() {
+bool Quake3Mock::ResetRagdollPhysicsAndAnimation() {
   EndRagdollSimulationGrab(false);
 
   RenderSkinnedMesh* skinned = Meshes[0].GetSkinnedMesh();
   t850::EngineContext* engineContext = GetEngineContext();
   if (!engineContext) engineContext = &t850::GetEngineContext();
   if (!skinned || !skinned->HasSkinData()) {
-    T8_LOG_ERROR("[SandboxScene] Cannot reset ragdoll: no skinned model is loaded");
+    T8_LOG_ERROR("[Quake3Mock] Cannot reset ragdoll: no skinned model is loaded");
     return false;
   }
 
@@ -6656,7 +6575,7 @@ bool SandboxScene::ResetRagdollPhysicsAndAnimation() {
   m_ragdollPhysicsCombinedMatrices.clear();
 
   if (!engineContext || !engineContext->physics || m_ragdollAnimationBinding.referencePose.bones.empty()) {
-    T8_LOG_INFO("[SandboxScene] F7: animation state reset");
+    T8_LOG_INFO("[Quake3Mock] F7: animation state reset");
     return true;
   }
 
@@ -6668,7 +6587,7 @@ bool SandboxScene::ResetRagdollPhysicsAndAnimation() {
   if (!Meshes[0].HasPhysicsRagdoll()) {
     const bool recreated = RecreateRagdollFromPose(pose);
     if (recreated) {
-      T8_LOG_INFO("[SandboxScene] F7: animation and ragdoll reset");
+      T8_LOG_INFO("[Quake3Mock] F7: animation and ragdoll reset");
     }
     return recreated;
   }
@@ -6681,12 +6600,12 @@ bool SandboxScene::ResetRagdollPhysicsAndAnimation() {
   const bool driven = engineContext->physics->DriveRagdollFromPose(Meshes[0].GetPhysicsRagdoll(), pose, 0.0f);
   if (driven) {
     m_ragdollAnimationPose = std::move(pose);
-    T8_LOG_INFO("[SandboxScene] F7: animation and ragdoll reset");
+    T8_LOG_INFO("[Quake3Mock] F7: animation and ragdoll reset");
   }
   return driven;
 }
 
-void SandboxScene::LogRagdollFloorDiagnostics(const char* stage) {
+void Quake3Mock::LogRagdollFloorDiagnostics(const char* stage) {
   t850::EngineContext* engineContext = GetEngineContext();
   if (!engineContext) engineContext = &t850::GetEngineContext();
   if (!engineContext || !engineContext->physics || !engineContext->physics->IsInitialized()) {
@@ -6785,7 +6704,7 @@ void SandboxScene::LogRagdollFloorDiagnostics(const char* stage) {
               lowestHalfHeight);
 }
 
-void SandboxScene::CreatePhysicsFloor(t850::JoltPhysicsSystem& physics) {
+void Quake3Mock::CreatePhysicsFloor(t850::JoltPhysicsSystem& physics) {
   if (m_floorBody.IsValid() || !Meshes[0].pBase) {
     return;
   }
@@ -6793,7 +6712,7 @@ void SandboxScene::CreatePhysicsFloor(t850::JoltPhysicsSystem& physics) {
   RenderMesh* mesh = static_cast<RenderMesh*>(Meshes[0].pBase);
   RenderMesh::AABB worldBounds;
   if (!BuildWorldBounds(mesh, Meshes[0].Final, worldBounds)) {
-    T8_LOG_ERROR("[SandboxScene] Failed to build physics floor: model bounds are unavailable");
+    T8_LOG_ERROR("[Quake3Mock] Failed to build physics floor: model bounds are unavailable");
     return;
   }
   RenderMesh::AABB modelFloorBounds = worldBounds;
@@ -6835,7 +6754,7 @@ void SandboxScene::CreatePhysicsFloor(t850::JoltPhysicsSystem& physics) {
 
   m_floorBody = physics.CreateBody(floorDesc);
   if (m_floorBody.IsValid()) {
-    T8_LOG_INFO("[SandboxScene] Added static ragdoll floor top y=%.3f source=%s sourceMinY=%.3f meshMinY=%.3f skinnedMinY=%.3f ragdollMinY=%.3f halfSize=%.3f halfHeight=%.3f areaScale=%.1f",
+    T8_LOG_INFO("[Quake3Mock] Added static ragdoll floor top y=%.3f source=%s sourceMinY=%.3f meshMinY=%.3f skinnedMinY=%.3f ragdollMinY=%.3f halfSize=%.3f halfHeight=%.3f areaScale=%.1f",
                 floorTransform.m42 + halfHeight,
                 hasSkinnedBounds ? "skinned-mesh" : "mesh",
                 floorSourceMinY,
@@ -6846,16 +6765,16 @@ void SandboxScene::CreatePhysicsFloor(t850::JoltPhysicsSystem& physics) {
                 halfHeight,
                 kRagdollFloorAreaScale);
   } else {
-    T8_LOG_ERROR("[SandboxScene] Failed to create static ragdoll floor");
+    T8_LOG_ERROR("[Quake3Mock] Failed to create static ragdoll floor");
   }
 }
 
-std::string SandboxScene::BuildSkeletonEditSavePath() const {
+std::string Quake3Mock::BuildSkeletonEditSavePath() const {
   const std::string key = FileSafeModelKey(m_profileModelKey.empty() ? SandboxProfileModelKey(g_config.modelPath) : m_profileModelKey);
   return t850::ResourceLocator::Instance().ResolveCachePath("SkeletonEdits/" + key + ".json").string();
 }
 
-bool SandboxScene::EnterSkeletonEditMode() {
+bool Quake3Mock::EnterSkeletonEditMode() {
   RenderSkinnedMesh* skinned = Meshes[0].GetSkinnedMesh();
   if (!skinned || !skinned->HasSkinData()) {
     T8_LOG_ERROR("[SkeletonEdit] Cannot enter edit mode: active model has no skinned skeleton");
@@ -6919,7 +6838,7 @@ bool SandboxScene::EnterSkeletonEditMode() {
   return true;
 }
 
-void SandboxScene::ExitSkeletonEditMode() {
+void Quake3Mock::ExitSkeletonEditMode() {
   RenderSkinnedMesh* skinned = Meshes[0].GetSkinnedMesh();
   RestoreSkeletonPreviewBone();
   m_skeletonEditMode = false;
@@ -6937,7 +6856,7 @@ void SandboxScene::ExitSkeletonEditMode() {
   T8_LOG_INFO("[SkeletonEdit] Exited edit mode");
 }
 
-bool SandboxScene::ApplySkeletonEditPose() {
+bool Quake3Mock::ApplySkeletonEditPose() {
   RenderSkinnedMesh* skinned = Meshes[0].GetSkinnedMesh();
   if (!skinned || !skinned->HasSkinData() || m_skeletonEditCombined.empty()) {
     return false;
@@ -6955,7 +6874,7 @@ bool SandboxScene::ApplySkeletonEditPose() {
   return true;
 }
 
-bool SandboxScene::ResetSkeletonEditPose() {
+bool Quake3Mock::ResetSkeletonEditPose() {
   if (m_skeletonEditBindCombined.empty()) {
     return false;
   }
@@ -6967,7 +6886,7 @@ bool SandboxScene::ResetSkeletonEditPose() {
   return ApplySkeletonEditPose();
 }
 
-bool SandboxScene::LoadSkeletonEditPose() {
+bool Quake3Mock::LoadSkeletonEditPose() {
   if (m_skeletonEditSavePath.empty()) {
     m_skeletonEditSavePath = BuildSkeletonEditSavePath();
   }
@@ -7032,7 +6951,7 @@ bool SandboxScene::LoadSkeletonEditPose() {
   return applied > 0;
 }
 
-bool SandboxScene::SaveSkeletonEditPose() {
+bool Quake3Mock::SaveSkeletonEditPose() {
   if (m_skeletonEditSavePath.empty()) {
     m_skeletonEditSavePath = BuildSkeletonEditSavePath();
   }
@@ -7103,7 +7022,7 @@ bool SandboxScene::SaveSkeletonEditPose() {
   return true;
 }
 
-std::string SandboxScene::BuildRagdollEditSavePath() const {
+std::string Quake3Mock::BuildRagdollEditSavePath() const {
   if (!m_primaryRagdollResourcePath.empty()) {
     return m_primaryRagdollResourcePath;
   }
@@ -7111,19 +7030,19 @@ std::string SandboxScene::BuildRagdollEditSavePath() const {
       m_profileModelKey.empty() ? g_config.modelPath : m_profileModelKey);
 }
 
-int SandboxScene::FindRagdollCapsuleForBone(int boneIndex) const {
+int Quake3Mock::FindRagdollCapsuleForBone(int boneIndex) const {
   return t850::ragdoll_editor::FindBodyForBone(m_ragdollAnimationBinding, boneIndex);
 }
 
-int SandboxScene::FindRagdollCapsuleControllingBone(int boneIndex) const {
+int Quake3Mock::FindRagdollCapsuleControllingBone(int boneIndex) const {
   return t850::ragdoll_editor::FindBodyControllingBone(m_ragdollAnimationBinding, boneIndex);
 }
 
-void SandboxScene::EnsureRagdollControlledBones() {
+void Quake3Mock::EnsureRagdollControlledBones() {
   t850::ragdoll_editor::EnsureControlledBones(m_ragdollAnimationBinding);
 }
 
-void SandboxScene::SelectRagdollEditCapsule(int capsuleIndex, bool syncBoneSelection) {
+void Quake3Mock::SelectRagdollEditCapsule(int capsuleIndex, bool syncBoneSelection) {
   const auto& bones = m_ragdollAnimationBinding.referencePose.bones;
   if (capsuleIndex < 0 || capsuleIndex >= static_cast<int>(bones.size())) {
     m_ragdollEditSelectedCapsule = -1;
@@ -7196,15 +7115,15 @@ void SandboxScene::SelectRagdollEditCapsule(int capsuleIndex, bool syncBoneSelec
   }
 }
 
-void SandboxScene::SyncRagdollParentCapsulesFromBoneLinks() {
+void Quake3Mock::SyncRagdollParentCapsulesFromBoneLinks() {
   t850::ragdoll_editor::SyncParentBodiesFromBoneLinks(m_ragdollAnimationBinding, m_ragdollParentCapsules);
 }
 
-void SandboxScene::EnsureRagdollParentCapsules() {
+void Quake3Mock::EnsureRagdollParentCapsules() {
   t850::ragdoll_editor::EnsureParentBodies(m_ragdollAnimationBinding, m_ragdollParentCapsules);
 }
 
-void SandboxScene::EnsureRagdollJointState() {
+void Quake3Mock::EnsureRagdollJointState() {
   const std::vector<int> newJointOffsets = t850::ragdoll_editor::EnsureJointState(
       m_ragdollAnimationBinding,
       m_ragdollParentCapsules,
@@ -7215,22 +7134,22 @@ void SandboxScene::EnsureRagdollJointState() {
   }
 }
 
-void SandboxScene::EnsureRagdollFreezeState() {
+void Quake3Mock::EnsureRagdollFreezeState() {
   t850::ragdoll_editor::EnsureFreezeState(
       m_ragdollAnimationBinding.referencePose.bones.size(),
       m_ragdollFrozenCapsules,
       m_ragdollFrozenJoints);
 }
 
-bool SandboxScene::IsRagdollCapsuleFrozen(int capsuleIndex) const {
+bool Quake3Mock::IsRagdollCapsuleFrozen(int capsuleIndex) const {
   return t850::ragdoll_editor::IsFrozen(m_ragdollFrozenCapsules, capsuleIndex);
 }
 
-bool SandboxScene::IsRagdollJointFrozen(int childCapsule) const {
+bool Quake3Mock::IsRagdollJointFrozen(int childCapsule) const {
   return t850::ragdoll_editor::IsFrozen(m_ragdollFrozenJoints, childCapsule);
 }
 
-void SandboxScene::SetRagdollCapsuleFrozen(int capsuleIndex, bool frozen) {
+void Quake3Mock::SetRagdollCapsuleFrozen(int capsuleIndex, bool frozen) {
   EnsureRagdollFreezeState();
   if (!t850::ragdoll_editor::SetFrozen(m_ragdollFrozenCapsules, capsuleIndex, frozen)) {
     return;
@@ -7243,7 +7162,7 @@ void SandboxScene::SetRagdollCapsuleFrozen(int capsuleIndex, bool frozen) {
   m_ragdollEditDirty = true;
 }
 
-void SandboxScene::SetRagdollJointFrozen(int childCapsule, bool frozen) {
+void Quake3Mock::SetRagdollJointFrozen(int childCapsule, bool frozen) {
   EnsureRagdollFreezeState();
   if (!t850::ragdoll_editor::SetFrozen(m_ragdollFrozenJoints, childCapsule, frozen)) {
     return;
@@ -7255,7 +7174,7 @@ void SandboxScene::SetRagdollJointFrozen(int childCapsule, bool frozen) {
   m_ragdollEditDirty = true;
 }
 
-int SandboxScene::GetRagdollEffectiveJointParentCapsule(int childCapsule) const {
+int Quake3Mock::GetRagdollEffectiveJointParentCapsule(int childCapsule) const {
   return t850::ragdoll_editor::EffectiveJointParent(
       childCapsule,
       m_ragdollAnimationBinding.referencePose.bones.size(),
@@ -7263,7 +7182,7 @@ int SandboxScene::GetRagdollEffectiveJointParentCapsule(int childCapsule) const 
       m_ragdollJointParentCapsules);
 }
 
-bool SandboxScene::UpdateRagdollJointOffsetFromWorld(int childCapsule) {
+bool Quake3Mock::UpdateRagdollJointOffsetFromWorld(int childCapsule) {
   auto& binding = m_ragdollAnimationBinding;
   if (childCapsule < 0 ||
       childCapsule >= static_cast<int>(binding.referencePose.bones.size())) {
@@ -7289,7 +7208,7 @@ bool SandboxScene::UpdateRagdollJointOffsetFromWorld(int childCapsule) {
   return true;
 }
 
-bool SandboxScene::UpdateRagdollJointFrameOffsetsFromWorld(int childCapsule) {
+bool Quake3Mock::UpdateRagdollJointFrameOffsetsFromWorld(int childCapsule) {
   auto& binding = m_ragdollAnimationBinding;
   auto& bones = binding.referencePose.bones;
   if (childCapsule < 0 || childCapsule >= static_cast<int>(bones.size())) {
@@ -7335,7 +7254,7 @@ bool SandboxScene::UpdateRagdollJointFrameOffsetsFromWorld(int childCapsule) {
   return true;
 }
 
-void SandboxScene::UpdateRagdollJointFrameOffsetsForBody(int capsuleIndex) {
+void Quake3Mock::UpdateRagdollJointFrameOffsetsForBody(int capsuleIndex) {
   const auto& bones = m_ragdollAnimationBinding.referencePose.bones;
   if (capsuleIndex < 0 || capsuleIndex >= static_cast<int>(bones.size())) {
     return;
@@ -7349,7 +7268,7 @@ void SandboxScene::UpdateRagdollJointFrameOffsetsForBody(int capsuleIndex) {
   }
 }
 
-bool SandboxScene::ResetRagdollJointFrameToBodyAxes(int childCapsule) {
+bool Quake3Mock::ResetRagdollJointFrameToBodyAxes(int childCapsule) {
   auto& bones = m_ragdollAnimationBinding.referencePose.bones;
   EnsureRagdollJointState();
   if (childCapsule < 0 || childCapsule >= static_cast<int>(bones.size())) {
@@ -7370,7 +7289,7 @@ bool SandboxScene::ResetRagdollJointFrameToBodyAxes(int childCapsule) {
   return UpdateRagdollJointFrameOffsetsFromWorld(childCapsule);
 }
 
-void SandboxScene::EnsureRagdollJointFrames() {
+void Quake3Mock::EnsureRagdollJointFrames() {
   auto& binding = m_ragdollAnimationBinding;
   auto& bones = binding.referencePose.bones;
   EnsureRagdollJointState();
@@ -7390,7 +7309,7 @@ void SandboxScene::EnsureRagdollJointFrames() {
   }
 }
 
-bool SandboxScene::ApplyRagdollParentCapsuleLinks() {
+bool Quake3Mock::ApplyRagdollParentCapsuleLinks() {
   auto& bones = m_ragdollAnimationBinding.referencePose.bones;
   EnsureRagdollJointState();
   if (m_ragdollParentCapsules.size() != bones.size()) {
@@ -7423,7 +7342,7 @@ bool SandboxScene::ApplyRagdollParentCapsuleLinks() {
   return true;
 }
 
-bool SandboxScene::SetRagdollCapsuleParent(int childCapsule, int parentCapsule) {
+bool Quake3Mock::SetRagdollCapsuleParent(int childCapsule, int parentCapsule) {
   const auto& bones = m_ragdollAnimationBinding.referencePose.bones;
   EnsureRagdollJointState();
   EnsureRagdollFreezeState();
@@ -7472,7 +7391,7 @@ bool SandboxScene::SetRagdollCapsuleParent(int childCapsule, int parentCapsule) 
   return ApplyRagdollEditPose(true);
 }
 
-bool SandboxScene::ClearRagdollCapsuleParent(int childCapsule) {
+bool Quake3Mock::ClearRagdollCapsuleParent(int childCapsule) {
   EnsureRagdollJointState();
   EnsureRagdollFreezeState();
   if (childCapsule < 0 ||
@@ -7502,7 +7421,7 @@ bool SandboxScene::ClearRagdollCapsuleParent(int childCapsule) {
   return ApplyRagdollEditPose(true);
 }
 
-bool SandboxScene::SetRagdollCapsuleJoint(int childCapsule, int parentCapsule) {
+bool Quake3Mock::SetRagdollCapsuleJoint(int childCapsule, int parentCapsule) {
   auto& bones = m_ragdollAnimationBinding.referencePose.bones;
   EnsureRagdollJointState();
   EnsureRagdollFreezeState();
@@ -7556,7 +7475,7 @@ bool SandboxScene::SetRagdollCapsuleJoint(int childCapsule, int parentCapsule) {
   return ApplyRagdollEditPose(true);
 }
 
-bool SandboxScene::ComputeRagdollCapsuleContactAnchor(int childCapsule, int parentCapsule, XVECTOR3& outAnchor) {
+bool Quake3Mock::ComputeRagdollCapsuleContactAnchor(int childCapsule, int parentCapsule, XVECTOR3& outAnchor) {
   const auto& bones = m_ragdollAnimationBinding.referencePose.bones;
   if (childCapsule < 0 || childCapsule >= static_cast<int>(bones.size()) ||
       parentCapsule < 0 || parentCapsule >= static_cast<int>(bones.size()) ||
@@ -7576,7 +7495,7 @@ bool SandboxScene::ComputeRagdollCapsuleContactAnchor(int childCapsule, int pare
       outAnchor);
 }
 
-bool SandboxScene::SetRagdollCapsuleJointAtContact(int childCapsule, int parentCapsule) {
+bool Quake3Mock::SetRagdollCapsuleJointAtContact(int childCapsule, int parentCapsule) {
   auto& bones = m_ragdollAnimationBinding.referencePose.bones;
   EnsureRagdollJointState();
   EnsureRagdollFreezeState();
@@ -7648,7 +7567,7 @@ bool SandboxScene::SetRagdollCapsuleJointAtContact(int childCapsule, int parentC
   return ApplyRagdollEditPose(true);
 }
 
-bool SandboxScene::ClearRagdollCapsuleJoint(int childCapsule) {
+bool Quake3Mock::ClearRagdollCapsuleJoint(int childCapsule) {
   EnsureRagdollJointState();
   EnsureRagdollFreezeState();
   if (childCapsule < 0 ||
@@ -7685,7 +7604,7 @@ bool SandboxScene::ClearRagdollCapsuleJoint(int childCapsule) {
   return ApplyRagdollEditPose(true);
 }
 
-bool SandboxScene::ClearRagdollCapsuleJointBetween(int capsuleA, int capsuleB) {
+bool Quake3Mock::ClearRagdollCapsuleJointBetween(int capsuleA, int capsuleB) {
   EnsureRagdollJointState();
   if (capsuleA < 0 || capsuleB < 0 || capsuleA == capsuleB) {
     return false;
@@ -7699,7 +7618,7 @@ bool SandboxScene::ClearRagdollCapsuleJointBetween(int capsuleA, int capsuleB) {
   return false;
 }
 
-bool SandboxScene::AddControlledBoneToSelectedCapsule(int boneIndex) {
+bool Quake3Mock::AddControlledBoneToSelectedCapsule(int boneIndex) {
   EnsureRagdollControlledBones();
   EnsureRagdollFreezeState();
   if (m_ragdollEditSelectedCapsule < 0 ||
@@ -7785,7 +7704,7 @@ bool SandboxScene::AddControlledBoneToSelectedCapsule(int boneIndex) {
   return true;
 }
 
-bool SandboxScene::RemoveControlledBoneFromSelectedCapsule(int boneIndex) {
+bool Quake3Mock::RemoveControlledBoneFromSelectedCapsule(int boneIndex) {
   EnsureRagdollControlledBones();
   EnsureRagdollFreezeState();
   if (m_ragdollEditSelectedCapsule < 0 ||
@@ -7817,7 +7736,7 @@ bool SandboxScene::RemoveControlledBoneFromSelectedCapsule(int boneIndex) {
   return false;
 }
 
-int SandboxScene::FindGeneratedRagdollCapsuleForBone(int boneIndex) const {
+int Quake3Mock::FindGeneratedRagdollCapsuleForBone(int boneIndex) const {
   const auto& bones = m_ragdollGeneratedBinding.referencePose.bones;
   for (int i = 0; i < static_cast<int>(bones.size()); ++i) {
     if (bones[static_cast<std::size_t>(i)].body.boneIndex == boneIndex) {
@@ -7827,7 +7746,7 @@ int SandboxScene::FindGeneratedRagdollCapsuleForBone(int boneIndex) const {
   return -1;
 }
 
-bool SandboxScene::GetSkeletonEditBoneWorldTransform(int boneIndex, XMATRIX44& outWorld) const {
+bool Quake3Mock::GetSkeletonEditBoneWorldTransform(int boneIndex, XMATRIX44& outWorld) const {
   if (boneIndex >= 0 && boneIndex < static_cast<int>(m_skeletonEditCombined.size())) {
     outWorld = FlipMatrixZ(m_skeletonEditCombined[static_cast<std::size_t>(boneIndex)]) * Meshes[0].Final;
     return true;
@@ -7842,7 +7761,7 @@ bool SandboxScene::GetSkeletonEditBoneWorldTransform(int boneIndex, XMATRIX44& o
   return true;
 }
 
-bool SandboxScene::GetRagdollAuthoringBoneWorldTransform(int boneIndex, XMATRIX44& outWorld) const {
+bool Quake3Mock::GetRagdollAuthoringBoneWorldTransform(int boneIndex, XMATRIX44& outWorld) const {
   if (boneIndex >= 0 && boneIndex < static_cast<int>(m_skeletonEditCombined.size())) {
     outWorld = FlipMatrixZ(m_skeletonEditCombined[static_cast<std::size_t>(boneIndex)]) * Meshes[0].Final;
     return true;
@@ -7864,7 +7783,7 @@ bool SandboxScene::GetRagdollAuthoringBoneWorldTransform(int boneIndex, XMATRIX4
   return GetSkeletonEditBoneWorldTransform(boneIndex, outWorld);
 }
 
-int SandboxScene::FindSkeletonEditDisplayEndpoint(int boneIndex) const {
+int Quake3Mock::FindSkeletonEditDisplayEndpoint(int boneIndex) const {
   RenderSkinnedMesh* skinned = Meshes[0].GetSkinnedMesh();
   const xF::xSkeleton* skeleton = skinned ? skinned->GetAnimController().GetAnimSkeleton() : nullptr;
   if (!skeleton || boneIndex < 0 || boneIndex >= static_cast<int>(skeleton->Bones.size())) {
@@ -7962,7 +7881,7 @@ int SandboxScene::FindSkeletonEditDisplayEndpoint(int boneIndex) const {
   return candidates.front().boneIndex;
 }
 
-bool SandboxScene::BuildSkeletonEditBoneOctahedron(int boneIndex, float widthScale, std::array<XVECTOR3, 6>& outPoints) const {
+bool Quake3Mock::BuildSkeletonEditBoneOctahedron(int boneIndex, float widthScale, std::array<XVECTOR3, 6>& outPoints) const {
   RenderSkinnedMesh* skinned = Meshes[0].GetSkinnedMesh();
   const xF::xSkeleton* skeleton = skinned ? skinned->GetAnimController().GetAnimSkeleton() : nullptr;
   if (!skeleton || boneIndex < 0 || boneIndex >= static_cast<int>(skeleton->Bones.size())) {
@@ -7987,7 +7906,7 @@ bool SandboxScene::BuildSkeletonEditBoneOctahedron(int boneIndex, float widthSca
   return true;
 }
 
-bool SandboxScene::RebuildRagdollParentLinks() {
+bool Quake3Mock::RebuildRagdollParentLinks() {
   if (!m_ragdollParentCapsules.empty()) {
     return ApplyRagdollParentCapsuleLinks();
   }
@@ -8022,7 +7941,7 @@ bool SandboxScene::RebuildRagdollParentLinks() {
   return true;
 }
 
-bool SandboxScene::BuildDefaultRagdollCapsuleForBone(int boneIndex,
+bool Quake3Mock::BuildDefaultRagdollCapsuleForBone(int boneIndex,
                                                      t850::PhysicsRagdollBoneDesc& outBone,
                                                      XMATRIX44& outBodyFromBone) const {
   RenderSkinnedMesh* skinned = Meshes[0].GetSkinnedMesh();
@@ -8132,7 +8051,7 @@ bool SandboxScene::BuildDefaultRagdollCapsuleForBone(int boneIndex,
   return true;
 }
 
-bool SandboxScene::CreateRagdollCapsuleForBone(int boneIndex) {
+bool Quake3Mock::CreateRagdollCapsuleForBone(int boneIndex) {
   EnsureRagdollControlledBones();
   if (boneIndex < 0 ||
       FindRagdollCapsuleForBone(boneIndex) >= 0 ||
@@ -8227,14 +8146,14 @@ bool SandboxScene::CreateRagdollCapsuleForBone(int boneIndex) {
   return true;
 }
 
-bool SandboxScene::CreateRagdollBoxForBone(int boneIndex) {
+bool Quake3Mock::CreateRagdollBoxForBone(int boneIndex) {
   if (!CreateRagdollCapsuleForBone(boneIndex)) {
     return false;
   }
   return MorphRagdollBodyToBox(m_ragdollEditSelectedCapsule);
 }
 
-bool SandboxScene::MorphRagdollBodyToBox(int capsuleIndex) {
+bool Quake3Mock::MorphRagdollBodyToBox(int capsuleIndex) {
   auto& bones = m_ragdollAnimationBinding.referencePose.bones;
   if (capsuleIndex < 0 || capsuleIndex >= static_cast<int>(bones.size())) {
     return false;
@@ -8260,7 +8179,7 @@ bool SandboxScene::MorphRagdollBodyToBox(int capsuleIndex) {
   return ApplyRagdollEditPose(true);
 }
 
-bool SandboxScene::MorphRagdollBodyToCapsule(int capsuleIndex) {
+bool Quake3Mock::MorphRagdollBodyToCapsule(int capsuleIndex) {
   auto& bones = m_ragdollAnimationBinding.referencePose.bones;
   if (capsuleIndex < 0 || capsuleIndex >= static_cast<int>(bones.size())) {
     return false;
@@ -8286,7 +8205,7 @@ bool SandboxScene::MorphRagdollBodyToCapsule(int capsuleIndex) {
   return ApplyRagdollEditPose(true);
 }
 
-bool SandboxScene::DeleteSelectedRagdollCapsule() {
+bool Quake3Mock::DeleteSelectedRagdollCapsule() {
   auto& bones = m_ragdollAnimationBinding.referencePose.bones;
   auto& locals = m_ragdollAnimationBinding.bodyFromBone;
   const int index = m_ragdollEditSelectedCapsule;
@@ -8423,7 +8342,7 @@ bool SandboxScene::DeleteSelectedRagdollCapsule() {
   return ApplyRagdollEditPose(true);
 }
 
-bool SandboxScene::ClearRagdollCapsules() {
+bool Quake3Mock::ClearRagdollCapsules() {
   const t850::PhysicsRagdollHandle ragdollHandle = Meshes[0].GetPhysicsRagdoll();
   Meshes[0].AttachPhysicsRagdoll(t850::PhysicsRagdollHandle{});
 
@@ -8474,7 +8393,7 @@ bool SandboxScene::ClearRagdollCapsules() {
   return true;
 }
 
-bool SandboxScene::UpdateRagdollReferenceBodyFromLocal(int capsuleIndex) {
+bool Quake3Mock::UpdateRagdollReferenceBodyFromLocal(int capsuleIndex) {
   if (capsuleIndex < 0 ||
       capsuleIndex >= static_cast<int>(m_ragdollAnimationBinding.referencePose.bones.size()) ||
       capsuleIndex >= static_cast<int>(m_ragdollAnimationBinding.bodyFromBone.size())) {
@@ -8541,7 +8460,7 @@ bool SandboxScene::UpdateRagdollReferenceBodyFromLocal(int capsuleIndex) {
   return true;
 }
 
-bool SandboxScene::SetRagdollEditCapsuleWorldTransform(int capsuleIndex, const XMATRIX44& bodyWorld, bool rebuildRagdoll) {
+bool Quake3Mock::SetRagdollEditCapsuleWorldTransform(int capsuleIndex, const XMATRIX44& bodyWorld, bool rebuildRagdoll) {
   auto& bones = m_ragdollAnimationBinding.referencePose.bones;
   auto& locals = m_ragdollAnimationBinding.bodyFromBone;
   if (capsuleIndex < 0 ||
@@ -8574,7 +8493,7 @@ bool SandboxScene::SetRagdollEditCapsuleWorldTransform(int capsuleIndex, const X
   return ApplyRagdollEditPose(rebuildRagdoll);
 }
 
-bool SandboxScene::MoveRagdollEditCapsuleByWorldDelta(int capsuleIndex, const XVECTOR3& worldDelta, bool rebuildRagdoll) {
+bool Quake3Mock::MoveRagdollEditCapsuleByWorldDelta(int capsuleIndex, const XVECTOR3& worldDelta, bool rebuildRagdoll) {
   if (IsRagdollCapsuleFrozen(capsuleIndex)) {
     return false;
   }
@@ -8588,7 +8507,7 @@ bool SandboxScene::MoveRagdollEditCapsuleByWorldDelta(int capsuleIndex, const XV
   return SetRagdollEditCapsuleWorldTransform(capsuleIndex, bodyWorld, rebuildRagdoll);
 }
 
-bool SandboxScene::RotateRagdollEditCapsuleWorld(int capsuleIndex,
+bool Quake3Mock::RotateRagdollEditCapsuleWorld(int capsuleIndex,
                                                  const XVECTOR3& axisWorld,
                                                  float angleRadians,
                                                  bool rebuildRagdoll) {
@@ -8614,7 +8533,7 @@ bool SandboxScene::RotateRagdollEditCapsuleWorld(int capsuleIndex,
   return SetRagdollEditCapsuleWorldTransform(capsuleIndex, rotatedWorld, rebuildRagdoll);
 }
 
-bool SandboxScene::FlipRagdollEditCapsuleLocalAxis(int capsuleIndex, int axisIndex) {
+bool Quake3Mock::FlipRagdollEditCapsuleLocalAxis(int capsuleIndex, int axisIndex) {
   if (axisIndex < 0 || axisIndex > 2 || IsRagdollCapsuleFrozen(capsuleIndex)) {
     return false;
   }
@@ -8629,7 +8548,7 @@ bool SandboxScene::FlipRagdollEditCapsuleLocalAxis(int capsuleIndex, int axisInd
   return RotateRagdollEditCapsuleWorld(capsuleIndex, axes[static_cast<std::size_t>(axisIndex)], xPI, true);
 }
 
-bool SandboxScene::AlignRagdollEditCapsuleToWorldAxis(int capsuleIndex, int axisIndex) {
+bool Quake3Mock::AlignRagdollEditCapsuleToWorldAxis(int capsuleIndex, int axisIndex) {
   if (axisIndex < 0 || axisIndex > 2 || IsRagdollCapsuleFrozen(capsuleIndex)) {
     return false;
   }
@@ -8654,7 +8573,7 @@ bool SandboxScene::AlignRagdollEditCapsuleToWorldAxis(int capsuleIndex, int axis
   return SetRagdollEditCapsuleWorldTransform(capsuleIndex, alignedWorld, true);
 }
 
-bool SandboxScene::SyncRagdollCapsuleSymmetry() {
+bool Quake3Mock::SyncRagdollCapsuleSymmetry() {
   auto& binding = m_ragdollAnimationBinding;
   auto& bones = binding.referencePose.bones;
   auto syncStatus = [&](const char* fmt, auto... args) {
@@ -9753,7 +9672,7 @@ bool SandboxScene::SyncRagdollCapsuleSymmetry() {
   return applied;
 }
 
-bool SandboxScene::RecreateRagdollFromPose(const t850::PhysicsRagdollDesc& pose) {
+bool Quake3Mock::RecreateRagdollFromPose(const t850::PhysicsRagdollDesc& pose) {
   if (pose.bones.empty()) {
     return false;
   }
@@ -9784,7 +9703,7 @@ bool SandboxScene::RecreateRagdollFromPose(const t850::PhysicsRagdollDesc& pose)
   return true;
 }
 
-bool SandboxScene::ApplyRagdollEditPose(bool rebuildRagdoll) {
+bool Quake3Mock::ApplyRagdollEditPose(bool rebuildRagdoll) {
   if (m_ragdollAnimationBinding.referencePose.bones.empty() ||
       m_ragdollAnimationBinding.referencePose.bones.size() != m_ragdollAnimationBinding.bodyFromBone.size()) {
     return false;
@@ -9819,7 +9738,7 @@ bool SandboxScene::ApplyRagdollEditPose(bool rebuildRagdoll) {
   return updated;
 }
 
-bool SandboxScene::LoadRagdollEditPose() {
+bool Quake3Mock::LoadRagdollEditPose() {
   if (m_ragdollEditSavePath.empty()) {
     m_ragdollEditSavePath = BuildRagdollEditSavePath();
   }
@@ -9878,7 +9797,7 @@ bool SandboxScene::LoadRagdollEditPose() {
   return true;
 }
 
-bool SandboxScene::SaveRagdollEditPose() {
+bool Quake3Mock::SaveRagdollEditPose() {
   if (m_ragdollEditSavePath.empty()) {
     m_ragdollEditSavePath = BuildRagdollEditSavePath();
   }
@@ -9913,7 +9832,7 @@ bool SandboxScene::SaveRagdollEditPose() {
   return true;
 }
 
-bool SandboxScene::ResetRagdollEditPose() {
+bool Quake3Mock::ResetRagdollEditPose() {
   if (m_ragdollGeneratedBinding.referencePose.bones.empty() ||
       m_ragdollGeneratedBinding.referencePose.bones.size() != m_ragdollGeneratedBinding.bodyFromBone.size()) {
     return false;
@@ -9937,7 +9856,7 @@ bool SandboxScene::ResetRagdollEditPose() {
   return ApplyRagdollEditPose(true);
 }
 
-bool SandboxScene::ResetSelectedRagdollCapsule() {
+bool Quake3Mock::ResetSelectedRagdollCapsule() {
   EnsureRagdollControlledBones();
   const int index = m_ragdollEditSelectedCapsule;
   if (index < 0 ||
@@ -9999,7 +9918,7 @@ bool SandboxScene::ResetSelectedRagdollCapsule() {
   return ApplyRagdollEditPose(true);
 }
 
-bool SandboxScene::GetSkeletonEditBoneWorldPosition(int boneIndex, XVECTOR3& outWorld) const {
+bool Quake3Mock::GetSkeletonEditBoneWorldPosition(int boneIndex, XVECTOR3& outWorld) const {
   if (boneIndex < 0 || boneIndex >= static_cast<int>(m_skeletonEditCombined.size())) {
     return false;
   }
@@ -10009,7 +9928,7 @@ bool SandboxScene::GetSkeletonEditBoneWorldPosition(int boneIndex, XVECTOR3& out
   return true;
 }
 
-bool SandboxScene::SetSkeletonEditBoneWorldPosition(int boneIndex, const XVECTOR3& worldPosition) {
+bool Quake3Mock::SetSkeletonEditBoneWorldPosition(int boneIndex, const XVECTOR3& worldPosition) {
   if (boneIndex < 0 || boneIndex >= static_cast<int>(m_skeletonEditCombined.size())) {
     return false;
   }
@@ -10024,14 +9943,14 @@ bool SandboxScene::SetSkeletonEditBoneWorldPosition(int boneIndex, const XVECTOR
   return ApplySkeletonEditPose();
 }
 
-void SandboxScene::SelectSkeletonEditBone(int boneIndex) {
+void Quake3Mock::SelectSkeletonEditBone(int boneIndex) {
   if (boneIndex != m_skeletonEditSelectedBone) {
     RestoreSkeletonPreviewBone();
   }
   m_skeletonEditSelectedBone = boneIndex;
 }
 
-void SandboxScene::RestoreSkeletonPreviewBone() {
+void Quake3Mock::RestoreSkeletonPreviewBone() {
   if (!m_skeletonPreviewBoneActive) {
     return;
   }
@@ -10048,7 +9967,7 @@ void SandboxScene::RestoreSkeletonPreviewBone() {
   ApplySkeletonEditPose();
 }
 
-bool SandboxScene::BeginSkeletonPreviewBone(int boneIndex) {
+bool Quake3Mock::BeginSkeletonPreviewBone(int boneIndex) {
   if (boneIndex < 0 || boneIndex >= static_cast<int>(m_skeletonEditCombined.size())) {
     return false;
   }
@@ -10063,7 +9982,7 @@ bool SandboxScene::BeginSkeletonPreviewBone(int boneIndex) {
   return true;
 }
 
-void SandboxScene::GatherSkeletonEditBoneSubtree(int boneIndex, std::vector<int>& outBones) const {
+void Quake3Mock::GatherSkeletonEditBoneSubtree(int boneIndex, std::vector<int>& outBones) const {
   outBones.clear();
   RenderSkinnedMesh* skinned = Meshes[0].GetSkinnedMesh();
   const xF::xSkeleton* skeleton = skinned ? skinned->GetAnimController().GetAnimSkeleton() : nullptr;
@@ -10113,7 +10032,7 @@ void SandboxScene::GatherSkeletonEditBoneSubtree(int boneIndex, std::vector<int>
   visit(boneIndex);
 }
 
-bool SandboxScene::SetSkeletonPreviewBoneWorldTransform(int boneIndex, const XMATRIX44& worldTransform) {
+bool Quake3Mock::SetSkeletonPreviewBoneWorldTransform(int boneIndex, const XMATRIX44& worldTransform) {
   if (!BeginSkeletonPreviewBone(boneIndex)) {
     return false;
   }
@@ -10128,7 +10047,7 @@ bool SandboxScene::SetSkeletonPreviewBoneWorldTransform(int boneIndex, const XMA
   return ApplySkeletonEditPose();
 }
 
-bool SandboxScene::MoveSkeletonPreviewBoneByWorldDelta(int boneIndex, const XVECTOR3& worldDelta) {
+bool Quake3Mock::MoveSkeletonPreviewBoneByWorldDelta(int boneIndex, const XVECTOR3& worldDelta) {
   XMATRIX44 boneWorld;
   if (!GetSkeletonEditBoneWorldTransform(boneIndex, boneWorld)) {
     return false;
@@ -10140,7 +10059,7 @@ bool SandboxScene::MoveSkeletonPreviewBoneByWorldDelta(int boneIndex, const XVEC
   return SetSkeletonPreviewBoneWorldTransform(boneIndex, boneWorld);
 }
 
-bool SandboxScene::RotateSkeletonPreviewBoneWorld(int boneIndex, const XVECTOR3& axisWorld, float angleRadians) {
+bool Quake3Mock::RotateSkeletonPreviewBoneWorld(int boneIndex, const XVECTOR3& axisWorld, float angleRadians) {
   if (std::fabs(angleRadians) < 0.000001f) {
     return true;
   }
@@ -10183,7 +10102,7 @@ bool SandboxScene::RotateSkeletonPreviewBoneWorld(int boneIndex, const XVECTOR3&
   return ApplySkeletonEditPose();
 }
 
-bool SandboxScene::GetSkeletonPreviewBoneGizmoFrame(int boneIndex,
+bool Quake3Mock::GetSkeletonPreviewBoneGizmoFrame(int boneIndex,
                                                    XVECTOR3& outCenter,
                                                    std::array<XVECTOR3, 3>& outAxes,
                                                    float& outSize,
@@ -10211,7 +10130,7 @@ bool SandboxScene::GetSkeletonPreviewBoneGizmoFrame(int boneIndex,
   return true;
 }
 
-std::array<float, 3> SandboxScene::GetSkeletonEditBoneScale(int boneIndex) const {
+std::array<float, 3> Quake3Mock::GetSkeletonEditBoneScale(int boneIndex) const {
   std::array<float, 3> scale = {1.0f, 1.0f, 1.0f};
   if (boneIndex < 0 || boneIndex >= static_cast<int>(m_skeletonEditCombined.size())) {
     return scale;
@@ -10226,7 +10145,7 @@ std::array<float, 3> SandboxScene::GetSkeletonEditBoneScale(int boneIndex) const
   return scale;
 }
 
-bool SandboxScene::SetSkeletonEditBoneScale(int boneIndex, const std::array<float, 3>& scale) {
+bool Quake3Mock::SetSkeletonEditBoneScale(int boneIndex, const std::array<float, 3>& scale) {
   if (boneIndex < 0 || boneIndex >= static_cast<int>(m_skeletonEditCombined.size())) {
     return false;
   }
@@ -10248,7 +10167,7 @@ bool SandboxScene::SetSkeletonEditBoneScale(int boneIndex, const std::array<floa
   return ApplySkeletonEditPose();
 }
 
-bool SandboxScene::GetCurrentRagdollEditCapsuleWorld(int capsuleIndex, XMATRIX44& outWorld) {
+bool Quake3Mock::GetCurrentRagdollEditCapsuleWorld(int capsuleIndex, XMATRIX44& outWorld) {
   const auto& bones = m_ragdollAnimationBinding.referencePose.bones;
   if (capsuleIndex < 0 || capsuleIndex >= static_cast<int>(bones.size())) {
     return false;
@@ -10295,7 +10214,7 @@ bool SandboxScene::GetCurrentRagdollEditCapsuleWorld(int capsuleIndex, XMATRIX44
   return true;
 }
 
-bool SandboxScene::SetRagdollEditJointWorldPosition(int childCapsule, const XVECTOR3& worldPosition) {
+bool Quake3Mock::SetRagdollEditJointWorldPosition(int childCapsule, const XVECTOR3& worldPosition) {
   auto& bones = m_ragdollAnimationBinding.referencePose.bones;
   EnsureRagdollJointState();
   EnsureRagdollFreezeState();
@@ -10318,7 +10237,7 @@ bool SandboxScene::SetRagdollEditJointWorldPosition(int childCapsule, const XVEC
   return true;
 }
 
-bool SandboxScene::MoveRagdollEditJointByWorldDelta(int childCapsule, const XVECTOR3& worldDelta) {
+bool Quake3Mock::MoveRagdollEditJointByWorldDelta(int childCapsule, const XVECTOR3& worldDelta) {
   if (childCapsule < 0 || childCapsule >= static_cast<int>(m_ragdollAnimationBinding.referencePose.bones.size())) {
     return false;
   }
@@ -10332,7 +10251,7 @@ bool SandboxScene::MoveRagdollEditJointByWorldDelta(int childCapsule, const XVEC
   return SetRagdollEditJointWorldPosition(childCapsule, joint);
 }
 
-bool SandboxScene::RotateRagdollEditJointWorld(int childCapsule, const XVECTOR3& axisWorld, float angleRadians) {
+bool Quake3Mock::RotateRagdollEditJointWorld(int childCapsule, const XVECTOR3& axisWorld, float angleRadians) {
   if (std::fabs(angleRadians) < 0.000001f) {
     return true;
   }
@@ -10371,7 +10290,7 @@ bool SandboxScene::RotateRagdollEditJointWorld(int childCapsule, const XVECTOR3&
   return true;
 }
 
-bool SandboxScene::FlipRagdollEditJointLocalAxis(int childCapsule, int axisIndex) {
+bool Quake3Mock::FlipRagdollEditJointLocalAxis(int childCapsule, int axisIndex) {
   if (axisIndex < 0 || axisIndex > 2 || IsRagdollJointFrozen(childCapsule)) {
     return false;
   }
@@ -10389,7 +10308,7 @@ bool SandboxScene::FlipRagdollEditJointLocalAxis(int childCapsule, int axisIndex
   return ApplyRagdollEditPose(true);
 }
 
-bool SandboxScene::GetRagdollJointVisualFrame(int childCapsule,
+bool Quake3Mock::GetRagdollJointVisualFrame(int childCapsule,
                                               XVECTOR3& outJoint,
                                               XVECTOR3& outParentCenter,
                                               XVECTOR3& outChildCenter,
@@ -10442,7 +10361,7 @@ bool SandboxScene::GetRagdollJointVisualFrame(int childCapsule,
   return true;
 }
 
-bool SandboxScene::GetRagdollJointGizmoFrame(int childCapsule,
+bool Quake3Mock::GetRagdollJointGizmoFrame(int childCapsule,
                                              XVECTOR3& outCenter,
                                              std::array<XVECTOR3, 3>& outAxes,
                                              float& outSize) {
@@ -10462,7 +10381,7 @@ bool SandboxScene::GetRagdollJointGizmoFrame(int childCapsule,
   return true;
 }
 
-bool SandboxScene::PickRagdollEditJoint(float mouseX, float mouseY, float thresholdPixels, int& outChildCapsule) {
+bool Quake3Mock::PickRagdollEditJoint(float mouseX, float mouseY, float thresholdPixels, int& outChildCapsule) {
   outChildCapsule = -1;
   if (!m_skeletonEditMode || !g_pBaseDriver || m_ragdollAnimationBinding.referencePose.bones.empty()) {
     return false;
@@ -10512,7 +10431,7 @@ bool SandboxScene::PickRagdollEditJoint(float mouseX, float mouseY, float thresh
   return outChildCapsule >= 0;
 }
 
-bool SandboxScene::PickRagdollEditJointGizmo(float mouseX, float mouseY, int& outAxis) {
+bool Quake3Mock::PickRagdollEditJointGizmo(float mouseX, float mouseY, int& outAxis) {
   outAxis = -1;
   if (!m_skeletonEditMode || !g_pBaseDriver || m_ragdollEditSelectedJoint < 0 ||
       m_ragdollEditSelectionMode != kRagdollSelectJoints ||
@@ -10582,7 +10501,7 @@ bool SandboxScene::PickRagdollEditJointGizmo(float mouseX, float mouseY, int& ou
   return outAxis >= 0;
 }
 
-bool SandboxScene::BeginRagdollEditJointGizmoDrag(float mouseX, float mouseY) {
+bool Quake3Mock::BeginRagdollEditJointGizmoDrag(float mouseX, float mouseY) {
   int pickedAxis = -1;
   if (!PickRagdollEditJointGizmo(mouseX, mouseY, pickedAxis)) {
     return false;
@@ -10628,7 +10547,7 @@ bool SandboxScene::BeginRagdollEditJointGizmoDrag(float mouseX, float mouseY) {
   return true;
 }
 
-bool SandboxScene::DragRagdollEditJointGizmo(float mouseX, float mouseY) {
+bool Quake3Mock::DragRagdollEditJointGizmo(float mouseX, float mouseY) {
   if (!m_ragdollEditJointDragging ||
       m_ragdollEditSelectedJoint < 0 ||
       m_ragdollEditJointAxis < 0 ||
@@ -10684,7 +10603,7 @@ bool SandboxScene::DragRagdollEditJointGizmo(float mouseX, float mouseY) {
   return RotateRagdollEditJointWorld(m_ragdollEditSelectedJoint, axis, signedAngle);
 }
 
-void SandboxScene::DrawRagdollJointGizmos(bool editable) {
+void Quake3Mock::DrawRagdollJointGizmos(bool editable) {
   const bool allowEditing = editable && m_skeletonEditMode && m_ragdollEditSelectionMode == kRagdollSelectJoints;
   if (!allowEditing || !g_pBaseDriver || !ImGui::GetCurrentContext()) {
     return;
@@ -10865,147 +10784,7 @@ void SandboxScene::DrawRagdollJointGizmos(bool editable) {
   }
 }
 
-void SandboxScene::ReleaseRagdollJointDebugBuffers() {
-  if (m_ragdollJointVB) {
-    m_ragdollJointVB->release();
-    m_ragdollJointVB = nullptr;
-  }
-  if (m_ragdollJointIB) {
-    m_ragdollJointIB->release();
-    m_ragdollJointIB = nullptr;
-  }
-  m_ragdollJointVertexCapacity = 0;
-  m_ragdollJointIndexCapacity = 0;
-  m_ragdollJointIndexCount = 0;
-}
-
-bool SandboxScene::UploadRagdollJointDebugGeometry(const std::vector<float>& vertices,
-                                                   const std::vector<unsigned int>& indices) {
-  const unsigned vertexCount = static_cast<unsigned>(vertices.size() / 4);
-  const unsigned indexCount = static_cast<unsigned>(indices.size());
-  if (vertexCount == 0 || indexCount == 0) {
-    m_ragdollJointIndexCount = 0;
-    return false;
-  }
-
-  if (!m_ragdollJointVB || !m_ragdollJointIB ||
-      vertexCount > m_ragdollJointVertexCapacity ||
-      indexCount > m_ragdollJointIndexCapacity) {
-    ReleaseRagdollJointDebugBuffers();
-
-    m_ragdollJointVB = t850::LineRenderer::CreatePositionVB(vertices.data(), vertexCount, BufferUsage::DINAMIC);
-
-    BufferDesc indexDesc;
-    indexDesc.byteWidth = static_cast<int>(sizeof(unsigned int) * indexCount);
-    indexDesc.usage = BufferUsage::DINAMIC;
-    m_ragdollJointIB = t850::T8Device
-        ? static_cast<IndexBuffer*>(t850::T8Device->CreateBuffer(BufferType::INDEX, indexDesc, const_cast<unsigned int*>(indices.data())))
-        : nullptr;
-
-    if (!m_ragdollJointVB || !m_ragdollJointIB) {
-      ReleaseRagdollJointDebugBuffers();
-      return false;
-    }
-
-    m_ragdollJointVertexCapacity = vertexCount;
-    m_ragdollJointIndexCapacity = indexCount;
-    m_ragdollJointIndexCount = indexCount;
-    return true;
-  }
-
-  if (!t850::T8DeviceContext) {
-    return false;
-  }
-
-  std::vector<float> paddedVertices = vertices;
-  std::vector<unsigned int> paddedIndices = indices;
-  paddedVertices.resize(static_cast<std::size_t>(m_ragdollJointVertexCapacity) * 4u, 0.0f);
-  paddedIndices.resize(m_ragdollJointIndexCapacity, 0u);
-  m_ragdollJointVB->UpdateFromBuffer(*t850::T8DeviceContext, paddedVertices.data());
-  m_ragdollJointIB->UpdateFromBuffer(*t850::T8DeviceContext, paddedIndices.data());
-  m_ragdollJointIndexCount = indexCount;
-  return true;
-}
-
-void SandboxScene::DrawRagdollJointDebugOverlay() {
-  if (!m_showPhysics || m_skeletonEditMode || !m_ragdollJointRenderer.IsReady()) {
-    return;
-  }
-
-  const auto& bones = m_ragdollAnimationBinding.referencePose.bones;
-  if (bones.empty()) {
-    return;
-  }
-
-  EnsureRagdollJointState();
-  std::vector<float> vertices;
-  std::vector<unsigned int> indices;
-  vertices.reserve(bones.size() * 32u);
-  indices.reserve(bones.size() * 16u);
-
-  auto appendLine = [&](const XVECTOR3& start, const XVECTOR3& end) {
-    const unsigned base = static_cast<unsigned>(vertices.size() / 4);
-    vertices.push_back(start.x);
-    vertices.push_back(start.y);
-    vertices.push_back(start.z);
-    vertices.push_back(1.0f);
-    vertices.push_back(end.x);
-    vertices.push_back(end.y);
-    vertices.push_back(end.z);
-    vertices.push_back(1.0f);
-    indices.push_back(base);
-    indices.push_back(base + 1);
-  };
-
-  for (int childCapsule = 0; childCapsule < static_cast<int>(bones.size()); ++childCapsule) {
-    if (GetRagdollEffectiveJointParentCapsule(childCapsule) < 0) {
-      continue;
-    }
-
-    XVECTOR3 joint;
-    XVECTOR3 parentCenter;
-    XVECTOR3 childCenter;
-    XVECTOR3 parentTwist;
-    XVECTOR3 childTwist;
-    XVECTOR3 childPlane;
-    float size = 0.0f;
-    if (!GetRagdollJointVisualFrame(childCapsule, joint, parentCenter, childCenter, parentTwist, childTwist, childPlane, size)) {
-      continue;
-    }
-
-    appendLine(parentCenter, joint);
-    appendLine(joint, childCenter);
-
-    const float markerSize = (std::max)(0.01f, size * 0.10f);
-    const XVECTOR3 normal = Normalize3(Cross3(childPlane, childTwist), XVECTOR3(0.0f, 0.0f, 1.0f, 0.0f));
-    appendLine(joint - childPlane * markerSize, joint + childPlane * markerSize);
-    appendLine(joint - childTwist * markerSize, joint + childTwist * markerSize);
-    appendLine(joint - normal * markerSize, joint + normal * markerSize);
-  }
-
-  if (!UploadRagdollJointDebugGeometry(vertices, indices)) {
-    return;
-  }
-
-  XMATRIX44 identity;
-  identity.Identity();
-  m_ragdollJointRenderer.SetDepthTestEnabled(false);
-  m_ragdollJointRenderer.SetViewport(g_pBaseDriver ? g_pBaseDriver->width : 1,
-                                     g_pBaseDriver ? g_pBaseDriver->height : 1);
-  m_ragdollJointRenderer.SetFarPlane(Cam.FPlane);
-  pFramework->pVideoDriver->SetDepthStencilState(BaseDriver::NONE);
-  pFramework->pVideoDriver->SetBlendState(BaseDriver::BLEND_DEFAULT);
-  m_ragdollJointRenderer.DrawLines(identity,
-                                   VP,
-                                   XVECTOR3(1.0f, 0.72f, 0.12f, 1.0f),
-                                   m_ragdollJointVB,
-                                   m_ragdollJointIB,
-                                   m_ragdollJointIndexCount,
-                                   sizeof(float) * 4,
-                                   IndexBufferFormat::R32);
-}
-
-bool SandboxScene::GetRagdollEditGizmoFrame(int capsuleIndex,
+bool Quake3Mock::GetRagdollEditGizmoFrame(int capsuleIndex,
                                             XVECTOR3& outCenter,
                                             std::array<XVECTOR3, 3>& outAxes,
                                             float& outSize,
@@ -11036,7 +10815,7 @@ bool SandboxScene::GetRagdollEditGizmoFrame(int capsuleIndex,
   return true;
 }
 
-bool SandboxScene::BuildRagdollEditHandlePoints(int capsuleIndex, std::array<XVECTOR3, 7>& outPoints) {
+bool Quake3Mock::BuildRagdollEditHandlePoints(int capsuleIndex, std::array<XVECTOR3, 7>& outPoints) {
   const auto& bones = m_ragdollAnimationBinding.referencePose.bones;
   if (capsuleIndex < 0 || capsuleIndex >= static_cast<int>(bones.size())) {
     return false;
@@ -11068,7 +10847,7 @@ bool SandboxScene::BuildRagdollEditHandlePoints(int capsuleIndex, std::array<XVE
   return true;
 }
 
-bool SandboxScene::PickRagdollEditHandle(float mouseX, float mouseY, float thresholdPixels, int& outCapsuleIndex, int& outHandleIndex) {
+bool Quake3Mock::PickRagdollEditHandle(float mouseX, float mouseY, float thresholdPixels, int& outCapsuleIndex, int& outHandleIndex) {
   outCapsuleIndex = -1;
   outHandleIndex = -1;
   if (!m_skeletonEditMode || !g_pBaseDriver || m_ragdollAnimationBinding.referencePose.bones.empty() ||
@@ -11133,7 +10912,7 @@ bool SandboxScene::PickRagdollEditHandle(float mouseX, float mouseY, float thres
   return outCapsuleIndex >= 0 && outHandleIndex >= 0;
 }
 
-bool SandboxScene::PickRagdollEditCapsule(float mouseX, float mouseY, float thresholdPixels, int& outCapsuleIndex) {
+bool Quake3Mock::PickRagdollEditCapsule(float mouseX, float mouseY, float thresholdPixels, int& outCapsuleIndex) {
   outCapsuleIndex = -1;
   if (!m_skeletonEditMode || !g_pBaseDriver || m_ragdollAnimationBinding.referencePose.bones.empty()) {
     return false;
@@ -11184,7 +10963,7 @@ bool SandboxScene::PickRagdollEditCapsule(float mouseX, float mouseY, float thre
   return outCapsuleIndex >= 0;
 }
 
-bool SandboxScene::PickRagdollEditTransformGizmo(float mouseX, float mouseY, int& outAxis) {
+bool Quake3Mock::PickRagdollEditTransformGizmo(float mouseX, float mouseY, int& outAxis) {
   outAxis = -1;
   if (!m_skeletonEditMode || !g_pBaseDriver ||
       (m_ragdollEditGizmoMode != kRagdollToolMove && m_ragdollEditGizmoMode != kRagdollToolRotate)) {
@@ -11261,7 +11040,7 @@ bool SandboxScene::PickRagdollEditTransformGizmo(float mouseX, float mouseY, int
   return outAxis >= 0;
 }
 
-bool SandboxScene::BeginRagdollEditTransformGizmoDrag(float mouseX, float mouseY) {
+bool Quake3Mock::BeginRagdollEditTransformGizmoDrag(float mouseX, float mouseY) {
   int pickedAxis = -1;
   if (!PickRagdollEditTransformGizmo(mouseX, mouseY, pickedAxis)) {
     return false;
@@ -11318,7 +11097,7 @@ bool SandboxScene::BeginRagdollEditTransformGizmoDrag(float mouseX, float mouseY
   return true;
 }
 
-bool SandboxScene::DragRagdollEditTransformGizmo(float mouseX, float mouseY) {
+bool Quake3Mock::DragRagdollEditTransformGizmo(float mouseX, float mouseY) {
   if (!m_ragdollEditGizmoDragging ||
       m_ragdollEditGizmoAxis < 0 ||
       !g_pBaseDriver) {
@@ -11388,7 +11167,7 @@ bool SandboxScene::DragRagdollEditTransformGizmo(float mouseX, float mouseY) {
       : RotateRagdollEditCapsuleWorld(m_ragdollEditSelectedCapsule, axis, signedAngle, false);
 }
 
-void SandboxScene::DrawRagdollEditTransformGizmo() {
+void Quake3Mock::DrawRagdollEditTransformGizmo() {
   if (!m_skeletonEditMode ||
       m_ragdollEditSelectionMode != kRagdollSelectCapsules ||
       m_ragdollEditSelectedCapsule < 0 ||
@@ -11513,7 +11292,7 @@ void SandboxScene::DrawRagdollEditTransformGizmo() {
   }
 }
 
-void SandboxScene::DrawSkeletonPreviewBoneGizmo() {
+void Quake3Mock::DrawSkeletonPreviewBoneGizmo() {
   if (!m_skeletonEditMode ||
       m_ragdollEditSelectionMode != kRagdollSelectBones ||
       m_skeletonEditSelectedBone < 0 ||
@@ -11601,7 +11380,7 @@ void SandboxScene::DrawSkeletonPreviewBoneGizmo() {
   }
 }
 
-bool SandboxScene::DragRagdollEditHandle(int capsuleIndex, int handleIndex, const XVECTOR3& worldDelta) {
+bool Quake3Mock::DragRagdollEditHandle(int capsuleIndex, int handleIndex, const XVECTOR3& worldDelta) {
   auto& bones = m_ragdollAnimationBinding.referencePose.bones;
   if (capsuleIndex < 0 || capsuleIndex >= static_cast<int>(bones.size()) ||
       capsuleIndex >= static_cast<int>(m_ragdollAnimationBinding.bodyFromBone.size()) ||
@@ -11720,7 +11499,7 @@ bool SandboxScene::DragRagdollEditHandle(int capsuleIndex, int handleIndex, cons
   return ApplyRagdollEditPose(rebuildRagdoll);
 }
 
-int SandboxScene::PickSkeletonEditBone(float mouseX, float mouseY, float thresholdPixels) const {
+int Quake3Mock::PickSkeletonEditBone(float mouseX, float mouseY, float thresholdPixels) const {
   if (!m_skeletonEditMode || m_skeletonEditCombined.empty() || !g_pBaseDriver) {
     return -1;
   }
@@ -11759,7 +11538,7 @@ int SandboxScene::PickSkeletonEditBone(float mouseX, float mouseY, float thresho
   return bestBone;
 }
 
-void SandboxScene::PickSkeletonEditBonesInScreenRect(float minX, float minY, float maxX, float maxY, std::vector<int>& outBones) const {
+void Quake3Mock::PickSkeletonEditBonesInScreenRect(float minX, float minY, float maxX, float maxY, std::vector<int>& outBones) const {
   outBones.clear();
   if (!m_skeletonEditMode || m_skeletonEditCombined.empty() || !g_pBaseDriver) {
     return;
@@ -11808,7 +11587,7 @@ void SandboxScene::PickSkeletonEditBonesInScreenRect(float minX, float minY, flo
   }
 }
 
-bool SandboxScene::SelectRagdollContextTargetAt(float mouseX, float mouseY) {
+bool Quake3Mock::SelectRagdollContextTargetAt(float mouseX, float mouseY) {
   auto selectBody = [&](int capsuleIndex) {
     RestoreSkeletonPreviewBone();
     SelectRagdollEditCapsule(capsuleIndex, true);
@@ -11869,7 +11648,7 @@ bool SandboxScene::SelectRagdollContextTargetAt(float mouseX, float mouseY) {
   return false;
 }
 
-SandboxScene::RagdollAuthoringUndoSnapshot SandboxScene::CaptureRagdollUndoSnapshot(const char* label) const {
+Quake3Mock::RagdollAuthoringUndoSnapshot Quake3Mock::CaptureRagdollUndoSnapshot(const char* label) const {
   RagdollAuthoringUndoSnapshot snapshot;
   snapshot.binding = m_ragdollAnimationBinding;
   snapshot.animationPose = m_ragdollAnimationPose;
@@ -11898,12 +11677,12 @@ SandboxScene::RagdollAuthoringUndoSnapshot SandboxScene::CaptureRagdollUndoSnaps
   return snapshot;
 }
 
-bool SandboxScene::RagdollUndoContentEquals(const RagdollAuthoringUndoSnapshot& a,
+bool Quake3Mock::RagdollUndoContentEquals(const RagdollAuthoringUndoSnapshot& a,
                                             const RagdollAuthoringUndoSnapshot& b) const {
   return t850::ragdoll_editor::SameAuthoringUndoContent(a, b);
 }
 
-void SandboxScene::BeginRagdollUndoScope(const char* label) {
+void Quake3Mock::BeginRagdollUndoScope(const char* label) {
   if (m_ragdollUndoState.scopeActive || m_ragdollUndoState.suppressRecording) {
     return;
   }
@@ -11912,7 +11691,7 @@ void SandboxScene::BeginRagdollUndoScope(const char* label) {
   m_ragdollUndoState.scopeActive = true;
 }
 
-void SandboxScene::PushRagdollUndoSnapshot(const RagdollAuthoringUndoSnapshot& snapshot) {
+void Quake3Mock::PushRagdollUndoSnapshot(const RagdollAuthoringUndoSnapshot& snapshot) {
   if (!m_ragdollUndoState.stack.empty() &&
       RagdollUndoContentEquals(m_ragdollUndoState.stack.back(), snapshot)) {
     return;
@@ -11926,7 +11705,7 @@ void SandboxScene::PushRagdollUndoSnapshot(const RagdollAuthoringUndoSnapshot& s
   }
 }
 
-void SandboxScene::EndRagdollUndoScope(bool gestureActive) {
+void Quake3Mock::EndRagdollUndoScope(bool gestureActive) {
   if (!m_ragdollUndoState.scopeActive) {
     if (m_ragdollUndoState.pendingActive && !gestureActive) {
       const RagdollAuthoringUndoSnapshot current = CaptureRagdollUndoSnapshot();
@@ -11979,17 +11758,17 @@ void SandboxScene::EndRagdollUndoScope(bool gestureActive) {
   }
 }
 
-bool SandboxScene::CanUndoRagdollAuthoringEdit() const {
+bool Quake3Mock::CanUndoRagdollAuthoringEdit() const {
   return !m_ragdollUndoState.stack.empty();
 }
 
-const char* SandboxScene::CurrentRagdollUndoLabel() const {
+const char* Quake3Mock::CurrentRagdollUndoLabel() const {
   return m_ragdollUndoState.stack.empty() || m_ragdollUndoState.stack.back().label.empty()
       ? "Undo"
       : m_ragdollUndoState.stack.back().label.c_str();
 }
 
-bool SandboxScene::UndoRagdollAuthoringEdit() {
+bool Quake3Mock::UndoRagdollAuthoringEdit() {
   if (m_ragdollUndoState.stack.empty()) {
     return false;
   }
@@ -12070,7 +11849,7 @@ bool SandboxScene::UndoRagdollAuthoringEdit() {
   return true;
 }
 
-void SandboxScene::DrawRagdollViewportContextMenu() {
+void Quake3Mock::DrawRagdollViewportContextMenu() {
   if (!ImGui::GetCurrentContext()) {
     m_ragdollContextMenuRequested = false;
     return;
@@ -12237,7 +12016,7 @@ void SandboxScene::DrawRagdollViewportContextMenu() {
   ImGui::EndPopup();
 }
 
-bool SandboxScene::HandleSkeletonEditInput(InputManager* input, bool imguiWantsMouse) {
+bool Quake3Mock::HandleSkeletonEditInput(InputManager* input, bool imguiWantsMouse) {
   if (!m_skeletonEditMode || !input) {
     return false;
   }
@@ -12472,7 +12251,7 @@ bool SandboxScene::HandleSkeletonEditInput(InputManager* input, bool imguiWantsM
   return false;
 }
 
-void SandboxScene::DrawRagdollCapsuleEditPanel(t850::DevGuiContext& gui) {
+void Quake3Mock::DrawRagdollCapsuleEditPanel(t850::DevGuiContext& gui) {
   ImGui::Separator();
   if (m_ragdollEditRenamingCapsule >= 0) {
     ImGui::SetNextItemOpen(true, ImGuiCond_Always);
@@ -13333,7 +13112,7 @@ void SandboxScene::DrawRagdollCapsuleEditPanel(t850::DevGuiContext& gui) {
   ImGui::PopID();
 }
 
-void SandboxScene::DrawRagdollJointEditPanel(t850::DevGuiContext& gui) {
+void Quake3Mock::DrawRagdollJointEditPanel(t850::DevGuiContext& gui) {
   ImGui::Separator();
   if (!ImGui::CollapsingHeader("Ragdoll Joints", ImGuiTreeNodeFlags_DefaultOpen)) {
     return;
@@ -13518,7 +13297,7 @@ void SandboxScene::DrawRagdollJointEditPanel(t850::DevGuiContext& gui) {
   }
 }
 
-void SandboxScene::DrawSkeletonEditPanel(t850::DevGuiContext& gui) {
+void Quake3Mock::DrawSkeletonEditPanel(t850::DevGuiContext& gui) {
   if (!gui.BeginSection("Skeleton Edit")) {
     return;
   }
@@ -13799,7 +13578,7 @@ void SandboxScene::DrawSkeletonEditPanel(t850::DevGuiContext& gui) {
 }
 
 #ifdef OS_ANDROID
-void SandboxScene::DrawAndroidPhysicsPanel(t850::DevGuiContext& gui) {
+void Quake3Mock::DrawAndroidPhysicsPanel(t850::DevGuiContext& gui) {
   if (!gui.BeginSection("Physics")) {
     return;
   }
@@ -13907,25 +13686,7 @@ void SandboxScene::DrawAndroidPhysicsPanel(t850::DevGuiContext& gui) {
 }
 #endif
 
-void SandboxScene::DrawSkinningAuthoringPanel(t850::DevGuiContext& gui) {
-  ImGui::SetNextWindowSize(ImVec2(460.0f, 680.0f), ImGuiCond_FirstUseEver);
-  const bool begun = gui.BeginPanel("Skinning / Bones / Capsules");
-  if (begun) {
-    BeginRagdollUndoScope("Panel edit");
-    DrawSkeletonEditPanel(gui);
-    const bool gestureActive =
-        ImGui::IsAnyItemActive() ||
-        ImGui::IsMouseDown(0) ||
-        m_skeletonEditDragging ||
-        m_ragdollEditHandleDragging ||
-        m_ragdollEditGizmoDragging ||
-        m_ragdollEditJointDragging;
-    EndRagdollUndoScope(gestureActive);
-  }
-  gui.EndPanel();
-}
-
-void SandboxScene::OnInput(InputManager* IManager) {
+void Quake3Mock::OnInput(InputManager* IManager) {
   // Skip mouse-driven camera when replay snapshot is active
   if (m_dumper.IsReplayActive()) return;
 
@@ -13944,28 +13705,6 @@ void SandboxScene::OnInput(InputManager* IManager) {
 #ifndef OS_ANDROID
   imguiWantsMouse = ImGui::GetCurrentContext() && ImGui::GetIO().WantCaptureMouse;
 #endif
-  bool handledSkeletonEditInput = false;
-  if (m_skeletonEditMode) {
-    BeginRagdollUndoScope("Viewport edit");
-    handledSkeletonEditInput = HandleSkeletonEditInput(IManager, imguiWantsMouse);
-    const bool gestureActive =
-        IManager->PressedMouseButton(0) ||
-        IManager->PressedMouseButton(1) ||
-        IManager->PressedMouseButton(2) ||
-        m_skeletonEditDragging ||
-        m_ragdollEditHandleDragging ||
-        m_ragdollEditGizmoDragging ||
-        m_ragdollEditJointDragging;
-    EndRagdollUndoScope(gestureActive);
-  } else {
-    handledSkeletonEditInput = HandleSkeletonEditInput(IManager, imguiWantsMouse);
-  }
-  if (handledSkeletonEditInput) {
-    return;
-  }
-  if (HandleRagdollSimulationGrabInput(IManager, imguiWantsMouse)) {
-    return;
-  }
 
   if (IManager->PressedOnceKey(T800K_F9)) {
     const int nextProfile = (m_cameraController.GetActiveProfileIndex() + 1) %
@@ -14014,28 +13753,6 @@ void SandboxScene::OnInput(InputManager* IManager) {
     m_showAABBs = !m_showAABBs;
   if (IManager->PressedOnceKey(T800K_F4))
     m_showPhysics = !m_showPhysics;
-  if (IManager->PressedOnceKey(T800K_F5))
-    SwitchRagdollToPhysics();
-  if (IManager->PressedOnceKey(T800K_F6)) {
-    if (m_skeletonEditMode) ExitSkeletonEditMode();
-    else EnterSkeletonEditMode();
-  }
-  if (IManager->PressedOnceKey(T800K_F7)) {
-    const int selectedMeshIndex = ClampSkinnedMeshSelection(m_selectedSkinningMeshIndex);
-    if (FindSceneRagdollRuntime(selectedMeshIndex)) {
-      ResetSceneRagdollPhysicsAndAnimation(selectedMeshIndex);
-    } else {
-      ResetRagdollPhysicsAndAnimation();
-    }
-  }
-  if (IManager->PressedOnceKey(T800K_F8)) {
-    if (!m_skeletonEditMode) {
-      EnterSkeletonEditMode();
-    }
-    if (m_skeletonEditMode) {
-      SyncRagdollCapsuleSymmetry();
-    }
-  }
 
   // Arrow keys: step keyframes when in keyframe mode
   RenderSkinnedMesh* sk = GetSelectedAnimationMesh();
@@ -14047,7 +13764,7 @@ void SandboxScene::OnInput(InputManager* IManager) {
   }
 }
 
-void SandboxScene::FitModelToView() {
+void Quake3Mock::FitModelToView() {
   RenderMesh::AABB total;
   total.Reset();
   bool hasBounds = false;
@@ -14096,11 +13813,11 @@ void SandboxScene::FitModelToView() {
   Cam.FPlane = m_modelRadius * 100.0f;
   Cam.CreatePojection();
 
-  T8_LOG_INFO("[SandboxScene] Model center=(%.2f,%.2f,%.2f) radius=%.2f dist=%.2f near=%.3f",
+  T8_LOG_INFO("[Quake3Mock] Model center=(%.2f,%.2f,%.2f) radius=%.2f dist=%.2f near=%.3f",
     m_orbitTarget.x, m_orbitTarget.y, m_orbitTarget.z, m_modelRadius, m_orbitDist, Cam.NPlane);
 }
 
-void SandboxScene::ComputeOrbitCamera() {
+void Quake3Mock::ComputeOrbitCamera() {
   SyncOrbitProfileFromSandbox();
   if (t850::OrbitCameraProfile* orbit = m_cameraController.GetOrbitProfile()) {
     orbit->Update(Cam, 0.0f, t850::CameraUpdateContext{});
@@ -14113,12 +13830,12 @@ void SandboxScene::ComputeOrbitCamera() {
   Cam.SetLookAt(target);
 }
 
-bool SandboxScene::SetCameraProfile(t850::CameraProfileType type) {
+bool Quake3Mock::SetCameraProfile(t850::CameraProfileType type) {
   if (type == t850::CameraProfileType::Orbit) {
     SyncOrbitProfileFromSandbox();
   }
   if (!m_cameraController.SetActiveProfile(type)) {
-    T8_LOG_ERROR("[SandboxScene] Failed to activate camera profile '%s'", t850::CameraProfileName(type));
+    T8_LOG_ERROR("[Quake3Mock] Failed to activate camera profile '%s'", t850::CameraProfileName(type));
     return false;
   }
   m_cameraProfileSelection = m_cameraController.GetActiveProfileIndex();
@@ -14130,24 +13847,24 @@ bool SandboxScene::SetCameraProfile(t850::CameraProfileType type) {
     ResetAndroidVirtualControls();
   }
 #endif
-  T8_LOG_INFO("[SandboxScene] Camera profile: %s", t850::CameraProfileName(type));
+  T8_LOG_INFO("[Quake3Mock] Camera profile: %s", t850::CameraProfileName(type));
   return true;
 }
 
 #ifdef OS_ANDROID
-bool SandboxScene::AndroidVirtualControlsVisible() const {
+bool Quake3Mock::AndroidVirtualControlsVisible() const {
   if (!ActiveCam) {
     return false;
   }
   return m_cameraController.GetActiveProfileType() != t850::CameraProfileType::Orbit;
 }
 
-bool SandboxScene::AndroidVirtualControlsActive() const {
+bool Quake3Mock::AndroidVirtualControlsActive() const {
   return m_androidMovePointerId >= 0 || m_androidLookPointerId >= 0 ||
          m_androidJumpPointerId >= 0 || m_androidRunPointerId >= 0;
 }
 
-void SandboxScene::ResetAndroidVirtualControls() {
+void Quake3Mock::ResetAndroidVirtualControls() {
   m_androidMovePointerId = -1;
   m_androidLookPointerId = -1;
   m_androidJumpPointerId = -1;
@@ -14158,7 +13875,7 @@ void SandboxScene::ResetAndroidVirtualControls() {
   m_androidRun = false;
 }
 
-bool SandboxScene::HandleAndroidVirtualControls(AInputEvent* event) {
+bool Quake3Mock::HandleAndroidVirtualControls(AInputEvent* event) {
   if (!event || AInputEvent_getType(event) != AINPUT_EVENT_TYPE_MOTION) {
     return false;
   }
@@ -14321,7 +14038,7 @@ bool SandboxScene::HandleAndroidVirtualControls(AInputEvent* event) {
   return true;
 }
 
-void SandboxScene::DrawAndroidVirtualControls(bool guiVisible) {
+void Quake3Mock::DrawAndroidVirtualControls(bool guiVisible) {
   if (guiVisible || !AndroidVirtualControlsVisible()) {
     ResetAndroidVirtualControls();
     return;
@@ -14381,7 +14098,7 @@ void SandboxScene::DrawAndroidVirtualControls(bool guiVisible) {
 }
 #endif
 
-void SandboxScene::SyncOrbitProfileFromSandbox() {
+void Quake3Mock::SyncOrbitProfileFromSandbox() {
   t850::OrbitCameraProfile* orbit = m_cameraController.GetOrbitProfile();
   if (!orbit) {
     return;
@@ -14396,7 +14113,7 @@ void SandboxScene::SyncOrbitProfileFromSandbox() {
   orbit->SetState(state);
 }
 
-void SandboxScene::SyncSandboxOrbitFromProfile() {
+void Quake3Mock::SyncSandboxOrbitFromProfile() {
   const t850::OrbitCameraProfile* orbit = m_cameraController.GetOrbitProfile();
   if (!orbit) {
     return;
@@ -14410,7 +14127,7 @@ void SandboxScene::SyncSandboxOrbitFromProfile() {
   m_modelRadius = state.modelRadius;
 }
 
-t850::CameraInputState SandboxScene::BuildCameraInputState(InputManager* input, bool imguiWantsMouse) const {
+t850::CameraInputState Quake3Mock::BuildCameraInputState(InputManager* input, bool imguiWantsMouse) const {
   t850::CameraInputState state;
   if (input) {
     state.moveForward = input->PressedKey(T800K_w);
@@ -14472,7 +14189,7 @@ t850::CameraInputState SandboxScene::BuildCameraInputState(InputManager* input, 
   return state;
 }
 
-bool SandboxScene::SweepCapsule(const t850::CameraCollisionSweep& sweep, t850::CameraCollisionHit& outHit) const {
+bool Quake3Mock::SweepCapsule(const t850::CameraCollisionSweep& sweep, t850::CameraCollisionHit& outHit) const {
   outHit = t850::CameraCollisionHit{};
   bool hasHit = false;
   bool hasBlockingHit = false;
@@ -14582,7 +14299,7 @@ bool SandboxScene::SweepCapsule(const t850::CameraCollisionSweep& sweep, t850::C
   return hasHit;
 }
 
-bool SandboxScene::SweepBox(const t850::CharacterBoxSweep& sweep, t850::CameraCollisionHit& outHit) const {
+bool Quake3Mock::SweepBox(const t850::CharacterBoxSweep& sweep, t850::CameraCollisionHit& outHit) const {
   outHit = t850::CameraCollisionHit{};
   bool hasHit = false;
   bool hasBlockingHit = false;
@@ -14685,7 +14402,7 @@ bool SandboxScene::SweepBox(const t850::CharacterBoxSweep& sweep, t850::CameraCo
   return hasHit;
 }
 
-bool SandboxScene::QueryTriggerTouch(const t850::CharacterTriggerQuery& query, t850::CharacterTriggerTouch& outTouch) const {
+bool Quake3Mock::QueryTriggerTouch(const t850::CharacterTriggerQuery& query, t850::CharacterTriggerTouch& outTouch) const {
   outTouch = t850::CharacterTriggerTouch{};
   if (m_q3CollisionWorld && m_q3CollisionWorld->IsLoaded()) {
     return m_q3CollisionWorld->QueryTriggerTouch(query, outTouch);
@@ -14693,7 +14410,7 @@ bool SandboxScene::QueryTriggerTouch(const t850::CharacterTriggerQuery& query, t
   return false;
 }
 
-void SandboxScene::EnsureLightRuntimeState() {
+void Quake3Mock::EnsureLightRuntimeState() {
   if (m_lightAttachToCamera.size() < SceneProp.Lights.size())
     m_lightAttachToCamera.resize(SceneProp.Lights.size(), false);
   else if (m_lightAttachToCamera.size() > SceneProp.Lights.size())
@@ -14704,7 +14421,7 @@ void SandboxScene::EnsureLightRuntimeState() {
   SceneProp.ActiveLights = (std::max)(0, (std::min)(SceneProp.ActiveLights, (int)SceneProp.Lights.size()));
 }
 
-void SandboxScene::UpdateAttachedLights() {
+void Quake3Mock::UpdateAttachedLights() {
   EnsureLightRuntimeState();
   Camera* attachCamera = ActiveCam ? ActiveCam : &Cam;
   for (int i = 0; i < (int)SceneProp.Lights.size(); ++i) {
@@ -14714,7 +14431,7 @@ void SandboxScene::UpdateAttachedLights() {
   }
 }
 
-void SandboxScene::SyncLightCameraFromDirectionalLight() {
+void Quake3Mock::SyncLightCameraFromDirectionalLight() {
   for (const Light& light : SceneProp.Lights) {
     if (light.Type != LIGHT_DIRECTIONAL) continue;
     XVECTOR3 direction = light.Direction;
@@ -14725,7 +14442,7 @@ void SandboxScene::SyncLightCameraFromDirectionalLight() {
   }
 }
 
-bool SandboxScene::AdjustSelectedDirectionalLightFromMouse(float dx, float dy) {
+bool Quake3Mock::AdjustSelectedDirectionalLightFromMouse(float dx, float dy) {
   EnsureLightRuntimeState();
   if (SceneProp.Lights.empty()) return false;
   Light& light = SceneProp.Lights[m_selectedLightIndex];
@@ -14746,7 +14463,7 @@ bool SandboxScene::AdjustSelectedDirectionalLightFromMouse(float dx, float dy) {
   return true;
 }
 
-void SandboxScene::DrawSelectedDirectionalLightArrow() {
+void Quake3Mock::DrawSelectedDirectionalLightArrow() {
   EnsureLightRuntimeState();
   if (!m_drawLightDirection) return;
   if (SceneProp.Lights.empty() || !m_lightArrowRenderer.IsReady() || !m_lightArrowVB || !m_lightArrowIB) return;
@@ -14802,7 +14519,7 @@ void SandboxScene::DrawSelectedDirectionalLightArrow() {
                                  IndexBufferFormat::R16);
 }
 
-void SandboxScene::CaptureSandboxProfileState(t850::SandboxProfileDesc& state) {
+void Quake3Mock::CaptureSandboxProfileState(t850::SandboxProfileDesc& state) {
   state = t850::SandboxProfileDesc{};
   state.model = m_profileEmbeddedInScene
       ? std::string{}
@@ -15013,7 +14730,7 @@ void SandboxScene::CaptureSandboxProfileState(t850::SandboxProfileDesc& state) {
   state.camera = camera;
 }
 
-void SandboxScene::ApplySandboxProfileState(const t850::SandboxProfileDesc& state) {
+void Quake3Mock::ApplySandboxProfileState(const t850::SandboxProfileDesc& state) {
   auto applyCubemapPath = [&](const std::string& cubemapPath) {
     const std::string normalizedPath = NormalizeSceneResourcePath(cubemapPath);
     if (normalizedPath.empty()) {
@@ -15355,7 +15072,7 @@ void SandboxScene::ApplySandboxProfileState(const t850::SandboxProfileDesc& stat
   for (const auto& animation : state.animations) {
     const int meshIndex = resolveAnimationMeshIndex(animation);
     if (meshIndex < 0) {
-      T8_LOG_INFO("[SandboxScene] Skipped profile animation for mesh slot %d path='%s'",
+      T8_LOG_INFO("[Quake3Mock] Skipped profile animation for mesh slot %d path='%s'",
                   animation.index,
                   animation.mesh.c_str());
       continue;
@@ -15364,7 +15081,7 @@ void SandboxScene::ApplySandboxProfileState(const t850::SandboxProfileDesc& stat
   }
 }
 
-t850::SandboxProfileDesc SandboxScene::BuildSparseSandboxProfile(const t850::SandboxProfileDesc& current) const {
+t850::SandboxProfileDesc Quake3Mock::BuildSparseSandboxProfile(const t850::SandboxProfileDesc& current) const {
   t850::SandboxProfileDesc sparse;
   sparse.name = current.name;
   sparse.platform = current.platform;
@@ -15439,7 +15156,7 @@ t850::SandboxProfileDesc SandboxScene::BuildSparseSandboxProfile(const t850::San
   return sparse;
 }
 
-bool SandboxScene::SandboxProfileStatesEqual(const t850::SandboxProfileDesc& lhs, const t850::SandboxProfileDesc& rhs) const {
+bool Quake3Mock::SandboxProfileStatesEqual(const t850::SandboxProfileDesc& lhs, const t850::SandboxProfileDesc& rhs) const {
   const t850::SandboxProfileDesc lhsSparse = BuildSparseSandboxProfile(lhs);
   const t850::SandboxProfileDesc rhsSparse = BuildSparseSandboxProfile(rhs);
   return lhsSparse.sliders == rhsSparse.sliders &&
@@ -15455,7 +15172,7 @@ bool SandboxScene::SandboxProfileStatesEqual(const t850::SandboxProfileDesc& lhs
          lhsSparse.current_keyframe == rhsSparse.current_keyframe;
 }
 
-void SandboxScene::LoadSandboxProfile(bool embeddedInScene) {
+void Quake3Mock::LoadSandboxProfile(bool embeddedInScene) {
   m_profileEmbeddedInScene = embeddedInScene;
   m_profileModelKey = embeddedInScene ? std::string{} : SandboxProfileModelKey(g_config.modelPath);
   m_selectedProfileTargetIndex = t850::DefaultProfileTargetIndex();
@@ -15493,7 +15210,7 @@ void SandboxScene::LoadSandboxProfile(bool embeddedInScene) {
   CaptureSandboxProfileState(m_profileSavedState);
 
   const auto& runtime = t850::GetRuntimeProfileInfo();
-  T8_LOG_INFO("[SandboxScene] Profile scope='%s' runtime='%s' platform=%s arch=%s gpu='%s' family=%s base=%d runtime=%d",
+  T8_LOG_INFO("[Quake3Mock] Profile scope='%s' runtime='%s' platform=%s arch=%s gpu='%s' family=%s base=%d runtime=%d",
               embeddedInScene ? m_loadedEditorScenePath.c_str() : m_profileModelKey.c_str(),
               runtime.recommendedProfile.c_str(),
               runtime.platform.c_str(),
@@ -15501,7 +15218,7 @@ void SandboxScene::LoadSandboxProfile(bool embeddedInScene) {
               runtime.gpuName.c_str(), runtime.gpuFamily.c_str(), baseProfile ? 1 : 0, runtimeProfile ? 1 : 0);
 }
 
-void SandboxScene::SaveSandboxProfile() {
+void Quake3Mock::SaveSandboxProfile() {
   if (!m_profileReady) return;
 
   t850::SandboxProfileDesc current;
@@ -15553,30 +15270,30 @@ void SandboxScene::SaveSandboxProfile() {
       scene.profiles = profiles;
       saved = t850::scene::SaveEditorSceneFile(scene, m_loadedEditorScenePath, &error);
       if (!saved && !error.empty()) {
-        T8_LOG_ERROR("[SandboxScene] Failed to save scene profile '%s': %s",
+        T8_LOG_ERROR("[Quake3Mock] Failed to save scene profile '%s': %s",
                      m_loadedEditorScenePath.c_str(),
                      error.c_str());
       }
     } else {
-      T8_LOG_ERROR("[SandboxScene] Failed to reload scene '%s' for profile save: %s",
+      T8_LOG_ERROR("[Quake3Mock] Failed to reload scene '%s' for profile save: %s",
                    m_loadedEditorScenePath.c_str(),
                    error.c_str());
     }
   } else {
-    saved = t850::SaveSceneDescriptor("Scenes/SandboxScene.json", m_controlSetup.descriptor);
+    saved = t850::SaveSceneDescriptor("Scenes/Quake3Mock.json", m_controlSetup.descriptor);
   }
 
   if (saved) {
     m_profileSavedState = current;
     m_profileDirty = false;
-    T8_LOG_INFO("[SandboxScene] Saved profile '%s' for %s '%s'",
+    T8_LOG_INFO("[Quake3Mock] Saved profile '%s' for %s '%s'",
                 target.name.empty() ? "pc/base" : target.name.c_str(),
                 m_profileEmbeddedInScene ? "scene" : "model",
                 m_profileEmbeddedInScene ? m_loadedEditorScenePath.c_str() : m_profileModelKey.c_str());
   }
 }
 
-void SandboxScene::OnDraw() {
+void Quake3Mock::OnDraw() {
   T8_TELEMETRY_SCOPE("sandbox.draw");
   SceneProp.ShowCullingDebug = m_showCullStats;
   static float sLuminanceReadbackAccum = 0.0f;
@@ -15800,7 +15517,6 @@ void SandboxScene::OnDraw() {
         pFramework->pVideoDriver->SetDepthStencilState(BaseDriver::NONE);
         pFramework->pVideoDriver->SetBlendState(BaseDriver::BLEND_DEFAULT);
         m_physicsDebugRenderer.Draw(*engineContext->physics, VP);
-        DrawRagdollJointDebugOverlay();
       }
     }
 
@@ -15967,9 +15683,9 @@ void SandboxScene::OnDraw() {
   }
 }
 
-void SandboxScene::DrawDevGui(t850::DevGuiContext& gui) {
+void Quake3Mock::DrawDevGui(t850::DevGuiContext& gui) {
   if (m_controlSetup.descriptor.name.empty()) {
-    m_controlSetup.Load("Scenes/SandboxScene.json");
+    m_controlSetup.Load("Scenes/Quake3Mock.json");
   }
 
   struct Mapping { const char* name; int settingIndex; };
@@ -16212,7 +15928,7 @@ void SandboxScene::DrawDevGui(t850::DevGuiContext& gui) {
         if (selectedIndex != m_currentCubemapIndex || pathChanged) {
           m_currentCubemapIndex = selectedIndex;
           m_pendingCubemap = selectedCubemapPath;
-          T8_LOG_INFO("[SandboxScene] Cubemap change queued: '%s'", m_pendingCubemap.c_str());
+          T8_LOG_INFO("[Quake3Mock] Cubemap change queued: '%s'", m_pendingCubemap.c_str());
         }
       }
       break;
@@ -16338,7 +16054,7 @@ void SandboxScene::DrawDevGui(t850::DevGuiContext& gui) {
       Cam.Velocity = XVECTOR3(0.0f, 0.0f, 0.0f, 0.0f);
       Cam.Update(0.0f);
       VP = Cam.VP;
-      T8_LOG_INFO("[SandboxScene] Camera unstuck to position[%f,%f,%f]", Cam.Eye.x, Cam.Eye.y, Cam.Eye.z);
+      T8_LOG_INFO("[Quake3Mock] Camera unstuck to position[%f,%f,%f]", Cam.Eye.x, Cam.Eye.y, Cam.Eye.z);
     }
   }
 
@@ -16788,7 +16504,6 @@ void SandboxScene::DrawDevGui(t850::DevGuiContext& gui) {
     }
   }
 
-  DrawSkinningAuthoringPanel(gui);
   const RenderMesh* consoleCullMesh = Meshes[0].pBase ? static_cast<const RenderMesh*>(Meshes[0].pBase) : nullptr;
   DrawSandboxConsolePanel(m_cameraController.GetActiveProfileType(), Cam.Eye, SceneProp, consoleCullMesh);
 }

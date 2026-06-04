@@ -71,6 +71,7 @@
     <ClInclude Include="include\physics\PhysicsDebugRenderer.h" />
     <ClInclude Include="include\physics\Q3BspCollision.h" />
     <ClInclude Include="include\physics\PhysicsAuthoring.h" />
+    <ClInclude Include="include\physics\RagdollEditorTool.h" />
     <ClInclude Include="include\physics\PhysicsTypes.h" />
     <ClInclude Include="include\utils\cil.h" />
     <ClInclude Include="include\utils\Log.h" />
@@ -172,6 +173,7 @@
     <ClCompile Include="src\physics\PhysicsDebugRenderer.cpp" />
     <ClCompile Include="src\physics\Q3BspCollision.cpp" />
     <ClCompile Include="src\physics\PhysicsAuthoring.cpp" />
+    <ClCompile Include="src\physics\RagdollEditorTool.cpp" />
     <ClCompile Include="src\navigation\NavigationSystem.cpp" />
     <ClCompile Include="src\navigation\NavigationDebugRenderer.cpp" />
     <ClCompile Include="src\scene\LensFlare.cpp" />

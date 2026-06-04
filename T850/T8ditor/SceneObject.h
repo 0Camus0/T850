@@ -39,6 +39,9 @@ struct SceneObject {
   bool                  showWire = false; // per-object wireframe override
   std::optional<float>  navAgentFrontYawOffsetDeg;
   std::optional<float>  navAgentFaceYawSign;
+  std::optional<t850::scene::SceneObjectPhysicsDesc> physics;
+  std::optional<t850::scene::SceneObjectNavigationDesc> navigation;
+  std::optional<t850::scene::SceneObjectRagdollDesc> ragdollAuthoringMeta;
 
   std::string                         ragdollModelKey;
   std::string                         ragdollResourcePath;

@@ -14,12 +14,20 @@
 // ImGui core
 #include <imgui.h>
 
+#ifndef OS_ANDROID
+#include <imgui_impl_vulkan.h>
+#endif
+
 #ifdef OS_WINDOWS
 #  include <video/d3d11/D3D11Texture.h>
+#  include <video/d3d12/D3D12Texture.h>
+#  include <video/vulkan/VulkanTexture.h>
 #endif
 
 #include <cmath>
+#include <cstdint>
 #include <mutex>
+#include <unordered_map>
 #include <vector>
 
 #include <ImGuizmo.h>
@@ -30,6 +38,7 @@ namespace t8ditor {
 static t850::ImGuiSystem      s_imguiSystem;
 static bool                   s_inited = false;
 static t850::GraphicsApi::E   s_api = t850::GraphicsApi::D3D11;
+static std::unordered_map<void*, uint64_t> s_imguiVkTextureDescriptors;
 
 // ── Log capture ring buffer ───────────────────────────
 static const int              kMaxLogLines = 500;
@@ -59,11 +68,11 @@ void ImGuiLogCaptureStop() {
 }
 
 // ── Init ──────────────────────────────────────────────
-bool ImGuiInit(t850::RootFramework* fw) {
+bool ImGuiInit(t850::RootFramework* fw, bool enablePlatformWindows) {
   if (s_inited) return true;
   if (!fw || !fw->pVideoDriver) return false;
   s_api = fw->pVideoDriver->m_currentAPI;
-  s_inited = s_imguiSystem.Init(fw, "imgui_layout.ini", true);
+  s_inited = s_imguiSystem.Init(fw, "imgui_layout.ini", true, enablePlatformWindows);
   return s_inited;
 }
 
@@ -71,6 +80,7 @@ bool ImGuiInit(t850::RootFramework* fw) {
 void ImGuiShutdown() {
   if (!s_inited) return;
   s_imguiSystem.Shutdown();
+  s_imguiVkTextureDescriptors.clear();
   s_inited = false;
 }
 
@@ -84,6 +94,67 @@ void ImGuiNewFrame() {
 void ImGuiRender() {
   if (!s_inited) return;
   s_imguiSystem.Render();
+}
+
+void ImGuiSetNextNativeEditorWindow(float offsetX, float offsetY, float width, float height) {
+  if (!s_inited) return;
+
+  ImGuiWindowClass windowClass{};
+  windowClass.ViewportFlagsOverrideSet = ImGuiViewportFlags_NoAutoMerge;
+  ImGui::SetNextWindowClass(&windowClass);
+
+  ImGuiViewport* mainViewport = ImGui::GetMainViewport();
+  ImGui::SetNextWindowPos(
+      ImVec2(mainViewport->Pos.x + offsetX, mainViewport->Pos.y + offsetY),
+      ImGuiCond_Appearing);
+  ImGui::SetNextWindowSize(ImVec2(width, height), ImGuiCond_Appearing);
+}
+
+ImTextureID ImGuiTextureID(t850::BaseDriver* driver, t850::Texture* texture) {
+  if (!driver || !texture) {
+    return (ImTextureID)nullptr;
+  }
+
+#ifdef OS_WINDOWS
+  if (driver->m_currentAPI == t850::GraphicsApi::D3D11) {
+    auto* d3dTexture = static_cast<t850::D3DXTexture*>(texture);
+    return (ImTextureID)d3dTexture->pSRVTex.Get();
+  }
+  if (driver->m_currentAPI == t850::GraphicsApi::D3D12) {
+    auto* d3dTexture = static_cast<t850::D3D12Texture*>(texture);
+    return (ImTextureID)d3dTexture->srvGPU.ptr;
+  }
+  if (driver->m_currentAPI == t850::GraphicsApi::VULKAN) {
+    auto* vkTexture = static_cast<t850::VulkanTexture*>(texture);
+    if (!vkTexture->m_sampler || !vkTexture->m_imageView) {
+      return (ImTextureID)nullptr;
+    }
+    auto found = s_imguiVkTextureDescriptors.find(texture);
+    if (found != s_imguiVkTextureDescriptors.end()) {
+#if defined(VK_USE_64_BIT_PTR_DEFINES) && VK_USE_64_BIT_PTR_DEFINES
+      return (ImTextureID)reinterpret_cast<VkDescriptorSet>((uintptr_t)found->second);
+#else
+      return (ImTextureID)(VkDescriptorSet)found->second;
+#endif
+    }
+    VkDescriptorSet descriptor = ImGui_ImplVulkan_AddTexture(
+        vkTexture->m_sampler,
+        vkTexture->m_imageView,
+        VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+#if defined(VK_USE_64_BIT_PTR_DEFINES) && VK_USE_64_BIT_PTR_DEFINES
+    s_imguiVkTextureDescriptors[texture] = (uint64_t)(uintptr_t)descriptor;
+#else
+    s_imguiVkTextureDescriptors[texture] = (uint64_t)descriptor;
+#endif
+    return (ImTextureID)descriptor;
+  }
+#endif
+
+  if (driver->m_currentAPI == t850::GraphicsApi::OPENGL) {
+    return (ImTextureID)(intptr_t)texture->id;
+  }
+
+  return (ImTextureID)nullptr;
 }
 
 // ── Menu bar ──────────────────────────────────────────

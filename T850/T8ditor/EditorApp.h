@@ -35,6 +35,8 @@
 #include <scene/SceneProp.h>
 #include <physics/JoltPhysicsSystem.h>
 #include <physics/PhysicsDebugRenderer.h>
+#include <physics/RagdollEditorTool.h>
+#include <utils/Camera.h>
 
 #include <string>
 
@@ -81,12 +83,20 @@ namespace t8ditor {
     void DestroyObjectRagdoll(struct SceneObject& obj);
     void DestroyAllObjectRagdolls();
     bool EnsureObjectRagdollAuthoring(struct SceneObject& obj);
+    bool LoadObjectRagdollAuthoringFromFile(struct SceneObject& obj);
     bool RecreateObjectRagdoll(struct SceneObject& obj, t850::PhysicsBodyMotion motion);
     bool StartObjectRagdollSimulation(struct SceneObject& obj);
     bool ResetObjectRagdollToAnimation(struct SceneObject& obj);
     void UpdateSkinnedAnimationAndRagdolls();
     void UploadSkinnedBoneTextures();
     void DrawRagdollInspector(struct SceneObject& obj);
+    void OpenRagdollEditor(int objectIndex);
+    void CloseRagdollEditor();
+    void DrawRagdollEditorWindow();
+    void DrawRagdollEditorBodyPanel(struct SceneObject& obj);
+    void DrawRagdollEditorViewport(struct SceneObject& obj);
+    bool EnsureRagdollEditorViewportTarget(int width, int height);
+    void DestroyRagdollEditorViewportTarget();
     void FrameSelectedEntity();
     void RenderLoadingProgressFrame();
 
@@ -121,6 +131,43 @@ namespace t8ditor {
 
     // Selection — currently single-object; -1 = nothing selected
     bool m_meshSelected = false;
+
+    bool m_ragdollEditorOpen = false;
+    bool m_ragdollEditorOpenRequested = false;
+    int  m_ragdollEditorObjectIndex = -1;
+    int  m_ragdollEditorSelectedBody = -1;
+    int  m_ragdollEditorSelectedJoint = -1;
+    int  m_ragdollEditorSelectedUnassignedBone = -1;
+    int  m_ragdollEditorSelectedAffectedBone = -1;
+    void* m_ragdollEditorNativeHandle = nullptr;
+    void* m_ragdollEditorLoggedNativeHandle = nullptr;
+    bool m_ragdollEditorMainViewportLogged = false;
+    bool m_ragdollEditorDirty = false;
+    std::string m_ragdollEditorStatus;
+    int m_ragdollEditorGBufferRT = -1;
+    int m_ragdollEditorViewportRT = -1;
+    int m_ragdollEditorViewportW = 0;
+    int m_ragdollEditorViewportH = 0;
+    int m_ragdollEditorPendingViewportW = 0;
+    int m_ragdollEditorPendingViewportH = 0;
+    int m_ragdollEditorViewportStableFrames = 0;
+    Camera m_ragdollEditorCamera;
+    XVECTOR3 m_ragdollEditorOrbitTarget = XVECTOR3(0.0f, 0.0f, 0.0f, 1.0f);
+    float m_ragdollEditorOrbitYaw = -0.75f;
+    float m_ragdollEditorOrbitPitch = 0.35f;
+    float m_ragdollEditorOrbitDistance = 4.0f;
+    bool m_ragdollEditorCameraInitialized = false;
+    bool m_ragdollEditorShowWireframe = false;
+    int m_ragdollEditorSelectionMode = static_cast<int>(t850::ragdoll_editor::SelectionMode::Bodies);
+    int m_ragdollEditorToolMode = static_cast<int>(t850::ragdoll_editor::ToolMode::Select);
+    int m_ragdollEditorSelectedHandle = -1;
+    bool m_ragdollEditorHandleDragging = false;
+    bool m_ragdollEditorGizmoDragging = false;
+    int m_ragdollEditorGizmoAxis = -1;
+    float m_ragdollEditorGizmoLastParameter = 0.0f;
+    XVECTOR3 m_ragdollEditorGizmoDragCenter = XVECTOR3(0.0f, 0.0f, 0.0f, 1.0f);
+    XVECTOR3 m_ragdollEditorGizmoDragAxis = XVECTOR3(1.0f, 0.0f, 0.0f, 0.0f);
+    XVECTOR3 m_ragdollEditorGizmoLastVector = XVECTOR3(1.0f, 0.0f, 0.0f, 0.0f);
   };
 
 } // namespace t8ditor

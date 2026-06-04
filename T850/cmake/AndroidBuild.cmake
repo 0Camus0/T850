@@ -83,6 +83,7 @@ set(T850_ANDROID_FRAMEWORK_SOURCES
   ${T850_SOURCE_DIR}/Framework/src/physics/PhysicsDebugRenderer.cpp
   ${T850_SOURCE_DIR}/Framework/src/physics/Q3BspCollision.cpp
   ${T850_SOURCE_DIR}/Framework/src/physics/PhysicsAuthoring.cpp
+  ${T850_SOURCE_DIR}/Framework/src/physics/RagdollEditorTool.cpp
   ${T850_SOURCE_DIR}/Framework/src/navigation/NavigationSystem.cpp
   ${T850_SOURCE_DIR}/Framework/src/navigation/NavigationDebugRenderer.cpp
   ${T850_SOURCE_DIR}/Framework/src/utils/AndroidAssets.cpp
@@ -169,6 +170,8 @@ add_library(T850Android SHARED
   ${T850_SOURCE_DIR}/DayScene/AndroidEntry.cpp
   ${T850_SOURCE_DIR}/DayScene/Application.cpp
   ${T850_SOURCE_DIR}/DayScene/DayScene.cpp
+  ${T850_SOURCE_DIR}/DayScene/Quake3Mock.cpp
+  ${T850_SOURCE_DIR}/DayScene/RagdollEditor.cpp
   ${T850_SOURCE_DIR}/DayScene/SandboxScene.cpp
   ${T850_ANDROID_FRAMEWORK_SOURCES})
 

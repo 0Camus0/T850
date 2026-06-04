@@ -4,20 +4,72 @@
 #include <cmath>
 
 #include <imgui.h>
-#include <ImGuizmo.h>
 
 namespace t850::ragdoll_editor {
 
 namespace {
 
+constexpr float kPi = 3.14159265358979323846f;
+constexpr float kRadToDeg = 180.0f / kPi;
+constexpr float kDegToRad = kPi / 180.0f;
+
+float RowLength3(const XMATRIX44& matrix, int row) {
+  const float x = matrix.m[row][0];
+  const float y = matrix.m[row][1];
+  const float z = matrix.m[row][2];
+  return std::sqrt(x * x + y * y + z * z);
+}
+
 void MatrixToComponents(const XMATRIX44& matrix, float translation[3], float rotationDeg[3], float scale[3]) {
-  XMATRIX44 copy = matrix;
-  ImGuizmo::DecomposeMatrixToComponents(&copy.m[0][0], translation, rotationDeg, scale);
+  translation[0] = matrix.m41;
+  translation[1] = matrix.m42;
+  translation[2] = matrix.m43;
+
+  XMATRIX44 rotation = matrix;
+  for (int row = 0; row < 3; ++row) {
+    scale[row] = RowLength3(matrix, row);
+    if (scale[row] > 0.000001f) {
+      rotation.m[row][0] /= scale[row];
+      rotation.m[row][1] /= scale[row];
+      rotation.m[row][2] /= scale[row];
+    } else {
+      scale[row] = 1.0f;
+    }
+  }
+
+  const float y = std::asin((std::max)(-1.0f, (std::min)(1.0f, -rotation.m13)));
+  const float cy = std::cos(y);
+  float x = 0.0f;
+  float z = 0.0f;
+  if (std::fabs(cy) > 0.00001f) {
+    x = std::atan2(rotation.m23, rotation.m33);
+    z = std::atan2(rotation.m12, rotation.m11);
+  } else {
+    x = std::atan2(-rotation.m32, rotation.m22);
+  }
+  rotationDeg[0] = x * kRadToDeg;
+  rotationDeg[1] = y * kRadToDeg;
+  rotationDeg[2] = z * kRadToDeg;
 }
 
 XMATRIX44 MatrixFromComponents(const float translation[3], const float rotationDeg[3], const float scale[3]) {
-  XMATRIX44 matrix;
-  ImGuizmo::RecomposeMatrixFromComponents(translation, rotationDeg, scale, &matrix.m[0][0]);
+  XMATRIX44 rx, ry, rz;
+  XMatIdentity(rx);
+  XMatIdentity(ry);
+  XMatIdentity(rz);
+  XMatRotationX(rx, rotationDeg[0] * kDegToRad);
+  XMatRotationY(ry, rotationDeg[1] * kDegToRad);
+  XMatRotationZ(rz, rotationDeg[2] * kDegToRad);
+  XMATRIX44 matrix = rx * ry * rz;
+  for (int row = 0; row < 3; ++row) {
+    matrix.m[row][0] *= scale[row];
+    matrix.m[row][1] *= scale[row];
+    matrix.m[row][2] *= scale[row];
+  }
+  matrix.m41 = translation[0];
+  matrix.m42 = translation[1];
+  matrix.m43 = translation[2];
+  matrix.m44 = 1.0f;
   return matrix;
 }
 

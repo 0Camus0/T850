@@ -71,7 +71,7 @@ ImGuiSystem::~ImGuiSystem() {
   Shutdown();
 }
 
-bool ImGuiSystem::Init(RootFramework* framework, const char* iniFileName, bool enableDocking) {
+bool ImGuiSystem::Init(RootFramework* framework, const char* iniFileName, bool enableDocking, bool enablePlatformWindows) {
   if (m_inited) return true;
   if (!framework || !framework->pVideoDriver) return false;
 
@@ -101,6 +101,7 @@ bool ImGuiSystem::Init(RootFramework* framework, const char* iniFileName, bool e
 
   m_api = framework->pVideoDriver->m_currentAPI;
   m_dockingEnabled = enableDocking;
+  m_platformWindowsEnabled = enablePlatformWindows;
 
   IMGUI_CHECKVERSION();
   ImGui::CreateContext();
@@ -110,6 +111,11 @@ bool ImGuiSystem::Init(RootFramework* framework, const char* iniFileName, bool e
   if (m_dockingEnabled) {
     io.ConfigFlags |= ImGuiConfigFlags_DockingEnable;
   }
+#ifndef OS_ANDROID
+  if (m_platformWindowsEnabled) {
+    io.ConfigFlags |= ImGuiConfigFlags_ViewportsEnable;
+  }
+#endif
   io.IniFilename = iniFileName;
 
   ImGui::StyleColorsDark();
@@ -118,6 +124,10 @@ bool ImGuiSystem::Init(RootFramework* framework, const char* iniFileName, bool e
   style.FrameRounding = 2.0f;
   style.GrabRounding = 2.0f;
   style.ScrollbarRounding = 3.0f;
+  if (m_platformWindowsEnabled) {
+    style.WindowRounding = 0.0f;
+    style.Colors[ImGuiCol_WindowBg].w = 1.0f;
+  }
 
   bool platformOK = false;
 #ifdef OS_ANDROID
@@ -232,6 +242,7 @@ bool ImGuiSystem::Init(RootFramework* framework, const char* iniFileName, bool e
     ImGui::DestroyContext();
     m_framework = nullptr;
     m_sdlWindow = nullptr;
+    m_platformWindowsEnabled = false;
 #ifdef OS_ANDROID
     m_androidWindow = nullptr;
 #endif
@@ -346,6 +357,32 @@ void ImGuiSystem::Render() {
 
   BuildDrawData();
   RenderDrawData();
+
+#ifndef OS_ANDROID
+  ImGuiIO& io = ImGui::GetIO();
+  if ((io.ConfigFlags & ImGuiConfigFlags_ViewportsEnable) != 0) {
+    bool deferPlatformResize = false;
+    if (m_api == GraphicsApi::VULKAN && io.MouseDown[0]) {
+      ImGuiPlatformIO& platformIO = ImGui::GetPlatformIO();
+      for (ImGuiViewport* viewport : platformIO.Viewports) {
+        if (viewport && viewport->PlatformRequestResize) {
+          deferPlatformResize = true;
+          break;
+        }
+      }
+    }
+    if (deferPlatformResize) {
+      return;
+    }
+    SDL_Window* backupWindow = SDL_GL_GetCurrentWindow();
+    SDL_GLContext backupContext = SDL_GL_GetCurrentContext();
+    ImGui::UpdatePlatformWindows();
+    ImGui::RenderPlatformWindowsDefault();
+    if (backupWindow && backupContext) {
+      SDL_GL_MakeCurrent(backupWindow, backupContext);
+    }
+  }
+#endif
 }
 
 void ImGuiSystem::InstallLoadingProgressRenderer() {

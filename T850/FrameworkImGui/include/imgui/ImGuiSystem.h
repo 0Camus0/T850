@@ -21,7 +21,7 @@ namespace t850 {
     ImGuiSystem() = default;
     ~ImGuiSystem();
 
-    bool Init(RootFramework* framework, const char* iniFileName, bool enableDocking);
+    bool Init(RootFramework* framework, const char* iniFileName, bool enableDocking, bool enablePlatformWindows = false);
     void Shutdown();
 
     bool NewFrame(bool createDockspace);
@@ -47,6 +47,7 @@ namespace t850 {
     RootFramework* m_framework = nullptr;
     bool m_inited = false;
     bool m_dockingEnabled = false;
+    bool m_platformWindowsEnabled = false;
     bool m_loadingFrameActive = false;
     GraphicsApi::E m_api = GraphicsApi::D3D11;
     SDL_Window* m_sdlWindow = nullptr;

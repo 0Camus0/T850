@@ -1395,8 +1395,9 @@ namespace t850 {
 
     Camera* cam = pScProp->pCameras[0];
     XVECTOR3 wireColor(0.0f, 1.0f, 0.0f, 1.0f);
-    m_lineRenderer.SetDepthTestEnabled(m_wireDepthTex != nullptr);
+    m_lineRenderer.SetDepthTestEnabled(m_wireDepthTex != nullptr || m_wireDepthTex2 != nullptr);
     m_lineRenderer.SetDepthTexture(m_wireDepthTex);
+    m_lineRenderer.SetSecondaryDepthTexture(m_wireDepthTex2);
     m_lineRenderer.SetViewport(m_wireViewW, m_wireViewH);
     m_lineRenderer.SetFarPlane(cam->FPlane);
 
@@ -2588,6 +2589,7 @@ namespace t850 {
     m_wireShader = nullptr;
     m_lineRenderer.Destroy();
     m_wireDepthTex = nullptr;
+    m_wireDepthTex2 = nullptr;
     m_cullingMetadataReady = false;
   }
 }

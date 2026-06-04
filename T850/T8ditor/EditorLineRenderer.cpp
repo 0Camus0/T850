@@ -120,10 +120,19 @@ void EditorLineRenderer::DrawLines(const XMATRIX44& world,
   m_shader->Set(*t850::T8DeviceContext);
   m_cb->UpdateFromBuffer(*t850::T8DeviceContext, &cb);
   m_cb->Set(*t850::T8DeviceContext);
+#if defined(USING_VULKAN) || defined(USING_VULKAN_ONLY)
+  // Vulkan reflection can map VS/FS cbuffers to different bindings when the
+  // fragment shader also samples depth. Populate both logical slots.
+  m_cb->Set(*t850::T8DeviceContext, 1);
+#endif
 
   // Bind depth texture AFTER shader is set (D3D12 needs active root signature)
-  if (m_depthTex)
-    m_depthTex->Set(*t850::T8DeviceContext, 0, "depthTex");
+  if (m_depthTex || m_depthTex2) {
+    t850::Texture* primaryDepth = m_depthTex ? m_depthTex : m_depthTex2;
+    t850::Texture* secondaryDepth = m_depthTex2 ? m_depthTex2 : primaryDepth;
+    primaryDepth->Set(*t850::T8DeviceContext, 0, "depthTex");
+    secondaryDepth->Set(*t850::T8DeviceContext, 1, "depthTex2");
+  }
 
   t850::T8DeviceContext->DrawIndexed(indexCount, 0, 0);
 

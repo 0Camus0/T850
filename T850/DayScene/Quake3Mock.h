@@ -32,7 +32,7 @@ class JoltPhysicsSystem;
 class RenderSkinnedMesh;
 }
 
-class SandboxScene : public t850::SceneBase, public t850::CameraCollisionWorld
+class Quake3Mock : public t850::SceneBase, public t850::CameraCollisionWorld
 {
   enum {
     CHANGE_EXPOSURE = 0,
@@ -86,7 +86,7 @@ class SandboxScene : public t850::SceneBase, public t850::CameraCollisionWorld
     CHANGE_MAX_NUM_OPTIONS
   };
 public:
-  SandboxScene() {}
+  Quake3Mock() {}
   void OnUpdate(float _DtSecs) override;
   void OnDraw() override;
   void OnInput(InputManager* IManager) override;
@@ -175,7 +175,6 @@ public:
   t850::TextRenderer m_debugText;
   t850::WireframeSphere m_debugSphere;
   t850::LineRenderer m_lightArrowRenderer;
-  t850::LineRenderer m_ragdollJointRenderer;
   t850::PhysicsDebugRenderer m_physicsDebugRenderer;
   t850::navigation::NavMeshDebugRenderer m_navMeshDebugRenderer;
   t850::navigation::NavMesh m_navMesh;
@@ -185,11 +184,6 @@ public:
   t850::VertexBuffer* m_lightArrowVB = nullptr;
   t850::IndexBuffer* m_lightArrowIB = nullptr;
   unsigned m_lightArrowIndexCount = 0;
-  t850::VertexBuffer* m_ragdollJointVB = nullptr;
-  t850::IndexBuffer* m_ragdollJointIB = nullptr;
-  unsigned m_ragdollJointVertexCapacity = 0;
-  unsigned m_ragdollJointIndexCapacity = 0;
-  unsigned m_ragdollJointIndexCount = 0;
   bool m_showCullStats = false;
   bool m_showAABBs = false;
   bool m_showWireframe = false;
@@ -430,7 +424,6 @@ public:
   bool EnterSkeletonEditMode();
   void ExitSkeletonEditMode();
   void DrawSkeletonEditPanel(t850::DevGuiContext& gui);
-  void DrawSkinningAuthoringPanel(t850::DevGuiContext& gui);
   bool HandleSkeletonEditInput(InputManager* input, bool imguiWantsMouse);
   RagdollAuthoringUndoSnapshot CaptureRagdollUndoSnapshot(const char* label = "") const;
   bool RagdollUndoContentEquals(const RagdollAuthoringUndoSnapshot& a, const RagdollAuthoringUndoSnapshot& b) const;
@@ -517,9 +510,6 @@ public:
   bool BeginRagdollEditJointGizmoDrag(float mouseX, float mouseY);
   bool DragRagdollEditJointGizmo(float mouseX, float mouseY);
   void DrawRagdollJointGizmos(bool editable);
-  void ReleaseRagdollJointDebugBuffers();
-  bool UploadRagdollJointDebugGeometry(const std::vector<float>& vertices, const std::vector<unsigned int>& indices);
-  void DrawRagdollJointDebugOverlay();
   bool GetRagdollEditGizmoFrame(int capsuleIndex, XVECTOR3& outCenter, std::array<XVECTOR3, 3>& outAxes, float& outSize, bool globalAxes = false);
   bool BuildRagdollEditHandlePoints(int capsuleIndex, std::array<XVECTOR3, 7>& outPoints);
   bool PickRagdollEditHandle(float mouseX, float mouseY, float thresholdPixels, int& outCapsuleIndex, int& outHandleIndex);

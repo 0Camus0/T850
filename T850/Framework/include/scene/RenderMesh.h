@@ -467,6 +467,7 @@ namespace t850 {
     bool EnsureCullingMetadata();
     bool HasCullingMetadata() const { return m_cullingMetadataReady; }
     void SetWireframeDepthTex(Texture* depthTex) { m_wireDepthTex = depthTex; }
+    void SetWireframeSecondaryDepthTex(Texture* depthTex) { m_wireDepthTex2 = depthTex; }
     void SetWireframeViewport(int w, int h) { m_wireViewW = w; m_wireViewH = h; }
 
     void GatherInfo();
@@ -538,11 +539,11 @@ namespace t850 {
     ShaderBase* m_wireShader = nullptr;
     LineRenderer m_lineRenderer;
     Texture* m_wireDepthTex = nullptr;
+    Texture* m_wireDepthTex2 = nullptr;
     int m_wireViewW = 1280;
     int m_wireViewH = 720;
   };
 }
 
 #endif
-
 

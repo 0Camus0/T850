@@ -13,6 +13,31 @@ struct Vec3f {
   float z = 0.0f;
 };
 
+struct SceneObjectPhysicsDesc {
+  bool enabled = false;
+  std::string body_type = "none";
+  std::string motion = "static";
+  std::string collision_layer = "world";
+  bool generate_collision = false;
+  std::string collision_asset;
+};
+
+struct SceneObjectNavigationDesc {
+  bool include = true;
+  bool walkable = true;
+  bool static_object = true;
+  std::string area = "walkable";
+  float cost = 1.0f;
+};
+
+struct SceneObjectRagdollDesc {
+  bool enabled = false;
+  std::string asset;
+  bool preview = false;
+  bool drive_from_animation = true;
+  std::string runtime_motion = "disabled";
+};
+
 struct SceneObjectDesc {
   std::string name;
   std::string mesh;
@@ -26,6 +51,9 @@ struct SceneObjectDesc {
   bool show_wire = false;
   std::optional<float> nav_agent_front_yaw_offset_deg;
   std::optional<float> nav_agent_face_yaw_sign;
+  std::optional<SceneObjectPhysicsDesc> physics;
+  std::optional<SceneObjectNavigationDesc> navigation;
+  std::optional<SceneObjectRagdollDesc> ragdoll_authoring;
 };
 
 struct SceneCameraDesc {

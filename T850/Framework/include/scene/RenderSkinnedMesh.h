@@ -74,8 +74,8 @@ public:
   int  GetTotalKeyframes() const { return m_animController.GetTotalKeyframes(); }
 
   // ── Debug wireframe / skeleton visualization ──
-  // Draw mesh wireframe using GPU skinning pipeline (green, LINE_LIST)
-  void DrawWireframe();
+  // Draw mesh wireframe using GPU skinning pipeline (LINE_LIST)
+  void DrawWireframe(const XVECTOR3& color = XVECTOR3(0.0f, 1.0f, 0.0f, 1.0f));
   // Draw skeleton bones without depth testing. Pass bone indices to highlight them.
   void DrawSkeleton(int selectedBone = -1,
                     const std::vector<int>* controlledBones = nullptr,
@@ -90,8 +90,9 @@ public:
   void ClearSnapshotBoneMatrices();
   bool HasSnapshotBoneMatrices() const { return m_snapshotPoseActive; }
 
-  // Set the GBuffer depth texture for wireframe depth-tested occlusion
+  // Set the scene depth textures for wireframe depth-tested occlusion.
   void SetWireframeDepthTex(Texture* depthTex) { m_wireDepthTex = depthTex; }
+  void SetWireframeSecondaryDepthTex(Texture* depthTex) { m_wireDepthTex2 = depthTex; }
   void SetWireframeViewport(int w, int h) { m_wireViewW = w; m_wireViewH = h; }
 
   bool GetSkeletonLocalAABB(RenderMesh::AABB& outBounds) const;
@@ -192,8 +193,9 @@ private:
   // LineRenderer kept for depth-tested wireframe overlays
   LineRenderer         m_lineRenderer;
 
-  // Wireframe depth occlusion (GBuffer depth texture)
+  // Wireframe depth occlusion.
   Texture*             m_wireDepthTex   = nullptr;
+  Texture*             m_wireDepthTex2  = nullptr;
   int                  m_wireViewW      = 1280;
   int                  m_wireViewH      = 720;
 };

@@ -877,7 +877,7 @@ namespace t850 {
 
   // ── Debug wireframe draw (GPU-skinned) ─────────────────
 
-  void RenderSkinnedMesh::DrawWireframe() {
+  void RenderSkinnedMesh::DrawWireframe(const XVECTOR3& color) {
     if (!m_hasSkin || !m_wireShader || m_wireGeo.empty()) return;
     if (!pScProp || pScProp->pCameras.empty()) return;
 
@@ -887,7 +887,7 @@ namespace t850 {
     // CameraInfo: .x=near, .y=far, .z=viewportW, .w=viewportH
     XVECTOR3 infoCam = XVECTOR3(cam->NPlane, cam->FPlane,
                                  (float)m_wireViewW, (float)m_wireViewH);
-    XVECTOR3 wireColor(0.0f, 1.0f, 0.0f, 1.0f);
+    XVECTOR3 wireColor = color;
 
     // Base CBuffer (no bone data — bones come from texture)
     RenderMesh::CBuffer wireCB;
@@ -937,8 +937,12 @@ namespace t850 {
         m_boneTexture->SetVS(*T8DeviceContext, BoneTextureSlot, "u_BoneTex");
 
       // Bind GBuffer depth texture for manual depth comparison in FS
-      if (m_wireDepthTex)
-        m_wireDepthTex->Set(*T8DeviceContext, 0, "depthTex");
+      if (m_wireDepthTex || m_wireDepthTex2) {
+        Texture* primaryDepth = m_wireDepthTex ? m_wireDepthTex : m_wireDepthTex2;
+        Texture* secondaryDepth = m_wireDepthTex2 ? m_wireDepthTex2 : primaryDepth;
+        primaryDepth->Set(*T8DeviceContext, 0, "depthTex");
+        secondaryDepth->Set(*T8DeviceContext, 1, "depthTex2");
+      }
 
       T8DeviceContext->DrawIndexed(m_wireGeo[i].indexCount, 0, baseVertex);
 
@@ -1573,6 +1577,7 @@ namespace t850 {
     m_skelSelectedIndexCount = 0;
     m_skelSelectedPositions.clear();
     m_wireDepthTex = nullptr;
+    m_wireDepthTex2 = nullptr;
 
     RenderMesh::Destroy();
     m_skinnedCBuffers.clear();

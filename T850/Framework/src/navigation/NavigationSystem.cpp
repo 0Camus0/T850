@@ -1131,6 +1131,75 @@ bool BuildGeometryFromPrimitiveInstances(const PrimitiveInst* instances,
   return true;
 }
 
+bool BuildGeometryFromNavSources(const std::vector<NavSourceInstance>& sources,
+                                 NavMeshGeometry& outGeometry,
+                                 NavSourceBuildStats* stats,
+                                 std::string* error) {
+  outGeometry.vertices.clear();
+  outGeometry.indices.clear();
+  if (stats) {
+    *stats = NavSourceBuildStats{};
+  }
+
+  if (sources.empty()) {
+    SetError(error, "No navigation sources were provided");
+    return false;
+  }
+
+  for (const NavSourceInstance& source : sources) {
+    if (stats) ++stats->considered;
+    if (!source.includeInNavigation || !source.visible || !source.navigationStatic) {
+      if (stats) ++stats->skippedInvisible;
+      continue;
+    }
+
+    const xF::XDataBase* database = source.database;
+    XMATRIX44 worldTransform = source.worldTransform;
+    if (source.instance) {
+      if (!source.instance->Visible || !source.instance->pBase) {
+        if (stats) ++stats->skippedInvisible;
+        continue;
+      }
+      if (source.instance->GetSkinnedMesh()) {
+        if (stats) ++stats->skippedSkinned;
+        continue;
+      }
+      const RenderMesh* mesh = dynamic_cast<const RenderMesh*>(source.instance->pBase);
+      if (!mesh || !mesh->xFile) {
+        if (stats) ++stats->skippedInvalid;
+        continue;
+      }
+      database = mesh->xFile;
+      worldTransform = source.instance->Final;
+    }
+
+    if (!database) {
+      if (stats) ++stats->skippedInvalid;
+      continue;
+    }
+
+    const std::size_t indicesBefore = outGeometry.indices.size();
+    std::string sourceError;
+    if (!AppendGeometryFromXDataBase(*database, worldTransform, outGeometry, &sourceError) ||
+        outGeometry.indices.size() == indicesBefore) {
+      if (stats) ++stats->skippedInvalid;
+      continue;
+    }
+    if (stats) ++stats->included;
+  }
+
+  if (outGeometry.vertices.empty() || outGeometry.indices.size() < 3) {
+    SetError(error, "Navigation sources produced no navigation geometry");
+    return false;
+  }
+
+  if (stats) {
+    stats->vertexCount = static_cast<int>(outGeometry.vertices.size());
+    stats->triangleCount = static_cast<int>(outGeometry.indices.size() / 3);
+  }
+  return true;
+}
+
 bool NavMesh::BuildFromXDataBase(const xF::XDataBase& database,
                                  const NavMeshBuildSettings& settings,
                                  std::string* error) {

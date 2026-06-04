@@ -1,4 +1,4 @@
-#include <SandboxScene.h>
+#include <RagdollEditor.h>
 #include <video/BaseDriver.h>
 #include <utils/Log.h>
 #include <utils/RuntimeProfile.h>
@@ -2788,7 +2788,7 @@ namespace {
     std::error_code ec;
     std::filesystem::create_directories("Logs", ec);
     if (ec) {
-      T8_LOG_ERROR("[SandboxScene] Failed to create Logs directory for ragdoll matrix dump");
+      T8_LOG_ERROR("[RagdollEditor] Failed to create Logs directory for ragdoll matrix dump");
       return false;
     }
 
@@ -2799,7 +2799,7 @@ namespace {
 
     std::ofstream shaderFile(shaderPath, std::ios::out | std::ios::trunc);
     if (!shaderFile.is_open()) {
-      T8_LOG_ERROR("[SandboxScene] Failed to open ragdoll shader matrix dump '%s'", shaderPath.string().c_str());
+      T8_LOG_ERROR("[RagdollEditor] Failed to open ragdoll shader matrix dump '%s'", shaderPath.string().c_str());
       return false;
     }
     shaderFile << std::fixed << std::setprecision(8);
@@ -2830,7 +2830,7 @@ namespace {
 
     std::ofstream combinedFile(combinedPath, std::ios::out | std::ios::trunc);
     if (!combinedFile.is_open()) {
-      T8_LOG_ERROR("[SandboxScene] Failed to open ragdoll combined matrix dump '%s'", combinedPath.string().c_str());
+      T8_LOG_ERROR("[RagdollEditor] Failed to open ragdoll combined matrix dump '%s'", combinedPath.string().c_str());
       return false;
     }
     combinedFile << std::fixed << std::setprecision(8);
@@ -2846,7 +2846,7 @@ namespace {
 
     std::ofstream bodyFile(bodyPath, std::ios::out | std::ios::trunc);
     if (!bodyFile.is_open()) {
-      T8_LOG_ERROR("[SandboxScene] Failed to open ragdoll body matrix dump '%s'", bodyPath.string().c_str());
+      T8_LOG_ERROR("[RagdollEditor] Failed to open ragdoll body matrix dump '%s'", bodyPath.string().c_str());
       return false;
     }
     bodyFile << std::fixed << std::setprecision(8);
@@ -2889,7 +2889,7 @@ namespace {
                << '\n';
     }
 
-    T8_LOG_INFO("[SandboxScene] F5 ragdoll matrix dump: shader='%s' combined='%s' bodies='%s' maxShaderDiff=%.6f bone=%d('%s') transDiff=%.6f maxBodyDiff=%.6f bone=%d('%s') bodyTransDiff=%.6f",
+    T8_LOG_INFO("[RagdollEditor] F5 ragdoll matrix dump: shader='%s' combined='%s' bodies='%s' maxShaderDiff=%.6f bone=%d('%s') transDiff=%.6f maxBodyDiff=%.6f bone=%d('%s') bodyTransDiff=%.6f",
                 shaderPath.string().c_str(),
                 combinedPath.string().c_str(),
                 bodyPath.string().c_str(),
@@ -3202,7 +3202,7 @@ namespace {
   }
 }
 
-void SandboxScene::InitVars() {
+void RagdollEditor::InitVars() {
 
 
 
@@ -3286,36 +3286,15 @@ void SandboxScene::InitVars() {
   m_showWireframe = false;
   m_showSkeleton = false;
   m_showPhysics = false;
-  m_showNavMesh = false;
-  m_navMeshDebugOffset = 0.01f;
-  m_navMeshDebugShapeMode = 0;
-  m_navMeshBuildAttempted = false;
-  m_navMeshBuildSettings = t850::navigation::NavMeshBuildSettings();
-  m_navMeshBuildSettings.enableAutoDropLinks = true;
-  m_navMeshBuildSettings.enableAutoJumpLinks = true;
-  m_navMeshBuildSettings.enableHybridJumpLinks = true;
-  m_navMeshBuildSettings.hybridJumpMaxLinks = 192;
-  m_navMeshLastBuildMs = 0.0f;
-  m_navMeshLastBuildFromCache = false;
   m_showLightVolumes = false;
   m_drawLightDirection = false;
   m_meshCount = 0;
   m_loadedEditorScene = false;
   m_loadedEditorScenePath.clear();
-  m_q3CollisionWorld.reset();
   m_primaryRagdollResourcePath.clear();
   m_sceneMeshPaths.clear();
   m_sceneRagdollPaths.clear();
-  m_sceneNavAgentFrontYawOffsets.clear();
-  m_sceneNavAgentFaceYawSigns.clear();
   m_sceneRagdolls.clear();
-  m_navTestAgents.clear();
-  m_navTestCandidatePoints.clear();
-  m_navTestInitialized = false;
-  m_navTestMode = kNavTestModeFollowPlayer;
-  m_navTestAppliedMode = m_navTestMode;
-  m_navTestRandomState = 0x6d2b79f5u;
-  m_navTestSpeed = 3.0f;
   m_selectedSkinningMeshIndex = 0;
   m_selectedAnimationMeshIndex = 0;
   m_lightAttachToCamera.clear();
@@ -3365,10 +3344,10 @@ void SandboxScene::InitVars() {
   SceneProp.IBLMipCount = 4.0f;
   SceneProp.IBLBRDFLUTEnabled = 0.0f;
 
-  if (m_controlSetup.Load("Scenes/SandboxScene.json")) {
+  if (m_controlSetup.Load("Scenes/RagdollEditor.json")) {
     m_controlSetup.ApplyQualityAndSettings(SceneProp);
   } else {
-    T8_LOG_ERROR("[SandboxScene] Failed to load Scenes/SandboxScene.json");
+    T8_LOG_ERROR("[RagdollEditor] Failed to load Scenes/RagdollEditor.json");
   }
   SceneProp.FrustumCullingToggleAllowed = g_config.cullingLoadMode != t850::Config::CullingLoadMode::Disabled;
   SceneProp.FrustumCullingEnabled = g_config.cullingLoadMode == t850::Config::CullingLoadMode::FullOnLoad;
@@ -3385,19 +3364,14 @@ void SandboxScene::InitVars() {
   m_dumper.Init(dumpCfg);
 }
 
-void SandboxScene::ApplyEditorSceneCameraAndLights(const t850::scene::EditorSceneFile& scene) {
-  const bool useQ3CameraDefaults = m_q3CollisionWorld && m_q3CollisionWorld->IsLoaded();
+void RagdollEditor::ApplyEditorSceneCameraAndLights(const t850::scene::EditorSceneFile& scene) {
   XVECTOR3 eye(0.0f, 0.0f, 0.0f, 1.0f);
   XVECTOR3 look(-1.0f, 0.0f, 0.0f, 0.0f);
-  if (useQ3CameraDefaults) {
-    eye = XVECTOR3(-18.524239f, 9.683158f, 2.7011344f, 1.0f);
-    look = XVECTOR3(-0.96796095f, -0.2035667f, 0.14701098f, 0.0f);
-  }
   const XVECTOR3 target = eye + look;
   const float aspect = g_config.height > 0 ? static_cast<float>(g_config.width) / static_cast<float>(g_config.height) : Cam.AspectRatio;
-  const float nearPlane = useQ3CameraDefaults ? 0.125f : (std::max)(0.0001f, Cam.NPlane);
-  const float farPlane = useQ3CameraDefaults ? 6198.7783f : (std::max)(nearPlane + 0.01f, Cam.FPlane);
-  const float fov = useQ3CameraDefaults ? Deg2Rad(100.0f) : (Cam.Fov > 0.0f ? Cam.Fov : Deg2Rad(46.8f));
+  const float nearPlane = (std::max)(0.0001f, Cam.NPlane);
+  const float farPlane = (std::max)(nearPlane + 0.01f, Cam.FPlane);
+  const float fov = Cam.Fov > 0.0f ? Cam.Fov : Deg2Rad(46.8f);
   Cam.InitPerspective(eye, fov, aspect, nearPlane, farPlane);
   Cam.Speed = 10.0f;
   Cam.Velocity = XVECTOR3(0.0f, 0.0f, 0.0f);
@@ -3408,10 +3382,9 @@ void SandboxScene::ApplyEditorSceneCameraAndLights(const t850::scene::EditorScen
   m_orbitPitch = 0.0f;
   m_orbitYaw = -1.57079632679f;
   SyncOrbitProfileFromSandbox();
-  SetCameraProfile(useQ3CameraDefaults ? t850::CameraProfileType::Quake3Fps : t850::CameraProfileType::FreeFly);
+  SetCameraProfile(t850::CameraProfileType::FreeFly);
   VP = Cam.VP;
-  T8_LOG_INFO("[SandboxScene] Ignoring scene cameras; using %s camera eye=(%.3f,%.3f,%.3f) look=(%.3f,%.3f,%.3f) fov=%.1f",
-              useQ3CameraDefaults ? "Quake 3 FPS" : "free-fly",
+  T8_LOG_INFO("[RagdollEditor] Ignoring scene cameras; using free-fly camera eye=(%.3f,%.3f,%.3f) look=(%.3f,%.3f,%.3f) fov=%.1f",
               Cam.Eye.x, Cam.Eye.y, Cam.Eye.z,
               Cam.Look.x, Cam.Look.y, Cam.Look.z,
               Rad2Deg(Cam.Fov));
@@ -3445,17 +3418,17 @@ void SandboxScene::ApplyEditorSceneCameraAndLights(const t850::scene::EditorScen
       }
     }
     SyncLightCameraFromDirectionalLight();
-    T8_LOG_INFO("[SandboxScene] Applied %zu scene lights; dynamic point lights %s",
+    T8_LOG_INFO("[RagdollEditor] Applied %zu scene lights; dynamic point lights %s",
                 SceneProp.Lights.size(),
                 SceneProp.PointLightsEnabled ? "enabled" : "disabled");
   }
 }
 
-int SandboxScene::GetRuntimeMeshCount() const {
+int RagdollEditor::GetRuntimeMeshCount() const {
   return (std::max)(m_meshCount, Meshes[0].pBase ? 1 : 0);
 }
 
-RenderSkinnedMesh* SandboxScene::GetSkinnedMeshForIndex(int meshIndex) const {
+RenderSkinnedMesh* RagdollEditor::GetSkinnedMeshForIndex(int meshIndex) const {
   if (meshIndex < 0 || meshIndex >= kMaxSandboxMeshes || meshIndex >= GetRuntimeMeshCount() || !Meshes[meshIndex].pBase) {
     return nullptr;
   }
@@ -3463,7 +3436,7 @@ RenderSkinnedMesh* SandboxScene::GetSkinnedMeshForIndex(int meshIndex) const {
   return (skinned && skinned->HasSkinData()) ? skinned : nullptr;
 }
 
-std::vector<std::string> SandboxScene::BuildSkinnedMeshOptions(std::vector<int>* outMeshIndices) const {
+std::vector<std::string> RagdollEditor::BuildSkinnedMeshOptions(std::vector<int>* outMeshIndices) const {
   if (outMeshIndices) {
     outMeshIndices->clear();
   }
@@ -3511,7 +3484,7 @@ std::vector<std::string> SandboxScene::BuildSkinnedMeshOptions(std::vector<int>*
   return options;
 }
 
-int SandboxScene::ClampSkinnedMeshSelection(int preferredMeshIndex) const {
+int RagdollEditor::ClampSkinnedMeshSelection(int preferredMeshIndex) const {
   std::vector<int> meshIndices;
   BuildSkinnedMeshOptions(&meshIndices);
   if (meshIndices.empty()) {
@@ -3525,15 +3498,15 @@ int SandboxScene::ClampSkinnedMeshSelection(int preferredMeshIndex) const {
   return meshIndices.front();
 }
 
-RenderSkinnedMesh* SandboxScene::GetSelectedSkinningMesh() const {
+RenderSkinnedMesh* RagdollEditor::GetSelectedSkinningMesh() const {
   return GetSkinnedMeshForIndex(ClampSkinnedMeshSelection(m_selectedSkinningMeshIndex));
 }
 
-RenderSkinnedMesh* SandboxScene::GetSelectedAnimationMesh() const {
+RenderSkinnedMesh* RagdollEditor::GetSelectedAnimationMesh() const {
   return GetSkinnedMeshForIndex(ClampSkinnedMeshSelection(m_selectedAnimationMeshIndex));
 }
 
-bool SandboxScene::AttachSceneObjectRagdoll(int meshIndex,
+bool RagdollEditor::AttachSceneObjectRagdoll(int meshIndex,
                                             const std::string& meshPath,
                                             const std::string& ragdollPath) {
   if (meshIndex < 0 || meshIndex >= kMaxSandboxMeshes || !Meshes[meshIndex].pBase) {
@@ -3549,7 +3522,7 @@ bool SandboxScene::AttachSceneObjectRagdoll(int meshIndex,
   if (!engineContext) engineContext = &t850::GetEngineContext();
   t850::JoltPhysicsSystem* physics = engineContext ? engineContext->physics : nullptr;
   if (!physics || !physics->IsInitialized()) {
-    T8_LOG_INFO("[SandboxScene] Cannot attach ragdoll '%s' for scene object '%s' because physics is not initialized",
+    T8_LOG_INFO("[RagdollEditor] Cannot attach ragdoll '%s' for scene object '%s' because physics is not initialized",
                 ragdollPath.c_str(),
                 meshPath.c_str());
     return false;
@@ -3585,7 +3558,7 @@ bool SandboxScene::AttachSceneObjectRagdoll(int meshIndex,
                                                Meshes[meshIndex].GetEntityId(),
                                                settings,
                                                generatedAuthoring)) {
-    T8_LOG_INFO("[SandboxScene] Failed to generate ragdoll binding for scene object '%s' using '%s'",
+    T8_LOG_INFO("[RagdollEditor] Failed to generate ragdoll binding for scene object '%s' using '%s'",
                 meshPath.c_str(),
                 ragdollPath.c_str());
     return false;
@@ -3599,7 +3572,7 @@ bool SandboxScene::AttachSceneObjectRagdoll(int meshIndex,
                                        generatedAuthoring.binding,
                                        authoring,
                                        &appliedBodies)) {
-    T8_LOG_INFO("[SandboxScene] Failed to load authored ragdoll '%s' for scene object '%s'",
+    T8_LOG_INFO("[RagdollEditor] Failed to load authored ragdoll '%s' for scene object '%s'",
                 ragdollPath.c_str(),
                 meshPath.c_str());
     return false;
@@ -3607,7 +3580,7 @@ bool SandboxScene::AttachSceneObjectRagdoll(int meshIndex,
 
   t850::PhysicsRagdollDesc pose = authoring.binding.referencePose;
   if (pose.bones.empty()) {
-    T8_LOG_INFO("[SandboxScene] Authored ragdoll '%s' for scene object '%s' produced no bodies",
+    T8_LOG_INFO("[RagdollEditor] Authored ragdoll '%s' for scene object '%s' produced no bodies",
                 ragdollPath.c_str(),
                 meshPath.c_str());
     return false;
@@ -3615,7 +3588,7 @@ bool SandboxScene::AttachSceneObjectRagdoll(int meshIndex,
 
   const t850::PhysicsRagdollHandle handle = physics->CreateRagdoll(pose, t850::PhysicsBodyMotion::Kinematic);
   if (!handle.IsValid()) {
-    T8_LOG_INFO("[SandboxScene] Failed to create runtime ragdoll '%s' for scene object '%s'",
+    T8_LOG_INFO("[RagdollEditor] Failed to create runtime ragdoll '%s' for scene object '%s'",
                 ragdollPath.c_str(),
                 meshPath.c_str());
     return false;
@@ -3630,7 +3603,7 @@ bool SandboxScene::AttachSceneObjectRagdoll(int meshIndex,
   runtime.pose = std::move(pose);
   m_sceneRagdolls.push_back(std::move(runtime));
 
-  T8_LOG_INFO("[SandboxScene] Loaded scene ragdoll '%s' for mesh '%s' bodies=%d appliedEdits=%d",
+  T8_LOG_INFO("[RagdollEditor] Loaded scene ragdoll '%s' for mesh '%s' bodies=%d appliedEdits=%d",
               ragdollPath.c_str(),
               meshPath.c_str(),
               static_cast<int>(authoring.binding.referencePose.bones.size()),
@@ -3638,7 +3611,7 @@ bool SandboxScene::AttachSceneObjectRagdoll(int meshIndex,
   return true;
 }
 
-SandboxScene::SceneRagdollRuntime* SandboxScene::FindSceneRagdollRuntime(int meshIndex) {
+RagdollEditor::SceneRagdollRuntime* RagdollEditor::FindSceneRagdollRuntime(int meshIndex) {
   for (SceneRagdollRuntime& runtime : m_sceneRagdolls) {
     if (runtime.meshIndex == meshIndex) {
       return &runtime;
@@ -3647,7 +3620,7 @@ SandboxScene::SceneRagdollRuntime* SandboxScene::FindSceneRagdollRuntime(int mes
   return nullptr;
 }
 
-const SandboxScene::SceneRagdollRuntime* SandboxScene::FindSceneRagdollRuntime(int meshIndex) const {
+const RagdollEditor::SceneRagdollRuntime* RagdollEditor::FindSceneRagdollRuntime(int meshIndex) const {
   for (const SceneRagdollRuntime& runtime : m_sceneRagdolls) {
     if (runtime.meshIndex == meshIndex) {
       return &runtime;
@@ -3656,12 +3629,12 @@ const SandboxScene::SceneRagdollRuntime* SandboxScene::FindSceneRagdollRuntime(i
   return nullptr;
 }
 
-bool SandboxScene::IsSceneRagdollPhysicsDriven(int meshIndex) const {
+bool RagdollEditor::IsSceneRagdollPhysicsDriven(int meshIndex) const {
   const SceneRagdollRuntime* runtime = FindSceneRagdollRuntime(meshIndex);
   return runtime && runtime->physicsDriven;
 }
 
-void SandboxScene::DriveSceneRagdollsFromAnimation(float deltaSeconds) {
+void RagdollEditor::DriveSceneRagdollsFromAnimation(float deltaSeconds) {
   t850::EngineContext* engineContext = GetEngineContext();
   if (!engineContext) engineContext = &t850::GetEngineContext();
   t850::JoltPhysicsSystem* physics = engineContext ? engineContext->physics : nullptr;
@@ -3694,7 +3667,7 @@ void SandboxScene::DriveSceneRagdollsFromAnimation(float deltaSeconds) {
                                              runtime.binding,
                                              pose)) {
       if (!runtime.driveLogEmitted) {
-        T8_LOG_INFO("[SandboxScene] Failed to drive scene ragdoll '%s' from animation",
+        T8_LOG_INFO("[RagdollEditor] Failed to drive scene ragdoll '%s' from animation",
                     runtime.resourcePath.c_str());
         runtime.driveLogEmitted = true;
       }
@@ -3704,14 +3677,14 @@ void SandboxScene::DriveSceneRagdollsFromAnimation(float deltaSeconds) {
     if (physics->DriveRagdollFromPose(handle, pose, deltaSeconds)) {
       runtime.pose = std::move(pose);
       if (!runtime.driveLogEmitted) {
-        T8_LOG_INFO("[SandboxScene] Driving scene ragdoll '%s' from animation", runtime.resourcePath.c_str());
+        T8_LOG_INFO("[RagdollEditor] Driving scene ragdoll '%s' from animation", runtime.resourcePath.c_str());
         runtime.driveLogEmitted = true;
       }
     }
   }
 }
 
-bool SandboxScene::SwitchSceneRagdollsToPhysics(int meshIndexFilter) {
+bool RagdollEditor::SwitchSceneRagdollsToPhysics(int meshIndexFilter) {
   if (m_sceneRagdolls.empty()) {
     return false;
   }
@@ -3748,7 +3721,7 @@ bool SandboxScene::SwitchSceneRagdollsToPhysics(int meshIndexFilter) {
 
     if (!engineContext->physics->SetRagdollMotion(Meshes[runtime.meshIndex].GetPhysicsRagdoll(),
                                                    t850::PhysicsBodyMotion::Dynamic)) {
-      T8_LOG_ERROR("[SandboxScene] Failed to switch scene ragdoll '%s' to dynamic physics",
+      T8_LOG_ERROR("[RagdollEditor] Failed to switch scene ragdoll '%s' to dynamic physics",
                    runtime.resourcePath.c_str());
       continue;
     }
@@ -3765,12 +3738,12 @@ bool SandboxScene::SwitchSceneRagdollsToPhysics(int meshIndexFilter) {
   }
 
   if (switchedCount > 0) {
-    T8_LOG_INFO("[SandboxScene] F5: %d scene-file ragdoll(s) switched to dynamic physics", switchedCount);
+    T8_LOG_INFO("[RagdollEditor] F5: %d scene-file ragdoll(s) switched to dynamic physics", switchedCount);
   }
   return switchedCount > 0;
 }
 
-bool SandboxScene::ResetSceneRagdollPhysicsAndAnimation(int meshIndex) {
+bool RagdollEditor::ResetSceneRagdollPhysicsAndAnimation(int meshIndex) {
   SceneRagdollRuntime* runtime = FindSceneRagdollRuntime(meshIndex);
   if (!runtime ||
       runtime->meshIndex < 0 ||
@@ -3794,7 +3767,7 @@ bool SandboxScene::ResetSceneRagdollPhysicsAndAnimation(int meshIndex) {
 
   t850::PhysicsRagdollDesc pose;
   if (!t850::BuildRagdollPoseFromAnimation(*skinned, Meshes[runtime->meshIndex].Final, runtime->binding, pose)) {
-    T8_LOG_ERROR("[SandboxScene] Failed to reset scene ragdoll '%s' from animation",
+    T8_LOG_ERROR("[RagdollEditor] Failed to reset scene ragdoll '%s' from animation",
                  runtime->resourcePath.c_str());
     return false;
   }
@@ -3802,7 +3775,7 @@ bool SandboxScene::ResetSceneRagdollPhysicsAndAnimation(int meshIndex) {
   const t850::PhysicsRagdollHandle handle = Meshes[runtime->meshIndex].GetPhysicsRagdoll();
   if (!engineContext->physics->SetRagdollMotion(handle, t850::PhysicsBodyMotion::Kinematic) ||
       !engineContext->physics->DriveRagdollFromPose(handle, pose, 0.0f)) {
-    T8_LOG_ERROR("[SandboxScene] Failed to reset scene ragdoll physics for '%s'",
+    T8_LOG_ERROR("[RagdollEditor] Failed to reset scene ragdoll physics for '%s'",
                  runtime->resourcePath.c_str());
     return false;
   }
@@ -3818,1785 +3791,624 @@ bool SandboxScene::ResetSceneRagdollPhysicsAndAnimation(int meshIndex) {
   runtime->physicsStates.clear();
   runtime->physicsBoneIndices.clear();
   runtime->physicsCombinedMatrices.clear();
-  T8_LOG_INFO("[SandboxScene] Reset scene ragdoll '%s' to animation drive", runtime->resourcePath.c_str());
+  T8_LOG_INFO("[RagdollEditor] Reset scene ragdoll '%s' to animation drive", runtime->resourcePath.c_str());
   return true;
 }
 
-bool SandboxScene::LoadEditorSceneAssets(const std::string& scenePath) {
-  t850::scene::EditorSceneFile scene;
-  std::string error;
-  if (!t850::scene::LoadEditorSceneFile(scenePath, scene, &error)) {
-    T8_LOG_ERROR("[SandboxScene] Failed to load editor scene '%s': %s", scenePath.c_str(), error.c_str());
-    return false;
-  }
+void RagdollEditor::EnsureLightRuntimeState() {
+  if (m_lightAttachToCamera.size() < SceneProp.Lights.size())
+    m_lightAttachToCamera.resize(SceneProp.Lights.size(), false);
+  else if (m_lightAttachToCamera.size() > SceneProp.Lights.size())
+    m_lightAttachToCamera.resize(SceneProp.Lights.size());
 
-  m_loadedEditorScene = true;
-  m_loadedEditorScenePath = scenePath;
-  m_meshCount = 0;
-  m_q3CollisionWorld.reset();
-  m_sceneMeshPaths.clear();
-  m_sceneRagdollPaths.clear();
-  m_sceneNavAgentFrontYawOffsets.clear();
-  m_sceneRagdolls.clear();
-  m_scenePhysicsAuthoring.clear();
-  m_sceneNavigationAuthoring.clear();
-  m_sceneRagdollAuthoring.clear();
-  m_q3StaticCollisionEntityIds.clear();
-  m_primaryRagdollResourcePath.clear();
+  if (SceneProp.Lights.empty()) m_selectedLightIndex = 0;
+  else if (m_selectedLightIndex < 0 || m_selectedLightIndex >= (int)SceneProp.Lights.size()) m_selectedLightIndex = 0;
+  SceneProp.ActiveLights = (std::max)(0, (std::min)(SceneProp.ActiveLights, (int)SceneProp.Lights.size()));
+}
 
-  std::string q3CollisionPath = NormalizeSceneResourcePath(scene.collision);
-  if (q3CollisionPath.empty()) {
-    q3CollisionPath = InferQ3CollisionResourcePath(scenePath);
-  }
-  if (q3CollisionPath.empty() || !t850::ResourceLocator::Instance().Exists(q3CollisionPath)) {
-    const std::string objectCollisionPath = InferQ3CollisionResourcePathFromObjects(scene);
-    if (!objectCollisionPath.empty()) {
-      q3CollisionPath = objectCollisionPath;
+void RagdollEditor::UpdateAttachedLights() {
+  EnsureLightRuntimeState();
+  Camera* attachCamera = ActiveCam ? ActiveCam : &Cam;
+  for (int i = 0; i < (int)SceneProp.Lights.size(); ++i) {
+    if (SceneProp.Lights[i].Type == LIGHT_POINT && m_lightAttachToCamera[i]) {
+      SceneProp.Lights[i].Position = attachCamera->Eye;
     }
   }
-  if (!q3CollisionPath.empty() && t850::ResourceLocator::Instance().Exists(q3CollisionPath)) {
-    auto q3CollisionWorld = std::make_unique<t850::Q3BspCollisionWorld>();
-    std::string q3CollisionError;
-    if (q3CollisionWorld->Load(q3CollisionPath, &q3CollisionError)) {
-      T8_LOG_INFO("[SandboxScene] Q3 collision clip loaded: %s brushes=%zu patchFacets=%zu jumpPads=%zu reachabilities=%zu",
-                  q3CollisionPath.c_str(),
-                  q3CollisionWorld->GetBrushCount(),
-                  q3CollisionWorld->GetPatchFacetCount(),
-                  q3CollisionWorld->GetJumpPadCount(),
-                  q3CollisionWorld->GetReachabilityCount());
-      m_q3CollisionWorld = std::move(q3CollisionWorld);
+}
+
+void RagdollEditor::SyncLightCameraFromDirectionalLight() {
+  for (const Light& light : SceneProp.Lights) {
+    if (light.Type != LIGHT_DIRECTIONAL) continue;
+    XVECTOR3 direction = light.Direction;
+    if (direction.Length() <= 0.0001f) return;
+    direction.Normalize();
+    LightCam.SetLookAt(LightCam.Eye + direction);
+    return;
+  }
+}
+
+void RagdollEditor::DrawSelectedDirectionalLightArrow() {
+}
+
+void RagdollEditor::CaptureSandboxProfileState(t850::SandboxProfileDesc& state) {
+  state = t850::SandboxProfileDesc{};
+  state.model = m_profileEmbeddedInScene
+      ? std::string{}
+      : (m_profileModelKey.empty() ? SandboxProfileModelKey(g_config.modelPath) : m_profileModelKey);
+
+  auto profileMeshPath = [&](int meshIndex) -> std::string {
+    if (meshIndex >= 0 && meshIndex < static_cast<int>(m_sceneMeshPaths.size())) {
+      return m_sceneMeshPaths[static_cast<std::size_t>(meshIndex)];
+    }
+    if (!m_profileModelKey.empty()) {
+      return m_profileModelKey;
+    }
+    return SandboxProfileModelKey(g_config.modelPath);
+  };
+
+  auto addFloat = [&](const char* name, float value) {
+    state.sliders.push_back({name, value});
+  };
+  auto addBool = [&](const char* name, bool value) {
+    state.checkboxes.push_back({name, value});
+  };
+  auto addInt = [&](const char* name, int value) {
+    state.selectors.push_back({name, value});
+  };
+
+  const t850::SelectorDesc* cubemapDesc = FindSelectorDesc(m_controlSetup.descriptor.selectors, "cubemap");
+  std::string selectedCubemapPath = NormalizeSceneResourcePath(m_pendingCubemap.empty() ? m_currentCubemapPath : m_pendingCubemap);
+  if (selectedCubemapPath.empty() && cubemapDesc) {
+    selectedCubemapPath = CubemapPathForSelectorIndex(*cubemapDesc, m_currentCubemapIndex);
+  }
+  if (!selectedCubemapPath.empty()) {
+    state.cubemap_path = selectedCubemapPath;
+  }
+
+  addFloat("exposure", SceneProp.Exposure);
+  addFloat("bloom_factor", SceneProp.BloomFactor);
+  addFloat("bloom_threshold", SceneProp.BloomThreshold);
+  addFloat("tm_white_level", SceneProp.ToneMapWhiteLevel);
+  addFloat("tm_adapt_tau", SceneProp.LuminanceTau);
+  addFloat("pcf_radius", SceneProp.PCFScale);
+  addFloat("pcf_samples", SceneProp.PCFSamples);
+  addFloat("ssao_kernel_size", (float)SceneProp.SSAOKernel.KernelSize);
+  addFloat("ssao_radius", SceneProp.SSAOKernel.Radius);
+  addFloat("dof_aperture", SceneProp.Aperture);
+  addFloat("dof_focal_length", SceneProp.FocalLength);
+  addFloat("dof_max_coc", SceneProp.MaxCoc);
+  addFloat("dof_far_samples", SceneProp.DOF_Far_Samples_squared);
+  addFloat("dof_near_samples", SceneProp.DOF_Near_Samples_squared);
+  addFloat("light_volume_steps", SceneProp.LightVolumeSteps);
+  addFloat("godrays_factor", SceneProp.GodRaysFactor);
+  addFloat("fov", ActiveCam ? Rad2Deg(ActiveCam->Fov) : Rad2Deg(Cam.Fov));
+  addFloat("light_radius_scale", SceneProp.LightRadiusScale);
+  addFloat("light_intensity_scale", SceneProp.LightIntensityScale);
+  addFloat("lightmap_intensity", SceneProp.LightmapIntensity);
+  addFloat("shadow_bias", SceneProp.ShadowBias);
+  addFloat("shadow_min", SceneProp.ShadowMin);
+  addFloat("env_factor", SceneProp.EnvFactor);
+  addFloat("ibl_factor", SceneProp.IBLFactor);
+  addFloat("ibl_mip_count", SceneProp.IBLMipCount);
+  addFloat("ibl_diffuse_mip_level", SceneProp.IBLDiffuseMipLevel);
+  addFloat("ibl_brdf_lut_enabled", SceneProp.IBLBRDFLUTEnabled);
+  addFloat("material_emissive_intensity", SceneProp.MaterialEmissiveIntensity);
+  addFloat("material_transmission_multiplier", SceneProp.MaterialTransmissionMultiplier);
+  addFloat("material_refraction_strength", SceneProp.MaterialRefractionStrength);
+  addFloat("mouse_sensitivity_x", m_mouseSensitivityX);
+  addFloat("mouse_sensitivity_y", m_mouseSensitivityY);
+
+  for (int kernelIndex = 0; kernelIndex < (int)SceneProp.pGaussKernels.size(); ++kernelIndex) {
+    GaussFilter* kernel = SceneProp.pGaussKernels[kernelIndex];
+    if (!kernel) continue;
+    std::string prefix = "gauss_" + std::to_string(kernelIndex) + "_";
+    addFloat((prefix + "radius").c_str(), kernel->radius);
+    addFloat((prefix + "sigma").c_str(), kernel->sigma);
+    addInt((prefix + "kernel_size").c_str(), kernel->kernelSize);
+  }
+
+  if (RenderSkinnedMesh* skinned = GetSelectedAnimationMesh()) {
+    addInt("animation_model", m_selectedAnimationMeshIndex);
+    addFloat("anim_speed", skinned->GetAnimSpeed());
+    addInt("anim_select", skinned->GetCurrentAnimSet());
+    addInt("anim_mode", skinned->GetKeyframeMode() ? 1 : 0);
+    if (skinned->GetKeyframeMode())
+      state.current_keyframe = skinned->GetCurrentKeyframe();
+  } else {
+    addFloat("anim_speed", 1.0f);
+    addInt("anim_select", 0);
+    addInt("anim_mode", 0);
+  }
+
+  const int meshCount = GetRuntimeMeshCount();
+  for (int meshIndex = 0; meshIndex < meshCount && meshIndex < kMaxSandboxMeshes; ++meshIndex) {
+    RenderSkinnedMesh* skinned = GetSkinnedMeshForIndex(meshIndex);
+    if (!skinned) {
+      continue;
+    }
+
+    t850::SandboxAnimationOverrideDesc animation;
+    animation.index = meshIndex;
+    animation.mesh = profileMeshPath(meshIndex);
+    animation.anim_speed = skinned->GetAnimSpeed();
+    animation.anim_select = skinned->GetCurrentAnimSet();
+    animation.anim_mode = skinned->GetKeyframeMode() ? 1 : 0;
+    if (skinned->GetKeyframeMode()) {
+      animation.current_keyframe = skinned->GetCurrentKeyframe();
+    }
+    state.animations.push_back(animation);
+  }
+
+  addBool("shadow_toggle", SceneProp.ToogleShadow != 0);
+  addBool("ssao_toggle", SceneProp.ToogleSSAO != 0);
+  addBool("show_wireframe", m_showWireframe);
+  addBool("show_skeleton", GetSelectedSkinningMesh() != nullptr && m_showSkeleton);
+  addBool("show_physics", m_showPhysics);
+  addBool("show_light_volumes", m_showLightVolumes);
+  addBool("point_lights_enabled", SceneProp.PointLightsEnabled);
+  addBool("draw_direction", m_drawLightDirection);
+  addBool("debug_luminance", SceneProp.DebugLuminanceEnabled);
+
+  addInt("debug_render_target", m_debugRTSelection);
+  addInt("cubemap", m_currentCubemapIndex);
+  addInt("luminance_mode", SceneProp.LuminanceMode);
+  addInt("gauss_kernel_sample_count", 0);
+  addInt("active_gauss_kernel", ChangeActiveGaussSelection);
+  addInt("active_light", m_selectedLightIndex);
+
+  EnsureLightRuntimeState();
+  for (int lightIndex = 0; lightIndex < (int)SceneProp.Lights.size(); ++lightIndex) {
+    const Light& light = SceneProp.Lights[lightIndex];
+    t850::SandboxLightOverrideDesc lightState;
+    lightState.index = lightIndex;
+    lightState.position = ToArray(light.Position);
+    lightState.direction = ToArray(light.Direction);
+    lightState.color = ToArray(light.Color);
+    lightState.diameter = light.radius * 2.0f;
+    lightState.intensity = light.Intensity;
+    lightState.attach_to_camera = light.Type == LIGHT_POINT && m_lightAttachToCamera[lightIndex];
+    state.lights.push_back(lightState);
+  }
+
+  state.frustum_culling = SceneProp.FrustumCullingEnabled;
+  state.show_culling_debug = m_showCullStats;
+
+  if (m_cameraController.GetActiveProfileType() == t850::CameraProfileType::Orbit) {
+    SyncSandboxOrbitFromProfile();
+  }
+
+  t850::SandboxOrbitCameraDesc orbit;
+  orbit.target = {m_orbitTarget.x, m_orbitTarget.y, m_orbitTarget.z};
+  orbit.pan_offset = {m_panOffset.x, m_panOffset.y, m_panOffset.z};
+  orbit.eye = {Cam.Eye.x, Cam.Eye.y, Cam.Eye.z};
+  orbit.yaw = m_orbitYaw;
+  orbit.pitch = m_orbitPitch;
+  orbit.distance = m_orbitDist;
+  state.orbit_camera = orbit;
+
+  Camera* profileCamera = ActiveCam ? ActiveCam : &Cam;
+  t850::SandboxCameraDesc camera;
+  camera.profile = m_cameraController.GetActiveProfileIndex();
+  camera.eye = ToArray(profileCamera->Eye);
+  camera.look = ToArray(profileCamera->Look);
+  camera.up = ToArray(profileCamera->Up);
+  camera.right = ToArray(profileCamera->Right);
+  camera.yaw = profileCamera->Yaw;
+  camera.pitch = profileCamera->Pitch;
+  camera.roll = profileCamera->Roll;
+  camera.fov = Rad2Deg(profileCamera->Fov);
+  camera.aspect_ratio = profileCamera->AspectRatio;
+  camera.near_plane = profileCamera->NPlane;
+  camera.far_plane = profileCamera->FPlane;
+  camera.ortho = profileCamera->Ortho;
+  camera.width = profileCamera->Width;
+  camera.height = profileCamera->Height;
+  camera.left_handed = profileCamera->LeftHanded;
+  camera.orbit = orbit;
+  state.camera = camera;
+}
+
+void RagdollEditor::ApplySandboxProfileState(const t850::SandboxProfileDesc& state) {
+  auto applyCubemapPath = [&](const std::string& cubemapPath) {
+    const std::string normalizedPath = NormalizeSceneResourcePath(cubemapPath);
+    if (normalizedPath.empty()) {
+      return;
+    }
+
+    const t850::SelectorDesc* cubemapDesc = FindSelectorDesc(m_controlSetup.descriptor.selectors, "cubemap");
+    if (cubemapDesc) {
+      const int pathIndex = CubemapSelectorIndexForPath(*cubemapDesc, normalizedPath);
+      if (pathIndex >= 0) {
+        m_currentCubemapIndex = pathIndex;
+      }
+    }
+
+    if (!ResourcePathEquals(normalizedPath, m_currentCubemapPath)) {
+      m_pendingCubemap = normalizedPath;
+    }
+  };
+
+  const bool hasCubemapPath = state.cubemap_path.has_value() &&
+      !NormalizeSceneResourcePath(*state.cubemap_path).empty();
+  if (hasCubemapPath) {
+    applyCubemapPath(*state.cubemap_path);
+  }
+
+  auto profileMeshPath = [&](int meshIndex) -> std::string {
+    if (meshIndex >= 0 && meshIndex < static_cast<int>(m_sceneMeshPaths.size())) {
+      return m_sceneMeshPaths[static_cast<std::size_t>(meshIndex)];
+    }
+    if (!m_profileModelKey.empty()) {
+      return m_profileModelKey;
+    }
+    return SandboxProfileModelKey(g_config.modelPath);
+  };
+
+  auto resolveAnimationMeshIndex = [&](const t850::SandboxAnimationOverrideDesc& animation) -> int {
+    if (GetSkinnedMeshForIndex(animation.index) &&
+        (animation.mesh.empty() || ResourcePathEquals(animation.mesh, profileMeshPath(animation.index)))) {
+      return animation.index;
+    }
+    if (animation.mesh.empty()) {
+      return -1;
+    }
+
+    int matchedMeshIndex = -1;
+    const int meshCount = GetRuntimeMeshCount();
+    for (int meshIndex = 0; meshIndex < meshCount && meshIndex < kMaxSandboxMeshes; ++meshIndex) {
+      if (!GetSkinnedMeshForIndex(meshIndex) || !ResourcePathEquals(animation.mesh, profileMeshPath(meshIndex))) {
+        continue;
+      }
+      if (matchedMeshIndex >= 0) {
+        return -1;
+      }
+      matchedMeshIndex = meshIndex;
+    }
+    return matchedMeshIndex;
+  };
+
+  auto applyAnimationToMesh = [&](RenderSkinnedMesh* skinned,
+                                  const t850::SandboxAnimationOverrideDesc& animation) {
+    if (!skinned) {
+      return;
+    }
+    skinned->SetAnimSpeed(animation.anim_speed);
+    if (animation.anim_select >= 0 && animation.anim_select < skinned->GetNumAnimSets()) {
+      int guard = skinned->GetNumAnimSets() + 1;
+      while (skinned->GetCurrentAnimSet() != animation.anim_select && guard-- > 0) {
+        skinned->NextAnimation();
+      }
+    }
+
+    const bool keyframeMode = (animation.anim_mode == 1);
+    skinned->SetKeyframeMode(keyframeMode);
+    if (keyframeMode) {
+      skinned->StepKeyframe(0);
+    }
+    if (animation.current_keyframe.has_value()) {
+      const int targetKeyframe = *animation.current_keyframe;
+      int guard = skinned->GetTotalKeyframes() + 1;
+      while (skinned->GetCurrentKeyframe() != targetKeyframe && guard-- > 0) {
+        const int direction = targetKeyframe > skinned->GetCurrentKeyframe() ? 1 : -1;
+        skinned->StepKeyframe(direction);
+      }
+    }
+  };
+
+  for (const auto& value : state.selectors) {
+    if (value.name == "animation_model" && GetSkinnedMeshForIndex(value.value)) {
+      m_selectedAnimationMeshIndex = value.value;
+    }
+  }
+
+  for (const auto& value : state.sliders) {
+    if (value.name == "exposure") SceneProp.Exposure = value.value;
+    else if (value.name == "bloom_factor") SceneProp.BloomFactor = value.value;
+    else if (value.name == "bloom_threshold") SceneProp.BloomThreshold = value.value;
+    else if (value.name == "tm_white_level") SceneProp.ToneMapWhiteLevel = value.value;
+    else if (value.name == "tm_adapt_tau") SceneProp.LuminanceTau = value.value;
+    else if (value.name == "pcf_radius") SceneProp.PCFScale = value.value;
+    else if (value.name == "pcf_samples") SceneProp.PCFSamples = value.value;
+    else if (value.name == "ssao_kernel_size") { SceneProp.SSAOKernel.KernelSize = (int)value.value; SceneProp.SSAOKernel.Update(); }
+    else if (value.name == "ssao_radius") SceneProp.SSAOKernel.Radius = value.value;
+    else if (value.name == "dof_aperture") SceneProp.Aperture = value.value;
+    else if (value.name == "dof_focal_length") SceneProp.FocalLength = value.value;
+    else if (value.name == "dof_max_coc") SceneProp.MaxCoc = value.value;
+    else if (value.name == "dof_far_samples") SceneProp.DOF_Far_Samples_squared = value.value;
+    else if (value.name == "dof_near_samples") SceneProp.DOF_Near_Samples_squared = value.value;
+    else if (value.name == "light_volume_steps") SceneProp.LightVolumeSteps = value.value;
+    else if (value.name == "godrays_factor") SceneProp.GodRaysFactor = value.value;
+    else if (value.name == "fov" && ActiveCam) { ActiveCam->SetFov(Deg2Rad(value.value)); VP = ActiveCam->VP; }
+    else if (value.name == "light_intensity" && !SceneProp.Lights.empty()) SceneProp.Lights[0].Intensity = value.value;
+    else if (value.name == "light_radius_scale") SceneProp.LightRadiusScale = value.value;
+    else if (value.name == "light_intensity_scale") SceneProp.LightIntensityScale = value.value;
+    else if (value.name == "lightmap_intensity") SceneProp.LightmapIntensity = value.value;
+    else if (value.name == "shadow_bias") SceneProp.ShadowBias = value.value;
+    else if (value.name == "shadow_min") SceneProp.ShadowMin = value.value;
+    else if (value.name == "env_factor") SceneProp.EnvFactor = value.value;
+    else if (value.name == "ibl_factor") SceneProp.IBLFactor = value.value;
+    else if (value.name == "ibl_mip_count") SceneProp.IBLMipCount = (std::max)(0.0f, value.value);
+    else if (value.name == "ibl_diffuse_mip_level") SceneProp.IBLDiffuseMipLevel = (std::max)(0.0f, value.value);
+    else if (value.name == "ibl_brdf_lut_enabled") SceneProp.IBLBRDFLUTEnabled = value.value > 0.5f ? 1.0f : 0.0f;
+    else if (value.name == "material_emissive_intensity") SceneProp.MaterialEmissiveIntensity = value.value;
+    else if (value.name == "material_transmission_multiplier") SceneProp.MaterialTransmissionMultiplier = value.value;
+    else if (value.name == "material_refraction_strength") SceneProp.MaterialRefractionStrength = value.value;
+    else if (value.name == "mouse_sensitivity_x") m_mouseSensitivityX = ClampMouseSensitivity(value.value);
+    else if (value.name == "mouse_sensitivity_y") m_mouseSensitivityY = ClampMouseSensitivity(value.value);
+    else if (value.name == "anim_speed") { if (RenderSkinnedMesh* skinned = GetSelectedAnimationMesh()) skinned->SetAnimSpeed(value.value); }
+
+    for (int kernelIndex = 0; kernelIndex < (int)SceneProp.pGaussKernels.size(); ++kernelIndex) {
+      GaussFilter* kernel = SceneProp.pGaussKernels[kernelIndex];
+      if (!kernel) continue;
+      std::string prefix = "gauss_" + std::to_string(kernelIndex) + "_";
+      if (value.name == prefix + "radius") { kernel->radius = value.value; kernel->Update(); }
+      else if (value.name == prefix + "sigma") { kernel->sigma = value.value; kernel->Update(); }
+    }
+  }
+
+  for (const auto& value : state.checkboxes) {
+    if (value.name == "shadow_toggle") SceneProp.ToogleShadow = value.value ? 1 : 0;
+    else if (value.name == "ssao_toggle") SceneProp.ToogleSSAO = value.value ? 1 : 0;
+    else if (value.name == "show_wireframe") m_showWireframe = value.value;
+    else if (value.name == "show_skeleton") m_showSkeleton = value.value && (GetSelectedSkinningMesh() != nullptr);
+    else if (value.name == "show_physics") m_showPhysics = value.value;
+    else if (value.name == "show_light_volumes") m_showLightVolumes = value.value;
+    else if (value.name == "point_lights_enabled") SceneProp.PointLightsEnabled = value.value;
+    else if (value.name == "draw_direction") m_drawLightDirection = value.value;
+    else if (value.name == "debug_luminance") {
+      SceneProp.DebugLuminanceEnabled = value.value;
+      if (!value.value) SceneProp.DebugAdaptedLuminanceValid = false;
+    }
+  }
+
+  for (const auto& value : state.selectors) {
+    if (value.name == "debug_render_target") m_debugRTSelection = value.value;
+    else if (value.name == "luminance_mode") SceneProp.LuminanceMode = value.value;
+    else if (value.name == "active_light") m_selectedLightIndex = value.value;
+    else if (value.name == "cubemap") {
+      const t850::SelectorDesc* cubemapDesc = hasCubemapPath
+          ? nullptr
+          : FindSelectorDesc(m_controlSetup.descriptor.selectors, "cubemap");
+      if (cubemapDesc && value.value >= 0 && value.value < (int)cubemapDesc->options.size()) {
+        const std::string profileCubemapPath = CubemapPathForSelectorIndex(*cubemapDesc, value.value);
+        m_currentCubemapIndex = value.value;
+        if (!profileCubemapPath.empty() && !ResourcePathEquals(profileCubemapPath, m_currentCubemapPath)) {
+          m_pendingCubemap = profileCubemapPath;
+        }
+      }
+    }
+    else if (value.name == "active_gauss_kernel") ChangeActiveGaussSelection = value.value;
+    else if (value.name == "animation_model") {
+      if (GetSkinnedMeshForIndex(value.value)) {
+        m_selectedAnimationMeshIndex = value.value;
+      }
+    }
+    else if (value.name == "anim_select") {
+      if (RenderSkinnedMesh* skinned = GetSelectedAnimationMesh()) {
+        int guard = skinned->GetNumAnimSets() + 1;
+        while (skinned->GetCurrentAnimSet() != value.value && guard-- > 0) skinned->NextAnimation();
+      }
+    }
+    else if (value.name == "anim_mode") {
+      if (RenderSkinnedMesh* skinned = GetSelectedAnimationMesh()) {
+        bool keyframeMode = (value.value == 1);
+        skinned->SetKeyframeMode(keyframeMode);
+        if (keyframeMode) skinned->StepKeyframe(0);
+      }
+    }
+
+    for (int kernelIndex = 0; kernelIndex < (int)SceneProp.pGaussKernels.size(); ++kernelIndex) {
+      GaussFilter* kernel = SceneProp.pGaussKernels[kernelIndex];
+      if (!kernel) continue;
+      std::string name = "gauss_" + std::to_string(kernelIndex) + "_kernel_size";
+      if (value.name == name) { kernel->kernelSize = value.value; kernel->Update(); }
+    }
+  }
+
+  EnsureLightRuntimeState();
+  for (const auto& lightState : state.lights) {
+    if (lightState.index < 0 || lightState.index >= (int)SceneProp.Lights.size()) continue;
+    Light& light = SceneProp.Lights[lightState.index];
+    if (lightState.position.has_value()) light.Position = FromArray(*lightState.position);
+    if (lightState.direction.has_value()) {
+      XVECTOR3 direction = FromArray(*lightState.direction);
+      if (direction.Length() > 0.0001f) {
+        direction.Normalize();
+        light.Direction = direction;
+      }
+    }
+    if (lightState.color.has_value()) light.Color = FromArray(*lightState.color);
+    if (lightState.diameter.has_value()) light.radius = (std::max)(0.001f, *lightState.diameter * 0.5f);
+    if (lightState.intensity.has_value()) light.Intensity = *lightState.intensity;
+    if (lightState.attach_to_camera.has_value() && light.Type == LIGHT_POINT)
+      m_lightAttachToCamera[lightState.index] = *lightState.attach_to_camera;
+  }
+  UpdateAttachedLights();
+  SyncLightCameraFromDirectionalLight();
+
+  if (state.frustum_culling.has_value()) {
+    if (!SceneProp.FrustumCullingToggleAllowed) {
+      SceneProp.FrustumCullingEnabled = false;
     } else {
-      T8_LOG_ERROR("[SandboxScene] Failed to load Q3 collision clip '%s': %s",
-                   q3CollisionPath.c_str(),
-                   q3CollisionError.c_str());
+      SceneProp.FrustumCullingEnabled = *state.frustum_culling;
     }
   }
+  if (state.show_culling_debug.has_value()) {
+    m_showCullStats = *state.show_culling_debug;
+    SceneProp.ShowCullingDebug = m_showCullStats;
+  }
 
-  for (const auto& object : scene.objects) {
-    if (!object.visible) continue;
-#if defined(OS_ANDROID)
-    if (object.mobile_visible && !*object.mobile_visible) {
-      T8_LOG_INFO("[SandboxScene] Android skipped mobile-hidden scene object '%s'", object.name.c_str());
-      continue;
-    }
-#endif
-    const std::string meshPath = NormalizeSceneResourcePath(object.mesh);
-    if (meshPath.empty()) {
-      T8_LOG_ERROR("[SandboxScene] Scene object '%s' has no mesh path; skipping", object.name.c_str());
-      continue;
-    }
-    if (m_meshCount >= kMaxSandboxMeshes) {
-      T8_LOG_ERROR("[SandboxScene] Scene '%s' has more than %d visible meshes; remaining objects skipped",
-                   scenePath.c_str(), kMaxSandboxMeshes);
-      break;
-    }
+  auto applyCameraPoseProjection = [&](const t850::SandboxCameraDesc& cameraState) {
+    Cam.Ortho = cameraState.ortho;
+    Cam.Fov = Deg2Rad(cameraState.fov);
+    const float liveWidth = (g_pBaseDriver && g_pBaseDriver->width > 0) ? static_cast<float>(g_pBaseDriver->width) : cameraState.width;
+    const float liveHeight = (g_pBaseDriver && g_pBaseDriver->height > 0) ? static_cast<float>(g_pBaseDriver->height) : cameraState.height;
+    Cam.AspectRatio = liveHeight > 0.0f ? liveWidth / liveHeight : cameraState.aspect_ratio;
+    Cam.NPlane = cameraState.near_plane;
+    Cam.FPlane = cameraState.far_plane;
+    Cam.Width = liveWidth > 0.0f ? liveWidth : cameraState.width;
+    Cam.Height = liveHeight > 0.0f ? liveHeight : cameraState.height;
+    Cam.LeftHanded = cameraState.left_handed;
+    Cam.Eye = FromArray(cameraState.eye);
+    Cam.Eye.w = 1.0f;
+    Cam.Yaw = cameraState.yaw;
+    Cam.Pitch = cameraState.pitch;
+    Cam.Roll = cameraState.roll;
+    Cam.Velocity = XVECTOR3(0.0f, 0.0f, 0.0f, 0.0f);
+    Cam.CreatePojection();
+    Cam.Update(0.0f);
+    VP = Cam.VP;
+  };
 
-    T8_LOG_INFO("[SandboxScene] Loading scene object '%s' mesh='%s'", object.name.c_str(), meshPath.c_str());
-    const int primitiveIndex = PrimitiveMgr.CreateMesh(meshPath.c_str());
-    if (primitiveIndex < 0) {
-      T8_LOG_ERROR("[SandboxScene] Failed to load scene object '%s' mesh '%s'", object.name.c_str(), meshPath.c_str());
-      continue;
+  if (state.camera.has_value()) {
+    const auto& cameraState = *state.camera;
+    const t850::CameraProfileType profileType = t850::CameraProfileTypeFromIndex(cameraState.profile);
+    if (cameraState.orbit.has_value()) {
+      const auto& orbit = *cameraState.orbit;
+      m_orbitTarget = XVECTOR3(orbit.target[0], orbit.target[1], orbit.target[2]);
+      m_panOffset = XVECTOR3(orbit.pan_offset[0], orbit.pan_offset[1], orbit.pan_offset[2]);
+      m_orbitYaw = orbit.yaw;
+      m_orbitPitch = orbit.pitch;
+      m_orbitDist = orbit.distance;
+      SyncOrbitProfileFromSandbox();
     }
-
-    PrimitiveInst& instance = Meshes[m_meshCount];
-    instance.CreateInstance(PrimitiveMgr.GetPrimitive(primitiveIndex), &VP);
-    instance.ScaleAbsolute(object.scale.x, object.scale.y, object.scale.z);
-    instance.RotateXAbsolute(object.rotation.x);
-    instance.RotateYAbsolute(object.rotation.y);
-    instance.RotateZAbsolute(object.rotation.z);
-    instance.TranslateAbsolute(object.position.x, object.position.y, object.position.z);
-    instance.Visible = object.visible;
-    instance.Update();
-
-    t850::scene::SceneObjectPhysicsDesc physicsMeta = object.physics.value_or(t850::scene::SceneObjectPhysicsDesc{});
-    t850::scene::SceneObjectNavigationDesc navigationMeta = object.navigation.value_or(t850::scene::SceneObjectNavigationDesc{});
-    t850::scene::SceneObjectRagdollDesc ragdollMeta = object.ragdoll_authoring.value_or(t850::scene::SceneObjectRagdollDesc{});
-    const std::string legacyRagdollPath = NormalizeSceneResourcePath(object.ragdoll);
-    if (ragdollMeta.asset.empty()) {
-      ragdollMeta.asset = legacyRagdollPath;
+    applyCameraPoseProjection(cameraState);
+    SetCameraProfile(profileType);
+    if (profileType != t850::CameraProfileType::Orbit || !cameraState.orbit.has_value()) {
+      applyCameraPoseProjection(cameraState);
     } else {
-      ragdollMeta.asset = NormalizeSceneResourcePath(ragdollMeta.asset);
+      VP = Cam.VP;
     }
-    const std::string ragdollPath = ragdollMeta.enabled ? ragdollMeta.asset : legacyRagdollPath;
-    const bool isSkinnedObject = (instance.GetSkinnedMesh() != nullptr);
-    if (!ragdollPath.empty() && isSkinnedObject && (ragdollMeta.enabled || !object.ragdoll_authoring.has_value())) {
-      AttachSceneObjectRagdoll(static_cast<int>(m_meshCount), meshPath, ragdollPath);
-    } else if (!isSkinnedObject && (physicsMeta.enabled || !object.physics.has_value())) {
-      if (!ragdollPath.empty()) {
-        T8_LOG_INFO("[SandboxScene] Ignoring ragdoll '%s' on non-skinned scene object '%s'",
-                    ragdollPath.c_str(),
-                    object.name.c_str());
-      }
-      t850::EngineContext* engineContext = GetEngineContext();
-      if (!engineContext) engineContext = &t850::GetEngineContext();
-      if (engineContext && engineContext->physics && engineContext->physics->IsInitialized()) {
-        t850::PhysicsTriangleMeshCookSettings cookSettings;
-        cookSettings.maxTrianglesPerLeaf = 8;
-        cookSettings.buildQuality = t850::PhysicsMeshBuildQuality::FavorRuntimePerformance;
-        cookSettings.useDiskCache = true;
-        t850::PhysicsCookStats cookStats;
-        RenderMesh* renderMesh = dynamic_cast<RenderMesh*>(instance.pBase);
-        const bool meshMatchesQ3Clip = MeshUsesQ3CollisionClip(meshPath, q3CollisionPath);
-        const bool wantsStaticTriangle =
-            !object.physics.has_value() ||
-            (physicsMeta.enabled && physicsMeta.body_type == "static_triangle_mesh" && physicsMeta.motion == "static");
-        if (wantsStaticTriangle && renderMesh && t850::AttachStaticTriangleMeshBody(
-            *engineContext->physics, instance, *renderMesh, cookSettings, &cookStats)) {
-          if (m_q3CollisionWorld && meshMatchesQ3Clip) {
-            m_q3StaticCollisionEntityIds.push_back(instance.GetEntityId());
-            T8_LOG_INFO("[SandboxScene] Q3 map Jolt body ignored by Q3 camera: object='%s' entity=%u clip='%s'",
-                        object.name.c_str(),
-                        instance.GetEntityId(),
-                        q3CollisionPath.c_str());
-          }
-          T8_LOG_INFO("[SandboxScene] Scene collision mesh ready for '%s': cache=%s vertices=%u triangles=%u total=%.2fms",
-                      object.name.c_str(),
-                      cookStats.cacheHit ? "hit" : "miss",
-                      cookStats.vertexCount,
-                      cookStats.triangleCount,
-                      cookStats.totalMs);
-        } else {
-          T8_LOG_ERROR("[SandboxScene] Failed to create scene collision mesh for '%s'", object.name.c_str());
-        }
+    UpdateAttachedLights();
+  } else if (state.orbit_camera.has_value()) {
+    const auto& orbit = *state.orbit_camera;
+    m_orbitTarget = XVECTOR3(orbit.target[0], orbit.target[1], orbit.target[2]);
+    m_panOffset = XVECTOR3(orbit.pan_offset[0], orbit.pan_offset[1], orbit.pan_offset[2]);
+    m_orbitYaw = orbit.yaw;
+    m_orbitPitch = orbit.pitch;
+    m_orbitDist = orbit.distance;
+    Cam.Eye = XVECTOR3(orbit.eye[0], orbit.eye[1], orbit.eye[2]);
+    ComputeOrbitCamera();
+    VP = Cam.VP;
+    UpdateAttachedLights();
+  }
+  if (state.current_keyframe.has_value()) {
+    if (RenderSkinnedMesh* skinned = GetSelectedAnimationMesh()) {
+      int targetKeyframe = *state.current_keyframe;
+      int guard = skinned->GetTotalKeyframes() + 1;
+      while (skinned->GetCurrentKeyframe() != targetKeyframe && guard-- > 0) {
+        int direction = targetKeyframe > skinned->GetCurrentKeyframe() ? 1 : -1;
+        skinned->StepKeyframe(direction);
       }
     }
-    if (m_meshCount == 0) {
-      m_profileModelKey = meshPath;
-      m_primaryRagdollResourcePath = ragdollPath;
-    }
-    m_sceneMeshPaths.push_back(meshPath);
-    m_sceneRagdollPaths.push_back(ragdollPath);
-    m_scenePhysicsAuthoring.push_back(physicsMeta);
-    m_sceneNavigationAuthoring.push_back(navigationMeta);
-    m_sceneRagdollAuthoring.push_back(ragdollMeta);
-    const float navAgentFrontYawOffset = object.nav_agent_front_yaw_offset_deg.value_or(0.0f);
-    m_sceneNavAgentFrontYawOffsets.push_back(navAgentFrontYawOffset);
-    const float navAgentFaceYawSign = object.nav_agent_face_yaw_sign.value_or(1.0f) < 0.0f ? -1.0f : 1.0f;
-    m_sceneNavAgentFaceYawSigns.push_back(navAgentFaceYawSign);
-    T8_LOG_INFO("[SandboxScene] Loaded scene object '%s' mesh='%s' ragdoll='%s' slot=%d navFrontYawOffset=%.1f navFaceYawSign=%.1f",
-                object.name.c_str(), meshPath.c_str(), ragdollPath.c_str(), m_meshCount,
-                navAgentFrontYawOffset, navAgentFaceYawSign);
-    ++m_meshCount;
   }
 
-  if (m_meshCount <= 0) {
-    T8_LOG_ERROR("[SandboxScene] Editor scene '%s' did not load any visible meshes", scenePath.c_str());
-    return false;
-  }
-
-  m_selectedSkinningMeshIndex = ClampSkinnedMeshSelection(m_selectedSkinningMeshIndex);
-  m_selectedAnimationMeshIndex = ClampSkinnedMeshSelection(m_selectedAnimationMeshIndex);
-  FitModelToView();
-  ApplyEditorSceneCameraAndLights(scene);
-  m_controlSetup.descriptor.profiles = scene.profiles;
-  LoadSandboxProfile(true);
-  T8_LOG_INFO("[SandboxScene] Loaded editor scene '%s' with %d mesh instances", scenePath.c_str(), m_meshCount);
-  return true;
-}
-
-bool SandboxScene::EnsureNavMeshBuilt() {
-  if (m_navMesh.IsReady()) {
-    return true;
-  }
-  if (m_navMeshBuildAttempted) {
-    return false;
-  }
-  m_navMeshBuildAttempted = true;
-
-  const int meshCount = (std::min)(kMaxSandboxMeshes, (std::max)(m_meshCount, Meshes[0].pBase ? 1 : 0));
-  t850::navigation::NavMeshBuildSettings navBuildSettings = m_navMeshBuildSettings;
-  const bool hasQ3Clip = m_q3CollisionWorld && m_q3CollisionWorld->IsLoaded();
-  const bool hasQ3AasReachability = hasQ3Clip && m_q3CollisionWorld->GetReachabilityCount() > 0;
-  navBuildSettings.enableAutoDropLinks = navBuildSettings.enableAutoDropLinks && hasQ3Clip && !hasQ3AasReachability;
-  navBuildSettings.enableAutoJumpLinks = navBuildSettings.enableAutoJumpLinks && hasQ3Clip && !hasQ3AasReachability;
-  navBuildSettings.enableHybridJumpLinks = navBuildSettings.enableHybridJumpLinks && hasQ3Clip && !hasQ3AasReachability;
-  navBuildSettings.offMeshLinkValidationKey = ComputeQ3NavLinkValidationKey(m_q3CollisionWorld.get());
-  const uint64_t navCacheKey =
-      ComputeSandboxNavMeshCacheKey(
-          Meshes,
-          meshCount,
-          m_sceneMeshPaths,
-          m_loadedEditorScenePath,
-          navBuildSettings,
-          m_q3CollisionWorld.get());
-  const auto navBuildStart = std::chrono::steady_clock::now();
-  if (navCacheKey != 0 && m_navMesh.LoadCached(navCacheKey, navBuildSettings, nullptr)) {
-    m_navMeshLastBuildMs = std::chrono::duration<float, std::milli>(std::chrono::steady_clock::now() - navBuildStart).count();
-    m_navMeshLastBuildFromCache = true;
-    m_navMeshDebugRenderer.Invalidate();
-    const t850::navigation::NavMeshBuildStats& stats = m_navMesh.GetStats();
-    T8_LOG_INFO("[Navigation] Sandbox navmesh ready from cache: %.2fms verts=%d tris=%d polys=%d offMesh=%d drop=%d jump=%d jumpPad=%d",
-                m_navMeshLastBuildMs,
-                stats.vertexCount, stats.triangleCount, stats.polygonCount,
-                stats.offMeshLinkCount, stats.dropLinkCount, stats.jumpLinkCount, stats.jumpPadLinkCount);
-    return true;
-  }
-
-  t850::navigation::NavMeshGeometry geometry;
-  t850::navigation::NavSourceBuildStats sourceStats;
-  std::string error;
-  std::vector<t850::navigation::NavSourceInstance> navSources;
-  navSources.reserve(static_cast<std::size_t>(meshCount));
-  for (int meshIndex = 0; meshIndex < meshCount; ++meshIndex) {
-    t850::navigation::NavSourceInstance source;
-    source.entityId = Meshes[meshIndex].GetEntityId();
-    source.instance = &Meshes[meshIndex];
-    source.worldTransform = Meshes[meshIndex].Final;
-    source.visible = Meshes[meshIndex].Visible;
-    if (meshIndex < static_cast<int>(m_sceneNavigationAuthoring.size())) {
-      const t850::scene::SceneObjectNavigationDesc& nav = m_sceneNavigationAuthoring[static_cast<std::size_t>(meshIndex)];
-      source.includeInNavigation = nav.include;
-      source.navigationStatic = nav.static_object;
-      source.navigationWalkable = nav.walkable;
-      source.area = nav.walkable ? 0 : -1;
-    }
-    navSources.push_back(source);
-  }
-  if (!t850::navigation::BuildGeometryFromNavSources(navSources, geometry, &sourceStats, &error)) {
-    T8_LOG_ERROR("[Navigation] Sandbox navmesh build skipped: %s (considered=%d included=%d skippedInvisible=%d skippedSkinned=%d skippedInvalid=%d)",
-                 error.c_str(),
-                 sourceStats.considered,
-                 sourceStats.included,
-                 sourceStats.skippedInvisible,
-                 sourceStats.skippedSkinned,
-                 sourceStats.skippedInvalid);
-    return false;
-  }
-  geometry.offMeshLinks = hasQ3AasReachability
-      ? BuildQ3AasReachabilityNavLinks(m_q3CollisionWorld.get())
-      : BuildQ3JumpPadNavLinks(m_q3CollisionWorld.get());
-  if (hasQ3Clip) {
-    const t850::Q3BspCollisionWorld* q3CollisionWorld = m_q3CollisionWorld.get();
-    if (!hasQ3AasReachability) {
-      geometry.offMeshLinkValidator = [q3CollisionWorld](const t850::navigation::NavOffMeshLink& link) {
-        return ValidateQ3NavOffMeshLink(*q3CollisionWorld, link);
-      };
-      geometry.offMeshHybridLinkValidator = [q3CollisionWorld](const t850::navigation::NavOffMeshLink& link) {
-        return ValidateQ3HybridJumpIntentLink(*q3CollisionWorld, link);
-      };
-    }
-  }
-  if (!geometry.offMeshLinks.empty()) {
-    T8_LOG_INFO("[Navigation] Q3 nav links prepared: %zu source=%s",
-                geometry.offMeshLinks.size(),
-                hasQ3AasReachability ? "aas" : "heuristic");
-  }
-
-  if (!m_navMesh.BuildCached(geometry, navBuildSettings, navCacheKey, &error)) {
-    T8_LOG_ERROR("[Navigation] Sandbox navmesh build failed: %s", error.c_str());
-    return false;
-  }
-  m_navMeshLastBuildMs = std::chrono::duration<float, std::milli>(std::chrono::steady_clock::now() - navBuildStart).count();
-  m_navMeshLastBuildFromCache = false;
-
-  m_navMeshDebugRenderer.Invalidate();
-  const t850::navigation::NavMeshBuildStats& stats = m_navMesh.GetStats();
-  T8_LOG_INFO("[Navigation] Sandbox navmesh ready: %.2fms sources=%d skippedSkinned=%d skippedInvalid=%d verts=%d tris=%d polys=%d offMesh=%d drop=%d jump=%d jumpPad=%d",
-              m_navMeshLastBuildMs,
-              sourceStats.included, sourceStats.skippedSkinned, sourceStats.skippedInvalid,
-              stats.vertexCount, stats.triangleCount, stats.polygonCount,
-              stats.offMeshLinkCount, stats.dropLinkCount, stats.jumpLinkCount, stats.jumpPadLinkCount);
-  return true;
-}
-
-void SandboxScene::InitializeNavTestAgents() {
-  if (m_navTestInitialized) {
-    return;
-  }
-  m_navTestInitialized = true;
-  m_navTestAgents.clear();
-  m_navTestCandidatePoints.clear();
-
-  if (!EnsureNavMeshBuilt()) {
-    return;
-  }
-
-  std::vector<unsigned int> graphIndices;
-  m_navMesh.GetDebugGraphEdges(m_navTestCandidatePoints, graphIndices, 0.0f);
-  if (m_navTestCandidatePoints.empty()) {
-    std::vector<unsigned int> wireIndices;
-    m_navMesh.GetDebugWireframe(m_navTestCandidatePoints, wireIndices, 0.0f);
-  }
-  if (m_navTestCandidatePoints.empty()) {
-    T8_LOG_ERROR("[NavigationTest] No navmesh candidate points available for skinned mesh path test");
-    return;
-  }
-
-  const int meshCount = (std::min)(kMaxSandboxMeshes, (std::max)(m_meshCount, Meshes[0].pBase ? 1 : 0));
-  int followSlot = 0;
-  for (int meshIndex = 0; meshIndex < meshCount; ++meshIndex) {
-    PrimitiveInst& instance = Meshes[meshIndex];
-    RenderSkinnedMesh* skinned = instance.GetSkinnedMesh();
-    if (!instance.Visible || !skinned || !skinned->HasSkinData()) {
+  for (const auto& animation : state.animations) {
+    const int meshIndex = resolveAnimationMeshIndex(animation);
+    if (meshIndex < 0) {
+      T8_LOG_INFO("[SandboxScene] Skipped profile animation for mesh slot %d path='%s'",
+                  animation.index,
+                  animation.mesh.c_str());
       continue;
     }
+    applyAnimationToMesh(GetSkinnedMeshForIndex(meshIndex), animation);
+  }
+}
 
-    NavTestAgentRuntime agent;
-    agent.meshIndex = meshIndex;
-    agent.followSlot = followSlot++;
-    if (meshIndex < static_cast<int>(m_sceneNavAgentFrontYawOffsets.size())) {
-      agent.frontYawOffsetDeg = m_sceneNavAgentFrontYawOffsets[static_cast<std::size_t>(meshIndex)];
-    }
-    if (meshIndex < static_cast<int>(m_sceneNavAgentFaceYawSigns.size())) {
-      agent.faceYawSign = m_sceneNavAgentFaceYawSigns[static_cast<std::size_t>(meshIndex)];
-    }
-    const XVECTOR3 visualPosition(instance.Final.m41, instance.Final.m42, instance.Final.m43, 1.0f);
-    std::string projectionError;
-    if (!m_navMesh.ProjectPoint(visualPosition, agent.navPosition, NavTestAgentProjectionExtents(), &projectionError)) {
-      T8_LOG_ERROR("[NavigationTest] Skipping mesh %d nav agent; cannot project initial position (%.2f,%.2f,%.2f): %s",
-                   meshIndex,
-                   visualPosition.x, visualPosition.y, visualPosition.z,
-                   projectionError.c_str());
-      continue;
-    }
-    agent.home = agent.navPosition;
-    agent.visualOffset = visualPosition - agent.navPosition;
-    agent.visualOffset.x = 0.0f;
-    agent.visualOffset.z = 0.0f;
-    agent.visualOffset.w = 0.0f;
-    agent.navToOriginOffset = agent.visualOffset;
-    if (m_navTestMode == kNavTestModeFollowPlayer) {
-      if (!ResolveNavTestFollowTarget(m_navMesh, Cam, agent.followSlot,
-                                      agent.desiredTarget, agent.target, &agent.lastPathError)) {
-        agent.target = agent.navPosition;
-        agent.repathCooldownSec = kNavTestFailedPathRetrySec;
-      }
-    } else if (m_navTestMode == kNavTestModeRandom) {
-      agent.target = RandomNavTestPoint(m_navTestCandidatePoints,
-                                        agent.home,
-                                        m_navTestRandomState,
-                                        static_cast<uint32_t>(meshIndex + 1));
-      agent.desiredTarget = agent.target;
+t850::SandboxProfileDesc RagdollEditor::BuildSparseSandboxProfile(const t850::SandboxProfileDesc& current) const {
+  t850::SandboxProfileDesc sparse;
+  sparse.name = current.name;
+  sparse.platform = current.platform;
+  sparse.architecture = current.architecture;
+  sparse.gpu_family = current.gpu_family;
+  sparse.gpu_name_contains = current.gpu_name_contains;
+  sparse.model = current.model;
+  for (const auto& value : current.sliders) {
+    const auto* baseline = FindFloatOverride(m_profileBaselineState.sliders, value.name);
+    if (!baseline || !NearlyEqual(value.value, baseline->value)) sparse.sliders.push_back(value);
+  }
+  for (const auto& value : current.checkboxes) {
+    const auto* baseline = FindBoolOverride(m_profileBaselineState.checkboxes, value.name);
+    if (!baseline || value.value != baseline->value) sparse.checkboxes.push_back(value);
+  }
+  for (const auto& value : current.selectors) {
+    const auto* baseline = FindIntOverride(m_profileBaselineState.selectors, value.name);
+    if (!baseline || value.value != baseline->value) sparse.selectors.push_back(value);
+  }
+  for (const auto& value : current.lights) {
+    t850::SandboxLightOverrideDesc lightSparse;
+    lightSparse.index = value.index;
+    const auto* baseline = FindLightOverride(m_profileBaselineState.lights, value.index);
+    if (!baseline) {
+      lightSparse = value;
     } else {
-      agent.target = FurthestNavTestPoint(m_navTestCandidatePoints, agent.home);
-      agent.desiredTarget = agent.target;
+      if (value.position.has_value() && (!baseline->position.has_value() || !VecNearlyEqual(*value.position, *baseline->position)))
+        lightSparse.position = value.position;
+      if (value.direction.has_value() && (!baseline->direction.has_value() || !VecNearlyEqual(*value.direction, *baseline->direction)))
+        lightSparse.direction = value.direction;
+      if (value.color.has_value() && (!baseline->color.has_value() || !VecNearlyEqual(*value.color, *baseline->color)))
+        lightSparse.color = value.color;
+      if (value.diameter.has_value() && (!baseline->diameter.has_value() || !NearlyEqual(*value.diameter, *baseline->diameter)))
+        lightSparse.diameter = value.diameter;
+      if (value.intensity.has_value() && (!baseline->intensity.has_value() || !NearlyEqual(*value.intensity, *baseline->intensity)))
+        lightSparse.intensity = value.intensity;
+      if (value.attach_to_camera.has_value() && (!baseline->attach_to_camera.has_value() || *value.attach_to_camera != *baseline->attach_to_camera))
+        lightSparse.attach_to_camera = value.attach_to_camera;
+      if (value.attach_to_camera.has_value() && *value.attach_to_camera) {
+        lightSparse.position.reset();
+      }
     }
-    agent.targetInitialized = true;
-    agent.active = DistanceSquared(agent.target, agent.home) > 0.25f || m_navTestMode == kNavTestModeFollowPlayer;
-    agent.needsPath = agent.active && agent.repathCooldownSec <= 0.0f;
-    m_navTestAgents.push_back(std::move(agent));
+    if (lightSparse.position.has_value() || lightSparse.direction.has_value() || lightSparse.color.has_value() ||
+        lightSparse.diameter.has_value() || lightSparse.intensity.has_value() || lightSparse.attach_to_camera.has_value()) {
+      sparse.lights.push_back(lightSparse);
+    }
   }
-
-  if (!m_navTestAgents.empty()) {
-    T8_LOG_INFO("[NavigationTest] Initialized %zu skinned mesh nav agents mode=%d speed=%.2f q3 units/sec",
-                m_navTestAgents.size(), m_navTestMode, m_navTestSpeed);
+  for (const auto& value : current.animations) {
+    const auto* baseline = FindAnimationOverride(m_profileBaselineState.animations, value.index);
+    if (!baseline || !AnimationOverrideNearlyEqual(value, *baseline)) {
+      sparse.animations.push_back(value);
+    }
   }
+  if (current.cubemap_path != m_profileBaselineState.cubemap_path) sparse.cubemap_path = current.cubemap_path;
+  if (current.frustum_culling != m_profileBaselineState.frustum_culling) sparse.frustum_culling = current.frustum_culling;
+  if (current.show_culling_debug != m_profileBaselineState.show_culling_debug) sparse.show_culling_debug = current.show_culling_debug;
+  if (current.current_keyframe != m_profileBaselineState.current_keyframe) sparse.current_keyframe = current.current_keyframe;
+  if (current.camera.has_value() && m_profileBaselineState.camera.has_value()) {
+    if (!CameraNearlyEqual(*current.camera, *m_profileBaselineState.camera)) {
+      sparse.camera = current.camera;
+    }
+  } else if (current.camera != m_profileBaselineState.camera) {
+    sparse.camera = current.camera;
+  }
+  if (current.orbit_camera.has_value() && m_profileBaselineState.orbit_camera.has_value()) {
+    if (!OrbitCameraNearlyEqual(*current.orbit_camera, *m_profileBaselineState.orbit_camera)) {
+      sparse.orbit_camera = current.orbit_camera;
+    }
+  } else if (current.orbit_camera != m_profileBaselineState.orbit_camera) {
+    sparse.orbit_camera = current.orbit_camera;
+  }
+  return sparse;
 }
 
-void SandboxScene::PlanNavTestAgentPaths() {
-  T8_TELEMETRY_SCOPE("navigation.agents.plan_paths");
-  if (!m_navMesh.IsReady() || m_navTestAgents.empty()) {
-    return;
-  }
-
-  std::vector<int> agentIndices;
-  std::vector<unsigned int> requestGenerations;
-  std::vector<t850::navigation::NavPathRequest> requests;
-  for (int i = 0; i < static_cast<int>(m_navTestAgents.size()); ++i) {
-    NavTestAgentRuntime& agent = m_navTestAgents[static_cast<std::size_t>(i)];
-    if (!agent.active || agent.physicsTraversalActive || !agent.needsPath || agent.repathCooldownSec > 0.0f ||
-        agent.meshIndex < 0 || agent.meshIndex >= kMaxSandboxMeshes ||
-        !Meshes[agent.meshIndex].pBase) {
-      continue;
-    }
-
-    t850::navigation::NavPathRequest request;
-    request.start = agent.navPosition;
-    request.end = (m_navTestMode == kNavTestModeFurthest && agent.returning) ? agent.home : agent.target;
-    request.queryExtents = NavTestAgentProjectionExtents();
-    agent.lastPathStart = request.start;
-    agent.lastPathEnd = request.end;
-    ++agent.pathGeneration;
-    requests.push_back(request);
-    agentIndices.push_back(i);
-    requestGenerations.push_back(agent.pathGeneration);
-  }
-
-  if (requests.empty()) {
-    if (t850::RuntimeTelemetry::IsFrameActive()) {
-      t850::RuntimeTelemetry::SetCounter("navigation.agents.path_requests", 0.0);
-    }
-    return;
-  }
-  if (t850::RuntimeTelemetry::IsFrameActive()) {
-    t850::RuntimeTelemetry::SetCounter("navigation.agents.path_requests", static_cast<double>(requests.size()));
-  }
-
-  std::vector<t850::navigation::NavPathResult> results;
-  {
-    T8_TELEMETRY_SCOPE("navigation.agents.find_paths");
-    m_navMesh.FindPaths(requests, results);
-  }
-  int successfulPaths = 0;
-  int failedPaths = 0;
-  int totalPathPoints = 0;
-  int dropSegments = 0;
-  int jumpSegments = 0;
-  int jumpPadSegments = 0;
-  for (std::size_t i = 0; i < agentIndices.size(); ++i) {
-    NavTestAgentRuntime& agent = m_navTestAgents[static_cast<std::size_t>(agentIndices[i])];
-    if (i >= requestGenerations.size() || agent.pathGeneration != requestGenerations[i]) {
-      continue;
-    }
-    agent.needsPath = false;
-    if (i >= results.size() || !results[i].success || results[i].points.empty()) {
-      ++failedPaths;
-      const PrimitiveInst& instance = Meshes[agent.meshIndex];
-      const XVECTOR3 current(instance.Final.m41, instance.Final.m42, instance.Final.m43, 1.0f);
-      agent.lastPathSuccess = false;
-      agent.lastPathError = i < results.size() ? results[i].error : "missing result";
-      agent.repathCooldownSec = kNavTestFailedPathRetrySec;
-      agent.path.clear();
-      agent.pathSegmentTypes.clear();
-      agent.waypointIndex = 0;
-      if (m_navTestMode == kNavTestModeRandom) {
-        agent.target = RandomNavTestPoint(m_navTestCandidatePoints,
-                                          agent.navPosition,
-                                          m_navTestRandomState,
-                                          static_cast<uint32_t>(agent.meshIndex + 43));
-        agent.desiredTarget = agent.target;
-      } else if (m_navTestMode == kNavTestModeFollowPlayer) {
-        XVECTOR3 desiredTarget;
-        XVECTOR3 projectedTarget;
-        if (ResolveNavTestFollowTarget(m_navMesh, Cam, agent.followSlot,
-                                       desiredTarget, projectedTarget, nullptr)) {
-          agent.desiredTarget = desiredTarget;
-          agent.target = projectedTarget;
-        } else {
-          agent.desiredTarget = desiredTarget;
-          agent.target = agent.navPosition;
-        }
-      } else {
-        agent.active = false;
-      }
-      T8_LOG_ERROR("[NavigationTest] Agent mesh %d failed to find path gen=%u start=(%.2f,%.2f,%.2f) end=(%.2f,%.2f,%.2f) desired=(%.2f,%.2f,%.2f) player=(%.2f,%.2f,%.2f) nav=(%.2f,%.2f,%.2f) visual=(%.2f,%.2f,%.2f) offset=(%.2f,%.2f,%.2f): %s",
-                   agent.meshIndex,
-                   agent.pathGeneration,
-                   agent.lastPathStart.x, agent.lastPathStart.y, agent.lastPathStart.z,
-                   agent.lastPathEnd.x, agent.lastPathEnd.y, agent.lastPathEnd.z,
-                   agent.desiredTarget.x, agent.desiredTarget.y, agent.desiredTarget.z,
-                   Cam.Eye.x, Cam.Eye.y, Cam.Eye.z,
-                   agent.navPosition.x, agent.navPosition.y, agent.navPosition.z,
-                   current.x, current.y, current.z,
-                   agent.visualOffset.x, agent.visualOffset.y, agent.visualOffset.z,
-                   agent.lastPathError.c_str());
-      continue;
-    }
-
-    ++successfulPaths;
-    totalPathPoints += static_cast<int>(results[i].points.size());
-    agent.navPosition = results[i].points.front();
-    agent.navToOriginOffset = agent.visualOffset;
-    agent.lastPathFirst = results[i].points.front();
-    agent.lastPathSuccess = true;
-    agent.lastPathError.clear();
-    agent.repathCooldownSec = 0.0f;
-    agent.path = results[i].points;
-    agent.pathSegmentTypes.assign(agent.path.size() > 1 ? agent.path.size() - 1 : 0,
-                                  t850::navigation::NavTraversalType::Walk);
-    for (const t850::navigation::NavPathResult::Segment& segment : results[i].segments) {
-      if (segment.startPointIndex < 0 ||
-          segment.endPointIndex <= segment.startPointIndex ||
-          segment.endPointIndex > static_cast<int>(agent.path.size())) {
-        continue;
-      }
-      for (int pointIndex = segment.startPointIndex; pointIndex < segment.endPointIndex; ++pointIndex) {
-        if (pointIndex >= 0 && pointIndex < static_cast<int>(agent.pathSegmentTypes.size())) {
-          agent.pathSegmentTypes[static_cast<std::size_t>(pointIndex)] = segment.type;
-        }
-      }
-      if (segment.type == t850::navigation::NavTraversalType::Drop) {
-        ++dropSegments;
-      } else if (segment.type == t850::navigation::NavTraversalType::Jump) {
-        ++jumpSegments;
-      } else if (segment.type == t850::navigation::NavTraversalType::JumpPad) {
-        ++jumpPadSegments;
-      }
-    }
-    agent.waypointIndex = agent.path.size() > 1 ? 1 : 0;
-  }
-  if (t850::RuntimeTelemetry::IsFrameActive()) {
-    t850::RuntimeTelemetry::SetCounter("navigation.agents.path_success", static_cast<double>(successfulPaths));
-    t850::RuntimeTelemetry::SetCounter("navigation.agents.path_fail", static_cast<double>(failedPaths));
-    t850::RuntimeTelemetry::SetCounter("navigation.agents.path_points", static_cast<double>(totalPathPoints));
-    t850::RuntimeTelemetry::SetCounter("navigation.agents.path_segments.drop", static_cast<double>(dropSegments));
-    t850::RuntimeTelemetry::SetCounter("navigation.agents.path_segments.jump", static_cast<double>(jumpSegments));
-    t850::RuntimeTelemetry::SetCounter("navigation.agents.path_segments.jump_pad", static_cast<double>(jumpPadSegments));
-  }
+bool RagdollEditor::SandboxProfileStatesEqual(const t850::SandboxProfileDesc& lhs, const t850::SandboxProfileDesc& rhs) const {
+  const t850::SandboxProfileDesc lhsSparse = BuildSparseSandboxProfile(lhs);
+  const t850::SandboxProfileDesc rhsSparse = BuildSparseSandboxProfile(rhs);
+  return lhsSparse.sliders == rhsSparse.sliders &&
+         lhsSparse.checkboxes == rhsSparse.checkboxes &&
+         lhsSparse.selectors == rhsSparse.selectors &&
+         lhsSparse.lights == rhsSparse.lights &&
+         lhsSparse.animations == rhsSparse.animations &&
+         lhsSparse.cubemap_path == rhsSparse.cubemap_path &&
+         lhsSparse.camera == rhsSparse.camera &&
+         lhsSparse.orbit_camera == rhsSparse.orbit_camera &&
+         lhsSparse.frustum_culling == rhsSparse.frustum_culling &&
+         lhsSparse.show_culling_debug == rhsSparse.show_culling_debug &&
+         lhsSparse.current_keyframe == rhsSparse.current_keyframe;
 }
 
-void SandboxScene::UpdateNavTestAgents(float dtSecs) {
-  T8_TELEMETRY_SCOPE("navigation.agents.update");
-  if (!m_loadedEditorScene) {
-    return;
-  }
-  m_navTestMode = ClampNavTestMode(m_navTestMode);
-  m_navTestSpeed = (std::max)(0.0f, (std::min)(10.0f, m_navTestSpeed));
-  if (m_navTestMode != m_navTestAppliedMode) {
-    m_navTestAppliedMode = m_navTestMode;
-    m_navTestInitialized = false;
-    m_navTestAgents.clear();
-    m_navTestRandomState = 0x6d2b79f5u;
-    m_navTestDiagAccumSec = 0.0f;
-  }
-  InitializeNavTestAgents();
-  if (m_navTestAgents.empty()) {
-    return;
-  }
-  if (t850::RuntimeTelemetry::IsFrameActive()) {
-    int activeAgents = 0;
-    int physicsAgents = 0;
-    int needsPathAgents = 0;
-    for (const NavTestAgentRuntime& agent : m_navTestAgents) {
-      if (agent.active) {
-        ++activeAgents;
-      }
-      if (agent.physicsTraversalActive) {
-        ++physicsAgents;
-      }
-      if (agent.needsPath) {
-        ++needsPathAgents;
-      }
-    }
-    t850::RuntimeTelemetry::SetCounter("navigation.agents.count", static_cast<double>(m_navTestAgents.size()));
-    t850::RuntimeTelemetry::SetCounter("navigation.agents.active", static_cast<double>(activeAgents));
-    t850::RuntimeTelemetry::SetCounter("navigation.agents.physics_active", static_cast<double>(physicsAgents));
-    t850::RuntimeTelemetry::SetCounter("navigation.agents.needs_path", static_cast<double>(needsPathAgents));
-  }
-
-  {
-    T8_TELEMETRY_SCOPE("navigation.agents.target_update");
-    for (NavTestAgentRuntime& agent : m_navTestAgents) {
-      if (!agent.active ||
-          agent.meshIndex < 0 || agent.meshIndex >= kMaxSandboxMeshes ||
-          !Meshes[agent.meshIndex].pBase) {
-        continue;
-      }
-
-      agent.repathCooldownSec = (std::max)(0.0f, agent.repathCooldownSec - (std::max)(0.0f, dtSecs));
-      if (agent.physicsTraversalActive) {
-        continue;
-      }
-      if (m_navTestMode == kNavTestModeFollowPlayer) {
-        XVECTOR3 desiredTarget;
-        XVECTOR3 projectedTarget;
-        std::string targetError;
-        if (ResolveNavTestFollowTarget(m_navMesh, Cam, agent.followSlot, desiredTarget, projectedTarget, &targetError)) {
-          agent.desiredTarget = desiredTarget;
-          if ((!agent.targetInitialized || agent.path.empty() || DistanceSquared(agent.target, projectedTarget) > 1.0f) &&
-              agent.repathCooldownSec <= 0.0f) {
-            agent.target = projectedTarget;
-            agent.returning = false;
-            agent.needsPath = true;
-            agent.targetInitialized = true;
-          }
-        } else {
-          agent.desiredTarget = desiredTarget;
-          agent.lastPathSuccess = false;
-          agent.lastPathError = targetError;
-          agent.repathCooldownSec = kNavTestFailedPathRetrySec;
-          agent.needsPath = false;
-        }
-      } else if (m_navTestMode == kNavTestModeRandom) {
-        if (!agent.targetInitialized || (agent.path.empty() && !agent.needsPath)) {
-          agent.target = RandomNavTestPoint(m_navTestCandidatePoints,
-                                            agent.navPosition,
-                                            m_navTestRandomState,
-                                            static_cast<uint32_t>(agent.meshIndex + 17));
-          agent.desiredTarget = agent.target;
-          agent.returning = false;
-          agent.needsPath = true;
-          agent.targetInitialized = true;
-        }
-      } else if (!agent.targetInitialized) {
-        agent.target = FurthestNavTestPoint(m_navTestCandidatePoints, agent.home);
-        agent.desiredTarget = agent.target;
-        agent.returning = false;
-        agent.needsPath = true;
-        agent.targetInitialized = true;
-      }
-    }
-  }
-
-  PlanNavTestAgentPaths();
-
-  const float maxStep = (std::max)(0.0f, dtSecs) * m_navTestSpeed;
-  std::vector<XVECTOR3> proposedPositions(m_navTestAgents.size());
-  std::vector<unsigned char> movedAgents(m_navTestAgents.size(), 0);
-  std::vector<unsigned char> physicsMovedAgents(m_navTestAgents.size(), 0);
-  std::vector<unsigned char> suppressProjection(m_navTestAgents.size(), 0);
-  std::vector<unsigned char> jumpPadQueuedAgents(m_navTestAgents.size(), 0);
-  static std::vector<float> s_navProjectionDebugCooldownSec;
-  if (s_navProjectionDebugCooldownSec.size() != m_navTestAgents.size()) {
-    s_navProjectionDebugCooldownSec.assign(m_navTestAgents.size(), 0.0f);
-  }
-  for (float& cooldown : s_navProjectionDebugCooldownSec) {
-    cooldown = (std::max)(0.0f, cooldown - (std::max)(0.0f, dtSecs));
-  }
-
-  const t850::KinematicCharacterSettings jumpPadDebugSettings = t850::MakeQuake3CharacterSettings();
-  const XVECTOR3 jumpPadAgentHalfExtents(
-      jumpPadDebugSettings.capsuleRadius,
-      jumpPadDebugSettings.capsuleHalfHeight + jumpPadDebugSettings.capsuleRadius,
-      jumpPadDebugSettings.capsuleRadius,
-      0.0f);
-
-  auto findJumpPadForBase = [&](const XVECTOR3& base) -> const t850::Q3BspCollisionWorld::JumpPad* {
-    if (!m_q3CollisionWorld) {
-      return nullptr;
-    }
-
-    const t850::Q3BspCollisionWorld::JumpPad* bestJumpPad = nullptr;
-    float bestDistanceSq = 1.0e30f;
-    for (const t850::Q3BspCollisionWorld::JumpPad& jumpPad : m_q3CollisionWorld->GetJumpPads()) {
-      const bool insideHorizontal =
-          base.x >= jumpPad.mins.x - 1.0f && base.x <= jumpPad.maxs.x + 1.0f &&
-          base.z >= jumpPad.mins.z - 1.0f && base.z <= jumpPad.maxs.z + 1.0f;
-      const XVECTOR3 center(
-          (jumpPad.mins.x + jumpPad.maxs.x) * 0.5f,
-          (jumpPad.mins.y + jumpPad.maxs.y) * 0.5f,
-          (jumpPad.mins.z + jumpPad.maxs.z) * 0.5f,
-          1.0f);
-      const float distanceSq = HorizontalDistanceSq3(center, base);
-      if ((insideHorizontal || distanceSq <= 16.0f) && distanceSq < bestDistanceSq) {
-        bestDistanceSq = distanceSq;
-        bestJumpPad = &jumpPad;
-      }
-    }
-    return bestJumpPad;
-  };
-
-  auto agentAabbOverlapsJumpPad = [&](const XVECTOR3& position,
-                                      const t850::Q3BspCollisionWorld::JumpPad& jumpPad,
-                                      float margin) {
-    const XVECTOR3 min = position - jumpPadAgentHalfExtents;
-    const XVECTOR3 max = position + jumpPadAgentHalfExtents;
-    return max.x >= jumpPad.mins.x - margin &&
-        min.x <= jumpPad.maxs.x + margin &&
-        max.y >= jumpPad.mins.y - margin &&
-        min.y <= jumpPad.maxs.y + margin &&
-        max.z >= jumpPad.mins.z - margin &&
-        min.z <= jumpPad.maxs.z + margin;
-  };
-
-  auto traversalName = [](t850::navigation::NavTraversalType type) {
-    switch (type) {
-      case t850::navigation::NavTraversalType::Drop: return "Drop";
-      case t850::navigation::NavTraversalType::Jump: return "Jump";
-      case t850::navigation::NavTraversalType::JumpPad: return "JumpPad";
-      case t850::navigation::NavTraversalType::JumpIntent: return "JumpIntent";
-      case t850::navigation::NavTraversalType::Walk:
-      default: return "Walk";
-    }
-  };
-
-  auto reachabilityTraversalDuration = [&](t850::navigation::NavTraversalType type,
-                                           const XVECTOR3& start,
-                                           const XVECTOR3& end) {
-    const float horizontal = std::sqrt(HorizontalDistanceSq3(start, end));
-    const float vertical = std::fabs(end.y - start.y);
-    const float speed = (std::max)(3.5f, m_navTestSpeed * 1.5f);
-    float duration = horizontal / speed;
-    if (type == t850::navigation::NavTraversalType::Drop) {
-      duration = (std::max)(duration, vertical > 2.0f ? 0.65f : 0.35f);
-    } else {
-      duration = (std::max)(duration, 0.45f);
-    }
-    return std::clamp(duration, 0.25f, 1.35f);
-  };
-
-  auto reachabilityTraversalPosition = [&](t850::navigation::NavTraversalType type,
-                                           const XVECTOR3& start,
-                                           const XVECTOR3& end,
-                                           float fraction) {
-    const float t = std::clamp(fraction, 0.0f, 1.0f);
-    XVECTOR3 position = start + (end - start) * t;
-    if (type == t850::navigation::NavTraversalType::Jump) {
-      const float horizontal = std::sqrt(HorizontalDistanceSq3(start, end));
-      const float arcHeight = (std::max)(0.45f, (std::min)(2.0f, horizontal * 0.25f));
-      position.y += std::sin(t * xPI) * arcHeight;
-    } else if (type == t850::navigation::NavTraversalType::Drop && end.y < start.y) {
-      position.y = start.y + (end.y - start.y) * (t * t);
-    }
-    position.w = 1.0f;
-    return position;
-  };
-
-  struct JumpPadOccupancyDecision {
-    bool occupied = false;
-    std::size_t ownerIndex = static_cast<std::size_t>(-1);
-    const char* reason = "free";
-    float currentDistanceSq = 1.0e30f;
-    float ownerDistanceSq = 1.0e30f;
-  };
-
-  auto jumpPadOccupancyDecision = [&](std::size_t currentAgentIndex, const XVECTOR3& base) {
-    constexpr float kJumpPadBaseOccupiedRadiusSq = 4.0f;
-    JumpPadOccupancyDecision decision;
-    const t850::Q3BspCollisionWorld::JumpPad* jumpPad = findJumpPadForBase(base);
-    if (currentAgentIndex < m_navTestAgents.size()) {
-      decision.currentDistanceSq = HorizontalDistanceSq3(m_navTestAgents[currentAgentIndex].navPosition, base);
-    }
-    for (std::size_t otherIndex = 0; otherIndex < m_navTestAgents.size(); ++otherIndex) {
-      if (otherIndex == currentAgentIndex) {
-        continue;
-      }
-      const NavTestAgentRuntime& other = m_navTestAgents[otherIndex];
-      if (!other.active) {
-        continue;
-      }
-
-      bool otherOwnsBase = false;
-      float otherDistanceSq = 1.0e30f;
-      if (jumpPad && agentAabbOverlapsJumpPad(other.navPosition, *jumpPad, 0.05f)) {
-        otherDistanceSq = HorizontalDistanceSq3(other.navPosition, base);
-        const bool closer = otherDistanceSq + 0.01f < decision.currentDistanceSq;
-        const bool tieBreak = std::fabs(otherDistanceSq - decision.currentDistanceSq) <= 0.01f && otherIndex < currentAgentIndex;
-        otherOwnsBase = closer || tieBreak;
-        if (otherOwnsBase) {
-          decision.reason = closer ? "other_inside_trigger_closer" : "other_inside_trigger_tiebreak";
-        }
-      } else if (other.physicsTraversalActive &&
-          other.physicsTraversalType == t850::navigation::NavTraversalType::JumpPad &&
-          DistanceSquared(other.physicsTraversalStart, base) <= kJumpPadBaseOccupiedRadiusSq) {
-        const bool otherStillInTrigger =
-            jumpPad && agentAabbOverlapsJumpPad(other.navPosition, *jumpPad, 0.25f);
-        const bool otherStillNearBase =
-            HorizontalDistanceSq3(other.navPosition, base) <= kJumpPadBaseOccupiedRadiusSq;
-        if (!other.physicsWasAirborne || otherStillInTrigger || otherStillNearBase) {
-          otherOwnsBase = true;
-          otherDistanceSq = 0.0f;
-          decision.reason = !other.physicsWasAirborne
-              ? "other_physics_not_airborne"
-              : (otherStillInTrigger ? "other_physics_still_in_trigger" : "other_physics_still_near_base");
-        }
-      } else if (!other.physicsTraversalActive &&
-                 !other.needsPath &&
-                 !other.path.empty() &&
-                 other.waypointIndex > 0 &&
-                 other.waypointIndex < static_cast<int>(other.path.size())) {
-        const int otherSegmentIndex = other.waypointIndex - 1;
-        const t850::navigation::NavTraversalType otherSegmentType =
-            otherSegmentIndex >= 0 && otherSegmentIndex < static_cast<int>(other.pathSegmentTypes.size())
-                ? other.pathSegmentTypes[static_cast<std::size_t>(otherSegmentIndex)]
-                : t850::navigation::NavTraversalType::Walk;
-        const XVECTOR3 otherBase = other.path[static_cast<std::size_t>(otherSegmentIndex)];
-        if (otherSegmentType == t850::navigation::NavTraversalType::JumpPad &&
-            DistanceSquared(otherBase, base) <= kJumpPadBaseOccupiedRadiusSq) {
-          otherDistanceSq = HorizontalDistanceSq3(other.navPosition, base);
-          const bool closer = otherDistanceSq + 0.01f < decision.currentDistanceSq;
-          const bool tieBreak = std::fabs(otherDistanceSq - decision.currentDistanceSq) <= 0.01f && otherIndex < currentAgentIndex;
-          otherOwnsBase = closer || tieBreak;
-          if (otherOwnsBase) {
-            decision.reason = closer ? "other_planned_jump_closer" : "other_planned_jump_tiebreak";
-          }
-        }
-      }
-
-      if (otherOwnsBase) {
-        decision.occupied = true;
-        decision.ownerIndex = otherIndex;
-        decision.ownerDistanceSq = otherDistanceSq;
-        return decision;
-      }
-    }
-    return decision;
-  };
-
-  auto isJumpPadBaseOccupied = [&](std::size_t currentAgentIndex, const XVECTOR3& base) {
-    return jumpPadOccupancyDecision(currentAgentIndex, base).occupied;
-  };
-
-  auto jumpPadQueuePosition = [&](const NavTestAgentRuntime& agent,
-                                  const XVECTOR3& base,
-                                  std::size_t agentIndex) {
-    XVECTOR3 retreat(0.0f, 0.0f, 0.0f, 0.0f);
-    const int previousIndex = agent.waypointIndex - 2;
-    if (previousIndex >= 0 && previousIndex < static_cast<int>(agent.path.size())) {
-      retreat = agent.path[static_cast<std::size_t>(previousIndex)] - base;
-    }
-    retreat.y = 0.0f;
-    retreat.w = 0.0f;
-    if (retreat.Length() <= 0.0001f) {
-      retreat = agent.navPosition - base;
-      retreat.y = 0.0f;
-      retreat.w = 0.0f;
-    }
-    if (retreat.Length() <= 0.0001f) {
-      retreat = XVECTOR3(0.0f, 0.0f, -1.0f, 0.0f);
-    }
-    retreat.Normalize();
-
-    const t850::KinematicCharacterSettings q3Settings = t850::MakeQuake3CharacterSettings();
-    const float triggerMargin = q3Settings.capsuleRadius + 0.20f;
-    float queueDistance = 2.25f;
-    if (const t850::Q3BspCollisionWorld::JumpPad* jumpPad = findJumpPadForBase(base)) {
-      const float minX = jumpPad->mins.x - triggerMargin;
-      const float maxX = jumpPad->maxs.x + triggerMargin;
-      const float minZ = jumpPad->mins.z - triggerMargin;
-      const float maxZ = jumpPad->maxs.z + triggerMargin;
-      const bool baseInsideExpanded =
-          base.x >= minX && base.x <= maxX &&
-          base.z >= minZ && base.z <= maxZ;
-      if (baseInsideExpanded) {
-        float exitDistance = 1.0e30f;
-        if (std::fabs(retreat.x) > 0.0001f) {
-          const float boundary = retreat.x > 0.0f ? maxX : minX;
-          const float candidate = (boundary - base.x) / retreat.x;
-          if (candidate >= 0.0f) {
-            exitDistance = (std::min)(exitDistance, candidate);
-          }
-        }
-        if (std::fabs(retreat.z) > 0.0001f) {
-          const float boundary = retreat.z > 0.0f ? maxZ : minZ;
-          const float candidate = (boundary - base.z) / retreat.z;
-          if (candidate >= 0.0f) {
-            exitDistance = (std::min)(exitDistance, candidate);
-          }
-        }
-        if (exitDistance < 1.0e29f) {
-          queueDistance = (std::max)(queueDistance, exitDistance + q3Settings.capsuleRadius + 0.30f);
-        }
-      }
-    }
-
-    XVECTOR3 side(retreat.z, 0.0f, -retreat.x, 0.0f);
-    if (side.Length() > 0.0001f) {
-      side.Normalize();
-    }
-    const int laneIndex = static_cast<int>((agent.followSlot + static_cast<int>(agentIndex)) % 5) - 2;
-    const float laneOffset = static_cast<float>(laneIndex) * (q3Settings.capsuleRadius * 2.35f);
-    XVECTOR3 queued = base + retreat * queueDistance + side * laneOffset;
-
-    if (const t850::Q3BspCollisionWorld::JumpPad* jumpPad = findJumpPadForBase(base)) {
-      const float minX = jumpPad->mins.x - triggerMargin;
-      const float maxX = jumpPad->maxs.x + triggerMargin;
-      const float minZ = jumpPad->mins.z - triggerMargin;
-      const float maxZ = jumpPad->maxs.z + triggerMargin;
-      for (int guard = 0; guard < 8 &&
-          queued.x >= minX && queued.x <= maxX &&
-          queued.z >= minZ && queued.z <= maxZ; ++guard) {
-        queued += retreat * 0.50f;
-      }
-    }
-
-    queued.w = 1.0f;
-    return queued;
-  };
-
-  auto isJumpPadTraversalProtected = [&](std::size_t agentIndex) {
-    if (agentIndex >= m_navTestAgents.size()) {
-      return false;
-    }
-    const NavTestAgentRuntime& agent = m_navTestAgents[agentIndex];
-    return agent.active &&
-        agent.physicsTraversalActive &&
-        agent.physicsTraversalType == t850::navigation::NavTraversalType::JumpPad;
-  };
-
-  auto isPhysicsTraversalProtected = [&](std::size_t agentIndex) {
-    if (agentIndex >= m_navTestAgents.size()) {
-      return false;
-    }
-    const NavTestAgentRuntime& agent = m_navTestAgents[agentIndex];
-    return agent.active && agent.physicsTraversalActive;
-  };
-
-  auto startJumpPadPhysicsTraversal = [&](std::size_t agentIndex,
-                                          NavTestAgentRuntime& agent,
-                                          const XVECTOR3& groundPosition,
-                                          const t850::Q3BspCollisionWorld::JumpPad& jumpPad,
-                                          const XVECTOR3& fallbackTarget) {
-    const t850::KinematicCharacterSettings q3Settings = t850::MakeQuake3CharacterSettings();
-    XVECTOR3 launchGround(
-        (jumpPad.mins.x + jumpPad.maxs.x) * 0.5f,
-        groundPosition.y,
-        (jumpPad.mins.z + jumpPad.maxs.z) * 0.5f,
-        1.0f);
-    agent.physicsController.SetSettings(q3Settings);
-    agent.physicsController.Reset();
-    agent.physicsController.SetPosition(Q3CenterFromGroundPoint(launchGround, q3Settings));
-    agent.physicsController.SetVelocity(jumpPad.velocity);
-    agent.physicsTraversalStart = launchGround;
-    agent.physicsTarget = jumpPad.hasTargetPosition ? jumpPad.targetPosition : fallbackTarget;
-    agent.physicsLastNavPosition = launchGround;
-    agent.physicsTargetWaypointIndex = agent.waypointIndex;
-    agent.physicsTraversalType = t850::navigation::NavTraversalType::JumpPad;
-    agent.physicsTraversalTimeSec = 0.0f;
-    agent.physicsStuckTimeSec = 0.0f;
-    agent.physicsTraversalActive = true;
-    agent.physicsWasAirborne = false;
-    proposedPositions[agentIndex] = launchGround;
-    movedAgents[agentIndex] = 1;
-    physicsMovedAgents[agentIndex] = 1;
-#ifdef NAV_MESH_TRACE_LOGS
-    T8_LOG_INFO("[JumpPadDebug] forced-trigger pad=%u agent=%zu mesh=%d pos=(%.2f,%.2f,%.2f) launch=(%.2f,%.2f,%.2f) velocity=(%.2f,%.2f,%.2f) target=(%.2f,%.2f,%.2f)",
-                jumpPad.entityId,
-                agentIndex,
-                agent.meshIndex,
-                groundPosition.x, groundPosition.y, groundPosition.z,
-                launchGround.x, launchGround.y, launchGround.z,
-                jumpPad.velocity.x, jumpPad.velocity.y, jumpPad.velocity.z,
-                agent.physicsTarget.x, agent.physicsTarget.y, agent.physicsTarget.z);
-#endif
-  };
-
-  for (std::size_t agentIndex = 0; agentIndex < m_navTestAgents.size(); ++agentIndex) {
-    NavTestAgentRuntime& agent = m_navTestAgents[agentIndex];
-    if (!agent.active ||
-        agent.meshIndex < 0 || agent.meshIndex >= kMaxSandboxMeshes ||
-        !Meshes[agent.meshIndex].pBase) {
-      continue;
-    }
-
-    if (agent.physicsTraversalActive) {
-      T8_TELEMETRY_SCOPE("navigation.agents.physics_traversal");
-      if (t850::RuntimeTelemetry::IsFrameActive()) {
-        t850::RuntimeTelemetry::AddCounter("navigation.agents.physics_traversal.count", 1.0);
-        if (agent.physicsTraversalType == t850::navigation::NavTraversalType::Drop) {
-          t850::RuntimeTelemetry::AddCounter("navigation.agents.physics_traversal.drop", 1.0);
-        } else if (agent.physicsTraversalType == t850::navigation::NavTraversalType::Jump) {
-          t850::RuntimeTelemetry::AddCounter("navigation.agents.physics_traversal.jump", 1.0);
-        } else if (agent.physicsTraversalType == t850::navigation::NavTraversalType::JumpPad) {
-          t850::RuntimeTelemetry::AddCounter("navigation.agents.physics_traversal.jump_pad", 1.0);
-        }
-      }
-
-      if (agent.physicsTraversalType == t850::navigation::NavTraversalType::Jump ||
-          agent.physicsTraversalType == t850::navigation::NavTraversalType::Drop) {
-        agent.physicsTraversalTimeSec += (std::max)(0.0f, dtSecs);
-        const float duration = (std::max)(0.01f, agent.physicsTraversalDurationSec);
-        const float fraction = std::clamp(agent.physicsTraversalTimeSec / duration, 0.0f, 1.0f);
-        XVECTOR3 navPosition = reachabilityTraversalPosition(
-            agent.physicsTraversalType,
-            agent.physicsTraversalStart,
-            agent.physicsTarget,
-            fraction);
-        agent.navPosition = navPosition;
-        proposedPositions[agentIndex] = navPosition;
-        movedAgents[agentIndex] = 1;
-        physicsMovedAgents[agentIndex] = 1;
-
-        if (fraction >= 1.0f) {
-          agent.navPosition = agent.physicsTarget;
-          proposedPositions[agentIndex] = agent.physicsTarget;
-          agent.physicsTraversalActive = false;
-          agent.physicsWasAirborne = false;
-          agent.physicsTraversalType = t850::navigation::NavTraversalType::Walk;
-          agent.physicsTraversalTimeSec = 0.0f;
-          agent.physicsTraversalDurationSec = 0.0f;
-          agent.physicsStuckTimeSec = 0.0f;
-          agent.needsPath = true;
-          agent.repathCooldownSec = 0.0f;
-          agent.path.clear();
-          agent.pathSegmentTypes.clear();
-          agent.waypointIndex = 0;
-        }
-        continue;
-      }
-
-      const t850::KinematicCharacterSettings q3Settings = t850::MakeQuake3CharacterSettings();
-      agent.physicsController.SetSettings(q3Settings);
-      const XVECTOR3 physicsGround = Q3GroundPointFromCenter(agent.physicsController.GetPosition(), q3Settings);
-      const bool jumpInput =
-          agent.physicsTraversalType == t850::navigation::NavTraversalType::Jump &&
-          agent.physicsTraversalTimeSec < 0.18f;
-      agent.physicsController.UpdateQuake3(
-          (std::max)(0.0f, dtSecs),
-          BuildNavAgentAirControlInput(
-              physicsGround,
-              agent.physicsController.GetVelocity(),
-              agent.physicsTarget,
-              jumpInput,
-              q3Settings),
-          t850::CharacterControllerContext{this});
-      agent.physicsTraversalTimeSec += (std::max)(0.0f, dtSecs);
-      if (!agent.physicsController.IsGrounded()) {
-        agent.physicsWasAirborne = true;
-      }
-
-      XVECTOR3 navPosition = Q3GroundPointFromCenter(agent.physicsController.GetPosition(), q3Settings);
-      const float traversalMoveSq = DistanceSquared(navPosition, agent.physicsLastNavPosition);
-      if (!agent.physicsController.IsGrounded() &&
-          agent.physicsTraversalTimeSec > 0.50f &&
-          traversalMoveSq < 0.0004f) {
-        agent.physicsStuckTimeSec += (std::max)(0.0f, dtSecs);
-      } else {
-        agent.physicsStuckTimeSec = 0.0f;
-        agent.physicsLastNavPosition = navPosition;
-      }
-      agent.navPosition = navPosition;
-      proposedPositions[agentIndex] = navPosition;
-      movedAgents[agentIndex] = 1;
-      physicsMovedAgents[agentIndex] = 1;
-
-      const float minTraversalTime = agent.physicsTraversalType == t850::navigation::NavTraversalType::JumpPad
-          ? 0.20f
-          : 0.35f;
-      const bool canReattach =
-          agent.physicsWasAirborne &&
-          agent.physicsTraversalTimeSec >= minTraversalTime &&
-          agent.physicsController.IsGrounded();
-      if (canReattach) {
-        XVECTOR3 projected;
-        if (m_navMesh.ProjectPoint(navPosition, projected, NavTestAgentProjectionExtents(), nullptr)) {
-          agent.navPosition = projected;
-          proposedPositions[agentIndex] = projected;
-        }
-        agent.physicsTraversalActive = false;
-        agent.physicsWasAirborne = false;
-        agent.physicsTraversalType = t850::navigation::NavTraversalType::Walk;
-        agent.physicsTraversalTimeSec = 0.0f;
-        agent.physicsTraversalDurationSec = 0.0f;
-        agent.needsPath = true;
-        agent.repathCooldownSec = 0.0f;
-        agent.path.clear();
-        agent.pathSegmentTypes.clear();
-        agent.waypointIndex = 0;
-      } else if (agent.physicsTraversalTimeSec > 6.0f || navPosition.y < -64.0f) {
-        agent.physicsTraversalActive = false;
-        agent.physicsWasAirborne = false;
-        agent.physicsTraversalType = t850::navigation::NavTraversalType::Walk;
-        agent.physicsTraversalTimeSec = 0.0f;
-        agent.physicsTraversalDurationSec = 0.0f;
-        agent.needsPath = true;
-        agent.repathCooldownSec = kNavTestFailedPathRetrySec;
-        agent.path.clear();
-        agent.pathSegmentTypes.clear();
-        agent.waypointIndex = 0;
-      } else if (agent.physicsStuckTimeSec > 0.75f) {
-        T8_LOG_INFO("[NavTraversalDebug] physics_stuck_repath mesh=%d agent=%zu type=%s pos=(%.2f,%.2f,%.2f) target=(%.2f,%.2f,%.2f) velocity=(%.2f,%.2f,%.2f) time=%.2f stuck=%.2f",
-                    agent.meshIndex,
-                    agentIndex,
-                    traversalName(agent.physicsTraversalType),
-                    navPosition.x, navPosition.y, navPosition.z,
-                    agent.physicsTarget.x, agent.physicsTarget.y, agent.physicsTarget.z,
-                    agent.physicsController.GetVelocity().x,
-                    agent.physicsController.GetVelocity().y,
-                    agent.physicsController.GetVelocity().z,
-                    agent.physicsTraversalTimeSec,
-                    agent.physicsStuckTimeSec);
-        agent.physicsTraversalActive = false;
-        agent.physicsWasAirborne = false;
-        agent.physicsTraversalType = t850::navigation::NavTraversalType::Walk;
-        agent.physicsTraversalTimeSec = 0.0f;
-        agent.physicsTraversalDurationSec = 0.0f;
-        agent.physicsStuckTimeSec = 0.0f;
-        agent.needsPath = true;
-        agent.repathCooldownSec = 0.0f;
-        agent.path.clear();
-        agent.pathSegmentTypes.clear();
-        agent.waypointIndex = 0;
-      }
-      continue;
-    }
-
-    bool forcedJumpPadTrigger = false;
-    if (m_q3CollisionWorld) {
-      const XVECTOR3 currentPosition = agent.navPosition;
-      for (const t850::Q3BspCollisionWorld::JumpPad& jumpPad : m_q3CollisionWorld->GetJumpPads()) {
-        if (!agentAabbOverlapsJumpPad(currentPosition, jumpPad, 0.05f)) {
-          continue;
-        }
-        const XVECTOR3 jumpPadBase(
-            (jumpPad.mins.x + jumpPad.maxs.x) * 0.5f,
-            currentPosition.y,
-            (jumpPad.mins.z + jumpPad.maxs.z) * 0.5f,
-            1.0f);
-        if (isJumpPadBaseOccupied(agentIndex, jumpPadBase)) {
-          if (t850::RuntimeTelemetry::IsFrameActive()) {
-            t850::RuntimeTelemetry::AddCounter("navigation.agents.jump_pad_wait", 1.0);
-          }
-          const XVECTOR3 queued = jumpPadQueuePosition(agent, jumpPadBase, agentIndex);
-          jumpPadQueuedAgents[agentIndex] = 1;
-          proposedPositions[agentIndex] = queued;
-          movedAgents[agentIndex] = 1;
-          forcedJumpPadTrigger = true;
-          break;
-        }
-        startJumpPadPhysicsTraversal(agentIndex, agent, currentPosition, jumpPad, agent.target);
-        forcedJumpPadTrigger = true;
-        break;
-      }
-    }
-    if (forcedJumpPadTrigger) {
-      continue;
-    }
-
-    if (agent.needsPath || agent.path.empty()) {
-      continue;
-    }
-
-    T8_TELEMETRY_SCOPE("navigation.agents.walk_follow");
-    if (t850::RuntimeTelemetry::IsFrameActive()) {
-      t850::RuntimeTelemetry::AddCounter("navigation.agents.walk_follow.count", 1.0);
-    }
-    XVECTOR3 current = agent.navPosition;
-    float remaining = maxStep;
-    while (remaining > 0.0f && agent.waypointIndex < static_cast<int>(agent.path.size())) {
-      const int segmentIndex = agent.waypointIndex - 1;
-      const t850::navigation::NavTraversalType segmentType =
-          (segmentIndex >= 0 && segmentIndex < static_cast<int>(agent.pathSegmentTypes.size()))
-              ? agent.pathSegmentTypes[static_cast<std::size_t>(segmentIndex)]
-              : t850::navigation::NavTraversalType::Walk;
-      const XVECTOR3 segmentStart =
-          (segmentIndex >= 0 && segmentIndex < static_cast<int>(agent.path.size()))
-              ? agent.path[static_cast<std::size_t>(segmentIndex)]
-              : current;
-      const XVECTOR3 target = agent.path[static_cast<std::size_t>(agent.waypointIndex)];
-      XVECTOR3 delta = target - current;
-      const float distance = delta.Length();
-      t850::navigation::NavTraversalType effectiveSegmentType = segmentType;
-      if (effectiveSegmentType == t850::navigation::NavTraversalType::Walk &&
-          m_q3CollisionWorld &&
-          agent.waypointIndex + 1 < static_cast<int>(agent.path.size())) {
-        const t850::KinematicCharacterSettings q3Settings = t850::MakeQuake3CharacterSettings();
-        const bool hasNextSegment = agent.waypointIndex >= 0 &&
-            agent.waypointIndex < static_cast<int>(agent.pathSegmentTypes.size());
-        const t850::navigation::NavTraversalType nextSegmentType = hasNextSegment
-            ? agent.pathSegmentTypes[static_cast<std::size_t>(agent.waypointIndex)]
-            : t850::navigation::NavTraversalType::Walk;
-        const float waypointTolerance = nextSegmentType != t850::navigation::NavTraversalType::Walk
-            ? (std::max)(1.50f, q3Settings.capsuleRadius * 3.0f)
-            : (std::max)(0.70f, q3Settings.capsuleRadius * 1.5f);
-        if (distance <= waypointTolerance) {
-          if (nextSegmentType != t850::navigation::NavTraversalType::Walk) {
-            T8_LOG_INFO("[NavTraversalDebug] reachability_start_accept mesh=%d agent=%zu current=(%.2f,%.2f,%.2f) start=(%.2f,%.2f,%.2f) dist=%.3f tolerance=%.3f nextType=%s wp=%d path=%zu",
-                        agent.meshIndex,
-                        agentIndex,
-                        current.x, current.y, current.z,
-                        target.x, target.y, target.z,
-                        distance,
-                        waypointTolerance,
-                        traversalName(nextSegmentType),
-                        agent.waypointIndex,
-                        agent.path.size());
-          }
-          current = target;
-          ++agent.waypointIndex;
-          continue;
-        }
-      }
-      if (effectiveSegmentType == t850::navigation::NavTraversalType::Walk &&
-          m_q3CollisionWorld &&
-          agent.waypointIndex >= 0 &&
-          agent.waypointIndex < static_cast<int>(agent.pathSegmentTypes.size())) {
-        const t850::navigation::NavTraversalType nextSegmentType =
-            agent.pathSegmentTypes[static_cast<std::size_t>(agent.waypointIndex)];
-        if (nextSegmentType != t850::navigation::NavTraversalType::Walk) {
-          const t850::KinematicCharacterSettings q3Settings = t850::MakeQuake3CharacterSettings();
-          const float traversalStartTolerance = (std::max)(0.85f, q3Settings.capsuleRadius * 2.0f);
-          if (distance <= traversalStartTolerance) {
-            T8_LOG_INFO("[NavTraversalDebug] edge_start_accept mesh=%d agent=%zu current=(%.2f,%.2f,%.2f) start=(%.2f,%.2f,%.2f) dist=%.3f tolerance=%.3f nextType=%s wp=%d path=%zu",
-                        agent.meshIndex,
-                        agentIndex,
-                        current.x, current.y, current.z,
-                        target.x, target.y, target.z,
-                        distance,
-                        traversalStartTolerance,
-                        traversalName(nextSegmentType),
-                        agent.waypointIndex,
-                        agent.path.size());
-            current = target;
-            ++agent.waypointIndex;
-            continue;
-          }
-        }
-      }
-      if (effectiveSegmentType == t850::navigation::NavTraversalType::Walk && m_q3CollisionWorld) {
-        const t850::KinematicCharacterSettings q3Settings = t850::MakeQuake3CharacterSettings();
-        const float verticalDrop = current.y - target.y;
-        const float horizontalDistanceSq = HorizontalDistanceSq3(current, target);
-        const float forcedDropHeight = (std::max)(1.25f, q3Settings.stepHeight * 2.0f);
-        if (verticalDrop >= forcedDropHeight &&
-            horizontalDistanceSq >= q3Settings.capsuleRadius * q3Settings.capsuleRadius) {
-          effectiveSegmentType = t850::navigation::NavTraversalType::Drop;
-          T8_LOG_INFO("[NavTraversalDebug] forced_drop mesh=%d agent=%zu current=(%.2f,%.2f,%.2f) target=(%.2f,%.2f,%.2f) verticalDrop=%.2f horizontal=%.2f wp=%d path=%zu",
-                      agent.meshIndex,
-                      agentIndex,
-                      current.x, current.y, current.z,
-                      target.x, target.y, target.z,
-                      verticalDrop,
-                      std::sqrt(horizontalDistanceSq),
-                      agent.waypointIndex,
-                      agent.path.size());
-        }
-      }
-      if (effectiveSegmentType != t850::navigation::NavTraversalType::Walk) {
-        if (effectiveSegmentType == t850::navigation::NavTraversalType::JumpPad) {
-          const XVECTOR3 jumpPadBase = segmentStart;
-        const t850::Q3BspCollisionWorld::JumpPad* pathJumpPad = findJumpPadForBase(jumpPadBase);
-        if (isJumpPadBaseOccupied(agentIndex, jumpPadBase)) {
-            if (t850::RuntimeTelemetry::IsFrameActive()) {
-              t850::RuntimeTelemetry::AddCounter("navigation.agents.jump_pad_wait", 1.0);
-            }
-            current = jumpPadQueuePosition(agent, jumpPadBase, agentIndex);
-            jumpPadQueuedAgents[agentIndex] = 1;
-            proposedPositions[agentIndex] = current;
-            movedAgents[agentIndex] = 1;
-            remaining = 0.0f;
-            break;
-          }
-
-          XVECTOR3 toBase = jumpPadBase - current;
-          const float baseDistance = toBase.Length();
-          if (baseDistance > 0.05f) {
-            if (baseDistance <= remaining) {
-              current = jumpPadBase;
-              remaining -= baseDistance;
-            } else {
-              toBase /= baseDistance;
-              current += toBase * remaining;
-              proposedPositions[agentIndex] = current;
-              movedAgents[agentIndex] = 1;
-              remaining = 0.0f;
-              break;
-            }
-          } else {
-            current = jumpPadBase;
-          }
-          if (pathJumpPad) {
-            startJumpPadPhysicsTraversal(agentIndex, agent, current, *pathJumpPad, target);
-            remaining = 0.0f;
-            break;
-          }
-        }
-        const t850::KinematicCharacterSettings q3Settings = t850::MakeQuake3CharacterSettings();
-        agent.physicsController.SetSettings(q3Settings);
-        agent.physicsController.Reset();
-        agent.physicsController.SetPosition(Q3CenterFromGroundPoint(current, q3Settings));
-        if (effectiveSegmentType == t850::navigation::NavTraversalType::Jump ||
-            effectiveSegmentType == t850::navigation::NavTraversalType::Drop) {
-          agent.physicsController.SetVelocity(XVECTOR3(0.0f, 0.0f, 0.0f, 0.0f));
-        }
-        agent.physicsTraversalStart = current;
-        agent.physicsTarget = target;
-        agent.physicsLastNavPosition = current;
-        agent.physicsTargetWaypointIndex = agent.waypointIndex;
-        agent.physicsTraversalType = effectiveSegmentType;
-        agent.physicsTraversalTimeSec = 0.0f;
-        agent.physicsTraversalDurationSec = reachabilityTraversalDuration(effectiveSegmentType, current, target);
-        agent.physicsStuckTimeSec = 0.0f;
-        agent.physicsTraversalActive = true;
-        agent.physicsWasAirborne = false;
-        if (t850::RuntimeTelemetry::IsFrameActive()) {
-          t850::RuntimeTelemetry::AddCounter("navigation.agents.physics_traversal.start", 1.0);
-        }
-        proposedPositions[agentIndex] = current;
-        movedAgents[agentIndex] = 1;
-        physicsMovedAgents[agentIndex] = 1;
-        remaining = 0.0f;
-        break;
-      }
-      if (distance <= 0.0001f) {
-        current = target;
-        ++agent.waypointIndex;
-        continue;
-      }
-      if (distance <= remaining) {
-        current = target;
-        remaining -= distance;
-        ++agent.waypointIndex;
-      } else {
-        delta /= distance;
-        current += delta * remaining;
-        remaining = 0.0f;
-      }
-    }
-
-    if (agent.waypointIndex >= static_cast<int>(agent.path.size())) {
-      if (m_navTestMode == kNavTestModeFurthest && agent.returning) {
-        current = agent.home;
-        agent.returning = false;
-      } else if (m_navTestMode == kNavTestModeFurthest) {
-        agent.returning = true;
-      } else if (m_navTestMode == kNavTestModeRandom) {
-        agent.target = RandomNavTestPoint(m_navTestCandidatePoints,
-                                          current,
-                                          m_navTestRandomState,
-                                          static_cast<uint32_t>(agent.meshIndex + 31));
-        agent.desiredTarget = agent.target;
-        agent.returning = false;
-      } else {
-        XVECTOR3 desiredTarget;
-        XVECTOR3 projectedTarget;
-        if (ResolveNavTestFollowTarget(m_navMesh, Cam, agent.followSlot,
-                                       desiredTarget, projectedTarget, nullptr)) {
-          agent.desiredTarget = desiredTarget;
-          agent.target = projectedTarget;
-        } else {
-          agent.desiredTarget = desiredTarget;
-          agent.target = current;
-        }
-        agent.returning = false;
-      }
-      agent.needsPath = true;
-      agent.path.clear();
-      agent.pathSegmentTypes.clear();
-      agent.waypointIndex = 0;
-    }
-
-      proposedPositions[agentIndex] = current;
-      movedAgents[agentIndex] = 1;
-  }
-
-  {
-    T8_TELEMETRY_SCOPE("navigation.agents.separation");
-    const t850::KinematicCharacterSettings q3Settings = t850::MakeQuake3CharacterSettings();
-    const float agentHalfX = q3Settings.capsuleRadius;
-    const float agentHalfZ = q3Settings.capsuleRadius;
-    const float playerHalfX = q3Settings.capsuleRadius;
-    const float playerHalfZ = q3Settings.capsuleRadius;
-    XVECTOR3 playerGround = Cam.Eye;
-    playerGround.y -= q3Settings.eyeHeight;
-    playerGround.w = 1.0f;
-
-    auto resolveAabbOverlap = [](XVECTOR3& first,
-                                 float firstHalfX,
-                                 float firstHalfZ,
-                                 XVECTOR3& second,
-                                 float secondHalfX,
-                                 float secondHalfZ,
-                                 bool moveFirst,
-                                 bool moveSecond) {
-      const float dx = second.x - first.x;
-      const float dz = second.z - first.z;
-      const float overlapX = firstHalfX + secondHalfX - std::fabs(dx);
-      const float overlapZ = firstHalfZ + secondHalfZ - std::fabs(dz);
-      if (overlapX <= 0.0f || overlapZ <= 0.0f) {
-        return false;
-      }
-
-      const bool pushX = overlapX < overlapZ;
-      const float direction = pushX
-          ? (dx >= 0.0f ? 1.0f : -1.0f)
-          : (dz >= 0.0f ? 1.0f : -1.0f);
-      const float amount = (pushX ? overlapX : overlapZ) + 0.01f;
-      const float firstShare = moveFirst && moveSecond ? 0.5f : (moveFirst ? 1.0f : 0.0f);
-      const float secondShare = moveFirst && moveSecond ? 0.5f : (moveSecond ? 1.0f : 0.0f);
-      if (pushX) {
-        first.x -= direction * amount * firstShare;
-        second.x += direction * amount * secondShare;
-      } else {
-        first.z -= direction * amount * firstShare;
-        second.z += direction * amount * secondShare;
-      }
-      return true;
-    };
-
-    for (std::size_t iteration = 0; iteration < 3; ++iteration) {
-      for (std::size_t agentIndex = 0; agentIndex < m_navTestAgents.size(); ++agentIndex) {
-        NavTestAgentRuntime& agent = m_navTestAgents[agentIndex];
-        if (!agent.active ||
-            agent.meshIndex < 0 || agent.meshIndex >= kMaxSandboxMeshes ||
-            !Meshes[agent.meshIndex].pBase) {
-          continue;
-        }
-        if (!movedAgents[agentIndex]) {
-          proposedPositions[agentIndex] = agent.navPosition;
-          movedAgents[agentIndex] = 1;
-        }
-        const bool agentProtected = isPhysicsTraversalProtected(agentIndex);
-        if (resolveAabbOverlap(playerGround,
-                               playerHalfX,
-                               playerHalfZ,
-                               proposedPositions[agentIndex],
-                               agentHalfX,
-                               agentHalfZ,
-                               false,
-                               !agentProtected)) {
-          if (t850::RuntimeTelemetry::IsFrameActive()) {
-            t850::RuntimeTelemetry::AddCounter("navigation.agents.aabb.player_overlaps", 1.0);
-          }
-        }
-      }
-
-    for (std::size_t a = 0; a < m_navTestAgents.size(); ++a) {
-        if (!movedAgents[a]) continue;
-      for (std::size_t b = a + 1; b < m_navTestAgents.size(); ++b) {
-          if (!movedAgents[b]) continue;
-          const bool protectA = isPhysicsTraversalProtected(a);
-          const bool protectB = isPhysicsTraversalProtected(b);
-          if (protectA && protectB) {
-            continue;
-          }
-          if (resolveAabbOverlap(proposedPositions[a],
-                                 agentHalfX,
-                                 agentHalfZ,
-                                 proposedPositions[b],
-                                 agentHalfX,
-                                 agentHalfZ,
-                                 !protectA,
-                                 !protectB)) {
-            if (t850::RuntimeTelemetry::IsFrameActive()) {
-              t850::RuntimeTelemetry::AddCounter("navigation.agents.aabb.agent_overlaps", 1.0);
-            }
-          }
-        }
-
-      }
-    }
-  }
-
-  for (std::size_t agentIndex = 0; agentIndex < m_navTestAgents.size(); ++agentIndex) {
-    if (!jumpPadQueuedAgents[agentIndex]) {
-      continue;
-    }
-    NavTestAgentRuntime& agent = m_navTestAgents[agentIndex];
-    const int segmentIndex = agent.waypointIndex - 1;
-    if (segmentIndex >= 0 && segmentIndex < static_cast<int>(agent.path.size())) {
-      const XVECTOR3 base = agent.path[static_cast<std::size_t>(segmentIndex)];
-      proposedPositions[agentIndex] = jumpPadQueuePosition(agent, base, agentIndex);
-      movedAgents[agentIndex] = 1;
-    }
-  }
-
-  {
-    static float s_jumpPadDebugLogTimerSec = 0.0f;
-    s_jumpPadDebugLogTimerSec += (std::max)(0.0f, dtSecs);
-    if (m_q3CollisionWorld && s_jumpPadDebugLogTimerSec >= 0.75f) {
-      s_jumpPadDebugLogTimerSec = 0.0f;
-      auto agentDebugPosition = [&](std::size_t agentIndex) {
-        return movedAgents[agentIndex] ? proposedPositions[agentIndex] : m_navTestAgents[agentIndex].navPosition;
-      };
-      auto agentMeshLabel = [&](const NavTestAgentRuntime& agent) -> const char* {
-        if (agent.meshIndex >= 0 && agent.meshIndex < static_cast<int>(m_sceneMeshPaths.size())) {
-          return m_sceneMeshPaths[static_cast<std::size_t>(agent.meshIndex)].c_str();
-        }
-        return "";
-      };
-      auto segmentTypeForAgent = [&](const NavTestAgentRuntime& agent) {
-        const int segmentIndex = agent.waypointIndex - 1;
-        return segmentIndex >= 0 && segmentIndex < static_cast<int>(agent.pathSegmentTypes.size())
-            ? agent.pathSegmentTypes[static_cast<std::size_t>(segmentIndex)]
-            : t850::navigation::NavTraversalType::Walk;
-      };
-      auto segmentBaseForAgent = [&](const NavTestAgentRuntime& agent) {
-        const int segmentIndex = agent.waypointIndex - 1;
-        return segmentIndex >= 0 && segmentIndex < static_cast<int>(agent.path.size())
-            ? agent.path[static_cast<std::size_t>(segmentIndex)]
-            : agent.navPosition;
-      };
-      auto segmentTargetForAgent = [&](const NavTestAgentRuntime& agent) {
-        return agent.waypointIndex >= 0 && agent.waypointIndex < static_cast<int>(agent.path.size())
-            ? agent.path[static_cast<std::size_t>(agent.waypointIndex)]
-            : agent.target;
-      };
-
-      for (const t850::Q3BspCollisionWorld::JumpPad& jumpPad : m_q3CollisionWorld->GetJumpPads()) {
-        const XVECTOR3 padCenter(
-            (jumpPad.mins.x + jumpPad.maxs.x) * 0.5f,
-            (jumpPad.mins.y + jumpPad.maxs.y) * 0.5f,
-            (jumpPad.mins.z + jumpPad.maxs.z) * 0.5f,
-            1.0f);
-        std::vector<std::size_t> relevantAgents;
-        int insideCount = 0;
-        int queuedCount = 0;
-        int attemptingCount = 0;
-        int physicsCount = 0;
-
-        for (std::size_t agentIndex = 0; agentIndex < m_navTestAgents.size(); ++agentIndex) {
-          const NavTestAgentRuntime& agent = m_navTestAgents[agentIndex];
-          if (!agent.active ||
-              agent.meshIndex < 0 || agent.meshIndex >= kMaxSandboxMeshes ||
-              !Meshes[agent.meshIndex].pBase) {
-            continue;
-          }
-
-          const XVECTOR3 position = agentDebugPosition(agentIndex);
-          const bool inside = agentAabbOverlapsJumpPad(position, jumpPad, 0.05f);
-          const bool nearby = HorizontalDistanceSq3(position, padCenter) <= 36.0f;
-          const bool physicsJumpPad =
-              agent.physicsTraversalActive &&
-              agent.physicsTraversalType == t850::navigation::NavTraversalType::JumpPad;
-          const t850::navigation::NavTraversalType segmentType = segmentTypeForAgent(agent);
-          const XVECTOR3 segmentBase = segmentBaseForAgent(agent);
-          const bool attempting =
-              segmentType == t850::navigation::NavTraversalType::JumpPad &&
-              findJumpPadForBase(segmentBase) == &jumpPad;
-          const bool queued = jumpPadQueuedAgents[agentIndex] != 0 && attempting;
-          const bool physicsForPad =
-              physicsJumpPad &&
-              (findJumpPadForBase(agent.physicsTraversalStart) == &jumpPad || inside);
-
-          insideCount += inside ? 1 : 0;
-          queuedCount += queued ? 1 : 0;
-          attemptingCount += attempting ? 1 : 0;
-          physicsCount += physicsForPad ? 1 : 0;
-          if (inside || queued || attempting || physicsForPad || nearby) {
-            relevantAgents.push_back(agentIndex);
-          }
-        }
-
-        const bool shouldLog =
-            queuedCount > 0 ||
-            insideCount > 1 ||
-            attemptingCount > 1 ||
-            physicsCount > 0 ||
-            !relevantAgents.empty();
-        if (!shouldLog) {
-          continue;
-        }
-
-#ifdef NAV_MESH_TRACE_LOGS
-        T8_LOG_INFO("[JumpPadDebug] pad=%u bounds=(%.2f,%.2f,%.2f)-(%.2f,%.2f,%.2f) center=(%.2f,%.2f,%.2f) vel=(%.2f,%.2f,%.2f) inside=%d queued=%d attempting=%d physics=%d relevant=%zu",
-                    jumpPad.entityId,
-                    jumpPad.mins.x, jumpPad.mins.y, jumpPad.mins.z,
-                    jumpPad.maxs.x, jumpPad.maxs.y, jumpPad.maxs.z,
-                    padCenter.x, padCenter.y, padCenter.z,
-                    jumpPad.velocity.x, jumpPad.velocity.y, jumpPad.velocity.z,
-                    insideCount, queuedCount, attemptingCount, physicsCount, relevantAgents.size());
-#endif
-
-        for (std::size_t agentIndex : relevantAgents) {
-          const NavTestAgentRuntime& agent = m_navTestAgents[agentIndex];
-          const XVECTOR3 position = agentDebugPosition(agentIndex);
-          const XVECTOR3 aabbMin = position - jumpPadAgentHalfExtents;
-          const XVECTOR3 aabbMax = position + jumpPadAgentHalfExtents;
-          const t850::navigation::NavTraversalType segmentType = segmentTypeForAgent(agent);
-          const XVECTOR3 segmentBase = segmentBaseForAgent(agent);
-          const XVECTOR3 segmentTarget = segmentTargetForAgent(agent);
-          const bool inside = agentAabbOverlapsJumpPad(position, jumpPad, 0.05f);
-          const bool nearby = HorizontalDistanceSq3(position, padCenter) <= 36.0f;
-          const bool attempting =
-              segmentType == t850::navigation::NavTraversalType::JumpPad &&
-              findJumpPadForBase(segmentBase) == &jumpPad;
-          const XVECTOR3 decisionBase = attempting
-              ? segmentBase
-              : XVECTOR3(padCenter.x, position.y, padCenter.z, 1.0f);
-          const JumpPadOccupancyDecision occupancy = jumpPadOccupancyDecision(agentIndex, decisionBase);
-          const bool queued = jumpPadQueuedAgents[agentIndex] != 0 && attempting;
-          const bool physicsForPad =
-              agent.physicsTraversalActive &&
-              agent.physicsTraversalType == t850::navigation::NavTraversalType::JumpPad &&
-              (findJumpPadForBase(agent.physicsTraversalStart) == &jumpPad || inside);
-          const bool canForceTriggerJump = inside && !physicsForPad && !occupancy.occupied;
-          const bool canPathJump =
-              attempting &&
-              !physicsForPad &&
-              !occupancy.occupied &&
-              std::sqrt(HorizontalDistanceSq3(position, segmentBase)) <= 0.05f;
-          const char* blockReason = physicsForPad
-              ? "already_physics"
-              : (occupancy.occupied ? occupancy.reason :
-                 (!inside && !attempting ? "not_inside_or_attempting" :
-                  (attempting && std::sqrt(HorizontalDistanceSq3(position, segmentBase)) > 0.05f ? "moving_to_base" : "none")));
-#ifdef NAV_MESH_TRACE_LOGS
-          T8_LOG_INFO("[JumpPadDebug] pad=%u agent=%zu mesh=%d '%s' pos=(%.2f,%.2f,%.2f) aabb=(%.2f,%.2f,%.2f)-(%.2f,%.2f,%.2f) inside=%d nearby=%d queued=%d attempting=%d physics=%d type=%s airborne=%d wp=%d path=%zu base=(%.2f,%.2f,%.2f) decisionBase=(%.2f,%.2f,%.2f) segTarget=(%.2f,%.2f,%.2f) distBase=%.2f target=(%.2f,%.2f,%.2f) desired=(%.2f,%.2f,%.2f) cooldown=%.3f occupied=%d owner=%lld reason=%s currentDist=%.3f ownerDist=%.3f canForce=%d canPath=%d block=%s",
-                      jumpPad.entityId,
-                      agentIndex,
-                      agent.meshIndex,
-                      agentMeshLabel(agent),
-                      position.x, position.y, position.z,
-                      aabbMin.x, aabbMin.y, aabbMin.z,
-                      aabbMax.x, aabbMax.y, aabbMax.z,
-                      inside ? 1 : 0,
-                      nearby ? 1 : 0,
-                      queued ? 1 : 0,
-                      attempting ? 1 : 0,
-                      physicsForPad ? 1 : 0,
-                      traversalName(segmentType),
-                      agent.physicsWasAirborne ? 1 : 0,
-                      agent.waypointIndex,
-                      agent.path.size(),
-                      segmentBase.x, segmentBase.y, segmentBase.z,
-                      decisionBase.x, decisionBase.y, decisionBase.z,
-                      segmentTarget.x, segmentTarget.y, segmentTarget.z,
-                      std::sqrt(HorizontalDistanceSq3(position, segmentBase)),
-                      agent.target.x, agent.target.y, agent.target.z,
-                      agent.desiredTarget.x, agent.desiredTarget.y, agent.desiredTarget.z,
-                      agent.repathCooldownSec,
-                      occupancy.occupied ? 1 : 0,
-                      occupancy.ownerIndex == static_cast<std::size_t>(-1) ? -1LL : static_cast<long long>(occupancy.ownerIndex),
-                      occupancy.reason,
-                      std::sqrt(occupancy.currentDistanceSq),
-                      occupancy.ownerDistanceSq >= 1.0e29f ? -1.0f : std::sqrt(occupancy.ownerDistanceSq),
-                      canForceTriggerJump ? 1 : 0,
-                      canPathJump ? 1 : 0,
-                      blockReason);
-#endif
-        }
-
-        for (std::size_t i = 0; i < relevantAgents.size(); ++i) {
-          for (std::size_t j = i + 1; j < relevantAgents.size(); ++j) {
-            const std::size_t a = relevantAgents[i];
-            const std::size_t b = relevantAgents[j];
-            const XVECTOR3 posA = agentDebugPosition(a);
-            const XVECTOR3 posB = agentDebugPosition(b);
-            const float overlapX = jumpPadAgentHalfExtents.x * 2.0f - std::fabs(posB.x - posA.x);
-            const float overlapZ = jumpPadAgentHalfExtents.z * 2.0f - std::fabs(posB.z - posA.z);
-            if (overlapX > 0.0f && overlapZ > 0.0f) {
-#ifdef NAV_MESH_TRACE_LOGS
-              T8_LOG_INFO("[JumpPadDebug] pad=%u overlap agents=%zu/%zu overlap=(%.3f,%.3f) posA=(%.2f,%.2f,%.2f) posB=(%.2f,%.2f,%.2f)",
-                          jumpPad.entityId,
-                          a,
-                          b,
-                          overlapX,
-                          overlapZ,
-                          posA.x, posA.y, posA.z,
-                          posB.x, posB.y, posB.z);
-#endif
-            }
-          }
-        }
-      }
-    }
-  }
-
-  {
-    T8_TELEMETRY_SCOPE("navigation.agents.apply_transforms");
-    for (std::size_t agentIndex = 0; agentIndex < m_navTestAgents.size(); ++agentIndex) {
-      NavTestAgentRuntime& agent = m_navTestAgents[agentIndex];
-      if (!agent.active ||
-          agent.meshIndex < 0 || agent.meshIndex >= kMaxSandboxMeshes ||
-          !Meshes[agent.meshIndex].pBase) {
-        continue;
-      }
-
-      PrimitiveInst& instance = Meshes[agent.meshIndex];
-      if (movedAgents[agentIndex]) {
-        XVECTOR3 navPosition = proposedPositions[agentIndex];
-        if (!physicsMovedAgents[agentIndex] &&
-            !jumpPadQueuedAgents[agentIndex] &&
-            !suppressProjection[agentIndex]) {
-          const XVECTOR3 requestedNavPosition = navPosition;
-          XVECTOR3 projectedNavPosition = navPosition;
-          std::string projectionError;
-          const bool projected = m_navMesh.ProjectPoint(
-              requestedNavPosition,
-              projectedNavPosition,
-              NavTestAgentProjectionExtents(),
-              &projectionError);
-
-          const float correctionSq = projected
-              ? DistanceSquared(requestedNavPosition, projectedNavPosition)
-              : 0.0f;
-          const bool largeCorrection = projected && correctionSq > 0.25f;
-          const bool shouldLogProjection =
-              (!projected || largeCorrection) &&
-              agentIndex < s_navProjectionDebugCooldownSec.size() &&
-              s_navProjectionDebugCooldownSec[agentIndex] <= 0.0f;
-
-          if (shouldLogProjection) {
-            s_navProjectionDebugCooldownSec[agentIndex] = 0.50f;
-            const int segmentIndex = agent.waypointIndex - 1;
-            const t850::navigation::NavTraversalType segmentType =
-                (segmentIndex >= 0 && segmentIndex < static_cast<int>(agent.pathSegmentTypes.size()))
-                    ? agent.pathSegmentTypes[static_cast<std::size_t>(segmentIndex)]
-                    : t850::navigation::NavTraversalType::Walk;
-            const XVECTOR3 segmentBase =
-                (segmentIndex >= 0 && segmentIndex < static_cast<int>(agent.path.size()))
-                    ? agent.path[static_cast<std::size_t>(segmentIndex)]
-                    : agent.navPosition;
-            const XVECTOR3 nextPoint =
-                (agent.waypointIndex >= 0 && agent.waypointIndex < static_cast<int>(agent.path.size()))
-                    ? agent.path[static_cast<std::size_t>(agent.waypointIndex)]
-                    : agent.target;
-            const float requestedMove = std::sqrt(HorizontalDistanceSq3(agent.navPosition, requestedNavPosition));
-            const float distToNext = std::sqrt(HorizontalDistanceSq3(agent.navPosition, nextPoint));
-            const float correction = projected ? std::sqrt(correctionSq) : 0.0f;
-#ifdef NAV_MESH_TRACE_LOGS
-            T8_LOG_INFO("[NavProjectionDebug] mesh=%d agent=%zu projected=%d largeCorrection=%d old=(%.2f,%.2f,%.2f) requested=(%.2f,%.2f,%.2f) projectedPos=(%.2f,%.2f,%.2f) requestedMoveXZ=%.3f correction=%.3f segment=%s wp=%d path=%zu base=(%.2f,%.2f,%.2f) next=(%.2f,%.2f,%.2f) distNext=%.3f target=(%.2f,%.2f,%.2f) desired=(%.2f,%.2f,%.2f) physics=%d queued=%d suppressed=%d err='%s'",
-                        agent.meshIndex,
-                        agentIndex,
-                        projected ? 1 : 0,
-                        largeCorrection ? 1 : 0,
-                        agent.navPosition.x, agent.navPosition.y, agent.navPosition.z,
-                        requestedNavPosition.x, requestedNavPosition.y, requestedNavPosition.z,
-                        projected ? projectedNavPosition.x : requestedNavPosition.x,
-                        projected ? projectedNavPosition.y : requestedNavPosition.y,
-                        projected ? projectedNavPosition.z : requestedNavPosition.z,
-                        requestedMove,
-                        correction,
-                        traversalName(segmentType),
-                        agent.waypointIndex,
-                        agent.path.size(),
-                        segmentBase.x, segmentBase.y, segmentBase.z,
-                        nextPoint.x, nextPoint.y, nextPoint.z,
-                        distToNext,
-                        agent.target.x, agent.target.y, agent.target.z,
-                        agent.desiredTarget.x, agent.desiredTarget.y, agent.desiredTarget.z,
-                        agent.physicsTraversalActive ? 1 : 0,
-                        jumpPadQueuedAgents[agentIndex] ? 1 : 0,
-                        suppressProjection[agentIndex] ? 1 : 0,
-                        projectionError.c_str());
-#endif
-          }
-
-          if (projected) {
-            navPosition = projectedNavPosition;
-          } else {
-            navPosition = agent.navPosition;
-          }
-        }
-        agent.navPosition = navPosition;
-        agent.navToOriginOffset = agent.visualOffset;
-        if (agent.physicsTraversalActive) {
-          const t850::KinematicCharacterSettings q3Settings = t850::MakeQuake3CharacterSettings();
-          agent.physicsController.SetPosition(Q3CenterFromGroundPoint(agent.navPosition, q3Settings));
-        }
-      }
-
-      const XVECTOR3 visualPosition = NavTestVisualPosition(agent.navPosition, agent.visualOffset);
-      instance.TranslateAbsolute(visualPosition.x, visualPosition.y, visualPosition.z);
-      RotateNavTestAgentToFace(instance, visualPosition, Cam.Eye, agent.frontYawOffsetDeg, agent.faceYawSign);
-      instance.Update();
-    }
-  }
-
-  if (m_navTestMode == kNavTestModeFollowPlayer) {
-    m_navTestDiagAccumSec += (std::max)(0.0f, dtSecs);
-    if (m_navTestDiagAccumSec >= kNavTestDiagIntervalSec) {
-      m_navTestDiagAccumSec = 0.0f;
-      for (const NavTestAgentRuntime& agent : m_navTestAgents) {
-        if (!agent.active ||
-            agent.meshIndex < 0 || agent.meshIndex >= kMaxSandboxMeshes ||
-            !Meshes[agent.meshIndex].pBase) {
-          continue;
-        }
-
-        const PrimitiveInst& instance = Meshes[agent.meshIndex];
-        const XVECTOR3 position(instance.Final.m41, instance.Final.m42, instance.Final.m43, 1.0f);
-        const bool hasNextWaypoint =
-            !agent.path.empty() &&
-            agent.waypointIndex >= 0 &&
-            agent.waypointIndex < static_cast<int>(agent.path.size());
-        const XVECTOR3 nextNav = hasNextWaypoint
-            ? agent.path[static_cast<std::size_t>(agent.waypointIndex)]
-            : agent.lastPathFirst;
-        const XVECTOR3 nextWorld = NavTestVisualPosition(nextNav, agent.visualOffset);
-#ifdef NAV_MESH_TRACE_LOGS
-        T8_LOG_INFO("[NavigationTestPos] mesh=%d slot=%d active=%d needsPath=%d cooldown=%.3f pathOk=%d pathCount=%zu wp=%d player=(%.2f,%.2f,%.2f) nav=(%.2f,%.2f,%.2f) visual=(%.2f,%.2f,%.2f) dyPlayer=%.2f desired=(%.2f,%.2f,%.2f) target=(%.2f,%.2f,%.2f) lastStart=(%.2f,%.2f,%.2f) lastEnd=(%.2f,%.2f,%.2f) pathFirst=(%.2f,%.2f,%.2f) nextNav=(%.2f,%.2f,%.2f) nextWorld=(%.2f,%.2f,%.2f) offset=(%.2f,%.2f,%.2f) err='%s'",
-                    agent.meshIndex,
-                    agent.followSlot,
-                    agent.active ? 1 : 0,
-                    agent.needsPath ? 1 : 0,
-                    agent.repathCooldownSec,
-                    agent.lastPathSuccess ? 1 : 0,
-                    agent.path.size(),
-                    agent.waypointIndex,
-                    Cam.Eye.x, Cam.Eye.y, Cam.Eye.z,
-                    agent.navPosition.x, agent.navPosition.y, agent.navPosition.z,
-                    position.x, position.y, position.z,
-                    position.y - Cam.Eye.y,
-                    agent.desiredTarget.x, agent.desiredTarget.y, agent.desiredTarget.z,
-                    agent.target.x, agent.target.y, agent.target.z,
-                    agent.lastPathStart.x, agent.lastPathStart.y, agent.lastPathStart.z,
-                    agent.lastPathEnd.x, agent.lastPathEnd.y, agent.lastPathEnd.z,
-                    agent.lastPathFirst.x, agent.lastPathFirst.y, agent.lastPathFirst.z,
-                    nextNav.x, nextNav.y, nextNav.z,
-                    nextWorld.x, nextWorld.y, nextWorld.z,
-                    agent.visualOffset.x, agent.visualOffset.y, agent.visualOffset.z,
-                    agent.lastPathError.c_str());
-#endif
-      }
-    }
-  }
-}
-
-void SandboxScene::CreateAssets() {
-  if (!m_renderGraph.Load("Scenes/SandboxScene_RenderGraph.json")) {
-    T8_LOG_ERROR("[SandboxScene] Failed to load render graph");
+void RagdollEditor::CreateAssets() {
+  if (!m_renderGraph.Load("Scenes/RagdollEditor_RenderGraph.json")) {
+    T8_LOG_ERROR("[RagdollEditor] Failed to load render graph");
     return;
   }
   m_renderGraph.CreateRenderTargets(pFramework->pVideoDriver, SceneProp);
@@ -5618,11 +4430,11 @@ void SandboxScene::CreateAssets() {
   SceneProp.SSAOKernel.InitTexture();
 
   if (m_controlSetup.descriptor.name.empty()) {
-    m_controlSetup.Load("Scenes/SandboxScene.json");
+    m_controlSetup.Load("Scenes/RagdollEditor.json");
   }
 
   const t850::SelectorDesc* cubemapDesc = FindSelectorDesc(m_controlSetup.descriptor.selectors, "cubemap");
-  const bool embeddedSceneProfile = !g_config.sceneFilePath.empty();
+  const bool embeddedSceneProfile = false;
   const std::string startupModelKey = embeddedSceneProfile ? std::string{} : SandboxProfileModelKey(g_config.modelPath);
   std::vector<t850::SandboxProfileDesc> startupSceneProfiles;
   const std::vector<t850::SandboxProfileDesc>* startupProfiles = &m_controlSetup.descriptor.profiles;
@@ -5633,7 +4445,7 @@ void SandboxScene::CreateAssets() {
       startupSceneProfiles = startupScene.profiles;
       startupProfiles = &startupSceneProfiles;
     } else {
-      T8_LOG_ERROR("[SandboxScene] Could not pre-read scene profiles from '%s': %s",
+      T8_LOG_ERROR("[RagdollEditor] Could not pre-read scene profiles from '%s': %s",
                    g_config.sceneFilePath.c_str(), startupSceneError.c_str());
     }
   }
@@ -5677,17 +4489,13 @@ void SandboxScene::CreateAssets() {
     SheenELUTTexIndex);
   UpdateSceneIBLSettings(SceneProp, g_pBaseDriver, EnvMaps);
 
-  if (!g_config.sceneFilePath.empty()) {
-    if (!LoadEditorSceneAssets(g_config.sceneFilePath)) {
-      T8_LOG_ERROR("[SandboxScene] Cannot continue without scene assets for '%s'", g_config.sceneFilePath.c_str());
-    }
-  } else {
+  {
     // Load the glTF model
     int index = PrimitiveMgr.CreateMesh(g_config.modelPath.c_str());
     if (index < 0) {
-      T8_LOG_ERROR("[SandboxScene] Failed to load '%s'", g_config.modelPath.c_str());
+      T8_LOG_ERROR("[RagdollEditor] Failed to load '%s'", g_config.modelPath.c_str());
     } else {
-      T8_LOG_INFO("[SandboxScene] Loaded model '%s', primitive index=%d", g_config.modelPath.c_str(), index);
+      T8_LOG_INFO("[RagdollEditor] Loaded model '%s', primitive index=%d", g_config.modelPath.c_str(), index);
       Meshes[0].CreateInstance(PrimitiveMgr.GetPrimitive(index), &VP);
       Meshes[0].Update();
       m_meshCount = 1;
@@ -5728,9 +4536,6 @@ void SandboxScene::CreateAssets() {
   m_lightArrowRenderer.Create();
   m_ragdollJointRenderer.Create();
   m_physicsDebugRenderer.Create();
-  m_navMeshDebugRenderer.Create();
-  m_navMesh.Clear();
-  m_navMeshBuildAttempted = false;
   float arrowVerts[10 * 4] = {};
   unsigned short arrowIndices[10] = {0, 1, 2, 3, 4, 5, 6, 7, 8, 9};
   m_lightArrowVB = t850::LineRenderer::CreatePositionVB(arrowVerts, 10, BufferUsage::DINAMIC);
@@ -5798,13 +4603,13 @@ void SandboxScene::CreateAssets() {
             m_ragdollEditSelectedHandle = 0;
             LoadRagdollEditPose();
           }
-          T8_LOG_INFO("[SandboxScene] Attached full-skeleton ragdoll physics for '%s'", g_config.modelPath.c_str());
+          T8_LOG_INFO("[RagdollEditor] Attached full-skeleton ragdoll physics for '%s'", g_config.modelPath.c_str());
           if (!m_driveRagdollFromAnimation) {
-            T8_LOG_ERROR("[SandboxScene] Failed to bind full-skeleton ragdoll to animation pose for '%s'", g_config.modelPath.c_str());
+            T8_LOG_ERROR("[RagdollEditor] Failed to bind full-skeleton ragdoll to animation pose for '%s'", g_config.modelPath.c_str());
           }
           CreatePhysicsFloor(*engineContext->physics);
         } else {
-          T8_LOG_ERROR("[SandboxScene] Failed to attach full-skeleton ragdoll physics for '%s'", g_config.modelPath.c_str());
+          T8_LOG_ERROR("[RagdollEditor] Failed to attach full-skeleton ragdoll physics for '%s'", g_config.modelPath.c_str());
         }
       }
 
@@ -5813,29 +4618,29 @@ void SandboxScene::CreateAssets() {
         RenderMesh* mesh = static_cast<RenderMesh*>(Meshes[0].pBase);
         attachedPhysics = t850::AttachMeshBoxBody(*engineContext->physics, Meshes[0], *mesh, t850::PhysicsBodyMotion::Static);
         if (attachedPhysics) {
-          T8_LOG_INFO("[SandboxScene] Attached static mesh-box physics for '%s'", g_config.modelPath.c_str());
+          T8_LOG_INFO("[RagdollEditor] Attached static mesh-box physics for '%s'", g_config.modelPath.c_str());
         }
       }
     }
   }
 }
 
-void SandboxScene::OnLoadScene() {
+void RagdollEditor::OnLoadScene() {
   InstallSandboxConsoleLogCapture();
   InitVars();
   CreateAssets();
 }
 
-void SandboxScene::OnDestoryScene() {
+void RagdollEditor::OnDestoryScene() {
   DestroyAssets();
   UninstallSandboxConsoleLogCapture();
 }
 
-void SandboxScene::ResetViewInput() {
+void RagdollEditor::ResetViewInput() {
   m_cameraController.ClearInput();
 }
 
-void SandboxScene::DestroyAssets() {
+void RagdollEditor::DestroyAssets() {
   SceneProp.SSAOKernel.Destroy();
   bool hasPhysicsLinks = m_floorBody.IsValid();
   const int meshCount = (std::max)(m_meshCount, Meshes[0].pBase ? 1 : 0);
@@ -5899,16 +4704,10 @@ void SandboxScene::DestroyAssets() {
   m_meshCount = 0;
   m_loadedEditorScene = false;
   m_loadedEditorScenePath.clear();
-  m_q3CollisionWorld.reset();
   m_primaryRagdollResourcePath.clear();
   m_sceneMeshPaths.clear();
   m_sceneRagdollPaths.clear();
-  m_sceneNavAgentFrontYawOffsets.clear();
-  m_sceneNavAgentFaceYawSigns.clear();
   m_sceneRagdolls.clear();
-  m_navTestAgents.clear();
-  m_navTestCandidatePoints.clear();
-  m_navTestInitialized = false;
   m_selectedSkinningMeshIndex = 0;
   m_selectedAnimationMeshIndex = 0;
   m_currentCubemapIndex = 0;
@@ -5925,14 +4724,11 @@ void SandboxScene::DestroyAssets() {
   m_lightArrowRenderer.Destroy();
   m_ragdollJointRenderer.Destroy();
   m_physicsDebugRenderer.Destroy();
-  m_navMeshDebugRenderer.Destroy();
-  m_navMesh.Clear();
-  m_navMeshBuildAttempted = false;
   PrimitiveMgr.DestroyPrimitives();
   pFramework->pVideoDriver->DestroyRTs();
 }
 
-void SandboxScene::OnUpdate(float _DtSecs) {
+void RagdollEditor::OnUpdate(float _DtSecs) {
   T8_TELEMETRY_SCOPE("sandbox.update");
   DtSecs = _DtSecs;
   SceneProp.FrameDeltaSec = DtSecs;
@@ -5964,7 +4760,7 @@ void SandboxScene::OnUpdate(float _DtSecs) {
         !m_ragdollAutoStartAttempted &&
         ((Meshes[0].HasPhysicsRagdoll() && !m_ragdollPhysicsDriven) || !m_sceneRagdolls.empty())) {
       m_ragdollAutoStartAttempted = true;
-      T8_LOG_INFO("[SandboxScene] Auto-starting ragdoll simulation at %s",
+      T8_LOG_INFO("[RagdollEditor] Auto-starting ragdoll simulation at %s",
                   RagdollSimulationSpeedLabelForIndex(m_ragdollSimulationSpeedIndex));
       SwitchRagdollToPhysics();
     }
@@ -5999,7 +4795,7 @@ void SandboxScene::OnUpdate(float _DtSecs) {
   // conflicts with the main command list if done mid-frame.
   if (!m_pendingCubemap.empty()) {
     T8_TELEMETRY_SCOPE("sandbox.update.pending_cubemap");
-    T8_LOG_INFO("[SandboxScene] Loading cubemap '%s' (old slot=%d)",
+    T8_LOG_INFO("[RagdollEditor] Loading cubemap '%s' (old slot=%d)",
                 m_pendingCubemap.c_str(), EnvMapTexIndex);
     // Flush GPU before destroying — D3D12 may still reference the old
     // texture from the previous frame's command list.
@@ -6040,7 +4836,7 @@ void SandboxScene::OnUpdate(float _DtSecs) {
       EnvMaps.SheenELUT = SheenELUTTexIndex;
       UpdateSceneIBLSettings(SceneProp, g_pBaseDriver, EnvMaps);
       Texture* newTex = g_pBaseDriver->GetTexture(EnvMapTexIndex);
-      T8_LOG_INFO("[SandboxScene] Cubemap loaded: slot=%d tex=%p (%dx%d)",
+      T8_LOG_INFO("[RagdollEditor] Cubemap loaded: slot=%d tex=%p (%dx%d)",
                   EnvMapTexIndex, newTex, newTex ? newTex->x : 0, newTex ? newTex->y : 0);
       Quads[0].SetEnvironmentMap(newTex);
       const int meshCount = (std::max)(m_meshCount, Meshes[0].pBase ? 1 : 0);
@@ -6050,7 +4846,7 @@ void SandboxScene::OnUpdate(float _DtSecs) {
         }
       }
     } else {
-      T8_LOG_ERROR("[SandboxScene] Failed to load cubemap '%s'; keeping previous cubemap", m_pendingCubemap.c_str());
+      T8_LOG_ERROR("[RagdollEditor] Failed to load cubemap '%s'; keeping previous cubemap", m_pendingCubemap.c_str());
     }
     m_pendingCubemap.clear();
   }
@@ -6097,11 +4893,6 @@ void SandboxScene::OnUpdate(float _DtSecs) {
       SyncLightCameraFromDirectionalLight();
     }
   }
-  {
-    T8_TELEMETRY_SCOPE("sandbox.update.nav_agents");
-    UpdateNavTestAgents(DtSecs);
-  }
-
   // --dumpMatrices: log all camera matrices per frame, then exit
   if (g_config.flags.dumpMatrices) {
     T8_TELEMETRY_SCOPE("sandbox.update.dump_matrices");
@@ -6191,7 +4982,7 @@ void SandboxScene::OnUpdate(float _DtSecs) {
   }
 }
 
-void SandboxScene::DriveRagdollFromAnimation(float deltaSeconds) {
+void RagdollEditor::DriveRagdollFromAnimation(float deltaSeconds) {
   if (!m_driveRagdollFromAnimation || !Meshes[0].HasPhysicsRagdoll()) {
     return;
   }
@@ -6205,7 +4996,7 @@ void SandboxScene::DriveRagdollFromAnimation(float deltaSeconds) {
 
   if (!t850::BuildRagdollPoseFromAnimation(*skinned, Meshes[0].Final, m_ragdollAnimationBinding, m_ragdollAnimationPose)) {
     if (!m_ragdollDriveLogEmitted) {
-      T8_LOG_ERROR("[SandboxScene] Failed to build animation-driven ragdoll pose for '%s'", g_config.modelPath.c_str());
+      T8_LOG_ERROR("[RagdollEditor] Failed to build animation-driven ragdoll pose for '%s'", g_config.modelPath.c_str());
       m_ragdollDriveLogEmitted = true;
     }
     return;
@@ -6213,20 +5004,20 @@ void SandboxScene::DriveRagdollFromAnimation(float deltaSeconds) {
 
   if (!engineContext->physics->DriveRagdollFromPose(Meshes[0].GetPhysicsRagdoll(), m_ragdollAnimationPose, deltaSeconds)) {
     if (!m_ragdollDriveLogEmitted) {
-      T8_LOG_ERROR("[SandboxScene] Failed to drive ragdoll from animation pose for '%s'", g_config.modelPath.c_str());
+      T8_LOG_ERROR("[RagdollEditor] Failed to drive ragdoll from animation pose for '%s'", g_config.modelPath.c_str());
       m_ragdollDriveLogEmitted = true;
     }
     return;
   }
 
   if (!m_ragdollDriveLogEmitted) {
-    T8_LOG_INFO("[SandboxScene] Driving humanoid ragdoll from animation pose: bodies=%zu", m_ragdollAnimationPose.bones.size());
+    T8_LOG_INFO("[RagdollEditor] Driving humanoid ragdoll from animation pose: bodies=%zu", m_ragdollAnimationPose.bones.size());
     LogRagdollFloorDiagnostics("animation driven");
     m_ragdollDriveLogEmitted = true;
   }
 }
 
-void SandboxScene::UpdateSkeletonFromRagdollPhysics() {
+void RagdollEditor::UpdateSkeletonFromRagdollPhysics() {
   if (!m_ragdollPhysicsDriven || !Meshes[0].HasPhysicsRagdoll()) {
     return;
   }
@@ -6250,14 +5041,14 @@ void SandboxScene::UpdateSkeletonFromRagdollPhysics() {
           m_ragdollPhysicsBoneIndices,
           m_ragdollPhysicsCombinedMatrices)) {
     if (!m_ragdollPhysicsLogEmitted) {
-      T8_LOG_ERROR("[SandboxScene] Failed to drive skinned skeleton from physics for '%s'", g_config.modelPath.c_str());
+      T8_LOG_ERROR("[RagdollEditor] Failed to drive skinned skeleton from physics for '%s'", g_config.modelPath.c_str());
       m_ragdollPhysicsLogEmitted = true;
     }
     return;
   }
 
   if (!m_ragdollPhysicsLogEmitted) {
-    T8_LOG_INFO("[SandboxScene] Driving skinned skeleton from dynamic ragdoll physics: bodies=%zu", m_ragdollPhysicsStates.size());
+    T8_LOG_INFO("[RagdollEditor] Driving skinned skeleton from dynamic ragdoll physics: bodies=%zu", m_ragdollPhysicsStates.size());
     m_ragdollPhysicsLogEmitted = true;
   }
   if (!m_ragdollFloorRuntimeDiagEmitted) {
@@ -6266,7 +5057,7 @@ void SandboxScene::UpdateSkeletonFromRagdollPhysics() {
   }
 }
 
-void SandboxScene::UpdateSceneSkeletonsFromRagdollPhysics() {
+void RagdollEditor::UpdateSceneSkeletonsFromRagdollPhysics() {
   if (m_sceneRagdolls.empty()) {
     return;
   }
@@ -6311,7 +5102,7 @@ void SandboxScene::UpdateSceneSkeletonsFromRagdollPhysics() {
             runtime.physicsCombinedMatrices);
     if (!gotState || !builtPose || !appliedPose) {
       if (!runtime.physicsLogEmitted) {
-        T8_LOG_ERROR("[SandboxScene] Failed to drive scene object skeleton from ragdoll '%s' state=%d bodies=%zu pose=%d overrides=%d bones=%zu",
+        T8_LOG_ERROR("[RagdollEditor] Failed to drive scene object skeleton from ragdoll '%s' state=%d bodies=%zu pose=%d overrides=%d bones=%zu",
                      runtime.resourcePath.c_str(),
                      gotState ? 1 : 0,
                      runtime.physicsStates.size(),
@@ -6324,7 +5115,7 @@ void SandboxScene::UpdateSceneSkeletonsFromRagdollPhysics() {
     }
 
     if (!runtime.physicsLogEmitted) {
-      T8_LOG_INFO("[SandboxScene] Driving scene object skeleton from dynamic ragdoll '%s': bodies=%zu",
+      T8_LOG_INFO("[RagdollEditor] Driving scene object skeleton from dynamic ragdoll '%s': bodies=%zu",
                   runtime.resourcePath.c_str(),
                   runtime.physicsStates.size());
       runtime.physicsLogEmitted = true;
@@ -6332,9 +5123,9 @@ void SandboxScene::UpdateSceneSkeletonsFromRagdollPhysics() {
   }
 }
 
-void SandboxScene::SwitchRagdollToPhysics() {
+void RagdollEditor::SwitchRagdollToPhysics() {
   if (m_ragdollPhysicsDriven) {
-    T8_LOG_INFO("[SandboxScene] Ragdoll is already physics-driven");
+    T8_LOG_INFO("[RagdollEditor] Ragdoll is already physics-driven");
     return;
   }
 
@@ -6345,7 +5136,7 @@ void SandboxScene::SwitchRagdollToPhysics() {
     if (SwitchSceneRagdollsToPhysics()) {
       return;
     }
-    T8_LOG_ERROR("[SandboxScene] Cannot switch to ragdoll physics: no skinned ragdoll is attached");
+    T8_LOG_ERROR("[RagdollEditor] Cannot switch to ragdoll physics: no skinned ragdoll is attached");
     return;
   }
 
@@ -6383,7 +5174,7 @@ void SandboxScene::SwitchRagdollToPhysics() {
     m_ragdollPhysicsBoneIndices = std::move(handoffBoneIndices);
     m_ragdollPhysicsCombinedMatrices = std::move(handoffCombinedMatrices);
   } else {
-    T8_LOG_ERROR("[SandboxScene] Failed to dump F5 ragdoll matrix comparison for '%s'", g_config.modelPath.c_str());
+    T8_LOG_ERROR("[RagdollEditor] Failed to dump F5 ragdoll matrix comparison for '%s'", g_config.modelPath.c_str());
   }
 
   if (m_floorBody.IsValid()) {
@@ -6393,7 +5184,7 @@ void SandboxScene::SwitchRagdollToPhysics() {
   CreatePhysicsFloor(*engineContext->physics);
   LogRagdollFloorDiagnostics("F5 pre-dynamic");
   if (!engineContext->physics->SetRagdollMotion(Meshes[0].GetPhysicsRagdoll(), t850::PhysicsBodyMotion::Dynamic)) {
-    T8_LOG_ERROR("[SandboxScene] Failed to switch ragdoll bodies to dynamic physics");
+    T8_LOG_ERROR("[RagdollEditor] Failed to switch ragdoll bodies to dynamic physics");
     return;
   }
   engineContext->physics->SetRagdollVelocity(
@@ -6409,10 +5200,10 @@ void SandboxScene::SwitchRagdollToPhysics() {
   skinned->ClearSnapshotBoneMatrices();
   LogRagdollFloorDiagnostics("F5 post-dynamic");
   SwitchSceneRagdollsToPhysics();
-  T8_LOG_INFO("[SandboxScene] F5: animation-to-physics ragdoll transition started");
+  T8_LOG_INFO("[RagdollEditor] F5: animation-to-physics ragdoll transition started");
 }
 
-bool SandboxScene::PickRagdollSimulationBody(float mouseX,
+bool RagdollEditor::PickRagdollSimulationBody(float mouseX,
                                              float mouseY,
                                              int& outBodyIndex,
                                              t850::PhysicsBodyState& outState,
@@ -6477,7 +5268,7 @@ bool SandboxScene::PickRagdollSimulationBody(float mouseX,
   return false;
 }
 
-bool SandboxScene::BeginRagdollSimulationGrab(float mouseX, float mouseY) {
+bool RagdollEditor::BeginRagdollSimulationGrab(float mouseX, float mouseY) {
   t850::PhysicsBodyState pickedState;
   XVECTOR3 hitPoint;
   float hitDistance = 0.0f;
@@ -6516,12 +5307,12 @@ bool SandboxScene::BeginRagdollSimulationGrab(float mouseX, float mouseY) {
   m_ragdollEditSelectedCapsule = bodyIndex;
   if (bodyIndex >= 0 && bodyIndex < static_cast<int>(m_ragdollAnimationBinding.referencePose.bones.size())) {
     const auto& bone = m_ragdollAnimationBinding.referencePose.bones[static_cast<std::size_t>(bodyIndex)];
-    T8_LOG_INFO("[SandboxScene] Grabbed ragdoll body %d (%s)", bodyIndex, bone.body.debugName.c_str());
+    T8_LOG_INFO("[RagdollEditor] Grabbed ragdoll body %d (%s)", bodyIndex, bone.body.debugName.c_str());
   }
   return UpdateRagdollSimulationGrab(mouseX, mouseY);
 }
 
-bool SandboxScene::UpdateRagdollSimulationGrab(float mouseX, float mouseY) {
+bool RagdollEditor::UpdateRagdollSimulationGrab(float mouseX, float mouseY) {
   if (!m_ragdollSimulationGrabActive || !m_ragdollSimulationGrabHandle.IsValid() || !g_pBaseDriver) {
     return false;
   }
@@ -6568,7 +5359,7 @@ bool SandboxScene::UpdateRagdollSimulationGrab(float mouseX, float mouseY) {
       currentState.angularVelocity);
 }
 
-void SandboxScene::EndRagdollSimulationGrab(bool applyThrow) {
+void RagdollEditor::EndRagdollSimulationGrab(bool applyThrow) {
   if (!m_ragdollSimulationGrabActive) {
     return;
   }
@@ -6599,7 +5390,7 @@ void SandboxScene::EndRagdollSimulationGrab(bool applyThrow) {
   m_ragdollSimulationGrabReleaseVelocity = XVECTOR3(0.0f, 0.0f, 0.0f, 0.0f);
 }
 
-bool SandboxScene::HandleRagdollSimulationGrabInput(InputManager* input, bool imguiWantsMouse) {
+bool RagdollEditor::HandleRagdollSimulationGrabInput(InputManager* input, bool imguiWantsMouse) {
   if (!input) {
     return false;
   }
@@ -6627,14 +5418,14 @@ bool SandboxScene::HandleRagdollSimulationGrabInput(InputManager* input, bool im
   return BeginRagdollSimulationGrab(static_cast<float>(input->mouseX), static_cast<float>(input->mouseY));
 }
 
-bool SandboxScene::ResetRagdollPhysicsAndAnimation() {
+bool RagdollEditor::ResetRagdollPhysicsAndAnimation() {
   EndRagdollSimulationGrab(false);
 
   RenderSkinnedMesh* skinned = Meshes[0].GetSkinnedMesh();
   t850::EngineContext* engineContext = GetEngineContext();
   if (!engineContext) engineContext = &t850::GetEngineContext();
   if (!skinned || !skinned->HasSkinData()) {
-    T8_LOG_ERROR("[SandboxScene] Cannot reset ragdoll: no skinned model is loaded");
+    T8_LOG_ERROR("[RagdollEditor] Cannot reset ragdoll: no skinned model is loaded");
     return false;
   }
 
@@ -6656,7 +5447,7 @@ bool SandboxScene::ResetRagdollPhysicsAndAnimation() {
   m_ragdollPhysicsCombinedMatrices.clear();
 
   if (!engineContext || !engineContext->physics || m_ragdollAnimationBinding.referencePose.bones.empty()) {
-    T8_LOG_INFO("[SandboxScene] F7: animation state reset");
+    T8_LOG_INFO("[RagdollEditor] F7: animation state reset");
     return true;
   }
 
@@ -6668,7 +5459,7 @@ bool SandboxScene::ResetRagdollPhysicsAndAnimation() {
   if (!Meshes[0].HasPhysicsRagdoll()) {
     const bool recreated = RecreateRagdollFromPose(pose);
     if (recreated) {
-      T8_LOG_INFO("[SandboxScene] F7: animation and ragdoll reset");
+      T8_LOG_INFO("[RagdollEditor] F7: animation and ragdoll reset");
     }
     return recreated;
   }
@@ -6681,12 +5472,12 @@ bool SandboxScene::ResetRagdollPhysicsAndAnimation() {
   const bool driven = engineContext->physics->DriveRagdollFromPose(Meshes[0].GetPhysicsRagdoll(), pose, 0.0f);
   if (driven) {
     m_ragdollAnimationPose = std::move(pose);
-    T8_LOG_INFO("[SandboxScene] F7: animation and ragdoll reset");
+    T8_LOG_INFO("[RagdollEditor] F7: animation and ragdoll reset");
   }
   return driven;
 }
 
-void SandboxScene::LogRagdollFloorDiagnostics(const char* stage) {
+void RagdollEditor::LogRagdollFloorDiagnostics(const char* stage) {
   t850::EngineContext* engineContext = GetEngineContext();
   if (!engineContext) engineContext = &t850::GetEngineContext();
   if (!engineContext || !engineContext->physics || !engineContext->physics->IsInitialized()) {
@@ -6785,7 +5576,7 @@ void SandboxScene::LogRagdollFloorDiagnostics(const char* stage) {
               lowestHalfHeight);
 }
 
-void SandboxScene::CreatePhysicsFloor(t850::JoltPhysicsSystem& physics) {
+void RagdollEditor::CreatePhysicsFloor(t850::JoltPhysicsSystem& physics) {
   if (m_floorBody.IsValid() || !Meshes[0].pBase) {
     return;
   }
@@ -6793,7 +5584,7 @@ void SandboxScene::CreatePhysicsFloor(t850::JoltPhysicsSystem& physics) {
   RenderMesh* mesh = static_cast<RenderMesh*>(Meshes[0].pBase);
   RenderMesh::AABB worldBounds;
   if (!BuildWorldBounds(mesh, Meshes[0].Final, worldBounds)) {
-    T8_LOG_ERROR("[SandboxScene] Failed to build physics floor: model bounds are unavailable");
+    T8_LOG_ERROR("[RagdollEditor] Failed to build physics floor: model bounds are unavailable");
     return;
   }
   RenderMesh::AABB modelFloorBounds = worldBounds;
@@ -6835,7 +5626,7 @@ void SandboxScene::CreatePhysicsFloor(t850::JoltPhysicsSystem& physics) {
 
   m_floorBody = physics.CreateBody(floorDesc);
   if (m_floorBody.IsValid()) {
-    T8_LOG_INFO("[SandboxScene] Added static ragdoll floor top y=%.3f source=%s sourceMinY=%.3f meshMinY=%.3f skinnedMinY=%.3f ragdollMinY=%.3f halfSize=%.3f halfHeight=%.3f areaScale=%.1f",
+    T8_LOG_INFO("[RagdollEditor] Added static ragdoll floor top y=%.3f source=%s sourceMinY=%.3f meshMinY=%.3f skinnedMinY=%.3f ragdollMinY=%.3f halfSize=%.3f halfHeight=%.3f areaScale=%.1f",
                 floorTransform.m42 + halfHeight,
                 hasSkinnedBounds ? "skinned-mesh" : "mesh",
                 floorSourceMinY,
@@ -6846,16 +5637,16 @@ void SandboxScene::CreatePhysicsFloor(t850::JoltPhysicsSystem& physics) {
                 halfHeight,
                 kRagdollFloorAreaScale);
   } else {
-    T8_LOG_ERROR("[SandboxScene] Failed to create static ragdoll floor");
+    T8_LOG_ERROR("[RagdollEditor] Failed to create static ragdoll floor");
   }
 }
 
-std::string SandboxScene::BuildSkeletonEditSavePath() const {
+std::string RagdollEditor::BuildSkeletonEditSavePath() const {
   const std::string key = FileSafeModelKey(m_profileModelKey.empty() ? SandboxProfileModelKey(g_config.modelPath) : m_profileModelKey);
   return t850::ResourceLocator::Instance().ResolveCachePath("SkeletonEdits/" + key + ".json").string();
 }
 
-bool SandboxScene::EnterSkeletonEditMode() {
+bool RagdollEditor::EnterSkeletonEditMode() {
   RenderSkinnedMesh* skinned = Meshes[0].GetSkinnedMesh();
   if (!skinned || !skinned->HasSkinData()) {
     T8_LOG_ERROR("[SkeletonEdit] Cannot enter edit mode: active model has no skinned skeleton");
@@ -6919,7 +5710,7 @@ bool SandboxScene::EnterSkeletonEditMode() {
   return true;
 }
 
-void SandboxScene::ExitSkeletonEditMode() {
+void RagdollEditor::ExitSkeletonEditMode() {
   RenderSkinnedMesh* skinned = Meshes[0].GetSkinnedMesh();
   RestoreSkeletonPreviewBone();
   m_skeletonEditMode = false;
@@ -6937,7 +5728,7 @@ void SandboxScene::ExitSkeletonEditMode() {
   T8_LOG_INFO("[SkeletonEdit] Exited edit mode");
 }
 
-bool SandboxScene::ApplySkeletonEditPose() {
+bool RagdollEditor::ApplySkeletonEditPose() {
   RenderSkinnedMesh* skinned = Meshes[0].GetSkinnedMesh();
   if (!skinned || !skinned->HasSkinData() || m_skeletonEditCombined.empty()) {
     return false;
@@ -6955,7 +5746,7 @@ bool SandboxScene::ApplySkeletonEditPose() {
   return true;
 }
 
-bool SandboxScene::ResetSkeletonEditPose() {
+bool RagdollEditor::ResetSkeletonEditPose() {
   if (m_skeletonEditBindCombined.empty()) {
     return false;
   }
@@ -6967,7 +5758,7 @@ bool SandboxScene::ResetSkeletonEditPose() {
   return ApplySkeletonEditPose();
 }
 
-bool SandboxScene::LoadSkeletonEditPose() {
+bool RagdollEditor::LoadSkeletonEditPose() {
   if (m_skeletonEditSavePath.empty()) {
     m_skeletonEditSavePath = BuildSkeletonEditSavePath();
   }
@@ -7032,7 +5823,7 @@ bool SandboxScene::LoadSkeletonEditPose() {
   return applied > 0;
 }
 
-bool SandboxScene::SaveSkeletonEditPose() {
+bool RagdollEditor::SaveSkeletonEditPose() {
   if (m_skeletonEditSavePath.empty()) {
     m_skeletonEditSavePath = BuildSkeletonEditSavePath();
   }
@@ -7103,7 +5894,7 @@ bool SandboxScene::SaveSkeletonEditPose() {
   return true;
 }
 
-std::string SandboxScene::BuildRagdollEditSavePath() const {
+std::string RagdollEditor::BuildRagdollEditSavePath() const {
   if (!m_primaryRagdollResourcePath.empty()) {
     return m_primaryRagdollResourcePath;
   }
@@ -7111,19 +5902,19 @@ std::string SandboxScene::BuildRagdollEditSavePath() const {
       m_profileModelKey.empty() ? g_config.modelPath : m_profileModelKey);
 }
 
-int SandboxScene::FindRagdollCapsuleForBone(int boneIndex) const {
+int RagdollEditor::FindRagdollCapsuleForBone(int boneIndex) const {
   return t850::ragdoll_editor::FindBodyForBone(m_ragdollAnimationBinding, boneIndex);
 }
 
-int SandboxScene::FindRagdollCapsuleControllingBone(int boneIndex) const {
+int RagdollEditor::FindRagdollCapsuleControllingBone(int boneIndex) const {
   return t850::ragdoll_editor::FindBodyControllingBone(m_ragdollAnimationBinding, boneIndex);
 }
 
-void SandboxScene::EnsureRagdollControlledBones() {
+void RagdollEditor::EnsureRagdollControlledBones() {
   t850::ragdoll_editor::EnsureControlledBones(m_ragdollAnimationBinding);
 }
 
-void SandboxScene::SelectRagdollEditCapsule(int capsuleIndex, bool syncBoneSelection) {
+void RagdollEditor::SelectRagdollEditCapsule(int capsuleIndex, bool syncBoneSelection) {
   const auto& bones = m_ragdollAnimationBinding.referencePose.bones;
   if (capsuleIndex < 0 || capsuleIndex >= static_cast<int>(bones.size())) {
     m_ragdollEditSelectedCapsule = -1;
@@ -7196,15 +5987,15 @@ void SandboxScene::SelectRagdollEditCapsule(int capsuleIndex, bool syncBoneSelec
   }
 }
 
-void SandboxScene::SyncRagdollParentCapsulesFromBoneLinks() {
+void RagdollEditor::SyncRagdollParentCapsulesFromBoneLinks() {
   t850::ragdoll_editor::SyncParentBodiesFromBoneLinks(m_ragdollAnimationBinding, m_ragdollParentCapsules);
 }
 
-void SandboxScene::EnsureRagdollParentCapsules() {
+void RagdollEditor::EnsureRagdollParentCapsules() {
   t850::ragdoll_editor::EnsureParentBodies(m_ragdollAnimationBinding, m_ragdollParentCapsules);
 }
 
-void SandboxScene::EnsureRagdollJointState() {
+void RagdollEditor::EnsureRagdollJointState() {
   const std::vector<int> newJointOffsets = t850::ragdoll_editor::EnsureJointState(
       m_ragdollAnimationBinding,
       m_ragdollParentCapsules,
@@ -7215,22 +6006,22 @@ void SandboxScene::EnsureRagdollJointState() {
   }
 }
 
-void SandboxScene::EnsureRagdollFreezeState() {
+void RagdollEditor::EnsureRagdollFreezeState() {
   t850::ragdoll_editor::EnsureFreezeState(
       m_ragdollAnimationBinding.referencePose.bones.size(),
       m_ragdollFrozenCapsules,
       m_ragdollFrozenJoints);
 }
 
-bool SandboxScene::IsRagdollCapsuleFrozen(int capsuleIndex) const {
+bool RagdollEditor::IsRagdollCapsuleFrozen(int capsuleIndex) const {
   return t850::ragdoll_editor::IsFrozen(m_ragdollFrozenCapsules, capsuleIndex);
 }
 
-bool SandboxScene::IsRagdollJointFrozen(int childCapsule) const {
+bool RagdollEditor::IsRagdollJointFrozen(int childCapsule) const {
   return t850::ragdoll_editor::IsFrozen(m_ragdollFrozenJoints, childCapsule);
 }
 
-void SandboxScene::SetRagdollCapsuleFrozen(int capsuleIndex, bool frozen) {
+void RagdollEditor::SetRagdollCapsuleFrozen(int capsuleIndex, bool frozen) {
   EnsureRagdollFreezeState();
   if (!t850::ragdoll_editor::SetFrozen(m_ragdollFrozenCapsules, capsuleIndex, frozen)) {
     return;
@@ -7243,7 +6034,7 @@ void SandboxScene::SetRagdollCapsuleFrozen(int capsuleIndex, bool frozen) {
   m_ragdollEditDirty = true;
 }
 
-void SandboxScene::SetRagdollJointFrozen(int childCapsule, bool frozen) {
+void RagdollEditor::SetRagdollJointFrozen(int childCapsule, bool frozen) {
   EnsureRagdollFreezeState();
   if (!t850::ragdoll_editor::SetFrozen(m_ragdollFrozenJoints, childCapsule, frozen)) {
     return;
@@ -7255,7 +6046,7 @@ void SandboxScene::SetRagdollJointFrozen(int childCapsule, bool frozen) {
   m_ragdollEditDirty = true;
 }
 
-int SandboxScene::GetRagdollEffectiveJointParentCapsule(int childCapsule) const {
+int RagdollEditor::GetRagdollEffectiveJointParentCapsule(int childCapsule) const {
   return t850::ragdoll_editor::EffectiveJointParent(
       childCapsule,
       m_ragdollAnimationBinding.referencePose.bones.size(),
@@ -7263,7 +6054,7 @@ int SandboxScene::GetRagdollEffectiveJointParentCapsule(int childCapsule) const 
       m_ragdollJointParentCapsules);
 }
 
-bool SandboxScene::UpdateRagdollJointOffsetFromWorld(int childCapsule) {
+bool RagdollEditor::UpdateRagdollJointOffsetFromWorld(int childCapsule) {
   auto& binding = m_ragdollAnimationBinding;
   if (childCapsule < 0 ||
       childCapsule >= static_cast<int>(binding.referencePose.bones.size())) {
@@ -7289,7 +6080,7 @@ bool SandboxScene::UpdateRagdollJointOffsetFromWorld(int childCapsule) {
   return true;
 }
 
-bool SandboxScene::UpdateRagdollJointFrameOffsetsFromWorld(int childCapsule) {
+bool RagdollEditor::UpdateRagdollJointFrameOffsetsFromWorld(int childCapsule) {
   auto& binding = m_ragdollAnimationBinding;
   auto& bones = binding.referencePose.bones;
   if (childCapsule < 0 || childCapsule >= static_cast<int>(bones.size())) {
@@ -7335,7 +6126,7 @@ bool SandboxScene::UpdateRagdollJointFrameOffsetsFromWorld(int childCapsule) {
   return true;
 }
 
-void SandboxScene::UpdateRagdollJointFrameOffsetsForBody(int capsuleIndex) {
+void RagdollEditor::UpdateRagdollJointFrameOffsetsForBody(int capsuleIndex) {
   const auto& bones = m_ragdollAnimationBinding.referencePose.bones;
   if (capsuleIndex < 0 || capsuleIndex >= static_cast<int>(bones.size())) {
     return;
@@ -7349,7 +6140,7 @@ void SandboxScene::UpdateRagdollJointFrameOffsetsForBody(int capsuleIndex) {
   }
 }
 
-bool SandboxScene::ResetRagdollJointFrameToBodyAxes(int childCapsule) {
+bool RagdollEditor::ResetRagdollJointFrameToBodyAxes(int childCapsule) {
   auto& bones = m_ragdollAnimationBinding.referencePose.bones;
   EnsureRagdollJointState();
   if (childCapsule < 0 || childCapsule >= static_cast<int>(bones.size())) {
@@ -7370,7 +6161,7 @@ bool SandboxScene::ResetRagdollJointFrameToBodyAxes(int childCapsule) {
   return UpdateRagdollJointFrameOffsetsFromWorld(childCapsule);
 }
 
-void SandboxScene::EnsureRagdollJointFrames() {
+void RagdollEditor::EnsureRagdollJointFrames() {
   auto& binding = m_ragdollAnimationBinding;
   auto& bones = binding.referencePose.bones;
   EnsureRagdollJointState();
@@ -7390,7 +6181,7 @@ void SandboxScene::EnsureRagdollJointFrames() {
   }
 }
 
-bool SandboxScene::ApplyRagdollParentCapsuleLinks() {
+bool RagdollEditor::ApplyRagdollParentCapsuleLinks() {
   auto& bones = m_ragdollAnimationBinding.referencePose.bones;
   EnsureRagdollJointState();
   if (m_ragdollParentCapsules.size() != bones.size()) {
@@ -7423,7 +6214,7 @@ bool SandboxScene::ApplyRagdollParentCapsuleLinks() {
   return true;
 }
 
-bool SandboxScene::SetRagdollCapsuleParent(int childCapsule, int parentCapsule) {
+bool RagdollEditor::SetRagdollCapsuleParent(int childCapsule, int parentCapsule) {
   const auto& bones = m_ragdollAnimationBinding.referencePose.bones;
   EnsureRagdollJointState();
   EnsureRagdollFreezeState();
@@ -7472,7 +6263,7 @@ bool SandboxScene::SetRagdollCapsuleParent(int childCapsule, int parentCapsule) 
   return ApplyRagdollEditPose(true);
 }
 
-bool SandboxScene::ClearRagdollCapsuleParent(int childCapsule) {
+bool RagdollEditor::ClearRagdollCapsuleParent(int childCapsule) {
   EnsureRagdollJointState();
   EnsureRagdollFreezeState();
   if (childCapsule < 0 ||
@@ -7502,7 +6293,7 @@ bool SandboxScene::ClearRagdollCapsuleParent(int childCapsule) {
   return ApplyRagdollEditPose(true);
 }
 
-bool SandboxScene::SetRagdollCapsuleJoint(int childCapsule, int parentCapsule) {
+bool RagdollEditor::SetRagdollCapsuleJoint(int childCapsule, int parentCapsule) {
   auto& bones = m_ragdollAnimationBinding.referencePose.bones;
   EnsureRagdollJointState();
   EnsureRagdollFreezeState();
@@ -7556,7 +6347,7 @@ bool SandboxScene::SetRagdollCapsuleJoint(int childCapsule, int parentCapsule) {
   return ApplyRagdollEditPose(true);
 }
 
-bool SandboxScene::ComputeRagdollCapsuleContactAnchor(int childCapsule, int parentCapsule, XVECTOR3& outAnchor) {
+bool RagdollEditor::ComputeRagdollCapsuleContactAnchor(int childCapsule, int parentCapsule, XVECTOR3& outAnchor) {
   const auto& bones = m_ragdollAnimationBinding.referencePose.bones;
   if (childCapsule < 0 || childCapsule >= static_cast<int>(bones.size()) ||
       parentCapsule < 0 || parentCapsule >= static_cast<int>(bones.size()) ||
@@ -7576,7 +6367,7 @@ bool SandboxScene::ComputeRagdollCapsuleContactAnchor(int childCapsule, int pare
       outAnchor);
 }
 
-bool SandboxScene::SetRagdollCapsuleJointAtContact(int childCapsule, int parentCapsule) {
+bool RagdollEditor::SetRagdollCapsuleJointAtContact(int childCapsule, int parentCapsule) {
   auto& bones = m_ragdollAnimationBinding.referencePose.bones;
   EnsureRagdollJointState();
   EnsureRagdollFreezeState();
@@ -7648,7 +6439,7 @@ bool SandboxScene::SetRagdollCapsuleJointAtContact(int childCapsule, int parentC
   return ApplyRagdollEditPose(true);
 }
 
-bool SandboxScene::ClearRagdollCapsuleJoint(int childCapsule) {
+bool RagdollEditor::ClearRagdollCapsuleJoint(int childCapsule) {
   EnsureRagdollJointState();
   EnsureRagdollFreezeState();
   if (childCapsule < 0 ||
@@ -7685,7 +6476,7 @@ bool SandboxScene::ClearRagdollCapsuleJoint(int childCapsule) {
   return ApplyRagdollEditPose(true);
 }
 
-bool SandboxScene::ClearRagdollCapsuleJointBetween(int capsuleA, int capsuleB) {
+bool RagdollEditor::ClearRagdollCapsuleJointBetween(int capsuleA, int capsuleB) {
   EnsureRagdollJointState();
   if (capsuleA < 0 || capsuleB < 0 || capsuleA == capsuleB) {
     return false;
@@ -7699,7 +6490,7 @@ bool SandboxScene::ClearRagdollCapsuleJointBetween(int capsuleA, int capsuleB) {
   return false;
 }
 
-bool SandboxScene::AddControlledBoneToSelectedCapsule(int boneIndex) {
+bool RagdollEditor::AddControlledBoneToSelectedCapsule(int boneIndex) {
   EnsureRagdollControlledBones();
   EnsureRagdollFreezeState();
   if (m_ragdollEditSelectedCapsule < 0 ||
@@ -7785,7 +6576,7 @@ bool SandboxScene::AddControlledBoneToSelectedCapsule(int boneIndex) {
   return true;
 }
 
-bool SandboxScene::RemoveControlledBoneFromSelectedCapsule(int boneIndex) {
+bool RagdollEditor::RemoveControlledBoneFromSelectedCapsule(int boneIndex) {
   EnsureRagdollControlledBones();
   EnsureRagdollFreezeState();
   if (m_ragdollEditSelectedCapsule < 0 ||
@@ -7817,7 +6608,7 @@ bool SandboxScene::RemoveControlledBoneFromSelectedCapsule(int boneIndex) {
   return false;
 }
 
-int SandboxScene::FindGeneratedRagdollCapsuleForBone(int boneIndex) const {
+int RagdollEditor::FindGeneratedRagdollCapsuleForBone(int boneIndex) const {
   const auto& bones = m_ragdollGeneratedBinding.referencePose.bones;
   for (int i = 0; i < static_cast<int>(bones.size()); ++i) {
     if (bones[static_cast<std::size_t>(i)].body.boneIndex == boneIndex) {
@@ -7827,7 +6618,7 @@ int SandboxScene::FindGeneratedRagdollCapsuleForBone(int boneIndex) const {
   return -1;
 }
 
-bool SandboxScene::GetSkeletonEditBoneWorldTransform(int boneIndex, XMATRIX44& outWorld) const {
+bool RagdollEditor::GetSkeletonEditBoneWorldTransform(int boneIndex, XMATRIX44& outWorld) const {
   if (boneIndex >= 0 && boneIndex < static_cast<int>(m_skeletonEditCombined.size())) {
     outWorld = FlipMatrixZ(m_skeletonEditCombined[static_cast<std::size_t>(boneIndex)]) * Meshes[0].Final;
     return true;
@@ -7842,7 +6633,7 @@ bool SandboxScene::GetSkeletonEditBoneWorldTransform(int boneIndex, XMATRIX44& o
   return true;
 }
 
-bool SandboxScene::GetRagdollAuthoringBoneWorldTransform(int boneIndex, XMATRIX44& outWorld) const {
+bool RagdollEditor::GetRagdollAuthoringBoneWorldTransform(int boneIndex, XMATRIX44& outWorld) const {
   if (boneIndex >= 0 && boneIndex < static_cast<int>(m_skeletonEditCombined.size())) {
     outWorld = FlipMatrixZ(m_skeletonEditCombined[static_cast<std::size_t>(boneIndex)]) * Meshes[0].Final;
     return true;
@@ -7864,7 +6655,7 @@ bool SandboxScene::GetRagdollAuthoringBoneWorldTransform(int boneIndex, XMATRIX4
   return GetSkeletonEditBoneWorldTransform(boneIndex, outWorld);
 }
 
-int SandboxScene::FindSkeletonEditDisplayEndpoint(int boneIndex) const {
+int RagdollEditor::FindSkeletonEditDisplayEndpoint(int boneIndex) const {
   RenderSkinnedMesh* skinned = Meshes[0].GetSkinnedMesh();
   const xF::xSkeleton* skeleton = skinned ? skinned->GetAnimController().GetAnimSkeleton() : nullptr;
   if (!skeleton || boneIndex < 0 || boneIndex >= static_cast<int>(skeleton->Bones.size())) {
@@ -7962,7 +6753,7 @@ int SandboxScene::FindSkeletonEditDisplayEndpoint(int boneIndex) const {
   return candidates.front().boneIndex;
 }
 
-bool SandboxScene::BuildSkeletonEditBoneOctahedron(int boneIndex, float widthScale, std::array<XVECTOR3, 6>& outPoints) const {
+bool RagdollEditor::BuildSkeletonEditBoneOctahedron(int boneIndex, float widthScale, std::array<XVECTOR3, 6>& outPoints) const {
   RenderSkinnedMesh* skinned = Meshes[0].GetSkinnedMesh();
   const xF::xSkeleton* skeleton = skinned ? skinned->GetAnimController().GetAnimSkeleton() : nullptr;
   if (!skeleton || boneIndex < 0 || boneIndex >= static_cast<int>(skeleton->Bones.size())) {
@@ -7987,7 +6778,7 @@ bool SandboxScene::BuildSkeletonEditBoneOctahedron(int boneIndex, float widthSca
   return true;
 }
 
-bool SandboxScene::RebuildRagdollParentLinks() {
+bool RagdollEditor::RebuildRagdollParentLinks() {
   if (!m_ragdollParentCapsules.empty()) {
     return ApplyRagdollParentCapsuleLinks();
   }
@@ -8022,7 +6813,7 @@ bool SandboxScene::RebuildRagdollParentLinks() {
   return true;
 }
 
-bool SandboxScene::BuildDefaultRagdollCapsuleForBone(int boneIndex,
+bool RagdollEditor::BuildDefaultRagdollCapsuleForBone(int boneIndex,
                                                      t850::PhysicsRagdollBoneDesc& outBone,
                                                      XMATRIX44& outBodyFromBone) const {
   RenderSkinnedMesh* skinned = Meshes[0].GetSkinnedMesh();
@@ -8132,7 +6923,7 @@ bool SandboxScene::BuildDefaultRagdollCapsuleForBone(int boneIndex,
   return true;
 }
 
-bool SandboxScene::CreateRagdollCapsuleForBone(int boneIndex) {
+bool RagdollEditor::CreateRagdollCapsuleForBone(int boneIndex) {
   EnsureRagdollControlledBones();
   if (boneIndex < 0 ||
       FindRagdollCapsuleForBone(boneIndex) >= 0 ||
@@ -8227,14 +7018,14 @@ bool SandboxScene::CreateRagdollCapsuleForBone(int boneIndex) {
   return true;
 }
 
-bool SandboxScene::CreateRagdollBoxForBone(int boneIndex) {
+bool RagdollEditor::CreateRagdollBoxForBone(int boneIndex) {
   if (!CreateRagdollCapsuleForBone(boneIndex)) {
     return false;
   }
   return MorphRagdollBodyToBox(m_ragdollEditSelectedCapsule);
 }
 
-bool SandboxScene::MorphRagdollBodyToBox(int capsuleIndex) {
+bool RagdollEditor::MorphRagdollBodyToBox(int capsuleIndex) {
   auto& bones = m_ragdollAnimationBinding.referencePose.bones;
   if (capsuleIndex < 0 || capsuleIndex >= static_cast<int>(bones.size())) {
     return false;
@@ -8260,7 +7051,7 @@ bool SandboxScene::MorphRagdollBodyToBox(int capsuleIndex) {
   return ApplyRagdollEditPose(true);
 }
 
-bool SandboxScene::MorphRagdollBodyToCapsule(int capsuleIndex) {
+bool RagdollEditor::MorphRagdollBodyToCapsule(int capsuleIndex) {
   auto& bones = m_ragdollAnimationBinding.referencePose.bones;
   if (capsuleIndex < 0 || capsuleIndex >= static_cast<int>(bones.size())) {
     return false;
@@ -8286,7 +7077,7 @@ bool SandboxScene::MorphRagdollBodyToCapsule(int capsuleIndex) {
   return ApplyRagdollEditPose(true);
 }
 
-bool SandboxScene::DeleteSelectedRagdollCapsule() {
+bool RagdollEditor::DeleteSelectedRagdollCapsule() {
   auto& bones = m_ragdollAnimationBinding.referencePose.bones;
   auto& locals = m_ragdollAnimationBinding.bodyFromBone;
   const int index = m_ragdollEditSelectedCapsule;
@@ -8423,7 +7214,7 @@ bool SandboxScene::DeleteSelectedRagdollCapsule() {
   return ApplyRagdollEditPose(true);
 }
 
-bool SandboxScene::ClearRagdollCapsules() {
+bool RagdollEditor::ClearRagdollCapsules() {
   const t850::PhysicsRagdollHandle ragdollHandle = Meshes[0].GetPhysicsRagdoll();
   Meshes[0].AttachPhysicsRagdoll(t850::PhysicsRagdollHandle{});
 
@@ -8474,7 +7265,7 @@ bool SandboxScene::ClearRagdollCapsules() {
   return true;
 }
 
-bool SandboxScene::UpdateRagdollReferenceBodyFromLocal(int capsuleIndex) {
+bool RagdollEditor::UpdateRagdollReferenceBodyFromLocal(int capsuleIndex) {
   if (capsuleIndex < 0 ||
       capsuleIndex >= static_cast<int>(m_ragdollAnimationBinding.referencePose.bones.size()) ||
       capsuleIndex >= static_cast<int>(m_ragdollAnimationBinding.bodyFromBone.size())) {
@@ -8541,7 +7332,7 @@ bool SandboxScene::UpdateRagdollReferenceBodyFromLocal(int capsuleIndex) {
   return true;
 }
 
-bool SandboxScene::SetRagdollEditCapsuleWorldTransform(int capsuleIndex, const XMATRIX44& bodyWorld, bool rebuildRagdoll) {
+bool RagdollEditor::SetRagdollEditCapsuleWorldTransform(int capsuleIndex, const XMATRIX44& bodyWorld, bool rebuildRagdoll) {
   auto& bones = m_ragdollAnimationBinding.referencePose.bones;
   auto& locals = m_ragdollAnimationBinding.bodyFromBone;
   if (capsuleIndex < 0 ||
@@ -8574,7 +7365,7 @@ bool SandboxScene::SetRagdollEditCapsuleWorldTransform(int capsuleIndex, const X
   return ApplyRagdollEditPose(rebuildRagdoll);
 }
 
-bool SandboxScene::MoveRagdollEditCapsuleByWorldDelta(int capsuleIndex, const XVECTOR3& worldDelta, bool rebuildRagdoll) {
+bool RagdollEditor::MoveRagdollEditCapsuleByWorldDelta(int capsuleIndex, const XVECTOR3& worldDelta, bool rebuildRagdoll) {
   if (IsRagdollCapsuleFrozen(capsuleIndex)) {
     return false;
   }
@@ -8588,7 +7379,7 @@ bool SandboxScene::MoveRagdollEditCapsuleByWorldDelta(int capsuleIndex, const XV
   return SetRagdollEditCapsuleWorldTransform(capsuleIndex, bodyWorld, rebuildRagdoll);
 }
 
-bool SandboxScene::RotateRagdollEditCapsuleWorld(int capsuleIndex,
+bool RagdollEditor::RotateRagdollEditCapsuleWorld(int capsuleIndex,
                                                  const XVECTOR3& axisWorld,
                                                  float angleRadians,
                                                  bool rebuildRagdoll) {
@@ -8614,7 +7405,7 @@ bool SandboxScene::RotateRagdollEditCapsuleWorld(int capsuleIndex,
   return SetRagdollEditCapsuleWorldTransform(capsuleIndex, rotatedWorld, rebuildRagdoll);
 }
 
-bool SandboxScene::FlipRagdollEditCapsuleLocalAxis(int capsuleIndex, int axisIndex) {
+bool RagdollEditor::FlipRagdollEditCapsuleLocalAxis(int capsuleIndex, int axisIndex) {
   if (axisIndex < 0 || axisIndex > 2 || IsRagdollCapsuleFrozen(capsuleIndex)) {
     return false;
   }
@@ -8629,7 +7420,7 @@ bool SandboxScene::FlipRagdollEditCapsuleLocalAxis(int capsuleIndex, int axisInd
   return RotateRagdollEditCapsuleWorld(capsuleIndex, axes[static_cast<std::size_t>(axisIndex)], xPI, true);
 }
 
-bool SandboxScene::AlignRagdollEditCapsuleToWorldAxis(int capsuleIndex, int axisIndex) {
+bool RagdollEditor::AlignRagdollEditCapsuleToWorldAxis(int capsuleIndex, int axisIndex) {
   if (axisIndex < 0 || axisIndex > 2 || IsRagdollCapsuleFrozen(capsuleIndex)) {
     return false;
   }
@@ -8654,7 +7445,7 @@ bool SandboxScene::AlignRagdollEditCapsuleToWorldAxis(int capsuleIndex, int axis
   return SetRagdollEditCapsuleWorldTransform(capsuleIndex, alignedWorld, true);
 }
 
-bool SandboxScene::SyncRagdollCapsuleSymmetry() {
+bool RagdollEditor::SyncRagdollCapsuleSymmetry() {
   auto& binding = m_ragdollAnimationBinding;
   auto& bones = binding.referencePose.bones;
   auto syncStatus = [&](const char* fmt, auto... args) {
@@ -9753,7 +8544,7 @@ bool SandboxScene::SyncRagdollCapsuleSymmetry() {
   return applied;
 }
 
-bool SandboxScene::RecreateRagdollFromPose(const t850::PhysicsRagdollDesc& pose) {
+bool RagdollEditor::RecreateRagdollFromPose(const t850::PhysicsRagdollDesc& pose) {
   if (pose.bones.empty()) {
     return false;
   }
@@ -9784,7 +8575,7 @@ bool SandboxScene::RecreateRagdollFromPose(const t850::PhysicsRagdollDesc& pose)
   return true;
 }
 
-bool SandboxScene::ApplyRagdollEditPose(bool rebuildRagdoll) {
+bool RagdollEditor::ApplyRagdollEditPose(bool rebuildRagdoll) {
   if (m_ragdollAnimationBinding.referencePose.bones.empty() ||
       m_ragdollAnimationBinding.referencePose.bones.size() != m_ragdollAnimationBinding.bodyFromBone.size()) {
     return false;
@@ -9819,7 +8610,7 @@ bool SandboxScene::ApplyRagdollEditPose(bool rebuildRagdoll) {
   return updated;
 }
 
-bool SandboxScene::LoadRagdollEditPose() {
+bool RagdollEditor::LoadRagdollEditPose() {
   if (m_ragdollEditSavePath.empty()) {
     m_ragdollEditSavePath = BuildRagdollEditSavePath();
   }
@@ -9878,7 +8669,7 @@ bool SandboxScene::LoadRagdollEditPose() {
   return true;
 }
 
-bool SandboxScene::SaveRagdollEditPose() {
+bool RagdollEditor::SaveRagdollEditPose() {
   if (m_ragdollEditSavePath.empty()) {
     m_ragdollEditSavePath = BuildRagdollEditSavePath();
   }
@@ -9913,7 +8704,7 @@ bool SandboxScene::SaveRagdollEditPose() {
   return true;
 }
 
-bool SandboxScene::ResetRagdollEditPose() {
+bool RagdollEditor::ResetRagdollEditPose() {
   if (m_ragdollGeneratedBinding.referencePose.bones.empty() ||
       m_ragdollGeneratedBinding.referencePose.bones.size() != m_ragdollGeneratedBinding.bodyFromBone.size()) {
     return false;
@@ -9937,7 +8728,7 @@ bool SandboxScene::ResetRagdollEditPose() {
   return ApplyRagdollEditPose(true);
 }
 
-bool SandboxScene::ResetSelectedRagdollCapsule() {
+bool RagdollEditor::ResetSelectedRagdollCapsule() {
   EnsureRagdollControlledBones();
   const int index = m_ragdollEditSelectedCapsule;
   if (index < 0 ||
@@ -9999,7 +8790,7 @@ bool SandboxScene::ResetSelectedRagdollCapsule() {
   return ApplyRagdollEditPose(true);
 }
 
-bool SandboxScene::GetSkeletonEditBoneWorldPosition(int boneIndex, XVECTOR3& outWorld) const {
+bool RagdollEditor::GetSkeletonEditBoneWorldPosition(int boneIndex, XVECTOR3& outWorld) const {
   if (boneIndex < 0 || boneIndex >= static_cast<int>(m_skeletonEditCombined.size())) {
     return false;
   }
@@ -10009,7 +8800,7 @@ bool SandboxScene::GetSkeletonEditBoneWorldPosition(int boneIndex, XVECTOR3& out
   return true;
 }
 
-bool SandboxScene::SetSkeletonEditBoneWorldPosition(int boneIndex, const XVECTOR3& worldPosition) {
+bool RagdollEditor::SetSkeletonEditBoneWorldPosition(int boneIndex, const XVECTOR3& worldPosition) {
   if (boneIndex < 0 || boneIndex >= static_cast<int>(m_skeletonEditCombined.size())) {
     return false;
   }
@@ -10024,14 +8815,14 @@ bool SandboxScene::SetSkeletonEditBoneWorldPosition(int boneIndex, const XVECTOR
   return ApplySkeletonEditPose();
 }
 
-void SandboxScene::SelectSkeletonEditBone(int boneIndex) {
+void RagdollEditor::SelectSkeletonEditBone(int boneIndex) {
   if (boneIndex != m_skeletonEditSelectedBone) {
     RestoreSkeletonPreviewBone();
   }
   m_skeletonEditSelectedBone = boneIndex;
 }
 
-void SandboxScene::RestoreSkeletonPreviewBone() {
+void RagdollEditor::RestoreSkeletonPreviewBone() {
   if (!m_skeletonPreviewBoneActive) {
     return;
   }
@@ -10048,7 +8839,7 @@ void SandboxScene::RestoreSkeletonPreviewBone() {
   ApplySkeletonEditPose();
 }
 
-bool SandboxScene::BeginSkeletonPreviewBone(int boneIndex) {
+bool RagdollEditor::BeginSkeletonPreviewBone(int boneIndex) {
   if (boneIndex < 0 || boneIndex >= static_cast<int>(m_skeletonEditCombined.size())) {
     return false;
   }
@@ -10063,7 +8854,7 @@ bool SandboxScene::BeginSkeletonPreviewBone(int boneIndex) {
   return true;
 }
 
-void SandboxScene::GatherSkeletonEditBoneSubtree(int boneIndex, std::vector<int>& outBones) const {
+void RagdollEditor::GatherSkeletonEditBoneSubtree(int boneIndex, std::vector<int>& outBones) const {
   outBones.clear();
   RenderSkinnedMesh* skinned = Meshes[0].GetSkinnedMesh();
   const xF::xSkeleton* skeleton = skinned ? skinned->GetAnimController().GetAnimSkeleton() : nullptr;
@@ -10113,7 +8904,7 @@ void SandboxScene::GatherSkeletonEditBoneSubtree(int boneIndex, std::vector<int>
   visit(boneIndex);
 }
 
-bool SandboxScene::SetSkeletonPreviewBoneWorldTransform(int boneIndex, const XMATRIX44& worldTransform) {
+bool RagdollEditor::SetSkeletonPreviewBoneWorldTransform(int boneIndex, const XMATRIX44& worldTransform) {
   if (!BeginSkeletonPreviewBone(boneIndex)) {
     return false;
   }
@@ -10128,7 +8919,7 @@ bool SandboxScene::SetSkeletonPreviewBoneWorldTransform(int boneIndex, const XMA
   return ApplySkeletonEditPose();
 }
 
-bool SandboxScene::MoveSkeletonPreviewBoneByWorldDelta(int boneIndex, const XVECTOR3& worldDelta) {
+bool RagdollEditor::MoveSkeletonPreviewBoneByWorldDelta(int boneIndex, const XVECTOR3& worldDelta) {
   XMATRIX44 boneWorld;
   if (!GetSkeletonEditBoneWorldTransform(boneIndex, boneWorld)) {
     return false;
@@ -10140,7 +8931,7 @@ bool SandboxScene::MoveSkeletonPreviewBoneByWorldDelta(int boneIndex, const XVEC
   return SetSkeletonPreviewBoneWorldTransform(boneIndex, boneWorld);
 }
 
-bool SandboxScene::RotateSkeletonPreviewBoneWorld(int boneIndex, const XVECTOR3& axisWorld, float angleRadians) {
+bool RagdollEditor::RotateSkeletonPreviewBoneWorld(int boneIndex, const XVECTOR3& axisWorld, float angleRadians) {
   if (std::fabs(angleRadians) < 0.000001f) {
     return true;
   }
@@ -10183,7 +8974,7 @@ bool SandboxScene::RotateSkeletonPreviewBoneWorld(int boneIndex, const XVECTOR3&
   return ApplySkeletonEditPose();
 }
 
-bool SandboxScene::GetSkeletonPreviewBoneGizmoFrame(int boneIndex,
+bool RagdollEditor::GetSkeletonPreviewBoneGizmoFrame(int boneIndex,
                                                    XVECTOR3& outCenter,
                                                    std::array<XVECTOR3, 3>& outAxes,
                                                    float& outSize,
@@ -10211,7 +9002,7 @@ bool SandboxScene::GetSkeletonPreviewBoneGizmoFrame(int boneIndex,
   return true;
 }
 
-std::array<float, 3> SandboxScene::GetSkeletonEditBoneScale(int boneIndex) const {
+std::array<float, 3> RagdollEditor::GetSkeletonEditBoneScale(int boneIndex) const {
   std::array<float, 3> scale = {1.0f, 1.0f, 1.0f};
   if (boneIndex < 0 || boneIndex >= static_cast<int>(m_skeletonEditCombined.size())) {
     return scale;
@@ -10226,7 +9017,7 @@ std::array<float, 3> SandboxScene::GetSkeletonEditBoneScale(int boneIndex) const
   return scale;
 }
 
-bool SandboxScene::SetSkeletonEditBoneScale(int boneIndex, const std::array<float, 3>& scale) {
+bool RagdollEditor::SetSkeletonEditBoneScale(int boneIndex, const std::array<float, 3>& scale) {
   if (boneIndex < 0 || boneIndex >= static_cast<int>(m_skeletonEditCombined.size())) {
     return false;
   }
@@ -10248,7 +9039,7 @@ bool SandboxScene::SetSkeletonEditBoneScale(int boneIndex, const std::array<floa
   return ApplySkeletonEditPose();
 }
 
-bool SandboxScene::GetCurrentRagdollEditCapsuleWorld(int capsuleIndex, XMATRIX44& outWorld) {
+bool RagdollEditor::GetCurrentRagdollEditCapsuleWorld(int capsuleIndex, XMATRIX44& outWorld) {
   const auto& bones = m_ragdollAnimationBinding.referencePose.bones;
   if (capsuleIndex < 0 || capsuleIndex >= static_cast<int>(bones.size())) {
     return false;
@@ -10295,7 +9086,7 @@ bool SandboxScene::GetCurrentRagdollEditCapsuleWorld(int capsuleIndex, XMATRIX44
   return true;
 }
 
-bool SandboxScene::SetRagdollEditJointWorldPosition(int childCapsule, const XVECTOR3& worldPosition) {
+bool RagdollEditor::SetRagdollEditJointWorldPosition(int childCapsule, const XVECTOR3& worldPosition) {
   auto& bones = m_ragdollAnimationBinding.referencePose.bones;
   EnsureRagdollJointState();
   EnsureRagdollFreezeState();
@@ -10318,7 +9109,7 @@ bool SandboxScene::SetRagdollEditJointWorldPosition(int childCapsule, const XVEC
   return true;
 }
 
-bool SandboxScene::MoveRagdollEditJointByWorldDelta(int childCapsule, const XVECTOR3& worldDelta) {
+bool RagdollEditor::MoveRagdollEditJointByWorldDelta(int childCapsule, const XVECTOR3& worldDelta) {
   if (childCapsule < 0 || childCapsule >= static_cast<int>(m_ragdollAnimationBinding.referencePose.bones.size())) {
     return false;
   }
@@ -10332,7 +9123,7 @@ bool SandboxScene::MoveRagdollEditJointByWorldDelta(int childCapsule, const XVEC
   return SetRagdollEditJointWorldPosition(childCapsule, joint);
 }
 
-bool SandboxScene::RotateRagdollEditJointWorld(int childCapsule, const XVECTOR3& axisWorld, float angleRadians) {
+bool RagdollEditor::RotateRagdollEditJointWorld(int childCapsule, const XVECTOR3& axisWorld, float angleRadians) {
   if (std::fabs(angleRadians) < 0.000001f) {
     return true;
   }
@@ -10371,7 +9162,7 @@ bool SandboxScene::RotateRagdollEditJointWorld(int childCapsule, const XVECTOR3&
   return true;
 }
 
-bool SandboxScene::FlipRagdollEditJointLocalAxis(int childCapsule, int axisIndex) {
+bool RagdollEditor::FlipRagdollEditJointLocalAxis(int childCapsule, int axisIndex) {
   if (axisIndex < 0 || axisIndex > 2 || IsRagdollJointFrozen(childCapsule)) {
     return false;
   }
@@ -10389,7 +9180,7 @@ bool SandboxScene::FlipRagdollEditJointLocalAxis(int childCapsule, int axisIndex
   return ApplyRagdollEditPose(true);
 }
 
-bool SandboxScene::GetRagdollJointVisualFrame(int childCapsule,
+bool RagdollEditor::GetRagdollJointVisualFrame(int childCapsule,
                                               XVECTOR3& outJoint,
                                               XVECTOR3& outParentCenter,
                                               XVECTOR3& outChildCenter,
@@ -10442,7 +9233,7 @@ bool SandboxScene::GetRagdollJointVisualFrame(int childCapsule,
   return true;
 }
 
-bool SandboxScene::GetRagdollJointGizmoFrame(int childCapsule,
+bool RagdollEditor::GetRagdollJointGizmoFrame(int childCapsule,
                                              XVECTOR3& outCenter,
                                              std::array<XVECTOR3, 3>& outAxes,
                                              float& outSize) {
@@ -10462,7 +9253,7 @@ bool SandboxScene::GetRagdollJointGizmoFrame(int childCapsule,
   return true;
 }
 
-bool SandboxScene::PickRagdollEditJoint(float mouseX, float mouseY, float thresholdPixels, int& outChildCapsule) {
+bool RagdollEditor::PickRagdollEditJoint(float mouseX, float mouseY, float thresholdPixels, int& outChildCapsule) {
   outChildCapsule = -1;
   if (!m_skeletonEditMode || !g_pBaseDriver || m_ragdollAnimationBinding.referencePose.bones.empty()) {
     return false;
@@ -10512,7 +9303,7 @@ bool SandboxScene::PickRagdollEditJoint(float mouseX, float mouseY, float thresh
   return outChildCapsule >= 0;
 }
 
-bool SandboxScene::PickRagdollEditJointGizmo(float mouseX, float mouseY, int& outAxis) {
+bool RagdollEditor::PickRagdollEditJointGizmo(float mouseX, float mouseY, int& outAxis) {
   outAxis = -1;
   if (!m_skeletonEditMode || !g_pBaseDriver || m_ragdollEditSelectedJoint < 0 ||
       m_ragdollEditSelectionMode != kRagdollSelectJoints ||
@@ -10582,7 +9373,7 @@ bool SandboxScene::PickRagdollEditJointGizmo(float mouseX, float mouseY, int& ou
   return outAxis >= 0;
 }
 
-bool SandboxScene::BeginRagdollEditJointGizmoDrag(float mouseX, float mouseY) {
+bool RagdollEditor::BeginRagdollEditJointGizmoDrag(float mouseX, float mouseY) {
   int pickedAxis = -1;
   if (!PickRagdollEditJointGizmo(mouseX, mouseY, pickedAxis)) {
     return false;
@@ -10628,7 +9419,7 @@ bool SandboxScene::BeginRagdollEditJointGizmoDrag(float mouseX, float mouseY) {
   return true;
 }
 
-bool SandboxScene::DragRagdollEditJointGizmo(float mouseX, float mouseY) {
+bool RagdollEditor::DragRagdollEditJointGizmo(float mouseX, float mouseY) {
   if (!m_ragdollEditJointDragging ||
       m_ragdollEditSelectedJoint < 0 ||
       m_ragdollEditJointAxis < 0 ||
@@ -10684,7 +9475,7 @@ bool SandboxScene::DragRagdollEditJointGizmo(float mouseX, float mouseY) {
   return RotateRagdollEditJointWorld(m_ragdollEditSelectedJoint, axis, signedAngle);
 }
 
-void SandboxScene::DrawRagdollJointGizmos(bool editable) {
+void RagdollEditor::DrawRagdollJointGizmos(bool editable) {
   const bool allowEditing = editable && m_skeletonEditMode && m_ragdollEditSelectionMode == kRagdollSelectJoints;
   if (!allowEditing || !g_pBaseDriver || !ImGui::GetCurrentContext()) {
     return;
@@ -10865,7 +9656,7 @@ void SandboxScene::DrawRagdollJointGizmos(bool editable) {
   }
 }
 
-void SandboxScene::ReleaseRagdollJointDebugBuffers() {
+void RagdollEditor::ReleaseRagdollJointDebugBuffers() {
   if (m_ragdollJointVB) {
     m_ragdollJointVB->release();
     m_ragdollJointVB = nullptr;
@@ -10879,7 +9670,7 @@ void SandboxScene::ReleaseRagdollJointDebugBuffers() {
   m_ragdollJointIndexCount = 0;
 }
 
-bool SandboxScene::UploadRagdollJointDebugGeometry(const std::vector<float>& vertices,
+bool RagdollEditor::UploadRagdollJointDebugGeometry(const std::vector<float>& vertices,
                                                    const std::vector<unsigned int>& indices) {
   const unsigned vertexCount = static_cast<unsigned>(vertices.size() / 4);
   const unsigned indexCount = static_cast<unsigned>(indices.size());
@@ -10927,7 +9718,7 @@ bool SandboxScene::UploadRagdollJointDebugGeometry(const std::vector<float>& ver
   return true;
 }
 
-void SandboxScene::DrawRagdollJointDebugOverlay() {
+void RagdollEditor::DrawRagdollJointDebugOverlay() {
   if (!m_showPhysics || m_skeletonEditMode || !m_ragdollJointRenderer.IsReady()) {
     return;
   }
@@ -11005,7 +9796,7 @@ void SandboxScene::DrawRagdollJointDebugOverlay() {
                                    IndexBufferFormat::R32);
 }
 
-bool SandboxScene::GetRagdollEditGizmoFrame(int capsuleIndex,
+bool RagdollEditor::GetRagdollEditGizmoFrame(int capsuleIndex,
                                             XVECTOR3& outCenter,
                                             std::array<XVECTOR3, 3>& outAxes,
                                             float& outSize,
@@ -11036,7 +9827,7 @@ bool SandboxScene::GetRagdollEditGizmoFrame(int capsuleIndex,
   return true;
 }
 
-bool SandboxScene::BuildRagdollEditHandlePoints(int capsuleIndex, std::array<XVECTOR3, 7>& outPoints) {
+bool RagdollEditor::BuildRagdollEditHandlePoints(int capsuleIndex, std::array<XVECTOR3, 7>& outPoints) {
   const auto& bones = m_ragdollAnimationBinding.referencePose.bones;
   if (capsuleIndex < 0 || capsuleIndex >= static_cast<int>(bones.size())) {
     return false;
@@ -11068,7 +9859,7 @@ bool SandboxScene::BuildRagdollEditHandlePoints(int capsuleIndex, std::array<XVE
   return true;
 }
 
-bool SandboxScene::PickRagdollEditHandle(float mouseX, float mouseY, float thresholdPixels, int& outCapsuleIndex, int& outHandleIndex) {
+bool RagdollEditor::PickRagdollEditHandle(float mouseX, float mouseY, float thresholdPixels, int& outCapsuleIndex, int& outHandleIndex) {
   outCapsuleIndex = -1;
   outHandleIndex = -1;
   if (!m_skeletonEditMode || !g_pBaseDriver || m_ragdollAnimationBinding.referencePose.bones.empty() ||
@@ -11133,7 +9924,7 @@ bool SandboxScene::PickRagdollEditHandle(float mouseX, float mouseY, float thres
   return outCapsuleIndex >= 0 && outHandleIndex >= 0;
 }
 
-bool SandboxScene::PickRagdollEditCapsule(float mouseX, float mouseY, float thresholdPixels, int& outCapsuleIndex) {
+bool RagdollEditor::PickRagdollEditCapsule(float mouseX, float mouseY, float thresholdPixels, int& outCapsuleIndex) {
   outCapsuleIndex = -1;
   if (!m_skeletonEditMode || !g_pBaseDriver || m_ragdollAnimationBinding.referencePose.bones.empty()) {
     return false;
@@ -11184,7 +9975,7 @@ bool SandboxScene::PickRagdollEditCapsule(float mouseX, float mouseY, float thre
   return outCapsuleIndex >= 0;
 }
 
-bool SandboxScene::PickRagdollEditTransformGizmo(float mouseX, float mouseY, int& outAxis) {
+bool RagdollEditor::PickRagdollEditTransformGizmo(float mouseX, float mouseY, int& outAxis) {
   outAxis = -1;
   if (!m_skeletonEditMode || !g_pBaseDriver ||
       (m_ragdollEditGizmoMode != kRagdollToolMove && m_ragdollEditGizmoMode != kRagdollToolRotate)) {
@@ -11261,7 +10052,7 @@ bool SandboxScene::PickRagdollEditTransformGizmo(float mouseX, float mouseY, int
   return outAxis >= 0;
 }
 
-bool SandboxScene::BeginRagdollEditTransformGizmoDrag(float mouseX, float mouseY) {
+bool RagdollEditor::BeginRagdollEditTransformGizmoDrag(float mouseX, float mouseY) {
   int pickedAxis = -1;
   if (!PickRagdollEditTransformGizmo(mouseX, mouseY, pickedAxis)) {
     return false;
@@ -11318,7 +10109,7 @@ bool SandboxScene::BeginRagdollEditTransformGizmoDrag(float mouseX, float mouseY
   return true;
 }
 
-bool SandboxScene::DragRagdollEditTransformGizmo(float mouseX, float mouseY) {
+bool RagdollEditor::DragRagdollEditTransformGizmo(float mouseX, float mouseY) {
   if (!m_ragdollEditGizmoDragging ||
       m_ragdollEditGizmoAxis < 0 ||
       !g_pBaseDriver) {
@@ -11388,7 +10179,7 @@ bool SandboxScene::DragRagdollEditTransformGizmo(float mouseX, float mouseY) {
       : RotateRagdollEditCapsuleWorld(m_ragdollEditSelectedCapsule, axis, signedAngle, false);
 }
 
-void SandboxScene::DrawRagdollEditTransformGizmo() {
+void RagdollEditor::DrawRagdollEditTransformGizmo() {
   if (!m_skeletonEditMode ||
       m_ragdollEditSelectionMode != kRagdollSelectCapsules ||
       m_ragdollEditSelectedCapsule < 0 ||
@@ -11513,7 +10304,7 @@ void SandboxScene::DrawRagdollEditTransformGizmo() {
   }
 }
 
-void SandboxScene::DrawSkeletonPreviewBoneGizmo() {
+void RagdollEditor::DrawSkeletonPreviewBoneGizmo() {
   if (!m_skeletonEditMode ||
       m_ragdollEditSelectionMode != kRagdollSelectBones ||
       m_skeletonEditSelectedBone < 0 ||
@@ -11601,7 +10392,7 @@ void SandboxScene::DrawSkeletonPreviewBoneGizmo() {
   }
 }
 
-bool SandboxScene::DragRagdollEditHandle(int capsuleIndex, int handleIndex, const XVECTOR3& worldDelta) {
+bool RagdollEditor::DragRagdollEditHandle(int capsuleIndex, int handleIndex, const XVECTOR3& worldDelta) {
   auto& bones = m_ragdollAnimationBinding.referencePose.bones;
   if (capsuleIndex < 0 || capsuleIndex >= static_cast<int>(bones.size()) ||
       capsuleIndex >= static_cast<int>(m_ragdollAnimationBinding.bodyFromBone.size()) ||
@@ -11720,7 +10511,7 @@ bool SandboxScene::DragRagdollEditHandle(int capsuleIndex, int handleIndex, cons
   return ApplyRagdollEditPose(rebuildRagdoll);
 }
 
-int SandboxScene::PickSkeletonEditBone(float mouseX, float mouseY, float thresholdPixels) const {
+int RagdollEditor::PickSkeletonEditBone(float mouseX, float mouseY, float thresholdPixels) const {
   if (!m_skeletonEditMode || m_skeletonEditCombined.empty() || !g_pBaseDriver) {
     return -1;
   }
@@ -11759,7 +10550,7 @@ int SandboxScene::PickSkeletonEditBone(float mouseX, float mouseY, float thresho
   return bestBone;
 }
 
-void SandboxScene::PickSkeletonEditBonesInScreenRect(float minX, float minY, float maxX, float maxY, std::vector<int>& outBones) const {
+void RagdollEditor::PickSkeletonEditBonesInScreenRect(float minX, float minY, float maxX, float maxY, std::vector<int>& outBones) const {
   outBones.clear();
   if (!m_skeletonEditMode || m_skeletonEditCombined.empty() || !g_pBaseDriver) {
     return;
@@ -11808,7 +10599,7 @@ void SandboxScene::PickSkeletonEditBonesInScreenRect(float minX, float minY, flo
   }
 }
 
-bool SandboxScene::SelectRagdollContextTargetAt(float mouseX, float mouseY) {
+bool RagdollEditor::SelectRagdollContextTargetAt(float mouseX, float mouseY) {
   auto selectBody = [&](int capsuleIndex) {
     RestoreSkeletonPreviewBone();
     SelectRagdollEditCapsule(capsuleIndex, true);
@@ -11869,7 +10660,7 @@ bool SandboxScene::SelectRagdollContextTargetAt(float mouseX, float mouseY) {
   return false;
 }
 
-SandboxScene::RagdollAuthoringUndoSnapshot SandboxScene::CaptureRagdollUndoSnapshot(const char* label) const {
+RagdollEditor::RagdollAuthoringUndoSnapshot RagdollEditor::CaptureRagdollUndoSnapshot(const char* label) const {
   RagdollAuthoringUndoSnapshot snapshot;
   snapshot.binding = m_ragdollAnimationBinding;
   snapshot.animationPose = m_ragdollAnimationPose;
@@ -11898,12 +10689,12 @@ SandboxScene::RagdollAuthoringUndoSnapshot SandboxScene::CaptureRagdollUndoSnaps
   return snapshot;
 }
 
-bool SandboxScene::RagdollUndoContentEquals(const RagdollAuthoringUndoSnapshot& a,
+bool RagdollEditor::RagdollUndoContentEquals(const RagdollAuthoringUndoSnapshot& a,
                                             const RagdollAuthoringUndoSnapshot& b) const {
   return t850::ragdoll_editor::SameAuthoringUndoContent(a, b);
 }
 
-void SandboxScene::BeginRagdollUndoScope(const char* label) {
+void RagdollEditor::BeginRagdollUndoScope(const char* label) {
   if (m_ragdollUndoState.scopeActive || m_ragdollUndoState.suppressRecording) {
     return;
   }
@@ -11912,7 +10703,7 @@ void SandboxScene::BeginRagdollUndoScope(const char* label) {
   m_ragdollUndoState.scopeActive = true;
 }
 
-void SandboxScene::PushRagdollUndoSnapshot(const RagdollAuthoringUndoSnapshot& snapshot) {
+void RagdollEditor::PushRagdollUndoSnapshot(const RagdollAuthoringUndoSnapshot& snapshot) {
   if (!m_ragdollUndoState.stack.empty() &&
       RagdollUndoContentEquals(m_ragdollUndoState.stack.back(), snapshot)) {
     return;
@@ -11926,7 +10717,7 @@ void SandboxScene::PushRagdollUndoSnapshot(const RagdollAuthoringUndoSnapshot& s
   }
 }
 
-void SandboxScene::EndRagdollUndoScope(bool gestureActive) {
+void RagdollEditor::EndRagdollUndoScope(bool gestureActive) {
   if (!m_ragdollUndoState.scopeActive) {
     if (m_ragdollUndoState.pendingActive && !gestureActive) {
       const RagdollAuthoringUndoSnapshot current = CaptureRagdollUndoSnapshot();
@@ -11979,17 +10770,17 @@ void SandboxScene::EndRagdollUndoScope(bool gestureActive) {
   }
 }
 
-bool SandboxScene::CanUndoRagdollAuthoringEdit() const {
+bool RagdollEditor::CanUndoRagdollAuthoringEdit() const {
   return !m_ragdollUndoState.stack.empty();
 }
 
-const char* SandboxScene::CurrentRagdollUndoLabel() const {
+const char* RagdollEditor::CurrentRagdollUndoLabel() const {
   return m_ragdollUndoState.stack.empty() || m_ragdollUndoState.stack.back().label.empty()
       ? "Undo"
       : m_ragdollUndoState.stack.back().label.c_str();
 }
 
-bool SandboxScene::UndoRagdollAuthoringEdit() {
+bool RagdollEditor::UndoRagdollAuthoringEdit() {
   if (m_ragdollUndoState.stack.empty()) {
     return false;
   }
@@ -12070,7 +10861,7 @@ bool SandboxScene::UndoRagdollAuthoringEdit() {
   return true;
 }
 
-void SandboxScene::DrawRagdollViewportContextMenu() {
+void RagdollEditor::DrawRagdollViewportContextMenu() {
   if (!ImGui::GetCurrentContext()) {
     m_ragdollContextMenuRequested = false;
     return;
@@ -12237,7 +11028,7 @@ void SandboxScene::DrawRagdollViewportContextMenu() {
   ImGui::EndPopup();
 }
 
-bool SandboxScene::HandleSkeletonEditInput(InputManager* input, bool imguiWantsMouse) {
+bool RagdollEditor::HandleSkeletonEditInput(InputManager* input, bool imguiWantsMouse) {
   if (!m_skeletonEditMode || !input) {
     return false;
   }
@@ -12472,7 +11263,7 @@ bool SandboxScene::HandleSkeletonEditInput(InputManager* input, bool imguiWantsM
   return false;
 }
 
-void SandboxScene::DrawRagdollCapsuleEditPanel(t850::DevGuiContext& gui) {
+void RagdollEditor::DrawRagdollCapsuleEditPanel(t850::DevGuiContext& gui) {
   ImGui::Separator();
   if (m_ragdollEditRenamingCapsule >= 0) {
     ImGui::SetNextItemOpen(true, ImGuiCond_Always);
@@ -13333,7 +12124,7 @@ void SandboxScene::DrawRagdollCapsuleEditPanel(t850::DevGuiContext& gui) {
   ImGui::PopID();
 }
 
-void SandboxScene::DrawRagdollJointEditPanel(t850::DevGuiContext& gui) {
+void RagdollEditor::DrawRagdollJointEditPanel(t850::DevGuiContext& gui) {
   ImGui::Separator();
   if (!ImGui::CollapsingHeader("Ragdoll Joints", ImGuiTreeNodeFlags_DefaultOpen)) {
     return;
@@ -13518,7 +12309,7 @@ void SandboxScene::DrawRagdollJointEditPanel(t850::DevGuiContext& gui) {
   }
 }
 
-void SandboxScene::DrawSkeletonEditPanel(t850::DevGuiContext& gui) {
+void RagdollEditor::DrawSkeletonEditPanel(t850::DevGuiContext& gui) {
   if (!gui.BeginSection("Skeleton Edit")) {
     return;
   }
@@ -13799,18 +12590,13 @@ void SandboxScene::DrawSkeletonEditPanel(t850::DevGuiContext& gui) {
 }
 
 #ifdef OS_ANDROID
-void SandboxScene::DrawAndroidPhysicsPanel(t850::DevGuiContext& gui) {
+void RagdollEditor::DrawAndroidPhysicsPanel(t850::DevGuiContext& gui) {
   if (!gui.BeginSection("Physics")) {
     return;
   }
 
   if (gui.Button(m_showPhysics ? "Physics Debug: On" : "Physics Debug: Off")) {
     m_showPhysics = !m_showPhysics;
-  }
-  ImGui::SameLine();
-  if (gui.Button(m_showNavMesh ? "NavMesh: On" : "NavMesh: Off")) {
-    m_showNavMesh = !m_showNavMesh;
-    if (m_showNavMesh && !m_navMesh.IsReady()) m_navMeshBuildAttempted = false;
   }
   ImGui::SameLine();
   if (gui.Button(m_showSkeleton ? "Skeleton Debug: On" : "Skeleton Debug: Off")) {
@@ -13907,7 +12693,7 @@ void SandboxScene::DrawAndroidPhysicsPanel(t850::DevGuiContext& gui) {
 }
 #endif
 
-void SandboxScene::DrawSkinningAuthoringPanel(t850::DevGuiContext& gui) {
+void RagdollEditor::DrawSkinningAuthoringPanel(t850::DevGuiContext& gui) {
   ImGui::SetNextWindowSize(ImVec2(460.0f, 680.0f), ImGuiCond_FirstUseEver);
   const bool begun = gui.BeginPanel("Skinning / Bones / Capsules");
   if (begun) {
@@ -13925,7 +12711,7 @@ void SandboxScene::DrawSkinningAuthoringPanel(t850::DevGuiContext& gui) {
   gui.EndPanel();
 }
 
-void SandboxScene::OnInput(InputManager* IManager) {
+void RagdollEditor::OnInput(InputManager* IManager) {
   // Skip mouse-driven camera when replay snapshot is active
   if (m_dumper.IsReplayActive()) return;
 
@@ -14047,7 +12833,7 @@ void SandboxScene::OnInput(InputManager* IManager) {
   }
 }
 
-void SandboxScene::FitModelToView() {
+void RagdollEditor::FitModelToView() {
   RenderMesh::AABB total;
   total.Reset();
   bool hasBounds = false;
@@ -14088,19 +12874,15 @@ void SandboxScene::FitModelToView() {
   m_orbitPitch = 0.0f;
   SyncOrbitProfileFromSandbox();
 
-  // Q3's default r_znear is 4 map units. Larger near planes can clip through walls
-  // before the Q3-sized player hull reaches them.
-  Cam.NPlane = (m_q3CollisionWorld && m_q3CollisionWorld->IsLoaded())
-    ? (4.0f / 32.0f)
-    : m_modelRadius * 0.01f;
+  Cam.NPlane = m_modelRadius * 0.01f;
   Cam.FPlane = m_modelRadius * 100.0f;
   Cam.CreatePojection();
 
-  T8_LOG_INFO("[SandboxScene] Model center=(%.2f,%.2f,%.2f) radius=%.2f dist=%.2f near=%.3f",
+  T8_LOG_INFO("[RagdollEditor] Model center=(%.2f,%.2f,%.2f) radius=%.2f dist=%.2f near=%.3f",
     m_orbitTarget.x, m_orbitTarget.y, m_orbitTarget.z, m_modelRadius, m_orbitDist, Cam.NPlane);
 }
 
-void SandboxScene::ComputeOrbitCamera() {
+void RagdollEditor::ComputeOrbitCamera() {
   SyncOrbitProfileFromSandbox();
   if (t850::OrbitCameraProfile* orbit = m_cameraController.GetOrbitProfile()) {
     orbit->Update(Cam, 0.0f, t850::CameraUpdateContext{});
@@ -14113,12 +12895,12 @@ void SandboxScene::ComputeOrbitCamera() {
   Cam.SetLookAt(target);
 }
 
-bool SandboxScene::SetCameraProfile(t850::CameraProfileType type) {
+bool RagdollEditor::SetCameraProfile(t850::CameraProfileType type) {
   if (type == t850::CameraProfileType::Orbit) {
     SyncOrbitProfileFromSandbox();
   }
   if (!m_cameraController.SetActiveProfile(type)) {
-    T8_LOG_ERROR("[SandboxScene] Failed to activate camera profile '%s'", t850::CameraProfileName(type));
+    T8_LOG_ERROR("[RagdollEditor] Failed to activate camera profile '%s'", t850::CameraProfileName(type));
     return false;
   }
   m_cameraProfileSelection = m_cameraController.GetActiveProfileIndex();
@@ -14130,24 +12912,24 @@ bool SandboxScene::SetCameraProfile(t850::CameraProfileType type) {
     ResetAndroidVirtualControls();
   }
 #endif
-  T8_LOG_INFO("[SandboxScene] Camera profile: %s", t850::CameraProfileName(type));
+  T8_LOG_INFO("[RagdollEditor] Camera profile: %s", t850::CameraProfileName(type));
   return true;
 }
 
 #ifdef OS_ANDROID
-bool SandboxScene::AndroidVirtualControlsVisible() const {
+bool RagdollEditor::AndroidVirtualControlsVisible() const {
   if (!ActiveCam) {
     return false;
   }
   return m_cameraController.GetActiveProfileType() != t850::CameraProfileType::Orbit;
 }
 
-bool SandboxScene::AndroidVirtualControlsActive() const {
+bool RagdollEditor::AndroidVirtualControlsActive() const {
   return m_androidMovePointerId >= 0 || m_androidLookPointerId >= 0 ||
          m_androidJumpPointerId >= 0 || m_androidRunPointerId >= 0;
 }
 
-void SandboxScene::ResetAndroidVirtualControls() {
+void RagdollEditor::ResetAndroidVirtualControls() {
   m_androidMovePointerId = -1;
   m_androidLookPointerId = -1;
   m_androidJumpPointerId = -1;
@@ -14158,7 +12940,7 @@ void SandboxScene::ResetAndroidVirtualControls() {
   m_androidRun = false;
 }
 
-bool SandboxScene::HandleAndroidVirtualControls(AInputEvent* event) {
+bool RagdollEditor::HandleAndroidVirtualControls(AInputEvent* event) {
   if (!event || AInputEvent_getType(event) != AINPUT_EVENT_TYPE_MOTION) {
     return false;
   }
@@ -14321,7 +13103,7 @@ bool SandboxScene::HandleAndroidVirtualControls(AInputEvent* event) {
   return true;
 }
 
-void SandboxScene::DrawAndroidVirtualControls(bool guiVisible) {
+void RagdollEditor::DrawAndroidVirtualControls(bool guiVisible) {
   if (guiVisible || !AndroidVirtualControlsVisible()) {
     ResetAndroidVirtualControls();
     return;
@@ -14381,7 +13163,7 @@ void SandboxScene::DrawAndroidVirtualControls(bool guiVisible) {
 }
 #endif
 
-void SandboxScene::SyncOrbitProfileFromSandbox() {
+void RagdollEditor::SyncOrbitProfileFromSandbox() {
   t850::OrbitCameraProfile* orbit = m_cameraController.GetOrbitProfile();
   if (!orbit) {
     return;
@@ -14396,7 +13178,7 @@ void SandboxScene::SyncOrbitProfileFromSandbox() {
   orbit->SetState(state);
 }
 
-void SandboxScene::SyncSandboxOrbitFromProfile() {
+void RagdollEditor::SyncSandboxOrbitFromProfile() {
   const t850::OrbitCameraProfile* orbit = m_cameraController.GetOrbitProfile();
   if (!orbit) {
     return;
@@ -14410,7 +13192,7 @@ void SandboxScene::SyncSandboxOrbitFromProfile() {
   m_modelRadius = state.modelRadius;
 }
 
-t850::CameraInputState SandboxScene::BuildCameraInputState(InputManager* input, bool imguiWantsMouse) const {
+t850::CameraInputState RagdollEditor::BuildCameraInputState(InputManager* input, bool imguiWantsMouse) const {
   t850::CameraInputState state;
   if (input) {
     state.moveForward = input->PressedKey(T800K_w);
@@ -14472,990 +13254,25 @@ t850::CameraInputState SandboxScene::BuildCameraInputState(InputManager* input, 
   return state;
 }
 
-bool SandboxScene::SweepCapsule(const t850::CameraCollisionSweep& sweep, t850::CameraCollisionHit& outHit) const {
-  outHit = t850::CameraCollisionHit{};
-  bool hasHit = false;
-  bool hasBlockingHit = false;
-  bool q3HasHit = false;
-  bool physicsHasHit = false;
-  bool physicsIgnoredForQ3Clip = false;
-  t850::CameraCollisionHit q3Hit;
-  t850::CameraCollisionHit cameraHit;
-  const char* chosenSource = "none";
-  const bool q3ClipLoaded = m_q3CollisionWorld && m_q3CollisionWorld->IsLoaded();
-  const bool q3PatchCollisionLoaded = q3ClipLoaded && m_q3CollisionWorld->GetPatchFacetCount() > 0;
-  if (q3ClipLoaded) {
-    t850::CharacterBoxSweep boxSweep;
-    boxSweep.startCenter = sweep.startCenter;
-    boxSweep.displacement = sweep.displacement;
-    boxSweep.halfExtents = XVECTOR3(
-        sweep.radius,
-        sweep.halfHeight + sweep.radius,
-        sweep.radius,
-        0.0f);
-    q3HasHit = m_q3CollisionWorld->SweepBox(boxSweep, q3Hit) && q3Hit.hit;
-    if (q3HasHit &&
-        ConsiderSweepHit(q3Hit, sweep.displacement, outHit, hasHit, hasBlockingHit)) {
-      chosenSource = "q3clip";
-    }
-  }
-
-  const t850::EngineContext* engineContext = GetEngineContext();
-  if (!engineContext) engineContext = &t850::GetEngineContext();
-  const bool physicsReady = engineContext && engineContext->physics && engineContext->physics->IsInitialized();
-  if (!physicsReady) {
-    T8_LOG_VERBOSE(
-        "[Q3CameraSweepCapsule] start=(%.4f, %.4f, %.4f) disp=(%.4f, %.4f, %.4f) radius=%.4f halfHeight=%.4f q3Hit=%d q3Fraction=%.5f q3Normal=(%.4f, %.4f, %.4f) joltReady=0 chosen=%s chosenFraction=%.5f blocking=%d",
-        sweep.startCenter.x,
-        sweep.startCenter.y,
-        sweep.startCenter.z,
-        sweep.displacement.x,
-        sweep.displacement.y,
-        sweep.displacement.z,
-        sweep.radius,
-        sweep.halfHeight,
-        q3HasHit ? 1 : 0,
-        q3Hit.fraction,
-        q3Hit.normal.x,
-        q3Hit.normal.y,
-        q3Hit.normal.z,
-        chosenSource,
-        outHit.fraction,
-        hasBlockingHit ? 1 : 0);
-    return hasHit;
-  }
-
-  t850::PhysicsCapsuleCastDesc desc;
-  desc.startCenter = sweep.startCenter;
-  desc.displacement = sweep.displacement;
-  desc.radius = sweep.radius;
-  desc.halfHeight = sweep.halfHeight;
-  if (q3PatchCollisionLoaded) {
-    desc.ignoredEntityIds = m_q3StaticCollisionEntityIds;
-  }
-
-  t850::PhysicsCastHit physicsHit;
-  physicsHasHit = engineContext->physics->CastCapsule(desc, physicsHit) && physicsHit.hit;
-  if (physicsHasHit) {
-    cameraHit.hit = true;
-    cameraHit.fraction = physicsHit.fraction;
-    cameraHit.position = physicsHit.position;
-    cameraHit.normal = physicsHit.normal;
-    cameraHit.entityId = physicsHit.entityId;
-    if (q3ClipLoaded) {
-      physicsIgnoredForQ3Clip = q3PatchCollisionLoaded
-          ? ContainsEntityId(m_q3StaticCollisionEntityIds, physicsHit.entityId)
-          : !IsQ3JoltFallbackHit(cameraHit, sweep.displacement);
-    }
-    if (!physicsIgnoredForQ3Clip &&
-        ConsiderSweepHit(cameraHit, sweep.displacement, outHit, hasHit, hasBlockingHit)) {
-      chosenSource = "jolt";
-    }
-  }
-  T8_LOG_VERBOSE(
-      "[Q3CameraSweepCapsule] start=(%.4f, %.4f, %.4f) disp=(%.4f, %.4f, %.4f) radius=%.4f halfHeight=%.4f q3Hit=%d q3Fraction=%.5f q3Normal=(%.4f, %.4f, %.4f) joltHit=%d joltIgnoredForQ3=%d joltFraction=%.5f joltNormal=(%.4f, %.4f, %.4f) chosen=%s chosenFraction=%.5f chosenNormal=(%.4f, %.4f, %.4f) blocking=%d",
-      sweep.startCenter.x,
-      sweep.startCenter.y,
-      sweep.startCenter.z,
-      sweep.displacement.x,
-      sweep.displacement.y,
-      sweep.displacement.z,
-      sweep.radius,
-      sweep.halfHeight,
-      q3HasHit ? 1 : 0,
-      q3Hit.fraction,
-      q3Hit.normal.x,
-      q3Hit.normal.y,
-      q3Hit.normal.z,
-      physicsHasHit ? 1 : 0,
-      physicsIgnoredForQ3Clip ? 1 : 0,
-      cameraHit.fraction,
-      cameraHit.normal.x,
-      cameraHit.normal.y,
-      cameraHit.normal.z,
-      chosenSource,
-      outHit.fraction,
-      outHit.normal.x,
-      outHit.normal.y,
-      outHit.normal.z,
-      hasBlockingHit ? 1 : 0);
-  return hasHit;
-}
-
-bool SandboxScene::SweepBox(const t850::CharacterBoxSweep& sweep, t850::CameraCollisionHit& outHit) const {
-  outHit = t850::CameraCollisionHit{};
-  bool hasHit = false;
-  bool hasBlockingHit = false;
-  bool q3HasHit = false;
-  bool physicsHasHit = false;
-  bool physicsIgnoredForQ3Clip = false;
-  t850::CameraCollisionHit q3Hit;
-  t850::CameraCollisionHit cameraHit;
-  const char* chosenSource = "none";
-  const bool q3ClipLoaded = m_q3CollisionWorld && m_q3CollisionWorld->IsLoaded();
-  const bool q3PatchCollisionLoaded = q3ClipLoaded && m_q3CollisionWorld->GetPatchFacetCount() > 0;
-  if (q3ClipLoaded) {
-    q3HasHit = m_q3CollisionWorld->SweepBox(sweep, q3Hit) && q3Hit.hit;
-    if (q3HasHit &&
-        ConsiderSweepHit(q3Hit, sweep.displacement, outHit, hasHit, hasBlockingHit)) {
-      chosenSource = "q3clip";
-    }
-  }
-
-  const t850::EngineContext* engineContext = GetEngineContext();
-  if (!engineContext) engineContext = &t850::GetEngineContext();
-  const bool physicsReady = engineContext && engineContext->physics && engineContext->physics->IsInitialized();
-  if (!physicsReady) {
-    T8_LOG_VERBOSE(
-        "[Q3CameraSweepBox] start=(%.4f, %.4f, %.4f) disp=(%.4f, %.4f, %.4f) half=(%.4f, %.4f, %.4f) q3Hit=%d q3Fraction=%.5f q3Normal=(%.4f, %.4f, %.4f) joltReady=0 chosen=%s chosenFraction=%.5f blocking=%d",
-        sweep.startCenter.x,
-        sweep.startCenter.y,
-        sweep.startCenter.z,
-        sweep.displacement.x,
-        sweep.displacement.y,
-        sweep.displacement.z,
-        sweep.halfExtents.x,
-        sweep.halfExtents.y,
-        sweep.halfExtents.z,
-        q3HasHit ? 1 : 0,
-        q3Hit.fraction,
-        q3Hit.normal.x,
-        q3Hit.normal.y,
-        q3Hit.normal.z,
-        chosenSource,
-        outHit.fraction,
-        hasBlockingHit ? 1 : 0);
-    return hasHit;
-  }
-
-  t850::PhysicsBoxCastDesc desc;
-  desc.startCenter = sweep.startCenter;
-  desc.displacement = sweep.displacement;
-  desc.halfExtents = sweep.halfExtents;
-  if (q3PatchCollisionLoaded) {
-    desc.ignoredEntityIds = m_q3StaticCollisionEntityIds;
-  }
-
-  t850::PhysicsCastHit physicsHit;
-  physicsHasHit = engineContext->physics->CastBox(desc, physicsHit) && physicsHit.hit;
-  if (physicsHasHit) {
-    cameraHit.hit = true;
-    cameraHit.fraction = physicsHit.fraction;
-    cameraHit.position = physicsHit.position;
-    cameraHit.normal = physicsHit.normal;
-    cameraHit.entityId = physicsHit.entityId;
-    if (q3ClipLoaded) {
-      physicsIgnoredForQ3Clip = q3PatchCollisionLoaded
-          ? ContainsEntityId(m_q3StaticCollisionEntityIds, physicsHit.entityId)
-          : !IsQ3JoltFallbackHit(cameraHit, sweep.displacement);
-    }
-    if (!physicsIgnoredForQ3Clip &&
-        ConsiderSweepHit(cameraHit, sweep.displacement, outHit, hasHit, hasBlockingHit)) {
-      chosenSource = "jolt";
-    }
-  }
-  T8_LOG_VERBOSE(
-      "[Q3CameraSweepBox] start=(%.4f, %.4f, %.4f) disp=(%.4f, %.4f, %.4f) half=(%.4f, %.4f, %.4f) q3Hit=%d q3Fraction=%.5f q3Normal=(%.4f, %.4f, %.4f) joltHit=%d joltIgnoredForQ3=%d joltFraction=%.5f joltNormal=(%.4f, %.4f, %.4f) chosen=%s chosenFraction=%.5f chosenNormal=(%.4f, %.4f, %.4f) blocking=%d",
-      sweep.startCenter.x,
-      sweep.startCenter.y,
-      sweep.startCenter.z,
-      sweep.displacement.x,
-      sweep.displacement.y,
-      sweep.displacement.z,
-      sweep.halfExtents.x,
-      sweep.halfExtents.y,
-      sweep.halfExtents.z,
-      q3HasHit ? 1 : 0,
-      q3Hit.fraction,
-      q3Hit.normal.x,
-      q3Hit.normal.y,
-      q3Hit.normal.z,
-      physicsHasHit ? 1 : 0,
-      physicsIgnoredForQ3Clip ? 1 : 0,
-      cameraHit.fraction,
-      cameraHit.normal.x,
-      cameraHit.normal.y,
-      cameraHit.normal.z,
-      chosenSource,
-      outHit.fraction,
-      outHit.normal.x,
-      outHit.normal.y,
-      outHit.normal.z,
-      hasBlockingHit ? 1 : 0);
-  return hasHit;
-}
-
-bool SandboxScene::QueryTriggerTouch(const t850::CharacterTriggerQuery& query, t850::CharacterTriggerTouch& outTouch) const {
-  outTouch = t850::CharacterTriggerTouch{};
-  if (m_q3CollisionWorld && m_q3CollisionWorld->IsLoaded()) {
-    return m_q3CollisionWorld->QueryTriggerTouch(query, outTouch);
-  }
+bool RagdollEditor::SweepCapsule(const t850::CameraCollisionSweep& sweep, t850::CameraCollisionHit& outHit) const {
+  (void)sweep;
+  (void)outHit;
   return false;
 }
 
-void SandboxScene::EnsureLightRuntimeState() {
-  if (m_lightAttachToCamera.size() < SceneProp.Lights.size())
-    m_lightAttachToCamera.resize(SceneProp.Lights.size(), false);
-  else if (m_lightAttachToCamera.size() > SceneProp.Lights.size())
-    m_lightAttachToCamera.resize(SceneProp.Lights.size());
-
-  if (SceneProp.Lights.empty()) m_selectedLightIndex = 0;
-  else if (m_selectedLightIndex < 0 || m_selectedLightIndex >= (int)SceneProp.Lights.size()) m_selectedLightIndex = 0;
-  SceneProp.ActiveLights = (std::max)(0, (std::min)(SceneProp.ActiveLights, (int)SceneProp.Lights.size()));
+bool RagdollEditor::SweepBox(const t850::CharacterBoxSweep& sweep, t850::CameraCollisionHit& outHit) const {
+  (void)sweep;
+  (void)outHit;
+  return false;
 }
 
-void SandboxScene::UpdateAttachedLights() {
-  EnsureLightRuntimeState();
-  Camera* attachCamera = ActiveCam ? ActiveCam : &Cam;
-  for (int i = 0; i < (int)SceneProp.Lights.size(); ++i) {
-    if (SceneProp.Lights[i].Type == LIGHT_POINT && m_lightAttachToCamera[i]) {
-      SceneProp.Lights[i].Position = attachCamera->Eye;
-    }
-  }
+bool RagdollEditor::QueryTriggerTouch(const t850::CharacterTriggerQuery& query, t850::CharacterTriggerTouch& outTouch) const {
+  (void)query;
+  (void)outTouch;
+  return false;
 }
 
-void SandboxScene::SyncLightCameraFromDirectionalLight() {
-  for (const Light& light : SceneProp.Lights) {
-    if (light.Type != LIGHT_DIRECTIONAL) continue;
-    XVECTOR3 direction = light.Direction;
-    if (direction.Length() <= 0.0001f) return;
-    direction.Normalize();
-    LightCam.SetLookAt(LightCam.Eye + direction);
-    return;
-  }
-}
-
-bool SandboxScene::AdjustSelectedDirectionalLightFromMouse(float dx, float dy) {
-  EnsureLightRuntimeState();
-  if (SceneProp.Lights.empty()) return false;
-  Light& light = SceneProp.Lights[m_selectedLightIndex];
-  if (light.Type != LIGHT_DIRECTIONAL) return false;
-  if (std::fabs(dx) < 0.001f && std::fabs(dy) < 0.001f) return true;
-
-  XVECTOR3 direction = light.Direction;
-  if (direction.Length() <= 0.0001f) direction = XVECTOR3(0.0f, -1.0f, 0.0f);
-  direction.Normalize();
-
-  const float sensitivity = 0.005f;
-  direction += Cam.Right * (dx * sensitivity);
-  direction += Cam.Up * (-dy * sensitivity);
-  if (direction.Length() <= 0.0001f) return true;
-  direction.Normalize();
-  light.Direction = direction;
-  SyncLightCameraFromDirectionalLight();
-  return true;
-}
-
-void SandboxScene::DrawSelectedDirectionalLightArrow() {
-  EnsureLightRuntimeState();
-  if (!m_drawLightDirection) return;
-  if (SceneProp.Lights.empty() || !m_lightArrowRenderer.IsReady() || !m_lightArrowVB || !m_lightArrowIB) return;
-
-  const Light& light = SceneProp.Lights[m_selectedLightIndex];
-  if (light.Type != LIGHT_DIRECTIONAL) return;
-
-  XVECTOR3 direction = light.Direction;
-  if (direction.Length() <= 0.0001f) return;
-  direction.Normalize();
-
-  XVECTOR3 origin = m_orbitTarget + m_panOffset;
-  float arrowLength = (std::max)(1.0f, m_modelRadius * 0.45f);
-  float headLength = arrowLength * 0.22f;
-  float headWidth = arrowLength * 0.08f;
-  XVECTOR3 tip = origin + direction * arrowLength;
-
-  XVECTOR3 side;
-  XVecCross(side, Cam.Up, direction);
-  if (side.Length() <= 0.0001f) XVecCross(side, XVECTOR3(0.0f, 1.0f, 0.0f), direction);
-  if (side.Length() <= 0.0001f) XVecCross(side, XVECTOR3(1.0f, 0.0f, 0.0f), direction);
-  side.Normalize();
-
-  XVECTOR3 up;
-  XVecCross(up, direction, side);
-  up.Normalize();
-
-  XVECTOR3 headBase = tip - direction * headLength;
-  XVECTOR3 points[10] = {
-    origin, tip,
-    tip, headBase + side * headWidth,
-    tip, headBase - side * headWidth,
-    tip, headBase + up * headWidth,
-    tip, headBase - up * headWidth,
-  };
-
-  float verts[10 * 4];
-  for (int i = 0; i < 10; ++i) {
-    verts[i * 4 + 0] = points[i].x;
-    verts[i * 4 + 1] = points[i].y;
-    verts[i * 4 + 2] = points[i].z;
-    verts[i * 4 + 3] = 1.0f;
-  }
-
-  m_lightArrowVB->UpdateFromBuffer(*t850::T8DeviceContext, verts);
-  XMATRIX44 identity;
-  identity.Identity();
-  m_lightArrowRenderer.SetDepthTestEnabled(false);
-  pFramework->pVideoDriver->SetDepthStencilState(BaseDriver::NONE);
-  pFramework->pVideoDriver->SetBlendState(BaseDriver::BLEND_DEFAULT);
-  m_lightArrowRenderer.DrawLines(identity, Cam.VP, XVECTOR3(1.0f, 0.82f, 0.25f, 1.0f),
-                                 m_lightArrowVB, m_lightArrowIB, m_lightArrowIndexCount, 16,
-                                 IndexBufferFormat::R16);
-}
-
-void SandboxScene::CaptureSandboxProfileState(t850::SandboxProfileDesc& state) {
-  state = t850::SandboxProfileDesc{};
-  state.model = m_profileEmbeddedInScene
-      ? std::string{}
-      : (m_profileModelKey.empty() ? SandboxProfileModelKey(g_config.modelPath) : m_profileModelKey);
-
-  auto profileMeshPath = [&](int meshIndex) -> std::string {
-    if (meshIndex >= 0 && meshIndex < static_cast<int>(m_sceneMeshPaths.size())) {
-      return m_sceneMeshPaths[static_cast<std::size_t>(meshIndex)];
-    }
-    if (!m_profileModelKey.empty()) {
-      return m_profileModelKey;
-    }
-    return SandboxProfileModelKey(g_config.modelPath);
-  };
-
-  auto addFloat = [&](const char* name, float value) {
-    state.sliders.push_back({name, value});
-  };
-  auto addBool = [&](const char* name, bool value) {
-    state.checkboxes.push_back({name, value});
-  };
-  auto addInt = [&](const char* name, int value) {
-    state.selectors.push_back({name, value});
-  };
-
-  const t850::SelectorDesc* cubemapDesc = FindSelectorDesc(m_controlSetup.descriptor.selectors, "cubemap");
-  std::string selectedCubemapPath = NormalizeSceneResourcePath(m_pendingCubemap.empty() ? m_currentCubemapPath : m_pendingCubemap);
-  if (selectedCubemapPath.empty() && cubemapDesc) {
-    selectedCubemapPath = CubemapPathForSelectorIndex(*cubemapDesc, m_currentCubemapIndex);
-  }
-  if (!selectedCubemapPath.empty()) {
-    state.cubemap_path = selectedCubemapPath;
-  }
-
-  addFloat("exposure", SceneProp.Exposure);
-  addFloat("bloom_factor", SceneProp.BloomFactor);
-  addFloat("bloom_threshold", SceneProp.BloomThreshold);
-  addFloat("tm_white_level", SceneProp.ToneMapWhiteLevel);
-  addFloat("tm_adapt_tau", SceneProp.LuminanceTau);
-  addFloat("pcf_radius", SceneProp.PCFScale);
-  addFloat("pcf_samples", SceneProp.PCFSamples);
-  addFloat("ssao_kernel_size", (float)SceneProp.SSAOKernel.KernelSize);
-  addFloat("ssao_radius", SceneProp.SSAOKernel.Radius);
-  addFloat("dof_aperture", SceneProp.Aperture);
-  addFloat("dof_focal_length", SceneProp.FocalLength);
-  addFloat("dof_max_coc", SceneProp.MaxCoc);
-  addFloat("dof_far_samples", SceneProp.DOF_Far_Samples_squared);
-  addFloat("dof_near_samples", SceneProp.DOF_Near_Samples_squared);
-  addFloat("light_volume_steps", SceneProp.LightVolumeSteps);
-  addFloat("godrays_factor", SceneProp.GodRaysFactor);
-  addFloat("fov", ActiveCam ? Rad2Deg(ActiveCam->Fov) : Rad2Deg(Cam.Fov));
-  addFloat("light_radius_scale", SceneProp.LightRadiusScale);
-  addFloat("light_intensity_scale", SceneProp.LightIntensityScale);
-  addFloat("lightmap_intensity", SceneProp.LightmapIntensity);
-  addFloat("shadow_bias", SceneProp.ShadowBias);
-  addFloat("shadow_min", SceneProp.ShadowMin);
-  addFloat("env_factor", SceneProp.EnvFactor);
-  addFloat("ibl_factor", SceneProp.IBLFactor);
-  addFloat("ibl_mip_count", SceneProp.IBLMipCount);
-  addFloat("ibl_diffuse_mip_level", SceneProp.IBLDiffuseMipLevel);
-  addFloat("ibl_brdf_lut_enabled", SceneProp.IBLBRDFLUTEnabled);
-  addFloat("material_emissive_intensity", SceneProp.MaterialEmissiveIntensity);
-  addFloat("material_transmission_multiplier", SceneProp.MaterialTransmissionMultiplier);
-  addFloat("material_refraction_strength", SceneProp.MaterialRefractionStrength);
-  addFloat("mouse_sensitivity_x", m_mouseSensitivityX);
-  addFloat("mouse_sensitivity_y", m_mouseSensitivityY);
-  addFloat("navmesh_debug_offset", m_navMeshDebugOffset);
-  addFloat("nav_agent_speed_multiplier", m_navTestSpeed);
-  addFloat("navmesh_cell_size", m_navMeshBuildSettings.cellSize);
-  addFloat("navmesh_cell_height", m_navMeshBuildSettings.cellHeight);
-  addFloat("navmesh_agent_height", m_navMeshBuildSettings.agentHeight);
-  addFloat("navmesh_agent_radius", m_navMeshBuildSettings.agentRadius);
-  addFloat("navmesh_agent_max_climb", m_navMeshBuildSettings.agentMaxClimb);
-  addFloat("navmesh_agent_max_slope", m_navMeshBuildSettings.agentMaxSlope);
-  addFloat("navmesh_region_min_size", m_navMeshBuildSettings.regionMinSize);
-  addFloat("navmesh_region_merge_size", m_navMeshBuildSettings.regionMergeSize);
-  addFloat("navmesh_edge_max_len", m_navMeshBuildSettings.edgeMaxLen);
-  addFloat("navmesh_edge_max_error", m_navMeshBuildSettings.edgeMaxError);
-  addFloat("navmesh_detail_sample_dist", m_navMeshBuildSettings.detailSampleDist);
-  addFloat("navmesh_detail_sample_max_error", m_navMeshBuildSettings.detailSampleMaxError);
-  addFloat("navmesh_query_extent_x", m_navMeshBuildSettings.queryExtents.x);
-  addFloat("navmesh_query_extent_y", m_navMeshBuildSettings.queryExtents.y);
-  addFloat("navmesh_query_extent_z", m_navMeshBuildSettings.queryExtents.z);
-  addFloat("navmesh_drop_min_height", m_navMeshBuildSettings.dropLinkMinHeight);
-  addFloat("navmesh_drop_max_height", m_navMeshBuildSettings.dropLinkMaxHeight);
-  addFloat("navmesh_drop_max_horizontal", m_navMeshBuildSettings.dropLinkMaxHorizontalDistance);
-  addFloat("navmesh_drop_sample_spacing", m_navMeshBuildSettings.dropLinkSampleSpacing);
-  addFloat("navmesh_drop_link_radius", m_navMeshBuildSettings.dropLinkRadius);
-  addFloat("navmesh_jump_max_horizontal", m_navMeshBuildSettings.jumpLinkMaxHorizontalDistance);
-  addFloat("navmesh_jump_sample_spacing", m_navMeshBuildSettings.jumpLinkSampleSpacing);
-  addFloat("navmesh_jump_link_radius", m_navMeshBuildSettings.jumpLinkRadius);
-
-  for (int kernelIndex = 0; kernelIndex < (int)SceneProp.pGaussKernels.size(); ++kernelIndex) {
-    GaussFilter* kernel = SceneProp.pGaussKernels[kernelIndex];
-    if (!kernel) continue;
-    std::string prefix = "gauss_" + std::to_string(kernelIndex) + "_";
-    addFloat((prefix + "radius").c_str(), kernel->radius);
-    addFloat((prefix + "sigma").c_str(), kernel->sigma);
-    addInt((prefix + "kernel_size").c_str(), kernel->kernelSize);
-  }
-
-  if (RenderSkinnedMesh* skinned = GetSelectedAnimationMesh()) {
-    addInt("animation_model", m_selectedAnimationMeshIndex);
-    addFloat("anim_speed", skinned->GetAnimSpeed());
-    addInt("anim_select", skinned->GetCurrentAnimSet());
-    addInt("anim_mode", skinned->GetKeyframeMode() ? 1 : 0);
-    if (skinned->GetKeyframeMode())
-      state.current_keyframe = skinned->GetCurrentKeyframe();
-  } else {
-    addFloat("anim_speed", 1.0f);
-    addInt("anim_select", 0);
-    addInt("anim_mode", 0);
-  }
-
-  const int meshCount = GetRuntimeMeshCount();
-  for (int meshIndex = 0; meshIndex < meshCount && meshIndex < kMaxSandboxMeshes; ++meshIndex) {
-    RenderSkinnedMesh* skinned = GetSkinnedMeshForIndex(meshIndex);
-    if (!skinned) {
-      continue;
-    }
-
-    t850::SandboxAnimationOverrideDesc animation;
-    animation.index = meshIndex;
-    animation.mesh = profileMeshPath(meshIndex);
-    animation.anim_speed = skinned->GetAnimSpeed();
-    animation.anim_select = skinned->GetCurrentAnimSet();
-    animation.anim_mode = skinned->GetKeyframeMode() ? 1 : 0;
-    if (skinned->GetKeyframeMode()) {
-      animation.current_keyframe = skinned->GetCurrentKeyframe();
-    }
-    state.animations.push_back(animation);
-  }
-
-  addBool("shadow_toggle", SceneProp.ToogleShadow != 0);
-  addBool("ssao_toggle", SceneProp.ToogleSSAO != 0);
-  addBool("show_wireframe", m_showWireframe);
-  addBool("show_skeleton", GetSelectedSkinningMesh() != nullptr && m_showSkeleton);
-  addBool("show_physics", m_showPhysics);
-  addBool("show_navmesh", m_showNavMesh);
-  addBool("show_light_volumes", m_showLightVolumes);
-  addBool("point_lights_enabled", SceneProp.PointLightsEnabled);
-  addBool("draw_direction", m_drawLightDirection);
-  addBool("debug_luminance", SceneProp.DebugLuminanceEnabled);
-  addBool("navmesh_auto_drop_links", m_navMeshBuildSettings.enableAutoDropLinks);
-  addBool("navmesh_auto_jump_links", m_navMeshBuildSettings.enableAutoJumpLinks);
-  addBool("navmesh_hybrid_jump_links", m_navMeshBuildSettings.enableHybridJumpLinks);
-
-  addInt("debug_render_target", m_debugRTSelection);
-  addInt("cubemap", m_currentCubemapIndex);
-  addInt("luminance_mode", SceneProp.LuminanceMode);
-  addInt("gauss_kernel_sample_count", 0);
-  addInt("active_gauss_kernel", ChangeActiveGaussSelection);
-  addInt("active_light", m_selectedLightIndex);
-  addInt("navmesh_debug_shape", m_navMeshDebugShapeMode);
-  addInt("nav_agent_mode", m_navTestMode);
-  addInt("navmesh_verts_per_poly", m_navMeshBuildSettings.vertsPerPoly);
-  addInt("navmesh_hybrid_max_links", m_navMeshBuildSettings.hybridJumpMaxLinks);
-
-  EnsureLightRuntimeState();
-  for (int lightIndex = 0; lightIndex < (int)SceneProp.Lights.size(); ++lightIndex) {
-    const Light& light = SceneProp.Lights[lightIndex];
-    t850::SandboxLightOverrideDesc lightState;
-    lightState.index = lightIndex;
-    lightState.position = ToArray(light.Position);
-    lightState.direction = ToArray(light.Direction);
-    lightState.color = ToArray(light.Color);
-    lightState.diameter = light.radius * 2.0f;
-    lightState.intensity = light.Intensity;
-    lightState.attach_to_camera = light.Type == LIGHT_POINT && m_lightAttachToCamera[lightIndex];
-    state.lights.push_back(lightState);
-  }
-
-  state.frustum_culling = SceneProp.FrustumCullingEnabled;
-  state.show_culling_debug = m_showCullStats;
-
-  if (m_cameraController.GetActiveProfileType() == t850::CameraProfileType::Orbit) {
-    SyncSandboxOrbitFromProfile();
-  }
-
-  t850::SandboxOrbitCameraDesc orbit;
-  orbit.target = {m_orbitTarget.x, m_orbitTarget.y, m_orbitTarget.z};
-  orbit.pan_offset = {m_panOffset.x, m_panOffset.y, m_panOffset.z};
-  orbit.eye = {Cam.Eye.x, Cam.Eye.y, Cam.Eye.z};
-  orbit.yaw = m_orbitYaw;
-  orbit.pitch = m_orbitPitch;
-  orbit.distance = m_orbitDist;
-  state.orbit_camera = orbit;
-
-  Camera* profileCamera = ActiveCam ? ActiveCam : &Cam;
-  t850::SandboxCameraDesc camera;
-  camera.profile = m_cameraController.GetActiveProfileIndex();
-  camera.eye = ToArray(profileCamera->Eye);
-  camera.look = ToArray(profileCamera->Look);
-  camera.up = ToArray(profileCamera->Up);
-  camera.right = ToArray(profileCamera->Right);
-  camera.yaw = profileCamera->Yaw;
-  camera.pitch = profileCamera->Pitch;
-  camera.roll = profileCamera->Roll;
-  camera.fov = Rad2Deg(profileCamera->Fov);
-  camera.aspect_ratio = profileCamera->AspectRatio;
-  camera.near_plane = profileCamera->NPlane;
-  camera.far_plane = profileCamera->FPlane;
-  camera.ortho = profileCamera->Ortho;
-  camera.width = profileCamera->Width;
-  camera.height = profileCamera->Height;
-  camera.left_handed = profileCamera->LeftHanded;
-  camera.orbit = orbit;
-  state.camera = camera;
-}
-
-void SandboxScene::ApplySandboxProfileState(const t850::SandboxProfileDesc& state) {
-  auto applyCubemapPath = [&](const std::string& cubemapPath) {
-    const std::string normalizedPath = NormalizeSceneResourcePath(cubemapPath);
-    if (normalizedPath.empty()) {
-      return;
-    }
-
-    const t850::SelectorDesc* cubemapDesc = FindSelectorDesc(m_controlSetup.descriptor.selectors, "cubemap");
-    if (cubemapDesc) {
-      const int pathIndex = CubemapSelectorIndexForPath(*cubemapDesc, normalizedPath);
-      if (pathIndex >= 0) {
-        m_currentCubemapIndex = pathIndex;
-      }
-    }
-
-    if (!ResourcePathEquals(normalizedPath, m_currentCubemapPath)) {
-      m_pendingCubemap = normalizedPath;
-    }
-  };
-
-  const bool hasCubemapPath = state.cubemap_path.has_value() &&
-      !NormalizeSceneResourcePath(*state.cubemap_path).empty();
-  if (hasCubemapPath) {
-    applyCubemapPath(*state.cubemap_path);
-  }
-
-  auto profileMeshPath = [&](int meshIndex) -> std::string {
-    if (meshIndex >= 0 && meshIndex < static_cast<int>(m_sceneMeshPaths.size())) {
-      return m_sceneMeshPaths[static_cast<std::size_t>(meshIndex)];
-    }
-    if (!m_profileModelKey.empty()) {
-      return m_profileModelKey;
-    }
-    return SandboxProfileModelKey(g_config.modelPath);
-  };
-
-  auto resolveAnimationMeshIndex = [&](const t850::SandboxAnimationOverrideDesc& animation) -> int {
-    if (GetSkinnedMeshForIndex(animation.index) &&
-        (animation.mesh.empty() || ResourcePathEquals(animation.mesh, profileMeshPath(animation.index)))) {
-      return animation.index;
-    }
-    if (animation.mesh.empty()) {
-      return -1;
-    }
-
-    int matchedMeshIndex = -1;
-    const int meshCount = GetRuntimeMeshCount();
-    for (int meshIndex = 0; meshIndex < meshCount && meshIndex < kMaxSandboxMeshes; ++meshIndex) {
-      if (!GetSkinnedMeshForIndex(meshIndex) || !ResourcePathEquals(animation.mesh, profileMeshPath(meshIndex))) {
-        continue;
-      }
-      if (matchedMeshIndex >= 0) {
-        return -1;
-      }
-      matchedMeshIndex = meshIndex;
-    }
-    return matchedMeshIndex;
-  };
-
-  auto applyAnimationToMesh = [&](RenderSkinnedMesh* skinned,
-                                  const t850::SandboxAnimationOverrideDesc& animation) {
-    if (!skinned) {
-      return;
-    }
-    skinned->SetAnimSpeed(animation.anim_speed);
-    if (animation.anim_select >= 0 && animation.anim_select < skinned->GetNumAnimSets()) {
-      int guard = skinned->GetNumAnimSets() + 1;
-      while (skinned->GetCurrentAnimSet() != animation.anim_select && guard-- > 0) {
-        skinned->NextAnimation();
-      }
-    }
-
-    const bool keyframeMode = (animation.anim_mode == 1);
-    skinned->SetKeyframeMode(keyframeMode);
-    if (keyframeMode) {
-      skinned->StepKeyframe(0);
-    }
-    if (animation.current_keyframe.has_value()) {
-      const int targetKeyframe = *animation.current_keyframe;
-      int guard = skinned->GetTotalKeyframes() + 1;
-      while (skinned->GetCurrentKeyframe() != targetKeyframe && guard-- > 0) {
-        const int direction = targetKeyframe > skinned->GetCurrentKeyframe() ? 1 : -1;
-        skinned->StepKeyframe(direction);
-      }
-    }
-  };
-
-  for (const auto& value : state.selectors) {
-    if (value.name == "animation_model" && GetSkinnedMeshForIndex(value.value)) {
-      m_selectedAnimationMeshIndex = value.value;
-    }
-  }
-
-  for (const auto& value : state.sliders) {
-    if (value.name == "exposure") SceneProp.Exposure = value.value;
-    else if (value.name == "bloom_factor") SceneProp.BloomFactor = value.value;
-    else if (value.name == "bloom_threshold") SceneProp.BloomThreshold = value.value;
-    else if (value.name == "tm_white_level") SceneProp.ToneMapWhiteLevel = value.value;
-    else if (value.name == "tm_adapt_tau") SceneProp.LuminanceTau = value.value;
-    else if (value.name == "pcf_radius") SceneProp.PCFScale = value.value;
-    else if (value.name == "pcf_samples") SceneProp.PCFSamples = value.value;
-    else if (value.name == "ssao_kernel_size") { SceneProp.SSAOKernel.KernelSize = (int)value.value; SceneProp.SSAOKernel.Update(); }
-    else if (value.name == "ssao_radius") SceneProp.SSAOKernel.Radius = value.value;
-    else if (value.name == "dof_aperture") SceneProp.Aperture = value.value;
-    else if (value.name == "dof_focal_length") SceneProp.FocalLength = value.value;
-    else if (value.name == "dof_max_coc") SceneProp.MaxCoc = value.value;
-    else if (value.name == "dof_far_samples") SceneProp.DOF_Far_Samples_squared = value.value;
-    else if (value.name == "dof_near_samples") SceneProp.DOF_Near_Samples_squared = value.value;
-    else if (value.name == "light_volume_steps") SceneProp.LightVolumeSteps = value.value;
-    else if (value.name == "godrays_factor") SceneProp.GodRaysFactor = value.value;
-    else if (value.name == "fov" && ActiveCam) { ActiveCam->SetFov(Deg2Rad(value.value)); VP = ActiveCam->VP; }
-    else if (value.name == "light_intensity" && !SceneProp.Lights.empty()) SceneProp.Lights[0].Intensity = value.value;
-    else if (value.name == "light_radius_scale") SceneProp.LightRadiusScale = value.value;
-    else if (value.name == "light_intensity_scale") SceneProp.LightIntensityScale = value.value;
-    else if (value.name == "lightmap_intensity") SceneProp.LightmapIntensity = value.value;
-    else if (value.name == "shadow_bias") SceneProp.ShadowBias = value.value;
-    else if (value.name == "shadow_min") SceneProp.ShadowMin = value.value;
-    else if (value.name == "env_factor") SceneProp.EnvFactor = value.value;
-    else if (value.name == "ibl_factor") SceneProp.IBLFactor = value.value;
-    else if (value.name == "ibl_mip_count") SceneProp.IBLMipCount = (std::max)(0.0f, value.value);
-    else if (value.name == "ibl_diffuse_mip_level") SceneProp.IBLDiffuseMipLevel = (std::max)(0.0f, value.value);
-    else if (value.name == "ibl_brdf_lut_enabled") SceneProp.IBLBRDFLUTEnabled = value.value > 0.5f ? 1.0f : 0.0f;
-    else if (value.name == "material_emissive_intensity") SceneProp.MaterialEmissiveIntensity = value.value;
-    else if (value.name == "material_transmission_multiplier") SceneProp.MaterialTransmissionMultiplier = value.value;
-    else if (value.name == "material_refraction_strength") SceneProp.MaterialRefractionStrength = value.value;
-    else if (value.name == "mouse_sensitivity_x") m_mouseSensitivityX = ClampMouseSensitivity(value.value);
-    else if (value.name == "mouse_sensitivity_y") m_mouseSensitivityY = ClampMouseSensitivity(value.value);
-    else if (value.name == "navmesh_debug_offset") m_navMeshDebugOffset = (std::max)(0.0f, (std::min)(0.25f, value.value));
-    else if (value.name == "nav_agent_speed_multiplier") m_navTestSpeed = (std::max)(0.0f, (std::min)(10.0f, value.value));
-    else if (value.name == "navmesh_cell_size") { m_navMeshBuildSettings.cellSize = (std::max)(0.0f, value.value); m_navMeshBuildAttempted = false; }
-    else if (value.name == "navmesh_cell_height") { m_navMeshBuildSettings.cellHeight = (std::max)(0.0f, value.value); m_navMeshBuildAttempted = false; }
-    else if (value.name == "navmesh_agent_height") { m_navMeshBuildSettings.agentHeight = (std::max)(0.1f, value.value); m_navMeshBuildAttempted = false; }
-    else if (value.name == "navmesh_agent_radius") { m_navMeshBuildSettings.agentRadius = (std::max)(0.0f, value.value); m_navMeshBuildAttempted = false; }
-    else if (value.name == "navmesh_agent_max_climb") { m_navMeshBuildSettings.agentMaxClimb = (std::max)(0.0f, value.value); m_navMeshBuildAttempted = false; }
-    else if (value.name == "navmesh_agent_max_slope") { m_navMeshBuildSettings.agentMaxSlope = std::clamp(value.value, 0.0f, 89.0f); m_navMeshBuildAttempted = false; }
-    else if (value.name == "navmesh_region_min_size") { m_navMeshBuildSettings.regionMinSize = (std::max)(0.0f, value.value); m_navMeshBuildAttempted = false; }
-    else if (value.name == "navmesh_region_merge_size") { m_navMeshBuildSettings.regionMergeSize = (std::max)(0.0f, value.value); m_navMeshBuildAttempted = false; }
-    else if (value.name == "navmesh_edge_max_len") { m_navMeshBuildSettings.edgeMaxLen = (std::max)(0.0f, value.value); m_navMeshBuildAttempted = false; }
-    else if (value.name == "navmesh_edge_max_error") { m_navMeshBuildSettings.edgeMaxError = (std::max)(0.0f, value.value); m_navMeshBuildAttempted = false; }
-    else if (value.name == "navmesh_detail_sample_dist") { m_navMeshBuildSettings.detailSampleDist = (std::max)(0.0f, value.value); m_navMeshBuildAttempted = false; }
-    else if (value.name == "navmesh_detail_sample_max_error") { m_navMeshBuildSettings.detailSampleMaxError = (std::max)(0.0f, value.value); m_navMeshBuildAttempted = false; }
-    else if (value.name == "navmesh_query_extent_x") { m_navMeshBuildSettings.queryExtents.x = (std::max)(0.05f, value.value); m_navMeshBuildAttempted = false; }
-    else if (value.name == "navmesh_query_extent_y") { m_navMeshBuildSettings.queryExtents.y = (std::max)(0.05f, value.value); m_navMeshBuildAttempted = false; }
-    else if (value.name == "navmesh_query_extent_z") { m_navMeshBuildSettings.queryExtents.z = (std::max)(0.05f, value.value); m_navMeshBuildAttempted = false; }
-    else if (value.name == "navmesh_drop_min_height") { m_navMeshBuildSettings.dropLinkMinHeight = (std::max)(0.0f, value.value); m_navMeshBuildAttempted = false; }
-    else if (value.name == "navmesh_drop_max_height") { m_navMeshBuildSettings.dropLinkMaxHeight = (std::max)(0.0f, value.value); m_navMeshBuildAttempted = false; }
-    else if (value.name == "navmesh_drop_max_horizontal") { m_navMeshBuildSettings.dropLinkMaxHorizontalDistance = (std::max)(0.0f, value.value); m_navMeshBuildAttempted = false; }
-    else if (value.name == "navmesh_drop_sample_spacing") { m_navMeshBuildSettings.dropLinkSampleSpacing = (std::max)(0.05f, value.value); m_navMeshBuildAttempted = false; }
-    else if (value.name == "navmesh_drop_link_radius") { m_navMeshBuildSettings.dropLinkRadius = (std::max)(0.05f, value.value); m_navMeshBuildAttempted = false; }
-    else if (value.name == "navmesh_jump_max_horizontal") { m_navMeshBuildSettings.jumpLinkMaxHorizontalDistance = (std::max)(0.0f, value.value); m_navMeshBuildAttempted = false; }
-    else if (value.name == "navmesh_jump_sample_spacing") { m_navMeshBuildSettings.jumpLinkSampleSpacing = (std::max)(0.05f, value.value); m_navMeshBuildAttempted = false; }
-    else if (value.name == "navmesh_jump_link_radius") { m_navMeshBuildSettings.jumpLinkRadius = (std::max)(0.05f, value.value); m_navMeshBuildAttempted = false; }
-    else if (value.name == "anim_speed") { if (RenderSkinnedMesh* skinned = GetSelectedAnimationMesh()) skinned->SetAnimSpeed(value.value); }
-
-    for (int kernelIndex = 0; kernelIndex < (int)SceneProp.pGaussKernels.size(); ++kernelIndex) {
-      GaussFilter* kernel = SceneProp.pGaussKernels[kernelIndex];
-      if (!kernel) continue;
-      std::string prefix = "gauss_" + std::to_string(kernelIndex) + "_";
-      if (value.name == prefix + "radius") { kernel->radius = value.value; kernel->Update(); }
-      else if (value.name == prefix + "sigma") { kernel->sigma = value.value; kernel->Update(); }
-    }
-  }
-
-  for (const auto& value : state.checkboxes) {
-    if (value.name == "shadow_toggle") SceneProp.ToogleShadow = value.value ? 1 : 0;
-    else if (value.name == "ssao_toggle") SceneProp.ToogleSSAO = value.value ? 1 : 0;
-    else if (value.name == "show_wireframe") m_showWireframe = value.value;
-    else if (value.name == "show_skeleton") m_showSkeleton = value.value && (GetSelectedSkinningMesh() != nullptr);
-    else if (value.name == "show_physics") m_showPhysics = value.value;
-    else if (value.name == "show_navmesh") {
-      m_showNavMesh = value.value;
-      if (m_showNavMesh && !m_navMesh.IsReady()) m_navMeshBuildAttempted = false;
-    }
-    else if (value.name == "show_light_volumes") m_showLightVolumes = value.value;
-    else if (value.name == "point_lights_enabled") SceneProp.PointLightsEnabled = value.value;
-    else if (value.name == "draw_direction") m_drawLightDirection = value.value;
-    else if (value.name == "debug_luminance") {
-      SceneProp.DebugLuminanceEnabled = value.value;
-      if (!value.value) SceneProp.DebugAdaptedLuminanceValid = false;
-    }
-    else if (value.name == "navmesh_auto_drop_links") { m_navMeshBuildSettings.enableAutoDropLinks = value.value; m_navMeshBuildAttempted = false; }
-    else if (value.name == "navmesh_auto_jump_links") { m_navMeshBuildSettings.enableAutoJumpLinks = value.value; m_navMeshBuildAttempted = false; }
-    else if (value.name == "navmesh_hybrid_jump_links") { m_navMeshBuildSettings.enableHybridJumpLinks = value.value; m_navMeshBuildAttempted = false; }
-  }
-
-  for (const auto& value : state.selectors) {
-    if (value.name == "debug_render_target") m_debugRTSelection = value.value;
-    else if (value.name == "luminance_mode") SceneProp.LuminanceMode = value.value;
-    else if (value.name == "active_light") m_selectedLightIndex = value.value;
-    else if (value.name == "cubemap") {
-      const t850::SelectorDesc* cubemapDesc = hasCubemapPath
-          ? nullptr
-          : FindSelectorDesc(m_controlSetup.descriptor.selectors, "cubemap");
-      if (cubemapDesc && value.value >= 0 && value.value < (int)cubemapDesc->options.size()) {
-        const std::string profileCubemapPath = CubemapPathForSelectorIndex(*cubemapDesc, value.value);
-        m_currentCubemapIndex = value.value;
-        if (!profileCubemapPath.empty() && !ResourcePathEquals(profileCubemapPath, m_currentCubemapPath)) {
-          m_pendingCubemap = profileCubemapPath;
-        }
-      }
-    }
-    else if (value.name == "active_gauss_kernel") ChangeActiveGaussSelection = value.value;
-    else if (value.name == "navmesh_debug_shape") m_navMeshDebugShapeMode = (std::max)(0, (std::min)(1, value.value));
-    else if (value.name == "nav_agent_mode") {
-      m_navTestMode = ClampNavTestMode(value.value);
-    }
-    else if (value.name == "navmesh_verts_per_poly") {
-      m_navMeshBuildSettings.vertsPerPoly = std::clamp(value.value, 3, 12);
-      m_navMeshBuildAttempted = false;
-    }
-    else if (value.name == "navmesh_hybrid_max_links") {
-      m_navMeshBuildSettings.hybridJumpMaxLinks = (std::max)(0, value.value);
-      m_navMeshBuildAttempted = false;
-    }
-    else if (value.name == "animation_model") {
-      if (GetSkinnedMeshForIndex(value.value)) {
-        m_selectedAnimationMeshIndex = value.value;
-      }
-    }
-    else if (value.name == "anim_select") {
-      if (RenderSkinnedMesh* skinned = GetSelectedAnimationMesh()) {
-        int guard = skinned->GetNumAnimSets() + 1;
-        while (skinned->GetCurrentAnimSet() != value.value && guard-- > 0) skinned->NextAnimation();
-      }
-    }
-    else if (value.name == "anim_mode") {
-      if (RenderSkinnedMesh* skinned = GetSelectedAnimationMesh()) {
-        bool keyframeMode = (value.value == 1);
-        skinned->SetKeyframeMode(keyframeMode);
-        if (keyframeMode) skinned->StepKeyframe(0);
-      }
-    }
-
-    for (int kernelIndex = 0; kernelIndex < (int)SceneProp.pGaussKernels.size(); ++kernelIndex) {
-      GaussFilter* kernel = SceneProp.pGaussKernels[kernelIndex];
-      if (!kernel) continue;
-      std::string name = "gauss_" + std::to_string(kernelIndex) + "_kernel_size";
-      if (value.name == name) { kernel->kernelSize = value.value; kernel->Update(); }
-    }
-  }
-
-  EnsureLightRuntimeState();
-  for (const auto& lightState : state.lights) {
-    if (lightState.index < 0 || lightState.index >= (int)SceneProp.Lights.size()) continue;
-    Light& light = SceneProp.Lights[lightState.index];
-    if (lightState.position.has_value()) light.Position = FromArray(*lightState.position);
-    if (lightState.direction.has_value()) {
-      XVECTOR3 direction = FromArray(*lightState.direction);
-      if (direction.Length() > 0.0001f) {
-        direction.Normalize();
-        light.Direction = direction;
-      }
-    }
-    if (lightState.color.has_value()) light.Color = FromArray(*lightState.color);
-    if (lightState.diameter.has_value()) light.radius = (std::max)(0.001f, *lightState.diameter * 0.5f);
-    if (lightState.intensity.has_value()) light.Intensity = *lightState.intensity;
-    if (lightState.attach_to_camera.has_value() && light.Type == LIGHT_POINT)
-      m_lightAttachToCamera[lightState.index] = *lightState.attach_to_camera;
-  }
-  UpdateAttachedLights();
-  SyncLightCameraFromDirectionalLight();
-
-  if (state.frustum_culling.has_value()) {
-    if (!SceneProp.FrustumCullingToggleAllowed) {
-      SceneProp.FrustumCullingEnabled = false;
-    } else {
-      SceneProp.FrustumCullingEnabled = *state.frustum_culling;
-    }
-  }
-  if (state.show_culling_debug.has_value()) {
-    m_showCullStats = *state.show_culling_debug;
-    SceneProp.ShowCullingDebug = m_showCullStats;
-  }
-
-  auto applyCameraPoseProjection = [&](const t850::SandboxCameraDesc& cameraState) {
-    Cam.Ortho = cameraState.ortho;
-    Cam.Fov = Deg2Rad(cameraState.fov);
-    const float liveWidth = (g_pBaseDriver && g_pBaseDriver->width > 0) ? static_cast<float>(g_pBaseDriver->width) : cameraState.width;
-    const float liveHeight = (g_pBaseDriver && g_pBaseDriver->height > 0) ? static_cast<float>(g_pBaseDriver->height) : cameraState.height;
-    Cam.AspectRatio = liveHeight > 0.0f ? liveWidth / liveHeight : cameraState.aspect_ratio;
-    Cam.NPlane = cameraState.near_plane;
-    Cam.FPlane = cameraState.far_plane;
-    Cam.Width = liveWidth > 0.0f ? liveWidth : cameraState.width;
-    Cam.Height = liveHeight > 0.0f ? liveHeight : cameraState.height;
-    Cam.LeftHanded = cameraState.left_handed;
-    Cam.Eye = FromArray(cameraState.eye);
-    Cam.Eye.w = 1.0f;
-    Cam.Yaw = cameraState.yaw;
-    Cam.Pitch = cameraState.pitch;
-    Cam.Roll = cameraState.roll;
-    Cam.Velocity = XVECTOR3(0.0f, 0.0f, 0.0f, 0.0f);
-    Cam.CreatePojection();
-    Cam.Update(0.0f);
-    VP = Cam.VP;
-  };
-
-  if (state.camera.has_value()) {
-    const auto& cameraState = *state.camera;
-    const t850::CameraProfileType profileType = t850::CameraProfileTypeFromIndex(cameraState.profile);
-    if (cameraState.orbit.has_value()) {
-      const auto& orbit = *cameraState.orbit;
-      m_orbitTarget = XVECTOR3(orbit.target[0], orbit.target[1], orbit.target[2]);
-      m_panOffset = XVECTOR3(orbit.pan_offset[0], orbit.pan_offset[1], orbit.pan_offset[2]);
-      m_orbitYaw = orbit.yaw;
-      m_orbitPitch = orbit.pitch;
-      m_orbitDist = orbit.distance;
-      SyncOrbitProfileFromSandbox();
-    }
-    applyCameraPoseProjection(cameraState);
-    SetCameraProfile(profileType);
-    if (profileType != t850::CameraProfileType::Orbit || !cameraState.orbit.has_value()) {
-      applyCameraPoseProjection(cameraState);
-    } else {
-      VP = Cam.VP;
-    }
-    UpdateAttachedLights();
-  } else if (state.orbit_camera.has_value()) {
-    const auto& orbit = *state.orbit_camera;
-    m_orbitTarget = XVECTOR3(orbit.target[0], orbit.target[1], orbit.target[2]);
-    m_panOffset = XVECTOR3(orbit.pan_offset[0], orbit.pan_offset[1], orbit.pan_offset[2]);
-    m_orbitYaw = orbit.yaw;
-    m_orbitPitch = orbit.pitch;
-    m_orbitDist = orbit.distance;
-    Cam.Eye = XVECTOR3(orbit.eye[0], orbit.eye[1], orbit.eye[2]);
-    ComputeOrbitCamera();
-    VP = Cam.VP;
-    UpdateAttachedLights();
-  }
-  if (state.current_keyframe.has_value()) {
-    if (RenderSkinnedMesh* skinned = GetSelectedAnimationMesh()) {
-      int targetKeyframe = *state.current_keyframe;
-      int guard = skinned->GetTotalKeyframes() + 1;
-      while (skinned->GetCurrentKeyframe() != targetKeyframe && guard-- > 0) {
-        int direction = targetKeyframe > skinned->GetCurrentKeyframe() ? 1 : -1;
-        skinned->StepKeyframe(direction);
-      }
-    }
-  }
-
-  for (const auto& animation : state.animations) {
-    const int meshIndex = resolveAnimationMeshIndex(animation);
-    if (meshIndex < 0) {
-      T8_LOG_INFO("[SandboxScene] Skipped profile animation for mesh slot %d path='%s'",
-                  animation.index,
-                  animation.mesh.c_str());
-      continue;
-    }
-    applyAnimationToMesh(GetSkinnedMeshForIndex(meshIndex), animation);
-  }
-}
-
-t850::SandboxProfileDesc SandboxScene::BuildSparseSandboxProfile(const t850::SandboxProfileDesc& current) const {
-  t850::SandboxProfileDesc sparse;
-  sparse.name = current.name;
-  sparse.platform = current.platform;
-  sparse.architecture = current.architecture;
-  sparse.gpu_family = current.gpu_family;
-  sparse.gpu_name_contains = current.gpu_name_contains;
-  sparse.model = current.model;
-  for (const auto& value : current.sliders) {
-    const auto* baseline = FindFloatOverride(m_profileBaselineState.sliders, value.name);
-    if (!baseline || !NearlyEqual(value.value, baseline->value)) sparse.sliders.push_back(value);
-  }
-  for (const auto& value : current.checkboxes) {
-    const auto* baseline = FindBoolOverride(m_profileBaselineState.checkboxes, value.name);
-    if (!baseline || value.value != baseline->value) sparse.checkboxes.push_back(value);
-  }
-  for (const auto& value : current.selectors) {
-    const auto* baseline = FindIntOverride(m_profileBaselineState.selectors, value.name);
-    if (!baseline || value.value != baseline->value) sparse.selectors.push_back(value);
-  }
-  for (const auto& value : current.lights) {
-    t850::SandboxLightOverrideDesc lightSparse;
-    lightSparse.index = value.index;
-    const auto* baseline = FindLightOverride(m_profileBaselineState.lights, value.index);
-    if (!baseline) {
-      lightSparse = value;
-    } else {
-      if (value.position.has_value() && (!baseline->position.has_value() || !VecNearlyEqual(*value.position, *baseline->position)))
-        lightSparse.position = value.position;
-      if (value.direction.has_value() && (!baseline->direction.has_value() || !VecNearlyEqual(*value.direction, *baseline->direction)))
-        lightSparse.direction = value.direction;
-      if (value.color.has_value() && (!baseline->color.has_value() || !VecNearlyEqual(*value.color, *baseline->color)))
-        lightSparse.color = value.color;
-      if (value.diameter.has_value() && (!baseline->diameter.has_value() || !NearlyEqual(*value.diameter, *baseline->diameter)))
-        lightSparse.diameter = value.diameter;
-      if (value.intensity.has_value() && (!baseline->intensity.has_value() || !NearlyEqual(*value.intensity, *baseline->intensity)))
-        lightSparse.intensity = value.intensity;
-      if (value.attach_to_camera.has_value() && (!baseline->attach_to_camera.has_value() || *value.attach_to_camera != *baseline->attach_to_camera))
-        lightSparse.attach_to_camera = value.attach_to_camera;
-      if (value.attach_to_camera.has_value() && *value.attach_to_camera) {
-        lightSparse.position.reset();
-      }
-    }
-    if (lightSparse.position.has_value() || lightSparse.direction.has_value() || lightSparse.color.has_value() ||
-        lightSparse.diameter.has_value() || lightSparse.intensity.has_value() || lightSparse.attach_to_camera.has_value()) {
-      sparse.lights.push_back(lightSparse);
-    }
-  }
-  for (const auto& value : current.animations) {
-    const auto* baseline = FindAnimationOverride(m_profileBaselineState.animations, value.index);
-    if (!baseline || !AnimationOverrideNearlyEqual(value, *baseline)) {
-      sparse.animations.push_back(value);
-    }
-  }
-  if (current.cubemap_path != m_profileBaselineState.cubemap_path) sparse.cubemap_path = current.cubemap_path;
-  if (current.frustum_culling != m_profileBaselineState.frustum_culling) sparse.frustum_culling = current.frustum_culling;
-  if (current.show_culling_debug != m_profileBaselineState.show_culling_debug) sparse.show_culling_debug = current.show_culling_debug;
-  if (current.current_keyframe != m_profileBaselineState.current_keyframe) sparse.current_keyframe = current.current_keyframe;
-  if (current.camera.has_value() && m_profileBaselineState.camera.has_value()) {
-    if (!CameraNearlyEqual(*current.camera, *m_profileBaselineState.camera)) {
-      sparse.camera = current.camera;
-    }
-  } else if (current.camera != m_profileBaselineState.camera) {
-    sparse.camera = current.camera;
-  }
-  if (current.orbit_camera.has_value() && m_profileBaselineState.orbit_camera.has_value()) {
-    if (!OrbitCameraNearlyEqual(*current.orbit_camera, *m_profileBaselineState.orbit_camera)) {
-      sparse.orbit_camera = current.orbit_camera;
-    }
-  } else if (current.orbit_camera != m_profileBaselineState.orbit_camera) {
-    sparse.orbit_camera = current.orbit_camera;
-  }
-  return sparse;
-}
-
-bool SandboxScene::SandboxProfileStatesEqual(const t850::SandboxProfileDesc& lhs, const t850::SandboxProfileDesc& rhs) const {
-  const t850::SandboxProfileDesc lhsSparse = BuildSparseSandboxProfile(lhs);
-  const t850::SandboxProfileDesc rhsSparse = BuildSparseSandboxProfile(rhs);
-  return lhsSparse.sliders == rhsSparse.sliders &&
-         lhsSparse.checkboxes == rhsSparse.checkboxes &&
-         lhsSparse.selectors == rhsSparse.selectors &&
-         lhsSparse.lights == rhsSparse.lights &&
-         lhsSparse.animations == rhsSparse.animations &&
-         lhsSparse.cubemap_path == rhsSparse.cubemap_path &&
-         lhsSparse.camera == rhsSparse.camera &&
-         lhsSparse.orbit_camera == rhsSparse.orbit_camera &&
-         lhsSparse.frustum_culling == rhsSparse.frustum_culling &&
-         lhsSparse.show_culling_debug == rhsSparse.show_culling_debug &&
-         lhsSparse.current_keyframe == rhsSparse.current_keyframe;
-}
-
-void SandboxScene::LoadSandboxProfile(bool embeddedInScene) {
+void RagdollEditor::LoadSandboxProfile(bool embeddedInScene) {
   m_profileEmbeddedInScene = embeddedInScene;
   m_profileModelKey = embeddedInScene ? std::string{} : SandboxProfileModelKey(g_config.modelPath);
   m_selectedProfileTargetIndex = t850::DefaultProfileTargetIndex();
@@ -15493,7 +13310,7 @@ void SandboxScene::LoadSandboxProfile(bool embeddedInScene) {
   CaptureSandboxProfileState(m_profileSavedState);
 
   const auto& runtime = t850::GetRuntimeProfileInfo();
-  T8_LOG_INFO("[SandboxScene] Profile scope='%s' runtime='%s' platform=%s arch=%s gpu='%s' family=%s base=%d runtime=%d",
+  T8_LOG_INFO("[RagdollEditor] Profile scope='%s' runtime='%s' platform=%s arch=%s gpu='%s' family=%s base=%d runtime=%d",
               embeddedInScene ? m_loadedEditorScenePath.c_str() : m_profileModelKey.c_str(),
               runtime.recommendedProfile.c_str(),
               runtime.platform.c_str(),
@@ -15501,7 +13318,7 @@ void SandboxScene::LoadSandboxProfile(bool embeddedInScene) {
               runtime.gpuName.c_str(), runtime.gpuFamily.c_str(), baseProfile ? 1 : 0, runtimeProfile ? 1 : 0);
 }
 
-void SandboxScene::SaveSandboxProfile() {
+void RagdollEditor::SaveSandboxProfile() {
   if (!m_profileReady) return;
 
   t850::SandboxProfileDesc current;
@@ -15553,30 +13370,30 @@ void SandboxScene::SaveSandboxProfile() {
       scene.profiles = profiles;
       saved = t850::scene::SaveEditorSceneFile(scene, m_loadedEditorScenePath, &error);
       if (!saved && !error.empty()) {
-        T8_LOG_ERROR("[SandboxScene] Failed to save scene profile '%s': %s",
+        T8_LOG_ERROR("[RagdollEditor] Failed to save scene profile '%s': %s",
                      m_loadedEditorScenePath.c_str(),
                      error.c_str());
       }
     } else {
-      T8_LOG_ERROR("[SandboxScene] Failed to reload scene '%s' for profile save: %s",
+      T8_LOG_ERROR("[RagdollEditor] Failed to reload scene '%s' for profile save: %s",
                    m_loadedEditorScenePath.c_str(),
                    error.c_str());
     }
   } else {
-    saved = t850::SaveSceneDescriptor("Scenes/SandboxScene.json", m_controlSetup.descriptor);
+    saved = t850::SaveSceneDescriptor("Scenes/RagdollEditor.json", m_controlSetup.descriptor);
   }
 
   if (saved) {
     m_profileSavedState = current;
     m_profileDirty = false;
-    T8_LOG_INFO("[SandboxScene] Saved profile '%s' for %s '%s'",
+    T8_LOG_INFO("[RagdollEditor] Saved profile '%s' for %s '%s'",
                 target.name.empty() ? "pc/base" : target.name.c_str(),
                 m_profileEmbeddedInScene ? "scene" : "model",
                 m_profileEmbeddedInScene ? m_loadedEditorScenePath.c_str() : m_profileModelKey.c_str());
   }
 }
 
-void SandboxScene::OnDraw() {
+void RagdollEditor::OnDraw() {
   T8_TELEMETRY_SCOPE("sandbox.draw");
   SceneProp.ShowCullingDebug = m_showCullStats;
   static float sLuminanceReadbackAccum = 0.0f;
@@ -15804,28 +13621,6 @@ void SandboxScene::OnDraw() {
       }
     }
 
-    if (m_showNavMesh && m_navMeshDebugRenderer.IsReady() && EnsureNavMeshBuilt()) {
-      Texture* depthTexture = nullptr;
-      if (GBufferPass >= 0 && GBufferPass < (int)pFramework->pVideoDriver->RTs.size()) {
-        if (auto* gbufRT = pFramework->pVideoDriver->RTs[GBufferPass]) {
-          depthTexture = gbufRT->pDepthTexture;
-        }
-      }
-      if (depthTexture) {
-        m_navMeshDebugRenderer.SetVerticalOffset(m_navMeshDebugOffset);
-        m_navMeshDebugRenderer.SetGraphVerticalOffset(m_navMeshDebugOffset + 0.005f);
-        m_navMeshDebugRenderer.SetShapeMode(m_navMeshDebugShapeMode == 1
-            ? t850::navigation::NavMeshDebugShapeMode::Nodes
-            : t850::navigation::NavMeshDebugShapeMode::Geometry);
-        m_navMeshDebugRenderer.SetDepthTexture(depthTexture);
-        m_navMeshDebugRenderer.SetViewport(g_pBaseDriver->width, g_pBaseDriver->height);
-        m_navMeshDebugRenderer.SetFarPlane(Cam.FPlane);
-        pFramework->pVideoDriver->SetDepthStencilState(BaseDriver::NONE);
-        pFramework->pVideoDriver->SetBlendState(BaseDriver::BLEND_DEFAULT);
-        m_navMeshDebugRenderer.Draw(m_navMesh, VP);
-      }
-    }
-
     if (m_showLightVolumes) {
       pFramework->pVideoDriver->SetDepthStencilState(BaseDriver::NONE);
       pFramework->pVideoDriver->SetBlendState(BaseDriver::ALPHA_BLEND);
@@ -15859,7 +13654,7 @@ void SandboxScene::OnDraw() {
   };
 
 #ifdef OS_ANDROID
-  if (m_showWireframe || m_showSkeleton || m_showPhysics || m_showNavMesh || m_showLightVolumes) {
+  if (m_showWireframe || m_showSkeleton || m_showPhysics || m_showLightVolumes) {
     if (auto* vkDriver = static_cast<VulkanDriver*>(pFramework->pVideoDriver)) {
       vkDriver->SetPrePresentOverlayCallback(drawMeshDebugOverlays);
     }
@@ -15967,9 +13762,9 @@ void SandboxScene::OnDraw() {
   }
 }
 
-void SandboxScene::DrawDevGui(t850::DevGuiContext& gui) {
+void RagdollEditor::DrawDevGui(t850::DevGuiContext& gui) {
   if (m_controlSetup.descriptor.name.empty()) {
-    m_controlSetup.Load("Scenes/SandboxScene.json");
+    m_controlSetup.Load("Scenes/RagdollEditor.json");
   }
 
   struct Mapping { const char* name; int settingIndex; };
@@ -16154,7 +13949,6 @@ void SandboxScene::DrawDevGui(t850::DevGuiContext& gui) {
     case CHANGE_SHOW_WIREFRAME: value = m_showWireframe; return true;
     case CHANGE_SHOW_SKELETON: value = (skinnedMesh() != nullptr) && m_showSkeleton; return true;
     case CHANGE_SHOW_PHYSICS: value = m_showPhysics; return true;
-    case CHANGE_SHOW_NAVMESH: value = m_showNavMesh; return true;
     case CHANGE_SHOW_LIGHT_VOLUMES: value = m_showLightVolumes; return true;
     case CHANGE_POINT_LIGHTS_ENABLED: value = SceneProp.PointLightsEnabled; return true;
     case CHANGE_DEBUG_LUMINANCE: value = SceneProp.DebugLuminanceEnabled; return true;
@@ -16169,10 +13963,6 @@ void SandboxScene::DrawDevGui(t850::DevGuiContext& gui) {
     case CHANGE_SHOW_WIREFRAME: m_showWireframe = value; break;
     case CHANGE_SHOW_SKELETON: m_showSkeleton = value && (skinnedMesh() != nullptr); break;
     case CHANGE_SHOW_PHYSICS: m_showPhysics = value; break;
-    case CHANGE_SHOW_NAVMESH:
-      m_showNavMesh = value;
-      if (m_showNavMesh && !m_navMesh.IsReady()) m_navMeshBuildAttempted = false;
-      break;
     case CHANGE_SHOW_LIGHT_VOLUMES: m_showLightVolumes = value; break;
     case CHANGE_POINT_LIGHTS_ENABLED: SceneProp.PointLightsEnabled = value; break;
     case CHANGE_DEBUG_LUMINANCE: SceneProp.DebugLuminanceEnabled = value; if (!value) SceneProp.DebugAdaptedLuminanceValid = false; break;
@@ -16212,7 +14002,7 @@ void SandboxScene::DrawDevGui(t850::DevGuiContext& gui) {
         if (selectedIndex != m_currentCubemapIndex || pathChanged) {
           m_currentCubemapIndex = selectedIndex;
           m_pendingCubemap = selectedCubemapPath;
-          T8_LOG_INFO("[SandboxScene] Cubemap change queued: '%s'", m_pendingCubemap.c_str());
+          T8_LOG_INFO("[RagdollEditor] Cubemap change queued: '%s'", m_pendingCubemap.c_str());
         }
       }
       break;
@@ -16338,7 +14128,7 @@ void SandboxScene::DrawDevGui(t850::DevGuiContext& gui) {
       Cam.Velocity = XVECTOR3(0.0f, 0.0f, 0.0f, 0.0f);
       Cam.Update(0.0f);
       VP = Cam.VP;
-      T8_LOG_INFO("[SandboxScene] Camera unstuck to position[%f,%f,%f]", Cam.Eye.x, Cam.Eye.y, Cam.Eye.z);
+      T8_LOG_INFO("[RagdollEditor] Camera unstuck to position[%f,%f,%f]", Cam.Eye.x, Cam.Eye.y, Cam.Eye.z);
     }
   }
 
@@ -16395,219 +14185,6 @@ void SandboxScene::DrawDevGui(t850::DevGuiContext& gui) {
     drawSelectorByName("anim_select");
     drawSelectorByName("anim_mode");
     drawSliderByName("anim_speed");
-  }
-
-  if (gui.BeginSection("NavMesh")) {
-    bool navRebuildRequested = false;
-    auto requestNavRebuild = [&]() {
-      navRebuildRequested = true;
-    };
-    auto rebuildNavMeshNow = [&](bool resetAgentsToSceneStart) {
-      m_navMesh.Clear();
-      m_navMeshBuildAttempted = false;
-      m_navMeshDebugRenderer.Invalidate();
-      m_navTestInitialized = false;
-      m_navTestAgents.clear();
-      const bool rebuilt = EnsureNavMeshBuilt();
-      if (rebuilt && resetAgentsToSceneStart) {
-        InitializeNavTestAgents();
-      }
-      T8_LOG_INFO("[Navigation] Auto re-create requested: result=%s elapsed=%.2fms source=%s",
-                  rebuilt ? "ok" : "failed",
-                  m_navMeshLastBuildMs,
-                  m_navMeshLastBuildFromCache ? "cache" : "build");
-    };
-    auto savedFloat = [&](const char* name, float fallback) {
-      if (const auto* value = FindFloatOverride(m_profileSavedState.sliders, name)) {
-        return value->value;
-      }
-      return fallback;
-    };
-    auto savedBool = [&](const char* name, bool fallback) {
-      if (const auto* value = FindBoolOverride(m_profileSavedState.checkboxes, name)) {
-        return value->value;
-      }
-      return fallback;
-    };
-    auto savedInt = [&](const char* name, int fallback) {
-      if (const auto* value = FindIntOverride(m_profileSavedState.selectors, name)) {
-        return value->value;
-      }
-      return fallback;
-    };
-    auto restoreSavedNavSettings = [&]() {
-      t850::navigation::NavMeshBuildSettings defaults;
-      m_navMeshDebugOffset = savedFloat("navmesh_debug_offset", 0.01f);
-      m_navTestSpeed = savedFloat("nav_agent_speed_multiplier", 3.0f);
-      m_navMeshBuildSettings.cellSize = savedFloat("navmesh_cell_size", defaults.cellSize);
-      m_navMeshBuildSettings.cellHeight = savedFloat("navmesh_cell_height", defaults.cellHeight);
-      m_navMeshBuildSettings.agentHeight = savedFloat("navmesh_agent_height", defaults.agentHeight);
-      m_navMeshBuildSettings.agentRadius = savedFloat("navmesh_agent_radius", defaults.agentRadius);
-      m_navMeshBuildSettings.agentMaxClimb = savedFloat("navmesh_agent_max_climb", defaults.agentMaxClimb);
-      m_navMeshBuildSettings.agentMaxSlope = savedFloat("navmesh_agent_max_slope", defaults.agentMaxSlope);
-      m_navMeshBuildSettings.regionMinSize = savedFloat("navmesh_region_min_size", defaults.regionMinSize);
-      m_navMeshBuildSettings.regionMergeSize = savedFloat("navmesh_region_merge_size", defaults.regionMergeSize);
-      m_navMeshBuildSettings.edgeMaxLen = savedFloat("navmesh_edge_max_len", defaults.edgeMaxLen);
-      m_navMeshBuildSettings.edgeMaxError = savedFloat("navmesh_edge_max_error", defaults.edgeMaxError);
-      m_navMeshBuildSettings.detailSampleDist = savedFloat("navmesh_detail_sample_dist", defaults.detailSampleDist);
-      m_navMeshBuildSettings.detailSampleMaxError = savedFloat("navmesh_detail_sample_max_error", defaults.detailSampleMaxError);
-      m_navMeshBuildSettings.queryExtents.x = savedFloat("navmesh_query_extent_x", defaults.queryExtents.x);
-      m_navMeshBuildSettings.queryExtents.y = savedFloat("navmesh_query_extent_y", defaults.queryExtents.y);
-      m_navMeshBuildSettings.queryExtents.z = savedFloat("navmesh_query_extent_z", defaults.queryExtents.z);
-      m_navMeshBuildSettings.queryExtents.w = 0.0f;
-      m_navMeshBuildSettings.dropLinkMinHeight = savedFloat("navmesh_drop_min_height", defaults.dropLinkMinHeight);
-      m_navMeshBuildSettings.dropLinkMaxHeight = savedFloat("navmesh_drop_max_height", defaults.dropLinkMaxHeight);
-      m_navMeshBuildSettings.dropLinkMaxHorizontalDistance = savedFloat("navmesh_drop_max_horizontal", defaults.dropLinkMaxHorizontalDistance);
-      m_navMeshBuildSettings.dropLinkSampleSpacing = savedFloat("navmesh_drop_sample_spacing", defaults.dropLinkSampleSpacing);
-      m_navMeshBuildSettings.dropLinkRadius = savedFloat("navmesh_drop_link_radius", defaults.dropLinkRadius);
-      m_navMeshBuildSettings.jumpLinkMaxHorizontalDistance = savedFloat("navmesh_jump_max_horizontal", defaults.jumpLinkMaxHorizontalDistance);
-      m_navMeshBuildSettings.jumpLinkSampleSpacing = savedFloat("navmesh_jump_sample_spacing", defaults.jumpLinkSampleSpacing);
-      m_navMeshBuildSettings.jumpLinkRadius = savedFloat("navmesh_jump_link_radius", defaults.jumpLinkRadius);
-      m_navMeshBuildSettings.enableAutoDropLinks = savedBool("navmesh_auto_drop_links", defaults.enableAutoDropLinks);
-      m_navMeshBuildSettings.enableAutoJumpLinks = savedBool("navmesh_auto_jump_links", defaults.enableAutoJumpLinks);
-      m_navMeshBuildSettings.enableHybridJumpLinks = savedBool("navmesh_hybrid_jump_links", defaults.enableHybridJumpLinks);
-      m_navTestMode = ClampNavTestMode(savedInt("nav_agent_mode", kNavTestModeFollowPlayer));
-      m_navMeshDebugShapeMode = std::clamp(savedInt("navmesh_debug_shape", 0), 0, 1);
-      m_navMeshBuildSettings.vertsPerPoly = std::clamp(savedInt("navmesh_verts_per_poly", defaults.vertsPerPoly), 3, 12);
-      m_navMeshBuildSettings.hybridJumpMaxLinks = (std::max)(0, savedInt("navmesh_hybrid_max_links", defaults.hybridJumpMaxLinks));
-    };
-    auto navSlider = [&](const char* label, float& value, float minValue, float maxValue, const char* format = "%.3f") {
-      ImGui::SetNextItemWidth(240.0f);
-      const bool changed = ImGui::SliderFloat(label, &value, minValue, maxValue, format);
-      if (changed) {
-        value = std::clamp(value, minValue, maxValue);
-      }
-      if (ImGui::IsItemDeactivatedAfterEdit()) {
-        requestNavRebuild();
-      }
-    };
-    auto navSliderInt = [&](const char* label, int& value, int minValue, int maxValue) {
-      ImGui::SetNextItemWidth(240.0f);
-      const bool changed = ImGui::SliderInt(label, &value, minValue, maxValue);
-      if (changed) {
-        value = std::clamp(value, minValue, maxValue);
-      }
-      if (ImGui::IsItemDeactivatedAfterEdit()) {
-        requestNavRebuild();
-      }
-    };
-    if (gui.Button(m_showNavMesh ? "Display: On" : "Display: Off")) {
-      m_showNavMesh = !m_showNavMesh;
-      if (m_showNavMesh && !m_navMesh.IsReady()) m_navMeshBuildAttempted = false;
-    }
-    ImGui::SameLine();
-    if (ImGui::Button("Default")) {
-      restoreSavedNavSettings();
-      navRebuildRequested = true;
-      rebuildNavMeshNow(true);
-      navRebuildRequested = false;
-    }
-    ImGui::SameLine();
-    if (ImGui::Button("Q3 preset")) {
-      m_navMeshBuildSettings.cellSize = 0.10f;
-      m_navMeshBuildSettings.cellHeight = 0.05f;
-      m_navMeshBuildSettings.agentHeight = 56.0f / 32.0f;
-      m_navMeshBuildSettings.agentRadius = 15.0f / 32.0f;
-      m_navMeshBuildSettings.agentMaxClimb = 18.0f / 32.0f;
-      m_navMeshBuildSettings.agentMaxSlope = 45.0f;
-      m_navMeshBuildSettings.regionMinSize = 4.0f;
-      m_navMeshBuildSettings.regionMergeSize = 12.0f;
-      m_navMeshBuildSettings.edgeMaxLen = 4.0f;
-      m_navMeshBuildSettings.edgeMaxError = 0.35f;
-      m_navMeshBuildSettings.detailSampleDist = 1.0f;
-      m_navMeshBuildSettings.detailSampleMaxError = 0.25f;
-      m_navMeshBuildSettings.queryExtents = XVECTOR3(2.0f, 4.0f, 2.0f, 0.0f);
-      navRebuildRequested = true;
-    }
-    if (m_navMesh.IsReady()) {
-      const t850::navigation::NavMeshBuildStats& stats = m_navMesh.GetStats();
-      ImGui::Text("Ready: polys=%d verts=%d tris=%d offMesh=%d drop=%d jump=%d jumpPad=%d",
-                  stats.polygonCount,
-                  stats.vertexCount,
-                  stats.triangleCount,
-                  stats.offMeshLinkCount,
-                  stats.dropLinkCount,
-                  stats.jumpLinkCount,
-                  stats.jumpPadLinkCount);
-      ImGui::Text("Last %s: %.2f ms", m_navMeshLastBuildFromCache ? "cache load" : "build", m_navMeshLastBuildMs);
-    } else {
-      ImGui::TextDisabled("NavMesh is not built. Change a value, press Default/Q3 preset, or enable display.");
-    }
-    ImGui::TextDisabled("Slider changes rebuild when released; cache keys include these values. Default restores saved profile values.");
-
-    const char* navModeOptions[] = { "Furthest loop", "Random nodes", "Follow player" };
-    ImGui::SetNextItemWidth(220.0f);
-    if (ImGui::Combo("Bot behavior", &m_navTestMode, navModeOptions, 3)) {
-      m_navTestMode = ClampNavTestMode(m_navTestMode);
-      m_navTestInitialized = false;
-      m_navTestAgents.clear();
-    }
-    ImGui::SetNextItemWidth(220.0f);
-    if (ImGui::SliderFloat("Bot speed multiplier", &m_navTestSpeed, 0.0f, 10.0f, "%.2fx")) {
-      m_navTestSpeed = (std::max)(0.0f, (std::min)(10.0f, m_navTestSpeed));
-    }
-    const char* navShapeOptions[] = { "Geometry", "Nodes" };
-    ImGui::SetNextItemWidth(180.0f);
-    ImGui::Combo("Debug shape", &m_navMeshDebugShapeMode, navShapeOptions, 2);
-    ImGui::SetNextItemWidth(220.0f);
-    if (ImGui::SliderFloat("Debug vertical offset", &m_navMeshDebugOffset, 0.0f, 0.25f, "%.3f")) {
-      m_navMeshDebugOffset = (std::max)(0.0f, (std::min)(0.25f, m_navMeshDebugOffset));
-    }
-
-    if (ImGui::CollapsingHeader("Rasterization", ImGuiTreeNodeFlags_DefaultOpen)) {
-      navSlider("Cell size", m_navMeshBuildSettings.cellSize, 0.0f, 1.0f);
-      navSlider("Cell height", m_navMeshBuildSettings.cellHeight, 0.0f, 1.0f);
-    }
-    if (ImGui::CollapsingHeader("Agent", ImGuiTreeNodeFlags_DefaultOpen)) {
-      navSlider("Agent height", m_navMeshBuildSettings.agentHeight, 0.1f, 5.0f);
-      navSlider("Agent radius", m_navMeshBuildSettings.agentRadius, 0.0f, 2.0f);
-      navSlider("Agent max climb", m_navMeshBuildSettings.agentMaxClimb, 0.0f, 3.0f);
-      navSlider("Agent max slope", m_navMeshBuildSettings.agentMaxSlope, 0.0f, 89.0f, "%.1f");
-    }
-    if (ImGui::CollapsingHeader("Regions and contours")) {
-      navSlider("Region min size", m_navMeshBuildSettings.regionMinSize, 0.0f, 128.0f, "%.1f");
-      navSlider("Region merge size", m_navMeshBuildSettings.regionMergeSize, 0.0f, 128.0f, "%.1f");
-      navSlider("Edge max len", m_navMeshBuildSettings.edgeMaxLen, 0.0f, 64.0f, "%.1f");
-      navSlider("Edge max error", m_navMeshBuildSettings.edgeMaxError, 0.0f, 8.0f, "%.2f");
-      navSliderInt("Verts per poly", m_navMeshBuildSettings.vertsPerPoly, 3, 12);
-    }
-    if (ImGui::CollapsingHeader("Detail and queries")) {
-      navSlider("Detail sample dist", m_navMeshBuildSettings.detailSampleDist, 0.0f, 16.0f, "%.2f");
-      navSlider("Detail max error", m_navMeshBuildSettings.detailSampleMaxError, 0.0f, 8.0f, "%.2f");
-      ImGui::SetNextItemWidth(300.0f);
-      const bool queryChanged = ImGui::SliderFloat3("Query extents", &m_navMeshBuildSettings.queryExtents.x, 0.05f, 16.0f, "%.2f");
-      if (queryChanged) {
-        m_navMeshBuildSettings.queryExtents.x = (std::max)(0.05f, m_navMeshBuildSettings.queryExtents.x);
-        m_navMeshBuildSettings.queryExtents.y = (std::max)(0.05f, m_navMeshBuildSettings.queryExtents.y);
-        m_navMeshBuildSettings.queryExtents.z = (std::max)(0.05f, m_navMeshBuildSettings.queryExtents.z);
-      }
-      if (ImGui::IsItemDeactivatedAfterEdit()) {
-        requestNavRebuild();
-      }
-      m_navMeshBuildSettings.queryExtents.w = 0.0f;
-    }
-    if (ImGui::CollapsingHeader("Generated traversal links")) {
-      if (ImGui::Checkbox("Auto drop links", &m_navMeshBuildSettings.enableAutoDropLinks)) requestNavRebuild();
-      navSlider("Drop min height", m_navMeshBuildSettings.dropLinkMinHeight, 0.0f, 64.0f, "%.2f");
-      navSlider("Drop max height", m_navMeshBuildSettings.dropLinkMaxHeight, 0.0f, 128.0f, "%.2f");
-      navSlider("Drop max horizontal", m_navMeshBuildSettings.dropLinkMaxHorizontalDistance, 0.0f, 16.0f, "%.2f");
-      navSlider("Drop sample spacing", m_navMeshBuildSettings.dropLinkSampleSpacing, 0.05f, 8.0f, "%.2f");
-      navSlider("Drop link radius", m_navMeshBuildSettings.dropLinkRadius, 0.05f, 4.0f, "%.2f");
-      ImGui::Separator();
-      if (ImGui::Checkbox("Auto jump links", &m_navMeshBuildSettings.enableAutoJumpLinks)) requestNavRebuild();
-      navSlider("Jump max horizontal", m_navMeshBuildSettings.jumpLinkMaxHorizontalDistance, 0.0f, 32.0f, "%.2f");
-      navSlider("Jump sample spacing", m_navMeshBuildSettings.jumpLinkSampleSpacing, 0.05f, 8.0f, "%.2f");
-      navSlider("Jump link radius", m_navMeshBuildSettings.jumpLinkRadius, 0.05f, 4.0f, "%.2f");
-      ImGui::Separator();
-      if (ImGui::Checkbox("Hybrid jump-intent links", &m_navMeshBuildSettings.enableHybridJumpLinks)) requestNavRebuild();
-      navSliderInt("Hybrid max links", m_navMeshBuildSettings.hybridJumpMaxLinks, 0, 4096);
-      if (m_q3CollisionWorld && m_q3CollisionWorld->GetReachabilityCount() > 0) {
-        ImGui::TextDisabled("Q3 AAS reachabilities are active; generated drop/jump/hybrid links are ignored for this map.");
-      }
-    }
-    if (navRebuildRequested) {
-      rebuildNavMeshNow(false);
-    }
   }
 
   if (gui.BeginSection("Debug Views")) {

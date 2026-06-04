@@ -265,6 +265,10 @@ bool BuildGeometryFromPrimitiveInstances(const PrimitiveInst* instances,
                                          NavMeshGeometry& outGeometry,
                                          NavSourceBuildStats* stats = nullptr,
                                          std::string* error = nullptr);
+bool BuildGeometryFromNavSources(const std::vector<NavSourceInstance>& sources,
+                                 NavMeshGeometry& outGeometry,
+                                 NavSourceBuildStats* stats = nullptr,
+                                 std::string* error = nullptr);
 
 } // namespace navigation
 } // namespace t850

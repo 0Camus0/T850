@@ -14,6 +14,7 @@
 #ifndef T8DITOR_EDITORIMGUI_H
 #define T8DITOR_EDITORIMGUI_H
 
+#include <imgui.h>
 #include <string>
 #include <utils/xMaths.h>
 
@@ -22,15 +23,18 @@ struct SDL_Window;
 namespace t850 {
   class RootFramework;
   class BaseDriver;
+  class Texture;
 }
 
 namespace t8ditor {
 
   // ── Lifecycle (called from EditorApp) ──────────────
-  bool ImGuiInit(t850::RootFramework* fw);
+  bool ImGuiInit(t850::RootFramework* fw, bool enablePlatformWindows = false);
   void ImGuiShutdown();
   void ImGuiNewFrame();
   void ImGuiRender();          // calls ImGui::Render() + backend RenderDrawData
+  void ImGuiSetNextNativeEditorWindow(float offsetX, float offsetY, float width, float height);
+  ImTextureID ImGuiTextureID(t850::BaseDriver* driver, t850::Texture* texture);
 
   // ── Menu bar ───────────────────────────────────────
   struct MenuAction {

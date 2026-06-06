@@ -29,6 +29,7 @@ set(FRAMEWORK_SOURCES
   src/scene/MeshPool.cpp
   src/scene/RenderQueue.cpp
   src/scene/IBLResources.cpp
+  src/scene/RenderViewport.cpp
   src/debug/FrameDumper.cpp
   src/debug/FrameDumperIO.cpp
   src/debug/Profiler.cpp

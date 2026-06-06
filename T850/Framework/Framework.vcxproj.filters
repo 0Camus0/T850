@@ -383,6 +383,9 @@
     <ClInclude Include="include\scene\RenderContainer.h">
       <Filter>Header Files\scene</Filter>
     </ClInclude>
+    <ClInclude Include="include\scene\RenderViewport.h">
+      <Filter>Header Files\scene</Filter>
+    </ClInclude>
     <ClInclude Include="include\scene\RenderResourceRegistry.h">
       <Filter>Header Files\scene</Filter>
     </ClInclude>
@@ -599,6 +602,9 @@
       <Filter>Source Files\scene</Filter>
     </ClCompile>
     <ClCompile Include="src\scene\RenderContainer.cpp">
+      <Filter>Source Files\scene</Filter>
+    </ClCompile>
+    <ClCompile Include="src\scene\RenderViewport.cpp">
       <Filter>Source Files\scene</Filter>
     </ClCompile>
     <ClCompile Include="src\scene\RenderResourceRegistry.cpp">

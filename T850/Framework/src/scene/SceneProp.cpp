@@ -78,6 +78,19 @@ void	SceneProps::AddCamera(Camera* cam){
 	pCameras.push_back(cam);
 }
 
+void SceneProps::SetPrimaryCamera(Camera* cam) {
+	if (pCameras.empty()) {
+		pCameras.push_back(cam);
+	} else {
+		pCameras[0] = cam;
+	}
+	ActiveCamera = 0;
+}
+
+Camera* SceneProps::GetPrimaryCamera() const {
+	return pCameras.empty() ? nullptr : pCameras[0];
+}
+
 void	SceneProps::RemoveCamera(unsigned int index){
 	if (index < 0 || index >= pCameras.size())
 		return;

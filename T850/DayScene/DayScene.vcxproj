@@ -401,6 +401,7 @@ copy /Y "$(SolutionDir)config.json" "$(OutDir)"</Command>
     <ClInclude Include="DayScene.h" />
     <ClInclude Include="Quake3Mock.h" />
     <ClInclude Include="RagdollEditor.h" />
+    <ClInclude Include="SandboxRenderGraphUtils.h" />
     <ClInclude Include="SandboxScene.h" />
   </ItemGroup>
   <ItemGroup>

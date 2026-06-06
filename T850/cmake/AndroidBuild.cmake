@@ -142,6 +142,7 @@ set(T850_ANDROID_FRAMEWORK_SOURCES
   ${T850_SOURCE_DIR}/Framework/src/scene/RenderQueue.cpp
   ${T850_SOURCE_DIR}/Framework/src/scene/RenderContainer.cpp
   ${T850_SOURCE_DIR}/Framework/src/scene/RenderResourceRegistry.cpp
+  ${T850_SOURCE_DIR}/Framework/src/scene/RenderViewport.cpp
   ${T850_SOURCE_DIR}/Framework/src/scene/IBLResources.cpp
   ${T850_SOURCE_DIR}/Framework/src/scene/EditorSceneFile.cpp
   ${T850_SOURCE_DIR}/Framework/src/scene/RenderGraph.cpp

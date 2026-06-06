@@ -51,6 +51,7 @@
     <ClInclude Include="include\scene\PrimitiveManager.h" />
     <ClInclude Include="include\scene\RenderQuad.h" />
     <ClInclude Include="include\scene\RenderContainer.h" />
+    <ClInclude Include="include\scene\RenderViewport.h" />
     <ClInclude Include="include\scene\RenderResourceRegistry.h" />
     <ClInclude Include="include\scene\IBLResources.h" />
     <ClInclude Include="include\debug\FrameDumper.h" />
@@ -191,6 +192,7 @@
     <ClCompile Include="src\scene\PrimitiveManager.cpp" />
     <ClCompile Include="src\scene\RenderQuad.cpp" />
     <ClCompile Include="src\scene\RenderContainer.cpp" />
+    <ClCompile Include="src\scene\RenderViewport.cpp" />
     <ClCompile Include="src\scene\RenderResourceRegistry.cpp" />
     <ClCompile Include="src\scene\IBLResources.cpp" />
     <ClCompile Include="src\debug\FrameDumper.cpp" />

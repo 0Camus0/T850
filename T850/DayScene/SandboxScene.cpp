@@ -1,4 +1,5 @@
 #include <SandboxScene.h>
+#include <SandboxRenderGraphUtils.h>
 #include <video/BaseDriver.h>
 #include <utils/Log.h>
 #include <utils/RuntimeProfile.h>
@@ -5601,15 +5602,17 @@ void SandboxScene::CreateAssets() {
   }
   m_renderGraph.CreateRenderTargets(pFramework->pVideoDriver, SceneProp);
 
-  GBufferPass           = m_renderGraph.GetRTHandle("GBuffer");
-  DeferredPass          = m_renderGraph.GetRTHandle("Deferred");
-  Extra16FPass          = m_renderGraph.GetRTHandle("Extra16F");
-  DepthPass             = m_renderGraph.GetRTHandle("DepthPass");
-  ShadowAccumPass       = m_renderGraph.GetRTHandle("ShadowAccum");
-  ExtraHelperPass       = m_renderGraph.GetRTHandle("ExtraHelper");
-  BloomAccumPass        = m_renderGraph.GetRTHandle("BloomAccum");
-  AdaptedLumCurrentPass = m_renderGraph.GetRTHandle("AdaptedLumCurrent");
-  AdaptedLumPrevPass    = m_renderGraph.GetRTHandle("AdaptedLumPrev");
+  t850::sandbox::RefreshDeferredPassHandles(
+      m_renderGraph,
+      GBufferPass,
+      DeferredPass,
+      Extra16FPass,
+      DepthPass,
+      ShadowAccumPass,
+      ExtraHelperPass,
+      BloomAccumPass,
+      AdaptedLumCurrentPass,
+      AdaptedLumPrevPass);
 
   PrimitiveMgr.SetEngineContext(pEngineContext);
   PrimitiveMgr.Init();

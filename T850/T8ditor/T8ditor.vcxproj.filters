@@ -74,6 +74,9 @@
     <ClInclude Include="..\DayScene\Quake3Mock.h">
       <Filter>Header Files</Filter>
     </ClInclude>
+    <ClInclude Include="..\DayScene\SandboxRenderGraphUtils.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
   </ItemGroup>
   <ItemGroup>
     <ResourceCompile Include="T8ditor.rc">

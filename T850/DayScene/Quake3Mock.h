@@ -32,6 +32,15 @@ class JoltPhysicsSystem;
 class RenderSkinnedMesh;
 }
 
+struct Quake3MockLaunchDesc {
+  std::string sceneFilePath;
+  std::string modelPath;
+  int width = 0;
+  int height = 0;
+  int startScene = 2;
+  bool guiOnStart = false;
+};
+
 class Quake3Mock : public t850::SceneBase, public t850::CameraCollisionWorld
 {
   enum {
@@ -97,6 +106,7 @@ public:
   void DestroyAssets() override;
 
   void DrawDevGui(t850::DevGuiContext& gui) override;
+  void SetLaunchDesc(const Quake3MockLaunchDesc& desc);
   void SetFinalOutputRT(int rtHandle) { m_finalOutputRT = rtHandle; }
   void SetRenderSize(int width, int height);
   void ResizeRenderTargets(int width, int height, int finalOutputRT);
@@ -116,6 +126,9 @@ public:
 #endif
   void RequestDump() override { m_dumper.RequestDump(); }
   void ResetViewInput() override;
+  const std::string& ActiveSceneFilePath() const;
+  const std::string& ActiveModelPath() const;
+  int ActiveStartScene() const;
 
   float DtSecs = 0.0f;
   t850::PrimitiveManager PrimitiveMgr;
@@ -127,6 +140,8 @@ public:
   int m_renderWidth = 0;
   int m_renderHeight = 0;
   bool m_ignoreImGuiMouseCaptureForInput = false;
+  bool m_hasLaunchDesc = false;
+  Quake3MockLaunchDesc m_launchDesc;
 
   t850::RenderGraph m_renderGraph;
   t850::SceneSetup m_controlSetup;

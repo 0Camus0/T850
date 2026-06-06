@@ -35,6 +35,7 @@
 #include <scene/PrimitiveInstance.h>
 #include <scene/RenderResourceRegistry.h>
 #include <scene/RenderGraph.h>
+#include <scene/RenderViewport.h>
 #include <scene/SceneSetup.h>
 #include <scene/SceneProp.h>
 #include <core/Config.h>
@@ -206,13 +207,8 @@ namespace t8ditor {
     float m_meshEditorViewportImageSizeY = 0.0f;
     unsigned int m_meshEditorDockspaceId = 0;
     unsigned int m_meshEditorDockClassId = 0;
-    int m_meshEditorGBufferRT = -1;
-    int m_meshEditorViewportRT = -1;
-    int m_meshEditorViewportW = 0;
-    int m_meshEditorViewportH = 0;
-    int m_meshEditorPendingViewportW = 0;
-    int m_meshEditorPendingViewportH = 0;
-    int m_meshEditorViewportStableFrames = 0;
+    t850::RenderViewport m_meshEditorGBufferTarget;
+    t850::RenderViewport m_meshEditorViewportTarget;
     int m_meshEditorDebugLogFramesRemaining = 0;
     bool m_meshEditorGuiVisible = true;
     bool m_meshEditorViewportInputActive = false;
@@ -260,12 +256,7 @@ namespace t8ditor {
     std::unique_ptr<::Quake3Mock> m_playScene;
     std::string m_playSceneTempPath;
     std::string m_playSceneStatus;
-    int m_playSceneViewportRT = -1;
-    int m_playSceneViewportW = 0;
-    int m_playSceneViewportH = 0;
-    int m_playScenePendingViewportW = 0;
-    int m_playScenePendingViewportH = 0;
-    int m_playSceneViewportStableFrames = 0;
+    t850::RenderViewport m_playSceneViewportTarget;
     float m_playSceneViewportImageMinX = 0.0f;
     float m_playSceneViewportImageMinY = 0.0f;
     float m_playSceneViewportImageSizeX = 0.0f;

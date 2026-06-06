@@ -18,6 +18,7 @@
 #include <physics/Q3BspCollision.h>
 #include <physics/RagdollEditorTool.h>
 #include <scene/IBLResources.h>
+#include <scene/MeshAssetCache.h>
 #include <scene/RenderGraph.h>
 #include <scene/RenderSkinnedMesh.h>
 #include <utils/InputManager.h>
@@ -1109,6 +1110,8 @@ void EditorApp::OpenMeshEditor(int objectIndex) {
   m_meshEditorDockClassId = 0;
   m_meshEditorOpen = true;
   m_meshEditorOpenRequested = true;
+  m_meshEditorCloseRequested = false;
+  InvalidateEditorFrozenFrame();
   m_meshEditorGuiVisible = true;
   m_meshEditorViewportInputActive = false;
 
@@ -1138,13 +1141,20 @@ void EditorApp::OpenMeshEditor(int objectIndex) {
 }
 
 void EditorApp::CloseMeshEditor() {
+  if (pFramework && pFramework->pVideoDriver) {
+    pFramework->pVideoDriver->WaitForGPU();
+  }
   if (m_meshEditorScene && m_meshEditorSceneLoaded) {
     m_meshEditorScene->OnDestoryScene();
+  }
+  if (m_imguiReady) {
+    ImGuiLogCaptureStart();
   }
   m_meshEditorScene.reset();
   m_meshEditorSceneLoaded = false;
   m_meshEditorOpen = false;
   m_meshEditorOpenRequested = false;
+  m_meshEditorCloseRequested = false;
   m_meshEditorObjectIndex = -1;
   m_meshEditorNativeHandle = nullptr;
   m_meshEditorLoggedNativeHandle = nullptr;
@@ -1160,6 +1170,106 @@ void EditorApp::CloseMeshEditor() {
   m_meshEditorViewportImageSizeY = 0.0f;
   m_meshEditorDockspaceId = 0;
   m_meshEditorDockClassId = 0;
+  m_meshEditorViewportInputActive = false;
+  DestroyMeshEditorViewportTarget();
+  IManager.xDelta = 0;
+  IManager.yDelta = 0;
+  for (int i = 0; i < MAXMOUSEBUTTONS; ++i) {
+    IManager.MouseButtonStates[0][i] = false;
+    IManager.MouseButtonStates[1][i] = false;
+  }
+  if (pFramework && pFramework->pVideoDriver) {
+    pFramework->pVideoDriver->SetDepthStencilState(t850::BaseDriver::DEPTH_DEFAULT);
+    pFramework->pVideoDriver->SetBlendState(t850::BaseDriver::BLEND_DEFAULT);
+    pFramework->pVideoDriver->SetCullFace(t850::BaseDriver::FRONT_FACES);
+    int mainW = m_lastW;
+    int mainH = m_lastH;
+#ifdef OS_WINDOWS
+    if (auto* w32 = static_cast<t850::Win32Framework*>(pFramework)) {
+      if (w32->m_pWindow) {
+        SDL_GetWindowSizeInPixels(w32->m_pWindow, &mainW, &mainH);
+      }
+    }
+#endif
+    if (mainW > 0 && mainH > 0) {
+      m_lastW = mainW;
+      m_lastH = mainH;
+      m_camera.SetViewportSize(mainW, mainH);
+      pFramework->pVideoDriver->SetViewport(0.0f, 0.0f, static_cast<float>(mainW), static_cast<float>(mainH));
+      pFramework->pVideoDriver->SetScissorRect(0, 0, mainW, mainH);
+    }
+  }
+  if (!m_sceneProps.pCameras.empty()) {
+    m_sceneProps.pCameras[0] = &m_camera.GetCameraMutable();
+  }
+}
+
+void EditorApp::InvalidateEditorFrozenFrame() {
+  m_editorFrozenFrameValid = false;
+}
+
+bool EditorApp::EnsureEditorFrozenFrameTarget(int width, int height) {
+  if (!pFramework || !pFramework->pVideoDriver || width <= 0 || height <= 0) {
+    return false;
+  }
+  width = (std::max)(1, width);
+  height = (std::max)(1, height);
+  if (m_editorFrozenFrameRT >= 0 &&
+      m_editorFrozenFrameW == width &&
+      m_editorFrozenFrameH == height) {
+    return true;
+  }
+
+  DestroyEditorFrozenFrameTarget();
+  m_editorFrozenFrameRT = pFramework->pVideoDriver->CreateRT(
+      1,
+      t850::BaseRT::RGBA8,
+      t850::BaseRT::F32,
+      width,
+      height);
+  if (m_editorFrozenFrameRT < 0) {
+    T8_LOG_ERROR("[T8ditor] Failed to create frozen editor frame RT %dx%d", width, height);
+    return false;
+  }
+  m_editorFrozenFrameW = width;
+  m_editorFrozenFrameH = height;
+  m_editorFrozenFrameValid = false;
+  return true;
+}
+
+void EditorApp::DestroyEditorFrozenFrameTarget() {
+  if (pFramework && pFramework->pVideoDriver && m_editorFrozenFrameRT >= 0) {
+    pFramework->pVideoDriver->DestroyRT(m_editorFrozenFrameRT);
+  }
+  m_editorFrozenFrameRT = -1;
+  m_editorFrozenFrameW = 0;
+  m_editorFrozenFrameH = 0;
+  m_editorFrozenFrameValid = false;
+}
+
+void EditorApp::DrawEditorFrozenFrame(t850::BaseDriver* driver) {
+  if (!driver ||
+      m_editorFrozenFrameRT < 0 ||
+      m_editorFrozenFrameRT >= static_cast<int>(driver->RTs.size()) ||
+      m_lastW <= 0 ||
+      m_lastH <= 0) {
+    return;
+  }
+  t850::BaseRT* rt = driver->RTs[m_editorFrozenFrameRT];
+  if (!rt || rt->vColorTextures.empty() || !rt->vColorTextures[0]) {
+    return;
+  }
+
+  driver->SetViewport(0.0f, 0.0f, static_cast<float>(m_lastW), static_cast<float>(m_lastH));
+  driver->SetScissorRect(0, 0, m_lastW, m_lastH);
+  driver->SetBlendState(t850::BaseDriver::BLEND_OPAQUE);
+  driver->SetDepthStencilState(t850::BaseDriver::NONE);
+  g_quads[7].SetTexture(rt->vColorTextures[0], 0);
+  t850::ShaderKey key(0);
+  key.setPass(t850::PassType::BACKBUFFER);
+  g_quads[7].SetGlobalKey(key);
+  g_quads[7].Draw();
+  driver->SetDepthStencilState(t850::BaseDriver::DEPTH_DEFAULT);
 }
 
 SceneFile EditorApp::BuildEditorSceneSnapshot(const std::string& scenePath) {
@@ -1402,6 +1512,7 @@ void EditorApp::OpenPlayScene() {
   m_playSceneLoaded = false;
   m_playSceneLaunchFailed = false;
   m_playSceneGuiVisible = false;
+  InvalidateEditorFrozenFrame();
   m_playSceneViewportInputActive = false;
   m_playSceneStatus = m_playSceneHasVisibleObjects
       ? "Starting Play Scene..."
@@ -4863,6 +4974,12 @@ bool EditorApp::EnsureMeshEditorEmbeddedScene(SceneObject& obj) {
                                        m_meshEditorViewportH);
   m_meshEditorScene->SetFinalOutputRT(m_meshEditorViewportRT);
   m_meshEditorScene->OnLoadScene();
+  if (m_meshEditorScene->m_meshCount <= 0 || !m_meshEditorScene->Meshes[0].pBase) {
+    T8_LOG_ERROR("[T8ditor] Mesh Edit failed to load embedded RagdollEditor mesh '%s'", meshPath.c_str());
+    m_meshEditorScene->OnDestoryScene();
+    m_meshEditorScene.reset();
+    return false;
+  }
   m_meshEditorSceneLoaded = true;
   T8_LOG_INFO("[T8ditor] Mesh Edit is hosting RagdollEditor scene for '%s'", meshPath.c_str());
   return true;
@@ -4975,14 +5092,20 @@ void EditorApp::DrawMeshEditorWindow() {
   if (!ImGui::Begin("Mesh Edit", &keepOpen, ImGuiWindowFlags_NoDocking)) {
     ImGui::End();
     ImGui::PopStyleVar();
-    if (!keepOpen) CloseMeshEditor();
+    if (!keepOpen) {
+      m_meshEditorOpen = false;
+      m_meshEditorCloseRequested = true;
+      m_meshEditorViewportInputActive = false;
+    }
     return;
   }
 
   if (!keepOpen) {
     ImGui::End();
     ImGui::PopStyleVar();
-    CloseMeshEditor();
+    m_meshEditorOpen = false;
+    m_meshEditorCloseRequested = true;
+    m_meshEditorViewportInputActive = false;
     return;
   }
 
@@ -5151,11 +5274,42 @@ void EditorApp::CreateAssets() {
     LogEditorLoadingLabel("Initializing editor", "Scene properties");
     t850::LoadingProgress::ScopedStep scenePropsStep("Initializing editor", "Scene properties", 8.0f);
     m_sceneProps.AddCamera(&m_camera.GetCameraMutable());
+    m_editorLightCamera.InitPerspective(XVECTOR3(0.0f, 100.0f, 10.0f), Deg2Rad(45.0f), 1.0f, 10.0f, 500.0f);
+    m_editorLightCamera.Speed = 10.0f;
+    m_editorLightCamera.Eye = XVECTOR3(50.0f, 150.0f, -50.0f);
+    m_editorLightCamera.Pitch = 1.0f;
+    m_editorLightCamera.Roll = 0.0f;
+    m_editorLightCamera.Yaw = -1.57f;
+    m_editorLightCamera.Update(0.0f);
+    m_sceneProps.AddLightCamera(&m_editorLightCamera);
     m_sceneProps.AddDirectionalLight(
       XVECTOR3(0.0f, -1.0f, 0.0f), XVECTOR3(1.0f, 1.0f, 1.0f), 1.5f, true);
     m_sceneProps.ActiveLights = 1;
     m_sceneProps.AmbientColor = XVECTOR3(0.15f, 0.15f, 0.15f);
     m_sceneProps.EnvFactor = 0.3f;  // reduced env reflections (no HDR tone mapping)
+    if (m_editorSceneSetup.Load("Scenes/Quake3Mock.json")) {
+      m_editorSceneSetup.ApplyQualityAndSettings(m_sceneProps);
+      m_sceneProps.DeferredLightVolumesEnabled = true;
+    } else {
+      T8_LOG_ERROR("[T8ditor] Failed to load runtime render settings from Scenes/Quake3Mock.json");
+    }
+    m_editorShadowFilter.kernelSize = 4;
+    m_editorShadowFilter.radius = 1.0f;
+    m_editorShadowFilter.sigma = 1.0f;
+    m_editorShadowFilter.Update();
+    m_editorBloomFilter.kernelSize = 11;
+    m_editorBloomFilter.radius = 2.5f;
+    m_editorBloomFilter.sigma = 4.5f;
+    m_editorBloomFilter.Update();
+    m_editorDofFilter.kernelSize = 23;
+    m_editorDofFilter.radius = 3.0f;
+    m_editorDofFilter.sigma = 6.0f;
+    m_editorDofFilter.Update();
+    m_sceneProps.AddGaussKernel(&m_editorShadowFilter);
+    m_sceneProps.AddGaussKernel(&m_editorBloomFilter);
+    m_sceneProps.AddGaussKernel(&m_editorDofFilter);
+    m_sceneProps.SSAOKernel.InitTexture();
+    m_sceneProps.pCullingCamera = &m_camera.GetCameraMutable();
   }
 
   {
@@ -5271,6 +5425,22 @@ void EditorApp::CreateAssets() {
   }
   if (!m_imguiReady)
     T8_LOG_ERROR("[T8ditor] ImGui init failed");
+#ifdef OS_WINDOWS
+  if (auto* w32 = static_cast<t850::Win32Framework*>(pFramework)) {
+    if (w32->m_pWindow) {
+      SDL_RaiseWindow(w32->m_pWindow);
+      SDL_SetWindowMouseGrab(w32->m_pWindow, false);
+      SDL_PumpEvents();
+    }
+  }
+#endif
+  IManager.xDelta = 0;
+  IManager.yDelta = 0;
+  IManager.scrollDelta = 0.0f;
+  for (int i = 0; i < MAXMOUSEBUTTONS; ++i) {
+    IManager.MouseButtonStates[0][i] = false;
+    IManager.MouseButtonStates[1][i] = false;
+  }
 
   t850::LoadingProgress::Complete("Editor ready", "T8ditor");
   t850::LoadingProgress::ClearFrameCallback();
@@ -5493,6 +5663,8 @@ void EditorApp::LoadAssets() {}
 
 void EditorApp::DestroyAssets() {
   ClosePlayScene(false);
+  CloseMeshEditor();
+  DestroyEditorFrozenFrameTarget();
   DestroyMeshEditorViewportTarget();
   DestroyMeshEditorSceneResources();
   DestroyRagdollEditorViewportTarget();
@@ -5505,6 +5677,7 @@ void EditorApp::DestroyAssets() {
   if (g_dummyWhiteTex) { g_dummyWhiteTex->release(); g_dummyWhiteTex = nullptr; }
   // g_dummyEnvMapIdx is tracked in the driver's Textures vector and destroyed by DestroyTextures()
   g_dummyEnvMapIdx = -1;
+  m_sceneProps.SSAOKernel.Destroy();
 
   DestroyAllObjectRagdolls();
   m_physicsDebug.Destroy();
@@ -5529,6 +5702,7 @@ void EditorApp::DestroyAssets() {
     g_skyboxPrimId = -1;
     g_skyboxReady = false;
   }
+  t850::MeshAssetCache::Get().Clear();
   m_gizmo.Destroy();
   m_grid.Destroy();
   m_lines.Destroy();
@@ -5550,6 +5724,7 @@ void EditorApp::CheckResize() {
       m_lastW = w;
       m_lastH = h;
       m_camera.SetViewportSize(w, h);
+      DestroyEditorFrozenFrameTarget();
       pFramework->aplicationDescriptor.width  = w;
       pFramework->aplicationDescriptor.height = h;
 
@@ -5712,6 +5887,9 @@ void EditorApp::OnUpdate() {
   if (m_firstFrame) { m_dtSecs = 1.0f / 60.0f; m_firstFrame = false; }
   m_sceneProps.FrameDeltaSec = m_dtSecs;
 
+  if (m_meshEditorCloseRequested) {
+    CloseMeshEditor();
+  }
   if (m_playSceneCloseRequested) {
     ClosePlayScene();
   }
@@ -5940,6 +6118,31 @@ void EditorApp::OnInput() {
   const ImGuiIO& io = ImGui::GetIO();
   const bool imguiWantsMouse    = io.WantCaptureMouse;
   const bool imguiWantsKeyboard = io.WantCaptureKeyboard;
+
+  if (!io.WantTextInput && IManager.PressedOnceKey(T800K_ESCAPE)) {
+    if (m_meshEditorOpen) {
+      m_meshEditorOpen = false;
+      m_meshEditorCloseRequested = true;
+      m_meshEditorViewportInputActive = false;
+      IManager.xDelta = 0;
+      IManager.yDelta = 0;
+      return;
+    }
+    if (m_playSceneOpen) {
+      m_playSceneOpen = false;
+      m_playSceneCloseRequested = true;
+      m_playSceneViewportInputActive = false;
+      IManager.xDelta = 0;
+      IManager.yDelta = 0;
+      return;
+    }
+    if (m_ragdollEditorOpen) {
+      CloseRagdollEditor();
+      IManager.xDelta = 0;
+      IManager.yDelta = 0;
+      return;
+    }
+  }
 
   if (m_meshEditorOpen) {
     if (!io.WantTextInput && IManager.PressedOnceKey(T800K_g)) {
@@ -6440,12 +6643,19 @@ void EditorApp::OnDraw() {
   t850::BaseDriver* drv = pFramework->pVideoDriver;
   T8_LOG_TRACE("[T8ditor] OnDraw: BeginFrame...");
   drv->BeginFrame();
-  if (!m_meshEditorOpen) {
-    T8_LOG_TRACE("[T8ditor] OnDraw: Clear...");
-    drv->Clear();
+  const bool freezeEditorViewport = m_meshEditorOpen || m_playSceneOpen;
+  if (freezeEditorViewport && !m_editorFrozenFrameValid) {
+    EnsureEditorFrozenFrameTarget(m_lastW, m_lastH);
   }
+  T8_LOG_TRACE("[T8ditor] OnDraw: Clear...");
+  drv->Clear();
 
-  if (m_assetsCreated && !m_meshEditorOpen) {
+  const bool captureFrozenEditorFrame =
+      freezeEditorViewport &&
+      !m_editorFrozenFrameValid &&
+      m_editorFrozenFrameRT >= 0;
+  bool didCaptureFrozenEditorFrame = false;
+  if (m_assetsCreated && (!freezeEditorViewport || captureFrozenEditorFrame)) {
     // Determine which camera drives rendering
     if (g_activeCameraIdx >= 0 && g_activeCameraIdx < (int)g_cameras.size()) {
       // Build a persistent Camera from the scene camera
@@ -6471,45 +6681,58 @@ void EditorApp::OnDraw() {
     const ::Camera& cam = *m_sceneProps.pCameras[0];
     m_vp = cam.VP;
 
-    // Update headlamp (light 0) direction from camera
-    if (!m_sceneProps.Lights.empty()) {
-      XVECTOR3 look = cam.Look;
-      XVECTOR3 eye  = cam.Eye;
-      XVECTOR3 dir(look.x - eye.x, look.y - eye.y, look.z - eye.z);
-      float len = std::sqrt(dir.x*dir.x + dir.y*dir.y + dir.z*dir.z);
-      if (len > 0.0001f) { dir.x /= len; dir.y /= len; dir.z /= len; }
-      m_sceneProps.Lights[0].Direction = dir;
-      m_sceneProps.Lights[0].Position  = eye;
-    }
-
     // Sync scene lights from editor lights.
-    // Headlamp is at index 0. Only ENABLED user lights are added after it.
+    // Use real scene lights by default; keep the camera headlamp only as an explicit/fallback light.
     {
-      // Count enabled lights
       int enabledCount = 0;
       for (auto& lt : g_lights)
         if (lt.enabled) enabledCount++;
 
-      size_t needed = 1 + enabledCount; // headlamp + enabled user lights
-      while (m_sceneProps.Lights.size() > needed)
-        m_sceneProps.Lights.pop_back();
-      while (m_sceneProps.Lights.size() < needed)
-        m_sceneProps.Lights.push_back(Light{});
+      m_sceneProps.Lights.clear();
+      const bool useHeadlamp = m_editorHeadlampEnabled || enabledCount == 0;
+      if (useHeadlamp) {
+        XVECTOR3 look = cam.Look;
+        XVECTOR3 eye = cam.Eye;
+        XVECTOR3 dir(look.x - eye.x, look.y - eye.y, look.z - eye.z);
+        float len = std::sqrt(dir.x * dir.x + dir.y * dir.y + dir.z * dir.z);
+        if (len > 0.0001f) { dir.x /= len; dir.y /= len; dir.z /= len; }
+        m_sceneProps.AddDirectionalLight(dir, XVECTOR3(1.0f, 1.0f, 1.0f), 1.5f, true);
+        if (!m_sceneProps.Lights.empty()) {
+          m_sceneProps.Lights.back().Position = eye;
+          m_sceneProps.Lights.back().radius = 30000.0f;
+        }
+      }
 
-      // Update enabled user lights only (skip disabled)
-      int slot = 1;
       for (auto& lt : g_lights) {
         if (!lt.enabled) continue;
-        Light& target = m_sceneProps.Lights[slot++];
-        target.Position  = lt.position;
-        target.Direction = lt.direction;
-        target.Color     = lt.color;
-        target.Intensity = lt.intensity;
-        target.radius    = lt.radius;
-        target.Enabled   = 1;
-        target.Type      = (lt.type == EditorLightType::Directional) ? LIGHT_DIRECTIONAL : LIGHT_POINT;
+        if (lt.type == EditorLightType::Directional) {
+          m_sceneProps.AddDirectionalLight(lt.direction, lt.color, lt.intensity, true);
+          if (!m_sceneProps.Lights.empty()) {
+            m_sceneProps.Lights.back().Position = lt.position;
+            m_sceneProps.Lights.back().radius = lt.radius;
+          }
+        } else {
+          m_sceneProps.AddLight(lt.position, lt.color, lt.radius, lt.intensity, LIGHT_POINT, true);
+        }
       }
       m_sceneProps.ActiveLights = (int)m_sceneProps.Lights.size();
+      for (const Light& light : m_sceneProps.Lights) {
+        if (light.Type == LIGHT_DIRECTIONAL && light.Enabled) {
+          XVECTOR3 direction = light.Direction;
+          if (direction.Length() > 0.0001f) {
+            direction.Normalize();
+            m_editorLightCamera.Eye = light.Position;
+            m_editorLightCamera.SetLookAt(m_editorLightCamera.Eye + direction);
+            m_editorLightCamera.Update(0.0f);
+          }
+          break;
+        }
+      }
+      if (m_sceneProps.pLightCameras.empty()) {
+        m_sceneProps.AddLightCamera(&m_editorLightCamera);
+      }
+      m_sceneProps.ActiveLightCamera = 0;
+      m_sceneProps.pCullingCamera = m_sceneProps.pCameras.empty() ? nullptr : m_sceneProps.pCameras[0];
     }
 
     // Update all mesh transforms
@@ -6525,13 +6748,8 @@ void EditorApp::OnDraw() {
       // The render graph JSON controls which indices are drawn in each pass.
       std::vector<t850::PrimitiveInst*> allMeshes;
 
-      // Skybox at index 0
-      if (g_skyboxReady && m_panels.showSkybox) {
-        g_skyboxInst.Update();
-        allMeshes.push_back(&g_skyboxInst);
-      }
-
-      // Scene meshes
+      // Scene meshes. The deferred graph draws sky/environment from empty GBuffer pixels;
+      // do not include the skybox mesh here or it will render into shadow/GBuffer passes.
       for (int objectIndex = 0; objectIndex < (int)g_objects.size(); ++objectIndex) {
         auto& obj = g_objects[objectIndex];
         if (obj.primId >= 0 && obj.visible) {
@@ -6559,7 +6777,9 @@ void EditorApp::OnDraw() {
       g_renderGraph.Execute(drv, m_sceneProps,
         meshArray.data(), (int)meshArray.size(),
         g_quads, mainCam, nullptr, nullptr,
-        editorEnvMaps);
+        editorEnvMaps,
+        captureFrozenEditorFrame ? m_editorFrozenFrameRT : -1);
+      didCaptureFrozenEditorFrame = captureFrozenEditorFrame;
       T8_LOG_TRACE("[T8ditor] OnDraw: RenderGraph Execute done");
 
       // RT debug override: if a specific RT is selected, draw it to backbuffer
@@ -6689,6 +6909,12 @@ void EditorApp::OnDraw() {
       m_physicsDebug.SetDepthTexture(nullptr);
       m_physicsDebug.Draw(m_physics, cam.VP);
     }
+  }
+  if (didCaptureFrozenEditorFrame) {
+    m_editorFrozenFrameValid = true;
+  }
+  if (freezeEditorViewport && m_editorFrozenFrameValid) {
+    DrawEditorFrozenFrame(drv);
   }
 
   // ImGui overlay
@@ -7198,8 +7424,12 @@ void EditorApp::OnDraw() {
 
     // Panels
     if (m_panels.showHierarchy) {
+      if (ImGuiViewport* viewport = ImGui::GetMainViewport()) {
+        ImGui::SetNextWindowPos(ImVec2(viewport->WorkPos.x + 8.0f, viewport->WorkPos.y + 8.0f), ImGuiCond_FirstUseEver);
+      }
       ImGui::SetNextWindowSize(ImVec2(350, 400), ImGuiCond_FirstUseEver);
       if (ImGui::Begin("Hierarchy")) {
+        ImGuiClampCurrentWindowToEditorWorkArea();
         if (ImGui::TreeNodeEx("Scene Root", ImGuiTreeNodeFlags_OpenOnArrow | ImGuiTreeNodeFlags_DefaultOpen)) {
           // Meshes & Groups
           if (ImGui::TreeNodeEx("Meshes", ImGuiTreeNodeFlags_DefaultOpen)) {
@@ -7424,8 +7654,12 @@ void EditorApp::OnDraw() {
     // ── Inspector ──
     SceneObject* sel = SelectedObject();
     if (m_panels.showInspector && g_selectedIdx >= 0) {
+      if (ImGuiViewport* viewport = ImGui::GetMainViewport()) {
+        ImGui::SetNextWindowPos(ImVec2(viewport->WorkPos.x + 368.0f, viewport->WorkPos.y + 8.0f), ImGuiCond_FirstUseEver);
+      }
       ImGui::SetNextWindowSize(ImVec2(300, 400), ImGuiCond_FirstUseEver);
       if (ImGui::Begin("Inspector")) {
+        ImGuiClampCurrentWindowToEditorWorkArea();
         if (g_selectionType == 0 && sel) {
           const bool selectedIsSkinned = sel->litInst.GetSkinnedMesh() != nullptr &&
               sel->litInst.GetSkinnedMesh()->HasSkinData();
@@ -7556,6 +7790,59 @@ void EditorApp::OnDraw() {
           ImGui::DragFloat("Intensity", &lt.intensity, 0.05f, 0.0f, 100.0f);
           ImGui::Checkbox("Enabled", &lt.enabled);
         }
+      }
+      ImGui::End();
+    }
+
+    if (m_panels.showRendering) {
+      if (ImGuiViewport* viewport = ImGui::GetMainViewport()) {
+        ImGui::SetNextWindowPos(ImVec2(viewport->WorkPos.x + 676.0f, viewport->WorkPos.y + 8.0f), ImGuiCond_FirstUseEver);
+      }
+      ImGui::SetNextWindowSize(ImVec2(390, 560), ImGuiCond_FirstUseEver);
+      if (ImGui::Begin("Rendering", &m_panels.showRendering)) {
+        ImGuiClampCurrentWindowToEditorWorkArea();
+        ImGui::TextDisabled("Editor viewport uses full deferred rendering on D3D/Vulkan.");
+        ImGui::SeparatorText("Lighting");
+        ImGui::Checkbox("Camera headlamp fallback", &m_editorHeadlampEnabled);
+        bool pointLights = m_sceneProps.PointLightsEnabled;
+        if (ImGui::Checkbox("Point lights", &pointLights)) m_sceneProps.PointLightsEnabled = pointLights;
+        bool lightVolumes = m_sceneProps.DeferredLightVolumesEnabled;
+        if (ImGui::Checkbox("Tiled/deferred light volumes", &lightVolumes)) m_sceneProps.DeferredLightVolumesEnabled = lightVolumes;
+        ImGui::DragFloat("Light radius scale", &m_sceneProps.LightRadiusScale, 0.05f, 0.0f, 64.0f, "%.3f");
+        ImGui::DragFloat("Light intensity scale", &m_sceneProps.LightIntensityScale, 0.05f, 0.0f, 64.0f, "%.3f");
+        ImGui::TextDisabled("Lights: scene=%u packed=%u pointVolumes=%u activeTiles=%u",
+                            m_sceneProps.DebugDeferredLightsSceneTotal,
+                            m_sceneProps.DebugDeferredLightsPacked,
+                            m_sceneProps.DebugDeferredLightsPointVolumes,
+                            m_sceneProps.DebugDeferredLightActiveTiles);
+
+        ImGui::SeparatorText("Shadows / SSAO");
+        bool shadows = m_sceneProps.ToogleShadow != 0;
+        if (ImGui::Checkbox("Shadows", &shadows)) m_sceneProps.ToogleShadow = shadows ? 1 : 0;
+        bool ssao = m_sceneProps.ToogleSSAO != 0;
+        if (ImGui::Checkbox("SSAO", &ssao)) m_sceneProps.ToogleSSAO = ssao ? 1 : 0;
+        ImGui::DragFloat("Shadow bias", &m_sceneProps.ShadowBias, 0.0001f, 0.0f, 0.1f, "%.6f");
+        ImGui::DragFloat("Shadow min", &m_sceneProps.ShadowMin, 0.01f, 0.0f, 1.0f, "%.3f");
+        ImGui::DragFloat("PCF radius", &m_sceneProps.PCFScale, 0.05f, 0.0f, 16.0f, "%.3f");
+        ImGui::DragFloat("PCF samples", &m_sceneProps.PCFSamples, 0.25f, 0.0f, 16.0f, "%.2f");
+        int ssaoKernel = m_sceneProps.SSAOKernel.KernelSize;
+        if (ImGui::SliderInt("SSAO kernel", &ssaoKernel, 1, 64)) {
+          m_sceneProps.SSAOKernel.KernelSize = ssaoKernel;
+          m_sceneProps.SSAOKernel.Update();
+        }
+        if (ImGui::DragFloat("SSAO radius", &m_sceneProps.SSAOKernel.Radius, 0.05f, 0.0f, 16.0f, "%.3f")) {
+          m_sceneProps.SSAOKernel.Update();
+        }
+
+        ImGui::SeparatorText("HDR / Bloom / IBL");
+        ImGui::DragFloat("Exposure", &m_sceneProps.Exposure, 0.05f, -10.0f, 10.0f, "%.3f");
+        ImGui::DragFloat("Bloom factor", &m_sceneProps.BloomFactor, 0.025f, 0.0f, 4.0f, "%.3f");
+        ImGui::DragFloat("Bloom threshold", &m_sceneProps.BloomThreshold, 0.05f, 0.0f, 10.0f, "%.3f");
+        ImGui::DragFloat("Tone-map white", &m_sceneProps.ToneMapWhiteLevel, 0.1f, 0.1f, 32.0f, "%.3f");
+        ImGui::DragFloat("Luminance tau", &m_sceneProps.LuminanceTau, 0.05f, 0.0f, 10.0f, "%.3f");
+        ImGui::DragFloat("Env factor", &m_sceneProps.EnvFactor, 0.05f, 0.0f, 8.0f, "%.3f");
+        ImGui::DragFloat("IBL factor", &m_sceneProps.IBLFactor, 0.05f, 0.0f, 8.0f, "%.3f");
+        ImGui::DragFloat("IBL mip count", &m_sceneProps.IBLMipCount, 0.05f, 0.0f, 12.0f, "%.3f");
       }
       ImGui::End();
     }

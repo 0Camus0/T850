@@ -49,6 +49,7 @@ namespace t8ditor {
     bool showHierarchy  = true;
     bool showInspector  = true;
     bool showConsole    = true;
+    bool showRendering  = true;
     bool showWireframe  = false;
     bool showSkybox     = true;
     bool showRTDebug    = false;
@@ -57,6 +58,7 @@ namespace t8ditor {
   // Draw the main menu bar. Returns actions triggered this frame.
   // `panels` is read/written for the View menu checkboxes.
   MenuAction ImGuiDrawMenuBar(PanelVisibility& panels);
+  void ImGuiClampCurrentWindowToEditorWorkArea();
 
   // ── Toolbar ─────────────────────────────────────────
   // Draws a horizontal button bar just below the menu bar.

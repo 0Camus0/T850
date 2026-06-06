@@ -13,6 +13,7 @@
 
 // ImGui core
 #include <imgui.h>
+#include <imgui_internal.h>
 
 #ifndef OS_ANDROID
 #include <imgui_impl_vulkan.h>
@@ -181,6 +182,7 @@ MenuAction ImGuiDrawMenuBar(PanelVisibility& panels) {
       ImGui::MenuItem("Hierarchy", nullptr, &panels.showHierarchy);
       ImGui::MenuItem("Inspector", nullptr, &panels.showInspector);
       ImGui::MenuItem("Console",   nullptr, &panels.showConsole);
+      ImGui::MenuItem("Rendering", nullptr, &panels.showRendering);
       ImGui::Separator();
       ImGui::MenuItem("Wireframe Overlay", nullptr, &panels.showWireframe);
       ImGui::MenuItem("Show Skybox",       nullptr, &panels.showSkybox);
@@ -202,6 +204,17 @@ MenuAction ImGuiDrawMenuBar(PanelVisibility& panels) {
   return action;
 }
 
+void ImGuiClampCurrentWindowToEditorWorkArea() {
+  ImGuiViewport* mainViewport = ImGui::GetMainViewport();
+  if (!mainViewport || ImGui::IsWindowDocked()) {
+    return;
+  }
+  ImVec2 pos = ImGui::GetWindowPos();
+  if (pos.y < mainViewport->WorkPos.y) {
+    ImGui::SetWindowPos(ImVec2(pos.x, mainViewport->WorkPos.y), ImGuiCond_Always);
+  }
+}
+
 // ── Toolbar ───────────────────────────────────────────
 int ImGuiDrawToolbar(int currentMode, int& addCamera, int& addLight,
                      bool& wantsClone, bool& wantsGroup, bool& wantsUngroup,
@@ -216,20 +229,21 @@ int ImGuiDrawToolbar(int currentMode, int& addCamera, int& addLight,
   if (!s_inited) return currentMode;
 
   ImGuiViewport* vp = ImGui::GetMainViewport();
-  ImGui::SetNextWindowPos(ImVec2(vp->WorkPos.x, vp->WorkPos.y), ImGuiCond_Always);
-  ImGui::SetNextWindowSize(ImVec2(vp->WorkSize.x, 0), ImGuiCond_Always);
+  if (!vp) return currentMode;
 
   ImGuiWindowFlags flags = ImGuiWindowFlags_NoTitleBar
                          | ImGuiWindowFlags_NoResize
                          | ImGuiWindowFlags_NoMove
                          | ImGuiWindowFlags_NoScrollbar
+                         | ImGuiWindowFlags_NoScrollWithMouse
                          | ImGuiWindowFlags_NoSavedSettings
                          | ImGuiWindowFlags_NoDocking;
 
   ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(6, 4));
   ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize, 0.0f);
 
-  if (ImGui::Begin("##Toolbar", nullptr, flags)) {
+  const float toolbarHeight = ImGui::GetFrameHeight() + ImGui::GetStyle().WindowPadding.y * 2.0f;
+  if (ImGui::BeginViewportSideBar("##T8ditorToolbar", vp, ImGuiDir_Up, toolbarHeight, flags)) {
     ImVec4 activeCol = ImGui::GetStyleColorVec4(ImGuiCol_ButtonActive);
     ImVec2 btnSize(70, 0);
 
@@ -462,11 +476,15 @@ static ImVec4 LogLevelColor(t850::Log::Level lvl) {
 }
 
 void ImGuiDrawConsolePanel() {
+  if (ImGuiViewport* viewport = ImGui::GetMainViewport()) {
+    ImGui::SetNextWindowPos(ImVec2(viewport->WorkPos.x + 8.0f, viewport->WorkPos.y + viewport->WorkSize.y - 220.0f), ImGuiCond_FirstUseEver);
+  }
   ImGui::SetNextWindowSize(ImVec2(600, 200), ImGuiCond_FirstUseEver);
   if (!ImGui::Begin("Console")) {
     ImGui::End();
     return;
   }
+  ImGuiClampCurrentWindowToEditorWorkArea();
 
   // Clear button
   if (ImGui::SmallButton("Clear")) {
@@ -506,11 +524,15 @@ void ImGuiDrawConsolePanel() {
 int ImGuiDrawRTDebugPanel(int selectedRT) {
   if (!s_inited) return selectedRT;
 
+  if (ImGuiViewport* viewport = ImGui::GetMainViewport()) {
+    ImGui::SetNextWindowPos(ImVec2(viewport->WorkPos.x + viewport->WorkSize.x - 340.0f, viewport->WorkPos.y + 8.0f), ImGuiCond_FirstUseEver);
+  }
   ImGui::SetNextWindowSize(ImVec2(320, 500), ImGuiCond_FirstUseEver);
   if (!ImGui::Begin("Render Targets")) {
     ImGui::End();
     return selectedRT;
   }
+  ImGuiClampCurrentWindowToEditorWorkArea();
 
   // "BackBuffer" entry (selectedRT = -1)
   {

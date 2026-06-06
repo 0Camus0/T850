@@ -4499,6 +4499,7 @@ void RagdollEditor::CreateAssets() {
     T8_LOG_ERROR("[RagdollEditor] Failed to initialize render container");
     return;
   }
+  m_renderContainer.Graph().DisablePass("Light Add");
 
   GBufferPass           = m_renderContainer.Graph().GetRTHandle("GBuffer");
   DeferredPass          = m_renderContainer.Graph().GetRTHandle("Deferred");
@@ -4579,7 +4580,7 @@ void RagdollEditor::CreateAssets() {
     SheenELUTTexIndex);
   UpdateSceneIBLSettings(SceneProp, g_pBaseDriver, EnvMaps);
 
-  if (m_useExternalMesh && m_externalMesh.pBase) {
+  if (m_useExternalMesh) {
     const int index = PrimitiveMgr.CreateMesh(activeModelPath.c_str());
     if (index < 0) {
       T8_LOG_ERROR("[RagdollEditor] Failed to instantiate external model '%s'", activeModelPath.c_str());

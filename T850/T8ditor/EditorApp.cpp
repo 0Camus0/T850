@@ -1200,7 +1200,7 @@ void EditorApp::CloseMeshEditor() {
     }
   }
   if (!m_sceneProps.pCameras.empty()) {
-    m_sceneProps.pCameras[0] = &m_camera.GetCameraMutable();
+    m_sceneProps.SetPrimaryCamera(&m_camera.GetCameraMutable());
   }
 }
 
@@ -1588,7 +1588,7 @@ void EditorApp::ClosePlayScene(bool restoreEditorScene) {
     }
   }
   if (!m_sceneProps.pCameras.empty()) {
-    m_sceneProps.pCameras[0] = &m_camera.GetCameraMutable();
+    m_sceneProps.SetPrimaryCamera(&m_camera.GetCameraMutable());
   }
 }
 
@@ -1597,47 +1597,28 @@ bool EditorApp::EnsurePlaySceneViewportTarget(int width, int height) {
     return false;
   }
 
-  width = (std::max)(1, width);
-  height = (std::max)(1, height);
-  if (m_playSceneViewportRT >= 0 &&
-      m_playSceneViewportW == width &&
-      m_playSceneViewportH == height) {
-    return true;
-  }
-
-  DestroyPlaySceneViewportTarget();
-  m_playSceneViewportRT = pFramework->pVideoDriver->CreateRT(
-      1,
-      t850::BaseRT::RGBA8,
-      t850::BaseRT::F32,
-      width,
-      height);
-  if (m_playSceneViewportRT < 0) {
-    m_playSceneViewportW = 0;
-    m_playSceneViewportH = 0;
+  t850::RenderViewportDesc desc;
+  desc.colorCount = 1;
+  desc.colorFormat = t850::BaseRT::RGBA8;
+  desc.depthFormat = t850::BaseRT::F32;
+  desc.minWidth = 64;
+  desc.minHeight = 64;
+  if (!m_playSceneViewportTarget.Ensure(pFramework->pVideoDriver, width, height, desc)) {
     T8_LOG_ERROR("[T8ditor] Failed to create Play Scene viewport RT %dx%d", width, height);
     return false;
   }
 
-  m_playSceneViewportW = width;
-  m_playSceneViewportH = height;
   T8_LOG_INFO("[T8ditor] Play Scene viewport RT created output=%d size=%dx%d",
-              m_playSceneViewportRT,
-              width,
-              height);
+              m_playSceneViewportTarget.Handle(),
+              m_playSceneViewportTarget.Width(),
+              m_playSceneViewportTarget.Height());
   return true;
 }
 
 void EditorApp::DestroyPlaySceneViewportTarget() {
-  if (pFramework && pFramework->pVideoDriver && m_playSceneViewportRT >= 0) {
-    pFramework->pVideoDriver->DestroyRT(m_playSceneViewportRT);
+  if (pFramework && pFramework->pVideoDriver) {
+    m_playSceneViewportTarget.Destroy(pFramework->pVideoDriver);
   }
-  m_playSceneViewportRT = -1;
-  m_playSceneViewportW = 0;
-  m_playSceneViewportH = 0;
-  m_playScenePendingViewportW = 0;
-  m_playScenePendingViewportH = 0;
-  m_playSceneViewportStableFrames = 0;
   m_playSceneViewportImageMinX = 0.0f;
   m_playSceneViewportImageMinY = 0.0f;
   m_playSceneViewportImageSizeX = 0.0f;
@@ -1648,7 +1629,7 @@ bool EditorApp::EnsurePlaySceneRuntimeLoaded() {
   if (m_playSceneLoaded) {
     return true;
   }
-  if (!pFramework || !pFramework->pVideoDriver || m_playSceneTempPath.empty() || m_playSceneViewportRT < 0) {
+  if (!pFramework || !pFramework->pVideoDriver || m_playSceneTempPath.empty() || !m_playSceneViewportTarget.IsValid()) {
     return false;
   }
   if (m_playSceneLaunchFailed) {
@@ -1657,13 +1638,6 @@ bool EditorApp::EnsurePlaySceneRuntimeLoaded() {
   if (!m_playSceneHasVisibleObjects) {
     return false;
   }
-
-  t850::g_config = m_playScenePreviousConfig;
-  t850::g_config.sceneFilePath = m_playSceneTempPath;
-  t850::g_config.startScene = 2;
-  t850::g_config.width = (std::max)(1, m_playSceneViewportW);
-  t850::g_config.height = (std::max)(1, m_playSceneViewportH);
-  t850::g_config.flags.guiOnStart = false;
 
   m_playSceneEngineContext = t850::GetEngineContext();
   m_playSceneEngineContext.physics = &m_playScenePhysics;
@@ -1675,9 +1649,17 @@ bool EditorApp::EnsurePlaySceneRuntimeLoaded() {
 
   m_playScene = std::make_unique<::Quake3Mock>();
   m_playScene->pFramework = pFramework;
+  Quake3MockLaunchDesc launchDesc;
+  launchDesc.sceneFilePath = m_playSceneTempPath;
+  launchDesc.modelPath = t850::g_config.modelPath;
+  launchDesc.width = m_playSceneViewportTarget.Width();
+  launchDesc.height = m_playSceneViewportTarget.Height();
+  launchDesc.startScene = 2;
+  launchDesc.guiOnStart = false;
+  m_playScene->SetLaunchDesc(launchDesc);
   m_playScene->SetEngineContext(&m_playSceneEngineContext);
-  m_playScene->SetRenderSize(m_playSceneViewportW, m_playSceneViewportH);
-  m_playScene->SetFinalOutputRT(m_playSceneViewportRT);
+  m_playScene->SetRenderSize(m_playSceneViewportTarget.Width(), m_playSceneViewportTarget.Height());
+  m_playScene->SetFinalOutputRT(m_playSceneViewportTarget.Handle());
   m_playScene->OnLoadScene();
   if (m_playScene->m_meshCount <= 0) {
     m_playScene->OnDestoryScene();
@@ -1705,23 +1687,15 @@ void EditorApp::DrawPlaySceneViewport() {
   }
   const int desiredViewportW = (std::max)(64, (int)std::floor(available.x));
   const int desiredViewportH = (std::max)(64, (int)std::floor(available.y));
-  bool shouldResizeRT = m_playSceneViewportRT < 0;
-  if (m_playSceneViewportRT >= 0 &&
-      (desiredViewportW != m_playSceneViewportW || desiredViewportH != m_playSceneViewportH)) {
-    const bool mouseResizingWindow =
-        ImGui::IsMouseDown(ImGuiMouseButton_Left) ||
-        ImGui::IsMouseDown(ImGuiMouseButton_Right) ||
-        ImGui::IsMouseDown(ImGuiMouseButton_Middle);
-    if (desiredViewportW != m_playScenePendingViewportW ||
-        desiredViewportH != m_playScenePendingViewportH) {
-      m_playScenePendingViewportW = desiredViewportW;
-      m_playScenePendingViewportH = desiredViewportH;
-      m_playSceneViewportStableFrames = 0;
-    } else if (!mouseResizingWindow) {
-      ++m_playSceneViewportStableFrames;
-    }
-    shouldResizeRT = !mouseResizingWindow && m_playSceneViewportStableFrames >= 8;
-  }
+  const bool mouseResizingWindow =
+      ImGui::IsMouseDown(ImGuiMouseButton_Left) ||
+      ImGui::IsMouseDown(ImGuiMouseButton_Right) ||
+      ImGui::IsMouseDown(ImGuiMouseButton_Middle);
+  t850::RenderViewportDesc viewportDesc;
+  viewportDesc.minWidth = 64;
+  viewportDesc.minHeight = 64;
+  const bool shouldResizeRT =
+      m_playSceneViewportTarget.ShouldResize(desiredViewportW, desiredViewportH, mouseResizingWindow, viewportDesc);
 
   if (shouldResizeRT) {
     if (pFramework && pFramework->pVideoDriver) {
@@ -1732,29 +1706,30 @@ void EditorApp::DrawPlaySceneViewport() {
       return;
     }
     if (m_playScene && m_playSceneLoaded) {
-      m_playScene->ResizeRenderTargets(m_playSceneViewportW, m_playSceneViewportH, m_playSceneViewportRT);
+      m_playScene->ResizeRenderTargets(
+          m_playSceneViewportTarget.Width(),
+          m_playSceneViewportTarget.Height(),
+          m_playSceneViewportTarget.Handle());
     }
-    m_playScenePendingViewportW = desiredViewportW;
-    m_playScenePendingViewportH = desiredViewportH;
-    m_playSceneViewportStableFrames = 0;
   }
 
-  if (!pFramework || !pFramework->pVideoDriver || m_playSceneViewportRT < 0) {
+  if (!pFramework || !pFramework->pVideoDriver || !m_playSceneViewportTarget.IsValid()) {
     ImGui::TextDisabled("Play Scene viewport unavailable.");
     return;
   }
 
   t850::BaseDriver* driver = pFramework->pVideoDriver;
-  t850::BaseRT* rt = (m_playSceneViewportRT >= 0 &&
-                      m_playSceneViewportRT < (int)driver->RTs.size())
-      ? driver->RTs[m_playSceneViewportRT]
+  const int playViewportRT = m_playSceneViewportTarget.Handle();
+  t850::BaseRT* rt = (playViewportRT >= 0 &&
+                      playViewportRT < (int)driver->RTs.size())
+      ? driver->RTs[playViewportRT]
       : nullptr;
   if (!rt || rt->vColorTextures.empty() || !rt->vColorTextures[0]) {
     ImGui::TextDisabled("Play Scene render target is unavailable.");
     return;
   }
 
-  const ImVec2 imageSize((float)m_playSceneViewportW, (float)m_playSceneViewportH);
+  const ImVec2 imageSize((float)m_playSceneViewportTarget.Width(), (float)m_playSceneViewportTarget.Height());
   const ImVec2 imageMin = ImGui::GetCursorScreenPos();
   const ImVec2 imageMax(imageMin.x + imageSize.x, imageMin.y + imageSize.y);
   m_playSceneViewportImageMinX = imageMin.x;
@@ -1767,8 +1742,8 @@ void EditorApp::DrawPlaySceneViewport() {
     return;
   }
 
-  m_playScene->SetFinalOutputRT(m_playSceneViewportRT);
-  m_playScene->SetRenderSize(m_playSceneViewportW, m_playSceneViewportH);
+  m_playScene->SetFinalOutputRT(m_playSceneViewportTarget.Handle());
+  m_playScene->SetRenderSize(m_playSceneViewportTarget.Width(), m_playSceneViewportTarget.Height());
   m_playScene->OnUpdate(m_dtSecs);
   m_playScene->OnDraw();
 
@@ -1883,19 +1858,9 @@ bool EditorApp::EnsureMeshEditorViewportTarget(int width, int height) {
     return false;
   }
 
-  width = (std::max)(1, width);
-  height = (std::max)(1, height);
-  if (m_meshEditorGBufferRT >= 0 &&
-      m_meshEditorViewportRT >= 0 &&
-      m_meshEditorViewportW == width &&
-      m_meshEditorViewportH == height) {
-    return true;
-  }
-
   t850::BaseDriver* driver = pFramework->pVideoDriver;
-  DestroyMeshEditorViewportTarget();
-
-  std::vector<int> gbufferFormats = {
+  t850::RenderViewportDesc gbufferDesc;
+  gbufferDesc.colorFormats = {
       t850::BaseRT::RGBA8,
       t850::BaseRT::RGBA16F,
       t850::BaseRT::RGBA8,
@@ -1903,57 +1868,42 @@ bool EditorApp::EnsureMeshEditorViewportTarget(int width, int height) {
       t850::BaseRT::RGBA16F,
       t850::BaseRT::RGBA8,
       t850::BaseRT::RGBA8};
-  m_meshEditorGBufferRT = driver->CreateRT(
-      7,
-      gbufferFormats,
-      t850::BaseRT::F32,
-      width,
-      height);
-  if (m_meshEditorGBufferRT < 0) {
-    m_meshEditorViewportW = 0;
-    m_meshEditorViewportH = 0;
+  gbufferDesc.depthFormat = t850::BaseRT::F32;
+  gbufferDesc.minWidth = 64;
+  gbufferDesc.minHeight = 64;
+
+  t850::RenderViewportDesc outputDesc;
+  outputDesc.colorCount = 1;
+  outputDesc.colorFormat = t850::BaseRT::RGBA8;
+  outputDesc.depthFormat = t850::BaseRT::F32;
+  outputDesc.minWidth = 64;
+  outputDesc.minHeight = 64;
+
+  if (!m_meshEditorGBufferTarget.Ensure(driver, width, height, gbufferDesc)) {
+    DestroyMeshEditorViewportTarget();
     T8_LOG_ERROR("[T8ditor] Failed to create Mesh Edit GBuffer RT %dx%d", width, height);
     return false;
   }
 
-  m_meshEditorViewportRT = driver->CreateRT(
-      1,
-      t850::BaseRT::RGBA8,
-      t850::BaseRT::F32,
-      width,
-      height);
-  if (m_meshEditorViewportRT < 0) {
+  if (!m_meshEditorViewportTarget.Ensure(driver, width, height, outputDesc)) {
     DestroyMeshEditorViewportTarget();
     T8_LOG_ERROR("[T8ditor] Failed to create Mesh Edit viewport RT %dx%d", width, height);
     return false;
   }
 
-  m_meshEditorViewportW = width;
-  m_meshEditorViewportH = height;
   T8_LOG_INFO("[T8ditor] Mesh Edit viewport RTs created gbuffer=%d output=%d size=%dx%d",
-              m_meshEditorGBufferRT,
-              m_meshEditorViewportRT,
-              width,
-              height);
+              m_meshEditorGBufferTarget.Handle(),
+              m_meshEditorViewportTarget.Handle(),
+              m_meshEditorViewportTarget.Width(),
+              m_meshEditorViewportTarget.Height());
   return true;
 }
 
 void EditorApp::DestroyMeshEditorViewportTarget() {
   if (pFramework && pFramework->pVideoDriver) {
-    if (m_meshEditorGBufferRT >= 0) {
-      pFramework->pVideoDriver->DestroyRT(m_meshEditorGBufferRT);
-    }
-    if (m_meshEditorViewportRT >= 0) {
-      pFramework->pVideoDriver->DestroyRT(m_meshEditorViewportRT);
-    }
+    m_meshEditorGBufferTarget.Destroy(pFramework->pVideoDriver);
+    m_meshEditorViewportTarget.Destroy(pFramework->pVideoDriver);
   }
-  m_meshEditorGBufferRT = -1;
-  m_meshEditorViewportRT = -1;
-  m_meshEditorViewportW = 0;
-  m_meshEditorViewportH = 0;
-  m_meshEditorPendingViewportW = 0;
-  m_meshEditorPendingViewportH = 0;
-  m_meshEditorViewportStableFrames = 0;
 }
 
 void EditorApp::DestroyMeshEditorSceneResources() {
@@ -2592,9 +2542,9 @@ void EditorApp::DrawRagdollEditorViewport(SceneObject& obj) {
   m_ragdollEditorCamera.SetLookAt(m_ragdollEditorOrbitTarget);
   m_ragdollEditorCamera.Update(0.0f);
 
-  Camera* previousCamera = (!m_sceneProps.pCameras.empty()) ? m_sceneProps.pCameras[0] : nullptr;
+  Camera* previousCamera = m_sceneProps.GetPrimaryCamera();
   if (!m_sceneProps.pCameras.empty()) {
-    m_sceneProps.pCameras[0] = &m_ragdollEditorCamera;
+    m_sceneProps.SetPrimaryCamera(&m_ragdollEditorCamera);
   }
 
   driver->PushRT(m_ragdollEditorGBufferRT);
@@ -2697,7 +2647,7 @@ void EditorApp::DrawRagdollEditorViewport(SceneObject& obj) {
 
   driver->PopRT();
   if (!m_sceneProps.pCameras.empty()) {
-    m_sceneProps.pCameras[0] = previousCamera;
+    m_sceneProps.SetPrimaryCamera(previousCamera);
   }
 
   ImTextureID image = ImGuiTextureID(driver, rt->vColorTextures[0]);
@@ -4970,9 +4920,9 @@ bool EditorApp::EnsureMeshEditorEmbeddedScene(SceneObject& obj) {
   m_meshEditorScene->UseExternalMesh(obj.litInst, meshPath);
   m_meshEditorScene->SetRenderViewport(m_meshEditorViewportImageMinX,
                                        m_meshEditorViewportImageMinY,
-                                       m_meshEditorViewportW,
-                                       m_meshEditorViewportH);
-  m_meshEditorScene->SetFinalOutputRT(m_meshEditorViewportRT);
+                                       m_meshEditorViewportTarget.Width(),
+                                       m_meshEditorViewportTarget.Height());
+  m_meshEditorScene->SetFinalOutputRT(m_meshEditorViewportTarget.Handle());
   m_meshEditorScene->OnLoadScene();
   if (m_meshEditorScene->m_meshCount <= 0 || !m_meshEditorScene->Meshes[0].pBase) {
     T8_LOG_ERROR("[T8ditor] Mesh Edit failed to load embedded RagdollEditor mesh '%s'", meshPath.c_str());
@@ -4989,24 +4939,15 @@ void EditorApp::DrawMeshEditorViewport(SceneObject& obj) {
   ImVec2 available = ImGui::GetContentRegionAvail();
   const int desiredViewportW = (std::max)(64, (int)std::floor(available.x));
   const int desiredViewportH = (std::max)(64, (int)std::floor(available.y));
-  const bool haveViewportRT = m_meshEditorGBufferRT >= 0 && m_meshEditorViewportRT >= 0;
-  bool shouldResizeRT = !haveViewportRT;
-  if (haveViewportRT &&
-      (desiredViewportW != m_meshEditorViewportW || desiredViewportH != m_meshEditorViewportH)) {
-    const bool mouseResizingWindow =
-        ImGui::IsMouseDown(ImGuiMouseButton_Left) ||
-        ImGui::IsMouseDown(ImGuiMouseButton_Right) ||
-        ImGui::IsMouseDown(ImGuiMouseButton_Middle);
-    if (desiredViewportW != m_meshEditorPendingViewportW ||
-        desiredViewportH != m_meshEditorPendingViewportH) {
-      m_meshEditorPendingViewportW = desiredViewportW;
-      m_meshEditorPendingViewportH = desiredViewportH;
-      m_meshEditorViewportStableFrames = 0;
-    } else if (!mouseResizingWindow) {
-      ++m_meshEditorViewportStableFrames;
-    }
-    shouldResizeRT = !mouseResizingWindow && m_meshEditorViewportStableFrames >= 8;
-  }
+  const bool mouseResizingWindow =
+      ImGui::IsMouseDown(ImGuiMouseButton_Left) ||
+      ImGui::IsMouseDown(ImGuiMouseButton_Right) ||
+      ImGui::IsMouseDown(ImGuiMouseButton_Middle);
+  t850::RenderViewportDesc viewportDesc;
+  viewportDesc.minWidth = 64;
+  viewportDesc.minHeight = 64;
+  const bool shouldResizeRT =
+      m_meshEditorViewportTarget.ShouldResize(desiredViewportW, desiredViewportH, mouseResizingWindow, viewportDesc);
 
   if (shouldResizeRT) {
     if (pFramework && pFramework->pVideoDriver) {
@@ -5017,20 +4958,20 @@ void EditorApp::DrawMeshEditorViewport(SceneObject& obj) {
       return;
     }
     if (m_meshEditorScene && m_meshEditorSceneLoaded) {
-      m_meshEditorScene->ResizeRenderTargets(m_meshEditorViewportW, m_meshEditorViewportH, m_meshEditorViewportRT);
+      m_meshEditorScene->ResizeRenderTargets(
+          m_meshEditorViewportTarget.Width(),
+          m_meshEditorViewportTarget.Height(),
+          m_meshEditorViewportTarget.Handle());
     }
-    m_meshEditorPendingViewportW = desiredViewportW;
-    m_meshEditorPendingViewportH = desiredViewportH;
-    m_meshEditorViewportStableFrames = 0;
   }
 
-  if (m_meshEditorViewportW <= 0 || m_meshEditorViewportH <= 0 || !pFramework || !pFramework->pVideoDriver) {
+  if (!m_meshEditorViewportTarget.IsValid() || !pFramework || !pFramework->pVideoDriver) {
     ImGui::TextDisabled("Mesh editor viewport unavailable.");
     return;
   }
 
-  const int viewportW = m_meshEditorViewportW;
-  const int viewportH = m_meshEditorViewportH;
+  const int viewportW = m_meshEditorViewportTarget.Width();
+  const int viewportH = m_meshEditorViewportTarget.Height();
   const ImVec2 embeddedViewportSize((float)viewportW, (float)viewportH);
   const ImVec2 embeddedImageMin = ImGui::GetCursorScreenPos();
   const ImVec2 embeddedImageMax(embeddedImageMin.x + embeddedViewportSize.x, embeddedImageMin.y + embeddedViewportSize.y);
@@ -5040,13 +4981,15 @@ void EditorApp::DrawMeshEditorViewport(SceneObject& obj) {
   m_meshEditorViewportImageSizeY = embeddedViewportSize.y;
 
   t850::BaseDriver* driver = pFramework->pVideoDriver;
-  t850::BaseRT* gbufferRT = (m_meshEditorGBufferRT >= 0 &&
-                             m_meshEditorGBufferRT < (int)driver->RTs.size())
-      ? driver->RTs[m_meshEditorGBufferRT]
+  const int meshEditorGBufferRT = m_meshEditorGBufferTarget.Handle();
+  const int meshEditorViewportRT = m_meshEditorViewportTarget.Handle();
+  t850::BaseRT* gbufferRT = (meshEditorGBufferRT >= 0 &&
+                             meshEditorGBufferRT < (int)driver->RTs.size())
+      ? driver->RTs[meshEditorGBufferRT]
       : nullptr;
-  t850::BaseRT* rt = (m_meshEditorViewportRT >= 0 &&
-                      m_meshEditorViewportRT < (int)driver->RTs.size())
-      ? driver->RTs[m_meshEditorViewportRT]
+  t850::BaseRT* rt = (meshEditorViewportRT >= 0 &&
+                      meshEditorViewportRT < (int)driver->RTs.size())
+      ? driver->RTs[meshEditorViewportRT]
       : nullptr;
   if (!gbufferRT || gbufferRT->vColorTextures.size() < 7 || !gbufferRT->pDepthTexture ||
       !rt || rt->vColorTextures.empty() || !rt->vColorTextures[0]) {
@@ -5059,7 +5002,7 @@ void EditorApp::DrawMeshEditorViewport(SceneObject& obj) {
     return;
   }
 
-  m_meshEditorScene->SetFinalOutputRT(m_meshEditorViewportRT);
+  m_meshEditorScene->SetFinalOutputRT(m_meshEditorViewportTarget.Handle());
   m_meshEditorScene->SetRenderViewport(embeddedImageMin.x, embeddedImageMin.y, viewportW, viewportH);
   m_meshEditorScene->OnUpdate(m_dtSecs);
   m_meshEditorScene->OnDraw();
@@ -6522,8 +6465,8 @@ single_pick:
   if (!IManager.PressedOnceMouseButton(0) && !selectMode) return;
 
   const ::Camera* activeCamera = &m_camera.GetCamera();
-  if (!m_sceneProps.pCameras.empty() && m_sceneProps.pCameras[0]) {
-    activeCamera = m_sceneProps.pCameras[0];
+  if (Camera* primaryCamera = m_sceneProps.GetPrimaryCamera()) {
+    activeCamera = primaryCamera;
   }
   t850::Ray ray = BuildEditorCameraRay(*activeCamera,
                                        static_cast<float>(IManager.mouseX),
@@ -6671,14 +6614,14 @@ void EditorApp::OnDraw() {
       g_viewCamera.Update(0.0f);
       // Point the scene props active camera at our persistent camera
       if (!m_sceneProps.pCameras.empty())
-        m_sceneProps.pCameras[0] = &g_viewCamera;
+        m_sceneProps.SetPrimaryCamera(&g_viewCamera);
     } else {
       // Editor orbit camera
       if (!m_sceneProps.pCameras.empty())
-        m_sceneProps.pCameras[0] = &m_camera.GetCameraMutable();
+        m_sceneProps.SetPrimaryCamera(&m_camera.GetCameraMutable());
     }
 
-    const ::Camera& cam = *m_sceneProps.pCameras[0];
+    const ::Camera& cam = *m_sceneProps.GetPrimaryCamera();
     m_vp = cam.VP;
 
     // Sync scene lights from editor lights.
@@ -6732,7 +6675,7 @@ void EditorApp::OnDraw() {
         m_sceneProps.AddLightCamera(&m_editorLightCamera);
       }
       m_sceneProps.ActiveLightCamera = 0;
-      m_sceneProps.pCullingCamera = m_sceneProps.pCameras.empty() ? nullptr : m_sceneProps.pCameras[0];
+      m_sceneProps.pCullingCamera = m_sceneProps.GetPrimaryCamera();
     }
 
     // Update all mesh transforms
@@ -6770,7 +6713,7 @@ void EditorApp::OnDraw() {
       meshArray.reserve(allMeshes.size());
       for (auto* p : allMeshes) meshArray.push_back(*p);
 
-      ::Camera* mainCam = m_sceneProps.pCameras[0];
+      ::Camera* mainCam = m_sceneProps.GetPrimaryCamera();
       t850::EnvironmentMapSet editorEnvMaps;
       editorEnvMaps.SetFallback(g_dummyEnvMapIdx);
       T8_LOG_TRACE("[T8ditor] OnDraw: RenderGraph Execute (%d meshes)...", (int)meshArray.size());
@@ -7085,7 +7028,7 @@ void EditorApp::OnDraw() {
         }
       }
       if (!first) {
-        const ::Camera& camBB = *m_sceneProps.pCameras[0];
+        const ::Camera& camBB = *m_sceneProps.GetPrimaryCamera();
         float bmin[3] = { combined.vMin.x, combined.vMin.y, combined.vMin.z };
         float bmax[3] = { combined.vMax.x, combined.vMax.y, combined.vMax.z };
         ImVec2 corners[8];
@@ -7120,8 +7063,8 @@ void EditorApp::OnDraw() {
 
     // ImGuizmo on selected entity
     ImGuizmoBeginFrame(0, 0, m_lastW, m_lastH, false);
-    const ::Camera& cam2 = (!m_sceneProps.pCameras.empty() && m_sceneProps.pCameras[0])
-        ? *m_sceneProps.pCameras[0]
+    const ::Camera& cam2 = m_sceneProps.GetPrimaryCamera()
+        ? *m_sceneProps.GetPrimaryCamera()
         : m_camera.GetCamera();
 
     // Multi-select group gizmo (meshes only, 2+ selected)

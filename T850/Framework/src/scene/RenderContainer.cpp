@@ -6,6 +6,51 @@
 
 namespace t850 {
 
+  namespace {
+    struct PrimitiveBindingState {
+      PrimitiveInst* instance = nullptr;
+      PrimitiveBase* primitive = nullptr;
+      SceneProps* sceneProps = nullptr;
+      XMATRIX44* viewProj = nullptr;
+    };
+
+    class PrimitiveBindingGuard {
+    public:
+      ~PrimitiveBindingGuard() {
+        Restore();
+      }
+
+      void Bind(PrimitiveInst& instance, SceneProps& sceneProps, XMATRIX44& viewProj) {
+        if (!instance.pBase) {
+          return;
+        }
+        m_states.push_back({&instance, instance.pBase, instance.pBase->pScProp, instance.pViewProj});
+        instance.pBase->SetSceneProps(&sceneProps);
+        instance.pViewProj = &viewProj;
+        instance.Update();
+      }
+
+      void Restore() {
+        if (m_restored) {
+          return;
+        }
+        for (const PrimitiveBindingState& state : m_states) {
+          if (state.primitive) {
+            state.primitive->SetSceneProps(state.sceneProps);
+          }
+          if (state.instance) {
+            state.instance->pViewProj = state.viewProj;
+          }
+        }
+        m_restored = true;
+      }
+
+    private:
+      std::vector<PrimitiveBindingState> m_states;
+      bool m_restored = false;
+    };
+  }
+
   bool RenderContainer::Initialize(BaseDriver* driver, EngineContext* engineContext, const RenderContainerDesc& desc) {
     if (!driver || desc.renderGraphPath.empty()) {
       T8_LOG_ERROR("[RenderContainer] Invalid initialization for '%s'", desc.name.c_str());
@@ -127,15 +172,9 @@ namespace t850 {
     }
     Props().FrameDeltaSec = deltaSeconds;
     m_meshVP = m_mainCamera->VP;
-    std::vector<SceneProps*> previousSceneProps;
-    previousSceneProps.reserve(m_meshes.size());
+    PrimitiveBindingGuard bindingGuard;
     for (PrimitiveInst& mesh : m_meshes) {
-      if (mesh.pBase) {
-        previousSceneProps.push_back(mesh.pBase->pScProp);
-        mesh.pBase->SetSceneProps(&Props());
-      }
-      mesh.pViewProj = &m_meshVP;
-      mesh.Update();
+      bindingGuard.Bind(mesh, Props(), m_meshVP);
     }
 
     m_renderGraph.Execute(
@@ -149,13 +188,6 @@ namespace t850 {
         nullptr,
         m_envMaps,
         m_finalOutputRT);
-    std::size_t restoreIndex = 0;
-    for (PrimitiveInst& mesh : m_meshes) {
-      if (!mesh.pBase) continue;
-      SceneProps* previous = restoreIndex < previousSceneProps.size() ? previousSceneProps[restoreIndex] : nullptr;
-      mesh.pBase->SetSceneProps(previous);
-      ++restoreIndex;
-    }
     return true;
   }
 
@@ -172,14 +204,9 @@ namespace t850 {
     }
     Props().FrameDeltaSec = deltaSeconds;
     m_meshVP = mainCamera->VP;
-    std::vector<SceneProps*> previousSceneProps;
-    previousSceneProps.reserve(static_cast<std::size_t>(meshCount));
+    PrimitiveBindingGuard bindingGuard;
     for (int i = 0; i < meshCount; ++i) {
-      if (!meshes[i].pBase) continue;
-      previousSceneProps.push_back(meshes[i].pBase->pScProp);
-      meshes[i].pBase->SetSceneProps(&Props());
-      meshes[i].pViewProj = &m_meshVP;
-      meshes[i].Update();
+      bindingGuard.Bind(meshes[i], Props(), m_meshVP);
     }
     const int outputRT = finalOutputRT >= 0 ? finalOutputRT : m_finalOutputRT;
     m_renderGraph.Execute(
@@ -193,13 +220,6 @@ namespace t850 {
         nullptr,
         envMaps,
         outputRT);
-    std::size_t restoreIndex = 0;
-    for (int i = 0; i < meshCount; ++i) {
-      if (!meshes[i].pBase) continue;
-      SceneProps* previous = restoreIndex < previousSceneProps.size() ? previousSceneProps[restoreIndex] : nullptr;
-      meshes[i].pBase->SetSceneProps(previous);
-      ++restoreIndex;
-    }
     return true;
   }
 

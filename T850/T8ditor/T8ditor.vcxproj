@@ -402,6 +402,7 @@ call "$(SolutionDir)scripts\CopyFirstExisting.cmd" "$(OutDir)" "$(T8VcpkgDynamic
     <ClInclude Include="EditorImGui.h" />
     <ClInclude Include="..\DayScene\RagdollEditor.h" />
     <ClInclude Include="..\DayScene\Quake3Mock.h" />
+    <ClInclude Include="..\DayScene\SandboxRenderGraphUtils.h" />
   </ItemGroup>
   <ItemGroup>
     <ResourceCompile Include="T8ditor.rc" />

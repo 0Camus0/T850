@@ -503,7 +503,7 @@ void RenderGraph::Execute(
                 mainCam, lightCam, omniCams, envMaps, finalOutputRT);
   }
   if (mainCam && !props.pCameras.empty()) {
-    props.pCameras[0] = mainCam;
+    props.SetPrimaryCamera(mainCam);
   }
 }
 
@@ -560,9 +560,9 @@ void RenderGraph::ExecutePass(
 
   // Camera selection
   if (pass.camera == "light" && lightCam) {
-    props.pCameras[0] = lightCam;
+    props.SetPrimaryCamera(lightCam);
   } else if (pass.camera == "main" && mainCam) {
-    props.pCameras[0] = mainCam;
+    props.SetPrimaryCamera(mainCam);
   }
 
   // Active light camera
@@ -588,7 +588,7 @@ void RenderGraph::ExecutePass(
     // Draw each face
     for (int face = 0; face < pass.cube_faces; face++) {
       if (pass.per_face_camera == "omni" && omniCams) {
-        props.pCameras[0] = &omniCams[face];
+        props.SetPrimaryCamera(&omniCams[face]);
       }
       driver->RTs[node.rt_handle]->ChangeCubeDepthTexture(face);
 
@@ -619,7 +619,7 @@ void RenderGraph::ExecutePass(
 
     // Restore camera after cubemap faces
     if (pass.per_face_camera == "omni" && mainCam) {
-      props.pCameras[0] = mainCam;
+      props.SetPrimaryCamera(mainCam);
     }
   }
   else {

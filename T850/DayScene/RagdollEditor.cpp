@@ -1,4 +1,5 @@
 #include <RagdollEditor.h>
+#include <SandboxRenderGraphUtils.h>
 #include <video/BaseDriver.h>
 #include <utils/Log.h>
 #include <utils/RuntimeProfile.h>
@@ -3230,15 +3231,17 @@ void RagdollEditor::ResizeRenderTargets(int width, int height, int finalOutputRT
     m_renderContainer.SetFinalOutputRT(finalOutputRT);
     if (width > 0 && height > 0) {
       m_renderContainer.Resize(pFramework->pVideoDriver, width, height);
-      GBufferPass           = m_renderContainer.Graph().GetRTHandle("GBuffer");
-      DeferredPass          = m_renderContainer.Graph().GetRTHandle("Deferred");
-      Extra16FPass          = m_renderContainer.Graph().GetRTHandle("Extra16F");
-      DepthPass             = m_renderContainer.Graph().GetRTHandle("DepthPass");
-      ShadowAccumPass       = m_renderContainer.Graph().GetRTHandle("ShadowAccum");
-      ExtraHelperPass       = m_renderContainer.Graph().GetRTHandle("ExtraHelper");
-      BloomAccumPass        = m_renderContainer.Graph().GetRTHandle("BloomAccum");
-      AdaptedLumCurrentPass = m_renderContainer.Graph().GetRTHandle("AdaptedLumCurrent");
-      AdaptedLumPrevPass    = m_renderContainer.Graph().GetRTHandle("AdaptedLumPrev");
+      t850::sandbox::RefreshDeferredPassHandles(
+          m_renderContainer.Graph(),
+          GBufferPass,
+          DeferredPass,
+          Extra16FPass,
+          DepthPass,
+          ShadowAccumPass,
+          ExtraHelperPass,
+          BloomAccumPass,
+          AdaptedLumCurrentPass,
+          AdaptedLumPrevPass);
     }
   }
 }
@@ -4501,15 +4504,17 @@ void RagdollEditor::CreateAssets() {
   }
   m_renderContainer.Graph().DisablePass("Light Add");
 
-  GBufferPass           = m_renderContainer.Graph().GetRTHandle("GBuffer");
-  DeferredPass          = m_renderContainer.Graph().GetRTHandle("Deferred");
-  Extra16FPass          = m_renderContainer.Graph().GetRTHandle("Extra16F");
-  DepthPass             = m_renderContainer.Graph().GetRTHandle("DepthPass");
-  ShadowAccumPass       = m_renderContainer.Graph().GetRTHandle("ShadowAccum");
-  ExtraHelperPass       = m_renderContainer.Graph().GetRTHandle("ExtraHelper");
-  BloomAccumPass        = m_renderContainer.Graph().GetRTHandle("BloomAccum");
-  AdaptedLumCurrentPass = m_renderContainer.Graph().GetRTHandle("AdaptedLumCurrent");
-  AdaptedLumPrevPass    = m_renderContainer.Graph().GetRTHandle("AdaptedLumPrev");
+  t850::sandbox::RefreshDeferredPassHandles(
+      m_renderContainer.Graph(),
+      GBufferPass,
+      DeferredPass,
+      Extra16FPass,
+      DepthPass,
+      ShadowAccumPass,
+      ExtraHelperPass,
+      BloomAccumPass,
+      AdaptedLumCurrentPass,
+      AdaptedLumPrevPass);
 
   PrimitiveMgr.SetEngineContext(pEngineContext);
   PrimitiveMgr.Init();

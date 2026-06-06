@@ -65,6 +65,8 @@ SceneProps() : ActiveCamera(0), ActiveLights(1), ActiveLightCamera(0), ActiveGau
 	void	SetLightPos(unsigned int index, XVECTOR3);
 
 	void	AddCamera(Camera*);
+	void	SetPrimaryCamera(Camera*);
+	Camera* GetPrimaryCamera() const;
 	void	RemoveCamera(unsigned int index);
 
 	void	AddLightCamera(Camera*);

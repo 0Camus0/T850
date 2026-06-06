@@ -1,4 +1,5 @@
 #include <Quake3Mock.h>
+#include <SandboxRenderGraphUtils.h>
 #include <video/BaseDriver.h>
 #include <utils/Log.h>
 #include <utils/RuntimeProfile.h>
@@ -3208,6 +3209,27 @@ void Quake3Mock::SetRenderSize(int width, int height) {
   UpdateCameraProjectionForRenderViewport();
 }
 
+void Quake3Mock::SetLaunchDesc(const Quake3MockLaunchDesc& desc) {
+  m_launchDesc = desc;
+  m_hasLaunchDesc = true;
+}
+
+const std::string& Quake3Mock::ActiveSceneFilePath() const {
+  return (m_hasLaunchDesc && !m_launchDesc.sceneFilePath.empty())
+      ? m_launchDesc.sceneFilePath
+      : g_config.sceneFilePath;
+}
+
+const std::string& Quake3Mock::ActiveModelPath() const {
+  return (m_hasLaunchDesc && !m_launchDesc.modelPath.empty())
+      ? m_launchDesc.modelPath
+      : g_config.modelPath;
+}
+
+int Quake3Mock::ActiveStartScene() const {
+  return m_hasLaunchDesc ? m_launchDesc.startScene : g_config.startScene;
+}
+
 void Quake3Mock::ResizeRenderTargets(int width, int height, int finalOutputRT) {
   m_renderWidth = width;
   m_renderHeight = height;
@@ -3218,15 +3240,17 @@ void Quake3Mock::ResizeRenderTargets(int width, int height, int finalOutputRT) {
   }
   m_renderGraph.DestroyRenderTargets(pFramework->pVideoDriver);
   m_renderGraph.CreateRenderTargets(pFramework->pVideoDriver, SceneProp, width, height);
-  GBufferPass           = m_renderGraph.GetRTHandle("GBuffer");
-  DeferredPass          = m_renderGraph.GetRTHandle("Deferred");
-  Extra16FPass          = m_renderGraph.GetRTHandle("Extra16F");
-  DepthPass             = m_renderGraph.GetRTHandle("DepthPass");
-  ShadowAccumPass       = m_renderGraph.GetRTHandle("ShadowAccum");
-  ExtraHelperPass       = m_renderGraph.GetRTHandle("ExtraHelper");
-  BloomAccumPass        = m_renderGraph.GetRTHandle("BloomAccum");
-  AdaptedLumCurrentPass = m_renderGraph.GetRTHandle("AdaptedLumCurrent");
-  AdaptedLumPrevPass    = m_renderGraph.GetRTHandle("AdaptedLumPrev");
+  t850::sandbox::RefreshDeferredPassHandles(
+      m_renderGraph,
+      GBufferPass,
+      DeferredPass,
+      Extra16FPass,
+      DepthPass,
+      ShadowAccumPass,
+      ExtraHelperPass,
+      BloomAccumPass,
+      AdaptedLumCurrentPass,
+      AdaptedLumPrevPass);
 }
 
 int Quake3Mock::RenderViewportWidth() const {
@@ -3438,7 +3462,7 @@ void Quake3Mock::InitVars() {
   dumpCfg.debugFrames        = g_config.flags.debugFrames;
   dumpCfg.keepRunning        = g_config.flags.keepRunning;
   dumpCfg.replaySnapshotPath = g_config.replaySnapshotPath;
-  dumpCfg.sceneIndex         = g_config.startScene;
+  dumpCfg.sceneIndex         = ActiveStartScene();
   m_dumper.Init(dumpCfg);
 }
 
@@ -3550,8 +3574,8 @@ std::vector<std::string> Quake3Mock::BuildSkinnedMeshOptions(std::vector<int>* o
     std::string label;
     if (meshIndex >= 0 && meshIndex < static_cast<int>(m_sceneMeshPaths.size())) {
       label = m_sceneMeshPaths[static_cast<std::size_t>(meshIndex)];
-    } else if (!g_config.modelPath.empty()) {
-      label = g_config.modelPath;
+    } else if (!ActiveModelPath().empty()) {
+      label = ActiveModelPath();
     }
     if (label.empty()) {
       label = "Skinned Mesh";
@@ -5677,15 +5701,17 @@ void Quake3Mock::CreateAssets() {
     m_renderGraph.CreateRenderTargets(pFramework->pVideoDriver, SceneProp);
   }
 
-  GBufferPass           = m_renderGraph.GetRTHandle("GBuffer");
-  DeferredPass          = m_renderGraph.GetRTHandle("Deferred");
-  Extra16FPass          = m_renderGraph.GetRTHandle("Extra16F");
-  DepthPass             = m_renderGraph.GetRTHandle("DepthPass");
-  ShadowAccumPass       = m_renderGraph.GetRTHandle("ShadowAccum");
-  ExtraHelperPass       = m_renderGraph.GetRTHandle("ExtraHelper");
-  BloomAccumPass        = m_renderGraph.GetRTHandle("BloomAccum");
-  AdaptedLumCurrentPass = m_renderGraph.GetRTHandle("AdaptedLumCurrent");
-  AdaptedLumPrevPass    = m_renderGraph.GetRTHandle("AdaptedLumPrev");
+  t850::sandbox::RefreshDeferredPassHandles(
+      m_renderGraph,
+      GBufferPass,
+      DeferredPass,
+      Extra16FPass,
+      DepthPass,
+      ShadowAccumPass,
+      ExtraHelperPass,
+      BloomAccumPass,
+      AdaptedLumCurrentPass,
+      AdaptedLumPrevPass);
 
   PrimitiveMgr.SetEngineContext(pEngineContext);
   PrimitiveMgr.Init();
@@ -5698,19 +5724,21 @@ void Quake3Mock::CreateAssets() {
   }
 
   const t850::SelectorDesc* cubemapDesc = FindSelectorDesc(m_controlSetup.descriptor.selectors, "cubemap");
-  const bool embeddedSceneProfile = !g_config.sceneFilePath.empty();
-  const std::string startupModelKey = embeddedSceneProfile ? std::string{} : SandboxProfileModelKey(g_config.modelPath);
+  const std::string& activeSceneFilePath = ActiveSceneFilePath();
+  const std::string& activeModelPath = ActiveModelPath();
+  const bool embeddedSceneProfile = !activeSceneFilePath.empty();
+  const std::string startupModelKey = embeddedSceneProfile ? std::string{} : SandboxProfileModelKey(activeModelPath);
   std::vector<t850::SandboxProfileDesc> startupSceneProfiles;
   const std::vector<t850::SandboxProfileDesc>* startupProfiles = &m_controlSetup.descriptor.profiles;
   if (embeddedSceneProfile) {
     t850::scene::EditorSceneFile startupScene;
     std::string startupSceneError;
-    if (t850::scene::LoadEditorSceneFile(g_config.sceneFilePath, startupScene, &startupSceneError)) {
+    if (t850::scene::LoadEditorSceneFile(activeSceneFilePath, startupScene, &startupSceneError)) {
       startupSceneProfiles = startupScene.profiles;
       startupProfiles = &startupSceneProfiles;
     } else {
       T8_LOG_ERROR("[Quake3Mock] Could not pre-read scene profiles from '%s': %s",
-                   g_config.sceneFilePath.c_str(), startupSceneError.c_str());
+                   activeSceneFilePath.c_str(), startupSceneError.c_str());
     }
   }
   const CubemapSelection startupProfileCubemap =
@@ -5753,17 +5781,17 @@ void Quake3Mock::CreateAssets() {
     SheenELUTTexIndex);
   UpdateSceneIBLSettings(SceneProp, g_pBaseDriver, EnvMaps);
 
-  if (!g_config.sceneFilePath.empty()) {
-    if (!LoadEditorSceneAssets(g_config.sceneFilePath)) {
-      T8_LOG_ERROR("[Quake3Mock] Cannot continue without scene assets for '%s'", g_config.sceneFilePath.c_str());
+  if (!activeSceneFilePath.empty()) {
+    if (!LoadEditorSceneAssets(activeSceneFilePath)) {
+      T8_LOG_ERROR("[Quake3Mock] Cannot continue without scene assets for '%s'", activeSceneFilePath.c_str());
     }
   } else {
     // Load the glTF model
-    int index = PrimitiveMgr.CreateMesh(g_config.modelPath.c_str());
+    int index = PrimitiveMgr.CreateMesh(activeModelPath.c_str());
     if (index < 0) {
-      T8_LOG_ERROR("[Quake3Mock] Failed to load '%s'", g_config.modelPath.c_str());
+      T8_LOG_ERROR("[Quake3Mock] Failed to load '%s'", activeModelPath.c_str());
     } else {
-      T8_LOG_INFO("[Quake3Mock] Loaded model '%s', primitive index=%d", g_config.modelPath.c_str(), index);
+      T8_LOG_INFO("[Quake3Mock] Loaded model '%s', primitive index=%d", activeModelPath.c_str(), index);
       Meshes[0].CreateInstance(PrimitiveMgr.GetPrimitive(index), &VP);
       Meshes[0].Update();
       m_meshCount = 1;
@@ -5813,7 +5841,7 @@ void Quake3Mock::CreateAssets() {
   m_lightArrowIndexCount = 10;
 
   if (false &&
-      g_config.sceneFilePath.empty() &&
+      ActiveSceneFilePath().empty() &&
       Meshes[0].pBase &&
       !Meshes[0].HasPhysicsBody() &&
       !Meshes[0].HasPhysicsRagdoll()) {
@@ -5871,13 +5899,13 @@ void Quake3Mock::CreateAssets() {
             m_ragdollEditSelectedHandle = 0;
             LoadRagdollEditPose();
           }
-          T8_LOG_INFO("[Quake3Mock] Attached full-skeleton ragdoll physics for '%s'", g_config.modelPath.c_str());
+          T8_LOG_INFO("[Quake3Mock] Attached full-skeleton ragdoll physics for '%s'", ActiveModelPath().c_str());
           if (!m_driveRagdollFromAnimation) {
-            T8_LOG_ERROR("[Quake3Mock] Failed to bind full-skeleton ragdoll to animation pose for '%s'", g_config.modelPath.c_str());
+            T8_LOG_ERROR("[Quake3Mock] Failed to bind full-skeleton ragdoll to animation pose for '%s'", ActiveModelPath().c_str());
           }
           CreatePhysicsFloor(*engineContext->physics);
         } else {
-          T8_LOG_ERROR("[Quake3Mock] Failed to attach full-skeleton ragdoll physics for '%s'", g_config.modelPath.c_str());
+          T8_LOG_ERROR("[Quake3Mock] Failed to attach full-skeleton ragdoll physics for '%s'", ActiveModelPath().c_str());
         }
       }
 
@@ -5886,7 +5914,7 @@ void Quake3Mock::CreateAssets() {
         RenderMesh* mesh = static_cast<RenderMesh*>(Meshes[0].pBase);
         attachedPhysics = t850::AttachMeshBoxBody(*engineContext->physics, Meshes[0], *mesh, t850::PhysicsBodyMotion::Static);
         if (attachedPhysics) {
-          T8_LOG_INFO("[Quake3Mock] Attached static mesh-box physics for '%s'", g_config.modelPath.c_str());
+          T8_LOG_INFO("[Quake3Mock] Attached static mesh-box physics for '%s'", ActiveModelPath().c_str());
         }
       }
     }
@@ -6202,7 +6230,7 @@ void Quake3Mock::DriveRagdollFromAnimation(float deltaSeconds) {
 
   if (!t850::BuildRagdollPoseFromAnimation(*skinned, Meshes[0].Final, m_ragdollAnimationBinding, m_ragdollAnimationPose)) {
     if (!m_ragdollDriveLogEmitted) {
-      T8_LOG_ERROR("[Quake3Mock] Failed to build animation-driven ragdoll pose for '%s'", g_config.modelPath.c_str());
+      T8_LOG_ERROR("[Quake3Mock] Failed to build animation-driven ragdoll pose for '%s'", ActiveModelPath().c_str());
       m_ragdollDriveLogEmitted = true;
     }
     return;
@@ -6210,7 +6238,7 @@ void Quake3Mock::DriveRagdollFromAnimation(float deltaSeconds) {
 
   if (!engineContext->physics->DriveRagdollFromPose(Meshes[0].GetPhysicsRagdoll(), m_ragdollAnimationPose, deltaSeconds)) {
     if (!m_ragdollDriveLogEmitted) {
-      T8_LOG_ERROR("[Quake3Mock] Failed to drive ragdoll from animation pose for '%s'", g_config.modelPath.c_str());
+      T8_LOG_ERROR("[Quake3Mock] Failed to drive ragdoll from animation pose for '%s'", ActiveModelPath().c_str());
       m_ragdollDriveLogEmitted = true;
     }
     return;
@@ -6247,7 +6275,7 @@ void Quake3Mock::UpdateSkeletonFromRagdollPhysics() {
           m_ragdollPhysicsBoneIndices,
           m_ragdollPhysicsCombinedMatrices)) {
     if (!m_ragdollPhysicsLogEmitted) {
-      T8_LOG_ERROR("[Quake3Mock] Failed to drive skinned skeleton from physics for '%s'", g_config.modelPath.c_str());
+      T8_LOG_ERROR("[Quake3Mock] Failed to drive skinned skeleton from physics for '%s'", ActiveModelPath().c_str());
       m_ragdollPhysicsLogEmitted = true;
     }
     return;
@@ -6380,7 +6408,7 @@ void Quake3Mock::SwitchRagdollToPhysics() {
     m_ragdollPhysicsBoneIndices = std::move(handoffBoneIndices);
     m_ragdollPhysicsCombinedMatrices = std::move(handoffCombinedMatrices);
   } else {
-    T8_LOG_ERROR("[Quake3Mock] Failed to dump F5 ragdoll matrix comparison for '%s'", g_config.modelPath.c_str());
+    T8_LOG_ERROR("[Quake3Mock] Failed to dump F5 ragdoll matrix comparison for '%s'", ActiveModelPath().c_str());
   }
 
   if (m_floorBody.IsValid()) {
@@ -6848,7 +6876,7 @@ void Quake3Mock::CreatePhysicsFloor(t850::JoltPhysicsSystem& physics) {
 }
 
 std::string Quake3Mock::BuildSkeletonEditSavePath() const {
-  const std::string key = FileSafeModelKey(m_profileModelKey.empty() ? SandboxProfileModelKey(g_config.modelPath) : m_profileModelKey);
+  const std::string key = FileSafeModelKey(m_profileModelKey.empty() ? SandboxProfileModelKey(ActiveModelPath()) : m_profileModelKey);
   return t850::ResourceLocator::Instance().ResolveCachePath("SkeletonEdits/" + key + ".json").string();
 }
 
@@ -6875,10 +6903,10 @@ bool Quake3Mock::EnterSkeletonEditMode() {
   m_skeletonEditWasPlaying = skinned->IsPlaying();
   skinned->PauseAnimation();
   skinned->ClearSnapshotBoneMatrices();
-  T8_LOG_INFO("[SkeletonEdit] Moving '%s' to bind pose", g_config.modelPath.c_str());
+  T8_LOG_INFO("[SkeletonEdit] Moving '%s' to bind pose", ActiveModelPath().c_str());
   if (!skinned->GetAnimController().ApplyBindPose() ||
       !skinned->GetAnimController().ExportCombinedPose(m_skeletonEditBindCombined)) {
-    T8_LOG_ERROR("[SkeletonEdit] Failed to move '%s' to bind pose", g_config.modelPath.c_str());
+    T8_LOG_ERROR("[SkeletonEdit] Failed to move '%s' to bind pose", ActiveModelPath().c_str());
     return false;
   }
   T8_LOG_INFO("[SkeletonEdit] Captured bind pose: bones=%zu", m_skeletonEditBindCombined.size());
@@ -6912,7 +6940,7 @@ bool Quake3Mock::EnterSkeletonEditMode() {
     }
     ApplyRagdollEditPose(true);
   }
-  T8_LOG_INFO("[SkeletonEdit] Entered bind-pose edit mode for '%s'", g_config.modelPath.c_str());
+  T8_LOG_INFO("[SkeletonEdit] Entered bind-pose edit mode for '%s'", ActiveModelPath().c_str());
   return true;
 }
 
@@ -7043,7 +7071,7 @@ bool Quake3Mock::SaveSkeletonEditPose() {
       : nullptr;
 
   SkeletonEditJson data;
-  data.model = m_profileModelKey.empty() ? SandboxProfileModelKey(g_config.modelPath) : m_profileModelKey;
+  data.model = m_profileModelKey.empty() ? SandboxProfileModelKey(ActiveModelPath()) : m_profileModelKey;
   for (std::size_t i = 0; i < m_skeletonEditCombined.size(); ++i) {
     const bool usePreviewOriginal =
         m_skeletonPreviewBoneActive &&
@@ -7105,7 +7133,7 @@ std::string Quake3Mock::BuildRagdollEditSavePath() const {
     return m_primaryRagdollResourcePath;
   }
   return t850::BuildRagdollEditResourcePath(
-      m_profileModelKey.empty() ? g_config.modelPath : m_profileModelKey);
+      m_profileModelKey.empty() ? ActiveModelPath() : m_profileModelKey);
 }
 
 int Quake3Mock::FindRagdollCapsuleForBone(int boneIndex) const {
@@ -8467,7 +8495,7 @@ bool Quake3Mock::ClearRagdollCapsules() {
   m_ragdollPhysicsDriven = false;
   m_showPhysics = false;
   m_ragdollEditDirty = true;
-  T8_LOG_INFO("[RagdollEdit] Cleared all capsule assignments for '%s'", g_config.modelPath.c_str());
+  T8_LOG_INFO("[RagdollEdit] Cleared all capsule assignments for '%s'", ActiveModelPath().c_str());
   return true;
 }
 
@@ -9765,7 +9793,7 @@ bool Quake3Mock::RecreateRagdollFromPose(const t850::PhysicsRagdollDesc& pose) {
   const t850::PhysicsRagdollHandle newHandle =
       engineContext->physics->CreateRagdoll(pose, t850::PhysicsBodyMotion::Kinematic);
   if (!newHandle.IsValid()) {
-    T8_LOG_ERROR("[RagdollEdit] Failed to recreate ragdoll for '%s'", g_config.modelPath.c_str());
+    T8_LOG_ERROR("[RagdollEdit] Failed to recreate ragdoll for '%s'", ActiveModelPath().c_str());
     return false;
   }
 
@@ -9892,7 +9920,7 @@ bool Quake3Mock::SaveRagdollEditPose() {
   }
 
   t850::PhysicsRagdollAuthoringDesc authoring;
-  authoring.model = m_profileModelKey.empty() ? t850::BuildRagdollEditModelKey(g_config.modelPath) : m_profileModelKey;
+  authoring.model = m_profileModelKey.empty() ? t850::BuildRagdollEditModelKey(ActiveModelPath()) : m_profileModelKey;
   authoring.binding = m_ragdollAnimationBinding;
   authoring.parentBodyIndices = m_ragdollParentCapsules;
   authoring.jointParentBodyIndices = m_ragdollJointParentCapsules;
@@ -14603,7 +14631,7 @@ void Quake3Mock::CaptureSandboxProfileState(t850::SandboxProfileDesc& state) {
   state = t850::SandboxProfileDesc{};
   state.model = m_profileEmbeddedInScene
       ? std::string{}
-      : (m_profileModelKey.empty() ? SandboxProfileModelKey(g_config.modelPath) : m_profileModelKey);
+      : (m_profileModelKey.empty() ? SandboxProfileModelKey(ActiveModelPath()) : m_profileModelKey);
 
   auto profileMeshPath = [&](int meshIndex) -> std::string {
     if (meshIndex >= 0 && meshIndex < static_cast<int>(m_sceneMeshPaths.size())) {
@@ -14612,7 +14640,7 @@ void Quake3Mock::CaptureSandboxProfileState(t850::SandboxProfileDesc& state) {
     if (!m_profileModelKey.empty()) {
       return m_profileModelKey;
     }
-    return SandboxProfileModelKey(g_config.modelPath);
+    return SandboxProfileModelKey(ActiveModelPath());
   };
 
   auto addFloat = [&](const char* name, float value) {
@@ -14843,7 +14871,7 @@ void Quake3Mock::ApplySandboxProfileState(const t850::SandboxProfileDesc& state)
     if (!m_profileModelKey.empty()) {
       return m_profileModelKey;
     }
-    return SandboxProfileModelKey(g_config.modelPath);
+    return SandboxProfileModelKey(ActiveModelPath());
   };
 
   auto resolveAnimationMeshIndex = [&](const t850::SandboxAnimationOverrideDesc& animation) -> int {
@@ -15254,7 +15282,7 @@ bool Quake3Mock::SandboxProfileStatesEqual(const t850::SandboxProfileDesc& lhs, 
 
 void Quake3Mock::LoadSandboxProfile(bool embeddedInScene) {
   m_profileEmbeddedInScene = embeddedInScene;
-  m_profileModelKey = embeddedInScene ? std::string{} : SandboxProfileModelKey(g_config.modelPath);
+  m_profileModelKey = embeddedInScene ? std::string{} : SandboxProfileModelKey(ActiveModelPath());
   m_selectedProfileTargetIndex = t850::DefaultProfileTargetIndex();
   CaptureSandboxProfileState(m_profileBaselineState);
   m_profileSavedState = m_profileBaselineState;

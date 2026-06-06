@@ -80,7 +80,11 @@ namespace t8ditor {
     void OnPause() override;
     void OnResume() override;
     void OnReset() override;
-    bool IsModalActive() const override { return m_meshEditorOpen; }
+    bool IsModalActive() const override {
+      return m_meshEditorOpen || m_meshEditorCloseRequested ||
+             m_playSceneOpen || m_playSceneCloseRequested ||
+             m_ragdollEditorOpen;
+    }
     bool WantsRelativeMouseMode() const override {
       return m_playSceneOpen && m_playSceneLoaded && !m_playSceneGuiVisible && !m_playSceneCloseRequested;
     }
@@ -123,6 +127,10 @@ namespace t8ditor {
     void DrawRagdollEditorViewport(struct SceneObject& obj);
     bool EnsureRagdollEditorViewportTarget(int width, int height);
     void DestroyRagdollEditorViewportTarget();
+    void InvalidateEditorFrozenFrame();
+    bool EnsureEditorFrozenFrameTarget(int width, int height);
+    void DestroyEditorFrozenFrameTarget();
+    void DrawEditorFrozenFrame(t850::BaseDriver* driver);
     SceneFile BuildEditorSceneSnapshot(const std::string& scenePath);
     bool SaveEditorSceneSnapshot(const std::string& path, bool updateLoadedScene);
     bool ExportTemporaryPlayScene(std::string& outPath);
@@ -154,11 +162,21 @@ namespace t8ditor {
     t850::PrimitiveInst   m_meshInst;
     int                   m_meshPrimId = -1;  // -1 = no lit mesh loaded
     XMATRIX44             m_vp;               // VP matrix for the prim mgr
+    Camera                m_editorLightCamera;
+    t850::SceneSetup      m_editorSceneSetup;
+    GaussFilter           m_editorShadowFilter;
+    GaussFilter           m_editorBloomFilter;
+    GaussFilter           m_editorDofFilter;
     t850::JoltPhysicsSystem m_physics;
     t850::PhysicsDebugRenderer m_physicsDebug;
+    bool m_editorHeadlampEnabled = false;
 
     bool m_assetsCreated = false;
     bool m_imguiReady   = false;
+    int  m_editorFrozenFrameRT = -1;
+    int  m_editorFrozenFrameW = 0;
+    int  m_editorFrozenFrameH = 0;
+    bool m_editorFrozenFrameValid = false;
 
     // Panel visibility (persists across frames)
     PanelVisibility m_panels;
@@ -172,6 +190,7 @@ namespace t8ditor {
 
     bool m_meshEditorOpen = false;
     bool m_meshEditorOpenRequested = false;
+    bool m_meshEditorCloseRequested = false;
     int  m_meshEditorObjectIndex = -1;
     void* m_meshEditorNativeHandle = nullptr;
     void* m_meshEditorLoggedNativeHandle = nullptr;

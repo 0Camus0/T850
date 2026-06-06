@@ -97,6 +97,12 @@ public:
   void DestroyAssets() override;
 
   void DrawDevGui(t850::DevGuiContext& gui) override;
+  void SetFinalOutputRT(int rtHandle) { m_finalOutputRT = rtHandle; }
+  void SetRenderSize(int width, int height);
+  void ResizeRenderTargets(int width, int height, int finalOutputRT);
+  void SetIgnoreImGuiMouseCaptureForInput(bool ignore) { m_ignoreImGuiMouseCaptureForInput = ignore; }
+  int RenderViewportWidth() const;
+  int RenderViewportHeight() const;
   bool EnsureNavMeshBuilt();
   void InitializeNavTestAgents();
   void UpdateNavTestAgents(float dtSecs);
@@ -117,6 +123,10 @@ public:
   t850::PrimitiveInst Meshes[kMaxSandboxMeshes];
   t850::PrimitiveInst Quads[10];
   int m_meshCount = 0;
+  int m_finalOutputRT = -1;
+  int m_renderWidth = 0;
+  int m_renderHeight = 0;
+  bool m_ignoreImGuiMouseCaptureForInput = false;
 
   t850::RenderGraph m_renderGraph;
   t850::SceneSetup m_controlSetup;
@@ -377,6 +387,7 @@ public:
 
   void ComputeOrbitCamera();
   void FitModelToView();
+  void UpdateCameraProjectionForRenderViewport();
   bool SetCameraProfile(t850::CameraProfileType type);
   void SyncOrbitProfileFromSandbox();
   void SyncSandboxOrbitFromProfile();

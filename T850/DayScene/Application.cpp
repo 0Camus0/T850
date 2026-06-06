@@ -678,7 +678,9 @@ void App::OnUpdate() {
 
 #ifndef OS_ANDROID
       HandleRuntimeGuiToggle("update");
-      if (m_imguiVisible && m_actualScene) {
+      const bool sceneAllowsGuiInput =
+          m_actualScene && m_actualScene->AllowsInputWhenRuntimeGuiVisible();
+      if (m_imguiVisible && m_actualScene && !sceneAllowsGuiInput) {
         IManager.xDelta = 0;
         IManager.yDelta = 0;
         m_actualScene->ResetViewInput();
@@ -813,13 +815,21 @@ void App::OnInput() {
 #ifndef OS_ANDROID
   const bool imguiConsumesKeyboard =
       m_imguiReady && m_imguiVisible && (m_imgui.WantsKeyboard() || m_imgui.WantsTextInput());
+  const bool sceneAllowsGuiInput =
+      m_actualScene && m_actualScene->AllowsInputWhenRuntimeGuiVisible();
+  const bool imguiBlocksSceneInput =
+      sceneAllowsGuiInput
+          ? (m_imguiReady && m_imguiVisible && m_imgui.WantsTextInput())
+          : imguiConsumesKeyboard;
   const bool guiToggled = HandleRuntimeGuiToggle("input");
-  if (m_imguiVisible && m_actualScene) {
+  if (m_imguiVisible && m_actualScene && !sceneAllowsGuiInput) {
     IManager.xDelta = 0;
     IManager.yDelta = 0;
     m_actualScene->ResetViewInput();
   }
-  m_devLayer.SetSceneInputBlocked(guiToggled || m_imguiVisible || imguiConsumesKeyboard);
+  m_devLayer.SetSceneInputBlocked(guiToggled ||
+                                  (m_imguiVisible && !sceneAllowsGuiInput) ||
+                                  imguiBlocksSceneInput);
   m_devLayer.ProcessInput(&IManager);
 #else
   UpdateAndroidGuiHoldToggle();

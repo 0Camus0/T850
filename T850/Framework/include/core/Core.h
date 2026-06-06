@@ -86,6 +86,7 @@ namespace t850 {
     virtual void RequestDump() {}
 
     virtual void ResetViewInput() {}
+    virtual bool AllowsInputWhenRuntimeGuiVisible() const { return false; }
 
     void SetEngineContext(EngineContext* context) { pEngineContext = context; }
     EngineContext* GetEngineContext() const { return pEngineContext; }

@@ -3202,6 +3202,62 @@ namespace {
   }
 }
 
+void Quake3Mock::SetRenderSize(int width, int height) {
+  m_renderWidth = width;
+  m_renderHeight = height;
+  UpdateCameraProjectionForRenderViewport();
+}
+
+void Quake3Mock::ResizeRenderTargets(int width, int height, int finalOutputRT) {
+  m_renderWidth = width;
+  m_renderHeight = height;
+  m_finalOutputRT = finalOutputRT;
+  UpdateCameraProjectionForRenderViewport();
+  if (!pFramework || !pFramework->pVideoDriver || width <= 0 || height <= 0) {
+    return;
+  }
+  m_renderGraph.DestroyRenderTargets(pFramework->pVideoDriver);
+  m_renderGraph.CreateRenderTargets(pFramework->pVideoDriver, SceneProp, width, height);
+  GBufferPass           = m_renderGraph.GetRTHandle("GBuffer");
+  DeferredPass          = m_renderGraph.GetRTHandle("Deferred");
+  Extra16FPass          = m_renderGraph.GetRTHandle("Extra16F");
+  DepthPass             = m_renderGraph.GetRTHandle("DepthPass");
+  ShadowAccumPass       = m_renderGraph.GetRTHandle("ShadowAccum");
+  ExtraHelperPass       = m_renderGraph.GetRTHandle("ExtraHelper");
+  BloomAccumPass        = m_renderGraph.GetRTHandle("BloomAccum");
+  AdaptedLumCurrentPass = m_renderGraph.GetRTHandle("AdaptedLumCurrent");
+  AdaptedLumPrevPass    = m_renderGraph.GetRTHandle("AdaptedLumPrev");
+}
+
+int Quake3Mock::RenderViewportWidth() const {
+  if (m_renderWidth > 0) {
+    return m_renderWidth;
+  }
+  return (std::max)(1, g_pBaseDriver ? g_pBaseDriver->width : 1);
+}
+
+int Quake3Mock::RenderViewportHeight() const {
+  if (m_renderHeight > 0) {
+    return m_renderHeight;
+  }
+  return (std::max)(1, g_pBaseDriver ? g_pBaseDriver->height : 1);
+}
+
+void Quake3Mock::UpdateCameraProjectionForRenderViewport() {
+  const int width = RenderViewportWidth();
+  const int height = RenderViewportHeight();
+  if (width <= 0 || height <= 0) {
+    return;
+  }
+  Cam.AspectRatio = static_cast<float>(width) / static_cast<float>(height);
+  if (Cam.Ortho) {
+    Cam.Height = Cam.Width > 0.0f ? Cam.Width / Cam.AspectRatio : static_cast<float>(height);
+  }
+  Cam.CreatePojection();
+  Cam.Update(0.0f);
+  VP = Cam.VP;
+}
+
 void Quake3Mock::InitVars() {
 
 
@@ -3215,6 +3271,7 @@ void Quake3Mock::InitVars() {
   Cam.Yaw = 0.0f;
   Cam.m_externalControl = false;
   Cam.Update(0.0f);
+  UpdateCameraProjectionForRenderViewport();
 
   // Initialize orbit camera defaults
   m_orbitTarget = XVECTOR3(0, 0, 0);
@@ -3386,18 +3443,30 @@ void Quake3Mock::InitVars() {
 }
 
 void Quake3Mock::ApplyEditorSceneCameraAndLights(const t850::scene::EditorSceneFile& scene) {
-  const bool useQ3CameraDefaults = m_q3CollisionWorld && m_q3CollisionWorld->IsLoaded();
+  const bool hasSceneCamera = !scene.cameras.empty();
+  const bool useQ3CameraDefaults = !hasSceneCamera && m_q3CollisionWorld && m_q3CollisionWorld->IsLoaded();
   XVECTOR3 eye(0.0f, 0.0f, 0.0f, 1.0f);
-  XVECTOR3 look(-1.0f, 0.0f, 0.0f, 0.0f);
-  if (useQ3CameraDefaults) {
+  XVECTOR3 target(-1.0f, 0.0f, 0.0f, 1.0f);
+  float nearPlane = (std::max)(0.0001f, Cam.NPlane);
+  float farPlane = (std::max)(nearPlane + 0.01f, Cam.FPlane);
+  float fov = Cam.Fov > 0.0f ? Cam.Fov : Deg2Rad(46.8f);
+  if (hasSceneCamera) {
+    const auto& camera = scene.cameras.front();
+    eye = SceneVecToVector(camera.position);
+    target = SceneVecToVector(camera.target);
+    nearPlane = (std::max)(0.0001f, camera.near_plane);
+    farPlane = (std::max)(nearPlane + 0.01f, camera.far_plane);
+    fov = Deg2Rad((std::max)(1.0f, camera.fov_deg));
+  } else if (useQ3CameraDefaults) {
     eye = XVECTOR3(-18.524239f, 9.683158f, 2.7011344f, 1.0f);
-    look = XVECTOR3(-0.96796095f, -0.2035667f, 0.14701098f, 0.0f);
+    target = eye + XVECTOR3(-0.96796095f, -0.2035667f, 0.14701098f, 0.0f);
+    nearPlane = 0.125f;
+    farPlane = 6198.7783f;
+    fov = Deg2Rad(100.0f);
+  } else {
+    target = eye + XVECTOR3(-1.0f, 0.0f, 0.0f, 0.0f);
   }
-  const XVECTOR3 target = eye + look;
-  const float aspect = g_config.height > 0 ? static_cast<float>(g_config.width) / static_cast<float>(g_config.height) : Cam.AspectRatio;
-  const float nearPlane = useQ3CameraDefaults ? 0.125f : (std::max)(0.0001f, Cam.NPlane);
-  const float farPlane = useQ3CameraDefaults ? 6198.7783f : (std::max)(nearPlane + 0.01f, Cam.FPlane);
-  const float fov = useQ3CameraDefaults ? Deg2Rad(100.0f) : (Cam.Fov > 0.0f ? Cam.Fov : Deg2Rad(46.8f));
+  const float aspect = static_cast<float>(RenderViewportWidth()) / static_cast<float>(RenderViewportHeight());
   Cam.InitPerspective(eye, fov, aspect, nearPlane, farPlane);
   Cam.Speed = 10.0f;
   Cam.Velocity = XVECTOR3(0.0f, 0.0f, 0.0f);
@@ -3408,13 +3477,15 @@ void Quake3Mock::ApplyEditorSceneCameraAndLights(const t850::scene::EditorSceneF
   m_orbitPitch = 0.0f;
   m_orbitYaw = -1.57079632679f;
   SyncOrbitProfileFromSandbox();
-  SetCameraProfile(useQ3CameraDefaults ? t850::CameraProfileType::Quake3Fps : t850::CameraProfileType::FreeFly);
+  SetCameraProfile((m_q3CollisionWorld && m_q3CollisionWorld->IsLoaded()) ? t850::CameraProfileType::Quake3Fps : t850::CameraProfileType::FreeFly);
   VP = Cam.VP;
-  T8_LOG_INFO("[Quake3Mock] Ignoring scene cameras; using %s camera eye=(%.3f,%.3f,%.3f) look=(%.3f,%.3f,%.3f) fov=%.1f",
-              useQ3CameraDefaults ? "Quake 3 FPS" : "free-fly",
+  T8_LOG_INFO("[Quake3Mock] Using %s camera eye=(%.3f,%.3f,%.3f) look=(%.3f,%.3f,%.3f) fov=%.1f near=%.3f far=%.3f",
+              hasSceneCamera ? "scene" : (useQ3CameraDefaults ? "Quake 3 FPS" : "free-fly"),
               Cam.Eye.x, Cam.Eye.y, Cam.Eye.z,
               Cam.Look.x, Cam.Look.y, Cam.Look.z,
-              Rad2Deg(Cam.Fov));
+              Rad2Deg(Cam.Fov),
+              Cam.NPlane,
+              Cam.FPlane);
 
   if (!scene.lights.empty()) {
     SceneProp.Lights.clear();
@@ -5599,7 +5670,12 @@ void Quake3Mock::CreateAssets() {
     T8_LOG_ERROR("[Quake3Mock] Failed to load render graph");
     return;
   }
-  m_renderGraph.CreateRenderTargets(pFramework->pVideoDriver, SceneProp);
+  m_renderGraph.DisablePass("Light Add");
+  if (m_renderWidth > 0 && m_renderHeight > 0) {
+    m_renderGraph.CreateRenderTargets(pFramework->pVideoDriver, SceneProp, m_renderWidth, m_renderHeight);
+  } else {
+    m_renderGraph.CreateRenderTargets(pFramework->pVideoDriver, SceneProp);
+  }
 
   GBufferPass           = m_renderGraph.GetRTHandle("GBuffer");
   DeferredPass          = m_renderGraph.GetRTHandle("Deferred");
@@ -5924,7 +6000,9 @@ void Quake3Mock::DestroyAssets() {
   m_navMesh.Clear();
   m_navMeshBuildAttempted = false;
   PrimitiveMgr.DestroyPrimitives();
-  pFramework->pVideoDriver->DestroyRTs();
+  if (pFramework && pFramework->pVideoDriver) {
+    m_renderGraph.DestroyRenderTargets(pFramework->pVideoDriver);
+  }
 }
 
 void Quake3Mock::OnUpdate(float _DtSecs) {
@@ -13703,7 +13781,9 @@ void Quake3Mock::OnInput(InputManager* IManager) {
 
   bool imguiWantsMouse = false;
 #ifndef OS_ANDROID
-  imguiWantsMouse = ImGui::GetCurrentContext() && ImGui::GetIO().WantCaptureMouse;
+  imguiWantsMouse = !m_ignoreImGuiMouseCaptureForInput &&
+      ImGui::GetCurrentContext() &&
+      ImGui::GetIO().WantCaptureMouse;
 #endif
 
   if (IManager->PressedOnceKey(T800K_F9)) {
@@ -15354,7 +15434,8 @@ void Quake3Mock::OnDraw() {
     &Cam,
     &LightCam,
     nullptr,
-    EnvMaps
+    EnvMaps,
+    m_finalOutputRT
   );
 
   // RT Dump via FrameDumper
@@ -15389,6 +15470,16 @@ void Quake3Mock::OnDraw() {
     if (m_dumper.ShouldExit()) exit(0);
   }
 
+  const int overlayW = RenderViewportWidth();
+  const int overlayH = RenderViewportHeight();
+  bool containerOverlayTargetBound = false;
+  if (m_finalOutputRT >= 0 && pFramework && pFramework->pVideoDriver) {
+    pFramework->pVideoDriver->PushRTLoad(m_finalOutputRT);
+    pFramework->pVideoDriver->SetViewport(0.0f, 0.0f, static_cast<float>(overlayW), static_cast<float>(overlayH));
+    pFramework->pVideoDriver->SetScissorRect(0, 0, overlayW, overlayH);
+    containerOverlayTargetBound = true;
+  }
+
   // Normal final output is emitted by the render graph BackBuffer pass.
   if (m_debugRTSelection > 0) {
     int selected = ExtraHelperPass;
@@ -15419,19 +15510,22 @@ void Quake3Mock::OnDraw() {
     Quads[0].Draw();
   }
 
-  auto drawMeshDebugOverlays = [this]() {
-    if (Meshes[0].pBase) {
-      RenderSkinnedMesh* skinned = dynamic_cast<RenderSkinnedMesh*>(Meshes[0].pBase);
+  auto drawMeshDebugOverlays = [this, overlayW, overlayH]() {
+    const int overlayMeshCount = (std::max)(m_meshCount, Meshes[0].pBase ? 1 : 0);
+    for (int meshIndex = 0; meshIndex < overlayMeshCount; ++meshIndex) {
+      if (!Meshes[meshIndex].pBase) {
+        continue;
+      }
+      RenderSkinnedMesh* skinned = dynamic_cast<RenderSkinnedMesh*>(Meshes[meshIndex].pBase);
       if (skinned && skinned->HasSkinData()) {
-        skinned->transform = Meshes[0].Final;
+        skinned->transform = Meshes[meshIndex].Final;
         if (m_showWireframe) {
-          // Bind GBuffer depth for shader-based depth comparison
           int gbufHandle = GBufferPass;
           if (gbufHandle >= 0 && gbufHandle < (int)pFramework->pVideoDriver->RTs.size()) {
             auto* gbufRT = pFramework->pVideoDriver->RTs[gbufHandle];
             skinned->SetWireframeDepthTex(gbufRT->pDepthTexture);
           }
-          skinned->SetWireframeViewport(g_pBaseDriver->width, g_pBaseDriver->height);
+          skinned->SetWireframeViewport(overlayW, overlayH);
           pFramework->pVideoDriver->SetDepthStencilState(BaseDriver::NONE);
           skinned->DrawWireframe();
         }
@@ -15442,7 +15536,8 @@ void Quake3Mock::OnDraw() {
           std::vector<int> previewBones;
           const std::vector<int>* previewBoneList = nullptr;
           const std::vector<int>* pendingBoneList = nullptr;
-          if (m_skeletonEditMode &&
+          if (meshIndex == 0 &&
+              m_skeletonEditMode &&
               m_ragdollEditSelectedCapsule >= 0 &&
               m_ragdollEditSelectedCapsule < static_cast<int>(m_ragdollAnimationBinding.controlledBoneIndices.size())) {
             controlledBones = &m_ragdollAnimationBinding.controlledBoneIndices[static_cast<std::size_t>(m_ragdollEditSelectedCapsule)];
@@ -15455,7 +15550,7 @@ void Quake3Mock::OnDraw() {
               pendingBoneList = &m_ragdollBoneSelectionPending;
             }
           }
-          int selectedSkeletonBone = m_skeletonEditMode ? m_skeletonEditSelectedBone : -1;
+          int selectedSkeletonBone = (meshIndex == m_selectedSkinningMeshIndex && m_skeletonEditMode) ? m_skeletonEditSelectedBone : -1;
           if (m_ragdollBoneSelectionActive) {
             selectedSkeletonBone = -1;
           } else if (previewBoneList && selectedSkeletonBone == m_ragdollEditSelectedUnassignedBone) {
@@ -15468,41 +15563,19 @@ void Quake3Mock::OnDraw() {
           skinned->DrawSkeleton(selectedSkeletonBone, controlledBones, previewBoneList, pendingBoneList);
         }
       } else if (m_showWireframe) {
-        RenderMesh* mesh = static_cast<RenderMesh*>(Meshes[0].pBase);
-        mesh->transform = Meshes[0].Final;
+        RenderMesh* mesh = dynamic_cast<RenderMesh*>(Meshes[meshIndex].pBase);
+        if (!mesh) {
+          continue;
+        }
+        mesh->transform = Meshes[meshIndex].Final;
         int gbufHandle = GBufferPass;
         if (gbufHandle >= 0 && gbufHandle < (int)pFramework->pVideoDriver->RTs.size()) {
           auto* gbufRT = pFramework->pVideoDriver->RTs[gbufHandle];
           mesh->SetWireframeDepthTex(gbufRT->pDepthTexture);
         }
-        mesh->SetWireframeViewport(g_pBaseDriver->width, g_pBaseDriver->height);
+        mesh->SetWireframeViewport(overlayW, overlayH);
         pFramework->pVideoDriver->SetDepthStencilState(BaseDriver::NONE);
         mesh->DrawWireframe();
-      }
-    }
-
-    const int selectedSkeletonMeshIndex = ClampSkinnedMeshSelection(m_selectedSkinningMeshIndex);
-    if ((m_showWireframe || m_showSkeleton) &&
-        selectedSkeletonMeshIndex > 0 &&
-        selectedSkeletonMeshIndex < kMaxSandboxMeshes) {
-      RenderSkinnedMesh* selectedSkinned = GetSkinnedMeshForIndex(selectedSkeletonMeshIndex);
-      if (selectedSkinned) {
-        selectedSkinned->transform = Meshes[selectedSkeletonMeshIndex].Final;
-        if (m_showWireframe) {
-          int gbufHandle = GBufferPass;
-          if (gbufHandle >= 0 && gbufHandle < (int)pFramework->pVideoDriver->RTs.size()) {
-            auto* gbufRT = pFramework->pVideoDriver->RTs[gbufHandle];
-            selectedSkinned->SetWireframeDepthTex(gbufRT->pDepthTexture);
-          }
-          selectedSkinned->SetWireframeViewport(g_pBaseDriver->width, g_pBaseDriver->height);
-          pFramework->pVideoDriver->SetDepthStencilState(BaseDriver::NONE);
-          selectedSkinned->DrawWireframe();
-        }
-        if (m_showSkeleton) {
-          pFramework->pVideoDriver->SetDepthStencilState(BaseDriver::NONE);
-          pFramework->pVideoDriver->SetBlendState(BaseDriver::BLEND_DEFAULT);
-          selectedSkinned->DrawSkeleton(-1, nullptr, nullptr, nullptr);
-        }
       }
     }
 
@@ -15512,7 +15585,7 @@ void Quake3Mock::OnDraw() {
       if (engineContext && engineContext->physics && m_physicsDebugRenderer.IsReady()) {
         m_physicsDebugRenderer.SetDepthTexture(nullptr);
         m_physicsDebugRenderer.SetDepthTestEnabled(false);
-        m_physicsDebugRenderer.SetViewport(g_pBaseDriver->width, g_pBaseDriver->height);
+        m_physicsDebugRenderer.SetViewport(overlayW, overlayH);
         m_physicsDebugRenderer.SetFarPlane(Cam.FPlane);
         pFramework->pVideoDriver->SetDepthStencilState(BaseDriver::NONE);
         pFramework->pVideoDriver->SetBlendState(BaseDriver::BLEND_DEFAULT);
@@ -15534,7 +15607,7 @@ void Quake3Mock::OnDraw() {
             ? t850::navigation::NavMeshDebugShapeMode::Nodes
             : t850::navigation::NavMeshDebugShapeMode::Geometry);
         m_navMeshDebugRenderer.SetDepthTexture(depthTexture);
-        m_navMeshDebugRenderer.SetViewport(g_pBaseDriver->width, g_pBaseDriver->height);
+        m_navMeshDebugRenderer.SetViewport(overlayW, overlayH);
         m_navMeshDebugRenderer.SetFarPlane(Cam.FPlane);
         pFramework->pVideoDriver->SetDepthStencilState(BaseDriver::NONE);
         pFramework->pVideoDriver->SetBlendState(BaseDriver::BLEND_DEFAULT);
@@ -15641,8 +15714,8 @@ void Quake3Mock::OnDraw() {
   // Debug: on-screen cull stats
   if (m_showCullStats && Meshes[0].pBase) {
     RenderMesh* rm = static_cast<RenderMesh*>(Meshes[0].pBase);
-    int w = g_pBaseDriver->width;
-    int h = g_pBaseDriver->height;
+    int w = overlayW;
+    int h = overlayH;
 
     pFramework->pVideoDriver->SetBlendState(BaseDriver::ALPHA_BLEND);
     pFramework->pVideoDriver->SetDepthStencilState(BaseDriver::NONE);
@@ -15680,6 +15753,10 @@ void Quake3Mock::OnDraw() {
 
     pFramework->pVideoDriver->SetBlendState(BaseDriver::BLEND_DEFAULT);
     pFramework->pVideoDriver->SetDepthStencilState(BaseDriver::DEPTH_DEFAULT);
+  }
+
+  if (containerOverlayTargetBound && pFramework && pFramework->pVideoDriver) {
+    pFramework->pVideoDriver->PopRT();
   }
 }
 

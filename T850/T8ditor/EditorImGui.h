@@ -64,6 +64,7 @@ namespace t8ditor {
   // `addCamera`/`addLight` are set to the type to add (0=persp/dir, 1=ortho/omni, -1=none).
   int ImGuiDrawToolbar(int currentMode, int& addCamera, int& addLight,
                        bool& wantsClone, bool& wantsGroup, bool& wantsUngroup,
+                       bool& wantsPlayScene,
                        bool hasSelection, bool hasMultiSelect);
 
   // ── Context menu (right-click) ─────────────────────

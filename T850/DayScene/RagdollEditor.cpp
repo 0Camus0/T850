@@ -1443,6 +1443,7 @@ namespace {
     return key;
   }
 
+
   const t850::FloatOverrideDesc* FindFloatOverride(const std::vector<t850::FloatOverrideDesc>& values, const std::string& name) {
     for (const auto& value : values)
       if (value.name == name) return &value;
@@ -3202,6 +3203,85 @@ namespace {
   }
 }
 
+void RagdollEditor::UseExternalMesh(const t850::PrimitiveInst& mesh, const std::string& modelPath) {
+  m_useExternalMesh = mesh.pBase != nullptr;
+  m_externalModelPath = modelPath;
+  m_externalMesh = t850::PrimitiveInst{};
+}
+
+void RagdollEditor::SetRenderSize(int width, int height) {
+  SetRenderViewport(m_renderViewportOriginX, m_renderViewportOriginY, width, height);
+}
+
+void RagdollEditor::SetRenderViewport(float screenX, float screenY, int width, int height) {
+  m_renderViewportOriginX = screenX;
+  m_renderViewportOriginY = screenY;
+  m_renderWidth = width;
+  m_renderHeight = height;
+  UpdateCameraProjectionForRenderViewport();
+}
+
+void RagdollEditor::ResizeRenderTargets(int width, int height, int finalOutputRT) {
+  m_renderWidth = width;
+  m_renderHeight = height;
+  m_finalOutputRT = finalOutputRT;
+  UpdateCameraProjectionForRenderViewport();
+  if (pFramework && pFramework->pVideoDriver) {
+    m_renderContainer.SetFinalOutputRT(finalOutputRT);
+    if (width > 0 && height > 0) {
+      m_renderContainer.Resize(pFramework->pVideoDriver, width, height);
+      GBufferPass           = m_renderContainer.Graph().GetRTHandle("GBuffer");
+      DeferredPass          = m_renderContainer.Graph().GetRTHandle("Deferred");
+      Extra16FPass          = m_renderContainer.Graph().GetRTHandle("Extra16F");
+      DepthPass             = m_renderContainer.Graph().GetRTHandle("DepthPass");
+      ShadowAccumPass       = m_renderContainer.Graph().GetRTHandle("ShadowAccum");
+      ExtraHelperPass       = m_renderContainer.Graph().GetRTHandle("ExtraHelper");
+      BloomAccumPass        = m_renderContainer.Graph().GetRTHandle("BloomAccum");
+      AdaptedLumCurrentPass = m_renderContainer.Graph().GetRTHandle("AdaptedLumCurrent");
+      AdaptedLumPrevPass    = m_renderContainer.Graph().GetRTHandle("AdaptedLumPrev");
+    }
+  }
+}
+
+int RagdollEditor::RenderViewportWidth() const {
+  if (m_renderWidth > 0) {
+    return m_renderWidth;
+  }
+  return (std::max)(1, g_pBaseDriver ? g_pBaseDriver->width : 1);
+}
+
+int RagdollEditor::RenderViewportHeight() const {
+  if (m_renderHeight > 0) {
+    return m_renderHeight;
+  }
+  return (std::max)(1, g_pBaseDriver ? g_pBaseDriver->height : 1);
+}
+
+float RagdollEditor::RenderViewportOriginX() const {
+  return m_finalOutputRT >= 0 ? m_renderViewportOriginX : 0.0f;
+}
+
+float RagdollEditor::RenderViewportOriginY() const {
+  return m_finalOutputRT >= 0 ? m_renderViewportOriginY : 0.0f;
+}
+
+void RagdollEditor::UpdateCameraProjectionForRenderViewport() {
+  const int width = RenderViewportWidth();
+  const int height = RenderViewportHeight();
+  if (width <= 0 || height <= 0) {
+    return;
+  }
+
+  const float aspect = static_cast<float>(width) / static_cast<float>(height);
+  Cam.AspectRatio = aspect;
+  if (Cam.Ortho) {
+    Cam.Height = Cam.Width > 0.0f ? Cam.Width / aspect : static_cast<float>(height);
+  }
+  Cam.CreatePojection();
+  Cam.Update(0.0f);
+  VP = Cam.VP;
+}
+
 void RagdollEditor::InitVars() {
 
 
@@ -3215,6 +3295,7 @@ void RagdollEditor::InitVars() {
   Cam.Yaw = 0.0f;
   Cam.m_externalControl = false;
   Cam.Update(0.0f);
+  UpdateCameraProjectionForRenderViewport();
 
   // Initialize orbit camera defaults
   m_orbitTarget = XVECTOR3(0, 0, 0);
@@ -4241,8 +4322,8 @@ void RagdollEditor::ApplySandboxProfileState(const t850::SandboxProfileDesc& sta
   auto applyCameraPoseProjection = [&](const t850::SandboxCameraDesc& cameraState) {
     Cam.Ortho = cameraState.ortho;
     Cam.Fov = Deg2Rad(cameraState.fov);
-    const float liveWidth = (g_pBaseDriver && g_pBaseDriver->width > 0) ? static_cast<float>(g_pBaseDriver->width) : cameraState.width;
-    const float liveHeight = (g_pBaseDriver && g_pBaseDriver->height > 0) ? static_cast<float>(g_pBaseDriver->height) : cameraState.height;
+    const float liveWidth = static_cast<float>(RenderViewportWidth());
+    const float liveHeight = static_cast<float>(RenderViewportHeight());
     Cam.AspectRatio = liveHeight > 0.0f ? liveWidth / liveHeight : cameraState.aspect_ratio;
     Cam.NPlane = cameraState.near_plane;
     Cam.FPlane = cameraState.far_plane;
@@ -4407,21 +4488,27 @@ bool RagdollEditor::SandboxProfileStatesEqual(const t850::SandboxProfileDesc& lh
 }
 
 void RagdollEditor::CreateAssets() {
-  if (!m_renderGraph.Load("Scenes/RagdollEditor_RenderGraph.json")) {
-    T8_LOG_ERROR("[RagdollEditor] Failed to load render graph");
+  t850::RenderContainerDesc renderDesc;
+  renderDesc.name = "RagdollEditor";
+  renderDesc.renderGraphPath = "Scenes/RagdollEditor_RenderGraph.json";
+  renderDesc.width = m_renderWidth;
+  renderDesc.height = m_renderHeight;
+  renderDesc.finalOutputRT = m_finalOutputRT;
+  renderDesc.sceneProps = &SceneProp;
+  if (!m_renderContainer.Initialize(pFramework->pVideoDriver, pEngineContext, renderDesc)) {
+    T8_LOG_ERROR("[RagdollEditor] Failed to initialize render container");
     return;
   }
-  m_renderGraph.CreateRenderTargets(pFramework->pVideoDriver, SceneProp);
 
-  GBufferPass           = m_renderGraph.GetRTHandle("GBuffer");
-  DeferredPass          = m_renderGraph.GetRTHandle("Deferred");
-  Extra16FPass          = m_renderGraph.GetRTHandle("Extra16F");
-  DepthPass             = m_renderGraph.GetRTHandle("DepthPass");
-  ShadowAccumPass       = m_renderGraph.GetRTHandle("ShadowAccum");
-  ExtraHelperPass       = m_renderGraph.GetRTHandle("ExtraHelper");
-  BloomAccumPass        = m_renderGraph.GetRTHandle("BloomAccum");
-  AdaptedLumCurrentPass = m_renderGraph.GetRTHandle("AdaptedLumCurrent");
-  AdaptedLumPrevPass    = m_renderGraph.GetRTHandle("AdaptedLumPrev");
+  GBufferPass           = m_renderContainer.Graph().GetRTHandle("GBuffer");
+  DeferredPass          = m_renderContainer.Graph().GetRTHandle("Deferred");
+  Extra16FPass          = m_renderContainer.Graph().GetRTHandle("Extra16F");
+  DepthPass             = m_renderContainer.Graph().GetRTHandle("DepthPass");
+  ShadowAccumPass       = m_renderContainer.Graph().GetRTHandle("ShadowAccum");
+  ExtraHelperPass       = m_renderContainer.Graph().GetRTHandle("ExtraHelper");
+  BloomAccumPass        = m_renderContainer.Graph().GetRTHandle("BloomAccum");
+  AdaptedLumCurrentPass = m_renderContainer.Graph().GetRTHandle("AdaptedLumCurrent");
+  AdaptedLumPrevPass    = m_renderContainer.Graph().GetRTHandle("AdaptedLumPrev");
 
   PrimitiveMgr.SetEngineContext(pEngineContext);
   PrimitiveMgr.Init();
@@ -4435,7 +4522,10 @@ void RagdollEditor::CreateAssets() {
 
   const t850::SelectorDesc* cubemapDesc = FindSelectorDesc(m_controlSetup.descriptor.selectors, "cubemap");
   const bool embeddedSceneProfile = false;
-  const std::string startupModelKey = embeddedSceneProfile ? std::string{} : SandboxProfileModelKey(g_config.modelPath);
+  const std::string activeModelPath = m_useExternalMesh && !m_externalModelPath.empty()
+      ? m_externalModelPath
+      : g_config.modelPath;
+  const std::string startupModelKey = embeddedSceneProfile ? std::string{} : SandboxProfileModelKey(activeModelPath);
   std::vector<t850::SandboxProfileDesc> startupSceneProfiles;
   const std::vector<t850::SandboxProfileDesc>* startupProfiles = &m_controlSetup.descriptor.profiles;
   if (embeddedSceneProfile) {
@@ -4489,7 +4579,24 @@ void RagdollEditor::CreateAssets() {
     SheenELUTTexIndex);
   UpdateSceneIBLSettings(SceneProp, g_pBaseDriver, EnvMaps);
 
-  {
+  if (m_useExternalMesh && m_externalMesh.pBase) {
+    const int index = PrimitiveMgr.CreateMesh(activeModelPath.c_str());
+    if (index < 0) {
+      T8_LOG_ERROR("[RagdollEditor] Failed to instantiate external model '%s'", activeModelPath.c_str());
+    } else {
+      Meshes[0].CreateInstance(PrimitiveMgr.GetPrimitive(index), &VP);
+      Meshes[0].Update();
+      m_meshCount = 1;
+      m_selectedSkinningMeshIndex = 0;
+      m_selectedAnimationMeshIndex = 0;
+      m_profileModelKey.clear();
+      FitModelToView();
+      LoadSandboxProfile();
+      T8_LOG_INFO("[RagdollEditor] Instantiated external model '%s' using shared resource caches (primitive index=%d)",
+                  activeModelPath.c_str(),
+                  index);
+    }
+  } else {
     // Load the glTF model
     int index = PrimitiveMgr.CreateMesh(g_config.modelPath.c_str());
     if (index < 0) {
@@ -4512,23 +4619,7 @@ void RagdollEditor::CreateAssets() {
   // interpolated view ray (PosCorner). This avoids cull-face issues
   // and works across all APIs.
 
-  // Fullscreen quad setup
-  m.Identity();
-  Quads[0].CreateInstance(PrimitiveMgr.GetPrimitive(PrimitiveManager::QUAD), &m);
-  Quads[0].SetTexture(pFramework->pVideoDriver->RTs[0]->vColorTextures[0], 0);
-  Quads[0].SetTexture(pFramework->pVideoDriver->RTs[0]->vColorTextures[1], 1);
-  Quads[0].SetTexture(pFramework->pVideoDriver->RTs[0]->vColorTextures[2], 2);
-  Quads[0].SetTexture(pFramework->pVideoDriver->RTs[0]->vColorTextures[3], 3);
-  Quads[0].SetTexture(pFramework->pVideoDriver->RTs[0]->pDepthTexture, 4);
-  Quads[0].SetEnvironmentMap(g_pBaseDriver->GetTexture(EnvMapTexIndex));
-
-  for (int i = 1; i <= 7; i++)
-    Quads[i].CreateInstance(PrimitiveMgr.GetPrimitive(PrimitiveManager::QUAD), &m);
-
   PrimitiveMgr.SetSceneProps(&SceneProp);
-
-  Quads[0].TranslateAbsolute(0.0f, 0.0f, 0.0f);
-  Quads[0].Update();
 
   // Debug visualization
   m_debugText.LoadFromFile(24, "Fonts/Martius-LV9L4.ttf", 512.0f);
@@ -4603,13 +4694,13 @@ void RagdollEditor::CreateAssets() {
             m_ragdollEditSelectedHandle = 0;
             LoadRagdollEditPose();
           }
-          T8_LOG_INFO("[RagdollEditor] Attached full-skeleton ragdoll physics for '%s'", g_config.modelPath.c_str());
+          T8_LOG_INFO("[RagdollEditor] Attached full-skeleton ragdoll physics for '%s'", activeModelPath.c_str());
           if (!m_driveRagdollFromAnimation) {
-            T8_LOG_ERROR("[RagdollEditor] Failed to bind full-skeleton ragdoll to animation pose for '%s'", g_config.modelPath.c_str());
+            T8_LOG_ERROR("[RagdollEditor] Failed to bind full-skeleton ragdoll to animation pose for '%s'", activeModelPath.c_str());
           }
           CreatePhysicsFloor(*engineContext->physics);
         } else {
-          T8_LOG_ERROR("[RagdollEditor] Failed to attach full-skeleton ragdoll physics for '%s'", g_config.modelPath.c_str());
+          T8_LOG_ERROR("[RagdollEditor] Failed to attach full-skeleton ragdoll physics for '%s'", activeModelPath.c_str());
         }
       }
 
@@ -4618,7 +4709,7 @@ void RagdollEditor::CreateAssets() {
         RenderMesh* mesh = static_cast<RenderMesh*>(Meshes[0].pBase);
         attachedPhysics = t850::AttachMeshBoxBody(*engineContext->physics, Meshes[0], *mesh, t850::PhysicsBodyMotion::Static);
         if (attachedPhysics) {
-          T8_LOG_INFO("[RagdollEditor] Attached static mesh-box physics for '%s'", g_config.modelPath.c_str());
+          T8_LOG_INFO("[RagdollEditor] Attached static mesh-box physics for '%s'", activeModelPath.c_str());
         }
       }
     }
@@ -4724,8 +4815,10 @@ void RagdollEditor::DestroyAssets() {
   m_lightArrowRenderer.Destroy();
   m_ragdollJointRenderer.Destroy();
   m_physicsDebugRenderer.Destroy();
+  if (pFramework && pFramework->pVideoDriver) {
+    m_renderContainer.Destroy(pFramework->pVideoDriver);
+  }
   PrimitiveMgr.DestroyPrimitives();
-  pFramework->pVideoDriver->DestroyRTs();
 }
 
 void RagdollEditor::OnUpdate(float _DtSecs) {
@@ -4838,7 +4931,7 @@ void RagdollEditor::OnUpdate(float _DtSecs) {
       Texture* newTex = g_pBaseDriver->GetTexture(EnvMapTexIndex);
       T8_LOG_INFO("[RagdollEditor] Cubemap loaded: slot=%d tex=%p (%dx%d)",
                   EnvMapTexIndex, newTex, newTex ? newTex->x : 0, newTex ? newTex->y : 0);
-      Quads[0].SetEnvironmentMap(newTex);
+      m_renderContainer.Quads()[0].SetEnvironmentMap(newTex);
       const int meshCount = (std::max)(m_meshCount, Meshes[0].pBase ? 1 : 0);
       for (int meshIndex = 0; meshIndex < meshCount; ++meshIndex) {
         if (Meshes[meshIndex].pBase) {
@@ -5231,8 +5324,8 @@ bool RagdollEditor::PickRagdollSimulationBody(float mouseX,
 
   XMATRIX44 invVP;
   VP.Inverse(&invVP);
-  const int width = (std::max)(1, g_pBaseDriver->width);
-  const int height = (std::max)(1, g_pBaseDriver->height);
+  const int width = RenderViewportWidth();
+  const int height = RenderViewportHeight();
   const t850::Ray ray = t850::ScreenPointToRay(mouseX, mouseY, 0, 0, width, height, invVP);
   const auto& bones = m_ragdollAnimationBinding.referencePose.bones;
   const int count = (std::min)(static_cast<int>(states.size()), static_cast<int>(bones.size()));
@@ -5326,8 +5419,8 @@ bool RagdollEditor::UpdateRagdollSimulationGrab(float mouseX, float mouseY) {
 
   XMATRIX44 invVP;
   VP.Inverse(&invVP);
-  const int width = (std::max)(1, g_pBaseDriver->width);
-  const int height = (std::max)(1, g_pBaseDriver->height);
+  const int width = RenderViewportWidth();
+  const int height = RenderViewportHeight();
   const t850::Ray ray = t850::ScreenPointToRay(mouseX, mouseY, 0, 0, width, height, invVP);
   const XVECTOR3 targetOnRay = ray.origin + Normalize3(ray.direction) * m_ragdollSimulationGrabDepth;
   XVECTOR3 targetCenter = targetOnRay + m_ragdollSimulationGrabCenterOffset;
@@ -9259,8 +9352,8 @@ bool RagdollEditor::PickRagdollEditJoint(float mouseX, float mouseY, float thres
     return false;
   }
 
-  const int width = (std::max)(1, g_pBaseDriver->width);
-  const int height = (std::max)(1, g_pBaseDriver->height);
+  const int width = RenderViewportWidth();
+  const int height = RenderViewportHeight();
   const ImVec2 mouse(mouseX, mouseY);
   float bestDistanceSq = thresholdPixels * thresholdPixels;
   for (int childCapsule = 0; childCapsule < static_cast<int>(m_ragdollAnimationBinding.referencePose.bones.size()); ++childCapsule) {
@@ -9321,8 +9414,8 @@ bool RagdollEditor::PickRagdollEditJointGizmo(float mouseX, float mouseY, int& o
     return false;
   }
 
-  const int width = (std::max)(1, g_pBaseDriver->width);
-  const int height = (std::max)(1, g_pBaseDriver->height);
+  const int width = RenderViewportWidth();
+  const int height = RenderViewportHeight();
   const ImVec2 mouse(mouseX, mouseY);
   constexpr float kThresholdPixels = 12.0f;
   float bestDistanceSq = kThresholdPixels * kThresholdPixels;
@@ -9389,8 +9482,8 @@ bool RagdollEditor::BeginRagdollEditJointGizmoDrag(float mouseX, float mouseY) {
 
   XMATRIX44 invVP;
   VP.Inverse(&invVP);
-  const int width = (std::max)(1, g_pBaseDriver ? g_pBaseDriver->width : 1);
-  const int height = (std::max)(1, g_pBaseDriver ? g_pBaseDriver->height : 1);
+  const int width = RenderViewportWidth();
+  const int height = RenderViewportHeight();
   const t850::Ray ray = t850::ScreenPointToRay(mouseX, mouseY, 0, 0, width, height, invVP);
   const XVECTOR3 axis = axes[static_cast<std::size_t>(pickedAxis)];
   if (m_ragdollEditGizmoMode == kRagdollToolEditCapsule ||
@@ -9438,8 +9531,8 @@ bool RagdollEditor::DragRagdollEditJointGizmo(float mouseX, float mouseY) {
 
   XMATRIX44 invVP;
   VP.Inverse(&invVP);
-  const int width = (std::max)(1, g_pBaseDriver->width);
-  const int height = (std::max)(1, g_pBaseDriver->height);
+  const int width = RenderViewportWidth();
+  const int height = RenderViewportHeight();
   const t850::Ray ray = t850::ScreenPointToRay(mouseX, mouseY, 0, 0, width, height, invVP);
   const XVECTOR3 axis = Normalize3(m_ragdollEditJointDragAxis, axes[static_cast<std::size_t>(m_ragdollEditJointAxis)]);
 
@@ -9487,9 +9580,16 @@ void RagdollEditor::DrawRagdollJointGizmos(bool editable) {
   }
   EnsureRagdollParentCapsules();
 
-  const int width = (std::max)(1, g_pBaseDriver->width);
-  const int height = (std::max)(1, g_pBaseDriver->height);
-  ImDrawList* drawList = ImGui::GetBackgroundDrawList();
+  const int width = RenderViewportWidth();
+  const int height = RenderViewportHeight();
+  const ImVec2 viewportOffset(RenderViewportOriginX(), RenderViewportOriginY());
+  auto project = [&](const XVECTOR3& point, bool& visible) {
+    ImVec2 screen = ProjectWorldToScreen(point, VP, width, height, visible);
+    screen.x += viewportOffset.x;
+    screen.y += viewportOffset.y;
+    return screen;
+  };
+  ImDrawList* drawList = ImGui::GetForegroundDrawList();
   const ImU32 lineColor = IM_COL32(255, 185, 40, 165);
   const ImU32 jointColor = IM_COL32(255, 220, 80, 230);
   const ImU32 selectedColor = IM_COL32(255, 245, 120, 255);
@@ -9518,9 +9618,9 @@ void RagdollEditor::DrawRagdollJointGizmos(bool editable) {
     bool jointVisible = false;
     bool parentVisible = false;
     bool childVisible = false;
-    const ImVec2 jointScreen = ProjectWorldToScreen(joint, VP, width, height, jointVisible);
-    const ImVec2 parentScreen = ProjectWorldToScreen(parentCenter, VP, width, height, parentVisible);
-    const ImVec2 childScreen = ProjectWorldToScreen(childCenter, VP, width, height, childVisible);
+    const ImVec2 jointScreen = project(joint, jointVisible);
+    const ImVec2 parentScreen = project(parentCenter, parentVisible);
+    const ImVec2 childScreen = project(childCenter, childVisible);
     if (!jointVisible) {
       continue;
     }
@@ -9543,7 +9643,7 @@ void RagdollEditor::DrawRagdollJointGizmos(bool editable) {
 
     auto drawAxis = [&](const XVECTOR3& axis, float length, ImU32 color, const char* label) {
       bool endVisible = false;
-      const ImVec2 endScreen = ProjectWorldToScreen(joint + axis * length, VP, width, height, endVisible);
+      const ImVec2 endScreen = project(joint + axis * length, endVisible);
       if (!endVisible) {
         return;
       }
@@ -9569,8 +9669,7 @@ void RagdollEditor::DrawRagdollJointGizmos(bool editable) {
         const bool active = m_ragdollEditJointDragging && m_ragdollEditJointAxis == axisIndex;
         const ImU32 color = RagdollGizmoAxisColor(axisIndex, active);
         bool endVisible = false;
-        const ImVec2 end = ProjectWorldToScreen(joint + gizmoAxes[static_cast<std::size_t>(axisIndex)] * (size * 0.75f),
-                                                VP, width, height, endVisible);
+        const ImVec2 end = project(joint + gizmoAxes[static_cast<std::size_t>(axisIndex)] * (size * 0.75f), endVisible);
         if (!endVisible) {
           continue;
         }
@@ -9592,7 +9691,7 @@ void RagdollEditor::DrawRagdollJointGizmos(bool editable) {
           const float t = static_cast<float>(segment) / static_cast<float>(kGizmoSegments) * (2.0f * xPI);
           const XVECTOR3 point = joint + (u * std::cos(t) + v * std::sin(t)) * radius;
           bool visible = false;
-          const ImVec2 screen = ProjectWorldToScreen(point, VP, width, height, visible);
+          const ImVec2 screen = project(point, visible);
           if (visible && previousVisible) {
             drawList->AddLine(previous, screen, color, active ? 3.5f : 2.5f);
           }
@@ -9620,7 +9719,7 @@ void RagdollEditor::DrawRagdollJointGizmos(bool editable) {
       const float t = static_cast<float>(segment) / static_cast<float>(kConeSegments) * (2.0f * xPI);
       const XVECTOR3 point = coneCenter + (coneU * std::cos(t) + coneV * std::sin(t)) * coneRadius;
       bool visible = false;
-      const ImVec2 screen = ProjectWorldToScreen(point, VP, width, height, visible);
+      const ImVec2 screen = project(point, visible);
       if (visible && previousConeVisible) {
         drawList->AddLine(previousCone, screen, coneColor, 2.0f);
       }
@@ -9631,7 +9730,7 @@ void RagdollEditor::DrawRagdollJointGizmos(bool editable) {
       const float t = static_cast<float>(spoke) * (0.5f * xPI);
       const XVECTOR3 point = coneCenter + (coneU * std::cos(t) + coneV * std::sin(t)) * coneRadius;
       bool visible = false;
-      const ImVec2 screen = ProjectWorldToScreen(point, VP, width, height, visible);
+      const ImVec2 screen = project(point, visible);
       if (visible) {
         drawList->AddLine(jointScreen, screen, coneColor, 1.4f);
       }
@@ -9646,7 +9745,7 @@ void RagdollEditor::DrawRagdollJointGizmos(bool editable) {
       const float t = -twist + (2.0f * twist * static_cast<float>(segment) / static_cast<float>(kTwistSegments));
       const XVECTOR3 point = joint + (coneU * std::cos(t) + coneV * std::sin(t)) * twistRadius;
       bool visible = false;
-      const ImVec2 screen = ProjectWorldToScreen(point, VP, width, height, visible);
+      const ImVec2 screen = project(point, visible);
       if (visible && previousTwistVisible) {
         drawList->AddLine(previousTwist, screen, twistColor, 2.5f);
       }
@@ -9781,8 +9880,7 @@ void RagdollEditor::DrawRagdollJointDebugOverlay() {
   XMATRIX44 identity;
   identity.Identity();
   m_ragdollJointRenderer.SetDepthTestEnabled(false);
-  m_ragdollJointRenderer.SetViewport(g_pBaseDriver ? g_pBaseDriver->width : 1,
-                                     g_pBaseDriver ? g_pBaseDriver->height : 1);
+  m_ragdollJointRenderer.SetViewport(RenderViewportWidth(), RenderViewportHeight());
   m_ragdollJointRenderer.SetFarPlane(Cam.FPlane);
   pFramework->pVideoDriver->SetDepthStencilState(BaseDriver::NONE);
   pFramework->pVideoDriver->SetBlendState(BaseDriver::BLEND_DEFAULT);
@@ -9868,8 +9966,8 @@ bool RagdollEditor::PickRagdollEditHandle(float mouseX, float mouseY, float thre
     return false;
   }
 
-  const int width = (std::max)(1, g_pBaseDriver->width);
-  const int height = (std::max)(1, g_pBaseDriver->height);
+  const int width = RenderViewportWidth();
+  const int height = RenderViewportHeight();
   int bestPriority = (std::numeric_limits<int>::max)();
   float bestDistanceSq = FLT_MAX;
   const float handleWorldRadius = (std::max)(0.01f, m_modelRadius * 0.014f);
@@ -9930,8 +10028,8 @@ bool RagdollEditor::PickRagdollEditCapsule(float mouseX, float mouseY, float thr
     return false;
   }
 
-  const int width = (std::max)(1, g_pBaseDriver->width);
-  const int height = (std::max)(1, g_pBaseDriver->height);
+  const int width = RenderViewportWidth();
+  const int height = RenderViewportHeight();
   const ImVec2 mouse(mouseX, mouseY);
   float bestScore = FLT_MAX;
 
@@ -10000,8 +10098,8 @@ bool RagdollEditor::PickRagdollEditTransformGizmo(float mouseX, float mouseY, in
     return false;
   }
 
-  const int width = (std::max)(1, g_pBaseDriver->width);
-  const int height = (std::max)(1, g_pBaseDriver->height);
+  const int width = RenderViewportWidth();
+  const int height = RenderViewportHeight();
   const ImVec2 mouse(mouseX, mouseY);
   constexpr float kThresholdPixels = 12.0f;
   float bestDistanceSq = kThresholdPixels * kThresholdPixels;
@@ -10080,8 +10178,8 @@ bool RagdollEditor::BeginRagdollEditTransformGizmoDrag(float mouseX, float mouse
 
   XMATRIX44 invVP;
   VP.Inverse(&invVP);
-  const int width = (std::max)(1, g_pBaseDriver ? g_pBaseDriver->width : 1);
-  const int height = (std::max)(1, g_pBaseDriver ? g_pBaseDriver->height : 1);
+  const int width = RenderViewportWidth();
+  const int height = RenderViewportHeight();
   const t850::Ray ray = t850::ScreenPointToRay(mouseX, mouseY, 0, 0, width, height, invVP);
   const XVECTOR3 axis = axes[static_cast<std::size_t>(pickedAxis)];
   m_ragdollEditGizmoDragCenter = center;
@@ -10139,8 +10237,8 @@ bool RagdollEditor::DragRagdollEditTransformGizmo(float mouseX, float mouseY) {
 
   XMATRIX44 invVP;
   VP.Inverse(&invVP);
-  const int width = (std::max)(1, g_pBaseDriver->width);
-  const int height = (std::max)(1, g_pBaseDriver->height);
+  const int width = RenderViewportWidth();
+  const int height = RenderViewportHeight();
   const t850::Ray ray = t850::ScreenPointToRay(mouseX, mouseY, 0, 0, width, height, invVP);
   const XVECTOR3 axis = Normalize3(m_ragdollEditGizmoDragAxis, axes[static_cast<std::size_t>(m_ragdollEditGizmoAxis)]);
 
@@ -10202,15 +10300,22 @@ void RagdollEditor::DrawRagdollEditTransformGizmo() {
     axes[2] = XVECTOR3(0.0f, 0.0f, 1.0f, 0.0f);
   }
 
-  const int width = (std::max)(1, g_pBaseDriver->width);
-  const int height = (std::max)(1, g_pBaseDriver->height);
+  const int width = RenderViewportWidth();
+  const int height = RenderViewportHeight();
+  const ImVec2 viewportOffset(RenderViewportOriginX(), RenderViewportOriginY());
+  auto project = [&](const XVECTOR3& point, bool& visible) {
+    ImVec2 screen = ProjectWorldToScreen(point, VP, width, height, visible);
+    screen.x += viewportOffset.x;
+    screen.y += viewportOffset.y;
+    return screen;
+  };
   bool centerVisible = false;
-  const ImVec2 centerScreen = ProjectWorldToScreen(center, VP, width, height, centerVisible);
+  const ImVec2 centerScreen = project(center, centerVisible);
   if (!centerVisible) {
     return;
   }
 
-  ImDrawList* drawList = ImGui::GetBackgroundDrawList();
+  ImDrawList* drawList = ImGui::GetForegroundDrawList();
   const ImU32 originColor = IM_COL32(64, 160, 255, 255);
   const ImU32 originFill = IM_COL32(24, 96, 255, 180);
   drawList->AddCircle(centerScreen, 9.0f, originColor, 24, 2.5f);
@@ -10231,8 +10336,8 @@ void RagdollEditor::DrawRagdollEditTransformGizmo() {
     const XVECTOR3 yNegative = center - localY * (markerLength * 0.72f);
     bool yPositiveVisible = false;
     bool yNegativeVisible = false;
-    const ImVec2 yPositiveScreen = ProjectWorldToScreen(yPositive, VP, width, height, yPositiveVisible);
-    const ImVec2 yNegativeScreen = ProjectWorldToScreen(yNegative, VP, width, height, yNegativeVisible);
+    const ImVec2 yPositiveScreen = project(yPositive, yPositiveVisible);
+    const ImVec2 yNegativeScreen = project(yNegative, yNegativeVisible);
     if (yPositiveVisible) {
       drawList->AddLine(centerScreen, yPositiveScreen, originColor, 3.0f);
       drawList->AddCircleFilled(yPositiveScreen, 5.0f, originColor, 16);
@@ -10255,8 +10360,7 @@ void RagdollEditor::DrawRagdollEditTransformGizmo() {
       const bool active = m_ragdollEditGizmoDragging && m_ragdollEditGizmoAxis == axisIndex;
       const ImU32 color = RagdollGizmoAxisColor(axisIndex, active);
       bool endVisible = false;
-      const ImVec2 end = ProjectWorldToScreen(center + axes[static_cast<std::size_t>(axisIndex)] * size,
-                                              VP, width, height, endVisible);
+      const ImVec2 end = project(center + axes[static_cast<std::size_t>(axisIndex)] * size, endVisible);
       if (!endVisible) {
         continue;
       }
@@ -10294,7 +10398,7 @@ void RagdollEditor::DrawRagdollEditTransformGizmo() {
       const float t = static_cast<float>(segment) / static_cast<float>(kSegments) * (2.0f * xPI);
       const XVECTOR3 point = center + (u * std::cos(t) + v * std::sin(t)) * radius;
       bool visible = false;
-      const ImVec2 screen = ProjectWorldToScreen(point, VP, width, height, visible);
+      const ImVec2 screen = project(point, visible);
       if (visible && previousVisible) {
         drawList->AddLine(previous, screen, color, active ? 3.5f : 2.5f);
       }
@@ -10322,15 +10426,22 @@ void RagdollEditor::DrawSkeletonPreviewBoneGizmo() {
     return;
   }
 
-  const int width = (std::max)(1, g_pBaseDriver->width);
-  const int height = (std::max)(1, g_pBaseDriver->height);
+  const int width = RenderViewportWidth();
+  const int height = RenderViewportHeight();
+  const ImVec2 viewportOffset(RenderViewportOriginX(), RenderViewportOriginY());
+  auto project = [&](const XVECTOR3& point, bool& visible) {
+    ImVec2 screen = ProjectWorldToScreen(point, VP, width, height, visible);
+    screen.x += viewportOffset.x;
+    screen.y += viewportOffset.y;
+    return screen;
+  };
   bool centerVisible = false;
-  const ImVec2 centerScreen = ProjectWorldToScreen(center, VP, width, height, centerVisible);
+  const ImVec2 centerScreen = project(center, centerVisible);
   if (!centerVisible) {
     return;
   }
 
-  ImDrawList* drawList = ImGui::GetBackgroundDrawList();
+  ImDrawList* drawList = ImGui::GetForegroundDrawList();
   const ImU32 originColor = IM_COL32(255, 255, 255, 245);
   const ImU32 originFill = IM_COL32(255, 255, 255, 150);
   drawList->AddCircle(centerScreen, 8.0f, originColor, 24, 2.0f);
@@ -10344,8 +10455,7 @@ void RagdollEditor::DrawSkeletonPreviewBoneGizmo() {
           m_ragdollEditGizmoAxis == axisIndex;
       const ImU32 color = RagdollGizmoAxisColor(axisIndex, active);
       bool endVisible = false;
-      const ImVec2 end = ProjectWorldToScreen(center + axes[static_cast<std::size_t>(axisIndex)] * size,
-                                              VP, width, height, endVisible);
+      const ImVec2 end = project(center + axes[static_cast<std::size_t>(axisIndex)] * size, endVisible);
       if (!endVisible) {
         continue;
       }
@@ -10382,7 +10492,7 @@ void RagdollEditor::DrawSkeletonPreviewBoneGizmo() {
       const float t = static_cast<float>(segment) / static_cast<float>(kSegments) * (2.0f * xPI);
       const XVECTOR3 point = center + (u * std::cos(t) + v * std::sin(t)) * radius;
       bool visible = false;
-      const ImVec2 screen = ProjectWorldToScreen(point, VP, width, height, visible);
+      const ImVec2 screen = project(point, visible);
       if (visible && previousVisible) {
         drawList->AddLine(previous, screen, color, active ? 3.5f : 2.5f);
       }
@@ -10517,8 +10627,8 @@ int RagdollEditor::PickSkeletonEditBone(float mouseX, float mouseY, float thresh
   }
   (void)thresholdPixels;
 
-  const int width = (std::max)(1, g_pBaseDriver->width);
-  const int height = (std::max)(1, g_pBaseDriver->height);
+  const int width = RenderViewportWidth();
+  const int height = RenderViewportHeight();
 
   XMATRIX44 viewProjection = VP;
   XMATRIX44 invVP;
@@ -10558,8 +10668,8 @@ void RagdollEditor::PickSkeletonEditBonesInScreenRect(float minX, float minY, fl
 
   if (minX > maxX) std::swap(minX, maxX);
   if (minY > maxY) std::swap(minY, maxY);
-  const int width = (std::max)(1, g_pBaseDriver->width);
-  const int height = (std::max)(1, g_pBaseDriver->height);
+  const int width = RenderViewportWidth();
+  const int height = RenderViewportHeight();
 
   for (int boneIndex = 0; boneIndex < static_cast<int>(m_skeletonEditCombined.size()); ++boneIndex) {
     if (FindRagdollCapsuleControllingBone(boneIndex) >= 0) {
@@ -10880,9 +10990,15 @@ void RagdollEditor::DrawRagdollViewportContextMenu() {
   const ImVec2 idealOrigin(kLeftWidth + kGap, kTopHeight + kGap);
 
   if (m_ragdollContextMenuRequested) {
-    ImVec2 popupPos(m_ragdollContextMenuX - idealOrigin.x,
-                    m_ragdollContextMenuY - idealOrigin.y);
-    if (ImGuiViewport* viewport = ImGui::GetMainViewport()) {
+    const float contextScreenX = m_ragdollContextMenuX + RenderViewportOriginX();
+    const float contextScreenY = m_ragdollContextMenuY + RenderViewportOriginY();
+    ImVec2 popupPos(contextScreenX - idealOrigin.x,
+                    contextScreenY - idealOrigin.y);
+    ImGuiViewport* viewport = ImGui::GetWindowViewport();
+    if (!viewport) {
+      viewport = ImGui::GetMainViewport();
+    }
+    if (viewport) {
       const float margin = 6.0f;
       const ImVec2 minPos(viewport->WorkPos.x + margin, viewport->WorkPos.y + margin);
       const ImVec2 maxPos(viewport->WorkPos.x + viewport->WorkSize.x - popupSize.x - margin,
@@ -11007,7 +11123,8 @@ void RagdollEditor::DrawRagdollViewportContextMenu() {
 
   ImDrawList* drawList = ImGui::GetWindowDrawList();
   const ImVec2 windowPos = ImGui::GetWindowPos();
-  ImVec2 origin(m_ragdollContextMenuX - windowPos.x, m_ragdollContextMenuY - windowPos.y);
+  ImVec2 origin(m_ragdollContextMenuX + RenderViewportOriginX() - windowPos.x,
+                m_ragdollContextMenuY + RenderViewportOriginY() - windowPos.y);
   origin.x = (std::max)(7.0f, (std::min)(popupSize.x - 7.0f, origin.x));
   origin.y = (std::max)(7.0f, (std::min)(popupSize.y - 7.0f, origin.y));
   const ImVec2 originScreen(windowPos.x + origin.x, windowPos.y + origin.y);
@@ -12694,7 +12811,9 @@ void RagdollEditor::DrawAndroidPhysicsPanel(t850::DevGuiContext& gui) {
 #endif
 
 void RagdollEditor::DrawSkinningAuthoringPanel(t850::DevGuiContext& gui) {
-  ImGui::SetNextWindowSize(ImVec2(460.0f, 680.0f), ImGuiCond_FirstUseEver);
+  if (!gui.EmbedPanels()) {
+    ImGui::SetNextWindowSize(ImVec2(460.0f, 680.0f), ImGuiCond_FirstUseEver);
+  }
   const bool begun = gui.BeginPanel("Skinning / Bones / Capsules");
   if (begun) {
     BeginRagdollUndoScope("Panel edit");
@@ -12728,7 +12847,9 @@ void RagdollEditor::OnInput(InputManager* IManager) {
 
   bool imguiWantsMouse = false;
 #ifndef OS_ANDROID
-  imguiWantsMouse = ImGui::GetCurrentContext() && ImGui::GetIO().WantCaptureMouse;
+  imguiWantsMouse = !m_ignoreImGuiMouseCaptureForInput &&
+      ImGui::GetCurrentContext() &&
+      ImGui::GetIO().WantCaptureMouse;
 #endif
   bool handledSkeletonEditInput = false;
   if (m_skeletonEditMode) {
@@ -13274,7 +13395,10 @@ bool RagdollEditor::QueryTriggerTouch(const t850::CharacterTriggerQuery& query, 
 
 void RagdollEditor::LoadSandboxProfile(bool embeddedInScene) {
   m_profileEmbeddedInScene = embeddedInScene;
-  m_profileModelKey = embeddedInScene ? std::string{} : SandboxProfileModelKey(g_config.modelPath);
+  const std::string profileModelPath = m_useExternalMesh && !m_externalModelPath.empty()
+      ? m_externalModelPath
+      : g_config.modelPath;
+  m_profileModelKey = embeddedInScene ? std::string{} : SandboxProfileModelKey(profileModelPath);
   m_selectedProfileTargetIndex = t850::DefaultProfileTargetIndex();
   CaptureSandboxProfileState(m_profileBaselineState);
   m_profileSavedState = m_profileBaselineState;
@@ -13405,7 +13529,7 @@ void RagdollEditor::OnDraw() {
   }
   if (g_sandboxConsoleOpen && SceneProp.DebugLuminanceEnabled && sLuminanceReadbackAccum >= 0.25f) {
     sLuminanceReadbackAccum = 0.0f;
-    const int adaptedLumRT = m_renderGraph.GetRTHandle("AdaptedLumCurrent");
+    const int adaptedLumRT = m_renderContainer.Graph().GetRTHandle("AdaptedLumCurrent");
     float lumRGBA[4] = {};
     {
       T8_TELEMETRY_SCOPE("sandbox.adapted_luminance_readback");
@@ -13446,15 +13570,14 @@ void RagdollEditor::OnDraw() {
   }
 
   // Execute the render graph (all passes through HDR Composition)
-  m_renderGraph.Execute(
+  m_renderContainer.Execute(
     pFramework->pVideoDriver,
-    SceneProp,
     Meshes, drawMeshCount,
-    Quads,
     &Cam,
     &LightCam,
-    nullptr,
-    EnvMaps
+    EnvMaps,
+    DtSecs,
+    m_finalOutputRT
   );
 
   // RT Dump via FrameDumper
@@ -13489,6 +13612,16 @@ void RagdollEditor::OnDraw() {
     if (m_dumper.ShouldExit()) exit(0);
   }
 
+  const int overlayW = RenderViewportWidth();
+  const int overlayH = RenderViewportHeight();
+  bool containerOverlayTargetBound = false;
+  if (m_finalOutputRT >= 0 && pFramework && pFramework->pVideoDriver) {
+    pFramework->pVideoDriver->PushRTLoad(m_finalOutputRT);
+    pFramework->pVideoDriver->SetViewport(0.0f, 0.0f, static_cast<float>(overlayW), static_cast<float>(overlayH));
+    pFramework->pVideoDriver->SetScissorRect(0, 0, overlayW, overlayH);
+    containerOverlayTargetBound = true;
+  }
+
   // Normal final output is emitted by the render graph BackBuffer pass.
   if (m_debugRTSelection > 0) {
     int selected = ExtraHelperPass;
@@ -13511,15 +13644,26 @@ void RagdollEditor::OnDraw() {
 
     pFramework->pVideoDriver->SetBlendState(BaseDriver::BLEND_DEFAULT);
     pFramework->pVideoDriver->SetDepthStencilState(BaseDriver::NONE);
-    Quads[0].SetTexture(pFramework->pVideoDriver->GetRTTexture(selected, attachment), 0);
+    PrimitiveInst& debugQuad = m_renderContainer.Quads()[0];
+    debugQuad.SetTexture(pFramework->pVideoDriver->GetRTTexture(selected, attachment), 0);
     ShaderKey finalKey(0);
     finalKey.setPass(PassType::FSQUAD_1_TEX);
     finalKey.bits |= ShaderKey::HAS_TEXCOORD0;
-    Quads[0].SetGlobalKey(finalKey);
-    Quads[0].Draw();
+    debugQuad.SetGlobalKey(finalKey);
+    debugQuad.Draw();
   }
 
-  auto drawMeshDebugOverlays = [this]() {
+  auto drawMeshDebugOverlays = [this, overlayW, overlayH]() {
+    std::vector<std::pair<PrimitiveBase*, SceneProps*>> previousSceneProps;
+    const int overlayMeshCount = (std::max)(m_meshCount, Meshes[0].pBase ? 1 : 0);
+    previousSceneProps.reserve(static_cast<std::size_t>(overlayMeshCount));
+    for (int meshIndex = 0; meshIndex < overlayMeshCount; ++meshIndex) {
+      PrimitiveBase* primitive = Meshes[meshIndex].pBase;
+      if (!primitive) continue;
+      previousSceneProps.push_back({primitive, primitive->pScProp});
+      primitive->SetSceneProps(&SceneProp);
+    }
+
     if (Meshes[0].pBase) {
       RenderSkinnedMesh* skinned = dynamic_cast<RenderSkinnedMesh*>(Meshes[0].pBase);
       if (skinned && skinned->HasSkinData()) {
@@ -13531,7 +13675,7 @@ void RagdollEditor::OnDraw() {
             auto* gbufRT = pFramework->pVideoDriver->RTs[gbufHandle];
             skinned->SetWireframeDepthTex(gbufRT->pDepthTexture);
           }
-          skinned->SetWireframeViewport(g_pBaseDriver->width, g_pBaseDriver->height);
+          skinned->SetWireframeViewport(overlayW, overlayH);
           pFramework->pVideoDriver->SetDepthStencilState(BaseDriver::NONE);
           skinned->DrawWireframe();
         }
@@ -13575,7 +13719,7 @@ void RagdollEditor::OnDraw() {
           auto* gbufRT = pFramework->pVideoDriver->RTs[gbufHandle];
           mesh->SetWireframeDepthTex(gbufRT->pDepthTexture);
         }
-        mesh->SetWireframeViewport(g_pBaseDriver->width, g_pBaseDriver->height);
+        mesh->SetWireframeViewport(overlayW, overlayH);
         pFramework->pVideoDriver->SetDepthStencilState(BaseDriver::NONE);
         mesh->DrawWireframe();
       }
@@ -13594,7 +13738,7 @@ void RagdollEditor::OnDraw() {
             auto* gbufRT = pFramework->pVideoDriver->RTs[gbufHandle];
             selectedSkinned->SetWireframeDepthTex(gbufRT->pDepthTexture);
           }
-          selectedSkinned->SetWireframeViewport(g_pBaseDriver->width, g_pBaseDriver->height);
+          selectedSkinned->SetWireframeViewport(overlayW, overlayH);
           pFramework->pVideoDriver->SetDepthStencilState(BaseDriver::NONE);
           selectedSkinned->DrawWireframe();
         }
@@ -13612,7 +13756,7 @@ void RagdollEditor::OnDraw() {
       if (engineContext && engineContext->physics && m_physicsDebugRenderer.IsReady()) {
         m_physicsDebugRenderer.SetDepthTexture(nullptr);
         m_physicsDebugRenderer.SetDepthTestEnabled(false);
-        m_physicsDebugRenderer.SetViewport(g_pBaseDriver->width, g_pBaseDriver->height);
+        m_physicsDebugRenderer.SetViewport(overlayW, overlayH);
         m_physicsDebugRenderer.SetFarPlane(Cam.FPlane);
         pFramework->pVideoDriver->SetDepthStencilState(BaseDriver::NONE);
         pFramework->pVideoDriver->SetBlendState(BaseDriver::BLEND_DEFAULT);
@@ -13651,6 +13795,12 @@ void RagdollEditor::OnDraw() {
 
       pFramework->pVideoDriver->SetBlendState(BaseDriver::BLEND_DEFAULT);
     }
+
+    for (auto& entry : previousSceneProps) {
+      if (entry.first) {
+        entry.first->SetSceneProps(entry.second);
+      }
+    }
   };
 
 #ifdef OS_ANDROID
@@ -13668,11 +13818,11 @@ void RagdollEditor::OnDraw() {
       m_ragdollBoneSelectionActive &&
       m_ragdollBoneMarqueeDragging &&
       ImGui::GetCurrentContext()) {
-    ImGuiViewport* viewport = ImGui::GetMainViewport();
-    if (viewport) {
-      ImDrawList* drawList = ImGui::GetBackgroundDrawList(viewport);
-      const ImVec2 start(m_ragdollBoneMarqueeStartX, m_ragdollBoneMarqueeStartY);
-      const ImVec2 current(m_ragdollBoneMarqueeCurrentX, m_ragdollBoneMarqueeCurrentY);
+    ImDrawList* drawList = ImGui::GetForegroundDrawList();
+    if (drawList) {
+      const ImVec2 viewportOffset(RenderViewportOriginX(), RenderViewportOriginY());
+      const ImVec2 start(m_ragdollBoneMarqueeStartX + viewportOffset.x, m_ragdollBoneMarqueeStartY + viewportOffset.y);
+      const ImVec2 current(m_ragdollBoneMarqueeCurrentX + viewportOffset.x, m_ragdollBoneMarqueeCurrentY + viewportOffset.y);
       drawList->AddRectFilled(start, current, IM_COL32(255, 0, 255, 36));
       drawList->AddRect(start, current, IM_COL32(255, 0, 255, 220), 0.0f, 0, 1.6f);
     }
@@ -13720,8 +13870,8 @@ void RagdollEditor::OnDraw() {
   // Debug: on-screen cull stats
   if (m_showCullStats && Meshes[0].pBase) {
     RenderMesh* rm = static_cast<RenderMesh*>(Meshes[0].pBase);
-    int w = g_pBaseDriver->width;
-    int h = g_pBaseDriver->height;
+    int w = overlayW;
+    int h = overlayH;
 
     pFramework->pVideoDriver->SetBlendState(BaseDriver::ALPHA_BLEND);
     pFramework->pVideoDriver->SetDepthStencilState(BaseDriver::NONE);
@@ -13759,6 +13909,10 @@ void RagdollEditor::OnDraw() {
 
     pFramework->pVideoDriver->SetBlendState(BaseDriver::BLEND_DEFAULT);
     pFramework->pVideoDriver->SetDepthStencilState(BaseDriver::DEPTH_DEFAULT);
+  }
+
+  if (containerOverlayTargetBound) {
+    pFramework->pVideoDriver->PopRT();
   }
 }
 

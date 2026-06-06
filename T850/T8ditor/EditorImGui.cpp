@@ -106,8 +106,8 @@ void ImGuiSetNextNativeEditorWindow(float offsetX, float offsetY, float width, f
   ImGuiViewport* mainViewport = ImGui::GetMainViewport();
   ImGui::SetNextWindowPos(
       ImVec2(mainViewport->Pos.x + offsetX, mainViewport->Pos.y + offsetY),
-      ImGuiCond_Appearing);
-  ImGui::SetNextWindowSize(ImVec2(width, height), ImGuiCond_Appearing);
+      ImGuiCond_FirstUseEver);
+  ImGui::SetNextWindowSize(ImVec2(width, height), ImGuiCond_FirstUseEver);
 }
 
 ImTextureID ImGuiTextureID(t850::BaseDriver* driver, t850::Texture* texture) {
@@ -205,12 +205,14 @@ MenuAction ImGuiDrawMenuBar(PanelVisibility& panels) {
 // ── Toolbar ───────────────────────────────────────────
 int ImGuiDrawToolbar(int currentMode, int& addCamera, int& addLight,
                      bool& wantsClone, bool& wantsGroup, bool& wantsUngroup,
+                     bool& wantsPlayScene,
                      bool hasSelection, bool hasMultiSelect) {
   addCamera = -1;
   addLight  = -1;
   wantsClone = false;
   wantsGroup = false;
   wantsUngroup = false;
+  wantsPlayScene = false;
   if (!s_inited) return currentMode;
 
   ImGuiViewport* vp = ImGui::GetMainViewport();
@@ -245,6 +247,13 @@ int ImGuiDrawToolbar(int currentMode, int& addCamera, int& addLight,
     ToolButton("Move (W)",   0);  ImGui::SameLine();
     ToolButton("Rotate (E)", 1);  ImGui::SameLine();
     ToolButton("Scale (R)",  2);
+
+    ImGui::SameLine();
+    ImGui::Text("|");
+    ImGui::SameLine();
+
+    if (ImGui::Button("Play", ImVec2(55, 0)))
+      wantsPlayScene = true;
 
     ImGui::SameLine();
     ImGui::Text("|");
@@ -590,7 +599,18 @@ int ImGuiDrawRTDebugPanel(int selectedRT) {
 void ImGuizmoBeginFrame(int vpX, int vpY, int vpW, int vpH, bool ortho) {
   ImGuizmo::BeginFrame();
   ImGuizmo::SetOrthographic(ortho);
-  ImGuizmo::SetRect((float)vpX, (float)vpY, (float)vpW, (float)vpH);
+  ImGuiViewport* mainViewport = ImGui::GetMainViewport();
+  if (mainViewport) {
+    // Platform viewports use OS/global coordinates; a (0,0) rect makes gizmos drift from the model.
+    ImGuizmo::SetDrawlist(ImGui::GetForegroundDrawList(mainViewport));
+    ImGuizmo::SetRect(mainViewport->Pos.x + (float)vpX,
+                      mainViewport->Pos.y + (float)vpY,
+                      (float)vpW,
+                      (float)vpH);
+  } else {
+    ImGuizmo::SetDrawlist(ImGui::GetForegroundDrawList());
+    ImGuizmo::SetRect((float)vpX, (float)vpY, (float)vpW, (float)vpH);
+  }
 }
 
 bool ImGuizmoManipulate(const float* view, const float* proj,

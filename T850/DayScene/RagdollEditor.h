@@ -8,6 +8,7 @@
 #include <utils/Timer.h>
 #include <scene/SceneSetup.h>
 #include <scene/RenderGraph.h>
+#include <scene/RenderContainer.h>
 #include <scene/EditorSceneFile.h>
 #include <scene/WireframeSphere.h>
 #include <scene/LineRenderer.h>
@@ -97,6 +98,16 @@ public:
   void DestroyAssets() override;
 
   void DrawDevGui(t850::DevGuiContext& gui) override;
+  void UseExternalMesh(const t850::PrimitiveInst& mesh, const std::string& modelPath);
+  void SetFinalOutputRT(int rtHandle) { m_finalOutputRT = rtHandle; }
+  void SetRenderSize(int width, int height);
+  void SetRenderViewport(float screenX, float screenY, int width, int height);
+  void ResizeRenderTargets(int width, int height, int finalOutputRT);
+  void SetIgnoreImGuiMouseCaptureForInput(bool ignore) { m_ignoreImGuiMouseCaptureForInput = ignore; }
+  int RenderViewportWidth() const;
+  int RenderViewportHeight() const;
+  float RenderViewportOriginX() const;
+  float RenderViewportOriginY() const;
 #ifdef OS_ANDROID
   bool HandleAndroidVirtualControls(AInputEvent* event);
   bool AndroidVirtualControlsActive() const;
@@ -106,6 +117,7 @@ public:
 #endif
   void RequestDump() override { m_dumper.RequestDump(); }
   void ResetViewInput() override;
+  bool AllowsInputWhenRuntimeGuiVisible() const override { return true; }
 
   float DtSecs = 0.0f;
   t850::PrimitiveManager PrimitiveMgr;
@@ -113,8 +125,18 @@ public:
   t850::PrimitiveInst Meshes[kMaxSandboxMeshes];
   t850::PrimitiveInst Quads[10];
   int m_meshCount = 0;
+  bool m_useExternalMesh = false;
+  t850::PrimitiveInst m_externalMesh;
+  std::string m_externalModelPath;
+  int m_finalOutputRT = -1;
+  int m_renderWidth = 0;
+  int m_renderHeight = 0;
+  float m_renderViewportOriginX = 0.0f;
+  float m_renderViewportOriginY = 0.0f;
+  bool m_ignoreImGuiMouseCaptureForInput = false;
 
   t850::RenderGraph m_renderGraph;
+  t850::RenderContainer m_renderContainer;
   t850::SceneSetup m_controlSetup;
   t850::FrameDumper m_dumper;
   int ChangeActiveGaussSelection = 1; // 0=Shadow, 1=Bloom, 2=DOF
@@ -320,6 +342,7 @@ public:
 
   void ComputeOrbitCamera();
   void FitModelToView();
+  void UpdateCameraProjectionForRenderViewport();
   bool SetCameraProfile(t850::CameraProfileType type);
   void SyncOrbitProfileFromSandbox();
   void SyncSandboxOrbitFromProfile();

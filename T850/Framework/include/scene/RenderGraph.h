@@ -89,6 +89,8 @@ namespace t850 {
     // Create all render targets declared in the graph.
     // Call after Load(), before Execute().
     void CreateRenderTargets(BaseDriver* driver, const SceneProps& props);
+    void CreateRenderTargets(BaseDriver* driver, const SceneProps& props, int widthOverride, int heightOverride);
+    void DestroyRenderTargets(BaseDriver* driver);
 
     // Execute all passes in order.
     // meshes/meshCount: the scene's mesh instances
@@ -103,7 +105,8 @@ namespace t850 {
       ::Camera* mainCam,
       ::Camera* lightCam,
       ::Camera* omniCams,
-      const EnvironmentMapSet& envMaps
+      const EnvironmentMapSet& envMaps,
+      int finalOutputRT = -1
     );
 
     // ---- Graph inspection (for future GUI) ----
@@ -165,7 +168,8 @@ namespace t850 {
       ::Camera* mainCam,
       ::Camera* lightCam,
       ::Camera* omniCams,
-      const EnvironmentMapSet& envMaps
+      const EnvironmentMapSet& envMaps,
+      int finalOutputRT
     );
   };
 

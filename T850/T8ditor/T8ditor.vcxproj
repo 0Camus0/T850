@@ -355,7 +355,7 @@ call "$(SolutionDir)scripts\CopyFirstExisting.cmd" "$(OutDir)" "$(T8VcpkgDynamic
   </ItemDefinitionGroup>
   <ItemDefinitionGroup>
     <ClCompile>
-      <AdditionalIncludeDirectories>$(SolutionDir)FrameworkImGui\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>$(SolutionDir)DayScene;$(SolutionDir)FrameworkImGui\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
     </ClCompile>
   </ItemDefinitionGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)'=='Debug'">
@@ -379,6 +379,8 @@ call "$(SolutionDir)scripts\CopyFirstExisting.cmd" "$(OutDir)" "$(T8VcpkgDynamic
     <ClCompile Include="EditorScene.cpp" />
     <ClCompile Include="EditorSceneGizmos.cpp" />
     <ClCompile Include="EditorImGui.cpp" />
+    <ClCompile Include="..\DayScene\RagdollEditor.cpp" />
+    <ClCompile Include="..\DayScene\Quake3Mock.cpp" />
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="EditorApp.h" />
@@ -392,6 +394,8 @@ call "$(SolutionDir)scripts\CopyFirstExisting.cmd" "$(OutDir)" "$(T8VcpkgDynamic
     <ClInclude Include="SceneObject.h" />
     <ClInclude Include="UndoRedo.h" />
     <ClInclude Include="EditorImGui.h" />
+    <ClInclude Include="..\DayScene\RagdollEditor.h" />
+    <ClInclude Include="..\DayScene\Quake3Mock.h" />
   </ItemGroup>
   <ItemGroup>
     <ResourceCompile Include="T8ditor.rc" />

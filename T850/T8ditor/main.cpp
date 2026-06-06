@@ -33,6 +33,7 @@
 
 // Global expected by Framework (RenderMesh.cpp uses extern reference).
 t850::AppBase* pApp = nullptr;
+std::vector<std::string> g_args;
 
 namespace t8ditor {
   // Defined in EditorApp.cpp.
@@ -44,6 +45,11 @@ static t850::AppBase*       g_pApp       = nullptr;
 static t850::RootFramework* g_pFramework = nullptr;
 
 int main(int argc, char** argv) {
+  g_args.clear();
+  for (int i = 0; i < argc; ++i) {
+    g_args.emplace_back(argv[i]);
+  }
+
   t850::ApplicationDesc desc;
   desc.api       = t850::GraphicsApi::D3D12;
   desc.height    = 720;

@@ -31,6 +31,7 @@
 #include <core/Core.h>
 #include <core/EngineContext.h>
 #include <utils/Timer.h>
+#include <utils/CameraProfiles.h>
 #include <scene/PrimitiveManager.h>
 #include <scene/PrimitiveInstance.h>
 #include <scene/RenderResourceRegistry.h>
@@ -134,6 +135,18 @@ namespace t8ditor {
     }
   };
 
+  enum class EditorCameraMode : int {
+    Orbit = 0,
+    Fly = 1,
+    Fps = 2
+  };
+
+  enum class EditorFpsStyle : int {
+    Default = 0,
+    Quake3 = 1,
+    Cod = 2
+  };
+
   class EditorApp : public t850::AppBase {
   public:
     EditorApp() : AppBase() {}
@@ -226,6 +239,9 @@ namespace t8ditor {
     EditorGrid          m_grid;
     EditorGizmo         m_gizmo;
     EditorMesh          m_mesh;      // wireframe overlay (kept for toggle)
+    t850::CameraController m_editorCameraController;
+    EditorCameraMode m_editorCameraMode = EditorCameraMode::Orbit;
+    EditorFpsStyle m_editorFpsStyle = EditorFpsStyle::Default;
 
     // Lit/textured rendering via the Framework pipeline
     SceneProps            m_sceneProps;

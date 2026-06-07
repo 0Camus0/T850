@@ -67,7 +67,8 @@ namespace t8ditor {
   int ImGuiDrawToolbar(int currentMode, int& addCamera, int& addLight,
                        bool& wantsClone, bool& wantsGroup, bool& wantsUngroup,
                        bool& wantsPlayScene,
-                       bool hasSelection, bool hasMultiSelect);
+                       bool hasSelection, bool hasMultiSelect,
+                       int& cameraMode, int& fpsStyle);
 
   // ── Context menu (right-click) ─────────────────────
   struct ContextAction {

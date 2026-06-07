@@ -5135,6 +5135,8 @@ void EditorApp::CreateAssets() {
     m_camera.Init(w, h, 50.0f);
     m_camera.SetTarget(XVECTOR3(0.0f, 0.0f, 0.0f));
     m_camera.Frame();
+    m_editorCameraController.AttachCamera(&m_camera.GetCameraMutable());
+    m_editorCameraController.SetActiveProfile(t850::CameraProfileType::FreeFly);
     m_lastW = w;
     m_lastH = h;
   }
@@ -6097,11 +6099,14 @@ void EditorApp::OnInput() {
   if (!imguiWantsKeyboard) {
     const bool ctrlDown = IManager.PressedKey(T800K_LCTRL) || IManager.PressedKey(T800K_RCTRL);
     const bool shiftDown = IManager.PressedKey(T800K_LSHIFT) || IManager.PressedKey(T800K_RSHIFT);
+    const bool orbitCameraMode = m_editorCameraMode == EditorCameraMode::Orbit;
 
-    if (IManager.PressedOnceKey(T800K_q)) m_gizmo.SetMode(GizmoMode::Select);
-    if (IManager.PressedOnceKey(T800K_w)) m_gizmo.SetMode(GizmoMode::Translate);
-    if (IManager.PressedOnceKey(T800K_e)) m_gizmo.SetMode(GizmoMode::Rotate);
-    if (IManager.PressedOnceKey(T800K_r)) m_gizmo.SetMode(GizmoMode::Scale);
+    if (orbitCameraMode) {
+      if (IManager.PressedOnceKey(T800K_q)) m_gizmo.SetMode(GizmoMode::Select);
+      if (IManager.PressedOnceKey(T800K_w)) m_gizmo.SetMode(GizmoMode::Translate);
+      if (IManager.PressedOnceKey(T800K_e)) m_gizmo.SetMode(GizmoMode::Rotate);
+      if (IManager.PressedOnceKey(T800K_r)) m_gizmo.SetMode(GizmoMode::Scale);
+    }
 
     // Z key behavior:
     // Ctrl+Z = undo, Ctrl+Shift+Z = redo
@@ -6148,15 +6153,77 @@ void EditorApp::OnInput() {
 
   float wheel = ImGuiConsumeWheelDelta();
   bool blockWheel = imguiWantsMouse && !ImGuizmo::IsOver();
-  m_camera.Update(m_dtSecs, IManager,
-                  blockWheel ? 0.0f : wheel,
-                  imguiWantsMouse,
-                  imguiWantsKeyboard);
+  const bool orbitCameraMode = m_editorCameraMode == EditorCameraMode::Orbit;
+  if (orbitCameraMode) {
+    m_camera.Update(m_dtSecs, IManager,
+                    blockWheel ? 0.0f : wheel,
+                    imguiWantsMouse,
+                    imguiWantsKeyboard);
+  } else {
+    Camera& cam = m_camera.GetCameraMutable();
+    cam.m_externalControl = false;
+    cam.m_lookAtCenter = false;
+    const bool wantsFly = m_editorCameraMode == EditorCameraMode::Fly;
+    t850::CameraInputState state;
+    if (!imguiWantsKeyboard) {
+      state.moveForward = IManager.PressedKey(T800K_w);
+      state.moveBackward = IManager.PressedKey(T800K_s);
+      state.moveLeft = IManager.PressedKey(T800K_a);
+      state.moveRight = IManager.PressedKey(T800K_d);
+      state.moveUp = wantsFly ? IManager.PressedKey(T800K_q) : IManager.PressedKey(T800K_SPACE);
+      state.moveDown = wantsFly ? IManager.PressedKey(T800K_e) : (IManager.PressedKey(T800K_LCTRL) || IManager.PressedKey(T800K_RCTRL));
+      state.jump = IManager.PressedKey(T800K_SPACE);
+      state.crouch = IManager.PressedKey(T800K_LCTRL) || IManager.PressedKey(T800K_RCTRL);
+      state.sprint = IManager.PressedKey(T800K_LSHIFT) || IManager.PressedKey(T800K_RSHIFT);
+    }
+    const bool mouseLook = !imguiWantsMouse && IManager.PressedMouseButton(2);
+    state.mouseLook = mouseLook;
+    state.mouseDeltaX = mouseLook ? static_cast<float>(IManager.xDelta) : 0.0f;
+    state.mouseDeltaY = mouseLook ? static_cast<float>(IManager.yDelta) : 0.0f;
 
-  if (!imguiWantsKeyboard)
+    if (wantsFly) {
+      if (m_editorCameraController.GetActiveProfileType() != t850::CameraProfileType::FreeFly) {
+        m_editorCameraController.SetActiveProfile(t850::CameraProfileType::FreeFly);
+      }
+      m_editorCameraController.HandleInput(state);
+      m_editorCameraController.Update(m_dtSecs, t850::CameraUpdateContext{});
+    } else {
+      const float mouseSensitivity =
+          m_editorFpsStyle == EditorFpsStyle::Quake3 ? 0.0035f :
+          m_editorFpsStyle == EditorFpsStyle::Cod ? 0.0025f : 0.0030f;
+      if (state.mouseLook) {
+        cam.MoveYaw(state.mouseDeltaX * mouseSensitivity);
+        cam.MovePitch(state.mouseDeltaY * mouseSensitivity);
+      }
+      cam.Update(0.0f);
+      const float baseSpeed =
+          m_editorFpsStyle == EditorFpsStyle::Quake3 ? 12.5f :
+          m_editorFpsStyle == EditorFpsStyle::Cod ? 7.0f : 8.0f;
+      const float speed = state.sprint ? baseSpeed * 1.8f : baseSpeed;
+      float forwardAmount = (state.moveForward ? 1.0f : 0.0f) - (state.moveBackward ? 1.0f : 0.0f);
+      float rightAmount = (state.moveRight ? 1.0f : 0.0f) - (state.moveLeft ? 1.0f : 0.0f);
+      float upAmount = (state.moveUp ? 1.0f : 0.0f) - (state.moveDown ? 1.0f : 0.0f);
+      const float len = std::sqrt(forwardAmount * forwardAmount + rightAmount * rightAmount + upAmount * upAmount);
+      if (len > 1.0f) {
+        forwardAmount /= len;
+        rightAmount /= len;
+        upAmount /= len;
+      }
+      XVECTOR3 forward(cam.Look.x, 0.0f, cam.Look.z, 0.0f);
+      if (forward.Length() > 0.0001f) forward.Normalize();
+      XVECTOR3 right(cam.Right.x, 0.0f, cam.Right.z, 0.0f);
+      if (right.Length() > 0.0001f) right.Normalize();
+      cam.Eye += (forward * forwardAmount + right * rightAmount + XVECTOR3(0.0f, upAmount, 0.0f, 0.0f)) * (speed * m_dtSecs);
+      cam.Eye.w = 1.0f;
+      cam.Velocity = XVECTOR3(0.0f, 0.0f, 0.0f, 0.0f);
+      cam.Update(0.0f);
+    }
+  }
+
+  if (orbitCameraMode && !imguiWantsKeyboard)
     ProcessSelectionInput();
 
-  if (!imguiWantsMouse) {
+  if (orbitCameraMode && !imguiWantsMouse) {
     // Skip mouse pick while multi-select gizmo is active (avoid clearing selection)
     if (!(g_multiSelect.size() > 1 && m_gizmo.Mode() != GizmoMode::Select && ImGuizmo::IsOver()))
       HandleMousePick();
@@ -6814,10 +6881,22 @@ void EditorApp::OnDraw() {
 
     int addCamera = -1, addLight = -1;
     bool wantsClone = false, wantsGroup = false, wantsUngroup = false, wantsPlayScene = false;
+    int toolbarCameraMode = static_cast<int>(m_editorCameraMode);
+    int toolbarFpsStyle = static_cast<int>(m_editorFpsStyle);
     int mode = ImGuiDrawToolbar((int)m_gizmo.Mode(), addCamera, addLight,
                                   wantsClone, wantsGroup, wantsUngroup, wantsPlayScene,
-                                  g_selectedIdx >= 0, g_multiSelect.size() >= 2);
+                                  g_selectedIdx >= 0, g_multiSelect.size() >= 2,
+                                  toolbarCameraMode, toolbarFpsStyle);
     m_gizmo.SetMode((GizmoMode)mode);
+    toolbarCameraMode = std::clamp(toolbarCameraMode, 0, 2);
+    toolbarFpsStyle = std::clamp(toolbarFpsStyle, 0, 2);
+    const EditorCameraMode newCameraMode = static_cast<EditorCameraMode>(toolbarCameraMode);
+    if (newCameraMode != m_editorCameraMode) {
+      m_editorCameraMode = newCameraMode;
+      m_editorCameraController.ClearInput();
+      m_camera.GetCameraMutable().Velocity = XVECTOR3(0.0f, 0.0f, 0.0f, 0.0f);
+    }
+    m_editorFpsStyle = static_cast<EditorFpsStyle>(toolbarFpsStyle);
 
     // Handle add camera/light from toolbar
     if (addCamera >= 0) {

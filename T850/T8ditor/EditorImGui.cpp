@@ -26,6 +26,7 @@
 #endif
 
 #include <cmath>
+#include <algorithm>
 #include <cstdint>
 #include <mutex>
 #include <unordered_map>
@@ -219,7 +220,8 @@ void ImGuiClampCurrentWindowToEditorWorkArea() {
 int ImGuiDrawToolbar(int currentMode, int& addCamera, int& addLight,
                      bool& wantsClone, bool& wantsGroup, bool& wantsUngroup,
                      bool& wantsPlayScene,
-                     bool hasSelection, bool hasMultiSelect) {
+                     bool hasSelection, bool hasMultiSelect,
+                     int& cameraMode, int& fpsStyle) {
   addCamera = -1;
   addLight  = -1;
   wantsClone = false;
@@ -268,6 +270,31 @@ int ImGuiDrawToolbar(int currentMode, int& addCamera, int& addLight,
 
     if (ImGui::Button("Play", ImVec2(55, 0)))
       wantsPlayScene = true;
+
+    ImGui::SameLine();
+    ImGui::Text("|");
+    ImGui::SameLine();
+
+    auto CameraModeButton = [&](const char* label, int mode) {
+      const bool isActive = cameraMode == mode;
+      if (isActive)
+        ImGui::PushStyleColor(ImGuiCol_Button, activeCol);
+      if (ImGui::Button(label, ImVec2(78, 0)))
+        cameraMode = mode;
+      if (isActive)
+        ImGui::PopStyleColor();
+    };
+
+    CameraModeButton("Cam Orbit", 0); ImGui::SameLine();
+    CameraModeButton("Cam Fly", 1); ImGui::SameLine();
+    CameraModeButton("FPS", 2);
+    if (cameraMode == 2) {
+      ImGui::SameLine();
+      const char* fpsItems[] = {"Default", "Quake 3 Style", "COD Style"};
+      fpsStyle = std::clamp(fpsStyle, 0, 2);
+      ImGui::SetNextItemWidth(120.0f);
+      ImGui::Combo("##EditorFpsStyle", &fpsStyle, fpsItems, 3);
+    }
 
     ImGui::SameLine();
     ImGui::Text("|");

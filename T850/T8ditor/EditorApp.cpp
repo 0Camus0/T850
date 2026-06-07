@@ -6165,7 +6165,7 @@ void EditorApp::OnInput() {
     cam.m_lookAtCenter = false;
     const bool wantsFly = m_editorCameraMode == EditorCameraMode::Fly;
     t850::CameraInputState state;
-    if (!imguiWantsKeyboard) {
+    if (!io.WantTextInput) {
       state.moveForward = IManager.PressedKey(T800K_w);
       state.moveBackward = IManager.PressedKey(T800K_s);
       state.moveLeft = IManager.PressedKey(T800K_a);
@@ -6188,35 +6188,15 @@ void EditorApp::OnInput() {
       m_editorCameraController.HandleInput(state);
       m_editorCameraController.Update(m_dtSecs, t850::CameraUpdateContext{});
     } else {
-      const float mouseSensitivity =
-          m_editorFpsStyle == EditorFpsStyle::Quake3 ? 0.0035f :
-          m_editorFpsStyle == EditorFpsStyle::Cod ? 0.0025f : 0.0030f;
-      if (state.mouseLook) {
-        cam.MoveYaw(state.mouseDeltaX * mouseSensitivity);
-        cam.MovePitch(state.mouseDeltaY * mouseSensitivity);
+      const t850::CameraProfileType fpsProfile =
+          m_editorFpsStyle == EditorFpsStyle::Quake3 ? t850::CameraProfileType::Quake3Fps :
+          m_editorFpsStyle == EditorFpsStyle::Cod ? t850::CameraProfileType::CodFps :
+          t850::CameraProfileType::GroundedFps;
+      if (m_editorCameraController.GetActiveProfileType() != fpsProfile) {
+        m_editorCameraController.SetActiveProfile(fpsProfile);
       }
-      cam.Update(0.0f);
-      const float baseSpeed =
-          m_editorFpsStyle == EditorFpsStyle::Quake3 ? 12.5f :
-          m_editorFpsStyle == EditorFpsStyle::Cod ? 7.0f : 8.0f;
-      const float speed = state.sprint ? baseSpeed * 1.8f : baseSpeed;
-      float forwardAmount = (state.moveForward ? 1.0f : 0.0f) - (state.moveBackward ? 1.0f : 0.0f);
-      float rightAmount = (state.moveRight ? 1.0f : 0.0f) - (state.moveLeft ? 1.0f : 0.0f);
-      float upAmount = (state.moveUp ? 1.0f : 0.0f) - (state.moveDown ? 1.0f : 0.0f);
-      const float len = std::sqrt(forwardAmount * forwardAmount + rightAmount * rightAmount + upAmount * upAmount);
-      if (len > 1.0f) {
-        forwardAmount /= len;
-        rightAmount /= len;
-        upAmount /= len;
-      }
-      XVECTOR3 forward(cam.Look.x, 0.0f, cam.Look.z, 0.0f);
-      if (forward.Length() > 0.0001f) forward.Normalize();
-      XVECTOR3 right(cam.Right.x, 0.0f, cam.Right.z, 0.0f);
-      if (right.Length() > 0.0001f) right.Normalize();
-      cam.Eye += (forward * forwardAmount + right * rightAmount + XVECTOR3(0.0f, upAmount, 0.0f, 0.0f)) * (speed * m_dtSecs);
-      cam.Eye.w = 1.0f;
-      cam.Velocity = XVECTOR3(0.0f, 0.0f, 0.0f, 0.0f);
-      cam.Update(0.0f);
+      m_editorCameraController.HandleInput(state);
+      m_editorCameraController.Update(m_dtSecs, t850::CameraUpdateContext{});
     }
   }
 

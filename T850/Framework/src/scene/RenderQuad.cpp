@@ -325,7 +325,7 @@ namespace t850 {
     ShaderBase * s = g_pBaseDriver->GetShader(finalKey);
     if (!s) return;
 
-    Camera *pActualCamera = pScProp->pCameras[0];
+    Camera *pActualCamera = pScProp->GetPrimaryCamera();
     bool useTiledLightPass = false;
     bool skipCurrentDraw = false;
 

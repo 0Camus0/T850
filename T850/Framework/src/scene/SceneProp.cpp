@@ -91,6 +91,20 @@ Camera* SceneProps::GetPrimaryCamera() const {
 	return pCameras.empty() ? nullptr : pCameras[0];
 }
 
+ScopedPrimaryCameraOverride::ScopedPrimaryCameraOverride(SceneProps& props)
+	: m_props(props),
+	  m_previousCamera(props.GetPrimaryCamera()),
+	  m_hadPrimaryCamera(!props.pCameras.empty()) {
+}
+
+ScopedPrimaryCameraOverride::~ScopedPrimaryCameraOverride() {
+	if (m_hadPrimaryCamera) {
+		m_props.SetPrimaryCamera(m_previousCamera);
+	} else if (!m_props.pCameras.empty()) {
+		m_props.pCameras.erase(m_props.pCameras.begin());
+	}
+}
+
 void	SceneProps::RemoveCamera(unsigned int index){
 	if (index < 0 || index >= pCameras.size())
 		return;

@@ -13,6 +13,7 @@
 
 #include <scene/PrimitiveInstance.h>
 #include <scene/RenderSkinnedMesh.h>
+#include <scene/RenderMesh.h>
 namespace t850 {
   namespace {
     uint32_t NextPrimitiveEntityId() {
@@ -130,6 +131,23 @@ namespace t850 {
   void PrimitiveInst::Draw() {
     if (!Visible || !pBase)
       return;
+    Texture* previousTextures[MaxPrimitiveTextures];
+    for (int i = 0; i < MaxPrimitiveTextures; i++) {
+      previousTextures[i] = pBase->Textures[i];
+    }
+    Texture* previousEnvMap = pBase->EnvMap;
+    ShaderKey previousKey = pBase->gKey;
+    const float previousBrightness = pBase->m_brightness;
+    const float previousParallaxLowSamples = pBase->m_fParallaxLowSamples;
+    const float previousParallaxHighSamples = pBase->m_fParallaxHighSamples;
+    const float previousParallaxHeight = pBase->m_fParallaxHeight;
+    const float previousParallaxEnabled = pBase->m_fParallaxEnabled;
+    const float previousParallaxShadowMinLayers = pBase->m_fParallaxShadowMinLayers;
+    const float previousParallaxShadowMaxLayers = pBase->m_fParallaxShadowMaxLayers;
+    const float previousParallaxShadowSoftness = pBase->m_fParallaxShadowSoftness;
+    const float previousParallaxShadowStrength = pBase->m_fParallaxShadowStrength;
+    const float previousParallaxShadowEnabled = pBase->m_fParallaxShadowEnabled;
+
     pBase->SetEnvironmentMap(EnvMap);
     pBase->SetGlobalKey(gKey);
     for (int i = 0; i < MaxPrimitiveTextures; i++) {
@@ -138,6 +156,36 @@ namespace t850 {
     pBase->SetBrightness(m_brightness);
 	pBase->SetParallaxSettings(m_fParallaxLowSamples, m_fParallaxHighSamples, m_fParallaxHeight);
     pBase->Draw(&Final.m[0][0], &(*pViewProj).m[0][0]);
+
+    for (int i = 0; i < MaxPrimitiveTextures; i++) {
+      pBase->Textures[i] = previousTextures[i];
+    }
+    pBase->EnvMap = previousEnvMap;
+    pBase->gKey = previousKey;
+    pBase->m_brightness = previousBrightness;
+    pBase->m_fParallaxLowSamples = previousParallaxLowSamples;
+    pBase->m_fParallaxHighSamples = previousParallaxHighSamples;
+    pBase->m_fParallaxHeight = previousParallaxHeight;
+    pBase->m_fParallaxEnabled = previousParallaxEnabled;
+    pBase->m_fParallaxShadowMinLayers = previousParallaxShadowMinLayers;
+    pBase->m_fParallaxShadowMaxLayers = previousParallaxShadowMaxLayers;
+    pBase->m_fParallaxShadowSoftness = previousParallaxShadowSoftness;
+    pBase->m_fParallaxShadowStrength = previousParallaxShadowStrength;
+    pBase->m_fParallaxShadowEnabled = previousParallaxShadowEnabled;
+  }
+
+  RenderEntity PrimitiveInst::ToRenderEntity() const {
+    RenderEntity entity;
+    entity.id = EntityId;
+    entity.worldFromLocal = Final;
+    entity.visible = Visible;
+    if (auto* mesh = dynamic_cast<RenderMesh*>(pBase)) {
+      entity.mesh = mesh->m_asset;
+      if (entity.mesh && entity.mesh->rootAABB.IsValid()) {
+        entity.worldAABB = entity.mesh->rootAABB.Transformed(Final);
+      }
+    }
+    return entity;
   }
 
   RenderSkinnedMesh* PrimitiveInst::GetSkinnedMesh() const {

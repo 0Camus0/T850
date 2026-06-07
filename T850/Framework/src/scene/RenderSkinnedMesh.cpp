@@ -879,9 +879,9 @@ namespace t850 {
 
   void RenderSkinnedMesh::DrawWireframe(const XVECTOR3& color) {
     if (!m_hasSkin || !m_wireShader || m_wireGeo.empty()) return;
-    if (!pScProp || pScProp->pCameras.empty()) return;
+    if (!pScProp || !pScProp->GetPrimaryCamera()) return;
 
-    Camera* cam = pScProp->pCameras[0];
+    Camera* cam = pScProp->GetPrimaryCamera();
     XMATRIX44 WVP = transform * cam->VP;
     XMATRIX44 WorldView = transform * cam->View;
     // CameraInfo: .x=near, .y=far, .z=viewportW, .w=viewportH
@@ -957,8 +957,8 @@ namespace t850 {
     if (!m_hasSkin || !m_skelIB || !m_skelVB || !m_lineRenderer.IsReady() || m_skelIndexCount == 0)
       return;
 
-    if (!pScProp || pScProp->pCameras.empty()) return;
-    Camera* cam = pScProp->pCameras[0];
+    if (!pScProp || !pScProp->GetPrimaryCamera()) return;
+    Camera* cam = pScProp->GetPrimaryCamera();
 
     UpdateSkeletonPositions();
     m_skelVB->UpdateFromBuffer(*T8DeviceContext, m_skelPositions.data());
@@ -1148,11 +1148,11 @@ namespace t850 {
 
     // Now do the actual draw using base CBuffer + bone texture
     // (animation update + texture upload already done in UpdateAnimationAndBones)
-    if (!pScProp || pScProp->pCameras.empty() || !pScProp->pCameras[0]) {
+    if (!pScProp || !pScProp->GetPrimaryCamera()) {
       T8_LOG_ERROR("[SkinnedMesh] Draw skipped: missing scene camera");
       return;
     }
-    Camera *pActualCamera = pScProp->pCameras[0];
+    Camera *pActualCamera = pScProp->GetPrimaryCamera();
     XMATRIX44 VP = pActualCamera->VP;
 
     m_totalSubsets = m_drawnSubsets = m_culledMeshes = 0;

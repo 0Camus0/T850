@@ -174,4 +174,15 @@ SceneProps() : ActiveCamera(0), ActiveLights(1), ActiveLightCamera(0), ActiveGau
   bool AutoFocus = false;
 };
 
+class ScopedPrimaryCameraOverride {
+public:
+	ScopedPrimaryCameraOverride(SceneProps& props);
+	~ScopedPrimaryCameraOverride();
+
+private:
+	SceneProps& m_props;
+	Camera* m_previousCamera = nullptr;
+	bool m_hadPrimaryCamera = false;
+};
+
 #endif

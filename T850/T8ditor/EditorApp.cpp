@@ -1094,26 +1094,8 @@ void EditorApp::OpenMeshEditor(int objectIndex) {
   m_meshEditorScene.reset();
   m_meshEditorSceneLoaded = false;
   m_meshEditorObjectIndex = objectIndex;
-  m_meshEditorNativeHandle = nullptr;
-  m_meshEditorLoggedNativeHandle = nullptr;
-  m_meshEditorMainViewportLogged = false;
-  m_meshEditorImGuiViewportId = 0;
-  m_meshEditorViewportPosX = 0.0f;
-  m_meshEditorViewportPosY = 0.0f;
-  m_meshEditorViewportSizeX = 0.0f;
-  m_meshEditorViewportSizeY = 0.0f;
-  m_meshEditorViewportImageMinX = 0.0f;
-  m_meshEditorViewportImageMinY = 0.0f;
-  m_meshEditorViewportImageSizeX = 0.0f;
-  m_meshEditorViewportImageSizeY = 0.0f;
-  m_meshEditorDockspaceId = 0;
-  m_meshEditorDockClassId = 0;
-  m_meshEditorOpen = true;
-  m_meshEditorOpenRequested = true;
-  m_meshEditorCloseRequested = false;
+  m_meshEditorWindow.Open(true);
   InvalidateEditorFrozenFrame();
-  m_meshEditorGuiVisible = true;
-  m_meshEditorViewportInputActive = false;
 
   g_selectedIdx = objectIndex;
   g_selectionType = 0;
@@ -1151,26 +1133,8 @@ void EditorApp::CloseMeshEditor() {
     ImGuiLogCaptureStart();
   }
   m_meshEditorScene.reset();
-  m_meshEditorSceneLoaded = false;
-  m_meshEditorOpen = false;
-  m_meshEditorOpenRequested = false;
-  m_meshEditorCloseRequested = false;
+  m_meshEditorWindow.Reset(true);
   m_meshEditorObjectIndex = -1;
-  m_meshEditorNativeHandle = nullptr;
-  m_meshEditorLoggedNativeHandle = nullptr;
-  m_meshEditorMainViewportLogged = false;
-  m_meshEditorImGuiViewportId = 0;
-  m_meshEditorViewportPosX = 0.0f;
-  m_meshEditorViewportPosY = 0.0f;
-  m_meshEditorViewportSizeX = 0.0f;
-  m_meshEditorViewportSizeY = 0.0f;
-  m_meshEditorViewportImageMinX = 0.0f;
-  m_meshEditorViewportImageMinY = 0.0f;
-  m_meshEditorViewportImageSizeX = 0.0f;
-  m_meshEditorViewportImageSizeY = 0.0f;
-  m_meshEditorDockspaceId = 0;
-  m_meshEditorDockClassId = 0;
-  m_meshEditorViewportInputActive = false;
   DestroyMeshEditorViewportTarget();
   IManager.xDelta = 0;
   IManager.yDelta = 0;
@@ -1506,14 +1470,9 @@ void EditorApp::OpenPlayScene() {
   m_playSceneHasPreviousConfig = true;
   m_playScenePreviousActiveCameraIdx = g_activeCameraIdx;
   m_playSceneTempPath = tempPath;
-  m_playSceneOpen = true;
-  m_playSceneOpenRequested = true;
-  m_playSceneCloseRequested = false;
-  m_playSceneLoaded = false;
+  m_playSceneWindow.Open(false);
   m_playSceneLaunchFailed = false;
-  m_playSceneGuiVisible = false;
   InvalidateEditorFrozenFrame();
-  m_playSceneViewportInputActive = false;
   m_playSceneStatus = m_playSceneHasVisibleObjects
       ? "Starting Play Scene..."
       : "Temporary scene has no visible meshes. Add an object before Play.";
@@ -1529,17 +1488,9 @@ void EditorApp::ClosePlayScene(bool restoreEditorScene) {
     m_playScene->OnDestoryScene();
   }
   m_playScene.reset();
-  m_playSceneLoaded = false;
-  m_playSceneOpen = false;
-  m_playSceneOpenRequested = false;
-  m_playSceneCloseRequested = false;
+  m_playSceneWindow.Reset(false);
   m_playSceneHasVisibleObjects = false;
   m_playSceneLaunchFailed = false;
-  m_playSceneGuiVisible = false;
-  m_playSceneViewportInputActive = false;
-  m_playSceneImGuiViewportId = 0;
-  m_playSceneDockspaceId = 0;
-  m_playSceneDockClassId = 0;
   DestroyPlaySceneViewportTarget();
   if (m_playScenePhysics.IsInitialized()) {
     m_playScenePhysics.Shutdown();
@@ -1791,9 +1742,7 @@ void EditorApp::DrawPlaySceneWindow() {
   ImGui::PopStyleVar();
 
   if (!keepOpen) {
-    m_playSceneOpen = false;
-    m_playSceneCloseRequested = true;
-    m_playSceneViewportInputActive = false;
+    m_playSceneWindow.RequestClose();
     return;
   }
 
@@ -1812,9 +1761,7 @@ void EditorApp::DrawPlaySceneWindow() {
                    &viewportOpen,
                    ImGuiWindowFlags_NoCollapse)) {
     if (ImGui::Button("Stop")) {
-      m_playSceneOpen = false;
-      m_playSceneCloseRequested = true;
-      m_playSceneViewportInputActive = false;
+      m_playSceneWindow.RequestClose();
     }
     ImGui::SameLine();
     ImGui::TextDisabled("Press G for runtime controls.");
@@ -2312,13 +2259,9 @@ void EditorApp::OpenRagdollEditor(int objectIndex) {
   m_ragdollEditorSelectedJoint = -1;
   m_ragdollEditorSelectedUnassignedBone = -1;
   m_ragdollEditorSelectedAffectedBone = -1;
-  m_ragdollEditorNativeHandle = nullptr;
-  m_ragdollEditorLoggedNativeHandle = nullptr;
-  m_ragdollEditorMainViewportLogged = false;
   m_ragdollEditorDirty = false;
   m_ragdollEditorStatus.clear();
-  m_ragdollEditorOpen = true;
-  m_ragdollEditorOpenRequested = true;
+  m_ragdollEditorWindow.Open(true);
   {
     ImGuiIO& io = ImGui::GetIO();
     T8_LOG_INFO("[T8ditor] Requested native editor window title='Ragdoll Edit' object='%s' configFlags=0x%08X backendFlags=0x%08X",
@@ -2360,16 +2303,12 @@ void EditorApp::CloseRagdollEditor() {
     SceneObject& obj = g_objects[m_ragdollEditorObjectIndex];
     SyncRagdollMetaFromObject(obj);
   }
-  m_ragdollEditorOpen = false;
-  m_ragdollEditorOpenRequested = false;
+  m_ragdollEditorWindow.Reset(true);
   m_ragdollEditorObjectIndex = -1;
   m_ragdollEditorSelectedBody = -1;
   m_ragdollEditorSelectedJoint = -1;
   m_ragdollEditorSelectedUnassignedBone = -1;
   m_ragdollEditorSelectedAffectedBone = -1;
-  m_ragdollEditorNativeHandle = nullptr;
-  m_ragdollEditorLoggedNativeHandle = nullptr;
-  m_ragdollEditorMainViewportLogged = false;
   m_ragdollEditorDirty = false;
   m_ragdollEditorStatus.clear();
 }
@@ -5036,9 +4975,7 @@ void EditorApp::DrawMeshEditorWindow() {
     ImGui::End();
     ImGui::PopStyleVar();
     if (!keepOpen) {
-      m_meshEditorOpen = false;
-      m_meshEditorCloseRequested = true;
-      m_meshEditorViewportInputActive = false;
+      m_meshEditorWindow.RequestClose();
     }
     return;
   }
@@ -5046,9 +4983,7 @@ void EditorApp::DrawMeshEditorWindow() {
   if (!keepOpen) {
     ImGui::End();
     ImGui::PopStyleVar();
-    m_meshEditorOpen = false;
-    m_meshEditorCloseRequested = true;
-    m_meshEditorViewportInputActive = false;
+    m_meshEditorWindow.RequestClose();
     return;
   }
 
@@ -6064,17 +5999,13 @@ void EditorApp::OnInput() {
 
   if (!io.WantTextInput && IManager.PressedOnceKey(T800K_ESCAPE)) {
     if (m_meshEditorOpen) {
-      m_meshEditorOpen = false;
-      m_meshEditorCloseRequested = true;
-      m_meshEditorViewportInputActive = false;
+      m_meshEditorWindow.RequestClose();
       IManager.xDelta = 0;
       IManager.yDelta = 0;
       return;
     }
     if (m_playSceneOpen) {
-      m_playSceneOpen = false;
-      m_playSceneCloseRequested = true;
-      m_playSceneViewportInputActive = false;
+      m_playSceneWindow.RequestClose();
       IManager.xDelta = 0;
       IManager.yDelta = 0;
       return;

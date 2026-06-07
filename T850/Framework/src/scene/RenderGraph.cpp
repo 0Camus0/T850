@@ -520,6 +520,7 @@ void RenderGraph::ExecutePass(
   int finalOutputRT)
 {
   const auto& pass = *node.desc;
+  ScopedPrimaryCameraOverride cameraScope(props);
   T8_PROFILE_SCOPE(t850::g_profiler, pass.name.c_str());
   RuntimeTelemetry::ScopedTimer telemetryPass("render.pass." + pass.name);
   RuntimeTelemetry::AddCounter("render.pass.count", 1.0);

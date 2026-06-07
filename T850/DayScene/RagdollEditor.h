@@ -14,9 +14,6 @@
 #include <scene/LineRenderer.h>
 #include <scene/TextRenderer.h>
 #include <physics/PhysicsDebugRenderer.h>
-#include <navigation/NavigationDebugRenderer.h>
-#include <navigation/NavigationSystem.h>
-#include <physics/Q3BspCollision.h>
 #include <physics/PhysicsTypes.h>
 #include <physics/RagdollEditorTool.h>
 #include <debug/FrameDumper.h>
@@ -80,7 +77,6 @@ class RagdollEditor : public t850::SceneBase, public t850::CameraCollisionWorld
     CHANGE_SHOW_WIREFRAME,
     CHANGE_SHOW_SKELETON,
     CHANGE_SHOW_PHYSICS,
-    CHANGE_SHOW_NAVMESH,
     CHANGE_SHOW_LIGHT_VOLUMES,
     CHANGE_POINT_LIGHTS_ENABLED,
     CHANGE_DEBUG_LUMINANCE,

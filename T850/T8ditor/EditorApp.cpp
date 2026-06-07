@@ -45,6 +45,7 @@
 #include <set>
 #include <map>
 #include <cstring>
+#include <thread>
 
 #include <imgui.h>
 #include <ImGuizmo.h>
@@ -148,6 +149,7 @@ namespace {
   // Frame dumper for RT snapshot debugging (space key)
   t850::FrameDumper g_dumper;
   bool              g_dumperInited = false;
+  int               g_editorResizeInputTraceFrames = 0;
 
   std::string FormatLoadingProgressForConsole(const t850::LoadingProgress::Snapshot& snapshot) {
     if (!snapshot.active) {
@@ -363,6 +365,36 @@ static int EditorCubemapSelectorIndexFromProfile(const t850::SandboxProfileDesc&
     }
   }
   return -1;
+}
+
+static void SetFloatOverride(std::vector<t850::FloatOverrideDesc>& values, std::string name, float value) {
+  for (auto& entry : values) {
+    if (entry.name == name) {
+      entry.value = value;
+      return;
+    }
+  }
+  values.push_back({std::move(name), value});
+}
+
+static void SetBoolOverride(std::vector<t850::BoolOverrideDesc>& values, std::string name, bool value) {
+  for (auto& entry : values) {
+    if (entry.name == name) {
+      entry.value = value;
+      return;
+    }
+  }
+  values.push_back({std::move(name), value});
+}
+
+static void SetIntOverride(std::vector<t850::IntOverrideDesc>& values, std::string name, int value) {
+  for (auto& entry : values) {
+    if (entry.name == name) {
+      entry.value = value;
+      return;
+    }
+  }
+  values.push_back({std::move(name), value});
 }
 
 static XVECTOR3 EditorVec3FromArray(const std::array<float, 3>& value, float w = 0.0f) {
@@ -681,6 +713,18 @@ static void* NativeHandleFromImGuiViewport(ImGuiViewport* viewport) {
   }
 #endif
   return viewport->PlatformHandle;
+}
+
+static void ApplyNativeWindowChrome(ImGuiViewport* viewport, const char* title) {
+  if (!viewport || !viewport->PlatformHandle) {
+    return;
+  }
+
+  viewport->Flags &= ~(ImGuiViewportFlags_NoDecoration | ImGuiViewportFlags_NoTaskBarIcon);
+  SDL_Window* sdlWindow = static_cast<SDL_Window*>(viewport->PlatformHandle);
+  SDL_SetWindowTitle(sdlWindow, title ? title : "T8ditor");
+  SDL_SetWindowBordered(sdlWindow, true);
+  SDL_SetWindowResizable(sdlWindow, true);
 }
 
 static bool ShouldDrawPhysicsDebug() {
@@ -1321,6 +1365,7 @@ SceneFile EditorApp::BuildEditorSceneSnapshot(const std::string& scenePath) {
 
   sf.collision = g_sceneCollisionResourcePath;
   sf.profiles = g_sceneProfiles;
+  UpsertEditorSceneProfile(sf.profiles);
   if (sf.collision.empty()) {
     sf.collision = ResolveSceneCollisionPath(sf, scenePath);
   }
@@ -1336,8 +1381,198 @@ bool EditorApp::SaveEditorSceneSnapshot(const std::string& path, bool updateLoad
     g_loadedSceneFile = sf;
     g_hasLoadedSceneFile = true;
     g_sceneCollisionResourcePath = sf.collision;
+    g_sceneProfiles = sf.profiles;
   }
   return true;
+}
+
+t850::RenderSkinnedMesh* EditorApp::GetSelectedSkinnedMesh() const {
+  if (g_selectionType != 0 || g_selectedIdx < 0 || g_selectedIdx >= static_cast<int>(g_objects.size())) {
+    return nullptr;
+  }
+  return g_objects[static_cast<std::size_t>(g_selectedIdx)].litInst.GetSkinnedMesh();
+}
+
+t850::SandboxProfileDesc EditorApp::BuildEditorSceneProfile() const {
+  t850::SandboxProfileDesc profile;
+  t850::ApplyProfileTarget(profile, t850::DefaultProfileTargetIndex());
+
+  SetFloatOverride(profile.sliders, "exposure", m_sceneProps.Exposure);
+  SetFloatOverride(profile.sliders, "bloom_factor", m_sceneProps.BloomFactor);
+  SetFloatOverride(profile.sliders, "bloom_threshold", m_sceneProps.BloomThreshold);
+  SetFloatOverride(profile.sliders, "light_radius_scale", m_sceneProps.LightRadiusScale);
+  SetFloatOverride(profile.sliders, "light_intensity_scale", m_sceneProps.LightIntensityScale);
+  SetFloatOverride(profile.sliders, "lightmap_intensity", m_sceneProps.LightmapIntensity);
+  SetFloatOverride(profile.sliders, "tm_white_level", m_sceneProps.ToneMapWhiteLevel);
+  SetFloatOverride(profile.sliders, "tm_adapt_tau", m_sceneProps.LuminanceTau);
+  SetFloatOverride(profile.sliders, "pcf_radius", m_sceneProps.PCFScale);
+  SetFloatOverride(profile.sliders, "pcf_samples", m_sceneProps.PCFSamples);
+  SetFloatOverride(profile.sliders, "ssao_kernel_size", static_cast<float>(m_sceneProps.SSAOKernel.KernelSize));
+  SetFloatOverride(profile.sliders, "ssao_radius", m_sceneProps.SSAOKernel.Radius);
+  GaussFilter* activeKernel =
+      (m_editorActiveGaussSelection >= 0 &&
+       m_editorActiveGaussSelection < static_cast<int>(m_sceneProps.pGaussKernels.size()))
+          ? m_sceneProps.pGaussKernels[static_cast<std::size_t>(m_editorActiveGaussSelection)]
+          : nullptr;
+  if (activeKernel) {
+    SetFloatOverride(profile.sliders, "gauss_kernel_radius", activeKernel->radius);
+    SetFloatOverride(profile.sliders, "gauss_kernel_deviation", activeKernel->sigma);
+  }
+  if (Camera* camera = m_sceneProps.GetPrimaryCamera()) {
+    SetFloatOverride(profile.sliders, "fov", Rad2Deg(camera->Fov));
+  }
+  SetFloatOverride(profile.sliders, "shadow_bias", m_sceneProps.ShadowBias);
+  SetFloatOverride(profile.sliders, "shadow_min", m_sceneProps.ShadowMin);
+  SetFloatOverride(profile.sliders, "env_factor", m_sceneProps.EnvFactor);
+  SetFloatOverride(profile.sliders, "ibl_factor", m_sceneProps.IBLFactor);
+  SetFloatOverride(profile.sliders, "material_emissive_intensity", m_sceneProps.MaterialEmissiveIntensity);
+  SetFloatOverride(profile.sliders, "material_transmission_multiplier", m_sceneProps.MaterialTransmissionMultiplier);
+  SetFloatOverride(profile.sliders, "material_refraction_strength", m_sceneProps.MaterialRefractionStrength);
+
+  SetBoolOverride(profile.checkboxes, "shadow_toggle", m_sceneProps.ToogleShadow != 0);
+  SetBoolOverride(profile.checkboxes, "ssao_toggle", m_sceneProps.ToogleSSAO != 0);
+  SetBoolOverride(profile.checkboxes, "show_wireframe", m_panels.showWireframe);
+  SetBoolOverride(profile.checkboxes, "show_skeleton", m_editorShowSkeleton);
+  SetBoolOverride(profile.checkboxes, "show_physics", m_editorShowPhysics);
+  SetBoolOverride(profile.checkboxes, "show_light_volumes", m_editorShowLightVolumes);
+  SetBoolOverride(profile.checkboxes, "debug_luminance", m_sceneProps.DebugLuminanceEnabled);
+
+  SetIntOverride(profile.selectors, "debug_render_target", m_editorDebugRTSelection);
+  SetIntOverride(profile.selectors, "cubemap", m_editorCurrentCubemapIndex);
+  if (activeKernel) {
+    SetIntOverride(profile.selectors, "gauss_kernel_sample_count", activeKernel->kernelSize);
+  }
+  SetIntOverride(profile.selectors, "active_gauss_kernel", m_editorActiveGaussSelection);
+  SetIntOverride(profile.selectors, "luminance_mode", m_sceneProps.LuminanceMode);
+
+  if (g_selectionType == 0 && g_selectedIdx >= 0 && g_selectedIdx < static_cast<int>(g_objects.size())) {
+    const SceneObject& object = g_objects[static_cast<std::size_t>(g_selectedIdx)];
+    if (t850::RenderSkinnedMesh* skinned = object.litInst.GetSkinnedMesh()) {
+      if (skinned->HasSkinData()) {
+        t850::SandboxAnimationOverrideDesc anim;
+        anim.index = g_selectedIdx;
+        anim.mesh = object.meshPath.empty() ? object.name : object.meshPath;
+        anim.anim_speed = skinned->GetAnimSpeed();
+        anim.anim_select = skinned->GetCurrentAnimSet();
+        anim.anim_mode = skinned->GetKeyframeMode() ? 1 : 0;
+        if (skinned->GetKeyframeMode()) {
+          anim.current_keyframe = skinned->GetCurrentKeyframe();
+        }
+        profile.animations.push_back(anim);
+      }
+    }
+  }
+
+  if (!m_editorCurrentCubemapPath.empty()) {
+    profile.cubemap_path = m_editorCurrentCubemapPath;
+  }
+  return profile;
+}
+
+void EditorApp::UpsertEditorSceneProfile(std::vector<t850::SandboxProfileDesc>& profiles) const {
+  t850::SandboxProfileDesc profile = BuildEditorSceneProfile();
+  auto sameTarget = [&](const t850::SandboxProfileDesc& existing) {
+    return existing.name == profile.name &&
+           existing.platform == profile.platform &&
+           existing.architecture == profile.architecture &&
+           existing.gpu_family == profile.gpu_family &&
+           existing.gpu_name_contains == profile.gpu_name_contains &&
+           existing.model.empty();
+  };
+  auto found = std::find_if(profiles.begin(), profiles.end(), sameTarget);
+  if (found != profiles.end()) {
+    *found = std::move(profile);
+  } else {
+    profiles.push_back(std::move(profile));
+  }
+}
+
+void EditorApp::DrawSelectedAnimationInspector(SceneObject& obj) {
+  t850::RenderSkinnedMesh* skinned = obj.litInst.GetSkinnedMesh();
+  if (!skinned || !skinned->HasSkinData()) {
+    return;
+  }
+
+  ImGui::SeparatorText("Animation");
+  const std::string label = "Selected mesh: " + (obj.meshPath.empty() ? obj.name : obj.meshPath);
+  ImGui::TextWrapped("%s", label.c_str());
+  const uint32_t entityId = obj.litInst.GetEntityId();
+  ImGui::PushID(static_cast<int>(entityId));
+
+  std::vector<std::string> options;
+  const int numSets = skinned->GetNumAnimSets();
+  options.reserve((std::max)(1, numSets));
+  for (int i = 0; i < numSets; ++i) {
+    if (skinned->xFile && !skinned->xFile->XMeshDataBase.empty()) {
+      const auto& animations = skinned->xFile->XMeshDataBase[0]->Animation.Animations;
+      if (i < static_cast<int>(animations.size()) && !animations[static_cast<std::size_t>(i)].Name.empty()) {
+        options.push_back(animations[static_cast<std::size_t>(i)].Name);
+        continue;
+      }
+    }
+    options.push_back("Anim " + std::to_string(i));
+  }
+  if (options.empty()) {
+    options.push_back("None");
+  }
+
+  const int currentMeshAnim = std::clamp(skinned->GetCurrentAnimSet(), 0, static_cast<int>(options.size()) - 1);
+  if (m_editorAnimationInspectorEntityId != entityId) {
+    m_editorAnimationInspectorEntityId = entityId;
+    m_editorAnimationInspectorAnimSet = currentMeshAnim;
+  }
+  int selectedAnim = std::clamp(m_editorAnimationInspectorAnimSet, 0, static_cast<int>(options.size()) - 1);
+  if (selectedAnim != currentMeshAnim && !ImGui::IsPopupOpen("Animation")) {
+    selectedAnim = currentMeshAnim;
+    m_editorAnimationInspectorAnimSet = currentMeshAnim;
+  }
+  if (ImGui::BeginCombo("Animation", options[static_cast<std::size_t>(selectedAnim)].c_str())) {
+    for (int i = 0; i < static_cast<int>(options.size()); ++i) {
+      const bool selected = i == selectedAnim;
+      if (ImGui::Selectable(options[static_cast<std::size_t>(i)].c_str(), selected)) {
+        m_editorAnimationInspectorAnimSet = i;
+        int guard = skinned->GetNumAnimSets() + 1;
+        while (skinned->GetCurrentAnimSet() != i && guard-- > 0) {
+          skinned->NextAnimation();
+        }
+      }
+      if (selected) {
+        ImGui::SetItemDefaultFocus();
+      }
+    }
+    ImGui::EndCombo();
+  }
+
+  const char* modes[] = {"Interpolation", "Keyframe"};
+  int animMode = skinned->GetKeyframeMode() ? 1 : 0;
+  if (ImGui::Combo("Anim Mode", &animMode, modes, 2)) {
+    skinned->SetKeyframeMode(animMode == 1);
+    if (animMode == 1) {
+      skinned->StepKeyframe(0);
+    }
+  }
+
+  float animSpeed = skinned->GetAnimSpeed();
+  if (ImGui::DragFloat("Anim Speed", &animSpeed, 0.05f, 0.0f, 2.0f, "%.3f")) {
+    skinned->SetAnimSpeed(animSpeed);
+  }
+
+  if (skinned->GetKeyframeMode()) {
+    int frame = skinned->GetCurrentKeyframe();
+    const int maxFrame = (std::max)(0, skinned->GetTotalKeyframes() - 1);
+    if (ImGui::SliderInt("Keyframe", &frame, 0, maxFrame)) {
+      const int delta = frame - skinned->GetCurrentKeyframe();
+      if (delta != 0) {
+        skinned->StepKeyframe(delta);
+      }
+    }
+  }
+
+  if (ImGui::Button(skinned->IsPlaying() ? "Pause Animation" : "Resume Animation")) {
+    if (skinned->IsPlaying()) skinned->PauseAnimation();
+    else skinned->PlayAnimation();
+  }
+  ImGui::PopID();
 }
 
 bool EditorApp::ExportTemporaryPlayScene(std::string& outPath) {
@@ -1725,6 +1960,7 @@ void EditorApp::DrawPlaySceneWindow() {
   const bool rootBegun = ImGui::Begin("Play Scene", &keepOpen, ImGuiWindowFlags_NoDocking);
   if (rootBegun) {
     if (ImGuiViewport* viewport = ImGui::GetWindowViewport()) {
+      ApplyNativeWindowChrome(viewport, "Play Scene");
       m_playSceneImGuiViewportId = (unsigned int)viewport->ID;
     }
     m_playSceneDockspaceId = (unsigned int)ImGui::GetID("PlaySceneDockSpace");
@@ -1945,6 +2181,252 @@ void EditorApp::SetMeshEditorCubemap(const std::string& cubemapPath) {
   if (cubemapDesc) {
     m_meshEditorCurrentCubemapIndex = EditorCubemapSelectorIndexForPath(*cubemapDesc, normalizedPath);
   }
+}
+
+void EditorApp::DrawEditorRenderingPanel() {
+  if (m_editorSceneSetup.descriptor.name.empty()) {
+    m_editorSceneSetup.Load("Scenes/Quake3Mock.json");
+  }
+
+  auto findSlider = [&](const char* name) -> const t850::SliderDesc* {
+    for (const auto& desc : m_editorSceneSetup.descriptor.sliders)
+      if (desc.name == name) return &desc;
+    return nullptr;
+  };
+  auto findCheckbox = [&](const char* name) -> const t850::CheckboxDesc* {
+    for (const auto& desc : m_editorSceneSetup.descriptor.checkboxes)
+      if (desc.name == name) return &desc;
+    return nullptr;
+  };
+  auto findSelector = [&](const char* name) -> const t850::SelectorDesc* {
+    return FindEditorSelectorDesc(m_editorSceneSetup.descriptor.selectors, name);
+  };
+  auto activeKernel = [&]() -> GaussFilter* {
+    if (m_editorActiveGaussSelection < 0 ||
+        m_editorActiveGaussSelection >= static_cast<int>(m_sceneProps.pGaussKernels.size())) {
+      return nullptr;
+    }
+    return m_sceneProps.pGaussKernels[static_cast<std::size_t>(m_editorActiveGaussSelection)];
+  };
+  auto flatRTIndex = [&](int rtHandle, int attachment) {
+    if (!pFramework || !pFramework->pVideoDriver || rtHandle < 0) return -1;
+    int flatIndex = 0;
+    auto* driver = pFramework->pVideoDriver;
+    for (int rtIndex = 0; rtIndex < static_cast<int>(driver->RTs.size()); ++rtIndex) {
+      t850::BaseRT* rt = driver->RTs[rtIndex];
+      if (!rt) continue;
+      for (int colorIndex = 0; colorIndex < static_cast<int>(rt->vColorTextures.size()); ++colorIndex) {
+        const int colorAttachment = 1 << colorIndex;
+        if (rtIndex == rtHandle && attachment == colorAttachment) return flatIndex;
+        ++flatIndex;
+      }
+      if (rt->pDepthTexture) {
+        if (rtIndex == rtHandle && attachment == t850::BaseDriver::DEPTH_ATTACHMENT) return flatIndex;
+        ++flatIndex;
+      }
+    }
+    return -1;
+  };
+  auto applyDebugSelection = [&]() {
+    switch (m_editorDebugRTSelection) {
+    case 1:  g_debugRT = flatRTIndex(g_renderGraph.GetRTHandle("GBuffer"), t850::BaseDriver::COLOR0_ATTACHMENT); break;
+    case 2:  g_debugRT = flatRTIndex(g_renderGraph.GetRTHandle("GBuffer"), t850::BaseDriver::COLOR1_ATTACHMENT); break;
+    case 3:  g_debugRT = flatRTIndex(g_renderGraph.GetRTHandle("GBuffer"), t850::BaseDriver::COLOR2_ATTACHMENT); break;
+    case 4:  g_debugRT = flatRTIndex(g_renderGraph.GetRTHandle("GBuffer"), t850::BaseDriver::COLOR3_ATTACHMENT); break;
+    case 5:  g_debugRT = flatRTIndex(g_renderGraph.GetRTHandle("GBuffer"), t850::BaseDriver::DEPTH_ATTACHMENT); break;
+    case 6:  g_debugRT = flatRTIndex(g_renderGraph.GetRTHandle("DepthPass"), t850::BaseDriver::DEPTH_ATTACHMENT); break;
+    case 7:  g_debugRT = flatRTIndex(g_renderGraph.GetRTHandle("ShadowAccum"), t850::BaseDriver::COLOR0_ATTACHMENT); break;
+    case 8:  g_debugRT = flatRTIndex(g_renderGraph.GetRTHandle("Deferred"), t850::BaseDriver::COLOR0_ATTACHMENT); break;
+    case 9:  g_debugRT = flatRTIndex(g_renderGraph.GetRTHandle("Extra16F"), t850::BaseDriver::COLOR0_ATTACHMENT); break;
+    case 10: g_debugRT = flatRTIndex(g_renderGraph.GetRTHandle("ExtraHelper"), t850::BaseDriver::COLOR0_ATTACHMENT); break;
+    case 11: g_debugRT = flatRTIndex(g_renderGraph.GetRTHandle("BloomAccum"), t850::BaseDriver::COLOR0_ATTACHMENT); break;
+    case 12: g_debugRT = flatRTIndex(g_renderGraph.GetRTHandle("AdaptedLumCurrent"), t850::BaseDriver::COLOR0_ATTACHMENT); break;
+    default: g_debugRT = -1; break;
+    }
+  };
+
+  auto drawSlider = [&](const char* name) {
+    const t850::SliderDesc* desc = findSlider(name);
+    if (!desc) return;
+    float value = desc->default_val;
+    bool valid = true;
+    GaussFilter* kernel = activeKernel();
+    if (desc->name == "exposure") value = m_sceneProps.Exposure;
+    else if (desc->name == "bloom_factor") value = m_sceneProps.BloomFactor;
+    else if (desc->name == "bloom_threshold") value = m_sceneProps.BloomThreshold;
+    else if (desc->name == "light_radius_scale") value = m_sceneProps.LightRadiusScale;
+    else if (desc->name == "light_intensity_scale") value = m_sceneProps.LightIntensityScale;
+    else if (desc->name == "lightmap_intensity") value = m_sceneProps.LightmapIntensity;
+    else if (desc->name == "tm_white_level") value = m_sceneProps.ToneMapWhiteLevel;
+    else if (desc->name == "tm_adapt_tau") value = m_sceneProps.LuminanceTau;
+    else if (desc->name == "pcf_radius") value = m_sceneProps.PCFScale;
+    else if (desc->name == "pcf_samples") value = m_sceneProps.PCFSamples;
+    else if (desc->name == "ssao_kernel_size") value = static_cast<float>(m_sceneProps.SSAOKernel.KernelSize);
+    else if (desc->name == "ssao_radius") value = m_sceneProps.SSAOKernel.Radius;
+    else if (desc->name == "gauss_kernel_radius") { if (kernel) value = kernel->radius; else valid = false; }
+    else if (desc->name == "gauss_kernel_deviation") { if (kernel) value = kernel->sigma; else valid = false; }
+    else if (desc->name == "fov") { if (Camera* cam = m_sceneProps.GetPrimaryCamera()) value = Rad2Deg(cam->Fov); else valid = false; }
+    else if (desc->name == "shadow_bias") value = m_sceneProps.ShadowBias;
+    else if (desc->name == "shadow_min") value = m_sceneProps.ShadowMin;
+    else if (desc->name == "env_factor") value = m_sceneProps.EnvFactor;
+    else if (desc->name == "ibl_factor") value = m_sceneProps.IBLFactor;
+    else if (desc->name == "material_emissive_intensity") value = m_sceneProps.MaterialEmissiveIntensity;
+    else if (desc->name == "material_transmission_multiplier") value = m_sceneProps.MaterialTransmissionMultiplier;
+    else if (desc->name == "material_refraction_strength") value = m_sceneProps.MaterialRefractionStrength;
+    else return;
+    if (!valid) return;
+    if (ImGui::DragFloat(desc->label.c_str(), &value, desc->step, desc->min_val, desc->max_val, "%.3f")) {
+      if (desc->name == "exposure") m_sceneProps.Exposure = value;
+      else if (desc->name == "bloom_factor") m_sceneProps.BloomFactor = value;
+      else if (desc->name == "bloom_threshold") m_sceneProps.BloomThreshold = value;
+      else if (desc->name == "light_radius_scale") m_sceneProps.LightRadiusScale = value;
+      else if (desc->name == "light_intensity_scale") m_sceneProps.LightIntensityScale = value;
+      else if (desc->name == "lightmap_intensity") m_sceneProps.LightmapIntensity = value;
+      else if (desc->name == "tm_white_level") m_sceneProps.ToneMapWhiteLevel = value;
+      else if (desc->name == "tm_adapt_tau") m_sceneProps.LuminanceTau = value;
+      else if (desc->name == "pcf_radius") m_sceneProps.PCFScale = value;
+      else if (desc->name == "pcf_samples") m_sceneProps.PCFSamples = value;
+      else if (desc->name == "ssao_kernel_size") { m_sceneProps.SSAOKernel.KernelSize = (int)value; m_sceneProps.SSAOKernel.Update(); }
+      else if (desc->name == "ssao_radius") { m_sceneProps.SSAOKernel.Radius = value; m_sceneProps.SSAOKernel.Update(); }
+      else if (desc->name == "gauss_kernel_radius" && kernel) { kernel->radius = value; kernel->Update(); }
+      else if (desc->name == "gauss_kernel_deviation" && kernel) { kernel->sigma = value; kernel->Update(); }
+      else if (desc->name == "fov") { if (Camera* cam = m_sceneProps.GetPrimaryCamera()) cam->SetFov(Deg2Rad(value)); }
+      else if (desc->name == "shadow_bias") m_sceneProps.ShadowBias = value;
+      else if (desc->name == "shadow_min") m_sceneProps.ShadowMin = value;
+      else if (desc->name == "env_factor") m_sceneProps.EnvFactor = value;
+      else if (desc->name == "ibl_factor") m_sceneProps.IBLFactor = value;
+      else if (desc->name == "material_emissive_intensity") m_sceneProps.MaterialEmissiveIntensity = value;
+      else if (desc->name == "material_transmission_multiplier") m_sceneProps.MaterialTransmissionMultiplier = value;
+      else if (desc->name == "material_refraction_strength") m_sceneProps.MaterialRefractionStrength = value;
+    }
+  };
+
+  auto drawCheckbox = [&](const char* name) {
+    const t850::CheckboxDesc* desc = findCheckbox(name);
+    if (!desc) return;
+    bool value = desc->default_val;
+    if (desc->name == "shadow_toggle") value = m_sceneProps.ToogleShadow != 0;
+    else if (desc->name == "ssao_toggle") value = m_sceneProps.ToogleSSAO != 0;
+    else if (desc->name == "show_wireframe") value = m_panels.showWireframe;
+    else if (desc->name == "show_skeleton") value = m_editorShowSkeleton;
+    else if (desc->name == "show_physics") value = m_editorShowPhysics;
+    else if (desc->name == "show_light_volumes") value = m_editorShowLightVolumes;
+    else if (desc->name == "debug_luminance") value = m_sceneProps.DebugLuminanceEnabled;
+    else return;
+    if (ImGui::Checkbox(desc->label.c_str(), &value)) {
+      if (desc->name == "shadow_toggle") m_sceneProps.ToogleShadow = value ? 1 : 0;
+      else if (desc->name == "ssao_toggle") m_sceneProps.ToogleSSAO = value ? 1 : 0;
+      else if (desc->name == "show_wireframe") m_panels.showWireframe = value;
+      else if (desc->name == "show_skeleton") m_editorShowSkeleton = value;
+      else if (desc->name == "show_physics") m_editorShowPhysics = value;
+      else if (desc->name == "show_light_volumes") m_editorShowLightVolumes = value;
+      else if (desc->name == "debug_luminance") {
+        m_sceneProps.DebugLuminanceEnabled = value;
+        if (!value) m_sceneProps.DebugAdaptedLuminanceValid = false;
+      }
+    }
+  };
+
+  auto drawSelector = [&](const char* name) {
+    const t850::SelectorDesc* desc = findSelector(name);
+    if (!desc) return;
+    int selected = desc->default_index;
+    if (desc->name == "debug_render_target") selected = m_editorDebugRTSelection;
+    else if (desc->name == "cubemap") selected = m_editorCurrentCubemapIndex >= 0 ? m_editorCurrentCubemapIndex : desc->default_index;
+    else if (desc->name == "gauss_kernel_sample_count") {
+      if (GaussFilter* kernel = activeKernel()) {
+        for (int i = 0; i < static_cast<int>(desc->options.size()); ++i)
+          if (std::atoi(desc->options[static_cast<std::size_t>(i)].c_str()) == kernel->kernelSize) selected = i;
+      }
+    } else if (desc->name == "active_gauss_kernel") selected = m_editorActiveGaussSelection;
+    else if (desc->name == "luminance_mode") selected = m_sceneProps.LuminanceMode;
+    else return;
+    selected = std::clamp(selected, 0, (std::max)(0, static_cast<int>(desc->options.size()) - 1));
+    if (ImGui::BeginCombo(desc->label.c_str(), desc->options[static_cast<std::size_t>(selected)].c_str())) {
+      for (int i = 0; i < static_cast<int>(desc->options.size()); ++i) {
+        const bool isSelected = selected == i;
+        if (ImGui::Selectable(desc->options[static_cast<std::size_t>(i)].c_str(), isSelected)) {
+          selected = i;
+          if (desc->name == "debug_render_target") { m_editorDebugRTSelection = selected; applyDebugSelection(); }
+          else if (desc->name == "cubemap") SetEditorCubemap(EditorCubemapPathForSelectorIndex(*desc, selected));
+          else if (desc->name == "gauss_kernel_sample_count") { if (GaussFilter* k = activeKernel()) { k->kernelSize = std::atoi(desc->options[static_cast<std::size_t>(selected)].c_str()); k->Update(); } }
+          else if (desc->name == "active_gauss_kernel") m_editorActiveGaussSelection = selected;
+          else if (desc->name == "luminance_mode") m_sceneProps.LuminanceMode = selected;
+        }
+        if (isSelected) ImGui::SetItemDefaultFocus();
+      }
+      ImGui::EndCombo();
+    }
+  };
+
+  ImGui::TextDisabled("Editor viewport uses the same deferred controls/order as Quake3Mock.");
+  ImGui::SeparatorText("Rendering");
+  drawSelector("cubemap");
+  drawSelector("active_gauss_kernel");
+  drawSelector("gauss_kernel_sample_count");
+  drawSelector("luminance_mode");
+  drawCheckbox("debug_luminance");
+  drawSelector("debug_render_target");
+  drawCheckbox("shadow_toggle");
+  drawCheckbox("ssao_toggle");
+  for (const auto& desc : m_editorSceneSetup.descriptor.sliders) {
+    if (desc.name == "anim_speed") continue;
+    drawSlider(desc.name.c_str());
+  }
+
+  ImGui::SeparatorText("Debug Views");
+  drawCheckbox("show_wireframe");
+  drawCheckbox("show_skeleton");
+  drawCheckbox("show_physics");
+  drawCheckbox("show_light_volumes");
+
+  ImGui::SeparatorText("Lights");
+  ImGui::Checkbox("Camera headlamp fallback", &m_editorHeadlampEnabled);
+  bool pointLights = m_sceneProps.PointLightsEnabled;
+  if (ImGui::Checkbox("Dynamic point lights", &pointLights)) m_sceneProps.PointLightsEnabled = pointLights;
+  bool lightVolumes = m_sceneProps.DeferredLightVolumesEnabled;
+  if (ImGui::Checkbox("Deferred light volumes", &lightVolumes)) m_sceneProps.DeferredLightVolumesEnabled = lightVolumes;
+  ImGui::TextDisabled("Lights: scene=%u packed=%u pointVolumes=%u activeTiles=%u",
+                      m_sceneProps.DebugDeferredLightsSceneTotal,
+                      m_sceneProps.DebugDeferredLightsPacked,
+                      m_sceneProps.DebugDeferredLightsPointVolumes,
+                      m_sceneProps.DebugDeferredLightActiveTiles);
+
+  ImGui::SeparatorText("Culling");
+  ImGui::Checkbox("Frustum culling", &m_sceneProps.FrustumCullingEnabled);
+  ImGui::Checkbox("Culling stats and frustum", &m_sceneProps.ShowCullingDebug);
+}
+
+void EditorApp::SetEditorCubemap(const std::string& cubemapPath) {
+  const std::string normalizedPath = NormalizeEditorResourcePath(cubemapPath);
+  if (normalizedPath.empty() || !pFramework || !pFramework->pVideoDriver) {
+    return;
+  }
+  if (g_dummyEnvMapIdx >= 0 && EditorResourcePathEquals(normalizedPath, m_editorCurrentCubemapPath)) {
+    return;
+  }
+
+  t850::BaseDriver* driver = pFramework->pVideoDriver;
+  if (g_dummyEnvMapIdx >= 0) {
+    driver->DestroyTexture(g_dummyEnvMapIdx);
+    g_dummyEnvMapIdx = -1;
+  }
+  g_dummyEnvMapIdx = driver->CreateTexture(normalizedPath);
+  if (g_dummyEnvMapIdx < 0) {
+    T8_LOG_ERROR("[T8ditor] Failed to load editor cubemap '%s'", normalizedPath.c_str());
+    m_editorCurrentCubemapPath.clear();
+    m_editorCurrentCubemapIndex = -1;
+    return;
+  }
+
+  m_editorCurrentCubemapPath = normalizedPath;
+  if (const t850::SelectorDesc* cubemapDesc =
+          FindEditorSelectorDesc(m_editorSceneSetup.descriptor.selectors, "cubemap")) {
+    m_editorCurrentCubemapIndex = EditorCubemapSelectorIndexForPath(*cubemapDesc, normalizedPath);
+  }
+  t850::EnvironmentMapSet editorEnvMaps;
+  editorEnvMaps.SetFallback(g_dummyEnvMapIdx);
+  t850::UpdateSceneIBLSettings(m_sceneProps, driver, editorEnvMaps);
 }
 
 void EditorApp::ApplyMeshEditorProfileState(SceneObject& obj, const t850::SandboxProfileDesc& state) {
@@ -4736,6 +5218,7 @@ void EditorApp::DrawRagdollEditorWindow() {
 
   if (ImGuiViewport* windowViewport = ImGui::GetWindowViewport()) {
     ImGuiViewport* mainViewport = ImGui::GetMainViewport();
+    ApplyNativeWindowChrome(windowViewport, "Ragdoll Edit");
     void* nativeHandle = NativeHandleFromImGuiViewport(windowViewport);
     m_ragdollEditorNativeHandle = nativeHandle;
 
@@ -4989,6 +5472,7 @@ void EditorApp::DrawMeshEditorWindow() {
 
   if (ImGuiViewport* windowViewport = ImGui::GetWindowViewport()) {
     ImGuiViewport* mainViewport = ImGui::GetMainViewport();
+    ApplyNativeWindowChrome(windowViewport, "Mesh Edit");
     void* nativeHandle = NativeHandleFromImGuiViewport(windowViewport);
     m_meshEditorNativeHandle = nativeHandle;
     m_meshEditorImGuiViewportId = (unsigned int)windowViewport->ID;
@@ -5259,7 +5743,12 @@ void EditorApp::CreateAssets() {
       g_dummyWhiteTex = t850::T8Device->CreateTextureFromMemory(white, 1, 1, 4, "dummyWhite");
 
       // Load environment cubemap for skybox (matID=0 in deferred shader samples texEnv)
-      g_dummyEnvMapIdx = t850::g_pBaseDriver->CreateTexture("sky/CubeMap_SkyWater.dds");
+      m_editorCurrentCubemapPath = "sky/CubeMap_SkyWater.dds";
+      if (const t850::SelectorDesc* cubemapDesc =
+              FindEditorSelectorDesc(m_editorSceneSetup.descriptor.selectors, "cubemap")) {
+        m_editorCurrentCubemapIndex = EditorCubemapSelectorIndexForPath(*cubemapDesc, m_editorCurrentCubemapPath);
+      }
+      g_dummyEnvMapIdx = t850::g_pBaseDriver->CreateTexture(m_editorCurrentCubemapPath);
       if (g_dummyEnvMapIdx >= 0) {
         g_quads[0].SetEnvironmentMap(t850::g_pBaseDriver->GetTexture(g_dummyEnvMapIdx));
         T8_LOG_INFO("[T8ditor] Environment cubemap loaded");
@@ -5600,7 +6089,39 @@ void EditorApp::CheckResize() {
   int w = 0, h = 0;
   SDL_GetWindowSizeInPixels(w32->m_pWindow, &w, &h);
   if (w > 0 && h > 0 && (w != m_lastW || h != m_lastH)) {
+    const auto now = std::chrono::steady_clock::now();
+    if (w == m_lastFailedResizeW && h == m_lastFailedResizeH && now < m_nextResizeRetryTime) {
+      return;
+    }
     if (pFramework->pVideoDriver->ResizeSwapchain(w, h)) {
+      m_lastFailedResizeW = 0;
+      m_lastFailedResizeH = 0;
+      m_nextResizeRetryTime = {};
+      g_editorResizeInputTraceFrames = 12;
+      ImGuiIO& io = ImGui::GetIO();
+      ImGuiViewport* viewport = ImGui::GetMainViewport();
+      int winX = 0, winY = 0, winW = 0, winH = 0;
+      SDL_GetWindowPosition(w32->m_pWindow, &winX, &winY);
+      SDL_GetWindowSize(w32->m_pWindow, &winW, &winH);
+      T8_LOG_TRACE("[T8ditorResizeTrace] beforeApply oldPix=(%d,%d) newPix=(%d,%d) winPos=(%d,%d) winSize=(%d,%d) ioMouse=(%.1f,%.1f) ioDisplay=(%.1f,%.1f) viewportPos=(%.1f,%.1f) viewportSize=(%.1f,%.1f) iMouse=(%d,%d)",
+                  m_lastW,
+                  m_lastH,
+                  w,
+                  h,
+                  winX,
+                  winY,
+                  winW,
+                  winH,
+                  io.MousePos.x,
+                  io.MousePos.y,
+                  io.DisplaySize.x,
+                  io.DisplaySize.y,
+                  viewport ? viewport->Pos.x : 0.0f,
+                  viewport ? viewport->Pos.y : 0.0f,
+                  viewport ? viewport->Size.x : 0.0f,
+                  viewport ? viewport->Size.y : 0.0f,
+                  IManager.mouseX,
+                  IManager.mouseY);
       m_lastW = w;
       m_lastH = h;
       m_camera.SetViewportSize(w, h);
@@ -5635,6 +6156,10 @@ void EditorApp::CheckResize() {
           g_quads[0].SetEnvironmentMap(t850::g_pBaseDriver->GetTexture(g_dummyEnvMapIdx));
         T8_LOG_INFO("[T8ditor] Render targets recreated at %dx%d", w, h);
       }
+    } else {
+      m_lastFailedResizeW = w;
+      m_lastFailedResizeH = h;
+      m_nextResizeRetryTime = now + std::chrono::milliseconds(250);
     }
   }
 #endif
@@ -5761,7 +6286,37 @@ void EditorApp::RenderLoadingProgressFrame() {
   drv->EndFrame();
 }
 
+bool EditorApp::HasHostedSceneWindowOpen() const {
+  return m_meshEditorOpen || m_meshEditorCloseRequested ||
+         m_playSceneOpen || m_playSceneCloseRequested ||
+         m_ragdollEditorOpen;
+}
+
+void EditorApp::ResetMainEditorFrameLimiter() {
+  m_mainEditorFrameLimiterActive = false;
+}
+
+void EditorApp::ThrottleMainEditorFrameIfNeeded() {
+  if (HasHostedSceneWindowOpen()) {
+    ResetMainEditorFrameLimiter();
+    return;
+  }
+
+  using Clock = std::chrono::steady_clock;
+  static constexpr auto kFrameInterval =
+      std::chrono::duration_cast<Clock::duration>(std::chrono::duration<double>(1.0 / 60.0));
+  auto now = Clock::now();
+  if (m_mainEditorFrameLimiterActive && now < m_nextMainEditorFrameTime) {
+    std::this_thread::sleep_until(m_nextMainEditorFrameTime);
+    now = Clock::now();
+  }
+  m_nextMainEditorFrameTime = now + kFrameInterval;
+  m_mainEditorFrameLimiterActive = true;
+}
+
 void EditorApp::OnUpdate() {
+  ThrottleMainEditorFrameIfNeeded();
+
   m_dtTimer.Update();
   m_dtSecs = m_dtTimer.GetDTSecs();
   if (m_firstFrame) { m_dtSecs = 1.0f / 60.0f; m_firstFrame = false; }
@@ -5998,6 +6553,47 @@ void EditorApp::OnInput() {
   const ImGuiIO& io = ImGui::GetIO();
   const bool imguiWantsMouse    = io.WantCaptureMouse;
   const bool imguiWantsKeyboard = io.WantCaptureKeyboard;
+  if (g_editorResizeInputTraceFrames > 0) {
+#ifdef OS_WINDOWS
+    auto* w32 = static_cast<t850::Win32Framework*>(pFramework);
+    int winX = 0, winY = 0, winW = 0, winH = 0, pixW = 0, pixH = 0;
+    SDL_WindowFlags flags = 0;
+    if (w32 && w32->m_pWindow) {
+      SDL_GetWindowPosition(w32->m_pWindow, &winX, &winY);
+      SDL_GetWindowSize(w32->m_pWindow, &winW, &winH);
+      SDL_GetWindowSizeInPixels(w32->m_pWindow, &pixW, &pixH);
+      flags = SDL_GetWindowFlags(w32->m_pWindow);
+    }
+    ImGuiViewport* viewport = ImGui::GetMainViewport();
+    T8_LOG_TRACE("[T8ditorInputTrace] framesLeft=%d winPos=(%d,%d) winSize=(%d,%d) pix=(%d,%d) flags=0x%llX iMouse=(%d,%d) iDelta=(%d,%d) iButtons=(%d,%d,%d) ioMouse=(%.1f,%.1f) ioDisplay=(%.1f,%.1f) viewportPos=(%.1f,%.1f) viewportSize=(%.1f,%.1f) wantMouse=%d wantKeyboard=%d",
+                g_editorResizeInputTraceFrames,
+                winX,
+                winY,
+                winW,
+                winH,
+                pixW,
+                pixH,
+                static_cast<unsigned long long>(flags),
+                IManager.mouseX,
+                IManager.mouseY,
+                IManager.xDelta,
+                IManager.yDelta,
+                IManager.MouseButtonStates[0][0] ? 1 : 0,
+                IManager.MouseButtonStates[0][1] ? 1 : 0,
+                IManager.MouseButtonStates[0][2] ? 1 : 0,
+                io.MousePos.x,
+                io.MousePos.y,
+                io.DisplaySize.x,
+                io.DisplaySize.y,
+                viewport ? viewport->Pos.x : 0.0f,
+                viewport ? viewport->Pos.y : 0.0f,
+                viewport ? viewport->Size.x : 0.0f,
+                viewport ? viewport->Size.y : 0.0f,
+                imguiWantsMouse ? 1 : 0,
+                imguiWantsKeyboard ? 1 : 0);
+#endif
+    --g_editorResizeInputTraceFrames;
+  }
 
   if (!io.WantTextInput && IManager.PressedOnceKey(T800K_ESCAPE)) {
     if (m_meshEditorOpen) {
@@ -6163,17 +6759,14 @@ void EditorApp::OnInput() {
     Camera& cam = m_camera.GetCameraMutable();
     cam.m_externalControl = false;
     cam.m_lookAtCenter = false;
-    const bool wantsFly = m_editorCameraMode == EditorCameraMode::Fly;
     t850::CameraInputState state;
     if (!io.WantTextInput) {
       state.moveForward = IManager.PressedKey(T800K_w);
       state.moveBackward = IManager.PressedKey(T800K_s);
       state.moveLeft = IManager.PressedKey(T800K_a);
       state.moveRight = IManager.PressedKey(T800K_d);
-      state.moveUp = wantsFly ? IManager.PressedKey(T800K_q) : IManager.PressedKey(T800K_SPACE);
-      state.moveDown = wantsFly ? IManager.PressedKey(T800K_e) : (IManager.PressedKey(T800K_LCTRL) || IManager.PressedKey(T800K_RCTRL));
-      state.jump = IManager.PressedKey(T800K_SPACE);
-      state.crouch = IManager.PressedKey(T800K_LCTRL) || IManager.PressedKey(T800K_RCTRL);
+      state.moveUp = IManager.PressedKey(T800K_q);
+      state.moveDown = IManager.PressedKey(T800K_e);
       state.sprint = IManager.PressedKey(T800K_LSHIFT) || IManager.PressedKey(T800K_RSHIFT);
     }
     const bool mouseLook = !imguiWantsMouse && IManager.PressedMouseButton(2);
@@ -6181,23 +6774,11 @@ void EditorApp::OnInput() {
     state.mouseDeltaX = mouseLook ? static_cast<float>(IManager.xDelta) : 0.0f;
     state.mouseDeltaY = mouseLook ? static_cast<float>(IManager.yDelta) : 0.0f;
 
-    if (wantsFly) {
-      if (m_editorCameraController.GetActiveProfileType() != t850::CameraProfileType::FreeFly) {
-        m_editorCameraController.SetActiveProfile(t850::CameraProfileType::FreeFly);
-      }
-      m_editorCameraController.HandleInput(state);
-      m_editorCameraController.Update(m_dtSecs, t850::CameraUpdateContext{});
-    } else {
-      const t850::CameraProfileType fpsProfile =
-          m_editorFpsStyle == EditorFpsStyle::Quake3 ? t850::CameraProfileType::Quake3Fps :
-          m_editorFpsStyle == EditorFpsStyle::Cod ? t850::CameraProfileType::CodFps :
-          t850::CameraProfileType::GroundedFps;
-      if (m_editorCameraController.GetActiveProfileType() != fpsProfile) {
-        m_editorCameraController.SetActiveProfile(fpsProfile);
-      }
-      m_editorCameraController.HandleInput(state);
-      m_editorCameraController.Update(m_dtSecs, t850::CameraUpdateContext{});
+    if (m_editorCameraController.GetActiveProfileType() != t850::CameraProfileType::FreeFly) {
+      m_editorCameraController.SetActiveProfile(t850::CameraProfileType::FreeFly);
     }
+    m_editorCameraController.HandleInput(state);
+    m_editorCameraController.Update(m_dtSecs, t850::CameraUpdateContext{});
   }
 
   if (orbitCameraMode && !imguiWantsKeyboard)
@@ -6779,21 +7360,25 @@ void EditorApp::OnDraw() {
       if (obj.primId < 0 || !obj.visible) continue;
       bool isSelected = (g_selectionType == 0 && i == g_selectedIdx) || g_multiSelect.count(i);
       bool showWire = m_panels.showWireframe || isSelected || obj.showWire;
-      if (!showWire) continue;
-
-      // For skinned meshes, use GPU-skinned wireframe + skeleton (same as SandBox)
       t850::RenderSkinnedMesh* skinned = nullptr;
       if (obj.litInst.pBase)
         skinned = dynamic_cast<t850::RenderSkinnedMesh*>(obj.litInst.pBase);
+      const bool showSkeleton = m_editorShowSkeleton && skinned && skinned->HasSkinData();
+      if (!showWire && !showSkeleton) continue;
 
+      // For skinned meshes, use GPU-skinned wireframe + skeleton (same as SandBox)
       if (skinned && skinned->HasSkinData()) {
         skinned->SetWireframeDepthTex(overlayOpaqueDepth);
         skinned->SetWireframeSecondaryDepthTex(overlayForwardDepth);
         skinned->SetWireframeViewport(m_lastW, m_lastH);
-        drv->SetDepthStencilState(t850::BaseDriver::NONE);
-        skinned->DrawWireframe();
-        drv->SetDepthStencilState(t850::BaseDriver::NONE);
-        skinned->DrawSkeleton();
+        if (showWire) {
+          drv->SetDepthStencilState(t850::BaseDriver::NONE);
+          skinned->DrawWireframe();
+        }
+        if (showSkeleton) {
+          drv->SetDepthStencilState(t850::BaseDriver::NONE);
+          skinned->DrawSkeleton();
+        }
         drv->SetDepthStencilState(t850::BaseDriver::DEPTH_DEFAULT);
       } else if (obj.wireframe.IsLoaded() && m_lines.IsReady()) {
         XVECTOR3 savedColor = obj.wireframe.WireColor;
@@ -6824,7 +7409,7 @@ void EditorApp::OnDraw() {
     if (m_lines.IsReady())
       m_grid.Draw(m_lines, cam.VP);
 
-    if (ShouldDrawPhysicsDebug() && m_physicsDebug.IsReady()) {
+    if ((m_editorShowPhysics || ShouldDrawPhysicsDebug()) && m_physicsDebug.IsReady()) {
       m_physicsDebug.SetViewport(m_lastW, m_lastH);
       m_physicsDebug.SetFarPlane(cam.FPlane);
       m_physicsDebug.SetDepthTexture(nullptr);
@@ -6862,21 +7447,18 @@ void EditorApp::OnDraw() {
     int addCamera = -1, addLight = -1;
     bool wantsClone = false, wantsGroup = false, wantsUngroup = false, wantsPlayScene = false;
     int toolbarCameraMode = static_cast<int>(m_editorCameraMode);
-    int toolbarFpsStyle = static_cast<int>(m_editorFpsStyle);
     int mode = ImGuiDrawToolbar((int)m_gizmo.Mode(), addCamera, addLight,
                                   wantsClone, wantsGroup, wantsUngroup, wantsPlayScene,
                                   g_selectedIdx >= 0, g_multiSelect.size() >= 2,
-                                  toolbarCameraMode, toolbarFpsStyle);
+                                  toolbarCameraMode);
     m_gizmo.SetMode((GizmoMode)mode);
-    toolbarCameraMode = std::clamp(toolbarCameraMode, 0, 2);
-    toolbarFpsStyle = std::clamp(toolbarFpsStyle, 0, 2);
+    toolbarCameraMode = std::clamp(toolbarCameraMode, 0, 1);
     const EditorCameraMode newCameraMode = static_cast<EditorCameraMode>(toolbarCameraMode);
     if (newCameraMode != m_editorCameraMode) {
       m_editorCameraMode = newCameraMode;
       m_editorCameraController.ClearInput();
       m_camera.GetCameraMutable().Velocity = XVECTOR3(0.0f, 0.0f, 0.0f, 0.0f);
     }
-    m_editorFpsStyle = static_cast<EditorFpsStyle>(toolbarFpsStyle);
 
     // Handle add camera/light from toolbar
     if (addCamera >= 0) {
@@ -7671,6 +8253,7 @@ void EditorApp::OnDraw() {
           }
 
           if (selectedIsSkinned) {
+            DrawSelectedAnimationInspector(*sel);
             DrawRagdollInspector(*sel);
           }
         }
@@ -7734,48 +8317,7 @@ void EditorApp::OnDraw() {
       ImGui::SetNextWindowSize(ImVec2(390, 560), ImGuiCond_FirstUseEver);
       if (ImGui::Begin("Rendering", &m_panels.showRendering)) {
         ImGuiClampCurrentWindowToEditorWorkArea();
-        ImGui::TextDisabled("Editor viewport uses full deferred rendering on D3D/Vulkan.");
-        ImGui::SeparatorText("Lighting");
-        ImGui::Checkbox("Camera headlamp fallback", &m_editorHeadlampEnabled);
-        bool pointLights = m_sceneProps.PointLightsEnabled;
-        if (ImGui::Checkbox("Point lights", &pointLights)) m_sceneProps.PointLightsEnabled = pointLights;
-        bool lightVolumes = m_sceneProps.DeferredLightVolumesEnabled;
-        if (ImGui::Checkbox("Tiled/deferred light volumes", &lightVolumes)) m_sceneProps.DeferredLightVolumesEnabled = lightVolumes;
-        ImGui::DragFloat("Light radius scale", &m_sceneProps.LightRadiusScale, 0.05f, 0.0f, 64.0f, "%.3f");
-        ImGui::DragFloat("Light intensity scale", &m_sceneProps.LightIntensityScale, 0.05f, 0.0f, 64.0f, "%.3f");
-        ImGui::TextDisabled("Lights: scene=%u packed=%u pointVolumes=%u activeTiles=%u",
-                            m_sceneProps.DebugDeferredLightsSceneTotal,
-                            m_sceneProps.DebugDeferredLightsPacked,
-                            m_sceneProps.DebugDeferredLightsPointVolumes,
-                            m_sceneProps.DebugDeferredLightActiveTiles);
-
-        ImGui::SeparatorText("Shadows / SSAO");
-        bool shadows = m_sceneProps.ToogleShadow != 0;
-        if (ImGui::Checkbox("Shadows", &shadows)) m_sceneProps.ToogleShadow = shadows ? 1 : 0;
-        bool ssao = m_sceneProps.ToogleSSAO != 0;
-        if (ImGui::Checkbox("SSAO", &ssao)) m_sceneProps.ToogleSSAO = ssao ? 1 : 0;
-        ImGui::DragFloat("Shadow bias", &m_sceneProps.ShadowBias, 0.0001f, 0.0f, 0.1f, "%.6f");
-        ImGui::DragFloat("Shadow min", &m_sceneProps.ShadowMin, 0.01f, 0.0f, 1.0f, "%.3f");
-        ImGui::DragFloat("PCF radius", &m_sceneProps.PCFScale, 0.05f, 0.0f, 16.0f, "%.3f");
-        ImGui::DragFloat("PCF samples", &m_sceneProps.PCFSamples, 0.25f, 0.0f, 16.0f, "%.2f");
-        int ssaoKernel = m_sceneProps.SSAOKernel.KernelSize;
-        if (ImGui::SliderInt("SSAO kernel", &ssaoKernel, 1, 64)) {
-          m_sceneProps.SSAOKernel.KernelSize = ssaoKernel;
-          m_sceneProps.SSAOKernel.Update();
-        }
-        if (ImGui::DragFloat("SSAO radius", &m_sceneProps.SSAOKernel.Radius, 0.05f, 0.0f, 16.0f, "%.3f")) {
-          m_sceneProps.SSAOKernel.Update();
-        }
-
-        ImGui::SeparatorText("HDR / Bloom / IBL");
-        ImGui::DragFloat("Exposure", &m_sceneProps.Exposure, 0.05f, -10.0f, 10.0f, "%.3f");
-        ImGui::DragFloat("Bloom factor", &m_sceneProps.BloomFactor, 0.025f, 0.0f, 4.0f, "%.3f");
-        ImGui::DragFloat("Bloom threshold", &m_sceneProps.BloomThreshold, 0.05f, 0.0f, 10.0f, "%.3f");
-        ImGui::DragFloat("Tone-map white", &m_sceneProps.ToneMapWhiteLevel, 0.1f, 0.1f, 32.0f, "%.3f");
-        ImGui::DragFloat("Luminance tau", &m_sceneProps.LuminanceTau, 0.05f, 0.0f, 10.0f, "%.3f");
-        ImGui::DragFloat("Env factor", &m_sceneProps.EnvFactor, 0.05f, 0.0f, 8.0f, "%.3f");
-        ImGui::DragFloat("IBL factor", &m_sceneProps.IBLFactor, 0.05f, 0.0f, 8.0f, "%.3f");
-        ImGui::DragFloat("IBL mip count", &m_sceneProps.IBLMipCount, 0.05f, 0.0f, 12.0f, "%.3f");
+        DrawEditorRenderingPanel();
       }
       ImGui::End();
     }

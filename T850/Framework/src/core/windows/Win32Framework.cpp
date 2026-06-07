@@ -41,6 +41,91 @@ namespace t850 {
     m_relativeMouseMode = false;
   }
 
+  void Win32Framework::ResetInputAfterWindowStateChange() {
+    if (!pBaseApp) {
+      m_absMouseBaselineValid = false;
+      return;
+    }
+
+    pBaseApp->IManager.xDelta = 0;
+    pBaseApp->IManager.yDelta = 0;
+    pBaseApp->IManager.scrollDelta = 0.0f;
+    pBaseApp->IManager.textInput.clear();
+    for (int i = 0; i < MAXMOUSEBUTTONS; ++i) {
+      pBaseApp->IManager.MouseButtonStates[0][i] = false;
+      pBaseApp->IManager.MouseButtonStates[1][i] = false;
+    }
+    if (m_relativeMouseMode) {
+      float discardX = 0.0f;
+      float discardY = 0.0f;
+      SDL_GetRelativeMouseState(&discardX, &discardY);
+    }
+    m_absMouseBaselineValid = false;
+    SDL_PumpEvents();
+  }
+
+  void Win32Framework::ResetMouseDeltaBaseline() {
+    if (pBaseApp) {
+      pBaseApp->IManager.xDelta = 0;
+      pBaseApp->IManager.yDelta = 0;
+      pBaseApp->IManager.scrollDelta = 0.0f;
+    }
+    m_absMouseBaselineValid = false;
+    if (m_relativeMouseMode) {
+      float discardX = 0.0f;
+      float discardY = 0.0f;
+      SDL_GetRelativeMouseState(&discardX, &discardY);
+    }
+  }
+
+  const char* Win32WindowEventName(Uint32 eventType) {
+    switch (eventType) {
+    case SDL_EVENT_WINDOW_FOCUS_LOST: return "FOCUS_LOST";
+    case SDL_EVENT_WINDOW_MINIMIZED: return "MINIMIZED";
+    case SDL_EVENT_WINDOW_HIDDEN: return "HIDDEN";
+    case SDL_EVENT_WINDOW_FOCUS_GAINED: return "FOCUS_GAINED";
+    case SDL_EVENT_WINDOW_RESTORED: return "RESTORED";
+    case SDL_EVENT_WINDOW_SHOWN: return "SHOWN";
+    case SDL_EVENT_WINDOW_MAXIMIZED: return "MAXIMIZED";
+    case SDL_EVENT_WINDOW_RESIZED: return "RESIZED";
+    case SDL_EVENT_WINDOW_PIXEL_SIZE_CHANGED: return "PIXEL_SIZE_CHANGED";
+    default: return "WINDOW_EVENT";
+    }
+  }
+
+  void Win32Framework::TraceWindowEvent(const SDL_Event& event) {
+      if (!m_pWindow) {
+        return;
+      }
+      int wx = 0, wy = 0, ww = 0, wh = 0, pw = 0, ph = 0;
+      SDL_GetWindowPosition(m_pWindow, &wx, &wy);
+      SDL_GetWindowSize(m_pWindow, &ww, &wh);
+      SDL_GetWindowSizeInPixels(m_pWindow, &pw, &ph);
+      SDL_WindowFlags flags = SDL_GetWindowFlags(m_pWindow);
+      float gx = 0.0f, gy = 0.0f, lx = 0.0f, ly = 0.0f;
+      SDL_MouseButtonFlags globalButtons = SDL_GetGlobalMouseState(&gx, &gy);
+      SDL_MouseButtonFlags localButtons = SDL_GetMouseState(&lx, &ly);
+      T8_LOG_TRACE("[Win32WindowEvent] type=%s data=(%d,%d) winPos=(%d,%d) winSize=(%d,%d) pix=(%d,%d) flags=0x%llX globalMouse=(%.1f,%.1f) localMouse=(%.1f,%.1f) buttons=(0x%X,0x%X) confined=%d relative=%d",
+                  Win32WindowEventName(event.type),
+                  event.window.data1,
+                  event.window.data2,
+                  wx,
+                  wy,
+                  ww,
+                  wh,
+                  pw,
+                  ph,
+                  static_cast<unsigned long long>(flags),
+                  gx,
+                  gy,
+                  lx,
+                  ly,
+                  static_cast<unsigned int>(globalButtons),
+                  static_cast<unsigned int>(localButtons),
+                  m_cursorConfined ? 1 : 0,
+                  m_relativeMouseMode ? 1 : 0);
+  }
+
   void Win32Framework::UpdateMouseMode() {
     if (!m_pWindow) {
       ReleaseMouseMode();
@@ -201,13 +286,23 @@ namespace t850 {
       case SDL_EVENT_WINDOW_FOCUS_LOST:
       case SDL_EVENT_WINDOW_MINIMIZED:
       case SDL_EVENT_WINDOW_HIDDEN: {
+        TraceWindowEvent(evento);
         ReleaseMouseMode();
       } break;
 
       case SDL_EVENT_WINDOW_FOCUS_GAINED:
       case SDL_EVENT_WINDOW_RESTORED:
       case SDL_EVENT_WINDOW_SHOWN: {
+        TraceWindowEvent(evento);
+        ResetInputAfterWindowStateChange();
         UpdateMouseMode();
+      } break;
+
+      case SDL_EVENT_WINDOW_MAXIMIZED:
+      case SDL_EVENT_WINDOW_RESIZED:
+      case SDL_EVENT_WINDOW_PIXEL_SIZE_CHANGED: {
+        TraceWindowEvent(evento);
+        ResetMouseDeltaBaseline();
       } break;
 
       case SDL_EVENT_MOUSE_BUTTON_DOWN: {
@@ -238,9 +333,6 @@ namespace t850 {
       }
     }
     UpdateMouseMode();
-    static int xDelta = 0;
-    static int yDelta = 0;
-    static bool firstCall = true;
     int x = 0, y = 0;
     float relativeX = 0.0f;
     float relativeY = 0.0f;
@@ -275,20 +367,23 @@ namespace t850 {
                      relativeY,
                      pBaseApp->IManager.xDelta,
                      pBaseApp->IManager.yDelta);
-      xDelta = x;
-      yDelta = y;
-      firstCall = false;
+      m_lastAbsMouseX = x;
+      m_lastAbsMouseY = y;
+      m_absMouseBaselineValid = true;
       return;
     }
 
-    if (firstCall) {
-      firstCall = false;
-      xDelta = x;
-      yDelta = y;
+    if (!m_absMouseBaselineValid) {
+      m_absMouseBaselineValid = true;
+      m_lastAbsMouseX = x;
+      m_lastAbsMouseY = y;
+      pBaseApp->IManager.xDelta = 0;
+      pBaseApp->IManager.yDelta = 0;
+      return;
     }
 
-    xDelta = x - xDelta;
-    yDelta = y - yDelta;
+    int xDelta = x - m_lastAbsMouseX;
+    int yDelta = y - m_lastAbsMouseY;
 
     pBaseApp->IManager.xDelta = xDelta;
     pBaseApp->IManager.yDelta = yDelta;
@@ -302,8 +397,8 @@ namespace t850 {
                    m_cursorConfined ? 1 : 0,
                    m_relativeMouseMode ? 1 : 0);
 
-    xDelta = x;
-    yDelta = y;
+    m_lastAbsMouseX = x;
+    m_lastAbsMouseY = y;
   }
 
   void Win32Framework::ResetApplication() {

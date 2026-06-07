@@ -36,6 +36,7 @@
 #include <scene/PrimitiveInstance.h>
 #include <scene/RenderResourceRegistry.h>
 #include <scene/RenderGraph.h>
+#include <scene/RenderSkinnedMesh.h>
 #include <scene/RenderViewport.h>
 #include <scene/SceneSetup.h>
 #include <scene/SceneProp.h>
@@ -49,6 +50,7 @@
 
 #include <string>
 #include <memory>
+#include <chrono>
 
 #include "EditorCamera.h"
 #include "EditorLineRenderer.h"
@@ -137,14 +139,7 @@ namespace t8ditor {
 
   enum class EditorCameraMode : int {
     Orbit = 0,
-    Fly = 1,
-    Fps = 2
-  };
-
-  enum class EditorFpsStyle : int {
-    Default = 0,
-    Quake3 = 1,
-    Cod = 2
+    Fly = 1
   };
 
   class EditorApp : public t850::AppBase {
@@ -218,6 +213,8 @@ namespace t8ditor {
     void DrawEditorFrozenFrame(t850::BaseDriver* driver);
     SceneFile BuildEditorSceneSnapshot(const std::string& scenePath);
     bool SaveEditorSceneSnapshot(const std::string& path, bool updateLoadedScene);
+    t850::SandboxProfileDesc BuildEditorSceneProfile() const;
+    void UpsertEditorSceneProfile(std::vector<t850::SandboxProfileDesc>& profiles) const;
     bool ExportTemporaryPlayScene(std::string& outPath);
     void RestoreEditorStateAfterPlay();
     void OpenPlayScene();
@@ -229,6 +226,13 @@ namespace t8ditor {
     bool EnsurePlaySceneRuntimeLoaded();
     void FrameSelectedEntity();
     void RenderLoadingProgressFrame();
+    t850::RenderSkinnedMesh* GetSelectedSkinnedMesh() const;
+    void DrawSelectedAnimationInspector(struct SceneObject& obj);
+    void DrawEditorRenderingPanel();
+    void SetEditorCubemap(const std::string& cubemapPath);
+    bool HasHostedSceneWindowOpen() const;
+    void ResetMainEditorFrameLimiter();
+    void ThrottleMainEditorFrameIfNeeded();
 
     Timer m_dtTimer;
     float m_dtSecs   = 0.0f;
@@ -241,7 +245,6 @@ namespace t8ditor {
     EditorMesh          m_mesh;      // wireframe overlay (kept for toggle)
     t850::CameraController m_editorCameraController;
     EditorCameraMode m_editorCameraMode = EditorCameraMode::Orbit;
-    EditorFpsStyle m_editorFpsStyle = EditorFpsStyle::Default;
 
     // Lit/textured rendering via the Framework pipeline
     SceneProps            m_sceneProps;
@@ -258,9 +261,23 @@ namespace t8ditor {
     t850::JoltPhysicsSystem m_physics;
     t850::PhysicsDebugRenderer m_physicsDebug;
     bool m_editorHeadlampEnabled = false;
+    bool m_editorShowSkeleton = false;
+    bool m_editorShowPhysics = false;
+    bool m_editorShowLightVolumes = false;
+    int m_editorDebugRTSelection = 0;
+    int m_editorActiveGaussSelection = 1;
+    int m_editorCurrentCubemapIndex = -1;
+    std::string m_editorCurrentCubemapPath;
+    uint32_t m_editorAnimationInspectorEntityId = 0;
+    int m_editorAnimationInspectorAnimSet = -1;
 
     bool m_assetsCreated = false;
     bool m_imguiReady   = false;
+    bool m_mainEditorFrameLimiterActive = false;
+    std::chrono::steady_clock::time_point m_nextMainEditorFrameTime{};
+    int  m_lastFailedResizeW = 0;
+    int  m_lastFailedResizeH = 0;
+    std::chrono::steady_clock::time_point m_nextResizeRetryTime{};
     int  m_editorFrozenFrameRT = -1;
     int  m_editorFrozenFrameW = 0;
     int  m_editorFrozenFrameH = 0;

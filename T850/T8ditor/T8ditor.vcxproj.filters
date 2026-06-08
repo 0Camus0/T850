@@ -45,6 +45,9 @@
     <ClCompile Include="..\DayScene\Quake3Mock.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
+    <ClCompile Include="..\DayScene\Quake3Jolt.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="EditorApp.h">
@@ -72,6 +75,9 @@
       <Filter>Header Files</Filter>
     </ClInclude>
     <ClInclude Include="..\DayScene\Quake3Mock.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="..\DayScene\Quake3Jolt.h">
       <Filter>Header Files</Filter>
     </ClInclude>
     <ClInclude Include="..\DayScene\SandboxRenderGraphUtils.h">

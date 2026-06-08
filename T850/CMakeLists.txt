@@ -157,7 +157,7 @@ function(t850_ensure_vcpkg)
 
 	message(STATUS "Installing vcpkg packages for ${T850_ARCH}: ${T850_VCPKG_PACKAGE_SPECS}")
 	t850_execute_process("vcpkg install"
-		COMMAND ${T850_VCPKG_EXE} install --recurse ${T850_VCPKG_PACKAGE_SPECS}
+		COMMAND ${T850_VCPKG_EXE} install --recurse --overlay-ports=${T850_SOURCE_DIR}/ports ${T850_VCPKG_PACKAGE_SPECS}
 		WORKING_DIRECTORY ${T850_VCPKG_SOURCE_DIR})
 endfunction()
 

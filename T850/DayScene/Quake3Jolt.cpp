@@ -169,67 +169,16 @@ namespace {
     HashNavCacheValue(hash, settings.offMeshLinkValidationKey);
   }
 
-  void HashQ3JumpPads(uint64_t& hash, const t850::Q3BspCollisionWorld* q3CollisionWorld) {
-    const uint32_t hasQ3Collision = q3CollisionWorld && q3CollisionWorld->IsLoaded() ? 1u : 0u;
-    HashNavCacheValue(hash, hasQ3Collision);
-    if (!hasQ3Collision) {
-      return;
-    }
-
-    HashNavCacheFileSignature(hash, q3CollisionWorld->GetResourcePath());
-    const std::vector<t850::Q3BspCollisionWorld::JumpPad>& jumpPads = q3CollisionWorld->GetJumpPads();
-    const uint64_t jumpPadCount = static_cast<uint64_t>(jumpPads.size());
-    HashNavCacheValue(hash, jumpPadCount);
-    for (const t850::Q3BspCollisionWorld::JumpPad& jumpPad : jumpPads) {
-      HashNavCacheValue(hash, jumpPad.entityId);
-      HashNavCacheValue(hash, jumpPad.mins.x);
-      HashNavCacheValue(hash, jumpPad.mins.y);
-      HashNavCacheValue(hash, jumpPad.mins.z);
-      HashNavCacheValue(hash, jumpPad.maxs.x);
-      HashNavCacheValue(hash, jumpPad.maxs.y);
-      HashNavCacheValue(hash, jumpPad.maxs.z);
-      HashNavCacheValue(hash, jumpPad.hasTargetPosition);
-      HashNavCacheValue(hash, jumpPad.targetPosition.x);
-      HashNavCacheValue(hash, jumpPad.targetPosition.y);
-      HashNavCacheValue(hash, jumpPad.targetPosition.z);
-      HashNavCacheValue(hash, jumpPad.velocity.x);
-      HashNavCacheValue(hash, jumpPad.velocity.y);
-      HashNavCacheValue(hash, jumpPad.velocity.z);
-    }
-  }
-
-  uint64_t ComputeQ3NavLinkValidationKey(const t850::Q3BspCollisionWorld* q3CollisionWorld) {
-    if (!q3CollisionWorld || !q3CollisionWorld->IsLoaded()) {
-      return 0;
-    }
-
-    uint64_t hash = 0xcbf29ce484222325ull;
-    constexpr uint32_t kQ3NavLinkValidationVersion = 7;
-    HashNavCacheValue(hash, kQ3NavLinkValidationVersion);
-    HashNavCacheFileSignature(hash, q3CollisionWorld->GetResourcePath());
-    const uint64_t brushCount = static_cast<uint64_t>(q3CollisionWorld->GetBrushCount());
-    const uint64_t patchFacetCount = static_cast<uint64_t>(q3CollisionWorld->GetPatchFacetCount());
-    const uint64_t jumpPadCount = static_cast<uint64_t>(q3CollisionWorld->GetJumpPadCount());
-    const uint64_t reachabilityCount = static_cast<uint64_t>(q3CollisionWorld->GetReachabilityCount());
-    HashNavCacheValue(hash, brushCount);
-    HashNavCacheValue(hash, patchFacetCount);
-    HashNavCacheValue(hash, jumpPadCount);
-    HashNavCacheValue(hash, reachabilityCount);
-    return hash;
-  }
-
   uint64_t ComputeSandboxNavMeshCacheKey(const PrimitiveInst* instances,
                                          int instanceCount,
                                          const std::vector<std::string>& meshPaths,
                                          const std::string& scenePath,
-                                         const t850::navigation::NavMeshBuildSettings& settings,
-                                         const t850::Q3BspCollisionWorld* q3CollisionWorld) {
+                                         const t850::navigation::NavMeshBuildSettings& settings) {
     uint64_t hash = 0xcbf29ce484222325ull;
     constexpr uint32_t kSandboxNavCacheVersion = 3;
     HashNavCacheValue(hash, kSandboxNavCacheVersion);
     HashNavCacheFileSignature(hash, scenePath);
     HashNavCacheSettings(hash, settings);
-    HashQ3JumpPads(hash, q3CollisionWorld);
     int includedSources = 0;
     for (int meshIndex = 0; meshIndex < instanceCount; ++meshIndex) {
       const PrimitiveInst& instance = instances[meshIndex];
@@ -374,72 +323,6 @@ namespace {
     return true;
   }
 
-  bool SimulateQ3JumpPadLanding(const t850::Q3BspCollisionWorld& collisionWorld,
-                                const XVECTOR3& source,
-                                const XVECTOR3& initialVelocity,
-                                XVECTOR3& outLanding) {
-    const t850::KinematicCharacterSettings q3Settings = t850::MakeQuake3CharacterSettings();
-    const XVECTOR3 halfExtents(
-        q3Settings.capsuleRadius,
-        q3Settings.capsuleHalfHeight + q3Settings.capsuleRadius,
-        q3Settings.capsuleRadius,
-        0.0f);
-
-    XVECTOR3 position = source;
-    position.w = 1.0f;
-    XVECTOR3 velocity = initialVelocity;
-    velocity.w = 0.0f;
-
-    constexpr float kStepSeconds = 1.0f / 60.0f;
-    constexpr float kMaxSimSeconds = 6.0f;
-    constexpr float kMinAirSeconds = 0.08f;
-    constexpr float kMinWalkNormalY = 0.62f;
-    const int maxSteps = static_cast<int>(kMaxSimSeconds / kStepSeconds);
-
-    for (int stepIndex = 0; stepIndex < maxSteps; ++stepIndex) {
-      const float elapsed = static_cast<float>(stepIndex) * kStepSeconds;
-      XVECTOR3 nextVelocity = velocity;
-      nextVelocity.y -= q3Settings.gravity * kStepSeconds;
-
-      XVECTOR3 displacement = (velocity + nextVelocity) * (0.5f * kStepSeconds);
-      displacement.w = 0.0f;
-      if (displacement.Length() <= 0.000001f) {
-        velocity = nextVelocity;
-        continue;
-      }
-
-      t850::CharacterBoxSweep sweep;
-      sweep.startCenter = position;
-      sweep.displacement = displacement;
-      sweep.halfExtents = halfExtents;
-      t850::CharacterCollisionHit hit;
-      if (collisionWorld.SweepBox(sweep, hit) && hit.hit) {
-        position += displacement * (std::max)(0.0f, (std::min)(1.0f, hit.fraction));
-        position.w = 1.0f;
-        if (elapsed >= kMinAirSeconds && hit.normal.y >= kMinWalkNormalY) {
-          outLanding = position;
-          return true;
-        }
-
-        const float intoNormal =
-            velocity.x * hit.normal.x +
-            velocity.y * hit.normal.y +
-            velocity.z * hit.normal.z;
-        velocity = nextVelocity - hit.normal * intoNormal;
-        velocity.w = 0.0f;
-        position += hit.normal * 0.01f;
-        position.w = 1.0f;
-        continue;
-      }
-
-      position += displacement;
-      position.w = 1.0f;
-      velocity = nextVelocity;
-    }
-
-    return false;
-  }
-
   float Q3CharacterGroundOffsetY(const t850::KinematicCharacterSettings& settings) {
     return settings.capsuleHalfHeight + settings.capsuleRadius;
   }
@@ -532,326 +415,6 @@ namespace {
     input.jump = jump;
     input.sprint = false;
     return input;
-  }
-
-  bool SimulateQ3TraversalLinkLanding(const t850::Q3BspCollisionWorld& collisionWorld,
-                                      const t850::navigation::NavOffMeshLink& link,
-                                      bool jump,
-                                      XVECTOR3& outLanding) {
-    const t850::KinematicCharacterSettings q3Settings = t850::MakeQuake3CharacterSettings();
-    XVECTOR3 horizontal = link.end - link.start;
-    horizontal.y = 0.0f;
-    horizontal.w = 0.0f;
-    const float horizontalDistance = horizontal.Length();
-    if (horizontalDistance <= 0.10f) {
-      return false;
-    }
-    horizontal /= horizontalDistance;
-
-    XVECTOR3 position = Q3CenterFromGroundPoint(link.start, q3Settings);
-    XVECTOR3 velocity = horizontal * q3Settings.walkSpeed;
-    velocity.y = jump ? q3Settings.jumpSpeed : 0.0f;
-    velocity.w = 0.0f;
-
-    const XVECTOR3 halfExtents(
-        q3Settings.capsuleRadius,
-        q3Settings.capsuleHalfHeight + q3Settings.capsuleRadius,
-        q3Settings.capsuleRadius,
-        0.0f);
-
-    constexpr float kStepSeconds = 1.0f / 60.0f;
-    constexpr float kMaxSimSeconds = 3.0f;
-    constexpr float kMinAirSeconds = 0.10f;
-    constexpr float kMinWalkNormalY = 0.62f;
-    const float landingTolerance = (std::max)(1.0f, link.radius * 2.0f);
-    const float landingToleranceSq = landingTolerance * landingTolerance;
-    const int maxSteps = static_cast<int>(kMaxSimSeconds / kStepSeconds);
-
-    for (int stepIndex = 0; stepIndex < maxSteps; ++stepIndex) {
-      const float elapsed = static_cast<float>(stepIndex) * kStepSeconds;
-      XVECTOR3 nextVelocity = velocity;
-      nextVelocity.y -= q3Settings.gravity * kStepSeconds;
-
-      XVECTOR3 displacement = (velocity + nextVelocity) * (0.5f * kStepSeconds);
-      displacement.w = 0.0f;
-      if (displacement.Length() <= 0.000001f) {
-        velocity = nextVelocity;
-        continue;
-      }
-
-      t850::CharacterBoxSweep sweep;
-      sweep.startCenter = position;
-      sweep.displacement = displacement;
-      sweep.halfExtents = halfExtents;
-      t850::CharacterCollisionHit hit;
-      if (collisionWorld.SweepBox(sweep, hit) && hit.hit) {
-        position += displacement * (std::max)(0.0f, (std::min)(1.0f, hit.fraction));
-        position.w = 1.0f;
-        if (elapsed >= kMinAirSeconds && nextVelocity.y <= 0.0f && hit.normal.y >= kMinWalkNormalY) {
-          const XVECTOR3 landing = Q3GroundPointFromCenter(position, q3Settings);
-          if (HorizontalDistanceSq3(landing, link.end) <= landingToleranceSq &&
-              std::fabs(landing.y - link.end.y) <= 1.25f) {
-            outLanding = landing;
-            return true;
-          }
-        }
-        return false;
-      }
-
-      position += displacement;
-      position.w = 1.0f;
-      velocity = nextVelocity;
-    }
-
-    return false;
-  }
-
-  bool ValidateQ3NavLinkSegment(const t850::Q3BspCollisionWorld& collisionWorld,
-                                const t850::navigation::NavOffMeshLink& link) {
-    if (!std::isfinite(link.start.x) || !std::isfinite(link.start.y) || !std::isfinite(link.start.z) ||
-        !std::isfinite(link.end.x) || !std::isfinite(link.end.y) || !std::isfinite(link.end.z)) {
-      return false;
-    }
-
-    XVECTOR3 delta = link.end - link.start;
-    delta.w = 0.0f;
-    const float length = delta.Length();
-    if (length <= 0.05f) {
-      return false;
-    }
-
-    XVECTOR3 horizontalDir(delta.x, 0.0f, delta.z, 0.0f);
-    if (horizontalDir.Length() > 0.0001f) {
-      horizontalDir.Normalize();
-    } else {
-      horizontalDir = XVECTOR3(0.0f, 0.0f, 0.0f, 0.0f);
-    }
-
-    const float endpointInset = (std::min)(0.25f, length * 0.10f);
-    const float radius = (std::max)(0.08f, (std::min)(0.28f, link.radius * 0.35f));
-    const float verticalHalfExtent = (std::max)(0.05f, (std::min)(0.14f, radius * 0.5f));
-    const float lift = (std::max)(0.30f, verticalHalfExtent + 0.18f);
-
-    XVECTOR3 start = link.start + horizontalDir * endpointInset;
-    XVECTOR3 end = link.end - horizontalDir * endpointInset;
-    start.y += lift;
-    end.y += lift;
-    start.w = 1.0f;
-    end.w = 1.0f;
-
-    t850::CharacterBoxSweep sweep;
-    sweep.startCenter = start;
-    sweep.displacement = end - start;
-    sweep.displacement.w = 0.0f;
-    sweep.halfExtents = XVECTOR3(radius, verticalHalfExtent, radius, 0.0f);
-
-    t850::CharacterCollisionHit hit;
-    if (!collisionWorld.SweepBox(sweep, hit) || !hit.hit) {
-      return true;
-    }
-    return hit.fraction >= 0.985f;
-  }
-
-  bool ValidateQ3HybridJumpIntentLink(const t850::Q3BspCollisionWorld& collisionWorld,
-                                      const t850::navigation::NavOffMeshLink& link) {
-    const t850::KinematicCharacterSettings q3Settings = t850::MakeQuake3CharacterSettings();
-    XVECTOR3 delta = link.end - link.start;
-    delta.y = 0.0f;
-    delta.w = 0.0f;
-    const float horizontalDistance = delta.Length();
-    if (horizontalDistance < 1.25f) {
-      return false;
-    }
-
-    const float verticalDelta = link.end.y - link.start.y;
-    if (verticalDelta > q3Settings.stepHeight * 0.75f) {
-      return false;
-    }
-    if (verticalDelta > -0.20f && horizontalDistance < 2.50f) {
-      return false;
-    }
-
-    delta /= horizontalDistance;
-
-    const XVECTOR3 halfExtents(
-        q3Settings.capsuleRadius * 0.85f,
-        q3Settings.capsuleHalfHeight + q3Settings.capsuleRadius * 0.85f,
-        q3Settings.capsuleRadius * 0.85f,
-        0.0f);
-    t850::CharacterBoxSweep corridorSweep;
-    corridorSweep.startCenter = Q3CenterFromGroundPoint(link.start, q3Settings);
-    corridorSweep.startCenter.y += 0.08f;
-    corridorSweep.displacement = delta * (std::min)(2.0f, horizontalDistance * 0.45f);
-    corridorSweep.displacement.w = 0.0f;
-    corridorSweep.halfExtents = halfExtents;
-
-    t850::CharacterCollisionHit corridorHit;
-    if (collisionWorld.SweepBox(corridorSweep, corridorHit) &&
-        corridorHit.hit &&
-        corridorHit.fraction < 0.95f &&
-        corridorHit.normal.y < q3Settings.minWalkNormalY) {
-      return false;
-    }
-
-    const XVECTOR3 probeHalfExtents(
-        q3Settings.capsuleRadius * 0.45f,
-        0.05f,
-        q3Settings.capsuleRadius * 0.45f,
-        0.0f);
-    t850::CharacterBoxSweep supportSweep;
-    supportSweep.startCenter = link.start + delta * (q3Settings.capsuleRadius + 0.45f);
-    supportSweep.startCenter.y += 0.35f;
-    supportSweep.startCenter.w = 1.0f;
-    supportSweep.displacement = XVECTOR3(0.0f, -1.25f, 0.0f, 0.0f);
-    supportSweep.halfExtents = probeHalfExtents;
-
-    t850::CharacterCollisionHit supportHit;
-    if (collisionWorld.SweepBox(supportSweep, supportHit) &&
-        supportHit.hit &&
-        supportHit.normal.y >= q3Settings.minWalkNormalY) {
-      const float supportGroundY = supportHit.position.y - probeHalfExtents.y;
-      const float dropFromStart = link.start.y - supportGroundY;
-      if (dropFromStart < q3Settings.stepHeight * 0.75f) {
-        return false;
-      }
-    }
-
-    return true;
-  }
-
-  bool ValidateQ3NavOffMeshLink(const t850::Q3BspCollisionWorld& collisionWorld,
-                                const t850::navigation::NavOffMeshLink& link) {
-    if (link.type == t850::navigation::NavTraversalType::Walk ||
-        link.type == t850::navigation::NavTraversalType::JumpPad) {
-      return true;
-    }
-    if (link.type == t850::navigation::NavTraversalType::JumpIntent) {
-      return ValidateQ3HybridJumpIntentLink(collisionWorld, link);
-    }
-    if (link.type == t850::navigation::NavTraversalType::Jump) {
-      XVECTOR3 landing;
-      return SimulateQ3TraversalLinkLanding(collisionWorld, link, true, landing);
-    }
-    if (link.type == t850::navigation::NavTraversalType::Drop) {
-      XVECTOR3 landing;
-      return SimulateQ3TraversalLinkLanding(collisionWorld, link, false, landing);
-    }
-    return ValidateQ3NavLinkSegment(collisionWorld, link);
-  }
-
-  std::vector<t850::navigation::NavOffMeshLink> BuildQ3JumpPadNavLinks(const t850::Q3BspCollisionWorld* q3CollisionWorld) {
-    std::vector<t850::navigation::NavOffMeshLink> links;
-    if (!q3CollisionWorld || !q3CollisionWorld->IsLoaded()) {
-      return links;
-    }
-
-    const std::vector<t850::Q3BspCollisionWorld::JumpPad>& jumpPads = q3CollisionWorld->GetJumpPads();
-    links.reserve(jumpPads.size());
-    for (const t850::Q3BspCollisionWorld::JumpPad& jumpPad : jumpPads) {
-      XVECTOR3 source(
-          (jumpPad.mins.x + jumpPad.maxs.x) * 0.5f,
-          (jumpPad.mins.y + jumpPad.maxs.y) * 0.5f,
-          (jumpPad.mins.z + jumpPad.maxs.z) * 0.5f,
-          1.0f);
-      XVECTOR3 landing = jumpPad.targetPosition;
-      const bool hasTargetPosition =
-          jumpPad.hasTargetPosition &&
-          std::isfinite(landing.x) &&
-          std::isfinite(landing.y) &&
-          std::isfinite(landing.z) &&
-          DistanceSquared(landing, source) > 0.25f;
-      if (!hasTargetPosition &&
-          !SimulateQ3JumpPadLanding(*q3CollisionWorld, source, jumpPad.velocity, landing)) {
-        T8_LOG_ERROR("[Navigation] Q3 jump pad %u did not produce a walkable landing link",
-                     jumpPad.entityId);
-        continue;
-      }
-
-      t850::navigation::NavOffMeshLink link;
-      link.start = source;
-      link.end = landing;
-      link.radius = 1.0f;
-      link.bidirectional = false;
-      link.type = t850::navigation::NavTraversalType::JumpPad;
-      link.userId = jumpPad.entityId;
-      links.push_back(link);
-    }
-    return links;
-  }
-
-  t850::navigation::NavTraversalType Q3ReachabilityTravelTypeToNavTraversal(const std::string& travelType) {
-    if (travelType == "walk_off_ledge") {
-      return t850::navigation::NavTraversalType::Drop;
-    }
-    if (travelType == "jump" || travelType == "barrier_jump") {
-      return t850::navigation::NavTraversalType::Jump;
-    }
-    if (travelType == "jump_pad") {
-      return t850::navigation::NavTraversalType::JumpPad;
-    }
-    return t850::navigation::NavTraversalType::Walk;
-  }
-
-  std::vector<t850::navigation::NavOffMeshLink> BuildQ3AasReachabilityNavLinks(
-      const t850::Q3BspCollisionWorld* q3CollisionWorld) {
-    std::vector<t850::navigation::NavOffMeshLink> links;
-    if (!q3CollisionWorld || !q3CollisionWorld->IsLoaded()) {
-      return links;
-    }
-
-    const std::vector<t850::Q3BspCollisionWorld::Reachability>& reachabilities =
-        q3CollisionWorld->GetReachabilities();
-    links.reserve(reachabilities.size());
-    int dropCount = 0;
-    int jumpCount = 0;
-    int jumpPadCount = 0;
-    int ignoredCount = 0;
-    for (const t850::Q3BspCollisionWorld::Reachability& reachability : reachabilities) {
-      const t850::navigation::NavTraversalType traversalType =
-          Q3ReachabilityTravelTypeToNavTraversal(reachability.travelType);
-      if (traversalType == t850::navigation::NavTraversalType::Walk) {
-        ++ignoredCount;
-        continue;
-      }
-      if (!std::isfinite(reachability.start.x) ||
-          !std::isfinite(reachability.start.y) ||
-          !std::isfinite(reachability.start.z) ||
-          !std::isfinite(reachability.end.x) ||
-          !std::isfinite(reachability.end.y) ||
-          !std::isfinite(reachability.end.z) ||
-          DistanceSquared(reachability.start, reachability.end) <= 0.01f) {
-        ++ignoredCount;
-        continue;
-      }
-
-      t850::navigation::NavOffMeshLink link;
-      link.start = reachability.start;
-      link.end = reachability.end;
-      link.radius = traversalType == t850::navigation::NavTraversalType::JumpPad ? 1.0f : 0.75f;
-      link.bidirectional = false;
-      link.type = traversalType;
-      link.userId = reachability.travelTypeId;
-      links.push_back(link);
-
-      if (traversalType == t850::navigation::NavTraversalType::Drop) {
-        ++dropCount;
-      } else if (traversalType == t850::navigation::NavTraversalType::Jump) {
-        ++jumpCount;
-      } else if (traversalType == t850::navigation::NavTraversalType::JumpPad) {
-        ++jumpPadCount;
-      }
-    }
-
-    if (!reachabilities.empty()) {
-      T8_LOG_INFO("[Navigation] Q3 AAS reachability links prepared: total=%zu used=%zu drop=%d jump=%d jumpPad=%d ignored=%d",
-                  reachabilities.size(),
-                  links.size(),
-                  dropCount,
-                  jumpCount,
-                  jumpPadCount,
-                  ignoredCount);
-    }
-    return links;
   }
 
   struct SandboxConsoleLine {
@@ -1180,86 +743,11 @@ namespace {
     return path;
   }
 
-  std::string InferQ3CollisionResourcePath(const std::string& scenePath) {
-    std::string normalized = NormalizeSceneResourcePath(scenePath);
-    std::string lower = normalized;
-    std::transform(lower.begin(), lower.end(), lower.begin(), [](unsigned char c) {
-      return static_cast<char>(std::tolower(c));
-    });
-
-    const std::string q3Marker = "scenes/q3/";
-    const std::string sceneExt = ".t8scene";
-    const std::size_t q3Offset = lower.rfind(q3Marker);
-    if (q3Offset == std::string::npos ||
-        lower.size() < sceneExt.size() ||
-        lower.substr(lower.size() - sceneExt.size()) != sceneExt) {
-      return {};
-    }
-
-    std::string resourcePath = normalized.substr(q3Offset);
-    resourcePath.resize(resourcePath.size() - sceneExt.size());
-    resourcePath += ".t8q3clip";
-    return resourcePath;
-  }
-
-  std::string FileStemFromResourcePath(const std::string& path) {
-    const std::size_t slash = path.find_last_of('/');
-    const std::size_t begin = slash == std::string::npos ? 0 : slash + 1;
-    const std::size_t dot = path.find_last_of('.');
-    const std::size_t end = (dot == std::string::npos || dot < begin) ? path.size() : dot;
-    return path.substr(begin, end - begin);
-  }
-
-  std::string InferQ3CollisionResourcePathFromMesh(const std::string& meshPath) {
-    std::string normalized = NormalizeSceneResourcePath(meshPath);
-    std::string lower = normalized;
-    std::transform(lower.begin(), lower.end(), lower.begin(), [](unsigned char c) {
-      return static_cast<char>(std::tolower(c));
-    });
-
-    const std::string q3Marker = "models/q3/";
-    const std::size_t q3Offset = lower.rfind(q3Marker);
-    if (q3Offset == std::string::npos) {
-      return {};
-    }
-
-    const std::string mapName = FileStemFromResourcePath(normalized.substr(q3Offset + q3Marker.size()));
-    if (mapName.empty()) {
-      return {};
-    }
-    return "Scenes/Q3/" + mapName + ".t8q3clip";
-  }
-
   std::string ToLowerAscii(std::string value) {
     std::transform(value.begin(), value.end(), value.begin(), [](unsigned char c) {
       return static_cast<char>(std::tolower(c));
     });
     return value;
-  }
-
-  bool MeshUsesQ3CollisionClip(const std::string& meshPath, const std::string& q3CollisionPath) {
-    if (q3CollisionPath.empty()) {
-      return false;
-    }
-
-    const std::string inferredClip = InferQ3CollisionResourcePathFromMesh(meshPath);
-    return !inferredClip.empty() &&
-           ToLowerAscii(NormalizeSceneResourcePath(inferredClip)) ==
-               ToLowerAscii(NormalizeSceneResourcePath(q3CollisionPath));
-  }
-
-  bool ContainsEntityId(const std::vector<uint32_t>& entityIds, uint32_t entityId) {
-    return std::find(entityIds.begin(), entityIds.end(), entityId) != entityIds.end();
-  }
-
-  std::string InferQ3CollisionResourcePathFromObjects(const t850::scene::EditorSceneFile& scene) {
-    for (const t850::scene::SceneObjectDesc& object : scene.objects) {
-      const std::string candidate = InferQ3CollisionResourcePathFromMesh(object.mesh.empty() ? object.name : object.mesh);
-      if (!candidate.empty() && t850::ResourceLocator::Instance().Exists(candidate)) {
-        return candidate;
-      }
-    }
-    return {};
   }
 
   XVECTOR3 SceneVecToVector(const t850::scene::Vec3f& value, float w = 1.0f) {
@@ -1523,26 +1011,6 @@ namespace {
     constexpr float kInitialHitEpsilon = 0.0005f;
     return hit.hit &&
            (hit.fraction > kInitialHitEpsilon || Dot3(displacement, hit.normal) < -0.00001f);
-  }
-
-  bool IsQ3JoltFallbackHit(const t850::CharacterCollisionHit& hit, const XVECTOR3& displacement) {
-    if (!hit.hit) {
-      return false;
-    }
-
-    constexpr float kQ3MinWalkNormalY = 0.70f;
-    constexpr float kMinHorizontalSweep = 0.002f;
-    const float horizontalLengthSq = displacement.x * displacement.x + displacement.z * displacement.z;
-    if (horizontalLengthSq <= kMinHorizontalSweep * kMinHorizontalSweep) {
-      return false;
-    }
-
-    const float horizontalLength = std::sqrt(horizontalLengthSq);
-    if (horizontalLength <= std::abs(displacement.y) * 0.25f) {
-      return false;
-    }
-
-    return hit.normal.y < kQ3MinWalkNormalY;
   }
 
   bool ConsiderSweepHit(const t850::CharacterCollisionHit& candidate,
@@ -3117,6 +2585,66 @@ namespace {
            ToLowerAscii(NormalizeSceneResourcePath(rhs));
   }
 
+  t850::PhysicsMeshBuildQuality PhysicsBuildQualityFromScene(const std::string& quality) {
+    return quality == "build_speed"
+        ? t850::PhysicsMeshBuildQuality::FavorBuildSpeed
+        : t850::PhysicsMeshBuildQuality::FavorRuntimePerformance;
+  }
+
+  t850::PhysicsTriangleMeshCookSettings PhysicsCookSettingsFromScene(const t850::scene::ScenePhysicsCookSettingsDesc& desc) {
+    t850::PhysicsTriangleMeshCookSettings settings;
+    settings.maxTrianglesPerLeaf = desc.max_triangles_per_leaf;
+    settings.buildQuality = PhysicsBuildQualityFromScene(desc.build_quality);
+    settings.activeEdgeCosThresholdAngle = desc.active_edge_cos_threshold_angle;
+    settings.perTriangleUserData = desc.per_triangle_user_data;
+    settings.useDiskCache = desc.use_disk_cache;
+    return settings;
+  }
+
+  bool SceneHasStaticPhysicsEntityForObject(const t850::scene::EditorSceneFile& scene, const std::string& objectName) {
+    for (const t850::scene::ScenePhysicsEntityDesc& entity : scene.physics_entities) {
+      if (entity.type == "static_triangle_mesh" && entity.source_object == objectName) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  t850::KinematicCharacterSettings CharacterSettingsFromPlayerEntity(const t850::scene::ScenePhysicsEntityDesc& player) {
+    t850::KinematicCharacterSettings settings = t850::MakeQuake3CharacterSettings();
+    const bool capsule = player.shape == "capsule" || player.shape == "sphere" || player.shape == "cylinder";
+    settings.collisionShape = capsule
+        ? t850::KinematicCharacterSettings::CollisionShape::Capsule
+        : t850::KinematicCharacterSettings::CollisionShape::Box;
+    if (capsule) {
+      settings.capsuleRadius = (std::max)(0.001f, player.radius);
+      settings.capsuleHalfHeight = player.shape == "sphere"
+          ? (std::max)(0.001f, player.radius)
+          : (std::max)(0.001f, player.half_height);
+      const float totalHeight = 2.0f * (settings.capsuleHalfHeight + settings.capsuleRadius);
+      settings.eyeHeight = (std::max)(0.001f, totalHeight * 0.88f);
+    } else {
+      const float horizontalRadius = (std::max)(0.001f, (std::max)(player.half_extents.x, player.half_extents.z));
+      settings.capsuleRadius = horizontalRadius;
+      settings.capsuleHalfHeight = (std::max)(0.001f, player.half_extents.y - horizontalRadius);
+      settings.eyeHeight = (std::max)(0.001f, player.half_extents.y * 2.0f * 0.88f);
+    }
+    settings.minWalkNormalY = std::cos(Deg2Rad(std::clamp(player.character.max_slope_angle_deg, 0.0f, 89.0f)));
+    settings.groundProbeDistance = (std::max)(0.05f, settings.capsuleRadius * 0.35f);
+    settings.stepHeight = (std::max)(0.05f, settings.capsuleRadius * 1.2f);
+    return settings;
+  }
+
+  XVECTOR3 PlayerEyeFromEntity(const t850::scene::ScenePhysicsEntityDesc& player,
+                               const t850::KinematicCharacterSettings& settings) {
+    const float verticalHalfExtent = settings.capsuleHalfHeight + settings.capsuleRadius;
+    return XVECTOR3(
+        player.position.x,
+        player.position.y + settings.eyeHeight - verticalHalfExtent,
+        player.position.z,
+        1.0f);
+  }
+
   int CubemapSelectorIndexForPath(const t850::SelectorDesc& selector, const std::string& resourcePath) {
     for (int index = 0; index < static_cast<int>(selector.options.size()); ++index) {
       if (ResourcePathEquals(CubemapPathForSelectorIndex(selector, index), resourcePath)) {
@@ -3392,13 +2920,15 @@ void Quake3Jolt::InitVars() {
   m_meshCount = 0;
   m_loadedEditorScene = false;
   m_loadedEditorScenePath.clear();
-  m_q3CollisionWorld.reset();
   m_primaryRagdollResourcePath.clear();
   m_sceneMeshPaths.clear();
   m_sceneRagdollPaths.clear();
   m_sceneNavAgentFrontYawOffsets.clear();
   m_sceneNavAgentFaceYawSigns.clear();
   m_sceneRagdolls.clear();
+  m_scenePhysicsEntities.clear();
+  m_hasAuthoredPlayer = false;
+  m_authoredPlayer = t850::scene::ScenePhysicsEntityDesc{};
   m_navTestAgents.clear();
   m_navTestCandidatePoints.clear();
   m_navTestInitialized = false;
@@ -3477,7 +3007,7 @@ void Quake3Jolt::InitVars() {
 
 void Quake3Jolt::ApplyEditorSceneCameraAndLights(const t850::scene::EditorSceneFile& scene) {
   const bool hasSceneCamera = !scene.cameras.empty();
-  const bool useQ3CameraDefaults = !hasSceneCamera && m_q3CollisionWorld && m_q3CollisionWorld->IsLoaded();
+  const bool useQ3CameraDefaults = !hasSceneCamera;
   XVECTOR3 eye(0.0f, 0.0f, 0.0f, 1.0f);
   XVECTOR3 target(-1.0f, 0.0f, 0.0f, 1.0f);
   float nearPlane = (std::max)(0.0001f, Cam.NPlane);
@@ -3510,10 +3040,10 @@ void Quake3Jolt::ApplyEditorSceneCameraAndLights(const t850::scene::EditorSceneF
   m_orbitPitch = 0.0f;
   m_orbitYaw = -1.57079632679f;
   SyncOrbitProfileFromSandbox();
-  SetCameraProfile((m_q3CollisionWorld && m_q3CollisionWorld->IsLoaded()) ? t850::CameraProfileType::Quake3Fps : t850::CameraProfileType::FreeFly);
+  SetCameraProfile(t850::CameraProfileType::Quake3Fps);
   VP = Cam.VP;
   T8_LOG_INFO("[Quake3Jolt] Using %s camera eye=(%.3f,%.3f,%.3f) look=(%.3f,%.3f,%.3f) fov=%.1f near=%.3f far=%.3f",
-              hasSceneCamera ? "scene" : (useQ3CameraDefaults ? "Quake 3 FPS" : "free-fly"),
+              hasSceneCamera ? "scene" : "Quake3Jolt FPS",
               Cam.Eye.x, Cam.Eye.y, Cam.Eye.z,
               Cam.Look.x, Cam.Look.y, Cam.Look.z,
               Rad2Deg(Cam.Fov),
@@ -3937,44 +3467,20 @@ bool Quake3Jolt::LoadEditorSceneAssets(const std::string& scenePath) {
   m_loadedEditorScene = true;
   m_loadedEditorScenePath = scenePath;
   m_meshCount = 0;
-  m_q3CollisionWorld.reset();
   m_sceneMeshPaths.clear();
   m_sceneRagdollPaths.clear();
   m_sceneNavAgentFrontYawOffsets.clear();
   m_sceneRagdolls.clear();
   m_scenePhysicsAuthoring.clear();
+  m_scenePhysicsEntities = scene.physics_entities;
   m_sceneNavigationAuthoring.clear();
   m_sceneRagdollAuthoring.clear();
-  m_q3StaticCollisionEntityIds.clear();
   m_primaryRagdollResourcePath.clear();
+  m_hasAuthoredPlayer = false;
+  m_authoredPlayer = t850::scene::ScenePhysicsEntityDesc{};
 
-  std::string q3CollisionPath = NormalizeSceneResourcePath(scene.collision);
-  if (q3CollisionPath.empty()) {
-    q3CollisionPath = InferQ3CollisionResourcePath(scenePath);
-  }
-  if (q3CollisionPath.empty() || !t850::ResourceLocator::Instance().Exists(q3CollisionPath)) {
-    const std::string objectCollisionPath = InferQ3CollisionResourcePathFromObjects(scene);
-    if (!objectCollisionPath.empty()) {
-      q3CollisionPath = objectCollisionPath;
-    }
-  }
-  if (!q3CollisionPath.empty() && t850::ResourceLocator::Instance().Exists(q3CollisionPath)) {
-    auto q3CollisionWorld = std::make_unique<t850::Q3BspCollisionWorld>();
-    std::string q3CollisionError;
-    if (q3CollisionWorld->Load(q3CollisionPath, &q3CollisionError)) {
-      T8_LOG_INFO("[Quake3Jolt] Q3 collision clip loaded: %s brushes=%zu patchFacets=%zu jumpPads=%zu reachabilities=%zu",
-                  q3CollisionPath.c_str(),
-                  q3CollisionWorld->GetBrushCount(),
-                  q3CollisionWorld->GetPatchFacetCount(),
-                  q3CollisionWorld->GetJumpPadCount(),
-                  q3CollisionWorld->GetReachabilityCount());
-      m_q3CollisionWorld = std::move(q3CollisionWorld);
-    } else {
-      T8_LOG_ERROR("[Quake3Jolt] Failed to load Q3 collision clip '%s': %s",
-                   q3CollisionPath.c_str(),
-                   q3CollisionError.c_str());
-    }
-  }
+  std::vector<std::pair<std::string, int>> loadedObjectSlots;
+  loadedObjectSlots.reserve(scene.objects.size());
 
   for (const auto& object : scene.objects) {
     if (!object.visible) continue;
@@ -4025,7 +3531,7 @@ bool Quake3Jolt::LoadEditorSceneAssets(const std::string& scenePath) {
     const bool isSkinnedObject = (instance.GetSkinnedMesh() != nullptr);
     if (!ragdollPath.empty() && isSkinnedObject && (ragdollMeta.enabled || !object.ragdoll_authoring.has_value())) {
       AttachSceneObjectRagdoll(static_cast<int>(m_meshCount), meshPath, ragdollPath);
-    } else if (!isSkinnedObject && (physicsMeta.enabled || !object.physics.has_value())) {
+    } else if (!isSkinnedObject && physicsMeta.enabled) {
       if (!ragdollPath.empty()) {
         T8_LOG_INFO("[Quake3Jolt] Ignoring ragdoll '%s' on non-skinned scene object '%s'",
                     ragdollPath.c_str(),
@@ -4033,26 +3539,18 @@ bool Quake3Jolt::LoadEditorSceneAssets(const std::string& scenePath) {
       }
       t850::EngineContext* engineContext = GetEngineContext();
       if (!engineContext) engineContext = &t850::GetEngineContext();
-      if (engineContext && engineContext->physics && engineContext->physics->IsInitialized()) {
+      const bool staticMeshOwnedByPhysicsEntity = SceneHasStaticPhysicsEntityForObject(scene, object.name);
+      if (!staticMeshOwnedByPhysicsEntity && engineContext && engineContext->physics && engineContext->physics->IsInitialized()) {
         t850::PhysicsTriangleMeshCookSettings cookSettings;
         cookSettings.maxTrianglesPerLeaf = 8;
         cookSettings.buildQuality = t850::PhysicsMeshBuildQuality::FavorRuntimePerformance;
         cookSettings.useDiskCache = true;
         t850::PhysicsCookStats cookStats;
         RenderMesh* renderMesh = dynamic_cast<RenderMesh*>(instance.pBase);
-        const bool meshMatchesQ3Clip = MeshUsesQ3CollisionClip(meshPath, q3CollisionPath);
         const bool wantsStaticTriangle =
-            !object.physics.has_value() ||
-            (physicsMeta.enabled && physicsMeta.body_type == "static_triangle_mesh" && physicsMeta.motion == "static");
+            physicsMeta.body_type == "static_triangle_mesh" && physicsMeta.motion == "static";
         if (wantsStaticTriangle && renderMesh && t850::AttachStaticTriangleMeshBody(
             *engineContext->physics, instance, *renderMesh, cookSettings, &cookStats)) {
-          if (m_q3CollisionWorld && meshMatchesQ3Clip) {
-            m_q3StaticCollisionEntityIds.push_back(instance.GetEntityId());
-            T8_LOG_INFO("[Quake3Jolt] Q3 map Jolt body ignored by Q3 camera: object='%s' entity=%u clip='%s'",
-                        object.name.c_str(),
-                        instance.GetEntityId(),
-                        q3CollisionPath.c_str());
-          }
           T8_LOG_INFO("[Quake3Jolt] Scene collision mesh ready for '%s': cache=%s vertices=%u triangles=%u total=%.2fms",
                       object.name.c_str(),
                       cookStats.cacheHit ? "hit" : "miss",
@@ -4077,10 +3575,68 @@ bool Quake3Jolt::LoadEditorSceneAssets(const std::string& scenePath) {
     m_sceneNavAgentFrontYawOffsets.push_back(navAgentFrontYawOffset);
     const float navAgentFaceYawSign = object.nav_agent_face_yaw_sign.value_or(1.0f) < 0.0f ? -1.0f : 1.0f;
     m_sceneNavAgentFaceYawSigns.push_back(navAgentFaceYawSign);
+    loadedObjectSlots.emplace_back(object.name, m_meshCount);
     T8_LOG_INFO("[Quake3Jolt] Loaded scene object '%s' mesh='%s' ragdoll='%s' slot=%d navFrontYawOffset=%.1f navFaceYawSign=%.1f",
                 object.name.c_str(), meshPath.c_str(), ragdollPath.c_str(), m_meshCount,
                 navAgentFrontYawOffset, navAgentFaceYawSign);
     ++m_meshCount;
+  }
+
+  auto findLoadedObjectSlot = [&](const std::string& name) -> int {
+    for (const auto& item : loadedObjectSlots) {
+      if (item.first == name) {
+        return item.second;
+      }
+    }
+    return -1;
+  };
+
+  t850::EngineContext* engineContext = GetEngineContext();
+  if (!engineContext) engineContext = &t850::GetEngineContext();
+  if (engineContext && engineContext->physics && engineContext->physics->IsInitialized()) {
+    for (const t850::scene::ScenePhysicsEntityDesc& entity : scene.physics_entities) {
+      if (entity.type == "player") {
+        m_authoredPlayer = entity;
+        m_hasAuthoredPlayer = true;
+        continue;
+      }
+      if (entity.type != "static_triangle_mesh") {
+        continue;
+      }
+      const int meshSlot = findLoadedObjectSlot(entity.source_object);
+      if (meshSlot < 0 || meshSlot >= m_meshCount) {
+        T8_LOG_ERROR("[Quake3Jolt] Physics entity '%s' source object '%s' was not loaded",
+                     entity.name.c_str(),
+                     entity.source_object.c_str());
+        continue;
+      }
+      RenderMesh* renderMesh = dynamic_cast<RenderMesh*>(Meshes[meshSlot].pBase);
+      if (!renderMesh) {
+        T8_LOG_ERROR("[Quake3Jolt] Physics entity '%s' source object '%s' has no render mesh",
+                     entity.name.c_str(),
+                     entity.source_object.c_str());
+        continue;
+      }
+      t850::PhysicsCookStats cookStats;
+      if (t850::AttachStaticTriangleMeshBody(
+              *engineContext->physics,
+              Meshes[meshSlot],
+              *renderMesh,
+              PhysicsCookSettingsFromScene(entity.cook_settings),
+              &cookStats)) {
+        T8_LOG_INFO("[Quake3Jolt] Authored physics static mesh '%s' ready from '%s': cache=%s vertices=%u triangles=%u total=%.2fms",
+                    entity.name.c_str(),
+                    entity.source_object.c_str(),
+                    cookStats.cacheHit ? "hit" : "miss",
+                    cookStats.vertexCount,
+                    cookStats.triangleCount,
+                    cookStats.totalMs);
+      } else {
+        T8_LOG_ERROR("[Quake3Jolt] Failed to create authored physics static mesh '%s' from '%s'",
+                     entity.name.c_str(),
+                     entity.source_object.c_str());
+      }
+    }
   }
 
   if (m_meshCount <= 0) {
@@ -4094,6 +3650,30 @@ bool Quake3Jolt::LoadEditorSceneAssets(const std::string& scenePath) {
   ApplyEditorSceneCameraAndLights(scene);
   m_controlSetup.descriptor.profiles = scene.profiles;
   LoadSandboxProfile(true);
+  if (m_hasAuthoredPlayer) {
+    const t850::KinematicCharacterSettings playerSettings = CharacterSettingsFromPlayerEntity(m_authoredPlayer);
+    const t850::CameraProfileType profileType =
+        m_authoredPlayer.character.implementation == "character"
+            ? t850::CameraProfileType::GroundedFps
+            : t850::CameraProfileType::Quake3Fps;
+    m_cameraController.SetKinematicProfileSettings(profileType, playerSettings);
+    Cam.Eye = PlayerEyeFromEntity(m_authoredPlayer, playerSettings);
+    Cam.Pitch = Deg2Rad(m_authoredPlayer.rotation.x);
+    Cam.Yaw = Deg2Rad(m_authoredPlayer.rotation.y);
+    Cam.Roll = Deg2Rad(m_authoredPlayer.rotation.z);
+    Cam.Update(0.0f);
+    SetCameraProfile(profileType);
+    VP = Cam.VP;
+    T8_LOG_INFO("[Quake3Jolt] Runtime player from scene '%s': profile=%s eye=(%.3f, %.3f, %.3f) shape=%s radius=%.3f halfHeight=%.3f",
+                m_authoredPlayer.name.c_str(),
+                t850::CameraProfileName(profileType),
+                Cam.Eye.x,
+                Cam.Eye.y,
+                Cam.Eye.z,
+                m_authoredPlayer.shape.c_str(),
+                playerSettings.capsuleRadius,
+                playerSettings.capsuleHalfHeight);
+  }
   T8_LOG_INFO("[Quake3Jolt] Loaded editor scene '%s' with %d mesh instances", scenePath.c_str(), m_meshCount);
   return true;
 }
@@ -4109,20 +3689,17 @@ bool Quake3Jolt::EnsureNavMeshBuilt() {
 
   const int meshCount = (std::min)(kMaxSandboxMeshes, (std::max)(m_meshCount, Meshes[0].pBase ? 1 : 0));
   t850::navigation::NavMeshBuildSettings navBuildSettings = m_navMeshBuildSettings;
-  const bool hasQ3Clip = m_q3CollisionWorld && m_q3CollisionWorld->IsLoaded();
-  const bool hasQ3AasReachability = hasQ3Clip && m_q3CollisionWorld->GetReachabilityCount() > 0;
-  navBuildSettings.enableAutoDropLinks = navBuildSettings.enableAutoDropLinks && hasQ3Clip && !hasQ3AasReachability;
-  navBuildSettings.enableAutoJumpLinks = navBuildSettings.enableAutoJumpLinks && hasQ3Clip && !hasQ3AasReachability;
-  navBuildSettings.enableHybridJumpLinks = navBuildSettings.enableHybridJumpLinks && hasQ3Clip && !hasQ3AasReachability;
-  navBuildSettings.offMeshLinkValidationKey = ComputeQ3NavLinkValidationKey(m_q3CollisionWorld.get());
+  navBuildSettings.enableAutoDropLinks = false;
+  navBuildSettings.enableAutoJumpLinks = false;
+  navBuildSettings.enableHybridJumpLinks = false;
+  navBuildSettings.offMeshLinkValidationKey = 0;
   const uint64_t navCacheKey =
       ComputeSandboxNavMeshCacheKey(
           Meshes,
           meshCount,
           m_sceneMeshPaths,
           m_loadedEditorScenePath,
-          navBuildSettings,
-          m_q3CollisionWorld.get());
+          navBuildSettings);
   const auto navBuildStart = std::chrono::steady_clock::now();
   if (navCacheKey != 0 && m_navMesh.LoadCached(navCacheKey, navBuildSettings, nullptr)) {
     m_navMeshLastBuildMs = std::chrono::duration<float, std::milli>(std::chrono::steady_clock::now() - navBuildStart).count();
@@ -4166,25 +3743,7 @@ bool Quake3Jolt::EnsureNavMeshBuilt() {
                  sourceStats.skippedInvalid);
     return false;
   }
-  geometry.offMeshLinks = hasQ3AasReachability
-      ? BuildQ3AasReachabilityNavLinks(m_q3CollisionWorld.get())
-      : BuildQ3JumpPadNavLinks(m_q3CollisionWorld.get());
-  if (hasQ3Clip) {
-    const t850::Q3BspCollisionWorld* q3CollisionWorld = m_q3CollisionWorld.get();
-    if (!hasQ3AasReachability) {
-      geometry.offMeshLinkValidator = [q3CollisionWorld](const t850::navigation::NavOffMeshLink& link) {
-        return ValidateQ3NavOffMeshLink(*q3CollisionWorld, link);
-      };
-      geometry.offMeshHybridLinkValidator = [q3CollisionWorld](const t850::navigation::NavOffMeshLink& link) {
-        return ValidateQ3HybridJumpIntentLink(*q3CollisionWorld, link);
-      };
-    }
-  }
-  if (!geometry.offMeshLinks.empty()) {
-    T8_LOG_INFO("[Navigation] Q3 nav links prepared: %zu source=%s",
-                geometry.offMeshLinks.size(),
-                hasQ3AasReachability ? "aas" : "heuristic");
-  }
+  geometry.offMeshLinks.clear();
 
   if (!m_navMesh.BuildCached(geometry, navBuildSettings, navCacheKey, &error)) {
     T8_LOG_ERROR("[Navigation] Sandbox navmesh build failed: %s", error.c_str());
@@ -4529,7 +4088,6 @@ void Quake3Jolt::UpdateNavTestAgents(float dtSecs) {
   std::vector<unsigned char> movedAgents(m_navTestAgents.size(), 0);
   std::vector<unsigned char> physicsMovedAgents(m_navTestAgents.size(), 0);
   std::vector<unsigned char> suppressProjection(m_navTestAgents.size(), 0);
-  std::vector<unsigned char> jumpPadQueuedAgents(m_navTestAgents.size(), 0);
   static std::vector<float> s_navProjectionDebugCooldownSec;
   if (s_navProjectionDebugCooldownSec.size() != m_navTestAgents.size()) {
     s_navProjectionDebugCooldownSec.assign(m_navTestAgents.size(), 0.0f);
@@ -4537,51 +4095,6 @@ void Quake3Jolt::UpdateNavTestAgents(float dtSecs) {
   for (float& cooldown : s_navProjectionDebugCooldownSec) {
     cooldown = (std::max)(0.0f, cooldown - (std::max)(0.0f, dtSecs));
   }
-
-  const t850::KinematicCharacterSettings jumpPadDebugSettings = t850::MakeQuake3CharacterSettings();
-  const XVECTOR3 jumpPadAgentHalfExtents(
-      jumpPadDebugSettings.capsuleRadius,
-      jumpPadDebugSettings.capsuleHalfHeight + jumpPadDebugSettings.capsuleRadius,
-      jumpPadDebugSettings.capsuleRadius,
-      0.0f);
-
-  auto findJumpPadForBase = [&](const XVECTOR3& base) -> const t850::Q3BspCollisionWorld::JumpPad* {
-    if (!m_q3CollisionWorld) {
-      return nullptr;
-    }
-
-    const t850::Q3BspCollisionWorld::JumpPad* bestJumpPad = nullptr;
-    float bestDistanceSq = 1.0e30f;
-    for (const t850::Q3BspCollisionWorld::JumpPad& jumpPad : m_q3CollisionWorld->GetJumpPads()) {
-      const bool insideHorizontal =
-          base.x >= jumpPad.mins.x - 1.0f && base.x <= jumpPad.maxs.x + 1.0f &&
-          base.z >= jumpPad.mins.z - 1.0f && base.z <= jumpPad.maxs.z + 1.0f;
-      const XVECTOR3 center(
-          (jumpPad.mins.x + jumpPad.maxs.x) * 0.5f,
-          (jumpPad.mins.y + jumpPad.maxs.y) * 0.5f,
-          (jumpPad.mins.z + jumpPad.maxs.z) * 0.5f,
-          1.0f);
-      const float distanceSq = HorizontalDistanceSq3(center, base);
-      if ((insideHorizontal || distanceSq <= 16.0f) && distanceSq < bestDistanceSq) {
-        bestDistanceSq = distanceSq;
-        bestJumpPad = &jumpPad;
-      }
-    }
-    return bestJumpPad;
-  };
-
-  auto agentAabbOverlapsJumpPad = [&](const XVECTOR3& position,
-                                      const t850::Q3BspCollisionWorld::JumpPad& jumpPad,
-                                      float margin) {
-    const XVECTOR3 min = position - jumpPadAgentHalfExtents;
-    const XVECTOR3 max = position + jumpPadAgentHalfExtents;
-    return max.x >= jumpPad.mins.x - margin &&
-        min.x <= jumpPad.maxs.x + margin &&
-        max.y >= jumpPad.mins.y - margin &&
-        min.y <= jumpPad.maxs.y + margin &&
-        max.z >= jumpPad.mins.z - margin &&
-        min.z <= jumpPad.maxs.z + margin;
-  };
 
   auto traversalName = [](t850::navigation::NavTraversalType type) {
     switch (type) {
@@ -4594,9 +4107,9 @@ void Quake3Jolt::UpdateNavTestAgents(float dtSecs) {
     }
   };
 
-  auto reachabilityTraversalDuration = [&](t850::navigation::NavTraversalType type,
-                                           const XVECTOR3& start,
-                                           const XVECTOR3& end) {
+  auto authoredTraversalDuration = [&](t850::navigation::NavTraversalType type,
+                                       const XVECTOR3& start,
+                                       const XVECTOR3& end) {
     const float horizontal = std::sqrt(HorizontalDistanceSq3(start, end));
     const float vertical = std::fabs(end.y - start.y);
     const float speed = (std::max)(3.5f, m_navTestSpeed * 1.5f);
@@ -4609,10 +4122,10 @@ void Quake3Jolt::UpdateNavTestAgents(float dtSecs) {
     return std::clamp(duration, 0.25f, 1.35f);
   };
 
-  auto reachabilityTraversalPosition = [&](t850::navigation::NavTraversalType type,
-                                           const XVECTOR3& start,
-                                           const XVECTOR3& end,
-                                           float fraction) {
+  auto authoredTraversalPosition = [&](t850::navigation::NavTraversalType type,
+                                       const XVECTOR3& start,
+                                       const XVECTOR3& end,
+                                       float fraction) {
     const float t = std::clamp(fraction, 0.0f, 1.0f);
     XVECTOR3 position = start + (end - start) * t;
     if (type == t850::navigation::NavTraversalType::Jump) {
@@ -4626,223 +4139,12 @@ void Quake3Jolt::UpdateNavTestAgents(float dtSecs) {
     return position;
   };
 
-  struct JumpPadOccupancyDecision {
-    bool occupied = false;
-    std::size_t ownerIndex = static_cast<std::size_t>(-1);
-    const char* reason = "free";
-    float currentDistanceSq = 1.0e30f;
-    float ownerDistanceSq = 1.0e30f;
-  };
-
-  auto jumpPadOccupancyDecision = [&](std::size_t currentAgentIndex, const XVECTOR3& base) {
-    constexpr float kJumpPadBaseOccupiedRadiusSq = 4.0f;
-    JumpPadOccupancyDecision decision;
-    const t850::Q3BspCollisionWorld::JumpPad* jumpPad = findJumpPadForBase(base);
-    if (currentAgentIndex < m_navTestAgents.size()) {
-      decision.currentDistanceSq = HorizontalDistanceSq3(m_navTestAgents[currentAgentIndex].navPosition, base);
-    }
-    for (std::size_t otherIndex = 0; otherIndex < m_navTestAgents.size(); ++otherIndex) {
-      if (otherIndex == currentAgentIndex) {
-        continue;
-      }
-      const NavTestAgentRuntime& other = m_navTestAgents[otherIndex];
-      if (!other.active) {
-        continue;
-      }
-
-      bool otherOwnsBase = false;
-      float otherDistanceSq = 1.0e30f;
-      if (jumpPad && agentAabbOverlapsJumpPad(other.navPosition, *jumpPad, 0.05f)) {
-        otherDistanceSq = HorizontalDistanceSq3(other.navPosition, base);
-        const bool closer = otherDistanceSq + 0.01f < decision.currentDistanceSq;
-        const bool tieBreak = std::fabs(otherDistanceSq - decision.currentDistanceSq) <= 0.01f && otherIndex < currentAgentIndex;
-        otherOwnsBase = closer || tieBreak;
-        if (otherOwnsBase) {
-          decision.reason = closer ? "other_inside_trigger_closer" : "other_inside_trigger_tiebreak";
-        }
-      } else if (other.physicsTraversalActive &&
-          other.physicsTraversalType == t850::navigation::NavTraversalType::JumpPad &&
-          DistanceSquared(other.physicsTraversalStart, base) <= kJumpPadBaseOccupiedRadiusSq) {
-        const bool otherStillInTrigger =
-            jumpPad && agentAabbOverlapsJumpPad(other.navPosition, *jumpPad, 0.25f);
-        const bool otherStillNearBase =
-            HorizontalDistanceSq3(other.navPosition, base) <= kJumpPadBaseOccupiedRadiusSq;
-        if (!other.physicsWasAirborne || otherStillInTrigger || otherStillNearBase) {
-          otherOwnsBase = true;
-          otherDistanceSq = 0.0f;
-          decision.reason = !other.physicsWasAirborne
-              ? "other_physics_not_airborne"
-              : (otherStillInTrigger ? "other_physics_still_in_trigger" : "other_physics_still_near_base");
-        }
-      } else if (!other.physicsTraversalActive &&
-                 !other.needsPath &&
-                 !other.path.empty() &&
-                 other.waypointIndex > 0 &&
-                 other.waypointIndex < static_cast<int>(other.path.size())) {
-        const int otherSegmentIndex = other.waypointIndex - 1;
-        const t850::navigation::NavTraversalType otherSegmentType =
-            otherSegmentIndex >= 0 && otherSegmentIndex < static_cast<int>(other.pathSegmentTypes.size())
-                ? other.pathSegmentTypes[static_cast<std::size_t>(otherSegmentIndex)]
-                : t850::navigation::NavTraversalType::Walk;
-        const XVECTOR3 otherBase = other.path[static_cast<std::size_t>(otherSegmentIndex)];
-        if (otherSegmentType == t850::navigation::NavTraversalType::JumpPad &&
-            DistanceSquared(otherBase, base) <= kJumpPadBaseOccupiedRadiusSq) {
-          otherDistanceSq = HorizontalDistanceSq3(other.navPosition, base);
-          const bool closer = otherDistanceSq + 0.01f < decision.currentDistanceSq;
-          const bool tieBreak = std::fabs(otherDistanceSq - decision.currentDistanceSq) <= 0.01f && otherIndex < currentAgentIndex;
-          otherOwnsBase = closer || tieBreak;
-          if (otherOwnsBase) {
-            decision.reason = closer ? "other_planned_jump_closer" : "other_planned_jump_tiebreak";
-          }
-        }
-      }
-
-      if (otherOwnsBase) {
-        decision.occupied = true;
-        decision.ownerIndex = otherIndex;
-        decision.ownerDistanceSq = otherDistanceSq;
-        return decision;
-      }
-    }
-    return decision;
-  };
-
-  auto isJumpPadBaseOccupied = [&](std::size_t currentAgentIndex, const XVECTOR3& base) {
-    return jumpPadOccupancyDecision(currentAgentIndex, base).occupied;
-  };
-
-  auto jumpPadQueuePosition = [&](const NavTestAgentRuntime& agent,
-                                  const XVECTOR3& base,
-                                  std::size_t agentIndex) {
-    XVECTOR3 retreat(0.0f, 0.0f, 0.0f, 0.0f);
-    const int previousIndex = agent.waypointIndex - 2;
-    if (previousIndex >= 0 && previousIndex < static_cast<int>(agent.path.size())) {
-      retreat = agent.path[static_cast<std::size_t>(previousIndex)] - base;
-    }
-    retreat.y = 0.0f;
-    retreat.w = 0.0f;
-    if (retreat.Length() <= 0.0001f) {
-      retreat = agent.navPosition - base;
-      retreat.y = 0.0f;
-      retreat.w = 0.0f;
-    }
-    if (retreat.Length() <= 0.0001f) {
-      retreat = XVECTOR3(0.0f, 0.0f, -1.0f, 0.0f);
-    }
-    retreat.Normalize();
-
-    const t850::KinematicCharacterSettings q3Settings = t850::MakeQuake3CharacterSettings();
-    const float triggerMargin = q3Settings.capsuleRadius + 0.20f;
-    float queueDistance = 2.25f;
-    if (const t850::Q3BspCollisionWorld::JumpPad* jumpPad = findJumpPadForBase(base)) {
-      const float minX = jumpPad->mins.x - triggerMargin;
-      const float maxX = jumpPad->maxs.x + triggerMargin;
-      const float minZ = jumpPad->mins.z - triggerMargin;
-      const float maxZ = jumpPad->maxs.z + triggerMargin;
-      const bool baseInsideExpanded =
-          base.x >= minX && base.x <= maxX &&
-          base.z >= minZ && base.z <= maxZ;
-      if (baseInsideExpanded) {
-        float exitDistance = 1.0e30f;
-        if (std::fabs(retreat.x) > 0.0001f) {
-          const float boundary = retreat.x > 0.0f ? maxX : minX;
-          const float candidate = (boundary - base.x) / retreat.x;
-          if (candidate >= 0.0f) {
-            exitDistance = (std::min)(exitDistance, candidate);
-          }
-        }
-        if (std::fabs(retreat.z) > 0.0001f) {
-          const float boundary = retreat.z > 0.0f ? maxZ : minZ;
-          const float candidate = (boundary - base.z) / retreat.z;
-          if (candidate >= 0.0f) {
-            exitDistance = (std::min)(exitDistance, candidate);
-          }
-        }
-        if (exitDistance < 1.0e29f) {
-          queueDistance = (std::max)(queueDistance, exitDistance + q3Settings.capsuleRadius + 0.30f);
-        }
-      }
-    }
-
-    XVECTOR3 side(retreat.z, 0.0f, -retreat.x, 0.0f);
-    if (side.Length() > 0.0001f) {
-      side.Normalize();
-    }
-    const int laneIndex = static_cast<int>((agent.followSlot + static_cast<int>(agentIndex)) % 5) - 2;
-    const float laneOffset = static_cast<float>(laneIndex) * (q3Settings.capsuleRadius * 2.35f);
-    XVECTOR3 queued = base + retreat * queueDistance + side * laneOffset;
-
-    if (const t850::Q3BspCollisionWorld::JumpPad* jumpPad = findJumpPadForBase(base)) {
-      const float minX = jumpPad->mins.x - triggerMargin;
-      const float maxX = jumpPad->maxs.x + triggerMargin;
-      const float minZ = jumpPad->mins.z - triggerMargin;
-      const float maxZ = jumpPad->maxs.z + triggerMargin;
-      for (int guard = 0; guard < 8 &&
-          queued.x >= minX && queued.x <= maxX &&
-          queued.z >= minZ && queued.z <= maxZ; ++guard) {
-        queued += retreat * 0.50f;
-      }
-    }
-
-    queued.w = 1.0f;
-    return queued;
-  };
-
-  auto isJumpPadTraversalProtected = [&](std::size_t agentIndex) {
-    if (agentIndex >= m_navTestAgents.size()) {
-      return false;
-    }
-    const NavTestAgentRuntime& agent = m_navTestAgents[agentIndex];
-    return agent.active &&
-        agent.physicsTraversalActive &&
-        agent.physicsTraversalType == t850::navigation::NavTraversalType::JumpPad;
-  };
-
   auto isPhysicsTraversalProtected = [&](std::size_t agentIndex) {
     if (agentIndex >= m_navTestAgents.size()) {
       return false;
     }
     const NavTestAgentRuntime& agent = m_navTestAgents[agentIndex];
     return agent.active && agent.physicsTraversalActive;
-  };
-
-  auto startJumpPadPhysicsTraversal = [&](std::size_t agentIndex,
-                                          NavTestAgentRuntime& agent,
-                                          const XVECTOR3& groundPosition,
-                                          const t850::Q3BspCollisionWorld::JumpPad& jumpPad,
-                                          const XVECTOR3& fallbackTarget) {
-    const t850::KinematicCharacterSettings q3Settings = t850::MakeQuake3CharacterSettings();
-    XVECTOR3 launchGround(
-        (jumpPad.mins.x + jumpPad.maxs.x) * 0.5f,
-        groundPosition.y,
-        (jumpPad.mins.z + jumpPad.maxs.z) * 0.5f,
-        1.0f);
-    agent.physicsController.SetSettings(q3Settings);
-    agent.physicsController.Reset();
-    agent.physicsController.SetPosition(Q3CenterFromGroundPoint(launchGround, q3Settings));
-    agent.physicsController.SetVelocity(jumpPad.velocity);
-    agent.physicsTraversalStart = launchGround;
-    agent.physicsTarget = jumpPad.hasTargetPosition ? jumpPad.targetPosition : fallbackTarget;
-    agent.physicsLastNavPosition = launchGround;
-    agent.physicsTargetWaypointIndex = agent.waypointIndex;
-    agent.physicsTraversalType = t850::navigation::NavTraversalType::JumpPad;
-    agent.physicsTraversalTimeSec = 0.0f;
-    agent.physicsStuckTimeSec = 0.0f;
-    agent.physicsTraversalActive = true;
-    agent.physicsWasAirborne = false;
-    proposedPositions[agentIndex] = launchGround;
-    movedAgents[agentIndex] = 1;
-    physicsMovedAgents[agentIndex] = 1;
-#ifdef NAV_MESH_TRACE_LOGS
-    T8_LOG_INFO("[JumpPadDebug] forced-trigger pad=%u agent=%zu mesh=%d pos=(%.2f,%.2f,%.2f) launch=(%.2f,%.2f,%.2f) velocity=(%.2f,%.2f,%.2f) target=(%.2f,%.2f,%.2f)",
-                jumpPad.entityId,
-                agentIndex,
-                agent.meshIndex,
-                groundPosition.x, groundPosition.y, groundPosition.z,
-                launchGround.x, launchGround.y, launchGround.z,
-                jumpPad.velocity.x, jumpPad.velocity.y, jumpPad.velocity.z,
-                agent.physicsTarget.x, agent.physicsTarget.y, agent.physicsTarget.z);
-#endif
   };
 
   for (std::size_t agentIndex = 0; agentIndex < m_navTestAgents.size(); ++agentIndex) {
@@ -4871,7 +4173,7 @@ void Quake3Jolt::UpdateNavTestAgents(float dtSecs) {
         agent.physicsTraversalTimeSec += (std::max)(0.0f, dtSecs);
         const float duration = (std::max)(0.01f, agent.physicsTraversalDurationSec);
         const float fraction = std::clamp(agent.physicsTraversalTimeSec / duration, 0.0f, 1.0f);
-        XVECTOR3 navPosition = reachabilityTraversalPosition(
+        XVECTOR3 navPosition = authoredTraversalPosition(
             agent.physicsTraversalType,
             agent.physicsTraversalStart,
             agent.physicsTarget,
@@ -4995,38 +4297,6 @@ void Quake3Jolt::UpdateNavTestAgents(float dtSecs) {
       continue;
     }
 
-    bool forcedJumpPadTrigger = false;
-    if (m_q3CollisionWorld) {
-      const XVECTOR3 currentPosition = agent.navPosition;
-      for (const t850::Q3BspCollisionWorld::JumpPad& jumpPad : m_q3CollisionWorld->GetJumpPads()) {
-        if (!agentAabbOverlapsJumpPad(currentPosition, jumpPad, 0.05f)) {
-          continue;
-        }
-        const XVECTOR3 jumpPadBase(
-            (jumpPad.mins.x + jumpPad.maxs.x) * 0.5f,
-            currentPosition.y,
-            (jumpPad.mins.z + jumpPad.maxs.z) * 0.5f,
-            1.0f);
-        if (isJumpPadBaseOccupied(agentIndex, jumpPadBase)) {
-          if (t850::RuntimeTelemetry::IsFrameActive()) {
-            t850::RuntimeTelemetry::AddCounter("navigation.agents.jump_pad_wait", 1.0);
-          }
-          const XVECTOR3 queued = jumpPadQueuePosition(agent, jumpPadBase, agentIndex);
-          jumpPadQueuedAgents[agentIndex] = 1;
-          proposedPositions[agentIndex] = queued;
-          movedAgents[agentIndex] = 1;
-          forcedJumpPadTrigger = true;
-          break;
-        }
-        startJumpPadPhysicsTraversal(agentIndex, agent, currentPosition, jumpPad, agent.target);
-        forcedJumpPadTrigger = true;
-        break;
-      }
-    }
-    if (forcedJumpPadTrigger) {
-      continue;
-    }
-
     if (agent.needsPath || agent.path.empty()) {
       continue;
     }
@@ -5051,120 +4321,7 @@ void Quake3Jolt::UpdateNavTestAgents(float dtSecs) {
       XVECTOR3 delta = target - current;
       const float distance = delta.Length();
       t850::navigation::NavTraversalType effectiveSegmentType = segmentType;
-      if (effectiveSegmentType == t850::navigation::NavTraversalType::Walk &&
-          m_q3CollisionWorld &&
-          agent.waypointIndex + 1 < static_cast<int>(agent.path.size())) {
-        const t850::KinematicCharacterSettings q3Settings = t850::MakeQuake3CharacterSettings();
-        const bool hasNextSegment = agent.waypointIndex >= 0 &&
-            agent.waypointIndex < static_cast<int>(agent.pathSegmentTypes.size());
-        const t850::navigation::NavTraversalType nextSegmentType = hasNextSegment
-            ? agent.pathSegmentTypes[static_cast<std::size_t>(agent.waypointIndex)]
-            : t850::navigation::NavTraversalType::Walk;
-        const float waypointTolerance = nextSegmentType != t850::navigation::NavTraversalType::Walk
-            ? (std::max)(1.50f, q3Settings.capsuleRadius * 3.0f)
-            : (std::max)(0.70f, q3Settings.capsuleRadius * 1.5f);
-        if (distance <= waypointTolerance) {
-          if (nextSegmentType != t850::navigation::NavTraversalType::Walk) {
-            T8_LOG_INFO("[NavTraversalDebug] reachability_start_accept mesh=%d agent=%zu current=(%.2f,%.2f,%.2f) start=(%.2f,%.2f,%.2f) dist=%.3f tolerance=%.3f nextType=%s wp=%d path=%zu",
-                        agent.meshIndex,
-                        agentIndex,
-                        current.x, current.y, current.z,
-                        target.x, target.y, target.z,
-                        distance,
-                        waypointTolerance,
-                        traversalName(nextSegmentType),
-                        agent.waypointIndex,
-                        agent.path.size());
-          }
-          current = target;
-          ++agent.waypointIndex;
-          continue;
-        }
-      }
-      if (effectiveSegmentType == t850::navigation::NavTraversalType::Walk &&
-          m_q3CollisionWorld &&
-          agent.waypointIndex >= 0 &&
-          agent.waypointIndex < static_cast<int>(agent.pathSegmentTypes.size())) {
-        const t850::navigation::NavTraversalType nextSegmentType =
-            agent.pathSegmentTypes[static_cast<std::size_t>(agent.waypointIndex)];
-        if (nextSegmentType != t850::navigation::NavTraversalType::Walk) {
-          const t850::KinematicCharacterSettings q3Settings = t850::MakeQuake3CharacterSettings();
-          const float traversalStartTolerance = (std::max)(0.85f, q3Settings.capsuleRadius * 2.0f);
-          if (distance <= traversalStartTolerance) {
-            T8_LOG_INFO("[NavTraversalDebug] edge_start_accept mesh=%d agent=%zu current=(%.2f,%.2f,%.2f) start=(%.2f,%.2f,%.2f) dist=%.3f tolerance=%.3f nextType=%s wp=%d path=%zu",
-                        agent.meshIndex,
-                        agentIndex,
-                        current.x, current.y, current.z,
-                        target.x, target.y, target.z,
-                        distance,
-                        traversalStartTolerance,
-                        traversalName(nextSegmentType),
-                        agent.waypointIndex,
-                        agent.path.size());
-            current = target;
-            ++agent.waypointIndex;
-            continue;
-          }
-        }
-      }
-      if (effectiveSegmentType == t850::navigation::NavTraversalType::Walk && m_q3CollisionWorld) {
-        const t850::KinematicCharacterSettings q3Settings = t850::MakeQuake3CharacterSettings();
-        const float verticalDrop = current.y - target.y;
-        const float horizontalDistanceSq = HorizontalDistanceSq3(current, target);
-        const float forcedDropHeight = (std::max)(1.25f, q3Settings.stepHeight * 2.0f);
-        if (verticalDrop >= forcedDropHeight &&
-            horizontalDistanceSq >= q3Settings.capsuleRadius * q3Settings.capsuleRadius) {
-          effectiveSegmentType = t850::navigation::NavTraversalType::Drop;
-          T8_LOG_INFO("[NavTraversalDebug] forced_drop mesh=%d agent=%zu current=(%.2f,%.2f,%.2f) target=(%.2f,%.2f,%.2f) verticalDrop=%.2f horizontal=%.2f wp=%d path=%zu",
-                      agent.meshIndex,
-                      agentIndex,
-                      current.x, current.y, current.z,
-                      target.x, target.y, target.z,
-                      verticalDrop,
-                      std::sqrt(horizontalDistanceSq),
-                      agent.waypointIndex,
-                      agent.path.size());
-        }
-      }
       if (effectiveSegmentType != t850::navigation::NavTraversalType::Walk) {
-        if (effectiveSegmentType == t850::navigation::NavTraversalType::JumpPad) {
-          const XVECTOR3 jumpPadBase = segmentStart;
-        const t850::Q3BspCollisionWorld::JumpPad* pathJumpPad = findJumpPadForBase(jumpPadBase);
-        if (isJumpPadBaseOccupied(agentIndex, jumpPadBase)) {
-            if (t850::RuntimeTelemetry::IsFrameActive()) {
-              t850::RuntimeTelemetry::AddCounter("navigation.agents.jump_pad_wait", 1.0);
-            }
-            current = jumpPadQueuePosition(agent, jumpPadBase, agentIndex);
-            jumpPadQueuedAgents[agentIndex] = 1;
-            proposedPositions[agentIndex] = current;
-            movedAgents[agentIndex] = 1;
-            remaining = 0.0f;
-            break;
-          }
-
-          XVECTOR3 toBase = jumpPadBase - current;
-          const float baseDistance = toBase.Length();
-          if (baseDistance > 0.05f) {
-            if (baseDistance <= remaining) {
-              current = jumpPadBase;
-              remaining -= baseDistance;
-            } else {
-              toBase /= baseDistance;
-              current += toBase * remaining;
-              proposedPositions[agentIndex] = current;
-              movedAgents[agentIndex] = 1;
-              remaining = 0.0f;
-              break;
-            }
-          } else {
-            current = jumpPadBase;
-          }
-          if (pathJumpPad) {
-            startJumpPadPhysicsTraversal(agentIndex, agent, current, *pathJumpPad, target);
-            remaining = 0.0f;
-            break;
-          }
-        }
         const t850::KinematicCharacterSettings q3Settings = t850::MakeQuake3CharacterSettings();
         agent.physicsController.SetSettings(q3Settings);
         agent.physicsController.Reset();
@@ -5179,7 +4336,7 @@ void Quake3Jolt::UpdateNavTestAgents(float dtSecs) {
         agent.physicsTargetWaypointIndex = agent.waypointIndex;
         agent.physicsTraversalType = effectiveSegmentType;
         agent.physicsTraversalTimeSec = 0.0f;
-        agent.physicsTraversalDurationSec = reachabilityTraversalDuration(effectiveSegmentType, current, target);
+        agent.physicsTraversalDurationSec = authoredTraversalDuration(effectiveSegmentType, current, target);
         agent.physicsStuckTimeSec = 0.0f;
         agent.physicsTraversalActive = true;
         agent.physicsWasAirborne = false;
@@ -5342,211 +4499,6 @@ void Quake3Jolt::UpdateNavTestAgents(float dtSecs) {
     }
   }
 
-  for (std::size_t agentIndex = 0; agentIndex < m_navTestAgents.size(); ++agentIndex) {
-    if (!jumpPadQueuedAgents[agentIndex]) {
-      continue;
-    }
-    NavTestAgentRuntime& agent = m_navTestAgents[agentIndex];
-    const int segmentIndex = agent.waypointIndex - 1;
-    if (segmentIndex >= 0 && segmentIndex < static_cast<int>(agent.path.size())) {
-      const XVECTOR3 base = agent.path[static_cast<std::size_t>(segmentIndex)];
-      proposedPositions[agentIndex] = jumpPadQueuePosition(agent, base, agentIndex);
-      movedAgents[agentIndex] = 1;
-    }
-  }
-
-  {
-    static float s_jumpPadDebugLogTimerSec = 0.0f;
-    s_jumpPadDebugLogTimerSec += (std::max)(0.0f, dtSecs);
-    if (m_q3CollisionWorld && s_jumpPadDebugLogTimerSec >= 0.75f) {
-      s_jumpPadDebugLogTimerSec = 0.0f;
-      auto agentDebugPosition = [&](std::size_t agentIndex) {
-        return movedAgents[agentIndex] ? proposedPositions[agentIndex] : m_navTestAgents[agentIndex].navPosition;
-      };
-      auto agentMeshLabel = [&](const NavTestAgentRuntime& agent) -> const char* {
-        if (agent.meshIndex >= 0 && agent.meshIndex < static_cast<int>(m_sceneMeshPaths.size())) {
-          return m_sceneMeshPaths[static_cast<std::size_t>(agent.meshIndex)].c_str();
-        }
-        return "";
-      };
-      auto segmentTypeForAgent = [&](const NavTestAgentRuntime& agent) {
-        const int segmentIndex = agent.waypointIndex - 1;
-        return segmentIndex >= 0 && segmentIndex < static_cast<int>(agent.pathSegmentTypes.size())
-            ? agent.pathSegmentTypes[static_cast<std::size_t>(segmentIndex)]
-            : t850::navigation::NavTraversalType::Walk;
-      };
-      auto segmentBaseForAgent = [&](const NavTestAgentRuntime& agent) {
-        const int segmentIndex = agent.waypointIndex - 1;
-        return segmentIndex >= 0 && segmentIndex < static_cast<int>(agent.path.size())
-            ? agent.path[static_cast<std::size_t>(segmentIndex)]
-            : agent.navPosition;
-      };
-      auto segmentTargetForAgent = [&](const NavTestAgentRuntime& agent) {
-        return agent.waypointIndex >= 0 && agent.waypointIndex < static_cast<int>(agent.path.size())
-            ? agent.path[static_cast<std::size_t>(agent.waypointIndex)]
-            : agent.target;
-      };
-
-      for (const t850::Q3BspCollisionWorld::JumpPad& jumpPad : m_q3CollisionWorld->GetJumpPads()) {
-        const XVECTOR3 padCenter(
-            (jumpPad.mins.x + jumpPad.maxs.x) * 0.5f,
-            (jumpPad.mins.y + jumpPad.maxs.y) * 0.5f,
-            (jumpPad.mins.z + jumpPad.maxs.z) * 0.5f,
-            1.0f);
-        std::vector<std::size_t> relevantAgents;
-        int insideCount = 0;
-        int queuedCount = 0;
-        int attemptingCount = 0;
-        int physicsCount = 0;
-
-        for (std::size_t agentIndex = 0; agentIndex < m_navTestAgents.size(); ++agentIndex) {
-          const NavTestAgentRuntime& agent = m_navTestAgents[agentIndex];
-          if (!agent.active ||
-              agent.meshIndex < 0 || agent.meshIndex >= kMaxSandboxMeshes ||
-              !Meshes[agent.meshIndex].pBase) {
-            continue;
-          }
-
-          const XVECTOR3 position = agentDebugPosition(agentIndex);
-          const bool inside = agentAabbOverlapsJumpPad(position, jumpPad, 0.05f);
-          const bool nearby = HorizontalDistanceSq3(position, padCenter) <= 36.0f;
-          const bool physicsJumpPad =
-              agent.physicsTraversalActive &&
-              agent.physicsTraversalType == t850::navigation::NavTraversalType::JumpPad;
-          const t850::navigation::NavTraversalType segmentType = segmentTypeForAgent(agent);
-          const XVECTOR3 segmentBase = segmentBaseForAgent(agent);
-          const bool attempting =
-              segmentType == t850::navigation::NavTraversalType::JumpPad &&
-              findJumpPadForBase(segmentBase) == &jumpPad;
-          const bool queued = jumpPadQueuedAgents[agentIndex] != 0 && attempting;
-          const bool physicsForPad =
-              physicsJumpPad &&
-              (findJumpPadForBase(agent.physicsTraversalStart) == &jumpPad || inside);
-
-          insideCount += inside ? 1 : 0;
-          queuedCount += queued ? 1 : 0;
-          attemptingCount += attempting ? 1 : 0;
-          physicsCount += physicsForPad ? 1 : 0;
-          if (inside || queued || attempting || physicsForPad || nearby) {
-            relevantAgents.push_back(agentIndex);
-          }
-        }
-
-        const bool shouldLog =
-            queuedCount > 0 ||
-            insideCount > 1 ||
-            attemptingCount > 1 ||
-            physicsCount > 0 ||
-            !relevantAgents.empty();
-        if (!shouldLog) {
-          continue;
-        }
-
-#ifdef NAV_MESH_TRACE_LOGS
-        T8_LOG_INFO("[JumpPadDebug] pad=%u bounds=(%.2f,%.2f,%.2f)-(%.2f,%.2f,%.2f) center=(%.2f,%.2f,%.2f) vel=(%.2f,%.2f,%.2f) inside=%d queued=%d attempting=%d physics=%d relevant=%zu",
-                    jumpPad.entityId,
-                    jumpPad.mins.x, jumpPad.mins.y, jumpPad.mins.z,
-                    jumpPad.maxs.x, jumpPad.maxs.y, jumpPad.maxs.z,
-                    padCenter.x, padCenter.y, padCenter.z,
-                    jumpPad.velocity.x, jumpPad.velocity.y, jumpPad.velocity.z,
-                    insideCount, queuedCount, attemptingCount, physicsCount, relevantAgents.size());
-#endif
-
-        for (std::size_t agentIndex : relevantAgents) {
-          const NavTestAgentRuntime& agent = m_navTestAgents[agentIndex];
-          const XVECTOR3 position = agentDebugPosition(agentIndex);
-          const XVECTOR3 aabbMin = position - jumpPadAgentHalfExtents;
-          const XVECTOR3 aabbMax = position + jumpPadAgentHalfExtents;
-          const t850::navigation::NavTraversalType segmentType = segmentTypeForAgent(agent);
-          const XVECTOR3 segmentBase = segmentBaseForAgent(agent);
-          const XVECTOR3 segmentTarget = segmentTargetForAgent(agent);
-          const bool inside = agentAabbOverlapsJumpPad(position, jumpPad, 0.05f);
-          const bool nearby = HorizontalDistanceSq3(position, padCenter) <= 36.0f;
-          const bool attempting =
-              segmentType == t850::navigation::NavTraversalType::JumpPad &&
-              findJumpPadForBase(segmentBase) == &jumpPad;
-          const XVECTOR3 decisionBase = attempting
-              ? segmentBase
-              : XVECTOR3(padCenter.x, position.y, padCenter.z, 1.0f);
-          const JumpPadOccupancyDecision occupancy = jumpPadOccupancyDecision(agentIndex, decisionBase);
-          const bool queued = jumpPadQueuedAgents[agentIndex] != 0 && attempting;
-          const bool physicsForPad =
-              agent.physicsTraversalActive &&
-              agent.physicsTraversalType == t850::navigation::NavTraversalType::JumpPad &&
-              (findJumpPadForBase(agent.physicsTraversalStart) == &jumpPad || inside);
-          const bool canForceTriggerJump = inside && !physicsForPad && !occupancy.occupied;
-          const bool canPathJump =
-              attempting &&
-              !physicsForPad &&
-              !occupancy.occupied &&
-              std::sqrt(HorizontalDistanceSq3(position, segmentBase)) <= 0.05f;
-          const char* blockReason = physicsForPad
-              ? "already_physics"
-              : (occupancy.occupied ? occupancy.reason :
-                 (!inside && !attempting ? "not_inside_or_attempting" :
-                  (attempting && std::sqrt(HorizontalDistanceSq3(position, segmentBase)) > 0.05f ? "moving_to_base" : "none")));
-#ifdef NAV_MESH_TRACE_LOGS
-          T8_LOG_INFO("[JumpPadDebug] pad=%u agent=%zu mesh=%d '%s' pos=(%.2f,%.2f,%.2f) aabb=(%.2f,%.2f,%.2f)-(%.2f,%.2f,%.2f) inside=%d nearby=%d queued=%d attempting=%d physics=%d type=%s airborne=%d wp=%d path=%zu base=(%.2f,%.2f,%.2f) decisionBase=(%.2f,%.2f,%.2f) segTarget=(%.2f,%.2f,%.2f) distBase=%.2f target=(%.2f,%.2f,%.2f) desired=(%.2f,%.2f,%.2f) cooldown=%.3f occupied=%d owner=%lld reason=%s currentDist=%.3f ownerDist=%.3f canForce=%d canPath=%d block=%s",
-                      jumpPad.entityId,
-                      agentIndex,
-                      agent.meshIndex,
-                      agentMeshLabel(agent),
-                      position.x, position.y, position.z,
-                      aabbMin.x, aabbMin.y, aabbMin.z,
-                      aabbMax.x, aabbMax.y, aabbMax.z,
-                      inside ? 1 : 0,
-                      nearby ? 1 : 0,
-                      queued ? 1 : 0,
-                      attempting ? 1 : 0,
-                      physicsForPad ? 1 : 0,
-                      traversalName(segmentType),
-                      agent.physicsWasAirborne ? 1 : 0,
-                      agent.waypointIndex,
-                      agent.path.size(),
-                      segmentBase.x, segmentBase.y, segmentBase.z,
-                      decisionBase.x, decisionBase.y, decisionBase.z,
-                      segmentTarget.x, segmentTarget.y, segmentTarget.z,
-                      std::sqrt(HorizontalDistanceSq3(position, segmentBase)),
-                      agent.target.x, agent.target.y, agent.target.z,
-                      agent.desiredTarget.x, agent.desiredTarget.y, agent.desiredTarget.z,
-                      agent.repathCooldownSec,
-                      occupancy.occupied ? 1 : 0,
-                      occupancy.ownerIndex == static_cast<std::size_t>(-1) ? -1LL : static_cast<long long>(occupancy.ownerIndex),
-                      occupancy.reason,
-                      std::sqrt(occupancy.currentDistanceSq),
-                      occupancy.ownerDistanceSq >= 1.0e29f ? -1.0f : std::sqrt(occupancy.ownerDistanceSq),
-                      canForceTriggerJump ? 1 : 0,
-                      canPathJump ? 1 : 0,
-                      blockReason);
-#endif
-        }
-
-        for (std::size_t i = 0; i < relevantAgents.size(); ++i) {
-          for (std::size_t j = i + 1; j < relevantAgents.size(); ++j) {
-            const std::size_t a = relevantAgents[i];
-            const std::size_t b = relevantAgents[j];
-            const XVECTOR3 posA = agentDebugPosition(a);
-            const XVECTOR3 posB = agentDebugPosition(b);
-            const float overlapX = jumpPadAgentHalfExtents.x * 2.0f - std::fabs(posB.x - posA.x);
-            const float overlapZ = jumpPadAgentHalfExtents.z * 2.0f - std::fabs(posB.z - posA.z);
-            if (overlapX > 0.0f && overlapZ > 0.0f) {
-#ifdef NAV_MESH_TRACE_LOGS
-              T8_LOG_INFO("[JumpPadDebug] pad=%u overlap agents=%zu/%zu overlap=(%.3f,%.3f) posA=(%.2f,%.2f,%.2f) posB=(%.2f,%.2f,%.2f)",
-                          jumpPad.entityId,
-                          a,
-                          b,
-                          overlapX,
-                          overlapZ,
-                          posA.x, posA.y, posA.z,
-                          posB.x, posB.y, posB.z);
-#endif
-            }
-          }
-        }
-      }
-    }
-  }
-
   {
     T8_TELEMETRY_SCOPE("navigation.agents.apply_transforms");
     for (std::size_t agentIndex = 0; agentIndex < m_navTestAgents.size(); ++agentIndex) {
@@ -5560,9 +4512,7 @@ void Quake3Jolt::UpdateNavTestAgents(float dtSecs) {
       PrimitiveInst& instance = Meshes[agent.meshIndex];
       if (movedAgents[agentIndex]) {
         XVECTOR3 navPosition = proposedPositions[agentIndex];
-        if (!physicsMovedAgents[agentIndex] &&
-            !jumpPadQueuedAgents[agentIndex] &&
-            !suppressProjection[agentIndex]) {
+        if (!physicsMovedAgents[agentIndex] && !suppressProjection[agentIndex]) {
           const XVECTOR3 requestedNavPosition = navPosition;
           XVECTOR3 projectedNavPosition = navPosition;
           std::string projectionError;
@@ -5621,7 +4571,7 @@ void Quake3Jolt::UpdateNavTestAgents(float dtSecs) {
                         agent.target.x, agent.target.y, agent.target.z,
                         agent.desiredTarget.x, agent.desiredTarget.y, agent.desiredTarget.z,
                         agent.physicsTraversalActive ? 1 : 0,
-                        jumpPadQueuedAgents[agentIndex] ? 1 : 0,
+                        0,
                         suppressProjection[agentIndex] ? 1 : 0,
                         projectionError.c_str());
 #endif
@@ -6009,13 +4959,15 @@ void Quake3Jolt::DestroyAssets() {
   m_meshCount = 0;
   m_loadedEditorScene = false;
   m_loadedEditorScenePath.clear();
-  m_q3CollisionWorld.reset();
   m_primaryRagdollResourcePath.clear();
   m_sceneMeshPaths.clear();
   m_sceneRagdollPaths.clear();
   m_sceneNavAgentFrontYawOffsets.clear();
   m_sceneNavAgentFaceYawSigns.clear();
   m_sceneRagdolls.clear();
+  m_scenePhysicsEntities.clear();
+  m_hasAuthoredPlayer = false;
+  m_authoredPlayer = t850::scene::ScenePhysicsEntityDesc{};
   m_navTestAgents.clear();
   m_navTestCandidatePoints.clear();
   m_navTestInitialized = false;
@@ -13922,11 +12874,7 @@ void Quake3Jolt::FitModelToView() {
   m_orbitPitch = 0.0f;
   SyncOrbitProfileFromSandbox();
 
-  // Q3's default r_znear is 4 map units. Larger near planes can clip through walls
-  // before the Q3-sized player hull reaches them.
-  Cam.NPlane = (m_q3CollisionWorld && m_q3CollisionWorld->IsLoaded())
-    ? (4.0f / 32.0f)
-    : m_modelRadius * 0.01f;
+  Cam.NPlane = 4.0f / 32.0f;
   Cam.FPlane = m_modelRadius * 100.0f;
   Cam.CreatePojection();
 
@@ -14310,36 +13258,16 @@ bool Quake3Jolt::SweepCapsule(const t850::CameraCollisionSweep& sweep, t850::Cam
   outHit = t850::CameraCollisionHit{};
   bool hasHit = false;
   bool hasBlockingHit = false;
-  bool q3HasHit = false;
   bool physicsHasHit = false;
-  bool physicsIgnoredForQ3Clip = false;
-  t850::CameraCollisionHit q3Hit;
   t850::CameraCollisionHit cameraHit;
   const char* chosenSource = "none";
-  const bool q3ClipLoaded = m_q3CollisionWorld && m_q3CollisionWorld->IsLoaded();
-  const bool q3PatchCollisionLoaded = q3ClipLoaded && m_q3CollisionWorld->GetPatchFacetCount() > 0;
-  if (q3ClipLoaded) {
-    t850::CharacterBoxSweep boxSweep;
-    boxSweep.startCenter = sweep.startCenter;
-    boxSweep.displacement = sweep.displacement;
-    boxSweep.halfExtents = XVECTOR3(
-        sweep.radius,
-        sweep.halfHeight + sweep.radius,
-        sweep.radius,
-        0.0f);
-    q3HasHit = m_q3CollisionWorld->SweepBox(boxSweep, q3Hit) && q3Hit.hit;
-    if (q3HasHit &&
-        ConsiderSweepHit(q3Hit, sweep.displacement, outHit, hasHit, hasBlockingHit)) {
-      chosenSource = "q3clip";
-    }
-  }
 
   const t850::EngineContext* engineContext = GetEngineContext();
   if (!engineContext) engineContext = &t850::GetEngineContext();
   const bool physicsReady = engineContext && engineContext->physics && engineContext->physics->IsInitialized();
   if (!physicsReady) {
     T8_LOG_VERBOSE(
-        "[Q3CameraSweepCapsule] start=(%.4f, %.4f, %.4f) disp=(%.4f, %.4f, %.4f) radius=%.4f halfHeight=%.4f q3Hit=%d q3Fraction=%.5f q3Normal=(%.4f, %.4f, %.4f) joltReady=0 chosen=%s chosenFraction=%.5f blocking=%d",
+        "[Quake3JoltSweepCapsule] start=(%.4f, %.4f, %.4f) disp=(%.4f, %.4f, %.4f) radius=%.4f halfHeight=%.4f joltReady=0 chosen=%s chosenFraction=%.5f blocking=%d",
         sweep.startCenter.x,
         sweep.startCenter.y,
         sweep.startCenter.z,
@@ -14348,11 +13276,6 @@ bool Quake3Jolt::SweepCapsule(const t850::CameraCollisionSweep& sweep, t850::Cam
         sweep.displacement.z,
         sweep.radius,
         sweep.halfHeight,
-        q3HasHit ? 1 : 0,
-        q3Hit.fraction,
-        q3Hit.normal.x,
-        q3Hit.normal.y,
-        q3Hit.normal.z,
         chosenSource,
         outHit.fraction,
         hasBlockingHit ? 1 : 0);
@@ -14364,9 +13287,6 @@ bool Quake3Jolt::SweepCapsule(const t850::CameraCollisionSweep& sweep, t850::Cam
   desc.displacement = sweep.displacement;
   desc.radius = sweep.radius;
   desc.halfHeight = sweep.halfHeight;
-  if (q3PatchCollisionLoaded) {
-    desc.ignoredEntityIds = m_q3StaticCollisionEntityIds;
-  }
 
   t850::PhysicsCastHit physicsHit;
   physicsHasHit = engineContext->physics->CastCapsule(desc, physicsHit) && physicsHit.hit;
@@ -14376,18 +13296,12 @@ bool Quake3Jolt::SweepCapsule(const t850::CameraCollisionSweep& sweep, t850::Cam
     cameraHit.position = physicsHit.position;
     cameraHit.normal = physicsHit.normal;
     cameraHit.entityId = physicsHit.entityId;
-    if (q3ClipLoaded) {
-      physicsIgnoredForQ3Clip = q3PatchCollisionLoaded
-          ? ContainsEntityId(m_q3StaticCollisionEntityIds, physicsHit.entityId)
-          : !IsQ3JoltFallbackHit(cameraHit, sweep.displacement);
-    }
-    if (!physicsIgnoredForQ3Clip &&
-        ConsiderSweepHit(cameraHit, sweep.displacement, outHit, hasHit, hasBlockingHit)) {
+    if (ConsiderSweepHit(cameraHit, sweep.displacement, outHit, hasHit, hasBlockingHit)) {
       chosenSource = "jolt";
     }
   }
   T8_LOG_VERBOSE(
-      "[Q3CameraSweepCapsule] start=(%.4f, %.4f, %.4f) disp=(%.4f, %.4f, %.4f) radius=%.4f halfHeight=%.4f q3Hit=%d q3Fraction=%.5f q3Normal=(%.4f, %.4f, %.4f) joltHit=%d joltIgnoredForQ3=%d joltFraction=%.5f joltNormal=(%.4f, %.4f, %.4f) chosen=%s chosenFraction=%.5f chosenNormal=(%.4f, %.4f, %.4f) blocking=%d",
+      "[Quake3JoltSweepCapsule] start=(%.4f, %.4f, %.4f) disp=(%.4f, %.4f, %.4f) radius=%.4f halfHeight=%.4f joltHit=%d joltFraction=%.5f joltNormal=(%.4f, %.4f, %.4f) chosen=%s chosenFraction=%.5f chosenNormal=(%.4f, %.4f, %.4f) blocking=%d",
       sweep.startCenter.x,
       sweep.startCenter.y,
       sweep.startCenter.z,
@@ -14396,13 +13310,7 @@ bool Quake3Jolt::SweepCapsule(const t850::CameraCollisionSweep& sweep, t850::Cam
       sweep.displacement.z,
       sweep.radius,
       sweep.halfHeight,
-      q3HasHit ? 1 : 0,
-      q3Hit.fraction,
-      q3Hit.normal.x,
-      q3Hit.normal.y,
-      q3Hit.normal.z,
       physicsHasHit ? 1 : 0,
-      physicsIgnoredForQ3Clip ? 1 : 0,
       cameraHit.fraction,
       cameraHit.normal.x,
       cameraHit.normal.y,
@@ -14420,28 +13328,16 @@ bool Quake3Jolt::SweepBox(const t850::CharacterBoxSweep& sweep, t850::CameraColl
   outHit = t850::CameraCollisionHit{};
   bool hasHit = false;
   bool hasBlockingHit = false;
-  bool q3HasHit = false;
   bool physicsHasHit = false;
-  bool physicsIgnoredForQ3Clip = false;
-  t850::CameraCollisionHit q3Hit;
   t850::CameraCollisionHit cameraHit;
   const char* chosenSource = "none";
-  const bool q3ClipLoaded = m_q3CollisionWorld && m_q3CollisionWorld->IsLoaded();
-  const bool q3PatchCollisionLoaded = q3ClipLoaded && m_q3CollisionWorld->GetPatchFacetCount() > 0;
-  if (q3ClipLoaded) {
-    q3HasHit = m_q3CollisionWorld->SweepBox(sweep, q3Hit) && q3Hit.hit;
-    if (q3HasHit &&
-        ConsiderSweepHit(q3Hit, sweep.displacement, outHit, hasHit, hasBlockingHit)) {
-      chosenSource = "q3clip";
-    }
-  }
 
   const t850::EngineContext* engineContext = GetEngineContext();
   if (!engineContext) engineContext = &t850::GetEngineContext();
   const bool physicsReady = engineContext && engineContext->physics && engineContext->physics->IsInitialized();
   if (!physicsReady) {
     T8_LOG_VERBOSE(
-        "[Q3CameraSweepBox] start=(%.4f, %.4f, %.4f) disp=(%.4f, %.4f, %.4f) half=(%.4f, %.4f, %.4f) q3Hit=%d q3Fraction=%.5f q3Normal=(%.4f, %.4f, %.4f) joltReady=0 chosen=%s chosenFraction=%.5f blocking=%d",
+        "[Quake3JoltSweepBox] start=(%.4f, %.4f, %.4f) disp=(%.4f, %.4f, %.4f) half=(%.4f, %.4f, %.4f) joltReady=0 chosen=%s chosenFraction=%.5f blocking=%d",
         sweep.startCenter.x,
         sweep.startCenter.y,
         sweep.startCenter.z,
@@ -14451,11 +13347,6 @@ bool Quake3Jolt::SweepBox(const t850::CharacterBoxSweep& sweep, t850::CameraColl
         sweep.halfExtents.x,
         sweep.halfExtents.y,
         sweep.halfExtents.z,
-        q3HasHit ? 1 : 0,
-        q3Hit.fraction,
-        q3Hit.normal.x,
-        q3Hit.normal.y,
-        q3Hit.normal.z,
         chosenSource,
         outHit.fraction,
         hasBlockingHit ? 1 : 0);
@@ -14466,9 +13357,6 @@ bool Quake3Jolt::SweepBox(const t850::CharacterBoxSweep& sweep, t850::CameraColl
   desc.startCenter = sweep.startCenter;
   desc.displacement = sweep.displacement;
   desc.halfExtents = sweep.halfExtents;
-  if (q3PatchCollisionLoaded) {
-    desc.ignoredEntityIds = m_q3StaticCollisionEntityIds;
-  }
 
   t850::PhysicsCastHit physicsHit;
   physicsHasHit = engineContext->physics->CastBox(desc, physicsHit) && physicsHit.hit;
@@ -14478,18 +13366,12 @@ bool Quake3Jolt::SweepBox(const t850::CharacterBoxSweep& sweep, t850::CameraColl
     cameraHit.position = physicsHit.position;
     cameraHit.normal = physicsHit.normal;
     cameraHit.entityId = physicsHit.entityId;
-    if (q3ClipLoaded) {
-      physicsIgnoredForQ3Clip = q3PatchCollisionLoaded
-          ? ContainsEntityId(m_q3StaticCollisionEntityIds, physicsHit.entityId)
-          : !IsQ3JoltFallbackHit(cameraHit, sweep.displacement);
-    }
-    if (!physicsIgnoredForQ3Clip &&
-        ConsiderSweepHit(cameraHit, sweep.displacement, outHit, hasHit, hasBlockingHit)) {
+    if (ConsiderSweepHit(cameraHit, sweep.displacement, outHit, hasHit, hasBlockingHit)) {
       chosenSource = "jolt";
     }
   }
   T8_LOG_VERBOSE(
-      "[Q3CameraSweepBox] start=(%.4f, %.4f, %.4f) disp=(%.4f, %.4f, %.4f) half=(%.4f, %.4f, %.4f) q3Hit=%d q3Fraction=%.5f q3Normal=(%.4f, %.4f, %.4f) joltHit=%d joltIgnoredForQ3=%d joltFraction=%.5f joltNormal=(%.4f, %.4f, %.4f) chosen=%s chosenFraction=%.5f chosenNormal=(%.4f, %.4f, %.4f) blocking=%d",
+      "[Quake3JoltSweepBox] start=(%.4f, %.4f, %.4f) disp=(%.4f, %.4f, %.4f) half=(%.4f, %.4f, %.4f) joltHit=%d joltFraction=%.5f joltNormal=(%.4f, %.4f, %.4f) chosen=%s chosenFraction=%.5f chosenNormal=(%.4f, %.4f, %.4f) blocking=%d",
       sweep.startCenter.x,
       sweep.startCenter.y,
       sweep.startCenter.z,
@@ -14499,13 +13381,7 @@ bool Quake3Jolt::SweepBox(const t850::CharacterBoxSweep& sweep, t850::CameraColl
       sweep.halfExtents.x,
       sweep.halfExtents.y,
       sweep.halfExtents.z,
-      q3HasHit ? 1 : 0,
-      q3Hit.fraction,
-      q3Hit.normal.x,
-      q3Hit.normal.y,
-      q3Hit.normal.z,
       physicsHasHit ? 1 : 0,
-      physicsIgnoredForQ3Clip ? 1 : 0,
       cameraHit.fraction,
       cameraHit.normal.x,
       cameraHit.normal.y,
@@ -14520,10 +13396,8 @@ bool Quake3Jolt::SweepBox(const t850::CharacterBoxSweep& sweep, t850::CameraColl
 }
 
 bool Quake3Jolt::QueryTriggerTouch(const t850::CharacterTriggerQuery& query, t850::CharacterTriggerTouch& outTouch) const {
+  (void)query;
   outTouch = t850::CharacterTriggerTouch{};
-  if (m_q3CollisionWorld && m_q3CollisionWorld->IsLoaded()) {
-    return m_q3CollisionWorld->QueryTriggerTouch(query, outTouch);
-  }
   return false;
 }
 
@@ -16416,25 +15290,7 @@ void Quake3Jolt::DrawDevGui(t850::DevGuiContext& gui) {
       }
       m_navMeshBuildSettings.queryExtents.w = 0.0f;
     }
-    if (ImGui::CollapsingHeader("Generated traversal links")) {
-      if (ImGui::Checkbox("Auto drop links", &m_navMeshBuildSettings.enableAutoDropLinks)) requestNavRebuild();
-      navSlider("Drop min height", m_navMeshBuildSettings.dropLinkMinHeight, 0.0f, 64.0f, "%.2f");
-      navSlider("Drop max height", m_navMeshBuildSettings.dropLinkMaxHeight, 0.0f, 128.0f, "%.2f");
-      navSlider("Drop max horizontal", m_navMeshBuildSettings.dropLinkMaxHorizontalDistance, 0.0f, 16.0f, "%.2f");
-      navSlider("Drop sample spacing", m_navMeshBuildSettings.dropLinkSampleSpacing, 0.05f, 8.0f, "%.2f");
-      navSlider("Drop link radius", m_navMeshBuildSettings.dropLinkRadius, 0.05f, 4.0f, "%.2f");
-      ImGui::Separator();
-      if (ImGui::Checkbox("Auto jump links", &m_navMeshBuildSettings.enableAutoJumpLinks)) requestNavRebuild();
-      navSlider("Jump max horizontal", m_navMeshBuildSettings.jumpLinkMaxHorizontalDistance, 0.0f, 32.0f, "%.2f");
-      navSlider("Jump sample spacing", m_navMeshBuildSettings.jumpLinkSampleSpacing, 0.05f, 8.0f, "%.2f");
-      navSlider("Jump link radius", m_navMeshBuildSettings.jumpLinkRadius, 0.05f, 4.0f, "%.2f");
-      ImGui::Separator();
-      if (ImGui::Checkbox("Hybrid jump-intent links", &m_navMeshBuildSettings.enableHybridJumpLinks)) requestNavRebuild();
-      navSliderInt("Hybrid max links", m_navMeshBuildSettings.hybridJumpMaxLinks, 0, 4096);
-      if (m_q3CollisionWorld && m_q3CollisionWorld->GetReachabilityCount() > 0) {
-        ImGui::TextDisabled("Q3 AAS reachabilities are active; generated drop/jump/hybrid links are ignored for this map.");
-      }
-    }
+    ImGui::TextDisabled("Traversal links are not generated in Quake3Jolt; use authored links once available.");
     if (navRebuildRequested) {
       rebuildNavMeshNow(false);
     }

@@ -1,5 +1,6 @@
 #pragma once
 
+#include <cstdint>
 #include <optional>
 #include <scene/SceneDescriptor.h>
 #include <string>
@@ -97,6 +98,60 @@ struct SceneLightDesc {
   std::optional<SceneQ3LightDesc> q3;
 };
 
+struct ScenePhysicsCookSettingsDesc {
+  uint32_t max_triangles_per_leaf = 8;
+  std::string build_quality = "runtime_performance";
+  float active_edge_cos_threshold_angle = 0.996195f;
+  bool per_triangle_user_data = false;
+  bool use_disk_cache = true;
+};
+
+struct ScenePhysicsCharacterDesc {
+  std::string implementation = "virtual";
+  float mass = 70.0f;
+  float max_strength = 100.0f;
+  float max_slope_angle_deg = 50.0f;
+  bool enhanced_internal_edge_removal = true;
+  float supporting_volume_offset = -1.0e10f;
+  Vec3f shape_offset;
+  std::string back_face_mode = "collide";
+  float predictive_contact_distance = 0.1f;
+  int max_collision_iterations = 5;
+  int max_constraint_iterations = 15;
+  float min_time_remaining = 1.0e-4f;
+  float collision_tolerance = 1.0e-3f;
+  float character_padding = 0.02f;
+  int max_num_hits = 256;
+  float hit_reduction_cos_max_angle = 0.999f;
+  float penetration_recovery_speed = 1.0f;
+  float gravity_factor = 1.0f;
+  bool allow_translation_x = true;
+  bool allow_translation_y = true;
+  bool allow_translation_z = true;
+  bool inner_body = false;
+};
+
+struct ScenePhysicsEntityDesc {
+  std::string name;
+  std::string type = "static_triangle_mesh";
+  std::string source_object;
+  Vec3f position;
+  Vec3f rotation;
+  Vec3f scale = {1.0f, 1.0f, 1.0f};
+  bool visible = true;
+  bool frozen = false;
+  bool show_wire = true;
+  std::string shape = "box";
+  Vec3f half_extents = {16.0f, 32.0f, 16.0f};
+  float radius = 16.0f;
+  float half_height = 24.0f;
+  float friction = 0.6f;
+  float restitution = 0.0f;
+  bool sensor = false;
+  ScenePhysicsCookSettingsDesc cook_settings;
+  ScenePhysicsCharacterDesc character;
+};
+
 struct EditorStateDesc {
   Vec3f camera_target;
   float camera_yaw = -0.75f;
@@ -111,6 +166,7 @@ struct EditorSceneFile {
   std::string collision;
   EditorStateDesc editor;
   std::vector<SceneObjectDesc> objects;
+  std::vector<ScenePhysicsEntityDesc> physics_entities;
   std::vector<SceneCameraDesc> cameras;
   std::vector<SceneLightDesc> lights;
   std::vector<::t850::SandboxProfileDesc> profiles;

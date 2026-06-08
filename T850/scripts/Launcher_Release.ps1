@@ -180,6 +180,7 @@ $xaml = @"
                             <ComboBoxItem Content="Day" Tag="1"/>
                             <ComboBoxItem Content="Quake3 Mock" Tag="2"/>
                             <ComboBoxItem Content="Ragdoll Editor" Tag="3"/>
+                            <ComboBoxItem Content="Quake3 Jolt" Tag="4"/>
                         </ComboBox>
                     </StackPanel>
                     <StackPanel Grid.Column="2" VerticalAlignment="Bottom">
@@ -454,6 +455,26 @@ function Get-SelectedSceneFilePath {
     return ""
 }
 
+function Get-PreferredSceneFileSuffix {
+    $sceneTag = if ($cmbScene -and $cmbScene.SelectedItem) { $cmbScene.SelectedItem.Tag.ToString() } else { "" }
+    switch ($sceneTag) {
+        "2" { return "Q3\q3dm6_mod_3.t8scene" }
+        "4" { return "Q3\q3dm6_mod_3_jolt.t8scene" }
+        default { return "" }
+    }
+}
+
+function Select-PreferredSceneFileForScene {
+    $preferredSuffix = Get-PreferredSceneFileSuffix
+    if (-not $preferredSuffix -or -not $cmbSceneFile) { return }
+    foreach ($item in $cmbSceneFile.Items) {
+        if ($item.Tag -and $item.Tag.ToString().EndsWith($preferredSuffix, [System.StringComparison]::OrdinalIgnoreCase)) {
+            $cmbSceneFile.SelectedItem = $item
+            return
+        }
+    }
+}
+
 function Get-SceneFileResourcePath {
     param([string]$ScenePath)
     if (-not $ScenePath) { return "" }
@@ -589,7 +610,7 @@ function Test-SelectedSceneDependencies {
         return @{ Ok = $true; Missing = @() }
     }
     $sceneTag = $cmbScene.SelectedItem.Tag.ToString()
-    if (($sceneTag -ne "2") -and (($sceneTag -ne "0") -or ((Get-SandboxInputMode) -ne "scene"))) {
+    if (($sceneTag -ne "2") -and ($sceneTag -ne "4") -and (($sceneTag -ne "0") -or ((Get-SandboxInputMode) -ne "scene"))) {
         return @{ Ok = $true; Missing = @() }
     }
     $scenePath = Get-SelectedSceneFilePath
@@ -819,7 +840,7 @@ function Save-Config {
         fullscreen = [bool]$chkFullscreen.IsChecked
         scene      = [int]$sceneTag
     }
-    if (($sceneTag -eq "2") -or (($sceneTag -eq "0") -and ($sandboxMode -eq "scene"))) {
+    if (($sceneTag -eq "2") -or ($sceneTag -eq "4") -or (($sceneTag -eq "0") -and ($sandboxMode -eq "scene"))) {
         $display.sceneFile = Get-SceneFileResourcePath (Get-SelectedSceneFilePath)
     } else {
         $display.model = if ($cmbModel.SelectedItem) { ($cmbModel.SelectedItem).Tag.ToString() } else { "Models/DamagedHelmet.glb" }
@@ -907,8 +928,8 @@ function Get-LaunchCommand {
 
     $argList += @("--culling", (Get-CullingMode))
 
-    if ($sceneTag -eq "0" -or $sceneTag -eq "2" -or $sceneTag -eq "3") {
-        if (($sceneTag -eq "2") -or (($sceneTag -eq "0") -and ((Get-SandboxInputMode) -eq "scene"))) {
+    if ($sceneTag -eq "0" -or $sceneTag -eq "2" -or $sceneTag -eq "3" -or $sceneTag -eq "4") {
+        if (($sceneTag -eq "2") -or ($sceneTag -eq "4") -or (($sceneTag -eq "0") -and ((Get-SandboxInputMode) -eq "scene"))) {
             $sceneFile = Get-SelectedSceneFilePath
             if ($sceneFile) {
                 $argList += @("--sceneFile", ('"{0}"' -f (Get-SceneFileResourcePath $sceneFile)))
@@ -1028,7 +1049,7 @@ function Update-SceneOptionVisibility {
     $sandboxMode = Get-SandboxInputMode
     $pnlSandboxInput.Visibility = if ($sandboxVisible) { "Visible" } else { "Collapsed" }
     $pnlModelSelect.Visibility = if (($sandboxVisible -and ($sandboxMode -eq "model")) -or ($sceneTag -eq "3")) { "Visible" } else { "Collapsed" }
-    $pnlSceneFileSelect.Visibility = if (($sandboxVisible -and ($sandboxMode -eq "scene")) -or ($sceneTag -eq "2")) { "Visible" } else { "Collapsed" }
+    $pnlSceneFileSelect.Visibility = if (($sandboxVisible -and ($sandboxMode -eq "scene")) -or ($sceneTag -eq "2") -or ($sceneTag -eq "4")) { "Visible" } else { "Collapsed" }
     $chkBenchmark.Visibility = if ($sceneTag -eq "1") { "Visible" } else { "Collapsed" }
     if ($sceneTag -ne "1") { $chkBenchmark.IsChecked = $false }
 }
@@ -1094,6 +1115,7 @@ $cmbSandboxInput.Add_SelectionChanged({
 $cmbApi.Add_SelectionChanged({ Update-Preview })
 $cmbScene.Add_SelectionChanged({
     Update-SceneOptionVisibility
+    Select-PreferredSceneFileForScene
     Update-SceneDependencyCache
     Update-Preview
 })

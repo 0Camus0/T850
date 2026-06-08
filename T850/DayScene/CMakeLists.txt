@@ -4,6 +4,9 @@ add_executable(DayScene
 	Application.cpp
 	App.cpp
 	DayScene.cpp
+	Quake3Jolt.cpp
+	Quake3Mock.cpp
+	RagdollEditor.cpp
 	SandboxScene.cpp)
 
 t850_apply_app(DayScene)

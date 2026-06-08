@@ -130,6 +130,9 @@ public final class LauncherActivity extends Activity {
 
         scenes.add(new Option("Sandbox", 0));
         scenes.add(new Option("Day Scene", 1));
+        scenes.add(new Option("Quake3 Mock", 2));
+        scenes.add(new Option("Ragdoll Editor", 3));
+        scenes.add(new Option("Quake3 Jolt", 4));
 
         sandboxContentOptions.add(new Option("Scene file (.t8scene)", CONTENT_SCENE_FILE));
         sandboxContentOptions.add(new Option("Model file", CONTENT_MODEL));
@@ -260,6 +263,10 @@ public final class LauncherActivity extends Activity {
         sceneSpinner.setOnItemSelectedListener(new AdapterView.OnItemSelectedListener() {
             @Override
             public void onItemSelected(AdapterView<?> parent, View view, int position, long id) {
+                int scene = selectedScene().value;
+                if (sceneUsesSceneFile(scene)) {
+                    selectSceneFile(defaultSceneFilePath(scene));
+                }
                 updateSandboxContentControls();
             }
 
@@ -377,9 +384,10 @@ public final class LauncherActivity extends Activity {
     }
 
     private void updateSandboxContentControls() {
-        boolean sandbox = selectedScene().value == 0;
-        boolean sceneFile = sandbox && selectedSandboxContent().value == CONTENT_SCENE_FILE;
-        boolean model = sandbox && selectedSandboxContent().value == CONTENT_MODEL;
+        int scene = selectedScene().value;
+        boolean sandbox = scene == 0;
+        boolean sceneFile = sceneUsesSceneFile(scene) || (sandbox && selectedSandboxContent().value == CONTENT_SCENE_FILE);
+        boolean model = sceneUsesModel(scene) || (sandbox && selectedSandboxContent().value == CONTENT_MODEL);
         sandboxContentLabel.setEnabled(sandbox);
         sandboxContentSpinner.setEnabled(sandbox);
         sceneFileLabel.setEnabled(sceneFile);
@@ -396,8 +404,10 @@ public final class LauncherActivity extends Activity {
         Option logLevel = selectedLogLevel();
         AssetOption sceneFile = selectedSceneFile();
         AssetOption model = selectedModel();
-        boolean launchSandboxSceneFile = scene.value == 0 && sandboxContent.value == CONTENT_SCENE_FILE;
-        boolean launchSandboxModel = scene.value == 0 && sandboxContent.value == CONTENT_MODEL;
+        boolean launchSceneFile = sceneUsesSceneFile(scene.value) ||
+                (scene.value == 0 && sandboxContent.value == CONTENT_SCENE_FILE);
+        boolean launchModel = sceneUsesModel(scene.value) ||
+                (scene.value == 0 && sandboxContent.value == CONTENT_MODEL);
 
         getSharedPreferences(PREFS_NAME, MODE_PRIVATE)
                 .edit()
@@ -413,9 +423,9 @@ public final class LauncherActivity extends Activity {
         NativeLaunchOptions options = new NativeLaunchOptions();
         options.scene = scene.value;
         options.sandboxContent = sandboxContent.value;
-        if (launchSandboxSceneFile) {
+        if (launchSceneFile) {
             options.sceneFile = sceneFile.path;
-        } else if (launchSandboxModel) {
+        } else if (launchModel) {
             options.model = model.path;
         }
         options.logLevel = logLevel.value;
@@ -443,9 +453,9 @@ public final class LauncherActivity extends Activity {
         NativeLaunchOptions options = new NativeLaunchOptions();
         options.scene = scene;
         options.sandboxContent = sandboxContent;
-        if (scene == 0 && sandboxContent == CONTENT_SCENE_FILE) {
+        if (sceneUsesSceneFile(scene) || (scene == 0 && sandboxContent == CONTENT_SCENE_FILE)) {
             options.sceneFile = sceneFile;
-        } else if (scene == 0) {
+        } else if (sceneUsesModel(scene) || scene == 0) {
             options.model = model;
         }
         options.logLevel = logLevel;
@@ -480,7 +490,7 @@ public final class LauncherActivity extends Activity {
 
         NativeLaunchOptions options = new NativeLaunchOptions();
         options.scene = intent.getIntExtra(EXTRA_SCENE, prefs.getInt(PREF_SCENE, 0));
-        if (options.scene != 0 && options.scene != 1) {
+        if (options.scene < 0 || options.scene > 4) {
             options.scene = 0;
         }
         int fallbackSandboxContent = prefs.getInt(PREF_SANDBOX_CONTENT, CONTENT_SCENE_FILE);
@@ -493,14 +503,16 @@ public final class LauncherActivity extends Activity {
         }
         options.sceneFile = intent.getStringExtra(EXTRA_SCENE_FILE);
         if (options.sceneFile != null && !options.sceneFile.isEmpty()) {
-            options.scene = 0;
+            if (!sceneUsesSceneFile(options.scene)) {
+                options.scene = 0;
+            }
             options.model = null;
             options.sandboxContent = CONTENT_SCENE_FILE;
         } else {
             options.sceneFile = fallbackSceneFile;
             options.sandboxContent = explicitModel ? CONTENT_MODEL : fallbackSandboxContent;
         }
-        if (options.scene == 0 && options.sandboxContent == CONTENT_SCENE_FILE) {
+        if (sceneUsesSceneFile(options.scene) || (options.scene == 0 && options.sandboxContent == CONTENT_SCENE_FILE)) {
             options.model = null;
         } else {
             options.sceneFile = null;
@@ -613,6 +625,14 @@ public final class LauncherActivity extends Activity {
                 : sandboxContentOptions.get(0);
     }
 
+    private boolean sceneUsesSceneFile(int scene) {
+        return scene == 2 || scene == 4;
+    }
+
+    private boolean sceneUsesModel(int scene) {
+        return scene == 3;
+    }
+
     private AssetOption selectedSceneFile() {
         Object selected = sceneFileSpinner.getSelectedItem();
         if (selected instanceof AssetOption) {
@@ -709,12 +729,19 @@ public final class LauncherActivity extends Activity {
     }
 
     private String defaultSceneFilePath() {
+        return defaultSceneFilePath(selectedScene().value);
+    }
+
+    private String defaultSceneFilePath(int scene) {
+        String preferred = scene == 4
+                ? "Scenes/Q3/q3dm6_mod_3_jolt.t8scene"
+                : "Scenes/Q3/q3dm6_mod_3.t8scene";
         for (AssetOption sceneFile : sceneFiles) {
-            if (sceneFile.path.equals("Scenes/Q3/q3dm6_mod_3.t8scene")) {
+            if (sceneFile.path.equals(preferred)) {
                 return sceneFile.path;
             }
         }
-        return sceneFiles.isEmpty() ? "Scenes/Q3/q3dm6_mod_3.t8scene" : sceneFiles.get(0).path;
+        return sceneFiles.isEmpty() ? preferred : sceneFiles.get(0).path;
     }
 
     private String defaultModelPath() {

@@ -465,6 +465,7 @@ namespace {
 #include <DayScene.h>
 #include <SandboxScene.h>
 #include <Quake3Mock.h>
+#include <Quake3Jolt.h>
 #include <RagdollEditor.h>
 
 #ifdef OS_ANDROID
@@ -487,6 +488,7 @@ void App::InitVars() {
   m_scenes.emplace_back(std::make_unique<DayScene>());
   m_scenes.emplace_back(std::make_unique<Quake3Mock>());
   m_scenes.emplace_back(std::make_unique<RagdollEditor>());
+  m_scenes.emplace_back(std::make_unique<Quake3Jolt>());
   t850::EngineContext& engineContext = t850::GetEngineContext();
   engineContext.physics = &m_physics;
   if (!m_physics.Initialize() && m_physics.IsAvailable()) {
@@ -843,6 +845,9 @@ void App::OnInput() {
     if (auto* quake3Mock = dynamic_cast<Quake3Mock*>(m_actualScene)) {
       quake3Mock->ResetAndroidVirtualControls();
     }
+    if (auto* quake3Jolt = dynamic_cast<Quake3Jolt*>(m_actualScene)) {
+      quake3Jolt->ResetAndroidVirtualControls();
+    }
     if (auto* ragdollEditor = dynamic_cast<RagdollEditor*>(m_actualScene)) {
       ragdollEditor->ResetAndroidVirtualControls();
     }
@@ -1005,6 +1010,8 @@ void App::DrawRuntimeGui() {
     sandboxScene->DrawAndroidVirtualControls(m_imguiVisible);
   } else if (auto* quake3Mock = dynamic_cast<Quake3Mock*>(m_actualScene)) {
     quake3Mock->DrawAndroidVirtualControls(m_imguiVisible);
+  } else if (auto* quake3Jolt = dynamic_cast<Quake3Jolt*>(m_actualScene)) {
+    quake3Jolt->DrawAndroidVirtualControls(m_imguiVisible);
   } else if (auto* ragdollEditor = dynamic_cast<RagdollEditor*>(m_actualScene)) {
     ragdollEditor->DrawAndroidVirtualControls(m_imguiVisible);
   }
@@ -1049,6 +1056,9 @@ bool App::HandleAndroidInputEvent(AInputEvent* event) {
     } else if (auto* quake3Mock = dynamic_cast<Quake3Mock*>(m_actualScene)) {
       sceneControlsActiveBefore = quake3Mock->AndroidVirtualControlsActive();
       sceneHandled = quake3Mock->HandleAndroidVirtualControls(event);
+    } else if (auto* quake3Jolt = dynamic_cast<Quake3Jolt*>(m_actualScene)) {
+      sceneControlsActiveBefore = quake3Jolt->AndroidVirtualControlsActive();
+      sceneHandled = quake3Jolt->HandleAndroidVirtualControls(event);
     } else if (auto* ragdollEditor = dynamic_cast<RagdollEditor*>(m_actualScene)) {
       sceneControlsActiveBefore = ragdollEditor->AndroidVirtualControlsActive();
       sceneHandled = ragdollEditor->HandleAndroidVirtualControls(event);
@@ -1137,6 +1147,10 @@ void App::DrawAndroidPhysicsGui(t850::DevGuiContext& gui) {
     quake3Mock->DrawAndroidPhysicsPanel(gui);
     return;
   }
+  if (auto* quake3Jolt = dynamic_cast<Quake3Jolt*>(m_actualScene)) {
+    quake3Jolt->DrawAndroidPhysicsPanel(gui);
+    return;
+  }
   if (auto* ragdollEditor = dynamic_cast<RagdollEditor*>(m_actualScene)) {
     ragdollEditor->DrawAndroidPhysicsPanel(gui);
     return;
@@ -1208,6 +1222,14 @@ void App::UpdateAndroidGuiHoldToggle() {
   }
   if (auto* quake3Mock = dynamic_cast<Quake3Mock*>(m_actualScene)) {
     if (quake3Mock->AndroidVirtualControlsActive()) {
+      m_androidGuiHoldSecs = 0.0f;
+      m_androidGuiHoldActive = false;
+      m_androidGuiHoldSuppressed = true;
+      return;
+    }
+  }
+  if (auto* quake3Jolt = dynamic_cast<Quake3Jolt*>(m_actualScene)) {
+    if (quake3Jolt->AndroidVirtualControlsActive()) {
       m_androidGuiHoldSecs = 0.0f;
       m_androidGuiHoldActive = false;
       m_androidGuiHoldSuppressed = true;

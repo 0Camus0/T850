@@ -263,7 +263,7 @@ if not defined VCPKG_PACKAGES (
     echo [ERROR] Supported ABIs: arm64-v8a,x86_64
     exit /b 1
 )
-call "%VCPKG_EXE%" install !VCPKG_PACKAGES! --overlay-ports="%ROOT%T850\ports" --no-print-usage
+call "%VCPKG_EXE%" install !VCPKG_PACKAGES! --no-print-usage
 if errorlevel 1 (
     echo [ERROR] Failed to install Android vcpkg dependencies.
     exit /b 1

@@ -3940,10 +3940,14 @@ bool Quake3Mock::LoadEditorSceneAssets(const std::string& scenePath) {
   m_primaryRagdollResourcePath.clear();
 
   std::string q3CollisionPath = NormalizeSceneResourcePath(scene.collision);
-  if (q3CollisionPath.empty()) {
+  const bool allowQ3CollisionInference =
+      !q3CollisionPath.empty() ||
+      ToLowerAscii(NormalizeSceneResourcePath(scenePath)).find("_jolt.t8scene") == std::string::npos;
+  if (q3CollisionPath.empty() && allowQ3CollisionInference) {
     q3CollisionPath = InferQ3CollisionResourcePath(scenePath);
   }
-  if (q3CollisionPath.empty() || !t850::ResourceLocator::Instance().Exists(q3CollisionPath)) {
+  if (allowQ3CollisionInference &&
+      (q3CollisionPath.empty() || !t850::ResourceLocator::Instance().Exists(q3CollisionPath))) {
     const std::string objectCollisionPath = InferQ3CollisionResourcePathFromObjects(scene);
     if (!objectCollisionPath.empty()) {
       q3CollisionPath = objectCollisionPath;

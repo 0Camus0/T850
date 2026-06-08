@@ -9,7 +9,7 @@
 #include "EditorSceneGizmos.h"
 #include "UndoRedo.h"
 #include "../DayScene/RagdollEditor.h"
-#include "../DayScene/Quake3Mock.h"
+#include "../DayScene/Quake3Jolt.h"
 
 #include <core/Core.h>
 #include <core/EngineContext.h>
@@ -20,6 +20,7 @@
 #include <scene/IBLResources.h>
 #include <scene/MeshAssetCache.h>
 #include <scene/RenderGraph.h>
+#include <scene/RenderMesh.h>
 #include <scene/RenderSkinnedMesh.h>
 #include <utils/InputManager.h>
 #include <utils/Log.h>
@@ -64,6 +65,10 @@ namespace t8ditor {
 EditorApp::~EditorApp() = default;
 
 static ImVec2 WorldToScreen(const XVECTOR3& p, const XMATRIX44& vp, int w, int h);
+static bool ProjectAABBToScreenRect(const t850::AABB& box, const XMATRIX44& vp,
+                                    int viewW, int viewH,
+                                    float& sMinX, float& sMinY,
+                                    float& sMaxX, float& sMaxY);
 static t850::Ray BuildEditorCameraRay(const ::Camera& camera,
                                       float mouseX,
                                       float mouseY,
@@ -88,6 +93,62 @@ namespace {
   std::vector<SceneObject> g_objects;
   int                      g_selectedIdx = -1;
 
+  enum class PhysicsSceneEntityType {
+    StaticTriangleMesh,
+    Player
+  };
+
+  struct PhysicsSceneEntity {
+    PhysicsSceneEntityType type = PhysicsSceneEntityType::StaticTriangleMesh;
+    std::string name;
+    std::string sourceName;
+    int sourceObjectIndex = -1;
+    t850::PhysicsBodyHandle body;
+    t850::PhysicsCookStats stats;
+    t850::PhysicsTriangleMeshCookSettings cookSettings;
+    std::unique_ptr<EditorMesh> visual;
+    bool visible = true;
+    bool frozen = false;
+    bool showWire = true;
+    XVECTOR3 position = XVECTOR3(0.0f, 64.0f, 0.0f, 1.0f);
+    XVECTOR3 eulerRadians = XVECTOR3(0.0f, 0.0f, 0.0f, 0.0f);
+    t850::PhysicsShapeType playerShape = t850::PhysicsShapeType::Box;
+    XVECTOR3 playerHalfExtents = XVECTOR3(16.0f, 32.0f, 16.0f, 0.0f);
+    float playerRadius = 16.0f;
+    float playerHalfHeight = 24.0f;
+    float friction = 0.6f;
+    float restitution = 0.0f;
+    bool sensor = false;
+    int characterImplementation = 1; // 0=Character rigid body, 1=CharacterVirtual
+    float characterMass = 70.0f;
+    float characterMaxStrength = 100.0f;
+    float characterMaxSlopeAngleDeg = 50.0f;
+    bool characterEnhancedInternalEdgeRemoval = true;
+    float characterSupportingVolumeOffset = -1.0e10f;
+    float characterShapeOffset[3] = { 0.0f, 0.0f, 0.0f };
+    int characterBackFaceMode = 1; // 0=IgnoreBackFaces, 1=CollideWithBackFaces
+    float characterPredictiveContactDistance = 0.1f;
+    int characterMaxCollisionIterations = 5;
+    int characterMaxConstraintIterations = 15;
+    float characterMinTimeRemaining = 1.0e-4f;
+    float characterCollisionTolerance = 1.0e-3f;
+    float characterPadding = 0.02f;
+    int characterMaxNumHits = 256;
+    float characterHitReductionCosMaxAngle = 0.999f;
+    float characterPenetrationRecoverySpeed = 1.0f;
+    float characterGravityFactor = 1.0f;
+    bool characterAllowTranslationX = true;
+    bool characterAllowTranslationY = true;
+    bool characterAllowTranslationZ = true;
+    bool characterInnerBody = false;
+  };
+  std::vector<PhysicsSceneEntity> g_physicsEntities;
+  t850::PhysicsTriangleMeshCookSettings g_triangleMeshCookSettings;
+  float g_triangleMeshFriction = 0.6f;
+  float g_triangleMeshRestitution = 0.0f;
+  bool g_triangleMeshSensor = false;
+  std::string g_triangleMeshStatus;
+
   // Multi-selection: set of selected mesh indices
   std::set<int>            g_multiSelect;
 
@@ -100,8 +161,7 @@ namespace {
   std::vector<SceneCamera> g_cameras;
   std::vector<SceneLight>  g_lights;
 
-  // Selection: what type of entity is selected
-  // 0=mesh, 1=camera, 2=light. Index is g_selectedIdx into the respective vector.
+  // Selection: 0=mesh, 1=camera, 2=light, 3=physics entity.
   int g_selectionType = 0;  // 0=mesh by default
 
   // Marquee box selection state
@@ -117,6 +177,9 @@ namespace {
   // ImGuizmo drag tracking
   bool           g_gizmoDragging = false;
   TransformState g_gizmoDragStart;
+  XVECTOR3       g_physicsGizmoStartHalfExtents = XVECTOR3(16.0f, 32.0f, 16.0f, 0.0f);
+  float          g_physicsGizmoStartRadius = 16.0f;
+  float          g_physicsGizmoStartHalfHeight = 24.0f;
 
   // Persistent camera for scene camera viewport switching
   ::Camera g_viewCamera;
@@ -129,6 +192,7 @@ namespace {
 
   // RT debug: which RT attachment to display (-1 = backbuffer)
   int g_debugRT = -1;
+  t850::Texture* g_debugRTTexture = nullptr;
 
   // Dummy 1x1 white texture for shadow slot
   t850::Texture* g_dummyWhiteTex = nullptr;
@@ -186,6 +250,654 @@ static SceneObject* SelectedObject() {
   if (g_selectionType == 0 && g_selectedIdx >= 0 && g_selectedIdx < (int)g_objects.size())
     return &g_objects[g_selectedIdx];
   return nullptr;
+}
+
+static PhysicsSceneEntity* SelectedPhysicsEntity() {
+  if (g_selectionType == 3 && g_selectedIdx >= 0 && g_selectedIdx < (int)g_physicsEntities.size())
+    return &g_physicsEntities[g_selectedIdx];
+  return nullptr;
+}
+
+static std::string MakeUniquePhysicsEntityName(const std::string& baseName) {
+  const std::string base = baseName.empty() ? "Static Triangle Mesh" : baseName;
+  std::string candidate = base;
+  int suffix = 1;
+  auto exists = [&](const std::string& name) {
+    for (const PhysicsSceneEntity& entity : g_physicsEntities) {
+      if (entity.name == name) return true;
+    }
+    return false;
+  };
+  while (exists(candidate)) {
+    candidate = base + " " + std::to_string(++suffix);
+  }
+  return candidate;
+}
+
+static int FindPlayerPhysicsEntityIndex() {
+  for (int i = 0; i < static_cast<int>(g_physicsEntities.size()); ++i) {
+    if (g_physicsEntities[i].type == PhysicsSceneEntityType::Player) {
+      return i;
+    }
+  }
+  return -1;
+}
+
+static float EstimateSceneScaleForPlayer() {
+  t850::AABB combined;
+  for (const SceneObject& object : g_objects) {
+    if (!object.visible || !object.wireframe.IsLoaded()) {
+      continue;
+    }
+    const t850::AABB bounds = object.wireframe.WorldAABB();
+    if (bounds.IsValid()) {
+      combined.ExpandToInclude(bounds);
+    }
+  }
+  if (!combined.IsValid()) {
+    return 1.0f;
+  }
+  const XVECTOR3 extents = combined.Extents();
+  const float maxExtent = (std::max)(extents.x, (std::max)(extents.y, extents.z));
+  if (!std::isfinite(maxExtent) || maxExtent <= 0.001f) {
+    return 1.0f;
+  }
+  return maxExtent;
+}
+
+static void ApplyDefaultPlayerSizeFromScene(PhysicsSceneEntity& entity) {
+  const float sceneExtent = EstimateSceneScaleForPlayer();
+  const float height = std::clamp(sceneExtent * 0.020f, 0.5f, 3.0f);
+  const float width = height * 0.32f;
+  entity.playerShape = t850::PhysicsShapeType::Box;
+  entity.playerHalfExtents = XVECTOR3(width * 0.5f, height * 0.5f, width * 0.5f, 0.0f);
+  entity.playerRadius = width * 0.5f;
+  entity.playerHalfHeight = (std::max)(1.0f, height * 0.5f - entity.playerRadius);
+}
+
+static void AppendBoxTriangles(std::vector<XVECTOR3>& vertices,
+                               std::vector<unsigned int>& indices,
+                               float minX,
+                               float minY,
+                               float minZ,
+                               float maxX,
+                               float maxY,
+                               float maxZ) {
+  const unsigned int base = static_cast<unsigned int>(vertices.size());
+  vertices.emplace_back(minX, minY, minZ, 1.0f);
+  vertices.emplace_back(maxX, minY, minZ, 1.0f);
+  vertices.emplace_back(maxX, maxY, minZ, 1.0f);
+  vertices.emplace_back(minX, maxY, minZ, 1.0f);
+  vertices.emplace_back(minX, minY, maxZ, 1.0f);
+  vertices.emplace_back(maxX, minY, maxZ, 1.0f);
+  vertices.emplace_back(maxX, maxY, maxZ, 1.0f);
+  vertices.emplace_back(minX, maxY, maxZ, 1.0f);
+  static constexpr unsigned int faces[] = {
+      0, 1, 2, 0, 2, 3,
+      4, 6, 5, 4, 7, 6,
+      0, 4, 5, 0, 5, 1,
+      3, 2, 6, 3, 6, 7,
+      0, 3, 7, 0, 7, 4,
+      1, 5, 6, 1, 6, 2,
+  };
+  indices.reserve(indices.size() + sizeof(faces) / sizeof(faces[0]));
+  for (unsigned int index : faces) {
+    indices.push_back(base + index);
+  }
+}
+
+static bool BuildPlayerSilhouetteMesh(PhysicsSceneEntity& entity) {
+  const float height = entity.playerShape == t850::PhysicsShapeType::Capsule
+      ? (entity.playerHalfHeight + entity.playerRadius) * 2.0f
+      : entity.playerShape == t850::PhysicsShapeType::Sphere
+          ? entity.playerRadius * 2.0f
+          : entity.playerShape == t850::PhysicsShapeType::Cylinder
+              ? entity.playerHalfHeight * 2.0f
+      : entity.playerHalfExtents.y * 2.0f;
+  const float width = entity.playerShape == t850::PhysicsShapeType::Capsule
+      ? entity.playerRadius * 2.0f
+      : entity.playerShape == t850::PhysicsShapeType::Sphere || entity.playerShape == t850::PhysicsShapeType::Cylinder
+          ? entity.playerRadius * 2.0f
+      : entity.playerHalfExtents.x * 2.0f;
+  const float depth = entity.playerShape == t850::PhysicsShapeType::Capsule
+      ? entity.playerRadius * 1.2f
+      : entity.playerShape == t850::PhysicsShapeType::Sphere || entity.playerShape == t850::PhysicsShapeType::Cylinder
+          ? entity.playerRadius * 1.2f
+      : entity.playerHalfExtents.z * 2.0f;
+  if (height <= 0.001f || width <= 0.001f || depth <= 0.001f) {
+    return false;
+  }
+
+  const float bottom = -height * 0.5f;
+  const float legTop = bottom + height * 0.45f;
+  const float torsoTop = bottom + height * 0.78f;
+  const float top = height * 0.5f;
+  const float halfDepth = depth * 0.5f;
+  std::vector<XVECTOR3> vertices;
+  std::vector<unsigned int> indices;
+  vertices.reserve(48);
+  indices.reserve(216);
+
+  const float legHalfWidth = width * 0.14f;
+  const float legOffset = width * 0.16f;
+  AppendBoxTriangles(vertices, indices, -legOffset - legHalfWidth, bottom, -halfDepth * 0.45f, -legOffset + legHalfWidth, legTop, halfDepth * 0.45f);
+  AppendBoxTriangles(vertices, indices,  legOffset - legHalfWidth, bottom, -halfDepth * 0.45f,  legOffset + legHalfWidth, legTop, halfDepth * 0.45f);
+  AppendBoxTriangles(vertices, indices, -width * 0.32f, legTop, -halfDepth * 0.55f, width * 0.32f, torsoTop, halfDepth * 0.55f);
+  AppendBoxTriangles(vertices, indices, -width * 0.18f, torsoTop, -halfDepth * 0.45f, width * 0.18f, top, halfDepth * 0.45f);
+  AppendBoxTriangles(vertices, indices, -width * 0.55f, legTop + height * 0.10f, -halfDepth * 0.35f, -width * 0.35f, torsoTop, halfDepth * 0.35f);
+  AppendBoxTriangles(vertices, indices,  width * 0.35f, legTop + height * 0.10f, -halfDepth * 0.35f,  width * 0.55f, torsoTop, halfDepth * 0.35f);
+
+  entity.visual = std::make_unique<EditorMesh>();
+  if (!entity.visual->LoadFromTriangles("player silhouette", vertices, indices)) {
+    entity.visual.reset();
+    return false;
+  }
+  entity.visual->Position() = entity.position;
+  entity.visual->EulerRadians() = entity.eulerRadians;
+  entity.visual->WireColor = XVECTOR3(0.2f, 0.8f, 1.0f, 1.0f);
+  return true;
+}
+
+static XMATRIX44 MakePhysicsTransform(const XVECTOR3& position, const XVECTOR3& eulerRadians) {
+  XMATRIX44 rx, ry, rz, rotation, translation;
+  XMatRotationX(rx, eulerRadians.x);
+  XMatRotationY(ry, eulerRadians.y);
+  XMatRotationZ(rz, eulerRadians.z);
+  XMatTranslation(translation, position.x, position.y, position.z);
+  rotation = rx * ry * rz;
+  return rotation * translation;
+}
+
+static XMATRIX44 MakePhysicsGizmoTransform(const PhysicsSceneEntity& entity) {
+  XMATRIX44 scale;
+  scale.Identity();
+  if (g_gizmoDragging && entity.type == PhysicsSceneEntityType::Player) {
+    if (entity.playerShape == t850::PhysicsShapeType::Capsule || entity.playerShape == t850::PhysicsShapeType::Cylinder) {
+      const float radiusScale = g_physicsGizmoStartRadius > 0.000001f
+          ? entity.playerRadius / g_physicsGizmoStartRadius
+          : 1.0f;
+      const float heightScale = g_physicsGizmoStartHalfHeight > 0.000001f
+          ? entity.playerHalfHeight / g_physicsGizmoStartHalfHeight
+          : 1.0f;
+      XMatScaling(scale, radiusScale, heightScale, radiusScale);
+    } else if (entity.playerShape == t850::PhysicsShapeType::Sphere) {
+      const float radiusScale = g_physicsGizmoStartRadius > 0.000001f
+          ? entity.playerRadius / g_physicsGizmoStartRadius
+          : 1.0f;
+      XMatScaling(scale, radiusScale, radiusScale, radiusScale);
+    } else {
+      XMatScaling(scale,
+                  g_physicsGizmoStartHalfExtents.x > 0.000001f ? entity.playerHalfExtents.x / g_physicsGizmoStartHalfExtents.x : 1.0f,
+                  g_physicsGizmoStartHalfExtents.y > 0.000001f ? entity.playerHalfExtents.y / g_physicsGizmoStartHalfExtents.y : 1.0f,
+                  g_physicsGizmoStartHalfExtents.z > 0.000001f ? entity.playerHalfExtents.z / g_physicsGizmoStartHalfExtents.z : 1.0f);
+    }
+  }
+  return scale * MakePhysicsTransform(entity.position, entity.eulerRadians);
+}
+
+static bool RecreatePlayerPhysicsBody(t850::JoltPhysicsSystem& physics, PhysicsSceneEntity& entity) {
+  if (entity.type != PhysicsSceneEntityType::Player || !physics.IsInitialized()) {
+    return false;
+  }
+  if (entity.body.IsValid()) {
+    physics.DestroyBody(entity.body);
+    entity.body.Reset();
+  }
+
+  t850::PhysicsBodyDesc desc;
+  desc.entityId = 0x504C5952u; // PLYR
+  desc.debugName = "player";
+  desc.worldTransform = MakePhysicsTransform(entity.position, entity.eulerRadians);
+  desc.motion = t850::PhysicsBodyMotion::Kinematic;
+  desc.friction = entity.friction;
+  desc.restitution = entity.restitution;
+  desc.sensor = entity.sensor;
+  if (entity.playerShape == t850::PhysicsShapeType::Capsule) {
+    desc.shape = t850::PhysicsShapeDesc::Capsule((std::max)(0.001f, entity.playerRadius),
+                                                 (std::max)(0.001f, entity.playerHalfHeight));
+  } else if (entity.playerShape == t850::PhysicsShapeType::Sphere) {
+    desc.shape = t850::PhysicsShapeDesc::Sphere((std::max)(0.001f, entity.playerRadius));
+  } else if (entity.playerShape == t850::PhysicsShapeType::Cylinder) {
+    desc.shape = t850::PhysicsShapeDesc::Cylinder((std::max)(0.001f, entity.playerRadius),
+                                                  (std::max)(0.001f, entity.playerHalfHeight));
+  } else {
+    desc.shape = t850::PhysicsShapeDesc::Box(XVECTOR3(
+        (std::max)(0.001f, entity.playerHalfExtents.x),
+        (std::max)(0.001f, entity.playerHalfExtents.y),
+        (std::max)(0.001f, entity.playerHalfExtents.z),
+        0.0f));
+  }
+
+  entity.body = physics.CreateBody(desc);
+  if (!entity.body.IsValid()) {
+    T8_LOG_ERROR("[T8ditor] Failed to create player physics body.");
+    return false;
+  }
+  return BuildPlayerSilhouetteMesh(entity);
+}
+
+static bool BuildPhysicsDebugBodyBounds(const t850::PhysicsDebugBody& debugBody, t850::AABB& outBounds) {
+  outBounds = t850::AABB{};
+  if (debugBody.shape.type == t850::PhysicsShapeType::TriangleMesh &&
+      debugBody.debugVertices && !debugBody.debugVertices->empty()) {
+    for (const XVECTOR3& vertex : *debugBody.debugVertices) {
+      outBounds.ExpandToInclude(t850::TransformPoint(vertex, debugBody.state.worldTransform));
+    }
+    return outBounds.IsValid();
+  }
+
+  if (debugBody.shape.type == t850::PhysicsShapeType::Capsule) {
+    const float radius = (std::max)(0.001f, debugBody.shape.radius);
+    const float halfHeight = (std::max)(0.001f, debugBody.shape.halfHeight);
+    t850::AABB local(
+        XVECTOR3(-radius, -halfHeight - radius, -radius, 1.0f),
+        XVECTOR3( radius,  halfHeight + radius,  radius, 1.0f));
+    outBounds = local.Transformed(debugBody.state.worldTransform);
+    return outBounds.IsValid();
+  }
+
+  if (debugBody.shape.type == t850::PhysicsShapeType::Sphere) {
+    const float radius = (std::max)(0.001f, debugBody.shape.radius);
+    t850::AABB local(
+        XVECTOR3(-radius, -radius, -radius, 1.0f),
+        XVECTOR3( radius,  radius,  radius, 1.0f));
+    outBounds = local.Transformed(debugBody.state.worldTransform);
+    return outBounds.IsValid();
+  }
+
+  if (debugBody.shape.type == t850::PhysicsShapeType::Cylinder) {
+    const float radius = (std::max)(0.001f, debugBody.shape.radius);
+    const float halfHeight = (std::max)(0.001f, debugBody.shape.halfHeight);
+    t850::AABB local(
+        XVECTOR3(-radius, -halfHeight, -radius, 1.0f),
+        XVECTOR3( radius,  halfHeight,  radius, 1.0f));
+    outBounds = local.Transformed(debugBody.state.worldTransform);
+    return outBounds.IsValid();
+  }
+
+  const XVECTOR3 halfExtents(
+      (std::max)(0.001f, debugBody.shape.halfExtents.x),
+      (std::max)(0.001f, debugBody.shape.halfExtents.y),
+      (std::max)(0.001f, debugBody.shape.halfExtents.z),
+      0.0f);
+  t850::AABB local(
+      XVECTOR3(-halfExtents.x, -halfExtents.y, -halfExtents.z, 1.0f),
+      XVECTOR3( halfExtents.x,  halfExtents.y,  halfExtents.z, 1.0f));
+  outBounds = local.Transformed(debugBody.state.worldTransform);
+  return outBounds.IsValid();
+}
+
+static bool GetPhysicsEntityWorldAABB(const PhysicsSceneEntity& entity,
+                                      const t850::JoltPhysicsSystem& physics,
+                                      t850::AABB& outBounds) {
+  outBounds = t850::AABB{};
+  if (entity.type == PhysicsSceneEntityType::Player && entity.visual && entity.visual->IsLoaded()) {
+    outBounds = entity.visual->WorldAABB();
+    return outBounds.IsValid();
+  }
+  if (!entity.body.IsValid()) {
+    return false;
+  }
+  t850::PhysicsDebugBody debugBody;
+  return physics.GetDebugBody(entity.body, debugBody) && BuildPhysicsDebugBodyBounds(debugBody, outBounds);
+}
+
+static bool RaycastPhysicsEntity(const PhysicsSceneEntity& entity,
+                                 const t850::JoltPhysicsSystem& physics,
+                                 const t850::Ray& ray,
+                                 const XMATRIX44& viewProjection,
+                                 int viewW,
+                                 int viewH,
+                                 float mouseX,
+                                 float mouseY,
+                                 float& outT) {
+  outT = FLT_MAX;
+  if (!entity.visible || entity.frozen) {
+    return false;
+  }
+  if (entity.type == PhysicsSceneEntityType::Player && entity.visual && entity.visual->IsLoaded()) {
+    return entity.visual->RaycastSurface(ray, outT);
+  }
+
+  t850::AABB bounds;
+  if (!GetPhysicsEntityWorldAABB(entity, physics, bounds)) {
+    return false;
+  }
+  float sMinX = 0.0f, sMinY = 0.0f, sMaxX = 0.0f, sMaxY = 0.0f;
+  const bool projected = ProjectAABBToScreenRect(bounds, viewProjection, viewW, viewH, sMinX, sMinY, sMaxX, sMaxY);
+  const float screenArea = (std::max)(1.0f, (sMaxX - sMinX) * (sMaxY - sMinY));
+  const float viewportArea = (std::max)(1.0f, static_cast<float>(viewW * viewH));
+  if (!projected || screenArea >= viewportArea * 0.65f ||
+      mouseX < sMinX || mouseX > sMaxX || mouseY < sMinY || mouseY > sMaxY) {
+    return false;
+  }
+  return t850::RayIntersectsAABB(ray, bounds, outT);
+}
+
+static int CreateOrSelectPlayerPhysicsEntity(t850::JoltPhysicsSystem& physics, const XVECTOR3& spawnPosition) {
+  int existing = FindPlayerPhysicsEntityIndex();
+  if (existing >= 0) {
+    g_selectedIdx = existing;
+    g_selectionType = 3;
+    g_multiSelect.clear();
+    return existing;
+  }
+
+  PhysicsSceneEntity entity;
+  entity.type = PhysicsSceneEntityType::Player;
+  entity.name = "player";
+  entity.sourceName = "player";
+  entity.sourceObjectIndex = -1;
+  entity.position = spawnPosition;
+  ApplyDefaultPlayerSizeFromScene(entity);
+  entity.friction = 0.0f;
+  entity.restitution = 0.0f;
+  entity.sensor = false;
+  if (!RecreatePlayerPhysicsBody(physics, entity)) {
+    return -1;
+  }
+
+  g_physicsEntities.push_back(std::move(entity));
+  g_selectedIdx = static_cast<int>(g_physicsEntities.size()) - 1;
+  g_selectionType = 3;
+  g_multiSelect.clear();
+  return g_selectedIdx;
+}
+
+static void DestroyPhysicsEntity(t850::JoltPhysicsSystem& physics, int index) {
+  if (index < 0 || index >= static_cast<int>(g_physicsEntities.size())) {
+    return;
+  }
+  PhysicsSceneEntity& entity = g_physicsEntities[index];
+  if (entity.body.IsValid() && physics.IsInitialized()) {
+    physics.DestroyBody(entity.body);
+  }
+  g_physicsEntities.erase(g_physicsEntities.begin() + index);
+  if (g_selectionType == 3) {
+    if (g_physicsEntities.empty()) {
+      g_selectedIdx = -1;
+      g_selectionType = 0;
+    } else if (g_selectedIdx >= static_cast<int>(g_physicsEntities.size())) {
+      g_selectedIdx = static_cast<int>(g_physicsEntities.size()) - 1;
+    }
+  }
+}
+
+static void DestroyAllPhysicsEntities(t850::JoltPhysicsSystem& physics) {
+  if (physics.IsInitialized()) {
+    for (PhysicsSceneEntity& entity : g_physicsEntities) {
+      if (entity.body.IsValid()) {
+        physics.DestroyBody(entity.body);
+      }
+    }
+  }
+  g_physicsEntities.clear();
+  if (g_selectionType == 3) {
+    g_selectedIdx = -1;
+    g_selectionType = 0;
+  }
+}
+
+static int CountPhysicsEntitiesForSourceObject(int sourceObjectIndex) {
+  int count = 0;
+  for (const PhysicsSceneEntity& entity : g_physicsEntities) {
+    if (entity.sourceObjectIndex == sourceObjectIndex) {
+      ++count;
+    }
+  }
+  return count;
+}
+
+static std::string PhysicsBuildQualityToScene(t850::PhysicsMeshBuildQuality quality) {
+  return quality == t850::PhysicsMeshBuildQuality::FavorBuildSpeed ? "build_speed" : "runtime_performance";
+}
+
+static t850::PhysicsMeshBuildQuality PhysicsBuildQualityFromScene(const std::string& quality) {
+  return quality == "build_speed"
+      ? t850::PhysicsMeshBuildQuality::FavorBuildSpeed
+      : t850::PhysicsMeshBuildQuality::FavorRuntimePerformance;
+}
+
+static t850::scene::ScenePhysicsCookSettingsDesc PhysicsCookSettingsToScene(const t850::PhysicsTriangleMeshCookSettings& settings) {
+  t850::scene::ScenePhysicsCookSettingsDesc desc;
+  desc.max_triangles_per_leaf = settings.maxTrianglesPerLeaf;
+  desc.build_quality = PhysicsBuildQualityToScene(settings.buildQuality);
+  desc.active_edge_cos_threshold_angle = settings.activeEdgeCosThresholdAngle;
+  desc.per_triangle_user_data = settings.perTriangleUserData;
+  desc.use_disk_cache = settings.useDiskCache;
+  return desc;
+}
+
+static t850::PhysicsTriangleMeshCookSettings PhysicsCookSettingsFromScene(const t850::scene::ScenePhysicsCookSettingsDesc& desc) {
+  t850::PhysicsTriangleMeshCookSettings settings;
+  settings.maxTrianglesPerLeaf = desc.max_triangles_per_leaf;
+  settings.buildQuality = PhysicsBuildQualityFromScene(desc.build_quality);
+  settings.activeEdgeCosThresholdAngle = desc.active_edge_cos_threshold_angle;
+  settings.perTriangleUserData = desc.per_triangle_user_data;
+  settings.useDiskCache = desc.use_disk_cache;
+  return settings;
+}
+
+static t850::scene::ScenePhysicsEntityDesc PhysicsEntityToScene(const PhysicsSceneEntity& entity) {
+  t850::scene::ScenePhysicsEntityDesc desc;
+  desc.name = entity.name;
+  desc.type = entity.type == PhysicsSceneEntityType::Player ? "player" : "static_triangle_mesh";
+  desc.source_object = entity.sourceName;
+  desc.position = { entity.position.x, entity.position.y, entity.position.z };
+  desc.rotation = { entity.eulerRadians.x * kRadToDeg, entity.eulerRadians.y * kRadToDeg, entity.eulerRadians.z * kRadToDeg };
+  desc.visible = entity.visible;
+  desc.frozen = entity.frozen;
+  desc.show_wire = entity.showWire;
+  desc.shape = entity.playerShape == t850::PhysicsShapeType::Capsule ? "capsule" :
+      (entity.playerShape == t850::PhysicsShapeType::Sphere ? "sphere" :
+       (entity.playerShape == t850::PhysicsShapeType::Cylinder ? "cylinder" : "box"));
+  desc.half_extents = { entity.playerHalfExtents.x, entity.playerHalfExtents.y, entity.playerHalfExtents.z };
+  desc.radius = entity.playerRadius;
+  desc.half_height = entity.playerHalfHeight;
+  desc.friction = entity.friction;
+  desc.restitution = entity.restitution;
+  desc.sensor = entity.sensor;
+  desc.cook_settings = PhysicsCookSettingsToScene(entity.cookSettings);
+  desc.character.implementation = entity.characterImplementation == 0 ? "character" : "virtual";
+  desc.character.mass = entity.characterMass;
+  desc.character.max_strength = entity.characterMaxStrength;
+  desc.character.max_slope_angle_deg = entity.characterMaxSlopeAngleDeg;
+  desc.character.enhanced_internal_edge_removal = entity.characterEnhancedInternalEdgeRemoval;
+  desc.character.supporting_volume_offset = entity.characterSupportingVolumeOffset;
+  desc.character.shape_offset = { entity.characterShapeOffset[0], entity.characterShapeOffset[1], entity.characterShapeOffset[2] };
+  desc.character.back_face_mode = entity.characterBackFaceMode == 0 ? "ignore" : "collide";
+  desc.character.predictive_contact_distance = entity.characterPredictiveContactDistance;
+  desc.character.max_collision_iterations = entity.characterMaxCollisionIterations;
+  desc.character.max_constraint_iterations = entity.characterMaxConstraintIterations;
+  desc.character.min_time_remaining = entity.characterMinTimeRemaining;
+  desc.character.collision_tolerance = entity.characterCollisionTolerance;
+  desc.character.character_padding = entity.characterPadding;
+  desc.character.max_num_hits = entity.characterMaxNumHits;
+  desc.character.hit_reduction_cos_max_angle = entity.characterHitReductionCosMaxAngle;
+  desc.character.penetration_recovery_speed = entity.characterPenetrationRecoverySpeed;
+  desc.character.gravity_factor = entity.characterGravityFactor;
+  desc.character.allow_translation_x = entity.characterAllowTranslationX;
+  desc.character.allow_translation_y = entity.characterAllowTranslationY;
+  desc.character.allow_translation_z = entity.characterAllowTranslationZ;
+  desc.character.inner_body = entity.characterInnerBody;
+  return desc;
+}
+
+static int FindSceneObjectIndexByName(const std::string& name) {
+  for (int i = 0; i < static_cast<int>(g_objects.size()); ++i) {
+    if (g_objects[i].name == name) {
+      return i;
+    }
+  }
+  return -1;
+}
+
+static void DestroyPhysicsEntitiesForSourceObject(t850::JoltPhysicsSystem& physics, int sourceObjectIndex) {
+  for (int i = static_cast<int>(g_physicsEntities.size()) - 1; i >= 0; --i) {
+    if (g_physicsEntities[i].sourceObjectIndex == sourceObjectIndex) {
+      DestroyPhysicsEntity(physics, i);
+    }
+  }
+}
+
+static bool CreateStaticTriangleMeshPhysicsEntity(t850::JoltPhysicsSystem& physics, int sourceObjectIndex) {
+  if (sourceObjectIndex < 0 || sourceObjectIndex >= static_cast<int>(g_objects.size())) {
+    T8_LOG_ERROR("[T8ditor] Select a loaded render mesh before creating a static triangle mesh.");
+    return false;
+  }
+  SceneObject& selected = g_objects[sourceObjectIndex];
+  const auto* renderMesh = dynamic_cast<const t850::RenderMesh*>(selected.litInst.pBase);
+  if (!renderMesh) {
+    T8_LOG_ERROR("[T8ditor] Selected object '%s' has no render mesh geometry.", selected.name.c_str());
+    return false;
+  }
+  if (!physics.IsInitialized()) {
+    T8_LOG_ERROR("[T8ditor] Physics runtime is not initialized.");
+    return false;
+  }
+
+  t850::PhysicsTriangleMeshBodyDesc desc;
+  t850::PhysicsCookStats stats;
+  const XMATRIX44 worldFromMesh = selected.wireframe.BuildWorld();
+  if (!t850::BuildStaticTriangleMeshBodyDesc(
+          *renderMesh,
+          worldFromMesh,
+          selected.litInst.GetEntityId(),
+          g_triangleMeshCookSettings,
+          desc,
+          &stats)) {
+    T8_LOG_ERROR("[T8ditor] Failed to extract static triangle mesh geometry for '%s'.", selected.name.c_str());
+    return false;
+  }
+
+  desc.debugName = selected.name + " Static Triangle Mesh";
+  desc.friction = g_triangleMeshFriction;
+  desc.restitution = g_triangleMeshRestitution;
+  desc.sensor = g_triangleMeshSensor;
+
+  const double extractionMs = stats.extractionMs;
+  t850::PhysicsBodyHandle handle = physics.CreateTriangleMeshBody(desc, &stats);
+  stats.extractionMs = extractionMs;
+  stats.totalMs += extractionMs;
+  if (!handle.IsValid()) {
+    T8_LOG_ERROR("[T8ditor] Jolt failed to create static triangle mesh for '%s'.", selected.name.c_str());
+    return false;
+  }
+
+  PhysicsSceneEntity entity;
+  entity.name = MakeUniquePhysicsEntityName(selected.name + " Static Triangle Mesh");
+  entity.sourceName = selected.name;
+  entity.sourceObjectIndex = sourceObjectIndex;
+  entity.body = handle;
+  entity.stats = stats;
+  entity.cookSettings = g_triangleMeshCookSettings;
+  entity.friction = g_triangleMeshFriction;
+  entity.restitution = g_triangleMeshRestitution;
+  entity.sensor = g_triangleMeshSensor;
+  const std::string createdName = entity.name;
+  g_physicsEntities.push_back(std::move(entity));
+  g_selectedIdx = static_cast<int>(g_physicsEntities.size()) - 1;
+  g_selectionType = 3;
+  g_multiSelect.clear();
+  g_triangleMeshStatus = "Created " + createdName;
+  T8_LOG_INFO("[T8ditor] Created physics static triangle mesh '%s': verts=%u tris=%u cacheHit=%d cook=%.2fms total=%.2fms",
+              createdName.c_str(),
+              stats.vertexCount,
+              stats.triangleCount,
+              stats.cacheHit ? 1 : 0,
+              stats.cookMs,
+              stats.totalMs);
+  return true;
+}
+
+static bool RestorePhysicsEntityFromScene(t850::JoltPhysicsSystem& physics,
+                                          const t850::scene::ScenePhysicsEntityDesc& desc) {
+  if (desc.type == "player") {
+    PhysicsSceneEntity entity;
+    entity.type = PhysicsSceneEntityType::Player;
+    entity.name = desc.name.empty() ? "player" : desc.name;
+    entity.sourceName = "player";
+    entity.sourceObjectIndex = -1;
+    entity.visible = desc.visible;
+    entity.frozen = desc.frozen;
+    entity.showWire = desc.show_wire;
+    entity.position = XVECTOR3(desc.position.x, desc.position.y, desc.position.z, 1.0f);
+    entity.eulerRadians = XVECTOR3(desc.rotation.x * kDegToRad, desc.rotation.y * kDegToRad, desc.rotation.z * kDegToRad, 0.0f);
+    entity.playerShape = desc.shape == "capsule" ? t850::PhysicsShapeType::Capsule :
+        (desc.shape == "sphere" ? t850::PhysicsShapeType::Sphere :
+         (desc.shape == "cylinder" ? t850::PhysicsShapeType::Cylinder : t850::PhysicsShapeType::Box));
+    entity.playerHalfExtents = XVECTOR3(desc.half_extents.x, desc.half_extents.y, desc.half_extents.z, 0.0f);
+    entity.playerRadius = desc.radius;
+    entity.playerHalfHeight = desc.half_height;
+    entity.friction = desc.friction;
+    entity.restitution = desc.restitution;
+    entity.sensor = desc.sensor;
+    entity.characterImplementation = desc.character.implementation == "character" ? 0 : 1;
+    entity.characterMass = desc.character.mass;
+    entity.characterMaxStrength = desc.character.max_strength;
+    entity.characterMaxSlopeAngleDeg = desc.character.max_slope_angle_deg;
+    entity.characterEnhancedInternalEdgeRemoval = desc.character.enhanced_internal_edge_removal;
+    entity.characterSupportingVolumeOffset = desc.character.supporting_volume_offset;
+    entity.characterShapeOffset[0] = desc.character.shape_offset.x;
+    entity.characterShapeOffset[1] = desc.character.shape_offset.y;
+    entity.characterShapeOffset[2] = desc.character.shape_offset.z;
+    entity.characterBackFaceMode = desc.character.back_face_mode == "ignore" ? 0 : 1;
+    entity.characterPredictiveContactDistance = desc.character.predictive_contact_distance;
+    entity.characterMaxCollisionIterations = desc.character.max_collision_iterations;
+    entity.characterMaxConstraintIterations = desc.character.max_constraint_iterations;
+    entity.characterMinTimeRemaining = desc.character.min_time_remaining;
+    entity.characterCollisionTolerance = desc.character.collision_tolerance;
+    entity.characterPadding = desc.character.character_padding;
+    entity.characterMaxNumHits = desc.character.max_num_hits;
+    entity.characterHitReductionCosMaxAngle = desc.character.hit_reduction_cos_max_angle;
+    entity.characterPenetrationRecoverySpeed = desc.character.penetration_recovery_speed;
+    entity.characterGravityFactor = desc.character.gravity_factor;
+    entity.characterAllowTranslationX = desc.character.allow_translation_x;
+    entity.characterAllowTranslationY = desc.character.allow_translation_y;
+    entity.characterAllowTranslationZ = desc.character.allow_translation_z;
+    entity.characterInnerBody = desc.character.inner_body;
+    if (!RecreatePlayerPhysicsBody(physics, entity)) {
+      return false;
+    }
+    g_physicsEntities.push_back(std::move(entity));
+    return true;
+  }
+
+  const int sourceIndex = FindSceneObjectIndexByName(desc.source_object);
+  if (sourceIndex < 0) {
+    T8_LOG_ERROR("[T8ditor] Cannot restore physics entity '%s': source object '%s' not found",
+                 desc.name.c_str(),
+                 desc.source_object.c_str());
+    return false;
+  }
+
+  const t850::PhysicsTriangleMeshCookSettings savedCookSettings = g_triangleMeshCookSettings;
+  const float savedFriction = g_triangleMeshFriction;
+  const float savedRestitution = g_triangleMeshRestitution;
+  const bool savedSensor = g_triangleMeshSensor;
+  g_triangleMeshCookSettings = PhysicsCookSettingsFromScene(desc.cook_settings);
+  g_triangleMeshFriction = desc.friction;
+  g_triangleMeshRestitution = desc.restitution;
+  g_triangleMeshSensor = desc.sensor;
+  const bool ok = CreateStaticTriangleMeshPhysicsEntity(physics, sourceIndex);
+  g_triangleMeshCookSettings = savedCookSettings;
+  g_triangleMeshFriction = savedFriction;
+  g_triangleMeshRestitution = savedRestitution;
+  g_triangleMeshSensor = savedSensor;
+  if (!ok || g_physicsEntities.empty()) {
+    return false;
+  }
+  PhysicsSceneEntity& entity = g_physicsEntities.back();
+  entity.name = desc.name.empty() ? entity.name : desc.name;
+  entity.sourceName = desc.source_object;
+  entity.visible = desc.visible;
+  entity.frozen = desc.frozen;
+  entity.showWire = desc.show_wire;
+  entity.cookSettings = PhysicsCookSettingsFromScene(desc.cook_settings);
+  entity.friction = desc.friction;
+  entity.restitution = desc.restitution;
+  entity.sensor = desc.sensor;
+  return true;
 }
 
 static t850::RenderSkinnedMesh* GetSkinnedMesh(SceneObject& obj) {
@@ -1291,6 +2003,9 @@ SceneFile EditorApp::BuildEditorSceneSnapshot(const std::string& scenePath) {
 
   sf.objects.clear();
   for (auto& obj : g_objects) {
+    if (obj.transient) {
+      continue;
+    }
     SceneObjectDesc od;
     od.name     = obj.name;
     od.mesh     = obj.meshPath.empty() ? obj.name : obj.meshPath;
@@ -1318,6 +2033,11 @@ SceneFile EditorApp::BuildEditorSceneSnapshot(const std::string& scenePath) {
   }
   for (const SceneObjectDesc& od : g_unloadedSceneObjects) {
     sf.objects.push_back(od);
+  }
+
+  sf.physics_entities.clear();
+  for (const PhysicsSceneEntity& entity : g_physicsEntities) {
+    sf.physics_entities.push_back(PhysicsEntityToScene(entity));
   }
 
   sf.cameras.clear();
@@ -1369,6 +2089,15 @@ SceneFile EditorApp::BuildEditorSceneSnapshot(const std::string& scenePath) {
   if (sf.collision.empty()) {
     sf.collision = ResolveSceneCollisionPath(sf, scenePath);
   }
+  return sf;
+}
+
+SceneFile EditorApp::RefreshVirtualEditorScene(const std::string& scenePath) {
+  SceneFile sf = BuildEditorSceneSnapshot(scenePath);
+  g_loadedSceneFile = sf;
+  g_hasLoadedSceneFile = true;
+  g_sceneCollisionResourcePath = sf.collision;
+  g_sceneProfiles = sf.profiles;
   return sf;
 }
 
@@ -1595,7 +2324,12 @@ bool EditorApp::ExportTemporaryPlayScene(std::string& outPath) {
       std::chrono::system_clock::now().time_since_epoch()).count();
   std::filesystem::path tempPath = tempDir / ("play_scene_" + std::to_string(stamp) + ".t8scene");
   outPath = tempPath.string();
-  m_playSceneEditorSnapshot = BuildEditorSceneSnapshot(outPath);
+  m_playSceneEditorSnapshot = RefreshVirtualEditorScene(outPath);
+  T8_LOG_INFO("[T8ditor] Play Scene virtual scene refreshed: objects=%zu physics=%zu cameras=%zu lights=%zu",
+              m_playSceneEditorSnapshot.objects.size(),
+              m_playSceneEditorSnapshot.physics_entities.size(),
+              m_playSceneEditorSnapshot.cameras.size(),
+              m_playSceneEditorSnapshot.lights.size());
   m_playSceneHasVisibleObjects = std::any_of(m_playSceneEditorSnapshot.objects.begin(), m_playSceneEditorSnapshot.objects.end(), [](const SceneObjectDesc& object) {
     const std::string mesh = object.mesh.empty() ? object.name : object.mesh;
     return object.visible && !mesh.empty();
@@ -1833,14 +2567,14 @@ bool EditorApp::EnsurePlaySceneRuntimeLoaded() {
     }
   }
 
-  m_playScene = std::make_unique<::Quake3Mock>();
+  m_playScene = std::make_unique<::Quake3Jolt>();
   m_playScene->pFramework = pFramework;
-  Quake3MockLaunchDesc launchDesc;
+  Quake3JoltLaunchDesc launchDesc;
   launchDesc.sceneFilePath = m_playSceneTempPath;
   launchDesc.modelPath = t850::g_config.modelPath;
   launchDesc.width = m_playSceneViewportTarget.Width();
   launchDesc.height = m_playSceneViewportTarget.Height();
-  launchDesc.startScene = 2;
+  launchDesc.startScene = 4;
   launchDesc.guiOnStart = false;
   m_playScene->SetLaunchDesc(launchDesc);
   m_playScene->SetEngineContext(&m_playSceneEngineContext);
@@ -2208,42 +2942,43 @@ void EditorApp::DrawEditorRenderingPanel() {
     }
     return m_sceneProps.pGaussKernels[static_cast<std::size_t>(m_editorActiveGaussSelection)];
   };
-  auto flatRTIndex = [&](int rtHandle, int attachment) {
-    if (!pFramework || !pFramework->pVideoDriver || rtHandle < 0) return -1;
-    int flatIndex = 0;
-    auto* driver = pFramework->pVideoDriver;
-    for (int rtIndex = 0; rtIndex < static_cast<int>(driver->RTs.size()); ++rtIndex) {
-      t850::BaseRT* rt = driver->RTs[rtIndex];
-      if (!rt) continue;
-      for (int colorIndex = 0; colorIndex < static_cast<int>(rt->vColorTextures.size()); ++colorIndex) {
-        const int colorAttachment = 1 << colorIndex;
-        if (rtIndex == rtHandle && attachment == colorAttachment) return flatIndex;
-        ++flatIndex;
-      }
-      if (rt->pDepthTexture) {
-        if (rtIndex == rtHandle && attachment == t850::BaseDriver::DEPTH_ATTACHMENT) return flatIndex;
-        ++flatIndex;
-      }
+  auto debugTexture = [&](const char* rtName, int attachment) -> t850::Texture* {
+    if (!pFramework || !pFramework->pVideoDriver || !rtName) return nullptr;
+    const int rtHandle = g_renderGraph.GetRTHandle(rtName);
+    if (rtHandle < 0 || rtHandle >= static_cast<int>(pFramework->pVideoDriver->RTs.size())) return nullptr;
+    t850::BaseRT* rt = pFramework->pVideoDriver->RTs[rtHandle];
+    if (!rt) return nullptr;
+    if (attachment == t850::BaseDriver::DEPTH_ATTACHMENT) return rt->pDepthTexture;
+    int colorIndex = 0;
+    int mask = attachment;
+    while (mask > 1) {
+      mask >>= 1;
+      ++colorIndex;
     }
-    return -1;
+    return colorIndex >= 0 && colorIndex < static_cast<int>(rt->vColorTextures.size())
+        ? rt->vColorTextures[colorIndex]
+        : nullptr;
   };
   auto applyDebugSelection = [&]() {
+    g_debugRT = -1;
+    g_debugRTTexture = nullptr;
     switch (m_editorDebugRTSelection) {
-    case 1:  g_debugRT = flatRTIndex(g_renderGraph.GetRTHandle("GBuffer"), t850::BaseDriver::COLOR0_ATTACHMENT); break;
-    case 2:  g_debugRT = flatRTIndex(g_renderGraph.GetRTHandle("GBuffer"), t850::BaseDriver::COLOR1_ATTACHMENT); break;
-    case 3:  g_debugRT = flatRTIndex(g_renderGraph.GetRTHandle("GBuffer"), t850::BaseDriver::COLOR2_ATTACHMENT); break;
-    case 4:  g_debugRT = flatRTIndex(g_renderGraph.GetRTHandle("GBuffer"), t850::BaseDriver::COLOR3_ATTACHMENT); break;
-    case 5:  g_debugRT = flatRTIndex(g_renderGraph.GetRTHandle("GBuffer"), t850::BaseDriver::DEPTH_ATTACHMENT); break;
-    case 6:  g_debugRT = flatRTIndex(g_renderGraph.GetRTHandle("DepthPass"), t850::BaseDriver::DEPTH_ATTACHMENT); break;
-    case 7:  g_debugRT = flatRTIndex(g_renderGraph.GetRTHandle("ShadowAccum"), t850::BaseDriver::COLOR0_ATTACHMENT); break;
-    case 8:  g_debugRT = flatRTIndex(g_renderGraph.GetRTHandle("Deferred"), t850::BaseDriver::COLOR0_ATTACHMENT); break;
-    case 9:  g_debugRT = flatRTIndex(g_renderGraph.GetRTHandle("Extra16F"), t850::BaseDriver::COLOR0_ATTACHMENT); break;
-    case 10: g_debugRT = flatRTIndex(g_renderGraph.GetRTHandle("ExtraHelper"), t850::BaseDriver::COLOR0_ATTACHMENT); break;
-    case 11: g_debugRT = flatRTIndex(g_renderGraph.GetRTHandle("BloomAccum"), t850::BaseDriver::COLOR0_ATTACHMENT); break;
-    case 12: g_debugRT = flatRTIndex(g_renderGraph.GetRTHandle("AdaptedLumCurrent"), t850::BaseDriver::COLOR0_ATTACHMENT); break;
-    default: g_debugRT = -1; break;
+    case 1:  g_debugRTTexture = debugTexture("GBuffer", t850::BaseDriver::COLOR0_ATTACHMENT); break;
+    case 2:  g_debugRTTexture = debugTexture("GBuffer", t850::BaseDriver::COLOR1_ATTACHMENT); break;
+    case 3:  g_debugRTTexture = debugTexture("GBuffer", t850::BaseDriver::COLOR2_ATTACHMENT); break;
+    case 4:  g_debugRTTexture = debugTexture("GBuffer", t850::BaseDriver::COLOR3_ATTACHMENT); break;
+    case 5:  g_debugRTTexture = debugTexture("GBuffer", t850::BaseDriver::DEPTH_ATTACHMENT); break;
+    case 6:  g_debugRTTexture = debugTexture("DepthPass", t850::BaseDriver::DEPTH_ATTACHMENT); break;
+    case 7:  g_debugRTTexture = debugTexture("ShadowAccum", t850::BaseDriver::COLOR0_ATTACHMENT); break;
+    case 8:  g_debugRTTexture = debugTexture("Deferred", t850::BaseDriver::COLOR0_ATTACHMENT); break;
+    case 9:  g_debugRTTexture = debugTexture("Extra16F", t850::BaseDriver::COLOR0_ATTACHMENT); break;
+    case 10: g_debugRTTexture = debugTexture("ExtraHelper", t850::BaseDriver::COLOR0_ATTACHMENT); break;
+    case 11: g_debugRTTexture = debugTexture("BloomAccum", t850::BaseDriver::COLOR0_ATTACHMENT); break;
+    case 12: g_debugRTTexture = debugTexture("AdaptedLumCurrent", t850::BaseDriver::COLOR0_ATTACHMENT); break;
+    default: break;
     }
   };
+  applyDebugSelection();
 
   auto drawSlider = [&](const char* name) {
     const t850::SliderDesc* desc = findSlider(name);
@@ -2275,7 +3010,15 @@ void EditorApp::DrawEditorRenderingPanel() {
     else if (desc->name == "material_refraction_strength") value = m_sceneProps.MaterialRefractionStrength;
     else return;
     if (!valid) return;
-    if (ImGui::DragFloat(desc->label.c_str(), &value, desc->step, desc->min_val, desc->max_val, "%.3f")) {
+    bool changed = false;
+    if (desc->name == "ssao_kernel_size" || desc->name == "pcf_samples") {
+      int intValue = static_cast<int>(std::round(value));
+      changed = ImGui::SliderInt(desc->label.c_str(), &intValue, static_cast<int>(desc->min_val), static_cast<int>(desc->max_val));
+      value = static_cast<float>(intValue);
+    } else {
+      changed = ImGui::SliderFloat(desc->label.c_str(), &value, desc->min_val, desc->max_val, "%.3f");
+    }
+    if (changed) {
       if (desc->name == "exposure") m_sceneProps.Exposure = value;
       else if (desc->name == "bloom_factor") m_sceneProps.BloomFactor = value;
       else if (desc->name == "bloom_threshold") m_sceneProps.BloomThreshold = value;
@@ -2402,21 +3145,47 @@ void EditorApp::SetEditorCubemap(const std::string& cubemapPath) {
   if (normalizedPath.empty() || !pFramework || !pFramework->pVideoDriver) {
     return;
   }
+  if (g_dummyEnvMapIdx >= 0 &&
+      m_pendingEditorCubemapPath.empty() &&
+      EditorResourcePathEquals(normalizedPath, m_editorCurrentCubemapPath)) {
+    return;
+  }
+
+  m_pendingEditorCubemapPath = normalizedPath;
+  if (const t850::SelectorDesc* cubemapDesc =
+          FindEditorSelectorDesc(m_editorSceneSetup.descriptor.selectors, "cubemap")) {
+    m_editorCurrentCubemapIndex = EditorCubemapSelectorIndexForPath(*cubemapDesc, normalizedPath);
+  }
+  ResetMainEditorFrameLimiter();
+  T8_LOG_INFO("[T8ditor] Queued editor cubemap change '%s'", normalizedPath.c_str());
+}
+
+void EditorApp::ApplyPendingEditorCubemap() {
+  if (m_pendingEditorCubemapPath.empty() || !pFramework || !pFramework->pVideoDriver) {
+    return;
+  }
+
+  const std::string normalizedPath = m_pendingEditorCubemapPath;
+  m_pendingEditorCubemapPath.clear();
   if (g_dummyEnvMapIdx >= 0 && EditorResourcePathEquals(normalizedPath, m_editorCurrentCubemapPath)) {
     return;
   }
 
+  ResetMainEditorFrameLimiter();
   t850::BaseDriver* driver = pFramework->pVideoDriver;
-  if (g_dummyEnvMapIdx >= 0) {
-    driver->DestroyTexture(g_dummyEnvMapIdx);
-    g_dummyEnvMapIdx = -1;
-  }
-  g_dummyEnvMapIdx = driver->CreateTexture(normalizedPath);
-  if (g_dummyEnvMapIdx < 0) {
+  T8_LOG_INFO("[T8ditor] Applying editor cubemap '%s'", normalizedPath.c_str());
+  driver->WaitForGPU();
+
+  const int oldEnvMapIdx = g_dummyEnvMapIdx;
+  const int newEnvMapIdx = driver->CreateTexture(normalizedPath);
+  if (newEnvMapIdx < 0) {
     T8_LOG_ERROR("[T8ditor] Failed to load editor cubemap '%s'", normalizedPath.c_str());
-    m_editorCurrentCubemapPath.clear();
-    m_editorCurrentCubemapIndex = -1;
     return;
+  }
+
+  g_dummyEnvMapIdx = newEnvMapIdx;
+  if (oldEnvMapIdx >= 0 && oldEnvMapIdx != newEnvMapIdx) {
+    driver->DestroyTexture(oldEnvMapIdx);
   }
 
   m_editorCurrentCubemapPath = normalizedPath;
@@ -2427,6 +3196,10 @@ void EditorApp::SetEditorCubemap(const std::string& cubemapPath) {
   t850::EnvironmentMapSet editorEnvMaps;
   editorEnvMaps.SetFallback(g_dummyEnvMapIdx);
   t850::UpdateSceneIBLSettings(m_sceneProps, driver, editorEnvMaps);
+  if (g_deferredReady && g_dummyEnvMapIdx >= 0) {
+    g_quads[0].SetEnvironmentMap(driver->GetTexture(g_dummyEnvMapIdx));
+  }
+  ResetMainEditorFrameLimiter();
 }
 
 void EditorApp::ApplyMeshEditorProfileState(SceneObject& obj, const t850::SandboxProfileDesc& state) {
@@ -6049,6 +6822,7 @@ void EditorApp::DestroyAssets() {
   m_sceneProps.SSAOKernel.Destroy();
 
   DestroyAllObjectRagdolls();
+  DestroyAllPhysicsEntities(m_physics);
   m_physicsDebug.Destroy();
   m_primMgr.DestroyPrimitives();
   g_objects.clear();
@@ -6294,6 +7068,7 @@ bool EditorApp::HasHostedSceneWindowOpen() const {
 
 void EditorApp::ResetMainEditorFrameLimiter() {
   m_mainEditorFrameLimiterActive = false;
+  m_nextMainEditorFrameTime = {};
 }
 
 void EditorApp::ThrottleMainEditorFrameIfNeeded() {
@@ -6305,10 +7080,20 @@ void EditorApp::ThrottleMainEditorFrameIfNeeded() {
   using Clock = std::chrono::steady_clock;
   static constexpr auto kFrameInterval =
       std::chrono::duration_cast<Clock::duration>(std::chrono::duration<double>(1.0 / 60.0));
+  static constexpr auto kMaxSleep =
+      std::chrono::duration_cast<Clock::duration>(std::chrono::milliseconds(20));
   auto now = Clock::now();
   if (m_mainEditorFrameLimiterActive && now < m_nextMainEditorFrameTime) {
-    std::this_thread::sleep_until(m_nextMainEditorFrameTime);
-    now = Clock::now();
+    const auto sleepDuration = m_nextMainEditorFrameTime - now;
+    if (sleepDuration <= kMaxSleep) {
+      std::this_thread::sleep_until(m_nextMainEditorFrameTime);
+      now = Clock::now();
+    } else {
+      T8_LOG_VERBOSE("[T8ditor] Resetting stale frame limiter target (%.3f ms ahead)",
+                     std::chrono::duration<double, std::milli>(sleepDuration).count());
+      ResetMainEditorFrameLimiter();
+      now = Clock::now();
+    }
   }
   m_nextMainEditorFrameTime = now + kFrameInterval;
   m_mainEditorFrameLimiterActive = true;
@@ -6329,8 +7114,11 @@ void EditorApp::OnUpdate() {
     ClosePlayScene();
   }
 
+  ApplyPendingEditorCubemap();
+
   // Execute deferred scene load BEFORE any GPU work this frame
   if (!g_pendingLoadPath.empty()) {
+    ResetMainEditorFrameLimiter();
     const std::string loadPath = g_pendingLoadPath;
     auto lastLoadingLine = std::make_shared<std::string>();
     auto loadingCallback = [this, lastLoadingLine]() {
@@ -6375,6 +7163,7 @@ void EditorApp::OnUpdate() {
       {
         t850::LoadingProgress::ScopedStep cleanupStep("Preparing scene", "Clearing current scene", 3.0f);
         DestroyAllObjectRagdolls();
+        DestroyAllPhysicsEntities(m_physics);
         m_primMgr.DestroyPrimitives();
         g_objects.clear();
         g_cameras.clear();
@@ -6481,6 +7270,13 @@ void EditorApp::OnUpdate() {
         }
       }
 
+      if (!sf.physics_entities.empty()) {
+        t850::LoadingProgress::ScopedStep physicsStep("Loading scene", "Physics entities", 4.0f);
+        for (const t850::scene::ScenePhysicsEntityDesc& entityDesc : sf.physics_entities) {
+          RestorePhysicsEntityFromScene(m_physics, entityDesc);
+        }
+      }
+
       // Load cameras
       {
         t850::LoadingProgress::ScopedStep cameraStep("Loading scene", "Cameras", 2.0f);
@@ -6533,6 +7329,7 @@ void EditorApp::OnUpdate() {
     t850::LoadingProgress::ClearFrameCallback();
     t850::LoadingProgress::Clear();
     g_pendingLoadPath.clear();
+    ResetMainEditorFrameLimiter();
     if (!g_pendingDeleteAfterLoadPath.empty() && g_pendingDeleteAfterLoadPath == loadPath) {
       std::error_code ec;
       std::filesystem::remove(g_pendingDeleteAfterLoadPath, ec);
@@ -6745,6 +7542,10 @@ void EditorApp::OnInput() {
       g_selectedIdx = -1;
       T8_LOG_INFO("[T8ditor] Mesh deleted");
     }
+    else if (g_selectionType == 3 && g_selectedIdx < (int)g_physicsEntities.size()) {
+      DestroyPhysicsEntity(m_physics, g_selectedIdx);
+      T8_LOG_INFO("[T8ditor] Physics entity deleted");
+    }
   }
 
   float wheel = ImGuiConsumeWheelDelta();
@@ -6856,6 +7657,14 @@ void EditorApp::FrameSelectedEntity() {
         : 3.0f;
     frameSphere(light.position, radius, "light");
     return;
+  } else if (g_selectionType == 3 && g_selectedIdx >= 0 && g_selectedIdx < static_cast<int>(g_physicsEntities.size())) {
+    t850::AABB bounds;
+    if (GetPhysicsEntityWorldAABB(g_physicsEntities[static_cast<std::size_t>(g_selectedIdx)], m_physics, bounds)) {
+      m_camera.FrameBounds(bounds);
+      T8_LOG_INFO("[T8ditor] Framed physics entity '%s'",
+                  g_physicsEntities[static_cast<std::size_t>(g_selectedIdx)].name.c_str());
+      return;
+    }
   }
 
   m_camera.ResetToDefault();
@@ -7074,6 +7883,25 @@ single_pick:
     }
   }
 
+  // Test physics entities
+  for (int i = 0; i < static_cast<int>(g_physicsEntities.size()); ++i) {
+    float physicsT = 0.0f;
+    const bool hit = RaycastPhysicsEntity(g_physicsEntities[i],
+                                          m_physics,
+                                          ray,
+                                          m_vp,
+                                          m_lastW,
+                                          m_lastH,
+                                          static_cast<float>(IManager.mouseX),
+                                          static_cast<float>(IManager.mouseY),
+                                          physicsT);
+    if (hit && physicsT < bestT) {
+      bestT = physicsT;
+      bestIdx = i;
+      bestType = 3;
+    }
+  }
+
   // Test cameras (AABB pick — virtual bounding box around position)
   for (int i = 0; i < (int)g_cameras.size(); ++i) {
     if (g_cameras[i].frozen || !g_cameras[i].visible) continue;
@@ -7284,31 +8112,16 @@ void EditorApp::OnDraw() {
       didCaptureFrozenEditorFrame = captureFrozenEditorFrame;
       T8_LOG_TRACE("[T8ditor] OnDraw: RenderGraph Execute done");
 
-      // RT debug override: if a specific RT is selected, draw it to backbuffer
-      if (g_debugRT >= 0) {
+      // RT debug override: if a specific RT is selected, draw it to backbuffer.
+      // Use the directly selected texture instead of a flattened RT index; RT order can change.
+      if (g_debugRTTexture) {
         drv->SetBlendState(t850::BaseDriver::BLEND_OPAQUE);
         drv->SetDepthStencilState(t850::BaseDriver::NONE);
-        int gi = 0;
-        t850::Texture* debugTex = nullptr;
-        for (int rtIdx = 0; rtIdx < (int)drv->RTs.size() && !debugTex; ++rtIdx) {
-          auto* rt = drv->RTs[rtIdx];
-          if (!rt) continue;
-          for (int ci = 0; ci < (int)rt->vColorTextures.size(); ++ci) {
-            if (gi == g_debugRT) { debugTex = rt->vColorTextures[ci]; break; }
-            gi++;
-          }
-          if (!debugTex && rt->pDepthTexture) {
-            if (gi == g_debugRT) debugTex = rt->pDepthTexture;
-            gi++;
-          }
-        }
-        if (debugTex) {
-          g_quads[7].SetTexture(debugTex, 0);
-          t850::ShaderKey bk(0);
-          bk.setPass(t850::PassType::BACKBUFFER);
-          g_quads[7].SetGlobalKey(bk);
-          g_quads[7].Draw();
-        }
+        g_quads[7].SetTexture(g_debugRTTexture, 0);
+        t850::ShaderKey bk(0);
+        bk.setPass(t850::PassType::BACKBUFFER);
+        g_quads[7].SetGlobalKey(bk);
+        g_quads[7].Draw();
         drv->SetDepthStencilState(t850::BaseDriver::DEPTH_DEFAULT);
       }
     } else {
@@ -7357,7 +8170,7 @@ void EditorApp::OnDraw() {
 
     for (int i = 0; i < (int)g_objects.size(); ++i) {
       SceneObject& obj = g_objects[i];
-      if (obj.primId < 0 || !obj.visible) continue;
+      if (!obj.visible || (obj.primId < 0 && !obj.wireframe.IsLoaded())) continue;
       bool isSelected = (g_selectionType == 0 && i == g_selectedIdx) || g_multiSelect.count(i);
       bool showWire = m_panels.showWireframe || isSelected || obj.showWire;
       t850::RenderSkinnedMesh* skinned = nullptr;
@@ -7395,6 +8208,22 @@ void EditorApp::OnDraw() {
       }
     }
 
+    for (int i = 0; i < static_cast<int>(g_physicsEntities.size()); ++i) {
+      PhysicsSceneEntity& entity = g_physicsEntities[i];
+      if (!entity.visible || !entity.visual || !entity.visual->IsLoaded() || !m_lines.IsReady()) {
+        continue;
+      }
+      const bool isSelected = g_selectionType == 3 && i == g_selectedIdx;
+      XVECTOR3 savedColor = entity.visual->WireColor;
+      entity.visual->WireColor = isSelected
+          ? XVECTOR3(0.2f, 0.55f, 1.0f, 1.0f)
+          : XVECTOR3(0.2f, 0.8f, 1.0f, 1.0f);
+      drv->SetDepthStencilState(t850::BaseDriver::READ);
+      entity.visual->Draw(m_lines, cam.VP);
+      drv->SetDepthStencilState(t850::BaseDriver::DEPTH_DEFAULT);
+      entity.visual->WireColor = savedColor;
+    }
+
     // Camera and light viewport gizmos (only if visible)
     if (m_lines.IsReady()) {
       for (int i = 0; i < (int)g_cameras.size(); ++i)
@@ -7409,11 +8238,34 @@ void EditorApp::OnDraw() {
     if (m_lines.IsReady())
       m_grid.Draw(m_lines, cam.VP);
 
-    if ((m_editorShowPhysics || ShouldDrawPhysicsDebug()) && m_physicsDebug.IsReady()) {
+    std::vector<t850::PhysicsDebugBody> physicsWireBodies;
+    std::vector<t850::PhysicsDebugBody> selectedPhysicsWireBodies;
+    for (int i = 0; i < static_cast<int>(g_physicsEntities.size()); ++i) {
+      const PhysicsSceneEntity& entity = g_physicsEntities[i];
+      if (!entity.visible || !entity.showWire || !entity.body.IsValid()) {
+        continue;
+      }
+      t850::PhysicsDebugBody debugBody;
+      if (m_physics.GetDebugBody(entity.body, debugBody)) {
+        if (g_selectionType == 3 && i == g_selectedIdx) {
+          selectedPhysicsWireBodies.push_back(std::move(debugBody));
+        } else {
+          physicsWireBodies.push_back(std::move(debugBody));
+        }
+      }
+    }
+    if (m_physicsDebug.IsReady() && (m_editorShowPhysics || ShouldDrawPhysicsDebug() || !physicsWireBodies.empty() || !selectedPhysicsWireBodies.empty())) {
       m_physicsDebug.SetViewport(m_lastW, m_lastH);
       m_physicsDebug.SetFarPlane(cam.FPlane);
       m_physicsDebug.SetDepthTexture(nullptr);
-      m_physicsDebug.Draw(m_physics, cam.VP);
+      if (m_editorShowPhysics || ShouldDrawPhysicsDebug()) {
+        m_physicsDebug.Draw(m_physics, cam.VP);
+      } else {
+        m_physicsDebug.DrawBodies(physicsWireBodies, cam.VP);
+      }
+      if (!selectedPhysicsWireBodies.empty()) {
+        m_physicsDebug.DrawBodies(selectedPhysicsWireBodies, cam.VP, XVECTOR3(0.2f, 0.55f, 1.0f, 1.0f));
+      }
     }
   }
   if (didCaptureFrozenEditorFrame) {
@@ -7512,6 +8364,8 @@ void EditorApp::OnDraw() {
         } else if (g_selectionType == 2 && g_selectedIdx < (int)g_lights.size()) {
           g_lights.erase(g_lights.begin() + g_selectedIdx);
           g_selectedIdx = -1;
+        } else if (g_selectionType == 3 && g_selectedIdx < (int)g_physicsEntities.size()) {
+          DestroyPhysicsEntity(m_physics, g_selectedIdx);
         }
       }
       if (ctx.wantsFrameView) {
@@ -7519,6 +8373,14 @@ void EditorApp::OnDraw() {
         if (sel && sel->wireframe.IsLoaded()) {
           m_camera.SetTarget(sel->wireframe.Position());
           m_camera.ResetViewAngle();
+        } else if (PhysicsSceneEntity* physicsEntity = SelectedPhysicsEntity()) {
+          t850::AABB bounds;
+          if (GetPhysicsEntityWorldAABB(*physicsEntity, m_physics, bounds)) {
+            m_camera.FrameBounds(bounds);
+          } else {
+            m_camera.SetTarget(physicsEntity->position);
+            m_camera.ResetViewAngle();
+          }
         }
       }
       if (ctx.addCamera >= 0) {
@@ -7904,6 +8766,48 @@ void EditorApp::OnDraw() {
         }
       }
     }
+    else if (g_selectionType == 3 && g_selectedIdx >= 0 && g_selectedIdx < (int)g_physicsEntities.size()) {
+      PhysicsSceneEntity& entity = g_physicsEntities[g_selectedIdx];
+      if (!entity.frozen && entity.type == PhysicsSceneEntityType::Player) {
+        bool isUsingNow = ImGuizmo::IsUsing();
+        if (isUsingNow && !g_gizmoDragging) {
+          g_gizmoDragging = true;
+          g_physicsGizmoStartHalfExtents = entity.playerHalfExtents;
+          g_physicsGizmoStartRadius = entity.playerRadius;
+          g_physicsGizmoStartHalfHeight = entity.playerHalfHeight;
+        }
+        XMATRIX44 worldMat = MakePhysicsGizmoTransform(entity);
+        bool manipulated = ImGuizmoManipulate(
+          &cam2.View.m[0][0], &cam2.Projection.m[0][0],
+          mode, &worldMat.m[0][0]);
+        if (manipulated) {
+          float translation[3], rotation[3], scale[3];
+          ImGuizmo::DecomposeMatrixToComponents(&worldMat.m[0][0], translation, rotation, scale);
+          entity.position = XVECTOR3(translation[0], translation[1], translation[2], 1.0f);
+          entity.eulerRadians = XVECTOR3(rotation[0] * kDegToRad, rotation[1] * kDegToRad, rotation[2] * kDegToRad, 0.0f);
+          if (mode == 2) {
+            const float sx = std::fabs(scale[0]) > kMinEditableScale ? std::fabs(scale[0]) : 1.0f;
+            const float sy = std::fabs(scale[1]) > kMinEditableScale ? std::fabs(scale[1]) : 1.0f;
+            const float sz = std::fabs(scale[2]) > kMinEditableScale ? std::fabs(scale[2]) : 1.0f;
+            if (entity.playerShape == t850::PhysicsShapeType::Capsule || entity.playerShape == t850::PhysicsShapeType::Cylinder) {
+              entity.playerRadius = (std::max)(0.001f, g_physicsGizmoStartRadius * (sx + sz) * 0.5f);
+              entity.playerHalfHeight = (std::max)(0.001f, g_physicsGizmoStartHalfHeight * sy);
+            } else if (entity.playerShape == t850::PhysicsShapeType::Sphere) {
+              entity.playerRadius = (std::max)(0.001f, g_physicsGizmoStartRadius * (sx + sy + sz) / 3.0f);
+            } else {
+              entity.playerHalfExtents.x = (std::max)(0.001f, g_physicsGizmoStartHalfExtents.x * sx);
+              entity.playerHalfExtents.y = (std::max)(0.001f, g_physicsGizmoStartHalfExtents.y * sy);
+              entity.playerHalfExtents.z = (std::max)(0.001f, g_physicsGizmoStartHalfExtents.z * sz);
+            }
+            worldMat = MakePhysicsTransform(entity.position, entity.eulerRadians);
+          }
+          RecreatePlayerPhysicsBody(m_physics, entity);
+        }
+        if (!isUsingNow && g_gizmoDragging) {
+          g_gizmoDragging = false;
+        }
+      }
+    }
 
     // Menu actions
     if (menuAction.wantsExit) {
@@ -8047,6 +8951,74 @@ void EditorApp::OnDraw() {
                 }
               }
               if (o.frozen) ImGui::PopStyleColor();
+              if (nodeOpen) ImGui::TreePop();
+              ImGui::PopID();
+            }
+            ImGui::TreePop();
+          }
+          // Cameras
+          if (ImGui::TreeNodeEx("Physics", ImGuiTreeNodeFlags_DefaultOpen)) {
+            ImGui::PushID("PhysicsBulkControls");
+            if (ImGui::SmallButton("Create / Select Player")) {
+              const ::Camera* spawnCamera = m_sceneProps.GetPrimaryCamera();
+              const XVECTOR3 spawnPosition = spawnCamera ? spawnCamera->Eye : m_camera.GetCameraMutable().Eye;
+              CreateOrSelectPlayerPhysicsEntity(m_physics, spawnPosition);
+            }
+            ImGui::SameLine();
+            if (ImGui::SmallButton("Destroy all") && !g_physicsEntities.empty()) {
+              DestroyAllPhysicsEntities(m_physics);
+            }
+            if (ImGui::SmallButton("Show all")) {
+              for (PhysicsSceneEntity& entity : g_physicsEntities) entity.visible = true;
+            }
+            ImGui::SameLine();
+            if (ImGui::SmallButton("Hide all")) {
+              for (PhysicsSceneEntity& entity : g_physicsEntities) entity.visible = false;
+            }
+            ImGui::SameLine();
+            if (ImGui::SmallButton("Freeze all")) {
+              for (PhysicsSceneEntity& entity : g_physicsEntities) entity.frozen = true;
+            }
+            ImGui::SameLine();
+            if (ImGui::SmallButton("Unfreeze all")) {
+              for (PhysicsSceneEntity& entity : g_physicsEntities) entity.frozen = false;
+            }
+            if (ImGui::SmallButton("Wire all")) {
+              for (PhysicsSceneEntity& entity : g_physicsEntities) entity.showWire = true;
+            }
+            ImGui::SameLine();
+            if (ImGui::SmallButton("Wire none")) {
+              for (PhysicsSceneEntity& entity : g_physicsEntities) entity.showWire = false;
+            }
+            ImGui::TextDisabled("Eye = Show   F = Freeze   W = Wire");
+            ImGui::Separator();
+            ImGui::PopID();
+
+            for (int i = 0; i < static_cast<int>(g_physicsEntities.size()); ++i) {
+              PhysicsSceneEntity& entity = g_physicsEntities[i];
+              ImGui::PushID(i + 50000);
+              ImGui::Checkbox("##vis", &entity.visible); ImGui::SameLine();
+              ImGui::Checkbox("##frz", &entity.frozen); ImGui::SameLine();
+              ImGui::Checkbox("##wir", &entity.showWire); ImGui::SameLine();
+              ImGuiTreeNodeFlags flags = ImGuiTreeNodeFlags_Leaf | ImGuiTreeNodeFlags_SpanAvailWidth;
+              if (g_selectionType == 3 && i == g_selectedIdx) flags |= ImGuiTreeNodeFlags_Selected;
+              const std::string label = (entity.type == PhysicsSceneEntityType::Player ? "[P] " : "[J] ") + entity.name;
+              if (entity.frozen) ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.5f,0.5f,0.5f,1));
+              const bool nodeOpen = ImGui::TreeNodeEx(label.c_str(), flags);
+              if (ImGui::IsItemClicked() && !entity.frozen) {
+                g_selectedIdx = i;
+                g_selectionType = 3;
+                g_multiSelect.clear();
+              }
+              if (entity.frozen) ImGui::PopStyleColor();
+              ImGui::SameLine();
+              if (ImGui::SmallButton("Destroy")) {
+                DestroyPhysicsEntity(m_physics, i);
+                if (nodeOpen) ImGui::TreePop();
+                ImGui::PopID();
+                --i;
+                continue;
+              }
               if (nodeOpen) ImGui::TreePop();
               ImGui::PopID();
             }
@@ -8224,22 +9196,44 @@ void EditorApp::OnDraw() {
           };
 
           if (ImGui::CollapsingHeader("Physics Authoring", ImGuiTreeNodeFlags_DefaultOpen)) {
-            t850::scene::SceneObjectPhysicsDesc& physics = EnsurePhysicsMeta(*sel);
-            ImGui::Checkbox("Enable Physics", &physics.enabled);
-            const char* bodyTypes[] = {
-              "none",
-              "static_triangle_mesh",
-              "convex_hull",
-              "box",
-              "sphere",
-              "capsule"
-            };
-            comboString("Body Type", physics.body_type, bodyTypes, (int)(sizeof(bodyTypes) / sizeof(bodyTypes[0])));
-            const char* motions[] = { "static", "kinematic", "dynamic" };
-            comboString("Motion", physics.motion, motions, (int)(sizeof(motions) / sizeof(motions[0])));
-            InputTextString("Collision Layer", physics.collision_layer);
-            ImGui::Checkbox("Generate Collision", &physics.generate_collision);
-            InputTextString("Collision Asset", physics.collision_asset);
+            ImGui::TextWrapped("Create a physics-only static Jolt triangle mesh from the selected render mesh. It appears under the Physics category and is not saved yet.");
+            int maxTrianglesPerLeaf = static_cast<int>(g_triangleMeshCookSettings.maxTrianglesPerLeaf);
+            if (ImGui::SliderInt("Max Triangles / Leaf", &maxTrianglesPerLeaf, 1, 8)) {
+              g_triangleMeshCookSettings.maxTrianglesPerLeaf = static_cast<uint32_t>(maxTrianglesPerLeaf);
+            }
+            int buildQuality = g_triangleMeshCookSettings.buildQuality == t850::PhysicsMeshBuildQuality::FavorBuildSpeed ? 1 : 0;
+            const char* buildQualityOptions[] = { "Favor Runtime Performance", "Favor Build Speed" };
+            if (ImGui::Combo("Build Quality", &buildQuality, buildQualityOptions, 2)) {
+              g_triangleMeshCookSettings.buildQuality = buildQuality == 1
+                  ? t850::PhysicsMeshBuildQuality::FavorBuildSpeed
+                  : t850::PhysicsMeshBuildQuality::FavorRuntimePerformance;
+            }
+            float activeEdgeCos = g_triangleMeshCookSettings.activeEdgeCosThresholdAngle;
+            if (ImGui::DragFloat("Active Edge Cos Threshold", &activeEdgeCos, 0.001f, -1.0f, 1.0f, "%.6f")) {
+              g_triangleMeshCookSettings.activeEdgeCosThresholdAngle = activeEdgeCos;
+            }
+            ImGui::TextDisabled("Default is cos(5 deg)=0.996195. Negative makes all edges active.");
+            ImGui::Checkbox("Per-Triangle User Data", &g_triangleMeshCookSettings.perTriangleUserData);
+            ImGui::Checkbox("Use Disk Cache", &g_triangleMeshCookSettings.useDiskCache);
+            ImGui::DragFloat("Friction", &g_triangleMeshFriction, 0.01f, 0.0f, 10.0f, "%.2f");
+            ImGui::DragFloat("Restitution", &g_triangleMeshRestitution, 0.01f, 0.0f, 1.0f, "%.2f");
+            ImGui::Checkbox("Sensor", &g_triangleMeshSensor);
+            const int selectedMeshIndex = static_cast<int>(sel - g_objects.data());
+            if (ImGui::Button("Create Static Triangle Mesh")) {
+              CreateStaticTriangleMeshPhysicsEntity(m_physics, selectedMeshIndex);
+            }
+            const int physicsCount = CountPhysicsEntitiesForSourceObject(selectedMeshIndex);
+            if (physicsCount > 0) {
+              ImGui::SameLine();
+              if (ImGui::Button("Destroy Mesh Physics")) {
+                DestroyPhysicsEntitiesForSourceObject(m_physics, selectedMeshIndex);
+              }
+              ImGui::TextDisabled("Physics entities for this mesh: %d", physicsCount);
+            }
+            if (!g_triangleMeshStatus.empty()) {
+              ImGui::TextWrapped("%s", g_triangleMeshStatus.c_str());
+            }
+            ImGui::TextDisabled("Jolt MeshShape settings exposed: max triangles per leaf, active edge threshold, per-triangle user data, build quality, disk cache; body settings: friction, restitution, sensor.");
           }
 
           if (!selectedIsSkinned && ImGui::CollapsingHeader("Navigation Authoring", ImGuiTreeNodeFlags_DefaultOpen)) {
@@ -8306,6 +9300,118 @@ void EditorApp::OnDraw() {
           ImGui::DragFloat("Intensity", &lt.intensity, 0.05f, 0.0f, 100.0f);
           ImGui::Checkbox("Enabled", &lt.enabled);
         }
+        else if (g_selectionType == 3 && g_selectedIdx < (int)g_physicsEntities.size()) {
+          PhysicsSceneEntity& entity = g_physicsEntities[g_selectedIdx];
+          ImGui::SeparatorText("Physics Entity");
+          ImGui::TextWrapped("%s", entity.name.c_str());
+          if (entity.type == PhysicsSceneEntityType::Player) {
+            bool changed = false;
+            ImGui::Text("Type: Player");
+            float p[3] = { entity.position.x, entity.position.y, entity.position.z };
+            if (ImGui::DragFloat3("Position", p, 0.5f)) {
+              entity.position = XVECTOR3(p[0], p[1], p[2], 1.0f);
+              changed = true;
+            }
+            int shape = entity.playerShape == t850::PhysicsShapeType::Capsule ? 1 :
+                (entity.playerShape == t850::PhysicsShapeType::Sphere ? 2 :
+                 (entity.playerShape == t850::PhysicsShapeType::Cylinder ? 3 : 0));
+            const char* shapeOptions[] = { "AABB / Box", "Capsule", "Sphere", "Cylinder" };
+            if (ImGui::Combo("Shape", &shape, shapeOptions, 4)) {
+              entity.playerShape = shape == 1 ? t850::PhysicsShapeType::Capsule :
+                  (shape == 2 ? t850::PhysicsShapeType::Sphere :
+                   (shape == 3 ? t850::PhysicsShapeType::Cylinder : t850::PhysicsShapeType::Box));
+              changed = true;
+            }
+            if (entity.playerShape == t850::PhysicsShapeType::Capsule) {
+              changed |= ImGui::DragFloat("Radius", &entity.playerRadius, 0.25f, 1.0f, 128.0f, "%.2f");
+              changed |= ImGui::DragFloat("Half Height", &entity.playerHalfHeight, 0.25f, 1.0f, 256.0f, "%.2f");
+              ImGui::TextDisabled("Total height = 2 * (half height + radius).");
+            } else if (entity.playerShape == t850::PhysicsShapeType::Sphere) {
+              changed |= ImGui::DragFloat("Radius", &entity.playerRadius, 0.25f, 0.1f, 256.0f, "%.2f");
+            } else if (entity.playerShape == t850::PhysicsShapeType::Cylinder) {
+              changed |= ImGui::DragFloat("Radius", &entity.playerRadius, 0.25f, 0.1f, 256.0f, "%.2f");
+              changed |= ImGui::DragFloat("Half Height", &entity.playerHalfHeight, 0.25f, 0.1f, 256.0f, "%.2f");
+            } else {
+              float he[3] = { entity.playerHalfExtents.x, entity.playerHalfExtents.y, entity.playerHalfExtents.z };
+              if (ImGui::DragFloat3("Half Extents", he, 0.25f, 1.0f, 256.0f, "%.2f")) {
+                entity.playerHalfExtents = XVECTOR3(he[0], he[1], he[2], 0.0f);
+                changed = true;
+              }
+            }
+            changed |= ImGui::DragFloat("Friction", &entity.friction, 0.01f, 0.0f, 10.0f, "%.2f");
+            changed |= ImGui::DragFloat("Restitution", &entity.restitution, 0.01f, 0.0f, 1.0f, "%.2f");
+            changed |= ImGui::Checkbox("Sensor", &entity.sensor);
+            ImGui::Checkbox("Visible", &entity.visible);
+            ImGui::Checkbox("Frozen", &entity.frozen);
+            ImGui::Checkbox("Wireframe", &entity.showWire);
+            if (ImGui::CollapsingHeader("Jolt Character Settings", ImGuiTreeNodeFlags_DefaultOpen)) {
+              const char* implementationOptions[] = { "Character rigid body", "CharacterVirtual controller" };
+              ImGui::Combo("Implementation", &entity.characterImplementation, implementationOptions, 2);
+              ImGui::DragFloat("Mass", &entity.characterMass, 0.5f, 0.0f, 1000.0f, "%.2f");
+              ImGui::DragFloat("Max Slope Angle (deg)", &entity.characterMaxSlopeAngleDeg, 0.5f, 0.0f, 89.0f, "%.2f");
+              ImGui::Checkbox("Enhanced Internal Edge Removal", &entity.characterEnhancedInternalEdgeRemoval);
+              ImGui::DragFloat("Supporting Volume Offset", &entity.characterSupportingVolumeOffset, 0.01f, -1.0e10f, 1.0e10f, "%.4f");
+              if (entity.characterImplementation == 0) {
+                ImGui::DragFloat("Character Friction", &entity.friction, 0.01f, 0.0f, 10.0f, "%.2f");
+                ImGui::DragFloat("Gravity Factor", &entity.characterGravityFactor, 0.01f, 0.0f, 10.0f, "%.2f");
+                ImGui::Checkbox("Allow Translation X", &entity.characterAllowTranslationX);
+                ImGui::Checkbox("Allow Translation Y", &entity.characterAllowTranslationY);
+                ImGui::Checkbox("Allow Translation Z", &entity.characterAllowTranslationZ);
+              } else {
+                ImGui::DragFloat("Max Strength", &entity.characterMaxStrength, 1.0f, 0.0f, 100000.0f, "%.1f");
+                ImGui::DragFloat3("Shape Offset", entity.characterShapeOffset, 0.01f, -256.0f, 256.0f, "%.3f");
+                const char* backFaceOptions[] = { "Ignore Back Faces", "Collide With Back Faces" };
+                ImGui::Combo("Back Face Mode", &entity.characterBackFaceMode, backFaceOptions, 2);
+                ImGui::DragFloat("Predictive Contact Distance", &entity.characterPredictiveContactDistance, 0.005f, 0.0f, 10.0f, "%.4f");
+                ImGui::DragInt("Max Collision Iterations", &entity.characterMaxCollisionIterations, 1.0f, 1, 64);
+                ImGui::DragInt("Max Constraint Iterations", &entity.characterMaxConstraintIterations, 1.0f, 1, 128);
+                ImGui::DragFloat("Min Time Remaining", &entity.characterMinTimeRemaining, 0.00001f, 0.0f, 0.1f, "%.6f");
+                ImGui::DragFloat("Collision Tolerance", &entity.characterCollisionTolerance, 0.0001f, 0.0f, 1.0f, "%.5f");
+                ImGui::DragFloat("Character Padding", &entity.characterPadding, 0.001f, 0.0f, 1.0f, "%.4f");
+                ImGui::DragInt("Max Num Hits", &entity.characterMaxNumHits, 1.0f, 1, 4096);
+                ImGui::DragFloat("Hit Reduction Cos Max Angle", &entity.characterHitReductionCosMaxAngle, 0.001f, -1.0f, 1.0f, "%.6f");
+                ImGui::DragFloat("Penetration Recovery Speed", &entity.characterPenetrationRecoverySpeed, 0.01f, 0.0f, 1.0f, "%.3f");
+                ImGui::Checkbox("Inner Body", &entity.characterInnerBody);
+              }
+              ImGui::TextDisabled("These are authored Jolt Character settings. Runtime Play Scene persistence/wiring is next.");
+            }
+            if (changed) {
+              RecreatePlayerPhysicsBody(m_physics, entity);
+            }
+            if (ImGui::Button("Destroy Player")) {
+              DestroyPhysicsEntity(m_physics, g_selectedIdx);
+            }
+          } else {
+            ImGui::Text("Source: %s", entity.sourceName.c_str());
+            ImGui::Text("Type: Static Triangle Mesh");
+            ImGui::Text("Vertices: %u", entity.stats.vertexCount);
+            ImGui::Text("Triangles: %u", entity.stats.triangleCount);
+            ImGui::Text("Max Triangles / Leaf: %u", entity.cookSettings.maxTrianglesPerLeaf);
+            ImGui::Text("Active Edge Cos Threshold: %.6f", entity.cookSettings.activeEdgeCosThresholdAngle);
+            ImGui::Text("Per-Triangle User Data: %s", entity.cookSettings.perTriangleUserData ? "On" : "Off");
+            ImGui::Text("Build Quality: %s",
+                        entity.cookSettings.buildQuality == t850::PhysicsMeshBuildQuality::FavorBuildSpeed
+                            ? "Favor Build Speed"
+                            : "Favor Runtime Performance");
+            ImGui::Text("Disk Cache: %s", entity.cookSettings.useDiskCache ? "On" : "Off");
+            ImGui::Text("Cache: %s", entity.stats.cacheHit ? "Hit" : (entity.stats.cacheSaved ? "Saved" : "Miss/Off"));
+            if (!entity.stats.cachePath.empty()) {
+              ImGui::TextWrapped("Cache Path: %s", entity.stats.cachePath.c_str());
+            }
+            ImGui::Text("Friction: %.2f", entity.friction);
+            ImGui::Text("Restitution: %.2f", entity.restitution);
+            ImGui::Text("Sensor: %s", entity.sensor ? "Yes" : "No");
+            ImGui::Text("Cook %.2f ms, cache load %.2f ms, cache save %.2f ms, total %.2f ms",
+                        entity.stats.cookMs,
+                        entity.stats.cacheLoadMs,
+                        entity.stats.cacheSaveMs,
+                        entity.stats.totalMs);
+            ImGui::Checkbox("Debug draw physics", &m_editorShowPhysics);
+            if (ImGui::Button("Destroy Static Triangle Mesh")) {
+              DestroyPhysicsEntity(m_physics, g_selectedIdx);
+            }
+          }
+        }
       }
       ImGui::End();
     }
@@ -8325,7 +9431,7 @@ void EditorApp::OnDraw() {
     if (m_panels.showConsole)
       ImGuiDrawConsolePanel();
 
-    if (m_panels.showRTDebug)
+    if (m_panels.showRTDebug && !m_panels.showRendering)
       g_debugRT = ImGuiDrawRTDebugPanel(g_debugRT);
 
     DrawRagdollEditorWindow();

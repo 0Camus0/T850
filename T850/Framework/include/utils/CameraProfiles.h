@@ -135,6 +135,8 @@ public:
   void OnActivated(Camera& camera) override;
   void HandleInput(Camera& camera, const CameraInputState& input) override;
   void Update(Camera& camera, float deltaSeconds, const CameraUpdateContext& context) override;
+  void SetSettings(const Settings& settings);
+  const Settings& GetSettings() const { return m_settings; }
 
 protected:
   CameraProfileType m_type;
@@ -168,6 +170,7 @@ public:
 
   bool SetActiveProfile(CameraProfileType type);
   bool SetActiveProfileByIndex(int index);
+  bool SetKinematicProfileSettings(CameraProfileType type, const KinematicCharacterSettings& settings);
   CameraProfileType GetActiveProfileType() const { return m_activeType; }
   int GetActiveProfileIndex() const { return CameraProfileIndex(m_activeType); }
   CameraProfile* GetActiveProfile();

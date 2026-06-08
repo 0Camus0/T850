@@ -32,6 +32,9 @@ public:
   // Load a mesh file (.x, .glb, .gltf) and build the wireframe buffers.
   // Returns false on any parse/IO/buffer-creation failure.
   bool Load(const std::string& path);
+  bool LoadFromTriangles(const std::string& name,
+                         const std::vector<XVECTOR3>& vertices,
+                         const std::vector<unsigned int>& triangleIndices);
   void Destroy();
 
   bool IsLoaded() const { return m_vb != nullptr && m_ib != nullptr; }

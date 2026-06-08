@@ -46,7 +46,7 @@
 #include <physics/RagdollEditorTool.h>
 #include <utils/Camera.h>
 #include <RagdollEditor.h>
-#include <Quake3Mock.h>
+#include <Quake3Jolt.h>
 
 #include <string>
 #include <memory>
@@ -212,6 +212,7 @@ namespace t8ditor {
     void DestroyEditorFrozenFrameTarget();
     void DrawEditorFrozenFrame(t850::BaseDriver* driver);
     SceneFile BuildEditorSceneSnapshot(const std::string& scenePath);
+    SceneFile RefreshVirtualEditorScene(const std::string& scenePath);
     bool SaveEditorSceneSnapshot(const std::string& path, bool updateLoadedScene);
     t850::SandboxProfileDesc BuildEditorSceneProfile() const;
     void UpsertEditorSceneProfile(std::vector<t850::SandboxProfileDesc>& profiles) const;
@@ -230,6 +231,7 @@ namespace t8ditor {
     void DrawSelectedAnimationInspector(struct SceneObject& obj);
     void DrawEditorRenderingPanel();
     void SetEditorCubemap(const std::string& cubemapPath);
+    void ApplyPendingEditorCubemap();
     bool HasHostedSceneWindowOpen() const;
     void ResetMainEditorFrameLimiter();
     void ThrottleMainEditorFrameIfNeeded();
@@ -268,6 +270,7 @@ namespace t8ditor {
     int m_editorActiveGaussSelection = 1;
     int m_editorCurrentCubemapIndex = -1;
     std::string m_editorCurrentCubemapPath;
+    std::string m_pendingEditorCubemapPath;
     uint32_t m_editorAnimationInspectorEntityId = 0;
     int m_editorAnimationInspectorAnimSet = -1;
 
@@ -359,7 +362,7 @@ namespace t8ditor {
     int m_playScenePreviousActiveCameraIdx = -1;
     t850::Config m_playScenePreviousConfig;
     SceneFile m_playSceneEditorSnapshot;
-    std::unique_ptr<::Quake3Mock> m_playScene;
+    std::unique_ptr<::Quake3Jolt> m_playScene;
     std::string m_playSceneTempPath;
     std::string m_playSceneStatus;
     t850::RenderViewport m_playSceneViewportTarget;

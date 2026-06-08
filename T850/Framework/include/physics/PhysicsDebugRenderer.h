@@ -19,6 +19,9 @@ public:
   void SetFarPlane(float farPlane) { m_farPlane = farPlane; }
 
   void Draw(const JoltPhysicsSystem& physics, const XMATRIX44& viewProjection);
+  void DrawBodies(const std::vector<PhysicsDebugBody>& bodies,
+                  const XMATRIX44& viewProjection,
+                  const XVECTOR3& color = XVECTOR3(0.0f, 1.0f, 0.0f, 1.0f));
 
 private:
   void ReleaseGeometryBuffers();

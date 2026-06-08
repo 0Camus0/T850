@@ -3,13 +3,13 @@
    "collision": "Scenes/Q3/q3dm6.t8q3clip",
    "editor": {
       "camera_target": {
-         "x": 6.5882893,
-         "y": 0.27237678,
-         "z": -17.15108
+         "x": 8.269215,
+         "y": -0.49745008,
+         "z": -17.028355
       },
-      "camera_yaw": 0.16999967,
-      "camera_pitch": 0.1550003,
-      "camera_distance": 8.027201,
+      "camera_yaw": -0.15499982,
+      "camera_pitch": 0.3249996,
+      "camera_distance": 12.722921,
       "show_skybox": false,
       "show_wireframe": false
    },
@@ -35,66 +35,33 @@
          },
          "visible": true,
          "frozen": false,
-         "show_wire": false
-      },
-      {
-         "name": "Models/doomslayer_cine_all_animations_no-damage_double-sided-opaque.glb",
-         "mesh": "Models/doomslayer_cine_all_animations_no-damage_double-sided-opaque.glb",
-         "ragdoll": "Models/RagdollEdits/doomslayer_cine_all_animations_no-damage_double-sided-opaque.glb.json",
-         "position": {
-            "x": 5.745601,
-            "y": 0,
-            "z": -17.464838
-         },
-         "rotation": {
-            "x": -179.99924,
-            "y": -61.33975,
-            "z": -179.99089
-         },
-         "scale": {
-            "x": 0.00032571016,
-            "y": 0.0003257098,
-            "z": 0.00032571016
-         },
-         "visible": true,
-         "frozen": false,
          "show_wire": false,
-         "nav_agent_front_yaw_offset_deg": 270,
-         "nav_agent_face_yaw_sign": -1
-      },
+         "physics": {
+            "enabled": true,
+            "body_type": "static_triangle_mesh",
+            "motion": "static",
+            "collision_layer": "world",
+            "generate_collision": true,
+            "collision_asset": ""
+         },
+         "navigation": {
+            "include": true,
+            "walkable": true,
+            "static_object": true,
+            "area": "walkable",
+            "cost": 1
+         }
+      }
+   ],
+   "physics_entities": [
       {
-         "name": "Models/doomslayer_cine_all_animations_no-damage_double-sided-opaque.glb Clone",
-         "mesh": "Models/doomslayer_cine_all_animations_no-damage_double-sided-opaque.glb",
-         "ragdoll": "Models/RagdollEdits/doomslayer_cine_all_animations_no-damage_double-sided-opaque.glb.json",
+         "name": "q3dm6 Static Triangle Mesh",
+         "type": "static_triangle_mesh",
+         "source_object": "q3dm6",
          "position": {
-            "x": 10.058084,
-            "y": 0,
-            "z": -17.464838
-         },
-         "rotation": {
-            "x": -179.99924,
-            "y": -61.339775,
-            "z": -179.99089
-         },
-         "scale": {
-            "x": 0.0003257102,
-            "y": 0.0003257098,
-            "z": 0.0003257102
-         },
-         "visible": true,
-         "frozen": false,
-         "show_wire": false,
-         "nav_agent_front_yaw_offset_deg": 270,
-         "nav_agent_face_yaw_sign": -1
-      },
-      {
-         "name": "Models\\rewind_cyborg.glb",
-         "mesh": "Models/rewind_cyborg.glb",
-         "ragdoll": "Models/RagdollEdits/rewind_cyborg.glb.json",
-         "position": {
-            "x": 8.06249,
-            "y": 8.365992,
-            "z": -8.319095
+            "x": 0,
+            "y": 64,
+            "z": 0
          },
          "rotation": {
             "x": 0,
@@ -102,85 +69,128 @@
             "z": 0
          },
          "scale": {
-            "x": 0.53,
-            "y": 0.53,
-            "z": 0.53
+            "x": 1,
+            "y": 1,
+            "z": 1
          },
          "visible": true,
          "frozen": false,
          "show_wire": false,
-         "nav_agent_front_yaw_offset_deg": 180
+         "shape": "box",
+         "half_extents": {
+            "x": 16,
+            "y": 32,
+            "z": 16
+         },
+         "radius": 16,
+         "half_height": 24,
+         "friction": 0.6,
+         "restitution": 0,
+         "sensor": false,
+         "cook_settings": {
+            "max_triangles_per_leaf": 1,
+            "build_quality": "runtime_performance",
+            "active_edge_cos_threshold_angle": 0.996195,
+            "per_triangle_user_data": false,
+            "use_disk_cache": true
+         },
+         "character": {
+            "implementation": "virtual",
+            "mass": 70,
+            "max_strength": 100,
+            "max_slope_angle_deg": 50,
+            "enhanced_internal_edge_removal": true,
+            "supporting_volume_offset": -1.0E10,
+            "shape_offset": {
+               "x": 0,
+               "y": 0,
+               "z": 0
+            },
+            "back_face_mode": "collide",
+            "predictive_contact_distance": 0.1,
+            "max_collision_iterations": 5,
+            "max_constraint_iterations": 15,
+            "min_time_remaining": 0.0001,
+            "collision_tolerance": 0.001,
+            "character_padding": 0.02,
+            "max_num_hits": 256,
+            "hit_reduction_cos_max_angle": 0.999,
+            "penetration_recovery_speed": 1,
+            "gravity_factor": 1,
+            "allow_translation_x": true,
+            "allow_translation_y": true,
+            "allow_translation_z": true,
+            "inner_body": false
+         }
       },
       {
-         "name": "Models\\rewind_cyborg.glb Clone",
-         "mesh": "Models/rewind_cyborg.glb",
-         "ragdoll": "Models/RagdollEdits/rewind_cyborg.glb.json",
+         "name": "player",
+         "type": "player",
+         "source_object": "player",
          "position": {
-            "x": 9.125077,
-            "y": 8.365992,
-            "z": -8.319095
+            "x": 6.9620166,
+            "y": 1.3235713,
+            "z": -12.062098
          },
          "rotation": {
             "x": 0,
-            "y": 0,
+            "y": -0,
             "z": 0
          },
          "scale": {
-            "x": 0.53,
-            "y": 0.53,
-            "z": 0.53
+            "x": 1,
+            "y": 1,
+            "z": 1
          },
          "visible": true,
          "frozen": false,
-         "show_wire": false,
-         "nav_agent_front_yaw_offset_deg": 180
-      },
-      {
-         "name": "Models\\rewind_cyborg.glb Clone Clone",
-         "mesh": "Models/rewind_cyborg.glb",
-         "ragdoll": "Models/RagdollEdits/rewind_cyborg.glb.json",
-         "position": {
-            "x": 5.909848,
-            "y": 8.365992,
-            "z": -8.319095
+         "show_wire": true,
+         "shape": "capsule",
+         "half_extents": {
+            "x": 0.6137631,
+            "y": 1.0203356,
+            "z": 0.6137631
          },
-         "rotation": {
-            "x": 0,
-            "y": 0,
-            "z": 0
+         "radius": 0.50699997,
+         "half_height": 0.50699997,
+         "friction": 0,
+         "restitution": 0,
+         "sensor": false,
+         "cook_settings": {
+            "max_triangles_per_leaf": 8,
+            "build_quality": "runtime_performance",
+            "active_edge_cos_threshold_angle": 0.996195,
+            "per_triangle_user_data": false,
+            "use_disk_cache": true
          },
-         "scale": {
-            "x": 0.53,
-            "y": 0.53,
-            "z": 0.53
-         },
-         "visible": true,
-         "frozen": false,
-         "show_wire": false,
-         "nav_agent_front_yaw_offset_deg": 180
-      },
-      {
-         "name": "Models\\porsche_992_gt3_r__www.vecarz.com.glb",
-         "mesh": "Models/porsche_992_gt3_r__www.vecarz.com.glb",
-         "ragdoll": "",
-         "position": {
-            "x": -23.545181,
-            "y": 7.8784404,
-            "z": 5.319562
-         },
-         "rotation": {
-            "x": 0,
-            "y": 0,
-            "z": 0
-         },
-         "scale": {
-            "x": 183.5291,
-            "y": 183.5291,
-            "z": 183.5291
-         },
-         "visible": true,
-         "frozen": false,
-         "show_wire": false
+         "character": {
+            "implementation": "virtual",
+            "mass": 70,
+            "max_strength": 100,
+            "max_slope_angle_deg": 50,
+            "enhanced_internal_edge_removal": true,
+            "supporting_volume_offset": -1.0E10,
+            "shape_offset": {
+               "x": 0,
+               "y": 0,
+               "z": 0
+            },
+            "back_face_mode": "collide",
+            "predictive_contact_distance": 0.1,
+            "max_collision_iterations": 5,
+            "max_constraint_iterations": 15,
+            "min_time_remaining": 0.0001,
+            "collision_tolerance": 0.001,
+            "character_padding": 0.02,
+            "max_num_hits": 256,
+            "hit_reduction_cos_max_angle": 0.999,
+            "penetration_recovery_speed": 1,
+            "gravity_factor": 1,
+            "allow_translation_x": true,
+            "allow_translation_y": true,
+            "allow_translation_z": true,
+            "inner_body": false
+         }
       }
    ],
    "cameras": [
@@ -227,7 +237,7 @@
          },
          "intensity": 5,
          "radius": 5.59017,
-         "enabled": true,
+         "enabled": false,
          "visible": false,
          "frozen": false,
          "q3": {
@@ -262,7 +272,7 @@
          },
          "intensity": 0.35,
          "radius": 1.47902,
-         "enabled": true,
+         "enabled": false,
          "visible": false,
          "frozen": false,
          "q3": {
@@ -297,7 +307,7 @@
          },
          "intensity": 0.2,
          "radius": 1.118034,
-         "enabled": true,
+         "enabled": false,
          "visible": false,
          "frozen": false,
          "q3": {
@@ -332,7 +342,7 @@
          },
          "intensity": 0.3,
          "radius": 1.369306,
-         "enabled": true,
+         "enabled": false,
          "visible": false,
          "frozen": false,
          "q3": {
@@ -367,7 +377,7 @@
          },
          "intensity": 0.3,
          "radius": 1.369306,
-         "enabled": true,
+         "enabled": false,
          "visible": false,
          "frozen": false,
          "q3": {
@@ -402,7 +412,7 @@
          },
          "intensity": 0.3,
          "radius": 1.369306,
-         "enabled": true,
+         "enabled": false,
          "visible": false,
          "frozen": false,
          "q3": {
@@ -437,7 +447,7 @@
          },
          "intensity": 0.3,
          "radius": 1.369306,
-         "enabled": true,
+         "enabled": false,
          "visible": false,
          "frozen": false,
          "q3": {
@@ -472,7 +482,7 @@
          },
          "intensity": 0.3,
          "radius": 1.369306,
-         "enabled": true,
+         "enabled": false,
          "visible": false,
          "frozen": false,
          "q3": {
@@ -507,7 +517,7 @@
          },
          "intensity": 0.3,
          "radius": 1.369306,
-         "enabled": true,
+         "enabled": false,
          "visible": false,
          "frozen": false,
          "q3": {
@@ -542,7 +552,7 @@
          },
          "intensity": 0.3,
          "radius": 1.369306,
-         "enabled": true,
+         "enabled": false,
          "visible": false,
          "frozen": false,
          "q3": {
@@ -577,7 +587,7 @@
          },
          "intensity": 0.3,
          "radius": 1.369306,
-         "enabled": true,
+         "enabled": false,
          "visible": false,
          "frozen": false,
          "q3": {
@@ -612,7 +622,7 @@
          },
          "intensity": 0.3,
          "radius": 1.369306,
-         "enabled": true,
+         "enabled": false,
          "visible": false,
          "frozen": false,
          "q3": {
@@ -647,7 +657,7 @@
          },
          "intensity": 0.3,
          "radius": 1.369306,
-         "enabled": true,
+         "enabled": false,
          "visible": false,
          "frozen": false,
          "q3": {
@@ -682,7 +692,7 @@
          },
          "intensity": 0.3,
          "radius": 1.369306,
-         "enabled": true,
+         "enabled": false,
          "visible": false,
          "frozen": false,
          "q3": {
@@ -717,7 +727,7 @@
          },
          "intensity": 0.3,
          "radius": 1.369306,
-         "enabled": true,
+         "enabled": false,
          "visible": false,
          "frozen": false,
          "q3": {
@@ -752,7 +762,7 @@
          },
          "intensity": 0.3,
          "radius": 1.369306,
-         "enabled": true,
+         "enabled": false,
          "visible": false,
          "frozen": false,
          "q3": {
@@ -787,7 +797,7 @@
          },
          "intensity": 0.3,
          "radius": 1.369306,
-         "enabled": true,
+         "enabled": false,
          "visible": false,
          "frozen": false,
          "q3": {
@@ -822,7 +832,7 @@
          },
          "intensity": 0.3,
          "radius": 1.369306,
-         "enabled": true,
+         "enabled": false,
          "visible": false,
          "frozen": false,
          "q3": {
@@ -857,7 +867,7 @@
          },
          "intensity": 0.4,
          "radius": 1.581139,
-         "enabled": true,
+         "enabled": false,
          "visible": false,
          "frozen": false,
          "q3": {
@@ -892,7 +902,7 @@
          },
          "intensity": 0.4,
          "radius": 1.581139,
-         "enabled": true,
+         "enabled": false,
          "visible": false,
          "frozen": false,
          "q3": {
@@ -927,7 +937,7 @@
          },
          "intensity": 0.4,
          "radius": 1.581139,
-         "enabled": true,
+         "enabled": false,
          "visible": false,
          "frozen": false,
          "q3": {
@@ -962,7 +972,7 @@
          },
          "intensity": 0.4,
          "radius": 1.581139,
-         "enabled": true,
+         "enabled": false,
          "visible": false,
          "frozen": false,
          "q3": {
@@ -997,7 +1007,7 @@
          },
          "intensity": 0.3,
          "radius": 1.369306,
-         "enabled": true,
+         "enabled": false,
          "visible": false,
          "frozen": false,
          "q3": {
@@ -1032,7 +1042,7 @@
          },
          "intensity": 0.3,
          "radius": 1.369306,
-         "enabled": true,
+         "enabled": false,
          "visible": false,
          "frozen": false,
          "q3": {
@@ -1067,7 +1077,7 @@
          },
          "intensity": 0.3,
          "radius": 1.369306,
-         "enabled": true,
+         "enabled": false,
          "visible": false,
          "frozen": false,
          "q3": {
@@ -1102,7 +1112,7 @@
          },
          "intensity": 3,
          "radius": 4.330127,
-         "enabled": true,
+         "enabled": false,
          "visible": false,
          "frozen": false,
          "q3": {
@@ -1137,7 +1147,7 @@
          },
          "intensity": 3,
          "radius": 4.330127,
-         "enabled": true,
+         "enabled": false,
          "visible": false,
          "frozen": false,
          "q3": {
@@ -1172,7 +1182,7 @@
          },
          "intensity": 3,
          "radius": 4.330127,
-         "enabled": true,
+         "enabled": false,
          "visible": false,
          "frozen": false,
          "q3": {
@@ -1207,7 +1217,7 @@
          },
          "intensity": 0.1,
          "radius": 0.790569,
-         "enabled": true,
+         "enabled": false,
          "visible": false,
          "frozen": false,
          "q3": {
@@ -1242,7 +1252,7 @@
          },
          "intensity": 0.3,
          "radius": 1.369306,
-         "enabled": true,
+         "enabled": false,
          "visible": false,
          "frozen": false,
          "q3": {
@@ -1277,7 +1287,7 @@
          },
          "intensity": 0.3,
          "radius": 1.369306,
-         "enabled": true,
+         "enabled": false,
          "visible": false,
          "frozen": false,
          "q3": {
@@ -1312,7 +1322,7 @@
          },
          "intensity": 1.5,
          "radius": 3.061862,
-         "enabled": true,
+         "enabled": false,
          "visible": false,
          "frozen": false,
          "q3": {
@@ -1347,7 +1357,7 @@
          },
          "intensity": 1.5,
          "radius": 3.061862,
-         "enabled": true,
+         "enabled": false,
          "visible": false,
          "frozen": false,
          "q3": {
@@ -1382,7 +1392,7 @@
          },
          "intensity": 1.5,
          "radius": 3.061862,
-         "enabled": true,
+         "enabled": false,
          "visible": false,
          "frozen": false,
          "q3": {
@@ -1417,7 +1427,7 @@
          },
          "intensity": 1.5,
          "radius": 3.061862,
-         "enabled": true,
+         "enabled": false,
          "visible": false,
          "frozen": false,
          "q3": {
@@ -1452,7 +1462,7 @@
          },
          "intensity": 1.5,
          "radius": 3.061862,
-         "enabled": true,
+         "enabled": false,
          "visible": false,
          "frozen": false,
          "q3": {
@@ -1487,7 +1497,7 @@
          },
          "intensity": 1.5,
          "radius": 3.061862,
-         "enabled": true,
+         "enabled": false,
          "visible": false,
          "frozen": false,
          "q3": {
@@ -1522,7 +1532,7 @@
          },
          "intensity": 0.3,
          "radius": 1.369306,
-         "enabled": true,
+         "enabled": false,
          "visible": false,
          "frozen": false,
          "q3": {
@@ -1557,7 +1567,7 @@
          },
          "intensity": 0.3,
          "radius": 1.369306,
-         "enabled": true,
+         "enabled": false,
          "visible": false,
          "frozen": false,
          "q3": {
@@ -1592,7 +1602,7 @@
          },
          "intensity": 0.3,
          "radius": 1.369306,
-         "enabled": true,
+         "enabled": false,
          "visible": false,
          "frozen": false,
          "q3": {
@@ -1627,7 +1637,7 @@
          },
          "intensity": 0.3,
          "radius": 1.369306,
-         "enabled": true,
+         "enabled": false,
          "visible": false,
          "frozen": false,
          "q3": {
@@ -1662,7 +1672,7 @@
          },
          "intensity": 0.35,
          "radius": 1.47902,
-         "enabled": true,
+         "enabled": false,
          "visible": false,
          "frozen": false,
          "q3": {
@@ -1697,7 +1707,7 @@
          },
          "intensity": 0.35,
          "radius": 1.47902,
-         "enabled": true,
+         "enabled": false,
          "visible": false,
          "frozen": false,
          "q3": {
@@ -1732,7 +1742,7 @@
          },
          "intensity": 1.5,
          "radius": 3.061862,
-         "enabled": true,
+         "enabled": false,
          "visible": false,
          "frozen": false,
          "q3": {
@@ -1767,7 +1777,7 @@
          },
          "intensity": 1.5,
          "radius": 3.061862,
-         "enabled": true,
+         "enabled": false,
          "visible": false,
          "frozen": false,
          "q3": {
@@ -1802,7 +1812,7 @@
          },
          "intensity": 1.5,
          "radius": 3.061862,
-         "enabled": true,
+         "enabled": false,
          "visible": false,
          "frozen": false,
          "q3": {
@@ -1837,7 +1847,7 @@
          },
          "intensity": 0.6,
          "radius": 1.936492,
-         "enabled": true,
+         "enabled": false,
          "visible": false,
          "frozen": false,
          "q3": {
@@ -1872,7 +1882,7 @@
          },
          "intensity": 1.5,
          "radius": 3.061862,
-         "enabled": true,
+         "enabled": false,
          "visible": false,
          "frozen": false,
          "q3": {
@@ -1907,7 +1917,7 @@
          },
          "intensity": 1.5,
          "radius": 3.061862,
-         "enabled": true,
+         "enabled": false,
          "visible": false,
          "frozen": false,
          "q3": {
@@ -1942,7 +1952,7 @@
          },
          "intensity": 1.5,
          "radius": 3.061862,
-         "enabled": true,
+         "enabled": false,
          "visible": false,
          "frozen": false,
          "q3": {
@@ -1977,7 +1987,7 @@
          },
          "intensity": 1.5,
          "radius": 3.061862,
-         "enabled": true,
+         "enabled": false,
          "visible": false,
          "frozen": false,
          "q3": {
@@ -2012,7 +2022,7 @@
          },
          "intensity": 1.5,
          "radius": 3.061862,
-         "enabled": true,
+         "enabled": false,
          "visible": false,
          "frozen": false,
          "q3": {
@@ -2047,7 +2057,7 @@
          },
          "intensity": 1.5,
          "radius": 3.061862,
-         "enabled": true,
+         "enabled": false,
          "visible": false,
          "frozen": false,
          "q3": {
@@ -2082,7 +2092,7 @@
          },
          "intensity": 1.5,
          "radius": 3.061862,
-         "enabled": true,
+         "enabled": false,
          "visible": false,
          "frozen": false,
          "q3": {
@@ -2117,7 +2127,7 @@
          },
          "intensity": 1.5,
          "radius": 3.061862,
-         "enabled": true,
+         "enabled": false,
          "visible": false,
          "frozen": false,
          "q3": {
@@ -2152,7 +2162,7 @@
          },
          "intensity": 0.2,
          "radius": 1.118034,
-         "enabled": true,
+         "enabled": false,
          "visible": false,
          "frozen": false,
          "q3": {
@@ -2187,7 +2197,7 @@
          },
          "intensity": 0.2,
          "radius": 1.118034,
-         "enabled": true,
+         "enabled": false,
          "visible": false,
          "frozen": false,
          "q3": {
@@ -2222,7 +2232,7 @@
          },
          "intensity": 0.2,
          "radius": 1.118034,
-         "enabled": true,
+         "enabled": false,
          "visible": false,
          "frozen": false,
          "q3": {
@@ -2257,7 +2267,7 @@
          },
          "intensity": 0.2,
          "radius": 1.118034,
-         "enabled": true,
+         "enabled": false,
          "visible": false,
          "frozen": false,
          "q3": {
@@ -2292,7 +2302,7 @@
          },
          "intensity": 0.2,
          "radius": 1.118034,
-         "enabled": true,
+         "enabled": false,
          "visible": false,
          "frozen": false,
          "q3": {
@@ -2327,7 +2337,7 @@
          },
          "intensity": 0.2,
          "radius": 1.118034,
-         "enabled": true,
+         "enabled": false,
          "visible": false,
          "frozen": false,
          "q3": {
@@ -2362,7 +2372,7 @@
          },
          "intensity": 0.2,
          "radius": 1.118034,
-         "enabled": true,
+         "enabled": false,
          "visible": false,
          "frozen": false,
          "q3": {
@@ -2397,7 +2407,7 @@
          },
          "intensity": 0.2,
          "radius": 1.118034,
-         "enabled": true,
+         "enabled": false,
          "visible": false,
          "frozen": false,
          "q3": {
@@ -2432,7 +2442,7 @@
          },
          "intensity": 0.2,
          "radius": 1.118034,
-         "enabled": true,
+         "enabled": false,
          "visible": false,
          "frozen": false,
          "q3": {
@@ -2467,7 +2477,7 @@
          },
          "intensity": 0.2,
          "radius": 1.118034,
-         "enabled": true,
+         "enabled": false,
          "visible": false,
          "frozen": false,
          "q3": {
@@ -2502,7 +2512,7 @@
          },
          "intensity": 0.2,
          "radius": 1.118034,
-         "enabled": true,
+         "enabled": false,
          "visible": false,
          "frozen": false,
          "q3": {
@@ -2537,7 +2547,7 @@
          },
          "intensity": 0.2,
          "radius": 1.118034,
-         "enabled": true,
+         "enabled": false,
          "visible": false,
          "frozen": false,
          "q3": {
@@ -2572,7 +2582,7 @@
          },
          "intensity": 0.2,
          "radius": 1.118034,
-         "enabled": true,
+         "enabled": false,
          "visible": false,
          "frozen": false,
          "q3": {
@@ -2607,7 +2617,7 @@
          },
          "intensity": 0.2,
          "radius": 1.118034,
-         "enabled": true,
+         "enabled": false,
          "visible": false,
          "frozen": false,
          "q3": {
@@ -2642,7 +2652,7 @@
          },
          "intensity": 0.5,
          "radius": 1.767767,
-         "enabled": true,
+         "enabled": false,
          "visible": false,
          "frozen": false,
          "q3": {
@@ -2677,7 +2687,7 @@
          },
          "intensity": 1.5,
          "radius": 3.061862,
-         "enabled": true,
+         "enabled": false,
          "visible": false,
          "frozen": false,
          "q3": {
@@ -2712,7 +2722,7 @@
          },
          "intensity": 0.2,
          "radius": 1.118034,
-         "enabled": true,
+         "enabled": false,
          "visible": false,
          "frozen": false,
          "q3": {
@@ -2747,7 +2757,7 @@
          },
          "intensity": 1.5,
          "radius": 3.061862,
-         "enabled": true,
+         "enabled": false,
          "visible": false,
          "frozen": false,
          "q3": {
@@ -2782,7 +2792,7 @@
          },
          "intensity": 0.2,
          "radius": 1.118034,
-         "enabled": true,
+         "enabled": false,
          "visible": false,
          "frozen": false,
          "q3": {
@@ -2817,7 +2827,7 @@
          },
          "intensity": 1.5,
          "radius": 3.061862,
-         "enabled": true,
+         "enabled": false,
          "visible": false,
          "frozen": false,
          "q3": {
@@ -2852,7 +2862,7 @@
          },
          "intensity": 0.2,
          "radius": 1.118034,
-         "enabled": true,
+         "enabled": false,
          "visible": false,
          "frozen": false,
          "q3": {
@@ -2887,7 +2897,7 @@
          },
          "intensity": 1.5,
          "radius": 3.061862,
-         "enabled": true,
+         "enabled": false,
          "visible": false,
          "frozen": false,
          "q3": {
@@ -2922,7 +2932,7 @@
          },
          "intensity": 0.2,
          "radius": 1.118034,
-         "enabled": true,
+         "enabled": false,
          "visible": false,
          "frozen": false,
          "q3": {
@@ -2957,7 +2967,7 @@
          },
          "intensity": 1.5,
          "radius": 3.061862,
-         "enabled": true,
+         "enabled": false,
          "visible": false,
          "frozen": false,
          "q3": {
@@ -2992,7 +3002,7 @@
          },
          "intensity": 0.2,
          "radius": 1.118034,
-         "enabled": true,
+         "enabled": false,
          "visible": false,
          "frozen": false,
          "q3": {
@@ -3027,7 +3037,7 @@
          },
          "intensity": 0.3,
          "radius": 1.369306,
-         "enabled": true,
+         "enabled": false,
          "visible": false,
          "frozen": false,
          "q3": {
@@ -3062,7 +3072,7 @@
          },
          "intensity": 1.5,
          "radius": 3.061862,
-         "enabled": true,
+         "enabled": false,
          "visible": false,
          "frozen": false,
          "q3": {
@@ -3097,7 +3107,7 @@
          },
          "intensity": 0.2,
          "radius": 1.118034,
-         "enabled": true,
+         "enabled": false,
          "visible": false,
          "frozen": false,
          "q3": {
@@ -3132,7 +3142,7 @@
          },
          "intensity": 1.5,
          "radius": 3.061862,
-         "enabled": true,
+         "enabled": false,
          "visible": false,
          "frozen": false,
          "q3": {
@@ -3167,7 +3177,7 @@
          },
          "intensity": 0.2,
          "radius": 1.118034,
-         "enabled": true,
+         "enabled": false,
          "visible": false,
          "frozen": false,
          "q3": {
@@ -3202,7 +3212,7 @@
          },
          "intensity": 1.5,
          "radius": 3.061862,
-         "enabled": true,
+         "enabled": false,
          "visible": false,
          "frozen": false,
          "q3": {
@@ -3237,7 +3247,7 @@
          },
          "intensity": 0.2,
          "radius": 1.118034,
-         "enabled": true,
+         "enabled": false,
          "visible": false,
          "frozen": false,
          "q3": {
@@ -3272,7 +3282,7 @@
          },
          "intensity": 0.3,
          "radius": 1.369306,
-         "enabled": true,
+         "enabled": false,
          "visible": false,
          "frozen": false,
          "q3": {
@@ -3307,7 +3317,7 @@
          },
          "intensity": 0.3,
          "radius": 1.369306,
-         "enabled": true,
+         "enabled": false,
          "visible": false,
          "frozen": false,
          "q3": {
@@ -3342,7 +3352,7 @@
          },
          "intensity": 0.35,
          "radius": 1.47902,
-         "enabled": true,
+         "enabled": false,
          "visible": false,
          "frozen": false,
          "q3": {
@@ -3377,7 +3387,7 @@
          },
          "intensity": 0.3,
          "radius": 185.7183,
-         "enabled": true,
+         "enabled": false,
          "visible": false,
          "frozen": false,
          "q3": {
@@ -3412,7 +3422,7 @@
          },
          "intensity": 0.35,
          "radius": 1.47902,
-         "enabled": true,
+         "enabled": false,
          "visible": false,
          "frozen": false,
          "q3": {
@@ -3447,7 +3457,7 @@
          },
          "intensity": 0.35,
          "radius": 1.47902,
-         "enabled": true,
+         "enabled": false,
          "visible": false,
          "frozen": false,
          "q3": {
@@ -3482,7 +3492,7 @@
          },
          "intensity": 0.35,
          "radius": 1.47902,
-         "enabled": true,
+         "enabled": false,
          "visible": false,
          "frozen": false,
          "q3": {
@@ -3517,7 +3527,7 @@
          },
          "intensity": 0.35,
          "radius": 1.47902,
-         "enabled": true,
+         "enabled": false,
          "visible": false,
          "frozen": false,
          "q3": {
@@ -3552,7 +3562,7 @@
          },
          "intensity": 0.35,
          "radius": 1.47902,
-         "enabled": true,
+         "enabled": false,
          "visible": false,
          "frozen": false,
          "q3": {
@@ -3587,7 +3597,7 @@
          },
          "intensity": 0.35,
          "radius": 1.47902,
-         "enabled": true,
+         "enabled": false,
          "visible": false,
          "frozen": false,
          "q3": {
@@ -3622,7 +3632,7 @@
          },
          "intensity": 0.4,
          "radius": 1.581139,
-         "enabled": true,
+         "enabled": false,
          "visible": false,
          "frozen": false,
          "q3": {
@@ -3657,7 +3667,7 @@
          },
          "intensity": 0.4,
          "radius": 1.581139,
-         "enabled": true,
+         "enabled": false,
          "visible": false,
          "frozen": false,
          "q3": {
@@ -3692,7 +3702,7 @@
          },
          "intensity": 0.35,
          "radius": 1.47902,
-         "enabled": true,
+         "enabled": false,
          "visible": false,
          "frozen": false,
          "q3": {
@@ -3727,7 +3737,7 @@
          },
          "intensity": 0.35,
          "radius": 1.47902,
-         "enabled": true,
+         "enabled": false,
          "visible": false,
          "frozen": false,
          "q3": {
@@ -3762,7 +3772,7 @@
          },
          "intensity": 0.35,
          "radius": 1.47902,
-         "enabled": true,
+         "enabled": false,
          "visible": false,
          "frozen": false,
          "q3": {
@@ -3797,7 +3807,7 @@
          },
          "intensity": 0.35,
          "radius": 1.47902,
-         "enabled": true,
+         "enabled": false,
          "visible": false,
          "frozen": false,
          "q3": {
@@ -3832,7 +3842,7 @@
          },
          "intensity": 0.35,
          "radius": 1.47902,
-         "enabled": true,
+         "enabled": false,
          "visible": false,
          "frozen": false,
          "q3": {
@@ -3867,7 +3877,7 @@
          },
          "intensity": 0.35,
          "radius": 1.47902,
-         "enabled": true,
+         "enabled": false,
          "visible": false,
          "frozen": false,
          "q3": {
@@ -3902,7 +3912,7 @@
          },
          "intensity": 0.3,
          "radius": 1.369306,
-         "enabled": true,
+         "enabled": false,
          "visible": false,
          "frozen": false,
          "q3": {
@@ -3937,7 +3947,7 @@
          },
          "intensity": 0.3,
          "radius": 1.369306,
-         "enabled": true,
+         "enabled": false,
          "visible": false,
          "frozen": false,
          "q3": {
@@ -3972,7 +3982,7 @@
          },
          "intensity": 0.35,
          "radius": 1.47902,
-         "enabled": true,
+         "enabled": false,
          "visible": false,
          "frozen": false,
          "q3": {
@@ -4007,7 +4017,7 @@
          },
          "intensity": 0.35,
          "radius": 1.47902,
-         "enabled": true,
+         "enabled": false,
          "visible": false,
          "frozen": false,
          "q3": {
@@ -4042,7 +4052,7 @@
          },
          "intensity": 1.5,
          "radius": 3.061862,
-         "enabled": true,
+         "enabled": false,
          "visible": false,
          "frozen": false,
          "q3": {
@@ -4077,7 +4087,7 @@
          },
          "intensity": 0.2,
          "radius": 1.118034,
-         "enabled": true,
+         "enabled": false,
          "visible": false,
          "frozen": false,
          "q3": {
@@ -4112,7 +4122,7 @@
          },
          "intensity": 5,
          "radius": 5.59017,
-         "enabled": true,
+         "enabled": false,
          "visible": false,
          "frozen": false,
          "q3": {
@@ -4147,7 +4157,7 @@
          },
          "intensity": 5,
          "radius": 5.59017,
-         "enabled": true,
+         "enabled": false,
          "visible": false,
          "frozen": false,
          "q3": {
@@ -4182,7 +4192,7 @@
          },
          "intensity": 2,
          "radius": 6.5,
-         "enabled": true,
+         "enabled": false,
          "visible": false,
          "frozen": false
       }
@@ -4198,95 +4208,139 @@
          "sliders": [
             {
                "name": "exposure",
-               "value": 2
+               "value": 1.147
             },
             {
                "name": "bloom_factor",
-               "value": 0.823
+               "value": 0.35
             },
             {
                "name": "bloom_threshold",
-               "value": 1.5
-            },
-            {
-               "name": "ssao_kernel_size",
-               "value": 16
-            },
-            {
-               "name": "ssao_radius",
-               "value": 2.237
-            },
-            {
-               "name": "fov",
-               "value": 95
-            },
-            {
-               "name": "light_intensity_scale",
-               "value": 2
-            },
-            {
-               "name": "lightmap_intensity",
-               "value": 2.5
-            },
-            {
-               "name": "shadow_min",
-               "value": 0
-            },
-            {
-               "name": "ibl_factor",
-               "value": 1.3
-            },
-            {
-               "name": "material_emissive_intensity",
-               "value": 0.734
-            },
-            {
-               "name": "material_transmission_multiplier",
-               "value": 3.481
-            },
-            {
-               "name": "nav_agent_speed_multiplier",
-               "value": 3.48
-            },
-            {
-               "name": "navmesh_cell_size",
-               "value": 0.188
-            },
-            {
-               "name": "navmesh_agent_radius",
-               "value": 0.529
-            },
-            {
-               "name": "gauss_1_radius",
                "value": 1
             },
             {
-               "name": "gauss_1_sigma",
+               "name": "light_radius_scale",
+               "value": 1
+            },
+            {
+               "name": "light_intensity_scale",
+               "value": 1
+            },
+            {
+               "name": "lightmap_intensity",
+               "value": 1.75
+            },
+            {
+               "name": "tm_white_level",
+               "value": 4
+            },
+            {
+               "name": "tm_adapt_tau",
+               "value": 1.1
+            },
+            {
+               "name": "pcf_radius",
+               "value": 1.7
+            },
+            {
+               "name": "pcf_samples",
+               "value": 1
+            },
+            {
+               "name": "ssao_kernel_size",
+               "value": 8
+            },
+            {
+               "name": "ssao_radius",
+               "value": 1.5
+            },
+            {
+               "name": "gauss_kernel_radius",
                "value": 2.5
+            },
+            {
+               "name": "gauss_kernel_deviation",
+               "value": 4.5
+            },
+            {
+               "name": "fov",
+               "value": 49.999996
+            },
+            {
+               "name": "shadow_bias",
+               "value": 0.001
+            },
+            {
+               "name": "shadow_min",
+               "value": 0.2
+            },
+            {
+               "name": "env_factor",
+               "value": 0.3
+            },
+            {
+               "name": "ibl_factor",
+               "value": 1
+            },
+            {
+               "name": "material_emissive_intensity",
+               "value": 1
+            },
+            {
+               "name": "material_transmission_multiplier",
+               "value": 1
+            },
+            {
+               "name": "material_refraction_strength",
+               "value": 0.03
             }
          ],
          "checkboxes": [
             {
                "name": "shadow_toggle",
+               "value": true
+            },
+            {
+               "name": "ssao_toggle",
+               "value": true
+            },
+            {
+               "name": "show_wireframe",
                "value": false
             },
             {
-               "name": "point_lights_enabled",
+               "name": "show_skeleton",
+               "value": false
+            },
+            {
+               "name": "show_physics",
+               "value": false
+            },
+            {
+               "name": "show_light_volumes",
+               "value": false
+            },
+            {
+               "name": "debug_luminance",
                "value": false
             }
          ],
          "selectors": [
             {
-               "name": "gauss_1_kernel_size",
-               "value": 27
-            },
-            {
-               "name": "anim_select",
-               "value": 92
+               "name": "debug_render_target",
+               "value": 0
             },
             {
                "name": "cubemap",
-               "value": 3
+               "value": 1
+            },
+            {
+               "name": "gauss_kernel_sample_count",
+               "value": 27
+            },
+            {
+               "name": "active_gauss_kernel",
+               "value": 1
             },
             {
                "name": "luminance_mode",
@@ -4294,97 +4348,8 @@
             }
          ],
          "lights": [],
-         "animations": [
-            {
-               "index": 1,
-               "mesh": "Models/doomslayer_cine_all_animations_no-damage_double-sided-opaque.glb",
-               "anim_speed": 1,
-               "anim_select": 92,
-               "anim_mode": 0
-            },
-            {
-               "index": 2,
-               "mesh": "Models/doomslayer_cine_all_animations_no-damage_double-sided-opaque.glb",
-               "anim_speed": 1,
-               "anim_select": 92,
-               "anim_mode": 0
-            }
-         ],
-         "cubemap_path": "sky/GraceCathedral.dds",
-         "camera": {
-            "profile": 5,
-            "eye": [
-               6.8598776,
-               1.6357378,
-               -9.751569
-            ],
-            "look": [
-               -0.28148776,
-               -0.12963568,
-               -0.95076776
-            ],
-            "up": [
-               -0.036801387,
-               0.9915617,
-               -0.1243023
-            ],
-            "right": [
-               -0.95885885,
-               0,
-               0.2838832
-            ],
-            "yaw": 15.995805,
-            "pitch": 0.13000153,
-            "roll": 0,
-            "fov": 95,
-            "aspect_ratio": 1.7777778,
-            "near_plane": 0.125,
-            "far_plane": 6198.7783,
-            "ortho": false,
-            "width": 2560,
-            "height": 1440,
-            "left_handed": true,
-            "orbit": {
-               "target": [
-                  -1,
-                  0,
-                  0
-               ],
-               "pan_offset": [
-                  0,
-                  0,
-                  0
-               ],
-               "eye": [
-                  6.8598776,
-                  1.6357378,
-                  -9.751569
-               ],
-               "yaw": -1.5757964,
-               "pitch": -0.005,
-               "distance": 3.099389
-            }
-         },
-         "orbit_camera": {
-            "target": [
-               -1,
-               0,
-               0
-            ],
-            "pan_offset": [
-               0,
-               0,
-               0
-            ],
-            "eye": [
-               6.8598776,
-               1.6357378,
-               -9.751569
-            ],
-            "yaw": -1.5757964,
-            "pitch": -0.005,
-            "distance": 3.099389
-         }
+         "animations": [],
+         "cubemap_path": "sky/Pisa.dds"
       },
       {
          "name": "android/mali-g700",

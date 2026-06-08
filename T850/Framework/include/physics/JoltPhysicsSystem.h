@@ -34,6 +34,7 @@ public:
   bool DriveBodyKinematic(PhysicsBodyHandle handle, const XMATRIX44& worldTransform, float deltaSeconds);
   bool SetBodyTransform(PhysicsBodyHandle handle, const XMATRIX44& worldTransform, bool activate);
   bool GetBodyState(PhysicsBodyHandle handle, PhysicsBodyState& outState) const;
+  bool GetDebugBody(PhysicsBodyHandle handle, PhysicsDebugBody& outBody) const;
   bool CastCapsule(const PhysicsCapsuleCastDesc& desc, PhysicsCastHit& outHit) const;
   bool CastBox(const PhysicsBoxCastDesc& desc, PhysicsCastHit& outHit) const;
 

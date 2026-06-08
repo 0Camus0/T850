@@ -15,7 +15,6 @@
 #include <physics/PhysicsDebugRenderer.h>
 #include <navigation/NavigationDebugRenderer.h>
 #include <navigation/NavigationSystem.h>
-#include <physics/Q3BspCollision.h>
 #include <physics/PhysicsTypes.h>
 #include <physics/RagdollEditorTool.h>
 #include <debug/FrameDumper.h>
@@ -226,16 +225,17 @@ public:
   std::vector<bool> m_lightAttachToCamera;
   bool m_loadedEditorScene = false;
   std::string m_loadedEditorScenePath;
-  std::unique_ptr<t850::Q3BspCollisionWorld> m_q3CollisionWorld;
   std::string m_primaryRagdollResourcePath;
   std::vector<std::string> m_sceneMeshPaths;
   std::vector<std::string> m_sceneRagdollPaths;
   std::vector<float> m_sceneNavAgentFrontYawOffsets;
   std::vector<float> m_sceneNavAgentFaceYawSigns;
   std::vector<t850::scene::SceneObjectPhysicsDesc> m_scenePhysicsAuthoring;
+  std::vector<t850::scene::ScenePhysicsEntityDesc> m_scenePhysicsEntities;
   std::vector<t850::scene::SceneObjectNavigationDesc> m_sceneNavigationAuthoring;
   std::vector<t850::scene::SceneObjectRagdollDesc> m_sceneRagdollAuthoring;
-  std::vector<uint32_t> m_q3StaticCollisionEntityIds;
+  bool m_hasAuthoredPlayer = false;
+  t850::scene::ScenePhysicsEntityDesc m_authoredPlayer;
   struct SceneRagdollRuntime {
     int meshIndex = -1;
     std::string resourcePath;

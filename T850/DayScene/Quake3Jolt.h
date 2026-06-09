@@ -225,6 +225,7 @@ public:
   std::vector<bool> m_lightAttachToCamera;
   bool m_loadedEditorScene = false;
   std::string m_loadedEditorScenePath;
+  std::vector<std::string> m_sceneObjectNames;
   std::string m_primaryRagdollResourcePath;
   std::vector<std::string> m_sceneMeshPaths;
   std::vector<std::string> m_sceneRagdollPaths;
@@ -234,6 +235,8 @@ public:
   std::vector<t850::scene::ScenePhysicsEntityDesc> m_scenePhysicsEntities;
   std::vector<t850::scene::SceneObjectNavigationDesc> m_sceneNavigationAuthoring;
   std::vector<t850::scene::SceneObjectRagdollDesc> m_sceneRagdollAuthoring;
+  bool m_hasAuthoredNavMesh = false;
+  t850::scene::SceneNavigationMeshDesc m_authoredNavMesh;
   bool m_hasAuthoredPlayer = false;
   t850::scene::ScenePhysicsEntityDesc m_authoredPlayer;
   struct SceneRagdollRuntime {
@@ -260,6 +263,7 @@ public:
     XVECTOR3 lastPathEnd = XVECTOR3(0.0f, 0.0f, 0.0f, 1.0f);
     XVECTOR3 lastPathFirst = XVECTOR3(0.0f, 0.0f, 0.0f, 1.0f);
     XVECTOR3 navToOriginOffset = XVECTOR3(0.0f, 0.0f, 0.0f, 0.0f);
+    t850::KinematicCharacterSettings characterSettings;
     t850::KinematicCharacterController physicsController;
     XVECTOR3 physicsTraversalStart = XVECTOR3(0.0f, 0.0f, 0.0f, 1.0f);
     XVECTOR3 physicsTarget = XVECTOR3(0.0f, 0.0f, 0.0f, 1.0f);
@@ -277,12 +281,14 @@ public:
     float physicsStuckTimeSec = 0.0f;
     float frontYawOffsetDeg = 0.0f;
     float faceYawSign = 1.0f;
+    int characterRuntimePath = 0; // 0=kinematic navmesh path, 1=Jolt collision path
     t850::navigation::NavTraversalType physicsTraversalType = t850::navigation::NavTraversalType::Walk;
     bool returning = false;
     bool active = false;
     bool needsPath = false;
     bool physicsTraversalActive = false;
     bool physicsWasAirborne = false;
+    bool hasAuthoredCharacter = false;
     bool targetInitialized = false;
     bool lastPathSuccess = false;
   };

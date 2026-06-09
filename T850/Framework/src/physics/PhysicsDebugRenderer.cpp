@@ -316,8 +316,9 @@ void PhysicsDebugRenderer::DrawBodies(const std::vector<PhysicsDebugBody>& bodie
 
   XMATRIX44 identity;
   identity.Identity();
-  m_lineRenderer.SetDepthTestEnabled(m_depthTest && m_depthTexture != nullptr);
+  m_lineRenderer.SetDepthTestEnabled(m_depthTest && (m_depthTexture != nullptr || m_depthTexture2 != nullptr));
   m_lineRenderer.SetDepthTexture(m_depthTexture);
+  m_lineRenderer.SetSecondaryDepthTexture(m_depthTexture2);
   m_lineRenderer.SetViewport(m_viewWidth, m_viewHeight);
   m_lineRenderer.SetFarPlane(m_farPlane);
   m_lineRenderer.DrawLines(identity,

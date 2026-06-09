@@ -3,13 +3,13 @@
    "collision": "Scenes/Q3/q3dm6.t8q3clip",
    "editor": {
       "camera_target": {
-         "x": 8.269215,
-         "y": -0.49745008,
-         "z": -17.028355
+         "x": 4.2965856,
+         "y": 12.349536,
+         "z": 9.233471
       },
-      "camera_yaw": -0.15499982,
-      "camera_pitch": 0.3249996,
-      "camera_distance": 12.722921,
+      "camera_yaw": -4.094986,
+      "camera_pitch": 0.20500052,
+      "camera_distance": 4.852521,
       "show_skybox": false,
       "show_wireframe": false
    },
@@ -50,6 +50,36 @@
             "static_object": true,
             "area": "walkable",
             "cost": 1
+         }
+      },
+      {
+         "name": "Models/doomslayer_cine_all_animations_no-damage_double-sided-opaque.glb",
+         "mesh": "Models/doomslayer_cine_all_animations_no-damage_double-sided-opaque.glb",
+         "ragdoll": "Models/RagdollEdits/doomslayer_cine_all_animations_no-damage_double-sided-opaque.glb.json",
+         "position": {
+            "x": 1.5730402,
+            "y": 16.321587,
+            "z": 16.825544
+         },
+         "rotation": {
+            "x": 0,
+            "y": 75.625206,
+            "z": 0
+         },
+         "scale": {
+            "x": 0.0005720011,
+            "y": 0.0005720012,
+            "z": 0.0005720011
+         },
+         "visible": true,
+         "frozen": false,
+         "show_wire": false,
+         "ragdoll_authoring": {
+            "enabled": false,
+            "asset": "Models/RagdollEdits/doomslayer_cine_all_animations_no-damage_double-sided-opaque.glb.json",
+            "preview": false,
+            "drive_from_animation": false,
+            "runtime_motion": "disabled"
          }
       }
    ],
@@ -128,9 +158,9 @@
          "type": "player",
          "source_object": "player",
          "position": {
-            "x": 6.9620166,
-            "y": 1.3235713,
-            "z": -12.062098
+            "x": 1.6966865,
+            "y": 9.344282,
+            "z": 8.199992
          },
          "rotation": {
             "x": 0,
@@ -193,6 +223,119 @@
          }
       }
    ],
+   "navigation_mesh": {
+      "name": "NavMesh",
+      "enabled": true,
+      "visible": true,
+      "frozen": false,
+      "show_wire": true,
+      "debug_offset": 0.01,
+      "debug_shape_mode": 0,
+      "build_settings": {
+         "cell_size": 0.1,
+         "cell_height": 0.1,
+         "agent_height": 1.7,
+         "agent_radius": 0.09,
+         "agent_max_climb": 0.9,
+         "agent_max_slope": 45,
+         "region_min_size": 8,
+         "region_merge_size": 16.25,
+         "edge_max_len": 8.75,
+         "edge_max_error": 1.3,
+         "verts_per_poly": 4,
+         "detail_sample_dist": 6,
+         "detail_sample_max_error": 1,
+         "query_extents": {
+            "x": 1.15,
+            "y": 1.9,
+            "z": 1.55
+         },
+         "auto_drop_links": false,
+         "drop_min_height": 1,
+         "drop_max_height": 24,
+         "drop_max_horizontal": 2.4,
+         "drop_sample_spacing": 1.2,
+         "drop_link_radius": 0.75,
+         "auto_jump_links": false,
+         "jump_max_horizontal": 7,
+         "jump_sample_spacing": 1.2,
+         "jump_link_radius": 0.75,
+         "hybrid_jump_links": false,
+         "hybrid_max_links": 192,
+         "off_mesh_link_validation_key": 0
+      },
+      "authored_links": [
+         {
+            "name": "Jump Link",
+            "type": "jump",
+            "start_node": 848,
+            "end_node": 704,
+            "start": {
+               "x": 3.0750008,
+               "y": 16.1,
+               "z": 16.975002
+            },
+            "end": {
+               "x": -0.49999905,
+               "y": 8.1,
+               "z": 9.575001
+            },
+            "radius": 0.75,
+            "bidirectional": false,
+            "cost": 1,
+            "enabled": true,
+            "visible": true,
+            "frozen": false,
+            "show_wire": true
+         },
+         {
+            "name": "Jump Link",
+            "type": "jump",
+            "start_node": 704,
+            "end_node": 712,
+            "start": {
+               "x": -0.49999905,
+               "y": 8.1,
+               "z": 9.575001
+            },
+            "end": {
+               "x": -6.583332,
+               "y": 0.099999905,
+               "z": 14.433334
+            },
+            "radius": 0.75,
+            "bidirectional": false,
+            "cost": 1,
+            "enabled": true,
+            "visible": true,
+            "frozen": false,
+            "show_wire": true
+         },
+         {
+            "name": "Jump Link",
+            "type": "jump",
+            "start_node": 704,
+            "end_node": 698,
+            "start": {
+               "x": -0.49999905,
+               "y": 8.1,
+               "z": 9.575001
+            },
+            "end": {
+               "x": 0.050001144,
+               "y": 0.099999905,
+               "z": 11.45
+            },
+            "radius": 0.75,
+            "bidirectional": false,
+            "cost": 1,
+            "enabled": true,
+            "visible": true,
+            "frozen": false,
+            "show_wire": true
+         }
+      ]
+   },
    "cameras": [
       {
          "name": "Overview Camera",
@@ -207,7 +350,7 @@
             "y": 11.5,
             "z": -5.711182
          },
-         "fov_deg": 60,
+         "fov_deg": 49.999996,
          "ortho_w": 82.75,
          "ortho_h": 84.57764,
          "near_plane": 0.1,
@@ -4208,7 +4351,7 @@
          "sliders": [
             {
                "name": "exposure",
-               "value": 1.147
+               "value": 1
             },
             {
                "name": "bloom_factor",
@@ -4216,7 +4359,7 @@
             },
             {
                "name": "bloom_threshold",
-               "value": 1
+               "value": 0.7
             },
             {
                "name": "light_radius_scale",
@@ -4228,7 +4371,7 @@
             },
             {
                "name": "lightmap_intensity",
-               "value": 1.75
+               "value": 1
             },
             {
                "name": "tm_white_level",
@@ -4264,7 +4407,7 @@
             },
             {
                "name": "fov",
-               "value": 49.999996
+               "value": 99.99999
             },
             {
                "name": "shadow_bias",
@@ -4332,7 +4475,7 @@
             },
             {
                "name": "cubemap",
-               "value": 1
+               "value": 0
             },
             {
                "name": "gauss_kernel_sample_count",
@@ -4344,12 +4487,12 @@
             },
             {
                "name": "luminance_mode",
-               "value": 1
+               "value": 0
             }
          ],
          "lights": [],
          "animations": [],
-         "cubemap_path": "sky/Pisa.dds"
+         "cubemap_path": "sky/Ennis.dds"
       },
       {
          "name": "android/mali-g700",

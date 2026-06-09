@@ -153,6 +153,7 @@ struct PhysicsCapsuleCastDesc {
   float radius = 0.35f;
   float halfHeight = 0.55f;
   std::vector<uint32_t> ignoredEntityIds;
+  bool triangleMeshesOnly = false;
 };
 
 struct PhysicsBoxCastDesc {
@@ -160,6 +161,7 @@ struct PhysicsBoxCastDesc {
   XVECTOR3 displacement = XVECTOR3(0.0f, 0.0f, 0.0f, 0.0f);
   XVECTOR3 halfExtents = XVECTOR3(0.35f, 0.90f, 0.35f, 0.0f);
   std::vector<uint32_t> ignoredEntityIds;
+  bool triangleMeshesOnly = false;
 };
 
 struct PhysicsCastHit {

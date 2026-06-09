@@ -203,6 +203,8 @@ public:
   bool GetDebugGraphEdges(std::vector<XVECTOR3>& outVertices,
                           std::vector<unsigned int>& outIndices,
                           float verticalOffset = 0.015f) const;
+  bool GetDebugNodePositions(std::vector<XVECTOR3>& outPositions,
+                            float verticalOffset = 0.0f) const;
   bool GetDebugOffMeshLinks(NavTraversalType type,
                            std::vector<XVECTOR3>& outVertices,
                            std::vector<unsigned int>& outIndices,

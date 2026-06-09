@@ -41,8 +41,11 @@
 #include <cctype>
 #include <filesystem>
 #include <functional>
+#include <fstream>
+#include <iomanip>
 #include <limits>
 #include <memory>
+#include <sstream>
 #include <set>
 #include <map>
 #include <cstring>
@@ -52,12 +55,29 @@
 #include <ImGuizmo.h>
 #include <SDL3/SDL.h>
 
+#ifdef min
+#undef min
+#endif
+#ifdef max
+#undef max
+#endif
+
+#ifdef _MSC_VER
+#pragma warning(push)
+#pragma warning(disable: 4244 4267)
+#endif
+#include <glaze/glaze.hpp>
+#ifdef _MSC_VER
+#pragma warning(pop)
+#endif
+
 #ifdef OS_WINDOWS
 #include <core/windows/Win32Framework.h>
 #endif
 
 namespace t850 {
   extern Device* T8Device;
+  extern DeviceContext* T8DeviceContext;
 }
 
 namespace t8ditor {
@@ -74,6 +94,16 @@ static t850::Ray BuildEditorCameraRay(const ::Camera& camera,
                                       float mouseY,
                                       int viewW,
                                       int viewH);
+
+struct EditorUndoState {
+  SceneFile scene;
+  std::vector<SceneGroup> groups;
+  std::set<int> multiSelect;
+  int activeGroupIdx = -1;
+  int selectionType = 0;
+  int selectedIdx = -1;
+  int activeCameraIdx = -1;
+};
 
 namespace {
   std::string g_startupMeshPath;
@@ -95,7 +125,13 @@ namespace {
 
   enum class PhysicsSceneEntityType {
     StaticTriangleMesh,
-    Player
+    Player,
+    Character
+  };
+
+  enum class CharacterRuntimePath {
+    Kinematic = 0,
+    Jolt = 1
   };
 
   struct PhysicsSceneEntity {
@@ -119,6 +155,7 @@ namespace {
     float friction = 0.6f;
     float restitution = 0.0f;
     bool sensor = false;
+    int characterRuntimePath = static_cast<int>(CharacterRuntimePath::Kinematic);
     int characterImplementation = 1; // 0=Character rigid body, 1=CharacterVirtual
     float characterMass = 70.0f;
     float characterMaxStrength = 100.0f;
@@ -148,6 +185,127 @@ namespace {
   float g_triangleMeshRestitution = 0.0f;
   bool g_triangleMeshSensor = false;
   std::string g_triangleMeshStatus;
+  PhysicsSceneEntity g_meshCharacterAuthoringTemplate;
+  int g_meshCharacterAuthoringSourceIndex = -1;
+  bool g_meshCharacterAuthoringInitialized = false;
+
+  t850::navigation::NavMeshBuildSettings DefaultEditorNavMeshBuildSettings() {
+    t850::navigation::NavMeshBuildSettings settings;
+    settings.enableAutoDropLinks = true;
+    settings.enableAutoJumpLinks = true;
+    settings.enableHybridJumpLinks = true;
+    settings.hybridJumpMaxLinks = 192;
+    return settings;
+  }
+
+  t850::scene::SceneNavMeshBuildSettingsDesc NavMeshBuildSettingsToScene(
+      const t850::navigation::NavMeshBuildSettings& settings) {
+    t850::scene::SceneNavMeshBuildSettingsDesc desc;
+    desc.cell_size = settings.cellSize;
+    desc.cell_height = settings.cellHeight;
+    desc.agent_height = settings.agentHeight;
+    desc.agent_radius = settings.agentRadius;
+    desc.agent_max_climb = settings.agentMaxClimb;
+    desc.agent_max_slope = settings.agentMaxSlope;
+    desc.region_min_size = settings.regionMinSize;
+    desc.region_merge_size = settings.regionMergeSize;
+    desc.edge_max_len = settings.edgeMaxLen;
+    desc.edge_max_error = settings.edgeMaxError;
+    desc.verts_per_poly = settings.vertsPerPoly;
+    desc.detail_sample_dist = settings.detailSampleDist;
+    desc.detail_sample_max_error = settings.detailSampleMaxError;
+    desc.query_extents = {settings.queryExtents.x, settings.queryExtents.y, settings.queryExtents.z};
+    desc.auto_drop_links = settings.enableAutoDropLinks;
+    desc.drop_min_height = settings.dropLinkMinHeight;
+    desc.drop_max_height = settings.dropLinkMaxHeight;
+    desc.drop_max_horizontal = settings.dropLinkMaxHorizontalDistance;
+    desc.drop_sample_spacing = settings.dropLinkSampleSpacing;
+    desc.drop_link_radius = settings.dropLinkRadius;
+    desc.auto_jump_links = settings.enableAutoJumpLinks;
+    desc.jump_max_horizontal = settings.jumpLinkMaxHorizontalDistance;
+    desc.jump_sample_spacing = settings.jumpLinkSampleSpacing;
+    desc.jump_link_radius = settings.jumpLinkRadius;
+    desc.hybrid_jump_links = settings.enableHybridJumpLinks;
+    desc.hybrid_max_links = settings.hybridJumpMaxLinks;
+    desc.off_mesh_link_validation_key = settings.offMeshLinkValidationKey;
+    return desc;
+  }
+
+  t850::navigation::NavMeshBuildSettings NavMeshBuildSettingsFromScene(
+      const t850::scene::SceneNavMeshBuildSettingsDesc& desc) {
+    t850::navigation::NavMeshBuildSettings settings = DefaultEditorNavMeshBuildSettings();
+    settings.cellSize = desc.cell_size;
+    settings.cellHeight = desc.cell_height;
+    settings.agentHeight = desc.agent_height;
+    settings.agentRadius = desc.agent_radius;
+    settings.agentMaxClimb = desc.agent_max_climb;
+    settings.agentMaxSlope = desc.agent_max_slope;
+    settings.regionMinSize = desc.region_min_size;
+    settings.regionMergeSize = desc.region_merge_size;
+    settings.edgeMaxLen = desc.edge_max_len;
+    settings.edgeMaxError = desc.edge_max_error;
+    settings.vertsPerPoly = desc.verts_per_poly;
+    settings.detailSampleDist = desc.detail_sample_dist;
+    settings.detailSampleMaxError = desc.detail_sample_max_error;
+    settings.queryExtents = XVECTOR3(desc.query_extents.x, desc.query_extents.y, desc.query_extents.z, 0.0f);
+    settings.enableAutoDropLinks = desc.auto_drop_links;
+    settings.dropLinkMinHeight = desc.drop_min_height;
+    settings.dropLinkMaxHeight = desc.drop_max_height;
+    settings.dropLinkMaxHorizontalDistance = desc.drop_max_horizontal;
+    settings.dropLinkSampleSpacing = desc.drop_sample_spacing;
+    settings.dropLinkRadius = desc.drop_link_radius;
+    settings.enableAutoJumpLinks = desc.auto_jump_links;
+    settings.jumpLinkMaxHorizontalDistance = desc.jump_max_horizontal;
+    settings.jumpLinkSampleSpacing = desc.jump_sample_spacing;
+    settings.jumpLinkRadius = desc.jump_link_radius;
+    settings.enableHybridJumpLinks = desc.hybrid_jump_links;
+    settings.hybridJumpMaxLinks = desc.hybrid_max_links;
+    settings.offMeshLinkValidationKey = desc.off_mesh_link_validation_key;
+    return settings;
+  }
+
+  const char* NavLinkTypeName(t850::navigation::NavTraversalType type) {
+    switch (type) {
+      case t850::navigation::NavTraversalType::Drop: return "drop";
+      case t850::navigation::NavTraversalType::Jump: return "jump";
+      case t850::navigation::NavTraversalType::JumpPad: return "jump_pad";
+      case t850::navigation::NavTraversalType::JumpIntent: return "jump_intent";
+      case t850::navigation::NavTraversalType::Walk:
+      default: return "walk";
+    }
+  }
+
+  t850::navigation::NavTraversalType NavLinkTypeFromName(const std::string& name) {
+    if (name == "drop") return t850::navigation::NavTraversalType::Drop;
+    if (name == "jump_pad") return t850::navigation::NavTraversalType::JumpPad;
+    if (name == "jump_intent") return t850::navigation::NavTraversalType::JumpIntent;
+    if (name == "jump") return t850::navigation::NavTraversalType::Jump;
+    return t850::navigation::NavTraversalType::Jump;
+  }
+
+  t850::navigation::NavOffMeshLink NavOffMeshLinkFromScene(const t850::scene::SceneNavMeshLinkDesc& desc) {
+    t850::navigation::NavOffMeshLink link;
+    link.start = XVECTOR3(desc.start.x, desc.start.y, desc.start.z, 1.0f);
+    link.end = XVECTOR3(desc.end.x, desc.end.y, desc.end.z, 1.0f);
+    link.radius = (std::max)(0.05f, desc.radius);
+    link.bidirectional = desc.bidirectional;
+    link.type = NavLinkTypeFromName(desc.type);
+    return link;
+  }
+
+  bool IsFiniteNavPoint(const t850::scene::Vec3f& point) {
+    return std::isfinite(point.x) && std::isfinite(point.y) && std::isfinite(point.z);
+  }
+
+  bool IsUsableAuthoredNavLink(const t850::scene::SceneNavMeshLinkDesc& link) {
+    if (!link.enabled || !IsFiniteNavPoint(link.start) || !IsFiniteNavPoint(link.end)) {
+      return false;
+    }
+    const float dx = link.end.x - link.start.x;
+    const float dy = link.end.y - link.start.y;
+    const float dz = link.end.z - link.start.z;
+    return dx * dx + dy * dy + dz * dz > 0.0001f && link.radius > 0.0f;
+  }
 
   // Multi-selection: set of selected mesh indices
   std::set<int>            g_multiSelect;
@@ -161,7 +319,7 @@ namespace {
   std::vector<SceneCamera> g_cameras;
   std::vector<SceneLight>  g_lights;
 
-  // Selection: 0=mesh, 1=camera, 2=light, 3=physics entity.
+  // Selection: 0=mesh, 1=camera, 2=light, 3=physics entity, 4=NavMesh.
   int g_selectionType = 0;  // 0=mesh by default
 
   // Marquee box selection state
@@ -173,6 +331,7 @@ namespace {
 
   // Undo/redo
   UndoStack g_undoStack;
+  bool g_applyingUndoState = false;
 
   // ImGuizmo drag tracking
   bool           g_gizmoDragging = false;
@@ -235,6 +394,53 @@ namespace {
   void LogEditorLoadingLabel(const char* phase, const char* item) {
     T8_LOG_INFO("[Loading] %s: %s", phase ? phase : "", item ? item : "");
   }
+
+  void AppendEditorUndoGroupKey(std::ostringstream& oss, const EditorUndoState& state) {
+    oss << "|groups=" << state.groups.size();
+    for (const SceneGroup& group : state.groups) {
+      oss << "|g:" << group.name << ':' << (group.persistent ? 1 : 0) << ':';
+      for (int member : group.members) {
+        oss << member << ',';
+      }
+    }
+    oss << "|activeGroup=" << state.activeGroupIdx;
+  }
+
+  std::string EditorUndoStateKey(const EditorUndoState& state) {
+    auto serialized = glz::write<glz::opts{.prettify = false}>(state.scene);
+    std::ostringstream oss;
+    if (serialized) {
+      oss << serialized.value();
+    } else {
+      oss << "scene-serialize-error";
+    }
+    AppendEditorUndoGroupKey(oss, state);
+    return oss.str();
+  }
+
+  class EditorSceneStateCommand : public UndoCommand {
+  public:
+    using ApplyFn = std::function<void(const EditorUndoState&)>;
+
+    EditorSceneStateCommand(std::string description,
+                            EditorUndoState before,
+                            EditorUndoState after,
+                            ApplyFn applyFn)
+        : m_description(std::move(description)),
+          m_before(std::move(before)),
+          m_after(std::move(after)),
+          m_applyFn(std::move(applyFn)) {}
+
+    void Apply() override { m_applyFn(m_after); }
+    void Undo() override { m_applyFn(m_before); }
+    const char* Description() const override { return m_description.c_str(); }
+
+  private:
+    std::string m_description;
+    EditorUndoState m_before;
+    EditorUndoState m_after;
+    ApplyFn m_applyFn;
+  };
 }
 
 void SetStartupMeshPath(const std::string& p) {
@@ -388,7 +594,8 @@ static bool BuildPlayerSilhouetteMesh(PhysicsSceneEntity& entity) {
   AppendBoxTriangles(vertices, indices,  width * 0.35f, legTop + height * 0.10f, -halfDepth * 0.35f,  width * 0.55f, torsoTop, halfDepth * 0.35f);
 
   entity.visual = std::make_unique<EditorMesh>();
-  if (!entity.visual->LoadFromTriangles("player silhouette", vertices, indices)) {
+  const std::string visualName = entity.name.empty() ? "character silhouette" : entity.name + " silhouette";
+  if (!entity.visual->LoadFromTriangles(visualName, vertices, indices)) {
     entity.visual.reset();
     return false;
   }
@@ -396,6 +603,187 @@ static bool BuildPlayerSilhouetteMesh(PhysicsSceneEntity& entity) {
   entity.visual->EulerRadians() = entity.eulerRadians;
   entity.visual->WireColor = XVECTOR3(0.2f, 0.8f, 1.0f, 1.0f);
   return true;
+}
+
+static XVECTOR3 SceneObjectWorldPosition(SceneObject& object) {
+  if (object.primId >= 0) {
+    return XVECTOR3(object.litInst.Final.m41,
+                    object.litInst.Final.m42,
+                    object.litInst.Final.m43,
+                    1.0f);
+  }
+  return object.wireframe.Position();
+}
+
+static XVECTOR3 SceneObjectWorldEulerRadians(SceneObject& object) {
+  return object.wireframe.EulerRadians();
+}
+
+static bool IsRenderMeshBoundsValid(const t850::RenderMesh::AABB& bounds) {
+  return bounds.min.x <= bounds.max.x &&
+         bounds.min.y <= bounds.max.y &&
+         bounds.min.z <= bounds.max.z &&
+         std::isfinite(bounds.min.x) &&
+         std::isfinite(bounds.min.y) &&
+         std::isfinite(bounds.min.z) &&
+         std::isfinite(bounds.max.x) &&
+         std::isfinite(bounds.max.y) &&
+         std::isfinite(bounds.max.z);
+}
+
+static t850::AABB RenderMeshAABBToPickingAABB(const t850::RenderMesh::AABB& bounds) {
+  return t850::AABB(
+      XVECTOR3(bounds.min.x, bounds.min.y, bounds.min.z, 1.0f),
+      XVECTOR3(bounds.max.x, bounds.max.y, bounds.max.z, 1.0f));
+}
+
+static bool GetSceneObjectWorldAABB(SceneObject& object, t850::AABB& outBounds) {
+  outBounds = t850::AABB{};
+  if (object.primId >= 0 && object.litInst.pBase) {
+    if (auto* renderMesh = dynamic_cast<t850::RenderMesh*>(object.litInst.pBase)) {
+      if (renderMesh->EnsureCullingMetadata()) {
+        for (const t850::RenderMesh::MeshInfo& info : renderMesh->Info) {
+          if (IsRenderMeshBoundsValid(info.bounds)) {
+            outBounds.ExpandToInclude(RenderMeshAABBToPickingAABB(info.bounds).Transformed(object.litInst.Final));
+          }
+        }
+        if (outBounds.IsValid()) {
+          return true;
+        }
+      }
+    }
+    if (auto* skinned = dynamic_cast<t850::RenderSkinnedMesh*>(object.litInst.pBase)) {
+      t850::RenderMesh::AABB skeletonBounds;
+      if (skinned->GetSkeletonLocalAABB(skeletonBounds) && IsRenderMeshBoundsValid(skeletonBounds)) {
+        outBounds = RenderMeshAABBToPickingAABB(skeletonBounds).Transformed(object.litInst.Final);
+        return outBounds.IsValid();
+      }
+    }
+  }
+  if (object.wireframe.IsLoaded()) {
+    outBounds = object.wireframe.WorldAABB();
+    return outBounds.IsValid();
+  }
+  return false;
+}
+
+static bool FitCharacterToAABB(PhysicsSceneEntity& entity, const t850::AABB& bounds) {
+  if (!bounds.IsValid()) {
+    return false;
+  }
+  const XVECTOR3 center = bounds.Center();
+  const XVECTOR3 extents = bounds.Extents();
+  entity.position = XVECTOR3(center.x, center.y, center.z, 1.0f);
+  entity.eulerRadians = XVECTOR3(0.0f, 0.0f, 0.0f, 0.0f);
+  entity.playerHalfExtents = XVECTOR3(
+      (std::max)(0.001f, extents.x),
+      (std::max)(0.001f, extents.y),
+      (std::max)(0.001f, extents.z),
+      0.0f);
+  const float radius = (std::max)(0.001f, (std::max)(extents.x, extents.z));
+  entity.playerRadius = radius;
+  if (entity.playerShape == t850::PhysicsShapeType::Sphere) {
+    entity.playerRadius = (std::max)(radius, extents.y);
+    entity.playerHalfHeight = entity.playerRadius;
+  } else if (entity.playerShape == t850::PhysicsShapeType::Cylinder) {
+    entity.playerHalfHeight = (std::max)(0.001f, extents.y);
+  } else if (entity.playerShape == t850::PhysicsShapeType::Capsule) {
+    entity.playerHalfHeight = (std::max)(0.001f, extents.y - entity.playerRadius);
+  }
+  return true;
+}
+
+static bool FitCharacterToSceneObject(PhysicsSceneEntity& entity, SceneObject& object) {
+  t850::AABB bounds;
+  if (!GetSceneObjectWorldAABB(object, bounds)) {
+    return false;
+  }
+  return FitCharacterToAABB(entity, bounds);
+}
+
+static const char* CharacterRuntimePathToSceneString(int runtimePath) {
+  return runtimePath == static_cast<int>(CharacterRuntimePath::Jolt) ? "jolt" : "kinematic";
+}
+
+static int CharacterRuntimePathFromSceneString(const std::string& runtimePath) {
+  return runtimePath == "jolt"
+      ? static_cast<int>(CharacterRuntimePath::Jolt)
+      : static_cast<int>(CharacterRuntimePath::Kinematic);
+}
+
+static void CopyCharacterAuthoringSettings(const PhysicsSceneEntity& source, PhysicsSceneEntity& dest) {
+  dest.position = source.position;
+  dest.eulerRadians = source.eulerRadians;
+  dest.playerShape = source.playerShape;
+  dest.playerHalfExtents = source.playerHalfExtents;
+  dest.playerRadius = source.playerRadius;
+  dest.playerHalfHeight = source.playerHalfHeight;
+  dest.friction = source.friction;
+  dest.restitution = source.restitution;
+  dest.sensor = source.sensor;
+  dest.characterRuntimePath = source.characterRuntimePath;
+  dest.characterImplementation = source.characterImplementation;
+  dest.characterMass = source.characterMass;
+  dest.characterMaxStrength = source.characterMaxStrength;
+  dest.characterMaxSlopeAngleDeg = source.characterMaxSlopeAngleDeg;
+  dest.characterEnhancedInternalEdgeRemoval = source.characterEnhancedInternalEdgeRemoval;
+  dest.characterSupportingVolumeOffset = source.characterSupportingVolumeOffset;
+  dest.characterShapeOffset[0] = source.characterShapeOffset[0];
+  dest.characterShapeOffset[1] = source.characterShapeOffset[1];
+  dest.characterShapeOffset[2] = source.characterShapeOffset[2];
+  dest.characterBackFaceMode = source.characterBackFaceMode;
+  dest.characterPredictiveContactDistance = source.characterPredictiveContactDistance;
+  dest.characterMaxCollisionIterations = source.characterMaxCollisionIterations;
+  dest.characterMaxConstraintIterations = source.characterMaxConstraintIterations;
+  dest.characterMinTimeRemaining = source.characterMinTimeRemaining;
+  dest.characterCollisionTolerance = source.characterCollisionTolerance;
+  dest.characterPadding = source.characterPadding;
+  dest.characterMaxNumHits = source.characterMaxNumHits;
+  dest.characterHitReductionCosMaxAngle = source.characterHitReductionCosMaxAngle;
+  dest.characterPenetrationRecoverySpeed = source.characterPenetrationRecoverySpeed;
+  dest.characterGravityFactor = source.characterGravityFactor;
+  dest.characterAllowTranslationX = source.characterAllowTranslationX;
+  dest.characterAllowTranslationY = source.characterAllowTranslationY;
+  dest.characterAllowTranslationZ = source.characterAllowTranslationZ;
+  dest.characterInnerBody = source.characterInnerBody;
+}
+
+static void RebuildMeshCharacterAuthoringPreview() {
+  if (!g_meshCharacterAuthoringInitialized) {
+    return;
+  }
+  BuildPlayerSilhouetteMesh(g_meshCharacterAuthoringTemplate);
+}
+
+static PhysicsSceneEntity& EnsureMeshCharacterAuthoringTemplate(int sourceObjectIndex) {
+  if (sourceObjectIndex < 0 || sourceObjectIndex >= static_cast<int>(g_objects.size())) {
+    g_meshCharacterAuthoringInitialized = false;
+    g_meshCharacterAuthoringSourceIndex = -1;
+    g_meshCharacterAuthoringTemplate.visual.reset();
+    return g_meshCharacterAuthoringTemplate;
+  }
+
+  if (!g_meshCharacterAuthoringInitialized ||
+      g_meshCharacterAuthoringSourceIndex != sourceObjectIndex) {
+    SceneObject& selected = g_objects[static_cast<std::size_t>(sourceObjectIndex)];
+    g_meshCharacterAuthoringTemplate = PhysicsSceneEntity{};
+    g_meshCharacterAuthoringTemplate.type = PhysicsSceneEntityType::Character;
+    g_meshCharacterAuthoringTemplate.name = selected.name + " Character";
+    g_meshCharacterAuthoringTemplate.sourceName = selected.name;
+    g_meshCharacterAuthoringTemplate.sourceObjectIndex = sourceObjectIndex;
+    g_meshCharacterAuthoringTemplate.position = SceneObjectWorldPosition(selected);
+    g_meshCharacterAuthoringTemplate.eulerRadians = SceneObjectWorldEulerRadians(selected);
+    ApplyDefaultPlayerSizeFromScene(g_meshCharacterAuthoringTemplate);
+    g_meshCharacterAuthoringTemplate.playerShape = t850::PhysicsShapeType::Capsule;
+    FitCharacterToSceneObject(g_meshCharacterAuthoringTemplate, selected);
+    g_meshCharacterAuthoringTemplate.friction = 0.0f;
+    g_meshCharacterAuthoringTemplate.restitution = 0.0f;
+    g_meshCharacterAuthoringTemplate.sensor = false;
+    g_meshCharacterAuthoringInitialized = true;
+    g_meshCharacterAuthoringSourceIndex = sourceObjectIndex;
+    RebuildMeshCharacterAuthoringPreview();
+  }
+  return g_meshCharacterAuthoringTemplate;
 }
 
 static XMATRIX44 MakePhysicsTransform(const XVECTOR3& position, const XVECTOR3& eulerRadians) {
@@ -408,10 +796,15 @@ static XMATRIX44 MakePhysicsTransform(const XVECTOR3& position, const XVECTOR3& 
   return rotation * translation;
 }
 
+static bool IsCharacterPhysicsEntity(const PhysicsSceneEntity& entity) {
+  return entity.type == PhysicsSceneEntityType::Player ||
+         entity.type == PhysicsSceneEntityType::Character;
+}
+
 static XMATRIX44 MakePhysicsGizmoTransform(const PhysicsSceneEntity& entity) {
   XMATRIX44 scale;
   scale.Identity();
-  if (g_gizmoDragging && entity.type == PhysicsSceneEntityType::Player) {
+  if (g_gizmoDragging && IsCharacterPhysicsEntity(entity)) {
     if (entity.playerShape == t850::PhysicsShapeType::Capsule || entity.playerShape == t850::PhysicsShapeType::Cylinder) {
       const float radiusScale = g_physicsGizmoStartRadius > 0.000001f
           ? entity.playerRadius / g_physicsGizmoStartRadius
@@ -435,8 +828,8 @@ static XMATRIX44 MakePhysicsGizmoTransform(const PhysicsSceneEntity& entity) {
   return scale * MakePhysicsTransform(entity.position, entity.eulerRadians);
 }
 
-static bool RecreatePlayerPhysicsBody(t850::JoltPhysicsSystem& physics, PhysicsSceneEntity& entity) {
-  if (entity.type != PhysicsSceneEntityType::Player || !physics.IsInitialized()) {
+static bool RecreateCharacterPhysicsBody(t850::JoltPhysicsSystem& physics, PhysicsSceneEntity& entity) {
+  if (!IsCharacterPhysicsEntity(entity) || !physics.IsInitialized()) {
     return false;
   }
   if (entity.body.IsValid()) {
@@ -445,8 +838,8 @@ static bool RecreatePlayerPhysicsBody(t850::JoltPhysicsSystem& physics, PhysicsS
   }
 
   t850::PhysicsBodyDesc desc;
-  desc.entityId = 0x504C5952u; // PLYR
-  desc.debugName = "player";
+  desc.entityId = entity.type == PhysicsSceneEntityType::Player ? 0x504C5952u : 0x43484152u; // PLYR / CHAR
+  desc.debugName = entity.name.empty() ? (entity.type == PhysicsSceneEntityType::Player ? "player" : "character") : entity.name;
   desc.worldTransform = MakePhysicsTransform(entity.position, entity.eulerRadians);
   desc.motion = t850::PhysicsBodyMotion::Kinematic;
   desc.friction = entity.friction;
@@ -470,10 +863,100 @@ static bool RecreatePlayerPhysicsBody(t850::JoltPhysicsSystem& physics, PhysicsS
 
   entity.body = physics.CreateBody(desc);
   if (!entity.body.IsValid()) {
-    T8_LOG_ERROR("[T8ditor] Failed to create player physics body.");
+    T8_LOG_ERROR("[T8ditor] Failed to create character physics body '%s'.", desc.debugName.c_str());
     return false;
   }
   return BuildPlayerSilhouetteMesh(entity);
+}
+
+static bool DrawCharacterRuntimePathControl(PhysicsSceneEntity& entity) {
+  int path = std::clamp(entity.characterRuntimePath, 0, 1);
+  const char* pathOptions[] = {
+      "Kinematic / NavMesh path",
+      "Jolt collision path"
+  };
+  if (ImGui::Combo("Movement Path", &path, pathOptions, 2)) {
+    entity.characterRuntimePath = path;
+    return true;
+  }
+  return false;
+}
+
+static bool DrawCharacterShapeControls(PhysicsSceneEntity& entity, bool includePosition) {
+  bool changed = false;
+  if (includePosition) {
+    float p[3] = { entity.position.x, entity.position.y, entity.position.z };
+    if (ImGui::DragFloat3("Position", p, 0.5f)) {
+      entity.position = XVECTOR3(p[0], p[1], p[2], 1.0f);
+      changed = true;
+    }
+  }
+
+  int shape = entity.playerShape == t850::PhysicsShapeType::Capsule ? 1 :
+      (entity.playerShape == t850::PhysicsShapeType::Sphere ? 2 :
+       (entity.playerShape == t850::PhysicsShapeType::Cylinder ? 3 : 0));
+  const char* shapeOptions[] = { "AABB / Box", "Capsule", "Sphere", "Cylinder" };
+  if (ImGui::Combo("Shape", &shape, shapeOptions, 4)) {
+    entity.playerShape = shape == 1 ? t850::PhysicsShapeType::Capsule :
+        (shape == 2 ? t850::PhysicsShapeType::Sphere :
+         (shape == 3 ? t850::PhysicsShapeType::Cylinder : t850::PhysicsShapeType::Box));
+    changed = true;
+  }
+
+  if (entity.playerShape == t850::PhysicsShapeType::Capsule) {
+    changed |= ImGui::DragFloat("Radius", &entity.playerRadius, 0.25f, 0.1f, 128.0f, "%.2f");
+    changed |= ImGui::DragFloat("Half Height", &entity.playerHalfHeight, 0.25f, 0.1f, 256.0f, "%.2f");
+    ImGui::TextDisabled("Total height = 2 * (half height + radius).");
+  } else if (entity.playerShape == t850::PhysicsShapeType::Sphere) {
+    changed |= ImGui::DragFloat("Radius", &entity.playerRadius, 0.25f, 0.1f, 256.0f, "%.2f");
+  } else if (entity.playerShape == t850::PhysicsShapeType::Cylinder) {
+    changed |= ImGui::DragFloat("Radius", &entity.playerRadius, 0.25f, 0.1f, 256.0f, "%.2f");
+    changed |= ImGui::DragFloat("Half Height", &entity.playerHalfHeight, 0.25f, 0.1f, 256.0f, "%.2f");
+  } else {
+    float he[3] = { entity.playerHalfExtents.x, entity.playerHalfExtents.y, entity.playerHalfExtents.z };
+    if (ImGui::DragFloat3("Half Extents", he, 0.25f, 0.1f, 256.0f, "%.2f")) {
+      entity.playerHalfExtents = XVECTOR3(he[0], he[1], he[2], 0.0f);
+      changed = true;
+    }
+  }
+
+  changed |= ImGui::DragFloat("Friction", &entity.friction, 0.01f, 0.0f, 10.0f, "%.2f");
+  changed |= ImGui::DragFloat("Restitution", &entity.restitution, 0.01f, 0.0f, 1.0f, "%.2f");
+  changed |= ImGui::Checkbox("Sensor", &entity.sensor);
+  return changed;
+}
+
+static bool DrawJoltCharacterSettingsControls(PhysicsSceneEntity& entity) {
+  bool changed = false;
+  const char* implementationOptions[] = { "Character rigid body", "CharacterVirtual controller" };
+  changed |= ImGui::Combo("Implementation", &entity.characterImplementation, implementationOptions, 2);
+  changed |= ImGui::DragFloat("Mass", &entity.characterMass, 0.5f, 0.0f, 1000.0f, "%.2f");
+  changed |= ImGui::DragFloat("Max Slope Angle (deg)", &entity.characterMaxSlopeAngleDeg, 0.5f, 0.0f, 89.0f, "%.2f");
+  changed |= ImGui::Checkbox("Enhanced Internal Edge Removal", &entity.characterEnhancedInternalEdgeRemoval);
+  changed |= ImGui::DragFloat("Supporting Volume Offset", &entity.characterSupportingVolumeOffset, 0.01f, -1.0e10f, 1.0e10f, "%.4f");
+  if (entity.characterImplementation == 0) {
+    changed |= ImGui::DragFloat("Character Friction", &entity.friction, 0.01f, 0.0f, 10.0f, "%.2f");
+    changed |= ImGui::DragFloat("Gravity Factor", &entity.characterGravityFactor, 0.01f, 0.0f, 10.0f, "%.2f");
+    changed |= ImGui::Checkbox("Allow Translation X", &entity.characterAllowTranslationX);
+    changed |= ImGui::Checkbox("Allow Translation Y", &entity.characterAllowTranslationY);
+    changed |= ImGui::Checkbox("Allow Translation Z", &entity.characterAllowTranslationZ);
+  } else {
+    changed |= ImGui::DragFloat("Max Strength", &entity.characterMaxStrength, 1.0f, 0.0f, 100000.0f, "%.1f");
+    changed |= ImGui::DragFloat3("Shape Offset", entity.characterShapeOffset, 0.01f, -256.0f, 256.0f, "%.3f");
+    const char* backFaceOptions[] = { "Ignore Back Faces", "Collide With Back Faces" };
+    changed |= ImGui::Combo("Back Face Mode", &entity.characterBackFaceMode, backFaceOptions, 2);
+    changed |= ImGui::DragFloat("Predictive Contact Distance", &entity.characterPredictiveContactDistance, 0.005f, 0.0f, 10.0f, "%.4f");
+    changed |= ImGui::DragInt("Max Collision Iterations", &entity.characterMaxCollisionIterations, 1.0f, 1, 64);
+    changed |= ImGui::DragInt("Max Constraint Iterations", &entity.characterMaxConstraintIterations, 1.0f, 1, 128);
+    changed |= ImGui::DragFloat("Min Time Remaining", &entity.characterMinTimeRemaining, 0.00001f, 0.0f, 0.1f, "%.6f");
+    changed |= ImGui::DragFloat("Collision Tolerance", &entity.characterCollisionTolerance, 0.0001f, 0.0f, 1.0f, "%.5f");
+    changed |= ImGui::DragFloat("Character Padding", &entity.characterPadding, 0.001f, 0.0f, 1.0f, "%.4f");
+    changed |= ImGui::DragInt("Max Num Hits", &entity.characterMaxNumHits, 1.0f, 1, 4096);
+    changed |= ImGui::DragFloat("Hit Reduction Cos Max Angle", &entity.characterHitReductionCosMaxAngle, 0.001f, -1.0f, 1.0f, "%.6f");
+    changed |= ImGui::DragFloat("Penetration Recovery Speed", &entity.characterPenetrationRecoverySpeed, 0.01f, 0.0f, 1.0f, "%.3f");
+    changed |= ImGui::Checkbox("Inner Body", &entity.characterInnerBody);
+  }
+  return changed;
 }
 
 static bool BuildPhysicsDebugBodyBounds(const t850::PhysicsDebugBody& debugBody, t850::AABB& outBounds) {
@@ -531,7 +1014,7 @@ static bool GetPhysicsEntityWorldAABB(const PhysicsSceneEntity& entity,
                                       const t850::JoltPhysicsSystem& physics,
                                       t850::AABB& outBounds) {
   outBounds = t850::AABB{};
-  if (entity.type == PhysicsSceneEntityType::Player && entity.visual && entity.visual->IsLoaded()) {
+  if (IsCharacterPhysicsEntity(entity) && entity.visual && entity.visual->IsLoaded()) {
     outBounds = entity.visual->WorldAABB();
     return outBounds.IsValid();
   }
@@ -555,7 +1038,7 @@ static bool RaycastPhysicsEntity(const PhysicsSceneEntity& entity,
   if (!entity.visible || entity.frozen) {
     return false;
   }
-  if (entity.type == PhysicsSceneEntityType::Player && entity.visual && entity.visual->IsLoaded()) {
+  if (IsCharacterPhysicsEntity(entity) && entity.visual && entity.visual->IsLoaded()) {
     return entity.visual->RaycastSurface(ray, outT);
   }
 
@@ -593,7 +1076,7 @@ static int CreateOrSelectPlayerPhysicsEntity(t850::JoltPhysicsSystem& physics, c
   entity.friction = 0.0f;
   entity.restitution = 0.0f;
   entity.sensor = false;
-  if (!RecreatePlayerPhysicsBody(physics, entity)) {
+  if (!RecreateCharacterPhysicsBody(physics, entity)) {
     return -1;
   }
 
@@ -602,6 +1085,47 @@ static int CreateOrSelectPlayerPhysicsEntity(t850::JoltPhysicsSystem& physics, c
   g_selectionType = 3;
   g_multiSelect.clear();
   return g_selectedIdx;
+}
+
+static bool CreateCharacterPhysicsEntity(t850::JoltPhysicsSystem& physics,
+                                         int sourceObjectIndex,
+                                         const PhysicsSceneEntity& authoringTemplate) {
+  if (sourceObjectIndex < 0 || sourceObjectIndex >= static_cast<int>(g_objects.size())) {
+    T8_LOG_ERROR("[T8ditor] Select a loaded mesh before creating a character.");
+    return false;
+  }
+  if (!physics.IsInitialized()) {
+    T8_LOG_ERROR("[T8ditor] Physics runtime is not initialized.");
+    return false;
+  }
+
+  SceneObject& selected = g_objects[sourceObjectIndex];
+  PhysicsSceneEntity entity;
+  entity.type = PhysicsSceneEntityType::Character;
+  entity.name = MakeUniquePhysicsEntityName(selected.name + " Character");
+  entity.sourceName = selected.name;
+  entity.sourceObjectIndex = sourceObjectIndex;
+  entity.position = SceneObjectWorldPosition(selected);
+  entity.eulerRadians = SceneObjectWorldEulerRadians(selected);
+  ApplyDefaultPlayerSizeFromScene(entity);
+  CopyCharacterAuthoringSettings(authoringTemplate, entity);
+  if (!RecreateCharacterPhysicsBody(physics, entity)) {
+    return false;
+  }
+
+  const std::string createdName = entity.name;
+  const char* implementationName = entity.characterImplementation == 0 ? "Character rigid-body" : "CharacterVirtual";
+  const char* runtimePathName = CharacterRuntimePathToSceneString(entity.characterRuntimePath);
+  g_physicsEntities.push_back(std::move(entity));
+  g_selectedIdx = static_cast<int>(g_physicsEntities.size()) - 1;
+  g_selectionType = 3;
+  g_multiSelect.clear();
+  T8_LOG_INFO("[T8ditor] Created %s %s physics entity '%s' for mesh '%s'",
+              runtimePathName,
+              implementationName,
+              createdName.c_str(),
+              selected.name.c_str());
+  return true;
 }
 
 static void DestroyPhysicsEntity(t850::JoltPhysicsSystem& physics, int index) {
@@ -681,7 +1205,8 @@ static t850::PhysicsTriangleMeshCookSettings PhysicsCookSettingsFromScene(const 
 static t850::scene::ScenePhysicsEntityDesc PhysicsEntityToScene(const PhysicsSceneEntity& entity) {
   t850::scene::ScenePhysicsEntityDesc desc;
   desc.name = entity.name;
-  desc.type = entity.type == PhysicsSceneEntityType::Player ? "player" : "static_triangle_mesh";
+  desc.type = entity.type == PhysicsSceneEntityType::Player ? "player" :
+      (entity.type == PhysicsSceneEntityType::Character ? "character" : "static_triangle_mesh");
   desc.source_object = entity.sourceName;
   desc.position = { entity.position.x, entity.position.y, entity.position.z };
   desc.rotation = { entity.eulerRadians.x * kRadToDeg, entity.eulerRadians.y * kRadToDeg, entity.eulerRadians.z * kRadToDeg };
@@ -698,6 +1223,7 @@ static t850::scene::ScenePhysicsEntityDesc PhysicsEntityToScene(const PhysicsSce
   desc.restitution = entity.restitution;
   desc.sensor = entity.sensor;
   desc.cook_settings = PhysicsCookSettingsToScene(entity.cookSettings);
+  desc.character.runtime_path = CharacterRuntimePathToSceneString(entity.characterRuntimePath);
   desc.character.implementation = entity.characterImplementation == 0 ? "character" : "virtual";
   desc.character.mass = entity.characterMass;
   desc.character.max_strength = entity.characterMaxStrength;
@@ -812,12 +1338,12 @@ static bool CreateStaticTriangleMeshPhysicsEntity(t850::JoltPhysicsSystem& physi
 
 static bool RestorePhysicsEntityFromScene(t850::JoltPhysicsSystem& physics,
                                           const t850::scene::ScenePhysicsEntityDesc& desc) {
-  if (desc.type == "player") {
+  if (desc.type == "player" || desc.type == "character") {
     PhysicsSceneEntity entity;
-    entity.type = PhysicsSceneEntityType::Player;
-    entity.name = desc.name.empty() ? "player" : desc.name;
-    entity.sourceName = "player";
-    entity.sourceObjectIndex = -1;
+    entity.type = desc.type == "player" ? PhysicsSceneEntityType::Player : PhysicsSceneEntityType::Character;
+    entity.name = desc.name.empty() ? (desc.type == "player" ? "player" : "character") : desc.name;
+    entity.sourceName = desc.type == "player" ? "player" : desc.source_object;
+    entity.sourceObjectIndex = desc.type == "player" ? -1 : FindSceneObjectIndexByName(desc.source_object);
     entity.visible = desc.visible;
     entity.frozen = desc.frozen;
     entity.showWire = desc.show_wire;
@@ -832,6 +1358,7 @@ static bool RestorePhysicsEntityFromScene(t850::JoltPhysicsSystem& physics,
     entity.friction = desc.friction;
     entity.restitution = desc.restitution;
     entity.sensor = desc.sensor;
+    entity.characterRuntimePath = CharacterRuntimePathFromSceneString(desc.character.runtime_path);
     entity.characterImplementation = desc.character.implementation == "character" ? 0 : 1;
     entity.characterMass = desc.character.mass;
     entity.characterMaxStrength = desc.character.max_strength;
@@ -856,7 +1383,7 @@ static bool RestorePhysicsEntityFromScene(t850::JoltPhysicsSystem& physics,
     entity.characterAllowTranslationY = desc.character.allow_translation_y;
     entity.characterAllowTranslationZ = desc.character.allow_translation_z;
     entity.characterInnerBody = desc.character.inner_body;
-    if (!RecreatePlayerPhysicsBody(physics, entity)) {
+    if (!RecreateCharacterPhysicsBody(physics, entity)) {
       return false;
     }
     g_physicsEntities.push_back(std::move(entity));
@@ -939,6 +1466,38 @@ static t850::scene::SceneObjectRagdollDesc& EnsureRagdollMeta(SceneObject& obj) 
     obj.ragdollAuthoringMeta = meta;
   }
   return *obj.ragdollAuthoringMeta;
+}
+
+static void EnsureRagdollHierarchyState(SceneObject& obj) {
+  const std::size_t bodyCount = obj.ragdollAuthoring.binding.referencePose.bones.size();
+  auto resizeFlags = [](std::vector<uint8_t>& flags, std::size_t count, uint8_t defaultValue) {
+    if (flags.size() < count) {
+      flags.resize(count, defaultValue);
+    } else if (flags.size() > count) {
+      flags.resize(count);
+    }
+  };
+  resizeFlags(obj.ragdollBodyVisible, bodyCount, 1);
+  resizeFlags(obj.ragdollBodyWire, bodyCount, 1);
+  resizeFlags(obj.ragdollJointVisible, bodyCount, 1);
+  resizeFlags(obj.ragdollJointWire, bodyCount, 1);
+  resizeFlags(obj.ragdollAuthoring.frozenBodies, bodyCount, 0);
+  resizeFlags(obj.ragdollAuthoring.frozenJoints, bodyCount, 0);
+}
+
+static std::string RagdollHierarchyBodyLabel(const SceneObject& obj, int bodyIndex) {
+  if (bodyIndex >= 0 &&
+      bodyIndex < static_cast<int>(obj.ragdollAuthoring.binding.referencePose.bones.size())) {
+    const t850::PhysicsRagdollBoneDesc& bone =
+        obj.ragdollAuthoring.binding.referencePose.bones[static_cast<std::size_t>(bodyIndex)];
+    if (!bone.body.debugName.empty()) {
+      return bone.body.debugName;
+    }
+    if (bone.body.boneIndex >= 0) {
+      return "Bone " + std::to_string(bone.body.boneIndex);
+    }
+  }
+  return "Body " + std::to_string(bodyIndex);
 }
 
 static void ExpandEditorAABB(t850::AABB& dst, const t850::AABB& src) {
@@ -1107,6 +1666,36 @@ static void SetIntOverride(std::vector<t850::IntOverrideDesc>& values, std::stri
     }
   }
   values.push_back({std::move(name), value});
+}
+
+static const t850::FloatOverrideDesc* FindEditorFloatOverride(const std::vector<t850::FloatOverrideDesc>& values,
+                                                              const std::string& name) {
+  for (const auto& value : values) {
+    if (value.name == name) {
+      return &value;
+    }
+  }
+  return nullptr;
+}
+
+static const t850::BoolOverrideDesc* FindEditorBoolOverride(const std::vector<t850::BoolOverrideDesc>& values,
+                                                            const std::string& name) {
+  for (const auto& value : values) {
+    if (value.name == name) {
+      return &value;
+    }
+  }
+  return nullptr;
+}
+
+static const t850::IntOverrideDesc* FindEditorIntOverride(const std::vector<t850::IntOverrideDesc>& values,
+                                                          const std::string& name) {
+  for (const auto& value : values) {
+    if (value.name == name) {
+      return &value;
+    }
+  }
+  return nullptr;
 }
 
 static XVECTOR3 EditorVec3FromArray(const std::array<float, 3>& value, float w = 0.0f) {
@@ -1445,6 +2034,659 @@ static bool ShouldDrawPhysicsDebug() {
       return true;
   }
   return false;
+}
+
+void EditorApp::ResetEditorNavMeshState(bool keepSettings) {
+  m_editorNavMesh.Clear();
+  m_editorNavMeshDebugRenderer.ReleaseCachedGeometry();
+  m_editorNavMeshSourceStats = t850::navigation::NavSourceBuildStats{};
+  m_editorNavMeshStatus.clear();
+  m_editorNavMeshAuthored = false;
+  m_editorNavMeshVisible = true;
+  m_editorNavMeshFrozen = false;
+  m_editorNavMeshShowWire = true;
+  m_editorNavMeshDebugOffset = 0.01f;
+  m_editorNavMeshDebugShapeMode = 0;
+  m_editorNavMeshLastBuildMs = 0.0f;
+  m_editorNavMeshDirty = false;
+  m_editorNavMeshLinks.clear();
+  m_editorNavMeshNodes.clear();
+  m_editorSelectedNavLink = -1;
+  m_editorNavLinkPickMode = 0;
+  if (!keepSettings) {
+    m_editorNavMeshBuildSettings = DefaultEditorNavMeshBuildSettings();
+  }
+}
+
+bool EditorApp::CreateEditorNavMesh() {
+  if (g_objects.empty()) {
+    m_editorNavMeshStatus = "No scene meshes are loaded.";
+    T8_LOG_ERROR("[T8ditor] NavMesh build skipped: no scene meshes are loaded.");
+    return false;
+  }
+
+  const bool wasAuthored = m_editorNavMeshAuthored;
+  SyncSceneObjectTransforms();
+  m_editorNavMeshDebugRenderer.ReleaseCachedGeometry();
+
+  std::vector<t850::navigation::NavSourceInstance> navSources;
+  navSources.reserve(g_objects.size());
+  for (const SceneObject& object : g_objects) {
+    if (object.transient) {
+      continue;
+    }
+    t850::navigation::NavSourceInstance source;
+    source.entityId = object.litInst.GetEntityId();
+    source.instance = &object.litInst;
+    source.worldTransform = object.litInst.Final;
+    source.visible = object.visible;
+    source.debugName = object.name;
+    const t850::scene::SceneObjectNavigationDesc navigation =
+        object.navigation.value_or(t850::scene::SceneObjectNavigationDesc{});
+    source.includeInNavigation = navigation.include;
+    source.navigationStatic = navigation.static_object;
+    source.navigationWalkable = navigation.walkable;
+    source.area = navigation.walkable ? 0 : -1;
+    navSources.push_back(source);
+  }
+
+  t850::navigation::NavMeshGeometry geometry;
+  t850::navigation::NavSourceBuildStats sourceStats;
+  std::string error;
+  const auto buildStart = std::chrono::steady_clock::now();
+  if (!t850::navigation::BuildGeometryFromNavSources(navSources, geometry, &sourceStats, &error)) {
+    m_editorNavMeshStatus = "Build skipped: " + error;
+    T8_LOG_ERROR("[T8ditor] NavMesh build skipped: %s (considered=%d included=%d skippedInvisible=%d skippedSkinned=%d skippedInvalid=%d)",
+                 error.c_str(),
+                 sourceStats.considered,
+                 sourceStats.included,
+                 sourceStats.skippedInvisible,
+                 sourceStats.skippedSkinned,
+                 sourceStats.skippedInvalid);
+    return false;
+  }
+  if (m_physics.IsInitialized()) {
+    geometry.offMeshLinkValidator = [this](const t850::navigation::NavOffMeshLink& link) {
+      return t850::ValidateNavOffMeshLinkWithPhysics(m_physics, m_editorNavMeshBuildSettings, link);
+    };
+    geometry.offMeshHybridLinkValidator = geometry.offMeshLinkValidator;
+  }
+  for (const t850::scene::SceneNavMeshLinkDesc& linkDesc : m_editorNavMeshLinks) {
+    if (IsUsableAuthoredNavLink(linkDesc)) {
+      geometry.offMeshLinks.push_back(NavOffMeshLinkFromScene(linkDesc));
+    }
+  }
+
+  t850::navigation::NavMesh builtNavMesh;
+  if (!builtNavMesh.Build(geometry, m_editorNavMeshBuildSettings, &error)) {
+    m_editorNavMeshStatus = "Build failed: " + error;
+    T8_LOG_ERROR("[T8ditor] NavMesh build failed: %s", error.c_str());
+    return false;
+  }
+
+  m_editorNavMesh = std::move(builtNavMesh);
+  m_editorNavMeshSourceStats = sourceStats;
+  m_editorNavMeshAuthored = true;
+  if (!wasAuthored) {
+    m_editorNavMeshVisible = true;
+    m_editorNavMeshFrozen = false;
+    m_editorNavMeshShowWire = true;
+  }
+  m_editorNavMeshLastBuildMs =
+      std::chrono::duration<float, std::milli>(std::chrono::steady_clock::now() - buildStart).count();
+  m_editorNavMeshDebugRenderer.Invalidate();
+  RefreshEditorNavMeshNodes();
+  DumpEditorNavMeshWireGeometry(wasAuthored ? "regenerate" : "create");
+
+  const t850::navigation::NavMeshBuildStats& stats = m_editorNavMesh.GetStats();
+  char status[256] = {};
+  std::snprintf(status,
+                sizeof(status),
+                "Created NavMesh: sources=%d verts=%d tris=%d polys=%d offMesh=%d total=%.2fms",
+                sourceStats.included,
+                stats.vertexCount,
+                stats.triangleCount,
+                stats.polygonCount,
+                stats.offMeshLinkCount,
+                m_editorNavMeshLastBuildMs);
+  m_editorNavMeshStatus = status;
+  m_editorNavMeshDirty = false;
+  return true;
+}
+
+void EditorApp::DestroyEditorNavMesh() {
+  m_editorNavMesh.Clear();
+  m_editorNavMeshDebugRenderer.ReleaseCachedGeometry();
+  m_editorNavMeshSourceStats = t850::navigation::NavSourceBuildStats{};
+  m_editorNavMeshAuthored = false;
+  m_editorNavMeshLastBuildMs = 0.0f;
+  m_editorNavMeshDirty = false;
+  m_editorNavMeshStatus = "NavMesh destroyed.";
+  DumpEditorNavMeshWireGeometry("destroy");
+  if (g_selectionType == 4) {
+    g_selectionType = 0;
+    g_selectedIdx = -1;
+  }
+}
+
+void EditorApp::RestoreEditorNavMeshFromScene(const t850::scene::SceneNavigationMeshDesc& desc) {
+  m_editorNavMeshBuildSettings = NavMeshBuildSettingsFromScene(desc.build_settings);
+  m_editorNavMeshVisible = desc.visible;
+  m_editorNavMeshFrozen = desc.frozen;
+  m_editorNavMeshShowWire = desc.show_wire;
+  m_editorNavMeshDebugOffset = desc.debug_offset;
+  m_editorNavMeshDebugShapeMode = std::clamp(desc.debug_shape_mode, 0, 1);
+  m_editorNavMeshLinks = desc.authored_links;
+  m_editorNavMeshDirty = false;
+  m_editorSelectedNavLink = m_editorNavMeshLinks.empty() ? -1 : std::clamp(m_editorSelectedNavLink, 0, static_cast<int>(m_editorNavMeshLinks.size()) - 1);
+  m_editorNavLinkPickMode = 0;
+  m_editorNavMeshAuthored = desc.enabled;
+  m_editorNavMeshDirty = false;
+  m_editorNavMeshStatus.clear();
+  m_editorNavMesh.Clear();
+  m_editorNavMeshDebugRenderer.ReleaseCachedGeometry();
+  if (desc.enabled && !CreateEditorNavMesh()) {
+    m_editorNavMeshAuthored = true;
+  }
+  DumpEditorNavMeshWireGeometry("restore");
+}
+
+t850::scene::SceneNavigationMeshDesc EditorApp::BuildEditorNavMeshDesc() const {
+  t850::scene::SceneNavigationMeshDesc desc;
+  desc.name = "NavMesh";
+  desc.enabled = m_editorNavMeshAuthored;
+  desc.visible = m_editorNavMeshVisible;
+  desc.frozen = m_editorNavMeshFrozen;
+  desc.show_wire = m_editorNavMeshShowWire;
+  desc.debug_offset = m_editorNavMeshDebugOffset;
+  desc.debug_shape_mode = m_editorNavMeshDebugShapeMode;
+  desc.build_settings = NavMeshBuildSettingsToScene(m_editorNavMeshBuildSettings);
+  desc.authored_links = m_editorNavMeshLinks;
+  return desc;
+}
+
+bool EditorApp::GetEditorNavMeshWorldAABB(t850::AABB& outBounds) const {
+  outBounds = t850::AABB{};
+  if (!m_editorNavMesh.IsReady()) {
+    return false;
+  }
+
+  std::vector<XVECTOR3> vertices;
+  std::vector<unsigned int> indices;
+  if (!m_editorNavMesh.GetDebugWireframe(vertices, indices, 0.0f) || vertices.empty()) {
+    return false;
+  }
+
+  bool expanded = false;
+  for (const XVECTOR3& vertex : vertices) {
+    outBounds.ExpandToInclude(vertex.x, vertex.y, vertex.z);
+    expanded = true;
+  }
+  return expanded && outBounds.IsValid();
+}
+
+void EditorApp::DumpEditorNavMeshWireGeometry(const char* reason) const {
+  static uint32_t s_dumpSerial = 0;
+  const std::string reasonText = reason && reason[0] ? reason : "unknown";
+  std::string safeReason;
+  safeReason.reserve(reasonText.size());
+  for (unsigned char c : reasonText) {
+    safeReason.push_back((std::isalnum(c) || c == '_' || c == '-') ? static_cast<char>(c) : '_');
+  }
+
+  std::filesystem::path dumpDir("Logs");
+  std::error_code ec;
+  std::filesystem::create_directories(dumpDir, ec);
+  std::ostringstream name;
+  name << "navmesh_wire_" << std::setw(4) << std::setfill('0') << (++s_dumpSerial) << "_" << safeReason << ".txt";
+  const std::filesystem::path dumpPath = dumpDir / name.str();
+  std::ofstream out(dumpPath, std::ios::binary);
+  if (!out.is_open()) {
+    T8_LOG_DEBUG("[T8ditor][NavMeshDump] Failed to open '%s'", dumpPath.string().c_str());
+    return;
+  }
+
+  auto dumpLines = [&](const char* label,
+                       const std::vector<XVECTOR3>& vertices,
+                       const std::vector<unsigned int>& indices) {
+    out << "\n[" << label << "] vertices=" << vertices.size()
+        << " indices=" << indices.size()
+        << " lines=" << (indices.size() / 2) << "\n";
+    for (std::size_t i = 0; i < vertices.size(); ++i) {
+      const XVECTOR3& v = vertices[i];
+      out << "v " << i << " " << v.x << " " << v.y << " " << v.z << " " << v.w << "\n";
+    }
+    for (std::size_t i = 0; i + 1 < indices.size(); i += 2) {
+      out << "l " << (i / 2) << " " << indices[i] << " " << indices[i + 1] << "\n";
+    }
+  };
+
+  out << "reason=" << reasonText << "\n";
+  out << "authored=" << (m_editorNavMeshAuthored ? 1 : 0)
+      << " ready=" << (m_editorNavMesh.IsReady() ? 1 : 0)
+      << " visible=" << (m_editorNavMeshVisible ? 1 : 0)
+      << " wire=" << (m_editorNavMeshShowWire ? 1 : 0)
+      << " dirty=" << (m_editorNavMeshDirty ? 1 : 0)
+      << " shapeMode=" << m_editorNavMeshDebugShapeMode
+      << " pickMode=" << m_editorNavLinkPickMode
+      << " selectedLink=" << m_editorSelectedNavLink
+      << " nodeCount=" << m_editorNavMeshNodes.size()
+      << "\n";
+  const t850::navigation::NavMeshBuildStats stats = m_editorNavMesh.GetStats();
+  out << "stats polys=" << stats.polygonCount
+      << " verts=" << stats.vertexCount
+      << " tris=" << stats.triangleCount
+      << " offMesh=" << stats.offMeshLinkCount
+      << " drop=" << stats.dropLinkCount
+      << " jump=" << stats.jumpLinkCount
+      << " jumpPad=" << stats.jumpPadLinkCount
+      << "\n";
+
+  for (std::size_t i = 0; i < m_editorNavMeshNodes.size(); ++i) {
+    const XVECTOR3& node = m_editorNavMeshNodes[i];
+    out << "node " << i << " " << node.x << " " << node.y << " " << node.z << " " << node.w << "\n";
+  }
+  for (std::size_t i = 0; i < m_editorNavMeshLinks.size(); ++i) {
+    const auto& link = m_editorNavMeshLinks[i];
+    out << "authored_link " << i
+        << " name=\"" << link.name << "\""
+        << " type=" << link.type
+        << " enabled=" << (link.enabled ? 1 : 0)
+        << " start_node=" << link.start_node
+        << " end_node=" << link.end_node
+        << " start=(" << link.start.x << "," << link.start.y << "," << link.start.z << ")"
+        << " end=(" << link.end.x << "," << link.end.y << "," << link.end.z << ")"
+        << " radius=" << link.radius
+        << " bidirectional=" << (link.bidirectional ? 1 : 0)
+        << " cost=" << link.cost
+        << " usable=" << (IsUsableAuthoredNavLink(link) ? 1 : 0)
+        << "\n";
+  }
+
+  if (m_editorNavMesh.IsReady()) {
+    std::vector<XVECTOR3> vertices;
+    std::vector<unsigned int> indices;
+    if (m_editorNavMesh.GetDebugWireframe(vertices, indices, m_editorNavMeshDebugOffset)) {
+      dumpLines("navmesh_geometry", vertices, indices);
+    }
+    if (m_editorNavMesh.GetDebugNodeMarkers(vertices, indices, m_editorNavMeshDebugOffset)) {
+      dumpLines("navmesh_nodes", vertices, indices);
+    }
+    if (m_editorNavMesh.GetDebugGraphEdges(vertices, indices, m_editorNavMeshDebugOffset + 0.005f)) {
+      dumpLines("navmesh_graph", vertices, indices);
+    }
+    if (m_editorNavMesh.GetDebugOffMeshLinks(t850::navigation::NavTraversalType::Drop, vertices, indices, m_editorNavMeshDebugOffset + 0.015f)) {
+      dumpLines("navmesh_drop_links", vertices, indices);
+    }
+    if (m_editorNavMesh.GetDebugOffMeshLinks(t850::navigation::NavTraversalType::Jump, vertices, indices, m_editorNavMeshDebugOffset + 0.025f)) {
+      dumpLines("navmesh_jump_links", vertices, indices);
+    }
+    if (m_editorNavMesh.GetDebugOffMeshLinks(t850::navigation::NavTraversalType::JumpPad, vertices, indices, m_editorNavMeshDebugOffset + 0.035f)) {
+      dumpLines("navmesh_jump_pad_links", vertices, indices);
+    }
+  }
+  if (m_editorSelectedNavLink >= 0 &&
+      m_editorSelectedNavLink < static_cast<int>(m_editorNavMeshLinks.size())) {
+    const auto& link = m_editorNavMeshLinks[static_cast<std::size_t>(m_editorSelectedNavLink)];
+    std::vector<XVECTOR3> overlayVertices;
+    std::vector<unsigned int> overlayIndices;
+    if (IsUsableAuthoredNavLink(link)) {
+      overlayVertices.emplace_back(link.start.x, link.start.y + m_editorNavMeshDebugOffset + 0.035f, link.start.z, 1.0f);
+      overlayVertices.emplace_back(link.end.x, link.end.y + m_editorNavMeshDebugOffset + 0.035f, link.end.z, 1.0f);
+      overlayIndices.push_back(0u);
+      overlayIndices.push_back(1u);
+    }
+    dumpLines("selected_authored_link_overlay", overlayVertices, overlayIndices);
+  }
+
+  out.close();
+  T8_LOG_DEBUG("[T8ditor][NavMeshDump] Wrote '%s'", dumpPath.string().c_str());
+}
+
+void EditorApp::RefreshEditorNavMeshNodes() {
+  m_editorNavMeshNodes.clear();
+  if (m_editorNavMesh.IsReady()) {
+    m_editorNavMesh.GetDebugNodePositions(m_editorNavMeshNodes, 0.0f);
+  }
+  for (t850::scene::SceneNavMeshLinkDesc& link : m_editorNavMeshLinks) {
+    if (link.start_node >= 0 && link.start_node < static_cast<int>(m_editorNavMeshNodes.size())) {
+      const XVECTOR3& node = m_editorNavMeshNodes[static_cast<std::size_t>(link.start_node)];
+      link.start = { node.x, node.y, node.z };
+    }
+    if (link.end_node >= 0 && link.end_node < static_cast<int>(m_editorNavMeshNodes.size())) {
+      const XVECTOR3& node = m_editorNavMeshNodes[static_cast<std::size_t>(link.end_node)];
+      link.end = { node.x, node.y, node.z };
+    }
+  }
+}
+
+bool EditorApp::PickEditorNavMeshNodeFromMouse(int mouseX, int mouseY, int& outNodeIndex, XVECTOR3& outNodePosition) const {
+  outNodeIndex = -1;
+  if (m_editorNavMeshNodes.empty() || !m_sceneProps.GetPrimaryCamera()) {
+    return false;
+  }
+
+  const Camera& cam = *m_sceneProps.GetPrimaryCamera();
+  float bestDistSq = 24.0f * 24.0f;
+  for (int i = 0; i < static_cast<int>(m_editorNavMeshNodes.size()); ++i) {
+    const ImVec2 screen = WorldToScreen(m_editorNavMeshNodes[static_cast<std::size_t>(i)], cam.VP, m_lastW, m_lastH);
+    if (screen.x < -1000.0f || screen.y < -1000.0f) {
+      continue;
+    }
+    const float dx = screen.x - static_cast<float>(mouseX);
+    const float dy = screen.y - static_cast<float>(mouseY);
+    const float distSq = dx * dx + dy * dy;
+    if (distSq < bestDistSq) {
+      bestDistSq = distSq;
+      outNodeIndex = i;
+      outNodePosition = m_editorNavMeshNodes[static_cast<std::size_t>(i)];
+    }
+  }
+  return outNodeIndex >= 0;
+}
+
+void EditorApp::DrawSelectedNavLinkOverlay(t850::Texture* depthTexture, t850::Texture* secondaryDepthTexture, const Camera& cam) {
+  if (m_editorSelectedNavLink < 0 ||
+      m_editorSelectedNavLink >= static_cast<int>(m_editorNavMeshLinks.size()) ||
+      !m_navLinkOverlayLines.IsReady()) {
+    return;
+  }
+  const t850::scene::SceneNavMeshLinkDesc& link = m_editorNavMeshLinks[static_cast<std::size_t>(m_editorSelectedNavLink)];
+  if (!link.visible ||
+      link.frozen ||
+      !link.show_wire ||
+      link.start_node < 0 ||
+      link.end_node < 0 ||
+      link.start_node >= static_cast<int>(m_editorNavMeshNodes.size()) ||
+      link.end_node >= static_cast<int>(m_editorNavMeshNodes.size()) ||
+      !IsUsableAuthoredNavLink(link)) {
+    return;
+  }
+
+  const float positions[] = {
+      link.start.x, link.start.y + m_editorNavMeshDebugOffset + 0.035f, link.start.z, 1.0f,
+      link.end.x,   link.end.y   + m_editorNavMeshDebugOffset + 0.035f, link.end.z,   1.0f,
+  };
+  const unsigned int indices[] = { 0u, 1u };
+  if (!m_editorNavLinkOverlayVB) {
+    m_editorNavLinkOverlayVB = EditorLineRenderer::CreatePositionVB(
+        positions,
+        2,
+        t850::BufferUsage::DINAMIC);
+  } else {
+    m_editorNavLinkOverlayVB->UpdateFromBuffer(*t850::T8DeviceContext, const_cast<float*>(positions));
+  }
+  if (!m_editorNavLinkOverlayIB) {
+    m_editorNavLinkOverlayIB = EditorLineRenderer::CreateIndexBuffer32(indices, 2);
+  }
+  if (!m_editorNavLinkOverlayVB || !m_editorNavLinkOverlayIB) {
+    return;
+  }
+
+  m_navLinkOverlayLines.SetDepthTexture(depthTexture);
+  m_navLinkOverlayLines.SetSecondaryDepthTexture(secondaryDepthTexture);
+  m_navLinkOverlayLines.SetViewport(m_lastW, m_lastH);
+  m_navLinkOverlayLines.SetFarPlane(cam.FPlane);
+  XMATRIX44 identity;
+  XMatIdentity(identity);
+  if (pFramework && pFramework->pVideoDriver) {
+    pFramework->pVideoDriver->SetDepthStencilState(t850::BaseDriver::NONE);
+  }
+  m_navLinkOverlayLines.DrawLines(identity,
+                                  cam.VP,
+                                  XVECTOR3(1.0f, 0.45f, 0.0f, 1.0f),
+                                  m_editorNavLinkOverlayVB,
+                                  m_editorNavLinkOverlayIB,
+                                  2,
+                                  sizeof(float) * 4,
+                                  t850::IndexBufferFormat::R32);
+  if (pFramework && pFramework->pVideoDriver) {
+    pFramework->pVideoDriver->SetDepthStencilState(t850::BaseDriver::DEPTH_DEFAULT);
+  }
+}
+
+void EditorApp::DrawNavMeshAuthoringPanel() {
+  ImGui::PushID("NavMeshAuthoringPanel");
+  t850::navigation::NavMeshBuildSettings& settings = m_editorNavMeshBuildSettings;
+  ImGui::TextWrapped("Creates a scene-level Recast/Detour NavMesh from visible, included static render meshes. The saved scene controls whether Quake3Jolt builds this NavMesh at Play time.");
+  auto markNavMeshDirty = [&]() {
+    m_editorNavMeshDirty = true;
+    m_editorNavMeshAuthored = true;
+    m_editorNavMeshStatus = "NavMesh parameters changed. Click Re-generate to update the preview.";
+  };
+
+  if (ImGui::Button("Create NavMesh")) {
+    CreateEditorNavMesh();
+  }
+  ImGui::SameLine();
+  if (ImGui::Button("Reset Quake3Mock Defaults")) {
+    settings = DefaultEditorNavMeshBuildSettings();
+    markNavMeshDirty();
+    m_editorNavMeshStatus = "NavMesh settings reset to Quake3Mock defaults. Click Re-generate.";
+  }
+  ImGui::SameLine();
+  if (!m_editorNavMeshDirty) {
+    ImGui::BeginDisabled();
+  }
+  if (ImGui::Button("Re-generate")) {
+    CreateEditorNavMesh();
+  }
+  if (!m_editorNavMeshDirty) {
+    ImGui::EndDisabled();
+  }
+  if (m_editorNavMeshAuthored) {
+    ImGui::SameLine();
+    if (ImGui::Button("Destroy NavMesh")) {
+      DestroyEditorNavMesh();
+    }
+  }
+
+  ImGui::Checkbox("Visible", &m_editorNavMeshVisible);
+  ImGui::SameLine();
+  ImGui::Checkbox("Frozen", &m_editorNavMeshFrozen);
+  ImGui::SameLine();
+  ImGui::Checkbox("Wireframe", &m_editorNavMeshShowWire);
+
+  ImGui::SliderFloat("Debug Vertical Offset", &m_editorNavMeshDebugOffset, 0.0f, 0.25f, "%.3f");
+  const char* debugShapeOptions[] = { "Geometry", "Nodes" };
+  ImGui::Combo("Debug Shape", &m_editorNavMeshDebugShapeMode, debugShapeOptions, 2);
+
+  if (m_editorNavMesh.IsReady()) {
+    const t850::navigation::NavMeshBuildStats& stats = m_editorNavMesh.GetStats();
+    ImGui::Text("Ready: sources=%d verts=%d tris=%d polys=%d offMesh=%d drop=%d jump=%d jumpPad=%d",
+                m_editorNavMeshSourceStats.included,
+                stats.vertexCount,
+                stats.triangleCount,
+                stats.polygonCount,
+                stats.offMeshLinkCount,
+                stats.dropLinkCount,
+                stats.jumpLinkCount,
+                stats.jumpPadLinkCount);
+    ImGui::Text("Build time: %.2f ms", m_editorNavMeshLastBuildMs);
+  } else if (m_editorNavMeshAuthored) {
+    ImGui::TextDisabled("Authored NavMesh exists in the scene, but no runtime NavMesh is currently built.");
+  }
+  if (!m_editorNavMeshStatus.empty()) {
+    ImGui::TextWrapped("%s", m_editorNavMeshStatus.c_str());
+  }
+  if (m_editorNavMeshDirty) {
+    ImGui::TextColored(ImVec4(1.0f, 0.75f, 0.1f, 1.0f), "Preview is stale. Click Re-generate.");
+  }
+
+  if (m_editorNavMesh.IsReady() && m_editorNavMeshNodes.empty()) {
+    RefreshEditorNavMeshNodes();
+  }
+  ImGui::SeparatorText("Authored Links");
+  ImGui::TextDisabled("Links snap to Detour polygon-center nodes. Use Pick Start/Pick End, then click the viewport.");
+  if (ImGui::Button("Refresh Nodes")) {
+    RefreshEditorNavMeshNodes();
+  }
+  ImGui::SameLine();
+  ImGui::Text("Nodes: %d", static_cast<int>(m_editorNavMeshNodes.size()));
+
+  auto makeDefaultLink = [&](const char* type, const char* label) {
+    if (m_editorNavMeshNodes.empty()) {
+      RefreshEditorNavMeshNodes();
+    }
+    if (m_editorNavMeshNodes.size() < 2) {
+      m_editorNavMeshStatus = "Build the NavMesh first; at least two Detour nodes are required for an authored link.";
+      return;
+    }
+    t850::scene::SceneNavMeshLinkDesc link;
+    link.name = label;
+    link.type = type;
+    link.radius = type == std::string("jump_pad") ? settings.jumpLinkRadius : (type == std::string("drop") ? settings.dropLinkRadius : settings.jumpLinkRadius);
+    link.bidirectional = false;
+    link.cost = 1.0f;
+    link.enabled = true;
+    link.start_node = 0;
+    link.end_node = 1;
+    const XVECTOR3& start = m_editorNavMeshNodes[static_cast<std::size_t>(link.start_node)];
+    const XVECTOR3& end = m_editorNavMeshNodes[static_cast<std::size_t>(link.end_node)];
+    link.start = { start.x, start.y, start.z };
+    link.end = { end.x, end.y, end.z };
+    m_editorNavMeshLinks.push_back(link);
+    m_editorSelectedNavLink = static_cast<int>(m_editorNavMeshLinks.size()) - 1;
+    markNavMeshDirty();
+    m_editorNavMeshStatus = "Authored link added. Click Re-generate.";
+  };
+
+  if (ImGui::Button("Add Drop Link")) makeDefaultLink("drop", "Drop Link");
+  ImGui::SameLine();
+  if (ImGui::Button("Add Jump Link")) makeDefaultLink("jump", "Jump Link");
+  if (ImGui::Button("Add Jump Intent")) makeDefaultLink("jump_intent", "Jump Intent Link");
+  ImGui::SameLine();
+  if (ImGui::Button("Add Jump Pad")) makeDefaultLink("jump_pad", "Jump Pad Link");
+
+  if (!m_editorNavMeshLinks.empty()) {
+    std::vector<const char*> linkLabels;
+    linkLabels.reserve(m_editorNavMeshLinks.size());
+    for (const auto& link : m_editorNavMeshLinks) {
+      linkLabels.push_back(link.name.c_str());
+    }
+    m_editorSelectedNavLink = std::clamp(m_editorSelectedNavLink, 0, static_cast<int>(m_editorNavMeshLinks.size()) - 1);
+    ImGui::Combo("Selected Link", &m_editorSelectedNavLink, linkLabels.data(), static_cast<int>(linkLabels.size()));
+
+    t850::scene::SceneNavMeshLinkDesc& link = m_editorNavMeshLinks[static_cast<std::size_t>(m_editorSelectedNavLink)];
+    bool linkChanged = false;
+    linkChanged |= InputTextString("Name", link.name);
+    const char* typeOptions[] = { "drop", "jump", "jump_intent", "jump_pad" };
+    int typeIndex = 1;
+    for (int i = 0; i < 4; ++i) {
+      if (link.type == typeOptions[i]) typeIndex = i;
+    }
+    if (ImGui::Combo("Type", &typeIndex, typeOptions, 4)) {
+      link.type = typeOptions[typeIndex];
+      linkChanged = true;
+    }
+    linkChanged |= ImGui::Checkbox("Enabled", &link.enabled);
+    linkChanged |= ImGui::Checkbox("Visible", &link.visible);
+    linkChanged |= ImGui::Checkbox("Frozen", &link.frozen);
+    linkChanged |= ImGui::Checkbox("Wireframe", &link.show_wire);
+    linkChanged |= ImGui::Checkbox("Bidirectional", &link.bidirectional);
+    linkChanged |= ImGui::DragFloat("Radius", &link.radius, 0.05f, 0.05f, 16.0f, "%.2f");
+    linkChanged |= ImGui::DragFloat("Cost", &link.cost, 0.05f, 0.0f, 100.0f, "%.2f");
+
+    int startNode = link.start_node;
+    int endNode = link.end_node;
+    if (ImGui::InputInt("From Node", &startNode)) {
+      if (!m_editorNavMeshNodes.empty()) {
+        startNode = std::clamp(startNode, 0, static_cast<int>(m_editorNavMeshNodes.size()) - 1);
+        const XVECTOR3& node = m_editorNavMeshNodes[static_cast<std::size_t>(startNode)];
+        link.start_node = startNode;
+        link.start = { node.x, node.y, node.z };
+        linkChanged = true;
+      }
+    }
+    if (ImGui::InputInt("To Node", &endNode)) {
+      if (!m_editorNavMeshNodes.empty()) {
+        endNode = std::clamp(endNode, 0, static_cast<int>(m_editorNavMeshNodes.size()) - 1);
+        const XVECTOR3& node = m_editorNavMeshNodes[static_cast<std::size_t>(endNode)];
+        link.end_node = endNode;
+        link.end = { node.x, node.y, node.z };
+        linkChanged = true;
+      }
+    }
+    ImGui::Text("From: node %d (%.2f, %.2f, %.2f)", link.start_node, link.start.x, link.start.y, link.start.z);
+    ImGui::Text("To:   node %d (%.2f, %.2f, %.2f)", link.end_node, link.end.x, link.end.y, link.end.z);
+    if (ImGui::Button("Pick Start Node")) {
+      m_editorNavLinkPickMode = 1;
+      g_selectionType = 4;
+      g_selectedIdx = 0;
+      DumpEditorNavMeshWireGeometry("begin_pick_start");
+    }
+    ImGui::SameLine();
+    if (ImGui::Button("Pick End Node")) {
+      m_editorNavLinkPickMode = 2;
+      g_selectionType = 4;
+      g_selectedIdx = 0;
+      DumpEditorNavMeshWireGeometry("begin_pick_end");
+    }
+    ImGui::SameLine();
+    if (ImGui::Button("Cancel Pick")) {
+      m_editorNavLinkPickMode = 0;
+    }
+    if (m_editorNavLinkPickMode != 0) {
+      ImGui::TextColored(ImVec4(1.0f, 0.7f, 0.1f, 1.0f), "Click viewport to snap %s node.", m_editorNavLinkPickMode == 1 ? "start" : "end");
+    }
+    if (ImGui::Button("Delete Link")) {
+      m_editorNavMeshLinks.erase(m_editorNavMeshLinks.begin() + m_editorSelectedNavLink);
+      m_editorSelectedNavLink = m_editorNavMeshLinks.empty() ? -1 : std::clamp(m_editorSelectedNavLink, 0, static_cast<int>(m_editorNavMeshLinks.size()) - 1);
+      markNavMeshDirty();
+      m_editorNavMeshStatus = "Authored link deleted. Click Re-generate.";
+    }
+    if (linkChanged) {
+      markNavMeshDirty();
+    }
+  } else {
+    ImGui::TextDisabled("No authored links.");
+  }
+
+  ImGui::SeparatorText("Recast Build Settings");
+  bool buildSettingsChanged = false;
+  buildSettingsChanged |= ImGui::DragFloat("Cell Size", &settings.cellSize, 0.01f, 0.01f, 10.0f, "%.3f");
+  buildSettingsChanged |= ImGui::DragFloat("Cell Height", &settings.cellHeight, 0.01f, 0.01f, 10.0f, "%.3f");
+  buildSettingsChanged |= ImGui::DragFloat("Agent Height", &settings.agentHeight, 0.05f, 0.05f, 64.0f, "%.2f");
+  buildSettingsChanged |= ImGui::DragFloat("Agent Radius", &settings.agentRadius, 0.01f, 0.01f, 32.0f, "%.2f");
+  buildSettingsChanged |= ImGui::DragFloat("Agent Max Climb", &settings.agentMaxClimb, 0.01f, 0.0f, 64.0f, "%.2f");
+  buildSettingsChanged |= ImGui::DragFloat("Agent Max Slope", &settings.agentMaxSlope, 0.5f, 0.0f, 89.0f, "%.1f");
+  buildSettingsChanged |= ImGui::DragFloat("Region Min Size", &settings.regionMinSize, 0.25f, 0.0f, 256.0f, "%.2f");
+  buildSettingsChanged |= ImGui::DragFloat("Region Merge Size", &settings.regionMergeSize, 0.25f, 0.0f, 256.0f, "%.2f");
+  buildSettingsChanged |= ImGui::DragFloat("Edge Max Len", &settings.edgeMaxLen, 0.25f, 0.0f, 256.0f, "%.2f");
+  buildSettingsChanged |= ImGui::DragFloat("Edge Max Error", &settings.edgeMaxError, 0.05f, 0.0f, 64.0f, "%.2f");
+  buildSettingsChanged |= ImGui::SliderInt("Verts Per Poly", &settings.vertsPerPoly, 3, 12);
+  buildSettingsChanged |= ImGui::DragFloat("Detail Sample Dist", &settings.detailSampleDist, 0.25f, 0.0f, 64.0f, "%.2f");
+  buildSettingsChanged |= ImGui::DragFloat("Detail Max Error", &settings.detailSampleMaxError, 0.05f, 0.0f, 64.0f, "%.2f");
+
+  float queryExtents[3] = { settings.queryExtents.x, settings.queryExtents.y, settings.queryExtents.z };
+  if (ImGui::DragFloat3("Query Extents", queryExtents, 0.05f, 0.01f, 128.0f, "%.2f")) {
+    settings.queryExtents = XVECTOR3(queryExtents[0], queryExtents[1], queryExtents[2], 0.0f);
+    buildSettingsChanged = true;
+  }
+
+  ImGui::SeparatorText("Traversal Link Generation");
+  ImGui::TextWrapped("Auto links are generated from exposed NavMesh polygon edges. Disable Auto Drop Links and Auto Jump Links for a pure connected-surface NavMesh. If static triangle physics bodies exist, drop/jump links are validated with a swept Jolt capsule against those triangle meshes.");
+  buildSettingsChanged |= ImGui::Checkbox("Auto Drop Links", &settings.enableAutoDropLinks);
+  buildSettingsChanged |= ImGui::DragFloat("Drop Min Height", &settings.dropLinkMinHeight, 0.05f, 0.0f, 128.0f, "%.2f");
+  buildSettingsChanged |= ImGui::DragFloat("Drop Max Height", &settings.dropLinkMaxHeight, 0.05f, 0.0f, 256.0f, "%.2f");
+  buildSettingsChanged |= ImGui::DragFloat("Drop Max Horizontal", &settings.dropLinkMaxHorizontalDistance, 0.05f, 0.0f, 128.0f, "%.2f");
+  buildSettingsChanged |= ImGui::DragFloat("Drop Sample Spacing", &settings.dropLinkSampleSpacing, 0.05f, 0.01f, 64.0f, "%.2f");
+  buildSettingsChanged |= ImGui::DragFloat("Drop Link Radius", &settings.dropLinkRadius, 0.05f, 0.01f, 64.0f, "%.2f");
+  buildSettingsChanged |= ImGui::Checkbox("Auto Jump Links", &settings.enableAutoJumpLinks);
+  buildSettingsChanged |= ImGui::DragFloat("Jump Max Horizontal", &settings.jumpLinkMaxHorizontalDistance, 0.05f, 0.0f, 256.0f, "%.2f");
+  buildSettingsChanged |= ImGui::DragFloat("Jump Sample Spacing", &settings.jumpLinkSampleSpacing, 0.05f, 0.01f, 64.0f, "%.2f");
+  buildSettingsChanged |= ImGui::DragFloat("Jump Link Radius", &settings.jumpLinkRadius, 0.05f, 0.01f, 64.0f, "%.2f");
+  buildSettingsChanged |= ImGui::Checkbox("Hybrid Jump Intent Links", &settings.enableHybridJumpLinks);
+  buildSettingsChanged |= ImGui::DragInt("Hybrid Max Links", &settings.hybridJumpMaxLinks, 1.0f, 0, 4096);
+  unsigned long long validationKey = static_cast<unsigned long long>(settings.offMeshLinkValidationKey);
+  if (ImGui::InputScalar("Off-Mesh Validation Key", ImGuiDataType_U64, &validationKey)) {
+    settings.offMeshLinkValidationKey = static_cast<uint64_t>(validationKey);
+    buildSettingsChanged = true;
+  }
+  if (buildSettingsChanged) {
+    markNavMeshDirty();
+  }
+  ImGui::PopID();
 }
 
 void EditorApp::SyncSceneObjectTransforms() {
@@ -2039,6 +3281,11 @@ SceneFile EditorApp::BuildEditorSceneSnapshot(const std::string& scenePath) {
   for (const PhysicsSceneEntity& entity : g_physicsEntities) {
     sf.physics_entities.push_back(PhysicsEntityToScene(entity));
   }
+  if (m_editorNavMeshAuthored) {
+    sf.navigation_mesh = BuildEditorNavMeshDesc();
+  } else {
+    sf.navigation_mesh.reset();
+  }
 
   sf.cameras.clear();
   auto appendCamera = [&](const SceneCamera& c) {
@@ -2113,6 +3360,241 @@ bool EditorApp::SaveEditorSceneSnapshot(const std::string& path, bool updateLoad
     g_sceneProfiles = sf.profiles;
   }
   return true;
+}
+
+EditorUndoState EditorApp::CaptureEditorUndoState(std::string* outKey) {
+  EditorUndoState state;
+  state.scene = BuildEditorSceneSnapshot({});
+  state.groups = g_groups;
+  state.multiSelect = g_multiSelect;
+  state.activeGroupIdx = g_activeGroupIdx;
+  state.selectionType = g_selectionType;
+  state.selectedIdx = g_selectedIdx;
+  state.activeCameraIdx = g_activeCameraIdx;
+  if (outKey) {
+    *outKey = EditorUndoStateKey(state);
+  }
+  return state;
+}
+
+void EditorApp::ApplyEditorUndoState(const EditorUndoState& state) {
+  if (!pFramework || !pFramework->pVideoDriver) {
+    return;
+  }
+
+  const bool previousApplying = g_applyingUndoState;
+  g_applyingUndoState = true;
+  struct UndoApplyingGuard {
+    bool previous = false;
+    ~UndoApplyingGuard() { g_applyingUndoState = previous; }
+  } undoApplyingGuard{previousApplying};
+
+  SceneFile sf = state.scene;
+  pFramework->pVideoDriver->WaitForGPU();
+
+  DestroyAllObjectRagdolls();
+  DestroyAllPhysicsEntities(m_physics);
+  ResetEditorNavMeshState(false);
+  m_primMgr.DestroyPrimitives();
+  g_objects.clear();
+  g_cameras.clear();
+  g_lights.clear();
+  g_selectedIdx = -1;
+  g_selectionType = 0;
+  g_activeCameraIdx = -1;
+  g_multiSelect.clear();
+  g_groups.clear();
+  g_activeGroupIdx = -1;
+  g_unloadedSceneObjects.clear();
+  g_meshCharacterAuthoringInitialized = false;
+  g_meshCharacterAuthoringSourceIndex = -1;
+  g_meshCharacterAuthoringTemplate.visual.reset();
+
+  g_loadedSceneFile = sf;
+  g_hasLoadedSceneFile = true;
+  g_sceneCollisionResourcePath = ResolveSceneCollisionPath(sf, {});
+  g_sceneProfiles = sf.profiles;
+  LoadSceneCollisionClip(g_sceneCollisionResourcePath);
+
+  m_primMgr.SetEngineContext(&t850::GetEngineContext());
+  m_primMgr.Init();
+  m_primMgr.SetVP(&m_vp);
+  m_primMgr.SetSceneProps(&m_sceneProps);
+
+  if (g_deferredReady) {
+    for (int i = 0; i < 8; ++i) {
+      g_quads[i].CreateInstance(m_primMgr.GetPrimitive(t850::PrimitiveManager::QUAD), &g_quadVP);
+      g_quads[i].Update();
+    }
+    if (!pFramework->pVideoDriver->RTs.empty()) {
+      auto* gbufferRT = pFramework->pVideoDriver->RTs[0];
+      for (int j = 0; j < (int)gbufferRT->vColorTextures.size() && j < 4; ++j) {
+        g_quads[0].SetTexture(gbufferRT->vColorTextures[j], j);
+      }
+      if (gbufferRT->vColorTextures.size() > 4) {
+        g_quads[0].SetTexture(gbufferRT->vColorTextures[4], 9);
+      }
+      if (gbufferRT->pDepthTexture) {
+        g_quads[0].SetTexture(gbufferRT->pDepthTexture, 4);
+      }
+    }
+    if (g_dummyWhiteTex) {
+      g_quads[0].SetTexture(g_dummyWhiteTex, 5);
+    }
+    if (g_dummyEnvMapIdx >= 0) {
+      g_quads[0].SetEnvironmentMap(t850::g_pBaseDriver->GetTexture(g_dummyEnvMapIdx));
+    }
+    m_primMgr.SetSceneProps(&m_sceneProps);
+  }
+
+  for (const auto& od : sf.objects) {
+    const std::string meshPath = od.mesh.empty() ? od.name : od.mesh;
+    const std::size_t objectCountBeforeImport = g_objects.size();
+    ImportMesh(meshPath);
+    if (g_objects.size() > objectCountBeforeImport) {
+      SceneObject& obj = g_objects.back();
+      obj.name = od.name;
+      obj.meshPath = meshPath;
+      obj.ragdollResourcePath = od.ragdoll;
+      if (obj.litInst.GetSkinnedMesh()) {
+        if (obj.ragdollResourcePath.empty()) {
+          obj.ragdollResourcePath = t850::BuildRagdollEditResourcePath(meshPath);
+        }
+        obj.ragdollModelKey = t850::BuildRagdollEditModelKey(meshPath);
+      } else {
+        obj.ragdollModelKey.clear();
+      }
+      obj.wireframe.Position() = XVECTOR3(od.position.x, od.position.y, od.position.z);
+      obj.wireframe.EulerRadians() = XVECTOR3(
+          od.rotation.x * kDegToRad, od.rotation.y * kDegToRad, od.rotation.z * kDegToRad);
+      obj.wireframe.Scale() = XVECTOR3(od.scale.x, od.scale.y, od.scale.z);
+      obj.visible = od.visible;
+      obj.mobileVisible = od.mobile_visible;
+      obj.frozen = od.frozen;
+      obj.showWire = od.show_wire;
+      obj.navAgentFrontYawOffsetDeg = od.nav_agent_front_yaw_offset_deg;
+      obj.navAgentFaceYawSign = od.nav_agent_face_yaw_sign;
+      obj.physics = od.physics;
+      obj.navigation = od.navigation;
+      obj.ragdollAuthoringMeta = od.ragdoll_authoring;
+      if (obj.ragdollAuthoringMeta) {
+        obj.ragdollResourcePath = obj.ragdollAuthoringMeta->asset.empty()
+            ? obj.ragdollResourcePath
+            : obj.ragdollAuthoringMeta->asset;
+        obj.ragdollPreviewEnabled = obj.ragdollAuthoringMeta->preview;
+        obj.ragdollDriveFromAnimation = obj.ragdollAuthoringMeta->drive_from_animation;
+        obj.ragdollSimulating = obj.ragdollAuthoringMeta->runtime_motion == "dynamic";
+      }
+    } else {
+      g_unloadedSceneObjects.push_back(od);
+    }
+  }
+
+  for (const t850::scene::ScenePhysicsEntityDesc& entityDesc : sf.physics_entities) {
+    RestorePhysicsEntityFromScene(m_physics, entityDesc);
+  }
+  if (sf.navigation_mesh) {
+    RestoreEditorNavMeshFromScene(*sf.navigation_mesh);
+  }
+
+  for (const SceneCameraDesc& cd : sf.cameras) {
+    SceneCamera c;
+    c.name = cd.name;
+    c.type = static_cast<CameraType>(cd.type);
+    c.position = XVECTOR3(cd.position.x, cd.position.y, cd.position.z);
+    c.target = XVECTOR3(cd.target.x, cd.target.y, cd.target.z);
+    c.fovDeg = cd.fov_deg;
+    c.orthoW = cd.ortho_w;
+    c.orthoH = cd.ortho_h;
+    c.nearPlane = cd.near_plane;
+    c.farPlane = cd.far_plane;
+    c.visible = cd.visible;
+    c.frozen = cd.frozen;
+    g_cameras.push_back(c);
+  }
+
+  for (const SceneLightDesc& ld : sf.lights) {
+    SceneLight l;
+    l.name = ld.name;
+    l.type = static_cast<EditorLightType>(ld.type);
+    l.position = XVECTOR3(ld.position.x, ld.position.y, ld.position.z);
+    l.direction = XVECTOR3(ld.direction.x, ld.direction.y, ld.direction.z);
+    l.color = XVECTOR3(ld.color.x, ld.color.y, ld.color.z);
+    l.intensity = ld.intensity;
+    l.radius = ld.radius;
+    l.enabled = ld.enabled;
+    l.visible = ld.visible;
+    l.frozen = ld.frozen;
+    l.q3 = ld.q3;
+    g_lights.push_back(l);
+  }
+
+  m_panels.showSkybox = sf.editor.show_skybox;
+  m_panels.showWireframe = sf.editor.show_wireframe;
+  m_camera.SetTarget(XVECTOR3(sf.editor.camera_target.x,
+                              sf.editor.camera_target.y,
+                              sf.editor.camera_target.z));
+  m_camera.SetOrbitState(sf.editor.camera_yaw,
+                         sf.editor.camera_pitch,
+                         sf.editor.camera_distance);
+  LoadEditorSceneProfiles();
+  SyncSceneObjectTransforms();
+
+  g_groups = state.groups;
+  for (SceneGroup& group : g_groups) {
+    for (auto it = group.members.begin(); it != group.members.end();) {
+      if (*it < 0 || *it >= static_cast<int>(g_objects.size())) {
+        it = group.members.erase(it);
+      } else {
+        ++it;
+      }
+    }
+  }
+  g_activeGroupIdx = state.activeGroupIdx >= 0 &&
+      state.activeGroupIdx < static_cast<int>(g_groups.size())
+          ? state.activeGroupIdx
+          : -1;
+  g_multiSelect.clear();
+  for (int member : state.multiSelect) {
+    if (member >= 0 && member < static_cast<int>(g_objects.size())) {
+      g_multiSelect.insert(member);
+    }
+  }
+  g_selectionType = state.selectionType;
+  g_selectedIdx = state.selectedIdx;
+  if ((g_selectionType == 0 && (g_selectedIdx < 0 || g_selectedIdx >= static_cast<int>(g_objects.size()))) ||
+      (g_selectionType == 1 && (g_selectedIdx < 0 || g_selectedIdx >= static_cast<int>(g_cameras.size()))) ||
+      (g_selectionType == 2 && (g_selectedIdx < 0 || g_selectedIdx >= static_cast<int>(g_lights.size()))) ||
+      (g_selectionType == 3 && (g_selectedIdx < 0 || g_selectedIdx >= static_cast<int>(g_physicsEntities.size()))) ||
+      (g_selectionType == 4 && !m_editorNavMeshAuthored)) {
+    g_selectedIdx = -1;
+    g_selectionType = 0;
+  }
+  g_activeCameraIdx = state.activeCameraIdx >= 0 &&
+      state.activeCameraIdx < static_cast<int>(g_cameras.size())
+          ? state.activeCameraIdx
+          : -1;
+  ResetMainEditorFrameLimiter();
+}
+
+void EditorApp::PushEditorUndoState(const char* label,
+                                    const EditorUndoState& before,
+                                    const std::string& beforeKey,
+                                    const EditorUndoState& after) {
+  if (g_applyingUndoState) {
+    return;
+  }
+  const std::string afterKey = EditorUndoStateKey(after);
+  if (beforeKey == afterKey) {
+    return;
+  }
+  g_undoStack.Push(std::make_unique<EditorSceneStateCommand>(
+      label && *label ? label : "Editor Action",
+      before,
+      after,
+      [this](const EditorUndoState& state) {
+        ApplyEditorUndoState(state);
+      }));
 }
 
 t850::RenderSkinnedMesh* EditorApp::GetSelectedSkinnedMesh() const {
@@ -2216,6 +3698,138 @@ void EditorApp::UpsertEditorSceneProfile(std::vector<t850::SandboxProfileDesc>& 
   }
 }
 
+void EditorApp::ApplyEditorSceneProfile(const t850::SandboxProfileDesc& profile) {
+  if (profile.cubemap_path && !NormalizeEditorResourcePath(*profile.cubemap_path).empty()) {
+    SetEditorCubemap(*profile.cubemap_path);
+  }
+
+  for (const t850::FloatOverrideDesc& value : profile.sliders) {
+    if (value.name == "exposure") m_sceneProps.Exposure = value.value;
+    else if (value.name == "bloom_factor") m_sceneProps.BloomFactor = value.value;
+    else if (value.name == "bloom_threshold") m_sceneProps.BloomThreshold = value.value;
+    else if (value.name == "light_radius_scale") m_sceneProps.LightRadiusScale = value.value;
+    else if (value.name == "light_intensity_scale") m_sceneProps.LightIntensityScale = value.value;
+    else if (value.name == "lightmap_intensity") m_sceneProps.LightmapIntensity = value.value;
+    else if (value.name == "tm_white_level") m_sceneProps.ToneMapWhiteLevel = value.value;
+    else if (value.name == "tm_adapt_tau") m_sceneProps.LuminanceTau = value.value;
+    else if (value.name == "pcf_radius") m_sceneProps.PCFScale = value.value;
+    else if (value.name == "pcf_samples") m_sceneProps.PCFSamples = value.value;
+    else if (value.name == "ssao_kernel_size") {
+      m_sceneProps.SSAOKernel.KernelSize = static_cast<int>(value.value);
+      m_sceneProps.SSAOKernel.Update();
+    } else if (value.name == "ssao_radius") {
+      m_sceneProps.SSAOKernel.Radius = value.value;
+    } else if (value.name == "gauss_kernel_radius") {
+      if (m_editorActiveGaussSelection >= 0 &&
+          m_editorActiveGaussSelection < static_cast<int>(m_sceneProps.pGaussKernels.size())) {
+        if (GaussFilter* kernel = m_sceneProps.pGaussKernels[static_cast<std::size_t>(m_editorActiveGaussSelection)]) {
+          kernel->radius = value.value;
+          kernel->Update();
+        }
+      }
+    } else if (value.name == "gauss_kernel_deviation") {
+      if (m_editorActiveGaussSelection >= 0 &&
+          m_editorActiveGaussSelection < static_cast<int>(m_sceneProps.pGaussKernels.size())) {
+        if (GaussFilter* kernel = m_sceneProps.pGaussKernels[static_cast<std::size_t>(m_editorActiveGaussSelection)]) {
+          kernel->sigma = value.value;
+          kernel->Update();
+        }
+      }
+    } else if (value.name == "fov") {
+      const float fovRad = Deg2Rad(std::clamp(value.value, 1.0f, 170.0f));
+      m_camera.GetCameraMutable().SetFov(fovRad);
+      for (SceneCamera& camera : g_cameras) {
+        camera.fovDeg = std::clamp(value.value, 1.0f, 170.0f);
+      }
+      if (Camera* camera = m_sceneProps.GetPrimaryCamera()) {
+        camera->SetFov(fovRad);
+      }
+    } else if (value.name == "shadow_bias") m_sceneProps.ShadowBias = value.value;
+    else if (value.name == "shadow_min") m_sceneProps.ShadowMin = value.value;
+    else if (value.name == "env_factor") m_sceneProps.EnvFactor = value.value;
+    else if (value.name == "ibl_factor") m_sceneProps.IBLFactor = value.value;
+    else if (value.name == "material_emissive_intensity") m_sceneProps.MaterialEmissiveIntensity = value.value;
+    else if (value.name == "material_transmission_multiplier") m_sceneProps.MaterialTransmissionMultiplier = value.value;
+    else if (value.name == "material_refraction_strength") m_sceneProps.MaterialRefractionStrength = value.value;
+  }
+
+  for (const t850::BoolOverrideDesc& value : profile.checkboxes) {
+    if (value.name == "shadow_toggle") m_sceneProps.ToogleShadow = value.value ? 1 : 0;
+    else if (value.name == "ssao_toggle") m_sceneProps.ToogleSSAO = value.value ? 1 : 0;
+    else if (value.name == "show_wireframe") m_panels.showWireframe = value.value;
+    else if (value.name == "show_skeleton") m_editorShowSkeleton = value.value;
+    else if (value.name == "show_physics") m_editorShowPhysics = value.value;
+    else if (value.name == "show_light_volumes") m_editorShowLightVolumes = value.value;
+    else if (value.name == "debug_luminance") {
+      m_sceneProps.DebugLuminanceEnabled = value.value;
+      if (!value.value) m_sceneProps.DebugAdaptedLuminanceValid = false;
+    }
+  }
+
+  if (const t850::IntOverrideDesc* activeGauss = FindEditorIntOverride(profile.selectors, "active_gauss_kernel")) {
+    m_editorActiveGaussSelection = std::clamp(
+        activeGauss->value,
+        0,
+        (std::max)(0, static_cast<int>(m_sceneProps.pGaussKernels.size()) - 1));
+  }
+
+  for (const t850::IntOverrideDesc& value : profile.selectors) {
+    if (value.name == "active_gauss_kernel") {
+      continue;
+    } else if (value.name == "debug_render_target") {
+      m_editorDebugRTSelection = value.value;
+      g_debugRTTexture = nullptr;
+    } else if (value.name == "cubemap") {
+      const t850::SelectorDesc* cubemapDesc = FindEditorSelectorDesc(m_editorSceneSetup.descriptor.selectors, "cubemap");
+      if (cubemapDesc && value.value >= 0 && value.value < static_cast<int>(cubemapDesc->options.size())) {
+        SetEditorCubemap(EditorCubemapPathForSelectorIndex(*cubemapDesc, value.value));
+      }
+    } else if (value.name == "gauss_kernel_sample_count") {
+      if (m_editorActiveGaussSelection >= 0 &&
+          m_editorActiveGaussSelection < static_cast<int>(m_sceneProps.pGaussKernels.size())) {
+        if (GaussFilter* kernel = m_sceneProps.pGaussKernels[static_cast<std::size_t>(m_editorActiveGaussSelection)]) {
+          kernel->kernelSize = value.value;
+          kernel->Update();
+        }
+      }
+    } else if (value.name == "luminance_mode") {
+      m_sceneProps.LuminanceMode = value.value;
+    }
+  }
+}
+
+void EditorApp::LoadEditorSceneProfiles() {
+  const t850::SandboxProfileDesc* baseProfile = nullptr;
+  const t850::SandboxProfileDesc* runtimeProfile = nullptr;
+  int bestRuntimeScore = -1;
+  for (const t850::SandboxProfileDesc& profile : g_sceneProfiles) {
+    const bool modelSpecific = !profile.model.empty();
+    if (modelSpecific) {
+      continue;
+    }
+    const bool hasTarget = !profile.name.empty() ||
+                           !profile.platform.empty() ||
+                           !profile.architecture.empty() ||
+                           !profile.gpu_family.empty() ||
+                           !profile.gpu_name_contains.empty();
+    if (!hasTarget) {
+      baseProfile = &profile;
+      continue;
+    }
+    const int score = t850::ScoreSceneProfileMatch(profile, {});
+    if (score > bestRuntimeScore) {
+      bestRuntimeScore = score;
+      runtimeProfile = &profile;
+    }
+  }
+
+  if (baseProfile) ApplyEditorSceneProfile(*baseProfile);
+  if (runtimeProfile && runtimeProfile != baseProfile) ApplyEditorSceneProfile(*runtimeProfile);
+  T8_LOG_INFO("[T8ditor] Applied embedded scene profiles: base=%d runtime=%d",
+              baseProfile ? 1 : 0,
+              runtimeProfile ? 1 : 0);
+}
+
 void EditorApp::DrawSelectedAnimationInspector(SceneObject& obj) {
   t850::RenderSkinnedMesh* skinned = obj.litInst.GetSkinnedMesh();
   if (!skinned || !skinned->HasSkinData()) {
@@ -2305,6 +3919,14 @@ void EditorApp::DrawSelectedAnimationInspector(SceneObject& obj) {
 }
 
 bool EditorApp::ExportTemporaryPlayScene(std::string& outPath) {
+  if (m_editorNavMeshAuthored && m_editorNavMeshDirty) {
+    if (!CreateEditorNavMesh()) {
+      m_playSceneStatus = "NavMesh is stale and failed to re-generate.";
+      T8_LOG_ERROR("[T8ditor] Play Scene failed: stale NavMesh could not be regenerated before export");
+      return false;
+    }
+  }
+
   std::error_code ec;
   std::filesystem::path tempDir = std::filesystem::temp_directory_path(ec);
   if (ec) {
@@ -2418,6 +4040,11 @@ void EditorApp::RestoreEditorStateAfterPlay() {
   g_selectionType = 0;
   g_multiSelect.clear();
   SyncSceneObjectTransforms();
+  if (sf.navigation_mesh) {
+    RestoreEditorNavMeshFromScene(*sf.navigation_mesh);
+  } else {
+    ResetEditorNavMeshState(false);
+  }
 }
 
 void EditorApp::OpenPlayScene() {
@@ -3800,7 +5427,7 @@ void EditorApp::DrawRagdollEditorViewport(SceneObject& obj) {
       viewportSkinned->SetWireframeSecondaryDepthTex(nullptr);
       viewportSkinned->SetWireframeViewport(viewportW, viewportH);
       driver->SetDepthStencilState(t850::BaseDriver::NONE);
-      viewportSkinned->DrawWireframe(XVECTOR3(0.42f, 0.42f, 0.42f, 1.0f));
+      viewportSkinned->DrawWireframe(XVECTOR3(1.0f, 1.0f, 1.0f, 1.0f));
     }
     int selectedSkeletonBone = -1;
     const std::vector<int>* selectedControlledBones = nullptr;
@@ -6403,6 +8030,8 @@ void EditorApp::CreateAssets() {
     t850::LoadingProgress::ScopedStep helpersStep("Initializing editor", "Viewport helpers", 12.0f);
     if (!m_lines.Create())
       T8_LOG_ERROR("[T8ditor] EditorLineRenderer::Create failed");
+    if (!m_navLinkOverlayLines.Create())
+      T8_LOG_ERROR("[T8ditor] Nav link overlay line renderer failed to initialize");
     m_grid.Create(10, 1.0f);
     m_gizmo.Create();
   }
@@ -6464,8 +8093,13 @@ void EditorApp::CreateAssets() {
     if (!m_physicsDebug.Create()) {
       T8_LOG_ERROR("[T8ditor] Physics debug renderer failed to initialize");
     } else {
-      m_physicsDebug.SetDepthTestEnabled(false);
+      m_physicsDebug.SetDepthTestEnabled(true);
     }
+    if (!m_editorNavMeshDebugRenderer.Create()) {
+      T8_LOG_ERROR("[T8ditor] NavMesh debug renderer failed to initialize");
+    }
+    ResetEditorNavMeshState(false);
+    DumpEditorNavMeshWireGeometry("startup");
   }
 
   {
@@ -6823,6 +8457,10 @@ void EditorApp::DestroyAssets() {
 
   DestroyAllObjectRagdolls();
   DestroyAllPhysicsEntities(m_physics);
+  DestroyEditorNavMesh();
+  m_editorNavMeshDebugRenderer.Destroy();
+  if (m_editorNavLinkOverlayVB) { m_editorNavLinkOverlayVB->release(); m_editorNavLinkOverlayVB = nullptr; }
+  if (m_editorNavLinkOverlayIB) { m_editorNavLinkOverlayIB->release(); m_editorNavLinkOverlayIB = nullptr; }
   m_physicsDebug.Destroy();
   m_primMgr.DestroyPrimitives();
   g_objects.clear();
@@ -6848,6 +8486,7 @@ void EditorApp::DestroyAssets() {
   t850::MeshAssetCache::Get().Clear();
   m_gizmo.Destroy();
   m_grid.Destroy();
+  m_navLinkOverlayLines.Destroy();
   m_lines.Destroy();
   m_physics.Shutdown();
   if (t850::GetEngineContext().physics == &m_physics)
@@ -7164,6 +8803,7 @@ void EditorApp::OnUpdate() {
         t850::LoadingProgress::ScopedStep cleanupStep("Preparing scene", "Clearing current scene", 3.0f);
         DestroyAllObjectRagdolls();
         DestroyAllPhysicsEntities(m_physics);
+        ResetEditorNavMeshState(false);
         m_primMgr.DestroyPrimitives();
         g_objects.clear();
         g_cameras.clear();
@@ -7276,6 +8916,10 @@ void EditorApp::OnUpdate() {
           RestorePhysicsEntityFromScene(m_physics, entityDesc);
         }
       }
+      if (sf.navigation_mesh) {
+        t850::LoadingProgress::ScopedStep navMeshStep("Loading scene", "NavMesh", 4.0f);
+        RestoreEditorNavMeshFromScene(*sf.navigation_mesh);
+      }
 
       // Load cameras
       {
@@ -7320,6 +8964,10 @@ void EditorApp::OnUpdate() {
                                sf.editor.camera_pitch,
                                sf.editor.camera_distance);
         g_selectedIdx = -1;
+      }
+      {
+        t850::LoadingProgress::ScopedStep profileStep("Loading scene", "Embedded rendering profile", 2.0f);
+        LoadEditorSceneProfiles();
       }
 
       t850::LoadingProgress::Complete("Scene loaded", loadPath);
@@ -7524,6 +9172,9 @@ void EditorApp::OnInput() {
 
   // Delete key — works even when ImGui panels have focus (but not during text input)
   if (!io.WantTextInput && IManager.PressedOnceKey(T800K_DELETE) && g_selectedIdx >= 0) {
+    std::string undoBeforeKey;
+    EditorUndoState undoBefore = CaptureEditorUndoState(&undoBeforeKey);
+    const int undoCountBeforeDelete = g_undoStack.UndoCount();
     if (g_selectionType == 1 && g_selectedIdx < (int)g_cameras.size()) {
       if (g_activeCameraIdx == g_selectedIdx) g_activeCameraIdx = -1;
       else if (g_activeCameraIdx > g_selectedIdx) g_activeCameraIdx--;
@@ -7545,6 +9196,13 @@ void EditorApp::OnInput() {
     else if (g_selectionType == 3 && g_selectedIdx < (int)g_physicsEntities.size()) {
       DestroyPhysicsEntity(m_physics, g_selectedIdx);
       T8_LOG_INFO("[T8ditor] Physics entity deleted");
+    }
+    else if (g_selectionType == 4 && g_selectedIdx == 0) {
+      DestroyEditorNavMesh();
+      T8_LOG_INFO("[T8ditor] NavMesh deleted");
+    }
+    if (g_undoStack.UndoCount() == undoCountBeforeDelete) {
+      PushEditorUndoState("Delete", undoBefore, undoBeforeKey, CaptureEditorUndoState(nullptr));
     }
   }
 
@@ -7604,6 +9262,20 @@ void EditorApp::ProcessSelectionInput() {
   XVECTOR3& eul = sel->wireframe.EulerRadians();
   XVECTOR3& scl = sel->wireframe.Scale();
 
+  const bool wantsTransform =
+      IManager.PressedKey(T800K_l) || IManager.PressedKey(T800K_j) ||
+      IManager.PressedKey(T800K_u) || IManager.PressedKey(T800K_o) ||
+      IManager.PressedKey(T800K_i) || IManager.PressedKey(T800K_k) ||
+      IManager.PressedKey(T800K_LEFTBRACKET) || IManager.PressedKey(T800K_RIGHTBRACKET) ||
+      IManager.PressedKey(T800K_QUOTE) || IManager.PressedKey(T800K_SEMICOLON);
+  if (!wantsTransform) {
+    return;
+  }
+
+  std::string undoBeforeKey;
+  EditorUndoState undoBefore = CaptureEditorUndoState(&undoBeforeKey);
+  const int undoCountBeforeTransform = g_undoStack.UndoCount();
+
   if (IManager.PressedKey(T800K_l)) pos.x += linRate;
   if (IManager.PressedKey(T800K_j)) pos.x -= linRate;
   if (IManager.PressedKey(T800K_u)) pos.y += linRate;
@@ -7619,6 +9291,9 @@ void EditorApp::ProcessSelectionInput() {
   }
   if (IManager.PressedKey(T800K_SEMICOLON)) {
     scl.x /= sclStep; scl.y /= sclStep; scl.z /= sclStep;
+  }
+  if (g_undoStack.UndoCount() == undoCountBeforeTransform) {
+    PushEditorUndoState("Keyboard Transform", undoBefore, undoBeforeKey, CaptureEditorUndoState(nullptr));
   }
 }
 
@@ -7663,6 +9338,13 @@ void EditorApp::FrameSelectedEntity() {
       m_camera.FrameBounds(bounds);
       T8_LOG_INFO("[T8ditor] Framed physics entity '%s'",
                   g_physicsEntities[static_cast<std::size_t>(g_selectedIdx)].name.c_str());
+      return;
+    }
+  } else if (g_selectionType == 4 && g_selectedIdx == 0) {
+    t850::AABB bounds;
+    if (GetEditorNavMeshWorldAABB(bounds)) {
+      m_camera.FrameBounds(bounds);
+      T8_LOG_INFO("[T8ditor] Framed NavMesh");
       return;
     }
   }
@@ -7772,10 +9454,42 @@ static t850::Ray BuildEditorCameraRay(const ::Camera& camera,
 void EditorApp::HandleMousePick() {
   const bool shiftDown = IManager.PressedKey(T800K_LSHIFT) || IManager.PressedKey(T800K_RSHIFT);
   const bool selectMode = (m_gizmo.Mode() == GizmoMode::Select);
+  const ImGuiIO& io = ImGui::GetIO();
+
+  if (m_editorNavLinkPickMode != 0) {
+    if (io.WantCaptureMouse) {
+      return;
+    }
+    if (IManager.PressedOnceMouseButton(0) &&
+        m_editorSelectedNavLink >= 0 &&
+        m_editorSelectedNavLink < static_cast<int>(m_editorNavMeshLinks.size())) {
+      int nodeIndex = -1;
+      XVECTOR3 nodePosition;
+      if (PickEditorNavMeshNodeFromMouse(IManager.mouseX, IManager.mouseY, nodeIndex, nodePosition)) {
+        const int completedPickMode = m_editorNavLinkPickMode;
+        t850::scene::SceneNavMeshLinkDesc& link = m_editorNavMeshLinks[static_cast<std::size_t>(m_editorSelectedNavLink)];
+        if (m_editorNavLinkPickMode == 1) {
+          link.start_node = nodeIndex;
+          link.start = { nodePosition.x, nodePosition.y, nodePosition.z };
+        } else {
+          link.end_node = nodeIndex;
+          link.end = { nodePosition.x, nodePosition.y, nodePosition.z };
+        }
+        m_editorNavLinkPickMode = 0;
+        m_editorNavMeshAuthored = true;
+        m_editorNavMeshDirty = true;
+        m_editorNavMeshStatus = "Authored link endpoint changed. Click Re-generate.";
+        DumpEditorNavMeshWireGeometry(completedPickMode == 1 ? "pick_start_node" : "pick_end_node");
+      } else {
+        m_editorNavMeshStatus = "No Detour node close enough to the click.";
+      }
+      return;
+    }
+    return;
+  }
 
   // Marquee drag in Select mode (skip when Alt is held — Alt+left-drag is orbit)
   if (selectMode) {
-    const ImGuiIO& io = ImGui::GetIO();
     if (io.WantCaptureMouse) return;
     const bool altDown = IManager.PressedKey(T800K_LALT) || IManager.PressedKey(T800K_RALT);
 
@@ -8186,7 +9900,7 @@ void EditorApp::OnDraw() {
         skinned->SetWireframeViewport(m_lastW, m_lastH);
         if (showWire) {
           drv->SetDepthStencilState(t850::BaseDriver::NONE);
-          skinned->DrawWireframe();
+          skinned->DrawWireframe(XVECTOR3(1.0f, 1.0f, 1.0f, 1.0f));
         }
         if (showSkeleton) {
           drv->SetDepthStencilState(t850::BaseDriver::NONE);
@@ -8195,13 +9909,8 @@ void EditorApp::OnDraw() {
         drv->SetDepthStencilState(t850::BaseDriver::DEPTH_DEFAULT);
       } else if (obj.wireframe.IsLoaded() && m_lines.IsReady()) {
         XVECTOR3 savedColor = obj.wireframe.WireColor;
-        if (g_multiSelect.count(i) && g_multiSelect.size() > 1)
-          obj.wireframe.WireColor = XVECTOR3(0.4f, 0.8f, 1.0f, 1.0f); // cyan for multi-select
-        else if (isSelected)
-          obj.wireframe.WireColor = XVECTOR3(1.0f, 1.0f, 1.0f, 1.0f);
-        else
-          obj.wireframe.WireColor = XVECTOR3(0.45f, 0.45f, 0.45f, 1.0f);
-        drv->SetDepthStencilState(t850::BaseDriver::READ);
+        obj.wireframe.WireColor = XVECTOR3(1.0f, 1.0f, 1.0f, 1.0f);
+        drv->SetDepthStencilState(t850::BaseDriver::NONE);
         obj.wireframe.Draw(m_lines, cam.VP);
         drv->SetDepthStencilState(t850::BaseDriver::DEPTH_DEFAULT);
         obj.wireframe.WireColor = savedColor;
@@ -8218,10 +9927,25 @@ void EditorApp::OnDraw() {
       entity.visual->WireColor = isSelected
           ? XVECTOR3(0.2f, 0.55f, 1.0f, 1.0f)
           : XVECTOR3(0.2f, 0.8f, 1.0f, 1.0f);
-      drv->SetDepthStencilState(t850::BaseDriver::READ);
+      drv->SetDepthStencilState(t850::BaseDriver::NONE);
       entity.visual->Draw(m_lines, cam.VP);
       drv->SetDepthStencilState(t850::BaseDriver::DEPTH_DEFAULT);
       entity.visual->WireColor = savedColor;
+    }
+
+    if (g_selectionType == 0 &&
+        g_selectedIdx == g_meshCharacterAuthoringSourceIndex &&
+        g_meshCharacterAuthoringInitialized &&
+        g_meshCharacterAuthoringTemplate.characterRuntimePath == static_cast<int>(CharacterRuntimePath::Jolt) &&
+        g_meshCharacterAuthoringTemplate.visual &&
+        g_meshCharacterAuthoringTemplate.visual->IsLoaded() &&
+        m_lines.IsReady()) {
+      XVECTOR3 savedColor = g_meshCharacterAuthoringTemplate.visual->WireColor;
+      g_meshCharacterAuthoringTemplate.visual->WireColor = XVECTOR3(0.2f, 0.55f, 1.0f, 1.0f);
+      drv->SetDepthStencilState(t850::BaseDriver::NONE);
+      g_meshCharacterAuthoringTemplate.visual->Draw(m_lines, cam.VP);
+      drv->SetDepthStencilState(t850::BaseDriver::DEPTH_DEFAULT);
+      g_meshCharacterAuthoringTemplate.visual->WireColor = savedColor;
     }
 
     // Camera and light viewport gizmos (only if visible)
@@ -8238,8 +9962,38 @@ void EditorApp::OnDraw() {
     if (m_lines.IsReady())
       m_grid.Draw(m_lines, cam.VP);
 
+    const bool navAuthored = m_editorNavMeshAuthored;
+    const bool navVisible = m_editorNavMeshVisible;
+    const bool navWire = m_editorNavMeshShowWire;
+    const bool navReady = m_editorNavMesh.IsReady();
+    const bool navRendererReady = m_editorNavMeshDebugRenderer.IsReady();
+    const bool navHasDepth = overlayOpaqueDepth || overlayForwardDepth;
+    const bool navCanDraw = navAuthored && navVisible && navWire && navReady && navRendererReady && navHasDepth;
+
+    if (navCanDraw) {
+      m_editorNavMeshDebugRenderer.SetDepthTexture(overlayOpaqueDepth);
+      m_editorNavMeshDebugRenderer.SetSecondaryDepthTexture(overlayForwardDepth);
+      m_editorNavMeshDebugRenderer.SetViewport(m_lastW, m_lastH);
+      m_editorNavMeshDebugRenderer.SetFarPlane(cam.FPlane);
+      m_editorNavMeshDebugRenderer.SetVerticalOffset(m_editorNavMeshDebugOffset);
+      m_editorNavMeshDebugRenderer.SetGraphVerticalOffset(m_editorNavMeshDebugOffset + 0.005f);
+      const bool pickingNavNode = m_editorNavLinkPickMode != 0;
+      m_editorNavMeshDebugRenderer.SetShapeMode(
+          pickingNavNode || m_editorNavMeshDebugShapeMode == 1
+              ? t850::navigation::NavMeshDebugShapeMode::Nodes
+              : t850::navigation::NavMeshDebugShapeMode::Geometry);
+      m_editorNavMeshDebugRenderer.SetAuxiliaryGeometryEnabled(!pickingNavNode);
+      drv->SetDepthStencilState(t850::BaseDriver::NONE);
+      m_editorNavMeshDebugRenderer.Draw(m_editorNavMesh, cam.VP);
+      drv->SetDepthStencilState(t850::BaseDriver::DEPTH_DEFAULT);
+      if (!pickingNavNode) {
+        DrawSelectedNavLinkOverlay(overlayOpaqueDepth, overlayForwardDepth, cam);
+      }
+    }
+
     std::vector<t850::PhysicsDebugBody> physicsWireBodies;
     std::vector<t850::PhysicsDebugBody> selectedPhysicsWireBodies;
+    std::vector<t850::PhysicsDebugBody> globalPhysicsWireBodies;
     for (int i = 0; i < static_cast<int>(g_physicsEntities.size()); ++i) {
       const PhysicsSceneEntity& entity = g_physicsEntities[i];
       if (!entity.visible || !entity.showWire || !entity.body.IsValid()) {
@@ -8254,18 +10008,43 @@ void EditorApp::OnDraw() {
         }
       }
     }
-    if (m_physicsDebug.IsReady() && (m_editorShowPhysics || ShouldDrawPhysicsDebug() || !physicsWireBodies.empty() || !selectedPhysicsWireBodies.empty())) {
+    const bool drawGlobalPhysicsBodies = m_editorShowPhysics || ShouldDrawPhysicsDebug();
+    if (drawGlobalPhysicsBodies) {
+      std::vector<t850::PhysicsDebugBody> allPhysicsBodies;
+      if (m_physics.GetDebugBodies(allPhysicsBodies)) {
+        for (t850::PhysicsDebugBody& body : allPhysicsBodies) {
+          const auto authoredBody = std::find_if(
+              g_physicsEntities.begin(),
+              g_physicsEntities.end(),
+              [&](const PhysicsSceneEntity& entity) {
+                return entity.body.IsValid() && entity.body.value == body.state.handle.value;
+              });
+          if (authoredBody != g_physicsEntities.end()) {
+            continue;
+          }
+          globalPhysicsWireBodies.push_back(std::move(body));
+        }
+      }
+    }
+    if (m_physicsDebug.IsReady() &&
+        (overlayOpaqueDepth || overlayForwardDepth) &&
+        (!globalPhysicsWireBodies.empty() || !physicsWireBodies.empty() || !selectedPhysicsWireBodies.empty())) {
       m_physicsDebug.SetViewport(m_lastW, m_lastH);
       m_physicsDebug.SetFarPlane(cam.FPlane);
-      m_physicsDebug.SetDepthTexture(nullptr);
-      if (m_editorShowPhysics || ShouldDrawPhysicsDebug()) {
-        m_physicsDebug.Draw(m_physics, cam.VP);
-      } else {
+      m_physicsDebug.SetDepthTestEnabled(true);
+      m_physicsDebug.SetDepthTexture(overlayOpaqueDepth);
+      m_physicsDebug.SetSecondaryDepthTexture(overlayForwardDepth);
+      drv->SetDepthStencilState(t850::BaseDriver::NONE);
+      if (!globalPhysicsWireBodies.empty()) {
+        m_physicsDebug.DrawBodies(globalPhysicsWireBodies, cam.VP);
+      }
+      if (!physicsWireBodies.empty()) {
         m_physicsDebug.DrawBodies(physicsWireBodies, cam.VP);
       }
       if (!selectedPhysicsWireBodies.empty()) {
         m_physicsDebug.DrawBodies(selectedPhysicsWireBodies, cam.VP, XVECTOR3(0.2f, 0.55f, 1.0f, 1.0f));
       }
+      drv->SetDepthStencilState(t850::BaseDriver::DEPTH_DEFAULT);
     }
   }
   if (didCaptureFrozenEditorFrame) {
@@ -8278,9 +10057,23 @@ void EditorApp::OnDraw() {
   // ImGui overlay
   if (m_imguiReady) {
     ImGuiNewFrame();
+    EditorUndoState imguiUndoBefore;
+    std::string imguiUndoBeforeKey;
+    const bool trackImguiUndo = !g_applyingUndoState;
+    const int undoCountBeforeImgui = g_undoStack.UndoCount();
+    if (trackImguiUndo) {
+      imguiUndoBefore = CaptureEditorUndoState(&imguiUndoBeforeKey);
+    }
+    auto commitImguiUndo = [&](const char* label) {
+      if (!trackImguiUndo || g_undoStack.UndoCount() != undoCountBeforeImgui) {
+        return;
+      }
+      PushEditorUndoState(label, imguiUndoBefore, imguiUndoBeforeKey, CaptureEditorUndoState(nullptr));
+    };
 
     if (m_meshEditorOpen) {
       DrawMeshEditorWindow();
+      commitImguiUndo("Mesh Editor Action");
       T8_LOG_TRACE("[T8ditor] OnDraw: ImGuiRender...");
       ImGuiRender();
       T8_LOG_TRACE("[T8ditor] OnDraw: ImGuiRender done");
@@ -8288,6 +10081,7 @@ void EditorApp::OnDraw() {
     }
     if (m_playSceneOpen) {
       DrawPlaySceneWindow();
+      commitImguiUndo("Play Window Action");
       T8_LOG_TRACE("[T8ditor] OnDraw: ImGuiRender...");
       ImGuiRender();
       T8_LOG_TRACE("[T8ditor] OnDraw: ImGuiRender done");
@@ -8366,6 +10160,8 @@ void EditorApp::OnDraw() {
           g_selectedIdx = -1;
         } else if (g_selectionType == 3 && g_selectedIdx < (int)g_physicsEntities.size()) {
           DestroyPhysicsEntity(m_physics, g_selectedIdx);
+        } else if (g_selectionType == 4 && g_selectedIdx == 0) {
+          DestroyEditorNavMesh();
         }
       }
       if (ctx.wantsFrameView) {
@@ -8380,6 +10176,11 @@ void EditorApp::OnDraw() {
           } else {
             m_camera.SetTarget(physicsEntity->position);
             m_camera.ResetViewAngle();
+          }
+        } else if (g_selectionType == 4 && g_selectedIdx == 0) {
+          t850::AABB bounds;
+          if (GetEditorNavMeshWorldAABB(bounds)) {
+            m_camera.FrameBounds(bounds);
           }
         }
       }
@@ -8768,7 +10569,7 @@ void EditorApp::OnDraw() {
     }
     else if (g_selectionType == 3 && g_selectedIdx >= 0 && g_selectedIdx < (int)g_physicsEntities.size()) {
       PhysicsSceneEntity& entity = g_physicsEntities[g_selectedIdx];
-      if (!entity.frozen && entity.type == PhysicsSceneEntityType::Player) {
+      if (!entity.frozen && IsCharacterPhysicsEntity(entity)) {
         bool isUsingNow = ImGuizmo::IsUsing();
         if (isUsingNow && !g_gizmoDragging) {
           g_gizmoDragging = true;
@@ -8801,7 +10602,7 @@ void EditorApp::OnDraw() {
             }
             worldMat = MakePhysicsTransform(entity.position, entity.eulerRadians);
           }
-          RecreatePlayerPhysicsBody(m_physics, entity);
+          RecreateCharacterPhysicsBody(m_physics, entity);
         }
         if (!isUsingNow && g_gizmoDragging) {
           g_gizmoDragging = false;
@@ -8879,6 +10680,58 @@ void EditorApp::OnDraw() {
             ImGui::Separator();
             ImGui::PopID();
 
+            auto drawMeshHierarchyChildren = [&](int objectIndex, SceneObject& object) {
+              ImGui::PushID(objectIndex + 70000);
+              bool boundsOpen = ImGui::TreeNodeEx("[B] Mesh Bounds", ImGuiTreeNodeFlags_Leaf | ImGuiTreeNodeFlags_SpanAvailWidth);
+              ImGui::SameLine();
+              ImGui::Checkbox("##boundsVis", &object.visible); ImGui::SameLine();
+              ImGui::Checkbox("##boundsFrz", &object.frozen); ImGui::SameLine();
+              ImGui::Checkbox("##boundsWire", &object.showWire);
+              if (boundsOpen) ImGui::TreePop();
+
+              if (object.ragdollAuthoringReady &&
+                  !object.ragdollAuthoring.binding.referencePose.bones.empty()) {
+                EnsureRagdollHierarchyState(object);
+                if (ImGui::TreeNodeEx("[R] Ragdoll", ImGuiTreeNodeFlags_DefaultOpen)) {
+                  ImGui::TextDisabled("Eye = Show   F = Freeze   W = Wire");
+                  const int bodyCount = static_cast<int>(object.ragdollAuthoring.binding.referencePose.bones.size());
+                  for (int bodyIndex = 0; bodyIndex < bodyCount; ++bodyIndex) {
+                    ImGui::PushID(bodyIndex + 71000);
+                    bool bodyVisible = object.ragdollBodyVisible[static_cast<std::size_t>(bodyIndex)] != 0;
+                    bool bodyWire = object.ragdollBodyWire[static_cast<std::size_t>(bodyIndex)] != 0;
+                    bool bodyFrozen = object.ragdollAuthoring.frozenBodies[static_cast<std::size_t>(bodyIndex)] != 0;
+                    ImGui::Checkbox("##bodyVis", &bodyVisible); ImGui::SameLine();
+                    ImGui::Checkbox("##bodyFrz", &bodyFrozen); ImGui::SameLine();
+                    ImGui::Checkbox("##bodyWire", &bodyWire); ImGui::SameLine();
+                    const std::string bodyLabel = "[C] Capsule " + std::to_string(bodyIndex) + " " + RagdollHierarchyBodyLabel(object, bodyIndex);
+                    const bool bodyOpen = ImGui::TreeNodeEx(bodyLabel.c_str(), ImGuiTreeNodeFlags_Leaf | ImGuiTreeNodeFlags_SpanAvailWidth);
+                    object.ragdollBodyVisible[static_cast<std::size_t>(bodyIndex)] = bodyVisible ? 1 : 0;
+                    object.ragdollBodyWire[static_cast<std::size_t>(bodyIndex)] = bodyWire ? 1 : 0;
+                    object.ragdollAuthoring.frozenBodies[static_cast<std::size_t>(bodyIndex)] = bodyFrozen ? 1 : 0;
+                    if (bodyOpen) ImGui::TreePop();
+                    ImGui::PopID();
+
+                    ImGui::PushID(bodyIndex + 72000);
+                    bool jointVisible = object.ragdollJointVisible[static_cast<std::size_t>(bodyIndex)] != 0;
+                    bool jointWire = object.ragdollJointWire[static_cast<std::size_t>(bodyIndex)] != 0;
+                    bool jointFrozen = object.ragdollAuthoring.frozenJoints[static_cast<std::size_t>(bodyIndex)] != 0;
+                    ImGui::Checkbox("##jointVis", &jointVisible); ImGui::SameLine();
+                    ImGui::Checkbox("##jointFrz", &jointFrozen); ImGui::SameLine();
+                    ImGui::Checkbox("##jointWire", &jointWire); ImGui::SameLine();
+                    const std::string jointLabel = "[J] Joint " + std::to_string(bodyIndex);
+                    const bool jointOpen = ImGui::TreeNodeEx(jointLabel.c_str(), ImGuiTreeNodeFlags_Leaf | ImGuiTreeNodeFlags_SpanAvailWidth);
+                    object.ragdollJointVisible[static_cast<std::size_t>(bodyIndex)] = jointVisible ? 1 : 0;
+                    object.ragdollJointWire[static_cast<std::size_t>(bodyIndex)] = jointWire ? 1 : 0;
+                    object.ragdollAuthoring.frozenJoints[static_cast<std::size_t>(bodyIndex)] = jointFrozen ? 1 : 0;
+                    if (jointOpen) ImGui::TreePop();
+                    ImGui::PopID();
+                  }
+                  ImGui::TreePop();
+                }
+              }
+              ImGui::PopID();
+            };
+
             // Track which meshes are in persistent groups
             std::set<int> groupedIndices;
             for (auto& grp : g_groups)
@@ -8911,15 +10764,18 @@ void EditorApp::OnDraw() {
                   auto& o = g_objects[idx];
                   ImGui::PushID(idx + 10000);
                   ImGui::Checkbox("##vis", &o.visible); ImGui::SameLine();
-                  ImGuiTreeNodeFlags flags = ImGuiTreeNodeFlags_Leaf | ImGuiTreeNodeFlags_SpanAvailWidth;
+                  ImGuiTreeNodeFlags flags = ImGuiTreeNodeFlags_OpenOnArrow | ImGuiTreeNodeFlags_SpanAvailWidth;
                   if (g_multiSelect.count(idx)) flags |= ImGuiTreeNodeFlags_Selected;
-                  ImGui::TreeNodeEx(o.name.c_str(), flags);
+                  bool nodeOpen = ImGui::TreeNodeEx(o.name.c_str(), flags);
                   if (ImGui::IsItemClicked()) {
                     g_selectedIdx = idx; g_selectionType = 0;
                     g_multiSelect.clear();
                     g_multiSelect.insert(idx);
                   }
-                  ImGui::TreePop();
+                  if (nodeOpen) {
+                    drawMeshHierarchyChildren(idx, o);
+                    ImGui::TreePop();
+                  }
                   ImGui::PopID();
                 }
                 ImGui::TreePop();
@@ -8935,7 +10791,7 @@ void EditorApp::OnDraw() {
               ImGui::Checkbox("##vis", &o.visible); ImGui::SameLine();
               ImGui::Checkbox("##frz", &o.frozen);  ImGui::SameLine();
               ImGui::Checkbox("##wir", &o.showWire); ImGui::SameLine();
-              ImGuiTreeNodeFlags flags = ImGuiTreeNodeFlags_Leaf | ImGuiTreeNodeFlags_SpanAvailWidth;
+              ImGuiTreeNodeFlags flags = ImGuiTreeNodeFlags_OpenOnArrow | ImGuiTreeNodeFlags_SpanAvailWidth;
               if ((g_selectionType == 0 && i == g_selectedIdx) || g_multiSelect.count(i))
                 flags |= ImGuiTreeNodeFlags_Selected;
               if (o.frozen) ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.5f,0.5f,0.5f,1));
@@ -8951,7 +10807,10 @@ void EditorApp::OnDraw() {
                 }
               }
               if (o.frozen) ImGui::PopStyleColor();
-              if (nodeOpen) ImGui::TreePop();
+              if (nodeOpen) {
+                drawMeshHierarchyChildren(i, o);
+                ImGui::TreePop();
+              }
               ImGui::PopID();
             }
             ImGui::TreePop();
@@ -9002,7 +10861,9 @@ void EditorApp::OnDraw() {
               ImGui::Checkbox("##wir", &entity.showWire); ImGui::SameLine();
               ImGuiTreeNodeFlags flags = ImGuiTreeNodeFlags_Leaf | ImGuiTreeNodeFlags_SpanAvailWidth;
               if (g_selectionType == 3 && i == g_selectedIdx) flags |= ImGuiTreeNodeFlags_Selected;
-              const std::string label = (entity.type == PhysicsSceneEntityType::Player ? "[P] " : "[J] ") + entity.name;
+              const char* physicsIcon = entity.type == PhysicsSceneEntityType::Player ? "[P] " :
+                  (entity.type == PhysicsSceneEntityType::Character ? "[C] " : "[J] ");
+              const std::string label = std::string(physicsIcon) + entity.name;
               if (entity.frozen) ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.5f,0.5f,0.5f,1));
               const bool nodeOpen = ImGui::TreeNodeEx(label.c_str(), flags);
               if (ImGui::IsItemClicked() && !entity.frozen) {
@@ -9021,6 +10882,65 @@ void EditorApp::OnDraw() {
               }
               if (nodeOpen) ImGui::TreePop();
               ImGui::PopID();
+            }
+            ImGui::TreePop();
+          }
+          // Navigation
+          if (ImGui::TreeNodeEx("Navigation", ImGuiTreeNodeFlags_DefaultOpen)) {
+            ImGui::PushID("NavigationControls");
+            if (ImGui::SmallButton("Create NavMesh")) {
+              CreateEditorNavMesh();
+            }
+            ImGui::SameLine();
+            if (ImGui::SmallButton("Destroy NavMesh") && m_editorNavMeshAuthored) {
+              DestroyEditorNavMesh();
+            }
+            ImGui::TextDisabled("Eye = Show   F = Freeze   W = Wire");
+            ImGui::Separator();
+            ImGui::PopID();
+
+            if (m_editorNavMeshAuthored) {
+              ImGui::PushID(60000);
+              ImGui::Checkbox("##navvis", &m_editorNavMeshVisible); ImGui::SameLine();
+              ImGui::Checkbox("##navfrz", &m_editorNavMeshFrozen);  ImGui::SameLine();
+              ImGui::Checkbox("##navwir", &m_editorNavMeshShowWire); ImGui::SameLine();
+              ImGuiTreeNodeFlags flags = ImGuiTreeNodeFlags_OpenOnArrow | ImGuiTreeNodeFlags_DefaultOpen | ImGuiTreeNodeFlags_SpanAvailWidth;
+              if (g_selectionType == 4 && g_selectedIdx == 0) flags |= ImGuiTreeNodeFlags_Selected;
+              if (m_editorNavMeshFrozen) ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.5f,0.5f,0.5f,1));
+              const bool nodeOpen = ImGui::TreeNodeEx("[N] NavMesh", flags);
+              if (ImGui::IsItemClicked() && !m_editorNavMeshFrozen) {
+                g_selectedIdx = 0;
+                g_selectionType = 4;
+                g_multiSelect.clear();
+              }
+              if (m_editorNavMeshFrozen) ImGui::PopStyleColor();
+              if (nodeOpen) {
+                for (int linkIndex = 0; linkIndex < static_cast<int>(m_editorNavMeshLinks.size()); ++linkIndex) {
+                  t850::scene::SceneNavMeshLinkDesc& link = m_editorNavMeshLinks[static_cast<std::size_t>(linkIndex)];
+                  ImGui::PushID(linkIndex + 61000);
+                  ImGui::Checkbox("##linkVis", &link.visible); ImGui::SameLine();
+                  ImGui::Checkbox("##linkFrz", &link.frozen); ImGui::SameLine();
+                  ImGui::Checkbox("##linkWir", &link.show_wire); ImGui::SameLine();
+                  ImGuiTreeNodeFlags linkFlags = ImGuiTreeNodeFlags_Leaf | ImGuiTreeNodeFlags_SpanAvailWidth;
+                  if (linkIndex == m_editorSelectedNavLink) linkFlags |= ImGuiTreeNodeFlags_Selected;
+                  if (link.frozen) ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.5f,0.5f,0.5f,1));
+                  const std::string linkLabel = "[L] " + link.name + " (" + link.type + ")";
+                  const bool linkOpen = ImGui::TreeNodeEx(linkLabel.c_str(), linkFlags);
+                  if (ImGui::IsItemClicked() && !link.frozen) {
+                    m_editorSelectedNavLink = linkIndex;
+                    g_selectedIdx = 0;
+                    g_selectionType = 4;
+                    g_multiSelect.clear();
+                  }
+                  if (link.frozen) ImGui::PopStyleColor();
+                  if (linkOpen) ImGui::TreePop();
+                  ImGui::PopID();
+                }
+                ImGui::TreePop();
+              }
+              ImGui::PopID();
+            } else {
+              ImGui::TextDisabled("No authored NavMesh.");
             }
             ImGui::TreePop();
           }
@@ -9196,7 +11116,7 @@ void EditorApp::OnDraw() {
           };
 
           if (ImGui::CollapsingHeader("Physics Authoring", ImGuiTreeNodeFlags_DefaultOpen)) {
-            ImGui::TextWrapped("Create a physics-only static Jolt triangle mesh from the selected render mesh. It appears under the Physics category and is not saved yet.");
+            ImGui::TextWrapped("Create authored Jolt physics from the selected render mesh. Triangle meshes are static collision; characters use the same shape and Character/CharacterVirtual settings as the player.");
             int maxTrianglesPerLeaf = static_cast<int>(g_triangleMeshCookSettings.maxTrianglesPerLeaf);
             if (ImGui::SliderInt("Max Triangles / Leaf", &maxTrianglesPerLeaf, 1, 8)) {
               g_triangleMeshCookSettings.maxTrianglesPerLeaf = static_cast<uint32_t>(maxTrianglesPerLeaf);
@@ -9222,6 +11142,33 @@ void EditorApp::OnDraw() {
             if (ImGui::Button("Create Static Triangle Mesh")) {
               CreateStaticTriangleMeshPhysicsEntity(m_physics, selectedMeshIndex);
             }
+            ImGui::SeparatorText("Mesh Character");
+            PhysicsSceneEntity& characterTemplate = EnsureMeshCharacterAuthoringTemplate(selectedMeshIndex);
+            ImGui::PushID("MeshCharacterAuthoring");
+            bool previewChanged = DrawCharacterRuntimePathControl(characterTemplate);
+            if (characterTemplate.characterRuntimePath == static_cast<int>(CharacterRuntimePath::Jolt)) {
+              ImGui::TextDisabled("Jolt path previews the authored collision object and drives Play through Jolt collision sweeps.");
+              previewChanged |= DrawCharacterShapeControls(characterTemplate, true);
+              if (ImGui::Button("Fit to Mesh AABB")) {
+                if (FitCharacterToSceneObject(characterTemplate, *sel)) {
+                  previewChanged = true;
+                }
+              }
+              if (ImGui::CollapsingHeader("Jolt Character Settings", ImGuiTreeNodeFlags_DefaultOpen)) {
+                previewChanged |= DrawJoltCharacterSettingsControls(characterTemplate);
+              }
+            } else {
+              ImGui::TextDisabled("Kinematic path uses Detour/navmesh movement and projection. Switch to Jolt to edit the character shape/object.");
+            }
+            if (previewChanged) {
+              RebuildMeshCharacterAuthoringPreview();
+            }
+            if (ImGui::Button(characterTemplate.characterRuntimePath == static_cast<int>(CharacterRuntimePath::Jolt)
+                ? "Create Jolt Character"
+                : "Create Kinematic Character")) {
+              CreateCharacterPhysicsEntity(m_physics, selectedMeshIndex, characterTemplate);
+            }
+            ImGui::PopID();
             const int physicsCount = CountPhysicsEntitiesForSourceObject(selectedMeshIndex);
             if (physicsCount > 0) {
               ImGui::SameLine();
@@ -9238,12 +11185,20 @@ void EditorApp::OnDraw() {
 
           if (!selectedIsSkinned && ImGui::CollapsingHeader("Navigation Authoring", ImGuiTreeNodeFlags_DefaultOpen)) {
             t850::scene::SceneObjectNavigationDesc& navigation = EnsureNavigationMeta(*sel);
-            ImGui::Checkbox("Include in NavMesh", &navigation.include);
-            ImGui::Checkbox("Walkable", &navigation.walkable);
-            ImGui::Checkbox("Static", &navigation.static_object);
+            bool objectNavChanged = false;
+            objectNavChanged |= ImGui::Checkbox("Include in NavMesh", &navigation.include);
+            objectNavChanged |= ImGui::Checkbox("Walkable", &navigation.walkable);
+            objectNavChanged |= ImGui::Checkbox("Static", &navigation.static_object);
             const char* areas[] = { "walkable", "not_walkable", "water", "door", "jump", "custom" };
-            comboString("Area", navigation.area, areas, (int)(sizeof(areas) / sizeof(areas[0])));
-            ImGui::DragFloat("Cost", &navigation.cost, 0.05f, 0.0f, 100.0f, "%.2f");
+            objectNavChanged |= comboString("Area", navigation.area, areas, (int)(sizeof(areas) / sizeof(areas[0])));
+            objectNavChanged |= ImGui::DragFloat("Cost", &navigation.cost, 0.05f, 0.0f, 100.0f, "%.2f");
+            if (objectNavChanged) {
+              m_editorNavMeshAuthored = true;
+              m_editorNavMeshDirty = true;
+              m_editorNavMeshStatus = "Object navigation settings changed. Click Re-generate.";
+            }
+            ImGui::SeparatorText("Scene NavMesh");
+            DrawNavMeshAuthoringPanel();
           }
 
           if (selectedIsSkinned) {
@@ -9304,81 +11259,44 @@ void EditorApp::OnDraw() {
           PhysicsSceneEntity& entity = g_physicsEntities[g_selectedIdx];
           ImGui::SeparatorText("Physics Entity");
           ImGui::TextWrapped("%s", entity.name.c_str());
-          if (entity.type == PhysicsSceneEntityType::Player) {
+          if (IsCharacterPhysicsEntity(entity)) {
             bool changed = false;
-            ImGui::Text("Type: Player");
-            float p[3] = { entity.position.x, entity.position.y, entity.position.z };
-            if (ImGui::DragFloat3("Position", p, 0.5f)) {
-              entity.position = XVECTOR3(p[0], p[1], p[2], 1.0f);
-              changed = true;
+            ImGui::Text("Type: %s", entity.type == PhysicsSceneEntityType::Player ? "Player" : "Character");
+            if (entity.type == PhysicsSceneEntityType::Character) {
+              ImGui::Text("Source: %s", entity.sourceName.c_str());
+              DrawCharacterRuntimePathControl(entity);
             }
-            int shape = entity.playerShape == t850::PhysicsShapeType::Capsule ? 1 :
-                (entity.playerShape == t850::PhysicsShapeType::Sphere ? 2 :
-                 (entity.playerShape == t850::PhysicsShapeType::Cylinder ? 3 : 0));
-            const char* shapeOptions[] = { "AABB / Box", "Capsule", "Sphere", "Cylinder" };
-            if (ImGui::Combo("Shape", &shape, shapeOptions, 4)) {
-              entity.playerShape = shape == 1 ? t850::PhysicsShapeType::Capsule :
-                  (shape == 2 ? t850::PhysicsShapeType::Sphere :
-                   (shape == 3 ? t850::PhysicsShapeType::Cylinder : t850::PhysicsShapeType::Box));
-              changed = true;
-            }
-            if (entity.playerShape == t850::PhysicsShapeType::Capsule) {
-              changed |= ImGui::DragFloat("Radius", &entity.playerRadius, 0.25f, 1.0f, 128.0f, "%.2f");
-              changed |= ImGui::DragFloat("Half Height", &entity.playerHalfHeight, 0.25f, 1.0f, 256.0f, "%.2f");
-              ImGui::TextDisabled("Total height = 2 * (half height + radius).");
-            } else if (entity.playerShape == t850::PhysicsShapeType::Sphere) {
-              changed |= ImGui::DragFloat("Radius", &entity.playerRadius, 0.25f, 0.1f, 256.0f, "%.2f");
-            } else if (entity.playerShape == t850::PhysicsShapeType::Cylinder) {
-              changed |= ImGui::DragFloat("Radius", &entity.playerRadius, 0.25f, 0.1f, 256.0f, "%.2f");
-              changed |= ImGui::DragFloat("Half Height", &entity.playerHalfHeight, 0.25f, 0.1f, 256.0f, "%.2f");
-            } else {
-              float he[3] = { entity.playerHalfExtents.x, entity.playerHalfExtents.y, entity.playerHalfExtents.z };
-              if (ImGui::DragFloat3("Half Extents", he, 0.25f, 1.0f, 256.0f, "%.2f")) {
-                entity.playerHalfExtents = XVECTOR3(he[0], he[1], he[2], 0.0f);
-                changed = true;
+            changed |= DrawCharacterShapeControls(entity, true);
+            if (entity.type == PhysicsSceneEntityType::Character) {
+              const int sourceIndex = (entity.sourceObjectIndex >= 0 &&
+                  entity.sourceObjectIndex < static_cast<int>(g_objects.size()))
+                      ? entity.sourceObjectIndex
+                      : FindSceneObjectIndexByName(entity.sourceName);
+              if (sourceIndex >= 0 && sourceIndex < static_cast<int>(g_objects.size())) {
+                if (ImGui::Button("Fit to Source Mesh AABB")) {
+                  if (FitCharacterToSceneObject(entity, g_objects[static_cast<std::size_t>(sourceIndex)])) {
+                    entity.sourceObjectIndex = sourceIndex;
+                    changed = true;
+                  }
+                }
               }
             }
-            changed |= ImGui::DragFloat("Friction", &entity.friction, 0.01f, 0.0f, 10.0f, "%.2f");
-            changed |= ImGui::DragFloat("Restitution", &entity.restitution, 0.01f, 0.0f, 1.0f, "%.2f");
-            changed |= ImGui::Checkbox("Sensor", &entity.sensor);
             ImGui::Checkbox("Visible", &entity.visible);
             ImGui::Checkbox("Frozen", &entity.frozen);
             ImGui::Checkbox("Wireframe", &entity.showWire);
-            if (ImGui::CollapsingHeader("Jolt Character Settings", ImGuiTreeNodeFlags_DefaultOpen)) {
-              const char* implementationOptions[] = { "Character rigid body", "CharacterVirtual controller" };
-              ImGui::Combo("Implementation", &entity.characterImplementation, implementationOptions, 2);
-              ImGui::DragFloat("Mass", &entity.characterMass, 0.5f, 0.0f, 1000.0f, "%.2f");
-              ImGui::DragFloat("Max Slope Angle (deg)", &entity.characterMaxSlopeAngleDeg, 0.5f, 0.0f, 89.0f, "%.2f");
-              ImGui::Checkbox("Enhanced Internal Edge Removal", &entity.characterEnhancedInternalEdgeRemoval);
-              ImGui::DragFloat("Supporting Volume Offset", &entity.characterSupportingVolumeOffset, 0.01f, -1.0e10f, 1.0e10f, "%.4f");
-              if (entity.characterImplementation == 0) {
-                ImGui::DragFloat("Character Friction", &entity.friction, 0.01f, 0.0f, 10.0f, "%.2f");
-                ImGui::DragFloat("Gravity Factor", &entity.characterGravityFactor, 0.01f, 0.0f, 10.0f, "%.2f");
-                ImGui::Checkbox("Allow Translation X", &entity.characterAllowTranslationX);
-                ImGui::Checkbox("Allow Translation Y", &entity.characterAllowTranslationY);
-                ImGui::Checkbox("Allow Translation Z", &entity.characterAllowTranslationZ);
-              } else {
-                ImGui::DragFloat("Max Strength", &entity.characterMaxStrength, 1.0f, 0.0f, 100000.0f, "%.1f");
-                ImGui::DragFloat3("Shape Offset", entity.characterShapeOffset, 0.01f, -256.0f, 256.0f, "%.3f");
-                const char* backFaceOptions[] = { "Ignore Back Faces", "Collide With Back Faces" };
-                ImGui::Combo("Back Face Mode", &entity.characterBackFaceMode, backFaceOptions, 2);
-                ImGui::DragFloat("Predictive Contact Distance", &entity.characterPredictiveContactDistance, 0.005f, 0.0f, 10.0f, "%.4f");
-                ImGui::DragInt("Max Collision Iterations", &entity.characterMaxCollisionIterations, 1.0f, 1, 64);
-                ImGui::DragInt("Max Constraint Iterations", &entity.characterMaxConstraintIterations, 1.0f, 1, 128);
-                ImGui::DragFloat("Min Time Remaining", &entity.characterMinTimeRemaining, 0.00001f, 0.0f, 0.1f, "%.6f");
-                ImGui::DragFloat("Collision Tolerance", &entity.characterCollisionTolerance, 0.0001f, 0.0f, 1.0f, "%.5f");
-                ImGui::DragFloat("Character Padding", &entity.characterPadding, 0.001f, 0.0f, 1.0f, "%.4f");
-                ImGui::DragInt("Max Num Hits", &entity.characterMaxNumHits, 1.0f, 1, 4096);
-                ImGui::DragFloat("Hit Reduction Cos Max Angle", &entity.characterHitReductionCosMaxAngle, 0.001f, -1.0f, 1.0f, "%.6f");
-                ImGui::DragFloat("Penetration Recovery Speed", &entity.characterPenetrationRecoverySpeed, 0.01f, 0.0f, 1.0f, "%.3f");
-                ImGui::Checkbox("Inner Body", &entity.characterInnerBody);
-              }
-              ImGui::TextDisabled("These are authored Jolt Character settings. Runtime Play Scene persistence/wiring is next.");
+            const bool showJoltSettings = entity.type == PhysicsSceneEntityType::Player ||
+                entity.characterRuntimePath == static_cast<int>(CharacterRuntimePath::Jolt);
+            if (showJoltSettings &&
+                ImGui::CollapsingHeader("Jolt Character Settings", ImGuiTreeNodeFlags_DefaultOpen)) {
+              changed |= DrawJoltCharacterSettingsControls(entity);
+              ImGui::TextDisabled("These settings are saved with the scene and used by Play for matching authored mesh characters.");
+            } else if (entity.type == PhysicsSceneEntityType::Character) {
+              ImGui::TextDisabled("Switch Movement Path to Jolt to edit Character / CharacterVirtual settings.");
             }
             if (changed) {
-              RecreatePlayerPhysicsBody(m_physics, entity);
+              RecreateCharacterPhysicsBody(m_physics, entity);
             }
-            if (ImGui::Button("Destroy Player")) {
+            if (ImGui::Button(entity.type == PhysicsSceneEntityType::Player ? "Destroy Player" : "Destroy Character")) {
               DestroyPhysicsEntity(m_physics, g_selectedIdx);
             }
           } else {
@@ -9406,11 +11324,16 @@ void EditorApp::OnDraw() {
                         entity.stats.cacheLoadMs,
                         entity.stats.cacheSaveMs,
                         entity.stats.totalMs);
-            ImGui::Checkbox("Debug draw physics", &m_editorShowPhysics);
+            ImGui::Checkbox("Visible", &entity.visible);
+            ImGui::Checkbox("Frozen", &entity.frozen);
+            ImGui::Checkbox("Wireframe", &entity.showWire);
             if (ImGui::Button("Destroy Static Triangle Mesh")) {
               DestroyPhysicsEntity(m_physics, g_selectedIdx);
             }
           }
+        } else if (g_selectionType == 4 && g_selectedIdx == 0) {
+          ImGui::SeparatorText("Navigation Mesh");
+          DrawNavMeshAuthoringPanel();
         }
       }
       ImGui::End();
@@ -9438,6 +11361,7 @@ void EditorApp::OnDraw() {
     DrawMeshEditorWindow();
     DrawPlaySceneWindow();
 
+    commitImguiUndo("Editor Action");
     T8_LOG_TRACE("[T8ditor] OnDraw: ImGuiRender...");
     ImGuiRender();
     T8_LOG_TRACE("[T8ditor] OnDraw: ImGuiRender done");

@@ -75,7 +75,7 @@ public:
 
   // ── Debug wireframe / skeleton visualization ──
   // Draw mesh wireframe using GPU skinning pipeline (LINE_LIST)
-  void DrawWireframe(const XVECTOR3& color = XVECTOR3(0.0f, 1.0f, 0.0f, 1.0f));
+  void DrawWireframe(const XVECTOR3& color = XVECTOR3(1.0f, 1.0f, 1.0f, 1.0f));
   // Draw skeleton bones without depth testing. Pass bone indices to highlight them.
   void DrawSkeleton(int selectedBone = -1,
                     const std::vector<int>* controlledBones = nullptr,

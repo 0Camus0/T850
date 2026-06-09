@@ -15,6 +15,7 @@ public:
 
   void SetDepthTestEnabled(bool enabled) { m_depthTest = enabled; }
   void SetDepthTexture(Texture* depthTexture) { m_depthTexture = depthTexture; }
+  void SetSecondaryDepthTexture(Texture* depthTexture) { m_depthTexture2 = depthTexture; }
   void SetViewport(int width, int height) { m_viewWidth = width; m_viewHeight = height; }
   void SetFarPlane(float farPlane) { m_farPlane = farPlane; }
 
@@ -34,6 +35,7 @@ private:
   unsigned m_indexCapacity = 0;
   unsigned m_indexCount = 0;
   Texture* m_depthTexture = nullptr;
+  Texture* m_depthTexture2 = nullptr;
   int m_viewWidth = 1280;
   int m_viewHeight = 720;
   float m_farPlane = 1000.0f;

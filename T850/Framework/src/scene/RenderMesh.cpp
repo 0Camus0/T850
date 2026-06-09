@@ -1394,7 +1394,7 @@ namespace t850 {
     if (!pScProp || !pScProp->GetPrimaryCamera()) return;
 
     Camera* cam = pScProp->GetPrimaryCamera();
-    XVECTOR3 wireColor(0.0f, 1.0f, 0.0f, 1.0f);
+    XVECTOR3 wireColor(1.0f, 1.0f, 1.0f, 1.0f);
     m_lineRenderer.SetDepthTestEnabled(m_wireDepthTex != nullptr || m_wireDepthTex2 != nullptr);
     m_lineRenderer.SetDepthTexture(m_wireDepthTex);
     m_lineRenderer.SetSecondaryDepthTexture(m_wireDepthTex2);

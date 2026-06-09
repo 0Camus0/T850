@@ -63,6 +63,7 @@ namespace {
   constexpr int kNavTestModeFollowPlayer = 2;
   constexpr float kNavTestDiagIntervalSec = 1.0f / 60.0f;
   constexpr float kNavTestFailedPathRetrySec = 0.25f;
+  constexpr uint64_t kJoltNavLinkValidationCacheKey = 0x4a4f4c544e41564cull; // JOLT NAVL
 
   const std::string& DefaultQuake3JoltSceneFilePath() {
     static const std::string path = "Scenes/Q3/q3dm6_mod_3_jolt.t8scene";
@@ -2601,6 +2602,79 @@ namespace {
     return settings;
   }
 
+  t850::navigation::NavMeshBuildSettings DefaultAuthoredNavMeshBuildSettings() {
+    t850::navigation::NavMeshBuildSettings settings;
+    settings.enableAutoDropLinks = true;
+    settings.enableAutoJumpLinks = true;
+    settings.enableHybridJumpLinks = true;
+    settings.hybridJumpMaxLinks = 192;
+    return settings;
+  }
+
+  t850::navigation::NavMeshBuildSettings NavMeshBuildSettingsFromScene(
+      const t850::scene::SceneNavMeshBuildSettingsDesc& desc) {
+    t850::navigation::NavMeshBuildSettings settings = DefaultAuthoredNavMeshBuildSettings();
+    settings.cellSize = desc.cell_size;
+    settings.cellHeight = desc.cell_height;
+    settings.agentHeight = desc.agent_height;
+    settings.agentRadius = desc.agent_radius;
+    settings.agentMaxClimb = desc.agent_max_climb;
+    settings.agentMaxSlope = desc.agent_max_slope;
+    settings.regionMinSize = desc.region_min_size;
+    settings.regionMergeSize = desc.region_merge_size;
+    settings.edgeMaxLen = desc.edge_max_len;
+    settings.edgeMaxError = desc.edge_max_error;
+    settings.vertsPerPoly = desc.verts_per_poly;
+    settings.detailSampleDist = desc.detail_sample_dist;
+    settings.detailSampleMaxError = desc.detail_sample_max_error;
+    settings.queryExtents = XVECTOR3(desc.query_extents.x, desc.query_extents.y, desc.query_extents.z, 0.0f);
+    settings.enableAutoDropLinks = desc.auto_drop_links;
+    settings.dropLinkMinHeight = desc.drop_min_height;
+    settings.dropLinkMaxHeight = desc.drop_max_height;
+    settings.dropLinkMaxHorizontalDistance = desc.drop_max_horizontal;
+    settings.dropLinkSampleSpacing = desc.drop_sample_spacing;
+    settings.dropLinkRadius = desc.drop_link_radius;
+    settings.enableAutoJumpLinks = desc.auto_jump_links;
+    settings.jumpLinkMaxHorizontalDistance = desc.jump_max_horizontal;
+    settings.jumpLinkSampleSpacing = desc.jump_sample_spacing;
+    settings.jumpLinkRadius = desc.jump_link_radius;
+    settings.enableHybridJumpLinks = desc.hybrid_jump_links;
+    settings.hybridJumpMaxLinks = desc.hybrid_max_links;
+    settings.offMeshLinkValidationKey = desc.off_mesh_link_validation_key;
+    return settings;
+  }
+
+  t850::navigation::NavTraversalType NavLinkTypeFromSceneName(const std::string& name) {
+    if (name == "drop") return t850::navigation::NavTraversalType::Drop;
+    if (name == "jump_pad") return t850::navigation::NavTraversalType::JumpPad;
+    if (name == "jump_intent") return t850::navigation::NavTraversalType::JumpIntent;
+    return t850::navigation::NavTraversalType::Jump;
+  }
+
+  t850::navigation::NavOffMeshLink NavOffMeshLinkFromScene(const t850::scene::SceneNavMeshLinkDesc& desc) {
+    t850::navigation::NavOffMeshLink link;
+    link.start = XVECTOR3(desc.start.x, desc.start.y, desc.start.z, 1.0f);
+    link.end = XVECTOR3(desc.end.x, desc.end.y, desc.end.z, 1.0f);
+    link.radius = (std::max)(0.05f, desc.radius);
+    link.bidirectional = desc.bidirectional;
+    link.type = NavLinkTypeFromSceneName(desc.type);
+    return link;
+  }
+
+  bool IsFiniteNavPoint(const t850::scene::Vec3f& point) {
+    return std::isfinite(point.x) && std::isfinite(point.y) && std::isfinite(point.z);
+  }
+
+  bool IsUsableAuthoredNavLink(const t850::scene::SceneNavMeshLinkDesc& link) {
+    if (!link.enabled || !IsFiniteNavPoint(link.start) || !IsFiniteNavPoint(link.end)) {
+      return false;
+    }
+    const float dx = link.end.x - link.start.x;
+    const float dy = link.end.y - link.start.y;
+    const float dz = link.end.z - link.start.z;
+    return dx * dx + dy * dy + dz * dz > 0.0001f && link.radius > 0.0f;
+  }
+
   bool SceneHasStaticPhysicsEntityForObject(const t850::scene::EditorSceneFile& scene, const std::string& objectName) {
     for (const t850::scene::ScenePhysicsEntityDesc& entity : scene.physics_entities) {
       if (entity.type == "static_triangle_mesh" && entity.source_object == objectName) {
@@ -2610,7 +2684,7 @@ namespace {
     return false;
   }
 
-  t850::KinematicCharacterSettings CharacterSettingsFromPlayerEntity(const t850::scene::ScenePhysicsEntityDesc& player) {
+  t850::KinematicCharacterSettings CharacterSettingsFromPhysicsEntity(const t850::scene::ScenePhysicsEntityDesc& player) {
     t850::KinematicCharacterSettings settings = t850::MakeQuake3CharacterSettings();
     const bool capsule = player.shape == "capsule" || player.shape == "sphere" || player.shape == "cylinder";
     settings.collisionShape = capsule
@@ -2633,6 +2707,10 @@ namespace {
     settings.groundProbeDistance = (std::max)(0.05f, settings.capsuleRadius * 0.35f);
     settings.stepHeight = (std::max)(0.05f, settings.capsuleRadius * 1.2f);
     return settings;
+  }
+
+  int CharacterRuntimePathFromPhysicsEntity(const t850::scene::ScenePhysicsEntityDesc& entity) {
+    return entity.character.runtime_path == "jolt" ? 1 : 0;
   }
 
   XVECTOR3 PlayerEyeFromEntity(const t850::scene::ScenePhysicsEntityDesc& player,
@@ -2921,12 +2999,15 @@ void Quake3Jolt::InitVars() {
   m_loadedEditorScene = false;
   m_loadedEditorScenePath.clear();
   m_primaryRagdollResourcePath.clear();
+  m_sceneObjectNames.clear();
   m_sceneMeshPaths.clear();
   m_sceneRagdollPaths.clear();
   m_sceneNavAgentFrontYawOffsets.clear();
   m_sceneNavAgentFaceYawSigns.clear();
   m_sceneRagdolls.clear();
   m_scenePhysicsEntities.clear();
+  m_hasAuthoredNavMesh = false;
+  m_authoredNavMesh = t850::scene::SceneNavigationMeshDesc{};
   m_hasAuthoredPlayer = false;
   m_authoredPlayer = t850::scene::ScenePhysicsEntityDesc{};
   m_navTestAgents.clear();
@@ -3467,15 +3548,28 @@ bool Quake3Jolt::LoadEditorSceneAssets(const std::string& scenePath) {
   m_loadedEditorScene = true;
   m_loadedEditorScenePath = scenePath;
   m_meshCount = 0;
+  m_sceneObjectNames.clear();
   m_sceneMeshPaths.clear();
   m_sceneRagdollPaths.clear();
   m_sceneNavAgentFrontYawOffsets.clear();
+  m_sceneNavAgentFaceYawSigns.clear();
   m_sceneRagdolls.clear();
   m_scenePhysicsAuthoring.clear();
   m_scenePhysicsEntities = scene.physics_entities;
   m_sceneNavigationAuthoring.clear();
   m_sceneRagdollAuthoring.clear();
   m_primaryRagdollResourcePath.clear();
+  m_hasAuthoredNavMesh = false;
+  m_authoredNavMesh = t850::scene::SceneNavigationMeshDesc{};
+  if (scene.navigation_mesh && scene.navigation_mesh->enabled) {
+    m_authoredNavMesh = *scene.navigation_mesh;
+    m_hasAuthoredNavMesh = true;
+    m_navMeshBuildSettings = NavMeshBuildSettingsFromScene(m_authoredNavMesh.build_settings);
+    m_navMeshDebugOffset = m_authoredNavMesh.debug_offset;
+    m_navMeshDebugShapeMode = std::clamp(m_authoredNavMesh.debug_shape_mode, 0, 1);
+    m_navMeshBuildAttempted = false;
+    m_navMesh.Clear();
+  }
   m_hasAuthoredPlayer = false;
   m_authoredPlayer = t850::scene::ScenePhysicsEntityDesc{};
 
@@ -3567,6 +3661,7 @@ bool Quake3Jolt::LoadEditorSceneAssets(const std::string& scenePath) {
       m_primaryRagdollResourcePath = ragdollPath;
     }
     m_sceneMeshPaths.push_back(meshPath);
+    m_sceneObjectNames.push_back(object.name);
     m_sceneRagdollPaths.push_back(ragdollPath);
     m_scenePhysicsAuthoring.push_back(physicsMeta);
     m_sceneNavigationAuthoring.push_back(navigationMeta);
@@ -3598,6 +3693,9 @@ bool Quake3Jolt::LoadEditorSceneAssets(const std::string& scenePath) {
       if (entity.type == "player") {
         m_authoredPlayer = entity;
         m_hasAuthoredPlayer = true;
+        continue;
+      }
+      if (entity.type == "character") {
         continue;
       }
       if (entity.type != "static_triangle_mesh") {
@@ -3650,8 +3748,14 @@ bool Quake3Jolt::LoadEditorSceneAssets(const std::string& scenePath) {
   ApplyEditorSceneCameraAndLights(scene);
   m_controlSetup.descriptor.profiles = scene.profiles;
   LoadSandboxProfile(true);
+  if (m_hasAuthoredNavMesh) {
+    m_navMeshBuildSettings = NavMeshBuildSettingsFromScene(m_authoredNavMesh.build_settings);
+    m_navMeshDebugOffset = m_authoredNavMesh.debug_offset;
+    m_navMeshDebugShapeMode = std::clamp(m_authoredNavMesh.debug_shape_mode, 0, 1);
+    m_navMeshBuildAttempted = false;
+  }
   if (m_hasAuthoredPlayer) {
-    const t850::KinematicCharacterSettings playerSettings = CharacterSettingsFromPlayerEntity(m_authoredPlayer);
+    const t850::KinematicCharacterSettings playerSettings = CharacterSettingsFromPhysicsEntity(m_authoredPlayer);
     const t850::CameraProfileType profileType =
         m_authoredPlayer.character.implementation == "character"
             ? t850::CameraProfileType::GroundedFps
@@ -3682,6 +3786,13 @@ bool Quake3Jolt::EnsureNavMeshBuilt() {
   if (m_navMesh.IsReady()) {
     return true;
   }
+  if (!m_hasAuthoredNavMesh) {
+    if (!m_navMeshBuildAttempted) {
+      T8_LOG_INFO("[Navigation] Quake3Jolt NavMesh build skipped: no authored NavMesh in scene");
+    }
+    m_navMeshBuildAttempted = true;
+    return false;
+  }
   if (m_navMeshBuildAttempted) {
     return false;
   }
@@ -3689,10 +3800,34 @@ bool Quake3Jolt::EnsureNavMeshBuilt() {
 
   const int meshCount = (std::min)(kMaxSandboxMeshes, (std::max)(m_meshCount, Meshes[0].pBase ? 1 : 0));
   t850::navigation::NavMeshBuildSettings navBuildSettings = m_navMeshBuildSettings;
-  navBuildSettings.enableAutoDropLinks = false;
-  navBuildSettings.enableAutoJumpLinks = false;
-  navBuildSettings.enableHybridJumpLinks = false;
-  navBuildSettings.offMeshLinkValidationKey = 0;
+  uint64_t authoredLinksHash = 0xcbf29ce484222325ull;
+  HashNavCacheValue(authoredLinksHash, static_cast<uint64_t>(m_authoredNavMesh.authored_links.size()));
+  for (const t850::scene::SceneNavMeshLinkDesc& link : m_authoredNavMesh.authored_links) {
+    HashNavCacheString(authoredLinksHash, link.name);
+    HashNavCacheString(authoredLinksHash, link.type);
+    HashNavCacheValue(authoredLinksHash, link.start_node);
+    HashNavCacheValue(authoredLinksHash, link.end_node);
+    HashNavCacheValue(authoredLinksHash, link.start.x);
+    HashNavCacheValue(authoredLinksHash, link.start.y);
+    HashNavCacheValue(authoredLinksHash, link.start.z);
+    HashNavCacheValue(authoredLinksHash, link.end.x);
+    HashNavCacheValue(authoredLinksHash, link.end.y);
+    HashNavCacheValue(authoredLinksHash, link.end.z);
+    HashNavCacheValue(authoredLinksHash, link.radius);
+    HashNavCacheValue(authoredLinksHash, link.bidirectional);
+    HashNavCacheValue(authoredLinksHash, link.cost);
+    HashNavCacheValue(authoredLinksHash, link.enabled);
+  }
+  navBuildSettings.offMeshLinkValidationKey ^= authoredLinksHash;
+  t850::EngineContext* engineContext = GetEngineContext();
+  if (!engineContext) engineContext = &t850::GetEngineContext();
+  t850::JoltPhysicsSystem* linkValidationPhysics =
+      (engineContext && engineContext->physics && engineContext->physics->IsInitialized())
+          ? engineContext->physics
+          : nullptr;
+  if (linkValidationPhysics) {
+    navBuildSettings.offMeshLinkValidationKey ^= kJoltNavLinkValidationCacheKey;
+  }
   const uint64_t navCacheKey =
       ComputeSandboxNavMeshCacheKey(
           Meshes,
@@ -3743,8 +3878,17 @@ bool Quake3Jolt::EnsureNavMeshBuilt() {
                  sourceStats.skippedInvalid);
     return false;
   }
-  geometry.offMeshLinks.clear();
-
+  if (linkValidationPhysics) {
+    geometry.offMeshLinkValidator = [linkValidationPhysics, navBuildSettings](const t850::navigation::NavOffMeshLink& link) {
+      return t850::ValidateNavOffMeshLinkWithPhysics(*linkValidationPhysics, navBuildSettings, link);
+    };
+    geometry.offMeshHybridLinkValidator = geometry.offMeshLinkValidator;
+  }
+  for (const t850::scene::SceneNavMeshLinkDesc& linkDesc : m_authoredNavMesh.authored_links) {
+    if (IsUsableAuthoredNavLink(linkDesc)) {
+      geometry.offMeshLinks.push_back(NavOffMeshLinkFromScene(linkDesc));
+    }
+  }
   if (!m_navMesh.BuildCached(geometry, navBuildSettings, navCacheKey, &error)) {
     T8_LOG_ERROR("[Navigation] Sandbox navmesh build failed: %s", error.c_str());
     return false;
@@ -3786,17 +3930,49 @@ void Quake3Jolt::InitializeNavTestAgents() {
   }
 
   const int meshCount = (std::min)(kMaxSandboxMeshes, (std::max)(m_meshCount, Meshes[0].pBase ? 1 : 0));
+  auto findAuthoredCharacterForMesh = [&](int meshIndex) -> const t850::scene::ScenePhysicsEntityDesc* {
+    if (meshIndex < 0 || meshIndex >= static_cast<int>(m_sceneObjectNames.size())) {
+      return nullptr;
+    }
+    const std::string& objectName = m_sceneObjectNames[static_cast<std::size_t>(meshIndex)];
+    for (const t850::scene::ScenePhysicsEntityDesc& entity : m_scenePhysicsEntities) {
+      if (entity.type == "character" && entity.source_object == objectName) {
+        return &entity;
+      }
+    }
+    return nullptr;
+  };
+
   int followSlot = 0;
+  int authoredCharacterCount = 0;
   for (int meshIndex = 0; meshIndex < meshCount; ++meshIndex) {
     PrimitiveInst& instance = Meshes[meshIndex];
     RenderSkinnedMesh* skinned = instance.GetSkinnedMesh();
     if (!instance.Visible || !skinned || !skinned->HasSkinData()) {
       continue;
     }
+    const t850::scene::ScenePhysicsEntityDesc* authoredCharacter = findAuthoredCharacterForMesh(meshIndex);
+    if (m_loadedEditorScene && !authoredCharacter) {
+      continue;
+    }
 
     NavTestAgentRuntime agent;
     agent.meshIndex = meshIndex;
     agent.followSlot = followSlot++;
+    agent.characterSettings = t850::MakeQuake3CharacterSettings();
+    if (authoredCharacter) {
+      agent.characterSettings = CharacterSettingsFromPhysicsEntity(*authoredCharacter);
+      agent.characterRuntimePath = CharacterRuntimePathFromPhysicsEntity(*authoredCharacter);
+      agent.hasAuthoredCharacter = true;
+      ++authoredCharacterCount;
+      T8_LOG_INFO("[NavigationTest] Mesh %d uses authored character '%s' source='%s' path=%s implementation=%s",
+                  meshIndex,
+                  authoredCharacter->name.c_str(),
+                  authoredCharacter->source_object.c_str(),
+                  authoredCharacter->character.runtime_path.c_str(),
+                  authoredCharacter->character.implementation.c_str());
+    }
+    agent.physicsController.SetSettings(agent.characterSettings);
     if (meshIndex < static_cast<int>(m_sceneNavAgentFrontYawOffsets.size())) {
       agent.frontYawOffsetDeg = m_sceneNavAgentFrontYawOffsets[static_cast<std::size_t>(meshIndex)];
     }
@@ -3818,6 +3994,7 @@ void Quake3Jolt::InitializeNavTestAgents() {
     agent.visualOffset.z = 0.0f;
     agent.visualOffset.w = 0.0f;
     agent.navToOriginOffset = agent.visualOffset;
+    agent.physicsController.SetPosition(Q3CenterFromGroundPoint(agent.navPosition, agent.characterSettings));
     if (m_navTestMode == kNavTestModeFollowPlayer) {
       if (!ResolveNavTestFollowTarget(m_navMesh, Cam, agent.followSlot,
                                       agent.desiredTarget, agent.target, &agent.lastPathError)) {
@@ -3841,8 +4018,10 @@ void Quake3Jolt::InitializeNavTestAgents() {
   }
 
   if (!m_navTestAgents.empty()) {
-    T8_LOG_INFO("[NavigationTest] Initialized %zu skinned mesh nav agents mode=%d speed=%.2f q3 units/sec",
-                m_navTestAgents.size(), m_navTestMode, m_navTestSpeed);
+    T8_LOG_INFO("[NavigationTest] Initialized %zu skinned mesh nav agents mode=%d speed=%.2f q3 units/sec authoredCharacters=%d",
+                m_navTestAgents.size(), m_navTestMode, m_navTestSpeed, authoredCharacterCount);
+  } else if (m_loadedEditorScene) {
+    T8_LOG_INFO("[NavigationTest] No authored mesh characters found; skinned scene meshes remain visible but are not nav agents.");
   }
 }
 
@@ -4147,6 +4326,43 @@ void Quake3Jolt::UpdateNavTestAgents(float dtSecs) {
     return agent.active && agent.physicsTraversalActive;
   };
 
+  auto refreshAgentTargetAfterPathEnd = [&](NavTestAgentRuntime& agent, const XVECTOR3& current) {
+    XVECTOR3 resolvedCurrent = current;
+    if (agent.waypointIndex < static_cast<int>(agent.path.size())) {
+      return resolvedCurrent;
+    }
+    if (m_navTestMode == kNavTestModeFurthest && agent.returning) {
+      resolvedCurrent = agent.home;
+      agent.returning = false;
+    } else if (m_navTestMode == kNavTestModeFurthest) {
+      agent.returning = true;
+    } else if (m_navTestMode == kNavTestModeRandom) {
+      agent.target = RandomNavTestPoint(m_navTestCandidatePoints,
+                                        resolvedCurrent,
+                                        m_navTestRandomState,
+                                        static_cast<uint32_t>(agent.meshIndex + 31));
+      agent.desiredTarget = agent.target;
+      agent.returning = false;
+    } else {
+      XVECTOR3 desiredTarget;
+      XVECTOR3 projectedTarget;
+      if (ResolveNavTestFollowTarget(m_navMesh, Cam, agent.followSlot,
+                                     desiredTarget, projectedTarget, nullptr)) {
+        agent.desiredTarget = desiredTarget;
+        agent.target = projectedTarget;
+      } else {
+        agent.desiredTarget = desiredTarget;
+        agent.target = resolvedCurrent;
+      }
+      agent.returning = false;
+    }
+    agent.needsPath = true;
+    agent.path.clear();
+    agent.pathSegmentTypes.clear();
+    agent.waypointIndex = 0;
+    return resolvedCurrent;
+  };
+
   for (std::size_t agentIndex = 0; agentIndex < m_navTestAgents.size(); ++agentIndex) {
     NavTestAgentRuntime& agent = m_navTestAgents[agentIndex];
     if (!agent.active ||
@@ -4201,7 +4417,7 @@ void Quake3Jolt::UpdateNavTestAgents(float dtSecs) {
         continue;
       }
 
-      const t850::KinematicCharacterSettings q3Settings = t850::MakeQuake3CharacterSettings();
+      const t850::KinematicCharacterSettings& q3Settings = agent.characterSettings;
       agent.physicsController.SetSettings(q3Settings);
       const XVECTOR3 physicsGround = Q3GroundPointFromCenter(agent.physicsController.GetPosition(), q3Settings);
       const bool jumpInput =
@@ -4322,7 +4538,7 @@ void Quake3Jolt::UpdateNavTestAgents(float dtSecs) {
       const float distance = delta.Length();
       t850::navigation::NavTraversalType effectiveSegmentType = segmentType;
       if (effectiveSegmentType != t850::navigation::NavTraversalType::Walk) {
-        const t850::KinematicCharacterSettings q3Settings = t850::MakeQuake3CharacterSettings();
+        const t850::KinematicCharacterSettings& q3Settings = agent.characterSettings;
         agent.physicsController.SetSettings(q3Settings);
         agent.physicsController.Reset();
         agent.physicsController.SetPosition(Q3CenterFromGroundPoint(current, q3Settings));
@@ -4349,6 +4565,27 @@ void Quake3Jolt::UpdateNavTestAgents(float dtSecs) {
         remaining = 0.0f;
         break;
       }
+      if (agent.characterRuntimePath == 1) {
+        const t850::KinematicCharacterSettings& q3Settings = agent.characterSettings;
+        agent.physicsController.SetSettings(q3Settings);
+        XVECTOR3 controllerGround = Q3GroundPointFromCenter(agent.physicsController.GetPosition(), q3Settings);
+        if (DistanceSquared(controllerGround, agent.navPosition) > 4.0f) {
+          agent.physicsController.SetPosition(Q3CenterFromGroundPoint(agent.navPosition, q3Settings));
+          controllerGround = agent.navPosition;
+        }
+        agent.physicsController.UpdateQuake3(
+            (std::max)(0.0f, dtSecs),
+            BuildNavAgentPhysicsInput(controllerGround, target, false),
+            t850::CharacterControllerContext{this});
+        current = Q3GroundPointFromCenter(agent.physicsController.GetPosition(), q3Settings);
+        if (HorizontalDistanceSq3(current, target) <= 0.04f &&
+            std::fabs(current.y - target.y) <= (std::max)(0.50f, q3Settings.stepHeight * 2.0f)) {
+          ++agent.waypointIndex;
+        }
+        physicsMovedAgents[agentIndex] = 1;
+        remaining = 0.0f;
+        break;
+      }
       if (distance <= 0.0001f) {
         current = target;
         ++agent.waypointIndex;
@@ -4365,37 +4602,7 @@ void Quake3Jolt::UpdateNavTestAgents(float dtSecs) {
       }
     }
 
-    if (agent.waypointIndex >= static_cast<int>(agent.path.size())) {
-      if (m_navTestMode == kNavTestModeFurthest && agent.returning) {
-        current = agent.home;
-        agent.returning = false;
-      } else if (m_navTestMode == kNavTestModeFurthest) {
-        agent.returning = true;
-      } else if (m_navTestMode == kNavTestModeRandom) {
-        agent.target = RandomNavTestPoint(m_navTestCandidatePoints,
-                                          current,
-                                          m_navTestRandomState,
-                                          static_cast<uint32_t>(agent.meshIndex + 31));
-        agent.desiredTarget = agent.target;
-        agent.returning = false;
-      } else {
-        XVECTOR3 desiredTarget;
-        XVECTOR3 projectedTarget;
-        if (ResolveNavTestFollowTarget(m_navMesh, Cam, agent.followSlot,
-                                       desiredTarget, projectedTarget, nullptr)) {
-          agent.desiredTarget = desiredTarget;
-          agent.target = projectedTarget;
-        } else {
-          agent.desiredTarget = desiredTarget;
-          agent.target = current;
-        }
-        agent.returning = false;
-      }
-      agent.needsPath = true;
-      agent.path.clear();
-      agent.pathSegmentTypes.clear();
-      agent.waypointIndex = 0;
-    }
+    current = refreshAgentTargetAfterPathEnd(agent, current);
 
       proposedPositions[agentIndex] = current;
       movedAgents[agentIndex] = 1;
@@ -4585,8 +4792,8 @@ void Quake3Jolt::UpdateNavTestAgents(float dtSecs) {
         }
         agent.navPosition = navPosition;
         agent.navToOriginOffset = agent.visualOffset;
-        if (agent.physicsTraversalActive) {
-          const t850::KinematicCharacterSettings q3Settings = t850::MakeQuake3CharacterSettings();
+        if (agent.physicsTraversalActive || agent.characterRuntimePath == 1) {
+          const t850::KinematicCharacterSettings& q3Settings = agent.characterSettings;
           agent.physicsController.SetPosition(Q3CenterFromGroundPoint(agent.navPosition, q3Settings));
         }
       }
@@ -4960,6 +5167,7 @@ void Quake3Jolt::DestroyAssets() {
   m_loadedEditorScene = false;
   m_loadedEditorScenePath.clear();
   m_primaryRagdollResourcePath.clear();
+  m_sceneObjectNames.clear();
   m_sceneMeshPaths.clear();
   m_sceneRagdollPaths.clear();
   m_sceneNavAgentFrontYawOffsets.clear();
@@ -14490,39 +14698,61 @@ void Quake3Jolt::OnDraw() {
       }
     }
 
-    if (m_showPhysics) {
-      t850::EngineContext* engineContext = GetEngineContext();
-      if (!engineContext) engineContext = &t850::GetEngineContext();
-      if (engineContext && engineContext->physics && m_physicsDebugRenderer.IsReady()) {
-        m_physicsDebugRenderer.SetDepthTexture(nullptr);
-        m_physicsDebugRenderer.SetDepthTestEnabled(false);
-        m_physicsDebugRenderer.SetViewport(overlayW, overlayH);
-        m_physicsDebugRenderer.SetFarPlane(Cam.FPlane);
-        pFramework->pVideoDriver->SetDepthStencilState(BaseDriver::NONE);
-        pFramework->pVideoDriver->SetBlendState(BaseDriver::BLEND_DEFAULT);
-        m_physicsDebugRenderer.Draw(*engineContext->physics, VP);
-      }
-    }
-
     if (m_showNavMesh && m_navMeshDebugRenderer.IsReady() && EnsureNavMeshBuilt()) {
       Texture* depthTexture = nullptr;
+      Texture* secondaryDepthTexture = nullptr;
       if (GBufferPass >= 0 && GBufferPass < (int)pFramework->pVideoDriver->RTs.size()) {
         if (auto* gbufRT = pFramework->pVideoDriver->RTs[GBufferPass]) {
           depthTexture = gbufRT->pDepthTexture;
         }
       }
-      if (depthTexture) {
+      if (DeferredPass >= 0 && DeferredPass < (int)pFramework->pVideoDriver->RTs.size()) {
+        if (auto* deferredRT = pFramework->pVideoDriver->RTs[DeferredPass]) {
+          secondaryDepthTexture = deferredRT->pDepthTexture;
+        }
+      }
+      if (depthTexture || secondaryDepthTexture) {
         m_navMeshDebugRenderer.SetVerticalOffset(m_navMeshDebugOffset);
         m_navMeshDebugRenderer.SetGraphVerticalOffset(m_navMeshDebugOffset + 0.005f);
         m_navMeshDebugRenderer.SetShapeMode(m_navMeshDebugShapeMode == 1
             ? t850::navigation::NavMeshDebugShapeMode::Nodes
             : t850::navigation::NavMeshDebugShapeMode::Geometry);
         m_navMeshDebugRenderer.SetDepthTexture(depthTexture);
+        m_navMeshDebugRenderer.SetSecondaryDepthTexture(secondaryDepthTexture);
         m_navMeshDebugRenderer.SetViewport(overlayW, overlayH);
         m_navMeshDebugRenderer.SetFarPlane(Cam.FPlane);
         pFramework->pVideoDriver->SetDepthStencilState(BaseDriver::NONE);
         pFramework->pVideoDriver->SetBlendState(BaseDriver::BLEND_DEFAULT);
         m_navMeshDebugRenderer.Draw(m_navMesh, VP);
+      }
+    }
+
+    if (m_showPhysics) {
+      t850::EngineContext* engineContext = GetEngineContext();
+      if (!engineContext) engineContext = &t850::GetEngineContext();
+      if (engineContext && engineContext->physics && m_physicsDebugRenderer.IsReady()) {
+        Texture* depthTexture = nullptr;
+        Texture* secondaryDepthTexture = nullptr;
+        if (GBufferPass >= 0 && GBufferPass < (int)pFramework->pVideoDriver->RTs.size()) {
+          if (auto* gbufRT = pFramework->pVideoDriver->RTs[GBufferPass]) {
+            depthTexture = gbufRT->pDepthTexture;
+          }
+        }
+        if (DeferredPass >= 0 && DeferredPass < (int)pFramework->pVideoDriver->RTs.size()) {
+          if (auto* deferredRT = pFramework->pVideoDriver->RTs[DeferredPass]) {
+            secondaryDepthTexture = deferredRT->pDepthTexture;
+          }
+        }
+        if (depthTexture || secondaryDepthTexture) {
+          m_physicsDebugRenderer.SetDepthTexture(depthTexture);
+          m_physicsDebugRenderer.SetSecondaryDepthTexture(secondaryDepthTexture);
+          m_physicsDebugRenderer.SetDepthTestEnabled(true);
+          m_physicsDebugRenderer.SetViewport(overlayW, overlayH);
+          m_physicsDebugRenderer.SetFarPlane(Cam.FPlane);
+          pFramework->pVideoDriver->SetDepthStencilState(BaseDriver::NONE);
+          pFramework->pVideoDriver->SetBlendState(BaseDriver::BLEND_DEFAULT);
+          m_physicsDebugRenderer.Draw(*engineContext->physics, VP);
+        }
       }
     }
 

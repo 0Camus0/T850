@@ -141,11 +141,12 @@ void EditorLineRenderer::DrawLines(const XMATRIX44& world,
 }
 
 t850::VertexBuffer* EditorLineRenderer::CreatePositionVB(const float* positionsXYZW,
-                                                         unsigned numVertices) {
+                                                         unsigned numVertices,
+                                                         t850::BufferUsage::E usage) {
   if (!t850::T8Device || !positionsXYZW || numVertices == 0) return nullptr;
   t850::BufferDesc bd;
   bd.byteWidth = static_cast<int>(sizeof(float) * 4 * numVertices);
-  bd.usage     = t850::BufferUsage::DEFAULT;
+  bd.usage     = usage;
   return (t850::VertexBuffer*)t850::T8Device->CreateBuffer(
       t850::BufferType::VERTEX, bd, const_cast<float*>(positionsXYZW));
 }

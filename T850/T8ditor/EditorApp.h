@@ -44,6 +44,8 @@
 #include <physics/JoltPhysicsSystem.h>
 #include <physics/PhysicsDebugRenderer.h>
 #include <physics/RagdollEditorTool.h>
+#include <navigation/NavigationDebugRenderer.h>
+#include <navigation/NavigationSystem.h>
 #include <utils/Camera.h>
 #include <RagdollEditor.h>
 #include <Quake3Jolt.h>
@@ -142,6 +144,8 @@ namespace t8ditor {
     Fly = 1
   };
 
+  struct EditorUndoState;
+
   class EditorApp : public t850::AppBase {
   public:
     EditorApp() : AppBase() {}
@@ -216,6 +220,8 @@ namespace t8ditor {
     bool SaveEditorSceneSnapshot(const std::string& path, bool updateLoadedScene);
     t850::SandboxProfileDesc BuildEditorSceneProfile() const;
     void UpsertEditorSceneProfile(std::vector<t850::SandboxProfileDesc>& profiles) const;
+    void ApplyEditorSceneProfile(const t850::SandboxProfileDesc& profile);
+    void LoadEditorSceneProfiles();
     bool ExportTemporaryPlayScene(std::string& outPath);
     void RestoreEditorStateAfterPlay();
     void OpenPlayScene();
@@ -226,12 +232,29 @@ namespace t8ditor {
     void DestroyPlaySceneViewportTarget();
     bool EnsurePlaySceneRuntimeLoaded();
     void FrameSelectedEntity();
+    bool CreateEditorNavMesh();
+    void DestroyEditorNavMesh();
+    void ResetEditorNavMeshState(bool keepSettings = false);
+    void RestoreEditorNavMeshFromScene(const t850::scene::SceneNavigationMeshDesc& desc);
+    t850::scene::SceneNavigationMeshDesc BuildEditorNavMeshDesc() const;
+    bool GetEditorNavMeshWorldAABB(t850::AABB& outBounds) const;
+    void DrawNavMeshAuthoringPanel();
+    void RefreshEditorNavMeshNodes();
+    bool PickEditorNavMeshNodeFromMouse(int mouseX, int mouseY, int& outNodeIndex, XVECTOR3& outNodePosition) const;
+    void DrawSelectedNavLinkOverlay(t850::Texture* depthTexture, t850::Texture* secondaryDepthTexture, const Camera& cam);
+    void DumpEditorNavMeshWireGeometry(const char* reason) const;
     void RenderLoadingProgressFrame();
     t850::RenderSkinnedMesh* GetSelectedSkinnedMesh() const;
     void DrawSelectedAnimationInspector(struct SceneObject& obj);
     void DrawEditorRenderingPanel();
     void SetEditorCubemap(const std::string& cubemapPath);
     void ApplyPendingEditorCubemap();
+    EditorUndoState CaptureEditorUndoState(std::string* outKey = nullptr);
+    void ApplyEditorUndoState(const EditorUndoState& state);
+    void PushEditorUndoState(const char* label,
+                             const EditorUndoState& before,
+                             const std::string& beforeKey,
+                             const EditorUndoState& after);
     bool HasHostedSceneWindowOpen() const;
     void ResetMainEditorFrameLimiter();
     void ThrottleMainEditorFrameIfNeeded();
@@ -242,6 +265,7 @@ namespace t8ditor {
 
     EditorCamera        m_camera;
     EditorLineRenderer  m_lines;
+    EditorLineRenderer  m_navLinkOverlayLines;
     EditorGrid          m_grid;
     EditorGizmo         m_gizmo;
     EditorMesh          m_mesh;      // wireframe overlay (kept for toggle)
@@ -262,6 +286,25 @@ namespace t8ditor {
     GaussFilter           m_editorDofFilter;
     t850::JoltPhysicsSystem m_physics;
     t850::PhysicsDebugRenderer m_physicsDebug;
+    t850::navigation::NavMeshDebugRenderer m_editorNavMeshDebugRenderer;
+    t850::navigation::NavMesh m_editorNavMesh;
+    t850::navigation::NavMeshBuildSettings m_editorNavMeshBuildSettings;
+    t850::navigation::NavSourceBuildStats m_editorNavMeshSourceStats;
+    std::string m_editorNavMeshStatus;
+    bool m_editorNavMeshAuthored = false;
+    bool m_editorNavMeshVisible = true;
+    bool m_editorNavMeshFrozen = false;
+    bool m_editorNavMeshShowWire = true;
+    float m_editorNavMeshDebugOffset = 0.01f;
+    int m_editorNavMeshDebugShapeMode = 0;
+    float m_editorNavMeshLastBuildMs = 0.0f;
+    bool m_editorNavMeshDirty = false;
+    std::vector<t850::scene::SceneNavMeshLinkDesc> m_editorNavMeshLinks;
+    std::vector<XVECTOR3> m_editorNavMeshNodes;
+    int m_editorSelectedNavLink = -1;
+    int m_editorNavLinkPickMode = 0; // 0=none, 1=start, 2=end
+    t850::VertexBuffer* m_editorNavLinkOverlayVB = nullptr;
+    t850::IndexBuffer* m_editorNavLinkOverlayIB = nullptr;
     bool m_editorHeadlampEnabled = false;
     bool m_editorShowSkeleton = false;
     bool m_editorShowPhysics = false;

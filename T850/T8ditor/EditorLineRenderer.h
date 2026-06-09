@@ -63,8 +63,10 @@ public:
   // Helper for callers that want to build a VB of a list of float4 line
   // endpoints (xyzw, w=1). Returns nullptr on failure. Ownership transfers
   // to the caller (must Destroy/release).
-  static t850::VertexBuffer* CreatePositionVB(const float* positionsXYZW,
-                                              unsigned numVertices);
+  static t850::VertexBuffer* CreatePositionVB(
+      const float* positionsXYZW,
+      unsigned numVertices,
+      t850::BufferUsage::E usage = t850::BufferUsage::DEFAULT);
   static t850::IndexBuffer*  CreateIndexBuffer16(const unsigned short* indices,
                                                  unsigned numIndices);
   static t850::IndexBuffer*  CreateIndexBuffer32(const unsigned int* indices,

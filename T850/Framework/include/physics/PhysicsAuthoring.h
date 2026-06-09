@@ -1,5 +1,6 @@
 #pragma once
 
+#include <navigation/NavigationSystem.h>
 #include <physics/JoltPhysicsSystem.h>
 
 #include <filesystem>
@@ -32,6 +33,9 @@ bool AttachStaticTriangleMeshBody(JoltPhysicsSystem& physics,
                                   const RenderMesh& mesh,
                                   const PhysicsTriangleMeshCookSettings& settings,
                                   PhysicsCookStats* outStats = nullptr);
+bool ValidateNavOffMeshLinkWithPhysics(const JoltPhysicsSystem& physics,
+                                      const navigation::NavMeshBuildSettings& settings,
+                                      const navigation::NavOffMeshLink& link);
 
 bool BuildRagdollDescFromSkeleton(const RenderSkinnedMesh& mesh,
                                   const XMATRIX44& worldFromMesh,

@@ -1467,6 +1467,13 @@ bool JoltPhysicsSystem::CastCapsule(const PhysicsCapsuleCastDesc& desc, PhysicsC
   JPH::ClosestHitCollisionCollector<JPH::CastShapeCollector> collector;
   const JPH::RVec3 baseOffset(desc.startCenter.x, desc.startCenter.y, desc.startCenter.z);
   JPH::IgnoreMultipleBodiesFilter ignoredBodies;
+  if (desc.triangleMeshesOnly) {
+    for (const Impl::BodySlot& slot : m_impl->bodies) {
+      if (slot.alive && slot.shape.type != PhysicsShapeType::TriangleMesh) {
+        ignoredBodies.IgnoreBody(slot.id);
+      }
+    }
+  }
   if (!desc.ignoredEntityIds.empty()) {
     ignoredBodies.Reserve(static_cast<JPH::uint>(desc.ignoredEntityIds.size()));
     for (const Impl::BodySlot& slot : m_impl->bodies) {
@@ -1563,6 +1570,13 @@ bool JoltPhysicsSystem::CastBox(const PhysicsBoxCastDesc& desc, PhysicsCastHit& 
   JPH::ClosestHitCollisionCollector<JPH::CastShapeCollector> collector;
   const JPH::RVec3 baseOffset(desc.startCenter.x, desc.startCenter.y, desc.startCenter.z);
   JPH::IgnoreMultipleBodiesFilter ignoredBodies;
+  if (desc.triangleMeshesOnly) {
+    for (const Impl::BodySlot& slot : m_impl->bodies) {
+      if (slot.alive && slot.shape.type != PhysicsShapeType::TriangleMesh) {
+        ignoredBodies.IgnoreBody(slot.id);
+      }
+    }
+  }
   if (!desc.ignoredEntityIds.empty()) {
     ignoredBodies.Reserve(static_cast<JPH::uint>(desc.ignoredEntityIds.size()));
     for (const Impl::BodySlot& slot : m_impl->bodies) {

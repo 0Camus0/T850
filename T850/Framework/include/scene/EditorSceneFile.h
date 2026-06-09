@@ -107,6 +107,7 @@ struct ScenePhysicsCookSettingsDesc {
 };
 
 struct ScenePhysicsCharacterDesc {
+  std::string runtime_path = "kinematic";
   std::string implementation = "virtual";
   float mass = 70.0f;
   float max_strength = 100.0f;
@@ -129,6 +130,64 @@ struct ScenePhysicsCharacterDesc {
   bool allow_translation_y = true;
   bool allow_translation_z = true;
   bool inner_body = false;
+};
+
+struct SceneNavMeshBuildSettingsDesc {
+  float cell_size = 0.30f;
+  float cell_height = 0.20f;
+  float agent_height = 2.0f;
+  float agent_radius = 0.6f;
+  float agent_max_climb = 0.9f;
+  float agent_max_slope = 45.0f;
+  float region_min_size = 8.0f;
+  float region_merge_size = 20.0f;
+  float edge_max_len = 12.0f;
+  float edge_max_error = 1.3f;
+  int verts_per_poly = 6;
+  float detail_sample_dist = 6.0f;
+  float detail_sample_max_error = 1.0f;
+  Vec3f query_extents = {2.0f, 4.0f, 2.0f};
+  bool auto_drop_links = true;
+  float drop_min_height = 1.0f;
+  float drop_max_height = 24.0f;
+  float drop_max_horizontal = 2.4f;
+  float drop_sample_spacing = 1.2f;
+  float drop_link_radius = 0.75f;
+  bool auto_jump_links = true;
+  float jump_max_horizontal = 7.0f;
+  float jump_sample_spacing = 1.2f;
+  float jump_link_radius = 0.75f;
+  bool hybrid_jump_links = true;
+  int hybrid_max_links = 192;
+  uint64_t off_mesh_link_validation_key = 0;
+};
+
+struct SceneNavMeshLinkDesc {
+  std::string name = "Nav Link";
+  std::string type = "jump";
+  int start_node = -1;
+  int end_node = -1;
+  Vec3f start;
+  Vec3f end;
+  float radius = 0.75f;
+  bool bidirectional = false;
+  float cost = 1.0f;
+  bool enabled = true;
+  bool visible = true;
+  bool frozen = false;
+  bool show_wire = true;
+};
+
+struct SceneNavigationMeshDesc {
+  std::string name = "NavMesh";
+  bool enabled = false;
+  bool visible = true;
+  bool frozen = false;
+  bool show_wire = true;
+  float debug_offset = 0.01f;
+  int debug_shape_mode = 0;
+  SceneNavMeshBuildSettingsDesc build_settings;
+  std::vector<SceneNavMeshLinkDesc> authored_links;
 };
 
 struct ScenePhysicsEntityDesc {
@@ -167,6 +226,7 @@ struct EditorSceneFile {
   EditorStateDesc editor;
   std::vector<SceneObjectDesc> objects;
   std::vector<ScenePhysicsEntityDesc> physics_entities;
+  std::optional<SceneNavigationMeshDesc> navigation_mesh;
   std::vector<SceneCameraDesc> cameras;
   std::vector<SceneLightDesc> lights;
   std::vector<::t850::SandboxProfileDesc> profiles;

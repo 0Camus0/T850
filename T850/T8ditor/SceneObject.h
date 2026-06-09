@@ -59,6 +59,10 @@ struct SceneObject {
   bool                                ragdollDebugDraw = false;
   int                                 ragdollBodyCount = 0;
   std::string                         ragdollStatus;
+  std::vector<uint8_t>                 ragdollBodyVisible;
+  std::vector<uint8_t>                 ragdollBodyWire;
+  std::vector<uint8_t>                 ragdollJointVisible;
+  std::vector<uint8_t>                 ragdollJointWire;
 };
 
 // ── Camera ───────────────────────────────────────────

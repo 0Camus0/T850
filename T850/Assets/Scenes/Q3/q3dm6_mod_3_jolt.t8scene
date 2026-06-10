@@ -7,9 +7,9 @@
          "y": 12.349536,
          "z": 9.233471
       },
-      "camera_yaw": -4.094986,
-      "camera_pitch": 0.20500052,
-      "camera_distance": 4.852521,
+      "camera_yaw": -3.9549835,
+      "camera_pitch": 0.5000003,
+      "camera_distance": 3.3143368,
       "show_skybox": false,
       "show_wireframe": false
    },
@@ -36,6 +36,12 @@
          "visible": true,
          "frozen": false,
          "show_wire": false,
+         "show_orientation": false,
+         "nav_agent_target_mode": "direct",
+         "nav_agent_follow_distance": 0,
+         "nav_agent_side_offset": 0,
+         "nav_agent_formation_depth_step": 0,
+         "nav_agent_slot": -1,
          "physics": {
             "enabled": true,
             "body_type": "static_triangle_mesh",
@@ -91,6 +97,38 @@
          }
       }
    ],
+   "game_entities": [
+      {
+         "name": "Player",
+         "kind": "player",
+         "mesh_object": "",
+         "primary_physics_entity": "player",
+         "physics_entities": [
+            "player"
+         ],
+         "camera": "runtime_player_camera",
+         "ragdoll_object": "",
+         "ai": "player",
+         "visible": true,
+         "frozen": false,
+         "show_wire": true
+      },
+      {
+         "name": "doomslayer_cine_all_animations_no-damage_double-sided-opaque",
+         "kind": "character",
+         "mesh_object": "Models/doomslayer_cine_all_animations_no-damage_double-sided-opaque.glb",
+         "primary_physics_entity": "Models/doomslayer_cine_all_animations_no-damage_double-sided-opaque.glb Character",
+         "physics_entities": [
+            "Models/doomslayer_cine_all_animations_no-damage_double-sided-opaque.glb Character"
+         ],
+         "camera": "",
+         "ragdoll_object": "Models/doomslayer_cine_all_animations_no-damage_double-sided-opaque.glb",
+         "ai": "nav_agent",
+         "visible": true,
+         "frozen": false,
+         "show_wire": true
+      }
+   ],
    "physics_entities": [
       {
          "name": "q3dm6 Static Triangle Mesh",
@@ -114,6 +152,7 @@
          "visible": true,
          "frozen": false,
          "show_wire": false,
+         "show_orientation": false,
          "shape": "box",
          "half_extents": {
             "x": 16,
@@ -133,7 +172,9 @@
             "use_disk_cache": true
          },
          "character": {
+            "runtime_path": "kinematic",
             "implementation": "virtual",
+            "bot_radius": 2,
             "mass": 70,
             "max_strength": 100,
             "max_slope_angle_deg": 50,
@@ -183,6 +224,7 @@
          "visible": true,
          "frozen": false,
          "show_wire": true,
+         "show_orientation": false,
          "shape": "capsule",
          "half_extents": {
             "x": 0.6137631,
@@ -202,7 +244,81 @@
             "use_disk_cache": true
          },
          "character": {
+            "runtime_path": "kinematic",
             "implementation": "virtual",
+            "bot_radius": 1.5,
+            "mass": 70,
+            "max_strength": 100,
+            "max_slope_angle_deg": 50,
+            "enhanced_internal_edge_removal": true,
+            "supporting_volume_offset": -1.0E10,
+            "shape_offset": {
+               "x": 0,
+               "y": 0,
+               "z": 0
+            },
+            "back_face_mode": "collide",
+            "predictive_contact_distance": 0.1,
+            "max_collision_iterations": 5,
+            "max_constraint_iterations": 15,
+            "min_time_remaining": 0.0001,
+            "collision_tolerance": 0.001,
+            "character_padding": 0.02,
+            "max_num_hits": 256,
+            "hit_reduction_cos_max_angle": 0.999,
+            "penetration_recovery_speed": 1,
+            "gravity_factor": 1,
+            "allow_translation_x": true,
+            "allow_translation_y": true,
+            "allow_translation_z": true,
+            "inner_body": false
+         }
+      },
+      {
+         "name": "Models/doomslayer_cine_all_animations_no-damage_double-sided-opaque.glb Character",
+         "type": "character",
+         "source_object": "Models/doomslayer_cine_all_animations_no-damage_double-sided-opaque.glb",
+         "position": {
+            "x": 1.5134208,
+            "y": 17.675926,
+            "z": 16.660034
+         },
+         "rotation": {
+            "x": 0,
+            "y": 0,
+            "z": 0
+         },
+         "scale": {
+            "x": 1,
+            "y": 1,
+            "z": 1
+         },
+         "visible": true,
+         "frozen": false,
+         "show_wire": true,
+         "show_orientation": false,
+         "shape": "capsule",
+         "half_extents": {
+            "x": 0.93775415,
+            "y": 1.3939848,
+            "z": 0.77917004
+         },
+         "radius": 0.93775415,
+         "half_height": 0.45623064,
+         "friction": 0,
+         "restitution": 0,
+         "sensor": false,
+         "cook_settings": {
+            "max_triangles_per_leaf": 8,
+            "build_quality": "runtime_performance",
+            "active_edge_cos_threshold_angle": 0.996195,
+            "per_triangle_user_data": false,
+            "use_disk_cache": true
+         },
+         "character": {
+            "runtime_path": "jolt",
+            "implementation": "virtual",
+            "bot_radius": 2,
             "mass": 70,
             "max_strength": 100,
             "max_slope_angle_deg": 50,
@@ -358,7 +474,7 @@
             "y": 11.5,
             "z": -5.711182
          },
-         "fov_deg": 49.999996,
+         "fov_deg": 99.999985,
          "ortho_w": 82.75,
          "ortho_h": 84.57764,
          "near_plane": 0.1,
@@ -4415,7 +4531,7 @@
             },
             {
                "name": "fov",
-               "value": 99.99999
+               "value": 99.999985
             },
             {
                "name": "shadow_bias",

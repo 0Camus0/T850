@@ -48,7 +48,7 @@
 #include <navigation/NavigationSystem.h>
 #include <utils/Camera.h>
 #include <RagdollEditor.h>
-#include <Quake3Jolt.h>
+#include <SceneTemplate.h>
 
 #include <string>
 #include <memory>
@@ -405,7 +405,7 @@ namespace t8ditor {
     int m_playScenePreviousActiveCameraIdx = -1;
     t850::Config m_playScenePreviousConfig;
     SceneFile m_playSceneEditorSnapshot;
-    std::unique_ptr<::Quake3Jolt> m_playScene;
+    std::unique_ptr<::SceneTemplate> m_playScene;
     std::string m_playSceneTempPath;
     std::string m_playSceneStatus;
     t850::RenderViewport m_playSceneViewportTarget;

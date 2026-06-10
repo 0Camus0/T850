@@ -9,7 +9,7 @@
 #include "EditorSceneGizmos.h"
 #include "UndoRedo.h"
 #include "../DayScene/RagdollEditor.h"
-#include "../DayScene/Quake3Jolt.h"
+#include "../DayScene/SceneTemplate.h"
 
 #include <core/Core.h>
 #include <core/EngineContext.h>
@@ -156,6 +156,7 @@ namespace {
     float friction = 0.6f;
     float restitution = 0.0f;
     bool sensor = false;
+    float playerBotRadius = 2.0f;
     int characterRuntimePath = static_cast<int>(CharacterRuntimePath::Kinematic);
     int characterImplementation = 1; // 0=Character rigid body, 1=CharacterVirtual
     float characterMass = 70.0f;
@@ -368,6 +369,7 @@ namespace {
   std::vector<SceneObjectDesc> g_unloadedSceneObjects;
   std::string g_sceneCollisionResourcePath;
   std::vector<t850::SandboxProfileDesc> g_sceneProfiles;
+  std::vector<t850::scene::SceneGameEntityDesc> g_gameEntities;
   std::unique_ptr<t850::Q3BspCollisionWorld> g_q3CollisionWorld;
 
   // Frame dumper for RT snapshot debugging (space key)
@@ -1344,6 +1346,7 @@ static t850::scene::ScenePhysicsEntityDesc PhysicsEntityToScene(const PhysicsSce
   desc.cook_settings = PhysicsCookSettingsToScene(entity.cookSettings);
   desc.character.runtime_path = CharacterRuntimePathToSceneString(entity.characterRuntimePath);
   desc.character.implementation = entity.characterImplementation == 0 ? "character" : "virtual";
+  desc.character.bot_radius = entity.playerBotRadius;
   desc.character.mass = entity.characterMass;
   desc.character.max_strength = entity.characterMaxStrength;
   desc.character.max_slope_angle_deg = entity.characterMaxSlopeAngleDeg;
@@ -1375,6 +1378,147 @@ static int FindSceneObjectIndexByName(const std::string& name) {
     }
   }
   return -1;
+}
+
+static int FindPhysicsEntityIndexByName(const std::string& name) {
+  for (int i = 0; i < static_cast<int>(g_physicsEntities.size()); ++i) {
+    if (g_physicsEntities[static_cast<std::size_t>(i)].name == name) {
+      return i;
+    }
+  }
+  return -1;
+}
+
+static bool GameEntityReferencesMesh(const t850::scene::SceneGameEntityDesc& entity,
+                                     const std::string& meshName) {
+  return !meshName.empty() && entity.mesh_object == meshName;
+}
+
+static bool GameEntityReferencesPhysics(const t850::scene::SceneGameEntityDesc& entity,
+                                        const std::string& physicsName) {
+  if (physicsName.empty()) {
+    return false;
+  }
+  if (entity.primary_physics_entity == physicsName) {
+    return true;
+  }
+  return std::find(entity.physics_entities.begin(), entity.physics_entities.end(), physicsName) != entity.physics_entities.end();
+}
+
+static bool HasGameEntityForMeshOrPhysics(const std::string& meshName,
+                                          const std::string& physicsName) {
+  for (const t850::scene::SceneGameEntityDesc& entity : g_gameEntities) {
+    if (GameEntityReferencesMesh(entity, meshName) ||
+        GameEntityReferencesPhysics(entity, physicsName)) {
+      return true;
+    }
+  }
+  return false;
+}
+
+static std::string UniqueGameEntityName(const std::string& baseName) {
+  const std::string base = baseName.empty() ? "Game Entity" : baseName;
+  std::string candidate = base;
+  int suffix = 1;
+  auto exists = [&](const std::string& name) {
+    for (const t850::scene::SceneGameEntityDesc& entity : g_gameEntities) {
+      if (entity.name == name) {
+        return true;
+      }
+    }
+    return false;
+  };
+  while (exists(candidate)) {
+    candidate = base + " " + std::to_string(++suffix);
+  }
+  return candidate;
+}
+
+static std::string DisplayNameForMeshObject(const std::string& meshName) {
+  if (meshName.empty()) {
+    return "Game Entity";
+  }
+  std::filesystem::path path(meshName);
+  std::string stem = path.stem().string();
+  return stem.empty() ? meshName : stem;
+}
+
+static void AddPhysicsNameToGameEntity(t850::scene::SceneGameEntityDesc& entity,
+                                       const std::string& physicsName) {
+  if (physicsName.empty()) {
+    return;
+  }
+  if (entity.primary_physics_entity.empty()) {
+    entity.primary_physics_entity = physicsName;
+  }
+  if (std::find(entity.physics_entities.begin(), entity.physics_entities.end(), physicsName) == entity.physics_entities.end()) {
+    entity.physics_entities.push_back(physicsName);
+  }
+}
+
+static bool ObjectHasRagdollRelationship(const SceneObject& object) {
+  return object.ragdollAuthoringReady ||
+         object.ragdollAuthoringMeta.has_value() ||
+         !object.ragdollResourcePath.empty();
+}
+
+static void EnsureInferredGameEntities() {
+  if (!HasGameEntityForMeshOrPhysics({}, "player")) {
+    for (const PhysicsSceneEntity& physics : g_physicsEntities) {
+      if (physics.type != PhysicsSceneEntityType::Player) {
+        continue;
+      }
+      t850::scene::SceneGameEntityDesc entity;
+      entity.name = UniqueGameEntityName(physics.name.empty() ? "Player" : physics.name);
+      entity.kind = "player";
+      entity.primary_physics_entity = physics.name;
+      entity.physics_entities.push_back(physics.name);
+      entity.camera = "runtime_player_camera";
+      entity.ai = "player";
+      g_gameEntities.push_back(std::move(entity));
+      break;
+    }
+  }
+
+  for (int objectIndex = 0; objectIndex < static_cast<int>(g_objects.size()); ++objectIndex) {
+    const SceneObject& object = g_objects[static_cast<std::size_t>(objectIndex)];
+    if (!object.litInst.GetSkinnedMesh() && !ObjectHasRagdollRelationship(object)) {
+      continue;
+    }
+
+    std::vector<std::string> physicsNames;
+    bool hasCharacterPhysics = false;
+    for (const PhysicsSceneEntity& physics : g_physicsEntities) {
+      if (physics.sourceObjectIndex == objectIndex || physics.sourceName == object.name) {
+        if (physics.type == PhysicsSceneEntityType::Character) {
+          hasCharacterPhysics = true;
+          physicsNames.push_back(physics.name);
+        }
+      }
+    }
+    if (!hasCharacterPhysics && !ObjectHasRagdollRelationship(object)) {
+      continue;
+    }
+    const std::string primaryPhysics = physicsNames.empty() ? std::string{} : physicsNames.front();
+    if (HasGameEntityForMeshOrPhysics(object.name, primaryPhysics)) {
+      continue;
+    }
+
+    t850::scene::SceneGameEntityDesc entity;
+    entity.name = UniqueGameEntityName(DisplayNameForMeshObject(object.name));
+    entity.kind = hasCharacterPhysics ? "character" : "mesh";
+    entity.mesh_object = object.name;
+    for (const std::string& physicsName : physicsNames) {
+      AddPhysicsNameToGameEntity(entity, physicsName);
+    }
+    if (ObjectHasRagdollRelationship(object)) {
+      entity.ragdoll_object = object.name;
+    }
+    if (hasCharacterPhysics) {
+      entity.ai = "nav_agent";
+    }
+    g_gameEntities.push_back(std::move(entity));
+  }
 }
 
 static void DestroyPhysicsEntitiesForSourceObject(t850::JoltPhysicsSystem& physics, int sourceObjectIndex) {
@@ -1478,6 +1622,7 @@ static bool RestorePhysicsEntityFromScene(t850::JoltPhysicsSystem& physics,
     entity.friction = desc.friction;
     entity.restitution = desc.restitution;
     entity.sensor = desc.sensor;
+    entity.playerBotRadius = desc.character.bot_radius;
     entity.characterRuntimePath = CharacterRuntimePathFromSceneString(desc.character.runtime_path);
     entity.characterImplementation = desc.character.implementation == "character" ? 0 : 1;
     entity.characterMass = desc.character.mass;
@@ -2569,7 +2714,7 @@ void EditorApp::DrawSelectedNavLinkOverlay(t850::Texture* depthTexture, t850::Te
 void EditorApp::DrawNavMeshAuthoringPanel() {
   ImGui::PushID("NavMeshAuthoringPanel");
   t850::navigation::NavMeshBuildSettings& settings = m_editorNavMeshBuildSettings;
-  ImGui::TextWrapped("Creates a scene-level Recast/Detour NavMesh from visible, included static render meshes. The saved scene controls whether Quake3Jolt builds this NavMesh at Play time.");
+  ImGui::TextWrapped("Creates a scene-level Recast/Detour NavMesh from visible, included static render meshes. The saved scene controls whether SceneTemplate builds this NavMesh at Play time.");
   auto markNavMeshDirty = [&]() {
     m_editorNavMeshDirty = true;
     m_editorNavMeshAuthored = true;
@@ -3356,6 +3501,7 @@ void EditorApp::DrawEditorFrozenFrame(t850::BaseDriver* driver) {
 }
 
 SceneFile EditorApp::BuildEditorSceneSnapshot(const std::string& scenePath) {
+  EnsureInferredGameEntities();
   SceneFile sf = g_hasLoadedSceneFile ? g_loadedSceneFile : SceneFile{};
   sf.editor.camera_target   = { m_camera.GetTarget().x, m_camera.GetTarget().y, m_camera.GetTarget().z };
   sf.editor.camera_yaw      = m_camera.GetYaw();
@@ -3403,6 +3549,8 @@ SceneFile EditorApp::BuildEditorSceneSnapshot(const std::string& scenePath) {
   for (const SceneObjectDesc& od : g_unloadedSceneObjects) {
     sf.objects.push_back(od);
   }
+
+  sf.game_entities = g_gameEntities;
 
   sf.physics_entities.clear();
   for (const PhysicsSceneEntity& entity : g_physicsEntities) {
@@ -3533,6 +3681,7 @@ void EditorApp::ApplyEditorUndoState(const EditorUndoState& state) {
   g_groups.clear();
   g_activeGroupIdx = -1;
   g_unloadedSceneObjects.clear();
+  g_gameEntities.clear();
   g_meshCharacterAuthoringInitialized = false;
   g_meshCharacterAuthoringSourceIndex = -1;
   g_meshCharacterAuthoringTemplate.visual.reset();
@@ -3626,6 +3775,8 @@ void EditorApp::ApplyEditorUndoState(const EditorUndoState& state) {
   for (const t850::scene::ScenePhysicsEntityDesc& entityDesc : sf.physics_entities) {
     RestorePhysicsEntityFromScene(m_physics, entityDesc);
   }
+  g_gameEntities = sf.game_entities;
+  EnsureInferredGameEntities();
   if (sf.navigation_mesh) {
     RestoreEditorNavMeshFromScene(*sf.navigation_mesh);
   }
@@ -4333,9 +4484,9 @@ bool EditorApp::EnsurePlaySceneRuntimeLoaded() {
     }
   }
 
-  m_playScene = std::make_unique<::Quake3Jolt>();
+  m_playScene = std::make_unique<::SceneTemplate>();
   m_playScene->pFramework = pFramework;
-  Quake3JoltLaunchDesc launchDesc;
+  SceneTemplateLaunchDesc launchDesc;
   launchDesc.sceneFilePath = m_playSceneTempPath;
   launchDesc.modelPath = t850::g_config.modelPath;
   launchDesc.width = m_playSceneViewportTarget.Width();
@@ -8628,6 +8779,7 @@ void EditorApp::DestroyAssets() {
   g_unloadedSceneObjects.clear();
   g_sceneCollisionResourcePath.clear();
   g_sceneProfiles.clear();
+  g_gameEntities.clear();
   g_undoStack.Clear();
   if (g_skyboxReady) {
     g_skyboxMgr.DestroyPrimitives();
@@ -8967,6 +9119,7 @@ void EditorApp::OnUpdate() {
         g_activeGroupIdx = -1;
         g_undoStack.Clear();
         g_unloadedSceneObjects.clear();
+        g_gameEntities.clear();
       }
 
       g_sceneCollisionResourcePath = ResolveSceneCollisionPath(sf, loadPath);
@@ -9073,6 +9226,8 @@ void EditorApp::OnUpdate() {
           RestorePhysicsEntityFromScene(m_physics, entityDesc);
         }
       }
+      g_gameEntities = sf.game_entities;
+      EnsureInferredGameEntities();
       if (sf.navigation_mesh) {
         t850::LoadingProgress::ScopedStep navMeshStep("Loading scene", "NavMesh", 4.0f);
         RestoreEditorNavMeshFromScene(*sf.navigation_mesh);
@@ -10937,6 +11092,119 @@ void EditorApp::OnDraw() {
       if (ImGui::Begin("Hierarchy")) {
         ImGuiClampCurrentWindowToEditorWorkArea();
         if (ImGui::TreeNodeEx("Scene Root", ImGuiTreeNodeFlags_OpenOnArrow | ImGuiTreeNodeFlags_DefaultOpen)) {
+          EnsureInferredGameEntities();
+          if (ImGui::TreeNodeEx("Game Entities", ImGuiTreeNodeFlags_OpenOnArrow | ImGuiTreeNodeFlags_DefaultOpen)) {
+            for (int entityIndex = 0; entityIndex < static_cast<int>(g_gameEntities.size()); ++entityIndex) {
+              t850::scene::SceneGameEntityDesc& entity = g_gameEntities[static_cast<std::size_t>(entityIndex)];
+              ImGui::PushID(entityIndex + 90000);
+              ImGui::Checkbox("##entityVis", &entity.visible); ImGui::SameLine();
+              ImGui::Checkbox("##entityFrz", &entity.frozen); ImGui::SameLine();
+              ImGui::Checkbox("##entityWire", &entity.show_wire); ImGui::SameLine();
+              if (entity.frozen) ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.5f,0.5f,0.5f,1));
+              const bool entityOpen = ImGui::TreeNodeEx(("[E] " + entity.name).c_str(),
+                  ImGuiTreeNodeFlags_OpenOnArrow | ImGuiTreeNodeFlags_DefaultOpen | ImGuiTreeNodeFlags_SpanAvailWidth);
+              if (entity.frozen) ImGui::PopStyleColor();
+              if (entityOpen) {
+                char nameBuffer[256] = {};
+                std::snprintf(nameBuffer, sizeof(nameBuffer), "%s", entity.name.c_str());
+                if (ImGui::InputText("Name", nameBuffer, sizeof(nameBuffer))) {
+                  entity.name = nameBuffer;
+                }
+                ImGui::TextDisabled("Kind: %s", entity.kind.c_str());
+
+                const int meshIndex = FindSceneObjectIndexByName(entity.mesh_object);
+                if (!entity.mesh_object.empty()) {
+                  ImGui::PushID("mesh-child");
+                  const std::string meshLabel = "[M] Mesh: " + entity.mesh_object;
+                  const bool meshOpen = ImGui::TreeNodeEx(meshLabel.c_str(), ImGuiTreeNodeFlags_Leaf | ImGuiTreeNodeFlags_SpanAvailWidth);
+                  if (ImGui::IsItemClicked() && meshIndex >= 0) {
+                    g_selectedIdx = meshIndex;
+                    g_selectionType = 0;
+                    g_multiSelect.clear();
+                    g_multiSelect.insert(meshIndex);
+                  }
+                  if (meshOpen) ImGui::TreePop();
+                  ImGui::PopID();
+                }
+
+                if (!entity.camera.empty()) {
+                  ImGui::PushID("camera-child");
+                  const bool cameraOpen = ImGui::TreeNodeEx(("[C] Camera: " + entity.camera).c_str(), ImGuiTreeNodeFlags_Leaf | ImGuiTreeNodeFlags_SpanAvailWidth);
+                  if (cameraOpen) ImGui::TreePop();
+                  ImGui::PopID();
+                }
+
+                for (int physicsRefIndex = 0; physicsRefIndex < static_cast<int>(entity.physics_entities.size()); ++physicsRefIndex) {
+                  const std::string& physicsName = entity.physics_entities[static_cast<std::size_t>(physicsRefIndex)];
+                  const int physicsIndex = FindPhysicsEntityIndexByName(physicsName);
+                  ImGui::PushID(physicsRefIndex + 91000);
+                  const std::string physicsLabel = "[P] Physics: " + physicsName;
+                  const bool physicsOpen = ImGui::TreeNodeEx(physicsLabel.c_str(), ImGuiTreeNodeFlags_Leaf | ImGuiTreeNodeFlags_SpanAvailWidth);
+                  if (ImGui::IsItemClicked() && physicsIndex >= 0) {
+                    g_selectedIdx = physicsIndex;
+                    g_selectionType = 3;
+                    g_multiSelect.clear();
+                  }
+                  if (physicsOpen) ImGui::TreePop();
+                  ImGui::PopID();
+                }
+
+                const int ragdollObjectIndex = FindSceneObjectIndexByName(entity.ragdoll_object);
+                if (ragdollObjectIndex >= 0) {
+                  SceneObject& ragdollObject = g_objects[static_cast<std::size_t>(ragdollObjectIndex)];
+                  EnsureRagdollHierarchyState(ragdollObject);
+                  if (ImGui::TreeNodeEx(("[R] Ragdoll: " + entity.ragdoll_object).c_str(), ImGuiTreeNodeFlags_OpenOnArrow | ImGuiTreeNodeFlags_DefaultOpen)) {
+                    if (ragdollObject.ragdollAuthoringReady &&
+                        !ragdollObject.ragdollAuthoring.binding.referencePose.bones.empty()) {
+                      const int bodyCount = static_cast<int>(ragdollObject.ragdollAuthoring.binding.referencePose.bones.size());
+                      for (int bodyIndex = 0; bodyIndex < bodyCount; ++bodyIndex) {
+                        ImGui::PushID(bodyIndex + 92000);
+                        bool bodyVisible = ragdollObject.ragdollBodyVisible[static_cast<std::size_t>(bodyIndex)] != 0;
+                        bool bodyWire = ragdollObject.ragdollBodyWire[static_cast<std::size_t>(bodyIndex)] != 0;
+                        bool bodyFrozen = ragdollObject.ragdollAuthoring.frozenBodies[static_cast<std::size_t>(bodyIndex)] != 0;
+                        ImGui::Checkbox("##geBodyVis", &bodyVisible); ImGui::SameLine();
+                        ImGui::Checkbox("##geBodyFrz", &bodyFrozen); ImGui::SameLine();
+                        ImGui::Checkbox("##geBodyWire", &bodyWire); ImGui::SameLine();
+                        const bool bodyOpen = ImGui::TreeNodeEx(("[C] Capsule " + std::to_string(bodyIndex) + " " + RagdollHierarchyBodyLabel(ragdollObject, bodyIndex)).c_str(),
+                            ImGuiTreeNodeFlags_Leaf | ImGuiTreeNodeFlags_SpanAvailWidth);
+                        ragdollObject.ragdollBodyVisible[static_cast<std::size_t>(bodyIndex)] = bodyVisible ? 1 : 0;
+                        ragdollObject.ragdollBodyWire[static_cast<std::size_t>(bodyIndex)] = bodyWire ? 1 : 0;
+                        ragdollObject.ragdollAuthoring.frozenBodies[static_cast<std::size_t>(bodyIndex)] = bodyFrozen ? 1 : 0;
+                        if (bodyOpen) ImGui::TreePop();
+                        ImGui::PopID();
+
+                        ImGui::PushID(bodyIndex + 93000);
+                        bool jointVisible = ragdollObject.ragdollJointVisible[static_cast<std::size_t>(bodyIndex)] != 0;
+                        bool jointWire = ragdollObject.ragdollJointWire[static_cast<std::size_t>(bodyIndex)] != 0;
+                        bool jointFrozen = ragdollObject.ragdollAuthoring.frozenJoints[static_cast<std::size_t>(bodyIndex)] != 0;
+                        ImGui::Checkbox("##geJointVis", &jointVisible); ImGui::SameLine();
+                        ImGui::Checkbox("##geJointFrz", &jointFrozen); ImGui::SameLine();
+                        ImGui::Checkbox("##geJointWire", &jointWire); ImGui::SameLine();
+                        const bool jointOpen = ImGui::TreeNodeEx(("[J] Joint " + std::to_string(bodyIndex)).c_str(),
+                            ImGuiTreeNodeFlags_Leaf | ImGuiTreeNodeFlags_SpanAvailWidth);
+                        ragdollObject.ragdollJointVisible[static_cast<std::size_t>(bodyIndex)] = jointVisible ? 1 : 0;
+                        ragdollObject.ragdollJointWire[static_cast<std::size_t>(bodyIndex)] = jointWire ? 1 : 0;
+                        ragdollObject.ragdollAuthoring.frozenJoints[static_cast<std::size_t>(bodyIndex)] = jointFrozen ? 1 : 0;
+                        if (jointOpen) ImGui::TreePop();
+                        ImGui::PopID();
+                      }
+                    } else {
+                      ImGui::TextDisabled("Ragdoll authoring not loaded.");
+                    }
+                    ImGui::TreePop();
+                  }
+                }
+
+                if (!entity.ai.empty()) {
+                  ImGui::TextDisabled("AI: %s", entity.ai.c_str());
+                }
+                ImGui::TreePop();
+              }
+              ImGui::PopID();
+            }
+            ImGui::TreePop();
+          }
+          if (ImGui::TreeNodeEx("Scene objects", ImGuiTreeNodeFlags_OpenOnArrow | ImGuiTreeNodeFlags_DefaultOpen)) {
           // Meshes & Groups
           if (ImGui::TreeNodeEx("Meshes", ImGuiTreeNodeFlags_DefaultOpen)) {
             ImGui::PushID("MeshesBulkControls");
@@ -11338,6 +11606,8 @@ void EditorApp::OnDraw() {
             }
             ImGui::TreePop();
           }
+          ImGui::TreePop(); // Scene objects
+          }
           ImGui::TreePop();
         }
       }
@@ -11611,6 +11881,11 @@ void EditorApp::OnDraw() {
             ImGui::Checkbox("Frozen", &entity.frozen);
             ImGui::Checkbox("Wireframe", &entity.showWire);
             ImGui::Checkbox("View Orientation", &entity.showOrientation);
+            if (entity.type == PhysicsSceneEntityType::Player) {
+              ImGui::SeparatorText("Bot Spacing");
+              ImGui::DragFloat("Radius##playerBotRadius", &entity.playerBotRadius, 0.05f, 0.0f, 128.0f, "%.2f");
+              ImGui::TextDisabled("Authored bots target the closest point on this radius around the player.");
+            }
             const bool showJoltSettings = entity.type == PhysicsSceneEntityType::Player ||
                 entity.characterRuntimePath == static_cast<int>(CharacterRuntimePath::Jolt);
             if (showJoltSettings &&

@@ -1,4 +1,4 @@
-﻿<?xml version="1.0" encoding="utf-8"?>
+<?xml version="1.0" encoding="utf-8"?>
 <Project ToolsVersion="4.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
   <ItemGroup>
     <Filter Include="Source Files">
@@ -45,7 +45,7 @@
     <ClCompile Include="..\DayScene\Quake3Mock.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
-    <ClCompile Include="..\DayScene\Quake3Jolt.cpp">
+    <ClCompile Include="..\DayScene\SceneTemplate.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
   </ItemGroup>
@@ -77,7 +77,7 @@
     <ClInclude Include="..\DayScene\Quake3Mock.h">
       <Filter>Header Files</Filter>
     </ClInclude>
-    <ClInclude Include="..\DayScene\Quake3Jolt.h">
+    <ClInclude Include="..\DayScene\SceneTemplate.h">
       <Filter>Header Files</Filter>
     </ClInclude>
     <ClInclude Include="..\DayScene\SandboxRenderGraphUtils.h">

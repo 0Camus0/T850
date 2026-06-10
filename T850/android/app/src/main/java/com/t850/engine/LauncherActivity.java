@@ -132,7 +132,7 @@ public final class LauncherActivity extends Activity {
         scenes.add(new Option("Day Scene", 1));
         scenes.add(new Option("Quake3 Mock", 2));
         scenes.add(new Option("Ragdoll Editor", 3));
-        scenes.add(new Option("Quake3 Jolt", 4));
+        scenes.add(new Option("Scene Template", 4));
 
         sandboxContentOptions.add(new Option("Scene file (.t8scene)", CONTENT_SCENE_FILE));
         sandboxContentOptions.add(new Option("Model file", CONTENT_MODEL));

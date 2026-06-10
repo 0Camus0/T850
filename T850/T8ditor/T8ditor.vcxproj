@@ -387,7 +387,7 @@ call "$(SolutionDir)scripts\CopyFirstExisting.cmd" "$(OutDir)" "$(T8VcpkgDynamic
     <ClCompile Include="EditorImGui.cpp" />
     <ClCompile Include="..\DayScene\RagdollEditor.cpp" />
     <ClCompile Include="..\DayScene\Quake3Mock.cpp" />
-    <ClCompile Include="..\DayScene\Quake3Jolt.cpp" />
+    <ClCompile Include="..\DayScene\SceneTemplate.cpp" />
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="EditorApp.h" />
@@ -403,7 +403,7 @@ call "$(SolutionDir)scripts\CopyFirstExisting.cmd" "$(OutDir)" "$(T8VcpkgDynamic
     <ClInclude Include="EditorImGui.h" />
     <ClInclude Include="..\DayScene\RagdollEditor.h" />
     <ClInclude Include="..\DayScene\Quake3Mock.h" />
-    <ClInclude Include="..\DayScene\Quake3Jolt.h" />
+    <ClInclude Include="..\DayScene\SceneTemplate.h" />
     <ClInclude Include="..\DayScene\SandboxRenderGraphUtils.h" />
   </ItemGroup>
   <ItemGroup>

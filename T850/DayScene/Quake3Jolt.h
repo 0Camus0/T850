@@ -229,8 +229,14 @@ public:
   std::string m_primaryRagdollResourcePath;
   std::vector<std::string> m_sceneMeshPaths;
   std::vector<std::string> m_sceneRagdollPaths;
+  std::vector<float> m_sceneObjectYawDegrees;
   std::vector<float> m_sceneNavAgentFrontYawOffsets;
   std::vector<float> m_sceneNavAgentFaceYawSigns;
+  std::vector<std::string> m_sceneNavAgentTargetModes;
+  std::vector<float> m_sceneNavAgentFollowDistances;
+  std::vector<float> m_sceneNavAgentSideOffsets;
+  std::vector<float> m_sceneNavAgentFormationDepthSteps;
+  std::vector<int> m_sceneNavAgentSlots;
   std::vector<t850::scene::SceneObjectPhysicsDesc> m_scenePhysicsAuthoring;
   std::vector<t850::scene::ScenePhysicsEntityDesc> m_scenePhysicsEntities;
   std::vector<t850::scene::SceneObjectNavigationDesc> m_sceneNavigationAuthoring;
@@ -263,6 +269,8 @@ public:
     XVECTOR3 lastPathEnd = XVECTOR3(0.0f, 0.0f, 0.0f, 1.0f);
     XVECTOR3 lastPathFirst = XVECTOR3(0.0f, 0.0f, 0.0f, 1.0f);
     XVECTOR3 navToOriginOffset = XVECTOR3(0.0f, 0.0f, 0.0f, 0.0f);
+    XVECTOR3 authoredCharacterPosition = XVECTOR3(0.0f, 0.0f, 0.0f, 1.0f);
+    XVECTOR3 authoredCharacterRotationDeg = XVECTOR3(0.0f, 0.0f, 0.0f, 0.0f);
     t850::KinematicCharacterSettings characterSettings;
     t850::KinematicCharacterController physicsController;
     XVECTOR3 physicsTraversalStart = XVECTOR3(0.0f, 0.0f, 0.0f, 1.0f);
@@ -281,6 +289,11 @@ public:
     float physicsStuckTimeSec = 0.0f;
     float frontYawOffsetDeg = 0.0f;
     float faceYawSign = 1.0f;
+    float visualYawDeg = 0.0f;
+    int behaviorMode = 2; // 0=furthest, 1=random, 2=follow player
+    float followDistance = 0.0f;
+    float sideOffset = 0.0f;
+    float formationDepthStep = 0.0f;
     int characterRuntimePath = 0; // 0=kinematic navmesh path, 1=Jolt collision path
     t850::navigation::NavTraversalType physicsTraversalType = t850::navigation::NavTraversalType::Walk;
     bool returning = false;

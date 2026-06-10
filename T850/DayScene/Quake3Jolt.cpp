@@ -259,62 +259,113 @@ namespace {
     return position;
   }
 
+  float HorizontalYawDeg(XVECTOR3 direction, const XVECTOR3& fallback = XVECTOR3(0.0f, 0.0f, 1.0f, 0.0f)) {
+    direction.y = 0.0f;
+    direction.w = 0.0f;
+    if (direction.Length() <= 0.0001f) {
+      direction = fallback;
+      direction.y = 0.0f;
+      direction.w = 0.0f;
+    }
+    if (direction.Length() <= 0.0001f) {
+      direction = XVECTOR3(0.0f, 0.0f, 1.0f, 0.0f);
+    }
+    direction.Normalize();
+    return Rad2Deg(std::atan2(direction.x, direction.z));
+  }
+
+  float NavTestAgentFacingYawDeg(const XVECTOR3& agentPosition,
+                                 const XVECTOR3& targetPosition,
+                                 float yawOffsetDegrees,
+                                 float yawSign) {
+    const float dx = targetPosition.x - agentPosition.x;
+    const float dz = targetPosition.z - agentPosition.z;
+    return Rad2Deg(std::atan2(dx, dz)) * (yawSign < 0.0f ? -1.0f : 1.0f) + yawOffsetDegrees;
+  }
+
   bool RotateNavTestAgentToFace(PrimitiveInst& instance,
                                 const XVECTOR3& agentPosition,
                                 const XVECTOR3& targetPosition,
                                 float yawOffsetDegrees,
-                                float yawSign) {
+                                float yawSign,
+                                float* outYawDegrees = nullptr) {
     const float dx = targetPosition.x - agentPosition.x;
     const float dz = targetPosition.z - agentPosition.z;
     if (dx * dx + dz * dz <= 0.0001f) {
       return false;
     }
 
-    const float yawDegrees = Rad2Deg(std::atan2(dx, dz)) * (yawSign < 0.0f ? -1.0f : 1.0f) + yawOffsetDegrees;
+    const float yawDegrees = NavTestAgentFacingYawDeg(agentPosition, targetPosition, yawOffsetDegrees, yawSign);
     instance.RotateYAbsolute(yawDegrees);
+    if (outYawDegrees) {
+      *outYawDegrees = yawDegrees;
+    }
     return true;
   }
 
-  XVECTOR3 NavTestFollowSlotTargetAt(const Camera& camera, XVECTOR3 anchor, int slotIndex) {
-    static constexpr float kBackSpacing = 2.0f;
-    static constexpr float kSideSpacing = 1.5f;
+  int NavAgentBehaviorModeFromScene(const std::string& mode) {
+    if (mode == "random") return kNavTestModeRandom;
+    if (mode == "furthest") return kNavTestModeFurthest;
+    return kNavTestModeFollowPlayer;
+  }
+
+  bool NavAgentUsesFormationTarget(const std::string& mode) {
+    return mode == "formation";
+  }
+
+  XVECTOR3 NavTestFollowSlotTargetAt(const Camera& camera,
+                                     XVECTOR3 anchor,
+                                     int slotIndex,
+                                     float followDistance,
+                                     float sideOffset,
+                                     float formationDepthStep) {
     const XVECTOR3 forward = HorizontalOrFallback(camera.Look, XVECTOR3(0.0f, 0.0f, 1.0f, 0.0f));
     const XVECTOR3 right = HorizontalOrFallback(camera.Right, XVECTOR3(1.0f, 0.0f, 0.0f, 0.0f));
 
     anchor.w = 1.0f;
     XVECTOR3 target = anchor;
+    if (slotIndex < 0) {
+      return target;
+    }
     if (slotIndex == 0) {
-      target -= forward * kBackSpacing;
+      target -= forward * followDistance;
       return target;
     }
 
     const int pairIndex = (slotIndex + 1) / 2;
     const float sideSign = (slotIndex % 2) ? 1.0f : -1.0f;
-    target -= forward * (kBackSpacing + static_cast<float>(pairIndex) * 1.25f);
-    target += right * (sideSign * kSideSpacing * static_cast<float>(pairIndex));
+    target -= forward * (followDistance + static_cast<float>(pairIndex) * formationDepthStep);
+    target += right * (sideSign * sideOffset * static_cast<float>(pairIndex));
     return target;
   }
 
-  XVECTOR3 NavTestFollowSlotTarget(const Camera& camera, int slotIndex) {
-    return NavTestFollowSlotTargetAt(camera, camera.Eye, slotIndex);
+  XVECTOR3 NavTestFollowSlotTarget(const Camera& camera,
+                                   int slotIndex,
+                                   float followDistance,
+                                   float sideOffset,
+                                   float formationDepthStep) {
+    return NavTestFollowSlotTargetAt(camera, camera.Eye, slotIndex, followDistance, sideOffset, formationDepthStep);
   }
 
   bool ResolveNavTestFollowTarget(const t850::navigation::NavMesh& navMesh,
                                   const Camera& camera,
                                   int slotIndex,
+                                  float followDistance,
+                                  float sideOffset,
+                                  float formationDepthStep,
                                   XVECTOR3& desiredTarget,
                                   XVECTOR3& projectedTarget,
                                   std::string* error) {
     XVECTOR3 playerNavPoint;
     std::string projectionError;
     if (!navMesh.ProjectPoint(camera.Eye, playerNavPoint, NavTestFollowProjectionExtents(), &projectionError)) {
-      desiredTarget = NavTestFollowSlotTarget(camera, slotIndex);
+      desiredTarget = NavTestFollowSlotTarget(camera, slotIndex, followDistance, sideOffset, formationDepthStep);
       projectedTarget = desiredTarget;
       if (error) *error = "player projection failed: " + projectionError;
       return false;
     }
 
-    desiredTarget = NavTestFollowSlotTargetAt(camera, playerNavPoint, slotIndex);
+    desiredTarget = NavTestFollowSlotTargetAt(camera, playerNavPoint, slotIndex, followDistance, sideOffset, formationDepthStep);
     if (navMesh.ProjectPoint(desiredTarget, projectedTarget, NavTestFollowProjectionExtents(), &projectionError)) {
       return true;
     }
@@ -3002,8 +3053,14 @@ void Quake3Jolt::InitVars() {
   m_sceneObjectNames.clear();
   m_sceneMeshPaths.clear();
   m_sceneRagdollPaths.clear();
+  m_sceneObjectYawDegrees.clear();
   m_sceneNavAgentFrontYawOffsets.clear();
   m_sceneNavAgentFaceYawSigns.clear();
+  m_sceneNavAgentTargetModes.clear();
+  m_sceneNavAgentFollowDistances.clear();
+  m_sceneNavAgentSideOffsets.clear();
+  m_sceneNavAgentFormationDepthSteps.clear();
+  m_sceneNavAgentSlots.clear();
   m_sceneRagdolls.clear();
   m_scenePhysicsEntities.clear();
   m_hasAuthoredNavMesh = false;
@@ -3551,8 +3608,14 @@ bool Quake3Jolt::LoadEditorSceneAssets(const std::string& scenePath) {
   m_sceneObjectNames.clear();
   m_sceneMeshPaths.clear();
   m_sceneRagdollPaths.clear();
+  m_sceneObjectYawDegrees.clear();
   m_sceneNavAgentFrontYawOffsets.clear();
   m_sceneNavAgentFaceYawSigns.clear();
+  m_sceneNavAgentTargetModes.clear();
+  m_sceneNavAgentFollowDistances.clear();
+  m_sceneNavAgentSideOffsets.clear();
+  m_sceneNavAgentFormationDepthSteps.clear();
+  m_sceneNavAgentSlots.clear();
   m_sceneRagdolls.clear();
   m_scenePhysicsAuthoring.clear();
   m_scenePhysicsEntities = scene.physics_entities;
@@ -3663,6 +3726,7 @@ bool Quake3Jolt::LoadEditorSceneAssets(const std::string& scenePath) {
     m_sceneMeshPaths.push_back(meshPath);
     m_sceneObjectNames.push_back(object.name);
     m_sceneRagdollPaths.push_back(ragdollPath);
+    m_sceneObjectYawDegrees.push_back(object.rotation.y);
     m_scenePhysicsAuthoring.push_back(physicsMeta);
     m_sceneNavigationAuthoring.push_back(navigationMeta);
     m_sceneRagdollAuthoring.push_back(ragdollMeta);
@@ -3670,6 +3734,11 @@ bool Quake3Jolt::LoadEditorSceneAssets(const std::string& scenePath) {
     m_sceneNavAgentFrontYawOffsets.push_back(navAgentFrontYawOffset);
     const float navAgentFaceYawSign = object.nav_agent_face_yaw_sign.value_or(1.0f) < 0.0f ? -1.0f : 1.0f;
     m_sceneNavAgentFaceYawSigns.push_back(navAgentFaceYawSign);
+    m_sceneNavAgentTargetModes.push_back(object.nav_agent_target_mode.empty() ? "direct" : object.nav_agent_target_mode);
+    m_sceneNavAgentFollowDistances.push_back(object.nav_agent_follow_distance);
+    m_sceneNavAgentSideOffsets.push_back(object.nav_agent_side_offset);
+    m_sceneNavAgentFormationDepthSteps.push_back(object.nav_agent_formation_depth_step);
+    m_sceneNavAgentSlots.push_back(object.nav_agent_slot);
     loadedObjectSlots.emplace_back(object.name, m_meshCount);
     T8_LOG_INFO("[Quake3Jolt] Loaded scene object '%s' mesh='%s' ragdoll='%s' slot=%d navFrontYawOffset=%.1f navFaceYawSign=%.1f",
                 object.name.c_str(), meshPath.c_str(), ragdollPath.c_str(), m_meshCount,
@@ -3958,26 +4027,69 @@ void Quake3Jolt::InitializeNavTestAgents() {
 
     NavTestAgentRuntime agent;
     agent.meshIndex = meshIndex;
-    agent.followSlot = followSlot++;
     agent.characterSettings = t850::MakeQuake3CharacterSettings();
     if (authoredCharacter) {
       agent.characterSettings = CharacterSettingsFromPhysicsEntity(*authoredCharacter);
       agent.characterRuntimePath = CharacterRuntimePathFromPhysicsEntity(*authoredCharacter);
+      agent.authoredCharacterPosition = XVECTOR3(
+          authoredCharacter->position.x,
+          authoredCharacter->position.y,
+          authoredCharacter->position.z,
+          1.0f);
+      agent.authoredCharacterRotationDeg = XVECTOR3(
+          authoredCharacter->rotation.x,
+          authoredCharacter->rotation.y,
+          authoredCharacter->rotation.z,
+          0.0f);
       agent.hasAuthoredCharacter = true;
       ++authoredCharacterCount;
-      T8_LOG_INFO("[NavigationTest] Mesh %d uses authored character '%s' source='%s' path=%s implementation=%s",
+      const float meshYaw = meshIndex < static_cast<int>(m_sceneObjectYawDegrees.size())
+          ? m_sceneObjectYawDegrees[static_cast<std::size_t>(meshIndex)]
+          : 0.0f;
+      T8_LOG_INFO("[NavigationTest] Mesh %d uses authored character '%s' source='%s' path=%s implementation=%s pos=(%.2f,%.2f,%.2f) rot=(%.2f,%.2f,%.2f) meshYaw=%.2f",
                   meshIndex,
                   authoredCharacter->name.c_str(),
                   authoredCharacter->source_object.c_str(),
                   authoredCharacter->character.runtime_path.c_str(),
-                  authoredCharacter->character.implementation.c_str());
+                  authoredCharacter->character.implementation.c_str(),
+                  authoredCharacter->position.x,
+                  authoredCharacter->position.y,
+                  authoredCharacter->position.z,
+                  authoredCharacter->rotation.x,
+                  authoredCharacter->rotation.y,
+                  authoredCharacter->rotation.z,
+                  meshYaw);
     }
     agent.physicsController.SetSettings(agent.characterSettings);
     if (meshIndex < static_cast<int>(m_sceneNavAgentFrontYawOffsets.size())) {
       agent.frontYawOffsetDeg = m_sceneNavAgentFrontYawOffsets[static_cast<std::size_t>(meshIndex)];
     }
+    if (authoredCharacter && meshIndex < static_cast<int>(m_sceneObjectYawDegrees.size())) {
+      agent.frontYawOffsetDeg += m_sceneObjectYawDegrees[static_cast<std::size_t>(meshIndex)];
+    }
     if (meshIndex < static_cast<int>(m_sceneNavAgentFaceYawSigns.size())) {
       agent.faceYawSign = m_sceneNavAgentFaceYawSigns[static_cast<std::size_t>(meshIndex)];
+    }
+    std::string targetMode = "direct";
+    if (meshIndex < static_cast<int>(m_sceneNavAgentTargetModes.size()) &&
+        !m_sceneNavAgentTargetModes[static_cast<std::size_t>(meshIndex)].empty()) {
+      targetMode = m_sceneNavAgentTargetModes[static_cast<std::size_t>(meshIndex)];
+    }
+    agent.behaviorMode = NavAgentBehaviorModeFromScene(targetMode);
+    agent.followSlot = NavAgentUsesFormationTarget(targetMode)
+        ? (meshIndex < static_cast<int>(m_sceneNavAgentSlots.size()) &&
+           m_sceneNavAgentSlots[static_cast<std::size_t>(meshIndex)] >= 0
+              ? m_sceneNavAgentSlots[static_cast<std::size_t>(meshIndex)]
+              : followSlot++)
+        : -1;
+    if (meshIndex < static_cast<int>(m_sceneNavAgentFollowDistances.size())) {
+      agent.followDistance = (std::max)(0.0f, m_sceneNavAgentFollowDistances[static_cast<std::size_t>(meshIndex)]);
+    }
+    if (meshIndex < static_cast<int>(m_sceneNavAgentSideOffsets.size())) {
+      agent.sideOffset = m_sceneNavAgentSideOffsets[static_cast<std::size_t>(meshIndex)];
+    }
+    if (meshIndex < static_cast<int>(m_sceneNavAgentFormationDepthSteps.size())) {
+      agent.formationDepthStep = m_sceneNavAgentFormationDepthSteps[static_cast<std::size_t>(meshIndex)];
     }
     const XVECTOR3 visualPosition(instance.Final.m41, instance.Final.m42, instance.Final.m43, 1.0f);
     std::string projectionError;
@@ -3995,13 +4107,16 @@ void Quake3Jolt::InitializeNavTestAgents() {
     agent.visualOffset.w = 0.0f;
     agent.navToOriginOffset = agent.visualOffset;
     agent.physicsController.SetPosition(Q3CenterFromGroundPoint(agent.navPosition, agent.characterSettings));
-    if (m_navTestMode == kNavTestModeFollowPlayer) {
+    if (agent.behaviorMode == kNavTestModeFollowPlayer) {
       if (!ResolveNavTestFollowTarget(m_navMesh, Cam, agent.followSlot,
+                                      agent.followDistance,
+                                      agent.sideOffset,
+                                      agent.formationDepthStep,
                                       agent.desiredTarget, agent.target, &agent.lastPathError)) {
         agent.target = agent.navPosition;
         agent.repathCooldownSec = kNavTestFailedPathRetrySec;
       }
-    } else if (m_navTestMode == kNavTestModeRandom) {
+    } else if (agent.behaviorMode == kNavTestModeRandom) {
       agent.target = RandomNavTestPoint(m_navTestCandidatePoints,
                                         agent.home,
                                         m_navTestRandomState,
@@ -4012,7 +4127,7 @@ void Quake3Jolt::InitializeNavTestAgents() {
       agent.desiredTarget = agent.target;
     }
     agent.targetInitialized = true;
-    agent.active = DistanceSquared(agent.target, agent.home) > 0.25f || m_navTestMode == kNavTestModeFollowPlayer;
+    agent.active = DistanceSquared(agent.target, agent.home) > 0.25f || agent.behaviorMode == kNavTestModeFollowPlayer;
     agent.needsPath = agent.active && agent.repathCooldownSec <= 0.0f;
     m_navTestAgents.push_back(std::move(agent));
   }
@@ -4044,7 +4159,7 @@ void Quake3Jolt::PlanNavTestAgentPaths() {
 
     t850::navigation::NavPathRequest request;
     request.start = agent.navPosition;
-    request.end = (m_navTestMode == kNavTestModeFurthest && agent.returning) ? agent.home : agent.target;
+    request.end = (agent.behaviorMode == kNavTestModeFurthest && agent.returning) ? agent.home : agent.target;
     request.queryExtents = NavTestAgentProjectionExtents();
     agent.lastPathStart = request.start;
     agent.lastPathEnd = request.end;
@@ -4091,16 +4206,19 @@ void Quake3Jolt::PlanNavTestAgentPaths() {
       agent.path.clear();
       agent.pathSegmentTypes.clear();
       agent.waypointIndex = 0;
-      if (m_navTestMode == kNavTestModeRandom) {
+      if (agent.behaviorMode == kNavTestModeRandom) {
         agent.target = RandomNavTestPoint(m_navTestCandidatePoints,
                                           agent.navPosition,
                                           m_navTestRandomState,
                                           static_cast<uint32_t>(agent.meshIndex + 43));
         agent.desiredTarget = agent.target;
-      } else if (m_navTestMode == kNavTestModeFollowPlayer) {
+      } else if (agent.behaviorMode == kNavTestModeFollowPlayer) {
         XVECTOR3 desiredTarget;
         XVECTOR3 projectedTarget;
         if (ResolveNavTestFollowTarget(m_navMesh, Cam, agent.followSlot,
+                                       agent.followDistance,
+                                       agent.sideOffset,
+                                       agent.formationDepthStep,
                                        desiredTarget, projectedTarget, nullptr)) {
           agent.desiredTarget = desiredTarget;
           agent.target = projectedTarget;
@@ -4219,11 +4337,15 @@ void Quake3Jolt::UpdateNavTestAgents(float dtSecs) {
       if (agent.physicsTraversalActive) {
         continue;
       }
-      if (m_navTestMode == kNavTestModeFollowPlayer) {
+      if (agent.behaviorMode == kNavTestModeFollowPlayer) {
         XVECTOR3 desiredTarget;
         XVECTOR3 projectedTarget;
         std::string targetError;
-        if (ResolveNavTestFollowTarget(m_navMesh, Cam, agent.followSlot, desiredTarget, projectedTarget, &targetError)) {
+        if (ResolveNavTestFollowTarget(m_navMesh, Cam, agent.followSlot,
+                                       agent.followDistance,
+                                       agent.sideOffset,
+                                       agent.formationDepthStep,
+                                       desiredTarget, projectedTarget, &targetError)) {
           agent.desiredTarget = desiredTarget;
           if ((!agent.targetInitialized || agent.path.empty() || DistanceSquared(agent.target, projectedTarget) > 1.0f) &&
               agent.repathCooldownSec <= 0.0f) {
@@ -4239,7 +4361,7 @@ void Quake3Jolt::UpdateNavTestAgents(float dtSecs) {
           agent.repathCooldownSec = kNavTestFailedPathRetrySec;
           agent.needsPath = false;
         }
-      } else if (m_navTestMode == kNavTestModeRandom) {
+      } else if (agent.behaviorMode == kNavTestModeRandom) {
         if (!agent.targetInitialized || (agent.path.empty() && !agent.needsPath)) {
           agent.target = RandomNavTestPoint(m_navTestCandidatePoints,
                                             agent.navPosition,
@@ -4331,12 +4453,12 @@ void Quake3Jolt::UpdateNavTestAgents(float dtSecs) {
     if (agent.waypointIndex < static_cast<int>(agent.path.size())) {
       return resolvedCurrent;
     }
-    if (m_navTestMode == kNavTestModeFurthest && agent.returning) {
+    if (agent.behaviorMode == kNavTestModeFurthest && agent.returning) {
       resolvedCurrent = agent.home;
       agent.returning = false;
-    } else if (m_navTestMode == kNavTestModeFurthest) {
+    } else if (agent.behaviorMode == kNavTestModeFurthest) {
       agent.returning = true;
-    } else if (m_navTestMode == kNavTestModeRandom) {
+    } else if (agent.behaviorMode == kNavTestModeRandom) {
       agent.target = RandomNavTestPoint(m_navTestCandidatePoints,
                                         resolvedCurrent,
                                         m_navTestRandomState,
@@ -4347,6 +4469,9 @@ void Quake3Jolt::UpdateNavTestAgents(float dtSecs) {
       XVECTOR3 desiredTarget;
       XVECTOR3 projectedTarget;
       if (ResolveNavTestFollowTarget(m_navMesh, Cam, agent.followSlot,
+                                     agent.followDistance,
+                                     agent.sideOffset,
+                                     agent.formationDepthStep,
                                      desiredTarget, projectedTarget, nullptr)) {
         agent.desiredTarget = desiredTarget;
         agent.target = projectedTarget;
@@ -4800,7 +4925,7 @@ void Quake3Jolt::UpdateNavTestAgents(float dtSecs) {
 
       const XVECTOR3 visualPosition = NavTestVisualPosition(agent.navPosition, agent.visualOffset);
       instance.TranslateAbsolute(visualPosition.x, visualPosition.y, visualPosition.z);
-      RotateNavTestAgentToFace(instance, visualPosition, Cam.Eye, agent.frontYawOffsetDeg, agent.faceYawSign);
+      RotateNavTestAgentToFace(instance, visualPosition, Cam.Eye, agent.frontYawOffsetDeg, agent.faceYawSign, &agent.visualYawDeg);
       instance.Update();
     }
   }
@@ -4826,6 +4951,46 @@ void Quake3Jolt::UpdateNavTestAgents(float dtSecs) {
             ? agent.path[static_cast<std::size_t>(agent.waypointIndex)]
             : agent.lastPathFirst;
         const XVECTOR3 nextWorld = NavTestVisualPosition(nextNav, agent.visualOffset);
+        const float playerYawDeg = HorizontalYawDeg(Cam.Look);
+        const float playerRightYawDeg = HorizontalYawDeg(Cam.Right, XVECTOR3(1.0f, 0.0f, 0.0f, 0.0f));
+        const float toPlayerYawDeg = HorizontalYawDeg(Cam.Eye - position);
+        const float toDesiredYawDeg = HorizontalYawDeg(agent.desiredTarget - position);
+        const float desiredBehindDistance = Dot3(agent.desiredTarget - Cam.Eye, HorizontalOrFallback(Cam.Look, XVECTOR3(0.0f, 0.0f, 1.0f, 0.0f)));
+        const float targetBehindDistance = Dot3(agent.target - Cam.Eye, HorizontalOrFallback(Cam.Look, XVECTOR3(0.0f, 0.0f, 1.0f, 0.0f)));
+        const float expectedFaceYawDeg = NavTestAgentFacingYawDeg(position, Cam.Eye, agent.frontYawOffsetDeg, agent.faceYawSign);
+        const float meshAuthoredYawDeg = agent.meshIndex >= 0 && agent.meshIndex < static_cast<int>(m_sceneObjectYawDegrees.size())
+            ? m_sceneObjectYawDegrees[static_cast<std::size_t>(agent.meshIndex)]
+            : 0.0f;
+        const char* meshName = (agent.meshIndex >= 0 && agent.meshIndex < static_cast<int>(m_sceneObjectNames.size()))
+            ? m_sceneObjectNames[static_cast<std::size_t>(agent.meshIndex)].c_str()
+            : "";
+        T8_LOG_TRACE("[DoomOrientationTrace] mesh=%d name='%s' slot=%d playerPos=(%.2f,%.2f,%.2f) playerLook=(%.3f,%.3f,%.3f) playerYaw=%.2f playerRightYaw=%.2f agentVisual=(%.2f,%.2f,%.2f) agentNav=(%.2f,%.2f,%.2f) meshAuthoredYaw=%.2f authoredCapsulePos=(%.2f,%.2f,%.2f) authoredCapsuleRotDeg=(%.2f,%.2f,%.2f) frontYawOffset=%.2f faceYawSign=%.1f meshVisualYaw=%.2f expectedFaceYaw=%.2f toPlayerYaw=%.2f toDesiredYaw=%.2f desired=(%.2f,%.2f,%.2f) target=(%.2f,%.2f,%.2f) desiredDotPlayerForward=%.2f targetDotPlayerForward=%.2f pathCount=%zu wp=%d physicsPath=%d traversal=%d",
+                     agent.meshIndex,
+                     meshName,
+                     agent.followSlot,
+                     Cam.Eye.x, Cam.Eye.y, Cam.Eye.z,
+                     Cam.Look.x, Cam.Look.y, Cam.Look.z,
+                     playerYawDeg,
+                     playerRightYawDeg,
+                     position.x, position.y, position.z,
+                     agent.navPosition.x, agent.navPosition.y, agent.navPosition.z,
+                     meshAuthoredYawDeg,
+                     agent.authoredCharacterPosition.x, agent.authoredCharacterPosition.y, agent.authoredCharacterPosition.z,
+                     agent.authoredCharacterRotationDeg.x, agent.authoredCharacterRotationDeg.y, agent.authoredCharacterRotationDeg.z,
+                     agent.frontYawOffsetDeg,
+                     agent.faceYawSign,
+                     agent.visualYawDeg,
+                     expectedFaceYawDeg,
+                     toPlayerYawDeg,
+                     toDesiredYawDeg,
+                     agent.desiredTarget.x, agent.desiredTarget.y, agent.desiredTarget.z,
+                     agent.target.x, agent.target.y, agent.target.z,
+                     desiredBehindDistance,
+                     targetBehindDistance,
+                     agent.path.size(),
+                     agent.waypointIndex,
+                     agent.characterRuntimePath,
+                     static_cast<int>(agent.physicsTraversalType));
 #ifdef NAV_MESH_TRACE_LOGS
         T8_LOG_INFO("[NavigationTestPos] mesh=%d slot=%d active=%d needsPath=%d cooldown=%.3f pathOk=%d pathCount=%zu wp=%d player=(%.2f,%.2f,%.2f) nav=(%.2f,%.2f,%.2f) visual=(%.2f,%.2f,%.2f) dyPlayer=%.2f desired=(%.2f,%.2f,%.2f) target=(%.2f,%.2f,%.2f) lastStart=(%.2f,%.2f,%.2f) lastEnd=(%.2f,%.2f,%.2f) pathFirst=(%.2f,%.2f,%.2f) nextNav=(%.2f,%.2f,%.2f) nextWorld=(%.2f,%.2f,%.2f) offset=(%.2f,%.2f,%.2f) err='%s'",
                     agent.meshIndex,
@@ -5170,8 +5335,14 @@ void Quake3Jolt::DestroyAssets() {
   m_sceneObjectNames.clear();
   m_sceneMeshPaths.clear();
   m_sceneRagdollPaths.clear();
+  m_sceneObjectYawDegrees.clear();
   m_sceneNavAgentFrontYawOffsets.clear();
   m_sceneNavAgentFaceYawSigns.clear();
+  m_sceneNavAgentTargetModes.clear();
+  m_sceneNavAgentFollowDistances.clear();
+  m_sceneNavAgentSideOffsets.clear();
+  m_sceneNavAgentFormationDepthSteps.clear();
+  m_sceneNavAgentSlots.clear();
   m_sceneRagdolls.clear();
   m_scenePhysicsEntities.clear();
   m_hasAuthoredPlayer = false;

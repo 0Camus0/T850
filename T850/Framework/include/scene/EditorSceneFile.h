@@ -50,8 +50,14 @@ struct SceneObjectDesc {
   std::optional<bool> mobile_visible;
   bool frozen = false;
   bool show_wire = false;
+  bool show_orientation = false;
   std::optional<float> nav_agent_front_yaw_offset_deg;
   std::optional<float> nav_agent_face_yaw_sign;
+  std::string nav_agent_target_mode = "direct";
+  float nav_agent_follow_distance = 0.0f;
+  float nav_agent_side_offset = 0.0f;
+  float nav_agent_formation_depth_step = 0.0f;
+  int nav_agent_slot = -1;
   std::optional<SceneObjectPhysicsDesc> physics;
   std::optional<SceneObjectNavigationDesc> navigation;
   std::optional<SceneObjectRagdollDesc> ragdoll_authoring;
@@ -200,6 +206,7 @@ struct ScenePhysicsEntityDesc {
   bool visible = true;
   bool frozen = false;
   bool show_wire = true;
+  bool show_orientation = false;
   std::string shape = "box";
   Vec3f half_extents = {16.0f, 32.0f, 16.0f};
   float radius = 16.0f;

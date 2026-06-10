@@ -209,6 +209,22 @@ namespace t850 {
                       1.0f);
     }
 
+    XVECTOR3 TransformPositionRowVector(const XVECTOR3& p, const XMATRIX44& m) {
+      return XVECTOR3(
+          p.x * m.m[0][0] + p.y * m.m[1][0] + p.z * m.m[2][0] + m.m[3][0],
+          p.x * m.m[0][1] + p.y * m.m[1][1] + p.z * m.m[2][1] + m.m[3][1],
+          p.x * m.m[0][2] + p.y * m.m[1][2] + p.z * m.m[2][2] + m.m[3][2],
+          1.0f);
+    }
+
+    int ClampBoneIndexForAABB(float value, int boneCount) {
+      if (boneCount <= 0 || !std::isfinite(value)) {
+        return -1;
+      }
+      const int index = static_cast<int>(value);
+      return index >= 0 && index < boneCount ? index : -1;
+    }
+
     std::string LowerName(const std::string& name) {
       std::string out;
       out.reserve(name.size());
@@ -754,6 +770,85 @@ namespace t850 {
       const XVECTOR3 tip = SkeletonJointPositionLH(bones[endpointBoneIndex]);
       WriteOctahedralBone(m_skelPositions, segment.vertexOffset, root, tip);
     }
+  }
+
+  bool RenderSkinnedMesh::GetCurrentPoseLocalAABB(RenderMesh::AABB& outBounds) const {
+    outBounds.Reset();
+    if (!m_hasSkin || !xFile || xFile->XMeshDataBase.empty()) {
+      return false;
+    }
+
+    int numBones = m_snapshotPoseActive
+        ? static_cast<int>(m_snapshotBoneMatrices.size())
+        : m_animController.GetNumBones();
+    numBones = (std::min)(numBones, kMaxBones);
+    const XMATRIX44* bones = m_snapshotPoseActive
+        ? m_snapshotBoneMatrices.data()
+        : m_animController.GetBoneMatrices();
+    if (numBones <= 0 || !bones) {
+      return false;
+    }
+
+    const xF::xMeshContainer* meshContainer = xFile->XMeshDataBase[0];
+    bool anyVertex = false;
+    const std::size_t geometryCount = (std::min)(meshContainer->Geometry.size(), xFile->MeshInfo.size());
+    for (std::size_t geometryIndex = 0; geometryIndex < geometryCount; ++geometryIndex) {
+      const xF::xMeshGeometry& sourceGeometry = meshContainer->Geometry[geometryIndex];
+      const xF::xFinalGeometry& finalGeometry = xFile->MeshInfo[geometryIndex];
+      const unsigned int stride = finalGeometry.VertexSize / sizeof(float);
+      if (stride < 3 || !finalGeometry.pData) {
+        continue;
+      }
+
+      const unsigned int vertexCount = (std::min)(static_cast<unsigned int>(finalGeometry.NumVertex),
+                                                 static_cast<unsigned int>(sourceGeometry.NumVertices));
+      for (unsigned int vertexIndex = 0; vertexIndex < vertexCount; ++vertexIndex) {
+        const float* vertex = &finalGeometry.pData[static_cast<std::size_t>(vertexIndex) * stride];
+        const XVECTOR3 bindPosition(vertex[0], vertex[1], vertex[2], 1.0f);
+        XVECTOR3 posedPosition = bindPosition;
+
+        if (vertexIndex < sourceGeometry.SkinWeights.size() &&
+            vertexIndex < sourceGeometry.SkinIndices.size()) {
+          const XVECTOR3& weights = sourceGeometry.SkinWeights[vertexIndex];
+          const XVECTOR3& indices = sourceGeometry.SkinIndices[vertexIndex];
+          const float weightValues[4] = { weights.x, weights.y, weights.z, weights.w };
+          const float indexValues[4] = { indices.x, indices.y, indices.z, indices.w };
+          XVECTOR3 blended(0.0f, 0.0f, 0.0f, 1.0f);
+          float totalWeight = 0.0f;
+          for (int influence = 0; influence < 4; ++influence) {
+            const float weight = weightValues[influence];
+            if (weight <= 0.0f || !std::isfinite(weight)) {
+              continue;
+            }
+            const int boneIndex = ClampBoneIndexForAABB(indexValues[influence], numBones);
+            if (boneIndex < 0) {
+              continue;
+            }
+            const XVECTOR3 bonePosition = TransformPositionRowVector(bindPosition, bones[boneIndex]);
+            blended.x += bonePosition.x * weight;
+            blended.y += bonePosition.y * weight;
+            blended.z += bonePosition.z * weight;
+            totalWeight += weight;
+          }
+          if (totalWeight > 0.000001f) {
+            if (totalWeight < 0.999f || totalWeight > 1.001f) {
+              blended.x /= totalWeight;
+              blended.y /= totalWeight;
+              blended.z /= totalWeight;
+            }
+            posedPosition = blended;
+          }
+        }
+
+        outBounds.Expand(posedPosition.x, posedPosition.y, posedPosition.z);
+        anyVertex = true;
+      }
+    }
+
+    return anyVertex &&
+           outBounds.min.x <= outBounds.max.x &&
+           outBounds.min.y <= outBounds.max.y &&
+           outBounds.min.z <= outBounds.max.z;
   }
 
   bool RenderSkinnedMesh::GetSkeletonLocalAABB(RenderMesh::AABB& outBounds) const {

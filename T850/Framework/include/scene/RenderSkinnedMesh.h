@@ -95,6 +95,7 @@ public:
   void SetWireframeSecondaryDepthTex(Texture* depthTex) { m_wireDepthTex2 = depthTex; }
   void SetWireframeViewport(int w, int h) { m_wireViewW = w; m_wireViewH = h; }
 
+  bool GetCurrentPoseLocalAABB(RenderMesh::AABB& outBounds) const;
   bool GetSkeletonLocalAABB(RenderMesh::AABB& outBounds) const;
 
 private:

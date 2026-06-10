@@ -146,6 +146,7 @@ namespace {
     bool visible = true;
     bool frozen = false;
     bool showWire = true;
+    bool showOrientation = false;
     XVECTOR3 position = XVECTOR3(0.0f, 64.0f, 0.0f, 1.0f);
     XVECTOR3 eulerRadians = XVECTOR3(0.0f, 0.0f, 0.0f, 0.0f);
     t850::PhysicsShapeType playerShape = t850::PhysicsShapeType::Box;
@@ -640,6 +641,14 @@ static t850::AABB RenderMeshAABBToPickingAABB(const t850::RenderMesh::AABB& boun
 static bool GetSceneObjectWorldAABB(SceneObject& object, t850::AABB& outBounds) {
   outBounds = t850::AABB{};
   if (object.primId >= 0 && object.litInst.pBase) {
+    if (auto* skinned = dynamic_cast<t850::RenderSkinnedMesh*>(object.litInst.pBase)) {
+      t850::RenderMesh::AABB currentPoseBounds;
+      if (skinned->GetCurrentPoseLocalAABB(currentPoseBounds) &&
+          IsRenderMeshBoundsValid(currentPoseBounds)) {
+        outBounds = RenderMeshAABBToPickingAABB(currentPoseBounds).Transformed(object.litInst.Final);
+        return outBounds.IsValid();
+      }
+    }
     if (auto* renderMesh = dynamic_cast<t850::RenderMesh*>(object.litInst.pBase)) {
       if (renderMesh->EnsureCullingMetadata()) {
         for (const t850::RenderMesh::MeshInfo& info : renderMesh->Info) {
@@ -1010,10 +1019,58 @@ static bool BuildPhysicsDebugBodyBounds(const t850::PhysicsDebugBody& debugBody,
   return outBounds.IsValid();
 }
 
+static bool GetPhysicsEntityPrimitiveWorldAABB(const PhysicsSceneEntity& entity,
+                                               t850::AABB& outBounds) {
+  outBounds = t850::AABB{};
+  if (!IsCharacterPhysicsEntity(entity)) {
+    return false;
+  }
+  if (entity.playerShape == t850::PhysicsShapeType::Capsule) {
+    const float radius = (std::max)(0.001f, entity.playerRadius);
+    const float halfHeight = (std::max)(0.001f, entity.playerHalfHeight);
+    t850::AABB local(
+        XVECTOR3(-radius, -halfHeight - radius, -radius, 1.0f),
+        XVECTOR3( radius,  halfHeight + radius,  radius, 1.0f));
+    outBounds = local.Transformed(MakePhysicsTransform(entity.position, entity.eulerRadians));
+    return outBounds.IsValid();
+  }
+  if (entity.playerShape == t850::PhysicsShapeType::Sphere) {
+    const float radius = (std::max)(0.001f, entity.playerRadius);
+    t850::AABB local(
+        XVECTOR3(-radius, -radius, -radius, 1.0f),
+        XVECTOR3( radius,  radius,  radius, 1.0f));
+    outBounds = local.Transformed(MakePhysicsTransform(entity.position, entity.eulerRadians));
+    return outBounds.IsValid();
+  }
+  if (entity.playerShape == t850::PhysicsShapeType::Cylinder) {
+    const float radius = (std::max)(0.001f, entity.playerRadius);
+    const float halfHeight = (std::max)(0.001f, entity.playerHalfHeight);
+    t850::AABB local(
+        XVECTOR3(-radius, -halfHeight, -radius, 1.0f),
+        XVECTOR3( radius,  halfHeight,  radius, 1.0f));
+    outBounds = local.Transformed(MakePhysicsTransform(entity.position, entity.eulerRadians));
+    return outBounds.IsValid();
+  }
+
+  const XVECTOR3 halfExtents(
+      (std::max)(0.001f, entity.playerHalfExtents.x),
+      (std::max)(0.001f, entity.playerHalfExtents.y),
+      (std::max)(0.001f, entity.playerHalfExtents.z),
+      0.0f);
+  t850::AABB local(
+      XVECTOR3(-halfExtents.x, -halfExtents.y, -halfExtents.z, 1.0f),
+      XVECTOR3( halfExtents.x,  halfExtents.y,  halfExtents.z, 1.0f));
+  outBounds = local.Transformed(MakePhysicsTransform(entity.position, entity.eulerRadians));
+  return outBounds.IsValid();
+}
+
 static bool GetPhysicsEntityWorldAABB(const PhysicsSceneEntity& entity,
                                       const t850::JoltPhysicsSystem& physics,
                                       t850::AABB& outBounds) {
   outBounds = t850::AABB{};
+  if (GetPhysicsEntityPrimitiveWorldAABB(entity, outBounds)) {
+    return true;
+  }
   if (IsCharacterPhysicsEntity(entity) && entity.visual && entity.visual->IsLoaded()) {
     outBounds = entity.visual->WorldAABB();
     return outBounds.IsValid();
@@ -1038,9 +1095,6 @@ static bool RaycastPhysicsEntity(const PhysicsSceneEntity& entity,
   if (!entity.visible || entity.frozen) {
     return false;
   }
-  if (IsCharacterPhysicsEntity(entity) && entity.visual && entity.visual->IsLoaded()) {
-    return entity.visual->RaycastSurface(ray, outT);
-  }
 
   t850::AABB bounds;
   if (!GetPhysicsEntityWorldAABB(entity, physics, bounds)) {
@@ -1054,7 +1108,13 @@ static bool RaycastPhysicsEntity(const PhysicsSceneEntity& entity,
       mouseX < sMinX || mouseX > sMaxX || mouseY < sMinY || mouseY > sMaxY) {
     return false;
   }
-  return t850::RayIntersectsAABB(ray, bounds, outT);
+  if (t850::RayIntersectsAABB(ray, bounds, outT)) {
+    return true;
+  }
+  if (IsCharacterPhysicsEntity(entity) && entity.visual && entity.visual->IsLoaded()) {
+    return entity.visual->RaycastSurface(ray, outT);
+  }
+  return false;
 }
 
 static int CreateOrSelectPlayerPhysicsEntity(t850::JoltPhysicsSystem& physics, const XVECTOR3& spawnPosition) {
@@ -1109,6 +1169,9 @@ static bool CreateCharacterPhysicsEntity(t850::JoltPhysicsSystem& physics,
   entity.eulerRadians = SceneObjectWorldEulerRadians(selected);
   ApplyDefaultPlayerSizeFromScene(entity);
   CopyCharacterAuthoringSettings(authoringTemplate, entity);
+  if (entity.characterRuntimePath == static_cast<int>(CharacterRuntimePath::Jolt)) {
+    FitCharacterToSceneObject(entity, selected);
+  }
   if (!RecreateCharacterPhysicsBody(physics, entity)) {
     return false;
   }
@@ -1172,6 +1235,61 @@ static int CountPhysicsEntitiesForSourceObject(int sourceObjectIndex) {
   return count;
 }
 
+static int FindJoltCharacterPhysicsEntityForSourceObject(int sourceObjectIndex) {
+  if (sourceObjectIndex < 0 || sourceObjectIndex >= static_cast<int>(g_objects.size())) {
+    return -1;
+  }
+  const std::string& sourceName = g_objects[static_cast<std::size_t>(sourceObjectIndex)].name;
+  for (int i = 0; i < static_cast<int>(g_physicsEntities.size()); ++i) {
+    const PhysicsSceneEntity& entity = g_physicsEntities[static_cast<std::size_t>(i)];
+    if (entity.type == PhysicsSceneEntityType::Character &&
+        entity.characterRuntimePath == static_cast<int>(CharacterRuntimePath::Jolt) &&
+        (entity.sourceObjectIndex == sourceObjectIndex || entity.sourceName == sourceName)) {
+      return i;
+    }
+  }
+  return -1;
+}
+
+static void SyncSceneObjectTransform(SceneObject& object) {
+  if (object.primId < 0) {
+    return;
+  }
+  const XVECTOR3& pos = object.wireframe.Position();
+  const XVECTOR3& eul = object.wireframe.EulerRadians();
+  const XVECTOR3& scl = object.wireframe.Scale();
+  object.litInst.TranslateAbsolute(pos.x, pos.y, pos.z);
+  object.litInst.RotateXAbsolute(eul.x * kRadToDeg);
+  object.litInst.RotateYAbsolute(eul.y * kRadToDeg);
+  object.litInst.RotateZAbsolute(eul.z * kRadToDeg);
+  object.litInst.ScaleAbsolute(scl.x, scl.y, scl.z);
+  object.litInst.Visible = object.visible;
+  object.litInst.Update();
+}
+
+static void DrawMeshCharacterOrientationMatchControls(t850::JoltPhysicsSystem& physics, int sourceObjectIndex) {
+  const int characterIndex = FindJoltCharacterPhysicsEntityForSourceObject(sourceObjectIndex);
+  const bool hasJoltCharacter = characterIndex >= 0;
+  ImGui::BeginDisabled(!hasJoltCharacter);
+  if (ImGui::Button("Match orientation to mesh")) {
+    SceneObject& object = g_objects[static_cast<std::size_t>(sourceObjectIndex)];
+    PhysicsSceneEntity& entity = g_physicsEntities[static_cast<std::size_t>(characterIndex)];
+    entity.eulerRadians = object.wireframe.EulerRadians();
+    RecreateCharacterPhysicsBody(physics, entity);
+  }
+  ImGui::SameLine();
+  if (ImGui::Button("Match orientation to Jolt")) {
+    SceneObject& object = g_objects[static_cast<std::size_t>(sourceObjectIndex)];
+    const PhysicsSceneEntity& entity = g_physicsEntities[static_cast<std::size_t>(characterIndex)];
+    object.wireframe.EulerRadians() = entity.eulerRadians;
+    SyncSceneObjectTransform(object);
+  }
+  ImGui::EndDisabled();
+  if (!hasJoltCharacter) {
+    ImGui::TextDisabled("Requires an authored Jolt character for this mesh.");
+  }
+}
+
 static std::string PhysicsBuildQualityToScene(t850::PhysicsMeshBuildQuality quality) {
   return quality == t850::PhysicsMeshBuildQuality::FavorBuildSpeed ? "build_speed" : "runtime_performance";
 }
@@ -1213,6 +1331,7 @@ static t850::scene::ScenePhysicsEntityDesc PhysicsEntityToScene(const PhysicsSce
   desc.visible = entity.visible;
   desc.frozen = entity.frozen;
   desc.show_wire = entity.showWire;
+  desc.show_orientation = entity.showOrientation;
   desc.shape = entity.playerShape == t850::PhysicsShapeType::Capsule ? "capsule" :
       (entity.playerShape == t850::PhysicsShapeType::Sphere ? "sphere" :
        (entity.playerShape == t850::PhysicsShapeType::Cylinder ? "cylinder" : "box"));
@@ -1347,6 +1466,7 @@ static bool RestorePhysicsEntityFromScene(t850::JoltPhysicsSystem& physics,
     entity.visible = desc.visible;
     entity.frozen = desc.frozen;
     entity.showWire = desc.show_wire;
+    entity.showOrientation = desc.show_orientation;
     entity.position = XVECTOR3(desc.position.x, desc.position.y, desc.position.z, 1.0f);
     entity.eulerRadians = XVECTOR3(desc.rotation.x * kDegToRad, desc.rotation.y * kDegToRad, desc.rotation.z * kDegToRad, 0.0f);
     entity.playerShape = desc.shape == "capsule" ? t850::PhysicsShapeType::Capsule :
@@ -1420,6 +1540,7 @@ static bool RestorePhysicsEntityFromScene(t850::JoltPhysicsSystem& physics,
   entity.visible = desc.visible;
   entity.frozen = desc.frozen;
   entity.showWire = desc.show_wire;
+  entity.showOrientation = desc.show_orientation;
   entity.cookSettings = PhysicsCookSettingsFromScene(desc.cook_settings);
   entity.friction = desc.friction;
   entity.restitution = desc.restitution;
@@ -3261,8 +3382,14 @@ SceneFile EditorApp::BuildEditorSceneSnapshot(const std::string& scenePath) {
     od.mobile_visible = obj.mobileVisible;
     od.frozen    = obj.frozen;
     od.show_wire = obj.showWire;
+    od.show_orientation = obj.showOrientation;
     od.nav_agent_front_yaw_offset_deg = obj.navAgentFrontYawOffsetDeg;
     od.nav_agent_face_yaw_sign = obj.navAgentFaceYawSign;
+    od.nav_agent_target_mode = obj.navAgentTargetMode;
+    od.nav_agent_follow_distance = obj.navAgentFollowDistance;
+    od.nav_agent_side_offset = obj.navAgentSideOffset;
+    od.nav_agent_formation_depth_step = obj.navAgentFormationDepthStep;
+    od.nav_agent_slot = obj.navAgentSlot;
     od.physics = obj.physics;
     od.navigation = obj.navigation;
     if (obj.ragdollAuthoringMeta) {
@@ -3472,8 +3599,14 @@ void EditorApp::ApplyEditorUndoState(const EditorUndoState& state) {
       obj.mobileVisible = od.mobile_visible;
       obj.frozen = od.frozen;
       obj.showWire = od.show_wire;
+      obj.showOrientation = od.show_orientation;
       obj.navAgentFrontYawOffsetDeg = od.nav_agent_front_yaw_offset_deg;
       obj.navAgentFaceYawSign = od.nav_agent_face_yaw_sign;
+      obj.navAgentTargetMode = od.nav_agent_target_mode.empty() ? "direct" : od.nav_agent_target_mode;
+      obj.navAgentFollowDistance = od.nav_agent_follow_distance;
+      obj.navAgentSideOffset = od.nav_agent_side_offset;
+      obj.navAgentFormationDepthStep = od.nav_agent_formation_depth_step;
+      obj.navAgentSlot = od.nav_agent_slot;
       obj.physics = od.physics;
       obj.navigation = od.navigation;
       obj.ragdollAuthoringMeta = od.ragdoll_authoring;
@@ -3991,8 +4124,14 @@ void EditorApp::RestoreEditorStateAfterPlay() {
     obj.mobileVisible = od.mobile_visible;
     obj.frozen = od.frozen;
     obj.showWire = od.show_wire;
+    obj.showOrientation = od.show_orientation;
     obj.navAgentFrontYawOffsetDeg = od.nav_agent_front_yaw_offset_deg;
     obj.navAgentFaceYawSign = od.nav_agent_face_yaw_sign;
+    obj.navAgentTargetMode = od.nav_agent_target_mode.empty() ? "direct" : od.nav_agent_target_mode;
+    obj.navAgentFollowDistance = od.nav_agent_follow_distance;
+    obj.navAgentSideOffset = od.nav_agent_side_offset;
+    obj.navAgentFormationDepthStep = od.nav_agent_formation_depth_step;
+    obj.navAgentSlot = od.nav_agent_slot;
     obj.physics = od.physics;
     obj.navigation = od.navigation;
     obj.ragdollAuthoringMeta = od.ragdoll_authoring;
@@ -8323,8 +8462,14 @@ void EditorApp::CloneSelected() {
     const std::optional<bool> mobileVisible = src.mobileVisible;
     const bool frozen = src.frozen;
     const bool showWire = src.showWire;
+    const bool showOrientation = src.showOrientation;
     const std::optional<float> navAgentFrontYawOffsetDeg = src.navAgentFrontYawOffsetDeg;
     const std::optional<float> navAgentFaceYawSign = src.navAgentFaceYawSign;
+    const std::string navAgentTargetMode = src.navAgentTargetMode;
+    const float navAgentFollowDistance = src.navAgentFollowDistance;
+    const float navAgentSideOffset = src.navAgentSideOffset;
+    const float navAgentFormationDepthStep = src.navAgentFormationDepthStep;
+    const int navAgentSlot = src.navAgentSlot;
     const std::optional<t850::scene::SceneObjectPhysicsDesc> physicsMeta = src.physics;
     const std::optional<t850::scene::SceneObjectNavigationDesc> navigationMeta = src.navigation;
     const std::optional<t850::scene::SceneObjectRagdollDesc> ragdollMeta = src.ragdollAuthoringMeta;
@@ -8364,8 +8509,14 @@ void EditorApp::CloneSelected() {
     clone.mobileVisible = mobileVisible;
     clone.frozen = frozen;
     clone.showWire = showWire;
+    clone.showOrientation = showOrientation;
     clone.navAgentFrontYawOffsetDeg = navAgentFrontYawOffsetDeg;
     clone.navAgentFaceYawSign = navAgentFaceYawSign;
+    clone.navAgentTargetMode = navAgentTargetMode;
+    clone.navAgentFollowDistance = navAgentFollowDistance;
+    clone.navAgentSideOffset = navAgentSideOffset;
+    clone.navAgentFormationDepthStep = navAgentFormationDepthStep;
+    clone.navAgentSlot = navAgentSlot;
     clone.physics = physicsMeta;
     clone.navigation = navigationMeta;
     clone.ragdollAuthoringMeta = ragdollMeta;
@@ -8889,8 +9040,14 @@ void EditorApp::OnUpdate() {
           obj.mobileVisible = od.mobile_visible;
           obj.frozen   = od.frozen;
           obj.showWire = od.show_wire;
+          obj.showOrientation = od.show_orientation;
           obj.navAgentFrontYawOffsetDeg = od.nav_agent_front_yaw_offset_deg;
           obj.navAgentFaceYawSign = od.nav_agent_face_yaw_sign;
+          obj.navAgentTargetMode = od.nav_agent_target_mode.empty() ? "direct" : od.nav_agent_target_mode;
+          obj.navAgentFollowDistance = od.nav_agent_follow_distance;
+          obj.navAgentSideOffset = od.nav_agent_side_offset;
+          obj.navAgentFormationDepthStep = od.nav_agent_formation_depth_step;
+          obj.navAgentSlot = od.nav_agent_slot;
           obj.physics = od.physics;
           obj.navigation = od.navigation;
           obj.ragdollAuthoringMeta = od.ragdoll_authoring;
@@ -9419,6 +9576,102 @@ static bool ProjectAABBToScreenRect(const t850::AABB& box, const XMATRIX44& vp,
     if (s.y > sMaxY) sMaxY = s.y;
   }
   return anyValid && sMinX <= sMaxX && sMinY <= sMaxY;
+}
+
+static XVECTOR3 NormalizeOrForward(XVECTOR3 direction) {
+  direction.w = 0.0f;
+  if (direction.Length() <= 0.000001f) {
+    return XVECTOR3(0.0f, 0.0f, 1.0f, 0.0f);
+  }
+  direction.Normalize();
+  direction.w = 0.0f;
+  return direction;
+}
+
+static XVECTOR3 OrientationFrontFromWorld(const XMATRIX44& world) {
+  return NormalizeOrForward(t850::TransformDirection(XVECTOR3(0.0f, 0.0f, 1.0f, 0.0f), world));
+}
+
+static float OrientationArrowLengthFromBounds(const t850::AABB& bounds) {
+  if (!bounds.IsValid()) {
+    return 1.0f;
+  }
+  const XVECTOR3 extents = bounds.Extents();
+  const float maxExtent = (std::max)(extents.x, (std::max)(extents.y, extents.z));
+  return std::clamp(maxExtent * 0.55f, 0.50f, 8.0f);
+}
+
+static void DrawOrientationArrow(EditorLineRenderer& lines,
+                                 const XMATRIX44& vp,
+                                 const XVECTOR3& origin,
+                                 const XVECTOR3& frontDirection,
+                                 float length,
+                                 const XVECTOR3& color) {
+  if (!lines.IsReady()) {
+    return;
+  }
+  const XVECTOR3 front = NormalizeOrForward(frontDirection);
+  XVECTOR3 up(0.0f, 1.0f, 0.0f, 0.0f);
+  XVECTOR3 right;
+  XVecCross(right, up, front);
+  if (right.Length() <= 0.000001f) {
+    up = XVECTOR3(1.0f, 0.0f, 0.0f, 0.0f);
+    XVecCross(right, up, front);
+  }
+  right = NormalizeOrForward(right);
+  XVECTOR3 arrowUp;
+  XVecCross(arrowUp, front, right);
+  arrowUp = NormalizeOrForward(arrowUp);
+
+  const float safeLength = (std::max)(0.05f, length);
+  const float headLength = (std::max)(0.12f, safeLength * 0.28f);
+  const float headWidth = headLength * 0.55f;
+  const XVECTOR3 tip(origin.x + front.x * safeLength,
+                     origin.y + front.y * safeLength,
+                     origin.z + front.z * safeLength,
+                     1.0f);
+  const XVECTOR3 headBase(tip.x - front.x * headLength,
+                          tip.y - front.y * headLength,
+                          tip.z - front.z * headLength,
+                          1.0f);
+
+  std::vector<float> verts;
+  verts.reserve(6 * 4);
+  auto append = [&](const XVECTOR3& p) {
+    verts.push_back(p.x);
+    verts.push_back(p.y);
+    verts.push_back(p.z);
+    verts.push_back(1.0f);
+  };
+  append(origin);
+  append(tip);
+  append(XVECTOR3(headBase.x + right.x * headWidth,
+                  headBase.y + right.y * headWidth,
+                  headBase.z + right.z * headWidth,
+                  1.0f));
+  append(XVECTOR3(headBase.x - right.x * headWidth,
+                  headBase.y - right.y * headWidth,
+                  headBase.z - right.z * headWidth,
+                  1.0f));
+  append(XVECTOR3(headBase.x + arrowUp.x * headWidth,
+                  headBase.y + arrowUp.y * headWidth,
+                  headBase.z + arrowUp.z * headWidth,
+                  1.0f));
+  append(XVECTOR3(headBase.x - arrowUp.x * headWidth,
+                  headBase.y - arrowUp.y * headWidth,
+                  headBase.z - arrowUp.z * headWidth,
+                  1.0f));
+
+  const unsigned short indices[] = { 0, 1, 1, 2, 1, 3, 1, 4, 1, 5 };
+  t850::VertexBuffer* vb = EditorLineRenderer::CreatePositionVB(verts.data(), 6);
+  t850::IndexBuffer* ib = EditorLineRenderer::CreateIndexBuffer16(indices, static_cast<unsigned>(sizeof(indices) / sizeof(indices[0])));
+  if (vb && ib) {
+    XMATRIX44 identity;
+    identity.Identity();
+    lines.DrawLines(identity, vp, color, vb, ib, static_cast<unsigned>(sizeof(indices) / sizeof(indices[0])), sizeof(float) * 4);
+  }
+  if (vb) vb->release();
+  if (ib) ib->release();
 }
 
 static t850::Ray BuildEditorCameraRay(const ::Camera& camera,
@@ -9950,6 +10203,39 @@ void EditorApp::OnDraw() {
 
     // Camera and light viewport gizmos (only if visible)
     if (m_lines.IsReady()) {
+      for (int i = 0; i < static_cast<int>(g_objects.size()); ++i) {
+        SceneObject& obj = g_objects[static_cast<std::size_t>(i)];
+        if (!obj.visible || !obj.showOrientation) {
+          continue;
+        }
+        const bool selected = g_selectionType == 0 && i == g_selectedIdx;
+        XMATRIX44 world = obj.primId >= 0 ? obj.litInst.Final : obj.wireframe.BuildWorld();
+        t850::AABB bounds;
+        GetEditorObjectWorldAABB(obj, bounds);
+        DrawOrientationArrow(
+            m_lines,
+            cam.VP,
+            SceneObjectWorldPosition(obj),
+            OrientationFrontFromWorld(world),
+            OrientationArrowLengthFromBounds(bounds),
+            selected ? XVECTOR3(1.0f, 0.85f, 0.1f, 1.0f) : XVECTOR3(1.0f, 0.55f, 0.0f, 1.0f));
+      }
+      for (int i = 0; i < static_cast<int>(g_physicsEntities.size()); ++i) {
+        const PhysicsSceneEntity& entity = g_physicsEntities[static_cast<std::size_t>(i)];
+        if (!entity.visible || !entity.showOrientation || !IsCharacterPhysicsEntity(entity)) {
+          continue;
+        }
+        const bool selected = g_selectionType == 3 && i == g_selectedIdx;
+        t850::AABB bounds;
+        GetPhysicsEntityWorldAABB(entity, m_physics, bounds);
+        DrawOrientationArrow(
+            m_lines,
+            cam.VP,
+            entity.position,
+            OrientationFrontFromWorld(MakePhysicsTransform(entity.position, entity.eulerRadians)),
+            OrientationArrowLengthFromBounds(bounds),
+            selected ? XVECTOR3(0.2f, 0.95f, 1.0f, 1.0f) : XVECTOR3(0.15f, 0.65f, 1.0f, 1.0f));
+      }
       for (int i = 0; i < (int)g_cameras.size(); ++i)
         if (g_cameras[i].visible)
           DrawCameraGizmo(m_lines, cam.VP, g_cameras[i], g_selectionType == 1 && i == g_selectedIdx);
@@ -11070,6 +11356,7 @@ void EditorApp::OnDraw() {
         if (g_selectionType == 0 && sel) {
           const bool selectedIsSkinned = sel->litInst.GetSkinnedMesh() != nullptr &&
               sel->litInst.GetSkinnedMesh()->HasSkinData();
+          const int selectedMeshIndex = static_cast<int>(sel - g_objects.data());
           // Mesh inspector
           if (ImGui::Button("Edit Mesh")) {
             for (int i = 0; i < (int)g_objects.size(); ++i) {
@@ -11099,6 +11386,8 @@ void EditorApp::OnDraw() {
           sel->wireframe.Position() = pos;
           sel->wireframe.EulerRadians() = XVECTOR3(eulerDeg.x*kDegToRad, eulerDeg.y*kDegToRad, eulerDeg.z*kDegToRad);
           sel->wireframe.Scale() = scl;
+          ImGui::Checkbox("View Orientation", &sel->showOrientation);
+          DrawMeshCharacterOrientationMatchControls(m_physics, selectedMeshIndex);
 
           auto comboString = [](const char* label, std::string& value, const char* const* options, int count) {
             int selected = 0;
@@ -11114,6 +11403,44 @@ void EditorApp::OnDraw() {
             }
             return false;
           };
+
+          if (selectedIsSkinned && ImGui::CollapsingHeader("Nav Agent Runtime", ImGuiTreeNodeFlags_DefaultOpen)) {
+            const char* targetModes[] = { "direct", "formation", "random", "furthest" };
+            comboString("Target Mode", sel->navAgentTargetMode, targetModes, static_cast<int>(sizeof(targetModes) / sizeof(targetModes[0])));
+            ImGui::TextDisabled("Direct chases the player position. Formation uses the scene-authored slot and offsets.");
+            float visualFrontYaw = sel->navAgentFrontYawOffsetDeg.value_or(0.0f);
+            if (ImGui::DragFloat("Visual Front Yaw Offset", &visualFrontYaw, 0.5f, -720.0f, 720.0f, "%.2f deg")) {
+              sel->navAgentFrontYawOffsetDeg = visualFrontYaw;
+            }
+            ImGui::SameLine();
+            if (ImGui::SmallButton("Clear##frontYaw")) {
+              sel->navAgentFrontYawOffsetDeg.reset();
+            }
+            ImGui::SameLine();
+            if (ImGui::SmallButton("Flip 180##frontYaw")) {
+              sel->navAgentFrontYawOffsetDeg = sel->navAgentFrontYawOffsetDeg.value_or(0.0f) + 180.0f;
+            }
+            int faceSign = sel->navAgentFaceYawSign.value_or(1.0f) < 0.0f ? 1 : 0;
+            const char* faceSignOptions[] = { "Normal", "Inverted" };
+            if (ImGui::Combo("Face Yaw Sign", &faceSign, faceSignOptions, 2)) {
+              sel->navAgentFaceYawSign = faceSign == 1 ? -1.0f : 1.0f;
+            }
+            ImGui::TextDisabled("Use Visual Front Yaw Offset when the asset's actual forward is not local +Z.");
+            if (sel->navAgentTargetMode == "formation") {
+              ImGui::DragInt("Formation Slot", &sel->navAgentSlot, 1.0f, 0, 64);
+              ImGui::DragFloat("Follow Distance", &sel->navAgentFollowDistance, 0.05f, 0.0f, 64.0f, "%.2f");
+              ImGui::DragFloat("Side Offset", &sel->navAgentSideOffset, 0.05f, -64.0f, 64.0f, "%.2f");
+              ImGui::DragFloat("Depth Step", &sel->navAgentFormationDepthStep, 0.05f, -64.0f, 64.0f, "%.2f");
+            } else {
+              sel->navAgentSlot = -1;
+            }
+            if (sel->navAgentTargetMode != "direct" &&
+                sel->navAgentTargetMode != "formation" &&
+                sel->navAgentTargetMode != "random" &&
+                sel->navAgentTargetMode != "furthest") {
+              sel->navAgentTargetMode = "direct";
+            }
+          }
 
           if (ImGui::CollapsingHeader("Physics Authoring", ImGuiTreeNodeFlags_DefaultOpen)) {
             ImGui::TextWrapped("Create authored Jolt physics from the selected render mesh. Triangle meshes are static collision; characters use the same shape and Character/CharacterVirtual settings as the player.");
@@ -11138,7 +11465,6 @@ void EditorApp::OnDraw() {
             ImGui::DragFloat("Friction", &g_triangleMeshFriction, 0.01f, 0.0f, 10.0f, "%.2f");
             ImGui::DragFloat("Restitution", &g_triangleMeshRestitution, 0.01f, 0.0f, 1.0f, "%.2f");
             ImGui::Checkbox("Sensor", &g_triangleMeshSensor);
-            const int selectedMeshIndex = static_cast<int>(sel - g_objects.data());
             if (ImGui::Button("Create Static Triangle Mesh")) {
               CreateStaticTriangleMeshPhysicsEntity(m_physics, selectedMeshIndex);
             }
@@ -11284,6 +11610,7 @@ void EditorApp::OnDraw() {
             ImGui::Checkbox("Visible", &entity.visible);
             ImGui::Checkbox("Frozen", &entity.frozen);
             ImGui::Checkbox("Wireframe", &entity.showWire);
+            ImGui::Checkbox("View Orientation", &entity.showOrientation);
             const bool showJoltSettings = entity.type == PhysicsSceneEntityType::Player ||
                 entity.characterRuntimePath == static_cast<int>(CharacterRuntimePath::Jolt);
             if (showJoltSettings &&

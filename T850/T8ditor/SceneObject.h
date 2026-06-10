@@ -38,8 +38,14 @@ struct SceneObject {
   std::optional<bool>   mobileVisible;
   bool                  frozen  = false;  // visible but not selectable
   bool                  showWire = false; // per-object wireframe override
+  bool                  showOrientation = false;
   std::optional<float>  navAgentFrontYawOffsetDeg;
   std::optional<float>  navAgentFaceYawSign;
+  std::string           navAgentTargetMode = "direct";
+  float                 navAgentFollowDistance = 0.0f;
+  float                 navAgentSideOffset = 0.0f;
+  float                 navAgentFormationDepthStep = 0.0f;
+  int                   navAgentSlot = -1;
   std::optional<t850::scene::SceneObjectPhysicsDesc> physics;
   std::optional<t850::scene::SceneObjectNavigationDesc> navigation;
   std::optional<t850::scene::SceneObjectRagdollDesc> ragdollAuthoringMeta;

@@ -173,7 +173,7 @@ add_library(T850Android SHARED
   ${T850_SOURCE_DIR}/DayScene/AndroidEntry.cpp
   ${T850_SOURCE_DIR}/DayScene/Application.cpp
   ${T850_SOURCE_DIR}/DayScene/DayScene.cpp
-  ${T850_SOURCE_DIR}/DayScene/Quake3Jolt.cpp
+  ${T850_SOURCE_DIR}/DayScene/SceneTemplate.cpp
   ${T850_SOURCE_DIR}/DayScene/Quake3Mock.cpp
   ${T850_SOURCE_DIR}/DayScene/RagdollEditor.cpp
   ${T850_SOURCE_DIR}/DayScene/SandboxScene.cpp

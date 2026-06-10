@@ -115,6 +115,7 @@ struct ScenePhysicsCookSettingsDesc {
 struct ScenePhysicsCharacterDesc {
   std::string runtime_path = "kinematic";
   std::string implementation = "virtual";
+  float bot_radius = 2.0f;
   float mass = 70.0f;
   float max_strength = 100.0f;
   float max_slope_angle_deg = 50.0f;
@@ -218,6 +219,20 @@ struct ScenePhysicsEntityDesc {
   ScenePhysicsCharacterDesc character;
 };
 
+struct SceneGameEntityDesc {
+  std::string name = "Game Entity";
+  std::string kind = "generic";
+  std::string mesh_object;
+  std::string primary_physics_entity;
+  std::vector<std::string> physics_entities;
+  std::string camera;
+  std::string ragdoll_object;
+  std::string ai;
+  bool visible = true;
+  bool frozen = false;
+  bool show_wire = true;
+};
+
 struct EditorStateDesc {
   Vec3f camera_target;
   float camera_yaw = -0.75f;
@@ -232,6 +247,7 @@ struct EditorSceneFile {
   std::string collision;
   EditorStateDesc editor;
   std::vector<SceneObjectDesc> objects;
+  std::vector<SceneGameEntityDesc> game_entities;
   std::vector<ScenePhysicsEntityDesc> physics_entities;
   std::optional<SceneNavigationMeshDesc> navigation_mesh;
   std::vector<SceneCameraDesc> cameras;

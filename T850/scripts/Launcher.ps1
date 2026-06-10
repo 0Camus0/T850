@@ -280,7 +280,7 @@ $xaml = @"
                             <ComboBoxItem Content="Day" Tag="1"/>
                             <ComboBoxItem Content="Quake3 Mock" Tag="2"/>
                             <ComboBoxItem Content="Ragdoll Editor" Tag="3"/>
-                            <ComboBoxItem Content="Quake3 Jolt" Tag="4"/>
+                            <ComboBoxItem Content="Scene Template" Tag="4"/>
                         </ComboBox>
                     </StackPanel>
                     <StackPanel Grid.Column="2" VerticalAlignment="Bottom">

@@ -31,7 +31,7 @@ class JoltPhysicsSystem;
 class RenderSkinnedMesh;
 }
 
-struct Quake3JoltLaunchDesc {
+struct SceneTemplateLaunchDesc {
   std::string sceneFilePath;
   std::string modelPath;
   int width = 0;
@@ -40,7 +40,7 @@ struct Quake3JoltLaunchDesc {
   bool guiOnStart = false;
 };
 
-class Quake3Jolt : public t850::SceneBase, public t850::CameraCollisionWorld
+class SceneTemplate : public t850::SceneBase, public t850::CameraCollisionWorld
 {
   enum {
     CHANGE_EXPOSURE = 0,
@@ -94,7 +94,7 @@ class Quake3Jolt : public t850::SceneBase, public t850::CameraCollisionWorld
     CHANGE_MAX_NUM_OPTIONS
   };
 public:
-  Quake3Jolt() {}
+  SceneTemplate() {}
   void OnUpdate(float _DtSecs) override;
   void OnDraw() override;
   void OnInput(InputManager* IManager) override;
@@ -105,7 +105,7 @@ public:
   void DestroyAssets() override;
 
   void DrawDevGui(t850::DevGuiContext& gui) override;
-  void SetLaunchDesc(const Quake3JoltLaunchDesc& desc);
+  void SetLaunchDesc(const SceneTemplateLaunchDesc& desc);
   void SetFinalOutputRT(int rtHandle) { m_finalOutputRT = rtHandle; }
   void SetRenderSize(int width, int height);
   void ResizeRenderTargets(int width, int height, int finalOutputRT);
@@ -140,7 +140,7 @@ public:
   int m_renderHeight = 0;
   bool m_ignoreImGuiMouseCaptureForInput = false;
   bool m_hasLaunchDesc = false;
-  Quake3JoltLaunchDesc m_launchDesc;
+  SceneTemplateLaunchDesc m_launchDesc;
 
   t850::RenderGraph m_renderGraph;
   t850::SceneSetup m_controlSetup;

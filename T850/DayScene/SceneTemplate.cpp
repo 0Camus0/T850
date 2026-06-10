@@ -1,4 +1,4 @@
-#include <Quake3Jolt.h>
+#include <SceneTemplate.h>
 #include <SandboxRenderGraphUtils.h>
 #include <video/BaseDriver.h>
 #include <utils/Log.h>
@@ -65,7 +65,7 @@ namespace {
   constexpr float kNavTestFailedPathRetrySec = 0.25f;
   constexpr uint64_t kJoltNavLinkValidationCacheKey = 0x4a4f4c544e41564cull; // JOLT NAVL
 
-  const std::string& DefaultQuake3JoltSceneFilePath() {
+  const std::string& DefaultSceneTemplateSceneFilePath() {
     static const std::string path = "Scenes/Q3/q3dm6_mod_3_jolt.t8scene";
     return path;
   }
@@ -315,7 +315,9 @@ namespace {
 
   XVECTOR3 NavTestFollowSlotTargetAt(const Camera& camera,
                                      XVECTOR3 anchor,
+                                     const XVECTOR3& agentPosition,
                                      int slotIndex,
+                                     float playerRadius,
                                      float followDistance,
                                      float sideOffset,
                                      float formationDepthStep) {
@@ -325,6 +327,22 @@ namespace {
     anchor.w = 1.0f;
     XVECTOR3 target = anchor;
     if (slotIndex < 0) {
+      const float radius = (std::max)(0.0f, playerRadius);
+      if (radius > 0.0001f) {
+        XVECTOR3 away = agentPosition - anchor;
+        away.y = 0.0f;
+        away.w = 0.0f;
+        if (away.Length() <= 0.0001f) {
+          away = forward * -1.0f;
+          away.y = 0.0f;
+          away.w = 0.0f;
+        }
+        if (away.Length() > 0.0001f) {
+          away.Normalize();
+          target += away * radius;
+          target.w = 1.0f;
+        }
+      }
       return target;
     }
     if (slotIndex == 0) {
@@ -340,16 +358,20 @@ namespace {
   }
 
   XVECTOR3 NavTestFollowSlotTarget(const Camera& camera,
+                                   const XVECTOR3& agentPosition,
                                    int slotIndex,
+                                   float playerRadius,
                                    float followDistance,
                                    float sideOffset,
                                    float formationDepthStep) {
-    return NavTestFollowSlotTargetAt(camera, camera.Eye, slotIndex, followDistance, sideOffset, formationDepthStep);
+    return NavTestFollowSlotTargetAt(camera, camera.Eye, agentPosition, slotIndex, playerRadius, followDistance, sideOffset, formationDepthStep);
   }
 
   bool ResolveNavTestFollowTarget(const t850::navigation::NavMesh& navMesh,
                                   const Camera& camera,
+                                  const XVECTOR3& agentPosition,
                                   int slotIndex,
+                                  float playerRadius,
                                   float followDistance,
                                   float sideOffset,
                                   float formationDepthStep,
@@ -359,13 +381,13 @@ namespace {
     XVECTOR3 playerNavPoint;
     std::string projectionError;
     if (!navMesh.ProjectPoint(camera.Eye, playerNavPoint, NavTestFollowProjectionExtents(), &projectionError)) {
-      desiredTarget = NavTestFollowSlotTarget(camera, slotIndex, followDistance, sideOffset, formationDepthStep);
+      desiredTarget = NavTestFollowSlotTarget(camera, agentPosition, slotIndex, playerRadius, followDistance, sideOffset, formationDepthStep);
       projectedTarget = desiredTarget;
       if (error) *error = "player projection failed: " + projectionError;
       return false;
     }
 
-    desiredTarget = NavTestFollowSlotTargetAt(camera, playerNavPoint, slotIndex, followDistance, sideOffset, formationDepthStep);
+    desiredTarget = NavTestFollowSlotTargetAt(camera, playerNavPoint, agentPosition, slotIndex, playerRadius, followDistance, sideOffset, formationDepthStep);
     if (navMesh.ProjectPoint(desiredTarget, projectedTarget, NavTestFollowProjectionExtents(), &projectionError)) {
       return true;
     }
@@ -2314,7 +2336,7 @@ namespace {
     std::error_code ec;
     std::filesystem::create_directories("Logs", ec);
     if (ec) {
-      T8_LOG_ERROR("[Quake3Jolt] Failed to create Logs directory for ragdoll matrix dump");
+      T8_LOG_ERROR("[SceneTemplate] Failed to create Logs directory for ragdoll matrix dump");
       return false;
     }
 
@@ -2325,7 +2347,7 @@ namespace {
 
     std::ofstream shaderFile(shaderPath, std::ios::out | std::ios::trunc);
     if (!shaderFile.is_open()) {
-      T8_LOG_ERROR("[Quake3Jolt] Failed to open ragdoll shader matrix dump '%s'", shaderPath.string().c_str());
+      T8_LOG_ERROR("[SceneTemplate] Failed to open ragdoll shader matrix dump '%s'", shaderPath.string().c_str());
       return false;
     }
     shaderFile << std::fixed << std::setprecision(8);
@@ -2356,7 +2378,7 @@ namespace {
 
     std::ofstream combinedFile(combinedPath, std::ios::out | std::ios::trunc);
     if (!combinedFile.is_open()) {
-      T8_LOG_ERROR("[Quake3Jolt] Failed to open ragdoll combined matrix dump '%s'", combinedPath.string().c_str());
+      T8_LOG_ERROR("[SceneTemplate] Failed to open ragdoll combined matrix dump '%s'", combinedPath.string().c_str());
       return false;
     }
     combinedFile << std::fixed << std::setprecision(8);
@@ -2372,7 +2394,7 @@ namespace {
 
     std::ofstream bodyFile(bodyPath, std::ios::out | std::ios::trunc);
     if (!bodyFile.is_open()) {
-      T8_LOG_ERROR("[Quake3Jolt] Failed to open ragdoll body matrix dump '%s'", bodyPath.string().c_str());
+      T8_LOG_ERROR("[SceneTemplate] Failed to open ragdoll body matrix dump '%s'", bodyPath.string().c_str());
       return false;
     }
     bodyFile << std::fixed << std::setprecision(8);
@@ -2415,7 +2437,7 @@ namespace {
                << '\n';
     }
 
-    T8_LOG_INFO("[Quake3Jolt] F5 ragdoll matrix dump: shader='%s' combined='%s' bodies='%s' maxShaderDiff=%.6f bone=%d('%s') transDiff=%.6f maxBodyDiff=%.6f bone=%d('%s') bodyTransDiff=%.6f",
+    T8_LOG_INFO("[SceneTemplate] F5 ragdoll matrix dump: shader='%s' combined='%s' bodies='%s' maxShaderDiff=%.6f bone=%d('%s') transDiff=%.6f maxBodyDiff=%.6f bone=%d('%s') bodyTransDiff=%.6f",
                 shaderPath.string().c_str(),
                 combinedPath.string().c_str(),
                 bodyPath.string().c_str(),
@@ -2764,6 +2786,10 @@ namespace {
     return entity.character.runtime_path == "jolt" ? 1 : 0;
   }
 
+  float PlayerBotRadiusFromEntity(const t850::scene::ScenePhysicsEntityDesc& player) {
+    return (std::max)(0.0f, player.character.bot_radius);
+  }
+
   XVECTOR3 PlayerEyeFromEntity(const t850::scene::ScenePhysicsEntityDesc& player,
                                const t850::KinematicCharacterSettings& settings) {
     const float verticalHalfExtent = settings.capsuleHalfHeight + settings.capsuleRadius;
@@ -2865,38 +2891,38 @@ namespace {
   }
 }
 
-void Quake3Jolt::SetRenderSize(int width, int height) {
+void SceneTemplate::SetRenderSize(int width, int height) {
   m_renderWidth = width;
   m_renderHeight = height;
   UpdateCameraProjectionForRenderViewport();
 }
 
-void Quake3Jolt::SetLaunchDesc(const Quake3JoltLaunchDesc& desc) {
+void SceneTemplate::SetLaunchDesc(const SceneTemplateLaunchDesc& desc) {
   m_launchDesc = desc;
   m_hasLaunchDesc = true;
 }
 
-const std::string& Quake3Jolt::ActiveSceneFilePath() const {
+const std::string& SceneTemplate::ActiveSceneFilePath() const {
   if (m_hasLaunchDesc && !m_launchDesc.sceneFilePath.empty()) {
     return m_launchDesc.sceneFilePath;
   }
   if (!g_config.sceneFilePath.empty()) {
     return g_config.sceneFilePath;
   }
-  return DefaultQuake3JoltSceneFilePath();
+  return DefaultSceneTemplateSceneFilePath();
 }
 
-const std::string& Quake3Jolt::ActiveModelPath() const {
+const std::string& SceneTemplate::ActiveModelPath() const {
   return (m_hasLaunchDesc && !m_launchDesc.modelPath.empty())
       ? m_launchDesc.modelPath
       : g_config.modelPath;
 }
 
-int Quake3Jolt::ActiveStartScene() const {
+int SceneTemplate::ActiveStartScene() const {
   return m_hasLaunchDesc ? m_launchDesc.startScene : g_config.startScene;
 }
 
-void Quake3Jolt::ResizeRenderTargets(int width, int height, int finalOutputRT) {
+void SceneTemplate::ResizeRenderTargets(int width, int height, int finalOutputRT) {
   m_renderWidth = width;
   m_renderHeight = height;
   m_finalOutputRT = finalOutputRT;
@@ -2919,21 +2945,21 @@ void Quake3Jolt::ResizeRenderTargets(int width, int height, int finalOutputRT) {
       AdaptedLumPrevPass);
 }
 
-int Quake3Jolt::RenderViewportWidth() const {
+int SceneTemplate::RenderViewportWidth() const {
   if (m_renderWidth > 0) {
     return m_renderWidth;
   }
   return (std::max)(1, g_pBaseDriver ? g_pBaseDriver->width : 1);
 }
 
-int Quake3Jolt::RenderViewportHeight() const {
+int SceneTemplate::RenderViewportHeight() const {
   if (m_renderHeight > 0) {
     return m_renderHeight;
   }
   return (std::max)(1, g_pBaseDriver ? g_pBaseDriver->height : 1);
 }
 
-void Quake3Jolt::UpdateCameraProjectionForRenderViewport() {
+void SceneTemplate::UpdateCameraProjectionForRenderViewport() {
   const int width = RenderViewportWidth();
   const int height = RenderViewportHeight();
   if (width <= 0 || height <= 0) {
@@ -2948,7 +2974,7 @@ void Quake3Jolt::UpdateCameraProjectionForRenderViewport() {
   VP = Cam.VP;
 }
 
-void Quake3Jolt::InitVars() {
+void SceneTemplate::InitVars() {
 
 
 
@@ -3123,10 +3149,10 @@ void Quake3Jolt::InitVars() {
   SceneProp.IBLMipCount = 4.0f;
   SceneProp.IBLBRDFLUTEnabled = 0.0f;
 
-  if (m_controlSetup.Load("Scenes/Quake3Jolt.json")) {
+  if (m_controlSetup.Load("Scenes/SceneTemplate.json")) {
     m_controlSetup.ApplyQualityAndSettings(SceneProp);
   } else {
-    T8_LOG_ERROR("[Quake3Jolt] Failed to load Scenes/Quake3Jolt.json");
+    T8_LOG_ERROR("[SceneTemplate] Failed to load Scenes/SceneTemplate.json");
   }
   SceneProp.FrustumCullingToggleAllowed = g_config.cullingLoadMode != t850::Config::CullingLoadMode::Disabled;
   SceneProp.FrustumCullingEnabled = g_config.cullingLoadMode == t850::Config::CullingLoadMode::FullOnLoad;
@@ -3143,7 +3169,7 @@ void Quake3Jolt::InitVars() {
   m_dumper.Init(dumpCfg);
 }
 
-void Quake3Jolt::ApplyEditorSceneCameraAndLights(const t850::scene::EditorSceneFile& scene) {
+void SceneTemplate::ApplyEditorSceneCameraAndLights(const t850::scene::EditorSceneFile& scene) {
   const bool hasSceneCamera = !scene.cameras.empty();
   const bool useQ3CameraDefaults = !hasSceneCamera;
   XVECTOR3 eye(0.0f, 0.0f, 0.0f, 1.0f);
@@ -3180,8 +3206,8 @@ void Quake3Jolt::ApplyEditorSceneCameraAndLights(const t850::scene::EditorSceneF
   SyncOrbitProfileFromSandbox();
   SetCameraProfile(t850::CameraProfileType::Quake3Fps);
   VP = Cam.VP;
-  T8_LOG_INFO("[Quake3Jolt] Using %s camera eye=(%.3f,%.3f,%.3f) look=(%.3f,%.3f,%.3f) fov=%.1f near=%.3f far=%.3f",
-              hasSceneCamera ? "scene" : "Quake3Jolt FPS",
+  T8_LOG_INFO("[SceneTemplate] Using %s camera eye=(%.3f,%.3f,%.3f) look=(%.3f,%.3f,%.3f) fov=%.1f near=%.3f far=%.3f",
+              hasSceneCamera ? "scene" : "SceneTemplate FPS",
               Cam.Eye.x, Cam.Eye.y, Cam.Eye.z,
               Cam.Look.x, Cam.Look.y, Cam.Look.z,
               Rad2Deg(Cam.Fov),
@@ -3217,17 +3243,17 @@ void Quake3Jolt::ApplyEditorSceneCameraAndLights(const t850::scene::EditorSceneF
       }
     }
     SyncLightCameraFromDirectionalLight();
-    T8_LOG_INFO("[Quake3Jolt] Applied %zu scene lights; dynamic point lights %s",
+    T8_LOG_INFO("[SceneTemplate] Applied %zu scene lights; dynamic point lights %s",
                 SceneProp.Lights.size(),
                 SceneProp.PointLightsEnabled ? "enabled" : "disabled");
   }
 }
 
-int Quake3Jolt::GetRuntimeMeshCount() const {
+int SceneTemplate::GetRuntimeMeshCount() const {
   return (std::max)(m_meshCount, Meshes[0].pBase ? 1 : 0);
 }
 
-RenderSkinnedMesh* Quake3Jolt::GetSkinnedMeshForIndex(int meshIndex) const {
+RenderSkinnedMesh* SceneTemplate::GetSkinnedMeshForIndex(int meshIndex) const {
   if (meshIndex < 0 || meshIndex >= kMaxSandboxMeshes || meshIndex >= GetRuntimeMeshCount() || !Meshes[meshIndex].pBase) {
     return nullptr;
   }
@@ -3235,7 +3261,7 @@ RenderSkinnedMesh* Quake3Jolt::GetSkinnedMeshForIndex(int meshIndex) const {
   return (skinned && skinned->HasSkinData()) ? skinned : nullptr;
 }
 
-std::vector<std::string> Quake3Jolt::BuildSkinnedMeshOptions(std::vector<int>* outMeshIndices) const {
+std::vector<std::string> SceneTemplate::BuildSkinnedMeshOptions(std::vector<int>* outMeshIndices) const {
   if (outMeshIndices) {
     outMeshIndices->clear();
   }
@@ -3283,7 +3309,7 @@ std::vector<std::string> Quake3Jolt::BuildSkinnedMeshOptions(std::vector<int>* o
   return options;
 }
 
-int Quake3Jolt::ClampSkinnedMeshSelection(int preferredMeshIndex) const {
+int SceneTemplate::ClampSkinnedMeshSelection(int preferredMeshIndex) const {
   std::vector<int> meshIndices;
   BuildSkinnedMeshOptions(&meshIndices);
   if (meshIndices.empty()) {
@@ -3297,15 +3323,15 @@ int Quake3Jolt::ClampSkinnedMeshSelection(int preferredMeshIndex) const {
   return meshIndices.front();
 }
 
-RenderSkinnedMesh* Quake3Jolt::GetSelectedSkinningMesh() const {
+RenderSkinnedMesh* SceneTemplate::GetSelectedSkinningMesh() const {
   return GetSkinnedMeshForIndex(ClampSkinnedMeshSelection(m_selectedSkinningMeshIndex));
 }
 
-RenderSkinnedMesh* Quake3Jolt::GetSelectedAnimationMesh() const {
+RenderSkinnedMesh* SceneTemplate::GetSelectedAnimationMesh() const {
   return GetSkinnedMeshForIndex(ClampSkinnedMeshSelection(m_selectedAnimationMeshIndex));
 }
 
-bool Quake3Jolt::AttachSceneObjectRagdoll(int meshIndex,
+bool SceneTemplate::AttachSceneObjectRagdoll(int meshIndex,
                                             const std::string& meshPath,
                                             const std::string& ragdollPath) {
   if (meshIndex < 0 || meshIndex >= kMaxSandboxMeshes || !Meshes[meshIndex].pBase) {
@@ -3321,7 +3347,7 @@ bool Quake3Jolt::AttachSceneObjectRagdoll(int meshIndex,
   if (!engineContext) engineContext = &t850::GetEngineContext();
   t850::JoltPhysicsSystem* physics = engineContext ? engineContext->physics : nullptr;
   if (!physics || !physics->IsInitialized()) {
-    T8_LOG_INFO("[Quake3Jolt] Cannot attach ragdoll '%s' for scene object '%s' because physics is not initialized",
+    T8_LOG_INFO("[SceneTemplate] Cannot attach ragdoll '%s' for scene object '%s' because physics is not initialized",
                 ragdollPath.c_str(),
                 meshPath.c_str());
     return false;
@@ -3357,7 +3383,7 @@ bool Quake3Jolt::AttachSceneObjectRagdoll(int meshIndex,
                                                Meshes[meshIndex].GetEntityId(),
                                                settings,
                                                generatedAuthoring)) {
-    T8_LOG_INFO("[Quake3Jolt] Failed to generate ragdoll binding for scene object '%s' using '%s'",
+    T8_LOG_INFO("[SceneTemplate] Failed to generate ragdoll binding for scene object '%s' using '%s'",
                 meshPath.c_str(),
                 ragdollPath.c_str());
     return false;
@@ -3371,7 +3397,7 @@ bool Quake3Jolt::AttachSceneObjectRagdoll(int meshIndex,
                                        generatedAuthoring.binding,
                                        authoring,
                                        &appliedBodies)) {
-    T8_LOG_INFO("[Quake3Jolt] Failed to load authored ragdoll '%s' for scene object '%s'",
+    T8_LOG_INFO("[SceneTemplate] Failed to load authored ragdoll '%s' for scene object '%s'",
                 ragdollPath.c_str(),
                 meshPath.c_str());
     return false;
@@ -3379,7 +3405,7 @@ bool Quake3Jolt::AttachSceneObjectRagdoll(int meshIndex,
 
   t850::PhysicsRagdollDesc pose = authoring.binding.referencePose;
   if (pose.bones.empty()) {
-    T8_LOG_INFO("[Quake3Jolt] Authored ragdoll '%s' for scene object '%s' produced no bodies",
+    T8_LOG_INFO("[SceneTemplate] Authored ragdoll '%s' for scene object '%s' produced no bodies",
                 ragdollPath.c_str(),
                 meshPath.c_str());
     return false;
@@ -3387,7 +3413,7 @@ bool Quake3Jolt::AttachSceneObjectRagdoll(int meshIndex,
 
   const t850::PhysicsRagdollHandle handle = physics->CreateRagdoll(pose, t850::PhysicsBodyMotion::Kinematic);
   if (!handle.IsValid()) {
-    T8_LOG_INFO("[Quake3Jolt] Failed to create runtime ragdoll '%s' for scene object '%s'",
+    T8_LOG_INFO("[SceneTemplate] Failed to create runtime ragdoll '%s' for scene object '%s'",
                 ragdollPath.c_str(),
                 meshPath.c_str());
     return false;
@@ -3402,7 +3428,7 @@ bool Quake3Jolt::AttachSceneObjectRagdoll(int meshIndex,
   runtime.pose = std::move(pose);
   m_sceneRagdolls.push_back(std::move(runtime));
 
-  T8_LOG_INFO("[Quake3Jolt] Loaded scene ragdoll '%s' for mesh '%s' bodies=%d appliedEdits=%d",
+  T8_LOG_INFO("[SceneTemplate] Loaded scene ragdoll '%s' for mesh '%s' bodies=%d appliedEdits=%d",
               ragdollPath.c_str(),
               meshPath.c_str(),
               static_cast<int>(authoring.binding.referencePose.bones.size()),
@@ -3410,7 +3436,7 @@ bool Quake3Jolt::AttachSceneObjectRagdoll(int meshIndex,
   return true;
 }
 
-Quake3Jolt::SceneRagdollRuntime* Quake3Jolt::FindSceneRagdollRuntime(int meshIndex) {
+SceneTemplate::SceneRagdollRuntime* SceneTemplate::FindSceneRagdollRuntime(int meshIndex) {
   for (SceneRagdollRuntime& runtime : m_sceneRagdolls) {
     if (runtime.meshIndex == meshIndex) {
       return &runtime;
@@ -3419,7 +3445,7 @@ Quake3Jolt::SceneRagdollRuntime* Quake3Jolt::FindSceneRagdollRuntime(int meshInd
   return nullptr;
 }
 
-const Quake3Jolt::SceneRagdollRuntime* Quake3Jolt::FindSceneRagdollRuntime(int meshIndex) const {
+const SceneTemplate::SceneRagdollRuntime* SceneTemplate::FindSceneRagdollRuntime(int meshIndex) const {
   for (const SceneRagdollRuntime& runtime : m_sceneRagdolls) {
     if (runtime.meshIndex == meshIndex) {
       return &runtime;
@@ -3428,12 +3454,12 @@ const Quake3Jolt::SceneRagdollRuntime* Quake3Jolt::FindSceneRagdollRuntime(int m
   return nullptr;
 }
 
-bool Quake3Jolt::IsSceneRagdollPhysicsDriven(int meshIndex) const {
+bool SceneTemplate::IsSceneRagdollPhysicsDriven(int meshIndex) const {
   const SceneRagdollRuntime* runtime = FindSceneRagdollRuntime(meshIndex);
   return runtime && runtime->physicsDriven;
 }
 
-void Quake3Jolt::DriveSceneRagdollsFromAnimation(float deltaSeconds) {
+void SceneTemplate::DriveSceneRagdollsFromAnimation(float deltaSeconds) {
   t850::EngineContext* engineContext = GetEngineContext();
   if (!engineContext) engineContext = &t850::GetEngineContext();
   t850::JoltPhysicsSystem* physics = engineContext ? engineContext->physics : nullptr;
@@ -3466,7 +3492,7 @@ void Quake3Jolt::DriveSceneRagdollsFromAnimation(float deltaSeconds) {
                                              runtime.binding,
                                              pose)) {
       if (!runtime.driveLogEmitted) {
-        T8_LOG_INFO("[Quake3Jolt] Failed to drive scene ragdoll '%s' from animation",
+        T8_LOG_INFO("[SceneTemplate] Failed to drive scene ragdoll '%s' from animation",
                     runtime.resourcePath.c_str());
         runtime.driveLogEmitted = true;
       }
@@ -3476,14 +3502,14 @@ void Quake3Jolt::DriveSceneRagdollsFromAnimation(float deltaSeconds) {
     if (physics->DriveRagdollFromPose(handle, pose, deltaSeconds)) {
       runtime.pose = std::move(pose);
       if (!runtime.driveLogEmitted) {
-        T8_LOG_INFO("[Quake3Jolt] Driving scene ragdoll '%s' from animation", runtime.resourcePath.c_str());
+        T8_LOG_INFO("[SceneTemplate] Driving scene ragdoll '%s' from animation", runtime.resourcePath.c_str());
         runtime.driveLogEmitted = true;
       }
     }
   }
 }
 
-bool Quake3Jolt::SwitchSceneRagdollsToPhysics(int meshIndexFilter) {
+bool SceneTemplate::SwitchSceneRagdollsToPhysics(int meshIndexFilter) {
   if (m_sceneRagdolls.empty()) {
     return false;
   }
@@ -3520,7 +3546,7 @@ bool Quake3Jolt::SwitchSceneRagdollsToPhysics(int meshIndexFilter) {
 
     if (!engineContext->physics->SetRagdollMotion(Meshes[runtime.meshIndex].GetPhysicsRagdoll(),
                                                    t850::PhysicsBodyMotion::Dynamic)) {
-      T8_LOG_ERROR("[Quake3Jolt] Failed to switch scene ragdoll '%s' to dynamic physics",
+      T8_LOG_ERROR("[SceneTemplate] Failed to switch scene ragdoll '%s' to dynamic physics",
                    runtime.resourcePath.c_str());
       continue;
     }
@@ -3537,12 +3563,12 @@ bool Quake3Jolt::SwitchSceneRagdollsToPhysics(int meshIndexFilter) {
   }
 
   if (switchedCount > 0) {
-    T8_LOG_INFO("[Quake3Jolt] F5: %d scene-file ragdoll(s) switched to dynamic physics", switchedCount);
+    T8_LOG_INFO("[SceneTemplate] F5: %d scene-file ragdoll(s) switched to dynamic physics", switchedCount);
   }
   return switchedCount > 0;
 }
 
-bool Quake3Jolt::ResetSceneRagdollPhysicsAndAnimation(int meshIndex) {
+bool SceneTemplate::ResetSceneRagdollPhysicsAndAnimation(int meshIndex) {
   SceneRagdollRuntime* runtime = FindSceneRagdollRuntime(meshIndex);
   if (!runtime ||
       runtime->meshIndex < 0 ||
@@ -3566,7 +3592,7 @@ bool Quake3Jolt::ResetSceneRagdollPhysicsAndAnimation(int meshIndex) {
 
   t850::PhysicsRagdollDesc pose;
   if (!t850::BuildRagdollPoseFromAnimation(*skinned, Meshes[runtime->meshIndex].Final, runtime->binding, pose)) {
-    T8_LOG_ERROR("[Quake3Jolt] Failed to reset scene ragdoll '%s' from animation",
+    T8_LOG_ERROR("[SceneTemplate] Failed to reset scene ragdoll '%s' from animation",
                  runtime->resourcePath.c_str());
     return false;
   }
@@ -3574,7 +3600,7 @@ bool Quake3Jolt::ResetSceneRagdollPhysicsAndAnimation(int meshIndex) {
   const t850::PhysicsRagdollHandle handle = Meshes[runtime->meshIndex].GetPhysicsRagdoll();
   if (!engineContext->physics->SetRagdollMotion(handle, t850::PhysicsBodyMotion::Kinematic) ||
       !engineContext->physics->DriveRagdollFromPose(handle, pose, 0.0f)) {
-    T8_LOG_ERROR("[Quake3Jolt] Failed to reset scene ragdoll physics for '%s'",
+    T8_LOG_ERROR("[SceneTemplate] Failed to reset scene ragdoll physics for '%s'",
                  runtime->resourcePath.c_str());
     return false;
   }
@@ -3590,15 +3616,15 @@ bool Quake3Jolt::ResetSceneRagdollPhysicsAndAnimation(int meshIndex) {
   runtime->physicsStates.clear();
   runtime->physicsBoneIndices.clear();
   runtime->physicsCombinedMatrices.clear();
-  T8_LOG_INFO("[Quake3Jolt] Reset scene ragdoll '%s' to animation drive", runtime->resourcePath.c_str());
+  T8_LOG_INFO("[SceneTemplate] Reset scene ragdoll '%s' to animation drive", runtime->resourcePath.c_str());
   return true;
 }
 
-bool Quake3Jolt::LoadEditorSceneAssets(const std::string& scenePath) {
+bool SceneTemplate::LoadEditorSceneAssets(const std::string& scenePath) {
   t850::scene::EditorSceneFile scene;
   std::string error;
   if (!t850::scene::LoadEditorSceneFile(scenePath, scene, &error)) {
-    T8_LOG_ERROR("[Quake3Jolt] Failed to load editor scene '%s': %s", scenePath.c_str(), error.c_str());
+    T8_LOG_ERROR("[SceneTemplate] Failed to load editor scene '%s': %s", scenePath.c_str(), error.c_str());
     return false;
   }
 
@@ -3643,25 +3669,25 @@ bool Quake3Jolt::LoadEditorSceneAssets(const std::string& scenePath) {
     if (!object.visible) continue;
 #if defined(OS_ANDROID)
     if (object.mobile_visible && !*object.mobile_visible) {
-      T8_LOG_INFO("[Quake3Jolt] Android skipped mobile-hidden scene object '%s'", object.name.c_str());
+      T8_LOG_INFO("[SceneTemplate] Android skipped mobile-hidden scene object '%s'", object.name.c_str());
       continue;
     }
 #endif
     const std::string meshPath = NormalizeSceneResourcePath(object.mesh);
     if (meshPath.empty()) {
-      T8_LOG_ERROR("[Quake3Jolt] Scene object '%s' has no mesh path; skipping", object.name.c_str());
+      T8_LOG_ERROR("[SceneTemplate] Scene object '%s' has no mesh path; skipping", object.name.c_str());
       continue;
     }
     if (m_meshCount >= kMaxSandboxMeshes) {
-      T8_LOG_ERROR("[Quake3Jolt] Scene '%s' has more than %d visible meshes; remaining objects skipped",
+      T8_LOG_ERROR("[SceneTemplate] Scene '%s' has more than %d visible meshes; remaining objects skipped",
                    scenePath.c_str(), kMaxSandboxMeshes);
       break;
     }
 
-    T8_LOG_INFO("[Quake3Jolt] Loading scene object '%s' mesh='%s'", object.name.c_str(), meshPath.c_str());
+    T8_LOG_INFO("[SceneTemplate] Loading scene object '%s' mesh='%s'", object.name.c_str(), meshPath.c_str());
     const int primitiveIndex = PrimitiveMgr.CreateMesh(meshPath.c_str());
     if (primitiveIndex < 0) {
-      T8_LOG_ERROR("[Quake3Jolt] Failed to load scene object '%s' mesh '%s'", object.name.c_str(), meshPath.c_str());
+      T8_LOG_ERROR("[SceneTemplate] Failed to load scene object '%s' mesh '%s'", object.name.c_str(), meshPath.c_str());
       continue;
     }
 
@@ -3690,7 +3716,7 @@ bool Quake3Jolt::LoadEditorSceneAssets(const std::string& scenePath) {
       AttachSceneObjectRagdoll(static_cast<int>(m_meshCount), meshPath, ragdollPath);
     } else if (!isSkinnedObject && physicsMeta.enabled) {
       if (!ragdollPath.empty()) {
-        T8_LOG_INFO("[Quake3Jolt] Ignoring ragdoll '%s' on non-skinned scene object '%s'",
+        T8_LOG_INFO("[SceneTemplate] Ignoring ragdoll '%s' on non-skinned scene object '%s'",
                     ragdollPath.c_str(),
                     object.name.c_str());
       }
@@ -3708,14 +3734,14 @@ bool Quake3Jolt::LoadEditorSceneAssets(const std::string& scenePath) {
             physicsMeta.body_type == "static_triangle_mesh" && physicsMeta.motion == "static";
         if (wantsStaticTriangle && renderMesh && t850::AttachStaticTriangleMeshBody(
             *engineContext->physics, instance, *renderMesh, cookSettings, &cookStats)) {
-          T8_LOG_INFO("[Quake3Jolt] Scene collision mesh ready for '%s': cache=%s vertices=%u triangles=%u total=%.2fms",
+          T8_LOG_INFO("[SceneTemplate] Scene collision mesh ready for '%s': cache=%s vertices=%u triangles=%u total=%.2fms",
                       object.name.c_str(),
                       cookStats.cacheHit ? "hit" : "miss",
                       cookStats.vertexCount,
                       cookStats.triangleCount,
                       cookStats.totalMs);
         } else {
-          T8_LOG_ERROR("[Quake3Jolt] Failed to create scene collision mesh for '%s'", object.name.c_str());
+          T8_LOG_ERROR("[SceneTemplate] Failed to create scene collision mesh for '%s'", object.name.c_str());
         }
       }
     }
@@ -3740,7 +3766,7 @@ bool Quake3Jolt::LoadEditorSceneAssets(const std::string& scenePath) {
     m_sceneNavAgentFormationDepthSteps.push_back(object.nav_agent_formation_depth_step);
     m_sceneNavAgentSlots.push_back(object.nav_agent_slot);
     loadedObjectSlots.emplace_back(object.name, m_meshCount);
-    T8_LOG_INFO("[Quake3Jolt] Loaded scene object '%s' mesh='%s' ragdoll='%s' slot=%d navFrontYawOffset=%.1f navFaceYawSign=%.1f",
+    T8_LOG_INFO("[SceneTemplate] Loaded scene object '%s' mesh='%s' ragdoll='%s' slot=%d navFrontYawOffset=%.1f navFaceYawSign=%.1f",
                 object.name.c_str(), meshPath.c_str(), ragdollPath.c_str(), m_meshCount,
                 navAgentFrontYawOffset, navAgentFaceYawSign);
     ++m_meshCount;
@@ -3772,14 +3798,14 @@ bool Quake3Jolt::LoadEditorSceneAssets(const std::string& scenePath) {
       }
       const int meshSlot = findLoadedObjectSlot(entity.source_object);
       if (meshSlot < 0 || meshSlot >= m_meshCount) {
-        T8_LOG_ERROR("[Quake3Jolt] Physics entity '%s' source object '%s' was not loaded",
+        T8_LOG_ERROR("[SceneTemplate] Physics entity '%s' source object '%s' was not loaded",
                      entity.name.c_str(),
                      entity.source_object.c_str());
         continue;
       }
       RenderMesh* renderMesh = dynamic_cast<RenderMesh*>(Meshes[meshSlot].pBase);
       if (!renderMesh) {
-        T8_LOG_ERROR("[Quake3Jolt] Physics entity '%s' source object '%s' has no render mesh",
+        T8_LOG_ERROR("[SceneTemplate] Physics entity '%s' source object '%s' has no render mesh",
                      entity.name.c_str(),
                      entity.source_object.c_str());
         continue;
@@ -3791,7 +3817,7 @@ bool Quake3Jolt::LoadEditorSceneAssets(const std::string& scenePath) {
               *renderMesh,
               PhysicsCookSettingsFromScene(entity.cook_settings),
               &cookStats)) {
-        T8_LOG_INFO("[Quake3Jolt] Authored physics static mesh '%s' ready from '%s': cache=%s vertices=%u triangles=%u total=%.2fms",
+        T8_LOG_INFO("[SceneTemplate] Authored physics static mesh '%s' ready from '%s': cache=%s vertices=%u triangles=%u total=%.2fms",
                     entity.name.c_str(),
                     entity.source_object.c_str(),
                     cookStats.cacheHit ? "hit" : "miss",
@@ -3799,7 +3825,7 @@ bool Quake3Jolt::LoadEditorSceneAssets(const std::string& scenePath) {
                     cookStats.triangleCount,
                     cookStats.totalMs);
       } else {
-        T8_LOG_ERROR("[Quake3Jolt] Failed to create authored physics static mesh '%s' from '%s'",
+        T8_LOG_ERROR("[SceneTemplate] Failed to create authored physics static mesh '%s' from '%s'",
                      entity.name.c_str(),
                      entity.source_object.c_str());
       }
@@ -3807,7 +3833,7 @@ bool Quake3Jolt::LoadEditorSceneAssets(const std::string& scenePath) {
   }
 
   if (m_meshCount <= 0) {
-    T8_LOG_ERROR("[Quake3Jolt] Editor scene '%s' did not load any visible meshes", scenePath.c_str());
+    T8_LOG_ERROR("[SceneTemplate] Editor scene '%s' did not load any visible meshes", scenePath.c_str());
     return false;
   }
 
@@ -3837,7 +3863,7 @@ bool Quake3Jolt::LoadEditorSceneAssets(const std::string& scenePath) {
     Cam.Update(0.0f);
     SetCameraProfile(profileType);
     VP = Cam.VP;
-    T8_LOG_INFO("[Quake3Jolt] Runtime player from scene '%s': profile=%s eye=(%.3f, %.3f, %.3f) shape=%s radius=%.3f halfHeight=%.3f",
+    T8_LOG_INFO("[SceneTemplate] Runtime player from scene '%s': profile=%s eye=(%.3f, %.3f, %.3f) shape=%s radius=%.3f halfHeight=%.3f",
                 m_authoredPlayer.name.c_str(),
                 t850::CameraProfileName(profileType),
                 Cam.Eye.x,
@@ -3847,17 +3873,17 @@ bool Quake3Jolt::LoadEditorSceneAssets(const std::string& scenePath) {
                 playerSettings.capsuleRadius,
                 playerSettings.capsuleHalfHeight);
   }
-  T8_LOG_INFO("[Quake3Jolt] Loaded editor scene '%s' with %d mesh instances", scenePath.c_str(), m_meshCount);
+  T8_LOG_INFO("[SceneTemplate] Loaded editor scene '%s' with %d mesh instances", scenePath.c_str(), m_meshCount);
   return true;
 }
 
-bool Quake3Jolt::EnsureNavMeshBuilt() {
+bool SceneTemplate::EnsureNavMeshBuilt() {
   if (m_navMesh.IsReady()) {
     return true;
   }
   if (!m_hasAuthoredNavMesh) {
     if (!m_navMeshBuildAttempted) {
-      T8_LOG_INFO("[Navigation] Quake3Jolt NavMesh build skipped: no authored NavMesh in scene");
+      T8_LOG_INFO("[Navigation] SceneTemplate NavMesh build skipped: no authored NavMesh in scene");
     }
     m_navMeshBuildAttempted = true;
     return false;
@@ -3975,7 +4001,7 @@ bool Quake3Jolt::EnsureNavMeshBuilt() {
   return true;
 }
 
-void Quake3Jolt::InitializeNavTestAgents() {
+void SceneTemplate::InitializeNavTestAgents() {
   if (m_navTestInitialized) {
     return;
   }
@@ -4108,7 +4134,10 @@ void Quake3Jolt::InitializeNavTestAgents() {
     agent.navToOriginOffset = agent.visualOffset;
     agent.physicsController.SetPosition(Q3CenterFromGroundPoint(agent.navPosition, agent.characterSettings));
     if (agent.behaviorMode == kNavTestModeFollowPlayer) {
-      if (!ResolveNavTestFollowTarget(m_navMesh, Cam, agent.followSlot,
+      if (!ResolveNavTestFollowTarget(m_navMesh, Cam,
+                                      agent.navPosition,
+                                      agent.followSlot,
+                                      m_hasAuthoredPlayer ? PlayerBotRadiusFromEntity(m_authoredPlayer) : 0.0f,
                                       agent.followDistance,
                                       agent.sideOffset,
                                       agent.formationDepthStep,
@@ -4140,7 +4169,7 @@ void Quake3Jolt::InitializeNavTestAgents() {
   }
 }
 
-void Quake3Jolt::PlanNavTestAgentPaths() {
+void SceneTemplate::PlanNavTestAgentPaths() {
   T8_TELEMETRY_SCOPE("navigation.agents.plan_paths");
   if (!m_navMesh.IsReady() || m_navTestAgents.empty()) {
     return;
@@ -4215,7 +4244,10 @@ void Quake3Jolt::PlanNavTestAgentPaths() {
       } else if (agent.behaviorMode == kNavTestModeFollowPlayer) {
         XVECTOR3 desiredTarget;
         XVECTOR3 projectedTarget;
-        if (ResolveNavTestFollowTarget(m_navMesh, Cam, agent.followSlot,
+        if (ResolveNavTestFollowTarget(m_navMesh, Cam,
+                                       agent.navPosition,
+                                       agent.followSlot,
+                                       m_hasAuthoredPlayer ? PlayerBotRadiusFromEntity(m_authoredPlayer) : 0.0f,
                                        agent.followDistance,
                                        agent.sideOffset,
                                        agent.formationDepthStep,
@@ -4285,7 +4317,7 @@ void Quake3Jolt::PlanNavTestAgentPaths() {
   }
 }
 
-void Quake3Jolt::UpdateNavTestAgents(float dtSecs) {
+void SceneTemplate::UpdateNavTestAgents(float dtSecs) {
   T8_TELEMETRY_SCOPE("navigation.agents.update");
   if (!m_loadedEditorScene) {
     return;
@@ -4341,7 +4373,10 @@ void Quake3Jolt::UpdateNavTestAgents(float dtSecs) {
         XVECTOR3 desiredTarget;
         XVECTOR3 projectedTarget;
         std::string targetError;
-        if (ResolveNavTestFollowTarget(m_navMesh, Cam, agent.followSlot,
+        if (ResolveNavTestFollowTarget(m_navMesh, Cam,
+                                       agent.navPosition,
+                                       agent.followSlot,
+                                       m_hasAuthoredPlayer ? PlayerBotRadiusFromEntity(m_authoredPlayer) : 0.0f,
                                        agent.followDistance,
                                        agent.sideOffset,
                                        agent.formationDepthStep,
@@ -4468,7 +4503,10 @@ void Quake3Jolt::UpdateNavTestAgents(float dtSecs) {
     } else {
       XVECTOR3 desiredTarget;
       XVECTOR3 projectedTarget;
-      if (ResolveNavTestFollowTarget(m_navMesh, Cam, agent.followSlot,
+      if (ResolveNavTestFollowTarget(m_navMesh, Cam,
+                                     agent.navPosition,
+                                     agent.followSlot,
+                                     m_hasAuthoredPlayer ? PlayerBotRadiusFromEntity(m_authoredPlayer) : 0.0f,
                                      agent.followDistance,
                                      agent.sideOffset,
                                      agent.formationDepthStep,
@@ -4961,10 +4999,11 @@ void Quake3Jolt::UpdateNavTestAgents(float dtSecs) {
         const float meshAuthoredYawDeg = agent.meshIndex >= 0 && agent.meshIndex < static_cast<int>(m_sceneObjectYawDegrees.size())
             ? m_sceneObjectYawDegrees[static_cast<std::size_t>(agent.meshIndex)]
             : 0.0f;
+        const float playerBotRadius = m_hasAuthoredPlayer ? PlayerBotRadiusFromEntity(m_authoredPlayer) : 0.0f;
         const char* meshName = (agent.meshIndex >= 0 && agent.meshIndex < static_cast<int>(m_sceneObjectNames.size()))
             ? m_sceneObjectNames[static_cast<std::size_t>(agent.meshIndex)].c_str()
             : "";
-        T8_LOG_TRACE("[DoomOrientationTrace] mesh=%d name='%s' slot=%d playerPos=(%.2f,%.2f,%.2f) playerLook=(%.3f,%.3f,%.3f) playerYaw=%.2f playerRightYaw=%.2f agentVisual=(%.2f,%.2f,%.2f) agentNav=(%.2f,%.2f,%.2f) meshAuthoredYaw=%.2f authoredCapsulePos=(%.2f,%.2f,%.2f) authoredCapsuleRotDeg=(%.2f,%.2f,%.2f) frontYawOffset=%.2f faceYawSign=%.1f meshVisualYaw=%.2f expectedFaceYaw=%.2f toPlayerYaw=%.2f toDesiredYaw=%.2f desired=(%.2f,%.2f,%.2f) target=(%.2f,%.2f,%.2f) desiredDotPlayerForward=%.2f targetDotPlayerForward=%.2f pathCount=%zu wp=%d physicsPath=%d traversal=%d",
+        T8_LOG_TRACE("[DoomOrientationTrace] mesh=%d name='%s' slot=%d playerPos=(%.2f,%.2f,%.2f) playerLook=(%.3f,%.3f,%.3f) playerYaw=%.2f playerRightYaw=%.2f playerBotRadius=%.2f agentVisual=(%.2f,%.2f,%.2f) agentNav=(%.2f,%.2f,%.2f) meshAuthoredYaw=%.2f authoredCapsulePos=(%.2f,%.2f,%.2f) authoredCapsuleRotDeg=(%.2f,%.2f,%.2f) frontYawOffset=%.2f faceYawSign=%.1f meshVisualYaw=%.2f expectedFaceYaw=%.2f toPlayerYaw=%.2f toDesiredYaw=%.2f desired=(%.2f,%.2f,%.2f) target=(%.2f,%.2f,%.2f) desiredDotPlayerForward=%.2f targetDotPlayerForward=%.2f pathCount=%zu wp=%d physicsPath=%d traversal=%d",
                      agent.meshIndex,
                      meshName,
                      agent.followSlot,
@@ -4972,6 +5011,7 @@ void Quake3Jolt::UpdateNavTestAgents(float dtSecs) {
                      Cam.Look.x, Cam.Look.y, Cam.Look.z,
                      playerYawDeg,
                      playerRightYawDeg,
+                     playerBotRadius,
                      position.x, position.y, position.z,
                      agent.navPosition.x, agent.navPosition.y, agent.navPosition.z,
                      meshAuthoredYawDeg,
@@ -5020,9 +5060,9 @@ void Quake3Jolt::UpdateNavTestAgents(float dtSecs) {
   }
 }
 
-void Quake3Jolt::CreateAssets() {
-  if (!m_renderGraph.Load("Scenes/Quake3Jolt_RenderGraph.json")) {
-    T8_LOG_ERROR("[Quake3Jolt] Failed to load render graph");
+void SceneTemplate::CreateAssets() {
+  if (!m_renderGraph.Load("Scenes/SceneTemplate_RenderGraph.json")) {
+    T8_LOG_ERROR("[SceneTemplate] Failed to load render graph");
     return;
   }
   m_renderGraph.DisablePass("Light Add");
@@ -5051,7 +5091,7 @@ void Quake3Jolt::CreateAssets() {
   SceneProp.SSAOKernel.InitTexture();
 
   if (m_controlSetup.descriptor.name.empty()) {
-    m_controlSetup.Load("Scenes/Quake3Jolt.json");
+    m_controlSetup.Load("Scenes/SceneTemplate.json");
   }
 
   const t850::SelectorDesc* cubemapDesc = FindSelectorDesc(m_controlSetup.descriptor.selectors, "cubemap");
@@ -5068,7 +5108,7 @@ void Quake3Jolt::CreateAssets() {
       startupSceneProfiles = startupScene.profiles;
       startupProfiles = &startupSceneProfiles;
     } else {
-      T8_LOG_ERROR("[Quake3Jolt] Could not pre-read scene profiles from '%s': %s",
+      T8_LOG_ERROR("[SceneTemplate] Could not pre-read scene profiles from '%s': %s",
                    activeSceneFilePath.c_str(), startupSceneError.c_str());
     }
   }
@@ -5114,15 +5154,15 @@ void Quake3Jolt::CreateAssets() {
 
   if (!activeSceneFilePath.empty()) {
     if (!LoadEditorSceneAssets(activeSceneFilePath)) {
-      T8_LOG_ERROR("[Quake3Jolt] Cannot continue without scene assets for '%s'", activeSceneFilePath.c_str());
+      T8_LOG_ERROR("[SceneTemplate] Cannot continue without scene assets for '%s'", activeSceneFilePath.c_str());
     }
   } else {
     // Load the glTF model
     int index = PrimitiveMgr.CreateMesh(activeModelPath.c_str());
     if (index < 0) {
-      T8_LOG_ERROR("[Quake3Jolt] Failed to load '%s'", activeModelPath.c_str());
+      T8_LOG_ERROR("[SceneTemplate] Failed to load '%s'", activeModelPath.c_str());
     } else {
-      T8_LOG_INFO("[Quake3Jolt] Loaded model '%s', primitive index=%d", activeModelPath.c_str(), index);
+      T8_LOG_INFO("[SceneTemplate] Loaded model '%s', primitive index=%d", activeModelPath.c_str(), index);
       Meshes[0].CreateInstance(PrimitiveMgr.GetPrimitive(index), &VP);
       Meshes[0].Update();
       m_meshCount = 1;
@@ -5230,13 +5270,13 @@ void Quake3Jolt::CreateAssets() {
             m_ragdollEditSelectedHandle = 0;
             LoadRagdollEditPose();
           }
-          T8_LOG_INFO("[Quake3Jolt] Attached full-skeleton ragdoll physics for '%s'", ActiveModelPath().c_str());
+          T8_LOG_INFO("[SceneTemplate] Attached full-skeleton ragdoll physics for '%s'", ActiveModelPath().c_str());
           if (!m_driveRagdollFromAnimation) {
-            T8_LOG_ERROR("[Quake3Jolt] Failed to bind full-skeleton ragdoll to animation pose for '%s'", ActiveModelPath().c_str());
+            T8_LOG_ERROR("[SceneTemplate] Failed to bind full-skeleton ragdoll to animation pose for '%s'", ActiveModelPath().c_str());
           }
           CreatePhysicsFloor(*engineContext->physics);
         } else {
-          T8_LOG_ERROR("[Quake3Jolt] Failed to attach full-skeleton ragdoll physics for '%s'", ActiveModelPath().c_str());
+          T8_LOG_ERROR("[SceneTemplate] Failed to attach full-skeleton ragdoll physics for '%s'", ActiveModelPath().c_str());
         }
       }
 
@@ -5245,29 +5285,29 @@ void Quake3Jolt::CreateAssets() {
         RenderMesh* mesh = static_cast<RenderMesh*>(Meshes[0].pBase);
         attachedPhysics = t850::AttachMeshBoxBody(*engineContext->physics, Meshes[0], *mesh, t850::PhysicsBodyMotion::Static);
         if (attachedPhysics) {
-          T8_LOG_INFO("[Quake3Jolt] Attached static mesh-box physics for '%s'", ActiveModelPath().c_str());
+          T8_LOG_INFO("[SceneTemplate] Attached static mesh-box physics for '%s'", ActiveModelPath().c_str());
         }
       }
     }
   }
 }
 
-void Quake3Jolt::OnLoadScene() {
+void SceneTemplate::OnLoadScene() {
   InstallSandboxConsoleLogCapture();
   InitVars();
   CreateAssets();
 }
 
-void Quake3Jolt::OnDestoryScene() {
+void SceneTemplate::OnDestoryScene() {
   DestroyAssets();
   UninstallSandboxConsoleLogCapture();
 }
 
-void Quake3Jolt::ResetViewInput() {
+void SceneTemplate::ResetViewInput() {
   m_cameraController.ClearInput();
 }
 
-void Quake3Jolt::DestroyAssets() {
+void SceneTemplate::DestroyAssets() {
   SceneProp.SSAOKernel.Destroy();
   bool hasPhysicsLinks = m_floorBody.IsValid();
   const int meshCount = (std::max)(m_meshCount, Meshes[0].pBase ? 1 : 0);
@@ -5373,7 +5413,7 @@ void Quake3Jolt::DestroyAssets() {
   }
 }
 
-void Quake3Jolt::OnUpdate(float _DtSecs) {
+void SceneTemplate::OnUpdate(float _DtSecs) {
   T8_TELEMETRY_SCOPE("sandbox.update");
   DtSecs = _DtSecs;
   SceneProp.FrameDeltaSec = DtSecs;
@@ -5383,7 +5423,7 @@ void Quake3Jolt::OnUpdate(float _DtSecs) {
   // conflicts with the main command list if done mid-frame.
   if (!m_pendingCubemap.empty()) {
     T8_TELEMETRY_SCOPE("sandbox.update.pending_cubemap");
-    T8_LOG_INFO("[Quake3Jolt] Loading cubemap '%s' (old slot=%d)",
+    T8_LOG_INFO("[SceneTemplate] Loading cubemap '%s' (old slot=%d)",
                 m_pendingCubemap.c_str(), EnvMapTexIndex);
     // Flush GPU before destroying — D3D12 may still reference the old
     // texture from the previous frame's command list.
@@ -5424,7 +5464,7 @@ void Quake3Jolt::OnUpdate(float _DtSecs) {
       EnvMaps.SheenELUT = SheenELUTTexIndex;
       UpdateSceneIBLSettings(SceneProp, g_pBaseDriver, EnvMaps);
       Texture* newTex = g_pBaseDriver->GetTexture(EnvMapTexIndex);
-      T8_LOG_INFO("[Quake3Jolt] Cubemap loaded: slot=%d tex=%p (%dx%d)",
+      T8_LOG_INFO("[SceneTemplate] Cubemap loaded: slot=%d tex=%p (%dx%d)",
                   EnvMapTexIndex, newTex, newTex ? newTex->x : 0, newTex ? newTex->y : 0);
       Quads[0].SetEnvironmentMap(newTex);
       const int meshCount = (std::max)(m_meshCount, Meshes[0].pBase ? 1 : 0);
@@ -5434,7 +5474,7 @@ void Quake3Jolt::OnUpdate(float _DtSecs) {
         }
       }
     } else {
-      T8_LOG_ERROR("[Quake3Jolt] Failed to load cubemap '%s'; keeping previous cubemap", m_pendingCubemap.c_str());
+      T8_LOG_ERROR("[SceneTemplate] Failed to load cubemap '%s'; keeping previous cubemap", m_pendingCubemap.c_str());
     }
     m_pendingCubemap.clear();
   }
@@ -5556,7 +5596,7 @@ void Quake3Jolt::OnUpdate(float _DtSecs) {
   }
 }
 
-void Quake3Jolt::DriveRagdollFromAnimation(float deltaSeconds) {
+void SceneTemplate::DriveRagdollFromAnimation(float deltaSeconds) {
   if (!m_driveRagdollFromAnimation || !Meshes[0].HasPhysicsRagdoll()) {
     return;
   }
@@ -5570,7 +5610,7 @@ void Quake3Jolt::DriveRagdollFromAnimation(float deltaSeconds) {
 
   if (!t850::BuildRagdollPoseFromAnimation(*skinned, Meshes[0].Final, m_ragdollAnimationBinding, m_ragdollAnimationPose)) {
     if (!m_ragdollDriveLogEmitted) {
-      T8_LOG_ERROR("[Quake3Jolt] Failed to build animation-driven ragdoll pose for '%s'", ActiveModelPath().c_str());
+      T8_LOG_ERROR("[SceneTemplate] Failed to build animation-driven ragdoll pose for '%s'", ActiveModelPath().c_str());
       m_ragdollDriveLogEmitted = true;
     }
     return;
@@ -5578,20 +5618,20 @@ void Quake3Jolt::DriveRagdollFromAnimation(float deltaSeconds) {
 
   if (!engineContext->physics->DriveRagdollFromPose(Meshes[0].GetPhysicsRagdoll(), m_ragdollAnimationPose, deltaSeconds)) {
     if (!m_ragdollDriveLogEmitted) {
-      T8_LOG_ERROR("[Quake3Jolt] Failed to drive ragdoll from animation pose for '%s'", ActiveModelPath().c_str());
+      T8_LOG_ERROR("[SceneTemplate] Failed to drive ragdoll from animation pose for '%s'", ActiveModelPath().c_str());
       m_ragdollDriveLogEmitted = true;
     }
     return;
   }
 
   if (!m_ragdollDriveLogEmitted) {
-    T8_LOG_INFO("[Quake3Jolt] Driving humanoid ragdoll from animation pose: bodies=%zu", m_ragdollAnimationPose.bones.size());
+    T8_LOG_INFO("[SceneTemplate] Driving humanoid ragdoll from animation pose: bodies=%zu", m_ragdollAnimationPose.bones.size());
     LogRagdollFloorDiagnostics("animation driven");
     m_ragdollDriveLogEmitted = true;
   }
 }
 
-void Quake3Jolt::UpdateSkeletonFromRagdollPhysics() {
+void SceneTemplate::UpdateSkeletonFromRagdollPhysics() {
   if (!m_ragdollPhysicsDriven || !Meshes[0].HasPhysicsRagdoll()) {
     return;
   }
@@ -5615,14 +5655,14 @@ void Quake3Jolt::UpdateSkeletonFromRagdollPhysics() {
           m_ragdollPhysicsBoneIndices,
           m_ragdollPhysicsCombinedMatrices)) {
     if (!m_ragdollPhysicsLogEmitted) {
-      T8_LOG_ERROR("[Quake3Jolt] Failed to drive skinned skeleton from physics for '%s'", ActiveModelPath().c_str());
+      T8_LOG_ERROR("[SceneTemplate] Failed to drive skinned skeleton from physics for '%s'", ActiveModelPath().c_str());
       m_ragdollPhysicsLogEmitted = true;
     }
     return;
   }
 
   if (!m_ragdollPhysicsLogEmitted) {
-    T8_LOG_INFO("[Quake3Jolt] Driving skinned skeleton from dynamic ragdoll physics: bodies=%zu", m_ragdollPhysicsStates.size());
+    T8_LOG_INFO("[SceneTemplate] Driving skinned skeleton from dynamic ragdoll physics: bodies=%zu", m_ragdollPhysicsStates.size());
     m_ragdollPhysicsLogEmitted = true;
   }
   if (!m_ragdollFloorRuntimeDiagEmitted) {
@@ -5631,7 +5671,7 @@ void Quake3Jolt::UpdateSkeletonFromRagdollPhysics() {
   }
 }
 
-void Quake3Jolt::UpdateSceneSkeletonsFromRagdollPhysics() {
+void SceneTemplate::UpdateSceneSkeletonsFromRagdollPhysics() {
   if (m_sceneRagdolls.empty()) {
     return;
   }
@@ -5676,7 +5716,7 @@ void Quake3Jolt::UpdateSceneSkeletonsFromRagdollPhysics() {
             runtime.physicsCombinedMatrices);
     if (!gotState || !builtPose || !appliedPose) {
       if (!runtime.physicsLogEmitted) {
-        T8_LOG_ERROR("[Quake3Jolt] Failed to drive scene object skeleton from ragdoll '%s' state=%d bodies=%zu pose=%d overrides=%d bones=%zu",
+        T8_LOG_ERROR("[SceneTemplate] Failed to drive scene object skeleton from ragdoll '%s' state=%d bodies=%zu pose=%d overrides=%d bones=%zu",
                      runtime.resourcePath.c_str(),
                      gotState ? 1 : 0,
                      runtime.physicsStates.size(),
@@ -5689,7 +5729,7 @@ void Quake3Jolt::UpdateSceneSkeletonsFromRagdollPhysics() {
     }
 
     if (!runtime.physicsLogEmitted) {
-      T8_LOG_INFO("[Quake3Jolt] Driving scene object skeleton from dynamic ragdoll '%s': bodies=%zu",
+      T8_LOG_INFO("[SceneTemplate] Driving scene object skeleton from dynamic ragdoll '%s': bodies=%zu",
                   runtime.resourcePath.c_str(),
                   runtime.physicsStates.size());
       runtime.physicsLogEmitted = true;
@@ -5697,9 +5737,9 @@ void Quake3Jolt::UpdateSceneSkeletonsFromRagdollPhysics() {
   }
 }
 
-void Quake3Jolt::SwitchRagdollToPhysics() {
+void SceneTemplate::SwitchRagdollToPhysics() {
   if (m_ragdollPhysicsDriven) {
-    T8_LOG_INFO("[Quake3Jolt] Ragdoll is already physics-driven");
+    T8_LOG_INFO("[SceneTemplate] Ragdoll is already physics-driven");
     return;
   }
 
@@ -5710,7 +5750,7 @@ void Quake3Jolt::SwitchRagdollToPhysics() {
     if (SwitchSceneRagdollsToPhysics()) {
       return;
     }
-    T8_LOG_ERROR("[Quake3Jolt] Cannot switch to ragdoll physics: no skinned ragdoll is attached");
+    T8_LOG_ERROR("[SceneTemplate] Cannot switch to ragdoll physics: no skinned ragdoll is attached");
     return;
   }
 
@@ -5748,7 +5788,7 @@ void Quake3Jolt::SwitchRagdollToPhysics() {
     m_ragdollPhysicsBoneIndices = std::move(handoffBoneIndices);
     m_ragdollPhysicsCombinedMatrices = std::move(handoffCombinedMatrices);
   } else {
-    T8_LOG_ERROR("[Quake3Jolt] Failed to dump F5 ragdoll matrix comparison for '%s'", ActiveModelPath().c_str());
+    T8_LOG_ERROR("[SceneTemplate] Failed to dump F5 ragdoll matrix comparison for '%s'", ActiveModelPath().c_str());
   }
 
   if (m_floorBody.IsValid()) {
@@ -5758,7 +5798,7 @@ void Quake3Jolt::SwitchRagdollToPhysics() {
   CreatePhysicsFloor(*engineContext->physics);
   LogRagdollFloorDiagnostics("F5 pre-dynamic");
   if (!engineContext->physics->SetRagdollMotion(Meshes[0].GetPhysicsRagdoll(), t850::PhysicsBodyMotion::Dynamic)) {
-    T8_LOG_ERROR("[Quake3Jolt] Failed to switch ragdoll bodies to dynamic physics");
+    T8_LOG_ERROR("[SceneTemplate] Failed to switch ragdoll bodies to dynamic physics");
     return;
   }
   engineContext->physics->SetRagdollVelocity(
@@ -5774,10 +5814,10 @@ void Quake3Jolt::SwitchRagdollToPhysics() {
   skinned->ClearSnapshotBoneMatrices();
   LogRagdollFloorDiagnostics("F5 post-dynamic");
   SwitchSceneRagdollsToPhysics();
-  T8_LOG_INFO("[Quake3Jolt] F5: animation-to-physics ragdoll transition started");
+  T8_LOG_INFO("[SceneTemplate] F5: animation-to-physics ragdoll transition started");
 }
 
-bool Quake3Jolt::PickRagdollSimulationBody(float mouseX,
+bool SceneTemplate::PickRagdollSimulationBody(float mouseX,
                                              float mouseY,
                                              int& outBodyIndex,
                                              t850::PhysicsBodyState& outState,
@@ -5842,7 +5882,7 @@ bool Quake3Jolt::PickRagdollSimulationBody(float mouseX,
   return false;
 }
 
-bool Quake3Jolt::BeginRagdollSimulationGrab(float mouseX, float mouseY) {
+bool SceneTemplate::BeginRagdollSimulationGrab(float mouseX, float mouseY) {
   t850::PhysicsBodyState pickedState;
   XVECTOR3 hitPoint;
   float hitDistance = 0.0f;
@@ -5881,12 +5921,12 @@ bool Quake3Jolt::BeginRagdollSimulationGrab(float mouseX, float mouseY) {
   m_ragdollEditSelectedCapsule = bodyIndex;
   if (bodyIndex >= 0 && bodyIndex < static_cast<int>(m_ragdollAnimationBinding.referencePose.bones.size())) {
     const auto& bone = m_ragdollAnimationBinding.referencePose.bones[static_cast<std::size_t>(bodyIndex)];
-    T8_LOG_INFO("[Quake3Jolt] Grabbed ragdoll body %d (%s)", bodyIndex, bone.body.debugName.c_str());
+    T8_LOG_INFO("[SceneTemplate] Grabbed ragdoll body %d (%s)", bodyIndex, bone.body.debugName.c_str());
   }
   return UpdateRagdollSimulationGrab(mouseX, mouseY);
 }
 
-bool Quake3Jolt::UpdateRagdollSimulationGrab(float mouseX, float mouseY) {
+bool SceneTemplate::UpdateRagdollSimulationGrab(float mouseX, float mouseY) {
   if (!m_ragdollSimulationGrabActive || !m_ragdollSimulationGrabHandle.IsValid() || !g_pBaseDriver) {
     return false;
   }
@@ -5933,7 +5973,7 @@ bool Quake3Jolt::UpdateRagdollSimulationGrab(float mouseX, float mouseY) {
       currentState.angularVelocity);
 }
 
-void Quake3Jolt::EndRagdollSimulationGrab(bool applyThrow) {
+void SceneTemplate::EndRagdollSimulationGrab(bool applyThrow) {
   if (!m_ragdollSimulationGrabActive) {
     return;
   }
@@ -5964,7 +6004,7 @@ void Quake3Jolt::EndRagdollSimulationGrab(bool applyThrow) {
   m_ragdollSimulationGrabReleaseVelocity = XVECTOR3(0.0f, 0.0f, 0.0f, 0.0f);
 }
 
-bool Quake3Jolt::HandleRagdollSimulationGrabInput(InputManager* input, bool imguiWantsMouse) {
+bool SceneTemplate::HandleRagdollSimulationGrabInput(InputManager* input, bool imguiWantsMouse) {
   if (!input) {
     return false;
   }
@@ -5992,14 +6032,14 @@ bool Quake3Jolt::HandleRagdollSimulationGrabInput(InputManager* input, bool imgu
   return BeginRagdollSimulationGrab(static_cast<float>(input->mouseX), static_cast<float>(input->mouseY));
 }
 
-bool Quake3Jolt::ResetRagdollPhysicsAndAnimation() {
+bool SceneTemplate::ResetRagdollPhysicsAndAnimation() {
   EndRagdollSimulationGrab(false);
 
   RenderSkinnedMesh* skinned = Meshes[0].GetSkinnedMesh();
   t850::EngineContext* engineContext = GetEngineContext();
   if (!engineContext) engineContext = &t850::GetEngineContext();
   if (!skinned || !skinned->HasSkinData()) {
-    T8_LOG_ERROR("[Quake3Jolt] Cannot reset ragdoll: no skinned model is loaded");
+    T8_LOG_ERROR("[SceneTemplate] Cannot reset ragdoll: no skinned model is loaded");
     return false;
   }
 
@@ -6021,7 +6061,7 @@ bool Quake3Jolt::ResetRagdollPhysicsAndAnimation() {
   m_ragdollPhysicsCombinedMatrices.clear();
 
   if (!engineContext || !engineContext->physics || m_ragdollAnimationBinding.referencePose.bones.empty()) {
-    T8_LOG_INFO("[Quake3Jolt] F7: animation state reset");
+    T8_LOG_INFO("[SceneTemplate] F7: animation state reset");
     return true;
   }
 
@@ -6033,7 +6073,7 @@ bool Quake3Jolt::ResetRagdollPhysicsAndAnimation() {
   if (!Meshes[0].HasPhysicsRagdoll()) {
     const bool recreated = RecreateRagdollFromPose(pose);
     if (recreated) {
-      T8_LOG_INFO("[Quake3Jolt] F7: animation and ragdoll reset");
+      T8_LOG_INFO("[SceneTemplate] F7: animation and ragdoll reset");
     }
     return recreated;
   }
@@ -6046,12 +6086,12 @@ bool Quake3Jolt::ResetRagdollPhysicsAndAnimation() {
   const bool driven = engineContext->physics->DriveRagdollFromPose(Meshes[0].GetPhysicsRagdoll(), pose, 0.0f);
   if (driven) {
     m_ragdollAnimationPose = std::move(pose);
-    T8_LOG_INFO("[Quake3Jolt] F7: animation and ragdoll reset");
+    T8_LOG_INFO("[SceneTemplate] F7: animation and ragdoll reset");
   }
   return driven;
 }
 
-void Quake3Jolt::LogRagdollFloorDiagnostics(const char* stage) {
+void SceneTemplate::LogRagdollFloorDiagnostics(const char* stage) {
   t850::EngineContext* engineContext = GetEngineContext();
   if (!engineContext) engineContext = &t850::GetEngineContext();
   if (!engineContext || !engineContext->physics || !engineContext->physics->IsInitialized()) {
@@ -6150,7 +6190,7 @@ void Quake3Jolt::LogRagdollFloorDiagnostics(const char* stage) {
               lowestHalfHeight);
 }
 
-void Quake3Jolt::CreatePhysicsFloor(t850::JoltPhysicsSystem& physics) {
+void SceneTemplate::CreatePhysicsFloor(t850::JoltPhysicsSystem& physics) {
   if (m_floorBody.IsValid() || !Meshes[0].pBase) {
     return;
   }
@@ -6158,7 +6198,7 @@ void Quake3Jolt::CreatePhysicsFloor(t850::JoltPhysicsSystem& physics) {
   RenderMesh* mesh = static_cast<RenderMesh*>(Meshes[0].pBase);
   RenderMesh::AABB worldBounds;
   if (!BuildWorldBounds(mesh, Meshes[0].Final, worldBounds)) {
-    T8_LOG_ERROR("[Quake3Jolt] Failed to build physics floor: model bounds are unavailable");
+    T8_LOG_ERROR("[SceneTemplate] Failed to build physics floor: model bounds are unavailable");
     return;
   }
   RenderMesh::AABB modelFloorBounds = worldBounds;
@@ -6200,7 +6240,7 @@ void Quake3Jolt::CreatePhysicsFloor(t850::JoltPhysicsSystem& physics) {
 
   m_floorBody = physics.CreateBody(floorDesc);
   if (m_floorBody.IsValid()) {
-    T8_LOG_INFO("[Quake3Jolt] Added static ragdoll floor top y=%.3f source=%s sourceMinY=%.3f meshMinY=%.3f skinnedMinY=%.3f ragdollMinY=%.3f halfSize=%.3f halfHeight=%.3f areaScale=%.1f",
+    T8_LOG_INFO("[SceneTemplate] Added static ragdoll floor top y=%.3f source=%s sourceMinY=%.3f meshMinY=%.3f skinnedMinY=%.3f ragdollMinY=%.3f halfSize=%.3f halfHeight=%.3f areaScale=%.1f",
                 floorTransform.m42 + halfHeight,
                 hasSkinnedBounds ? "skinned-mesh" : "mesh",
                 floorSourceMinY,
@@ -6211,16 +6251,16 @@ void Quake3Jolt::CreatePhysicsFloor(t850::JoltPhysicsSystem& physics) {
                 halfHeight,
                 kRagdollFloorAreaScale);
   } else {
-    T8_LOG_ERROR("[Quake3Jolt] Failed to create static ragdoll floor");
+    T8_LOG_ERROR("[SceneTemplate] Failed to create static ragdoll floor");
   }
 }
 
-std::string Quake3Jolt::BuildSkeletonEditSavePath() const {
+std::string SceneTemplate::BuildSkeletonEditSavePath() const {
   const std::string key = FileSafeModelKey(m_profileModelKey.empty() ? SandboxProfileModelKey(ActiveModelPath()) : m_profileModelKey);
   return t850::ResourceLocator::Instance().ResolveCachePath("SkeletonEdits/" + key + ".json").string();
 }
 
-bool Quake3Jolt::EnterSkeletonEditMode() {
+bool SceneTemplate::EnterSkeletonEditMode() {
   RenderSkinnedMesh* skinned = Meshes[0].GetSkinnedMesh();
   if (!skinned || !skinned->HasSkinData()) {
     T8_LOG_ERROR("[SkeletonEdit] Cannot enter edit mode: active model has no skinned skeleton");
@@ -6284,7 +6324,7 @@ bool Quake3Jolt::EnterSkeletonEditMode() {
   return true;
 }
 
-void Quake3Jolt::ExitSkeletonEditMode() {
+void SceneTemplate::ExitSkeletonEditMode() {
   RenderSkinnedMesh* skinned = Meshes[0].GetSkinnedMesh();
   RestoreSkeletonPreviewBone();
   m_skeletonEditMode = false;
@@ -6302,7 +6342,7 @@ void Quake3Jolt::ExitSkeletonEditMode() {
   T8_LOG_INFO("[SkeletonEdit] Exited edit mode");
 }
 
-bool Quake3Jolt::ApplySkeletonEditPose() {
+bool SceneTemplate::ApplySkeletonEditPose() {
   RenderSkinnedMesh* skinned = Meshes[0].GetSkinnedMesh();
   if (!skinned || !skinned->HasSkinData() || m_skeletonEditCombined.empty()) {
     return false;
@@ -6320,7 +6360,7 @@ bool Quake3Jolt::ApplySkeletonEditPose() {
   return true;
 }
 
-bool Quake3Jolt::ResetSkeletonEditPose() {
+bool SceneTemplate::ResetSkeletonEditPose() {
   if (m_skeletonEditBindCombined.empty()) {
     return false;
   }
@@ -6332,7 +6372,7 @@ bool Quake3Jolt::ResetSkeletonEditPose() {
   return ApplySkeletonEditPose();
 }
 
-bool Quake3Jolt::LoadSkeletonEditPose() {
+bool SceneTemplate::LoadSkeletonEditPose() {
   if (m_skeletonEditSavePath.empty()) {
     m_skeletonEditSavePath = BuildSkeletonEditSavePath();
   }
@@ -6397,7 +6437,7 @@ bool Quake3Jolt::LoadSkeletonEditPose() {
   return applied > 0;
 }
 
-bool Quake3Jolt::SaveSkeletonEditPose() {
+bool SceneTemplate::SaveSkeletonEditPose() {
   if (m_skeletonEditSavePath.empty()) {
     m_skeletonEditSavePath = BuildSkeletonEditSavePath();
   }
@@ -6468,7 +6508,7 @@ bool Quake3Jolt::SaveSkeletonEditPose() {
   return true;
 }
 
-std::string Quake3Jolt::BuildRagdollEditSavePath() const {
+std::string SceneTemplate::BuildRagdollEditSavePath() const {
   if (!m_primaryRagdollResourcePath.empty()) {
     return m_primaryRagdollResourcePath;
   }
@@ -6476,19 +6516,19 @@ std::string Quake3Jolt::BuildRagdollEditSavePath() const {
       m_profileModelKey.empty() ? ActiveModelPath() : m_profileModelKey);
 }
 
-int Quake3Jolt::FindRagdollCapsuleForBone(int boneIndex) const {
+int SceneTemplate::FindRagdollCapsuleForBone(int boneIndex) const {
   return t850::ragdoll_editor::FindBodyForBone(m_ragdollAnimationBinding, boneIndex);
 }
 
-int Quake3Jolt::FindRagdollCapsuleControllingBone(int boneIndex) const {
+int SceneTemplate::FindRagdollCapsuleControllingBone(int boneIndex) const {
   return t850::ragdoll_editor::FindBodyControllingBone(m_ragdollAnimationBinding, boneIndex);
 }
 
-void Quake3Jolt::EnsureRagdollControlledBones() {
+void SceneTemplate::EnsureRagdollControlledBones() {
   t850::ragdoll_editor::EnsureControlledBones(m_ragdollAnimationBinding);
 }
 
-void Quake3Jolt::SelectRagdollEditCapsule(int capsuleIndex, bool syncBoneSelection) {
+void SceneTemplate::SelectRagdollEditCapsule(int capsuleIndex, bool syncBoneSelection) {
   const auto& bones = m_ragdollAnimationBinding.referencePose.bones;
   if (capsuleIndex < 0 || capsuleIndex >= static_cast<int>(bones.size())) {
     m_ragdollEditSelectedCapsule = -1;
@@ -6561,15 +6601,15 @@ void Quake3Jolt::SelectRagdollEditCapsule(int capsuleIndex, bool syncBoneSelecti
   }
 }
 
-void Quake3Jolt::SyncRagdollParentCapsulesFromBoneLinks() {
+void SceneTemplate::SyncRagdollParentCapsulesFromBoneLinks() {
   t850::ragdoll_editor::SyncParentBodiesFromBoneLinks(m_ragdollAnimationBinding, m_ragdollParentCapsules);
 }
 
-void Quake3Jolt::EnsureRagdollParentCapsules() {
+void SceneTemplate::EnsureRagdollParentCapsules() {
   t850::ragdoll_editor::EnsureParentBodies(m_ragdollAnimationBinding, m_ragdollParentCapsules);
 }
 
-void Quake3Jolt::EnsureRagdollJointState() {
+void SceneTemplate::EnsureRagdollJointState() {
   const std::vector<int> newJointOffsets = t850::ragdoll_editor::EnsureJointState(
       m_ragdollAnimationBinding,
       m_ragdollParentCapsules,
@@ -6580,22 +6620,22 @@ void Quake3Jolt::EnsureRagdollJointState() {
   }
 }
 
-void Quake3Jolt::EnsureRagdollFreezeState() {
+void SceneTemplate::EnsureRagdollFreezeState() {
   t850::ragdoll_editor::EnsureFreezeState(
       m_ragdollAnimationBinding.referencePose.bones.size(),
       m_ragdollFrozenCapsules,
       m_ragdollFrozenJoints);
 }
 
-bool Quake3Jolt::IsRagdollCapsuleFrozen(int capsuleIndex) const {
+bool SceneTemplate::IsRagdollCapsuleFrozen(int capsuleIndex) const {
   return t850::ragdoll_editor::IsFrozen(m_ragdollFrozenCapsules, capsuleIndex);
 }
 
-bool Quake3Jolt::IsRagdollJointFrozen(int childCapsule) const {
+bool SceneTemplate::IsRagdollJointFrozen(int childCapsule) const {
   return t850::ragdoll_editor::IsFrozen(m_ragdollFrozenJoints, childCapsule);
 }
 
-void Quake3Jolt::SetRagdollCapsuleFrozen(int capsuleIndex, bool frozen) {
+void SceneTemplate::SetRagdollCapsuleFrozen(int capsuleIndex, bool frozen) {
   EnsureRagdollFreezeState();
   if (!t850::ragdoll_editor::SetFrozen(m_ragdollFrozenCapsules, capsuleIndex, frozen)) {
     return;
@@ -6608,7 +6648,7 @@ void Quake3Jolt::SetRagdollCapsuleFrozen(int capsuleIndex, bool frozen) {
   m_ragdollEditDirty = true;
 }
 
-void Quake3Jolt::SetRagdollJointFrozen(int childCapsule, bool frozen) {
+void SceneTemplate::SetRagdollJointFrozen(int childCapsule, bool frozen) {
   EnsureRagdollFreezeState();
   if (!t850::ragdoll_editor::SetFrozen(m_ragdollFrozenJoints, childCapsule, frozen)) {
     return;
@@ -6620,7 +6660,7 @@ void Quake3Jolt::SetRagdollJointFrozen(int childCapsule, bool frozen) {
   m_ragdollEditDirty = true;
 }
 
-int Quake3Jolt::GetRagdollEffectiveJointParentCapsule(int childCapsule) const {
+int SceneTemplate::GetRagdollEffectiveJointParentCapsule(int childCapsule) const {
   return t850::ragdoll_editor::EffectiveJointParent(
       childCapsule,
       m_ragdollAnimationBinding.referencePose.bones.size(),
@@ -6628,7 +6668,7 @@ int Quake3Jolt::GetRagdollEffectiveJointParentCapsule(int childCapsule) const {
       m_ragdollJointParentCapsules);
 }
 
-bool Quake3Jolt::UpdateRagdollJointOffsetFromWorld(int childCapsule) {
+bool SceneTemplate::UpdateRagdollJointOffsetFromWorld(int childCapsule) {
   auto& binding = m_ragdollAnimationBinding;
   if (childCapsule < 0 ||
       childCapsule >= static_cast<int>(binding.referencePose.bones.size())) {
@@ -6654,7 +6694,7 @@ bool Quake3Jolt::UpdateRagdollJointOffsetFromWorld(int childCapsule) {
   return true;
 }
 
-bool Quake3Jolt::UpdateRagdollJointFrameOffsetsFromWorld(int childCapsule) {
+bool SceneTemplate::UpdateRagdollJointFrameOffsetsFromWorld(int childCapsule) {
   auto& binding = m_ragdollAnimationBinding;
   auto& bones = binding.referencePose.bones;
   if (childCapsule < 0 || childCapsule >= static_cast<int>(bones.size())) {
@@ -6700,7 +6740,7 @@ bool Quake3Jolt::UpdateRagdollJointFrameOffsetsFromWorld(int childCapsule) {
   return true;
 }
 
-void Quake3Jolt::UpdateRagdollJointFrameOffsetsForBody(int capsuleIndex) {
+void SceneTemplate::UpdateRagdollJointFrameOffsetsForBody(int capsuleIndex) {
   const auto& bones = m_ragdollAnimationBinding.referencePose.bones;
   if (capsuleIndex < 0 || capsuleIndex >= static_cast<int>(bones.size())) {
     return;
@@ -6714,7 +6754,7 @@ void Quake3Jolt::UpdateRagdollJointFrameOffsetsForBody(int capsuleIndex) {
   }
 }
 
-bool Quake3Jolt::ResetRagdollJointFrameToBodyAxes(int childCapsule) {
+bool SceneTemplate::ResetRagdollJointFrameToBodyAxes(int childCapsule) {
   auto& bones = m_ragdollAnimationBinding.referencePose.bones;
   EnsureRagdollJointState();
   if (childCapsule < 0 || childCapsule >= static_cast<int>(bones.size())) {
@@ -6735,7 +6775,7 @@ bool Quake3Jolt::ResetRagdollJointFrameToBodyAxes(int childCapsule) {
   return UpdateRagdollJointFrameOffsetsFromWorld(childCapsule);
 }
 
-void Quake3Jolt::EnsureRagdollJointFrames() {
+void SceneTemplate::EnsureRagdollJointFrames() {
   auto& binding = m_ragdollAnimationBinding;
   auto& bones = binding.referencePose.bones;
   EnsureRagdollJointState();
@@ -6755,7 +6795,7 @@ void Quake3Jolt::EnsureRagdollJointFrames() {
   }
 }
 
-bool Quake3Jolt::ApplyRagdollParentCapsuleLinks() {
+bool SceneTemplate::ApplyRagdollParentCapsuleLinks() {
   auto& bones = m_ragdollAnimationBinding.referencePose.bones;
   EnsureRagdollJointState();
   if (m_ragdollParentCapsules.size() != bones.size()) {
@@ -6788,7 +6828,7 @@ bool Quake3Jolt::ApplyRagdollParentCapsuleLinks() {
   return true;
 }
 
-bool Quake3Jolt::SetRagdollCapsuleParent(int childCapsule, int parentCapsule) {
+bool SceneTemplate::SetRagdollCapsuleParent(int childCapsule, int parentCapsule) {
   const auto& bones = m_ragdollAnimationBinding.referencePose.bones;
   EnsureRagdollJointState();
   EnsureRagdollFreezeState();
@@ -6837,7 +6877,7 @@ bool Quake3Jolt::SetRagdollCapsuleParent(int childCapsule, int parentCapsule) {
   return ApplyRagdollEditPose(true);
 }
 
-bool Quake3Jolt::ClearRagdollCapsuleParent(int childCapsule) {
+bool SceneTemplate::ClearRagdollCapsuleParent(int childCapsule) {
   EnsureRagdollJointState();
   EnsureRagdollFreezeState();
   if (childCapsule < 0 ||
@@ -6867,7 +6907,7 @@ bool Quake3Jolt::ClearRagdollCapsuleParent(int childCapsule) {
   return ApplyRagdollEditPose(true);
 }
 
-bool Quake3Jolt::SetRagdollCapsuleJoint(int childCapsule, int parentCapsule) {
+bool SceneTemplate::SetRagdollCapsuleJoint(int childCapsule, int parentCapsule) {
   auto& bones = m_ragdollAnimationBinding.referencePose.bones;
   EnsureRagdollJointState();
   EnsureRagdollFreezeState();
@@ -6921,7 +6961,7 @@ bool Quake3Jolt::SetRagdollCapsuleJoint(int childCapsule, int parentCapsule) {
   return ApplyRagdollEditPose(true);
 }
 
-bool Quake3Jolt::ComputeRagdollCapsuleContactAnchor(int childCapsule, int parentCapsule, XVECTOR3& outAnchor) {
+bool SceneTemplate::ComputeRagdollCapsuleContactAnchor(int childCapsule, int parentCapsule, XVECTOR3& outAnchor) {
   const auto& bones = m_ragdollAnimationBinding.referencePose.bones;
   if (childCapsule < 0 || childCapsule >= static_cast<int>(bones.size()) ||
       parentCapsule < 0 || parentCapsule >= static_cast<int>(bones.size()) ||
@@ -6941,7 +6981,7 @@ bool Quake3Jolt::ComputeRagdollCapsuleContactAnchor(int childCapsule, int parent
       outAnchor);
 }
 
-bool Quake3Jolt::SetRagdollCapsuleJointAtContact(int childCapsule, int parentCapsule) {
+bool SceneTemplate::SetRagdollCapsuleJointAtContact(int childCapsule, int parentCapsule) {
   auto& bones = m_ragdollAnimationBinding.referencePose.bones;
   EnsureRagdollJointState();
   EnsureRagdollFreezeState();
@@ -7013,7 +7053,7 @@ bool Quake3Jolt::SetRagdollCapsuleJointAtContact(int childCapsule, int parentCap
   return ApplyRagdollEditPose(true);
 }
 
-bool Quake3Jolt::ClearRagdollCapsuleJoint(int childCapsule) {
+bool SceneTemplate::ClearRagdollCapsuleJoint(int childCapsule) {
   EnsureRagdollJointState();
   EnsureRagdollFreezeState();
   if (childCapsule < 0 ||
@@ -7050,7 +7090,7 @@ bool Quake3Jolt::ClearRagdollCapsuleJoint(int childCapsule) {
   return ApplyRagdollEditPose(true);
 }
 
-bool Quake3Jolt::ClearRagdollCapsuleJointBetween(int capsuleA, int capsuleB) {
+bool SceneTemplate::ClearRagdollCapsuleJointBetween(int capsuleA, int capsuleB) {
   EnsureRagdollJointState();
   if (capsuleA < 0 || capsuleB < 0 || capsuleA == capsuleB) {
     return false;
@@ -7064,7 +7104,7 @@ bool Quake3Jolt::ClearRagdollCapsuleJointBetween(int capsuleA, int capsuleB) {
   return false;
 }
 
-bool Quake3Jolt::AddControlledBoneToSelectedCapsule(int boneIndex) {
+bool SceneTemplate::AddControlledBoneToSelectedCapsule(int boneIndex) {
   EnsureRagdollControlledBones();
   EnsureRagdollFreezeState();
   if (m_ragdollEditSelectedCapsule < 0 ||
@@ -7150,7 +7190,7 @@ bool Quake3Jolt::AddControlledBoneToSelectedCapsule(int boneIndex) {
   return true;
 }
 
-bool Quake3Jolt::RemoveControlledBoneFromSelectedCapsule(int boneIndex) {
+bool SceneTemplate::RemoveControlledBoneFromSelectedCapsule(int boneIndex) {
   EnsureRagdollControlledBones();
   EnsureRagdollFreezeState();
   if (m_ragdollEditSelectedCapsule < 0 ||
@@ -7182,7 +7222,7 @@ bool Quake3Jolt::RemoveControlledBoneFromSelectedCapsule(int boneIndex) {
   return false;
 }
 
-int Quake3Jolt::FindGeneratedRagdollCapsuleForBone(int boneIndex) const {
+int SceneTemplate::FindGeneratedRagdollCapsuleForBone(int boneIndex) const {
   const auto& bones = m_ragdollGeneratedBinding.referencePose.bones;
   for (int i = 0; i < static_cast<int>(bones.size()); ++i) {
     if (bones[static_cast<std::size_t>(i)].body.boneIndex == boneIndex) {
@@ -7192,7 +7232,7 @@ int Quake3Jolt::FindGeneratedRagdollCapsuleForBone(int boneIndex) const {
   return -1;
 }
 
-bool Quake3Jolt::GetSkeletonEditBoneWorldTransform(int boneIndex, XMATRIX44& outWorld) const {
+bool SceneTemplate::GetSkeletonEditBoneWorldTransform(int boneIndex, XMATRIX44& outWorld) const {
   if (boneIndex >= 0 && boneIndex < static_cast<int>(m_skeletonEditCombined.size())) {
     outWorld = FlipMatrixZ(m_skeletonEditCombined[static_cast<std::size_t>(boneIndex)]) * Meshes[0].Final;
     return true;
@@ -7207,7 +7247,7 @@ bool Quake3Jolt::GetSkeletonEditBoneWorldTransform(int boneIndex, XMATRIX44& out
   return true;
 }
 
-bool Quake3Jolt::GetRagdollAuthoringBoneWorldTransform(int boneIndex, XMATRIX44& outWorld) const {
+bool SceneTemplate::GetRagdollAuthoringBoneWorldTransform(int boneIndex, XMATRIX44& outWorld) const {
   if (boneIndex >= 0 && boneIndex < static_cast<int>(m_skeletonEditCombined.size())) {
     outWorld = FlipMatrixZ(m_skeletonEditCombined[static_cast<std::size_t>(boneIndex)]) * Meshes[0].Final;
     return true;
@@ -7229,7 +7269,7 @@ bool Quake3Jolt::GetRagdollAuthoringBoneWorldTransform(int boneIndex, XMATRIX44&
   return GetSkeletonEditBoneWorldTransform(boneIndex, outWorld);
 }
 
-int Quake3Jolt::FindSkeletonEditDisplayEndpoint(int boneIndex) const {
+int SceneTemplate::FindSkeletonEditDisplayEndpoint(int boneIndex) const {
   RenderSkinnedMesh* skinned = Meshes[0].GetSkinnedMesh();
   const xF::xSkeleton* skeleton = skinned ? skinned->GetAnimController().GetAnimSkeleton() : nullptr;
   if (!skeleton || boneIndex < 0 || boneIndex >= static_cast<int>(skeleton->Bones.size())) {
@@ -7327,7 +7367,7 @@ int Quake3Jolt::FindSkeletonEditDisplayEndpoint(int boneIndex) const {
   return candidates.front().boneIndex;
 }
 
-bool Quake3Jolt::BuildSkeletonEditBoneOctahedron(int boneIndex, float widthScale, std::array<XVECTOR3, 6>& outPoints) const {
+bool SceneTemplate::BuildSkeletonEditBoneOctahedron(int boneIndex, float widthScale, std::array<XVECTOR3, 6>& outPoints) const {
   RenderSkinnedMesh* skinned = Meshes[0].GetSkinnedMesh();
   const xF::xSkeleton* skeleton = skinned ? skinned->GetAnimController().GetAnimSkeleton() : nullptr;
   if (!skeleton || boneIndex < 0 || boneIndex >= static_cast<int>(skeleton->Bones.size())) {
@@ -7352,7 +7392,7 @@ bool Quake3Jolt::BuildSkeletonEditBoneOctahedron(int boneIndex, float widthScale
   return true;
 }
 
-bool Quake3Jolt::RebuildRagdollParentLinks() {
+bool SceneTemplate::RebuildRagdollParentLinks() {
   if (!m_ragdollParentCapsules.empty()) {
     return ApplyRagdollParentCapsuleLinks();
   }
@@ -7387,7 +7427,7 @@ bool Quake3Jolt::RebuildRagdollParentLinks() {
   return true;
 }
 
-bool Quake3Jolt::BuildDefaultRagdollCapsuleForBone(int boneIndex,
+bool SceneTemplate::BuildDefaultRagdollCapsuleForBone(int boneIndex,
                                                      t850::PhysicsRagdollBoneDesc& outBone,
                                                      XMATRIX44& outBodyFromBone) const {
   RenderSkinnedMesh* skinned = Meshes[0].GetSkinnedMesh();
@@ -7497,7 +7537,7 @@ bool Quake3Jolt::BuildDefaultRagdollCapsuleForBone(int boneIndex,
   return true;
 }
 
-bool Quake3Jolt::CreateRagdollCapsuleForBone(int boneIndex) {
+bool SceneTemplate::CreateRagdollCapsuleForBone(int boneIndex) {
   EnsureRagdollControlledBones();
   if (boneIndex < 0 ||
       FindRagdollCapsuleForBone(boneIndex) >= 0 ||
@@ -7592,14 +7632,14 @@ bool Quake3Jolt::CreateRagdollCapsuleForBone(int boneIndex) {
   return true;
 }
 
-bool Quake3Jolt::CreateRagdollBoxForBone(int boneIndex) {
+bool SceneTemplate::CreateRagdollBoxForBone(int boneIndex) {
   if (!CreateRagdollCapsuleForBone(boneIndex)) {
     return false;
   }
   return MorphRagdollBodyToBox(m_ragdollEditSelectedCapsule);
 }
 
-bool Quake3Jolt::MorphRagdollBodyToBox(int capsuleIndex) {
+bool SceneTemplate::MorphRagdollBodyToBox(int capsuleIndex) {
   auto& bones = m_ragdollAnimationBinding.referencePose.bones;
   if (capsuleIndex < 0 || capsuleIndex >= static_cast<int>(bones.size())) {
     return false;
@@ -7625,7 +7665,7 @@ bool Quake3Jolt::MorphRagdollBodyToBox(int capsuleIndex) {
   return ApplyRagdollEditPose(true);
 }
 
-bool Quake3Jolt::MorphRagdollBodyToCapsule(int capsuleIndex) {
+bool SceneTemplate::MorphRagdollBodyToCapsule(int capsuleIndex) {
   auto& bones = m_ragdollAnimationBinding.referencePose.bones;
   if (capsuleIndex < 0 || capsuleIndex >= static_cast<int>(bones.size())) {
     return false;
@@ -7651,7 +7691,7 @@ bool Quake3Jolt::MorphRagdollBodyToCapsule(int capsuleIndex) {
   return ApplyRagdollEditPose(true);
 }
 
-bool Quake3Jolt::DeleteSelectedRagdollCapsule() {
+bool SceneTemplate::DeleteSelectedRagdollCapsule() {
   auto& bones = m_ragdollAnimationBinding.referencePose.bones;
   auto& locals = m_ragdollAnimationBinding.bodyFromBone;
   const int index = m_ragdollEditSelectedCapsule;
@@ -7788,7 +7828,7 @@ bool Quake3Jolt::DeleteSelectedRagdollCapsule() {
   return ApplyRagdollEditPose(true);
 }
 
-bool Quake3Jolt::ClearRagdollCapsules() {
+bool SceneTemplate::ClearRagdollCapsules() {
   const t850::PhysicsRagdollHandle ragdollHandle = Meshes[0].GetPhysicsRagdoll();
   Meshes[0].AttachPhysicsRagdoll(t850::PhysicsRagdollHandle{});
 
@@ -7839,7 +7879,7 @@ bool Quake3Jolt::ClearRagdollCapsules() {
   return true;
 }
 
-bool Quake3Jolt::UpdateRagdollReferenceBodyFromLocal(int capsuleIndex) {
+bool SceneTemplate::UpdateRagdollReferenceBodyFromLocal(int capsuleIndex) {
   if (capsuleIndex < 0 ||
       capsuleIndex >= static_cast<int>(m_ragdollAnimationBinding.referencePose.bones.size()) ||
       capsuleIndex >= static_cast<int>(m_ragdollAnimationBinding.bodyFromBone.size())) {
@@ -7906,7 +7946,7 @@ bool Quake3Jolt::UpdateRagdollReferenceBodyFromLocal(int capsuleIndex) {
   return true;
 }
 
-bool Quake3Jolt::SetRagdollEditCapsuleWorldTransform(int capsuleIndex, const XMATRIX44& bodyWorld, bool rebuildRagdoll) {
+bool SceneTemplate::SetRagdollEditCapsuleWorldTransform(int capsuleIndex, const XMATRIX44& bodyWorld, bool rebuildRagdoll) {
   auto& bones = m_ragdollAnimationBinding.referencePose.bones;
   auto& locals = m_ragdollAnimationBinding.bodyFromBone;
   if (capsuleIndex < 0 ||
@@ -7939,7 +7979,7 @@ bool Quake3Jolt::SetRagdollEditCapsuleWorldTransform(int capsuleIndex, const XMA
   return ApplyRagdollEditPose(rebuildRagdoll);
 }
 
-bool Quake3Jolt::MoveRagdollEditCapsuleByWorldDelta(int capsuleIndex, const XVECTOR3& worldDelta, bool rebuildRagdoll) {
+bool SceneTemplate::MoveRagdollEditCapsuleByWorldDelta(int capsuleIndex, const XVECTOR3& worldDelta, bool rebuildRagdoll) {
   if (IsRagdollCapsuleFrozen(capsuleIndex)) {
     return false;
   }
@@ -7953,7 +7993,7 @@ bool Quake3Jolt::MoveRagdollEditCapsuleByWorldDelta(int capsuleIndex, const XVEC
   return SetRagdollEditCapsuleWorldTransform(capsuleIndex, bodyWorld, rebuildRagdoll);
 }
 
-bool Quake3Jolt::RotateRagdollEditCapsuleWorld(int capsuleIndex,
+bool SceneTemplate::RotateRagdollEditCapsuleWorld(int capsuleIndex,
                                                  const XVECTOR3& axisWorld,
                                                  float angleRadians,
                                                  bool rebuildRagdoll) {
@@ -7979,7 +8019,7 @@ bool Quake3Jolt::RotateRagdollEditCapsuleWorld(int capsuleIndex,
   return SetRagdollEditCapsuleWorldTransform(capsuleIndex, rotatedWorld, rebuildRagdoll);
 }
 
-bool Quake3Jolt::FlipRagdollEditCapsuleLocalAxis(int capsuleIndex, int axisIndex) {
+bool SceneTemplate::FlipRagdollEditCapsuleLocalAxis(int capsuleIndex, int axisIndex) {
   if (axisIndex < 0 || axisIndex > 2 || IsRagdollCapsuleFrozen(capsuleIndex)) {
     return false;
   }
@@ -7994,7 +8034,7 @@ bool Quake3Jolt::FlipRagdollEditCapsuleLocalAxis(int capsuleIndex, int axisIndex
   return RotateRagdollEditCapsuleWorld(capsuleIndex, axes[static_cast<std::size_t>(axisIndex)], xPI, true);
 }
 
-bool Quake3Jolt::AlignRagdollEditCapsuleToWorldAxis(int capsuleIndex, int axisIndex) {
+bool SceneTemplate::AlignRagdollEditCapsuleToWorldAxis(int capsuleIndex, int axisIndex) {
   if (axisIndex < 0 || axisIndex > 2 || IsRagdollCapsuleFrozen(capsuleIndex)) {
     return false;
   }
@@ -8019,7 +8059,7 @@ bool Quake3Jolt::AlignRagdollEditCapsuleToWorldAxis(int capsuleIndex, int axisIn
   return SetRagdollEditCapsuleWorldTransform(capsuleIndex, alignedWorld, true);
 }
 
-bool Quake3Jolt::SyncRagdollCapsuleSymmetry() {
+bool SceneTemplate::SyncRagdollCapsuleSymmetry() {
   auto& binding = m_ragdollAnimationBinding;
   auto& bones = binding.referencePose.bones;
   auto syncStatus = [&](const char* fmt, auto... args) {
@@ -9118,7 +9158,7 @@ bool Quake3Jolt::SyncRagdollCapsuleSymmetry() {
   return applied;
 }
 
-bool Quake3Jolt::RecreateRagdollFromPose(const t850::PhysicsRagdollDesc& pose) {
+bool SceneTemplate::RecreateRagdollFromPose(const t850::PhysicsRagdollDesc& pose) {
   if (pose.bones.empty()) {
     return false;
   }
@@ -9149,7 +9189,7 @@ bool Quake3Jolt::RecreateRagdollFromPose(const t850::PhysicsRagdollDesc& pose) {
   return true;
 }
 
-bool Quake3Jolt::ApplyRagdollEditPose(bool rebuildRagdoll) {
+bool SceneTemplate::ApplyRagdollEditPose(bool rebuildRagdoll) {
   if (m_ragdollAnimationBinding.referencePose.bones.empty() ||
       m_ragdollAnimationBinding.referencePose.bones.size() != m_ragdollAnimationBinding.bodyFromBone.size()) {
     return false;
@@ -9184,7 +9224,7 @@ bool Quake3Jolt::ApplyRagdollEditPose(bool rebuildRagdoll) {
   return updated;
 }
 
-bool Quake3Jolt::LoadRagdollEditPose() {
+bool SceneTemplate::LoadRagdollEditPose() {
   if (m_ragdollEditSavePath.empty()) {
     m_ragdollEditSavePath = BuildRagdollEditSavePath();
   }
@@ -9243,7 +9283,7 @@ bool Quake3Jolt::LoadRagdollEditPose() {
   return true;
 }
 
-bool Quake3Jolt::SaveRagdollEditPose() {
+bool SceneTemplate::SaveRagdollEditPose() {
   if (m_ragdollEditSavePath.empty()) {
     m_ragdollEditSavePath = BuildRagdollEditSavePath();
   }
@@ -9278,7 +9318,7 @@ bool Quake3Jolt::SaveRagdollEditPose() {
   return true;
 }
 
-bool Quake3Jolt::ResetRagdollEditPose() {
+bool SceneTemplate::ResetRagdollEditPose() {
   if (m_ragdollGeneratedBinding.referencePose.bones.empty() ||
       m_ragdollGeneratedBinding.referencePose.bones.size() != m_ragdollGeneratedBinding.bodyFromBone.size()) {
     return false;
@@ -9302,7 +9342,7 @@ bool Quake3Jolt::ResetRagdollEditPose() {
   return ApplyRagdollEditPose(true);
 }
 
-bool Quake3Jolt::ResetSelectedRagdollCapsule() {
+bool SceneTemplate::ResetSelectedRagdollCapsule() {
   EnsureRagdollControlledBones();
   const int index = m_ragdollEditSelectedCapsule;
   if (index < 0 ||
@@ -9364,7 +9404,7 @@ bool Quake3Jolt::ResetSelectedRagdollCapsule() {
   return ApplyRagdollEditPose(true);
 }
 
-bool Quake3Jolt::GetSkeletonEditBoneWorldPosition(int boneIndex, XVECTOR3& outWorld) const {
+bool SceneTemplate::GetSkeletonEditBoneWorldPosition(int boneIndex, XVECTOR3& outWorld) const {
   if (boneIndex < 0 || boneIndex >= static_cast<int>(m_skeletonEditCombined.size())) {
     return false;
   }
@@ -9374,7 +9414,7 @@ bool Quake3Jolt::GetSkeletonEditBoneWorldPosition(int boneIndex, XVECTOR3& outWo
   return true;
 }
 
-bool Quake3Jolt::SetSkeletonEditBoneWorldPosition(int boneIndex, const XVECTOR3& worldPosition) {
+bool SceneTemplate::SetSkeletonEditBoneWorldPosition(int boneIndex, const XVECTOR3& worldPosition) {
   if (boneIndex < 0 || boneIndex >= static_cast<int>(m_skeletonEditCombined.size())) {
     return false;
   }
@@ -9389,14 +9429,14 @@ bool Quake3Jolt::SetSkeletonEditBoneWorldPosition(int boneIndex, const XVECTOR3&
   return ApplySkeletonEditPose();
 }
 
-void Quake3Jolt::SelectSkeletonEditBone(int boneIndex) {
+void SceneTemplate::SelectSkeletonEditBone(int boneIndex) {
   if (boneIndex != m_skeletonEditSelectedBone) {
     RestoreSkeletonPreviewBone();
   }
   m_skeletonEditSelectedBone = boneIndex;
 }
 
-void Quake3Jolt::RestoreSkeletonPreviewBone() {
+void SceneTemplate::RestoreSkeletonPreviewBone() {
   if (!m_skeletonPreviewBoneActive) {
     return;
   }
@@ -9413,7 +9453,7 @@ void Quake3Jolt::RestoreSkeletonPreviewBone() {
   ApplySkeletonEditPose();
 }
 
-bool Quake3Jolt::BeginSkeletonPreviewBone(int boneIndex) {
+bool SceneTemplate::BeginSkeletonPreviewBone(int boneIndex) {
   if (boneIndex < 0 || boneIndex >= static_cast<int>(m_skeletonEditCombined.size())) {
     return false;
   }
@@ -9428,7 +9468,7 @@ bool Quake3Jolt::BeginSkeletonPreviewBone(int boneIndex) {
   return true;
 }
 
-void Quake3Jolt::GatherSkeletonEditBoneSubtree(int boneIndex, std::vector<int>& outBones) const {
+void SceneTemplate::GatherSkeletonEditBoneSubtree(int boneIndex, std::vector<int>& outBones) const {
   outBones.clear();
   RenderSkinnedMesh* skinned = Meshes[0].GetSkinnedMesh();
   const xF::xSkeleton* skeleton = skinned ? skinned->GetAnimController().GetAnimSkeleton() : nullptr;
@@ -9478,7 +9518,7 @@ void Quake3Jolt::GatherSkeletonEditBoneSubtree(int boneIndex, std::vector<int>& 
   visit(boneIndex);
 }
 
-bool Quake3Jolt::SetSkeletonPreviewBoneWorldTransform(int boneIndex, const XMATRIX44& worldTransform) {
+bool SceneTemplate::SetSkeletonPreviewBoneWorldTransform(int boneIndex, const XMATRIX44& worldTransform) {
   if (!BeginSkeletonPreviewBone(boneIndex)) {
     return false;
   }
@@ -9493,7 +9533,7 @@ bool Quake3Jolt::SetSkeletonPreviewBoneWorldTransform(int boneIndex, const XMATR
   return ApplySkeletonEditPose();
 }
 
-bool Quake3Jolt::MoveSkeletonPreviewBoneByWorldDelta(int boneIndex, const XVECTOR3& worldDelta) {
+bool SceneTemplate::MoveSkeletonPreviewBoneByWorldDelta(int boneIndex, const XVECTOR3& worldDelta) {
   XMATRIX44 boneWorld;
   if (!GetSkeletonEditBoneWorldTransform(boneIndex, boneWorld)) {
     return false;
@@ -9505,7 +9545,7 @@ bool Quake3Jolt::MoveSkeletonPreviewBoneByWorldDelta(int boneIndex, const XVECTO
   return SetSkeletonPreviewBoneWorldTransform(boneIndex, boneWorld);
 }
 
-bool Quake3Jolt::RotateSkeletonPreviewBoneWorld(int boneIndex, const XVECTOR3& axisWorld, float angleRadians) {
+bool SceneTemplate::RotateSkeletonPreviewBoneWorld(int boneIndex, const XVECTOR3& axisWorld, float angleRadians) {
   if (std::fabs(angleRadians) < 0.000001f) {
     return true;
   }
@@ -9548,7 +9588,7 @@ bool Quake3Jolt::RotateSkeletonPreviewBoneWorld(int boneIndex, const XVECTOR3& a
   return ApplySkeletonEditPose();
 }
 
-bool Quake3Jolt::GetSkeletonPreviewBoneGizmoFrame(int boneIndex,
+bool SceneTemplate::GetSkeletonPreviewBoneGizmoFrame(int boneIndex,
                                                    XVECTOR3& outCenter,
                                                    std::array<XVECTOR3, 3>& outAxes,
                                                    float& outSize,
@@ -9576,7 +9616,7 @@ bool Quake3Jolt::GetSkeletonPreviewBoneGizmoFrame(int boneIndex,
   return true;
 }
 
-std::array<float, 3> Quake3Jolt::GetSkeletonEditBoneScale(int boneIndex) const {
+std::array<float, 3> SceneTemplate::GetSkeletonEditBoneScale(int boneIndex) const {
   std::array<float, 3> scale = {1.0f, 1.0f, 1.0f};
   if (boneIndex < 0 || boneIndex >= static_cast<int>(m_skeletonEditCombined.size())) {
     return scale;
@@ -9591,7 +9631,7 @@ std::array<float, 3> Quake3Jolt::GetSkeletonEditBoneScale(int boneIndex) const {
   return scale;
 }
 
-bool Quake3Jolt::SetSkeletonEditBoneScale(int boneIndex, const std::array<float, 3>& scale) {
+bool SceneTemplate::SetSkeletonEditBoneScale(int boneIndex, const std::array<float, 3>& scale) {
   if (boneIndex < 0 || boneIndex >= static_cast<int>(m_skeletonEditCombined.size())) {
     return false;
   }
@@ -9613,7 +9653,7 @@ bool Quake3Jolt::SetSkeletonEditBoneScale(int boneIndex, const std::array<float,
   return ApplySkeletonEditPose();
 }
 
-bool Quake3Jolt::GetCurrentRagdollEditCapsuleWorld(int capsuleIndex, XMATRIX44& outWorld) {
+bool SceneTemplate::GetCurrentRagdollEditCapsuleWorld(int capsuleIndex, XMATRIX44& outWorld) {
   const auto& bones = m_ragdollAnimationBinding.referencePose.bones;
   if (capsuleIndex < 0 || capsuleIndex >= static_cast<int>(bones.size())) {
     return false;
@@ -9660,7 +9700,7 @@ bool Quake3Jolt::GetCurrentRagdollEditCapsuleWorld(int capsuleIndex, XMATRIX44& 
   return true;
 }
 
-bool Quake3Jolt::SetRagdollEditJointWorldPosition(int childCapsule, const XVECTOR3& worldPosition) {
+bool SceneTemplate::SetRagdollEditJointWorldPosition(int childCapsule, const XVECTOR3& worldPosition) {
   auto& bones = m_ragdollAnimationBinding.referencePose.bones;
   EnsureRagdollJointState();
   EnsureRagdollFreezeState();
@@ -9683,7 +9723,7 @@ bool Quake3Jolt::SetRagdollEditJointWorldPosition(int childCapsule, const XVECTO
   return true;
 }
 
-bool Quake3Jolt::MoveRagdollEditJointByWorldDelta(int childCapsule, const XVECTOR3& worldDelta) {
+bool SceneTemplate::MoveRagdollEditJointByWorldDelta(int childCapsule, const XVECTOR3& worldDelta) {
   if (childCapsule < 0 || childCapsule >= static_cast<int>(m_ragdollAnimationBinding.referencePose.bones.size())) {
     return false;
   }
@@ -9697,7 +9737,7 @@ bool Quake3Jolt::MoveRagdollEditJointByWorldDelta(int childCapsule, const XVECTO
   return SetRagdollEditJointWorldPosition(childCapsule, joint);
 }
 
-bool Quake3Jolt::RotateRagdollEditJointWorld(int childCapsule, const XVECTOR3& axisWorld, float angleRadians) {
+bool SceneTemplate::RotateRagdollEditJointWorld(int childCapsule, const XVECTOR3& axisWorld, float angleRadians) {
   if (std::fabs(angleRadians) < 0.000001f) {
     return true;
   }
@@ -9736,7 +9776,7 @@ bool Quake3Jolt::RotateRagdollEditJointWorld(int childCapsule, const XVECTOR3& a
   return true;
 }
 
-bool Quake3Jolt::FlipRagdollEditJointLocalAxis(int childCapsule, int axisIndex) {
+bool SceneTemplate::FlipRagdollEditJointLocalAxis(int childCapsule, int axisIndex) {
   if (axisIndex < 0 || axisIndex > 2 || IsRagdollJointFrozen(childCapsule)) {
     return false;
   }
@@ -9754,7 +9794,7 @@ bool Quake3Jolt::FlipRagdollEditJointLocalAxis(int childCapsule, int axisIndex) 
   return ApplyRagdollEditPose(true);
 }
 
-bool Quake3Jolt::GetRagdollJointVisualFrame(int childCapsule,
+bool SceneTemplate::GetRagdollJointVisualFrame(int childCapsule,
                                               XVECTOR3& outJoint,
                                               XVECTOR3& outParentCenter,
                                               XVECTOR3& outChildCenter,
@@ -9807,7 +9847,7 @@ bool Quake3Jolt::GetRagdollJointVisualFrame(int childCapsule,
   return true;
 }
 
-bool Quake3Jolt::GetRagdollJointGizmoFrame(int childCapsule,
+bool SceneTemplate::GetRagdollJointGizmoFrame(int childCapsule,
                                              XVECTOR3& outCenter,
                                              std::array<XVECTOR3, 3>& outAxes,
                                              float& outSize) {
@@ -9827,7 +9867,7 @@ bool Quake3Jolt::GetRagdollJointGizmoFrame(int childCapsule,
   return true;
 }
 
-bool Quake3Jolt::PickRagdollEditJoint(float mouseX, float mouseY, float thresholdPixels, int& outChildCapsule) {
+bool SceneTemplate::PickRagdollEditJoint(float mouseX, float mouseY, float thresholdPixels, int& outChildCapsule) {
   outChildCapsule = -1;
   if (!m_skeletonEditMode || !g_pBaseDriver || m_ragdollAnimationBinding.referencePose.bones.empty()) {
     return false;
@@ -9877,7 +9917,7 @@ bool Quake3Jolt::PickRagdollEditJoint(float mouseX, float mouseY, float threshol
   return outChildCapsule >= 0;
 }
 
-bool Quake3Jolt::PickRagdollEditJointGizmo(float mouseX, float mouseY, int& outAxis) {
+bool SceneTemplate::PickRagdollEditJointGizmo(float mouseX, float mouseY, int& outAxis) {
   outAxis = -1;
   if (!m_skeletonEditMode || !g_pBaseDriver || m_ragdollEditSelectedJoint < 0 ||
       m_ragdollEditSelectionMode != kRagdollSelectJoints ||
@@ -9947,7 +9987,7 @@ bool Quake3Jolt::PickRagdollEditJointGizmo(float mouseX, float mouseY, int& outA
   return outAxis >= 0;
 }
 
-bool Quake3Jolt::BeginRagdollEditJointGizmoDrag(float mouseX, float mouseY) {
+bool SceneTemplate::BeginRagdollEditJointGizmoDrag(float mouseX, float mouseY) {
   int pickedAxis = -1;
   if (!PickRagdollEditJointGizmo(mouseX, mouseY, pickedAxis)) {
     return false;
@@ -9993,7 +10033,7 @@ bool Quake3Jolt::BeginRagdollEditJointGizmoDrag(float mouseX, float mouseY) {
   return true;
 }
 
-bool Quake3Jolt::DragRagdollEditJointGizmo(float mouseX, float mouseY) {
+bool SceneTemplate::DragRagdollEditJointGizmo(float mouseX, float mouseY) {
   if (!m_ragdollEditJointDragging ||
       m_ragdollEditSelectedJoint < 0 ||
       m_ragdollEditJointAxis < 0 ||
@@ -10049,7 +10089,7 @@ bool Quake3Jolt::DragRagdollEditJointGizmo(float mouseX, float mouseY) {
   return RotateRagdollEditJointWorld(m_ragdollEditSelectedJoint, axis, signedAngle);
 }
 
-void Quake3Jolt::DrawRagdollJointGizmos(bool editable) {
+void SceneTemplate::DrawRagdollJointGizmos(bool editable) {
   const bool allowEditing = editable && m_skeletonEditMode && m_ragdollEditSelectionMode == kRagdollSelectJoints;
   if (!allowEditing || !g_pBaseDriver || !ImGui::GetCurrentContext()) {
     return;
@@ -10230,7 +10270,7 @@ void Quake3Jolt::DrawRagdollJointGizmos(bool editable) {
   }
 }
 
-bool Quake3Jolt::GetRagdollEditGizmoFrame(int capsuleIndex,
+bool SceneTemplate::GetRagdollEditGizmoFrame(int capsuleIndex,
                                             XVECTOR3& outCenter,
                                             std::array<XVECTOR3, 3>& outAxes,
                                             float& outSize,
@@ -10261,7 +10301,7 @@ bool Quake3Jolt::GetRagdollEditGizmoFrame(int capsuleIndex,
   return true;
 }
 
-bool Quake3Jolt::BuildRagdollEditHandlePoints(int capsuleIndex, std::array<XVECTOR3, 7>& outPoints) {
+bool SceneTemplate::BuildRagdollEditHandlePoints(int capsuleIndex, std::array<XVECTOR3, 7>& outPoints) {
   const auto& bones = m_ragdollAnimationBinding.referencePose.bones;
   if (capsuleIndex < 0 || capsuleIndex >= static_cast<int>(bones.size())) {
     return false;
@@ -10293,7 +10333,7 @@ bool Quake3Jolt::BuildRagdollEditHandlePoints(int capsuleIndex, std::array<XVECT
   return true;
 }
 
-bool Quake3Jolt::PickRagdollEditHandle(float mouseX, float mouseY, float thresholdPixels, int& outCapsuleIndex, int& outHandleIndex) {
+bool SceneTemplate::PickRagdollEditHandle(float mouseX, float mouseY, float thresholdPixels, int& outCapsuleIndex, int& outHandleIndex) {
   outCapsuleIndex = -1;
   outHandleIndex = -1;
   if (!m_skeletonEditMode || !g_pBaseDriver || m_ragdollAnimationBinding.referencePose.bones.empty() ||
@@ -10358,7 +10398,7 @@ bool Quake3Jolt::PickRagdollEditHandle(float mouseX, float mouseY, float thresho
   return outCapsuleIndex >= 0 && outHandleIndex >= 0;
 }
 
-bool Quake3Jolt::PickRagdollEditCapsule(float mouseX, float mouseY, float thresholdPixels, int& outCapsuleIndex) {
+bool SceneTemplate::PickRagdollEditCapsule(float mouseX, float mouseY, float thresholdPixels, int& outCapsuleIndex) {
   outCapsuleIndex = -1;
   if (!m_skeletonEditMode || !g_pBaseDriver || m_ragdollAnimationBinding.referencePose.bones.empty()) {
     return false;
@@ -10409,7 +10449,7 @@ bool Quake3Jolt::PickRagdollEditCapsule(float mouseX, float mouseY, float thresh
   return outCapsuleIndex >= 0;
 }
 
-bool Quake3Jolt::PickRagdollEditTransformGizmo(float mouseX, float mouseY, int& outAxis) {
+bool SceneTemplate::PickRagdollEditTransformGizmo(float mouseX, float mouseY, int& outAxis) {
   outAxis = -1;
   if (!m_skeletonEditMode || !g_pBaseDriver ||
       (m_ragdollEditGizmoMode != kRagdollToolMove && m_ragdollEditGizmoMode != kRagdollToolRotate)) {
@@ -10486,7 +10526,7 @@ bool Quake3Jolt::PickRagdollEditTransformGizmo(float mouseX, float mouseY, int& 
   return outAxis >= 0;
 }
 
-bool Quake3Jolt::BeginRagdollEditTransformGizmoDrag(float mouseX, float mouseY) {
+bool SceneTemplate::BeginRagdollEditTransformGizmoDrag(float mouseX, float mouseY) {
   int pickedAxis = -1;
   if (!PickRagdollEditTransformGizmo(mouseX, mouseY, pickedAxis)) {
     return false;
@@ -10543,7 +10583,7 @@ bool Quake3Jolt::BeginRagdollEditTransformGizmoDrag(float mouseX, float mouseY) 
   return true;
 }
 
-bool Quake3Jolt::DragRagdollEditTransformGizmo(float mouseX, float mouseY) {
+bool SceneTemplate::DragRagdollEditTransformGizmo(float mouseX, float mouseY) {
   if (!m_ragdollEditGizmoDragging ||
       m_ragdollEditGizmoAxis < 0 ||
       !g_pBaseDriver) {
@@ -10613,7 +10653,7 @@ bool Quake3Jolt::DragRagdollEditTransformGizmo(float mouseX, float mouseY) {
       : RotateRagdollEditCapsuleWorld(m_ragdollEditSelectedCapsule, axis, signedAngle, false);
 }
 
-void Quake3Jolt::DrawRagdollEditTransformGizmo() {
+void SceneTemplate::DrawRagdollEditTransformGizmo() {
   if (!m_skeletonEditMode ||
       m_ragdollEditSelectionMode != kRagdollSelectCapsules ||
       m_ragdollEditSelectedCapsule < 0 ||
@@ -10738,7 +10778,7 @@ void Quake3Jolt::DrawRagdollEditTransformGizmo() {
   }
 }
 
-void Quake3Jolt::DrawSkeletonPreviewBoneGizmo() {
+void SceneTemplate::DrawSkeletonPreviewBoneGizmo() {
   if (!m_skeletonEditMode ||
       m_ragdollEditSelectionMode != kRagdollSelectBones ||
       m_skeletonEditSelectedBone < 0 ||
@@ -10826,7 +10866,7 @@ void Quake3Jolt::DrawSkeletonPreviewBoneGizmo() {
   }
 }
 
-bool Quake3Jolt::DragRagdollEditHandle(int capsuleIndex, int handleIndex, const XVECTOR3& worldDelta) {
+bool SceneTemplate::DragRagdollEditHandle(int capsuleIndex, int handleIndex, const XVECTOR3& worldDelta) {
   auto& bones = m_ragdollAnimationBinding.referencePose.bones;
   if (capsuleIndex < 0 || capsuleIndex >= static_cast<int>(bones.size()) ||
       capsuleIndex >= static_cast<int>(m_ragdollAnimationBinding.bodyFromBone.size()) ||
@@ -10945,7 +10985,7 @@ bool Quake3Jolt::DragRagdollEditHandle(int capsuleIndex, int handleIndex, const 
   return ApplyRagdollEditPose(rebuildRagdoll);
 }
 
-int Quake3Jolt::PickSkeletonEditBone(float mouseX, float mouseY, float thresholdPixels) const {
+int SceneTemplate::PickSkeletonEditBone(float mouseX, float mouseY, float thresholdPixels) const {
   if (!m_skeletonEditMode || m_skeletonEditCombined.empty() || !g_pBaseDriver) {
     return -1;
   }
@@ -10984,7 +11024,7 @@ int Quake3Jolt::PickSkeletonEditBone(float mouseX, float mouseY, float threshold
   return bestBone;
 }
 
-void Quake3Jolt::PickSkeletonEditBonesInScreenRect(float minX, float minY, float maxX, float maxY, std::vector<int>& outBones) const {
+void SceneTemplate::PickSkeletonEditBonesInScreenRect(float minX, float minY, float maxX, float maxY, std::vector<int>& outBones) const {
   outBones.clear();
   if (!m_skeletonEditMode || m_skeletonEditCombined.empty() || !g_pBaseDriver) {
     return;
@@ -11033,7 +11073,7 @@ void Quake3Jolt::PickSkeletonEditBonesInScreenRect(float minX, float minY, float
   }
 }
 
-bool Quake3Jolt::SelectRagdollContextTargetAt(float mouseX, float mouseY) {
+bool SceneTemplate::SelectRagdollContextTargetAt(float mouseX, float mouseY) {
   auto selectBody = [&](int capsuleIndex) {
     RestoreSkeletonPreviewBone();
     SelectRagdollEditCapsule(capsuleIndex, true);
@@ -11094,7 +11134,7 @@ bool Quake3Jolt::SelectRagdollContextTargetAt(float mouseX, float mouseY) {
   return false;
 }
 
-Quake3Jolt::RagdollAuthoringUndoSnapshot Quake3Jolt::CaptureRagdollUndoSnapshot(const char* label) const {
+SceneTemplate::RagdollAuthoringUndoSnapshot SceneTemplate::CaptureRagdollUndoSnapshot(const char* label) const {
   RagdollAuthoringUndoSnapshot snapshot;
   snapshot.binding = m_ragdollAnimationBinding;
   snapshot.animationPose = m_ragdollAnimationPose;
@@ -11123,12 +11163,12 @@ Quake3Jolt::RagdollAuthoringUndoSnapshot Quake3Jolt::CaptureRagdollUndoSnapshot(
   return snapshot;
 }
 
-bool Quake3Jolt::RagdollUndoContentEquals(const RagdollAuthoringUndoSnapshot& a,
+bool SceneTemplate::RagdollUndoContentEquals(const RagdollAuthoringUndoSnapshot& a,
                                             const RagdollAuthoringUndoSnapshot& b) const {
   return t850::ragdoll_editor::SameAuthoringUndoContent(a, b);
 }
 
-void Quake3Jolt::BeginRagdollUndoScope(const char* label) {
+void SceneTemplate::BeginRagdollUndoScope(const char* label) {
   if (m_ragdollUndoState.scopeActive || m_ragdollUndoState.suppressRecording) {
     return;
   }
@@ -11137,7 +11177,7 @@ void Quake3Jolt::BeginRagdollUndoScope(const char* label) {
   m_ragdollUndoState.scopeActive = true;
 }
 
-void Quake3Jolt::PushRagdollUndoSnapshot(const RagdollAuthoringUndoSnapshot& snapshot) {
+void SceneTemplate::PushRagdollUndoSnapshot(const RagdollAuthoringUndoSnapshot& snapshot) {
   if (!m_ragdollUndoState.stack.empty() &&
       RagdollUndoContentEquals(m_ragdollUndoState.stack.back(), snapshot)) {
     return;
@@ -11151,7 +11191,7 @@ void Quake3Jolt::PushRagdollUndoSnapshot(const RagdollAuthoringUndoSnapshot& sna
   }
 }
 
-void Quake3Jolt::EndRagdollUndoScope(bool gestureActive) {
+void SceneTemplate::EndRagdollUndoScope(bool gestureActive) {
   if (!m_ragdollUndoState.scopeActive) {
     if (m_ragdollUndoState.pendingActive && !gestureActive) {
       const RagdollAuthoringUndoSnapshot current = CaptureRagdollUndoSnapshot();
@@ -11204,17 +11244,17 @@ void Quake3Jolt::EndRagdollUndoScope(bool gestureActive) {
   }
 }
 
-bool Quake3Jolt::CanUndoRagdollAuthoringEdit() const {
+bool SceneTemplate::CanUndoRagdollAuthoringEdit() const {
   return !m_ragdollUndoState.stack.empty();
 }
 
-const char* Quake3Jolt::CurrentRagdollUndoLabel() const {
+const char* SceneTemplate::CurrentRagdollUndoLabel() const {
   return m_ragdollUndoState.stack.empty() || m_ragdollUndoState.stack.back().label.empty()
       ? "Undo"
       : m_ragdollUndoState.stack.back().label.c_str();
 }
 
-bool Quake3Jolt::UndoRagdollAuthoringEdit() {
+bool SceneTemplate::UndoRagdollAuthoringEdit() {
   if (m_ragdollUndoState.stack.empty()) {
     return false;
   }
@@ -11295,7 +11335,7 @@ bool Quake3Jolt::UndoRagdollAuthoringEdit() {
   return true;
 }
 
-void Quake3Jolt::DrawRagdollViewportContextMenu() {
+void SceneTemplate::DrawRagdollViewportContextMenu() {
   if (!ImGui::GetCurrentContext()) {
     m_ragdollContextMenuRequested = false;
     return;
@@ -11462,7 +11502,7 @@ void Quake3Jolt::DrawRagdollViewportContextMenu() {
   ImGui::EndPopup();
 }
 
-bool Quake3Jolt::HandleSkeletonEditInput(InputManager* input, bool imguiWantsMouse) {
+bool SceneTemplate::HandleSkeletonEditInput(InputManager* input, bool imguiWantsMouse) {
   if (!m_skeletonEditMode || !input) {
     return false;
   }
@@ -11697,7 +11737,7 @@ bool Quake3Jolt::HandleSkeletonEditInput(InputManager* input, bool imguiWantsMou
   return false;
 }
 
-void Quake3Jolt::DrawRagdollCapsuleEditPanel(t850::DevGuiContext& gui) {
+void SceneTemplate::DrawRagdollCapsuleEditPanel(t850::DevGuiContext& gui) {
   ImGui::Separator();
   if (m_ragdollEditRenamingCapsule >= 0) {
     ImGui::SetNextItemOpen(true, ImGuiCond_Always);
@@ -12558,7 +12598,7 @@ void Quake3Jolt::DrawRagdollCapsuleEditPanel(t850::DevGuiContext& gui) {
   ImGui::PopID();
 }
 
-void Quake3Jolt::DrawRagdollJointEditPanel(t850::DevGuiContext& gui) {
+void SceneTemplate::DrawRagdollJointEditPanel(t850::DevGuiContext& gui) {
   ImGui::Separator();
   if (!ImGui::CollapsingHeader("Ragdoll Joints", ImGuiTreeNodeFlags_DefaultOpen)) {
     return;
@@ -12743,7 +12783,7 @@ void Quake3Jolt::DrawRagdollJointEditPanel(t850::DevGuiContext& gui) {
   }
 }
 
-void Quake3Jolt::DrawSkeletonEditPanel(t850::DevGuiContext& gui) {
+void SceneTemplate::DrawSkeletonEditPanel(t850::DevGuiContext& gui) {
   if (!gui.BeginSection("Skeleton Edit")) {
     return;
   }
@@ -13024,7 +13064,7 @@ void Quake3Jolt::DrawSkeletonEditPanel(t850::DevGuiContext& gui) {
 }
 
 #ifdef OS_ANDROID
-void Quake3Jolt::DrawAndroidPhysicsPanel(t850::DevGuiContext& gui) {
+void SceneTemplate::DrawAndroidPhysicsPanel(t850::DevGuiContext& gui) {
   if (!gui.BeginSection("Physics")) {
     return;
   }
@@ -13132,7 +13172,7 @@ void Quake3Jolt::DrawAndroidPhysicsPanel(t850::DevGuiContext& gui) {
 }
 #endif
 
-void Quake3Jolt::OnInput(InputManager* IManager) {
+void SceneTemplate::OnInput(InputManager* IManager) {
   // Skip mouse-driven camera when replay snapshot is active
   if (m_dumper.IsReplayActive()) return;
 
@@ -13212,7 +13252,7 @@ void Quake3Jolt::OnInput(InputManager* IManager) {
   }
 }
 
-void Quake3Jolt::FitModelToView() {
+void SceneTemplate::FitModelToView() {
   RenderMesh::AABB total;
   total.Reset();
   bool hasBounds = false;
@@ -13257,11 +13297,11 @@ void Quake3Jolt::FitModelToView() {
   Cam.FPlane = m_modelRadius * 100.0f;
   Cam.CreatePojection();
 
-  T8_LOG_INFO("[Quake3Jolt] Model center=(%.2f,%.2f,%.2f) radius=%.2f dist=%.2f near=%.3f",
+  T8_LOG_INFO("[SceneTemplate] Model center=(%.2f,%.2f,%.2f) radius=%.2f dist=%.2f near=%.3f",
     m_orbitTarget.x, m_orbitTarget.y, m_orbitTarget.z, m_modelRadius, m_orbitDist, Cam.NPlane);
 }
 
-void Quake3Jolt::ComputeOrbitCamera() {
+void SceneTemplate::ComputeOrbitCamera() {
   SyncOrbitProfileFromSandbox();
   if (t850::OrbitCameraProfile* orbit = m_cameraController.GetOrbitProfile()) {
     orbit->Update(Cam, 0.0f, t850::CameraUpdateContext{});
@@ -13274,12 +13314,12 @@ void Quake3Jolt::ComputeOrbitCamera() {
   Cam.SetLookAt(target);
 }
 
-bool Quake3Jolt::SetCameraProfile(t850::CameraProfileType type) {
+bool SceneTemplate::SetCameraProfile(t850::CameraProfileType type) {
   if (type == t850::CameraProfileType::Orbit) {
     SyncOrbitProfileFromSandbox();
   }
   if (!m_cameraController.SetActiveProfile(type)) {
-    T8_LOG_ERROR("[Quake3Jolt] Failed to activate camera profile '%s'", t850::CameraProfileName(type));
+    T8_LOG_ERROR("[SceneTemplate] Failed to activate camera profile '%s'", t850::CameraProfileName(type));
     return false;
   }
   m_cameraProfileSelection = m_cameraController.GetActiveProfileIndex();
@@ -13291,24 +13331,24 @@ bool Quake3Jolt::SetCameraProfile(t850::CameraProfileType type) {
     ResetAndroidVirtualControls();
   }
 #endif
-  T8_LOG_INFO("[Quake3Jolt] Camera profile: %s", t850::CameraProfileName(type));
+  T8_LOG_INFO("[SceneTemplate] Camera profile: %s", t850::CameraProfileName(type));
   return true;
 }
 
 #ifdef OS_ANDROID
-bool Quake3Jolt::AndroidVirtualControlsVisible() const {
+bool SceneTemplate::AndroidVirtualControlsVisible() const {
   if (!ActiveCam) {
     return false;
   }
   return m_cameraController.GetActiveProfileType() != t850::CameraProfileType::Orbit;
 }
 
-bool Quake3Jolt::AndroidVirtualControlsActive() const {
+bool SceneTemplate::AndroidVirtualControlsActive() const {
   return m_androidMovePointerId >= 0 || m_androidLookPointerId >= 0 ||
          m_androidJumpPointerId >= 0 || m_androidRunPointerId >= 0;
 }
 
-void Quake3Jolt::ResetAndroidVirtualControls() {
+void SceneTemplate::ResetAndroidVirtualControls() {
   m_androidMovePointerId = -1;
   m_androidLookPointerId = -1;
   m_androidJumpPointerId = -1;
@@ -13319,7 +13359,7 @@ void Quake3Jolt::ResetAndroidVirtualControls() {
   m_androidRun = false;
 }
 
-bool Quake3Jolt::HandleAndroidVirtualControls(AInputEvent* event) {
+bool SceneTemplate::HandleAndroidVirtualControls(AInputEvent* event) {
   if (!event || AInputEvent_getType(event) != AINPUT_EVENT_TYPE_MOTION) {
     return false;
   }
@@ -13482,7 +13522,7 @@ bool Quake3Jolt::HandleAndroidVirtualControls(AInputEvent* event) {
   return true;
 }
 
-void Quake3Jolt::DrawAndroidVirtualControls(bool guiVisible) {
+void SceneTemplate::DrawAndroidVirtualControls(bool guiVisible) {
   if (guiVisible || !AndroidVirtualControlsVisible()) {
     ResetAndroidVirtualControls();
     return;
@@ -13542,7 +13582,7 @@ void Quake3Jolt::DrawAndroidVirtualControls(bool guiVisible) {
 }
 #endif
 
-void Quake3Jolt::SyncOrbitProfileFromSandbox() {
+void SceneTemplate::SyncOrbitProfileFromSandbox() {
   t850::OrbitCameraProfile* orbit = m_cameraController.GetOrbitProfile();
   if (!orbit) {
     return;
@@ -13557,7 +13597,7 @@ void Quake3Jolt::SyncOrbitProfileFromSandbox() {
   orbit->SetState(state);
 }
 
-void Quake3Jolt::SyncSandboxOrbitFromProfile() {
+void SceneTemplate::SyncSandboxOrbitFromProfile() {
   const t850::OrbitCameraProfile* orbit = m_cameraController.GetOrbitProfile();
   if (!orbit) {
     return;
@@ -13571,7 +13611,7 @@ void Quake3Jolt::SyncSandboxOrbitFromProfile() {
   m_modelRadius = state.modelRadius;
 }
 
-t850::CameraInputState Quake3Jolt::BuildCameraInputState(InputManager* input, bool imguiWantsMouse) const {
+t850::CameraInputState SceneTemplate::BuildCameraInputState(InputManager* input, bool imguiWantsMouse) const {
   t850::CameraInputState state;
   if (input) {
     state.moveForward = input->PressedKey(T800K_w);
@@ -13633,7 +13673,7 @@ t850::CameraInputState Quake3Jolt::BuildCameraInputState(InputManager* input, bo
   return state;
 }
 
-bool Quake3Jolt::SweepCapsule(const t850::CameraCollisionSweep& sweep, t850::CameraCollisionHit& outHit) const {
+bool SceneTemplate::SweepCapsule(const t850::CameraCollisionSweep& sweep, t850::CameraCollisionHit& outHit) const {
   outHit = t850::CameraCollisionHit{};
   bool hasHit = false;
   bool hasBlockingHit = false;
@@ -13646,7 +13686,7 @@ bool Quake3Jolt::SweepCapsule(const t850::CameraCollisionSweep& sweep, t850::Cam
   const bool physicsReady = engineContext && engineContext->physics && engineContext->physics->IsInitialized();
   if (!physicsReady) {
     T8_LOG_VERBOSE(
-        "[Quake3JoltSweepCapsule] start=(%.4f, %.4f, %.4f) disp=(%.4f, %.4f, %.4f) radius=%.4f halfHeight=%.4f joltReady=0 chosen=%s chosenFraction=%.5f blocking=%d",
+        "[SceneTemplateSweepCapsule] start=(%.4f, %.4f, %.4f) disp=(%.4f, %.4f, %.4f) radius=%.4f halfHeight=%.4f joltReady=0 chosen=%s chosenFraction=%.5f blocking=%d",
         sweep.startCenter.x,
         sweep.startCenter.y,
         sweep.startCenter.z,
@@ -13680,7 +13720,7 @@ bool Quake3Jolt::SweepCapsule(const t850::CameraCollisionSweep& sweep, t850::Cam
     }
   }
   T8_LOG_VERBOSE(
-      "[Quake3JoltSweepCapsule] start=(%.4f, %.4f, %.4f) disp=(%.4f, %.4f, %.4f) radius=%.4f halfHeight=%.4f joltHit=%d joltFraction=%.5f joltNormal=(%.4f, %.4f, %.4f) chosen=%s chosenFraction=%.5f chosenNormal=(%.4f, %.4f, %.4f) blocking=%d",
+      "[SceneTemplateSweepCapsule] start=(%.4f, %.4f, %.4f) disp=(%.4f, %.4f, %.4f) radius=%.4f halfHeight=%.4f joltHit=%d joltFraction=%.5f joltNormal=(%.4f, %.4f, %.4f) chosen=%s chosenFraction=%.5f chosenNormal=(%.4f, %.4f, %.4f) blocking=%d",
       sweep.startCenter.x,
       sweep.startCenter.y,
       sweep.startCenter.z,
@@ -13703,7 +13743,7 @@ bool Quake3Jolt::SweepCapsule(const t850::CameraCollisionSweep& sweep, t850::Cam
   return hasHit;
 }
 
-bool Quake3Jolt::SweepBox(const t850::CharacterBoxSweep& sweep, t850::CameraCollisionHit& outHit) const {
+bool SceneTemplate::SweepBox(const t850::CharacterBoxSweep& sweep, t850::CameraCollisionHit& outHit) const {
   outHit = t850::CameraCollisionHit{};
   bool hasHit = false;
   bool hasBlockingHit = false;
@@ -13716,7 +13756,7 @@ bool Quake3Jolt::SweepBox(const t850::CharacterBoxSweep& sweep, t850::CameraColl
   const bool physicsReady = engineContext && engineContext->physics && engineContext->physics->IsInitialized();
   if (!physicsReady) {
     T8_LOG_VERBOSE(
-        "[Quake3JoltSweepBox] start=(%.4f, %.4f, %.4f) disp=(%.4f, %.4f, %.4f) half=(%.4f, %.4f, %.4f) joltReady=0 chosen=%s chosenFraction=%.5f blocking=%d",
+        "[SceneTemplateSweepBox] start=(%.4f, %.4f, %.4f) disp=(%.4f, %.4f, %.4f) half=(%.4f, %.4f, %.4f) joltReady=0 chosen=%s chosenFraction=%.5f blocking=%d",
         sweep.startCenter.x,
         sweep.startCenter.y,
         sweep.startCenter.z,
@@ -13750,7 +13790,7 @@ bool Quake3Jolt::SweepBox(const t850::CharacterBoxSweep& sweep, t850::CameraColl
     }
   }
   T8_LOG_VERBOSE(
-      "[Quake3JoltSweepBox] start=(%.4f, %.4f, %.4f) disp=(%.4f, %.4f, %.4f) half=(%.4f, %.4f, %.4f) joltHit=%d joltFraction=%.5f joltNormal=(%.4f, %.4f, %.4f) chosen=%s chosenFraction=%.5f chosenNormal=(%.4f, %.4f, %.4f) blocking=%d",
+      "[SceneTemplateSweepBox] start=(%.4f, %.4f, %.4f) disp=(%.4f, %.4f, %.4f) half=(%.4f, %.4f, %.4f) joltHit=%d joltFraction=%.5f joltNormal=(%.4f, %.4f, %.4f) chosen=%s chosenFraction=%.5f chosenNormal=(%.4f, %.4f, %.4f) blocking=%d",
       sweep.startCenter.x,
       sweep.startCenter.y,
       sweep.startCenter.z,
@@ -13774,13 +13814,13 @@ bool Quake3Jolt::SweepBox(const t850::CharacterBoxSweep& sweep, t850::CameraColl
   return hasHit;
 }
 
-bool Quake3Jolt::QueryTriggerTouch(const t850::CharacterTriggerQuery& query, t850::CharacterTriggerTouch& outTouch) const {
+bool SceneTemplate::QueryTriggerTouch(const t850::CharacterTriggerQuery& query, t850::CharacterTriggerTouch& outTouch) const {
   (void)query;
   outTouch = t850::CharacterTriggerTouch{};
   return false;
 }
 
-void Quake3Jolt::EnsureLightRuntimeState() {
+void SceneTemplate::EnsureLightRuntimeState() {
   if (m_lightAttachToCamera.size() < SceneProp.Lights.size())
     m_lightAttachToCamera.resize(SceneProp.Lights.size(), false);
   else if (m_lightAttachToCamera.size() > SceneProp.Lights.size())
@@ -13791,7 +13831,7 @@ void Quake3Jolt::EnsureLightRuntimeState() {
   SceneProp.ActiveLights = (std::max)(0, (std::min)(SceneProp.ActiveLights, (int)SceneProp.Lights.size()));
 }
 
-void Quake3Jolt::UpdateAttachedLights() {
+void SceneTemplate::UpdateAttachedLights() {
   EnsureLightRuntimeState();
   Camera* attachCamera = ActiveCam ? ActiveCam : &Cam;
   for (int i = 0; i < (int)SceneProp.Lights.size(); ++i) {
@@ -13801,7 +13841,7 @@ void Quake3Jolt::UpdateAttachedLights() {
   }
 }
 
-void Quake3Jolt::SyncLightCameraFromDirectionalLight() {
+void SceneTemplate::SyncLightCameraFromDirectionalLight() {
   for (const Light& light : SceneProp.Lights) {
     if (light.Type != LIGHT_DIRECTIONAL) continue;
     XVECTOR3 direction = light.Direction;
@@ -13812,7 +13852,7 @@ void Quake3Jolt::SyncLightCameraFromDirectionalLight() {
   }
 }
 
-bool Quake3Jolt::AdjustSelectedDirectionalLightFromMouse(float dx, float dy) {
+bool SceneTemplate::AdjustSelectedDirectionalLightFromMouse(float dx, float dy) {
   EnsureLightRuntimeState();
   if (SceneProp.Lights.empty()) return false;
   Light& light = SceneProp.Lights[m_selectedLightIndex];
@@ -13833,7 +13873,7 @@ bool Quake3Jolt::AdjustSelectedDirectionalLightFromMouse(float dx, float dy) {
   return true;
 }
 
-void Quake3Jolt::DrawSelectedDirectionalLightArrow() {
+void SceneTemplate::DrawSelectedDirectionalLightArrow() {
   EnsureLightRuntimeState();
   if (!m_drawLightDirection) return;
   if (SceneProp.Lights.empty() || !m_lightArrowRenderer.IsReady() || !m_lightArrowVB || !m_lightArrowIB) return;
@@ -13889,7 +13929,7 @@ void Quake3Jolt::DrawSelectedDirectionalLightArrow() {
                                  IndexBufferFormat::R16);
 }
 
-void Quake3Jolt::CaptureSandboxProfileState(t850::SandboxProfileDesc& state) {
+void SceneTemplate::CaptureSandboxProfileState(t850::SandboxProfileDesc& state) {
   state = t850::SandboxProfileDesc{};
   state.model = m_profileEmbeddedInScene
       ? std::string{}
@@ -14100,7 +14140,7 @@ void Quake3Jolt::CaptureSandboxProfileState(t850::SandboxProfileDesc& state) {
   state.camera = camera;
 }
 
-void Quake3Jolt::ApplySandboxProfileState(const t850::SandboxProfileDesc& state) {
+void SceneTemplate::ApplySandboxProfileState(const t850::SandboxProfileDesc& state) {
   auto applyCubemapPath = [&](const std::string& cubemapPath) {
     const std::string normalizedPath = NormalizeSceneResourcePath(cubemapPath);
     if (normalizedPath.empty()) {
@@ -14442,7 +14482,7 @@ void Quake3Jolt::ApplySandboxProfileState(const t850::SandboxProfileDesc& state)
   for (const auto& animation : state.animations) {
     const int meshIndex = resolveAnimationMeshIndex(animation);
     if (meshIndex < 0) {
-      T8_LOG_INFO("[Quake3Jolt] Skipped profile animation for mesh slot %d path='%s'",
+      T8_LOG_INFO("[SceneTemplate] Skipped profile animation for mesh slot %d path='%s'",
                   animation.index,
                   animation.mesh.c_str());
       continue;
@@ -14451,7 +14491,7 @@ void Quake3Jolt::ApplySandboxProfileState(const t850::SandboxProfileDesc& state)
   }
 }
 
-t850::SandboxProfileDesc Quake3Jolt::BuildSparseSandboxProfile(const t850::SandboxProfileDesc& current) const {
+t850::SandboxProfileDesc SceneTemplate::BuildSparseSandboxProfile(const t850::SandboxProfileDesc& current) const {
   t850::SandboxProfileDesc sparse;
   sparse.name = current.name;
   sparse.platform = current.platform;
@@ -14526,7 +14566,7 @@ t850::SandboxProfileDesc Quake3Jolt::BuildSparseSandboxProfile(const t850::Sandb
   return sparse;
 }
 
-bool Quake3Jolt::SandboxProfileStatesEqual(const t850::SandboxProfileDesc& lhs, const t850::SandboxProfileDesc& rhs) const {
+bool SceneTemplate::SandboxProfileStatesEqual(const t850::SandboxProfileDesc& lhs, const t850::SandboxProfileDesc& rhs) const {
   const t850::SandboxProfileDesc lhsSparse = BuildSparseSandboxProfile(lhs);
   const t850::SandboxProfileDesc rhsSparse = BuildSparseSandboxProfile(rhs);
   return lhsSparse.sliders == rhsSparse.sliders &&
@@ -14542,7 +14582,7 @@ bool Quake3Jolt::SandboxProfileStatesEqual(const t850::SandboxProfileDesc& lhs, 
          lhsSparse.current_keyframe == rhsSparse.current_keyframe;
 }
 
-void Quake3Jolt::LoadSandboxProfile(bool embeddedInScene) {
+void SceneTemplate::LoadSandboxProfile(bool embeddedInScene) {
   m_profileEmbeddedInScene = embeddedInScene;
   m_profileModelKey = embeddedInScene ? std::string{} : SandboxProfileModelKey(ActiveModelPath());
   m_selectedProfileTargetIndex = t850::DefaultProfileTargetIndex();
@@ -14580,7 +14620,7 @@ void Quake3Jolt::LoadSandboxProfile(bool embeddedInScene) {
   CaptureSandboxProfileState(m_profileSavedState);
 
   const auto& runtime = t850::GetRuntimeProfileInfo();
-  T8_LOG_INFO("[Quake3Jolt] Profile scope='%s' runtime='%s' platform=%s arch=%s gpu='%s' family=%s base=%d runtime=%d",
+  T8_LOG_INFO("[SceneTemplate] Profile scope='%s' runtime='%s' platform=%s arch=%s gpu='%s' family=%s base=%d runtime=%d",
               embeddedInScene ? m_loadedEditorScenePath.c_str() : m_profileModelKey.c_str(),
               runtime.recommendedProfile.c_str(),
               runtime.platform.c_str(),
@@ -14588,7 +14628,7 @@ void Quake3Jolt::LoadSandboxProfile(bool embeddedInScene) {
               runtime.gpuName.c_str(), runtime.gpuFamily.c_str(), baseProfile ? 1 : 0, runtimeProfile ? 1 : 0);
 }
 
-void Quake3Jolt::SaveSandboxProfile() {
+void SceneTemplate::SaveSandboxProfile() {
   if (!m_profileReady) return;
 
   t850::SandboxProfileDesc current;
@@ -14640,30 +14680,30 @@ void Quake3Jolt::SaveSandboxProfile() {
       scene.profiles = profiles;
       saved = t850::scene::SaveEditorSceneFile(scene, m_loadedEditorScenePath, &error);
       if (!saved && !error.empty()) {
-        T8_LOG_ERROR("[Quake3Jolt] Failed to save scene profile '%s': %s",
+        T8_LOG_ERROR("[SceneTemplate] Failed to save scene profile '%s': %s",
                      m_loadedEditorScenePath.c_str(),
                      error.c_str());
       }
     } else {
-      T8_LOG_ERROR("[Quake3Jolt] Failed to reload scene '%s' for profile save: %s",
+      T8_LOG_ERROR("[SceneTemplate] Failed to reload scene '%s' for profile save: %s",
                    m_loadedEditorScenePath.c_str(),
                    error.c_str());
     }
   } else {
-    saved = t850::SaveSceneDescriptor("Scenes/Quake3Jolt.json", m_controlSetup.descriptor);
+    saved = t850::SaveSceneDescriptor("Scenes/SceneTemplate.json", m_controlSetup.descriptor);
   }
 
   if (saved) {
     m_profileSavedState = current;
     m_profileDirty = false;
-    T8_LOG_INFO("[Quake3Jolt] Saved profile '%s' for %s '%s'",
+    T8_LOG_INFO("[SceneTemplate] Saved profile '%s' for %s '%s'",
                 target.name.empty() ? "pc/base" : target.name.c_str(),
                 m_profileEmbeddedInScene ? "scene" : "model",
                 m_profileEmbeddedInScene ? m_loadedEditorScenePath.c_str() : m_profileModelKey.c_str());
   }
 }
 
-void Quake3Jolt::OnDraw() {
+void SceneTemplate::OnDraw() {
   T8_TELEMETRY_SCOPE("sandbox.draw");
   SceneProp.ShowCullingDebug = m_showCullStats;
   static float sLuminanceReadbackAccum = 0.0f;
@@ -15072,9 +15112,9 @@ void Quake3Jolt::OnDraw() {
   }
 }
 
-void Quake3Jolt::DrawDevGui(t850::DevGuiContext& gui) {
+void SceneTemplate::DrawDevGui(t850::DevGuiContext& gui) {
   if (m_controlSetup.descriptor.name.empty()) {
-    m_controlSetup.Load("Scenes/Quake3Jolt.json");
+    m_controlSetup.Load("Scenes/SceneTemplate.json");
   }
 
   struct Mapping { const char* name; int settingIndex; };
@@ -15317,7 +15357,7 @@ void Quake3Jolt::DrawDevGui(t850::DevGuiContext& gui) {
         if (selectedIndex != m_currentCubemapIndex || pathChanged) {
           m_currentCubemapIndex = selectedIndex;
           m_pendingCubemap = selectedCubemapPath;
-          T8_LOG_INFO("[Quake3Jolt] Cubemap change queued: '%s'", m_pendingCubemap.c_str());
+          T8_LOG_INFO("[SceneTemplate] Cubemap change queued: '%s'", m_pendingCubemap.c_str());
         }
       }
       break;
@@ -15443,7 +15483,7 @@ void Quake3Jolt::DrawDevGui(t850::DevGuiContext& gui) {
       Cam.Velocity = XVECTOR3(0.0f, 0.0f, 0.0f, 0.0f);
       Cam.Update(0.0f);
       VP = Cam.VP;
-      T8_LOG_INFO("[Quake3Jolt] Camera unstuck to position[%f,%f,%f]", Cam.Eye.x, Cam.Eye.y, Cam.Eye.z);
+      T8_LOG_INFO("[SceneTemplate] Camera unstuck to position[%f,%f,%f]", Cam.Eye.x, Cam.Eye.y, Cam.Eye.z);
     }
   }
 
@@ -15691,7 +15731,7 @@ void Quake3Jolt::DrawDevGui(t850::DevGuiContext& gui) {
       }
       m_navMeshBuildSettings.queryExtents.w = 0.0f;
     }
-    ImGui::TextDisabled("Traversal links are not generated in Quake3Jolt; use authored links once available.");
+    ImGui::TextDisabled("Traversal links are not generated in SceneTemplate; use authored links once available.");
     if (navRebuildRequested) {
       rebuildNavMeshNow(false);
     }

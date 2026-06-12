@@ -35,6 +35,11 @@ namespace t8ditor {
   void ImGuiRender();          // calls ImGui::Render() + backend RenderDrawData
   void ImGuiSetNextNativeEditorWindow(float offsetX, float offsetY, float width, float height);
   ImTextureID ImGuiTextureID(t850::BaseDriver* driver, t850::Texture* texture);
+  bool ImGuiAllowCustomSceneLayout();
+  void ImGuiSetAllowCustomSceneLayout(bool allow);
+  void ImGuiApplySceneLayout(bool allowCustomLayout, const std::string& sceneLayoutIni);
+  std::string ImGuiCaptureCurrentLayout();
+  void ImGuiSaveGlobalLayout();
 
   // ── Menu bar ───────────────────────────────────────
   struct MenuAction {
@@ -42,6 +47,7 @@ namespace t8ditor {
     bool wantsLoadScene = false;  // File > Load Scene
     bool wantsSaveScene = false;  // File > Save Scene
     bool wantsExit     = false;   // File > Exit
+    bool wantsResetLayout = false;
   };
 
   // Persistent panel visibility — pass references from EditorApp.

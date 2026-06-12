@@ -48,6 +48,7 @@
 #include <sstream>
 #include <set>
 #include <map>
+#include <unordered_map>
 #include <cstring>
 #include <thread>
 
@@ -309,8 +310,17 @@ namespace {
     return dx * dx + dy * dy + dz * dz > 0.0001f && link.radius > 0.0f;
   }
 
-  // Multi-selection: set of selected mesh indices
+  struct SelectionRef {
+    int type = 0;
+    int index = -1;
+    bool operator<(const SelectionRef& other) const {
+      return type != other.type ? type < other.type : index < other.index;
+    }
+  };
+
+  // Multi-selection: legacy mesh set plus typed refs for mixed mesh/physics selection.
   std::set<int>            g_multiSelect;
+  std::set<SelectionRef>   g_multiEntitySelect;
 
   // Groups (persistent and temporary)
   std::vector<SceneGroup>  g_groups;           // persistent groups
@@ -327,6 +337,7 @@ namespace {
   // Marquee box selection state
   bool     g_marqueeActive = false;
   ImVec2   g_marqueeStart  = {0, 0};
+  ImVec2   g_marqueeStartScreen = {0, 0};
 
   // Active camera index (-1 = default editor camera)
   int g_activeCameraIdx = -1;
@@ -341,6 +352,8 @@ namespace {
   XVECTOR3       g_physicsGizmoStartHalfExtents = XVECTOR3(16.0f, 32.0f, 16.0f, 0.0f);
   float          g_physicsGizmoStartRadius = 16.0f;
   float          g_physicsGizmoStartHalfHeight = 24.0f;
+  std::vector<TransformState> g_lastSceneObjectTransforms;
+  std::vector<std::string> g_lastSceneObjectTransformNames;
 
   // Persistent camera for scene camera viewport switching
   ::Camera g_viewCamera;
@@ -376,6 +389,7 @@ namespace {
   t850::FrameDumper g_dumper;
   bool              g_dumperInited = false;
   int               g_editorResizeInputTraceFrames = 0;
+  bool              g_resetArtistLayout = false;
 
   std::string FormatLoadingProgressForConsole(const t850::LoadingProgress::Snapshot& snapshot) {
     if (!snapshot.active) {
@@ -465,6 +479,64 @@ static PhysicsSceneEntity* SelectedPhysicsEntity() {
   if (g_selectionType == 3 && g_selectedIdx >= 0 && g_selectedIdx < (int)g_physicsEntities.size())
     return &g_physicsEntities[g_selectedIdx];
   return nullptr;
+}
+
+static bool IsValidSelectionRef(const SelectionRef& ref) {
+  if (ref.type == 0) return ref.index >= 0 && ref.index < static_cast<int>(g_objects.size());
+  if (ref.type == 3) return ref.index >= 0 && ref.index < static_cast<int>(g_physicsEntities.size());
+  return false;
+}
+
+static void ClearMixedSelection() {
+  g_multiSelect.clear();
+  g_multiEntitySelect.clear();
+}
+
+static void AddMixedSelection(int type, int index) {
+  SelectionRef ref{type, index};
+  if (!IsValidSelectionRef(ref)) return;
+  g_multiEntitySelect.insert(ref);
+  if (type == 0) g_multiSelect.insert(index);
+}
+
+static void ToggleMixedSelection(int type, int index) {
+  SelectionRef ref{type, index};
+  if (!IsValidSelectionRef(ref)) return;
+  auto it = g_multiEntitySelect.find(ref);
+  if (it != g_multiEntitySelect.end()) {
+    g_multiEntitySelect.erase(it);
+    if (type == 0) g_multiSelect.erase(index);
+  } else {
+    AddMixedSelection(type, index);
+  }
+}
+
+static void SetSingleSelection(int type, int index) {
+  g_selectedIdx = index;
+  g_selectionType = type;
+  ClearMixedSelection();
+  AddMixedSelection(type, index);
+}
+
+static std::vector<SelectionRef> CurrentCloneSelection() {
+  std::vector<SelectionRef> refs;
+  for (const SelectionRef& ref : g_multiEntitySelect) {
+    if (IsValidSelectionRef(ref)) refs.push_back(ref);
+  }
+  if (refs.empty() && g_selectedIdx >= 0) {
+    SelectionRef ref{g_selectionType, g_selectedIdx};
+    if (IsValidSelectionRef(ref)) refs.push_back(ref);
+  }
+  return refs;
+}
+
+static bool IsMixedSelected(int type, int index) {
+  return g_multiEntitySelect.find(SelectionRef{type, index}) != g_multiEntitySelect.end();
+}
+
+static void InvalidateSceneObjectTransformSnapshots() {
+  g_lastSceneObjectTransforms.clear();
+  g_lastSceneObjectTransformNames.clear();
 }
 
 static std::string MakeUniquePhysicsEntityName(const std::string& baseName) {
@@ -797,6 +869,8 @@ static PhysicsSceneEntity& EnsureMeshCharacterAuthoringTemplate(int sourceObject
   return g_meshCharacterAuthoringTemplate;
 }
 
+static bool RecreateCharacterPhysicsBody(t850::JoltPhysicsSystem& physics, PhysicsSceneEntity& entity);
+
 static XMATRIX44 MakePhysicsTransform(const XVECTOR3& position, const XVECTOR3& eulerRadians) {
   XMATRIX44 rx, ry, rz, rotation, translation;
   XMatRotationX(rx, eulerRadians.x);
@@ -807,9 +881,166 @@ static XMATRIX44 MakePhysicsTransform(const XVECTOR3& position, const XVECTOR3& 
   return rotation * translation;
 }
 
+static TransformState GetSceneObjectTransformState(SceneObject& object) {
+  return TransformState{
+      object.wireframe.Position(),
+      object.wireframe.EulerRadians(),
+      object.wireframe.Scale()
+  };
+}
+
+static bool NearlyEqual(float a, float b, float epsilon = 0.00001f) {
+  return std::fabs(a - b) <= epsilon;
+}
+
+static bool NearlyEqualVec3(const XVECTOR3& a, const XVECTOR3& b, float epsilon = 0.00001f) {
+  return NearlyEqual(a.x, b.x, epsilon) &&
+         NearlyEqual(a.y, b.y, epsilon) &&
+         NearlyEqual(a.z, b.z, epsilon);
+}
+
+static bool NearlyEqualTransform(const TransformState& a, const TransformState& b) {
+  return NearlyEqualVec3(a.position, b.position) &&
+         NearlyEqualVec3(a.eulerRad, b.eulerRad) &&
+         NearlyEqualVec3(a.scale, b.scale);
+}
+
+static XMATRIX44 BuildSceneObjectWorldFromTransform(const TransformState& state) {
+  XMATRIX44 scale, rx, ry, rz, translation;
+  XMatScaling(scale, state.scale.x, state.scale.y, state.scale.z);
+  XMatRotationX(rx, state.eulerRad.x);
+  XMatRotationY(ry, state.eulerRad.y);
+  XMatRotationZ(rz, state.eulerRad.z);
+  XMatTranslation(translation, state.position.x, state.position.y, state.position.z);
+  return scale * rx * ry * rz * translation;
+}
+
+static bool BuildInverseSceneObjectWorldFromTransform(const TransformState& state, XMATRIX44& outInverse) {
+  if (std::fabs(state.scale.x) < kMinEditableScale ||
+      std::fabs(state.scale.y) < kMinEditableScale ||
+      std::fabs(state.scale.z) < kMinEditableScale) {
+    T8_LOG_ERROR("[T8ditor] Cannot update attached character: source mesh has a near-zero scale.");
+    XMatIdentity(outInverse);
+    return false;
+  }
+
+  XMATRIX44 invTranslation, invRz, invRy, invRx, invScale;
+  XMatTranslation(invTranslation, -state.position.x, -state.position.y, -state.position.z);
+  XMatRotationZ(invRz, -state.eulerRad.z);
+  XMatRotationY(invRy, -state.eulerRad.y);
+  XMatRotationX(invRx, -state.eulerRad.x);
+  XMatScaling(invScale, 1.0f / state.scale.x, 1.0f / state.scale.y, 1.0f / state.scale.z);
+  outInverse = invTranslation * invRz * invRy * invRx * invScale;
+  return true;
+}
+
 static bool IsCharacterPhysicsEntity(const PhysicsSceneEntity& entity) {
   return entity.type == PhysicsSceneEntityType::Player ||
          entity.type == PhysicsSceneEntityType::Character;
+}
+
+static float AttachmentScaleRatio(float before, float after, const char* entityName) {
+  if (std::fabs(before) < kMinEditableScale) {
+    T8_LOG_ERROR("[T8ditor] Cannot scale attached character '%s': source mesh had a near-zero scale.",
+                 entityName ? entityName : "");
+    return 1.0f;
+  }
+  return std::fabs(after / before);
+}
+
+static bool ScaleAttachedCharacterShape(PhysicsSceneEntity& entity,
+                                        const TransformState& beforeMesh,
+                                        const TransformState& afterMesh) {
+  const float sx = AttachmentScaleRatio(beforeMesh.scale.x, afterMesh.scale.x, entity.name.c_str());
+  const float sy = AttachmentScaleRatio(beforeMesh.scale.y, afterMesh.scale.y, entity.name.c_str());
+  const float sz = AttachmentScaleRatio(beforeMesh.scale.z, afterMesh.scale.z, entity.name.c_str());
+  if (NearlyEqual(sx, 1.0f) && NearlyEqual(sy, 1.0f) && NearlyEqual(sz, 1.0f)) {
+    return false;
+  }
+
+  if (entity.playerShape == t850::PhysicsShapeType::Capsule ||
+      entity.playerShape == t850::PhysicsShapeType::Cylinder) {
+    entity.playerRadius = (std::max)(0.001f, entity.playerRadius * (sx + sz) * 0.5f);
+    entity.playerHalfHeight = (std::max)(0.001f, entity.playerHalfHeight * sy);
+  } else if (entity.playerShape == t850::PhysicsShapeType::Sphere) {
+    entity.playerRadius = (std::max)(0.001f, entity.playerRadius * (sx + sy + sz) / 3.0f);
+  } else {
+    entity.playerHalfExtents.x = (std::max)(0.001f, entity.playerHalfExtents.x * sx);
+    entity.playerHalfExtents.y = (std::max)(0.001f, entity.playerHalfExtents.y * sy);
+    entity.playerHalfExtents.z = (std::max)(0.001f, entity.playerHalfExtents.z * sz);
+  }
+  return true;
+}
+
+static void SyncCharacterEntityBodyAndVisual(t850::JoltPhysicsSystem& physics,
+                                             PhysicsSceneEntity& entity,
+                                             bool shapeChanged) {
+  if (shapeChanged) {
+    if (!RecreateCharacterPhysicsBody(physics, entity)) {
+      BuildPlayerSilhouetteMesh(entity);
+    }
+    return;
+  }
+
+  if (entity.visual) {
+    entity.visual->Position() = entity.position;
+    entity.visual->EulerRadians() = entity.eulerRadians;
+  } else {
+    BuildPlayerSilhouetteMesh(entity);
+  }
+
+  const XMATRIX44 world = MakePhysicsTransform(entity.position, entity.eulerRadians);
+  if (entity.body.IsValid()) {
+    physics.SetBodyTransform(entity.body, world, true);
+  } else if (physics.IsInitialized()) {
+    RecreateCharacterPhysicsBody(physics, entity);
+  }
+}
+
+static void PropagateSceneObjectTransformToAttachedCharacters(t850::JoltPhysicsSystem& physics,
+                                                              int sourceObjectIndex,
+                                                              const TransformState& before,
+                                                              const TransformState& after) {
+  if (sourceObjectIndex < 0 || sourceObjectIndex >= static_cast<int>(g_objects.size())) {
+    return;
+  }
+  if (NearlyEqualTransform(before, after)) {
+    return;
+  }
+
+  XMATRIX44 oldMeshInverse;
+  if (!BuildInverseSceneObjectWorldFromTransform(before, oldMeshInverse)) {
+    return;
+  }
+  const XMATRIX44 newMeshWorld = BuildSceneObjectWorldFromTransform(after);
+  const XMATRIX44 meshDelta = oldMeshInverse * newMeshWorld;
+  SceneObject& sourceObject = g_objects[static_cast<std::size_t>(sourceObjectIndex)];
+
+  for (PhysicsSceneEntity& entity : g_physicsEntities) {
+    if (entity.type != PhysicsSceneEntityType::Character) {
+      continue;
+    }
+    if (entity.sourceObjectIndex != sourceObjectIndex && entity.sourceName != sourceObject.name) {
+      continue;
+    }
+
+    const XMATRIX44 oldCharacterWorld = MakePhysicsTransform(entity.position, entity.eulerRadians);
+    const XMATRIX44 newCharacterWorld = oldCharacterWorld * meshDelta;
+    float translation[3] = {};
+    float rotationDeg[3] = {};
+    float scale[3] = {};
+    ImGuizmo::DecomposeMatrixToComponents(&newCharacterWorld.m[0][0], translation, rotationDeg, scale);
+    entity.position = XVECTOR3(translation[0], translation[1], translation[2], 1.0f);
+    entity.eulerRadians = XVECTOR3(rotationDeg[0] * kDegToRad,
+                                   rotationDeg[1] * kDegToRad,
+                                   rotationDeg[2] * kDegToRad,
+                                   0.0f);
+    entity.sourceObjectIndex = sourceObjectIndex;
+    entity.sourceName = sourceObject.name;
+
+    const bool shapeChanged = ScaleAttachedCharacterShape(entity, before, after);
+    SyncCharacterEntityBodyAndVisual(physics, entity, shapeChanged);
+  }
 }
 
 static XMATRIX44 MakePhysicsGizmoTransform(const PhysicsSceneEntity& entity) {
@@ -1124,7 +1355,8 @@ static int CreateOrSelectPlayerPhysicsEntity(t850::JoltPhysicsSystem& physics, c
   if (existing >= 0) {
     g_selectedIdx = existing;
     g_selectionType = 3;
-    g_multiSelect.clear();
+    ClearMixedSelection();
+    AddMixedSelection(3, existing);
     return existing;
   }
 
@@ -1145,7 +1377,8 @@ static int CreateOrSelectPlayerPhysicsEntity(t850::JoltPhysicsSystem& physics, c
   g_physicsEntities.push_back(std::move(entity));
   g_selectedIdx = static_cast<int>(g_physicsEntities.size()) - 1;
   g_selectionType = 3;
-  g_multiSelect.clear();
+  ClearMixedSelection();
+  AddMixedSelection(3, g_selectedIdx);
   return g_selectedIdx;
 }
 
@@ -1184,7 +1417,8 @@ static bool CreateCharacterPhysicsEntity(t850::JoltPhysicsSystem& physics,
   g_physicsEntities.push_back(std::move(entity));
   g_selectedIdx = static_cast<int>(g_physicsEntities.size()) - 1;
   g_selectionType = 3;
-  g_multiSelect.clear();
+  ClearMixedSelection();
+  AddMixedSelection(3, g_selectedIdx);
   T8_LOG_INFO("[T8ditor] Created %s %s physics entity '%s' for mesh '%s'",
               runtimePathName,
               implementationName,
@@ -1202,6 +1436,7 @@ static void DestroyPhysicsEntity(t850::JoltPhysicsSystem& physics, int index) {
     physics.DestroyBody(entity.body);
   }
   g_physicsEntities.erase(g_physicsEntities.begin() + index);
+  ClearMixedSelection();
   if (g_selectionType == 3) {
     if (g_physicsEntities.empty()) {
       g_selectedIdx = -1;
@@ -1221,6 +1456,7 @@ static void DestroyAllPhysicsEntities(t850::JoltPhysicsSystem& physics) {
     }
   }
   g_physicsEntities.clear();
+  ClearMixedSelection();
   if (g_selectionType == 3) {
     g_selectedIdx = -1;
     g_selectionType = 0;
@@ -1416,6 +1652,25 @@ static bool HasGameEntityForMeshOrPhysics(const std::string& meshName,
   return false;
 }
 
+static int FindGameEntityIndexForSelection(const SelectionRef& ref) {
+  for (int i = 0; i < static_cast<int>(g_gameEntities.size()); ++i) {
+    const t850::scene::SceneGameEntityDesc& entity = g_gameEntities[static_cast<std::size_t>(i)];
+    if (ref.type == 0 &&
+        ref.index >= 0 &&
+        ref.index < static_cast<int>(g_objects.size()) &&
+        GameEntityReferencesMesh(entity, g_objects[static_cast<std::size_t>(ref.index)].name)) {
+      return i;
+    }
+    if (ref.type == 3 &&
+        ref.index >= 0 &&
+        ref.index < static_cast<int>(g_physicsEntities.size()) &&
+        GameEntityReferencesPhysics(entity, g_physicsEntities[static_cast<std::size_t>(ref.index)].name)) {
+      return i;
+    }
+  }
+  return -1;
+}
+
 static std::string UniqueGameEntityName(const std::string& baseName) {
   const std::string base = baseName.empty() ? "Game Entity" : baseName;
   std::string candidate = base;
@@ -1587,7 +1842,8 @@ static bool CreateStaticTriangleMeshPhysicsEntity(t850::JoltPhysicsSystem& physi
   g_physicsEntities.push_back(std::move(entity));
   g_selectedIdx = static_cast<int>(g_physicsEntities.size()) - 1;
   g_selectionType = 3;
-  g_multiSelect.clear();
+  ClearMixedSelection();
+  AddMixedSelection(3, g_selectedIdx);
   g_triangleMeshStatus = "Created " + createdName;
   T8_LOG_INFO("[T8ditor] Created physics static triangle mesh '%s': verts=%u tris=%u cacheHit=%d cook=%.2fms total=%.2fms",
               createdName.c_str(),
@@ -2295,7 +2551,7 @@ static void ApplyNativeWindowChrome(ImGuiViewport* viewport, const char* title) 
 }
 
 static bool ShouldDrawPhysicsDebug() {
-  for (const SceneObject& obj : g_objects) {
+  for (SceneObject& obj : g_objects) {
     if (obj.ragdollDebugDraw && obj.litInst.HasPhysicsRagdoll())
       return true;
   }
@@ -2956,6 +3212,37 @@ void EditorApp::DrawNavMeshAuthoringPanel() {
 }
 
 void EditorApp::SyncSceneObjectTransforms() {
+  bool attachmentSnapshotsValid =
+      g_lastSceneObjectTransforms.size() == g_objects.size() &&
+      g_lastSceneObjectTransformNames.size() == g_objects.size();
+  if (attachmentSnapshotsValid) {
+    for (std::size_t i = 0; i < g_objects.size(); ++i) {
+      if (g_lastSceneObjectTransformNames[i] != g_objects[i].name) {
+        attachmentSnapshotsValid = false;
+        break;
+      }
+    }
+  }
+  if (!attachmentSnapshotsValid) {
+    g_lastSceneObjectTransforms.clear();
+    g_lastSceneObjectTransformNames.clear();
+    g_lastSceneObjectTransforms.reserve(g_objects.size());
+    g_lastSceneObjectTransformNames.reserve(g_objects.size());
+    for (SceneObject& obj : g_objects) {
+      g_lastSceneObjectTransforms.push_back(GetSceneObjectTransformState(obj));
+      g_lastSceneObjectTransformNames.push_back(obj.name);
+    }
+  } else {
+    for (int i = 0; i < static_cast<int>(g_objects.size()); ++i) {
+      const TransformState current = GetSceneObjectTransformState(g_objects[static_cast<std::size_t>(i)]);
+      const TransformState previous = g_lastSceneObjectTransforms[static_cast<std::size_t>(i)];
+      if (!NearlyEqualTransform(previous, current)) {
+        PropagateSceneObjectTransformToAttachedCharacters(m_physics, i, previous, current);
+        g_lastSceneObjectTransforms[static_cast<std::size_t>(i)] = current;
+      }
+    }
+  }
+
   for (SceneObject& obj : g_objects) {
     if (obj.primId < 0) continue;
     const XVECTOR3& pos = obj.wireframe.Position();
@@ -3363,8 +3650,8 @@ void EditorApp::OpenMeshEditor(int objectIndex) {
 
   g_selectedIdx = objectIndex;
   g_selectionType = 0;
-  g_multiSelect.clear();
-  g_multiSelect.insert(objectIndex);
+  ClearMixedSelection();
+  AddMixedSelection(0, objectIndex);
 
   t850::AABB bounds;
   if (GetEditorObjectWorldAABB(obj, bounds) && bounds.IsValid()) {
@@ -3500,7 +3787,7 @@ void EditorApp::DrawEditorFrozenFrame(t850::BaseDriver* driver) {
   driver->SetDepthStencilState(t850::BaseDriver::DEPTH_DEFAULT);
 }
 
-SceneFile EditorApp::BuildEditorSceneSnapshot(const std::string& scenePath) {
+SceneFile EditorApp::BuildEditorSceneSnapshot(const std::string& scenePath, bool captureImGuiLayout) {
   EnsureInferredGameEntities();
   SceneFile sf = g_hasLoadedSceneFile ? g_loadedSceneFile : SceneFile{};
   sf.editor.camera_target   = { m_camera.GetTarget().x, m_camera.GetTarget().y, m_camera.GetTarget().z };
@@ -3509,6 +3796,14 @@ SceneFile EditorApp::BuildEditorSceneSnapshot(const std::string& scenePath) {
   sf.editor.camera_distance = m_camera.GetDistance();
   sf.editor.show_skybox     = m_panels.showSkybox;
   sf.editor.show_wireframe  = m_panels.showWireframe;
+  sf.editor.allow_custom_layout = ImGuiAllowCustomSceneLayout();
+  if (sf.editor.allow_custom_layout) {
+    if (captureImGuiLayout) {
+      sf.editor.imgui_layout = ImGuiCaptureCurrentLayout();
+    }
+  } else {
+    sf.editor.imgui_layout.clear();
+  }
 
   sf.objects.clear();
   for (auto& obj : g_objects) {
@@ -3624,7 +3919,7 @@ SceneFile EditorApp::RefreshVirtualEditorScene(const std::string& scenePath) {
 }
 
 bool EditorApp::SaveEditorSceneSnapshot(const std::string& path, bool updateLoadedScene) {
-  SceneFile sf = BuildEditorSceneSnapshot(path);
+  SceneFile sf = BuildEditorSceneSnapshot(path, true);
   if (!SaveSceneToFile(sf, path)) {
     return false;
   }
@@ -3672,12 +3967,13 @@ void EditorApp::ApplyEditorUndoState(const EditorUndoState& state) {
   ResetEditorNavMeshState(false);
   m_primMgr.DestroyPrimitives();
   g_objects.clear();
+  InvalidateSceneObjectTransformSnapshots();
   g_cameras.clear();
   g_lights.clear();
   g_selectedIdx = -1;
   g_selectionType = 0;
   g_activeCameraIdx = -1;
-  g_multiSelect.clear();
+  ClearMixedSelection();
   g_groups.clear();
   g_activeGroupIdx = -1;
   g_unloadedSceneObjects.clear();
@@ -3822,6 +4118,7 @@ void EditorApp::ApplyEditorUndoState(const EditorUndoState& state) {
                          sf.editor.camera_pitch,
                          sf.editor.camera_distance);
   LoadEditorSceneProfiles();
+  ImGuiApplySceneLayout(sf.editor.allow_custom_layout, sf.editor.imgui_layout);
   SyncSceneObjectTransforms();
 
   g_groups = state.groups;
@@ -3838,10 +4135,10 @@ void EditorApp::ApplyEditorUndoState(const EditorUndoState& state) {
       state.activeGroupIdx < static_cast<int>(g_groups.size())
           ? state.activeGroupIdx
           : -1;
-  g_multiSelect.clear();
+  ClearMixedSelection();
   for (int member : state.multiSelect) {
     if (member >= 0 && member < static_cast<int>(g_objects.size())) {
-      g_multiSelect.insert(member);
+      AddMixedSelection(0, member);
     }
   }
   g_selectionType = state.selectionType;
@@ -3853,6 +4150,9 @@ void EditorApp::ApplyEditorUndoState(const EditorUndoState& state) {
       (g_selectionType == 4 && !m_editorNavMeshAuthored)) {
     g_selectedIdx = -1;
     g_selectionType = 0;
+  }
+  if (g_multiEntitySelect.empty() && (g_selectionType == 0 || g_selectionType == 3)) {
+    AddMixedSelection(g_selectionType, g_selectedIdx);
   }
   g_activeCameraIdx = state.activeCameraIdx >= 0 &&
       state.activeCameraIdx < static_cast<int>(g_cameras.size())
@@ -4328,7 +4628,8 @@ void EditorApp::RestoreEditorStateAfterPlay() {
   }
   g_selectedIdx = -1;
   g_selectionType = 0;
-  g_multiSelect.clear();
+  ClearMixedSelection();
+  InvalidateSceneObjectTransformSnapshots();
   SyncSceneObjectTransforms();
   if (sf.navigation_mesh) {
     RestoreEditorNavMeshFromScene(*sf.navigation_mesh);
@@ -5443,8 +5744,8 @@ void EditorApp::OpenRagdollEditor(int objectIndex) {
   }
   g_selectedIdx = objectIndex;
   g_selectionType = 0;
-  g_multiSelect.clear();
-  g_multiSelect.insert(objectIndex);
+  ClearMixedSelection();
+  AddMixedSelection(0, objectIndex);
 
   if (!obj.ragdollAuthoringReady && !LoadObjectRagdollAuthoringFromFile(obj)) {
     EnsureObjectRagdollAuthoring(obj);
@@ -7137,8 +7438,8 @@ void EditorApp::DrawRagdollEditorBodyPanel(SceneObject& obj) {
     guiState.physicsDebug = obj.ragdollDebugDraw && obj.litInst.HasPhysicsRagdoll();
     guiState.skeletonDebug = true;
     guiState.skeletonEditMode = true;
-    guiState.simulationSpeedIndex = 3;
-    guiState.fixedSimulationDelta = false;
+    guiState.simulationSpeedIndex = t850::ragdoll_editor::ClampSimulationSpeedIndex(m_ragdollEditorSimulationSpeedIndex);
+    guiState.fixedSimulationDelta = m_ragdollEditorUseFixedSimulationDelta;
     guiState.undoCount = 0;
     guiState.undoLabel = "Undo";
     guiState.dirty = m_ragdollEditorDirty;
@@ -7321,8 +7622,19 @@ void EditorApp::DrawRagdollEditorBodyPanel(SceneObject& obj) {
     context.callbacks.toggleSkeletonEditMode = [&]() {
       // T8ditor opens this native window already in dedicated edit mode.
     };
-    context.callbacks.setSimulationSpeedIndex = [](int) {};
-    context.callbacks.setFixedSimulationDelta = [](bool) {};
+    context.callbacks.setSimulationSpeedIndex = [&](int index) {
+      m_ragdollEditorSimulationSpeedIndex = t850::ragdoll_editor::ClampSimulationSpeedIndex(index);
+      if (m_physics.IsInitialized()) {
+        m_physics.SetSimulationSpeedScale(
+            t850::ragdoll_editor::SimulationSpeedScaleForIndex(m_ragdollEditorSimulationSpeedIndex));
+      }
+    };
+    context.callbacks.setFixedSimulationDelta = [&](bool fixedDelta) {
+      m_ragdollEditorUseFixedSimulationDelta = fixedDelta;
+      if (m_physics.IsInitialized()) {
+        m_physics.SetUseFixedSimulationDelta(m_ragdollEditorUseFixedSimulationDelta);
+      }
+    };
     context.callbacks.undo = []() {};
 
     const int previousSelectionMode = m_ragdollEditorSelectionMode;
@@ -8117,6 +8429,9 @@ void EditorApp::DrawMeshEditorViewport(SceneObject& obj) {
   m_meshEditorScene->SetFinalOutputRT(m_meshEditorViewportTarget.Handle());
   m_meshEditorScene->SetRenderViewport(embeddedImageMin.x, embeddedImageMin.y, viewportW, viewportH);
   m_meshEditorScene->OnUpdate(m_dtSecs);
+  if (m_physics.IsInitialized()) {
+    m_physics.Update(m_dtSecs);
+  }
   m_meshEditorScene->OnDraw();
 
   ImTextureID embeddedImage = ImGuiTextureID(driver, rt->vColorTextures[0]);
@@ -8558,8 +8873,100 @@ void EditorApp::ImportMesh(const std::string& path) {
   T8_LOG_INFO("[T8ditor] Loaded mesh [%d]: %s", g_selectedIdx, meshPath.c_str());
 }
 
+static bool CloneCharacterPhysicsForMesh(t850::JoltPhysicsSystem& physics,
+                                         const PhysicsSceneEntity& source,
+                                         int newSourceObjectIndex,
+                                         const std::string& newSourceName,
+                                         std::string& outNewPhysicsName) {
+  if (source.type != PhysicsSceneEntityType::Character ||
+      newSourceObjectIndex < 0 ||
+      newSourceObjectIndex >= static_cast<int>(g_objects.size())) {
+    return false;
+  }
+  PhysicsSceneEntity clone;
+  clone.type = PhysicsSceneEntityType::Character;
+  clone.name = MakeUniquePhysicsEntityName(source.name + " Clone");
+  clone.sourceName = newSourceName;
+  clone.sourceObjectIndex = newSourceObjectIndex;
+  clone.visible = source.visible;
+  clone.frozen = source.frozen;
+  clone.showWire = source.showWire;
+  clone.showOrientation = source.showOrientation;
+  clone.position = source.position;
+  clone.eulerRadians = source.eulerRadians;
+  clone.playerShape = source.playerShape;
+  clone.playerHalfExtents = source.playerHalfExtents;
+  clone.playerRadius = source.playerRadius;
+  clone.playerHalfHeight = source.playerHalfHeight;
+  clone.friction = source.friction;
+  clone.restitution = source.restitution;
+  clone.sensor = source.sensor;
+  clone.playerBotRadius = source.playerBotRadius;
+  clone.characterRuntimePath = source.characterRuntimePath;
+  clone.characterImplementation = source.characterImplementation;
+  clone.characterMass = source.characterMass;
+  clone.characterMaxStrength = source.characterMaxStrength;
+  clone.characterMaxSlopeAngleDeg = source.characterMaxSlopeAngleDeg;
+  clone.characterEnhancedInternalEdgeRemoval = source.characterEnhancedInternalEdgeRemoval;
+  clone.characterSupportingVolumeOffset = source.characterSupportingVolumeOffset;
+  clone.characterShapeOffset[0] = source.characterShapeOffset[0];
+  clone.characterShapeOffset[1] = source.characterShapeOffset[1];
+  clone.characterShapeOffset[2] = source.characterShapeOffset[2];
+  clone.characterBackFaceMode = source.characterBackFaceMode;
+  clone.characterPredictiveContactDistance = source.characterPredictiveContactDistance;
+  clone.characterMaxCollisionIterations = source.characterMaxCollisionIterations;
+  clone.characterMaxConstraintIterations = source.characterMaxConstraintIterations;
+  clone.characterMinTimeRemaining = source.characterMinTimeRemaining;
+  clone.characterCollisionTolerance = source.characterCollisionTolerance;
+  clone.characterPadding = source.characterPadding;
+  clone.characterMaxNumHits = source.characterMaxNumHits;
+  clone.characterHitReductionCosMaxAngle = source.characterHitReductionCosMaxAngle;
+  clone.characterPenetrationRecoverySpeed = source.characterPenetrationRecoverySpeed;
+  clone.characterGravityFactor = source.characterGravityFactor;
+  clone.characterAllowTranslationX = source.characterAllowTranslationX;
+  clone.characterAllowTranslationY = source.characterAllowTranslationY;
+  clone.characterAllowTranslationZ = source.characterAllowTranslationZ;
+  clone.characterInnerBody = source.characterInnerBody;
+  if (!RecreateCharacterPhysicsBody(physics, clone)) {
+    return false;
+  }
+  outNewPhysicsName = clone.name;
+  g_physicsEntities.push_back(std::move(clone));
+  return true;
+}
+
 void EditorApp::CloneSelected() {
   if (g_selectedIdx < 0) return;
+
+  const std::vector<SelectionRef> cloneRefs = CurrentCloneSelection();
+  if (cloneRefs.size() > 1) {
+    std::set<int> sourceObjectIndices;
+    for (const SelectionRef& ref : cloneRefs) {
+      if (ref.type == 0) {
+        sourceObjectIndices.insert(ref.index);
+      } else if (ref.type == 3 && ref.index >= 0 && ref.index < static_cast<int>(g_physicsEntities.size())) {
+        const PhysicsSceneEntity& entity = g_physicsEntities[static_cast<std::size_t>(ref.index)];
+        const int sourceObjectIndex = (entity.sourceObjectIndex >= 0 &&
+            entity.sourceObjectIndex < static_cast<int>(g_objects.size()))
+                ? entity.sourceObjectIndex
+                : FindSceneObjectIndexByName(entity.sourceName);
+        if (sourceObjectIndex >= 0) {
+          sourceObjectIndices.insert(sourceObjectIndex);
+        }
+      }
+    }
+    if (!sourceObjectIndices.empty()) {
+      ClearMixedSelection();
+      for (int sourceObjectIndex : sourceObjectIndices) {
+        if (sourceObjectIndex >= 0 && sourceObjectIndex < static_cast<int>(g_objects.size())) {
+          g_selectedIdx = sourceObjectIndex;
+          g_selectionType = 0;
+          CloneSelected();
+        }
+      }
+      return;
+    }
+  }
 
   auto makeUniqueObjectName = [](const std::string& base) {
     const std::string root = base.empty() ? "Object" : base;
@@ -8604,6 +9011,7 @@ void EditorApp::CloneSelected() {
   };
 
   if (g_selectionType == 0 && g_selectedIdx < (int)g_objects.size()) {
+    const int sourceObjectIndex = g_selectedIdx;
     SceneObject& src = g_objects[g_selectedIdx];
     const std::string meshPath = src.meshPath.empty() ? src.name : src.meshPath;
     const std::string sourceName = src.name;
@@ -8644,10 +9052,13 @@ void EditorApp::CloneSelected() {
       return;
     }
 
-    int id = m_primMgr.CreateMesh(meshPath.c_str());
-    if (id < 0) {
-      T8_LOG_ERROR("[T8ditor] Failed to clone mesh: %s", meshPath.c_str());
-      return;
+    int id = src.primId;
+    if (id < 0 || !m_primMgr.GetPrimitive(id)) {
+      id = m_primMgr.CreateMesh(meshPath.c_str());
+      if (id < 0) {
+        T8_LOG_ERROR("[T8ditor] Failed to clone mesh: %s", meshPath.c_str());
+        return;
+      }
     }
     m_primMgr.SetSceneProps(&m_sceneProps);
 
@@ -8684,7 +9095,9 @@ void EditorApp::CloneSelected() {
       clone.ragdollModelKey.clear();
       clone.ragdollResourcePath.clear();
     }
-    clone.wireframe.Load(meshPath);
+    if (!clone.wireframe.CloneFrom(src.wireframe)) {
+      clone.wireframe.Load(meshPath);
+    }
     clone.wireframe.Position() = position;
     clone.wireframe.EulerRadians() = rotation;
     clone.wireframe.Scale() = scale;
@@ -8699,7 +9112,8 @@ void EditorApp::CloneSelected() {
 
     g_selectedIdx = (int)g_objects.size() - 1;
     g_selectionType = 0;
-    g_multiSelect.clear();
+    ClearMixedSelection();
+    AddMixedSelection(0, g_selectedIdx);
     SyncSceneObjectTransforms();
     if (clone.litInst.GetSkinnedMesh() && !clone.ragdollAuthoringReady) {
       EnsureObjectRagdollAuthoring(clone);
@@ -8711,8 +9125,72 @@ void EditorApp::CloneSelected() {
         RecreateObjectRagdoll(clone, t850::PhysicsBodyMotion::Kinematic);
       }
     }
+
+    std::vector<int> relatedPhysicsIndices;
+    const int originalPhysicsCount = static_cast<int>(g_physicsEntities.size());
+    for (int physicsIndex = 0; physicsIndex < originalPhysicsCount; ++physicsIndex) {
+      const PhysicsSceneEntity& physicsEntity = g_physicsEntities[static_cast<std::size_t>(physicsIndex)];
+      if (physicsEntity.sourceObjectIndex == sourceObjectIndex || physicsEntity.sourceName == sourceName) {
+        relatedPhysicsIndices.push_back(physicsIndex);
+      }
+    }
+
+    std::unordered_map<std::string, std::string> clonedPhysicsNames;
+    for (int physicsIndex : relatedPhysicsIndices) {
+      if (physicsIndex >= 0 && physicsIndex < static_cast<int>(g_physicsEntities.size())) {
+        const PhysicsSceneEntity& physicsEntity = g_physicsEntities[static_cast<std::size_t>(physicsIndex)];
+        std::string newPhysicsName;
+        if (CloneCharacterPhysicsForMesh(m_physics, physicsEntity, static_cast<int>(g_objects.size()) - 1, clone.name, newPhysicsName)) {
+          clonedPhysicsNames[physicsEntity.name] = newPhysicsName;
+        }
+      }
+    }
+
+    for (const t850::scene::SceneGameEntityDesc& entity : g_gameEntities) {
+      if (!GameEntityReferencesMesh(entity, sourceName) &&
+          std::none_of(clonedPhysicsNames.begin(), clonedPhysicsNames.end(), [&](const auto& item) {
+            return GameEntityReferencesPhysics(entity, item.first);
+          })) {
+        continue;
+      }
+      t850::scene::SceneGameEntityDesc cloneEntity = entity;
+      cloneEntity.name = UniqueGameEntityName(entity.name + " Clone");
+      if (cloneEntity.mesh_object == sourceName) {
+        cloneEntity.mesh_object = clone.name;
+      }
+      if (cloneEntity.ragdoll_object == sourceName) {
+        cloneEntity.ragdoll_object = clone.name;
+      }
+      if (auto found = clonedPhysicsNames.find(cloneEntity.primary_physics_entity); found != clonedPhysicsNames.end()) {
+        cloneEntity.primary_physics_entity = found->second;
+      }
+      for (std::string& physicsName : cloneEntity.physics_entities) {
+        if (auto found = clonedPhysicsNames.find(physicsName); found != clonedPhysicsNames.end()) {
+          physicsName = found->second;
+        }
+      }
+      g_gameEntities.push_back(std::move(cloneEntity));
+      break;
+    }
+
     T8_LOG_INFO("[T8ditor] Cloned mesh '%s' as '%s'", sourceName.c_str(), clone.name.c_str());
     return;
+  }
+
+  if (g_selectionType == 3 && g_selectedIdx < static_cast<int>(g_physicsEntities.size())) {
+    const PhysicsSceneEntity& entity = g_physicsEntities[static_cast<std::size_t>(g_selectedIdx)];
+    const int sourceObjectIndex = (entity.sourceObjectIndex >= 0 &&
+        entity.sourceObjectIndex < static_cast<int>(g_objects.size()))
+            ? entity.sourceObjectIndex
+            : FindSceneObjectIndexByName(entity.sourceName);
+    if (sourceObjectIndex >= 0) {
+      g_selectedIdx = sourceObjectIndex;
+      g_selectionType = 0;
+      ClearMixedSelection();
+      AddMixedSelection(0, sourceObjectIndex);
+      CloneSelected();
+      return;
+    }
   }
 
   if (g_selectionType == 1 && g_selectedIdx < (int)g_cameras.size()) {
@@ -8721,7 +9199,7 @@ void EditorApp::CloneSelected() {
     g_cameras.push_back(clone);
     g_selectedIdx = (int)g_cameras.size() - 1;
     g_selectionType = 1;
-    g_multiSelect.clear();
+    ClearMixedSelection();
     T8_LOG_INFO("[T8ditor] Cloned camera '%s'", clone.name.c_str());
     return;
   }
@@ -8732,7 +9210,7 @@ void EditorApp::CloneSelected() {
     g_lights.push_back(clone);
     g_selectedIdx = (int)g_lights.size() - 1;
     g_selectionType = 2;
-    g_multiSelect.clear();
+    ClearMixedSelection();
     T8_LOG_INFO("[T8ditor] Cloned light '%s'", clone.name.c_str());
   }
 }
@@ -8766,12 +9244,13 @@ void EditorApp::DestroyAssets() {
   m_physicsDebug.Destroy();
   m_primMgr.DestroyPrimitives();
   g_objects.clear();
+  InvalidateSceneObjectTransformSnapshots();
   g_cameras.clear();
   g_lights.clear();
   g_selectedIdx = -1;
   g_selectionType = 0;
   g_activeCameraIdx = -1;
-  g_multiSelect.clear();
+  ClearMixedSelection();
   g_groups.clear();
   g_activeGroupIdx = -1;
   g_loadedSceneFile = SceneFile{};
@@ -9109,12 +9588,13 @@ void EditorApp::OnUpdate() {
         ResetEditorNavMeshState(false);
         m_primMgr.DestroyPrimitives();
         g_objects.clear();
+        InvalidateSceneObjectTransformSnapshots();
         g_cameras.clear();
         g_lights.clear();
         g_selectedIdx = -1;
         g_selectionType = 0;
         g_activeCameraIdx = -1;
-        g_multiSelect.clear();
+        ClearMixedSelection();
         g_groups.clear();
         g_activeGroupIdx = -1;
         g_undoStack.Clear();
@@ -9281,6 +9761,7 @@ void EditorApp::OnUpdate() {
         t850::LoadingProgress::ScopedStep profileStep("Loading scene", "Embedded rendering profile", 2.0f);
         LoadEditorSceneProfiles();
       }
+      ImGuiApplySceneLayout(sf.editor.allow_custom_layout, sf.editor.imgui_layout);
 
       t850::LoadingProgress::Complete("Scene loaded", loadPath);
     } else {
@@ -9905,6 +10386,7 @@ void EditorApp::HandleMousePick() {
     if (IManager.PressedOnceMouseButton(0) && !altDown) {
       g_marqueeActive = true;
       g_marqueeStart = ImVec2((float)IManager.mouseX, (float)IManager.mouseY);
+      g_marqueeStartScreen = ImGui::GetMousePos();
     }
 
     // Finish marquee on mouse release
@@ -9925,24 +10407,33 @@ void EditorApp::HandleMousePick() {
       float rMaxX = (g_marqueeStart.x > mEnd.x) ? g_marqueeStart.x : mEnd.x;
       float rMaxY = (g_marqueeStart.y > mEnd.y) ? g_marqueeStart.y : mEnd.y;
 
-      if (!shiftDown) g_multiSelect.clear();
+      if (!shiftDown) ClearMixedSelection();
 
       for (int i = 0; i < (int)g_objects.size(); ++i) {
         if (!g_objects[i].wireframe.IsLoaded() || g_objects[i].frozen || !g_objects[i].visible)
           continue;
         t850::AABB worldBox = g_objects[i].wireframe.WorldAABB();
         if (AABBInScreenRect(worldBox, m_vp, m_lastW, m_lastH, rMinX, rMinY, rMaxX, rMaxY)) {
-          g_multiSelect.insert(i);
+          AddMixedSelection(0, i);
+        }
+      }
+      for (int i = 0; i < static_cast<int>(g_physicsEntities.size()); ++i) {
+        const PhysicsSceneEntity& entity = g_physicsEntities[static_cast<std::size_t>(i)];
+        if (!entity.visible || entity.frozen) {
+          continue;
+        }
+        t850::AABB worldBox;
+        if (GetPhysicsEntityWorldAABB(entity, m_physics, worldBox) &&
+            AABBInScreenRect(worldBox, m_vp, m_lastW, m_lastH, rMinX, rMinY, rMaxX, rMaxY)) {
+          AddMixedSelection(3, i);
         }
       }
 
       // Update single selection to match multi-select state
-      if (g_multiSelect.size() == 1) {
-        g_selectedIdx = *g_multiSelect.begin();
-        g_selectionType = 0;
-      } else if (g_multiSelect.size() > 1) {
-        g_selectedIdx = *g_multiSelect.begin();
-        g_selectionType = 0;
+      if (!g_multiEntitySelect.empty()) {
+        const SelectionRef first = *g_multiEntitySelect.begin();
+        g_selectedIdx = first.index;
+        g_selectionType = first.type;
       } else {
         g_selectedIdx = -1;
       }
@@ -10056,36 +10547,36 @@ single_pick:
     g_selectedIdx   = bestIdx;
     g_selectionType = bestType;
 
-    // Multi-select: shift-click adds/removes from set (meshes only)
-    if (bestType == 0) {
+    if (bestType == 0 || bestType == 3) {
       if (shiftDown) {
-        if (g_multiSelect.count(bestIdx))
-          g_multiSelect.erase(bestIdx);
-        else
-          g_multiSelect.insert(bestIdx);
-      } else {
-        g_multiSelect.clear();
-        // Check if clicked mesh belongs to a persistent group — select entire group
+        ToggleMixedSelection(bestType, bestIdx);
+      } else if (bestType == 0) {
+        ClearMixedSelection();
         bool foundGroup = false;
         for (auto& grp : g_groups) {
           if (grp.persistent && grp.members.count(bestIdx)) {
-            g_multiSelect = grp.members;
+            for (int member : grp.members) {
+              AddMixedSelection(0, member);
+            }
             foundGroup = true;
             break;
           }
         }
-        if (!foundGroup)
-          g_multiSelect.insert(bestIdx);
+        if (!foundGroup) {
+          AddMixedSelection(0, bestIdx);
+        }
+      } else {
+        SetSingleSelection(bestType, bestIdx);
       }
-    } else {
-      g_multiSelect.clear();
+    } else if (!shiftDown) {
+      ClearMixedSelection();
     }
   } else {
     g_selectedIdx = -1;
     // Auto-switch to Select mode when deselecting (hides orphaned gizmo)
     m_gizmo.SetMode(GizmoMode::Select);
     if (!shiftDown)
-      g_multiSelect.clear();
+      ClearMixedSelection();
   }
 }
 
@@ -10330,7 +10821,7 @@ void EditorApp::OnDraw() {
       if (!entity.visible || !entity.visual || !entity.visual->IsLoaded() || !m_lines.IsReady()) {
         continue;
       }
-      const bool isSelected = g_selectionType == 3 && i == g_selectedIdx;
+      const bool isSelected = (g_selectionType == 3 && i == g_selectedIdx) || IsMixedSelected(3, i);
       XVECTOR3 savedColor = entity.visual->WireColor;
       entity.visual->WireColor = isSelected
           ? XVECTOR3(0.2f, 0.55f, 1.0f, 1.0f)
@@ -10380,7 +10871,7 @@ void EditorApp::OnDraw() {
         if (!entity.visible || !entity.showOrientation || !IsCharacterPhysicsEntity(entity)) {
           continue;
         }
-        const bool selected = g_selectionType == 3 && i == g_selectedIdx;
+        const bool selected = (g_selectionType == 3 && i == g_selectedIdx) || IsMixedSelected(3, i);
         t850::AABB bounds;
         GetPhysicsEntityWorldAABB(entity, m_physics, bounds);
         DrawOrientationArrow(
@@ -10442,7 +10933,7 @@ void EditorApp::OnDraw() {
       }
       t850::PhysicsDebugBody debugBody;
       if (m_physics.GetDebugBody(entity.body, debugBody)) {
-        if (g_selectionType == 3 && i == g_selectedIdx) {
+        if ((g_selectionType == 3 && i == g_selectedIdx) || IsMixedSelected(3, i)) {
           selectedPhysicsWireBodies.push_back(std::move(debugBody));
         } else {
           physicsWireBodies.push_back(std::move(debugBody));
@@ -10530,6 +11021,14 @@ void EditorApp::OnDraw() {
     }
 
     MenuAction menuAction = ImGuiDrawMenuBar(m_panels);
+    if (menuAction.wantsResetLayout) {
+      g_resetArtistLayout = true;
+      m_panels.showHierarchy = true;
+      m_panels.showInspector = true;
+      m_panels.showRendering = true;
+      m_panels.showConsole = true;
+      m_panels.showRTDebug = false;
+    }
 
     int addCamera = -1, addLight = -1;
     bool wantsClone = false, wantsGroup = false, wantsUngroup = false, wantsPlayScene = false;
@@ -10679,10 +11178,10 @@ void EditorApp::OnDraw() {
 
     // Draw marquee selection rectangle (Select mode)
     if (g_marqueeActive && m_gizmo.Mode() == GizmoMode::Select) {
-      ImVec2 mPos((float)IManager.mouseX, (float)IManager.mouseY);
-      ImDrawList* dl = ImGui::GetBackgroundDrawList();
-      dl->AddRectFilled(g_marqueeStart, mPos, IM_COL32(100, 100, 255, 40));
-      dl->AddRect(g_marqueeStart, mPos, IM_COL32(100, 100, 255, 200), 0.0f, 0, 1.5f);
+      ImVec2 mPos = ImGui::GetMousePos();
+      ImDrawList* dl = ImGui::GetForegroundDrawList();
+      dl->AddRectFilled(g_marqueeStartScreen, mPos, IM_COL32(80, 140, 255, 42), 2.0f);
+      dl->AddRect(g_marqueeStartScreen, mPos, IM_COL32(110, 170, 255, 230), 2.0f, 0, 1.5f);
     }
 
     // Group / multi-select bounding box (corner brackets)
@@ -11086,10 +11585,14 @@ void EditorApp::OnDraw() {
     // Panels
     if (m_panels.showHierarchy) {
       if (ImGuiViewport* viewport = ImGui::GetMainViewport()) {
-        ImGui::SetNextWindowPos(ImVec2(viewport->WorkPos.x + 8.0f, viewport->WorkPos.y + 8.0f), ImGuiCond_FirstUseEver);
+        const float margin = 12.0f;
+        const ImGuiCond layoutCond = g_resetArtistLayout ? ImGuiCond_Always : ImGuiCond_Once;
+        const float width = (std::min)(400.0f, (std::max)(340.0f, viewport->WorkSize.x * 0.24f));
+        const float height = (std::max)(480.0f, viewport->WorkSize.y - 260.0f);
+        ImGui::SetNextWindowPos(ImVec2(viewport->WorkPos.x + margin, viewport->WorkPos.y + margin), layoutCond);
+        ImGui::SetNextWindowSize(ImVec2(width, height), layoutCond);
       }
-      ImGui::SetNextWindowSize(ImVec2(350, 400), ImGuiCond_FirstUseEver);
-      if (ImGui::Begin("Hierarchy")) {
+      if (ImGui::Begin("Scene Hierarchy", &m_panels.showHierarchy, ImGuiWindowFlags_NoCollapse)) {
         ImGuiClampCurrentWindowToEditorWorkArea();
         if (ImGui::TreeNodeEx("Scene Root", ImGuiTreeNodeFlags_OpenOnArrow | ImGuiTreeNodeFlags_DefaultOpen)) {
           EnsureInferredGameEntities();
@@ -11120,8 +11623,12 @@ void EditorApp::OnDraw() {
                   if (ImGui::IsItemClicked() && meshIndex >= 0) {
                     g_selectedIdx = meshIndex;
                     g_selectionType = 0;
-                    g_multiSelect.clear();
-                    g_multiSelect.insert(meshIndex);
+                    if (ImGui::GetIO().KeyShift) {
+                      ToggleMixedSelection(0, meshIndex);
+                    } else {
+                      ClearMixedSelection();
+                      AddMixedSelection(0, meshIndex);
+                    }
                   }
                   if (meshOpen) ImGui::TreePop();
                   ImGui::PopID();
@@ -11143,7 +11650,12 @@ void EditorApp::OnDraw() {
                   if (ImGui::IsItemClicked() && physicsIndex >= 0) {
                     g_selectedIdx = physicsIndex;
                     g_selectionType = 3;
-                    g_multiSelect.clear();
+                    if (ImGui::GetIO().KeyShift) {
+                      ToggleMixedSelection(3, physicsIndex);
+                    } else {
+                      ClearMixedSelection();
+                      AddMixedSelection(3, physicsIndex);
+                    }
                   }
                   if (physicsOpen) ImGui::TreePop();
                   ImGui::PopID();
@@ -11323,8 +11835,12 @@ void EditorApp::OnDraw() {
                   bool nodeOpen = ImGui::TreeNodeEx(o.name.c_str(), flags);
                   if (ImGui::IsItemClicked()) {
                     g_selectedIdx = idx; g_selectionType = 0;
-                    g_multiSelect.clear();
-                    g_multiSelect.insert(idx);
+                    if (ImGui::GetIO().KeyShift) {
+                      ToggleMixedSelection(0, idx);
+                    } else {
+                      ClearMixedSelection();
+                      AddMixedSelection(0, idx);
+                    }
                   }
                   if (nodeOpen) {
                     drawMeshHierarchyChildren(idx, o);
@@ -11351,13 +11867,17 @@ void EditorApp::OnDraw() {
               if (o.frozen) ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.5f,0.5f,0.5f,1));
               bool nodeOpen = ImGui::TreeNodeEx(o.name.c_str(), flags);
               if (ImGui::IsItemClicked() && !o.frozen) {
-                if (g_selectionType == 0 && g_selectedIdx == i) {
+                if (!ImGui::GetIO().KeyShift && g_selectionType == 0 && g_selectedIdx == i) {
                   g_selectedIdx = -1;
-                  g_multiSelect.clear();
+                  ClearMixedSelection();
                 } else {
                   g_selectedIdx = i; g_selectionType = 0;
-                  g_multiSelect.clear();
-                  g_multiSelect.insert(i);
+                  if (ImGui::GetIO().KeyShift) {
+                    ToggleMixedSelection(0, i);
+                  } else {
+                    ClearMixedSelection();
+                    AddMixedSelection(0, i);
+                  }
                 }
               }
               if (o.frozen) ImGui::PopStyleColor();
@@ -11414,7 +11934,7 @@ void EditorApp::OnDraw() {
               ImGui::Checkbox("##frz", &entity.frozen); ImGui::SameLine();
               ImGui::Checkbox("##wir", &entity.showWire); ImGui::SameLine();
               ImGuiTreeNodeFlags flags = ImGuiTreeNodeFlags_Leaf | ImGuiTreeNodeFlags_SpanAvailWidth;
-              if (g_selectionType == 3 && i == g_selectedIdx) flags |= ImGuiTreeNodeFlags_Selected;
+              if ((g_selectionType == 3 && i == g_selectedIdx) || IsMixedSelected(3, i)) flags |= ImGuiTreeNodeFlags_Selected;
               const char* physicsIcon = entity.type == PhysicsSceneEntityType::Player ? "[P] " :
                   (entity.type == PhysicsSceneEntityType::Character ? "[C] " : "[J] ");
               const std::string label = std::string(physicsIcon) + entity.name;
@@ -11423,7 +11943,12 @@ void EditorApp::OnDraw() {
               if (ImGui::IsItemClicked() && !entity.frozen) {
                 g_selectedIdx = i;
                 g_selectionType = 3;
-                g_multiSelect.clear();
+                if (ImGui::GetIO().KeyShift) {
+                  ToggleMixedSelection(3, i);
+                } else {
+                  ClearMixedSelection();
+                  AddMixedSelection(3, i);
+                }
               }
               if (entity.frozen) ImGui::PopStyleColor();
               ImGui::SameLine();
@@ -11465,7 +11990,7 @@ void EditorApp::OnDraw() {
               if (ImGui::IsItemClicked() && !m_editorNavMeshFrozen) {
                 g_selectedIdx = 0;
                 g_selectionType = 4;
-                g_multiSelect.clear();
+                ClearMixedSelection();
               }
               if (m_editorNavMeshFrozen) ImGui::PopStyleColor();
               if (nodeOpen) {
@@ -11484,7 +12009,7 @@ void EditorApp::OnDraw() {
                     m_editorSelectedNavLink = linkIndex;
                     g_selectedIdx = 0;
                     g_selectionType = 4;
-                    g_multiSelect.clear();
+                    ClearMixedSelection();
                   }
                   if (link.frozen) ImGui::PopStyleColor();
                   if (linkOpen) ImGui::TreePop();
@@ -11618,10 +12143,15 @@ void EditorApp::OnDraw() {
     SceneObject* sel = SelectedObject();
     if (m_panels.showInspector && g_selectedIdx >= 0) {
       if (ImGuiViewport* viewport = ImGui::GetMainViewport()) {
-        ImGui::SetNextWindowPos(ImVec2(viewport->WorkPos.x + 368.0f, viewport->WorkPos.y + 8.0f), ImGuiCond_FirstUseEver);
+        const float margin = 12.0f;
+        const ImGuiCond layoutCond = g_resetArtistLayout ? ImGuiCond_Always : ImGuiCond_Once;
+        const float width = (std::min)(440.0f, (std::max)(360.0f, viewport->WorkSize.x * 0.27f));
+        const float height = (std::max)(480.0f, viewport->WorkSize.y * 0.62f);
+        ImGui::SetNextWindowPos(ImVec2(viewport->WorkPos.x + viewport->WorkSize.x - width - margin,
+                                       viewport->WorkPos.y + margin), layoutCond);
+        ImGui::SetNextWindowSize(ImVec2(width, height), layoutCond);
       }
-      ImGui::SetNextWindowSize(ImVec2(300, 400), ImGuiCond_FirstUseEver);
-      if (ImGui::Begin("Inspector")) {
+      if (ImGui::Begin("Properties", &m_panels.showInspector, ImGuiWindowFlags_NoCollapse)) {
         ImGuiClampCurrentWindowToEditorWorkArea();
         if (g_selectionType == 0 && sel) {
           const bool selectedIsSkinned = sel->litInst.GetSkinnedMesh() != nullptr &&
@@ -11943,10 +12473,16 @@ void EditorApp::OnDraw() {
 
     if (m_panels.showRendering) {
       if (ImGuiViewport* viewport = ImGui::GetMainViewport()) {
-        ImGui::SetNextWindowPos(ImVec2(viewport->WorkPos.x + 676.0f, viewport->WorkPos.y + 8.0f), ImGuiCond_FirstUseEver);
+        const float margin = 12.0f;
+        const ImGuiCond layoutCond = g_resetArtistLayout ? ImGuiCond_Always : ImGuiCond_Once;
+        const float width = (std::min)(440.0f, (std::max)(360.0f, viewport->WorkSize.x * 0.27f));
+        const float inspectorHeight = (std::max)(480.0f, viewport->WorkSize.y * 0.62f);
+        const float top = viewport->WorkPos.y + margin + inspectorHeight + margin;
+        const float height = (std::max)(260.0f, viewport->WorkPos.y + viewport->WorkSize.y - top - margin);
+        ImGui::SetNextWindowPos(ImVec2(viewport->WorkPos.x + viewport->WorkSize.x - width - margin, top), layoutCond);
+        ImGui::SetNextWindowSize(ImVec2(width, height), layoutCond);
       }
-      ImGui::SetNextWindowSize(ImVec2(390, 560), ImGuiCond_FirstUseEver);
-      if (ImGui::Begin("Rendering", &m_panels.showRendering)) {
+      if (ImGui::Begin("Look & Lighting", &m_panels.showRendering, ImGuiWindowFlags_NoCollapse)) {
         ImGuiClampCurrentWindowToEditorWorkArea();
         DrawEditorRenderingPanel();
       }
@@ -11964,6 +12500,7 @@ void EditorApp::OnDraw() {
     DrawPlaySceneWindow();
 
     commitImguiUndo("Editor Action");
+    g_resetArtistLayout = false;
     T8_LOG_TRACE("[T8ditor] OnDraw: ImGuiRender...");
     ImGuiRender();
     T8_LOG_TRACE("[T8ditor] OnDraw: ImGuiRender done");

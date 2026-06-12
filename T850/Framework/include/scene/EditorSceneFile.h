@@ -240,6 +240,8 @@ struct EditorStateDesc {
   float camera_distance = 30.0f;
   bool show_skybox = true;
   bool show_wireframe = false;
+  bool allow_custom_layout = false;
+  std::string imgui_layout;
 };
 
 struct EditorSceneFile {

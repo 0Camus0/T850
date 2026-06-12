@@ -215,7 +215,7 @@ namespace t8ditor {
     bool EnsureEditorFrozenFrameTarget(int width, int height);
     void DestroyEditorFrozenFrameTarget();
     void DrawEditorFrozenFrame(t850::BaseDriver* driver);
-    SceneFile BuildEditorSceneSnapshot(const std::string& scenePath);
+    SceneFile BuildEditorSceneSnapshot(const std::string& scenePath, bool captureImGuiLayout = false);
     SceneFile RefreshVirtualEditorScene(const std::string& scenePath);
     bool SaveEditorSceneSnapshot(const std::string& path, bool updateLoadedScene);
     t850::SandboxProfileDesc BuildEditorSceneProfile() const;
@@ -449,6 +449,8 @@ namespace t8ditor {
     bool m_ragdollEditorShowWireframe = false;
     int m_ragdollEditorSelectionMode = static_cast<int>(t850::ragdoll_editor::SelectionMode::Bodies);
     int m_ragdollEditorToolMode = static_cast<int>(t850::ragdoll_editor::ToolMode::Select);
+    int m_ragdollEditorSimulationSpeedIndex = 3;
+    bool m_ragdollEditorUseFixedSimulationDelta = false;
     int m_ragdollEditorSelectedHandle = -1;
     bool m_ragdollEditorHandleDragging = false;
     bool m_ragdollEditorGizmoDragging = false;

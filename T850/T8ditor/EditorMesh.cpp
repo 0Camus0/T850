@@ -241,6 +241,23 @@ bool EditorMesh::LoadFromTriangles(const std::string& name,
   return true;
 }
 
+bool EditorMesh::CloneFrom(const EditorMesh& source) {
+  if (!source.IsLoaded() || source.m_pickVertices.empty() || source.m_pickIndices.empty()) {
+    return false;
+  }
+  const std::string sourcePath = source.m_path;
+  if (!LoadFromTriangles(sourcePath.empty() ? "cloned editor mesh" : sourcePath,
+                         source.m_pickVertices,
+                         source.m_pickIndices)) {
+    return false;
+  }
+  m_position = source.m_position;
+  m_euler = source.m_euler;
+  m_scale = source.m_scale;
+  WireColor = source.WireColor;
+  return true;
+}
+
 void EditorMesh::Destroy() {
   m_vb = nullptr;
   m_ib = nullptr;

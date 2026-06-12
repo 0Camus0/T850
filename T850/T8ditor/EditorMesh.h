@@ -35,6 +35,7 @@ public:
   bool LoadFromTriangles(const std::string& name,
                          const std::vector<XVECTOR3>& vertices,
                          const std::vector<unsigned int>& triangleIndices);
+  bool CloneFrom(const EditorMesh& source);
   void Destroy();
 
   bool IsLoaded() const { return m_vb != nullptr && m_ib != nullptr; }

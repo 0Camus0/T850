@@ -28,6 +28,8 @@
 #include <Jolt/Physics/Collision/Shape/Shape.h>
 #include <Jolt/Physics/Collision/Shape/BoxShape.h>
 #include <Jolt/Physics/Collision/Shape/CapsuleShape.h>
+#include <Jolt/Physics/Collision/Shape/CylinderShape.h>
+#include <Jolt/Physics/Collision/Shape/SphereShape.h>
 #include <Jolt/Physics/Constraints/FixedConstraint.h>
 #include <Jolt/Physics/Constraints/SwingTwistConstraint.h>
 #include <Jolt/Physics/PhysicsSystem.h>
@@ -97,8 +99,11 @@ static bool IsUsablePhysicsShape(const PhysicsShapeDesc& shape) {
            IsBoundedPhysicsExtent(shape.halfExtents.y) &&
            IsBoundedPhysicsExtent(shape.halfExtents.z);
   case PhysicsShapeType::Capsule:
+  case PhysicsShapeType::Cylinder:
     return IsBoundedPhysicsExtent(shape.radius) &&
            IsBoundedPhysicsExtent(shape.halfHeight);
+  case PhysicsShapeType::Sphere:
+    return IsBoundedPhysicsExtent(shape.radius);
   default:
     return false;
   }
@@ -356,6 +361,17 @@ static JPH::RefConst<JPH::Shape> CreateJoltShape(const PhysicsShapeDesc& desc) {
     return new JPH::CapsuleShape(halfHeight, radius);
   }
 
+  if (desc.type == PhysicsShapeType::Sphere) {
+    const float radius = (std::max)(0.001f, desc.radius);
+    return new JPH::SphereShape(radius);
+  }
+
+  if (desc.type == PhysicsShapeType::Cylinder) {
+    const float radius = (std::max)(0.001f, desc.radius);
+    const float halfHeight = (std::max)(0.001f, desc.halfHeight);
+    return new JPH::CylinderShape(halfHeight, radius);
+  }
+
   if (desc.type == PhysicsShapeType::Box) {
     const float x = (std::max)(0.001f, desc.halfExtents.x);
     const float y = (std::max)(0.001f, desc.halfExtents.y);
@@ -467,6 +483,16 @@ static uint32_t SanitizedMaxTrianglesPerLeaf(uint32_t value) {
   return (std::max)(1u, (std::min)(8u, value));
 }
 
+static float SanitizedActiveEdgeCosThresholdAngle(float value) {
+  if (!std::isfinite(value)) {
+    return 0.996195f;
+  }
+  if (value < 0.0f) {
+    return value;
+  }
+  return (std::max)(0.0f, (std::min)(1.0f, value));
+}
+
 static uint64_t BuildTriangleMeshCookHash(const PhysicsTriangleMeshDesc& mesh) {
   uint64_t hash = 0xcbf29ce484222325ull;
   hash = HashValue(hash, kCookedMeshCacheVersion);
@@ -474,6 +500,9 @@ static uint64_t BuildTriangleMeshCookHash(const PhysicsTriangleMeshDesc& mesh) {
   hash = HashValue(hash, GetCachePlatformTag());
   hash = HashValue(hash, SanitizedMaxTrianglesPerLeaf(mesh.settings.maxTrianglesPerLeaf));
   hash = HashValue(hash, CacheBuildQualityValue(mesh.settings.buildQuality));
+  const float activeEdgeCos = SanitizedActiveEdgeCosThresholdAngle(mesh.settings.activeEdgeCosThresholdAngle);
+  hash = HashBytes(hash, &activeEdgeCos, sizeof(activeEdgeCos));
+  hash = HashValue(hash, mesh.settings.perTriangleUserData ? 1u : 0u);
   hash = HashString(hash, ResourceLocator::NormalizePath(mesh.sourcePath));
   hash = HashValue(hash, static_cast<uint64_t>(mesh.vertices.size()));
   hash = HashValue(hash, static_cast<uint64_t>(mesh.indices.size()));
@@ -660,11 +689,14 @@ static JPH::RefConst<JPH::Shape> CreateOrLoadTriangleMeshShape(const PhysicsTria
   JPH::IndexedTriangleList triangles;
   triangles.reserve(stats.triangleCount);
   for (std::size_t i = 0; i + 2 < mesh.indices.size(); i += 3) {
-    triangles.emplace_back(mesh.indices[i + 0], mesh.indices[i + 1], mesh.indices[i + 2], 0);
+    const uint32_t triangleUserData = mesh.settings.perTriangleUserData ? static_cast<uint32_t>(i / 3u) : 0u;
+    triangles.emplace_back(mesh.indices[i + 0], mesh.indices[i + 1], mesh.indices[i + 2], triangleUserData);
   }
 
   JPH::MeshShapeSettings shapeSettings(std::move(vertices), std::move(triangles));
   shapeSettings.mMaxTrianglesPerLeaf = SanitizedMaxTrianglesPerLeaf(mesh.settings.maxTrianglesPerLeaf);
+  shapeSettings.mActiveEdgeCosThresholdAngle = SanitizedActiveEdgeCosThresholdAngle(mesh.settings.activeEdgeCosThresholdAngle);
+  shapeSettings.mPerTriangleUserData = mesh.settings.perTriangleUserData;
   shapeSettings.mBuildQuality = mesh.settings.buildQuality == PhysicsMeshBuildQuality::FavorBuildSpeed
       ? JPH::MeshShapeSettings::EBuildQuality::FavorBuildSpeed
       : JPH::MeshShapeSettings::EBuildQuality::FavorRuntimePerformance;
@@ -1373,6 +1405,26 @@ bool JoltPhysicsSystem::GetBodyState(PhysicsBodyHandle handle, PhysicsBodyState&
   return true;
 }
 
+bool JoltPhysicsSystem::GetDebugBody(PhysicsBodyHandle handle, PhysicsDebugBody& outBody) const {
+  if (!m_initialized || !m_impl) {
+    return false;
+  }
+  const Impl::BodySlot* slot = m_impl->Resolve(handle);
+  if (!slot) {
+    return false;
+  }
+
+  outBody = PhysicsDebugBody{};
+  if (!GetBodyState(handle, outBody.state)) {
+    return false;
+  }
+  outBody.shape = slot->shape;
+  outBody.debugName = slot->debugName;
+  outBody.debugVertices = slot->debugVertices;
+  outBody.debugLineIndices = slot->debugLineIndices;
+  return true;
+}
+
 bool JoltPhysicsSystem::CastCapsule(const PhysicsCapsuleCastDesc& desc, PhysicsCastHit& outHit) const {
   T8_TELEMETRY_SCOPE("physics.jolt.cast_capsule");
   RuntimeTelemetry::AddCounter("physics.jolt.castCapsule.count", 1.0);
@@ -1415,6 +1467,13 @@ bool JoltPhysicsSystem::CastCapsule(const PhysicsCapsuleCastDesc& desc, PhysicsC
   JPH::ClosestHitCollisionCollector<JPH::CastShapeCollector> collector;
   const JPH::RVec3 baseOffset(desc.startCenter.x, desc.startCenter.y, desc.startCenter.z);
   JPH::IgnoreMultipleBodiesFilter ignoredBodies;
+  if (desc.triangleMeshesOnly) {
+    for (const Impl::BodySlot& slot : m_impl->bodies) {
+      if (slot.alive && slot.shape.type != PhysicsShapeType::TriangleMesh) {
+        ignoredBodies.IgnoreBody(slot.id);
+      }
+    }
+  }
   if (!desc.ignoredEntityIds.empty()) {
     ignoredBodies.Reserve(static_cast<JPH::uint>(desc.ignoredEntityIds.size()));
     for (const Impl::BodySlot& slot : m_impl->bodies) {
@@ -1511,6 +1570,13 @@ bool JoltPhysicsSystem::CastBox(const PhysicsBoxCastDesc& desc, PhysicsCastHit& 
   JPH::ClosestHitCollisionCollector<JPH::CastShapeCollector> collector;
   const JPH::RVec3 baseOffset(desc.startCenter.x, desc.startCenter.y, desc.startCenter.z);
   JPH::IgnoreMultipleBodiesFilter ignoredBodies;
+  if (desc.triangleMeshesOnly) {
+    for (const Impl::BodySlot& slot : m_impl->bodies) {
+      if (slot.alive && slot.shape.type != PhysicsShapeType::TriangleMesh) {
+        ignoredBodies.IgnoreBody(slot.id);
+      }
+    }
+  }
   if (!desc.ignoredEntityIds.empty()) {
     ignoredBodies.Reserve(static_cast<JPH::uint>(desc.ignoredEntityIds.size()));
     for (const Impl::BodySlot& slot : m_impl->bodies) {
@@ -1886,6 +1952,10 @@ bool JoltPhysicsSystem::SetBodyTransform(PhysicsBodyHandle, const XMATRIX44&, bo
 }
 
 bool JoltPhysicsSystem::GetBodyState(PhysicsBodyHandle, PhysicsBodyState&) const {
+  return false;
+}
+
+bool JoltPhysicsSystem::GetDebugBody(PhysicsBodyHandle, PhysicsDebugBody&) const {
   return false;
 }
 

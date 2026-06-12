@@ -349,7 +349,6 @@ bool ValidateConfig(Config& cfg) {
 
   cfg.sceneFilePath = StripQuotes(cfg.sceneFilePath);
   if (!cfg.sceneFilePath.empty()) {
-    cfg.startScene = 0;
     cfg.modelPath.clear();
   }
 
@@ -534,7 +533,6 @@ void ApplyCommandLine(int argc, char** argv, Config& cfg) {
     else if ((arg == "--sceneFile" || arg == "--t8scene") && i + 1 < argc) {
       cfg.sceneFilePath = StripQuotes(argv[++i]);
       cfg.modelPath.clear();
-      cfg.startScene = 0;
     }
     else if (arg == "--sceneProfile" && i + 1 < argc) {
       cfg.sceneProfile = StripQuotes(argv[++i]);

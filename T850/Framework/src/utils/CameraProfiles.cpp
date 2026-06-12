@@ -334,6 +334,11 @@ void KinematicFpsCameraProfile::HandleInput(Camera&, const CameraInputState& inp
   m_input = input;
 }
 
+void KinematicFpsCameraProfile::SetSettings(const Settings& settings) {
+  m_settings = settings;
+  m_character.SetSettings(m_settings);
+}
+
 void KinematicFpsCameraProfile::Update(Camera& camera, float deltaSeconds, const CameraUpdateContext& context) {
   ApplyMouseLook(camera, m_input, m_settings.mouseSensitivity);
   RefreshCamera(camera);
@@ -406,6 +411,19 @@ bool CameraController::SetActiveProfile(CameraProfileType type) {
 
 bool CameraController::SetActiveProfileByIndex(int index) {
   return SetActiveProfile(CameraProfileTypeFromIndex(index));
+}
+
+bool CameraController::SetKinematicProfileSettings(CameraProfileType type, const KinematicCharacterSettings& settings) {
+  CameraProfile* profile = GetProfile(type);
+  auto* kinematic = dynamic_cast<KinematicFpsCameraProfile*>(profile);
+  if (!kinematic) {
+    return false;
+  }
+  kinematic->SetSettings(settings);
+  if (m_camera && m_activeType == type) {
+    kinematic->OnActivated(*m_camera);
+  }
+  return true;
 }
 
 CameraProfile* CameraController::GetActiveProfile() {

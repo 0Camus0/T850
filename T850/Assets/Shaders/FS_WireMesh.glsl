@@ -56,11 +56,13 @@ uniform highp vec4 AmbientColor;
 #endif
 
 uniform highp sampler2D depthTex;
+uniform highp sampler2D depthTex2;
 
 void main(){
-	// Manual depth test against GBuffer depth
+	// Manual depth test against the composed scene depth.
 	vec2 screenUV = gl_FragCoord.xy * vec2(1.0/CameraInfo.z, 1.0/CameraInfo.w);
-	float sceneDepth = texture(depthTex, screenUV).r;
+	float sceneDepth = max(texture(depthTex, screenUV).r,
+	                       texture(depthTex2, screenUV).r);
 	float wireDepth = Pos.z / Pos.w;
 	if (sceneDepth > 0.0001 && wireDepth < sceneDepth * 0.995)
 		discard;

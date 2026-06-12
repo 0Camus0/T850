@@ -1958,6 +1958,13 @@ bool UpdateRagdollReferenceBodyFromLocal(PhysicsRagdollAuthoringDesc& authoring,
 
 } // namespace
 
+bool UpdateRagdollAuthoringBodyFromLocal(PhysicsRagdollAuthoringDesc& authoring,
+                                         const RenderSkinnedMesh& mesh,
+                                         const XMATRIX44& worldFromMesh,
+                                         int bodyIndex) {
+  return UpdateRagdollReferenceBodyFromLocal(authoring, mesh, worldFromMesh, authoring.binding, bodyIndex);
+}
+
 bool BuildMeshBoxBodyDesc(const RenderMesh& mesh,
                           const XMATRIX44& worldFromMesh,
                           uint32_t entityId,
@@ -2126,6 +2133,120 @@ bool AttachStaticTriangleMeshBody(JoltPhysicsSystem& physics,
   }
 
   instance.AttachPhysicsBody(handle);
+  return true;
+}
+
+bool ValidateNavOffMeshLinkWithPhysics(const JoltPhysicsSystem& physics,
+                                       const navigation::NavMeshBuildSettings& settings,
+                                       const navigation::NavOffMeshLink& link) {
+  using navigation::NavTraversalType;
+  if (link.type != NavTraversalType::Drop &&
+      link.type != NavTraversalType::Jump &&
+      link.type != NavTraversalType::JumpIntent) {
+    return true;
+  }
+  if (!physics.IsInitialized()) {
+    return true;
+  }
+
+  std::vector<PhysicsDebugBody> debugBodies;
+  if (!physics.GetDebugBodies(debugBodies)) {
+    return true;
+  }
+
+  bool hasTriangleMeshBody = false;
+  for (const PhysicsDebugBody& body : debugBodies) {
+    if (body.shape.type == PhysicsShapeType::TriangleMesh) {
+      hasTriangleMeshBody = true;
+    }
+  }
+  if (!hasTriangleMeshBody) {
+    return true;
+  }
+
+  XVECTOR3 linkVector = link.end - link.start;
+  linkVector.w = 0.0f;
+  const float linkLength = Length(linkVector);
+  if (linkLength <= 0.0001f) {
+    return false;
+  }
+
+  XVECTOR3 horizontal(linkVector.x, 0.0f, linkVector.z, 0.0f);
+  const float horizontalLength = Length(horizontal);
+  XVECTOR3 horizontalDir = horizontalLength > 0.0001f
+      ? XVECTOR3(horizontal.x / horizontalLength, 0.0f, horizontal.z / horizontalLength, 0.0f)
+      : XVECTOR3(0.0f, 0.0f, 0.0f, 0.0f);
+
+  const float radius = std::clamp(
+      (std::min)((std::max)(0.05f, settings.agentRadius), (std::max)(0.05f, link.radius)),
+      0.05f,
+      4.0f);
+  const float halfHeight = (std::max)(0.05f, settings.agentHeight * 0.5f - radius);
+  const float verticalCenterOffset = halfHeight + radius + (std::max)(0.03f, radius * 0.10f);
+  const float startClearance = horizontalLength > 0.0001f
+      ? (std::min)(horizontalLength * 0.25f, radius + 0.05f)
+      : 0.0f;
+  const float endBackoff = horizontalLength > 0.0001f
+      ? (std::min)(horizontalLength * 0.10f, radius * 0.50f)
+      : 0.0f;
+
+  auto makeCenter = [&](XVECTOR3 point, float verticalOffset) {
+    point.y += verticalOffset;
+    point.w = 1.0f;
+    return point;
+  };
+
+  auto segmentIsClear = [&](const XVECTOR3& a, const XVECTOR3& b, float castRadius, float castHalfHeight) {
+    XVECTOR3 displacement = b - a;
+    displacement.w = 0.0f;
+    if (Length(displacement) <= 0.0001f) {
+      return true;
+    }
+
+    PhysicsCapsuleCastDesc castDesc;
+    castDesc.startCenter = a;
+    castDesc.displacement = displacement;
+    castDesc.radius = castRadius;
+    castDesc.halfHeight = castHalfHeight;
+    castDesc.triangleMeshesOnly = true;
+
+    PhysicsCastHit hit;
+    if (!physics.CastCapsule(castDesc, hit)) {
+      return true;
+    }
+    return hit.fraction >= 0.98f;
+  };
+
+  const std::array<float, 3> validationOffsets = {
+      (std::max)(radius + 0.05f, 0.10f),
+      verticalCenterOffset,
+      (std::max)(verticalCenterOffset, settings.agentHeight - (std::min)(radius * 0.5f, 0.20f))
+  };
+  for (std::size_t offsetIndex = 0; offsetIndex < validationOffsets.size(); ++offsetIndex) {
+    const float offset = validationOffsets[offsetIndex];
+    const float castRadius = offsetIndex == 1 ? radius : (std::max)(0.05f, (std::min)(radius * 0.5f, 0.20f));
+    const float castHalfHeight = offsetIndex == 1 ? halfHeight : 0.05f;
+    const XVECTOR3 start = makeCenter(link.start + horizontalDir * startClearance, offset);
+    const XVECTOR3 end = makeCenter(link.end - horizontalDir * endBackoff, offset);
+
+    if (!segmentIsClear(start, end, castRadius, castHalfHeight) ||
+        !segmentIsClear(end, start, castRadius, castHalfHeight)) {
+      return false;
+    }
+
+    if (link.type == NavTraversalType::Drop) {
+      XVECTOR3 verticalEnd = start;
+      verticalEnd.y = end.y;
+      const XVECTOR3 horizontalStart = verticalEnd;
+      if (!segmentIsClear(start, verticalEnd, castRadius, castHalfHeight) ||
+          !segmentIsClear(verticalEnd, start, castRadius, castHalfHeight) ||
+          !segmentIsClear(horizontalStart, end, castRadius, castHalfHeight) ||
+          !segmentIsClear(end, horizontalStart, castRadius, castHalfHeight)) {
+        return false;
+      }
+    }
+  }
+
   return true;
 }
 

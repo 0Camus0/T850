@@ -203,6 +203,8 @@ public:
   bool GetDebugGraphEdges(std::vector<XVECTOR3>& outVertices,
                           std::vector<unsigned int>& outIndices,
                           float verticalOffset = 0.015f) const;
+  bool GetDebugNodePositions(std::vector<XVECTOR3>& outPositions,
+                            float verticalOffset = 0.0f) const;
   bool GetDebugOffMeshLinks(NavTraversalType type,
                            std::vector<XVECTOR3>& outVertices,
                            std::vector<unsigned int>& outIndices,
@@ -265,6 +267,10 @@ bool BuildGeometryFromPrimitiveInstances(const PrimitiveInst* instances,
                                          NavMeshGeometry& outGeometry,
                                          NavSourceBuildStats* stats = nullptr,
                                          std::string* error = nullptr);
+bool BuildGeometryFromNavSources(const std::vector<NavSourceInstance>& sources,
+                                 NavMeshGeometry& outGeometry,
+                                 NavSourceBuildStats* stats = nullptr,
+                                 std::string* error = nullptr);
 
 } // namespace navigation
 } // namespace t850

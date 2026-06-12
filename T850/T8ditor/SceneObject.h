@@ -34,11 +34,21 @@ struct SceneObject {
   std::string           name;
   std::string           meshPath;
   bool                  visible = true;
+  bool                  transient = false;
   std::optional<bool>   mobileVisible;
   bool                  frozen  = false;  // visible but not selectable
   bool                  showWire = false; // per-object wireframe override
+  bool                  showOrientation = false;
   std::optional<float>  navAgentFrontYawOffsetDeg;
   std::optional<float>  navAgentFaceYawSign;
+  std::string           navAgentTargetMode = "direct";
+  float                 navAgentFollowDistance = 0.0f;
+  float                 navAgentSideOffset = 0.0f;
+  float                 navAgentFormationDepthStep = 0.0f;
+  int                   navAgentSlot = -1;
+  std::optional<t850::scene::SceneObjectPhysicsDesc> physics;
+  std::optional<t850::scene::SceneObjectNavigationDesc> navigation;
+  std::optional<t850::scene::SceneObjectRagdollDesc> ragdollAuthoringMeta;
 
   std::string                         ragdollModelKey;
   std::string                         ragdollResourcePath;
@@ -55,6 +65,10 @@ struct SceneObject {
   bool                                ragdollDebugDraw = false;
   int                                 ragdollBodyCount = 0;
   std::string                         ragdollStatus;
+  std::vector<uint8_t>                 ragdollBodyVisible;
+  std::vector<uint8_t>                 ragdollBodyWire;
+  std::vector<uint8_t>                 ragdollJointVisible;
+  std::vector<uint8_t>                 ragdollJointWire;
 };
 
 // ── Camera ───────────────────────────────────────────

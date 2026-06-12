@@ -14,6 +14,7 @@ set(FRAMEWORK_SOURCES
   src/physics/PhysicsDebugRenderer.cpp
   src/physics/Q3BspCollision.cpp
   src/physics/PhysicsAuthoring.cpp
+  src/physics/RagdollEditorTool.cpp
   src/navigation/NavigationSystem.cpp
   src/navigation/NavigationDebugRenderer.cpp
   src/scene/LensFlare.cpp
@@ -28,7 +29,10 @@ set(FRAMEWORK_SOURCES
   src/scene/MaterialAssetCache.cpp
   src/scene/MeshPool.cpp
   src/scene/RenderQueue.cpp
+  src/scene/RenderContainer.cpp
+  src/scene/RenderResourceRegistry.cpp
   src/scene/IBLResources.cpp
+  src/scene/RenderViewport.cpp
   src/debug/FrameDumper.cpp
   src/debug/FrameDumperIO.cpp
   src/debug/Profiler.cpp

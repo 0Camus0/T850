@@ -432,9 +432,6 @@ std::vector<NavOffMeshLink> NormalizeExplicitOffMeshLinks(const std::vector<NavO
     link.end = projectedEnd;
     link.radius = (std::max)(0.05f, sourceLink.radius);
     link.userId = EncodeOffMeshUserId(link.type, static_cast<uint32_t>(links.size()));
-    if (!PassesOffMeshLinkValidator(link, validator, outRejectedCount)) {
-      continue;
-    }
     links.push_back(link);
   }
   return links;
@@ -1131,6 +1128,75 @@ bool BuildGeometryFromPrimitiveInstances(const PrimitiveInst* instances,
   return true;
 }
 
+bool BuildGeometryFromNavSources(const std::vector<NavSourceInstance>& sources,
+                                 NavMeshGeometry& outGeometry,
+                                 NavSourceBuildStats* stats,
+                                 std::string* error) {
+  outGeometry.vertices.clear();
+  outGeometry.indices.clear();
+  if (stats) {
+    *stats = NavSourceBuildStats{};
+  }
+
+  if (sources.empty()) {
+    SetError(error, "No navigation sources were provided");
+    return false;
+  }
+
+  for (const NavSourceInstance& source : sources) {
+    if (stats) ++stats->considered;
+    if (!source.includeInNavigation || !source.visible || !source.navigationStatic) {
+      if (stats) ++stats->skippedInvisible;
+      continue;
+    }
+
+    const xF::XDataBase* database = source.database;
+    XMATRIX44 worldTransform = source.worldTransform;
+    if (source.instance) {
+      if (!source.instance->Visible || !source.instance->pBase) {
+        if (stats) ++stats->skippedInvisible;
+        continue;
+      }
+      if (source.instance->GetSkinnedMesh()) {
+        if (stats) ++stats->skippedSkinned;
+        continue;
+      }
+      const RenderMesh* mesh = dynamic_cast<const RenderMesh*>(source.instance->pBase);
+      if (!mesh || !mesh->xFile) {
+        if (stats) ++stats->skippedInvalid;
+        continue;
+      }
+      database = mesh->xFile;
+      worldTransform = source.instance->Final;
+    }
+
+    if (!database) {
+      if (stats) ++stats->skippedInvalid;
+      continue;
+    }
+
+    const std::size_t indicesBefore = outGeometry.indices.size();
+    std::string sourceError;
+    if (!AppendGeometryFromXDataBase(*database, worldTransform, outGeometry, &sourceError) ||
+        outGeometry.indices.size() == indicesBefore) {
+      if (stats) ++stats->skippedInvalid;
+      continue;
+    }
+    if (stats) ++stats->included;
+  }
+
+  if (outGeometry.vertices.empty() || outGeometry.indices.size() < 3) {
+    SetError(error, "Navigation sources produced no navigation geometry");
+    return false;
+  }
+
+  if (stats) {
+    stats->vertexCount = static_cast<int>(outGeometry.vertices.size());
+    stats->triangleCount = static_cast<int>(outGeometry.indices.size() / 3);
+  }
+  return true;
+}
+
 bool NavMesh::BuildFromXDataBase(const xF::XDataBase& database,
                                  const NavMeshBuildSettings& settings,
                                  std::string* error) {
@@ -1230,7 +1296,9 @@ bool NavMesh::BuildCached(const NavMeshGeometry& geometry,
   NavMeshBuildStats cachedStats;
   std::unique_ptr<dtNavMesh, NavMeshDeleter> cachedNavMesh;
   std::unique_ptr<dtNavMeshQuery, NavMeshQueryDeleter> cachedQuery;
-  if (LoadNavMeshCache(cachePath, effectiveCacheKey, settings, cachedStats, cachedNavMesh, cachedQuery)) {
+  const bool hasExplicitOffMeshLinks = !geometry.offMeshLinks.empty();
+  if (!hasExplicitOffMeshLinks &&
+      LoadNavMeshCache(cachePath, effectiveCacheKey, settings, cachedStats, cachedNavMesh, cachedQuery)) {
     m_stats = cachedStats;
     m_impl->navMesh = std::move(cachedNavMesh);
     m_impl->query = std::move(cachedQuery);
@@ -1833,7 +1901,9 @@ bool NavMesh::GetDebugNodeMarkers(std::vector<XVECTOR3>& outVertices,
 
   const dtNavMesh* detourMesh = m_impl->navMesh.get();
   const int maxTiles = detourMesh ? detourMesh->getMaxTiles() : 0;
-  const float nodeMarkerSize = (std::max)(0.10f, m_impl->settings.agentRadius * 0.25f);
+  const float nodeMarkerRadius = (std::max)(0.10f, m_impl->settings.agentRadius * 0.25f);
+  constexpr int kNodeSphereSegments = 12;
+  constexpr float kTwoPi = 6.28318530717958647692f;
   for (int tileIndex = 0; tileIndex < maxTiles; ++tileIndex) {
     const dtMeshTile* tile = detourMesh->getTile(tileIndex);
     if (!tile || !tile->header || !tile->verts || !tile->polys) {
@@ -1874,11 +1944,20 @@ bool NavMesh::GetDebugNodeMarkers(std::vector<XVECTOR3>& outVertices,
       center.x *= invVertCount;
       center.y = center.y * invVertCount + verticalOffset;
       center.z *= invVertCount;
-      appendMarkerLine(XVECTOR3(center.x - nodeMarkerSize, center.y, center.z, 1.0f),
-                       XVECTOR3(center.x + nodeMarkerSize, center.y, center.z, 1.0f));
-      appendMarkerLine(XVECTOR3(center.x, center.y, center.z - nodeMarkerSize, 1.0f),
-                       XVECTOR3(center.x, center.y, center.z + nodeMarkerSize, 1.0f));
-
+      for (int segment = 0; segment < kNodeSphereSegments; ++segment) {
+        const float a0 = kTwoPi * static_cast<float>(segment) / static_cast<float>(kNodeSphereSegments);
+        const float a1 = kTwoPi * static_cast<float>(segment + 1) / static_cast<float>(kNodeSphereSegments);
+        const float c0 = std::cos(a0) * nodeMarkerRadius;
+        const float s0 = std::sin(a0) * nodeMarkerRadius;
+        const float c1 = std::cos(a1) * nodeMarkerRadius;
+        const float s1 = std::sin(a1) * nodeMarkerRadius;
+        appendMarkerLine(XVECTOR3(center.x + c0, center.y, center.z + s0, 1.0f),
+                         XVECTOR3(center.x + c1, center.y, center.z + s1, 1.0f));
+        appendMarkerLine(XVECTOR3(center.x + c0, center.y + s0, center.z, 1.0f),
+                         XVECTOR3(center.x + c1, center.y + s1, center.z, 1.0f));
+        appendMarkerLine(XVECTOR3(center.x, center.y + c0, center.z + s0, 1.0f),
+                         XVECTOR3(center.x, center.y + c1, center.z + s1, 1.0f));
+      }
     }
   }
 
@@ -1975,6 +2054,59 @@ bool NavMesh::GetDebugGraphEdges(std::vector<XVECTOR3>& outVertices,
 #endif
 }
 
+bool NavMesh::GetDebugNodePositions(std::vector<XVECTOR3>& outPositions,
+                                    float verticalOffset) const {
+  outPositions.clear();
+#if !defined(T850_ENABLE_RECAST)
+  (void)verticalOffset;
+  return false;
+#else
+  if (!IsReady()) {
+    return false;
+  }
+
+  const dtNavMesh* detourMesh = m_impl->navMesh.get();
+  const int maxTiles = detourMesh ? detourMesh->getMaxTiles() : 0;
+  for (int tileIndex = 0; tileIndex < maxTiles; ++tileIndex) {
+    const dtMeshTile* tile = detourMesh->getTile(tileIndex);
+    if (!tile || !tile->header || !tile->verts || !tile->polys) {
+      continue;
+    }
+
+    for (int polyIndex = 0; polyIndex < tile->header->polyCount; ++polyIndex) {
+      const dtPoly& poly = tile->polys[polyIndex];
+      if (poly.getType() == DT_POLYTYPE_OFFMESH_CONNECTION || poly.vertCount < 2) {
+        continue;
+      }
+
+      XVECTOR3 center(0.0f, 0.0f, 0.0f, 1.0f);
+      int validVertices = 0;
+      for (unsigned char vertexIndex = 0; vertexIndex < poly.vertCount; ++vertexIndex) {
+        const unsigned short polyVertexIndex = poly.verts[vertexIndex];
+        if (polyVertexIndex >= tile->header->vertCount) {
+          continue;
+        }
+        const float* v = &tile->verts[polyVertexIndex * 3];
+        center.x += v[0];
+        center.y += v[1];
+        center.z += v[2];
+        ++validVertices;
+      }
+      if (validVertices <= 0) {
+        continue;
+      }
+
+      const float invVertexCount = 1.0f / static_cast<float>(validVertices);
+      center.x *= invVertexCount;
+      center.y = center.y * invVertexCount + verticalOffset;
+      center.z *= invVertexCount;
+      outPositions.push_back(center);
+    }
+  }
+  return !outPositions.empty();
+#endif
+}
+
 bool NavMesh::GetDebugOffMeshLinks(NavTraversalType type,
                                    std::vector<XVECTOR3>& outVertices,
                                    std::vector<unsigned int>& outIndices,
@@ -2017,9 +2149,9 @@ bool NavMesh::GetDebugOffMeshLinks(NavTraversalType type,
 
       XVECTOR3 start(connection.pos[0], connection.pos[1] + verticalOffset, connection.pos[2], 1.0f);
       XVECTOR3 end(connection.pos[3], connection.pos[4] + verticalOffset, connection.pos[5], 1.0f);
+      XVECTOR3 direction = end - start;
       appendLine(start, end);
 
-      XVECTOR3 direction = end - start;
       direction.y = 0.0f;
       direction.w = 0.0f;
       direction = NormalizeHorizontalOr(direction, XVECTOR3(0.0f, 0.0f, 1.0f, 0.0f));

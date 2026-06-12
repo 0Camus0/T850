@@ -239,6 +239,10 @@ bool RenderGraph::Load(const std::string& path) {
 }
 
 void RenderGraph::CreateRenderTargets(BaseDriver* driver, const SceneProps& props) {
+  CreateRenderTargets(driver, props, 0, 0);
+}
+
+void RenderGraph::CreateRenderTargets(BaseDriver* driver, const SceneProps& props, int widthOverride, int heightOverride) {
   m_rtHandles.clear();
 
 #if defined(OS_ANDROID)
@@ -273,6 +277,11 @@ void RenderGraph::CreateRenderTargets(BaseDriver* driver, const SceneProps& prop
       }
     }
 #endif
+
+    if (rt.size[0] == 0 && rt.size[1] == 0 && rt.size_ref.empty()) {
+      if (widthOverride > 0) w = widthOverride;
+      if (heightOverride > 0) h = heightOverride;
+    }
 
     // CreateRT's final argument controls mip generation, not linear filtering.
     // Keep it opt-in per target so bloom/intermediate passes never sample
@@ -317,6 +326,30 @@ void RenderGraph::CreateRenderTargets(BaseDriver* driver, const SceneProps& prop
 
   // Now that RT handles are resolved, build the DAG
   BuildGraph();
+}
+
+void RenderGraph::DestroyRenderTargets(BaseDriver* driver) {
+  if (!driver) {
+    m_rtHandles.clear();
+    m_nodes.clear();
+    m_edges.clear();
+    return;
+  }
+  std::vector<int> handles;
+  handles.reserve(m_rtHandles.size());
+  for (const auto& entry : m_rtHandles) {
+    if (entry.second >= 0) {
+      handles.push_back(entry.second);
+    }
+  }
+  std::sort(handles.begin(), handles.end());
+  handles.erase(std::unique(handles.begin(), handles.end()), handles.end());
+  for (int handle : handles) {
+    driver->DestroyRT(handle);
+  }
+  m_rtHandles.clear();
+  m_nodes.clear();
+  m_edges.clear();
 }
 
 void RenderGraph::BuildGraph() {
@@ -440,7 +473,8 @@ void RenderGraph::Execute(
   ::Camera* mainCam,
   ::Camera* lightCam,
   ::Camera* omniCams,
-      const EnvironmentMapSet& envMaps)
+  const EnvironmentMapSet& envMaps,
+  int finalOutputRT)
 {
   const bool shadowsEnabled = props.ToogleShadow != 0;
   const bool ssaoEnabled = props.ToogleSSAO != 0;
@@ -466,10 +500,10 @@ void RenderGraph::Execute(
       continue;
     }
     ExecutePass(node, driver, props, meshes, meshCount, quads,
-                mainCam, lightCam, omniCams, envMaps);
+                mainCam, lightCam, omniCams, envMaps, finalOutputRT);
   }
   if (mainCam && !props.pCameras.empty()) {
-    props.pCameras[0] = mainCam;
+    props.SetPrimaryCamera(mainCam);
   }
 }
 
@@ -482,9 +516,11 @@ void RenderGraph::ExecutePass(
   ::Camera* mainCam,
   ::Camera* lightCam,
   ::Camera* omniCams,
-  const EnvironmentMapSet& envMaps)
+  const EnvironmentMapSet& envMaps,
+  int finalOutputRT)
 {
   const auto& pass = *node.desc;
+  ScopedPrimaryCameraOverride cameraScope(props);
   T8_PROFILE_SCOPE(t850::g_profiler, pass.name.c_str());
   RuntimeTelemetry::ScopedTimer telemetryPass("render.pass." + pass.name);
   RuntimeTelemetry::AddCounter("render.pass.count", 1.0);
@@ -525,9 +561,9 @@ void RenderGraph::ExecutePass(
 
   // Camera selection
   if (pass.camera == "light" && lightCam) {
-    props.pCameras[0] = lightCam;
+    props.SetPrimaryCamera(lightCam);
   } else if (pass.camera == "main" && mainCam) {
-    props.pCameras[0] = mainCam;
+    props.SetPrimaryCamera(mainCam);
   }
 
   // Active light camera
@@ -553,7 +589,7 @@ void RenderGraph::ExecutePass(
     // Draw each face
     for (int face = 0; face < pass.cube_faces; face++) {
       if (pass.per_face_camera == "omni" && omniCams) {
-        props.pCameras[0] = &omniCams[face];
+        props.SetPrimaryCamera(&omniCams[face]);
       }
       driver->RTs[node.rt_handle]->ChangeCubeDepthTexture(face);
 
@@ -584,18 +620,21 @@ void RenderGraph::ExecutePass(
 
     // Restore camera after cubemap faces
     if (pass.per_face_camera == "omni" && mainCam) {
-      props.pCameras[0] = mainCam;
+      props.SetPrimaryCamera(mainCam);
     }
   }
   else {
     // Standard pass: push RT, bind textures, draw, pop
 
     // Push RT (if we have a target and push is enabled)
-    if (node.rt_handle >= 0 && pass.push) {
+    const bool finalOutputPass = node.rt_handle < 0 && finalOutputRT >= 0;
+    if (finalOutputPass && pass.push) {
+      driver->PushRT(finalOutputRT);
+    } else if (node.rt_handle >= 0 && pass.push) {
       driver->PushRT(node.rt_handle);
     } else if (node.rt_handle >= 0 && !pass.push && driver->CurrentRT != node.rt_handle) {
       driver->PushRTLoad(node.rt_handle);
-    } else if (node.rt_handle < 0 && driver->IsOffscreenEnabled() && !driver->IsCurrentOffscreenTarget()) {
+    } else if (node.rt_handle < 0 && !finalOutputPass && driver->IsOffscreenEnabled() && !driver->IsCurrentOffscreenTarget()) {
       driver->BindOffscreenTarget(false);
     }
 
@@ -603,6 +642,11 @@ void RenderGraph::ExecutePass(
       driver->ClearWithColor(pass.clear_color[0], pass.clear_color[1],
                              pass.clear_color[2], pass.clear_color[3]);
     }
+
+    for (int slot = 0; slot < MaxPrimitiveTextures; ++slot) {
+      clearTextureSlot(quads[0], slot);
+    }
+    quads[0].SetEnvironmentMap(nullptr);
 
     // Bind input textures
     for (const auto& input : pass.inputs) {
@@ -663,6 +707,11 @@ void RenderGraph::ExecutePass(
     }
 
     auto bindMeshPassResources = [&](PrimitiveInst& mesh) {
+      for (int slot = 0; slot < MaxPrimitiveTextures; ++slot) {
+        clearTextureSlot(mesh, slot);
+      }
+      mesh.SetEnvironmentMap(nullptr);
+
       for (const auto& input : pass.inputs) {
         if (shouldSkipTextureInput(input)) {
           clearTextureSlot(mesh, input.slot);
@@ -751,7 +800,7 @@ void RenderGraph::ExecutePass(
     if (meshTrackerOpened) { MeshDrawStateTracker::Get().End(); meshTrackerOpened = false; }
 
     // Pop RT
-    bool didPush = (node.rt_handle >= 0 && pass.push);
+    bool didPush = ((node.rt_handle >= 0 || finalOutputPass) && pass.push);
     bool inheritedRT = (!pass.push && node.rt_handle >= 0);
     if (pass.pop && (didPush || inheritedRT)) {
       driver->PopRT();

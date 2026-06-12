@@ -98,6 +98,14 @@ float Length3(const XVECTOR3& value) {
   return std::sqrt(LengthSq3(value));
 }
 
+XVECTOR3 Cross3(const XVECTOR3& a, const XVECTOR3& b) {
+  return XVECTOR3(
+      a.y * b.z - a.z * b.y,
+      a.z * b.x - a.x * b.z,
+      a.x * b.y - a.y * b.x,
+      0.0f);
+}
+
 XVECTOR3 NormalizeOr(XVECTOR3 value, const XVECTOR3& fallback) {
   const float length = Length3(value);
   if (length <= 0.000001f) {
@@ -135,6 +143,92 @@ bool OverlapsAabb(const XVECTOR3& firstMin,
       firstMin.y <= secondMax.y &&
       firstMax.z >= secondMin.z &&
       firstMin.z <= secondMax.z;
+}
+
+void BuildSweptBoxAabb(const XVECTOR3& start,
+                       const XVECTOR3& end,
+                       const XVECTOR3& halfExtents,
+                       float epsilon,
+                       XVECTOR3& outMin,
+                       XVECTOR3& outMax) {
+  outMin = XVECTOR3(
+      (std::min)(start.x, end.x) - halfExtents.x - epsilon,
+      (std::min)(start.y, end.y) - halfExtents.y - epsilon,
+      (std::min)(start.z, end.z) - halfExtents.z - epsilon,
+      1.0f);
+  outMax = XVECTOR3(
+      (std::max)(start.x, end.x) + halfExtents.x + epsilon,
+      (std::max)(start.y, end.y) + halfExtents.y + epsilon,
+      (std::max)(start.z, end.z) + halfExtents.z + epsilon,
+      1.0f);
+}
+
+bool IntersectPlanes(const Q3BspCollisionWorld::Plane& a,
+                     const Q3BspCollisionWorld::Plane& b,
+                     const Q3BspCollisionWorld::Plane& c,
+                     XVECTOR3& outPoint) {
+  const XVECTOR3 bc = Cross3(b.normal, c.normal);
+  const float denom = Dot3(a.normal, bc);
+  if (std::fabs(denom) <= 0.000001f) {
+    return false;
+  }
+
+  const XVECTOR3 ca = Cross3(c.normal, a.normal);
+  const XVECTOR3 ab = Cross3(a.normal, b.normal);
+  outPoint = (bc * a.dist + ca * b.dist + ab * c.dist) * (1.0f / denom);
+  outPoint.w = 1.0f;
+  return std::isfinite(outPoint.x) && std::isfinite(outPoint.y) && std::isfinite(outPoint.z);
+}
+
+bool ComputeBrushBounds(const std::vector<Q3BspCollisionWorld::Plane>& planes,
+                        float tolerance,
+                        XVECTOR3& outMin,
+                        XVECTOR3& outMax) {
+  outMin = XVECTOR3(1.0e30f, 1.0e30f, 1.0e30f, 1.0f);
+  outMax = XVECTOR3(-1.0e30f, -1.0e30f, -1.0e30f, 1.0f);
+  bool havePoint = false;
+
+  for (std::size_t i = 0; i < planes.size(); ++i) {
+    for (std::size_t j = i + 1; j < planes.size(); ++j) {
+      for (std::size_t k = j + 1; k < planes.size(); ++k) {
+        XVECTOR3 point;
+        if (!IntersectPlanes(planes[i], planes[j], planes[k], point)) {
+          continue;
+        }
+
+        bool inside = true;
+        for (const Q3BspCollisionWorld::Plane& plane : planes) {
+          if (Dot3(point, plane.normal) - plane.dist > tolerance) {
+            inside = false;
+            break;
+          }
+        }
+        if (!inside) {
+          continue;
+        }
+
+        havePoint = true;
+        outMin.x = (std::min)(outMin.x, point.x);
+        outMin.y = (std::min)(outMin.y, point.y);
+        outMin.z = (std::min)(outMin.z, point.z);
+        outMax.x = (std::max)(outMax.x, point.x);
+        outMax.y = (std::max)(outMax.y, point.y);
+        outMax.z = (std::max)(outMax.z, point.z);
+      }
+    }
+  }
+
+  if (!havePoint) {
+    return false;
+  }
+
+  outMin.x -= tolerance;
+  outMin.y -= tolerance;
+  outMin.z -= tolerance;
+  outMax.x += tolerance;
+  outMax.y += tolerance;
+  outMax.z += tolerance;
+  return outMin.x <= outMax.x && outMin.y <= outMax.y && outMin.z <= outMax.z;
 }
 
 bool TraceBrush(const Q3BspCollisionWorld::Brush& brush,
@@ -224,16 +318,9 @@ bool TracePatchFacet(const Q3BspCollisionWorld::PatchFacet& facet,
                      float surfaceClipEpsilon,
                      float& inOutFraction,
                      XVECTOR3& outNormal) {
-  const XVECTOR3 sweepMin(
-      (std::min)(start.x, end.x) - halfExtents.x - surfaceClipEpsilon,
-      (std::min)(start.y, end.y) - halfExtents.y - surfaceClipEpsilon,
-      (std::min)(start.z, end.z) - halfExtents.z - surfaceClipEpsilon,
-      1.0f);
-  const XVECTOR3 sweepMax(
-      (std::max)(start.x, end.x) + halfExtents.x + surfaceClipEpsilon,
-      (std::max)(start.y, end.y) + halfExtents.y + surfaceClipEpsilon,
-      (std::max)(start.z, end.z) + halfExtents.z + surfaceClipEpsilon,
-      1.0f);
+  XVECTOR3 sweepMin;
+  XVECTOR3 sweepMax;
+  BuildSweptBoxAabb(start, end, halfExtents, surfaceClipEpsilon, sweepMin, sweepMax);
   if (!OverlapsAabb(sweepMin, sweepMax, facet.mins, facet.maxs)) {
     return false;
   }
@@ -297,6 +384,12 @@ bool Q3BspCollisionWorld::Load(const std::string& resourcePath, std::string* err
     return false;
   }
 
+  const float unitScale = std::isfinite(desc.unit_scale) && desc.unit_scale > 0.0f
+      ? std::fabs(desc.unit_scale)
+      : kDefaultQ3UnitScale;
+  m_surfaceClipEpsilon = (std::max)(kQ3SurfaceClipEpsilon * unitScale, kMinTraceEpsilon);
+  m_triggerTouchSlop = (std::max)(kQ3EntityLinkEpsilon * unitScale, m_surfaceClipEpsilon);
+
   m_brushes.reserve(desc.brushes.size());
   for (const Q3ClipBrushDesc& brushDesc : desc.brushes) {
     Brush brush;
@@ -313,6 +406,10 @@ bool Q3BspCollisionWorld::Load(const std::string& resourcePath, std::string* err
     }
 
     if (brush.planes.size() >= 4) {
+      brush.hasBounds = ComputeBrushBounds(brush.planes,
+                                           (std::max)(m_surfaceClipEpsilon * 2.0f, 0.0005f),
+                                           brush.mins,
+                                           brush.maxs);
       m_brushes.push_back(std::move(brush));
     }
   }
@@ -419,11 +516,6 @@ bool Q3BspCollisionWorld::Load(const std::string& resourcePath, std::string* err
   }
 
   m_resourcePath = resourcePath;
-  const float unitScale = std::isfinite(desc.unit_scale) && desc.unit_scale > 0.0f
-      ? std::fabs(desc.unit_scale)
-      : kDefaultQ3UnitScale;
-  m_surfaceClipEpsilon = (std::max)(kQ3SurfaceClipEpsilon * unitScale, kMinTraceEpsilon);
-  m_triggerTouchSlop = (std::max)(kQ3EntityLinkEpsilon * unitScale, m_surfaceClipEpsilon);
   T8_LOG_INFO(
       "[Q3BspCollision] Loaded %s brushes=%zu patchFacets=%zu jumpPads=%zu reachabilities=%zu",
       resourcePath.c_str(),
@@ -461,11 +553,20 @@ bool Q3BspCollisionWorld::SweepBox(const CharacterBoxSweep& sweep, CharacterColl
   }
 
   const XVECTOR3 end = sweep.startCenter + sweep.displacement;
+  XVECTOR3 sweepMin;
+  XVECTOR3 sweepMax;
+  BuildSweptBoxAabb(sweep.startCenter, end, sweep.halfExtents, m_surfaceClipEpsilon, sweepMin, sweepMax);
   float hitFraction = 1.0f;
   XVECTOR3 hitNormal(0.0f, 1.0f, 0.0f, 0.0f);
   bool allSolid = false;
+  int brushCandidates = 0;
+  int patchCandidates = 0;
 
   for (const Brush& brush : m_brushes) {
+    if (brush.hasBounds && !OverlapsAabb(sweepMin, sweepMax, brush.mins, brush.maxs)) {
+      continue;
+    }
+    ++brushCandidates;
     TraceBrush(
         brush,
         sweep.startCenter,
@@ -478,6 +579,10 @@ bool Q3BspCollisionWorld::SweepBox(const CharacterBoxSweep& sweep, CharacterColl
   }
 
   for (const PatchFacet& facet : m_patchFacets) {
+    if (!OverlapsAabb(sweepMin, sweepMax, facet.mins, facet.maxs)) {
+      continue;
+    }
+    ++patchCandidates;
     TracePatchFacet(
         facet,
         sweep.startCenter,
@@ -487,6 +592,8 @@ bool Q3BspCollisionWorld::SweepBox(const CharacterBoxSweep& sweep, CharacterColl
         hitFraction,
         hitNormal);
   }
+  RuntimeTelemetry::AddCounter("character.q3SweepBox.brushCandidates", static_cast<double>(brushCandidates));
+  RuntimeTelemetry::AddCounter("character.q3SweepBox.patchCandidates", static_cast<double>(patchCandidates));
 
   if (hitFraction >= 1.0f && !allSolid) {
     return false;

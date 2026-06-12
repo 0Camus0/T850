@@ -35,6 +35,8 @@ enum class PhysicsBodyMotion : uint8_t {
 enum class PhysicsShapeType : uint8_t {
   Box,
   Capsule,
+  Sphere,
+  Cylinder,
   TriangleMesh
 };
 
@@ -65,6 +67,21 @@ struct PhysicsShapeDesc {
     return desc;
   }
 
+  static PhysicsShapeDesc Sphere(float radiusValue) {
+    PhysicsShapeDesc desc;
+    desc.type = PhysicsShapeType::Sphere;
+    desc.radius = radiusValue;
+    return desc;
+  }
+
+  static PhysicsShapeDesc Cylinder(float radiusValue, float halfHeightValue) {
+    PhysicsShapeDesc desc;
+    desc.type = PhysicsShapeType::Cylinder;
+    desc.radius = radiusValue;
+    desc.halfHeight = halfHeightValue;
+    return desc;
+  }
+
   static PhysicsShapeDesc TriangleMeshBounds(const XVECTOR3& halfExtentsValue) {
     PhysicsShapeDesc desc;
     desc.type = PhysicsShapeType::TriangleMesh;
@@ -81,6 +98,8 @@ enum class PhysicsMeshBuildQuality : uint8_t {
 struct PhysicsTriangleMeshCookSettings {
   uint32_t maxTrianglesPerLeaf = 8;
   PhysicsMeshBuildQuality buildQuality = PhysicsMeshBuildQuality::FavorRuntimePerformance;
+  float activeEdgeCosThresholdAngle = 0.996195f;
+  bool perTriangleUserData = false;
   bool useDiskCache = true;
 };
 
@@ -134,6 +153,7 @@ struct PhysicsCapsuleCastDesc {
   float radius = 0.35f;
   float halfHeight = 0.55f;
   std::vector<uint32_t> ignoredEntityIds;
+  bool triangleMeshesOnly = false;
 };
 
 struct PhysicsBoxCastDesc {
@@ -141,6 +161,7 @@ struct PhysicsBoxCastDesc {
   XVECTOR3 displacement = XVECTOR3(0.0f, 0.0f, 0.0f, 0.0f);
   XVECTOR3 halfExtents = XVECTOR3(0.35f, 0.90f, 0.35f, 0.0f);
   std::vector<uint32_t> ignoredEntityIds;
+  bool triangleMeshesOnly = false;
 };
 
 struct PhysicsCastHit {

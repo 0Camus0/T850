@@ -13,6 +13,7 @@
 
 #include <d3d12.h>
 #include <wrl/client.h>
+#include <vector>
 using Microsoft::WRL::ComPtr;
 
 namespace t850 {
@@ -39,6 +40,7 @@ namespace t850 {
     D3D12_GPU_DESCRIPTOR_HANDLE GetGPUStart() const;
     D3D12_CPU_DESCRIPTOR_HANDLE AllocateCPU();
     D3D12_GPU_DESCRIPTOR_HANDLE AllocateGPU();
+    void FreeCPU(D3D12_CPU_DESCRIPTOR_HANDLE handle);
     D3D12_CPU_DESCRIPTOR_HANDLE GetCPUAt(uint64_t index) const;
     D3D12_GPU_DESCRIPTOR_HANDLE GetGPUAt(uint64_t index) const;
     uint64_t GetCurrentIndex() const { return m_currentCount; }
@@ -50,8 +52,10 @@ namespace t850 {
     D3D12_DESCRIPTOR_HEAP_TYPE   m_type = D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV;
     uint64_t m_maxDescriptors = 0;
     uint64_t m_currentCount   = 0;
+    uint64_t m_lastAllocatedIndex = UINT64_MAX;
     uint64_t m_incrementSize  = 0;
     bool     m_shaderVisible  = false;
+    std::vector<uint64_t> m_freeList;
   };
 
 } // namespace t850

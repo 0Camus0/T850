@@ -16,6 +16,7 @@
 #include <Config.h>
 
 #include <scene/PrimitiveBase.h>
+#include <scene/RenderQueue.h>
 #include <physics/PhysicsTypes.h>
 #include <video/BaseDriver.h>
 #include <utils/xMaths.h>
@@ -43,6 +44,7 @@ namespace t850 {
 
     void	Update();
     void	Draw();
+    RenderEntity ToRenderEntity() const;
 
     void ToogleVisible() { Visible = !Visible; }
     void SetVisible(bool f) { Visible = f; }

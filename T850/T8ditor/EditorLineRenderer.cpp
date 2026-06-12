@@ -120,10 +120,19 @@ void EditorLineRenderer::DrawLines(const XMATRIX44& world,
   m_shader->Set(*t850::T8DeviceContext);
   m_cb->UpdateFromBuffer(*t850::T8DeviceContext, &cb);
   m_cb->Set(*t850::T8DeviceContext);
+#if defined(USING_VULKAN) || defined(USING_VULKAN_ONLY)
+  // Vulkan reflection can map VS/FS cbuffers to different bindings when the
+  // fragment shader also samples depth. Populate both logical slots.
+  m_cb->Set(*t850::T8DeviceContext, 1);
+#endif
 
   // Bind depth texture AFTER shader is set (D3D12 needs active root signature)
-  if (m_depthTex)
-    m_depthTex->Set(*t850::T8DeviceContext, 0, "depthTex");
+  if (m_depthTex || m_depthTex2) {
+    t850::Texture* primaryDepth = m_depthTex ? m_depthTex : m_depthTex2;
+    t850::Texture* secondaryDepth = m_depthTex2 ? m_depthTex2 : primaryDepth;
+    primaryDepth->Set(*t850::T8DeviceContext, 0, "depthTex");
+    secondaryDepth->Set(*t850::T8DeviceContext, 1, "depthTex2");
+  }
 
   t850::T8DeviceContext->DrawIndexed(indexCount, 0, 0);
 
@@ -132,11 +141,12 @@ void EditorLineRenderer::DrawLines(const XMATRIX44& world,
 }
 
 t850::VertexBuffer* EditorLineRenderer::CreatePositionVB(const float* positionsXYZW,
-                                                         unsigned numVertices) {
+                                                         unsigned numVertices,
+                                                         t850::BufferUsage::E usage) {
   if (!t850::T8Device || !positionsXYZW || numVertices == 0) return nullptr;
   t850::BufferDesc bd;
   bd.byteWidth = static_cast<int>(sizeof(float) * 4 * numVertices);
-  bd.usage     = t850::BufferUsage::DEFAULT;
+  bd.usage     = usage;
   return (t850::VertexBuffer*)t850::T8Device->CreateBuffer(
       t850::BufferType::VERTEX, bd, const_cast<float*>(positionsXYZW));
 }

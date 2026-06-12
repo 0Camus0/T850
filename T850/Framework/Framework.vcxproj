@@ -50,6 +50,9 @@
     <ClInclude Include="include\scene\PrimitiveInstance.h" />
     <ClInclude Include="include\scene\PrimitiveManager.h" />
     <ClInclude Include="include\scene\RenderQuad.h" />
+    <ClInclude Include="include\scene\RenderContainer.h" />
+    <ClInclude Include="include\scene\RenderViewport.h" />
+    <ClInclude Include="include\scene\RenderResourceRegistry.h" />
     <ClInclude Include="include\scene\IBLResources.h" />
     <ClInclude Include="include\debug\FrameDumper.h" />
     <ClInclude Include="include\debug\LoadingProgress.h" />
@@ -71,6 +74,7 @@
     <ClInclude Include="include\physics\PhysicsDebugRenderer.h" />
     <ClInclude Include="include\physics\Q3BspCollision.h" />
     <ClInclude Include="include\physics\PhysicsAuthoring.h" />
+    <ClInclude Include="include\physics\RagdollEditorTool.h" />
     <ClInclude Include="include\physics\PhysicsTypes.h" />
     <ClInclude Include="include\utils\cil.h" />
     <ClInclude Include="include\utils\Log.h" />
@@ -172,6 +176,7 @@
     <ClCompile Include="src\physics\PhysicsDebugRenderer.cpp" />
     <ClCompile Include="src\physics\Q3BspCollision.cpp" />
     <ClCompile Include="src\physics\PhysicsAuthoring.cpp" />
+    <ClCompile Include="src\physics\RagdollEditorTool.cpp" />
     <ClCompile Include="src\navigation\NavigationSystem.cpp" />
     <ClCompile Include="src\navigation\NavigationDebugRenderer.cpp" />
     <ClCompile Include="src\scene\LensFlare.cpp" />
@@ -186,6 +191,9 @@
     <ClCompile Include="src\scene\PrimitiveInstance.cpp" />
     <ClCompile Include="src\scene\PrimitiveManager.cpp" />
     <ClCompile Include="src\scene\RenderQuad.cpp" />
+    <ClCompile Include="src\scene\RenderContainer.cpp" />
+    <ClCompile Include="src\scene\RenderViewport.cpp" />
+    <ClCompile Include="src\scene\RenderResourceRegistry.cpp" />
     <ClCompile Include="src\scene\IBLResources.cpp" />
     <ClCompile Include="src\debug\FrameDumper.cpp" />
     <ClCompile Include="src\debug\FrameDumperIO.cpp" />

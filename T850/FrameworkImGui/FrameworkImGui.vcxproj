@@ -168,10 +168,12 @@
   <ItemGroup>
     <ClCompile Include="src\ImGuiSystem.cpp" />
     <ClCompile Include="src\DevGuiContext.cpp" />
+    <ClCompile Include="src\RagdollEditorGui.cpp" />
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="include\imgui\ImGuiSystem.h" />
     <ClInclude Include="include\imgui\DevGuiContext.h" />
+    <ClInclude Include="include\imgui\RagdollEditorGui.h" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Label="ExtensionTargets" />

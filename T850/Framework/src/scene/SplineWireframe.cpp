@@ -93,7 +93,7 @@ void SplineWireframe::Transform(float * t)
 void SplineWireframe::Draw(float * t, float * vp)
 {
 
-  Camera *pActualCamera = pScProp->pCameras[0];
+  Camera *pActualCamera = pScProp->GetPrimaryCamera();
   constantBuff.WVP = pActualCamera->VP;
   IB->Set(*T8DeviceContext, 0, IndexBufferFormat::R16);
   VB->Set(*T8DeviceContext,sizeof(Vert),0);

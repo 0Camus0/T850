@@ -8,6 +8,11 @@
 #include "EditorScene.h"
 #include "EditorSceneGizmos.h"
 #include "UndoRedo.h"
+#include "EditorMath.h"
+#include "EditorUtil.h"
+#include "EditorSceneSerialization.h"
+#include "EditorWorld.h"
+#include "EditorInternal.h"
 #include "../DayScene/RagdollEditor.h"
 #include "../DayScene/SceneTemplate.h"
 
@@ -109,10 +114,12 @@ struct EditorUndoState {
 namespace {
   std::string g_startupMeshPath;
   int g_startupDumpFrame = -1;
-  const float kRadToDeg = 180.0f / xPI;
-  const float kDegToRad = xPI / 180.0f;
-  constexpr float kMinEditableScale = 0.000001f;
   constexpr float kScaleDragSpeed = 0.0001f;
+
+  // All authored scene data lives in a single EditorWorld instance (EditorWorld.h).
+  // The g_* names below are aliases bound to its members, so existing call sites
+  // keep working while the editor is split into smaller translation units.
+  EditorWorld& g_world = GetEditorWorld();
 
   // Persistent skybox (editor backdrop, separate from scene meshes).
   t850::PrimitiveManager g_skyboxMgr;
@@ -120,69 +127,10 @@ namespace {
   int                    g_skyboxPrimId = -1;
   bool                   g_skyboxReady  = false;
 
-  // Multi-mesh scene objects (file-scope because EditorApp.h is locked).
-  std::vector<SceneObject> g_objects;
-  int                      g_selectedIdx = -1;
-
-  enum class PhysicsSceneEntityType {
-    StaticTriangleMesh,
-    Player,
-    Character
-  };
-
-  enum class CharacterRuntimePath {
-    Kinematic = 0,
-    Jolt = 1
-  };
-
-  struct PhysicsSceneEntity {
-    PhysicsSceneEntityType type = PhysicsSceneEntityType::StaticTriangleMesh;
-    std::string name;
-    std::string sourceName;
-    int sourceObjectIndex = -1;
-    t850::PhysicsBodyHandle body;
-    t850::PhysicsCookStats stats;
-    t850::PhysicsTriangleMeshCookSettings cookSettings;
-    std::unique_ptr<EditorMesh> visual;
-    bool visible = true;
-    bool frozen = false;
-    bool showWire = true;
-    bool showOrientation = false;
-    XVECTOR3 position = XVECTOR3(0.0f, 64.0f, 0.0f, 1.0f);
-    XVECTOR3 eulerRadians = XVECTOR3(0.0f, 0.0f, 0.0f, 0.0f);
-    t850::PhysicsShapeType playerShape = t850::PhysicsShapeType::Box;
-    XVECTOR3 playerHalfExtents = XVECTOR3(16.0f, 32.0f, 16.0f, 0.0f);
-    float playerRadius = 16.0f;
-    float playerHalfHeight = 24.0f;
-    float friction = 0.6f;
-    float restitution = 0.0f;
-    bool sensor = false;
-    float playerBotRadius = 2.0f;
-    int characterRuntimePath = static_cast<int>(CharacterRuntimePath::Kinematic);
-    int characterImplementation = 1; // 0=Character rigid body, 1=CharacterVirtual
-    float characterMass = 70.0f;
-    float characterMaxStrength = 100.0f;
-    float characterMaxSlopeAngleDeg = 50.0f;
-    bool characterEnhancedInternalEdgeRemoval = true;
-    float characterSupportingVolumeOffset = -1.0e10f;
-    float characterShapeOffset[3] = { 0.0f, 0.0f, 0.0f };
-    int characterBackFaceMode = 1; // 0=IgnoreBackFaces, 1=CollideWithBackFaces
-    float characterPredictiveContactDistance = 0.1f;
-    int characterMaxCollisionIterations = 5;
-    int characterMaxConstraintIterations = 15;
-    float characterMinTimeRemaining = 1.0e-4f;
-    float characterCollisionTolerance = 1.0e-3f;
-    float characterPadding = 0.02f;
-    int characterMaxNumHits = 256;
-    float characterHitReductionCosMaxAngle = 0.999f;
-    float characterPenetrationRecoverySpeed = 1.0f;
-    float characterGravityFactor = 1.0f;
-    bool characterAllowTranslationX = true;
-    bool characterAllowTranslationY = true;
-    bool characterAllowTranslationZ = true;
-    bool characterInnerBody = false;
-  };
-  std::vector<PhysicsSceneEntity> g_physicsEntities;
+  // Scene data now lives in EditorWorld (EditorWorld.h); g_* are aliases.
+  auto& g_objects         = g_world.objects;
+  auto& g_selectedIdx     = g_world.selectedIdx;
+  auto& g_physicsEntities = g_world.physicsEntities;
   t850::PhysicsTriangleMeshCookSettings g_triangleMeshCookSettings;
   float g_triangleMeshFriction = 0.6f;
   float g_triangleMeshRestitution = 0.0f;
@@ -192,147 +140,21 @@ namespace {
   int g_meshCharacterAuthoringSourceIndex = -1;
   bool g_meshCharacterAuthoringInitialized = false;
 
-  t850::navigation::NavMeshBuildSettings DefaultEditorNavMeshBuildSettings() {
-    t850::navigation::NavMeshBuildSettings settings;
-    settings.enableAutoDropLinks = true;
-    settings.enableAutoJumpLinks = true;
-    settings.enableHybridJumpLinks = true;
-    settings.hybridJumpMaxLinks = 192;
-    return settings;
-  }
-
-  t850::scene::SceneNavMeshBuildSettingsDesc NavMeshBuildSettingsToScene(
-      const t850::navigation::NavMeshBuildSettings& settings) {
-    t850::scene::SceneNavMeshBuildSettingsDesc desc;
-    desc.cell_size = settings.cellSize;
-    desc.cell_height = settings.cellHeight;
-    desc.agent_height = settings.agentHeight;
-    desc.agent_radius = settings.agentRadius;
-    desc.agent_max_climb = settings.agentMaxClimb;
-    desc.agent_max_slope = settings.agentMaxSlope;
-    desc.region_min_size = settings.regionMinSize;
-    desc.region_merge_size = settings.regionMergeSize;
-    desc.edge_max_len = settings.edgeMaxLen;
-    desc.edge_max_error = settings.edgeMaxError;
-    desc.verts_per_poly = settings.vertsPerPoly;
-    desc.detail_sample_dist = settings.detailSampleDist;
-    desc.detail_sample_max_error = settings.detailSampleMaxError;
-    desc.query_extents = {settings.queryExtents.x, settings.queryExtents.y, settings.queryExtents.z};
-    desc.auto_drop_links = settings.enableAutoDropLinks;
-    desc.drop_min_height = settings.dropLinkMinHeight;
-    desc.drop_max_height = settings.dropLinkMaxHeight;
-    desc.drop_max_horizontal = settings.dropLinkMaxHorizontalDistance;
-    desc.drop_sample_spacing = settings.dropLinkSampleSpacing;
-    desc.drop_link_radius = settings.dropLinkRadius;
-    desc.auto_jump_links = settings.enableAutoJumpLinks;
-    desc.jump_max_horizontal = settings.jumpLinkMaxHorizontalDistance;
-    desc.jump_sample_spacing = settings.jumpLinkSampleSpacing;
-    desc.jump_link_radius = settings.jumpLinkRadius;
-    desc.hybrid_jump_links = settings.enableHybridJumpLinks;
-    desc.hybrid_max_links = settings.hybridJumpMaxLinks;
-    desc.off_mesh_link_validation_key = settings.offMeshLinkValidationKey;
-    return desc;
-  }
-
-  t850::navigation::NavMeshBuildSettings NavMeshBuildSettingsFromScene(
-      const t850::scene::SceneNavMeshBuildSettingsDesc& desc) {
-    t850::navigation::NavMeshBuildSettings settings = DefaultEditorNavMeshBuildSettings();
-    settings.cellSize = desc.cell_size;
-    settings.cellHeight = desc.cell_height;
-    settings.agentHeight = desc.agent_height;
-    settings.agentRadius = desc.agent_radius;
-    settings.agentMaxClimb = desc.agent_max_climb;
-    settings.agentMaxSlope = desc.agent_max_slope;
-    settings.regionMinSize = desc.region_min_size;
-    settings.regionMergeSize = desc.region_merge_size;
-    settings.edgeMaxLen = desc.edge_max_len;
-    settings.edgeMaxError = desc.edge_max_error;
-    settings.vertsPerPoly = desc.verts_per_poly;
-    settings.detailSampleDist = desc.detail_sample_dist;
-    settings.detailSampleMaxError = desc.detail_sample_max_error;
-    settings.queryExtents = XVECTOR3(desc.query_extents.x, desc.query_extents.y, desc.query_extents.z, 0.0f);
-    settings.enableAutoDropLinks = desc.auto_drop_links;
-    settings.dropLinkMinHeight = desc.drop_min_height;
-    settings.dropLinkMaxHeight = desc.drop_max_height;
-    settings.dropLinkMaxHorizontalDistance = desc.drop_max_horizontal;
-    settings.dropLinkSampleSpacing = desc.drop_sample_spacing;
-    settings.dropLinkRadius = desc.drop_link_radius;
-    settings.enableAutoJumpLinks = desc.auto_jump_links;
-    settings.jumpLinkMaxHorizontalDistance = desc.jump_max_horizontal;
-    settings.jumpLinkSampleSpacing = desc.jump_sample_spacing;
-    settings.jumpLinkRadius = desc.jump_link_radius;
-    settings.enableHybridJumpLinks = desc.hybrid_jump_links;
-    settings.hybridJumpMaxLinks = desc.hybrid_max_links;
-    settings.offMeshLinkValidationKey = desc.off_mesh_link_validation_key;
-    return settings;
-  }
-
-  const char* NavLinkTypeName(t850::navigation::NavTraversalType type) {
-    switch (type) {
-      case t850::navigation::NavTraversalType::Drop: return "drop";
-      case t850::navigation::NavTraversalType::Jump: return "jump";
-      case t850::navigation::NavTraversalType::JumpPad: return "jump_pad";
-      case t850::navigation::NavTraversalType::JumpIntent: return "jump_intent";
-      case t850::navigation::NavTraversalType::Walk:
-      default: return "walk";
-    }
-  }
-
-  t850::navigation::NavTraversalType NavLinkTypeFromName(const std::string& name) {
-    if (name == "drop") return t850::navigation::NavTraversalType::Drop;
-    if (name == "jump_pad") return t850::navigation::NavTraversalType::JumpPad;
-    if (name == "jump_intent") return t850::navigation::NavTraversalType::JumpIntent;
-    if (name == "jump") return t850::navigation::NavTraversalType::Jump;
-    return t850::navigation::NavTraversalType::Jump;
-  }
-
-  t850::navigation::NavOffMeshLink NavOffMeshLinkFromScene(const t850::scene::SceneNavMeshLinkDesc& desc) {
-    t850::navigation::NavOffMeshLink link;
-    link.start = XVECTOR3(desc.start.x, desc.start.y, desc.start.z, 1.0f);
-    link.end = XVECTOR3(desc.end.x, desc.end.y, desc.end.z, 1.0f);
-    link.radius = (std::max)(0.05f, desc.radius);
-    link.bidirectional = desc.bidirectional;
-    link.type = NavLinkTypeFromName(desc.type);
-    return link;
-  }
-
-  bool IsFiniteNavPoint(const t850::scene::Vec3f& point) {
-    return std::isfinite(point.x) && std::isfinite(point.y) && std::isfinite(point.z);
-  }
-
-  bool IsUsableAuthoredNavLink(const t850::scene::SceneNavMeshLinkDesc& link) {
-    if (!link.enabled || !IsFiniteNavPoint(link.start) || !IsFiniteNavPoint(link.end)) {
-      return false;
-    }
-    const float dx = link.end.x - link.start.x;
-    const float dy = link.end.y - link.start.y;
-    const float dz = link.end.z - link.start.z;
-    return dx * dx + dy * dy + dz * dz > 0.0001f && link.radius > 0.0f;
-  }
-
-  struct SelectionRef {
-    int type = 0;
-    int index = -1;
-    bool operator<(const SelectionRef& other) const {
-      return type != other.type ? type < other.type : index < other.index;
-    }
-  };
-
   // Multi-selection: legacy mesh set plus typed refs for mixed mesh/physics selection.
-  std::set<int>            g_multiSelect;
-  std::set<SelectionRef>   g_multiEntitySelect;
+  auto& g_multiSelect       = g_world.multiSelect;
+  auto& g_multiEntitySelect = g_world.multiEntitySelect;
 
   // Groups (persistent and temporary)
-  std::vector<SceneGroup>  g_groups;           // persistent groups
-  SceneGroup               g_tempGroup;        // temporary group from multi-select
-  int                      g_activeGroupIdx = -1; // index into g_groups, or -1 for temp/none
+  auto& g_groups         = g_world.groups;
+  auto& g_tempGroup      = g_world.tempGroup;
+  auto& g_activeGroupIdx = g_world.activeGroupIdx;
 
   // Cameras and lights in the scene
-  std::vector<SceneCamera> g_cameras;
-  std::vector<SceneLight>  g_lights;
+  auto& g_cameras = g_world.cameras;
+  auto& g_lights  = g_world.lights;
 
   // Selection: 0=mesh, 1=camera, 2=light, 3=physics entity, 4=NavMesh.
-  int g_selectionType = 0;  // 0=mesh by default
+  auto& g_selectionType = g_world.selectionType;
 
   // Marquee box selection state
   bool     g_marqueeActive = false;
@@ -340,10 +162,10 @@ namespace {
   ImVec2   g_marqueeStartScreen = {0, 0};
 
   // Active camera index (-1 = default editor camera)
-  int g_activeCameraIdx = -1;
+  auto& g_activeCameraIdx = g_world.activeCameraIdx;
 
   // Undo/redo
-  UndoStack g_undoStack;
+  auto& g_undoStack = g_world.undoStack;
   bool g_applyingUndoState = false;
 
   // ImGuizmo drag tracking
@@ -377,13 +199,13 @@ namespace {
   // Pending scene load — deferred to execute before next frame's BeginFrame
   std::string g_pendingLoadPath;
   std::string g_pendingDeleteAfterLoadPath;
-  SceneFile g_loadedSceneFile;
-  bool g_hasLoadedSceneFile = false;
-  std::vector<SceneObjectDesc> g_unloadedSceneObjects;
-  std::string g_sceneCollisionResourcePath;
-  std::vector<t850::SandboxProfileDesc> g_sceneProfiles;
-  std::vector<t850::scene::SceneGameEntityDesc> g_gameEntities;
-  std::unique_ptr<t850::Q3BspCollisionWorld> g_q3CollisionWorld;
+  auto& g_loadedSceneFile = g_world.loadedSceneFile;
+  auto& g_hasLoadedSceneFile = g_world.hasLoadedSceneFile;
+  auto& g_unloadedSceneObjects = g_world.unloadedSceneObjects;
+  auto& g_sceneCollisionResourcePath = g_world.sceneCollisionResourcePath;
+  auto& g_sceneProfiles = g_world.sceneProfiles;
+  auto& g_gameEntities = g_world.gameEntities;
+  auto& g_q3CollisionWorld = g_world.q3CollisionWorld;
 
   // Frame dumper for RT snapshot debugging (space key)
   t850::FrameDumper g_dumper;
@@ -487,12 +309,12 @@ static bool IsValidSelectionRef(const SelectionRef& ref) {
   return false;
 }
 
-static void ClearMixedSelection() {
+void ClearMixedSelection() {
   g_multiSelect.clear();
   g_multiEntitySelect.clear();
 }
 
-static void AddMixedSelection(int type, int index) {
+void AddMixedSelection(int type, int index) {
   SelectionRef ref{type, index};
   if (!IsValidSelectionRef(ref)) return;
   g_multiEntitySelect.insert(ref);
@@ -534,7 +356,7 @@ static bool IsMixedSelected(int type, int index) {
   return g_multiEntitySelect.find(SelectionRef{type, index}) != g_multiEntitySelect.end();
 }
 
-static void InvalidateSceneObjectTransformSnapshots() {
+void InvalidateSceneObjectTransformSnapshots() {
   g_lastSceneObjectTransforms.clear();
   g_lastSceneObjectTransformNames.clear();
 }
@@ -871,67 +693,12 @@ static PhysicsSceneEntity& EnsureMeshCharacterAuthoringTemplate(int sourceObject
 
 static bool RecreateCharacterPhysicsBody(t850::JoltPhysicsSystem& physics, PhysicsSceneEntity& entity);
 
-static XMATRIX44 MakePhysicsTransform(const XVECTOR3& position, const XVECTOR3& eulerRadians) {
-  XMATRIX44 rx, ry, rz, rotation, translation;
-  XMatRotationX(rx, eulerRadians.x);
-  XMatRotationY(ry, eulerRadians.y);
-  XMatRotationZ(rz, eulerRadians.z);
-  XMatTranslation(translation, position.x, position.y, position.z);
-  rotation = rx * ry * rz;
-  return rotation * translation;
-}
-
 static TransformState GetSceneObjectTransformState(SceneObject& object) {
   return TransformState{
       object.wireframe.Position(),
       object.wireframe.EulerRadians(),
       object.wireframe.Scale()
   };
-}
-
-static bool NearlyEqual(float a, float b, float epsilon = 0.00001f) {
-  return std::fabs(a - b) <= epsilon;
-}
-
-static bool NearlyEqualVec3(const XVECTOR3& a, const XVECTOR3& b, float epsilon = 0.00001f) {
-  return NearlyEqual(a.x, b.x, epsilon) &&
-         NearlyEqual(a.y, b.y, epsilon) &&
-         NearlyEqual(a.z, b.z, epsilon);
-}
-
-static bool NearlyEqualTransform(const TransformState& a, const TransformState& b) {
-  return NearlyEqualVec3(a.position, b.position) &&
-         NearlyEqualVec3(a.eulerRad, b.eulerRad) &&
-         NearlyEqualVec3(a.scale, b.scale);
-}
-
-static XMATRIX44 BuildSceneObjectWorldFromTransform(const TransformState& state) {
-  XMATRIX44 scale, rx, ry, rz, translation;
-  XMatScaling(scale, state.scale.x, state.scale.y, state.scale.z);
-  XMatRotationX(rx, state.eulerRad.x);
-  XMatRotationY(ry, state.eulerRad.y);
-  XMatRotationZ(rz, state.eulerRad.z);
-  XMatTranslation(translation, state.position.x, state.position.y, state.position.z);
-  return scale * rx * ry * rz * translation;
-}
-
-static bool BuildInverseSceneObjectWorldFromTransform(const TransformState& state, XMATRIX44& outInverse) {
-  if (std::fabs(state.scale.x) < kMinEditableScale ||
-      std::fabs(state.scale.y) < kMinEditableScale ||
-      std::fabs(state.scale.z) < kMinEditableScale) {
-    T8_LOG_ERROR("[T8ditor] Cannot update attached character: source mesh has a near-zero scale.");
-    XMatIdentity(outInverse);
-    return false;
-  }
-
-  XMATRIX44 invTranslation, invRz, invRy, invRx, invScale;
-  XMatTranslation(invTranslation, -state.position.x, -state.position.y, -state.position.z);
-  XMatRotationZ(invRz, -state.eulerRad.z);
-  XMatRotationY(invRy, -state.eulerRad.y);
-  XMatRotationX(invRx, -state.eulerRad.x);
-  XMatScaling(invScale, 1.0f / state.scale.x, 1.0f / state.scale.y, 1.0f / state.scale.z);
-  outInverse = invTranslation * invRz * invRy * invRx * invScale;
-  return true;
 }
 
 static bool IsCharacterPhysicsEntity(const PhysicsSceneEntity& entity) {
@@ -1528,36 +1295,6 @@ static void DrawMeshCharacterOrientationMatchControls(t850::JoltPhysicsSystem& p
   }
 }
 
-static std::string PhysicsBuildQualityToScene(t850::PhysicsMeshBuildQuality quality) {
-  return quality == t850::PhysicsMeshBuildQuality::FavorBuildSpeed ? "build_speed" : "runtime_performance";
-}
-
-static t850::PhysicsMeshBuildQuality PhysicsBuildQualityFromScene(const std::string& quality) {
-  return quality == "build_speed"
-      ? t850::PhysicsMeshBuildQuality::FavorBuildSpeed
-      : t850::PhysicsMeshBuildQuality::FavorRuntimePerformance;
-}
-
-static t850::scene::ScenePhysicsCookSettingsDesc PhysicsCookSettingsToScene(const t850::PhysicsTriangleMeshCookSettings& settings) {
-  t850::scene::ScenePhysicsCookSettingsDesc desc;
-  desc.max_triangles_per_leaf = settings.maxTrianglesPerLeaf;
-  desc.build_quality = PhysicsBuildQualityToScene(settings.buildQuality);
-  desc.active_edge_cos_threshold_angle = settings.activeEdgeCosThresholdAngle;
-  desc.per_triangle_user_data = settings.perTriangleUserData;
-  desc.use_disk_cache = settings.useDiskCache;
-  return desc;
-}
-
-static t850::PhysicsTriangleMeshCookSettings PhysicsCookSettingsFromScene(const t850::scene::ScenePhysicsCookSettingsDesc& desc) {
-  t850::PhysicsTriangleMeshCookSettings settings;
-  settings.maxTrianglesPerLeaf = desc.max_triangles_per_leaf;
-  settings.buildQuality = PhysicsBuildQualityFromScene(desc.build_quality);
-  settings.activeEdgeCosThresholdAngle = desc.active_edge_cos_threshold_angle;
-  settings.perTriangleUserData = desc.per_triangle_user_data;
-  settings.useDiskCache = desc.use_disk_cache;
-  return settings;
-}
-
 static t850::scene::ScenePhysicsEntityDesc PhysicsEntityToScene(const PhysicsSceneEntity& entity) {
   t850::scene::ScenePhysicsEntityDesc desc;
   desc.name = entity.name;
@@ -1949,7 +1686,7 @@ static bool RestorePhysicsEntityFromScene(t850::JoltPhysicsSystem& physics,
   return true;
 }
 
-static t850::RenderSkinnedMesh* GetSkinnedMesh(SceneObject& obj) {
+t850::RenderSkinnedMesh* GetSkinnedMesh(SceneObject& obj) {
   return obj.litInst.GetSkinnedMesh();
 }
 
@@ -2022,18 +1759,6 @@ static std::string RagdollHierarchyBodyLabel(const SceneObject& obj, int bodyInd
   return "Body " + std::to_string(bodyIndex);
 }
 
-static void ExpandEditorAABB(t850::AABB& dst, const t850::AABB& src) {
-  if (!src.IsValid()) {
-    return;
-  }
-  if (!dst.IsValid()) {
-    dst = src;
-    return;
-  }
-  dst.ExpandToInclude(src.vMin);
-  dst.ExpandToInclude(src.vMax);
-}
-
 static bool GetSkinnedSkeletonWorldAABB(const SceneObject& object, t850::AABB& outBounds) {
   const t850::RenderSkinnedMesh* skinned = object.litInst.GetSkinnedMesh();
   if (!skinned || !skinned->HasSkinData()) {
@@ -2052,11 +1777,11 @@ static bool GetSkinnedSkeletonWorldAABB(const SceneObject& object, t850::AABB& o
   return outBounds.IsValid();
 }
 
-static bool GetEditorObjectWorldAABB(const SceneObject& object,
-                                     t850::AABB& outBounds,
-                                     t850::AABB* outWireBounds = nullptr,
-                                     t850::AABB* outSkeletonBounds = nullptr,
-                                     bool* outHasSkeletonBounds = nullptr) {
+bool GetEditorObjectWorldAABB(const SceneObject& object,
+                              t850::AABB& outBounds,
+                              t850::AABB* outWireBounds,
+                              t850::AABB* outSkeletonBounds,
+                              bool* outHasSkeletonBounds) {
   outBounds = t850::AABB{};
   bool haveBounds = false;
 
@@ -2085,46 +1810,7 @@ static bool GetEditorObjectWorldAABB(const SceneObject& object,
   return haveBounds;
 }
 
-static std::string ToLowerCopy(std::string value) {
-  std::transform(value.begin(), value.end(), value.begin(), [](unsigned char c) {
-    return static_cast<char>(std::tolower(c));
-  });
-  return value;
-}
-
-static std::string NormalizeEditorResourcePath(std::string path) {
-  std::replace(path.begin(), path.end(), '\\', '/');
-  const std::string lower = ToLowerCopy(path);
-  const std::string assetsMarker = "/assets/";
-  const std::size_t embeddedAssets = lower.rfind(assetsMarker);
-  if (embeddedAssets != std::string::npos) {
-    path.erase(0, embeddedAssets + 1);
-  }
-  while (!path.empty() && path.front() == '/') {
-    path.erase(path.begin());
-  }
-  const std::string assetsPrefix = "assets/";
-  if (ToLowerCopy(path).rfind(assetsPrefix, 0) == 0) {
-    path.erase(0, assetsPrefix.size());
-  }
-  return path;
-}
-
-static std::string MeshEditorProfileModelKey(const std::string& path) {
-  std::string key = NormalizeEditorResourcePath(path);
-  const std::size_t slash = key.find_last_of('/');
-  if (slash != std::string::npos) {
-    key = key.substr(slash + 1);
-  }
-  return ToLowerCopy(key);
-}
-
-static bool EditorResourcePathEquals(const std::string& lhs, const std::string& rhs) {
-  return ToLowerCopy(NormalizeEditorResourcePath(lhs)) ==
-         ToLowerCopy(NormalizeEditorResourcePath(rhs));
-}
-
-static const t850::SelectorDesc* FindEditorSelectorDesc(const std::vector<t850::SelectorDesc>& selectors,
+const t850::SelectorDesc* FindEditorSelectorDesc(const std::vector<t850::SelectorDesc>& selectors,
                                                         const std::string& name) {
   for (const auto& selector : selectors) {
     if (selector.name == name) {
@@ -2134,14 +1820,14 @@ static const t850::SelectorDesc* FindEditorSelectorDesc(const std::vector<t850::
   return nullptr;
 }
 
-static std::string EditorCubemapPathForSelectorIndex(const t850::SelectorDesc& selector, int selectedIndex) {
+std::string EditorCubemapPathForSelectorIndex(const t850::SelectorDesc& selector, int selectedIndex) {
   if (selectedIndex < 0 || selectedIndex >= static_cast<int>(selector.options.size())) {
     return {};
   }
   return "sky/" + selector.options[static_cast<std::size_t>(selectedIndex)];
 }
 
-static int EditorCubemapSelectorIndexForPath(const t850::SelectorDesc& selector,
+int EditorCubemapSelectorIndexForPath(const t850::SelectorDesc& selector,
                                              const std::string& resourcePath) {
   for (int index = 0; index < static_cast<int>(selector.options.size()); ++index) {
     if (EditorResourcePathEquals(EditorCubemapPathForSelectorIndex(selector, index), resourcePath)) {
@@ -2151,85 +1837,13 @@ static int EditorCubemapSelectorIndexForPath(const t850::SelectorDesc& selector,
   return -1;
 }
 
-static int EditorCubemapSelectorIndexFromProfile(const t850::SandboxProfileDesc& profile) {
+int EditorCubemapSelectorIndexFromProfile(const t850::SandboxProfileDesc& profile) {
   for (const t850::IntOverrideDesc& selector : profile.selectors) {
     if (selector.name == "cubemap") {
       return selector.value;
     }
   }
   return -1;
-}
-
-static void SetFloatOverride(std::vector<t850::FloatOverrideDesc>& values, std::string name, float value) {
-  for (auto& entry : values) {
-    if (entry.name == name) {
-      entry.value = value;
-      return;
-    }
-  }
-  values.push_back({std::move(name), value});
-}
-
-static void SetBoolOverride(std::vector<t850::BoolOverrideDesc>& values, std::string name, bool value) {
-  for (auto& entry : values) {
-    if (entry.name == name) {
-      entry.value = value;
-      return;
-    }
-  }
-  values.push_back({std::move(name), value});
-}
-
-static void SetIntOverride(std::vector<t850::IntOverrideDesc>& values, std::string name, int value) {
-  for (auto& entry : values) {
-    if (entry.name == name) {
-      entry.value = value;
-      return;
-    }
-  }
-  values.push_back({std::move(name), value});
-}
-
-static const t850::FloatOverrideDesc* FindEditorFloatOverride(const std::vector<t850::FloatOverrideDesc>& values,
-                                                              const std::string& name) {
-  for (const auto& value : values) {
-    if (value.name == name) {
-      return &value;
-    }
-  }
-  return nullptr;
-}
-
-static const t850::BoolOverrideDesc* FindEditorBoolOverride(const std::vector<t850::BoolOverrideDesc>& values,
-                                                            const std::string& name) {
-  for (const auto& value : values) {
-    if (value.name == name) {
-      return &value;
-    }
-  }
-  return nullptr;
-}
-
-static const t850::IntOverrideDesc* FindEditorIntOverride(const std::vector<t850::IntOverrideDesc>& values,
-                                                          const std::string& name) {
-  for (const auto& value : values) {
-    if (value.name == name) {
-      return &value;
-    }
-  }
-  return nullptr;
-}
-
-static XVECTOR3 EditorVec3FromArray(const std::array<float, 3>& value, float w = 0.0f) {
-  return XVECTOR3(value[0], value[1], value[2], w);
-}
-
-static std::string FileStemFromResourcePath(const std::string& path) {
-  const std::size_t slash = path.find_last_of('/');
-  const std::size_t begin = slash == std::string::npos ? 0 : slash + 1;
-  const std::size_t dot = path.find_last_of('.');
-  const std::size_t end = (dot == std::string::npos || dot < begin) ? path.size() : dot;
-  return path.substr(begin, end - begin);
 }
 
 static std::string InferQ3CollisionFromScenePath(const std::string& scenePath) {
@@ -2519,7 +2133,7 @@ static void RagdollNormalizeJointFrameAxes(XVECTOR3& twist,
   }
 }
 
-static void* NativeHandleFromImGuiViewport(ImGuiViewport* viewport) {
+void* NativeHandleFromImGuiViewport(ImGuiViewport* viewport) {
   if (!viewport) {
     return nullptr;
   }
@@ -2538,7 +2152,7 @@ static void* NativeHandleFromImGuiViewport(ImGuiViewport* viewport) {
   return viewport->PlatformHandle;
 }
 
-static void ApplyNativeWindowChrome(ImGuiViewport* viewport, const char* title) {
+void ApplyNativeWindowChrome(ImGuiViewport* viewport, const char* title) {
   if (!viewport || !viewport->PlatformHandle) {
     return;
   }
@@ -3633,92 +3247,6 @@ void EditorApp::DrawRagdollInspector(SceneObject& obj) {
     ImGui::TextWrapped("%s", obj.ragdollStatus.c_str());
 }
 
-void EditorApp::OpenMeshEditor(int objectIndex) {
-  if (objectIndex < 0 || objectIndex >= (int)g_objects.size()) {
-    return;
-  }
-
-  SceneObject& obj = g_objects[objectIndex];
-  if (m_meshEditorScene && m_meshEditorSceneLoaded) {
-    m_meshEditorScene->OnDestoryScene();
-  }
-  m_meshEditorScene.reset();
-  m_meshEditorSceneLoaded = false;
-  m_meshEditorObjectIndex = objectIndex;
-  m_meshEditorWindow.Open(true);
-  InvalidateEditorFrozenFrame();
-
-  g_selectedIdx = objectIndex;
-  g_selectionType = 0;
-  ClearMixedSelection();
-  AddMixedSelection(0, objectIndex);
-
-  t850::AABB bounds;
-  if (GetEditorObjectWorldAABB(obj, bounds) && bounds.IsValid()) {
-    m_meshEditorOrbitTarget = bounds.Center();
-    const XVECTOR3 ext = bounds.Extents();
-    const float radius = (std::max)(0.25f, std::sqrt(ext.x * ext.x + ext.y * ext.y + ext.z * ext.z));
-    m_meshEditorOrbitDistance = radius * 2.8f;
-  } else {
-    m_meshEditorOrbitTarget = obj.wireframe.Position();
-    m_meshEditorOrbitDistance = 4.0f;
-  }
-  m_meshEditorOrbitYaw = -0.75f;
-  m_meshEditorOrbitPitch = 0.35f;
-  m_meshEditorFovDeg = 45.0f;
-  m_meshEditorCameraInitialized = true;
-  m_meshEditorSceneReady = false;
-  m_meshEditorDebugLogFramesRemaining = 8;
-
-  T8_LOG_INFO("[T8ditor] Requested native editor window title='Mesh Edit' object='%s'", obj.name.c_str());
-}
-
-void EditorApp::CloseMeshEditor() {
-  if (pFramework && pFramework->pVideoDriver) {
-    pFramework->pVideoDriver->WaitForGPU();
-  }
-  if (m_meshEditorScene && m_meshEditorSceneLoaded) {
-    m_meshEditorScene->OnDestoryScene();
-  }
-  if (m_imguiReady) {
-    ImGuiLogCaptureStart();
-  }
-  m_meshEditorScene.reset();
-  m_meshEditorWindow.Reset(true);
-  m_meshEditorObjectIndex = -1;
-  DestroyMeshEditorViewportTarget();
-  IManager.xDelta = 0;
-  IManager.yDelta = 0;
-  for (int i = 0; i < MAXMOUSEBUTTONS; ++i) {
-    IManager.MouseButtonStates[0][i] = false;
-    IManager.MouseButtonStates[1][i] = false;
-  }
-  if (pFramework && pFramework->pVideoDriver) {
-    pFramework->pVideoDriver->SetDepthStencilState(t850::BaseDriver::DEPTH_DEFAULT);
-    pFramework->pVideoDriver->SetBlendState(t850::BaseDriver::BLEND_DEFAULT);
-    pFramework->pVideoDriver->SetCullFace(t850::BaseDriver::FRONT_FACES);
-    int mainW = m_lastW;
-    int mainH = m_lastH;
-#ifdef OS_WINDOWS
-    if (auto* w32 = static_cast<t850::Win32Framework*>(pFramework)) {
-      if (w32->m_pWindow) {
-        SDL_GetWindowSizeInPixels(w32->m_pWindow, &mainW, &mainH);
-      }
-    }
-#endif
-    if (mainW > 0 && mainH > 0) {
-      m_lastW = mainW;
-      m_lastH = mainH;
-      m_camera.SetViewportSize(mainW, mainH);
-      pFramework->pVideoDriver->SetViewport(0.0f, 0.0f, static_cast<float>(mainW), static_cast<float>(mainH));
-      pFramework->pVideoDriver->SetScissorRect(0, 0, mainW, mainH);
-    }
-  }
-  if (!m_sceneProps.pCameras.empty()) {
-    m_sceneProps.SetPrimaryCamera(&m_camera.GetCameraMutable());
-  }
-}
-
 void EditorApp::InvalidateEditorFrozenFrame() {
   m_editorFrozenFrameValid = false;
 }
@@ -4502,639 +4030,6 @@ void EditorApp::DrawSelectedAnimationInspector(SceneObject& obj) {
   ImGui::PopID();
 }
 
-bool EditorApp::ExportTemporaryPlayScene(std::string& outPath) {
-  if (m_editorNavMeshAuthored && m_editorNavMeshDirty) {
-    if (!CreateEditorNavMesh()) {
-      m_playSceneStatus = "NavMesh is stale and failed to re-generate.";
-      T8_LOG_ERROR("[T8ditor] Play Scene failed: stale NavMesh could not be regenerated before export");
-      return false;
-    }
-  }
-
-  std::error_code ec;
-  std::filesystem::path tempDir = std::filesystem::temp_directory_path(ec);
-  if (ec) {
-    tempDir = std::filesystem::current_path();
-  }
-  tempDir /= "T850";
-  tempDir /= "T8ditorPlay";
-  std::filesystem::create_directories(tempDir, ec);
-  if (ec) {
-    T8_LOG_ERROR("[T8ditor] Cannot create play-scene temp directory '%s': %s",
-                 tempDir.string().c_str(),
-                 ec.message().c_str());
-    return false;
-  }
-
-  const auto stamp = std::chrono::duration_cast<std::chrono::milliseconds>(
-      std::chrono::system_clock::now().time_since_epoch()).count();
-  std::filesystem::path tempPath = tempDir / ("play_scene_" + std::to_string(stamp) + ".t8scene");
-  outPath = tempPath.string();
-  m_playSceneEditorSnapshot = RefreshVirtualEditorScene(outPath);
-  T8_LOG_INFO("[T8ditor] Play Scene virtual scene refreshed: objects=%zu physics=%zu cameras=%zu lights=%zu",
-              m_playSceneEditorSnapshot.objects.size(),
-              m_playSceneEditorSnapshot.physics_entities.size(),
-              m_playSceneEditorSnapshot.cameras.size(),
-              m_playSceneEditorSnapshot.lights.size());
-  m_playSceneHasVisibleObjects = std::any_of(m_playSceneEditorSnapshot.objects.begin(), m_playSceneEditorSnapshot.objects.end(), [](const SceneObjectDesc& object) {
-    const std::string mesh = object.mesh.empty() ? object.name : object.mesh;
-    return object.visible && !mesh.empty();
-  });
-  if (!SaveSceneToFile(m_playSceneEditorSnapshot, outPath)) {
-    outPath.clear();
-    return false;
-  }
-  return true;
-}
-
-void EditorApp::RestoreEditorStateAfterPlay() {
-  const SceneFile& sf = m_playSceneEditorSnapshot;
-  m_panels.showSkybox = sf.editor.show_skybox;
-  m_panels.showWireframe = sf.editor.show_wireframe;
-  m_camera.SetTarget(XVECTOR3(sf.editor.camera_target.x,
-                              sf.editor.camera_target.y,
-                              sf.editor.camera_target.z));
-  m_camera.SetOrbitState(sf.editor.camera_yaw,
-                         sf.editor.camera_pitch,
-                         sf.editor.camera_distance);
-  if (m_lastW > 0 && m_lastH > 0) {
-    m_camera.SetViewportSize(m_lastW, m_lastH);
-  }
-
-  const std::size_t objectCount = (std::min)(g_objects.size(), sf.objects.size());
-  for (std::size_t i = 0; i < objectCount; ++i) {
-    SceneObject& obj = g_objects[i];
-    const SceneObjectDesc& od = sf.objects[i];
-    obj.wireframe.Position() = XVECTOR3(od.position.x, od.position.y, od.position.z);
-    obj.wireframe.EulerRadians() = XVECTOR3(
-        od.rotation.x * kDegToRad,
-        od.rotation.y * kDegToRad,
-        od.rotation.z * kDegToRad);
-    obj.wireframe.Scale() = XVECTOR3(od.scale.x, od.scale.y, od.scale.z);
-    obj.visible = od.visible;
-    obj.mobileVisible = od.mobile_visible;
-    obj.frozen = od.frozen;
-    obj.showWire = od.show_wire;
-    obj.showOrientation = od.show_orientation;
-    obj.navAgentFrontYawOffsetDeg = od.nav_agent_front_yaw_offset_deg;
-    obj.navAgentFaceYawSign = od.nav_agent_face_yaw_sign;
-    obj.navAgentTargetMode = od.nav_agent_target_mode.empty() ? "direct" : od.nav_agent_target_mode;
-    obj.navAgentFollowDistance = od.nav_agent_follow_distance;
-    obj.navAgentSideOffset = od.nav_agent_side_offset;
-    obj.navAgentFormationDepthStep = od.nav_agent_formation_depth_step;
-    obj.navAgentSlot = od.nav_agent_slot;
-    obj.physics = od.physics;
-    obj.navigation = od.navigation;
-    obj.ragdollAuthoringMeta = od.ragdoll_authoring;
-  }
-
-  g_cameras.clear();
-  for (const auto& cd : sf.cameras) {
-    SceneCamera c;
-    c.name = cd.name;
-    c.type = (CameraType)cd.type;
-    c.position = XVECTOR3(cd.position.x, cd.position.y, cd.position.z);
-    c.target = XVECTOR3(cd.target.x, cd.target.y, cd.target.z);
-    c.fovDeg = cd.fov_deg;
-    c.orthoW = cd.ortho_w;
-    c.orthoH = cd.ortho_h;
-    c.nearPlane = cd.near_plane;
-    c.farPlane = cd.far_plane;
-    c.visible = cd.visible;
-    c.frozen = cd.frozen;
-    g_cameras.push_back(c);
-  }
-  g_activeCameraIdx =
-      (m_playScenePreviousActiveCameraIdx >= 0 &&
-       m_playScenePreviousActiveCameraIdx < static_cast<int>(g_cameras.size()))
-          ? m_playScenePreviousActiveCameraIdx
-          : -1;
-
-  g_lights.clear();
-  for (const auto& ld : sf.lights) {
-    SceneLight l;
-    l.name = ld.name;
-    l.type = (EditorLightType)ld.type;
-    l.position = XVECTOR3(ld.position.x, ld.position.y, ld.position.z);
-    l.direction = XVECTOR3(ld.direction.x, ld.direction.y, ld.direction.z);
-    l.color = XVECTOR3(ld.color.x, ld.color.y, ld.color.z);
-    l.intensity = ld.intensity;
-    l.radius = ld.radius;
-    l.enabled = ld.enabled;
-    l.visible = ld.visible;
-    l.frozen = ld.frozen;
-    l.q3 = ld.q3;
-    g_lights.push_back(l);
-  }
-  g_selectedIdx = -1;
-  g_selectionType = 0;
-  ClearMixedSelection();
-  InvalidateSceneObjectTransformSnapshots();
-  SyncSceneObjectTransforms();
-  if (sf.navigation_mesh) {
-    RestoreEditorNavMeshFromScene(*sf.navigation_mesh);
-  } else {
-    ResetEditorNavMeshState(false);
-  }
-}
-
-void EditorApp::OpenPlayScene() {
-  if (m_meshEditorOpen) {
-    CloseMeshEditor();
-  }
-  if (m_playSceneOpen) {
-    ClosePlayScene(false);
-  }
-
-  std::string tempPath;
-  if (!ExportTemporaryPlayScene(tempPath)) {
-    m_playSceneStatus = "Failed to export temporary play scene.";
-    T8_LOG_ERROR("[T8ditor] Play Scene failed: temporary scene export failed");
-    return;
-  }
-
-  m_playScenePreviousConfig = t850::g_config;
-  m_playSceneHasPreviousConfig = true;
-  m_playScenePreviousActiveCameraIdx = g_activeCameraIdx;
-  m_playSceneTempPath = tempPath;
-  m_playSceneWindow.Open(false);
-  m_playSceneLaunchFailed = false;
-  InvalidateEditorFrozenFrame();
-  m_playSceneStatus = m_playSceneHasVisibleObjects
-      ? "Starting Play Scene..."
-      : "Temporary scene has no visible meshes. Add an object before Play.";
-  T8_LOG_INFO("[T8ditor] Play Scene exported temporary scene '%s'", m_playSceneTempPath.c_str());
-}
-
-void EditorApp::ClosePlayScene(bool restoreEditorScene) {
-  const std::string restorePath = m_playSceneTempPath;
-  if (pFramework && pFramework->pVideoDriver) {
-    pFramework->pVideoDriver->WaitForGPU();
-  }
-  if (m_playScene && m_playSceneLoaded) {
-    m_playScene->OnDestoryScene();
-  }
-  m_playScene.reset();
-  m_playSceneWindow.Reset(false);
-  m_playSceneHasVisibleObjects = false;
-  m_playSceneLaunchFailed = false;
-  DestroyPlaySceneViewportTarget();
-  if (m_playScenePhysics.IsInitialized()) {
-    m_playScenePhysics.Shutdown();
-  }
-  m_playSceneEngineContext = t850::EngineContext{};
-
-  if (m_playSceneHasPreviousConfig) {
-    t850::g_config = m_playScenePreviousConfig;
-    m_playSceneHasPreviousConfig = false;
-  }
-  if (restoreEditorScene) {
-    RestoreEditorStateAfterPlay();
-  }
-  m_playScenePreviousActiveCameraIdx = -1;
-  if (!restorePath.empty()) {
-    std::error_code ec;
-    std::filesystem::remove(restorePath, ec);
-  }
-  m_playSceneTempPath.clear();
-  m_playSceneStatus.clear();
-  IManager.xDelta = 0;
-  IManager.yDelta = 0;
-  for (int i = 0; i < MAXMOUSEBUTTONS; ++i) {
-    IManager.MouseButtonStates[0][i] = false;
-    IManager.MouseButtonStates[1][i] = false;
-  }
-  if (pFramework && pFramework->pVideoDriver) {
-    pFramework->pVideoDriver->SetDepthStencilState(t850::BaseDriver::DEPTH_DEFAULT);
-    pFramework->pVideoDriver->SetBlendState(t850::BaseDriver::BLEND_DEFAULT);
-    pFramework->pVideoDriver->SetCullFace(t850::BaseDriver::FRONT_FACES);
-    int mainW = m_lastW;
-    int mainH = m_lastH;
-#ifdef OS_WINDOWS
-    if (auto* w32 = static_cast<t850::Win32Framework*>(pFramework)) {
-      if (w32->m_pWindow) {
-        SDL_GetWindowSizeInPixels(w32->m_pWindow, &mainW, &mainH);
-      }
-    }
-#endif
-    if (mainW > 0 && mainH > 0) {
-      m_lastW = mainW;
-      m_lastH = mainH;
-      m_camera.SetViewportSize(mainW, mainH);
-      pFramework->pVideoDriver->SetViewport(0.0f, 0.0f, static_cast<float>(mainW), static_cast<float>(mainH));
-      pFramework->pVideoDriver->SetScissorRect(0, 0, mainW, mainH);
-    }
-  }
-  if (!m_sceneProps.pCameras.empty()) {
-    m_sceneProps.SetPrimaryCamera(&m_camera.GetCameraMutable());
-  }
-}
-
-bool EditorApp::EnsurePlaySceneViewportTarget(int width, int height) {
-  if (!pFramework || !pFramework->pVideoDriver || width <= 0 || height <= 0) {
-    return false;
-  }
-
-  t850::RenderViewportDesc desc;
-  desc.colorCount = 1;
-  desc.colorFormat = t850::BaseRT::RGBA8;
-  desc.depthFormat = t850::BaseRT::F32;
-  desc.minWidth = 64;
-  desc.minHeight = 64;
-  if (!m_playSceneViewportTarget.Ensure(pFramework->pVideoDriver, width, height, desc)) {
-    T8_LOG_ERROR("[T8ditor] Failed to create Play Scene viewport RT %dx%d", width, height);
-    return false;
-  }
-
-  T8_LOG_INFO("[T8ditor] Play Scene viewport RT created output=%d size=%dx%d",
-              m_playSceneViewportTarget.Handle(),
-              m_playSceneViewportTarget.Width(),
-              m_playSceneViewportTarget.Height());
-  return true;
-}
-
-void EditorApp::DestroyPlaySceneViewportTarget() {
-  if (pFramework && pFramework->pVideoDriver) {
-    m_playSceneViewportTarget.Destroy(pFramework->pVideoDriver);
-  }
-  m_playSceneViewportImageMinX = 0.0f;
-  m_playSceneViewportImageMinY = 0.0f;
-  m_playSceneViewportImageSizeX = 0.0f;
-  m_playSceneViewportImageSizeY = 0.0f;
-}
-
-bool EditorApp::EnsurePlaySceneRuntimeLoaded() {
-  if (m_playSceneLoaded) {
-    return true;
-  }
-  if (!pFramework || !pFramework->pVideoDriver || m_playSceneTempPath.empty() || !m_playSceneViewportTarget.IsValid()) {
-    return false;
-  }
-  if (m_playSceneLaunchFailed) {
-    return false;
-  }
-  if (!m_playSceneHasVisibleObjects) {
-    return false;
-  }
-
-  m_playSceneEngineContext = t850::GetEngineContext();
-  m_playSceneEngineContext.physics = &m_playScenePhysics;
-  if (!m_playScenePhysics.IsInitialized()) {
-    if (!m_playScenePhysics.Initialize() && m_playScenePhysics.IsAvailable()) {
-      T8_LOG_ERROR("[T8ditor] Play Scene physics runtime failed to initialize");
-    }
-  }
-
-  m_playScene = std::make_unique<::SceneTemplate>();
-  m_playScene->pFramework = pFramework;
-  SceneTemplateLaunchDesc launchDesc;
-  launchDesc.sceneFilePath = m_playSceneTempPath;
-  launchDesc.modelPath = t850::g_config.modelPath;
-  launchDesc.width = m_playSceneViewportTarget.Width();
-  launchDesc.height = m_playSceneViewportTarget.Height();
-  launchDesc.startScene = 4;
-  launchDesc.guiOnStart = false;
-  m_playScene->SetLaunchDesc(launchDesc);
-  m_playScene->SetEngineContext(&m_playSceneEngineContext);
-  m_playScene->SetRenderSize(m_playSceneViewportTarget.Width(), m_playSceneViewportTarget.Height());
-  m_playScene->SetFinalOutputRT(m_playSceneViewportTarget.Handle());
-  m_playScene->OnLoadScene();
-  if (m_playScene->m_meshCount <= 0) {
-    m_playScene->OnDestoryScene();
-    m_playScene.reset();
-    m_playSceneStatus = "Play Scene did not load any visible meshes.";
-    m_playSceneLaunchFailed = true;
-    T8_LOG_ERROR("[T8ditor] Play Scene launch failed: runtime loaded no visible meshes from '%s'",
-                 m_playSceneTempPath.c_str());
-    return false;
-  }
-  m_playSceneLoaded = true;
-  m_playSceneStatus.clear();
-  T8_LOG_INFO("[T8ditor] Play Scene launched Quake3 scene from '%s'", m_playSceneTempPath.c_str());
-  return true;
-}
-
-void EditorApp::DrawPlaySceneViewport() {
-  ImVec2 available = ImGui::GetContentRegionAvail();
-  if (m_playSceneLaunchFailed || !m_playSceneHasVisibleObjects) {
-    ImGui::Dummy(ImVec2((std::max)(1.0f, available.x), 16.0f));
-    ImGui::TextWrapped("%s", m_playSceneStatus.empty()
-        ? "Temporary scene has no visible meshes. Add an object before Play."
-        : m_playSceneStatus.c_str());
-    return;
-  }
-  const int desiredViewportW = (std::max)(64, (int)std::floor(available.x));
-  const int desiredViewportH = (std::max)(64, (int)std::floor(available.y));
-  const bool mouseResizingWindow =
-      ImGui::IsMouseDown(ImGuiMouseButton_Left) ||
-      ImGui::IsMouseDown(ImGuiMouseButton_Right) ||
-      ImGui::IsMouseDown(ImGuiMouseButton_Middle);
-  t850::RenderViewportDesc viewportDesc;
-  viewportDesc.minWidth = 64;
-  viewportDesc.minHeight = 64;
-  const bool shouldResizeRT =
-      m_playSceneViewportTarget.ShouldResize(desiredViewportW, desiredViewportH, mouseResizingWindow, viewportDesc);
-
-  if (shouldResizeRT) {
-    if (pFramework && pFramework->pVideoDriver) {
-      pFramework->pVideoDriver->WaitForGPU();
-    }
-    if (!EnsurePlaySceneViewportTarget(desiredViewportW, desiredViewportH)) {
-      ImGui::TextDisabled("Play Scene viewport unavailable.");
-      return;
-    }
-    if (m_playScene && m_playSceneLoaded) {
-      m_playScene->ResizeRenderTargets(
-          m_playSceneViewportTarget.Width(),
-          m_playSceneViewportTarget.Height(),
-          m_playSceneViewportTarget.Handle());
-    }
-  }
-
-  if (!pFramework || !pFramework->pVideoDriver || !m_playSceneViewportTarget.IsValid()) {
-    ImGui::TextDisabled("Play Scene viewport unavailable.");
-    return;
-  }
-
-  t850::BaseDriver* driver = pFramework->pVideoDriver;
-  const int playViewportRT = m_playSceneViewportTarget.Handle();
-  t850::BaseRT* rt = (playViewportRT >= 0 &&
-                      playViewportRT < (int)driver->RTs.size())
-      ? driver->RTs[playViewportRT]
-      : nullptr;
-  if (!rt || rt->vColorTextures.empty() || !rt->vColorTextures[0]) {
-    ImGui::TextDisabled("Play Scene render target is unavailable.");
-    return;
-  }
-
-  const ImVec2 imageSize((float)m_playSceneViewportTarget.Width(), (float)m_playSceneViewportTarget.Height());
-  const ImVec2 imageMin = ImGui::GetCursorScreenPos();
-  const ImVec2 imageMax(imageMin.x + imageSize.x, imageMin.y + imageSize.y);
-  m_playSceneViewportImageMinX = imageMin.x;
-  m_playSceneViewportImageMinY = imageMin.y;
-  m_playSceneViewportImageSizeX = imageSize.x;
-  m_playSceneViewportImageSizeY = imageSize.y;
-
-  if (!EnsurePlaySceneRuntimeLoaded()) {
-    ImGui::TextDisabled("%s", m_playSceneStatus.empty() ? "Play Scene is loading..." : m_playSceneStatus.c_str());
-    return;
-  }
-
-  m_playScene->SetFinalOutputRT(m_playSceneViewportTarget.Handle());
-  m_playScene->SetRenderSize(m_playSceneViewportTarget.Width(), m_playSceneViewportTarget.Height());
-  m_playScene->OnUpdate(m_dtSecs);
-  m_playScene->OnDraw();
-
-  ImTextureID image = ImGuiTextureID(driver, rt->vColorTextures[0]);
-  if (!image) {
-    ImGui::TextDisabled("Play Scene texture is not available for ImGui.");
-    return;
-  }
-  const bool flipV = driver->NeedsVFlip();
-  const ImVec2 uv0(0.0f, flipV ? 1.0f : 0.0f);
-  const ImVec2 uv1(1.0f, flipV ? 0.0f : 1.0f);
-  ImGui::GetWindowDrawList()->AddImage(image, imageMin, imageMax, uv0, uv1);
-  ImGui::InvisibleButton("##PlaySceneViewportInput",
-                         imageSize,
-                         ImGuiButtonFlags_MouseButtonLeft | ImGuiButtonFlags_MouseButtonRight | ImGuiButtonFlags_MouseButtonMiddle);
-  m_playSceneViewportInputActive = ImGui::IsItemHovered() || ImGui::IsItemActive();
-}
-
-void EditorApp::DrawPlaySceneWindow() {
-  if (!m_playSceneOpen) {
-    return;
-  }
-
-  ImGuiSetNextNativeEditorWindow(160.0f, 160.0f, 1280.0f, 720.0f);
-  m_playSceneOpenRequested = false;
-  bool keepOpen = m_playSceneOpen;
-  ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0.0f, 0.0f));
-  const bool rootBegun = ImGui::Begin("Play Scene", &keepOpen, ImGuiWindowFlags_NoDocking);
-  if (rootBegun) {
-    if (ImGuiViewport* viewport = ImGui::GetWindowViewport()) {
-      ApplyNativeWindowChrome(viewport, "Play Scene");
-      m_playSceneImGuiViewportId = (unsigned int)viewport->ID;
-    }
-    m_playSceneDockspaceId = (unsigned int)ImGui::GetID("PlaySceneDockSpace");
-    m_playSceneDockClassId = (unsigned int)ImGui::GetID("PlaySceneDockClass");
-    ImGuiWindowClass playClass{};
-    playClass.ClassId = (ImGuiID)m_playSceneDockClassId;
-    playClass.DockingAllowUnclassed = false;
-    ImGui::DockSpace(
-        (ImGuiID)m_playSceneDockspaceId,
-        ImVec2(0.0f, 0.0f),
-        ImGuiDockNodeFlags_None,
-        &playClass);
-  }
-  ImGui::End();
-  ImGui::PopStyleVar();
-
-  if (!keepOpen) {
-    m_playSceneWindow.RequestClose();
-    return;
-  }
-
-  ImGuiWindowClass playClass{};
-  playClass.ClassId = (ImGuiID)m_playSceneDockClassId;
-  playClass.DockingAllowUnclassed = false;
-  if (m_playSceneImGuiViewportId != 0) {
-    ImGui::SetNextWindowViewport((ImGuiID)m_playSceneImGuiViewportId);
-  }
-  ImGui::SetNextWindowClass(&playClass);
-  if (m_playSceneDockspaceId != 0) {
-    ImGui::SetNextWindowDockID((ImGuiID)m_playSceneDockspaceId, ImGuiCond_FirstUseEver);
-  }
-  bool viewportOpen = true;
-  if (ImGui::Begin("Play Scene Viewport##PlaySceneViewport",
-                   &viewportOpen,
-                   ImGuiWindowFlags_NoCollapse)) {
-    if (ImGui::Button("Stop")) {
-      m_playSceneWindow.RequestClose();
-    }
-    ImGui::SameLine();
-    ImGui::TextDisabled("Press G for runtime controls.");
-    ImGui::SameLine();
-    if (m_playSceneLaunchFailed) {
-      ImGui::TextDisabled("%s", m_playSceneStatus.c_str());
-    } else if (m_playSceneHasVisibleObjects) {
-      ImGui::TextDisabled("Temporary scene: %s", m_playSceneTempPath.c_str());
-    } else {
-      ImGui::TextDisabled("Temporary scene has no visible meshes; nothing to run.");
-    }
-    ImGui::Separator();
-    if (!m_playSceneCloseRequested) {
-      DrawPlaySceneViewport();
-    }
-  }
-  ImGui::End();
-
-  if (m_playSceneGuiVisible && m_playScene && m_playSceneLoaded) {
-    if (m_playSceneImGuiViewportId != 0) {
-      ImGui::SetNextWindowViewport((ImGuiID)m_playSceneImGuiViewportId);
-    }
-    ImGui::SetNextWindowSize(ImVec2(440.0f, 680.0f), ImGuiCond_FirstUseEver);
-    t850::DevGuiContext gui;
-    gui.SetIdSuffix("PlaySceneQuake3");
-    gui.SetViewportId((ImGuiID)m_playSceneImGuiViewportId);
-    gui.SetDockId((ImGuiID)m_playSceneDockspaceId);
-    gui.SetWindowClassId((ImGuiID)m_playSceneDockClassId);
-    const bool panelBegun = gui.BeginPanel("Scene Controls", &m_playSceneGuiVisible);
-    if (panelBegun) {
-      ImGui::TextDisabled("Play Scene runtime controls - press G to hide.");
-      ImGui::Separator();
-      m_playScene->DrawDevGui(gui);
-    }
-    gui.EndPanel();
-  }
-}
-
-bool EditorApp::EnsureMeshEditorViewportTarget(int width, int height) {
-  if (!pFramework || !pFramework->pVideoDriver || width <= 0 || height <= 0) {
-    return false;
-  }
-
-  t850::BaseDriver* driver = pFramework->pVideoDriver;
-  t850::RenderViewportDesc gbufferDesc;
-  gbufferDesc.colorFormats = {
-      t850::BaseRT::RGBA8,
-      t850::BaseRT::RGBA16F,
-      t850::BaseRT::RGBA8,
-      t850::BaseRT::RGBA8,
-      t850::BaseRT::RGBA16F,
-      t850::BaseRT::RGBA8,
-      t850::BaseRT::RGBA8};
-  gbufferDesc.depthFormat = t850::BaseRT::F32;
-  gbufferDesc.minWidth = 64;
-  gbufferDesc.minHeight = 64;
-
-  t850::RenderViewportDesc outputDesc;
-  outputDesc.colorCount = 1;
-  outputDesc.colorFormat = t850::BaseRT::RGBA8;
-  outputDesc.depthFormat = t850::BaseRT::F32;
-  outputDesc.minWidth = 64;
-  outputDesc.minHeight = 64;
-
-  if (!m_meshEditorGBufferTarget.Ensure(driver, width, height, gbufferDesc)) {
-    DestroyMeshEditorViewportTarget();
-    T8_LOG_ERROR("[T8ditor] Failed to create Mesh Edit GBuffer RT %dx%d", width, height);
-    return false;
-  }
-
-  if (!m_meshEditorViewportTarget.Ensure(driver, width, height, outputDesc)) {
-    DestroyMeshEditorViewportTarget();
-    T8_LOG_ERROR("[T8ditor] Failed to create Mesh Edit viewport RT %dx%d", width, height);
-    return false;
-  }
-
-  T8_LOG_INFO("[T8ditor] Mesh Edit viewport RTs created gbuffer=%d output=%d size=%dx%d",
-              m_meshEditorGBufferTarget.Handle(),
-              m_meshEditorViewportTarget.Handle(),
-              m_meshEditorViewportTarget.Width(),
-              m_meshEditorViewportTarget.Height());
-  return true;
-}
-
-void EditorApp::DestroyMeshEditorViewportTarget() {
-  if (pFramework && pFramework->pVideoDriver) {
-    m_meshEditorGBufferTarget.Destroy(pFramework->pVideoDriver);
-    m_meshEditorViewportTarget.Destroy(pFramework->pVideoDriver);
-  }
-}
-
-void EditorApp::DestroyMeshEditorSceneResources() {
-  t850::BaseDriver* driver = (pFramework && pFramework->pVideoDriver) ? pFramework->pVideoDriver : nullptr;
-  auto destroyTexture = [&](int& textureIndex) {
-    if (driver && textureIndex >= 0) {
-      driver->DestroyTexture(textureIndex);
-    }
-    textureIndex = -1;
-  };
-
-  destroyTexture(m_meshEditorEnvMapIdx);
-  destroyTexture(m_meshEditorDiffuseIBLTexIndex);
-  destroyTexture(m_meshEditorSpecularIBLTexIndex);
-  destroyTexture(m_meshEditorBrdfLUTTexIndex);
-  destroyTexture(m_meshEditorSheenIBLTexIndex);
-  destroyTexture(m_meshEditorCharlieLUTTexIndex);
-  destroyTexture(m_meshEditorSheenELUTTexIndex);
-
-  if (m_meshEditorSSAOTextureReady) {
-    m_meshEditorSceneProps.SSAOKernel.Destroy();
-    m_meshEditorSSAOTextureReady = false;
-  }
-
-  m_meshEditorEnvMaps = t850::EnvironmentMapSet{};
-  m_meshEditorCurrentCubemapPath.clear();
-  m_meshEditorCurrentCubemapIndex = -1;
-  m_meshEditorSceneModelKey.clear();
-  m_meshEditorSceneReady = false;
-  m_meshEditorSceneProps = SceneProps{};
-  m_meshEditorSceneProps.SSAOKernel.NoiseTex = nullptr;
-}
-
-void EditorApp::SetMeshEditorCubemap(const std::string& cubemapPath) {
-  const std::string normalizedPath = NormalizeEditorResourcePath(cubemapPath);
-  if (normalizedPath.empty() || !pFramework || !pFramework->pVideoDriver) {
-    return;
-  }
-  if (m_meshEditorEnvMapIdx >= 0 &&
-      EditorResourcePathEquals(normalizedPath, m_meshEditorCurrentCubemapPath)) {
-    return;
-  }
-
-  t850::BaseDriver* driver = pFramework->pVideoDriver;
-  auto destroyTexture = [&](int& textureIndex) {
-    if (textureIndex >= 0) {
-      driver->DestroyTexture(textureIndex);
-      textureIndex = -1;
-    }
-  };
-
-  destroyTexture(m_meshEditorEnvMapIdx);
-  if (m_meshEditorSceneSetup.environmentDiffuseIBL.empty()) {
-    destroyTexture(m_meshEditorDiffuseIBLTexIndex);
-  }
-  if (m_meshEditorSceneSetup.environmentSpecularIBL.empty()) {
-    destroyTexture(m_meshEditorSpecularIBLTexIndex);
-  }
-  if (m_meshEditorSceneSetup.environmentSheenIBL.empty()) {
-    destroyTexture(m_meshEditorSheenIBLTexIndex);
-  }
-
-  m_meshEditorEnvMapIdx = driver->CreateTexture(normalizedPath);
-  if (m_meshEditorEnvMapIdx < 0) {
-    T8_LOG_ERROR("[T8ditor] Mesh Edit failed to load cubemap '%s'", normalizedPath.c_str());
-    m_meshEditorCurrentCubemapPath.clear();
-    m_meshEditorEnvMaps = t850::EnvironmentMapSet{};
-    return;
-  }
-
-  m_meshEditorCurrentCubemapPath = normalizedPath;
-  m_meshEditorEnvMaps.SetFallback(m_meshEditorEnvMapIdx);
-  t850::LoadEnvironmentIBLResources(
-      driver,
-      {m_meshEditorSceneSetup.environmentDiffuseIBL,
-       m_meshEditorSceneSetup.environmentSpecularIBL,
-       m_meshEditorSceneSetup.environmentBrdfLUT,
-       m_meshEditorSceneSetup.environmentSheenIBL,
-       m_meshEditorSceneSetup.environmentCharlieLUT,
-       m_meshEditorSceneSetup.environmentSheenELUT},
-      m_meshEditorEnvMaps,
-      m_meshEditorDiffuseIBLTexIndex,
-      m_meshEditorSpecularIBLTexIndex,
-      m_meshEditorBrdfLUTTexIndex,
-      m_meshEditorSheenIBLTexIndex,
-      m_meshEditorCharlieLUTTexIndex,
-      m_meshEditorSheenELUTTexIndex);
-  t850::UpdateSceneIBLSettings(m_meshEditorSceneProps, driver, m_meshEditorEnvMaps);
-
-  const t850::SelectorDesc* cubemapDesc =
-      FindEditorSelectorDesc(m_meshEditorSceneSetup.descriptor.selectors, "cubemap");
-  if (cubemapDesc) {
-    m_meshEditorCurrentCubemapIndex = EditorCubemapSelectorIndexForPath(*cubemapDesc, normalizedPath);
-  }
-}
-
 void EditorApp::DrawEditorRenderingPanel() {
   if (m_editorSceneSetup.descriptor.name.empty()) {
     m_editorSceneSetup.Load("Scenes/Quake3Mock.json");
@@ -5418,304 +4313,6 @@ void EditorApp::ApplyPendingEditorCubemap() {
     g_quads[0].SetEnvironmentMap(driver->GetTexture(g_dummyEnvMapIdx));
   }
   ResetMainEditorFrameLimiter();
-}
-
-void EditorApp::ApplyMeshEditorProfileState(SceneObject& obj, const t850::SandboxProfileDesc& state) {
-  const bool hasCubemapPath = state.cubemap_path.has_value() &&
-      !NormalizeEditorResourcePath(*state.cubemap_path).empty();
-  if (hasCubemapPath) {
-    SetMeshEditorCubemap(*state.cubemap_path);
-  }
-
-  t850::RenderSkinnedMesh* skinned = GetSkinnedMesh(obj);
-
-  for (const auto& value : state.sliders) {
-    if (value.name == "exposure") m_meshEditorSceneProps.Exposure = value.value;
-    else if (value.name == "bloom_factor") m_meshEditorSceneProps.BloomFactor = value.value;
-    else if (value.name == "bloom_threshold") m_meshEditorSceneProps.BloomThreshold = value.value;
-    else if (value.name == "tm_white_level") m_meshEditorSceneProps.ToneMapWhiteLevel = value.value;
-    else if (value.name == "tm_adapt_tau") m_meshEditorSceneProps.LuminanceTau = value.value;
-    else if (value.name == "pcf_radius") m_meshEditorSceneProps.PCFScale = value.value;
-    else if (value.name == "pcf_samples") m_meshEditorSceneProps.PCFSamples = value.value;
-    else if (value.name == "ssao_kernel_size") { m_meshEditorSceneProps.SSAOKernel.KernelSize = (int)value.value; m_meshEditorSceneProps.SSAOKernel.Update(); }
-    else if (value.name == "ssao_radius") m_meshEditorSceneProps.SSAOKernel.Radius = value.value;
-    else if (value.name == "dof_aperture") m_meshEditorSceneProps.Aperture = value.value;
-    else if (value.name == "dof_focal_length") m_meshEditorSceneProps.FocalLength = value.value;
-    else if (value.name == "dof_max_coc") m_meshEditorSceneProps.MaxCoc = value.value;
-    else if (value.name == "dof_far_samples") m_meshEditorSceneProps.DOF_Far_Samples_squared = value.value;
-    else if (value.name == "dof_near_samples") m_meshEditorSceneProps.DOF_Near_Samples_squared = value.value;
-    else if (value.name == "light_volume_steps") m_meshEditorSceneProps.LightVolumeSteps = value.value;
-    else if (value.name == "godrays_factor") m_meshEditorSceneProps.GodRaysFactor = value.value;
-    else if (value.name == "fov") m_meshEditorFovDeg = value.value;
-    else if (value.name == "light_radius_scale") m_meshEditorSceneProps.LightRadiusScale = value.value;
-    else if (value.name == "light_intensity_scale") m_meshEditorSceneProps.LightIntensityScale = value.value;
-    else if (value.name == "lightmap_intensity") m_meshEditorSceneProps.LightmapIntensity = value.value;
-    else if (value.name == "shadow_bias") m_meshEditorSceneProps.ShadowBias = value.value;
-    else if (value.name == "shadow_min") m_meshEditorSceneProps.ShadowMin = value.value;
-    else if (value.name == "env_factor") m_meshEditorSceneProps.EnvFactor = value.value;
-    else if (value.name == "ibl_factor") m_meshEditorSceneProps.IBLFactor = value.value;
-    else if (value.name == "ibl_mip_count") m_meshEditorSceneProps.IBLMipCount = (std::max)(0.0f, value.value);
-    else if (value.name == "ibl_diffuse_mip_level") m_meshEditorSceneProps.IBLDiffuseMipLevel = (std::max)(0.0f, value.value);
-    else if (value.name == "ibl_brdf_lut_enabled") m_meshEditorSceneProps.IBLBRDFLUTEnabled = value.value > 0.5f ? 1.0f : 0.0f;
-    else if (value.name == "material_emissive_intensity") m_meshEditorSceneProps.MaterialEmissiveIntensity = value.value;
-    else if (value.name == "material_transmission_multiplier") m_meshEditorSceneProps.MaterialTransmissionMultiplier = value.value;
-    else if (value.name == "material_refraction_strength") m_meshEditorSceneProps.MaterialRefractionStrength = value.value;
-
-    for (int kernelIndex = 0; kernelIndex < (int)m_meshEditorSceneProps.pGaussKernels.size(); ++kernelIndex) {
-      GaussFilter* kernel = m_meshEditorSceneProps.pGaussKernels[kernelIndex];
-      if (!kernel) continue;
-      const std::string prefix = "gauss_" + std::to_string(kernelIndex) + "_";
-      if (value.name == prefix + "radius") { kernel->radius = value.value; kernel->Update(); }
-      else if (value.name == prefix + "sigma") { kernel->sigma = value.value; kernel->Update(); }
-    }
-  }
-
-  for (const auto& value : state.checkboxes) {
-    if (value.name == "shadow_toggle") m_meshEditorSceneProps.ToogleShadow = value.value ? 1 : 0;
-    else if (value.name == "ssao_toggle") m_meshEditorSceneProps.ToogleSSAO = value.value ? 1 : 0;
-    else if (value.name == "show_wireframe") m_meshEditorShowWireframe = value.value;
-    else if (value.name == "show_skeleton") m_meshEditorShowSkeleton = value.value && skinned && skinned->HasSkinData();
-    else if (value.name == "point_lights_enabled") m_meshEditorSceneProps.PointLightsEnabled = value.value;
-    else if (value.name == "debug_luminance") {
-      m_meshEditorSceneProps.DebugLuminanceEnabled = value.value;
-      if (!value.value) m_meshEditorSceneProps.DebugAdaptedLuminanceValid = false;
-    }
-  }
-
-  for (const auto& value : state.selectors) {
-    if (value.name == "cubemap" && !hasCubemapPath) {
-      const t850::SelectorDesc* cubemapDesc =
-          FindEditorSelectorDesc(m_meshEditorSceneSetup.descriptor.selectors, "cubemap");
-      if (cubemapDesc && value.value >= 0 && value.value < (int)cubemapDesc->options.size()) {
-        m_meshEditorCurrentCubemapIndex = value.value;
-        SetMeshEditorCubemap(EditorCubemapPathForSelectorIndex(*cubemapDesc, value.value));
-      }
-    } else if (value.name == "luminance_mode") {
-      m_meshEditorSceneProps.LuminanceMode = value.value;
-    }
-
-    for (int kernelIndex = 0; kernelIndex < (int)m_meshEditorSceneProps.pGaussKernels.size(); ++kernelIndex) {
-      GaussFilter* kernel = m_meshEditorSceneProps.pGaussKernels[kernelIndex];
-      if (!kernel) continue;
-      const std::string name = "gauss_" + std::to_string(kernelIndex) + "_kernel_size";
-      if (value.name == name) { kernel->kernelSize = value.value; kernel->Update(); }
-    }
-  }
-
-  for (const auto& lightState : state.lights) {
-    if (lightState.index < 0 || lightState.index >= (int)m_meshEditorSceneProps.Lights.size()) {
-      continue;
-    }
-    Light& light = m_meshEditorSceneProps.Lights[lightState.index];
-    if (lightState.position.has_value()) light.Position = EditorVec3FromArray(*lightState.position, 1.0f);
-    if (lightState.direction.has_value()) {
-      XVECTOR3 direction = EditorVec3FromArray(*lightState.direction, 0.0f);
-      if (direction.Length() > 0.0001f) {
-        direction.Normalize();
-        light.Direction = direction;
-      }
-    }
-    if (lightState.color.has_value()) light.Color = EditorVec3FromArray(*lightState.color, 0.0f);
-    if (lightState.diameter.has_value()) light.radius = (std::max)(0.001f, *lightState.diameter * 0.5f);
-    if (lightState.intensity.has_value()) light.Intensity = *lightState.intensity;
-  }
-
-  if (state.frustum_culling.has_value()) {
-    m_meshEditorSceneProps.FrustumCullingEnabled = *state.frustum_culling;
-  }
-
-  auto applyOrbit = [&](const t850::SandboxOrbitCameraDesc& orbit) {
-    const XVECTOR3 target = EditorVec3FromArray(orbit.target, 1.0f);
-    const XVECTOR3 panOffset = EditorVec3FromArray(orbit.pan_offset, 0.0f);
-    m_meshEditorOrbitTarget = target + panOffset;
-    m_meshEditorOrbitTarget.w = 1.0f;
-    m_meshEditorOrbitYaw = orbit.yaw;
-    m_meshEditorOrbitPitch = orbit.pitch;
-    m_meshEditorOrbitDistance = (std::max)(0.001f, orbit.distance);
-    m_meshEditorCameraInitialized = true;
-  };
-
-  if (state.camera.has_value()) {
-    const auto& cameraState = *state.camera;
-    m_meshEditorFovDeg = cameraState.fov;
-    if (cameraState.orbit.has_value()) {
-      applyOrbit(*cameraState.orbit);
-    } else {
-      m_meshEditorCamera.Eye = EditorVec3FromArray(cameraState.eye, 1.0f);
-      m_meshEditorOrbitYaw = cameraState.yaw;
-      m_meshEditorOrbitPitch = cameraState.pitch;
-      m_meshEditorCameraInitialized = true;
-    }
-  } else if (state.orbit_camera.has_value()) {
-    applyOrbit(*state.orbit_camera);
-  }
-
-  (void)state.animations;
-  (void)state.current_keyframe;
-}
-
-void EditorApp::ApplyMeshEditorProfiles(SceneObject& obj) {
-  const t850::SandboxProfileDesc* baseProfile = nullptr;
-  const t850::SandboxProfileDesc* runtimeProfile = nullptr;
-  int bestRuntimeScore = -1;
-  for (const auto& profile : m_meshEditorSceneSetup.descriptor.profiles) {
-    const bool modelSpecific = !profile.model.empty();
-    const bool modelMatches = !modelSpecific ||
-        MeshEditorProfileModelKey(profile.model) == m_meshEditorSceneModelKey;
-    if (!modelMatches) {
-      continue;
-    }
-
-    const bool hasTarget = !profile.name.empty() ||
-                           !profile.platform.empty() ||
-                           !profile.architecture.empty() ||
-                           !profile.gpu_family.empty() ||
-                           !profile.gpu_name_contains.empty();
-    if (!hasTarget && modelSpecific) {
-      baseProfile = &profile;
-      continue;
-    }
-
-    const int score = t850::ScoreSceneProfileMatch(profile, m_meshEditorSceneModelKey);
-    if (score > bestRuntimeScore) {
-      bestRuntimeScore = score;
-      runtimeProfile = &profile;
-    }
-  }
-
-  if (baseProfile) {
-    ApplyMeshEditorProfileState(obj, *baseProfile);
-  }
-  if (runtimeProfile && runtimeProfile != baseProfile) {
-    ApplyMeshEditorProfileState(obj, *runtimeProfile);
-  }
-}
-
-bool EditorApp::EnsureMeshEditorSceneState(SceneObject& obj) {
-  const std::string meshPath = obj.meshPath.empty() ? obj.name : obj.meshPath;
-  const std::string modelKey = MeshEditorProfileModelKey(meshPath);
-  if (m_meshEditorSceneReady && m_meshEditorSceneModelKey == modelKey) {
-    return true;
-  }
-
-  if (!m_meshEditorSceneSetupLoaded) {
-    if (!m_meshEditorSceneSetup.Load("Scenes/RagdollEditor.json")) {
-      T8_LOG_ERROR("[T8ditor] Mesh Edit failed to load Scenes/RagdollEditor.json");
-      return false;
-    }
-    m_meshEditorSceneSetupLoaded = true;
-  }
-
-  if (m_meshEditorSSAOTextureReady) {
-    m_meshEditorSceneProps.SSAOKernel.Destroy();
-    m_meshEditorSSAOTextureReady = false;
-  }
-  m_meshEditorSceneProps = SceneProps{};
-  m_meshEditorSceneProps.SSAOKernel.NoiseTex = nullptr;
-  m_meshEditorSceneProps.SSAOKernel.InitTexture();
-  m_meshEditorSSAOTextureReady = true;
-  m_meshEditorSceneSetup.Apply(m_meshEditorSceneProps);
-  if (!m_meshEditorRenderGraphLoaded) {
-    if (!m_meshEditorRenderGraph.Load("Scenes/RagdollEditor_RenderGraph.json")) {
-      T8_LOG_ERROR("[T8ditor] Mesh Edit failed to load Scenes/RagdollEditor_RenderGraph.json");
-      return false;
-    }
-    m_meshEditorRenderGraph.CreateRenderTargets(pFramework->pVideoDriver, m_meshEditorSceneProps);
-    m_meshEditorRenderGraphLoaded = true;
-  }
-  if (m_meshEditorSceneProps.pCameras.empty()) {
-    m_meshEditorSceneProps.AddCamera(&m_meshEditorCamera);
-  }
-  if (!m_meshEditorSceneProps.pLightCameras.empty()) {
-    m_meshEditorSceneProps.ActiveLightCamera = 0;
-  }
-  m_meshEditorSceneProps.pCullingCamera = &m_meshEditorCamera;
-  m_meshEditorSceneModelKey = modelKey;
-  m_meshEditorShowWireframe = false;
-  m_meshEditorShowSkeleton = false;
-
-  if (Camera* sceneCamera = m_meshEditorSceneSetup.GetCamera(0)) {
-    m_meshEditorFovDeg = Rad2Deg(sceneCamera->Fov);
-  } else {
-    m_meshEditorFovDeg = 45.0f;
-  }
-
-  std::string startupCubemapPath = NormalizeEditorResourcePath(m_meshEditorSceneSetup.environmentMap);
-  if (startupCubemapPath.empty()) {
-    startupCubemapPath = "sky/Ennis.dds";
-  }
-  const t850::SelectorDesc* cubemapDesc =
-      FindEditorSelectorDesc(m_meshEditorSceneSetup.descriptor.selectors, "cubemap");
-  if (cubemapDesc) {
-    const int environmentIndex = EditorCubemapSelectorIndexForPath(*cubemapDesc, startupCubemapPath);
-    m_meshEditorCurrentCubemapIndex = environmentIndex >= 0
-        ? environmentIndex
-        : (std::max)(0, (std::min)(cubemapDesc->default_index,
-                                   static_cast<int>(cubemapDesc->options.size()) - 1));
-    if (environmentIndex < 0 && m_meshEditorCurrentCubemapIndex >= 0) {
-      startupCubemapPath = EditorCubemapPathForSelectorIndex(*cubemapDesc, m_meshEditorCurrentCubemapIndex);
-    }
-  }
-
-  auto applyStartupProfileCubemap = [&](const t850::SandboxProfileDesc& profile) {
-    if (profile.cubemap_path.has_value() &&
-        !NormalizeEditorResourcePath(*profile.cubemap_path).empty()) {
-      startupCubemapPath = NormalizeEditorResourcePath(*profile.cubemap_path);
-      if (cubemapDesc) {
-        m_meshEditorCurrentCubemapIndex = EditorCubemapSelectorIndexForPath(*cubemapDesc, startupCubemapPath);
-      }
-      return;
-    }
-
-    if (cubemapDesc) {
-      const int selectorIndex = EditorCubemapSelectorIndexFromProfile(profile);
-      if (selectorIndex >= 0 && selectorIndex < static_cast<int>(cubemapDesc->options.size())) {
-        m_meshEditorCurrentCubemapIndex = selectorIndex;
-        startupCubemapPath = EditorCubemapPathForSelectorIndex(*cubemapDesc, selectorIndex);
-      }
-    }
-  };
-
-  const t850::SandboxProfileDesc* baseProfile = nullptr;
-  const t850::SandboxProfileDesc* runtimeProfile = nullptr;
-  int bestRuntimeScore = -1;
-  for (const auto& profile : m_meshEditorSceneSetup.descriptor.profiles) {
-    const bool modelSpecific = !profile.model.empty();
-    const bool modelMatches = !modelSpecific ||
-        MeshEditorProfileModelKey(profile.model) == m_meshEditorSceneModelKey;
-    if (!modelMatches) {
-      continue;
-    }
-    const bool hasTarget = !profile.name.empty() ||
-                           !profile.platform.empty() ||
-                           !profile.architecture.empty() ||
-                           !profile.gpu_family.empty() ||
-                           !profile.gpu_name_contains.empty();
-    if (!hasTarget && modelSpecific) {
-      baseProfile = &profile;
-      continue;
-    }
-    const int score = t850::ScoreSceneProfileMatch(profile, m_meshEditorSceneModelKey);
-    if (score > bestRuntimeScore) {
-      bestRuntimeScore = score;
-      runtimeProfile = &profile;
-    }
-  }
-  if (baseProfile) {
-    applyStartupProfileCubemap(*baseProfile);
-  }
-  if (runtimeProfile && runtimeProfile != baseProfile) {
-    applyStartupProfileCubemap(*runtimeProfile);
-  }
-
-  SetMeshEditorCubemap(startupCubemapPath);
-
-  ApplyMeshEditorProfiles(obj);
-  m_meshEditorSceneReady = true;
-  T8_LOG_INFO("[T8ditor] Mesh Edit scene state ready model='%s' cubemap='%s'",
-              m_meshEditorSceneModelKey.c_str(),
-              m_meshEditorCurrentCubemapPath.c_str());
-  return true;
 }
 
 void EditorApp::OpenRagdollEditor(int objectIndex) {
@@ -8327,259 +6924,6 @@ void EditorApp::DrawRagdollEditorWindow() {
     CloseRagdollEditor();
   }
   ImGui::End();
-}
-
-bool EditorApp::EnsureMeshEditorEmbeddedScene(SceneObject& obj) {
-  if (m_meshEditorScene && m_meshEditorSceneLoaded) {
-    return true;
-  }
-  if (!pFramework || !pFramework->pVideoDriver || !obj.litInst.pBase) {
-    return false;
-  }
-
-  m_meshEditorScene = std::make_unique<::RagdollEditor>();
-  m_meshEditorScene->pFramework = pFramework;
-  m_meshEditorScene->SetEngineContext(&t850::GetEngineContext());
-  const std::string meshPath = obj.meshPath.empty() ? obj.name : obj.meshPath;
-  m_meshEditorScene->UseExternalMesh(obj.litInst, meshPath);
-  m_meshEditorScene->SetRenderViewport(m_meshEditorViewportImageMinX,
-                                       m_meshEditorViewportImageMinY,
-                                       m_meshEditorViewportTarget.Width(),
-                                       m_meshEditorViewportTarget.Height());
-  m_meshEditorScene->SetFinalOutputRT(m_meshEditorViewportTarget.Handle());
-  m_meshEditorScene->OnLoadScene();
-  if (m_meshEditorScene->m_meshCount <= 0 || !m_meshEditorScene->Meshes[0].pBase) {
-    T8_LOG_ERROR("[T8ditor] Mesh Edit failed to load embedded RagdollEditor mesh '%s'", meshPath.c_str());
-    m_meshEditorScene->OnDestoryScene();
-    m_meshEditorScene.reset();
-    return false;
-  }
-  m_meshEditorSceneLoaded = true;
-  T8_LOG_INFO("[T8ditor] Mesh Edit is hosting RagdollEditor scene for '%s'", meshPath.c_str());
-  return true;
-}
-
-void EditorApp::DrawMeshEditorViewport(SceneObject& obj) {
-  ImVec2 available = ImGui::GetContentRegionAvail();
-  const int desiredViewportW = (std::max)(64, (int)std::floor(available.x));
-  const int desiredViewportH = (std::max)(64, (int)std::floor(available.y));
-  const bool mouseResizingWindow =
-      ImGui::IsMouseDown(ImGuiMouseButton_Left) ||
-      ImGui::IsMouseDown(ImGuiMouseButton_Right) ||
-      ImGui::IsMouseDown(ImGuiMouseButton_Middle);
-  t850::RenderViewportDesc viewportDesc;
-  viewportDesc.minWidth = 64;
-  viewportDesc.minHeight = 64;
-  const bool shouldResizeRT =
-      m_meshEditorViewportTarget.ShouldResize(desiredViewportW, desiredViewportH, mouseResizingWindow, viewportDesc);
-
-  if (shouldResizeRT) {
-    if (pFramework && pFramework->pVideoDriver) {
-      pFramework->pVideoDriver->WaitForGPU();
-    }
-    if (!EnsureMeshEditorViewportTarget(desiredViewportW, desiredViewportH)) {
-      ImGui::TextDisabled("Mesh editor viewport unavailable.");
-      return;
-    }
-    if (m_meshEditorScene && m_meshEditorSceneLoaded) {
-      m_meshEditorScene->ResizeRenderTargets(
-          m_meshEditorViewportTarget.Width(),
-          m_meshEditorViewportTarget.Height(),
-          m_meshEditorViewportTarget.Handle());
-    }
-  }
-
-  if (!m_meshEditorViewportTarget.IsValid() || !pFramework || !pFramework->pVideoDriver) {
-    ImGui::TextDisabled("Mesh editor viewport unavailable.");
-    return;
-  }
-
-  const int viewportW = m_meshEditorViewportTarget.Width();
-  const int viewportH = m_meshEditorViewportTarget.Height();
-  const ImVec2 embeddedViewportSize((float)viewportW, (float)viewportH);
-  const ImVec2 embeddedImageMin = ImGui::GetCursorScreenPos();
-  const ImVec2 embeddedImageMax(embeddedImageMin.x + embeddedViewportSize.x, embeddedImageMin.y + embeddedViewportSize.y);
-  m_meshEditorViewportImageMinX = embeddedImageMin.x;
-  m_meshEditorViewportImageMinY = embeddedImageMin.y;
-  m_meshEditorViewportImageSizeX = embeddedViewportSize.x;
-  m_meshEditorViewportImageSizeY = embeddedViewportSize.y;
-
-  t850::BaseDriver* driver = pFramework->pVideoDriver;
-  const int meshEditorGBufferRT = m_meshEditorGBufferTarget.Handle();
-  const int meshEditorViewportRT = m_meshEditorViewportTarget.Handle();
-  t850::BaseRT* gbufferRT = (meshEditorGBufferRT >= 0 &&
-                             meshEditorGBufferRT < (int)driver->RTs.size())
-      ? driver->RTs[meshEditorGBufferRT]
-      : nullptr;
-  t850::BaseRT* rt = (meshEditorViewportRT >= 0 &&
-                      meshEditorViewportRT < (int)driver->RTs.size())
-      ? driver->RTs[meshEditorViewportRT]
-      : nullptr;
-  if (!gbufferRT || gbufferRT->vColorTextures.size() < 7 || !gbufferRT->pDepthTexture ||
-      !rt || rt->vColorTextures.empty() || !rt->vColorTextures[0]) {
-    ImGui::TextDisabled("Mesh editor render targets are unavailable.");
-    return;
-  }
-
-  if (!EnsureMeshEditorEmbeddedScene(obj)) {
-    ImGui::TextDisabled("RagdollEditor scene host is unavailable.");
-    return;
-  }
-
-  m_meshEditorScene->SetFinalOutputRT(m_meshEditorViewportTarget.Handle());
-  m_meshEditorScene->SetRenderViewport(embeddedImageMin.x, embeddedImageMin.y, viewportW, viewportH);
-  m_meshEditorScene->OnUpdate(m_dtSecs);
-  if (m_physics.IsInitialized()) {
-    m_physics.Update(m_dtSecs);
-  }
-  m_meshEditorScene->OnDraw();
-
-  ImTextureID embeddedImage = ImGuiTextureID(driver, rt->vColorTextures[0]);
-  if (!embeddedImage) {
-    ImGui::TextDisabled("Mesh editor viewport texture is not available for ImGui.");
-    return;
-  }
-  const bool embeddedFlipV = driver->NeedsVFlip();
-  const ImVec2 embeddedUv0(0.0f, embeddedFlipV ? 1.0f : 0.0f);
-  const ImVec2 embeddedUv1(1.0f, embeddedFlipV ? 0.0f : 1.0f);
-  ImGui::GetWindowDrawList()->AddImage(embeddedImage, embeddedImageMin, embeddedImageMax, embeddedUv0, embeddedUv1);
-  ImGui::InvisibleButton("##MeshEditorViewportInput",
-                         embeddedViewportSize,
-                         ImGuiButtonFlags_MouseButtonLeft | ImGuiButtonFlags_MouseButtonRight | ImGuiButtonFlags_MouseButtonMiddle);
-  m_meshEditorViewportInputActive = ImGui::IsItemHovered() || ImGui::IsItemActive();
-}
-
-void EditorApp::DrawMeshEditorWindow() {
-  if (!m_meshEditorOpen) {
-    return;
-  }
-
-  ImGuiSetNextNativeEditorWindow(128.0f, 128.0f, 920.0f, 720.0f);
-  m_meshEditorOpenRequested = false;
-
-  bool keepOpen = m_meshEditorOpen;
-  ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0.0f, 0.0f));
-  if (!ImGui::Begin("Mesh Edit", &keepOpen, ImGuiWindowFlags_NoDocking)) {
-    ImGui::End();
-    ImGui::PopStyleVar();
-    if (!keepOpen) {
-      m_meshEditorWindow.RequestClose();
-    }
-    return;
-  }
-
-  if (!keepOpen) {
-    ImGui::End();
-    ImGui::PopStyleVar();
-    m_meshEditorWindow.RequestClose();
-    return;
-  }
-
-  if (ImGuiViewport* windowViewport = ImGui::GetWindowViewport()) {
-    ImGuiViewport* mainViewport = ImGui::GetMainViewport();
-    ApplyNativeWindowChrome(windowViewport, "Mesh Edit");
-    void* nativeHandle = NativeHandleFromImGuiViewport(windowViewport);
-    m_meshEditorNativeHandle = nativeHandle;
-    m_meshEditorImGuiViewportId = (unsigned int)windowViewport->ID;
-    m_meshEditorViewportPosX = windowViewport->Pos.x;
-    m_meshEditorViewportPosY = windowViewport->Pos.y;
-    m_meshEditorViewportSizeX = windowViewport->Size.x;
-    m_meshEditorViewportSizeY = windowViewport->Size.y;
-
-    if (mainViewport && windowViewport->ID == mainViewport->ID) {
-      if (!m_meshEditorMainViewportLogged) {
-        ImGuiIO& io = ImGui::GetIO();
-        T8_LOG_INFO("[T8ditor] Native editor window pending title='Mesh Edit': still merged with main viewport id=0x%08X hwnd=%p configFlags=0x%08X backendFlags=0x%08X",
-                    (unsigned int)windowViewport->ID,
-                    nativeHandle,
-                    (unsigned int)io.ConfigFlags,
-                    (unsigned int)io.BackendFlags);
-        m_meshEditorMainViewportLogged = true;
-      }
-    } else if (nativeHandle && nativeHandle != m_meshEditorLoggedNativeHandle) {
-      T8_LOG_INFO("[T8ditor] Native editor window created title='Mesh Edit' viewportId=0x%08X sdlWindow=%p hwnd=%p pos=(%.1f, %.1f) size=(%.1f, %.1f) flags=0x%08X",
-                  (unsigned int)windowViewport->ID,
-                  windowViewport->PlatformHandle,
-                  nativeHandle,
-                  windowViewport->Pos.x,
-                  windowViewport->Pos.y,
-                  windowViewport->Size.x,
-                  windowViewport->Size.y,
-                  (unsigned int)windowViewport->Flags);
-      m_meshEditorLoggedNativeHandle = nativeHandle;
-      m_meshEditorMainViewportLogged = false;
-    }
-  }
-
-  if (m_meshEditorObjectIndex < 0 || m_meshEditorObjectIndex >= (int)g_objects.size()) {
-    ImGui::TextWrapped("The mesh editor selection is no longer valid.");
-    ImGui::End();
-    ImGui::PopStyleVar();
-    return;
-  }
-
-  SceneObject& obj = g_objects[m_meshEditorObjectIndex];
-  m_meshEditorViewportInputActive = false;
-  m_meshEditorDockspaceId = (unsigned int)ImGui::GetID("MeshEditDockSpace");
-  m_meshEditorDockClassId = (unsigned int)ImGui::GetID("MeshEditDockClass");
-  ImGuiWindowClass meshEditClass{};
-  meshEditClass.ClassId = (ImGuiID)m_meshEditorDockClassId;
-  meshEditClass.DockingAllowUnclassed = false;
-  ImGui::DockSpace(
-      (ImGuiID)m_meshEditorDockspaceId,
-      ImVec2(0.0f, 0.0f),
-      ImGuiDockNodeFlags_None,
-      &meshEditClass);
-
-  ImGui::End();
-  ImGui::PopStyleVar();
-
-  if (m_meshEditorImGuiViewportId != 0) {
-    ImGui::SetNextWindowViewport((ImGuiID)m_meshEditorImGuiViewportId);
-  }
-  ImGui::SetNextWindowClass(&meshEditClass);
-  if (m_meshEditorDockspaceId != 0) {
-    ImGui::SetNextWindowDockID((ImGuiID)m_meshEditorDockspaceId, ImGuiCond_FirstUseEver);
-  }
-  bool viewportOpen = true;
-  if (ImGui::Begin("Mesh Edit Viewport##MeshEditSceneViewport",
-                   &viewportOpen,
-                   ImGuiWindowFlags_NoCollapse)) {
-    DrawMeshEditorViewport(obj);
-  }
-  ImGui::End();
-
-  if (m_meshEditorGuiVisible && m_meshEditorScene && m_meshEditorSceneLoaded) {
-    ImGuiViewport* fallbackViewport = ImGui::GetMainViewport();
-    const float baseX = m_meshEditorViewportSizeX > 0.0f ? m_meshEditorViewportPosX : fallbackViewport->WorkPos.x;
-    const float baseY = m_meshEditorViewportSizeY > 0.0f ? m_meshEditorViewportPosY : fallbackViewport->WorkPos.y;
-    const float baseW = m_meshEditorViewportSizeX > 0.0f ? m_meshEditorViewportSizeX : fallbackViewport->WorkSize.x;
-    const float baseH = m_meshEditorViewportSizeY > 0.0f ? m_meshEditorViewportSizeY : fallbackViewport->WorkSize.y;
-    const float panelW = (std::min)(420.0f, (std::max)(320.0f, baseW - 48.0f));
-    const float panelH = (std::min)(680.0f, (std::max)(320.0f, baseH - 48.0f));
-    const ImVec2 panelPos(
-        (std::max)(baseX + 24.0f, baseX + baseW - panelW - 24.0f),
-        baseY + 24.0f);
-    if (m_meshEditorImGuiViewportId != 0) {
-      ImGui::SetNextWindowViewport((ImGuiID)m_meshEditorImGuiViewportId);
-    }
-    ImGui::SetNextWindowPos(panelPos, ImGuiCond_FirstUseEver);
-    ImGui::SetNextWindowSize(ImVec2(panelW, panelH), ImGuiCond_FirstUseEver);
-    ImGui::SetNextWindowCollapsed(false, ImGuiCond_FirstUseEver);
-
-    t850::DevGuiContext gui;
-    gui.SetViewportId((ImGuiID)m_meshEditorImGuiViewportId);
-    gui.SetIdSuffix("MeshEditRagdollEditor");
-    gui.SetDockId((ImGuiID)m_meshEditorDockspaceId);
-    gui.SetWindowClassId((ImGuiID)m_meshEditorDockClassId);
-    const bool panelBegun = gui.BeginPanel("Scene Controls", &m_meshEditorGuiVisible);
-    if (panelBegun) {
-      ImGui::TextDisabled("Mesh Edit modal - press G to hide/show controls.");
-      ImGui::Separator();
-      m_meshEditorScene->DrawDevGui(gui);
-    }
-    gui.EndPanel();
-  }
 }
 
 void EditorApp::InitVars() {

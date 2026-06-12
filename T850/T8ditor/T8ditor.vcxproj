@@ -384,6 +384,12 @@ call "$(SolutionDir)scripts\CopyFirstExisting.cmd" "$(OutDir)" "$(T8VcpkgDynamic
     <ClCompile Include="EditorMesh.cpp" />
     <ClCompile Include="EditorScene.cpp" />
     <ClCompile Include="EditorSceneGizmos.cpp" />
+    <ClCompile Include="EditorMath.cpp" />
+    <ClCompile Include="EditorUtil.cpp" />
+    <ClCompile Include="EditorSceneSerialization.cpp" />
+    <ClCompile Include="EditorWorld.cpp" />
+    <ClCompile Include="PlayScenePanel.cpp" />
+    <ClCompile Include="MeshEditorPanel.cpp" />
     <ClCompile Include="EditorImGui.cpp" />
     <ClCompile Include="..\DayScene\RagdollEditor.cpp" />
     <ClCompile Include="..\DayScene\Quake3Mock.cpp" />
@@ -398,7 +404,13 @@ call "$(SolutionDir)scripts\CopyFirstExisting.cmd" "$(OutDir)" "$(T8VcpkgDynamic
     <ClInclude Include="EditorMesh.h" />
     <ClInclude Include="EditorScene.h" />
     <ClInclude Include="EditorSceneGizmos.h" />
+    <ClInclude Include="EditorMath.h" />
+    <ClInclude Include="EditorUtil.h" />
+    <ClInclude Include="EditorSceneSerialization.h" />
+    <ClInclude Include="EditorWorld.h" />
+    <ClInclude Include="EditorInternal.h" />
     <ClInclude Include="SceneObject.h" />
+    <ClInclude Include="SceneGraph.h" />
     <ClInclude Include="UndoRedo.h" />
     <ClInclude Include="EditorImGui.h" />
     <ClInclude Include="..\DayScene\RagdollEditor.h" />

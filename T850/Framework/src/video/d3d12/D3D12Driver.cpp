@@ -423,11 +423,21 @@ namespace t850 {
       m_backBuffers[i].Reset();
     m_depthBuffer.Reset();
 
+    UINT swapChainFlags = DXGI_SWAP_CHAIN_FLAG_FRAME_LATENCY_WAITABLE_OBJECT;
+    if (m_tearingSupported)
+      swapChainFlags |= DXGI_SWAP_CHAIN_FLAG_ALLOW_TEARING;
     HRESULT hr = m_swapChain->ResizeBuffers(kBackBufferCount, (UINT)newW, (UINT)newH,
                                              DXGI_FORMAT_R8G8B8A8_UNORM,
-                                             DXGI_SWAP_CHAIN_FLAG_ALLOW_TEARING);
+                                             swapChainFlags);
     if (FAILED(hr)) {
-      T8_LOG_ERROR("[D3D12] ResizeBuffers failed (0x%08X)", (unsigned)hr);
+      T8_LOG_ERROR("[D3D12] ResizeBuffers failed (0x%08X) size=%dx%d flags=0x%08X",
+                   (unsigned)hr, newW, newH, swapChainFlags);
+      ID3D12Device* device = static_cast<D3D12Device*>(T8Device)->GetNativeDevice();
+      for (UINT i = 0; i < kBackBufferCount; i++) {
+        if (!m_backBuffers[i] && SUCCEEDED(m_swapChain->GetBuffer(i, IID_PPV_ARGS(&m_backBuffers[i])))) {
+          device->CreateRenderTargetView(m_backBuffers[i].Get(), nullptr, m_backBufferRTVs[i]);
+        }
+      }
       return false;
     }
 
@@ -461,6 +471,11 @@ namespace t850 {
 
     // Update current back buffer index, viewport, and scissor
     m_currentBackBuffer = m_swapChain->GetCurrentBackBufferIndex();
+    ComPtr<IDXGISwapChain2> sc2;
+    if (SUCCEEDED(m_swapChain.As(&sc2))) {
+      sc2->SetMaximumFrameLatency(kBackBufferCount);
+      m_swapChainWaitableObject = sc2->GetFrameLatencyWaitableObject();
+    }
     m_viewport = { 0.f, 0.f, (float)newW, (float)newH, 0.f, 1.f };
     m_scissorRect = { 0, 0, (LONG)newW, (LONG)newH };
 

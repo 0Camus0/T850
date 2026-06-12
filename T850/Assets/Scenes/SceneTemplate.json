@@ -1,0 +1,2013 @@
+{
+   "name": "SceneTemplate",
+   "cameras": [
+      {
+         "position": [
+            0,
+            1,
+            10
+         ],
+         "eye": [
+            0,
+            5,
+            -15
+         ],
+         "pitch": 0.2,
+         "roll": 0,
+         "yaw": 0,
+         "speed": 10,
+         "fov": 0.817,
+         "aspect": 1.7778,
+         "width": 0,
+         "height": 0,
+         "near_plane": 0.1,
+         "far_plane": 5000,
+         "ortho": false,
+         "left_handed": true
+      }
+   ],
+   "light_cameras": [
+      {
+         "position": [
+            0,
+            100,
+            10
+         ],
+         "eye": [
+            50,
+            150,
+            -50
+         ],
+         "pitch": 1,
+         "roll": 0,
+         "yaw": -1.57,
+         "speed": 10,
+         "fov": 0.7854,
+         "aspect": 1,
+         "width": 0,
+         "height": 0,
+         "near_plane": 10,
+         "far_plane": 500,
+         "ortho": false,
+         "left_handed": true
+      }
+   ],
+   "lights": [
+      {
+         "type": "directional",
+         "position": [
+            50,
+            150,
+            -50
+         ],
+         "direction": [
+            -0.2,
+            -1,
+            0.1
+         ],
+         "color": [
+            1,
+            1,
+            1
+         ],
+         "radius": 30000,
+         "intensity": 5,
+         "enabled": true
+      },
+      {
+         "type": "point",
+         "position": [
+            10,
+            10,
+            -10
+         ],
+         "direction": [
+            0,
+            -1,
+            0
+         ],
+         "color": [
+            1,
+            0.9,
+            0.8
+         ],
+         "radius": 100,
+         "intensity": 1,
+         "enabled": true
+      }
+   ],
+   "gauss_filters": [
+      {
+         "kernel_size": 4,
+         "radius": 1,
+         "sigma": 1
+      },
+      {
+         "kernel_size": 11,
+         "radius": 2.5,
+         "sigma": 4.5
+      },
+      {
+         "kernel_size": 23,
+         "radius": 3,
+         "sigma": 6
+      }
+   ],
+   "splines": [],
+   "meshes": [],
+   "environment_map": "sky/Uffizi.dds",
+   "environment_diffuse_ibl": "",
+   "environment_specular_ibl": "",
+   "environment_brdf_lut": "LUT/lut_ggx.dds",
+   "environment_sheen_ibl": "",
+   "environment_charlie_lut": "LUT/lut_charlie.dds",
+   "environment_sheen_e_lut": "LUT/lut_sheen_E.dds",
+   "quality": {
+      "shadow_map_resolution": 1024,
+      "god_rays_resolution": 0,
+      "pcf_scale": 1.7,
+      "pcf_samples": 1,
+      "parallax_low_samples": 2,
+      "parallax_high_samples": 8,
+      "parallax_height": 0.01,
+      "light_volume_steps": 32,
+      "ssao_kernel_size": 8,
+      "ssao_radius": 1.5,
+      "dof_near_samples": 1,
+      "dof_far_samples": 2
+   },
+   "settings": {
+      "exposure": 1,
+      "bloom_factor": 0.35,
+      "bloom_threshold": 0.7,
+      "tone_map_white_level": 4,
+      "luminance_tau": 1.1,
+      "luminance_mode": 0,
+      "aperture": 120,
+      "focal_length": 50,
+      "max_coc": 2.5,
+      "ambient_color": [
+         0.3,
+         0.3,
+         0.3
+      ],
+      "active_lights": 2,
+      "shadow_enabled": true,
+      "ssao_enabled": true,
+      "dof_enabled": true,
+      "parallax_enabled": true,
+      "godrays_enabled": true,
+      "auto_focus": true,
+      "debug_mode": 0,
+      "shadow_bias": 0.001,
+      "shadow_min": 0.2,
+      "env_factor": 0.3,
+      "ibl_factor": 1,
+      "godrays_factor": 1,
+      "light_radius_scale": 1,
+      "light_intensity_scale": 1,
+      "lightmap_intensity": 1,
+      "material_emissive_intensity": 1,
+      "material_transmission_multiplier": 1,
+      "material_refraction_strength": 0.03
+   },
+   "sliders": [
+      {
+         "name": "exposure",
+         "label": "Exposure",
+         "min_val": -10,
+         "max_val": 10,
+         "step": 0.1,
+         "default_val": 1
+      },
+      {
+         "name": "bloom_factor",
+         "label": "Bloom Factor",
+         "min_val": 0,
+         "max_val": 2,
+         "step": 0.05,
+         "default_val": 0.35
+      },
+      {
+         "name": "bloom_threshold",
+         "label": "Bloom Threshold",
+         "min_val": 0,
+         "max_val": 10,
+         "step": 0.1,
+         "default_val": 1.5
+      },
+      {
+         "name": "light_radius_scale",
+         "label": "Light Radius Scale",
+         "min_val": 0.01,
+         "max_val": 32,
+         "step": 0.05,
+         "default_val": 1
+      },
+      {
+         "name": "light_intensity_scale",
+         "label": "Light Intensity Scale",
+         "min_val": 0,
+         "max_val": 32,
+         "step": 0.05,
+         "default_val": 1
+      },
+      {
+         "name": "lightmap_intensity",
+         "label": "Lightmap Intensity",
+         "min_val": 0,
+         "max_val": 4,
+         "step": 0.05,
+         "default_val": 1
+      },
+      {
+         "name": "tm_white_level",
+         "label": "TM White Level",
+         "min_val": 0.5,
+         "max_val": 20,
+         "step": 0.25,
+         "default_val": 5.5
+      },
+      {
+         "name": "tm_adapt_tau",
+         "label": "TM Adapt Tau",
+         "min_val": 0.05,
+         "max_val": 5,
+         "step": 0.1,
+         "default_val": 1.1
+      },
+      {
+         "name": "pcf_radius",
+         "label": "PCF Radius",
+         "min_val": 0.1,
+         "max_val": 10,
+         "step": 0.1,
+         "default_val": 1.7
+      },
+      {
+         "name": "pcf_samples",
+         "label": "PCF Samples",
+         "min_val": 1,
+         "max_val": 16,
+         "step": 1,
+         "default_val": 1
+      },
+      {
+         "name": "ssao_kernel_size",
+         "label": "SSAO Kernel",
+         "min_val": 2,
+         "max_val": 128,
+         "step": 2,
+         "default_val": 8
+      },
+      {
+         "name": "ssao_radius",
+         "label": "SSAO Radius",
+         "min_val": 0.1,
+         "max_val": 10,
+         "step": 0.5,
+         "default_val": 1.5
+      },
+      {
+         "name": "gauss_kernel_radius",
+         "label": "Gauss Radius",
+         "min_val": 0.5,
+         "max_val": 10,
+         "step": 0.5,
+         "default_val": 2.5
+      },
+      {
+         "name": "gauss_kernel_deviation",
+         "label": "Gauss Sigma",
+         "min_val": 0.5,
+         "max_val": 10,
+         "step": 0.5,
+         "default_val": 4.5
+      },
+      {
+         "name": "fov",
+         "label": "FOV",
+         "min_val": 20,
+         "max_val": 120,
+         "step": 1,
+         "default_val": 46.8
+      },
+      {
+         "name": "shadow_bias",
+         "label": "Shadow Bias",
+         "min_val": 0,
+         "max_val": 0.005,
+         "step": 0.0001,
+         "default_val": 0.001
+      },
+      {
+         "name": "shadow_min",
+         "label": "Shadow Intensity",
+         "min_val": 0,
+         "max_val": 1,
+         "step": 0.01,
+         "default_val": 0.2
+      },
+      {
+         "name": "env_factor",
+         "label": "Env Factor",
+         "min_val": 0,
+         "max_val": 10,
+         "step": 0.05,
+         "default_val": 1
+      },
+      {
+         "name": "ibl_factor",
+         "label": "IBL Factor",
+         "min_val": 0,
+         "max_val": 5,
+         "step": 0.05,
+         "default_val": 1
+      },
+      {
+         "name": "material_emissive_intensity",
+         "label": "Emissive Intensity",
+         "min_val": 0,
+         "max_val": 100,
+         "step": 0.5,
+         "default_val": 1
+      },
+      {
+         "name": "material_transmission_multiplier",
+         "label": "Transmission Boost",
+         "min_val": 0,
+         "max_val": 100,
+         "step": 0.5,
+         "default_val": 1
+      },
+      {
+         "name": "material_refraction_strength",
+         "label": "Refraction Strength",
+         "min_val": 0,
+         "max_val": 0.2,
+         "step": 0.005,
+         "default_val": 0.03
+      },
+      {
+         "name": "anim_speed",
+         "label": "Anim Speed",
+         "min_val": 0,
+         "max_val": 2,
+         "step": 0.1,
+         "default_val": 1
+      }
+   ],
+   "checkboxes": [
+      {
+         "name": "shadow_toggle",
+         "label": "Shadows",
+         "default_val": true,
+         "enabled": true
+      },
+      {
+         "name": "ssao_toggle",
+         "label": "SSAO",
+         "default_val": true,
+         "enabled": true
+      },
+      {
+         "name": "show_wireframe",
+         "label": "Wireframe",
+         "default_val": false,
+         "enabled": true
+      },
+      {
+         "name": "show_skeleton",
+         "label": "Skeleton",
+         "default_val": false,
+         "enabled": true
+      },
+      {
+         "name": "show_physics",
+         "label": "Physics",
+         "default_val": false,
+         "enabled": true
+      },
+      {
+         "name": "show_navmesh",
+         "label": "NavMesh",
+         "default_val": false,
+         "enabled": true
+      },
+      {
+         "name": "show_light_volumes",
+         "label": "Light Volumes",
+         "default_val": false,
+         "enabled": true
+      },
+      {
+         "name": "debug_luminance",
+         "label": "Debug luminance",
+         "default_val": false,
+         "enabled": true
+      }
+   ],
+   "selectors": [
+      {
+         "name": "debug_render_target",
+         "label": "Debug RT",
+         "options": [
+            "Final",
+            "Albedo",
+            "Normals",
+            "PBR Data",
+            "Geo Normal",
+            "GBuf Depth",
+            "Shadow Map",
+            "Shadow Accum",
+            "Deferred",
+            "Extra16F",
+            "HDR Output",
+            "Bloom",
+            "Adapted Lum"
+         ],
+         "default_index": 0
+      },
+      {
+         "name": "luminance_mode",
+         "label": "Luminance Mode",
+         "options": [
+            "Temporal HDR",
+            "Robust Temporal"
+         ],
+         "default_index": 0
+      },
+      {
+         "name": "cubemap",
+         "label": "Cubemap",
+         "options": [
+            "Ennis.dds",
+            "Pisa.dds",
+            "Glacier.dds",
+            "GraceCathedral.dds",
+            "Uffizi.dds",
+            "Doge.dds",
+            "CubeMap_Mountains.dds",
+            "CubeMap_SkyDawn.dds",
+            "CubeMap_SkyWater.dds"
+         ],
+         "default_index": 4
+      },
+      {
+         "name": "gauss_kernel_sample_count",
+         "label": "Gauss Samples",
+         "options": [
+            "3",
+            "5",
+            "7",
+            "9",
+            "11",
+            "13",
+            "15",
+            "21",
+            "27"
+         ],
+         "default_index": 4
+      },
+      {
+         "name": "active_gauss_kernel",
+         "label": "Gauss Target",
+         "options": [
+            "Shadow",
+            "Bloom"
+         ],
+         "default_index": 1
+      },
+      {
+         "name": "anim_select",
+         "label": "Animation",
+         "options": [
+            "Default"
+         ],
+         "default_index": 0
+      },
+      {
+         "name": "anim_mode",
+         "label": "Anim Mode",
+         "options": [
+            "Interpolation",
+            "Keyframe"
+         ],
+         "default_index": 0
+      }
+   ],
+   "profiles": [
+      {
+         "name": "android/adreno-700",
+         "platform": "android",
+         "architecture": "",
+         "gpu_family": "adreno-700",
+         "gpu_name_contains": "",
+         "model": "",
+         "sliders": [
+            {
+               "name": "ssao_kernel_size",
+               "value": 8
+            },
+            {
+               "name": "light_volume_steps",
+               "value": 64
+            },
+            {
+               "name": "dof_far_samples",
+               "value": 2
+            },
+            {
+               "name": "godrays_factor",
+               "value": 0.45
+            },
+            {
+               "name": "lightmap_intensity",
+               "value": 1
+            }
+         ],
+         "checkboxes": [
+            {
+               "name": "shadow_toggle",
+               "value": false
+            },
+            {
+               "name": "debug_luminance",
+               "value": false
+            }
+         ],
+         "selectors": [
+            {
+               "name": "cubemap",
+               "value": 4
+            }
+         ],
+         "lights": []
+      },
+      {
+         "name": "android/adreno-800",
+         "platform": "android",
+         "architecture": "",
+         "gpu_family": "adreno-800",
+         "gpu_name_contains": "",
+         "model": "",
+         "sliders": [
+            {
+               "name": "ssao_kernel_size",
+               "value": 12
+            },
+            {
+               "name": "light_volume_steps",
+               "value": 96
+            },
+            {
+               "name": "dof_far_samples",
+               "value": 3
+            },
+            {
+               "name": "godrays_factor",
+               "value": 0.6
+            },
+            {
+               "name": "lightmap_intensity",
+               "value": 1
+            }
+         ],
+         "checkboxes": [
+            {
+               "name": "shadow_toggle",
+               "value": false
+            },
+            {
+               "name": "debug_luminance",
+               "value": false
+            }
+         ],
+         "selectors": [
+            {
+               "name": "cubemap",
+               "value": 4
+            }
+         ],
+         "lights": []
+      },
+      {
+         "name": "android/mali-g600",
+         "platform": "android",
+         "architecture": "",
+         "gpu_family": "mali-g600",
+         "gpu_name_contains": "",
+         "model": "",
+         "sliders": [],
+         "checkboxes": [
+            {
+               "name": "debug_luminance",
+               "value": false
+            }
+         ],
+         "selectors": [
+            {
+               "name": "cubemap",
+               "value": 4
+            }
+         ],
+         "lights": []
+      },
+      {
+         "name": "android/mali-g700",
+         "platform": "android",
+         "architecture": "",
+         "gpu_family": "mali-g700",
+         "gpu_name_contains": "",
+         "model": "",
+         "sliders": [],
+         "checkboxes": [
+            {
+               "name": "debug_luminance",
+               "value": false
+            }
+         ],
+         "selectors": [
+            {
+               "name": "cubemap",
+               "value": 4
+            }
+         ],
+         "lights": []
+      },
+      {
+         "name": "android/default",
+         "platform": "android",
+         "architecture": "",
+         "gpu_family": "",
+         "gpu_name_contains": "",
+         "model": "",
+         "sliders": [],
+         "checkboxes": [
+            {
+               "name": "debug_luminance",
+               "value": false
+            }
+         ],
+         "selectors": [
+            {
+               "name": "cubemap",
+               "value": 4
+            }
+         ],
+         "lights": []
+      },
+      {
+         "name": "",
+         "platform": "",
+         "architecture": "",
+         "gpu_family": "",
+         "gpu_name_contains": "",
+         "model": "porsche_992_gt3_r__www.vecarz.com.glb",
+         "sliders": [
+            {
+               "name": "bloom_factor",
+               "value": 0.299
+            },
+            {
+               "name": "env_factor",
+               "value": 1.069
+            },
+            {
+               "name": "ibl_factor",
+               "value": 0.774
+            },
+            {
+               "name": "material_refraction_strength",
+               "value": 0.018
+            },
+            {
+               "name": "gauss_1_radius",
+               "value": 3.532
+            },
+            {
+               "name": "gauss_1_sigma",
+               "value": 1.102
+            },
+            {
+               "name": "lightmap_intensity",
+               "value": 1
+            }
+         ],
+         "checkboxes": [
+            {
+               "name": "shadow_toggle",
+               "value": false
+            },
+            {
+               "name": "debug_luminance",
+               "value": false
+            }
+         ],
+         "selectors": [
+            {
+               "name": "gauss_1_kernel_size",
+               "value": 27
+            },
+            {
+               "name": "cubemap",
+               "value": 4
+            }
+         ],
+         "lights": [
+            {
+               "index": 0,
+               "intensity": 1
+            },
+            {
+               "index": 1,
+               "color": [
+                  1,
+                  1,
+                  1
+               ],
+               "intensity": 0,
+               "attach_to_camera": true
+            }
+         ],
+         "orbit_camera": {
+            "target": [
+               5.6272373e-05,
+               0.0064673093,
+               -4.656613e-09
+            ],
+            "pan_offset": [
+               -0.0019408631,
+               -0.0035376549,
+               -0.003322452
+            ],
+            "eye": [
+               0.014260901,
+               0.012377117,
+               -0.03932722
+            ],
+            "yaw": 2.720048,
+            "pitch": 0.23500054,
+            "distance": 0.040574305
+         }
+      },
+      {
+         "name": "",
+         "platform": "",
+         "architecture": "",
+         "gpu_family": "",
+         "gpu_name_contains": "",
+         "model": "2021_bmw_m4_competition.glb",
+         "sliders": [
+            {
+               "name": "exposure",
+               "value": 2.9
+            },
+            {
+               "name": "bloom_factor",
+               "value": 1.011
+            },
+            {
+               "name": "bloom_threshold",
+               "value": 1.469
+            },
+            {
+               "name": "light_intensity",
+               "value": 1.652
+            },
+            {
+               "name": "env_factor",
+               "value": 1.114
+            },
+            {
+               "name": "ibl_factor",
+               "value": 1.113
+            },
+            {
+               "name": "material_emissive_intensity",
+               "value": 58.919
+            },
+            {
+               "name": "gauss_1_radius",
+               "value": 4.5
+            },
+            {
+               "name": "gauss_1_sigma",
+               "value": 1
+            },
+            {
+               "name": "lightmap_intensity",
+               "value": 1
+            }
+         ],
+         "checkboxes": [
+            {
+               "name": "shadow_toggle",
+               "value": false
+            },
+            {
+               "name": "debug_luminance",
+               "value": false
+            }
+         ],
+         "selectors": [
+            {
+               "name": "gauss_1_kernel_size",
+               "value": 27
+            },
+            {
+               "name": "cubemap",
+               "value": 1
+            }
+         ],
+         "lights": [],
+         "orbit_camera": {
+            "target": [
+               -0.016313732,
+               0.9677299,
+               -0.019363165
+            ],
+            "pan_offset": [
+               -0.88763946,
+               -0.58818823,
+               -1.0033925
+            ],
+            "eye": [
+               2.9776196,
+               1.680587,
+               -5.1757183
+            ],
+            "yaw": 2.3899596,
+            "pitch": 0.22499998,
+            "distance": 5.831503
+         }
+      },
+      {
+         "name": "",
+         "platform": "",
+         "architecture": "",
+         "gpu_family": "",
+         "gpu_name_contains": "",
+         "model": "4_20_2026.glb",
+         "sliders": [
+            {
+               "name": "exposure",
+               "value": 2.76
+            },
+            {
+               "name": "bloom_factor",
+               "value": 0.504
+            },
+            {
+               "name": "env_factor",
+               "value": 0.905
+            },
+            {
+               "name": "ibl_factor",
+               "value": 1.045
+            },
+            {
+               "name": "gauss_1_radius",
+               "value": 3.5
+            },
+            {
+               "name": "gauss_1_sigma",
+               "value": 1
+            },
+            {
+               "name": "lightmap_intensity",
+               "value": 1
+            }
+         ],
+         "checkboxes": [
+            {
+               "name": "shadow_toggle",
+               "value": false
+            },
+            {
+               "name": "debug_luminance",
+               "value": false
+            }
+         ],
+         "selectors": [
+            {
+               "name": "gauss_1_kernel_size",
+               "value": 27
+            },
+            {
+               "name": "cubemap",
+               "value": 1
+            }
+         ],
+         "lights": [
+            {
+               "index": 0,
+               "intensity": 0.294
+            }
+         ],
+         "orbit_camera": {
+            "target": [
+               0,
+               0,
+               0
+            ],
+            "pan_offset": [
+               -0.30073786,
+               -0.3224721,
+               0.31025404
+            ],
+            "eye": [
+               1.9410102,
+               -0.028268218,
+               3.0264456
+            ],
+            "yaw": 0.689995,
+            "pitch": 0.08334422,
+            "distance": 3.5340753
+         }
+      },
+      {
+         "name": "",
+         "platform": "",
+         "architecture": "",
+         "gpu_family": "",
+         "gpu_name_contains": "",
+         "model": "damagedhelmet.glb",
+         "sliders": [
+            {
+               "name": "exposure",
+               "value": 1.946
+            },
+            {
+               "name": "bloom_factor",
+               "value": 0.341
+            },
+            {
+               "name": "bloom_threshold",
+               "value": 1.967
+            },
+            {
+               "name": "material_emissive_intensity",
+               "value": 2.715
+            },
+            {
+               "name": "gauss_1_radius",
+               "value": 3.5
+            },
+            {
+               "name": "gauss_1_sigma",
+               "value": 1
+            },
+            {
+               "name": "lightmap_intensity",
+               "value": 1
+            }
+         ],
+         "checkboxes": [
+            {
+               "name": "shadow_toggle",
+               "value": false
+            },
+            {
+               "name": "debug_luminance",
+               "value": false
+            }
+         ],
+         "selectors": [
+            {
+               "name": "gauss_1_kernel_size",
+               "value": 27
+            },
+            {
+               "name": "cubemap",
+               "value": 4
+            },
+            {
+               "name": "active_light",
+               "value": 1
+            }
+         ],
+         "lights": [
+            {
+               "index": 0,
+               "direction": [
+                  0.042913962,
+                  -0.39219218,
+                  0.9188818
+               ],
+               "intensity": 1
+            },
+            {
+               "index": 1,
+               "color": [
+                  1,
+                  0.84,
+                  0.58
+               ],
+               "diameter": 607.239,
+               "intensity": 17.194,
+               "attach_to_camera": true
+            }
+         ],
+         "orbit_camera": {
+            "target": [
+               -0.0024815798,
+               1.052022e-05,
+               0.18715498
+            ],
+            "pan_offset": [
+               -0.20491426,
+               -0.046456374,
+               0.08985985
+            ],
+            "eye": [
+               1.8944349,
+               0.017960288,
+               -3.4667025
+            ],
+            "yaw": 2.6300173,
+            "pitch": 0.015000144,
+            "distance": 4.293863
+         }
+      },
+      {
+         "name": "",
+         "platform": "",
+         "architecture": "",
+         "gpu_family": "",
+         "gpu_name_contains": "",
+         "model": "dragon.glb",
+         "sliders": [
+            {
+               "name": "exposure",
+               "value": 1.995
+            },
+            {
+               "name": "lightmap_intensity",
+               "value": 1
+            }
+         ],
+         "checkboxes": [
+            {
+               "name": "shadow_toggle",
+               "value": false
+            },
+            {
+               "name": "debug_luminance",
+               "value": false
+            }
+         ],
+         "selectors": [
+            {
+               "name": "gauss_1_kernel_size",
+               "value": 27
+            },
+            {
+               "name": "anim_select",
+               "value": 1
+            },
+            {
+               "name": "cubemap",
+               "value": 5
+            },
+            {
+               "name": "active_light",
+               "value": 1
+            }
+         ],
+         "lights": [
+            {
+               "index": 0,
+               "direction": [
+                  -0.048200738,
+                  -0.89049125,
+                  0.45244005
+               ]
+            },
+            {
+               "index": 1,
+               "intensity": 3.262,
+               "attach_to_camera": true
+            }
+         ],
+         "orbit_camera": {
+            "target": [
+               0.0012435913,
+               15.139095,
+               23.646435
+            ],
+            "pan_offset": [
+               1.2844042,
+               1.210831,
+               -15.723161
+            ],
+            "eye": [
+               1.1716613,
+               11.981635,
+               -64.79461
+            ],
+            "yaw": -3.1400251,
+            "pitch": -0.05999958,
+            "distance": 72.84906
+         }
+      },
+      {
+         "name": "",
+         "platform": "",
+         "architecture": "",
+         "gpu_family": "",
+         "gpu_name_contains": "",
+         "model": "rewind_cyborg.glb",
+         "sliders": [
+            {
+               "name": "exposure",
+               "value": 2.036
+            },
+            {
+               "name": "bloom_factor",
+               "value": 0.603
+            },
+            {
+               "name": "material_emissive_intensity",
+               "value": 19.1
+            },
+            {
+               "name": "gauss_1_radius",
+               "value": 3.5
+            },
+            {
+               "name": "gauss_1_sigma",
+               "value": 1
+            },
+            {
+               "name": "lightmap_intensity",
+               "value": 1
+            }
+         ],
+         "checkboxes": [
+            {
+               "name": "shadow_toggle",
+               "value": false
+            },
+            {
+               "name": "debug_luminance",
+               "value": false
+            }
+         ],
+         "selectors": [
+            {
+               "name": "gauss_1_kernel_size",
+               "value": 27
+            }
+         ],
+         "lights": [
+            {
+               "index": 0,
+               "direction": [
+                  0,
+                  0,
+                  1
+               ],
+               "intensity": 1
+            },
+            {
+               "index": 1,
+               "color": [
+                  1,
+                  1,
+                  1
+               ],
+               "attach_to_camera": true
+            }
+         ],
+         "orbit_camera": {
+            "target": [
+               0,
+               -1.3896071,
+               -0.036643
+            ],
+            "pan_offset": [
+               -0.052183926,
+               3.181458,
+               0.023581628
+            ],
+            "eye": [
+               -0.72859734,
+               2.4137425,
+               -3.0882065
+            ],
+            "yaw": -2.925079,
+            "pitch": 0.19500019,
+            "distance": 3.2094862
+         }
+      },
+      {
+         "name": "",
+         "platform": "",
+         "architecture": "",
+         "gpu_family": "",
+         "gpu_name_contains": "",
+         "model": "marauder.glb",
+         "sliders": [
+            {
+               "name": "exposure",
+               "value": 2.267
+            },
+            {
+               "name": "bloom_factor",
+               "value": 0.142
+            },
+            {
+               "name": "gauss_1_sigma",
+               "value": 1
+            },
+            {
+               "name": "lightmap_intensity",
+               "value": 1
+            }
+         ],
+         "checkboxes": [
+            {
+               "name": "shadow_toggle",
+               "value": false
+            },
+            {
+               "name": "debug_luminance",
+               "value": false
+            }
+         ],
+         "selectors": [
+            {
+               "name": "gauss_1_kernel_size",
+               "value": 27
+            },
+            {
+               "name": "anim_select",
+               "value": 72
+            },
+            {
+               "name": "active_light",
+               "value": 1
+            }
+         ],
+         "lights": [
+            {
+               "index": 0,
+               "direction": [
+                  0.14997374,
+                  -0.068839,
+                  0.9862906
+               ],
+               "intensity": 1
+            },
+            {
+               "index": 1,
+               "color": [
+                  1,
+                  1,
+                  1
+               ],
+               "diameter": 1420.817,
+               "intensity": 0,
+               "attach_to_camera": true
+            }
+         ],
+         "orbit_camera": {
+            "target": [
+               11.071243,
+               1.0453186,
+               663.9069
+            ],
+            "pan_offset": [
+               -1061.5809,
+               4839.8833,
+               -143.30313
+            ],
+            "eye": [
+               2467.7554,
+               5519.987,
+               -4189.1846
+            ],
+            "yaw": 2.5000072,
+            "pitch": 0.114999965,
+            "distance": 5917.8896
+         }
+      },
+      {
+         "name": "",
+         "platform": "",
+         "architecture": "",
+         "gpu_family": "",
+         "gpu_name_contains": "",
+         "model": "mercedes-amg_gt3__www.vecarz.com(1).glb",
+         "sliders": [
+            {
+               "name": "exposure",
+               "value": 2.086
+            },
+            {
+               "name": "bloom_factor",
+               "value": 0.395
+            },
+            {
+               "name": "bloom_threshold",
+               "value": 0.971
+            },
+            {
+               "name": "env_factor",
+               "value": 0.39
+            },
+            {
+               "name": "gauss_1_radius",
+               "value": 3.5
+            },
+            {
+               "name": "gauss_1_sigma",
+               "value": 1
+            },
+            {
+               "name": "lightmap_intensity",
+               "value": 1
+            }
+         ],
+         "checkboxes": [
+            {
+               "name": "shadow_toggle",
+               "value": false
+            },
+            {
+               "name": "debug_luminance",
+               "value": false
+            }
+         ],
+         "selectors": [
+            {
+               "name": "gauss_1_kernel_size",
+               "value": 27
+            },
+            {
+               "name": "cubemap",
+               "value": 4
+            },
+            {
+               "name": "active_light",
+               "value": 1
+            }
+         ],
+         "lights": [
+            {
+               "index": 0,
+               "direction": [
+                  0,
+                  -1,
+                  0
+               ]
+            },
+            {
+               "index": 1,
+               "color": [
+                  1,
+                  1,
+                  1
+               ],
+               "diameter": 500,
+               "intensity": 0,
+               "attach_to_camera": true
+            }
+         ],
+         "orbit_camera": {
+            "target": [
+               0,
+               0.008397965,
+               0.00012173131
+            ],
+            "pan_offset": [
+               0.0023302848,
+               -0.00095167075,
+               -0.0072872946
+            ],
+            "eye": [
+               -0.020037748,
+               0.0126551725,
+               -0.052133057
+            ],
+            "yaw": -2.6800058,
+            "pitch": 0.10334438,
+            "distance": 0.05049294
+         }
+      },
+      {
+         "name": "",
+         "platform": "",
+         "architecture": "",
+         "gpu_family": "",
+         "gpu_name_contains": "",
+         "model": "space_station_scene_hd.glb",
+         "sliders": [
+            {
+               "name": "bloom_factor",
+               "value": 1
+            },
+            {
+               "name": "material_transmission_multiplier",
+               "value": 0.453
+            },
+            {
+               "name": "material_refraction_strength",
+               "value": 0.01
+            },
+            {
+               "name": "gauss_1_radius",
+               "value": 3.5
+            },
+            {
+               "name": "gauss_1_sigma",
+               "value": 1
+            },
+            {
+               "name": "lightmap_intensity",
+               "value": 1
+            }
+         ],
+         "checkboxes": [
+            {
+               "name": "shadow_toggle",
+               "value": false
+            },
+            {
+               "name": "debug_luminance",
+               "value": false
+            }
+         ],
+         "selectors": [
+            {
+               "name": "gauss_1_kernel_size",
+               "value": 27
+            },
+            {
+               "name": "cubemap",
+               "value": 2
+            }
+         ],
+         "lights": [
+            {
+               "index": 0,
+               "direction": [
+                  0.034078334,
+                  -0.3242979,
+                  0.94534093
+               ],
+               "intensity": 1
+            },
+            {
+               "index": 1,
+               "diameter": 299.548,
+               "intensity": 2,
+               "attach_to_camera": true
+            }
+         ],
+         "orbit_camera": {
+            "target": [
+               -13.671049,
+               1.2717171,
+               4.079109
+            ],
+            "pan_offset": [
+               12.999219,
+               1.1762874,
+               -4.1119924
+            ],
+            "eye": [
+               -11.326402,
+               3.6255748,
+               -10.143471
+            ],
+            "yaw": -2.3300035,
+            "pitch": 0.07999996,
+            "distance": 14.73535
+         }
+      },
+      {
+         "name": "",
+         "platform": "",
+         "architecture": "",
+         "gpu_family": "",
+         "gpu_name_contains": "",
+         "model": "tyrant.glb",
+         "sliders": [
+            {
+               "name": "exposure",
+               "value": 1.271
+            },
+            {
+               "name": "bloom_factor",
+               "value": 0.486
+            },
+            {
+               "name": "bloom_threshold",
+               "value": 0.383
+            },
+            {
+               "name": "gauss_1_radius",
+               "value": 3.5
+            },
+            {
+               "name": "gauss_1_sigma",
+               "value": 1
+            },
+            {
+               "name": "anim_speed",
+               "value": 0.312
+            },
+            {
+               "name": "lightmap_intensity",
+               "value": 1
+            }
+         ],
+         "checkboxes": [
+            {
+               "name": "shadow_toggle",
+               "value": false
+            },
+            {
+               "name": "draw_direction",
+               "value": true
+            },
+            {
+               "name": "debug_luminance",
+               "value": false
+            }
+         ],
+         "selectors": [
+            {
+               "name": "gauss_1_kernel_size",
+               "value": 27
+            },
+            {
+               "name": "anim_select",
+               "value": 10
+            }
+         ],
+         "lights": [
+            {
+               "index": 0,
+               "direction": [
+                  -0.15611257,
+                  -0.091431305,
+                  0.98349845
+               ],
+               "intensity": 1
+            },
+            {
+               "index": 1,
+               "attach_to_camera": true
+            }
+         ],
+         "orbit_camera": {
+            "target": [
+               32.23503,
+               143.07202,
+               1427.1667
+            ],
+            "pan_offset": [
+               858.3237,
+               10680.57,
+               -726.67993
+            ],
+            "eye": [
+               -187.08624,
+               12171.496,
+               -11455.598
+            ],
+            "yaw": 3.2300122,
+            "pitch": 0.10999999,
+            "distance": 12277.965
+         }
+      },
+      {
+         "name": "",
+         "platform": "",
+         "architecture": "",
+         "gpu_family": "",
+         "gpu_name_contains": "",
+         "model": "doomslayer_cine_all_animations_no-damage_double-sided-opaque.glb",
+         "sliders": [
+            {
+               "name": "exposure",
+               "value": 1.814
+            },
+            {
+               "name": "bloom_factor",
+               "value": 0.721
+            },
+            {
+               "name": "ssao_radius",
+               "value": 3
+            },
+            {
+               "name": "env_factor",
+               "value": 0.752
+            },
+            {
+               "name": "gauss_1_radius",
+               "value": 3.5
+            },
+            {
+               "name": "gauss_1_sigma",
+               "value": 1
+            },
+            {
+               "name": "lightmap_intensity",
+               "value": 1
+            }
+         ],
+         "checkboxes": [
+            {
+               "name": "shadow_toggle",
+               "value": false
+            },
+            {
+               "name": "ssao_toggle",
+               "value": false
+            },
+            {
+               "name": "debug_luminance",
+               "value": false
+            }
+         ],
+         "selectors": [
+            {
+               "name": "gauss_1_kernel_size",
+               "value": 27
+            },
+            {
+               "name": "anim_select",
+               "value": 80
+            },
+            {
+               "name": "cubemap",
+               "value": 1
+            }
+         ],
+         "lights": [
+            {
+               "index": 0,
+               "direction": [
+                  0.24106516,
+                  0.07309007,
+                  0.9677528
+               ],
+               "intensity": 4.846
+            }
+         ],
+         "orbit_camera": {
+            "target": [
+               8.635834,
+               0.07846069,
+               493.62683
+            ],
+            "pan_offset": [
+               1120.7275,
+               1828.4458,
+               880.579
+            ],
+            "eye": [
+               6306.4526,
+               5295.698,
+               -6415.198
+            ],
+            "yaw": 2.5549998,
+            "pitch": 0.35499993,
+            "distance": 9974.887
+         }
+      },
+      {
+         "name": "",
+         "platform": "",
+         "architecture": "",
+         "gpu_family": "",
+         "gpu_name_contains": "",
+         "model": "doomslayer_cine_base_all_animations_no-damage_double-sided-opaque.glb",
+         "sliders": [
+            {
+               "name": "exposure",
+               "value": 3.352
+            },
+            {
+               "name": "gauss_1_radius",
+               "value": 3.5
+            },
+            {
+               "name": "gauss_1_sigma",
+               "value": 1
+            },
+            {
+               "name": "lightmap_intensity",
+               "value": 1
+            }
+         ],
+         "checkboxes": [
+            {
+               "name": "shadow_toggle",
+               "value": false
+            },
+            {
+               "name": "debug_luminance",
+               "value": false
+            }
+         ],
+         "selectors": [
+            {
+               "name": "gauss_1_kernel_size",
+               "value": 27
+            },
+            {
+               "name": "cubemap",
+               "value": 1
+            }
+         ],
+         "lights": [
+            {
+               "index": 0,
+               "direction": [
+                  0.06670926,
+                  0.058362577,
+                  0.99606407
+               ]
+            }
+         ],
+         "orbit_camera": {
+            "target": [
+               8.635834,
+               0.07846069,
+               493.62683
+            ],
+            "pan_offset": [
+               -488.1628,
+               2289.081,
+               826.7017
+            ],
+            "eye": [
+               3813.4004,
+               2809.7473,
+               -5427.6147
+            ],
+            "yaw": 2.574992,
+            "pitch": 0.06500011,
+            "distance": 8014.673
+         }
+      },
+      {
+         "name": "",
+         "platform": "",
+         "architecture": "",
+         "gpu_family": "",
+         "gpu_name_contains": "",
+         "model": "jaguar_xj13_1959__www.vecarz.com.glb",
+         "sliders": [
+            {
+               "name": "gauss_1_sigma",
+               "value": 1
+            },
+            {
+               "name": "lightmap_intensity",
+               "value": 1
+            }
+         ],
+         "checkboxes": [
+            {
+               "name": "shadow_toggle",
+               "value": false
+            },
+            {
+               "name": "debug_luminance",
+               "value": false
+            }
+         ],
+         "selectors": [
+            {
+               "name": "gauss_1_kernel_size",
+               "value": 27
+            },
+            {
+               "name": "cubemap",
+               "value": 4
+            }
+         ],
+         "lights": [
+            {
+               "index": 0,
+               "direction": [
+                  -0.008689016,
+                  -0.9999242,
+                  -0.008728233
+               ],
+               "intensity": 1
+            },
+            {
+               "index": 1,
+               "color": [
+                  1,
+                  1,
+                  1
+               ],
+               "diameter": 1267.869,
+               "intensity": 0
+            }
+         ],
+         "orbit_camera": {
+            "target": [
+               0.041424274,
+               2.571905,
+               0.37520266
+            ],
+            "pan_offset": [
+               0.7846451,
+               0.20618081,
+               1.6312195
+            ],
+            "eye": [
+               -12.512976,
+               9.062738,
+               23.52125
+            ],
+            "yaw": -0.55499077,
+            "pitch": 0.2433442,
+            "distance": 26.082846
+         }
+      },
+      {
+         "name": "",
+         "platform": "",
+         "architecture": "",
+         "gpu_family": "",
+         "gpu_name_contains": "",
+         "model": "mclaren_p1__www.vecarz.com.glb",
+         "sliders": [
+            {
+               "name": "exposure",
+               "value": 2.81
+            },
+            {
+               "name": "material_emissive_intensity",
+               "value": 0.095
+            },
+            {
+               "name": "lightmap_intensity",
+               "value": 1
+            }
+         ],
+         "checkboxes": [
+            {
+               "name": "shadow_toggle",
+               "value": false
+            },
+            {
+               "name": "debug_luminance",
+               "value": false
+            }
+         ],
+         "selectors": [
+            {
+               "name": "gauss_1_kernel_size",
+               "value": 27
+            },
+            {
+               "name": "cubemap",
+               "value": 4
+            },
+            {
+               "name": "active_light",
+               "value": 1
+            }
+         ],
+         "lights": [
+            {
+               "index": 0,
+               "intensity": 1
+            },
+            {
+               "index": 1,
+               "intensity": 0
+            }
+         ],
+         "orbit_camera": {
+            "target": [
+               -5.9604645e-08,
+               0.26260284,
+               0.001106143
+            ],
+            "pan_offset": [
+               -0.1486734,
+               -0.02968598,
+               0.092318326
+            ],
+            "eye": [
+               1.2614387,
+               0.8846371,
+               -1.6270186
+            ],
+            "yaw": 2.4550014,
+            "pitch": 0.28499997,
+            "distance": 2.3179905
+         }
+      },
+      {
+         "name": "pc/x64",
+         "platform": "windows",
+         "architecture": "x64",
+         "gpu_family": "",
+         "gpu_name_contains": "",
+         "model": "doomslayer_cine_all_animations_no-damage_double-sided-opaque.glb",
+         "sliders": [
+            {
+               "name": "exposure",
+               "value": 2.464
+            },
+            {
+               "name": "bloom_factor",
+               "value": 0.558
+            },
+            {
+               "name": "bloom_threshold",
+               "value": 0.66
+            },
+            {
+               "name": "ssao_radius",
+               "value": 3
+            },
+            {
+               "name": "env_factor",
+               "value": 0.427
+            },
+            {
+               "name": "gauss_1_radius",
+               "value": 3.5
+            },
+            {
+               "name": "gauss_1_sigma",
+               "value": 1
+            },
+            {
+               "name": "lightmap_intensity",
+               "value": 1
+            }
+         ],
+         "checkboxes": [
+            {
+               "name": "shadow_toggle",
+               "value": false
+            },
+            {
+               "name": "ssao_toggle",
+               "value": false
+            },
+            {
+               "name": "debug_luminance",
+               "value": false
+            }
+         ],
+         "selectors": [
+            {
+               "name": "gauss_1_kernel_size",
+               "value": 27
+            },
+            {
+               "name": "cubemap",
+               "value": 1
+            }
+         ],
+         "lights": [
+            {
+               "index": 0,
+               "direction": [
+                  0.24106516,
+                  0.07309007,
+                  0.9677528
+               ],
+               "intensity": 4.846
+            }
+         ],
+         "orbit_camera": {
+            "target": [
+               8.635834,
+               0.07846069,
+               493.62683
+            ],
+            "pan_offset": [
+               -37.06934,
+               2518.8604,
+               -931.6866
+            ],
+            "eye": [
+               6833.6455,
+               3835.7593,
+               -3332.9387
+            ],
+            "yaw": 1.9700096,
+            "pitch": 0.17500006,
+            "distance": 7563.2314
+         }
+      }
+   ]
+}

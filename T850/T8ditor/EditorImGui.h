@@ -14,6 +14,7 @@
 #ifndef T8DITOR_EDITORIMGUI_H
 #define T8DITOR_EDITORIMGUI_H
 
+#include <imgui.h>
 #include <string>
 #include <utils/xMaths.h>
 
@@ -22,15 +23,23 @@ struct SDL_Window;
 namespace t850 {
   class RootFramework;
   class BaseDriver;
+  class Texture;
 }
 
 namespace t8ditor {
 
   // ── Lifecycle (called from EditorApp) ──────────────
-  bool ImGuiInit(t850::RootFramework* fw);
+  bool ImGuiInit(t850::RootFramework* fw, bool enablePlatformWindows = false);
   void ImGuiShutdown();
   void ImGuiNewFrame();
   void ImGuiRender();          // calls ImGui::Render() + backend RenderDrawData
+  void ImGuiSetNextNativeEditorWindow(float offsetX, float offsetY, float width, float height);
+  ImTextureID ImGuiTextureID(t850::BaseDriver* driver, t850::Texture* texture);
+  bool ImGuiAllowCustomSceneLayout();
+  void ImGuiSetAllowCustomSceneLayout(bool allow);
+  void ImGuiApplySceneLayout(bool allowCustomLayout, const std::string& sceneLayoutIni);
+  std::string ImGuiCaptureCurrentLayout();
+  void ImGuiSaveGlobalLayout();
 
   // ── Menu bar ───────────────────────────────────────
   struct MenuAction {
@@ -38,6 +47,7 @@ namespace t8ditor {
     bool wantsLoadScene = false;  // File > Load Scene
     bool wantsSaveScene = false;  // File > Save Scene
     bool wantsExit     = false;   // File > Exit
+    bool wantsResetLayout = false;
   };
 
   // Persistent panel visibility — pass references from EditorApp.
@@ -45,6 +55,7 @@ namespace t8ditor {
     bool showHierarchy  = true;
     bool showInspector  = true;
     bool showConsole    = true;
+    bool showRendering  = true;
     bool showWireframe  = false;
     bool showSkybox     = true;
     bool showRTDebug    = false;
@@ -53,6 +64,7 @@ namespace t8ditor {
   // Draw the main menu bar. Returns actions triggered this frame.
   // `panels` is read/written for the View menu checkboxes.
   MenuAction ImGuiDrawMenuBar(PanelVisibility& panels);
+  void ImGuiClampCurrentWindowToEditorWorkArea();
 
   // ── Toolbar ─────────────────────────────────────────
   // Draws a horizontal button bar just below the menu bar.
@@ -60,7 +72,9 @@ namespace t8ditor {
   // `addCamera`/`addLight` are set to the type to add (0=persp/dir, 1=ortho/omni, -1=none).
   int ImGuiDrawToolbar(int currentMode, int& addCamera, int& addLight,
                        bool& wantsClone, bool& wantsGroup, bool& wantsUngroup,
-                       bool hasSelection, bool hasMultiSelect);
+                       bool& wantsPlayScene,
+                       bool hasSelection, bool hasMultiSelect,
+                       int& cameraMode);
 
   // ── Context menu (right-click) ─────────────────────
   struct ContextAction {

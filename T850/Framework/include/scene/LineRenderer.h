@@ -50,8 +50,9 @@ public:
   // Set viewport dimensions for depth comparison (call once per frame or on resize)
   void SetViewport(int width, int height) { m_viewW = width; m_viewH = height; }
 
-  // Set the GBuffer depth texture for depth-tested wireframe.
+  // Set the scene depth textures for depth-tested wireframe.
   void SetDepthTexture(Texture* depthTex) { m_depthTex = depthTex; }
+  void SetSecondaryDepthTexture(Texture* depthTex) { m_depthTex2 = depthTex; }
 
   // Set the camera far plane for depth-tested overlays.
   void SetFarPlane(float farPlane) { m_farPlane = farPlane; }
@@ -85,6 +86,7 @@ private:
   ShaderBase*     m_shaderFlat  = nullptr;  // FS_LineFlat   (always visible)
   ConstantBuffer* m_cb          = nullptr;
   Texture*        m_depthTex    = nullptr;
+  Texture*        m_depthTex2   = nullptr;
   int             m_viewW       = 1280;
   int             m_viewH       = 720;
   float           m_farPlane    = 1000.0f;

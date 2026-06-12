@@ -83,6 +83,7 @@ namespace t850 {
 
       // RTV
       D3D12_CPU_DESCRIPTOR_HANDLE rtv = driver->GetHeap(D3D12Heap::RTV).AllocateCPU();
+      if (!rtv.ptr) { DestroyAPIRT(); return false; }
       device->CreateRenderTargetView(colorRes.Get(), nullptr, rtv);
       vRTVHandles.push_back(rtv);
 
@@ -100,6 +101,7 @@ namespace t850 {
       srvDesc.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
       colorTex->srvCPU = driver->GetHeap(D3D12Heap::CBV_SRV_UAV_VISIBLE).AllocateCPU();
       colorTex->srvGPU = driver->GetHeap(D3D12Heap::CBV_SRV_UAV_VISIBLE).AllocateGPU();
+      if (!colorTex->srvCPU.ptr || !colorTex->srvGPU.ptr) { colorTex->release(); DestroyAPIRT(); return false; }
       device->CreateShaderResourceView(colorRes.Get(), &srvDesc, colorTex->srvCPU);
       colorTex->SetTextureParams();
       vColorTextures.push_back(colorTex);
@@ -134,6 +136,7 @@ namespace t850 {
         dsvDesc.Texture2DArray.FirstArraySlice = face;
         dsvDesc.Texture2DArray.ArraySize = 1;
         cubeFaceDSVs[face] = driver->GetHeap(D3D12Heap::DSV).AllocateCPU();
+        if (!cubeFaceDSVs[face].ptr) { DestroyAPIRT(); return false; }
         device->CreateDepthStencilView(depthResource.Get(), &dsvDesc, cubeFaceDSVs[face]);
       }
       depthDSV = cubeFaceDSVs[0];
@@ -142,6 +145,7 @@ namespace t850 {
       dsvDesc.Format = dsvFmt;
       dsvDesc.ViewDimension = D3D12_DSV_DIMENSION_TEXTURE2D;
       depthDSV = driver->GetHeap(D3D12Heap::DSV).AllocateCPU();
+      if (!depthDSV.ptr) { DestroyAPIRT(); return false; }
       device->CreateDepthStencilView(depthResource.Get(), &dsvDesc, depthDSV);
     }
 
@@ -164,6 +168,7 @@ namespace t850 {
     }
     depthTex->srvCPU = driver->GetHeap(D3D12Heap::CBV_SRV_UAV_VISIBLE).AllocateCPU();
     depthTex->srvGPU = driver->GetHeap(D3D12Heap::CBV_SRV_UAV_VISIBLE).AllocateGPU();
+    if (!depthTex->srvCPU.ptr || !depthTex->srvGPU.ptr) { depthTex->release(); DestroyAPIRT(); return false; }
     device->CreateShaderResourceView(depthResource.Get(), &depthSrvDesc, depthTex->srvCPU);
     depthTex->SetTextureParams();
     pDepthTexture = depthTex;
@@ -177,10 +182,26 @@ namespace t850 {
   // ══════════════════════════════════════════════════════
 
   void D3D12RT::DestroyAPIRT() {
+    auto* driver = g_pBaseDriver ? GetD3D12Driver() : nullptr;
+    if (driver) {
+      for (auto& rtv : vRTVHandles) {
+        driver->GetHeap(D3D12Heap::RTV).FreeCPU(rtv);
+      }
+      if (isCubeDepth) {
+        for (auto& dsv : cubeFaceDSVs) {
+          driver->GetHeap(D3D12Heap::DSV).FreeCPU(dsv);
+          dsv = {};
+        }
+      } else {
+        driver->GetHeap(D3D12Heap::DSV).FreeCPU(depthDSV);
+      }
+      depthDSV = {};
+    }
     if (pDepthTexture) { pDepthTexture->release(); pDepthTexture = nullptr; }
     for (auto* t : vColorTextures) t->release();
     vColorTextures.clear();
     vColorResources.clear();
+    vColorStates.clear();
     vRTVHandles.clear();
     vColorFormats.clear();
     depthResource.Reset();

@@ -2,17 +2,20 @@
 
 #include <scene/MeshPool.h>
 #include <utils/Log.h>
+#include <video/BaseDriver.h>
 
 namespace t850 {
 
   extern Device* T8Device;
+  extern BaseDriver* g_pBaseDriver;
 
   VertexPool::VertexPool(uint64_t formatHash, uint32_t vertexStride)
     : m_formatHash(formatHash), m_vertexStride(vertexStride) {
   }
 
   VertexPool::~VertexPool() {
-    if (m_gpuVB) m_gpuVB->release();
+    if (m_gpuVB && g_pBaseDriver) m_gpuVB->release();
+    m_gpuVB = nullptr;
   }
 
   uint32_t VertexPool::Suballocate(const void* data, uint32_t byteCount) {
@@ -66,7 +69,8 @@ namespace t850 {
   IndexPool::IndexPool(bool ib32Bit) : m_ib32Bit(ib32Bit) {}
 
   IndexPool::~IndexPool() {
-    if (m_gpuIB) m_gpuIB->release();
+    if (m_gpuIB && g_pBaseDriver) m_gpuIB->release();
+    m_gpuIB = nullptr;
   }
 
   uint32_t IndexPool::Suballocate(const void* data, uint32_t indexCount) {

@@ -140,6 +140,42 @@ void AppendCapsule(std::vector<float>& vertices,
   AppendCapsuleArc(vertices, indices, world, true, -halfHeight, kPhysicsDebugPi, 2.0f * kPhysicsDebugPi, radius);
 }
 
+void AppendSphere(std::vector<float>& vertices,
+                  std::vector<unsigned int>& indices,
+                  const PhysicsShapeDesc& shape,
+                  const XMATRIX44& world) {
+  const float radius = (std::max)(0.001f, shape.radius);
+  AppendCircleXZ(vertices, indices, world, 0.0f, radius);
+  for (int i = 0; i < kCapsuleSegments; ++i) {
+    const float a0 = (2.0f * kPhysicsDebugPi * static_cast<float>(i)) / static_cast<float>(kCapsuleSegments);
+    const float a1 = (2.0f * kPhysicsDebugPi * static_cast<float>(i + 1)) / static_cast<float>(kCapsuleSegments);
+    AppendLine(vertices, indices,
+               LocalPoint(std::cos(a0) * radius, std::sin(a0) * radius, 0.0f, world),
+               LocalPoint(std::cos(a1) * radius, std::sin(a1) * radius, 0.0f, world));
+    AppendLine(vertices, indices,
+               LocalPoint(0.0f, std::sin(a0) * radius, std::cos(a0) * radius, world),
+               LocalPoint(0.0f, std::sin(a1) * radius, std::cos(a1) * radius, world));
+  }
+}
+
+void AppendCylinder(std::vector<float>& vertices,
+                    std::vector<unsigned int>& indices,
+                    const PhysicsShapeDesc& shape,
+                    const XMATRIX44& world) {
+  const float radius = (std::max)(0.001f, shape.radius);
+  const float halfHeight = (std::max)(0.001f, shape.halfHeight);
+  AppendCircleXZ(vertices, indices, world, halfHeight, radius);
+  AppendCircleXZ(vertices, indices, world, -halfHeight, radius);
+  for (int i = 0; i < kCapsuleSegments; i += 4) {
+    const float a = (2.0f * kPhysicsDebugPi * static_cast<float>(i)) / static_cast<float>(kCapsuleSegments);
+    const float x = std::cos(a) * radius;
+    const float z = std::sin(a) * radius;
+    AppendLine(vertices, indices,
+               LocalPoint(x, -halfHeight, z, world),
+               LocalPoint(x, halfHeight, z, world));
+  }
+}
+
 void AppendIndexedLineMesh(std::vector<float>& vertices,
                            std::vector<unsigned int>& indices,
                            const std::vector<XVECTOR3>& meshVertices,
@@ -204,6 +240,10 @@ bool PhysicsDebugRenderer::UploadGeometry(const std::vector<PhysicsDebugBody>& b
       AppendIndexedLineMesh(m_vertices, m_indices, *body.debugVertices, *body.debugLineIndices, body.state.worldTransform);
     } else if (body.shape.type == PhysicsShapeType::Capsule) {
       AppendCapsule(m_vertices, m_indices, body.shape, body.state.worldTransform);
+    } else if (body.shape.type == PhysicsShapeType::Sphere) {
+      AppendSphere(m_vertices, m_indices, body.shape, body.state.worldTransform);
+    } else if (body.shape.type == PhysicsShapeType::Cylinder) {
+      AppendCylinder(m_vertices, m_indices, body.shape, body.state.worldTransform);
     } else {
       AppendBox(m_vertices, m_indices, body.shape, body.state.worldTransform);
     }
@@ -257,19 +297,33 @@ void PhysicsDebugRenderer::Draw(const JoltPhysicsSystem& physics, const XMATRIX4
     return;
   }
 
-  if (!physics.GetDebugBodies(m_bodies) || !UploadGeometry(m_bodies)) {
+  if (!physics.GetDebugBodies(m_bodies)) {
+    return;
+  }
+  DrawBodies(m_bodies, viewProjection);
+}
+
+void PhysicsDebugRenderer::DrawBodies(const std::vector<PhysicsDebugBody>& bodies,
+                                      const XMATRIX44& viewProjection,
+                                      const XVECTOR3& color) {
+  if (!m_lineRenderer.IsReady()) {
+    return;
+  }
+
+  if (!UploadGeometry(bodies)) {
     return;
   }
 
   XMATRIX44 identity;
   identity.Identity();
-  m_lineRenderer.SetDepthTestEnabled(m_depthTest && m_depthTexture != nullptr);
+  m_lineRenderer.SetDepthTestEnabled(m_depthTest && (m_depthTexture != nullptr || m_depthTexture2 != nullptr));
   m_lineRenderer.SetDepthTexture(m_depthTexture);
+  m_lineRenderer.SetSecondaryDepthTexture(m_depthTexture2);
   m_lineRenderer.SetViewport(m_viewWidth, m_viewHeight);
   m_lineRenderer.SetFarPlane(m_farPlane);
   m_lineRenderer.DrawLines(identity,
                            viewProjection,
-                           XVECTOR3(0.0f, 1.0f, 0.0f, 1.0f),
+                           color,
                            m_vertexBuffer,
                            m_indexBuffer,
                            m_indexCount,

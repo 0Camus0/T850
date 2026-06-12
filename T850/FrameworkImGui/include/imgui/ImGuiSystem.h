@@ -21,7 +21,7 @@ namespace t850 {
     ImGuiSystem() = default;
     ~ImGuiSystem();
 
-    bool Init(RootFramework* framework, const char* iniFileName, bool enableDocking);
+    bool Init(RootFramework* framework, const char* iniFileName, bool enableDocking, bool enablePlatformWindows = false);
     void Shutdown();
 
     bool NewFrame(bool createDockspace);
@@ -38,6 +38,7 @@ namespace t850 {
     bool WantsMouse() const;
     float ConsumeWheelDelta();
     void AddWheelDelta(float delta) { m_wheelAccum += delta; }
+    void NoteWindowEvent(const char* eventName, int data1, int data2);
 #ifdef OS_ANDROID
     bool HandleAndroidInputEvent(AInputEvent* event);
     bool SetAndroidNativeWindow(ANativeWindow* window);
@@ -47,10 +48,15 @@ namespace t850 {
     RootFramework* m_framework = nullptr;
     bool m_inited = false;
     bool m_dockingEnabled = false;
+    bool m_platformWindowsEnabled = false;
     bool m_loadingFrameActive = false;
     GraphicsApi::E m_api = GraphicsApi::D3D11;
     SDL_Window* m_sdlWindow = nullptr;
     float m_wheelAccum = 0.0f;
+    int m_windowEventTraceFrames = 0;
+    std::string m_lastWindowEventName;
+    int m_lastWindowEventData1 = 0;
+    int m_lastWindowEventData2 = 0;
 
 #ifdef OS_WINDOWS
     ID3D12DescriptorHeap* m_d3d12SrvHeap = nullptr;

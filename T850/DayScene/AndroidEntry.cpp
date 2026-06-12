@@ -205,7 +205,7 @@ namespace {
 
     if (getIntExtra) {
       int scene = GetIntentIntExtra(env, intent, getIntExtra, kExtraScene, t850::g_config.startScene);
-      if (scene == 0 || scene == 1) {
+      if (scene >= 0 && scene <= 4) {
         t850::g_config.startScene = scene;
       }
 
@@ -268,7 +268,6 @@ namespace {
       if (!sceneFile.empty()) {
         t850::g_config.sceneFilePath = sceneFile;
         t850::g_config.modelPath.clear();
-        t850::g_config.startScene = 0;
       }
 
       std::string replaySnapshot = GetIntentStringExtra(env, intent, getStringExtra, kExtraReplaySnapshot);

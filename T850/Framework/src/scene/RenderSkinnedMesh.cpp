@@ -209,6 +209,22 @@ namespace t850 {
                       1.0f);
     }
 
+    XVECTOR3 TransformPositionRowVector(const XVECTOR3& p, const XMATRIX44& m) {
+      return XVECTOR3(
+          p.x * m.m[0][0] + p.y * m.m[1][0] + p.z * m.m[2][0] + m.m[3][0],
+          p.x * m.m[0][1] + p.y * m.m[1][1] + p.z * m.m[2][1] + m.m[3][1],
+          p.x * m.m[0][2] + p.y * m.m[1][2] + p.z * m.m[2][2] + m.m[3][2],
+          1.0f);
+    }
+
+    int ClampBoneIndexForAABB(float value, int boneCount) {
+      if (boneCount <= 0 || !std::isfinite(value)) {
+        return -1;
+      }
+      const int index = static_cast<int>(value);
+      return index >= 0 && index < boneCount ? index : -1;
+    }
+
     std::string LowerName(const std::string& name) {
       std::string out;
       out.reserve(name.size());
@@ -756,6 +772,109 @@ namespace t850 {
     }
   }
 
+  bool RenderSkinnedMesh::GetCurrentPoseLocalAABB(RenderMesh::AABB& outBounds) const {
+    outBounds.Reset();
+    if (!m_hasSkin || !xFile || xFile->XMeshDataBase.empty()) {
+      return false;
+    }
+
+    int numBones = m_snapshotPoseActive
+        ? static_cast<int>(m_snapshotBoneMatrices.size())
+        : m_animController.GetNumBones();
+    numBones = (std::min)(numBones, kMaxBones);
+    const XMATRIX44* bones = m_snapshotPoseActive
+        ? m_snapshotBoneMatrices.data()
+        : m_animController.GetBoneMatrices();
+    if (numBones <= 0 || !bones) {
+      return false;
+    }
+
+    const xF::xMeshContainer* meshContainer = xFile->XMeshDataBase[0];
+    bool anyVertex = false;
+    const std::size_t geometryCount = (std::min)(meshContainer->Geometry.size(), xFile->MeshInfo.size());
+    for (std::size_t geometryIndex = 0; geometryIndex < geometryCount; ++geometryIndex) {
+      const xF::xMeshGeometry& sourceGeometry = meshContainer->Geometry[geometryIndex];
+      const xF::xFinalGeometry& finalGeometry = xFile->MeshInfo[geometryIndex];
+      const unsigned int stride = finalGeometry.VertexSize / sizeof(float);
+      if (stride < 3 || !finalGeometry.pData) {
+        continue;
+      }
+
+      const unsigned int vertexCount = (std::min)(static_cast<unsigned int>(finalGeometry.NumVertex),
+                                                 static_cast<unsigned int>(sourceGeometry.NumVertices));
+      for (unsigned int vertexIndex = 0; vertexIndex < vertexCount; ++vertexIndex) {
+        const float* vertex = &finalGeometry.pData[static_cast<std::size_t>(vertexIndex) * stride];
+        const XVECTOR3 bindPosition(vertex[0], vertex[1], vertex[2], 1.0f);
+        XVECTOR3 posedPosition = bindPosition;
+
+        if (vertexIndex < sourceGeometry.SkinWeights.size() &&
+            vertexIndex < sourceGeometry.SkinIndices.size()) {
+          const XVECTOR3& weights = sourceGeometry.SkinWeights[vertexIndex];
+          const XVECTOR3& indices = sourceGeometry.SkinIndices[vertexIndex];
+          const float weightValues[4] = { weights.x, weights.y, weights.z, weights.w };
+          const float indexValues[4] = { indices.x, indices.y, indices.z, indices.w };
+          XVECTOR3 blended(0.0f, 0.0f, 0.0f, 1.0f);
+          float totalWeight = 0.0f;
+          for (int influence = 0; influence < 4; ++influence) {
+            const float weight = weightValues[influence];
+            if (weight <= 0.0f || !std::isfinite(weight)) {
+              continue;
+            }
+            const int boneIndex = ClampBoneIndexForAABB(indexValues[influence], numBones);
+            if (boneIndex < 0) {
+              continue;
+            }
+            const XVECTOR3 bonePosition = TransformPositionRowVector(bindPosition, bones[boneIndex]);
+            blended.x += bonePosition.x * weight;
+            blended.y += bonePosition.y * weight;
+            blended.z += bonePosition.z * weight;
+            totalWeight += weight;
+          }
+          if (totalWeight > 0.000001f) {
+            if (totalWeight < 0.999f || totalWeight > 1.001f) {
+              blended.x /= totalWeight;
+              blended.y /= totalWeight;
+              blended.z /= totalWeight;
+            }
+            posedPosition = blended;
+          }
+        }
+
+        outBounds.Expand(posedPosition.x, posedPosition.y, posedPosition.z);
+        anyVertex = true;
+      }
+    }
+
+    return anyVertex &&
+           outBounds.min.x <= outBounds.max.x &&
+           outBounds.min.y <= outBounds.max.y &&
+           outBounds.min.z <= outBounds.max.z;
+  }
+
+  bool RenderSkinnedMesh::GetSkeletonLocalAABB(RenderMesh::AABB& outBounds) const {
+    outBounds.Reset();
+    if (!m_hasSkin) {
+      return false;
+    }
+
+    const xF::xSkeleton* skel = m_animController.GetAnimSkeleton();
+    if (!skel) {
+      skel = m_animController.GetBindSkeleton();
+    }
+    if (!skel) {
+      return false;
+    }
+
+    for (const xF::xBone& bone : skel->Bones) {
+      const XVECTOR3 p = SkeletonJointPositionLH(bone);
+      outBounds.Expand(p.x, p.y, p.z);
+    }
+
+    return outBounds.min.x <= outBounds.max.x &&
+           outBounds.min.y <= outBounds.max.y &&
+           outBounds.min.z <= outBounds.max.z;
+  }
+
   bool RenderSkinnedMesh::UpdateHighlightedSkeletonPositions(const std::vector<int>& boneIndices) {
     if (boneIndices.empty()) {
       return false;
@@ -853,17 +972,17 @@ namespace t850 {
 
   // ── Debug wireframe draw (GPU-skinned) ─────────────────
 
-  void RenderSkinnedMesh::DrawWireframe() {
+  void RenderSkinnedMesh::DrawWireframe(const XVECTOR3& color) {
     if (!m_hasSkin || !m_wireShader || m_wireGeo.empty()) return;
-    if (!pScProp || pScProp->pCameras.empty()) return;
+    if (!pScProp || !pScProp->GetPrimaryCamera()) return;
 
-    Camera* cam = pScProp->pCameras[0];
+    Camera* cam = pScProp->GetPrimaryCamera();
     XMATRIX44 WVP = transform * cam->VP;
     XMATRIX44 WorldView = transform * cam->View;
     // CameraInfo: .x=near, .y=far, .z=viewportW, .w=viewportH
     XVECTOR3 infoCam = XVECTOR3(cam->NPlane, cam->FPlane,
                                  (float)m_wireViewW, (float)m_wireViewH);
-    XVECTOR3 wireColor(0.0f, 1.0f, 0.0f, 1.0f);
+    XVECTOR3 wireColor = color;
 
     // Base CBuffer (no bone data — bones come from texture)
     RenderMesh::CBuffer wireCB;
@@ -913,8 +1032,12 @@ namespace t850 {
         m_boneTexture->SetVS(*T8DeviceContext, BoneTextureSlot, "u_BoneTex");
 
       // Bind GBuffer depth texture for manual depth comparison in FS
-      if (m_wireDepthTex)
-        m_wireDepthTex->Set(*T8DeviceContext, 0, "depthTex");
+      if (m_wireDepthTex || m_wireDepthTex2) {
+        Texture* primaryDepth = m_wireDepthTex ? m_wireDepthTex : m_wireDepthTex2;
+        Texture* secondaryDepth = m_wireDepthTex2 ? m_wireDepthTex2 : primaryDepth;
+        primaryDepth->Set(*T8DeviceContext, 0, "depthTex");
+        secondaryDepth->Set(*T8DeviceContext, 1, "depthTex2");
+      }
 
       T8DeviceContext->DrawIndexed(m_wireGeo[i].indexCount, 0, baseVertex);
 
@@ -929,8 +1052,8 @@ namespace t850 {
     if (!m_hasSkin || !m_skelIB || !m_skelVB || !m_lineRenderer.IsReady() || m_skelIndexCount == 0)
       return;
 
-    if (!pScProp || pScProp->pCameras.empty()) return;
-    Camera* cam = pScProp->pCameras[0];
+    if (!pScProp || !pScProp->GetPrimaryCamera()) return;
+    Camera* cam = pScProp->GetPrimaryCamera();
 
     UpdateSkeletonPositions();
     m_skelVB->UpdateFromBuffer(*T8DeviceContext, m_skelPositions.data());
@@ -1120,11 +1243,11 @@ namespace t850 {
 
     // Now do the actual draw using base CBuffer + bone texture
     // (animation update + texture upload already done in UpdateAnimationAndBones)
-    if (!pScProp || pScProp->pCameras.empty() || !pScProp->pCameras[0]) {
+    if (!pScProp || !pScProp->GetPrimaryCamera()) {
       T8_LOG_ERROR("[SkinnedMesh] Draw skipped: missing scene camera");
       return;
     }
-    Camera *pActualCamera = pScProp->pCameras[0];
+    Camera *pActualCamera = pScProp->GetPrimaryCamera();
     XMATRIX44 VP = pActualCamera->VP;
 
     m_totalSubsets = m_drawnSubsets = m_culledMeshes = 0;
@@ -1549,6 +1672,7 @@ namespace t850 {
     m_skelSelectedIndexCount = 0;
     m_skelSelectedPositions.clear();
     m_wireDepthTex = nullptr;
+    m_wireDepthTex2 = nullptr;
 
     RenderMesh::Destroy();
     m_skinnedCBuffers.clear();

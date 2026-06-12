@@ -17,6 +17,7 @@
 #include <navigation/NavigationSystem.h>
 #include <physics/Q3BspCollision.h>
 #include <physics/PhysicsTypes.h>
+#include <physics/RagdollEditorTool.h>
 #include <debug/FrameDumper.h>
 #include <Config.h>
 
@@ -178,6 +179,9 @@ public:
   t850::PhysicsDebugRenderer m_physicsDebugRenderer;
   t850::navigation::NavMeshDebugRenderer m_navMeshDebugRenderer;
   t850::navigation::NavMesh m_navMesh;
+  t850::navigation::NavMeshBuildSettings m_navMeshBuildSettings;
+  float m_navMeshLastBuildMs = 0.0f;
+  bool m_navMeshLastBuildFromCache = false;
   t850::VertexBuffer* m_lightArrowVB = nullptr;
   t850::IndexBuffer* m_lightArrowIB = nullptr;
   unsigned m_lightArrowIndexCount = 0;
@@ -209,6 +213,9 @@ public:
   std::vector<std::string> m_sceneRagdollPaths;
   std::vector<float> m_sceneNavAgentFrontYawOffsets;
   std::vector<float> m_sceneNavAgentFaceYawSigns;
+  std::vector<t850::scene::SceneObjectPhysicsDesc> m_scenePhysicsAuthoring;
+  std::vector<t850::scene::SceneObjectNavigationDesc> m_sceneNavigationAuthoring;
+  std::vector<t850::scene::SceneObjectRagdollDesc> m_sceneRagdollAuthoring;
   std::vector<uint32_t> m_q3StaticCollisionEntityIds;
   struct SceneRagdollRuntime {
     int meshIndex = -1;
@@ -237,6 +244,7 @@ public:
     t850::KinematicCharacterController physicsController;
     XVECTOR3 physicsTraversalStart = XVECTOR3(0.0f, 0.0f, 0.0f, 1.0f);
     XVECTOR3 physicsTarget = XVECTOR3(0.0f, 0.0f, 0.0f, 1.0f);
+    XVECTOR3 physicsLastNavPosition = XVECTOR3(0.0f, 0.0f, 0.0f, 1.0f);
     std::vector<XVECTOR3> path;
     std::vector<t850::navigation::NavTraversalType> pathSegmentTypes;
     std::string lastPathError;
@@ -246,6 +254,8 @@ public:
     unsigned int pathGeneration = 0;
     float repathCooldownSec = 0.0f;
     float physicsTraversalTimeSec = 0.0f;
+    float physicsTraversalDurationSec = 0.0f;
+    float physicsStuckTimeSec = 0.0f;
     float frontYawOffsetDeg = 0.0f;
     float faceYawSign = 1.0f;
     t850::navigation::NavTraversalType physicsTraversalType = t850::navigation::NavTraversalType::Walk;
@@ -275,35 +285,8 @@ public:
   t850::PhysicsRagdollAnimationBinding m_ragdollAnimationBinding;
   t850::PhysicsRagdollAnimationBinding m_ragdollGeneratedBinding;
   t850::PhysicsRagdollDesc m_ragdollAnimationPose;
-  struct RagdollAuthoringUndoSnapshot {
-    t850::PhysicsRagdollAnimationBinding binding;
-    t850::PhysicsRagdollDesc animationPose;
-    std::vector<int> parentCapsules;
-    std::vector<int> jointParentCapsules;
-    std::vector<uint8_t> frozenCapsules;
-    std::vector<uint8_t> frozenJoints;
-    std::vector<uint8_t> contactJoints;
-    std::vector<XMATRIX44> skeletonEditCombined;
-    int selectedCapsule = -1;
-    int selectedJoint = -1;
-    int selectedParentCapsule = -1;
-    int selectedJointParentCapsule = -1;
-    int selectedBone = -1;
-    int selectedUnassignedBone = -1;
-    int selectedAffectedBone = -1;
-    int selectedHandle = -1;
-    int selectionMode = 0;
-    int transformSpace = 0;
-    int gizmoMode = 0;
-    std::string label;
-  };
-  std::vector<RagdollAuthoringUndoSnapshot> m_ragdollUndoStack;
-  RagdollAuthoringUndoSnapshot m_ragdollUndoScopeBefore;
-  RagdollAuthoringUndoSnapshot m_ragdollUndoPendingBefore;
-  std::string m_ragdollUndoScopeLabel;
-  bool m_ragdollUndoScopeActive = false;
-  bool m_ragdollUndoPendingActive = false;
-  bool m_ragdollUndoSuppressRecording = false;
+  using RagdollAuthoringUndoSnapshot = t850::ragdoll_editor::AuthoringUndoSnapshot;
+  t850::ragdoll_editor::UndoState m_ragdollUndoState;
   std::vector<int> m_ragdollParentCapsules;
   std::vector<int> m_ragdollJointParentCapsules;
   std::vector<t850::PhysicsBodyState> m_ragdollPhysicsStates;

@@ -48,13 +48,86 @@ namespace t850 {
 
 namespace {
 #ifndef OS_ANDROID
+  const char* SdlWindowEventName(Uint32 eventType) {
+    switch (eventType) {
+    case SDL_EVENT_WINDOW_FOCUS_LOST: return "FOCUS_LOST";
+    case SDL_EVENT_WINDOW_MINIMIZED: return "MINIMIZED";
+    case SDL_EVENT_WINDOW_HIDDEN: return "HIDDEN";
+    case SDL_EVENT_WINDOW_FOCUS_GAINED: return "FOCUS_GAINED";
+    case SDL_EVENT_WINDOW_RESTORED: return "RESTORED";
+    case SDL_EVENT_WINDOW_SHOWN: return "SHOWN";
+    case SDL_EVENT_WINDOW_MAXIMIZED: return "MAXIMIZED";
+    case SDL_EVENT_WINDOW_RESIZED: return "RESIZED";
+    case SDL_EVENT_WINDOW_PIXEL_SIZE_CHANGED: return "PIXEL_SIZE_CHANGED";
+    case SDL_EVENT_WINDOW_MOUSE_ENTER: return "MOUSE_ENTER";
+    case SDL_EVENT_WINDOW_MOUSE_LEAVE: return "MOUSE_LEAVE";
+    default: return "WINDOW_EVENT";
+    }
+  }
+
   static bool sdlEventWatcher(void* userdata, SDL_Event* event) {
     ImGui_ImplSDL3_ProcessEvent(event);
     auto* system = static_cast<t850::ImGuiSystem*>(userdata);
     if (system && event->type == SDL_EVENT_MOUSE_WHEEL) {
       system->AddWheelDelta(event->wheel.y);
     }
+    if (system &&
+        event->type >= SDL_EVENT_WINDOW_FIRST &&
+        event->type <= SDL_EVENT_WINDOW_LAST) {
+      system->NoteWindowEvent(SdlWindowEventName(event->type), event->window.data1, event->window.data2);
+    }
     return true;
+  }
+
+  void SyncImGuiMouseFromSDL(SDL_Window* window, bool platformWindowsEnabled, int traceFrames, const std::string& lastEventName, int eventData1, int eventData2) {
+    if (!window) {
+      return;
+    }
+
+    ImGuiIO& io = ImGui::GetIO();
+    float x = 0.0f;
+    float y = 0.0f;
+    SDL_MouseButtonFlags buttons = 0;
+    if (platformWindowsEnabled) {
+      buttons = SDL_GetGlobalMouseState(&x, &y);
+    } else {
+      buttons = SDL_GetMouseState(&x, &y);
+    }
+
+    io.AddMousePosEvent(x, y);
+    io.AddMouseButtonEvent(0, (buttons & SDL_BUTTON_LMASK) != 0);
+    io.AddMouseButtonEvent(1, (buttons & SDL_BUTTON_RMASK) != 0);
+    io.AddMouseButtonEvent(2, (buttons & SDL_BUTTON_MMASK) != 0);
+    if (traceFrames > 0) {
+      int winX = 0, winY = 0, winW = 0, winH = 0, pixW = 0, pixH = 0;
+      SDL_GetWindowPosition(window, &winX, &winY);
+      SDL_GetWindowSize(window, &winW, &winH);
+      SDL_GetWindowSizeInPixels(window, &pixW, &pixH);
+      ImGuiViewport* viewport = ImGui::GetMainViewport();
+      T8_LOG_TRACE("[ImGuiMouseSync] after=%s(%d,%d) mode=%s mouse=(%.1f,%.1f) buttons=0x%08X io.MousePos=(%.1f,%.1f) display=(%.1f,%.1f) winPos=(%d,%d) winSize=(%d,%d) pix=(%d,%d) viewportPos=(%.1f,%.1f) viewportSize=(%.1f,%.1f) captureMouse=%d",
+                  lastEventName.c_str(),
+                  eventData1,
+                  eventData2,
+                  platformWindowsEnabled ? "global" : "window",
+                  x,
+                  y,
+                  (unsigned int)buttons,
+                  io.MousePos.x,
+                  io.MousePos.y,
+                  io.DisplaySize.x,
+                  io.DisplaySize.y,
+                  winX,
+                  winY,
+                  winW,
+                  winH,
+                  pixW,
+                  pixH,
+                  viewport ? viewport->Pos.x : 0.0f,
+                  viewport ? viewport->Pos.y : 0.0f,
+                  viewport ? viewport->Size.x : 0.0f,
+                  viewport ? viewport->Size.y : 0.0f,
+                  io.WantCaptureMouse ? 1 : 0);
+    }
   }
 #endif
 
@@ -71,7 +144,7 @@ ImGuiSystem::~ImGuiSystem() {
   Shutdown();
 }
 
-bool ImGuiSystem::Init(RootFramework* framework, const char* iniFileName, bool enableDocking) {
+bool ImGuiSystem::Init(RootFramework* framework, const char* iniFileName, bool enableDocking, bool enablePlatformWindows) {
   if (m_inited) return true;
   if (!framework || !framework->pVideoDriver) return false;
 
@@ -101,6 +174,7 @@ bool ImGuiSystem::Init(RootFramework* framework, const char* iniFileName, bool e
 
   m_api = framework->pVideoDriver->m_currentAPI;
   m_dockingEnabled = enableDocking;
+  m_platformWindowsEnabled = enablePlatformWindows;
 
   IMGUI_CHECKVERSION();
   ImGui::CreateContext();
@@ -110,6 +184,11 @@ bool ImGuiSystem::Init(RootFramework* framework, const char* iniFileName, bool e
   if (m_dockingEnabled) {
     io.ConfigFlags |= ImGuiConfigFlags_DockingEnable;
   }
+#ifndef OS_ANDROID
+  if (m_platformWindowsEnabled) {
+    io.ConfigFlags |= ImGuiConfigFlags_ViewportsEnable;
+  }
+#endif
   io.IniFilename = iniFileName;
 
   ImGui::StyleColorsDark();
@@ -118,6 +197,10 @@ bool ImGuiSystem::Init(RootFramework* framework, const char* iniFileName, bool e
   style.FrameRounding = 2.0f;
   style.GrabRounding = 2.0f;
   style.ScrollbarRounding = 3.0f;
+  if (m_platformWindowsEnabled) {
+    style.WindowRounding = 0.0f;
+    style.Colors[ImGuiCol_WindowBg].w = 1.0f;
+  }
 
   bool platformOK = false;
 #ifdef OS_ANDROID
@@ -232,6 +315,7 @@ bool ImGuiSystem::Init(RootFramework* framework, const char* iniFileName, bool e
     ImGui::DestroyContext();
     m_framework = nullptr;
     m_sdlWindow = nullptr;
+    m_platformWindowsEnabled = false;
 #ifdef OS_ANDROID
     m_androidWindow = nullptr;
 #endif
@@ -251,6 +335,11 @@ void ImGuiSystem::Shutdown() {
   if (!m_inited) return;
 
   ClearLoadingProgressRenderer();
+
+  ImGuiIO& io = ImGui::GetIO();
+  if (io.IniFilename && io.IniFilename[0] != '\0') {
+    ImGui::SaveIniSettingsToDisk(io.IniFilename);
+  }
 
 #ifdef OS_WINDOWS
   if (m_api == GraphicsApi::D3D11) {
@@ -294,6 +383,13 @@ void ImGuiSystem::Shutdown() {
   T8_LOG_INFO("[ImGuiSystem] Shutdown complete");
 }
 
+void ImGuiSystem::NoteWindowEvent(const char* eventName, int data1, int data2) {
+  m_lastWindowEventName = eventName ? eventName : "<null>";
+  m_lastWindowEventData1 = data1;
+  m_lastWindowEventData2 = data2;
+  m_windowEventTraceFrames = 12;
+}
+
 bool ImGuiSystem::NewFrame(bool createDockspace) {
   if (!m_inited) return false;
 
@@ -327,8 +423,34 @@ bool ImGuiSystem::NewFrame(bool createDockspace) {
   ImGui_ImplAndroid_NewFrame();
 #else
   ImGui_ImplSDL3_NewFrame();
+  SyncImGuiMouseFromSDL(
+      m_sdlWindow,
+      m_platformWindowsEnabled,
+      m_windowEventTraceFrames,
+      m_lastWindowEventName,
+      m_lastWindowEventData1,
+      m_lastWindowEventData2);
 #endif
   ImGui::NewFrame();
+  if (m_windowEventTraceFrames > 0) {
+    ImGuiIO& io = ImGui::GetIO();
+    ImGuiViewport* viewport = ImGui::GetMainViewport();
+    T8_LOG_TRACE("[ImGuiNewFrameTrace] after=%s framesLeft=%d io.MousePos=(%.1f,%.1f) display=(%.1f,%.1f) viewportPos=(%.1f,%.1f) viewportSize=(%.1f,%.1f) wantMouse=%d wantKeyboard=%d hoveredAny=%d",
+                m_lastWindowEventName.c_str(),
+                m_windowEventTraceFrames,
+                io.MousePos.x,
+                io.MousePos.y,
+                io.DisplaySize.x,
+                io.DisplaySize.y,
+                viewport ? viewport->Pos.x : 0.0f,
+                viewport ? viewport->Pos.y : 0.0f,
+                viewport ? viewport->Size.x : 0.0f,
+                viewport ? viewport->Size.y : 0.0f,
+                io.WantCaptureMouse ? 1 : 0,
+                io.WantCaptureKeyboard ? 1 : 0,
+                ImGui::IsWindowHovered(ImGuiHoveredFlags_AnyWindow) ? 1 : 0);
+    --m_windowEventTraceFrames;
+  }
 
   if (m_dockingEnabled && createDockspace) {
     ImGui::DockSpaceOverViewport(0, ImGui::GetMainViewport(), ImGuiDockNodeFlags_PassthruCentralNode);
@@ -341,6 +463,32 @@ void ImGuiSystem::Render() {
 
   BuildDrawData();
   RenderDrawData();
+
+#ifndef OS_ANDROID
+  ImGuiIO& io = ImGui::GetIO();
+  if ((io.ConfigFlags & ImGuiConfigFlags_ViewportsEnable) != 0) {
+    bool deferPlatformResize = false;
+    if (m_api == GraphicsApi::VULKAN && io.MouseDown[0]) {
+      ImGuiPlatformIO& platformIO = ImGui::GetPlatformIO();
+      for (ImGuiViewport* viewport : platformIO.Viewports) {
+        if (viewport && viewport->PlatformRequestResize) {
+          deferPlatformResize = true;
+          break;
+        }
+      }
+    }
+    if (deferPlatformResize) {
+      return;
+    }
+    SDL_Window* backupWindow = SDL_GL_GetCurrentWindow();
+    SDL_GLContext backupContext = SDL_GL_GetCurrentContext();
+    ImGui::UpdatePlatformWindows();
+    ImGui::RenderPlatformWindowsDefault();
+    if (backupWindow && backupContext) {
+      SDL_GL_MakeCurrent(backupWindow, backupContext);
+    }
+  }
+#endif
 }
 
 void ImGuiSystem::InstallLoadingProgressRenderer() {

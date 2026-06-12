@@ -180,10 +180,10 @@ void DevLayer::BuildCullingFrustumVertices(const Camera& camera, CullingDebugVer
 }
 
 void DevLayer::DrawCullingDebug(const SceneProps& props) {
-  if (!props.ShowCullingDebug || props.pCameras.empty() || !props.pCameras[0] || !T8DeviceContext) return;
+  if (!props.ShowCullingDebug || !props.GetPrimaryCamera() || !T8DeviceContext) return;
   if (!EnsureCullingDebugResources()) return;
 
-  Camera* viewCamera = props.pCameras[0];
+  Camera* viewCamera = props.GetPrimaryCamera();
   Camera* cullingCamera = props.pCullingCamera ? props.pCullingCamera : viewCamera;
 
   CullingDebugVert verts[8];

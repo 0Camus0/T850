@@ -19,6 +19,7 @@
 #include <video/BaseDriver.h>
 
 struct SDL_Window;
+union SDL_Event;
 struct SDL_GLContextState;
 typedef struct SDL_GLContextState *SDL_GLContext;
 
@@ -47,8 +48,14 @@ namespace t850 {
   private:
     void UpdateMouseMode();
     void ReleaseMouseMode();
+    void ResetInputAfterWindowStateChange();
+    void ResetMouseDeltaBaseline();
+    void TraceWindowEvent(const SDL_Event& event);
     bool m_cursorConfined = false;
     bool m_relativeMouseMode = false;
+    int m_lastAbsMouseX = 0;
+    int m_lastAbsMouseY = 0;
+    bool m_absMouseBaselineValid = false;
   };
 }
 

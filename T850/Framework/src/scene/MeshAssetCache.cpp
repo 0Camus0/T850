@@ -244,7 +244,16 @@ namespace t850 {
   }
 
   MeshAssetCache::~MeshAssetCache() {
-    Clear();
+    if (g_pBaseDriver) {
+      Clear();
+      return;
+    }
+    m_assets.clear();
+    m_vertexPools.clear();
+    m_vertexPoolIndex.clear();
+    m_indexPools.clear();
+    m_indexPool16 = -1;
+    m_indexPool32 = -1;
   }
 
   std::string MeshAssetCache::Normalize(const std::string& path) {

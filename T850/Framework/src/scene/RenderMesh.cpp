@@ -1391,12 +1391,13 @@ namespace t850 {
 
   void RenderMesh::DrawWireframe() {
     if (!m_lineRenderer.IsReady() || m_wireGeo.empty()) return;
-    if (!pScProp || pScProp->pCameras.empty()) return;
+    if (!pScProp || !pScProp->GetPrimaryCamera()) return;
 
-    Camera* cam = pScProp->pCameras[0];
-    XVECTOR3 wireColor(0.0f, 1.0f, 0.0f, 1.0f);
-    m_lineRenderer.SetDepthTestEnabled(m_wireDepthTex != nullptr);
+    Camera* cam = pScProp->GetPrimaryCamera();
+    XVECTOR3 wireColor(1.0f, 1.0f, 1.0f, 1.0f);
+    m_lineRenderer.SetDepthTestEnabled(m_wireDepthTex != nullptr || m_wireDepthTex2 != nullptr);
     m_lineRenderer.SetDepthTexture(m_wireDepthTex);
+    m_lineRenderer.SetSecondaryDepthTexture(m_wireDepthTex2);
     m_lineRenderer.SetViewport(m_wireViewW, m_wireViewH);
     m_lineRenderer.SetFarPlane(cam->FPlane);
 
@@ -1927,7 +1928,7 @@ namespace t850 {
       return;
 
     uint8_t currentPass = gKey.getPass();
-    Camera* pRenderCamera = pScProp && !pScProp->pCameras.empty() ? pScProp->pCameras[0] : nullptr;
+    Camera* pRenderCamera = pScProp ? pScProp->GetPrimaryCamera() : nullptr;
     if (!pRenderCamera)
       return;
     Camera* pCullCamera = pRenderCamera;
@@ -2588,6 +2589,7 @@ namespace t850 {
     m_wireShader = nullptr;
     m_lineRenderer.Destroy();
     m_wireDepthTex = nullptr;
+    m_wireDepthTex2 = nullptr;
     m_cullingMetadataReady = false;
   }
 }

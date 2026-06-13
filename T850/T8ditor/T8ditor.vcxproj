@@ -390,6 +390,7 @@ call "$(SolutionDir)scripts\CopyFirstExisting.cmd" "$(OutDir)" "$(T8VcpkgDynamic
     <ClCompile Include="EditorWorld.cpp" />
     <ClCompile Include="PlayScenePanel.cpp" />
     <ClCompile Include="MeshEditorPanel.cpp" />
+    <ClCompile Include="RagdollEditorPanel.cpp" />
     <ClCompile Include="EditorImGui.cpp" />
     <ClCompile Include="..\DayScene\RagdollEditor.cpp" />
     <ClCompile Include="..\DayScene\Quake3Mock.cpp" />
@@ -409,6 +410,7 @@ call "$(SolutionDir)scripts\CopyFirstExisting.cmd" "$(OutDir)" "$(T8VcpkgDynamic
     <ClInclude Include="EditorSceneSerialization.h" />
     <ClInclude Include="EditorWorld.h" />
     <ClInclude Include="EditorInternal.h" />
+    <ClInclude Include="EditorRagdollSupport.h" />
     <ClInclude Include="SceneObject.h" />
     <ClInclude Include="SceneGraph.h" />
     <ClInclude Include="UndoRedo.h" />

@@ -12,6 +12,7 @@ add_executable(T8ditor
 	EditorSceneGizmos.cpp
 	EditorMath.cpp
 	EditorUtil.cpp
+	EditorViewportUtil.cpp
 	EditorSceneSerialization.cpp
 	EditorWorld.cpp
 	PlayScenePanel.cpp

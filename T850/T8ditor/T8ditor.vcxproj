@@ -386,6 +386,7 @@ call "$(SolutionDir)scripts\CopyFirstExisting.cmd" "$(OutDir)" "$(T8VcpkgDynamic
     <ClCompile Include="EditorSceneGizmos.cpp" />
     <ClCompile Include="EditorMath.cpp" />
     <ClCompile Include="EditorUtil.cpp" />
+    <ClCompile Include="EditorViewportUtil.cpp" />
     <ClCompile Include="EditorSceneSerialization.cpp" />
     <ClCompile Include="EditorWorld.cpp" />
     <ClCompile Include="PlayScenePanel.cpp" />
@@ -407,6 +408,7 @@ call "$(SolutionDir)scripts\CopyFirstExisting.cmd" "$(OutDir)" "$(T8VcpkgDynamic
     <ClInclude Include="EditorSceneGizmos.h" />
     <ClInclude Include="EditorMath.h" />
     <ClInclude Include="EditorUtil.h" />
+    <ClInclude Include="EditorViewportUtil.h" />
     <ClInclude Include="EditorSceneSerialization.h" />
     <ClInclude Include="EditorWorld.h" />
     <ClInclude Include="EditorInternal.h" />

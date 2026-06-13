@@ -40,9 +40,9 @@ Important safety change versus the broken stash: the ragdoll panel no longer bin
 those deferred scratch resources inside `DrawRagdollEditorViewport()` right before use. Runtime-test **Mesh Edit**
 and **Ragdoll Edit** in the launcher passed on 2026-06-12.
 
-## CURRENT WIP — Phase 5, build-green, awaiting runtime test
-Phase 5 has been applied on top of the committed Phase 4c baseline. `EditorApp.cpp` now has **7,669**
-lines. The x64 Release full-solution build succeeds.
+## DONE — Phase 5, build-green, runtime-verified, committed
+Phase 5 was applied on top of the committed Phase 4c baseline and committed as `644535a`.
+`EditorApp.cpp` now has **7,669** lines. The x64 Release full-solution build succeeds.
 
 What changed:
 - `OnUpdate()` now delegates the deferred scene-load block to `LoadPendingScene()`.
@@ -53,8 +53,25 @@ What changed:
 - The old sub-editor fast-path `goto after_editor_imgui;` cases are `return;` statements inside
   `DrawEditorUI()`, while the frame dump and `EndFrame()` epilogue remain in `OnDraw()`.
 
-Runtime-test **Mesh Edit** first, then normal editor scene rendering/loading, before marking Phase 5 done
-or committing it.
+Runtime-test passed on 2026-06-12.
+
+## DONE — Phase 6, build-green, runtime-verified
+Phase 6 has been applied and runtime-tested. The x64 Release full-solution build succeeds.
+
+What changed:
+- Added `EditorViewportUtil.{h,cpp}` for shared hosted-viewport sizing, resize-held checks,
+  render-target lookup/validation, ImGui texture blit + input capture, and ragdoll orbit-camera setup.
+- Mesh Edit and Play Scene now use the shared viewport resize, RT validation, and ImGui blit helpers.
+- Ragdoll Edit now stores its GBuffer/output RTs as `t850::RenderViewport`, using the same resize/debounce
+  helper path as Mesh Edit and Play Scene instead of manual `m_ragdollEditorViewport*` counters.
+- Ragdoll Edit's inline spherical camera setup now goes through `ConfigureEditorOrbitCamera()`.
+
+Runtime-test Mesh Edit, Ragdoll Edit, and Play Scene passed on 2026-06-12.
+
+## NEXT — Phase 7, production architecture
+The safe split/refactor plan is complete. The next phase should convert the extracted partial-method panels
+into proper shared classes, starting with hosted window/viewport abstractions that own common native-window
+state, viewport sizing/resize, render-target lifecycle, image blit, and input focus behavior.
 
 ### Technique (reuse this for remaining phases)
 - **Partial class across TUs**: move a sub-app's `EditorApp::` methods byte-for-byte into a new
@@ -73,15 +90,14 @@ or committing it.
 Complete in the current worktree. Commit this safe baseline before attempting Phase 5.
 
 ### Phase 5 — decompose `OnDraw` (1,959 lines) and the `OnUpdate` scene-loader
-Code/build complete in the current worktree. Runtime-test Mesh Edit and scene loading/rendering before
-marking done or committing.
+Complete and committed.
 
 ### Phase 6 — remove duplication (the user's original ask)
-- Replace the **3 hand-rolled orbit cameras** (main `EditorCamera` vs mesh-editor `m_meshEditorOrbit*`
-  vs ragdoll-editor inline spherical math) with the existing `EditorCamera`.
-- Unify the **inconsistent viewport-resize** debounce (mesh editor uses `RenderViewport::ShouldResize`;
-  ragdoll editor hand-rolls a stable-frame counter).
-- De-dup the copy-pasted RT-validity check + ImGui image blit across the hosted viewports.
+Complete in the current worktree. Commit this runtime-verified baseline before Phase 7.
+
+### Phase 7 — production-quality hosted panel classes
+Start converting the panel TUs from "partial `EditorApp::` methods" into actual classes. First target:
+shared hosted window/viewport state and behavior for Mesh Edit, Ragdoll Edit, and Play Scene.
 
 ### Optional
 Extract `DrawNavMeshAuthoringPanel` and `DrawEditorRenderingPanel` into their own panel TUs.

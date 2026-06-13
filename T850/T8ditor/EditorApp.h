@@ -437,13 +437,8 @@ namespace t8ditor {
     bool& m_ragdollEditorMainViewportLogged = m_ragdollEditorWindow.mainViewportLogged;
     bool m_ragdollEditorDirty = false;
     std::string m_ragdollEditorStatus;
-    int m_ragdollEditorGBufferRT = -1;
-    int m_ragdollEditorViewportRT = -1;
-    int m_ragdollEditorViewportW = 0;
-    int m_ragdollEditorViewportH = 0;
-    int m_ragdollEditorPendingViewportW = 0;
-    int m_ragdollEditorPendingViewportH = 0;
-    int m_ragdollEditorViewportStableFrames = 0;
+    t850::RenderViewport m_ragdollEditorGBufferTarget;
+    t850::RenderViewport m_ragdollEditorViewportTarget;
     Camera m_ragdollEditorCamera;
     XVECTOR3 m_ragdollEditorOrbitTarget = XVECTOR3(0.0f, 0.0f, 0.0f, 1.0f);
     float m_ragdollEditorOrbitYaw = -0.75f;

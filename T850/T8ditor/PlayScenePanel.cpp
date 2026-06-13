@@ -12,6 +12,7 @@
 #include "EditorInternal.h"
 #include "EditorMath.h"
 #include "EditorScene.h"
+#include "EditorViewportUtil.h"
 #include "EditorImGui.h"
 
 #include <core/EngineContext.h>
@@ -365,23 +366,18 @@ void EditorApp::DrawPlaySceneViewport() {
         : m_playSceneStatus.c_str());
     return;
   }
-  const int desiredViewportW = (std::max)(64, (int)std::floor(available.x));
-  const int desiredViewportH = (std::max)(64, (int)std::floor(available.y));
-  const bool mouseResizingWindow =
-      ImGui::IsMouseDown(ImGuiMouseButton_Left) ||
-      ImGui::IsMouseDown(ImGuiMouseButton_Right) ||
-      ImGui::IsMouseDown(ImGuiMouseButton_Middle);
+  const EditorViewportSize desiredViewport = EditorViewportDesiredSize(available);
   t850::RenderViewportDesc viewportDesc;
   viewportDesc.minWidth = 64;
   viewportDesc.minHeight = 64;
   const bool shouldResizeRT =
-      m_playSceneViewportTarget.ShouldResize(desiredViewportW, desiredViewportH, mouseResizingWindow, viewportDesc);
+      EditorViewportShouldResize(m_playSceneViewportTarget, desiredViewport.width, desiredViewport.height, viewportDesc);
 
   if (shouldResizeRT) {
     if (pFramework && pFramework->pVideoDriver) {
       pFramework->pVideoDriver->WaitForGPU();
     }
-    if (!EnsurePlaySceneViewportTarget(desiredViewportW, desiredViewportH)) {
+    if (!EnsurePlaySceneViewportTarget(desiredViewport.width, desiredViewport.height)) {
       ImGui::TextDisabled("Play Scene viewport unavailable.");
       return;
     }
@@ -399,19 +395,14 @@ void EditorApp::DrawPlaySceneViewport() {
   }
 
   t850::BaseDriver* driver = pFramework->pVideoDriver;
-  const int playViewportRT = m_playSceneViewportTarget.Handle();
-  t850::BaseRT* rt = (playViewportRT >= 0 &&
-                      playViewportRT < (int)driver->RTs.size())
-      ? driver->RTs[playViewportRT]
-      : nullptr;
-  if (!rt || rt->vColorTextures.empty() || !rt->vColorTextures[0]) {
+  t850::BaseRT* rt = EditorRenderTarget(driver, m_playSceneViewportTarget.Handle());
+  if (!EditorRenderTargetReady(rt, 1, false)) {
     ImGui::TextDisabled("Play Scene render target is unavailable.");
     return;
   }
 
   const ImVec2 imageSize((float)m_playSceneViewportTarget.Width(), (float)m_playSceneViewportTarget.Height());
   const ImVec2 imageMin = ImGui::GetCursorScreenPos();
-  const ImVec2 imageMax(imageMin.x + imageSize.x, imageMin.y + imageSize.y);
   m_playSceneViewportImageMinX = imageMin.x;
   m_playSceneViewportImageMinY = imageMin.y;
   m_playSceneViewportImageSizeX = imageSize.x;
@@ -427,19 +418,15 @@ void EditorApp::DrawPlaySceneViewport() {
   m_playScene->OnUpdate(m_dtSecs);
   m_playScene->OnDraw();
 
-  ImTextureID image = ImGuiTextureID(driver, rt->vColorTextures[0]);
-  if (!image) {
-    ImGui::TextDisabled("Play Scene texture is not available for ImGui.");
+  if (!DrawEditorViewportTexture(driver,
+                                 EditorRenderTargetColor(rt),
+                                 imageMin,
+                                 imageSize,
+                                 "##PlaySceneViewportInput",
+                                 "Play Scene texture is not available for ImGui.",
+                                 &m_playSceneViewportInputActive)) {
     return;
   }
-  const bool flipV = driver->NeedsVFlip();
-  const ImVec2 uv0(0.0f, flipV ? 1.0f : 0.0f);
-  const ImVec2 uv1(1.0f, flipV ? 0.0f : 1.0f);
-  ImGui::GetWindowDrawList()->AddImage(image, imageMin, imageMax, uv0, uv1);
-  ImGui::InvisibleButton("##PlaySceneViewportInput",
-                         imageSize,
-                         ImGuiButtonFlags_MouseButtonLeft | ImGuiButtonFlags_MouseButtonRight | ImGuiButtonFlags_MouseButtonMiddle);
-  m_playSceneViewportInputActive = ImGui::IsItemHovered() || ImGui::IsItemActive();
 }
 
 void EditorApp::DrawPlaySceneWindow() {

@@ -51,6 +51,9 @@
     <ClCompile Include="EditorViewportUtil.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
+    <ClCompile Include="HostedViewportPanel.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
     <ClCompile Include="EditorSceneSerialization.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
@@ -111,6 +114,9 @@
       <Filter>Header Files</Filter>
     </ClInclude>
     <ClInclude Include="EditorViewportUtil.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="HostedViewportPanel.h">
       <Filter>Header Files</Filter>
     </ClInclude>
     <ClInclude Include="EditorSceneSerialization.h">

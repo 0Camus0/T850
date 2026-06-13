@@ -40,6 +40,22 @@ Important safety change versus the broken stash: the ragdoll panel no longer bin
 those deferred scratch resources inside `DrawRagdollEditorViewport()` right before use. Runtime-test **Mesh Edit**
 and **Ragdoll Edit** in the launcher passed on 2026-06-12.
 
+## CURRENT WIP — Phase 5, build-green, awaiting runtime test
+Phase 5 has been applied on top of the committed Phase 4c baseline. `EditorApp.cpp` now has **7,669**
+lines. The x64 Release full-solution build succeeds.
+
+What changed:
+- `OnUpdate()` now delegates the deferred scene-load block to `LoadPendingScene()`.
+- `OnDraw()` now orchestrates frame begin/clear/frozen-frame capture/UI/frame dump/end-frame.
+- Scene rendering moved to `RenderEditorSceneFrame()`.
+- Editor-light synchronization moved to `SyncEditorSceneLights()`.
+- ImGui/editor panel drawing moved to `DrawEditorUI()`.
+- The old sub-editor fast-path `goto after_editor_imgui;` cases are `return;` statements inside
+  `DrawEditorUI()`, while the frame dump and `EndFrame()` epilogue remain in `OnDraw()`.
+
+Runtime-test **Mesh Edit** first, then normal editor scene rendering/loading, before marking Phase 5 done
+or committing it.
+
 ### Technique (reuse this for remaining phases)
 - **Partial class across TUs**: move a sub-app's `EditorApp::` methods byte-for-byte into a new
   `.cpp` (still `namespace t8ditor { ... }`, still `EditorApp::` methods). No new members in
@@ -57,9 +73,8 @@ and **Ragdoll Edit** in the launcher passed on 2026-06-12.
 Complete in the current worktree. Commit this safe baseline before attempting Phase 5.
 
 ### Phase 5 — decompose `OnDraw` (1,959 lines) and the `OnUpdate` scene-loader
-Split into `LoadPendingScene` (from OnUpdate), `SyncEditorSceneLights`, `RenderEditorSceneFrame`,
-`DrawEditorUI`. Note `OnDraw` has 2 `goto after_editor_imgui;` (the sub-editor-open fast path) that
-become `return;` once `DrawEditorUI` is its own method, with the frame-dump epilogue staying in `OnDraw`.
+Code/build complete in the current worktree. Runtime-test Mesh Edit and scene loading/rendering before
+marking done or committing.
 
 ### Phase 6 — remove duplication (the user's original ask)
 - Replace the **3 hand-rolled orbit cameras** (main `EditorCamera` vs mesh-editor `m_meshEditorOrbit*`

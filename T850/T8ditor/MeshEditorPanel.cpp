@@ -162,7 +162,7 @@ bool EditorApp::EnsureMeshEditorViewportTarget(int width, int height) {
     return false;
   }
 
-  if (!m_meshEditorViewportTarget.Ensure(driver, width, height, outputDesc)) {
+  if (!m_meshEditorViewport.Ensure(driver, width, height, outputDesc)) {
     DestroyMeshEditorViewportTarget();
     T8_LOG_ERROR("[T8ditor] Failed to create Mesh Edit viewport RT %dx%d", width, height);
     return false;
@@ -170,16 +170,16 @@ bool EditorApp::EnsureMeshEditorViewportTarget(int width, int height) {
 
   T8_LOG_INFO("[T8ditor] Mesh Edit viewport RTs created gbuffer=%d output=%d size=%dx%d",
               m_meshEditorGBufferTarget.Handle(),
-              m_meshEditorViewportTarget.Handle(),
-              m_meshEditorViewportTarget.Width(),
-              m_meshEditorViewportTarget.Height());
+              m_meshEditorViewport.Handle(),
+              m_meshEditorViewport.Width(),
+              m_meshEditorViewport.Height());
   return true;
 }
 
 void EditorApp::DestroyMeshEditorViewportTarget() {
   if (pFramework && pFramework->pVideoDriver) {
     m_meshEditorGBufferTarget.Destroy(pFramework->pVideoDriver);
-    m_meshEditorViewportTarget.Destroy(pFramework->pVideoDriver);
+    m_meshEditorViewport.Destroy(pFramework->pVideoDriver);
   }
 }
 
@@ -588,11 +588,11 @@ bool EditorApp::EnsureMeshEditorEmbeddedScene(SceneObject& obj) {
   m_meshEditorScene->SetEngineContext(&t850::GetEngineContext());
   const std::string meshPath = obj.meshPath.empty() ? obj.name : obj.meshPath;
   m_meshEditorScene->UseExternalMesh(obj.litInst, meshPath);
-  m_meshEditorScene->SetRenderViewport(m_meshEditorViewportImageMinX,
-                                       m_meshEditorViewportImageMinY,
-                                       m_meshEditorViewportTarget.Width(),
-                                       m_meshEditorViewportTarget.Height());
-  m_meshEditorScene->SetFinalOutputRT(m_meshEditorViewportTarget.Handle());
+  m_meshEditorScene->SetRenderViewport(m_meshEditorViewport.ImageMinX(),
+                                       m_meshEditorViewport.ImageMinY(),
+                                       m_meshEditorViewport.Width(),
+                                       m_meshEditorViewport.Height());
+  m_meshEditorScene->SetFinalOutputRT(m_meshEditorViewport.Handle());
   m_meshEditorScene->OnLoadScene();
   if (m_meshEditorScene->m_meshCount <= 0 || !m_meshEditorScene->Meshes[0].pBase) {
     T8_LOG_ERROR("[T8ditor] Mesh Edit failed to load embedded RagdollEditor mesh '%s'", meshPath.c_str());
@@ -611,7 +611,7 @@ void EditorApp::DrawMeshEditorViewport(SceneObject& obj) {
   viewportDesc.minWidth = 64;
   viewportDesc.minHeight = 64;
   const bool shouldResizeRT =
-      EditorViewportShouldResize(m_meshEditorViewportTarget, desiredViewport.width, desiredViewport.height, viewportDesc);
+      m_meshEditorViewport.ShouldResize(desiredViewport.width, desiredViewport.height, viewportDesc);
 
   if (shouldResizeRT) {
     if (pFramework && pFramework->pVideoDriver) {
@@ -623,29 +623,26 @@ void EditorApp::DrawMeshEditorViewport(SceneObject& obj) {
     }
     if (m_meshEditorScene && m_meshEditorSceneLoaded) {
       m_meshEditorScene->ResizeRenderTargets(
-          m_meshEditorViewportTarget.Width(),
-          m_meshEditorViewportTarget.Height(),
-          m_meshEditorViewportTarget.Handle());
+          m_meshEditorViewport.Width(),
+          m_meshEditorViewport.Height(),
+          m_meshEditorViewport.Handle());
     }
   }
 
-  if (!m_meshEditorViewportTarget.IsValid() || !pFramework || !pFramework->pVideoDriver) {
+  if (!m_meshEditorViewport.IsValid() || !pFramework || !pFramework->pVideoDriver) {
     ImGui::TextDisabled("Mesh editor viewport unavailable.");
     return;
   }
 
-  const int viewportW = m_meshEditorViewportTarget.Width();
-  const int viewportH = m_meshEditorViewportTarget.Height();
+  const int viewportW = m_meshEditorViewport.Width();
+  const int viewportH = m_meshEditorViewport.Height();
   const ImVec2 embeddedViewportSize((float)viewportW, (float)viewportH);
   const ImVec2 embeddedImageMin = ImGui::GetCursorScreenPos();
-  m_meshEditorViewportImageMinX = embeddedImageMin.x;
-  m_meshEditorViewportImageMinY = embeddedImageMin.y;
-  m_meshEditorViewportImageSizeX = embeddedViewportSize.x;
-  m_meshEditorViewportImageSizeY = embeddedViewportSize.y;
+  m_meshEditorViewport.SetImageRect(embeddedImageMin, embeddedViewportSize);
 
   t850::BaseDriver* driver = pFramework->pVideoDriver;
   t850::BaseRT* gbufferRT = EditorRenderTarget(driver, m_meshEditorGBufferTarget.Handle());
-  t850::BaseRT* rt = EditorRenderTarget(driver, m_meshEditorViewportTarget.Handle());
+  t850::BaseRT* rt = EditorRenderTarget(driver, m_meshEditorViewport.Handle());
   if (!EditorRenderTargetReady(gbufferRT, 7, true) ||
       !EditorRenderTargetReady(rt, 1, false)) {
     ImGui::TextDisabled("Mesh editor render targets are unavailable.");
@@ -657,7 +654,7 @@ void EditorApp::DrawMeshEditorViewport(SceneObject& obj) {
     return;
   }
 
-  m_meshEditorScene->SetFinalOutputRT(m_meshEditorViewportTarget.Handle());
+  m_meshEditorScene->SetFinalOutputRT(m_meshEditorViewport.Handle());
   m_meshEditorScene->SetRenderViewport(embeddedImageMin.x, embeddedImageMin.y, viewportW, viewportH);
   m_meshEditorScene->OnUpdate(m_dtSecs);
   if (m_physics.IsInitialized()) {
@@ -665,13 +662,12 @@ void EditorApp::DrawMeshEditorViewport(SceneObject& obj) {
   }
   m_meshEditorScene->OnDraw();
 
-  if (!DrawEditorViewportTexture(driver,
-                                 EditorRenderTargetColor(rt),
-                                 embeddedImageMin,
-                                 embeddedViewportSize,
-                                 "##MeshEditorViewportInput",
-                                 "Mesh editor viewport texture is not available for ImGui.",
-                                 &m_meshEditorViewportInputActive)) {
+  if (!m_meshEditorViewport.DrawTexture(driver,
+                                        EditorRenderTargetColor(rt),
+                                        embeddedImageMin,
+                                        embeddedViewportSize,
+                                        "##MeshEditorViewportInput",
+                                        "Mesh editor viewport texture is not available for ImGui.")) {
     return;
   }
 }
@@ -712,7 +708,7 @@ void EditorApp::DrawMeshEditorWindow() {
   }
 
   SceneObject& obj = g_objects[m_meshEditorObjectIndex];
-  m_meshEditorViewportInputActive = false;
+  m_meshEditorViewport.SetInputActive(false);
   m_meshEditorDockspaceId = (unsigned int)ImGui::GetID("MeshEditDockSpace");
   m_meshEditorDockClassId = (unsigned int)ImGui::GetID("MeshEditDockClass");
   ImGuiWindowClass meshEditClass{};

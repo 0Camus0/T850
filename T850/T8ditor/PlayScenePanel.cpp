@@ -284,33 +284,29 @@ bool EditorApp::EnsurePlaySceneViewportTarget(int width, int height) {
   desc.depthFormat = t850::BaseRT::F32;
   desc.minWidth = 64;
   desc.minHeight = 64;
-  if (!m_playSceneViewportTarget.Ensure(pFramework->pVideoDriver, width, height, desc)) {
+  if (!m_playSceneViewport.Ensure(pFramework->pVideoDriver, width, height, desc)) {
     T8_LOG_ERROR("[T8ditor] Failed to create Play Scene viewport RT %dx%d", width, height);
     return false;
   }
 
   T8_LOG_INFO("[T8ditor] Play Scene viewport RT created output=%d size=%dx%d",
-              m_playSceneViewportTarget.Handle(),
-              m_playSceneViewportTarget.Width(),
-              m_playSceneViewportTarget.Height());
+              m_playSceneViewport.Handle(),
+              m_playSceneViewport.Width(),
+              m_playSceneViewport.Height());
   return true;
 }
 
 void EditorApp::DestroyPlaySceneViewportTarget() {
   if (pFramework && pFramework->pVideoDriver) {
-    m_playSceneViewportTarget.Destroy(pFramework->pVideoDriver);
+    m_playSceneViewport.Destroy(pFramework->pVideoDriver);
   }
-  m_playSceneViewportImageMinX = 0.0f;
-  m_playSceneViewportImageMinY = 0.0f;
-  m_playSceneViewportImageSizeX = 0.0f;
-  m_playSceneViewportImageSizeY = 0.0f;
 }
 
 bool EditorApp::EnsurePlaySceneRuntimeLoaded() {
   if (m_playSceneLoaded) {
     return true;
   }
-  if (!pFramework || !pFramework->pVideoDriver || m_playSceneTempPath.empty() || !m_playSceneViewportTarget.IsValid()) {
+  if (!pFramework || !pFramework->pVideoDriver || m_playSceneTempPath.empty() || !m_playSceneViewport.IsValid()) {
     return false;
   }
   if (m_playSceneLaunchFailed) {
@@ -333,14 +329,14 @@ bool EditorApp::EnsurePlaySceneRuntimeLoaded() {
   SceneTemplateLaunchDesc launchDesc;
   launchDesc.sceneFilePath = m_playSceneTempPath;
   launchDesc.modelPath = t850::g_config.modelPath;
-  launchDesc.width = m_playSceneViewportTarget.Width();
-  launchDesc.height = m_playSceneViewportTarget.Height();
+  launchDesc.width = m_playSceneViewport.Width();
+  launchDesc.height = m_playSceneViewport.Height();
   launchDesc.startScene = 4;
   launchDesc.guiOnStart = false;
   m_playScene->SetLaunchDesc(launchDesc);
   m_playScene->SetEngineContext(&m_playSceneEngineContext);
-  m_playScene->SetRenderSize(m_playSceneViewportTarget.Width(), m_playSceneViewportTarget.Height());
-  m_playScene->SetFinalOutputRT(m_playSceneViewportTarget.Handle());
+  m_playScene->SetRenderSize(m_playSceneViewport.Width(), m_playSceneViewport.Height());
+  m_playScene->SetFinalOutputRT(m_playSceneViewport.Handle());
   m_playScene->OnLoadScene();
   if (m_playScene->m_meshCount <= 0) {
     m_playScene->OnDestoryScene();
@@ -371,7 +367,7 @@ void EditorApp::DrawPlaySceneViewport() {
   viewportDesc.minWidth = 64;
   viewportDesc.minHeight = 64;
   const bool shouldResizeRT =
-      EditorViewportShouldResize(m_playSceneViewportTarget, desiredViewport.width, desiredViewport.height, viewportDesc);
+      m_playSceneViewport.ShouldResize(desiredViewport.width, desiredViewport.height, viewportDesc);
 
   if (shouldResizeRT) {
     if (pFramework && pFramework->pVideoDriver) {
@@ -383,48 +379,44 @@ void EditorApp::DrawPlaySceneViewport() {
     }
     if (m_playScene && m_playSceneLoaded) {
       m_playScene->ResizeRenderTargets(
-          m_playSceneViewportTarget.Width(),
-          m_playSceneViewportTarget.Height(),
-          m_playSceneViewportTarget.Handle());
+          m_playSceneViewport.Width(),
+          m_playSceneViewport.Height(),
+          m_playSceneViewport.Handle());
     }
   }
 
-  if (!pFramework || !pFramework->pVideoDriver || !m_playSceneViewportTarget.IsValid()) {
+  if (!pFramework || !pFramework->pVideoDriver || !m_playSceneViewport.IsValid()) {
     ImGui::TextDisabled("Play Scene viewport unavailable.");
     return;
   }
 
   t850::BaseDriver* driver = pFramework->pVideoDriver;
-  t850::BaseRT* rt = EditorRenderTarget(driver, m_playSceneViewportTarget.Handle());
+  t850::BaseRT* rt = EditorRenderTarget(driver, m_playSceneViewport.Handle());
   if (!EditorRenderTargetReady(rt, 1, false)) {
     ImGui::TextDisabled("Play Scene render target is unavailable.");
     return;
   }
 
-  const ImVec2 imageSize((float)m_playSceneViewportTarget.Width(), (float)m_playSceneViewportTarget.Height());
+  const ImVec2 imageSize((float)m_playSceneViewport.Width(), (float)m_playSceneViewport.Height());
   const ImVec2 imageMin = ImGui::GetCursorScreenPos();
-  m_playSceneViewportImageMinX = imageMin.x;
-  m_playSceneViewportImageMinY = imageMin.y;
-  m_playSceneViewportImageSizeX = imageSize.x;
-  m_playSceneViewportImageSizeY = imageSize.y;
+  m_playSceneViewport.SetImageRect(imageMin, imageSize);
 
   if (!EnsurePlaySceneRuntimeLoaded()) {
     ImGui::TextDisabled("%s", m_playSceneStatus.empty() ? "Play Scene is loading..." : m_playSceneStatus.c_str());
     return;
   }
 
-  m_playScene->SetFinalOutputRT(m_playSceneViewportTarget.Handle());
-  m_playScene->SetRenderSize(m_playSceneViewportTarget.Width(), m_playSceneViewportTarget.Height());
+  m_playScene->SetFinalOutputRT(m_playSceneViewport.Handle());
+  m_playScene->SetRenderSize(m_playSceneViewport.Width(), m_playSceneViewport.Height());
   m_playScene->OnUpdate(m_dtSecs);
   m_playScene->OnDraw();
 
-  if (!DrawEditorViewportTexture(driver,
-                                 EditorRenderTargetColor(rt),
-                                 imageMin,
-                                 imageSize,
-                                 "##PlaySceneViewportInput",
-                                 "Play Scene texture is not available for ImGui.",
-                                 &m_playSceneViewportInputActive)) {
+  if (!m_playSceneViewport.DrawTexture(driver,
+                                       EditorRenderTargetColor(rt),
+                                       imageMin,
+                                       imageSize,
+                                       "##PlaySceneViewportInput",
+                                       "Play Scene texture is not available for ImGui.")) {
     return;
   }
 }

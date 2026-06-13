@@ -5612,16 +5612,10 @@ void EditorApp::OnInput() {
       const ImVec2 globalMouse = ImGui::GetMousePos();
       const float globalMouseX = globalMouse.x;
       const float globalMouseY = globalMouse.y;
-      const bool mouseOverViewportImage =
-          m_meshEditorViewportImageSizeX > 0.0f &&
-          m_meshEditorViewportImageSizeY > 0.0f &&
-          globalMouseX >= m_meshEditorViewportImageMinX &&
-          globalMouseY >= m_meshEditorViewportImageMinY &&
-          globalMouseX < m_meshEditorViewportImageMinX + m_meshEditorViewportImageSizeX &&
-          globalMouseY < m_meshEditorViewportImageMinY + m_meshEditorViewportImageSizeY;
-      IManager.mouseX = static_cast<int>(std::lround(globalMouseX - m_meshEditorViewportImageMinX));
-      IManager.mouseY = static_cast<int>(std::lround(globalMouseY - m_meshEditorViewportImageMinY));
-      m_meshEditorScene->SetIgnoreImGuiMouseCaptureForInput(mouseOverViewportImage || m_meshEditorViewportInputActive);
+      const bool mouseOverViewportImage = m_meshEditorViewport.Contains(globalMouseX, globalMouseY);
+      IManager.mouseX = m_meshEditorViewport.LocalX(globalMouseX);
+      IManager.mouseY = m_meshEditorViewport.LocalY(globalMouseY);
+      m_meshEditorScene->SetIgnoreImGuiMouseCaptureForInput(mouseOverViewportImage || m_meshEditorViewport.InputActive());
       m_meshEditorScene->OnInput(&IManager);
       IManager.mouseX = savedMouseX;
       IManager.mouseY = savedMouseY;
@@ -5655,16 +5649,10 @@ void EditorApp::OnInput() {
       ImGuiViewport* mainViewport = ImGui::GetMainViewport();
       const float globalMouseX = (mainViewport ? mainViewport->Pos.x : 0.0f) + static_cast<float>(savedMouseX);
       const float globalMouseY = (mainViewport ? mainViewport->Pos.y : 0.0f) + static_cast<float>(savedMouseY);
-      const bool mouseOverViewportImage =
-          m_playSceneViewportImageSizeX > 0.0f &&
-          m_playSceneViewportImageSizeY > 0.0f &&
-          globalMouseX >= m_playSceneViewportImageMinX &&
-          globalMouseY >= m_playSceneViewportImageMinY &&
-          globalMouseX < m_playSceneViewportImageMinX + m_playSceneViewportImageSizeX &&
-          globalMouseY < m_playSceneViewportImageMinY + m_playSceneViewportImageSizeY;
-      IManager.mouseX = static_cast<int>(std::lround(globalMouseX - m_playSceneViewportImageMinX));
-      IManager.mouseY = static_cast<int>(std::lround(globalMouseY - m_playSceneViewportImageMinY));
-      m_playScene->SetIgnoreImGuiMouseCaptureForInput(mouseOverViewportImage || (!m_playSceneGuiVisible && m_playSceneViewportInputActive));
+      const bool mouseOverViewportImage = m_playSceneViewport.Contains(globalMouseX, globalMouseY);
+      IManager.mouseX = m_playSceneViewport.LocalX(globalMouseX);
+      IManager.mouseY = m_playSceneViewport.LocalY(globalMouseY);
+      m_playScene->SetIgnoreImGuiMouseCaptureForInput(mouseOverViewportImage || (!m_playSceneGuiVisible && m_playSceneViewport.InputActive()));
       m_playScene->OnInput(&IManager);
       IManager.mouseX = savedMouseX;
       IManager.mouseY = savedMouseY;
@@ -7305,7 +7293,7 @@ void EditorApp::DrawEditorUI(t850::BaseDriver* drv) {
   if (m_panels.showHierarchy) {
     if (ImGuiViewport* viewport = ImGui::GetMainViewport()) {
       const float margin = 12.0f;
-      const ImGuiCond layoutCond = g_resetArtistLayout ? ImGuiCond_Always : ImGuiCond_Once;
+      const ImGuiCond layoutCond = g_resetArtistLayout ? ImGuiCond_Always : ImGuiCond_FirstUseEver;
       const float width = (std::min)(400.0f, (std::max)(340.0f, viewport->WorkSize.x * 0.24f));
       const float height = (std::max)(480.0f, viewport->WorkSize.y - 260.0f);
       ImGui::SetNextWindowPos(ImVec2(viewport->WorkPos.x + margin, viewport->WorkPos.y + margin), layoutCond);
@@ -7863,7 +7851,7 @@ void EditorApp::DrawEditorUI(t850::BaseDriver* drv) {
   if (m_panels.showInspector && g_selectedIdx >= 0) {
     if (ImGuiViewport* viewport = ImGui::GetMainViewport()) {
       const float margin = 12.0f;
-      const ImGuiCond layoutCond = g_resetArtistLayout ? ImGuiCond_Always : ImGuiCond_Once;
+      const ImGuiCond layoutCond = g_resetArtistLayout ? ImGuiCond_Always : ImGuiCond_FirstUseEver;
       const float width = (std::min)(440.0f, (std::max)(360.0f, viewport->WorkSize.x * 0.27f));
       const float height = (std::max)(480.0f, viewport->WorkSize.y * 0.62f);
       ImGui::SetNextWindowPos(ImVec2(viewport->WorkPos.x + viewport->WorkSize.x - width - margin,
@@ -8193,7 +8181,7 @@ void EditorApp::DrawEditorUI(t850::BaseDriver* drv) {
   if (m_panels.showRendering) {
     if (ImGuiViewport* viewport = ImGui::GetMainViewport()) {
       const float margin = 12.0f;
-      const ImGuiCond layoutCond = g_resetArtistLayout ? ImGuiCond_Always : ImGuiCond_Once;
+      const ImGuiCond layoutCond = g_resetArtistLayout ? ImGuiCond_Always : ImGuiCond_FirstUseEver;
       const float width = (std::min)(440.0f, (std::max)(360.0f, viewport->WorkSize.x * 0.27f));
       const float inspectorHeight = (std::max)(480.0f, viewport->WorkSize.y * 0.62f);
       const float top = viewport->WorkPos.y + margin + inspectorHeight + margin;

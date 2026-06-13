@@ -163,23 +163,23 @@ bool EditorApp::EnsureRagdollEditorViewportTarget(int width, int height) {
   outputDesc.depthFormat = t850::BaseRT::F32;
   outputDesc.minWidth = 64;
   outputDesc.minHeight = 64;
-  if (!m_ragdollEditorViewportTarget.Ensure(driver, width, height, outputDesc)) {
+  if (!m_ragdollEditorViewport.Ensure(driver, width, height, outputDesc)) {
     DestroyRagdollEditorViewportTarget();
     T8_LOG_ERROR("[T8ditor] Failed to create Ragdoll Edit viewport RT %dx%d", width, height);
     return false;
   }
   T8_LOG_INFO("[T8ditor] Ragdoll Edit viewport RTs created gbuffer=%d output=%d size=%dx%d",
               m_ragdollEditorGBufferTarget.Handle(),
-              m_ragdollEditorViewportTarget.Handle(),
-              m_ragdollEditorViewportTarget.Width(),
-              m_ragdollEditorViewportTarget.Height());
+              m_ragdollEditorViewport.Handle(),
+              m_ragdollEditorViewport.Width(),
+              m_ragdollEditorViewport.Height());
   return true;
 }
 
 void EditorApp::DestroyRagdollEditorViewportTarget() {
   if (pFramework && pFramework->pVideoDriver) {
     m_ragdollEditorGBufferTarget.Destroy(pFramework->pVideoDriver);
-    m_ragdollEditorViewportTarget.Destroy(pFramework->pVideoDriver);
+    m_ragdollEditorViewport.Destroy(pFramework->pVideoDriver);
   }
 }
 
@@ -190,10 +190,9 @@ void EditorApp::DrawRagdollEditorViewport(SceneObject& obj) {
   viewportDesc.minHeight = 64;
   const bool shouldResizeRT =
       !m_ragdollEditorGBufferTarget.IsValid() ||
-      EditorViewportShouldResize(m_ragdollEditorViewportTarget,
-                                 desiredViewport.width,
-                                 desiredViewport.height,
-                                 viewportDesc);
+      m_ragdollEditorViewport.ShouldResize(desiredViewport.width,
+                                           desiredViewport.height,
+                                           viewportDesc);
 
   if (shouldResizeRT) {
     if (pFramework && pFramework->pVideoDriver) {
@@ -205,12 +204,12 @@ void EditorApp::DrawRagdollEditorViewport(SceneObject& obj) {
     }
   }
 
-  if (!m_ragdollEditorViewportTarget.IsValid()) {
+  if (!m_ragdollEditorViewport.IsValid()) {
     ImGui::TextDisabled("Ragdoll viewport unavailable.");
     return;
   }
-  const int viewportW = m_ragdollEditorViewportTarget.Width();
-  const int viewportH = m_ragdollEditorViewportTarget.Height();
+  const int viewportW = m_ragdollEditorViewport.Width();
+  const int viewportH = m_ragdollEditorViewport.Height();
   if (!pFramework || !pFramework->pVideoDriver) {
     return;
   }
@@ -220,7 +219,7 @@ void EditorApp::DrawRagdollEditorViewport(SceneObject& obj) {
 
   t850::BaseDriver* driver = pFramework->pVideoDriver;
   t850::BaseRT* gbufferRT = EditorRenderTarget(driver, m_ragdollEditorGBufferTarget.Handle());
-  t850::BaseRT* rt = EditorRenderTarget(driver, m_ragdollEditorViewportTarget.Handle());
+  t850::BaseRT* rt = EditorRenderTarget(driver, m_ragdollEditorViewport.Handle());
   if (!EditorRenderTargetReady(gbufferRT, 7, true) ||
       !EditorRenderTargetReady(rt, 1, false)) {
     ImGui::TextDisabled("Ragdoll viewport render targets are unavailable.");
@@ -289,7 +288,7 @@ void EditorApp::DrawRagdollEditorViewport(SceneObject& obj) {
 
   driver->PopRT();
 
-  driver->PushRT(m_ragdollEditorViewportTarget.Handle());
+  driver->PushRT(m_ragdollEditorViewport.Handle());
   driver->ClearWithColor(0.10f, 0.105f, 0.115f, 1.0f);
   driver->SetBlendState(t850::BaseDriver::BLEND_OPAQUE);
   driver->SetDepthStencilState(t850::BaseDriver::NONE);
@@ -366,15 +365,15 @@ void EditorApp::DrawRagdollEditorViewport(SceneObject& obj) {
   const ImVec2 viewportSize((float)displayViewportW, (float)displayViewportH);
   const ImVec2 imageMin = ImGui::GetCursorScreenPos();
   bool viewportInputActive = false;
-  if (!DrawEditorViewportTexture(driver,
-                                 EditorRenderTargetColor(rt),
-                                 imageMin,
-                                 viewportSize,
-                                 "##RagdollEditorViewportInput",
-                                 "Ragdoll viewport texture is not available for ImGui.",
-                                 &viewportInputActive)) {
+  if (!m_ragdollEditorViewport.DrawTexture(driver,
+                                           EditorRenderTargetColor(rt),
+                                           imageMin,
+                                           viewportSize,
+                                           "##RagdollEditorViewportInput",
+                                           "Ragdoll viewport texture is not available for ImGui.")) {
     return;
   }
+  viewportInputActive = m_ragdollEditorViewport.InputActive();
   const bool viewportHovered = viewportInputActive && ImGui::IsItemHovered();
   const bool viewportActive = viewportInputActive && ImGui::IsItemActive();
   auto projectToImage = [&](const XVECTOR3& worldPoint, bool& visible) {

@@ -143,6 +143,20 @@ void ImGuiSaveGlobalLayout() {
   ImGui::SaveIniSettingsToDisk(s_globalLayoutPath.c_str());
 }
 
+static void SaveGlobalLayoutIfDirty() {
+  if (!s_inited || s_allowCustomSceneLayout || s_globalLayoutPath.empty()) {
+    return;
+  }
+
+  ImGuiContext* context = ImGui::GetCurrentContext();
+  if (!context || context->SettingsDirtyTimer <= 0.0f) {
+    return;
+  }
+
+  ImGui::SaveIniSettingsToDisk(s_globalLayoutPath.c_str());
+  context->SettingsDirtyTimer = 0.0f;
+}
+
 bool ImGuiAllowCustomSceneLayout() {
   return s_allowCustomSceneLayout;
 }
@@ -433,6 +447,7 @@ void ImGuiNewFrame() {
 void ImGuiRender() {
   if (!s_inited) return;
   s_imguiSystem.Render();
+  SaveGlobalLayoutIfDirty();
 }
 
 void ImGuiSetNextNativeEditorWindow(float offsetX, float offsetY, float width, float height) {
@@ -910,8 +925,8 @@ void ImGuiDrawConsolePanel() {
   if (ImGuiViewport* viewport = ImGui::GetMainViewport()) {
     const float margin = 12.0f;
     const float width = (std::max)(560.0f, viewport->WorkSize.x - 480.0f);
-    ImGui::SetNextWindowPos(ImVec2(viewport->WorkPos.x + margin, viewport->WorkPos.y + viewport->WorkSize.y - 230.0f), ImGuiCond_Once);
-    ImGui::SetNextWindowSize(ImVec2(width, 218.0f), ImGuiCond_Once);
+    ImGui::SetNextWindowPos(ImVec2(viewport->WorkPos.x + margin, viewport->WorkPos.y + viewport->WorkSize.y - 230.0f), ImGuiCond_FirstUseEver);
+    ImGui::SetNextWindowSize(ImVec2(width, 218.0f), ImGuiCond_FirstUseEver);
   }
   if (!ImGui::Begin("Console", nullptr, ImGuiWindowFlags_NoCollapse)) {
     ImGui::End();
@@ -958,9 +973,9 @@ int ImGuiDrawRTDebugPanel(int selectedRT) {
   if (!s_inited) return selectedRT;
 
   if (ImGuiViewport* viewport = ImGui::GetMainViewport()) {
-    ImGui::SetNextWindowPos(ImVec2(viewport->WorkPos.x + viewport->WorkSize.x - 360.0f, viewport->WorkPos.y + 12.0f), ImGuiCond_Once);
+    ImGui::SetNextWindowPos(ImVec2(viewport->WorkPos.x + viewport->WorkSize.x - 360.0f, viewport->WorkPos.y + 12.0f), ImGuiCond_FirstUseEver);
   }
-  ImGui::SetNextWindowSize(ImVec2(348, 540), ImGuiCond_Once);
+  ImGui::SetNextWindowSize(ImVec2(348, 540), ImGuiCond_FirstUseEver);
   if (!ImGui::Begin("Render Targets", nullptr, ImGuiWindowFlags_NoCollapse)) {
     ImGui::End();
     return selectedRT;

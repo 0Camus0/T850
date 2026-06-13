@@ -74,7 +74,7 @@ into proper shared classes, starting with hosted window/viewport abstractions th
 state, viewport sizing/resize, render-target lifecycle, image blit, and input focus behavior.
 
 ## CURRENT WIP — Phase 7a, build-green, awaiting runtime test
-Phase 7a has been applied as an uncommitted WIP. The x64 Release full-solution build succeeds.
+Phase 7a was applied and committed as `631c2c6`. The x64 Release full-solution build succeeds.
 
 What changed:
 - Moved `HostedSceneWindowController` out of `EditorApp.h` into `HostedViewportPanel.{h,cpp}`.
@@ -84,7 +84,20 @@ What changed:
 - Mesh Edit, Ragdoll Edit, and Play Scene now call the shared class method instead of duplicating
   native-window bookkeeping/logging.
 
-Runtime-test Mesh Edit, Ragdoll Edit, and Play Scene before committing Phase 7a.
+Runtime-test passed on 2026-06-12.
+
+## CURRENT WIP — Phase 7b, build-green, awaiting runtime test
+Phase 7b has been applied as an uncommitted WIP. The x64 Release full-solution build succeeds.
+
+What changed:
+- Added `HostedRenderViewport` to `HostedViewportPanel.{h,cpp}`.
+- `HostedRenderViewport` owns the output `t850::RenderViewport`, image rect, input-active state,
+  resize checks, local input coordinate mapping, and ImGui texture drawing.
+- Mesh Edit, Play Scene, and Ragdoll Edit output viewports now use `HostedRenderViewport`.
+- `EditorApp::OnInput()` now routes embedded-scene mouse input through `HostedRenderViewport::Contains`,
+  `LocalX`, `LocalY`, and `InputActive`.
+
+Runtime-test Mesh Edit, Ragdoll Edit, and Play Scene before committing Phase 7b.
 
 ### Technique (reuse this for remaining phases)
 - **Partial class across TUs**: move a sub-app's `EditorApp::` methods byte-for-byte into a new
@@ -111,7 +124,7 @@ Complete in the current worktree. Commit this runtime-verified baseline before P
 ### Phase 7 — production-quality hosted panel classes
 Start converting the panel TUs from "partial `EditorApp::` methods" into actual classes. First target:
 shared hosted window/viewport state and behavior for Mesh Edit, Ragdoll Edit, and Play Scene.
-Phase 7a code/build is complete in the current worktree; runtime-test before commit.
+Phase 7a is committed. Phase 7b code/build is complete in the current worktree; runtime-test before commit.
 
 ### Optional
 Extract `DrawNavMeshAuthoringPanel` and `DrawEditorRenderingPanel` into their own panel TUs.

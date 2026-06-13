@@ -4,8 +4,11 @@
 
 #include "HostedViewportPanel.h"
 #include "EditorInternal.h"
+#include "EditorViewportUtil.h"
 
 #include <utils/Log.h>
+
+#include <cmath>
 
 namespace t8ditor {
 
@@ -97,6 +100,72 @@ void HostedSceneWindowController::CaptureNativeViewport(ImGuiViewport* viewport,
     loggedNativeHandle = nativeHandle;
     mainViewportLogged = false;
   }
+}
+
+bool HostedRenderViewport::Ensure(t850::BaseDriver* driver,
+                                  int width,
+                                  int height,
+                                  const t850::RenderViewportDesc& desc) {
+  return m_target.Ensure(driver, width, height, desc);
+}
+
+bool HostedRenderViewport::ShouldResize(int desiredWidth,
+                                        int desiredHeight,
+                                        const t850::RenderViewportDesc& desc) {
+  return EditorViewportShouldResize(m_target, desiredWidth, desiredHeight, desc);
+}
+
+void HostedRenderViewport::Destroy(t850::BaseDriver* driver) {
+  m_target.Destroy(driver);
+  ResetImageRect();
+  m_inputActive = false;
+}
+
+void HostedRenderViewport::ResetImageRect() {
+  m_imageMinX = 0.0f;
+  m_imageMinY = 0.0f;
+  m_imageSizeX = 0.0f;
+  m_imageSizeY = 0.0f;
+}
+
+void HostedRenderViewport::SetImageRect(const ImVec2& imageMin, const ImVec2& imageSize) {
+  m_imageMinX = imageMin.x;
+  m_imageMinY = imageMin.y;
+  m_imageSizeX = imageSize.x;
+  m_imageSizeY = imageSize.y;
+}
+
+bool HostedRenderViewport::Contains(float screenX, float screenY) const {
+  return HasImageRect() &&
+         screenX >= m_imageMinX &&
+         screenY >= m_imageMinY &&
+         screenX < m_imageMinX + m_imageSizeX &&
+         screenY < m_imageMinY + m_imageSizeY;
+}
+
+int HostedRenderViewport::LocalX(float screenX) const {
+  return static_cast<int>(std::lround(screenX - m_imageMinX));
+}
+
+int HostedRenderViewport::LocalY(float screenY) const {
+  return static_cast<int>(std::lround(screenY - m_imageMinY));
+}
+
+bool HostedRenderViewport::DrawTexture(t850::BaseDriver* driver,
+                                       t850::Texture* texture,
+                                       const ImVec2& imageMin,
+                                       const ImVec2& imageSize,
+                                       const char* inputId,
+                                       const char* unavailableText) {
+  SetImageRect(imageMin, imageSize);
+  return DrawEditorViewportTexture(
+      driver,
+      texture,
+      imageMin,
+      imageSize,
+      inputId,
+      unavailableText,
+      &m_inputActive);
 }
 
 } // namespace t8ditor

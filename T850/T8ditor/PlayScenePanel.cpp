@@ -440,10 +440,7 @@ void EditorApp::DrawPlaySceneWindow() {
   ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0.0f, 0.0f));
   const bool rootBegun = ImGui::Begin("Play Scene", &keepOpen, ImGuiWindowFlags_NoDocking);
   if (rootBegun) {
-    if (ImGuiViewport* viewport = ImGui::GetWindowViewport()) {
-      ApplyNativeWindowChrome(viewport, "Play Scene");
-      m_playSceneImGuiViewportId = (unsigned int)viewport->ID;
-    }
+    m_playSceneWindow.CaptureNativeViewport(ImGui::GetWindowViewport(), "Play Scene");
     m_playSceneDockspaceId = (unsigned int)ImGui::GetID("PlaySceneDockSpace");
     m_playSceneDockClassId = (unsigned int)ImGui::GetID("PlaySceneDockClass");
     ImGuiWindowClass playClass{};

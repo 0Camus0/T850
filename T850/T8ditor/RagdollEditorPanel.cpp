@@ -2512,36 +2512,7 @@ void EditorApp::DrawRagdollEditorWindow() {
     return;
   }
 
-  if (ImGuiViewport* windowViewport = ImGui::GetWindowViewport()) {
-    ImGuiViewport* mainViewport = ImGui::GetMainViewport();
-    ApplyNativeWindowChrome(windowViewport, "Ragdoll Edit");
-    void* nativeHandle = NativeHandleFromImGuiViewport(windowViewport);
-    m_ragdollEditorNativeHandle = nativeHandle;
-
-    if (mainViewport && windowViewport->ID == mainViewport->ID) {
-      if (!m_ragdollEditorMainViewportLogged) {
-        ImGuiIO& io = ImGui::GetIO();
-        T8_LOG_INFO("[T8ditor] Native editor window pending title='Ragdoll Edit': still merged with main viewport id=0x%08X hwnd=%p configFlags=0x%08X backendFlags=0x%08X",
-                    (unsigned int)windowViewport->ID,
-                    nativeHandle,
-                    (unsigned int)io.ConfigFlags,
-                    (unsigned int)io.BackendFlags);
-        m_ragdollEditorMainViewportLogged = true;
-      }
-    } else if (nativeHandle && nativeHandle != m_ragdollEditorLoggedNativeHandle) {
-      T8_LOG_INFO("[T8ditor] Native editor window created title='Ragdoll Edit' viewportId=0x%08X sdlWindow=%p hwnd=%p pos=(%.1f, %.1f) size=(%.1f, %.1f) flags=0x%08X",
-                  (unsigned int)windowViewport->ID,
-                  windowViewport->PlatformHandle,
-                  nativeHandle,
-                  windowViewport->Pos.x,
-                  windowViewport->Pos.y,
-                  windowViewport->Size.x,
-                  windowViewport->Size.y,
-                  (unsigned int)windowViewport->Flags);
-      m_ragdollEditorLoggedNativeHandle = nativeHandle;
-      m_ragdollEditorMainViewportLogged = false;
-    }
-  }
+  m_ragdollEditorWindow.CaptureNativeViewport(ImGui::GetWindowViewport(), "Ragdoll Edit");
 
   if (m_ragdollEditorObjectIndex < 0 || m_ragdollEditorObjectIndex >= (int)g_objects.size()) {
     ImGui::TextWrapped("The ragdoll editor selection is no longer valid.");

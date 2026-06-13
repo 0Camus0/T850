@@ -702,41 +702,7 @@ void EditorApp::DrawMeshEditorWindow() {
     return;
   }
 
-  if (ImGuiViewport* windowViewport = ImGui::GetWindowViewport()) {
-    ImGuiViewport* mainViewport = ImGui::GetMainViewport();
-    ApplyNativeWindowChrome(windowViewport, "Mesh Edit");
-    void* nativeHandle = NativeHandleFromImGuiViewport(windowViewport);
-    m_meshEditorNativeHandle = nativeHandle;
-    m_meshEditorImGuiViewportId = (unsigned int)windowViewport->ID;
-    m_meshEditorViewportPosX = windowViewport->Pos.x;
-    m_meshEditorViewportPosY = windowViewport->Pos.y;
-    m_meshEditorViewportSizeX = windowViewport->Size.x;
-    m_meshEditorViewportSizeY = windowViewport->Size.y;
-
-    if (mainViewport && windowViewport->ID == mainViewport->ID) {
-      if (!m_meshEditorMainViewportLogged) {
-        ImGuiIO& io = ImGui::GetIO();
-        T8_LOG_INFO("[T8ditor] Native editor window pending title='Mesh Edit': still merged with main viewport id=0x%08X hwnd=%p configFlags=0x%08X backendFlags=0x%08X",
-                    (unsigned int)windowViewport->ID,
-                    nativeHandle,
-                    (unsigned int)io.ConfigFlags,
-                    (unsigned int)io.BackendFlags);
-        m_meshEditorMainViewportLogged = true;
-      }
-    } else if (nativeHandle && nativeHandle != m_meshEditorLoggedNativeHandle) {
-      T8_LOG_INFO("[T8ditor] Native editor window created title='Mesh Edit' viewportId=0x%08X sdlWindow=%p hwnd=%p pos=(%.1f, %.1f) size=(%.1f, %.1f) flags=0x%08X",
-                  (unsigned int)windowViewport->ID,
-                  windowViewport->PlatformHandle,
-                  nativeHandle,
-                  windowViewport->Pos.x,
-                  windowViewport->Pos.y,
-                  windowViewport->Size.x,
-                  windowViewport->Size.y,
-                  (unsigned int)windowViewport->Flags);
-      m_meshEditorLoggedNativeHandle = nativeHandle;
-      m_meshEditorMainViewportLogged = false;
-    }
-  }
+  m_meshEditorWindow.CaptureNativeViewport(ImGui::GetWindowViewport(), "Mesh Edit");
 
   if (m_meshEditorObjectIndex < 0 || m_meshEditorObjectIndex >= (int)g_objects.size()) {
     ImGui::TextWrapped("The mesh editor selection is no longer valid.");

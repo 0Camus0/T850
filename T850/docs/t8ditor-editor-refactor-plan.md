@@ -73,6 +73,19 @@ The safe split/refactor plan is complete. The next phase should convert the extr
 into proper shared classes, starting with hosted window/viewport abstractions that own common native-window
 state, viewport sizing/resize, render-target lifecycle, image blit, and input focus behavior.
 
+## CURRENT WIP — Phase 7a, build-green, awaiting runtime test
+Phase 7a has been applied as an uncommitted WIP. The x64 Release full-solution build succeeds.
+
+What changed:
+- Moved `HostedSceneWindowController` out of `EditorApp.h` into `HostedViewportPanel.{h,cpp}`.
+- Converted it from an inline data struct into a real class module with `Open`, `RequestClose`, `Reset`,
+  `ResetNativeWindow`, `ResetViewportRect`, and `CaptureNativeViewport`.
+- Centralized native ImGui viewport capture/chrome/logging in `CaptureNativeViewport()`.
+- Mesh Edit, Ragdoll Edit, and Play Scene now call the shared class method instead of duplicating
+  native-window bookkeeping/logging.
+
+Runtime-test Mesh Edit, Ragdoll Edit, and Play Scene before committing Phase 7a.
+
 ### Technique (reuse this for remaining phases)
 - **Partial class across TUs**: move a sub-app's `EditorApp::` methods byte-for-byte into a new
   `.cpp` (still `namespace t8ditor { ... }`, still `EditorApp::` methods). No new members in
@@ -98,6 +111,7 @@ Complete in the current worktree. Commit this runtime-verified baseline before P
 ### Phase 7 — production-quality hosted panel classes
 Start converting the panel TUs from "partial `EditorApp::` methods" into actual classes. First target:
 shared hosted window/viewport state and behavior for Mesh Edit, Ragdoll Edit, and Play Scene.
+Phase 7a code/build is complete in the current worktree; runtime-test before commit.
 
 ### Optional
 Extract `DrawNavMeshAuthoringPanel` and `DrawEditorRenderingPanel` into their own panel TUs.

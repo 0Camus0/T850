@@ -61,83 +61,13 @@
 #include "EditorMesh.h"
 #include "EditorScene.h"
 #include "EditorImGui.h"
+#include "HostedViewportPanel.h"
 
 namespace t8ditor {
 
   // Set by main.cpp before constructing the app.
   void SetStartupMeshPath(const std::string& p);
   void SetStartupDumpFrame(int frame);
-
-  struct HostedSceneWindowController {
-    bool open = false;
-    bool loaded = false;
-    bool openRequested = false;
-    bool closeRequested = false;
-    bool guiVisible = true;
-    bool viewportInputActive = false;
-    void* nativeHandle = nullptr;
-    void* loggedNativeHandle = nullptr;
-    bool mainViewportLogged = false;
-    unsigned int imguiViewportId = 0;
-    unsigned int dockspaceId = 0;
-    unsigned int dockClassId = 0;
-    float viewportPosX = 0.0f;
-    float viewportPosY = 0.0f;
-    float viewportSizeX = 0.0f;
-    float viewportSizeY = 0.0f;
-    float imageMinX = 0.0f;
-    float imageMinY = 0.0f;
-    float imageSizeX = 0.0f;
-    float imageSizeY = 0.0f;
-
-    void Open(bool guiVisibleOnOpen = true) {
-      open = true;
-      loaded = false;
-      openRequested = true;
-      closeRequested = false;
-      guiVisible = guiVisibleOnOpen;
-      viewportInputActive = false;
-      ResetNativeWindow();
-      ResetViewportRect();
-    }
-
-    void RequestClose() {
-      open = false;
-      closeRequested = true;
-      viewportInputActive = false;
-    }
-
-    void Reset(bool guiVisibleDefault = true) {
-      open = false;
-      loaded = false;
-      openRequested = false;
-      closeRequested = false;
-      guiVisible = guiVisibleDefault;
-      viewportInputActive = false;
-      ResetNativeWindow();
-      ResetViewportRect();
-    }
-
-    void ResetNativeWindow() {
-      nativeHandle = nullptr;
-      loggedNativeHandle = nullptr;
-      mainViewportLogged = false;
-      imguiViewportId = 0;
-      dockspaceId = 0;
-      dockClassId = 0;
-    }
-
-    void ResetViewportRect() {
-      viewportPosX = 0.0f;
-      viewportPosY = 0.0f;
-      viewportSizeX = 0.0f;
-      viewportSizeY = 0.0f;
-      imageMinX = 0.0f;
-      imageMinY = 0.0f;
-      imageSizeX = 0.0f;
-      imageSizeY = 0.0f;
-    }
-  };
 
   enum class EditorCameraMode : int {
     Orbit = 0,

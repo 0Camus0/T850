@@ -244,6 +244,10 @@ namespace t8ditor {
     void DrawSelectedNavLinkOverlay(t850::Texture* depthTexture, t850::Texture* secondaryDepthTexture, const Camera& cam);
     void DumpEditorNavMeshWireGeometry(const char* reason) const;
     void RenderLoadingProgressFrame();
+    void LoadPendingScene();
+    void SyncEditorSceneLights(const ::Camera& cam);
+    void RenderEditorSceneFrame(t850::BaseDriver* drv, bool captureFrozenEditorFrame, bool& didCaptureFrozenEditorFrame);
+    void DrawEditorUI(t850::BaseDriver* drv);
     t850::RenderSkinnedMesh* GetSelectedSkinnedMesh() const;
     void DrawSelectedAnimationInspector(struct SceneObject& obj);
     void DrawEditorRenderingPanel();

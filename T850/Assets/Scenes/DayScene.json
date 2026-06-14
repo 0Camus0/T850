@@ -993,10 +993,6 @@
                "value": 13
             },
             {
-               "name": "active_camera",
-               "value": 1
-            },
-            {
                "name": "cubemap",
                "value": 10
             },

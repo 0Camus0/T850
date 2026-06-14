@@ -1,39 +1,39 @@
 {
+  "androidDeviceSerial": "",
   "dump": {
-    "enabled": false,
-    "seconds": -1,
+    "trigger": "frame",
     "frame": -1,
-    "trigger": "frame"
+    "enabled": false,
+    "seconds": -1
   },
-  "api": "vulkan",
-  "cullDisabled": false,
-  "configuration": "Release",
   "replaySnapshot": {
     "enabled": false,
     "path": "D:\\Code\\Game\\T850\\T850\\bin\\x64\\Release\\dumps_vulkan_f863_20260507_090650\\snapshot.json"
   },
   "keepRunning": false,
-  "cullingMode": "full",
-  "architecture": "x64",
-  "debugFrames": false,
-  "benchmark": false,
-  "devTools": {
-    "logToFile": false,
-    "d3d12Debug": false,
-    "logLevel": "error"
-  },
   "display": {
-    "width": 2560,
-    "sceneFile": "D:\\Code\\Game\\T850\\T850\\bin\\x64\\Release\\Scenes\\Q3\\q3dm6_mod_3.t8scene",
     "fullscreen": false,
     "height": 1440,
-    "scene": 0
+    "model": "Models/doomslayer_cine_all_animations_no-damage_double-sided-opaque.glb",
+    "scene": 1,
+    "width": 2560
   },
+  "cullDisabled": false,
+  "configuration": "Release",
+  "cullingMode": "full",
+  "architecture": "x64",
+  "targetPlatform": "windows",
+  "devTools": {
+    "logLevel": "error",
+    "d3d12Debug": false,
+    "logToFile": false
+  },
+  "api": "vulkan",
+  "benchmark": false,
   "telemetry": {
-    "enabled": true,
-    "frequencyFrames": 20,
-    "outputPath": "logs\\perf_telemetry.json"
+    "outputPath": "logs\\perf_telemetry.json",
+    "enabled": false,
+    "frequencyFrames": 20
   },
-  "androidDeviceSerial": "",
-  "targetPlatform": "windows"
+  "debugFrames": false
 }

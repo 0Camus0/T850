@@ -10,6 +10,15 @@ add_executable(T8ditor
 	EditorMesh.cpp
 	EditorScene.cpp
 	EditorSceneGizmos.cpp
+	EditorMath.cpp
+	EditorUtil.cpp
+	EditorViewportUtil.cpp
+	HostedViewportPanel.cpp
+	EditorSceneSerialization.cpp
+	EditorWorld.cpp
+	PlayScenePanel.cpp
+	MeshEditorPanel.cpp
+	RagdollEditorPanel.cpp
 	EditorImGui.cpp)
 
 t850_apply_app(T8ditor)

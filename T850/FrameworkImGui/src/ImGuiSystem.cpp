@@ -511,7 +511,7 @@ void ImGuiSystem::RenderLoadingFrame() {
 #endif
 
   auto* driver = m_framework->pVideoDriver;
-  driver->Clear();
+  driver->ClearBackbufferWithColor(0.0f, 0.0f, 0.0f, 1.0f);
 
   if (NewFrame(false)) {
     const LoadingProgress::Snapshot snapshot = LoadingProgress::GetSnapshot();
@@ -603,7 +603,7 @@ void ImGuiSystem::RenderLoadingFrame() {
     Render();
   }
 
-  driver->SwapBuffers();
+  driver->CompleteFrame(BaseDriver::FrameCompletionMode::Present);
   m_loadingFrameActive = false;
 }
 

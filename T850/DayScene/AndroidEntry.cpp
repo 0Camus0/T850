@@ -34,6 +34,16 @@ namespace {
   constexpr const char* kExtraReplaySnapshot = "com.t850.engine.extra.REPLAY_SNAPSHOT";
   constexpr const char* kExtraProfile = "com.t850.engine.extra.PROFILE";
   constexpr const char* kExtraProfileFrames = "com.t850.engine.extra.PROFILE_FRAMES";
+  constexpr const char* kExtraBenchmark = "com.t850.engine.extra.BENCHMARK";
+  constexpr const char* kExtraBenchmarkMatrix = "com.t850.engine.extra.BENCHMARK_MATRIX";
+  constexpr const char* kExtraBenchmarkOutput = "com.t850.engine.extra.BENCHMARK_OUTPUT";
+  constexpr const char* kExtraBenchmarkReport = "com.t850.engine.extra.BENCHMARK_REPORT";
+  constexpr const char* kExtraBenchmarkSeconds = "com.t850.engine.extra.BENCHMARK_SECONDS";
+  constexpr const char* kExtraBenchmarkFrames = "com.t850.engine.extra.BENCHMARK_FRAMES";
+  constexpr const char* kExtraBenchmarkFixedDt = "com.t850.engine.extra.BENCHMARK_FIXED_DT";
+  constexpr const char* kExtraWidth = "com.t850.engine.extra.WIDTH";
+  constexpr const char* kExtraHeight = "com.t850.engine.extra.HEIGHT";
+  constexpr const char* kExtraOffscreen = "com.t850.engine.extra.OFFSCREEN";
   constexpr const char* kExtraTelemetry = "com.t850.engine.extra.TELEMETRY";
   constexpr const char* kExtraTelemetryFrequencyFrames = "com.t850.engine.extra.TELEMETRY_FREQUENCY_FRAMES";
   constexpr const char* kExtraTelemetryOutput = "com.t850.engine.extra.TELEMETRY_OUTPUT";
@@ -225,9 +235,25 @@ namespace {
       if (profileFrames > 0) {
         t850::g_config.profileFrames = profileFrames;
       }
+      int width = GetIntentIntExtra(env, intent, getIntExtra, kExtraWidth, t850::g_config.width);
+      if (width > 0) {
+        t850::g_config.width = width;
+      }
+      int height = GetIntentIntExtra(env, intent, getIntExtra, kExtraHeight, t850::g_config.height);
+      if (height > 0) {
+        t850::g_config.height = height;
+      }
       int telemetryFrequency = GetIntentIntExtra(env, intent, getIntExtra, kExtraTelemetryFrequencyFrames, t850::g_config.runtimeTelemetryFrequencyFrames);
       if (telemetryFrequency >= 0) {
         t850::g_config.runtimeTelemetryFrequencyFrames = telemetryFrequency;
+      }
+      int benchmarkSeconds = GetIntentIntExtra(env, intent, getIntExtra, kExtraBenchmarkSeconds, t850::g_config.benchmarkDurationSeconds);
+      if (benchmarkSeconds > 0) {
+        t850::g_config.benchmarkDurationSeconds = benchmarkSeconds;
+      }
+      int benchmarkFrames = GetIntentIntExtra(env, intent, getIntExtra, kExtraBenchmarkFrames, t850::g_config.benchmarkFrameLimit);
+      if (benchmarkFrames > 0) {
+        t850::g_config.benchmarkFrameLimit = benchmarkFrames;
       }
       t850::g_config.ragdollSimulationSpeedIndex =
         GetIntentIntExtra(env, intent, getIntExtra, kExtraRagdollSpeedIndex, t850::g_config.ragdollSimulationSpeedIndex);
@@ -240,6 +266,10 @@ namespace {
         t850::g_config.flags.dumpByFrame = false;
         t850::g_config.dumpSeconds = dumpSeconds;
       }
+      float benchmarkFixedDt = GetIntentFloatExtra(env, intent, getFloatExtra, kExtraBenchmarkFixedDt, t850::g_config.benchmarkFixedDt);
+      if (benchmarkFixedDt > 0.0f) {
+        t850::g_config.benchmarkFixedDt = benchmarkFixedDt;
+      }
     }
 
     if (getBooleanExtra) {
@@ -251,6 +281,15 @@ namespace {
         GetIntentBoolExtra(env, intent, getBooleanExtra, kExtraKeepRunning, t850::g_config.flags.keepRunning);
       t850::g_config.flags.profile =
         GetIntentBoolExtra(env, intent, getBooleanExtra, kExtraProfile, t850::g_config.flags.profile);
+      t850::g_config.flags.benchmark =
+        GetIntentBoolExtra(env, intent, getBooleanExtra, kExtraBenchmark, t850::g_config.flags.benchmark);
+      t850::g_config.flags.benchmarkMatrix =
+        GetIntentBoolExtra(env, intent, getBooleanExtra, kExtraBenchmarkMatrix, t850::g_config.flags.benchmarkMatrix);
+      if (t850::g_config.flags.benchmarkMatrix) {
+        t850::g_config.flags.benchmark = true;
+      }
+      t850::g_config.flags.offscreen =
+        GetIntentBoolExtra(env, intent, getBooleanExtra, kExtraOffscreen, t850::g_config.flags.offscreen);
       t850::g_config.flags.runtimeTelemetry =
         GetIntentBoolExtra(env, intent, getBooleanExtra, kExtraTelemetry, t850::g_config.flags.runtimeTelemetry);
       t850::g_config.flags.autoStartRagdoll =
@@ -278,6 +317,15 @@ namespace {
       std::string sceneProfile = GetIntentStringExtra(env, intent, getStringExtra, kExtraSceneProfile);
       if (!sceneProfile.empty()) {
         t850::g_config.sceneProfile = sceneProfile;
+      }
+
+      std::string benchmarkOutput = GetIntentStringExtra(env, intent, getStringExtra, kExtraBenchmarkOutput);
+      if (!benchmarkOutput.empty()) {
+        t850::g_config.benchmarkOutputPath = benchmarkOutput;
+      }
+      std::string benchmarkReport = GetIntentStringExtra(env, intent, getStringExtra, kExtraBenchmarkReport);
+      if (!benchmarkReport.empty()) {
+        t850::g_config.benchmarkReportPath = benchmarkReport;
       }
 
       std::string telemetryOutput = GetIntentStringExtra(env, intent, getStringExtra, kExtraTelemetryOutput);
@@ -318,6 +366,13 @@ void android_main(android_app* state) {
   t850::g_config.startScene = 0;
   t850::g_config.logLevel = t850::Log::LVL_DEBUG;
   ApplyLauncherIntent(state);
+  if (t850::g_config.flags.benchmarkMatrix) {
+    t850::g_config.api = "vulkan";
+    t850::g_config.width = 1920;
+    t850::g_config.height = 1080;
+    t850::g_config.flags.offscreen = false;
+    t850::g_config.startScene = 1;
+  }
   CaptureAndroidBuildInfo(state);
 
   t850::Log::Init(static_cast<t850::Log::Level>(t850::g_config.logLevel),
@@ -339,9 +394,16 @@ void android_main(android_app* state) {
     }
   }
   T8_LOG_INFO("[Android] T850 NativeActivity starting");
-  T8_LOG_INFO("[Android] Launch config: scene=%d model='%s' sceneFile='%s' sceneProfile='%s' logLevel=%d api=vulkan dumpEnabled=%d dumpByFrame=%d dumpFrame=%d dumpSeconds=%.3f keepRunning=%d profile=%d profileFrames=%d telemetry=%d telemetryFrequencyFrames=%d telemetryOutput='%s' replay='%s'",
+  T8_LOG_INFO("[Android] Launch config: scene=%d model='%s' sceneFile='%s' sceneProfile='%s' size=%dx%d logLevel=%d api=vulkan benchmark=%d benchmarkMatrix=%d benchmarkOutput='%s' benchmarkReport='%s' offscreen=%d dumpEnabled=%d dumpByFrame=%d dumpFrame=%d dumpSeconds=%.3f keepRunning=%d profile=%d profileFrames=%d telemetry=%d telemetryFrequencyFrames=%d telemetryOutput='%s' replay='%s'",
               t850::g_config.startScene, t850::g_config.modelPath.c_str(), t850::g_config.sceneFilePath.c_str(), t850::g_config.sceneProfile.c_str(),
+              t850::g_config.width,
+              t850::g_config.height,
               t850::g_config.logLevel,
+              t850::g_config.flags.benchmark ? 1 : 0,
+              t850::g_config.flags.benchmarkMatrix ? 1 : 0,
+              t850::g_config.benchmarkOutputPath.c_str(),
+              t850::g_config.benchmarkReportPath.c_str(),
+              t850::g_config.flags.offscreen ? 1 : 0,
               t850::g_config.flags.dumpEnabled ? 1 : 0,
               t850::g_config.flags.dumpByFrame ? 1 : 0,
               t850::g_config.dumpFrame,

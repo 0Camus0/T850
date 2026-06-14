@@ -51,6 +51,7 @@
 #endif
 
 #include <algorithm>
+#include <chrono>
 #include <cstdint>
 #include <cmath>
 #include <fstream>
@@ -569,7 +570,10 @@ void App::CreateAssets() {
     return;
   }
   m_imguiVisible = g_config.flags.guiOnStart;
-  if (!g_config.flags.benchmark) {
+  if (g_config.flags.benchmarkMatrix) {
+    m_actualScene->InitVars();
+  }
+  if (!g_config.flags.benchmark || g_config.flags.benchmarkMatrix) {
     t850::LoadingProgress::Reset(160.0f, "Starting", "Preparing renderer");
     m_imguiReady = m_imgui.Init(pFramework, "imgui_runtime_layout.ini", true);
     if (!m_imguiReady) {
@@ -605,13 +609,13 @@ void App::CreateAssets() {
   }
 #endif
 
-  if (!g_config.flags.benchmark && m_imguiReady) {
+  if ((!g_config.flags.benchmark || g_config.flags.benchmarkMatrix) && m_imguiReady) {
     t850::LoadingProgress::Complete("Ready", "Starting renderer");
     m_imgui.ClearLoadingProgressRenderer();
     t850::LoadingProgress::Clear();
   }
 
-  if (!g_config.flags.dumpShaderPermutations) {
+  if (!g_config.flags.dumpShaderPermutations && !g_config.flags.benchmark) {
     FadeFX(0.5, false);
   }
 
@@ -662,6 +666,10 @@ void App::OnUpdate() {
    if (FirstFrame) {
      DtSecs = 1.0f / 60.0f;
    }
+   if (RunOffscreenBenchmarkFastPath(DtSecs)) {
+     return;
+   }
+   const auto benchmarkFrameStart = std::chrono::steady_clock::now();
    static uint64_t telemetryFrameIndex = 0;
    t850::RuntimeTelemetry::BeginFrame(telemetryFrameIndex++, DtSecs);
    {
@@ -708,8 +716,103 @@ void App::OnUpdate() {
       }
     }
     OnDraw();
+    if (auto* dayScene = dynamic_cast<DayScene*>(m_actualScene)) {
+      if (t850::g_config.flags.benchmark) {
+        const double frameMs = std::chrono::duration<double, std::milli>(
+            std::chrono::steady_clock::now() - benchmarkFrameStart).count();
+        dayScene->RecordBenchmarkRenderedFrame(frameMs);
+      }
+    }
    }
    t850::RuntimeTelemetry::EndFrame();
+}
+
+bool App::RunOffscreenBenchmarkFastPath(float initialDtSecs) {
+  auto* dayScene = dynamic_cast<DayScene*>(m_actualScene);
+  if (!dayScene || !g_config.flags.benchmark || !dayScene->IsBenchmarkRenderingOffscreen()) {
+    return false;
+  }
+  if (!pFramework || !pFramework->pVideoDriver) {
+    return false;
+  }
+
+  constexpr float kProgressPresentIntervalSec = 0.1f;
+  constexpr int kMaxOffscreenFramesPerPresent = 512;
+  const auto batchStart = std::chrono::steady_clock::now();
+  float frameDt = initialDtSecs > 0.0f ? initialDtSecs : 1.0f / 1000000.0f;
+  int batchFrames = 0;
+
+  while (batchFrames < kMaxOffscreenFramesPerPresent) {
+    const auto benchmarkFrameStart = std::chrono::steady_clock::now();
+    DtSecs = frameDt;
+
+#ifndef OS_ANDROID
+    m_devLayer.Update(DtSecs);
+#else
+    if (m_actualScene && !bPaused) {
+      m_actualScene->OnUpdate(DtSecs);
+    }
+#endif
+    dayScene = dynamic_cast<DayScene*>(m_actualScene);
+    if (!g_config.flags.benchmark || !dayScene || !dayScene->IsBenchmarkRenderingOffscreen()) {
+      break;
+    }
+
+    if (t850::GetEngineContext().physics && t850::GetEngineContext().physics->IsInitialized()) {
+      t850::GetEngineContext().physics->Update(DtSecs);
+    }
+
+    pFramework->pVideoDriver->BeginFrame(t850::BaseDriver::FrameTargetMode::Offscreen);
+#ifndef OS_ANDROID
+    m_devLayer.Draw();
+#else
+    if (m_actualScene) {
+      m_actualScene->OnDraw();
+    }
+#endif
+    pFramework->pVideoDriver->CompleteFrame(t850::BaseDriver::FrameCompletionMode::SubmitNoPresent);
+    dayScene = dynamic_cast<DayScene*>(m_actualScene);
+    if (dayScene && t850::g_config.flags.benchmark) {
+      const double frameMs = std::chrono::duration<double, std::milli>(
+          std::chrono::steady_clock::now() - benchmarkFrameStart).count();
+      dayScene->RecordBenchmarkRenderedFrame(frameMs);
+    }
+    FirstFrame = false;
+    ++batchFrames;
+
+    const auto elapsed = std::chrono::duration<float>(std::chrono::steady_clock::now() - batchStart).count();
+    dayScene = dynamic_cast<DayScene*>(m_actualScene);
+    if (elapsed >= kProgressPresentIntervalSec ||
+        !g_config.flags.benchmark ||
+        !dayScene ||
+        !dayScene->IsBenchmarkRenderingOffscreen() ||
+        dayScene->IsBenchmarkFinishPending()) {
+      break;
+    }
+
+    DtTimer.Update();
+    frameDt = DtTimer.GetDTSecs();
+    if (frameDt <= 0.0f) {
+      frameDt = 1.0f / 1000000.0f;
+    }
+  }
+
+  dayScene = dynamic_cast<DayScene*>(m_actualScene);
+  const bool stillOffscreenBenchmark =
+      g_config.flags.benchmark && dayScene && dayScene->IsBenchmarkRenderingOffscreen();
+  if (!stillOffscreenBenchmark && pFramework && pFramework->pVideoDriver) {
+    pFramework->pVideoDriver->WaitForGPU();
+    pFramework->pVideoDriver->DestroyOffscreenTargets();
+  }
+  if (batchFrames > 0) {
+    m_fpsString = "FPS " + std::to_string((int)(1.0f / (DtSecs > 0.0f ? DtSecs : 1.0f)));
+  }
+
+  OnInput();
+  pFramework->pVideoDriver->ClearBackbufferWithColor(0.0f, 0.0f, 0.0f, 1.0f);
+  DrawRuntimeGui();
+  pFramework->pVideoDriver->CompleteFrame(t850::BaseDriver::FrameCompletionMode::Present);
+  return true;
 }
 
 void App::OnDraw() {
@@ -772,7 +875,7 @@ void App::OnDraw() {
     T8_LOG_TRACE("[Frame %d] === SwapBuffers ===" , frameCount);
     {
       T8_TELEMETRY_SCOPE("frame.swap_buffers");
-      pFramework->pVideoDriver->SwapBuffers();
+      pFramework->pVideoDriver->CompleteFrame(t850::BaseDriver::FrameCompletionMode::Present);
     }
   } else {
     T8_LOG_TRACE("[Frame %d] === SKIPPED SwapBuffers (first frame) ===" , frameCount);
@@ -905,6 +1008,9 @@ void App::DrawRuntimeGui() {
 
   t850::DevGuiContext gui;
   gui.DrawFrameStatsOverlay(m_fpsString.c_str());
+  if (auto* dayScene = dynamic_cast<DayScene*>(m_actualScene)) {
+    dayScene->DrawBenchmarkMatrixGui(gui);
+  }
 
   if (m_imguiVisible) {
 #ifdef OS_ANDROID

@@ -172,6 +172,8 @@ $xaml = @"
                         <ColumnDefinition Width="*"/>
                         <ColumnDefinition Width="12"/>
                         <ColumnDefinition Width="*"/>
+                        <ColumnDefinition Width="12"/>
+                        <ColumnDefinition Width="*"/>
                     </Grid.ColumnDefinitions>
                     <StackPanel Grid.Column="0">
                         <TextBlock Text="Scene" Style="{StaticResource LabelStyle}"/>
@@ -196,6 +198,13 @@ $xaml = @"
                     </StackPanel>
                 </StackPanel>
                 <CheckBox Name="chkBenchmark" Content="Benchmark mode" Margin="0,0,0,6" Visibility="Collapsed"/>
+                <StackPanel Name="pnlBenchmarkMode" Margin="20,0,0,8" Visibility="Collapsed">
+                    <TextBlock Text="Benchmark type" Style="{StaticResource LabelStyle}"/>
+                    <StackPanel Orientation="Horizontal">
+                        <RadioButton Name="rbBenchmarkSingle" Content="Single run at selected resolution" GroupName="BenchmarkMode" IsChecked="True"/>
+                        <RadioButton Name="rbBenchmarkMatrix" Content="Matrix: all APIs/resolutions + onscreen/offscreen" GroupName="BenchmarkMode"/>
+                    </StackPanel>
+                </StackPanel>
                 <StackPanel Name="pnlSandboxInput" Margin="0,6,0,8">
                     <TextBlock Text="Sandbox input" Style="{StaticResource LabelStyle}"/>
                     <ComboBox Name="cmbSandboxInput">
@@ -352,7 +361,17 @@ $xaml = @"
                     </Style>
                 </Button.Resources>
             </Button>
-            <Button Grid.Column="4" Name="btnEditor" Content="&#x270E;  EDITOR" Height="48"
+            <Button Grid.Column="4" Name="btnBenchmarkMatrix" Content="Benchmark Matrix" Height="48"
+                    FontSize="15" FontWeight="Bold" Cursor="Hand"
+                    Background="{StaticResource Surface2Brush}" Foreground="#E0E0E0"
+                    BorderThickness="0">
+                <Button.Resources>
+                    <Style TargetType="Border">
+                        <Setter Property="CornerRadius" Value="6"/>
+                    </Style>
+                </Button.Resources>
+            </Button>
+            <Button Grid.Column="6" Name="btnEditor" Content="&#x270E;  EDITOR" Height="48"
                     FontSize="18" FontWeight="Bold" Cursor="Hand"
                     Background="{StaticResource AccentBrush}" Foreground="#E0E0E0"
                     BorderThickness="0">
@@ -393,6 +412,9 @@ $rbCullingFull     = $window.FindName("rbCullingFull")
 $rbCullingLazy     = $window.FindName("rbCullingLazy")
 $rbCullingDisabled = $window.FindName("rbCullingDisabled")
 $chkBenchmark   = $window.FindName("chkBenchmark")
+$pnlBenchmarkMode = $window.FindName("pnlBenchmarkMode")
+$rbBenchmarkSingle = $window.FindName("rbBenchmarkSingle")
+$rbBenchmarkMatrix = $window.FindName("rbBenchmarkMatrix")
 $cmbSandboxInput = $window.FindName("cmbSandboxInput")
 $cmbModel       = $window.FindName("cmbModel")
 $cmbSceneFile   = $window.FindName("cmbSceneFile")
@@ -409,6 +431,7 @@ $txtStatus      = $window.FindName("txtStatus")
 $txtCmdPreview  = $window.FindName("txtCmdPreview")
 $btnRun         = $window.FindName("btnRun")
 $btnDownloadAssets = $window.FindName("btnDownloadAssets")
+$btnBenchmarkMatrix = $window.FindName("btnBenchmarkMatrix")
 $btnEditor      = $window.FindName("btnEditor")
 
 # Resolve root directory: if running from ps2exe, use exe location; otherwise script location
@@ -922,8 +945,13 @@ function Get-LaunchCommand {
         $argList += @("--scene", $sceneTag)
     }
 
-    if ($sceneTag -eq "1" -and $chkBenchmark.IsChecked) {
-        $argList += "--benchmark"
+    $benchmarkMatrix = ($sceneTag -eq "1" -and $chkBenchmark.IsChecked -and $rbBenchmarkMatrix.IsChecked)
+    if ($benchmarkMatrix) {
+        $ts = Get-Date -Format "yyyyMMdd_HHmmss"
+        $reportPath = Join-Path $rootDir ("benchmark_reports\dayscene_matrix_$ts\DayScene_Benchmark_Report.md")
+        $argList += @("--scene", "1", "--benchmarkMatrix", "--benchmarkSeconds", "90", "--benchmarkReport", $reportPath)
+    } elseif ($sceneTag -eq "1" -and $chkBenchmark.IsChecked) {
+        $argList += @("--benchmark", "--benchmarkSeconds", "90")
     }
 
     $argList += @("--culling", (Get-CullingMode))
@@ -1051,6 +1079,8 @@ function Update-SceneOptionVisibility {
     $pnlModelSelect.Visibility = if (($sandboxVisible -and ($sandboxMode -eq "model")) -or ($sceneTag -eq "3")) { "Visible" } else { "Collapsed" }
     $pnlSceneFileSelect.Visibility = if (($sandboxVisible -and ($sandboxMode -eq "scene")) -or ($sceneTag -eq "2") -or ($sceneTag -eq "4")) { "Visible" } else { "Collapsed" }
     $chkBenchmark.Visibility = if ($sceneTag -eq "1") { "Visible" } else { "Collapsed" }
+    $pnlBenchmarkMode.Visibility = if ($sceneTag -eq "1" -and $chkBenchmark.IsChecked) { "Visible" } else { "Collapsed" }
+    if ($btnBenchmarkMatrix) { $btnBenchmarkMatrix.Visibility = "Collapsed" }
     if ($sceneTag -ne "1") { $chkBenchmark.IsChecked = $false }
 }
 
@@ -1124,8 +1154,10 @@ $chkFullscreen.Add_Unchecked({ Update-Preview })
 $rbCullingFull.Add_Checked({ Update-Preview })
 $rbCullingLazy.Add_Checked({ Update-Preview })
 $rbCullingDisabled.Add_Checked({ Update-Preview })
-$chkBenchmark.Add_Checked({ Update-Preview })
-$chkBenchmark.Add_Unchecked({ Update-Preview })
+$chkBenchmark.Add_Checked({ Update-SceneOptionVisibility; Update-Preview })
+$chkBenchmark.Add_Unchecked({ Update-SceneOptionVisibility; Update-Preview })
+$rbBenchmarkSingle.Add_Checked({ Update-Preview })
+$rbBenchmarkMatrix.Add_Checked({ Update-Preview })
 $cmbLogLevel.Add_SelectionChanged({ Update-Preview })
 $chkLogToFile.Add_Checked({ Update-Preview })
 $chkLogToFile.Add_Unchecked({ Update-Preview })

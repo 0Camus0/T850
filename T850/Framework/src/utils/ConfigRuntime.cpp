@@ -206,10 +206,18 @@ void ApplyConfigJson(const RuntimeConfigJson& json, Config& cfg) {
   if (json.dumpMatrices) cfg.flags.dumpMatrices = *json.dumpMatrices;
   if (json.dumpMatricesFrames) cfg.dumpMatricesFrames = *json.dumpMatricesFrames;
   if (json.benchmark) cfg.flags.benchmark = *json.benchmark;
+  if (json.benchmarkMatrix) { cfg.flags.benchmarkMatrix = *json.benchmarkMatrix; if (*json.benchmarkMatrix) cfg.flags.benchmark = true; }
   if (json.cullDisabled && *json.cullDisabled) cfg.cullingLoadMode = Config::CullingLoadMode::Disabled;
   if (json.cullingMode) cfg.cullingLoadMode = ParseCullingLoadMode(*json.cullingMode, cfg.cullingLoadMode);
   cfg.flags.cullDisabled = cfg.cullingLoadMode == Config::CullingLoadMode::Disabled;
   if (json.benchmarkOutputPath) cfg.benchmarkOutputPath = *json.benchmarkOutputPath;
+  if (json.benchmarkReportPath) cfg.benchmarkReportPath = *json.benchmarkReportPath;
+  if (json.benchmarkFinalFrameDump) cfg.flags.benchmarkFinalFrameDump = *json.benchmarkFinalFrameDump;
+  if (json.benchmarkFinalFrameDir) cfg.benchmarkFinalFrameDir = StripQuotes(*json.benchmarkFinalFrameDir);
+  if (json.benchmarkSeconds) cfg.benchmarkDurationSeconds = *json.benchmarkSeconds;
+  if (json.benchmarkDurationSeconds) cfg.benchmarkDurationSeconds = *json.benchmarkDurationSeconds;
+  if (json.benchmarkFrameLimit) cfg.benchmarkFrameLimit = *json.benchmarkFrameLimit;
+  if (json.benchmarkFixedDt) cfg.benchmarkFixedDt = *json.benchmarkFixedDt;
   if (json.offscreen) cfg.flags.offscreen = *json.offscreen;
   if (json.offscreenDebug) cfg.flags.offscreenDebug = *json.offscreenDebug;
   if (json.glOffscreenFlushMode) cfg.glOffscreenFlushMode = ParseGLOffscreenFlushMode(*json.glOffscreenFlushMode, cfg.glOffscreenFlushMode);
@@ -263,10 +271,18 @@ void ApplyConfigJson(const RuntimeConfigJson& json, Config& cfg) {
     if (devTools.dumpMatrices) cfg.flags.dumpMatrices = *devTools.dumpMatrices;
     if (devTools.dumpMatricesFrames) cfg.dumpMatricesFrames = *devTools.dumpMatricesFrames;
     if (devTools.benchmark) cfg.flags.benchmark = *devTools.benchmark;
+    if (devTools.benchmarkMatrix) { cfg.flags.benchmarkMatrix = *devTools.benchmarkMatrix; if (*devTools.benchmarkMatrix) cfg.flags.benchmark = true; }
     if (devTools.cullDisabled && *devTools.cullDisabled) cfg.cullingLoadMode = Config::CullingLoadMode::Disabled;
     if (devTools.cullingMode) cfg.cullingLoadMode = ParseCullingLoadMode(*devTools.cullingMode, cfg.cullingLoadMode);
     cfg.flags.cullDisabled = cfg.cullingLoadMode == Config::CullingLoadMode::Disabled;
     if (devTools.benchmarkOutputPath) cfg.benchmarkOutputPath = *devTools.benchmarkOutputPath;
+    if (devTools.benchmarkReportPath) cfg.benchmarkReportPath = *devTools.benchmarkReportPath;
+    if (devTools.benchmarkFinalFrameDump) cfg.flags.benchmarkFinalFrameDump = *devTools.benchmarkFinalFrameDump;
+    if (devTools.benchmarkFinalFrameDir) cfg.benchmarkFinalFrameDir = StripQuotes(*devTools.benchmarkFinalFrameDir);
+    if (devTools.benchmarkSeconds) cfg.benchmarkDurationSeconds = *devTools.benchmarkSeconds;
+    if (devTools.benchmarkDurationSeconds) cfg.benchmarkDurationSeconds = *devTools.benchmarkDurationSeconds;
+    if (devTools.benchmarkFrameLimit) cfg.benchmarkFrameLimit = *devTools.benchmarkFrameLimit;
+    if (devTools.benchmarkFixedDt) cfg.benchmarkFixedDt = *devTools.benchmarkFixedDt;
     if (devTools.offscreen) cfg.flags.offscreen = *devTools.offscreen;
     if (devTools.offscreenDebug) cfg.flags.offscreenDebug = *devTools.offscreenDebug;
     if (devTools.glOffscreenFlushMode) cfg.glOffscreenFlushMode = ParseGLOffscreenFlushMode(*devTools.glOffscreenFlushMode, cfg.glOffscreenFlushMode);
@@ -385,6 +401,24 @@ bool ValidateConfig(Config& cfg) {
     valid = false;
   }
 
+  if (cfg.benchmarkDurationSeconds < 0) {
+    WarnConfigAdjusted("benchmarkDurationSeconds", "must be non-negative, using 0");
+    cfg.benchmarkDurationSeconds = 0;
+    valid = false;
+  }
+
+  if (cfg.benchmarkFrameLimit < 0) {
+    WarnConfigAdjusted("benchmarkFrameLimit", "must be non-negative, using 0");
+    cfg.benchmarkFrameLimit = 0;
+    valid = false;
+  }
+
+  if (cfg.benchmarkFixedDt < 0.0f || !std::isfinite(cfg.benchmarkFixedDt)) {
+    WarnConfigAdjusted("benchmarkFixedDt", "must be finite and non-negative, using 0");
+    cfg.benchmarkFixedDt = 0.0f;
+    valid = false;
+  }
+
   if (cfg.flags.dumpEnabled && cfg.flags.dumpByFrame && cfg.dumpFrame < 0) {
     cfg.flags.dumpEnabled = false;
     valid = false;
@@ -418,6 +452,12 @@ bool ValidateConfig(Config& cfg) {
   cfg.logFile = StripQuotes(cfg.logFile);
   cfg.replaySnapshotPath = StripQuotes(cfg.replaySnapshotPath);
   cfg.benchmarkOutputPath = StripQuotes(cfg.benchmarkOutputPath);
+  cfg.benchmarkReportPath = StripQuotes(cfg.benchmarkReportPath);
+  cfg.benchmarkFinalFrameDir = StripQuotes(cfg.benchmarkFinalFrameDir);
+  if (cfg.flags.benchmarkMatrix) {
+    cfg.flags.benchmark = true;
+    cfg.startScene = 1;
+  }
   cfg.runtimeTelemetryOutputPath = StripQuotes(cfg.runtimeTelemetryOutputPath);
   if (cfg.flags.runtimeTelemetry && cfg.runtimeTelemetryOutputPath.empty()) {
     cfg.runtimeTelemetryOutputPath = defaults.runtimeTelemetryOutputPath;
@@ -554,9 +594,48 @@ void ApplyCommandLine(int argc, char** argv, Config& cfg) {
     else if (arg == "--benchmark") {
       cfg.flags.benchmark = true;
     }
+    else if (arg == "--benchmarkMatrix") {
+      cfg.flags.benchmark = true;
+      cfg.flags.benchmarkMatrix = true;
+    }
     else if (arg == "--benchmarkOutput" && i + 1 < argc) {
       cfg.flags.benchmark = true;
       cfg.benchmarkOutputPath = argv[++i];
+    }
+    else if (arg == "--benchmarkReport" && i + 1 < argc) {
+      cfg.flags.benchmark = true;
+      cfg.flags.benchmarkMatrix = true;
+      cfg.benchmarkReportPath = argv[++i];
+    }
+    else if (arg == "--benchmarkFinalFrameDump" || arg == "--benchmarkDumpFinalFrame" || arg == "--benchmarkCaptureFinalFrame") {
+      cfg.flags.benchmark = true;
+      cfg.flags.benchmarkFinalFrameDump = true;
+    }
+    else if ((arg == "--benchmarkFinalFrameDir" || arg == "--benchmarkFinalFramePath") && i + 1 < argc) {
+      cfg.flags.benchmark = true;
+      cfg.flags.benchmarkFinalFrameDump = true;
+      cfg.benchmarkFinalFrameDir = StripQuotes(argv[++i]);
+    }
+    else if (arg == "--benchmarkSeconds" || arg == "--benchmarkDuration" || arg == "--benchmarkDurationSeconds") {
+      int value = 0;
+      if (ReadIntArgument(arg, argc, argv, i, value)) {
+        cfg.flags.benchmark = true;
+        cfg.benchmarkDurationSeconds = value;
+      }
+    }
+    else if (arg == "--benchmarkFrames" || arg == "--benchmarkFrameLimit") {
+      int value = 0;
+      if (ReadIntArgument(arg, argc, argv, i, value)) {
+        cfg.flags.benchmark = true;
+        cfg.benchmarkFrameLimit = value;
+      }
+    }
+    else if (arg == "--benchmarkFixedDt" || arg == "--benchmarkFixedDelta") {
+      float value = 0.0f;
+      if (ReadFloatArgument(arg, argc, argv, i, value)) {
+        cfg.flags.benchmark = true;
+        cfg.benchmarkFixedDt = value;
+      }
     }
     else if (arg == "--cullDisabled") {
       cfg.cullingLoadMode = Config::CullingLoadMode::Disabled;
@@ -619,7 +698,14 @@ void PrintHelp() {
     << "  --keepRunning                      Keep running after dump\n"
     << "  --dumpMatrices <frames>            Write matrix_dump.csv for N frames\n"
     << "  --benchmark                        Run DayScene tour, write benchmark JSON, then exit\n"
+    << "  --benchmarkMatrix                  Run DayScene API/resolution/onscreen-offscreen matrix in process\n"
     << "  --benchmarkOutput <path>            Benchmark JSON output path\n"
+    << "  --benchmarkReport <path>            Benchmark matrix Markdown report path\n"
+    << "  --benchmarkFinalFrameDump           Save the final offscreen benchmark output RT as PPM\n"
+    << "  --benchmarkFinalFrameDir <dir>      Directory for --benchmarkFinalFrameDump captures\n"
+    << "  --benchmarkSeconds <seconds>        Run benchmark unthrottled for this many seconds\n"
+    << "  --benchmarkFrames <N>               End benchmark after N update frames instead of duration\n"
+    << "  --benchmarkFixedDt <seconds>        Use a fixed dt for benchmark updates\n"
     << "  --culling <full|lazy|disabled>      Culling metadata load policy\n"
     << "  --cullDisabled                      Legacy alias for --culling disabled\n"
     << "  --offscreen                         Render the default target to rotating offscreen RTs instead of presenting\n"

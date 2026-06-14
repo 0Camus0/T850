@@ -9,7 +9,7 @@ on:
 
 jobs:
   build:
-    runs-on: windows-latest
+    runs-on: windows-2022
     strategy:
       fail-fast: false
       matrix:
@@ -168,7 +168,7 @@ jobs:
             $sdk = Get-ChildItem $vulkanRoot -Directory | Sort-Object Name -Descending | Select-Object -First 1
           }
           if (-not $sdk) {
-            winget install --id KhronosGroup.VulkanSDK -e --accept-package-agreements --accept-source-agreements --disable-interactivity
+            winget install --id KhronosGroup.VulkanSDK -e --source winget --accept-package-agreements --accept-source-agreements --disable-interactivity
             if (Test-Path $vulkanRoot) {
               $sdk = Get-ChildItem $vulkanRoot -Directory | Sort-Object Name -Descending | Select-Object -First 1
             }

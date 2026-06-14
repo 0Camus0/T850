@@ -261,6 +261,14 @@ namespace t850 {
 		BACK_FACES,
 		FRONT_AND_BACK
 	};
+	enum class FrameTargetMode {
+	  Swapchain,
+	  Offscreen
+	};
+	enum class FrameCompletionMode {
+	  Present,
+	  SubmitNoPresent
+	};
 
     BaseDriver() : CurrentRT(-1) , m_FaceCulling(FRONT_FACES) {  }
 
@@ -291,6 +299,7 @@ namespace t850 {
     virtual void	 SetDimensions(int, int) = 0;
     virtual void	 Clear() = 0;
     virtual void	 ClearWithColor(float r, float g, float b, float a) { Clear(); }
+    virtual void   ClearBackbufferWithColor(float r, float g, float b, float a) { ClearWithColor(r, g, b, a); }
     virtual void	 SwapBuffers() = 0;
     virtual void SetBlendState(BlendStates state) = 0;
     virtual void SetDepthStencilState(DepthStencilStates state) = 0;
@@ -309,8 +318,9 @@ namespace t850 {
 
     // ── D3D12/Vulkan explicit API (no-ops for D3D11/GL) ──
     virtual void BuildPipelineObjects() {}
-    virtual void BeginFrame() {}
+    virtual void BeginFrame(FrameTargetMode target = FrameTargetMode::Swapchain) { (void)target; }
     virtual void EndFrame() {}
+    virtual void CompleteFrame(FrameCompletionMode mode = FrameCompletionMode::Present) { (void)mode; SwapBuffers(); }
     virtual void WaitForGPU() {}
     virtual void FlushGPUResources() { WaitForGPU(); }  // flush GPU + release cmd buffer/descriptor references
     virtual void BeginResourceUploadBatch() {}

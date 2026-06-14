@@ -61,83 +61,13 @@
 #include "EditorMesh.h"
 #include "EditorScene.h"
 #include "EditorImGui.h"
+#include "HostedViewportPanel.h"
 
 namespace t8ditor {
 
   // Set by main.cpp before constructing the app.
   void SetStartupMeshPath(const std::string& p);
   void SetStartupDumpFrame(int frame);
-
-  struct HostedSceneWindowController {
-    bool open = false;
-    bool loaded = false;
-    bool openRequested = false;
-    bool closeRequested = false;
-    bool guiVisible = true;
-    bool viewportInputActive = false;
-    void* nativeHandle = nullptr;
-    void* loggedNativeHandle = nullptr;
-    bool mainViewportLogged = false;
-    unsigned int imguiViewportId = 0;
-    unsigned int dockspaceId = 0;
-    unsigned int dockClassId = 0;
-    float viewportPosX = 0.0f;
-    float viewportPosY = 0.0f;
-    float viewportSizeX = 0.0f;
-    float viewportSizeY = 0.0f;
-    float imageMinX = 0.0f;
-    float imageMinY = 0.0f;
-    float imageSizeX = 0.0f;
-    float imageSizeY = 0.0f;
-
-    void Open(bool guiVisibleOnOpen = true) {
-      open = true;
-      loaded = false;
-      openRequested = true;
-      closeRequested = false;
-      guiVisible = guiVisibleOnOpen;
-      viewportInputActive = false;
-      ResetNativeWindow();
-      ResetViewportRect();
-    }
-
-    void RequestClose() {
-      open = false;
-      closeRequested = true;
-      viewportInputActive = false;
-    }
-
-    void Reset(bool guiVisibleDefault = true) {
-      open = false;
-      loaded = false;
-      openRequested = false;
-      closeRequested = false;
-      guiVisible = guiVisibleDefault;
-      viewportInputActive = false;
-      ResetNativeWindow();
-      ResetViewportRect();
-    }
-
-    void ResetNativeWindow() {
-      nativeHandle = nullptr;
-      loggedNativeHandle = nullptr;
-      mainViewportLogged = false;
-      imguiViewportId = 0;
-      dockspaceId = 0;
-      dockClassId = 0;
-    }
-
-    void ResetViewportRect() {
-      viewportPosX = 0.0f;
-      viewportPosY = 0.0f;
-      viewportSizeX = 0.0f;
-      viewportSizeY = 0.0f;
-      imageMinX = 0.0f;
-      imageMinY = 0.0f;
-      imageSizeX = 0.0f;
-      imageSizeY = 0.0f;
-    }
-  };
 
   enum class EditorCameraMode : int {
     Orbit = 0,
@@ -244,6 +174,10 @@ namespace t8ditor {
     void DrawSelectedNavLinkOverlay(t850::Texture* depthTexture, t850::Texture* secondaryDepthTexture, const Camera& cam);
     void DumpEditorNavMeshWireGeometry(const char* reason) const;
     void RenderLoadingProgressFrame();
+    void LoadPendingScene();
+    void SyncEditorSceneLights(const ::Camera& cam);
+    void RenderEditorSceneFrame(t850::BaseDriver* drv, bool captureFrozenEditorFrame, bool& didCaptureFrozenEditorFrame);
+    void DrawEditorUI(t850::BaseDriver* drv);
     t850::RenderSkinnedMesh* GetSelectedSkinnedMesh() const;
     void DrawSelectedAnimationInspector(struct SceneObject& obj);
     void DrawEditorRenderingPanel();
@@ -353,17 +287,12 @@ namespace t8ditor {
     float& m_meshEditorViewportPosY = m_meshEditorWindow.viewportPosY;
     float& m_meshEditorViewportSizeX = m_meshEditorWindow.viewportSizeX;
     float& m_meshEditorViewportSizeY = m_meshEditorWindow.viewportSizeY;
-    float& m_meshEditorViewportImageMinX = m_meshEditorWindow.imageMinX;
-    float& m_meshEditorViewportImageMinY = m_meshEditorWindow.imageMinY;
-    float& m_meshEditorViewportImageSizeX = m_meshEditorWindow.imageSizeX;
-    float& m_meshEditorViewportImageSizeY = m_meshEditorWindow.imageSizeY;
     unsigned int& m_meshEditorDockspaceId = m_meshEditorWindow.dockspaceId;
     unsigned int& m_meshEditorDockClassId = m_meshEditorWindow.dockClassId;
     t850::RenderViewport m_meshEditorGBufferTarget;
-    t850::RenderViewport m_meshEditorViewportTarget;
+    HostedRenderViewport m_meshEditorViewport;
     int m_meshEditorDebugLogFramesRemaining = 0;
     bool& m_meshEditorGuiVisible = m_meshEditorWindow.guiVisible;
-    bool& m_meshEditorViewportInputActive = m_meshEditorWindow.viewportInputActive;
     std::unique_ptr<::RagdollEditor> m_meshEditorScene;
     SceneProps m_meshEditorSceneProps;
     t850::SceneSetup m_meshEditorSceneSetup;
@@ -408,12 +337,7 @@ namespace t8ditor {
     std::unique_ptr<::SceneTemplate> m_playScene;
     std::string m_playSceneTempPath;
     std::string m_playSceneStatus;
-    t850::RenderViewport m_playSceneViewportTarget;
-    float& m_playSceneViewportImageMinX = m_playSceneWindow.imageMinX;
-    float& m_playSceneViewportImageMinY = m_playSceneWindow.imageMinY;
-    float& m_playSceneViewportImageSizeX = m_playSceneWindow.imageSizeX;
-    float& m_playSceneViewportImageSizeY = m_playSceneWindow.imageSizeY;
-    bool& m_playSceneViewportInputActive = m_playSceneWindow.viewportInputActive;
+    HostedRenderViewport m_playSceneViewport;
     unsigned int& m_playSceneImGuiViewportId = m_playSceneWindow.imguiViewportId;
     unsigned int& m_playSceneDockspaceId = m_playSceneWindow.dockspaceId;
     unsigned int& m_playSceneDockClassId = m_playSceneWindow.dockClassId;
@@ -433,13 +357,8 @@ namespace t8ditor {
     bool& m_ragdollEditorMainViewportLogged = m_ragdollEditorWindow.mainViewportLogged;
     bool m_ragdollEditorDirty = false;
     std::string m_ragdollEditorStatus;
-    int m_ragdollEditorGBufferRT = -1;
-    int m_ragdollEditorViewportRT = -1;
-    int m_ragdollEditorViewportW = 0;
-    int m_ragdollEditorViewportH = 0;
-    int m_ragdollEditorPendingViewportW = 0;
-    int m_ragdollEditorPendingViewportH = 0;
-    int m_ragdollEditorViewportStableFrames = 0;
+    t850::RenderViewport m_ragdollEditorGBufferTarget;
+    HostedRenderViewport m_ragdollEditorViewport;
     Camera m_ragdollEditorCamera;
     XVECTOR3 m_ragdollEditorOrbitTarget = XVECTOR3(0.0f, 0.0f, 0.0f, 1.0f);
     float m_ragdollEditorOrbitYaw = -0.75f;

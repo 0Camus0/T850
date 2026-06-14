@@ -50,6 +50,7 @@ public:
 
   void LoadScene(int id) override;
   void DrawRuntimeGui();
+  bool RunOffscreenBenchmarkFastPath(float initialDtSecs);
   bool HandleRuntimeGuiToggle(const char* phase);
 #ifdef OS_ANDROID
   bool HandleAndroidInputEvent(AInputEvent* event) override;

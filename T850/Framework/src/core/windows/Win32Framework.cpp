@@ -21,6 +21,8 @@
 #include <video/d3d12/D3D12Driver.h>
 #include <video/vulkan/VulkanDriver.h>
 #endif
+#include <scene/MaterialAsset.h>
+#include <scene/MeshAssetCache.h>
 // SDL3
 #include <SDL3/SDL.h>
 // Windows
@@ -28,6 +30,7 @@
 #include <mmsystem.h>
 #include <utils/ThreadPool.h>
 #include <utils/Log.h>
+#include <utils/ConfigRuntime.h>
 #include <debug/RuntimeTelemetry.h>
 #include <navigation/NavigationSystem.h>
 namespace t850 {
@@ -403,6 +406,20 @@ namespace t850 {
 
   void Win32Framework::ResetApplication() {
   }
+
+  bool Win32Framework::ResizeApplicationWindow(int width, int height) {
+    if (width <= 0 || height <= 0 || !pVideoDriver) {
+      return false;
+    }
+    aplicationDescriptor.width = width;
+    aplicationDescriptor.height = height;
+    if (m_pWindow && aplicationDescriptor.videoMode != t850::VideoMode::FULLSCREEN) {
+      SDL_SetWindowSize(m_pWindow, width, height);
+    }
+    ResetInputAfterWindowStateChange();
+    return pVideoDriver->ResizeSwapchain(width, height);
+  }
+
   void Win32Framework::ChangeAPI(GraphicsApi::E api)
   {
 #ifndef OS_WINDOWS
@@ -410,10 +427,17 @@ namespace t850 {
       api = GraphicsApi::OPENGL;
     }
 #endif
+    const GraphicsApi::E oldApi = pVideoDriver ? pVideoDriver->m_currentAPI : api;
+    T8_LOG_INFO("[Framework] ChangeAPI begin %s -> %s",
+                t850::config::ApiTag(oldApi),
+                t850::config::ApiTag(api));
     if (m_inited) {
       ReleaseMouseMode();
       pVideoDriver->FlushGPUResources();  // release cmd buffer/descriptor refs before scene cleanup
       pBaseApp->DestroyAssets();
+      MeshAssetCache::Get().Clear();
+      MaterialAssetCache::Get().Clear();
+      pBaseApp->resourceManager.Release();
       pVideoDriver->DestroyDriver();
       delete pVideoDriver;
       pVideoDriver = nullptr;
@@ -537,11 +561,16 @@ namespace t850 {
     }
 
     g_pBaseDriver = pVideoDriver;
+    t850::Log::SetSessionTag(t850::config::ApiTag(pVideoDriver->m_currentAPI));
     pVideoDriver->SetWindow(m_pWindow);
     pVideoDriver->InitDriver();
     RefreshEngineContextFromGlobals();
     pBaseApp->CreateAssets();
     // For D3D12: record where permanent descriptors end so per-frame dynamic CBVs start after them
     pVideoDriver->BuildPipelineObjects();
+    T8_LOG_INFO("[Framework] ChangeAPI complete %s (%dx%d)",
+                t850::config::ApiTag(pVideoDriver->m_currentAPI),
+                aplicationDescriptor.width,
+                aplicationDescriptor.height);
   }
 }

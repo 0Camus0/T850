@@ -45,7 +45,7 @@ struct GaussFilter{
 #define SSAO_NOISE_SIZE 4
 
 struct SSAOFilter {
-	SSAOFilter() : KernelSize(10), Radius(1.0f), NoiseSize((float)SSAO_NOISE_SIZE){}
+	SSAOFilter() : KernelSize(10), Radius(1.0f), NoiseSize((float)SSAO_NOISE_SIZE), NoiseTex(nullptr){}
 	int   KernelSize;
 	float Radius;
 	float NoiseSize;

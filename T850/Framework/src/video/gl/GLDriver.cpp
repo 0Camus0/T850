@@ -729,9 +729,37 @@ namespace t850 {
 #endif
   }
 
+  void GLDriver::ClearBackbufferWithColor(float r, float g, float b, float a) {
+    glBindFramebuffer(GL_FRAMEBUFFER, CurrentFBO);
+    glViewport(0, 0, width, height);
+    glColorMask(GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE);
+    CurrentRT = -1;
+    glClearColor(r, g, b, a);
+    glClearDepthf(0.0f);
+    GLboolean previousDepthMask = GL_TRUE;
+    glGetBooleanv(GL_DEPTH_WRITEMASK, &previousDepthMask);
+    glDepthMask(GL_TRUE);
+    glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT | GL_STENCIL_BUFFER_BIT);
+    glDepthMask(previousDepthMask);
+#ifdef T850_RENDER_TRACE
+    if (T8_TRACE_ACTIVE()) {
+      g_renderTracer->EvClearRT(-1, 1u | 2u | 4u, r, g, b, a, 0.0f, 0);
+      RefreshTracePendingRenderState();
+    }
+#endif
+  }
+
   void	GLDriver::SwapBuffers() {
+    CompleteFrame(FrameCompletionMode::Present);
+  }
+
+  void GLDriver::CompleteFrame(FrameCompletionMode mode) {
     T8_TELEMETRY_SCOPE("gpu.gl.swap_buffers");
     T8_LOG_TRACE("[GLDriver] SwapBuffers");
+    if (mode == FrameCompletionMode::SubmitNoPresent) {
+      glFlush();
+      return;
+    }
     if (IsOffscreenEnabled()) {
 #if defined(T850_HEADLESS) || defined(USING_OPENGL) || defined(USING_OPENGL_ES30) || defined(USING_OPENGL_ES31)
       FenceOffscreenTarget(GetActiveOffscreenRT());

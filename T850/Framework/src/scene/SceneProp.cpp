@@ -136,6 +136,7 @@ float lerp(float a, float b, float f)
 }
 
 void SSAOFilter::InitTexture() {
+	Destroy();
 	unsigned char *pChar = &Noise[0];
 	for (int i = 0; i < SSAO_NOISE_SIZE*SSAO_NOISE_SIZE; i++) {
 			*pChar = (unsigned char)RandRange(0.0f,255.0f); pChar++;

@@ -267,8 +267,10 @@ public final class AssetDownloadActivity extends Activity {
 
     private static void downloadAsset(AssetEntry asset, File target) throws Exception {
         File parent = target.getParentFile();
-        if (parent != null && !parent.isDirectory() && !parent.mkdirs()) {
-            throw new IllegalStateException("Could not create " + parent);
+        if (parent != null && !parent.isDirectory()) {
+            if (!parent.mkdirs() && !parent.isDirectory()) {
+                throw new IllegalStateException("Could not create " + parent);
+            }
         }
         File tmp = new File(target.getAbsolutePath() + ".download");
         if (tmp.exists() && !tmp.delete()) {

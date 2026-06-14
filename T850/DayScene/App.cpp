@@ -61,6 +61,13 @@ int main(int arg,char ** args){
 
   t850::config::ApplyCommandLine(arg, args, t850::g_config);
   t850::config::ValidateConfig(t850::g_config);
+  if (t850::g_config.flags.benchmarkMatrix) {
+    t850::g_config.api = "d3d11";
+    t850::g_config.width = 1920;
+    t850::g_config.height = 1080;
+    t850::g_config.flags.offscreen = false;
+    t850::g_config.startScene = 1;
+  }
 
   t850::ApplicationDesc desc;
   t850::config::ConfigureApplicationDesc(t850::g_config, desc);
@@ -182,4 +189,3 @@ int main(int arg,char ** args){
 
     return 0;
 }
-

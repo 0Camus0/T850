@@ -129,9 +129,24 @@ class DayScene : public t850::SceneBase
   void ApplyActiveCameraSelection(int selection);
   void SetSpectatorCameraEnabled(bool enabled);
   void SetSpectatorDebugEnabled(bool enabled);
-  void RecordBenchmarkFrame(float dtSecs);
+  void RecordBenchmarkRenderedFrame(double frameMs);
   void WriteBenchmarkResults(float durationSecs) const;
   std::string BuildBenchmarkOutputPath() const;
+  std::string BuildBenchmarkFinalFramePath() const;
+  std::string CaptureBenchmarkFinalFrame();
+  void QueueBenchmarkFinish(float durationSecs);
+  void InitializeBenchmarkMatrix();
+  bool IsBenchmarkMatrixActive() const;
+  void ResetBenchmarkRunCapture();
+  void ApplyBenchmarkMatrixRun(std::size_t runIndex, bool recreateRenderer);
+  void ResetBenchmarkSameApiRun();
+  void RebindRenderGraphOutputs();
+  void ResetSceneStateForBenchmarkRun();
+  void FinishBenchmarkRun(float durationSecs);
+  void WriteBenchmarkMatrixReport() const;
+  void DrawBenchmarkMatrixGui(t850::DevGuiContext& gui);
+  bool IsBenchmarkRenderingOffscreen() const { return m_benchmarkActiveOffscreen; }
+  bool IsBenchmarkFinishPending() const { return m_benchmarkFinishPending; }
   void LoadSceneProfile();
   void SaveSceneProfile();
   void CaptureSceneProfileState(t850::SandboxProfileDesc& state) const;
@@ -150,6 +165,28 @@ class DayScene : public t850::SceneBase
     unsigned long long drawnIndices = 0;
     unsigned long long culledIndices = 0;
     double cullingCpuMs = 0.0;
+  };
+
+  struct BenchmarkMatrixRun {
+    t850::GraphicsApi::E api = t850::GraphicsApi::D3D11;
+    std::string apiTag = "d3d11";
+    int width = 1920;
+    int height = 1080;
+    bool offscreen = false;
+    std::string outputPath;
+  };
+
+  struct BenchmarkMatrixResult {
+    BenchmarkMatrixRun run;
+    double averageFps = 0.0;
+    double medianFps = 0.0;
+    double minFps = 0.0;
+    double maxFps = 0.0;
+    double averageMs = 0.0;
+    double medianMs = 0.0;
+    int frameCount = 0;
+    double durationSeconds = 0.0;
+    std::string finalFramePath;
   };
 
   float DtSecs;
@@ -249,6 +286,21 @@ class DayScene : public t850::SceneBase
   float m_tourTimeSec = 0.0f;
   std::vector<double> m_benchmarkFrameTimesMs;
   BenchmarkCullingTotals m_benchmarkCullingTotals;
+  std::vector<BenchmarkMatrixRun> m_benchmarkMatrixRuns;
+  std::vector<BenchmarkMatrixResult> m_benchmarkMatrixResults;
+  std::size_t m_benchmarkMatrixRunIndex = 0;
+  bool m_benchmarkMatrixInitialized = false;
+  bool m_benchmarkFinished = false;
+  bool m_benchmarkActiveOffscreen = false;
+  bool m_benchmarkFinishPending = false;
+  float m_benchmarkPendingDurationSeconds = 0.0f;
+  int m_benchmarkSimulationFrame = 0;
+  int m_benchmarkWarmupFrames = 0;
+  int m_benchmarkTargetFrames = 0;
+  int m_benchmarkOffscreenOutputRT = -1;
+  std::string m_benchmarkStatus;
+  std::string m_benchmarkMatrixReportPath;
+  std::string m_benchmarkPendingFinalFramePath;
   t850::LensFlare m_flare;
   XMATRIX44 m;
 

@@ -30,9 +30,11 @@ public:
     bool profile : 1 = false;
     bool dumpMatrices : 1 = false;
     bool benchmark : 1 = false;
+    bool benchmarkMatrix : 1 = false;
     bool cullDisabled : 1 = false;
     bool offscreen : 1 = false;
     bool offscreenDebug : 1 = false;
+    bool benchmarkFinalFrameDump : 1 = false;
     bool dumpShaderPermutations : 1 = false;
     bool autoStartRagdoll : 1 = false;
     bool runtimeTelemetry : 1 = false;
@@ -56,6 +58,10 @@ public:
   GLOffscreenFlushMode glOffscreenFlushMode = GLOffscreenFlushMode::Frame;
   CullingLoadMode cullingLoadMode = CullingLoadMode::FullOnLoad;
   std::string benchmarkOutputPath;
+  std::string benchmarkReportPath;
+  std::string benchmarkFinalFrameDir;
+  int benchmarkFrameLimit = 0;
+  float benchmarkFixedDt = 0.0f;
   std::string modelPath = "Models/DamagedHelmet.glb";
   std::string sceneFilePath;
   std::string sceneProfile;

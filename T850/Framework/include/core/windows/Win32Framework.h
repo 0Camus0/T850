@@ -40,6 +40,7 @@ namespace t850 {
     void ProcessInput();
     void ResetApplication();
     void ChangeAPI(GraphicsApi::E api);
+    bool ResizeApplicationWindow(int width, int height);
     ~Win32Framework() {	}
 
     bool	m_alive;

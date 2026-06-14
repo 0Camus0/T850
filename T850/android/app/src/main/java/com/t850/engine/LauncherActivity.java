@@ -5,6 +5,7 @@ import android.content.Intent;
 import android.content.SharedPreferences;
 import android.content.res.AssetManager;
 import android.graphics.Color;
+import android.graphics.Typeface;
 import android.os.Bundle;
 import android.view.View;
 import android.widget.AdapterView;
@@ -17,12 +18,14 @@ import android.widget.TextView;
 import android.widget.Toast;
 
 import java.io.File;
+import java.io.FileInputStream;
 import java.io.IOException;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Locale;
+import org.json.JSONObject;
 
 @SuppressWarnings("deprecation")
 public final class LauncherActivity extends Activity {
@@ -38,6 +41,15 @@ public final class LauncherActivity extends Activity {
     public static final String EXTRA_REPLAY_SNAPSHOT = "com.t850.engine.extra.REPLAY_SNAPSHOT";
     public static final String EXTRA_PROFILE = "com.t850.engine.extra.PROFILE";
     public static final String EXTRA_PROFILE_FRAMES = "com.t850.engine.extra.PROFILE_FRAMES";
+    public static final String EXTRA_BENCHMARK = "com.t850.engine.extra.BENCHMARK";
+    public static final String EXTRA_BENCHMARK_MATRIX = "com.t850.engine.extra.BENCHMARK_MATRIX";
+    public static final String EXTRA_BENCHMARK_OUTPUT = "com.t850.engine.extra.BENCHMARK_OUTPUT";
+    public static final String EXTRA_BENCHMARK_REPORT = "com.t850.engine.extra.BENCHMARK_REPORT";
+    public static final String EXTRA_BENCHMARK_FRAMES = "com.t850.engine.extra.BENCHMARK_FRAMES";
+    public static final String EXTRA_BENCHMARK_FIXED_DT = "com.t850.engine.extra.BENCHMARK_FIXED_DT";
+    public static final String EXTRA_WIDTH = "com.t850.engine.extra.WIDTH";
+    public static final String EXTRA_HEIGHT = "com.t850.engine.extra.HEIGHT";
+    public static final String EXTRA_OFFSCREEN = "com.t850.engine.extra.OFFSCREEN";
     public static final String EXTRA_AUTO_START_RAGDOLL = "com.t850.engine.extra.AUTO_START_RAGDOLL";
     public static final String EXTRA_RAGDOLL_SPEED_INDEX = "com.t850.engine.extra.RAGDOLL_SPEED_INDEX";
     public static final String EXTRA_RETURN_TO_NATIVE = "com.t850.engine.extra.RETURN_TO_NATIVE";
@@ -72,8 +84,14 @@ public final class LauncherActivity extends Activity {
     private TextView sceneFileHint;
     private TextView modelLabel;
     private TextView modelHint;
+    private TextView benchmarkStatus;
+    private TextView benchmarkReport;
     private boolean launchingNative;
     private static boolean resumeNativeInCurrentProcess;
+    private final List<BenchmarkRun> benchmarkRuns = new ArrayList<>();
+    private final List<BenchmarkResult> benchmarkResults = new ArrayList<>();
+    private int benchmarkRunIndex = -1;
+    private boolean benchmarkMatrixRunning;
 
     private static final class Option {
         final String label;
@@ -122,6 +140,58 @@ public final class LauncherActivity extends Activity {
         int sandboxContent = CONTENT_SCENE_FILE;
         String sceneFile;
         String sceneProfile;
+        boolean benchmark;
+        boolean benchmarkMatrix;
+        String benchmarkOutput;
+        String benchmarkReport;
+        int benchmarkFrames;
+        float benchmarkFixedDt;
+        int width;
+        int height;
+        boolean offscreen;
+    }
+
+    private static final class BenchmarkRun {
+        final int width;
+        final int height;
+        final boolean offscreen;
+        final File outputFile;
+
+        BenchmarkRun(int width, int height, boolean offscreen, File outputFile) {
+            this.width = width;
+            this.height = height;
+            this.offscreen = offscreen;
+            this.outputFile = outputFile;
+        }
+
+        String resolution() {
+            return width + "x" + height;
+        }
+
+        String mode() {
+            return offscreen ? "offscreen" : "onscreen";
+        }
+    }
+
+    private static final class BenchmarkResult {
+        final BenchmarkRun run;
+        final double averageFps;
+        final double medianFps;
+        final double minFps;
+        final double maxFps;
+        final int frameCount;
+        final double durationSeconds;
+
+        BenchmarkResult(BenchmarkRun run, double averageFps, double medianFps, double minFps, double maxFps,
+                        int frameCount, double durationSeconds) {
+            this.run = run;
+            this.averageFps = averageFps;
+            this.medianFps = medianFps;
+            this.minFps = minFps;
+            this.maxFps = maxFps;
+            this.frameCount = frameCount;
+            this.durationSeconds = durationSeconds;
+        }
     }
 
     @Override
@@ -170,6 +240,10 @@ public final class LauncherActivity extends Activity {
         super.onActivityResult(requestCode, resultCode, data);
         if (requestCode == REQUEST_NATIVE_SCENE) {
             launchingNative = false;
+            if (benchmarkMatrixRunning) {
+                handleBenchmarkRunReturned();
+                return;
+            }
             getSharedPreferences(PREFS_NAME, MODE_PRIVATE)
                     .edit()
                     .remove(PREF_CONSUMED_AUTO_RUN)
@@ -260,6 +334,17 @@ public final class LauncherActivity extends Activity {
         buttonParams.setMargins(0, dp(24), 0, 0);
         root.addView(runButton, buttonParams);
 
+        Button benchmarkButton = new Button(this);
+        benchmarkButton.setText("Run DayScene Benchmark Matrix");
+        root.addView(benchmarkButton, buttonParams);
+
+        benchmarkStatus = hint("Benchmark matrix: Vulkan, 1920x1080 / 2560x1440 / 3840x2160, onscreen and offscreen.");
+        root.addView(benchmarkStatus);
+        benchmarkReport = valueText("");
+        benchmarkReport.setTypeface(Typeface.MONOSPACE);
+        benchmarkReport.setVisibility(View.GONE);
+        root.addView(benchmarkReport);
+
         sceneSpinner.setOnItemSelectedListener(new AdapterView.OnItemSelectedListener() {
             @Override
             public void onItemSelected(AdapterView<?> parent, View view, int position, long id) {
@@ -292,6 +377,13 @@ public final class LauncherActivity extends Activity {
             @Override
             public void onClick(View view) {
                 runNativeScene();
+            }
+        });
+
+        benchmarkButton.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View view) {
+                startBenchmarkMatrix();
             }
         });
 
@@ -531,6 +623,15 @@ public final class LauncherActivity extends Activity {
         options.ragdollSpeedIndex = intent.getIntExtra(EXTRA_RAGDOLL_SPEED_INDEX, -1);
         options.replaySnapshot = intent.getStringExtra(EXTRA_REPLAY_SNAPSHOT);
         options.sceneProfile = intent.getStringExtra(EXTRA_SCENE_PROFILE);
+        options.benchmark = intent.getBooleanExtra(EXTRA_BENCHMARK, false);
+        options.benchmarkMatrix = intent.getBooleanExtra(EXTRA_BENCHMARK_MATRIX, false);
+        options.benchmarkOutput = intent.getStringExtra(EXTRA_BENCHMARK_OUTPUT);
+        options.benchmarkReport = intent.getStringExtra(EXTRA_BENCHMARK_REPORT);
+        options.benchmarkFrames = intent.getIntExtra(EXTRA_BENCHMARK_FRAMES, 0);
+        options.benchmarkFixedDt = intent.getFloatExtra(EXTRA_BENCHMARK_FIXED_DT, 0.0f);
+        options.width = intent.getIntExtra(EXTRA_WIDTH, 0);
+        options.height = intent.getIntExtra(EXTRA_HEIGHT, 0);
+        options.offscreen = intent.getBooleanExtra(EXTRA_OFFSCREEN, false);
         options.returnToNative = intent.getBooleanExtra(EXTRA_RETURN_TO_NATIVE, false);
 
         selectOption(sceneSpinner, scenes, options.scene);
@@ -586,6 +687,33 @@ public final class LauncherActivity extends Activity {
             intent.putExtra(EXTRA_PROFILE, true);
             intent.putExtra(EXTRA_PROFILE_FRAMES, Math.max(1, options.profileFrames));
         }
+        if (options.benchmark) {
+            intent.putExtra(EXTRA_BENCHMARK, true);
+        }
+        if (options.benchmarkMatrix) {
+            intent.putExtra(EXTRA_BENCHMARK_MATRIX, true);
+        }
+        if (options.benchmarkOutput != null && !options.benchmarkOutput.isEmpty()) {
+            intent.putExtra(EXTRA_BENCHMARK_OUTPUT, options.benchmarkOutput);
+        }
+        if (options.benchmarkReport != null && !options.benchmarkReport.isEmpty()) {
+            intent.putExtra(EXTRA_BENCHMARK_REPORT, options.benchmarkReport);
+        }
+        if (options.benchmarkFrames > 0) {
+            intent.putExtra(EXTRA_BENCHMARK_FRAMES, options.benchmarkFrames);
+        }
+        if (options.benchmarkFixedDt > 0.0f) {
+            intent.putExtra(EXTRA_BENCHMARK_FIXED_DT, options.benchmarkFixedDt);
+        }
+        if (options.width > 0) {
+            intent.putExtra(EXTRA_WIDTH, options.width);
+        }
+        if (options.height > 0) {
+            intent.putExtra(EXTRA_HEIGHT, options.height);
+        }
+        if (options.offscreen) {
+            intent.putExtra(EXTRA_OFFSCREEN, true);
+        }
         if (options.autoStartRagdoll) {
             intent.putExtra(EXTRA_AUTO_START_RAGDOLL, true);
         }
@@ -631,6 +759,159 @@ public final class LauncherActivity extends Activity {
 
     private boolean sceneUsesModel(int scene) {
         return scene == 3;
+    }
+
+    private void startBenchmarkMatrix() {
+        File root = new File(getExternalFilesDir(null), "benchmarks/dayscene_" + System.currentTimeMillis());
+        if (!root.mkdirs() && !root.isDirectory()) {
+            Toast.makeText(this, "Could not create benchmark directory", Toast.LENGTH_LONG).show();
+            return;
+        }
+
+        benchmarkReport.setVisibility(View.GONE);
+        benchmarkStatus.setText("Benchmark matrix running in DayScene...");
+
+        NativeLaunchOptions options = new NativeLaunchOptions();
+        options.scene = 1;
+        options.logLevel = selectedLogLevel().value;
+        options.benchmark = true;
+        options.benchmarkMatrix = true;
+        options.benchmarkReport = new File(root, "DayScene_Benchmark_Report.md").getAbsolutePath();
+        options.benchmarkFrames = 5400;
+        options.benchmarkFixedDt = 1.0f / 60.0f;
+        options.returnToNative = false;
+        launchNativeScene(options);
+    }
+
+    private void launchCurrentBenchmarkRun() {
+        if (benchmarkRunIndex < 0 || benchmarkRunIndex >= benchmarkRuns.size()) {
+            benchmarkMatrixRunning = false;
+            benchmarkStatus.setText("Benchmark matrix complete.");
+            benchmarkReport.setText(buildBenchmarkReport());
+            benchmarkReport.setVisibility(View.VISIBLE);
+            return;
+        }
+
+        BenchmarkRun run = benchmarkRuns.get(benchmarkRunIndex);
+        benchmarkStatus.setText(String.format(Locale.US,
+                "Running %d/%d: Vulkan %s %s",
+                benchmarkRunIndex + 1,
+                benchmarkRuns.size(),
+                run.resolution(),
+                run.mode()));
+        benchmarkReport.setVisibility(View.GONE);
+
+        NativeLaunchOptions options = new NativeLaunchOptions();
+        options.scene = 1;
+        options.logLevel = selectedLogLevel().value;
+        options.benchmark = true;
+        options.benchmarkOutput = run.outputFile.getAbsolutePath();
+        options.width = run.width;
+        options.height = run.height;
+        options.offscreen = run.offscreen;
+        options.returnToNative = false;
+        launchNativeScene(options);
+    }
+
+    private void handleBenchmarkRunReturned() {
+        if (benchmarkRunIndex >= 0 && benchmarkRunIndex < benchmarkRuns.size()) {
+            BenchmarkRun run = benchmarkRuns.get(benchmarkRunIndex);
+            try {
+                benchmarkResults.add(readBenchmarkResult(run));
+            } catch (Exception ex) {
+                benchmarkMatrixRunning = false;
+                benchmarkStatus.setText("Benchmark failed: " + ex.getMessage());
+                benchmarkReport.setVisibility(View.GONE);
+                return;
+            }
+        }
+        benchmarkRunIndex++;
+        launchCurrentBenchmarkRun();
+    }
+
+    private BenchmarkResult readBenchmarkResult(BenchmarkRun run) throws Exception {
+        if (!run.outputFile.isFile()) {
+            throw new IOException("Missing result " + run.outputFile.getName());
+        }
+        String text = readTextFile(run.outputFile);
+        JSONObject json = new JSONObject(text);
+        JSONObject fps = json.optJSONObject("statsFps");
+        JSONObject ms = json.optJSONObject("statsMs");
+        double averageFps = fps != null ? fps.optDouble("average", 0.0) : fpsFromMs(ms, "average");
+        double medianFps = fps != null ? fps.optDouble("median", 0.0) : fpsFromMs(ms, "median");
+        double minFps = fps != null ? fps.optDouble("min", 0.0) : inverseMs(ms, "max");
+        double maxFps = fps != null ? fps.optDouble("max", 0.0) : inverseMs(ms, "min");
+        return new BenchmarkResult(
+                run,
+                averageFps,
+                medianFps,
+                minFps,
+                maxFps,
+                json.optInt("frameCount", 0),
+                json.optDouble("measuredDurationSeconds", 0.0));
+    }
+
+    private double fpsFromMs(JSONObject ms, String key) {
+        return inverseMs(ms, key);
+    }
+
+    private double inverseMs(JSONObject ms, String key) {
+        if (ms == null) {
+            return 0.0;
+        }
+        double value = ms.optDouble(key, 0.0);
+        return value > 0.0 ? 1000.0 / value : 0.0;
+    }
+
+    private String buildBenchmarkReport() {
+        double max = 1.0;
+        for (BenchmarkResult result : benchmarkResults) {
+            if (result.averageFps > max) {
+                max = result.averageFps;
+            }
+        }
+
+        StringBuilder out = new StringBuilder();
+        out.append("DayScene Vulkan Benchmark\n\n");
+        for (BenchmarkResult result : benchmarkResults) {
+            int bars = (int)Math.max(1, Math.round((result.averageFps / max) * 28.0));
+            out.append(String.format(Locale.US,
+                    "%-9s %-9s avg %7.2f fps med %7.2f min %7.2f max %7.2f %s\n",
+                    result.run.resolution(),
+                    result.run.mode(),
+                    result.averageFps,
+                    result.medianFps,
+                    result.minFps,
+                    result.maxFps,
+                    repeat('#', bars)));
+        }
+        return out.toString();
+    }
+
+    private String repeat(char value, int count) {
+        StringBuilder out = new StringBuilder(count);
+        for (int i = 0; i < count; ++i) {
+            out.append(value);
+        }
+        return out.toString();
+    }
+
+    private String readTextFile(File file) throws IOException {
+        FileInputStream stream = new FileInputStream(file);
+        try {
+            byte[] data = new byte[(int) file.length()];
+            int offset = 0;
+            while (offset < data.length) {
+                int read = stream.read(data, offset, data.length - offset);
+                if (read < 0) {
+                    break;
+                }
+                offset += read;
+            }
+            return new String(data, 0, offset, "UTF-8");
+        } finally {
+            stream.close();
+        }
     }
 
     private AssetOption selectedSceneFile() {

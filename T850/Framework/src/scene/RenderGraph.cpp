@@ -231,6 +231,12 @@ RenderGraph::ResolvedTexture RenderGraph::ResolveTextureInput(const std::string&
 // ---- Load & Build ----
 
 bool RenderGraph::Load(const std::string& path) {
+  m_disabledPasses.clear();
+  m_desc = RenderGraphDesc{};
+  m_nodes.clear();
+  m_edges.clear();
+  m_rtHandles.clear();
+
   if (!LoadRenderGraphDescriptor(path, m_desc))
     return false;
 

@@ -155,7 +155,10 @@ namespace t850 {
       T8_LOG_INFO("[AndroidFramework] Android backend is Vulkan-only; forcing Vulkan");
     }
     aplicationDescriptor.api = GraphicsApi::VULKAN;
-    if (m_window) CreateVulkanRuntime();
+    if (m_window) {
+      DestroyVulkanRuntime();
+      CreateVulkanRuntime();
+    }
   }
 
   void AndroidFramework::OnNativeWindowCreated(ANativeWindow* window) {
@@ -411,6 +414,9 @@ namespace t850 {
 
   void AndroidFramework::UpdateWindowSize() {
     if (!m_window) return;
+    if (g_config.flags.benchmark && g_config.width > 0 && g_config.height > 0) {
+      ANativeWindow_setBuffersGeometry(m_window, g_config.width, g_config.height, 0);
+    }
     int32_t w = ANativeWindow_getWidth(m_window);
     int32_t h = ANativeWindow_getHeight(m_window);
     if (w > 0 && h > 0 && h > w) {

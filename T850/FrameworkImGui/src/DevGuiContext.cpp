@@ -1,6 +1,7 @@
 #include <imgui/DevGuiContext.h>
 
 #include <algorithm>
+#include <cmath>
 #include <string>
 #include <utility>
 
@@ -90,7 +91,9 @@ void DevGuiContext::Text(const char* text) {
 bool DevGuiContext::Slider(const SliderDesc& desc, float& value) {
   const std::string label = MakeImGuiLabel(desc.name, desc.label);
   float clamped = (std::max)(desc.min_val, (std::min)(desc.max_val, value));
-  bool changed = ImGui::SliderFloat(label.c_str(), &clamped, desc.min_val, desc.max_val, "%.3f");
+  const float range = desc.max_val - desc.min_val;
+  const char* format = (std::abs(range) <= 0.001f || std::abs(desc.step) < 0.0001f) ? "%.7f" : "%.3f";
+  bool changed = ImGui::SliderFloat(label.c_str(), &clamped, desc.min_val, desc.max_val, format);
   if (changed) value = clamped;
   return changed;
 }

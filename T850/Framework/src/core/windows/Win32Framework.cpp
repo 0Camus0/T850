@@ -21,6 +21,8 @@
 #include <video/d3d12/D3D12Driver.h>
 #include <video/vulkan/VulkanDriver.h>
 #endif
+#include <scene/MaterialAsset.h>
+#include <scene/MeshAssetCache.h>
 // SDL3
 #include <SDL3/SDL.h>
 // Windows
@@ -403,6 +405,20 @@ namespace t850 {
 
   void Win32Framework::ResetApplication() {
   }
+
+  bool Win32Framework::ResizeApplicationWindow(int width, int height) {
+    if (width <= 0 || height <= 0 || !pVideoDriver) {
+      return false;
+    }
+    aplicationDescriptor.width = width;
+    aplicationDescriptor.height = height;
+    if (m_pWindow && aplicationDescriptor.videoMode != t850::VideoMode::FULLSCREEN) {
+      SDL_SetWindowSize(m_pWindow, width, height);
+    }
+    ResetInputAfterWindowStateChange();
+    return pVideoDriver->ResizeSwapchain(width, height);
+  }
+
   void Win32Framework::ChangeAPI(GraphicsApi::E api)
   {
 #ifndef OS_WINDOWS
@@ -414,6 +430,9 @@ namespace t850 {
       ReleaseMouseMode();
       pVideoDriver->FlushGPUResources();  // release cmd buffer/descriptor refs before scene cleanup
       pBaseApp->DestroyAssets();
+      MeshAssetCache::Get().Clear();
+      MaterialAssetCache::Get().Clear();
+      pBaseApp->resourceManager.Release();
       pVideoDriver->DestroyDriver();
       delete pVideoDriver;
       pVideoDriver = nullptr;

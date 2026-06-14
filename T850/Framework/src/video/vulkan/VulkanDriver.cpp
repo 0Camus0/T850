@@ -1266,7 +1266,7 @@ namespace t850 {
     VkPipelineStageFlags waitStage[] = { VK_PIPELINE_STAGE_ALL_COMMANDS_BIT };
 
     VkSubmitInfo submitInfo = { VK_STRUCTURE_TYPE_SUBMIT_INFO };
-    const bool mustWaitForAcquire = !IsOffscreenEnabled() && !m_screenshotConsumedSemaphore;
+    const bool mustWaitForAcquire = m_frameUsesSwapchain && !m_screenshotConsumedSemaphore;
     submitInfo.waitSemaphoreCount = mustWaitForAcquire ? 1 : 0;
     submitInfo.pWaitSemaphores = mustWaitForAcquire ? waitSem : nullptr;
     submitInfo.pWaitDstStageMask = mustWaitForAcquire ? waitStage : nullptr;
@@ -1296,8 +1296,13 @@ namespace t850 {
   //  VulkanDriver — Frame lifecycle
   // ══════════════════════════════════════════════════════
 
-  void VulkanDriver::BeginFrame() {
-    if (!IsOffscreenEnabled() && m_swapchainNeedsRecreate) {
+  void VulkanDriver::BeginFrame(FrameTargetMode target) {
+    if (m_frameStarted)
+      return;
+
+    const bool useSwapchain = target == FrameTargetMode::Swapchain && !IsOffscreenEnabled();
+    m_frameUsesSwapchain = useSwapchain;
+    if (useSwapchain && m_swapchainNeedsRecreate) {
       T8_LOG_INFO("[Vulkan] Recreating suboptimal swapchain before acquire");
       ResizeSwapchain(width, height);
     }
@@ -1309,7 +1314,7 @@ namespace t850 {
       vkResetFences(m_device, 1, &m_inFlightFences[m_currentFrame]);
     }
 
-    if (!IsOffscreenEnabled()) {
+    if (useSwapchain) {
       VkResult res = vkAcquireNextImageKHR(m_device, m_swapChain, UINT64_MAX,
                                             m_imageAvailableSemaphores[m_currentFrame],
                                             VK_NULL_HANDLE, &m_imageIndex);
@@ -1589,6 +1594,39 @@ namespace t850 {
     }
   }
 
+  void VulkanDriver::ClearBackbufferWithColor(float r, float g, float b, float a) {
+    if (!m_frameStarted) {
+      BeginFrame(FrameTargetMode::Swapchain);
+    }
+
+    VkCommandBuffer cmd = m_commandBuffers[m_currentFrame];
+    if (m_renderPassActive) {
+      vkCmdEndRenderPass(cmd);
+      m_renderPassActive = false;
+      m_activeRenderPass = VK_NULL_HANDLE;
+    }
+
+    CurrentRT = -1;
+    VkClearValue clearValues[2] = {};
+    clearValues[0].color = { { r, g, b, a } };
+    clearValues[1].depthStencil = { 0.0f, 0 };
+
+    VkRenderPassBeginInfo rpBegin = { VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO };
+    rpBegin.renderPass = m_backbufferRenderPass;
+    rpBegin.framebuffer = m_backbufferFramebuffers[m_imageIndex];
+    rpBegin.renderArea.offset = { 0, 0 };
+    rpBegin.renderArea.extent = m_swapChainExtent;
+    rpBegin.clearValueCount = 2;
+    rpBegin.pClearValues = clearValues;
+
+    vkCmdBeginRenderPass(cmd, &rpBegin, VK_SUBPASS_CONTENTS_INLINE);
+    m_activeRenderPass = m_backbufferRenderPass;
+    m_renderPassActive = true;
+    vkCmdSetViewport(cmd, 0, 1, &m_viewport);
+    vkCmdSetScissor(cmd, 0, 1, &m_scissorRect);
+    T8_TRACE(EvClearRT(-1, 1u | 2u, r, g, b, a, 0.0f, 0));
+  }
+
   void VulkanDriver::EnsureBackbufferRenderPass() {
     VkCommandBuffer cmd = m_commandBuffers[m_currentFrame];
     if (!m_renderPassActive) {
@@ -1764,10 +1802,17 @@ namespace t850 {
   }
 
   void VulkanDriver::SwapBuffers() {
+    CompleteFrame(FrameCompletionMode::Present);
+  }
+
+  void VulkanDriver::CompleteFrame(FrameCompletionMode mode) {
     T8_LOG_TRACE("[Vulkan] SwapBuffers");
+    if (!m_frameStarted) {
+      return;
+    }
     VkCommandBuffer cmd = m_commandBuffers[m_currentFrame];
 
-    if (IsOffscreenEnabled()) {
+    if (mode == FrameCompletionMode::SubmitNoPresent || IsOffscreenEnabled()) {
       if (m_renderPassActive) {
         vkCmdEndRenderPass(cmd);
         m_renderPassActive = false;
@@ -1797,7 +1842,11 @@ namespace t850 {
       }
 
       m_frameStarted = false;
-      CompleteOffscreenFrame();
+      if (IsOffscreenEnabled()) {
+        CompleteOffscreenFrame();
+      } else {
+        CurrentRT = -1;
+      }
       m_currentFrame = (m_currentFrame + 1) % kBackBufferCount;
       return;
     }

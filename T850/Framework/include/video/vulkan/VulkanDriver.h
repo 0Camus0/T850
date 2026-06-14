@@ -59,7 +59,9 @@ namespace t850 {
     void SetDimensions(int w, int h) override;
     void Clear() override;
     void ClearWithColor(float r, float g, float b, float a) override;
+    void ClearBackbufferWithColor(float r, float g, float b, float a) override;
     void SwapBuffers() override;
+    void CompleteFrame(FrameCompletionMode mode = FrameCompletionMode::Present) override;
     void SetBlendState(BlendStates state) override;
     void SetDepthStencilState(DepthStencilStates state) override;
     void SetCullFace(FaceCulling state) override;
@@ -73,7 +75,7 @@ namespace t850 {
 #endif
 
     // ── Vulkan-specific overrides ──
-    void BeginFrame() override;
+    void BeginFrame(FrameTargetMode target = FrameTargetMode::Swapchain) override;
     void EndFrame() override;
     void WaitForGPU() override;
     void FlushGPUResources() override;
@@ -299,6 +301,7 @@ namespace t850 {
     DepthStencilStates   m_currentDepth = DEPTH_DEFAULT;
     FaceCulling           m_currentCull  = FRONT_FACES;
     bool                   m_frameStarted = false;
+    bool                   m_frameUsesSwapchain = true;
     bool                   m_screenshotConsumedSemaphore = false;
     bool                   m_swapchainNeedsRecreate = false;
 

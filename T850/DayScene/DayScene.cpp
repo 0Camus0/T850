@@ -18,17 +18,29 @@
 #include <core/EngineContext.h>
 #include <utils/ConfigRuntime.h>
 #include <utils/RuntimeProfile.h>
+#ifdef OS_WINDOWS
+#include <core/windows/Win32Framework.h>
+#endif
 #ifdef OS_ANDROID
 #include <android/input.h>
+#include <core/android/AndroidFramework.h>
 #include <video/vulkan/VulkanDriver.h>
 #endif
 #include <imgui/DevGuiContext.h>
+#include <imgui.h>
 using namespace t850;
 using std::cout;
 using std::endl;
 using std::string;
 
 namespace {
+constexpr float kBenchmarkRunDurationSeconds = 10.0f;
+constexpr float kBenchmarkFixedDeltaSeconds = 1.0f / 60.0f;
+constexpr int kBenchmarkDefaultWarmupFrames = 30;
+constexpr int kBenchmarkDefaultMeasuredFrames =
+    static_cast<int>(kBenchmarkRunDurationSeconds / kBenchmarkFixedDeltaSeconds + 0.5f);
+constexpr const char* kDaySceneSharedProfileName = "shared";
+
 std::string JsonEscape(const std::string& value) {
   std::ostringstream out;
   for (char c : value) {
@@ -383,22 +395,20 @@ bool DayScene::EnsureNavMeshBuilt() {
 }
 
 void DayScene::LoadSceneProfile() {
-  m_selectedProfileTargetIndex = t850::DefaultProfileTargetIndex();
+  m_selectedProfileTargetIndex = 0;
   CaptureSceneProfileState(m_sceneProfileBaselineState);
   m_sceneProfileSavedState = m_sceneProfileBaselineState;
   m_sceneProfileReady = true;
   m_sceneProfileDirty = false;
 
   const t850::SandboxProfileDesc* bestProfile = nullptr;
-  int bestScore = -1;
   for (const auto& profile : m_sceneSetup.descriptor.profiles) {
     if (!profile.model.empty()) continue;
-    const bool hasTarget = !profile.name.empty() || !profile.platform.empty() || !profile.architecture.empty() ||
-                           !profile.gpu_family.empty() || !profile.gpu_name_contains.empty();
-    if (!hasTarget) continue;
-    int score = t850::ScoreSceneProfileMatch(profile);
-    if (score > bestScore) {
-      bestScore = score;
+    if (profile.name == kDaySceneSharedProfileName) {
+      bestProfile = &profile;
+      break;
+    }
+    if (!bestProfile) {
       bestProfile = &profile;
     }
   }
@@ -407,7 +417,7 @@ void DayScene::LoadSceneProfile() {
   CaptureSceneProfileState(m_sceneProfileSavedState);
 
   const auto& runtime = t850::GetRuntimeProfileInfo();
-  T8_LOG_INFO("[DayScene] Profile runtime='%s' platform=%s arch=%s gpu='%s' family=%s applied=%d",
+  T8_LOG_INFO("[DayScene] Shared profile runtime='%s' platform=%s arch=%s gpu='%s' family=%s applied=%d",
               runtime.recommendedProfile.c_str(), runtime.platform.c_str(), runtime.architecture.c_str(),
               runtime.gpuName.c_str(), runtime.gpuFamily.c_str(), bestProfile ? 1 : 0);
 }
@@ -418,29 +428,21 @@ void DayScene::SaveSceneProfile() {
   t850::SandboxProfileDesc current;
   CaptureSceneProfileState(current);
   t850::SandboxProfileDesc sparse = BuildSparseSceneProfile(current);
-  t850::ApplyProfileTarget(sparse, m_selectedProfileTargetIndex);
+  sparse.name = kDaySceneSharedProfileName;
+  sparse.platform.clear();
+  sparse.architecture.clear();
+  sparse.gpu_family.clear();
+  sparse.gpu_name_contains.clear();
+  sparse.model.clear();
 
-  t850::SandboxProfileDesc target;
-  t850::ApplyProfileTarget(target, m_selectedProfileTargetIndex);
   auto& profiles = m_sceneSetup.descriptor.profiles;
-  auto existing = std::find_if(profiles.begin(), profiles.end(), [&](const t850::SandboxProfileDesc& profile) {
-    return profile.model.empty() && profile.name == target.name && profile.platform == target.platform &&
-           profile.architecture == target.architecture && profile.gpu_family == target.gpu_family &&
-           profile.gpu_name_contains == target.gpu_name_contains;
-  });
-
-  bool hasOverrides = !sparse.sliders.empty() || !sparse.checkboxes.empty() || !sparse.selectors.empty();
-  if (hasOverrides) {
-    if (existing == profiles.end()) profiles.push_back(sparse);
-    else *existing = sparse;
-  } else if (existing != profiles.end()) {
-    profiles.erase(existing);
-  }
+  profiles.clear();
+  profiles.push_back(sparse);
 
   if (t850::SaveSceneDescriptor("Scenes/DayScene.json", m_sceneSetup.descriptor)) {
     m_sceneProfileSavedState = current;
     m_sceneProfileDirty = false;
-    T8_LOG_INFO("[DayScene] Saved profile '%s'", target.name.empty() ? "pc/base" : target.name.c_str());
+    T8_LOG_INFO("[DayScene] Saved shared rendering profile for all runtimes");
   }
 }
 
@@ -478,6 +480,24 @@ std::string TimestampForFilename() {
 #endif
 
 void DayScene::InitVars() {
+  SceneProp = SceneProps{};
+  m_renderGraph = t850::RenderGraph{};
+  EnvMaps = t850::EnvironmentMapSet{};
+  EnvMapTexIndex = -1;
+  DiffuseIBLTexIndex = -1;
+  SpecularIBLTexIndex = -1;
+  BrdfLUTTexIndex = -1;
+  SheenIBLTexIndex = -1;
+  CharlieLUTTexIndex = -1;
+  SheenELUTTexIndex = -1;
+  RTIndex = -1;
+  GBufferPass = DeferredPass = DepthPass = ShadowAccumPass = BloomAccumPass = -1;
+  BrightPassPass = ExtraHelperPass = Extra16FPass = GodRaysCalcPass = GodRaysCalcExtraPass = -1;
+  AdaptedLumCurrentPass = AdaptedLumPrevPass = CoCPass = CoCHelperPass = CoCHelperPass2 = -1;
+  DOFPass = CombineCoCPass = Extra16FPass5x5 = -1;
+  splineWire = nullptr;
+  m_pendingCubemap.clear();
+
   Position = XVECTOR3(0.0f, 0.0f, 0.0f);
   Orientation = XVECTOR3(0.0f, 0.0f, 0.0f);
   Scaling = XVECTOR3(1.0f, 1.0f, 1.0f);
@@ -583,8 +603,23 @@ void DayScene::InitVars() {
   m_tourTimeSec = 0.0f;
   m_benchmarkFrameTimesMs.clear();
   m_benchmarkCullingTotals = BenchmarkCullingTotals{};
+  if (g_config.flags.benchmarkMatrix &&
+      m_benchmarkMatrixInitialized &&
+      m_benchmarkMatrixRunIndex < m_benchmarkMatrixRuns.size()) {
+    m_benchmarkActiveOffscreen = m_benchmarkMatrixRuns[m_benchmarkMatrixRunIndex].offscreen;
+  } else {
+    m_benchmarkActiveOffscreen = g_config.flags.benchmark && g_config.flags.offscreen;
+  }
+  if (g_config.flags.benchmark) {
+    g_config.flags.offscreen = false;
+  }
+  InitializeBenchmarkMatrix();
   if (g_config.flags.benchmark) {
     m_benchmarkFrameTimesMs.reserve(12000);
+    if (!g_config.flags.benchmarkMatrix) {
+      m_benchmarkStatus = "Running benchmark " + std::to_string(g_config.width) + "x" + std::to_string(g_config.height) +
+          (g_config.flags.offscreen ? " offscreen" : " onscreen");
+    }
   }
   RTIndex = -1;
 
@@ -608,24 +643,23 @@ void DayScene::CreateAssets() {
   LoadSceneProfile();
   m_renderGraph.CreateRenderTargets(pFramework->pVideoDriver, SceneProp);
   m_renderGraph.PrintGraph();
+  m_benchmarkOffscreenOutputRT = -1;
+  if (g_config.flags.benchmark && m_benchmarkActiveOffscreen) {
+    const int outputWidth = g_config.width;
+    const int outputHeight = g_config.height;
+    m_benchmarkOffscreenOutputRT = pFramework->pVideoDriver->CreateRT(
+        1,
+        BaseRT::RGBA8,
+        BaseRT::F32,
+        outputWidth,
+        outputHeight,
+        false);
+    if (m_benchmarkOffscreenOutputRT < 0) {
+      T8_LOG_ERROR("[Benchmark] Failed to create explicit offscreen output RT %dx%d", outputWidth, outputHeight);
+    }
+  }
 
-  // Alias RT handles for FrameDumper and debug display
-  GBufferPass      = m_renderGraph.GetRTHandle("GBuffer");
-  DeferredPass     = m_renderGraph.GetRTHandle("Deferred");
-  Extra16FPass     = m_renderGraph.GetRTHandle("Extra16F");
-  DepthPass        = m_renderGraph.GetRTHandle("DepthPass");
-  ShadowAccumPass  = m_renderGraph.GetRTHandle("ShadowAccum");
-  ExtraHelperPass  = m_renderGraph.GetRTHandle("ExtraHelper");
-  BloomAccumPass   = m_renderGraph.GetRTHandle("BloomAccum");
-  BrightPassPass   = m_renderGraph.GetRTHandle("BrightPass");
-  GodRaysCalcPass  = m_renderGraph.GetRTHandle("GodRaysCalc");
-  GodRaysCalcExtraPass = m_renderGraph.GetRTHandle("GodRaysCalcExtra");
-  AdaptedLumCurrentPass = m_renderGraph.GetRTHandle("AdaptedLumCurrent");
-  AdaptedLumPrevPass = m_renderGraph.GetRTHandle("AdaptedLumPrev");
-  CoCPass          = m_renderGraph.GetRTHandle("CoC");
-  CombineCoCPass   = m_renderGraph.GetRTHandle("CombineCoC");
-  CoCHelperPass    = m_renderGraph.GetRTHandle("CoCHelper");
-  CoCHelperPass2   = m_renderGraph.GetRTHandle("CoCHelper2");
+  RebindRenderGraphOutputs();
 
   //
   PrimitiveMgr.SetEngineContext(pEngineContext);
@@ -687,12 +721,7 @@ void DayScene::CreateAssets() {
   splineInst.CreateInstance(splineWire, &VP);
   m.Identity();
   Quads[0].CreateInstance(PrimitiveMgr.GetPrimitive(PrimitiveManager::QUAD), &m);
-  Quads[0].SetTexture(pFramework->pVideoDriver->RTs[0]->vColorTextures[0], 0);
-  Quads[0].SetTexture(pFramework->pVideoDriver->RTs[0]->vColorTextures[1], 1);
-  Quads[0].SetTexture(pFramework->pVideoDriver->RTs[0]->vColorTextures[2], 2);
-  Quads[0].SetTexture(pFramework->pVideoDriver->RTs[0]->vColorTextures[3], 3);
-  Quads[0].SetTexture(pFramework->pVideoDriver->RTs[0]->pDepthTexture, 4);
-  Quads[0].SetEnvironmentMap(g_pBaseDriver->GetTexture(EnvMapTexIndex));
+  RebindRenderGraphOutputs();
 
   Quads[1].CreateInstance(PrimitiveMgr.GetPrimitive(PrimitiveManager::QUAD), &m);
   Quads[2].CreateInstance(PrimitiveMgr.GetPrimitive(PrimitiveManager::QUAD), &m);
@@ -794,10 +823,18 @@ void DayScene::OnDestoryScene() {
   DestroyAssets();
 }
 
-void DayScene::RecordBenchmarkFrame(float dtSecs) {
+void DayScene::RecordBenchmarkRenderedFrame(double frameMs) {
   if (!g_config.flags.benchmark)
     return;
-  m_benchmarkFrameTimesMs.push_back(static_cast<double>(dtSecs) * 1000.0);
+  if (m_benchmarkFinished)
+    return;
+  if (m_benchmarkSimulationFrame <= m_benchmarkWarmupFrames)
+    return;
+  if (m_benchmarkTargetFrames > 0 &&
+      static_cast<int>(m_benchmarkFrameTimesMs.size()) >= m_benchmarkTargetFrames)
+    return;
+
+  m_benchmarkFrameTimesMs.push_back(frameMs);
   if (Meshes[0].pBase) {
     RenderMesh* rm = static_cast<RenderMesh*>(Meshes[0].pBase);
     m_benchmarkCullingTotals.samples++;
@@ -810,6 +847,15 @@ void DayScene::RecordBenchmarkFrame(float dtSecs) {
     m_benchmarkCullingTotals.drawnIndices += rm->m_drawnIndices;
     m_benchmarkCullingTotals.culledIndices += rm->m_culledIndices;
     m_benchmarkCullingTotals.cullingCpuMs += rm->m_cullingCpuMs;
+  }
+
+  if (m_benchmarkTargetFrames > 0 &&
+      static_cast<int>(m_benchmarkFrameTimesMs.size()) >= m_benchmarkTargetFrames &&
+      !m_benchmarkFinishPending) {
+    if (g_config.flags.benchmarkFinalFrameDump && m_benchmarkPendingFinalFramePath.empty()) {
+      m_benchmarkPendingFinalFramePath = CaptureBenchmarkFinalFrame();
+    }
+    QueueBenchmarkFinish(static_cast<float>(m_benchmarkTargetFrames) * DtSecs);
   }
 }
 
@@ -829,6 +875,92 @@ std::string DayScene::BuildBenchmarkOutputPath() const {
       << (SceneProp.FrustumCullingEnabled ? "on" : "off") << "_"
       << TimestampForFilename() << ".json";
   return out.str();
+}
+
+std::string DayScene::BuildBenchmarkFinalFramePath() const {
+  if (!g_config.flags.benchmarkFinalFrameDump)
+    return {};
+
+  std::filesystem::path outputDir;
+  if (!g_config.benchmarkFinalFrameDir.empty()) {
+    outputDir = g_config.benchmarkFinalFrameDir;
+  } else if (IsBenchmarkMatrixActive() && !m_benchmarkMatrixReportPath.empty()) {
+    std::filesystem::path reportPath(m_benchmarkMatrixReportPath);
+    outputDir = reportPath.parent_path() / "final_frames";
+  } else {
+    outputDir = "benchmark_final_frames";
+  }
+
+  const char* apiTag = g_pBaseDriver
+    ? t850::config::ApiTag(g_pBaseDriver->m_currentAPI)
+    : t850::config::ApiTag(t850::config::ParseGraphicsApi(g_config.api, GraphicsApi::D3D11));
+  int benchmarkWidth = (g_pBaseDriver && g_pBaseDriver->width > 0) ? g_pBaseDriver->width : g_config.width;
+  int benchmarkHeight = (g_pBaseDriver && g_pBaseDriver->height > 0) ? g_pBaseDriver->height : g_config.height;
+  bool offscreen = m_benchmarkActiveOffscreen;
+
+  if (IsBenchmarkMatrixActive() && m_benchmarkMatrixRunIndex < m_benchmarkMatrixRuns.size()) {
+    const BenchmarkMatrixRun& run = m_benchmarkMatrixRuns[m_benchmarkMatrixRunIndex];
+    apiTag = run.apiTag.c_str();
+    benchmarkWidth = run.width;
+    benchmarkHeight = run.height;
+    offscreen = run.offscreen;
+  }
+
+  std::ostringstream fileName;
+  fileName << "dayscene_" << apiTag << "_"
+           << benchmarkWidth << "x" << benchmarkHeight << "_"
+           << (offscreen ? "offscreen" : "onscreen") << "_final";
+  return (outputDir / fileName.str()).string();
+}
+
+std::string DayScene::CaptureBenchmarkFinalFrame() {
+  if (!g_config.flags.benchmarkFinalFrameDump)
+    return {};
+
+  const std::string pathString = BuildBenchmarkFinalFramePath();
+  if (pathString.empty())
+    return {};
+
+  auto* driver = pFramework ? pFramework->pVideoDriver : nullptr;
+  if (!driver) {
+    T8_LOG_ERROR("[BenchmarkFinalFrame] Cannot capture final frame: driver is null");
+    return {};
+  }
+
+  std::filesystem::path path(pathString);
+  std::filesystem::path actualPath(pathString + ".ppm");
+  if (!actualPath.parent_path().empty()) {
+    std::filesystem::create_directories(actualPath.parent_path());
+  }
+
+  driver->WaitForGPU();
+  if (m_benchmarkActiveOffscreen) {
+    if (m_benchmarkOffscreenOutputRT < 0) {
+      T8_LOG_ERROR("[BenchmarkFinalFrame] Cannot capture offscreen final frame: offscreenRT=%d",
+                   m_benchmarkOffscreenOutputRT);
+      return {};
+    }
+    driver->SaveRTToFile(m_benchmarkOffscreenOutputRT, BaseDriver::COLOR0_ATTACHMENT, path.string());
+  } else {
+    driver->SaveScreenshot(path.string());
+  }
+
+  std::error_code ec;
+  const bool exists = std::filesystem::exists(actualPath, ec);
+  ec.clear();
+  const auto writtenBytes = exists ? std::filesystem::file_size(actualPath, ec) : 0;
+  if (exists && !ec && writtenBytes > 0) {
+    T8_LOG_INFO("[BenchmarkFinalFrame] Wrote '%s'", actualPath.string().c_str());
+    return actualPath.string();
+  }
+
+  T8_LOG_ERROR("[BenchmarkFinalFrame] Failed to write '%s'", actualPath.string().c_str());
+  return {};
+}
+
+void DayScene::QueueBenchmarkFinish(float durationSecs) {
+  m_benchmarkFinishPending = true;
+  m_benchmarkPendingDurationSeconds = durationSecs;
 }
 
 void DayScene::WriteBenchmarkResults(float durationSecs) const {
@@ -867,12 +999,20 @@ void DayScene::WriteBenchmarkResults(float durationSecs) const {
   file << "{\n";
   file << "  \"scene\": \"DayScene\",\n";
   file << "  \"api\": \"" << JsonEscape(apiTag) << "\",\n";
+  file << "  \"mode\": \"" << (m_benchmarkActiveOffscreen ? "offscreen" : "onscreen") << "\",\n";
   file << "  \"resolution\": { \"width\": " << benchmarkWidth << ", \"height\": " << benchmarkHeight << " },\n";
+  file << "  \"offscreen\": " << (m_benchmarkActiveOffscreen ? "true" : "false") << ",\n";
   file << "  \"cullingEnabled\": " << (SceneProp.FrustumCullingEnabled ? "true" : "false") << ",\n";
-  file << "  \"finishReason\": \"spline_journey_complete\",\n";
+  file << "  \"finishReason\": \"fixed_frame_count\",\n";
   file << "  \"splineLength\": " << (m_sceneSetup.splines.empty() ? 0.0f : m_sceneSetup.splines[0].m_totalLength) << ",\n";
   file << "  \"measuredDurationSeconds\": " << durationSecs << ",\n";
   file << "  \"frameCount\": " << frameCount << ",\n";
+  file << "  \"simulation\": {\n";
+  file << "    \"fixedDtSeconds\": " << DtSecs << ",\n";
+  file << "    \"warmupFrames\": " << m_benchmarkWarmupFrames << ",\n";
+  file << "    \"measuredFrames\": " << m_benchmarkTargetFrames << ",\n";
+  file << "    \"simulationFrame\": " << m_benchmarkSimulationFrame << "\n";
+  file << "  },\n";
   file << "  \"statsMs\": {\n";
   file << "    \"average\": " << averageMs << ",\n";
   file << "    \"median\": " << Percentile(sorted, 50.0) << ",\n";
@@ -888,6 +1028,16 @@ void DayScene::WriteBenchmarkResults(float durationSecs) const {
   file << "    \"p90\": " << Percentile(sorted, 90.0) << ",\n";
   file << "    \"p95\": " << Percentile(sorted, 95.0) << ",\n";
   file << "    \"p99\": " << Percentile(sorted, 99.0) << "\n";
+  file << "  },\n";
+  file << "  \"statsFps\": {\n";
+  file << "    \"average\": " << (averageMs > 0.0 ? 1000.0 / averageMs : 0.0) << ",\n";
+  file << "    \"median\": " << (Percentile(sorted, 50.0) > 0.0 ? 1000.0 / Percentile(sorted, 50.0) : 0.0) << ",\n";
+  file << "    \"min\": " << (!sorted.empty() && sorted.back() > 0.0 ? 1000.0 / sorted.back() : 0.0) << ",\n";
+  file << "    \"max\": " << (!sorted.empty() && sorted.front() > 0.0 ? 1000.0 / sorted.front() : 0.0) << ",\n";
+  file << "    \"p01\": " << (Percentile(sorted, 99.0) > 0.0 ? 1000.0 / Percentile(sorted, 99.0) : 0.0) << ",\n";
+  file << "    \"p05\": " << (Percentile(sorted, 95.0) > 0.0 ? 1000.0 / Percentile(sorted, 95.0) : 0.0) << ",\n";
+  file << "    \"p95\": " << (Percentile(sorted, 5.0) > 0.0 ? 1000.0 / Percentile(sorted, 5.0) : 0.0) << ",\n";
+  file << "    \"p99\": " << (Percentile(sorted, 1.0) > 0.0 ? 1000.0 / Percentile(sorted, 1.0) : 0.0) << "\n";
   file << "  },\n";
   const RenderMesh* benchmarkMesh = Meshes[0].pBase ? static_cast<const RenderMesh*>(Meshes[0].pBase) : nullptr;
   const unsigned long long cullSamples = m_benchmarkCullingTotals.samples;
@@ -941,6 +1091,490 @@ void DayScene::WriteBenchmarkResults(float durationSecs) const {
   file << "]\n";
   file << "}\n";
   T8_LOG_INFO("[Benchmark] Wrote %zu frame samples to '%s'", frameCount, outputPath.c_str());
+}
+
+void DayScene::InitializeBenchmarkMatrix() {
+  if (m_benchmarkMatrixInitialized || !g_config.flags.benchmarkMatrix) {
+    return;
+  }
+
+  m_benchmarkMatrixRuns.clear();
+  m_benchmarkMatrixResults.clear();
+  m_benchmarkMatrixRunIndex = 0;
+  m_benchmarkFinished = false;
+
+  std::vector<BenchmarkMatrixRun> runs;
+#ifdef OS_ANDROID
+  const std::vector<std::pair<t850::GraphicsApi::E, std::string>> apis = {
+    {t850::GraphicsApi::VULKAN, "vulkan"}
+  };
+#else
+  const std::vector<std::pair<t850::GraphicsApi::E, std::string>> apis = {
+    {t850::GraphicsApi::D3D11, "d3d11"},
+    {t850::GraphicsApi::D3D12, "d3d12"},
+    {t850::GraphicsApi::VULKAN, "vulkan"},
+    {t850::GraphicsApi::OPENGL, "gl"}
+  };
+#endif
+  const std::vector<std::pair<int, int>> resolutions = {
+    {1920, 1080},
+    {2560, 1440},
+    {3840, 2160}
+  };
+  const bool modes[] = {false, true};
+
+  if (!g_config.benchmarkReportPath.empty()) {
+    m_benchmarkMatrixReportPath = g_config.benchmarkReportPath;
+  } else {
+    std::ostringstream report;
+    report << "benchmark_reports/dayscene_matrix_" << TimestampForFilename() << "/DayScene_Benchmark_Report.md";
+    m_benchmarkMatrixReportPath = report.str();
+  }
+  const std::filesystem::path reportPath(m_benchmarkMatrixReportPath);
+  const std::filesystem::path outputDir = reportPath.parent_path().empty()
+    ? std::filesystem::path(".")
+    : reportPath.parent_path();
+
+  for (const auto& api : apis) {
+    for (const auto& resolution : resolutions) {
+      for (bool offscreen : modes) {
+        BenchmarkMatrixRun run;
+        run.api = api.first;
+        run.apiTag = api.second;
+        run.width = resolution.first;
+        run.height = resolution.second;
+        run.offscreen = offscreen;
+        std::ostringstream fileName;
+        fileName << "dayscene_" << run.apiTag << "_" << run.width << "x" << run.height
+                 << "_" << (run.offscreen ? "offscreen" : "onscreen") << ".json";
+        run.outputPath = (outputDir / fileName.str()).string();
+        runs.push_back(run);
+      }
+    }
+  }
+
+  m_benchmarkMatrixRuns = std::move(runs);
+  m_benchmarkMatrixInitialized = true;
+  if (!m_benchmarkMatrixRuns.empty()) {
+    ApplyBenchmarkMatrixRun(0, false);
+  }
+}
+
+bool DayScene::IsBenchmarkMatrixActive() const {
+  return g_config.flags.benchmarkMatrix && m_benchmarkMatrixInitialized && !m_benchmarkMatrixRuns.empty();
+}
+
+void DayScene::RebindRenderGraphOutputs() {
+  GBufferPass      = m_renderGraph.GetRTHandle("GBuffer");
+  DeferredPass     = m_renderGraph.GetRTHandle("Deferred");
+  Extra16FPass     = m_renderGraph.GetRTHandle("Extra16F");
+  DepthPass        = m_renderGraph.GetRTHandle("DepthPass");
+  ShadowAccumPass  = m_renderGraph.GetRTHandle("ShadowAccum");
+  ExtraHelperPass  = m_renderGraph.GetRTHandle("ExtraHelper");
+  BloomAccumPass   = m_renderGraph.GetRTHandle("BloomAccum");
+  BrightPassPass   = m_renderGraph.GetRTHandle("BrightPass");
+  GodRaysCalcPass  = m_renderGraph.GetRTHandle("GodRaysCalc");
+  GodRaysCalcExtraPass = m_renderGraph.GetRTHandle("GodRaysCalcExtra");
+  AdaptedLumCurrentPass = m_renderGraph.GetRTHandle("AdaptedLumCurrent");
+  AdaptedLumPrevPass = m_renderGraph.GetRTHandle("AdaptedLumPrev");
+  CoCPass          = m_renderGraph.GetRTHandle("CoC");
+  CombineCoCPass   = m_renderGraph.GetRTHandle("CombineCoC");
+  CoCHelperPass    = m_renderGraph.GetRTHandle("CoCHelper");
+  CoCHelperPass2   = m_renderGraph.GetRTHandle("CoCHelper2");
+
+  auto* driver = pFramework ? pFramework->pVideoDriver : nullptr;
+  if (driver && GBufferPass >= 0 && GBufferPass < static_cast<int>(driver->RTs.size()) && driver->RTs[GBufferPass]) {
+    auto* gbuffer = driver->RTs[GBufferPass];
+    for (int slot = 0; slot < 4; ++slot) {
+      Quads[0].SetTexture(slot < static_cast<int>(gbuffer->vColorTextures.size()) ? gbuffer->vColorTextures[slot] : nullptr, slot);
+    }
+    Quads[0].SetTexture(gbuffer->pDepthTexture, 4);
+  } else {
+    T8_LOG_ERROR("[DayScene] Cannot bind GBuffer textures, handle=%d", GBufferPass);
+  }
+  Quads[0].SetEnvironmentMap((g_pBaseDriver && EnvMapTexIndex >= 0) ? g_pBaseDriver->GetTexture(EnvMapTexIndex) : nullptr);
+  T8_LOG_INFO("[DayScene] Rebound render graph outputs: gbuffer=%d deferred=%d extra=%d depth=%d env=%d",
+              GBufferPass, DeferredPass, Extra16FPass, DepthPass, EnvMapTexIndex);
+}
+
+void DayScene::ResetSceneStateForBenchmarkRun() {
+  t850::Texture* preservedSSAONoise = SceneProp.SSAOKernel.NoiseTex;
+  SceneProp = SceneProps{};
+  SceneProp.SSAOKernel.NoiseTex = preservedSSAONoise;
+  VP.Identity();
+  if (!m_sceneSetup.Load("Scenes/DayScene.json")) {
+    T8_LOG_ERROR("[BenchmarkMatrix] Failed to reload DayScene descriptor for benchmark reset");
+    return;
+  }
+  if (m_sceneSetup.cameras.size() < 2 && !m_sceneSetup.cameras.empty()) {
+    Camera& mainCam = m_sceneSetup.cameras[0];
+    Camera spectator;
+    XVECTOR3 spectatorPos(mainCam.Eye.x, mainCam.Eye.y + 20.0f, mainCam.Eye.z - 60.0f, 1.0f);
+    if (mainCam.Ortho)
+      spectator.InitOrtho(spectatorPos, mainCam.Width, mainCam.Height, mainCam.NPlane, mainCam.FPlane, mainCam.LeftHanded);
+    else
+      spectator.InitPerspective(spectatorPos, mainCam.Fov, mainCam.AspectRatio, mainCam.NPlane, mainCam.FPlane, mainCam.LeftHanded);
+    spectator.Speed = mainCam.Speed;
+    spectator.Pitch = mainCam.Pitch;
+    spectator.Roll = mainCam.Roll;
+    spectator.Yaw = mainCam.Yaw;
+    spectator.Update(0.0f);
+    m_sceneSetup.cameras.push_back(spectator);
+  }
+  for (auto& selector : m_sceneSetup.descriptor.selectors) {
+    if (selector.name == "active_camera") {
+      selector.options = {"Spline", "Free"};
+      selector.default_index = 0;
+      break;
+    }
+  }
+  m_sceneSetup.Apply(SceneProp);
+  if (!SceneProp.SSAOKernel.NoiseTex) {
+    SceneProp.SSAOKernel.InitTexture();
+  }
+  ActiveCam = m_sceneSetup.GetCamera(0);
+  SceneProp.pCullingCamera = ActiveCam;
+  SceneProp.FrustumCullingToggleAllowed = g_config.cullingLoadMode != t850::Config::CullingLoadMode::Disabled;
+  SceneProp.FrustumCullingEnabled = g_config.cullingLoadMode == t850::Config::CullingLoadMode::FullOnLoad;
+  ChangeActiveGaussSelection = SHADOW_KERNEL;
+  m_debugRTSelection = 0;
+  m_showSpline = false;
+  m_showLights = false;
+  m_showPhysics = false;
+#ifdef OS_ANDROID
+  ResetAndroidVirtualControls();
+#endif
+  m_spectatorCameraEnabled = false;
+  m_activeCameraIndex = 0;
+  PrimitiveMgr.SetVP(&VP);
+  PrimitiveMgr.SetSceneProps(&SceneProp);
+  if (!m_sceneSetup.splines.empty()) {
+    if (splineWire) {
+      splineWire->m_spline = &m_sceneSetup.splines[0];
+    }
+    t850::Spline& spline = m_sceneSetup.splines[0];
+    t850::SplineAgent& agent = m_sceneSetup.agents[0];
+    agent.m_actualPoint = spline.GetPoint(spline.GetNormalizedOffset(0));
+    const int attachedCamera = m_sceneSetup.descriptor.splines[0].attached_camera;
+    if (Camera* splineCamera = m_sceneSetup.GetCamera(attachedCamera)) {
+      splineCamera->AttachAgent(agent);
+      splineCamera->m_lookAtCenter = false;
+    }
+  }
+  ApplyActiveCameraSelection(m_activeCameraIndex);
+  FrameDumperConfig dumpCfg;
+  dumpCfg.dumpEnabled = g_config.flags.dumpEnabled;
+  dumpCfg.dumpByFrame = g_config.flags.dumpByFrame;
+  dumpCfg.dumpFrame = g_config.dumpFrame;
+  dumpCfg.dumpSeconds = g_config.dumpSeconds;
+  dumpCfg.debugFrames = g_config.flags.debugFrames;
+  dumpCfg.keepRunning = g_config.flags.keepRunning;
+  dumpCfg.replaySnapshotPath = g_config.replaySnapshotPath;
+  dumpCfg.sceneIndex = g_config.startScene;
+  m_dumper.Init(dumpCfg);
+  ResetBenchmarkRunCapture();
+}
+
+void DayScene::ResetBenchmarkRunCapture() {
+  m_tourTimeSec = 0.0f;
+  m_benchmarkFrameTimesMs.clear();
+  m_benchmarkCullingTotals = BenchmarkCullingTotals{};
+  m_benchmarkFinished = false;
+  m_benchmarkFinishPending = false;
+  m_benchmarkPendingDurationSeconds = 0.0f;
+  m_benchmarkSimulationFrame = 0;
+  m_benchmarkWarmupFrames = kBenchmarkDefaultWarmupFrames;
+  m_benchmarkTargetFrames = g_config.benchmarkFrameLimit > 0
+      ? g_config.benchmarkFrameLimit
+      : kBenchmarkDefaultMeasuredFrames;
+  m_benchmarkPendingFinalFramePath.clear();
+}
+
+void DayScene::ApplyBenchmarkMatrixRun(std::size_t runIndex, bool recreateRenderer) {
+  if (runIndex >= m_benchmarkMatrixRuns.size()) {
+    return;
+  }
+
+  m_benchmarkMatrixRunIndex = runIndex;
+  const BenchmarkMatrixRun& run = m_benchmarkMatrixRuns[m_benchmarkMatrixRunIndex];
+  g_config.flags.benchmark = true;
+  g_config.flags.benchmarkMatrix = true;
+  g_config.api = run.apiTag;
+  g_config.width = run.width;
+  g_config.height = run.height;
+  m_benchmarkActiveOffscreen = run.offscreen;
+  g_config.flags.offscreen = false;
+  g_config.benchmarkOutputPath = run.outputPath;
+  g_config.startScene = 1;
+  if (pFramework) {
+    pFramework->aplicationDescriptor.api = run.api;
+    pFramework->aplicationDescriptor.width = run.width;
+    pFramework->aplicationDescriptor.height = run.height;
+  }
+  ResetBenchmarkRunCapture();
+  m_benchmarkStatus = "Running " + run.apiTag + " " +
+      std::to_string(run.width) + "x" + std::to_string(run.height) + " " +
+      (run.offscreen ? "offscreen" : "onscreen");
+  T8_LOG_INFO("[BenchmarkMatrix] %zu/%zu %s", m_benchmarkMatrixRunIndex + 1, m_benchmarkMatrixRuns.size(), m_benchmarkStatus.c_str());
+
+  if (recreateRenderer && pFramework) {
+    const bool sameApi = pFramework->pVideoDriver && pFramework->pVideoDriver->m_currentAPI == run.api;
+    if (sameApi) {
+      ResetBenchmarkSameApiRun();
+    } else {
+      pFramework->ChangeAPI(run.api);
+    }
+  }
+}
+
+void DayScene::ResetBenchmarkSameApiRun() {
+  auto* driver = pFramework ? pFramework->pVideoDriver : nullptr;
+  if (!driver) {
+    return;
+  }
+
+  T8_LOG_INFO("[BenchmarkMatrix] Same-API reset begin api=%s size=%dx%d offscreen=%d",
+              g_config.api.c_str(), g_config.width, g_config.height, m_benchmarkActiveOffscreen ? 1 : 0);
+  driver->WaitForGPU();
+  driver->DestroyOffscreenTargets();
+  m_renderGraph.DestroyRenderTargets(driver);
+  if (m_benchmarkOffscreenOutputRT >= 0) {
+    driver->DestroyRT(m_benchmarkOffscreenOutputRT);
+    m_benchmarkOffscreenOutputRT = -1;
+  }
+  if (driver->width != g_config.width || driver->height != g_config.height) {
+#ifdef OS_WINDOWS
+    bool resized = false;
+    if (auto* win32 = dynamic_cast<t850::Win32Framework*>(pFramework)) {
+      resized = win32->ResizeApplicationWindow(g_config.width, g_config.height);
+    }
+    if (!resized) {
+#else
+    {
+#endif
+      const bool resizedSwapchain = driver->ResizeSwapchain(g_config.width, g_config.height);
+      if (!resizedSwapchain) {
+      T8_LOG_INFO("[BenchmarkMatrix] ResizeSwapchain unavailable/failed; updating driver dimensions only");
+      driver->SetDimensions(g_config.width, g_config.height);
+      }
+    }
+  }
+
+  ResetSceneStateForBenchmarkRun();
+  m_renderGraph = t850::RenderGraph{};
+  if (!m_renderGraph.Load("Scenes/DayScene_RenderGraph.json")) {
+    T8_LOG_ERROR("[BenchmarkMatrix] Failed to reload render graph for benchmark reset");
+    return;
+  }
+  LoadSceneProfile();
+  m_renderGraph.CreateRenderTargets(driver, SceneProp, g_config.width, g_config.height);
+  RebindRenderGraphOutputs();
+
+  if (m_benchmarkActiveOffscreen) {
+    m_benchmarkOffscreenOutputRT = driver->CreateRT(1, BaseRT::RGBA8, BaseRT::F32, g_config.width, g_config.height, false);
+    if (m_benchmarkOffscreenOutputRT < 0) {
+      T8_LOG_ERROR("[BenchmarkMatrix] Failed to create explicit offscreen output RT %dx%d", g_config.width, g_config.height);
+    }
+  }
+
+  const bool dofOn = SceneProp.ToogleDOF != 0;
+  m_renderGraph.SetPassEnabled("CoC", dofOn);
+  m_renderGraph.SetPassEnabled("Combine CoC", dofOn);
+  m_renderGraph.SetPassEnabled("DOF", dofOn);
+  m_renderGraph.SetPassEnabled("DOF 2", dofOn);
+  Meshes[0].SetParallaxEnabled(SceneProp.ToogleParallax != 0);
+  Meshes[0].SetParallaxShadowEnabled(SceneProp.ToogleParallaxShadow != 0);
+  Meshes[0].SetParallaxSettings(SceneProp.ParallaxLowSamples, SceneProp.ParallaxHighSamples, SceneProp.ParallaxHeight);
+  Meshes[0].SetParallaxShadowSettings(SceneProp.ParallaxShadowMinLayers, SceneProp.ParallaxShadowMaxLayers,
+                                       SceneProp.ParallaxShadowSoftness, SceneProp.ParallaxShadowStrength);
+  T8_LOG_INFO("[BenchmarkMatrix] Same-API reset complete gbuffer=%d deferred=%d offscreenRT=%d textures=%zu rts=%zu",
+              GBufferPass, DeferredPass, m_benchmarkOffscreenOutputRT, driver->Textures.size(), driver->RTs.size());
+}
+
+void DayScene::FinishBenchmarkRun(float durationSecs) {
+  const std::string finalFramePath = m_benchmarkPendingFinalFramePath;
+  m_benchmarkFinishPending = false;
+  m_benchmarkPendingDurationSeconds = 0.0f;
+  m_benchmarkPendingFinalFramePath.clear();
+  WriteBenchmarkResults(durationSecs);
+
+  std::vector<double> sorted = m_benchmarkFrameTimesMs;
+  std::sort(sorted.begin(), sorted.end());
+  const double totalMs = std::accumulate(m_benchmarkFrameTimesMs.begin(), m_benchmarkFrameTimesMs.end(), 0.0);
+  const double averageMs = m_benchmarkFrameTimesMs.empty() ? 0.0 : totalMs / static_cast<double>(m_benchmarkFrameTimesMs.size());
+
+  if (IsBenchmarkMatrixActive()) {
+    const BenchmarkMatrixRun& run = m_benchmarkMatrixRuns[m_benchmarkMatrixRunIndex];
+    BenchmarkMatrixResult result;
+    result.run = run;
+    result.averageMs = averageMs;
+    result.medianMs = Percentile(sorted, 50.0);
+    result.averageFps = averageMs > 0.0 ? 1000.0 / averageMs : 0.0;
+    result.medianFps = result.medianMs > 0.0 ? 1000.0 / result.medianMs : 0.0;
+    result.minFps = !sorted.empty() && sorted.back() > 0.0 ? 1000.0 / sorted.back() : 0.0;
+    result.maxFps = !sorted.empty() && sorted.front() > 0.0 ? 1000.0 / sorted.front() : 0.0;
+    result.frameCount = static_cast<int>(m_benchmarkFrameTimesMs.size());
+    result.durationSeconds = durationSecs;
+    result.finalFramePath = finalFramePath;
+    m_benchmarkMatrixResults.push_back(result);
+
+    const std::size_t nextRun = m_benchmarkMatrixRunIndex + 1;
+    if (nextRun < m_benchmarkMatrixRuns.size()) {
+      ApplyBenchmarkMatrixRun(nextRun, true);
+      return;
+    }
+
+    WriteBenchmarkMatrixReport();
+    m_benchmarkFinished = true;
+    m_benchmarkStatus = "Benchmark matrix complete: " + m_benchmarkMatrixReportPath;
+    return;
+  }
+
+  m_benchmarkFinished = true;
+  m_benchmarkStatus = "Benchmark complete: " + BuildBenchmarkOutputPath();
+}
+
+void DayScene::WriteBenchmarkMatrixReport() const {
+  if (m_benchmarkMatrixReportPath.empty()) {
+    return;
+  }
+  std::filesystem::path path(m_benchmarkMatrixReportPath);
+  if (!path.parent_path().empty()) {
+    std::filesystem::create_directories(path.parent_path());
+  }
+  std::ofstream file(path, std::ios::out | std::ios::trunc);
+  if (!file.is_open()) {
+    T8_LOG_ERROR("[BenchmarkMatrix] Failed to open report '%s'", m_benchmarkMatrixReportPath.c_str());
+    return;
+  }
+  double maxFps = 10.0;
+  for (const BenchmarkMatrixResult& result : m_benchmarkMatrixResults) {
+    maxFps = (std::max)(maxFps, result.averageFps);
+  }
+  maxFps = std::ceil(maxFps / 10.0) * 10.0;
+
+  file << "# DayScene Benchmark Report\n\n";
+  file << "## Average FPS Chart\n\n";
+  file << "```mermaid\n";
+  file << "xychart-beta\n";
+  file << "  title \"DayScene Average FPS\"\n";
+  file << "  x-axis [";
+  for (std::size_t i = 0; i < m_benchmarkMatrixResults.size(); ++i) {
+    const auto& result = m_benchmarkMatrixResults[i];
+    if (i > 0) file << ", ";
+    file << "\"" << result.run.apiTag << " " << result.run.width << "x" << result.run.height << " "
+         << (result.run.offscreen ? "offscreen" : "onscreen") << "\"";
+  }
+  file << "]\n";
+  file << "  y-axis \"FPS\" 0 --> " << static_cast<int>(maxFps) << "\n";
+  file << "  bar [";
+  for (std::size_t i = 0; i < m_benchmarkMatrixResults.size(); ++i) {
+    if (i > 0) file << ", ";
+    file << std::fixed << std::setprecision(2) << m_benchmarkMatrixResults[i].averageFps;
+  }
+  file << "]\n";
+  file << "```\n\n";
+  file << "| API | Mode | Resolution | Avg FPS | Median FPS | Min FPS | Max FPS | Avg ms | Median ms | Frames | Duration s | JSON | Final frame |\n";
+  file << "|---|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---|---|\n";
+  for (const BenchmarkMatrixResult& result : m_benchmarkMatrixResults) {
+    std::string finalFrameCell = "-";
+    if (!result.finalFramePath.empty()) {
+      const std::filesystem::path finalFramePath(result.finalFramePath);
+      std::string finalFrameLink = finalFramePath.generic_string();
+      if (!path.parent_path().empty()) {
+        const std::filesystem::path relativePath = finalFramePath.lexically_relative(path.parent_path());
+        if (!relativePath.empty())
+          finalFrameLink = relativePath.generic_string();
+      }
+      finalFrameCell = "[" + finalFramePath.filename().string() + "](" + finalFrameLink + ")";
+    }
+    file << "| " << result.run.apiTag << " | " << (result.run.offscreen ? "offscreen" : "onscreen")
+         << " | " << result.run.width << "x" << result.run.height
+         << " | " << result.averageFps
+         << " | " << result.medianFps
+         << " | " << result.minFps
+         << " | " << result.maxFps
+         << " | " << result.averageMs
+         << " | " << result.medianMs
+         << " | " << result.frameCount
+         << " | " << result.durationSeconds
+         << " | [" << std::filesystem::path(result.run.outputPath).filename().string()
+         << "](" << std::filesystem::path(result.run.outputPath).filename().string() << ")"
+         << " | " << finalFrameCell << " |\n";
+  }
+  T8_LOG_INFO("[BenchmarkMatrix] Wrote report '%s'", m_benchmarkMatrixReportPath.c_str());
+}
+
+void DayScene::DrawBenchmarkMatrixGui(t850::DevGuiContext& gui) {
+  (void)gui;
+  if (!g_config.flags.benchmark || (!IsBenchmarkMatrixActive() && m_benchmarkStatus.empty())) {
+    return;
+  }
+
+  ImGuiIO& io = ImGui::GetIO();
+  ImGui::SetNextWindowPos(ImVec2(24.0f, 24.0f), ImGuiCond_Always);
+  ImGui::SetNextWindowSize(ImVec2((std::min)(720.0f, io.DisplaySize.x - 48.0f), 0.0f), ImGuiCond_Always);
+  const bool displayOffscreenMode = m_benchmarkActiveOffscreen;
+  ImGui::SetNextWindowBgAlpha(displayOffscreenMode ? 0.92f : 0.72f);
+  if (displayOffscreenMode) {
+    ImGui::GetBackgroundDrawList()->AddRectFilled(ImVec2(0.0f, 0.0f), io.DisplaySize, IM_COL32(0, 0, 0, 255));
+  }
+  if (!ImGui::Begin("DayScene Benchmark", nullptr,
+                    ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoSavedSettings)) {
+    ImGui::End();
+    return;
+  }
+
+  float runProgress = 0.0f;
+  const int totalRunFrames = (std::max)(1, m_benchmarkWarmupFrames + m_benchmarkTargetFrames);
+  runProgress = std::clamp(static_cast<float>(m_benchmarkSimulationFrame) / static_cast<float>(totalRunFrames), 0.0f, 1.0f);
+  const float matrixProgress = IsBenchmarkMatrixActive()
+      ? (static_cast<float>(m_benchmarkMatrixRunIndex) + runProgress) / static_cast<float>(m_benchmarkMatrixRuns.size())
+      : runProgress;
+
+  ImGui::TextWrapped("%s", m_benchmarkStatus.empty() ? "Running benchmark..." : m_benchmarkStatus.c_str());
+  ImGui::Text("Frame: %d / %d  Warmup: %d  Measured: %zu / %d  dt: %.6f",
+              m_benchmarkSimulationFrame,
+              totalRunFrames,
+              m_benchmarkWarmupFrames,
+              m_benchmarkFrameTimesMs.size(),
+              m_benchmarkTargetFrames,
+              DtSecs);
+  if (IsBenchmarkMatrixActive()) {
+    const BenchmarkMatrixRun& run = m_benchmarkMatrixRuns[m_benchmarkMatrixRunIndex];
+    ImGui::Text("Run %zu / %zu", m_benchmarkMatrixRunIndex + 1, m_benchmarkMatrixRuns.size());
+    ImGui::Text("API: %s  Resolution: %dx%d  Mode: %s",
+                run.apiTag.c_str(), run.width, run.height, run.offscreen ? "offscreen" : "onscreen");
+  }
+  ImGui::ProgressBar(runProgress, ImVec2(-1.0f, 0.0f), "Current run");
+  if (IsBenchmarkMatrixActive()) {
+    ImGui::ProgressBar(matrixProgress, ImVec2(-1.0f, 0.0f), "Matrix");
+  }
+  if (m_benchmarkFinished && !m_benchmarkMatrixReportPath.empty()) {
+    ImGui::TextWrapped("Report: %s", m_benchmarkMatrixReportPath.c_str());
+  }
+  if (!m_benchmarkMatrixResults.empty()) {
+    ImGui::SeparatorText("Results");
+    double maxFps = 1.0;
+    for (const BenchmarkMatrixResult& result : m_benchmarkMatrixResults) {
+      maxFps = (std::max)(maxFps, result.averageFps);
+    }
+    for (const BenchmarkMatrixResult& result : m_benchmarkMatrixResults) {
+      const float normalized = static_cast<float>(result.averageFps / maxFps);
+      const std::string label =
+          result.run.apiTag + " " +
+          std::to_string(result.run.width) + "x" + std::to_string(result.run.height) + " " +
+          (result.run.offscreen ? "offscreen" : "onscreen");
+      ImGui::Text("%s  avg %.2f fps  med %.2f  min %.2f  max %.2f",
+                  label.c_str(),
+                  result.averageFps,
+                  result.medianFps,
+                  result.minFps,
+                  result.maxFps);
+      ImGui::ProgressBar(normalized, ImVec2(-1.0f, 0.0f), "");
+    }
+  }
+  ImGui::End();
 }
 
 void DayScene::ApplyActiveCameraSelection(int selection) {
@@ -1289,6 +1923,10 @@ void DayScene::DrawAndroidVirtualControls(bool guiVisible) {
 #endif
 
 void DayScene::DestroyAssets() {
+  if (m_benchmarkOffscreenOutputRT >= 0 && pFramework && pFramework->pVideoDriver) {
+    pFramework->pVideoDriver->DestroyRT(m_benchmarkOffscreenOutputRT);
+    m_benchmarkOffscreenOutputRT = -1;
+  }
   SceneProp.SSAOKernel.Destroy();
   m_debugText.Destroy();
   m_physicsDebugRenderer.Destroy();
@@ -1310,13 +1948,30 @@ void DayScene::OnUpdate(float _DtSecs) {
   Camera* lightCamPtr = SceneProp.pLightCameras.empty() ? &LightCam : SceneProp.pLightCameras[0];
   t850::SplineAgent& m_agent = m_sceneSetup.agents[0];
   bool splineJourneyFinished = false;
+  const bool benchmarkMode = g_config.flags.benchmark;
+  const float effectiveDt = benchmarkMode
+      ? (g_config.benchmarkFixedDt > 0.0f ? g_config.benchmarkFixedDt : kBenchmarkFixedDeltaSeconds)
+      : _DtSecs;
+  if (m_benchmarkFinishPending && g_config.flags.benchmark) {
+    DtSecs = effectiveDt;
+    SceneProp.FrameDeltaSec = DtSecs;
+    FinishBenchmarkRun(m_benchmarkPendingDurationSeconds > 0.0f ? m_benchmarkPendingDurationSeconds : kBenchmarkRunDurationSeconds);
+    return;
+  }
+  if (m_benchmarkFinished && g_config.flags.benchmark) {
+    DtSecs = effectiveDt;
+    SceneProp.FrameDeltaSec = DtSecs;
+    return;
+  }
 
-  // Only advance scene timer when spline camera is driving the tour
-  if (Cam.m_externalControl)
-    m_tourTimeSec += _DtSecs;
-  DtSecs = _DtSecs;
+  // Benchmarks are fixed-duration runs; normal mode still follows the spline journey.
+  if (g_config.flags.benchmark || Cam.m_externalControl)
+    m_tourTimeSec += effectiveDt;
+  DtSecs = effectiveDt;
   SceneProp.FrameDeltaSec = DtSecs;
-  RecordBenchmarkFrame(DtSecs);
+  if (benchmarkMode) {
+    ++m_benchmarkSimulationFrame;
+  }
 
   // Apply deferred cubemap change BEFORE rendering begins.
   if (!m_pendingCubemap.empty()) {
@@ -1392,12 +2047,7 @@ void DayScene::OnUpdate(float _DtSecs) {
   }
 
   if (splineJourneyFinished) {
-    const float finishedDurationSec = m_tourTimeSec;
     m_tourTimeSec = 0.0f;
-    if (g_config.flags.benchmark) {
-      WriteBenchmarkResults(finishedDurationSec);
-      exit(0);
-    }
 #ifdef T850_HEADLESS
     exit(0);
 #else
@@ -1643,6 +2293,7 @@ void DayScene::OnDraw() {
   SceneProp.pCullingCamera = &Cam;
 
   // Execute the render graph (all passes up to and including HDR Composition)
+  const int finalOutputRT = m_benchmarkActiveOffscreen ? m_benchmarkOffscreenOutputRT : -1;
   m_renderGraph.Execute(
     pFramework->pVideoDriver,
     SceneProp,
@@ -1651,8 +2302,13 @@ void DayScene::OnDraw() {
     viewCam,
     &LightCam,
     nullptr,
-    EnvMaps
+    EnvMaps,
+    finalOutputRT
   );
+
+  if (m_benchmarkFinishPending && g_config.flags.benchmarkFinalFrameDump && m_benchmarkPendingFinalFramePath.empty()) {
+    m_benchmarkPendingFinalFramePath = CaptureBenchmarkFinalFrame();
+  }
 
 #ifdef T850_HEADLESS
   //Save file
@@ -2722,17 +3378,8 @@ void DayScene::DrawDevGui(t850::DevGuiContext& gui) {
       else if (!runtime.gpuFamily.empty() && runtime.gpuFamily != runtime.gpuName) gpuText += " (" + runtime.gpuFamily + ")";
       std::string runtimeText = "Runtime: " + runtime.platform + " / " + runtime.architecture + " / " + gpuText;
       gui.Text(runtimeText.c_str());
-
-      t850::SelectorDesc targetDesc;
-      targetDesc.name = "profile_target";
-      targetDesc.label = "Save target";
-      for (const auto& target : t850::GetProfileTargets()) targetDesc.options.push_back(target.label);
-      targetDesc.default_index = m_selectedProfileTargetIndex;
-      int targetIndex = m_selectedProfileTargetIndex;
-      if (gui.Combo(targetDesc, targetIndex)) {
-        m_selectedProfileTargetIndex = targetIndex;
-      }
-      bool canSaveProfile = m_sceneProfileDirty || m_selectedProfileTargetIndex != t850::DefaultProfileTargetIndex();
+      gui.Text("Rendering profile: Shared DayScene profile (all devices)");
+      bool canSaveProfile = m_sceneProfileDirty;
       if (gui.Button("Save Profile", canSaveProfile)) {
         SaveSceneProfile();
       }

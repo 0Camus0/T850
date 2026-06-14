@@ -4134,7 +4134,9 @@ void EditorApp::DrawEditorRenderingPanel() {
       changed = ImGui::SliderInt(desc->label.c_str(), &intValue, static_cast<int>(desc->min_val), static_cast<int>(desc->max_val));
       value = static_cast<float>(intValue);
     } else {
-      changed = ImGui::SliderFloat(desc->label.c_str(), &value, desc->min_val, desc->max_val, "%.3f");
+      const float range = desc->max_val - desc->min_val;
+      const char* format = (std::abs(range) <= 0.001f || std::abs(desc->step) < 0.0001f) ? "%.7f" : "%.3f";
+      changed = ImGui::SliderFloat(desc->label.c_str(), &value, desc->min_val, desc->max_val, format);
     }
     if (changed) {
       if (desc->name == "exposure") m_sceneProps.Exposure = value;

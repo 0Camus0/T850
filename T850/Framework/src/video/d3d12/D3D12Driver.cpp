@@ -756,7 +756,11 @@ namespace t850 {
   //  D3D12Driver — Frame lifecycle
   // ══════════════════════════════════════════════════════
 
-  void D3D12Driver::BeginFrame() {
+  void D3D12Driver::BeginFrame(FrameTargetMode target) {
+    (void)target;
+    if (m_frameStarted)
+      return;
+
     {
       T8_PROFILE_CPU_SCOPE(t850::g_profiler, "D3D12_FenceWait");
       T8_TELEMETRY_SCOPE("gpu.d3d12.fence_wait");
@@ -786,6 +790,7 @@ namespace t850 {
     m_lastPSO = nullptr;
     m_lastRootSig = nullptr;
     static_cast<D3D12DeviceContext*>(T8DeviceContext)->m_topologyType = D3D12_PRIMITIVE_TOPOLOGY_TYPE_TRIANGLE;
+    m_frameStarted = true;
   }
 
   void D3D12Driver::EndFrame() {}
@@ -856,9 +861,39 @@ namespace t850 {
     }
   }
 
-  void D3D12Driver::SwapBuffers() {
+  void D3D12Driver::ClearBackbufferWithColor(float r, float g, float b, float a) {
+    if (!m_frameStarted) {
+      BeginFrame(FrameTargetMode::Swapchain);
 
-    if (IsOffscreenEnabled()) {
+      D3D12_RESOURCE_BARRIER b = {};
+      b.Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
+      b.Transition.pResource = m_backBuffers[m_currentBackBuffer].Get();
+      b.Transition.StateBefore = D3D12_RESOURCE_STATE_PRESENT;
+      b.Transition.StateAfter = D3D12_RESOURCE_STATE_RENDER_TARGET;
+      b.Transition.Subresource = D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES;
+      m_commandLists[m_currentBackBuffer]->ResourceBarrier(1, &b);
+    }
+
+    CurrentRT = -1;
+    m_commandLists[m_currentBackBuffer]->OMSetRenderTargets(1, &m_backBufferRTVs[m_currentBackBuffer], FALSE, &m_depthDSV);
+    m_commandLists[m_currentBackBuffer]->RSSetViewports(1, &m_viewport);
+    m_commandLists[m_currentBackBuffer]->RSSetScissorRects(1, &m_scissorRect);
+    const float cc[4] = { r, g, b, a };
+    m_commandLists[m_currentBackBuffer]->ClearRenderTargetView(m_backBufferRTVs[m_currentBackBuffer], cc, 0, nullptr);
+    m_commandLists[m_currentBackBuffer]->ClearDepthStencilView(m_depthDSV, D3D12_CLEAR_FLAG_DEPTH, 0.0f, 0, 0, nullptr);
+    T8_TRACE(EvClearRT(-1, 1u | 2u, cc[0], cc[1], cc[2], cc[3], 0.0f, 0));
+  }
+
+  void D3D12Driver::SwapBuffers() {
+    CompleteFrame(FrameCompletionMode::Present);
+  }
+
+  void D3D12Driver::CompleteFrame(FrameCompletionMode mode) {
+    if (!m_frameStarted) {
+      return;
+    }
+
+    if (mode == FrameCompletionMode::SubmitNoPresent || IsOffscreenEnabled()) {
       {
         T8_PROFILE_CPU_SCOPE(t850::g_profiler, "D3D12_OffscreenCmdClose+Execute");
         T8_TELEMETRY_SCOPE("gpu.d3d12.cmd_close_execute");
@@ -872,8 +907,12 @@ namespace t850 {
       m_frameFenceValues[m_currentBackBuffer] = fenceVal;
 
       m_frameStarted = false;
-      CompleteOffscreenFrame();
-      m_currentBackBuffer = (m_currentBackBuffer + 1) % kBackBufferCount;
+      if (IsOffscreenEnabled()) {
+        CompleteOffscreenFrame();
+        m_currentBackBuffer = (m_currentBackBuffer + 1) % kBackBufferCount;
+      } else {
+        CurrentRT = -1;
+      }
 
       if (m_infoQueue) PollDebugMessages();
       return;
@@ -1160,6 +1199,12 @@ namespace t850 {
 
   void D3D12Driver::SaveRTToFile(int rtID, int attachment, std::string path) {
     if (rtID < 0 || rtID >= (int)RTs.size()) return;
+    const bool frameOpen = m_frameStarted;
+    if (frameOpen) {
+      m_commandLists[m_currentBackBuffer]->Close();
+      ID3D12CommandList* lists[] = { m_commandLists[m_currentBackBuffer].Get() };
+      m_commandQueue->ExecuteCommandLists(1, lists);
+    }
     WaitForGPU();
 
     D3D12RT* rt = static_cast<D3D12RT*>(RTs[rtID]);
@@ -1170,6 +1215,19 @@ namespace t850 {
     } else if (attachment >= 0 && attachment < rt->number_RT) {
       SaveD3D12ResourceToPPM(rt->vColorResources[attachment].Get(),
                               rt->vColorStates[attachment], path, this);
+    }
+    if (frameOpen) {
+      m_commandAllocators[m_currentBackBuffer]->Reset();
+      m_commandLists[m_currentBackBuffer]->Reset(m_commandAllocators[m_currentBackBuffer].Get(), nullptr);
+      ID3D12DescriptorHeap* heaps[] = {
+        m_heaps[D3D12Heap::CBV_SRV_UAV_VISIBLE].GetHeap(),
+        m_heaps[D3D12Heap::SAMPLER].GetHeap()
+      };
+      m_commandLists[m_currentBackBuffer]->SetDescriptorHeaps(2, heaps);
+      m_lastPSO = nullptr;
+      m_lastRootSig = nullptr;
+      static_cast<D3D12DeviceContext*>(T8DeviceContext)->m_commandList = m_commandLists[m_currentBackBuffer];
+      static_cast<D3D12DeviceContext*>(T8DeviceContext)->m_topologyType = D3D12_PRIMITIVE_TOPOLOGY_TYPE_TRIANGLE;
     }
   }
 

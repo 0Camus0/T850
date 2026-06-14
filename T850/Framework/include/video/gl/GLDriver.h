@@ -104,7 +104,9 @@ namespace t850 {
 
     void	Clear();
     void	ClearWithColor(float r, float g, float b, float a) override;
+    void  ClearBackbufferWithColor(float r, float g, float b, float a) override;
     void	SwapBuffers();
+    void  CompleteFrame(FrameCompletionMode mode = FrameCompletionMode::Present) override;
     bool	CheckExtension(std::string s);
 #if defined(USING_OPENGL_ES20) || defined(USING_OPENGL_ES30) || defined(USING_OPENGL_ES31)
     EGLDisplay			eglDisplay;

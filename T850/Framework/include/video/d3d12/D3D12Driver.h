@@ -62,7 +62,9 @@ namespace t850 {
     bool ResizeSwapchain(int newW, int newH) override;
     void Clear() override;
     void ClearWithColor(float r, float g, float b, float a) override;
+    void ClearBackbufferWithColor(float r, float g, float b, float a) override;
     void SwapBuffers() override;
+    void CompleteFrame(FrameCompletionMode mode = FrameCompletionMode::Present) override;
     void SetBlendState(BlendStates state) override;
     void SetDepthStencilState(DepthStencilStates state) override;
     void SetCullFace(FaceCulling state) override;
@@ -75,7 +77,7 @@ namespace t850 {
 #endif
 
     // ── D3D12-specific overrides ──
-    void BeginFrame() override;
+    void BeginFrame(FrameTargetMode target = FrameTargetMode::Swapchain) override;
     void EndFrame() override;
     void WaitForGPU() override;
     void BeginResourceUploadBatch() override;

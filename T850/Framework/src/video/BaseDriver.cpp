@@ -824,6 +824,14 @@ namespace t850 {
     BaseRT	*pRT = T8Device->CreateRT(nrt,cf,df,w,h,genMips);
     pRT->number_RT = nrt;
     if (pRT!= nullptr) {
+      for (std::size_t i = 0; i < RTs.size(); ++i) {
+        if (!RTs[i]) {
+          RTs[i] = pRT;
+          T8_LOG_DEBUG("RenderTarget created: reused handle %d (%dx%d, %d color attachments)", (int)i, w, h, nrt);
+          T8_TRACE_REGISTER_RT(pRT, nullptr, (int)i);
+          return static_cast<int>(i);
+        }
+      }
       RTs.push_back(pRT);
       T8_LOG_DEBUG("RenderTarget created: handle %d (%dx%d, %d color attachments)", (int)(RTs.size()-1), w, h, nrt);
       T8_TRACE_REGISTER_RT(pRT, nullptr, (int)(RTs.size() - 1));
@@ -845,6 +853,14 @@ namespace t850 {
       // Reload with per-attachment formats
       pRT->DestroyAPIRT();
       pRT->LoadRT(nrt, perColorFormats, df, w, h, genMips);
+      for (std::size_t i = 0; i < RTs.size(); ++i) {
+        if (!RTs[i]) {
+          RTs[i] = pRT;
+          T8_LOG_DEBUG("RenderTarget created (per-format): reused handle %d (%dx%d, %d colors)", (int)i, w, h, nrt);
+          T8_TRACE_REGISTER_RT(pRT, nullptr, (int)i);
+          return static_cast<int>(i);
+        }
+      }
       RTs.push_back(pRT);
       T8_LOG_DEBUG("RenderTarget created (per-format): handle %d (%dx%d, %d colors)", (int)(RTs.size()-1), w, h, nrt);
       T8_TRACE_REGISTER_RT(pRT, nullptr, (int)(RTs.size() - 1));
@@ -905,6 +921,10 @@ namespace t850 {
   }
 
   void BaseDriver::DestroyOffscreenTargets() {
+    if (!m_offscreenRTs.empty() &&
+        std::find(m_offscreenRTs.begin(), m_offscreenRTs.end(), CurrentRT) != m_offscreenRTs.end()) {
+      CurrentRT = -1;
+    }
     for (int rt : m_offscreenRTs) {
       DestroyRT(rt);
     }
@@ -955,6 +975,7 @@ namespace t850 {
     if (!IsOffscreenEnabled() || m_offscreenRTs.empty())
       return;
 
+    CurrentRT = -1;
     const int completedRT = GetActiveOffscreenRT();
     ++m_offscreenFrameCounter;
 

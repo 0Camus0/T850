@@ -421,7 +421,7 @@
    "meshes": [
       "Models/SponzaEsc.glb"
    ],
-   "environment_map": "sky/Uffizi.dds",
+   "environment_map": "sky/CubeMap_SkyWater.dds",
    "environment_diffuse_ibl": "",
    "environment_specular_ibl": "",
    "environment_brdf_lut": "LUT/lut_ggx.dds",
@@ -465,17 +465,17 @@
       "godrays_enabled": true,
       "auto_focus": true,
       "debug_mode": 0,
-      "shadow_bias": 5e-06,
-      "shadow_min": 0.0,
+      "shadow_bias": 0.000005,
+      "shadow_min": 0,
       "env_factor": 1.6,
       "ibl_factor": 0.2,
       "godrays_factor": 0.7,
       "light_radius_scale": 1,
       "light_intensity_scale": 1,
-      "lightmap_intensity": 1,
       "material_emissive_intensity": 1,
       "material_transmission_multiplier": 1,
-      "material_refraction_strength": 0.03
+      "material_refraction_strength": 0.03,
+      "lightmap_intensity": 1
    },
    "sliders": [
       {
@@ -721,10 +721,10 @@
       {
          "name": "shadow_bias",
          "label": "Shadow Bias",
-         "min_val": 0,
-         "max_val": 5e-05,
-         "step": 1e-07,
-         "default_val": 5e-06
+         "min_val": -0.001,
+         "max_val": 0.001,
+         "step": 0.000001,
+         "default_val": 0.000005
       },
       {
          "name": "shadow_min",
@@ -779,57 +779,68 @@
       {
          "name": "shadow_toggle",
          "label": "Shadows",
-         "default_val": true
+         "default_val": true,
+         "enabled": true
       },
       {
          "name": "ssao_toggle",
          "label": "SSAO",
-         "default_val": true
+         "default_val": true,
+         "enabled": true
       },
       {
          "name": "dof_auto_focus",
          "label": "AutoFocus",
-         "default_val": true
+         "default_val": true,
+         "enabled": true
       },
       {
          "name": "show_spline",
          "label": "Show Spline",
-         "default_val": false
+         "default_val": false,
+         "enabled": true
       },
       {
          "name": "show_lights",
          "label": "Show Lights",
-         "default_val": false
+         "default_val": false,
+         "enabled": true
       },
       {
          "name": "show_physics",
          "label": "Physics",
-         "default_val": false
+         "default_val": false,
+         "enabled": true
       },
       {
          "name": "show_navmesh",
          "label": "NavMesh",
-         "default_val": false
+         "default_val": false,
+         "enabled": true
       },
       {
          "name": "dof_toggle",
          "label": "DOF",
-         "default_val": true
+         "default_val": true,
+         "enabled": true
       },
       {
          "name": "parallax_toggle",
          "label": "Parallax",
-         "default_val": true
+         "default_val": true,
+         "enabled": true
       },
       {
          "name": "parallax_shadow_toggle",
          "label": "PX Self-Shadow",
-         "default_val": true
+         "default_val": true,
+         "enabled": true
       },
       {
          "name": "godrays_toggle",
          "label": "God Rays",
-         "default_val": true
+         "default_val": true,
+         "enabled": true
       }
    ],
    "selectors": [
@@ -934,126 +945,68 @@
             "CubeMap_SkyDawn.dds",
             "CubeMap_SkyWater.dds"
          ],
-         "default_index": 4
+         "default_index": 10
       }
    ],
    "profiles": [
       {
-         "name": "android/adreno-700",
-         "platform": "android",
-         "gpu_family": "adreno-700",
-         "sliders": [
-            {
-               "name": "ssao_kernel_size",
-               "value": 8
-            },
-            {
-               "name": "light_volume_steps",
-               "value": 64
-            },
-            {
-               "name": "dof_far_samples",
-               "value": 2
-            },
-            {
-               "name": "godrays_factor",
-               "value": 0.45
-            },
-            {
-               "name": "lightmap_intensity",
-               "value": 1
-            }
-         ],
-         "checkboxes": [
-            {
-               "name": "shadow_toggle",
-               "value": true
-            }
-         ],
-         "selectors": [
-            {
-               "name": "cubemap",
-               "value": 4
-            }
-         ]
-      },
-      {
-         "name": "android/adreno-800",
-         "platform": "android",
-         "gpu_family": "adreno-800",
-         "sliders": [
-            {
-               "name": "ssao_kernel_size",
-               "value": 12
-            },
-            {
-               "name": "light_volume_steps",
-               "value": 96
-            },
-            {
-               "name": "dof_far_samples",
-               "value": 3
-            },
-            {
-               "name": "godrays_factor",
-               "value": 0.6
-            },
-            {
-               "name": "lightmap_intensity",
-               "value": 1
-            }
-         ],
-         "checkboxes": [
-            {
-               "name": "shadow_toggle",
-               "value": true
-            }
-         ],
-         "selectors": [
-            {
-               "name": "cubemap",
-               "value": 4
-            }
-         ]
-      },
-      {
-         "name": "android/mali-g600",
-         "platform": "android",
-         "gpu_family": "mali-g600",
-         "sliders": [],
-         "checkboxes": [],
-         "selectors": [
-            {
-               "name": "cubemap",
-               "value": 4
-            }
-         ]
-      },
-      {
-         "name": "android/mali-g700",
-         "platform": "android",
-         "gpu_family": "mali-g700",
-         "sliders": [],
-         "checkboxes": [],
-         "selectors": [
-            {
-               "name": "cubemap",
-               "value": 4
-            }
-         ]
-      },
-      {
-         "name": "android/default",
-         "platform": "android",
+         "name": "shared",
+         "platform": "",
+         "architecture": "",
          "gpu_family": "",
-         "sliders": [],
+         "gpu_name_contains": "",
+         "model": "",
+         "sliders": [
+            {
+               "name": "ssao_kernel_size",
+               "value": 4
+            },
+            {
+               "name": "ssao_radius",
+               "value": 1.5
+            },
+            {
+               "name": "parallax_low_samples",
+               "value": 10
+            },
+            {
+               "name": "parallax_high_samples",
+               "value": 15
+            },
+            {
+               "name": "light_volume_steps",
+               "value": 24
+            },
+            {
+               "name": "shadow_bias",
+               "value": -0.001
+            },
+            {
+               "name": "fov",
+               "value": 69.99999
+            }
+         ],
          "checkboxes": [],
          "selectors": [
             {
+               "name": "gauss_0_kernel_size",
+               "value": 13
+            },
+            {
+               "name": "active_camera",
+               "value": 1
+            },
+            {
                "name": "cubemap",
-               "value": 4
+               "value": 10
+            },
+            {
+               "name": "luminance_mode",
+               "value": 1
             }
-         ]
+         ],
+         "lights": [],
+         "animations": []
       }
    ]
 }

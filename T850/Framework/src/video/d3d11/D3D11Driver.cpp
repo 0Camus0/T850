@@ -281,8 +281,11 @@ namespace t850 {
     ID3D11DeviceContext* deviceContext = reinterpret_cast<ID3D11DeviceContext*>(T8DeviceContext->GetAPIObject());
     if (!device || !deviceContext) return false;
 
-    // Unbind render targets before resizing
+    // Unbind all state before resizing. Backbuffer/RT SRVs or RTVs may still
+    // be referenced by the immediate context after render-graph passes.
     deviceContext->OMSetRenderTargets(0, nullptr, nullptr);
+    deviceContext->ClearState();
+    deviceContext->Flush();
     D3D11RenderTargetView.Reset();
     D3D11DepthStencilTargetView.Reset();
     D3D11DepthTex.Reset();
@@ -443,6 +446,9 @@ namespace t850 {
 
     ID3D11DeviceContext* deviceContext = reinterpret_cast<ID3D11DeviceContext*>(T8DeviceContext->GetAPIObject());
     float rgba[4] = { 0.227f, 0.227f, 0.227f, 1.0f };
+    deviceContext->OMSetRenderTargets(1, D3D11RenderTargetView.GetAddressOf(), D3D11DepthStencilTargetView.Get());
+    deviceContext->RSSetViewports(1, &viewport);
+    CurrentRT = -1;
     deviceContext->ClearRenderTargetView(D3D11RenderTargetView.Get(), rgba);
     deviceContext->ClearDepthStencilView(D3D11DepthStencilTargetView.Get(), D3D11_CLEAR_DEPTH, 0.0f, 0);
     T8_TRACE(EvClearRT(-1, 1u | 2u, rgba[0], rgba[1], rgba[2], rgba[3], 0.0f, 0));
@@ -461,16 +467,38 @@ namespace t850 {
                          (rt->number_RT > 0 ? 1u : 0u) | (rt->D3D11DepthStencilTargetView ? 2u : 0u),
                          rgba[0], rgba[1], rgba[2], rgba[3], 0.0f, 0));
     } else {
+      deviceContext->OMSetRenderTargets(1, D3D11RenderTargetView.GetAddressOf(), D3D11DepthStencilTargetView.Get());
+      deviceContext->RSSetViewports(1, &viewport);
+      CurrentRT = -1;
       deviceContext->ClearRenderTargetView(D3D11RenderTargetView.Get(), rgba);
       deviceContext->ClearDepthStencilView(D3D11DepthStencilTargetView.Get(), D3D11_CLEAR_DEPTH, 0.0f, 0);
       T8_TRACE(EvClearRT(-1, 1u | 2u, rgba[0], rgba[1], rgba[2], rgba[3], 0.0f, 0));
     }
   }
 
+  void D3DXDriver::ClearBackbufferWithColor(float r, float g, float b, float a) {
+    ID3D11DeviceContext* deviceContext = reinterpret_cast<ID3D11DeviceContext*>(T8DeviceContext->GetAPIObject());
+    float rgba[4] = { r, g, b, a };
+    deviceContext->OMSetRenderTargets(1, D3D11RenderTargetView.GetAddressOf(), D3D11DepthStencilTargetView.Get());
+    deviceContext->RSSetViewports(1, &viewport);
+    CurrentRT = -1;
+    deviceContext->ClearRenderTargetView(D3D11RenderTargetView.Get(), rgba);
+    deviceContext->ClearDepthStencilView(D3D11DepthStencilTargetView.Get(), D3D11_CLEAR_DEPTH, 0.0f, 0);
+    T8_TRACE(EvClearRT(-1, 1u | 2u, rgba[0], rgba[1], rgba[2], rgba[3], 0.0f, 0));
+  }
+
   void D3DXDriver::SwapBuffers() {
+    CompleteFrame(FrameCompletionMode::Present);
+  }
+
+  void D3DXDriver::CompleteFrame(FrameCompletionMode mode) {
     T8_PROFILE_SCOPE(t850::g_profiler, "D3D11_Present");
     T8_TELEMETRY_SCOPE("gpu.d3d11.present");
     T8_LOG_TRACE("[D3DXDriver] SwapBuffers/Present");
+
+    if (mode == FrameCompletionMode::SubmitNoPresent) {
+      return;
+    }
 
     if (IsOffscreenEnabled()) {
       ID3D11DeviceContext* deviceContext = reinterpret_cast<ID3D11DeviceContext*>(T8DeviceContext->GetAPIObject());

@@ -37,6 +37,7 @@ namespace t850 {
     void OnNativeWindowDestroyed();
     void OnAppCommand(int32_t cmd);
     int32_t OnInputEvent(AInputEvent* event);
+    void RequestCloseApplication();
 
     bool IsAlive() const { return m_alive; }
     ANativeWindow* GetNativeWindow() const { return m_window; }
@@ -50,7 +51,6 @@ namespace t850 {
     void ResetTransientInput();
     void ClearTouchState();
     void ClearReturnToNativePreference();
-    void RequestCloseApplication();
 
     android_app* m_app = nullptr;
     ANativeWindow* m_window = nullptr;

@@ -15,6 +15,22 @@ bool DefaultPointLightsEnabled() {
 }
 
 bool SceneSetup::Load(const std::string& jsonPath) {
+  descriptor = SceneDescriptor{};
+  name.clear();
+  meshPaths.clear();
+  environmentMap.clear();
+  environmentDiffuseIBL.clear();
+  environmentSpecularIBL.clear();
+  environmentBrdfLUT.clear();
+  environmentSheenIBL.clear();
+  environmentCharlieLUT.clear();
+  environmentSheenELUT.clear();
+  cameras.clear();
+  lightCameras.clear();
+  gaussFilters.clear();
+  splines.clear();
+  agents.clear();
+
   if (!LoadSceneDescriptor(jsonPath, descriptor)) {
     T8_LOG_ERROR("[SceneSetup] Failed to load '%s'", jsonPath.c_str());
     return false;

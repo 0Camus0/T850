@@ -4189,9 +4189,9 @@
    ],
    "profiles": [
       {
-         "name": "pc/x64",
+         "name": "pc/windows",
          "platform": "windows",
-         "architecture": "x64",
+         "architecture": "",
          "gpu_family": "",
          "gpu_name_contains": "",
          "model": "",

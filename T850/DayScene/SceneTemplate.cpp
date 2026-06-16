@@ -13633,6 +13633,12 @@ t850::CameraInputState SceneTemplate::BuildCameraInputState(InputManager* input,
     state.orbitRotate = allowMouse && input->PressedMouseButton(0);
     state.orbitPan = allowMouse && input->PressedMouseButton(1);
     state.orbitZoom = allowMouse && input->PressedMouseButton(2);
+
+    ApplyGamepadToCameraInput(
+        state,
+        *input,
+        DtSecs,
+        allowMouse && m_cameraController.GetActiveProfileType() != t850::CameraProfileType::Orbit);
   }
 #ifdef OS_ANDROID
   if (AndroidVirtualControlsVisible()) {

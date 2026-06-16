@@ -6,7 +6,7 @@ Add-Type -AssemblyName PresentationFramework, PresentationCore, WindowsBase, Sys
 $xaml = @"
 <Window xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-        Title="T850 Engine Launcher" SizeToContent="Height" Width="920" MinWidth="760"
+        Title="T850 Engine Launcher" Height="820" Width="920" MinWidth="640" MinHeight="520"
         WindowStartupLocation="CenterScreen" ResizeMode="CanResize"
         Background="#1B1B2F" Foreground="#E0E0E0">
     <Window.Resources>
@@ -117,20 +117,66 @@ $xaml = @"
         </Style>
     </Window.Resources>
 
-    <Grid Margin="24,16,24,20">
-        <Grid.RowDefinitions>
-            <RowDefinition Height="Auto"/>
-            <RowDefinition Height="Auto"/>
-            <RowDefinition Height="Auto"/>
-            <RowDefinition Height="Auto"/>
-            <RowDefinition Height="Auto"/>
-            <RowDefinition Height="Auto"/>
-        </Grid.RowDefinitions>
-        <Grid.ColumnDefinitions>
-            <ColumnDefinition Width="*"/>
-            <ColumnDefinition Width="16"/>
-            <ColumnDefinition Width="*"/>
-        </Grid.ColumnDefinitions>
+    <DockPanel Margin="16,12,16,16" LastChildFill="True">
+        <UniformGrid DockPanel.Dock="Bottom" Columns="4" Margin="0,10,0,0">
+            <Button Name="btnRun" Content="&#x25B6;  RUN" Height="48" Margin="0,0,6,0"
+                    FontSize="18" FontWeight="Bold" Cursor="Hand"
+                    Background="{StaticResource GreenBrush}" Foreground="#1E1E2E"
+                    BorderThickness="0">
+                <Button.Resources>
+                    <Style TargetType="Border">
+                        <Setter Property="CornerRadius" Value="6"/>
+                    </Style>
+                </Button.Resources>
+            </Button>
+            <Button Name="btnDownloadAssets" Content="Download Assets" Height="48" Margin="2,0,6,0"
+                    FontSize="15" FontWeight="Bold" Cursor="Hand"
+                    Background="{StaticResource GreenBrush}" Foreground="#1E1E2E"
+                    BorderThickness="0" IsEnabled="False">
+                <Button.Resources>
+                    <Style TargetType="Border">
+                        <Setter Property="CornerRadius" Value="6"/>
+                    </Style>
+                </Button.Resources>
+            </Button>
+            <Button Name="btnBenchmarkMatrix" Content="Benchmark Matrix" Height="48" Margin="2,0,6,0"
+                    FontSize="14" FontWeight="Bold" Cursor="Hand"
+                    Background="{StaticResource Surface2Brush}" Foreground="#E0E0E0"
+                    BorderThickness="0">
+                <Button.Resources>
+                    <Style TargetType="Border">
+                        <Setter Property="CornerRadius" Value="6"/>
+                    </Style>
+                </Button.Resources>
+            </Button>
+            <Button Name="btnEditor" Content="&#x270E;  EDITOR" Height="48" Margin="2,0,0,0"
+                    FontSize="18" FontWeight="Bold" Cursor="Hand"
+                    Background="{StaticResource AccentBrush}" Foreground="#E0E0E0"
+                    BorderThickness="0">
+                <Button.Resources>
+                    <Style TargetType="Border">
+                        <Setter Property="CornerRadius" Value="6"/>
+                    </Style>
+                </Button.Resources>
+            </Button>
+        </UniformGrid>
+
+        <ScrollViewer VerticalScrollBarVisibility="Auto"
+                      HorizontalScrollBarVisibility="Disabled"
+                      CanContentScroll="False">
+            <Grid Margin="8,4,8,0">
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="Auto"/>
+                    <RowDefinition Height="Auto"/>
+                    <RowDefinition Height="Auto"/>
+                    <RowDefinition Height="Auto"/>
+                    <RowDefinition Height="Auto"/>
+                </Grid.RowDefinitions>
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*"/>
+                    <ColumnDefinition Width="16"/>
+                    <ColumnDefinition Width="*"/>
+                </Grid.ColumnDefinitions>
 
         <!-- Header -->
         <StackPanel Grid.Row="0" Grid.ColumnSpan="3" Margin="0,0,0,20">
@@ -235,6 +281,24 @@ $xaml = @"
                         <TextBox Name="txtHeight" Text="1440"/>
                     </StackPanel>
                 </Grid>
+                <WrapPanel Margin="0,10,0,0">
+                    <Button Name="btnResolution1080" Content="1920 x 1080" Margin="0,0,8,8"
+                            Padding="12,6" FontSize="12" Cursor="Hand"
+                            Background="{StaticResource Surface2Brush}" Foreground="{StaticResource TextBrush}"
+                            BorderThickness="0"/>
+                    <Button Name="btnResolution1440" Content="2560 x 1440" Margin="0,0,8,8"
+                            Padding="12,6" FontSize="12" Cursor="Hand"
+                            Background="{StaticResource Surface2Brush}" Foreground="{StaticResource TextBrush}"
+                            BorderThickness="0"/>
+                    <Button Name="btnResolution4K" Content="3840 x 2160" Margin="0,0,8,8"
+                            Padding="12,6" FontSize="12" Cursor="Hand"
+                            Background="{StaticResource Surface2Brush}" Foreground="{StaticResource TextBrush}"
+                            BorderThickness="0"/>
+                    <Button Name="btnResolutionMaxDevice" Content="Max Device" Margin="0,0,0,8"
+                            Padding="12,6" FontSize="12" Cursor="Hand"
+                            Background="{StaticResource AccentBrush}" Foreground="{StaticResource TextBrush}"
+                            BorderThickness="0"/>
+                </WrapPanel>
             </StackPanel>
         </Border>
 
@@ -332,63 +396,21 @@ $xaml = @"
                      Cursor="IBeam"/>
         </StackPanel>
 
-        <!-- Buttons -->
-        <Grid Grid.Row="5" Grid.ColumnSpan="3">
-            <Grid.ColumnDefinitions>
-                <ColumnDefinition Width="*"/>
-                <ColumnDefinition Width="12"/>
-                <ColumnDefinition Width="*"/>
-                <ColumnDefinition Width="12"/>
-                <ColumnDefinition Width="*"/>
-            </Grid.ColumnDefinitions>
-            <Button Grid.Column="0" Name="btnRun" Content="&#x25B6;  RUN" Height="48"
-                    FontSize="18" FontWeight="Bold" Cursor="Hand"
-                    Background="{StaticResource GreenBrush}" Foreground="#1E1E2E"
-                    BorderThickness="0">
-                <Button.Resources>
-                    <Style TargetType="Border">
-                        <Setter Property="CornerRadius" Value="6"/>
-                    </Style>
-                </Button.Resources>
-            </Button>
-            <Button Grid.Column="2" Name="btnDownloadAssets" Content="Download Assets" Height="48"
-                    FontSize="16" FontWeight="Bold" Cursor="Hand"
-                    Background="{StaticResource GreenBrush}" Foreground="#1E1E2E"
-                    BorderThickness="0" IsEnabled="False">
-                <Button.Resources>
-                    <Style TargetType="Border">
-                        <Setter Property="CornerRadius" Value="6"/>
-                    </Style>
-                </Button.Resources>
-            </Button>
-            <Button Grid.Column="4" Name="btnBenchmarkMatrix" Content="Benchmark Matrix" Height="48"
-                    FontSize="15" FontWeight="Bold" Cursor="Hand"
-                    Background="{StaticResource Surface2Brush}" Foreground="#E0E0E0"
-                    BorderThickness="0">
-                <Button.Resources>
-                    <Style TargetType="Border">
-                        <Setter Property="CornerRadius" Value="6"/>
-                    </Style>
-                </Button.Resources>
-            </Button>
-            <Button Grid.Column="6" Name="btnEditor" Content="&#x270E;  EDITOR" Height="48"
-                    FontSize="18" FontWeight="Bold" Cursor="Hand"
-                    Background="{StaticResource AccentBrush}" Foreground="#E0E0E0"
-                    BorderThickness="0">
-                <Button.Resources>
-                    <Style TargetType="Border">
-                        <Setter Property="CornerRadius" Value="6"/>
-                    </Style>
-                </Button.Resources>
-            </Button>
-        </Grid>
-    </Grid>
+            </Grid>
+        </ScrollViewer>
+    </DockPanel>
 </Window>
 "@
 
 # Parse XAML
 $reader = [System.Xml.XmlReader]::Create([System.IO.StringReader]::new($xaml))
 $window = [System.Windows.Markup.XamlReader]::Load($reader)
+
+$workArea = [System.Windows.SystemParameters]::WorkArea
+$window.MaxHeight = [Math]::Max($window.MinHeight, $workArea.Height - 16)
+$window.MaxWidth = [Math]::Max($window.MinWidth, $workArea.Width - 16)
+$window.Height = [Math]::Min($window.Height, $window.MaxHeight)
+$window.Width = [Math]::Min($window.Width, $window.MaxWidth)
 
 # Get controls
 $cmbApi         = $window.FindName("cmbApi")
@@ -423,6 +445,10 @@ $pnlModelSelect = $window.FindName("pnlModelSelect")
 $pnlSceneFileSelect = $window.FindName("pnlSceneFileSelect")
 $txtWidth       = $window.FindName("txtWidth")
 $txtHeight      = $window.FindName("txtHeight")
+$btnResolution1080 = $window.FindName("btnResolution1080")
+$btnResolution1440 = $window.FindName("btnResolution1440")
+$btnResolution4K = $window.FindName("btnResolution4K")
+$btnResolutionMaxDevice = $window.FindName("btnResolutionMaxDevice")
 $cmbLogLevel    = $window.FindName("cmbLogLevel")
 $chkLogToFile   = $window.FindName("chkLogToFile")
 $chkTelemetry   = $window.FindName("chkTelemetry")
@@ -699,6 +725,133 @@ function Get-CachedSceneDependencyResult {
         return @{ Ok = $true; Missing = @() }
     }
     return $script:SceneDependencyResult
+}
+
+function Ensure-NativeDisplayType {
+    if ("T850Launcher.NativeDisplay" -as [type]) { return }
+    Add-Type -TypeDefinition @"
+using System;
+using System.Runtime.InteropServices;
+
+namespace T850Launcher {
+    public struct DisplayResolution {
+        public int Width;
+        public int Height;
+        public DisplayResolution(int width, int height) {
+            Width = width;
+            Height = height;
+        }
+    }
+
+    public static class NativeDisplay {
+        private const int CCHDEVICENAME = 32;
+        private const int CCHFORMNAME = 32;
+        private const int ENUM_CURRENT_SETTINGS = -1;
+
+        [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Auto)]
+        private struct DEVMODE {
+            [MarshalAs(UnmanagedType.ByValTStr, SizeConst = CCHDEVICENAME)]
+            public string dmDeviceName;
+            public short dmSpecVersion;
+            public short dmDriverVersion;
+            public short dmSize;
+            public short dmDriverExtra;
+            public int dmFields;
+            public int dmPositionX;
+            public int dmPositionY;
+            public int dmDisplayOrientation;
+            public int dmDisplayFixedOutput;
+            public short dmColor;
+            public short dmDuplex;
+            public short dmYResolution;
+            public short dmTTOption;
+            public short dmCollate;
+            [MarshalAs(UnmanagedType.ByValTStr, SizeConst = CCHFORMNAME)]
+            public string dmFormName;
+            public short dmLogPixels;
+            public int dmBitsPerPel;
+            public int dmPelsWidth;
+            public int dmPelsHeight;
+            public int dmDisplayFlags;
+            public int dmDisplayFrequency;
+            public int dmICMMethod;
+            public int dmICMIntent;
+            public int dmMediaType;
+            public int dmDitherType;
+            public int dmReserved1;
+            public int dmReserved2;
+            public int dmPanningWidth;
+            public int dmPanningHeight;
+        }
+
+        [DllImport("user32.dll", CharSet = CharSet.Auto)]
+        private static extern bool EnumDisplaySettings(string deviceName, int modeNum, ref DEVMODE devMode);
+
+        private static DEVMODE CreateMode() {
+            DEVMODE mode = new DEVMODE();
+            mode.dmSize = (short)Marshal.SizeOf(typeof(DEVMODE));
+            return mode;
+        }
+
+        public static DisplayResolution GetMaxPrimaryDisplayMode() {
+            int bestWidth = 0;
+            int bestHeight = 0;
+            for (int modeIndex = 0; ; ++modeIndex) {
+                DEVMODE mode = CreateMode();
+                if (!EnumDisplaySettings(null, modeIndex, ref mode)) {
+                    break;
+                }
+                if (mode.dmPelsWidth <= 0 || mode.dmPelsHeight <= 0) {
+                    continue;
+                }
+                long area = (long)mode.dmPelsWidth * mode.dmPelsHeight;
+                long bestArea = (long)bestWidth * bestHeight;
+                if (area > bestArea || (area == bestArea && mode.dmPelsWidth > bestWidth)) {
+                    bestWidth = mode.dmPelsWidth;
+                    bestHeight = mode.dmPelsHeight;
+                }
+            }
+            if (bestWidth <= 0 || bestHeight <= 0) {
+                DEVMODE current = CreateMode();
+                if (EnumDisplaySettings(null, ENUM_CURRENT_SETTINGS, ref current)) {
+                    bestWidth = current.dmPelsWidth;
+                    bestHeight = current.dmPelsHeight;
+                }
+            }
+            return new DisplayResolution(bestWidth, bestHeight);
+        }
+    }
+}
+"@
+}
+
+function Get-MaxDeviceResolution {
+    try {
+        Ensure-NativeDisplayType
+        $native = [T850Launcher.NativeDisplay]::GetMaxPrimaryDisplayMode()
+        if ($native.Width -gt 0 -and $native.Height -gt 0) {
+            return [pscustomobject]@{ Width = [int]$native.Width; Height = [int]$native.Height }
+        }
+    } catch {
+    }
+
+    $screen = [System.Windows.Forms.Screen]::PrimaryScreen
+    return [pscustomobject]@{ Width = [int]$screen.Bounds.Width; Height = [int]$screen.Bounds.Height }
+}
+
+function Set-ResolutionPreset {
+    param(
+        [Parameter(Mandatory = $true)] [int]$Width,
+        [Parameter(Mandatory = $true)] [int]$Height,
+        [string]$Label = ""
+    )
+    $txtWidth.Text = $Width.ToString()
+    $txtHeight.Text = $Height.ToString()
+    if ($Label) {
+        $txtStatus.Text = "Resolution set to $Label ($Width x $Height)"
+        $txtStatus.Foreground = $window.FindResource("AccentBrush")
+    }
+    Update-Preview
 }
 
 # ── Config load/save ──
@@ -1168,6 +1321,13 @@ $txtSeconds.Add_TextChanged({ Update-Preview })
 $txtFrame.Add_TextChanged({ Update-Preview })
 $txtWidth.Add_TextChanged({ Update-Preview })
 $txtHeight.Add_TextChanged({ Update-Preview })
+$btnResolution1080.Add_Click({ Set-ResolutionPreset -Width 1920 -Height 1080 -Label "1920 x 1080" })
+$btnResolution1440.Add_Click({ Set-ResolutionPreset -Width 2560 -Height 1440 -Label "2560 x 1440" })
+$btnResolution4K.Add_Click({ Set-ResolutionPreset -Width 3840 -Height 2160 -Label "3840 x 2160" })
+$btnResolutionMaxDevice.Add_Click({
+    $resolution = Get-MaxDeviceResolution
+    Set-ResolutionPreset -Width $resolution.Width -Height $resolution.Height -Label "Max Device"
+})
 
 # DOWNLOAD ASSETS button
 $btnDownloadAssets.Add_Click({

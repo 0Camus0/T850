@@ -263,6 +263,52 @@ enum STDKEYS {
 #define MAXKEYS 512
 #define MAXMOUSEBUTTONS 5
 
+struct GamepadInputState {
+	bool	connected = false;
+	bool	enabled = false;
+	bool	handheldDevice = false;
+	std::string name;
+	std::string handheldReason;
+
+	float	leftX = 0.0f;
+	float	leftY = 0.0f;
+	float	rightX = 0.0f;
+	float	rightY = 0.0f;
+	float	leftTrigger = 0.0f;
+	float	rightTrigger = 0.0f;
+
+	bool	buttonSouth = false; // Xbox A
+	bool	buttonEast = false;  // Xbox B
+	bool	buttonWest = false;  // Xbox X
+	bool	buttonNorth = false; // Xbox Y
+	bool	back = false;
+	bool	guide = false;
+	bool	start = false;
+	bool	leftStick = false;
+	bool	rightStick = false;
+	bool	leftShoulder = false;
+	bool	rightShoulder = false;
+	bool	dpadUp = false;
+	bool	dpadDown = false;
+	bool	dpadLeft = false;
+	bool	dpadRight = false;
+
+	bool	buttonSouthPressed = false;
+	bool	buttonEastPressed = false;
+	bool	buttonWestPressed = false;
+	bool	buttonNorthPressed = false;
+	bool	backPressed = false;
+	bool	guidePressed = false;
+	bool	startPressed = false;
+	bool	leftStickPressed = false;
+	bool	rightStickPressed = false;
+	bool	leftShoulderPressed = false;
+	bool	rightShoulderPressed = false;
+	bool	dpadUpPressed = false;
+	bool	dpadDownPressed = false;
+	bool	dpadLeftPressed = false;
+	bool	dpadRightPressed = false;
+};
 
 class InputManager {
 public:
@@ -272,15 +318,20 @@ public:
 
 	bool	PressedKey(int key);
 	bool	PressedMouseButton(int mb);
+	bool	HasGamepadInput() const;
+	bool	ConsumeGamepadStartPress();
+	bool	ConsumeGamepadEastPress();
 
 	bool	KeyStates[2][MAXKEYS];
 	bool	MouseButtonStates[2][MAXMOUSEBUTTONS];
+	GamepadInputState Gamepad;
 
 	int		xDelta;
 	int 	yDelta;
 	int		mouseX;
 	int		mouseY;
 	float	scrollDelta; // mouse wheel: positive = scroll up, negative = scroll down
+	bool	touchCursorVisible;
 
 	// UTF-8 characters produced by SDL_EVENT_TEXT_INPUT during the last frame.
 	// Consumers read and clear this buffer each frame.

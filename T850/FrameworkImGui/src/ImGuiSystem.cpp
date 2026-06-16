@@ -4,6 +4,9 @@
 #include <Descriptors.h>
 #include <core/Core.h>
 #include <debug/LoadingProgress.h>
+#ifdef OS_WINDOWS
+#include <utils/HandheldControllerOverlay.h>
+#endif
 #include <utils/Log.h>
 #include <video/BaseDriver.h>
 
@@ -181,6 +184,7 @@ bool ImGuiSystem::Init(RootFramework* framework, const char* iniFileName, bool e
 
   ImGuiIO& io = ImGui::GetIO();
   io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;
+  io.ConfigFlags |= ImGuiConfigFlags_NavEnableGamepad;
   if (m_dockingEnabled) {
     io.ConfigFlags |= ImGuiConfigFlags_DockingEnable;
   }
@@ -223,6 +227,9 @@ bool ImGuiSystem::Init(RootFramework* framework, const char* iniFileName, bool e
     m_framework = nullptr;
     return false;
   }
+#ifdef OS_WINDOWS
+  ImGui_ImplSDL3_SetGamepadMode(ImGui_ImplSDL3_GamepadMode_Manual);
+#endif
 #ifdef OS_ANDROID
   m_androidPlatformInited = true;
 #endif
@@ -379,6 +386,9 @@ void ImGuiSystem::Shutdown() {
   m_androidWindow = nullptr;
 #endif
   m_wheelAccum = 0.0f;
+  m_gamepadNavigationState = GamepadInputState{};
+  m_gamepadNavigationGuiVisible = false;
+  m_gamepadNavigationTouchCursor = false;
   m_inited = false;
   T8_LOG_INFO("[ImGuiSystem] Shutdown complete");
 }
@@ -388,6 +398,12 @@ void ImGuiSystem::NoteWindowEvent(const char* eventName, int data1, int data2) {
   m_lastWindowEventData1 = data1;
   m_lastWindowEventData2 = data2;
   m_windowEventTraceFrames = 12;
+}
+
+void ImGuiSystem::SetGamepadNavigationInput(const GamepadInputState& gamepad, bool guiVisible, bool touchCursorVisible) {
+  m_gamepadNavigationState = gamepad;
+  m_gamepadNavigationGuiVisible = guiVisible;
+  m_gamepadNavigationTouchCursor = touchCursorVisible;
 }
 
 bool ImGuiSystem::NewFrame(bool createDockspace) {
@@ -430,6 +446,10 @@ bool ImGuiSystem::NewFrame(bool createDockspace) {
       m_lastWindowEventName,
       m_lastWindowEventData1,
       m_lastWindowEventData2);
+#endif
+#ifdef OS_WINDOWS
+  SubmitGamepadGuiNavigation(m_gamepadNavigationState, m_gamepadNavigationGuiVisible);
+  ImGui::GetIO().MouseDrawCursor = m_gamepadNavigationGuiVisible && m_gamepadNavigationTouchCursor;
 #endif
   ImGui::NewFrame();
   if (m_windowEventTraceFrames > 0) {

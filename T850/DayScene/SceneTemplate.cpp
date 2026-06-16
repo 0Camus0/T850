@@ -13063,6 +13063,26 @@ void SceneTemplate::DrawSkeletonEditPanel(t850::DevGuiContext& gui) {
   DrawRagdollViewportContextMenu();
 }
 
+void SceneTemplate::DrawRagdollPhysicsSimulationPanel(t850::DevGuiContext& gui) {
+  if (!gui.EmbedPanels()) {
+    ImGui::SetNextWindowSize(ImVec2(460.0f, 680.0f), ImGuiCond_FirstUseEver);
+  }
+  const bool begun = gui.BeginPanel("Ragdoll Physics Simulation");
+  if (begun) {
+    BeginRagdollUndoScope("Panel edit");
+    DrawSkeletonEditPanel(gui);
+    const bool gestureActive =
+        ImGui::IsAnyItemActive() ||
+        ImGui::IsMouseDown(0) ||
+        m_skeletonEditDragging ||
+        m_ragdollEditHandleDragging ||
+        m_ragdollEditGizmoDragging ||
+        m_ragdollEditJointDragging;
+    EndRagdollUndoScope(gestureActive);
+  }
+  gui.EndPanel();
+}
+
 #ifdef OS_ANDROID
 void SceneTemplate::DrawAndroidPhysicsPanel(t850::DevGuiContext& gui) {
   if (!gui.BeginSection("Physics")) {
@@ -13633,6 +13653,12 @@ t850::CameraInputState SceneTemplate::BuildCameraInputState(InputManager* input,
     state.orbitRotate = allowMouse && input->PressedMouseButton(0);
     state.orbitPan = allowMouse && input->PressedMouseButton(1);
     state.orbitZoom = allowMouse && input->PressedMouseButton(2);
+
+    ApplyGamepadToCameraInput(
+        state,
+        *input,
+        DtSecs,
+        allowMouse && m_cameraController.GetActiveProfileType() != t850::CameraProfileType::Orbit);
   }
 #ifdef OS_ANDROID
   if (AndroidVirtualControlsVisible()) {
@@ -15914,6 +15940,8 @@ void SceneTemplate::DrawDevGui(t850::DevGuiContext& gui) {
       SceneProp.ShowCullingDebug = showCulling;
     }
   }
+
+  DrawRagdollPhysicsSimulationPanel(gui);
 
   const RenderMesh* consoleCullMesh = Meshes[0].pBase ? static_cast<const RenderMesh*>(Meshes[0].pBase) : nullptr;
   DrawSandboxConsolePanel(m_cameraController.GetActiveProfileType(), Cam.Eye, SceneProp, consoleCullMesh);

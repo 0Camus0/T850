@@ -213,6 +213,39 @@ std::vector<std::string> CameraProfileNames() {
   return names;
 }
 
+void ApplyGamepadToCameraInput(CameraInputState& state,
+                               const InputManager& input,
+                               float deltaSeconds,
+                               bool allowLook) {
+  const GamepadInputState& gamepad = input.Gamepad;
+  if (!gamepad.connected || !gamepad.enabled) {
+    return;
+  }
+
+  constexpr float kMoveThreshold = 0.12f;
+  constexpr float kLookThreshold = 0.08f;
+  constexpr float kLookYawMouseDeltaPerSecond = 520.0f;
+  constexpr float kLookPitchMouseDeltaPerSecond = 440.0f;
+
+  state.moveForwardAmount = ClampFloat(state.moveForwardAmount - gamepad.leftY, -1.0f, 1.0f);
+  state.moveRightAmount = ClampFloat(state.moveRightAmount + gamepad.leftX, -1.0f, 1.0f);
+  state.moveForward = state.moveForward || gamepad.leftY < -kMoveThreshold;
+  state.moveBackward = state.moveBackward || gamepad.leftY > kMoveThreshold;
+  state.moveLeft = state.moveLeft || gamepad.leftX < -kMoveThreshold;
+  state.moveRight = state.moveRight || gamepad.leftX > kMoveThreshold;
+
+  state.jump = state.jump || gamepad.buttonSouth;
+  state.crouch = state.crouch || gamepad.buttonEast;
+  state.sprint = state.sprint || gamepad.leftStick;
+
+  if (allowLook &&
+      (std::fabs(gamepad.rightX) > kLookThreshold || std::fabs(gamepad.rightY) > kLookThreshold)) {
+    state.mouseLook = true;
+    state.mouseDeltaX += gamepad.rightX * kLookYawMouseDeltaPerSecond * deltaSeconds;
+    state.mouseDeltaY += gamepad.rightY * kLookPitchMouseDeltaPerSecond * deltaSeconds;
+  }
+}
+
 void CameraProfile::OnActivated(Camera& camera) {
   RefreshCamera(camera);
 }

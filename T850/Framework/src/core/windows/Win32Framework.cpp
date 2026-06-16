@@ -33,6 +33,77 @@
 #include <utils/ConfigRuntime.h>
 #include <debug/RuntimeTelemetry.h>
 #include <navigation/NavigationSystem.h>
+
+#include <algorithm>
+#include <cctype>
+#include <cmath>
+#include <string>
+
+namespace {
+  std::string ToLowerAscii(std::string value) {
+    std::transform(value.begin(), value.end(), value.begin(), [](unsigned char ch) {
+      return static_cast<char>(std::tolower(ch));
+    });
+    return value;
+  }
+
+  bool ContainsNoCase(const std::string& haystack, const char* needle) {
+    return ToLowerAscii(haystack).find(ToLowerAscii(needle ? std::string(needle) : std::string{})) != std::string::npos;
+  }
+
+  std::string ReadRegistryString(HKEY root, const char* subKey, const char* valueName) {
+    HKEY key = nullptr;
+    if (RegOpenKeyExA(root, subKey, 0, KEY_READ, &key) != ERROR_SUCCESS) {
+      return {};
+    }
+    char buffer[512] = {};
+    DWORD type = 0;
+    DWORD size = sizeof(buffer);
+    const LSTATUS status = RegQueryValueExA(key, valueName, nullptr, &type, reinterpret_cast<LPBYTE>(buffer), &size);
+    RegCloseKey(key);
+    if (status != ERROR_SUCCESS || (type != REG_SZ && type != REG_EXPAND_SZ)) {
+      return {};
+    }
+    return std::string(buffer);
+  }
+
+  std::string DetectWindowsHandheldReason() {
+    const std::string manufacturer = ReadRegistryString(HKEY_LOCAL_MACHINE, "HARDWARE\\DESCRIPTION\\System\\BIOS", "SystemManufacturer");
+    const std::string product = ReadRegistryString(HKEY_LOCAL_MACHINE, "HARDWARE\\DESCRIPTION\\System\\BIOS", "SystemProductName");
+    const std::string baseBoard = ReadRegistryString(HKEY_LOCAL_MACHINE, "HARDWARE\\DESCRIPTION\\System\\BIOS", "BaseBoardProduct");
+    const std::string probe = manufacturer + " " + product + " " + baseBoard;
+
+    if (ContainsNoCase(probe, "rog ally") || ContainsNoCase(probe, "rc71") || ContainsNoCase(probe, "rc72")) {
+      return "ASUS ROG Ally/Ally X (" + product + " " + baseBoard + ")";
+    }
+    if (ContainsNoCase(probe, "legion go")) return "Lenovo Legion Go (" + product + ")";
+    if (ContainsNoCase(probe, "steam deck")) return "Steam Deck (" + product + ")";
+    if (ContainsNoCase(probe, "msi claw")) return "MSI Claw (" + product + ")";
+    if (ContainsNoCase(probe, "ayaneo")) return "AYANEO (" + product + ")";
+    if (ContainsNoCase(probe, "onexplayer")) return "ONEXPLAYER (" + product + ")";
+    if (ContainsNoCase(probe, "gpd win") || ContainsNoCase(probe, "gpd handheld")) return "GPD handheld (" + product + ")";
+    if (ContainsNoCase(probe, "aokzoe")) return "AOKZOE (" + product + ")";
+    return {};
+  }
+
+  float NormalizeGamepadAxis(Sint16 value, Sint16 deadzone = 8000) {
+    if (std::abs(value) <= deadzone) {
+      return 0.0f;
+    }
+    const float sign = value < 0 ? -1.0f : 1.0f;
+    const float magnitude = (std::abs(static_cast<int>(value)) - deadzone) / static_cast<float>(32767 - deadzone);
+    return sign * (std::min)(1.0f, (std::max)(0.0f, magnitude));
+  }
+
+  float NormalizeGamepadTrigger(Sint16 value) {
+    constexpr Sint16 deadzone = 2000;
+    if (value <= deadzone) {
+      return 0.0f;
+    }
+    return (std::min)(1.0f, (value - deadzone) / static_cast<float>(32767 - deadzone));
+  }
+}
+
 namespace t850 {
   void Win32Framework::ReleaseMouseMode() {
     if (m_pWindow && m_relativeMouseMode) {
@@ -65,6 +136,125 @@ namespace t850 {
     }
     m_absMouseBaselineValid = false;
     SDL_PumpEvents();
+  }
+
+  void Win32Framework::InitializeGamepads() {
+    m_handheldReason = DetectWindowsHandheldReason();
+    m_handheldDetected = !m_handheldReason.empty();
+    pBaseApp->IManager.Gamepad.handheldDevice = m_handheldDetected;
+    pBaseApp->IManager.Gamepad.handheldReason = m_handheldReason;
+    T8_LOG_INFO("[Input] Handheld detection: %s%s",
+                m_handheldDetected ? "yes " : "no",
+                m_handheldDetected ? m_handheldReason.c_str() : "");
+
+    int gamepadCount = 0;
+    SDL_JoystickID* gamepads = SDL_GetGamepads(&gamepadCount);
+    for (int i = 0; gamepads && i < gamepadCount && !m_gamepad; ++i) {
+      OpenGamepad(static_cast<int>(gamepads[i]));
+    }
+    if (gamepads) {
+      SDL_free(gamepads);
+    }
+  }
+
+  void Win32Framework::ShutdownGamepads() {
+    if (m_gamepad) {
+      SDL_CloseGamepad(static_cast<SDL_Gamepad*>(m_gamepad));
+      m_gamepad = nullptr;
+      m_gamepadInstanceId = 0;
+    }
+    pBaseApp->IManager.Gamepad = GamepadInputState{};
+  }
+
+  void Win32Framework::OpenGamepad(int instanceId) {
+    if (m_gamepad) {
+      return;
+    }
+    SDL_Gamepad* gamepad = SDL_OpenGamepad(static_cast<SDL_JoystickID>(instanceId));
+    if (!gamepad) {
+      T8_LOG_INFO("[Input] Could not open SDL gamepad id=%d: %s", instanceId, SDL_GetError());
+      return;
+    }
+    m_gamepad = gamepad;
+    m_gamepadInstanceId = instanceId;
+    GamepadInputState& state = pBaseApp->IManager.Gamepad;
+    state.connected = true;
+    state.enabled = true;
+    state.handheldDevice = m_handheldDetected;
+    state.handheldReason = m_handheldReason;
+    const char* name = SDL_GetGamepadName(gamepad);
+    state.name = name ? name : "SDL gamepad";
+    T8_LOG_INFO("[Input] Gamepad opened id=%d name='%s' handheld=%d reason='%s'",
+                instanceId,
+                state.name.c_str(),
+                state.handheldDevice ? 1 : 0,
+                state.handheldReason.c_str());
+  }
+
+  void Win32Framework::CloseGamepad(int instanceId) {
+    if (!m_gamepad || m_gamepadInstanceId != instanceId) {
+      return;
+    }
+    T8_LOG_INFO("[Input] Gamepad removed id=%d name='%s'", instanceId, pBaseApp->IManager.Gamepad.name.c_str());
+    SDL_CloseGamepad(static_cast<SDL_Gamepad*>(m_gamepad));
+    m_gamepad = nullptr;
+    m_gamepadInstanceId = 0;
+    pBaseApp->IManager.Gamepad = GamepadInputState{};
+    pBaseApp->IManager.Gamepad.handheldDevice = m_handheldDetected;
+    pBaseApp->IManager.Gamepad.handheldReason = m_handheldReason;
+  }
+
+  void Win32Framework::RefreshGamepadState() {
+    GamepadInputState& state = pBaseApp->IManager.Gamepad;
+    const GamepadInputState previous = state;
+    state.handheldDevice = m_handheldDetected;
+    state.handheldReason = m_handheldReason;
+    if (!m_gamepad) {
+      state.connected = false;
+      state.enabled = false;
+      return;
+    }
+    SDL_Gamepad* gamepad = static_cast<SDL_Gamepad*>(m_gamepad);
+    state.connected = true;
+    state.enabled = true;
+    state.leftX = NormalizeGamepadAxis(SDL_GetGamepadAxis(gamepad, SDL_GAMEPAD_AXIS_LEFTX));
+    state.leftY = NormalizeGamepadAxis(SDL_GetGamepadAxis(gamepad, SDL_GAMEPAD_AXIS_LEFTY));
+    state.rightX = NormalizeGamepadAxis(SDL_GetGamepadAxis(gamepad, SDL_GAMEPAD_AXIS_RIGHTX), 6500);
+    state.rightY = NormalizeGamepadAxis(SDL_GetGamepadAxis(gamepad, SDL_GAMEPAD_AXIS_RIGHTY), 6500);
+    state.leftTrigger = NormalizeGamepadTrigger(SDL_GetGamepadAxis(gamepad, SDL_GAMEPAD_AXIS_LEFT_TRIGGER));
+    state.rightTrigger = NormalizeGamepadTrigger(SDL_GetGamepadAxis(gamepad, SDL_GAMEPAD_AXIS_RIGHT_TRIGGER));
+
+    state.buttonSouth = SDL_GetGamepadButton(gamepad, SDL_GAMEPAD_BUTTON_SOUTH);
+    state.buttonEast = SDL_GetGamepadButton(gamepad, SDL_GAMEPAD_BUTTON_EAST);
+    state.buttonWest = SDL_GetGamepadButton(gamepad, SDL_GAMEPAD_BUTTON_WEST);
+    state.buttonNorth = SDL_GetGamepadButton(gamepad, SDL_GAMEPAD_BUTTON_NORTH);
+    state.back = SDL_GetGamepadButton(gamepad, SDL_GAMEPAD_BUTTON_BACK);
+    state.guide = SDL_GetGamepadButton(gamepad, SDL_GAMEPAD_BUTTON_GUIDE);
+    state.start = SDL_GetGamepadButton(gamepad, SDL_GAMEPAD_BUTTON_START);
+    state.leftStick = SDL_GetGamepadButton(gamepad, SDL_GAMEPAD_BUTTON_LEFT_STICK);
+    state.rightStick = SDL_GetGamepadButton(gamepad, SDL_GAMEPAD_BUTTON_RIGHT_STICK);
+    state.leftShoulder = SDL_GetGamepadButton(gamepad, SDL_GAMEPAD_BUTTON_LEFT_SHOULDER);
+    state.rightShoulder = SDL_GetGamepadButton(gamepad, SDL_GAMEPAD_BUTTON_RIGHT_SHOULDER);
+    state.dpadUp = SDL_GetGamepadButton(gamepad, SDL_GAMEPAD_BUTTON_DPAD_UP);
+    state.dpadDown = SDL_GetGamepadButton(gamepad, SDL_GAMEPAD_BUTTON_DPAD_DOWN);
+    state.dpadLeft = SDL_GetGamepadButton(gamepad, SDL_GAMEPAD_BUTTON_DPAD_LEFT);
+    state.dpadRight = SDL_GetGamepadButton(gamepad, SDL_GAMEPAD_BUTTON_DPAD_RIGHT);
+
+    state.buttonSouthPressed = state.buttonSouth && !previous.buttonSouth;
+    state.buttonEastPressed = state.buttonEast && !previous.buttonEast;
+    state.buttonWestPressed = state.buttonWest && !previous.buttonWest;
+    state.buttonNorthPressed = state.buttonNorth && !previous.buttonNorth;
+    state.backPressed = state.back && !previous.back;
+    state.guidePressed = state.guide && !previous.guide;
+    state.startPressed = state.start && !previous.start;
+    state.leftStickPressed = state.leftStick && !previous.leftStick;
+    state.rightStickPressed = state.rightStick && !previous.rightStick;
+    state.leftShoulderPressed = state.leftShoulder && !previous.leftShoulder;
+    state.rightShoulderPressed = state.rightShoulder && !previous.rightShoulder;
+    state.dpadUpPressed = state.dpadUp && !previous.dpadUp;
+    state.dpadDownPressed = state.dpadDown && !previous.dpadDown;
+    state.dpadLeftPressed = state.dpadLeft && !previous.dpadLeft;
+    state.dpadRightPressed = state.dpadRight && !previous.dpadRight;
   }
 
   void Win32Framework::ResetMouseDeltaBaseline() {
@@ -217,15 +407,17 @@ namespace t850 {
                 navInfo.detourTileCacheAvailable ? 1 : 0,
                 navInfo.recastVersion.c_str(),
                 navigation::ValidateNavigationBackend() ? "ok" : "failed");
-    if (!SDL_Init(SDL_INIT_VIDEO)) {
+    if (!SDL_Init(SDL_INIT_VIDEO | SDL_INIT_GAMEPAD)) {
       printf("Video initialization failed: %s\n", SDL_GetError());
     }
     pBaseApp->InitVars();
+    InitializeGamepads();
     ChangeAPI(desc.api);
     m_inited = true;
   }
   void Win32Framework::OnDestroyApplication() {
     ReleaseMouseMode();
+    ShutdownGamepads();
     pVideoDriver->FlushGPUResources();  // release cmd buffer/descriptor refs before scene cleanup
     pBaseApp->DestroyAssets();
     RuntimeTelemetry::Shutdown();
@@ -308,12 +500,27 @@ namespace t850 {
         ResetMouseDeltaBaseline();
       } break;
 
+      case SDL_EVENT_MOUSE_MOTION: {
+        if (evento.motion.which == SDL_TOUCH_MOUSEID) {
+          pBaseApp->IManager.touchCursorVisible = true;
+          SDL_ShowCursor();
+        }
+      } break;
+
       case SDL_EVENT_MOUSE_BUTTON_DOWN: {
+        if (evento.button.which == SDL_TOUCH_MOUSEID) {
+          pBaseApp->IManager.touchCursorVisible = true;
+          SDL_ShowCursor();
+        }
         int btn = evento.button.button - 1; // SDL buttons are 1-based
         if (btn >= 0 && btn < MAXMOUSEBUTTONS)
           pBaseApp->IManager.MouseButtonStates[0][btn] = true;
       }break;
       case SDL_EVENT_MOUSE_BUTTON_UP: {
+        if (evento.button.which == SDL_TOUCH_MOUSEID) {
+          pBaseApp->IManager.touchCursorVisible = true;
+          SDL_ShowCursor();
+        }
         int btn = evento.button.button - 1;
         if (btn >= 0 && btn < MAXMOUSEBUTTONS) {
           pBaseApp->IManager.MouseButtonStates[0][btn] = false;
@@ -333,7 +540,37 @@ namespace t850 {
         pBaseApp->IManager.scrollDelta += wy;
       }break;
 
+      case SDL_EVENT_FINGER_DOWN:
+      case SDL_EVENT_FINGER_MOTION:
+      case SDL_EVENT_FINGER_UP:
+      case SDL_EVENT_FINGER_CANCELED: {
+        pBaseApp->IManager.touchCursorVisible = true;
+        SDL_ShowCursor();
+        if (m_pWindow) {
+          int ww = 0;
+          int wh = 0;
+          SDL_GetWindowSize(m_pWindow, &ww, &wh);
+          pBaseApp->IManager.mouseX = static_cast<int>(evento.tfinger.x * (std::max)(1, ww));
+          pBaseApp->IManager.mouseY = static_cast<int>(evento.tfinger.y * (std::max)(1, wh));
+        }
+      }break;
+
+      case SDL_EVENT_GAMEPAD_ADDED: {
+        OpenGamepad(static_cast<int>(evento.gdevice.which));
+      } break;
+
+      case SDL_EVENT_GAMEPAD_REMOVED: {
+        CloseGamepad(static_cast<int>(evento.gdevice.which));
+      } break;
+
       }
+    }
+    RefreshGamepadState();
+    if (pBaseApp->IManager.Gamepad.backPressed) {
+      T8_LOG_INFO("[Input] Gamepad View/Back requested app close");
+      ReleaseMouseMode();
+      m_alive = false;
+      return;
     }
     UpdateMouseMode();
     int x = 0, y = 0;

@@ -16,6 +16,7 @@
 #include <video/gl/GLTexture.h>
 #endif
 #include <utils/InputManager.h>
+#include <utils/HandheldControllerOverlay.h>
 #ifndef OS_ANDROID
 #include <SDL3/SDL.h>
 #endif
@@ -73,6 +74,49 @@ extern std::vector<std::string> g_args;
 
 namespace t850 {
   extern Device*       T8Device;
+}
+
+namespace {
+  constexpr const char* kRuntimeImGuiLayoutFile = "imgui_runtime_layout.ini";
+  constexpr const char* kPackagedRuntimeImGuiLayoutFile = "Layouts/imgui_runtime_layout.ini";
+
+  void EnsureRuntimeImGuiLayoutSeed() {
+    const std::filesystem::path runtimeLayout(kRuntimeImGuiLayoutFile);
+    std::error_code ec;
+    if (std::filesystem::exists(runtimeLayout, ec)) {
+      return;
+    }
+
+#ifdef OS_ANDROID
+    std::string layoutText;
+    if (t850::ResourceLocator::Instance().ReadText(kPackagedRuntimeImGuiLayoutFile, layoutText) &&
+        t850::ResourceLocator::Instance().WriteText(kRuntimeImGuiLayoutFile, layoutText)) {
+      T8_LOG_INFO("[App] Seeded Android runtime ImGui layout from '%s'", kPackagedRuntimeImGuiLayoutFile);
+      return;
+    }
+    T8_LOG_ERROR("[App] Failed to seed Android runtime ImGui layout from '%s'", kPackagedRuntimeImGuiLayoutFile);
+#else
+    const std::filesystem::path candidates[] = {
+      std::filesystem::path(kPackagedRuntimeImGuiLayoutFile),
+      std::filesystem::path("Assets") / kPackagedRuntimeImGuiLayoutFile
+    };
+    for (const std::filesystem::path& candidate : candidates) {
+      ec.clear();
+      if (!std::filesystem::exists(candidate, ec)) {
+        continue;
+      }
+      ec.clear();
+      std::filesystem::copy_file(candidate, runtimeLayout, std::filesystem::copy_options::none, ec);
+      if (!ec) {
+        T8_LOG_INFO("[App] Seeded runtime ImGui layout from '%s'", candidate.string().c_str());
+        return;
+      }
+      T8_LOG_ERROR("[App] Failed to seed runtime ImGui layout from '%s': %s",
+                   candidate.string().c_str(),
+                   ec.message().c_str());
+    }
+#endif
+  }
 }
 
 #ifndef OS_ANDROID
@@ -575,7 +619,8 @@ void App::CreateAssets() {
   }
   if (!g_config.flags.benchmark || g_config.flags.benchmarkMatrix) {
     t850::LoadingProgress::Reset(160.0f, "Starting", "Preparing renderer");
-    m_imguiReady = m_imgui.Init(pFramework, "imgui_runtime_layout.ini", true);
+    EnsureRuntimeImGuiLayoutSeed();
+    m_imguiReady = m_imgui.Init(pFramework, kRuntimeImGuiLayoutFile, true);
     if (!m_imguiReady) {
       T8_LOG_ERROR("[App] Runtime ImGui init failed");
       t850::LoadingProgress::Clear();
@@ -687,10 +732,13 @@ void App::OnUpdate() {
       }
 
 #ifndef OS_ANDROID
-      HandleRuntimeGuiToggle("update");
+      const bool guiToggledInUpdate = HandleRuntimeGuiToggle("update");
       const bool sceneAllowsGuiInput =
           m_actualScene && m_actualScene->AllowsInputWhenRuntimeGuiVisible();
-      if (m_imguiVisible && m_actualScene && !sceneAllowsGuiInput) {
+      if (m_actualScene &&
+          ((m_imguiVisible && !sceneAllowsGuiInput) ||
+           guiToggledInUpdate ||
+           m_runtimeGuiInputBlockThisFrame)) {
         IManager.xDelta = 0;
         IManager.yDelta = 0;
         m_actualScene->ResetViewInput();
@@ -893,12 +941,20 @@ bool App::HandleRuntimeGuiToggle(const char* phase) {
 
   const bool imguiConsumesKeyboard =
       m_imguiVisible && (m_imgui.WantsKeyboard() || m_imgui.WantsTextInput());
-  if (imguiConsumesKeyboard || !IManager.PressedOnceKey(T800K_g)) {
+  const bool keyboardToggle = !imguiConsumesKeyboard && IManager.PressedOnceKey(T800K_g);
+  const bool gamepadToggle = IManager.ConsumeGamepadStartPress();
+  const bool gamepadClose = m_imguiVisible && IManager.ConsumeGamepadEastPress();
+  if (!keyboardToggle && !gamepadToggle && !gamepadClose) {
     return false;
   }
 
   const bool oldVisible = m_imguiVisible;
-  m_imguiVisible = !m_imguiVisible;
+  m_imguiVisible = gamepadClose ? false : !m_imguiVisible;
+  m_runtimeGuiGamepadFocusPending = m_imguiVisible && !oldVisible;
+  if (m_runtimeGuiGamepadFocusPending) {
+    m_runtimeGuiFocusedPanelIndex = 1; // Scene Controls / rendering panel
+  }
+  m_runtimeGuiInputBlockThisFrame = true;
   IManager.xDelta = 0;
   IManager.yDelta = 0;
   if (m_actualScene) {
@@ -914,6 +970,51 @@ bool App::HandleRuntimeGuiToggle(const char* phase) {
 #endif
 }
 
+#ifndef OS_ANDROID
+void App::SubmitRuntimeGamepadGuiInput() {
+  if (!m_imguiReady) {
+    return;
+  }
+
+  m_imgui.SetGamepadNavigationInput(IManager.Gamepad, m_imguiVisible, IManager.touchCursorVisible);
+}
+
+namespace {
+  constexpr const char* kRuntimeGuiFocusPanels[] = {
+    "Ragdoll Physics Simulation",
+    "Scene Controls",
+    "Sandbox Console",
+    "DEBUG"
+  };
+
+  constexpr int kRuntimeGuiFocusPanelCount =
+      static_cast<int>(sizeof(kRuntimeGuiFocusPanels) / sizeof(kRuntimeGuiFocusPanels[0]));
+}
+
+void App::HandleRuntimeGuiPanelFocusSwitch() {
+  if (!m_imguiReady || !m_imguiVisible || !IManager.Gamepad.connected || !IManager.Gamepad.enabled) {
+    return;
+  }
+
+  int direction = 0;
+  if (IManager.Gamepad.leftShoulderPressed) {
+    direction = -1;
+  } else if (IManager.Gamepad.rightShoulderPressed) {
+    direction = 1;
+  }
+  if (direction == 0) {
+    return;
+  }
+
+  m_runtimeGuiFocusedPanelIndex =
+      (m_runtimeGuiFocusedPanelIndex + direction + kRuntimeGuiFocusPanelCount) % kRuntimeGuiFocusPanelCount;
+  const char* panelName = kRuntimeGuiFocusPanels[m_runtimeGuiFocusedPanelIndex];
+  ImGui::SetWindowFocus(panelName);
+  ImGui::SetNavCursorVisible(true);
+  T8_LOG_INFO("[App] Runtime GUI controller focus -> %s", panelName);
+}
+#endif
+
 void App::OnInput() {
 	if (FirstFrame)
 		return;
@@ -926,16 +1027,19 @@ void App::OnInput() {
       sceneAllowsGuiInput
           ? (m_imguiReady && m_imguiVisible && m_imgui.WantsTextInput())
           : imguiConsumesKeyboard;
+  const bool runtimeGuiBlockedThisFrame = m_runtimeGuiInputBlockThisFrame;
   const bool guiToggled = HandleRuntimeGuiToggle("input");
   if (m_imguiVisible && m_actualScene && !sceneAllowsGuiInput) {
     IManager.xDelta = 0;
     IManager.yDelta = 0;
     m_actualScene->ResetViewInput();
   }
-  m_devLayer.SetSceneInputBlocked(guiToggled ||
+  m_devLayer.SetSceneInputBlocked(runtimeGuiBlockedThisFrame ||
+                                  guiToggled ||
                                   (m_imguiVisible && !sceneAllowsGuiInput) ||
                                   imguiBlocksSceneInput);
   m_devLayer.ProcessInput(&IManager);
+  m_runtimeGuiInputBlockThisFrame = false;
 #else
   UpdateAndroidGuiHoldToggle();
   if (m_imguiVisible) {
@@ -1003,6 +1107,8 @@ void App::DrawRuntimeGui() {
 
 #ifdef OS_ANDROID
   ImGui::GetIO().FontGlobalScale = m_androidGuiScale;
+#else
+  SubmitRuntimeGamepadGuiInput();
 #endif
   if (!m_imgui.NewFrame(m_imguiVisible)) return;
 
@@ -1045,6 +1151,9 @@ void App::DrawRuntimeGui() {
     ImGui::SetNextWindowPos(panelPos, ImGuiCond_FirstUseEver);
     ImGui::SetNextWindowSize(ImVec2(panelW, panelH), ImGuiCond_FirstUseEver);
     ImGui::SetNextWindowCollapsed(false, ImGuiCond_FirstUseEver);
+    if (m_runtimeGuiGamepadFocusPending) {
+      ImGui::SetNextWindowFocus();
+    }
     const char* panelTitle = "Scene Controls";
 #endif
     const bool panelBegun = gui.BeginPanel(panelTitle, &m_imguiVisible);
@@ -1055,6 +1164,14 @@ void App::DrawRuntimeGui() {
     }
 #endif
     if (panelBegun) {
+#ifndef OS_ANDROID
+      if (m_runtimeGuiGamepadFocusPending) {
+        ImGui::SetWindowFocus();
+        ImGui::SetKeyboardFocusHere();
+        ImGui::SetNavCursorVisible(true);
+        m_runtimeGuiGamepadFocusPending = false;
+      }
+#endif
 #ifdef OS_ANDROID
       if (ImGui::Button(bPaused ? "Resume Scene" : "Pause Scene")) {
         bPaused = !bPaused;
@@ -1108,6 +1225,14 @@ void App::DrawRuntimeGui() {
     }
 #endif
   }
+
+#ifndef OS_ANDROID
+  if (m_imguiVisible) {
+    HandleRuntimeGuiPanelFocusSwitch();
+    t850::DrawHandheldGuiFooter(IManager.Gamepad);
+  }
+  t850::DrawHandheldControllerHelpOverlay(IManager.Gamepad);
+#endif
 
 #ifdef OS_ANDROID
   if (auto* dayScene = dynamic_cast<DayScene*>(m_actualScene)) {

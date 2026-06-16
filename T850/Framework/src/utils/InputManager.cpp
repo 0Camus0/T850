@@ -12,6 +12,7 @@
 *********************************************************/
 
 #include <utils/InputManager.h>
+#include <cmath>
 #include <stdio.h>
 
 InputManager::InputManager() {
@@ -29,6 +30,7 @@ InputManager::InputManager() {
 	mouseX = 0;
 	mouseY = 0;
 	scrollDelta = 0.0f;
+	touchCursorVisible = false;
 }
 
 bool InputManager::PressedOnceKey(int key) {
@@ -64,4 +66,45 @@ bool InputManager::PressedKey(int key) {
 
 bool InputManager::PressedMouseButton(int mb) {
 	return MouseButtonStates[0][mb];
+}
+
+bool InputManager::HasGamepadInput() const {
+	if (!Gamepad.connected || !Gamepad.enabled) {
+		return false;
+	}
+	constexpr float kAxisActivity = 0.08f;
+	constexpr float kTriggerActivity = 0.05f;
+	return std::fabs(Gamepad.leftX) > kAxisActivity ||
+	       std::fabs(Gamepad.leftY) > kAxisActivity ||
+	       std::fabs(Gamepad.rightX) > kAxisActivity ||
+	       std::fabs(Gamepad.rightY) > kAxisActivity ||
+	       Gamepad.leftTrigger > kTriggerActivity ||
+	       Gamepad.rightTrigger > kTriggerActivity ||
+	       Gamepad.buttonSouth ||
+	       Gamepad.buttonEast ||
+	       Gamepad.buttonWest ||
+	       Gamepad.buttonNorth ||
+	       Gamepad.back ||
+	       Gamepad.guide ||
+	       Gamepad.start ||
+	       Gamepad.leftStick ||
+	       Gamepad.rightStick ||
+	       Gamepad.leftShoulder ||
+	       Gamepad.rightShoulder ||
+	       Gamepad.dpadUp ||
+	       Gamepad.dpadDown ||
+	       Gamepad.dpadLeft ||
+	       Gamepad.dpadRight;
+}
+
+bool InputManager::ConsumeGamepadStartPress() {
+	bool ret = Gamepad.startPressed;
+	Gamepad.startPressed = false;
+	return ret;
+}
+
+bool InputManager::ConsumeGamepadEastPress() {
+	bool ret = Gamepad.buttonEastPressed;
+	Gamepad.buttonEastPressed = false;
+	return ret;
 }

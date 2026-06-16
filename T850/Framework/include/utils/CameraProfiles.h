@@ -49,6 +49,11 @@ struct CameraInputState {
   float scrollDelta = 0.0f;
 };
 
+void ApplyGamepadToCameraInput(CameraInputState& state,
+                               const InputManager& input,
+                               float deltaSeconds,
+                               bool allowLook);
+
 using CameraCollisionSweep = CharacterCollisionSweep;
 using CameraCollisionHit = CharacterCollisionHit;
 using CameraCollisionWorld = CharacterCollisionWorld;

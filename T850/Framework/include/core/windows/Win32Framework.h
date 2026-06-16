@@ -24,6 +24,7 @@ struct SDL_GLContextState;
 typedef struct SDL_GLContextState *SDL_GLContext;
 
 #include <memory>
+#include <string>
 namespace t850 {
   class Win32Framework : public RootFramework {
   public:
@@ -52,11 +53,20 @@ namespace t850 {
     void ResetInputAfterWindowStateChange();
     void ResetMouseDeltaBaseline();
     void TraceWindowEvent(const SDL_Event& event);
+    void InitializeGamepads();
+    void ShutdownGamepads();
+    void OpenGamepad(int instanceId);
+    void CloseGamepad(int instanceId);
+    void RefreshGamepadState();
     bool m_cursorConfined = false;
     bool m_relativeMouseMode = false;
     int m_lastAbsMouseX = 0;
     int m_lastAbsMouseY = 0;
     bool m_absMouseBaselineValid = false;
+    void* m_gamepad = nullptr;
+    int m_gamepadInstanceId = 0;
+    bool m_handheldDetected = false;
+    std::string m_handheldReason;
   };
 }
 

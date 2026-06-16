@@ -52,6 +52,10 @@ public:
   void DrawRuntimeGui();
   bool RunOffscreenBenchmarkFastPath(float initialDtSecs);
   bool HandleRuntimeGuiToggle(const char* phase);
+#ifndef OS_ANDROID
+  void SubmitRuntimeGamepadGuiInput();
+  void HandleRuntimeGuiPanelFocusSwitch();
+#endif
 #ifdef OS_ANDROID
   bool HandleAndroidInputEvent(AInputEvent* event) override;
   void OnAndroidNativeWindowChanged(ANativeWindow* window) override;
@@ -84,6 +88,9 @@ public:
 #ifndef OS_ANDROID
   t850::DevLayer m_devLayer;
   bool m_debugPanelVisible = false;
+  bool m_runtimeGuiGamepadFocusPending = false;
+  bool m_runtimeGuiInputBlockThisFrame = false;
+  int m_runtimeGuiFocusedPanelIndex = 1;
   std::unordered_set<std::string> m_debugOpenTargets;
   std::unordered_map<void*, uint64_t> m_debugTextureDescriptors;
   std::unordered_map<void*, uint64_t> m_debugOpaqueTextureDescriptors;

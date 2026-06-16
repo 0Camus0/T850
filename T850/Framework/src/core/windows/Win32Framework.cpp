@@ -206,6 +206,7 @@ namespace t850 {
 
   void Win32Framework::RefreshGamepadState() {
     GamepadInputState& state = pBaseApp->IManager.Gamepad;
+    const GamepadInputState previous = state;
     state.handheldDevice = m_handheldDetected;
     state.handheldReason = m_handheldReason;
     if (!m_gamepad) {
@@ -238,6 +239,22 @@ namespace t850 {
     state.dpadDown = SDL_GetGamepadButton(gamepad, SDL_GAMEPAD_BUTTON_DPAD_DOWN);
     state.dpadLeft = SDL_GetGamepadButton(gamepad, SDL_GAMEPAD_BUTTON_DPAD_LEFT);
     state.dpadRight = SDL_GetGamepadButton(gamepad, SDL_GAMEPAD_BUTTON_DPAD_RIGHT);
+
+    state.buttonSouthPressed = state.buttonSouth && !previous.buttonSouth;
+    state.buttonEastPressed = state.buttonEast && !previous.buttonEast;
+    state.buttonWestPressed = state.buttonWest && !previous.buttonWest;
+    state.buttonNorthPressed = state.buttonNorth && !previous.buttonNorth;
+    state.backPressed = state.back && !previous.back;
+    state.guidePressed = state.guide && !previous.guide;
+    state.startPressed = state.start && !previous.start;
+    state.leftStickPressed = state.leftStick && !previous.leftStick;
+    state.rightStickPressed = state.rightStick && !previous.rightStick;
+    state.leftShoulderPressed = state.leftShoulder && !previous.leftShoulder;
+    state.rightShoulderPressed = state.rightShoulder && !previous.rightShoulder;
+    state.dpadUpPressed = state.dpadUp && !previous.dpadUp;
+    state.dpadDownPressed = state.dpadDown && !previous.dpadDown;
+    state.dpadLeftPressed = state.dpadLeft && !previous.dpadLeft;
+    state.dpadRightPressed = state.dpadRight && !previous.dpadRight;
   }
 
   void Win32Framework::ResetMouseDeltaBaseline() {
@@ -483,12 +500,27 @@ namespace t850 {
         ResetMouseDeltaBaseline();
       } break;
 
+      case SDL_EVENT_MOUSE_MOTION: {
+        if (evento.motion.which == SDL_TOUCH_MOUSEID) {
+          pBaseApp->IManager.touchCursorVisible = true;
+          SDL_ShowCursor();
+        }
+      } break;
+
       case SDL_EVENT_MOUSE_BUTTON_DOWN: {
+        if (evento.button.which == SDL_TOUCH_MOUSEID) {
+          pBaseApp->IManager.touchCursorVisible = true;
+          SDL_ShowCursor();
+        }
         int btn = evento.button.button - 1; // SDL buttons are 1-based
         if (btn >= 0 && btn < MAXMOUSEBUTTONS)
           pBaseApp->IManager.MouseButtonStates[0][btn] = true;
       }break;
       case SDL_EVENT_MOUSE_BUTTON_UP: {
+        if (evento.button.which == SDL_TOUCH_MOUSEID) {
+          pBaseApp->IManager.touchCursorVisible = true;
+          SDL_ShowCursor();
+        }
         int btn = evento.button.button - 1;
         if (btn >= 0 && btn < MAXMOUSEBUTTONS) {
           pBaseApp->IManager.MouseButtonStates[0][btn] = false;
@@ -508,6 +540,21 @@ namespace t850 {
         pBaseApp->IManager.scrollDelta += wy;
       }break;
 
+      case SDL_EVENT_FINGER_DOWN:
+      case SDL_EVENT_FINGER_MOTION:
+      case SDL_EVENT_FINGER_UP:
+      case SDL_EVENT_FINGER_CANCELED: {
+        pBaseApp->IManager.touchCursorVisible = true;
+        SDL_ShowCursor();
+        if (m_pWindow) {
+          int ww = 0;
+          int wh = 0;
+          SDL_GetWindowSize(m_pWindow, &ww, &wh);
+          pBaseApp->IManager.mouseX = static_cast<int>(evento.tfinger.x * (std::max)(1, ww));
+          pBaseApp->IManager.mouseY = static_cast<int>(evento.tfinger.y * (std::max)(1, wh));
+        }
+      }break;
+
       case SDL_EVENT_GAMEPAD_ADDED: {
         OpenGamepad(static_cast<int>(evento.gdevice.which));
       } break;
@@ -519,6 +566,12 @@ namespace t850 {
       }
     }
     RefreshGamepadState();
+    if (pBaseApp->IManager.Gamepad.backPressed) {
+      T8_LOG_INFO("[Input] Gamepad View/Back requested app close");
+      ReleaseMouseMode();
+      m_alive = false;
+      return;
+    }
     UpdateMouseMode();
     int x = 0, y = 0;
     float relativeX = 0.0f;

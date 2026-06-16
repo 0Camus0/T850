@@ -292,6 +292,22 @@ struct GamepadInputState {
 	bool	dpadDown = false;
 	bool	dpadLeft = false;
 	bool	dpadRight = false;
+
+	bool	buttonSouthPressed = false;
+	bool	buttonEastPressed = false;
+	bool	buttonWestPressed = false;
+	bool	buttonNorthPressed = false;
+	bool	backPressed = false;
+	bool	guidePressed = false;
+	bool	startPressed = false;
+	bool	leftStickPressed = false;
+	bool	rightStickPressed = false;
+	bool	leftShoulderPressed = false;
+	bool	rightShoulderPressed = false;
+	bool	dpadUpPressed = false;
+	bool	dpadDownPressed = false;
+	bool	dpadLeftPressed = false;
+	bool	dpadRightPressed = false;
 };
 
 class InputManager {
@@ -303,6 +319,8 @@ public:
 	bool	PressedKey(int key);
 	bool	PressedMouseButton(int mb);
 	bool	HasGamepadInput() const;
+	bool	ConsumeGamepadStartPress();
+	bool	ConsumeGamepadEastPress();
 
 	bool	KeyStates[2][MAXKEYS];
 	bool	MouseButtonStates[2][MAXMOUSEBUTTONS];
@@ -313,6 +331,7 @@ public:
 	int		mouseX;
 	int		mouseY;
 	float	scrollDelta; // mouse wheel: positive = scroll up, negative = scroll down
+	bool	touchCursorVisible;
 
 	// UTF-8 characters produced by SDL_EVENT_TEXT_INPUT during the last frame.
 	// Consumers read and clear this buffer each frame.

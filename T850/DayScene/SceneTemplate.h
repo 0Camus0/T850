@@ -468,6 +468,7 @@ public:
   void LogRagdollFloorDiagnostics(const char* stage);
   bool EnterSkeletonEditMode();
   void ExitSkeletonEditMode();
+  void DrawRagdollPhysicsSimulationPanel(t850::DevGuiContext& gui);
   void DrawSkeletonEditPanel(t850::DevGuiContext& gui);
   bool HandleSkeletonEditInput(InputManager* input, bool imguiWantsMouse);
   RagdollAuthoringUndoSnapshot CaptureRagdollUndoSnapshot(const char* label = "") const;

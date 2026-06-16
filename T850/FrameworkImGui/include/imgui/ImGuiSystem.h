@@ -38,6 +38,7 @@ namespace t850 {
     bool WantsMouse() const;
     float ConsumeWheelDelta();
     void AddWheelDelta(float delta) { m_wheelAccum += delta; }
+    void SetGamepadNavigationInput(const GamepadInputState& gamepad, bool guiVisible, bool touchCursorVisible);
     void NoteWindowEvent(const char* eventName, int data1, int data2);
 #ifdef OS_ANDROID
     bool HandleAndroidInputEvent(AInputEvent* event);
@@ -53,6 +54,9 @@ namespace t850 {
     GraphicsApi::E m_api = GraphicsApi::D3D11;
     SDL_Window* m_sdlWindow = nullptr;
     float m_wheelAccum = 0.0f;
+    GamepadInputState m_gamepadNavigationState;
+    bool m_gamepadNavigationGuiVisible = false;
+    bool m_gamepadNavigationTouchCursor = false;
     int m_windowEventTraceFrames = 0;
     std::string m_lastWindowEventName;
     int m_lastWindowEventData1 = 0;

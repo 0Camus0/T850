@@ -30,6 +30,7 @@ InputManager::InputManager() {
 	mouseX = 0;
 	mouseY = 0;
 	scrollDelta = 0.0f;
+	touchCursorVisible = false;
 }
 
 bool InputManager::PressedOnceKey(int key) {
@@ -94,4 +95,16 @@ bool InputManager::HasGamepadInput() const {
 	       Gamepad.dpadDown ||
 	       Gamepad.dpadLeft ||
 	       Gamepad.dpadRight;
+}
+
+bool InputManager::ConsumeGamepadStartPress() {
+	bool ret = Gamepad.startPressed;
+	Gamepad.startPressed = false;
+	return ret;
+}
+
+bool InputManager::ConsumeGamepadEastPress() {
+	bool ret = Gamepad.buttonEastPressed;
+	Gamepad.buttonEastPressed = false;
+	return ret;
 }

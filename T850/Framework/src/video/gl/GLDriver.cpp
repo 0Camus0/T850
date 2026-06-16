@@ -203,6 +203,8 @@ namespace t850 {
     eglQuerySurface(eglDisplay, eglSurface, EGL_WIDTH, &width);
     eglQuerySurface(eglDisplay, eglSurface, EGL_HEIGHT, &height);
 #elif defined(USING_OPENGL)
+    const int requestedWidth = width;
+    const int requestedHeight = height;
     GLenum err = glewInit();
     if (GLEW_OK != err) {
       T8_LOG_ERROR("GLEW init error: %s", glewGetErrorString(err));
@@ -211,6 +213,12 @@ namespace t850 {
       T8_LOG_INFO("GLEW OK");
     }
     SDL_GetWindowSizeInPixels((SDL_Window*)m_sdlWindow, &width, &height);
+    if ((width <= 0 || height <= 0) && requestedWidth > 0 && requestedHeight > 0) {
+      T8_LOG_INFO("[GL] SDL reported %dx%d pixels during init; using requested %dx%d",
+                  width, height, requestedWidth, requestedHeight);
+      width = requestedWidth;
+      height = requestedHeight;
+    }
 #endif
 #endif//HEADLESS
     std::string GL_Version = std::string((const char*)glGetString(GL_VERSION));

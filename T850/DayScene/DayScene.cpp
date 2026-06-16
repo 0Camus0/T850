@@ -645,7 +645,11 @@ void DayScene::CreateAssets() {
     return;
   }
   LoadSceneProfile();
-  m_renderGraph.CreateRenderTargets(pFramework->pVideoDriver, SceneProp);
+  if (g_config.flags.benchmark) {
+    m_renderGraph.CreateRenderTargets(pFramework->pVideoDriver, SceneProp, g_config.width, g_config.height);
+  } else {
+    m_renderGraph.CreateRenderTargets(pFramework->pVideoDriver, SceneProp);
+  }
   m_renderGraph.PrintGraph();
   m_benchmarkOffscreenOutputRT = -1;
   if (g_config.flags.benchmark && m_benchmarkActiveOffscreen) {
@@ -1467,6 +1471,7 @@ void DayScene::FinishBenchmarkRun(float durationSecs) {
     result.durationSeconds = durationSecs;
     result.finalFramePath = finalFramePath;
     m_benchmarkMatrixResults.push_back(result);
+    WriteBenchmarkMatrixReport();
 
     const std::size_t nextRun = m_benchmarkMatrixRunIndex + 1;
     if (nextRun < m_benchmarkMatrixRuns.size()) {
@@ -1474,7 +1479,6 @@ void DayScene::FinishBenchmarkRun(float durationSecs) {
       return;
     }
 
-    WriteBenchmarkMatrixReport();
     m_benchmarkFinished = true;
     m_benchmarkStatus = "Benchmark matrix complete: " + m_benchmarkMatrixReportPath;
     return;

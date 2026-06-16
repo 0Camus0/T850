@@ -427,7 +427,7 @@ namespace t850 {
       api = GraphicsApi::OPENGL;
     }
 #endif
-    const GraphicsApi::E oldApi = pVideoDriver ? pVideoDriver->m_currentAPI : api;
+    const GraphicsApi::E oldApi = (m_inited && pVideoDriver) ? pVideoDriver->m_currentAPI : api;
     T8_LOG_INFO("[Framework] ChangeAPI begin %s -> %s",
                 t850::config::ApiTag(oldApi),
                 t850::config::ApiTag(api));
@@ -546,6 +546,7 @@ namespace t850 {
       T8_LOG_ERROR("USING_OPENGL not defined — skipping SDL_GL_CreateContext");
 #endif
       pVideoDriver = new GLDriver;
+      pVideoDriver->SetDimensions(aplicationDescriptor.width, aplicationDescriptor.height);
     }
     else if (api == GraphicsApi::D3D12) {
       pVideoDriver = new D3D12Driver;

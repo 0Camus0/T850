@@ -97,7 +97,7 @@ namespace t850 {
   };
   class RootFramework {
   public:
-    RootFramework(AppBase *pApp) : pBaseApp(pApp) {}
+    RootFramework(AppBase *pApp) : pVideoDriver(nullptr), pBaseApp(pApp), m_inited(false) {}
     virtual void InitGlobalVars() = 0;
     virtual void OnCreateApplication(ApplicationDesc desc) = 0;
     virtual void OnDestroyApplication() = 0;

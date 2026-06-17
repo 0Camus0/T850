@@ -577,6 +577,8 @@ function Update-DownloadAssetsButton {
         "Asset download is already running."
     } elseif ($missing -gt 0) {
         "$missing cloud asset(s) missing. Click to download only missing files."
+    } elseif ($status -and -not $status.Ok) {
+        "Cloud check failed. Run still uses local file checks; click to retry when online."
     } elseif ($status -and $status.Total -gt 0) {
         "All cloud assets are present. Click to scan again."
     } else {
@@ -640,12 +642,22 @@ function Get-SceneRequiredMeshes {
     if (-not $ScenePath -or -not (Test-Path $ScenePath)) { return @() }
     try {
         $scene = Get-Content $ScenePath -Raw | ConvertFrom-Json
-        if (-not $scene.objects) { return @() }
         $meshes = @()
-        foreach ($object in $scene.objects) {
-            if ($object.PSObject.Properties['visible'] -and -not [bool]$object.visible) { continue }
-            if ($object.PSObject.Properties['mesh'] -and $object.mesh) {
-                $meshes += (Normalize-ResourcePath $object.mesh.ToString())
+        if ($scene.PSObject.Properties['collision'] -and $scene.collision) {
+            $meshes += (Normalize-ResourcePath $scene.collision.ToString())
+        }
+        if ($scene.objects) {
+            foreach ($object in $scene.objects) {
+                if ($object.PSObject.Properties['visible'] -and -not [bool]$object.visible) { continue }
+                if ($object.PSObject.Properties['mesh'] -and $object.mesh) {
+                    $meshes += (Normalize-ResourcePath $object.mesh.ToString())
+                }
+                if ($object.PSObject.Properties['physics'] -and $object.physics) {
+                    $physics = $object.physics
+                    if ($physics.PSObject.Properties['collision_asset'] -and $physics.collision_asset) {
+                        $meshes += (Normalize-ResourcePath $physics.collision_asset.ToString())
+                    }
+                }
             }
         }
         return @($meshes | Sort-Object -Unique)
@@ -659,7 +671,18 @@ function Test-SelectedSceneDependencies {
         return @{ Ok = $true; Missing = @() }
     }
     $sceneTag = $cmbScene.SelectedItem.Tag.ToString()
-    if (($sceneTag -ne "2") -and ($sceneTag -ne "4") -and (($sceneTag -ne "0") -or ((Get-SandboxInputMode) -ne "scene"))) {
+    $sandboxMode = Get-SandboxInputMode
+    if (($sceneTag -eq "0" -and $sandboxMode -eq "model") -or $sceneTag -eq "3") {
+        $modelPath = if ($cmbModel.SelectedItem -and $cmbModel.SelectedItem.Tag) { $cmbModel.SelectedItem.Tag.ToString() } else { "" }
+        if (-not $modelPath) {
+            return @{ Ok = $false; Missing = @("Selected model") }
+        }
+        if (-not (Resolve-SceneAssetPath $modelPath)) {
+            return @{ Ok = $false; Missing = @($modelPath) }
+        }
+        return @{ Ok = $true; Missing = @() }
+    }
+    if (($sceneTag -ne "2") -and ($sceneTag -ne "4") -and (($sceneTag -ne "0") -or ($sandboxMode -ne "scene"))) {
         return @{ Ok = $true; Missing = @() }
     }
     $scenePath = Get-SelectedSceneFilePath
@@ -1193,7 +1216,7 @@ function Update-Preview {
     $editorOk = Test-Path $editorCmd.ExePath
     $sceneDeps = Get-CachedSceneDependencyResult
     $assetStatus = $script:CloudAssetStatus
-    $assetsMissing = ($assetStatus -and $assetStatus.Configured -and ($assetStatus.Missing -gt 0 -or -not $assetStatus.Ok))
+    $assetsMissing = ($assetStatus -and $assetStatus.Configured -and $assetStatus.Ok -and $assetStatus.Missing -gt 0)
 
     if (-not $sceneDeps.Ok) {
         $txtStatus.Text = "Scene missing: $($sceneDeps.Missing -join ', ')"
@@ -1204,6 +1227,11 @@ function Update-Preview {
         $txtStatus.Text = "Cloud assets missing: $($assetStatus.Missing)/$($assetStatus.Total). Click Download Assets before running."
         $txtStatus.Foreground = $window.FindResource("AccentBrush")
         $btnRun.IsEnabled = $false
+        $btnEditor.IsEnabled = $editorOk
+    } elseif ($assetStatus -and -not $assetStatus.Ok) {
+        $txtStatus.Text = "Cloud check unavailable; Run will use local selected files."
+        $txtStatus.Foreground = $window.FindResource("AccentBrush")
+        $btnRun.IsEnabled = $sceneOk
         $btnEditor.IsEnabled = $editorOk
     } elseif ($sceneOk -and $editorOk) {
         $txtStatus.Text = "Ready to run (Scene + Editor)"
@@ -1348,20 +1376,18 @@ $btnDownloadAssets.Add_Click({
 
 # RUN button
 $btnRun.Add_Click({
-    Update-LauncherCloudAssetStatus | Out-Null
-    Update-Preview
-    $assetStatus = $script:CloudAssetStatus
-    if ($assetStatus -and $assetStatus.Configured -and ($assetStatus.Missing -gt 0 -or -not $assetStatus.Ok)) {
-        [System.Windows.MessageBox]::Show(
-            ("Cloud assets are missing or invalid. Click Download Assets before running." + "`n`n" + $assetStatus.Message),
-            "T850 Launcher", "OK", "Warning") | Out-Null
-        return
-    }
     Populate-ModelList
     Populate-SceneFileList
     Update-SceneDependencyCache
     $sceneDeps = $script:SceneDependencyResult
     if (-not (Show-SceneDependencyError $sceneDeps)) { return }
+    $assetStatus = $script:CloudAssetStatus
+    if ($assetStatus -and $assetStatus.Configured -and $assetStatus.Ok -and $assetStatus.Missing -gt 0) {
+        [System.Windows.MessageBox]::Show(
+            ("Cloud assets are missing. Click Download Assets before running." + "`n`n" + $assetStatus.Message),
+            "T850 Launcher", "OK", "Warning") | Out-Null
+        return
+    }
 
     $cmd = Get-LaunchCommand
     if (-not (Test-Path $cmd.ExePath)) {
@@ -1481,7 +1507,7 @@ try {
     Populate-ModelList
     Populate-SceneFileList
     Load-Config
-    Update-LauncherCloudAssetStatus | Out-Null
+    Update-DownloadAssetsButton
     Update-SceneOptionVisibility
     Update-Preview
 } finally {

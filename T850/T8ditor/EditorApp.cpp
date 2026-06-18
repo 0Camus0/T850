@@ -101,6 +101,10 @@ t850::Ray BuildEditorCameraRay(const ::Camera& camera,
                                       float mouseY,
                                       int viewW,
                                       int viewH);
+static bool BuildRuntimeSpline(const t850::scene::SceneSplineDesc& desc, t850::Spline& outSpline);
+static bool ApplyEditorSplineToAttachedCamera(t850::scene::SceneSplineDesc& desc);
+static bool ApplyEditorSplineAgentToAttachedCamera(const t850::scene::SceneSplineDesc& desc,
+                                                   const t850::SplineAgent& agent);
 
 struct EditorUndoState {
   SceneFile scene;
@@ -153,8 +157,9 @@ namespace {
   // Cameras and lights in the scene
   auto& g_cameras = g_world.cameras;
   auto& g_lights  = g_world.lights;
+  auto& g_splines = g_world.splines;
 
-  // Selection: 0=mesh, 1=camera, 2=light, 3=physics entity, 4=NavMesh.
+  // Selection: 0=mesh, 1=camera, 2=light, 3=physics entity, 4=NavMesh, 5=spline.
   auto& g_selectionType = g_world.selectionType;
 
   // Marquee box selection state
@@ -2586,6 +2591,40 @@ void EditorApp::DrawSelectedNavLinkOverlay(t850::Texture* depthTexture, t850::Te
   }
 }
 
+void EditorApp::UpdateEditorSplinePreview(float deltaSeconds) {
+  if (!m_editorSplinePreviewPlaying ||
+      m_editorSplinePreviewIndex < 0 ||
+      m_editorSplinePreviewIndex >= static_cast<int>(g_splines.size())) {
+    m_editorSplinePreviewPlaying = false;
+    m_editorSplinePreviewIndex = -1;
+    return;
+  }
+
+  t850::scene::SceneSplineDesc& desc = g_splines[static_cast<std::size_t>(m_editorSplinePreviewIndex)];
+  if (m_editorSplinePreviewAgent.m_pSpline != &m_editorSplinePreviewSpline ||
+      m_editorSplinePreviewSpline.m_totalLength <= 0.0f) {
+    if (!BuildRuntimeSpline(desc, m_editorSplinePreviewSpline)) {
+      m_editorSplinePreviewPlaying = false;
+      return;
+    }
+    m_editorSplinePreviewAgent = t850::SplineAgent{};
+    m_editorSplinePreviewAgent.m_pSpline = &m_editorSplinePreviewSpline;
+    m_editorSplinePreviewAgent.m_moving = true;
+    m_editorSplinePreviewAgent.m_velocity = desc.agent_velocity;
+    m_editorSplinePreviewAgent.SetOffset(std::fmod((std::max)(0.0f, desc.agent_offset), m_editorSplinePreviewSpline.m_totalLength));
+    m_editorSplinePreviewAgent.m_actualPoint =
+        m_editorSplinePreviewSpline.GetPoint(m_editorSplinePreviewSpline.GetNormalizedOffset(m_editorSplinePreviewAgent.GetOffset()));
+  }
+  if (m_editorSplinePreviewSpline.m_totalLength <= 0.0f) {
+    m_editorSplinePreviewPlaying = false;
+    return;
+  }
+
+  m_editorSplinePreviewAgent.Update(deltaSeconds);
+  desc.agent_offset = m_editorSplinePreviewAgent.GetOffset();
+  ApplyEditorSplineAgentToAttachedCamera(desc, m_editorSplinePreviewAgent);
+}
+
 void EditorApp::DrawNavMeshAuthoringPanel() {
   ImGui::PushID("NavMeshAuthoringPanel");
   t850::navigation::NavMeshBuildSettings& settings = m_editorNavMeshBuildSettings;
@@ -3379,6 +3418,7 @@ SceneFile EditorApp::BuildEditorSceneSnapshot(const std::string& scenePath, bool
   }
 
   sf.game_entities = g_gameEntities;
+  sf.splines = g_splines;
 
   sf.physics_entities.clear();
   for (const PhysicsSceneEntity& entity : g_physicsEntities) {
@@ -3503,6 +3543,7 @@ void EditorApp::ApplyEditorUndoState(const EditorUndoState& state) {
   InvalidateSceneObjectTransformSnapshots();
   g_cameras.clear();
   g_lights.clear();
+  g_splines.clear();
   g_selectedIdx = -1;
   g_selectionType = 0;
   g_activeCameraIdx = -1;
@@ -3605,6 +3646,7 @@ void EditorApp::ApplyEditorUndoState(const EditorUndoState& state) {
     RestorePhysicsEntityFromScene(m_physics, entityDesc);
   }
   g_gameEntities = sf.game_entities;
+  g_splines = sf.splines;
   EnsureInferredGameEntities();
   if (sf.navigation_mesh) {
     RestoreEditorNavMeshFromScene(*sf.navigation_mesh);
@@ -4987,6 +5029,7 @@ void EditorApp::DestroyAssets() {
   InvalidateSceneObjectTransformSnapshots();
   g_cameras.clear();
   g_lights.clear();
+  g_splines.clear();
   g_selectedIdx = -1;
   g_selectionType = 0;
   g_activeCameraIdx = -1;
@@ -5315,6 +5358,7 @@ void EditorApp::LoadPendingScene() {
         InvalidateSceneObjectTransformSnapshots();
         g_cameras.clear();
         g_lights.clear();
+        g_splines.clear();
         g_selectedIdx = -1;
         g_selectionType = 0;
         g_activeCameraIdx = -1;
@@ -5431,6 +5475,7 @@ void EditorApp::LoadPendingScene() {
         }
       }
       g_gameEntities = sf.game_entities;
+      g_splines = sf.splines;
       EnsureInferredGameEntities();
       if (sf.navigation_mesh) {
         t850::LoadingProgress::ScopedStep navMeshStep("Loading scene", "NavMesh", 4.0f);
@@ -5523,6 +5568,7 @@ void EditorApp::OnUpdate() {
   LoadPendingScene();
 
   CheckResize();
+  UpdateEditorSplinePreview(m_dtSecs);
 
   OnInput();
   if (!m_meshEditorOpen && !m_playSceneOpen) {
@@ -6040,6 +6086,153 @@ static void DrawOrientationArrow(EditorLineRenderer& lines,
   }
   if (vb) vb->release();
   if (ib) ib->release();
+}
+
+static bool BuildRuntimeSpline(const t850::scene::SceneSplineDesc& desc, t850::Spline& outSpline) {
+  outSpline.m_points.clear();
+  outSpline.m_totalLength = 0.0f;
+  outSpline.m_looped = desc.looped;
+  std::vector<t850::SplinePoint> points;
+  points.reserve(desc.points.size());
+  for (const t850::scene::SceneSplinePointDesc& point : desc.points) {
+    t850::SplinePoint splinePoint(point.position.x, point.position.y, point.position.z);
+    splinePoint.m_velocity = point.velocity;
+    splinePoint.m_rotation = XVECTOR3(point.rotation.x, point.rotation.y, point.rotation.z, 0.0f);
+    splinePoint.m_LookAtCenter = point.look_at_center;
+    points.push_back(splinePoint);
+  }
+  outSpline.m_points = std::move(points);
+  if (outSpline.m_points.size() >= 4) {
+    outSpline.Init();
+  }
+  return outSpline.m_points.size() >= 4 && outSpline.m_totalLength > 0.0f;
+}
+
+static void DrawEditorSpline(EditorLineRenderer& lines,
+                             const XMATRIX44& vp,
+                             const t850::scene::SceneSplineDesc& desc,
+                             bool selected) {
+  if (!lines.IsReady() || !desc.visible || !desc.show_wire || desc.points.size() < 2) {
+    return;
+  }
+
+  std::vector<float> verts;
+  std::vector<unsigned short> indices;
+  auto append = [&](const t850::scene::Vec3f& p) -> unsigned short {
+    const unsigned int index = static_cast<unsigned int>(verts.size() / 4);
+    if (index > std::numeric_limits<unsigned short>::max()) {
+      return std::numeric_limits<unsigned short>::max();
+    }
+    verts.push_back(p.x);
+    verts.push_back(p.y);
+    verts.push_back(p.z);
+    verts.push_back(1.0f);
+    return static_cast<unsigned short>(index);
+  };
+
+  t850::Spline spline;
+  const bool hasRuntimeSpline = BuildRuntimeSpline(desc, spline);
+  if (hasRuntimeSpline) {
+    const int sampleCount = (std::min)(512, (std::max)(32, static_cast<int>(spline.m_totalLength * 2.0f)));
+    unsigned short previous = append(desc.points.front().position);
+    for (int sample = 1; sample <= sampleCount; ++sample) {
+      const float distance = spline.m_totalLength * (static_cast<float>(sample) / static_cast<float>(sampleCount));
+      const t850::SplinePoint point = spline.GetPoint(spline.GetNormalizedOffset(distance));
+      t850::scene::Vec3f p{point.x, point.y, point.z};
+      const unsigned short current = append(p);
+      indices.push_back(previous);
+      indices.push_back(current);
+      previous = current;
+    }
+  } else {
+    unsigned short previous = append(desc.points.front().position);
+    for (std::size_t i = 1; i < desc.points.size(); ++i) {
+      const unsigned short current = append(desc.points[i].position);
+      indices.push_back(previous);
+      indices.push_back(current);
+      previous = current;
+    }
+  }
+
+  for (const t850::scene::SceneSplinePointDesc& point : desc.points) {
+    const float r = selected ? 0.45f : 0.30f;
+    const t850::scene::Vec3f p = point.position;
+    const unsigned short a = append({p.x - r, p.y, p.z});
+    const unsigned short b = append({p.x + r, p.y, p.z});
+    const unsigned short c = append({p.x, p.y - r, p.z});
+    const unsigned short d = append({p.x, p.y + r, p.z});
+    const unsigned short e = append({p.x, p.y, p.z - r});
+    const unsigned short f = append({p.x, p.y, p.z + r});
+    indices.insert(indices.end(), {a, b, c, d, e, f});
+  }
+
+  if (verts.empty() || indices.empty()) {
+    return;
+  }
+  t850::VertexBuffer* vb = EditorLineRenderer::CreatePositionVB(verts.data(), static_cast<unsigned>(verts.size() / 4));
+  t850::IndexBuffer* ib = EditorLineRenderer::CreateIndexBuffer16(indices.data(), static_cast<unsigned>(indices.size()));
+  if (vb && ib) {
+    XMATRIX44 identity;
+    identity.Identity();
+    const XVECTOR3 color = selected
+        ? XVECTOR3(1.0f, 0.82f, 0.18f, 1.0f)
+        : XVECTOR3(0.15f, 0.90f, 0.95f, 1.0f);
+    lines.DrawLines(identity, vp, color, vb, ib, static_cast<unsigned>(indices.size()), sizeof(float) * 4);
+  }
+  if (vb) vb->release();
+  if (ib) ib->release();
+}
+
+static bool ApplyEditorSplineToAttachedCamera(t850::scene::SceneSplineDesc& desc) {
+  if (desc.attached_camera < 0 ||
+      desc.attached_camera >= static_cast<int>(g_cameras.size()) ||
+      desc.points.size() < 4) {
+    return false;
+  }
+  t850::Spline spline;
+  if (!BuildRuntimeSpline(desc, spline)) return false;
+  float safeOffset = (std::max)(0.0f, desc.agent_offset);
+  safeOffset = std::fmod(safeOffset, spline.m_totalLength);
+  t850::SplineAgent agent;
+  agent.m_pSpline = &spline;
+  agent.m_moving = true;
+  agent.m_velocity = desc.agent_velocity;
+  agent.SetOffset(safeOffset);
+  agent.m_actualPoint = spline.GetPoint(spline.GetNormalizedOffset(agent.GetOffset()));
+  SceneCamera& camera = g_cameras[static_cast<std::size_t>(desc.attached_camera)];
+  ::Camera previewCamera;
+  if (camera.type == CameraType::Orthographic) {
+    previewCamera.InitOrtho(camera.position, camera.orthoW, camera.orthoH, camera.nearPlane, camera.farPlane);
+  } else {
+    previewCamera.InitPerspective(camera.position, Deg2Rad(camera.fovDeg), 16.0f / 9.0f, camera.nearPlane, camera.farPlane);
+  }
+  previewCamera.AttachAgent(agent);
+  previewCamera.m_lookAtCenter = false;
+  previewCamera.Update(0.0f);
+  camera.position = previewCamera.Eye;
+  camera.target = previewCamera.Eye + previewCamera.Look;
+  desc.agent_offset = safeOffset;
+  return true;
+}
+
+static bool ApplyEditorSplineAgentToAttachedCamera(const t850::scene::SceneSplineDesc& desc,
+                                                   const t850::SplineAgent& agent) {
+  if (desc.attached_camera < 0 || desc.attached_camera >= static_cast<int>(g_cameras.size())) {
+    return false;
+  }
+  SceneCamera& camera = g_cameras[static_cast<std::size_t>(desc.attached_camera)];
+  ::Camera previewCamera;
+  if (camera.type == CameraType::Orthographic) {
+    previewCamera.InitOrtho(camera.position, camera.orthoW, camera.orthoH, camera.nearPlane, camera.farPlane);
+  } else {
+    previewCamera.InitPerspective(camera.position, Deg2Rad(camera.fovDeg), 16.0f / 9.0f, camera.nearPlane, camera.farPlane);
+  }
+  previewCamera.AttachAgent(agent);
+  previewCamera.m_lookAtCenter = false;
+  previewCamera.Update(0.0f);
+  camera.position = previewCamera.Eye;
+  camera.target = previewCamera.Eye + previewCamera.Look;
+  return true;
 }
 
 t850::Ray BuildEditorCameraRay(const ::Camera& camera,
@@ -6604,6 +6797,8 @@ void EditorApp::RenderEditorSceneFrame(t850::BaseDriver* drv, bool captureFrozen
     for (int i = 0; i < (int)g_lights.size(); ++i)
       if (g_lights[i].visible)
         DrawLightGizmo(m_lines, cam.VP, g_lights[i], g_selectionType == 2 && i == g_selectedIdx);
+    for (int i = 0; i < static_cast<int>(g_splines.size()); ++i)
+      DrawEditorSpline(m_lines, cam.VP, g_splines[static_cast<std::size_t>(i)], g_selectionType == 5 && i == g_selectedIdx);
   }
 
   // Grid
@@ -7732,6 +7927,54 @@ void EditorApp::DrawEditorUI(t850::BaseDriver* drv) {
           }
           ImGui::TreePop();
         }
+        // Splines
+        if (ImGui::TreeNodeEx("Splines", ImGuiTreeNodeFlags_DefaultOpen)) {
+          if (ImGui::SmallButton("Add Spline")) {
+            t850::scene::SceneSplineDesc spline;
+            spline.name = "Spline " + std::to_string(g_splines.size() + 1);
+            spline.points = {
+              {{0.0f, 5.0f, -10.0f}, 7.0f},
+              {{0.0f, 5.0f, -5.0f}, 7.0f},
+              {{0.0f, 5.0f, 5.0f}, 7.0f},
+              {{0.0f, 5.0f, 10.0f}, 7.0f}
+            };
+            g_splines.push_back(std::move(spline));
+            g_selectionType = 5;
+            g_selectedIdx = static_cast<int>(g_splines.size()) - 1;
+            ClearMixedSelection();
+          }
+          ImGui::SameLine();
+          if (ImGui::SmallButton("Show all")) {
+            for (auto& spline : g_splines) spline.visible = true;
+          }
+          ImGui::SameLine();
+          if (ImGui::SmallButton("Hide all")) {
+            for (auto& spline : g_splines) spline.visible = false;
+          }
+          ImGui::TextDisabled("Eye = Show   F = Freeze   W = Wire");
+          ImGui::Separator();
+          for (int i = 0; i < static_cast<int>(g_splines.size()); ++i) {
+            auto& spline = g_splines[static_cast<std::size_t>(i)];
+            ImGui::PushID(i + 70000);
+            ImGui::Checkbox("##splineVis", &spline.visible); ImGui::SameLine();
+            ImGui::Checkbox("##splineFrz", &spline.frozen); ImGui::SameLine();
+            ImGui::Checkbox("##splineWir", &spline.show_wire); ImGui::SameLine();
+            ImGuiTreeNodeFlags flags = ImGuiTreeNodeFlags_Leaf | ImGuiTreeNodeFlags_SpanAvailWidth;
+            if (g_selectionType == 5 && i == g_selectedIdx) flags |= ImGuiTreeNodeFlags_Selected;
+            if (spline.frozen) ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.5f,0.5f,0.5f,1));
+            const std::string label = "[S] " + spline.name;
+            const bool nodeOpen = ImGui::TreeNodeEx(label.c_str(), flags);
+            if (ImGui::IsItemClicked() && !spline.frozen) {
+              g_selectionType = 5;
+              g_selectedIdx = i;
+              ClearMixedSelection();
+            }
+            if (spline.frozen) ImGui::PopStyleColor();
+            if (nodeOpen) ImGui::TreePop();
+            ImGui::PopID();
+          }
+          ImGui::TreePop();
+        }
         // Cameras
         if (ImGui::TreeNodeEx("Cameras", ImGuiTreeNodeFlags_DefaultOpen)) {
           ImGui::PushID("CamerasBulkControls");
@@ -8175,6 +8418,119 @@ void EditorApp::DrawEditorUI(t850::BaseDriver* drv) {
       } else if (g_selectionType == 4 && g_selectedIdx == 0) {
         ImGui::SeparatorText("Navigation Mesh");
         DrawNavMeshAuthoringPanel();
+      } else if (g_selectionType == 5 && g_selectedIdx >= 0 && g_selectedIdx < static_cast<int>(g_splines.size())) {
+        t850::scene::SceneSplineDesc& spline = g_splines[static_cast<std::size_t>(g_selectedIdx)];
+        ImGui::SeparatorText("Spline");
+        char nameBuffer[256] = {};
+        std::snprintf(nameBuffer, sizeof(nameBuffer), "%s", spline.name.c_str());
+        if (ImGui::InputText("Name", nameBuffer, sizeof(nameBuffer))) {
+          spline.name = nameBuffer;
+        }
+        ImGui::Checkbox("Visible", &spline.visible);
+        ImGui::Checkbox("Frozen", &spline.frozen);
+        ImGui::Checkbox("Wireframe", &spline.show_wire);
+        ImGui::Checkbox("Looped", &spline.looped);
+        ImGui::Checkbox("Play on SceneTemplate start", &spline.play_on_start);
+        ImGui::DragFloat("Agent velocity", &spline.agent_velocity, 0.1f, 0.0f, 100.0f, "%.2f");
+        ImGui::DragFloat("Agent offset", &spline.agent_offset, 0.1f, 0.0f, 100000.0f, "%.2f");
+
+        std::vector<std::string> cameraOptions;
+        cameraOptions.push_back("None");
+        for (int cameraIndex = 0; cameraIndex < static_cast<int>(g_cameras.size()); ++cameraIndex) {
+          cameraOptions.push_back(std::to_string(cameraIndex) + ": " + g_cameras[static_cast<std::size_t>(cameraIndex)].name);
+        }
+        int attachedCameraOption = spline.attached_camera >= 0 ? spline.attached_camera + 1 : 0;
+        const char* preview = attachedCameraOption >= 0 && attachedCameraOption < static_cast<int>(cameraOptions.size())
+            ? cameraOptions[static_cast<std::size_t>(attachedCameraOption)].c_str()
+            : "None";
+        if (ImGui::BeginCombo("Attached camera", preview)) {
+          for (int option = 0; option < static_cast<int>(cameraOptions.size()); ++option) {
+            const bool selected = option == attachedCameraOption;
+            if (ImGui::Selectable(cameraOptions[static_cast<std::size_t>(option)].c_str(), selected)) {
+              attachedCameraOption = option;
+              spline.attached_camera = option == 0 ? -1 : option - 1;
+            }
+            if (selected) ImGui::SetItemDefaultFocus();
+          }
+          ImGui::EndCombo();
+        }
+        if (ImGui::Button(m_editorSplinePreviewPlaying && m_editorSplinePreviewIndex == g_selectedIdx
+                              ? "Stop Timeline Preview"
+                              : "Play Timeline Preview")) {
+          if (m_editorSplinePreviewPlaying && m_editorSplinePreviewIndex == g_selectedIdx) {
+            m_editorSplinePreviewPlaying = false;
+            m_editorSplinePreviewIndex = -1;
+          } else {
+            if (BuildRuntimeSpline(spline, m_editorSplinePreviewSpline)) {
+              m_editorSplinePreviewAgent = t850::SplineAgent{};
+              m_editorSplinePreviewAgent.m_pSpline = &m_editorSplinePreviewSpline;
+              m_editorSplinePreviewAgent.m_moving = true;
+              m_editorSplinePreviewAgent.m_velocity = spline.agent_velocity;
+              m_editorSplinePreviewAgent.SetOffset(
+                  std::fmod((std::max)(0.0f, spline.agent_offset), m_editorSplinePreviewSpline.m_totalLength));
+              m_editorSplinePreviewAgent.m_actualPoint =
+                  m_editorSplinePreviewSpline.GetPoint(m_editorSplinePreviewSpline.GetNormalizedOffset(m_editorSplinePreviewAgent.GetOffset()));
+              m_editorSplinePreviewPlaying = true;
+              m_editorSplinePreviewIndex = g_selectedIdx;
+              ApplyEditorSplineAgentToAttachedCamera(spline, m_editorSplinePreviewAgent);
+            }
+          }
+        }
+        ImGui::SameLine();
+        if (ImGui::Button("Apply Offset to Camera")) {
+          ApplyEditorSplineToAttachedCamera(spline);
+        }
+
+        ImGui::SeparatorText("Control Points");
+        if (ImGui::Button("Add Point")) {
+          t850::scene::SceneSplinePointDesc point;
+          if (!spline.points.empty()) {
+            point = spline.points.back();
+            point.position.z += 5.0f;
+          }
+          spline.points.push_back(point);
+        }
+        ImGui::SameLine();
+        bool deleteSpline = false;
+        if (ImGui::Button("Delete Spline")) {
+          deleteSpline = true;
+        }
+        if (deleteSpline) {
+          if (m_editorSplinePreviewIndex == g_selectedIdx) {
+            m_editorSplinePreviewPlaying = false;
+            m_editorSplinePreviewIndex = -1;
+          }
+          g_splines.erase(g_splines.begin() + g_selectedIdx);
+          g_selectedIdx = -1;
+          g_selectionType = 0;
+        } else {
+          for (int pointIndex = 0; pointIndex < static_cast<int>(spline.points.size()); ++pointIndex) {
+            t850::scene::SceneSplinePointDesc& point = spline.points[static_cast<std::size_t>(pointIndex)];
+            ImGui::PushID(pointIndex);
+            const std::string header = "Point " + std::to_string(pointIndex);
+            if (ImGui::CollapsingHeader(header.c_str(), ImGuiTreeNodeFlags_DefaultOpen)) {
+              float pos[3] = {point.position.x, point.position.y, point.position.z};
+              if (ImGui::DragFloat3("Position", pos, 0.1f, -100000.0f, 100000.0f, "%.3f")) {
+                point.position = {pos[0], pos[1], pos[2]};
+              }
+              ImGui::DragFloat("Velocity", &point.velocity, 0.1f, 0.0f, 100.0f, "%.2f");
+              ImGui::Checkbox("Look at next point", &point.look_at_center);
+              float rot[3] = {point.rotation.x, point.rotation.y, point.rotation.z};
+              if (ImGui::DragFloat3("Rotation", rot, 0.01f, -1000.0f, 1000.0f, "%.3f")) {
+                point.rotation = {rot[0], rot[1], rot[2]};
+              }
+              if (spline.points.size() > 4 && ImGui::SmallButton("Remove Point")) {
+                spline.points.erase(spline.points.begin() + pointIndex);
+                ImGui::PopID();
+                break;
+              }
+            }
+            ImGui::PopID();
+          }
+          if (spline.points.size() < 4) {
+            ImGui::TextColored(ImVec4(1.0f, 0.7f, 0.2f, 1.0f), "At least 4 points are needed for Catmull-Rom playback.");
+          }
+        }
       }
     }
     ImGui::End();

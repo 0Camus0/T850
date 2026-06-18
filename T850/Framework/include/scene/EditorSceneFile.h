@@ -197,6 +197,26 @@ struct SceneNavigationMeshDesc {
   std::vector<SceneNavMeshLinkDesc> authored_links;
 };
 
+struct SceneSplinePointDesc {
+  Vec3f position;
+  float velocity = 7.0f;
+  Vec3f rotation;
+  bool look_at_center = true;
+};
+
+struct SceneSplineDesc {
+  std::string name = "Spline";
+  std::vector<SceneSplinePointDesc> points;
+  bool looped = false;
+  float agent_velocity = 15.0f;
+  float agent_offset = 0.0f;
+  int attached_camera = 0;
+  bool play_on_start = true;
+  bool visible = true;
+  bool frozen = false;
+  bool show_wire = true;
+};
+
 struct ScenePhysicsEntityDesc {
   std::string name;
   std::string type = "static_triangle_mesh";
@@ -252,6 +272,7 @@ struct EditorSceneFile {
   std::vector<SceneGameEntityDesc> game_entities;
   std::vector<ScenePhysicsEntityDesc> physics_entities;
   std::optional<SceneNavigationMeshDesc> navigation_mesh;
+  std::vector<SceneSplineDesc> splines;
   std::vector<SceneCameraDesc> cameras;
   std::vector<SceneLightDesc> lights;
   std::vector<::t850::SandboxProfileDesc> profiles;

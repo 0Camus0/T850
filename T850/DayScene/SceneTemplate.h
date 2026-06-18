@@ -5,6 +5,7 @@
 #include <utils/xMaths.h>
 #include <utils/Camera.h>
 #include <utils/CameraProfiles.h>
+#include <utils/Spline.h>
 #include <utils/Timer.h>
 #include <scene/SceneSetup.h>
 #include <scene/RenderGraph.h>
@@ -241,6 +242,11 @@ public:
   std::vector<t850::scene::ScenePhysicsEntityDesc> m_scenePhysicsEntities;
   std::vector<t850::scene::SceneObjectNavigationDesc> m_sceneNavigationAuthoring;
   std::vector<t850::scene::SceneObjectRagdollDesc> m_sceneRagdollAuthoring;
+  std::vector<t850::scene::SceneSplineDesc> m_sceneSplines;
+  t850::Spline m_runtimeSpline;
+  t850::SplineAgent m_runtimeSplineAgent;
+  bool m_runtimeSplineActive = false;
+  int m_runtimeSplineCameraIndex = -1;
   bool m_hasAuthoredNavMesh = false;
   t850::scene::SceneNavigationMeshDesc m_authoredNavMesh;
   bool m_hasAuthoredPlayer = false;
@@ -450,6 +456,8 @@ public:
   bool SwitchSceneRagdollsToPhysics(int meshIndexFilter = -1);
   bool ResetSceneRagdollPhysicsAndAnimation(int meshIndex);
   void UpdateSceneSkeletonsFromRagdollPhysics();
+  void InitializeSceneSplinePlayback(const t850::scene::EditorSceneFile& scene);
+  bool UpdateSceneSplinePlayback(float deltaSeconds);
   void DriveRagdollFromAnimation(float deltaSeconds);
   void UpdateSkeletonFromRagdollPhysics();
   void SwitchRagdollToPhysics();

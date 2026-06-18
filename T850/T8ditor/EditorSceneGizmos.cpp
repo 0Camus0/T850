@@ -13,6 +13,7 @@ namespace t8ditor {
 namespace {
 
 const XVECTOR3 kSelectedColor(1.0f, 1.0f, 0.3f, 1.0f);   // yellow highlight
+const XVECTOR3 kSelectedCameraColor(0.1f, 1.0f, 0.2f, 1.0f); // green frustum highlight
 const XVECTOR3 kCameraColor(0.4f, 0.7f, 1.0f, 1.0f);     // light blue
 const XVECTOR3 kDirLightColor(1.0f, 0.95f, 0.5f, 1.0f);  // warm yellow
 const XVECTOR3 kOmniLightColor(1.0f, 0.85f, 0.3f, 1.0f); // orange
@@ -108,28 +109,110 @@ void BuildFrustumGeometry(const SceneCamera& cam,
   L(4,5); L(5,6); L(6,7); L(7,4); // far quad
   L(0,4); L(1,5); L(2,6); L(3,7); // connecting edges
 
-  // Small wireframe cube at target position (8 corners + 12 edges)
-  float th = 0.3f; // half-size
-  XVECTOR3 tgt = cam.target;
-  unsigned short tb = (unsigned short)(verts.size() / 4);
-  float tc[8][3] = {
-    {tgt.x-th, tgt.y-th, tgt.z-th}, {tgt.x+th, tgt.y-th, tgt.z-th},
-    {tgt.x+th, tgt.y+th, tgt.z-th}, {tgt.x-th, tgt.y+th, tgt.z-th},
-    {tgt.x-th, tgt.y-th, tgt.z+th}, {tgt.x+th, tgt.y-th, tgt.z+th},
-    {tgt.x+th, tgt.y+th, tgt.z+th}, {tgt.x-th, tgt.y+th, tgt.z+th},
+  // Mini wire camera body at the camera origin, oriented with the frustum.
+  const float targetDistance = (std::max)(0.001f,
+      XVECTOR3(cam.target.x - cam.position.x,
+               cam.target.y - cam.position.y,
+               cam.target.z - cam.position.z).Length());
+  const float cameraScale = std::clamp(
+      cam.type == CameraType::Orthographic
+          ? (std::max)(cam.orthoW, cam.orthoH) * 0.02f
+          : targetDistance * 0.035f,
+      0.5f,
+      4.0f);
+  const float bodyHalfW = cameraScale * 0.55f;
+  const float bodyHalfH = cameraScale * 0.35f;
+  const float bodyHalfD = cameraScale * 0.30f;
+  const XVECTOR3 bodyCenter(
+      cam.position.x - forward.x * bodyHalfD,
+      cam.position.y - forward.y * bodyHalfD,
+      cam.position.z - forward.z * bodyHalfD);
+  auto BodyPoint = [&](float rx, float uy, float fz) -> XVECTOR3 {
+    return XVECTOR3(bodyCenter.x + right.x * rx + up.x * uy + forward.x * fz,
+                    bodyCenter.y + right.y * rx + up.y * uy + forward.y * fz,
+                    bodyCenter.z + right.z * rx + up.z * uy + forward.z * fz);
   };
-  for (int i = 0; i < 8; ++i) {
-    verts.push_back(tc[i][0]); verts.push_back(tc[i][1]); verts.push_back(tc[i][2]); verts.push_back(1.0f);
+  const unsigned short bodyBase = static_cast<unsigned short>(verts.size() / 4);
+  const XVECTOR3 bodyCorners[8] = {
+      BodyPoint(-bodyHalfW, -bodyHalfH, -bodyHalfD), BodyPoint( bodyHalfW, -bodyHalfH, -bodyHalfD),
+      BodyPoint( bodyHalfW,  bodyHalfH, -bodyHalfD), BodyPoint(-bodyHalfW,  bodyHalfH, -bodyHalfD),
+      BodyPoint(-bodyHalfW, -bodyHalfH,  bodyHalfD), BodyPoint( bodyHalfW, -bodyHalfH,  bodyHalfD),
+      BodyPoint( bodyHalfW,  bodyHalfH,  bodyHalfD), BodyPoint(-bodyHalfW,  bodyHalfH,  bodyHalfD)
+  };
+  for (const XVECTOR3& c : bodyCorners) {
+    verts.push_back(c.x); verts.push_back(c.y); verts.push_back(c.z); verts.push_back(1.0f);
   }
-  L(tb+0,tb+1); L(tb+1,tb+2); L(tb+2,tb+3); L(tb+3,tb+0);
-  L(tb+4,tb+5); L(tb+5,tb+6); L(tb+6,tb+7); L(tb+7,tb+4);
-  L(tb+0,tb+4); L(tb+1,tb+5); L(tb+2,tb+6); L(tb+3,tb+7);
+  L(bodyBase+0,bodyBase+1); L(bodyBase+1,bodyBase+2); L(bodyBase+2,bodyBase+3); L(bodyBase+3,bodyBase+0);
+  L(bodyBase+4,bodyBase+5); L(bodyBase+5,bodyBase+6); L(bodyBase+6,bodyBase+7); L(bodyBase+7,bodyBase+4);
+  L(bodyBase+0,bodyBase+4); L(bodyBase+1,bodyBase+5); L(bodyBase+2,bodyBase+6); L(bodyBase+3,bodyBase+7);
 
-  // Line from camera position to target
-  unsigned short pl = (unsigned short)(verts.size() / 4);
-  verts.push_back(cam.position.x); verts.push_back(cam.position.y); verts.push_back(cam.position.z); verts.push_back(1.0f);
-  verts.push_back(cam.target.x); verts.push_back(cam.target.y); verts.push_back(cam.target.z); verts.push_back(1.0f);
-  idx.push_back(pl); idx.push_back(pl+1);
+  const unsigned short lensBase = static_cast<unsigned short>(verts.size() / 4);
+  const XVECTOR3 lensCenter(
+      cam.position.x + forward.x * cameraScale * 0.38f,
+      cam.position.y + forward.y * cameraScale * 0.38f,
+      cam.position.z + forward.z * cameraScale * 0.38f);
+  const XVECTOR3 lensTop(
+      lensCenter.x + up.x * cameraScale * 0.20f,
+      lensCenter.y + up.y * cameraScale * 0.20f,
+      lensCenter.z + up.z * cameraScale * 0.20f);
+  const XVECTOR3 lensBottom(
+      lensCenter.x - up.x * cameraScale * 0.20f,
+      lensCenter.y - up.y * cameraScale * 0.20f,
+      lensCenter.z - up.z * cameraScale * 0.20f);
+  const XVECTOR3 lensLeft(
+      lensCenter.x - right.x * cameraScale * 0.20f,
+      lensCenter.y - right.y * cameraScale * 0.20f,
+      lensCenter.z - right.z * cameraScale * 0.20f);
+  const XVECTOR3 lensRight(
+      lensCenter.x + right.x * cameraScale * 0.20f,
+      lensCenter.y + right.y * cameraScale * 0.20f,
+      lensCenter.z + right.z * cameraScale * 0.20f);
+  const XVECTOR3 lensTip(
+      cam.position.x + forward.x * cameraScale * 0.75f,
+      cam.position.y + forward.y * cameraScale * 0.75f,
+      cam.position.z + forward.z * cameraScale * 0.75f);
+  const XVECTOR3 lensPoints[5] = { lensTop, lensRight, lensBottom, lensLeft, lensTip };
+  for (const XVECTOR3& p : lensPoints) {
+    verts.push_back(p.x); verts.push_back(p.y); verts.push_back(p.z); verts.push_back(1.0f);
+  }
+  L(lensBase+0,lensBase+1); L(lensBase+1,lensBase+2); L(lensBase+2,lensBase+3); L(lensBase+3,lensBase+0);
+  L(lensBase+0,lensBase+4); L(lensBase+1,lensBase+4); L(lensBase+2,lensBase+4); L(lensBase+3,lensBase+4);
+
+  const unsigned short handleBase = static_cast<unsigned short>(verts.size() / 4);
+  const XVECTOR3 handleA = BodyPoint(-bodyHalfW * 0.45f, bodyHalfH, -bodyHalfD * 0.20f);
+  const XVECTOR3 handleB = BodyPoint( bodyHalfW * 0.45f, bodyHalfH, -bodyHalfD * 0.20f);
+  const XVECTOR3 handleC = BodyPoint( bodyHalfW * 0.30f, bodyHalfH + cameraScale * 0.28f, -bodyHalfD * 0.10f);
+  const XVECTOR3 handleD = BodyPoint(-bodyHalfW * 0.30f, bodyHalfH + cameraScale * 0.28f, -bodyHalfD * 0.10f);
+  const XVECTOR3 handlePoints[4] = { handleA, handleB, handleC, handleD };
+  for (const XVECTOR3& p : handlePoints) {
+    verts.push_back(p.x); verts.push_back(p.y); verts.push_back(p.z); verts.push_back(1.0f);
+  }
+  L(handleBase+0,handleBase+1); L(handleBase+1,handleBase+2); L(handleBase+2,handleBase+3); L(handleBase+3,handleBase+0);
+
+  if (cam.type == CameraType::Perspective) {
+    // Small wireframe cube at target position (8 corners + 12 edges)
+    float th = 0.3f; // half-size
+    XVECTOR3 tgt = cam.target;
+    unsigned short tb = (unsigned short)(verts.size() / 4);
+    float tc[8][3] = {
+      {tgt.x-th, tgt.y-th, tgt.z-th}, {tgt.x+th, tgt.y-th, tgt.z-th},
+      {tgt.x+th, tgt.y+th, tgt.z-th}, {tgt.x-th, tgt.y+th, tgt.z-th},
+      {tgt.x-th, tgt.y-th, tgt.z+th}, {tgt.x+th, tgt.y-th, tgt.z+th},
+      {tgt.x+th, tgt.y+th, tgt.z+th}, {tgt.x-th, tgt.y+th, tgt.z+th},
+    };
+    for (int i = 0; i < 8; ++i) {
+      verts.push_back(tc[i][0]); verts.push_back(tc[i][1]); verts.push_back(tc[i][2]); verts.push_back(1.0f);
+    }
+    L(tb+0,tb+1); L(tb+1,tb+2); L(tb+2,tb+3); L(tb+3,tb+0);
+    L(tb+4,tb+5); L(tb+5,tb+6); L(tb+6,tb+7); L(tb+7,tb+4);
+    L(tb+0,tb+4); L(tb+1,tb+5); L(tb+2,tb+6); L(tb+3,tb+7);
+
+    // Line from camera position to target
+    unsigned short pl = (unsigned short)(verts.size() / 4);
+    verts.push_back(cam.position.x); verts.push_back(cam.position.y); verts.push_back(cam.position.z); verts.push_back(1.0f);
+    verts.push_back(cam.target.x); verts.push_back(cam.target.y); verts.push_back(cam.target.z); verts.push_back(1.0f);
+    idx.push_back(pl); idx.push_back(pl+1);
+  }
 }
 
 // Build a circle of line segments in world space.
@@ -228,11 +311,11 @@ void DrawCameraGizmo(EditorLineRenderer& lines, const XMATRIX44& vp,
   if (!lines.IsReady()) return;
 
   // Per-entity cache via cam.gizmo
-  float params[] = { cam.fovDeg, cam.nearPlane, cam.farPlane,
+  float params[] = { cam.fovDeg, cam.orthoW, cam.orthoH, cam.nearPlane, cam.farPlane,
                      cam.position.x, cam.position.y, cam.position.z,
                      cam.target.x, cam.target.y, cam.target.z,
                      (float)cam.type };
-  uint64_t h = HashFloats(params, 10);
+  uint64_t h = HashFloats(params, 12);
 
   if (cam.gizmo.vb == nullptr || cam.gizmo.hash != h) {
     std::vector<float> verts;
@@ -248,7 +331,7 @@ void DrawCameraGizmo(EditorLineRenderer& lines, const XMATRIX44& vp,
 
   XMATRIX44 identity;
   XMatIdentity(identity);
-  const XVECTOR3& color = selected ? kSelectedColor : kCameraColor;
+  const XVECTOR3& color = selected ? kSelectedCameraColor : kCameraColor;
   lines.DrawLines(identity, vp, color, cam.gizmo.vb, cam.gizmo.ib, cam.gizmo.count, 16);
 }
 

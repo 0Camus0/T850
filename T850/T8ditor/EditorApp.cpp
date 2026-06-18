@@ -114,6 +114,23 @@ static void ApplySceneCameraToRuntimeCamera(const SceneCamera& desc,
 static void SyncSceneCameraFromRuntimeCamera(const ::Camera& runtimeCamera, SceneCamera& desc);
 static void SyncLightCameraFromRuntimeCamera(const ::Camera& runtimeCamera,
                                              t850::scene::SceneLightCameraDesc& desc);
+static bool HandleActiveCameraOrbitControls(InputManager& input,
+                                            float dtSecs,
+                                            float wheelDelta,
+                                            bool skipMouse,
+                                            bool skipKeyboard,
+                                            float perspectiveAspect);
+static bool ManipulateCameraEntityGizmo(const ::Camera& viewCamera,
+                                        int mode,
+                                        XVECTOR3& position,
+                                        XVECTOR3& target,
+                                        bool orthographic,
+                                        float& orthoW,
+                                        float& orthoH,
+                                        float& fovDeg);
+static bool TranslateCameraPointGizmo(const ::Camera& viewCamera,
+                                      int gizmoId,
+                                      XVECTOR3& point);
 
 struct EditorUndoState {
   SceneFile scene;
@@ -6060,10 +6077,23 @@ void EditorApp::OnInput() {
     return;
   }
 
+  const bool ctrlDown = IManager.PressedKey(T800K_LCTRL) || IManager.PressedKey(T800K_RCTRL);
+  const bool shiftDown = IManager.PressedKey(T800K_LSHIFT) || IManager.PressedKey(T800K_RSHIFT);
+  const bool orbitCameraMode = m_editorCameraMode == EditorCameraMode::Orbit;
+
+  // Z shortcuts must work after selecting from hierarchy panels too; only text entry blocks them.
+  if (!io.WantTextInput && IManager.PressedOnceKey(T800K_z)) {
+    if (ctrlDown && shiftDown)
+      g_undoStack.Redo();
+    else if (ctrlDown)
+      g_undoStack.Undo();
+    else
+      FrameSelectedEntity();
+  }
+  if (!io.WantTextInput && ctrlDown && IManager.PressedOnceKey(T800K_y))
+    g_undoStack.Redo();
+
   if (!imguiWantsKeyboard) {
-    const bool ctrlDown = IManager.PressedKey(T800K_LCTRL) || IManager.PressedKey(T800K_RCTRL);
-    const bool shiftDown = IManager.PressedKey(T800K_LSHIFT) || IManager.PressedKey(T800K_RSHIFT);
-    const bool orbitCameraMode = m_editorCameraMode == EditorCameraMode::Orbit;
 
     if (orbitCameraMode) {
       if (IManager.PressedOnceKey(T800K_q)) m_gizmo.SetMode(GizmoMode::Select);
@@ -6071,22 +6101,6 @@ void EditorApp::OnInput() {
       if (IManager.PressedOnceKey(T800K_e)) m_gizmo.SetMode(GizmoMode::Rotate);
       if (IManager.PressedOnceKey(T800K_r)) m_gizmo.SetMode(GizmoMode::Scale);
     }
-
-    // Z key behavior:
-    // Ctrl+Z = undo, Ctrl+Shift+Z = redo
-    // Z alone: if mesh selected → frame camera on it; else reset camera
-    if (IManager.PressedOnceKey(T800K_z)) {
-      if (ctrlDown && shiftDown)
-        g_undoStack.Redo();
-      else if (ctrlDown)
-        g_undoStack.Undo();
-      else {
-        FrameSelectedEntity();
-      }
-    }
-    // Ctrl+Y also redoes
-    if (ctrlDown && IManager.PressedOnceKey(T800K_y))
-      g_undoStack.Redo();
 
     // Space key — dump frame (all RTs + snapshot)
     if (IManager.PressedOnceKey(T800K_SPACE) && g_dumperInited)
@@ -6151,12 +6165,21 @@ void EditorApp::OnInput() {
 
   float wheel = ImGuiConsumeWheelDelta();
   bool blockWheel = imguiWantsMouse && !ImGuizmo::IsOver();
-  const bool orbitCameraMode = m_editorCameraMode == EditorCameraMode::Orbit;
   if (orbitCameraMode) {
-    m_camera.Update(m_dtSecs, IManager,
-                    blockWheel ? 0.0f : wheel,
-                    imguiWantsMouse,
-                    imguiWantsKeyboard);
+    const float activeCameraAspect =
+        (m_lastW > 0 && m_lastH > 0) ? static_cast<float>(m_lastW) / static_cast<float>(m_lastH) : 16.0f / 9.0f;
+    if (!HandleActiveCameraOrbitControls(
+            IManager,
+            m_dtSecs,
+            blockWheel ? 0.0f : wheel,
+            imguiWantsMouse,
+            imguiWantsKeyboard,
+            activeCameraAspect)) {
+      m_camera.Update(m_dtSecs, IManager,
+                      blockWheel ? 0.0f : wheel,
+                      imguiWantsMouse,
+                      imguiWantsKeyboard);
+    }
   } else {
     Camera* controlledCamera = &m_camera.GetCameraMutable();
     int activeLightCameraIndex = -1;
@@ -6281,15 +6304,13 @@ void EditorApp::FrameSelectedEntity() {
     }
   } else if (g_selectionType == 1 && g_selectedIdx >= 0 && g_selectedIdx < static_cast<int>(g_cameras.size())) {
     const SceneCamera& camera = g_cameras[static_cast<std::size_t>(g_selectedIdx)];
-    const XVECTOR3 center(
-        (camera.position.x + camera.target.x) * 0.5f,
-        (camera.position.y + camera.target.y) * 0.5f,
-        (camera.position.z + camera.target.z) * 0.5f,
-        1.0f);
-    const float dx = camera.position.x - camera.target.x;
-    const float dy = camera.position.y - camera.target.y;
-    const float dz = camera.position.z - camera.target.z;
-    frameSphere(center, (std::max)(1.0f, 0.5f * std::sqrt(dx * dx + dy * dy + dz * dz)), "camera");
+    if (g_activeCameraIdx == g_selectedIdx) {
+      g_activeCameraIdx = -1;
+    }
+    const float radius = camera.type == CameraType::Orthographic
+        ? std::clamp((std::max)(camera.orthoW, camera.orthoH) * 0.08f, 3.0f, 50.0f)
+        : 4.0f;
+    frameSphere(camera.position, radius, "camera");
     return;
   } else if (g_selectionType == 2 && g_selectedIdx >= 0 && g_selectedIdx < static_cast<int>(g_lights.size())) {
     const SceneLight& light = g_lights[static_cast<std::size_t>(g_selectedIdx)];
@@ -6326,15 +6347,16 @@ void EditorApp::FrameSelectedEntity() {
     }
   } else if (g_selectionType == 6 && g_selectedIdx >= 0 && g_selectedIdx < static_cast<int>(g_lightCameras.size())) {
     const auto& lightCamera = g_lightCameras[static_cast<std::size_t>(g_selectedIdx)];
-    const XVECTOR3 center(
-        (lightCamera.position.x + lightCamera.target.x) * 0.5f,
-        (lightCamera.position.y + lightCamera.target.y) * 0.5f,
-        (lightCamera.position.z + lightCamera.target.z) * 0.5f,
-        1.0f);
-    const float dx = lightCamera.position.x - lightCamera.target.x;
-    const float dy = lightCamera.position.y - lightCamera.target.y;
-    const float dz = lightCamera.position.z - lightCamera.target.z;
-    frameSphere(center, (std::max)(2.0f, 0.5f * std::sqrt(dx * dx + dy * dy + dz * dz)), "light camera");
+    int activeLightCameraIndex = -1;
+    if (DecodeActiveLightCameraIndex(g_activeCameraIdx, activeLightCameraIndex) &&
+        activeLightCameraIndex == g_selectedIdx) {
+      g_activeCameraIdx = -1;
+    }
+    const XVECTOR3 center(lightCamera.position.x, lightCamera.position.y, lightCamera.position.z, 1.0f);
+    const float radius = lightCamera.type == 1
+        ? std::clamp((std::max)(lightCamera.ortho_w, lightCamera.ortho_h) * 0.08f, 3.0f, 50.0f)
+        : 4.0f;
+    frameSphere(center, radius, "light camera");
     return;
   } else if (g_selectionType == 7 &&
              g_selectedIdx >= 0 && g_selectedIdx < static_cast<int>(g_splines.size()) &&
@@ -6627,6 +6649,325 @@ static void ApplyGodRaysVolumeToSceneProps(const t850::scene::SceneGodRaysVolume
                                                  (std::max)(0.001f, std::abs(volume.half_extents.y)),
                                                  (std::max)(0.001f, std::abs(volume.half_extents.z)),
                                                  0.0f);
+}
+
+static bool ApplyOrbitStyleControlsToCamera(::Camera& runtimeCamera,
+                                            XVECTOR3& eye,
+                                            XVECTOR3& target,
+                                            bool orthographic,
+                                            float& orthoWidth,
+                                            float& orthoHeight,
+                                            InputManager& input,
+                                            float dtSecs,
+                                            float wheelDelta,
+                                            bool skipMouse,
+                                            bool skipKeyboard) {
+  bool changed = false;
+  runtimeCamera.Update(0.0f);
+
+  XVECTOR3 targetToEye(eye.x - target.x, eye.y - target.y, eye.z - target.z, 0.0f);
+  float distance = targetToEye.Length();
+  if (distance <= 0.0001f) {
+    targetToEye = XVECTOR3(-runtimeCamera.Look.x, -runtimeCamera.Look.y, -runtimeCamera.Look.z, 0.0f);
+    distance = 1.0f;
+  } else {
+    targetToEye.x /= distance;
+    targetToEye.y /= distance;
+    targetToEye.z /= distance;
+  }
+
+  auto dollyOrZoom = [&](float factor) {
+    factor = std::clamp(factor, 0.001f, 1000.0f);
+    if (orthographic) {
+      orthoWidth = std::clamp(orthoWidth * factor, 0.001f, 100000.0f);
+      orthoHeight = std::clamp(orthoHeight * factor, 0.001f, 100000.0f);
+    } else {
+      distance = std::clamp(distance * factor, 0.001f, 1000000.0f);
+      eye = XVECTOR3(target.x + targetToEye.x * distance,
+                     target.y + targetToEye.y * distance,
+                     target.z + targetToEye.z * distance,
+                     1.0f);
+    }
+    changed = true;
+  };
+
+  auto orbit = [&](float dx, float dy) {
+    float yaw = std::atan2(targetToEye.x, targetToEye.z);
+    float pitch = std::asin(std::clamp(targetToEye.y, -1.0f, 1.0f));
+    yaw += dx * 0.005f;
+    pitch = std::clamp(pitch + dy * 0.005f, -1.55f, 1.55f);
+    const float cp = std::cos(pitch);
+    targetToEye = XVECTOR3(std::sin(yaw) * cp, std::sin(pitch), std::cos(yaw) * cp, 0.0f);
+    eye = XVECTOR3(target.x + targetToEye.x * distance,
+                   target.y + targetToEye.y * distance,
+                   target.z + targetToEye.z * distance,
+                   1.0f);
+    changed = true;
+  };
+
+  if (!skipMouse) {
+    const bool middleDown = input.PressedMouseButton(1);
+    const bool rightDown = input.PressedMouseButton(2);
+    const bool leftDown = input.PressedMouseButton(0);
+    const bool altDown = input.PressedKey(T800K_LALT) || input.PressedKey(T800K_RALT);
+    const float dx = static_cast<float>(input.xDelta);
+    const float dy = static_cast<float>(input.yDelta);
+
+    if (middleDown) {
+      const float panScale = 0.01f * (std::max)(1.0f, distance);
+      XVECTOR3 delta(
+          -runtimeCamera.Right.x * dx * panScale + runtimeCamera.Up.x * dy * panScale,
+          -runtimeCamera.Right.y * dx * panScale + runtimeCamera.Up.y * dy * panScale,
+          -runtimeCamera.Right.z * dx * panScale + runtimeCamera.Up.z * dy * panScale,
+          0.0f);
+      eye += delta;
+      target += delta;
+      changed = true;
+    } else if (rightDown || (leftDown && altDown)) {
+      orbit(dx, dy);
+    }
+  }
+
+  if (!skipKeyboard) {
+    const float orbitStep = 1.5f * dtSecs;
+    if (input.PressedKey(T800K_LEFT)) orbit(-orbitStep / 0.005f, 0.0f);
+    if (input.PressedKey(T800K_RIGHT)) orbit(orbitStep / 0.005f, 0.0f);
+    if (input.PressedKey(T800K_UP)) orbit(0.0f, -orbitStep / 0.005f);
+    if (input.PressedKey(T800K_DOWN)) orbit(0.0f, orbitStep / 0.005f);
+
+    const float zoomStep = 4.0f * dtSecs * (std::max)(1.0f, distance * 0.1f);
+    if (input.PressedKey(T800K_PLUS) || input.PressedKey(T800K_EQUALS) || input.PressedKey(T800K_KP_PLUS)) {
+      dollyOrZoom(orthographic ? std::pow(1.10f, -4.0f * dtSecs) : (std::max)(0.001f, (distance - zoomStep) / distance));
+    }
+    if (input.PressedKey(T800K_MINUS) || input.PressedKey(T800K_KP_MINUS)) {
+      dollyOrZoom(orthographic ? std::pow(1.10f, 4.0f * dtSecs) : (distance + zoomStep) / distance);
+    }
+  }
+
+  if (wheelDelta != 0.0f) {
+    dollyOrZoom(std::pow(1.10f, -wheelDelta));
+  }
+
+  if (changed) {
+    runtimeCamera.Eye = eye;
+    runtimeCamera.SetLookAt(target);
+    if (orthographic) {
+      runtimeCamera.Width = orthoWidth;
+      runtimeCamera.Height = orthoHeight;
+      runtimeCamera.CreatePojection();
+      runtimeCamera.Update(0.0f);
+    }
+  }
+  return changed;
+}
+
+static bool HandleActiveCameraOrbitControls(InputManager& input,
+                                            float dtSecs,
+                                            float wheelDelta,
+                                            bool skipMouse,
+                                            bool skipKeyboard,
+                                            float perspectiveAspect) {
+  if (g_activeCameraIdx >= 0 && g_activeCameraIdx < static_cast<int>(g_cameras.size())) {
+    SceneCamera& sceneCamera = g_cameras[static_cast<std::size_t>(g_activeCameraIdx)];
+    ApplySceneCameraToRuntimeCamera(sceneCamera, g_viewCamera, perspectiveAspect);
+    XVECTOR3 eye = sceneCamera.position;
+    XVECTOR3 target = sceneCamera.target;
+    float orthoW = sceneCamera.orthoW;
+    float orthoH = sceneCamera.orthoH;
+    if (ApplyOrbitStyleControlsToCamera(
+            g_viewCamera,
+            eye,
+            target,
+            sceneCamera.type == CameraType::Orthographic,
+            orthoW,
+            orthoH,
+            input,
+            dtSecs,
+            wheelDelta,
+            skipMouse,
+            skipKeyboard)) {
+      sceneCamera.position = eye;
+      sceneCamera.target = target;
+      sceneCamera.orthoW = orthoW;
+      sceneCamera.orthoH = orthoH;
+    }
+    return true;
+  }
+
+  int activeLightCameraIndex = -1;
+  if (DecodeActiveLightCameraIndex(g_activeCameraIdx, activeLightCameraIndex) &&
+      activeLightCameraIndex >= 0 &&
+      activeLightCameraIndex < static_cast<int>(g_lightCameras.size())) {
+    t850::scene::SceneLightCameraDesc& lightCamera = g_lightCameras[static_cast<std::size_t>(activeLightCameraIndex)];
+    ApplySceneLightCameraToRuntimeCamera(lightCamera, g_viewCamera, perspectiveAspect);
+    XVECTOR3 eye(lightCamera.position.x, lightCamera.position.y, lightCamera.position.z, 1.0f);
+    XVECTOR3 target(lightCamera.target.x, lightCamera.target.y, lightCamera.target.z, 1.0f);
+    float orthoW = lightCamera.ortho_w;
+    float orthoH = lightCamera.ortho_h;
+    if (ApplyOrbitStyleControlsToCamera(
+            g_viewCamera,
+            eye,
+            target,
+            lightCamera.type == 1,
+            orthoW,
+            orthoH,
+            input,
+            dtSecs,
+            wheelDelta,
+            skipMouse,
+            skipKeyboard)) {
+      lightCamera.position = {eye.x, eye.y, eye.z};
+      lightCamera.target = {target.x, target.y, target.z};
+      lightCamera.ortho_w = orthoW;
+      lightCamera.ortho_h = orthoH;
+    }
+    return true;
+  }
+
+  return false;
+}
+
+static XMATRIX44 BuildCameraEntityGizmoMatrix(const XVECTOR3& position,
+                                              const XVECTOR3& target,
+                                              float scaleX,
+                                              float scaleY,
+                                              float scaleZ) {
+  XVECTOR3 forward(target.x - position.x, target.y - position.y, target.z - position.z, 0.0f);
+  if (forward.Length() <= 0.000001f) {
+    forward = XVECTOR3(0.0f, 0.0f, 1.0f, 0.0f);
+  } else {
+    forward.Normalize();
+  }
+
+  XVECTOR3 up(0.0f, 1.0f, 0.0f, 0.0f);
+  XVECTOR3 right;
+  XVecCross(right, up, forward);
+  if (right.Length() <= 0.000001f) {
+    up = XVECTOR3(0.0f, 0.0f, 1.0f, 0.0f);
+    XVecCross(right, up, forward);
+  }
+  right.Normalize();
+  XVecCross(up, forward, right);
+  up.Normalize();
+
+  XMATRIX44 world;
+  XMatIdentity(world);
+  world.m[0][0] = right.x * scaleX;
+  world.m[0][1] = right.y * scaleX;
+  world.m[0][2] = right.z * scaleX;
+  world.m[1][0] = up.x * scaleY;
+  world.m[1][1] = up.y * scaleY;
+  world.m[1][2] = up.z * scaleY;
+  world.m[2][0] = forward.x * scaleZ;
+  world.m[2][1] = forward.y * scaleZ;
+  world.m[2][2] = forward.z * scaleZ;
+  world.m[3][0] = position.x;
+  world.m[3][1] = position.y;
+  world.m[3][2] = position.z;
+  return world;
+}
+
+static bool ManipulateCameraEntityGizmo(const ::Camera& viewCamera,
+                                        int mode,
+                                        XVECTOR3& position,
+                                        XVECTOR3& target,
+                                        bool orthographic,
+                                        float& orthoW,
+                                        float& orthoH,
+                                        float& fovDeg) {
+  (void)fovDeg;
+  if (mode < 0 || mode > 2) {
+    return false;
+  }
+  if (!orthographic && mode != 0) {
+    return false;
+  }
+
+  const float scaleX = mode == 2 ? (orthographic ? (std::max)(0.001f, orthoW) : 1.0f) : 1.0f;
+  const float scaleY = mode == 2 ? (orthographic ? (std::max)(0.001f, orthoH) : 1.0f) : 1.0f;
+  XMATRIX44 worldMat = BuildCameraEntityGizmoMatrix(position, target, scaleX, scaleY, 1.0f);
+  XMATRIX44 deltaMatrix;
+  XMatIdentity(deltaMatrix);
+
+  ImGuizmo::OPERATION operation = ImGuizmo::TRANSLATE;
+  if (mode == 1) operation = ImGuizmo::ROTATE;
+  else if (mode == 2) operation = ImGuizmo::SCALE;
+
+  const bool manipulated = ImGuizmo::Manipulate(
+      &viewCamera.View.m[0][0],
+      &viewCamera.Projection.m[0][0],
+      operation,
+      mode == 0 ? ImGuizmo::WORLD : ImGuizmo::LOCAL,
+      &worldMat.m[0][0],
+      &deltaMatrix.m[0][0]);
+  if (!manipulated) {
+    return false;
+  }
+
+  float translation[3], rotationDeg[3], scale[3];
+  ImGuizmo::DecomposeMatrixToComponents(&worldMat.m[0][0], translation, rotationDeg, scale);
+
+  if (mode == 0) {
+    const XVECTOR3 newPosition(translation[0], translation[1], translation[2], 1.0f);
+    const XVECTOR3 delta(newPosition.x - position.x, newPosition.y - position.y, newPosition.z - position.z, 0.0f);
+    position = newPosition;
+    target += delta;
+    return true;
+  }
+
+  if (mode == 1) {
+    XVECTOR3 direction(target.x - position.x, target.y - position.y, target.z - position.z, 0.0f);
+    const float distance = (std::max)(0.001f, direction.Length());
+    if (direction.Length() <= 0.000001f) {
+      direction = XVECTOR3(0.0f, 0.0f, 1.0f, 0.0f);
+    } else {
+      direction.Normalize();
+    }
+    XVECTOR3 rotated = t850::TransformDirection(direction, deltaMatrix);
+    if (rotated.Length() <= 0.000001f) {
+      return false;
+    }
+    rotated.Normalize();
+    target = XVECTOR3(position.x + rotated.x * distance,
+                      position.y + rotated.y * distance,
+                      position.z + rotated.z * distance,
+                      1.0f);
+    return true;
+  }
+
+  if (mode == 2) {
+    if (orthographic) {
+      orthoW = (std::max)(0.001f, std::abs(scale[0]));
+      orthoH = (std::max)(0.001f, std::abs(scale[1]));
+    }
+    return true;
+  }
+
+  return false;
+}
+
+static bool TranslateCameraPointGizmo(const ::Camera& viewCamera,
+                                      int gizmoId,
+                                      XVECTOR3& point) {
+  ImGuizmo::SetID(gizmoId);
+  XMATRIX44 worldMat;
+  XMatTranslation(worldMat, point.x, point.y, point.z);
+  const bool manipulated = ImGuizmo::Manipulate(
+      &viewCamera.View.m[0][0],
+      &viewCamera.Projection.m[0][0],
+      ImGuizmo::TRANSLATE,
+      ImGuizmo::WORLD,
+      &worldMat.m[0][0],
+      nullptr);
+  ImGuizmo::SetID(-1);
+  if (!manipulated) {
+    return false;
+  }
+
+  float translation[3], rotation[3], scale[3];
+  ImGuizmo::DecomposeMatrixToComponents(&worldMat.m[0][0], translation, rotation, scale);
+  point = XVECTOR3(translation[0], translation[1], translation[2], 1.0f);
+  return true;
 }
 
 static uint64_t HashSplineFloat(float value) {
@@ -8135,45 +8476,30 @@ void EditorApp::DrawEditorUI(t850::BaseDriver* drv) {
     }
   }
   else if (g_selectionType == 1 && g_selectedIdx >= 0 && g_selectedIdx < (int)g_cameras.size()) {
-    // ── Camera gizmo — use translate-only via ImGuizmo ──
     SceneCamera& sc = g_cameras[g_selectedIdx];
-
-    // Camera position gizmo
-    ImGuizmo::SetID(0);
-    XMATRIX44 worldMat;
-    XMatTranslation(worldMat, sc.position.x, sc.position.y, sc.position.z);
-
-    bool manipulated = ImGuizmo::Manipulate(
-      &cam2.View.m[0][0], &cam2.Projection.m[0][0],
-      ImGuizmo::TRANSLATE, ImGuizmo::WORLD,
-      &worldMat.m[0][0], nullptr);
-
-    if (manipulated) {
-      float t[3], r[3], s[3];
-      ImGuizmo::DecomposeMatrixToComponents(&worldMat.m[0][0], t, r, s);
-      XVECTOR3 delta(t[0] - sc.position.x, t[1] - sc.position.y, t[2] - sc.position.z);
-      sc.position = XVECTOR3(t[0], t[1], t[2]);
-      sc.target.x += delta.x;
-      sc.target.y += delta.y;
-      sc.target.z += delta.z;
+    if (sc.type == CameraType::Perspective) {
+      if (mode == 0) {
+        const XVECTOR3 oldPosition = sc.position;
+        if (TranslateCameraPointGizmo(cam2, 0, sc.position)) {
+          const XVECTOR3 delta(sc.position.x - oldPosition.x,
+                               sc.position.y - oldPosition.y,
+                               sc.position.z - oldPosition.z,
+                               0.0f);
+          sc.target += delta;
+        }
+        TranslateCameraPointGizmo(cam2, 1, sc.target);
+      }
+    } else {
+      ManipulateCameraEntityGizmo(
+          cam2,
+          mode,
+          sc.position,
+          sc.target,
+          true,
+          sc.orthoW,
+          sc.orthoH,
+          sc.fovDeg);
     }
-
-    // Camera target gizmo (separate ImGuizmo ID so both can coexist)
-    ImGuizmo::SetID(1);
-    XMATRIX44 targetMat;
-    XMatTranslation(targetMat, sc.target.x, sc.target.y, sc.target.z);
-
-    bool targetMoved = ImGuizmo::Manipulate(
-      &cam2.View.m[0][0], &cam2.Projection.m[0][0],
-      ImGuizmo::TRANSLATE, ImGuizmo::WORLD,
-      &targetMat.m[0][0], nullptr);
-
-    if (targetMoved) {
-      float t[3], r[3], s[3];
-      ImGuizmo::DecomposeMatrixToComponents(&targetMat.m[0][0], t, r, s);
-      sc.target = XVECTOR3(t[0], t[1], t[2]);
-    }
-    ImGuizmo::SetID(-1); // reset
   }
   else if (g_selectionType == 2 && g_selectedIdx >= 0 && g_selectedIdx < (int)g_lights.size()) {
     // ── Light gizmo ──
@@ -8223,36 +8549,37 @@ void EditorApp::DrawEditorUI(t850::BaseDriver* drv) {
   else if (g_selectionType == 6 && g_selectedIdx >= 0 && g_selectedIdx < static_cast<int>(g_lightCameras.size())) {
     t850::scene::SceneLightCameraDesc& lightCamera = g_lightCameras[static_cast<std::size_t>(g_selectedIdx)];
     if (!lightCamera.frozen) {
-      ImGuizmo::SetID(20);
-      XMATRIX44 worldMat;
-      XMatTranslation(worldMat, lightCamera.position.x, lightCamera.position.y, lightCamera.position.z);
-      const bool manipulated = ImGuizmo::Manipulate(
-          &cam2.View.m[0][0], &cam2.Projection.m[0][0],
-          ImGuizmo::TRANSLATE, ImGuizmo::WORLD,
-          &worldMat.m[0][0], nullptr);
-      if (manipulated) {
-        float t[3], r[3], s[3];
-        ImGuizmo::DecomposeMatrixToComponents(&worldMat.m[0][0], t, r, s);
-        const t850::scene::Vec3f oldPos = lightCamera.position;
-        lightCamera.position = {t[0], t[1], t[2]};
-        lightCamera.target.x += lightCamera.position.x - oldPos.x;
-        lightCamera.target.y += lightCamera.position.y - oldPos.y;
-        lightCamera.target.z += lightCamera.position.z - oldPos.z;
+      XVECTOR3 position(lightCamera.position.x, lightCamera.position.y, lightCamera.position.z, 1.0f);
+      XVECTOR3 target(lightCamera.target.x, lightCamera.target.y, lightCamera.target.z, 1.0f);
+      bool changed = false;
+      if (lightCamera.type == 0) {
+        if (mode == 0) {
+          const XVECTOR3 oldPosition = position;
+          if (TranslateCameraPointGizmo(cam2, 20, position)) {
+            const XVECTOR3 delta(position.x - oldPosition.x,
+                                 position.y - oldPosition.y,
+                                 position.z - oldPosition.z,
+                                 0.0f);
+            target += delta;
+            changed = true;
+          }
+          changed = TranslateCameraPointGizmo(cam2, 21, target) || changed;
+        }
+      } else {
+        changed = ManipulateCameraEntityGizmo(
+            cam2,
+            mode,
+            position,
+            target,
+            true,
+            lightCamera.ortho_w,
+            lightCamera.ortho_h,
+            lightCamera.fov_deg);
       }
-
-      ImGuizmo::SetID(21);
-      XMATRIX44 targetMat;
-      XMatTranslation(targetMat, lightCamera.target.x, lightCamera.target.y, lightCamera.target.z);
-      const bool targetMoved = ImGuizmo::Manipulate(
-          &cam2.View.m[0][0], &cam2.Projection.m[0][0],
-          ImGuizmo::TRANSLATE, ImGuizmo::WORLD,
-          &targetMat.m[0][0], nullptr);
-      if (targetMoved) {
-        float t[3], r[3], s[3];
-        ImGuizmo::DecomposeMatrixToComponents(&targetMat.m[0][0], t, r, s);
-        lightCamera.target = {t[0], t[1], t[2]};
+      if (changed) {
+        lightCamera.position = {position.x, position.y, position.z};
+        lightCamera.target = {target.x, target.y, target.z};
       }
-      ImGuizmo::SetID(-1);
     }
   }
   else if (g_selectionType == 7 &&

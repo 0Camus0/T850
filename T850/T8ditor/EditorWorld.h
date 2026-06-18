@@ -118,8 +118,9 @@ struct EditorWorld {
   // Cameras and lights
   std::vector<SceneCamera> cameras;
   std::vector<SceneLight> lights;
+  std::vector<t850::scene::SceneSplineDesc> splines;
 
-  // Selection type: 0=mesh, 1=camera, 2=light, 3=physics entity, 4=NavMesh.
+  // Selection type: 0=mesh, 1=camera, 2=light, 3=physics entity, 4=NavMesh, 5=spline.
   int selectionType = 0;
   int activeCameraIdx = -1;  // -1 = default editor camera
 

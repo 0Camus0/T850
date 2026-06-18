@@ -3108,6 +3108,13 @@ void SceneTemplate::InitVars() {
   m_ragdollPhysicsDriven = false;
   m_ragdollDriveLogEmitted = false;
   m_ragdollPhysicsLogEmitted = false;
+  m_sceneSplines.clear();
+  m_runtimeSplineActive = false;
+  m_runtimeSplineCameraIndex = -1;
+  m_runtimeSpline.m_points.clear();
+  m_runtimeSpline.m_totalLength = 0.0f;
+  m_runtimeSpline.m_looped = false;
+  m_runtimeSplineAgent = t850::SplineAgent{};
   m_ragdollEditDirty = false;
   m_ragdollEditHandleDragging = false;
   m_ragdollEditGizmoDragging = false;
@@ -3247,6 +3254,102 @@ void SceneTemplate::ApplyEditorSceneCameraAndLights(const t850::scene::EditorSce
                 SceneProp.Lights.size(),
                 SceneProp.PointLightsEnabled ? "enabled" : "disabled");
   }
+}
+
+void SceneTemplate::InitializeSceneSplinePlayback(const t850::scene::EditorSceneFile& scene) {
+  m_sceneSplines = scene.splines;
+  m_runtimeSplineActive = false;
+  m_runtimeSplineCameraIndex = -1;
+  m_runtimeSpline.m_points.clear();
+  m_runtimeSpline.m_totalLength = 0.0f;
+  m_runtimeSpline.m_looped = false;
+  m_runtimeSplineAgent = t850::SplineAgent{};
+  if (m_sceneSplines.empty()) {
+    return;
+  }
+
+  const t850::scene::SceneSplineDesc* selectedSpline = nullptr;
+  for (const t850::scene::SceneSplineDesc& spline : m_sceneSplines) {
+    if (spline.play_on_start && spline.attached_camera >= 0 && spline.points.size() >= 4) {
+      selectedSpline = &spline;
+      break;
+    }
+  }
+  if (!selectedSpline) {
+    return;
+  }
+  if (selectedSpline->attached_camera < 0 ||
+      selectedSpline->attached_camera >= static_cast<int>(scene.cameras.size())) {
+    T8_LOG_ERROR("[SceneTemplate] Spline '%s' references missing camera index %d",
+                 selectedSpline->name.c_str(),
+                 selectedSpline->attached_camera);
+    return;
+  }
+
+  std::vector<t850::SplinePoint> points;
+  points.reserve(selectedSpline->points.size());
+  for (const t850::scene::SceneSplinePointDesc& point : selectedSpline->points) {
+    t850::SplinePoint splinePoint(point.position.x, point.position.y, point.position.z);
+    splinePoint.m_velocity = point.velocity;
+    splinePoint.m_rotation = XVECTOR3(point.rotation.x, point.rotation.y, point.rotation.z, 0.0f);
+    splinePoint.m_LookAtCenter = point.look_at_center;
+    points.push_back(splinePoint);
+  }
+
+  m_runtimeSpline.m_points = std::move(points);
+  m_runtimeSpline.m_totalLength = 0.0f;
+  m_runtimeSpline.m_looped = selectedSpline->looped;
+  m_runtimeSpline.Init();
+  if (m_runtimeSpline.m_totalLength <= 0.0f) {
+    return;
+  }
+
+  m_runtimeSplineAgent = t850::SplineAgent{};
+  m_runtimeSplineAgent.m_pSpline = &m_runtimeSpline;
+  m_runtimeSplineAgent.m_moving = true;
+  m_runtimeSplineAgent.m_velocity = selectedSpline->agent_velocity;
+  float safeOffset = (std::max)(0.0f, selectedSpline->agent_offset);
+  if (m_runtimeSpline.m_totalLength > 0.0f) {
+    safeOffset = std::fmod(safeOffset, m_runtimeSpline.m_totalLength);
+  }
+  m_runtimeSplineAgent.SetOffset(safeOffset);
+  m_runtimeSplineAgent.m_actualPoint = m_runtimeSpline.GetPoint(m_runtimeSpline.GetNormalizedOffset(m_runtimeSplineAgent.GetOffset()));
+  const t850::scene::SceneCameraDesc& cameraDesc = scene.cameras[static_cast<std::size_t>(selectedSpline->attached_camera)];
+  const XVECTOR3 cameraPosition = SceneVecToVector(cameraDesc.position);
+  const float nearPlane = (std::max)(0.0001f, cameraDesc.near_plane);
+  const float farPlane = (std::max)(nearPlane + 0.01f, cameraDesc.far_plane);
+  if (cameraDesc.type == 1) {
+    Cam.InitOrtho(cameraPosition,
+                  (std::max)(0.01f, cameraDesc.ortho_w),
+                  (std::max)(0.01f, cameraDesc.ortho_h),
+                  nearPlane,
+                  farPlane);
+  } else {
+    const float aspect = static_cast<float>(RenderViewportWidth()) / static_cast<float>(RenderViewportHeight());
+    Cam.InitPerspective(cameraPosition, Deg2Rad((std::max)(1.0f, cameraDesc.fov_deg)), aspect, nearPlane, farPlane);
+  }
+  Cam.AttachAgent(m_runtimeSplineAgent);
+  Cam.m_lookAtCenter = false;
+  Cam.Update(0.0f);
+  VP = Cam.VP;
+  m_runtimeSplineActive = true;
+  m_runtimeSplineCameraIndex = selectedSpline->attached_camera;
+  m_cameraController.ClearInput();
+  T8_LOG_INFO("[SceneTemplate] Spline playback attached camera=%d points=%zu length=%.2f velocity=%.2f",
+              m_runtimeSplineCameraIndex,
+              selectedSpline->points.size(),
+              m_runtimeSpline.m_totalLength,
+              selectedSpline->agent_velocity);
+}
+
+bool SceneTemplate::UpdateSceneSplinePlayback(float deltaSeconds) {
+  if (!m_runtimeSplineActive || !Cam.m_externalControl) {
+    return false;
+  }
+  m_runtimeSplineAgent.Update(deltaSeconds);
+  Cam.Update(deltaSeconds);
+  VP = Cam.VP;
+  return true;
 }
 
 int SceneTemplate::GetRuntimeMeshCount() const {
@@ -3647,6 +3750,13 @@ bool SceneTemplate::LoadEditorSceneAssets(const std::string& scenePath) {
   m_scenePhysicsEntities = scene.physics_entities;
   m_sceneNavigationAuthoring.clear();
   m_sceneRagdollAuthoring.clear();
+  m_sceneSplines = scene.splines;
+  m_runtimeSplineActive = false;
+  m_runtimeSplineCameraIndex = -1;
+  m_runtimeSpline.m_points.clear();
+  m_runtimeSpline.m_totalLength = 0.0f;
+  m_runtimeSpline.m_looped = false;
+  m_runtimeSplineAgent = t850::SplineAgent{};
   m_primaryRagdollResourcePath.clear();
   m_hasAuthoredNavMesh = false;
   m_authoredNavMesh = t850::scene::SceneNavigationMeshDesc{};
@@ -3873,6 +3983,7 @@ bool SceneTemplate::LoadEditorSceneAssets(const std::string& scenePath) {
                 playerSettings.capsuleRadius,
                 playerSettings.capsuleHalfHeight);
   }
+  InitializeSceneSplinePlayback(scene);
   T8_LOG_INFO("[SceneTemplate] Loaded editor scene '%s' with %d mesh instances", scenePath.c_str(), m_meshCount);
   return true;
 }
@@ -5500,19 +5611,21 @@ void SceneTemplate::OnUpdate(float _DtSecs) {
 
   if (!m_dumper.SkipCameraUpdates()) {
     T8_TELEMETRY_SCOPE("sandbox.update.camera_and_lights");
-    if (m_cameraController.GetActiveProfileType() == t850::CameraProfileType::Orbit) {
-      T8_TELEMETRY_SCOPE("sandbox.update.camera.sync_orbit_profile");
-      SyncOrbitProfileFromSandbox();
-    }
-    {
-      T8_TELEMETRY_SCOPE("sandbox.update.camera_controller");
-      t850::CameraUpdateContext cameraContext;
-      cameraContext.collisionWorld = this;
-      m_cameraController.Update(DtSecs, cameraContext);
-    }
-    if (m_cameraController.GetActiveProfileType() == t850::CameraProfileType::Orbit) {
-      T8_TELEMETRY_SCOPE("sandbox.update.camera.sync_sandbox_orbit");
-      SyncSandboxOrbitFromProfile();
+    if (!UpdateSceneSplinePlayback(DtSecs)) {
+      if (m_cameraController.GetActiveProfileType() == t850::CameraProfileType::Orbit) {
+        T8_TELEMETRY_SCOPE("sandbox.update.camera.sync_orbit_profile");
+        SyncOrbitProfileFromSandbox();
+      }
+      {
+        T8_TELEMETRY_SCOPE("sandbox.update.camera_controller");
+        t850::CameraUpdateContext cameraContext;
+        cameraContext.collisionWorld = this;
+        m_cameraController.Update(DtSecs, cameraContext);
+      }
+      if (m_cameraController.GetActiveProfileType() == t850::CameraProfileType::Orbit) {
+        T8_TELEMETRY_SCOPE("sandbox.update.camera.sync_sandbox_orbit");
+        SyncSandboxOrbitFromProfile();
+      }
     }
     VP = Cam.VP;
     {

@@ -1,0 +1,247 @@
+{
+   "version": 1,
+   "editor": {
+      "camera_target": { "x": 0, "y": 20, "z": 0 },
+      "camera_yaw": -0.75,
+      "camera_pitch": 0.4,
+      "camera_distance": 140,
+      "show_skybox": true,
+      "show_wireframe": false,
+      "allow_custom_layout": false,
+      "imgui_layout": ""
+   },
+   "objects": [
+      {
+         "name": "SponzaEsc",
+         "mesh": "Models/SponzaEsc.glb",
+         "position": { "x": 0, "y": 0, "z": 0 },
+         "rotation": { "x": 0, "y": 0, "z": 0 },
+         "scale": { "x": 1, "y": 1, "z": 1 },
+         "visible": true,
+         "show_wire": false,
+         "physics": {
+            "enabled": true,
+            "body_type": "static_triangle_mesh",
+            "motion": "static",
+            "collision_layer": "world",
+            "generate_collision": true,
+            "collision_asset": ""
+         },
+         "navigation": {
+            "include": true,
+            "walkable": true,
+            "static_object": true,
+            "area": "walkable",
+            "cost": 1
+         }
+      },
+      {
+         "name": "SkyBox",
+         "mesh": "Models/SkyBox.glb",
+         "position": { "x": 0, "y": -10, "z": 0 },
+         "rotation": { "x": 0, "y": 0, "z": 0 },
+         "scale": { "x": 1, "y": 1, "z": 1 },
+         "visible": true,
+         "show_wire": false,
+         "physics": {
+            "enabled": false,
+            "body_type": "none",
+            "motion": "static",
+            "collision_layer": "world",
+            "generate_collision": false,
+            "collision_asset": ""
+         },
+         "navigation": {
+            "include": false,
+            "walkable": false,
+            "static_object": true,
+            "area": "blocked",
+            "cost": 1
+         }
+      }
+   ],
+   "physics_entities": [
+      {
+         "name": "SponzaEsc Static Triangle Mesh",
+         "type": "static_triangle_mesh",
+         "source_object": "SponzaEsc",
+         "visible": true,
+         "show_wire": false,
+         "cook_settings": {
+            "max_triangles_per_leaf": 8,
+            "build_quality": "runtime_performance",
+            "active_edge_cos_threshold_angle": 0.996195,
+            "per_triangle_user_data": false,
+            "use_disk_cache": true
+         }
+      }
+   ],
+   "cameras": [
+      {
+         "name": "DayScene Spline Camera",
+         "type": 0,
+         "position": { "x": 0, "y": 9.75, "z": -31 },
+         "target": { "x": 0, "y": 9.75, "z": -30 },
+         "fov_deg": 60,
+         "near_plane": 2,
+         "far_plane": 12000,
+         "visible": true,
+         "frozen": false
+      },
+      {
+         "name": "DayScene Free Camera",
+         "type": 0,
+         "position": { "x": 0, "y": 35, "z": -90 },
+         "target": { "x": 0, "y": 35, "z": -89 },
+         "fov_deg": 60,
+         "near_plane": 2,
+         "far_plane": 12000,
+         "visible": true,
+         "frozen": false
+      }
+   ],
+   "lights": [
+      {
+         "name": "Sun",
+         "type": 0,
+         "position": { "x": 25, "y": 100, "z": 0 },
+         "direction": { "x": -0.23658708, "y": -0.9711484, "z": -0.029957913 },
+         "color": { "x": 1, "y": 0.98, "z": 0.92 },
+         "intensity": 4.3,
+         "radius": 0,
+         "enabled": true,
+         "visible": true
+      },
+      {
+         "name": "Warm Point A",
+         "type": 1,
+         "position": { "x": -55, "y": 10, "z": 0 },
+         "color": { "x": 1, "y": 0.57, "z": 0.16 },
+         "intensity": 1,
+         "radius": 60,
+         "enabled": true,
+         "visible": true
+      },
+      {
+         "name": "Warm Point B",
+         "type": 1,
+         "position": { "x": 55, "y": 10, "z": 0 },
+         "color": { "x": 1, "y": 0.57, "z": 0.16 },
+         "intensity": 1,
+         "radius": 60,
+         "enabled": true,
+         "visible": true
+      },
+      {
+         "name": "Warm Point C",
+         "type": 1,
+         "position": { "x": 60, "y": 10, "z": 30 },
+         "color": { "x": 1, "y": 0.57, "z": 0.16 },
+         "intensity": 1,
+         "radius": 60,
+         "enabled": true,
+         "visible": true
+      },
+      {
+         "name": "Warm Point D",
+         "type": 1,
+         "position": { "x": 60, "y": 10, "z": -30 },
+         "color": { "x": 1, "y": 0.57, "z": 0.16 },
+         "intensity": 1,
+         "radius": 60,
+         "enabled": true,
+         "visible": true
+      }
+   ],
+   "splines": [
+      {
+         "name": "DayScene Camera Tour",
+         "looped": false,
+         "agent_velocity": 15,
+         "agent_offset": 0,
+         "attached_camera": 0,
+         "play_on_start": true,
+         "visible": true,
+         "show_wire": true,
+         "points": [
+            { "position": { "x": 80, "y": 90, "z": -80 }, "velocity": 3 },
+            { "position": { "x": 80, "y": 90, "z": -20 }, "velocity": 6 },
+            { "position": { "x": 20, "y": 110, "z": 0 }, "velocity": 20 },
+            { "position": { "x": 30, "y": 20, "z": 0 }, "velocity": 7 },
+            { "position": { "x": 40, "y": 6, "z": 0 }, "velocity": 7 },
+            { "position": { "x": 50, "y": 4, "z": 20 }, "velocity": 7 },
+            { "position": { "x": 40, "y": 4, "z": 20 }, "velocity": 7 },
+            { "position": { "x": 0, "y": 4, "z": 20 }, "velocity": 7 },
+            { "position": { "x": -50, "y": 3, "z": 20 }, "velocity": 7 },
+            { "position": { "x": -50, "y": 6, "z": 0 }, "velocity": 7 },
+            { "position": { "x": -20, "y": 15, "z": 0 }, "velocity": 7 },
+            { "position": { "x": 0, "y": 10, "z": 0 }, "velocity": 7 },
+            { "position": { "x": -40, "y": 25, "z": 3 }, "velocity": 10 },
+            { "position": { "x": -55, "y": 30, "z": 5 }, "velocity": 10 },
+            { "position": { "x": -55, "y": 30, "z": -25 }, "velocity": 3 },
+            { "position": { "x": -65, "y": 25, "z": 0 }, "velocity": 3 },
+            { "position": { "x": -60, "y": 25, "z": 25 }, "velocity": 3 },
+            { "position": { "x": -35, "y": 30, "z": -20 }, "velocity": 10 },
+            { "position": { "x": 15, "y": 30, "z": -20 }, "velocity": 10 },
+            { "position": { "x": 25, "y": 30, "z": 20 }, "velocity": 10 },
+            { "position": { "x": 50, "y": 30, "z": 20 }, "velocity": 10 },
+            { "position": { "x": 50, "y": 30, "z": -20 }, "velocity": 10 },
+            { "position": { "x": -50, "y": 30, "z": -20 }, "velocity": 10 },
+            { "position": { "x": -50, "y": 30, "z": 0 }, "velocity": 10 },
+            { "position": { "x": -30, "y": 30, "z": 0 }, "velocity": 10 },
+            { "position": { "x": 0, "y": 5, "z": 0 }, "velocity": 10 }
+         ]
+      }
+   ],
+   "profiles": [
+      {
+         "name": "shared",
+         "platform": "",
+         "architecture": "",
+         "gpu_family": "",
+         "gpu_name_contains": "",
+         "model": "",
+         "sliders": [
+            { "name": "exposure", "value": 1.1000004 },
+            { "name": "bloom_factor", "value": 0.6 },
+            { "name": "bloom_threshold", "value": 1.2 },
+            { "name": "tm_white_level", "value": 5.5 },
+            { "name": "tm_adapt_tau", "value": 0.65000004 },
+            { "name": "pcf_radius", "value": 0.8 },
+            { "name": "pcf_samples", "value": 2 },
+            { "name": "ssao_kernel_size", "value": 4 },
+            { "name": "ssao_radius", "value": 1.5 },
+            { "name": "dof_aperture", "value": 70 },
+            { "name": "dof_focal_length", "value": 1 },
+            { "name": "dof_max_coc", "value": 0.6 },
+            { "name": "dof_near_samples", "value": 2 },
+            { "name": "dof_far_samples", "value": 5 },
+            { "name": "parallax_low_samples", "value": 10 },
+            { "name": "parallax_high_samples", "value": 15 },
+            { "name": "parallax_height", "value": 0.02 },
+            { "name": "light_volume_steps", "value": 24 },
+            { "name": "godrays_factor", "value": 0.7 },
+            { "name": "fov", "value": 60 },
+            { "name": "shadow_bias", "value": 0.000005 },
+            { "name": "shadow_min", "value": 0 },
+            { "name": "env_factor", "value": 1.6 },
+            { "name": "ibl_factor", "value": 0.2 },
+            { "name": "material_refraction_strength", "value": 0.03 }
+         ],
+         "checkboxes": [
+            { "name": "shadow_toggle", "value": true },
+            { "name": "ssao_toggle", "value": true },
+            { "name": "dof_toggle", "value": true },
+            { "name": "parallax_toggle", "value": true },
+            { "name": "godrays_toggle", "value": true },
+            { "name": "dof_auto_focus", "value": true }
+         ],
+         "selectors": [
+            { "name": "cubemap", "value": 8 },
+            { "name": "luminance_mode", "value": 1 },
+            { "name": "active_camera", "value": 0 }
+         ],
+         "lights": []
+      }
+   ]
+}

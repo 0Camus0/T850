@@ -130,6 +130,9 @@ SceneProps() : ActiveCamera(0), ActiveLights(1), ActiveLightCamera(0), ActiveGau
 	float LightVolumeSteps = 0.0f;
 	float LightRadiusScale = 1.0f;
 	float LightIntensityScale = 1.0f;
+  int GodRaysVolumeEnabled = 0;
+  XVECTOR3 GodRaysVolumeCenter = XVECTOR3(0.0f, 50.0f, 0.0f, 1.0f);
+  XVECTOR3 GodRaysVolumeHalfExtents = XVECTOR3(65.0f, 65.0f, 65.0f, 0.0f);
 	// HDR
 	float	Exposure = 0.0f;
 	float	BloomFactor = 0.35f;

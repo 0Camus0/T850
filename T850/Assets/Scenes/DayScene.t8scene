@@ -1,5 +1,6 @@
 {
    "version": 1,
+   "render_graph": "Scenes/DayScene_RenderGraph.json",
    "editor": {
       "camera_target": { "x": 0, "y": 20, "z": 0 },
       "camera_yaw": -0.75,
@@ -153,6 +154,34 @@
          "visible": true
       }
    ],
+   "light_cameras": [
+      {
+         "name": "DayScene Sun Shadow Camera",
+         "type": 1,
+         "position": { "x": 25, "y": 100, "z": 0 },
+         "target": { "x": 24.763413, "y": 99.02885, "z": -0.0299579 },
+         "fov_deg": 45,
+         "ortho_w": 130,
+         "ortho_h": 130,
+         "near_plane": 0.1,
+         "far_plane": 600,
+         "yaw_rate": -0.008,
+         "attached_light": 0,
+         "enabled": true,
+         "visible": true,
+         "frozen": false
+      }
+   ],
+   "god_rays_volume": {
+      "name": "DayScene God Rays Volume",
+      "position": { "x": 0, "y": 50, "z": 0 },
+      "half_extents": { "x": 65, "y": 65, "z": 65 },
+      "enabled": true,
+      "clip_enabled": false,
+      "visible": true,
+      "frozen": false,
+      "show_wire": true
+   },
    "splines": [
       {
          "name": "DayScene Camera Tour",
@@ -207,25 +236,35 @@
             { "name": "bloom_threshold", "value": 1.2 },
             { "name": "tm_white_level", "value": 5.5 },
             { "name": "tm_adapt_tau", "value": 0.65000004 },
+            { "name": "shadow_map_resolution", "value": 2048 },
+            { "name": "god_rays_resolution", "value": 0 },
             { "name": "pcf_radius", "value": 0.8 },
             { "name": "pcf_samples", "value": 2 },
-            { "name": "ssao_kernel_size", "value": 4 },
-            { "name": "ssao_radius", "value": 1.5 },
+            { "name": "ssao_kernel_size", "value": 20 },
+            { "name": "ssao_radius", "value": 1.1 },
             { "name": "dof_aperture", "value": 70 },
             { "name": "dof_focal_length", "value": 1 },
+            { "name": "dof_focus_depth", "value": 0 },
             { "name": "dof_max_coc", "value": 0.6 },
             { "name": "dof_near_samples", "value": 2 },
             { "name": "dof_far_samples", "value": 5 },
-            { "name": "parallax_low_samples", "value": 10 },
-            { "name": "parallax_high_samples", "value": 15 },
+            { "name": "parallax_low_samples", "value": 20 },
+            { "name": "parallax_high_samples", "value": 30 },
             { "name": "parallax_height", "value": 0.02 },
-            { "name": "light_volume_steps", "value": 24 },
+            { "name": "parallax_shadow_min_layers", "value": 8 },
+            { "name": "parallax_shadow_max_layers", "value": 32 },
+            { "name": "parallax_shadow_softness", "value": 0.5 },
+            { "name": "parallax_shadow_strength", "value": 1 },
+            { "name": "light_volume_steps", "value": 256 },
             { "name": "godrays_factor", "value": 0.7 },
+            { "name": "active_lights", "value": 1 },
             { "name": "fov", "value": 60 },
             { "name": "shadow_bias", "value": 0.000005 },
             { "name": "shadow_min", "value": 0 },
             { "name": "env_factor", "value": 1.6 },
             { "name": "ibl_factor", "value": 0.2 },
+            { "name": "material_emissive_intensity", "value": 1 },
+            { "name": "material_transmission_multiplier", "value": 1 },
             { "name": "material_refraction_strength", "value": 0.03 }
          ],
          "checkboxes": [
@@ -233,6 +272,7 @@
             { "name": "ssao_toggle", "value": true },
             { "name": "dof_toggle", "value": true },
             { "name": "parallax_toggle", "value": true },
+            { "name": "parallax_shadow_toggle", "value": true },
             { "name": "godrays_toggle", "value": true },
             { "name": "dof_auto_focus", "value": true }
          ],

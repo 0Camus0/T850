@@ -722,6 +722,9 @@ namespace t850 {
 	}
 	else if (pass == PassType::LIGHT_RAY_MARCHING) {
 	  CnstBuffer.LightPositions[0].y = pScProp->LightVolumeSteps;
+    CnstBuffer.LightPositions[1] = pScProp->GodRaysVolumeCenter;
+    CnstBuffer.LightPositions[1].w = static_cast<float>(pScProp->GodRaysVolumeEnabled);
+    CnstBuffer.LightPositions[2] = pScProp->GodRaysVolumeHalfExtents;
       XVECTOR3 sunDir(0.0f, 1.0f, 0.0f, 0.0f);
       if (pScProp->pLightCameras.size() > 0) {
         int selected = pScProp->ActiveLightCamera;

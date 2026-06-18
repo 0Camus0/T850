@@ -1462,6 +1462,20 @@ float ComputeScattering(float lightDotView)
   result /= (4.0f * PI * pow(1.0f + G_SCATTERING * G_SCATTERING - (2.0f * G_SCATTERING) *      lightDotView, 1.5f));
   return result;
 }
+bool IntersectGodRaysBox(float3 origin, float3 direction, float3 boxMin, float3 boxMax, out float tNear, out float tFar)
+{
+  float3 safeDirection = direction;
+  safeDirection.x = abs(safeDirection.x) < 1e-6f ? (safeDirection.x < 0.0f ? -1e-6f : 1e-6f) : safeDirection.x;
+  safeDirection.y = abs(safeDirection.y) < 1e-6f ? (safeDirection.y < 0.0f ? -1e-6f : 1e-6f) : safeDirection.y;
+  safeDirection.z = abs(safeDirection.z) < 1e-6f ? (safeDirection.z < 0.0f ? -1e-6f : 1e-6f) : safeDirection.z;
+  float3 t0 = (boxMin - origin) / safeDirection;
+  float3 t1 = (boxMax - origin) / safeDirection;
+  float3 tMin = min(t0, t1);
+  float3 tMax = max(t0, t1);
+  tNear = max(max(tMin.x, tMin.y), tMin.z);
+  tFar = min(min(tMax.x, tMax.y), tMax.z);
+  return tFar >= max(tNear, 0.0f);
+}
 Texture2D tex0 : register(t0);
 Texture2D tex1 : register(t1);
 float4 FS(VS_OUTPUT input) : SV_TARGET{
@@ -1477,9 +1491,24 @@ float4 position = ReconstructPosition(clipPos, depth);
 int steps = max((int)LightPositions[0].y, 2);
 float4 ray = (position - CameraPosition);
 float4 rayDir = normalize(ray);
+float rayLength = length(ray.xyz);
 
 float4 intersectionNear = CameraPosition;
 float4 intersectionFar = position;
+if (LightPositions[1].w > 0.5f) {
+  float3 volumeCenter = LightPositions[1].xyz;
+  float3 volumeHalfExtents = max(abs(LightPositions[2].xyz), float3(0.001f, 0.001f, 0.001f));
+  float tNear;
+  float tFar;
+  if (!IntersectGodRaysBox(CameraPosition.xyz, rayDir.xyz, volumeCenter - volumeHalfExtents, volumeCenter + volumeHalfExtents, tNear, tFar))
+    return float4(0,0,0,1);
+  tNear = clamp(tNear, 0.0f, rayLength);
+  tFar = clamp(tFar, 0.0f, rayLength);
+  if (tFar <= tNear)
+    return float4(0,0,0,1);
+  intersectionNear = CameraPosition + rayDir * tNear;
+  intersectionFar = CameraPosition + rayDir * tFar;
+}
 
 float3 accumFog = 0.0f.xxx;
 

@@ -247,6 +247,9 @@ public:
   t850::SplineAgent m_runtimeSplineAgent;
   bool m_runtimeSplineActive = false;
   int m_runtimeSplineCameraIndex = -1;
+  bool m_hasAuthoredLightCamera = false;
+  int m_authoredLightCameraAttachedLight = -1;
+  float m_authoredLightCameraYawRate = 0.0f;
   bool m_hasAuthoredNavMesh = false;
   t850::scene::SceneNavigationMeshDesc m_authoredNavMesh;
   bool m_hasAuthoredPlayer = false;

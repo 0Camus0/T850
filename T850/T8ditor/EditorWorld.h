@@ -118,11 +118,17 @@ struct EditorWorld {
   // Cameras and lights
   std::vector<SceneCamera> cameras;
   std::vector<SceneLight> lights;
+  std::vector<t850::scene::SceneLightCameraDesc> lightCameras;
+  std::vector<SceneCamera> lightCameraGizmoCameras;
+  t850::scene::SceneGodRaysVolumeDesc godRaysVolume;
+  GizmoCache godRaysVolumeGizmo;
   std::vector<t850::scene::SceneSplineDesc> splines;
+  std::vector<GizmoCache> splineGizmos;
 
-  // Selection type: 0=mesh, 1=camera, 2=light, 3=physics entity, 4=NavMesh, 5=spline.
+  // Selection type: 0=mesh, 1=camera, 2=light, 3=physics entity, 4=NavMesh, 5=spline, 6=light camera, 7=spline point, 8=God Rays volume.
   int selectionType = 0;
-  int activeCameraIdx = -1;  // -1 = default editor camera
+  int activeCameraIdx = -1;  // -1 = default editor camera, >=0 = scene camera, <=-2 = light camera (-2-index)
+  int selectedSplinePoint = -1;
 
   // Undo/redo command stack
   UndoStack undoStack;

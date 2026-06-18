@@ -104,6 +104,34 @@ struct SceneLightDesc {
   std::optional<SceneQ3LightDesc> q3;
 };
 
+struct SceneLightCameraDesc {
+  std::string name = "Light Camera";
+  int type = 1; // 0=perspective, 1=ortho
+  Vec3f position = {25.0f, 100.0f, 0.0f};
+  Vec3f target = {0.0f, 0.0f, 0.0f};
+  float fov_deg = 45.0f;
+  float ortho_w = 130.0f;
+  float ortho_h = 130.0f;
+  float near_plane = 0.1f;
+  float far_plane = 600.0f;
+  float yaw_rate = 0.0f;
+  int attached_light = 0;
+  bool enabled = true;
+  bool visible = true;
+  bool frozen = false;
+};
+
+struct SceneGodRaysVolumeDesc {
+  std::string name = "God Rays Volume";
+  Vec3f position = {0.0f, 50.0f, 0.0f};
+  Vec3f half_extents = {65.0f, 65.0f, 65.0f};
+  bool enabled = true;
+  bool clip_enabled = false;
+  bool visible = true;
+  bool frozen = false;
+  bool show_wire = true;
+};
+
 struct ScenePhysicsCookSettingsDesc {
   uint32_t max_triangles_per_leaf = 8;
   std::string build_quality = "runtime_performance";
@@ -267,6 +295,7 @@ struct EditorStateDesc {
 struct EditorSceneFile {
   int version = 1;
   std::string collision;
+  std::string render_graph;
   EditorStateDesc editor;
   std::vector<SceneObjectDesc> objects;
   std::vector<SceneGameEntityDesc> game_entities;
@@ -274,6 +303,8 @@ struct EditorSceneFile {
   std::optional<SceneNavigationMeshDesc> navigation_mesh;
   std::vector<SceneSplineDesc> splines;
   std::vector<SceneCameraDesc> cameras;
+  std::vector<SceneLightCameraDesc> light_cameras;
+  std::optional<SceneGodRaysVolumeDesc> god_rays_volume;
   std::vector<SceneLightDesc> lights;
   std::vector<::t850::SandboxProfileDesc> profiles;
 };

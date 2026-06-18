@@ -38,6 +38,7 @@ std::vector<std::string> g_args;
 namespace t8ditor {
   // Defined in EditorApp.cpp.
   void SetStartupMeshPath(const std::string& p);
+  void SetStartupSceneFilePath(const std::string& p);
   void SetStartupDumpFrame(int frame);
 }
 
@@ -64,6 +65,7 @@ int main(int argc, char** argv) {
   int   logLevel = 3;
   std::string logFile;
   std::string meshPath;
+  std::string sceneFilePath;
   int dumpFrame = -1;
 
   for (int i = 1; i < argc; ++i) {
@@ -78,7 +80,7 @@ int main(int argc, char** argv) {
     else if (a == "--width"  && i + 1 < argc) desc.width  = std::stoi(argv[++i]);
     else if (a == "--height" && i + 1 < argc) desc.height = std::stoi(argv[++i]);
     else if (a == "--mesh"   && i + 1 < argc) meshPath = argv[++i];
-    else if ((a == "--sceneFile" || a == "--t8scene") && i + 1 < argc) ++i;
+    else if ((a == "--sceneFile" || a == "--t8scene") && i + 1 < argc) sceneFilePath = argv[++i];
     else if ((a == "--dump-frame" || a == "--dumpFrame") && i + 1 < argc) dumpFrame = std::stoi(argv[++i]);
     else if (a == "--logFile" && i + 1 < argc) logFile = argv[++i];
     else if (a == "--d3d12debug") t850::g_config.flags.d3d12Debug = true;
@@ -115,12 +117,13 @@ int main(int argc, char** argv) {
 
   // Default to a sample model if the user didn't pick one — Models/SkyBox.glb
   // ships with the repo and is loaded by DayScene, so it's known-good.
-  if (meshPath.empty()) {
+  if (meshPath.empty() && sceneFilePath.empty()) {
     if (std::filesystem::exists("Models/SkyBox.glb")) {
       meshPath = "Models/SkyBox.glb";
     }
   }
   t8ditor::SetStartupMeshPath(meshPath);
+  t8ditor::SetStartupSceneFilePath(sceneFilePath);
   t8ditor::SetStartupDumpFrame(dumpFrame);
 
   g_pApp = new t8ditor::EditorApp();

@@ -1489,6 +1489,20 @@ highp float ComputeScattering(highp float lightDotView)
   result /= (4.0f * PI * pow(1.0 + G_SCATTERING * G_SCATTERING - (2.0f * G_SCATTERING) *      lightDotView, 1.5));
   return result;
 }
+bool IntersectGodRaysBox(highp vec3 origin, highp vec3 direction, highp vec3 boxMin, highp vec3 boxMax, out highp float tNear, out highp float tFar)
+{
+  highp vec3 safeDirection = direction;
+  safeDirection.x = abs(safeDirection.x) < 0.000001 ? (safeDirection.x < 0.0 ? -0.000001 : 0.000001) : safeDirection.x;
+  safeDirection.y = abs(safeDirection.y) < 0.000001 ? (safeDirection.y < 0.0 ? -0.000001 : 0.000001) : safeDirection.y;
+  safeDirection.z = abs(safeDirection.z) < 0.000001 ? (safeDirection.z < 0.0 ? -0.000001 : 0.000001) : safeDirection.z;
+  highp vec3 t0 = (boxMin - origin) / safeDirection;
+  highp vec3 t1 = (boxMax - origin) / safeDirection;
+  highp vec3 tMin = min(t0, t1);
+  highp vec3 tMax = max(t0, t1);
+  tNear = max(max(tMin.x, tMin.y), tMin.z);
+  tFar = min(min(tMax.x, tMax.y), tMax.z);
+  return tFar >= max(tNear, 0.0);
+}
 uniform highp sampler2D tex0;
 uniform mediump sampler2DShadow  tex1;
 void main(){
@@ -1520,6 +1534,32 @@ void main(){
 
  highp vec4 intersectionNear = CameraPosition;
  highp vec4 intersectionFar = position;
+ if (LightPositions[1].w > 0.5) {
+   highp vec3 volumeCenter = LightPositions[1].xyz;
+   highp vec3 volumeHalfExtents = max(abs(LightPositions[2].xyz), vec3(0.001));
+   highp float tNear;
+   highp float tFar;
+   if (!IntersectGodRaysBox(CameraPosition.xyz, rayDir.xyz, volumeCenter - volumeHalfExtents, volumeCenter + volumeHalfExtents, tNear, tFar)) {
+     #ifdef ES_30
+       colorOut = vec4(0.0, 0.0, 0.0, 1.0);
+     #else
+       gl_FragColor = vec4(0.0, 0.0, 0.0, 1.0);
+     #endif
+     return;
+   }
+   tNear = clamp(tNear, 0.0, rayLength);
+   tFar = clamp(tFar, 0.0, rayLength);
+   if (tFar <= tNear) {
+     #ifdef ES_30
+       colorOut = vec4(0.0, 0.0, 0.0, 1.0);
+     #else
+       gl_FragColor = vec4(0.0, 0.0, 0.0, 1.0);
+     #endif
+     return;
+   }
+   intersectionNear = CameraPosition + rayDir * tNear;
+   intersectionFar = CameraPosition + rayDir * tFar;
+ }
 
 //March
  highp vec4 step = (intersectionNear - intersectionFar) / float(steps - 1);
@@ -1682,4 +1722,3 @@ void main(){
 	#endif
 }
 #endif
-

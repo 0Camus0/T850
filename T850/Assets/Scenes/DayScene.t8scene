@@ -165,11 +165,27 @@
          "ortho_h": 130,
          "near_plane": 0.1,
          "far_plane": 600,
-         "yaw_rate": -0.008,
+         "yaw_rate": 0,
          "attached_light": 0,
          "enabled": true,
          "visible": true,
          "frozen": false
+      }
+   ],
+   "camera_animations": [
+      {
+         "name": "DayScene Sun Shadow Yaw Drift",
+         "target": "light_camera",
+         "camera": 0,
+         "enabled": true,
+         "play_on_timeline": true,
+         "loop": true,
+         "start_time": 0,
+         "duration": 0,
+         "linear_velocity": { "x": 0, "y": 0, "z": 0 },
+         "target_velocity": { "x": 0, "y": 0, "z": 0 },
+         "angular_velocity": { "x": 0, "y": -0.008, "z": 0 },
+         "keyframes": []
       }
    ],
    "god_rays_volume": {

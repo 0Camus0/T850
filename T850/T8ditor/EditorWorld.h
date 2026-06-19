@@ -119,6 +119,7 @@ struct EditorWorld {
   std::vector<SceneCamera> cameras;
   std::vector<SceneLight> lights;
   std::vector<t850::scene::SceneLightCameraDesc> lightCameras;
+  std::vector<t850::scene::SceneCameraAnimationDesc> cameraAnimations;
   std::vector<SceneCamera> lightCameraGizmoCameras;
   t850::scene::SceneGodRaysVolumeDesc godRaysVolume;
   GizmoCache godRaysVolumeGizmo;

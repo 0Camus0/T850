@@ -603,6 +603,7 @@ MenuAction ImGuiDrawMenuBar(PanelVisibility& panels) {
       ImGui::MenuItem("Inspector", nullptr, &panels.showInspector);
       ImGui::MenuItem("Console",   nullptr, &panels.showConsole);
       ImGui::MenuItem("Rendering", nullptr, &panels.showRendering);
+      ImGui::MenuItem("Timeline",  nullptr, &panels.showTimeline);
       ImGui::Separator();
       ImGui::MenuItem("Wireframe Overlay", nullptr, &panels.showWireframe);
       ImGui::MenuItem("Show Skybox",       nullptr, &panels.showSkybox);

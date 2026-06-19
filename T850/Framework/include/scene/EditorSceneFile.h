@@ -132,6 +132,31 @@ struct SceneGodRaysVolumeDesc {
   bool show_wire = true;
 };
 
+struct SceneCameraAnimationKeyframeDesc {
+  float time = 0.0f;
+  std::optional<Vec3f> position;
+  std::optional<Vec3f> target;
+  std::optional<Vec3f> rotation;
+  std::optional<float> fov_deg;
+  std::optional<float> ortho_w;
+  std::optional<float> ortho_h;
+};
+
+struct SceneCameraAnimationDesc {
+  std::string name = "Camera Animation";
+  std::string target = "camera"; // camera or light_camera
+  int camera = 0;
+  bool enabled = true;
+  bool play_on_timeline = true;
+  bool loop = true;
+  float start_time = 0.0f;
+  float duration = 0.0f;
+  Vec3f linear_velocity = {0.0f, 0.0f, 0.0f};
+  Vec3f target_velocity = {0.0f, 0.0f, 0.0f};
+  Vec3f angular_velocity = {0.0f, 0.0f, 0.0f};
+  std::vector<SceneCameraAnimationKeyframeDesc> keyframes;
+};
+
 struct ScenePhysicsCookSettingsDesc {
   uint32_t max_triangles_per_leaf = 8;
   std::string build_quality = "runtime_performance";
@@ -304,6 +329,7 @@ struct EditorSceneFile {
   std::vector<SceneSplineDesc> splines;
   std::vector<SceneCameraDesc> cameras;
   std::vector<SceneLightCameraDesc> light_cameras;
+  std::vector<SceneCameraAnimationDesc> camera_animations;
   std::optional<SceneGodRaysVolumeDesc> god_rays_volume;
   std::vector<SceneLightDesc> lights;
   std::vector<::t850::SandboxProfileDesc> profiles;

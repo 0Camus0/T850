@@ -182,6 +182,7 @@ namespace t8ditor {
     t850::RenderSkinnedMesh* GetSelectedSkinnedMesh() const;
     void DrawSelectedAnimationInspector(struct SceneObject& obj);
     void DrawEditorRenderingPanel();
+    void DrawEditorTimelinePanel();
     void SetEditorCubemap(const std::string& cubemapPath);
     void ApplyPendingEditorCubemap();
     EditorUndoState CaptureEditorUndoState(std::string* outKey = nullptr);
@@ -248,6 +249,9 @@ namespace t8ditor {
     int m_editorSplinePreviewIndex = -1;
     t850::Spline m_editorSplinePreviewSpline;
     t850::SplineAgent m_editorSplinePreviewAgent;
+    float m_editorTimelineTimeSec = 0.0f;
+    float m_editorTimelineDurationSec = 0.0f;
+    bool m_editorTimelineLoop = true;
     int m_editorDebugRTSelection = 0;
     int m_editorActiveGaussSelection = 1;
     int m_editorCurrentCubemapIndex = -1;

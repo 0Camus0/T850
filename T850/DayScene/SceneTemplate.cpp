@@ -3117,7 +3117,9 @@ void SceneTemplate::InitVars() {
   m_runtimeSplineAgent = t850::SplineAgent{};
   m_hasAuthoredLightCamera = false;
   m_authoredLightCameraAttachedLight = -1;
-  m_authoredLightCameraYawRate = 0.0f;
+  m_authoredLightCameraLinearVelocity = XVECTOR3(0.0f, 0.0f, 0.0f, 0.0f);
+  m_authoredLightCameraTargetVelocity = XVECTOR3(0.0f, 0.0f, 0.0f, 0.0f);
+  m_authoredLightCameraAngularVelocity = XVECTOR3(0.0f, 0.0f, 0.0f, 0.0f);
   m_ragdollEditDirty = false;
   m_ragdollEditHandleDragging = false;
   m_ragdollEditGizmoDragging = false;
@@ -3254,7 +3256,9 @@ void SceneTemplate::ApplyEditorSceneCameraAndLights(const t850::scene::EditorSce
     }
     m_hasAuthoredLightCamera = false;
     m_authoredLightCameraAttachedLight = -1;
-    m_authoredLightCameraYawRate = 0.0f;
+    m_authoredLightCameraLinearVelocity = XVECTOR3(0.0f, 0.0f, 0.0f, 0.0f);
+    m_authoredLightCameraTargetVelocity = XVECTOR3(0.0f, 0.0f, 0.0f, 0.0f);
+    m_authoredLightCameraAngularVelocity = XVECTOR3(0.0f, 0.0f, 0.0f, 0.0f);
     for (const t850::scene::SceneLightCameraDesc& lightCamera : scene.light_cameras) {
       if (!lightCamera.enabled) continue;
       const XVECTOR3 lightCameraPosition = SceneVecToVector(lightCamera.position);
@@ -3276,7 +3280,18 @@ void SceneTemplate::ApplyEditorSceneCameraAndLights(const t850::scene::EditorSce
       LightCam.SetLookAt(SceneVecToVector(lightCamera.target));
       m_hasAuthoredLightCamera = true;
       m_authoredLightCameraAttachedLight = lightCamera.attached_light;
-      m_authoredLightCameraYawRate = lightCamera.yaw_rate;
+      m_authoredLightCameraAngularVelocity = XVECTOR3(0.0f, lightCamera.yaw_rate, 0.0f, 0.0f);
+      for (const t850::scene::SceneCameraAnimationDesc& animation : scene.camera_animations) {
+        std::string target = animation.target;
+        std::transform(target.begin(), target.end(), target.begin(), [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+        const bool targetsLightCamera = target == "light_camera" || target == "light-camera" || target == "lightcamera";
+        if (animation.enabled && targetsLightCamera && animation.camera == 0) {
+          m_authoredLightCameraLinearVelocity = SceneVecToVector(animation.linear_velocity, 0.0f);
+          m_authoredLightCameraTargetVelocity = SceneVecToVector(animation.target_velocity, 0.0f);
+          m_authoredLightCameraAngularVelocity = SceneVecToVector(animation.angular_velocity, 0.0f);
+          break;
+        }
+      }
       if (m_authoredLightCameraAttachedLight >= 0 &&
           m_authoredLightCameraAttachedLight < static_cast<int>(SceneProp.Lights.size())) {
         Light& attachedLight = SceneProp.Lights[static_cast<std::size_t>(m_authoredLightCameraAttachedLight)];
@@ -3812,7 +3827,9 @@ bool SceneTemplate::LoadEditorSceneAssets(const std::string& scenePath) {
   m_runtimeSplineAgent = t850::SplineAgent{};
   m_hasAuthoredLightCamera = false;
   m_authoredLightCameraAttachedLight = -1;
-  m_authoredLightCameraYawRate = 0.0f;
+  m_authoredLightCameraLinearVelocity = XVECTOR3(0.0f, 0.0f, 0.0f, 0.0f);
+  m_authoredLightCameraTargetVelocity = XVECTOR3(0.0f, 0.0f, 0.0f, 0.0f);
+  m_authoredLightCameraAngularVelocity = XVECTOR3(0.0f, 0.0f, 0.0f, 0.0f);
   m_primaryRagdollResourcePath.clear();
   m_hasAuthoredNavMesh = false;
   m_authoredNavMesh = t850::scene::SceneNavigationMeshDesc{};
@@ -5734,8 +5751,22 @@ void SceneTemplate::OnUpdate(float _DtSecs) {
       if (m_hasAuthoredLightCamera &&
           m_authoredLightCameraAttachedLight >= 0 &&
           m_authoredLightCameraAttachedLight < static_cast<int>(SceneProp.Lights.size())) {
-        if (std::abs(m_authoredLightCameraYawRate) > 0.000001f) {
-          LightCam.Yaw += m_authoredLightCameraYawRate * DtSecs;
+        const bool hasLinearVelocity = m_authoredLightCameraLinearVelocity.Length() > 0.000001f;
+        const bool hasTargetVelocity = m_authoredLightCameraTargetVelocity.Length() > 0.000001f;
+        const bool hasAngularVelocity = m_authoredLightCameraAngularVelocity.Length() > 0.000001f;
+        if (hasLinearVelocity || hasTargetVelocity || hasAngularVelocity) {
+          XVECTOR3 target = LightCam.Eye + LightCam.Look;
+          if (hasLinearVelocity) {
+            LightCam.Eye += m_authoredLightCameraLinearVelocity * DtSecs;
+            target += m_authoredLightCameraLinearVelocity * DtSecs;
+          }
+          if (hasTargetVelocity) {
+            target += m_authoredLightCameraTargetVelocity * DtSecs;
+          }
+          LightCam.SetLookAt(target);
+          LightCam.Pitch += m_authoredLightCameraAngularVelocity.x * DtSecs;
+          LightCam.Yaw += m_authoredLightCameraAngularVelocity.y * DtSecs;
+          LightCam.Roll += m_authoredLightCameraAngularVelocity.z * DtSecs;
           LightCam.Update(DtSecs);
         }
         Light& attachedLight = SceneProp.Lights[static_cast<std::size_t>(m_authoredLightCameraAttachedLight)];

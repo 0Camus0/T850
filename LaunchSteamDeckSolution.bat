@@ -22,7 +22,7 @@ set "SKIP_WINGET=0"
 set "SKIP_HOST=0"
 set "SKIP_DECK=0"
 set "SKIP_DECK_PACKAGES=0"
-set "SKIP_DECK_VCPKG=0"
+set "SKIP_DECK_VCPKG=1"
 set "SKIP_ASSETS=0"
 set "SKIP_LAUNCH=0"
 set "CONFIGURE_DECK=0"
@@ -54,6 +54,7 @@ if /i "%~1"=="--skip-host" set "SKIP_HOST=1"& shift& goto parse_args
 if /i "%~1"=="--skip-deck" set "SKIP_DECK=1"& shift& goto parse_args
 if /i "%~1"=="--skip-deck-packages" set "SKIP_DECK_PACKAGES=1"& shift& goto parse_args
 if /i "%~1"=="--skip-deck-vcpkg" set "SKIP_DECK_VCPKG=1"& shift& goto parse_args
+if /i "%~1"=="--install-deck-vcpkg" set "SKIP_DECK_VCPKG=0"& shift& goto parse_args
 if /i "%~1"=="--skip-assets" set "SKIP_ASSETS=1"& shift& goto parse_args
 if /i "%~1"=="--setup-only" set "SKIP_LAUNCH=1"& shift& goto parse_args
 if /i "%~1"=="--configure" set "CONFIGURE_DECK=1"& shift& goto parse_args
@@ -295,7 +296,7 @@ if "%SKIP_DECK_PACKAGES%"=="0" (
 
 if "%PULL_DECK%"=="1" (
     echo [T850] Syncing branch %BRANCH% on Steam Deck...
-    call :deck_ssh "mkdir -p $(dirname %DECK_ROOT%) && if [ ! -d %DECK_ROOT%/.git ]; then git clone %REPO_URL% %DECK_ROOT%; fi && cd %DECK_ROOT% && git fetch origin %BRANCH% && git checkout %BRANCH% && git pull --ff-only"
+    call :deck_ssh "mkdir -p $(dirname %DECK_ROOT%) && if [ -d %DECK_ROOT%/.git ]; then :; else git clone %REPO_URL% %DECK_ROOT%; fi && cd %DECK_ROOT% && git fetch origin %BRANCH% && git checkout %BRANCH% && git pull --ff-only"
     if errorlevel 1 exit /b 1
 ) else (
     echo [T850] Skipping Steam Deck git sync.
@@ -303,10 +304,10 @@ if "%PULL_DECK%"=="1" (
 
 if "%SKIP_DECK_VCPKG%"=="0" (
     echo [T850] Installing Steam Deck vcpkg dependencies...
-    call :deck_ssh "cd %DECK_ROOT% && if [ ! -f T850/Librerias/vcpkg/bootstrap-vcpkg.sh ]; then rm -rf T850/Librerias/vcpkg && git clone https://github.com/microsoft/vcpkg.git T850/Librerias/vcpkg; fi && cd T850/Librerias/vcpkg && ./bootstrap-vcpkg.sh -disableMetrics && ./vcpkg install --recurse --no-print-usage sdl3[vulkan,wayland,x11]:x64-linux vulkan-headers:x64-linux vulkan-loader:x64-linux vulkan-memory-allocator:x64-linux glslang:x64-linux draco:x64-linux joltphysics:x64-linux recastnavigation:x64-linux imgui[docking-experimental,vulkan-binding,opengl3-binding,sdl3-binding]:x64-linux imguizmo:x64-linux"
+    call :deck_ssh "cd %DECK_ROOT% && if [ -f T850/Librerias/vcpkg/bootstrap-vcpkg.sh ]; then :; else rm -rf T850/Librerias/vcpkg && git clone https://github.com/microsoft/vcpkg.git T850/Librerias/vcpkg; fi && cd T850/Librerias/vcpkg && ./bootstrap-vcpkg.sh -disableMetrics && ./vcpkg install --recurse --no-print-usage sdl3[vulkan,wayland,x11]:x64-linux vulkan-headers:x64-linux vulkan-loader:x64-linux vulkan-memory-allocator:x64-linux glslang:x64-linux draco:x64-linux joltphysics:x64-linux recastnavigation:x64-linux imgui[docking-experimental,vulkan-binding,opengl3-binding,sdl3-binding]:x64-linux imguizmo:x64-linux"
     if errorlevel 1 exit /b 1
 ) else (
-    echo [T850] Skipping Steam Deck vcpkg dependency installation.
+    echo [T850] Skipping Steam Deck vcpkg dependency preinstall. SteamRT CMake installs vcpkg dependencies from its manifest.
 )
 
 exit /b 0
@@ -408,7 +409,8 @@ echo   --skip-winget               Do not install Windows host tools with winget
 echo   --skip-host                 Skip Windows host dependency and asset setup.
 echo   --skip-deck                 Skip all Steam Deck SSH setup.
 echo   --skip-deck-packages        Skip SteamOS pacman package installation.
-echo   --skip-deck-vcpkg           Skip Steam Deck vcpkg dependency installation.
+echo   --skip-deck-vcpkg           Skip Steam Deck vcpkg dependency preinstall. This is the default.
+echo   --install-deck-vcpkg        Preinstall legacy Deck vcpkg dependencies before CMake.
 echo   --skip-assets               Skip local cloud asset download.
 echo   --deploy-assets             Copy local T850\Assets and config.json to the Deck.
 echo   --configure                 Run the Steam Deck CMake configure step.

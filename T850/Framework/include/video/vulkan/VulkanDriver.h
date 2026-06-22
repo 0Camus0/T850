@@ -132,6 +132,11 @@ namespace t850 {
 
     // Write pending CB + textures into a descriptor set and bind it
     void BindPendingDescriptors(VkCommandBuffer cmd, VulkanShader* shader);
+    void ClearPendingTextureBinding(int slot) override {
+      if (slot >= 0 && slot < VulkanShader::kMaxTextureSlots) {
+        m_pendingTextures[slot] = PendingTextureBinding{};
+      }
+    }
 
     // Currently active render pass (backbuffer or RT)
     VkRenderPass GetCurrentRenderPass() const { return m_activeRenderPass; }

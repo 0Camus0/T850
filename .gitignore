@@ -6,6 +6,9 @@
 /T850/bin/x64/
 /T850/bin/arm64/
 /T850/bin/ARM64/
+/T850/bin/SteamDeck/
+/T850/steamdeck/package/
+/deckConfig.json
 
 # ── IDE / editor ──
 /T850/.vs/

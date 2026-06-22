@@ -207,7 +207,10 @@ namespace {
     }
 
     ImGui::SetNextWindowSize(ImVec2(1120.0f, 360.0f), ImGuiCond_FirstUseEver);
-    if (!ImGui::Begin("Sandbox Console", &g_sandboxConsoleOpen)) {
+    ImGuiWindowFlags flags = t850::DevGuiContext::PanelAllowsNavigationFocus("Sandbox Console")
+        ? 0
+        : (ImGuiWindowFlags_NoNavFocus | ImGuiWindowFlags_NoNavInputs);
+    if (!ImGui::Begin("Sandbox Console", &g_sandboxConsoleOpen, flags)) {
       ImGui::End();
       return;
     }

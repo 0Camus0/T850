@@ -7,17 +7,21 @@
 
 #include <video/vulkan/VulkanDriver.h>
 
-#if defined(OS_WINDOWS) || defined(OS_ANDROID)
+#if defined(OS_WINDOWS) || defined(OS_ANDROID) || defined(OS_LINUX)
 
 #define VMA_IMPLEMENTATION
+#if __has_include(<vma/vk_mem_alloc.h>)
 #include <vma/vk_mem_alloc.h>
+#else
+#include <vk_mem_alloc.h>
+#endif
 
 #if defined(OS_WINDOWS)
 #include <glslang/Include/glslang_c_interface.h>
 #include <glslang/Public/resource_limits_c.h>
 #endif
 
-#if defined(OS_WINDOWS)
+#if defined(OS_WINDOWS) || defined(OS_LINUX)
 #include <SDL3/SDL_vulkan.h>
 #elif defined(OS_ANDROID)
 #include <android/native_window.h>
@@ -79,7 +83,7 @@ namespace t850 {
     bool ShouldRecreateSwapchainAfterSuboptimal(VkPhysicalDevice physicalDevice,
                                                 VkSurfaceKHR surface,
                                                 VkExtent2D swapchainExtent) {
-#if defined(OS_ANDROID)
+#if defined(OS_ANDROID) || defined(OS_LINUX)
       if (!physicalDevice || !surface)
         return true;
 
@@ -101,11 +105,11 @@ namespace t850 {
 #endif
     }
 
-    void LogIgnoredAndroidSuboptimalSwapchainOnce() {
-#if defined(OS_ANDROID)
+    void LogIgnoredStableSuboptimalSwapchainOnce() {
+#if defined(OS_ANDROID) || defined(OS_LINUX)
       static bool logged = false;
       if (!logged) {
-        T8_LOG_INFO("[Vulkan] Android swapchain is suboptimal but extent is unchanged; keeping it to avoid per-frame recreation");
+        T8_LOG_INFO("[Vulkan] Swapchain is suboptimal but surface extent is unchanged; keeping it to avoid per-frame recreation");
         logged = true;
       }
 #endif
@@ -369,7 +373,7 @@ namespace t850 {
     appInfo.apiVersion = VK_API_VERSION_1_0;
 
     std::vector<const char*> extensions;
-#if defined(OS_WINDOWS)
+#if defined(OS_WINDOWS) || defined(OS_LINUX)
     // Get SDL-required extensions
     uint32_t sdlExtCount = 0;
     const char* const* sdlExts = SDL_Vulkan_GetInstanceExtensions(&sdlExtCount);
@@ -537,7 +541,7 @@ namespace t850 {
     if (!m_nativeWindow || !m_instance) return false;
     if (m_surface) return true;
 
-#if defined(OS_WINDOWS)
+#if defined(OS_WINDOWS) || defined(OS_LINUX)
     SDL_Window* sdlWin = (SDL_Window*)m_nativeWindow;
     if (!SDL_Vulkan_CreateSurface(sdlWin, m_instance, nullptr, &m_surface)) {
       T8_LOG_ERROR("[Vulkan] SDL_Vulkan_CreateSurface failed: %s", SDL_GetError());
@@ -1342,7 +1346,7 @@ namespace t850 {
         if (ShouldRecreateSwapchainAfterSuboptimal(m_physicalDevice, m_surface, m_swapChainExtent)) {
           m_swapchainNeedsRecreate = true;
         } else {
-          LogIgnoredAndroidSuboptimalSwapchainOnce();
+          LogIgnoredStableSuboptimalSwapchainOnce();
         }
       }
     }
@@ -1939,7 +1943,7 @@ namespace t850 {
         presentRes == VK_SUBOPTIMAL_KHR) {
       if (presentRes == VK_SUBOPTIMAL_KHR &&
           !ShouldRecreateSwapchainAfterSuboptimal(m_physicalDevice, m_surface, m_swapChainExtent)) {
-        LogIgnoredAndroidSuboptimalSwapchainOnce();
+        LogIgnoredStableSuboptimalSwapchainOnce();
       } else {
         T8_LOG_INFO("[Vulkan] Present: swap chain needs recreation (res=%d)", presentRes);
         m_swapchainNeedsRecreate = true;

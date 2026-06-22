@@ -1,303 +1,461 @@
 #include <pch.h>
-#include <video/gl/GLDriver.h>
-#include <core/EngineContext.h>
+
 #include <core/LinuxFramework.h>
-#include <stdio.h>
+#include <core/EngineContext.h>
+#include <core/Config.h>
+#include <video/vulkan/VulkanDriver.h>
+#include <utils/Log.h>
+#include <utils/ThreadPool.h>
+#include <utils/ConfigRuntime.h>
+#include <debug/RuntimeTelemetry.h>
+#include <navigation/NavigationSystem.h>
 
-#include <sys/time.h>
-extern int g_AvoidInput;
-extern std::vector<std::string> g_args;
-namespace t850 {
-#ifdef USING_WAYLAND_NATIVE
-struct wl_compositor    *wlnd_compositor = 0;
-struct wl_shell         *wlnd_shell = 0;
+#include <SDL3/SDL.h>
 
-static void registry_add_object(void *data, struct wl_registry *registry,
-                     uint32_t name, const char *interface, uint32_t version){
-    if (!strcmp(interface,"wl_compositor")) {
-        wlnd_compositor = (wl_compositor*)wl_registry_bind (registry, name, &wl_compositor_interface, 1);
-    }else if (strcmp(interface, "wl_shell") == 0) {
-        wlnd_shell = (wl_shell*)wl_registry_bind(registry, name, &wl_shell_interface, 1);
-    }
-}
-
-static void registry_remove_object(void *data,
-        struct wl_registry *registry, uint32_t name)
-{}
-
-static struct wl_registry_listener registry_listener = {
-                                                    registry_add_object,
-                                                    registry_remove_object
-                                                    };
-
-extern void EGLError(const char* c_ptr);
-#endif
-
-LinuxFramework *LinuxFramework::thiz = 0;
-
-LinuxFramework::LinuxFramework(AppBase *pBaseApp) : RootFramework(pBaseApp), m_alive(true) 	{
-		pBaseApp->SetParentFramework(this);
-		LinuxFramework::thiz = this;
-}
-
-void LinuxFramework::InitGlobalVars(){
-
-}
-
-#include <iostream>
+#include <algorithm>
+#include <cctype>
+#include <cmath>
+#include <cstdlib>
+#include <fstream>
 #include <string>
 #include <vector>
 
+extern std::vector<std::string> g_args;
 
+namespace t850 {
+  namespace {
+    std::string ReadFirstLine(const char* path) {
+      std::ifstream file(path);
+      std::string value;
+      std::getline(file, value);
+      return value;
+    }
 
+    std::string DetectSteamDeckReason() {
+      const std::string product = ReadFirstLine("/sys/devices/virtual/dmi/id/product_name");
+      const std::string board = ReadFirstLine("/sys/devices/virtual/dmi/id/board_name");
+      const std::string vendor = ReadFirstLine("/sys/devices/virtual/dmi/id/sys_vendor");
+      const std::string probe = product + " " + board + " " + vendor;
+      std::string lower = probe;
+      std::transform(lower.begin(), lower.end(), lower.begin(), [](unsigned char ch) {
+        return static_cast<char>(std::tolower(ch));
+      });
+      if (lower.find("steam deck") != std::string::npos || lower.find("jupiter") != std::string::npos) {
+        return "Steam Deck (" + probe + ")";
+      }
+      return {};
+    }
 
-void LinuxFramework::OnCreateApplication(ApplicationDesc desc){
+    float NormalizeGamepadAxis(Sint16 value, Sint16 deadzone = 8000) {
+      if (std::abs(value) <= deadzone) {
+        return 0.0f;
+      }
+      const float sign = value < 0 ? -1.0f : 1.0f;
+      const float magnitude = (std::abs(static_cast<int>(value)) - deadzone) / static_cast<float>(32767 - deadzone);
+      return sign * (std::min)(1.0f, (std::max)(0.0f, magnitude));
+    }
+
+    float NormalizeGamepadTrigger(Sint16 value) {
+      constexpr Sint16 deadzone = 2000;
+      if (value <= deadzone) {
+        return 0.0f;
+      }
+      return (std::min)(1.0f, (value - deadzone) / static_cast<float>(32767 - deadzone));
+    }
+  }
+
+  LinuxFramework* LinuxFramework::thiz = nullptr;
+
+  LinuxFramework::LinuxFramework(AppBase* appBase)
+    : RootFramework(appBase), m_alive(true), m_pWindow(nullptr) {
+    pBaseApp->SetParentFramework(this);
+    LinuxFramework::thiz = this;
+  }
+
+  LinuxFramework::~LinuxFramework() {
+    OnDestroyApplication();
+  }
+
+  void LinuxFramework::InitGlobalVars() {}
+
+  void LinuxFramework::OnCreateApplication(ApplicationDesc desc) {
     aplicationDescriptor = desc;
-    m_inited = true;
-#ifdef USING_WAYLAND_NATIVE
-    printf("Using Wayland Camus\n");
-#else
-    printf("Using Wayland Freeglut\n");
-#endif
+    aplicationDescriptor.api = GraphicsApi::VULKAN;
 
-    int req = 0;
-    g_AvoidInput = 0;
-    putenv( (char *) "__GL_SYNC_TO_VBLANK=1" );
-    int width = 1280;
-	int height = 720;
+    InitGlobalThreadPool();
+    RuntimeTelemetry::InitializeFromConfig(g_config);
+    const navigation::NavigationBackendInfo navInfo = navigation::GetNavigationBackendInfo();
+    T8_LOG_INFO("[Navigation] Recast=%d Detour=%d Crowd=%d TileCache=%d version=%s validation=%s",
+                navInfo.recastAvailable ? 1 : 0,
+                navInfo.detourAvailable ? 1 : 0,
+                navInfo.detourCrowdAvailable ? 1 : 0,
+                navInfo.detourTileCacheAvailable ? 1 : 0,
+                navInfo.recastVersion.c_str(),
+                navigation::ValidateNavigationBackend() ? "ok" : "failed");
 
-	for(unsigned int i=0;i<g_args.size();i++){
-        if(g_args[i] == "-x"){
-           width = atoi( g_args[i+1].c_str() );
+    if (!SDL_Init(SDL_INIT_VIDEO | SDL_INIT_GAMEPAD)) {
+      T8_LOG_ERROR("[LinuxFramework] SDL initialization failed: %s", SDL_GetError());
+      m_alive = false;
+      return;
+    }
+
+    pBaseApp->InitVars();
+    InitializeGamepads();
+    ChangeAPI(GraphicsApi::VULKAN);
+    m_inited = pVideoDriver != nullptr;
+    if (m_inited) {
+      UpdateApplication();
+    }
+    OnDestroyApplication();
+  }
+
+  void LinuxFramework::OnDestroyApplication() {
+    if (!m_inited && !pVideoDriver && !m_pWindow && !m_gamepad) {
+      return;
+    }
+
+    ShutdownGamepads();
+    if (pVideoDriver) {
+      pVideoDriver->FlushGPUResources();
+      if (pBaseApp) {
+        pBaseApp->DestroyAssets();
+      }
+      pVideoDriver->DestroyDriver();
+      delete pVideoDriver;
+      pVideoDriver = nullptr;
+      g_pBaseDriver = nullptr;
+    }
+
+    RuntimeTelemetry::Shutdown();
+    ShutdownGlobalThreadPool();
+    ClearEngineContext();
+
+    if (m_pWindow) {
+      SDL_DestroyWindow(m_pWindow);
+      m_pWindow = nullptr;
+    }
+    SDL_Quit();
+    m_inited = false;
+  }
+
+  void LinuxFramework::OnInterruptApplication() {}
+  void LinuxFramework::OnResumeApplication() {}
+
+  void LinuxFramework::UpdateApplication() {
+    while (m_alive) {
+      ProcessInput();
+      if (!m_alive) {
+        break;
+      }
+      pBaseApp->OnUpdate();
+    }
+  }
+
+  void LinuxFramework::ProcessInput() {
+    pBaseApp->IManager.scrollDelta = 0.0f;
+    pBaseApp->IManager.xDelta = 0;
+    pBaseApp->IManager.yDelta = 0;
+
+    SDL_Event event;
+    while (SDL_PollEvent(&event)) {
+      switch (event.type) {
+      case SDL_EVENT_QUIT:
+        m_alive = false;
+        break;
+
+      case SDL_EVENT_KEY_DOWN: {
+        const int t800key = SDL3KeyToSTDKEY(static_cast<unsigned int>(event.key.key));
+        if (t800key == T800K_ESCAPE) {
+          if (!pBaseApp || !pBaseApp->IsModalActive()) {
+            m_alive = false;
+          }
         }
-
-        if(g_args[i] == "-y"){
-           height = atoi( g_args[i+1].c_str() );
+        if (t800key >= 0 && t800key < MAXKEYS) {
+          pBaseApp->IManager.KeyStates[0][t800key] = true;
         }
-	}
-#ifndef T850_HEADLESS
-#ifdef USING_FREEGLUT
-    glutInit(&req,0);
-    glutInitContextProfile(GLUT_CORE_PROFILE);
-#ifdef USING_OPENGL_ES30
-    glutInitContextVersion(3,0);
-#elif defined(USING_OPENGL_ES31)
-    glutInitContextVersion(3,1);
-#elif defined(USING_OPENGL_ES20)
-    glutInitContextVersion(2,0);
-#endif
+      } break;
 
+      case SDL_EVENT_KEY_UP: {
+        const int t800key = SDL3KeyToSTDKEY(static_cast<unsigned int>(event.key.key));
+        if (t800key >= 0 && t800key < MAXKEYS) {
+          pBaseApp->IManager.KeyStates[0][t800key] = false;
+          pBaseApp->IManager.KeyStates[1][t800key] = false;
+        }
+      } break;
 
-    glutInitWindowSize(width,height);
-    glutInitDisplayMode(GLUT_DOUBLE|GLUT_RGB|GLUT_DEPTH);
-    glutCreateWindow("T850");
-    glutDisplayFunc(IdleFunction);
-    glutIdleFunc(IdleFunction);
-    glutMouseFunc(MouseClickFunction);
-    glutPassiveMotionFunc(MouseMoveFunction);
-    glutReshapeFunc(ResizeWindow);
-    glutKeyboardFunc(KeyboardEvent);
-    glutKeyboardUpFunc(KeyboardReleaseEvent);
-#elif defined(USING_WAYLAND_NATIVE)
+      case SDL_EVENT_TEXT_INPUT:
+        if (event.text.text) {
+          pBaseApp->IManager.textInput.append(event.text.text);
+        }
+        break;
 
-    wlnd_display = wl_display_connect(NULL);
-    if (wlnd_display == NULL) {
-        fprintf(stderr, "Can't connect to display\n");
-        exit(1);
-    }
-    printf("connected to display\n");
+      case SDL_EVENT_MOUSE_MOTION:
+        pBaseApp->IManager.xDelta += static_cast<int>(event.motion.xrel);
+        pBaseApp->IManager.yDelta += static_cast<int>(event.motion.yrel);
+        pBaseApp->IManager.mouseX = static_cast<int>(event.motion.x);
+        pBaseApp->IManager.mouseY = static_cast<int>(event.motion.y);
+        break;
 
-    wl_registry *registry = wl_display_get_registry(wlnd_display);
-    wl_registry_add_listener(registry, &registry_listener, NULL);
+      case SDL_EVENT_MOUSE_BUTTON_DOWN: {
+        const int btn = event.button.button - 1;
+        if (btn >= 0 && btn < MAXMOUSEBUTTONS) {
+          pBaseApp->IManager.MouseButtonStates[0][btn] = true;
+        }
+      } break;
 
-    wl_display_dispatch(wlnd_display);
-    wl_display_roundtrip(wlnd_display);
+      case SDL_EVENT_MOUSE_BUTTON_UP: {
+        const int btn = event.button.button - 1;
+        if (btn >= 0 && btn < MAXMOUSEBUTTONS) {
+          pBaseApp->IManager.MouseButtonStates[0][btn] = false;
+          pBaseApp->IManager.MouseButtonStates[1][btn] = false;
+        }
+      } break;
 
-    if (wlnd_compositor == NULL) {
-        fprintf(stderr, "Can't find compositor\n");
-	exit(1);
-    } else {
-        fprintf(stderr, "Found compositor\n");
-    }
+      case SDL_EVENT_MOUSE_WHEEL: {
+        float wheelY = event.wheel.y;
+        if (event.wheel.direction == SDL_MOUSEWHEEL_FLIPPED) {
+          wheelY = -wheelY;
+        }
+        pBaseApp->IManager.scrollDelta += wheelY;
+      } break;
 
-    wlnd_surface = wl_compositor_create_surface(wlnd_compositor);
-    if (wlnd_surface == NULL) {
-        fprintf(stderr, "Can't create surface\n");
-        exit(1);
-    } else {
-        fprintf(stderr, "Created surface\n");
-    }
+      case SDL_EVENT_WINDOW_RESIZED:
+      case SDL_EVENT_WINDOW_PIXEL_SIZE_CHANGED: {
+        int width = 0;
+        int height = 0;
+        if (m_pWindow && SDL_GetWindowSizeInPixels(m_pWindow, &width, &height)) {
+          aplicationDescriptor.width = static_cast<unsigned int>((std::max)(1, width));
+          aplicationDescriptor.height = static_cast<unsigned int>((std::max)(1, height));
+          ResetInputAfterWindowStateChange();
+          if (pVideoDriver) {
+            pVideoDriver->ResizeSwapchain(static_cast<int>(aplicationDescriptor.width),
+                                          static_cast<int>(aplicationDescriptor.height));
+          }
+        }
+      } break;
 
-    wlnd_shell_surface = wl_shell_get_shell_surface(wlnd_shell, wlnd_surface);
-    wl_shell_surface_set_toplevel(wlnd_shell_surface);
+      case SDL_EVENT_GAMEPAD_ADDED:
+        OpenGamepad(static_cast<int>(event.gdevice.which));
+        break;
 
-    wland_region = wl_compositor_create_region(wlnd_compositor);
-    wl_region_add(wland_region, 0, 0,
-		  width,
-		  height);
-    wl_surface_set_opaque_region(wlnd_surface, wland_region);
+      case SDL_EVENT_GAMEPAD_REMOVED:
+        CloseGamepad(static_cast<int>(event.gdevice.which));
+        break;
 
-
-
-
-	EGLint numConfigs;
-
-	eglDisplay = eglGetDisplay((EGLNativeDisplayType)wlnd_display);
-
-	EGLError("eglGetDisplay");
-
-	EGLint iMajorVersion, iMinorVersion;
-
-	if (!eglInitialize(eglDisplay, &iMajorVersion, &iMinorVersion)) {
-		std::cout << "Failed to initialize egl" << std::endl;
-	}else{
-		std::cout << "EGL version " << iMajorVersion << "." << iMinorVersion << std::endl;
-	}
-
-	eglBindAPI(EGL_OPENGL_ES_API);
-
-	EGLError("eglBindAPI");
-
-	const EGLint attribs[] = {
-		EGL_SURFACE_TYPE,	EGL_WINDOW_BIT,
-		EGL_RENDERABLE_TYPE,	EGL_OPENGL_ES2_BIT,
-		EGL_BLUE_SIZE,		8,
-		EGL_GREEN_SIZE,		8,
-		EGL_RED_SIZE,		8,
-		EGL_DEPTH_SIZE,		24,
-		EGL_NONE
-	};
-
-	if(!eglChooseConfig(eglDisplay, attribs, &eglConfig, 1, &numConfigs)){
-		std::cout << "Failed to choose config" << std::endl;
-	}
-
-	EGLError("eglChooseConfig");
-
-	EGLint ai32ContextAttribs[] = { EGL_CONTEXT_CLIENT_VERSION, 2, EGL_NONE };
-	eglContext = eglCreateContext(eglDisplay, eglConfig, NULL, ai32ContextAttribs);
-
-	EGLError("eglCreateContext");
-
-	wland_egl_window = wl_egl_window_create(wlnd_surface,width, height);
-    if (wland_egl_window == EGL_NO_SURFACE) {
-        fprintf(stderr, "Can't create egl window\n");
-	exit(1);
-    } else {
-        fprintf(stderr, "Created egl window\n");
+      default:
+        break;
+      }
     }
 
-    eglSurface = eglCreateWindowSurface(eglDisplay, eglConfig, (EGLNativeWindowType) wland_egl_window, NULL);
+    float mouseX = 0.0f;
+    float mouseY = 0.0f;
+    SDL_GetMouseState(&mouseX, &mouseY);
+    pBaseApp->IManager.mouseX = static_cast<int>(mouseX);
+    pBaseApp->IManager.mouseY = static_cast<int>(mouseY);
 
-	EGLError("eglCreateWindowSurface");
+    RefreshGamepadState();
+    if (pBaseApp->IManager.Gamepad.backPressed) {
+      T8_LOG_INFO("[Input] Gamepad View/Back pressed");
+    }
+  }
 
-	if (eglMakeCurrent(eglDisplay, eglSurface, eglSurface, eglContext) == EGL_FALSE) {
-		std::cout << "Failed to make current" << std::endl;
-		return;
-	}
-#endif
-#endif //headless
-    pVideoDriver = new GLDriver;
-    pVideoDriver->SetDimensions(width, height);
+  void LinuxFramework::ResetApplication() {}
 
+  void LinuxFramework::ChangeAPI(GraphicsApi::E api) {
+    if (api != GraphicsApi::VULKAN) {
+      T8_LOG_INFO("[LinuxFramework] Steam Deck/Linux backend is Vulkan-only; forcing Vulkan");
+    }
+
+    if (m_inited && pVideoDriver) {
+      pVideoDriver->FlushGPUResources();
+      pBaseApp->DestroyAssets();
+      pVideoDriver->DestroyDriver();
+      delete pVideoDriver;
+      pVideoDriver = nullptr;
+      g_pBaseDriver = nullptr;
+      ClearEngineContext();
+    }
+
+    if (m_pWindow) {
+      SDL_DestroyWindow(m_pWindow);
+      m_pWindow = nullptr;
+    }
+
+    aplicationDescriptor.api = GraphicsApi::VULKAN;
+    std::string title = aplicationDescriptor.title.empty() ? "T850" : aplicationDescriptor.title;
+    title += "   Vulkan Steam Deck";
+
+    Uint64 flags = SDL_WINDOW_VULKAN | SDL_WINDOW_RESIZABLE;
+    if (aplicationDescriptor.videoMode == VideoMode::FULLSCREEN) {
+      flags |= SDL_WINDOW_FULLSCREEN;
+    }
+
+    m_pWindow = SDL_CreateWindow(title.c_str(),
+                                 static_cast<int>(aplicationDescriptor.width),
+                                 static_cast<int>(aplicationDescriptor.height),
+                                 flags);
+    if (!m_pWindow) {
+      T8_LOG_ERROR("[LinuxFramework] SDL window creation failed: %s", SDL_GetError());
+      return;
+    }
+    SDL_SetWindowPosition(m_pWindow, 0, 0);
+    SDL_StartTextInput(m_pWindow);
+
+    int pixelWidth = 0;
+    int pixelHeight = 0;
+    if (SDL_GetWindowSizeInPixels(m_pWindow, &pixelWidth, &pixelHeight)) {
+      aplicationDescriptor.width = static_cast<unsigned int>((std::max)(1, pixelWidth));
+      aplicationDescriptor.height = static_cast<unsigned int>((std::max)(1, pixelHeight));
+    }
+
+    pVideoDriver = new VulkanDriver;
+    pVideoDriver->SetDimensions(static_cast<int>(aplicationDescriptor.width),
+                                static_cast<int>(aplicationDescriptor.height));
     g_pBaseDriver = pVideoDriver;
-
-	pVideoDriver->SetWindow(0);
-	pVideoDriver->InitDriver();
+    Log::SetSessionTag(config::ApiTag(pVideoDriver->m_currentAPI));
+    pVideoDriver->SetWindowHandle(WindowHandle::FromSDL(m_pWindow));
+    pVideoDriver->InitDriver();
     RefreshEngineContextFromGlobals();
+    pBaseApp->CreateAssets();
+    pVideoDriver->BuildPipelineObjects();
 
-	timeval start;
-    gettimeofday(&start,0);
+    T8_LOG_INFO("[LinuxFramework] Vulkan runtime ready (%ux%u)",
+                aplicationDescriptor.width,
+                aplicationDescriptor.height);
+  }
 
-
-	pBaseApp->InitVars();
-	pBaseApp->CreateAssets();
-
-	timeval actual;
-	gettimeofday(&actual,0);
-	double ttaken = double( (actual.tv_sec - start.tv_sec) + (actual.tv_usec - start.tv_usec)/1000000.0);
-
-	printf("Asset Loading took : %f \n",ttaken);
-
-#ifdef USING_FREEGLUT
-	glutMainLoop();
-#elif defined(USING_WAYLAND_NATIVE)
-    UpdateApplication();
-#endif // USING_FREEGLUT
-}
-
-void LinuxFramework::OnDestroyApplication(){
-
-}
-
-void LinuxFramework::OnInterruptApplication(){
-
-}
-
-void LinuxFramework::OnResumeApplication(){
-
-}
-
-void LinuxFramework::UpdateApplication(){
-#ifdef USING_FREEGLUT
-    pBaseApp->OnUpdate();
-#elif defined(USING_WAYLAND_NATIVE)
-    while(m_alive){
-        pBaseApp->OnUpdate();
-        eglSwapBuffers(eglDisplay, eglSurface);
+  void LinuxFramework::ResetInputAfterWindowStateChange() {
+    pBaseApp->IManager.xDelta = 0;
+    pBaseApp->IManager.yDelta = 0;
+    pBaseApp->IManager.scrollDelta = 0.0f;
+    pBaseApp->IManager.textInput.clear();
+    for (int i = 0; i < MAXMOUSEBUTTONS; ++i) {
+      pBaseApp->IManager.MouseButtonStates[0][i] = false;
+      pBaseApp->IManager.MouseButtonStates[1][i] = false;
     }
-#endif
-}
+    SDL_PumpEvents();
+  }
 
-void LinuxFramework::ProcessInput(){
+  void LinuxFramework::InitializeGamepads() {
+    m_handheldReason = DetectSteamDeckReason();
+    m_handheldDetected = !m_handheldReason.empty();
+    pBaseApp->IManager.Gamepad.handheldDevice = m_handheldDetected;
+    pBaseApp->IManager.Gamepad.handheldReason = m_handheldReason;
+    T8_LOG_INFO("[Input] Handheld detection: %s%s",
+                m_handheldDetected ? "yes " : "no",
+                m_handheldDetected ? m_handheldReason.c_str() : "");
 
-}
+    int gamepadCount = 0;
+    SDL_JoystickID* gamepads = SDL_GetGamepads(&gamepadCount);
+    for (int i = 0; gamepads && i < gamepadCount && !m_gamepad; ++i) {
+      OpenGamepad(static_cast<int>(gamepads[i]));
+    }
+    if (gamepads) {
+      SDL_free(gamepads);
+    }
+  }
 
-void LinuxFramework::ResetApplication(){
+  void LinuxFramework::ShutdownGamepads() {
+    if (m_gamepad) {
+      SDL_CloseGamepad(static_cast<SDL_Gamepad*>(m_gamepad));
+      m_gamepad = nullptr;
+      m_gamepadInstanceId = 0;
+    }
+    if (pBaseApp) {
+      pBaseApp->IManager.Gamepad = GamepadInputState{};
+    }
+  }
 
-}
-void LinuxFramework::ChangeAPI(GraphicsApi::E api){
+  void LinuxFramework::OpenGamepad(int instanceId) {
+    if (m_gamepad) {
+      return;
+    }
+    SDL_Gamepad* gamepad = SDL_OpenGamepad(static_cast<SDL_JoystickID>(instanceId));
+    if (!gamepad) {
+      T8_LOG_INFO("[Input] Could not open SDL gamepad id=%d: %s", instanceId, SDL_GetError());
+      return;
+    }
 
-}
+    m_gamepad = gamepad;
+    m_gamepadInstanceId = instanceId;
+    GamepadInputState& state = pBaseApp->IManager.Gamepad;
+    state.connected = true;
+    state.enabled = true;
+    state.handheldDevice = m_handheldDetected;
+    state.handheldReason = m_handheldReason;
+    const char* name = SDL_GetGamepadName(gamepad);
+    state.name = name ? name : "SDL gamepad";
+    T8_LOG_INFO("[Input] Gamepad opened id=%d name='%s' handheld=%d reason='%s'",
+                instanceId,
+                state.name.c_str(),
+                state.handheldDevice ? 1 : 0,
+                state.handheldReason.c_str());
+  }
 
-#ifdef USING_FREEGLUT
-// STATIC
-void LinuxFramework::IdleFunction(){
-    thiz->UpdateApplication();
-    thiz->pBaseApp->IManager.xDelta = 0;
-    thiz->pBaseApp->IManager.yDelta = 0;
-}
+  void LinuxFramework::CloseGamepad(int instanceId) {
+    if (!m_gamepad || m_gamepadInstanceId != instanceId) {
+      return;
+    }
+    T8_LOG_INFO("[Input] Gamepad removed id=%d name='%s'", instanceId, pBaseApp->IManager.Gamepad.name.c_str());
+    SDL_CloseGamepad(static_cast<SDL_Gamepad*>(m_gamepad));
+    m_gamepad = nullptr;
+    m_gamepadInstanceId = 0;
+    pBaseApp->IManager.Gamepad = GamepadInputState{};
+    pBaseApp->IManager.Gamepad.handheldDevice = m_handheldDetected;
+    pBaseApp->IManager.Gamepad.handheldReason = m_handheldReason;
+  }
 
-void LinuxFramework::MouseClickFunction(int button, int state, int x, int y){
+  void LinuxFramework::RefreshGamepadState() {
+    GamepadInputState& state = pBaseApp->IManager.Gamepad;
+    const GamepadInputState previous = state;
+    state.handheldDevice = m_handheldDetected;
+    state.handheldReason = m_handheldReason;
+    if (!m_gamepad) {
+      state.connected = false;
+      state.enabled = false;
+      return;
+    }
 
-}
+    SDL_Gamepad* gamepad = static_cast<SDL_Gamepad*>(m_gamepad);
+    state.connected = true;
+    state.enabled = true;
+    state.leftX = NormalizeGamepadAxis(SDL_GetGamepadAxis(gamepad, SDL_GAMEPAD_AXIS_LEFTX));
+    state.leftY = NormalizeGamepadAxis(SDL_GetGamepadAxis(gamepad, SDL_GAMEPAD_AXIS_LEFTY));
+    state.rightX = NormalizeGamepadAxis(SDL_GetGamepadAxis(gamepad, SDL_GAMEPAD_AXIS_RIGHTX));
+    state.rightY = NormalizeGamepadAxis(SDL_GetGamepadAxis(gamepad, SDL_GAMEPAD_AXIS_RIGHTY));
+    state.leftTrigger = NormalizeGamepadTrigger(SDL_GetGamepadAxis(gamepad, SDL_GAMEPAD_AXIS_LEFT_TRIGGER));
+    state.rightTrigger = NormalizeGamepadTrigger(SDL_GetGamepadAxis(gamepad, SDL_GAMEPAD_AXIS_RIGHT_TRIGGER));
 
-void LinuxFramework::MouseMoveFunction(int x, int y){
-    static int xDelta = 0;
-	static int yDelta = 0;
+    state.buttonSouth = SDL_GetGamepadButton(gamepad, SDL_GAMEPAD_BUTTON_SOUTH);
+    state.buttonEast = SDL_GetGamepadButton(gamepad, SDL_GAMEPAD_BUTTON_EAST);
+    state.buttonWest = SDL_GetGamepadButton(gamepad, SDL_GAMEPAD_BUTTON_WEST);
+    state.buttonNorth = SDL_GetGamepadButton(gamepad, SDL_GAMEPAD_BUTTON_NORTH);
+    state.back = SDL_GetGamepadButton(gamepad, SDL_GAMEPAD_BUTTON_BACK);
+    state.guide = SDL_GetGamepadButton(gamepad, SDL_GAMEPAD_BUTTON_GUIDE);
+    state.start = SDL_GetGamepadButton(gamepad, SDL_GAMEPAD_BUTTON_START);
+    state.leftStick = SDL_GetGamepadButton(gamepad, SDL_GAMEPAD_BUTTON_LEFT_STICK);
+    state.rightStick = SDL_GetGamepadButton(gamepad, SDL_GAMEPAD_BUTTON_RIGHT_STICK);
+    state.leftShoulder = SDL_GetGamepadButton(gamepad, SDL_GAMEPAD_BUTTON_LEFT_SHOULDER);
+    state.rightShoulder = SDL_GetGamepadButton(gamepad, SDL_GAMEPAD_BUTTON_RIGHT_SHOULDER);
+    state.dpadUp = SDL_GetGamepadButton(gamepad, SDL_GAMEPAD_BUTTON_DPAD_UP);
+    state.dpadDown = SDL_GetGamepadButton(gamepad, SDL_GAMEPAD_BUTTON_DPAD_DOWN);
+    state.dpadLeft = SDL_GetGamepadButton(gamepad, SDL_GAMEPAD_BUTTON_DPAD_LEFT);
+    state.dpadRight = SDL_GetGamepadButton(gamepad, SDL_GAMEPAD_BUTTON_DPAD_RIGHT);
 
-	xDelta = x - xDelta;
-	yDelta = y - yDelta;
-
-	thiz->pBaseApp->IManager.xDelta = xDelta;
-	thiz->pBaseApp->IManager.yDelta = yDelta;
-
-	xDelta = x;
-	yDelta = y;
-}
-
-void LinuxFramework::ResizeWindow(int w, int h){
-
-}
-
-void LinuxFramework::KeyboardEvent(unsigned char key, int x, int y){
-printf("key %d \n",key);
-	thiz->pBaseApp->IManager.KeyStates[0][key] = true;
-}
-
-void LinuxFramework::KeyboardReleaseEvent(unsigned char key, int x, int y){
-	thiz->pBaseApp->IManager.KeyStates[0][key] = false;
-	thiz->pBaseApp->IManager.KeyStates[1][key] = false;
-}
-#endif
+    state.buttonSouthPressed = state.buttonSouth && !previous.buttonSouth;
+    state.buttonEastPressed = state.buttonEast && !previous.buttonEast;
+    state.buttonWestPressed = state.buttonWest && !previous.buttonWest;
+    state.buttonNorthPressed = state.buttonNorth && !previous.buttonNorth;
+    state.backPressed = state.back && !previous.back;
+    state.guidePressed = state.guide && !previous.guide;
+    state.startPressed = state.start && !previous.start;
+    state.leftStickPressed = state.leftStick && !previous.leftStick;
+    state.rightStickPressed = state.rightStick && !previous.rightStick;
+    state.leftShoulderPressed = state.leftShoulder && !previous.leftShoulder;
+    state.rightShoulderPressed = state.rightShoulder && !previous.rightShoulder;
+    state.dpadUpPressed = state.dpadUp && !previous.dpadUp;
+    state.dpadDownPressed = state.dpadDown && !previous.dpadDown;
+    state.dpadLeftPressed = state.dpadLeft && !previous.dpadLeft;
+    state.dpadRightPressed = state.dpadRight && !previous.dpadRight;
+  }
 }

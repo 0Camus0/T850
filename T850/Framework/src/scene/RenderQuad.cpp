@@ -16,7 +16,7 @@
 #include <scene/RenderMesh.h>
 #include <utils/Utils.h>
 
-#ifndef OS_ANDROID
+#if defined(USING_GL_COMMON)
 #include <video/gl/GLShader.h>
 #include <video/gl/GLDriver.h>
 #endif

@@ -66,6 +66,38 @@ inline void SubmitGamepadGuiNavigation(const GamepadInputState& gamepad, bool gu
   analog(ImGuiKey_GamepadRStickDown, HandheldAnalogAmount((std::max)(gamepad.rightY, 0.0f), kStickNavThreshold));
 }
 
+inline void SubmitGamepadGuiDirectionalNavigation(const GamepadInputState& gamepad, bool guiVisible) {
+  ImGuiIO& io = ImGui::GetIO();
+  io.ConfigFlags |= ImGuiConfigFlags_NavEnableGamepad;
+
+  const bool gamepadAvailable = gamepad.connected && gamepad.enabled;
+  const bool active = guiVisible && gamepadAvailable;
+  if (gamepadAvailable) {
+    io.BackendFlags |= ImGuiBackendFlags_HasGamepad;
+  } else {
+    io.BackendFlags &= ~ImGuiBackendFlags_HasGamepad;
+  }
+
+  const auto key = [&](ImGuiKey imguiKey, bool down) {
+    io.AddKeyEvent(imguiKey, active && down);
+  };
+  const auto analog = [&](ImGuiKey imguiKey, float value) {
+    io.AddKeyAnalogEvent(imguiKey, active && value > 0.0f, active ? value : 0.0f);
+  };
+
+  key(ImGuiKey_GamepadFaceDown, gamepad.buttonSouth);
+  key(ImGuiKey_GamepadDpadLeft, gamepad.dpadLeft);
+  key(ImGuiKey_GamepadDpadRight, gamepad.dpadRight);
+  key(ImGuiKey_GamepadDpadUp, gamepad.dpadUp);
+  key(ImGuiKey_GamepadDpadDown, gamepad.dpadDown);
+
+  constexpr float kStickNavThreshold = 0.22f;
+  analog(ImGuiKey_GamepadLStickLeft, HandheldAnalogAmount((std::min)(gamepad.leftX, 0.0f), kStickNavThreshold));
+  analog(ImGuiKey_GamepadLStickRight, HandheldAnalogAmount((std::max)(gamepad.leftX, 0.0f), kStickNavThreshold));
+  analog(ImGuiKey_GamepadLStickUp, HandheldAnalogAmount((std::min)(gamepad.leftY, 0.0f), kStickNavThreshold));
+  analog(ImGuiKey_GamepadLStickDown, HandheldAnalogAmount((std::max)(gamepad.leftY, 0.0f), kStickNavThreshold));
+}
+
 inline void DrawHandheldCenteredText(ImDrawList* drawList, ImVec2 center, const char* text, ImU32 color) {
   const ImVec2 size = ImGui::CalcTextSize(text);
   drawList->AddText(ImVec2(center.x - size.x * 0.5f, center.y - size.y * 0.5f), color, text);

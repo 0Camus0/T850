@@ -4,7 +4,7 @@
 #include <Descriptors.h>
 #include <core/Core.h>
 #include <debug/LoadingProgress.h>
-#ifdef OS_WINDOWS
+#if defined(OS_WINDOWS) || defined(OS_LINUX)
 #include <utils/HandheldControllerOverlay.h>
 #endif
 #include <utils/Log.h>
@@ -13,6 +13,8 @@
 #include <imgui.h>
 #ifndef OS_ANDROID
 #include <imgui_impl_opengl3.h>
+#include <imgui_impl_sdl3.h>
+#include <SDL3/SDL.h>
 #endif
 #include <imgui_impl_vulkan.h>
 
@@ -20,8 +22,6 @@
 #  include <core/windows/Win32Framework.h>
 #  include <d3d11.h>
 #  include <imgui_impl_dx11.h>
-#  include <imgui_impl_sdl3.h>
-#  include <SDL3/SDL.h>
 #  include <video/d3d11/D3D11Texture.h>
 #  if __has_include(<imgui_impl_dx12.h>)
 #    define T850_IMGUI_HAS_DX12 1
@@ -30,6 +30,9 @@
 #  else
 #    define T850_IMGUI_HAS_DX12 0
 #  endif
+#endif
+#ifdef OS_LINUX
+#  include <core/LinuxFramework.h>
 #endif
 #ifdef OS_ANDROID
 #  include <android/input.h>
@@ -159,6 +162,9 @@ bool ImGuiSystem::Init(RootFramework* framework, const char* iniFileName, bool e
 #elif defined(OS_WINDOWS)
   auto* w32 = static_cast<Win32Framework*>(framework);
   m_sdlWindow = w32 ? w32->m_pWindow : nullptr;
+#elif defined(OS_LINUX)
+  auto* linuxFramework = static_cast<LinuxFramework*>(framework);
+  m_sdlWindow = linuxFramework ? linuxFramework->m_pWindow : nullptr;
 #else
   m_sdlWindow = nullptr;
 #endif
@@ -217,6 +223,8 @@ bool ImGuiSystem::Init(RootFramework* framework, const char* iniFileName, bool e
   } else {
     platformOK = ImGui_ImplSDL3_InitForD3D(m_sdlWindow);
   }
+#elif defined(OS_LINUX)
+  platformOK = ImGui_ImplSDL3_InitForVulkan(m_sdlWindow);
 #else
   platformOK = ImGui_ImplSDL3_InitForOpenGL(m_sdlWindow, nullptr);
 #endif
@@ -227,7 +235,7 @@ bool ImGuiSystem::Init(RootFramework* framework, const char* iniFileName, bool e
     m_framework = nullptr;
     return false;
   }
-#ifdef OS_WINDOWS
+#if defined(OS_WINDOWS) || defined(OS_LINUX)
   ImGui_ImplSDL3_SetGamepadMode(ImGui_ImplSDL3_GamepadMode_Manual);
 #endif
 #ifdef OS_ANDROID
@@ -450,6 +458,8 @@ bool ImGuiSystem::NewFrame(bool createDockspace) {
 #ifdef OS_WINDOWS
   SubmitGamepadGuiNavigation(m_gamepadNavigationState, m_gamepadNavigationGuiVisible);
   ImGui::GetIO().MouseDrawCursor = m_gamepadNavigationGuiVisible && m_gamepadNavigationTouchCursor;
+#elif defined(OS_LINUX)
+  SubmitGamepadGuiDirectionalNavigation(m_gamepadNavigationState, m_gamepadNavigationGuiVisible);
 #endif
   ImGui::NewFrame();
   if (m_windowEventTraceFrames > 0) {
@@ -500,13 +510,17 @@ void ImGuiSystem::Render() {
     if (deferPlatformResize) {
       return;
     }
+#if defined(USING_GL_COMMON)
     SDL_Window* backupWindow = SDL_GL_GetCurrentWindow();
     SDL_GLContext backupContext = SDL_GL_GetCurrentContext();
+#endif
     ImGui::UpdatePlatformWindows();
     ImGui::RenderPlatformWindowsDefault();
+#if defined(USING_GL_COMMON)
     if (backupWindow && backupContext) {
       SDL_GL_MakeCurrent(backupWindow, backupContext);
     }
+#endif
   }
 #endif
 }
@@ -526,7 +540,7 @@ void ImGuiSystem::RenderLoadingFrame() {
 
   m_loadingFrameActive = true;
 
-#if defined(OS_WINDOWS)
+#if defined(OS_WINDOWS) || defined(OS_LINUX)
   m_framework->ProcessInput();
 #endif
 

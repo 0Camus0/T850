@@ -9,7 +9,7 @@
 
 #include <Config.h>
 
-#if defined(OS_WINDOWS) || defined(OS_ANDROID)
+#if defined(OS_WINDOWS) || defined(OS_ANDROID) || defined(OS_LINUX)
 
 // Include all per-class headers
 #include <video/vulkan/VulkanVertexBuffer.h>
@@ -29,7 +29,11 @@
 #define VK_USE_PLATFORM_ANDROID_KHR
 #endif
 #include <vulkan/vulkan.h>
+#if __has_include(<vma/vk_mem_alloc.h>)
 #include <vma/vk_mem_alloc.h>
+#else
+#include <vk_mem_alloc.h>
+#endif
 
 #include <unordered_map>
 #include <string>

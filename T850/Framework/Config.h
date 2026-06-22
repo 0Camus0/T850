@@ -72,7 +72,11 @@
 #if defined(OS_LINUX)
 #undef USING_D3D11
 #undef USING_OPENGL
-#define USING_OPENGL_ES31
+#undef USING_OPENGL_ES20
+#undef USING_OPENGL_ES30
+#undef USING_OPENGL_ES31
+#undef USING_GL_COMMON
+#define USING_VULKAN_ONLY
 #endif
 
 #if defined(OS_ANDROID)
@@ -96,6 +100,11 @@
 
 
 #define WINDOW_MANAGER WAYLAND_NATIVE
+
+#ifdef OS_LINUX
+#undef WINDOW_MANAGER
+#define WINDOW_MANAGER SDL
+#endif
 
 #if WINDOW_MANAGER == SDL
 #define USING_SDL

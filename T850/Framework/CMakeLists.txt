@@ -8,7 +8,6 @@ set(FRAMEWORK_SOURCES
   src/core/DevLayer.cpp
   src/core/Config.cpp
   src/core/EngineContext.cpp
-  src/core/windows/Win32Framework.cpp
   src/physics/CharacterController.cpp
   src/physics/JoltPhysicsSystem.cpp
   src/physics/PhysicsDebugRenderer.cpp
@@ -68,45 +67,6 @@ set(FRAMEWORK_SOURCES
   src/utils/SPIRVReflection.cpp
   src/utils/ShaderDiskCache.cpp
   src/video/BaseDriver.cpp
-  src/video/gl/GLDriver.cpp
-  src/video/gl/GLDeviceContext.cpp
-  src/video/gl/GLDevice.cpp
-  src/video/gl/GLVertexBuffer.cpp
-  src/video/gl/GLIndexBuffer.cpp
-  src/video/gl/GLConstantBuffer.cpp
-  src/video/gl/GLRT.cpp
-  src/video/gl/GLShader.cpp
-  src/video/gl/GLSLParser.cpp
-  src/video/gl/GLTexture.cpp
-  src/video/d3d11/D3D11DeviceContext.cpp
-  src/video/d3d11/D3D11Device.cpp
-  src/video/d3d11/D3D11VertexBuffer.cpp
-  src/video/d3d11/D3D11IndexBuffer.cpp
-  src/video/d3d11/D3D11ConstantBuffer.cpp
-  src/video/d3d11/D3D11Driver.cpp
-  src/video/d3d11/D3D11RT.cpp
-  src/video/d3d11/D3D11Shader.cpp
-  src/video/d3d11/D3D11Texture.cpp
-  src/video/d3d12/D3D12Driver.cpp
-  src/video/d3d12/D3D12Heap.cpp
-  src/video/d3d12/D3D12VertexBuffer.cpp
-  src/video/d3d12/D3D12IndexBuffer.cpp
-  src/video/d3d12/D3D12ConstantBuffer.cpp
-  src/video/d3d12/D3D12DeviceContext.cpp
-  src/video/d3d12/D3D12Device.cpp
-  src/video/d3d12/D3D12Shader.cpp
-  src/video/d3d12/D3D12RT.cpp
-  src/video/d3d12/D3D12Texture.cpp
-  src/video/vulkan/VulkanDriver.cpp
-  src/video/vulkan/VulkanVertexBuffer.cpp
-  src/video/vulkan/VulkanIndexBuffer.cpp
-  src/video/vulkan/VulkanConstantBuffer.cpp
-  src/video/vulkan/VulkanTexture.cpp
-  src/video/vulkan/VulkanRT.cpp
-  src/video/vulkan/VulkanShader.cpp
-  src/video/vulkan/VulkanDeviceContext.cpp
-  src/video/vulkan/VulkanDevice.cpp
-  src/video/vulkan/VulkanUtils.cpp
   src/utils/gltf/GLTFLoader.cpp
   src/utils/gltf/GLTFJson.cpp
   src/utils/gltf/GLTFAccessor.cpp
@@ -116,6 +76,57 @@ set(FRAMEWORK_SOURCES
   src/utils/gltf/GLTFMesh.cpp
   src/utils/gltf/GLTFAnimation.cpp
   src/utils/ThreadPool.cpp)
+
+set(T850_VULKAN_SOURCES
+  src/video/vulkan/VulkanDriver.cpp
+  src/video/vulkan/VulkanVertexBuffer.cpp
+  src/video/vulkan/VulkanIndexBuffer.cpp
+  src/video/vulkan/VulkanConstantBuffer.cpp
+  src/video/vulkan/VulkanTexture.cpp
+  src/video/vulkan/VulkanRT.cpp
+  src/video/vulkan/VulkanShader.cpp
+  src/video/vulkan/VulkanDeviceContext.cpp
+  src/video/vulkan/VulkanDevice.cpp
+  src/video/vulkan/VulkanUtils.cpp)
+
+if(WIN32)
+  list(APPEND FRAMEWORK_SOURCES
+    src/core/windows/Win32Framework.cpp
+    src/video/gl/GLDriver.cpp
+    src/video/gl/GLDeviceContext.cpp
+    src/video/gl/GLDevice.cpp
+    src/video/gl/GLVertexBuffer.cpp
+    src/video/gl/GLIndexBuffer.cpp
+    src/video/gl/GLConstantBuffer.cpp
+    src/video/gl/GLRT.cpp
+    src/video/gl/GLShader.cpp
+    src/video/gl/GLSLParser.cpp
+    src/video/gl/GLTexture.cpp
+    src/video/d3d11/D3D11DeviceContext.cpp
+    src/video/d3d11/D3D11Device.cpp
+    src/video/d3d11/D3D11VertexBuffer.cpp
+    src/video/d3d11/D3D11IndexBuffer.cpp
+    src/video/d3d11/D3D11ConstantBuffer.cpp
+    src/video/d3d11/D3D11Driver.cpp
+    src/video/d3d11/D3D11RT.cpp
+    src/video/d3d11/D3D11Shader.cpp
+    src/video/d3d11/D3D11Texture.cpp
+    src/video/d3d12/D3D12Driver.cpp
+    src/video/d3d12/D3D12Heap.cpp
+    src/video/d3d12/D3D12VertexBuffer.cpp
+    src/video/d3d12/D3D12IndexBuffer.cpp
+    src/video/d3d12/D3D12ConstantBuffer.cpp
+    src/video/d3d12/D3D12DeviceContext.cpp
+    src/video/d3d12/D3D12Device.cpp
+    src/video/d3d12/D3D12Shader.cpp
+    src/video/d3d12/D3D12RT.cpp
+    src/video/d3d12/D3D12Texture.cpp
+    ${T850_VULKAN_SOURCES})
+elseif(T850_PLATFORM_STEAM_DECK)
+  list(APPEND FRAMEWORK_SOURCES
+    src/core/LinuxFramework.cpp
+    ${T850_VULKAN_SOURCES})
+endif()
 
 add_library(Framework STATIC ${FRAMEWORK_SOURCES})
 add_library(T800Framework ALIAS Framework)
@@ -147,12 +158,15 @@ target_include_directories(Framework PUBLIC
   ${CMAKE_CURRENT_SOURCE_DIR}
   ${CMAKE_CURRENT_SOURCE_DIR}/include
   ${T850_SOURCE_DIR}/Librerias/tinyxml2/include
-  ${T850_SOURCE_DIR}/Librerias/SDL3/include
   ${T850_VCPKG_STATIC}/include
   ${T850_VCPKG_DYNAMIC}/include
   ${T850_SOURCE_DIR}/Librerias/stb/include
   ${T850_SOURCE_DIR}/Librerias/mikktspace/include
   ${T850_SOURCE_DIR}/GLSLParser/Include)
+
+if(WIN32)
+  target_include_directories(Framework PUBLIC ${T850_SOURCE_DIR}/Librerias/SDL3/include)
+endif()
 
 target_include_directories(Framework SYSTEM PUBLIC
   ${T850_SOURCE_DIR}/Librerias/glaze/include)

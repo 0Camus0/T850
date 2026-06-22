@@ -17,7 +17,7 @@
 #include <cstring>
 #include <vector>
 
-#if defined(OS_WINDOWS) || defined(OS_ANDROID)
+#if defined(OS_WINDOWS) || defined(OS_ANDROID) || defined(OS_LINUX)
 
 #include <utils/Log.h>
 

@@ -9,6 +9,8 @@ namespace t850 {
 
 namespace {
 
+std::string g_navigationFocusPanel;
+
 std::string MakeImGuiLabel(const std::string& name, const std::string& label) {
   const std::string& visible = label.empty() ? name : label;
   if (name.empty() || visible.find("##") != std::string::npos) return visible;
@@ -23,7 +25,23 @@ std::string MakePanelLabel(const char* title, const std::string& suffix) {
   return visible + "##" + suffix + "/" + original;
 }
 
+std::string VisiblePanelTitle(const char* title) {
+  if (!title) return {};
+  const std::string original(title);
+  const std::size_t idMarker = original.find("##");
+  return idMarker == std::string::npos ? original : original.substr(0, idMarker);
+}
+
 } // namespace
+
+void DevGuiContext::SetNavigationFocusPanel(const char* title) {
+  g_navigationFocusPanel = VisiblePanelTitle(title);
+}
+
+bool DevGuiContext::PanelAllowsNavigationFocus(const char* title) {
+  if (g_navigationFocusPanel.empty()) return true;
+  return VisiblePanelTitle(title) == g_navigationFocusPanel;
+}
 
 bool DevGuiContext::BeginPanel(const char* title, bool* open, ImGuiWindowFlags flags) {
   if (m_embedPanels) {
@@ -41,6 +59,9 @@ bool DevGuiContext::BeginPanel(const char* title, bool* open, ImGuiWindowFlags f
     return begun;
   }
   const std::string scopedTitle = MakePanelLabel(title, m_idSuffix);
+  if (!PanelAllowsNavigationFocus(title)) {
+    flags |= ImGuiWindowFlags_NoNavFocus | ImGuiWindowFlags_NoNavInputs;
+  }
   if (m_windowClassId != 0) {
     ImGuiWindowClass windowClass{};
     windowClass.ClassId = m_windowClassId;

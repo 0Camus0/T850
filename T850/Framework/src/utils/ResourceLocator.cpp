@@ -1,5 +1,5 @@
 #include <pch.h>
-#include <utils\ResourceLocator.h>
+#include <utils/ResourceLocator.h>
 
 #include <algorithm>
 #include <cctype>

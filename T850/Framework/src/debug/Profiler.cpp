@@ -18,7 +18,7 @@
 using Microsoft::WRL::ComPtr;
 #endif
 
-#if defined(OS_WINDOWS) || defined(OS_ANDROID)
+#if defined(OS_WINDOWS) || defined(OS_ANDROID) || defined(OS_LINUX)
 #include <video/vulkan/VulkanDriver.h>
 #include <video/vulkan/VulkanDeviceContext.h>
 #endif
@@ -71,7 +71,7 @@ struct D3D11ProfileState {
 };
 #endif
 
-#if defined(OS_WINDOWS) || defined(OS_ANDROID)
+#if defined(OS_WINDOWS) || defined(OS_ANDROID) || defined(OS_LINUX)
 struct VulkanProfileState {
   VkQueryPool queryPool = VK_NULL_HANDLE;
   VkBuffer    readbackBuffer = VK_NULL_HANDLE;
@@ -250,7 +250,7 @@ void Profiler::InitGPU_GL() {
 }
 
 void Profiler::InitGPU_Vulkan() {
-#if defined(OS_WINDOWS) || defined(OS_ANDROID)
+#if defined(OS_WINDOWS) || defined(OS_ANDROID) || defined(OS_LINUX)
   auto* state = new VulkanProfileState();
   state->maxQueries = m_maxScopes * 2;  // begin + end per scope
 
@@ -331,7 +331,7 @@ void Profiler::DestroyGPU() {
   if (m_apiType == 1) delete static_cast<D3D12ProfileState*>(m_gpuState);
   if (m_apiType == 2) delete static_cast<D3D11ProfileState*>(m_gpuState);
 #endif
-#if defined(OS_WINDOWS) || defined(OS_ANDROID)
+#if defined(OS_WINDOWS) || defined(OS_ANDROID) || defined(OS_LINUX)
   if (m_apiType == 4 && m_gpuState) {
     auto* state = static_cast<VulkanProfileState*>(m_gpuState);
     auto* vkDrv = static_cast<VulkanDriver*>(m_driver);
@@ -366,7 +366,7 @@ void Profiler::BeginFrame() {
 
   m_activeQueryCount = 0;
 
-#if defined(OS_WINDOWS) || defined(OS_ANDROID)
+#if defined(OS_WINDOWS) || defined(OS_ANDROID) || defined(OS_LINUX)
   if (m_apiType == 2) {
 #ifdef OS_WINDOWS
     // D3D11: flip write set
@@ -389,7 +389,7 @@ void Profiler::BeginFrame() {
 void Profiler::EndFrame() {
   if (!m_initialized) return;
 
-#if defined(OS_WINDOWS) || defined(OS_ANDROID)
+#if defined(OS_WINDOWS) || defined(OS_ANDROID) || defined(OS_LINUX)
   if (m_apiType == 1) {
 #ifdef OS_WINDOWS
     // D3D12: save scope mappings for this frame, then resolve timestamps
@@ -534,7 +534,7 @@ void Profiler::AddDrawCall(int vertexCount) {
 }
 
 void Profiler::FlushVulkanQueryReset(void* commandBuffer) {
-#if defined(OS_WINDOWS) || defined(OS_ANDROID)
+#if defined(OS_WINDOWS) || defined(OS_ANDROID) || defined(OS_LINUX)
   if (m_apiType == 4 && m_gpuState) {
     auto* state = static_cast<VulkanProfileState*>(m_gpuState);
     if (state->needsReset) {
@@ -553,7 +553,7 @@ void Profiler::FlushVulkanQueryReset(void* commandBuffer) {
 // ═════════════════════════════════════════════════════════════
 
 void Profiler::BeginGPUScope(int queryIndex) {
-#if defined(OS_WINDOWS) || defined(OS_ANDROID)
+#if defined(OS_WINDOWS) || defined(OS_ANDROID) || defined(OS_LINUX)
   if (m_apiType == 1) {
 #ifdef OS_WINDOWS
     auto* state = static_cast<D3D12ProfileState*>(m_gpuState);
@@ -591,7 +591,7 @@ void Profiler::BeginGPUScope(int queryIndex) {
 }
 
 void Profiler::EndGPUScope(int queryIndex) {
-#if defined(OS_WINDOWS) || defined(OS_ANDROID)
+#if defined(OS_WINDOWS) || defined(OS_ANDROID) || defined(OS_LINUX)
   if (m_apiType == 1) {
 #ifdef OS_WINDOWS
     auto* state = static_cast<D3D12ProfileState*>(m_gpuState);
@@ -634,7 +634,7 @@ void Profiler::EndGPUScope(int queryIndex) {
 // ═════════════════════════════════════════════════════════════
 
 void Profiler::ResolveGPUFrame() {
-#if defined(OS_WINDOWS) || defined(OS_ANDROID)
+#if defined(OS_WINDOWS) || defined(OS_ANDROID) || defined(OS_LINUX)
   if (m_apiType == 1 && m_gpuState) {
 #ifdef OS_WINDOWS
     auto* state = static_cast<D3D12ProfileState*>(m_gpuState);

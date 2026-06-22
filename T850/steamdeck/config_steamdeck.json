@@ -1,0 +1,27 @@
+{
+  "api": "vulkan",
+  "targetPlatform": "linux",
+  "architecture": "x64",
+  "configuration": "Release",
+  "display": {
+    "scene": 1,
+    "width": 1280,
+    "height": 800,
+    "fullscreen": true,
+    "title": "T850 Steam Deck"
+  },
+  "devTools": {
+    "logLevel": "error",
+    "logToFile": false,
+    "logFile": "logs/steamdeck.log"
+  },
+  "telemetry": {
+    "enabled": false,
+    "frequencyFrames": 20,
+    "outputPath": "logs/perf_telemetry_steamdeck.json"
+  },
+  "debugFrames": false,
+  "keepRunning": false,
+  "benchmark": false,
+  "cullingMode": "full"
+}

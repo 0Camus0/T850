@@ -30,6 +30,8 @@ namespace t850 {
     bool Button(const char* label, bool enabled = true);
 
     void DrawFrameStatsOverlay(const char* text);
+    static void SetNavigationFocusPanel(const char* title);
+    static bool PanelAllowsNavigationFocus(const char* title);
 
   private:
     std::string m_idSuffix;

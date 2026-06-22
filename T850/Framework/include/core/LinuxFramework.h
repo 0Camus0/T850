@@ -19,27 +19,16 @@
 #include <core/Core.h>
 #include <video/BaseDriver.h>
 
-#ifdef USING_FREEGLUT
-    #include <GL/freeglut.h>
-#elif defined(USING_WAYLAND_NATIVE)
-    #include <stdio.h>
-    #include <stdlib.h>
-    #include <string.h>
-
-    #include <wayland-client.h>
-    #include <wayland-server.h>
-    #include <wayland-client-protocol.h>
-    #include <wayland-egl.h>
-
-    #include <EGL/egl.h>
-    #include <GLES2/gl2.h>
-#endif
+struct SDL_Window;
+union SDL_Event;
 
 #include <memory>
+#include <string>
 namespace t850 {
 class LinuxFramework : public RootFramework {
 public:
 	LinuxFramework(AppBase *pBaseApp);
+  ~LinuxFramework() override;
 	void InitGlobalVars();
 	void OnCreateApplication(ApplicationDesc desc);
 	void OnDestroyApplication();
@@ -49,30 +38,23 @@ public:
 	void ProcessInput();
 	void ResetApplication();
   void ChangeAPI(GraphicsApi::E api);
-	~LinuxFramework() {	}
 
-#ifdef USING_FREEGLUT
-	static void IdleFunction();
-    static void MouseClickFunction(int button, int state, int x, int y);
-    static void MouseMoveFunction(int x, int y);
-    static void ResizeWindow(int w, int h);
-    static void KeyboardEvent(unsigned char key, int x, int y);
-    static void KeyboardReleaseEvent(unsigned char key, int x, int y);
-#elif defined(USING_WAYLAND_NATIVE)
-    struct wl_display       *wlnd_display;
-    struct wl_surface       *wlnd_surface;
-    struct wl_egl_window    *wland_egl_window;
-    struct wl_shell_surface *wlnd_shell_surface;
-    struct wl_region        *wland_region;
-
-    EGLDisplay  eglDisplay;
-    EGLConfig   eglConfig;
-    EGLSurface  eglSurface;
-    EGLContext  eglContext;
-#endif
 	bool	m_alive;
+  SDL_Window* m_pWindow;
 
 	static LinuxFramework* thiz;
+private:
+  void ResetInputAfterWindowStateChange();
+  void InitializeGamepads();
+  void ShutdownGamepads();
+  void OpenGamepad(int instanceId);
+  void CloseGamepad(int instanceId);
+  void RefreshGamepadState();
+
+  void* m_gamepad = nullptr;
+  int m_gamepadInstanceId = 0;
+  bool m_handheldDetected = false;
+  std::string m_handheldReason;
  };
 }
 

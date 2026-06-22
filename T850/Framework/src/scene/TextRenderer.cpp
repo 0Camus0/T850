@@ -7,7 +7,7 @@
 #include <stb_truetype.h>
 #include <fstream>
 
-#ifndef OS_ANDROID
+#if defined(USING_GL_COMMON)
 #include <video/gl/GLShader.h>
 #include <video/gl/GLDriver.h>
 #endif

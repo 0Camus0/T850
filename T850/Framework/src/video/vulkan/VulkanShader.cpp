@@ -8,9 +8,9 @@
 #include <video/vulkan/VulkanDriver.h>
 #include <video/vulkan/VulkanUtils.h>
 
-#if defined(OS_WINDOWS) || defined(OS_ANDROID)
+#if defined(OS_WINDOWS) || defined(OS_ANDROID) || defined(OS_LINUX)
 
-#if defined(OS_WINDOWS) || defined(OS_ANDROID)
+#if defined(OS_WINDOWS) || defined(OS_ANDROID) || defined(OS_LINUX)
 #include <glslang/Public/ResourceLimits.h>
 #include <glslang/Public/ShaderLang.h>
 #include <glslang/SPIRV/GlslangToSpv.h>
@@ -30,7 +30,7 @@ namespace t850 {
   //  Helpers (file-local)
   // ══════════════════════════════════════════════════════
 
-#if defined(OS_WINDOWS) || defined(OS_ANDROID)
+#if defined(OS_WINDOWS) || defined(OS_ANDROID) || defined(OS_LINUX)
   static bool s_glslangInitialized = false;
 #endif
 
@@ -47,7 +47,7 @@ namespace t850 {
     return mod;
   }
 
-#if defined(OS_WINDOWS)
+#if defined(OS_WINDOWS) || defined(OS_LINUX)
   static std::string GetVulkanShaderCacheDriverSignature(VkPhysicalDevice physicalDevice) {
     std::ostringstream sig;
     sig << "vulkan;shaderCompiler=glslang-hlsl-spv1.0;pipelineCache=1";
@@ -75,7 +75,7 @@ namespace t850 {
   }
 #endif
 
-#if defined(OS_WINDOWS) || defined(OS_ANDROID)
+#if defined(OS_WINDOWS) || defined(OS_ANDROID) || defined(OS_LINUX)
   static bool CompileHLSLToSPIRV(const std::string& source, EShLanguage stage,
                                     std::vector<uint32_t>& spirv, const std::string& debugName) {
     if (!s_glslangInitialized) {
@@ -158,7 +158,7 @@ namespace t850 {
                                       const std::string& vs_name, const std::string& fs_name) {
     auto* driver = GetVkDriver();
     VkDevice device = driver->GetDevice();
-#if defined(OS_WINDOWS)
+#if defined(OS_WINDOWS) || defined(OS_LINUX)
     const std::string driverSignature = GetVulkanShaderCacheDriverSignature(driver->GetPhysicalDevice());
     const ShaderDiskCacheKey cacheKey = ShaderDiskCache::MakeKey("vulkan", driverSignature, key.bits, vs_name, fs_name, src_vs, src_fs);
 #endif

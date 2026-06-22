@@ -249,7 +249,9 @@ public:
   int m_runtimeSplineCameraIndex = -1;
   bool m_hasAuthoredLightCamera = false;
   int m_authoredLightCameraAttachedLight = -1;
-  float m_authoredLightCameraYawRate = 0.0f;
+  XVECTOR3 m_authoredLightCameraLinearVelocity = XVECTOR3(0.0f, 0.0f, 0.0f, 0.0f);
+  XVECTOR3 m_authoredLightCameraTargetVelocity = XVECTOR3(0.0f, 0.0f, 0.0f, 0.0f);
+  XVECTOR3 m_authoredLightCameraAngularVelocity = XVECTOR3(0.0f, 0.0f, 0.0f, 0.0f);
   bool m_hasAuthoredNavMesh = false;
   t850::scene::SceneNavigationMeshDesc m_authoredNavMesh;
   bool m_hasAuthoredPlayer = false;

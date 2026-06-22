@@ -105,6 +105,9 @@ static bool BuildRuntimeSpline(const t850::scene::SceneSplineDesc& desc, t850::S
 static bool ApplyEditorSplineToAttachedCamera(t850::scene::SceneSplineDesc& desc);
 static bool ApplyEditorSplineAgentToAttachedCamera(const t850::scene::SceneSplineDesc& desc,
                                                    const t850::SplineAgent& agent);
+static float EstimateEditorSplineDurationSeconds(const t850::scene::SceneSplineDesc& desc);
+static int FindDefaultTimelineSplineIndex(int preferredIndex);
+static void ApplyEditorCameraAnimationsAtTime(float timeSeconds);
 static void ApplySceneLightCameraToRuntimeCamera(const t850::scene::SceneLightCameraDesc& desc,
                                                  ::Camera& camera,
                                                  float perspectiveAspect);
@@ -186,6 +189,7 @@ namespace {
   auto& g_cameras = g_world.cameras;
   auto& g_lights  = g_world.lights;
   auto& g_lightCameras = g_world.lightCameras;
+  auto& g_cameraAnimations = g_world.cameraAnimations;
   auto& g_lightCameraGizmoCameras = g_world.lightCameraGizmoCameras;
   auto& g_godRaysVolume = g_world.godRaysVolume;
   auto& g_godRaysVolumeGizmo = g_world.godRaysVolumeGizmo;
@@ -2700,6 +2704,7 @@ void EditorApp::UpdateEditorSplinePreview(float deltaSeconds) {
       m_editorSplinePreviewIndex >= static_cast<int>(g_splines.size())) {
     m_editorSplinePreviewPlaying = false;
     m_editorSplinePreviewIndex = -1;
+    m_editorTimelineTimeSec = 0.0f;
     return;
   }
 
@@ -2709,6 +2714,9 @@ void EditorApp::UpdateEditorSplinePreview(float deltaSeconds) {
     if (!BuildRuntimeSpline(desc, m_editorSplinePreviewSpline)) {
       m_editorSplinePreviewPlaying = false;
       return;
+    }
+    if (m_editorTimelineDurationSec <= 0.0f) {
+      m_editorTimelineDurationSec = EstimateEditorSplineDurationSeconds(desc);
     }
     m_editorSplinePreviewAgent = t850::SplineAgent{};
     m_editorSplinePreviewAgent.m_pSpline = &m_editorSplinePreviewSpline;
@@ -2724,8 +2732,20 @@ void EditorApp::UpdateEditorSplinePreview(float deltaSeconds) {
   }
 
   m_editorSplinePreviewAgent.Update(deltaSeconds);
+  m_editorTimelineTimeSec += deltaSeconds;
+  ApplyEditorCameraAnimationsAtTime(m_editorTimelineTimeSec);
   desc.agent_offset = m_editorSplinePreviewAgent.GetOffset();
   ApplyEditorSplineAgentToAttachedCamera(desc, m_editorSplinePreviewAgent);
+  if (m_editorSplinePreviewAgent.FinishedJourneyThisUpdate()) {
+    if (m_editorTimelineLoop) {
+      if (m_editorTimelineDurationSec > 0.0f) {
+        m_editorTimelineTimeSec = std::fmod(m_editorTimelineTimeSec, m_editorTimelineDurationSec);
+      }
+    } else {
+      m_editorSplinePreviewPlaying = false;
+      m_editorTimelineTimeSec = m_editorTimelineDurationSec;
+    }
+  }
 }
 
 void EditorApp::DrawNavMeshAuthoringPanel() {
@@ -3355,6 +3375,8 @@ void EditorApp::DrawRagdollInspector(SceneObject& obj) {
     obj.ragdollAuthoringReady = false;
     obj.ragdollAuthoringTried = false;
     if (LoadObjectRagdollAuthoringFromFile(obj)) {
+      meta.enabled = true;
+      meta.asset = obj.ragdollResourcePath;
       if (meta.preview) {
         RecreateObjectRagdoll(obj, t850::PhysicsBodyMotion::Kinematic);
         obj.ragdollDebugDraw = true;
@@ -3379,6 +3401,7 @@ void EditorApp::DrawRagdollInspector(SceneObject& obj) {
       }
       if (obj.ragdollAuthoringReady && RecreateObjectRagdoll(obj, t850::PhysicsBodyMotion::Kinematic)) {
         obj.ragdollDebugDraw = true;
+        meta.enabled = true;
       }
     } else {
       obj.ragdollDebugDraw = false;
@@ -3523,6 +3546,7 @@ SceneFile EditorApp::BuildEditorSceneSnapshot(const std::string& scenePath, bool
   sf.game_entities = g_gameEntities;
   sf.splines = g_splines;
   sf.light_cameras = g_lightCameras;
+  sf.camera_animations = g_cameraAnimations;
   sf.god_rays_volume = g_godRaysVolume;
 
   sf.physics_entities.clear();
@@ -3653,6 +3677,7 @@ void EditorApp::ApplyEditorUndoState(const EditorUndoState& state) {
   g_lights.clear();
   ReleaseCameraGizmoCaches(g_lightCameraGizmoCameras);
   g_lightCameras.clear();
+  g_cameraAnimations.clear();
   ReleaseGizmoCache(g_godRaysVolumeGizmo);
   g_godRaysVolume = t850::scene::SceneGodRaysVolumeDesc{};
   g_splines.clear();
@@ -3763,6 +3788,7 @@ void EditorApp::ApplyEditorUndoState(const EditorUndoState& state) {
   g_splines = sf.splines;
   ReleaseCameraGizmoCaches(g_lightCameraGizmoCameras);
   g_lightCameras = sf.light_cameras;
+  g_cameraAnimations = sf.camera_animations;
   g_godRaysVolume = sf.god_rays_volume.value_or(t850::scene::SceneGodRaysVolumeDesc{});
   EnsureInferredGameEntities();
   if (sf.navigation_mesh) {
@@ -4646,6 +4672,156 @@ void EditorApp::SetEditorCubemap(const std::string& cubemapPath) {
   T8_LOG_INFO("[T8ditor] Queued editor cubemap change '%s'", normalizedPath.c_str());
 }
 
+void EditorApp::DrawEditorTimelinePanel() {
+  int timelineSplineIndex = FindDefaultTimelineSplineIndex(m_editorSplinePreviewIndex);
+  if (timelineSplineIndex != m_editorSplinePreviewIndex) {
+    m_editorSplinePreviewIndex = timelineSplineIndex;
+    m_editorTimelineTimeSec = 0.0f;
+    m_editorTimelineDurationSec = timelineSplineIndex >= 0
+        ? EstimateEditorSplineDurationSeconds(g_splines[static_cast<std::size_t>(timelineSplineIndex)])
+        : 0.0f;
+  }
+
+  auto applyTimelineTime = [&](int splineIndex, float requestedTime) -> bool {
+    if (splineIndex < 0 || splineIndex >= static_cast<int>(g_splines.size())) return false;
+    t850::scene::SceneSplineDesc& splineDesc = g_splines[static_cast<std::size_t>(splineIndex)];
+    if (splineDesc.attached_camera < 0 || splineDesc.attached_camera >= static_cast<int>(g_cameras.size())) return false;
+    if (!BuildRuntimeSpline(splineDesc, m_editorSplinePreviewSpline)) return false;
+
+    m_editorTimelineDurationSec = EstimateEditorSplineDurationSeconds(splineDesc);
+    if (m_editorTimelineDurationSec > 0.0f) {
+      requestedTime = m_editorTimelineLoop
+          ? std::fmod((std::max)(0.0f, requestedTime), m_editorTimelineDurationSec)
+          : std::clamp(requestedTime, 0.0f, m_editorTimelineDurationSec);
+    } else {
+      requestedTime = 0.0f;
+    }
+
+    m_editorSplinePreviewAgent = t850::SplineAgent{};
+    m_editorSplinePreviewAgent.m_pSpline = &m_editorSplinePreviewSpline;
+    m_editorSplinePreviewAgent.m_moving = true;
+    m_editorSplinePreviewAgent.m_velocity = splineDesc.agent_velocity;
+    m_editorSplinePreviewAgent.SetOffset(0.0f);
+    m_editorSplinePreviewAgent.m_actualPoint =
+        m_editorSplinePreviewSpline.GetPoint(m_editorSplinePreviewSpline.GetNormalizedOffset(0.0f));
+
+    float remaining = requestedTime;
+    constexpr float kStep = 1.0f / 60.0f;
+    while (remaining > 0.000001f) {
+      const float step = (std::min)(remaining, kStep);
+      m_editorSplinePreviewAgent.Update(step);
+      remaining -= step;
+      if (!m_editorTimelineLoop && m_editorSplinePreviewAgent.FinishedJourneyThisUpdate()) {
+        break;
+      }
+    }
+
+    m_editorSplinePreviewIndex = splineIndex;
+    m_editorTimelineTimeSec = requestedTime;
+    ApplyEditorCameraAnimationsAtTime(m_editorTimelineTimeSec);
+    splineDesc.agent_offset = m_editorSplinePreviewAgent.GetOffset();
+    ApplyEditorSplineAgentToAttachedCamera(splineDesc, m_editorSplinePreviewAgent);
+    return true;
+  };
+
+  ImGui::TextDisabled("Timeline drives authored time-based editor playback. It moves cameras but never changes the active view camera.");
+  ImGui::Separator();
+
+  if (g_splines.empty()) {
+    ImGui::TextDisabled("No authored splines in this scene.");
+    return;
+  }
+
+  std::vector<std::string> splineLabels;
+  splineLabels.reserve(g_splines.size());
+  for (int i = 0; i < static_cast<int>(g_splines.size()); ++i) {
+    const t850::scene::SceneSplineDesc& spline = g_splines[static_cast<std::size_t>(i)];
+    std::string label = std::to_string(i) + ": " + (spline.name.empty() ? "Spline" : spline.name);
+    if (spline.attached_camera < 0 || spline.attached_camera >= static_cast<int>(g_cameras.size())) {
+      label += " (no camera)";
+    }
+    splineLabels.push_back(std::move(label));
+  }
+
+  int selectedSpline = m_editorSplinePreviewIndex >= 0 ? m_editorSplinePreviewIndex : 0;
+  selectedSpline = std::clamp(selectedSpline, 0, (std::max)(0, static_cast<int>(splineLabels.size()) - 1));
+  if (ImGui::BeginCombo("Track", splineLabels[static_cast<std::size_t>(selectedSpline)].c_str())) {
+    for (int i = 0; i < static_cast<int>(splineLabels.size()); ++i) {
+      const bool selected = i == selectedSpline;
+      if (ImGui::Selectable(splineLabels[static_cast<std::size_t>(i)].c_str(), selected)) {
+        selectedSpline = i;
+        m_editorSplinePreviewPlaying = false;
+        applyTimelineTime(selectedSpline, 0.0f);
+      }
+      if (selected) ImGui::SetItemDefaultFocus();
+    }
+    ImGui::EndCombo();
+  }
+
+  t850::scene::SceneSplineDesc& spline = g_splines[static_cast<std::size_t>(selectedSpline)];
+  const bool playable = spline.attached_camera >= 0 &&
+      spline.attached_camera < static_cast<int>(g_cameras.size()) &&
+      spline.points.size() >= 4;
+  if (!playable) {
+    ImGui::TextColored(ImVec4(1.0f, 0.65f, 0.25f, 1.0f),
+                       "Selected spline needs at least 4 points and an attached camera.");
+    return;
+  }
+
+  if (m_editorTimelineDurationSec <= 0.0f || selectedSpline != m_editorSplinePreviewIndex) {
+    m_editorTimelineDurationSec = EstimateEditorSplineDurationSeconds(spline);
+  }
+
+  if (m_editorSplinePreviewPlaying) {
+    if (ImGui::Button("Pause")) {
+      m_editorSplinePreviewPlaying = false;
+    }
+  } else {
+    if (ImGui::Button("Play")) {
+      if (m_editorSplinePreviewIndex != selectedSpline ||
+          m_editorSplinePreviewAgent.m_pSpline != &m_editorSplinePreviewSpline) {
+        applyTimelineTime(selectedSpline, m_editorTimelineTimeSec);
+      }
+      m_editorSplinePreviewPlaying = true;
+      m_editorSplinePreviewIndex = selectedSpline;
+    }
+  }
+  ImGui::SameLine();
+  if (ImGui::Button("Stop")) {
+    m_editorSplinePreviewPlaying = false;
+    applyTimelineTime(selectedSpline, 0.0f);
+  }
+  ImGui::SameLine();
+  if (ImGui::Button("End")) {
+    m_editorSplinePreviewPlaying = false;
+    applyTimelineTime(selectedSpline, m_editorTimelineDurationSec);
+  }
+  ImGui::SameLine();
+  ImGui::Checkbox("Loop", &m_editorTimelineLoop);
+  if (!g_cameraAnimations.empty()) {
+    ImGui::SameLine();
+    ImGui::TextDisabled("Camera animations: %d", static_cast<int>(g_cameraAnimations.size()));
+  }
+
+  const float duration = (std::max)(0.0f, m_editorTimelineDurationSec);
+  float timeValue = std::clamp(m_editorTimelineTimeSec, 0.0f, duration);
+  if (duration > 0.0f) {
+    if (ImGui::SliderFloat("Time", &timeValue, 0.0f, duration, "%.3f s")) {
+      m_editorSplinePreviewPlaying = false;
+      applyTimelineTime(selectedSpline, timeValue);
+    }
+  } else {
+    ImGui::SliderFloat("Time", &timeValue, 0.0f, 1.0f, "%.3f s");
+  }
+
+  const float offset = spline.agent_offset;
+  const float length = m_editorSplinePreviewSpline.m_totalLength > 0.0f
+      ? m_editorSplinePreviewSpline.m_totalLength
+      : 0.0f;
+  ImGui::Text("Camera: %d (%s)", spline.attached_camera, g_cameras[static_cast<std::size_t>(spline.attached_camera)].name.c_str());
+  ImGui::Text("Time: %.3f / %.3f sec    Offset: %.3f / %.3f", m_editorTimelineTimeSec, duration, offset, length);
+}
+
 void EditorApp::ApplyPendingEditorCubemap() {
   if (m_pendingEditorCubemapPath.empty() || !pFramework || !pFramework->pVideoDriver) {
     return;
@@ -5362,6 +5538,7 @@ void EditorApp::DestroyAssets() {
   g_lights.clear();
   ReleaseCameraGizmoCaches(g_lightCameraGizmoCameras);
   g_lightCameras.clear();
+  g_cameraAnimations.clear();
   ReleaseGizmoCache(g_godRaysVolumeGizmo);
   g_godRaysVolume = t850::scene::SceneGodRaysVolumeDesc{};
   g_splines.clear();
@@ -5699,6 +5876,7 @@ void EditorApp::LoadPendingScene() {
         g_lights.clear();
         ReleaseCameraGizmoCaches(g_lightCameraGizmoCameras);
         g_lightCameras.clear();
+        g_cameraAnimations.clear();
         ReleaseGizmoCache(g_godRaysVolumeGizmo);
         g_godRaysVolume = t850::scene::SceneGodRaysVolumeDesc{};
         g_splines.clear();
@@ -5844,6 +6022,7 @@ void EditorApp::LoadPendingScene() {
       g_splines = sf.splines;
       ReleaseCameraGizmoCaches(g_lightCameraGizmoCameras);
       g_lightCameras = sf.light_cameras;
+      g_cameraAnimations = sf.camera_animations;
       g_godRaysVolume = sf.god_rays_volume.value_or(t850::scene::SceneGodRaysVolumeDesc{});
       EnsureInferredGameEntities();
       if (sf.navigation_mesh) {
@@ -6564,6 +6743,145 @@ static bool BuildRuntimeSpline(const t850::scene::SceneSplineDesc& desc, t850::S
     outSpline.Init();
   }
   return outSpline.m_points.size() >= 4 && outSpline.m_totalLength > 0.0f;
+}
+
+static float EstimateEditorSplineDurationSeconds(const t850::scene::SceneSplineDesc& desc) {
+  t850::Spline spline;
+  if (!BuildRuntimeSpline(desc, spline)) {
+    return 0.0f;
+  }
+  t850::SplineAgent agent;
+  agent.m_pSpline = &spline;
+  agent.m_moving = true;
+  agent.m_velocity = desc.agent_velocity;
+  agent.SetOffset(0.0f);
+  agent.m_actualPoint = spline.GetPoint(spline.GetNormalizedOffset(0.0f));
+
+  constexpr float dt = 1.0f / 60.0f;
+  constexpr float maxDuration = 3600.0f;
+  float elapsed = 0.0f;
+  while (elapsed < maxDuration) {
+    agent.Update(dt);
+    elapsed += dt;
+    if (agent.FinishedJourneyThisUpdate()) {
+      return elapsed;
+    }
+  }
+  return spline.m_totalLength > 0.0f && desc.agent_velocity > 0.0f
+      ? spline.m_totalLength / (desc.agent_velocity * 2.4f)
+      : 0.0f;
+}
+
+static int FindDefaultTimelineSplineIndex(int preferredIndex) {
+  auto validPlayable = [](int index) {
+    return index >= 0 &&
+        index < static_cast<int>(g_splines.size()) &&
+        g_splines[static_cast<std::size_t>(index)].attached_camera >= 0 &&
+        g_splines[static_cast<std::size_t>(index)].attached_camera < static_cast<int>(g_cameras.size()) &&
+        g_splines[static_cast<std::size_t>(index)].points.size() >= 4;
+  };
+  if (validPlayable(preferredIndex)) return preferredIndex;
+  if (g_selectionType == 5 && validPlayable(g_selectedIdx)) return g_selectedIdx;
+  for (int i = 0; i < static_cast<int>(g_splines.size()); ++i) {
+    if (g_splines[static_cast<std::size_t>(i)].play_on_start && validPlayable(i)) return i;
+  }
+  for (int i = 0; i < static_cast<int>(g_splines.size()); ++i) {
+    if (validPlayable(i)) return i;
+  }
+  return -1;
+}
+
+static bool IsLightCameraAnimationTarget(const std::string& target) {
+  std::string lower = target;
+  std::transform(lower.begin(), lower.end(), lower.begin(), [](unsigned char c) {
+    return static_cast<char>(std::tolower(c));
+  });
+  return lower == "light_camera" || lower == "light-camera" || lower == "lightcamera";
+}
+
+static XVECTOR3 SceneVec3ToX(const t850::scene::Vec3f& value, float w = 1.0f) {
+  return XVECTOR3(value.x, value.y, value.z, w);
+}
+
+static t850::scene::Vec3f XToSceneVec3(const XVECTOR3& value) {
+  return {value.x, value.y, value.z};
+}
+
+static float CameraAnimationLocalTime(const t850::scene::SceneCameraAnimationDesc& animation,
+                                      float timeSeconds) {
+  float t = (std::max)(0.0f, timeSeconds - animation.start_time);
+  if (animation.duration > 0.0f) {
+    t = animation.loop ? std::fmod(t, animation.duration) : std::clamp(t, 0.0f, animation.duration);
+  }
+  return t;
+}
+
+static void ApplyCameraAnimationToRuntimeCamera(const t850::scene::SceneCameraAnimationDesc& animation,
+                                                float localTime,
+                                                ::Camera& runtimeCamera) {
+  runtimeCamera.Eye += SceneVec3ToX(animation.linear_velocity, 0.0f) * localTime;
+  const XVECTOR3 target = runtimeCamera.Eye + runtimeCamera.Look + SceneVec3ToX(animation.target_velocity, 0.0f) * localTime;
+  runtimeCamera.SetLookAt(target);
+  runtimeCamera.Pitch += animation.angular_velocity.x * localTime;
+  runtimeCamera.Yaw += animation.angular_velocity.y * localTime;
+  runtimeCamera.Roll += animation.angular_velocity.z * localTime;
+  runtimeCamera.Update(0.0f);
+}
+
+static void ApplyEditorCameraAnimationsAtTime(float timeSeconds) {
+  if (g_cameraAnimations.empty()) {
+    return;
+  }
+
+  for (const t850::scene::SceneCameraAnimationDesc& animation : g_cameraAnimations) {
+    if (!animation.enabled || !animation.play_on_timeline) continue;
+    const float localTime = CameraAnimationLocalTime(animation, timeSeconds);
+    const bool lightTarget = IsLightCameraAnimationTarget(animation.target);
+
+    if (lightTarget) {
+      if (animation.camera < 0 || animation.camera >= static_cast<int>(g_lightCameras.size())) continue;
+      const t850::scene::SceneLightCameraDesc* base = nullptr;
+      if (g_loadedSceneFile.light_cameras.size() > static_cast<std::size_t>(animation.camera)) {
+        base = &g_loadedSceneFile.light_cameras[static_cast<std::size_t>(animation.camera)];
+      }
+      t850::scene::SceneLightCameraDesc animated = base ? *base : g_lightCameras[static_cast<std::size_t>(animation.camera)];
+      ::Camera runtimeCamera;
+      ApplySceneLightCameraToRuntimeCamera(animated, runtimeCamera, 1.0f);
+      ApplyCameraAnimationToRuntimeCamera(animation, localTime, runtimeCamera);
+      animated.position = XToSceneVec3(runtimeCamera.Eye);
+      animated.target = XToSceneVec3(runtimeCamera.Eye + runtimeCamera.Look);
+      animated.fov_deg = Rad2Deg(runtimeCamera.Fov);
+      animated.ortho_w = runtimeCamera.Width;
+      animated.ortho_h = runtimeCamera.Height;
+      animated.near_plane = runtimeCamera.NPlane;
+      animated.far_plane = runtimeCamera.FPlane;
+      g_lightCameras[static_cast<std::size_t>(animation.camera)] = animated;
+    } else {
+      if (animation.camera < 0 || animation.camera >= static_cast<int>(g_cameras.size())) continue;
+      SceneCamera animated;
+      if (g_loadedSceneFile.cameras.size() > static_cast<std::size_t>(animation.camera)) {
+        const t850::scene::SceneCameraDesc& base = g_loadedSceneFile.cameras[static_cast<std::size_t>(animation.camera)];
+        animated.name = base.name;
+        animated.type = static_cast<CameraType>(base.type);
+        animated.position = SceneVec3ToX(base.position);
+        animated.target = SceneVec3ToX(base.target);
+        animated.fovDeg = base.fov_deg;
+        animated.orthoW = base.ortho_w;
+        animated.orthoH = base.ortho_h;
+        animated.nearPlane = base.near_plane;
+        animated.farPlane = base.far_plane;
+        animated.visible = base.visible;
+        animated.frozen = base.frozen;
+      } else {
+        animated = g_cameras[static_cast<std::size_t>(animation.camera)];
+      }
+      ::Camera runtimeCamera;
+      ApplySceneCameraToRuntimeCamera(animated, runtimeCamera, 16.0f / 9.0f);
+      ApplyCameraAnimationToRuntimeCamera(animation, localTime, runtimeCamera);
+      SyncSceneCameraFromRuntimeCamera(runtimeCamera, animated);
+      g_cameras[static_cast<std::size_t>(animation.camera)] = animated;
+    }
+  }
 }
 
 static void SyncLightCameraGizmoCamera(const t850::scene::SceneLightCameraDesc& desc, SceneCamera& camera) {
@@ -9979,6 +10297,25 @@ void EditorApp::DrawEditorUI(t850::BaseDriver* drv) {
           }
         }
       }
+    }
+    ImGui::End();
+  }
+
+  if (m_panels.showTimeline) {
+    if (ImGuiViewport* viewport = ImGui::GetMainViewport()) {
+      const float margin = 12.0f;
+      const ImGuiCond layoutCond = g_resetArtistLayout ? ImGuiCond_Always : ImGuiCond_FirstUseEver;
+      const float rightPanelWidth = (std::min)(440.0f, (std::max)(360.0f, viewport->WorkSize.x * 0.27f));
+      const float width = (std::max)(520.0f, viewport->WorkSize.x - rightPanelWidth - margin * 3.0f);
+      const float height = 170.0f;
+      ImGui::SetNextWindowPos(
+          ImVec2(viewport->WorkPos.x + margin, viewport->WorkPos.y + viewport->WorkSize.y - height - margin),
+          layoutCond);
+      ImGui::SetNextWindowSize(ImVec2(width, height), layoutCond);
+    }
+    if (ImGui::Begin("Timeline", &m_panels.showTimeline, ImGuiWindowFlags_NoCollapse)) {
+      ImGuiClampCurrentWindowToEditorWorkArea();
+      DrawEditorTimelinePanel();
     }
     ImGui::End();
   }

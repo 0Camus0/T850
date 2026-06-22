@@ -4616,7 +4616,81 @@
          ],
          "lights": [],
          "animations": [],
-         "cubemap_path": "sky/Ennis.dds"
+         "cubemap_path": "sky/Ennis.dds",
+         "camera": {
+            "profile": 5,
+            "eye": [
+               3.6418679,
+               1.6571285,
+               -7.339037
+            ],
+            "look": [
+               0.32910568,
+               -0.1593183,
+               -0.9307562
+            ],
+            "up": [
+               0.05311093,
+               0.98722726,
+               -0.15020502
+            ],
+            "right": [
+               -0.9427983,
+               0,
+               -0.33336365
+            ],
+            "yaw": 40.500835,
+            "pitch": 0.16000009,
+            "roll": 0,
+            "fov": 95,
+            "aspect_ratio": 1.7777778,
+            "near_plane": 0.125,
+            "far_plane": 6198.7783,
+            "ortho": false,
+            "width": 2560,
+            "height": 1440,
+            "left_handed": true,
+            "orbit": {
+               "target": [
+                  -1,
+                  0,
+                  0
+               ],
+               "pan_offset": [
+                  0,
+                  0,
+                  0
+               ],
+               "eye": [
+                  3.6418679,
+                  1.6571285,
+                  -7.339037
+               ],
+               "yaw": -1.5757964,
+               "pitch": -0.005,
+               "distance": 3.099389
+            }
+         },
+         "orbit_camera": {
+            "target": [
+               -1,
+               0,
+               0
+            ],
+            "pan_offset": [
+               0,
+               0,
+               0
+            ],
+            "eye": [
+               3.6418679,
+               1.6571285,
+               -7.339037
+            ],
+            "yaw": -1.5757964,
+            "pitch": -0.005,
+            "distance": 3.099389
+         }
       },
       {
          "name": "android/mali-g700",

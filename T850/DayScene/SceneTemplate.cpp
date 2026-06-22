@@ -635,7 +635,10 @@ namespace {
     }
 
     ImGui::SetNextWindowSize(ImVec2(1120.0f, 360.0f), ImGuiCond_FirstUseEver);
-    if (!ImGui::Begin("Sandbox Console", &g_sandboxConsoleOpen)) {
+    ImGuiWindowFlags flags = t850::DevGuiContext::PanelAllowsNavigationFocus("Sandbox Console")
+        ? 0
+        : (ImGuiWindowFlags_NoNavFocus | ImGuiWindowFlags_NoNavInputs);
+    if (!ImGui::Begin("Sandbox Console", &g_sandboxConsoleOpen, flags)) {
       ImGui::End();
       return;
     }
@@ -3108,6 +3111,18 @@ void SceneTemplate::InitVars() {
   m_ragdollPhysicsDriven = false;
   m_ragdollDriveLogEmitted = false;
   m_ragdollPhysicsLogEmitted = false;
+  m_sceneSplines.clear();
+  m_runtimeSplineActive = false;
+  m_runtimeSplineCameraIndex = -1;
+  m_runtimeSpline.m_points.clear();
+  m_runtimeSpline.m_totalLength = 0.0f;
+  m_runtimeSpline.m_looped = false;
+  m_runtimeSplineAgent = t850::SplineAgent{};
+  m_hasAuthoredLightCamera = false;
+  m_authoredLightCameraAttachedLight = -1;
+  m_authoredLightCameraLinearVelocity = XVECTOR3(0.0f, 0.0f, 0.0f, 0.0f);
+  m_authoredLightCameraTargetVelocity = XVECTOR3(0.0f, 0.0f, 0.0f, 0.0f);
+  m_authoredLightCameraAngularVelocity = XVECTOR3(0.0f, 0.0f, 0.0f, 0.0f);
   m_ragdollEditDirty = false;
   m_ragdollEditHandleDragging = false;
   m_ragdollEditGizmoDragging = false;
@@ -3242,11 +3257,170 @@ void SceneTemplate::ApplyEditorSceneCameraAndLights(const t850::scene::EditorSce
         break;
       }
     }
-    SyncLightCameraFromDirectionalLight();
+    m_hasAuthoredLightCamera = false;
+    m_authoredLightCameraAttachedLight = -1;
+    m_authoredLightCameraLinearVelocity = XVECTOR3(0.0f, 0.0f, 0.0f, 0.0f);
+    m_authoredLightCameraTargetVelocity = XVECTOR3(0.0f, 0.0f, 0.0f, 0.0f);
+    m_authoredLightCameraAngularVelocity = XVECTOR3(0.0f, 0.0f, 0.0f, 0.0f);
+    for (const t850::scene::SceneLightCameraDesc& lightCamera : scene.light_cameras) {
+      if (!lightCamera.enabled) continue;
+      const XVECTOR3 lightCameraPosition = SceneVecToVector(lightCamera.position);
+      const float nearPlane = (std::max)(0.0001f, lightCamera.near_plane);
+      const float farPlane = (std::max)(nearPlane + 0.01f, lightCamera.far_plane);
+      if (lightCamera.type == 1) {
+        LightCam.InitOrtho(lightCameraPosition,
+                           (std::max)(0.01f, lightCamera.ortho_w),
+                           (std::max)(0.01f, lightCamera.ortho_h),
+                           nearPlane,
+                           farPlane);
+      } else {
+        LightCam.InitPerspective(lightCameraPosition,
+                                 Deg2Rad((std::max)(1.0f, lightCamera.fov_deg)),
+                                 1.0f,
+                                 nearPlane,
+                                 farPlane);
+      }
+      LightCam.SetLookAt(SceneVecToVector(lightCamera.target));
+      m_hasAuthoredLightCamera = true;
+      m_authoredLightCameraAttachedLight = lightCamera.attached_light;
+      m_authoredLightCameraAngularVelocity = XVECTOR3(0.0f, lightCamera.yaw_rate, 0.0f, 0.0f);
+      for (const t850::scene::SceneCameraAnimationDesc& animation : scene.camera_animations) {
+        std::string target = animation.target;
+        std::transform(target.begin(), target.end(), target.begin(), [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+        const bool targetsLightCamera = target == "light_camera" || target == "light-camera" || target == "lightcamera";
+        if (animation.enabled && targetsLightCamera && animation.camera == 0) {
+          m_authoredLightCameraLinearVelocity = SceneVecToVector(animation.linear_velocity, 0.0f);
+          m_authoredLightCameraTargetVelocity = SceneVecToVector(animation.target_velocity, 0.0f);
+          m_authoredLightCameraAngularVelocity = SceneVecToVector(animation.angular_velocity, 0.0f);
+          break;
+        }
+      }
+      if (m_authoredLightCameraAttachedLight >= 0 &&
+          m_authoredLightCameraAttachedLight < static_cast<int>(SceneProp.Lights.size())) {
+        Light& attachedLight = SceneProp.Lights[static_cast<std::size_t>(m_authoredLightCameraAttachedLight)];
+        attachedLight.Position = LightCam.Eye;
+        attachedLight.Direction = LightCam.Look;
+      }
+      T8_LOG_INFO("[SceneTemplate] Applied authored light camera '%s' type=%s eye=(%.3f,%.3f,%.3f) look=(%.3f,%.3f,%.3f) attachedLight=%d",
+                  lightCamera.name.c_str(),
+                  lightCamera.type == 1 ? "ortho" : "perspective",
+                  LightCam.Eye.x, LightCam.Eye.y, LightCam.Eye.z,
+                  LightCam.Look.x, LightCam.Look.y, LightCam.Look.z,
+                  m_authoredLightCameraAttachedLight);
+      break;
+    }
+    if (!m_hasAuthoredLightCamera) {
+      SyncLightCameraFromDirectionalLight();
+    }
+    if (scene.god_rays_volume) {
+      const auto& volume = *scene.god_rays_volume;
+      SceneProp.GodRaysVolumeEnabled = (volume.enabled && volume.clip_enabled) ? 1 : 0;
+      SceneProp.GodRaysVolumeCenter = XVECTOR3(volume.position.x, volume.position.y, volume.position.z, 1.0f);
+      SceneProp.GodRaysVolumeHalfExtents = XVECTOR3((std::max)(0.001f, std::abs(volume.half_extents.x)),
+                                                    (std::max)(0.001f, std::abs(volume.half_extents.y)),
+                                                    (std::max)(0.001f, std::abs(volume.half_extents.z)),
+                                                    0.0f);
+    }
     T8_LOG_INFO("[SceneTemplate] Applied %zu scene lights; dynamic point lights %s",
                 SceneProp.Lights.size(),
                 SceneProp.PointLightsEnabled ? "enabled" : "disabled");
   }
+}
+
+void SceneTemplate::InitializeSceneSplinePlayback(const t850::scene::EditorSceneFile& scene) {
+  m_sceneSplines = scene.splines;
+  m_runtimeSplineActive = false;
+  m_runtimeSplineCameraIndex = -1;
+  m_runtimeSpline.m_points.clear();
+  m_runtimeSpline.m_totalLength = 0.0f;
+  m_runtimeSpline.m_looped = false;
+  m_runtimeSplineAgent = t850::SplineAgent{};
+  if (m_sceneSplines.empty()) {
+    return;
+  }
+
+  const t850::scene::SceneSplineDesc* selectedSpline = nullptr;
+  for (const t850::scene::SceneSplineDesc& spline : m_sceneSplines) {
+    if (spline.play_on_start && spline.attached_camera >= 0 && spline.points.size() >= 4) {
+      selectedSpline = &spline;
+      break;
+    }
+  }
+  if (!selectedSpline) {
+    return;
+  }
+  if (selectedSpline->attached_camera < 0 ||
+      selectedSpline->attached_camera >= static_cast<int>(scene.cameras.size())) {
+    T8_LOG_ERROR("[SceneTemplate] Spline '%s' references missing camera index %d",
+                 selectedSpline->name.c_str(),
+                 selectedSpline->attached_camera);
+    return;
+  }
+
+  std::vector<t850::SplinePoint> points;
+  points.reserve(selectedSpline->points.size());
+  for (const t850::scene::SceneSplinePointDesc& point : selectedSpline->points) {
+    t850::SplinePoint splinePoint(point.position.x, point.position.y, point.position.z);
+    splinePoint.m_velocity = point.velocity;
+    splinePoint.m_rotation = XVECTOR3(point.rotation.x, point.rotation.y, point.rotation.z, 0.0f);
+    splinePoint.m_LookAtCenter = point.look_at_center;
+    points.push_back(splinePoint);
+  }
+
+  m_runtimeSpline.m_points = std::move(points);
+  m_runtimeSpline.m_totalLength = 0.0f;
+  m_runtimeSpline.m_looped = selectedSpline->looped;
+  m_runtimeSpline.Init();
+  if (m_runtimeSpline.m_totalLength <= 0.0f) {
+    return;
+  }
+
+  m_runtimeSplineAgent = t850::SplineAgent{};
+  m_runtimeSplineAgent.m_pSpline = &m_runtimeSpline;
+  m_runtimeSplineAgent.m_moving = true;
+  m_runtimeSplineAgent.m_velocity = selectedSpline->agent_velocity;
+  float safeOffset = (std::max)(0.0f, selectedSpline->agent_offset);
+  if (m_runtimeSpline.m_totalLength > 0.0f) {
+    safeOffset = std::fmod(safeOffset, m_runtimeSpline.m_totalLength);
+  }
+  m_runtimeSplineAgent.SetOffset(safeOffset);
+  m_runtimeSplineAgent.m_actualPoint = m_runtimeSpline.GetPoint(m_runtimeSpline.GetNormalizedOffset(m_runtimeSplineAgent.GetOffset()));
+  const t850::scene::SceneCameraDesc& cameraDesc = scene.cameras[static_cast<std::size_t>(selectedSpline->attached_camera)];
+  const XVECTOR3 cameraPosition = SceneVecToVector(cameraDesc.position);
+  const float nearPlane = (std::max)(0.0001f, cameraDesc.near_plane);
+  const float farPlane = (std::max)(nearPlane + 0.01f, cameraDesc.far_plane);
+  if (cameraDesc.type == 1) {
+    Cam.InitOrtho(cameraPosition,
+                  (std::max)(0.01f, cameraDesc.ortho_w),
+                  (std::max)(0.01f, cameraDesc.ortho_h),
+                  nearPlane,
+                  farPlane);
+  } else {
+    const float aspect = static_cast<float>(RenderViewportWidth()) / static_cast<float>(RenderViewportHeight());
+    Cam.InitPerspective(cameraPosition, Deg2Rad((std::max)(1.0f, cameraDesc.fov_deg)), aspect, nearPlane, farPlane);
+  }
+  Cam.AttachAgent(m_runtimeSplineAgent);
+  Cam.m_lookAtCenter = false;
+  Cam.Update(0.0f);
+  VP = Cam.VP;
+  m_runtimeSplineActive = true;
+  m_runtimeSplineCameraIndex = selectedSpline->attached_camera;
+  m_cameraController.ClearInput();
+  T8_LOG_INFO("[SceneTemplate] Spline playback attached camera=%d points=%zu length=%.2f velocity=%.2f",
+              m_runtimeSplineCameraIndex,
+              selectedSpline->points.size(),
+              m_runtimeSpline.m_totalLength,
+              selectedSpline->agent_velocity);
+}
+
+bool SceneTemplate::UpdateSceneSplinePlayback(float deltaSeconds) {
+  if (!m_runtimeSplineActive || !Cam.m_externalControl) {
+    return false;
+  }
+  m_runtimeSplineAgent.Update(deltaSeconds);
+  Cam.Update(deltaSeconds);
+  VP = Cam.VP;
+  return true;
 }
 
 int SceneTemplate::GetRuntimeMeshCount() const {
@@ -3647,6 +3821,18 @@ bool SceneTemplate::LoadEditorSceneAssets(const std::string& scenePath) {
   m_scenePhysicsEntities = scene.physics_entities;
   m_sceneNavigationAuthoring.clear();
   m_sceneRagdollAuthoring.clear();
+  m_sceneSplines = scene.splines;
+  m_runtimeSplineActive = false;
+  m_runtimeSplineCameraIndex = -1;
+  m_runtimeSpline.m_points.clear();
+  m_runtimeSpline.m_totalLength = 0.0f;
+  m_runtimeSpline.m_looped = false;
+  m_runtimeSplineAgent = t850::SplineAgent{};
+  m_hasAuthoredLightCamera = false;
+  m_authoredLightCameraAttachedLight = -1;
+  m_authoredLightCameraLinearVelocity = XVECTOR3(0.0f, 0.0f, 0.0f, 0.0f);
+  m_authoredLightCameraTargetVelocity = XVECTOR3(0.0f, 0.0f, 0.0f, 0.0f);
+  m_authoredLightCameraAngularVelocity = XVECTOR3(0.0f, 0.0f, 0.0f, 0.0f);
   m_primaryRagdollResourcePath.clear();
   m_hasAuthoredNavMesh = false;
   m_authoredNavMesh = t850::scene::SceneNavigationMeshDesc{};
@@ -3873,6 +4059,7 @@ bool SceneTemplate::LoadEditorSceneAssets(const std::string& scenePath) {
                 playerSettings.capsuleRadius,
                 playerSettings.capsuleHalfHeight);
   }
+  InitializeSceneSplinePlayback(scene);
   T8_LOG_INFO("[SceneTemplate] Loaded editor scene '%s' with %d mesh instances", scenePath.c_str(), m_meshCount);
   return true;
 }
@@ -5061,16 +5248,81 @@ void SceneTemplate::UpdateNavTestAgents(float dtSecs) {
 }
 
 void SceneTemplate::CreateAssets() {
-  if (!m_renderGraph.Load("Scenes/SceneTemplate_RenderGraph.json")) {
+  const std::string& activeSceneFilePath = ActiveSceneFilePath();
+  const std::string& activeModelPath = ActiveModelPath();
+  const bool embeddedSceneProfile = !activeSceneFilePath.empty();
+  const std::string startupModelKey = embeddedSceneProfile ? std::string{} : SandboxProfileModelKey(activeModelPath);
+  std::vector<t850::SandboxProfileDesc> startupSceneProfiles;
+  const std::vector<t850::SandboxProfileDesc>* startupProfiles = nullptr;
+  t850::scene::EditorSceneFile startupScene;
+  std::string renderGraphPath = "Scenes/SceneTemplate_RenderGraph.json";
+
+  if (m_controlSetup.descriptor.name.empty()) {
+    m_controlSetup.Load("Scenes/SceneTemplate.json");
+  }
+  startupProfiles = &m_controlSetup.descriptor.profiles;
+  if (embeddedSceneProfile) {
+    std::string startupSceneError;
+    if (t850::scene::LoadEditorSceneFile(activeSceneFilePath, startupScene, &startupSceneError)) {
+      startupSceneProfiles = startupScene.profiles;
+      startupProfiles = &startupSceneProfiles;
+      if (!startupScene.render_graph.empty()) {
+        renderGraphPath = startupScene.render_graph;
+      }
+    } else {
+      T8_LOG_ERROR("[SceneTemplate] Could not pre-read scene file from '%s': %s",
+                   activeSceneFilePath.c_str(), startupSceneError.c_str());
+    }
+  }
+
+  auto applyStartupProfilesForRenderTargets = [&]() {
+    if (!startupProfiles) return;
+    const t850::SandboxProfileDesc* baseProfile = nullptr;
+    const t850::SandboxProfileDesc* runtimeProfile = nullptr;
+    int bestRuntimeScore = -1;
+    for (const auto& profile : *startupProfiles) {
+      const bool modelSpecific = !profile.model.empty();
+      const bool modelMatches = embeddedSceneProfile
+          ? !modelSpecific
+          : (!modelSpecific || SandboxProfileModelKey(profile.model) == startupModelKey);
+      if (!modelMatches) continue;
+
+      const bool hasTarget = !profile.name.empty() || !profile.platform.empty() || !profile.architecture.empty() ||
+                             !profile.gpu_family.empty() || !profile.gpu_name_contains.empty();
+      if (!hasTarget && (embeddedSceneProfile || modelSpecific)) {
+        baseProfile = &profile;
+        continue;
+      }
+
+      const int score = t850::ScoreSceneProfileMatch(profile, startupModelKey);
+      if (score > bestRuntimeScore) {
+        bestRuntimeScore = score;
+        runtimeProfile = &profile;
+      }
+    }
+    if (baseProfile) ApplySandboxProfileState(*baseProfile);
+    if (runtimeProfile && runtimeProfile != baseProfile) ApplySandboxProfileState(*runtimeProfile);
+  };
+  applyStartupProfilesForRenderTargets();
+
+  if (!m_renderGraph.Load(renderGraphPath)) {
     T8_LOG_ERROR("[SceneTemplate] Failed to load render graph");
     return;
   }
-  m_renderGraph.DisablePass("Light Add");
+  T8_LOG_INFO("[SceneTemplate] Loaded render graph '%s'", renderGraphPath.c_str());
+  if (renderGraphPath == "Scenes/SceneTemplate_RenderGraph.json") {
+    m_renderGraph.DisablePass("Light Add");
+  }
   if (m_renderWidth > 0 && m_renderHeight > 0) {
     m_renderGraph.CreateRenderTargets(pFramework->pVideoDriver, SceneProp, m_renderWidth, m_renderHeight);
   } else {
     m_renderGraph.CreateRenderTargets(pFramework->pVideoDriver, SceneProp);
   }
+  const bool dofOn = SceneProp.ToogleDOF != 0;
+  m_renderGraph.SetPassEnabled("CoC", dofOn);
+  m_renderGraph.SetPassEnabled("Combine CoC", dofOn);
+  m_renderGraph.SetPassEnabled("DOF", dofOn);
+  m_renderGraph.SetPassEnabled("DOF 2", dofOn);
 
   t850::sandbox::RefreshDeferredPassHandles(
       m_renderGraph,
@@ -5090,28 +5342,7 @@ void SceneTemplate::CreateAssets() {
 
   SceneProp.SSAOKernel.InitTexture();
 
-  if (m_controlSetup.descriptor.name.empty()) {
-    m_controlSetup.Load("Scenes/SceneTemplate.json");
-  }
-
   const t850::SelectorDesc* cubemapDesc = FindSelectorDesc(m_controlSetup.descriptor.selectors, "cubemap");
-  const std::string& activeSceneFilePath = ActiveSceneFilePath();
-  const std::string& activeModelPath = ActiveModelPath();
-  const bool embeddedSceneProfile = !activeSceneFilePath.empty();
-  const std::string startupModelKey = embeddedSceneProfile ? std::string{} : SandboxProfileModelKey(activeModelPath);
-  std::vector<t850::SandboxProfileDesc> startupSceneProfiles;
-  const std::vector<t850::SandboxProfileDesc>* startupProfiles = &m_controlSetup.descriptor.profiles;
-  if (embeddedSceneProfile) {
-    t850::scene::EditorSceneFile startupScene;
-    std::string startupSceneError;
-    if (t850::scene::LoadEditorSceneFile(activeSceneFilePath, startupScene, &startupSceneError)) {
-      startupSceneProfiles = startupScene.profiles;
-      startupProfiles = &startupSceneProfiles;
-    } else {
-      T8_LOG_ERROR("[SceneTemplate] Could not pre-read scene profiles from '%s': %s",
-                   activeSceneFilePath.c_str(), startupSceneError.c_str());
-    }
-  }
   const CubemapSelection startupProfileCubemap =
       ResolveStartupCubemapSelection(
           m_controlSetup.descriptor.selectors,
@@ -5500,25 +5731,53 @@ void SceneTemplate::OnUpdate(float _DtSecs) {
 
   if (!m_dumper.SkipCameraUpdates()) {
     T8_TELEMETRY_SCOPE("sandbox.update.camera_and_lights");
-    if (m_cameraController.GetActiveProfileType() == t850::CameraProfileType::Orbit) {
-      T8_TELEMETRY_SCOPE("sandbox.update.camera.sync_orbit_profile");
-      SyncOrbitProfileFromSandbox();
-    }
-    {
-      T8_TELEMETRY_SCOPE("sandbox.update.camera_controller");
-      t850::CameraUpdateContext cameraContext;
-      cameraContext.collisionWorld = this;
-      m_cameraController.Update(DtSecs, cameraContext);
-    }
-    if (m_cameraController.GetActiveProfileType() == t850::CameraProfileType::Orbit) {
-      T8_TELEMETRY_SCOPE("sandbox.update.camera.sync_sandbox_orbit");
-      SyncSandboxOrbitFromProfile();
+    if (!UpdateSceneSplinePlayback(DtSecs)) {
+      if (m_cameraController.GetActiveProfileType() == t850::CameraProfileType::Orbit) {
+        T8_TELEMETRY_SCOPE("sandbox.update.camera.sync_orbit_profile");
+        SyncOrbitProfileFromSandbox();
+      }
+      {
+        T8_TELEMETRY_SCOPE("sandbox.update.camera_controller");
+        t850::CameraUpdateContext cameraContext;
+        cameraContext.collisionWorld = this;
+        m_cameraController.Update(DtSecs, cameraContext);
+      }
+      if (m_cameraController.GetActiveProfileType() == t850::CameraProfileType::Orbit) {
+        T8_TELEMETRY_SCOPE("sandbox.update.camera.sync_sandbox_orbit");
+        SyncSandboxOrbitFromProfile();
+      }
     }
     VP = Cam.VP;
     {
       T8_TELEMETRY_SCOPE("sandbox.update.attached_lights");
       UpdateAttachedLights();
-      SyncLightCameraFromDirectionalLight();
+      if (m_hasAuthoredLightCamera &&
+          m_authoredLightCameraAttachedLight >= 0 &&
+          m_authoredLightCameraAttachedLight < static_cast<int>(SceneProp.Lights.size())) {
+        const bool hasLinearVelocity = m_authoredLightCameraLinearVelocity.Length() > 0.000001f;
+        const bool hasTargetVelocity = m_authoredLightCameraTargetVelocity.Length() > 0.000001f;
+        const bool hasAngularVelocity = m_authoredLightCameraAngularVelocity.Length() > 0.000001f;
+        if (hasLinearVelocity || hasTargetVelocity || hasAngularVelocity) {
+          XVECTOR3 target = LightCam.Eye + LightCam.Look;
+          if (hasLinearVelocity) {
+            LightCam.Eye += m_authoredLightCameraLinearVelocity * DtSecs;
+            target += m_authoredLightCameraLinearVelocity * DtSecs;
+          }
+          if (hasTargetVelocity) {
+            target += m_authoredLightCameraTargetVelocity * DtSecs;
+          }
+          LightCam.SetLookAt(target);
+          LightCam.Pitch += m_authoredLightCameraAngularVelocity.x * DtSecs;
+          LightCam.Yaw += m_authoredLightCameraAngularVelocity.y * DtSecs;
+          LightCam.Roll += m_authoredLightCameraAngularVelocity.z * DtSecs;
+          LightCam.Update(DtSecs);
+        }
+        Light& attachedLight = SceneProp.Lights[static_cast<std::size_t>(m_authoredLightCameraAttachedLight)];
+        attachedLight.Position = LightCam.Eye;
+        attachedLight.Direction = LightCam.Look;
+      } else {
+        SyncLightCameraFromDirectionalLight();
+      }
     }
   }
   {
@@ -13995,17 +14254,28 @@ void SceneTemplate::CaptureSandboxProfileState(t850::SandboxProfileDesc& state) 
   addFloat("bloom_threshold", SceneProp.BloomThreshold);
   addFloat("tm_white_level", SceneProp.ToneMapWhiteLevel);
   addFloat("tm_adapt_tau", SceneProp.LuminanceTau);
+  addFloat("shadow_map_resolution", SceneProp.ShadowMapResolution);
+  addFloat("god_rays_resolution", SceneProp.GoodRaysResolution);
   addFloat("pcf_radius", SceneProp.PCFScale);
   addFloat("pcf_samples", SceneProp.PCFSamples);
   addFloat("ssao_kernel_size", (float)SceneProp.SSAOKernel.KernelSize);
   addFloat("ssao_radius", SceneProp.SSAOKernel.Radius);
   addFloat("dof_aperture", SceneProp.Aperture);
   addFloat("dof_focal_length", SceneProp.FocalLength);
+  addFloat("dof_focus_depth", SceneProp.FocusDepth);
   addFloat("dof_max_coc", SceneProp.MaxCoc);
   addFloat("dof_far_samples", SceneProp.DOF_Far_Samples_squared);
   addFloat("dof_near_samples", SceneProp.DOF_Near_Samples_squared);
+  addFloat("parallax_low_samples", SceneProp.ParallaxLowSamples);
+  addFloat("parallax_high_samples", SceneProp.ParallaxHighSamples);
+  addFloat("parallax_height", SceneProp.ParallaxHeight);
+  addFloat("parallax_shadow_min_layers", SceneProp.ParallaxShadowMinLayers);
+  addFloat("parallax_shadow_max_layers", SceneProp.ParallaxShadowMaxLayers);
+  addFloat("parallax_shadow_softness", SceneProp.ParallaxShadowSoftness);
+  addFloat("parallax_shadow_strength", SceneProp.ParallaxShadowStrength);
   addFloat("light_volume_steps", SceneProp.LightVolumeSteps);
   addFloat("godrays_factor", SceneProp.GodRaysFactor);
+  addFloat("active_lights", static_cast<float>(SceneProp.ActiveLights));
   addFloat("fov", ActiveCam ? Rad2Deg(ActiveCam->Fov) : Rad2Deg(Cam.Fov));
   addFloat("light_radius_scale", SceneProp.LightRadiusScale);
   addFloat("light_intensity_scale", SceneProp.LightIntensityScale);
@@ -14091,6 +14361,11 @@ void SceneTemplate::CaptureSandboxProfileState(t850::SandboxProfileDesc& state) 
 
   addBool("shadow_toggle", SceneProp.ToogleShadow != 0);
   addBool("ssao_toggle", SceneProp.ToogleSSAO != 0);
+  addBool("dof_toggle", SceneProp.ToogleDOF != 0);
+  addBool("dof_auto_focus", SceneProp.AutoFocus);
+  addBool("parallax_toggle", SceneProp.ToogleParallax != 0);
+  addBool("parallax_shadow_toggle", SceneProp.ToogleParallaxShadow != 0);
+  addBool("godrays_toggle", SceneProp.ToogleGodRays != 0);
   addBool("show_wireframe", m_showWireframe);
   addBool("show_skeleton", GetSelectedSkinningMesh() != nullptr && m_showSkeleton);
   addBool("show_physics", m_showPhysics);
@@ -14265,17 +14540,28 @@ void SceneTemplate::ApplySandboxProfileState(const t850::SandboxProfileDesc& sta
     else if (value.name == "bloom_threshold") SceneProp.BloomThreshold = value.value;
     else if (value.name == "tm_white_level") SceneProp.ToneMapWhiteLevel = value.value;
     else if (value.name == "tm_adapt_tau") SceneProp.LuminanceTau = value.value;
+    else if (value.name == "shadow_map_resolution") SceneProp.ShadowMapResolution = value.value;
+    else if (value.name == "god_rays_resolution") SceneProp.GoodRaysResolution = value.value;
     else if (value.name == "pcf_radius") SceneProp.PCFScale = value.value;
     else if (value.name == "pcf_samples") SceneProp.PCFSamples = value.value;
     else if (value.name == "ssao_kernel_size") { SceneProp.SSAOKernel.KernelSize = (int)value.value; SceneProp.SSAOKernel.Update(); }
     else if (value.name == "ssao_radius") SceneProp.SSAOKernel.Radius = value.value;
     else if (value.name == "dof_aperture") SceneProp.Aperture = value.value;
     else if (value.name == "dof_focal_length") SceneProp.FocalLength = value.value;
+    else if (value.name == "dof_focus_depth") SceneProp.FocusDepth = value.value;
     else if (value.name == "dof_max_coc") SceneProp.MaxCoc = value.value;
     else if (value.name == "dof_far_samples") SceneProp.DOF_Far_Samples_squared = value.value;
     else if (value.name == "dof_near_samples") SceneProp.DOF_Near_Samples_squared = value.value;
+    else if (value.name == "parallax_low_samples") SceneProp.ParallaxLowSamples = value.value;
+    else if (value.name == "parallax_high_samples") SceneProp.ParallaxHighSamples = value.value;
+    else if (value.name == "parallax_height") SceneProp.ParallaxHeight = value.value;
+    else if (value.name == "parallax_shadow_min_layers") SceneProp.ParallaxShadowMinLayers = value.value;
+    else if (value.name == "parallax_shadow_max_layers") SceneProp.ParallaxShadowMaxLayers = value.value;
+    else if (value.name == "parallax_shadow_softness") SceneProp.ParallaxShadowSoftness = value.value;
+    else if (value.name == "parallax_shadow_strength") SceneProp.ParallaxShadowStrength = value.value;
     else if (value.name == "light_volume_steps") SceneProp.LightVolumeSteps = value.value;
     else if (value.name == "godrays_factor") SceneProp.GodRaysFactor = value.value;
+    else if (value.name == "active_lights") SceneProp.ActiveLights = (std::max)(0, static_cast<int>(std::round(value.value)));
     else if (value.name == "fov" && ActiveCam) { ActiveCam->SetFov(Deg2Rad(value.value)); VP = ActiveCam->VP; }
     else if (value.name == "light_intensity" && !SceneProp.Lights.empty()) SceneProp.Lights[0].Intensity = value.value;
     else if (value.name == "light_radius_scale") SceneProp.LightRadiusScale = value.value;
@@ -14332,6 +14618,11 @@ void SceneTemplate::ApplySandboxProfileState(const t850::SandboxProfileDesc& sta
   for (const auto& value : state.checkboxes) {
     if (value.name == "shadow_toggle") SceneProp.ToogleShadow = value.value ? 1 : 0;
     else if (value.name == "ssao_toggle") SceneProp.ToogleSSAO = value.value ? 1 : 0;
+    else if (value.name == "dof_toggle") SceneProp.ToogleDOF = value.value ? 1 : 0;
+    else if (value.name == "dof_auto_focus") SceneProp.AutoFocus = value.value;
+    else if (value.name == "parallax_toggle") SceneProp.ToogleParallax = value.value ? 1 : 0;
+    else if (value.name == "parallax_shadow_toggle") SceneProp.ToogleParallaxShadow = value.value ? 1 : 0;
+    else if (value.name == "godrays_toggle") SceneProp.ToogleGodRays = value.value ? 1 : 0;
     else if (value.name == "show_wireframe") m_showWireframe = value.value;
     else if (value.name == "show_skeleton") m_showSkeleton = value.value && (GetSelectedSkinningMesh() != nullptr);
     else if (value.name == "show_physics") m_showPhysics = value.value;
@@ -14772,6 +15063,15 @@ void SceneTemplate::OnDraw() {
   UpdateSceneSkeletonsFromRagdollPhysics();
   for (int meshIndex = 0; meshIndex < drawMeshCount; ++meshIndex) {
     if (!Meshes[meshIndex].pBase) continue;
+    Meshes[meshIndex].SetParallaxSettings(SceneProp.ParallaxLowSamples,
+                                           SceneProp.ParallaxHighSamples,
+                                           SceneProp.ParallaxHeight);
+    Meshes[meshIndex].SetParallaxEnabled(SceneProp.ToogleParallax != 0);
+    Meshes[meshIndex].SetParallaxShadowSettings(SceneProp.ParallaxShadowMinLayers,
+                                                 SceneProp.ParallaxShadowMaxLayers,
+                                                 SceneProp.ParallaxShadowSoftness,
+                                                 SceneProp.ParallaxShadowStrength);
+    Meshes[meshIndex].SetParallaxShadowEnabled(SceneProp.ToogleParallaxShadow != 0);
     RenderSkinnedMesh* skinned = Meshes[meshIndex].GetSkinnedMesh();
     if (skinned && skinned->HasSkinData()) {
       if (meshIndex == 0) {

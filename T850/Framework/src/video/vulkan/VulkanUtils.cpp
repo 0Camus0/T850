@@ -7,7 +7,7 @@
 #include <video/vulkan/VulkanUtils.h>
 #include <video/vulkan/VulkanDriver.h>
 
-#if defined(OS_WINDOWS) || defined(OS_ANDROID)
+#if defined(OS_WINDOWS) || defined(OS_ANDROID) || defined(OS_LINUX)
 
 namespace t850 {
 

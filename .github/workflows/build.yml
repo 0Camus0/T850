@@ -256,8 +256,65 @@ jobs:
           name: T850-Android-${{ matrix.artifact_suffix }}-Release
           path: artifacts/android/*.apk
 
+  steamdeck:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          lfs: false
+
+      - name: Install podman
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y podman
+
+      - name: Clone vcpkg
+        run: |
+          git clone https://github.com/microsoft/vcpkg.git T850/Librerias/vcpkg
+
+      - name: Cache Steam Deck vcpkg packages
+        uses: actions/cache@v4
+        with:
+          path: |
+            T850/Librerias/vcpkg/installed
+            T850/Librerias/vcpkg/downloads
+          key: steamdeck-vcpkg-${{ hashFiles('T850/CMakeLists.txt', 'T850/steamdeck/BuildSteamRuntime.sh', '.github/workflows/build.yml') }}
+          restore-keys: |
+            steamdeck-vcpkg-
+
+      - name: Validate Steam Deck launcher scripts
+        run: |
+          chmod +x T850/steamdeck/*.sh
+          bash -n T850/steamdeck/BuildSteamRuntime.sh
+          bash -n T850/steamdeck/PackageSteamDeckRelease.sh
+          bash -n T850/steamdeck/T850.sh
+          bash -n T850/steamdeck/T850DeckLauncher.sh
+          python3 -m py_compile T850/steamdeck/T850DeckLauncher.py
+
+      - name: Build Steam Deck runtime
+        run: |
+          T850/steamdeck/BuildSteamRuntime.sh --configuration Release
+
+      - name: Verify Steam Deck runtime output
+        run: |
+          test -x T850/bin/SteamDeck/Release/DayScene
+          test -f T850/bin/SteamDeck/Release/libc++.so.1
+          test -f T850/bin/SteamDeck/Release/libc++abi.so.1
+          test -f T850/bin/SteamDeck/Release/libunwind.so.1
+
+      - name: Package Steam Deck release
+        run: |
+          T850/steamdeck/PackageSteamDeckRelease.sh --configuration Release --skip-build --output artifacts/steamdeck/T850-SteamDeck-Release.tar.gz
+
+      - name: Upload Steam Deck package
+        uses: actions/upload-artifact@v4
+        with:
+          name: T850-SteamDeck-Release
+          path: artifacts/steamdeck/T850-SteamDeck-Release.tar.gz
+
   release:
-    needs: [build, android]
+    needs: [build, android, steamdeck]
     if: startsWith(github.ref, 'refs/tags/v')
     runs-on: windows-latest
     permissions:
@@ -288,7 +345,7 @@ jobs:
           $releaseDir = "release-assets"
           New-Item -ItemType Directory -Path $releaseDir -Force | Out-Null
           $assets = "T850/Assets"
-          foreach ($dir in Get-ChildItem -Path artifacts -Directory | Where-Object { $_.Name -notlike "T850-Android-*" }) {
+          foreach ($dir in Get-ChildItem -Path artifacts -Directory | Where-Object { $_.Name -notlike "T850-Android-*" -and $_.Name -ne "T850-SteamDeck-Release" }) {
             $name = $dir.Name
             $staging = "staging/$name"
             New-Item -ItemType Directory -Path $staging -Force | Out-Null
@@ -326,6 +383,10 @@ jobs:
 
           foreach ($apk in Get-ChildItem -Path artifacts -Recurse -Filter "*.apk") {
             Copy-Item $apk.FullName -Destination (Join-Path $releaseDir $apk.Name) -Force
+          }
+
+          foreach ($steamDeckPackage in Get-ChildItem -Path artifacts -Recurse -Filter "T850-SteamDeck-*.tar.gz") {
+            Copy-Item $steamDeckPackage.FullName -Destination (Join-Path $releaseDir $steamDeckPackage.Name) -Force
           }
 
       - name: Create GitHub Release

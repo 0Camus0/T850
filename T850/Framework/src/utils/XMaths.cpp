@@ -295,6 +295,7 @@ std::vector<sample_> UpdateKernel(float sigma, float kernelSize, float Samplecou
  void XMatPerspectiveLH(XMATRIX44 &mpout, const float &FOV, const float &Aspect, const float &NearPlane, const float &FarPlane) {
 	 float x, y;
 	 float ang = FOV / 2.0f;
+	 XMatIdentity(mpout);
 
 	 y = cosf(ang) / sinf(ang);
 	 x = y / Aspect;
@@ -312,6 +313,7 @@ std::vector<sample_> UpdateKernel(float sigma, float kernelSize, float Samplecou
 {
 	 float x, y;
 	 float ang = FOV / 2.0f;
+	 XMatIdentity(mpout);
 
 	 y = cosf(ang) / sinf(ang);
 	 x = y / Aspect;
@@ -325,6 +327,7 @@ std::vector<sample_> UpdateKernel(float sigma, float kernelSize, float Samplecou
 }
 
  void XMatOrthoLH(XMATRIX44 &m, const float &w, const float &h, const float &zn, const float &zf) {
+	XMatIdentity(m);
 	m.m[0][0] = 2.0f / w;
 	m.m[1][1] = 2.0f / h;
 	m.m[2][2] = -1.0f / (zf - zn);
@@ -333,6 +336,7 @@ std::vector<sample_> UpdateKernel(float sigma, float kernelSize, float Samplecou
 }
 
  void XMatOrthoRH(XMATRIX44 &m, const float &w, const float &h, const float &zn, const float &zf) {
+	XMatIdentity(m);
 	m.m[0][0] = 2.0f / w;
 	m.m[1][1] = 2.0f / h;
 	m.m[2][2] = 1.0f / (zf - zn);

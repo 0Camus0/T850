@@ -2,7 +2,7 @@
 #include <utils/Technique.h>
 #include <iostream>
 #include <video/BaseDriver.h>
-#ifndef OS_ANDROID
+#if defined(USING_GL_COMMON)
 #include <video/gl/GLDriver.h>
 #include <video/gl/GLShader.h>
 #endif

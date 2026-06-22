@@ -56,6 +56,7 @@ namespace t8ditor {
     bool showInspector  = true;
     bool showConsole    = true;
     bool showRendering  = true;
+    bool showTimeline   = true;
     bool showWireframe  = false;
     bool showSkybox     = true;
     bool showRTDebug    = false;

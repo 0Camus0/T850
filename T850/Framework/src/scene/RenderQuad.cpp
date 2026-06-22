@@ -16,7 +16,7 @@
 #include <scene/RenderMesh.h>
 #include <utils/Utils.h>
 
-#ifndef OS_ANDROID
+#if defined(USING_GL_COMMON)
 #include <video/gl/GLShader.h>
 #include <video/gl/GLDriver.h>
 #endif
@@ -722,6 +722,9 @@ namespace t850 {
 	}
 	else if (pass == PassType::LIGHT_RAY_MARCHING) {
 	  CnstBuffer.LightPositions[0].y = pScProp->LightVolumeSteps;
+    CnstBuffer.LightPositions[1] = pScProp->GodRaysVolumeCenter;
+    CnstBuffer.LightPositions[1].w = static_cast<float>(pScProp->GodRaysVolumeEnabled);
+    CnstBuffer.LightPositions[2] = pScProp->GodRaysVolumeHalfExtents;
       XVECTOR3 sunDir(0.0f, 1.0f, 0.0f, 0.0f);
       if (pScProp->pLightCameras.size() > 0) {
         int selected = pScProp->ActiveLightCamera;
@@ -801,8 +804,14 @@ namespace t850 {
 
     for (int slot = 0; slot < MaxPrimitiveTextures; ++slot) {
       const char* textureName = textureNameForSlot(slot);
-      if (Textures[slot] && textureName && passUsesTextureSlot(slot))
+      if (!textureName || !passUsesTextureSlot(slot))
+        continue;
+
+      if (Textures[slot]) {
         Textures[slot]->Set(*T8DeviceContext, slot, textureName);
+      } else {
+        g_pBaseDriver->ClearPendingTextureBinding(slot);
+      }
     }
     if (EnvMap) {
       EnvMap->Set(*T8DeviceContext, 6, "texEnv");

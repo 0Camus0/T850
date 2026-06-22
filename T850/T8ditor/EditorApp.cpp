@@ -101,6 +101,39 @@ t850::Ray BuildEditorCameraRay(const ::Camera& camera,
                                       float mouseY,
                                       int viewW,
                                       int viewH);
+static bool BuildRuntimeSpline(const t850::scene::SceneSplineDesc& desc, t850::Spline& outSpline);
+static bool ApplyEditorSplineToAttachedCamera(t850::scene::SceneSplineDesc& desc);
+static bool ApplyEditorSplineAgentToAttachedCamera(const t850::scene::SceneSplineDesc& desc,
+                                                   const t850::SplineAgent& agent);
+static float EstimateEditorSplineDurationSeconds(const t850::scene::SceneSplineDesc& desc);
+static int FindDefaultTimelineSplineIndex(int preferredIndex);
+static void ApplyEditorCameraAnimationsAtTime(float timeSeconds);
+static void ApplySceneLightCameraToRuntimeCamera(const t850::scene::SceneLightCameraDesc& desc,
+                                                 ::Camera& camera,
+                                                 float perspectiveAspect);
+static void ApplySceneCameraToRuntimeCamera(const SceneCamera& desc,
+                                            ::Camera& camera,
+                                            float perspectiveAspect);
+static void SyncSceneCameraFromRuntimeCamera(const ::Camera& runtimeCamera, SceneCamera& desc);
+static void SyncLightCameraFromRuntimeCamera(const ::Camera& runtimeCamera,
+                                             t850::scene::SceneLightCameraDesc& desc);
+static bool HandleActiveCameraOrbitControls(InputManager& input,
+                                            float dtSecs,
+                                            float wheelDelta,
+                                            bool skipMouse,
+                                            bool skipKeyboard,
+                                            float perspectiveAspect);
+static bool ManipulateCameraEntityGizmo(const ::Camera& viewCamera,
+                                        int mode,
+                                        XVECTOR3& position,
+                                        XVECTOR3& target,
+                                        bool orthographic,
+                                        float& orthoW,
+                                        float& orthoH,
+                                        float& fovDeg);
+static bool TranslateCameraPointGizmo(const ::Camera& viewCamera,
+                                      int gizmoId,
+                                      XVECTOR3& point);
 
 struct EditorUndoState {
   SceneFile scene;
@@ -109,11 +142,13 @@ struct EditorUndoState {
   int activeGroupIdx = -1;
   int selectionType = 0;
   int selectedIdx = -1;
+  int selectedSplinePoint = -1;
   int activeCameraIdx = -1;
 };
 
 namespace {
   std::string g_startupMeshPath;
+  std::string g_startupSceneFilePath;
   int g_startupDumpFrame = -1;
   constexpr float kScaleDragSpeed = 0.0001f;
 
@@ -153,8 +188,16 @@ namespace {
   // Cameras and lights in the scene
   auto& g_cameras = g_world.cameras;
   auto& g_lights  = g_world.lights;
+  auto& g_lightCameras = g_world.lightCameras;
+  auto& g_cameraAnimations = g_world.cameraAnimations;
+  auto& g_lightCameraGizmoCameras = g_world.lightCameraGizmoCameras;
+  auto& g_godRaysVolume = g_world.godRaysVolume;
+  auto& g_godRaysVolumeGizmo = g_world.godRaysVolumeGizmo;
+  auto& g_splines = g_world.splines;
+  auto& g_splineGizmos = g_world.splineGizmos;
+  auto& g_selectedSplinePoint = g_world.selectedSplinePoint;
 
-  // Selection: 0=mesh, 1=camera, 2=light, 3=physics entity, 4=NavMesh.
+  // Selection: 0=mesh, 1=camera, 2=light, 3=physics entity, 4=NavMesh, 5=spline, 6=light camera, 7=spline point, 8=God Rays volume.
   auto& g_selectionType = g_world.selectionType;
 
   // Marquee box selection state
@@ -254,8 +297,36 @@ namespace {
     } else {
       oss << "scene-serialize-error";
     }
+
     AppendEditorUndoGroupKey(oss, state);
     return oss.str();
+  }
+
+  void ReleaseGizmoCache(GizmoCache& cache) {
+    if (cache.vb) {
+      cache.vb->release();
+      cache.vb = nullptr;
+    }
+    if (cache.ib) {
+      cache.ib->release();
+      cache.ib = nullptr;
+    }
+    cache.count = 0;
+    cache.hash = 0;
+  }
+
+  void ReleaseGizmoCaches(std::vector<GizmoCache>& caches) {
+    for (GizmoCache& cache : caches) {
+      ReleaseGizmoCache(cache);
+    }
+    caches.clear();
+  }
+
+  void ReleaseCameraGizmoCaches(std::vector<SceneCamera>& cameras) {
+    for (SceneCamera& camera : cameras) {
+      ReleaseGizmoCache(camera.gizmo);
+    }
+    cameras.clear();
   }
 
   class EditorSceneStateCommand : public UndoCommand {
@@ -287,6 +358,10 @@ void SetStartupMeshPath(const std::string& p) {
   g_startupMeshPath = p;
 }
 
+void SetStartupSceneFilePath(const std::string& p) {
+  g_startupSceneFilePath = p;
+}
+
 void SetStartupDumpFrame(int frame) {
   g_startupDumpFrame = frame;
 }
@@ -316,6 +391,40 @@ static bool IsValidSelectionRef(const SelectionRef& ref) {
   return false;
 }
 
+static int EncodeActiveLightCameraIndex(int index) {
+  return -2 - index;
+}
+
+static bool DecodeActiveLightCameraIndex(int encoded, int& outIndex) {
+  if (encoded > -2) {
+    outIndex = -1;
+    return false;
+  }
+  outIndex = -2 - encoded;
+  return true;
+}
+
+static bool IsActiveCameraIndexValid(int activeCameraIdx) {
+  if (activeCameraIdx == -1) return true;
+  if (activeCameraIdx >= 0) return activeCameraIdx < static_cast<int>(g_cameras.size());
+  int lightCameraIndex = -1;
+  return DecodeActiveLightCameraIndex(activeCameraIdx, lightCameraIndex) &&
+      lightCameraIndex >= 0 &&
+      lightCameraIndex < static_cast<int>(g_lightCameras.size());
+}
+
+static void AdjustActiveLightCameraAfterErase(int erasedIndex) {
+  int activeLightCameraIndex = -1;
+  if (!DecodeActiveLightCameraIndex(g_activeCameraIdx, activeLightCameraIndex)) {
+    return;
+  }
+  if (activeLightCameraIndex == erasedIndex) {
+    g_activeCameraIdx = -1;
+  } else if (activeLightCameraIndex > erasedIndex) {
+    g_activeCameraIdx = EncodeActiveLightCameraIndex(activeLightCameraIndex - 1);
+  }
+}
+
 void ClearMixedSelection() {
   g_multiSelect.clear();
   g_multiEntitySelect.clear();
@@ -343,6 +452,9 @@ static void ToggleMixedSelection(int type, int index) {
 static void SetSingleSelection(int type, int index) {
   g_selectedIdx = index;
   g_selectionType = type;
+  if (type != 7) {
+    g_selectedSplinePoint = -1;
+  }
   ClearMixedSelection();
   AddMixedSelection(type, index);
 }
@@ -2586,6 +2698,56 @@ void EditorApp::DrawSelectedNavLinkOverlay(t850::Texture* depthTexture, t850::Te
   }
 }
 
+void EditorApp::UpdateEditorSplinePreview(float deltaSeconds) {
+  if (!m_editorSplinePreviewPlaying ||
+      m_editorSplinePreviewIndex < 0 ||
+      m_editorSplinePreviewIndex >= static_cast<int>(g_splines.size())) {
+    m_editorSplinePreviewPlaying = false;
+    m_editorSplinePreviewIndex = -1;
+    m_editorTimelineTimeSec = 0.0f;
+    return;
+  }
+
+  t850::scene::SceneSplineDesc& desc = g_splines[static_cast<std::size_t>(m_editorSplinePreviewIndex)];
+  if (m_editorSplinePreviewAgent.m_pSpline != &m_editorSplinePreviewSpline ||
+      m_editorSplinePreviewSpline.m_totalLength <= 0.0f) {
+    if (!BuildRuntimeSpline(desc, m_editorSplinePreviewSpline)) {
+      m_editorSplinePreviewPlaying = false;
+      return;
+    }
+    if (m_editorTimelineDurationSec <= 0.0f) {
+      m_editorTimelineDurationSec = EstimateEditorSplineDurationSeconds(desc);
+    }
+    m_editorSplinePreviewAgent = t850::SplineAgent{};
+    m_editorSplinePreviewAgent.m_pSpline = &m_editorSplinePreviewSpline;
+    m_editorSplinePreviewAgent.m_moving = true;
+    m_editorSplinePreviewAgent.m_velocity = desc.agent_velocity;
+    m_editorSplinePreviewAgent.SetOffset(std::fmod((std::max)(0.0f, desc.agent_offset), m_editorSplinePreviewSpline.m_totalLength));
+    m_editorSplinePreviewAgent.m_actualPoint =
+        m_editorSplinePreviewSpline.GetPoint(m_editorSplinePreviewSpline.GetNormalizedOffset(m_editorSplinePreviewAgent.GetOffset()));
+  }
+  if (m_editorSplinePreviewSpline.m_totalLength <= 0.0f) {
+    m_editorSplinePreviewPlaying = false;
+    return;
+  }
+
+  m_editorSplinePreviewAgent.Update(deltaSeconds);
+  m_editorTimelineTimeSec += deltaSeconds;
+  ApplyEditorCameraAnimationsAtTime(m_editorTimelineTimeSec);
+  desc.agent_offset = m_editorSplinePreviewAgent.GetOffset();
+  ApplyEditorSplineAgentToAttachedCamera(desc, m_editorSplinePreviewAgent);
+  if (m_editorSplinePreviewAgent.FinishedJourneyThisUpdate()) {
+    if (m_editorTimelineLoop) {
+      if (m_editorTimelineDurationSec > 0.0f) {
+        m_editorTimelineTimeSec = std::fmod(m_editorTimelineTimeSec, m_editorTimelineDurationSec);
+      }
+    } else {
+      m_editorSplinePreviewPlaying = false;
+      m_editorTimelineTimeSec = m_editorTimelineDurationSec;
+    }
+  }
+}
+
 void EditorApp::DrawNavMeshAuthoringPanel() {
   ImGui::PushID("NavMeshAuthoringPanel");
   t850::navigation::NavMeshBuildSettings& settings = m_editorNavMeshBuildSettings;
@@ -3213,6 +3375,8 @@ void EditorApp::DrawRagdollInspector(SceneObject& obj) {
     obj.ragdollAuthoringReady = false;
     obj.ragdollAuthoringTried = false;
     if (LoadObjectRagdollAuthoringFromFile(obj)) {
+      meta.enabled = true;
+      meta.asset = obj.ragdollResourcePath;
       if (meta.preview) {
         RecreateObjectRagdoll(obj, t850::PhysicsBodyMotion::Kinematic);
         obj.ragdollDebugDraw = true;
@@ -3237,6 +3401,7 @@ void EditorApp::DrawRagdollInspector(SceneObject& obj) {
       }
       if (obj.ragdollAuthoringReady && RecreateObjectRagdoll(obj, t850::PhysicsBodyMotion::Kinematic)) {
         obj.ragdollDebugDraw = true;
+        meta.enabled = true;
       }
     } else {
       obj.ragdollDebugDraw = false;
@@ -3379,6 +3544,10 @@ SceneFile EditorApp::BuildEditorSceneSnapshot(const std::string& scenePath, bool
   }
 
   sf.game_entities = g_gameEntities;
+  sf.splines = g_splines;
+  sf.light_cameras = g_lightCameras;
+  sf.camera_animations = g_cameraAnimations;
+  sf.god_rays_volume = g_godRaysVolume;
 
   sf.physics_entities.clear();
   for (const PhysicsSceneEntity& entity : g_physicsEntities) {
@@ -3446,6 +3615,8 @@ SceneFile EditorApp::RefreshVirtualEditorScene(const std::string& scenePath) {
   SceneFile sf = BuildEditorSceneSnapshot(scenePath);
   g_loadedSceneFile = sf;
   g_hasLoadedSceneFile = true;
+  g_sceneProfiles = sf.profiles;
+  LoadEditorSceneProfiles();
   g_sceneCollisionResourcePath = sf.collision;
   g_sceneProfiles = sf.profiles;
   return sf;
@@ -3473,6 +3644,7 @@ EditorUndoState EditorApp::CaptureEditorUndoState(std::string* outKey) {
   state.activeGroupIdx = g_activeGroupIdx;
   state.selectionType = g_selectionType;
   state.selectedIdx = g_selectedIdx;
+  state.selectedSplinePoint = g_selectedSplinePoint;
   state.activeCameraIdx = g_activeCameraIdx;
   if (outKey) {
     *outKey = EditorUndoStateKey(state);
@@ -3503,7 +3675,15 @@ void EditorApp::ApplyEditorUndoState(const EditorUndoState& state) {
   InvalidateSceneObjectTransformSnapshots();
   g_cameras.clear();
   g_lights.clear();
+  ReleaseCameraGizmoCaches(g_lightCameraGizmoCameras);
+  g_lightCameras.clear();
+  g_cameraAnimations.clear();
+  ReleaseGizmoCache(g_godRaysVolumeGizmo);
+  g_godRaysVolume = t850::scene::SceneGodRaysVolumeDesc{};
+  g_splines.clear();
+  ReleaseGizmoCaches(g_splineGizmos);
   g_selectedIdx = -1;
+  g_selectedSplinePoint = -1;
   g_selectionType = 0;
   g_activeCameraIdx = -1;
   ClearMixedSelection();
@@ -3605,6 +3785,11 @@ void EditorApp::ApplyEditorUndoState(const EditorUndoState& state) {
     RestorePhysicsEntityFromScene(m_physics, entityDesc);
   }
   g_gameEntities = sf.game_entities;
+  g_splines = sf.splines;
+  ReleaseCameraGizmoCaches(g_lightCameraGizmoCameras);
+  g_lightCameras = sf.light_cameras;
+  g_cameraAnimations = sf.camera_animations;
+  g_godRaysVolume = sf.god_rays_volume.value_or(t850::scene::SceneGodRaysVolumeDesc{});
   EnsureInferredGameEntities();
   if (sf.navigation_mesh) {
     RestoreEditorNavMeshFromScene(*sf.navigation_mesh);
@@ -3676,21 +3861,29 @@ void EditorApp::ApplyEditorUndoState(const EditorUndoState& state) {
   }
   g_selectionType = state.selectionType;
   g_selectedIdx = state.selectedIdx;
+  g_selectedSplinePoint = state.selectedSplinePoint;
   if ((g_selectionType == 0 && (g_selectedIdx < 0 || g_selectedIdx >= static_cast<int>(g_objects.size()))) ||
       (g_selectionType == 1 && (g_selectedIdx < 0 || g_selectedIdx >= static_cast<int>(g_cameras.size()))) ||
       (g_selectionType == 2 && (g_selectedIdx < 0 || g_selectedIdx >= static_cast<int>(g_lights.size()))) ||
       (g_selectionType == 3 && (g_selectedIdx < 0 || g_selectedIdx >= static_cast<int>(g_physicsEntities.size()))) ||
-      (g_selectionType == 4 && !m_editorNavMeshAuthored)) {
+      (g_selectionType == 4 && !m_editorNavMeshAuthored) ||
+      (g_selectionType == 5 && (g_selectedIdx < 0 || g_selectedIdx >= static_cast<int>(g_splines.size()))) ||
+      (g_selectionType == 6 && (g_selectedIdx < 0 || g_selectedIdx >= static_cast<int>(g_lightCameras.size()))) ||
+      (g_selectionType == 7 && (g_selectedIdx < 0 ||
+                                g_selectedIdx >= static_cast<int>(g_splines.size()) ||
+                                g_selectedSplinePoint < 0 ||
+                                g_selectedSplinePoint >= static_cast<int>(g_splines[static_cast<std::size_t>(g_selectedIdx)].points.size()))) ||
+      (g_selectionType == 8 && g_selectedIdx != 0)) {
     g_selectedIdx = -1;
+    g_selectedSplinePoint = -1;
     g_selectionType = 0;
   }
   if (g_multiEntitySelect.empty() && (g_selectionType == 0 || g_selectionType == 3)) {
     AddMixedSelection(g_selectionType, g_selectedIdx);
   }
-  g_activeCameraIdx = state.activeCameraIdx >= 0 &&
-      state.activeCameraIdx < static_cast<int>(g_cameras.size())
-          ? state.activeCameraIdx
-          : -1;
+  g_activeCameraIdx = IsActiveCameraIndexValid(state.activeCameraIdx)
+      ? state.activeCameraIdx
+      : -1;
   ResetMainEditorFrameLimiter();
 }
 
@@ -3733,10 +3926,28 @@ t850::SandboxProfileDesc EditorApp::BuildEditorSceneProfile() const {
   SetFloatOverride(profile.sliders, "lightmap_intensity", m_sceneProps.LightmapIntensity);
   SetFloatOverride(profile.sliders, "tm_white_level", m_sceneProps.ToneMapWhiteLevel);
   SetFloatOverride(profile.sliders, "tm_adapt_tau", m_sceneProps.LuminanceTau);
+  SetFloatOverride(profile.sliders, "shadow_map_resolution", m_sceneProps.ShadowMapResolution);
+  SetFloatOverride(profile.sliders, "god_rays_resolution", m_sceneProps.GoodRaysResolution);
   SetFloatOverride(profile.sliders, "pcf_radius", m_sceneProps.PCFScale);
   SetFloatOverride(profile.sliders, "pcf_samples", m_sceneProps.PCFSamples);
   SetFloatOverride(profile.sliders, "ssao_kernel_size", static_cast<float>(m_sceneProps.SSAOKernel.KernelSize));
   SetFloatOverride(profile.sliders, "ssao_radius", m_sceneProps.SSAOKernel.Radius);
+  SetFloatOverride(profile.sliders, "dof_aperture", m_sceneProps.Aperture);
+  SetFloatOverride(profile.sliders, "dof_focal_length", m_sceneProps.FocalLength);
+  SetFloatOverride(profile.sliders, "dof_focus_depth", m_sceneProps.FocusDepth);
+  SetFloatOverride(profile.sliders, "dof_max_coc", m_sceneProps.MaxCoc);
+  SetFloatOverride(profile.sliders, "dof_far_samples", m_sceneProps.DOF_Far_Samples_squared);
+  SetFloatOverride(profile.sliders, "dof_near_samples", m_sceneProps.DOF_Near_Samples_squared);
+  SetFloatOverride(profile.sliders, "parallax_low_samples", m_sceneProps.ParallaxLowSamples);
+  SetFloatOverride(profile.sliders, "parallax_high_samples", m_sceneProps.ParallaxHighSamples);
+  SetFloatOverride(profile.sliders, "parallax_height", m_sceneProps.ParallaxHeight);
+  SetFloatOverride(profile.sliders, "parallax_shadow_min_layers", m_sceneProps.ParallaxShadowMinLayers);
+  SetFloatOverride(profile.sliders, "parallax_shadow_max_layers", m_sceneProps.ParallaxShadowMaxLayers);
+  SetFloatOverride(profile.sliders, "parallax_shadow_softness", m_sceneProps.ParallaxShadowSoftness);
+  SetFloatOverride(profile.sliders, "parallax_shadow_strength", m_sceneProps.ParallaxShadowStrength);
+  SetFloatOverride(profile.sliders, "light_volume_steps", m_sceneProps.LightVolumeSteps);
+  SetFloatOverride(profile.sliders, "godrays_factor", m_sceneProps.GodRaysFactor);
+  SetFloatOverride(profile.sliders, "active_lights", static_cast<float>(m_sceneProps.ActiveLights));
   GaussFilter* activeKernel =
       (m_editorActiveGaussSelection >= 0 &&
        m_editorActiveGaussSelection < static_cast<int>(m_sceneProps.pGaussKernels.size()))
@@ -3753,12 +3964,20 @@ t850::SandboxProfileDesc EditorApp::BuildEditorSceneProfile() const {
   SetFloatOverride(profile.sliders, "shadow_min", m_sceneProps.ShadowMin);
   SetFloatOverride(profile.sliders, "env_factor", m_sceneProps.EnvFactor);
   SetFloatOverride(profile.sliders, "ibl_factor", m_sceneProps.IBLFactor);
+  SetFloatOverride(profile.sliders, "ibl_mip_count", m_sceneProps.IBLMipCount);
+  SetFloatOverride(profile.sliders, "ibl_diffuse_mip_level", m_sceneProps.IBLDiffuseMipLevel);
+  SetFloatOverride(profile.sliders, "ibl_brdf_lut_enabled", m_sceneProps.IBLBRDFLUTEnabled);
   SetFloatOverride(profile.sliders, "material_emissive_intensity", m_sceneProps.MaterialEmissiveIntensity);
   SetFloatOverride(profile.sliders, "material_transmission_multiplier", m_sceneProps.MaterialTransmissionMultiplier);
   SetFloatOverride(profile.sliders, "material_refraction_strength", m_sceneProps.MaterialRefractionStrength);
 
   SetBoolOverride(profile.checkboxes, "shadow_toggle", m_sceneProps.ToogleShadow != 0);
   SetBoolOverride(profile.checkboxes, "ssao_toggle", m_sceneProps.ToogleSSAO != 0);
+  SetBoolOverride(profile.checkboxes, "dof_toggle", m_sceneProps.ToogleDOF != 0);
+  SetBoolOverride(profile.checkboxes, "dof_auto_focus", m_sceneProps.AutoFocus);
+  SetBoolOverride(profile.checkboxes, "parallax_toggle", m_sceneProps.ToogleParallax != 0);
+  SetBoolOverride(profile.checkboxes, "parallax_shadow_toggle", m_sceneProps.ToogleParallaxShadow != 0);
+  SetBoolOverride(profile.checkboxes, "godrays_toggle", m_sceneProps.ToogleGodRays != 0);
   SetBoolOverride(profile.checkboxes, "show_wireframe", m_panels.showWireframe);
   SetBoolOverride(profile.checkboxes, "show_skeleton", m_editorShowSkeleton);
   SetBoolOverride(profile.checkboxes, "show_physics", m_editorShowPhysics);
@@ -3829,6 +4048,8 @@ void EditorApp::ApplyEditorSceneProfile(const t850::SandboxProfileDesc& profile)
     else if (value.name == "lightmap_intensity") m_sceneProps.LightmapIntensity = value.value;
     else if (value.name == "tm_white_level") m_sceneProps.ToneMapWhiteLevel = value.value;
     else if (value.name == "tm_adapt_tau") m_sceneProps.LuminanceTau = value.value;
+    else if (value.name == "shadow_map_resolution") m_sceneProps.ShadowMapResolution = value.value;
+    else if (value.name == "god_rays_resolution") m_sceneProps.GoodRaysResolution = value.value;
     else if (value.name == "pcf_radius") m_sceneProps.PCFScale = value.value;
     else if (value.name == "pcf_samples") m_sceneProps.PCFSamples = value.value;
     else if (value.name == "ssao_kernel_size") {
@@ -3836,7 +4057,24 @@ void EditorApp::ApplyEditorSceneProfile(const t850::SandboxProfileDesc& profile)
       m_sceneProps.SSAOKernel.Update();
     } else if (value.name == "ssao_radius") {
       m_sceneProps.SSAOKernel.Radius = value.value;
-    } else if (value.name == "gauss_kernel_radius") {
+      m_sceneProps.SSAOKernel.Update();
+    } else if (value.name == "dof_aperture") m_sceneProps.Aperture = value.value;
+    else if (value.name == "dof_focal_length") m_sceneProps.FocalLength = value.value;
+    else if (value.name == "dof_focus_depth") m_sceneProps.FocusDepth = value.value;
+    else if (value.name == "dof_max_coc") m_sceneProps.MaxCoc = value.value;
+    else if (value.name == "dof_far_samples") m_sceneProps.DOF_Far_Samples_squared = value.value;
+    else if (value.name == "dof_near_samples") m_sceneProps.DOF_Near_Samples_squared = value.value;
+    else if (value.name == "parallax_low_samples") m_sceneProps.ParallaxLowSamples = value.value;
+    else if (value.name == "parallax_high_samples") m_sceneProps.ParallaxHighSamples = value.value;
+    else if (value.name == "parallax_height") m_sceneProps.ParallaxHeight = value.value;
+    else if (value.name == "parallax_shadow_min_layers") m_sceneProps.ParallaxShadowMinLayers = value.value;
+    else if (value.name == "parallax_shadow_max_layers") m_sceneProps.ParallaxShadowMaxLayers = value.value;
+    else if (value.name == "parallax_shadow_softness") m_sceneProps.ParallaxShadowSoftness = value.value;
+    else if (value.name == "parallax_shadow_strength") m_sceneProps.ParallaxShadowStrength = value.value;
+    else if (value.name == "light_volume_steps") m_sceneProps.LightVolumeSteps = value.value;
+    else if (value.name == "godrays_factor") m_sceneProps.GodRaysFactor = value.value;
+    else if (value.name == "active_lights") m_sceneProps.ActiveLights = (std::max)(0, static_cast<int>(std::round(value.value)));
+    else if (value.name == "gauss_kernel_radius") {
       if (m_editorActiveGaussSelection >= 0 &&
           m_editorActiveGaussSelection < static_cast<int>(m_sceneProps.pGaussKernels.size())) {
         if (GaussFilter* kernel = m_sceneProps.pGaussKernels[static_cast<std::size_t>(m_editorActiveGaussSelection)]) {
@@ -3865,6 +4103,9 @@ void EditorApp::ApplyEditorSceneProfile(const t850::SandboxProfileDesc& profile)
     else if (value.name == "shadow_min") m_sceneProps.ShadowMin = value.value;
     else if (value.name == "env_factor") m_sceneProps.EnvFactor = value.value;
     else if (value.name == "ibl_factor") m_sceneProps.IBLFactor = value.value;
+    else if (value.name == "ibl_mip_count") m_sceneProps.IBLMipCount = (std::max)(0.0f, value.value);
+    else if (value.name == "ibl_diffuse_mip_level") m_sceneProps.IBLDiffuseMipLevel = (std::max)(0.0f, value.value);
+    else if (value.name == "ibl_brdf_lut_enabled") m_sceneProps.IBLBRDFLUTEnabled = value.value > 0.5f ? 1.0f : 0.0f;
     else if (value.name == "material_emissive_intensity") m_sceneProps.MaterialEmissiveIntensity = value.value;
     else if (value.name == "material_transmission_multiplier") m_sceneProps.MaterialTransmissionMultiplier = value.value;
     else if (value.name == "material_refraction_strength") m_sceneProps.MaterialRefractionStrength = value.value;
@@ -3873,6 +4114,11 @@ void EditorApp::ApplyEditorSceneProfile(const t850::SandboxProfileDesc& profile)
   for (const t850::BoolOverrideDesc& value : profile.checkboxes) {
     if (value.name == "shadow_toggle") m_sceneProps.ToogleShadow = value.value ? 1 : 0;
     else if (value.name == "ssao_toggle") m_sceneProps.ToogleSSAO = value.value ? 1 : 0;
+    else if (value.name == "dof_toggle") m_sceneProps.ToogleDOF = value.value ? 1 : 0;
+    else if (value.name == "dof_auto_focus") m_sceneProps.AutoFocus = value.value;
+    else if (value.name == "parallax_toggle") m_sceneProps.ToogleParallax = value.value ? 1 : 0;
+    else if (value.name == "parallax_shadow_toggle") m_sceneProps.ToogleParallaxShadow = value.value ? 1 : 0;
+    else if (value.name == "godrays_toggle") m_sceneProps.ToogleGodRays = value.value ? 1 : 0;
     else if (value.name == "show_wireframe") m_panels.showWireframe = value.value;
     else if (value.name == "show_skeleton") m_editorShowSkeleton = value.value;
     else if (value.name == "show_physics") m_editorShowPhysics = value.value;
@@ -4097,6 +4343,7 @@ void EditorApp::DrawEditorRenderingPanel() {
     }
   };
   applyDebugSelection();
+  bool recreateRenderTargets = false;
 
   auto drawSlider = [&](const char* name) {
     const t850::SliderDesc* desc = findSlider(name);
@@ -4112,10 +4359,28 @@ void EditorApp::DrawEditorRenderingPanel() {
     else if (desc->name == "lightmap_intensity") value = m_sceneProps.LightmapIntensity;
     else if (desc->name == "tm_white_level") value = m_sceneProps.ToneMapWhiteLevel;
     else if (desc->name == "tm_adapt_tau") value = m_sceneProps.LuminanceTau;
+    else if (desc->name == "shadow_map_resolution") value = m_sceneProps.ShadowMapResolution;
+    else if (desc->name == "god_rays_resolution") value = m_sceneProps.GoodRaysResolution;
     else if (desc->name == "pcf_radius") value = m_sceneProps.PCFScale;
     else if (desc->name == "pcf_samples") value = m_sceneProps.PCFSamples;
     else if (desc->name == "ssao_kernel_size") value = static_cast<float>(m_sceneProps.SSAOKernel.KernelSize);
     else if (desc->name == "ssao_radius") value = m_sceneProps.SSAOKernel.Radius;
+    else if (desc->name == "dof_aperture") value = m_sceneProps.Aperture;
+    else if (desc->name == "dof_focal_length") value = m_sceneProps.FocalLength;
+    else if (desc->name == "dof_focus_depth") value = m_sceneProps.FocusDepth;
+    else if (desc->name == "dof_max_coc") value = m_sceneProps.MaxCoc;
+    else if (desc->name == "dof_far_samples") value = m_sceneProps.DOF_Far_Samples_squared;
+    else if (desc->name == "dof_near_samples") value = m_sceneProps.DOF_Near_Samples_squared;
+    else if (desc->name == "parallax_low_samples") value = m_sceneProps.ParallaxLowSamples;
+    else if (desc->name == "parallax_high_samples") value = m_sceneProps.ParallaxHighSamples;
+    else if (desc->name == "parallax_height") value = m_sceneProps.ParallaxHeight;
+    else if (desc->name == "parallax_shadow_min_layers") value = m_sceneProps.ParallaxShadowMinLayers;
+    else if (desc->name == "parallax_shadow_max_layers") value = m_sceneProps.ParallaxShadowMaxLayers;
+    else if (desc->name == "parallax_shadow_softness") value = m_sceneProps.ParallaxShadowSoftness;
+    else if (desc->name == "parallax_shadow_strength") value = m_sceneProps.ParallaxShadowStrength;
+    else if (desc->name == "light_volume_steps") value = m_sceneProps.LightVolumeSteps;
+    else if (desc->name == "godrays_factor") value = m_sceneProps.GodRaysFactor;
+    else if (desc->name == "active_lights") value = static_cast<float>(m_sceneProps.ActiveLights);
     else if (desc->name == "gauss_kernel_radius") { if (kernel) value = kernel->radius; else valid = false; }
     else if (desc->name == "gauss_kernel_deviation") { if (kernel) value = kernel->sigma; else valid = false; }
     else if (desc->name == "fov") { if (Camera* cam = m_sceneProps.GetPrimaryCamera()) value = Rad2Deg(cam->Fov); else valid = false; }
@@ -4123,13 +4388,20 @@ void EditorApp::DrawEditorRenderingPanel() {
     else if (desc->name == "shadow_min") value = m_sceneProps.ShadowMin;
     else if (desc->name == "env_factor") value = m_sceneProps.EnvFactor;
     else if (desc->name == "ibl_factor") value = m_sceneProps.IBLFactor;
+    else if (desc->name == "ibl_mip_count") value = m_sceneProps.IBLMipCount;
+    else if (desc->name == "ibl_diffuse_mip_level") value = m_sceneProps.IBLDiffuseMipLevel;
+    else if (desc->name == "ibl_brdf_lut_enabled") value = m_sceneProps.IBLBRDFLUTEnabled;
     else if (desc->name == "material_emissive_intensity") value = m_sceneProps.MaterialEmissiveIntensity;
     else if (desc->name == "material_transmission_multiplier") value = m_sceneProps.MaterialTransmissionMultiplier;
     else if (desc->name == "material_refraction_strength") value = m_sceneProps.MaterialRefractionStrength;
     else return;
     if (!valid) return;
     bool changed = false;
-    if (desc->name == "ssao_kernel_size" || desc->name == "pcf_samples") {
+    if (desc->name == "ssao_kernel_size" || desc->name == "pcf_samples" ||
+        desc->name == "shadow_map_resolution" || desc->name == "god_rays_resolution" ||
+        desc->name == "dof_far_samples" || desc->name == "dof_near_samples" ||
+        desc->name == "parallax_low_samples" || desc->name == "parallax_high_samples" ||
+        desc->name == "light_volume_steps" || desc->name == "active_lights") {
       int intValue = static_cast<int>(std::round(value));
       changed = ImGui::SliderInt(desc->label.c_str(), &intValue, static_cast<int>(desc->min_val), static_cast<int>(desc->max_val));
       value = static_cast<float>(intValue);
@@ -4147,10 +4419,28 @@ void EditorApp::DrawEditorRenderingPanel() {
       else if (desc->name == "lightmap_intensity") m_sceneProps.LightmapIntensity = value;
       else if (desc->name == "tm_white_level") m_sceneProps.ToneMapWhiteLevel = value;
       else if (desc->name == "tm_adapt_tau") m_sceneProps.LuminanceTau = value;
+      else if (desc->name == "shadow_map_resolution") m_sceneProps.ShadowMapResolution = value;
+      else if (desc->name == "god_rays_resolution") m_sceneProps.GoodRaysResolution = value;
       else if (desc->name == "pcf_radius") m_sceneProps.PCFScale = value;
       else if (desc->name == "pcf_samples") m_sceneProps.PCFSamples = value;
       else if (desc->name == "ssao_kernel_size") { m_sceneProps.SSAOKernel.KernelSize = (int)value; m_sceneProps.SSAOKernel.Update(); }
       else if (desc->name == "ssao_radius") { m_sceneProps.SSAOKernel.Radius = value; m_sceneProps.SSAOKernel.Update(); }
+      else if (desc->name == "dof_aperture") m_sceneProps.Aperture = value;
+      else if (desc->name == "dof_focal_length") m_sceneProps.FocalLength = value;
+      else if (desc->name == "dof_focus_depth") m_sceneProps.FocusDepth = value;
+      else if (desc->name == "dof_max_coc") m_sceneProps.MaxCoc = value;
+      else if (desc->name == "dof_far_samples") m_sceneProps.DOF_Far_Samples_squared = value;
+      else if (desc->name == "dof_near_samples") m_sceneProps.DOF_Near_Samples_squared = value;
+      else if (desc->name == "parallax_low_samples") m_sceneProps.ParallaxLowSamples = value;
+      else if (desc->name == "parallax_high_samples") m_sceneProps.ParallaxHighSamples = value;
+      else if (desc->name == "parallax_height") m_sceneProps.ParallaxHeight = value;
+      else if (desc->name == "parallax_shadow_min_layers") m_sceneProps.ParallaxShadowMinLayers = value;
+      else if (desc->name == "parallax_shadow_max_layers") m_sceneProps.ParallaxShadowMaxLayers = value;
+      else if (desc->name == "parallax_shadow_softness") m_sceneProps.ParallaxShadowSoftness = value;
+      else if (desc->name == "parallax_shadow_strength") m_sceneProps.ParallaxShadowStrength = value;
+      else if (desc->name == "light_volume_steps") m_sceneProps.LightVolumeSteps = value;
+      else if (desc->name == "godrays_factor") m_sceneProps.GodRaysFactor = value;
+      else if (desc->name == "active_lights") m_sceneProps.ActiveLights = (std::max)(0, static_cast<int>(std::round(value)));
       else if (desc->name == "gauss_kernel_radius" && kernel) { kernel->radius = value; kernel->Update(); }
       else if (desc->name == "gauss_kernel_deviation" && kernel) { kernel->sigma = value; kernel->Update(); }
       else if (desc->name == "fov") { if (Camera* cam = m_sceneProps.GetPrimaryCamera()) cam->SetFov(Deg2Rad(value)); }
@@ -4158,9 +4448,15 @@ void EditorApp::DrawEditorRenderingPanel() {
       else if (desc->name == "shadow_min") m_sceneProps.ShadowMin = value;
       else if (desc->name == "env_factor") m_sceneProps.EnvFactor = value;
       else if (desc->name == "ibl_factor") m_sceneProps.IBLFactor = value;
+      else if (desc->name == "ibl_mip_count") m_sceneProps.IBLMipCount = value;
+      else if (desc->name == "ibl_diffuse_mip_level") m_sceneProps.IBLDiffuseMipLevel = value;
+      else if (desc->name == "ibl_brdf_lut_enabled") m_sceneProps.IBLBRDFLUTEnabled = value;
       else if (desc->name == "material_emissive_intensity") m_sceneProps.MaterialEmissiveIntensity = value;
       else if (desc->name == "material_transmission_multiplier") m_sceneProps.MaterialTransmissionMultiplier = value;
       else if (desc->name == "material_refraction_strength") m_sceneProps.MaterialRefractionStrength = value;
+      if (desc->name == "shadow_map_resolution" || desc->name == "god_rays_resolution") {
+        recreateRenderTargets = true;
+      }
     }
   };
 
@@ -4170,6 +4466,11 @@ void EditorApp::DrawEditorRenderingPanel() {
     bool value = desc->default_val;
     if (desc->name == "shadow_toggle") value = m_sceneProps.ToogleShadow != 0;
     else if (desc->name == "ssao_toggle") value = m_sceneProps.ToogleSSAO != 0;
+    else if (desc->name == "dof_toggle") value = m_sceneProps.ToogleDOF != 0;
+    else if (desc->name == "dof_auto_focus") value = m_sceneProps.AutoFocus;
+    else if (desc->name == "parallax_toggle") value = m_sceneProps.ToogleParallax != 0;
+    else if (desc->name == "parallax_shadow_toggle") value = m_sceneProps.ToogleParallaxShadow != 0;
+    else if (desc->name == "godrays_toggle") value = m_sceneProps.ToogleGodRays != 0;
     else if (desc->name == "show_wireframe") value = m_panels.showWireframe;
     else if (desc->name == "show_skeleton") value = m_editorShowSkeleton;
     else if (desc->name == "show_physics") value = m_editorShowPhysics;
@@ -4179,6 +4480,17 @@ void EditorApp::DrawEditorRenderingPanel() {
     if (ImGui::Checkbox(desc->label.c_str(), &value)) {
       if (desc->name == "shadow_toggle") m_sceneProps.ToogleShadow = value ? 1 : 0;
       else if (desc->name == "ssao_toggle") m_sceneProps.ToogleSSAO = value ? 1 : 0;
+      else if (desc->name == "dof_toggle") {
+        m_sceneProps.ToogleDOF = value ? 1 : 0;
+        g_renderGraph.SetPassEnabled("CoC", value);
+        g_renderGraph.SetPassEnabled("Combine CoC", value);
+        g_renderGraph.SetPassEnabled("DOF", value);
+        g_renderGraph.SetPassEnabled("DOF 2", value);
+      }
+      else if (desc->name == "dof_auto_focus") m_sceneProps.AutoFocus = value;
+      else if (desc->name == "parallax_toggle") m_sceneProps.ToogleParallax = value ? 1 : 0;
+      else if (desc->name == "parallax_shadow_toggle") m_sceneProps.ToogleParallaxShadow = value ? 1 : 0;
+      else if (desc->name == "godrays_toggle") m_sceneProps.ToogleGodRays = value ? 1 : 0;
       else if (desc->name == "show_wireframe") m_panels.showWireframe = value;
       else if (desc->name == "show_skeleton") m_editorShowSkeleton = value;
       else if (desc->name == "show_physics") m_editorShowPhysics = value;
@@ -4237,6 +4549,86 @@ void EditorApp::DrawEditorRenderingPanel() {
     drawSlider(desc.name.c_str());
   }
 
+  auto intSlider = [](const char* label, float& value, int minValue, int maxValue) {
+    int intValue = static_cast<int>(std::round(value));
+    if (ImGui::SliderInt(label, &intValue, minValue, maxValue)) {
+      value = static_cast<float>(intValue);
+      return true;
+    }
+    return false;
+  };
+
+  ImGui::SeparatorText("Depth of Field");
+  bool dofEnabled = m_sceneProps.ToogleDOF != 0;
+  if (ImGui::Checkbox("Depth of Field", &dofEnabled)) {
+    m_sceneProps.ToogleDOF = dofEnabled ? 1 : 0;
+    g_renderGraph.SetPassEnabled("CoC", dofEnabled);
+    g_renderGraph.SetPassEnabled("Combine CoC", dofEnabled);
+    g_renderGraph.SetPassEnabled("DOF", dofEnabled);
+    g_renderGraph.SetPassEnabled("DOF 2", dofEnabled);
+  }
+  ImGui::Checkbox("Auto Focus", &m_sceneProps.AutoFocus);
+  ImGui::SliderFloat("Aperture", &m_sceneProps.Aperture, 0.0f, 200.0f, "%.3f");
+  ImGui::SliderFloat("Focal Length", &m_sceneProps.FocalLength, 0.0f, 100.0f, "%.3f");
+  ImGui::SliderFloat("Focus Depth", &m_sceneProps.FocusDepth, 0.0f, 1.0f, "%.6f");
+  ImGui::SliderFloat("Max CoC", &m_sceneProps.MaxCoc, 0.0f, 10.0f, "%.3f");
+  intSlider("Near Samples", m_sceneProps.DOF_Near_Samples_squared, 0, 16);
+  intSlider("Far Samples", m_sceneProps.DOF_Far_Samples_squared, 0, 16);
+
+  ImGui::SeparatorText("God Rays");
+  bool godRaysEnabled = m_sceneProps.ToogleGodRays != 0;
+  if (ImGui::Checkbox("God Rays", &godRaysEnabled)) {
+    m_sceneProps.ToogleGodRays = godRaysEnabled ? 1 : 0;
+  }
+  intSlider("Ray March Steps", m_sceneProps.LightVolumeSteps, 2, 512);
+  ImGui::SliderFloat("God Rays Factor", &m_sceneProps.GodRaysFactor, 0.0f, 5.0f, "%.3f");
+  if (intSlider("God Rays Resolution", m_sceneProps.GoodRaysResolution, 0, 4096)) {
+    recreateRenderTargets = true;
+  }
+  ImGui::Checkbox("Clip to authored volume", &g_godRaysVolume.clip_enabled);
+  ImGui::TextDisabled("Select Rendering Volumes > God Rays Volume to place and resize the volume.");
+
+  ImGui::SeparatorText("Advanced Scene Rendering");
+  int activeLights = m_sceneProps.ActiveLights;
+  if (ImGui::SliderInt("Active Lights", &activeLights, 0, (std::max)(1, static_cast<int>(m_sceneProps.Lights.size())))) {
+    m_sceneProps.ActiveLights = activeLights;
+  }
+  if (intSlider("Shadow Map Resolution", m_sceneProps.ShadowMapResolution, 256, 8192)) {
+    recreateRenderTargets = true;
+  }
+  ImGui::SliderFloat("Shadow Bias", &m_sceneProps.ShadowBias, 0.0f, 0.01f, "%.7f");
+  ImGui::SliderFloat("Shadow Min", &m_sceneProps.ShadowMin, 0.0f, 1.0f, "%.3f");
+  ImGui::SliderFloat("Environment Factor", &m_sceneProps.EnvFactor, 0.0f, 5.0f, "%.3f");
+  ImGui::SliderFloat("IBL Factor", &m_sceneProps.IBLFactor, 0.0f, 5.0f, "%.3f");
+  ImGui::SliderFloat("IBL Max Mip", &m_sceneProps.IBLMipCount, 0.0f, 16.0f, "%.3f");
+  ImGui::SliderFloat("Diffuse IBL Mip", &m_sceneProps.IBLDiffuseMipLevel, 0.0f, 16.0f, "%.3f");
+  ImGui::SliderFloat("BRDF LUT Enabled", &m_sceneProps.IBLBRDFLUTEnabled, 0.0f, 1.0f, "%.0f");
+  bool parallaxEnabled = m_sceneProps.ToogleParallax != 0;
+  if (ImGui::Checkbox("Parallax", &parallaxEnabled)) m_sceneProps.ToogleParallax = parallaxEnabled ? 1 : 0;
+  bool parallaxShadowEnabled = m_sceneProps.ToogleParallaxShadow != 0;
+  if (ImGui::Checkbox("Parallax Self-Shadow", &parallaxShadowEnabled)) m_sceneProps.ToogleParallaxShadow = parallaxShadowEnabled ? 1 : 0;
+  intSlider("Parallax Low Samples", m_sceneProps.ParallaxLowSamples, 0, 128);
+  intSlider("Parallax High Samples", m_sceneProps.ParallaxHighSamples, 0, 128);
+  ImGui::SliderFloat("Parallax Height", &m_sceneProps.ParallaxHeight, 0.0f, 0.2f, "%.5f");
+  ImGui::SliderFloat("PX Shadow Min Layers", &m_sceneProps.ParallaxShadowMinLayers, 0.0f, 128.0f, "%.3f");
+  ImGui::SliderFloat("PX Shadow Max Layers", &m_sceneProps.ParallaxShadowMaxLayers, 0.0f, 128.0f, "%.3f");
+  ImGui::SliderFloat("PX Shadow Softness", &m_sceneProps.ParallaxShadowSoftness, 0.0f, 4.0f, "%.3f");
+  ImGui::SliderFloat("PX Shadow Strength", &m_sceneProps.ParallaxShadowStrength, 0.0f, 4.0f, "%.3f");
+  ImGui::SliderFloat("Material Emissive", &m_sceneProps.MaterialEmissiveIntensity, 0.0f, 10.0f, "%.3f");
+  ImGui::SliderFloat("Transmission", &m_sceneProps.MaterialTransmissionMultiplier, 0.0f, 10.0f, "%.3f");
+  ImGui::SliderFloat("Refraction", &m_sceneProps.MaterialRefractionStrength, 0.0f, 1.0f, "%.3f");
+  if (recreateRenderTargets && pFramework && pFramework->pVideoDriver && g_deferredReady) {
+    pFramework->pVideoDriver->WaitForGPU();
+    pFramework->pVideoDriver->DestroyRTs();
+    g_renderGraph.CreateRenderTargets(pFramework->pVideoDriver, m_sceneProps);
+    const bool dofOn = m_sceneProps.ToogleDOF != 0;
+    g_renderGraph.SetPassEnabled("CoC", dofOn);
+    g_renderGraph.SetPassEnabled("Combine CoC", dofOn);
+    g_renderGraph.SetPassEnabled("DOF", dofOn);
+    g_renderGraph.SetPassEnabled("DOF 2", dofOn);
+    applyDebugSelection();
+  }
+
   ImGui::SeparatorText("Debug Views");
   drawCheckbox("show_wireframe");
   drawCheckbox("show_skeleton");
@@ -4278,6 +4670,156 @@ void EditorApp::SetEditorCubemap(const std::string& cubemapPath) {
   }
   ResetMainEditorFrameLimiter();
   T8_LOG_INFO("[T8ditor] Queued editor cubemap change '%s'", normalizedPath.c_str());
+}
+
+void EditorApp::DrawEditorTimelinePanel() {
+  int timelineSplineIndex = FindDefaultTimelineSplineIndex(m_editorSplinePreviewIndex);
+  if (timelineSplineIndex != m_editorSplinePreviewIndex) {
+    m_editorSplinePreviewIndex = timelineSplineIndex;
+    m_editorTimelineTimeSec = 0.0f;
+    m_editorTimelineDurationSec = timelineSplineIndex >= 0
+        ? EstimateEditorSplineDurationSeconds(g_splines[static_cast<std::size_t>(timelineSplineIndex)])
+        : 0.0f;
+  }
+
+  auto applyTimelineTime = [&](int splineIndex, float requestedTime) -> bool {
+    if (splineIndex < 0 || splineIndex >= static_cast<int>(g_splines.size())) return false;
+    t850::scene::SceneSplineDesc& splineDesc = g_splines[static_cast<std::size_t>(splineIndex)];
+    if (splineDesc.attached_camera < 0 || splineDesc.attached_camera >= static_cast<int>(g_cameras.size())) return false;
+    if (!BuildRuntimeSpline(splineDesc, m_editorSplinePreviewSpline)) return false;
+
+    m_editorTimelineDurationSec = EstimateEditorSplineDurationSeconds(splineDesc);
+    if (m_editorTimelineDurationSec > 0.0f) {
+      requestedTime = m_editorTimelineLoop
+          ? std::fmod((std::max)(0.0f, requestedTime), m_editorTimelineDurationSec)
+          : std::clamp(requestedTime, 0.0f, m_editorTimelineDurationSec);
+    } else {
+      requestedTime = 0.0f;
+    }
+
+    m_editorSplinePreviewAgent = t850::SplineAgent{};
+    m_editorSplinePreviewAgent.m_pSpline = &m_editorSplinePreviewSpline;
+    m_editorSplinePreviewAgent.m_moving = true;
+    m_editorSplinePreviewAgent.m_velocity = splineDesc.agent_velocity;
+    m_editorSplinePreviewAgent.SetOffset(0.0f);
+    m_editorSplinePreviewAgent.m_actualPoint =
+        m_editorSplinePreviewSpline.GetPoint(m_editorSplinePreviewSpline.GetNormalizedOffset(0.0f));
+
+    float remaining = requestedTime;
+    constexpr float kStep = 1.0f / 60.0f;
+    while (remaining > 0.000001f) {
+      const float step = (std::min)(remaining, kStep);
+      m_editorSplinePreviewAgent.Update(step);
+      remaining -= step;
+      if (!m_editorTimelineLoop && m_editorSplinePreviewAgent.FinishedJourneyThisUpdate()) {
+        break;
+      }
+    }
+
+    m_editorSplinePreviewIndex = splineIndex;
+    m_editorTimelineTimeSec = requestedTime;
+    ApplyEditorCameraAnimationsAtTime(m_editorTimelineTimeSec);
+    splineDesc.agent_offset = m_editorSplinePreviewAgent.GetOffset();
+    ApplyEditorSplineAgentToAttachedCamera(splineDesc, m_editorSplinePreviewAgent);
+    return true;
+  };
+
+  ImGui::TextDisabled("Timeline drives authored time-based editor playback. It moves cameras but never changes the active view camera.");
+  ImGui::Separator();
+
+  if (g_splines.empty()) {
+    ImGui::TextDisabled("No authored splines in this scene.");
+    return;
+  }
+
+  std::vector<std::string> splineLabels;
+  splineLabels.reserve(g_splines.size());
+  for (int i = 0; i < static_cast<int>(g_splines.size()); ++i) {
+    const t850::scene::SceneSplineDesc& spline = g_splines[static_cast<std::size_t>(i)];
+    std::string label = std::to_string(i) + ": " + (spline.name.empty() ? "Spline" : spline.name);
+    if (spline.attached_camera < 0 || spline.attached_camera >= static_cast<int>(g_cameras.size())) {
+      label += " (no camera)";
+    }
+    splineLabels.push_back(std::move(label));
+  }
+
+  int selectedSpline = m_editorSplinePreviewIndex >= 0 ? m_editorSplinePreviewIndex : 0;
+  selectedSpline = std::clamp(selectedSpline, 0, (std::max)(0, static_cast<int>(splineLabels.size()) - 1));
+  if (ImGui::BeginCombo("Track", splineLabels[static_cast<std::size_t>(selectedSpline)].c_str())) {
+    for (int i = 0; i < static_cast<int>(splineLabels.size()); ++i) {
+      const bool selected = i == selectedSpline;
+      if (ImGui::Selectable(splineLabels[static_cast<std::size_t>(i)].c_str(), selected)) {
+        selectedSpline = i;
+        m_editorSplinePreviewPlaying = false;
+        applyTimelineTime(selectedSpline, 0.0f);
+      }
+      if (selected) ImGui::SetItemDefaultFocus();
+    }
+    ImGui::EndCombo();
+  }
+
+  t850::scene::SceneSplineDesc& spline = g_splines[static_cast<std::size_t>(selectedSpline)];
+  const bool playable = spline.attached_camera >= 0 &&
+      spline.attached_camera < static_cast<int>(g_cameras.size()) &&
+      spline.points.size() >= 4;
+  if (!playable) {
+    ImGui::TextColored(ImVec4(1.0f, 0.65f, 0.25f, 1.0f),
+                       "Selected spline needs at least 4 points and an attached camera.");
+    return;
+  }
+
+  if (m_editorTimelineDurationSec <= 0.0f || selectedSpline != m_editorSplinePreviewIndex) {
+    m_editorTimelineDurationSec = EstimateEditorSplineDurationSeconds(spline);
+  }
+
+  if (m_editorSplinePreviewPlaying) {
+    if (ImGui::Button("Pause")) {
+      m_editorSplinePreviewPlaying = false;
+    }
+  } else {
+    if (ImGui::Button("Play")) {
+      if (m_editorSplinePreviewIndex != selectedSpline ||
+          m_editorSplinePreviewAgent.m_pSpline != &m_editorSplinePreviewSpline) {
+        applyTimelineTime(selectedSpline, m_editorTimelineTimeSec);
+      }
+      m_editorSplinePreviewPlaying = true;
+      m_editorSplinePreviewIndex = selectedSpline;
+    }
+  }
+  ImGui::SameLine();
+  if (ImGui::Button("Stop")) {
+    m_editorSplinePreviewPlaying = false;
+    applyTimelineTime(selectedSpline, 0.0f);
+  }
+  ImGui::SameLine();
+  if (ImGui::Button("End")) {
+    m_editorSplinePreviewPlaying = false;
+    applyTimelineTime(selectedSpline, m_editorTimelineDurationSec);
+  }
+  ImGui::SameLine();
+  ImGui::Checkbox("Loop", &m_editorTimelineLoop);
+  if (!g_cameraAnimations.empty()) {
+    ImGui::SameLine();
+    ImGui::TextDisabled("Camera animations: %d", static_cast<int>(g_cameraAnimations.size()));
+  }
+
+  const float duration = (std::max)(0.0f, m_editorTimelineDurationSec);
+  float timeValue = std::clamp(m_editorTimelineTimeSec, 0.0f, duration);
+  if (duration > 0.0f) {
+    if (ImGui::SliderFloat("Time", &timeValue, 0.0f, duration, "%.3f s")) {
+      m_editorSplinePreviewPlaying = false;
+      applyTimelineTime(selectedSpline, timeValue);
+    }
+  } else {
+    ImGui::SliderFloat("Time", &timeValue, 0.0f, 1.0f, "%.3f s");
+  }
+
+  const float offset = spline.agent_offset;
+  const float length = m_editorSplinePreviewSpline.m_totalLength > 0.0f
+      ? m_editorSplinePreviewSpline.m_totalLength
+      : 0.0f;
+  ImGui::Text("Camera: %d (%s)", spline.attached_camera, g_cameras[static_cast<std::size_t>(spline.attached_camera)].name.c_str());
+  ImGui::Text("Time: %.3f / %.3f sec    Offset: %.3f / %.3f", m_editorTimelineTimeSec, duration, offset, length);
 }
 
 void EditorApp::ApplyPendingEditorCubemap() {
@@ -4471,6 +5013,11 @@ void EditorApp::CreateAssets() {
     t850::LoadingProgress::ScopedStep graphStep("Loading editor assets", "Render graph", 24.0f);
     if (g_renderGraph.Load("Scenes/T8ditor_RenderGraph.json")) {
       g_renderGraph.CreateRenderTargets(pFramework->pVideoDriver, m_sceneProps);
+      const bool dofOn = m_sceneProps.ToogleDOF != 0;
+      g_renderGraph.SetPassEnabled("CoC", dofOn);
+      g_renderGraph.SetPassEnabled("Combine CoC", dofOn);
+      g_renderGraph.SetPassEnabled("DOF", dofOn);
+      g_renderGraph.SetPassEnabled("DOF 2", dofOn);
       XMatIdentity(g_quadVP);
       for (int i = 0; i < 8; ++i) {
         g_quads[i].CreateInstance(m_primMgr.GetPrimitive(t850::PrimitiveManager::QUAD), &g_quadVP);
@@ -4528,6 +5075,8 @@ void EditorApp::CreateAssets() {
 
   if (!g_startupMeshPath.empty() && g_startupMeshPath != "Models/SkyBox.glb")
     ImportMesh(g_startupMeshPath);
+  if (!g_startupSceneFilePath.empty())
+    g_pendingLoadPath = g_startupSceneFilePath;
 
   m_assetsCreated = true;
 
@@ -4987,7 +5536,15 @@ void EditorApp::DestroyAssets() {
   InvalidateSceneObjectTransformSnapshots();
   g_cameras.clear();
   g_lights.clear();
+  ReleaseCameraGizmoCaches(g_lightCameraGizmoCameras);
+  g_lightCameras.clear();
+  g_cameraAnimations.clear();
+  ReleaseGizmoCache(g_godRaysVolumeGizmo);
+  g_godRaysVolume = t850::scene::SceneGodRaysVolumeDesc{};
+  g_splines.clear();
+  ReleaseGizmoCaches(g_splineGizmos);
   g_selectedIdx = -1;
+  g_selectedSplinePoint = -1;
   g_selectionType = 0;
   g_activeCameraIdx = -1;
   ClearMixedSelection();
@@ -5297,6 +5854,8 @@ void EditorApp::LoadPendingScene() {
 
       g_loadedSceneFile = sf;
       g_hasLoadedSceneFile = true;
+      g_sceneProfiles = sf.profiles;
+      LoadEditorSceneProfiles();
 
       // Flush all GPU work from previous frames
       {
@@ -5315,7 +5874,15 @@ void EditorApp::LoadPendingScene() {
         InvalidateSceneObjectTransformSnapshots();
         g_cameras.clear();
         g_lights.clear();
+        ReleaseCameraGizmoCaches(g_lightCameraGizmoCameras);
+        g_lightCameras.clear();
+        g_cameraAnimations.clear();
+        ReleaseGizmoCache(g_godRaysVolumeGizmo);
+        g_godRaysVolume = t850::scene::SceneGodRaysVolumeDesc{};
+        g_splines.clear();
+        ReleaseGizmoCaches(g_splineGizmos);
         g_selectedIdx = -1;
+        g_selectedSplinePoint = -1;
         g_selectionType = 0;
         g_activeCameraIdx = -1;
         ClearMixedSelection();
@@ -5327,10 +5894,31 @@ void EditorApp::LoadPendingScene() {
       }
 
       g_sceneCollisionResourcePath = ResolveSceneCollisionPath(sf, loadPath);
-      g_sceneProfiles = sf.profiles;
       {
         t850::LoadingProgress::ScopedStep collisionStep("Loading scene", "Collision data", 4.0f);
         LoadSceneCollisionClip(g_sceneCollisionResourcePath);
+      }
+
+      if (g_deferredReady) {
+        const std::string renderGraphPath = sf.render_graph.empty()
+            ? "Scenes/T8ditor_RenderGraph.json"
+            : sf.render_graph;
+        t850::LoadingProgress::ScopedStep graphReloadStep("Preparing scene", "Render graph", 4.0f);
+        pFramework->pVideoDriver->DestroyRTs();
+        g_renderGraph = t850::RenderGraph{};
+        if (g_renderGraph.Load(renderGraphPath)) {
+          g_renderGraph.CreateRenderTargets(pFramework->pVideoDriver, m_sceneProps);
+          const bool dofOn = m_sceneProps.ToogleDOF != 0;
+          g_renderGraph.SetPassEnabled("CoC", dofOn);
+          g_renderGraph.SetPassEnabled("Combine CoC", dofOn);
+          g_renderGraph.SetPassEnabled("DOF", dofOn);
+          g_renderGraph.SetPassEnabled("DOF 2", dofOn);
+          T8_LOG_INFO("[T8ditor] Loaded scene render graph '%s'", renderGraphPath.c_str());
+        } else {
+          g_deferredReady = false;
+          T8_LOG_ERROR("[T8ditor] Failed to load scene render graph '%s'; deferred rendering disabled",
+                       renderGraphPath.c_str());
+        }
       }
 
       {
@@ -5431,6 +6019,11 @@ void EditorApp::LoadPendingScene() {
         }
       }
       g_gameEntities = sf.game_entities;
+      g_splines = sf.splines;
+      ReleaseCameraGizmoCaches(g_lightCameraGizmoCameras);
+      g_lightCameras = sf.light_cameras;
+      g_cameraAnimations = sf.camera_animations;
+      g_godRaysVolume = sf.god_rays_volume.value_or(t850::scene::SceneGodRaysVolumeDesc{});
       EnsureInferredGameEntities();
       if (sf.navigation_mesh) {
         t850::LoadingProgress::ScopedStep navMeshStep("Loading scene", "NavMesh", 4.0f);
@@ -5523,6 +6116,7 @@ void EditorApp::OnUpdate() {
   LoadPendingScene();
 
   CheckResize();
+  UpdateEditorSplinePreview(m_dtSecs);
 
   OnInput();
   if (!m_meshEditorOpen && !m_playSceneOpen) {
@@ -5662,10 +6256,23 @@ void EditorApp::OnInput() {
     return;
   }
 
+  const bool ctrlDown = IManager.PressedKey(T800K_LCTRL) || IManager.PressedKey(T800K_RCTRL);
+  const bool shiftDown = IManager.PressedKey(T800K_LSHIFT) || IManager.PressedKey(T800K_RSHIFT);
+  const bool orbitCameraMode = m_editorCameraMode == EditorCameraMode::Orbit;
+
+  // Z shortcuts must work after selecting from hierarchy panels too; only text entry blocks them.
+  if (!io.WantTextInput && IManager.PressedOnceKey(T800K_z)) {
+    if (ctrlDown && shiftDown)
+      g_undoStack.Redo();
+    else if (ctrlDown)
+      g_undoStack.Undo();
+    else
+      FrameSelectedEntity();
+  }
+  if (!io.WantTextInput && ctrlDown && IManager.PressedOnceKey(T800K_y))
+    g_undoStack.Redo();
+
   if (!imguiWantsKeyboard) {
-    const bool ctrlDown = IManager.PressedKey(T800K_LCTRL) || IManager.PressedKey(T800K_RCTRL);
-    const bool shiftDown = IManager.PressedKey(T800K_LSHIFT) || IManager.PressedKey(T800K_RSHIFT);
-    const bool orbitCameraMode = m_editorCameraMode == EditorCameraMode::Orbit;
 
     if (orbitCameraMode) {
       if (IManager.PressedOnceKey(T800K_q)) m_gizmo.SetMode(GizmoMode::Select);
@@ -5673,22 +6280,6 @@ void EditorApp::OnInput() {
       if (IManager.PressedOnceKey(T800K_e)) m_gizmo.SetMode(GizmoMode::Rotate);
       if (IManager.PressedOnceKey(T800K_r)) m_gizmo.SetMode(GizmoMode::Scale);
     }
-
-    // Z key behavior:
-    // Ctrl+Z = undo, Ctrl+Shift+Z = redo
-    // Z alone: if mesh selected → frame camera on it; else reset camera
-    if (IManager.PressedOnceKey(T800K_z)) {
-      if (ctrlDown && shiftDown)
-        g_undoStack.Redo();
-      else if (ctrlDown)
-        g_undoStack.Undo();
-      else {
-        FrameSelectedEntity();
-      }
-    }
-    // Ctrl+Y also redoes
-    if (ctrlDown && IManager.PressedOnceKey(T800K_y))
-      g_undoStack.Redo();
 
     // Space key — dump frame (all RTs + snapshot)
     if (IManager.PressedOnceKey(T800K_SPACE) && g_dumperInited)
@@ -5712,6 +6303,19 @@ void EditorApp::OnInput() {
       g_selectedIdx = -1;
       T8_LOG_INFO("[T8ditor] Light deleted");
     }
+    else if (g_selectionType == 6 && g_selectedIdx < static_cast<int>(g_lightCameras.size())) {
+      AdjustActiveLightCameraAfterErase(g_selectedIdx);
+      if (g_selectedIdx >= 0 && g_selectedIdx < static_cast<int>(g_lightCameraGizmoCameras.size())) {
+        if (t850::g_pBaseDriver) {
+          t850::g_pBaseDriver->WaitForGPU();
+        }
+        ReleaseGizmoCache(g_lightCameraGizmoCameras[static_cast<std::size_t>(g_selectedIdx)].gizmo);
+        g_lightCameraGizmoCameras.erase(g_lightCameraGizmoCameras.begin() + g_selectedIdx);
+      }
+      g_lightCameras.erase(g_lightCameras.begin() + g_selectedIdx);
+      g_selectedIdx = -1;
+      T8_LOG_INFO("[T8ditor] Light camera deleted");
+    }
     else if (g_selectionType == 0 && g_selectedIdx < (int)g_objects.size()) {
       DestroyObjectRagdoll(g_objects[g_selectedIdx]);
       g_objects.erase(g_objects.begin() + g_selectedIdx);
@@ -5726,6 +6330,13 @@ void EditorApp::OnInput() {
       DestroyEditorNavMesh();
       T8_LOG_INFO("[T8ditor] NavMesh deleted");
     }
+    else if (g_selectionType == 8 && g_selectedIdx == 0) {
+      g_godRaysVolume.enabled = false;
+      g_godRaysVolume.visible = false;
+      g_selectedIdx = -1;
+      g_selectionType = 0;
+      T8_LOG_INFO("[T8ditor] God Rays volume disabled");
+    }
     if (g_undoStack.UndoCount() == undoCountBeforeDelete) {
       PushEditorUndoState("Delete", undoBefore, undoBeforeKey, CaptureEditorUndoState(nullptr));
     }
@@ -5733,16 +6344,39 @@ void EditorApp::OnInput() {
 
   float wheel = ImGuiConsumeWheelDelta();
   bool blockWheel = imguiWantsMouse && !ImGuizmo::IsOver();
-  const bool orbitCameraMode = m_editorCameraMode == EditorCameraMode::Orbit;
   if (orbitCameraMode) {
-    m_camera.Update(m_dtSecs, IManager,
-                    blockWheel ? 0.0f : wheel,
-                    imguiWantsMouse,
-                    imguiWantsKeyboard);
+    const float activeCameraAspect =
+        (m_lastW > 0 && m_lastH > 0) ? static_cast<float>(m_lastW) / static_cast<float>(m_lastH) : 16.0f / 9.0f;
+    if (!HandleActiveCameraOrbitControls(
+            IManager,
+            m_dtSecs,
+            blockWheel ? 0.0f : wheel,
+            imguiWantsMouse,
+            imguiWantsKeyboard,
+            activeCameraAspect)) {
+      m_camera.Update(m_dtSecs, IManager,
+                      blockWheel ? 0.0f : wheel,
+                      imguiWantsMouse,
+                      imguiWantsKeyboard);
+    }
   } else {
-    Camera& cam = m_camera.GetCameraMutable();
-    cam.m_externalControl = false;
-    cam.m_lookAtCenter = false;
+    Camera* controlledCamera = &m_camera.GetCameraMutable();
+    int activeLightCameraIndex = -1;
+    const float aspect = (m_lastW > 0 && m_lastH > 0) ? (float)m_lastW / (float)m_lastH : 16.0f / 9.0f;
+    if (g_activeCameraIdx >= 0 && g_activeCameraIdx < static_cast<int>(g_cameras.size())) {
+      ApplySceneCameraToRuntimeCamera(g_cameras[static_cast<std::size_t>(g_activeCameraIdx)], g_viewCamera, aspect);
+      controlledCamera = &g_viewCamera;
+    } else if (DecodeActiveLightCameraIndex(g_activeCameraIdx, activeLightCameraIndex) &&
+               activeLightCameraIndex >= 0 &&
+               activeLightCameraIndex < static_cast<int>(g_lightCameras.size())) {
+      ApplySceneLightCameraToRuntimeCamera(
+          g_lightCameras[static_cast<std::size_t>(activeLightCameraIndex)],
+          g_viewCamera,
+          aspect);
+      controlledCamera = &g_viewCamera;
+    }
+    controlledCamera->m_externalControl = false;
+    controlledCamera->m_lookAtCenter = false;
     t850::CameraInputState state;
     if (!io.WantTextInput) {
       state.moveForward = IManager.PressedKey(T800K_w);
@@ -5761,8 +6395,17 @@ void EditorApp::OnInput() {
     if (m_editorCameraController.GetActiveProfileType() != t850::CameraProfileType::FreeFly) {
       m_editorCameraController.SetActiveProfile(t850::CameraProfileType::FreeFly);
     }
+    m_editorCameraController.AttachCamera(controlledCamera);
     m_editorCameraController.HandleInput(state);
     m_editorCameraController.Update(m_dtSecs, t850::CameraUpdateContext{});
+    if (controlledCamera == &g_viewCamera) {
+      if (g_activeCameraIdx >= 0 && g_activeCameraIdx < static_cast<int>(g_cameras.size())) {
+        SyncSceneCameraFromRuntimeCamera(g_viewCamera, g_cameras[static_cast<std::size_t>(g_activeCameraIdx)]);
+      } else if (activeLightCameraIndex >= 0 &&
+                 activeLightCameraIndex < static_cast<int>(g_lightCameras.size())) {
+        SyncLightCameraFromRuntimeCamera(g_viewCamera, g_lightCameras[static_cast<std::size_t>(activeLightCameraIndex)]);
+      }
+    }
   }
 
   if (orbitCameraMode && !imguiWantsKeyboard)
@@ -5840,15 +6483,13 @@ void EditorApp::FrameSelectedEntity() {
     }
   } else if (g_selectionType == 1 && g_selectedIdx >= 0 && g_selectedIdx < static_cast<int>(g_cameras.size())) {
     const SceneCamera& camera = g_cameras[static_cast<std::size_t>(g_selectedIdx)];
-    const XVECTOR3 center(
-        (camera.position.x + camera.target.x) * 0.5f,
-        (camera.position.y + camera.target.y) * 0.5f,
-        (camera.position.z + camera.target.z) * 0.5f,
-        1.0f);
-    const float dx = camera.position.x - camera.target.x;
-    const float dy = camera.position.y - camera.target.y;
-    const float dz = camera.position.z - camera.target.z;
-    frameSphere(center, (std::max)(1.0f, 0.5f * std::sqrt(dx * dx + dy * dy + dz * dz)), "camera");
+    if (g_activeCameraIdx == g_selectedIdx) {
+      g_activeCameraIdx = -1;
+    }
+    const float radius = camera.type == CameraType::Orthographic
+        ? std::clamp((std::max)(camera.orthoW, camera.orthoH) * 0.08f, 3.0f, 50.0f)
+        : 4.0f;
+    frameSphere(camera.position, radius, "camera");
     return;
   } else if (g_selectionType == 2 && g_selectedIdx >= 0 && g_selectedIdx < static_cast<int>(g_lights.size())) {
     const SceneLight& light = g_lights[static_cast<std::size_t>(g_selectedIdx)];
@@ -5872,6 +6513,48 @@ void EditorApp::FrameSelectedEntity() {
       T8_LOG_INFO("[T8ditor] Framed NavMesh");
       return;
     }
+  } else if (g_selectionType == 5 && g_selectedIdx >= 0 && g_selectedIdx < static_cast<int>(g_splines.size())) {
+    const auto& spline = g_splines[static_cast<std::size_t>(g_selectedIdx)];
+    t850::AABB bounds;
+    for (const auto& point : spline.points) {
+      bounds.ExpandToInclude(point.position.x, point.position.y, point.position.z);
+    }
+    if (bounds.IsValid()) {
+      m_camera.FrameBounds(bounds);
+      T8_LOG_INFO("[T8ditor] Framed spline '%s'", spline.name.c_str());
+      return;
+    }
+  } else if (g_selectionType == 6 && g_selectedIdx >= 0 && g_selectedIdx < static_cast<int>(g_lightCameras.size())) {
+    const auto& lightCamera = g_lightCameras[static_cast<std::size_t>(g_selectedIdx)];
+    int activeLightCameraIndex = -1;
+    if (DecodeActiveLightCameraIndex(g_activeCameraIdx, activeLightCameraIndex) &&
+        activeLightCameraIndex == g_selectedIdx) {
+      g_activeCameraIdx = -1;
+    }
+    const XVECTOR3 center(lightCamera.position.x, lightCamera.position.y, lightCamera.position.z, 1.0f);
+    const float radius = lightCamera.type == 1
+        ? std::clamp((std::max)(lightCamera.ortho_w, lightCamera.ortho_h) * 0.08f, 3.0f, 50.0f)
+        : 4.0f;
+    frameSphere(center, radius, "light camera");
+    return;
+  } else if (g_selectionType == 7 &&
+             g_selectedIdx >= 0 && g_selectedIdx < static_cast<int>(g_splines.size()) &&
+             g_selectedSplinePoint >= 0 &&
+             g_selectedSplinePoint < static_cast<int>(g_splines[static_cast<std::size_t>(g_selectedIdx)].points.size())) {
+    const auto& point = g_splines[static_cast<std::size_t>(g_selectedIdx)].points[static_cast<std::size_t>(g_selectedSplinePoint)];
+    frameSphere(XVECTOR3(point.position.x, point.position.y, point.position.z, 1.0f), 3.0f, "spline point");
+    return;
+  } else if (g_selectionType == 8 && g_selectedIdx == 0) {
+    t850::AABB bounds(
+        XVECTOR3(g_godRaysVolume.position.x - std::abs(g_godRaysVolume.half_extents.x),
+                 g_godRaysVolume.position.y - std::abs(g_godRaysVolume.half_extents.y),
+                 g_godRaysVolume.position.z - std::abs(g_godRaysVolume.half_extents.z)),
+        XVECTOR3(g_godRaysVolume.position.x + std::abs(g_godRaysVolume.half_extents.x),
+                 g_godRaysVolume.position.y + std::abs(g_godRaysVolume.half_extents.y),
+                 g_godRaysVolume.position.z + std::abs(g_godRaysVolume.half_extents.z)));
+    m_camera.FrameBounds(bounds);
+    T8_LOG_INFO("[T8ditor] Framed God Rays volume");
+    return;
   }
 
   m_camera.ResetToDefault();
@@ -6040,6 +6723,825 @@ static void DrawOrientationArrow(EditorLineRenderer& lines,
   }
   if (vb) vb->release();
   if (ib) ib->release();
+}
+
+static bool BuildRuntimeSpline(const t850::scene::SceneSplineDesc& desc, t850::Spline& outSpline) {
+  outSpline.m_points.clear();
+  outSpline.m_totalLength = 0.0f;
+  outSpline.m_looped = desc.looped;
+  std::vector<t850::SplinePoint> points;
+  points.reserve(desc.points.size());
+  for (const t850::scene::SceneSplinePointDesc& point : desc.points) {
+    t850::SplinePoint splinePoint(point.position.x, point.position.y, point.position.z);
+    splinePoint.m_velocity = point.velocity;
+    splinePoint.m_rotation = XVECTOR3(point.rotation.x, point.rotation.y, point.rotation.z, 0.0f);
+    splinePoint.m_LookAtCenter = point.look_at_center;
+    points.push_back(splinePoint);
+  }
+  outSpline.m_points = std::move(points);
+  if (outSpline.m_points.size() >= 4) {
+    outSpline.Init();
+  }
+  return outSpline.m_points.size() >= 4 && outSpline.m_totalLength > 0.0f;
+}
+
+static float EstimateEditorSplineDurationSeconds(const t850::scene::SceneSplineDesc& desc) {
+  t850::Spline spline;
+  if (!BuildRuntimeSpline(desc, spline)) {
+    return 0.0f;
+  }
+  t850::SplineAgent agent;
+  agent.m_pSpline = &spline;
+  agent.m_moving = true;
+  agent.m_velocity = desc.agent_velocity;
+  agent.SetOffset(0.0f);
+  agent.m_actualPoint = spline.GetPoint(spline.GetNormalizedOffset(0.0f));
+
+  constexpr float dt = 1.0f / 60.0f;
+  constexpr float maxDuration = 3600.0f;
+  float elapsed = 0.0f;
+  while (elapsed < maxDuration) {
+    agent.Update(dt);
+    elapsed += dt;
+    if (agent.FinishedJourneyThisUpdate()) {
+      return elapsed;
+    }
+  }
+  return spline.m_totalLength > 0.0f && desc.agent_velocity > 0.0f
+      ? spline.m_totalLength / (desc.agent_velocity * 2.4f)
+      : 0.0f;
+}
+
+static int FindDefaultTimelineSplineIndex(int preferredIndex) {
+  auto validPlayable = [](int index) {
+    return index >= 0 &&
+        index < static_cast<int>(g_splines.size()) &&
+        g_splines[static_cast<std::size_t>(index)].attached_camera >= 0 &&
+        g_splines[static_cast<std::size_t>(index)].attached_camera < static_cast<int>(g_cameras.size()) &&
+        g_splines[static_cast<std::size_t>(index)].points.size() >= 4;
+  };
+  if (validPlayable(preferredIndex)) return preferredIndex;
+  if (g_selectionType == 5 && validPlayable(g_selectedIdx)) return g_selectedIdx;
+  for (int i = 0; i < static_cast<int>(g_splines.size()); ++i) {
+    if (g_splines[static_cast<std::size_t>(i)].play_on_start && validPlayable(i)) return i;
+  }
+  for (int i = 0; i < static_cast<int>(g_splines.size()); ++i) {
+    if (validPlayable(i)) return i;
+  }
+  return -1;
+}
+
+static bool IsLightCameraAnimationTarget(const std::string& target) {
+  std::string lower = target;
+  std::transform(lower.begin(), lower.end(), lower.begin(), [](unsigned char c) {
+    return static_cast<char>(std::tolower(c));
+  });
+  return lower == "light_camera" || lower == "light-camera" || lower == "lightcamera";
+}
+
+static XVECTOR3 SceneVec3ToX(const t850::scene::Vec3f& value, float w = 1.0f) {
+  return XVECTOR3(value.x, value.y, value.z, w);
+}
+
+static t850::scene::Vec3f XToSceneVec3(const XVECTOR3& value) {
+  return {value.x, value.y, value.z};
+}
+
+static float CameraAnimationLocalTime(const t850::scene::SceneCameraAnimationDesc& animation,
+                                      float timeSeconds) {
+  float t = (std::max)(0.0f, timeSeconds - animation.start_time);
+  if (animation.duration > 0.0f) {
+    t = animation.loop ? std::fmod(t, animation.duration) : std::clamp(t, 0.0f, animation.duration);
+  }
+  return t;
+}
+
+static void ApplyCameraAnimationToRuntimeCamera(const t850::scene::SceneCameraAnimationDesc& animation,
+                                                float localTime,
+                                                ::Camera& runtimeCamera) {
+  runtimeCamera.Eye += SceneVec3ToX(animation.linear_velocity, 0.0f) * localTime;
+  const XVECTOR3 target = runtimeCamera.Eye + runtimeCamera.Look + SceneVec3ToX(animation.target_velocity, 0.0f) * localTime;
+  runtimeCamera.SetLookAt(target);
+  runtimeCamera.Pitch += animation.angular_velocity.x * localTime;
+  runtimeCamera.Yaw += animation.angular_velocity.y * localTime;
+  runtimeCamera.Roll += animation.angular_velocity.z * localTime;
+  runtimeCamera.Update(0.0f);
+}
+
+static void ApplyEditorCameraAnimationsAtTime(float timeSeconds) {
+  if (g_cameraAnimations.empty()) {
+    return;
+  }
+
+  for (const t850::scene::SceneCameraAnimationDesc& animation : g_cameraAnimations) {
+    if (!animation.enabled || !animation.play_on_timeline) continue;
+    const float localTime = CameraAnimationLocalTime(animation, timeSeconds);
+    const bool lightTarget = IsLightCameraAnimationTarget(animation.target);
+
+    if (lightTarget) {
+      if (animation.camera < 0 || animation.camera >= static_cast<int>(g_lightCameras.size())) continue;
+      const t850::scene::SceneLightCameraDesc* base = nullptr;
+      if (g_loadedSceneFile.light_cameras.size() > static_cast<std::size_t>(animation.camera)) {
+        base = &g_loadedSceneFile.light_cameras[static_cast<std::size_t>(animation.camera)];
+      }
+      t850::scene::SceneLightCameraDesc animated = base ? *base : g_lightCameras[static_cast<std::size_t>(animation.camera)];
+      ::Camera runtimeCamera;
+      ApplySceneLightCameraToRuntimeCamera(animated, runtimeCamera, 1.0f);
+      ApplyCameraAnimationToRuntimeCamera(animation, localTime, runtimeCamera);
+      animated.position = XToSceneVec3(runtimeCamera.Eye);
+      animated.target = XToSceneVec3(runtimeCamera.Eye + runtimeCamera.Look);
+      animated.fov_deg = Rad2Deg(runtimeCamera.Fov);
+      animated.ortho_w = runtimeCamera.Width;
+      animated.ortho_h = runtimeCamera.Height;
+      animated.near_plane = runtimeCamera.NPlane;
+      animated.far_plane = runtimeCamera.FPlane;
+      g_lightCameras[static_cast<std::size_t>(animation.camera)] = animated;
+    } else {
+      if (animation.camera < 0 || animation.camera >= static_cast<int>(g_cameras.size())) continue;
+      SceneCamera animated;
+      if (g_loadedSceneFile.cameras.size() > static_cast<std::size_t>(animation.camera)) {
+        const t850::scene::SceneCameraDesc& base = g_loadedSceneFile.cameras[static_cast<std::size_t>(animation.camera)];
+        animated.name = base.name;
+        animated.type = static_cast<CameraType>(base.type);
+        animated.position = SceneVec3ToX(base.position);
+        animated.target = SceneVec3ToX(base.target);
+        animated.fovDeg = base.fov_deg;
+        animated.orthoW = base.ortho_w;
+        animated.orthoH = base.ortho_h;
+        animated.nearPlane = base.near_plane;
+        animated.farPlane = base.far_plane;
+        animated.visible = base.visible;
+        animated.frozen = base.frozen;
+      } else {
+        animated = g_cameras[static_cast<std::size_t>(animation.camera)];
+      }
+      ::Camera runtimeCamera;
+      ApplySceneCameraToRuntimeCamera(animated, runtimeCamera, 16.0f / 9.0f);
+      ApplyCameraAnimationToRuntimeCamera(animation, localTime, runtimeCamera);
+      SyncSceneCameraFromRuntimeCamera(runtimeCamera, animated);
+      g_cameras[static_cast<std::size_t>(animation.camera)] = animated;
+    }
+  }
+}
+
+static void SyncLightCameraGizmoCamera(const t850::scene::SceneLightCameraDesc& desc, SceneCamera& camera) {
+  camera.name = desc.name;
+  camera.type = desc.type == 1 ? CameraType::Orthographic : CameraType::Perspective;
+  camera.position = XVECTOR3(desc.position.x, desc.position.y, desc.position.z, 1.0f);
+  camera.target = XVECTOR3(desc.target.x, desc.target.y, desc.target.z, 1.0f);
+  camera.fovDeg = desc.fov_deg;
+  camera.orthoW = desc.ortho_w;
+  camera.orthoH = desc.ortho_h;
+  camera.nearPlane = desc.near_plane;
+  camera.farPlane = desc.far_plane;
+  camera.visible = desc.visible && desc.enabled;
+  camera.frozen = desc.frozen;
+}
+
+static void ApplySceneLightCameraToRuntimeCamera(const t850::scene::SceneLightCameraDesc& desc,
+                                                 ::Camera& camera,
+                                                 float perspectiveAspect) {
+  const XVECTOR3 position(desc.position.x, desc.position.y, desc.position.z, 1.0f);
+  const float nearPlane = (std::max)(0.0001f, desc.near_plane);
+  const float farPlane = (std::max)(nearPlane + 0.01f, desc.far_plane);
+  if (desc.type == 1) {
+    camera.InitOrtho(position,
+                     (std::max)(0.01f, desc.ortho_w),
+                     (std::max)(0.01f, desc.ortho_h),
+                     nearPlane,
+                     farPlane);
+  } else {
+    camera.InitPerspective(position,
+                           Deg2Rad((std::max)(1.0f, desc.fov_deg)),
+                           (std::max)(0.01f, perspectiveAspect),
+                           nearPlane,
+                           farPlane);
+  }
+  camera.SetLookAt(XVECTOR3(desc.target.x, desc.target.y, desc.target.z, 1.0f));
+  camera.Update(0.0f);
+}
+
+static void ApplySceneCameraToRuntimeCamera(const SceneCamera& desc,
+                                            ::Camera& camera,
+                                            float perspectiveAspect) {
+  if (desc.type == CameraType::Orthographic) {
+    camera.InitOrtho(desc.position, desc.orthoW, desc.orthoH, desc.nearPlane, desc.farPlane);
+  } else {
+    camera.InitPerspective(desc.position,
+                           Deg2Rad((std::max)(1.0f, desc.fovDeg)),
+                           (std::max)(0.01f, perspectiveAspect),
+                           desc.nearPlane,
+                           desc.farPlane);
+  }
+  camera.SetLookAt(desc.target);
+  camera.Update(0.0f);
+}
+
+static void SyncSceneCameraFromRuntimeCamera(const ::Camera& runtimeCamera, SceneCamera& desc) {
+  desc.position = runtimeCamera.Eye;
+  desc.target = runtimeCamera.Eye + runtimeCamera.Look;
+  desc.fovDeg = Rad2Deg(runtimeCamera.Fov);
+  desc.orthoW = runtimeCamera.Width;
+  desc.orthoH = runtimeCamera.Height;
+  desc.nearPlane = runtimeCamera.NPlane;
+  desc.farPlane = runtimeCamera.FPlane;
+}
+
+static void SyncLightCameraFromRuntimeCamera(const ::Camera& runtimeCamera,
+                                             t850::scene::SceneLightCameraDesc& desc) {
+  desc.position = { runtimeCamera.Eye.x, runtimeCamera.Eye.y, runtimeCamera.Eye.z };
+  const XVECTOR3 target = runtimeCamera.Eye + runtimeCamera.Look;
+  desc.target = { target.x, target.y, target.z };
+  desc.fov_deg = Rad2Deg(runtimeCamera.Fov);
+  desc.ortho_w = runtimeCamera.Width;
+  desc.ortho_h = runtimeCamera.Height;
+  desc.near_plane = runtimeCamera.NPlane;
+  desc.far_plane = runtimeCamera.FPlane;
+}
+
+static void ApplyGodRaysVolumeToSceneProps(const t850::scene::SceneGodRaysVolumeDesc& volume,
+                                           SceneProps& sceneProps) {
+  sceneProps.GodRaysVolumeEnabled = (volume.enabled && volume.clip_enabled) ? 1 : 0;
+  sceneProps.GodRaysVolumeCenter = XVECTOR3(volume.position.x, volume.position.y, volume.position.z, 1.0f);
+  sceneProps.GodRaysVolumeHalfExtents = XVECTOR3((std::max)(0.001f, std::abs(volume.half_extents.x)),
+                                                 (std::max)(0.001f, std::abs(volume.half_extents.y)),
+                                                 (std::max)(0.001f, std::abs(volume.half_extents.z)),
+                                                 0.0f);
+}
+
+static bool ApplyOrbitStyleControlsToCamera(::Camera& runtimeCamera,
+                                            XVECTOR3& eye,
+                                            XVECTOR3& target,
+                                            bool orthographic,
+                                            float& orthoWidth,
+                                            float& orthoHeight,
+                                            InputManager& input,
+                                            float dtSecs,
+                                            float wheelDelta,
+                                            bool skipMouse,
+                                            bool skipKeyboard) {
+  bool changed = false;
+  runtimeCamera.Update(0.0f);
+
+  XVECTOR3 targetToEye(eye.x - target.x, eye.y - target.y, eye.z - target.z, 0.0f);
+  float distance = targetToEye.Length();
+  if (distance <= 0.0001f) {
+    targetToEye = XVECTOR3(-runtimeCamera.Look.x, -runtimeCamera.Look.y, -runtimeCamera.Look.z, 0.0f);
+    distance = 1.0f;
+  } else {
+    targetToEye.x /= distance;
+    targetToEye.y /= distance;
+    targetToEye.z /= distance;
+  }
+
+  auto dollyOrZoom = [&](float factor) {
+    factor = std::clamp(factor, 0.001f, 1000.0f);
+    if (orthographic) {
+      orthoWidth = std::clamp(orthoWidth * factor, 0.001f, 100000.0f);
+      orthoHeight = std::clamp(orthoHeight * factor, 0.001f, 100000.0f);
+    } else {
+      distance = std::clamp(distance * factor, 0.001f, 1000000.0f);
+      eye = XVECTOR3(target.x + targetToEye.x * distance,
+                     target.y + targetToEye.y * distance,
+                     target.z + targetToEye.z * distance,
+                     1.0f);
+    }
+    changed = true;
+  };
+
+  auto orbit = [&](float dx, float dy) {
+    float yaw = std::atan2(targetToEye.x, targetToEye.z);
+    float pitch = std::asin(std::clamp(targetToEye.y, -1.0f, 1.0f));
+    yaw += dx * 0.005f;
+    pitch = std::clamp(pitch + dy * 0.005f, -1.55f, 1.55f);
+    const float cp = std::cos(pitch);
+    targetToEye = XVECTOR3(std::sin(yaw) * cp, std::sin(pitch), std::cos(yaw) * cp, 0.0f);
+    eye = XVECTOR3(target.x + targetToEye.x * distance,
+                   target.y + targetToEye.y * distance,
+                   target.z + targetToEye.z * distance,
+                   1.0f);
+    changed = true;
+  };
+
+  if (!skipMouse) {
+    const bool middleDown = input.PressedMouseButton(1);
+    const bool rightDown = input.PressedMouseButton(2);
+    const bool leftDown = input.PressedMouseButton(0);
+    const bool altDown = input.PressedKey(T800K_LALT) || input.PressedKey(T800K_RALT);
+    const float dx = static_cast<float>(input.xDelta);
+    const float dy = static_cast<float>(input.yDelta);
+
+    if (middleDown) {
+      const float panScale = 0.01f * (std::max)(1.0f, distance);
+      XVECTOR3 delta(
+          -runtimeCamera.Right.x * dx * panScale + runtimeCamera.Up.x * dy * panScale,
+          -runtimeCamera.Right.y * dx * panScale + runtimeCamera.Up.y * dy * panScale,
+          -runtimeCamera.Right.z * dx * panScale + runtimeCamera.Up.z * dy * panScale,
+          0.0f);
+      eye += delta;
+      target += delta;
+      changed = true;
+    } else if (rightDown || (leftDown && altDown)) {
+      orbit(dx, dy);
+    }
+  }
+
+  if (!skipKeyboard) {
+    const float orbitStep = 1.5f * dtSecs;
+    if (input.PressedKey(T800K_LEFT)) orbit(-orbitStep / 0.005f, 0.0f);
+    if (input.PressedKey(T800K_RIGHT)) orbit(orbitStep / 0.005f, 0.0f);
+    if (input.PressedKey(T800K_UP)) orbit(0.0f, -orbitStep / 0.005f);
+    if (input.PressedKey(T800K_DOWN)) orbit(0.0f, orbitStep / 0.005f);
+
+    const float zoomStep = 4.0f * dtSecs * (std::max)(1.0f, distance * 0.1f);
+    if (input.PressedKey(T800K_PLUS) || input.PressedKey(T800K_EQUALS) || input.PressedKey(T800K_KP_PLUS)) {
+      dollyOrZoom(orthographic ? std::pow(1.10f, -4.0f * dtSecs) : (std::max)(0.001f, (distance - zoomStep) / distance));
+    }
+    if (input.PressedKey(T800K_MINUS) || input.PressedKey(T800K_KP_MINUS)) {
+      dollyOrZoom(orthographic ? std::pow(1.10f, 4.0f * dtSecs) : (distance + zoomStep) / distance);
+    }
+  }
+
+  if (wheelDelta != 0.0f) {
+    dollyOrZoom(std::pow(1.10f, -wheelDelta));
+  }
+
+  if (changed) {
+    runtimeCamera.Eye = eye;
+    runtimeCamera.SetLookAt(target);
+    if (orthographic) {
+      runtimeCamera.Width = orthoWidth;
+      runtimeCamera.Height = orthoHeight;
+      runtimeCamera.CreatePojection();
+      runtimeCamera.Update(0.0f);
+    }
+  }
+  return changed;
+}
+
+static bool HandleActiveCameraOrbitControls(InputManager& input,
+                                            float dtSecs,
+                                            float wheelDelta,
+                                            bool skipMouse,
+                                            bool skipKeyboard,
+                                            float perspectiveAspect) {
+  if (g_activeCameraIdx >= 0 && g_activeCameraIdx < static_cast<int>(g_cameras.size())) {
+    SceneCamera& sceneCamera = g_cameras[static_cast<std::size_t>(g_activeCameraIdx)];
+    ApplySceneCameraToRuntimeCamera(sceneCamera, g_viewCamera, perspectiveAspect);
+    XVECTOR3 eye = sceneCamera.position;
+    XVECTOR3 target = sceneCamera.target;
+    float orthoW = sceneCamera.orthoW;
+    float orthoH = sceneCamera.orthoH;
+    if (ApplyOrbitStyleControlsToCamera(
+            g_viewCamera,
+            eye,
+            target,
+            sceneCamera.type == CameraType::Orthographic,
+            orthoW,
+            orthoH,
+            input,
+            dtSecs,
+            wheelDelta,
+            skipMouse,
+            skipKeyboard)) {
+      sceneCamera.position = eye;
+      sceneCamera.target = target;
+      sceneCamera.orthoW = orthoW;
+      sceneCamera.orthoH = orthoH;
+    }
+    return true;
+  }
+
+  int activeLightCameraIndex = -1;
+  if (DecodeActiveLightCameraIndex(g_activeCameraIdx, activeLightCameraIndex) &&
+      activeLightCameraIndex >= 0 &&
+      activeLightCameraIndex < static_cast<int>(g_lightCameras.size())) {
+    t850::scene::SceneLightCameraDesc& lightCamera = g_lightCameras[static_cast<std::size_t>(activeLightCameraIndex)];
+    ApplySceneLightCameraToRuntimeCamera(lightCamera, g_viewCamera, perspectiveAspect);
+    XVECTOR3 eye(lightCamera.position.x, lightCamera.position.y, lightCamera.position.z, 1.0f);
+    XVECTOR3 target(lightCamera.target.x, lightCamera.target.y, lightCamera.target.z, 1.0f);
+    float orthoW = lightCamera.ortho_w;
+    float orthoH = lightCamera.ortho_h;
+    if (ApplyOrbitStyleControlsToCamera(
+            g_viewCamera,
+            eye,
+            target,
+            lightCamera.type == 1,
+            orthoW,
+            orthoH,
+            input,
+            dtSecs,
+            wheelDelta,
+            skipMouse,
+            skipKeyboard)) {
+      lightCamera.position = {eye.x, eye.y, eye.z};
+      lightCamera.target = {target.x, target.y, target.z};
+      lightCamera.ortho_w = orthoW;
+      lightCamera.ortho_h = orthoH;
+    }
+    return true;
+  }
+
+  return false;
+}
+
+static XMATRIX44 BuildCameraEntityGizmoMatrix(const XVECTOR3& position,
+                                              const XVECTOR3& target,
+                                              float scaleX,
+                                              float scaleY,
+                                              float scaleZ) {
+  XVECTOR3 forward(target.x - position.x, target.y - position.y, target.z - position.z, 0.0f);
+  if (forward.Length() <= 0.000001f) {
+    forward = XVECTOR3(0.0f, 0.0f, 1.0f, 0.0f);
+  } else {
+    forward.Normalize();
+  }
+
+  XVECTOR3 up(0.0f, 1.0f, 0.0f, 0.0f);
+  XVECTOR3 right;
+  XVecCross(right, up, forward);
+  if (right.Length() <= 0.000001f) {
+    up = XVECTOR3(0.0f, 0.0f, 1.0f, 0.0f);
+    XVecCross(right, up, forward);
+  }
+  right.Normalize();
+  XVecCross(up, forward, right);
+  up.Normalize();
+
+  XMATRIX44 world;
+  XMatIdentity(world);
+  world.m[0][0] = right.x * scaleX;
+  world.m[0][1] = right.y * scaleX;
+  world.m[0][2] = right.z * scaleX;
+  world.m[1][0] = up.x * scaleY;
+  world.m[1][1] = up.y * scaleY;
+  world.m[1][2] = up.z * scaleY;
+  world.m[2][0] = forward.x * scaleZ;
+  world.m[2][1] = forward.y * scaleZ;
+  world.m[2][2] = forward.z * scaleZ;
+  world.m[3][0] = position.x;
+  world.m[3][1] = position.y;
+  world.m[3][2] = position.z;
+  return world;
+}
+
+static bool ManipulateCameraEntityGizmo(const ::Camera& viewCamera,
+                                        int mode,
+                                        XVECTOR3& position,
+                                        XVECTOR3& target,
+                                        bool orthographic,
+                                        float& orthoW,
+                                        float& orthoH,
+                                        float& fovDeg) {
+  (void)fovDeg;
+  if (mode < 0 || mode > 2) {
+    return false;
+  }
+  if (!orthographic && mode != 0) {
+    return false;
+  }
+
+  const float scaleX = mode == 2 ? (orthographic ? (std::max)(0.001f, orthoW) : 1.0f) : 1.0f;
+  const float scaleY = mode == 2 ? (orthographic ? (std::max)(0.001f, orthoH) : 1.0f) : 1.0f;
+  XMATRIX44 worldMat = BuildCameraEntityGizmoMatrix(position, target, scaleX, scaleY, 1.0f);
+  XMATRIX44 deltaMatrix;
+  XMatIdentity(deltaMatrix);
+
+  ImGuizmo::OPERATION operation = ImGuizmo::TRANSLATE;
+  if (mode == 1) operation = ImGuizmo::ROTATE;
+  else if (mode == 2) operation = ImGuizmo::SCALE;
+
+  const bool manipulated = ImGuizmo::Manipulate(
+      &viewCamera.View.m[0][0],
+      &viewCamera.Projection.m[0][0],
+      operation,
+      mode == 0 ? ImGuizmo::WORLD : ImGuizmo::LOCAL,
+      &worldMat.m[0][0],
+      &deltaMatrix.m[0][0]);
+  if (!manipulated) {
+    return false;
+  }
+
+  float translation[3], rotationDeg[3], scale[3];
+  ImGuizmo::DecomposeMatrixToComponents(&worldMat.m[0][0], translation, rotationDeg, scale);
+
+  if (mode == 0) {
+    const XVECTOR3 newPosition(translation[0], translation[1], translation[2], 1.0f);
+    const XVECTOR3 delta(newPosition.x - position.x, newPosition.y - position.y, newPosition.z - position.z, 0.0f);
+    position = newPosition;
+    target += delta;
+    return true;
+  }
+
+  if (mode == 1) {
+    XVECTOR3 direction(target.x - position.x, target.y - position.y, target.z - position.z, 0.0f);
+    const float distance = (std::max)(0.001f, direction.Length());
+    if (direction.Length() <= 0.000001f) {
+      direction = XVECTOR3(0.0f, 0.0f, 1.0f, 0.0f);
+    } else {
+      direction.Normalize();
+    }
+    XVECTOR3 rotated = t850::TransformDirection(direction, deltaMatrix);
+    if (rotated.Length() <= 0.000001f) {
+      return false;
+    }
+    rotated.Normalize();
+    target = XVECTOR3(position.x + rotated.x * distance,
+                      position.y + rotated.y * distance,
+                      position.z + rotated.z * distance,
+                      1.0f);
+    return true;
+  }
+
+  if (mode == 2) {
+    if (orthographic) {
+      orthoW = (std::max)(0.001f, std::abs(scale[0]));
+      orthoH = (std::max)(0.001f, std::abs(scale[1]));
+    }
+    return true;
+  }
+
+  return false;
+}
+
+static bool TranslateCameraPointGizmo(const ::Camera& viewCamera,
+                                      int gizmoId,
+                                      XVECTOR3& point) {
+  ImGuizmo::SetID(gizmoId);
+  XMATRIX44 worldMat;
+  XMatTranslation(worldMat, point.x, point.y, point.z);
+  const bool manipulated = ImGuizmo::Manipulate(
+      &viewCamera.View.m[0][0],
+      &viewCamera.Projection.m[0][0],
+      ImGuizmo::TRANSLATE,
+      ImGuizmo::WORLD,
+      &worldMat.m[0][0],
+      nullptr);
+  ImGuizmo::SetID(-1);
+  if (!manipulated) {
+    return false;
+  }
+
+  float translation[3], rotation[3], scale[3];
+  ImGuizmo::DecomposeMatrixToComponents(&worldMat.m[0][0], translation, rotation, scale);
+  point = XVECTOR3(translation[0], translation[1], translation[2], 1.0f);
+  return true;
+}
+
+static uint64_t HashSplineFloat(float value) {
+  uint32_t bits = 0;
+  std::memcpy(&bits, &value, sizeof(bits));
+  return static_cast<uint64_t>(bits);
+}
+
+static uint64_t HashEditorSplineDrawData(const t850::scene::SceneSplineDesc& desc, bool selected, int selectedPoint) {
+  uint64_t hash = 1469598103934665603ull;
+  auto mix = [&](uint64_t value) {
+    hash ^= value;
+    hash *= 1099511628211ull;
+  };
+  mix(desc.looped ? 1ull : 0ull);
+  mix(selected ? 1ull : 0ull);
+  mix(static_cast<uint64_t>(selectedPoint + 1));
+  mix(static_cast<uint64_t>(desc.points.size()));
+  for (const t850::scene::SceneSplinePointDesc& point : desc.points) {
+    mix(HashSplineFloat(point.position.x));
+    mix(HashSplineFloat(point.position.y));
+    mix(HashSplineFloat(point.position.z));
+    mix(HashSplineFloat(point.velocity));
+  }
+  return hash;
+}
+
+static uint64_t HashGodRaysVolumeDrawData(const t850::scene::SceneGodRaysVolumeDesc& desc, bool selected) {
+  uint64_t hash = 1469598103934665603ull;
+  auto mix = [&](uint64_t value) {
+    hash ^= value;
+    hash *= 1099511628211ull;
+  };
+  mix(selected ? 1ull : 0ull);
+  mix(desc.enabled ? 1ull : 0ull);
+  mix(desc.clip_enabled ? 1ull : 0ull);
+  mix(HashSplineFloat(desc.position.x));
+  mix(HashSplineFloat(desc.position.y));
+  mix(HashSplineFloat(desc.position.z));
+  mix(HashSplineFloat(desc.half_extents.x));
+  mix(HashSplineFloat(desc.half_extents.y));
+  mix(HashSplineFloat(desc.half_extents.z));
+  return hash;
+}
+
+static void DrawGodRaysVolume(EditorLineRenderer& lines,
+                              const XMATRIX44& vp,
+                              const t850::scene::SceneGodRaysVolumeDesc& desc,
+                              bool selected,
+                              GizmoCache& cache) {
+  if (!lines.IsReady() || !desc.enabled || !desc.visible || !desc.show_wire) {
+    return;
+  }
+  const uint64_t drawHash = HashGodRaysVolumeDrawData(desc, selected);
+  const XVECTOR3 color = selected
+      ? XVECTOR3(1.0f, 0.82f, 0.18f, 1.0f)
+      : XVECTOR3(1.0f, 0.45f, 0.05f, 1.0f);
+  if (cache.vb && cache.ib && cache.hash == drawHash) {
+    XMATRIX44 identity;
+    identity.Identity();
+    lines.DrawLines(identity, vp, color, cache.vb, cache.ib, cache.count, sizeof(float) * 4);
+    return;
+  }
+
+  const auto& p = desc.position;
+  const t850::scene::Vec3f h{
+      (std::max)(0.001f, std::abs(desc.half_extents.x)),
+      (std::max)(0.001f, std::abs(desc.half_extents.y)),
+      (std::max)(0.001f, std::abs(desc.half_extents.z))};
+  const float x0 = p.x - h.x, x1 = p.x + h.x;
+  const float y0 = p.y - h.y, y1 = p.y + h.y;
+  const float z0 = p.z - h.z, z1 = p.z + h.z;
+  const float verts[] = {
+      x0,y0,z0,1,  x1,y0,z0,1,  x1,y1,z0,1,  x0,y1,z0,1,
+      x0,y0,z1,1,  x1,y0,z1,1,  x1,y1,z1,1,  x0,y1,z1,1};
+  const unsigned short indices[] = {
+      0,1, 1,2, 2,3, 3,0,
+      4,5, 5,6, 6,7, 7,4,
+      0,4, 1,5, 2,6, 3,7};
+  const unsigned indexCount = static_cast<unsigned>(sizeof(indices) / sizeof(indices[0]));
+  if (!cache.vb || !cache.ib || cache.count != indexCount) {
+    if (cache.vb || cache.ib) {
+      if (t850::g_pBaseDriver) {
+        t850::g_pBaseDriver->WaitForGPU();
+      }
+      ReleaseGizmoCache(cache);
+    }
+    cache.vb = EditorLineRenderer::CreatePositionVB(verts, 8, t850::BufferUsage::DINAMIC);
+    cache.ib = EditorLineRenderer::CreateIndexBuffer16(indices, indexCount);
+    cache.count = indexCount;
+  } else {
+    cache.vb->UpdateFromBuffer(*t850::T8DeviceContext, verts);
+  }
+  cache.hash = drawHash;
+  if (cache.vb && cache.ib) {
+    XMATRIX44 identity;
+    identity.Identity();
+    lines.DrawLines(identity, vp, color, cache.vb, cache.ib, cache.count, sizeof(float) * 4);
+  }
+}
+
+static void DrawEditorSpline(EditorLineRenderer& lines,
+                             const XMATRIX44& vp,
+                             const t850::scene::SceneSplineDesc& desc,
+                             bool selected,
+                             int selectedPoint,
+                             GizmoCache& cache) {
+  if (!lines.IsReady() || !desc.visible || !desc.show_wire || desc.points.size() < 2) {
+    return;
+  }
+
+  const uint64_t drawHash = HashEditorSplineDrawData(desc, selected, selectedPoint);
+  if (cache.vb && cache.ib && cache.hash == drawHash) {
+    XMATRIX44 identity;
+    identity.Identity();
+    const XVECTOR3 color = selected
+        ? XVECTOR3(1.0f, 0.82f, 0.18f, 1.0f)
+        : XVECTOR3(0.15f, 0.90f, 0.95f, 1.0f);
+    lines.DrawLines(identity, vp, color, cache.vb, cache.ib, cache.count, sizeof(float) * 4);
+    return;
+  }
+
+  std::vector<float> verts;
+  std::vector<unsigned short> indices;
+  auto append = [&](const t850::scene::Vec3f& p) -> unsigned short {
+    const unsigned int index = static_cast<unsigned int>(verts.size() / 4);
+    if (index > std::numeric_limits<unsigned short>::max()) {
+      return std::numeric_limits<unsigned short>::max();
+    }
+    verts.push_back(p.x);
+    verts.push_back(p.y);
+    verts.push_back(p.z);
+    verts.push_back(1.0f);
+    return static_cast<unsigned short>(index);
+  };
+
+  t850::Spline spline;
+  const bool hasRuntimeSpline = BuildRuntimeSpline(desc, spline);
+  if (hasRuntimeSpline) {
+    const int sampleCount = (std::min)(512, (std::max)(32, static_cast<int>(spline.m_totalLength * 2.0f)));
+    unsigned short previous = append(desc.points.front().position);
+    for (int sample = 1; sample < sampleCount; ++sample) {
+      const float distance = spline.m_totalLength * (static_cast<float>(sample) / static_cast<float>(sampleCount));
+      const t850::SplinePoint point = spline.GetPoint(spline.GetNormalizedOffset(distance));
+      t850::scene::Vec3f p{point.x, point.y, point.z};
+      const unsigned short current = append(p);
+      indices.push_back(previous);
+      indices.push_back(current);
+      previous = current;
+    }
+  } else {
+    unsigned short previous = append(desc.points.front().position);
+    for (std::size_t i = 1; i < desc.points.size(); ++i) {
+      const unsigned short current = append(desc.points[i].position);
+      indices.push_back(previous);
+      indices.push_back(current);
+      previous = current;
+    }
+  }
+
+  for (int pointIndex = 0; pointIndex < static_cast<int>(desc.points.size()); ++pointIndex) {
+    const t850::scene::SceneSplinePointDesc& point = desc.points[static_cast<std::size_t>(pointIndex)];
+    const float r = pointIndex == selectedPoint ? 0.85f : (selected ? 0.45f : 0.30f);
+    const t850::scene::Vec3f p = point.position;
+    const unsigned short a = append({p.x - r, p.y, p.z});
+    const unsigned short b = append({p.x + r, p.y, p.z});
+    const unsigned short c = append({p.x, p.y - r, p.z});
+    const unsigned short d = append({p.x, p.y + r, p.z});
+    const unsigned short e = append({p.x, p.y, p.z - r});
+    const unsigned short f = append({p.x, p.y, p.z + r});
+    indices.insert(indices.end(), {a, b, c, d, e, f});
+  }
+
+  if (verts.empty() || indices.empty()) {
+    return;
+  }
+
+  const unsigned indexCount = static_cast<unsigned>(indices.size());
+  if (!cache.vb || !cache.ib || cache.count != indexCount) {
+    if (cache.vb || cache.ib) {
+      if (t850::g_pBaseDriver) {
+        t850::g_pBaseDriver->WaitForGPU();
+      }
+      ReleaseGizmoCache(cache);
+    }
+    cache.vb = EditorLineRenderer::CreatePositionVB(
+        verts.data(),
+        static_cast<unsigned>(verts.size() / 4),
+        t850::BufferUsage::DINAMIC);
+    cache.ib = EditorLineRenderer::CreateIndexBuffer16(indices.data(), indexCount);
+    cache.count = indexCount;
+  } else {
+    cache.vb->UpdateFromBuffer(*t850::T8DeviceContext, verts.data());
+  }
+  cache.hash = drawHash;
+
+  if (cache.vb && cache.ib) {
+    XMATRIX44 identity;
+    identity.Identity();
+    const XVECTOR3 color = selected
+        ? XVECTOR3(1.0f, 0.82f, 0.18f, 1.0f)
+        : XVECTOR3(0.15f, 0.90f, 0.95f, 1.0f);
+    lines.DrawLines(identity, vp, color, cache.vb, cache.ib, cache.count, sizeof(float) * 4);
+  }
+}
+
+static bool ApplyEditorSplineToAttachedCamera(t850::scene::SceneSplineDesc& desc) {
+  if (desc.attached_camera < 0 ||
+      desc.attached_camera >= static_cast<int>(g_cameras.size()) ||
+      desc.points.size() < 4) {
+    return false;
+  }
+  t850::Spline spline;
+  if (!BuildRuntimeSpline(desc, spline)) return false;
+  float safeOffset = (std::max)(0.0f, desc.agent_offset);
+  safeOffset = std::fmod(safeOffset, spline.m_totalLength);
+  t850::SplineAgent agent;
+  agent.m_pSpline = &spline;
+  agent.m_moving = true;
+  agent.m_velocity = desc.agent_velocity;
+  agent.SetOffset(safeOffset);
+  agent.m_actualPoint = spline.GetPoint(spline.GetNormalizedOffset(agent.GetOffset()));
+  SceneCamera& camera = g_cameras[static_cast<std::size_t>(desc.attached_camera)];
+  ::Camera previewCamera;
+  if (camera.type == CameraType::Orthographic) {
+    previewCamera.InitOrtho(camera.position, camera.orthoW, camera.orthoH, camera.nearPlane, camera.farPlane);
+  } else {
+    previewCamera.InitPerspective(camera.position, Deg2Rad(camera.fovDeg), 16.0f / 9.0f, camera.nearPlane, camera.farPlane);
+  }
+  previewCamera.AttachAgent(agent);
+  previewCamera.m_lookAtCenter = false;
+  previewCamera.Update(0.0f);
+  camera.position = previewCamera.Eye;
+  camera.target = previewCamera.Eye + previewCamera.Look;
+  desc.agent_offset = safeOffset;
+  return true;
+}
+
+static bool ApplyEditorSplineAgentToAttachedCamera(const t850::scene::SceneSplineDesc& desc,
+                                                   const t850::SplineAgent& agent) {
+  if (desc.attached_camera < 0 || desc.attached_camera >= static_cast<int>(g_cameras.size())) {
+    return false;
+  }
+  SceneCamera& camera = g_cameras[static_cast<std::size_t>(desc.attached_camera)];
+  ::Camera previewCamera;
+  if (camera.type == CameraType::Orthographic) {
+    previewCamera.InitOrtho(camera.position, camera.orthoW, camera.orthoH, camera.nearPlane, camera.farPlane);
+  } else {
+    previewCamera.InitPerspective(camera.position, Deg2Rad(camera.fovDeg), 16.0f / 9.0f, camera.nearPlane, camera.farPlane);
+  }
+  previewCamera.AttachAgent(agent);
+  previewCamera.m_lookAtCenter = false;
+  previewCamera.Update(0.0f);
+  camera.position = previewCamera.Eye;
+  camera.target = previewCamera.Eye + previewCamera.Look;
+  return true;
 }
 
 t850::Ray BuildEditorCameraRay(const ::Camera& camera,
@@ -6275,9 +7777,72 @@ single_pick:
     }
   }
 
+  // Test authored light cameras.
+  for (int i = 0; i < static_cast<int>(g_lightCameras.size()); ++i) {
+    const auto& camera = g_lightCameras[static_cast<std::size_t>(i)];
+    if (camera.frozen || !camera.visible) continue;
+    const float hs = 2.0f;
+    t850::AABB box(
+        XVECTOR3(camera.position.x - hs, camera.position.y - hs, camera.position.z - hs),
+        XVECTOR3(camera.position.x + hs, camera.position.y + hs, camera.position.z + hs));
+    float t = 0.0f;
+    const bool hit = t850::RayIntersectsAABB(ray, box, t);
+    if (hit && t < bestT) {
+      bestT = t; bestIdx = i; bestType = 6;
+    }
+  }
+
+  // Test God Rays volume.
+  if (g_godRaysVolume.enabled && g_godRaysVolume.visible && !g_godRaysVolume.frozen) {
+    const auto& p = g_godRaysVolume.position;
+    const auto& h = g_godRaysVolume.half_extents;
+    t850::AABB box(
+        XVECTOR3(p.x - std::abs(h.x), p.y - std::abs(h.y), p.z - std::abs(h.z)),
+        XVECTOR3(p.x + std::abs(h.x), p.y + std::abs(h.y), p.z + std::abs(h.z)));
+    float t = 0.0f;
+    if (t850::RayIntersectsAABB(ray, box, t) && t < bestT) {
+      bestT = t;
+      bestIdx = 0;
+      bestType = 8;
+    }
+  }
+
+  // Test spline control points with a screen-space threshold so the small markers are easy to select.
+  const float pointPickRadiusPx = 14.0f;
+  float bestPointScreenDist2 = pointPickRadiusPx * pointPickRadiusPx;
+  int bestSplinePoint = -1;
+  for (int splineIndex = 0; splineIndex < static_cast<int>(g_splines.size()); ++splineIndex) {
+    const auto& spline = g_splines[static_cast<std::size_t>(splineIndex)];
+    if (!spline.visible || spline.frozen) continue;
+    for (int pointIndex = 0; pointIndex < static_cast<int>(spline.points.size()); ++pointIndex) {
+      const auto& point = spline.points[static_cast<std::size_t>(pointIndex)];
+      const XVECTOR3 worldPoint(point.position.x, point.position.y, point.position.z, 1.0f);
+      const ImVec2 screen = WorldToScreen(worldPoint, m_vp, m_lastW, m_lastH);
+      if (!std::isfinite(screen.x) || !std::isfinite(screen.y)) continue;
+      const float dx = screen.x - static_cast<float>(IManager.mouseX);
+      const float dy = screen.y - static_cast<float>(IManager.mouseY);
+      const float dist2 = dx * dx + dy * dy;
+      if (dist2 >= bestPointScreenDist2) continue;
+
+      const float hs = 0.85f;
+      t850::AABB box(
+          XVECTOR3(point.position.x - hs, point.position.y - hs, point.position.z - hs),
+          XVECTOR3(point.position.x + hs, point.position.y + hs, point.position.z + hs));
+      float t = 0.0f;
+      if (t850::RayIntersectsAABB(ray, box, t) && t < bestT) {
+        bestT = t;
+        bestIdx = splineIndex;
+        bestType = 7;
+        bestSplinePoint = pointIndex;
+        bestPointScreenDist2 = dist2;
+      }
+    }
+  }
+
   if (bestIdx >= 0) {
     g_selectedIdx   = bestIdx;
     g_selectionType = bestType;
+    g_selectedSplinePoint = (bestType == 7) ? bestSplinePoint : -1;
 
     if (bestType == 0 || bestType == 3) {
       if (shiftDown) {
@@ -6305,6 +7870,7 @@ single_pick:
     }
   } else {
     g_selectedIdx = -1;
+    g_selectedSplinePoint = -1;
     // Auto-switch to Select mode when deselecting (hides orphaned gizmo)
     m_gizmo.SetMode(GizmoMode::Select);
     if (!shiftDown)
@@ -6313,6 +7879,7 @@ single_pick:
 }
 
 void EditorApp::SyncEditorSceneLights(const ::Camera& cam) {
+  const int requestedActiveLights = m_sceneProps.ActiveLights;
   int enabledCount = 0;
   for (auto& lt : g_lights)
     if (lt.enabled) enabledCount++;
@@ -6344,17 +7911,35 @@ void EditorApp::SyncEditorSceneLights(const ::Camera& cam) {
       m_sceneProps.AddLight(lt.position, lt.color, lt.radius, lt.intensity, LIGHT_POINT, true);
     }
   }
-  m_sceneProps.ActiveLights = (int)m_sceneProps.Lights.size();
-  for (const Light& light : m_sceneProps.Lights) {
-    if (light.Type == LIGHT_DIRECTIONAL && light.Enabled) {
-      XVECTOR3 direction = light.Direction;
-      if (direction.Length() > 0.0001f) {
-        direction.Normalize();
-        m_editorLightCamera.Eye = light.Position;
-        m_editorLightCamera.SetLookAt(m_editorLightCamera.Eye + direction);
-        m_editorLightCamera.Update(0.0f);
+  m_sceneProps.ActiveLights = std::clamp(
+      requestedActiveLights,
+      0,
+      static_cast<int>(m_sceneProps.Lights.size()));
+  bool appliedAuthoredLightCamera = false;
+  for (const auto& lightCamera : g_lightCameras) {
+    if (!lightCamera.enabled) continue;
+    ApplySceneLightCameraToRuntimeCamera(lightCamera, m_editorLightCamera, 1.0f);
+    if (lightCamera.attached_light >= 0 &&
+        lightCamera.attached_light < static_cast<int>(m_sceneProps.Lights.size())) {
+      Light& attachedLight = m_sceneProps.Lights[static_cast<std::size_t>(lightCamera.attached_light)];
+      attachedLight.Position = m_editorLightCamera.Eye;
+      attachedLight.Direction = m_editorLightCamera.Look;
+    }
+    appliedAuthoredLightCamera = true;
+    break;
+  }
+  if (!appliedAuthoredLightCamera) {
+    for (const Light& light : m_sceneProps.Lights) {
+      if (light.Type == LIGHT_DIRECTIONAL && light.Enabled) {
+        XVECTOR3 direction = light.Direction;
+        if (direction.Length() > 0.0001f) {
+          direction.Normalize();
+          m_editorLightCamera.Eye = light.Position;
+          m_editorLightCamera.SetLookAt(m_editorLightCamera.Eye + direction);
+          m_editorLightCamera.Update(0.0f);
+        }
+        break;
       }
-      break;
     }
   }
   if (m_sceneProps.pLightCameras.empty()) {
@@ -6366,25 +7951,30 @@ void EditorApp::SyncEditorSceneLights(const ::Camera& cam) {
 
 void EditorApp::RenderEditorSceneFrame(t850::BaseDriver* drv, bool captureFrozenEditorFrame, bool& didCaptureFrozenEditorFrame) {
   // Determine which camera drives rendering
+  const float aspect = (m_lastW > 0 && m_lastH > 0) ? (float)m_lastW / (float)m_lastH : 16.0f/9.0f;
   if (g_activeCameraIdx >= 0 && g_activeCameraIdx < (int)g_cameras.size()) {
     // Build a persistent Camera from the scene camera
     SceneCamera& sc = g_cameras[g_activeCameraIdx];
-    float aspect = (m_lastW > 0 && m_lastH > 0) ? (float)m_lastW / (float)m_lastH : 16.0f/9.0f;
-    if (sc.type == CameraType::Perspective) {
-      g_viewCamera.InitPerspective(sc.position, sc.fovDeg * (xPI / 180.0f), aspect, sc.nearPlane, sc.farPlane);
-    } else {
-      g_viewCamera.InitOrtho(sc.position, sc.orthoW, sc.orthoH, sc.nearPlane, sc.farPlane);
-    }
-    g_viewCamera.Eye = sc.position;
-    g_viewCamera.SetLookAt(sc.target);
-    g_viewCamera.Update(0.0f);
+    ApplySceneCameraToRuntimeCamera(sc, g_viewCamera, aspect);
     // Point the scene props active camera at our persistent camera
     if (!m_sceneProps.pCameras.empty())
       m_sceneProps.SetPrimaryCamera(&g_viewCamera);
   } else {
-    // Editor orbit camera
-    if (!m_sceneProps.pCameras.empty())
-      m_sceneProps.SetPrimaryCamera(&m_camera.GetCameraMutable());
+    int activeLightCameraIndex = -1;
+    if (DecodeActiveLightCameraIndex(g_activeCameraIdx, activeLightCameraIndex) &&
+        activeLightCameraIndex >= 0 &&
+        activeLightCameraIndex < static_cast<int>(g_lightCameras.size())) {
+      ApplySceneLightCameraToRuntimeCamera(
+          g_lightCameras[static_cast<std::size_t>(activeLightCameraIndex)],
+          g_viewCamera,
+          aspect);
+      if (!m_sceneProps.pCameras.empty())
+        m_sceneProps.SetPrimaryCamera(&g_viewCamera);
+    } else {
+      // Editor orbit camera
+      if (!m_sceneProps.pCameras.empty())
+        m_sceneProps.SetPrimaryCamera(&m_camera.GetCameraMutable());
+    }
   }
 
   const ::Camera& cam = *m_sceneProps.GetPrimaryCamera();
@@ -6393,6 +7983,7 @@ void EditorApp::RenderEditorSceneFrame(t850::BaseDriver* drv, bool captureFrozen
   // Sync scene lights from editor lights.
   // Use real scene lights by default; keep the camera headlamp only as an explicit/fallback light.
   SyncEditorSceneLights(cam);
+  ApplyGodRaysVolumeToSceneProps(g_godRaysVolume, m_sceneProps);
 
   // Update all mesh transforms
   SyncSceneObjectTransforms();
@@ -6412,6 +8003,17 @@ void EditorApp::RenderEditorSceneFrame(t850::BaseDriver* drv, bool captureFrozen
     for (int objectIndex = 0; objectIndex < (int)g_objects.size(); ++objectIndex) {
       auto& obj = g_objects[objectIndex];
       if (obj.primId >= 0 && obj.visible) {
+        obj.litInst.SetParallaxSettings(
+            m_sceneProps.ParallaxLowSamples,
+            m_sceneProps.ParallaxHighSamples,
+            m_sceneProps.ParallaxHeight);
+        obj.litInst.SetParallaxEnabled(m_sceneProps.ToogleParallax != 0);
+        obj.litInst.SetParallaxShadowSettings(
+            m_sceneProps.ParallaxShadowMinLayers,
+            m_sceneProps.ParallaxShadowMaxLayers,
+            m_sceneProps.ParallaxShadowSoftness,
+            m_sceneProps.ParallaxShadowStrength);
+        obj.litInst.SetParallaxShadowEnabled(m_sceneProps.ToogleParallaxShadow != 0);
         allMeshes.push_back(&obj.litInst);
       }
     }
@@ -6430,12 +8032,20 @@ void EditorApp::RenderEditorSceneFrame(t850::BaseDriver* drv, bool captureFrozen
     for (auto* p : allMeshes) meshArray.push_back(*p);
 
     ::Camera* mainCam = m_sceneProps.GetPrimaryCamera();
+    ::Camera* lightCam = nullptr;
+    if (!m_sceneProps.pLightCameras.empty()) {
+      m_sceneProps.ActiveLightCamera = std::clamp(
+          m_sceneProps.ActiveLightCamera,
+          0,
+          static_cast<int>(m_sceneProps.pLightCameras.size()) - 1);
+      lightCam = m_sceneProps.pLightCameras[static_cast<std::size_t>(m_sceneProps.ActiveLightCamera)];
+    }
     t850::EnvironmentMapSet editorEnvMaps;
     editorEnvMaps.SetFallback(g_dummyEnvMapIdx);
     T8_LOG_TRACE("[T8ditor] OnDraw: RenderGraph Execute (%d meshes)...", (int)meshArray.size());
     g_renderGraph.Execute(drv, m_sceneProps,
       meshArray.data(), (int)meshArray.size(),
-      g_quads, mainCam, nullptr, nullptr,
+      g_quads, mainCam, lightCam, nullptr,
       editorEnvMaps,
       captureFrozenEditorFrame ? m_editorFrozenFrameRT : -1);
     didCaptureFrozenEditorFrame = captureFrozenEditorFrame;
@@ -6466,6 +8076,17 @@ void EditorApp::RenderEditorSceneFrame(t850::BaseDriver* drv, bool captureFrozen
     for (int i = 0; i < (int)g_objects.size(); ++i) {
       SceneObject& obj = g_objects[i];
       if (obj.primId < 0 || !obj.visible) continue;
+      obj.litInst.SetParallaxSettings(
+          m_sceneProps.ParallaxLowSamples,
+          m_sceneProps.ParallaxHighSamples,
+          m_sceneProps.ParallaxHeight);
+      obj.litInst.SetParallaxEnabled(m_sceneProps.ToogleParallax != 0);
+      obj.litInst.SetParallaxShadowSettings(
+          m_sceneProps.ParallaxShadowMinLayers,
+          m_sceneProps.ParallaxShadowMaxLayers,
+          m_sceneProps.ParallaxShadowSoftness,
+          m_sceneProps.ParallaxShadowStrength);
+      obj.litInst.SetParallaxShadowEnabled(m_sceneProps.ToogleParallaxShadow != 0);
       t850::ShaderKey fwdKey(0);
       fwdKey.setPass(t850::PassType::FORWARD);
       obj.litInst.SetGlobalKey(fwdKey);
@@ -6604,6 +8225,32 @@ void EditorApp::RenderEditorSceneFrame(t850::BaseDriver* drv, bool captureFrozen
     for (int i = 0; i < (int)g_lights.size(); ++i)
       if (g_lights[i].visible)
         DrawLightGizmo(m_lines, cam.VP, g_lights[i], g_selectionType == 2 && i == g_selectedIdx);
+    if (g_lightCameraGizmoCameras.size() < g_lightCameras.size())
+      g_lightCameraGizmoCameras.resize(g_lightCameras.size());
+    for (int i = 0; i < static_cast<int>(g_lightCameras.size()); ++i) {
+      const auto& lightCameraDesc = g_lightCameras[static_cast<std::size_t>(i)];
+      if (!lightCameraDesc.visible) continue;
+      SceneCamera& lightCamera = g_lightCameraGizmoCameras[static_cast<std::size_t>(i)];
+      SyncLightCameraGizmoCamera(lightCameraDesc, lightCamera);
+      DrawCameraGizmo(m_lines, cam.VP, lightCamera, g_selectionType == 6 && i == g_selectedIdx);
+    }
+    DrawGodRaysVolume(
+        m_lines,
+        cam.VP,
+        g_godRaysVolume,
+        g_selectionType == 8,
+        g_godRaysVolumeGizmo);
+    if (g_splineGizmos.size() < g_splines.size()) {
+      g_splineGizmos.resize(g_splines.size());
+    }
+    for (int i = 0; i < static_cast<int>(g_splines.size()); ++i)
+      DrawEditorSpline(
+          m_lines,
+          cam.VP,
+          g_splines[static_cast<std::size_t>(i)],
+          (g_selectionType == 5 || g_selectionType == 7) && i == g_selectedIdx,
+          g_selectionType == 7 && i == g_selectedIdx ? g_selectedSplinePoint : -1,
+          g_splineGizmos[static_cast<std::size_t>(i)]);
   }
 
   // Grid
@@ -6807,10 +8454,26 @@ void EditorApp::DrawEditorUI(t850::BaseDriver* drv) {
       } else if (g_selectionType == 2 && g_selectedIdx < (int)g_lights.size()) {
         g_lights.erase(g_lights.begin() + g_selectedIdx);
         g_selectedIdx = -1;
+      } else if (g_selectionType == 6 && g_selectedIdx < static_cast<int>(g_lightCameras.size())) {
+        AdjustActiveLightCameraAfterErase(g_selectedIdx);
+        if (g_selectedIdx >= 0 && g_selectedIdx < static_cast<int>(g_lightCameraGizmoCameras.size())) {
+          if (t850::g_pBaseDriver) {
+            t850::g_pBaseDriver->WaitForGPU();
+          }
+          ReleaseGizmoCache(g_lightCameraGizmoCameras[static_cast<std::size_t>(g_selectedIdx)].gizmo);
+          g_lightCameraGizmoCameras.erase(g_lightCameraGizmoCameras.begin() + g_selectedIdx);
+        }
+        g_lightCameras.erase(g_lightCameras.begin() + g_selectedIdx);
+        g_selectedIdx = -1;
       } else if (g_selectionType == 3 && g_selectedIdx < (int)g_physicsEntities.size()) {
         DestroyPhysicsEntity(m_physics, g_selectedIdx);
       } else if (g_selectionType == 4 && g_selectedIdx == 0) {
         DestroyEditorNavMesh();
+      } else if (g_selectionType == 8 && g_selectedIdx == 0) {
+        g_godRaysVolume.enabled = false;
+        g_godRaysVolume.visible = false;
+        g_selectedIdx = -1;
+        g_selectionType = 0;
       }
     }
     if (ctx.wantsFrameView) {
@@ -7131,45 +8794,30 @@ void EditorApp::DrawEditorUI(t850::BaseDriver* drv) {
     }
   }
   else if (g_selectionType == 1 && g_selectedIdx >= 0 && g_selectedIdx < (int)g_cameras.size()) {
-    // ── Camera gizmo — use translate-only via ImGuizmo ──
     SceneCamera& sc = g_cameras[g_selectedIdx];
-
-    // Camera position gizmo
-    ImGuizmo::SetID(0);
-    XMATRIX44 worldMat;
-    XMatTranslation(worldMat, sc.position.x, sc.position.y, sc.position.z);
-
-    bool manipulated = ImGuizmo::Manipulate(
-      &cam2.View.m[0][0], &cam2.Projection.m[0][0],
-      ImGuizmo::TRANSLATE, ImGuizmo::WORLD,
-      &worldMat.m[0][0], nullptr);
-
-    if (manipulated) {
-      float t[3], r[3], s[3];
-      ImGuizmo::DecomposeMatrixToComponents(&worldMat.m[0][0], t, r, s);
-      XVECTOR3 delta(t[0] - sc.position.x, t[1] - sc.position.y, t[2] - sc.position.z);
-      sc.position = XVECTOR3(t[0], t[1], t[2]);
-      sc.target.x += delta.x;
-      sc.target.y += delta.y;
-      sc.target.z += delta.z;
+    if (sc.type == CameraType::Perspective) {
+      if (mode == 0) {
+        const XVECTOR3 oldPosition = sc.position;
+        if (TranslateCameraPointGizmo(cam2, 0, sc.position)) {
+          const XVECTOR3 delta(sc.position.x - oldPosition.x,
+                               sc.position.y - oldPosition.y,
+                               sc.position.z - oldPosition.z,
+                               0.0f);
+          sc.target += delta;
+        }
+        TranslateCameraPointGizmo(cam2, 1, sc.target);
+      }
+    } else {
+      ManipulateCameraEntityGizmo(
+          cam2,
+          mode,
+          sc.position,
+          sc.target,
+          true,
+          sc.orthoW,
+          sc.orthoH,
+          sc.fovDeg);
     }
-
-    // Camera target gizmo (separate ImGuizmo ID so both can coexist)
-    ImGuizmo::SetID(1);
-    XMATRIX44 targetMat;
-    XMatTranslation(targetMat, sc.target.x, sc.target.y, sc.target.z);
-
-    bool targetMoved = ImGuizmo::Manipulate(
-      &cam2.View.m[0][0], &cam2.Projection.m[0][0],
-      ImGuizmo::TRANSLATE, ImGuizmo::WORLD,
-      &targetMat.m[0][0], nullptr);
-
-    if (targetMoved) {
-      float t[3], r[3], s[3];
-      ImGuizmo::DecomposeMatrixToComponents(&targetMat.m[0][0], t, r, s);
-      sc.target = XVECTOR3(t[0], t[1], t[2]);
-    }
-    ImGuizmo::SetID(-1); // reset
   }
   else if (g_selectionType == 2 && g_selectedIdx >= 0 && g_selectedIdx < (int)g_lights.size()) {
     // ── Light gizmo ──
@@ -7213,6 +8861,88 @@ void EditorApp::DrawEditorUI(t850::BaseDriver* drv) {
         float t[3], r[3], s[3];
         ImGuizmo::DecomposeMatrixToComponents(&worldMat.m[0][0], t, r, s);
         sl.position = XVECTOR3(t[0], t[1], t[2]);
+      }
+    }
+  }
+  else if (g_selectionType == 6 && g_selectedIdx >= 0 && g_selectedIdx < static_cast<int>(g_lightCameras.size())) {
+    t850::scene::SceneLightCameraDesc& lightCamera = g_lightCameras[static_cast<std::size_t>(g_selectedIdx)];
+    if (!lightCamera.frozen) {
+      XVECTOR3 position(lightCamera.position.x, lightCamera.position.y, lightCamera.position.z, 1.0f);
+      XVECTOR3 target(lightCamera.target.x, lightCamera.target.y, lightCamera.target.z, 1.0f);
+      bool changed = false;
+      if (lightCamera.type == 0) {
+        if (mode == 0) {
+          const XVECTOR3 oldPosition = position;
+          if (TranslateCameraPointGizmo(cam2, 20, position)) {
+            const XVECTOR3 delta(position.x - oldPosition.x,
+                                 position.y - oldPosition.y,
+                                 position.z - oldPosition.z,
+                                 0.0f);
+            target += delta;
+            changed = true;
+          }
+          changed = TranslateCameraPointGizmo(cam2, 21, target) || changed;
+        }
+      } else {
+        changed = ManipulateCameraEntityGizmo(
+            cam2,
+            mode,
+            position,
+            target,
+            true,
+            lightCamera.ortho_w,
+            lightCamera.ortho_h,
+            lightCamera.fov_deg);
+      }
+      if (changed) {
+        lightCamera.position = {position.x, position.y, position.z};
+        lightCamera.target = {target.x, target.y, target.z};
+      }
+    }
+  }
+  else if (g_selectionType == 7 &&
+           g_selectedIdx >= 0 && g_selectedIdx < static_cast<int>(g_splines.size()) &&
+           g_selectedSplinePoint >= 0 &&
+           g_selectedSplinePoint < static_cast<int>(g_splines[static_cast<std::size_t>(g_selectedIdx)].points.size())) {
+    t850::scene::SceneSplineDesc& spline = g_splines[static_cast<std::size_t>(g_selectedIdx)];
+    if (!spline.frozen) {
+      t850::scene::SceneSplinePointDesc& point = spline.points[static_cast<std::size_t>(g_selectedSplinePoint)];
+      XMATRIX44 worldMat;
+      XMatTranslation(worldMat, point.position.x, point.position.y, point.position.z);
+      const bool manipulated = ImGuizmo::Manipulate(
+          &cam2.View.m[0][0], &cam2.Projection.m[0][0],
+          ImGuizmo::TRANSLATE, ImGuizmo::WORLD,
+          &worldMat.m[0][0], nullptr);
+      if (manipulated) {
+        float t[3], r[3], s[3];
+        ImGuizmo::DecomposeMatrixToComponents(&worldMat.m[0][0], t, r, s);
+        point.position = {t[0], t[1], t[2]};
+      }
+    }
+  }
+  else if (g_selectionType == 8 && g_selectedIdx == 0 && !g_godRaysVolume.frozen) {
+    XMATRIX44 worldMat;
+    XMatScaling(worldMat,
+                (std::max)(0.001f, g_godRaysVolume.half_extents.x),
+                (std::max)(0.001f, g_godRaysVolume.half_extents.y),
+                (std::max)(0.001f, g_godRaysVolume.half_extents.z));
+    worldMat.m[3][0] = g_godRaysVolume.position.x;
+    worldMat.m[3][1] = g_godRaysVolume.position.y;
+    worldMat.m[3][2] = g_godRaysVolume.position.z;
+    const ImGuizmo::OPERATION operation = mode == 2 ? ImGuizmo::SCALE : ImGuizmo::TRANSLATE;
+    const bool manipulated = ImGuizmo::Manipulate(
+        &cam2.View.m[0][0], &cam2.Projection.m[0][0],
+        operation, ImGuizmo::WORLD,
+        &worldMat.m[0][0], nullptr);
+    if (manipulated) {
+      float t[3], r[3], s[3];
+      ImGuizmo::DecomposeMatrixToComponents(&worldMat.m[0][0], t, r, s);
+      g_godRaysVolume.position = {t[0], t[1], t[2]};
+      if (mode == 2) {
+        g_godRaysVolume.half_extents = {
+            (std::max)(0.001f, std::abs(s[0])),
+            (std::max)(0.001f, std::abs(s[1])),
+            (std::max)(0.001f, std::abs(s[2]))};
       }
     }
   }
@@ -7732,6 +9462,57 @@ void EditorApp::DrawEditorUI(t850::BaseDriver* drv) {
           }
           ImGui::TreePop();
         }
+        // Splines
+        if (ImGui::TreeNodeEx("Splines", ImGuiTreeNodeFlags_DefaultOpen)) {
+          if (ImGui::SmallButton("Add Spline")) {
+            t850::scene::SceneSplineDesc spline;
+            spline.name = "Spline " + std::to_string(g_splines.size() + 1);
+            spline.points = {
+              {{0.0f, 5.0f, -10.0f}, 7.0f},
+              {{0.0f, 5.0f, -5.0f}, 7.0f},
+              {{0.0f, 5.0f, 5.0f}, 7.0f},
+              {{0.0f, 5.0f, 10.0f}, 7.0f}
+            };
+            g_splines.push_back(std::move(spline));
+            g_splineGizmos.emplace_back();
+            g_selectionType = 5;
+            g_selectedIdx = static_cast<int>(g_splines.size()) - 1;
+            g_selectedSplinePoint = -1;
+            ClearMixedSelection();
+          }
+          ImGui::SameLine();
+          if (ImGui::SmallButton("Show all")) {
+            for (auto& spline : g_splines) spline.visible = true;
+          }
+          ImGui::SameLine();
+          if (ImGui::SmallButton("Hide all")) {
+            for (auto& spline : g_splines) spline.visible = false;
+          }
+          ImGui::TextDisabled("Eye = Show   F = Freeze   W = Wire");
+          ImGui::Separator();
+          for (int i = 0; i < static_cast<int>(g_splines.size()); ++i) {
+            auto& spline = g_splines[static_cast<std::size_t>(i)];
+            ImGui::PushID(i + 70000);
+            ImGui::Checkbox("##splineVis", &spline.visible); ImGui::SameLine();
+            ImGui::Checkbox("##splineFrz", &spline.frozen); ImGui::SameLine();
+            ImGui::Checkbox("##splineWir", &spline.show_wire); ImGui::SameLine();
+            ImGuiTreeNodeFlags flags = ImGuiTreeNodeFlags_Leaf | ImGuiTreeNodeFlags_SpanAvailWidth;
+            if (g_selectionType == 5 && i == g_selectedIdx) flags |= ImGuiTreeNodeFlags_Selected;
+            if (spline.frozen) ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.5f,0.5f,0.5f,1));
+            const std::string label = "[S] " + spline.name;
+            const bool nodeOpen = ImGui::TreeNodeEx(label.c_str(), flags);
+            if (ImGui::IsItemClicked() && !spline.frozen) {
+              g_selectionType = 5;
+              g_selectedIdx = i;
+              g_selectedSplinePoint = -1;
+              ClearMixedSelection();
+            }
+            if (spline.frozen) ImGui::PopStyleColor();
+            if (nodeOpen) ImGui::TreePop();
+            ImGui::PopID();
+          }
+          ImGui::TreePop();
+        }
         // Cameras
         if (ImGui::TreeNodeEx("Cameras", ImGuiTreeNodeFlags_DefaultOpen)) {
           ImGui::PushID("CamerasBulkControls");
@@ -7755,7 +9536,7 @@ void EditorApp::DrawEditorUI(t850::BaseDriver* drv) {
           ImGui::PopID();
 
           {
-            bool isDefault = (g_activeCameraIdx < 0);
+            bool isDefault = (g_activeCameraIdx == -1);
             ImGui::PushID(20000);
             if (ImGui::RadioButton("##act", isDefault)) g_activeCameraIdx = -1;
             ImGui::SameLine();
@@ -7787,6 +9568,82 @@ void EditorApp::DrawEditorUI(t850::BaseDriver* drv) {
             if (nodeOpen) ImGui::TreePop();
             ImGui::PopID();
           }
+          ImGui::TreePop();
+        }
+        // Light Cameras
+        if (ImGui::TreeNodeEx("Light Cameras", ImGuiTreeNodeFlags_DefaultOpen)) {
+          if (ImGui::SmallButton("Add Light Camera")) {
+            t850::scene::SceneLightCameraDesc lightCamera;
+            lightCamera.name = "Light Camera " + std::to_string(g_lightCameras.size() + 1);
+            lightCamera.type = 1;
+            lightCamera.position = {25.0f, 100.0f, 0.0f};
+            lightCamera.target = {0.0f, 0.0f, 0.0f};
+            lightCamera.ortho_w = 130.0f;
+            lightCamera.ortho_h = 130.0f;
+            lightCamera.far_plane = 600.0f;
+            lightCamera.attached_light = g_lights.empty() ? -1 : 0;
+            g_lightCameras.push_back(std::move(lightCamera));
+            g_selectionType = 6;
+            g_selectedIdx = static_cast<int>(g_lightCameras.size()) - 1;
+            g_selectedSplinePoint = -1;
+            ClearMixedSelection();
+          }
+          ImGui::SameLine();
+          if (ImGui::SmallButton("Show all")) {
+            for (auto& camera : g_lightCameras) camera.visible = true;
+          }
+          ImGui::SameLine();
+          if (ImGui::SmallButton("Hide all")) {
+            for (auto& camera : g_lightCameras) camera.visible = false;
+          }
+          ImGui::TextDisabled("Active   Enable   Eye = Show   F = Freeze");
+          ImGui::Separator();
+          for (int i = 0; i < static_cast<int>(g_lightCameras.size()); ++i) {
+            auto& camera = g_lightCameras[static_cast<std::size_t>(i)];
+            ImGui::PushID(i + 35000);
+            const int encodedActive = EncodeActiveLightCameraIndex(i);
+            const bool isActive = (g_activeCameraIdx == encodedActive);
+            if (ImGui::RadioButton("##act", isActive))
+              g_activeCameraIdx = isActive ? -1 : encodedActive;
+            ImGui::SameLine();
+            ImGui::Checkbox("##en", &camera.enabled); ImGui::SameLine();
+            ImGui::Checkbox("##vis", &camera.visible); ImGui::SameLine();
+            ImGui::Checkbox("##frz", &camera.frozen); ImGui::SameLine();
+            ImGuiTreeNodeFlags flags = ImGuiTreeNodeFlags_Leaf | ImGuiTreeNodeFlags_SpanAvailWidth;
+            if (g_selectionType == 6 && i == g_selectedIdx) flags |= ImGuiTreeNodeFlags_Selected;
+            if (camera.frozen) ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.5f,0.5f,0.5f,1));
+            const char* icon = (camera.type == 1) ? "[LO] " : "[LP] ";
+            const std::string label = icon + camera.name;
+            const bool nodeOpen = ImGui::TreeNodeEx(label.c_str(), flags);
+            if (ImGui::IsItemClicked() && !camera.frozen) {
+              g_selectionType = 6;
+              g_selectedIdx = i;
+              g_selectedSplinePoint = -1;
+              ClearMixedSelection();
+            }
+            if (camera.frozen) ImGui::PopStyleColor();
+            if (nodeOpen) ImGui::TreePop();
+            ImGui::PopID();
+          }
+          ImGui::TreePop();
+        }
+        // Rendering Volumes
+        if (ImGui::TreeNodeEx("Rendering Volumes", ImGuiTreeNodeFlags_DefaultOpen)) {
+          ImGui::Checkbox("##godRaysVolumeEnabled", &g_godRaysVolume.enabled); ImGui::SameLine();
+          ImGui::Checkbox("##godRaysVolumeVisible", &g_godRaysVolume.visible); ImGui::SameLine();
+          ImGui::Checkbox("##godRaysVolumeFrozen", &g_godRaysVolume.frozen); ImGui::SameLine();
+          ImGuiTreeNodeFlags flags = ImGuiTreeNodeFlags_Leaf | ImGuiTreeNodeFlags_SpanAvailWidth;
+          if (g_selectionType == 8) flags |= ImGuiTreeNodeFlags_Selected;
+          if (g_godRaysVolume.frozen) ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.5f,0.5f,0.5f,1));
+          const bool nodeOpen = ImGui::TreeNodeEx("[GR] God Rays Volume", flags);
+          if (ImGui::IsItemClicked() && !g_godRaysVolume.frozen) {
+            g_selectionType = 8;
+            g_selectedIdx = 0;
+            g_selectedSplinePoint = -1;
+            ClearMixedSelection();
+          }
+          if (g_godRaysVolume.frozen) ImGui::PopStyleColor();
+          if (nodeOpen) ImGui::TreePop();
           ImGui::TreePop();
         }
         // Lights
@@ -8045,6 +9902,11 @@ void EditorApp::DrawEditorUI(t850::BaseDriver* drv) {
         // Camera inspector
         SceneCamera& cam = g_cameras[g_selectedIdx];
         ImGui::SeparatorText("Camera");
+        if (ImGui::Button(g_activeCameraIdx == g_selectedIdx
+                              ? "Return to Editor Camera"
+                              : "View Through Camera")) {
+          g_activeCameraIdx = (g_activeCameraIdx == g_selectedIdx) ? -1 : g_selectedIdx;
+        }
         const char* types[] = { "Perspective", "Orthographic" };
         int t = (int)cam.type;
         if (ImGui::Combo("Type", &t, types, 2))
@@ -8175,7 +10037,285 @@ void EditorApp::DrawEditorUI(t850::BaseDriver* drv) {
       } else if (g_selectionType == 4 && g_selectedIdx == 0) {
         ImGui::SeparatorText("Navigation Mesh");
         DrawNavMeshAuthoringPanel();
+      } else if (g_selectionType == 5 && g_selectedIdx >= 0 && g_selectedIdx < static_cast<int>(g_splines.size())) {
+        t850::scene::SceneSplineDesc& spline = g_splines[static_cast<std::size_t>(g_selectedIdx)];
+        ImGui::SeparatorText("Spline");
+        char nameBuffer[256] = {};
+        std::snprintf(nameBuffer, sizeof(nameBuffer), "%s", spline.name.c_str());
+        if (ImGui::InputText("Name", nameBuffer, sizeof(nameBuffer))) {
+          spline.name = nameBuffer;
+        }
+        ImGui::Checkbox("Visible", &spline.visible);
+        ImGui::Checkbox("Frozen", &spline.frozen);
+        ImGui::Checkbox("Wireframe", &spline.show_wire);
+        ImGui::Checkbox("Looped", &spline.looped);
+        ImGui::Checkbox("Play on SceneTemplate start", &spline.play_on_start);
+        ImGui::DragFloat("Agent velocity", &spline.agent_velocity, 0.1f, 0.0f, 100.0f, "%.2f");
+        ImGui::DragFloat("Agent offset", &spline.agent_offset, 0.1f, 0.0f, 100000.0f, "%.2f");
+
+        std::vector<std::string> cameraOptions;
+        cameraOptions.push_back("None");
+        for (int cameraIndex = 0; cameraIndex < static_cast<int>(g_cameras.size()); ++cameraIndex) {
+          cameraOptions.push_back(std::to_string(cameraIndex) + ": " + g_cameras[static_cast<std::size_t>(cameraIndex)].name);
+        }
+        int attachedCameraOption = spline.attached_camera >= 0 ? spline.attached_camera + 1 : 0;
+        const char* preview = attachedCameraOption >= 0 && attachedCameraOption < static_cast<int>(cameraOptions.size())
+            ? cameraOptions[static_cast<std::size_t>(attachedCameraOption)].c_str()
+            : "None";
+        if (ImGui::BeginCombo("Attached camera", preview)) {
+          for (int option = 0; option < static_cast<int>(cameraOptions.size()); ++option) {
+            const bool selected = option == attachedCameraOption;
+            if (ImGui::Selectable(cameraOptions[static_cast<std::size_t>(option)].c_str(), selected)) {
+              attachedCameraOption = option;
+              spline.attached_camera = option == 0 ? -1 : option - 1;
+            }
+            if (selected) ImGui::SetItemDefaultFocus();
+          }
+          ImGui::EndCombo();
+        }
+        if (ImGui::Button(m_editorSplinePreviewPlaying && m_editorSplinePreviewIndex == g_selectedIdx
+                              ? "Stop Timeline Preview"
+                              : "Play Timeline Preview")) {
+          if (m_editorSplinePreviewPlaying && m_editorSplinePreviewIndex == g_selectedIdx) {
+            m_editorSplinePreviewPlaying = false;
+            m_editorSplinePreviewIndex = -1;
+          } else {
+            if (BuildRuntimeSpline(spline, m_editorSplinePreviewSpline)) {
+              m_editorSplinePreviewAgent = t850::SplineAgent{};
+              m_editorSplinePreviewAgent.m_pSpline = &m_editorSplinePreviewSpline;
+              m_editorSplinePreviewAgent.m_moving = true;
+              m_editorSplinePreviewAgent.m_velocity = spline.agent_velocity;
+              m_editorSplinePreviewAgent.SetOffset(
+                  std::fmod((std::max)(0.0f, spline.agent_offset), m_editorSplinePreviewSpline.m_totalLength));
+              m_editorSplinePreviewAgent.m_actualPoint =
+                  m_editorSplinePreviewSpline.GetPoint(m_editorSplinePreviewSpline.GetNormalizedOffset(m_editorSplinePreviewAgent.GetOffset()));
+              m_editorSplinePreviewPlaying = true;
+              m_editorSplinePreviewIndex = g_selectedIdx;
+              ApplyEditorSplineAgentToAttachedCamera(spline, m_editorSplinePreviewAgent);
+            }
+          }
+        }
+        ImGui::SameLine();
+        if (ImGui::Button("Apply Offset to Camera")) {
+          ApplyEditorSplineToAttachedCamera(spline);
+        }
+
+        ImGui::SeparatorText("Control Points");
+        if (ImGui::Button("Add Point")) {
+          t850::scene::SceneSplinePointDesc point;
+          if (!spline.points.empty()) {
+            point = spline.points.back();
+            point.position.z += 5.0f;
+          }
+          spline.points.push_back(point);
+        }
+        ImGui::SameLine();
+        bool deleteSpline = false;
+        if (ImGui::Button("Delete Spline")) {
+          deleteSpline = true;
+        }
+        if (deleteSpline) {
+          if (m_editorSplinePreviewIndex == g_selectedIdx) {
+            m_editorSplinePreviewPlaying = false;
+            m_editorSplinePreviewIndex = -1;
+          }
+          if (g_selectedIdx >= 0 && g_selectedIdx < static_cast<int>(g_splineGizmos.size())) {
+            if (t850::g_pBaseDriver) {
+              t850::g_pBaseDriver->WaitForGPU();
+            }
+            ReleaseGizmoCache(g_splineGizmos[static_cast<std::size_t>(g_selectedIdx)]);
+            g_splineGizmos.erase(g_splineGizmos.begin() + g_selectedIdx);
+          }
+          g_splines.erase(g_splines.begin() + g_selectedIdx);
+          g_selectedIdx = -1;
+          g_selectedSplinePoint = -1;
+          g_selectionType = 0;
+        } else {
+          for (int pointIndex = 0; pointIndex < static_cast<int>(spline.points.size()); ++pointIndex) {
+            t850::scene::SceneSplinePointDesc& point = spline.points[static_cast<std::size_t>(pointIndex)];
+            ImGui::PushID(pointIndex);
+            const std::string header = "Point " + std::to_string(pointIndex);
+            if (ImGui::CollapsingHeader(header.c_str(), ImGuiTreeNodeFlags_DefaultOpen)) {
+              float pos[3] = {point.position.x, point.position.y, point.position.z};
+              if (ImGui::DragFloat3("Position", pos, 0.1f, -100000.0f, 100000.0f, "%.3f")) {
+                point.position = {pos[0], pos[1], pos[2]};
+              }
+              ImGui::DragFloat("Velocity", &point.velocity, 0.1f, 0.0f, 100.0f, "%.2f");
+              ImGui::Checkbox("Look at next point", &point.look_at_center);
+              float rot[3] = {point.rotation.x, point.rotation.y, point.rotation.z};
+              if (ImGui::DragFloat3("Rotation", rot, 0.01f, -1000.0f, 1000.0f, "%.3f")) {
+                point.rotation = {rot[0], rot[1], rot[2]};
+              }
+              if (spline.points.size() > 4 && ImGui::SmallButton("Remove Point")) {
+                spline.points.erase(spline.points.begin() + pointIndex);
+                ImGui::PopID();
+                break;
+              }
+            }
+            ImGui::PopID();
+          }
+          if (spline.points.size() < 4) {
+            ImGui::TextColored(ImVec4(1.0f, 0.7f, 0.2f, 1.0f), "At least 4 points are needed for Catmull-Rom playback.");
+          }
+        }
+      } else if (g_selectionType == 6 && g_selectedIdx >= 0 && g_selectedIdx < static_cast<int>(g_lightCameras.size())) {
+        t850::scene::SceneLightCameraDesc& lightCamera = g_lightCameras[static_cast<std::size_t>(g_selectedIdx)];
+        ImGui::SeparatorText("Light Camera");
+        char nameBuffer[256] = {};
+        std::snprintf(nameBuffer, sizeof(nameBuffer), "%s", lightCamera.name.c_str());
+        if (ImGui::InputText("Name", nameBuffer, sizeof(nameBuffer))) {
+          lightCamera.name = nameBuffer;
+        }
+        const int encodedActiveLightCamera = EncodeActiveLightCameraIndex(g_selectedIdx);
+        if (ImGui::Button(g_activeCameraIdx == encodedActiveLightCamera
+                              ? "Return to Editor Camera"
+                              : "View Through Light Camera")) {
+          g_activeCameraIdx = (g_activeCameraIdx == encodedActiveLightCamera)
+              ? -1
+              : encodedActiveLightCamera;
+        }
+        ImGui::Checkbox("Enabled", &lightCamera.enabled);
+        ImGui::Checkbox("Visible", &lightCamera.visible);
+        ImGui::Checkbox("Frozen", &lightCamera.frozen);
+
+        const char* projectionPreview = lightCamera.type == 1 ? "Orthographic" : "Perspective";
+        if (ImGui::BeginCombo("Projection", projectionPreview)) {
+          if (ImGui::Selectable("Perspective", lightCamera.type == 0)) lightCamera.type = 0;
+          if (ImGui::Selectable("Orthographic", lightCamera.type == 1)) lightCamera.type = 1;
+          ImGui::EndCombo();
+        }
+        float pos[3] = {lightCamera.position.x, lightCamera.position.y, lightCamera.position.z};
+        if (ImGui::DragFloat3("Position", pos, 0.1f, -100000.0f, 100000.0f, "%.3f")) {
+          lightCamera.position = {pos[0], pos[1], pos[2]};
+        }
+        float target[3] = {lightCamera.target.x, lightCamera.target.y, lightCamera.target.z};
+        if (ImGui::DragFloat3("Target", target, 0.1f, -100000.0f, 100000.0f, "%.3f")) {
+          lightCamera.target = {target[0], target[1], target[2]};
+        }
+        if (lightCamera.type == 1) {
+          ImGui::DragFloat("Ortho width", &lightCamera.ortho_w, 0.1f, 0.01f, 100000.0f, "%.3f");
+          ImGui::DragFloat("Ortho height", &lightCamera.ortho_h, 0.1f, 0.01f, 100000.0f, "%.3f");
+        } else {
+          ImGui::DragFloat("FOV degrees", &lightCamera.fov_deg, 0.1f, 1.0f, 179.0f, "%.3f");
+        }
+        ImGui::DragFloat("Near plane", &lightCamera.near_plane, 0.01f, 0.001f, 10000.0f, "%.3f");
+        ImGui::DragFloat("Far plane", &lightCamera.far_plane, 0.1f, 0.001f, 1000000.0f, "%.3f");
+        ImGui::DragFloat("Yaw rate", &lightCamera.yaw_rate, 0.0001f, -10.0f, 10.0f, "%.6f");
+
+        std::vector<std::string> lightOptions;
+        lightOptions.push_back("None");
+        for (int lightIndex = 0; lightIndex < static_cast<int>(g_lights.size()); ++lightIndex) {
+          lightOptions.push_back(std::to_string(lightIndex) + ": " + g_lights[static_cast<std::size_t>(lightIndex)].name);
+        }
+        int attachedLightOption = lightCamera.attached_light >= 0 ? lightCamera.attached_light + 1 : 0;
+        const char* attachedPreview = attachedLightOption >= 0 && attachedLightOption < static_cast<int>(lightOptions.size())
+            ? lightOptions[static_cast<std::size_t>(attachedLightOption)].c_str()
+            : "None";
+        if (ImGui::BeginCombo("Attached light", attachedPreview)) {
+          for (int option = 0; option < static_cast<int>(lightOptions.size()); ++option) {
+            const bool selected = option == attachedLightOption;
+            if (ImGui::Selectable(lightOptions[static_cast<std::size_t>(option)].c_str(), selected)) {
+              attachedLightOption = option;
+              lightCamera.attached_light = option == 0 ? -1 : option - 1;
+            }
+            if (selected) ImGui::SetItemDefaultFocus();
+          }
+          ImGui::EndCombo();
+        }
+        ImGui::TextDisabled("SceneTemplate uses the first enabled light camera as the shadow camera source.");
+        if (ImGui::Button("Delete Light Camera")) {
+          AdjustActiveLightCameraAfterErase(g_selectedIdx);
+          if (g_selectedIdx >= 0 && g_selectedIdx < static_cast<int>(g_lightCameraGizmoCameras.size())) {
+            if (t850::g_pBaseDriver) {
+              t850::g_pBaseDriver->WaitForGPU();
+            }
+            ReleaseGizmoCache(g_lightCameraGizmoCameras[static_cast<std::size_t>(g_selectedIdx)].gizmo);
+            g_lightCameraGizmoCameras.erase(g_lightCameraGizmoCameras.begin() + g_selectedIdx);
+          }
+          g_lightCameras.erase(g_lightCameras.begin() + g_selectedIdx);
+          g_selectedIdx = -1;
+          g_selectionType = 0;
+        }
+      } else if (g_selectionType == 8 && g_selectedIdx == 0) {
+        ImGui::SeparatorText("God Rays Volume");
+        char nameBuffer[256] = {};
+        std::snprintf(nameBuffer, sizeof(nameBuffer), "%s", g_godRaysVolume.name.c_str());
+        if (ImGui::InputText("Name", nameBuffer, sizeof(nameBuffer))) {
+          g_godRaysVolume.name = nameBuffer;
+        }
+        ImGui::Checkbox("Enabled", &g_godRaysVolume.enabled);
+        ImGui::Checkbox("Clip God Rays to Volume", &g_godRaysVolume.clip_enabled);
+        ImGui::Checkbox("Visible", &g_godRaysVolume.visible);
+        ImGui::Checkbox("Frozen", &g_godRaysVolume.frozen);
+        ImGui::Checkbox("Wireframe", &g_godRaysVolume.show_wire);
+        float position[3] = {g_godRaysVolume.position.x, g_godRaysVolume.position.y, g_godRaysVolume.position.z};
+        if (ImGui::DragFloat3("Position", position, 0.1f, -100000.0f, 100000.0f, "%.3f")) {
+          g_godRaysVolume.position = {position[0], position[1], position[2]};
+        }
+        float halfExtents[3] = {g_godRaysVolume.half_extents.x, g_godRaysVolume.half_extents.y, g_godRaysVolume.half_extents.z};
+        if (ImGui::DragFloat3("Half Extents", halfExtents, 0.1f, 0.001f, 100000.0f, "%.3f")) {
+          g_godRaysVolume.half_extents = {
+              (std::max)(0.001f, halfExtents[0]),
+              (std::max)(0.001f, halfExtents[1]),
+              (std::max)(0.001f, halfExtents[2])};
+          if (t850::g_pBaseDriver) {
+            t850::g_pBaseDriver->WaitForGPU();
+          }
+          ReleaseGizmoCache(g_godRaysVolumeGizmo);
+        }
+        ImGui::TextDisabled("DayScene's original shader has no spatial clip; clip is off by default to preserve parity.");
+      } else if (g_selectionType == 7 &&
+                 g_selectedIdx >= 0 && g_selectedIdx < static_cast<int>(g_splines.size()) &&
+                 g_selectedSplinePoint >= 0 &&
+                 g_selectedSplinePoint < static_cast<int>(g_splines[static_cast<std::size_t>(g_selectedIdx)].points.size())) {
+        t850::scene::SceneSplineDesc& spline = g_splines[static_cast<std::size_t>(g_selectedIdx)];
+        t850::scene::SceneSplinePointDesc& point = spline.points[static_cast<std::size_t>(g_selectedSplinePoint)];
+        ImGui::SeparatorText("Spline Point");
+        ImGui::Text("Spline: %s", spline.name.c_str());
+        ImGui::Text("Point: %d / %d", g_selectedSplinePoint, static_cast<int>(spline.points.size()));
+        float pos[3] = {point.position.x, point.position.y, point.position.z};
+        if (ImGui::DragFloat3("Position", pos, 0.1f, -100000.0f, 100000.0f, "%.3f")) {
+          point.position = {pos[0], pos[1], pos[2]};
+        }
+        ImGui::DragFloat("Velocity", &point.velocity, 0.1f, 0.0f, 100.0f, "%.2f");
+        ImGui::Checkbox("Look at next point", &point.look_at_center);
+        float rot[3] = {point.rotation.x, point.rotation.y, point.rotation.z};
+        if (ImGui::DragFloat3("Rotation", rot, 0.01f, -1000.0f, 1000.0f, "%.3f")) {
+          point.rotation = {rot[0], rot[1], rot[2]};
+        }
+        if (ImGui::Button("Previous Point") && g_selectedSplinePoint > 0) {
+          --g_selectedSplinePoint;
+        }
+        ImGui::SameLine();
+        if (ImGui::Button("Next Point") && g_selectedSplinePoint + 1 < static_cast<int>(spline.points.size())) {
+          ++g_selectedSplinePoint;
+        }
+        if (spline.points.size() > 4 && ImGui::Button("Delete Point")) {
+          spline.points.erase(spline.points.begin() + g_selectedSplinePoint);
+          if (g_selectedSplinePoint >= static_cast<int>(spline.points.size())) {
+            g_selectedSplinePoint = static_cast<int>(spline.points.size()) - 1;
+          }
+        }
       }
+    }
+    ImGui::End();
+  }
+
+  if (m_panels.showTimeline) {
+    if (ImGuiViewport* viewport = ImGui::GetMainViewport()) {
+      const float margin = 12.0f;
+      const ImGuiCond layoutCond = g_resetArtistLayout ? ImGuiCond_Always : ImGuiCond_FirstUseEver;
+      const float rightPanelWidth = (std::min)(440.0f, (std::max)(360.0f, viewport->WorkSize.x * 0.27f));
+      const float width = (std::max)(520.0f, viewport->WorkSize.x - rightPanelWidth - margin * 3.0f);
+      const float height = 170.0f;
+      ImGui::SetNextWindowPos(
+          ImVec2(viewport->WorkPos.x + margin, viewport->WorkPos.y + viewport->WorkSize.y - height - margin),
+          layoutCond);
+      ImGui::SetNextWindowSize(ImVec2(width, height), layoutCond);
+    }
+    if (ImGui::Begin("Timeline", &m_panels.showTimeline, ImGuiWindowFlags_NoCollapse)) {
+      ImGuiClampCurrentWindowToEditorWorkArea();
+      DrawEditorTimelinePanel();
     }
     ImGui::End();
   }

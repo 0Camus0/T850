@@ -24,8 +24,15 @@ add_executable(T8ditor
 t850_apply_app(T8ditor)
 t850_stage_runtime(T8ditor)
 
-target_link_libraries(T8ditor PRIVATE
-	FrameworkImGui
-	$<$<CONFIG:Debug>:imguid>
-	$<$<NOT:$<CONFIG:Debug>>:imgui>
-	imguizmo)
+if(WIN32)
+	target_link_libraries(T8ditor PRIVATE
+		FrameworkImGui
+		$<$<CONFIG:Debug>:imguid>
+		$<$<NOT:$<CONFIG:Debug>>:imgui>
+		imguizmo)
+else()
+	target_link_libraries(T8ditor PRIVATE
+		FrameworkImGui
+		imgui::imgui
+		imguizmo::imguizmo)
+endif()

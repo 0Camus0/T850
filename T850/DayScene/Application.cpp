@@ -12,7 +12,7 @@
 
 #include <Application.h>
 #include <video/BaseDriver.h>
-#ifndef OS_ANDROID
+#if defined(USING_GL_COMMON)
 #include <video/gl/GLTexture.h>
 #endif
 #include <utils/InputManager.h>
@@ -33,6 +33,9 @@
 #include <scene/MaterialAsset.h>
 #include <imgui/DevGuiContext.h>
 #include <imgui.h>
+#ifdef OS_LINUX
+#include <unistd.h>
+#endif
 #ifndef OS_ANDROID
 
 #include <imgui_impl_vulkan.h>
@@ -409,7 +412,10 @@ namespace {
     if (!panelOpen || !*panelOpen) return;
 
     ImGui::SetNextWindowSize(ImVec2(520.0f, 520.0f), ImGuiCond_FirstUseEver);
-    if (!ImGui::Begin("DEBUG", panelOpen)) {
+    ImGuiWindowFlags flags = t850::DevGuiContext::PanelAllowsNavigationFocus("DEBUG")
+        ? 0
+        : (ImGuiWindowFlags_NoNavFocus | ImGuiWindowFlags_NoNavInputs);
+    if (!ImGui::Begin("DEBUG", panelOpen, flags)) {
       ImGui::End();
       return;
     }
@@ -453,7 +459,10 @@ namespace {
       bool open = true;
       std::string title = "DEBUG - " + entry.label + "###" + entry.key;
       ImGui::SetNextWindowSize(ImVec2(760.0f, 480.0f), ImGuiCond_FirstUseEver);
-      if (ImGui::Begin(title.c_str(), &open)) {
+      ImGuiWindowFlags flags = t850::DevGuiContext::PanelAllowsNavigationFocus("DEBUG")
+          ? 0
+          : (ImGuiWindowFlags_NoNavFocus | ImGuiWindowFlags_NoNavInputs);
+      if (ImGui::Begin(title.c_str(), &open, flags)) {
         ImGui::TextUnformatted(entry.label.c_str());
         ImGui::Separator();
         ImVec2 available = ImGui::GetContentRegionAvail();
@@ -942,14 +951,28 @@ bool App::HandleRuntimeGuiToggle(const char* phase) {
   const bool imguiConsumesKeyboard =
       m_imguiVisible && (m_imgui.WantsKeyboard() || m_imgui.WantsTextInput());
   const bool keyboardToggle = !imguiConsumesKeyboard && IManager.PressedOnceKey(T800K_g);
-  const bool gamepadToggle = IManager.ConsumeGamepadStartPress();
+  const bool gamepadStartToggle = IManager.ConsumeGamepadStartPress();
+#if defined(OS_LINUX)
+  const bool gamepadDeckMenuToggle = IManager.Gamepad.backPressed || IManager.Gamepad.guidePressed;
+  IManager.Gamepad.backPressed = false;
+  IManager.Gamepad.guidePressed = false;
+#else
+  const bool gamepadDeckMenuToggle = false;
+#endif
+  const bool gamepadToggle = gamepadStartToggle || gamepadDeckMenuToggle;
   const bool gamepadClose = m_imguiVisible && IManager.ConsumeGamepadEastPress();
   if (!keyboardToggle && !gamepadToggle && !gamepadClose) {
     return false;
   }
 
   const bool oldVisible = m_imguiVisible;
-  m_imguiVisible = gamepadClose ? false : !m_imguiVisible;
+  if (gamepadClose) {
+    m_imguiVisible = false;
+  } else if (keyboardToggle) {
+    m_imguiVisible = !m_imguiVisible;
+  } else if (gamepadToggle) {
+    m_imguiVisible = true;
+  }
   m_runtimeGuiGamepadFocusPending = m_imguiVisible && !oldVisible;
   if (m_runtimeGuiGamepadFocusPending) {
     m_runtimeGuiFocusedPanelIndex = 1; // Scene Controls / rendering panel
@@ -1119,6 +1142,9 @@ void App::DrawRuntimeGui() {
   }
 
   if (m_imguiVisible) {
+#ifndef OS_ANDROID
+    t850::DevGuiContext::SetNavigationFocusPanel(kRuntimeGuiFocusPanels[m_runtimeGuiFocusedPanelIndex]);
+#endif
 #ifdef OS_ANDROID
     const bool androidUndockThisFrame = m_androidGuiUndockRequested;
     const bool androidPhysicsPanel = m_androidGuiPanelMode == kAndroidGuiPanelPhysics;
@@ -1254,6 +1280,7 @@ void App::DrawRuntimeGui() {
     });
   }
 #else
+  t850::DevGuiContext::SetNavigationFocusPanel(nullptr);
   T8_TELEMETRY_SCOPE("ui.imgui_render");
   m_imgui.Render();
 #endif

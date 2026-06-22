@@ -19,7 +19,7 @@
 
 #include <utils/Log.h>
 
-#ifndef OS_ANDROID
+#if defined(USING_GL_COMMON)
 #include <video/gl/GLShader.h>
 #include <video/gl/GLDriver.h>
 #endif
@@ -130,7 +130,7 @@ T RandRange(T m, T M) {
 }
 
 
-float lerp(float a, float b, float f)
+float t850_lerp(float a, float b, float f)
 {
 	return a + f * (b - a);
 }
@@ -177,7 +177,7 @@ void SSAOFilter::Update() {
 		vec.z *= RandRange(0.0f, 1.0f);
 
 		float scale = float(i) / float(KernelSize);
-		scale = lerp(0.1f, 1.0f, scale * scale);
+		scale = t850_lerp(0.1f, 1.0f, scale * scale);
 		vec.x *= scale;
 		vec.y *= scale;
 		vec.z *= scale;

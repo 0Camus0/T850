@@ -10,7 +10,7 @@
 #include <Config.h>
 #include <video/BaseDriver.h>
 
-#if defined(OS_WINDOWS) || defined(OS_ANDROID)
+#if defined(OS_WINDOWS) || defined(OS_ANDROID) || defined(OS_LINUX)
 
 #if defined(OS_WINDOWS)
 #define VK_USE_PLATFORM_WIN32_KHR

@@ -21,7 +21,7 @@
 #include <vector>
 
 
-#ifndef OS_ANDROID
+#if defined(USING_GL_COMMON)
 #include <video/gl/GLTexture.h>
 #endif
 #if defined(OS_WINDOWS)
@@ -104,5 +104,4 @@ namespace t850 {
 }
 
 #endif
-
 

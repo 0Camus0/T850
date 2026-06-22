@@ -191,11 +191,13 @@ where glslangValidator.exe >nul 2>nul || (
 )
 
 set "BUILD_TASK=assemble%CONFIG%"
-set "INSTALL_TASK=install%CONFIG%"
+set "INSTALL_TASK=installDevelopment%CONFIG%"
 if /i "%CONFIG%"=="Debug" (
-    set "OUTPUT_VARIANT=debug"
+    set "OUTPUT_VARIANT=development\debug"
+    set "APK_NAME=app-development-debug.apk"
 ) else (
-    set "OUTPUT_VARIANT=release"
+    set "OUTPUT_VARIANT=development\release"
+    set "APK_NAME=app-development-release.apk"
     if not "%ALLOW_UNSIGNED_RELEASE%"=="1" (
         call :check_release_signing
         if errorlevel 1 exit /b 1
@@ -211,6 +213,7 @@ echo Project : %ANDROID_PROJECT%
 echo ABIs    : %ABI_FILTERS%
 echo Assets  : %ASSET_PROFILE%
 echo Vulkan validation: %VULKAN_VALIDATION%
+if "%INSTALL%"=="1" echo Install : development %CONFIG%
 echo Workers : %T850_BUILD_WORKERS% ^(cores - 1^)
 if "%ALLOW_UNSIGNED_RELEASE%"=="1" echo Release signing: unsigned allowed
 if "%CLEAN%"=="1" echo Mode    : clean rebuild
@@ -255,9 +258,9 @@ if "%LAUNCH%"=="1" (
     if errorlevel 1 exit /b 1
 )
 
-set "APK_PATH=%ANDROID_PROJECT%\app\build\outputs\apk\%OUTPUT_VARIANT%\app-%OUTPUT_VARIANT%.apk"
-if not exist "%APK_PATH%" if /i "%OUTPUT_VARIANT%"=="release" (
-    set "APK_PATH=%ANDROID_PROJECT%\app\build\outputs\apk\release\app-release-unsigned.apk"
+set "APK_PATH=%ANDROID_PROJECT%\app\build\outputs\apk\%OUTPUT_VARIANT%\%APK_NAME%"
+if not exist "%APK_PATH%" if /i "%CONFIG%"=="Release" (
+    set "APK_PATH=%ANDROID_PROJECT%\app\build\outputs\apk\%OUTPUT_VARIANT%\app-development-release-unsigned.apk"
 )
 
 echo(

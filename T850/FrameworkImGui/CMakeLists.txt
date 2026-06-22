@@ -14,13 +14,19 @@ target_include_directories(FrameworkImGui PUBLIC
   ${CMAKE_CURRENT_SOURCE_DIR}/include
   ${T850_SOURCE_DIR}/Framework
   ${T850_SOURCE_DIR}/Framework/include
-  ${T850_SOURCE_DIR}/Librerias/SDL3/include
   ${T850_VCPKG_STATIC}/include
   ${T850_VCPKG_DYNAMIC}/include)
 
-target_link_libraries(FrameworkImGui PUBLIC
-  Framework
-  $<$<CONFIG:Debug>:imguid>
-  $<$<NOT:$<CONFIG:Debug>>:imgui>)
+if(WIN32)
+  target_include_directories(FrameworkImGui PUBLIC ${T850_SOURCE_DIR}/Librerias/SDL3/include)
+  target_link_libraries(FrameworkImGui PUBLIC
+    Framework
+    $<$<CONFIG:Debug>:imguid>
+    $<$<NOT:$<CONFIG:Debug>>:imgui>)
+else()
+  target_link_libraries(FrameworkImGui PUBLIC
+    Framework
+    imgui::imgui)
+endif()
 
 install(TARGETS FrameworkImGui DESTINATION Lib)

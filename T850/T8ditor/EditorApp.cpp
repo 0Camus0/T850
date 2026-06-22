@@ -3375,6 +3375,8 @@ void EditorApp::DrawRagdollInspector(SceneObject& obj) {
     obj.ragdollAuthoringReady = false;
     obj.ragdollAuthoringTried = false;
     if (LoadObjectRagdollAuthoringFromFile(obj)) {
+      meta.enabled = true;
+      meta.asset = obj.ragdollResourcePath;
       if (meta.preview) {
         RecreateObjectRagdoll(obj, t850::PhysicsBodyMotion::Kinematic);
         obj.ragdollDebugDraw = true;
@@ -3399,6 +3401,7 @@ void EditorApp::DrawRagdollInspector(SceneObject& obj) {
       }
       if (obj.ragdollAuthoringReady && RecreateObjectRagdoll(obj, t850::PhysicsBodyMotion::Kinematic)) {
         obj.ragdollDebugDraw = true;
+        meta.enabled = true;
       }
     } else {
       obj.ragdollDebugDraw = false;

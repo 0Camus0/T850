@@ -804,8 +804,14 @@ namespace t850 {
 
     for (int slot = 0; slot < MaxPrimitiveTextures; ++slot) {
       const char* textureName = textureNameForSlot(slot);
-      if (Textures[slot] && textureName && passUsesTextureSlot(slot))
+      if (!textureName || !passUsesTextureSlot(slot))
+        continue;
+
+      if (Textures[slot]) {
         Textures[slot]->Set(*T8DeviceContext, slot, textureName);
+      } else {
+        g_pBaseDriver->ClearPendingTextureBinding(slot);
+      }
     }
     if (EnvMap) {
       EnvMap->Set(*T8DeviceContext, 6, "texEnv");

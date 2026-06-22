@@ -328,6 +328,7 @@ namespace t850 {
     virtual bool IsResourceUploadBatchActive() const { return false; }
     virtual void SetViewport(float x, float y, float w, float h) {}
     virtual void SetScissorRect(int x, int y, int w, int h) {}
+    virtual void ClearPendingTextureBinding(int slot) { (void)slot; }
 
     // Resize the swapchain, back-buffer RTVs, and depth buffer to the new
     // pixel dimensions. Returns true on success. Implementations must flush

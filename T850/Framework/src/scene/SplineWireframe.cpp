@@ -1,5 +1,6 @@
 #include <pch.h>
 #include <scene/SplineWireframe.h>
+#include <scene/RenderQueue.h>
 #include <utils/Log.h>
 #include <utils/Utils.h>
 namespace t850 {
@@ -95,12 +96,18 @@ void SplineWireframe::Draw(float * t, float * vp)
 
   Camera *pActualCamera = pScProp->GetPrimaryCamera();
   constantBuff.WVP = pActualCamera->VP;
-  IB->Set(*T8DeviceContext, 0, IndexBufferFormat::R16);
-  VB->Set(*T8DeviceContext,sizeof(Vert),0);
+  MeshDrawStateTracker& tracker = MeshDrawStateTracker::Get();
+  tracker.BindIndexedGeometry(*T8DeviceContext,
+                              VB,
+                              sizeof(Vert),
+                              0,
+                              IB,
+                              IndexBufferFormat::R16,
+                              Topology::LINE_STRIP);
   s->Set(*T8DeviceContext);
+  tracker.OnShaderChanged(s);
   CB->UpdateFromBuffer(*T8DeviceContext, &constantBuff.WVP[0]);
   CB->Set(*T8DeviceContext);
-  T8DeviceContext->SetPrimitiveTopology(Topology::LINE_STRIP);
   T8DeviceContext->DrawIndexed(static_cast<unsigned>(vertices.size()), 0, 0);
 }
 void SplineWireframe::Destroy()

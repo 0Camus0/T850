@@ -1,5 +1,6 @@
 #include <pch.h>
 #include <scene/WireframeSphere.h>
+#include <scene/RenderQueue.h>
 #include <utils/Log.h>
 #include <utils/Utils.h>
 #include <cmath>
@@ -139,14 +140,19 @@ void WireframeSphere::Draw(const XMATRIX44& vp, const XVECTOR3& center, float ra
   constantBuff.WVP = world * vp;
   constantBuff.LineColor = color;
 
-  IB->Set(*T8DeviceContext, 0, IndexBufferFormat::R16);
-  VB->Set(*T8DeviceContext, sizeof(Vert), 0);
-  T8DeviceContext->SetPrimitiveTopology(Topology::LINE_LIST);
+  MeshDrawStateTracker& tracker = MeshDrawStateTracker::Get();
+  tracker.BindIndexedGeometry(*T8DeviceContext,
+                              VB,
+                              sizeof(Vert),
+                              0,
+                              IB,
+                              IndexBufferFormat::R16,
+                              Topology::LINE_LIST);
   s->Set(*T8DeviceContext);
+  tracker.OnShaderChanged(s);
   CB->UpdateFromBuffer(*T8DeviceContext, &constantBuff);
   CB->Set(*T8DeviceContext);
   T8DeviceContext->DrawIndexed(static_cast<unsigned>(indexCount), 0, 0);
-  T8DeviceContext->SetPrimitiveTopology(Topology::TRIANLE_LIST);
 }
 
 void WireframeSphere::Destroy() {

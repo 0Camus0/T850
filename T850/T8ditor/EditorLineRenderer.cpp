@@ -5,6 +5,7 @@
 #include "EditorLineRenderer.h"
 
 #include <Config.h>
+#include <scene/RenderQueue.h>
 #include <video/BaseDriver.h>
 #include <utils/Utils.h>
 #include <utils/Log.h>
@@ -111,19 +112,22 @@ void EditorLineRenderer::DrawLines(const XMATRIX44& world,
     m_farPlane,
     0.005f);  // proportional depth bias (wireDepth *= 1 - bias)
 
-  ib->Set(*t850::T8DeviceContext, 0, ibFormat);
-  vb->Set(*t850::T8DeviceContext, vertexStride, 0);
-
-  // Set topology BEFORE shader (Vulkan bakes topology into the pipeline at Set time)
-  t850::T8DeviceContext->SetPrimitiveTopology(t850::Topology::LINE_LIST);
+  t850::MeshDrawStateTracker& tracker = t850::MeshDrawStateTracker::Get();
+  tracker.BindIndexedGeometry(*t850::T8DeviceContext,
+                              vb,
+                              vertexStride,
+                              0,
+                              ib,
+                              ibFormat,
+                              t850::Topology::LINE_LIST);
 
   m_shader->Set(*t850::T8DeviceContext);
-  m_cb->UpdateFromBuffer(*t850::T8DeviceContext, &cb);
-  m_cb->Set(*t850::T8DeviceContext);
+  tracker.OnShaderChanged(m_shader);
+  tracker.UpdateAndBindConstantBuffer(*t850::T8DeviceContext, m_cb, 0, &cb, sizeof(cb));
 #if defined(USING_VULKAN) || defined(USING_VULKAN_ONLY)
   // Vulkan reflection can map VS/FS cbuffers to different bindings when the
   // fragment shader also samples depth. Populate both logical slots.
-  m_cb->Set(*t850::T8DeviceContext, 1);
+  tracker.UpdateAndBindConstantBuffer(*t850::T8DeviceContext, m_cb, 1, &cb, sizeof(cb));
 #endif
 
   // Bind depth texture AFTER shader is set (D3D12 needs active root signature)
@@ -135,9 +139,6 @@ void EditorLineRenderer::DrawLines(const XMATRIX44& world,
   }
 
   t850::T8DeviceContext->DrawIndexed(indexCount, 0, 0);
-
-  // Reset topology back to triangle list for subsequent draws (meshes, ImGui, etc.)
-  t850::T8DeviceContext->SetPrimitiveTopology(t850::Topology::TRIANLE_LIST);
 }
 
 t850::VertexBuffer* EditorLineRenderer::CreatePositionVB(const float* positionsXYZW,

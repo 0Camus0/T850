@@ -14,6 +14,7 @@
 #include <scene/RenderQuad.h>
 #include <scene/RenderGraph.h>
 #include <scene/RenderMesh.h>
+#include <scene/RenderQueue.h>
 #include <utils/Utils.h>
 
 #if defined(USING_GL_COMMON)
@@ -744,8 +745,8 @@ namespace t850 {
     g_pBaseDriver->SetCullFace(BaseDriver::FRONT_AND_BACK);
 
     m_quad.Set();
-    T8DeviceContext->SetPrimitiveTopology(Topology::TRIANLE_LIST);
     s->Set(*T8DeviceContext);
+    MeshDrawStateTracker::Get().OnShaderChanged(s);
 
     auto updateQuadConstants = [&]() {
       if (g_pBaseDriver->UsesGLSL()) {

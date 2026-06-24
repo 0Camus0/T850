@@ -1,5 +1,6 @@
 #include <pch.h>
 #include <scene/Quad.h>
+#include <scene/RenderQueue.h>
 #include <utils/Utils.h>
 namespace t850 {
 
@@ -40,7 +41,12 @@ namespace t850 {
   {
     unsigned int offset = 0;
     unsigned int stride = sizeof(Vertex);
-    m_VB->Set(*T8DeviceContext, stride, offset);
-    m_IB->Set(*T8DeviceContext, 0, IndexBufferFormat::R16);
+    MeshDrawStateTracker::Get().BindIndexedGeometry(*T8DeviceContext,
+                                                    m_VB,
+                                                    stride,
+                                                    offset,
+                                                    m_IB,
+                                                    IndexBufferFormat::R16,
+                                                    Topology::TRIANLE_LIST);
   }
 }

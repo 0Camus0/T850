@@ -37,8 +37,14 @@ namespace t850 {
     for (int i = 0; i < kMaxTrackedSlots; ++i) m_lastTex[i] = nullptr;
     for (int i = 0; i < kMaxTrackedSlots; ++i) m_lastCB[i] = nullptr;
     m_lastEnv = nullptr;
+    m_lastVB = nullptr;
+    m_lastVBStride = 0;
+    m_lastVBOffset = 0;
+    m_lastVBSet = false;
     m_lastIB = nullptr;
     m_lastIBFmtSet = false;
+    m_lastTopology = Topology::TRIANLE_LIST;
+    m_lastTopologySet = false;
   }
 
   void MeshDrawStateTracker::OnShaderChanged(ShaderBase* s) {
@@ -71,6 +77,55 @@ namespace t850 {
     m_lastIBFmt = fmt;
     m_lastIBFmtSet = true;
     return true;
+  }
+
+  bool MeshDrawStateTracker::ShouldSetTopology(Topology::E topology) {
+    if (m_lastTopologySet && m_lastTopology == topology) return false;
+    m_lastTopology = topology;
+    m_lastTopologySet = true;
+    return true;
+  }
+
+  bool MeshDrawStateTracker::ShouldBindVertexBuffer(VertexBuffer* vb,
+                                                    unsigned stride,
+                                                    unsigned offset) {
+    if (m_lastVBSet && m_lastVB == vb &&
+        m_lastVBStride == stride && m_lastVBOffset == offset)
+      return false;
+    m_lastVB = vb;
+    m_lastVBStride = stride;
+    m_lastVBOffset = offset;
+    m_lastVBSet = true;
+    return true;
+  }
+
+  unsigned MeshDrawStateTracker::BindIndexedGeometry(DeviceContext& deviceContext,
+                                                     VertexBuffer* vb,
+                                                     unsigned stride,
+                                                     unsigned offset,
+                                                     IndexBuffer* ib,
+                                                     IndexBufferFormat::E fmt,
+                                                     Topology::E topology) {
+    if (!vb || !ib)
+      return 0;
+
+    if (!m_passActive)
+      Reset();
+
+    unsigned changes = 0;
+    if (ShouldSetTopology(topology)) {
+      deviceContext.SetPrimitiveTopology(topology);
+      ++changes;
+    }
+    if (ShouldBindVertexBuffer(vb, stride, offset)) {
+      vb->Set(deviceContext, stride, offset);
+      ++changes;
+    }
+    if (ShouldBindIB(ib, fmt)) {
+      ib->Set(deviceContext, 0, fmt);
+      ++changes;
+    }
+    return changes;
   }
 
   bool MeshDrawStateTracker::UpdateAndBindConstantBuffer(const DeviceContext& deviceContext,

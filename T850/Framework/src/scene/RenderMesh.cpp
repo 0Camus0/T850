@@ -1375,17 +1375,7 @@ namespace t850 {
       if (lineIdx.empty()) continue;
 
       unsigned maxVert = (unsigned)geom.Positions.size();
-      if (maxVert <= 65535) {
-        std::vector<unsigned short> idx16(lineIdx.size());
-        for (std::size_t j = 0; j < lineIdx.size(); j++)
-          idx16[j] = (unsigned short)lineIdx[j];
-        m_wireGeo[gi].IB = LineRenderer::CreateIndexBuffer16(idx16.data(), (unsigned)idx16.size());
-        m_wireGeo[gi].use32Bit = false;
-      } else {
-        m_wireGeo[gi].IB = LineRenderer::CreateIndexBuffer32(lineIdx.data(), (unsigned)lineIdx.size());
-        m_wireGeo[gi].use32Bit = true;
-      }
-      m_wireGeo[gi].indexCount = (unsigned)lineIdx.size();
+      m_wireGeo[gi].CreateLineIndexBuffer(lineIdx, maxVert);
     }
   }
 
@@ -1402,7 +1392,7 @@ namespace t850 {
     m_lineRenderer.SetFarPlane(cam->FPlane);
 
     for (std::size_t i = 0; i < Info.size() && i < m_wireGeo.size(); i++) {
-      if (!m_wireGeo[i].IB || m_wireGeo[i].indexCount == 0) continue;
+      if (!m_wireGeo[i].HasIndexBuffer()) continue;
 
       MeshInfo* mi = &Info[i];
       VertexBuffer* vbToBind = mi->VB;
@@ -1420,9 +1410,15 @@ namespace t850 {
         continue;
       }
 
-      auto ibFmt = m_wireGeo[i].use32Bit ? IndexBufferFormat::R32 : IndexBufferFormat::R16;
-      m_lineRenderer.DrawLines(transform, cam->VP, wireColor, vbToBind, m_wireGeo[i].IB,
-                               m_wireGeo[i].indexCount, mi->VertexSize, ibFmt, baseVertex);
+      m_lineRenderer.DrawLines(transform,
+                               cam->VP,
+                               wireColor,
+                               vbToBind,
+                               m_wireGeo[i].GetIndexBuffer(),
+                               m_wireGeo[i].GetIndexCount(),
+                               mi->VertexSize,
+                               m_wireGeo[i].GetIndexFormat(),
+                               baseVertex);
     }
   }
 
@@ -2179,7 +2175,6 @@ namespace t850 {
         T8_LOG_ERROR("[RenderMesh] Skipped geometry %zu: no uploaded vertex buffer", i);
         continue;
       }
-      vbToBind->Set(*deviceContext, stride, offset);
 
       // Build sorted draw order by shader key to minimize PSO switches
       std::size_t numSubsets = it_MeshInfo->SubSets.size();
@@ -2313,11 +2308,16 @@ namespace t850 {
           continue;
         }
         IndexBufferFormat::E ibFmt = sub_info->IB32Bit ? IndexBufferFormat::R32 : IndexBufferFormat::R16;
-        // Phase C step 3: IB-bind dedup via process-wide tracker.
-        if (tracker.ShouldBindIB(ibToBind, ibFmt)) {
-          if (trackCullStats) m_renderStateChanges++;
-          ibToBind->Set(*deviceContext, 0, ibFmt);
-        }
+        const unsigned geometryBindChanges =
+          tracker.BindIndexedGeometry(*deviceContext,
+                                      vbToBind,
+                                      stride,
+                                      offset,
+                                      ibToBind,
+                                      ibFmt,
+                                      Topology::TRIANLE_LIST);
+        if (trackCullStats)
+          m_renderStateChanges += geometryBindChanges;
 
         // Build final shader key: material features + global pass + toggles
         ShaderKey finalKey(sub_info->key.bits);
@@ -2466,8 +2466,6 @@ namespace t850 {
           bindTextureOnce(t, MaterialTextureSlot::Lightmap, "LightmapTex", LightmapSamplerSlot);
         }
 
-        if (trackCullStats) m_renderStateChanges++;
-        deviceContext->SetPrimitiveTopology(Topology::TRIANLE_LIST);
         // Phase A.5 step 2: when using shared pools the index/vertex
         // offsets steer the draw to this submesh's allocation. Falls
         // back to (count, 0, 0) on the legacy per-subset IB path.
@@ -2582,9 +2580,8 @@ namespace t850 {
       m_asset = nullptr;
     }
 
-    for (auto& wg : m_wireGeo) {
-      if (wg.IB) { wg.IB->release(); wg.IB = nullptr; }
-    }
+    for (auto& wg : m_wireGeo)
+      wg.Destroy();
     m_wireGeo.clear();
     m_wireShader = nullptr;
     m_lineRenderer.Destroy();

@@ -20,6 +20,7 @@ set(FRAMEWORK_SOURCES
   src/scene/RenderMesh.cpp
   src/scene/RenderSkinnedMesh.cpp
   src/scene/LineRenderer.cpp
+  src/scene/WireframeGeometry.cpp
   src/scene/AnimationController.cpp
   src/scene/PrimitiveInstance.cpp
   src/scene/PrimitiveManager.cpp

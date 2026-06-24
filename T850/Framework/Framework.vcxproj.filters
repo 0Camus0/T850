@@ -131,6 +131,9 @@
     <ClInclude Include="include\scene\PrimitiveManager.h">
       <Filter>Header Files\scene</Filter>
     </ClInclude>
+    <ClInclude Include="include\scene\WireframeGeometry.h">
+      <Filter>Header Files\scene</Filter>
+    </ClInclude>
     <ClInclude Include="include\scene\SceneProp.h">
       <Filter>Header Files\scene</Filter>
     </ClInclude>
@@ -449,6 +452,9 @@
       <Filter>Source Files\scene</Filter>
     </ClCompile>
     <ClCompile Include="src\scene\PrimitiveManager.cpp">
+      <Filter>Source Files\scene</Filter>
+    </ClCompile>
+    <ClCompile Include="src\scene\WireframeGeometry.cpp">
       <Filter>Source Files\scene</Filter>
     </ClCompile>
     <ClCompile Include="src\scene\SceneProp.cpp">

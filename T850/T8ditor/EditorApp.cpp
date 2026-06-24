@@ -7313,24 +7313,6 @@ static uint64_t HashEditorSplineDrawData(const t850::scene::SceneSplineDesc& des
   return hash;
 }
 
-static uint64_t HashGodRaysVolumeDrawData(const t850::scene::SceneGodRaysVolumeDesc& desc, bool selected) {
-  uint64_t hash = 1469598103934665603ull;
-  auto mix = [&](uint64_t value) {
-    hash ^= value;
-    hash *= 1099511628211ull;
-  };
-  mix(selected ? 1ull : 0ull);
-  mix(desc.enabled ? 1ull : 0ull);
-  mix(desc.clip_enabled ? 1ull : 0ull);
-  mix(HashSplineFloat(desc.position.x));
-  mix(HashSplineFloat(desc.position.y));
-  mix(HashSplineFloat(desc.position.z));
-  mix(HashSplineFloat(desc.half_extents.x));
-  mix(HashSplineFloat(desc.half_extents.y));
-  mix(HashSplineFloat(desc.half_extents.z));
-  return hash;
-}
-
 static void DrawGodRaysVolume(EditorLineRenderer& lines,
                               const XMATRIX44& vp,
                               const t850::scene::SceneGodRaysVolumeDesc& desc,
@@ -7339,28 +7321,13 @@ static void DrawGodRaysVolume(EditorLineRenderer& lines,
   if (!lines.IsReady() || !desc.enabled || !desc.visible || !desc.show_wire) {
     return;
   }
-  const uint64_t drawHash = HashGodRaysVolumeDrawData(desc, selected);
   const XVECTOR3 color = selected
       ? XVECTOR3(1.0f, 0.82f, 0.18f, 1.0f)
       : XVECTOR3(1.0f, 0.45f, 0.05f, 1.0f);
-  if (cache.vb && cache.ib && cache.hash == drawHash) {
-    XMATRIX44 identity;
-    identity.Identity();
-    lines.DrawLines(identity, vp, color, cache.vb, cache.ib, cache.count, sizeof(float) * 4);
-    return;
-  }
 
-  const auto& p = desc.position;
-  const t850::scene::Vec3f h{
-      (std::max)(0.001f, std::abs(desc.half_extents.x)),
-      (std::max)(0.001f, std::abs(desc.half_extents.y)),
-      (std::max)(0.001f, std::abs(desc.half_extents.z))};
-  const float x0 = p.x - h.x, x1 = p.x + h.x;
-  const float y0 = p.y - h.y, y1 = p.y + h.y;
-  const float z0 = p.z - h.z, z1 = p.z + h.z;
   const float verts[] = {
-      x0,y0,z0,1,  x1,y0,z0,1,  x1,y1,z0,1,  x0,y1,z0,1,
-      x0,y0,z1,1,  x1,y0,z1,1,  x1,y1,z1,1,  x0,y1,z1,1};
+      -1,-1,-1,1,  1,-1,-1,1,  1, 1,-1,1, -1, 1,-1,1,
+      -1,-1, 1,1,  1,-1, 1,1,  1, 1, 1,1, -1, 1, 1,1};
   const unsigned short indices[] = {
       0,1, 1,2, 2,3, 3,0,
       4,5, 5,6, 6,7, 7,4,
@@ -7373,17 +7340,21 @@ static void DrawGodRaysVolume(EditorLineRenderer& lines,
       }
       ReleaseGizmoCache(cache);
     }
-    cache.vb = EditorLineRenderer::CreatePositionVB(verts, 8, t850::BufferUsage::DINAMIC);
+    cache.vb = EditorLineRenderer::CreatePositionVB(verts, 8);
     cache.ib = EditorLineRenderer::CreateIndexBuffer16(indices, indexCount);
     cache.count = indexCount;
-  } else {
-    cache.vb->UpdateFromBuffer(*t850::T8DeviceContext, verts);
   }
-  cache.hash = drawHash;
   if (cache.vb && cache.ib) {
-    XMATRIX44 identity;
-    identity.Identity();
-    lines.DrawLines(identity, vp, color, cache.vb, cache.ib, cache.count, sizeof(float) * 4);
+    const t850::scene::Vec3f h{
+        (std::max)(0.001f, std::abs(desc.half_extents.x)),
+        (std::max)(0.001f, std::abs(desc.half_extents.y)),
+        (std::max)(0.001f, std::abs(desc.half_extents.z))};
+    XMATRIX44 world;
+    XMatScaling(world, h.x, h.y, h.z);
+    world.m[3][0] = desc.position.x;
+    world.m[3][1] = desc.position.y;
+    world.m[3][2] = desc.position.z;
+    lines.DrawLines(world, vp, color, cache.vb, cache.ib, cache.count, sizeof(float) * 4);
   }
 }
 

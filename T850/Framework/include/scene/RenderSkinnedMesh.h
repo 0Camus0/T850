@@ -165,12 +165,7 @@ private:
   std::vector<XMATRIX44> m_snapshotBoneMatrices;
 
   // ── Wireframe state (GPU-skinned) ──
-  struct WireGeo {
-    IndexBuffer* IB = nullptr;
-    unsigned indexCount = 0;
-    bool use32Bit = false;
-  };
-  std::vector<WireGeo> m_wireGeo;      // per-geometry line-list IBs
+  std::vector<WireframeGeometry> m_wireGeo;      // per-geometry line-list IBs
   ShaderBase*          m_wireShader = nullptr;
 
   // Octahedral skeleton bones (CPU-updated each frame)

@@ -105,6 +105,35 @@ t850::navigation::NavTraversalType NavLinkTypeFromName(const std::string& name) 
   return t850::navigation::NavTraversalType::Jump;
 }
 
+int NavAreaFromName(const std::string& name) {
+  if (name == "walkable") return 0;
+  if (name == "drop") return 1;
+  if (name == "jump") return 2;
+  if (name == "jump_pad") return 3;
+  if (name == "jump_intent") return 4;
+  if (name == "water") return 5;
+  if (name == "door") return 6;
+  if (name == "mud") return 7;
+  if (name == "custom") return 8;
+  return 8;
+}
+
+t850::navigation::NavMeshModifierMode NavModifierModeFromName(const std::string& name) {
+  if (name == "include" || name == "include_bounds" || name == "bounds") {
+    return t850::navigation::NavMeshModifierMode::Include;
+  }
+  if (name == "area" || name == "area_cost" || name == "cost") {
+    return t850::navigation::NavMeshModifierMode::Area;
+  }
+  if (name == "link_include" || name == "link_add" || name == "add_links") {
+    return t850::navigation::NavMeshModifierMode::LinkInclude;
+  }
+  if (name == "link_exclude" || name == "exclude_links") {
+    return t850::navigation::NavMeshModifierMode::LinkExclude;
+  }
+  return t850::navigation::NavMeshModifierMode::Exclude;
+}
+
 t850::navigation::NavOffMeshLink NavOffMeshLinkFromScene(const t850::scene::SceneNavMeshLinkDesc& desc) {
   t850::navigation::NavOffMeshLink link;
   link.start = XVECTOR3(desc.start.x, desc.start.y, desc.start.z, 1.0f);
@@ -113,6 +142,23 @@ t850::navigation::NavOffMeshLink NavOffMeshLinkFromScene(const t850::scene::Scen
   link.bidirectional = desc.bidirectional;
   link.type = NavLinkTypeFromName(desc.type);
   return link;
+}
+
+t850::navigation::NavMeshVolumeModifier NavVolumeModifierFromScene(const t850::scene::SceneNavMeshVolumeDesc& desc) {
+  t850::navigation::NavMeshVolumeModifier modifier;
+  modifier.name = desc.name;
+  modifier.mode = NavModifierModeFromName(desc.type);
+  modifier.position = XVECTOR3(desc.position.x, desc.position.y, desc.position.z, 1.0f);
+  modifier.rotation = XVECTOR3(desc.rotation.x, desc.rotation.y, desc.rotation.z, 0.0f);
+  modifier.halfExtents = XVECTOR3(
+      (std::max)(0.001f, std::abs(desc.half_extents.x)),
+      (std::max)(0.001f, std::abs(desc.half_extents.y)),
+      (std::max)(0.001f, std::abs(desc.half_extents.z)),
+      0.0f);
+  modifier.area = NavAreaFromName(desc.area);
+  modifier.cost = (std::max)(0.01f, desc.cost);
+  modifier.enabled = desc.enabled && desc.shape == "box";
+  return modifier;
 }
 
 bool IsFiniteNavPoint(const t850::scene::Vec3f& point) {

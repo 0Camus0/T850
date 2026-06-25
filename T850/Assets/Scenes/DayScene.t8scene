@@ -192,6 +192,8 @@
       "name": "DayScene God Rays Volume",
       "position": { "x": 0, "y": 50, "z": 0 },
       "half_extents": { "x": 65, "y": 65, "z": 65 },
+      "light_camera": 0,
+      "authored": true,
       "enabled": true,
       "clip_enabled": false,
       "visible": true,

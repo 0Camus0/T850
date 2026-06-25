@@ -57,6 +57,7 @@ namespace t8ditor {
     bool showConsole    = true;
     bool showRendering  = true;
     bool showTimeline   = true;
+    bool showNavMeshAuthoring = false;
     bool showWireframe  = false;
     bool showSkybox     = true;
     bool showRTDebug    = false;
@@ -75,7 +76,8 @@ namespace t8ditor {
                        bool& wantsClone, bool& wantsGroup, bool& wantsUngroup,
                        bool& wantsPlayScene,
                        bool hasSelection, bool hasMultiSelect,
-                       int& cameraMode);
+                       int& cameraMode,
+                       bool& navMeshAuthoringMode);
 
   // ── Context menu (right-click) ─────────────────────
   struct ContextAction {

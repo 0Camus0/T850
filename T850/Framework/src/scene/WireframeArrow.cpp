@@ -1,5 +1,6 @@
 #include <pch.h>
 #include <scene/WireframeArrow.h>
+#include <scene/RenderQueue.h>
 #include <utils/Log.h>
 #include <utils/Utils.h>
 #include <cmath>
@@ -176,12 +177,18 @@ void WireframeArrow::Draw(const XMATRIX44& vp, const XVECTOR3& position, const X
 
   constantBuff.WVP = world * vp;
 
-  IB->Set(*T8DeviceContext, 0, IndexBufferFormat::R16);
-  VB->Set(*T8DeviceContext, sizeof(Vert), 0);
+  MeshDrawStateTracker& tracker = MeshDrawStateTracker::Get();
+  tracker.BindIndexedGeometry(*T8DeviceContext,
+                              VB,
+                              sizeof(Vert),
+                              0,
+                              IB,
+                              IndexBufferFormat::R16,
+                              Topology::LINE_LIST);
   s->Set(*T8DeviceContext);
+  tracker.OnShaderChanged(s);
   CB->UpdateFromBuffer(*T8DeviceContext, &constantBuff.WVP[0]);
   CB->Set(*T8DeviceContext);
-  T8DeviceContext->SetPrimitiveTopology(Topology::LINE_LIST);
   T8DeviceContext->DrawIndexed(static_cast<unsigned>(indexCount), 0, 0);
 }
 

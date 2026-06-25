@@ -134,7 +134,8 @@ namespace t850 {
   // Process-wide draw-pass state tracker. Reset by the caller at the
   // start of a multi-entity mesh pass; persists across multiple
   // RenderMesh::Draw / RenderSkinnedMesh::Draw calls inside the pass
-  // so redundant texture / IB / shader binds dedupe across entities.
+  // so redundant texture / VB / IB / topology / shader binds dedupe
+  // across entities.
   //
   // D3D12 invariants honored:
   //   - Shader::Set must run every draw (PSO is keyed by current
@@ -180,8 +181,17 @@ namespace t850 {
     // EnvMap dedup (separate slot tracking with its own lastEnv).
     bool ShouldBindEnvMap(Texture* env);
 
-    // IB-bind dedup.
+    // Geometry-bind dedup.
+    bool ShouldSetTopology(Topology::E topology);
+    bool ShouldBindVertexBuffer(VertexBuffer* vb, unsigned stride, unsigned offset);
     bool ShouldBindIB(IndexBuffer* ib, IndexBufferFormat::E fmt);
+    unsigned BindIndexedGeometry(DeviceContext& deviceContext,
+                                 VertexBuffer* vb,
+                                 unsigned stride,
+                                 unsigned offset,
+                                 IndexBuffer* ib,
+                                 IndexBufferFormat::E fmt,
+                                 Topology::E topology);
 
     // Constant-buffer update/bind dedup. This compares the pending
     // contents against the buffer's last uploaded system copy, updates
@@ -197,9 +207,15 @@ namespace t850 {
     ShaderBase*          m_lastShader   = nullptr;
     Texture*             m_lastTex[kMaxTrackedSlots] = { nullptr };
     Texture*             m_lastEnv      = nullptr;
+    VertexBuffer*        m_lastVB       = nullptr;
+    unsigned             m_lastVBStride = 0;
+    unsigned             m_lastVBOffset = 0;
+    bool                 m_lastVBSet    = false;
     IndexBuffer*         m_lastIB       = nullptr;
     IndexBufferFormat::E m_lastIBFmt    = IndexBufferFormat::R16;
     bool                 m_lastIBFmtSet = false;
+    Topology::E          m_lastTopology = Topology::TRIANLE_LIST;
+    bool                 m_lastTopologySet = false;
     ConstantBuffer*      m_lastCB[kMaxTrackedSlots] = { nullptr };
   };
 }

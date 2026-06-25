@@ -49,6 +49,7 @@
 #include <scene/MeshAssetCache.h>
 #include <scene/MaterialAsset.h>
 #include <scene/LineRenderer.h>
+#include <scene/WireframeGeometry.h>
 
 
 
@@ -524,18 +525,13 @@ namespace t850 {
     std::vector<std::size_t> m_drawOrderScratch;
 
   private:
-    struct WireGeo {
-      IndexBuffer* IB = nullptr;
-      unsigned indexCount = 0;
-      bool use32Bit = false;
-    };
     void BuildWireframeBuffers();
     void CreateWireframeShader();
     bool ApplyCullingPreprocessCache(const MeshPreprocessCacheData& cache);
     bool BuildCullingMetadata();
     const EngineContext& Context() const;
 
-    std::vector<WireGeo> m_wireGeo;
+    std::vector<WireframeGeometry> m_wireGeo;
     ShaderBase* m_wireShader = nullptr;
     LineRenderer m_lineRenderer;
     Texture* m_wireDepthTex = nullptr;
@@ -546,4 +542,3 @@ namespace t850 {
 }
 
 #endif
-

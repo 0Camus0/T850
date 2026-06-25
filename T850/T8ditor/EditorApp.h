@@ -53,6 +53,7 @@
 #include <string>
 #include <memory>
 #include <chrono>
+#include <set>
 
 #include "EditorCamera.h"
 #include "EditorLineRenderer.h"
@@ -165,11 +166,19 @@ namespace t8ditor {
     bool CreateEditorNavMesh();
     void DestroyEditorNavMesh();
     void ResetEditorNavMeshState(bool keepSettings = false);
+    void MarkEditorNavMeshDirty(const std::string& status);
+    bool DeleteSelectedNavAuthoringChild();
     void RestoreEditorNavMeshFromScene(const t850::scene::SceneNavigationMeshDesc& desc);
     t850::scene::SceneNavigationMeshDesc BuildEditorNavMeshDesc() const;
     bool GetEditorNavMeshWorldAABB(t850::AABB& outBounds) const;
     void DrawNavMeshAuthoringPanel();
     void RefreshEditorNavMeshNodes();
+    void InvalidateEditorNavMeshClassification();
+    bool UpdateEditorNavMeshClassification();
+    void DrawNavMeshClassificationOverlay(EditorLineRenderer& lines, const XMATRIX44& vp);
+    bool PickEditorNavMeshTriangleFromMouse(int mouseX, int mouseY, int& outTriangleIndex) const;
+    bool CreateNavVolumeFromSelectedTriangle(const char* type);
+    bool CreateNavVolumeFromSelectedTriangles(const char* type);
     bool PickEditorNavMeshNodeFromMouse(int mouseX, int mouseY, int& outNodeIndex, XVECTOR3& outNodePosition) const;
     void DrawSelectedNavLinkOverlay(t850::Texture* depthTexture, t850::Texture* secondaryDepthTexture, const Camera& cam);
     void UpdateEditorSplinePreview(float deltaSeconds);
@@ -216,6 +225,7 @@ namespace t8ditor {
     int                   m_meshPrimId = -1;  // -1 = no lit mesh loaded
     XMATRIX44             m_vp;               // VP matrix for the prim mgr
     Camera                m_editorLightCamera;
+    std::vector<Camera>   m_editorRuntimeLightCameras;
     t850::SceneSetup      m_editorSceneSetup;
     GaussFilter           m_editorShadowFilter;
     GaussFilter           m_editorBloomFilter;
@@ -231,13 +241,26 @@ namespace t8ditor {
     bool m_editorNavMeshVisible = true;
     bool m_editorNavMeshFrozen = false;
     bool m_editorNavMeshShowWire = true;
+    bool m_editorNavMeshShowSourcePreview = true;
+    bool m_editorNavMeshAuthoringMode = false;
+    std::string m_editorNavMeshRuntimeMode = "build_cached";
+    std::string m_editorNavMeshBakedAsset;
     float m_editorNavMeshDebugOffset = 0.01f;
     int m_editorNavMeshDebugShapeMode = 0;
     float m_editorNavMeshLastBuildMs = 0.0f;
     bool m_editorNavMeshDirty = false;
+    std::vector<t850::scene::SceneNavMeshVolumeDesc> m_editorNavMeshVolumes;
     std::vector<t850::scene::SceneNavMeshLinkDesc> m_editorNavMeshLinks;
+    t850::navigation::NavMeshClassificationResult m_editorNavMeshClassification;
+    bool m_editorNavMeshClassificationReady = false;
+    bool m_editorNavMeshClassificationDirty = true;
     std::vector<XVECTOR3> m_editorNavMeshNodes;
+    int m_editorSelectedNavVolume = -1;
     int m_editorSelectedNavLink = -1;
+    int m_editorSelectedNavTriangle = -1;
+    std::set<int> m_editorSelectedNavTriangles;
+    bool m_editorNavMeshBrushSelect = false;
+    float m_editorNavMeshBrushRadius = 4.0f;
     int m_editorNavLinkPickMode = 0; // 0=none, 1=start, 2=end
     t850::VertexBuffer* m_editorNavLinkOverlayVB = nullptr;
     t850::IndexBuffer* m_editorNavLinkOverlayIB = nullptr;

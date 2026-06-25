@@ -604,6 +604,7 @@ MenuAction ImGuiDrawMenuBar(PanelVisibility& panels) {
       ImGui::MenuItem("Console",   nullptr, &panels.showConsole);
       ImGui::MenuItem("Rendering", nullptr, &panels.showRendering);
       ImGui::MenuItem("Timeline",  nullptr, &panels.showTimeline);
+      ImGui::MenuItem("NavMesh Authoring", nullptr, &panels.showNavMeshAuthoring);
       ImGui::Separator();
       ImGui::MenuItem("Wireframe Overlay", nullptr, &panels.showWireframe);
       ImGui::MenuItem("Show Skybox",       nullptr, &panels.showSkybox);
@@ -645,7 +646,8 @@ int ImGuiDrawToolbar(int currentMode, int& addCamera, int& addLight,
                      bool& wantsClone, bool& wantsGroup, bool& wantsUngroup,
                      bool& wantsPlayScene,
                      bool hasSelection, bool hasMultiSelect,
-                     int& cameraMode) {
+                     int& cameraMode,
+                     bool& navMeshAuthoringMode) {
   addCamera = -1;
   addLight  = -1;
   wantsClone = false;
@@ -696,6 +698,18 @@ int ImGuiDrawToolbar(int currentMode, int& addCamera, int& addLight,
 
     if (ImGui::Button("Play Scene", ImVec2(ToolbarButtonWidth("Play Scene", 98.0f), 0)))
       wantsPlayScene = true;
+
+    ImGui::SameLine();
+    ImGui::TextColored(mutedText, "  |  ");
+    ImGui::SameLine();
+
+    const bool navModeActive = navMeshAuthoringMode;
+    if (navModeActive)
+      ImGui::PushStyleColor(ImGuiCol_Button, activeCol);
+    if (ImGui::Button("NavMesh", ImVec2(ToolbarButtonWidth("NavMesh", 86.0f), 0)))
+      navMeshAuthoringMode = !navMeshAuthoringMode;
+    if (navModeActive)
+      ImGui::PopStyleColor();
 
     ImGui::SameLine();
     ImGui::TextColored(mutedText, "  |  ");

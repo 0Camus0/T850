@@ -75,12 +75,65 @@ struct NavOffMeshLink {
   uint32_t userId = 0;
 };
 
+enum class NavMeshModifierMode : uint8_t {
+  Include = 0,
+  Exclude = 1,
+  Area = 2,
+  LinkInclude = 3,
+  LinkExclude = 4
+};
+
+struct NavMeshVolumeModifier {
+  std::string name;
+  NavMeshModifierMode mode = NavMeshModifierMode::Exclude;
+  XVECTOR3 position = XVECTOR3(0.0f, 0.0f, 0.0f, 1.0f);
+  XVECTOR3 rotation = XVECTOR3(0.0f, 0.0f, 0.0f, 0.0f);
+  XVECTOR3 halfExtents = XVECTOR3(1.0f, 1.0f, 1.0f, 0.0f);
+  int area = 0;
+  float cost = 1.0f;
+  bool enabled = true;
+};
+
+struct NavAreaCost {
+  int area = 0;
+  float cost = 1.0f;
+};
+
 struct NavMeshGeometry {
   std::vector<XVECTOR3> vertices;
   std::vector<int> indices;
   std::vector<NavOffMeshLink> offMeshLinks;
+  std::vector<NavMeshVolumeModifier> volumeModifiers;
+  std::vector<NavAreaCost> areaCosts;
   std::function<bool(const NavOffMeshLink&)> offMeshLinkValidator;
   std::function<bool(const NavOffMeshLink&)> offMeshHybridLinkValidator;
+};
+
+enum class NavTriangleClassificationReason : uint8_t {
+  Included = 0,
+  ExcludedBySlope = 1,
+  OutsideIncludeVolume = 2,
+  ExcludedByVolume = 3,
+  InvalidGeometry = 4
+};
+
+struct NavTriangleClassification {
+  int triangleIndex = -1;
+  XVECTOR3 vertices[3];
+  XVECTOR3 centroid = XVECTOR3(0.0f, 0.0f, 0.0f, 1.0f);
+  bool included = false;
+  int area = 0;
+  float cost = 1.0f;
+  NavTriangleClassificationReason reason = NavTriangleClassificationReason::InvalidGeometry;
+  int modifierIndex = -1;
+};
+
+struct NavMeshClassificationResult {
+  std::vector<NavTriangleClassification> triangles;
+  int includedCount = 0;
+  int excludedBySlopeCount = 0;
+  int outsideIncludeVolumeCount = 0;
+  int excludedByVolumeCount = 0;
 };
 
 struct NavMeshBuildStats {
@@ -176,6 +229,11 @@ public:
   bool LoadCached(uint64_t cacheKey,
                   const NavMeshBuildSettings& settings = NavMeshBuildSettings(),
                   std::string* error = nullptr);
+  bool LoadBaked(const std::string& path,
+                 const NavMeshBuildSettings& settings = NavMeshBuildSettings(),
+                 std::string* error = nullptr);
+  bool SaveBaked(const std::string& path,
+                 std::string* error = nullptr) const;
   bool BuildFromXDataBase(const xF::XDataBase& database,
                           const NavMeshBuildSettings& settings = NavMeshBuildSettings(),
                           std::string* error = nullptr);
@@ -271,6 +329,10 @@ bool BuildGeometryFromNavSources(const std::vector<NavSourceInstance>& sources,
                                  NavMeshGeometry& outGeometry,
                                  NavSourceBuildStats* stats = nullptr,
                                  std::string* error = nullptr);
+bool ClassifyNavMeshTriangles(const NavMeshGeometry& geometry,
+                              const NavMeshBuildSettings& settings,
+                              NavMeshClassificationResult& outResult,
+                              std::string* error = nullptr);
 
 } // namespace navigation
 } // namespace t850

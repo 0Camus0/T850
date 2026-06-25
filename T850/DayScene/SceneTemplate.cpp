@@ -170,6 +170,70 @@ namespace {
     HashNavCacheValue(hash, settings.offMeshLinkValidationKey);
   }
 
+  int NavAreaFromSceneName(const std::string& name) {
+    if (name == "walkable") return 0;
+    if (name == "drop") return 1;
+    if (name == "jump") return 2;
+    if (name == "jump_pad") return 3;
+    if (name == "jump_intent") return 4;
+    if (name == "water") return 5;
+    if (name == "door") return 6;
+    if (name == "mud") return 7;
+    if (name == "custom") return 8;
+    return 8;
+  }
+
+  t850::navigation::NavMeshModifierMode NavModifierModeFromSceneName(const std::string& name) {
+    if (name == "include" || name == "include_bounds" || name == "bounds")
+      return t850::navigation::NavMeshModifierMode::Include;
+    if (name == "area" || name == "area_cost" || name == "cost")
+      return t850::navigation::NavMeshModifierMode::Area;
+    if (name == "link_include" || name == "link_add" || name == "add_links")
+      return t850::navigation::NavMeshModifierMode::LinkInclude;
+    if (name == "link_exclude" || name == "exclude_links")
+      return t850::navigation::NavMeshModifierMode::LinkExclude;
+    return t850::navigation::NavMeshModifierMode::Exclude;
+  }
+
+  t850::navigation::NavMeshVolumeModifier NavVolumeModifierFromScene(
+      const t850::scene::SceneNavMeshVolumeDesc& desc) {
+    t850::navigation::NavMeshVolumeModifier modifier;
+    modifier.name = desc.name;
+    modifier.mode = NavModifierModeFromSceneName(desc.type);
+    modifier.position = XVECTOR3(desc.position.x, desc.position.y, desc.position.z, 1.0f);
+    modifier.rotation = XVECTOR3(desc.rotation.x, desc.rotation.y, desc.rotation.z, 0.0f);
+    modifier.halfExtents = XVECTOR3(
+        (std::max)(0.001f, std::abs(desc.half_extents.x)),
+        (std::max)(0.001f, std::abs(desc.half_extents.y)),
+        (std::max)(0.001f, std::abs(desc.half_extents.z)),
+        0.0f);
+    modifier.area = NavAreaFromSceneName(desc.area);
+    modifier.cost = (std::max)(0.01f, desc.cost);
+    modifier.enabled = desc.enabled && desc.shape == "box";
+    return modifier;
+  }
+
+  void HashNavMeshVolumes(uint64_t& hash, const std::vector<t850::scene::SceneNavMeshVolumeDesc>& volumes) {
+    HashNavCacheValue(hash, static_cast<uint64_t>(volumes.size()));
+    for (const t850::scene::SceneNavMeshVolumeDesc& volume : volumes) {
+      HashNavCacheString(hash, volume.name);
+      HashNavCacheString(hash, volume.type);
+      HashNavCacheString(hash, volume.shape);
+      HashNavCacheValue(hash, volume.position.x);
+      HashNavCacheValue(hash, volume.position.y);
+      HashNavCacheValue(hash, volume.position.z);
+      HashNavCacheValue(hash, volume.rotation.x);
+      HashNavCacheValue(hash, volume.rotation.y);
+      HashNavCacheValue(hash, volume.rotation.z);
+      HashNavCacheValue(hash, volume.half_extents.x);
+      HashNavCacheValue(hash, volume.half_extents.y);
+      HashNavCacheValue(hash, volume.half_extents.z);
+      HashNavCacheString(hash, volume.area);
+      HashNavCacheValue(hash, volume.cost);
+      HashNavCacheValue(hash, volume.enabled);
+    }
+  }
+
   uint64_t ComputeSandboxNavMeshCacheKey(const PrimitiveInst* instances,
                                          int instanceCount,
                                          const std::vector<std::string>& meshPaths,
@@ -3314,7 +3378,18 @@ void SceneTemplate::ApplyEditorSceneCameraAndLights(const t850::scene::EditorSce
     }
     if (scene.god_rays_volume) {
       const auto& volume = *scene.god_rays_volume;
-      SceneProp.GodRaysVolumeEnabled = (volume.enabled && volume.clip_enabled) ? 1 : 0;
+      const bool volumeAuthored = volume.authored || volume.enabled || volume.visible || volume.clip_enabled;
+      const int volumeLightCamera = std::clamp(
+          volume.light_camera,
+          0,
+          SceneProp.pLightCameras.empty() ? 0 : static_cast<int>(SceneProp.pLightCameras.size()) - 1);
+      const bool validVolumeLightCamera = !SceneProp.pLightCameras.empty() &&
+          volumeLightCamera >= 0 &&
+          volumeLightCamera < static_cast<int>(SceneProp.pLightCameras.size());
+      SceneProp.GodRaysVolumeEnabled = (volumeAuthored && validVolumeLightCamera && volume.enabled && volume.clip_enabled) ? 1 : 0;
+      if (validVolumeLightCamera) {
+        SceneProp.ActiveLightCamera = volumeLightCamera;
+      }
       SceneProp.GodRaysVolumeCenter = XVECTOR3(volume.position.x, volume.position.y, volume.position.z, 1.0f);
       SceneProp.GodRaysVolumeHalfExtents = XVECTOR3((std::max)(0.001f, std::abs(volume.half_extents.x)),
                                                     (std::max)(0.001f, std::abs(volume.half_extents.y)),
@@ -3888,7 +3963,11 @@ bool SceneTemplate::LoadEditorSceneAssets(const std::string& scenePath) {
     instance.Update();
 
     t850::scene::SceneObjectPhysicsDesc physicsMeta = object.physics.value_or(t850::scene::SceneObjectPhysicsDesc{});
+    const bool hasExplicitNavigation = object.navigation.has_value();
     t850::scene::SceneObjectNavigationDesc navigationMeta = object.navigation.value_or(t850::scene::SceneObjectNavigationDesc{});
+    if (!hasExplicitNavigation && !object.visible) {
+      navigationMeta.include = false;
+    }
     t850::scene::SceneObjectRagdollDesc ragdollMeta = object.ragdoll_authoring.value_or(t850::scene::SceneObjectRagdollDesc{});
     const std::string legacyRagdollPath = NormalizeSceneResourcePath(object.ragdoll);
     if (ragdollMeta.asset.empty()) {
@@ -4100,6 +4179,7 @@ bool SceneTemplate::EnsureNavMeshBuilt() {
     HashNavCacheValue(authoredLinksHash, link.cost);
     HashNavCacheValue(authoredLinksHash, link.enabled);
   }
+  HashNavMeshVolumes(authoredLinksHash, m_authoredNavMesh.volumes);
   navBuildSettings.offMeshLinkValidationKey ^= authoredLinksHash;
   t850::EngineContext* engineContext = GetEngineContext();
   if (!engineContext) engineContext = &t850::GetEngineContext();
@@ -4118,7 +4198,31 @@ bool SceneTemplate::EnsureNavMeshBuilt() {
           m_loadedEditorScenePath,
           navBuildSettings);
   const auto navBuildStart = std::chrono::steady_clock::now();
-  if (navCacheKey != 0 && m_navMesh.LoadCached(navCacheKey, navBuildSettings, nullptr)) {
+  const std::string runtimeMode = m_authoredNavMesh.runtime_mode.empty()
+      ? "build_cached"
+      : m_authoredNavMesh.runtime_mode;
+  if (runtimeMode == "baked_asset" && !m_authoredNavMesh.baked_asset.empty()) {
+    std::string bakedError;
+    if (m_navMesh.LoadBaked(m_authoredNavMesh.baked_asset, navBuildSettings, &bakedError)) {
+      m_navMeshLastBuildMs = std::chrono::duration<float, std::milli>(std::chrono::steady_clock::now() - navBuildStart).count();
+      m_navMeshLastBuildFromCache = true;
+      m_navMeshDebugRenderer.Invalidate();
+      const t850::navigation::NavMeshBuildStats& stats = m_navMesh.GetStats();
+      T8_LOG_INFO("[Navigation] Loaded baked NavMesh asset '%s': %.2fms verts=%d tris=%d polys=%d offMesh=%d",
+                  m_authoredNavMesh.baked_asset.c_str(),
+                  m_navMeshLastBuildMs,
+                  stats.vertexCount,
+                  stats.triangleCount,
+                  stats.polygonCount,
+                  stats.offMeshLinkCount);
+      return true;
+    }
+    T8_LOG_ERROR("[Navigation] Failed to load baked NavMesh asset '%s': %s; falling back to cached build.",
+                 m_authoredNavMesh.baked_asset.c_str(),
+                 bakedError.c_str());
+  }
+  const bool allowCache = runtimeMode != "build";
+  if (allowCache && navCacheKey != 0 && m_navMesh.LoadCached(navCacheKey, navBuildSettings, nullptr)) {
     m_navMeshLastBuildMs = std::chrono::duration<float, std::milli>(std::chrono::steady_clock::now() - navBuildStart).count();
     m_navMeshLastBuildFromCache = true;
     m_navMeshDebugRenderer.Invalidate();
@@ -4144,6 +4248,7 @@ bool SceneTemplate::EnsureNavMeshBuilt() {
     if (meshIndex < static_cast<int>(m_sceneNavigationAuthoring.size())) {
       const t850::scene::SceneObjectNavigationDesc& nav = m_sceneNavigationAuthoring[static_cast<std::size_t>(meshIndex)];
       source.includeInNavigation = nav.include;
+      source.visible = source.visible || nav.include;
       source.navigationStatic = nav.static_object;
       source.navigationWalkable = nav.walkable;
       source.area = nav.walkable ? 0 : -1;
@@ -4166,12 +4271,23 @@ bool SceneTemplate::EnsureNavMeshBuilt() {
     };
     geometry.offMeshHybridLinkValidator = geometry.offMeshLinkValidator;
   }
+  for (const t850::scene::SceneNavMeshVolumeDesc& volumeDesc : m_authoredNavMesh.volumes) {
+    t850::navigation::NavMeshVolumeModifier modifier = NavVolumeModifierFromScene(volumeDesc);
+    if (!modifier.enabled) {
+      continue;
+    }
+    geometry.volumeModifiers.push_back(modifier);
+    if (modifier.mode == t850::navigation::NavMeshModifierMode::Area) {
+      geometry.areaCosts.push_back({modifier.area, modifier.cost});
+    }
+  }
   for (const t850::scene::SceneNavMeshLinkDesc& linkDesc : m_authoredNavMesh.authored_links) {
     if (IsUsableAuthoredNavLink(linkDesc)) {
       geometry.offMeshLinks.push_back(NavOffMeshLinkFromScene(linkDesc));
     }
   }
-  if (!m_navMesh.BuildCached(geometry, navBuildSettings, navCacheKey, &error)) {
+  const uint64_t buildCacheKey = allowCache ? navCacheKey : 0;
+  if (!m_navMesh.BuildCached(geometry, navBuildSettings, buildCacheKey, &error)) {
     T8_LOG_ERROR("[Navigation] Sandbox navmesh build failed: %s", error.c_str());
     return false;
   }

@@ -4197,9 +4197,25 @@ bool SceneTemplate::EnsureNavMeshBuilt() {
   const std::string runtimeMode = m_authoredNavMesh.runtime_mode.empty()
       ? "build_cached"
       : m_authoredNavMesh.runtime_mode;
-  if (runtimeMode == "baked_asset") {
-    T8_LOG_INFO("[Navigation] Baked NavMesh asset '%s' requested but export/load is not implemented yet; falling back to cached build.",
-                m_authoredNavMesh.baked_asset.c_str());
+  if (runtimeMode == "baked_asset" && !m_authoredNavMesh.baked_asset.empty()) {
+    std::string bakedError;
+    if (m_navMesh.LoadBaked(m_authoredNavMesh.baked_asset, navBuildSettings, &bakedError)) {
+      m_navMeshLastBuildMs = std::chrono::duration<float, std::milli>(std::chrono::steady_clock::now() - navBuildStart).count();
+      m_navMeshLastBuildFromCache = true;
+      m_navMeshDebugRenderer.Invalidate();
+      const t850::navigation::NavMeshBuildStats& stats = m_navMesh.GetStats();
+      T8_LOG_INFO("[Navigation] Loaded baked NavMesh asset '%s': %.2fms verts=%d tris=%d polys=%d offMesh=%d",
+                  m_authoredNavMesh.baked_asset.c_str(),
+                  m_navMeshLastBuildMs,
+                  stats.vertexCount,
+                  stats.triangleCount,
+                  stats.polygonCount,
+                  stats.offMeshLinkCount);
+      return true;
+    }
+    T8_LOG_ERROR("[Navigation] Failed to load baked NavMesh asset '%s': %s; falling back to cached build.",
+                 m_authoredNavMesh.baked_asset.c_str(),
+                 bakedError.c_str());
   }
   const bool allowCache = runtimeMode != "build";
   if (allowCache && navCacheKey != 0 && m_navMesh.LoadCached(navCacheKey, navBuildSettings, nullptr)) {

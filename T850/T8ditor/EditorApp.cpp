@@ -2380,6 +2380,8 @@ void EditorApp::ResetEditorNavMeshState(bool keepSettings) {
   ReleaseGizmoCaches(g_navMeshVolumeGizmos);
   m_editorNavMeshVolumes.clear();
   m_editorNavMeshLinks.clear();
+  m_editorNavMeshRuntimeMode = "build_cached";
+  m_editorNavMeshBakedAsset.clear();
   m_editorNavMeshNodes.clear();
   m_editorSelectedNavVolume = -1;
   m_editorSelectedNavLink = -1;
@@ -2811,6 +2813,8 @@ void EditorApp::DestroyEditorNavMesh() {
   ReleaseGizmoCaches(g_navMeshVolumeGizmos);
   m_editorNavMeshVolumes.clear();
   m_editorNavMeshLinks.clear();
+  m_editorNavMeshRuntimeMode = "build_cached";
+  m_editorNavMeshBakedAsset.clear();
   m_editorSelectedNavVolume = -1;
   m_editorSelectedNavLink = -1;
   m_editorNavLinkPickMode = 0;
@@ -2830,6 +2834,8 @@ void EditorApp::RestoreEditorNavMeshFromScene(const t850::scene::SceneNavigation
   m_editorNavMeshShowWire = desc.show_wire;
   m_editorNavMeshDebugOffset = desc.debug_offset;
   m_editorNavMeshDebugShapeMode = std::clamp(desc.debug_shape_mode, 0, 1);
+  m_editorNavMeshRuntimeMode = desc.runtime_mode.empty() ? "build_cached" : desc.runtime_mode;
+  m_editorNavMeshBakedAsset = desc.baked_asset;
   m_editorNavMeshVolumes = desc.volumes;
   m_editorNavMeshLinks = desc.authored_links;
   if (m_editorSelectedNavVolume < 0 ||
@@ -2859,6 +2865,8 @@ t850::scene::SceneNavigationMeshDesc EditorApp::BuildEditorNavMeshDesc() const {
   desc.show_wire = m_editorNavMeshShowWire;
   desc.debug_offset = m_editorNavMeshDebugOffset;
   desc.debug_shape_mode = m_editorNavMeshDebugShapeMode;
+  desc.runtime_mode = m_editorNavMeshRuntimeMode.empty() ? "build_cached" : m_editorNavMeshRuntimeMode;
+  desc.baked_asset = m_editorNavMeshBakedAsset;
   desc.build_settings = NavMeshBuildSettingsToScene(m_editorNavMeshBuildSettings);
   desc.volumes = m_editorNavMeshVolumes;
   desc.authored_links = m_editorNavMeshLinks;
@@ -3197,6 +3205,21 @@ void EditorApp::DrawNavMeshAuthoringPanel() {
   ImGui::SameLine();
   ImGui::Checkbox("Wireframe", &m_editorNavMeshShowWire);
   ImGui::Checkbox("NavMesh Authoring Mode", &m_editorNavMeshAuthoringMode);
+  const char* runtimeModes[] = { "build_cached", "build", "baked_asset" };
+  int runtimeModeIndex = 0;
+  for (int i = 0; i < static_cast<int>(sizeof(runtimeModes) / sizeof(runtimeModes[0])); ++i) {
+    if (m_editorNavMeshRuntimeMode == runtimeModes[i]) runtimeModeIndex = i;
+  }
+  if (ImGui::Combo("Runtime Mode", &runtimeModeIndex, runtimeModes, static_cast<int>(sizeof(runtimeModes) / sizeof(runtimeModes[0])))) {
+    m_editorNavMeshRuntimeMode = runtimeModes[runtimeModeIndex];
+    MarkEditorNavMeshDirty("NavMesh runtime mode changed. Save the scene to persist it.");
+  }
+  if (m_editorNavMeshRuntimeMode == "baked_asset") {
+    if (InputTextString("Baked Asset", m_editorNavMeshBakedAsset)) {
+      MarkEditorNavMeshDirty("NavMesh baked asset path changed. Save the scene to persist it.");
+    }
+    ImGui::TextDisabled("Baked asset loading/export is metadata-only for now; runtime falls back to build_cached.");
+  }
 
   if (ImGui::SliderFloat("Debug Vertical Offset", &m_editorNavMeshDebugOffset, 0.0f, 0.25f, "%.3f")) {
     ReleaseNavMeshClassificationGizmos();

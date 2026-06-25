@@ -416,10 +416,12 @@ bool NavGeometryHasIncludeVolume(const NavMeshGeometry& geometry) {
 NavModifierTriangleResult ApplyNavVolumeModifiersToTriangle(const NavMeshGeometry& geometry,
                                                             const XVECTOR3& centroid,
                                                             unsigned char initialArea,
-                                                            bool hasIncludeVolume) {
+                                                            bool hasIncludeVolume,
+                                                            bool showVolumeEffectsOnSlope = false) {
   NavModifierTriangleResult result;
   result.area = initialArea;
-  if (initialArea == RC_NULL_AREA) {
+  const bool slopeExcluded = initialArea == RC_NULL_AREA;
+  if (slopeExcluded && !showVolumeEffectsOnSlope) {
     result.reason = NavTriangleClassificationReason::ExcludedBySlope;
     return result;
   }
@@ -450,6 +452,13 @@ NavModifierTriangleResult ApplyNavVolumeModifiersToTriangle(const NavMeshGeometr
   if (!insideInclude) {
     result.area = RC_NULL_AREA;
     result.reason = NavTriangleClassificationReason::OutsideIncludeVolume;
+    return result;
+  }
+
+  if (slopeExcluded) {
+    result.area = RC_NULL_AREA;
+    result.reason = NavTriangleClassificationReason::ExcludedBySlope;
+    result.modifierIndex = areaModifierIndex;
     return result;
   }
 
@@ -1486,7 +1495,8 @@ bool ClassifyNavMeshTriangles(const NavMeshGeometry& geometry,
         geometry,
         classified.centroid,
         areas[static_cast<std::size_t>(tri)],
-        hasIncludeVolume);
+        hasIncludeVolume,
+        true);
     classified.included = modifierResult.area != RC_NULL_AREA;
     classified.reason = modifierResult.reason;
     classified.modifierIndex = modifierResult.modifierIndex;
@@ -1611,17 +1621,19 @@ bool NavMesh::BuildCached(const NavMeshGeometry& geometry,
 
   m_impl->areaCosts = BuildNavAreaCosts(geometry);
 
-  uint64_t effectiveCacheKey = cacheKey != 0 ? cacheKey : ComputeNavMeshCacheKey(geometry, settings);
-  if (cacheKey != 0 && (!geometry.volumeModifiers.empty() || !geometry.areaCosts.empty())) {
+  const bool useCache = cacheKey != 0;
+  uint64_t effectiveCacheKey = cacheKey;
+  if (useCache && (!geometry.volumeModifiers.empty() || !geometry.areaCosts.empty())) {
     const uint64_t modifierHash = ComputeNavModifierCacheKey(geometry);
     HashBytes(effectiveCacheKey, modifierHash);
   }
-  const std::filesystem::path cachePath = NavMeshCachePath(effectiveCacheKey);
+  const std::filesystem::path cachePath = useCache ? NavMeshCachePath(effectiveCacheKey) : std::filesystem::path{};
   NavMeshBuildStats cachedStats;
   std::unique_ptr<dtNavMesh, NavMeshDeleter> cachedNavMesh;
   std::unique_ptr<dtNavMeshQuery, NavMeshQueryDeleter> cachedQuery;
   const bool hasExplicitOffMeshLinks = !geometry.offMeshLinks.empty();
-  if (!hasExplicitOffMeshLinks &&
+  if (useCache &&
+      !hasExplicitOffMeshLinks &&
       LoadNavMeshCache(cachePath, effectiveCacheKey, settings, cachedStats, cachedNavMesh, cachedQuery)) {
     m_stats = cachedStats;
     m_impl->navMesh = std::move(cachedNavMesh);
@@ -1892,7 +1904,9 @@ bool NavMesh::BuildCached(const NavMeshGeometry& geometry,
   m_stats.dropLinkCount = dropLinkCount;
   m_stats.jumpLinkCount = jumpLinkCount;
   m_stats.jumpPadLinkCount = jumpPadLinkCount;
-  SaveNavMeshCache(cachePath, effectiveCacheKey, m_stats, navData, navDataSize);
+  if (useCache) {
+    SaveNavMeshCache(cachePath, effectiveCacheKey, m_stats, navData, navDataSize);
+  }
   m_impl->navMesh = std::move(navMesh);
   m_impl->query = std::move(query);
 

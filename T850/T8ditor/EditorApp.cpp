@@ -299,6 +299,7 @@ namespace {
   // Pending scene load — deferred to execute before next frame's BeginFrame
   std::string g_pendingLoadPath;
   std::string g_pendingDeleteAfterLoadPath;
+  std::string g_loadedScenePath;
   auto& g_loadedSceneFile = g_world.loadedSceneFile;
   auto& g_hasLoadedSceneFile = g_world.hasLoadedSceneFile;
   auto& g_unloadedSceneObjects = g_world.unloadedSceneObjects;
@@ -2401,6 +2402,17 @@ static bool NavVolumeContainsPoint(const t850::scene::SceneNavMeshVolumeDesc& vo
          std::abs(local.z) <= (std::max)(0.001f, std::abs(volume.half_extents.z));
 }
 
+static std::string SuggestedNavMeshBakedAssetPath() {
+  std::string baseName = "EditorNavMesh";
+  if (!g_loadedScenePath.empty()) {
+    baseName = std::filesystem::path(g_loadedScenePath).stem().string();
+  }
+  if (baseName.empty()) {
+    baseName = "EditorNavMesh";
+  }
+  return "Navigation/" + baseName + ".t8nav";
+}
+
 void EditorApp::ResetEditorNavMeshState(bool keepSettings) {
   m_editorNavMesh.Clear();
   m_editorNavMeshDebugRenderer.ReleaseCachedGeometry();
@@ -3274,11 +3286,19 @@ void EditorApp::DrawNavMeshAuthoringPanel() {
   }
   if (m_editorNavMeshRuntimeMode == "baked_asset") {
     if (m_editorNavMeshBakedAsset.empty()) {
-      m_editorNavMeshBakedAsset = "Navigation/EditorNavMesh.t8nav";
+      m_editorNavMeshBakedAsset = SuggestedNavMeshBakedAssetPath();
     }
     if (InputTextString("Baked Asset", m_editorNavMeshBakedAsset)) {
       MarkEditorNavMeshDirty("NavMesh baked asset path changed. Save the scene to persist it.");
     }
+    ImGui::SameLine();
+    if (ImGui::Button("Suggest Path")) {
+      m_editorNavMeshBakedAsset = SuggestedNavMeshBakedAssetPath();
+      MarkEditorNavMeshDirty("NavMesh baked asset path changed. Save the scene to persist it.");
+    }
+    const bool bakedExists = !m_editorNavMeshBakedAsset.empty() &&
+        t850::ResourceLocator::Instance().Exists(m_editorNavMeshBakedAsset);
+    ImGui::TextDisabled("Baked Asset Status: %s", bakedExists ? "Found" : "Missing / not baked yet");
     if (!m_editorNavMesh.IsReady()) {
       ImGui::BeginDisabled();
     }
@@ -3293,6 +3313,26 @@ void EditorApp::DrawNavMeshAuthoringPanel() {
     if (!m_editorNavMesh.IsReady()) {
       ImGui::EndDisabled();
       ImGui::TextDisabled("Build or Re-generate the NavMesh before baking.");
+    }
+    ImGui::SameLine();
+    if (!m_editorNavMesh.IsReady() || g_loadedScenePath.empty()) {
+      ImGui::BeginDisabled();
+    }
+    if (ImGui::Button("Bake + Save Scene")) {
+      std::string bakeError;
+      if (!m_editorNavMesh.SaveBaked(m_editorNavMeshBakedAsset, &bakeError)) {
+        m_editorNavMeshStatus = "Bake failed: " + bakeError;
+      } else if (!SaveEditorSceneSnapshot(g_loadedScenePath, true)) {
+        m_editorNavMeshStatus = "Baked asset written, but scene save failed.";
+      } else {
+        m_editorNavMeshStatus = "Baked NavMesh asset and saved scene: " + m_editorNavMeshBakedAsset;
+      }
+    }
+    if (!m_editorNavMesh.IsReady() || g_loadedScenePath.empty()) {
+      ImGui::EndDisabled();
+      if (g_loadedScenePath.empty()) {
+        ImGui::TextDisabled("Load or save a scene before using Bake + Save Scene.");
+      }
     }
   }
 
@@ -4400,6 +4440,7 @@ bool EditorApp::SaveEditorSceneSnapshot(const std::string& path, bool updateLoad
   if (updateLoadedScene) {
     g_loadedSceneFile = sf;
     g_hasLoadedSceneFile = true;
+    g_loadedScenePath = path;
     g_sceneCollisionResourcePath = sf.collision;
     g_sceneProfiles = sf.profiles;
   }
@@ -6414,6 +6455,7 @@ void EditorApp::DestroyAssets() {
   g_activeGroupIdx = -1;
   g_loadedSceneFile = SceneFile{};
   g_hasLoadedSceneFile = false;
+  g_loadedScenePath.clear();
   g_unloadedSceneObjects.clear();
   g_sceneCollisionResourcePath.clear();
   g_sceneProfiles.clear();
@@ -6716,6 +6758,7 @@ void EditorApp::LoadPendingScene() {
 
       g_loadedSceneFile = sf;
       g_hasLoadedSceneFile = true;
+      g_loadedScenePath = loadPath;
       g_sceneProfiles = sf.profiles;
       LoadEditorSceneProfiles();
 

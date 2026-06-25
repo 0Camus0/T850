@@ -2423,6 +2423,7 @@ void EditorApp::ResetEditorNavMeshState(bool keepSettings) {
   m_editorSelectedNavVolume = -1;
   m_editorSelectedNavLink = -1;
   m_editorSelectedNavTriangle = -1;
+  m_editorSelectedNavTriangles.clear();
   m_editorNavLinkPickMode = 0;
   InvalidateEditorNavMeshClassification();
   if (!keepSettings) {
@@ -2444,6 +2445,7 @@ void EditorApp::InvalidateEditorNavMeshClassification() {
   m_editorNavMeshClassificationDirty = true;
   m_editorNavMeshClassification = t850::navigation::NavMeshClassificationResult{};
   m_editorSelectedNavTriangle = -1;
+  m_editorSelectedNavTriangles.clear();
   ReleaseNavMeshClassificationGizmos();
 }
 
@@ -2567,25 +2569,33 @@ bool EditorApp::PickEditorNavMeshTriangleFromMouse(int mouseX, int mouseY, int& 
 }
 
 bool EditorApp::CreateNavVolumeFromSelectedTriangle(const char* type) {
-  if (m_editorSelectedNavTriangle < 0) {
+  if (m_editorSelectedNavTriangle >= 0 && m_editorSelectedNavTriangles.empty()) {
+    m_editorSelectedNavTriangles.insert(m_editorSelectedNavTriangle);
+  }
+  return CreateNavVolumeFromSelectedTriangles(type);
+}
+
+bool EditorApp::CreateNavVolumeFromSelectedTriangles(const char* type) {
+  if (m_editorSelectedNavTriangles.empty()) {
     return false;
   }
   if (!UpdateEditorNavMeshClassification()) {
     return false;
   }
-  const auto it = std::find_if(
-      m_editorNavMeshClassification.triangles.begin(),
-      m_editorNavMeshClassification.triangles.end(),
-      [&](const t850::navigation::NavTriangleClassification& tri) {
-        return tri.triangleIndex == m_editorSelectedNavTriangle;
-      });
-  if (it == m_editorNavMeshClassification.triangles.end()) {
-    return false;
-  }
 
   t850::AABB bounds;
-  for (const XVECTOR3& p : it->vertices) {
-    bounds.ExpandToInclude(p);
+  int usedTriangles = 0;
+  for (const t850::navigation::NavTriangleClassification& tri : m_editorNavMeshClassification.triangles) {
+    if (m_editorSelectedNavTriangles.count(tri.triangleIndex) == 0) {
+      continue;
+    }
+    for (const XVECTOR3& p : tri.vertices) {
+      bounds.ExpandToInclude(p);
+    }
+    ++usedTriangles;
+  }
+  if (usedTriangles <= 0 || !bounds.IsValid()) {
+    return false;
   }
   const XVECTOR3 center = bounds.Center();
   const XVECTOR3 extents = bounds.Extents();
@@ -2616,6 +2626,8 @@ bool EditorApp::CreateNavVolumeFromSelectedTriangle(const char* type) {
   m_editorNavMeshVolumes.push_back(volume);
   m_editorSelectedNavVolume = static_cast<int>(m_editorNavMeshVolumes.size()) - 1;
   m_editorSelectedNavLink = -1;
+  m_editorSelectedNavTriangles.clear();
+  m_editorSelectedNavTriangle = -1;
   g_selectionType = 4;
   g_selectedIdx = 0;
   ClearMixedSelection();
@@ -2673,7 +2685,8 @@ void EditorApp::DrawNavMeshClassificationOverlay(EditorLineRenderer& lines, cons
     };
 
     for (const t850::navigation::NavTriangleClassification& tri : m_editorNavMeshClassification.triangles) {
-      if (tri.triangleIndex == m_editorSelectedNavTriangle) {
+      if (tri.triangleIndex == m_editorSelectedNavTriangle ||
+          m_editorSelectedNavTriangles.count(tri.triangleIndex) != 0) {
         appendTriangle(Selected, tri);
       }
       if (tri.included) {
@@ -3409,22 +3422,31 @@ void EditorApp::DrawNavMeshAuthoringPanel() {
   }
   if (m_editorNavMeshAuthoringMode) {
     ImGui::TextColored(ImVec4(0.25f, 0.75f, 1.0f, 1.0f), "NavMesh Authoring Mode: click source preview triangles to select them.");
+    ImGui::Checkbox("Brush Select Triangles", &m_editorNavMeshBrushSelect);
+    ImGui::SameLine();
+    ImGui::DragFloat("Brush Radius", &m_editorNavMeshBrushRadius, 0.1f, 0.1f, 256.0f, "%.2f");
   }
-  if (m_editorSelectedNavTriangle >= 0) {
+  if (m_editorSelectedNavTriangle >= 0 || !m_editorSelectedNavTriangles.empty()) {
     ImGui::Text("Selected Source Triangle: %d", m_editorSelectedNavTriangle);
+    ImGui::Text("Selected Source Triangles: %d", static_cast<int>(m_editorSelectedNavTriangles.size()));
+    if (ImGui::Button("Clear Triangle Selection")) {
+      m_editorSelectedNavTriangle = -1;
+      m_editorSelectedNavTriangles.clear();
+      ReleaseNavMeshClassificationGizmos();
+    }
     if (ImGui::Button("Exclude Selected Triangle")) {
-      CreateNavVolumeFromSelectedTriangle("exclude");
+      CreateNavVolumeFromSelectedTriangles("exclude");
     }
     ImGui::SameLine();
     if (ImGui::Button("Area Cost Selected Triangle")) {
-      CreateNavVolumeFromSelectedTriangle("area_cost");
+      CreateNavVolumeFromSelectedTriangles("area_cost");
     }
     if (ImGui::Button("Link Include Selected Triangle")) {
-      CreateNavVolumeFromSelectedTriangle("link_include");
+      CreateNavVolumeFromSelectedTriangles("link_include");
     }
     ImGui::SameLine();
     if (ImGui::Button("Link Exclude Selected Triangle")) {
-      CreateNavVolumeFromSelectedTriangle("link_exclude");
+      CreateNavVolumeFromSelectedTriangles("link_exclude");
     }
   }
   if (m_editorNavMeshDirty) {
@@ -8594,13 +8616,41 @@ single_pick:
     int triangleIndex = -1;
     if (PickEditorNavMeshTriangleFromMouse(IManager.mouseX, IManager.mouseY, triangleIndex)) {
       m_editorSelectedNavTriangle = triangleIndex;
+      const bool appendSelection = shiftDown || m_editorNavMeshBrushSelect;
+      if (!appendSelection) {
+        m_editorSelectedNavTriangles.clear();
+      }
+      auto selectedIt = std::find_if(
+          m_editorNavMeshClassification.triangles.begin(),
+          m_editorNavMeshClassification.triangles.end(),
+          [&](const t850::navigation::NavTriangleClassification& tri) {
+            return tri.triangleIndex == triangleIndex;
+          });
+      if (selectedIt != m_editorNavMeshClassification.triangles.end()) {
+        const float radiusSq = (std::max)(0.001f, m_editorNavMeshBrushRadius) *
+            (std::max)(0.001f, m_editorNavMeshBrushRadius);
+        for (const t850::navigation::NavTriangleClassification& tri : m_editorNavMeshClassification.triangles) {
+          const float dx = tri.centroid.x - selectedIt->centroid.x;
+          const float dy = tri.centroid.y - selectedIt->centroid.y;
+          const float dz = tri.centroid.z - selectedIt->centroid.z;
+          if (!m_editorNavMeshBrushSelect || (dx * dx + dy * dy + dz * dz) <= radiusSq) {
+            if (shiftDown && !m_editorNavMeshBrushSelect && m_editorSelectedNavTriangles.count(tri.triangleIndex)) {
+              m_editorSelectedNavTriangles.erase(tri.triangleIndex);
+            } else {
+              m_editorSelectedNavTriangles.insert(tri.triangleIndex);
+            }
+          }
+        }
+      } else {
+        m_editorSelectedNavTriangles.insert(triangleIndex);
+      }
       m_editorSelectedNavVolume = -1;
       m_editorSelectedNavLink = -1;
       g_selectedIdx = 0;
       g_selectionType = 4;
       ClearMixedSelection();
       ReleaseNavMeshClassificationGizmos();
-      m_editorNavMeshStatus = "Source triangle selected. Use Exclude Selected Triangle or Area Cost Selected Triangle.";
+      m_editorNavMeshStatus = "Source triangle selection updated. Use selected-triangle volume tools.";
       return;
     }
   }

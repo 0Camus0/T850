@@ -3221,10 +3221,27 @@ void EditorApp::DrawNavMeshAuthoringPanel() {
     MarkEditorNavMeshDirty("NavMesh runtime mode changed. Save the scene to persist it.");
   }
   if (m_editorNavMeshRuntimeMode == "baked_asset") {
+    if (m_editorNavMeshBakedAsset.empty()) {
+      m_editorNavMeshBakedAsset = "Navigation/EditorNavMesh.t8nav";
+    }
     if (InputTextString("Baked Asset", m_editorNavMeshBakedAsset)) {
       MarkEditorNavMeshDirty("NavMesh baked asset path changed. Save the scene to persist it.");
     }
-    ImGui::TextDisabled("Baked asset loading/export is metadata-only for now; runtime falls back to build_cached.");
+    if (!m_editorNavMesh.IsReady()) {
+      ImGui::BeginDisabled();
+    }
+    if (ImGui::Button("Bake NavMesh Asset")) {
+      std::string bakeError;
+      if (m_editorNavMesh.SaveBaked(m_editorNavMeshBakedAsset, &bakeError)) {
+        m_editorNavMeshStatus = "Baked NavMesh asset: " + m_editorNavMeshBakedAsset;
+      } else {
+        m_editorNavMeshStatus = "Bake failed: " + bakeError;
+      }
+    }
+    if (!m_editorNavMesh.IsReady()) {
+      ImGui::EndDisabled();
+      ImGui::TextDisabled("Build or Re-generate the NavMesh before baking.");
+    }
   }
 
   if (ImGui::SliderFloat("Debug Vertical Offset", &m_editorNavMeshDebugOffset, 0.0f, 0.25f, "%.3f")) {

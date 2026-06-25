@@ -972,7 +972,8 @@ bool LoadNavMeshCache(const std::filesystem::path& path,
                       const NavMeshBuildSettings& settings,
                       NavMeshBuildStats& outStats,
                       std::unique_ptr<dtNavMesh, NavMeshDeleter>& outNavMesh,
-                      std::unique_ptr<dtNavMeshQuery, NavMeshQueryDeleter>& outQuery) {
+                      std::unique_ptr<dtNavMeshQuery, NavMeshQueryDeleter>& outQuery,
+                      std::vector<unsigned char>* outNavDataCopy = nullptr) {
   std::ifstream file(path, std::ios::binary);
   if (!file.is_open()) {
     return false;
@@ -1013,6 +1014,9 @@ bool LoadNavMeshCache(const std::filesystem::path& path,
   if (!file.good()) {
     dtFree(navData);
     return false;
+  }
+  if (outNavDataCopy) {
+    outNavDataCopy->assign(navData, navData + dataSize);
   }
 
   std::string error;
@@ -1249,6 +1253,7 @@ struct NavMesh::Impl {
   std::unique_ptr<dtNavMeshQuery, NavMeshQueryDeleter> query;
   NavMeshBuildSettings settings;
   std::array<float, kNavMaxAreas> areaCosts = DefaultNavAreaCosts();
+  std::vector<unsigned char> navData;
 #endif
 };
 
@@ -1613,7 +1618,8 @@ bool NavMesh::LoadCached(uint64_t cacheKey,
   NavMeshBuildStats cachedStats;
   std::unique_ptr<dtNavMesh, NavMeshDeleter> cachedNavMesh;
   std::unique_ptr<dtNavMeshQuery, NavMeshQueryDeleter> cachedQuery;
-  if (!LoadNavMeshCache(NavMeshCachePath(cacheKey), cacheKey, settings, cachedStats, cachedNavMesh, cachedQuery)) {
+  std::vector<unsigned char> cachedNavData;
+  if (!LoadNavMeshCache(NavMeshCachePath(cacheKey), cacheKey, settings, cachedStats, cachedNavMesh, cachedQuery, &cachedNavData)) {
     if (error) *error = "Navigation cache is not available";
     return false;
   }
@@ -1621,6 +1627,68 @@ bool NavMesh::LoadCached(uint64_t cacheKey,
   m_stats = cachedStats;
   m_impl->navMesh = std::move(cachedNavMesh);
   m_impl->query = std::move(cachedQuery);
+  m_impl->navData = std::move(cachedNavData);
+  return true;
+#endif
+}
+
+bool NavMesh::LoadBaked(const std::string& path,
+                        const NavMeshBuildSettings& settings,
+                        std::string* error) {
+#if !defined(T850_ENABLE_RECAST)
+  SetError(error, "RecastNavigation is not enabled in this build");
+  return false;
+#else
+  Clear();
+  m_impl->settings = settings;
+  m_impl->areaCosts = DefaultNavAreaCosts();
+  if (path.empty()) {
+    SetError(error, "Baked NavMesh path is empty");
+    return false;
+  }
+
+  const std::filesystem::path resolvedPath = ResourceLocator::Instance().ResolveFilePath(path);
+  NavMeshBuildStats bakedStats;
+  std::unique_ptr<dtNavMesh, NavMeshDeleter> bakedNavMesh;
+  std::unique_ptr<dtNavMeshQuery, NavMeshQueryDeleter> bakedQuery;
+  std::vector<unsigned char> bakedNavData;
+  if (!LoadNavMeshCache(resolvedPath, 0, settings, bakedStats, bakedNavMesh, bakedQuery, &bakedNavData)) {
+    SetError(error, "Failed to load baked NavMesh asset: " + path);
+    return false;
+  }
+
+  m_stats = bakedStats;
+  m_impl->navMesh = std::move(bakedNavMesh);
+  m_impl->query = std::move(bakedQuery);
+  m_impl->navData = std::move(bakedNavData);
+  return true;
+#endif
+}
+
+bool NavMesh::SaveBaked(const std::string& path, std::string* error) const {
+#if !defined(T850_ENABLE_RECAST)
+  SetError(error, "RecastNavigation is not enabled in this build");
+  return false;
+#else
+  if (!IsReady() || !m_impl || m_impl->navData.empty()) {
+    SetError(error, "Cannot bake NavMesh before a NavMesh is built or loaded");
+    return false;
+  }
+  if (path.empty()) {
+    SetError(error, "Baked NavMesh path is empty");
+    return false;
+  }
+
+  std::filesystem::path outputPath(path);
+  if (!outputPath.is_absolute()) {
+    outputPath = ResourceLocator::Instance().ResolveCachePath(path);
+  }
+  SaveNavMeshCache(outputPath, 0, m_stats, m_impl->navData.data(), static_cast<int>(m_impl->navData.size()));
+  std::error_code ec;
+  if (!std::filesystem::is_regular_file(outputPath, ec)) {
+    SetError(error, "Failed to write baked NavMesh asset: " + outputPath.string());
+    return false;
+  }
   return true;
 #endif
 }
@@ -1690,7 +1758,7 @@ bool NavMesh::BuildCached(const NavMeshGeometry& geometry,
   const bool hasExplicitOffMeshLinks = !geometry.offMeshLinks.empty();
   if (useCache &&
       !hasExplicitOffMeshLinks &&
-      LoadNavMeshCache(cachePath, effectiveCacheKey, settings, cachedStats, cachedNavMesh, cachedQuery)) {
+      LoadNavMeshCache(cachePath, effectiveCacheKey, settings, cachedStats, cachedNavMesh, cachedQuery, &m_impl->navData)) {
     m_stats = cachedStats;
     m_impl->navMesh = std::move(cachedNavMesh);
     m_impl->query = std::move(cachedQuery);
@@ -1935,6 +2003,9 @@ bool NavMesh::BuildCached(const NavMeshGeometry& geometry,
     return false;
   }
   dtStatus status = navMesh->init(navData, navDataSize, DT_TILE_FREE_DATA);
+  if (!dtStatusFailed(status)) {
+    m_impl->navData.assign(navData, navData + navDataSize);
+  }
   if (dtStatusFailed(status)) {
     dtFree(navData);
     SetError(error, "Failed to initialize Detour navmesh");

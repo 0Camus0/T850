@@ -229,6 +229,11 @@ public:
   bool LoadCached(uint64_t cacheKey,
                   const NavMeshBuildSettings& settings = NavMeshBuildSettings(),
                   std::string* error = nullptr);
+  bool LoadBaked(const std::string& path,
+                 const NavMeshBuildSettings& settings = NavMeshBuildSettings(),
+                 std::string* error = nullptr);
+  bool SaveBaked(const std::string& path,
+                 std::string* error = nullptr) const;
   bool BuildFromXDataBase(const xF::XDataBase& database,
                           const NavMeshBuildSettings& settings = NavMeshBuildSettings(),
                           std::string* error = nullptr);

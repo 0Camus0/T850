@@ -11,11 +11,11 @@ This folder is the long-form technical documentation for T850. It is separate fr
 | Full documentation plan | [stage-plan.md](stage-plan.md) | Stage 0 skeleton |
 | Main architecture | [architecture/main-architecture.md](architecture/main-architecture.md) | Stage 1 draft |
 | Platform event loop and windows | [architecture/platform-event-loop.md](architecture/platform-event-loop.md) | Stage 1 draft |
-| Geometry loading | [geometry/loading-geometry.md](geometry/loading-geometry.md) | Planned |
-| Shader management | [rendering/shader-management.md](rendering/shader-management.md) | Planned |
-| Render graph | [rendering/render-graph.md](rendering/render-graph.md) | Planned |
-| Geometry rendering flow | [rendering/geometry-rendering-flow.md](rendering/geometry-rendering-flow.md) | Planned |
-| Animation | [animation/animation-system.md](animation/animation-system.md) | Planned |
+| Geometry loading | [geometry/loading-geometry.md](geometry/loading-geometry.md) | Stage 2 draft |
+| Shader management | [rendering/shader-management.md](rendering/shader-management.md) | Stage 3 draft |
+| Render graph | [rendering/render-graph.md](rendering/render-graph.md) | Stage 4 draft |
+| Geometry rendering flow | [rendering/geometry-rendering-flow.md](rendering/geometry-rendering-flow.md) | Stage 5 draft |
+| Animation | [animation/animation-system.md](animation/animation-system.md) | Stage 6 draft |
 | Physics | [physics/jolt-physics.md](physics/jolt-physics.md) | Planned |
 | Navigation | [navigation/navmesh-detour.md](navigation/navmesh-detour.md) | Planned |
 | Editor | [editor/editor-overview.md](editor/editor-overview.md) | Planned |

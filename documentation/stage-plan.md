@@ -60,6 +60,8 @@ Output:
 
 - [geometry/loading-geometry.md](geometry/loading-geometry.md)
 
+Status: draft complete.
+
 Must cover:
 
 - glTF / GLB path.
@@ -87,6 +89,8 @@ Output:
 
 - [rendering/shader-management.md](rendering/shader-management.md)
 
+Status: draft complete.
+
 Must cover:
 
 - `ShaderKey`.
@@ -110,6 +114,8 @@ Target files:
 Output:
 
 - [rendering/render-graph.md](rendering/render-graph.md)
+
+Status: draft complete.
 
 Must cover:
 
@@ -138,6 +144,8 @@ Output:
 
 - [rendering/geometry-rendering-flow.md](rendering/geometry-rendering-flow.md)
 
+Status: draft complete.
+
 Must cover:
 
 - `PrimitiveInst` to draw call.
@@ -162,6 +170,8 @@ Target files:
 Output:
 
 - [animation/animation-system.md](animation/animation-system.md)
+
+Status: draft complete.
 
 Must cover:
 

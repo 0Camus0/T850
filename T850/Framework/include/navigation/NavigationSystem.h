@@ -107,6 +107,33 @@ struct NavMeshGeometry {
   std::function<bool(const NavOffMeshLink&)> offMeshHybridLinkValidator;
 };
 
+enum class NavTriangleClassificationReason : uint8_t {
+  Included = 0,
+  ExcludedBySlope = 1,
+  OutsideIncludeVolume = 2,
+  ExcludedByVolume = 3,
+  InvalidGeometry = 4
+};
+
+struct NavTriangleClassification {
+  int triangleIndex = -1;
+  XVECTOR3 vertices[3];
+  XVECTOR3 centroid = XVECTOR3(0.0f, 0.0f, 0.0f, 1.0f);
+  bool included = false;
+  int area = 0;
+  float cost = 1.0f;
+  NavTriangleClassificationReason reason = NavTriangleClassificationReason::InvalidGeometry;
+  int modifierIndex = -1;
+};
+
+struct NavMeshClassificationResult {
+  std::vector<NavTriangleClassification> triangles;
+  int includedCount = 0;
+  int excludedBySlopeCount = 0;
+  int outsideIncludeVolumeCount = 0;
+  int excludedByVolumeCount = 0;
+};
+
 struct NavMeshBuildStats {
   int vertexCount = 0;
   int triangleCount = 0;
@@ -295,6 +322,10 @@ bool BuildGeometryFromNavSources(const std::vector<NavSourceInstance>& sources,
                                  NavMeshGeometry& outGeometry,
                                  NavSourceBuildStats* stats = nullptr,
                                  std::string* error = nullptr);
+bool ClassifyNavMeshTriangles(const NavMeshGeometry& geometry,
+                              const NavMeshBuildSettings& settings,
+                              NavMeshClassificationResult& outResult,
+                              std::string* error = nullptr);
 
 } // namespace navigation
 } // namespace t850

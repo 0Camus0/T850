@@ -75,7 +75,8 @@ namespace t8ditor {
                        bool& wantsClone, bool& wantsGroup, bool& wantsUngroup,
                        bool& wantsPlayScene,
                        bool hasSelection, bool hasMultiSelect,
-                       int& cameraMode);
+                       int& cameraMode,
+                       bool& navMeshAuthoringMode);
 
   // ── Context menu (right-click) ─────────────────────
   struct ContextAction {

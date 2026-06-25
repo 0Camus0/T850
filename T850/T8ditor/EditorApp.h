@@ -53,6 +53,7 @@
 #include <string>
 #include <memory>
 #include <chrono>
+#include <set>
 
 #include "EditorCamera.h"
 #include "EditorLineRenderer.h"
@@ -177,6 +178,7 @@ namespace t8ditor {
     void DrawNavMeshClassificationOverlay(EditorLineRenderer& lines, const XMATRIX44& vp);
     bool PickEditorNavMeshTriangleFromMouse(int mouseX, int mouseY, int& outTriangleIndex) const;
     bool CreateNavVolumeFromSelectedTriangle(const char* type);
+    bool CreateNavVolumeFromSelectedTriangles(const char* type);
     bool PickEditorNavMeshNodeFromMouse(int mouseX, int mouseY, int& outNodeIndex, XVECTOR3& outNodePosition) const;
     void DrawSelectedNavLinkOverlay(t850::Texture* depthTexture, t850::Texture* secondaryDepthTexture, const Camera& cam);
     void UpdateEditorSplinePreview(float deltaSeconds);
@@ -256,6 +258,9 @@ namespace t8ditor {
     int m_editorSelectedNavVolume = -1;
     int m_editorSelectedNavLink = -1;
     int m_editorSelectedNavTriangle = -1;
+    std::set<int> m_editorSelectedNavTriangles;
+    bool m_editorNavMeshBrushSelect = false;
+    float m_editorNavMeshBrushRadius = 4.0f;
     int m_editorNavLinkPickMode = 0; // 0=none, 1=start, 2=end
     t850::VertexBuffer* m_editorNavLinkOverlayVB = nullptr;
     t850::IndexBuffer* m_editorNavLinkOverlayIB = nullptr;
